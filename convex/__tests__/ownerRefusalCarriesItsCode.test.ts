@@ -98,6 +98,7 @@ const seedDiary = (t: T, orchestrator: string) =>
 			orchestrator,
 			content: "seed diary",
 			createdAt: Date.now(),
+			orgId: "org-a",
 		}),
 	);
 

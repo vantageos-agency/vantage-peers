@@ -37,6 +37,7 @@ import {
 	resolveReviewer,
 } from "./lib/reviewRouting";
 import { isFleetSystemCaller } from "./lib/systemCaller";
+import { fleetOperatorSlug, sameTenantStamp } from "./lib/operatorOrg";
 import {
 	enforceClosureGate,
 	closeTrailingSegmentOnExit,
@@ -2626,7 +2627,21 @@ export const complete = mutation({
 			);
 			if (allDone) {
 				const mission = await ctx.db.get(task.missionId);
-				if (mission && mission.status !== "complete") {
+				// R-52 — `task.missionId` is set by the caller (create/update accept
+				// it as an argument), so the mission is a caller-chosen target. It is
+				// closed only when ITS server-stamped tenant is the task's own (equal,
+				// or both the fleet's: unstamped and operator-stamped are one tenant)
+				// (itself stamped from the caller's scope at create). A foreign or
+				// fleet mission is left untouched; the task completion is not refused.
+				if (
+					mission &&
+					sameTenantStamp(
+						mission.orgId,
+						task.orgId,
+						await fleetOperatorSlug(ctx.db),
+					) &&
+					mission.status !== "complete"
+				) {
 					await ctx.db.patch(task.missionId, {
 						status: "complete",
 						updatedAt: Date.now(),

@@ -33,3 +33,33 @@ export async function findOperatorOrg(
 		? { kind: "none" }
 		: { kind: "many", count: operators.length };
 }
+
+// RULING 4: the FLEET's tenant is {unstamped, operator-stamped}. A master write
+// stamps nothing, while backfill_org_stamp stamps fleet rows with the operator
+// slug, so a row may carry either and both mean "the fleet". The operator slug
+// is returned only when EXACTLY ONE active operator org exists; otherwise
+// undefined (fail closed: only the unstamped rows are the fleet's, nothing is
+// widened).
+export async function fleetOperatorSlug(
+	db: DatabaseReader,
+): Promise<string | undefined> {
+	const op = await findOperatorOrg(db);
+	return op.kind === "one" ? op.slug : undefined;
+}
+
+/** Is this stamp the fleet's: unstamped, or the operator org's slug? */
+export function isFleetStamp(
+	orgId: string | undefined,
+	operatorSlug: string | undefined,
+): boolean {
+	return orgId === undefined || (operatorSlug !== undefined && orgId === operatorSlug);
+}
+
+/** Do two stamps name the same tenant (equal, or both the fleet's)? */
+export function sameTenantStamp(
+	a: string | undefined,
+	b: string | undefined,
+	operatorSlug: string | undefined,
+): boolean {
+	return a === b || (isFleetStamp(a, operatorSlug) && isFleetStamp(b, operatorSlug));
+}

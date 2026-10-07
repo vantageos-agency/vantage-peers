@@ -441,6 +441,14 @@ def test_must_refuse_unreadable_input_unchanged():
 
 BASELINE_REL = pathlib.Path(".claude/config/backend-doctor-baseline.json")
 REAL_BASELINE = pathlib.Path(__file__).resolve().parents[2] / BASELINE_REL
+# The ratchet MECHANISM is tested against the baseline as merged at 760b5d7
+# (#1476), frozen here, because the committed baseline is meant to go DOWN with
+# every lane PR: a test reading the live file as its fixture would turn red at
+# the first lowering, which is exactly the change the ratchet exists to allow.
+# The live file is checked separately: same command provenance, and no value
+# above this frozen measurement.
+E85618D_BASELINE = (pathlib.Path(__file__).resolve().parent / "tests" / "fixtures"
+                    / "backend-doctor-baseline-e85618d.json")
 
 MEASURED_E85618D = {
     "sha": "e85618d056f0dd0a39ea57ea70a3b85190a17bde",
@@ -460,7 +468,7 @@ def _ratchet_repo(tmp, main_baseline=None, head_baseline=None):
     """Temp repo whose origin/main carries `main_baseline` (default: the real
     committed baseline) and whose HEAD carries `head_baseline` (default: same)."""
     repo, _ = _init_repo(tmp)
-    real = json.loads(REAL_BASELINE.read_text())
+    real = json.loads(E85618D_BASELINE.read_text())
     on_main = real if main_baseline is None else main_baseline
     path = repo / BASELINE_REL
     path.parent.mkdir(parents=True)
@@ -478,7 +486,7 @@ def _ratchet_repo(tmp, main_baseline=None, head_baseline=None):
 
 
 def _copy_baseline():
-    return json.loads(REAL_BASELINE.read_text())
+    return json.loads(E85618D_BASELINE.read_text())
 
 
 def _write_measured(repo, head, counts=None, extra=None, mech=None):
@@ -495,13 +503,22 @@ def _write_measured(repo, head, counts=None, extra=None, mech=None):
 
 
 def test_ratchet_baseline_values_carry_their_command():
-    real = _copy_baseline()
-    assert set(real["rules"]) == set(MEASURED_E85618D_RULE_COUNTS)
-    for rule, entry in real["rules"].items():
+    frozen = _copy_baseline()
+    assert set(frozen["rules"]) == set(MEASURED_E85618D_RULE_COUNTS)
+    for rule, entry in frozen["rules"].items():
+        assert entry["count"] == MEASURED_E85618D_RULE_COUNTS[rule]
+        assert entry["cli_commit"] == "1bda92f854f8f851ea38af11511968df0c7042e5"
+
+
+def test_ratchet_live_baseline_carries_its_command_and_never_rose():
+    live = json.loads(REAL_BASELINE.read_text())
+    assert set(live["rules"]) <= set(MEASURED_E85618D_RULE_COUNTS)
+    for rule, entry in live["rules"].items():
         assert entry["command"].startswith("cd ")
         assert "npx tsx src/cli.ts" in entry["command"]
         assert entry["output_line"].startswith(f"{rule}: {entry['count']} ")
-        assert entry["cli_commit"] == "1bda92f854f8f851ea38af11511968df0c7042e5"
+        assert entry["cli_commit"]
+        assert entry["count"] <= MEASURED_E85618D_RULE_COUNTS[rule], rule
 
 
 def test_ratchet_block_one_more_r53_site():
@@ -618,7 +635,7 @@ def test_ratchet_block_baseline_absent_on_origin_main():
         _git(repo, "update-ref", "refs/remotes/origin/main", "HEAD")
         path = repo / BASELINE_REL
         path.parent.mkdir(parents=True)
-        path.write_text(REAL_BASELINE.read_text())
+        path.write_text(E85618D_BASELINE.read_text())
         _git(repo, "add", "-A")
         _git(repo, "commit", "-q", "-m", "unmerged baseline")
         head = subprocess.run(["git", "rev-parse", "HEAD"], cwd=repo,

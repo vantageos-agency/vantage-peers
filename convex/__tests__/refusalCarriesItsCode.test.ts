@@ -944,6 +944,7 @@ const seedDiary = (
 			orchestrator,
 			content,
 			createdAt: now(),
+			orgId: "org-a",
 		});
 	});
 

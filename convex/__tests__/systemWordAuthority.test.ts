@@ -120,6 +120,7 @@ async function seedBU(t: T, orchestratorId: string) {
 			managementFee: 10,
 			createdAt: Date.now(),
 			updatedAt: Date.now(),
+			orgId: "org-a",
 		}),
 	);
 }
@@ -131,6 +132,7 @@ async function seedDiary(t: T, orchestrator: string) {
 			orchestrator,
 			content: "seed diary",
 			createdAt: Date.now(),
+			orgId: "org-a",
 		}),
 	);
 }

@@ -8,6 +8,7 @@ import {
 	withOrgScope,
 } from "./lib/auth";
 import { isFleetSystemCaller } from "./lib/systemCaller";
+import { fleetOperatorSlug, sameTenantStamp } from "./lib/operatorOrg";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Org-scope orchestrator enforcement (same defect class as convex/diary.ts's
@@ -84,6 +85,7 @@ const buObject = v.object({
 	managementFee: v.number(),
 	createdAt: v.number(),
 	updatedAt: v.number(),
+	orgId: v.optional(v.string()),
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -146,6 +148,11 @@ export const create = mutation({
 			managementFee: args.managementFee ?? 10,
 			createdAt: now,
 			updatedAt: now,
+			// R-52 tenant stamp, derived from the verified scope and never from an
+			// argument. A master write is fleet-owned (unstamped), as `tasks` does.
+			...(scope.isMaster || scope.orgSlug === null
+				? {}
+				: { orgId: scope.orgSlug }),
 		});
 	},
 });
@@ -209,6 +216,20 @@ export const update = mutation({
 		const bu = await ctx.db.get(args.buId);
 		if (bu === null) {
 			throw new Error(`Business unit ${args.buId} not found`);
+		}
+
+		// R-52 — the row's own server-stamped tenant must be the caller's. The
+		// roster check below keys on a NAME that two organisations (or the fleet)
+		// can both hold; only the stamp tells their rows apart. An unstamped row is
+		// fleet-owned or not yet backfilled and is refused to every org caller.
+		// Master is unchanged.
+		if (
+			!scope.isMaster &&
+			!sameTenantStamp(bu.orgId, scope.orgSlug ?? undefined, await fleetOperatorSlug(ctx.db))
+		) {
+			throw new ConvexError(
+				`RBAC_DENIED: caller may not update business unit ${args.buId} — ${JSON.stringify({ orgSlug: scope.orgSlug, reason: "row-not-in-caller-org" })}`,
+			);
 		}
 
 		// The TARGET ROW's current owner must be within the caller's scope —
@@ -290,6 +311,14 @@ export const remove = mutation({
 
 		const bu = await ctx.db.get(args.buId);
 		if (!bu) throw new Error("Business unit not found");
+		// R-52 defence in depth: the master-only gate above is what decides today;
+		// this reads the row's own server-stamped tenant so the delete stays bound
+		// to the caller's tenant if that gate is ever relaxed to org admins.
+		if (!scope.isMaster && bu.orgId !== scope.orgSlug) {
+			throw new ConvexError(
+				`RBAC_DENIED: caller may not delete business unit ${args.buId} — ${JSON.stringify({ orgSlug: scope.orgSlug, reason: "row-not-in-caller-org" })}`,
+			);
+		}
 		await ctx.db.delete(args.buId);
 		return { deleted: true };
 	},

@@ -316,6 +316,7 @@ const INTENTIONAL_PROJECTIONS: Record<string, { fields: string[]; reason: string
 			"managementFee",
 			"createdAt",
 			"updatedAt",
+			"orgId",
 		],
 		reason:
 			"`fields: \"lite\"|\"full\"` API (documented at the `list` query) — `liteValidator` is the deliberate lite projection; `buObject` (the full shape, in the same union) already COVERS.",
