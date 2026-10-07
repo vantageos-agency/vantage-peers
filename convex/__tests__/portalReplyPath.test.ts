@@ -180,6 +180,61 @@ describe("PART 1a — what the portal's service-account + seatOrgSlug path accep
 		expect(await writes()).toEqual({ messages: 0, receipts: 0 });
 	});
 
+	async function seedAgent(orgSlug: string, name: string) {
+		await t.run(async (ctx) => {
+			await ctx.db.insert("agents", {
+				orgSlug,
+				name,
+				normalizedName: name.trim().toLowerCase(),
+				isActive: true,
+				createdAt: Date.now(),
+			});
+		});
+	}
+
+	test("S3 REFUSED: a registered agent of ANOTHER org (on no roster, no profile) cannot be impersonated", async () => {
+		await seedAgent(OTHER, "nadia");
+		await expectCode(
+			service().mutation(api.messages.sendMessage, {
+				from: "nadia",
+				channel: "neo",
+				content: "forged",
+				seatOrgSlug: CGT,
+			}),
+			"seat-sender-foreign-identity",
+		);
+		expect(await writes()).toEqual({ messages: 0, receipts: 0 });
+	});
+
+	test("S4 REFUSED: a case or instance variant of that agent is refused too", async () => {
+		await seedAgent(OTHER, "nadia");
+		for (const from of ["Nadia", " NADIA ", "nadia-vps", "nadia-vps-1"]) {
+			await expectCode(
+				service().mutation(api.messages.sendMessage, {
+					from,
+					channel: "neo",
+					content: "forged",
+					seatOrgSlug: CGT,
+				}),
+				"seat-sender-foreign-identity",
+			);
+		}
+		expect(await writes()).toEqual({ messages: 0, receipts: 0 });
+	});
+
+	test("PRESENT: an agent registered in the seat's OWN org is accepted, as are its variants", async () => {
+		await seedAgent(CGT, "mira");
+		for (const from of ["mira", "Mira", "mira-vps"]) {
+			const id = await service().mutation(api.messages.sendMessage, {
+				from,
+				channel: "neo",
+				content: "own",
+				seatOrgSlug: CGT,
+			});
+			expect(id).toBeDefined();
+		}
+	});
+
 	test("the seat path stamps the seat's verified org on the message and its receipts", async () => {
 		const id = await service().mutation(api.messages.sendMessage, {
 			from: "hal",

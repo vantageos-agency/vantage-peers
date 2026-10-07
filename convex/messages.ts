@@ -26,6 +26,7 @@ import {
 	resolveVerifiedPerson,
 	verifiedPersonValidator,
 } from "./lib/personPrincipal";
+import { findAgentByName } from "./lib/agentIdentity";
 import { requireId } from "./lib/ids";
 import { normalizeOrchestratorId } from "./_helpers/normalizeOrchestratorId";
 import { creatorValidator } from "./schema";
@@ -571,6 +572,16 @@ async function requireSeatSenderNotForeign(
 	if (isHumanActorName(from)) return refuse("seat-sender-is-person");
 	if (isRecipientOnRoster(seat, from)) return;
 	const claimed = normalizeOrchestratorId(from);
+	const segments = claimed.split("-");
+	const candidates: string[] = [];
+	for (let i = segments.length; i >= 1; i--) {
+		candidates.push(segments.slice(0, i).join("-"));
+	}
+	for (const candidate of candidates) {
+		if (seat.orgSlug !== null && (await findAgentByName(ctx, seat.orgSlug, candidate))) {
+			return;
+		}
+	}
 	const owns = (id: string | undefined): boolean =>
 		id !== undefined &&
 		(normalizeOrchestratorId(id) === claimed ||
@@ -582,6 +593,21 @@ async function requireSeatSenderNotForeign(
 	const mappings = await ctx.db.query("client_org_mapping").collect();
 	if (mappings.some((m) => m.allowedOrchestrators.some(owns))) {
 		return refuse("seat-sender-foreign-identity");
+	}
+	// The `agents` table is the registered-identity table (RULING 4): a name
+	// registered there is somebody's identity even with no roster entry and no
+	// profile. Candidates are the name and each hyphen-prefix of it, so an
+	// instance spelling ("nadia-vps-1") resolves to its agent ("nadia"). The
+	// seat org's own rows are accepted; a row of any other org (client,
+	// operator or fleet, every org of `client_org_mapping`) is refused. Lookup
+	// is `findAgentByName` per org (index by_org_normalized_name).
+	for (const m of mappings) {
+		if (m.clerkOrgSlug === seat.orgSlug) continue;
+		for (const candidate of candidates) {
+			if (await findAgentByName(ctx, m.clerkOrgSlug, candidate)) {
+				return refuse("seat-sender-foreign-identity");
+			}
+		}
 	}
 }
 
