@@ -48,6 +48,7 @@ import type * as issues from "../issues.js";
 import type * as kb from "../kb.js";
 import type * as kbMutations from "../kbMutations.js";
 import type * as kbShared from "../kbShared.js";
+import type * as lib_actingPrincipal from "../lib/actingPrincipal.js";
 import type * as lib_agentIdentity from "../lib/agentIdentity.js";
 import type * as lib_aiClient from "../lib/aiClient.js";
 import type * as lib_auth from "../lib/auth.js";
@@ -154,6 +155,7 @@ declare const fullApi: ApiFromModules<{
   kb: typeof kb;
   kbMutations: typeof kbMutations;
   kbShared: typeof kbShared;
+  "lib/actingPrincipal": typeof lib_actingPrincipal;
   "lib/agentIdentity": typeof lib_agentIdentity;
   "lib/aiClient": typeof lib_aiClient;
   "lib/auth": typeof lib_auth;

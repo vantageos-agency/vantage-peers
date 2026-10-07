@@ -1,0 +1,4 @@
+---
+section: Security
+---
+- **`messages:sendMessage` resolves a forwarded acting agent BY ID through `@vantageos/cloud-identity` (R-53, messages lane).** A `verifiedActor` is resolved with the package's `resolveActingPrincipal` (agent row read by ID, active, stamped with the org it was verified in, that org active), and every organisation the call names (the seat's verified org, a declared `tenantId`) is checked against the principal's stored org with `assertTargetBelongsTo`. Recipients and the tenant stamp derive from the principal's own org, so an agent of another organisation that shares a name can neither act as this org's agent nor reach its recipients, and an agent naming no org is confined to its own. New adapter `convex/lib/actingPrincipal.ts` (lookups by ID, `orgKindOf` answers `client` for an active non-operator mapping). Dependency `@vantageos/cloud-identity` bumped to `^0.11.0`. Evidence: `convex/__tests__/messagesActingPrincipalById.test.ts` 28/28.
