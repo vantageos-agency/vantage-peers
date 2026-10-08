@@ -106,7 +106,7 @@ import { scanUnreadIndexBindings } from "../../tests/lib/unreadIndexScan";
 
 const CONVEX_DIR = join(__dirname, "..");
 const SCHEMA_PATH = join(CONVEX_DIR, "schema.ts");
-const MESSAGES_PATH = join(CONVEX_DIR, "messages.ts");
+const INBOX_READER_PATH = join(CONVEX_DIR, "lib", "inboxReader.ts");
 
 /**
  * Build a throwaway `convex/` directory containing ONLY `schema.ts` (copied
@@ -154,9 +154,9 @@ describe("every *_unread index withIndex call, anywhere under convex/, binds the
 		]);
 	});
 
-	test("MUST_REFUSE: messages.ts must be readable and must itself contain resolvable by_recipient_unread / by_instance_unread withIndex calls — never pass vacuously off other files alone", () => {
+	test("MUST_REFUSE: the inbox read (convex/lib/inboxReader.ts, which every inbox door reads through) must be readable and must itself contain resolvable by_recipient_unread / by_instance_unread withIndex calls — never pass vacuously off other files alone", () => {
 		const { matches } = scanUnreadIndexBindings(CONVEX_DIR, SCHEMA_PATH);
-		const inMessagesTs = matches.filter((m) => m.file === MESSAGES_PATH);
+		const inMessagesTs = matches.filter((m) => m.file === INBOX_READER_PATH);
 		const recipientCalls = inMessagesTs.filter(
 			(m) => m.indexName === "by_recipient_unread",
 		);
@@ -165,11 +165,11 @@ describe("every *_unread index withIndex call, anywhere under convex/, binds the
 		);
 		expect(
 			recipientCalls.length,
-			`expected at least one resolvable by_recipient_unread withIndex call in ${MESSAGES_PATH} — found ${recipientCalls.length}. Either the file is unreadable/renamed, or the known call-sites moved to a shape this scan cannot resolve.`,
+			`expected at least one resolvable by_recipient_unread withIndex call in ${INBOX_READER_PATH} — found ${recipientCalls.length}. Either the file is unreadable/renamed, or the known call-sites moved to a shape this scan cannot resolve.`,
 		).toBeGreaterThan(0);
 		expect(
 			instanceCalls.length,
-			`expected at least one resolvable by_instance_unread withIndex call in ${MESSAGES_PATH} — found ${instanceCalls.length}. Either the file is unreadable/renamed, or the known call-sites moved to a shape this scan cannot resolve.`,
+			`expected at least one resolvable by_instance_unread withIndex call in ${INBOX_READER_PATH} — found ${instanceCalls.length}. Either the file is unreadable/renamed, or the known call-sites moved to a shape this scan cannot resolve.`,
 		).toBeGreaterThan(0);
 	});
 

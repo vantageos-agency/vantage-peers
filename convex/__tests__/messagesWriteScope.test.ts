@@ -129,13 +129,14 @@ describe("messages.markAsRead — write-scope enforcement", () => {
 		expect(receipt?.readAt).toBeDefined();
 	});
 
-	test("the master/service-account identity marks any receipt as read", async () => {
+	test("the master/service-account identity marks a fleet receipt as read, naming its owner", async () => {
 		const t = createT();
 		const { receiptId } = await seedMessageAndReceipt(t, "seat-x", "seat-b");
 		const tMaster = asMaster(t);
 
 		const count = await tMaster.mutation(api.messages.markAsRead, {
 			receiptIds: [receiptId],
+			callerOrchestrator: "seat-b",
 		});
 		expect(count).toBe(1);
 	});

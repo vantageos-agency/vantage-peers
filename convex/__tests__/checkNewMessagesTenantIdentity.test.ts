@@ -239,7 +239,14 @@ describe("checkNewMessages / checkNewMessagesEnvelope — read-half tenant ident
 		).toBe(false);
 	});
 
-	test("MUST-PASS: TRUE master identity with no tenantId still sees ALL tenants — checkNewMessages + checkNewMessagesEnvelope", async () => {
+	// Task k17c5q842gm1gbh0j2qjtc80g18fx5kb (inbox by agent ID): the two tests that
+	// stood here asserted that the service account, naming a recipient, reads ALL
+	// tenants' mail and any NAMED tenant's mail. That is the Iris RH defect: the
+	// wire shape of another org's same-named agent's seat. The service account
+	// with no claim now reads the FLEET's tenant only and a client tenant is a
+	// raised refusal; a client org's mail is read through a verified identity
+	// (inboxByAgentId.test.ts is the full table).
+	test("MUST-PASS: the service account with no tenantId reads the FLEET's mail only, never a client org's", async () => {
 		const t = createT();
 		await seedOrgMapping(t, "acme", ["noe"]);
 		await seedOrgMapping(t, "project/beta", ["noe"]);
@@ -256,6 +263,12 @@ describe("checkNewMessages / checkNewMessagesEnvelope — read-half tenant ident
 			content: "beta mail master",
 			tenantId: "project/beta",
 		});
+		await seedMessageForRecipient(t, {
+			from: "pi",
+			recipient: "noe",
+			content: "fleet mail master",
+			tenantId: undefined,
+		});
 
 		// Service-account identity — resolves to master via the
 		// CLERK_SERVICE_ACCOUNT_USER_ID carve-out (convex/lib/auth.ts:141-160).
@@ -267,21 +280,17 @@ describe("checkNewMessages / checkNewMessagesEnvelope — read-half tenant ident
 		const rows = await master.query(api.messages.checkNewMessages, {
 			recipient: "noe",
 		});
-		expect(rows.some((r) => r.content === "acme mail master")).toBe(true);
-		expect(rows.some((r) => r.content === "beta mail master")).toBe(true);
+		expect(rows.map((r) => r.content)).toEqual(["fleet mail master"]);
 
 		const envelope = await master.query(api.messages.checkNewMessagesEnvelope, {
 			recipient: "noe",
 		});
-		expect(
-			envelope.messages.some((r) => r.content === "acme mail master"),
-		).toBe(true);
-		expect(
-			envelope.messages.some((r) => r.content === "beta mail master"),
-		).toBe(true);
+		expect(envelope.messages.map((r) => r.content)).toEqual([
+			"fleet mail master",
+		]);
 	});
 
-	test("MUST-PASS: TRUE master identity WITH a tenantId scopes to that tenant only", async () => {
+	test("MUST-PASS: the service account naming a client tenant is REFUSED; a verified org scopes to that tenant only", async () => {
 		const t = createT();
 		await seedOrgMapping(t, "acme", ["noe"]);
 		await seedOrgMapping(t, "project/beta", ["noe"]);
@@ -303,9 +312,16 @@ describe("checkNewMessages / checkNewMessagesEnvelope — read-half tenant ident
 			subject: "test-service-account-user-id",
 		} as Parameters<typeof t.withIdentity>[0]);
 
+		await expect(
+			master.query(api.messages.checkNewMessages, {
+				recipient: "noe",
+				tenantId: "acme",
+			}),
+		).rejects.toThrow(/RBAC_DENIED.*messages:checkNewMessages/);
+
 		const rows = await master.query(api.messages.checkNewMessages, {
 			recipient: "noe",
-			tenantId: "acme",
+			verifiedOrg: { orgSlug: "acme" },
 		});
 		expect(rows.some((r) => r.content === "acme mail master scoped")).toBe(
 			true,
