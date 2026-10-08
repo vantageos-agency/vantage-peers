@@ -8540,6 +8540,58 @@ export function registerTools(
 		},
 	);
 
+	// ── bind_github_owner ───────────────────────────────────────────────────────
+
+	// oracle-justified: the binding row is written server-side only by the GitHub-verified
+	//   setup callback (convex/http.ts /github/app/setup); this tool only asks Convex for a
+	//   single-use install state, and Convex requires an org ADMIN of the caller's own org
+	//   (githubOwnerBinding:startBinding -> requireOrgAdmin). Nothing here names an owner.
+	// oracle-disposition: CONSERVER — githubInstallStates is the single-use install state of the GitHub-verified owner binding
+	defineTool(
+		server,
+		authCtx,
+		{
+			kind: "filtered",
+			reason:
+				"guardResolvedCaller() refuses an unresolved caller; org admin of the own org enforced by githubOwnerBinding:startBinding (requireOrgAdmin); no owner/org argument exists",
+		},
+		"bind_github_owner",
+		"Start binding a GitHub account (owner) to your organisation: returns a single-use install state. " +
+			"WHEN: before add_repo_mapping for a repo whose GitHub owner is not yet bound to your org; org admin only. " +
+			"EXAMPLE: bind_github_owner — then install the VantagePeers GitHub App on the owning account with this state; GitHub verifies the owner.",
+		{},
+		{
+			readOnlyHint: false,
+			openWorldHint: false,
+			destructiveHint: false,
+			title: "Bind GitHub owner",
+		},
+		async () => {
+			const unresolved = guardResolvedCaller("bind_github_owner");
+			if (unresolved) return unresolved;
+			try {
+				const res = await convex.mutation("githubOwnerBinding:startBinding" as any, {});
+				return {
+					content: [
+						{
+							type: "text",
+							text: JSON.stringify(
+								{
+									...res,
+									next: "Install the VantagePeers GitHub App on the GitHub account that owns the repos, passing this state; the owner is proven by GitHub, never by what you type. The state is single-use and expires in 15 minutes.",
+								},
+								null,
+								2,
+							),
+						},
+					],
+				};
+			} catch (error: any) {
+				return mcpConvexError(error);
+			}
+		},
+	);
+
 	// ── get_github_owner_bindings ──────────────────────────────────────────────
 
 	// oracle-disposition: CONSERVER — githubOwnerBindings is the proof an owner belongs to an org, the only basis on which a repo routes to it

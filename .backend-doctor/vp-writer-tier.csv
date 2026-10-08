@@ -15,6 +15,7 @@ create_bu,businessUnits,CREATE,org-member,orgResolver,businessUnits:create=orgRe
 delete_bu,businessUnits,DELETE,master,masterOnly,businessUnits:remove=masterOnly
 update_bu,businessUnits+client_org_mapping+oauth_access_tokens,TRANSITION,org-member,orgResolver,businessUnits:update=orgResolver
 write_diary,client_org_mapping+diary,UPSERT,org-member,orgResolver,diary:write=orgResolver
+bind_github_owner,client_org_mapping+githubInstallStates,CREATE,org-admin,orgAdmin,githubOwnerBinding:startBinding=orgAdmin
 create_mandate,client_org_mapping+mandates+oauth_access_tokens,CREATE,master,masterOnly,mandates:create=masterOnly
 create_mission,client_org_mapping+memberWriterRoles+missions+oauth_access_tokens,CREATE,org-member,orgResolver,missions:create=orgResolver
 update_mission,client_org_mapping+memberWriterRoles+missions+oauth_access_tokens,TRANSITION,org-member,orgResolver,missions:update=orgResolver

@@ -939,6 +939,8 @@ function declareDeleteBu(root, value) {
 // The tools that declare their R-13 disposition at their definition in
 // mcp-server/src/tools.ts. Every other tool declares nothing and stays empty.
 const DECLARED_DISPOSITION = {
+	bind_github_owner:
+		"CONSERVER — githubInstallStates is the single-use install state of the GitHub-verified owner binding",
 	get_github_owner_bindings:
 		"CONSERVER — githubOwnerBindings is the proof an owner belongs to an org, the only basis on which a repo routes to it",
 };

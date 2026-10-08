@@ -1006,9 +1006,9 @@ export default defineSchema({
 	// ── githubOwnerBindings ───────────────────────────────────────────────────
 	// PROOF that a GitHub account (the `owner` of "owner/name") belongs to one
 	// client org. A repo is routed to an org only when its owner is bound here.
-	// Rows are written by NO function in this change (the verified writer moves to
-	// the follow-up that restores startBinding); this change only reads and revokes
-	// them. The writer will be reached from a GitHub-verified setup callback,
+	// Rows are written ONLY by `githubOwnerBinding:completeBindingInternal`,
+	// reached from the GitHub-verified setup callback (convex/http.ts
+	// /github/app/setup: OAuth code exchange + GET /user/installations) —
 	// never from a client argument. `active:false` after the GitHub App
 	// installation is deleted/suspended (HMAC-verified `installation` webhook).
 	githubOwnerBindings: defineTable({
@@ -1025,6 +1025,16 @@ export default defineSchema({
 		.index("by_owner", ["owner"])
 		.index("by_org", ["orgId"])
 		.index("by_installation", ["installationId"]),
+
+	// Single-use, short-lived, server-generated state that ties a GitHub App
+	// install to the org admin who started it.
+	githubInstallStates: defineTable({
+		state: v.string(),
+		orgId: v.string(),
+		createdBy: v.string(),
+		expiresAt: v.number(),
+		usedAt: v.optional(v.number()),
+	}).index("by_state", ["state"]),
 
 	// ── businessUnits ─────────────────────────────────────────────────────────
 	// One row per ElPi Corp business unit. Tracks strategy, structure, and KPIs.

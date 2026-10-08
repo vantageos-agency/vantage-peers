@@ -1,13 +1,17 @@
-import { v } from "convex/values";
+import { type ActingCredential, resolveActingPrincipal } from "@vantageos/cloud-identity";
+import { ConvexError, v } from "convex/values";
 import type { Doc } from "./_generated/dataModel";
 import {
 	type MutationCtx,
 	type QueryCtx,
 	internalMutation,
 	internalQuery,
+	mutation,
 	query,
 } from "./_generated/server";
-import { requireResolvedCaller, withOrgScope } from "./lib/auth";
+import { lookupOrgMapping, requireOrgAdmin, requireResolvedCaller, withOrgScope } from "./lib/auth";
+import { signInstallState } from "./lib/installState";
+import { findOperatorOrg } from "./lib/operatorOrg";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // GitHub owner binding — the proof behind "this repo belongs to this org".
@@ -16,17 +20,29 @@ import { requireResolvedCaller, withOrgScope } from "./lib/auth";
 // "owner/name") is bound to that org here. A first claim proves nothing: org-a
 // could otherwise map "org-b/newrepo" and receive org-b's issues.
 //
-// HOW A BINDING IS CREATED: not in this module. The self-serve door that
-// started a binding (`startBinding`), the signed install state, the GitHub
-// setup callback and the writer of `githubOwnerBindings` were removed from this
-// change and move to a follow-up that restores them through a cloud-identity
-// admin primitive. What remains reads and revokes bindings:
-//   - `listBindings` / `listUnprovenMappings` report them (cursor-paged);
-//   - `repoRoutable` / `activeBindingForOwner` are the proof githubRepoMapping
-//     checks before it routes a repo to an org;
-//   - an `installation` webhook (HMAC-verified) with action deleted/suspend
-//     deactivates the bindings of that installation.
+// HOW A BINDING IS PROVEN (no operator in the loop, self-serve):
+//   1. an org ADMIN calls `startBinding` (requireOrgAdmin on its OWN org) and
+//      receives a single-use, 15-minute, server-generated `state`;
+//   2. the admin installs the VantagePeers GitHub App on the GitHub account
+//      that owns the repos, with that `state` on the install/setup URL;
+//   3. GitHub redirects to `/github/app/setup` (convex/http.ts), which
+//      exchanges the OAuth `code` with the App's client secret and calls
+//      `GET /user/installations` with the resulting USER token. Only an
+//      installation the authorising GitHub user can actually see is accepted;
+//      its `account.login` is the owner. Nothing in the query string names the
+//      owner — GitHub does;
+//   4. `completeBindingInternal` consumes the state and writes the binding.
+// An `installation` webhook (HMAC-verified) with action deleted/suspend
+// deactivates the bindings of that installation.
+//
+// LIMITS: needs a real GitHub App (GITHUB_APP_CLIENT_ID / GITHUB_APP_CLIENT_SECRET
+// on the deployment, "Request user authorization (OAuth) during installation"
+// enabled, setup URL pointing at /github/app/setup). Without them the setup
+// route answers 501 and no binding can be created (fail closed). The GitHub
+// side is exercised in tests with a stubbed fetch, never against github.com.
 // ─────────────────────────────────────────────────────────────────────────────
+
+export const INSTALL_STATE_TTL_MS = 15 * 60 * 1000;
 
 const REPO_RE = /^([A-Za-z0-9](?:[A-Za-z0-9-]{0,38}))\/([A-Za-z0-9._-]{1,100})$/;
 
@@ -110,6 +126,143 @@ function toView(r: Doc<"githubOwnerBindings">) {
 		active: r.active,
 	};
 }
+
+function randomNonce(): string {
+	const bytes = new Uint8Array(24);
+	crypto.getRandomValues(bytes);
+	return Array.from(bytes, (b) => b.toString(16).padStart(2, "0")).join("");
+}
+
+const START_DOOR = "githubOwnerBinding:startBinding";
+
+function refuseStart(reason: string, detail: string): never {
+	throw new ConvexError(`RBAC_DENIED: ${detail} — ${JSON.stringify({ door: START_DOOR, reason })}`);
+}
+
+// Step 1. Org admin only, own org only. The caller is identified BY ID through
+// @vantageos/cloud-identity: a dashboard human is a `person` (stored subject +
+// the org claim it presented), the fleet service account is a `service`. Each
+// lookup reads a stored row by id; a miss, an inactive row or an unmapped org is
+// a typed refusal, never a default principal. Only a person of a CLIENT-style
+// org reaches the binding: a service account (the fleet) has no client org.
+export const startBinding = mutation({
+	args: {},
+	returns: v.object({ state: v.string(), expiresAt: v.number() }),
+	handler: async (ctx) => {
+		// write-contract: MCP-transport-only (tool bind_github_owner); an
+		// imperative call, never a render. The refusal is a coded RBAC_DENIED.
+		const identity = await ctx.auth.getUserIdentity();
+		if (identity === null) refuseStart("anonymous", "no authenticated identity presented");
+		const claims = identity as Record<string, unknown>;
+		const orgClaim =
+			(claims.organizationSlug as string | undefined) ??
+			(claims.org_slug as string | undefined) ??
+			null;
+		const serviceAccountUserId = process.env.CLERK_SERVICE_ACCOUNT_USER_ID;
+		const credential: ActingCredential =
+			serviceAccountUserId && identity.subject === serviceAccountUserId
+				? { kind: "service", serviceAccountId: identity.subject }
+				: orgClaim !== null
+					? { kind: "person", personId: identity.subject, verifiedOrgId: orgClaim }
+					: refuseStart("no-organisation", "identity has no organisation attached");
+		const mappingOf = (orgId: string) => lookupOrgMapping(ctx, orgId);
+		const who = await resolveActingPrincipal(
+			credential,
+			{
+				personById: async (personId, orgId) => {
+					const m = await mappingOf(orgId);
+					return m === null ? null : { id: personId, orgId, active: m.isActive };
+				},
+				serviceAccountById: async (id) => {
+					const op = await findOperatorOrg(ctx.db);
+					return op.kind === "one" ? { id, orgId: op.slug, active: true } : null;
+				},
+				organisationById: async (orgId) => {
+					const m = await mappingOf(orgId);
+					return m === null ? null : { id: orgId, active: m.isActive };
+				},
+				orgKindOf: async (orgId) => (await mappingOf(orgId))?.orgKind ?? null,
+			},
+			START_DOOR,
+		);
+		if (!who.ok) refuseStart(who.refusal.reason, who.refusal.detail);
+		const principal = who.principal;
+		if (principal.kind !== "person") {
+			refuseStart(
+				"no-client-organisation",
+				"startBinding binds a GitHub owner to a CLIENT org; the caller has no client organisation",
+			);
+		}
+		await requireOrgAdmin(ctx, principal.orgId);
+		const secret = process.env.GITHUB_APP_CLIENT_SECRET;
+		if (!secret) {
+			// Fail closed: without the App secret no signed state can be issued.
+			refuseStart("github-app-not-configured", "the GitHub App is not configured on this deployment");
+		}
+		const state = await signInstallState(randomNonce(), secret);
+		const now = Date.now();
+		const expiresAt = now + INSTALL_STATE_TTL_MS;
+		await ctx.db.insert("githubInstallStates", {
+			state,
+			orgId: principal.orgId,
+			createdBy: principal.principalId,
+			expiresAt,
+		});
+		return { state, expiresAt };
+	},
+});
+
+// Step 4. Internal: reached only from the GitHub-verified setup callback.
+export const completeBindingInternal = internalMutation({
+	args: {
+		state: v.string(),
+		installationId: v.number(),
+		accountLogin: v.string(),
+		accountType: v.string(),
+		githubUserLogin: v.string(),
+	},
+	returns: v.union(
+		v.object({ ok: v.literal(true), owner: v.string(), orgId: v.string() }),
+		v.object({ ok: v.literal(false), reason: v.string() }),
+	),
+	handler: async (ctx, args) => {
+		const row = await ctx.db
+			.query("githubInstallStates")
+			.withIndex("by_state", (q) => q.eq("state", args.state))
+			.unique();
+		const now = Date.now();
+		if (row === null) return { ok: false as const, reason: "state-unknown" };
+		if (row.usedAt !== undefined) return { ok: false as const, reason: "state-used" };
+		if (row.expiresAt < now) return { ok: false as const, reason: "state-expired" };
+		const owner = args.accountLogin.toLowerCase();
+		const current = await activeBindingForOwner(ctx, owner);
+		if (current !== null && current.orgId !== row.orgId) {
+			// An owner is proven to ONE org. A second org claiming it is refused.
+			return { ok: false as const, reason: "owner-bound-to-another-org" };
+		}
+		await ctx.db.patch(row._id, { usedAt: now });
+		if (current !== null) {
+			await ctx.db.patch(current._id, {
+				installationId: args.installationId,
+				githubUserLogin: args.githubUserLogin,
+				boundBy: row.createdBy,
+				boundAt: now,
+			});
+		} else {
+			await ctx.db.insert("githubOwnerBindings", {
+				owner,
+				orgId: row.orgId,
+				installationId: args.installationId,
+				accountType: args.accountType,
+				githubUserLogin: args.githubUserLogin,
+				boundBy: row.createdBy,
+				boundAt: now,
+				active: true,
+			});
+		}
+		return { ok: true as const, owner, orgId: row.orgId };
+	},
+});
 
 // HMAC-verified `installation` webhook (deleted / suspend): the proof is gone.
 export const deactivateInstallation = internalMutation({
