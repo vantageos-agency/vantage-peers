@@ -7,7 +7,14 @@ import {
 	mutation,
 	query,
 } from "./_generated/server";
-import { requireResolvedCaller, withOrgScope } from "./lib/auth";
+import { ownerOfRepo, repoOwnerBoundToOrg } from "./githubOwnerBinding";
+import {
+	type OrgScope,
+	requireOrchestratorOnRoster,
+	requireResolvedCaller,
+	requireScope,
+	withOrgScope,
+} from "./lib/auth";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Auth — fleet-internal surface, no per-org owner field
@@ -31,6 +38,38 @@ async function requireMasterScope(ctx: Parameters<typeof withOrgScope>[0]) {
 	}
 }
 
+// WRITE TENANT. The tenant of a mapping row is derived HERE, from the verified
+// scope, and nowhere else — no mutation in this file takes an `orgId` argument.
+//   master / service account  -> undefined (a FLEET row)
+//   org member                -> its own org slug, and only with the
+//                                "manage-repo-mappings" scope on its mapping
+// An unresolved caller or a signed-in caller with no organisation is refused.
+function resolveWriteTenant(scope: OrgScope, door: string): string | undefined {
+	if (scope.isMaster) return undefined;
+	requireScope(scope, "manage-repo-mappings");
+	if (scope.orgSlug === null) {
+		throw new ConvexError(
+			`RBAC_DENIED: ${door} needs an organisation to own the mapping — ${JSON.stringify({ door })}`,
+		);
+	}
+	return scope.orgSlug;
+}
+
+// A member may touch only rows its own org owns. Master may touch any row
+// (and never changes who owns it).
+function requireRowOwnedBy(
+	scope: OrgScope,
+	row: Doc<"githubRepoMapping">,
+	door: string,
+): void {
+	if (scope.isMaster) return;
+	if (row.orgId !== scope.orgSlug) {
+		throw new ConvexError(
+			`RBAC_DENIED: ${door} — repo is not owned by org "${scope.orgSlug}" — ${JSON.stringify({ door, repo: row.repo })}`,
+		);
+	}
+}
+
 const repoMappingDocOrNull = v.union(
 	v.object({
 		_id: v.id("githubRepoMapping"),
@@ -43,6 +82,7 @@ const repoMappingDocOrNull = v.union(
 		lastDeployedAt: v.optional(v.number()),
 		reviewer: v.optional(v.string()),
 		fallbackReviewer: v.optional(v.string()),
+		orgId: v.optional(v.string()),
 	}),
 	v.null(),
 );
@@ -59,11 +99,11 @@ async function lookupByRepo(
 		.unique();
 }
 
-// Public door. Fleet-master only: the table has no orgId column (it maps the
-// FLEET's own repositories to orchestrators), so there is no tenant predicate
-// to scope by — same admission as `list`, `add` and `remove` in this file.
-// An ordinary org member is REFUSED by raising (`masterOnly`), never answered
-// with a null that would read as "no such repo".
+// Public door. Tenant-scoped like `list`, `add` and `remove` in this file: the
+// fleet master reads any row; an org member reads ONLY a row its own org owns
+// (`orgId` stamped server-side). A row that exists but is not the caller's (a
+// fleet row or another org's) is REFUSED by raising, never answered with a
+// null that would read as "no such repo"; a repo with no row at all is a null.
 // isolation-contract: no reactive subscriber. Enumerated by command against
 // the only subscribing consumer (vantage-peers-dashboard):
 //   grep -rn "api\.githubRepoMapping\." --include=*.tsx --include=*.ts app components hooks lib → 0 hits.
@@ -77,9 +117,11 @@ export const getByRepo = query({
 		const scope = await withOrgScope(ctx, { refuseWithoutThrow: true });
 		requireResolvedCaller(scope, "githubRepoMapping:getByRepo", {
 			alsoRefusePreOrg: true,
-			masterOnly: true,
 		});
-		return await lookupByRepo(ctx, args.repo);
+		const row = await lookupByRepo(ctx, args.repo);
+		if (row === null) return null;
+		requireRowOwnedBy(scope, row, "githubRepoMapping:getByRepo");
+		return row;
 	},
 });
 
@@ -111,6 +153,7 @@ const repoMappingFullObject = v.object({
 	lastDeployedAt: v.optional(v.number()),
 	reviewer: v.optional(v.string()),
 	fallbackReviewer: v.optional(v.string()),
+	orgId: v.optional(v.string()),
 });
 
 const repoMappingLiteObject = v.object({
@@ -206,7 +249,10 @@ export const list = query({
 		requireResolvedCaller(scope, "githubRepoMapping:list", {
 			alsoRefusePreOrg: true,
 		});
-		if (!scope.isMaster) return { items: [], nextCursor: null };
+		// A master reads the whole corpus. An org member reads ONLY the rows its
+		// own org owns (the server-stamped `orgId`), via the by_org index.
+		const memberOrg = scope.isMaster ? null : scope.orgSlug;
+		if (!scope.isMaster && memberOrg === null) return { items: [], nextCursor: null };
 
 		const DEFAULT_LIMIT = 20;
 		const CAP = 200;
@@ -232,10 +278,14 @@ export const list = query({
 		const wide = cursorPayload !== undefined || args.createdBefore !== undefined;
 		const fetchLimit = wide ? GITHUB_REPO_MAPPING_LIST_SCAN_CAP + 1 : limit + 1;
 
-		let rows: Doc<"githubRepoMapping">[] = await ctx.db
-			.query("githubRepoMapping")
-			.order("desc")
-			.take(fetchLimit);
+		let rows: Doc<"githubRepoMapping">[] =
+			memberOrg === null
+				? await ctx.db.query("githubRepoMapping").order("desc").take(fetchLimit)
+				: await ctx.db
+						.query("githubRepoMapping")
+						.withIndex("by_org", (q) => q.eq("orgId", memberOrg))
+						.order("desc")
+						.take(fetchLimit);
 
 		// Apply cursor filter: skip rows up to and including the anchor row.
 		if (cursorPayload !== undefined) {
@@ -293,13 +343,40 @@ export const add = mutation({
 	},
 	handler: async (ctx, args) => {
 		// write-contract: MCP-transport-only — issued via mcp-server client.mutation("githubRepoMapping:add", …) at mcp-server/src/tools.ts:7892 (imperative), 0 hits in vantage-peers-dashboard {app,components,hooks,lib,contexts,providers} (measured 2026-10-01 at origin/main e2dc58f and 0466fac); never a subscribing pre-org client shell. The no-org throw is a refusal at an imperative MCP call, never at a render.
-		await requireMasterScope(ctx);
+		const scope = await withOrgScope(ctx);
+		const tenant = resolveWriteTenant(scope, "githubRepoMapping:add");
+		// A member routes only to orchestrators of its OWN roster.
+		requireOrchestratorOnRoster(scope, args.orchestrator, "githubRepoMapping:add", "assignee");
+		if (args.reviewer !== undefined) {
+			requireOrchestratorOnRoster(scope, args.reviewer, "githubRepoMapping:add", "assignee");
+		}
+		if (args.fallbackReviewer !== undefined) {
+			requireOrchestratorOnRoster(scope, args.fallbackReviewer, "githubRepoMapping:add", "assignee");
+		}
+		// PROOF OF OWNERSHIP. A member may map only a repo whose GitHub OWNER is
+		// bound to its own org through a GitHub-verified step
+		// (convex/githubOwnerBinding.ts). A first claim is never enough: without
+		// this, org-a could map "org-b/newrepo" and receive org-b's issues.
+		// Master (fleet) rows are not subject to it.
+		if (tenant !== undefined) {
+			if (ownerOfRepo(args.repo) === null) {
+				throw new ConvexError(
+					`INVALID_REPO: repo must be "owner/name" — ${JSON.stringify({ repo: args.repo })}`,
+				);
+			}
+			if (!(await repoOwnerBoundToOrg(ctx, args.repo, tenant))) {
+				throw new ConvexError(
+					`RBAC_DENIED: the GitHub owner of "${args.repo}" is not bound to org "${tenant}" — an owner binding for it must exist first — ${JSON.stringify({ reason: "github-owner-not-bound", door: "githubRepoMapping:add", repo: args.repo })}`,
+				);
+			}
+		}
 		// Upsert by repo
 		const existing = await ctx.db
 			.query("githubRepoMapping")
 			.withIndex("by_repo", (q) => q.eq("repo", args.repo))
 			.unique();
 		if (existing) {
+			requireRowOwnedBy(scope, existing, "githubRepoMapping:add");
 			await ctx.db.patch(existing._id, {
 				orchestrator: args.orchestrator,
 				project: args.project,
@@ -316,6 +393,7 @@ export const add = mutation({
 			orchestrator: args.orchestrator,
 			project: args.project,
 			active: args.active ?? true,
+			...(tenant !== undefined ? { orgId: tenant } : {}),
 			...(args.reviewer !== undefined ? { reviewer: args.reviewer } : {}),
 			...(args.fallbackReviewer !== undefined
 				? { fallbackReviewer: args.fallbackReviewer }
@@ -328,12 +406,14 @@ export const remove = mutation({
 	args: { repo: v.string() },
 	handler: async (ctx, args) => {
 		// write-contract: MCP-transport-only — issued via mcp-server client.mutation("githubRepoMapping:remove", …) at mcp-server/src/tools.ts:8085 (imperative), 0 hits in vantage-peers-dashboard {app,components,hooks,lib,contexts,providers} (measured 2026-10-01 at origin/main e2dc58f and 0466fac); never a subscribing pre-org client shell. The no-org throw is a refusal at an imperative MCP call, never at a render.
-		await requireMasterScope(ctx);
+		const scope = await withOrgScope(ctx);
+		resolveWriteTenant(scope, "githubRepoMapping:remove");
 		const existing = await ctx.db
 			.query("githubRepoMapping")
 			.withIndex("by_repo", (q) => q.eq("repo", args.repo))
 			.unique();
 		if (existing) {
+			requireRowOwnedBy(scope, existing, "githubRepoMapping:remove");
 			await ctx.db.delete(existing._id);
 			return { deleted: true };
 		}

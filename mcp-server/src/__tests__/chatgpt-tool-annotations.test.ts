@@ -133,6 +133,7 @@ const READ_ONLY_TOOLS = new Set([
 	"get_bu",
 	"list_bus",
 	"list_repo_mappings",
+	"get_github_owner_bindings",
 	"list_issues",
 	"get_issue",
 	"issue_stats",

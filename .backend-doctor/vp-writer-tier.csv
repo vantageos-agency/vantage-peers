@@ -2,7 +2,7 @@ outil,table,crud,writer_tier,writer_gate,write_doors
 import_okf_bundle,_storage+agents+briefingNotes+client_org_mapping+memories+tasks,CREATE,org-member,orgResolver,okfBundleNode:importOkfBundle=orgResolver
 store_document_chunked,_storage+kbUploads+memories,UPSERT,org-member,orgResolver,kb:storeDocumentChunked=orgResolver
 soft_delete_memory,,UPDATE,org-member,orgResolver,memories:softDeleteMemory=orgResolver
-complete_task,agents+client_org_mapping+fixPatterns+githubRepoMapping+issues+memberWriterRoles+messageReceipts+messages+taskClosureConfig+tasks,UPSERT,org-member,orgResolver,tasks:complete=orgResolver
+complete_task,agents+client_org_mapping+fixPatterns+githubOwnerBindings+githubRepoMapping+issues+memberWriterRoles+messageReceipts+messages+taskClosureConfig+tasks,UPSERT,org-member,orgResolver,tasks:complete=orgResolver
 update_task,agents+client_org_mapping+githubRepoMapping+memberWriterRoles+messageReceipts+messages+missions+oauth_access_tokens+taskClosureConfig+tasks,UPSERT,org-member,orgResolver,tasks:update=orgResolver
 add_task_dependency,agents+client_org_mapping+githubRepoMapping+memberWriterRoles+messageReceipts+messages+missions+taskClosureConfig+tasks,UPSERT,org-member,orgResolver,tasks:update=orgResolver
 block_task,agents+client_org_mapping+githubRepoMapping+memberWriterRoles+messageReceipts+messages+missions+taskClosureConfig+tasks,UPSERT,org-member,orgResolver,tasks:blockTask=orgResolver; tasks:update=orgResolver
@@ -24,8 +24,8 @@ add_fix_attempt,fixAttempts+fixPatterns,UPSERT,master,masterOnly,fixPatterns:add
 create_fix_pattern,fixPatterns,CREATE,master,masterOnly,fixPatterns:create=masterOnly
 link_issue_to_pattern,fixPatterns,UPDATE,master,masterOnly,fixPatterns:linkIssue=masterOnly
 validate_fix,fixPatterns,UPDATE,master,masterOnly,fixPatterns:validate=masterOnly
-add_repo_mapping,githubRepoMapping,UPSERT,master,masterOnly,githubRepoMapping:add=masterOnly
-remove_repo_mapping,githubRepoMapping,DELETE,master,masterOnly,githubRepoMapping:remove=masterOnly
+add_repo_mapping,githubOwnerBindings+githubRepoMapping,UPSERT,org-member,orgResolver,githubRepoMapping:add=orgResolver
+remove_repo_mapping,githubRepoMapping,DELETE,org-member,orgResolver,githubRepoMapping:remove=orgResolver
 link_commit_to_issue,issues,UPDATE,master,masterOnly,issues:linkCommit=masterOnly
 update_issue_status,issues,TRANSITION,master,masterOnly,issues:updateStatus=masterOnly
 verify_issue,issues,TRANSITION,master,masterOnly,issues:verify=masterOnly

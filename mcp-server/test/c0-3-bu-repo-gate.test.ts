@@ -143,11 +143,12 @@ describe("C0.3 — add_repo_mapping master-only gate", () => {
 		active: true,
 	};
 
-	it("RED: non-master scoped bearer → Forbidden error", async () => {
+	it("scoped org bearer is NOT refused at the MCP layer: the Convex door derives the tenant and decides", async () => {
+		// Repo mappings are tenant-owned (githubRepoMapping.orgId, stamped server-side).
+		// The mock Convex client accepts; the real door's member/scope/own-rows
+		// refusals are pinned in convex/__tests__/repoMappingTenant.test.ts.
 		const result = await callTool("add_repo_mapping", args, buildScopedCtx());
-		expect(result.isError).toBe(true);
-		expect(getText(result)).toMatch(/Forbidden/i);
-		expect(getText(result)).toMatch(/master/i);
+		expect(result.isError).toBeFalsy();
 	});
 
 	it("happy path: master bearer → passes through", async () => {
@@ -170,15 +171,13 @@ describe("C0.3 — add_repo_mapping master-only gate", () => {
 describe("C0.3 — remove_repo_mapping master-only gate", () => {
 	const args = { repo: "vantageos-agency/test" };
 
-	it("RED: non-master scoped bearer → Forbidden error", async () => {
+	it("scoped org bearer is NOT refused at the MCP layer: the Convex door refuses another org's rows", async () => {
 		const result = await callTool(
 			"remove_repo_mapping",
 			args,
 			buildScopedCtx(),
 		);
-		expect(result.isError).toBe(true);
-		expect(getText(result)).toMatch(/Forbidden/i);
-		expect(getText(result)).toMatch(/master/i);
+		expect(result.isError).toBeFalsy();
 	});
 
 	it("happy path: master bearer → passes through", async () => {

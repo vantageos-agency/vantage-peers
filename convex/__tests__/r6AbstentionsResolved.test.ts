@@ -8,9 +8,13 @@
  *   issues:updateStatus, issues:linkCommit, issues:verify,
  *   licenses:activate
  *
- * Verdict for all eight: SAFE. The first seven write fleet-internal tables that
- * carry NO tenant column, behind a master-only guard; a member has no boundary
- * to steer. `licenses:activate` is possession-gated by the presented key plus
+ * Verdict for all eight: SAFE. Five of them write fleet-internal tables that carry NO
+ * tenant column, behind a master-only guard; a member has no boundary to steer.
+ * The githubRepoMapping pair is NOT of that kind any more: the table is
+ * tenant-owned (`orgId`, stamped server-side) and a member may write only a row
+ * whose GitHub OWNER is bound to its own org through a GitHub-verified step
+ * (convex/githubOwnerBinding.ts) — its REFUSED pole is an UNBOUND owner, pinned
+ * in githubOwnerBinding.test.ts and repoMappingTenant.test.ts and restated below. `licenses:activate` is possession-gated by the presented key plus
  * the licensee email, and writes only the row that key hashes to.
  *
  * Every REFUSED caller is an ORDINARY MEMBER of an active org (org-a or org-b),
@@ -130,7 +134,7 @@ describe("errorMonitor:addDeployment / removeDeployment — master-only, tenant-
 
 // ─── githubRepoMapping:add / remove ─────────────────────────────────────────
 
-describe("githubRepoMapping:add / remove — master-only, tenant-less table", () => {
+describe("githubRepoMapping:add / remove — tenant-owned; a member needs the scope AND a GitHub-verified bound owner", () => {
 	const row = { repo: "acme/widgets", orchestrator: "seat-a", project: "widgets" };
 
 	test("REFUSED: a member cannot add or re-point a repo mapping", async () => {
@@ -145,6 +149,26 @@ describe("githubRepoMapping:add / remove — master-only, tenant-less table", ()
 			await expect(
 				asMember(t, org).mutation(api.githubRepoMapping.add, { ...row, repo: "acme/other" }),
 			).rejects.toThrow(/RBAC_DENIED/);
+		}
+		expect(await snapshot(t, "githubRepoMapping")).toBe(before);
+	});
+
+	test("REFUSED: a scoped member whose repo owner is NOT bound to its org (unbound owner) cannot add or take over", async () => {
+		const t = createT();
+		await seedOrgs(t);
+		await t.run(async (ctx) => {
+			const m = await ctx.db
+				.query("client_org_mapping")
+				.withIndex("by_clerk_slug", (q) => q.eq("clerkOrgSlug", "org-a"))
+				.unique();
+			if (m) await ctx.db.patch(m._id, { scopes: ["view-own-missions", "manage-repo-mappings"] });
+		});
+		await asMaster(t).mutation(api.githubRepoMapping.add, row);
+		const before = await snapshot(t, "githubRepoMapping");
+		for (const repo of [row.repo, "acme/other", "org-b/newrepo"]) {
+			await expect(
+				asMember(t, "org-a").mutation(api.githubRepoMapping.add, { ...row, repo, orchestrator: "seat-a" }),
+			).rejects.toThrow(/github-owner-not-bound/);
 		}
 		expect(await snapshot(t, "githubRepoMapping")).toBe(before);
 	});

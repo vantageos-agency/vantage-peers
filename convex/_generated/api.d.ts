@@ -35,6 +35,7 @@ import type * as errorMonitorRefusalClassifier from "../errorMonitorRefusalClass
 import type * as fixPatterns from "../fixPatterns.js";
 import type * as githubComments from "../githubComments.js";
 import type * as githubDeployGate from "../githubDeployGate.js";
+import type * as githubOwnerBinding from "../githubOwnerBinding.js";
 import type * as githubRepoMapping from "../githubRepoMapping.js";
 import type * as gumroadWebhook from "../gumroadWebhook.js";
 import type * as http from "../http.js";
@@ -61,6 +62,7 @@ import type * as lib_operatorOrg from "../lib/operatorOrg.js";
 import type * as lib_orgClerkId from "../lib/orgClerkId.js";
 import type * as lib_personPrincipal from "../lib/personPrincipal.js";
 import type * as lib_reviewRouting from "../lib/reviewRouting.js";
+import type * as lib_repoMappingTenant from "../lib/repoMappingTenant.js";
 import type * as lib_seatAgent from "../lib/seatAgent.js";
 import type * as lib_systemCaller from "../lib/systemCaller.js";
 import type * as lib_taskClosureGate from "../lib/taskClosureGate.js";
@@ -147,6 +149,7 @@ declare const fullApi: ApiFromModules<{
   fixPatterns: typeof fixPatterns;
   githubComments: typeof githubComments;
   githubDeployGate: typeof githubDeployGate;
+  githubOwnerBinding: typeof githubOwnerBinding;
   githubRepoMapping: typeof githubRepoMapping;
   gumroadWebhook: typeof gumroadWebhook;
   http: typeof http;
@@ -172,6 +175,7 @@ declare const fullApi: ApiFromModules<{
   "lib/operatorOrg": typeof lib_operatorOrg;
   "lib/orgClerkId": typeof lib_orgClerkId;
   "lib/personPrincipal": typeof lib_personPrincipal;
+  "lib/repoMappingTenant": typeof lib_repoMappingTenant;
   "lib/reviewRouting": typeof lib_reviewRouting;
   "lib/seatAgent": typeof lib_seatAgent;
   "lib/systemCaller": typeof lib_systemCaller;

@@ -946,6 +946,9 @@ export default defineSchema({
 			),
 		),
 		forkRepo: v.optional(v.string()), // "elpiarthera/better-auth"
+		// TENANT, copied by the server from the repo's githubRepoMapping row when
+		// the webhook upserts the issue. Absent = fleet issue.
+		orgId: v.optional(v.string()),
 	})
 		.index("by_repo_number", ["repo", "issueNumber"])
 		.index("by_status", ["status"])
@@ -976,8 +979,15 @@ export default defineSchema({
 		// convex/lib/reviewRouting.ts.
 		reviewer: v.optional(v.string()),
 		fallbackReviewer: v.optional(v.string()),
+		// TENANT. Absent = a FLEET row (the operator's own repositories, the
+		// historical meaning of every existing row — no backfill). Present = the
+		// client org that owns the repo. Written ONLY by the server from the
+		// caller's verified scope (convex/githubRepoMapping.ts `add`); there is
+		// no argument for it anywhere.
+		orgId: v.optional(v.string()),
 	})
 		.index("by_repo", ["repo"])
+		.index("by_org", ["orgId"])
 		// Issue #1276 fix — `resolveStaleDeployTasks` (convex/tasks.ts) used to
 		// open with an unbounded `ctx.db.query("githubRepoMapping").collect()`
 		// of the WHOLE table every single cron tick (every 6 hours), the one
@@ -992,6 +1002,29 @@ export default defineSchema({
 		// task batch — bounded by that batch's distinct-project count, never
 		// by the total onboarded-repo corpus.
 		.index("by_project", ["project"]),
+
+	// ── githubOwnerBindings ───────────────────────────────────────────────────
+	// PROOF that a GitHub account (the `owner` of "owner/name") belongs to one
+	// client org. A repo is routed to an org only when its owner is bound here.
+	// Rows are written by NO function in this change (the verified writer moves to
+	// the follow-up that restores startBinding); this change only reads and revokes
+	// them. The writer will be reached from a GitHub-verified setup callback,
+	// never from a client argument. `active:false` after the GitHub App
+	// installation is deleted/suspended (HMAC-verified `installation` webhook).
+	githubOwnerBindings: defineTable({
+		owner: v.string(), // lowercase GitHub login (user or organisation)
+		orgId: v.string(), // client_org_mapping.clerkOrgSlug
+		installationId: v.number(),
+		accountType: v.string(), // "User" | "Organization" as reported by GitHub
+		githubUserLogin: v.string(), // the GitHub user who authorised the install
+		boundBy: v.string(), // Clerk subject of the org admin who started the binding
+		boundAt: v.number(),
+		active: v.boolean(),
+		deactivatedAt: v.optional(v.number()),
+	})
+		.index("by_owner", ["owner"])
+		.index("by_org", ["orgId"])
+		.index("by_installation", ["installationId"]),
 
 	// ── businessUnits ─────────────────────────────────────────────────────────
 	// One row per ElPi Corp business unit. Tracks strategy, structure, and KPIs.

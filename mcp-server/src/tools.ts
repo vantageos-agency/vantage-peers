@@ -2082,6 +2082,15 @@ export function registerTools(
 		);
 	};
 
+	// A caller the transport could not resolve is never served (absence is never
+	// master). Used by tools whose Convex door derives the tenant itself.
+	const guardResolvedCaller = (toolName: string) => {
+		if (oauthCtx) return null;
+		return mcpError(
+			`Forbidden: ${toolName} requires an authenticated caller, but the request carried no authorization context (absence is never master).`,
+		);
+	};
+
 	// Auth context threaded into every defineTool registration. The wrapper reads
 	// the declared scope and applies the SAME shared predicates the in-handler
 	// guards use (checkNamespace*/checkFromAllowed/isMasterScope), so migrated
@@ -8367,14 +8376,19 @@ export function registerTools(
 
 	// ── add_repo_mapping ────────────────────────────────────────────────────────
 
-	// oracle-justified: fleet webhook-routing config with no orgId on the table: writes are master-only (MCP scope
-	//   master; requireMasterScope in convex/githubRepoMapping.ts) and the reads are master-only at the
-	//   Convex door too (requireResolvedCaller masterOnly); the in-handler-filtered label on the read
-	//   tools is the MCP-layer kind, not a wider door.
+	// oracle-justified: githubRepoMapping rows carry an optional `orgId` (absent = fleet row), written
+	//   server-side from the caller's verified scope (convex/githubRepoMapping.ts resolveWriteTenant) and
+	//   never from an argument. The MCP layer therefore only refuses an unresolved caller; the Convex door
+	//   decides: master writes a fleet row, an org member needs the "manage-repo-mappings" scope, writes only
+	//   its own org's rows, and routes only to its own roster.
 	defineTool(
 		server,
 		authCtx,
-		{ kind: "master" },
+		{
+			kind: "filtered",
+			reason:
+				"guardResolvedCaller() refuses an unresolved caller; tenant (orgId) derived server-side from the verified scope in githubRepoMapping:add; member needs manage-repo-mappings and a GitHub-verified owner binding",
+		},
 		"add_repo_mapping",
 		"Register or update a GitHub repo to orchestrator mapping for webhook event routing. " +
 			"WHEN: use when adding a new repo to monitoring or changing which orchestrator handles its events. " +
@@ -8414,9 +8428,10 @@ export function registerTools(
 			title: "Add repo mapping",
 		},
 		async ({ repo, orchestrator, project, active, reviewer, fallbackReviewer }) => {
-			// C0.3: infra webhook routing config — master scope only
-			const masterDenied = guardMasterOnly("add_repo_mapping");
-			if (masterDenied) return masterDenied;
+			// Repo mappings are tenant-owned (orgId): an unresolved caller is refused
+			// here, the Convex door decides master / org-member / own-rows.
+			const unresolved = guardResolvedCaller("add_repo_mapping");
+			if (unresolved) return unresolved;
 			try {
 				const id = await convex.mutation("githubRepoMapping:add" as any, {
 					repo,
@@ -8447,6 +8462,10 @@ export function registerTools(
 
 	// ── list_repo_mappings ──────────────────────────────────────────────────────
 
+	// oracle-justified: githubRepoMapping rows carry an optional `orgId` (absent = fleet row). The tenant is
+	//   resolved at the Convex door githubRepoMapping:list from the verified caller (withOrgScope +
+	//   requireResolvedCaller), never from an argument: a member is served only its own org's rows, the fleet
+	//   master all of them. The MCP layer only refuses an unresolved caller.
 	defineTool(
 		server,
 		authCtx,
@@ -8586,10 +8605,18 @@ export function registerTools(
 
 	// ── remove_repo_mapping ─────────────────────────────────────────────────────
 
+	// oracle-justified: githubRepoMapping rows carry an optional `orgId` (absent = fleet row). The tenant is
+	//   resolved at the Convex door githubRepoMapping:remove from the verified caller (withOrgScope) and the
+	//   row must belong to it (requireRowOwnedBy), never judged from an argument: a member removes only its
+	//   own org's rows. The MCP layer only refuses an unresolved caller.
 	defineTool(
 		server,
 		authCtx,
-		{ kind: "master" },
+		{
+			kind: "filtered",
+			reason:
+				"guardResolvedCaller() refuses an unresolved caller; tenant (orgId) derived server-side from the verified scope in githubRepoMapping:remove; member removes only its own org rows",
+		},
 		"remove_repo_mapping",
 		"Delete a GitHub repo mapping by repo name, stopping webhook event routing for that repo. " +
 			"WHEN: use when a repo is archived or its events should no longer generate VP notifications. " +
@@ -8608,9 +8635,8 @@ export function registerTools(
 			title: "Remove repo mapping",
 		},
 		async ({ repo }) => {
-			// C0.3: infra webhook routing config — master scope only
-			const masterDenied = guardMasterOnly("remove_repo_mapping");
-			if (masterDenied) return masterDenied;
+			const unresolved = guardResolvedCaller("remove_repo_mapping");
+			if (unresolved) return unresolved;
 			try {
 				const result = await convex.mutation(
 					"githubRepoMapping:remove" as any,
@@ -8624,6 +8650,90 @@ export function registerTools(
 						{
 							type: "text",
 							text: JSON.stringify({ repo, ...result }, null, 2),
+						},
+					],
+				};
+			} catch (error: any) {
+				return mcpConvexError(error);
+			}
+		},
+	);
+
+	// ── get_github_owner_bindings ──────────────────────────────────────────────
+
+	// oracle-disposition: CONSERVER — githubOwnerBindings is the proof an owner belongs to an org, the only basis on which a repo routes to it
+	// oracle-justified: githubOwnerBindings rows carry the owning `orgId`. The tenant is resolved at the Convex
+	//   doors githubOwnerBinding:listBindings and listUnprovenMappings from the verified caller (withOrgScope +
+	//   requireResolvedCaller), never from an argument: a member sees only its own org's bindings, the unproven
+	//   mappings are master-only. The MCP layer only refuses an unresolved caller.
+	defineTool(
+		server,
+		authCtx,
+		{
+			kind: "filtered",
+			reason:
+				"guardResolvedCaller() refuses an unresolved caller; result set scoped by githubOwnerBinding:listBindings (own org for a member, all for master); unproven mappings are master-only at the Convex door",
+		},
+		"get_github_owner_bindings",
+		"List the GitHub owners bound to your organisation (master: all), and for master the org-owned repo mappings that have no proof. " +
+			"WHEN: use to see which repos you may map, or to audit mappings created without GitHub proof. " +
+			"EXAMPLE: get_github_owner_bindings limit=100. " +
+			"Default limit 100, cap 500. Pages by cursor: pass `nextCursor` back as `cursor` (and `unprovenNextCursor` as `unprovenCursor`); null means exhausted.",
+		{
+			limit: z
+				.number()
+				.int()
+				.min(1)
+				.max(500)
+				.default(100)
+				.describe("Max items per page. Default 100, cap 500."),
+			cursor: z
+				.string()
+				.optional()
+				.describe("Opaque cursor for the bindings list: the `nextCursor` of the previous call."),
+			unprovenCursor: z
+				.string()
+				.optional()
+				.describe(
+					"Opaque cursor for the unproven-mappings list (master only): the `unprovenNextCursor` of the previous call.",
+				),
+		},
+		{
+			readOnlyHint: true,
+			openWorldHint: false,
+			destructiveHint: false,
+			title: "List GitHub owner bindings",
+		},
+		async ({ limit, cursor, unprovenCursor }) => {
+			const unresolved = guardResolvedCaller("get_github_owner_bindings");
+			if (unresolved) return unresolved;
+			try {
+				// Both reads are cursor-paginated server-side and return { items,
+				// nextCursor }: the cursors are passed on so a page never reads as the whole list.
+				const bindingsPage = await convex.query("githubOwnerBinding:listBindings" as any, {
+					limit,
+					...(cursor !== undefined ? { cursor } : {}),
+				});
+				const unprovenPage = isMasterScope(oauthCtx)
+					? await convex.query("githubOwnerBinding:listUnprovenMappings" as any, {
+							limit,
+							...(unprovenCursor !== undefined ? { cursor: unprovenCursor } : {}),
+						})
+					: undefined;
+				return {
+					content: [
+						{
+							type: "text",
+							text: JSON.stringify(
+								{
+									bindings: bindingsPage.items,
+									nextCursor: bindingsPage.nextCursor,
+									unprovenMappings: unprovenPage?.items,
+									unprovenNextCursor: unprovenPage?.nextCursor,
+								},
+								null,
+								2,
+							),
 						},
 					],
 				};
@@ -10489,6 +10599,13 @@ export function registerTools(
 	// ── get_repo_mapping ────────────────────────────────────────────────────────
 	// Day 100 — Phase 1 get_by_id surface fix. Convex githubRepoMapping:getByRepo exists.
 	// Lookup key is `repo` (string e.g. "vantageos-agency/vantage-peers-plugin"), not a doc ID.
+
+	// oracle-justified: a single-row lookup by repo key, so its verb (READ-GET) differs from
+	//   list_repo_mappings (READ-LIST) by design; it is registered but not advertised in
+	//   mcp-server/tool-exposure.json core (hors-MCP), whereas list_repo_mappings is advertised. Its isolation
+	//   differs from remove_repo_mapping only in the tail of the guard: both scope by org in-handler
+	//   (requireRowOwnedBy refuses a row the caller's org does not own); the read refuses an unresolved
+	//   caller with requireResolvedCaller, the delete with requireScope("manage-repo-mappings").
 	defineTool(
 		server,
 		authCtx,
