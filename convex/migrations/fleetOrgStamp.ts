@@ -50,6 +50,7 @@ import type { Id } from "../_generated/dataModel";
 import type { DatabaseReader } from "../_generated/server";
 import { internalMutation } from "../_generated/server";
 import { normalizeOrchestratorId } from "../_helpers/normalizeOrchestratorId";
+import { clerkOrgIdForSlug } from "../lib/orgClerkId";
 
 const DEFAULT_PAGE_SIZE = 100;
 const MAX_PAGE_SIZE = 500;
@@ -154,6 +155,12 @@ export const run = internalMutation({
 			);
 		}
 		const resolver = await loadResolver(ctx.db, args.orgSlug);
+		// The id of the org being stamped, written beside its slug. Absent when the
+		// mapping has no id yet: then the row gets the slug only and
+		// backfill_org_clerk_id lists and fills it.
+		const orgClerkId = await clerkOrgIdForSlug(ctx, resolver.orgSlug);
+		const idPatch =
+			orgClerkId === undefined ? {} : { clerkOrgId: orgClerkId };
 
 		let examined = 0;
 		let stampable = 0;
@@ -207,7 +214,10 @@ export const run = internalMutation({
 				}
 				stampable++;
 				if (apply) {
-					await ctx.db.patch(row._id, { orgId: resolver.orgSlug });
+					await ctx.db.patch(row._id, {
+						orgId: resolver.orgSlug,
+						...idPatch,
+					});
 					stamped++;
 				}
 			}
@@ -227,7 +237,10 @@ export const run = internalMutation({
 				}
 				stampable++;
 				if (apply) {
-					await ctx.db.patch(row._id, { orgId: resolver.orgSlug });
+					await ctx.db.patch(row._id, {
+						orgId: resolver.orgSlug,
+						...idPatch,
+					});
 					stamped++;
 				}
 			}
@@ -247,7 +260,10 @@ export const run = internalMutation({
 				}
 				stampable++;
 				if (apply) {
-					await ctx.db.patch(row._id, { tenantId: resolver.orgSlug });
+					await ctx.db.patch(row._id, {
+						tenantId: resolver.orgSlug,
+						...(orgClerkId === undefined ? {} : { tenantOrgId: orgClerkId }),
+					});
 					stamped++;
 				}
 			}

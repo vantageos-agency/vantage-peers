@@ -470,6 +470,7 @@ export async function lookupOrgMapping(
 	scopes: string[];
 	isActive: boolean;
 	orgKind?: "operator" | "client";
+	clerkOrgId?: string;
 } | null> {
 	const mapping = await ctx.db
 		.query("client_org_mapping")
@@ -481,6 +482,7 @@ export async function lookupOrgMapping(
 		scopes: mapping.scopes,
 		isActive: mapping.isActive,
 		orgKind: mapping.orgKind,
+		clerkOrgId: mapping.clerkOrgId,
 	};
 }
 

@@ -186,6 +186,10 @@ export default defineSchema({
 		fromId: v.optional(v.string()),
 		fromInstanceId: v.optional(v.string()), // "pi-chromebook", "tau-vps-1"
 		tenantId: v.optional(v.string()),
+		// Permanent Clerk org id (org_...) of the same organisation as `tenantId`. The slug is a
+		// renamable label; this is the identity (Pi ruling (d), k174d95s5qqy8t2r5rdrz3pr3d8fqv82).
+		// Optional during the expand phase: filled by migrations/backfill_org_clerk_id.
+		tenantOrgId: v.optional(v.string()),
 		channel: v.string(),
 		content: v.string(),
 		sessionDay: v.optional(v.number()),
@@ -196,12 +200,18 @@ export default defineSchema({
 		.index("by_fromId", ["fromId", "createdAt"])
 		.index("by_channel", ["channel", "createdAt"])
 		.index("by_tenant_channel", ["tenantId", "channel", "createdAt"])
+		.index("by_tenant_channel_clerk_id", [
+			"tenantOrgId",
+			"channel",
+			"createdAt",
+		])
 		// Day 103 — tenant-scoped listing for Clerk callers (task k176wgsrhha0fr0dxxahctvhw588q5a1).
 		// by_tenant_created lets listMessages push tenantId BEFORE .take(limit) for
 		// non-master callers, preventing under-fill when fleet (null-tenant) traffic
 		// dominates the recent window. by_tenant_channel cannot be reused here because
 		// channel is a required equality field in that compound (can't skip to createdAt).
 		.index("by_tenant_created", ["tenantId", "createdAt"])
+		.index("by_tenant_created_clerk_id", ["tenantOrgId", "createdAt"])
 		// messages.listByChannelPaginated (master, no channel / sender named):
 		// the dashboard history table's `since`/`until` day window must live in the
 		// index range, not in a post-fetch filter.
@@ -225,6 +235,10 @@ export default defineSchema({
 		recipientId: v.optional(v.string()),
 		recipientInstanceId: v.optional(v.string()), // instance-level: "pi-vps"
 		tenantId: v.optional(v.string()),
+		// Permanent Clerk org id (org_...) of the same organisation as `tenantId`. The slug is a
+		// renamable label; this is the identity (Pi ruling (d), k174d95s5qqy8t2r5rdrz3pr3d8fqv82).
+		// Optional during the expand phase: filled by migrations/backfill_org_clerk_id.
+		tenantOrgId: v.optional(v.string()),
 		readAt: v.optional(v.number()), // undefined = unread, ms epoch = read
 	})
 		.index("by_recipient_unread", ["recipient", "readAt"])
@@ -232,12 +246,22 @@ export default defineSchema({
 		.index("by_instance_unread", ["recipientInstanceId", "readAt"])
 		.index("by_message", ["messageId"])
 		.index("by_tenant_recipient_unread", ["tenantId", "recipient", "readAt"])
+		.index("by_tenant_recipient_unread_clerk_id", [
+			"tenantOrgId",
+			"recipient",
+			"readAt",
+		])
 		// R-11 fix (task k171ev3awqn4n2r9hfhbv2n1jx8df4tt) — mirrors
 		// by_tenant_recipient_unread's shape for the instance-targeted branch of
 		// checkNewMessages/checkNewMessagesEnvelope, so tenantId can be pushed
 		// INTO the query as an index predicate instead of a post-query-only filter.
 		.index("by_tenant_instance_unread", [
 			"tenantId",
+			"recipientInstanceId",
+			"readAt",
+		])
+		.index("by_tenant_instance_unread_clerk_id", [
+			"tenantOrgId",
 			"recipientInstanceId",
 			"readAt",
 		])
@@ -250,7 +274,8 @@ export default defineSchema({
 		// which requires ALL fields of a "*_unread" index to be bound).
 		// This index carries no readAt field, so it is outside that
 		// check's tracked set by construction, not by evasion.
-		.index("by_tenant", ["tenantId"]),
+		.index("by_tenant", ["tenantId"])
+		.index("by_tenant_clerk_id", ["tenantOrgId"]),
 
 	// ── missions ──────────────────────────────────────────────────────────────
 	missions: defineTable({
@@ -283,6 +308,10 @@ export default defineSchema({
 		// Beta multi-tenant scope. null/undefined = master (internal Alpha).
 		// Set to Clerk org slug (e.g. "acme-hr") for client-scoped rows.
 		orgId: v.optional(v.string()),
+		// Permanent Clerk org id (org_...) of the same organisation as `orgId`. The slug is a
+		// renamable label; this is the identity (Pi ruling (d), k174d95s5qqy8t2r5rdrz3pr3d8fqv82).
+		// Optional during the expand phase: filled by migrations/backfill_org_clerk_id.
+		clerkOrgId: v.optional(v.string()),
 		// Terminal cancelled status (Day 157) — creator-only, mandatory reason.
 		// Never counted as done/complete; excluded from open/active aliases.
 		cancelledBy: v.optional(creatorValidator),
@@ -301,13 +330,21 @@ export default defineSchema({
 		.index("by_status", ["status", "createdAt"])
 		.index("by_priority", ["priority", "status"])
 		.index("by_orgId", ["orgId"])
+		.index("by_orgId_clerk_id", ["clerkOrgId"])
 		// Org-keyed list reads (missions.list for non-master callers): the tenant
 		// predicate lives INSIDE the index range so `take(limit)` pages the
 		// caller's own rows, never the fleet's. `_creationTime` is the implicit
 		// trailing field, so each index is newest-first under `.order("desc")`.
 		.index("by_orgId_status", ["orgId", "status"])
+		.index("by_orgId_status_clerk_id", ["clerkOrgId", "status"])
 		.index("by_orgId_project_status", ["orgId", "project", "status"])
-		.index("by_orgId_pilot_status", ["orgId", "pilot", "status"]),
+		.index("by_orgId_project_status_clerk_id", [
+			"clerkOrgId",
+			"project",
+			"status",
+		])
+		.index("by_orgId_pilot_status", ["orgId", "pilot", "status"])
+		.index("by_orgId_pilot_status_clerk_id", ["clerkOrgId", "pilot", "status"]),
 
 	// ── bulk_complete_runs ─────────────────────────────────────────────────────
 	// One row per LIVE tasks:bulkComplete run, keyed by the bulkRunId the first
@@ -320,6 +357,10 @@ export default defineSchema({
 	bulk_complete_runs: defineTable({
 		bulkRunId: v.string(),
 		orgId: v.optional(v.string()),
+		// Permanent Clerk org id (org_...) of the same organisation as `orgId`. The slug is a
+		// renamable label; this is the identity (Pi ruling (d), k174d95s5qqy8t2r5rdrz3pr3d8fqv82).
+		// Optional during the expand phase: filled by migrations/backfill_org_clerk_id.
+		clerkOrgId: v.optional(v.string()),
 		createdBy: v.string(), // the callerOrchestrator of the run
 		status: v.union(
 			v.literal("running"),
@@ -387,6 +428,10 @@ export default defineSchema({
 		// Beta multi-tenant scope. null/undefined = master (internal Alpha).
 		// Set to Clerk org slug (e.g. "acme-hr") for client-scoped rows.
 		orgId: v.optional(v.string()),
+		// Permanent Clerk org id (org_...) of the same organisation as `orgId`. The slug is a
+		// renamable label; this is the identity (Pi ruling (d), k174d95s5qqy8t2r5rdrz3pr3d8fqv82).
+		// Optional during the expand phase: filled by migrations/backfill_org_clerk_id.
+		clerkOrgId: v.optional(v.string()),
 		// Day 130 follow-up #2 — inforgeable automation signal. ONLY the
 		// internal webhook mutation (createOrUpdateReviewTask) writes this;
 		// the public `tasks.create` mutation does not accept it as an arg.
@@ -557,10 +602,27 @@ export default defineSchema({
 		// and each status bucket is newest-first. Additive: no existing index
 		// or field changes.
 		.index("by_orgId_status", ["orgId", "status"])
+		.index("by_orgId_status_clerk_id", ["clerkOrgId", "status"])
 		.index("by_orgId_assignee_status", ["orgId", "assignedTo", "status"])
+		.index("by_orgId_assignee_status_clerk_id", [
+			"clerkOrgId",
+			"assignedTo",
+			"status",
+		])
 		.index("by_orgId_project_status", ["orgId", "project", "status"])
+		.index("by_orgId_project_status_clerk_id", [
+			"clerkOrgId",
+			"project",
+			"status",
+		])
 		.index("by_orgId_assignee_project_status", [
 			"orgId",
+			"assignedTo",
+			"project",
+			"status",
+		])
+		.index("by_orgId_assignee_project_status_clerk_id", [
+			"clerkOrgId",
 			"assignedTo",
 			"project",
 			"status",
@@ -570,8 +632,19 @@ export default defineSchema({
 			"assignedToInstance",
 			"status",
 		])
+		.index("by_orgId_instance_status_clerk_id", [
+			"clerkOrgId",
+			"assignedToInstance",
+			"status",
+		])
 		.index("by_orgId_instance_project_status", [
 			"orgId",
+			"assignedToInstance",
+			"project",
+			"status",
+		])
+		.index("by_orgId_instance_project_status_clerk_id", [
+			"clerkOrgId",
 			"assignedToInstance",
 			"project",
 			"status",
@@ -580,6 +653,11 @@ export default defineSchema({
 		// equality, so a member's mission read never touches another org's rows
 		// and the scan cap bounds the member's own mission. Additive.
 		.index("by_orgId_mission_status", ["orgId", "missionId", "status"])
+		.index("by_orgId_mission_status_clerk_id", [
+			"clerkOrgId",
+			"missionId",
+			"status",
+		])
 		// Compound indexes added to close the silent-filter-drop defect in
 		// convex/tasks.ts `list`: when a caller supplies assignedTo/assignedToInstance
 		// TOGETHER with project, the query must apply BOTH filters via a matching
@@ -622,16 +700,13 @@ export default defineSchema({
 		// OKF bundle task imports. Tasks scope by orgId (no namespace field),
 		// mirroring the by_orgId dedup key in _findTaskByTitleAndDescription.
 		.index("by_orgId_contentHash", ["orgId", "contentHash"])
+		.index("by_orgId_contentHash_clerk_id", ["clerkOrgId", "contentHash"])
 		// Issue #1293 — the (repoFullName, prNumber, status) lookup key for
 		// findOpenReviewTasks/closeReviewTasksForPr, replacing the by_status
 		// scan-then-parse-the-title pattern that timed out in production once
 		// reviewBacklogSweep started calling closeReviewTasksForPr once per
 		// backlog row (multiplying the unbounded scan N times per sweep run).
-		.index("by_review_pr", [
-			"reviewPrRepoFullName",
-			"reviewPrNumber",
-			"status",
-		])
+		.index("by_review_pr", ["reviewPrRepoFullName", "reviewPrNumber", "status"])
 		// Day 102 v2.11.0 — CRUD baseline PR-C-bis option B (mission k575kc1r):
 		// Convex native BM25 search on task title, with filterFields for the
 		// common targeting axes (assignedTo, status, project, missionId).
@@ -659,11 +734,20 @@ export default defineSchema({
 		// fleet-owned (master-written) or not yet backfilled; an org caller is
 		// refused an unstamped row.
 		orgId: v.optional(v.string()),
+		// Permanent Clerk org id (org_...) of the same organisation as `orgId`. The slug is a
+		// renamable label; this is the identity (Pi ruling (d), k174d95s5qqy8t2r5rdrz3pr3d8fqv82).
+		// Optional during the expand phase: filled by migrations/backfill_org_clerk_id.
+		clerkOrgId: v.optional(v.string()),
 	})
 		.index("by_orchestrator_date", ["orchestrator", "date"])
 		// R-11/R-52: the tenant is an index predicate. An undefined orgId (fleet) is
 		// matched by `.eq("orgId", undefined)`.
 		.index("by_org_orchestrator_date", ["orgId", "orchestrator", "date"])
+		.index("by_org_orchestrator_date_clerk_id", [
+			"clerkOrgId",
+			"orchestrator",
+			"date",
+		])
 		.index("by_date", ["date"]),
 	// by_createdBy_date intentionally omitted: createdBy filtering is handled
 	// as a universal post-take in-memory filter (mirrors tasks.ts:371-373 pattern).
@@ -684,6 +768,10 @@ export default defineSchema({
 		// Beta multi-tenant scope. null/undefined = master (internal Alpha).
 		// Set to Clerk org slug (e.g. "acme-hr") for client-scoped rows.
 		orgId: v.optional(v.string()),
+		// Permanent Clerk org id (org_...) of the same organisation as `orgId`. The slug is a
+		// renamable label; this is the identity (Pi ruling (d), k174d95s5qqy8t2r5rdrz3pr3d8fqv82).
+		// Optional during the expand phase: filled by migrations/backfill_org_clerk_id.
+		clerkOrgId: v.optional(v.string()),
 		// R-18 idempotency key for retriable OKF bundle import inserts.
 		// sha256(title + "\n" + content) computed once by the importer
 		// (convex/okfBundleNode.ts); the atomic findOrCreate in
@@ -697,10 +785,12 @@ export default defineSchema({
 		.index("by_topic", ["topic"])
 		.index("by_creator", ["createdBy", "createdAt"])
 		.index("by_orgId", ["orgId"])
+		.index("by_orgId_clerk_id", ["clerkOrgId"])
 		// R-18 import idempotency lookup — (orgId, contentHash) findOrCreate for
 		// OKF bundle briefing imports (briefingNotes scope by orgId, mirroring
 		// the by_orgId dedup key in _findBriefingByTitleAndContent).
 		.index("by_orgId_contentHash", ["orgId", "contentHash"])
+		.index("by_orgId_contentHash_clerk_id", ["clerkOrgId", "contentHash"])
 		// Issue #1260 live-defect fix: `briefingNotes.list`'s `updatedSince`
 		// branch widened to a fixed-size `.take(BRIEFING_NOTES_LIST_SCAN_CAP + 1)`
 		// scan and filtered `updatedAt` IN-MEMORY afterward. The row-count guard
@@ -752,6 +842,7 @@ export default defineSchema({
 		// non-master caller's topic-filtered scan is bounded by ITS OWN org's
 		// row count from the index itself, never the platform-wide corpus.
 		.index("by_orgId_topic", ["orgId", "topic"])
+		.index("by_orgId_topic_clerk_id", ["clerkOrgId", "topic"])
 		// Day 102 v2.11.0 — CRUD baseline PR-C-bis option B (mission k575kc1r):
 		// Convex native BM25 search on briefing body, with filterFields for the
 		// common narrowing axes (topic, createdBy).
@@ -940,6 +1031,10 @@ export default defineSchema({
 		updatedAt: v.number(),
 		// R-52 tenant stamp: see diary.orgId. Server-derived from withOrgScope.
 		orgId: v.optional(v.string()),
+		// Permanent Clerk org id (org_...) of the same organisation as `orgId`. The slug is a
+		// renamable label; this is the identity (Pi ruling (d), k174d95s5qqy8t2r5rdrz3pr3d8fqv82).
+		// Optional during the expand phase: filled by migrations/backfill_org_clerk_id.
+		clerkOrgId: v.optional(v.string()),
 	})
 		.index("by_orchestrator", ["orchestratorId"])
 		.index("by_status", ["status"])
@@ -975,6 +1070,10 @@ export default defineSchema({
 		// schedule: a withheld grant manufactured by a missing column.
 		// `undefined` = fleet/master-owned schedule.
 		orgId: v.optional(v.string()),
+		// Permanent Clerk org id (org_...) of the same organisation as `orgId`. The slug is a
+		// renamable label; this is the identity (Pi ruling (d), k174d95s5qqy8t2r5rdrz3pr3d8fqv82).
+		// Optional during the expand phase: filled by migrations/backfill_org_clerk_id.
+		clerkOrgId: v.optional(v.string()),
 		createdAt: v.number(),
 		updatedAt: v.number(),
 	})
@@ -1229,6 +1328,10 @@ export default defineSchema({
 		// Org claim snapshotted at mint (same class as fromAllowList).
 		// Missing → provisioned client cannot belong to an organisation (#1215 refuse).
 		clerkOrgSlug: v.optional(v.string()),
+		// Permanent Clerk org id (org_...) of the same organisation as `clerkOrgSlug`. The slug is a
+		// renamable label; this is the identity (Pi ruling (d), k174d95s5qqy8t2r5rdrz3pr3d8fqv82).
+		// Optional during the expand phase: filled by migrations/backfill_org_clerk_id.
+		clerkOrgId: v.optional(v.string()),
 		// Digest of the authorization code this token was minted from (person
 		// flow only). Lets a replayed code revoke what its first redemption issued.
 		codeHash: v.optional(v.string()),
@@ -1287,6 +1390,10 @@ export default defineSchema({
 		createdAt: v.number(),
 		updatedAt: v.number(),
 		clerkOrgSlug: v.optional(v.string()),
+		// Permanent Clerk org id (org_...) of the same organisation as `clerkOrgSlug`. The slug is a
+		// renamable label; this is the identity (Pi ruling (d), k174d95s5qqy8t2r5rdrz3pr3d8fqv82).
+		// Optional during the expand phase: filled by migrations/backfill_org_clerk_id.
+		clerkOrgId: v.optional(v.string()),
 		// SECURITY (task oauth-dcr-scope-allowlist): whether anonymous public
 		// DCR self-registration (registerPublicClient) may request this
 		// profile. Additive; absent === false (deny-by-default). Only the
@@ -1300,7 +1407,8 @@ export default defineSchema({
 		selfRegistrable: v.optional(v.boolean()),
 	})
 		.index("by_profileId", ["profileId"])
-		.index("by_clerkOrgSlug", ["clerkOrgSlug"]),
+		.index("by_clerkOrgSlug", ["clerkOrgSlug"])
+		.index("by_clerkOrgSlug_clerk_id", ["clerkOrgId"]),
 
 	// ── errorMonitorFilterRules ──────────────────────────────────────────────
 	// Runtime-configurable filter rules for the auto-IRP bot.
@@ -1457,6 +1565,10 @@ export default defineSchema({
 	iframeEmbedSessions: defineTable({
 		sessionId: v.string(),
 		tenantId: v.optional(v.string()),
+		// Permanent Clerk org id (org_...) of the same organisation as `tenantId`. The slug is a
+		// renamable label; this is the identity (Pi ruling (d), k174d95s5qqy8t2r5rdrz3pr3d8fqv82).
+		// Optional during the expand phase: filled by migrations/backfill_org_clerk_id.
+		tenantOrgId: v.optional(v.string()),
 		origin: v.string(),
 		userId: v.optional(v.string()),
 		createdAt: v.number(),
@@ -1520,9 +1632,15 @@ export default defineSchema({
 	// (operator path: `npx convex run`), never wired to a client-facing surface.
 	memberWriterRoles: defineTable({
 		orgSlug: v.optional(v.string()),
+		// Permanent Clerk org id (org_...) of the same organisation as `orgSlug`. The slug is a
+		// renamable label; this is the identity (Pi ruling (d), k174d95s5qqy8t2r5rdrz3pr3d8fqv82).
+		// Optional during the expand phase: filled by migrations/backfill_org_clerk_id.
+		clerkOrgId: v.optional(v.string()),
 		roles: v.array(v.string()),
 		updatedAt: v.number(),
-	}).index("by_org", ["orgSlug"]),
+	})
+		.index("by_org", ["orgSlug"])
+		.index("by_org_clerk_id", ["clerkOrgId"]),
 
 	// ── client_org_mapping ───────────────────────────────────────────────────
 	// Dashboard Beta multi-tenant scope registry. One row per Clerk organisation
@@ -1544,6 +1662,13 @@ export default defineSchema({
 	//   <redacted-client> → allowedOrchestrators=["phi"],    scopes=["view-own-tasks","view-own-missions"]
 	client_org_mapping: defineTable({
 		clerkOrgSlug: v.string(), // "acme-hr"
+		// The permanent Clerk org id (org_...) of this organisation: the SOURCE OF
+		// TRUTH for org identity (Pi ruling (d), k174d95s5qqy8t2r5rdrz3pr3d8fqv82).
+		// `clerkOrgSlug` is a renamable label. Optional during the expand phase;
+		// set by clientOrgMapping:setClerkOrgId (script: scripts/fill-mapping-clerk-org-id.mjs),
+		// then every `clerkOrgId` / `tenantOrgId` column is filled from it by
+		// migrations/backfill_org_clerk_id.
+		clerkOrgId: v.optional(v.string()),
 		allowedOrchestrators: v.array(v.string()), // ["orch-a"] or ["*"] for master sentinel
 		scopes: v.array(v.string()), // ["view-own-tasks", "view-own-missions", ...]
 		displayName: v.string(), // "<redacted-client>"
@@ -1562,6 +1687,7 @@ export default defineSchema({
 		addressableFleetCoordinators: v.optional(v.array(v.string())),
 	})
 		.index("by_clerk_slug", ["clerkOrgSlug"])
+		.index("by_clerk_org_id", ["clerkOrgId"])
 		.index("by_isActive", ["isActive"]),
 
 	// ── orgMembership ────────────────────────────────────────────────────────
@@ -1593,6 +1719,10 @@ export default defineSchema({
 	//   (reserved for the future webhook-driven sync).
 	orgMembership: defineTable({
 		clerkOrgSlug: v.string(),
+		// Permanent Clerk org id (org_...) of the same organisation as `clerkOrgSlug`. The slug is a
+		// renamable label; this is the identity (Pi ruling (d), k174d95s5qqy8t2r5rdrz3pr3d8fqv82).
+		// Optional during the expand phase: filled by migrations/backfill_org_clerk_id.
+		clerkOrgId: v.optional(v.string()),
 		clerkUserId: v.string(),
 		role: v.union(v.literal("admin"), v.literal("member")),
 		createdAt: v.number(),
@@ -1600,10 +1730,12 @@ export default defineSchema({
 	})
 		// "who administers/belongs to org X" — no table scan.
 		.index("by_org", ["clerkOrgSlug"])
+		.index("by_org_clerk_id", ["clerkOrgId"])
 		// "which orgs does subject S belong to" — no table scan.
 		.index("by_user", ["clerkUserId"])
 		// Idempotent upsert key at provisioning time — one row per (org, user).
-		.index("by_org_user", ["clerkOrgSlug", "clerkUserId"]),
+		.index("by_org_user", ["clerkOrgSlug", "clerkUserId"])
+		.index("by_org_user_clerk_id", ["clerkOrgId", "clerkUserId"]),
 
 	// ── userBearerTokens ─────────────────────────────────────────────────────
 	// Bearer tokens issued to VP webapp users via Clerk JWT exchange
@@ -1752,6 +1884,10 @@ export default defineSchema({
 	// the relation lives in a separate layer, not inside this entity).
 	agents: defineTable({
 		orgSlug: v.string(), // client_org_mapping.clerkOrgSlug — the org that owns this agent
+		// Permanent Clerk org id (org_...) of the same organisation as `orgSlug`. The slug is a
+		// renamable label; this is the identity (Pi ruling (d), k174d95s5qqy8t2r5rdrz3pr3d8fqv82).
+		// Optional during the expand phase: filled by migrations/backfill_org_clerk_id.
+		clerkOrgId: v.optional(v.string()),
 		// IDENTITY IS THIS ROW'S `_id`, never the name. `name` is a display LABEL, renamable;
 		// it is unique within its org UNDER `normalizeOrchestratorId` (NFC + lowercase + trim),
 		// enforced at write time (`assertAgentNameFree`, convex/lib/agentIdentity.ts), because a
@@ -1771,8 +1907,11 @@ export default defineSchema({
 		createdAt: v.number(),
 	})
 		.index("by_org", ["orgSlug"])
+		.index("by_org_clerk_id", ["clerkOrgId"])
 		.index("by_org_name", ["orgSlug", "name"])
-		.index("by_org_normalized_name", ["orgSlug", "normalizedName"]),
+		.index("by_org_name_clerk_id", ["clerkOrgId", "name"])
+		.index("by_org_normalized_name", ["orgSlug", "normalizedName"])
+		.index("by_org_normalized_name_clerk_id", ["clerkOrgId", "normalizedName"]),
 
 	// ── agent_relations ──────────────────────────────────────────────────────
 	// [P-T3] the parent-child edge — the graph P-T2's `agents` entity table
@@ -1787,13 +1926,20 @@ export default defineSchema({
 	// agent rows exist (callers/mutations do), it only records the edge.
 	agent_relations: defineTable({
 		orgSlug: v.string(), // client_org_mapping.clerkOrgSlug — the org this edge belongs to
+		// Permanent Clerk org id (org_...) of the same organisation as `orgSlug`. The slug is a
+		// renamable label; this is the identity (Pi ruling (d), k174d95s5qqy8t2r5rdrz3pr3d8fqv82).
+		// Optional during the expand phase: filled by migrations/backfill_org_clerk_id.
+		clerkOrgId: v.optional(v.string()),
 		parentName: v.string(), // agents.name of the parent in this org
 		childName: v.string(), // agents.name of the child in this org
 		createdAt: v.number(),
 	})
 		.index("by_org", ["orgSlug"])
+		.index("by_org_clerk_id", ["clerkOrgId"])
 		.index("by_parent", ["orgSlug", "parentName"])
-		.index("by_child", ["orgSlug", "childName"]),
+		.index("by_parent_clerk_id", ["clerkOrgId", "parentName"])
+		.index("by_child", ["orgSlug", "childName"])
+		.index("by_child_clerk_id", ["clerkOrgId", "childName"]),
 
 	// ── agent_credentials ────────────────────────────────────────────────────
 	// [P-T4] the per-agent CREDENTIAL — today the token identifies the
@@ -1816,6 +1962,10 @@ export default defineSchema({
 	// never by trusting a caller-declared name.
 	agent_credentials: defineTable({
 		orgSlug: v.string(), // client_org_mapping.clerkOrgSlug — the org this credential's agent belongs to
+		// Permanent Clerk org id (org_...) of the same organisation as `orgSlug`. The slug is a
+		// renamable label; this is the identity (Pi ruling (d), k174d95s5qqy8t2r5rdrz3pr3d8fqv82).
+		// Optional during the expand phase: filled by migrations/backfill_org_clerk_id.
+		clerkOrgId: v.optional(v.string()),
 		// IDENTITY: the `agents` row this credential was minted for. Resolution and rotation key
 		// on this, so renaming the agent never orphans or re-targets the credential. Optional ONLY
 		// for the rollout of rows minted before this field existed; such rows resolve through the
@@ -1839,6 +1989,7 @@ export default defineSchema({
 		createdAt: v.number(),
 	})
 		.index("by_org_agent", ["orgSlug", "agentName"])
+		.index("by_org_agent_clerk_id", ["clerkOrgId", "agentName"])
 		.index("by_agent", ["agentId"])
 		.index("by_secret_hash", ["secretHash"]),
 });

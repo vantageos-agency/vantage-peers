@@ -2,6 +2,7 @@ import { v } from "convex/values";
 import type { Id } from "./_generated/dataModel";
 import { mutation, query } from "./_generated/server";
 import { requireOrgAdmin } from "./lib/auth";
+import { clerkOrgIdForSlug } from "./lib/orgClerkId";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // [P-T3] agent_relations — the parent-child EDGE, on top of P-T2's `agents`
@@ -34,6 +35,7 @@ const edgeReturnValidator = v.object({
 	_id: v.id("agent_relations"),
 	_creationTime: v.number(),
 	orgSlug: v.string(),
+	clerkOrgId: v.optional(v.string()),
 	parentName: v.string(),
 	childName: v.string(),
 	createdAt: v.number(),
@@ -81,6 +83,7 @@ export const linkChild = mutation({
 
 		return await ctx.db.insert("agent_relations", {
 			orgSlug: args.orgSlug,
+			clerkOrgId: await clerkOrgIdForSlug(ctx, args.orgSlug),
 			parentName: args.parentName,
 			childName: args.childName,
 			createdAt: Date.now(),

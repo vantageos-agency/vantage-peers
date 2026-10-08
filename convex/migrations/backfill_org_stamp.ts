@@ -56,6 +56,8 @@ import type { DatabaseReader, MutationCtx } from "../_generated/server";
 import { internalMutation } from "../_generated/server";
 import { normalizeOrchestratorId } from "../_helpers/normalizeOrchestratorId";
 import { findOperatorOrg } from "../lib/operatorOrg";
+import { clerkOrgIdForSlug } from "../lib/orgClerkId";
+import { ORG_COLUMNS } from "./backfill_org_clerk_id";
 
 export const TABLE_ORDER = [
 	"missions",
@@ -283,7 +285,15 @@ async function walk(
 		stamp: string | null,
 	): Promise<void> => {
 		if (stamp === null || dryRun) return;
-		await ctx.db.patch(t, id, { [field]: stamp } as never);
+		// The id column sits next to the slug column (ORG_COLUMNS); it is written
+		// with the slug when the stamped org's mapping carries one.
+		const clerkOrgId = await clerkOrgIdForSlug(ctx, stamp);
+		await ctx.db.patch(t, id, {
+			[field]: stamp,
+			...(clerkOrgId === undefined
+				? {}
+				: { [ORG_COLUMNS[t].idField]: clerkOrgId }),
+		} as never);
 		tally.stamped++;
 	};
 

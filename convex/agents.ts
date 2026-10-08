@@ -13,6 +13,7 @@ import {
 } from "./lib/agentIdentity";
 import { requireOrgAdmin } from "./lib/auth";
 import { isHumanActorName } from "./lib/humanActor";
+import { clerkOrgIdForSlug } from "./lib/orgClerkId";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // [P-T2] agents — the agent as an ENTITY carrying its organisation.
@@ -41,6 +42,7 @@ const agentReturnValidator = v.object({
 	_id: v.id("agents"),
 	_creationTime: v.number(),
 	orgSlug: v.string(),
+	clerkOrgId: v.optional(v.string()),
 	name: v.string(),
 	normalizedName: v.optional(v.string()),
 	description: v.optional(v.string()),
@@ -145,6 +147,7 @@ export const registerAgent = mutation({
 
 		return await ctx.db.insert("agents", {
 			orgSlug: args.orgSlug,
+			clerkOrgId: await clerkOrgIdForSlug(ctx, args.orgSlug),
 			name: args.name,
 			normalizedName: normalizeOrchestratorId(args.name),
 			description: args.description,

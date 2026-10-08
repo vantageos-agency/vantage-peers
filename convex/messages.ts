@@ -47,6 +47,7 @@ import {
 	computeStuckInProgress,
 } from "./lib/taskClosureGate";
 import { actorIdResolver } from "./lib/actorIds";
+import { clerkOrgIdForSlug } from "./lib/orgClerkId";
 
 // getUnreadCount only needs the count, not the rows; the receipts table per
 // recipient is small, so this bound exists to guard against unbounded growth
@@ -286,6 +287,9 @@ async function sendMessageCore(
 		const resolveActor = actorIdResolver(ctx, derivedTenantId);
 		const fromId = await resolveActor(args.from);
 
+		// Permanent Clerk org id of the derived tenant (Pi ruling (d)), read from the
+		// tenant's mapping row; the slug above stays the label.
+		const derivedTenantOrgId = await clerkOrgIdForSlug(ctx, derivedTenantId);
 		const messageId = await ctx.db.insert("messages", {
 			from: args.from,
 			...(fromId !== undefined ? { fromId } : {}),
@@ -294,6 +298,7 @@ async function sendMessageCore(
 			content: args.content,
 			sessionDay: args.sessionDay,
 			tenantId: derivedTenantId,
+			tenantOrgId: derivedTenantOrgId,
 			createdAt: Date.now(),
 		});
 
@@ -493,6 +498,7 @@ async function sendMessageCore(
 				...(recipientId !== undefined ? { recipientId } : {}),
 				recipientInstanceId: isInstance ? recipient : undefined,
 				tenantId: derivedTenantId,
+				tenantOrgId: derivedTenantOrgId,
 				readAt: undefined,
 			});
 		}
@@ -1715,6 +1721,7 @@ export const listMessages = query({
 			// rows carry tenantId; returns shape must declare it or Convex
 			// emits ReturnsValidationError "extra field tenantId".
 			tenantId: v.optional(v.string()),
+			tenantOrgId: v.optional(v.string()),
 		}),
 	),
 	handler: async (ctx, args) => {
@@ -2018,6 +2025,7 @@ const listByChannelRow = v.object({
 	fromInstanceId: v.optional(v.string()),
 	fromId: v.optional(v.string()),
 	tenantId: v.optional(v.string()),
+	tenantOrgId: v.optional(v.string()),
 	channel: v.string(),
 	content: v.string(),
 	sessionDay: v.optional(v.number()),

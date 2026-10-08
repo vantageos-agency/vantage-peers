@@ -1,7 +1,8 @@
 import { ConvexError, v } from "convex/values";
-import { internalMutation, query } from "./_generated/server";
+import { internalMutation, internalQuery, query } from "./_generated/server";
 import { lookupOrgMapping, withOrgScope } from "./lib/auth";
 import { normalizeOrchestratorId } from "./_helpers/normalizeOrchestratorId";
+import { CLERK_ORG_ID_PATTERN } from "./lib/orgClerkId";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // getByClerkSlug — the HTTP-layer accessor onto client_org_mapping.
@@ -300,5 +301,101 @@ export const addRosterMembers = internalMutation({
 		}
 		await ctx.db.patch(row._id, { allowedOrchestrators: current });
 		return { clerkOrgSlug: args.clerkOrgSlug, previous, current };
+	},
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Clerk org id on the mapping (Pi ruling (d), k174d95s5qqy8t2r5rdrz3pr3d8fqv82).
+// `client_org_mapping.clerkOrgId` is the SOURCE OF TRUTH for org identity; the
+// slug is a renamable label. Both are internal (admin credential only), run by
+// scripts/fill-mapping-clerk-org-id.mjs at deploy time.
+// ─────────────────────────────────────────────────────────────────────────────
+const MAPPING_FILL_READ_CAP = 1000;
+
+export const listMappingsForClerkIdFill = internalQuery({
+	args: {},
+	returns: v.array(
+		v.object({
+			clerkOrgSlug: v.string(),
+			clerkOrgId: v.union(v.string(), v.null()),
+			isActive: v.boolean(),
+			orgKind: v.union(v.literal("operator"), v.literal("client")),
+		}),
+	),
+	handler: async (ctx) => {
+		const rows = await ctx.db
+			.query("client_org_mapping")
+			.take(MAPPING_FILL_READ_CAP + 1);
+		if (rows.length > MAPPING_FILL_READ_CAP) {
+			throw new ConvexError(
+				`MAPPING_FILL_OVER_CAP: client_org_mapping holds more than ${MAPPING_FILL_READ_CAP} rows; refusing to list a truncated set.`,
+			);
+		}
+		return rows.map((m) => ({
+			clerkOrgSlug: m.clerkOrgSlug,
+			clerkOrgId: m.clerkOrgId ?? null,
+			isActive: m.isActive,
+			orgKind: m.orgKind ?? "client",
+		}));
+	},
+});
+
+export const setClerkOrgId = internalMutation({
+	args: {
+		clerkOrgSlug: v.string(),
+		clerkOrgId: v.string(),
+		// A row that already carries a DIFFERENT id is refused unless this is set:
+		// an org id is permanent, so a change is a correction made on purpose.
+		replace: v.optional(v.boolean()),
+	},
+	returns: v.object({
+		clerkOrgSlug: v.string(),
+		previous: v.union(v.string(), v.null()),
+		current: v.string(),
+	}),
+	handler: async (ctx, args) => {
+		if (!CLERK_ORG_ID_PATTERN.test(args.clerkOrgId)) {
+			throw new ConvexError(
+				`CLERK_ORG_ID_INVALID: "${args.clerkOrgId}" is not a Clerk org id (expected org_ followed by alphanumerics).`,
+			);
+		}
+		const row = await ctx.db
+			.query("client_org_mapping")
+			.withIndex("by_clerk_slug", (q) =>
+				q.eq("clerkOrgSlug", args.clerkOrgSlug),
+			)
+			.unique();
+		if (!row) {
+			throw new ConvexError(
+				`ORG_MAPPING_NOT_FOUND: no client_org_mapping row for clerkOrgSlug "${args.clerkOrgSlug}"`,
+			);
+		}
+		const owners = await ctx.db
+			.query("client_org_mapping")
+			.withIndex("by_clerk_org_id", (q) => q.eq("clerkOrgId", args.clerkOrgId))
+			.take(2);
+		if (owners.some((o) => o._id !== row._id)) {
+			throw new ConvexError(
+				`CLERK_ORG_ID_TAKEN: ${args.clerkOrgId} already belongs to another client_org_mapping row; two organisations cannot share an id.`,
+			);
+		}
+		const previous = row.clerkOrgId ?? null;
+		if (
+			previous !== null &&
+			previous !== args.clerkOrgId &&
+			args.replace !== true
+		) {
+			throw new ConvexError(
+				`CLERK_ORG_ID_CONFLICT: "${args.clerkOrgSlug}" already carries ${previous}; pass replace:true to correct it on purpose.`,
+			);
+		}
+		if (previous !== args.clerkOrgId) {
+			await ctx.db.patch(row._id, { clerkOrgId: args.clerkOrgId });
+		}
+		return {
+			clerkOrgSlug: args.clerkOrgSlug,
+			previous,
+			current: args.clerkOrgId,
+		};
 	},
 });

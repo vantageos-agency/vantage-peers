@@ -7,6 +7,7 @@ import { withOrgScope, requireScope, requireOrchestratorOnRoster, type OrgScope 
 import { isFleetSystemCaller } from "./lib/systemCaller";
 import { requireId } from "./lib/ids";
 import { resolveHumanActor } from "./lib/humanActor";
+import { clerkOrgIdForSlug } from "./lib/orgClerkId";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // participant-visibility helpers (Day 165 fix — task
@@ -207,6 +208,9 @@ export const create = mutation({
 			createdBy,
 			createdAt: Date.now(),
 			orgId: scope.isMaster ? undefined : (scope.orgSlug as string),
+			clerkOrgId: scope.isMaster
+				? undefined
+				: await clerkOrgIdForSlug(ctx, scope.orgSlug),
 		});
 		await syncParticipantIndex(ctx, noteId, args.participants);
 		return noteId;
@@ -228,6 +232,7 @@ const briefingNoteFullValidator = v.object({
 	updatedBy: v.optional(creatorValidator),
 	// PR #360 — Beta multi-tenant scope field. Optional so pre-PR #360 docs pass.
 	orgId: v.optional(v.string()),
+	clerkOrgId: v.optional(v.string()),
 	// R-18 import idempotency key (sha256 of the OKF dedup key). Optional
 	// because only OKF-imported rows carry it.
 	contentHash: v.optional(v.string()),

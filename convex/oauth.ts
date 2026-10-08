@@ -39,6 +39,7 @@ import { isHumanActorName } from "./lib/humanActor";
 import { liveSeatAgent, resolveSeatAgent } from "./lib/seatAgent";
 import { DEFAULT_MEMBER_SCOPES } from "./lib/memberScopes";
 import { upsertAdminMembership } from "./orgMembership";
+import { clerkOrgIdForSlug } from "./lib/orgClerkId";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Shared auth helper — master-token gate for admin mutations
@@ -402,6 +403,9 @@ export const upsertScopeProfile = internalMutation({
 		if (!existing) {
 			await ctx.db.insert("oauth_scope_profiles", {
 				...profile,
+				// The slug arrives in the spread; the id is derived from it here, never
+				// accepted from the caller (scopeProfileShape has no id field).
+				clerkOrgId: await clerkOrgIdForSlug(ctx, profile.clerkOrgSlug),
 				createdAt: now,
 				updatedAt: now,
 			});
@@ -430,6 +434,11 @@ export const upsertScopeProfile = internalMutation({
 
 		await ctx.db.patch(existing._id, {
 			...profile,
+			// The id follows the slug it is patched with. A profile that carries no
+			// slug leaves both columns as they are (patching undefined would unset).
+			...(profile.clerkOrgSlug !== undefined
+				? { clerkOrgId: await clerkOrgIdForSlug(ctx, profile.clerkOrgSlug) }
+				: {}),
 			updatedAt: now,
 		});
 
@@ -933,6 +942,11 @@ export const provisionOrganization = mutation({
 				? args.callerToken
 				: ((await ctx.auth.getUserIdentity())?.subject ?? "org-admin:unknown");
 		const actorTokenHash = await sha256Hex(actorIdentitySource);
+		// The mapping row above was inserted in THIS mutation with no clerkOrgId
+		// (setClerkOrgId fills it afterwards), so this resolves to undefined today
+		// and the seat rows below carry the slug only; backfill_org_clerk_id lists
+		// and fills them once the mapping has its id.
+		const seatClerkOrgId = await clerkOrgIdForSlug(ctx, slug);
 		const seats = [];
 		for (const name of names) {
 			const profileId = `${name}-${slug}`;
@@ -945,6 +959,7 @@ export const provisionOrganization = mutation({
 				createdAt: now,
 				updatedAt: now,
 				clerkOrgSlug: slug,
+				clerkOrgId: seatClerkOrgId,
 			});
 
 			const clientId = randomOpaqueHex(16);
@@ -1007,6 +1022,7 @@ export const provisionOrganization = mutation({
 				...(seatAgent
 					? { agentId: seatAgent._id, agentOrgId: seatAgent.orgSlug }
 					: {}),
+				clerkOrgId: seatClerkOrgId,
 			});
 
 			seats.push({
@@ -1556,6 +1572,12 @@ async function walkClientTokensPage(
 			.query("oauth_access_tokens")
 			.withIndex("by_clientId", (q) => q.eq("clientId", walk.clientId))
 			.paginate({ numItems: CLIENT_TOKEN_BATCH, cursor: state.accessCursor });
+		// The id of the profile's org, resolved once per page from the same mapping
+		// join; it travels with the slug it is written beside.
+		const walkClerkOrgId =
+			walk.op === "retarget_scope" && walk.profile !== null
+				? await clerkOrgIdForSlug(ctx, walk.profile.clerkOrgSlug)
+				: undefined;
 		for (const t of page.page) {
 			accessSeen++;
 			if (walk.op === "retarget_scope") {
@@ -1568,6 +1590,7 @@ async function walkClientTokensPage(
 					namespaceReadPrefixes: walk.profile.namespaceReadPrefixes,
 					namespaceWritePrefixes: walk.profile.namespaceWritePrefixes,
 					clerkOrgSlug: walk.profile.clerkOrgSlug,
+					clerkOrgId: walkClerkOrgId,
 				});
 				accessTouched++;
 			} else if (t.revokedAt === undefined) {
@@ -2174,6 +2197,7 @@ export const createAccessToken = mutation({
 			clerkOrgSlug: args.clerkOrgSlug,
 			principal: args.principal,
 		});
+		const tokenClerkOrgId = await clerkOrgIdForSlug(ctx, args.clerkOrgSlug);
 		return await ctx.db.insert("oauth_access_tokens", {
 			tokenHash: args.tokenHash,
 			clientId: args.clientId,
@@ -2189,6 +2213,8 @@ export const createAccessToken = mutation({
 			...(args.clerkOrgSlug !== undefined
 				? { clerkOrgSlug: args.clerkOrgSlug }
 				: {}),
+			// Permanent Clerk org id of the same org (Pi ruling (d)), from its mapping.
+			...(tokenClerkOrgId !== undefined ? { clerkOrgId: tokenClerkOrgId } : {}),
 			...(args.codeHash !== undefined ? { codeHash: args.codeHash } : {}),
 			...(args.orgRole !== undefined ? { orgRole: args.orgRole } : {}),
 			...(args.principal !== undefined ? { principal: args.principal } : {}),

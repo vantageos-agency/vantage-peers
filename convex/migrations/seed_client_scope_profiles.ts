@@ -27,6 +27,7 @@
 
 import { ConvexError, v } from "convex/values";
 import { internalMutation } from "../_generated/server";
+import { clerkOrgIdForSlug } from "../lib/orgClerkId";
 
 const GENERIC_CATALOG_IDS: ReadonlySet<string> = new Set([
 	"master",
@@ -147,7 +148,10 @@ export const seedClientScopeProfiles = internalMutation({
 						namespaceReadPrefixes: p.namespaceReadPrefixes,
 						namespaceWritePrefixes: p.namespaceWritePrefixes,
 						...(p.clerkOrgSlug !== undefined
-							? { clerkOrgSlug: p.clerkOrgSlug }
+							? {
+									clerkOrgSlug: p.clerkOrgSlug,
+									clerkOrgId: await clerkOrgIdForSlug(ctx, p.clerkOrgSlug),
+								}
 							: {}),
 						createdAt: now,
 						updatedAt: now,

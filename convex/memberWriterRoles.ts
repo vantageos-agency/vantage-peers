@@ -3,6 +3,7 @@ import { ConvexError, v } from "convex/values";
 import type { MutationCtx, QueryCtx } from "./_generated/server";
 import { internalMutation, query } from "./_generated/server";
 import { isMcpBoundMaster, type OrgScope, withOrgScope } from "./lib/auth";
+import { clerkOrgIdForSlug } from "./lib/orgClerkId";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Writer-role allowlist for the member-acting path (tasks.start / complete /
@@ -98,7 +99,12 @@ export const setMemberWriterRoles = internalMutation({
 			await ctx.db.patch(existing._id, { roles, updatedAt: Date.now() });
 		} else {
 			await ctx.db.insert("memberWriterRoles", {
-				...(args.orgSlug !== undefined ? { orgSlug: args.orgSlug } : {}),
+				...(args.orgSlug !== undefined
+					? {
+							orgSlug: args.orgSlug,
+							clerkOrgId: await clerkOrgIdForSlug(ctx, args.orgSlug),
+						}
+					: {}),
 				roles,
 				updatedAt: Date.now(),
 			});
