@@ -283,7 +283,7 @@ export const generateUploadUrlWithTicket = mutation({
 		expiresAt: v.number(),
 	}),
 	handler: async (ctx, args) => {
-		// write-contract: MCP-transport-only — issued via mcp-server client.mutation("kbMutations:generateUploadUrlWithTicket", …) in mcp-server/src/tools/kbIngest.ts (generate_upload_url, imperative), 0 hits for "generateUploadUrlWithTicket|claimUpload|generateUploadUrl" in vantage-peers-dashboard {app,components,hooks,lib,contexts,providers} (measured 2026-10-05, local checkout); never a subscribing pre-org client shell. The RBAC_DENIED throw is the R-16 coded refusal the MCP layer catches, not an uncaught Server Error.
+		// write-contract: MCP transport and one dashboard consumer — issued via mcp-server client.mutation("kbMutations:generateUploadUrlWithTicket", …) in mcp-server/src/tools/kbIngest.ts (generate_upload_url, imperative), and by vantage-peers-dashboard components/settings/okf/okf-validate-panel.tsx (imperative, on a user action; dashboard PR #71, branch sigma/okf-validate-ticket-flow at 3fffb85; measured 2026-10-08 with `git grep -n "generateUploadUrlWithTicket|claimUpload" 3fffb85 -- app components hooks lib contexts providers`: only okf-validate-panel.tsx and its test); never a subscribing pre-org client shell. The RBAC_DENIED throw is the R-16 coded refusal the MCP layer catches, not an uncaught Server Error.
 		const scope = await withOrgScope(ctx);
 		if (!scope.isMaster && scope.orgSlug === null) {
 			throw new ConvexError(
@@ -330,7 +330,7 @@ export const claimUpload = mutation({
 	},
 	returns: v.object({ storageId: v.id("_storage"), orgId: v.string() }),
 	handler: async (ctx, args) => {
-		// write-contract: MCP-transport-only — issued via mcp-server client.mutation("kbMutations:claimUpload", …) in mcp-server/src/tools/kbIngest.ts (claim_upload, imperative), 0 dashboard hits (same measurement as generateUploadUrlWithTicket above); the RBAC_DENIED / AUTH_UPLOAD_TICKET_* throws are coded refusals the MCP layer surfaces.
+		// write-contract: MCP transport and one dashboard consumer — issued via mcp-server client.mutation("kbMutations:claimUpload", …) in mcp-server/src/tools/kbIngest.ts (claim_upload, imperative), and by components/settings/okf/okf-validate-panel.tsx (same measurement as generateUploadUrlWithTicket above); the RBAC_DENIED / AUTH_UPLOAD_TICKET_* throws are coded refusals the MCP layer surfaces.
 		const scope = await withOrgScope(ctx);
 		requireResolvedCaller(scope, "kbMutations:claimUpload", {
 			alsoRefusePreOrg: true,

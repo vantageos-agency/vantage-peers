@@ -1280,20 +1280,26 @@ const DECLARED_DISPOSITION = {
 
 describe("derive-backend-doctor-oracle declared disposition (R-13)", () => {
 	it(
-		"ABSENT — a tool with no oracle-disposition marker has an empty disposition; a declared one carries its own",
+		"ABSENT — a tool with no oracle-disposition marker carries the disposition declared in dispositions.json; a tool that declares its own carries that",
 		() => {
 			const rows = rowsOf(COMMITTED_CSV);
 			expect(rows).toHaveLength(TOOL_COUNT);
-			for (const r of rows)
-				expect(r.table_conserver_supprimer, r.outil).toBe(
-					DECLARED_DISPOSITION[r.outil] ?? "",
-				);
+			for (const r of rows) {
+				if (DECLARED_DISPOSITION[r.outil])
+					expect(r.table_conserver_supprimer, r.outil).toBe(
+						DECLARED_DISPOSITION[r.outil],
+					);
+				else
+					expect(r.table_conserver_supprimer, r.outil).toMatch(
+						/^(CONSERVER|SUPPRIMER|undecided — owner: \S+, deadline: \d{4}-\d{2}-\d{2}) \(dispositions\.json: /,
+					);
+			}
 		},
 		TIMEOUT,
 	);
 
 	it(
-		"PRESENT — a declared tool carries its disposition verbatim; an undeclared neighbour stays empty; the justification is not swallowed",
+		"PRESENT — a declared tool carries its disposition verbatim; an undeclared neighbour keeps the dispositions.json value; the justification is not swallowed",
 		() => {
 			const root = copyTree();
 			declareDeleteBu(
@@ -1311,10 +1317,12 @@ describe("derive-backend-doctor-oracle declared disposition (R-13)", () => {
 			expect(del.rbac_adjustment_needed).toMatch(/^JUSTIFIED: master-only/);
 			expect(del.rbac_adjustment_needed).not.toContain("oracle-disposition");
 			expect(del.rbac_adjustment_needed).not.toContain("CONSERVER");
-			// the same table's other tools declared nothing: nothing is inferred
+			// the same table's other tools declared nothing: they keep the value
+			// dispositions.json gives them; the marker never leaks to a neighbour
+			const committed = rowsOf(COMMITTED_CSV);
 			for (const x of rows.filter((y) => y.outil !== "delete_bu"))
 				expect(x.table_conserver_supprimer, x.outil).toBe(
-					DECLARED_DISPOSITION[x.outil] ?? "",
+					committed.find((c) => c.outil === x.outil).table_conserver_supprimer,
 				);
 		},
 		TIMEOUT,
