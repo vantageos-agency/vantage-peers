@@ -936,14 +936,25 @@ function declareDeleteBu(root, value) {
 	);
 }
 
+// The tools that declare their R-13 disposition at their definition in
+// mcp-server/src/tools.ts. Every other tool declares nothing and stays empty.
+const DECLARED_DISPOSITION = {
+	bind_github_owner:
+		"CONSERVER — githubInstallStates is the single-use install state of the GitHub-verified owner binding",
+	get_github_owner_bindings:
+		"CONSERVER — githubOwnerBindings is the proof an owner belongs to an org, the only basis on which a repo routes to it",
+};
+
 describe("derive-backend-doctor-oracle declared disposition (R-13)", () => {
 	it(
-		"ABSENT — with no oracle-disposition marker in the tree, every committed row has an empty disposition",
+		"ABSENT — a tool with no oracle-disposition marker has an empty disposition; a declared one carries its own",
 		() => {
 			const rows = rowsOf(COMMITTED_CSV);
 			expect(rows).toHaveLength(TOOL_COUNT);
 			for (const r of rows)
-				expect(r.table_conserver_supprimer, r.outil).toBe("");
+				expect(r.table_conserver_supprimer, r.outil).toBe(
+					DECLARED_DISPOSITION[r.outil] ?? "",
+				);
 		},
 		TIMEOUT,
 	);
@@ -969,7 +980,9 @@ describe("derive-backend-doctor-oracle declared disposition (R-13)", () => {
 			expect(del.rbac_adjustment_needed).not.toContain("CONSERVER");
 			// the same table's other tools declared nothing: nothing is inferred
 			for (const x of rows.filter((y) => y.outil !== "delete_bu"))
-				expect(x.table_conserver_supprimer, x.outil).toBe("");
+				expect(x.table_conserver_supprimer, x.outil).toBe(
+					DECLARED_DISPOSITION[x.outil] ?? "",
+				);
 		},
 		TIMEOUT,
 	);

@@ -8546,6 +8546,7 @@ export function registerTools(
 	//   setup callback (convex/http.ts /github/app/setup); this tool only asks Convex for a
 	//   single-use install state, and Convex requires an org ADMIN of the caller's own org
 	//   (githubOwnerBinding:startBinding -> requireOrgAdmin). Nothing here names an owner.
+	// oracle-disposition: CONSERVER — githubInstallStates is the single-use install state of the GitHub-verified owner binding
 	defineTool(
 		server,
 		authCtx,
@@ -8593,6 +8594,7 @@ export function registerTools(
 
 	// ── get_github_owner_bindings ──────────────────────────────────────────────
 
+	// oracle-disposition: CONSERVER — githubOwnerBindings is the proof an owner belongs to an org, the only basis on which a repo routes to it
 	defineTool(
 		server,
 		authCtx,
