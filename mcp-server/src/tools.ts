@@ -3811,15 +3811,62 @@ export function registerTools(
 				// remap orchestratorId->createdBy before scopeFilterList, then
 				// strip the synthetic field back out (the output projection below
 				// never reads `createdBy`, so no explicit strip is needed).
-				const filteredProfiles = scopeFilterList(
-					oauthCtx ?? DENIED_SCOPE_CTX,
-					(Array.isArray(profiles) ? profiles : []).map(
-						(p: Record<string, unknown>) => ({
-							...p,
-							createdBy: p.orchestratorId as string | undefined,
-						}),
-					),
-				);
+				const profileRows: Array<Record<string, unknown>> = (
+					Array.isArray(profiles) ? profiles : []
+				).map((p: Record<string, unknown>) => ({
+					...p,
+					createdBy: p.orchestratorId as string | undefined,
+				}));
+
+				// Directory vs. identity: `fromAllowList` governs who a token may ACT
+				// AS (send_message `from`, message reads). It is NOT the org directory.
+				// A seat narrowed to its own name (["clio"]) must still see the
+				// colleagues of its org. A non-master token that carries a verified org
+				// is therefore listed against the org ROSTER (the same door the
+				// delegation guard reads), never against fromAllowList. Master, and a
+				// token with no org, keep the scopeFilterList path unchanged. Only this
+				// listing changes: no acting, message-read or namespace gate is touched.
+				let filteredProfiles: typeof profileRows;
+				const rosterDoor =
+					!oauthCtx ||
+					isMasterScope(oauthCtx) ||
+					oauthCtx.clerkOrgSlug === undefined
+						? null
+						: oauthCtx.clerkJwt
+							? { door: "orgRoster:getMyOrgRoster", args: {} }
+							: oauthCtx.accessTokenHash
+								? {
+										door: "orgRoster:getForAccessToken",
+										args: { tokenHash: oauthCtx.accessTokenHash },
+									}
+								: null;
+				if (rosterDoor === null) {
+					filteredProfiles = scopeFilterList(
+						oauthCtx ?? DENIED_SCOPE_CTX,
+						profileRows,
+					);
+				} else {
+					const roster = await convex.query(
+						// biome-ignore lint/suspicious/noExplicitAny: Convex string API
+						rosterDoor.door as any,
+						rosterDoor.args,
+					);
+					if (isRefusedEnvelope(roster)) {
+						return mcpRefused("list_peers", rosterDoor.door);
+					}
+					// "*" names nobody here: a wildcard never widens a directory to
+					// other organisations' profiles.
+					const rosterNames = new Set(
+						(Array.isArray(roster) ? (roster as string[]) : [])
+							.filter((n) => typeof n === "string" && n !== "*")
+							.map(normalizeOrchestratorId),
+					);
+					filteredProfiles = profileRows.filter(
+						(p) =>
+							typeof p.orchestratorId === "string" &&
+							rosterNames.has(normalizeOrchestratorId(p.orchestratorId)),
+					);
+				}
 
 				const peers = filteredProfiles.map((p: any) => ({
 					_id: p._id,
