@@ -392,7 +392,8 @@ describe("a read-only hint is checked against what the handler reaches", () => {
 	it("the action walk is bipolar: a writing action is seen, a search action is not", () => {
 		expect(convexFnWrites("search:recall")).toBeNull();
 		expect(convexFnWrites("search:searchFixPatterns")).toBeNull();
-		expect(convexFnWrites("okfBundleNode:exportOkfBundle")).toBeNull();
+		// export binds the blob it creates to the exporter's org: it writes
+		expect(convexFnWrites("okfBundleNode:exportOkfBundle")).not.toBeNull();
 		expect(convexFnWrites("okfBundleNode:importOkfBundle")).not.toBeNull();
 		expect(convexFnWrites("nope:missing")).toMatch(/unresolved/);
 	});

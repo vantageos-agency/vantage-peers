@@ -64,7 +64,7 @@ function makeServer(): { calls: ToolRegistration[]; server: unknown } {
 }
 
 describe("export_okf_bundle MCP wrapper", () => {
-	test("registers tool with the expected name + read-only hint", () => {
+	test("registers tool with the expected name + write hint (it binds the blob)", () => {
 		const { calls, server } = makeServer();
 		const convex = { action: vi.fn() } as unknown;
 		registerExportOkfBundle(
@@ -74,7 +74,8 @@ describe("export_okf_bundle MCP wrapper", () => {
 		expect(calls).toHaveLength(1);
 		expect(calls[0].name).toBe("export_okf_bundle");
 		const ann = calls[0].annotations as Record<string, unknown>;
-		expect(ann.readOnlyHint).toBe(true);
+		// export binds the blob it creates to the exporter's org: it writes
+		expect(ann.readOnlyHint).toBe(false);
 		expect(ann.destructiveHint).toBe(false);
 	});
 

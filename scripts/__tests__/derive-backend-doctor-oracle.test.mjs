@@ -478,6 +478,11 @@ describe("derive-backend-doctor-oracle writer authority (R-10 side-car)", () => 
 			// ASSERTS storage ownership and never binds (Argus REVISE #1465): it is a
 			// read, so it has no writer row. + generate_upload_url (now writes its
 			// upload ticket, CREATE) and claim_upload (binds the blob, UPSERT).
+			// + export_okf_bundle, which binds the blob it creates to the exporter's
+			// org (CREATE) and so now has a writer row.
+			expect(
+				side.find((r) => r.outil === "export_okf_bundle"),
+			).toBeDefined();
 			expect(
 				side.find((r) => r.outil === "validate_okf_bundle"),
 			).toBeUndefined();
