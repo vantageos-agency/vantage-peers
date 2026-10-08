@@ -1898,7 +1898,7 @@ async function listPeersFromOrgRoster(
 } | null> {
 	// Directory vs. identity: `fromAllowList` governs who a token may ACT
 	// AS (send_message `from`, message reads). It is NOT the org directory.
-	// A seat narrowed to its own name (["clio"]) must still see the
+	// A seat narrowed to its own name (e.g. ["agent-a"]) must still see the
 	// colleagues of its org. A non-master token that carries a verified org
 	// is therefore listed FROM THE ORG ROSTER (the door the delegation
 	// guard reads), never from a page of the global profiles table and never
