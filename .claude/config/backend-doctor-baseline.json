@@ -9,7 +9,7 @@
 			"measured_tree_sha": "3b141c484b943dc72b892e19d160f5a001020795",
 			"cli_commit": "b2ecbca62565e492838636caa9724328f6043b78",
 			"command": "cd <backend-doctor worktree @b2ecbca> && npx tsx src/cli.ts <clean vantage-peers worktree @3b141c4>/convex --json-evidence <dir>/",
-			"output_line": "MECHANICAL RULE COUNTS: R-5 62, R-53 234 (MECHANICAL VIOLATIONS: 2 — mechanical [R-5, R-53])",
+			"output_line": "R-2: 0 non-conforming (109 applicable oracle rows conform); MECHANICAL RULE COUNTS: R-5 62, R-53 234",
 			"modules": {}
 		},
 		"R-8": {
@@ -17,7 +17,7 @@
 			"measured_tree_sha": "3b141c484b943dc72b892e19d160f5a001020795",
 			"cli_commit": "b2ecbca62565e492838636caa9724328f6043b78",
 			"command": "cd <backend-doctor worktree @b2ecbca> && npx tsx src/cli.ts <clean vantage-peers worktree @3b141c4>/convex --json-evidence <dir>/",
-			"output_line": "MECHANICAL RULE COUNTS: R-5 62, R-53 234 (MECHANICAL VIOLATIONS: 2 — mechanical [R-5, R-53])",
+			"output_line": "R-8: 0 non-conforming (109 applicable oracle rows conform); MECHANICAL RULE COUNTS: R-5 62, R-53 234",
 			"modules": {}
 		},
 		"R-13": {
@@ -25,7 +25,7 @@
 			"measured_tree_sha": "3b141c484b943dc72b892e19d160f5a001020795",
 			"cli_commit": "b2ecbca62565e492838636caa9724328f6043b78",
 			"command": "cd <backend-doctor worktree @b2ecbca> && npx tsx src/cli.ts <clean vantage-peers worktree @3b141c4>/convex --json-evidence <dir>/",
-			"output_line": "MECHANICAL RULE COUNTS: R-5 62, R-53 234 (MECHANICAL VIOLATIONS: 2 — mechanical [R-5, R-53])",
+			"output_line": "R-13: 0 non-conforming (111 applicable oracle rows conform); MECHANICAL RULE COUNTS: R-5 62, R-53 234",
 			"modules": {}
 		},
 		"R-28": {
@@ -33,7 +33,7 @@
 			"measured_tree_sha": "3b141c484b943dc72b892e19d160f5a001020795",
 			"cli_commit": "b2ecbca62565e492838636caa9724328f6043b78",
 			"command": "cd <backend-doctor worktree @b2ecbca> && npx tsx src/cli.ts <clean vantage-peers worktree @3b141c4>/convex --json-evidence <dir>/",
-			"output_line": "MECHANICAL RULE COUNTS: R-5 62, R-53 234 (MECHANICAL VIOLATIONS: 2 — mechanical [R-5, R-53])",
+			"output_line": "R-28: 0 non-conforming (0 applicable oracle rows); MECHANICAL RULE COUNTS: R-5 62, R-53 234",
 			"modules": {}
 		},
 		"R-31": {
@@ -41,7 +41,7 @@
 			"measured_tree_sha": "3b141c484b943dc72b892e19d160f5a001020795",
 			"cli_commit": "b2ecbca62565e492838636caa9724328f6043b78",
 			"command": "cd <backend-doctor worktree @b2ecbca> && npx tsx src/cli.ts <clean vantage-peers worktree @3b141c4>/convex --json-evidence <dir>/",
-			"output_line": "MECHANICAL RULE COUNTS: R-5 62, R-53 234 (MECHANICAL VIOLATIONS: 2 — mechanical [R-5, R-53])",
+			"output_line": "R-31: 0 non-conforming (abstains: 42 sites could-not-judge); MECHANICAL RULE COUNTS: R-5 62, R-53 234",
 			"modules": {}
 		},
 		"R-52": {
@@ -49,7 +49,7 @@
 			"measured_tree_sha": "3b141c484b943dc72b892e19d160f5a001020795",
 			"cli_commit": "b2ecbca62565e492838636caa9724328f6043b78",
 			"command": "cd <backend-doctor worktree @b2ecbca> && npx tsx src/cli.ts <clean vantage-peers worktree @3b141c4>/convex --json-evidence <dir>/",
-			"output_line": "MECHANICAL RULE COUNTS: R-5 62, R-53 234 (MECHANICAL VIOLATIONS: 2 — mechanical [R-5, R-53])",
+			"output_line": "R-52: 0 non-conforming (6 sites could-not-judge); MECHANICAL RULE COUNTS: R-5 62, R-53 234",
 			"modules": {}
 		},
 		"R-53": {
@@ -57,7 +57,7 @@
 			"measured_tree_sha": "3b141c484b943dc72b892e19d160f5a001020795",
 			"cli_commit": "b2ecbca62565e492838636caa9724328f6043b78",
 			"command": "cd <backend-doctor worktree @b2ecbca> && npx tsx src/cli.ts <clean vantage-peers worktree @3b141c4>/convex --json-evidence <dir>/",
-			"output_line": "MECHANICAL RULE COUNTS: R-5 62, R-53 234 (MECHANICAL VIOLATIONS: 2 — mechanical [R-5, R-53])",
+			"output_line": "R-53: 234 site(s) VIOLATE; MECHANICAL RULE COUNTS: R-5 62, R-53 234",
 			"modules": {}
 		},
 		"R-5": {
@@ -66,7 +66,7 @@
 			"measured_tree_sha": "3b141c484b943dc72b892e19d160f5a001020795",
 			"cli_commit": "b2ecbca62565e492838636caa9724328f6043b78",
 			"command": "cd <backend-doctor worktree @b2ecbca> && npx tsx src/cli.ts <clean vantage-peers worktree @3b141c4>/convex --json-evidence <dir>/",
-			"output_line": "MECHANICAL RULE COUNTS: R-5 62, R-53 234 (MECHANICAL VIOLATIONS: 2 — mechanical [R-5, R-53])"
+			"output_line": "R-5: 62 of 85 applicable oracle rows VIOLATE; MECHANICAL RULE COUNTS: R-5 62, R-53 234"
 		}
 	}
 }
