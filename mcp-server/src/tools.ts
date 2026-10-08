@@ -3326,7 +3326,7 @@ export function registerTools(
 		"Send a message to one or more agents BY AGENT ID (recipientAgentIds, the `agentId` values list_peers returns), or via channel routing (broadcast / fleet role / instance). " +
 			"WHEN: use to notify peers of task completion, handoff, or decision; creates one receipt per recipient. " +
 			"Pass exactly one of recipientAgentIds and channel; an agent of your organisation is addressed by its ID, a name is never matched against an ID. " +
-			"EXAMPLE: send_message from='clio' recipientAgentIds=['<agentId from list_peers>'] content='Brief ready'. " +
+			"EXAMPLE: send_message from='agent-a' recipientAgentIds=['<agentId from list_peers>'] content='Brief ready'. " +
 			"EXAMPLE: send_message from='alpha' channel='beta' content='C3 descriptions PR ready for review'.",
 		{
 			from: creatorSchema
