@@ -1,64 +1,72 @@
 {
 	"schema_version": 1,
-	"ruling": "RULING 6 (Pi), task k172fnxzt4f71yj801mqjcdgnx8fr0md",
+	"ruling": "RULING 6 (Pi), task k172fnxzt4f71yj801mqjcdgnx8fr0md; re-baselined on doctor b2ecbca at tree 3b141c4 by Pi ruling (option b), task k17fbwkmpetmrkv4hcyxnqh8sx8fwva5, 2026-10-08",
 	"semantics": "RATCHET ONLY. Each `count` is a CEILING of non-conforming sites/rows for one mechanical rule. A deploy refuses when the evidence count for a baselined rule is ABOVE its count, when a red mechanical rule is not listed here, when a module listed under `modules` with 0 carries a site, or when any value here is HIGHER than the same value on origin/main. Values may only go down.",
 	"evidence_contract": "The deploy evidence must carry `mechanical_rule_counts` {rule_id: int} (and `mechanical_rule_module_counts` {rule_id: {module: int}} for a rule with a zero-lane module). Without it the gate refuses; it never compares totals.",
 	"rules": {
 		"R-2": {
-			"count": 6,
-			"measured_tree_sha": "65e517e850afe5d21987225a9a41f55f54cde980",
-			"cli_commit": "1bda92f854f8f851ea38af11511968df0c7042e5",
-			"command": "cd /tmp/claude-1001/-root-coding-vantage-memory/418fee1c-2660-40df-b51d-d56a8b7ebbe1/scratchpad/bd-base && npx tsx src/cli.ts /tmp/claude-1001/-root-coding-vantage-memory/418fee1c-2660-40df-b51d-d56a8b7ebbe1/scratchpad/vp-65e517e/convex --json-evidence /tmp/claude-1001/-root-coding-vantage-memory/418fee1c-2660-40df-b51d-d56a8b7ebbe1/scratchpad/ev-65e517e/",
-			"output_line": "R-2: 6 of 106 applicable oracle rows VIOLATE",
+			"count": 0,
+			"measured_tree_sha": "3b141c484b943dc72b892e19d160f5a001020795",
+			"cli_commit": "b2ecbca62565e492838636caa9724328f6043b78",
+			"command": "cd <backend-doctor worktree @b2ecbca> && npx tsx src/cli.ts <clean vantage-peers worktree @3b141c4>/convex --json-evidence <dir>/",
+			"output_line": "R-2: 0 non-conforming (109 applicable oracle rows conform); MECHANICAL RULE COUNTS: R-5 62, R-53 234",
 			"modules": {}
 		},
 		"R-8": {
-			"count": 2,
-			"measured_tree_sha": "65e517e850afe5d21987225a9a41f55f54cde980",
-			"cli_commit": "1bda92f854f8f851ea38af11511968df0c7042e5",
-			"command": "cd /tmp/claude-1001/-root-coding-vantage-memory/418fee1c-2660-40df-b51d-d56a8b7ebbe1/scratchpad/bd-base && npx tsx src/cli.ts /tmp/claude-1001/-root-coding-vantage-memory/418fee1c-2660-40df-b51d-d56a8b7ebbe1/scratchpad/vp-65e517e/convex --json-evidence /tmp/claude-1001/-root-coding-vantage-memory/418fee1c-2660-40df-b51d-d56a8b7ebbe1/scratchpad/ev-65e517e/",
-			"output_line": "R-8: 2 of 106 applicable oracle rows VIOLATE",
+			"count": 0,
+			"measured_tree_sha": "3b141c484b943dc72b892e19d160f5a001020795",
+			"cli_commit": "b2ecbca62565e492838636caa9724328f6043b78",
+			"command": "cd <backend-doctor worktree @b2ecbca> && npx tsx src/cli.ts <clean vantage-peers worktree @3b141c4>/convex --json-evidence <dir>/",
+			"output_line": "R-8: 0 non-conforming (109 applicable oracle rows conform); MECHANICAL RULE COUNTS: R-5 62, R-53 234",
 			"modules": {}
 		},
 		"R-13": {
-			"count": 108,
-			"measured_tree_sha": "65e517e850afe5d21987225a9a41f55f54cde980",
-			"cli_commit": "1bda92f854f8f851ea38af11511968df0c7042e5",
-			"command": "cd /tmp/claude-1001/-root-coding-vantage-memory/418fee1c-2660-40df-b51d-d56a8b7ebbe1/scratchpad/bd-base && npx tsx src/cli.ts /tmp/claude-1001/-root-coding-vantage-memory/418fee1c-2660-40df-b51d-d56a8b7ebbe1/scratchpad/vp-65e517e/convex --json-evidence /tmp/claude-1001/-root-coding-vantage-memory/418fee1c-2660-40df-b51d-d56a8b7ebbe1/scratchpad/ev-65e517e/",
-			"output_line": "R-13: 108 of 108 applicable oracle rows VIOLATE",
+			"count": 0,
+			"measured_tree_sha": "3b141c484b943dc72b892e19d160f5a001020795",
+			"cli_commit": "b2ecbca62565e492838636caa9724328f6043b78",
+			"command": "cd <backend-doctor worktree @b2ecbca> && npx tsx src/cli.ts <clean vantage-peers worktree @3b141c4>/convex --json-evidence <dir>/",
+			"output_line": "R-13: 0 non-conforming (111 applicable oracle rows conform); MECHANICAL RULE COUNTS: R-5 62, R-53 234",
 			"modules": {}
 		},
 		"R-28": {
-			"count": 7,
-			"measured_tree_sha": "65e517e850afe5d21987225a9a41f55f54cde980",
-			"cli_commit": "1bda92f854f8f851ea38af11511968df0c7042e5",
-			"command": "cd /tmp/claude-1001/-root-coding-vantage-memory/418fee1c-2660-40df-b51d-d56a8b7ebbe1/scratchpad/bd-base && npx tsx src/cli.ts /tmp/claude-1001/-root-coding-vantage-memory/418fee1c-2660-40df-b51d-d56a8b7ebbe1/scratchpad/vp-65e517e/convex --json-evidence /tmp/claude-1001/-root-coding-vantage-memory/418fee1c-2660-40df-b51d-d56a8b7ebbe1/scratchpad/ev-65e517e/",
-			"output_line": "R-28: 7 of 7 applicable oracle rows VIOLATE",
+			"count": 0,
+			"measured_tree_sha": "3b141c484b943dc72b892e19d160f5a001020795",
+			"cli_commit": "b2ecbca62565e492838636caa9724328f6043b78",
+			"command": "cd <backend-doctor worktree @b2ecbca> && npx tsx src/cli.ts <clean vantage-peers worktree @3b141c4>/convex --json-evidence <dir>/",
+			"output_line": "R-28: 0 non-conforming (0 applicable oracle rows); MECHANICAL RULE COUNTS: R-5 62, R-53 234",
 			"modules": {}
 		},
 		"R-31": {
-			"count": 18,
-			"measured_tree_sha": "65e517e850afe5d21987225a9a41f55f54cde980",
-			"cli_commit": "1bda92f854f8f851ea38af11511968df0c7042e5",
-			"command": "cd /tmp/claude-1001/-root-coding-vantage-memory/418fee1c-2660-40df-b51d-d56a8b7ebbe1/scratchpad/bd-base && npx tsx src/cli.ts /tmp/claude-1001/-root-coding-vantage-memory/418fee1c-2660-40df-b51d-d56a8b7ebbe1/scratchpad/vp-65e517e/convex --json-evidence /tmp/claude-1001/-root-coding-vantage-memory/418fee1c-2660-40df-b51d-d56a8b7ebbe1/scratchpad/ev-65e517e/",
-			"output_line": "R-31: 18 site(s) VIOLATE",
+			"count": 0,
+			"measured_tree_sha": "3b141c484b943dc72b892e19d160f5a001020795",
+			"cli_commit": "b2ecbca62565e492838636caa9724328f6043b78",
+			"command": "cd <backend-doctor worktree @b2ecbca> && npx tsx src/cli.ts <clean vantage-peers worktree @3b141c4>/convex --json-evidence <dir>/",
+			"output_line": "R-31: 0 non-conforming (abstains: 42 sites could-not-judge); MECHANICAL RULE COUNTS: R-5 62, R-53 234",
 			"modules": {}
 		},
 		"R-52": {
 			"count": 0,
-			"measured_tree_sha": "d8a7b7be28039166f7a4b2a56ace803f8e932bd4",
-			"cli_commit": "23e4e54",
-			"command": "cd /tmp/claude-1001/-root-coding-vantage-memory/418fee1c-2660-40df-b51d-d56a8b7ebbe1/scratchpad/bd-base && npx tsx src/cli.ts /tmp/claude-1001/-root-coding-vantage-memory/418fee1c-2660-40df-b51d-d56a8b7ebbe1/scratchpad/vp-r52/convex --json-evidence /tmp/claude-1001/-root-coding-vantage-memory/418fee1c-2660-40df-b51d-d56a8b7ebbe1/scratchpad/ev-d8a7b7b/",
-			"output_line": "R-52: 0 sites VIOLATE (6 could-not-judge, unchanged); MECHANICAL RULE COUNTS: R-2 6, R-8 2, R-13 108, R-28 7, R-31 18, R-53 113",
+			"measured_tree_sha": "3b141c484b943dc72b892e19d160f5a001020795",
+			"cli_commit": "b2ecbca62565e492838636caa9724328f6043b78",
+			"command": "cd <backend-doctor worktree @b2ecbca> && npx tsx src/cli.ts <clean vantage-peers worktree @3b141c4>/convex --json-evidence <dir>/",
+			"output_line": "R-52: 0 non-conforming (6 sites could-not-judge); MECHANICAL RULE COUNTS: R-5 62, R-53 234",
 			"modules": {}
 		},
 		"R-53": {
-			"count": 113,
-			"measured_tree_sha": "e85618d056f0dd0a39ea57ea70a3b85190a17bde",
-			"cli_commit": "1bda92f854f8f851ea38af11511968df0c7042e5",
-			"command": "cd /tmp/claude-1001/-root-coding-vantage-memory/418fee1c-2660-40df-b51d-d56a8b7ebbe1/scratchpad/bd-base && npx tsx src/cli.ts /root/coding/vantage-memory/.claude/worktrees/agent-a234d7faa2d009387/convex --json-evidence /tmp/claude-1001/-root-coding-vantage-memory/418fee1c-2660-40df-b51d-d56a8b7ebbe1/scratchpad/ev-e85618d/",
-			"output_line": "R-53: 113 site(s) VIOLATE",
+			"count": 234,
+			"measured_tree_sha": "3b141c484b943dc72b892e19d160f5a001020795",
+			"cli_commit": "b2ecbca62565e492838636caa9724328f6043b78",
+			"command": "cd <backend-doctor worktree @b2ecbca> && npx tsx src/cli.ts <clean vantage-peers worktree @3b141c4>/convex --json-evidence <dir>/",
+			"output_line": "R-53: 234 site(s) VIOLATE; MECHANICAL RULE COUNTS: R-5 62, R-53 234",
 			"modules": {}
+		},
+		"R-5": {
+			"modules": {},
+			"count": 62,
+			"measured_tree_sha": "3b141c484b943dc72b892e19d160f5a001020795",
+			"cli_commit": "b2ecbca62565e492838636caa9724328f6043b78",
+			"command": "cd <backend-doctor worktree @b2ecbca> && npx tsx src/cli.ts <clean vantage-peers worktree @3b141c4>/convex --json-evidence <dir>/",
+			"output_line": "R-5: 62 of 85 applicable oracle rows VIOLATE; MECHANICAL RULE COUNTS: R-5 62, R-53 234"
 		}
 	}
 }
