@@ -479,6 +479,9 @@ export const purgeUploadTickets = internalMutation({
 				internal.kbMutations.purgeUploadTickets,
 				{},
 			);
+		console.log(
+			`[kbMutations.purgeUploadTickets] deleted ${ids.size} (batch cap ${UPLOAD_TICKET_PURGE_BATCH}, rescheduled ${rescheduled})`,
+		);
 		return { deleted: ids.size, rescheduled };
 	},
 });

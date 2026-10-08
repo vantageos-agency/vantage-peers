@@ -275,9 +275,7 @@ describe("upload ticket bound to the declared content sha256", () => {
 
 		expect(await bindingsOf(t, storageId)).toEqual(before);
 		const tickets = await t.run(async (ctx) =>
-			ctx.db
-				.query("uploadTickets")
-				.collect(),
+			ctx.db.query("uploadTickets").collect(),
 		);
 		const orgB = tickets.filter((r) => r.orgId === "org-B");
 		expect(orgB).toHaveLength(1);
