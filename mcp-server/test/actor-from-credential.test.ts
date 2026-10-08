@@ -1271,14 +1271,18 @@ describe("verify-actor-credentials — two proofs per actor, derived from the se
 		return {
 			query: vi.fn(async (name: string, args: Record<string, unknown>) => {
 				// An org-scoped caller (the Clerk JWT of org-iris here) is listed FROM
-				// THE ORG ROSTER, not from a page of profiles: list_peers reads
-				// orgRoster:getMyOrgRoster (convex/orgRoster.ts, returns string[]) and
-				// then, per roster name, profiles:listProfiles by orchestratorId
-				// (mcp-server/src/tools.ts, list_peers org branch), taking only the row
-				// whose instanceId is `<name>-<orgSlug>`.
-				if (name === "orgRoster:getMyOrgRoster") {
-					if (opts.peers === "error") throw new Error("roster unavailable");
-					return opts.peers.map((p) => p.id);
+				// THE ORG DIRECTORY, not from a page of profiles: list_peers reads
+				// orgRoster:getMyAgentDirectory (convex/orgRoster.ts, returns
+				// Array<{ name, agentId }>) and then, per name,
+				// profiles:listProfiles by orchestratorId (mcp-server/src/tools.ts,
+				// list_peers org branch), taking only the row whose instanceId is
+				// `<name>-<orgSlug>`.
+				if (name === "orgRoster:getMyAgentDirectory") {
+					if (opts.peers === "error") throw new Error("directory unavailable");
+					return opts.peers.map((p) => ({
+						name: p.id,
+						agentId: `agent_${p.id}`,
+					}));
 				}
 				if (name === "profiles:listProfiles") {
 					if (opts.peers === "error") throw new Error("profiles unavailable");
