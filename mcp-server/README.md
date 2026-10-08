@@ -113,7 +113,7 @@ Your organisation's credential authenticates the **organisation**. An individual
 ## Tools
 
 <!-- tools:start -->
-80 tools are advertised to clients. This reference is generated from the server's own `tools/list` by `scripts/print-tools.mjs`; do not edit it by hand.
+85 tools are advertised to clients. This reference is generated from the server's own `tools/list` by `scripts/print-tools.mjs`; do not edit it by hand.
 
 ### Memory and search (9)
 
@@ -187,7 +187,7 @@ Your organisation's credential authenticates the **organisation**. An individual
 - `list_messages` (read) — List historical messages filtered by session day or sender, newest first; use check_messages for unread.
 - `mark_as_read` (write) — Mark one or more message receipts as read using receiptIds from check_messages.
 - `search_messages_by_keyword` (read) — BM25 full-text keyword search over message content, ranked by relevance.
-- `send_message` (write) — Send a message to one, many, or all orchestrators via channel routing (broadcast / role DM / instance DM).
+- `send_message` (write) — Send a message to one or more agents BY AGENT ID (recipientAgentIds, the `agentId` values list_peers returns), or via channel routing (broadcast / fleet role / instance).
 
 ### Briefing notes (5)
 
@@ -218,28 +218,32 @@ Your organisation's credential authenticates the **organisation**. An individual
 ### Profiles and peers (4)
 
 - `get_profile` (read) — Fetch an orchestrator profile with static identity and dynamic session state fields.
-- `list_peers` (read) — List all orchestrator profiles with current status, summary, and session info, newest first. A non-master token that carries an organisation lists that organisation's roster (not its `from` allowlist); other organisations' agents are never listed.
+- `list_peers` (read) — List all orchestrator profiles with current status, summary, and session info, newest first.
 - `set_summary` (write) — Update the current-work summary for an orchestrator instance, visible via list_peers.
 - `update_profile` (write) — Create or update an orchestrator profile with static identity facts and dynamic session state.
 
 ### Knowledge bundles (OKF) (2)
 
-- `export_okf_bundle` (read) — Export a VantagePeers namespace as an OKF v0.1 bundle (tarball).
+- `export_okf_bundle` (write) — Export a VantagePeers namespace as an OKF v0.1 bundle (tarball).
 - `import_okf_bundle` (write) — Import an OKF v0.1 bundle (memories + briefing-notes + tasks) into a target VantagePeers namespace.
 
-### Other (5)
+### Other (9)
 
-- `claim_upload` (write) — Claim an uploaded blob for your organisation with the single-use ticket generate_upload_url returned (required before validate_okf_bundle reads it).
-- `generate_upload_url` (write) — Mint a Convex storage upload URL for the Knowledge Base ingest flow, plus a single-use upload ticket bound to your org.
+- `add_repo_mapping` (write) — Register or update a GitHub repo to orchestrator mapping for webhook event routing.
+- `claim_upload` (write) — Claim an uploaded blob for your organisation with the single-use ticket generate_upload_url returned.
+- `generate_upload_url` (write) — Mint a Convex storage upload URL for the Knowledge Base ingest flow.
 - `get_bulk_complete_run` (read) — Read the status of one live bulk_complete_tasks run by the `bulkRunId` its first call returned.
+- `get_github_owner_bindings` (read) — List the GitHub owners bound to your organisation (master: all), and for master the org-owned repo mappings that have no proof.
 - `improvisation_digest` (read) — Scan a rolling time window of VP tasks, messages, and memories for durable artifacts that carry fleet/state tokens (commit SHA, PR#, VP id, or decisive verb such as merged/deployed/approved) but have NO VP-Sources footer.
+- `list_repo_mappings` (read) — List all GitHub repo to orchestrator webhook mappings, newest first with cursor paging support.
+- `remove_repo_mapping` (write, destructive) — Delete a GitHub repo mapping by repo name, stopping webhook event routing for that repo.
 - `whoami` (read) — Returns the orchestrator identity baked into the current bearer's scope context.
 
 The tools below are present in the server code but disabled in this release: a client can neither list nor call them. They are named so this reference matches the code exactly.
 
-### Registered, not advertised (29)
+### Registered, not advertised (26)
 
-`accept_mandate`, `add_deployment`, `add_repo_mapping`, `create_bu`, `create_mandate`, `delete_bu`, `get_bu`, `get_error`, `get_issue`, `get_mandate`, `get_repo_mapping`, `issue_stats`, `link_commit_to_issue`, `list_bus`, `list_errors`, `list_issues`, `list_mandates`, `list_repo_mappings`, `remove_deployment`, `remove_repo_mapping`, `settle_mandate`, `soft_delete_mission_template`, `update_bu`, `update_issue_status`, `update_mandate`, `validate_mandate_spending`, `validate_okf_bundle`, `validate_task_payload`, `verify_issue`
+`accept_mandate`, `add_deployment`, `create_bu`, `create_mandate`, `delete_bu`, `get_bu`, `get_error`, `get_issue`, `get_mandate`, `get_repo_mapping`, `issue_stats`, `link_commit_to_issue`, `list_bus`, `list_errors`, `list_issues`, `list_mandates`, `remove_deployment`, `settle_mandate`, `soft_delete_mission_template`, `update_bu`, `update_issue_status`, `update_mandate`, `validate_mandate_spending`, `validate_okf_bundle`, `validate_task_payload`, `verify_issue`
 <!-- tools:end -->
 
 Every tool declares MCP annotations (`readOnlyHint`, `destructiveHint`, `openWorldHint`), so clients such as ChatGPT can label read and write actions correctly. Most list and search tools page their results with a cursor and keep each response under a fixed size; when a response says more results exist, call again with the returned cursor.
