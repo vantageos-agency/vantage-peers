@@ -8351,6 +8351,10 @@ export function registerTools(
 
 	// ── list_repo_mappings ──────────────────────────────────────────────────────
 
+	// oracle-justified: githubRepoMapping rows carry an optional `orgId` (absent = fleet row). The tenant is
+	//   resolved at the Convex door githubRepoMapping:list from the verified caller (withOrgScope +
+	//   requireResolvedCaller), never from an argument: a member is served only its own org's rows, the fleet
+	//   master all of them. The MCP layer only refuses an unresolved caller.
 	defineTool(
 		server,
 		authCtx,
@@ -8490,6 +8494,10 @@ export function registerTools(
 
 	// ── remove_repo_mapping ─────────────────────────────────────────────────────
 
+	// oracle-justified: githubRepoMapping rows carry an optional `orgId` (absent = fleet row). The tenant is
+	//   resolved at the Convex door githubRepoMapping:remove from the verified caller (withOrgScope) and the
+	//   row must belong to it (requireRowOwnedBy), never judged from an argument: a member removes only its
+	//   own org's rows. The MCP layer only refuses an unresolved caller.
 	defineTool(
 		server,
 		authCtx,
@@ -8543,6 +8551,10 @@ export function registerTools(
 	// ── get_github_owner_bindings ──────────────────────────────────────────────
 
 	// oracle-disposition: CONSERVER — githubOwnerBindings is the proof an owner belongs to an org, the only basis on which a repo routes to it
+	// oracle-justified: githubOwnerBindings rows carry the owning `orgId`. The tenant is resolved at the Convex
+	//   doors githubOwnerBinding:listBindings and listUnprovenMappings from the verified caller (withOrgScope +
+	//   requireResolvedCaller), never from an argument: a member sees only its own org's bindings, the unproven
+	//   mappings are master-only. The MCP layer only refuses an unresolved caller.
 	defineTool(
 		server,
 		authCtx,
