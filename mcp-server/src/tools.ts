@@ -8545,7 +8545,7 @@ export function registerTools(
 	// oracle-justified: the binding row is written server-side only by the GitHub-verified
 	//   setup callback (convex/http.ts /github/app/setup); this tool only asks Convex for a
 	//   single-use install state, and Convex requires an org ADMIN of the caller's own org
-	//   (githubOwnerBinding:startBinding -> requireOrgAdmin). Nothing here names an owner.
+	//   (githubOwnerBinding:startBinding -> cloud-identity assertOrgAdmin, by ID). Nothing here names an owner.
 	// oracle-disposition: CONSERVER — githubInstallStates is the single-use install state of the GitHub-verified owner binding
 	defineTool(
 		server,
@@ -8553,7 +8553,7 @@ export function registerTools(
 		{
 			kind: "filtered",
 			reason:
-				"guardResolvedCaller() refuses an unresolved caller; org admin of the own org enforced by githubOwnerBinding:startBinding (requireOrgAdmin); no owner/org argument exists",
+				"guardResolvedCaller() refuses an unresolved caller; org admin of the own org enforced by githubOwnerBinding:startBinding (cloud-identity assertOrgAdmin, by ID); no owner/org argument exists",
 		},
 		"bind_github_owner",
 		"Start binding a GitHub account (owner) to your organisation: returns a single-use install state. " +

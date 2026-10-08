@@ -40,21 +40,36 @@ const makeT = () => convexTest(schema, modules);
 type T = ReturnType<typeof makeT>;
 const ORCH = "eta";
 
+// The Clerk org ID of a seeded org. startBinding resolves the caller BY this ID
+// (the `org_id` claim) and reads its role from `org_role`; the other doors still
+// read the slug claim, so each identity carries both, as a Clerk-native token does.
+const clerkIdOf = (slug: string) => `org_${slug.replace(/[^a-z0-9]/g, "")}`;
+type Claims = Parameters<T["withIdentity"]>[0];
 const member = (t: T, slug: string) =>
-	t.withIdentity({ subject: `member-${slug}`, organizationSlug: slug, orgRole: "org:member" } as Parameters<
-		T["withIdentity"]
-	>[0]);
+	t.withIdentity({
+		subject: `member-${slug}`,
+		organizationSlug: slug,
+		orgRole: "org:member",
+		org_id: clerkIdOf(slug),
+		org_role: "org:member",
+	} as Claims);
 const admin = (t: T, slug: string) =>
-	t.withIdentity({ subject: `admin-${slug}`, organizationSlug: slug, orgRole: "org:admin" } as Parameters<
-		T["withIdentity"]
-	>[0]);
-const master = (t: T) => t.withIdentity({ subject: "test-service-account-user-id" });
+	t.withIdentity({
+		subject: `admin-${slug}`,
+		organizationSlug: slug,
+		orgRole: "org:admin",
+		org_id: clerkIdOf(slug),
+		org_role: "org:admin",
+	} as Claims);
+const master = (t: T) =>
+	t.withIdentity({ subject: "test-service-account-user-id" });
 
 async function seed(t: T, opts: { bind?: boolean } = { bind: true }) {
 	await t.run(async (ctx) => {
 		for (const slug of ["org-a", "org-b"]) {
 			await ctx.db.insert("client_org_mapping", {
 				clerkOrgSlug: slug,
+				clerkOrgId: clerkIdOf(slug),
 				allowedOrchestrators: [ORCH],
 				scopes: ["view-own-tasks", "manage-repo-mappings"],
 				displayName: slug,
@@ -159,15 +174,85 @@ describe("add: a repo is mapped to an org only when its GitHub owner is bound to
 });
 
 describe("startBinding / completeBindingInternal", () => {
-	test("PRESENT: org admin gets a state bound to ITS org; member and master are refused", async () => {
+	const start = (c: ReturnType<typeof member>) =>
+		c
+			.mutation(api.githubOwnerBinding.startBinding, {})
+			.catch((e: unknown) => e);
+	const installStates = (t: T) =>
+		t.run(async (ctx) => ctx.db.query("githubInstallStates").collect());
+
+	test("PRESENT: org admin gets a state bound to ITS org, by Clerk org ID; member and master are refused", async () => {
 		const t = makeT();
 		await seed(t, { bind: false });
-		const r = await admin(t, "org-a").mutation(api.githubOwnerBinding.startBinding, {});
+		const r = await admin(t, "org-a").mutation(
+			api.githubOwnerBinding.startBinding,
+			{},
+		);
 		expect(r.state).toMatch(/^[0-9a-f]{48}\.[0-9a-f]{64}$/);
-		const row = await t.run(async (ctx) => (await ctx.db.query("githubInstallStates").collect())[0]);
-		expect(row.orgId).toBe("org-a");
-		denied(await member(t, "org-a").mutation(api.githubOwnerBinding.startBinding, {}).catch((e: unknown) => e));
-		denied(await master(t).mutation(api.githubOwnerBinding.startBinding, {}).catch((e: unknown) => e));
+		const row = (await installStates(t))[0];
+		expect(row.orgId).toBe(clerkIdOf("org-a"));
+		expect(row.createdBy).toBe("admin-org-a");
+		denied(await start(member(t, "org-a")), "role-not-admin");
+		denied(
+			await master(t)
+				.mutation(api.githubOwnerBinding.startBinding, {})
+				.catch((e: unknown) => e),
+		);
+		expect((await installStates(t)).length).toBe(1);
+	});
+
+	test("REFUSED: an absent role, a role spelled otherwise, and the slug-only legacy token (no org_id)", async () => {
+		const t = makeT();
+		await seed(t, { bind: false });
+		const as = (claims: Record<string, unknown>) =>
+			t.withIdentity({ subject: "admin-org-a", ...claims } as Claims);
+		denied(await start(as({ org_id: clerkIdOf("org-a") })), "role-not-admin");
+		denied(
+			await start(as({ org_id: clerkIdOf("org-a"), org_role: "admin" })),
+			"role-not-admin",
+		);
+		// the camelCase role alone is not the claim the door reads: refused, never inferred
+		denied(
+			await start(as({ org_id: clerkIdOf("org-a"), orgRole: "org:admin" })),
+			"role-not-admin",
+		);
+		denied(
+			await start(as({ organizationSlug: "org-a", org_role: "org:admin" })),
+			"credential-invalid",
+		);
+		expect((await installStates(t)).length).toBe(0);
+	});
+
+	test("REFUSED: the service account presenting an org admin token is a service, never a person admin", async () => {
+		const t = makeT();
+		await seed(t, { bind: false });
+		const svc = t.withIdentity({
+			subject: "test-service-account-user-id",
+			org_id: clerkIdOf("org-a"),
+			org_role: "org:admin",
+		} as Claims);
+		denied(await start(svc), "principal-not-found");
+		expect((await installStates(t)).length).toBe(0);
+	});
+
+	test("REFUSED: an org ID with no mapping, and an inactive org, are not administered", async () => {
+		const t = makeT();
+		await seed(t, { bind: false });
+		const ghost = t.withIdentity({
+			subject: "admin-x",
+			org_id: "org_ghost",
+			org_role: "org:admin",
+		} as Claims);
+		denied(await start(ghost), "organisation-not-active");
+		await t.run(async (ctx) => {
+			const m = await ctx.db
+				.query("client_org_mapping")
+				.withIndex("by_clerk_slug", (q) => q.eq("clerkOrgSlug", "org-b"))
+				.unique();
+			if (m) await ctx.db.patch(m._id, { isActive: false });
+		});
+		denied(await start(admin(t, "org-b")), "organisation-not-active");
+		expect((await installStates(t)).length).toBe(0);
 	});
 
 	test("REFUSED: no signed state can be issued without the GitHub App secret (fail closed)", async () => {
@@ -198,6 +283,32 @@ describe("startBinding / completeBindingInternal", () => {
 			accountType: "Organization",
 			githubUserLogin: "octocat",
 		});
+
+	test("REFUSED at completion: an org deactivated after the state was issued binds nothing", async () => {
+		const t = makeT();
+		await seed(t, { bind: false });
+		const { state } = await admin(t, "org-a").mutation(
+			api.githubOwnerBinding.startBinding,
+			{},
+		);
+		await t.run(async (ctx) => {
+			const m = await ctx.db
+				.query("client_org_mapping")
+				.withIndex("by_clerk_slug", (q) => q.eq("clerkOrgSlug", "org-a"))
+				.unique();
+			if (m) await ctx.db.patch(m._id, { isActive: false });
+		});
+		expect(await complete(t, state)).toEqual({
+			ok: false,
+			reason: "org-not-active",
+		});
+		expect(
+			await t.run(
+				async (ctx) =>
+					(await ctx.db.query("githubOwnerBindings").collect()).length,
+			),
+		).toBe(0);
+	});
 
 	test("success binds the owner to the org that started it; state is single-use", async () => {
 		const t = makeT();

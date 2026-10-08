@@ -1,4 +1,4 @@
-import { type ActingCredential, resolveActingPrincipal } from "@vantageos/cloud-identity";
+import { assertOrgAdmin, resolveActingPrincipal } from "@vantageos/cloud-identity";
 import { ConvexError, v } from "convex/values";
 import type { Doc } from "./_generated/dataModel";
 import {
@@ -9,9 +9,8 @@ import {
 	mutation,
 	query,
 } from "./_generated/server";
-import { lookupOrgMapping, requireOrgAdmin, requireResolvedCaller, withOrgScope } from "./lib/auth";
+import { requireResolvedCaller, withOrgScope } from "./lib/auth";
 import { signInstallState } from "./lib/installState";
-import { findOperatorOrg } from "./lib/operatorOrg";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // GitHub owner binding — the proof behind "this repo belongs to this org".
@@ -21,7 +20,8 @@ import { findOperatorOrg } from "./lib/operatorOrg";
 // could otherwise map "org-b/newrepo" and receive org-b's issues.
 //
 // HOW A BINDING IS PROVEN (no operator in the loop, self-serve):
-//   1. an org ADMIN calls `startBinding` (requireOrgAdmin on its OWN org) and
+//   1. an org ADMIN calls `startBinding` (resolved BY ID and proven admin of
+//      its OWN org through @vantageos/cloud-identity `assertOrgAdmin`) and
 //      receives a single-use, 15-minute, server-generated `state`;
 //   2. the admin installs the VantagePeers GitHub App on the GitHub account
 //      that owns the repos, with that `state` on the install/setup URL;
@@ -135,69 +135,88 @@ function randomNonce(): string {
 
 const START_DOOR = "githubOwnerBinding:startBinding";
 
-function refuseStart(reason: string, detail: string): never {
-	throw new ConvexError(`RBAC_DENIED: ${detail} — ${JSON.stringify({ door: START_DOOR, reason })}`);
+function startRefusal(reason: string, detail: string): ConvexError<string> {
+	return new ConvexError(`RBAC_DENIED: ${detail} — ${JSON.stringify({ door: START_DOOR, reason })}`);
 }
 
-// Step 1. Org admin only, own org only. The caller is identified BY ID through
-// @vantageos/cloud-identity: a dashboard human is a `person` (stored subject +
-// the org claim it presented), the fleet service account is a `service`. Each
-// lookup reads a stored row by id; a miss, an inactive row or an unmapped org is
-// a typed refusal, never a default principal. Only a person of a CLIENT-style
-// org reaches the binding: a service account (the fleet) has no client org.
+// Clerk's admin role claim, exactly as the verified token spells it.
+const ORG_ADMIN_ROLES = ["org:admin"] as const;
+
+// The credential of the person calling startBinding, built ONLY from the
+// verified identity: the Clerk subject, the Clerk org ID the session is bound to
+// (`org_id`) and the role the SAME token carries in that org (`org_role`). No
+// argument contributes. An absent identity is forwarded as absent and the
+// package refuses it; an absent org or role reaches the package as absent and
+// is refused there (credential-invalid / role-not-admin).
+async function startBindingCredential(ctx: MutationCtx) {
+	const identity = await ctx.auth.getUserIdentity();
+	if (identity === null) return null;
+	return {
+		kind: "person" as const,
+		personId: identity.subject,
+		verifiedOrgId: identity.org_id as string,
+		verifiedOrgRole: identity.org_role as string,
+	};
+}
+
+// Step 1. Org admin only, own org only, decided BY ID through
+// @vantageos/cloud-identity: `resolveActingPrincipal` resolves the person in the
+// Clerk org its token is bound to, `assertOrgAdmin` admits it only as an admin of
+// THAT org. Each host read is by ID:
+//   - organisationById / orgKindOf read client_org_mapping by `by_clerk_org_id`;
+//   - personById answers the membership the verified token attests (Clerk issues
+//     `org_id` only to a current member of that org), and answers NOTHING for the
+//     fleet service account: it is a service, never a person, so it never becomes
+//     an org admin here (it is also a Clerk org:admin of orgs it created).
+// The install state is stamped with the principal's org ID (the Clerk org ID);
+// completeBindingInternal re-reads that org by ID before binding.
 export const startBinding = mutation({
 	args: {},
 	returns: v.object({ state: v.string(), expiresAt: v.number() }),
 	handler: async (ctx) => {
 		// write-contract: MCP-transport-only (tool bind_github_owner); an
 		// imperative call, never a render. The refusal is a coded RBAC_DENIED.
-		const identity = await ctx.auth.getUserIdentity();
-		if (identity === null) refuseStart("anonymous", "no authenticated identity presented");
-		const claims = identity as Record<string, unknown>;
-		const orgClaim =
-			(claims.organizationSlug as string | undefined) ??
-			(claims.org_slug as string | undefined) ??
-			null;
-		const serviceAccountUserId = process.env.CLERK_SERVICE_ACCOUNT_USER_ID;
-		const credential: ActingCredential =
-			serviceAccountUserId && identity.subject === serviceAccountUserId
-				? { kind: "service", serviceAccountId: identity.subject }
-				: orgClaim !== null
-					? { kind: "person", personId: identity.subject, verifiedOrgId: orgClaim }
-					: refuseStart("no-organisation", "identity has no organisation attached");
-		const mappingOf = (orgId: string) => lookupOrgMapping(ctx, orgId);
+		const credential = await startBindingCredential(ctx);
 		const who = await resolveActingPrincipal(
 			credential,
 			{
-				personById: async (personId, orgId) => {
-					const m = await mappingOf(orgId);
-					return m === null ? null : { id: personId, orgId, active: m.isActive };
-				},
-				serviceAccountById: async (id) => {
-					const op = await findOperatorOrg(ctx.db);
-					return op.kind === "one" ? { id, orgId: op.slug, active: true } : null;
-				},
+				personById: async (personId, orgId) =>
+					personId === process.env.CLERK_SERVICE_ACCOUNT_USER_ID
+						? null
+						: { id: personId, orgId, active: true },
 				organisationById: async (orgId) => {
-					const m = await mappingOf(orgId);
-					return m === null ? null : { id: orgId, active: m.isActive };
+					const row = await ctx.db
+						.query("client_org_mapping")
+						.withIndex("by_clerk_org_id", (q) => q.eq("clerkOrgId", orgId))
+						.unique();
+					if (row === null) return null;
+					return { id: orgId, active: row.isActive };
 				},
-				orgKindOf: async (orgId) => (await mappingOf(orgId))?.orgKind ?? null,
+				orgKindOf: async (orgId) => {
+					const row = await ctx.db
+						.query("client_org_mapping")
+						.withIndex("by_clerk_org_id", (q) => q.eq("clerkOrgId", orgId))
+						.unique();
+					if (row === null || !row.isActive) return null;
+					return row.orgKind === "operator" ? "operator" : "client";
+				},
 			},
 			START_DOOR,
 		);
-		if (!who.ok) refuseStart(who.refusal.reason, who.refusal.detail);
+		if (!who.ok) throw startRefusal(who.refusal.reason, who.refusal.detail);
 		const principal = who.principal;
-		if (principal.kind !== "person") {
-			refuseStart(
-				"no-client-organisation",
-				"startBinding binds a GitHub owner to a CLIENT org; the caller has no client organisation",
-			);
-		}
-		await requireOrgAdmin(ctx, principal.orgId);
+		const admin = assertOrgAdmin(principal, principal.orgId, {
+			adminRoles: ORG_ADMIN_ROLES,
+			door: START_DOOR,
+		});
+		if (!admin.ok) throw startRefusal(admin.refusal.reason, admin.refusal.detail);
 		const secret = process.env.GITHUB_APP_CLIENT_SECRET;
 		if (!secret) {
 			// Fail closed: without the App secret no signed state can be issued.
-			refuseStart("github-app-not-configured", "the GitHub App is not configured on this deployment");
+			throw startRefusal(
+				"github-app-not-configured",
+				"the GitHub App is not configured on this deployment",
+			);
 		}
 		const state = await signInstallState(randomNonce(), secret);
 		const now = Date.now();
@@ -234,9 +253,18 @@ export const completeBindingInternal = internalMutation({
 		if (row === null) return { ok: false as const, reason: "state-unknown" };
 		if (row.usedAt !== undefined) return { ok: false as const, reason: "state-used" };
 		if (row.expiresAt < now) return { ok: false as const, reason: "state-expired" };
+		// The state carries the Clerk org ID startBinding resolved. Bindings and
+		// mappings are keyed by the org's slug, so the org is re-read BY ID here:
+		// an org gone or deactivated since the state was issued binds nothing.
+		const org = await ctx.db
+			.query("client_org_mapping")
+			.withIndex("by_clerk_org_id", (q) => q.eq("clerkOrgId", row.orgId))
+			.unique();
+		if (org === null || !org.isActive) return { ok: false as const, reason: "org-not-active" };
+		const orgSlug = org.clerkOrgSlug;
 		const owner = args.accountLogin.toLowerCase();
 		const current = await activeBindingForOwner(ctx, owner);
-		if (current !== null && current.orgId !== row.orgId) {
+		if (current !== null && current.orgId !== orgSlug) {
 			// An owner is proven to ONE org. A second org claiming it is refused.
 			return { ok: false as const, reason: "owner-bound-to-another-org" };
 		}
@@ -251,7 +279,7 @@ export const completeBindingInternal = internalMutation({
 		} else {
 			await ctx.db.insert("githubOwnerBindings", {
 				owner,
-				orgId: row.orgId,
+				orgId: orgSlug,
 				installationId: args.installationId,
 				accountType: args.accountType,
 				githubUserLogin: args.githubUserLogin,
@@ -260,7 +288,7 @@ export const completeBindingInternal = internalMutation({
 				active: true,
 			});
 		}
-		return { ok: true as const, owner, orgId: row.orgId };
+		return { ok: true as const, owner, orgId: orgSlug };
 	},
 });
 

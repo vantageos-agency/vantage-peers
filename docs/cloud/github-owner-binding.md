@@ -22,6 +22,11 @@ A mapping whose owner is not bound to the caller's org is refused with
 ## How an owner gets bound (self-serve, no operator step)
 
 1. An org ADMIN calls `bind_github_owner` (Convex `githubOwnerBinding:startBinding`).
+   The caller is identified BY ID through `@vantageos/cloud-identity`: the Clerk
+   session must carry `org_id` (the Clerk org ID, matched against
+   `client_org_mapping.clerkOrgId`, which must be set and active) and `org_role`
+   equal to `org:admin`. A member, a token with no `org_id` or no `org_role`, and
+   the fleet service account are refused `RBAC_DENIED`.
    It returns a single-use `state`, valid 15 minutes, tied to the admin's org. The
    state is `<nonce>.<HMAC-SHA-256>` signed with the App client secret; the setup
    callback verifies the signature (401 on a forged one) before it calls GitHub.
@@ -33,7 +38,9 @@ A mapping whose owner is not bound to the caller's org is refused with
    see it. The owner written is the `account.login` GitHub returns. Nothing in
    the query string names the owner.
 4. `githubOwnerBinding:completeBindingInternal` consumes the state and writes the
-   binding. An owner is bound to one org; a second org claiming it is refused.
+   binding. It re-reads the org by its Clerk org ID first: an org removed or
+   deactivated since the state was issued binds nothing (`org-not-active`). An
+   owner is bound to one org; a second org claiming it is refused.
 5. The HMAC-verified `installation` webhook (`deleted` or `suspend`) deactivates
    the bindings of that installation.
 

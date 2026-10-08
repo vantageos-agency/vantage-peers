@@ -898,14 +898,15 @@ function effectiveTier(mcpTier, cf) {
  *                 MCP-bound service account is admitted      -> fleet-internal
  *   masterOnly    convexTierOf() === "master" (masterOnly: true, or an
  *                 `if (!scope.isMaster)` refusal)             -> master
- *   orgAdmin      requireOrgAdmin(...)                        -> org-admin
+ *   orgAdmin      requireOrgAdmin(...), or the package's        -> org-admin
+ *                 assertOrgAdmin(...) (@vantageos/cloud-identity)
  *   orgResolver   a GUARDS resolver, no gate above            -> org-member
  *   none          no resolver at all                          -> (MCP layer)
  */
 function writerGateOf(code, guards) {
 	if (/mcpBoundOnly\s*:\s*true/.test(code)) return "mcpBoundOnly";
 	if (convexTierOf(code, guards) === "master") return "masterOnly";
-	if (/\brequireOrgAdmin\s*\(/.test(code)) return "orgAdmin";
+	if (/\b(?:requireOrgAdmin|assertOrgAdmin)\s*\(/.test(code)) return "orgAdmin";
 	return guards.size > 0 ? "orgResolver" : "none";
 }
 
