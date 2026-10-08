@@ -16,14 +16,11 @@ import {
 	OWNER_LIST_MAX_LIMIT,
 	pageSize,
 } from "../githubOwnerBinding";
-import { signInstallState } from "../lib/installState";
 import schema from "../schema";
 import { TEST_WEBHOOK_SECRET, signGithubBody } from "../../tests/lib/githubWebhookSignature";
 
 beforeEach(() => {
 	vi.useFakeTimers({ toFake: ["Date", "setTimeout", "clearTimeout"] });
-	// startBinding signs the install state with the GitHub App client secret.
-	vi.stubEnv("GITHUB_APP_CLIENT_SECRET", "csecret");
 });
 afterEach(() => {
 	vi.useRealTimers();
@@ -42,10 +39,6 @@ const ORCH = "eta";
 
 const member = (t: T, slug: string) =>
 	t.withIdentity({ subject: `member-${slug}`, organizationSlug: slug, orgRole: "org:member" } as Parameters<
-		T["withIdentity"]
-	>[0]);
-const admin = (t: T, slug: string) =>
-	t.withIdentity({ subject: `admin-${slug}`, organizationSlug: slug, orgRole: "org:admin" } as Parameters<
 		T["withIdentity"]
 	>[0]);
 const master = (t: T) => t.withIdentity({ subject: "test-service-account-user-id" });
@@ -155,162 +148,6 @@ describe("add: a repo is mapped to an org only when its GitHub owner is bound to
 			.catch((e: unknown) => e);
 		expect(r).not.toBeInstanceOf(Error);
 		expect((await mappingOf(t, "anyone/fleet-repo"))?.orgId).toBeUndefined();
-	});
-});
-
-describe("startBinding / completeBindingInternal", () => {
-	test("PRESENT: org admin gets a state bound to ITS org; member and master are refused", async () => {
-		const t = makeT();
-		await seed(t, { bind: false });
-		const r = await admin(t, "org-a").mutation(api.githubOwnerBinding.startBinding, {});
-		expect(r.state).toMatch(/^[0-9a-f]{48}\.[0-9a-f]{64}$/);
-		const row = await t.run(async (ctx) => (await ctx.db.query("githubInstallStates").collect())[0]);
-		expect(row.orgId).toBe("org-a");
-		denied(await member(t, "org-a").mutation(api.githubOwnerBinding.startBinding, {}).catch((e: unknown) => e));
-		denied(await master(t).mutation(api.githubOwnerBinding.startBinding, {}).catch((e: unknown) => e));
-	});
-
-	test("REFUSED: no signed state can be issued without the GitHub App secret (fail closed)", async () => {
-		vi.stubEnv("GITHUB_APP_CLIENT_SECRET", "");
-		const t = makeT();
-		await seed(t, { bind: false });
-		denied(await admin(t, "org-a").mutation(api.githubOwnerBinding.startBinding, {}).catch((e: unknown) => e));
-		expect(await t.run(async (ctx) => (await ctx.db.query("githubInstallStates").collect()).length)).toBe(0);
-	});
-
-	test("REFUSED: an anonymous caller and an identity with no organisation", async () => {
-		const t = makeT();
-		await seed(t, { bind: false });
-		denied(await t.mutation(api.githubOwnerBinding.startBinding, {}).catch((e: unknown) => e));
-		denied(
-			await t
-				.withIdentity({ subject: "loner" })
-				.mutation(api.githubOwnerBinding.startBinding, {})
-				.catch((e: unknown) => e),
-		);
-	});
-
-	const complete = (t: T, state: string, login = "gh-owner") =>
-		t.mutation(internal.githubOwnerBinding.completeBindingInternal, {
-			state,
-			installationId: 99,
-			accountLogin: login,
-			accountType: "Organization",
-			githubUserLogin: "octocat",
-		});
-
-	test("success binds the owner to the org that started it; state is single-use", async () => {
-		const t = makeT();
-		await seed(t, { bind: false });
-		const { state } = await admin(t, "org-a").mutation(api.githubOwnerBinding.startBinding, {});
-		const ok = await complete(t, state, "GH-Owner");
-		expect(ok).toEqual({ ok: true, owner: "gh-owner", orgId: "org-a" });
-		expect(await complete(t, state)).toEqual({ ok: false, reason: "state-used" });
-		expect(await addMapping(member(t, "org-a"), "gh-owner/r")).not.toBeInstanceOf(Error);
-	});
-
-	test("REFUSED: unknown state, expired state, owner already bound to another org", async () => {
-		const t = makeT();
-		await seed(t, { bind: false });
-		expect(await complete(t, "nope")).toEqual({ ok: false, reason: "state-unknown" });
-		const a = await admin(t, "org-a").mutation(api.githubOwnerBinding.startBinding, {});
-		const b = await admin(t, "org-b").mutation(api.githubOwnerBinding.startBinding, {});
-		expect((await complete(t, a.state)).ok).toBe(true);
-		expect(await complete(t, b.state)).toEqual({ ok: false, reason: "owner-bound-to-another-org" });
-		const c = await admin(t, "org-b").mutation(api.githubOwnerBinding.startBinding, {});
-		vi.setSystemTime(Date.now() + 16 * 60 * 1000);
-		expect(await complete(t, c.state, "other-owner")).toEqual({ ok: false, reason: "state-expired" });
-	});
-});
-
-describe("GitHub-verified setup callback /github/app/setup", () => {
-	const stubGitHub = (opts: { installs?: unknown[]; tokenOk?: boolean } = {}) => {
-		const calls: string[] = [];
-		vi.stubGlobal(
-			"fetch",
-			vi.fn(async (input: string | URL | Request) => {
-				const u = String(input);
-				calls.push(u);
-				if (u.includes("login/oauth/access_token")) {
-					return opts.tokenOk === false
-						? new Response("{}", { status: 400 })
-						: new Response(JSON.stringify({ access_token: "ghu_x" }), { status: 200 });
-				}
-				if (u.includes("/user/installations")) {
-					return new Response(JSON.stringify({ installations: opts.installs ?? [] }), { status: 200 });
-				}
-				if (u.endsWith("/user")) return new Response(JSON.stringify({ login: "octocat" }), { status: 200 });
-				return new Response("{}", { status: 404 });
-			}),
-		);
-		return calls;
-	};
-	const setup = (t: T, q: Record<string, string>) =>
-		t.fetch(`/github/app/setup?${new URLSearchParams(q).toString()}`, { method: "GET" });
-
-	test("fail closed (501) without the GitHub App client credentials", async () => {
-		const t = makeT();
-		await seed(t, { bind: false });
-		expect((await setup(t, { state: "s", code: "c", installation_id: "5" })).status).toBe(501);
-	});
-
-	test("PRESENT: verified installation binds the account.login GitHub returned, not anything in the URL", async () => {
-		vi.stubEnv("GITHUB_APP_CLIENT_ID", "cid");
-		vi.stubEnv("GITHUB_APP_CLIENT_SECRET", "csecret");
-		const t = makeT();
-		await seed(t, { bind: false });
-		stubGitHub({ installs: [{ id: 5, account: { login: "RealOwner", type: "Organization" } }] });
-		const { state } = await admin(t, "org-a").mutation(api.githubOwnerBinding.startBinding, {});
-		const res = await setup(t, { state, code: "c", installation_id: "5", owner: "org-b" });
-		expect(res.status).toBe(200);
-		const rows = await t.run(async (ctx) => await ctx.db.query("githubOwnerBindings").collect());
-		expect(rows.map((r) => [r.owner, r.orgId, r.installationId])).toEqual([["realowner", "org-a", 5]]);
-	});
-
-	test("REFUSED: an installation id the authorising GitHub user cannot see (guessed id)", async () => {
-		vi.stubEnv("GITHUB_APP_CLIENT_ID", "cid");
-		vi.stubEnv("GITHUB_APP_CLIENT_SECRET", "csecret");
-		const t = makeT();
-		await seed(t, { bind: false });
-		stubGitHub({ installs: [{ id: 5, account: { login: "mine", type: "User" } }] });
-		const { state } = await admin(t, "org-a").mutation(api.githubOwnerBinding.startBinding, {});
-		const res = await setup(t, { state, code: "c", installation_id: "6" });
-		expect(res.status).toBe(403);
-		expect(await t.run(async (ctx) => (await ctx.db.query("githubOwnerBindings").collect()).length)).toBe(0);
-	});
-
-	test("REFUSED: failed OAuth exchange, unknown state, missing params", async () => {
-		vi.stubEnv("GITHUB_APP_CLIENT_ID", "cid");
-		vi.stubEnv("GITHUB_APP_CLIENT_SECRET", "csecret");
-		const t = makeT();
-		await seed(t, { bind: false });
-		stubGitHub({ tokenOk: false });
-		const { state } = await admin(t, "org-a").mutation(api.githubOwnerBinding.startBinding, {});
-		expect((await setup(t, { state, code: "c", installation_id: "5" })).status).toBe(502);
-		stubGitHub({ installs: [{ id: 5, account: { login: "x", type: "User" } }] });
-		// signed by this deployment but never issued: the stored row decides (409)
-		const signedUnknown = await signInstallState("f".repeat(48), "csecret");
-		expect((await setup(t, { state: signedUnknown, code: "c", installation_id: "5" })).status).toBe(409);
-		expect((await setup(t, { state: "s" })).status).toBe(400);
-	});
-
-	test("REFUSED 401 before ANY call to GitHub: unsigned, foreign-signed and tampered state", async () => {
-		vi.stubEnv("GITHUB_APP_CLIENT_ID", "cid");
-		vi.stubEnv("GITHUB_APP_CLIENT_SECRET", "csecret");
-		const t = makeT();
-		await seed(t, { bind: false });
-		const calls = stubGitHub({ installs: [{ id: 5, account: { login: "x", type: "User" } }] });
-		const { state } = await admin(t, "org-a").mutation(api.githubOwnerBinding.startBinding, {});
-		const foreign = await signInstallState("a".repeat(48), "another-secret");
-		const tampered = `${"0".repeat(48)}.${state.split(".")[1]}`;
-		for (const bad of ["nope", "a".repeat(48), foreign, tampered, `${state}00`]) {
-			expect((await setup(t, { state: bad, code: "c", installation_id: "5" })).status).toBe(401);
-		}
-		expect(calls).toEqual([]);
-		expect(await t.run(async (ctx) => (await ctx.db.query("githubOwnerBindings").collect()).length)).toBe(0);
-		// the genuine state still reaches GitHub
-		expect((await setup(t, { state, code: "c", installation_id: "5" })).status).toBe(200);
-		expect(calls.length).toBeGreaterThan(0);
 	});
 });
 
@@ -498,15 +335,30 @@ describe("a revoked binding stops routing (it stays REPORTED)", () => {
 		t.run(async (ctx) =>
 			ctx.db.query("issues").withIndex("by_repo_number", (q) => q.eq("repo", "org-a/repo").eq("issueNumber", n)).unique(),
 		);
+	// The verified writer of a binding is not part of this change, so the proof
+	// row is seeded directly: a (re-)bind is an active row for org-a's owner.
 	const bind = async (t: T, installationId: number) => {
-		const { state } = await admin(t, "org-a").mutation(api.githubOwnerBinding.startBinding, {});
-		return t.mutation(internal.githubOwnerBinding.completeBindingInternal, {
-			state,
-			installationId,
-			accountLogin: "org-a",
-			accountType: "Organization",
-			githubUserLogin: "octocat",
+		await t.run(async (ctx) => {
+			const current = await ctx.db
+				.query("githubOwnerBindings")
+				.withIndex("by_owner", (q) => q.eq("owner", "org-a"))
+				.first();
+			if (current !== null) {
+				await ctx.db.patch(current._id, { installationId, active: true, boundAt: Date.now() });
+				return;
+			}
+			await ctx.db.insert("githubOwnerBindings", {
+				owner: "org-a",
+				orgId: "org-a",
+				installationId,
+				accountType: "Organization",
+				githubUserLogin: "octocat",
+				boundBy: "admin-org-a",
+				boundAt: Date.now(),
+				active: true,
+			});
 		});
+		return { ok: true as const };
 	};
 	const autoLink = async (t: T) => {
 		const c = member(t, "org-a");

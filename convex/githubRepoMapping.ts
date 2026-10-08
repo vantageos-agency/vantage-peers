@@ -366,7 +366,7 @@ export const add = mutation({
 			}
 			if (!(await repoOwnerBoundToOrg(ctx, args.repo, tenant))) {
 				throw new ConvexError(
-					`RBAC_DENIED: the GitHub owner of "${args.repo}" is not bound to org "${tenant}" — bind it through the GitHub App install (bind_github_owner) first — ${JSON.stringify({ reason: "github-owner-not-bound", door: "githubRepoMapping:add", repo: args.repo })}`,
+					`RBAC_DENIED: the GitHub owner of "${args.repo}" is not bound to org "${tenant}" — an owner binding for it must exist first — ${JSON.stringify({ reason: "github-owner-not-bound", door: "githubRepoMapping:add", repo: args.repo })}`,
 				);
 			}
 		}

@@ -4,7 +4,6 @@
 		"add_repo_mapping",
 		"add_task_dependency",
 		"billing_summary_by_project",
-		"bind_github_owner",
 		"block_task",
 		"bulk_complete_tasks",
 		"check_messages",
