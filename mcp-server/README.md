@@ -218,7 +218,7 @@ Your organisation's credential authenticates the **organisation**. An individual
 ### Profiles and peers (4)
 
 - `get_profile` (read) — Fetch an orchestrator profile with static identity and dynamic session state fields.
-- `list_peers` (read) — List all orchestrator profiles with current status, summary, and session info, newest first.
+- `list_peers` (read) — List all orchestrator profiles with current status, summary, and session info, newest first. A non-master token that carries an organisation lists that organisation's roster (not its `from` allowlist); other organisations' agents are never listed.
 - `set_summary` (write) — Update the current-work summary for an orchestrator instance, visible via list_peers.
 - `update_profile` (write) — Create or update an orchestrator profile with static identity facts and dynamic session state.
 

@@ -1875,6 +1875,9 @@ function passesBriefingNoteParticipantScope(
 	return false;
 }
 
+// Upper bound on the roster entries one list_peers call resolves (one by-orchestrator read each).
+const ROSTER_LISTING_CAP = 200;
+
 export function registerTools(
 	server: McpServer,
 	rawConvex: ConvexHttpClient,
@@ -3786,6 +3789,114 @@ export function registerTools(
 				}
 				const effectiveLimit =
 					limit === undefined ? undefined : clampLimit(limit);
+
+				// Directory vs. identity: `fromAllowList` governs who a token may ACT
+				// AS (send_message `from`, message reads). It is NOT the org directory.
+				// A seat narrowed to its own name (["clio"]) must still see the
+				// colleagues of its org. A non-master token that carries a verified org
+				// is therefore listed FROM THE ORG ROSTER (the door the delegation
+				// guard reads), never from a page of the global profiles table and never
+				// from fromAllowList. Master, and a token with no org, keep the
+				// scopeFilterList path below unchanged. Only this listing changes: no
+				// acting, message-read or namespace gate is touched.
+				const rosterDoor =
+					!oauthCtx ||
+					isMasterScope(oauthCtx) ||
+					oauthCtx.clerkOrgSlug === undefined
+						? null
+						: oauthCtx.clerkJwt
+							? { door: "orgRoster:getMyOrgRoster", args: {} }
+							: oauthCtx.accessTokenHash
+								? {
+										door: "orgRoster:getForAccessToken",
+										args: { tokenHash: oauthCtx.accessTokenHash },
+									}
+								: null;
+				if (rosterDoor !== null && oauthCtx?.clerkOrgSlug !== undefined) {
+					const orgSlug = oauthCtx.clerkOrgSlug;
+					const roster = await convex.query(
+						// biome-ignore lint/suspicious/noExplicitAny: Convex string API
+						rosterDoor.door as any,
+						rosterDoor.args,
+					);
+					if (isRefusedEnvelope(roster)) {
+						return mcpRefused("list_peers", rosterDoor.door);
+					}
+					// "*" names nobody here: a wildcard never widens a directory to
+					// other organisations. De-duplicated, bounded.
+					const names = [
+						...new Map(
+							(Array.isArray(roster) ? (roster as unknown[]) : [])
+								.filter((n): n is string => typeof n === "string" && n !== "*")
+								.map((n) => [normalizeOrchestratorId(n), n] as const),
+						).values(),
+					].slice(0, ROSTER_LISTING_CAP);
+					const entries = await Promise.all(
+						names.map(async (name) => {
+							// Existing by-orchestratorId read (index by_orchestrator).
+							const rows = await convex.query("profiles:listProfiles" as any, {
+								orchestratorId: name,
+								limit: 50,
+								fields: fields ?? "lite",
+							});
+							if (isRefusedEnvelope(rows)) return "refused" as const;
+							// `profiles` has NO org column. A row is taken only when it is
+							// attributable to THIS org: its instanceId is exactly
+							// `<orchestratorId>-<orgSlug>`. A same-named row of another org
+							// (or an unlabelled legacy row) is never read for its dynamic
+							// fields; the roster entry stands alone.
+							const attributable = (Array.isArray(rows) ? rows : []).find(
+								(r: Record<string, unknown>) =>
+									typeof r.instanceId === "string" &&
+									normalizeOrchestratorId(r.instanceId) ===
+										normalizeOrchestratorId(`${name}-${orgSlug}`),
+							);
+							return { name, row: attributable as any };
+						}),
+					);
+					if (entries.includes("refused")) {
+						return mcpRefused("list_peers", "profiles:listProfiles");
+					}
+					const orgPeers = (
+						entries as Array<{ name: string; row: any | undefined }>
+					).map(({ name, row }) =>
+						row === undefined
+							? {
+									id: name,
+									instanceId: name,
+									name,
+									role: null,
+									workspace: null,
+									currentTask: null,
+									lastSeen: null,
+									sessionCount: null,
+								}
+							: {
+									_id: row._id,
+									_creationTime: row._creationTime,
+									id: name,
+									instanceId: row.instanceId ?? name,
+									name: row.name,
+									role: row.static.role,
+									workspace: row.static.workspace,
+									currentTask: row.dynamic.currentTask ?? "idle",
+									lastSeen: new Date(row.dynamic.lastSeen).toISOString(),
+									sessionCount: row.dynamic.sessionCount,
+								},
+					);
+					return {
+						content: [
+							{
+								type: "text",
+								text: capListResponseBytes(
+									orgPeers,
+									JSON.stringify(orgPeers, null, 2),
+									"list_peers",
+								),
+							},
+						],
+					};
+				}
 
 				// S3.1.B Wave B — scope-aware filter replaces guardMasterOnly.
 				// Master + legacy bearer pass through unchanged. Non-master clients
