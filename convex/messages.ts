@@ -54,6 +54,12 @@ import { clerkOrgIdForSlug } from "./lib/orgClerkId";
 // rather than reflecting an expected volume.
 const UNREAD_RECEIPTS_SCAN_CAP = 500;
 
+// Diacritic-insensitive comparison key for a RECIPIENT name only (never a
+// sender: `from` stays an exact identity). NFD, drop combining marks, lowercase.
+function foldDiacritics(input: string): string {
+	return input.normalize("NFD").replace(/\p{M}/gu, "").toLowerCase();
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Org-scope orchestrator enforcement (same defect class as
 // convex/memories.ts's isNamespaceAllowedForScope — see
@@ -455,31 +461,74 @@ async function sendMessageCore(
 				.map((s) => s.trim())
 				.filter((s) => s.length > 0);
 
-			const bounce = () => {
+			const bounce = (didYouMean: string[] = []) => {
+				const hint =
+					didYouMean.length > 0
+						? ` Vouliez-vous dire : ${didYouMean.map((n) => `'${n}'`).join(" ou ")} ? (did you mean ${didYouMean.map((n) => `'${n}'`).join(" or ")}?)`
+						: "";
 				throw new ConvexError(
-					`recipient error / message non livré : "${args.channel}" ne correspond à aucun destinataire de l'organisation. Formes valides : <role existant> | <instance> | broadcast | liste "eta,pi".`,
+					`recipient error / message non livré : "${args.channel}" ne correspond à aucun destinataire de l'organisation. Formes valides : <role existant> | <instance> | broadcast | liste "eta,pi".${hint}`,
 				);
+			};
+
+			// Recipient-name match (task k1716f01f9g1a0scz7nj30118h8fx32c): the names
+			// THIS caller can address — roles and instances that pass the roster
+			// check above — and nothing else. Every tier below searches only this
+			// set, so a fold can never resolve to, nor suggest, a name outside it.
+			const reachableNames = [
+				...new Set([...knownRoles, ...knownInstances]),
+			].filter(isOnOwnRoster);
+			const reachableSet = new Set(reachableNames);
+			// Tiers, first non-empty wins: exact spelling, then NFC+lowercase, then
+			// diacritic-insensitive. ONE match resolves to the stored spelling; two
+			// or more are never guessed (the caller gets the bounce naming them).
+			const resolveRecipientName = (
+				part: string,
+			): { name: string } | { ambiguous: string[] } | null => {
+				if (reachableSet.has(part)) return { name: part };
+				const tiers: Array<(n: string) => string> = [
+					normalizeOrchestratorId,
+					foldDiacritics,
+				];
+				for (const key of tiers) {
+					const wanted = key(part);
+					const hits = reachableNames.filter((n) => key(n) === wanted);
+					if (hits.length === 1) return { name: hits[0] };
+					if (hits.length > 1) return { ambiguous: hits };
+				}
+				return null;
 			};
 
 			if (rawParts.length === 0) {
 				bounce();
 			}
+			const resolved: string[] = [];
 			for (const part of rawParts) {
 				if (part === args.from) continue; // sender excluding itself never needs to resolve
 				if (isHumanActorName(part)) {
 					// A PERSON ("user:<subject>"): addressable by an agent of the
 					// SAME org only, never by role or profile.
 					await requirePersonRecipientInOrg(ctx, reach, part);
+					resolved.push(part);
 					continue;
 				}
-				const isKnown = knownRoles.has(part) || knownInstances.has(part);
 				// One foreign or unknown part refuses the WHOLE send (same bounce).
-				if (!isKnown || !isOnOwnRoster(part)) {
+				const hit = resolveRecipientName(part);
+				if (hit === null) {
 					bounce();
+					continue;
 				}
+				if ("ambiguous" in hit) {
+					bounce(hit.ambiguous);
+					continue;
+				}
+				// The sender excluding itself, by its stored spelling (`from` itself
+				// is never folded).
+				if (hit.name === args.from || resolved.includes(hit.name)) continue;
+				resolved.push(hit.name);
 			}
 
-			recipients = rawParts.filter((s) => s !== args.from);
+			recipients = resolved;
 			if (recipients.length === 0) {
 				bounce();
 			}
