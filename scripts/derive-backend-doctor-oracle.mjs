@@ -63,7 +63,23 @@
  *                    string, quoted verbatim as `source reason (...)`.
  *   table_purpose    the leading comment of the table in convex/schema.ts
  *                    (banner lines dropped); `?` when there is none.
- *   table_conserver_supprimer  a disposition decision, no code source => "".
+ *   table_conserver_supprimer  a disposition decision (backend-standard §5
+ *                    R-13: the table stays / goes / is undecided with an owner
+ *                    and a deadline). Its ONLY source is the tool's own
+ *                    `// oracle-disposition: <value>` comment in the block
+ *                    immediately before its defineTool( call (same block as
+ *                    `oracle-justified:`; each marker's text runs to the next
+ *                    `oracle-<name>:` line), emitted verbatim. No marker => ""
+ *                    (nothing is inferred, not even from a table neighbour, so
+ *                    an undeclared tool still counts under R-13). The value is
+ *                    a closed set, checked before any row is written:
+ *                      CONSERVER[ <why>]  |  SUPPRIMER[ <why>]  |
+ *                      UNDECIDED owner: <who> deadline: YYYY-MM-DD[ <why>]
+ *                    (the forms backend-doctor's r13 predicate conforms on:
+ *                    ^CONSERVER / ^SUPPRIMER, or undecided + owner: + deadline).
+ *                    Anything else — another word, a lower-case keyword, a
+ *                    bare UNDECIDED, a decision that also says undecided, an
+ *                    empty marker — exits 2 and writes nothing.
  *   statut_suppression  a current tool is not removed => "".
  *
  * Writer authority (backend-standard R-10) has NO column in the 18-column
@@ -107,7 +123,9 @@
  *            from a fresh derivation.
  *   --root:  derive from another tree (tests run against temp copies);
  *            defaults to the repository containing this script.
- *   exit 2:  the population guard refused (see above), in either mode.
+ *   exit 2:  the population guard refused (see above), or a declaration
+ *            marker (oracle-justified / oracle-disposition) is illegal, in
+ *            either mode.
  */
 
 import {
@@ -1024,14 +1042,19 @@ function objProps(node, file) {
 }
 
 /**
- * The written justification a tool's source carries for a divergence from its
- * table neighbours: a `// oracle-justified: <reason>` comment block placed
- * immediately before the tool's `defineTool(` statement (continuation lines
- * are the following `//` lines of the same block). The reason is the
- * author's own statement, never generated here; a marker with no reason text
- * makes the population guard refuse (returned as `{ empty: true }`).
+ * The declaration markers a tool's source carries in the `//` comment block
+ * placed immediately before its `defineTool(` statement: `oracle-<name>:
+ * <text>`, continued by the following `//` lines of the block up to the next
+ * `oracle-<name>:` line. The text is the author's own statement, never
+ * generated here. Returns name -> text ("" when the marker has no text; the
+ * last occurrence of a name wins).
+ *   oracle-justified:   a divergence from the table neighbours, emitted as
+ *                       `JUSTIFIED: <reason>` in rbac_adjustment_needed.
+ *   oracle-disposition: the R-13 disposition, emitted verbatim in
+ *                       table_conserver_supprimer (see DISPOSITION below).
  */
-function justificationOf(file, call) {
+const MARKER = /^oracle-([a-z][a-z-]*):/;
+function markersOf(file, call) {
 	let stmt = call;
 	while (
 		stmt.parent &&
@@ -1049,16 +1072,46 @@ function justificationOf(file, call) {
 				.split("\n")
 				.map((l) => l.replace(/^\s*\/\/ ?/, "").trim()),
 		);
-	const at = lines.findLastIndex((l) => l.startsWith("oracle-justified:"));
-	if (at < 0) return null;
-	const reason = [
-		lines[at].slice("oracle-justified:".length),
-		...lines.slice(at + 1),
-	]
-		.join(" ")
-		.replace(/\s+/g, " ")
-		.trim();
-	return reason === "" ? { empty: true } : { reason };
+	const out = new Map();
+	let name = null;
+	let parts = [];
+	const flush = () => {
+		if (name !== null)
+			out.set(name, parts.join(" ").replace(/\s+/g, " ").trim());
+	};
+	for (const l of lines) {
+		const m = MARKER.exec(l);
+		if (m) {
+			flush();
+			name = m[1];
+			parts = [l.slice(m[0].length)];
+		} else if (name !== null) parts.push(l);
+	}
+	flush();
+	return out;
+}
+
+/**
+ * R-13 disposition vocabulary (backend-standard §5; backend-doctor r13). A
+ * legal value returns null; an illegal one returns why. Keywords are
+ * upper-case and whole-word, as the doctor's ^CONSERVER/^SUPPRIMER test is
+ * case-sensitive. A decision that also says "undecided" is refused because the
+ * doctor would read it as undecided.
+ */
+const DISPOSITION_SET = "{CONSERVER, SUPPRIMER, UNDECIDED}";
+function dispositionProblem(value) {
+	if (value === "") return "oracle-disposition marker carries no value";
+	const undecidedWord = /undecided|\(a confirmer\)/i;
+	if (/^(CONSERVER|SUPPRIMER)(?![\p{L}\p{N}_])/u.test(value))
+		return undecidedWord.test(value)
+			? `oracle-disposition "${value}" names a decision and undecided at once`
+			: null;
+	if (/^UNDECIDED(?![\p{L}\p{N}_])/u.test(value))
+		return /owner\s*:\s*\S/i.test(value) &&
+			/deadline\s*:\s*\d{4}-\d{2}-\d{2}\b/i.test(value)
+			? null
+			: `oracle-disposition "${value}": UNDECIDED without owner: and deadline: (deadline as YYYY-MM-DD)`;
+	return `oracle-disposition "${value}" outside ${DISPOSITION_SET}`;
 }
 
 const tools = [];
@@ -1066,6 +1119,7 @@ const mcpFiles = walkFiles(MCP_SRC).filter(
 	(f) => !f.endsWith("registerTool.ts"),
 );
 const astSkipped = [];
+const illegalDeclarations = [];
 for (const file of mcpFiles) {
 	forEachDeep(sourceOf(file), (n) => {
 		if (
@@ -1092,13 +1146,20 @@ for (const file of mcpFiles) {
 			scope[k] = evalString(file, v) ?? v.getText();
 		const schemaNode = strip(a[5]);
 		const handler = a[a.length - 1];
-		const justification = justificationOf(file, n);
-		if (justification?.empty)
+		const markers = markersOf(file, n);
+		const justification = markers.get("justified");
+		if (justification === "")
 			astSkipped.push(
 				`${where} oracle-justified marker carries no reason text`,
 			);
+		const disposition = markers.get("disposition");
+		if (disposition !== undefined) {
+			const problem = dispositionProblem(disposition);
+			if (problem) illegalDeclarations.push(`${where} ${name}: ${problem}`);
+		}
 		tools.push({
-			justification: justification?.reason ?? "",
+			justification: justification ?? "",
+			disposition: disposition ?? "",
 			file,
 			line: sourceOf(file).getLineAndCharacterOfPosition(n.getStart()).line + 1,
 			name,
@@ -1244,6 +1305,13 @@ function populationProblems() {
 {
 	const problems = populationProblems();
 	if (problems.length) refusePopulation(problems);
+}
+if (illegalDeclarations.length) {
+	console.error(
+		`REFUSED: ${illegalDeclarations.length} illegal oracle declaration(s); ${relative(ROOT, OUT)} not written/checked`,
+	);
+	for (const p of illegalDeclarations) console.error(`  - ${p}`);
+	process.exit(2);
 }
 
 // ── per-tool column derivation ──────────────────────────────────────────────
@@ -1480,7 +1548,7 @@ for (const t of tools) {
 		rbac_coherence_table: "",
 		rbac_adjustment_needed: reason,
 		table_purpose: purpose,
-		table_conserver_supprimer: "",
+		table_conserver_supprimer: t.disposition,
 		statut_suppression: "",
 	});
 }
