@@ -1883,8 +1883,10 @@ const LIST_PEERS = "list_peers";
 /**
  * list_peers for a NON-MASTER token that carries a verified org: the listing
  * is the caller's OWN org roster. The org is never read from an argument:
- * orgRoster:getMyOrgRoster (Clerk session) and orgRoster:getForAccessToken
- * (access-token hash) derive it server-side from the verified credential.
+ * orgRoster:getMyAgentDirectory (Clerk session) and
+ * orgRoster:getAgentDirectoryForAccessToken (access-token hash) derive it
+ * server-side from the verified credential and attach each agent's unique ID
+ * (`agentId`, null = not addressable) for send_message `recipientAgentIds`.
  * Returns null when the roster path does not apply (no context, master, no
  * org, no credential handle); the caller then scopes with scopeFilterList.
  */
@@ -1905,35 +1907,58 @@ async function listPeersFromOrgRoster(
 	// from fromAllowList. Master, and a token with no org, keep the
 	// caller's scopeFilterList path unchanged. Only this listing changes: no
 	// acting, message-read or namespace gate is touched.
-	const rosterDoor =
+	const directoryDoors =
 		!oauthCtx || isMasterScope(oauthCtx) || oauthCtx.clerkOrgSlug === undefined
 			? null
 			: oauthCtx.clerkJwt
-				? { door: "orgRoster:getMyOrgRoster", args: {} }
+				? {
+						directory: "orgRoster:getMyAgentDirectory",
+						args: {},
+					}
 				: oauthCtx.accessTokenHash
 					? {
-							door: "orgRoster:getForAccessToken",
+							directory: "orgRoster:getAgentDirectoryForAccessToken",
 							args: { tokenHash: oauthCtx.accessTokenHash },
 						}
 					: null;
-	if (rosterDoor === null || oauthCtx?.clerkOrgSlug === undefined) {
+	if (directoryDoors === null || oauthCtx?.clerkOrgSlug === undefined) {
 		return null;
 	}
 	const orgSlug = oauthCtx.clerkOrgSlug;
-	const roster = await convex.query(
+	// A provider that cannot answer the directory door is an error, raised as
+	// such: it is never silently replaced by a name-only roster.
+	const roster: unknown = await convex.query(
 		// biome-ignore lint/suspicious/noExplicitAny: Convex string API
-		rosterDoor.door as any,
-		rosterDoor.args,
+		directoryDoors.directory as any,
+		directoryDoors.args,
 	);
 	if (isRefusedEnvelope(roster)) {
-		return mcpRefused(LIST_PEERS, rosterDoor.door);
+		return mcpRefused(LIST_PEERS, directoryDoors.directory);
 	}
 	// "*" names nobody here: a wildcard never widens a directory to
 	// other organisations. De-duplicated, bounded.
+	const agentIdOf = new Map<string, string | null>();
+	const rosterNames: string[] = [];
+	for (const entry of Array.isArray(roster) ? (roster as unknown[]) : []) {
+		if (typeof entry === "string") {
+			rosterNames.push(entry);
+		} else if (
+			entry !== null &&
+			typeof entry === "object" &&
+			typeof (entry as { name?: unknown }).name === "string"
+		) {
+			const en = entry as { name: string; agentId?: unknown };
+			rosterNames.push(en.name);
+			agentIdOf.set(
+				normalizeOrchestratorId(en.name),
+				typeof en.agentId === "string" ? en.agentId : null,
+			);
+		}
+	}
 	const names = [
 		...new Map(
-			(Array.isArray(roster) ? (roster as unknown[]) : [])
-				.filter((n): n is string => typeof n === "string" && n !== "*")
+			rosterNames
+				.filter((n) => n !== "*")
 				.map((n) => [normalizeOrchestratorId(n), n] as const),
 		).values(),
 	].slice(0, ROSTER_LISTING_CAP);
@@ -1969,6 +1994,7 @@ async function listPeersFromOrgRoster(
 		row === undefined
 			? {
 					id: name,
+					agentId: agentIdOf.get(normalizeOrchestratorId(name)) ?? null,
 					instanceId: name,
 					name,
 					role: null,
@@ -1981,6 +2007,7 @@ async function listPeersFromOrgRoster(
 					_id: row._id,
 					_creationTime: row._creationTime,
 					id: name,
+					agentId: agentIdOf.get(normalizeOrchestratorId(name)) ?? null,
 					instanceId: row.instanceId ?? name,
 					name: row.name,
 					role: row.static.role,
@@ -3296,8 +3323,10 @@ export function registerTools(
 		authCtx,
 		{ kind: "from", fromArg: "from" },
 		"send_message",
-		"Send a message to one, many, or all orchestrators via channel routing (broadcast / role DM / instance DM). " +
+		"Send a message to one or more agents BY AGENT ID (recipientAgentIds, the `agentId` values list_peers returns), or via channel routing (broadcast / fleet role / instance). " +
 			"WHEN: use to notify peers of task completion, handoff, or decision; creates one receipt per recipient. " +
+			"Pass exactly one of recipientAgentIds and channel; an agent of your organisation is addressed by its ID, a name is never matched against an ID. " +
+			"EXAMPLE: send_message from='agent-a' recipientAgentIds=['<agentId from list_peers>'] content='Brief ready'. " +
 			"EXAMPLE: send_message from='alpha' channel='beta' content='C3 descriptions PR ready for review'.",
 		{
 			from: creatorSchema
@@ -3311,8 +3340,17 @@ export function registerTools(
 				.describe("Sender instance ID — e.g. 'pi-chromebook', 'tau-vps-1'"),
 			channel: z
 				.string()
+				.optional()
 				.describe(
-					"Recipients: 'broadcast' | 'tau' | 'pi-vps' | 'tau,phi' (comma-separated)",
+					"Recipients by NAME (fleet routing): 'broadcast' | 'tau' | 'pi-vps' | 'tau,phi' (comma-separated). Omit when recipientAgentIds is given.",
+				),
+			recipientAgentIds: z
+				.array(z.string().min(1))
+				.min(1)
+				.max(50)
+				.optional()
+				.describe(
+					"Recipients BY AGENT ID: the `agentId` values list_peers returns for your organisation (1-50). A name here is refused, never matched. Omit when channel is given.",
 				),
 			content: z.string().describe("Message content"),
 			sessionDay: z
@@ -3339,12 +3377,20 @@ export function registerTools(
 			from,
 			fromInstanceId,
 			channel,
+			recipientAgentIds,
 			content,
 			sessionDay,
 			tenantId,
 		}) => {
 			let contentBytes = 0;
 			try {
+				// Exactly one recipient form. Refused here, before anything is
+				// resolved or sent; Convex refuses the same (INVALID_RECIPIENTS).
+				if ((channel === undefined) === (recipientAgentIds === undefined)) {
+					return mcpError(
+						"INVALID_RECIPIENTS: send_message takes exactly one of `recipientAgentIds` (agent IDs from list_peers `agentId`) or `channel` (broadcast, a fleet role, an instance).",
+					);
+				}
 				// No sender named: a person acting in its own name (personDoorArgs).
 				// An instance label, if typed, is forwarded and refused by the
 				// Convex human door (a person has no instance).
@@ -3443,7 +3489,9 @@ export function registerTools(
 				// A person channel ("user:<Clerk subject>") is also kept verbatim: a
 				// subject is case-sensitive and Convex matches it byte for byte
 				// against the name the person was written down under.
+				// Agent IDs are forwarded verbatim: an ID is never normalised.
 				const normChannel =
+					channel === undefined ||
 					channel === "broadcast" ||
 					channel.includes(",") ||
 					channel.toLowerCase().startsWith(PERSON_ACTOR_PREFIX)
@@ -3456,7 +3504,9 @@ export function registerTools(
 				const messageId = await convex.mutation("messages:sendMessage" as any, {
 					from: normFrom,
 					fromInstanceId: senderInstance,
-					channel: normChannel,
+					...(recipientAgentIds !== undefined
+						? { recipientAgentIds }
+						: { channel: normChannel }),
 					content: resolvedContent,
 					sessionDay: derivedSessionDay,
 					tenantId,
@@ -3474,10 +3524,18 @@ export function registerTools(
 									? {
 											messageId,
 											from: sender,
-											channel,
+											...(recipientAgentIds !== undefined
+												? { recipientAgentIds }
+												: { channel }),
 											stateUnverified: unverified,
 										}
-									: { messageId, from: sender, channel },
+									: {
+											messageId,
+											from: sender,
+											...(recipientAgentIds !== undefined
+												? { recipientAgentIds }
+												: { channel }),
+										},
 								null,
 								2,
 							),
@@ -3490,6 +3548,7 @@ export function registerTools(
 					contentBytes,
 					from,
 					channel,
+					recipientAgentIds,
 					errorMessage: error?.message ?? String(error),
 				});
 				return mcpConvexError(error);
@@ -3874,11 +3933,12 @@ export function registerTools(
 			kind: "filtered",
 			reason:
 				"org-scoped non-master token served from its own org roster via listPeersFromOrgRoster(convex,oauthCtx,...) " +
-				"(org derived server-side from the verified session/token by orgRoster:getMyOrgRoster / orgRoster:getForAccessToken); " +
+				"(org derived server-side from the verified session/token by orgRoster:getMyAgentDirectory / orgRoster:getAgentDirectoryForAccessToken); " +
 				"master and no-org tokens scoped in-handler via scopeFilterList(oauthCtx,...)",
 		},
 		"list_peers",
 		"List all orchestrator profiles with current status, summary, and session info, newest first. " +
+			"For an organisation token, lists the organisation's agents, each with its unique `agentId`: pass it to send_message `recipientAgentIds` (agentId null = not addressable). " +
 			"WHEN: use before assigning work or sending a DM to confirm who is active and what they are doing. " +
 			"EXAMPLE: list_peers limit=20 fields='lite'. " +
 			"Default limit 20. cap 200.",

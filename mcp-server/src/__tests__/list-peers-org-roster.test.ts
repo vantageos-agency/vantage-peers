@@ -101,6 +101,11 @@ function mockConvex(roster: unknown) {
 		}
 		if (door.startsWith("orgRoster:")) {
 			if (roster instanceof Error) throw roster;
+			// The directory doors return the roster WITH agent IDs (the IDs
+			// themselves are pinned by send-message-recipient-agent-ids.test.ts).
+			if (door.includes("AgentDirectory") && Array.isArray(roster)) {
+				return roster.map((name) => ({ name, agentId: null }));
+			}
 			return roster;
 		}
 		return [];
@@ -168,6 +173,7 @@ describe("list_peers - org roster listing for a non-master token with an org", (
 		const victor = peers.find((p) => p.id === "victor");
 		expect(victor).toEqual({
 			id: "victor",
+			agentId: null,
 			instanceId: "victor",
 			name: "victor",
 			role: null,
@@ -215,27 +221,30 @@ describe("list_peers - org roster listing for a non-master token with an org", (
 		expect(folded[0].sessionCount).toBeNull(); // no row for the unaccented spelling
 	});
 
-	it("Clerk-JWT session reads the roster through getMyOrgRoster", async () => {
+	it("Clerk-JWT session reads the roster through getMyAgentDirectory", async () => {
 		const { ids, query } = await listPeers(
 			seat({ accessTokenHash: undefined, clerkJwt: "jwt" }),
 			IRIS_ROSTER,
 		);
 		expect(ids).toHaveLength(4);
-		expect(query).toHaveBeenCalledWith("orgRoster:getMyOrgRoster", {});
+		expect(query).toHaveBeenCalledWith("orgRoster:getMyAgentDirectory", {});
 	});
 
-	it("token path reads only the roster of ITS OWN token hash (no org argument)", async () => {
+	it("token path reads only the directory of ITS OWN token hash (no org argument)", async () => {
 		const { query } = await listPeers(seat({}), IRIS_ROSTER);
-		expect(query).toHaveBeenCalledWith("orgRoster:getForAccessToken", {
-			tokenHash: "hash-clio",
-		});
+		expect(query).toHaveBeenCalledWith(
+			"orgRoster:getAgentDirectoryForAccessToken",
+			{ tokenHash: "hash-clio" },
+		);
 	});
 
 	it("a refusal envelope from the roster door is surfaced, not coalesced to []", async () => {
 		const { raw } = await listPeers(seat({}), { refused: true, items: [] });
 		expect(raw.isError).toBe(true);
 		expect(raw.content[0].text).toContain("REFUSED (RBAC_DENIED)");
-		expect(raw.content[0].text).toContain("orgRoster:getForAccessToken");
+		expect(raw.content[0].text).toContain(
+			"orgRoster:getAgentDirectoryForAccessToken",
+		);
 	});
 
 	it("a roster door that raises is an error result, not an empty directory", async () => {
@@ -277,7 +286,7 @@ describe("send_message - acting is NOT widened by the directory change", () => {
 		registerTools(server, m.convex, seat({}));
 		const res = (await handlers.get("send_message")?.({
 			from: HELIOS,
-			to: "marie",
+			channel: "marie",
 			content: "impersonation attempt",
 		})) as ToolResult;
 		expect(res.isError).toBe(true);
