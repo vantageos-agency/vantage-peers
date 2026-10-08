@@ -44,7 +44,7 @@ import { registerValidateOkfBundle } from "./tools/validateOkfBundle.js";
 import type { VpToolResult } from "./ui-resources/schemas.js";
 import { wrapToolResult } from "./ui-resources/stream-marker.js";
 import { validateTaskPayload } from "./validate-task-payload.js";
-import { withVerifiedActor } from "./verifiedActor.js";
+import { verifiedActorOf, withVerifiedActor } from "./verifiedActor.js";
 import { resolveWhoamiIdentity } from "./whoamiIdentity.js";
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -2147,6 +2147,20 @@ export function registerTools(
 		const orgSlug = verifiedOrgOf();
 		return orgSlug !== undefined ? { verifiedOrg: { orgSlug } } : {};
 	};
+	// The inbox doors (check_messages, mark_as_read, delete_message) identify the
+	// reader BY ID. A bearer that resolved ONE agent forwards its ID
+	// (verifiedActor.ts, added to the call by the wrapped client). A bearer that
+	// names several agents behind one org-level token has no single ID: it
+	// forwards its VERIFIED org instead, and Convex resolves the name in that org
+	// only. Never both, never a tool argument, and nothing for a person acting in
+	// its own name (that call carries verifiedPerson).
+	const inboxOrgArgs = (
+		actingName: string | undefined,
+	): { verifiedOrg?: { orgSlug: string } } =>
+		verifiedActorOf(oauthCtx) !== undefined ||
+		Object.keys(personDoorArgs(actingName)).length > 0
+			? {}
+			: verifiedOrgArgs();
 	// A lookup miss at this boundary is a DENY, never a fall-through
 	// (.claude/rules/http-boundary-derives-from-principal.md): a NON-master bearer
 	// whose organisation cannot be resolved (no verified actor, no token-row org,
@@ -3636,6 +3650,8 @@ export function registerTools(
 					}
 				}
 
+				const orgUnresolved = unresolvedOrgDenial("check_messages");
+				if (orgUnresolved) return orgUnresolved;
 				const result = await convex.query(
 					"messages:checkNewMessagesEnvelope" as any,
 					{
@@ -3644,6 +3660,7 @@ export function registerTools(
 						tenantId,
 						since,
 						limit,
+						...inboxOrgArgs(recipient),
 					},
 				);
 				// Day-156 reader-first: extra envelope fields are ignored;
@@ -3782,9 +3799,13 @@ export function registerTools(
 				} else {
 					receiptIdsArray = [receiptIds as string];
 				}
+				const orgUnresolved = unresolvedOrgDenial("mark_as_read");
+				if (orgUnresolved) return orgUnresolved;
 				const count = await convex.mutation("messages:markAsRead" as any, {
 					receiptIds: receiptIdsArray,
 					callerOrchestrator,
+					...personDoorArgs(callerOrchestrator),
+					...inboxOrgArgs(callerOrchestrator),
 				});
 
 				return {
@@ -3837,9 +3858,12 @@ export function registerTools(
 					if (fromDenied) return fromDenied;
 				}
 
+				const orgUnresolved = unresolvedOrgDenial("delete_message");
+				if (orgUnresolved) return orgUnresolved;
 				const result = await convex.mutation("messages:deleteMessage" as any, {
 					messageId: messageId as any,
 					callerOrchestrator,
+					...inboxOrgArgs(callerOrchestrator),
 				});
 
 				return {
