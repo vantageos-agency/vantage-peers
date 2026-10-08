@@ -11,13 +11,13 @@ import { resolveVerifiedOrg, type VerifiedOrg } from "./verifiedOrg";
 // ─────────────────────────────────────────────────────────────────────────────
 // inboxReader — WHO is reading an inbox, decided once, for every inbox door
 // (checkNewMessages, checkNewMessagesEnvelope, getUnreadCount, markAsRead,
-// deleteMessage). Cloud security, class of the Iris RH incident (task
+// deleteMessage). Cloud security, class of a client incident (task
 // k17c5q842gm1gbh0j2qjtc80g18fx5kb); operator decision 2026-10-08: the inbox is
 // read by the caller's VERIFIED agent ID, never by a supplied name.
 //
 // The defect. These doors keyed on the `recipient` NAME. The fleet service
 // account (which every MCP seat reaches Convex as) is master with no org, so
-// `recipient: "hélios"` with no tenant read EVERY org's "hélios" mailbox: the
+// `recipient: "agent-b"` with no tenant read EVERY org's "agent-b" mailbox: the
 // wire shape of another org's same-named agent's seat calling check_messages.
 //
 // The five readers (one of them per call, never a mixture):
