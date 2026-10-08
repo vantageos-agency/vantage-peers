@@ -244,22 +244,7 @@ describe("DIRECTORY — list_peers carries the agentId Convex attached", () => {
 		);
 	});
 
-	it("a provider without the directory door: name roster, every agentId null", async () => {
-		const h = harness(seat(), {
-			directory: new Error(
-				"[Request ID: x] Server Error Could not find public function for 'orgRoster:getAgentDirectoryForAccessToken'",
-			),
-			roster: ["clio", HELIOS],
-		});
-		const list = await peers(h);
-		expect(list.map((p) => [p.id, p.agentId])).toEqual([
-			["clio", null],
-			[HELIOS, null],
-		]);
-		expect(h.calls.map((c) => c.name)).toContain("orgRoster:getForAccessToken");
-	});
-
-	it("any other directory error is an error result; the roster is not read", async () => {
+	it("a directory error is an error result; the roster is not read", async () => {
 		const h = harness(seat(), {
 			directory: new Error(
 				"RBAC_DENIED: access token not found, revoked, or expired",

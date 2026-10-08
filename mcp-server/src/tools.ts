@@ -1880,15 +1880,6 @@ const ROSTER_LISTING_CAP = 200;
 
 const LIST_PEERS = "list_peers";
 
-// A Convex provider that does not serve a function answers
-// "Could not find public function for '<module>:<name>'". Used ONLY by the
-// transitional list_peers fallback (reader ahead of provider); never a
-// licence to swallow any other error.
-function isMissingConvexFunction(err: unknown): boolean {
-	const message = err instanceof Error ? err.message : String(err);
-	return message.includes("Could not find public function");
-}
-
 /**
  * list_peers for a NON-MASTER token that carries a verified org: the listing
  * is the caller's OWN org roster. The org is never read from an argument:
@@ -1922,13 +1913,11 @@ async function listPeersFromOrgRoster(
 			: oauthCtx.clerkJwt
 				? {
 						directory: "orgRoster:getMyAgentDirectory",
-						roster: "orgRoster:getMyOrgRoster",
 						args: {},
 					}
 				: oauthCtx.accessTokenHash
 					? {
 							directory: "orgRoster:getAgentDirectoryForAccessToken",
-							roster: "orgRoster:getForAccessToken",
 							args: { tokenHash: oauthCtx.accessTokenHash },
 						}
 					: null;
@@ -1936,29 +1925,15 @@ async function listPeersFromOrgRoster(
 		return null;
 	}
 	const orgSlug = oauthCtx.clerkOrgSlug;
-	// TRANSITIONAL (delete once the Convex provider serves the directory door
-	// in prod): a provider that does not know the directory door yet answers
-	// "Could not find public function"; only then is the name roster read,
-	// every agentId null (not addressable). Any other error is raised.
-	let doorUsed = directoryDoors.directory;
-	let roster: unknown;
-	try {
-		roster = await convex.query(
-			// biome-ignore lint/suspicious/noExplicitAny: Convex string API
-			directoryDoors.directory as any,
-			directoryDoors.args,
-		);
-	} catch (err: unknown) {
-		if (!isMissingConvexFunction(err)) throw err;
-		doorUsed = directoryDoors.roster;
-		roster = await convex.query(
-			// biome-ignore lint/suspicious/noExplicitAny: Convex string API
-			directoryDoors.roster as any,
-			directoryDoors.args,
-		);
-	}
+	// A provider that cannot answer the directory door is an error, raised as
+	// such: it is never silently replaced by a name-only roster.
+	const roster: unknown = await convex.query(
+		// biome-ignore lint/suspicious/noExplicitAny: Convex string API
+		directoryDoors.directory as any,
+		directoryDoors.args,
+	);
 	if (isRefusedEnvelope(roster)) {
-		return mcpRefused(LIST_PEERS, doorUsed);
+		return mcpRefused(LIST_PEERS, directoryDoors.directory);
 	}
 	// "*" names nobody here: a wildcard never widens a directory to
 	// other organisations. De-duplicated, bounded.
@@ -3958,8 +3933,7 @@ export function registerTools(
 			kind: "filtered",
 			reason:
 				"org-scoped non-master token served from its own org roster via listPeersFromOrgRoster(convex,oauthCtx,...) " +
-				"(org derived server-side from the verified session/token by orgRoster:getMyAgentDirectory / orgRoster:getAgentDirectoryForAccessToken, " +
-				"or orgRoster:getMyOrgRoster / orgRoster:getForAccessToken while the provider lacks the directory); " +
+				"(org derived server-side from the verified session/token by orgRoster:getMyAgentDirectory / orgRoster:getAgentDirectoryForAccessToken); " +
 				"master and no-org tokens scoped in-handler via scopeFilterList(oauthCtx,...)",
 		},
 		"list_peers",
