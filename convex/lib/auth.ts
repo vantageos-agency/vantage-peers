@@ -1463,7 +1463,7 @@ export function refuseStorageOwnership(
 ): never {
 	const detail =
 		reason === "storage-unbound"
-			? "AUTH_STORAGE_UNBOUND: storageId is not bound to any organisation; ownership is bound on upload/store, never by validation."
+			? "AUTH_STORAGE_UNBOUND: storageId is not bound to any organisation; ownership is bound on upload/store/export, never by validate or import."
 			: "AUTH_STORAGE_NOT_OWNED: storageId does not belong to this org.";
 	throw new ConvexError(
 		`RBAC_DENIED: ${detail} — ${JSON.stringify({ registration, orgSlug, reason })}`,

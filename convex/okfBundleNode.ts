@@ -442,10 +442,10 @@ export const exportOkfBundle = action({
 			{},
 		);
 		if (!exporterScope.isMaster && exporterScope.orgSlug !== null) {
-			await ctx.runMutation(
-				internal.kbMutations.bindOrAssertStorageOwnership,
-				{ storageId, orgId: exporterScope.orgSlug },
-			);
+			await ctx.runMutation(internal.kbMutations.bindOrAssertStorageOwnership, {
+				storageId,
+				orgId: exporterScope.orgSlug,
+			});
 		}
 		const bundleUrl = await ctx.storage.getUrl(storageId);
 		if (bundleUrl === null) {
@@ -996,12 +996,16 @@ export const importOkfBundle = action({
 					{ storageId: args.storageId },
 				);
 				if (owner === null)
-					throw new Error(
-						"AUTH_STORAGE_UNBOUND: storageId is not bound to any organisation; ownership is bound on upload/store/export, never by import.",
+					refuseStorageOwnership(
+						"okfBundleNode:importOkfBundle",
+						"storage-unbound",
+						scope.orgSlug,
 					);
 				if (owner !== scope.orgSlug)
-					throw new Error(
-						"AUTH_STORAGE_NOT_OWNED: storageId does not belong to this org.",
+					refuseStorageOwnership(
+						"okfBundleNode:importOkfBundle",
+						"storage-not-owned",
+						scope.orgSlug,
 					);
 			}
 			const blob = await ctx.storage.get(args.storageId);

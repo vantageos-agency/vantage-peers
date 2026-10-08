@@ -23,6 +23,7 @@
 //
 // Backend standard R-8 (scope check on a data op).
 
+import { ConvexError } from "convex/values";
 import { convexTest } from "convex-test";
 import { describe, expect, test } from "vitest";
 import { internal } from "../_generated/api";
@@ -234,5 +235,54 @@ describe("import_okf_bundle — storage ownership is asserted, never claimed", (
 			"org-A",
 		]);
 		expect(await memoryRowCount(t)).toBe(0);
+	});
+
+	// A refusal must be distinguishable from a crash: Convex prod redacts a plain
+	// Error's message to "[Request ID] Server Error", so the code has to travel in
+	// ConvexError.data (rule: refusal-is-distinguishable-from-absence, rule 2).
+	async function refusalOf(p: Promise<unknown>): Promise<string> {
+		try {
+			await p;
+		} catch (e) {
+			expect(e).toBeInstanceOf(ConvexError);
+			return String((e as ConvexError<string>).data);
+		}
+		throw new Error("expected a refusal, call succeeded");
+	}
+
+	test("REFUSED — unbound refusal carries RBAC_DENIED and the door in errorData", async () => {
+		const t = createT();
+		await seedOrgMapping(t, "org-A");
+		const storageId = await storeBundle(t);
+
+		const data = await refusalOf(
+			asOrg(t, "org-A").action(
+				IMPORT_ACTION_REF,
+				importArgs(storageId, "org-A"),
+			),
+		);
+		expect(data).toContain("RBAC_DENIED");
+		expect(data).toContain("okfBundleNode:importOkfBundle");
+		expect(data).toContain("storage-unbound");
+		expect(data).toContain("AUTH_STORAGE_UNBOUND");
+	});
+
+	test("REFUSED — not-owned refusal carries RBAC_DENIED and the door in errorData", async () => {
+		const t = createT();
+		await seedOrgMapping(t, "org-A");
+		await seedOrgMapping(t, "org-B");
+		const storageId = await storeBundle(t);
+		await bindOnStore(t, storageId, "org-A");
+
+		const data = await refusalOf(
+			asOrg(t, "org-B").action(
+				IMPORT_ACTION_REF,
+				importArgs(storageId, "org-B"),
+			),
+		);
+		expect(data).toContain("RBAC_DENIED");
+		expect(data).toContain("okfBundleNode:importOkfBundle");
+		expect(data).toContain("storage-not-owned");
+		expect(data).toContain("AUTH_STORAGE_NOT_OWNED");
 	});
 });
