@@ -1,6 +1,8 @@
 outil,table,crud,writer_tier,writer_gate,write_doors
 import_okf_bundle,_storage+agents+briefingNotes+client_org_mapping+memories+tasks,CREATE,org-member,orgResolver,okfBundleNode:importOkfBundle=orgResolver
 store_document_chunked,_storage+kbUploads+memories,UPSERT,org-member,orgResolver,kb:storeDocumentChunked=orgResolver
+claim_upload,_storage+kbUploads+uploadTickets,UPSERT,org-member,orgResolver,kbMutations:claimUpload=orgResolver
+generate_upload_url,_storage+uploadTickets,CREATE,org-member,orgResolver,kbMutations:generateUploadUrl=orgResolver; kbMutations:generateUploadUrlWithTicket=orgResolver
 soft_delete_memory,,UPDATE,org-member,orgResolver,memories:softDeleteMemory=orgResolver
 complete_task,agents+client_org_mapping+fixPatterns+githubOwnerBindings+githubRepoMapping+issues+memberWriterRoles+messageReceipts+messages+taskClosureConfig+tasks,UPSERT,org-member,orgResolver,tasks:complete=orgResolver
 update_task,agents+client_org_mapping+githubRepoMapping+memberWriterRoles+messageReceipts+messages+missions+oauth_access_tokens+taskClosureConfig+tasks,UPSERT,org-member,orgResolver,tasks:update=orgResolver
@@ -10,6 +12,8 @@ send_message,agents+client_org_mapping+memberWriterRoles+messageReceipts+message
 fail_task,agents+client_org_mapping+memberWriterRoles+messageReceipts+messages+tasks,UPSERT,org-member,orgResolver,tasks:failTask=orgResolver
 create_task,agents+client_org_mapping+memberWriterRoles+oauth_access_tokens+tasks,CREATE,org-member,orgResolver,tasks:create=orgResolver
 instantiate_template_into_mission,agents+client_org_mapping+missionTemplates+missions+tasks,UPSERT,org-member,orgResolver,missionTemplates:instantiateTemplateIntoMission=orgResolver
+create_briefing_note,briefingNoteParticipants+briefingNotes+memberWriterRoles+memories,CREATE,org-member,orgResolver,briefingNotes:create=orgResolver
+update_briefing_note,briefingNoteParticipants+briefingNotes+memberWriterRoles+memories,UPDATE,org-member,orgResolver,briefingNotes:update=orgResolver
 bulk_complete_tasks,bulk_complete_runs+taskClosureConfig+tasks,UPSERT,org-member,orgResolver,tasks:bulkComplete=orgResolver
 create_bu,businessUnits,CREATE,org-member,orgResolver,businessUnits:create=orgResolver
 delete_bu,businessUnits,DELETE,master,masterOnly,businessUnits:remove=masterOnly

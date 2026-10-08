@@ -1,0 +1,203 @@
+{
+	"$comment": [
+		"Declared disposition per table (and per tool for a row whose table the derivation cannot name) — backend standard R-13.",
+		"Read by scripts/derive-backend-doctor-oracle.mjs into vp-by-tool.csv `table_conserver_supprimer`; never typed into the CSV.",
+		"disposition: CONSERVER (stays) | SUPPRIMER (goes) | undecided (requires owner + deadline YYYY-MM-DD).",
+		"purpose: only for a table whose convex/schema.ts definition carries no leading comment (the schema comment wins and must not be restated).",
+		"The derivation refuses (exit 2) on a missing, stale, out-of-set or bare-undecided entry."
+	],
+	"tables": {
+		"_storage": {
+			"disposition": "CONSERVER",
+			"reason": "live: served by MCP-public tool(s) export_okf_bundle, generate_upload_url, import_okf_bundle, store_document_chunked",
+			"purpose": "Convex file storage: uploaded knowledge-base documents and OKF bundle tarballs (generate_upload_url, store_document_chunked, export/import/validate_okf_bundle)."
+		},
+		"agents": {
+			"disposition": "CONSERVER",
+			"reason": "live: served by MCP-public tool(s) send_message"
+		},
+		"briefingNoteParticipants": {
+			"disposition": "CONSERVER",
+			"reason": "live: served by MCP-public tool(s) create_briefing_note, get_briefing_note, list_briefing_notes, search_briefing_notes_by_keyword …"
+		},
+		"briefingNotes": {
+			"disposition": "CONSERVER",
+			"reason": "live: served by MCP-public tool(s) create_briefing_note, export_okf_bundle, import_okf_bundle, list_briefing_notes …"
+		},
+		"bulk_complete_runs": {
+			"disposition": "CONSERVER",
+			"reason": "live: served by MCP-public tool(s) bulk_complete_tasks, get_bulk_complete_run"
+		},
+		"businessUnits": {
+			"disposition": "CONSERVER",
+			"reason": "live: read by the dashboard (vantage-peers-dashboard app/[locale]/dashboard/page.tsx, api.businessUnits.*); MCP tools masked"
+		},
+		"client_org_mapping": {
+			"disposition": "CONSERVER",
+			"reason": "live: served by MCP-public tool(s) create_mission, create_recurring_task, create_task, send_message …"
+		},
+		"diary": {
+			"disposition": "CONSERVER",
+			"reason": "live: served by MCP-public tool(s) get_diary, list_diaries, write_diary",
+			"purpose": "One diary entry per orchestrator per date: content, highlights, blockers, with the auth-derived author captured at write time."
+		},
+		"errorLogs": {
+			"disposition": "CONSERVER",
+			"reason": "live: written by the errorMonitor cron (convex/crons.ts -> errorMonitorActions.pollAllDeployments); MCP tool masked"
+		},
+		"fixAttempts": {
+			"disposition": "CONSERVER",
+			"reason": "live: served by MCP-public tool(s) add_fix_attempt, get_fix_pattern, search_fix_patterns"
+		},
+		"fixPatterns": {
+			"disposition": "CONSERVER",
+			"reason": "live: served by MCP-public tool(s) add_fix_attempt, complete_task, create_fix_pattern, link_issue_to_pattern …"
+		},
+		"githubOwnerBindings": {
+			"disposition": "CONSERVER",
+			"reason": "live: the proof an owner belongs to an org, the only basis on which a repo routes to it; served by MCP-public tool(s) add_repo_mapping, get_github_owner_bindings"
+		},
+		"githubRepoMapping": {
+			"disposition": "CONSERVER",
+			"reason": "live: served by MCP-public tool(s) add_task_dependency, block_task, complete_task, update_task"
+		},
+		"issues": {
+			"disposition": "CONSERVER",
+			"reason": "live: served by MCP-public tool(s) complete_task"
+		},
+		"kbUploads": {
+			"disposition": "CONSERVER",
+			"reason": "live: served by MCP-public tool(s) store_document_chunked"
+		},
+		"mandates": {
+			"disposition": "CONSERVER",
+			"reason": "live: subscribed by the dashboard mandate board (vantage-peers-dashboard components/mandates/mandate-board.tsx, api.mandates.list); MCP tools masked"
+		},
+		"memberWriterRoles": {
+			"disposition": "CONSERVER",
+			"reason": "live: served by MCP-public tool(s) add_task_dependency, block_task, complete_task, create_briefing_note …"
+		},
+		"memories": {
+			"disposition": "CONSERVER",
+			"reason": "live: served by MCP-public tool(s) create_briefing_note, export_okf_bundle, import_okf_bundle, improvisation_digest …"
+		},
+		"messageReceipts": {
+			"disposition": "CONSERVER",
+			"reason": "live: served by MCP-public tool(s) add_task_dependency, block_task, check_messages, complete_task …"
+		},
+		"messages": {
+			"disposition": "CONSERVER",
+			"reason": "live: served by MCP-public tool(s) add_task_dependency, block_task, complete_task, delete_message …"
+		},
+		"missionTemplates": {
+			"disposition": "CONSERVER",
+			"reason": "live: served by MCP-public tool(s) get_mission_template, instantiate_template_into_mission, update_mission_template"
+		},
+		"missions": {
+			"disposition": "CONSERVER",
+			"reason": "live: served by MCP-public tool(s) add_task_dependency, block_task, create_mission, instantiate_template_into_mission …",
+			"purpose": "Multi-task missions: name, project, lifecycle status (brainstorm..complete/cancelled), priority, pilot, agents, dates, progress; org-scoped."
+		},
+		"monitoredDeployments": {
+			"disposition": "CONSERVER",
+			"reason": "live: read by the errorMonitor cron (convex/crons.ts -> errorMonitorActions.pollAllDeployments); MCP tools masked"
+		},
+		"oauth_access_tokens": {
+			"disposition": "CONSERVER",
+			"reason": "live: served by MCP-public tool(s) create_mission, create_recurring_task, create_task, send_message …"
+		},
+		"profiles": {
+			"disposition": "CONSERVER",
+			"reason": "live: served by MCP-public tool(s) get_profile, list_peers, send_message, set_summary …"
+		},
+		"recurringTasks": {
+			"disposition": "CONSERVER",
+			"reason": "live: served by MCP-public tool(s) create_recurring_task, list_recurring_tasks"
+		},
+		"taskClosureConfig": {
+			"disposition": "CONSERVER",
+			"reason": "live: served by MCP-public tool(s) add_task_dependency, block_task, bulk_complete_tasks, check_messages …"
+		},
+		"tasks": {
+			"disposition": "CONSERVER",
+			"reason": "live: served by MCP-public tool(s) add_task_dependency, billing_summary_by_project, block_task, bulk_complete_tasks …",
+			"purpose": "The task queue: title, assignee, priority, status lifecycle, project, tags, mission link; org-scoped."
+		},
+		"uploadTickets": {
+			"disposition": "CONSERVER",
+			"reason": "live: served by MCP-public tool(s) claim_upload, generate_upload_url (the ticket that binds a client's own upload to its org without first-claim)"
+		}
+	},
+	"tools": {
+		"get_bu": {
+			"disposition": "CONSERVER",
+			"reason": "live: reads one business unit by id (businessUnits:get); businessUnits is live via the dashboard; MCP tool masked"
+		},
+		"get_episode": {
+			"disposition": "CONSERVER",
+			"reason": "live: MCP-public tool; Convex door memories:getMemory(query) (the derivation names no table: the id argument is not a v.id validator)"
+		},
+		"get_error": {
+			"disposition": "CONSERVER",
+			"reason": "live: reads one error log by id; errorLogs is live via the errorMonitor cron; MCP tool masked"
+		},
+		"get_mandate": {
+			"disposition": "CONSERVER",
+			"reason": "live: reads one mandate by id; mandates is live via the dashboard mandate board; MCP tool masked"
+		},
+		"get_memory": {
+			"disposition": "CONSERVER",
+			"reason": "live: MCP-public tool; Convex door memories:getMemory(query) (the derivation names no table: the id argument is not a v.id validator)"
+		},
+		"get_message": {
+			"disposition": "CONSERVER",
+			"reason": "live: MCP-public tool; Convex door messages:getById(query) (the derivation names no table: the id argument is not a v.id validator)"
+		},
+		"get_mission": {
+			"disposition": "CONSERVER",
+			"reason": "live: MCP-public tool; Convex door missions:get(query) (the derivation names no table: the id argument is not a v.id validator)"
+		},
+		"get_recurring_task": {
+			"disposition": "CONSERVER",
+			"reason": "live: MCP-public tool; Convex door recurringTasks:getById(query) (the derivation names no table: the id argument is not a v.id validator)"
+		},
+		"get_task": {
+			"disposition": "CONSERVER",
+			"reason": "live: MCP-public tool; Convex door tasks:getById(query) (the derivation names no table: the id argument is not a v.id validator)"
+		},
+		"hybrid_search": {
+			"disposition": "CONSERVER",
+			"reason": "live: MCP-public tool; Convex door search:hybridSearch(action) (the derivation names no table: the id argument is not a v.id validator)"
+		},
+		"recall": {
+			"disposition": "CONSERVER",
+			"reason": "live: MCP-public tool; Convex door search:recall(action) (the derivation names no table: the id argument is not a v.id validator)"
+		},
+		"search_episodes_by_keyword": {
+			"disposition": "CONSERVER",
+			"reason": "live: MCP-public tool; Convex door search:textSearch(action) (the derivation names no table: the id argument is not a v.id validator)"
+		},
+		"search_episodes_by_semantic": {
+			"disposition": "CONSERVER",
+			"reason": "live: MCP-public tool; Convex door search:recall(action) (the derivation names no table: the id argument is not a v.id validator)"
+		},
+		"soft_delete_memory": {
+			"disposition": "CONSERVER",
+			"reason": "live: MCP-public tool; Convex door memories:softDeleteMemory(mutation) (the derivation names no table: the id argument is not a v.id validator)"
+		},
+		"text_search": {
+			"disposition": "CONSERVER",
+			"reason": "live: MCP-public tool; Convex door search:textSearch(action) (the derivation names no table: the id argument is not a v.id validator)"
+		},
+		"validate_task_payload": {
+			"disposition": "undecided",
+			"owner": "sigma",
+			"deadline": "2026-10-31",
+			"reason": "masked (not in tool-exposure.json core), reaches no Convex function and touches no table; no consumer measured outside MCP. Keep or remove is owed by the owner by the deadline."
+		},
+		"whoami": {
+			"disposition": "CONSERVER",
+			"reason": "live: MCP-public tool; reaches no Convex function"
+		}
+	}
+}

@@ -23,7 +23,8 @@ crons.interval(
 
 // Purge person-flow authorization codes two hours past their expiry
 // (oauth.purgeExpiredPersonCodes: bounded take(500) per run, by_expiresAt).
-crons.interval( // allow-time-estimate: polling interval — cron config
+crons.interval(
+	// allow-time-estimate: polling interval — cron config
 	"purge expired oauth person codes",
 	{ hours: 1 },
 	internal.oauth.purgeExpiredPersonCodes,
@@ -58,10 +59,20 @@ crons.cron(
 // Poll open PRs on external repos every hour
 crons.interval("pr monitor", { hours: 1 }, internal.prMonitor.pollOpenPRs, {});
 
+// Upload tickets: delete expired or used ones (kbMutations.purgeUploadTickets,
+// bounded batches, self-rescheduling while a batch is full).
+crons.interval(
+	"purge upload tickets",
+	{ hours: 1 },
+	internal.kbMutations.purgeUploadTickets,
+	{},
+);
+
 // Auto-resolve stale false-positive IRP missions.
 // Day 76 doctrine mechanism 3: "any automation that creates work must resolve it."
 // Closes missions + tasks + GH issues for errors that stopped recurring (>24h quiet).
-crons.interval( // allow-time-estimate: polling interval — cron config
+crons.interval(
+	// allow-time-estimate: polling interval — cron config
 	"auto-resolve stale irp",
 	{ hours: 6 },
 	internal.errorMonitorAutoResolver.autoResolveStaleIrp,
@@ -72,7 +83,8 @@ crons.interval( // allow-time-estimate: polling interval — cron config
 // were already covered by a bundled deploy chain (recorded via
 // githubRepoMapping.recordDeployment). Pair with Mechanism (a) which
 // prevents new such tasks from spawning; this cron catches residue.
-crons.interval( // allow-time-estimate: polling interval — cron config
+crons.interval(
+	// allow-time-estimate: polling interval — cron config
 	"resolve stale deploy tasks",
 	{ hours: 6 },
 	internal.tasks.resolveStaleDeployTasks,
@@ -83,7 +95,8 @@ crons.interval( // allow-time-estimate: polling interval — cron config
 // GH issue closed externally → linked IRP missions + cascade tasks stay zombie.
 // Fix: sweep active missions with GH issue refs, close mission + tasks if
 // the GH issue is now state=closed. Runs every 6h aligned with c2 cron.
-crons.interval( // allow-time-estimate: polling interval — cron config
+crons.interval(
+	// allow-time-estimate: polling interval — cron config
 	"issue closed sweep",
 	{ hours: 6 },
 	internal.issueClosedSweep.sweepIssueClosed,

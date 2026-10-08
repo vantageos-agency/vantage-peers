@@ -108,6 +108,11 @@ export function registerExportOkfBundle(
 	convex: ConvexHttpClient,
 	oauthCtx?: OAuthContext,
 ): void {
+	// oracle-justified: export and import_okf_bundle are the two directions of
+	// one bundle format over the same tables: export READS memories, briefing
+	// notes and tasks and stores the tarball in _storage (okfBundleNode:
+	// exportOkfBundle, convex/okfBundleNode.ts), import WRITES them, so their
+	// verbs differ by purpose.
 	defineTool(
 		server,
 		{ oauthCtx },

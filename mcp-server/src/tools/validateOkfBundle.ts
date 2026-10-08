@@ -82,7 +82,7 @@ export function registerValidateOkfBundle(
 		{
 			kind: "public",
 			reason:
-				"stateless bundle schema validation; reads only the caller-supplied bundle, no VP data access",
+				"bundle schema validation, no transport check; a storageId is refused at the Convex door unless the caller's verified org already owns it (requireResolvedCaller + read-only assert against the kbUploads binding written on upload/store; validate never binds, okfBundleNode:validateOkfBundle)",
 		},
 		"validate_okf_bundle",
 		"Validate an OKF v0.1 bundle (tarball) against the spec (RFC §3.5) without " +

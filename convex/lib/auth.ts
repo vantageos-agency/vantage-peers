@@ -1440,6 +1440,37 @@ export function refuseUnresolvedCredential(
 }
 
 
+/**
+ * refuseStorageOwnership — the SAME refusal, said at the doors that gate a
+ * `_storage` handle by its ownership binding (kbUploads): validate, import,
+ * claim, and the TOFU bind.
+ *
+ * Not a second mechanism: the same `ConvexError`, the same `RBAC_DENIED:`
+ * prefix and the same `{ registration, orgSlug, reason }` payload as
+ * `refuseUnresolvedCredential` above. It exists because these doors judge a
+ * BLOB's binding, not an `OrgScope`. A plain `Error` here put the code only in
+ * the message, which Convex prod redacts to "[Request ID] Server Error", so a
+ * refused caller could not tell a refusal from a crash. The legacy
+ * `AUTH_STORAGE_*` token stays inside the message for existing matchers.
+ *
+ *   - `storage-unbound`   no binding exists for the storageId
+ *   - `storage-not-owned` the binding names another organisation
+ */
+export function refuseStorageOwnership(
+	registration: string,
+	reason: "storage-unbound" | "storage-not-owned",
+	orgSlug: string | null,
+): never {
+	const detail =
+		reason === "storage-unbound"
+			? "AUTH_STORAGE_UNBOUND: storageId is not bound to any organisation; ownership is bound on upload/store, never by validation."
+			: "AUTH_STORAGE_NOT_OWNED: storageId does not belong to this org.";
+	throw new ConvexError(
+		`RBAC_DENIED: ${detail} — ${JSON.stringify({ registration, orgSlug, reason })}`,
+	);
+}
+
+
 // ─────────────────────────────────────────────────────────────────────────────
 // resolveOrgScopeForAction — the ONE way a Convex ACTION resolves its caller's
 // organisation scope.
