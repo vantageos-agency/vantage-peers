@@ -203,7 +203,7 @@ interface SendMessageArgs {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Recipients BY AGENT ID (Cloud, client incident Iris RH, task
+// Recipients BY AGENT ID (Cloud, client incident, task
 // k1716f01f9g1a0scz7nj30118h8fx32c; operator decision 2026-10-08: an agent is
 // addressed by its unique ID, never by its name — no accent fold, no name
 // tolerance).

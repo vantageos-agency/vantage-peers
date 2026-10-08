@@ -1269,21 +1269,35 @@ describe("verify-actor-credentials — two proofs per actor, derived from the se
 		failMutation?: (name: string, args: Record<string, unknown>) => boolean;
 	}): unknown {
 		return {
-			query: vi.fn(async (name: string) => {
+			query: vi.fn(async (name: string, args: Record<string, unknown>) => {
+				// An org-scoped caller (the Clerk JWT of org-iris here) is listed FROM
+				// THE ORG ROSTER, not from a page of profiles: list_peers reads
+				// orgRoster:getMyOrgRoster (convex/orgRoster.ts, returns string[]) and
+				// then, per roster name, profiles:listProfiles by orchestratorId
+				// (mcp-server/src/tools.ts, list_peers org branch), taking only the row
+				// whose instanceId is `<name>-<orgSlug>`.
+				if (name === "orgRoster:getMyOrgRoster") {
+					if (opts.peers === "error") throw new Error("roster unavailable");
+					return opts.peers.map((p) => p.id);
+				}
 				if (name === "profiles:listProfiles") {
 					if (opts.peers === "error") throw new Error("profiles unavailable");
-					return opts.peers.map((p) => ({
-						_id: `profile_${p.id}`,
-						_creationTime: 1,
-						orchestratorId: p.id,
-						name: p.id,
-						static: { role: "agent", workspace: "iris" },
-						dynamic: {
-							currentTask: "idle",
-							lastSeen: p.lastSeen,
-							sessionCount: 1,
-						},
-					}));
+					const only = args.orchestratorId;
+					return opts.peers
+						.filter((p) => only === undefined || p.id === only)
+						.map((p) => ({
+							_id: `profile_${p.id}`,
+							_creationTime: 1,
+							orchestratorId: p.id,
+							instanceId: `${p.id}-org-iris`,
+							name: p.id,
+							static: { role: "agent", workspace: "iris" },
+							dynamic: {
+								currentTask: "idle",
+								lastSeen: p.lastSeen,
+								sessionCount: 1,
+							},
+						}));
 				}
 				if (name === "messages:checkNewMessagesEnvelope")
 					return { messages: [] };

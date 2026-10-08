@@ -94,7 +94,7 @@ async function mappingOfAccessToken(
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Agent directory — the org roster WITH each agent's unique ID (Cloud, client
-// incident Iris RH, task k1716f01f9g1a0scz7nj30118h8fx32c).
+// incident, task k1716f01f9g1a0scz7nj30118h8fx32c).
 //
 // A message recipient is addressed by its `agents` row ID, never by its name
 // (messages:sendMessage `recipientAgentIds`). This is where a caller learns
