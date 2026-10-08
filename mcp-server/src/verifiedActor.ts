@@ -40,6 +40,14 @@ export const VERIFIED_ACTOR_DOORS: ReadonlySet<string> = new Set([
 	"tasks:deleteTask",
 	"tasks:blockTask",
 	"tasks:bulkComplete",
+	// The inbox doors (task k17c5q842gm1gbh0j2qjtc80g18fx5kb): an agent's inbox is
+	// read, marked and its sent mail deleted BY ITS ID, never by the `recipient` /
+	// `callerOrchestrator` name another org's same-named agent also carries.
+	"messages:checkNewMessages",
+	"messages:checkNewMessagesEnvelope",
+	"messages:getUnreadCount",
+	"messages:markAsRead",
+	"messages:deleteMessage",
 ]);
 
 export type VerifiedActorArg = { agentId: string; orgSlug: string };
@@ -67,10 +75,11 @@ export function verifiedActorOf(
 
 type MutatingClient = {
 	mutation: (name: never, args: never, ...rest: never[]) => unknown;
+	query?: (name: never, args: never, ...rest: never[]) => unknown;
 };
 
 /**
- * Wraps a Convex client so every call to a {@link VERIFIED_ACTOR_DOORS} door
+ * Wraps a Convex client so every query or mutation to a {@link VERIFIED_ACTOR_DOORS} door
  * carries the resolved agent's `verifiedActor`. Returns the SAME client object
  * when no agent ID was resolved, so a caller without one is byte-for-byte
  * unchanged.
@@ -86,32 +95,33 @@ export function withVerifiedActor<T extends MutatingClient>(
 ): T {
 	const actor = verifiedActorOf(ctx);
 	if (actor === undefined) return convex;
+	const forward = (name: string, args: unknown): unknown => {
+		if (
+			!VERIFIED_ACTOR_DOORS.has(name) ||
+			typeof args !== "object" ||
+			args === null
+		) {
+			return args;
+		}
+		const a = args as Record<string, unknown>;
+		const carriesProof =
+			a.verifiedActor !== undefined ||
+			a.verifiedPerson !== undefined ||
+			a.agentCredentialSecret !== undefined;
+		const senderless =
+			name === "messages:sendMessage" &&
+			(a.from === undefined || a.from === null);
+		return carriesProof || senderless ? args : { ...a, verifiedActor: actor };
+	};
 	return new Proxy(convex, {
 		get(target, prop) {
 			const value = Reflect.get(target, prop, target) as unknown;
-			if (prop === "mutation") {
+			if (prop === "mutation" || prop === "query") {
 				return (name: string, args: unknown, ...rest: unknown[]) => {
-					const call = target.mutation as unknown as (
+					const call = (target as Record<string, unknown>)[prop] as (
 						...a: unknown[]
 					) => unknown;
-					if (
-						VERIFIED_ACTOR_DOORS.has(name) &&
-						typeof args === "object" &&
-						args !== null
-					) {
-						const a = args as Record<string, unknown>;
-						const carriesProof =
-							a.verifiedActor !== undefined ||
-							a.verifiedPerson !== undefined ||
-							a.agentCredentialSecret !== undefined;
-						const senderless =
-							name === "messages:sendMessage" &&
-							(a.from === undefined || a.from === null);
-						if (!carriesProof && !senderless) {
-							return call.call(target, name, { ...a, verifiedActor: actor }, ...rest);
-						}
-					}
-					return call.call(target, name, args, ...rest);
+					return call.call(target, name, forward(name, args), ...rest);
 				};
 			}
 			return typeof value === "function"
