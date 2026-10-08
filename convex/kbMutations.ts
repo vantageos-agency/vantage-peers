@@ -22,7 +22,11 @@ import { internal } from "./_generated/api";
 import { internalMutation, internalQuery, mutation } from "./_generated/server";
 import { assertOrgArgs } from "./kbShared";
 import { sha256Hex } from "./lib/agentIdentity";
-import { requireResolvedCaller, withOrgScope } from "./lib/auth";
+import {
+	refuseStorageOwnership,
+	requireResolvedCaller,
+	withOrgScope,
+} from "./lib/auth";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // bindOrAssertStorageOwnership — TOFU org-binding guard (M1 defense-in-depth)
@@ -66,8 +70,10 @@ export const bindOrAssertStorageOwnership = internalMutation({
 		}
 
 		// Different org — cross-tenant attempt: reject.
-		throw new Error(
-			"AUTH_STORAGE_NOT_OWNED: storageId does not belong to this org.",
+		refuseStorageOwnership(
+			"kbMutations:bindOrAssertStorageOwnership",
+			"storage-not-owned",
+			args.orgId,
 		);
 	},
 });
@@ -389,8 +395,10 @@ export const claimUpload = mutation({
 			.withIndex("by_storageId", (q) => q.eq("storageId", args.storageId))
 			.unique();
 		if (existing !== null && existing.orgId !== claimOrgId)
-			throw new ConvexError(
-				"AUTH_STORAGE_NOT_OWNED: storageId does not belong to this org.",
+			refuseStorageOwnership(
+				"kbMutations:claimUpload",
+				"storage-not-owned",
+				claimOrgId,
 			);
 		if (existing === null)
 			await ctx.db.insert("kbUploads", {

@@ -18,6 +18,7 @@
 //
 // Backend standard R-8 (scope check on a data op). Argus REVISE on #1465.
 
+import { ConvexError } from "convex/values";
 import { convexTest } from "convex-test";
 import { describe, expect, test } from "vitest";
 import { internal } from "../_generated/api";
@@ -150,5 +151,48 @@ describe("validate_okf_bundle — storage ownership is asserted, never claimed",
 		await expect(
 			asOrg(t, "org-unmapped").action(VALIDATE_ACTION_REF, { storageId }),
 		).rejects.toThrow(/RBAC_DENIED/);
+	});
+
+	// A refusal must be distinguishable from a crash: Convex prod redacts a plain
+	// Error's message to "[Request ID] Server Error", so the code has to travel in
+	// ConvexError.data (rule: refusal-is-distinguishable-from-absence, rule 2).
+	async function refusalOf(p: Promise<unknown>): Promise<unknown> {
+		try {
+			await p;
+		} catch (e) {
+			expect(e).toBeInstanceOf(ConvexError);
+			return (e as ConvexError<string>).data;
+		}
+		throw new Error("expected a refusal, call succeeded");
+	}
+
+	test("REFUSED — unbound refusal carries RBAC_DENIED and the door in errorData", async () => {
+		const t = createT();
+		await seedOrgMapping(t, "org-A");
+		const storageId = await storeBundle(t);
+
+		const data = await refusalOf(
+			asOrg(t, "org-A").action(VALIDATE_ACTION_REF, { storageId }),
+		);
+		expect(String(data)).toContain("RBAC_DENIED");
+		expect(String(data)).toContain("okfBundleNode:validateOkfBundle");
+		expect(String(data)).toContain("storage-unbound");
+		expect(String(data)).toContain("AUTH_STORAGE_UNBOUND");
+	});
+
+	test("REFUSED — not-owned refusal carries RBAC_DENIED and the door in errorData", async () => {
+		const t = createT();
+		await seedOrgMapping(t, "org-A");
+		await seedOrgMapping(t, "org-B");
+		const storageId = await storeBundle(t);
+		await bindOnStore(t, storageId, "org-A");
+
+		const data = await refusalOf(
+			asOrg(t, "org-B").action(VALIDATE_ACTION_REF, { storageId }),
+		);
+		expect(String(data)).toContain("RBAC_DENIED");
+		expect(String(data)).toContain("okfBundleNode:validateOkfBundle");
+		expect(String(data)).toContain("storage-not-owned");
+		expect(String(data)).toContain("AUTH_STORAGE_NOT_OWNED");
 	});
 });

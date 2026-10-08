@@ -31,7 +31,11 @@ import { ConvexError, v } from "convex/values";
 import { extract, pack } from "tar-stream";
 import { internal as generatedInternal } from "./_generated/api";
 import { type ActionCtx, action } from "./_generated/server";
-import { requireResolvedCaller, requireTenantNamespace } from "./lib/auth";
+import {
+	refuseStorageOwnership,
+	requireResolvedCaller,
+	requireTenantNamespace,
+} from "./lib/auth";
 import {
 	applyMemorySubtypeFilter,
 	assembleBundle,
@@ -719,12 +723,16 @@ export const validateOkfBundle = action({
 					{ storageId },
 				);
 				if (owner === null)
-					throw new Error(
-						"AUTH_STORAGE_UNBOUND: storageId is not bound to any organisation; ownership is bound on upload/store, never by validation.",
+					refuseStorageOwnership(
+						"okfBundleNode:validateOkfBundle",
+						"storage-unbound",
+						scope.orgSlug,
 					);
 				if (owner !== scope.orgSlug)
-					throw new Error(
-						"AUTH_STORAGE_NOT_OWNED: storageId does not belong to this org.",
+					refuseStorageOwnership(
+						"okfBundleNode:validateOkfBundle",
+						"storage-not-owned",
+						scope.orgSlug,
 					);
 			}
 			blob = await ctx.storage.get(storageId);
