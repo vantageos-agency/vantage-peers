@@ -1,6 +1,13 @@
 import { ConvexError, v } from "convex/values";
-import { query } from "./_generated/server";
-import { isMcpBoundMaster, withOrgScope } from "./lib/auth";
+import type { Id } from "./_generated/dataModel";
+import { type QueryCtx, query } from "./_generated/server";
+import { normalizeOrchestratorId } from "./_helpers/normalizeOrchestratorId";
+import {
+	isMcpBoundMaster,
+	lookupOrgMapping,
+	requireResolvedCaller,
+	withOrgScope,
+} from "./lib/auth";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // getMyOrgRoster — the authenticated caller's own organisation roster.
@@ -44,6 +51,163 @@ export const getMyOrgRoster = query({
 	},
 });
 
+// The active client_org_mapping row of the organisation an OAuth access token
+// was minted for, derived from the token row keyed by its hash (never from an
+// organisation argument). Refuses a missing / revoked / expired token, a token
+// with no organisation claim, and a missing or inactive mapping. Same refusals as
+// getForAccessToken below, which keeps its own inline copy because its source
+// shape is pinned by orgRoster.getForAccessToken.test.ts. The org join is the
+// canonical lookupOrgMapping (convex/lib/auth.ts), never a second one.
+async function mappingOfAccessToken(
+	ctx: QueryCtx,
+	tokenHash: string,
+): Promise<{ orgSlug: string; allowedOrchestrators: string[] }> {
+	const token = await ctx.db
+		.query("oauth_access_tokens")
+		.withIndex("by_tokenHash", (q) => q.eq("tokenHash", tokenHash))
+		.unique();
+	if (
+		token === null ||
+		token.revokedAt !== undefined ||
+		token.expiresAt < Date.now()
+	) {
+		throw new ConvexError(
+			"RBAC_DENIED: access token not found, revoked, or expired",
+		);
+	}
+
+	const slug = token.clerkOrgSlug;
+	if (!slug) {
+		throw new ConvexError(
+			"RBAC_DENIED: access token carries no organisation claim",
+		);
+	}
+
+	const mapping = await lookupOrgMapping(ctx, slug);
+	if (mapping === null || !mapping.isActive) {
+		throw new ConvexError(
+			`RBAC_DENIED: Org "${slug}" not in client_org_mapping or inactive`,
+		);
+	}
+	return { orgSlug: slug, allowedOrchestrators: mapping.allowedOrchestrators };
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Agent directory — the org roster WITH each agent's unique ID (Cloud, client
+// incident Iris RH, task k1716f01f9g1a0scz7nj30118h8fx32c).
+//
+// A message recipient is addressed by its `agents` row ID, never by its name
+// (messages:sendMessage `recipientAgentIds`). This is where a caller learns
+// those IDs: one entry per roster name of the caller's OWN organisation, with
+// `agentId` the `_id` of the ACTIVE agents row of that org whose
+// `normalizedName` equals the roster name under normalizeOrchestratorId (NFC,
+// lowercase, trim) — an exact index read, no accent fold, no fuzzy match. A
+// roster name with no such row, an inactive row, or (impossible under
+// assertAgentNameFree, refused anyway) two rows gets `agentId: null`: listed,
+// not addressable. "*" names nobody and is dropped. Bounded at
+// AGENT_DIRECTORY_CAP entries, one indexed read each.
+// ─────────────────────────────────────────────────────────────────────────────
+
+export const AGENT_DIRECTORY_CAP = 200;
+
+const agentDirectoryEntry = v.object({
+	name: v.string(),
+	agentId: v.union(v.id("agents"), v.null()),
+});
+
+async function agentDirectoryOf(
+	ctx: QueryCtx,
+	orgSlug: string,
+	roster: readonly string[],
+): Promise<Array<{ name: string; agentId: Id<"agents"> | null }>> {
+	const byKey = new Map<string, string>();
+	for (const entry of roster) {
+		if (entry === "*") continue;
+		const key = normalizeOrchestratorId(entry);
+		if (key === "" || byKey.has(key)) continue;
+		byKey.set(key, entry);
+		if (byKey.size >= AGENT_DIRECTORY_CAP) break;
+	}
+	const out: Array<{ name: string; agentId: Id<"agents"> | null }> = [];
+	for (const [key, label] of byKey) {
+		const rows = await ctx.db
+			.query("agents")
+			.withIndex("by_org_normalized_name", (q) =>
+				q.eq("orgSlug", orgSlug).eq("normalizedName", key),
+			)
+			.take(2);
+		const row = rows.length === 1 && rows[0].isActive ? rows[0] : null;
+		out.push({ name: label, agentId: row === null ? null : row._id });
+	}
+	return out;
+}
+
+// The directory of the organisation an OAuth access token was minted for.
+// Same caller gate and same token-hash derivation as getForAccessToken: no
+// organisation argument, MCP-bound master only.
+export const getAgentDirectoryForAccessToken = query({
+	args: { tokenHash: v.string() },
+	returns: v.array(agentDirectoryEntry),
+	handler: async (ctx, args) => {
+		// isolation-contract: server-side only — invoked by the MCP transport (mcp-server/src/tools.ts list_peers) via imperative client.query, never a reactive useQuery: `grep -rn "getAgentDirectory" app components hooks lib contexts providers` in vantage-peers-dashboard -> 0 hits (2026-10-08). R-50 declared divergence.
+		const scope = await withOrgScope(ctx);
+		if (!isMcpBoundMaster(scope)) {
+			throw new ConvexError(
+				`RBAC_DENIED: orgRoster.getAgentDirectoryForAccessToken requires the MCP service account — ${JSON.stringify(
+					{
+						registration: "orgRoster:getAgentDirectoryForAccessToken",
+						reason: scope.anonymous ? "no-credential" : "not-mcp-bound-master",
+					},
+				)}`,
+			);
+		}
+		const mapping = await mappingOfAccessToken(ctx, args.tokenHash);
+		return await agentDirectoryOf(
+			ctx,
+			mapping.orgSlug,
+			mapping.allowedOrchestrators,
+		);
+	},
+});
+
+// The directory of the signed-in caller's own organisation (a Clerk session on
+// the MCP). The caller's org comes from withOrgScope, never an argument.
+export const getMyAgentDirectory = query({
+	args: {},
+	returns: v.array(agentDirectoryEntry),
+	handler: async (ctx) => {
+		// isolation-contract: server-side only — invoked by the MCP transport (mcp-server/src/tools.ts list_peers, Clerk-JWT session) via imperative client.query, never a reactive useQuery: `grep -rn "getMyAgentDirectory" app components hooks lib contexts providers` in vantage-peers-dashboard -> 0 hits (2026-10-08). So the pre-organisation caller is refused by raising (alsoRefusePreOrg).
+		const resolved = await withOrgScope(ctx, { refuseWithoutThrow: true });
+		requireResolvedCaller(resolved, "orgRoster:getMyAgentDirectory", {
+			alsoRefusePreOrg: true,
+		});
+		// The operator's own org admin reads as a master; the directory it may
+		// address is its org's real roster (same re-resolution as getMyOrgRoster).
+		const scope =
+			resolved.masterSource === "operator-admin"
+				? await withOrgScope(ctx, {
+						refuseWithoutThrow: true,
+						operatorAsMember: true,
+					})
+				: resolved;
+		if (scope.orgSlug === null) {
+			throw new ConvexError(
+				`RBAC_DENIED: orgRoster.getMyAgentDirectory lists an organisation's agents and this caller resolves to none — ${JSON.stringify(
+					{
+						registration: "orgRoster:getMyAgentDirectory",
+						reason: "no-organisation",
+					},
+				)}`,
+			);
+		}
+		return await agentDirectoryOf(
+			ctx,
+			scope.orgSlug,
+			scope.allowedOrchestrators,
+		);
+	},
+});
+
 // ─────────────────────────────────────────────────────────────────────────────
 // getForAccessToken — roster for a provisioned OAuth access token.
 //
@@ -83,7 +247,11 @@ export const getForAccessToken = query({
 			.query("oauth_access_tokens")
 			.withIndex("by_tokenHash", (q) => q.eq("tokenHash", args.tokenHash))
 			.unique();
-		if (!token || token.revokedAt !== undefined || token.expiresAt < Date.now()) {
+		if (
+			!token ||
+			token.revokedAt !== undefined ||
+			token.expiresAt < Date.now()
+		) {
 			throw new ConvexError(
 				"RBAC_DENIED: access token not found, revoked, or expired",
 			);

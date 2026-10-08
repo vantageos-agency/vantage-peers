@@ -48,6 +48,7 @@ import {
 } from "./lib/taskClosureGate";
 import { actorIdResolver } from "./lib/actorIds";
 import { clerkOrgIdForSlug } from "./lib/orgClerkId";
+import { fleetOperatorSlug } from "./lib/operatorOrg";
 
 // getUnreadCount only needs the count, not the rows; the receipts table per
 // recipient is small, so this bound exists to guard against unbounded growth
@@ -190,10 +191,108 @@ function assertPersonInboxOwner(
 interface SendMessageArgs {
 	from: string;
 	fromInstanceId?: string;
-	channel: string;
+	// Exactly one of `channel` (names: fleet routing, broadcast, a person) and
+	// `recipientAgentIds` (agent IDs) is present: requireOneRecipientForm, at the
+	// public door and again at the top of sendMessageCore. The internal
+	// (webhook) doors always pass `channel`.
+	channel?: string;
+	recipientAgentIds?: string[];
 	content: string;
 	sessionDay?: number;
 	tenantId?: string;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Recipients BY AGENT ID (Cloud, client incident Iris RH, task
+// k1716f01f9g1a0scz7nj30118h8fx32c; operator decision 2026-10-08: an agent is
+// addressed by its unique ID, never by its name — no accent fold, no name
+// tolerance).
+//
+// `recipientAgentIds` carries `agents` row IDs (list_peers returns them as
+// `agentId`). Each is narrowed with requireId (a name, a malformed string or an
+// ID of another table is a typed validation error, never a lookup), read BY ID,
+// and admitted only when the row is ACTIVE, belongs to the organisation the
+// message is written in, and (for a client-scoped sender) is on that org's own
+// roster: never wider than the name path's reach, and narrower (no fleet
+// coordinator, no instance, no person). Every other outcome (deleted, inactive,
+// another org, off the roster) is ONE refusal with one reason, so the refusal is
+// not an oracle for "this ID exists in another organisation".
+//
+// THE NAME BOUNDARY. `channel` keeps routing by name, exact under
+// normalizeOrchestratorId and nothing looser, for what an agent ID cannot name:
+// "broadcast", fleet orchestrator roles and their instances ("pi", "eta-vps"),
+// the fleet coordinators a client org lists, and a person ("user:<subject>").
+// Converting fleet roles and client callers to IDs only is traced as its own
+// task (see the PR); nothing here widens or narrows the name path.
+// ─────────────────────────────────────────────────────────────────────────────
+
+const SEND_DOOR = "messages:sendMessage";
+export const MAX_RECIPIENT_AGENT_IDS = 50;
+
+function requireOneRecipientForm(args: {
+	channel?: string;
+	recipientAgentIds?: string[];
+}): void {
+	const refuse = (reason: string): never => {
+		throw new ConvexError(
+			`INVALID_RECIPIENTS: ${SEND_DOOR} takes exactly one of \`channel\` (names: broadcast, a fleet role, an instance, a person) or \`recipientAgentIds\` (1-${MAX_RECIPIENT_AGENT_IDS} agent IDs, as returned by list_peers \`agentId\`) — ${JSON.stringify({ reason, door: SEND_DOOR })}`,
+		);
+	};
+	const hasChannel = args.channel !== undefined;
+	const ids = args.recipientAgentIds;
+	if (hasChannel && ids !== undefined) refuse("both-channel-and-agent-ids");
+	if (!hasChannel && ids === undefined) refuse("no-recipient");
+	if (ids !== undefined && ids.length === 0) refuse("empty-agent-ids");
+	if (ids !== undefined && ids.length > MAX_RECIPIENT_AGENT_IDS) {
+		refuse("too-many-agent-ids");
+	}
+}
+
+async function resolveRecipientAgents(
+	ctx: MutationCtx,
+	reach: OrgScope,
+	derivedTenantId: string | undefined,
+	rawIds: readonly string[],
+): Promise<Doc<"agents">[]> {
+	const fleetWide = reach.isMaster && reach.orgSlug === null;
+	// The organisation the receipts are stamped with is the one the recipients
+	// must belong to: the sender's own org, or (fleet master) the declared
+	// tenant, else the operator org.
+	const targetOrg = fleetWide
+		? (derivedTenantId ?? (await fleetOperatorSlug(ctx.db)))
+		: reach.orgSlug;
+	const refuse = (raw: string): never => {
+		throw new ConvexError(
+			`RBAC_DENIED: recipient agent "${raw}" is not an addressable agent of the sender's organisation — ${JSON.stringify({ reason: "recipient-agent-not-addressable", door: SEND_DOOR, recipientAgentId: raw })}`,
+		);
+	};
+	const rows: Doc<"agents">[] = [];
+	const seen = new Set<string>();
+	for (const raw of rawIds) {
+		const id = requireId(
+			ctx,
+			"agents",
+			raw,
+			"recipientAgentIds",
+			`${SEND_DOOR} addresses an agent by its ID (list_peers \`agentId\`); a name is never matched here.`,
+		);
+		if (seen.has(id)) continue;
+		seen.add(id);
+		const row = await ctx.db.get(id);
+		if (
+			row === null ||
+			!row.isActive ||
+			targetOrg === undefined ||
+			targetOrg === null ||
+			row.orgSlug !== targetOrg ||
+			(derivedTenantId !== undefined && row.orgSlug !== derivedTenantId) ||
+			(!fleetWide && !isOrchestratorOnOrgRoster(reach, row.name))
+		) {
+			return refuse(raw);
+		}
+		rows.push(row);
+	}
+	return rows;
 }
 
 async function sendMessageCore(
@@ -207,6 +306,7 @@ async function sendMessageCore(
 	// tenant stamp still derives from `scope`).
 	recipientScope?: OrgScope,
 ): Promise<Doc<"messages">["_id"]> {
+	requireOneRecipientForm(args);
 	const reach = recipientScope ?? scope;
 	// Tenant-scope write symmetry (task sigma/tenant-scope-write-symmetry):
 		// the scoped READS (listMessages/listByChannel/searchMessagesByKeyword)
@@ -287,6 +387,35 @@ async function sendMessageCore(
 		const resolveActor = actorIdResolver(ctx, derivedTenantId);
 		const fromId = await resolveActor(args.from);
 
+		// Recipients BY ID are resolved before anything is written; the stored
+		// channel is their labels, the same string a name send would store.
+		let agentRecipients: Doc<"agents">[] | undefined;
+		if (args.recipientAgentIds !== undefined) {
+			agentRecipients = (
+				await resolveRecipientAgents(
+					ctx,
+					reach,
+					derivedTenantId,
+					args.recipientAgentIds,
+				)
+			).filter((row) => row._id !== fromId);
+			if (agentRecipients.length === 0) {
+				throw new ConvexError(
+					`recipient error / message not delivered: recipientAgentIds names no recipient other than the sender — ${JSON.stringify({ reason: "only-self", door: SEND_DOOR })}`,
+				);
+			}
+		}
+		const channel =
+			agentRecipients !== undefined
+				? agentRecipients.map((row) => normalizeOrchestratorId(row.name)).join(",")
+				: args.channel;
+		if (channel === undefined) {
+			// Unreachable: requireOneRecipientForm (top of this core) refused it.
+			throw new ConvexError(
+				`INVALID_RECIPIENTS: no recipient — ${JSON.stringify({ reason: "no-recipient", door: SEND_DOOR })}`,
+			);
+		}
+
 		// Permanent Clerk org id of the derived tenant (Pi ruling (d)), read from the
 		// tenant's mapping row; the slug above stays the label.
 		const derivedTenantOrgId = await clerkOrgIdForSlug(ctx, derivedTenantId);
@@ -294,7 +423,7 @@ async function sendMessageCore(
 			from: args.from,
 			...(fromId !== undefined ? { fromId } : {}),
 			fromInstanceId: args.fromInstanceId,
-			channel: args.channel,
+			channel,
 			content: args.content,
 			sessionDay: args.sessionDay,
 			tenantId: derivedTenantId,
@@ -312,8 +441,22 @@ async function sendMessageCore(
 		// succeeding with no receipts written. The recipient set is DERIVED from
 		// the org (the `profiles` table), never a hardcoded denylist — mirrors
 		// the broadcast branch below.
+		if (agentRecipients !== undefined) {
+			for (const row of agentRecipients) {
+				await ctx.db.insert("messageReceipts", {
+					messageId,
+					recipient: normalizeOrchestratorId(row.name),
+					recipientId: row._id,
+					tenantId: derivedTenantId,
+					tenantOrgId: derivedTenantOrgId,
+					readAt: undefined,
+				});
+			}
+			return messageId;
+		}
+
 		let recipients: string[];
-		if (args.channel === "broadcast") {
+		if (channel === "broadcast") {
 			// Dynamic: get all registered orchestrators from profiles
 			const profiles = await ctx.db.query("profiles").collect();
 			const orchestratorIds = [
@@ -450,14 +593,14 @@ async function sendMessageCore(
 				return owner !== undefined && isReachable(owner);
 			};
 
-			const rawParts = args.channel
+			const rawParts = channel
 				.split(",")
 				.map((s) => s.trim())
 				.filter((s) => s.length > 0);
 
 			const bounce = () => {
 				throw new ConvexError(
-					`recipient error / message non livré : "${args.channel}" ne correspond à aucun destinataire de l'organisation. Formes valides : <role existant> | <instance> | broadcast | liste "eta,pi".`,
+					`recipient error / message non livré : "${channel}" ne correspond à aucun destinataire de l'organisation. Formes valides : <role existant> | <instance> | broadcast | liste "eta,pi".`,
 				);
 			};
 
@@ -666,7 +809,8 @@ async function sendAsHuman(
 	ctx: MutationCtx,
 	args: {
 		fromInstanceId?: string;
-		channel: string;
+		channel?: string;
+		recipientAgentIds?: string[];
 		content: string;
 		sessionDay?: number;
 		tenantId?: string;
@@ -687,7 +831,9 @@ async function sendAsHuman(
 	}
 	// create mode: no row — the tenant is stamped from the scope by the core.
 	const actor = await resolveHumanActor(ctx, scope, { door });
-	if (args.channel !== "broadcast") {
+	// Recipients by agent ID are admitted by the core against this same scope's
+	// roster (resolveRecipientAgents); only a NAME channel is checked here.
+	if (args.channel !== undefined && args.channel !== "broadcast") {
 		const parts = args.channel
 			.split(",")
 			.map((s) => s.trim())
@@ -703,6 +849,7 @@ async function sendAsHuman(
 		{
 			from: actor,
 			channel: args.channel,
+			recipientAgentIds: args.recipientAgentIds,
 			content: args.content,
 			sessionDay: args.sessionDay,
 			tenantId: args.tenantId,
@@ -711,8 +858,6 @@ async function sendAsHuman(
 	);
 }
 
-const SEND_DOOR = "messages:sendMessage";
-
 export const sendMessage = mutation({
 	args: {
 		// OPTIONAL: omitting `from` is the HUMAN path (a dashboard org member
@@ -720,7 +865,13 @@ export const sendMessage = mutation({
 		// identity as "user:<Clerk subject>", never taken from the client.
 		from: v.optional(creatorValidator),
 		fromInstanceId: v.optional(v.string()),
-		channel: v.string(),
+		// Recipients by NAME: "broadcast" | a fleet role | an instance | a person
+		// | a comma list. Exactly one of `channel` and `recipientAgentIds`.
+		channel: v.optional(v.string()),
+		// Recipients by AGENT ID (`agents` row `_id`, list_peers `agentId`).
+		// Declared v.string() and narrowed with requireId so a name or a foreign
+		// table's ID is a typed refusal, never a validator crash.
+		recipientAgentIds: v.optional(v.array(v.string())),
 		content: v.string(),
 		sessionDay: v.optional(v.number()),
 		tenantId: v.optional(v.string()),
@@ -749,6 +900,7 @@ export const sendMessage = mutation({
 		// credential lock so the lock can bind the presented credential's org
 		// against the SAME `orgSlug` the rest of this handler already derives
 		// (reused below by sendMessageCore — never re-derived).
+		requireOneRecipientForm(args);
 		const { verifiedPerson, seatOrgSlug, ...sendArgs } = args;
 		// The transport's own scope is bound first (the service account, or the
 		// dashboard member); resolveVerifiedPerson returns it unchanged unless a
