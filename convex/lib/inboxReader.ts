@@ -74,7 +74,12 @@ type Ctx = QueryCtx | MutationCtx;
 // MCP is OBSERVED live (a seat's check_messages served by its verifiedActor).
 // The claimless service account then reads the FLEET's tenant only.
 // ─────────────────────────────────────────────────────────────────────────────
-export const UNCLAIMED_SERVICE_ACCOUNT_READS_EVERY_TENANT: boolean = true;
+// CONTRACT is in force (this value `false`): the claim-sending MCP was observed
+// live on main 3682c11 (Railway /health commit 3682c11, a seat's check_messages
+// served by its verifiedActor, task k17aypc5cr3edmvvbvwhb32evx8fz1x1). The
+// EXPAND leg below is dead code kept one release so a rollback is a one-line
+// flip; it is deleted in the follow-up.
+export const UNCLAIMED_SERVICE_ACCOUNT_READS_EVERY_TENANT: boolean = false;
 
 export type InboxReader = {
 	kind:
