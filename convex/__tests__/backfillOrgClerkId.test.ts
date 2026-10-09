@@ -19,6 +19,7 @@ import {
 	TABLE_ORDER,
 } from "../migrations/backfill_org_clerk_id";
 import schema from "../schema";
+import { agentIdOf } from "../../tests/lib/agentIdOf";
 
 const modules = Object.fromEntries(
 	Object.entries(import.meta.glob("../**/*.ts")).filter(
@@ -422,7 +423,7 @@ describe("new writes stamp the slug AND the Clerk org id", () => {
 			api.agentCredentials.mintAgentCredential,
 			{
 				orgSlug: ACME.slug,
-				agentName: "neo",
+				agentId: await agentIdOf(t, ACME.slug, "neo"),
 			},
 		);
 		expect((await idOf(t, agentId)).clerkOrgId).toBe(ACME.id);
@@ -474,7 +475,7 @@ describe("a stamped row is still READABLE through its returns validator", () => 
 		});
 		const agent = await adminOf(t, ACME.slug).query(api.agents.getAgent, {
 			orgSlug: ACME.slug,
-			name: "neo",
+			agentId: await agentIdOf(t, ACME.slug, "neo"),
 		});
 		expect(agent?.clerkOrgId).toBe(ACME.id);
 	});

@@ -31,6 +31,7 @@ import {
 } from "../migrations/backfill_org_clerk_id";
 import { upsertAdminMembership } from "../orgMembership";
 import schema from "../schema";
+import { agentIdOf } from "../../tests/lib/agentIdOf";
 
 const modules = Object.fromEntries(
 	Object.entries(import.meta.glob("../**/*.ts")).filter(
@@ -175,12 +176,19 @@ const DRIVERS = {
 			orgSlug: ACME.slug,
 			name: "neo",
 		}),
-	agent_relations: (t) =>
-		adminOf(t, ACME.slug).mutation(api.agentRelations.linkChild, {
+	agent_relations: async (t) => {
+		for (const name of ["neo", "trinity"]) {
+			await adminOf(t, ACME.slug).mutation(api.agents.registerAgent, {
+				orgSlug: ACME.slug,
+				name,
+			});
+		}
+		return await adminOf(t, ACME.slug).mutation(api.agentRelations.linkChild, {
 			orgSlug: ACME.slug,
-			parentName: "neo",
-			childName: "trinity",
-		}),
+			parentAgentId: await agentIdOf(t, ACME.slug, "neo"),
+			childAgentId: await agentIdOf(t, ACME.slug, "trinity"),
+		});
+	},
 	agent_credentials: async (t) => {
 		await adminOf(t, ACME.slug).mutation(api.agents.registerAgent, {
 			orgSlug: ACME.slug,
@@ -188,7 +196,7 @@ const DRIVERS = {
 		});
 		return await adminOf(t, ACME.slug).mutation(
 			api.agentCredentials.mintAgentCredential,
-			{ orgSlug: ACME.slug, agentName: "neo" },
+			{ orgSlug: ACME.slug, agentId: await agentIdOf(t, ACME.slug, "neo") },
 		);
 	},
 	orgMembership: (t) =>

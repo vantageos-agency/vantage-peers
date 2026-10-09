@@ -32,6 +32,8 @@ import { api, internal } from "../_generated/api";
 import type { Id } from "../_generated/dataModel";
 import schema from "../schema";
 import { requireAgentCredentialMatch } from "../lib/auth";
+import { sha256Hex } from "@vantageos/cloud-identity";
+import { agentIdOf } from "../../tests/lib/agentIdOf";
 
 const modules = Object.fromEntries(
 	Object.entries(import.meta.glob("../**/*.ts")).filter(
@@ -90,7 +92,7 @@ async function register(t: T, org: string, name: string): Promise<Id<"agents">> 
 async function mint(t: T, org: string, agentName: string): Promise<string> {
 	const minted = await adminOf(t, org).mutation(
 		api.agentCredentials.mintAgentCredential,
-		{ orgSlug: org, agentName },
+		{ orgSlug: org, agentId: await agentIdOf(t, org, agentName) },
 	);
 	return minted.secret;
 }
@@ -185,7 +187,7 @@ describe("RENAME — the credential follows the row", () => {
 		const taken = await codeOf(
 			adminOf(t, "org-a").mutation(api.agents.renameAgent, {
 				orgSlug: "org-a",
-				name: "clio",
+				agentId: await agentIdOf(t, "org-a", "clio"),
 				newName: "Victor",
 			}),
 		);
@@ -193,7 +195,7 @@ describe("RENAME — the credential follows the row", () => {
 
 		await adminOf(t, "org-a").mutation(api.agents.renameAgent, {
 			orgSlug: "org-a",
-			name: "clio",
+			agentId: await agentIdOf(t, "org-a", "clio"),
 			newName: "calliope",
 		});
 		const resolved = await asServiceAccount(t).query(
@@ -274,7 +276,7 @@ describe("REVOKED — a rotated-out credential stays dead through a rename", () 
 
 		const res = await adminOf(t, "org-a").mutation(
 			api.agentCredentials.revokeAgentCredential,
-			{ orgSlug: "org-a", agentName: "calliope" },
+			{ orgSlug: "org-a", agentId: await agentIdOf(t, "org-a", "calliope") },
 		);
 		expect(res).toEqual({ revoked: 1 });
 		const dead = await codeOf(
@@ -297,12 +299,15 @@ describe("UNIQUENESS — a name is unique within its org, per normalizeOrchestra
 		expect(rows).toHaveLength(1);
 	});
 
-	test("registering the exact same name again stays idempotent (same _id)", async () => {
+	test("registering the exact same name again is REFUSED naming the holder by id; the name never selects a row", async () => {
 		const t = createT();
 		await seedOrg(t, "org-a");
 		const first = await register(t, "org-a", "clio");
-		const second = await register(t, "org-a", "clio");
-		expect(second).toBe(first);
+		const code = await codeOf(register(t, "org-a", "clio"));
+		expect(code).toMatch(/^AGENT_NAME_TAKEN/);
+		expect(code).toContain(first);
+		const rows = await t.run(async (ctx) => ctx.db.query("agents").collect());
+		expect(rows).toHaveLength(1);
 	});
 
 	test("clio and victor in one org both register", async () => {
@@ -412,7 +417,7 @@ describe("BACKFILL — agentId from (orgSlug, agentName), refusing never guessin
 		expect((await t.run(async (ctx) => ctx.db.get(credId)))?.agentId).toBeUndefined();
 	});
 
-	test("a legacy credential (no agentId) still resolves before the backfill runs", async () => {
+	test("a legacy credential (no agentId) is REFUSED until the backfill binds it to its agent by id", async () => {
 		const t = createT();
 		await seedOrg(t, "org-a");
 		await register(t, "org-a", "clio");
@@ -421,6 +426,15 @@ describe("BACKFILL — agentId from (orgSlug, agentName), refusing never guessin
 			const row = (await ctx.db.query("agent_credentials").collect())[0];
 			await ctx.db.patch(row._id, { agentId: undefined });
 		});
+		await expect(
+			asServiceAccount(t).query(api.agentCredentials.resolveAgentCredential, {
+				presentedSecret: secret,
+			}),
+		).rejects.toThrow(/credential-not-recognised/);
+		await t.mutation(
+			internal.migrations.agentIdentityRows.backfillCredentialAgentIds,
+			{ dryRun: false, cursor: null },
+		);
 		const resolved = await asServiceAccount(t).query(
 			api.agentCredentials.resolveAgentCredential,
 			{ presentedSecret: secret },
@@ -456,7 +470,7 @@ describe("BACKFILL — agentId from (orgSlug, agentName), refusing never guessin
 	});
 });
 
-describe("LEGACY credential (agentId undefined) follows the ROW across rename and name reuse", () => {
+describe("LEGACY credential (agentId undefined) is inert: a label never selects an agent", () => {
 	// Pre-backfill prod shape: minted, then agentId stripped.
 	async function legacyMint(t: T, org: string, name: string) {
 		const secret = await mint(t, org, name);
@@ -468,136 +482,83 @@ describe("LEGACY credential (agentId undefined) follows the ROW across rename an
 		return secret;
 	}
 
-	test("P1a: rename keeps a legacy credential on the same row; the lock accepts the new name, refuses the old", async () => {
+	const resolveRefused = (t: T, secret: string) =>
+		expect(
+			asServiceAccount(t).query(api.agentCredentials.resolveAgentCredential, {
+				presentedSecret: secret,
+			}),
+		).rejects.toThrow(/credential-not-recognised/);
+
+	test("P1a: a legacy credential is refused before and after a rename, and the lock refuses it under either label", async () => {
 		const t = createT();
 		await seedOrg(t, "org-a");
 		await seedProfile(t, "calliope");
 		await seedProfile(t, "clio");
 		await seedProfile(t, "recipient-role");
-		const id = await register(t, "org-a", "clio");
+		await register(t, "org-a", "clio");
 		const secret = await legacyMint(t, "org-a", "clio");
+		await resolveRefused(t, secret);
 
 		await adminOf(t, "org-a").mutation(api.agents.renameAgent, {
 			orgSlug: "org-a",
-			name: "clio",
+			agentId: await agentIdOf(t, "org-a", "clio"),
 			newName: "calliope",
 		});
+		await resolveRefused(t, secret);
 
-		const resolved = await asServiceAccount(t).query(
-			api.agentCredentials.resolveAgentCredential,
-			{ presentedSecret: secret },
-		);
-		expect(resolved).toMatchObject({ orgSlug: "org-a", agentName: "calliope" });
-		const rows = await t.run(async (ctx) => ctx.db.query("agent_credentials").collect());
-		expect(rows[0].agentId).toBe(id);
-
-		const ok = await asServiceAccount(t).mutation(api.messages.sendMessage, {
-			from: "calliope",
-			channel: "recipient-role",
-			content: "legacy cred, new name",
-			agentCredentialSecret: secret,
-		});
-		expect(ok).toBeTruthy();
-		const stale = await codeOf(
-			asServiceAccount(t).mutation(api.messages.sendMessage, {
-				from: "clio",
-				channel: "recipient-role",
-				content: "legacy cred, old name",
-				agentCredentialSecret: secret,
-			}),
-		);
-		expect(stale).toMatch(/^AGENT_IDENTITY_MISMATCH/);
+		for (const from of ["calliope", "clio"]) {
+			const code = await codeOf(
+				asServiceAccount(t).mutation(api.messages.sendMessage, {
+					from,
+					channel: "recipient-role",
+					content: "legacy cred",
+					agentCredentialSecret: secret,
+				}),
+			);
+			expect(code).toMatch(/^AGENT_IDENTITY_MISMATCH/);
+		}
 	});
 
-	test("P1b: re-registering the old name makes a NEW row that does not inherit the credential", async () => {
+	test("P1b: re-registering the old label makes a NEW row that does not inherit the legacy credential", async () => {
 		const t = createT();
 		await seedOrg(t, "org-a");
 		const oldId = await register(t, "org-a", "clio");
 		const secret = await legacyMint(t, "org-a", "clio");
 		await adminOf(t, "org-a").mutation(api.agents.renameAgent, {
 			orgSlug: "org-a",
-			name: "clio",
+			agentId: oldId,
 			newName: "calliope",
 		});
 		const newId = await register(t, "org-a", "clio");
 		expect(newId).not.toBe(oldId);
 
-		const resolved = await asServiceAccount(t).query(
-			api.agentCredentials.resolveAgentCredential,
-			{ presentedSecret: secret },
-		);
-		expect(resolved).toMatchObject({ orgSlug: "org-a", agentName: "calliope" });
+		await resolveRefused(t, secret);
 		const status = await adminOf(t, "org-a").query(
 			api.agentCredentials.getAgentCredentialStatus,
-			{ orgSlug: "org-a", agentName: "clio" },
+			{ orgSlug: "org-a", agentId: newId },
 		);
 		expect(status.hasActiveCredential).toBe(false);
 	});
 
-	test("ORPHAN: a legacy credential whose agent row is gone blocks registering that label (AGENT_LEGACY_CREDENTIAL_ORPHANED)", async () => {
+	test("ORPHAN: a legacy credential whose agent row is gone does not block registering that label, and never resolves to the new agent", async () => {
 		const t = createT();
 		await seedOrg(t, "org-a");
+		const secret = "f0".repeat(32);
 		await t.run(async (ctx) => {
 			await ctx.db.insert("agent_credentials", {
 				orgSlug: "org-a",
 				agentName: "Clio",
-				secretHash: "orphan-hash",
+				secretHash: await sha256Hex(secret),
 				isActive: true,
 				createdAt: Date.now(),
 			});
 		});
-		const code = await codeOf(register(t, "org-a", "clio"));
-		expect(code).toMatch(/^AGENT_LEGACY_CREDENTIAL_ORPHANED/);
-		const rows = await t.run(async (ctx) => ctx.db.query("agents").collect());
-		expect(rows).toHaveLength(0);
-		// a different org is unaffected
-		await seedOrg(t, "org-b");
-		await register(t, "org-b", "clio");
-	});
-	// An orphan: a legacy credential row (no agentId) carrying a label no live
-	// agent holds.
-	async function seedOrphan(t: T, label: string, isActive: boolean) {
-		await t.run(async (ctx) => {
-			await ctx.db.insert("agent_credentials", {
-				orgSlug: "org-a",
-				agentName: label,
-				secretHash: `orphan-${label}-${isActive}`,
-				isActive,
-				createdAt: Date.now(),
-			});
-		});
-	}
-	const rename = (t: T, name: string, newName: string) =>
-		adminOf(t, "org-a").mutation(api.agents.renameAgent, {
-			orgSlug: "org-a",
-			name,
-			newName,
-		});
-
-	test("ORPHAN (rename side): renameAgent b -> x is refused while an ACTIVE orphan carries x", async () => {
-		const t = createT();
-		await seedOrg(t, "org-a");
-		const id = await register(t, "org-a", "b");
-		await seedOrphan(t, "x", true);
-		expect(await codeOf(rename(t, "b", "x"))).toMatch(
-			/^AGENT_LEGACY_CREDENTIAL_ORPHANED/,
+		const id = await register(t, "org-a", "clio");
+		await resolveRefused(t, secret);
+		const status = await adminOf(t, "org-a").query(
+			api.agentCredentials.getAgentCredentialStatus,
+			{ orgSlug: "org-a", agentId: id },
 		);
-		const row = await t.run(async (ctx) => ctx.db.get(id));
-		expect(row?.name).toBe("b");
+		expect(status.hasActiveCredential).toBe(false);
 	});
-
-	test("ORPHAN (revoked): a REVOKED orphan on x blocks neither registerAgent x nor renameAgent b -> x; an active one still does", async () => {
-		const t = createT();
-		await seedOrg(t, "org-a");
-		await register(t, "org-a", "b");
-		await seedOrphan(t, "x", false);
-		await seedOrphan(t, "y", false);
-		expect(await codeOf(rename(t, "b", "x"))).toBe("NO_ERROR");
-		expect(await codeOf(register(t, "org-a", "y"))).toBe("NO_ERROR");
-		await seedOrphan(t, "z", true);
-		expect(await codeOf(register(t, "org-a", "z"))).toMatch(
-			/^AGENT_LEGACY_CREDENTIAL_ORPHANED/,
-		);
-	});
-
 });

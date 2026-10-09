@@ -18,6 +18,7 @@ import { convexTest } from "convex-test";
 import { describe, expect, test } from "vitest";
 import { api } from "../_generated/api";
 import schema from "../schema";
+import { agentIdOf } from "../../tests/lib/agentIdOf";
 
 const modules = Object.fromEntries(
 	Object.entries(import.meta.glob("../**/*.ts")).filter(
@@ -154,7 +155,7 @@ describe("sendMessage — the sender derives from the verified caller", () => {
 		});
 		const minted = await adminOf(t, "org-b").mutation(
 			api.agentCredentials.mintAgentCredential,
-			{ orgSlug: "org-b", agentName: "bob" },
+			{ orgSlug: "org-b", agentId: await agentIdOf(t, "org-b", "bob") },
 		);
 		const refusal = await refusalOf(
 			memberOf(t, "org-b").mutation(api.messages.sendMessage, {

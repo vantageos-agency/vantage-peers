@@ -20,6 +20,7 @@ import { describe, expect, test } from "vitest";
 import { api, internal } from "../_generated/api";
 import type { Id } from "../_generated/dataModel";
 import schema from "../schema";
+import { agentIdOf } from "../../tests/lib/agentIdOf";
 
 const modules = Object.fromEntries(
 	Object.entries(import.meta.glob("../**/*.ts")).filter(
@@ -140,7 +141,7 @@ describe("resolveAgentCredential carries the agent ID", () => {
 		const id = await seedAgent(t, "org-a", "clio");
 		const { secret } = await adminOf(t, "org-a").mutation(
 			api.agentCredentials.mintAgentCredential,
-			{ orgSlug: "org-a", agentName: "clio" },
+			{ orgSlug: "org-a", agentId: await agentIdOf(t, "org-a", "clio") },
 		);
 		const resolved = await asServiceAccount(t).query(
 			api.agentCredentials.resolveAgentCredential,
@@ -149,23 +150,23 @@ describe("resolveAgentCredential carries the agent ID", () => {
 		expect(resolved).toEqual({ orgSlug: "org-a", agentName: "clio", agentId: id });
 	});
 
-	test("a legacy credential row (no agentId) still reports the id of the agent its label resolves to", async () => {
+	test("a legacy credential row (no agentId) is REFUSED: a label never selects the agent", async () => {
 		const t = createT();
 		await seedOrg(t, "org-a");
-		const id = await seedAgent(t, "org-a", "clio");
+		await seedAgent(t, "org-a", "clio");
 		const { secret } = await adminOf(t, "org-a").mutation(
 			api.agentCredentials.mintAgentCredential,
-			{ orgSlug: "org-a", agentName: "clio" },
+			{ orgSlug: "org-a", agentId: await agentIdOf(t, "org-a", "clio") },
 		);
 		await t.run(async (ctx) => {
 			const row = (await ctx.db.query("agent_credentials").collect())[0];
 			await ctx.db.patch(row._id, { agentId: undefined });
 		});
-		const resolved = await asServiceAccount(t).query(
-			api.agentCredentials.resolveAgentCredential,
-			{ presentedSecret: secret },
-		);
-		expect(resolved.agentId).toBe(id);
+		await expect(
+			asServiceAccount(t).query(api.agentCredentials.resolveAgentCredential, {
+				presentedSecret: secret,
+			}),
+		).rejects.toThrow(/credential-not-recognised/);
 	});
 });
 

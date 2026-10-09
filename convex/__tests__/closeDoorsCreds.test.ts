@@ -24,6 +24,7 @@ import { convexTest } from "convex-test";
 import { describe, expect, test } from "vitest";
 import { api, internal } from "../_generated/api";
 import schema from "../schema";
+import { agentIdOf } from "../../tests/lib/agentIdOf";
 
 const modules = Object.fromEntries(
 	Object.entries(import.meta.glob("../**/*.ts")).filter(
@@ -73,7 +74,7 @@ async function mint(t: T, org: string, name: string): Promise<string> {
 	});
 	const minted = await adminOf(t, org).mutation(
 		api.agentCredentials.mintAgentCredential,
-		{ orgSlug: org, agentName: name },
+		{ orgSlug: org, agentId: await agentIdOf(t, org, name) },
 	);
 	return minted.secret;
 }

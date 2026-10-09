@@ -10,8 +10,8 @@ Before this table, the token identified the ORGANISATION and the agent wrote its
 
 Source: `convex/agentCredentials.ts:63-125`, exported as `export const mintAgentCredential = mutation(...)`.
 
-- Gated to the organisation administrator via `requireOrgAdmin` — the same gate `registerAgent` and `linkChild` use.
-- Refuses to mint for an agent name that has no `agents` row in this org — `AGENT_NOT_FOUND` — a credential is issued to an agent that already exists as an entity, never to an arbitrary string.
+- Gated to the organisation administrator via `requireOrgAdminById` — the same gate `registerAgent` and `linkChild` use.
+- The agent is named by `agentId`. An ID naming no `agents` row raises `AGENT_NOT_FOUND`; an ID naming another organisation's agent is refused `RBAC_DENIED`. A name never selects the agent. `revokeAgentCredential` and `getAgentCredentialStatus` take `agentId` the same way.
 - The raw secret is 32 random bytes → 64-char hex (`crypto.getRandomValues`, `convex/agentCredentials.ts:104-108`) — the same shape as this codebase's existing OAuth client secrets and bearer tokens.
 
 ## The once-only plaintext return
@@ -34,7 +34,8 @@ Source: `convex/schema.ts:1375-1383`.
 ```
 agent_credentials: defineTable({
 	orgSlug: v.string(),      // client_org_mapping.clerkOrgSlug — the org this credential's agent belongs to
-	agentName: v.string(),    // agents.name within orgSlug — the credential's OWN identity, never caller-declared
+	agentId: v.optional(v.id("agents")),  // the identity: the agents row. A row without it never resolves
+	agentName: v.string(),    // denormalised label at mint time, for audit only; never selects an agent
 	secretHash: v.string(),   // sha256 hex of the minted secret — raw secret NEVER stored
 	isActive: v.boolean(),    // false once rotated out by a later mint
 	createdAt: v.number(),
@@ -43,11 +44,11 @@ agent_credentials: defineTable({
 	.index("by_secret_hash", ["secretHash"])
 ```
 
-Hashing reuses the same sha256-hex pattern already used for tokens elsewhere in this codebase (`convex/credentials.ts`'s exported `sha256Hex`; `convex/oauth.ts`'s local mirror of the same helper) — `convex/agentCredentials.ts:19-24`.
+Hashing and validation belong to `@vantageos/cloud-identity`: `sha256Hex` produces the stored digest at mint and `validatePresentedBearer` recomputes and compares it at resolution. This file keeps no hashing code of its own.
 
 ## Rotation — `isActive` flip, never a delete
 
-On a second `mintAgentCredential` call for the same `(orgSlug, agentName)`, every prior row is patched to `isActive: false` before the new row is inserted (`convex/agentCredentials.ts:87-100`). Rows are never deleted — the audit trail of past mints is preserved. Only the latest mint's plaintext resolves afterward; the previous plaintext stops authenticating immediately.
+On a second `mintAgentCredential` call for the same agent (by `agentId`), every prior row is patched to `isActive: false` before the new row is inserted (`convex/agentCredentials.ts:87-100`). Rows are never deleted — the audit trail of past mints is preserved. Only the latest mint's plaintext resolves afterward; the previous plaintext stops authenticating immediately.
 
 ## Resolution — `resolveAgentCredential`
 
@@ -56,17 +57,18 @@ Source: `convex/agentCredentials.ts:143-149`, exported as `export const resolveA
 ```
 const resolvedIdentityValidator = v.object({
 	orgSlug: v.string(),
-	agentName: v.string(),
+	agentName: v.string(),    // the agent's CURRENT label
+	agentId: v.id("agents"),
 });
 ```
 
 The only argument is the presented secret (`presentedSecret: v.string()`); the identity returned comes solely from which row's `secretHash` matches via the `by_secret_hash` index — never from an argument the caller could set. This is the property the identity lock (`requireAgentCredentialMatch`, see `identity-lock.md`) depends on: the credential holder is authenticated by presenting the secret, not by declaring who it is. A rotated-out (`isActive: false`) row's old plaintext no longer resolves, even though the row itself still exists for audit purposes.
 
-Deliberately no `requireOrgAdmin` gate on `resolveAgentCredential` — the credential itself is the proof of identity being verified; requiring a separate org-admin identity on the same call would defeat the point of an agent authenticating as itself (`convex/agentCredentials.ts:138-141`).
+Deliberately no org-admin gate on `resolveAgentCredential` — the credential itself is the proof of identity being verified; requiring a separate org-admin identity on the same call would defeat the point of an agent authenticating as itself (`convex/agentCredentials.ts:138-141`).
 
 ## Authorization split — two different identities, deliberately
 
-- **Mint**: gated by `requireOrgAdmin` — only an org:admin of the agent's own org may mint or rotate its credential.
-- **Resolution**: trusts no caller-declared name — the presented secret alone determines the resolved `(orgSlug, agentName)`.
+- **Mint**: gated by `requireOrgAdminById` — only an org:admin of the agent's own org may mint or rotate its credential.
+- **Resolution**: trusts no caller-declared name — the presented secret alone determines the resolved `(orgSlug, agentId)` (plus the agent's current label).
 
 (`convex/agentCredentials.ts:26-35`.)

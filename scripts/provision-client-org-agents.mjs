@@ -30,6 +30,7 @@ import { fileURLToPath } from "node:url";
 import { ConvexHttpClient } from "convex/browser";
 import { getScopedUserToken } from "../mcp-server/src/serviceAccountAuth.ts";
 import { api } from "../convex/_generated/api.js";
+import { agentRowByLabel } from "./lib/station-agents.mjs";
 
 const argv = process.argv.slice(2);
 const arg = (k, d) => {
@@ -150,14 +151,14 @@ for (const agent of agents) {
 		continue;
 	}
 	// 3. agent registry, by ID, in THIS org
-	let row = await admin.query(api.agents.getAgent, { orgSlug: org, name: agent });
+	let row = agentRowByLabel(await admin.query(api.agents.listAgentsByOrg, { orgSlug: org }), agent);
 	if (!row) {
-		await admin.mutation(api.agents.registerAgent, { orgSlug: org, name: agent, description: `Agent ${agent} of ${org}` });
-		row = await admin.query(api.agents.getAgent, { orgSlug: org, name: agent });
+		const agentId = await admin.mutation(api.agents.registerAgent, { orgSlug: org, name: agent, description: `Agent ${agent} of ${org}` });
+		row = await admin.query(api.agents.getAgent, { orgSlug: org, agentId });
 	}
 	let secretPath = join(stage, `${agent}.secret`);
 	if (!existsSync(secretPath)) {
-		const { secret } = await admin.mutation(api.agentCredentials.mintAgentCredential, { orgSlug: org, agentName: agent });
+		const { secret } = await admin.mutation(api.agentCredentials.mintAgentCredential, { orgSlug: org, agentId: row._id });
 		secretPath = writeSecret(`${agent}.secret`, secret);
 	}
 	console.log(

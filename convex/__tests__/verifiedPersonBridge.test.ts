@@ -31,6 +31,7 @@ import { beforeEach, describe, expect, test } from "vitest";
 import { api } from "../_generated/api";
 import type { Id } from "../_generated/dataModel";
 import schema from "../schema";
+import { agentIdOf } from "../../tests/lib/agentIdOf";
 
 const modules = Object.fromEntries(
 	Object.entries(import.meta.glob("../**/*.ts")).filter(
@@ -480,7 +481,7 @@ describe("RESERVED — no agent is ever named like a person", () => {
 		await expectCode(
 			admin().mutation(api.agents.renameAgent, {
 				orgSlug: "org-a",
-				name: "agent-a",
+				agentId: await agentIdOf(t, "org-a", "agent-a"),
 				newName: "user:user_editor",
 			}),
 			"AGENT_NAME_RESERVED",

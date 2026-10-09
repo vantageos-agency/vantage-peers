@@ -19,6 +19,7 @@ import {
 	TABLE_ORDER,
 } from "../migrations/backfill_actor_ids";
 import schema from "../schema";
+import { agentIdOf } from "../../tests/lib/agentIdOf";
 
 const modules = Object.fromEntries(
 	Object.entries(import.meta.glob("../**/*.ts")),
@@ -365,7 +366,7 @@ describe("new writes stamp the IDs", () => {
 		}
 		const minted = await adminOf(t, "iris-rh").mutation(
 			api.agentCredentials.mintAgentCredential,
-			{ orgSlug: "iris-rh", agentName: "clio" },
+			{ orgSlug: "iris-rh", agentId: await agentIdOf(t, "iris-rh", "clio") },
 		);
 		const agentId = (name: string) =>
 			t.run(async (ctx) => {

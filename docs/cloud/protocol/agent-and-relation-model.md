@@ -13,7 +13,8 @@ Source: `convex/schema.ts:1320-1333`.
 ```
 agents: defineTable({
 	orgSlug: v.string(),                    // client_org_mapping.clerkOrgSlug — the org that owns this agent
-	name: v.string(),                       // agent's declared name, unique within its org (see by_org_name)
+	name: v.string(),                       // agent's display label, unique within its org (see by_org_name); the identity is the row _id
+	formerNames: v.optional(v.array(v.string())), // normalized labels before a rename (newest last, max 50); a roster entry keeps resolving to this row
 	description: v.optional(v.string()),
 	address: v.optional(v.string()),        // write-back target used AFTER an agent deploys
 	outboundAuthRef: v.optional(v.string()),// opaque reference to an outbound-auth credential; never the raw credential
@@ -37,8 +38,8 @@ export const getAgent = query(...)             // convex/agents.ts:135
 export const listAgentsByOrg = query(...)      // convex/agents.ts:155
 ```
 
-- `registerAgent` — creates or updates an agent row in the caller's own org, gated by `requireOrgAdmin`. Idempotent on `(orgSlug, name)`: a second call with the same pair updates `description`/`outboundAuthRef`/`isActive` instead of duplicating (`convex/agents.ts:41-92`).
-- `setAgentAddress` — the write-back path used after an agent deploys; the emitter (parent-child edge layer) reads this address as the source for a parent's remote-agent declaration. Same `requireOrgAdmin` gate. Refuses with `AGENT_NOT_FOUND` if no row exists for `(orgSlug, name)` (`convex/agents.ts:94-128`).
+- `registerAgent` — creates an agent row in the caller's own org and returns its ID; gated by the org-administrator proof (`requireOrgAdminById`, built on `@vantageos/cloud-identity`). `name` is a display label, unique per org case-insensitively: a label already held is refused `AGENT_NAME_TAKEN` (naming the holder by ID) or `AGENT_INACTIVE` (holder retired); it never updates or revives the holder (`convex/agents.ts`).
+- `setAgentAddress` — the write-back path used after an agent deploys; the emitter (parent-child edge layer) reads this address as the source for a parent's remote-agent declaration. Same gate. Takes `agentId`; `AGENT_NOT_FOUND` if the ID names no row, `RBAC_DENIED` if it names another organisation's agent (`convex/agents.ts`). `deactivateAgent`, `reactivateAgent`, `renameAgent` and `getAgent` take `agentId` the same way.
 - `getAgent` — org-scoped lookup by `(orgSlug, name)` (`convex/agents.ts:130-148`).
 - `listAgentsByOrg` — org-scoped listing via the `by_org` index (`convex/agents.ts:150-166`).
 
@@ -51,8 +52,8 @@ Source: `convex/schema.ts:1346-1354`.
 ```
 agent_relations: defineTable({
 	orgSlug: v.string(),
-	parentName: v.string(),  // agents.name of the parent in this org
-	childName: v.string(),   // agents.name of the child in this org
+	parentName: v.string(),  // copy of the parent agent's label in this org (refreshed on rename)
+	childName: v.string(),   // copy of the child agent's label in this org (refreshed on rename)
 	createdAt: v.number(),
 })
 	.index("by_org", ["orgSlug"])
@@ -74,12 +75,12 @@ export const parentsOf = query(...)        // convex/agentRelations.ts:145
 export const graphByOrg = query(...)       // convex/agentRelations.ts:167
 ```
 
-- `linkChild` — records a parent→child edge, org-admin gated, idempotent on `(orgSlug, parentName, childName)` — never checks or enforces a single-parent constraint (`convex/agentRelations.ts:48-88`).
-- `unlinkChild` — removes the edge; no-op (returns `null`) if it does not exist (`convex/agentRelations.ts:90-118`).
-- `childrenOf` — all children of `parentName`, via the `by_parent` index (`convex/agentRelations.ts:120-138`).
-- `parentsOf` — all parents of `childName`, via the `by_child` index — proves the shared-child case: a child linked from two parents returns both rows (`convex/agentRelations.ts:140-158`).
+- `linkChild` — records a parent→child edge between two agents named by `parentAgentId` and `childAgentId`, org-admin gated, idempotent on the pair — never checks or enforces a single-parent constraint (`convex/agentRelations.ts`).
+- `unlinkChild` — removes the edge between two agents named by ID; no-op (returns `null`) if it does not exist (`convex/agentRelations.ts`).
+- `childrenOf` — all children of the agent `parentAgentId`, via the `by_parent` index (`convex/agentRelations.ts`).
+- `parentsOf` — all parents of the agent `childAgentId`, via the `by_child` index — proves the shared-child case: a child linked from two parents returns both rows (`convex/agentRelations.ts`).
 - `graphByOrg` — the whole org's graph as `{ nodes, edges }`. Nodes are the distinct set of names appearing as either a parent or a child across the org's edges — an agent registered in `agents` but never linked does not appear (this is the edge graph, not the agent roster) (`convex/agentRelations.ts:160-193`).
 
 ## How an org reads its own graph, and nobody else's
 
-Every mutation and query in both files calls `requireOrgAdmin(ctx, args.orgSlug)` before touching the database (`convex/agents.ts:21-27`, `convex/agentRelations.ts:24-31`). `requireOrgAdmin` verifies the caller's own org — derived from the authenticated identity, never from a caller-supplied claim — equals `args.orgSlug`; a caller from org B passing org A's slug is refused (`RBAC_DENIED`), never silently emptied. There is no master carve-out on any of these calls — an org-admin identity of the target org is required every time. This is the same gate `client_org_mapping`-backed `provisionOrganization` uses, reused rather than duplicated. See `.claude/rules/authority-attached-to-anonymous-object.md` for the general doctrine this instance follows: authority is bound to the verified principal, never a caller-supplied value.
+Every mutation and query in both files calls `requireOrgAdminById(ctx, args.orgSlug, door)` before touching the database (`convex/lib/agentIdentity.ts`): `resolveActingPrincipal` builds a person principal from the verified session (never from an argument) and `assertOrgAdmin` requires an admin of exactly `args.orgSlug`. A caller from org B passing org A's slug is refused (`RBAC_DENIED`), never silently emptied, and an agent ID of another organisation is refused by `assertTargetBelongsTo`. There is no master carve-out on any of these calls. `agent_relations` stores a denormalised copy of each endpoint's label (the edge table has no agent-ID column); the doors derive it from the row the ID names, and `renameAgent` refreshes it. See `.claude/rules/authority-attached-to-anonymous-object.md` for the general doctrine this instance follows: authority is bound to the verified principal, never a caller-supplied value.
