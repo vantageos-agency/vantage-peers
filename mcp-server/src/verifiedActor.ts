@@ -41,8 +41,8 @@ export const VERIFIED_ACTOR_DOORS: ReadonlySet<string> = new Set([
 	"tasks:blockTask",
 	"tasks:bulkComplete",
 	// The inbox doors (task k17c5q842gm1gbh0j2qjtc80g18fx5kb): an agent's inbox is
-	// read, marked and its sent mail deleted BY ITS ID, never by the `recipient` /
-	// `callerOrchestrator` name another org's same-named agent also carries.
+	// read, marked and its sent mail deleted BY ITS ID, never by the recipient or
+	// acting-name argument that another org's same-named agent also carries.
 	"messages:checkNewMessages",
 	"messages:checkNewMessagesEnvelope",
 	"messages:getUnreadCount",
