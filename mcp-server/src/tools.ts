@@ -3769,7 +3769,7 @@ export function registerTools(
 			callerOrchestrator: creatorSchema
 				.optional()
 				.describe(
-					"Orchestrator marking its own receipts as read — omit it only when the credential resolves exactly one agent (a seat or an agent credential: it is derived from that agent's ID). An org-level token and the fleet master must name it: a master that omits it is refused by messages:markAsRead (recipient-required). Enforced against each receipt's recipient in messages:markAsRead",
+					"Orchestrator marking its own receipts as read — omit it only when the credential resolves exactly one agent (a seat or an agent credential: it is derived from that agent's ID). An org-level token and the fleet master must name it. Enforced against each receipt's recipient in messages:markAsRead",
 				),
 		},
 		{

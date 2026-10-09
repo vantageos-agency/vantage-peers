@@ -16,9 +16,11 @@
  *   PERSON          acts in its own name: refused before Convex today on all three
  *                   tools (no human door), so no agent ID or org is ever sent.
  *   MASTER          the fleet service account: no proof of any kind. A master that
- *                   omits callerOrchestrator is refused by the door
- *                   (recipient-required); the tool surfaces that refusal as an
- *                   error, it does not swallow it into an empty success.
+ *                   omits callerOrchestrator is refused by the door once it is in
+ *                   CONTRACT mode (recipient-required; in EXPAND mode,
+ *                   convex/lib/inboxReader.ts, it is served as before); the fake
+ *                   models the CONTRACT refusal, and the tool must surface it as an
+ *                   error, never swallow it into an empty success.
  *
  * There is no MCP tool over messages:getUnreadCount (grep in src/tools.ts finds
  * none), so it has no row here; its VERIFIED_ACTOR_DOORS membership is pinned in
