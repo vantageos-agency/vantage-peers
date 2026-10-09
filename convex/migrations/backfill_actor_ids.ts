@@ -29,16 +29,6 @@
 // agents, and a row is never given the other org's agent. Undecidable columns
 // are LEFT UNSET, counted and listed by row ID.
 //
-// ONE EXCEPTION, receipts only: a receipt written in a CLIENT org T to a name that
-// is NOT an agent of T but IS on T's roster (client_org_mapping.allowedOrchestrators,
-// e.g. "pi") resolves in the OPERATOR org instead, under the same one-org rule
-// (exactly one ACTIVE operator-org agent -> its _id; none -> unknownAgent; 2+ ->
-// ambiguousAgent). T's own agent always wins (in-org first), and a name off T's
-// roster stays unknownAgent. This is the backfill of the write-path rule in
-// convex/lib/operatorRosterAgents.ts. The tasks and messages columns are
-// unchanged: a task/message actor is the sender or assignee, not a roster mail
-// target, so no cross-org resolution is required there.
-//
 // SHAPE. Caller-walked, cursor-paginated, one page of one table per execution
 // (bounded reads and writes). DRY RUN BY DEFAULT. Idempotent: a column that
 // already holds an ID is counted `alreadySet` and never rewritten. Run it AFTER
@@ -57,8 +47,7 @@ import type { DatabaseReader } from "../_generated/server";
 import { internalMutation } from "../_generated/server";
 import { normalizeOrchestratorId } from "../_helpers/normalizeOrchestratorId";
 import { isHumanActorName } from "../lib/humanActor";
-import { findOperatorOrg, OPERATOR_MAPPING_READ_CAP } from "../lib/operatorOrg";
-import { isNameOnRoster } from "../lib/operatorRosterAgents";
+import { findOperatorOrg } from "../lib/operatorOrg";
 
 export const TABLE_ORDER = ["tasks", "messages", "messageReceipts"] as const;
 export type ActorTable = (typeof TABLE_ORDER)[number];
@@ -96,10 +85,6 @@ type Resolver = {
 	operatorSlug: string;
 	// orgSlug -> normalized name -> every agents _id carrying it
 	agentIds: Map<string, Map<string, string[]>>;
-	// operator org only: normalized name -> every ACTIVE agents _id carrying it
-	operatorActiveIds: Map<string, string[]>;
-	// orgSlug -> allowedOrchestrators of the ACTIVE mapping
-	rosters: Map<string, string[]>;
 };
 
 async function loadResolver(db: DatabaseReader): Promise<Resolver> {
@@ -124,25 +109,7 @@ async function loadResolver(db: DatabaseReader): Promise<Resolver> {
 		byName.set(key, [...(byName.get(key) ?? []), a._id]);
 		agentIds.set(a.orgSlug, byName);
 	}
-	const operatorActiveIds = new Map<string, string[]>();
-	for (const a of agents) {
-		if (a.orgSlug !== operator.slug || !a.isActive) continue;
-		const key = normalizeOrchestratorId(a.name);
-		operatorActiveIds.set(key, [...(operatorActiveIds.get(key) ?? []), a._id]);
-	}
-	const mappings = await db
-		.query("client_org_mapping")
-		.withIndex("by_isActive", (q) => q.eq("isActive", true))
-		.take(OPERATOR_MAPPING_READ_CAP + 1);
-	if (mappings.length > OPERATOR_MAPPING_READ_CAP) {
-		throw new ConvexError(
-			"backfill_actor_ids: active client_org_mapping rows exceed the read cap; refusing to decide rosters from a truncated read.",
-		);
-	}
-	const rosters = new Map<string, string[]>(
-		mappings.map((m) => [m.clerkOrgSlug, m.allowedOrchestrators]),
-	);
-	return { operatorSlug: operator.slug, agentIds, operatorActiveIds, rosters };
+	return { operatorSlug: operator.slug, agentIds };
 }
 
 type Verdict = { id: string } | { reason: Reason };
@@ -152,30 +119,11 @@ function resolveName(
 	r: Resolver,
 	rowOrg: string | undefined,
 	name: string,
-	// Receipts only: a roster name of a client org with no agent of that name in
-	// the org resolves in the operator org (see the header).
-	rosterFallback = false,
 ): Verdict {
 	if (isHumanActorName(name)) return { id: name };
 	const org = rowOrg ?? r.operatorSlug;
-	const key = normalizeOrchestratorId(name);
-	const ids = r.agentIds.get(org)?.get(key);
-	if (ids === undefined || ids.length === 0) {
-		if (
-			rosterFallback &&
-			org !== r.operatorSlug &&
-			isNameOnRoster(r.rosters.get(org) ?? [], name)
-		) {
-			const fleet = r.operatorActiveIds.get(key);
-			if (fleet === undefined || fleet.length === 0) {
-				return { reason: "unknownAgent" };
-			}
-			return fleet.length > 1
-				? { reason: "ambiguousAgent" }
-				: { id: fleet[0] };
-		}
-		return { reason: "unknownAgent" };
-	}
+	const ids = r.agentIds.get(org)?.get(normalizeOrchestratorId(name));
+	if (ids === undefined || ids.length === 0) return { reason: "unknownAgent" };
 	if (ids.length > 1) return { reason: "ambiguousAgent" };
 	return { id: ids[0] };
 }
@@ -228,8 +176,6 @@ type Undecidable = {
 type RowView = {
 	_id: string;
 	org: string | undefined;
-	// receipts: a client roster name may resolve in the operator org
-	rosterFallback?: boolean;
 	// [name column, ID column, name, current ID] for every pair the row carries.
 	pairs: Array<[string, string, string | undefined, string | undefined]>;
 };
@@ -268,7 +214,6 @@ function viewReceipt(row: Doc<"messageReceipts">): RowView {
 	return {
 		_id: row._id,
 		org: row.tenantId,
-		rosterFallback: true,
 		pairs: [["recipient", "recipientId", row.recipient, row.recipientId]],
 	};
 }
@@ -288,7 +233,7 @@ function decide(
 			t.alreadySet++;
 			continue;
 		}
-		const verdict = resolveName(r, view.org, name, view.rosterFallback === true);
+		const verdict = resolveName(r, view.org, name);
 		if ("reason" in verdict) {
 			t[verdict.reason]++;
 			undecidable.push({

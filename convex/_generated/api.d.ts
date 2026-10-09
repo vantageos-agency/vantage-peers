@@ -60,7 +60,6 @@ import type * as lib_inboxReader from "../lib/inboxReader.js";
 import type * as lib_license from "../lib/license.js";
 import type * as lib_memberScopes from "../lib/memberScopes.js";
 import type * as lib_operatorOrg from "../lib/operatorOrg.js";
-import type * as lib_operatorRosterAgents from "../lib/operatorRosterAgents.js";
 import type * as lib_orgClerkId from "../lib/orgClerkId.js";
 import type * as lib_personPrincipal from "../lib/personPrincipal.js";
 import type * as lib_reviewRouting from "../lib/reviewRouting.js";
@@ -176,7 +175,6 @@ declare const fullApi: ApiFromModules<{
   "lib/license": typeof lib_license;
   "lib/memberScopes": typeof lib_memberScopes;
   "lib/operatorOrg": typeof lib_operatorOrg;
-  "lib/operatorRosterAgents": typeof lib_operatorRosterAgents;
   "lib/orgClerkId": typeof lib_orgClerkId;
   "lib/personPrincipal": typeof lib_personPrincipal;
   "lib/repoMappingTenant": typeof lib_repoMappingTenant;

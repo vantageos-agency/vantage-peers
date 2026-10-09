@@ -49,7 +49,6 @@ import {
 import { actorIdResolver } from "./lib/actorIds";
 import { clerkOrgIdForSlug } from "./lib/orgClerkId";
 import { fleetOperatorSlug } from "./lib/operatorOrg";
-import { operatorAgentForRosterName } from "./lib/operatorRosterAgents";
 import {
 	fetchUnreadReceipts,
 	ownsReceipt,
@@ -258,24 +257,6 @@ function requireOneRecipientForm(args: {
 	}
 }
 
-// Is `row` the operator-org agent that `reach`'s roster name denotes? Same
-// one-org resolution as the name path (operatorAgentForRosterName): the roster
-// name resolves to exactly ONE active operator-org agent and it is this row.
-async function isRosterOperatorAgent(
-	ctx: MutationCtx,
-	reach: OrgScope,
-	row: Doc<"agents">,
-): Promise<boolean> {
-	if (reach.orgSlug === null) return false;
-	const resolved = await operatorAgentForRosterName(
-		ctx,
-		reach.orgSlug,
-		reach.allowedOrchestrators,
-		row.name,
-	);
-	return resolved !== undefined && resolved._id === row._id;
-}
-
 async function resolveRecipientAgents(
 	ctx: MutationCtx,
 	reach: OrgScope,
@@ -316,20 +297,6 @@ async function resolveRecipientAgents(
 			(derivedTenantId !== undefined && row.orgSlug !== derivedTenantId) ||
 			(!fleetWide && !isOrchestratorOnOrgRoster(reach, row.name))
 		) {
-			// The ONE cross-org admission: a client sender may address an active
-			// OPERATOR-org agent BY ID when that agent's name is on the sender
-			// tenant's roster (the same grant the name path gives "pi"). The
-			// receipt stays in the sender's tenant and carries this ID.
-			if (
-				row !== null &&
-				row.isActive &&
-				!fleetWide &&
-				reach.orgSlug !== null &&
-				(await isRosterOperatorAgent(ctx, reach, row))
-			) {
-				rows.push(row);
-				continue;
-			}
 			return refuse(raw);
 		}
 		rows.push(row);
@@ -670,38 +637,13 @@ async function sendMessageCore(
 			}
 		}
 
-		// A roster name that is NOT an agent of the message's tenant but is a fleet
-		// agent of the operator org (a client roster lists "pi"): the receipt is
-		// stamped with that operator-org agent's ID, resolved inside the operator
-		// org alone. The tenant's OWN agent of the name always wins.
-		let tenantRoster: readonly string[] | undefined;
-		const resolveRecipientId = async (
-			role: string,
-		): Promise<string | undefined> => {
-			const own = await resolveActor(role);
-			if (own !== undefined || derivedTenantId === undefined) return own;
-			if (isHumanActorName(role)) return undefined;
-			if (tenantRoster === undefined) {
-				const mapping = await lookupOrgMapping(ctx, derivedTenantId);
-				tenantRoster =
-					mapping?.isActive === true ? mapping.allowedOrchestrators : [];
-			}
-			const fleetAgent = await operatorAgentForRosterName(
-				ctx,
-				derivedTenantId,
-				tenantRoster,
-				role,
-			);
-			return fleetAgent?._id;
-		};
-
 		for (const recipient of recipients) {
 			// Determine if this is an instance target or role target
 			// A person is one inbox, never an instance: its subject is not split.
 			const isInstance = !isHumanActorName(recipient) && recipient.includes("-");
 			const role = isInstance ? recipient.split("-")[0] : recipient;
 
-			const recipientId = await resolveRecipientId(role);
+			const recipientId = await resolveActor(role);
 			await ctx.db.insert("messageReceipts", {
 				messageId,
 				recipient: role,
