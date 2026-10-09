@@ -530,17 +530,28 @@ describe("OWNED: a receipt / message of another agent is refused", () => {
 		).toBe(1);
 	});
 
-	// CONTRACT pole (inboxReader.ts UNCLAIMED_SERVICE_ACCOUNT_READS_EVERY_TENANT):
-	// armed when the flag is flipped to false, after the claim-sending MCP is
-	// observed live. Until then the claimless service account is served as
+	// CONTRACT poles (inboxReader.ts UNCLAIMED_SERVICE_ACCOUNT_READS_EVERY_TENANT
+	// `false`): the claimless service account naming no owner (the check-messages
+	// skill's call) marks the FLEET's receipts and is refused a client tenant's.
+	// While the flag is true the claimless service account is served as
 	// production served it; inboxOldMcpWire.test.ts pins that.
 	test.runIf(!UNCLAIMED_SERVICE_ACCOUNT_READS_EVERY_TENANT)(
-		"markAsRead: the service account cannot mark a receipt it does not name an owner for",
+		"markAsRead: the service account naming no owner marks a fleet receipt",
+		async () => {
+			const { t, receipt } = await seedWorld();
+			expect(await markAs(t, { receiptIds: [receipt["FLEET-PI"]] })).toBe(1);
+		},
+	);
+
+	test.runIf(!UNCLAIMED_SERVICE_ACCOUNT_READS_EVERY_TENANT)(
+		"markAsRead: the service account naming no owner cannot mark a client tenant's receipt",
 		async () => {
 			const { t, receipt } = await seedWorld();
 			await expect(
-				markAs(t, { receiptIds: [receipt["FLEET-PI"]] }),
+				markAs(t, { receiptIds: [receipt["ACME-BY-ID"]] }),
 			).rejects.toThrow(/RBAC_DENIED.*messages:markAsRead/);
+			const row = await t.run((ctx) => ctx.db.get(receipt["ACME-BY-ID"]));
+			expect(row?.readAt).toBeUndefined();
 		},
 	);
 
