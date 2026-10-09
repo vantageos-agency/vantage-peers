@@ -1511,22 +1511,42 @@ export const markAsRead = mutation({
 		// it is THIS reader's (ID, tenant, and for a legacy receipt the exact name).
 		// The service account asserting a bare name is no longer a licence over every
 		// org's namesake. A Clerk member keeps the roster + tenant gates below.
-		// EXPAND (inboxReader.ts UNCLAIMED_SERVICE_ACCOUNT_READS_EVERY_TENANT): a
-		// claimless master that names no owner keeps the production path below
-		// (master marks the receipts it lists) until the contract step.
+		// A CLAIMLESS master that names no owner (the check-messages skill calls
+		// mark_as_read with only receiptIds) marks the receipts it lists:
+		//  - EXPAND (inboxReader.ts UNCLAIMED_SERVICE_ACCOUNT_READS_EVERY_TENANT
+		//    `true`): any tenant, exactly as production served it.
+		//  - CONTRACT (flag `false`): the fleet service account marks ONLY the
+		//    fleet's tenants, the set the fleet reader uses ([unstamped, operator
+		//    slug]); a receipt of any other tenant is refused whole with
+		//    RBAC_DENIED (tenant-receipt-needs-verified-reader), a client
+		//    tenant's receipt being marked through its verified reader.
+		//  - A master of masterSource "operator-admin" is unchanged: that grant is
+		//    made only in a read-only ctx (auth.ts withOrgScope, isReadOnlyCtx), so
+		//    a mutation never resolves it and it cannot reach this door claimless.
+		// A claim (verifiedActor / verifiedOrg) or a named owner goes to the
+		// inbox reader as before.
 		const claimed =
 			args.verifiedActor !== undefined || args.verifiedOrg !== undefined;
+		const masterNamesNoOwner =
+			!claimed && scope.isMaster && args.callerOrchestrator === undefined;
 		const unclaimedMasterNamesNoOwner =
-			!claimed &&
-			scope.isMaster &&
-			args.callerOrchestrator === undefined &&
-			UNCLAIMED_SERVICE_ACCOUNT_READS_EVERY_TENANT;
+			masterNamesNoOwner && UNCLAIMED_SERVICE_ACCOUNT_READS_EVERY_TENANT;
+		// CONTRACT: the tenants a claimless, ownerless service account may mark.
+		let fleetTenants: ReadonlyArray<string | undefined> | undefined;
+		if (masterNamesNoOwner && !UNCLAIMED_SERVICE_ACCOUNT_READS_EVERY_TENANT) {
+			const operatorSlug = await fleetOperatorSlug(ctx.db);
+			fleetTenants =
+				operatorSlug !== undefined ? [undefined, operatorSlug] : [undefined];
+		}
 		// A claimed caller never takes the claimless master path: the ONLY way past
-		// the inbox reader is `unclaimedMasterNamesNoOwner`, which `!claimed` guards
-		// (a seat omits callerOrchestrator, so without it a claim would mark across
-		// tenants). A Clerk member without a claim keeps the roster + tenant gates.
+		// the inbox reader is a claimless master naming no owner, which `!claimed`
+		// guards (a seat omits callerOrchestrator, so without it a claim would mark
+		// across tenants). A Clerk member without a claim keeps the roster + tenant
+		// gates.
 		const reader =
-			!unclaimedMasterNamesNoOwner && (claimed || scope.isMaster)
+			!unclaimedMasterNamesNoOwner &&
+			fleetTenants === undefined &&
+			(claimed || scope.isMaster)
 				? await resolveInboxReader(
 						ctx,
 						transportScope,
@@ -1544,6 +1564,14 @@ export const markAsRead = mutation({
 		for (const receiptId of normalizedIds) {
 			const receipt = await ctx.db.get(receiptId);
 			if (receipt === null) continue;
+			if (
+				fleetTenants !== undefined &&
+				!fleetTenants.includes(receipt.tenantId)
+			) {
+				throw new ConvexError(
+					`RBAC_DENIED: receipt ${receiptId} belongs to a client organisation; it is marked through that organisation's verified reader, never by the fleet service account — ${JSON.stringify({ reason: "tenant-receipt-needs-verified-reader", door: "messages:markAsRead" })}`,
+				);
+			}
 			if (reader !== undefined) {
 				if (!ownsReceipt(reader, receipt)) {
 					throw new ConvexError(

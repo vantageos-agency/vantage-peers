@@ -175,6 +175,73 @@ describe("messages:markAsRead — receipt tenant", () => {
 	});
 });
 
+// Contract step (inboxReader.ts UNCLAIMED_SERVICE_ACCOUNT_READS_EVERY_TENANT
+// `false`): the check-messages skill calls mark_as_read with only receiptIds.
+// The claimless service account marks the FLEET's receipts (unstamped, or
+// stamped with the operator slug) and is refused a client tenant's.
+describe("messages:markAsRead — claimless service account, no owner named", () => {
+	async function seedOperator(t: T) {
+		await t.run(async (ctx) => {
+			await ctx.db.insert("client_org_mapping", {
+				clerkOrgSlug: "op-org",
+				allowedOrchestrators: ["seat-x"],
+				scopes: ["view-own-tasks"],
+				displayName: "operator",
+				isActive: true,
+				createdAt: Date.now(),
+				orgKind: "operator",
+			});
+		});
+	}
+
+	test.skipIf(UNCLAIMED_SERVICE_ACCOUNT_READS_EVERY_TENANT)(
+		"marks the fleet's receipts (unstamped and operator-stamped) and returns the count",
+		async () => {
+			const t = createT();
+			await seedMappings(t);
+			await seedOperator(t);
+			const unstamped = await seedRow(t, undefined);
+			const stamped = await seedRow(t, "op-org");
+			const n = await asMaster(t).mutation(api.messages.markAsRead, {
+				receiptIds: [unstamped.receiptId, stamped.receiptId],
+			});
+			expect(n).toBe(2);
+			for (const id of [unstamped.receiptId, stamped.receiptId]) {
+				expect((await t.run((ctx) => ctx.db.get(id)))?.readAt).toBeDefined();
+			}
+		},
+	);
+
+	test.skipIf(UNCLAIMED_SERVICE_ACCOUNT_READS_EVERY_TENANT)(
+		"is refused a client tenant's receipt, naming the door; the receipt stays unread, the batch is not partly marked",
+		async () => {
+			const t = createT();
+			await seedMappings(t);
+			await seedOperator(t);
+			const fleet = await seedRow(t, undefined);
+			const client = await seedRow(t, "org-b");
+			await expect(
+				asMaster(t).mutation(api.messages.markAsRead, {
+					receiptIds: [client.receiptId],
+				}),
+			).rejects.toThrow(
+				/RBAC_DENIED.*tenant-receipt-needs-verified-reader.*messages:markAsRead/,
+			);
+			await expect(
+				asMaster(t).mutation(api.messages.markAsRead, {
+					receiptIds: [fleet.receiptId, client.receiptId],
+				}),
+			).rejects.toThrow(/RBAC_DENIED.*messages:markAsRead/);
+			expect(
+				(await t.run((ctx) => ctx.db.get(client.receiptId)))?.readAt,
+			).toBeUndefined();
+			expect(
+				(await t.run((ctx) => ctx.db.get(fleet.receiptId)))?.readAt,
+			).toBeUndefined();
+		},
+	);
+});
+
 describe("messages:deleteMessage — message tenant (sibling receipt mutation)", () => {
 	test("a member cannot delete another org's message (and its receipts) for a same-named sender", async () => {
 		const t = createT();
