@@ -53,8 +53,37 @@ import { resolveVerifiedOrg, type VerifiedOrg } from "./verifiedOrg";
 
 type Ctx = QueryCtx | MutationCtx;
 
+// ─────────────────────────────────────────────────────────────────────────────
+// EXPAND / CONTRACT — the no-interruption contract (task
+// k17aypc5cr3edmvvbvwhb32evx8fz1x1). The MCP server (Railway) and these doors
+// deploy independently. The MCP that serves every seat until the claim-sending
+// MCP is live (main 71510d2) sends NO claim on its inbox tools: a client-org
+// seat, a person and a fleet station all reach Convex as the fleet service
+// account with a recipient NAME and, at most, a free `tenantId` tool argument.
+// Those requests are byte-identical between two orgs' same-named seats, so no
+// door can tell them apart; serving them the fleet tenant only would empty
+// every client seat's and every person's inbox until the MCP redeploys.
+//
+// EXPAND (this value `true`): the claimless service account is served exactly
+// as production served it before this change: every tenant (or the `tenantId`
+// it names), by exact name. A CLAIMED call (verifiedActor / verifiedOrg) is
+// already served by the verified reader below, so the same-named agent of
+// another org reads only its own the moment the MCP sends the claim.
+//
+// CONTRACT (set to `false`, then delete this leg): only after the claim-sending
+// MCP is OBSERVED live (a seat's check_messages served by its verifiedActor).
+// The claimless service account then reads the FLEET's tenant only.
+// ─────────────────────────────────────────────────────────────────────────────
+export const UNCLAIMED_SERVICE_ACCOUNT_READS_EVERY_TENANT: boolean = true;
+
 export type InboxReader = {
-	kind: "agent" | "org-name" | "member" | "fleet" | "operator-admin";
+	kind:
+		| "agent"
+		| "org-name"
+		| "member"
+		| "fleet"
+		| "operator-admin"
+		| "legacy-service-account";
 	// The tenant stamps this reader may see. `undefined` is the unstamped fleet.
 	tenants: ReadonlyArray<string | undefined> | "all";
 	// The reader's own label (the agent's name, or the name the caller gave).
@@ -167,7 +196,12 @@ export async function resolveInboxReader(
 	}
 
 	if (claims.verifiedOrg !== undefined) {
-		const orgSlug = await resolveVerifiedOrg(ctx, scope, claims.verifiedOrg, door);
+		const orgSlug = await resolveVerifiedOrg(
+			ctx,
+			scope,
+			claims.verifiedOrg,
+			door,
+		);
 		if (orgSlug === undefined) {
 			return refuse(door, "reader-unidentified", "no verified reader");
 		}
@@ -223,6 +257,16 @@ export async function resolveInboxReader(
 				names: [claims.recipient],
 			};
 		}
+		// EXPAND: the claimless service account, as production served it (see
+		// UNCLAIMED_SERVICE_ACCOUNT_READS_EVERY_TENANT above).
+		if (UNCLAIMED_SERVICE_ACCOUNT_READS_EVERY_TENANT) {
+			return {
+				kind: "legacy-service-account",
+				tenants: claims.tenantId !== undefined ? [claims.tenantId] : "all",
+				label: claims.recipient,
+				names: [claims.recipient],
+			};
+		}
 		// The fleet service account, no claim: the FLEET's tenant, by exact name.
 		const operator = await fleetOperatorSlug(ctx.db);
 		const fleet: Array<string | undefined> =
@@ -243,7 +287,11 @@ export async function resolveInboxReader(
 	}
 
 	if (scope.orgSlug === null) {
-		return refuse(door, "reader-unidentified", "the caller resolves no organisation");
+		return refuse(
+			door,
+			"reader-unidentified",
+			"the caller resolves no organisation",
+		);
 	}
 	return {
 		kind: "member",

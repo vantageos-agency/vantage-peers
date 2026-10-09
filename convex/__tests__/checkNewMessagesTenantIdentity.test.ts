@@ -32,6 +32,7 @@
 import { convexTest } from "convex-test";
 import { describe, expect, test } from "vitest";
 import { api } from "../_generated/api";
+import { UNCLAIMED_SERVICE_ACCOUNT_READS_EVERY_TENANT } from "../lib/inboxReader";
 import schema from "../schema";
 
 const modules = Object.fromEntries(
@@ -246,7 +247,13 @@ describe("checkNewMessages / checkNewMessagesEnvelope — read-half tenant ident
 	// with no claim now reads the FLEET's tenant only and a client tenant is a
 	// raised refusal; a client org's mail is read through a verified identity
 	// (inboxByAgentId.test.ts is the full table).
-	test("MUST-PASS: the service account with no tenantId reads the FLEET's mail only, never a client org's", async () => {
+	// CONTRACT pole (inboxReader.ts UNCLAIMED_SERVICE_ACCOUNT_READS_EVERY_TENANT):
+	// armed when the flag is flipped to false, after the claim-sending MCP is
+	// observed live. Until then the claimless service account is served as
+	// production served it; inboxOldMcpWire.test.ts pins that.
+	test.runIf(!UNCLAIMED_SERVICE_ACCOUNT_READS_EVERY_TENANT)(
+		"MUST-PASS: the service account with no tenantId reads the FLEET's mail only, never a client org's",
+		async () => {
 		const t = createT();
 		await seedOrgMapping(t, "acme", ["noe"]);
 		await seedOrgMapping(t, "project/beta", ["noe"]);
@@ -288,7 +295,8 @@ describe("checkNewMessages / checkNewMessagesEnvelope — read-half tenant ident
 		expect(envelope.messages.map((r) => r.content)).toEqual([
 			"fleet mail master",
 		]);
-	});
+		},
+	);
 
 	test("MUST-PASS: the service account naming a client tenant is REFUSED; a verified org scopes to that tenant only", async () => {
 		const t = createT();
@@ -312,12 +320,15 @@ describe("checkNewMessages / checkNewMessagesEnvelope — read-half tenant ident
 			subject: "test-service-account-user-id",
 		} as Parameters<typeof t.withIdentity>[0]);
 
-		await expect(
-			master.query(api.messages.checkNewMessages, {
-				recipient: "noe",
-				tenantId: "acme",
-			}),
-		).rejects.toThrow(/RBAC_DENIED.*messages:checkNewMessages/);
+		// CONTRACT pole, armed when the expand flag is flipped (see above).
+		if (!UNCLAIMED_SERVICE_ACCOUNT_READS_EVERY_TENANT) {
+			await expect(
+				master.query(api.messages.checkNewMessages, {
+					recipient: "noe",
+					tenantId: "acme",
+				}),
+			).rejects.toThrow(/RBAC_DENIED.*messages:checkNewMessages/);
+		}
 
 		const rows = await master.query(api.messages.checkNewMessages, {
 			recipient: "noe",

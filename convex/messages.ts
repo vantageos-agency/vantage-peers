@@ -55,6 +55,7 @@ import {
 	ownsSentMessage,
 	resolveInboxReader,
 	taskVisibleTo,
+	UNCLAIMED_SERVICE_ACCOUNT_READS_EVERY_TENANT,
 } from "./lib/inboxReader";
 import { verifiedOrgValidator } from "./lib/verifiedOrg";
 
@@ -1510,10 +1511,18 @@ export const markAsRead = mutation({
 		// it is THIS reader's (ID, tenant, and for a legacy receipt the exact name).
 		// The service account asserting a bare name is no longer a licence over every
 		// org's namesake. A Clerk member keeps the roster + tenant gates below.
+		// EXPAND (inboxReader.ts UNCLAIMED_SERVICE_ACCOUNT_READS_EVERY_TENANT): a
+		// claimless master that names no owner keeps the production path below
+		// (master marks the receipts it lists) until the contract step.
+		const claimed =
+			args.verifiedActor !== undefined || args.verifiedOrg !== undefined;
+		const unclaimedMasterNamesNoOwner =
+			!claimed &&
+			scope.isMaster &&
+			args.callerOrchestrator === undefined &&
+			UNCLAIMED_SERVICE_ACCOUNT_READS_EVERY_TENANT;
 		const reader =
-			args.verifiedActor !== undefined ||
-			args.verifiedOrg !== undefined ||
-			scope.isMaster
+			claimed || (scope.isMaster && !unclaimedMasterNamesNoOwner)
 				? await resolveInboxReader(
 						ctx,
 						transportScope,

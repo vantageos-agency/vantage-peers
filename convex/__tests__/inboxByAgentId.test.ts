@@ -31,6 +31,7 @@ import { describe, expect, test } from "vitest";
 import { api, internal } from "../_generated/api";
 import type { Id } from "../_generated/dataModel";
 import { normalizeOrchestratorId } from "../_helpers/normalizeOrchestratorId";
+import { UNCLAIMED_SERVICE_ACCOUNT_READS_EVERY_TENANT } from "../lib/inboxReader";
 import schema from "../schema";
 
 const modules = Object.fromEntries(
@@ -143,7 +144,11 @@ async function seedWorld(): Promise<World> {
 			recipientId: acmeHelios,
 			tenantId: ACME,
 		});
-		await put("ACME-LEGACY", { from: "x", recipient: "hélios", tenantId: ACME });
+		await put("ACME-LEGACY", {
+			from: "x",
+			recipient: "hélios",
+			tenantId: ACME,
+		});
 		// the fleet: roles with NO agents row, unstamped and operator-stamped.
 		await put("FLEET-PI", { from: "eta", recipient: "pi" });
 		await put("FLEET-ETA", { from: "pi", recipient: "eta", tenantId: FLEET });
@@ -194,7 +199,11 @@ const viaEnvelope: Check = async (t, args) =>
 	).messages;
 const DOORS: Array<[string, Check, string]> = [
 	["checkNewMessages", viaCheck, "messages:checkNewMessages"],
-	["checkNewMessagesEnvelope", viaEnvelope, "messages:checkNewMessagesEnvelope"],
+	[
+		"checkNewMessagesEnvelope",
+		viaEnvelope,
+		"messages:checkNewMessagesEnvelope",
+	],
 ];
 
 const countOf = async (t: T, args: Record<string, unknown>) =>
@@ -202,11 +211,18 @@ const countOf = async (t: T, args: Record<string, unknown>) =>
 
 describe("REFUSED: the namesake in another org reads nothing of iris's inbox", () => {
 	describe.each(DOORS)("%s", (_name, check, door) => {
-		test("the measured defect: the service account, a name, NO tenant, reads the fleet tenant only", async () => {
-			const { t } = await seedWorld();
-			const got = contentsOf(await check(t, { recipient: "hélios" }));
-			expect(got).toEqual(["FLEET-HELIOS"]);
-		});
+		// CONTRACT pole (inboxReader.ts UNCLAIMED_SERVICE_ACCOUNT_READS_EVERY_TENANT):
+		// armed when the flag is flipped to false, after the claim-sending MCP is
+		// observed live. Until then the claimless service account is served as
+		// production served it; inboxOldMcpWire.test.ts pins that.
+		test.runIf(!UNCLAIMED_SERVICE_ACCOUNT_READS_EVERY_TENANT)(
+			"the measured defect: the service account, a name, NO tenant, reads the fleet tenant only",
+			async () => {
+				const { t } = await seedWorld();
+				const got = contentsOf(await check(t, { recipient: "hélios" }));
+				expect(got).toEqual(["FLEET-HELIOS"]);
+			},
+		);
 
 		test("acme's hélios, recipient 'hélios' or nothing: reads acme's two, never iris's", async () => {
 			const { t, acmeHelios } = await seedWorld();
@@ -239,9 +255,9 @@ describe("REFUSED: the namesake in another org reads nothing of iris's inbox", (
 
 		test("a verifiedActor lying about its org is refused (the agent row is read by ID)", async () => {
 			const { t, acmeHelios } = await seedWorld();
-			await expect(
-				check(t, { ...actor(acmeHelios, IRIS) }),
-			).rejects.toThrow(/ORG_MISMATCH/);
+			await expect(check(t, { ...actor(acmeHelios, IRIS) })).rejects.toThrow(
+				/ORG_MISMATCH/,
+			);
 		});
 	});
 
@@ -249,7 +265,10 @@ describe("REFUSED: the namesake in another org reads nothing of iris's inbox", (
 		const { t, acmeHelios, irisHelios } = await seedWorld();
 		expect(await countOf(t, { ...actor(acmeHelios, ACME) })).toBe(2);
 		expect(
-			await countOf(t, { orchestratorId: "hélios", ...actor(acmeHelios, ACME) }),
+			await countOf(t, {
+				orchestratorId: "hélios",
+				...actor(acmeHelios, ACME),
+			}),
 		).toBe(2);
 		await expect(
 			countOf(t, { orchestratorId: irisHelios, ...actor(acmeHelios, ACME) }),
@@ -259,10 +278,17 @@ describe("REFUSED: the namesake in another org reads nothing of iris's inbox", (
 		).rejects.toThrow(/RBAC_DENIED.*messages:getUnreadCount/);
 	});
 
-	test("getUnreadCount: the service account by name, no tenant, counts the fleet's mailbox only", async () => {
-		const { t } = await seedWorld();
-		expect(await countOf(t, { orchestratorId: "hélios" })).toBe(1);
-	});
+	// CONTRACT pole (inboxReader.ts UNCLAIMED_SERVICE_ACCOUNT_READS_EVERY_TENANT):
+	// armed when the flag is flipped to false, after the claim-sending MCP is
+	// observed live. Until then the claimless service account is served as
+	// production served it; inboxOldMcpWire.test.ts pins that.
+	test.runIf(!UNCLAIMED_SERVICE_ACCOUNT_READS_EVERY_TENANT)(
+		"getUnreadCount: the service account by name, no tenant, counts the fleet's mailbox only",
+		async () => {
+			const { t } = await seedWorld();
+			expect(await countOf(t, { orchestratorId: "hélios" })).toBe(1);
+		},
+	);
 
 	test("a verifiedActor from a non-service-account caller is refused, not ignored", async () => {
 		const { t, acmeHelios } = await seedWorld();
@@ -294,10 +320,15 @@ describe("REFUSED: the namesake in another org reads nothing of iris's inbox", (
 			{ ...actor(irisHelios, IRIS) } as never,
 		);
 		expect(JSON.stringify(mine.stuckInProgress)).toContain("IRIS-PRIVATE-TASK");
-		for (const args of [
+		// The claimless form is a CONTRACT pole (inboxReader.ts
+		// UNCLAIMED_SERVICE_ACCOUNT_READS_EVERY_TENANT), armed after the flip.
+		const readers: Array<Record<string, unknown>> = [
 			{ ...actor(acmeHelios, ACME) },
-			{ recipient: "hélios" },
-		]) {
+		];
+		if (!UNCLAIMED_SERVICE_ACCOUNT_READS_EVERY_TENANT) {
+			readers.push({ recipient: "hélios" });
+		}
+		for (const args of readers) {
 			const theirs = await asServiceAccount(t).query(
 				api.messages.checkNewMessagesEnvelope,
 				args as never,
@@ -323,9 +354,10 @@ describe("PRESENT: a reader is served what is its own", () => {
 
 		test("the operator org's agent reads its unstamped legacy and its stamped receipts", async () => {
 			const { t, sigma } = await seedWorld();
-			expect(
-				contentsOf(await check(t, { ...actor(sigma, FLEET) })),
-			).toEqual(["SIGMA-BY-ID", "SIGMA-LEGACY"]);
+			expect(contentsOf(await check(t, { ...actor(sigma, FLEET) }))).toEqual([
+				"SIGMA-BY-ID",
+				"SIGMA-LEGACY",
+			]);
 		});
 
 		test("a fleet orchestrator without an agents row (pi, eta) still reads its inbox", async () => {
@@ -395,19 +427,28 @@ describe("PRESENT: a reader is served what is its own", () => {
 	});
 });
 
-describe("FLEET: the service account names no client tenant", () => {
-	test.each(DOORS)("%s: a client tenant by name is REFUSED", async (_n, check, door) => {
-		const { t } = await seedWorld();
-		await expect(
-			check(t, { recipient: "hélios", tenantId: IRIS }),
-		).rejects.toThrow(new RegExp(`RBAC_DENIED.*${door}`));
-	});
+// CONTRACT pole (inboxReader.ts UNCLAIMED_SERVICE_ACCOUNT_READS_EVERY_TENANT):
+// armed when the flag is flipped to false, after the claim-sending MCP is
+// observed live. Until then the claimless service account is served as
+// production served it; inboxOldMcpWire.test.ts pins that.
+describe.runIf(!UNCLAIMED_SERVICE_ACCOUNT_READS_EVERY_TENANT)(
+	"FLEET: the service account names no client tenant",
+	() => {
+		test.each(
+			DOORS,
+		)("%s: a client tenant by name is REFUSED", async (_n, check, door) => {
+			const { t } = await seedWorld();
+			await expect(
+				check(t, { recipient: "hélios", tenantId: IRIS }),
+			).rejects.toThrow(new RegExp(`RBAC_DENIED.*${door}`));
+		});
 
-	test("getUnreadCount: a client tenant has no name-keyed door; the call is the fleet's", async () => {
-		const { t } = await seedWorld();
-		expect(await countOf(t, { orchestratorId: "hélios" })).toBe(1);
-	});
-});
+		test("getUnreadCount: a client tenant has no name-keyed door; the call is the fleet's", async () => {
+			const { t } = await seedWorld();
+			expect(await countOf(t, { orchestratorId: "hélios" })).toBe(1);
+		});
+	},
+);
 
 describe("OWNED: a receipt / message of another agent is refused", () => {
 	const markAs = (t: T, args: Record<string, unknown>) =>
@@ -431,15 +472,22 @@ describe("OWNED: a receipt / message of another agent is refused", () => {
 		expect(left).toEqual({ byId: null, legacy: null });
 	});
 
-	test("markAsRead: the service account naming 'hélios' cannot mark iris's receipt either", async () => {
-		const { t, receipt } = await seedWorld();
-		await expect(
-			markAs(t, {
-				receiptIds: [receipt["IRIS-BY-ID"]],
-				callerOrchestrator: "hélios",
-			}),
-		).rejects.toThrow(/RBAC_DENIED.*messages:markAsRead/);
-	});
+	// CONTRACT pole (inboxReader.ts UNCLAIMED_SERVICE_ACCOUNT_READS_EVERY_TENANT):
+	// armed when the flag is flipped to false, after the claim-sending MCP is
+	// observed live. Until then the claimless service account is served as
+	// production served it; inboxOldMcpWire.test.ts pins that.
+	test.runIf(!UNCLAIMED_SERVICE_ACCOUNT_READS_EVERY_TENANT)(
+		"markAsRead: the service account naming 'hélios' cannot mark iris's receipt either",
+		async () => {
+			const { t, receipt } = await seedWorld();
+			await expect(
+				markAs(t, {
+					receiptIds: [receipt["IRIS-BY-ID"]],
+					callerOrchestrator: "hélios",
+				}),
+			).rejects.toThrow(/RBAC_DENIED.*messages:markAsRead/);
+		},
+	);
 
 	test("markAsRead: a reader marks its own (ID-stamped and legacy), and only those", async () => {
 		const { t, irisHelios, receipt } = await seedWorld();
@@ -465,12 +513,19 @@ describe("OWNED: a receipt / message of another agent is refused", () => {
 		).toBe(1);
 	});
 
-	test("markAsRead: the service account cannot mark a receipt it does not name an owner for", async () => {
-		const { t, receipt } = await seedWorld();
-		await expect(
-			markAs(t, { receiptIds: [receipt["FLEET-PI"]] }),
-		).rejects.toThrow(/RBAC_DENIED.*messages:markAsRead/);
-	});
+	// CONTRACT pole (inboxReader.ts UNCLAIMED_SERVICE_ACCOUNT_READS_EVERY_TENANT):
+	// armed when the flag is flipped to false, after the claim-sending MCP is
+	// observed live. Until then the claimless service account is served as
+	// production served it; inboxOldMcpWire.test.ts pins that.
+	test.runIf(!UNCLAIMED_SERVICE_ACCOUNT_READS_EVERY_TENANT)(
+		"markAsRead: the service account cannot mark a receipt it does not name an owner for",
+		async () => {
+			const { t, receipt } = await seedWorld();
+			await expect(
+				markAs(t, { receiptIds: [receipt["FLEET-PI"]] }),
+			).rejects.toThrow(/RBAC_DENIED.*messages:markAsRead/);
+		},
+	);
 
 	test("deleteMessage: acme's hélios cannot delete the message iris's hélios sent", async () => {
 		const { t, acmeHelios, message } = await seedWorld();
@@ -481,18 +536,27 @@ describe("OWNED: a receipt / message of another agent is refused", () => {
 				...actor(acmeHelios, ACME),
 			} as never),
 		).rejects.toThrow(/RBAC_DENIED.*messages:deleteMessage/);
-		expect(await t.run((ctx) => ctx.db.get(message["IRIS-SENT"]))).not.toBeNull();
+		expect(
+			await t.run((ctx) => ctx.db.get(message["IRIS-SENT"])),
+		).not.toBeNull();
 	});
 
-	test("deleteMessage: the service account asserting 'hélios' cannot delete iris's message", async () => {
-		const { t, message } = await seedWorld();
-		await expect(
-			asServiceAccount(t).mutation(api.messages.deleteMessage, {
-				messageId: message["IRIS-SENT"],
-				callerOrchestrator: "hélios",
-			}),
-		).rejects.toThrow(/RBAC_DENIED.*messages:deleteMessage/);
-	});
+	// CONTRACT pole (inboxReader.ts UNCLAIMED_SERVICE_ACCOUNT_READS_EVERY_TENANT):
+	// armed when the flag is flipped to false, after the claim-sending MCP is
+	// observed live. Until then the claimless service account is served as
+	// production served it; inboxOldMcpWire.test.ts pins that.
+	test.runIf(!UNCLAIMED_SERVICE_ACCOUNT_READS_EVERY_TENANT)(
+		"deleteMessage: the service account asserting 'hélios' cannot delete iris's message",
+		async () => {
+			const { t, message } = await seedWorld();
+			await expect(
+				asServiceAccount(t).mutation(api.messages.deleteMessage, {
+					messageId: message["IRIS-SENT"],
+					callerOrchestrator: "hélios",
+				}),
+			).rejects.toThrow(/RBAC_DENIED.*messages:deleteMessage/);
+		},
+	);
 
 	test("deleteMessage: its own sender, by ID, deletes it", async () => {
 		const { t, irisHelios, message } = await seedWorld();
@@ -522,10 +586,13 @@ describe("LEGACY receipts: backfill stamps them, and nothing becomes unreadable"
 			cursor = page.nextCursor;
 		}
 		const stamped = await t.run(async (ctx) => ({
-			irisLegacy: (await ctx.db.get(receipt["IRIS-LEGACY"]))?.recipientId ?? null,
-			acmeLegacy: (await ctx.db.get(receipt["ACME-LEGACY"]))?.recipientId ?? null,
+			irisLegacy:
+				(await ctx.db.get(receipt["IRIS-LEGACY"]))?.recipientId ?? null,
+			acmeLegacy:
+				(await ctx.db.get(receipt["ACME-LEGACY"]))?.recipientId ?? null,
 			// the fleet has no "hélios" agent: undecidable, left unset, never guessed.
-			fleetHelios: (await ctx.db.get(receipt["FLEET-HELIOS"]))?.recipientId ?? null,
+			fleetHelios:
+				(await ctx.db.get(receipt["FLEET-HELIOS"]))?.recipientId ?? null,
 		}));
 		expect(stamped.irisLegacy).toBe(irisHelios);
 		expect(stamped.acmeLegacy).toBe(acmeHelios);
@@ -534,9 +601,14 @@ describe("LEGACY receipts: backfill stamps them, and nothing becomes unreadable"
 		expect(
 			contentsOf(await viaCheck(t, { ...actor(irisHelios, IRIS) })),
 		).toEqual(before);
-		// and the fleet's own "hélios" mailbox is still its own.
-		expect(contentsOf(await viaCheck(t, { recipient: "hélios" }))).toEqual([
-			"FLEET-HELIOS",
-		]);
+		// and the fleet's own "hélios" mailbox is still its own (the claimless
+		// form reads the fleet tenant only after the CONTRACT flip; before it,
+		// every tenant, as production; the receipt is served either way).
+		const fleetRead = contentsOf(await viaCheck(t, { recipient: "hélios" }));
+		if (UNCLAIMED_SERVICE_ACCOUNT_READS_EVERY_TENANT) {
+			expect(fleetRead).toContain("FLEET-HELIOS");
+		} else {
+			expect(fleetRead).toEqual(["FLEET-HELIOS"]);
+		}
 	});
 });
