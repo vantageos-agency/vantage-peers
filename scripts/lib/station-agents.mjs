@@ -20,6 +20,17 @@ export function normalizeRole(raw) {
 	return String(raw ?? "").trim().toLowerCase();
 }
 
+/**
+ * agentRowByLabel — the operator's own lookup: picks the agents row whose
+ * display label is `label` from the org's listing (`agents:listAgentsByOrg`).
+ * This is a script-side convenience for a human running a station tool; the
+ * backend doors take the row's `_id` and never select a row by label.
+ */
+export function agentRowByLabel(rows, label) {
+	const key = normalizeRole(label);
+	return (rows ?? []).find((row) => normalizeRole(row.name) === key) ?? null;
+}
+
 /** Env var NAME a station reads its secret into: eta -> ETA_AGENT_SECRET. */
 export function envVarNameFor(agentName) {
 	return `${agentName.replace(/[^a-z0-9]+/gi, "_").toUpperCase()}_AGENT_SECRET`;

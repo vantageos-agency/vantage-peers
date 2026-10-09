@@ -134,13 +134,13 @@ async function agentCredential(): Promise<string> {
 			org_role: "org:admin",
 		} as never),
 	);
-	await admin.mutation("agents:registerAgent", {
+	const agentId = (await admin.mutation("agents:registerAgent", {
 		orgSlug: "org-a",
 		name: "agent-a",
-	});
+	})) as string;
 	const minted = (await admin.mutation("agentCredentials:mintAgentCredential", {
 		orgSlug: "org-a",
-		agentName: "agent-a",
+		agentId,
 	})) as { secret: string };
 	return minted.secret;
 }

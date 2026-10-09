@@ -2,7 +2,7 @@ import { QueryCtx, MutationCtx, internalQuery } from "../_generated/server";
 import type { Id } from "../_generated/dataModel";
 import { ConvexError, v } from "convex/values";
 import { requireTenantId } from "@vantageos/cloud-identity";
-import { findAgentByName, resolveAgentCredentialCore } from "./agentIdentity";
+import { findAgentByName, resolveAgentOfPresentedSecret } from "./agentIdentity";
 import { normalizeOrchestratorId } from "../_helpers/normalizeOrchestratorId";
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -972,7 +972,7 @@ async function requireVerifiedActorMatch(
  * requireAgentCredentialMatch — [P-T5] THE LOCK. Cap analysis/le-cap/le-cap.md
  * @ e3c1ffd6 §6 VP.4 (second half): the ACTING AGENT is derived from the
  * per-agent CREDENTIAL presented on the call (P-T4's
- * `resolveAgentCredentialCore` — the SAME hashing+lookup `agentCredentials.ts`
+ * `resolveAgentOfPresentedSecret` — the SAME hashing+lookup `agentCredentials.ts`
  * exposes publicly as `resolveAgentCredential`, reused here rather than
  * duplicated), never from the caller-declared name alone.
  *
@@ -1064,7 +1064,14 @@ export async function requireAgentCredentialMatch(
 		return;
 	}
 
-	const resolved = await resolveAgentCredentialCore(ctx, agentCredentialSecret);
+	// The presented secret is validated and its agent read BY ID through
+	// @vantageos/cloud-identity (convex/lib/agentIdentity.ts); no name takes part.
+	const resolvedAgent = await resolveAgentOfPresentedSecret(
+		ctx,
+		agentCredentialSecret,
+		"lib/auth:requireAgentCredentialMatch",
+	);
+	const resolved = resolvedAgent === null ? null : { agent: resolvedAgent };
 
 	if (!resolved) {
 		throw new ConvexError(

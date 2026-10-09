@@ -1150,7 +1150,7 @@ type ActorResolution =
  * KEY INTO THE JOIN (http-boundary-derives-from-principal.md): the ONLY input
  * is the presented secret. The (orgSlug, agentName) that comes back is derived
  * by Convex from which `agent_credentials` row's hash matched
- * (`resolveAgentCredentialCore`); no name a caller typed participates. The
+ * (`resolveAgentOfPresentedSecret`); no name a caller typed participates. The
  * secret is never logged and never stored on the context.
  *
  * REFUSE, never default:

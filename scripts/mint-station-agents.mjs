@@ -42,6 +42,7 @@ import { fileURLToPath } from "node:url";
 import { ConvexHttpClient } from "convex/browser";
 import { getScopedUserToken } from "../mcp-server/src/serviceAccountAuth.ts";
 import {
+	agentRowByLabel,
 	assertSecretPathOutsideRepo,
 	decideStation,
 	decodeJwtClaims,
@@ -101,10 +102,11 @@ async function main() {
 	const { api } = await import("../convex/_generated/api.js");
 
 	const plan = [];
+	const orgAgents = await client.query(api.agents.listAgentsByOrg, { orgSlug });
 	for (const st of stations) {
-		const agent = await client.query(api.agents.getAgent, { orgSlug, name: st.agentName });
+		const agent = agentRowByLabel(orgAgents, st.agentName);
 		const status = agent
-			? await client.query(api.agentCredentials.getAgentCredentialStatus, { orgSlug, agentName: st.agentName })
+			? await client.query(api.agentCredentials.getAgentCredentialStatus, { orgSlug, agentId: agent._id })
 			: { hasActiveCredential: false, activeRows: 0 };
 		plan.push({ st, agent, status, decision: decideStation({ agent, status, rotate: args.rotate }) });
 	}
@@ -152,7 +154,7 @@ async function main() {
 		}
 		const { secret, mintedAt } = await client.mutation(api.agentCredentials.mintAgentCredential, {
 			orgSlug,
-			agentName: st.agentName,
+			agentId,
 		});
 		const path = writeSecretFile(secretsDir, st.agentName, secret);
 		console.log(

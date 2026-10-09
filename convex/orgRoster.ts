@@ -1,5 +1,5 @@
 import { ConvexError, v } from "convex/values";
-import type { Id } from "./_generated/dataModel";
+import type { Doc, Id } from "./_generated/dataModel";
 import { type QueryCtx, query } from "./_generated/server";
 import { normalizeOrchestratorId } from "./_helpers/normalizeOrchestratorId";
 import {
@@ -110,6 +110,9 @@ async function mappingOfAccessToken(
 
 export const AGENT_DIRECTORY_CAP = 200;
 
+// Most agent rows of one org read to resolve roster labels through `formerNames`.
+export const AGENT_DIRECTORY_SCAN_CAP = 500;
+
 const agentDirectoryEntry = v.object({
 	name: v.string(),
 	agentId: v.union(v.id("agents"), v.null()),
@@ -129,6 +132,25 @@ async function agentDirectoryOf(
 		if (byKey.size >= AGENT_DIRECTORY_CAP) break;
 	}
 	const out: Array<{ name: string; agentId: Id<"agents"> | null }> = [];
+	// Rows that carry a roster label as a FORMER label, read once and only when a
+	// roster label matched no current label (bounded; an org past the bound is
+	// not guessed at: those labels stay `null`).
+	let renamed: Map<string, Doc<"agents">[]> | undefined;
+	const renamedRows = async (): Promise<Map<string, Doc<"agents">[]>> => {
+		if (renamed !== undefined) return renamed;
+		renamed = new Map();
+		const rows = await ctx.db
+			.query("agents")
+			.withIndex("by_org", (q) => q.eq("orgSlug", orgSlug))
+			.take(AGENT_DIRECTORY_SCAN_CAP + 1);
+		if (rows.length > AGENT_DIRECTORY_SCAN_CAP) return renamed;
+		for (const row of rows) {
+			for (const former of row.formerNames ?? []) {
+				renamed.set(former, [...(renamed.get(former) ?? []), row]);
+			}
+		}
+		return renamed;
+	};
 	for (const [key, label] of byKey) {
 		const rows = await ctx.db
 			.query("agents")
@@ -136,7 +158,15 @@ async function agentDirectoryOf(
 				q.eq("orgSlug", orgSlug).eq("normalizedName", key),
 			)
 			.take(2);
-		const row = rows.length === 1 && rows[0].isActive ? rows[0] : null;
+		let row = rows.length === 1 && rows[0].isActive ? rows[0] : null;
+		// A roster is not rewritten by a rename. When no agent CARRIES this label
+		// now, the agent that carried it before still owns the entry: the same
+		// row, so the same ID. An agent whose current label is this one wins
+		// (above), and two claimants are ambiguous, never guessed.
+		if (rows.length === 0) {
+			const claimants = (await renamedRows()).get(key) ?? [];
+			row = claimants.length === 1 && claimants[0].isActive ? claimants[0] : null;
+		}
 		out.push({ name: label, agentId: row === null ? null : row._id });
 	}
 	return out;

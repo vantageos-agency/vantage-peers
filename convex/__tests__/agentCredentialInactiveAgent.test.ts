@@ -1,6 +1,6 @@
 /// <reference types="vite/client" />
 /**
- * resolveAgentCredentialCore — a credential is only as live as its AGENT.
+ * resolveAgentOfPresentedSecret — a credential is only as live as its AGENT.
  *
  * task k173ny6as0gsq996xtbtzn5rjd8fbj9m (VantagePeers Cloud). The MCP boundary
  * now resolves the acting agent from this core. Before this change the core
@@ -25,6 +25,7 @@ import { convexTest } from "convex-test";
 import { describe, expect, test } from "vitest";
 import { api } from "../_generated/api";
 import schema from "../schema";
+import { agentIdOf } from "../../tests/lib/agentIdOf";
 
 const modules = Object.fromEntries(
 	Object.entries(import.meta.glob("../**/*.ts")).filter(
@@ -66,7 +67,7 @@ async function mintAgent(
 		api.agentCredentials.mintAgentCredential,
 		{
 			orgSlug: org,
-			agentName: name,
+			agentId: await agentIdOf(admin, org, name),
 		},
 	);
 	return minted.secret;

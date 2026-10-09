@@ -36,6 +36,7 @@ import { readFileSync } from "node:fs";
 import { ConvexHttpClient } from "convex/browser";
 import { getScopedUserToken } from "../mcp-server/src/serviceAccountAuth.ts";
 import {
+	agentRowByLabel,
 	decodeJwtClaims,
 	envVarNameFor,
 	errorCode,
@@ -79,9 +80,9 @@ async function main() {
 	client.setAuth(jwt);
 	const { api } = await import("../convex/_generated/api.js");
 
-	const agent = await client.query(api.agents.getAgent, { orgSlug, name: station });
+	const agent = agentRowByLabel(await client.query(api.agents.listAgentsByOrg, { orgSlug }), station);
 	const status = agent
-		? await client.query(api.agentCredentials.getAgentCredentialStatus, { orgSlug, agentName: station })
+		? await client.query(api.agentCredentials.getAgentCredentialStatus, { orgSlug, agentId: agent._id })
 		: { hasActiveCredential: false, activeRows: 0 };
 	const phase = args.phase === "auto" ? (agent ? "green" : "red") : args.phase;
 

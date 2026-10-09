@@ -35,6 +35,7 @@ import { api } from "../_generated/api";
 import type { Id } from "../_generated/dataModel";
 import schema from "../schema";
 import { requireAgentCredentialMatch } from "../lib/auth";
+import { agentIdOf } from "../../tests/lib/agentIdOf";
 
 const modules = Object.fromEntries(
 	Object.entries(import.meta.glob("../**/*.ts")).filter(
@@ -99,7 +100,7 @@ async function register(t: T, org: string, name: string): Promise<Id<"agents">> 
 async function mint(t: T, org: string, agentName: string): Promise<string> {
 	const minted = await adminOf(t, org).mutation(
 		api.agentCredentials.mintAgentCredential,
-		{ orgSlug: org, agentName },
+		{ orgSlug: org, agentId: await agentIdOf(t, org, agentName) },
 	);
 	return minted.secret;
 }

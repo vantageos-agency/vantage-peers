@@ -19,6 +19,7 @@ import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import { convexTest } from "convex-test";
 import { api } from "../_generated/api";
 import schema from "../schema";
+import { agentIdOf } from "../../tests/lib/agentIdOf";
 
 const modules = Object.fromEntries(
 	Object.entries(import.meta.glob("../**/*.ts")).filter(
@@ -99,7 +100,7 @@ describe("agents.renameAgent — bounded relation rewrite (R-31)", () => {
 
 		await admin.mutation(api.agents.renameAgent, {
 			orgSlug: "org-a",
-			name: "ada",
+			agentId: await agentIdOf(admin, "org-a", "ada"),
 			newName: "ada2",
 		});
 
@@ -126,7 +127,7 @@ describe("agents.renameAgent — bounded relation rewrite (R-31)", () => {
 		await admin.mutation(api.agents.registerAgent, { orgSlug: "org-a", name: "solo" });
 		await admin.mutation(api.agents.renameAgent, {
 			orgSlug: "org-a",
-			name: "solo",
+			agentId: await agentIdOf(admin, "org-a", "solo"),
 			newName: "solo2",
 		});
 		await t.finishAllScheduledFunctions(vi.runAllTimers);

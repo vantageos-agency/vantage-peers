@@ -21,7 +21,7 @@ import { ConvexError, v } from "convex/values";
 import { internal } from "./_generated/api";
 import { internalMutation, internalQuery, mutation } from "./_generated/server";
 import { assertOrgArgs } from "./kbShared";
-import { sha256Hex } from "./lib/agentIdentity";
+import { sha256Hex } from "@vantageos/cloud-identity";
 import {
 	refuseStorageOwnership,
 	requireResolvedCaller,

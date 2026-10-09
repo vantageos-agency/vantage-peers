@@ -4,7 +4,7 @@ VantagePeers Cloud only. Derived from `convex/lib/auth.ts:387-496`, `convex/task
 
 ## What it enforces
 
-`requireAgentCredentialMatch(ctx, agentCredentialSecret, assertedName, targetOrgSlug)` derives the ACTING AGENT from the per-agent credential presented on the call — never from the caller-declared name alone (`convex/lib/auth.ts:388-393`). It reuses `resolveAgentCredentialCore`, the same hashing+lookup `agentCredentials.ts` exposes publicly as `resolveAgentCredential` (see `credential-lifecycle.md`).
+`requireAgentCredentialMatch(ctx, agentCredentialSecret, assertedName, targetOrgSlug)` derives the ACTING AGENT from the per-agent credential presented on the call — never from the caller-declared name alone (`convex/lib/auth.ts:388-393`). It reuses `resolveAgentOfPresentedSecret` (`convex/lib/agentIdentity.ts`), which validates the bearer with `validatePresentedBearer` and reads the agent by ID with `resolveActingPrincipal` from `@vantageos/cloud-identity`; the same resolution `agentCredentials.ts` exposes publicly as `resolveAgentCredential` (see `credential-lifecycle.md`). A credential row with no `agentId` does not resolve.
 
 ## The two poles, both directions
 

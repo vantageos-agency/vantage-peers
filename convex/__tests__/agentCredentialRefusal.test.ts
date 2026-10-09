@@ -23,6 +23,7 @@ import { convexTest } from "convex-test";
 import { describe, expect, test } from "vitest";
 import { api } from "../_generated/api";
 import schema from "../schema";
+import { agentIdOf, findAgentId } from "../../tests/lib/agentIdOf";
 
 const modules = Object.fromEntries(
 	Object.entries(import.meta.glob("../**/*.ts")).filter(
@@ -58,6 +59,8 @@ const adminOf = (t: T, org: string) =>
 	} as Parameters<typeof t.withIdentity>[0]);
 
 async function register(t: T, org: string, name: string) {
+	// A label is registered once; a second call is refused AGENT_NAME_TAKEN.
+	if ((await findAgentId(t, org, name)) !== null) return;
 	await adminOf(t, org).mutation(api.agents.registerAgent, {
 		orgSlug: org,
 		name,
@@ -68,7 +71,7 @@ async function mint(t: T, org: string, name: string): Promise<string> {
 	await register(t, org, name);
 	const minted = await adminOf(t, org).mutation(
 		api.agentCredentials.mintAgentCredential,
-		{ orgSlug: org, agentName: name },
+		{ orgSlug: org, agentId: await agentIdOf(t, org, name) },
 	);
 	return minted.secret;
 }
@@ -156,10 +159,11 @@ describe("resolveAgentCredential — the refusal carries its code and names its 
 		await register(t, "org-a", "no-cred");
 		const status = await adminOf(t, "org-a").query(
 			api.agentCredentials.getAgentCredentialStatus,
-			{ orgSlug: "org-a", agentName: "no-cred" },
+			{ orgSlug: "org-a", agentId: await agentIdOf(t, "org-a", "no-cred") },
 		);
 		expect(status).toEqual({
 			orgSlug: "org-a",
+			agentId: await agentIdOf(t, "org-a", "no-cred"),
 			agentName: "no-cred",
 			hasActiveCredential: false,
 			activeRows: 0,
@@ -168,7 +172,7 @@ describe("resolveAgentCredential — the refusal carries its code and names its 
 		await mint(t, "org-a", "no-cred");
 		const after = await adminOf(t, "org-a").query(
 			api.agentCredentials.getAgentCredentialStatus,
-			{ orgSlug: "org-a", agentName: "no-cred" },
+			{ orgSlug: "org-a", agentId: await agentIdOf(t, "org-a", "no-cred") },
 		);
 		expect(after.hasActiveCredential).toBe(true);
 		expect(after.activeRows).toBe(1);
@@ -182,7 +186,7 @@ describe("resolveAgentCredential — the refusal carries its code and names its 
 		await expect(
 			adminOf(t, "org-b").query(api.agentCredentials.getAgentCredentialStatus, {
 				orgSlug: "org-a",
-				agentName: "b",
+				agentId: await agentIdOf(t, "org-a", "b"),
 			}),
 		).rejects.toThrow(/RBAC_DENIED/);
 	});

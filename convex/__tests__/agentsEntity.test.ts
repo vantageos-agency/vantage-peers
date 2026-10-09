@@ -33,6 +33,7 @@ import { convexTest } from "convex-test";
 import { describe, expect, test } from "vitest";
 import { api } from "../_generated/api";
 import schema from "../schema";
+import { agentIdOf } from "../../tests/lib/agentIdOf";
 
 const modules = Object.fromEntries(
 	Object.entries(import.meta.glob("../**/*.ts")).filter(
@@ -97,7 +98,7 @@ describe("[P-T2] agents — entity carrying its organisation", () => {
 
 		const single = await tAdminA.query(api.agents.getAgent, {
 			orgSlug: "org-a",
-			name: "researcher-1",
+			agentId: await agentIdOf(tAdminA, "org-a", "researcher-1"),
 		});
 		expect(single?.orgSlug).toBe("org-a");
 	});
@@ -161,7 +162,7 @@ describe("[P-T2] agents — entity carrying its organisation", () => {
 		await expect(
 			tAdminB.query(api.agents.getAgent, {
 				orgSlug: "org-a",
-				name: "researcher-a",
+				agentId: await agentIdOf(tAdminB, "org-a", "researcher-a"),
 			}),
 		).rejects.toThrow(/RBAC_DENIED/);
 	});
@@ -191,13 +192,13 @@ describe("[P-T2] agents — entity carrying its organisation", () => {
 
 		await tAdminA.mutation(api.agents.setAgentAddress, {
 			orgSlug: "org-a",
-			name: "researcher-1",
+			agentId: await agentIdOf(tAdminA, "org-a", "researcher-1"),
 			address: "https://researcher-1.example.internal",
 		});
 
 		const readBack = await tAdminA.query(api.agents.getAgent, {
 			orgSlug: "org-a",
-			name: "researcher-1",
+			agentId: await agentIdOf(tAdminA, "org-a", "researcher-1"),
 		});
 		expect(readBack?.address).toBe("https://researcher-1.example.internal");
 	});

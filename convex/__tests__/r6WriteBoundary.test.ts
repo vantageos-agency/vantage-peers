@@ -28,6 +28,7 @@ import { convexTest } from "convex-test";
 import { describe, expect, test } from "vitest";
 import { api } from "../_generated/api";
 import schema from "../schema";
+import { agentIdOf } from "../../tests/lib/agentIdOf";
 
 const modules = Object.fromEntries(
 	Object.entries(import.meta.glob("../**/*.ts")).filter(
@@ -92,7 +93,7 @@ describe("A. requireOrgAdmin doors: a write names an org only if the verified cl
 		await expect(
 			adminA.mutation(api.agents.setAgentAddress, {
 				orgSlug: "org-b",
-				name: "bob",
+				agentId: await agentIdOf(adminA, "org-b", "bob"),
 				address: "https://evil.example/hook",
 			}),
 		).rejects.toThrow(/RBAC_DENIED/);
@@ -101,7 +102,7 @@ describe("A. requireOrgAdmin doors: a write names an org only if the verified cl
 		await adminA.mutation(api.agents.registerAgent, { orgSlug: "org-a", name: "alice" });
 		await adminA.mutation(api.agents.setAgentAddress, {
 			orgSlug: "org-a",
-			name: "alice",
+			agentId: await agentIdOf(adminA, "org-a", "alice"),
 			address: "https://a.example/hook",
 		});
 		expect((await agentsOf(t, "org-a"))[0].address).toBe("https://a.example/hook");
@@ -112,7 +113,7 @@ describe("A. requireOrgAdmin doors: a write names an org only if the verified cl
 		await expect(
 			adminA.mutation(api.agents.renameAgent, {
 				orgSlug: "org-b",
-				name: "bob",
+				agentId: await agentIdOf(adminA, "org-b", "bob"),
 				newName: "mallory",
 			}),
 		).rejects.toThrow(/RBAC_DENIED/);
@@ -121,7 +122,7 @@ describe("A. requireOrgAdmin doors: a write names an org only if the verified cl
 		await adminA.mutation(api.agents.registerAgent, { orgSlug: "org-a", name: "alice" });
 		await adminA.mutation(api.agents.renameAgent, {
 			orgSlug: "org-a",
-			name: "alice",
+			agentId: await agentIdOf(adminA, "org-a", "alice"),
 			newName: "alicia",
 		});
 		expect((await agentsOf(t, "org-a")).map((a) => a.name)).toEqual(["alicia"]);
@@ -132,7 +133,7 @@ describe("A. requireOrgAdmin doors: a write names an org only if the verified cl
 		await expect(
 			adminA.mutation(api.agentCredentials.mintAgentCredential, {
 				orgSlug: "org-b",
-				agentName: "bob",
+				agentId: await agentIdOf(adminA, "org-b", "bob"),
 			}),
 		).rejects.toThrow(/RBAC_DENIED/);
 		expect(await t.run((ctx) => ctx.db.query("agent_credentials").collect())).toHaveLength(0);
@@ -140,7 +141,7 @@ describe("A. requireOrgAdmin doors: a write names an org only if the verified cl
 		await adminA.mutation(api.agents.registerAgent, { orgSlug: "org-a", name: "alice" });
 		const minted = await adminA.mutation(api.agentCredentials.mintAgentCredential, {
 			orgSlug: "org-a",
-			agentName: "alice",
+			agentId: await agentIdOf(adminA, "org-a", "alice"),
 		});
 		expect(minted.secret).toMatch(/^[0-9a-f]{64}$/);
 		const rows = await t.run((ctx) => ctx.db.query("agent_credentials").collect());
