@@ -58,6 +58,8 @@ export const ORG_COLUMNS = {
 	oauth_access_tokens: { slugField: "clerkOrgSlug", idField: "clerkOrgId" },
 	oauth_scope_profiles: { slugField: "clerkOrgSlug", idField: "clerkOrgId" },
 	iframeEmbedSessions: { slugField: "tenantId", idField: "tenantOrgId" },
+	githubRepoMapping: { slugField: "orgId", idField: "clerkOrgId" },
+	issues: { slugField: "orgId", idField: "clerkOrgId" },
 } as const satisfies Record<string, Column>;
 
 export type OrgIdTable = keyof typeof ORG_COLUMNS;
@@ -81,6 +83,8 @@ const tableValidator = v.union(
 	v.literal("oauth_access_tokens"),
 	v.literal("oauth_scope_profiles"),
 	v.literal("iframeEmbedSessions"),
+	v.literal("githubRepoMapping"),
+	v.literal("issues"),
 );
 
 const DEFAULT_PAGE_SIZE = 100;

@@ -92,6 +92,37 @@ async function seedWorld(t: T, mappingClerkOrgId: string | undefined) {
 
 type Driver = (t: T) => Promise<unknown>;
 
+// A member of ACME may map a repo only with the scope and a GitHub-verified
+// owner binding for the repo's owner.
+async function mapAcmeRepo(t: T) {
+	await t.run(async (ctx) => {
+		const m = await ctx.db
+			.query("client_org_mapping")
+			.withIndex("by_clerk_slug", (q) => q.eq("clerkOrgSlug", ACME.slug))
+			.unique();
+		if (m) {
+			await ctx.db.patch(m._id, {
+				scopes: [...m.scopes, "manage-repo-mappings"],
+			});
+		}
+		await ctx.db.insert("githubOwnerBindings", {
+			owner: "acme-gh",
+			orgId: ACME.slug,
+			installationId: 1,
+			accountType: "Organization",
+			githubUserLogin: "gh-acme",
+			boundBy: "admin-acme",
+			boundAt: 1,
+			active: true,
+		});
+	});
+	return await asOrg(t, ACME.slug).mutation(api.githubRepoMapping.add, {
+		repo: "acme-gh/repo",
+		orchestrator: SEAT,
+		project: "acme-proj",
+	});
+}
+
 // One REAL write path per table of ORG_COLUMNS, acting as a member of ACME.
 const DRIVERS = {
 	missions: (t) =>
@@ -236,6 +267,21 @@ const DRIVERS = {
 			origin: "https://example.test",
 			expiresAt: NOW + 1000,
 		}),
+	githubRepoMapping: (t) => mapAcmeRepo(t),
+	issues: async (t) => {
+		await mapAcmeRepo(t);
+		return await t.mutation(internal.issues.upsertFromGitHub, {
+			repo: "acme-gh/repo",
+			issueNumber: 1,
+			title: "i",
+			body: "b",
+			htmlUrl: "https://example.test/acme-gh/repo/1",
+			labels: [],
+			status: "open",
+			githubCreatedAt: NOW,
+			githubUpdatedAt: NOW,
+		});
+	},
 } satisfies Record<OrgIdTable, Driver>;
 
 const rowsOf = (t: T, table: OrgIdTable) =>

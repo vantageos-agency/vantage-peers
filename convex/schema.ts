@@ -949,6 +949,10 @@ export default defineSchema({
 		// TENANT, copied by the server from the repo's githubRepoMapping row when
 		// the webhook upserts the issue. Absent = fleet issue.
 		orgId: v.optional(v.string()),
+		// The owning org's permanent Clerk org id, copied with `orgId`. Tenant
+		// equality is decided by this id; `orgId` (a renamable slug) is compared
+		// only while either side has no id (until backfill_org_clerk_id reports 0).
+		clerkOrgId: v.optional(v.string()),
 	})
 		.index("by_repo_number", ["repo", "issueNumber"])
 		.index("by_status", ["status"])
@@ -985,6 +989,11 @@ export default defineSchema({
 		// caller's verified scope (convex/githubRepoMapping.ts `add`); there is
 		// no argument for it anywhere.
 		orgId: v.optional(v.string()),
+		// The owning org's permanent Clerk org id, stamped with `orgId` from the
+		// same verified scope. Tenant equality is decided by this id; the slug is
+		// compared only while either side has no id (until backfill_org_clerk_id
+		// reports 0 remaining).
+		clerkOrgId: v.optional(v.string()),
 	})
 		.index("by_repo", ["repo"])
 		.index("by_org", ["orgId"])

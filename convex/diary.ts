@@ -4,8 +4,12 @@ import { mutation, query, type QueryCtx } from "./_generated/server";
 import { creatorValidator } from "./schema";
 import { requireResolvedCaller, withOrgScope, type OrgScope } from "./lib/auth";
 import { isFleetSystemCaller } from "./lib/systemCaller";
-import { fleetOperatorSlug, sameTenantStamp } from "./lib/operatorOrg";
-import { clerkOrgIdForSlug } from "./lib/orgClerkId";
+import {
+	fleetOperatorRef,
+	fleetOperatorSlug,
+	sameTenantStamp,
+	stampOfScope,
+} from "./lib/operatorOrg";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Org-scope orchestrator enforcement (same defect class as
@@ -156,7 +160,7 @@ export const write = mutation({
 			// bound to the row's server-stamped tenant. Master is unchanged.
 			if (
 				!scope.isMaster &&
-				!sameTenantStamp(existing.orgId, scope.orgSlug ?? undefined, await fleetOperatorSlug(ctx.db))
+				!sameTenantStamp(existing, stampOfScope(scope), await fleetOperatorRef(ctx.db))
 			) {
 				throw new ConvexError(
 					`RBAC_DENIED: caller may not write diary entry ${existing._id} (orchestrator "${args.orchestrator}") — ${JSON.stringify({ orgSlug: scope.orgSlug, reason: "row-not-in-caller-org" })}`,
@@ -186,7 +190,7 @@ export const write = mutation({
 				? {}
 				: {
 						orgId: scope.orgSlug,
-						clerkOrgId: await clerkOrgIdForSlug(ctx, scope.orgSlug),
+						clerkOrgId: scope.orgClerkId,
 					}),
 		});
 	},
@@ -433,7 +437,7 @@ export const deleteDiary = mutation({
 		// roster check below keys on a name another organisation may also hold.
 		if (
 			!scope.isMaster &&
-			!sameTenantStamp(entry.orgId, scope.orgSlug ?? undefined, await fleetOperatorSlug(ctx.db))
+			!sameTenantStamp(entry, stampOfScope(scope), await fleetOperatorRef(ctx.db))
 		) {
 			throw new ConvexError(
 				`RBAC_DENIED: caller may not delete diary entry ${args.diaryId} — ${JSON.stringify({ orgSlug: scope.orgSlug, reason: "row-not-in-caller-org" })}`,

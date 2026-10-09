@@ -232,7 +232,7 @@ export const create = mutation({
 			orgId: scope.isMaster ? undefined : (scope.orgSlug ?? undefined),
 			clerkOrgId: scope.isMaster
 				? undefined
-				: await clerkOrgIdForSlug(ctx, scope.orgSlug),
+				: scope.orgClerkId,
 			createdAt: now,
 			updatedAt: now,
 		});

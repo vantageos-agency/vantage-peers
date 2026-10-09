@@ -600,9 +600,9 @@ describe("fleetOperatorSlug fails closed — R-52 follow-up", () => {
 	});
 
 	test("with 2 operators, no operator slug widens: only the unstamped stamp is the fleet's", () => {
-		expect(isFleetStamp("op-1", undefined)).toBe(false);
-		expect(isFleetStamp(undefined, undefined)).toBe(true);
-		expect(sameTenantStamp("op-1", undefined, undefined)).toBe(false);
+		expect(isFleetStamp({ orgId: "op-1" }, undefined)).toBe(false);
+		expect(isFleetStamp({}, undefined)).toBe(true);
+		expect(sameTenantStamp({ orgId: "op-1" }, {}, undefined)).toBe(false);
 	});
 
 	test("with 2 active operators a master get does not read an operator-stamped row", async () => {

@@ -3,11 +3,10 @@ import { ConvexError } from "convex/values";
 import { mutation, query, type MutationCtx, type QueryCtx } from "./_generated/server";
 import type { Doc, Id } from "./_generated/dataModel";
 import { creatorValidator } from "./schema";
-import { withOrgScope, requireScope, requireOrchestratorOnRoster, type OrgScope } from "./lib/auth";
+import { withOrgScope, requireScope, requireOrchestratorOnRoster, rowInScopeOrg, type OrgScope } from "./lib/auth";
 import { isFleetSystemCaller } from "./lib/systemCaller";
 import { requireId } from "./lib/ids";
 import { resolveHumanActor } from "./lib/humanActor";
-import { clerkOrgIdForSlug } from "./lib/orgClerkId";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // participant-visibility helpers (Day 165 fix — task
@@ -64,11 +63,11 @@ export async function syncParticipantIndex(
 
 function isOrgAllowedForScope(
 	scope: OrgScope,
-	orgId: string | undefined,
+	row: { orgId?: string; clerkOrgId?: string },
 ): boolean {
 	if (scope.isMaster) return true;
 	if (scope.orgSlug === null) return false;
-	return orgId === scope.orgSlug;
+	return rowInScopeOrg(row, scope);
 }
 
 async function identityMatchesParticipant(
@@ -142,7 +141,7 @@ async function callerCanReadForScope(
 	// callerCanReadForScope never leaks a note on its own if that upstream
 	// refusal is ever bypassed or reordered.
 	if (scope.orgSlug === null) return false;
-	if (note.orgId !== scope.orgSlug) return false;
+	if (!rowInScopeOrg(note, scope)) return false;
 	if (callerIdentities === undefined) return true;
 	return identityMatchesParticipant(ctx, note, callerIdentities);
 }
@@ -210,7 +209,7 @@ export const create = mutation({
 			orgId: scope.isMaster ? undefined : (scope.orgSlug as string),
 			clerkOrgId: scope.isMaster
 				? undefined
-				: await clerkOrgIdForSlug(ctx, scope.orgSlug),
+				: scope.orgClerkId,
 		});
 		await syncParticipantIndex(ctx, noteId, args.participants);
 		return noteId;
@@ -771,7 +770,7 @@ export const deleteBriefingNote = mutation({
 		const note = await ctx.db.get(args.noteId);
 		if (!note) throw new Error("Briefing note not found");
 
-		if (!isOrgAllowedForScope(scope, note.orgId)) {
+		if (!isOrgAllowedForScope(scope, note)) {
 			throw new ConvexError(
 				`RBAC_DENIED: caller may not delete briefing note ${args.noteId} (orgId "${note.orgId ?? "none"}") — ${JSON.stringify({ orgSlug: scope.orgSlug })}`,
 			);
@@ -867,7 +866,7 @@ export const update = mutation({
 		// validator) — an org caller can never move a note into another org's
 		// scope via the patch; the org-scope check below binds ONLY to the
 		// note's STORED orgId, never anything caller-supplied.
-		if (!isOrgAllowedForScope(scope, note.orgId)) {
+		if (!isOrgAllowedForScope(scope, note)) {
 			throw new ConvexError(
 				`RBAC_DENIED: caller may not update briefing note ${noteId} (orgId "${note.orgId ?? "none"}") — ${JSON.stringify({ orgSlug: scope.orgSlug })}`,
 			);
