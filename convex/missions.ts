@@ -16,6 +16,7 @@ import {
 	filterByOrgScope,
 	isRowVisibleToScope,
 	requireScope,
+	rowInScopeOrg,
 } from "./lib/auth";
 import type { OrgScope } from "./lib/auth";
 import { isFleetSystemCaller } from "./lib/systemCaller";
@@ -25,7 +26,6 @@ import {
 	resolveVerifiedPerson,
 	verifiedPersonValidator,
 } from "./lib/personPrincipal";
-import { clerkOrgIdForSlug } from "./lib/orgClerkId";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Shared validators
@@ -150,11 +150,11 @@ const priorityValidator = v.union(
 
 function isOrgAllowedForScope(
 	scope: OrgScope,
-	orgId: string | undefined,
+	row: { orgId?: string; clerkOrgId?: string },
 ): boolean {
 	if (scope.isMaster) return true;
 	if (scope.orgSlug === null) return false;
-	return orgId === scope.orgSlug;
+	return rowInScopeOrg(row, scope);
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -246,7 +246,7 @@ export const create = mutation({
 			orgId: scope.isMaster ? undefined : (scope.orgSlug as string),
 			clerkOrgId: scope.isMaster
 				? undefined
-				: await clerkOrgIdForSlug(ctx, scope.orgSlug),
+				: scope.orgClerkId,
 		});
 	},
 });
@@ -711,7 +711,7 @@ export const update = mutation({
 		// validator) — an org caller can never move a mission into another
 		// org's scope via the patch; the org-scope check below binds ONLY to
 		// the mission's STORED orgId, never anything caller-supplied.
-		if (!isOrgAllowedForScope(scope, mission.orgId)) {
+		if (!isOrgAllowedForScope(scope, mission)) {
 			throw new ConvexError(
 				`RBAC_DENIED: caller may not update mission ${missionId} (orgId "${mission.orgId ?? "none"}") — ${JSON.stringify({ orgSlug: scope.orgSlug })}`,
 			);
@@ -819,7 +819,7 @@ export const updateStatus = mutation({
 			throw new Error(`Mission ${args.missionId} not found`);
 		}
 
-		if (!isOrgAllowedForScope(scope, mission.orgId)) {
+		if (!isOrgAllowedForScope(scope, mission)) {
 			throw new ConvexError(
 				`RBAC_DENIED: caller may not update mission ${args.missionId} (orgId "${mission.orgId ?? "none"}") — ${JSON.stringify({ orgSlug: scope.orgSlug })}`,
 			);
@@ -882,7 +882,7 @@ export const updateProgress = mutation({
 			throw new Error(`Mission ${args.missionId} not found`);
 		}
 
-		if (!isOrgAllowedForScope(scope, mission.orgId)) {
+		if (!isOrgAllowedForScope(scope, mission)) {
 			throw new ConvexError(
 				`RBAC_DENIED: caller may not update mission ${args.missionId} (orgId "${mission.orgId ?? "none"}") — ${JSON.stringify({ orgSlug: scope.orgSlug })}`,
 			);

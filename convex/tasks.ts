@@ -16,6 +16,7 @@ import {
 	requireScope,
 	withOrgScope,
 	requireOrchestratorOnRoster,
+	sameOrgKey,
 } from "./lib/auth";
 import type { OrgScope, VerifiedActor } from "./lib/auth";
 import { requireId } from "./lib/ids";
@@ -27,7 +28,7 @@ import {
 } from "./deliveryLedger";
 import {
 	FLEET_AUDIENCE,
-	audienceForOrgId,
+	audienceForOrg,
 	issueMatchesMapping,
 	mappingInAudience,
 	type MappingAudience,
@@ -56,7 +57,7 @@ import {
 	resolveReviewer,
 } from "./lib/reviewRouting";
 import { isFleetSystemCaller } from "./lib/systemCaller";
-import { fleetOperatorSlug, sameTenantStamp } from "./lib/operatorOrg";
+import { fleetOperatorRef, sameTenantStamp } from "./lib/operatorOrg";
 import {
 	enforceClosureGate,
 	closeTrailingSegmentOnExit,
@@ -2630,7 +2631,7 @@ export const complete = mutation({
 			// row is the fleet's (unstamped) or the task's own org's, never another's.
 			if (
 				repoMapping &&
-				(repoMapping.orgId === undefined || repoMapping.orgId === task.orgId)
+				(isFleetMapping(repoMapping) || sameOrgKey(repoMapping, task))
 			) {
 				const dateStr = new Date().toISOString().split("T")[0];
 				const orch = task.assignedTo;
@@ -2658,7 +2659,7 @@ export const complete = mutation({
 				// fixPatterns and its RAG entry are a GLOBAL fleet corpus with no
 				// tenant column: only a FLEET mapping may feed it. A client org's own
 				// repo still gets the GitHub comment above, never a row here.
-				if (stepNumber === 7 && args.completionNote && repoMapping.orgId === undefined) {
+				if (stepNumber === 7 && args.completionNote && isFleetMapping(repoMapping)) {
 					const note = args.completionNote;
 
 					// Parse structured completionNote: "Root cause: ... Fix: ... Files: ..."
@@ -2749,11 +2750,7 @@ export const complete = mutation({
 				// fleet mission is left untouched; the task completion is not refused.
 				if (
 					mission &&
-					sameTenantStamp(
-						mission.orgId,
-						task.orgId,
-						await fleetOperatorSlug(ctx.db),
-					) &&
+					sameTenantStamp(mission, task, await fleetOperatorRef(ctx.db)) &&
 					mission.status !== "complete"
 				) {
 					await ctx.db.patch(task.missionId, {
@@ -3734,12 +3731,16 @@ export const REPO_MAPPING_PER_PROJECT_SCAN_CAP = 200;
  * the audience of the task's own server-stamped orgId (fleet task: fleet rows;
  * operator-org task: fleet + own rows; client-org task: own rows only).
  */
+function isFleetMapping(row: Pick<Doc<"githubRepoMapping">, "orgId" | "clerkOrgId">): boolean {
+	return row.orgId === undefined && row.clerkOrgId === undefined;
+}
+
 async function resolveRepoMappingForTask(
 	ctx: MutationCtx,
 	task: Doc<"tasks">,
 ): Promise<{ row: Doc<"githubRepoMapping"> | null; truncated: boolean }> {
 	if (!task.project) return { row: null, truncated: false };
-	const audience = await audienceForOrgId(ctx, task.orgId);
+	const audience = await audienceForOrg(ctx, task);
 	return await resolveGithubRepoMappingForProject(ctx, task.project, audience);
 }
 
@@ -4126,15 +4127,15 @@ export const resolveStaleDeployTasks = internalMutation({
 
 		async function resolveMappingForProject(
 			project: string,
-			orgId: string | undefined,
+			org: { orgId?: string; clerkOrgId?: string },
 		): Promise<Doc<"githubRepoMapping"> | null> {
-			const key = `${orgId ?? ""}\u0000${project}`;
+			const audKey = org.clerkOrgId ?? org.orgId ?? "";
+			const key = `${audKey}\u0000${project}`;
 			const cached = repoCache.get(key);
 			if (cached !== undefined) return cached;
-			const audKey = orgId ?? "";
 			let audience = audienceCache.get(audKey);
 			if (audience === undefined) {
-				audience = await audienceForOrgId(ctx, orgId);
+				audience = await audienceForOrg(ctx, org);
 				audienceCache.set(audKey, audience);
 			}
 
@@ -4153,7 +4154,7 @@ export const resolveStaleDeployTasks = internalMutation({
 			if (!parsed) continue;
 			scanned++;
 
-			const mapping = await resolveMappingForProject(parsed.repo, t.orgId);
+			const mapping = await resolveMappingForProject(parsed.repo, t);
 
 			if (
 				!mapping ||

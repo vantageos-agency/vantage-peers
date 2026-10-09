@@ -4,12 +4,16 @@ import { mutation, query } from "./_generated/server";
 import { requireId } from "./lib/ids";
 import {
 	requireResolvedCaller,
+	rowInScopeOrg,
 	type OrgScope,
 	withOrgScope,
 } from "./lib/auth";
 import { isFleetSystemCaller } from "./lib/systemCaller";
-import { fleetOperatorSlug, sameTenantStamp } from "./lib/operatorOrg";
-import { clerkOrgIdForSlug } from "./lib/orgClerkId";
+import {
+	fleetOperatorRef,
+	sameTenantStamp,
+	stampOfScope,
+} from "./lib/operatorOrg";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Org-scope orchestrator enforcement (same defect class as convex/diary.ts's
@@ -156,7 +160,7 @@ export const create = mutation({
 				? {}
 				: {
 						orgId: scope.orgSlug,
-						clerkOrgId: await clerkOrgIdForSlug(ctx, scope.orgSlug),
+						clerkOrgId: scope.orgClerkId,
 					}),
 		});
 	},
@@ -230,7 +234,7 @@ export const update = mutation({
 		// Master is unchanged.
 		if (
 			!scope.isMaster &&
-			!sameTenantStamp(bu.orgId, scope.orgSlug ?? undefined, await fleetOperatorSlug(ctx.db))
+			!sameTenantStamp(bu, stampOfScope(scope), await fleetOperatorRef(ctx.db))
 		) {
 			throw new ConvexError(
 				`RBAC_DENIED: caller may not update business unit ${args.buId} — ${JSON.stringify({ orgSlug: scope.orgSlug, reason: "row-not-in-caller-org" })}`,
@@ -319,7 +323,7 @@ export const remove = mutation({
 		// R-52 defence in depth: the master-only gate above is what decides today;
 		// this reads the row's own server-stamped tenant so the delete stays bound
 		// to the caller's tenant if that gate is ever relaxed to org admins.
-		if (!scope.isMaster && bu.orgId !== scope.orgSlug) {
+		if (!scope.isMaster && !rowInScopeOrg(bu, scope)) {
 			throw new ConvexError(
 				`RBAC_DENIED: caller may not delete business unit ${args.buId} — ${JSON.stringify({ orgSlug: scope.orgSlug, reason: "row-not-in-caller-org" })}`,
 			);

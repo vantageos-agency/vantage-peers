@@ -13,6 +13,7 @@ import {
 	requireOrchestratorOnRoster,
 	requireResolvedCaller,
 	requireScope,
+	rowInScopeOrg,
 	withOrgScope,
 } from "./lib/auth";
 
@@ -63,7 +64,7 @@ function requireRowOwnedBy(
 	door: string,
 ): void {
 	if (scope.isMaster) return;
-	if (row.orgId !== scope.orgSlug) {
+	if (!rowInScopeOrg(row, scope)) {
 		throw new ConvexError(
 			`RBAC_DENIED: ${door} — repo is not owned by org "${scope.orgSlug}" — ${JSON.stringify({ door, repo: row.repo })}`,
 		);
@@ -83,6 +84,7 @@ const repoMappingDocOrNull = v.union(
 		reviewer: v.optional(v.string()),
 		fallbackReviewer: v.optional(v.string()),
 		orgId: v.optional(v.string()),
+		clerkOrgId: v.optional(v.string()),
 	}),
 	v.null(),
 );
@@ -154,6 +156,7 @@ const repoMappingFullObject = v.object({
 	reviewer: v.optional(v.string()),
 	fallbackReviewer: v.optional(v.string()),
 	orgId: v.optional(v.string()),
+	clerkOrgId: v.optional(v.string()),
 });
 
 const repoMappingLiteObject = v.object({
@@ -394,6 +397,9 @@ export const add = mutation({
 			project: args.project,
 			active: args.active ?? true,
 			...(tenant !== undefined ? { orgId: tenant } : {}),
+			...(tenant !== undefined && scope.orgClerkId !== undefined
+				? { clerkOrgId: scope.orgClerkId }
+				: {}),
 			...(args.reviewer !== undefined ? { reviewer: args.reviewer } : {}),
 			...(args.fallbackReviewer !== undefined
 				? { fallbackReviewer: args.fallbackReviewer }
