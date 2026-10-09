@@ -361,3 +361,111 @@ describe("BACKFILL — a roster name resolves in the operator org, in-org first"
 		expect((await readAs(w, w.opPi, FLEET)).messages).toHaveLength(1);
 	});
 });
+
+describe("REPLY — an operator agent answers a client agent BY ID", () => {
+	const fleetSends = (
+		w: World,
+		from: string,
+		agentId: Id<"agents">,
+		extra: Record<string, unknown>,
+	) =>
+		asService(w.t).mutation(api.messages.sendMessage, {
+			from,
+			content: "reply from the fleet",
+			verifiedActor: { agentId, orgSlug: FLEET },
+			...extra,
+		} as never);
+	const nothingWritten = async (w: World) =>
+		w.t.run(async (ctx) => ({
+			messages: (await ctx.db.query("messages").collect()).length,
+			receipts: (await ctx.db.query("messageReceipts").collect()).length,
+		}));
+
+	test("pi (on globex's roster) -> a globex agent by ID: written in globex's tenant, the agent reads it", async () => {
+		const w = await world();
+		const messageId = await fleetSends(w, "pi", w.opPi, {
+			recipientAgentIds: [w.globexClio],
+		});
+		const message = await w.t.run((ctx) => ctx.db.get(messageId));
+		expect(message?.tenantId).toBe(GLOBEX);
+		expect(message?.fromId).toBe(w.opPi);
+		const receipts = await receiptsOf(w, messageId);
+		expect(receipts).toHaveLength(1);
+		expect(receipts[0].tenantId).toBe(GLOBEX);
+		expect(receipts[0].recipientId).toBe(w.globexClio);
+		const inbox = await readAs(w, w.globexClio, GLOBEX);
+		expect(inbox.messages.map((m) => m.messageId)).toEqual([messageId]);
+		// Another org's agent does not read it.
+		expect((await readAs(w, w.acmeBob, ACME)).messages).toHaveLength(0);
+	});
+
+	test("an operator agent NOT on globex's roster -> a globex agent by ID: refused, nothing written", async () => {
+		const w = await world();
+		const msg = await errorOf(
+			fleetSends(w, "eta", w.opEta, { recipientAgentIds: [w.globexClio] }),
+		);
+		expect(msg).toMatch(/recipient-agent-not-addressable/);
+		expect(await nothingWritten(w)).toEqual({ messages: 0, receipts: 0 });
+	});
+
+	test("an agent of another client org U -> a globex agent by ID: refused", async () => {
+		const w = await world();
+		const msg = await errorOf(
+			seatSends(
+				w,
+				{ from: "bob", agentId: w.acmeBob, org: ACME },
+				{ recipientAgentIds: [w.globexClio] },
+			),
+		);
+		expect(msg).toMatch(/recipient-agent-not-addressable/);
+		expect(await nothingWritten(w)).toEqual({ messages: 0, receipts: 0 });
+	});
+
+	test("pi -> agents of globex AND acme in one call: refused whole, nothing written", async () => {
+		const w = await world();
+		const msg = await errorOf(
+			fleetSends(w, "pi", w.opPi, {
+				recipientAgentIds: [w.globexClio, w.acmeBob],
+			}),
+		);
+		expect(msg).toMatch(/recipient-agent-not-addressable/);
+		expect(await nothingWritten(w)).toEqual({ messages: 0, receipts: 0 });
+	});
+
+	test("pi -> a globex agent plus an operator-org agent: refused whole", async () => {
+		const w = await world();
+		const msg = await errorOf(
+			fleetSends(w, "pi", w.opPi, {
+				recipientAgentIds: [w.globexClio, w.opEta],
+			}),
+		);
+		expect(msg).toMatch(/recipient-agent-not-addressable/);
+		expect(await nothingWritten(w)).toEqual({ messages: 0, receipts: 0 });
+	});
+
+	test("pi -> an inactive globex agent: the same single refusal", async () => {
+		const w = await world();
+		await w.t.run((ctx) => ctx.db.patch(w.globexClio, { isActive: false }));
+		const msg = await errorOf(
+			fleetSends(w, "pi", w.opPi, { recipientAgentIds: [w.globexClio] }),
+		);
+		expect(msg).toMatch(/recipient-agent-not-addressable/);
+	});
+
+	test("two active operator agents named pi: the reply is refused (the name is not unique)", async () => {
+		const w = await world();
+		await w.t.run((ctx) =>
+			ctx.db.insert("agents", {
+				orgSlug: FLEET,
+				name: "pi",
+				normalizedName: "pi",
+				isActive: true,
+				createdAt: Date.now(),
+			}),
+		);
+		const msg = await errorOf(
+			fleetSends(w, "pi", w.opPi, { recipientAgentIds: [w.globexClio] }),
+		);
+		expect(msg).toMatch(/recipient-agent-not-addressable/);
+	});
+});

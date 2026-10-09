@@ -210,6 +210,9 @@ interface SendMessageArgs {
 	content: string;
 	sessionDay?: number;
 	tenantId?: string;
+	// The transport-verified acting agent (sendMessage forwards it). Used only to
+	// bind the reply direction to the verified sender's own agent row.
+	verifiedActor?: { agentId: string };
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -276,13 +279,44 @@ async function isRosterOperatorAgent(
 	return resolved !== undefined && resolved._id === row._id;
 }
 
+// REPLY direction. Is the sender (an operator-org agent, named `senderName`)
+// the operator agent that CLIENT org `clientSlug`'s roster names? One rule for
+// both directions (operatorRosterAgents.ts): the roster lists the name, the name
+// resolves in the operator org to exactly one active agent, and (when the
+// transport verified the sender by ID) that agent is the verified sender.
+async function isRosteredOperatorSender(
+	ctx: MutationCtx,
+	clientSlug: string,
+	senderName: string,
+	senderAgentId: string | undefined,
+): Promise<boolean> {
+	const mapping = await lookupOrgMapping(ctx, clientSlug);
+	if (mapping === null || !mapping.isActive) return false;
+	const sender = await operatorAgentForRosterName(
+		ctx,
+		clientSlug,
+		mapping.allowedOrchestrators,
+		senderName,
+	);
+	return (
+		sender !== undefined &&
+		(senderAgentId === undefined || sender._id === senderAgentId)
+	);
+}
+
 async function resolveRecipientAgents(
 	ctx: MutationCtx,
 	reach: OrgScope,
 	derivedTenantId: string | undefined,
 	rawIds: readonly string[],
-): Promise<Doc<"agents">[]> {
+	sender: { name: string; agentId?: string },
+): Promise<{ rows: Doc<"agents">[]; replyTenant?: string }> {
 	const fleetWide = reach.isMaster && reach.orgSlug === null;
+	// REPLY direction: an operator-org sender addressing a CLIENT org's agents.
+	const operatorSlug = fleetWide ? undefined : await fleetOperatorSlug(ctx.db);
+	const senderIsOperator =
+		operatorSlug !== undefined && reach.orgSlug === operatorSlug;
+	let replyTenant: string | undefined;
 	// The organisation the receipts are stamped with is the one the recipients
 	// must belong to: the sender's own org, or (fleet master) the declared
 	// tenant, else the operator org.
@@ -330,11 +364,37 @@ async function resolveRecipientAgents(
 				rows.push(row);
 				continue;
 			}
+			// The REPLY admission: an active agent of a CLIENT org T, addressed by an
+			// operator-org sender that T's roster names. All IDs must be of the one
+			// org T (checked below); anything else is the same single refusal.
+			if (
+				row !== null &&
+				row.isActive &&
+				senderIsOperator &&
+				row.orgSlug !== operatorSlug &&
+				(replyTenant === undefined || replyTenant === row.orgSlug) &&
+				(await isRosteredOperatorSender(
+					ctx,
+					row.orgSlug,
+					sender.name,
+					sender.agentId,
+				))
+			) {
+				replyTenant = row.orgSlug;
+				rows.push(row);
+				continue;
+			}
 			return refuse(raw);
 		}
 		rows.push(row);
 	}
-	return rows;
+	// Refuse-whole: a reply list spanning two orgs (two clients, or a client and
+	// the operator org) delivers nothing.
+	if (replyTenant !== undefined) {
+		const stray = rows.find((row) => row.orgSlug !== replyTenant);
+		if (stray !== undefined) return refuse(stray._id);
+	}
+	return replyTenant === undefined ? { rows } : { rows, replyTenant };
 }
 
 async function sendMessageCore(
@@ -433,14 +493,23 @@ async function sendMessageCore(
 		// channel is their labels, the same string a name send would store.
 		let agentRecipients: Doc<"agents">[] | undefined;
 		if (args.recipientAgentIds !== undefined) {
-			agentRecipients = (
-				await resolveRecipientAgents(
-					ctx,
-					reach,
-					derivedTenantId,
-					args.recipientAgentIds,
-				)
-			).filter((row) => row._id !== fromId);
+			const resolved = await resolveRecipientAgents(
+				ctx,
+				reach,
+				derivedTenantId,
+				args.recipientAgentIds,
+				{ name: args.from, agentId: args.verifiedActor?.agentId },
+			);
+			// REPLY: the message and its receipts are written in the RECIPIENTS'
+			// tenant (the client org), so the client agent's verified reader and its
+			// org's scoped reads see them. Without it derivedTenantId would be the
+			// sender's org (recipientScope.orgSlug, set from the verified actor's
+			// org in sendMessage). `fromId` was resolved above in the sender's own
+			// org and is kept.
+			if (resolved.replyTenant !== undefined) {
+				derivedTenantId = resolved.replyTenant;
+			}
+			agentRecipients = resolved.rows.filter((row) => row._id !== fromId);
 			if (agentRecipients.length === 0) {
 				throw new ConvexError(
 					`recipient error / message not delivered: recipientAgentIds names no recipient other than the sender — ${JSON.stringify({ reason: "only-self", door: SEND_DOOR })}`,
