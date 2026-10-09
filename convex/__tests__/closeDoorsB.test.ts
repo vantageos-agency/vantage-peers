@@ -11,6 +11,7 @@
 import { convexTest } from "convex-test";
 import { describe, expect, test } from "vitest";
 import { api } from "../_generated/api";
+import { UNCLAIMED_SERVICE_ACCOUNT_READS_EVERY_TENANT } from "../lib/inboxReader";
 import schema from "../schema";
 
 const modules = Object.fromEntries(
@@ -199,9 +200,12 @@ describe("messages:getUnreadCount", () => {
 			refused: true,
 			count: 0,
 		});
-		// The service account by NAME counts the FLEET's tenant only (task
-		// k17c5q842gm1gbh0j2qjtc80g18fx5kb): neither org's receipts are the fleet's.
-		expect(await asMaster(t).query(api.messages.getUnreadCount, { orchestratorId: "sigma" })).toBe(0);
+		// The service account by NAME: EXPAND serves it as production does (every
+		// tenant's "sigma" receipts: 3); CONTRACT (task k17c5q842gm1gbh0j2qjtc80g18fx5kb)
+		// counts the FLEET's tenant only, and neither org's receipts are the fleet's.
+		expect(await asMaster(t).query(api.messages.getUnreadCount, { orchestratorId: "sigma" })).toBe(
+			UNCLAIMED_SERVICE_ACCOUNT_READS_EVERY_TENANT ? 3 : 0,
+		);
 		// A client org's count is taken through its VERIFIED org, not through a name.
 		expect(
 			await asMaster(t).query(api.messages.getUnreadCount, {

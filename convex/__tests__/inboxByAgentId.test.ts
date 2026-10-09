@@ -472,6 +472,23 @@ describe("OWNED: a receipt / message of another agent is refused", () => {
 		expect(left).toEqual({ byId: null, legacy: null });
 	});
 
+	// A seat reaches Convex as the service account, carries `verifiedActor`, and
+	// OMITS `callerOrchestrator` (the tool description says so for a seat). A
+	// claimed caller must never take the claimless master marking path, which
+	// marks every receipt id it lists across tenants. Holds in BOTH deploy phases.
+	test("markAsRead: a seat's claim without callerOrchestrator never takes the master path (org B's seat, org A's receipt)", async () => {
+		const { t, acmeHelios, receipt } = await seedWorld();
+		for (const key of ["IRIS-BY-ID", "IRIS-LEGACY"]) {
+			await expect(
+				markAs(t, { receiptIds: [receipt[key]], ...actor(acmeHelios, ACME) }),
+			).rejects.toThrow(/RBAC_DENIED.*messages:markAsRead/);
+			const readAt = await t.run(
+				async (ctx) => (await ctx.db.get(receipt[key]))?.readAt ?? null,
+			);
+			expect(readAt).toBeNull();
+		}
+	});
+
 	// CONTRACT pole (inboxReader.ts UNCLAIMED_SERVICE_ACCOUNT_READS_EVERY_TENANT):
 	// armed when the flag is flipped to false, after the claim-sending MCP is
 	// observed live. Until then the claimless service account is served as

@@ -1521,8 +1521,12 @@ export const markAsRead = mutation({
 			scope.isMaster &&
 			args.callerOrchestrator === undefined &&
 			UNCLAIMED_SERVICE_ACCOUNT_READS_EVERY_TENANT;
+		// A claimed caller never takes the claimless master path: the ONLY way past
+		// the inbox reader is `unclaimedMasterNamesNoOwner`, which `!claimed` guards
+		// (a seat omits callerOrchestrator, so without it a claim would mark across
+		// tenants). A Clerk member without a claim keeps the roster + tenant gates.
 		const reader =
-			claimed || (scope.isMaster && !unclaimedMasterNamesNoOwner)
+			!unclaimedMasterNamesNoOwner && (claimed || scope.isMaster)
 				? await resolveInboxReader(
 						ctx,
 						transportScope,
