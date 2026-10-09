@@ -13,6 +13,7 @@
 import { convexTest } from "convex-test";
 import { describe, expect, test } from "vitest";
 import { api } from "../_generated/api";
+import { UNCLAIMED_SERVICE_ACCOUNT_READS_EVERY_TENANT } from "../lib/inboxReader";
 import schema from "../schema";
 
 const modules = Object.fromEntries(
@@ -103,12 +104,13 @@ describe("messages:markAsRead — receipt tenant", () => {
 		expect(row?.readAt).toBeUndefined();
 	});
 
-	test("master marks a legacy receipt that carries no tenantId", async () => {
+	test("master marks a legacy receipt that carries no tenantId (it is the fleet's), naming its owner", async () => {
 		const t = createT();
 		await seedMappings(t);
 		const { receiptId } = await seedRow(t, undefined);
 		const n = await asMaster(t).mutation(api.messages.markAsRead, {
 			receiptIds: [receiptId],
+			callerOrchestrator: "seat-x",
 		});
 		expect(n).toBe(1);
 		const row = await t.run((ctx) => ctx.db.get(receiptId));
@@ -141,12 +143,33 @@ describe("messages:markAsRead — receipt tenant", () => {
 		expect(row?.readAt).toBeDefined();
 	});
 
-	test("master marks any tenant's receipt", async () => {
+	// Task k17c5q842gm1gbh0j2qjtc80g18fx5kb: the service account asserting a bare
+	// NAME is not a licence over every org's namesake. It marks the FLEET's
+	// receipts; a client org's receipt is marked through the org's VERIFIED
+	// identity, and the service account naming no owner at all is refused.
+	test("master marks a client tenant's receipt only through the verified org, never by a bare name", async () => {
 		const t = createT();
 		await seedMappings(t);
 		const { receiptId } = await seedRow(t, "org-b");
+		// CONTRACT poles (inboxReader.ts UNCLAIMED_SERVICE_ACCOUNT_READS_EVERY_TENANT),
+		// armed when the flag is flipped after the claim-sending MCP is live.
+		if (!UNCLAIMED_SERVICE_ACCOUNT_READS_EVERY_TENANT) {
+			await expect(
+				asMaster(t).mutation(api.messages.markAsRead, {
+					receiptIds: [receiptId],
+					callerOrchestrator: "seat-x",
+				}),
+			).rejects.toThrow(/RBAC_DENIED.*messages:markAsRead/);
+			await expect(
+				asMaster(t).mutation(api.messages.markAsRead, {
+					receiptIds: [receiptId],
+				}),
+			).rejects.toThrow(/RBAC_DENIED.*messages:markAsRead/);
+		}
 		const n = await asMaster(t).mutation(api.messages.markAsRead, {
 			receiptIds: [receiptId],
+			callerOrchestrator: "seat-x",
+			verifiedOrg: { orgSlug: "org-b" },
 		});
 		expect(n).toBe(1);
 	});

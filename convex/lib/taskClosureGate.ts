@@ -719,6 +719,10 @@ export async function computeStaleInProgress(
 	ctx: QueryCtx | MutationCtx,
 	recipient: string,
 	now: number,
+	// A task is listed only when this says the READER may see it (its tenant,
+	// and its agent ID where the task carries one). The by_assignee index is
+	// keyed on a NAME, which two organisations share; undefined = no extra gate.
+	visible: (task: Doc<"tasks">) => boolean = () => true,
 ): Promise<StaleInProgressEntry[]> {
 	const thresholdMs = await getStaleInProgressThresholdMs(ctx);
 
@@ -731,6 +735,7 @@ export async function computeStaleInProgress(
 			)
 			.order("desc"),
 		(task) => {
+			if (!visible(task)) return;
 			const { age } = staleAge(task, now);
 			if (age > thresholdMs && entries.length < MATCH_ENTRY_CAP) {
 				entries.push({ taskId: task._id, title: task.title, age });
@@ -796,6 +801,7 @@ export async function computeStuckInProgress(
 	ctx: QueryCtx | MutationCtx,
 	recipient: string,
 	now: number,
+	visible: (task: Doc<"tasks">) => boolean = () => true,
 ): Promise<StuckCappedList<StaleInProgressEntry>> {
 	const thresholdMs = await getStuckActionableThresholdMs(ctx);
 	return computeStuckList(
@@ -805,7 +811,7 @@ export async function computeStuckInProgress(
 				q.eq("assignedTo", recipient).eq("status", "in_progress"),
 			)
 			.order("desc"),
-		() => true,
+		visible,
 		now,
 		thresholdMs,
 	);
@@ -822,6 +828,7 @@ export async function computePeersStuckOnYou(
 	ctx: QueryCtx | MutationCtx,
 	caller: string,
 	now: number,
+	visible: (task: Doc<"tasks">) => boolean = () => true,
 ): Promise<StuckCappedList<StaleInProgressEntry>> {
 	const thresholdMs = await getStuckActionableThresholdMs(ctx);
 	return computeStuckList(
@@ -829,7 +836,8 @@ export async function computePeersStuckOnYou(
 			.query("tasks")
 			.withIndex("by_status", (q) => q.eq("status", "in_progress"))
 			.order("desc"),
-		(task) => task.createdBy === caller && task.assignedTo !== caller,
+		(task) =>
+			task.createdBy === caller && task.assignedTo !== caller && visible(task),
 		now,
 		thresholdMs,
 	);

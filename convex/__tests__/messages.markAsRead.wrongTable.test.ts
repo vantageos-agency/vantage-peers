@@ -166,6 +166,7 @@ describe("markAsRead — wrong-table ID (issue #1064)", () => {
 
 		const count = await t.mutation(api.messages.markAsRead, {
 			receiptIds: [receipts[0].receiptId],
+			callerOrchestrator: "pi",
 		});
 		expect(count).toBe(1);
 	});

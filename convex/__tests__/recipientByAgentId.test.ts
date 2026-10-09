@@ -177,10 +177,12 @@ const counts = (w: World) =>
 		receipts: (await ctx.db.query("messageReceipts").collect()).length,
 	}));
 
-const inbox = (w: World, recipient: string, tenantId: string) =>
+// The inbox is read through the VERIFIED org (task k17c5q842gm1gbh0j2qjtc80g18fx5kb):
+// the service account can no longer name a client tenant by argument.
+const inbox = (w: World, recipient: string, orgSlug: string) =>
 	asService(w.t).query(api.messages.checkNewMessagesEnvelope, {
 		recipient,
-		tenantId,
+		verifiedOrg: { orgSlug },
 	});
 
 describe("DELIVERED — a recipient addressed by its agent ID", () => {

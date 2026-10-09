@@ -49,6 +49,15 @@ import {
 import { actorIdResolver } from "./lib/actorIds";
 import { clerkOrgIdForSlug } from "./lib/orgClerkId";
 import { fleetOperatorSlug } from "./lib/operatorOrg";
+import {
+	fetchUnreadReceipts,
+	ownsReceipt,
+	ownsSentMessage,
+	resolveInboxReader,
+	taskVisibleTo,
+	UNCLAIMED_SERVICE_ACCOUNT_READS_EVERY_TENANT,
+} from "./lib/inboxReader";
+import { verifiedOrgValidator } from "./lib/verifiedOrg";
 
 // getUnreadCount only needs the count, not the rows; the receipts table per
 // recipient is small, so this bound exists to guard against unbounded growth
@@ -1066,10 +1075,14 @@ export const sendMessageDelivery = internalMutation({
 
 export const checkNewMessages = query({
 	args: {
-		recipient: creatorValidator,
+		// Optional: an agent presenting a verified identity (`verifiedActor` /
+		// `verifiedOrg`) is identified by it, and a name may only narrow it.
+		recipient: v.optional(creatorValidator),
 		recipientInstanceId: v.optional(v.string()),
 		tenantId: v.optional(v.string()),
 		since: v.optional(v.number()), // Unix ms — only return receipts with _creationTime > since
+		verifiedActor: v.optional(verifiedActorValidator),
+		verifiedOrg: v.optional(verifiedOrgValidator),
 	},
 	returns: v.array(
 		v.object({
@@ -1124,129 +1137,29 @@ export const checkNewMessages = query({
 		// silent. The bare `[]` this line returns is pinned as an ARRAY by
 		// convex/__tests__/preOrgRefusalCarriesItsMarker.test.ts.
 		if (!scope.isMaster && scope.orgSlug === null) return [];
-		assertPersonInboxOwner(scope, args.recipient, "messages:checkNewMessages");
-
-		const effectiveTenantId =
-			scope.isMaster && scope.orgSlug === null
-				? args.tenantId
-				: (scope.orgSlug ?? undefined);
-
-		let receipts;
-
-		if (args.recipientInstanceId !== undefined) {
-			// Instance-level: get messages targeted at this specific instance
-			// PLUS role-level messages (recipientInstanceId === undefined)
-			//
-			// R-11 fix (task k171ev3awqn4n2r9hfhbv2n1jx8df4tt) — when tenantId is
-			// supplied, push it INTO the query via by_tenant_instance_unread /
-			// by_tenant_recipient_unread (index predicate) rather than relying on
-			// the post-query .filter below alone. The .filter is KEPT as
-			// belt-and-suspenders, mirroring the conform pattern at :735/:995.
-			const instanceReceipts =
-				effectiveTenantId !== undefined
-					? await ctx.db
-							.query("messageReceipts")
-							.withIndex("by_tenant_instance_unread", (q) =>
-								q
-									.eq("tenantId", effectiveTenantId)
-									.eq("recipientInstanceId", args.recipientInstanceId!)
-									.eq("readAt", undefined),
-							)
-							.filter((q) =>
-								args.since !== undefined
-									? q.gt(q.field("_creationTime"), args.since)
-									: true,
-							)
-							.take(100)
-					: await ctx.db
-							.query("messageReceipts")
-							.withIndex("by_instance_unread", (q) =>
-								q
-									.eq("recipientInstanceId", args.recipientInstanceId!)
-									.eq("readAt", undefined),
-							)
-							.filter((q) =>
-								args.since !== undefined
-									? q.gt(q.field("_creationTime"), args.since)
-									: true,
-							)
-							.take(100);
-
-			const roleReceipts =
-				effectiveTenantId !== undefined
-					? await ctx.db
-							.query("messageReceipts")
-							.withIndex("by_tenant_recipient_unread", (q) =>
-								q
-									.eq("tenantId", effectiveTenantId)
-									.eq("recipient", args.recipient)
-									.eq("readAt", undefined),
-							)
-							.filter((q) => {
-								const base = q.eq(q.field("recipientInstanceId"), undefined);
-								return args.since !== undefined
-									? q.and(base, q.gt(q.field("_creationTime"), args.since))
-									: base;
-							})
-							.take(100)
-					: await ctx.db
-							.query("messageReceipts")
-							.withIndex("by_recipient_unread", (q) =>
-								q.eq("recipient", args.recipient).eq("readAt", undefined),
-							)
-							.filter((q) => {
-								const base = q.eq(q.field("recipientInstanceId"), undefined);
-								return args.since !== undefined
-									? q.and(base, q.gt(q.field("_creationTime"), args.since))
-									: base;
-							})
-							.take(100);
-
-			// Merge and deduplicate by receiptId
-			const seen = new Set<string>();
-			receipts = [];
-			for (const r of [...instanceReceipts, ...roleReceipts]) {
-				if (!seen.has(r._id)) {
-					seen.add(r._id);
-					receipts.push(r);
-				}
-			}
-
-			// Belt-and-suspenders: ensure no cross-tenant row leaks through.
-			if (effectiveTenantId !== undefined) {
-				receipts = receipts.filter((r) => r.tenantId === effectiveTenantId);
-			}
-		} else {
-			// Role-level: get all unread for this role
-			if (effectiveTenantId !== undefined) {
-				receipts = await ctx.db
-					.query("messageReceipts")
-					.withIndex("by_tenant_recipient_unread", (q) =>
-						q
-							.eq("tenantId", effectiveTenantId)
-							.eq("recipient", args.recipient)
-							.eq("readAt", undefined),
-					)
-					.filter((q) =>
-						args.since !== undefined
-							? q.gt(q.field("_creationTime"), args.since)
-							: true,
-					)
-					.take(100);
-			} else {
-				receipts = await ctx.db
-					.query("messageReceipts")
-					.withIndex("by_recipient_unread", (q) =>
-						q.eq("recipient", args.recipient).eq("readAt", undefined),
-					)
-					.filter((q) =>
-						args.since !== undefined
-							? q.gt(q.field("_creationTime"), args.since)
-							: true,
-					)
-					.take(100);
-			}
+		if (args.recipient !== undefined) {
+			assertPersonInboxOwner(scope, args.recipient, "messages:checkNewMessages");
 		}
+
+		// WHO is reading, decided once (convex/lib/inboxReader.ts): the verified
+		// agent BY ID, or a tenant-confined name reader. Never a free-text name
+		// across tenants.
+		const reader = await resolveInboxReader(
+			ctx,
+			scope,
+			{
+				recipient: args.recipient,
+				tenantId: args.tenantId,
+				verifiedActor: args.verifiedActor,
+				verifiedOrg: args.verifiedOrg,
+			},
+			"messages:checkNewMessages",
+		);
+		const receipts = await fetchUnreadReceipts(ctx, reader, {
+			recipientInstanceId: args.recipientInstanceId,
+			since: args.since,
+			take: 100,
+		});
 
 		const results = [];
 		for (const receipt of receipts) {
@@ -1284,12 +1197,14 @@ export const checkNewMessages = query({
 
 export const checkNewMessagesEnvelope = query({
 	args: {
-		recipient: creatorValidator,
+		recipient: v.optional(creatorValidator),
 		recipientInstanceId: v.optional(v.string()),
 		tenantId: v.optional(v.string()),
 		since: v.optional(v.number()),
 		limit: v.optional(v.number()),
 		maxBytes: v.optional(v.number()),
+		verifiedActor: v.optional(verifiedActorValidator),
+		verifiedOrg: v.optional(verifiedOrgValidator),
 	},
 	returns: v.object({
 		messages: v.array(
@@ -1343,127 +1258,32 @@ export const checkNewMessagesEnvelope = query({
 			};
 		}
 
-		assertPersonInboxOwner(
-			scope,
-			args.recipient,
-			"messages:checkNewMessagesEnvelope",
-		);
-
-		const effectiveTenantId =
-			scope.isMaster && scope.orgSlug === null
-				? args.tenantId
-				: (scope.orgSlug ?? undefined);
-
-		let receipts: Doc<"messageReceipts">[];
-
-		if (args.recipientInstanceId !== undefined) {
-			// R-11 fix (task k171ev3awqn4n2r9hfhbv2n1jx8df4tt) — when tenantId is
-			// supplied, push it INTO the query via by_tenant_instance_unread /
-			// by_tenant_recipient_unread (index predicate) rather than relying on
-			// the post-query .filter below alone. The .filter is KEPT as
-			// belt-and-suspenders, mirroring the conform pattern at :735/:995.
-			const instanceReceipts =
-				effectiveTenantId !== undefined
-					? await ctx.db
-							.query("messageReceipts")
-							.withIndex("by_tenant_instance_unread", (q) =>
-								q
-									.eq("tenantId", effectiveTenantId)
-									.eq("recipientInstanceId", args.recipientInstanceId!)
-									.eq("readAt", undefined),
-							)
-							.filter((q) =>
-								args.since !== undefined
-									? q.gt(q.field("_creationTime"), args.since)
-									: true,
-							)
-							.take(takeBudget)
-					: await ctx.db
-							.query("messageReceipts")
-							.withIndex("by_instance_unread", (q) =>
-								q
-									.eq("recipientInstanceId", args.recipientInstanceId!)
-									.eq("readAt", undefined),
-							)
-							.filter((q) =>
-								args.since !== undefined
-									? q.gt(q.field("_creationTime"), args.since)
-									: true,
-							)
-							.take(takeBudget);
-
-			const roleReceipts =
-				effectiveTenantId !== undefined
-					? await ctx.db
-							.query("messageReceipts")
-							.withIndex("by_tenant_recipient_unread", (q) =>
-								q
-									.eq("tenantId", effectiveTenantId)
-									.eq("recipient", args.recipient)
-									.eq("readAt", undefined),
-							)
-							.filter((q) => {
-								const base = q.eq(q.field("recipientInstanceId"), undefined);
-								return args.since !== undefined
-									? q.and(base, q.gt(q.field("_creationTime"), args.since))
-									: base;
-							})
-							.take(takeBudget)
-					: await ctx.db
-							.query("messageReceipts")
-							.withIndex("by_recipient_unread", (q) =>
-								q.eq("recipient", args.recipient).eq("readAt", undefined),
-							)
-							.filter((q) => {
-								const base = q.eq(q.field("recipientInstanceId"), undefined);
-								return args.since !== undefined
-									? q.and(base, q.gt(q.field("_creationTime"), args.since))
-									: base;
-							})
-							.take(takeBudget);
-
-			const seen = new Set<string>();
-			receipts = [];
-			for (const r of [...instanceReceipts, ...roleReceipts]) {
-				if (!seen.has(r._id)) {
-					seen.add(r._id);
-					receipts.push(r);
-				}
-			}
-			// Belt-and-suspenders: ensure no cross-tenant row leaks through.
-			if (effectiveTenantId !== undefined) {
-				receipts = receipts.filter((r) => r.tenantId === effectiveTenantId);
-			}
-		} else if (effectiveTenantId !== undefined) {
-			receipts = await ctx.db
-				.query("messageReceipts")
-				.withIndex("by_tenant_recipient_unread", (q) =>
-					q
-						.eq("tenantId", effectiveTenantId)
-						.eq("recipient", args.recipient)
-						.eq("readAt", undefined),
-				)
-				.filter((q) =>
-					args.since !== undefined
-						? q.gt(q.field("_creationTime"), args.since)
-						: true,
-				)
-				.take(takeBudget);
-		} else {
-			receipts = await ctx.db
-				.query("messageReceipts")
-				.withIndex("by_recipient_unread", (q) =>
-					q.eq("recipient", args.recipient).eq("readAt", undefined),
-				)
-				.filter((q) =>
-					args.since !== undefined
-						? q.gt(q.field("_creationTime"), args.since)
-						: true,
-				)
-				.take(takeBudget);
+		if (args.recipient !== undefined) {
+			assertPersonInboxOwner(
+				scope,
+				args.recipient,
+				"messages:checkNewMessagesEnvelope",
+			);
 		}
 
-		receipts.sort((a, b) => a._creationTime - b._creationTime);
+		// WHO is reading, decided once (convex/lib/inboxReader.ts); see
+		// checkNewMessages above.
+		const reader = await resolveInboxReader(
+			ctx,
+			scope,
+			{
+				recipient: args.recipient,
+				tenantId: args.tenantId,
+				verifiedActor: args.verifiedActor,
+				verifiedOrg: args.verifiedOrg,
+			},
+			"messages:checkNewMessagesEnvelope",
+		);
+		const receipts = await fetchUnreadReceipts(ctx, reader, {
+			recipientInstanceId: args.recipientInstanceId,
+			since: args.since,
+			take: takeBudget,
+		});
 
 		const messages: Array<{
 			receiptId: Doc<"messageReceipts">["_id"];
@@ -1514,9 +1334,15 @@ export const checkNewMessagesEnvelope = query({
 		const now = Date.now();
 		const [staleInProgress, stuckInProgress, peersStuckOnYou] =
 			await Promise.all([
-				computeStaleInProgress(ctx, args.recipient, now),
-				computeStuckInProgress(ctx, args.recipient, now),
-				computePeersStuckOnYou(ctx, args.recipient, now),
+				computeStaleInProgress(ctx, reader.label, now, (task) =>
+					taskVisibleTo(reader, task, "assignee"),
+				),
+				computeStuckInProgress(ctx, reader.label, now, (task) =>
+					taskVisibleTo(reader, task, "assignee"),
+				),
+				computePeersStuckOnYou(ctx, reader.label, now, (task) =>
+					taskVisibleTo(reader, task, "creator"),
+				),
 			]);
 
 		return {
@@ -1639,6 +1465,10 @@ export const markAsRead = mutation({
 		// A person reached through the MCP service account acknowledges its OWN
 		// receipts (convex/lib/personPrincipal.ts); scope rebuilt from its token.
 		verifiedPerson: v.optional(verifiedPersonValidator),
+		// The acting agent, by ID, forwarded by the MCP transport (believed from the
+		// service account only): the receipts it may mark are its own.
+		verifiedActor: v.optional(verifiedActorValidator),
+		verifiedOrg: v.optional(verifiedOrgValidator),
 	},
 	returns: v.number(),
 	handler: async (ctx, args) => {
@@ -1676,11 +1506,56 @@ export const markAsRead = mutation({
 			),
 		);
 
+		// WHO is marking. A verified agent (or verified org), and the fleet service
+		// account, are decided by the inbox reader: a receipt is marked only when
+		// it is THIS reader's (ID, tenant, and for a legacy receipt the exact name).
+		// The service account asserting a bare name is no longer a licence over every
+		// org's namesake. A Clerk member keeps the roster + tenant gates below.
+		// EXPAND (inboxReader.ts UNCLAIMED_SERVICE_ACCOUNT_READS_EVERY_TENANT): a
+		// claimless master that names no owner keeps the production path below
+		// (master marks the receipts it lists) until the contract step.
+		const claimed =
+			args.verifiedActor !== undefined || args.verifiedOrg !== undefined;
+		const unclaimedMasterNamesNoOwner =
+			!claimed &&
+			scope.isMaster &&
+			args.callerOrchestrator === undefined &&
+			UNCLAIMED_SERVICE_ACCOUNT_READS_EVERY_TENANT;
+		// A claimed caller never takes the claimless master path: the ONLY way past
+		// the inbox reader is `unclaimedMasterNamesNoOwner`, which `!claimed` guards
+		// (a seat omits callerOrchestrator, so without it a claim would mark across
+		// tenants). A Clerk member without a claim keeps the roster + tenant gates.
+		const reader =
+			!unclaimedMasterNamesNoOwner && (claimed || scope.isMaster)
+				? await resolveInboxReader(
+						ctx,
+						transportScope,
+						{
+							recipient: args.callerOrchestrator,
+							verifiedActor: args.verifiedActor,
+							verifiedOrg: args.verifiedOrg,
+						},
+						"messages:markAsRead",
+					)
+				: undefined;
+
 		const now = Date.now();
 		let count = 0;
 		for (const receiptId of normalizedIds) {
 			const receipt = await ctx.db.get(receiptId);
 			if (receipt === null) continue;
+			if (reader !== undefined) {
+				if (!ownsReceipt(reader, receipt)) {
+					throw new ConvexError(
+						`RBAC_DENIED: receipt ${receiptId} is not the verified reader's — ${JSON.stringify({ reason: "receipt-not-yours", door: "messages:markAsRead", kind: reader.kind })}`,
+					);
+				}
+				if (receipt.readAt === undefined) {
+					await ctx.db.patch(receiptId, { readAt: now });
+					count++;
+				}
+				continue;
+			}
 			// A person's own receipt ("user:<subject>", written by a reply addressed
 			// to it) is acknowledged by that person and by nobody else; the tenant
 			// gate below still applies.
@@ -1751,6 +1626,10 @@ export const deleteMessage = mutation({
 	args: {
 		messageId: v.id("messages"),
 		callerOrchestrator: v.optional(creatorValidator),
+		// The acting agent, by ID (believed from the service account only): it may
+		// delete only a message it SENT.
+		verifiedActor: v.optional(verifiedActorValidator),
+		verifiedOrg: v.optional(verifiedOrgValidator),
 	},
 	returns: v.object({ deleted: v.boolean(), receiptsDeleted: v.number() }),
 	handler: async (ctx, args) => {
@@ -1784,6 +1663,35 @@ export const deleteMessage = mutation({
 
 		const message = await ctx.db.get(args.messageId);
 		if (!message) throw new Error("Message not found");
+
+		// A verified agent (or org), or the service account naming a sender: the
+		// sender is decided by the inbox reader, BY ID, in the reader's tenant. A
+		// bare name asserted by the service account no longer reaches a namesake's
+		// message in another org. The fleet "system" word keeps its reach.
+		if (
+			args.verifiedActor !== undefined ||
+			args.verifiedOrg !== undefined ||
+			(scope.isMaster &&
+				args.callerOrchestrator !== undefined &&
+				!isFleetSystemCaller(scope, args.callerOrchestrator))
+		) {
+			const reader = await resolveInboxReader(
+				ctx,
+				scope,
+				{
+					recipient: args.callerOrchestrator,
+					verifiedActor: args.verifiedActor,
+					verifiedOrg: args.verifiedOrg,
+				},
+				"messages:deleteMessage",
+			);
+			if (!ownsSentMessage(reader, message)) {
+				throw new ConvexError(
+					`RBAC_DENIED: message ${args.messageId} was not sent by the verified reader — ${JSON.stringify({ reason: "not-sender", door: "messages:deleteMessage", kind: reader.kind })}`,
+				);
+			}
+			return { deleted: true, receiptsDeleted: await cascadeDeleteMessage(ctx, args.messageId) };
+		}
 
 		if (args.callerOrchestrator === undefined && !scope.isMaster) {
 			// HUMAN path (task k17d5k5bw741p3681bc0pq76ah8fk4sn): a dashboard
@@ -1963,14 +1871,20 @@ export const listMessages = query({
 // ─────────────────────────────────────────────────────────────────────────────
 
 export const getUnreadCount = query({
-	args: { orchestratorId: creatorValidator },
+	args: {
+		// Optional: an agent presenting a verified identity is identified by it.
+		orchestratorId: v.optional(creatorValidator),
+		verifiedActor: v.optional(verifiedActorValidator),
+		verifiedOrg: v.optional(verifiedOrgValidator),
+	},
 	// A served caller gets the bare number; a signed-in caller with no
 	// organisation gets the typed envelope (a zero would be a false figure).
 	returns: v.union(
 		v.number(),
 		v.object({ refused: v.literal(true), count: v.number() }),
 	),
-	handler: async (ctx, { orchestratorId }) => {
+	handler: async (ctx, args) => {
+		const door = "messages:getUnreadCount";
 		// GATE — this read took NO identity check: it counted the unread receipts
 		// of ANY recipient name for ANY caller, including one presenting no
 		// credential at all. `messageReceipts` carries `tenantId`, so a non-master
@@ -1991,19 +1905,39 @@ export const getUnreadCount = query({
 		//   member, own roster   -> the unread count of its own tenant.
 		//   fleet master         -> unchanged (all tenants, by recipient).
 		const scope = await withOrgScope(ctx, { refuseWithoutThrow: true });
-		requireResolvedCaller(scope, "messages:getUnreadCount");
+		requireResolvedCaller(scope, door);
 
-		if (scope.isMaster) {
-			const receipts = await ctx.db
-				.query("messageReceipts")
-				.withIndex("by_recipient_unread", (q) =>
-					q.eq("recipient", orchestratorId).eq("readAt", undefined),
-				)
-				.take(UNREAD_RECEIPTS_SCAN_CAP);
+		// A verified identity, or a master: the reader is decided by
+		// convex/lib/inboxReader.ts (the agent BY ID; the fleet service account
+		// by name in the FLEET's tenant only; the operator admin cross-tenant).
+		if (
+			args.verifiedActor !== undefined ||
+			args.verifiedOrg !== undefined ||
+			scope.isMaster
+		) {
+			const reader = await resolveInboxReader(
+				ctx,
+				scope,
+				{
+					recipient: args.orchestratorId,
+					verifiedActor: args.verifiedActor,
+					verifiedOrg: args.verifiedOrg,
+				},
+				door,
+			);
+			const receipts = await fetchUnreadReceipts(ctx, reader, {
+				take: UNREAD_RECEIPTS_SCAN_CAP,
+			});
 			return receipts.length;
 		}
 		if (scope.orgSlug === null) {
 			return { refused: true as const, count: 0 };
+		}
+		const orchestratorId = args.orchestratorId;
+		if (orchestratorId === undefined) {
+			throw new ConvexError(
+				`RBAC_DENIED: a member counts the unread mail of a named orchestrator and none was named — ${JSON.stringify({ reason: "recipient-required", door })}`,
+			);
 		}
 		// A member counts only the mailbox of an orchestrator on ITS OWN roster
 		// (the free `orchestratorId` argument is not a licence to probe another

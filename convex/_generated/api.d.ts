@@ -56,6 +56,7 @@ import type * as lib_aiClient from "../lib/aiClient.js";
 import type * as lib_auth from "../lib/auth.js";
 import type * as lib_humanActor from "../lib/humanActor.js";
 import type * as lib_ids from "../lib/ids.js";
+import type * as lib_inboxReader from "../lib/inboxReader.js";
 import type * as lib_license from "../lib/license.js";
 import type * as lib_memberScopes from "../lib/memberScopes.js";
 import type * as lib_operatorOrg from "../lib/operatorOrg.js";
@@ -170,6 +171,7 @@ declare const fullApi: ApiFromModules<{
   "lib/auth": typeof lib_auth;
   "lib/humanActor": typeof lib_humanActor;
   "lib/ids": typeof lib_ids;
+  "lib/inboxReader": typeof lib_inboxReader;
   "lib/license": typeof lib_license;
   "lib/memberScopes": typeof lib_memberScopes;
   "lib/operatorOrg": typeof lib_operatorOrg;

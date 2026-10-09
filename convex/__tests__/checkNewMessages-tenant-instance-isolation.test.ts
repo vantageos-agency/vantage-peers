@@ -21,6 +21,21 @@ const modules = Object.fromEntries(
 
 const createT = () => convexTest(schema, modules);
 
+async function seedOrgs(t: ReturnType<typeof createT>) {
+	await t.run(async (ctx) => {
+		for (const clerkOrgSlug of ["tenant-a", "tenant-b"]) {
+			await ctx.db.insert("client_org_mapping", {
+				clerkOrgSlug,
+				allowedOrchestrators: ["pi"],
+				scopes: ["view-own-tasks"],
+				displayName: clerkOrgSlug,
+				isActive: true,
+				createdAt: Date.now(),
+			});
+		}
+	});
+}
+
 async function seedReceipt(
 	t: ReturnType<typeof createT>,
 	opts: {
@@ -51,6 +66,7 @@ async function seedReceipt(
 describe("checkNewMessages — instance branch tenant isolation (R-11)", () => {
 	test("ALLOW: tenant-a caller sees its own instance-targeted message", async () => {
 		const t = createT();
+		await seedOrgs(t);
 		await seedReceipt(t, {
 			recipient: "pi",
 			recipientInstanceId: "pi-vps",
@@ -65,7 +81,9 @@ describe("checkNewMessages — instance branch tenant isolation (R-11)", () => {
 			.query(api.messages.checkNewMessages, {
 			recipient: "pi",
 			recipientInstanceId: "pi-vps",
-			tenantId: "tenant-a",
+			// The tenant is the VERIFIED org (task k17c5q842gm1gbh0j2qjtc80g18fx5kb): the
+			// service account can no longer name a client tenant by argument.
+			verifiedOrg: { orgSlug: "tenant-a" },
 		});
 
 		expect(results.length).toBe(1);
@@ -74,6 +92,7 @@ describe("checkNewMessages — instance branch tenant isolation (R-11)", () => {
 
 	test("DENY: tenant-a caller never sees tenant-b's instance-targeted message", async () => {
 		const t = createT();
+		await seedOrgs(t);
 		await seedReceipt(t, {
 			recipient: "pi",
 			recipientInstanceId: "pi-vps",
@@ -94,7 +113,9 @@ describe("checkNewMessages — instance branch tenant isolation (R-11)", () => {
 			.query(api.messages.checkNewMessages, {
 			recipient: "pi",
 			recipientInstanceId: "pi-vps",
-			tenantId: "tenant-a",
+			// The tenant is the VERIFIED org (task k17c5q842gm1gbh0j2qjtc80g18fx5kb): the
+			// service account can no longer name a client tenant by argument.
+			verifiedOrg: { orgSlug: "tenant-a" },
 		});
 
 		expect(results.length).toBe(1);
@@ -107,6 +128,7 @@ describe("checkNewMessages — instance branch tenant isolation (R-11)", () => {
 describe("checkNewMessagesEnvelope — instance branch tenant isolation (R-11)", () => {
 	test("ALLOW: tenant-a caller sees its own instance-targeted message", async () => {
 		const t = createT();
+		await seedOrgs(t);
 		await seedReceipt(t, {
 			recipient: "pi",
 			recipientInstanceId: "pi-vps",
@@ -121,7 +143,9 @@ describe("checkNewMessagesEnvelope — instance branch tenant isolation (R-11)",
 			.query(api.messages.checkNewMessagesEnvelope, {
 			recipient: "pi",
 			recipientInstanceId: "pi-vps",
-			tenantId: "tenant-a",
+			// The tenant is the VERIFIED org (task k17c5q842gm1gbh0j2qjtc80g18fx5kb): the
+			// service account can no longer name a client tenant by argument.
+			verifiedOrg: { orgSlug: "tenant-a" },
 		});
 
 		expect(result.messages.length).toBe(1);
@@ -130,6 +154,7 @@ describe("checkNewMessagesEnvelope — instance branch tenant isolation (R-11)",
 
 	test("DENY: tenant-a caller never sees tenant-b's instance-targeted message", async () => {
 		const t = createT();
+		await seedOrgs(t);
 		await seedReceipt(t, {
 			recipient: "pi",
 			recipientInstanceId: "pi-vps",
@@ -150,7 +175,9 @@ describe("checkNewMessagesEnvelope — instance branch tenant isolation (R-11)",
 			.query(api.messages.checkNewMessagesEnvelope, {
 			recipient: "pi",
 			recipientInstanceId: "pi-vps",
-			tenantId: "tenant-a",
+			// The tenant is the VERIFIED org (task k17c5q842gm1gbh0j2qjtc80g18fx5kb): the
+			// service account can no longer name a client tenant by argument.
+			verifiedOrg: { orgSlug: "tenant-a" },
 		});
 
 		expect(result.messages.length).toBe(1);

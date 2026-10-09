@@ -11,6 +11,7 @@
 import { convexTest } from "convex-test";
 import { describe, expect, test } from "vitest";
 import { api } from "../_generated/api";
+import { UNCLAIMED_SERVICE_ACCOUNT_READS_EVERY_TENANT } from "../lib/inboxReader";
 import schema from "../schema";
 
 const modules = Object.fromEntries(
@@ -171,7 +172,7 @@ describe("messages:getById", () => {
 
 // ─────────────────────────── messages:getUnreadCount ───────────────────────────
 describe("messages:getUnreadCount", () => {
-	test("anonymous refused; member A counts only its own tenant; member B does not see A's; master counts all", async () => {
+	test("anonymous refused; member A counts only its own tenant; member B does not see A's; master counts the fleet only", async () => {
 		const t = createT();
 		await seedMappings(t);
 		const mA = await seedMsg(t, "sigma", "org-a");
@@ -199,7 +200,19 @@ describe("messages:getUnreadCount", () => {
 			refused: true,
 			count: 0,
 		});
-		expect(await asMaster(t).query(api.messages.getUnreadCount, { orchestratorId: "sigma" })).toBe(3);
+		// The service account by NAME: EXPAND serves it as production does (every
+		// tenant's "sigma" receipts: 3); CONTRACT (task k17c5q842gm1gbh0j2qjtc80g18fx5kb)
+		// counts the FLEET's tenant only, and neither org's receipts are the fleet's.
+		expect(await asMaster(t).query(api.messages.getUnreadCount, { orchestratorId: "sigma" })).toBe(
+			UNCLAIMED_SERVICE_ACCOUNT_READS_EVERY_TENANT ? 3 : 0,
+		);
+		// A client org's count is taken through its VERIFIED org, not through a name.
+		expect(
+			await asMaster(t).query(api.messages.getUnreadCount, {
+				orchestratorId: "sigma",
+				verifiedOrg: { orgSlug: "org-a" },
+			}),
+		).toBe(2);
 		// pre-org: a mounted sidebar cannot take a throw, and a bare 0 would be the
 		// bytes of an absence, so the refusal is the typed envelope.
 		expect(await asPreOrg(t).query(api.messages.getUnreadCount, { orchestratorId: "sigma" })).toEqual({
