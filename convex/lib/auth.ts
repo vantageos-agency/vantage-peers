@@ -386,6 +386,16 @@ export async function withOrgScope(
 		);
 	}
 	const org = resolved.org;
+	// The package decides WHICH org; the ROSTER BY AGENT ID is storage the
+	// package does not carry, so it is read from that same row by the org ID the
+	// package just resolved (never by the slug). The row was found one read ago;
+	// its absence now is a refusal, not an empty roster.
+	const rosterRow = await lookupOrgMapping(ctx, { clerkOrgId: org.id });
+	if (rosterRow === null) {
+		throw new ConvexError(
+			`RBAC_DENIED: Org "${orgSlug}" not in client_org_mapping or inactive — ${JSON.stringify({ orgSlug, reason: "org-mapping-unreadable" })}`,
+		);
+	}
 
 	// OPERATOR ORG ADMIN -> FLEET MASTER FOR READS ONLY. The operator's own
 	// organisation is the row marked `orgKind: "operator"` (setOrgKind); its
@@ -433,7 +443,7 @@ export async function withOrgScope(
 		orgSlug: org.label,
 		...(org.id !== undefined ? { orgClerkId: org.id } : {}),
 		allowedOrchestrators: org.allowedOrchestrators,
-		allowedAgentIds: org.allowedAgentIds ?? [],
+		allowedAgentIds: rosterRow.allowedAgentIds ?? [],
 		fleetWide: false,
 		scopes: org.scopes,
 		// Pi ruling (PR #1224, decision b): a Clerk identity resolved through
