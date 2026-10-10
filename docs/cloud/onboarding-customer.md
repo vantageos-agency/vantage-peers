@@ -288,6 +288,7 @@ The client ID, client secret, and refresh token issued to you at onboarding are 
 | Normal daily use | Token auto-refreshes via `/token` endpoint using stored refresh token | None |
 | Scope change by operator | Operator runs `patchClientScopeAndRefreshTokens` (commit `a446517`) — scope is updated server-side, refresh tokens preserved | None — reconnect is automatic |
 | Force access-token rotation by operator | Operator runs `revokeAccessTokensOnly` (commit `aaf7da2`) — access tokens revoked, refresh tokens preserved; connector auto-re-authenticates on next call | None — connector handles it transparently |
+| Revoke ONE access token by its id (leaked or retired token, with or without a client row) | Operator runs `oauth:revokeAccessTokenById` — that token and its paired refresh token are revoked, nothing else of the client is touched | The one connector holding that token signs in again; no other connector is affected |
 | OAuth client full re-registration | Only in rare emergency (key compromise). Operator will contact you with new credentials | Re-paste credentials once, then stable again |
 
 **No re-paste during operation.** If your connector ever prompts you to re-enter credentials mid-session, that is a connector configuration issue — not a VantagePeers token expiry. Escalate to your operator.
@@ -297,6 +298,7 @@ The client ID, client secret, and refresh token issued to you at onboarding are 
 **Admin endpoints (operator-facing, cited for transparency):**
 
 - `POST /admin/oauth/clients/:id/revoke-access-tokens-only` — revokes active access tokens while preserving refresh tokens. Clients auto-re-authenticate on the next call. Shipped in commit `aaf7da2`.
+- `POST /admin/oauth/access-tokens/:tokenId/revoke` (body `{"reason": "<at least 20 characters>"}`) — revokes ONE access token by its row id plus its paired refresh token, even when the token's client has no registry row. Idempotent: a second call answers 200 with `revoked: false` and `alreadyRevokedAt`; an unknown id answers 404 `TOKEN_NOT_FOUND`; a short reason answers 400. Use it when one token must stop working; use `revoke-access-tokens-only` to rotate every access token of a client without forcing a re-login.
 - `POST /admin/oauth/clients/:id/patch-scope` (via `patchClientScopeAndRefreshTokens`) — re-targets scope profile and refreshes tokens server-side without customer re-paste. Shipped in commit `a446517`.
 
 **Reference:** A production pilot was successfully run end-to-end with zero customer re-paste, demonstrating these endpoints in production. Multiple scope profiles were active throughout without credential interruption.
@@ -314,6 +316,7 @@ Le client ID, le client secret et le refresh token qui vous ont été remis lors
 | Usage quotidien normal | Le token se rafraîchit automatiquement via l'endpoint `/token` en utilisant le refresh token stocké | Aucune |
 | Changement de scope par l'opérateur | L'opérateur exécute `patchClientScopeAndRefreshTokens` (commit `a446517`) — le scope est mis à jour côté serveur, les refresh tokens sont préservés | Aucune — la reconnexion est automatique |
 | Rotation forcée des access-tokens par l'opérateur | L'opérateur exécute `revokeAccessTokensOnly` (commit `aaf7da2`) — les access tokens sont révoqués, les refresh tokens sont préservés ; le connecteur se ré-authentifie automatiquement au prochain appel | Aucune — le connecteur gère cela de manière transparente |
+| Révocation d'UN access token par son id (token fuité ou retiré, avec ou sans ligne client) | L'opérateur exécute `oauth:revokeAccessTokenById` — ce token et son refresh token associé sont révoqués, rien d'autre du client n'est touché | Le seul connecteur qui détient ce token se reconnecte ; aucun autre connecteur n'est affecté |
 | Ré-enregistrement complet du client OAuth | Uniquement en cas d'urgence rare (compromission de clé). L'opérateur vous contactera avec de nouveaux identifiants | Recoller les identifiants une fois, puis stable à nouveau |
 
 **Pas de re-paste pendant l'opération.** Si votre connecteur vous invite un jour à ressaisir des identifiants en cours de session, c'est un problème de configuration du connecteur — pas une expiration de token VantagePeers. Escaladez vers votre opérateur.
@@ -323,6 +326,7 @@ Le client ID, le client secret et le refresh token qui vous ont été remis lors
 **Endpoints d'administration (côté opérateur, cités pour transparence) :**
 
 - `POST /admin/oauth/clients/:id/revoke-access-tokens-only` — révoque les access tokens actifs tout en préservant les refresh tokens. Les clients se ré-authentifient automatiquement au prochain appel. Livré dans le commit `aaf7da2`.
+- `POST /admin/oauth/access-tokens/:tokenId/revoke` (corps `{"reason": "<au moins 20 caractères>"}`) — révoque UN access token par son id de ligne, avec son refresh token associé, même si le client du token n'a plus de ligne dans le registre. Idempotent : un second appel répond 200 avec `revoked: false` et `alreadyRevokedAt` ; un id inconnu répond 404 `TOKEN_NOT_FOUND` ; une raison trop courte répond 400. À utiliser quand un seul token doit cesser de fonctionner ; `revoke-access-tokens-only` fait tourner tous les access tokens d'un client sans forcer de reconnexion.
 - `POST /admin/oauth/clients/:id/patch-scope` (via `patchClientScopeAndRefreshTokens`) — re-cible le scope profile et rafraîchit les tokens côté serveur sans re-paste côté client. Livré dans le commit `a446517`.
 
 **Référence :** Un pilote de production a été exécuté de bout en bout avec zéro re-paste côté client, démontrant ces endpoints en production. Plusieurs scope profiles étaient actifs tout au long sans interruption des identifiants.
