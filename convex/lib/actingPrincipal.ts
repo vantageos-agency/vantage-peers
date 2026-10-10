@@ -47,11 +47,45 @@ export function principalLookups(ctx: Ctx): PrincipalLookups {
 			if (mapping === null) return null;
 			return { id: orgId, active: mapping.isActive };
 		},
-		orgKindOf: async (orgId): Promise<OrgKind | null> => {
-			const mapping = await lookupOrgMapping(ctx, orgId);
-			if (mapping === null || !mapping.isActive) return null;
-			return mapping.orgKind === "operator" ? "operator" : "client";
+		orgKindOf: async (orgId): Promise<OrgKind | null> =>
+			orgKindOfMapping(await lookupOrgMapping(ctx, orgId)),
+	};
+}
+
+/**
+ * The stored-orgKind -> OrgKind translation both lookup variants share (see ORG
+ * KIND above): null for a missing or inactive mapping.
+ */
+function orgKindOfMapping(
+	mapping: { isActive: boolean; orgKind?: string } | null,
+): OrgKind | null {
+	if (mapping === null || !mapping.isActive) return null;
+	return mapping.orgKind === "operator" ? "operator" : "client";
+}
+
+/**
+ * The lookups for a PERSON whose session a door has verified, every organisation
+ * read keyed by the permanent org ID (the ID-keyed sibling of `principalLookups`).
+ * The person row is the verified session itself (this backend keeps no separate
+ * person table), so `personById` answers only for the verified subject. An org
+ * ID that two mapping rows claim is undecidable (`lookupOrgMapping` answers
+ * null), hence not an organisation here.
+ */
+export function personPrincipalLookups(
+	ctx: Ctx,
+	verifiedSubject: string,
+): PrincipalLookups {
+	return {
+		personById: (personId, orgId) =>
+			personId === verifiedSubject
+				? { id: personId, orgId, active: true }
+				: null,
+		organisationById: async (orgId) => {
+			const mapping = await lookupOrgMapping(ctx, { clerkOrgId: orgId });
+			return mapping === null ? null : { id: orgId, active: mapping.isActive };
 		},
+		orgKindOf: async (orgId): Promise<OrgKind | null> =>
+			orgKindOfMapping(await lookupOrgMapping(ctx, { clerkOrgId: orgId })),
 	};
 }
 
