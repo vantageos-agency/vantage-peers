@@ -2,10 +2,15 @@ import { QueryCtx, MutationCtx, internalQuery } from "../_generated/server";
 import type { Id } from "../_generated/dataModel";
 import { ConvexError, v } from "convex/values";
 import {
-	requireTenantId,
+	type ActingPrincipal,
+	assertOrgAdmin,
+	type IdentityRefusal,
+	resolveActingPrincipal,
+	type ResolvedOrg,
 	resolveOrgFromClaim,
 	sameOrg,
 } from "@vantageos/cloud-identity";
+import type { UserIdentity } from "convex/server";
 import { findAgentByName, resolveAgentOfPresentedSecret } from "./agentIdentity";
 import { normalizeOrchestratorId } from "../_helpers/normalizeOrchestratorId";
 import {
@@ -13,6 +18,7 @@ import {
 	orgMappingLookups,
 	orgRefOfRow,
 	orgRefOfScope,
+	personPrincipalLookups,
 } from "./authOrgMapping";
 
 // The join onto `client_org_mapping` lives in ./authOrgMapping (storage only); it is
@@ -287,102 +293,53 @@ export async function withOrgScope(
 		};
 	}
 
-	// `client_org_mapping.clerkOrgSlug` (the `by_clerk_slug` index this join
-	// resolves against — see lookupOrgMapping below) is keyed on a SLUG.
-	// Measured today: the "convex" JWT template carries NO org claim; it may
-	// carry `org_slug`/`org_role` later. The cross-tenant isolation suites
-	// (messages-with-org-scope, multiTenantIsolation) construct callers with the
-	// slug in `organizationId`, and Pi's decision-(b) TESTS pole requires an
-	// identity carrying `organizationId` to resolve the mapping and keep its
-	// authority (PR #1224, task k17b70hdb0c5h4y9nsaffc8qb98cz9h5).
-	// Eta's blocker-3 concern was PRECEDENCE, not presence: when BOTH claims are
-	// present, a real slug in `organizationSlug` must win over a raw `org_xxx`
-	// that could sit in `organizationId`. So read slug-FIRST with an
-	// `organizationId` FALLBACK — never `organizationId`-first (the id would
-	// then shadow a real slug and silently miss the mapping). A miss on this
-	// path is fail-closed (RBAC_DENIED), never a cross-tenant grant.
-	// Casing-class fix (IDENTITY-CLAIM CASING CLASS): a genuine Clerk-NATIVE
-	// session token (no custom JWT template) delivers the org slug/id as
-	// snake_case `org_slug`/`org_id`, not camelCase `organizationSlug`/
-	// `organizationId`. This mirrors the fallback already applied to
-	// okfBundleNode.ts/okfBundleDurable.ts and requireOrgAdmin below — read
-	// slug spellings before id spellings (camelCase then snake_case for each),
-	// preserving the documented slug-first-id-fallback precedence.
-	const orgSlugRec = identity as Record<string, unknown>;
-	const orgSlug =
-		(orgSlugRec.organizationSlug as string | undefined) ??
-		(orgSlugRec.org_slug as string | undefined) ??
-		(orgSlugRec.organizationId as string | undefined) ??
-		(orgSlugRec.org_id as string | undefined) ??
-		null;
-
-	// Any other identity with no org attached: REFUSED. Uses the package's
-	// requireTenantId guard (@vantageos/cloud-identity) — the door this repo
-	// used to leave open ("no org → full access") is closed by reusing the
-	// package's refuse-on-absence semantics rather than hand-rolling a local
-	// isMaster/org check. requireTenantId throws when identity.orgId is
-	// missing/empty; we translate that throw into the same RBAC_DENIED
-	// ConvexError shape used by the rest of this module.
-	//
-	// `opts.refuseWithoutThrow` (R-50/R-51): a signed-in caller with no org
-	// yet is a REAL, ordinary state (freshly onboarded, has not
-	// created/joined an org) — not a hostile caller. A reactively-subscribed
-	// public query has no call site to catch the throw below, so it would
-	// crash the subscribing client's render instead of refusing cleanly.
-	// Call sites that opted in receive the SAME typed-empty shape the
-	// anonymous (no-identity) branch above already returns, tagged
-	// `refused: true` so the caller can distinguish "no identity at all" from
-	// "identity present, no org" if it ever needs to — every OTHER refusal
-	// in this function (org-mapping miss/inactive, requireOrgAdmin,
-	// requireScope) is unchanged and still throws; this narrows one branch
-	// only.
-	if (!orgSlug) {
-		if (opts?.refuseWithoutThrow) {
-			return {
-				userId: identity.subject,
-				orgSlug: null,
-				allowedOrchestrators: [],
-				allowedAgentIds: [],
-				fleetWide: false,
-				scopes: [],
-				isMaster: false,
-				refused: true,
-			};
-		}
-		try {
-			requireTenantId({ kind: "session", identity: { orgId: orgSlug } });
-		} catch (err: unknown) {
-			const message = err instanceof Error ? err.message : String(err);
-			throw new ConvexError(
-				`RBAC_DENIED: ${message} — ${JSON.stringify({ orgSlug: null })}`,
-			);
-		}
-		// requireTenantId ALWAYS throws when orgId is missing/empty (which it is,
-		// in this branch) — this line is unreachable at runtime, but it lets
-		// TypeScript narrow `orgSlug` to `string` below without a cast, and
-		// guarantees this function never falls through to the org-mapping
-		// lookup with a null orgSlug even if the package's contract ever
-		// changed underneath us.
-		throw new ConvexError(
-			`RBAC_DENIED: no organization attached — ${JSON.stringify({ orgSlug: null })}`,
-		);
-	}
-
 	// THE ORG COMES FROM THE CREDENTIAL'S OWN ID, never from the slug it happens
 	// to carry, and that decision is @vantageos/cloud-identity's: the package reads
 	// the verified `org_id` claim, selects the mapping row through the adapters
 	// below BY ID ONLY, and refuses (typed) on no org ID, an ID no mapping holds,
 	// an inactive org or a malformed row. There is no label fallback on this
 	// path (M4 ruling 2): a miss on the ID-keyed lookup is a refusal, even when a
-	// mapping with the credential's slug exists.
+	// mapping with the credential's slug exists, and a slug claim alone is not an
+	// organisation (a token with a slug and no `org_id` is a caller with NO
+	// verified organisation).
 	const resolved = await resolveOrgFromClaim(
 		identity as Record<string, unknown>,
 		orgMappingLookups(ctx),
 		{ door: "withOrgScope" },
 	);
 	if (!resolved.ok) {
+		// Signed in, no verified organisation (R-50/R-51): a REAL, ordinary state
+		// (freshly onboarded) rather than a hostile caller. A reactively-subscribed
+		// public query has no call site to catch a throw, so a site that opted in
+		// with `refuseWithoutThrow` receives a typed refusal; every other branch
+		// (an ID no active mapping holds, requireOrgAdmin, requireScope) still
+		// throws, and so does this one for a site that did not opt in.
+		// A token that NAMES an organisation (a slug, an id) the package cannot
+		// prove is not "signed in without one": it is refused by RAISING at every
+		// door, whatever the door's opt-in (a typed empty result would be the bytes
+		// of an absence for a credential that claims an org).
+		if (
+			resolved.refusal.reason === "no-verified-organisation" &&
+			!carriesOrgClaim(identity)
+		) {
+			if (opts?.refuseWithoutThrow) {
+				return {
+					userId: identity.subject,
+					orgSlug: null,
+					allowedOrchestrators: [],
+					allowedAgentIds: [],
+					fleetWide: false,
+					scopes: [],
+					isMaster: false,
+					refused: true,
+				};
+			}
+			throw new ConvexError(
+				`RBAC_DENIED: No active organization on the verified credential — ${JSON.stringify({ orgSlug: null, reason: resolved.refusal.reason })}`,
+			);
+		}
 		throw new ConvexError(
-			`RBAC_DENIED: the credential's org ID resolves no active org in client_org_mapping — ${JSON.stringify({ orgSlug, reason: resolved.refusal.reason })}`,
+			`RBAC_DENIED: the credential's org ID resolves no active org in client_org_mapping — ${JSON.stringify({ reason: resolved.refusal.reason })}`,
 		);
 	}
 	const org = resolved.org;
@@ -393,7 +350,7 @@ export async function withOrgScope(
 	const rosterRow = await lookupOrgMapping(ctx, { clerkOrgId: org.id });
 	if (rosterRow === null) {
 		throw new ConvexError(
-			`RBAC_DENIED: Org "${orgSlug}" not in client_org_mapping or inactive — ${JSON.stringify({ orgSlug, reason: "org-mapping-unreadable" })}`,
+			`RBAC_DENIED: Org "${org.label}" not in client_org_mapping or inactive — ${JSON.stringify({ orgSlug: org.label, reason: "org-mapping-unreadable" })}`,
 		);
 	}
 
@@ -402,10 +359,11 @@ export async function withOrgScope(
 	// verified `org:admin` is the operator human, who must see the whole fleet on
 	// the dashboard. Two keys must BOTH hold, each read from a place the caller
 	// cannot write: the row's orgKind (the mapping the join above just resolved
-	// as ACTIVE) and the VERIFIED role claim (readOrgRole, the reader
-	// requireOrgAdmin uses). A member/editor, an admin of a "client" org, an admin
-	// with no role claim and an inactive mapping are NOT master. This never reads
-	// a client-registration field.
+	// as ACTIVE) and the VERIFIED role claim, which the package judges
+	// (`isVerifiedOrgAdmin`: resolveActingPrincipal + assertOrgAdmin by org ID).
+	// A member/editor, an admin of a "client" org, an admin with no role claim
+	// and an inactive mapping are NOT master. This never reads a
+	// client-registration field.
 	//
 	// READS ONLY. The grant is made in a ctx that CANNOT write (isReadOnlyCtx);
 	// in a mutation (or an action's scope bridge, `operatorAsMember`) the same
@@ -415,9 +373,9 @@ export async function withOrgScope(
 	// `isMcpBoundMaster` for the query side.
 	if (
 		org.orgKind === "operator" &&
-		readOrgRole(identity).role === "admin" &&
 		!opts?.operatorAsMember &&
-		isReadOnlyCtx(ctx)
+		isReadOnlyCtx(ctx) &&
+		(await isVerifiedOrgAdmin(ctx, identity, org.id, "withOrgScope"))
 	) {
 		return {
 			userId: identity.subject,
@@ -457,6 +415,23 @@ export async function withOrgScope(
 		isMaster: false,
 		...(memberRoleRaw !== null ? { orgRole: memberRoleRaw } : {}),
 	};
+}
+
+/**
+ * Does the token carry ANY organisation claim at all (a slug or an id, in any
+ * spelling)? It chooses only the SHAPE of a refusal, never an organisation: which
+ * org a credential names is the package's decision (`resolveOrgFromClaim`, by the
+ * `org_id` claim alone).
+ */
+function carriesOrgClaim(identity: object): boolean {
+	const rec = identity as Record<string, unknown>;
+	return [
+		"organizationSlug",
+		"org_slug",
+		"organizationId",
+		"org_id",
+		"orgId",
+	].some((key) => rec[key] !== undefined && rec[key] !== null);
 }
 
 /**
@@ -503,28 +478,22 @@ export function isMcpBoundMaster(scope: {
 }
 
 /**
- * The caller's org role from the verified claim, normalised ("org:admin" ->
- * "admin"). Single reader shared by withOrgScope and requireOrgAdmin — Clerk's
- * default claim is `org_role`; the camelCase spellings are what Convex's OIDC
- * mapping may surface. Absent claim -> null.
+ * The caller's org role claim, verbatim ("org:admin"), read from the spellings
+ * Convex's OIDC mapping may surface (Clerk's default is `org_role`). It is
+ * only a CLAIM: whether it makes the caller an admin is the package's decision
+ * (`assertOrgAdmin`). A claim is a role only when it is a non-empty STRING; an
+ * array/object/number claim is "no role", never coerced.
  */
-function readOrgRole(identity: object): {
-	roleRaw: string | null;
-	role: string | null;
-} {
+function readOrgRole(identity: object): { roleRaw: string | null } {
 	const rec = identity as Record<string, unknown>;
-	// A claim is a role only when it is a STRING. An array/object/number claim
-	// is "no role" — never coerced, never a TypeError on `.replace`.
 	const asRole = (x: unknown): string | undefined =>
-		typeof x === "string" ? x : undefined;
-	const roleRaw =
-		asRole(rec.orgRole) ??
-		asRole(rec.org_role) ??
-		asRole(rec.organizationRole) ??
-		null;
+		typeof x === "string" && x !== "" ? x : undefined;
 	return {
-		roleRaw,
-		role: roleRaw ? roleRaw.replace(/^org:/i, "").toLowerCase() : null,
+		roleRaw:
+			asRole(rec.orgRole) ??
+			asRole(rec.org_role) ??
+			asRole(rec.organizationRole) ??
+			null,
 	};
 }
 
@@ -701,44 +670,125 @@ export function isRowVisibleToScope(
 	return filterByOrgScope([row], scope).length === 1;
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// Org-admin authority, by the verified org ID.
+//
+// WHO IS AN ADMIN OF WHICH ORG is @vantageos/cloud-identity's decision:
+// `resolveOrgFromClaim` selects the caller's organisation from the VERIFIED
+// `org_id` claim (mapping read by ID only), `resolveActingPrincipal` makes the
+// person a principal of THAT org ID, and `assertOrgAdmin` compares the target's
+// org ID with the principal's and judges the role claim. This module only reads
+// the mapping rows the package asks for (./authOrgMapping) and says the
+// package's refusal in this backend's `RBAC_DENIED` shape.
+//
+// THE SLUG IS NOT A KEY HERE. A slug is a renamable label that can be freed and
+// taken by a NEW Clerk org, so a session carrying the old slug with a different
+// `org_id` resolves no mapping and is refused; a renamed org keeps its authority
+// because its `org_id` is unchanged. An argument that names the target by slug
+// is resolved to its mapping row, and the two organisations are compared by ID.
+// ─────────────────────────────────────────────────────────────────────────────
+
+// Clerk spells the administrator role "org:admin"; the bare "admin" is the
+// spelling a custom role mapping may carry. Exact strings, no case folding.
+const ORG_ADMIN_ROLES: readonly string[] = ["org:admin", "admin"];
+
+// The package's typed refusal, said in this backend's wire shape: its code as
+// the prefix, {reason, door} as the payload, so a reader branches on content.
+function refusalError(refusal: IdentityRefusal): ConvexError<string> {
+	return new ConvexError(
+		`${refusal.code}: ${refusal.detail} — ${JSON.stringify({ reason: refusal.reason, door: refusal.door })}`,
+	);
+}
+
+/** The verified person as a principal of the org the package resolved by ID. */
+async function personPrincipalOf(
+	ctx: QueryCtx | MutationCtx,
+	identity: UserIdentity,
+	orgId: string,
+	door: string,
+) {
+	const role = readOrgRole(identity).roleRaw;
+	return await resolveActingPrincipal(
+		{
+			kind: "person",
+			personId: identity.subject,
+			verifiedOrgId: orgId,
+			...(role !== null ? { verifiedOrgRole: role } : {}),
+		},
+		personPrincipalLookups(ctx, identity.subject),
+		door,
+	);
+}
+
+/** Is the verified person an administrator of the org the package resolved by ID? */
+async function isVerifiedOrgAdmin(
+	ctx: QueryCtx | MutationCtx,
+	identity: UserIdentity,
+	orgId: string,
+	door: string,
+): Promise<boolean> {
+	const resolved = await personPrincipalOf(ctx, identity, orgId, door);
+	if (!resolved.ok) return false;
+	return assertOrgAdmin(resolved.principal, orgId, {
+		adminRoles: ORG_ADMIN_ROLES,
+		door,
+	}).ok;
+}
+
 /**
- * requireOrgAdmin — D2 (task k17awjxrj7ggwvw277cswh314d8cx7nr).
+ * proveOrgAdmin -- the verified session is an ADMINISTRATOR of `targetOrgSlug`,
+ * proven by org ID through @vantageos/cloud-identity. Returns the acting
+ * principal (its `orgId` is the permanent org ID) and the org the session
+ * resolved to; throws `RBAC_DENIED` otherwise.
  *
- * Authorizes an authenticated Clerk org-ADMIN to act on their OWN org,
- * without a global secret. Used by `convex/oauth.ts`'s `provisionOrganization`
- * as an ADDITIVE authority path alongside the pre-existing
- * `requireMasterAuth` (master stays a valid caller, byte-unchanged).
+ *   ALLOW: the session's `org_id` resolves an ACTIVE mapping, the target slug
+ *   names a mapping holding that SAME org ID, and the role claim is an admin
+ *   role. DENY: any other org (an admin of X is never an admin of Y), a member,
+ *   a session with no `org_id` (a slug is not a claim), an `org_id` no active
+ *   mapping holds (a new org on a freed slug), a target that is not an active,
+ *   ID-stamped mapping (an org-admin cannot bootstrap a new org: that stays
+ *   operator/master-only). Neither the service account nor an agent is ever an
+ *   administrator here, so there is no master carve-out.
+ */
+export async function proveOrgAdmin(
+	ctx: QueryCtx | MutationCtx,
+	identity: UserIdentity,
+	targetOrgSlug: string,
+	door: string,
+): Promise<{ principal: ActingPrincipal; org: ResolvedOrg }> {
+	const callerOrg = await resolveOrgFromClaim(
+		identity as Record<string, unknown>,
+		orgMappingLookups(ctx),
+		{ door },
+	);
+	if (!callerOrg.ok) throw refusalError(callerOrg.refusal);
+	const resolved = await personPrincipalOf(ctx, identity, callerOrg.org.id, door);
+	if (!resolved.ok) throw refusalError(resolved.refusal);
+	const target = await lookupOrgMapping(ctx, targetOrgSlug);
+	// A target that is not an active, ID-stamped mapping names no organisation to
+	// administer; it is refused with the same reason as another org's, so the
+	// refusal is no oracle for which slugs are provisioned.
+	const verdict = assertOrgAdmin(
+		resolved.principal,
+		target?.isActive === true ? target.clerkOrgId : undefined,
+		{ adminRoles: ORG_ADMIN_ROLES, door },
+	);
+	if (!verdict.ok) throw refusalError(verdict.refusal);
+	return { principal: resolved.principal, org: callerOrg.org };
+}
+
+/**
+ * requireOrgAdmin -- D2 (task k17awjxrj7ggwvw277cswh314d8cx7nr).
  *
- * THE PROPERTY (both poles):
- *   ALLOW — a verified Clerk identity whose own org SLUG (`organizationSlug`
- *   claim — `targetOrgSlug` and `client_org_mapping.clerkOrgSlug` are both
- *   slugs, so the compare is slug-to-slug ONLY; `organizationId` is a
- *   distinct claim that MAY carry a raw Clerk org id instead of the slug
- *   depending on JWT template configuration, and is never used here) equals
- *   `targetOrgSlug`, AND whose org-role claim normalizes to "admin"
- *   (Clerk's default session-token claim is `org_role`, shaped
- *   "org:admin" / "org:member" — see mcp-server/src/auth.ts's
- *   `tryVerifyClerkJwt` for the same claim read at the HTTP boundary),
- *   AND whose org is an ACTIVE row in `client_org_mapping` (reusing
- *   `lookupOrgMapping` — the SAME join `withOrgScope` uses, not duplicated).
+ * Authorizes an authenticated Clerk org-ADMIN to act on their OWN org, without a
+ * global secret. Used by `convex/oauth.ts`'s `provisionOrganization` as an
+ * ADDITIVE authority path alongside `requireMasterAuth`. A thin call into
+ * `proveOrgAdmin`: see it for both poles. `targetOrgSlug` is the value the
+ * CALLING mutation validated belongs to this request (`args.clerkOrgSlug`); this
+ * function proves the session's own org, by ID, is that org.
  *
- *   DENY — no identity; identity with no org attached; identity whose org
- *   does NOT equal targetOrgSlug (an admin of X may never provision into Y);
- *   identity whose role does not normalize to "admin" (a non-admin member of
- *   their own org is refused); or targetOrgSlug not an active mapping row
- *   (an org-admin cannot bootstrap a brand-new org from nothing — that stays
- *   master-only).
- *
- * The target org is ALWAYS derived from the caller's OWN verified identity,
- * never trusted from a caller-supplied argument — `targetOrgSlug` here is
- * the value the CALLING mutation already validated belongs to this request
- * (e.g. `args.clerkOrgSlug`), and this function's job is solely to prove the
- * identity's own org equals it, not to source the org from the identity
- * alone (which would let anyone claim any org unless the request-side value
- * is bound too).
- *
- * Throws ConvexError("RBAC_DENIED: ...") on every deny branch. Returns void
- * (no return value) on success — callers proceed after the await.
+ * Throws ConvexError("RBAC_DENIED: ...") on every deny branch. Returns void on
+ * success.
  */
 export async function requireOrgAdmin(
 	ctx: QueryCtx | MutationCtx,
@@ -750,68 +800,7 @@ export async function requireOrgAdmin(
 			"RBAC_DENIED: no authenticated identity presented for org-admin provisioning",
 		);
 	}
-
-	// CORRECTNESS (task k17awjxrj7ggwvw277cswh314d8cx7nr D2 follow-up, item 4):
-	// `targetOrgSlug` (args.clerkOrgSlug) and `client_org_mapping.clerkOrgSlug`
-	// (the `by_clerk_slug` index `lookupOrgMapping` queries) are BOTH a SLUG,
-	// never a Clerk org id. `identity.organizationId` is a distinct claim —
-	// Clerk's JWT template MAY populate it with a raw org id (`org_xxx`)
-	// rather than the slug, depending on template configuration. Comparing
-	// THAT against a slug would never hold, and this function would fail
-	// closed silently for a legitimate org-admin whenever the two diverge.
-	// The compare below is therefore slug-to-slug ONLY: `organizationSlug` is
-	// the sole source of `callerOrgSlug` (never `organizationId`), matching
-	// the slug key `lookupOrgMapping`/`by_clerk_slug` is keyed on.
-	// P-T1 fix: a genuine Clerk-NATIVE session token (no custom JWT template
-	// — the mint path that carries org_id/org_role/org_slug together, see
-	// mcp-server/src/serviceAccountAuth.ts's getScopedUserToken) delivers the
-	// org slug as snake_case `org_slug`, not `organizationSlug`. This mirrors
-	// the ROLE read below (which already falls back to `org_role`) and
-	// withOrgScope's slug-first resolution above. `organizationId`/`org_id`
-	// are deliberately NOT part of this fallback chain — PR #1224 item 4
-	// established that requireOrgAdmin's slug compare must be slug-to-slug
-	// ONLY, never an org id (see provisionOrganizationOrgAdmin.test.ts's
-	// "organizationId alone ... is NOT accepted" pole, unchanged by this fix).
-	const rec = identity as Record<string, unknown>;
-	const callerOrgSlug =
-		(rec.organizationSlug as string | undefined) ??
-		(rec.org_slug as string | undefined) ??
-		null;
-
-	if (!callerOrgSlug) {
-		throw new ConvexError(
-			"RBAC_DENIED: authenticated identity has no organisation attached",
-		);
-	}
-
-	if (callerOrgSlug !== targetOrgSlug) {
-		throw new ConvexError(
-			`RBAC_DENIED: caller's organisation "${callerOrgSlug}" does not match target org "${targetOrgSlug}" — an org-admin may only act on their OWN org — ${JSON.stringify({ callerOrgSlug, targetOrgSlug })}`,
-		);
-	}
-
-	// Clerk's default active-organization session claim is `org_role`,
-	// shaped "org:admin" / "org:member" (unless custom roles are configured).
-	// Read defensively across the spellings Convex's OIDC identity mapping
-	// may surface, mirroring the organizationId/organizationSlug fallback
-	// above — no new claim shape is invented here.
-	const { roleRaw, role: normalizedRole } = readOrgRole(identity);
-
-	if (normalizedRole !== "admin") {
-		throw new ConvexError(
-			`RBAC_DENIED: caller is not an org-admin of "${targetOrgSlug}" (role=${roleRaw ?? "none"}) — ${JSON.stringify({ targetOrgSlug, role: roleRaw ?? null })}`,
-		);
-	}
-
-	// An org-admin cannot bootstrap a brand-new org from nothing — the
-	// target org must already be an ACTIVE provisioned mapping. Reuses the
-	// SAME join withOrgScope uses; not duplicated.
-	const mapping = await lookupOrgMapping(ctx, targetOrgSlug);
-	if (!mapping || !mapping.isActive) {
-		throw new ConvexError(
-			`RBAC_DENIED: org "${targetOrgSlug}" is not an active provisioned organisation — ${JSON.stringify({ targetOrgSlug })}`,
-		);
-	}
+	await proveOrgAdmin(ctx, identity, targetOrgSlug, "lib/auth:requireOrgAdmin");
 }
 
 /**
@@ -821,9 +810,9 @@ export async function requireOrgAdmin(
  *
  * ALLOW only when ALL hold, each read from the VERIFIED identity or the DB
  * (never an argument except `targetOrgSlug`, which is the thing being created):
- *   1. an authenticated identity with an org slug claim;
- *   2. its role claim normalizes to "admin";
- *   3. that org is an ACTIVE `client_org_mapping` row with `orgKind: "operator"`;
+ *   1. an authenticated identity whose `org_id` resolves an ACTIVE mapping;
+ *   2. that mapping is `orgKind: "operator"`;
+ *   3. its role claim is an admin role (package `assertOrgAdmin`);
  *   4. NO mapping row (active or not) exists for `targetOrgSlug` -- this
  *      branch can only CREATE, never re-provision or touch an existing org
  *      (an existing slug goes through `requireOrgAdmin`, which refuses an admin
@@ -832,20 +821,29 @@ export async function requireOrgAdmin(
  * Returns the verified admin's subject for the audit row.
  */
 export type OperatorAdminVerdict =
-	| { ok: true; subject: string; operatorOrgSlug: string }
+	| {
+			ok: true;
+			subject: string;
+			operatorOrgSlug: string;
+			/** The operator org's permanent ID, from the verified `org_id` claim. */
+			operatorOrgId: string;
+	  }
 	| { ok: false; reason: string; detail: string };
 
 /**
  * resolveOperatorAdmin -- the ONE predicate "the verified caller is org:admin of
  * an ACTIVE operator-kind mapping". Shared by the mutation guard below and the
  * `oauth:canCreateOrganization` query, so the UI affordance and the door can
- * never disagree. Reads the verified org claim and role directly (never the
- * resolved scope: a query ctx grants the operator admin a read-only master
- * scope that would make every check here vacuous). Never throws.
+ * never disagree. The org is resolved by the verified `org_id` (a new org that
+ * took the operator's slug is not the operator) and the role is judged by the
+ * package; it never reads the resolved scope (a query ctx grants the operator
+ * admin a read-only master scope that would make every check here vacuous).
+ * Never throws.
  */
 export async function resolveOperatorAdmin(
 	ctx: QueryCtx | MutationCtx,
 ): Promise<OperatorAdminVerdict> {
+	const door = "lib/auth:resolveOperatorAdmin";
 	const identity = await ctx.auth.getUserIdentity();
 	if (!identity) {
 		return {
@@ -854,37 +852,44 @@ export async function resolveOperatorAdmin(
 			detail: "no authenticated identity presented",
 		};
 	}
-	const rec = identity as Record<string, unknown>;
-	const callerOrgSlug =
-		(rec.organizationSlug as string | undefined) ??
-		(rec.org_slug as string | undefined) ??
-		null;
-	if (!callerOrgSlug) {
-		return {
-			ok: false,
-			reason: "no-organisation",
-			detail: "identity has no organisation attached",
-		};
+	const callerOrg = await resolveOrgFromClaim(
+		identity as Record<string, unknown>,
+		orgMappingLookups(ctx),
+		{ door },
+	);
+	if (!callerOrg.ok) {
+		return callerOrg.refusal.reason === "no-verified-organisation"
+			? {
+					ok: false,
+					reason: "no-organisation",
+					detail: "identity has no verified organisation attached",
+				}
+			: {
+					ok: false,
+					reason: "caller-org-not-operator",
+					detail: `the caller's organisation is not an active provisioned organisation (${callerOrg.refusal.reason}); only the operator may create a new organisation`,
+				};
 	}
-	const callerMapping = await lookupOrgMapping(ctx, callerOrgSlug);
-	if (!callerMapping?.isActive || callerMapping.orgKind !== "operator") {
+	const org = callerOrg.org;
+	if (org.orgKind !== "operator") {
 		return {
 			ok: false,
 			reason: "caller-org-not-operator",
-			detail: `organisation "${callerOrgSlug}" is not the operator organisation; only the operator may create a new organisation`,
+			detail: `organisation "${org.label}" is not the operator organisation; only the operator may create a new organisation`,
 		};
 	}
-	if (readOrgRole(identity).role !== "admin") {
+	if (!(await isVerifiedOrgAdmin(ctx, identity, org.id, door))) {
 		return {
 			ok: false,
 			reason: "operator-member-not-admin",
-			detail: `caller is not an org-admin of the operator organisation "${callerOrgSlug}"`,
+			detail: `caller is not an org-admin of the operator organisation "${org.label}"`,
 		};
 	}
 	return {
 		ok: true,
 		subject: identity.subject,
-		operatorOrgSlug: callerOrgSlug,
+		operatorOrgSlug: org.label,
+		operatorOrgId: org.id,
 	};
 }
 
@@ -899,14 +904,15 @@ export async function requireOperatorAdminToCreateOrg(
 	};
 	const v = await resolveOperatorAdmin(ctx);
 	if (!v.ok) return deny(v.reason, v.detail);
-	// allow-local-identity: naming-collision guard on a not-yet-existing org; no ID exists and the caller is already resolved by resolveOperatorAdmin
-	if (v.operatorOrgSlug === targetOrgSlug) {
-		return deny(
-			"slug-is-operator-org",
-			"target slug is the operator organisation itself",
-		);
-	}
-	if (await lookupOrgMapping(ctx, targetOrgSlug)) {
+	const existing = await lookupOrgMapping(ctx, targetOrgSlug);
+	if (existing !== null) {
+		// The operator's own org is told apart from any other by org ID, not by name.
+		if (sameOrg({ id: existing.clerkOrgId }, { id: v.operatorOrgId })) {
+			return deny(
+				"slug-is-operator-org",
+				"target slug is the operator organisation itself",
+			);
+		}
 		return deny(
 			"slug-already-mapped",
 			`org "${targetOrgSlug}" already exists; an operator admin may only create, never re-provision another organisation`,

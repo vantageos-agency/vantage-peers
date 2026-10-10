@@ -62,6 +62,7 @@ function asServiceAccount(t: ReturnType<typeof createT>) {
 const orgAdminIdentity = (org: string) => ({
 	subject: `admin-of-${org}`,
 	organizationSlug: org,
+	org_id: testClerkOrgId(org),
 	orgRole: "org:admin",
 });
 
@@ -231,6 +232,7 @@ describe("provisionOrganization — cross-org seat-name collision", () => {
 		const tAdminGamma = t.withIdentity({
 			subject: "same-admin-subject",
 			organizationSlug: "org-gamma",
+			org_id: testClerkOrgId("org-gamma"),
 			orgRole: "org:admin",
 		} as Parameters<typeof t.withIdentity>[0]);
 		const gammaResult = await tAdminGamma.mutation(
@@ -247,6 +249,7 @@ describe("provisionOrganization — cross-org seat-name collision", () => {
 		const tAdminDelta = t.withIdentity({
 			subject: "same-admin-subject",
 			organizationSlug: "org-delta",
+			org_id: testClerkOrgId("org-delta"),
 			orgRole: "org:admin",
 		} as Parameters<typeof t.withIdentity>[0]);
 		const deltaResult = await tAdminDelta.mutation(

@@ -31,6 +31,7 @@
 import { convexTest } from "convex-test";
 import { describe, expect, test } from "vitest";
 import { requireOrgAdmin } from "../lib/auth";
+import { testClerkOrgId } from "../../tests/fixtures/testClerkOrgId";
 import schema from "../schema";
 
 const modules = Object.fromEntries(
@@ -48,6 +49,7 @@ async function seedOrgMapping(
 	await t.run(async (ctx) => {
 		await ctx.db.insert("client_org_mapping", {
 			clerkOrgSlug,
+			clerkOrgId: testClerkOrgId(clerkOrgSlug),
 			allowedOrchestrators: ["existing-seat"],
 			scopes: ["view-own-tasks"],
 			displayName: clerkOrgSlug,
@@ -57,14 +59,17 @@ async function seedOrgMapping(
 	});
 }
 
-describe("P-T1 requireOrgAdmin — snake_case org_slug fallback", () => {
-	test("POLE ALLOW: identity carrying ONLY snake_case org_slug + org:admin is accepted", async () => {
+// M2: the org is resolved by the snake_case `org_id` claim (a Clerk-native session
+// delivers it beside `org_slug`/`org_role`); the slug claim is display text.
+describe("P-T1 requireOrgAdmin — snake_case claims of a Clerk-native session", () => {
+	test("POLE ALLOW: identity carrying ONLY snake_case org_id/org_slug/org_role (a Clerk-native session) + org:admin is accepted", async () => {
 		const t = createT();
 		await seedOrgMapping(t, "perello-consulting-1782214787064836324");
 
 		const tSnakeAdmin = t.withIdentity({
 			subject: "user_3FXI326OF3bgUd6OnOgUcAYY9ip",
 			org_slug: "perello-consulting-1782214787064836324",
+			org_id: testClerkOrgId("perello-consulting-1782214787064836324"),
 			org_role: "org:admin",
 		} as Parameters<typeof t.withIdentity>[0]);
 

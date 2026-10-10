@@ -38,6 +38,7 @@ async function seedOrg(
 	await t.run(async (ctx) => {
 		await ctx.db.insert("client_org_mapping", {
 			clerkOrgSlug: slug,
+			clerkOrgId: testClerkOrgId(slug),
 			allowedOrchestrators: names,
 			scopes: ["view-own-tasks"],
 			displayName: slug,
@@ -52,6 +53,7 @@ const as = (t: T, org: string, role: string, sub = `${role}-of-${org}`) =>
 	t.withIdentity({
 		subject: sub,
 		organizationSlug: org,
+		org_id: testClerkOrgId(org),
 		orgRole: role,
 	} as Ident);
 

@@ -50,6 +50,7 @@ async function seedOrgMapping(
 	await t.run(async (ctx) => {
 		await ctx.db.insert("client_org_mapping", {
 			clerkOrgSlug,
+			clerkOrgId: testClerkOrgId(clerkOrgSlug),
 			allowedOrchestrators,
 			scopes: ["view-own-tasks"],
 			displayName: clerkOrgSlug,
@@ -59,22 +60,21 @@ async function seedOrgMapping(
 	});
 }
 
-// CORRECTNESS (item 4, D2 follow-up): requireOrgAdmin compares
-// `identity.organizationSlug` — a SLUG — against `targetOrgSlug`, which is
-// also a slug (client_org_mapping.clerkOrgSlug, the `by_clerk_slug` index
-// key). `organizationId` is deliberately NOT set below to prove the compare
-// does not depend on it (see the dedicated slug-vs-org-id test further
-// down, which sets a MISMATCHED organizationId alongside the correct
-// organizationSlug to prove the compare ignores organizationId entirely).
+// requireOrgAdmin decides by the VERIFIED `org_id` claim (M2): the session's
+// org ID is compared with the ID the target slug's mapping row holds. The slug
+// claim is display text and decides nothing (see the slug-vs-org-id tests
+// further down).
 const orgAdminIdentity = (org: string) => ({
 	subject: `admin-of-${org}`,
 	organizationSlug: org,
+	org_id: testClerkOrgId(org),
 	orgRole: "org:admin",
 });
 
 const orgMemberIdentity = (org: string) => ({
 	subject: `member-of-${org}`,
 	organizationSlug: org,
+	org_id: testClerkOrgId(org),
 	orgRole: "org:member",
 });
 
@@ -220,23 +220,17 @@ describe("D2 provisionOrganization — org-admin authority, scoped to own org", 
 		}
 	});
 
-	test("CORRECTNESS (item 4): compare is slug-based — a MISMATCHED organizationId alongside the CORRECT organizationSlug still ALLOWS", async () => {
-		// requireOrgAdmin (convex/lib/auth.ts) must compare
-		// identity.organizationSlug (a SLUG) against targetOrgSlug (also a
-		// SLUG — client_org_mapping.clerkOrgSlug, the by_clerk_slug index
-		// key), never identity.organizationId. This identity carries an
-		// organizationId that looks like a raw Clerk org id ("org_2abcXYZ",
-		// NOT the slug "org-x") alongside the CORRECT organizationSlug
-		// ("org-x") — if the compare ever read organizationId instead of (or
-		// before) organizationSlug, this would fail closed
-		// (RBAC_DENIED) even though the caller genuinely IS org-x's admin.
+	test("CORRECTNESS (M2): authority is by org ID — a STALE slug claim alongside the CORRECT org_id still ALLOWS", async () => {
+		// The org was renamed: the session still carries its old slug. The
+		// authority is the verified org_id, which still names the org the target
+		// slug's mapping row holds.
 		const t = createT();
 		await seedOrgMapping(t, "org-x", ["slug-correctness-seat"]);
 
 		const tAdminX = t.withIdentity({
-			subject: "admin-of-org-x-with-distinct-org-id",
-			organizationId: "org_2abcXYZmismatchedClerkOrgId",
-			organizationSlug: "org-x",
+			subject: "admin-of-org-x-with-stale-slug",
+			organizationId: testClerkOrgId("org-x"),
+			organizationSlug: "org-x-before-rename",
 			orgRole: "org:admin",
 		} as Parameters<typeof t.withIdentity>[0]);
 
@@ -250,6 +244,27 @@ describe("D2 provisionOrganization — org-admin authority, scoped to own org", 
 		expect(result.clerkOrgSlug).toBe("org-x");
 		const mapping = await t.run(async (ctx) => ctx.db.get(result.mappingId));
 		expect(mapping?.clerkOrgSlug).toBe("org-x");
+	});
+
+	test("CORRECTNESS (M2): the CORRECT slug claim alongside a MISMATCHED org_id is REFUSED (a new org on a freed slug)", async () => {
+		const t = createT();
+		await seedOrgMapping(t, "org-x", ["slug-correctness-seat"]);
+
+		const tNewOrg = t.withIdentity({
+			subject: "admin-of-a-new-org-on-the-freed-slug",
+			organizationId: "org_2abcXYZmismatchedClerkOrgId",
+			organizationSlug: "org-x",
+			orgRole: "org:admin",
+		} as Parameters<typeof t.withIdentity>[0]);
+
+		await expect(
+			tNewOrg.mutation(api.oauth.provisionOrganization, {
+				clerkOrgSlug: "org-x",
+				clerkOrgId: testClerkOrgId("org-x"),
+				displayName: "Org X",
+				orchestrators: [{ name: "slug-correctness-seat" }],
+			}),
+		).rejects.toThrow(/RBAC_DENIED/);
 	});
 
 	test("CORRECTNESS (item 4): organizationId alone (no organizationSlug) is NOT accepted as the compare value", async () => {
