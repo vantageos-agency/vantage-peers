@@ -32,6 +32,7 @@ import { describe, expect, test } from "vitest";
 import { api } from "../_generated/api";
 import schema from "../schema";
 import { analyse as analyseSystemWord } from "../../tests/lib/systemWordAst";
+import { testClerkOrgId } from "../../tests/fixtures/testClerkOrgId";
 
 const modules = Object.fromEntries(
 	Object.entries(import.meta.glob("../**/*.ts")).filter(
@@ -46,6 +47,7 @@ async function seedOrgA(t: T) {
 	await t.run(async (ctx) => {
 		await ctx.db.insert("client_org_mapping", {
 			clerkOrgSlug: "org-a",
+			clerkOrgId: testClerkOrgId("org-a"),
 			allowedOrchestrators: ["seat-a", "seat-b"],
 			scopes: ["view-own-tasks"],
 			displayName: "org-a",
@@ -59,6 +61,7 @@ function asMemberOfOrgA(t: T) {
 	return t.withIdentity({
 		subject: "user-org-a",
 		organizationId: "org-a",
+		org_id: testClerkOrgId("org-a"),
 	} as Parameters<typeof t.withIdentity>[0]);
 }
 
@@ -79,6 +82,7 @@ async function seedNote(t: T, createdBy: string) {
 			createdBy,
 			createdAt: Date.now(),
 			orgId: "org-a",
+			clerkOrgId: testClerkOrgId("org-a"),
 		}),
 	);
 }
@@ -96,6 +100,7 @@ async function seedMission(t: T, createdBy: string) {
 			createdAt: Date.now(),
 			updatedAt: Date.now(),
 			orgId: "org-a",
+			clerkOrgId: testClerkOrgId("org-a"),
 		}),
 	);
 }
@@ -121,6 +126,7 @@ async function seedBU(t: T, orchestratorId: string) {
 			createdAt: Date.now(),
 			updatedAt: Date.now(),
 			orgId: "org-a",
+			clerkOrgId: testClerkOrgId("org-a"),
 		}),
 	);
 }
@@ -133,6 +139,7 @@ async function seedDiary(t: T, orchestrator: string) {
 			content: "seed diary",
 			createdAt: Date.now(),
 			orgId: "org-a",
+			clerkOrgId: testClerkOrgId("org-a"),
 		}),
 	);
 }
@@ -146,6 +153,7 @@ async function seedMessage(t: T, from: string, tenantId = "org-a") {
 			createdAt: Date.now(),
 			// sendMessage stamps the caller's org; deleteMessage's tenant gate reads it.
 			tenantId,
+			tenantOrgId: testClerkOrgId(tenantId),
 		}),
 	);
 }

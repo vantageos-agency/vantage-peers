@@ -16,6 +16,7 @@
 
 import { convexTest } from "convex-test";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
+import { testClerkOrgId } from "../../tests/fixtures/testClerkOrgId";
 import schema from "../schema";
 
 // biome-ignore lint/suspicious/noExplicitAny: action refs by string, codegen-independent
@@ -46,6 +47,7 @@ async function seedOrg(t: T, slug: string) {
 	await t.run(async (ctx) => {
 		await ctx.db.insert("client_org_mapping", {
 			clerkOrgSlug: slug,
+			clerkOrgId: testClerkOrgId(slug),
 			allowedOrchestrators: ["sigma"],
 			scopes: ["view-own-tasks"],
 			displayName: slug,
@@ -60,6 +62,7 @@ function asOrg(t: T, slug: string) {
 		subject: `user-${slug}`,
 		tokenIdentifier: `test|user-${slug}`,
 		organizationId: slug,
+		org_id: testClerkOrgId(slug),
 	} as Parameters<typeof t.withIdentity>[0]);
 }
 

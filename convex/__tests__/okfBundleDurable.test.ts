@@ -45,6 +45,7 @@
 import { convexTest } from "convex-test";
 import { describe, expect, test } from "vitest";
 import agentEngineSchema from "../../node_modules/@vantageos/agent-engine/dist/component/schema.js";
+import { testClerkOrgId } from "../../tests/fixtures/testClerkOrgId";
 import { api, internal } from "../_generated/api";
 import schema from "../schema";
 
@@ -86,6 +87,7 @@ async function seedOrgMapping(
 	await t.run(async (ctx) => {
 		await ctx.db.insert("client_org_mapping", {
 			clerkOrgSlug: slug,
+			clerkOrgId: testClerkOrgId(slug),
 			allowedOrchestrators: ["sigma"],
 			scopes: ["view-own-tasks"],
 			displayName: slug,
@@ -138,7 +140,7 @@ describe("agent-engine 0.1.0-alpha.4 — the auth gate no longer blocks the call
 			const base = withAgentEngine(convexTest(schema, modules));
 			await seedOrgMapping(base, "acme");
 			await seedOrgMapping(base, "acme");
-		const t = base.withIdentity({ org_slug: "acme" });
+		const t = base.withIdentity({ org_slug: "acme", org_id: testClerkOrgId("acme") });
 			await expect(
 				t.mutation(apiAny.okfBundleDurable.startOkfBundleExportDurable, {
 					namespace: "team/acme",
@@ -166,7 +168,7 @@ describe("agent-engine 0.1.0-alpha.4 — the auth gate no longer blocks the call
 
 		test("DENY pole (camelCase id variant): an identity carrying ONLY organizationId (no slug claim) is refused RBAC_DENIED (no mapping row) even when the id string equals the namespace's slug-shaped tail", async () => {
 			const base = withAgentEngine(convexTest(schema, modules));
-			const t = base.withIdentity({ organizationId: "org_xxxxx" });
+			const t = base.withIdentity({ organizationId: "org_xxxxx", org_id: testClerkOrgId("org_xxxxx") });
 			await expect(
 				t.mutation(apiAny.okfBundleDurable.startOkfBundleExportDurable, {
 					namespace: "team/org_xxxxx",
@@ -214,6 +216,7 @@ describe("okfBundleDurable — step function plumbing (real fixed-contract entry
 				createdBy: "sigma",
 				createdAt: now,
 				orgId: opts.orgId,
+				clerkOrgId: testClerkOrgId(opts.orgId),
 			});
 			await ctx.db.insert("tasks", {
 				title: "task one",
@@ -225,6 +228,7 @@ describe("okfBundleDurable — step function plumbing (real fixed-contract entry
 				createdAt: now,
 				updatedAt: now,
 				orgId: opts.orgId,
+				clerkOrgId: testClerkOrgId(opts.orgId),
 			});
 
 			return await ctx.db.insert("okfDurableExportProgress", {
@@ -427,7 +431,7 @@ describe("okfBundleDurable — auth (V8-safe assertCanExportNamespaceV8, mirrors
 		// below).
 		const base = withAgentEngine(convexTest(schema, modules));
 		await seedOrgMapping(base, "other-org");
-		const t = base.withIdentity({ organizationSlug: "other-org" });
+		const t = base.withIdentity({ organizationSlug: "other-org", org_id: testClerkOrgId("other-org") });
 		await expect(
 			t.mutation(apiAny.okfBundleDurable.startOkfBundleExportDurable, {
 				namespace: "team/acme",
@@ -472,7 +476,7 @@ describe("okfBundleDurable — auth (V8-safe assertCanExportNamespaceV8, mirrors
 	test("accepts a snake_case-only identity (org_slug, no organizationSlug/organizationId) for its own namespace", async () => {
 		const base = withAgentEngine(convexTest(schema, modules));
 		await seedOrgMapping(base, "acme");
-		const t = base.withIdentity({ org_slug: "acme" });
+		const t = base.withIdentity({ org_slug: "acme", org_id: testClerkOrgId("acme") });
 
 		await expect(
 			t.mutation(apiAny.okfBundleDurable.startOkfBundleExportDurable, {
@@ -498,7 +502,7 @@ describe("okfBundleDurable — auth (V8-safe assertCanExportNamespaceV8, mirrors
 			const base = withAgentEngine(convexTest(schema, modules));
 			await seedOrgMapping(base, "acme");
 			await seedOrgMapping(base, "acme");
-		const t = base.withIdentity({ org_slug: "acme" });
+		const t = base.withIdentity({ org_slug: "acme", org_id: testClerkOrgId("acme") });
 			await expect(
 				t.mutation(apiAny.okfBundleDurable.startOkfBundleExportDurable, {
 					namespace: "team/acme",
@@ -526,7 +530,7 @@ describe("okfBundleDurable — auth (V8-safe assertCanExportNamespaceV8, mirrors
 
 		test("DENY pole (camelCase id variant): an identity carrying ONLY organizationId (no slug claim) is refused RBAC_DENIED (no mapping row) even when the id string equals the namespace's slug-shaped tail", async () => {
 			const base = withAgentEngine(convexTest(schema, modules));
-			const t = base.withIdentity({ organizationId: "org_xxxxx" });
+			const t = base.withIdentity({ organizationId: "org_xxxxx", org_id: testClerkOrgId("org_xxxxx") });
 			await expect(
 				t.mutation(apiAny.okfBundleDurable.startOkfBundleExportDurable, {
 					namespace: "team/org_xxxxx",

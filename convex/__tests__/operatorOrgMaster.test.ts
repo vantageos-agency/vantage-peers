@@ -26,6 +26,7 @@
 import { ConvexError } from "convex/values";
 import { convexTest } from "convex-test";
 import { afterEach, describe, expect, test, vi } from "vitest";
+import { testClerkOrgId } from "../../tests/fixtures/testClerkOrgId";
 import { api } from "../_generated/api";
 import schema from "../schema";
 
@@ -55,6 +56,7 @@ async function seed(t: T) {
 		orgKind?: "operator" | "client",
 	) => ({
 		clerkOrgSlug,
+		clerkOrgId: testClerkOrgId(clerkOrgSlug),
 		allowedOrchestrators: ["sigma"],
 		scopes: ["view-own-tasks"],
 		displayName: clerkOrgSlug,
@@ -99,7 +101,7 @@ describe("operator org admin -> fleet master", () => {
 	test("operator-org admin (org_role org:admin) -> master-only read served", async () => {
 		const t = createT();
 		await seed(t);
-		const c = as(t, { subject: "op", org_slug: OPERATOR_ORG, org_role: "org:admin" });
+		const c = as(t, { subject: "op", org_slug: OPERATOR_ORG, org_id: testClerkOrgId(OPERATOR_ORG), org_role: "org:admin" });
 		expect(await read(c)).toEqual([]);
 	});
 
@@ -109,6 +111,7 @@ describe("operator org admin -> fleet master", () => {
 		const c = as(t, {
 			subject: "op",
 			organizationSlug: OPERATOR_ORG,
+			org_id: testClerkOrgId(OPERATOR_ORG),
 			organizationRole: "org:admin",
 		});
 		expect(await read(c)).toEqual([]);
@@ -117,14 +120,14 @@ describe("operator org admin -> fleet master", () => {
 	test("operator-org member -> refused not-fleet-master", async () => {
 		const t = createT();
 		await seed(t);
-		const c = as(t, { subject: "m", org_slug: OPERATOR_ORG, org_role: "org:member" });
+		const c = as(t, { subject: "m", org_slug: OPERATOR_ORG, org_id: testClerkOrgId(OPERATOR_ORG), org_role: "org:member" });
 		expect(await refusal(read(c))).toContain("not-fleet-master");
 	});
 
 	test("operator-org editor (custom role) -> refused", async () => {
 		const t = createT();
 		await seed(t);
-		const c = as(t, { subject: "e", org_slug: OPERATOR_ORG, org_role: "org:editor" });
+		const c = as(t, { subject: "e", org_slug: OPERATOR_ORG, org_id: testClerkOrgId(OPERATOR_ORG), org_role: "org:editor" });
 		expect(await refusal(read(c))).toContain("not-fleet-master");
 	});
 
@@ -140,7 +143,7 @@ describe("operator org admin -> fleet master", () => {
 	])("operator-org role %s (contains admin, not exactly admin) -> refused", async (role) => {
 		const t = createT();
 		await seed(t);
-		const c = as(t, { subject: "x", org_slug: OPERATOR_ORG, org_role: role });
+		const c = as(t, { subject: "x", org_slug: OPERATOR_ORG, org_id: testClerkOrgId(OPERATOR_ORG), org_role: role });
 		expect(await refusal(read(c))).toContain("not-fleet-master");
 	});
 
@@ -149,7 +152,7 @@ describe("operator org admin -> fleet master", () => {
 		async (role) => {
 			const t = createT();
 			await seed(t);
-			const c = as(t, { subject: "op", org_slug: OPERATOR_ORG, org_role: role });
+			const c = as(t, { subject: "op", org_slug: OPERATOR_ORG, org_id: testClerkOrgId(OPERATOR_ORG), org_role: role });
 			expect(await read(c)).toEqual([]);
 		},
 	);
@@ -157,14 +160,14 @@ describe("operator org admin -> fleet master", () => {
 	test("client-org admin -> refused", async () => {
 		const t = createT();
 		await seed(t);
-		const c = as(t, { subject: "ca", org_slug: CLIENT_ORG, org_role: "org:admin" });
+		const c = as(t, { subject: "ca", org_slug: CLIENT_ORG, org_id: testClerkOrgId(CLIENT_ORG), org_role: "org:admin" });
 		expect(await refusal(read(c))).toContain("not-fleet-master");
 	});
 
 	test("admin of an org with NO orgKind -> refused", async () => {
 		const t = createT();
 		await seed(t);
-		const c = as(t, { subject: "pa", org_slug: PLAIN_ORG, org_role: "org:admin" });
+		const c = as(t, { subject: "pa", org_slug: PLAIN_ORG, org_id: testClerkOrgId(PLAIN_ORG), org_role: "org:admin" });
 		expect(await refusal(read(c))).toContain("not-fleet-master");
 	});
 
@@ -174,6 +177,7 @@ describe("operator org admin -> fleet master", () => {
 		const c = as(t, {
 			subject: "da",
 			org_slug: DEAD_OPERATOR_ORG,
+			org_id: testClerkOrgId(DEAD_OPERATOR_ORG),
 			org_role: "org:admin",
 		});
 		await refusal(read(c));
@@ -182,7 +186,7 @@ describe("operator org admin -> fleet master", () => {
 	test("operator-org admin with the role claim missing -> not master", async () => {
 		const t = createT();
 		await seed(t);
-		const c = as(t, { subject: "nr", org_slug: OPERATOR_ORG });
+		const c = as(t, { subject: "nr", org_slug: OPERATOR_ORG, org_id: testClerkOrgId(OPERATOR_ORG) });
 		expect(await refusal(read(c))).toContain("not-fleet-master");
 	});
 
@@ -190,12 +194,12 @@ describe("operator org admin -> fleet master", () => {
 		vi.stubEnv("CLERK_SERVICE_ACCOUNT_USER_ID", SA);
 		const t = createT();
 		await seed(t);
-		const c = as(t, { subject: SA, org_slug: CLIENT_ORG, org_role: "org:member" });
+		const c = as(t, { subject: SA, org_slug: CLIENT_ORG, org_id: testClerkOrgId(CLIENT_ORG), org_role: "org:member" });
 		expect(await read(c)).toEqual([]);
 	});
 });
 
-const OP_ADMIN = { subject: "op-human", org_slug: OPERATOR_ORG, org_role: "org:admin" };
+const OP_ADMIN = { subject: "op-human", org_slug: OPERATOR_ORG, org_id: testClerkOrgId(OPERATOR_ORG), org_role: "org:admin" };
 
 const mintArgs = {
 	tokenHash: "h".repeat(64),
@@ -333,7 +337,7 @@ describe("operator admin keeps its master reads; a malformed role claim is not a
 	])("org_role as %s -> not master, no TypeError", async (_n, role) => {
 		const t = createT();
 		await seed(t);
-		const c = as(t, { subject: "x", org_slug: OPERATOR_ORG, org_role: role });
+		const c = as(t, { subject: "x", org_slug: OPERATOR_ORG, org_id: testClerkOrgId(OPERATOR_ORG), org_role: role });
 		expect(await refusal(read(c))).toContain("not-fleet-master");
 	});
 });
@@ -360,6 +364,7 @@ async function seedFleet(t: T) {
 			createdAt: 1,
 			updatedAt: 1,
 			clerkOrgSlug: CLIENT_ORG,
+			clerkOrgId: testClerkOrgId(CLIENT_ORG),
 		} as never);
 		await ctx.db.insert("oauth_clients", {
 			clientId: "c-b",
@@ -381,6 +386,7 @@ async function seedFleet(t: T) {
 			expiresAt: Date.now() + 1e9,
 			createdAt: 1,
 			clerkOrgSlug: CLIENT_ORG,
+			clerkOrgId: testClerkOrgId(CLIENT_ORG),
 		} as never);
 		const fleetMsg = await ctx.db.insert("messages", {
 			from: "pi",
@@ -394,6 +400,7 @@ async function seedFleet(t: T) {
 			content: "client-row",
 			createdAt: 2,
 			tenantId: CLIENT_ORG,
+			tenantOrgId: testClerkOrgId(CLIENT_ORG),
 		} as never);
 		const note = await ctx.db.insert("briefingNotes", {
 			title: "n",
@@ -418,6 +425,7 @@ async function seedFleet(t: T) {
 			createdAt: 1,
 			updatedAt: 1,
 			orgId: CLIENT_ORG,
+			clerkOrgId: testClerkOrgId(CLIENT_ORG),
 		} as never);
 		await ctx.db.insert("missions", {
 			name: "client mission",
@@ -430,6 +438,7 @@ async function seedFleet(t: T) {
 			createdAt: 1,
 			updatedAt: 1,
 			orgId: CLIENT_ORG,
+			clerkOrgId: testClerkOrgId(CLIENT_ORG),
 		} as never);
 		return { fleetMsg, clientMsg, note, diary };
 	});

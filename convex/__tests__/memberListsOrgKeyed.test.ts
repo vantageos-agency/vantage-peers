@@ -20,6 +20,7 @@
 
 import { convexTest } from "convex-test";
 import { describe, expect, test } from "vitest";
+import { testClerkOrgId } from "../../tests/fixtures/testClerkOrgId";
 import { api } from "../_generated/api";
 import schema from "../schema";
 import { TASK_LIST_SCAN_CAP } from "../tasks";
@@ -55,12 +56,14 @@ async function seedOrgs(t: T) {
 		await ctx.db.insert("client_org_mapping", {
 			...base,
 			clerkOrgSlug: FLEET,
+			clerkOrgId: testClerkOrgId(FLEET),
 			displayName: FLEET,
 			orgKind: "operator",
 		});
 		await ctx.db.insert("client_org_mapping", {
 			...base,
 			clerkOrgSlug: OTHER,
+			clerkOrgId: testClerkOrgId(OTHER),
 			displayName: OTHER,
 			orgKind: "client",
 		});
@@ -71,6 +74,7 @@ const asMember = (t: T, org: string) =>
 	t.withIdentity({
 		subject: `${org}-member`,
 		org_slug: org,
+		org_id: testClerkOrgId(org),
 		org_role: "org:editor",
 	} as Identity);
 
@@ -94,7 +98,7 @@ async function seedTasks(t: T, seed: TaskSeed, count: number, tag: string) {
 					createdBy: "sigma",
 					createdAt: Date.now(),
 					updatedAt: Date.now(),
-					...(seed.orgId !== undefined ? { orgId: seed.orgId } : {}),
+					...(seed.orgId !== undefined ? { orgId: seed.orgId, clerkOrgId: testClerkOrgId(seed.orgId) } : {}),
 					...(seed.project !== undefined ? { project: seed.project } : {}),
 					...(seed.missionId !== undefined ? { missionId: seed.missionId } : {}),
 				} as never);
@@ -116,7 +120,7 @@ async function seedMission(t: T, name: string, orgId?: string, project = "p") {
 			createdBy: "sigma",
 			createdAt: 1,
 			updatedAt: 1,
-			...(orgId !== undefined ? { orgId } : {}),
+			...(orgId !== undefined ? { orgId, clerkOrgId: testClerkOrgId(orgId) } : {}),
 		} as never),
 	);
 }
@@ -291,12 +295,14 @@ describe("tasks.listByMission — member of org A", () => {
 					title: `own-${i}`,
 					status: statuses[i % 2],
 					orgId: FLEET,
+					clerkOrgId: testClerkOrgId(FLEET),
 				} as never);
 				await ctx.db.insert("tasks", {
 					...base,
 					title: `foreign-${i}`,
 					status: statuses[i % 2],
 					orgId: OTHER,
+					clerkOrgId: testClerkOrgId(OTHER),
 				} as never);
 			}
 		});
@@ -420,6 +426,7 @@ describe("dashboard.getProjectSummary — member of org A", () => {
 					createdAt: 1,
 					updatedAt: 1,
 					orgId: OTHER,
+					clerkOrgId: testClerkOrgId(OTHER),
 				} as never);
 			}
 		});
@@ -566,6 +573,7 @@ describe("roster narrowing stays pinned on every member path (own org, orchestra
 				createdAt: 1,
 				updatedAt: 1,
 				orgId: FLEET,
+				clerkOrgId: testClerkOrgId(FLEET),
 			} as never);
 		});
 		const res = (await asMember(t, FLEET).query(

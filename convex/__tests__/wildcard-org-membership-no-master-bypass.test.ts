@@ -34,6 +34,7 @@
 
 import { convexTest } from "convex-test";
 import { describe, expect, test } from "vitest";
+import { testClerkOrgId } from "../../tests/fixtures/testClerkOrgId";
 import { api } from "../_generated/api";
 import schema from "../schema";
 
@@ -63,6 +64,7 @@ describe("T2 — wildcard-org membership never mints master, roster stays scoped
 		await t.run(async (ctx) => {
 			await ctx.db.insert("client_org_mapping", {
 				clerkOrgSlug: "org-wildcard",
+				clerkOrgId: testClerkOrgId("org-wildcard"),
 				allowedOrchestrators: ["*", "member-a"],
 				scopes: ["view-own-tasks"],
 				displayName: "Wildcard Org",
@@ -71,6 +73,7 @@ describe("T2 — wildcard-org membership never mints master, roster stays scoped
 			});
 			await ctx.db.insert("client_org_mapping", {
 				clerkOrgSlug: "org-b",
+				clerkOrgId: testClerkOrgId("org-b"),
 				allowedOrchestrators: ["member-b"],
 				scopes: ["view-own-tasks"],
 				displayName: "Org B",
@@ -89,6 +92,7 @@ describe("T2 — wildcard-org membership never mints master, roster stays scoped
 				createdAt: Date.now(),
 				updatedAt: Date.now(),
 				orgId: "org-wildcard",
+				clerkOrgId: testClerkOrgId("org-wildcard"),
 			});
 
 			// org-b's task — a DIFFERENT tenant's data.
@@ -101,6 +105,7 @@ describe("T2 — wildcard-org membership never mints master, roster stays scoped
 				createdAt: Date.now(),
 				updatedAt: Date.now(),
 				orgId: "org-b",
+				clerkOrgId: testClerkOrgId("org-b"),
 			});
 		});
 
@@ -109,6 +114,7 @@ describe("T2 — wildcard-org membership never mints master, roster stays scoped
 		const tMember = t.withIdentity({
 			subject: "user-member-a",
 			organizationSlug: "org-wildcard",
+			org_id: testClerkOrgId("org-wildcard"),
 		} as Parameters<typeof t.withIdentity>[0]);
 
 		const ownResults = await tMember.query(api.tasks.searchTasksByKeyword, {
@@ -126,6 +132,7 @@ describe("T2 — wildcard-org membership never mints master, roster stays scoped
 		await t.run(async (ctx) => {
 			await ctx.db.insert("client_org_mapping", {
 				clerkOrgSlug: "org-wildcard",
+				clerkOrgId: testClerkOrgId("org-wildcard"),
 				allowedOrchestrators: ["*", "member-a"],
 				scopes: ["view-own-tasks"],
 				displayName: "Wildcard Org",
@@ -134,6 +141,7 @@ describe("T2 — wildcard-org membership never mints master, roster stays scoped
 			});
 			await ctx.db.insert("client_org_mapping", {
 				clerkOrgSlug: "org-b",
+				clerkOrgId: testClerkOrgId("org-b"),
 				allowedOrchestrators: ["member-b"],
 				scopes: ["view-own-tasks"],
 				displayName: "Org B",
@@ -150,12 +158,14 @@ describe("T2 — wildcard-org membership never mints master, roster stays scoped
 				createdAt: Date.now(),
 				updatedAt: Date.now(),
 				orgId: "org-b",
+				clerkOrgId: testClerkOrgId("org-b"),
 			});
 		});
 
 		const tMember = t.withIdentity({
 			subject: "user-member-a",
 			organizationSlug: "org-wildcard",
+			org_id: testClerkOrgId("org-wildcard"),
 		} as Parameters<typeof t.withIdentity>[0]);
 
 		// This member of org-wildcard reaches for org-b's data. Pre-FIX-2, the

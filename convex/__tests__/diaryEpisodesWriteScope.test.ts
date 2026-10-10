@@ -31,6 +31,7 @@
 
 import { convexTest } from "convex-test";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
+import { testClerkOrgId } from "../../tests/fixtures/testClerkOrgId";
 import { api } from "../_generated/api";
 import schema from "../schema";
 
@@ -57,6 +58,7 @@ async function seedOrgAMapping(t: ReturnType<typeof createT>) {
 	await t.run(async (ctx) => {
 		await ctx.db.insert("client_org_mapping", {
 			clerkOrgSlug: "org-a",
+			clerkOrgId: testClerkOrgId("org-a"),
 			allowedOrchestrators: ["seat-a"],
 			scopes: ["view-own-tasks"],
 			displayName: "org-a",
@@ -70,6 +72,7 @@ function asOrgA(t: ReturnType<typeof createT>) {
 	return t.withIdentity({
 		subject: "user-org-a",
 		organizationId: "org-a",
+		org_id: testClerkOrgId("org-a"),
 	} as Parameters<typeof t.withIdentity>[0]);
 }
 

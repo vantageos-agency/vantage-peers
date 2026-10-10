@@ -29,6 +29,7 @@ import { describe, expect, test } from "vitest";
 import { api } from "../_generated/api";
 import schema from "../schema";
 import { agentIdOf } from "../../tests/lib/agentIdOf";
+import { testClerkOrgId } from "../../tests/fixtures/testClerkOrgId";
 
 const modules = Object.fromEntries(
 	Object.entries(import.meta.glob("../**/*.ts")).filter(
@@ -41,14 +42,15 @@ type T = ReturnType<typeof createT>;
 type Identity = Parameters<T["withIdentity"]>[0];
 
 const adminOf = (org: string) =>
-	({ subject: `admin-of-${org}`, org_slug: org, org_role: "org:admin" }) as Identity;
+	({ subject: `admin-of-${org}`, org_slug: org, org_id: testClerkOrgId(org), org_role: "org:admin" }) as Identity;
 const memberOf = (org: string) =>
-	({ subject: `member-of-${org}`, organizationId: org, org_slug: org }) as Identity;
+	({ subject: `member-of-${org}`, organizationId: org, org_id: testClerkOrgId(org), org_slug: org }) as Identity;
 
 async function seedOrg(t: T, clerkOrgSlug: string, roster: string[]) {
 	await t.run(async (ctx) => {
 		await ctx.db.insert("client_org_mapping", {
 			clerkOrgSlug,
+			clerkOrgId: testClerkOrgId(clerkOrgSlug),
 			allowedOrchestrators: roster,
 			scopes: ["view-own-tasks"],
 			displayName: clerkOrgSlug,

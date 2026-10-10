@@ -25,6 +25,7 @@ import { describe, expect, test } from "vitest";
 import { api, internal } from "../_generated/api";
 import schema from "../schema";
 import { agentIdOf } from "../../tests/lib/agentIdOf";
+import { testClerkOrgId } from "../../tests/fixtures/testClerkOrgId";
 
 const modules = Object.fromEntries(
 	Object.entries(import.meta.glob("../**/*.ts")).filter(
@@ -50,6 +51,7 @@ const adminOf = (t: T, org: string) =>
 	t.withIdentity({
 		subject: `admin-of-${org}`,
 		org_slug: org,
+		org_id: testClerkOrgId(org),
 		org_role: "org:admin",
 	} as Parameters<typeof t.withIdentity>[0]);
 
@@ -57,6 +59,7 @@ async function seedOrg(t: T, clerkOrgSlug: string) {
 	await t.run(async (ctx) => {
 		await ctx.db.insert("client_org_mapping", {
 			clerkOrgSlug,
+			clerkOrgId: testClerkOrgId(clerkOrgSlug),
 			allowedOrchestrators: ["b"],
 			scopes: ["view-own-tasks"],
 			displayName: clerkOrgSlug,

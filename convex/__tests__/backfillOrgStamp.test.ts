@@ -6,6 +6,7 @@
 import type { FunctionReturnType } from "convex/server";
 import { convexTest } from "convex-test";
 import { describe, expect, test } from "vitest";
+import { testClerkOrgId } from "../../tests/fixtures/testClerkOrgId";
 import { api, internal } from "../_generated/api";
 import { type StampTable, TABLE_ORDER } from "../migrations/backfill_org_stamp";
 import schema from "../schema";
@@ -77,6 +78,7 @@ async function seed(t: T) {
 		const mapping = (slug: string, isActive: boolean, operator: boolean) =>
 			ctx.db.insert("client_org_mapping", {
 				clerkOrgSlug: slug,
+				clerkOrgId: testClerkOrgId(slug),
 				allowedOrchestrators: [],
 				scopes: [],
 				displayName: slug,
@@ -90,6 +92,7 @@ async function seed(t: T) {
 		const agent = (name: string, orgSlug: string) =>
 			ctx.db.insert("agents", {
 				orgSlug,
+				clerkOrgId: testClerkOrgId(orgSlug),
 				name,
 				normalizedName: name.toLowerCase(),
 				isActive: true,
@@ -238,6 +241,7 @@ describe("backfill_org_stamp", () => {
 		const id = await t.run(async (ctx) => {
 			await ctx.db.insert("client_org_mapping", {
 				clerkOrgSlug: "acme-hr",
+				clerkOrgId: testClerkOrgId("acme-hr"),
 				allowedOrchestrators: [],
 				scopes: [],
 				displayName: "acme-hr",
@@ -268,6 +272,7 @@ describe("backfill_org_stamp", () => {
 			for (const slug of ["op-a", "op-b"]) {
 				await ctx.db.insert("client_org_mapping", {
 					clerkOrgSlug: slug,
+					clerkOrgId: testClerkOrgId(slug),
 					allowedOrchestrators: [],
 					scopes: [],
 					displayName: slug,
@@ -438,6 +443,7 @@ describe("a stamped fleet task still reaches the fleet's issue on complete", () 
 			});
 			await ctx.db.insert("client_org_mapping", {
 				clerkOrgSlug: "fleet-org",
+				clerkOrgId: testClerkOrgId("fleet-org"),
 				allowedOrchestrators: [],
 				scopes: [],
 				displayName: "fleet-org",
@@ -447,6 +453,7 @@ describe("a stamped fleet task still reaches the fleet's issue on complete", () 
 			});
 			await ctx.db.insert("client_org_mapping", {
 				clerkOrgSlug: "acme-hr",
+				clerkOrgId: testClerkOrgId("acme-hr"),
 				allowedOrchestrators: [],
 				scopes: [],
 				displayName: "acme-hr",
@@ -455,6 +462,7 @@ describe("a stamped fleet task still reaches the fleet's issue on complete", () 
 			});
 			await ctx.db.insert("agents", {
 				orgSlug: "fleet-org",
+				clerkOrgId: testClerkOrgId("fleet-org"),
 				name: "sigma",
 				normalizedName: "sigma",
 				isActive: true,
@@ -555,6 +563,7 @@ describe("backfill_org_stamp — diary and businessUnits (R-52 stamp)", () => {
 			const mapping = (slug: string, operator: boolean) =>
 				ctx.db.insert("client_org_mapping", {
 					clerkOrgSlug: slug,
+					clerkOrgId: testClerkOrgId(slug),
 					allowedOrchestrators: [],
 					scopes: [],
 					displayName: slug,
@@ -567,6 +576,7 @@ describe("backfill_org_stamp — diary and businessUnits (R-52 stamp)", () => {
 			for (const [name, orgSlug] of [["sigma", "fleet-org"], ["nadia", "acme-hr"]]) {
 				await ctx.db.insert("agents", {
 					orgSlug,
+					clerkOrgId: testClerkOrgId(orgSlug),
 					name,
 					normalizedName: name,
 					isActive: true,

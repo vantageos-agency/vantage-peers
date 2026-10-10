@@ -22,6 +22,7 @@
 
 import { convexTest } from "convex-test";
 import { describe, expect, test } from "vitest";
+import { testClerkOrgId } from "../../tests/fixtures/testClerkOrgId";
 import { api } from "../_generated/api";
 import schema from "../schema";
 
@@ -41,6 +42,7 @@ async function seedBothOrgsWithSameRoster(t: ReturnType<typeof createT>) {
 		for (const slug of ["org-a", "org-b"]) {
 			await ctx.db.insert("client_org_mapping", {
 				clerkOrgSlug: slug,
+				clerkOrgId: testClerkOrgId(slug),
 				allowedOrchestrators: [SHARED_SEAT],
 				scopes: ["view-own-tasks"],
 				displayName: slug,
@@ -55,6 +57,7 @@ function asMember(t: ReturnType<typeof createT>, org: "org-a" | "org-b") {
 	return t.withIdentity({
 		subject: `member-of-${org}`,
 		organizationId: org,
+		org_id: testClerkOrgId(org),
 		// the human path (no caller arg on update) needs a writer role (memberWriterRoles)
 		org_role: "org:editor",
 	} as Parameters<typeof t.withIdentity>[0]);
@@ -74,6 +77,7 @@ async function seedSchedule(
 			active: true,
 			createdBy: opts.assignedTo ?? SHARED_SEAT,
 			orgId: opts.orgId,
+			clerkOrgId: testClerkOrgId(opts.orgId),
 			createdAt: Date.now(),
 			updatedAt: Date.now(),
 		});

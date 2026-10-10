@@ -34,6 +34,7 @@
 
 import { convexTest } from "convex-test";
 import { describe, expect, test } from "vitest";
+import { testClerkOrgId } from "../../tests/fixtures/testClerkOrgId";
 import { api } from "../_generated/api";
 import type { Id } from "../_generated/dataModel";
 import schema from "../schema";
@@ -65,6 +66,7 @@ const asMember = (t: T, subject: string, orgSlug: string) =>
 	t.withIdentity({
 		subject,
 		organizationId: orgSlug,
+		org_id: testClerkOrgId(orgSlug),
 		organizationSlug: orgSlug,
 	} as Parameters<T["withIdentity"]>[0]);
 
@@ -84,6 +86,7 @@ async function seedOrg(t: T, slug: string, roster: string[] = ["sigma"]) {
 	await t.run(async (ctx) => {
 		await ctx.db.insert("client_org_mapping", {
 			clerkOrgSlug: slug,
+			clerkOrgId: testClerkOrgId(slug),
 			allowedOrchestrators: roster,
 			scopes: ["view-own-tasks", "view-own-missions"],
 			displayName: slug,
@@ -125,7 +128,7 @@ async function seedTask(t: Pick<T, "run">, o: SeedOpts = {}): Promise<Id<"tasks"
 			createdBy: o.createdBy ?? "sigma",
 			priority: "low",
 			status: o.status ?? "todo",
-			...(o.orgId === undefined ? {} : { orgId: o.orgId }),
+			...(o.orgId === undefined ? {} : { orgId: o.orgId, clerkOrgId: testClerkOrgId(o.orgId) }),
 			...(o.missionId === undefined ? {} : { missionId: o.missionId }),
 			...(o.dueDate === undefined ? {} : { dueDate: o.dueDate }),
 			...(o.completionNote === undefined
@@ -152,6 +155,7 @@ async function seedMission(t: T, orgId: string): Promise<Id<"missions">> {
 			agents: [],
 			createdBy: "sigma",
 			orgId,
+			clerkOrgId: testClerkOrgId(orgId),
 			createdAt: Date.now(),
 			updatedAt: Date.now(),
 		}),
@@ -327,6 +331,7 @@ describe("improvisationDigest.scanWindow — scoped by the verified organisation
 			await ctx.db.insert("messages", {
 				from: "sigma",
 				tenantId: "org-a",
+				tenantOrgId: testClerkOrgId("org-a"),
 				channel: "c",
 				content: NOTE,
 				createdAt: Date.now(),
@@ -378,6 +383,7 @@ describe("improvisationDigest.scanWindow — scoped by the verified organisation
 			await ctx.db.insert("messages", {
 				from: "sigma",
 				tenantId: "org-a",
+				tenantOrgId: testClerkOrgId("org-a"),
 				channel: "c",
 				content: NOTE,
 				createdAt: Date.now(),

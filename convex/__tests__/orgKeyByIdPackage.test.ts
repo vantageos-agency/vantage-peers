@@ -3,8 +3,10 @@
 //
 // This pins the SHAPE of the code, not a behaviour: the local definitions of
 // "which org is this credential", "do these two rows name one org", "is this
-// stamp the fleet's", "which org is the operator" and "what is this slug's org
-// ID" are GONE, and the call sites reach the package. Behaviour is pinned by
+// stamp the fleet's" and "which org is the operator" are GONE, and the call
+// sites reach the package. The package's label-to-ID derivation
+// (`resolveOrgIdForLabelBackfillOnly`) is reached by the one-off backfill only
+// (M4 ruling 3), and no source turns the label fallback on (ruling 2). Behaviour is pinned by
 // orgKeyById.test.ts and the package's own tests; this test fails the day a
 // local copy of any of those decisions comes back.
 // Hermetic: reads source text only.
@@ -82,8 +84,9 @@ describe("the org-by-ID decisions live in the package", () => {
 		expect(auth).toMatch(/from "@vantageos\/cloud-identity"/);
 		// the credential's org ID is no longer sniffed here
 		expect(auth).not.toMatch(/CLERK_ORG_ID_SHAPE/);
-		// the package decides the contradiction; auth.ts only words the refusal
-		expect(auth).toMatch(/org-id-contradicts-label/);
+		// no label fallback on the request path (M4 ruling 2)
+		expect(auth).not.toMatch(/\blabelFallback\b/);
+		expect(auth).not.toMatch(/\bORG_KEY_OPTIONS\b/);
 	});
 
 	test("lib/operatorOrg.ts finds the operator through the package and defines no stamp comparison", () => {
@@ -104,11 +107,11 @@ describe("the org-by-ID decisions live in the package", () => {
 		expect(t).not.toMatch(/\.query\(/);
 	});
 
-	test("lib/orgClerkId.ts derives the ID through the package and reads nothing itself", () => {
+	test("lib/orgClerkId.ts (request-path write stamp) never calls the backfill-only resolver", () => {
 		const t = code("lib/orgClerkId.ts");
-		expect(t).toMatch(/\bresolveOrgIdForLabel\(/);
+		expect(t).not.toMatch(/\bresolveOrgIdForLabel\w*\(/);
+		expect(t).toMatch(/\blookupOrgMapping\(/);
 		expect(t).not.toMatch(/\.query\(/);
-		expect(t).not.toMatch(/\?\?/);
 	});
 
 	test("lib/authOrgMapping.ts is storage only: it supplies the adapters and decides nothing", () => {
@@ -122,14 +125,15 @@ describe("the org-by-ID decisions live in the package", () => {
 		expect(t).not.toMatch(/orgKind\s*===/);
 	});
 
-	test("the label fallback is switched on in ONE place, and named as transitional", () => {
-		const uses: string[] = [];
+	test("the label-to-ID resolver is called by the one-off backfill only", () => {
+		const callers: string[] = [];
 		for (const rel of sourceFiles(CONVEX_DIR)) {
-			if (/labelFallback\s*:\s*true/.test(code(rel))) uses.push(rel);
+			if (/\bresolveOrgIdForLabel\w*\(/.test(code(rel))) callers.push(rel);
 		}
-		expect(uses).toEqual(["lib/authOrgMapping.ts"]);
-		const raw = readFileSync(join(CONVEX_DIR, "lib/authOrgMapping.ts"), "utf8");
-		expect(raw).toMatch(/TRANSITIONAL/);
+		expect(callers).toEqual(["migrations/backfill_org_clerk_id.ts"]);
+		expect(code("migrations/backfill_org_clerk_id.ts")).toMatch(
+			/\bresolveOrgIdForLabelBackfillOnly\(/,
+		);
 	});
 
 	test("every package decision is imported from the package, never from a sibling module", () => {
@@ -139,7 +143,7 @@ describe("the org-by-ID decisions live in the package", () => {
 			"isFleetStamp",
 			"sameTenantStamp",
 			"resolveOrgFromClaim",
-			"resolveOrgIdForLabel",
+			"resolveOrgIdForLabelBackfillOnly",
 		];
 		for (const rel of sourceFiles(CONVEX_DIR)) {
 			const text = readFileSync(join(CONVEX_DIR, rel), "utf8");

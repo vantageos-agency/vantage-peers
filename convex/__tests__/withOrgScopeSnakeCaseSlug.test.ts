@@ -27,10 +27,16 @@
  * Deletion probe: removing the snake_case fallback lines from withOrgScope
  * turns the ALLOW (snake-case-only) test RED — see PR description / diff for
  * the manual revert-and-rerun evidence.
+ *
+ * M4 (no label fallback): the organisation is now resolved from the `org_id`
+ * claim BY ID only; a slug claim, in either casing, is display text and never
+ * selects the org. Every ALLOW pole therefore carries the org's permanent ID,
+ * and an `org_id` claim carrying a SLUG instead of an ID is refused.
  */
 
 import { convexTest } from "convex-test";
 import { describe, expect, test } from "vitest";
+import { testClerkOrgId } from "../../tests/fixtures/testClerkOrgId";
 import { withOrgScope } from "../lib/auth";
 import schema from "../schema";
 
@@ -50,6 +56,7 @@ async function seedOrgMapping(
 	await t.run(async (ctx) => {
 		await ctx.db.insert("client_org_mapping", {
 			clerkOrgSlug,
+			clerkOrgId: testClerkOrgId(clerkOrgSlug),
 			allowedOrchestrators,
 			scopes: ["view-own-tasks"],
 			displayName: clerkOrgSlug,
@@ -67,6 +74,7 @@ describe("withOrgScope — snake_case org_slug/org_id fallback", () => {
 		const tSnake = t.withIdentity({
 			subject: "user_snake_only",
 			org_slug: "snake-case-org",
+			org_id: testClerkOrgId("snake-case-org"),
 		} as Parameters<typeof t.withIdentity>[0]);
 
 		await tSnake.run(async (ctx) => {
@@ -83,7 +91,7 @@ describe("withOrgScope — snake_case org_slug/org_id fallback", () => {
 
 		const tSnakeId = t.withIdentity({
 			subject: "user_snake_id_only",
-			org_id: "snake-case-org-by-id",
+			org_id: testClerkOrgId("snake-case-org-by-id"),
 		} as Parameters<typeof t.withIdentity>[0]);
 
 		await tSnakeId.run(async (ctx) => {
@@ -94,6 +102,20 @@ describe("withOrgScope — snake_case org_slug/org_id fallback", () => {
 		});
 	});
 
+	test("POLE DENY (M4): an org_id claim carrying a SLUG, not an ID, is refused", async () => {
+		const t = createT();
+		await seedOrgMapping(t, "snake-case-org-by-slug", ["sigma-snake-slug"]);
+
+		const tSlugAsId = t.withIdentity({
+			subject: "user_slug_in_org_id",
+			org_id: "snake-case-org-by-slug",
+		} as Parameters<typeof t.withIdentity>[0]);
+
+		await expect(tSlugAsId.run((ctx) => withOrgScope(ctx))).rejects.toThrow(
+			/RBAC_DENIED/,
+		);
+	});
+
 	test("REGRESSION: existing camelCase organizationSlug resolution still works", async () => {
 		const t = createT();
 		await seedOrgMapping(t, "camel-case-org", ["sigma-camel"]);
@@ -101,6 +123,7 @@ describe("withOrgScope — snake_case org_slug/org_id fallback", () => {
 		const tCamel = t.withIdentity({
 			subject: "user_camel",
 			organizationSlug: "camel-case-org",
+			org_id: testClerkOrgId("camel-case-org"),
 		} as Parameters<typeof t.withIdentity>[0]);
 
 		await tCamel.run(async (ctx) => {
@@ -120,6 +143,7 @@ describe("withOrgScope — snake_case org_slug/org_id fallback", () => {
 		const tBoth = t.withIdentity({
 			subject: "user_both_claims",
 			organizationSlug: "real-slug-wins",
+			org_id: testClerkOrgId("real-slug-wins"),
 			organizationId: "org_raw_id_should_lose",
 		} as Parameters<typeof t.withIdentity>[0]);
 

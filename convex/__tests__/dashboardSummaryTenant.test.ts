@@ -17,6 +17,7 @@
  */
 import { convexTest } from "convex-test";
 import { describe, expect, test } from "vitest";
+import { testClerkOrgId } from "../../tests/fixtures/testClerkOrgId";
 import { api } from "../_generated/api";
 import schema from "../schema";
 
@@ -36,6 +37,7 @@ const asOrg = (t: T, org: string) =>
 	t.withIdentity({
 		subject: `user-${org}`,
 		organizationId: org,
+		org_id: testClerkOrgId(org),
 	} as Parameters<typeof t.withIdentity>[0]);
 const asMaster = (t: T) =>
 	t.withIdentity({
@@ -55,6 +57,7 @@ async function seed(t: T, orgAScopes: string[] = ["view-stats-aggregated"]) {
 		] as const) {
 			await ctx.db.insert("client_org_mapping", {
 				clerkOrgSlug: org,
+				clerkOrgId: testClerkOrgId(org),
 				allowedOrchestrators: [seat],
 				scopes: [...scopes],
 				displayName: org,
@@ -86,6 +89,7 @@ async function seed(t: T, orgAScopes: string[] = ["view-stats-aggregated"]) {
 				createdAt: now,
 				updatedAt: now,
 				orgId,
+				clerkOrgId: testClerkOrgId(orgId),
 			});
 			await ctx.db.insert("missions", {
 				name: `mission-${orgId ?? "fleet"}`,
@@ -98,6 +102,7 @@ async function seed(t: T, orgAScopes: string[] = ["view-stats-aggregated"]) {
 				createdAt: now,
 				updatedAt: now,
 				orgId,
+				clerkOrgId: testClerkOrgId(orgId),
 			});
 		}
 		// messages + receipts: org-a (1 unread), org-b (2 unread), fleet (1 unread)
@@ -109,6 +114,7 @@ async function seed(t: T, orgAScopes: string[] = ["view-stats-aggregated"]) {
 			const messageId = await ctx.db.insert("messages", {
 				from,
 				tenantId,
+				tenantOrgId: testClerkOrgId(tenantId),
 				channel: "general",
 				content: `msg-${tenantId ?? "fleet"}`,
 				createdAt: now,
@@ -118,6 +124,7 @@ async function seed(t: T, orgAScopes: string[] = ["view-stats-aggregated"]) {
 					messageId,
 					recipient: from,
 					tenantId,
+					tenantOrgId: testClerkOrgId(tenantId),
 					readAt: undefined,
 				});
 			}

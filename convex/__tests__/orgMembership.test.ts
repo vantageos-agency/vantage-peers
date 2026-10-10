@@ -26,6 +26,7 @@
 
 import { convexTest } from "convex-test";
 import { describe, expect, test } from "vitest";
+import { testClerkOrgId } from "../../tests/fixtures/testClerkOrgId";
 import { api } from "../_generated/api";
 import { MEMBERSHIP_QUERY_LIMIT } from "../orgMembership";
 import schema from "../schema";
@@ -46,6 +47,7 @@ async function seedOrgMapping(
 	await t.run(async (ctx) => {
 		await ctx.db.insert("client_org_mapping", {
 			clerkOrgSlug,
+			clerkOrgId: testClerkOrgId(clerkOrgSlug),
 			allowedOrchestrators,
 			scopes: ["view-own-tasks"],
 			displayName: clerkOrgSlug,
@@ -58,6 +60,7 @@ async function seedOrgMapping(
 const orgAdminIdentity = (subject: string, org: string) => ({
 	subject,
 	organizationSlug: org,
+	org_id: testClerkOrgId(org),
 	orgRole: "org:admin",
 });
 
@@ -320,6 +323,7 @@ describe("orgMembership.getMembership — MEMBERSHIP_QUERY_INCOMPLETE bound", ()
 			for (let i = 0; i < MEMBERSHIP_QUERY_LIMIT; i++) {
 				await ctx.db.insert("orgMembership", {
 					clerkOrgSlug: "org-membership-bound",
+					clerkOrgId: testClerkOrgId("org-membership-bound"),
 					clerkUserId: `admin-bound-${i}`,
 					role: "admin",
 					createdAt: now,

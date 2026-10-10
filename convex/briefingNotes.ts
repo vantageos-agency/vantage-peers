@@ -5,7 +5,7 @@ import type { Doc, Id } from "./_generated/dataModel";
 import { creatorValidator } from "./schema";
 import { withOrgScope, requireScope, requireOrchestratorOnRoster, type OrgScope } from "./lib/auth";
 import { sameOrg } from "@vantageos/cloud-identity";
-import { ORG_KEY_OPTIONS, orgRefOfRow, orgRefOfScope } from "./lib/authOrgMapping";
+import { orgRefOfRow, orgRefOfScope } from "./lib/authOrgMapping";
 import { isFleetSystemCaller } from "./lib/systemCaller";
 import { requireId } from "./lib/ids";
 import { resolveHumanActor } from "./lib/humanActor";
@@ -69,7 +69,7 @@ function isOrgAllowedForScope(
 ): boolean {
 	if (scope.isMaster) return true;
 	if (scope.orgSlug === null) return false;
-	return sameOrg(orgRefOfRow(row), orgRefOfScope(scope), ORG_KEY_OPTIONS);
+	return sameOrg(orgRefOfRow(row), orgRefOfScope(scope));
 }
 
 async function identityMatchesParticipant(
@@ -143,7 +143,7 @@ async function callerCanReadForScope(
 	// callerCanReadForScope never leaks a note on its own if that upstream
 	// refusal is ever bypassed or reordered.
 	if (scope.orgSlug === null) return false;
-	if (!sameOrg(orgRefOfRow(note), orgRefOfScope(scope), ORG_KEY_OPTIONS)) return false;
+	if (!sameOrg(orgRefOfRow(note), orgRefOfScope(scope))) return false;
 	if (callerIdentities === undefined) return true;
 	return identityMatchesParticipant(ctx, note, callerIdentities);
 }

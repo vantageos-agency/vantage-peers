@@ -36,6 +36,7 @@ import type { Id } from "../_generated/dataModel";
 import schema from "../schema";
 import { requireAgentCredentialMatch } from "../lib/auth";
 import { agentIdOf } from "../../tests/lib/agentIdOf";
+import { testClerkOrgId } from "../../tests/fixtures/testClerkOrgId";
 
 const modules = Object.fromEntries(
 	Object.entries(import.meta.glob("../**/*.ts")).filter(
@@ -54,6 +55,7 @@ const adminOf = (t: T, org: string) =>
 	t.withIdentity({
 		subject: `admin-of-${org}`,
 		org_slug: org,
+		org_id: testClerkOrgId(org),
 		org_role: "org:admin",
 	} as Parameters<typeof t.withIdentity>[0]);
 
@@ -61,6 +63,7 @@ const memberOf = (t: T, org: string) =>
 	t.withIdentity({
 		subject: `reader-of-${org}`,
 		organizationId: org,
+		org_id: testClerkOrgId(org),
 	} as Parameters<typeof t.withIdentity>[0]);
 
 const asServiceAccount = (t: T) =>
@@ -70,6 +73,7 @@ async function seedOrg(t: T, clerkOrgSlug: string) {
 	await t.run(async (ctx) => {
 		await ctx.db.insert("client_org_mapping", {
 			clerkOrgSlug,
+			clerkOrgId: testClerkOrgId(clerkOrgSlug),
 			allowedOrchestrators: ["clio", "vera", "calliope"],
 			scopes: ["view-own-tasks"],
 			displayName: clerkOrgSlug,
@@ -122,6 +126,7 @@ async function seedTask(t: T): Promise<Id<"tasks">> {
 			createdAt: Date.now(),
 			updatedAt: Date.now(),
 			orgId: "org-a",
+			clerkOrgId: testClerkOrgId("org-a"),
 		} as never);
 	});
 }

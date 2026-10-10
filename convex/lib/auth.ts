@@ -10,7 +10,6 @@ import { findAgentByName, resolveAgentOfPresentedSecret } from "./agentIdentity"
 import { normalizeOrchestratorId } from "../_helpers/normalizeOrchestratorId";
 import {
 	lookupOrgMapping,
-	ORG_KEY_OPTIONS,
 	orgMappingLookups,
 	orgRefOfRow,
 	orgRefOfScope,
@@ -369,23 +368,21 @@ export async function withOrgScope(
 		);
 	}
 
-	// THE ORG COMES FROM THE CREDENTIAL'S OWN ID, not from the slug it happens to
-	// carry, and that decision is @vantageos/cloud-identity's: the package reads the
-	// verified claims, selects the mapping row through the adapters below, and
-	// refuses (typed) on no org, an unknown or inactive org, a malformed row or an
-	// ID that contradicts the org the slug names. The slug fallback is the
-	// package's TRANSITIONAL option (ORG_KEY_OPTIONS) for mappings whose ID is not
-	// filled yet.
+	// THE ORG COMES FROM THE CREDENTIAL'S OWN ID, never from the slug it happens
+	// to carry, and that decision is @vantageos/cloud-identity's: the package reads
+	// the verified `org_id` claim, selects the mapping row through the adapters
+	// below BY ID ONLY, and refuses (typed) on no org ID, an ID no mapping holds,
+	// an inactive org or a malformed row. There is no label fallback on this
+	// path (M4 ruling 2): a miss on the ID-keyed lookup is a refusal, even when a
+	// mapping with the credential's slug exists.
 	const resolved = await resolveOrgFromClaim(
 		identity as Record<string, unknown>,
 		orgMappingLookups(ctx),
-		{ ...ORG_KEY_OPTIONS, door: "withOrgScope" },
+		{ door: "withOrgScope" },
 	);
 	if (!resolved.ok) {
 		throw new ConvexError(
-			resolved.refusal.reason === "org-id-contradicts-label"
-				? `RBAC_DENIED: the org id of the credential is not the org "${orgSlug}" names — ${JSON.stringify({ orgSlug, reason: "org-id-contradicts-slug" })}`
-				: `RBAC_DENIED: Org "${orgSlug}" not in client_org_mapping or inactive — ${JSON.stringify({ orgSlug, reason: resolved.refusal.reason })}`,
+			`RBAC_DENIED: the credential's org ID resolves no active org in client_org_mapping — ${JSON.stringify({ orgSlug, reason: resolved.refusal.reason })}`,
 		);
 	}
 	const org = resolved.org;
@@ -563,7 +560,7 @@ export function filterByOrgScope<
 	return records.filter((r) => {
 		// 1. Tenant gate. An absent `orgId` asserts nothing and so grants
 		// nothing: `undefined` never equals a resolved org slug.
-		if (!sameOrg(orgRefOfRow(r), orgRefOfScope(scope), ORG_KEY_OPTIONS)) return false;
+		if (!sameOrg(orgRefOfRow(r), orgRefOfScope(scope))) return false;
 		// 2. Roster, as a narrowing intersect on top of the tenant gate.
 		const orchestrator = r.pilot ?? r.assignedTo;
 		if (!orchestrator) return false;
@@ -679,7 +676,7 @@ export function isRowVisibleToScope(
 	// tenant gate explicitly here is what makes the by-id read legible on its
 	// own, and it keeps this function correct if `filterByOrgScope` is ever
 	// narrowed to a pure roster helper again.
-	if (!sameOrg(orgRefOfRow(row), orgRefOfScope(scope), ORG_KEY_OPTIONS)) return false;
+	if (!sameOrg(orgRefOfRow(row), orgRefOfScope(scope))) return false;
 	// Leg 4 — the ROSTER, kept as a NARROWING intersect and never as a grant.
 	// The tenant gate above is what makes two organisations disjoint; the roster
 	// is the INTRA-org delegation control and it still applies on top. Dropping

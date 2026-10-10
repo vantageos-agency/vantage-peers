@@ -14,6 +14,7 @@
 import { ConvexError } from "convex/values";
 import { convexTest } from "convex-test";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
+import { testClerkOrgId } from "../../tests/fixtures/testClerkOrgId";
 import { api } from "../_generated/api";
 import schema from "../schema";
 
@@ -37,6 +38,7 @@ async function seedOrgA(t: T) {
 	await t.run(async (ctx) => {
 		await ctx.db.insert("client_org_mapping", {
 			clerkOrgSlug: "org-a",
+			clerkOrgId: testClerkOrgId("org-a"),
 			allowedOrchestrators: ["seat-a", "seat-b"],
 			scopes: ["view-own-tasks"],
 			displayName: "org-a",
@@ -50,6 +52,7 @@ const asMemberOfOrgA = (t: T) =>
 	t.withIdentity({
 		subject: "user-org-a",
 		organizationId: "org-a",
+		org_id: testClerkOrgId("org-a"),
 	} as Parameters<typeof t.withIdentity>[0]);
 
 const asMaster = (t: T) =>
@@ -88,6 +91,7 @@ const seedNote = (t: T, createdBy: string) =>
 			createdBy,
 			createdAt: Date.now(),
 			orgId: "org-a",
+			clerkOrgId: testClerkOrgId("org-a"),
 		}),
 	);
 
@@ -99,6 +103,7 @@ const seedDiary = (t: T, orchestrator: string) =>
 			content: "seed diary",
 			createdAt: Date.now(),
 			orgId: "org-a",
+			clerkOrgId: testClerkOrgId("org-a"),
 		}),
 	);
 
@@ -111,6 +116,7 @@ const seedMessage = (t: T, from: string) =>
 			createdAt: Date.now(),
 			// sendMessage stamps the caller's org; deleteMessage's tenant gate reads it.
 			tenantId: "org-a",
+			tenantOrgId: testClerkOrgId("org-a"),
 		}),
 	);
 

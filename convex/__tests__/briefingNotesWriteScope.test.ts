@@ -25,6 +25,7 @@
 
 import { convexTest } from "convex-test";
 import { describe, expect, test } from "vitest";
+import { testClerkOrgId } from "../../tests/fixtures/testClerkOrgId";
 import { api } from "../_generated/api";
 import schema from "../schema";
 
@@ -40,6 +41,7 @@ async function seedOrgAMapping(t: ReturnType<typeof createT>) {
 	await t.run(async (ctx) => {
 		await ctx.db.insert("client_org_mapping", {
 			clerkOrgSlug: "org-a",
+			clerkOrgId: testClerkOrgId("org-a"),
 			allowedOrchestrators: ["seat-a"],
 			scopes: ["view-own-tasks"],
 			displayName: "org-a",
@@ -53,6 +55,7 @@ async function seedOrgBMapping(t: ReturnType<typeof createT>) {
 	await t.run(async (ctx) => {
 		await ctx.db.insert("client_org_mapping", {
 			clerkOrgSlug: "org-b",
+			clerkOrgId: testClerkOrgId("org-b"),
 			allowedOrchestrators: ["seat-b"],
 			scopes: ["view-own-tasks"],
 			displayName: "org-b",
@@ -66,6 +69,7 @@ function asOrgA(t: ReturnType<typeof createT>) {
 	return t.withIdentity({
 		subject: "user-org-a",
 		organizationId: "org-a",
+		org_id: testClerkOrgId("org-a"),
 	} as Parameters<typeof t.withIdentity>[0]);
 }
 
@@ -73,6 +77,7 @@ function asOrgB(t: ReturnType<typeof createT>) {
 	return t.withIdentity({
 		subject: "user-org-b",
 		organizationId: "org-b",
+		org_id: testClerkOrgId("org-b"),
 	} as Parameters<typeof t.withIdentity>[0]);
 }
 
@@ -96,6 +101,7 @@ async function seedNote(
 			createdBy,
 			createdAt: Date.now(),
 			orgId,
+			clerkOrgId: testClerkOrgId(orgId),
 		});
 	});
 }

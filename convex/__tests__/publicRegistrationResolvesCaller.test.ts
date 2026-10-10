@@ -78,6 +78,7 @@
 import { ConvexError } from "convex/values";
 import { convexTest } from "convex-test";
 import { describe, expect, test } from "vitest";
+import { testClerkOrgId } from "../../tests/fixtures/testClerkOrgId";
 import { api } from "../_generated/api";
 import schema from "../schema";
 
@@ -119,6 +120,7 @@ const asOrgMember = (t: T, orgSlug: string, subject = ORDINARY_A) =>
 	t.withIdentity({
 		subject,
 		organizationId: orgSlug,
+		org_id: testClerkOrgId(orgSlug),
 		organizationSlug: orgSlug,
 	} as Parameters<typeof t.withIdentity>[0]);
 
@@ -141,6 +143,7 @@ async function seedOrgMapping(t: T, clerkOrgSlug: string, roster = ["sigma"]) {
 	await t.run(async (ctx) => {
 		await ctx.db.insert("client_org_mapping", {
 			clerkOrgSlug,
+			clerkOrgId: testClerkOrgId(clerkOrgSlug),
 			allowedOrchestrators: roster,
 			scopes: ["view-own-tasks"],
 			displayName: clerkOrgSlug,
@@ -332,6 +335,7 @@ const seedRecurringTask = (t: T, assignedTo = "sigma", orgId?: string) =>
 			title: "daily scan",
 			assignedTo,
 			orgId,
+			clerkOrgId: testClerkOrgId(orgId),
 			priority: "medium",
 			cronExpression: "0 9 * * *",
 			nextRunAt: now(),
@@ -372,6 +376,7 @@ const seedUnlinkedBlockedTask = (t: T, assignedTo = "sigma", orgId?: string) =>
 			title: "blocked with no link",
 			assignedTo,
 			orgId,
+			clerkOrgId: testClerkOrgId(orgId),
 			priority: "medium",
 			status: "blocked",
 			createdBy: "sigma",
@@ -387,7 +392,7 @@ const seedMessage = (t: T, channel: string, tenantId?: string) =>
 			channel,
 			content: `content on ${channel}`,
 			createdAt: now(),
-			...(tenantId !== undefined ? { tenantId } : {}),
+			...(tenantId !== undefined ? { tenantId, tenantOrgId: testClerkOrgId(tenantId) } : {}),
 		});
 	});
 

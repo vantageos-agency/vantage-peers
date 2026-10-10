@@ -24,6 +24,7 @@ import { convexTest } from "convex-test";
 import { Hono } from "hono";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import schema from "../../convex/schema";
+import { testClerkOrgId } from "../../tests/fixtures/testClerkOrgId";
 import { app } from "../server-http.js";
 import {
 	_setInternalClientForTest,
@@ -103,6 +104,7 @@ beforeEach(async () => {
 		] as const) {
 			await ctx.db.insert("client_org_mapping", {
 				clerkOrgSlug: slug,
+				clerkOrgId: testClerkOrgId(slug),
 				allowedOrchestrators: [...roster],
 				scopes: ["vantage:read", "vantage:write"],
 				displayName: slug,
@@ -216,6 +218,7 @@ async function agentCredential(): Promise<string> {
 		t.withIdentity({
 			subject: "admin-of-org-a",
 			org_slug: "org-a",
+			org_id: testClerkOrgId("org-a"),
 			org_role: "org:admin",
 		} as never),
 	);
@@ -410,6 +413,7 @@ describe("pole 5 — seat tokens and agent credentials are unchanged", () => {
 		await t.run(async (ctx) => {
 			await ctx.db.insert("agents", {
 				orgSlug: "org-a",
+				clerkOrgId: testClerkOrgId("org-a"),
 				name: "agent-a",
 				normalizedName: "agent-a",
 				isActive: true,
@@ -424,6 +428,7 @@ describe("pole 5 — seat tokens and agent credentials are unchanged", () => {
 				createdAt: Date.now(),
 				updatedAt: Date.now(),
 				clerkOrgSlug: "org-a",
+				clerkOrgId: testClerkOrgId("org-a"),
 			});
 			await ctx.db.insert("oauth_access_tokens", {
 				tokenHash: await sha256Hex(token),
@@ -437,6 +442,7 @@ describe("pole 5 — seat tokens and agent credentials are unchanged", () => {
 				expiresAt: Date.now() + 3_600_000,
 				createdAt: Date.now(),
 				clerkOrgSlug: "org-a",
+				clerkOrgId: testClerkOrgId("org-a"),
 			});
 		});
 		const tools = realTools(await contextFor(token));
@@ -469,6 +475,7 @@ describe("pole 5 — seat tokens and agent credentials are unchanged", () => {
 				createdAt: Date.now(),
 				updatedAt: Date.now(),
 				clerkOrgSlug: "org-a",
+				clerkOrgId: testClerkOrgId("org-a"),
 			});
 			await ctx.db.insert("oauth_access_tokens", {
 				tokenHash: await sha256Hex(token),
@@ -482,6 +489,7 @@ describe("pole 5 — seat tokens and agent credentials are unchanged", () => {
 				expiresAt: Date.now() + 3_600_000,
 				createdAt: Date.now(),
 				clerkOrgSlug: "org-a",
+				clerkOrgId: testClerkOrgId("org-a"),
 			});
 		});
 		const tools = realTools(await contextFor(token));

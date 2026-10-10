@@ -10,6 +10,7 @@
 
 import { convexTest } from "convex-test";
 import { describe, expect, test } from "vitest";
+import { testClerkOrgId } from "../../tests/fixtures/testClerkOrgId";
 import { api, internal } from "../_generated/api";
 import type { Id } from "../_generated/dataModel";
 import schema from "../schema";
@@ -31,6 +32,7 @@ const as = (subject: string, role?: string) =>
 	({
 		subject,
 		organizationSlug: "org-a",
+		org_id: testClerkOrgId("org-a"),
 		...(role !== undefined ? { org_role: role } : {}),
 	}) as Parameters<T["withIdentity"]>[0];
 
@@ -69,6 +71,7 @@ async function setup(defaultRoles: string[] | null = ["org:admin", "org:editor"]
 	await t.run(async (ctx) => {
 		await ctx.db.insert("client_org_mapping", {
 			clerkOrgSlug: "org-a",
+			clerkOrgId: testClerkOrgId("org-a"),
 			allowedOrchestrators: ["sigma"],
 			scopes: ["view-own-tasks"],
 			displayName: "org-a",
@@ -96,6 +99,7 @@ async function seedTask(t: T, status: "todo" | "in_progress") {
 			createdAt: Date.now(),
 			updatedAt: Date.now(),
 			orgId: "org-a",
+			clerkOrgId: testClerkOrgId("org-a"),
 			...(status === "in_progress"
 				? { startedAt: Date.now(), workSegments: [{ start: Date.now() }] }
 				: {}),
@@ -239,6 +243,7 @@ const operator = (subject: string, role = "org:admin") =>
 	({
 		subject,
 		organizationSlug: "op-org",
+		org_id: testClerkOrgId("op-org"),
 		org_role: role,
 	}) as Parameters<T["withIdentity"]>[0];
 
@@ -247,6 +252,7 @@ async function setupOperator(): Promise<T> {
 	await t.run(async (ctx) => {
 		await ctx.db.insert("client_org_mapping", {
 			clerkOrgSlug: "op-org",
+			clerkOrgId: testClerkOrgId("op-org"),
 			allowedOrchestrators: ["sigma"],
 			scopes: ["view-own-tasks"],
 			displayName: "operator",
@@ -272,7 +278,7 @@ async function seedOrgTask(
 			createdBy: "sigma",
 			createdAt: Date.now(),
 			updatedAt: Date.now(),
-			...(orgId !== undefined ? { orgId } : {}),
+			...(orgId !== undefined ? { orgId, clerkOrgId: testClerkOrgId(orgId) } : {}),
 			...(status === "in_progress"
 				? { startedAt: Date.now(), workSegments: [{ start: Date.now() }] }
 				: {}),

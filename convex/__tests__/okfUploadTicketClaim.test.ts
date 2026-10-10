@@ -16,6 +16,7 @@
 import { createHash } from "node:crypto";
 import { convexTest } from "convex-test";
 import { afterEach, describe, expect, test, vi } from "vitest";
+import { testClerkOrgId } from "../../tests/fixtures/testClerkOrgId";
 import type { Id } from "../_generated/dataModel";
 import { packTarball } from "../okfBundleNode";
 import schema from "../schema";
@@ -47,6 +48,7 @@ async function seedOrg(t: T, clerkOrgSlug: string) {
 	await t.run(async (ctx) => {
 		await ctx.db.insert("client_org_mapping", {
 			clerkOrgSlug,
+			clerkOrgId: testClerkOrgId(clerkOrgSlug),
 			allowedOrchestrators: ["sigma"],
 			scopes: ["view-own-tasks"],
 			displayName: clerkOrgSlug,
@@ -61,6 +63,7 @@ function asOrg(t: T, orgId: string) {
 		subject: `user-${orgId}`,
 		tokenIdentifier: `test|user-${orgId}`,
 		organizationId: orgId,
+		org_id: testClerkOrgId(orgId),
 	} as Parameters<typeof t.withIdentity>[0]);
 }
 

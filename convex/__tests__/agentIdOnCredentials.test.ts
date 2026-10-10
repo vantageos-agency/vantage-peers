@@ -21,6 +21,7 @@ import { api, internal } from "../_generated/api";
 import type { Id } from "../_generated/dataModel";
 import schema from "../schema";
 import { agentIdOf } from "../../tests/lib/agentIdOf";
+import { testClerkOrgId } from "../../tests/fixtures/testClerkOrgId";
 
 const modules = Object.fromEntries(
 	Object.entries(import.meta.glob("../**/*.ts")).filter(
@@ -42,6 +43,7 @@ const adminOf = (t: T, org: string) =>
 	t.withIdentity({
 		subject: `admin-of-${org}`,
 		org_slug: org,
+		org_id: testClerkOrgId(org),
 		org_role: "org:admin",
 	} as Parameters<typeof t.withIdentity>[0]);
 
@@ -49,6 +51,7 @@ async function seedOrg(t: T, clerkOrgSlug: string): Promise<void> {
 	await t.run(async (ctx) => {
 		await ctx.db.insert("client_org_mapping", {
 			clerkOrgSlug,
+			clerkOrgId: testClerkOrgId(clerkOrgSlug),
 			allowedOrchestrators: ["clio"],
 			scopes: ["view-own-tasks"],
 			displayName: clerkOrgSlug,
@@ -67,6 +70,7 @@ async function seedAgent(
 	return await t.run(async (ctx) =>
 		ctx.db.insert("agents", {
 			orgSlug,
+			clerkOrgId: testClerkOrgId(orgSlug),
 			name,
 			normalizedName: name.toLowerCase(),
 			isActive,
@@ -277,6 +281,7 @@ describe("seat token stamp at mint and at refresh", () => {
 				expiresAt: Date.now() + 3_600_000,
 				createdAt: Date.now(),
 				clerkOrgSlug: "iris-rh",
+				clerkOrgId: testClerkOrgId("iris-rh"),
 			});
 		});
 		expect((await lookup(t, "legacy-hash"))?.seatAgent).toEqual({
@@ -306,6 +311,7 @@ describe("seat token stamp at mint and at refresh", () => {
 					expiresAt: Date.now() + 3_600_000,
 					createdAt: Date.now(),
 					clerkOrgSlug: "iris-rh",
+					clerkOrgId: testClerkOrgId("iris-rh"),
 				}),
 			);
 		const good = await insert("h-good", "clio-iris-rh", "clio");
@@ -338,6 +344,7 @@ describe("credential backfill lists what it could not decide", () => {
 			await t.run(async (ctx) =>
 				ctx.db.insert("agent_credentials", {
 					orgSlug: "org-a",
+					clerkOrgId: testClerkOrgId("org-a"),
 					agentName: name,
 					secretHash: `s-${name}`,
 					isActive: true,

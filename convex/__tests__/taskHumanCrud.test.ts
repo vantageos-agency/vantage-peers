@@ -11,6 +11,7 @@
 
 import { convexTest } from "convex-test";
 import { describe, expect, test } from "vitest";
+import { testClerkOrgId } from "../../tests/fixtures/testClerkOrgId";
 import { api } from "../_generated/api";
 import type { Id } from "../_generated/dataModel";
 import schema from "../schema";
@@ -32,6 +33,7 @@ const as = (subject: string, role?: string) =>
 	({
 		subject,
 		organizationSlug: "org-a",
+		org_id: testClerkOrgId("org-a"),
 		...(role !== undefined ? { org_role: role } : {}),
 	}) as Parameters<T["withIdentity"]>[0];
 
@@ -42,6 +44,7 @@ async function setup() {
 	await t.run(async (ctx) => {
 		await ctx.db.insert("client_org_mapping", {
 			clerkOrgSlug: "org-a",
+			clerkOrgId: testClerkOrgId("org-a"),
 			allowedOrchestrators: ["sigma"],
 			scopes: ["view-own-tasks"],
 			displayName: "org-a",
@@ -67,7 +70,7 @@ async function seedTask(t: T, seed: Seed, orgId: string | null = "org-a") {
 			createdBy: "sigma",
 			createdAt: now,
 			updatedAt: now,
-			...(orgId !== null ? { orgId } : {}),
+			...(orgId !== null ? { orgId, clerkOrgId: testClerkOrgId(orgId) } : {}),
 			...(seed === "in_progress"
 				? { startedAt: now, workSegments: [{ start: now }] }
 				: {}),
@@ -265,7 +268,7 @@ describe("create — human, no createdBy", () => {
 		const t = await setup();
 		await expect(
 			t
-				.withIdentity({ subject: "svc", organizationSlug: "vantage-fleet" } as Parameters<T["withIdentity"]>[0])
+				.withIdentity({ subject: "svc", organizationSlug: "vantage-fleet", org_id: testClerkOrgId("vantage-fleet") } as Parameters<T["withIdentity"]>[0])
 				.mutation(api.tasks.create, args),
 		).rejects.toThrow(/RBAC_DENIED|AUTH_REQUIRED/);
 	});

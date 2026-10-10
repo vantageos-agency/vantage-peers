@@ -23,6 +23,7 @@
 
 import { convexTest } from "convex-test";
 import { beforeEach, describe, expect, test } from "vitest";
+import { testClerkOrgId } from "../../tests/fixtures/testClerkOrgId";
 import { api } from "../_generated/api";
 import schema from "../schema";
 
@@ -52,6 +53,7 @@ const member = (org: string, subject: string) =>
 	t.withIdentity({
 		subject,
 		org_slug: org,
+		org_id: testClerkOrgId(org),
 		org_role: "org:editor",
 	} as Identity);
 const portalPerson = () => member(CGT, PERSON);
@@ -88,6 +90,7 @@ beforeEach(async () => {
 		] as const) {
 			await ctx.db.insert("client_org_mapping", {
 				clerkOrgSlug: slug,
+				clerkOrgId: testClerkOrgId(slug),
 				allowedOrchestrators: [...roster],
 				scopes: ["vantage:read", "vantage:write"],
 				displayName: slug,
@@ -117,6 +120,7 @@ beforeEach(async () => {
 			expiresAt: now + 3_600_000,
 			createdAt: now,
 			clerkOrgSlug: CGT,
+			clerkOrgId: testClerkOrgId(CGT),
 			tokenHash: PERSON_TOKEN,
 			userId: PERSON,
 			orgRole: "org:editor",
@@ -184,6 +188,7 @@ describe("PART 1a — what the portal's service-account + seatOrgSlug path accep
 		await t.run(async (ctx) => {
 			await ctx.db.insert("agents", {
 				orgSlug,
+				clerkOrgId: testClerkOrgId(orgSlug),
 				name,
 				normalizedName: name.trim().toLowerCase(),
 				isActive: true,
@@ -241,6 +246,7 @@ describe("PART 1a — what the portal's service-account + seatOrgSlug path accep
 		await t.run(async (ctx) => {
 			await ctx.db.insert("agents", {
 				orgSlug: CGT,
+				clerkOrgId: testClerkOrgId(CGT),
 				name: "sigma",
 				normalizedName: "sigma",
 				isActive: true,
@@ -464,6 +470,7 @@ describe("PART 2 — REFUSED: a person of another org stays unreachable", () => 
 				channel: "themis",
 				content: "hi",
 				tenantId: OTHER,
+				tenantOrgId: testClerkOrgId(OTHER),
 				createdAt: Date.now(),
 			});
 		});

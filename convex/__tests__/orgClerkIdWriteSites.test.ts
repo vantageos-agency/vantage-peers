@@ -53,11 +53,13 @@ const asOrg = (t: T, slug: string) =>
 	t.withIdentity({
 		subject: `user-${slug}`,
 		organizationId: slug,
+		org_id: ID_BY_SLUG[slug],
 	} as Identity);
 const adminOf = (t: T, org: string) =>
 	t.withIdentity({
 		subject: `admin-of-${org}`,
 		org_slug: org,
+		org_id: ID_BY_SLUG[org],
 		org_role: "org:admin",
 	} as Identity);
 const serviceAccount = (t: T) =>
@@ -329,16 +331,30 @@ describe("every table in ORG_COLUMNS has a real write path that stamps slug AND 
 	}
 });
 
-describe("a mapping with no id yet: the slug is written, no id is invented", () => {
+describe("a mapping with no id yet: a member is refused, and no id is ever invented", () => {
+	// M4 ruling 2: a member's org is resolved from its org_id claim BY ID only, so a
+	// mapping whose clerkOrgId is not filled serves no member (no label fallback).
+	// A write path that does not resolve a member (service account, internal)
+	// still writes the slug only. Either way no row carries an invented id.
 	for (const table of TABLE_ORDER) {
-		test(`${table}: slug only while the mapping has no clerkOrgId`, async () => {
+		test(`${table}: refused as a member, or slug only, while the mapping has no clerkOrgId`, async () => {
 			const { slugField, idField } = ORG_COLUMNS[table];
 			const t = createT();
 			await seedWorld(t, undefined);
-			await (DRIVERS[table] as Driver)(t);
+			let refusal = "";
+			try {
+				await (DRIVERS[table] as Driver)(t);
+			} catch (e) {
+				refusal = String((e as { data?: unknown }).data ?? e);
+			}
 			const rows = await rowsOf(t, table);
 			const stamped = rows.filter((r) => r[slugField] === ACME.slug);
-			expect(stamped.length).toBeGreaterThan(0);
+			if (refusal !== "") {
+				expect(refusal).toContain("RBAC_DENIED");
+				expect(refusal).toContain("org-mapping-not-found");
+			} else {
+				expect(stamped.length).toBeGreaterThan(0);
+			}
 			for (const r of stamped) expect(r[idField]).toBeUndefined();
 		});
 	}

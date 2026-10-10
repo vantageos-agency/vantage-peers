@@ -37,15 +37,25 @@ const createT = () => convexTest(schema, modules);
 type T = ReturnType<typeof createT>;
 type Result = FunctionReturnType<typeof run>;
 
+// A member session carries its org's permanent ID (M4: the org is resolved from
+// the org_id claim by ID only). "not-filled-yet" has no mapping ID, so its
+// member carries a fictitious one that no mapping holds.
+const ID_BY_SLUG: Record<string, string> = {
+	[OPERATOR.slug]: OPERATOR.id,
+	[ACME.slug]: ACME.id,
+	"not-filled-yet": "org_NOTFILLED1",
+};
 const asOrg = (t: T, slug: string) =>
 	t.withIdentity({
 		subject: `user-${slug}`,
 		organizationId: slug,
+		org_id: ID_BY_SLUG[slug],
 	} as Parameters<T["withIdentity"]>[0]);
 const adminOf = (t: T, org: string) =>
 	t.withIdentity({
 		subject: `admin-of-${org}`,
 		org_slug: org,
+		org_id: ID_BY_SLUG[org],
 		org_role: "org:admin",
 	} as Parameters<T["withIdentity"]>[0]);
 
@@ -352,19 +362,24 @@ describe("new writes stamp the slug AND the Clerk org id", () => {
 		expect(row.clerkOrgId).toBe(ACME.id);
 	});
 
-	test("a mapping whose id is not filled yet stamps the slug only; no id is invented", async () => {
+	test("a mapping whose id is not filled yet serves no member: refused, nothing written", async () => {
+		// M4 ruling 2: no label fallback. The member's org_id names no mapping, and
+		// the mapping its slug names is never consulted instead.
 		const t = createT();
 		await seedWorld(t);
-		const id = await asOrg(t, "not-filled-yet").mutation(api.tasks.create, {
-			title: "Slug only",
-			assignedTo: SEAT,
-			priority: "high",
-			status: "todo",
-			createdBy: SEAT,
-		});
-		const row = await idOf(t, id);
-		expect(row.orgId).toBe("not-filled-yet");
-		expect(row.clerkOrgId).toBeUndefined();
+		await expect(
+			asOrg(t, "not-filled-yet").mutation(api.tasks.create, {
+				title: "Slug only",
+				assignedTo: SEAT,
+				priority: "high",
+				status: "todo",
+				createdBy: SEAT,
+			}),
+		).rejects.toThrow(/org-mapping-not-found/);
+		const titles = await t.run(async (ctx) =>
+			(await ctx.db.query("tasks").take(50)).map((r) => r.title),
+		);
+		expect(titles).not.toContain("Slug only");
 	});
 
 	test("a fleet-master write stays unstamped on both columns", async () => {

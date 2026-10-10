@@ -9,6 +9,7 @@
 
 import { convexTest } from "convex-test";
 import { describe, expect, test } from "vitest";
+import { testClerkOrgId } from "../../tests/fixtures/testClerkOrgId";
 import { api } from "../_generated/api";
 import schema from "../schema";
 
@@ -28,6 +29,7 @@ async function seedOrgMapping(
 	await t.run(async (ctx) => {
 		await ctx.db.insert("client_org_mapping", {
 			clerkOrgSlug,
+			clerkOrgId: testClerkOrgId(clerkOrgSlug),
 			allowedOrchestrators: ["victor"],
 			scopes: ["view-own-tasks", "view-own-missions"],
 			displayName: clerkOrgSlug,
@@ -50,6 +52,7 @@ async function seedNote(
 			createdBy: "sigma",
 			createdAt: Date.now(),
 			orgId: opts.orgId,
+			clerkOrgId: testClerkOrgId(opts.orgId),
 		});
 	});
 }
@@ -77,6 +80,7 @@ describe("searchBriefingNotesByKeyword — cross-org isolation", () => {
 		const tIris = t.withIdentity({
 			subject: "user-iris",
 			organizationId: "acme-hr",
+			org_id: testClerkOrgId("acme-hr"),
 		} as Parameters<typeof t.withIdentity>[0]);
 
 		const results = await tIris.query(

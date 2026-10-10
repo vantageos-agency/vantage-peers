@@ -18,6 +18,7 @@ import {
 } from "../githubOwnerBinding";
 import schema from "../schema";
 import { TEST_WEBHOOK_SECRET, signGithubBody } from "../../tests/lib/githubWebhookSignature";
+import { testClerkOrgId } from "../../tests/fixtures/testClerkOrgId";
 
 beforeEach(() => {
 	vi.useFakeTimers({ toFake: ["Date", "setTimeout", "clearTimeout"] });
@@ -38,7 +39,7 @@ type T = ReturnType<typeof makeT>;
 const ORCH = "eta";
 
 const member = (t: T, slug: string) =>
-	t.withIdentity({ subject: `member-${slug}`, organizationSlug: slug, orgRole: "org:member" } as Parameters<
+	t.withIdentity({ subject: `member-${slug}`, organizationSlug: slug, org_id: testClerkOrgId(slug), orgRole: "org:member" } as Parameters<
 		T["withIdentity"]
 	>[0]);
 const master = (t: T) => t.withIdentity({ subject: "test-service-account-user-id" });
@@ -48,6 +49,7 @@ async function seed(t: T, opts: { bind?: boolean } = { bind: true }) {
 		for (const slug of ["org-a", "org-b"]) {
 			await ctx.db.insert("client_org_mapping", {
 				clerkOrgSlug: slug,
+				clerkOrgId: testClerkOrgId(slug),
 				allowedOrchestrators: [ORCH],
 				scopes: ["view-own-tasks", "manage-repo-mappings"],
 				displayName: slug,
@@ -194,9 +196,9 @@ describe("existing mappings without proof are REPORTED", () => {
 		const t = makeT();
 		await seed(t);
 		await t.run(async (ctx) => {
-			await ctx.db.insert("githubRepoMapping", { repo: "org-a/ok", orchestrator: ORCH, project: "p", active: true, orgId: "org-a" });
-			await ctx.db.insert("githubRepoMapping", { repo: "squat/x", orchestrator: ORCH, project: "p", active: true, orgId: "org-a" });
-			await ctx.db.insert("githubRepoMapping", { repo: "org-b/y", orchestrator: ORCH, project: "p", active: true, orgId: "org-a" });
+			await ctx.db.insert("githubRepoMapping", { repo: "org-a/ok", orchestrator: ORCH, project: "p", active: true, orgId: "org-a", clerkOrgId: testClerkOrgId("org-a") });
+			await ctx.db.insert("githubRepoMapping", { repo: "squat/x", orchestrator: ORCH, project: "p", active: true, orgId: "org-a", clerkOrgId: testClerkOrgId("org-a") });
+			await ctx.db.insert("githubRepoMapping", { repo: "org-b/y", orchestrator: ORCH, project: "p", active: true, orgId: "org-a", clerkOrgId: testClerkOrgId("org-a") });
 			await ctx.db.insert("githubRepoMapping", { repo: "fleet/z", orchestrator: ORCH, project: "p", active: true });
 		});
 		const list = await master(t).query(api.githubOwnerBinding.listUnprovenMappings, {});
@@ -226,6 +228,7 @@ describe("existing mappings without proof are REPORTED", () => {
 		await t.run(async (ctx) => {
 			await ctx.db.insert("client_org_mapping", {
 				clerkOrgSlug: "org-a",
+				clerkOrgId: testClerkOrgId("org-a"),
 				allowedOrchestrators: [ORCH],
 				scopes: ["view-own-tasks", "manage-repo-mappings"],
 				displayName: "org-a",
@@ -289,6 +292,7 @@ describe("existing mappings without proof are REPORTED", () => {
 					project: "p",
 					active: true,
 					orgId: "org-a",
+					clerkOrgId: testClerkOrgId("org-a"),
 				});
 			}
 			// a fleet row is scanned but never reported
@@ -394,6 +398,7 @@ describe("a revoked binding stops routing (it stays REPORTED)", () => {
 				repo: "org-a/repo", issueNumber: 5, title: "i", body: "", htmlUrl: "https://example.test/5", labels: [],
 				status: "open", priority: "medium", assignedOrchestrator: ORCH, project: "pa",
 				githubCreatedAt: 1, githubUpdatedAt: 1, orgId: "org-a",
+				clerkOrgId: testClerkOrgId("org-a"),
 			});
 		});
 	};

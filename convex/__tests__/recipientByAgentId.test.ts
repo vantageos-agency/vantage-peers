@@ -22,6 +22,7 @@
 
 import { convexTest } from "convex-test";
 import { describe, expect, test } from "vitest";
+import { testClerkOrgId } from "../../tests/fixtures/testClerkOrgId";
 import { api, internal } from "../_generated/api";
 import type { Id } from "../_generated/dataModel";
 import schema from "../schema";
@@ -45,6 +46,7 @@ const adminOf = (t: T, org: string) =>
 	t.withIdentity({
 		subject: `admin-of-${org}`,
 		org_slug: org,
+		org_id: testClerkOrgId(org),
 		org_role: "org:admin",
 	} as Identity);
 const anonymous = (t: T) => t;
@@ -73,6 +75,7 @@ async function world(): Promise<World> {
 		) =>
 			ctx.db.insert("client_org_mapping", {
 				clerkOrgSlug,
+				clerkOrgId: testClerkOrgId(clerkOrgSlug),
 				allowedOrchestrators,
 				scopes: ["view-own-tasks"],
 				displayName: clerkOrgSlug,
@@ -93,6 +96,7 @@ async function world(): Promise<World> {
 		const agent = (orgSlug: string, name: string, isActive = true) =>
 			ctx.db.insert("agents", {
 				orgSlug,
+				clerkOrgId: testClerkOrgId(orgSlug),
 				name,
 				normalizedName: name.normalize("NFC").toLowerCase().trim(),
 				isActive,
@@ -143,6 +147,7 @@ async function world(): Promise<World> {
 			expiresAt: now + 3_600_000,
 			createdAt: now,
 			clerkOrgSlug: "iris-rh",
+			clerkOrgId: testClerkOrgId("iris-rh"),
 		});
 	});
 	return {

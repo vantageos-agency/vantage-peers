@@ -14,6 +14,7 @@
 
 import { convexTest } from "convex-test";
 import { describe, expect, test } from "vitest";
+import { testClerkOrgId } from "../../tests/fixtures/testClerkOrgId";
 import { api } from "../_generated/api";
 import type { Id } from "../_generated/dataModel";
 import schema from "../schema";
@@ -37,7 +38,7 @@ type Caller = ReturnType<T["withIdentity"]>;
 const idOf = (subject: string, org?: string, role?: string) =>
 	({
 		subject,
-		...(org ? { organizationSlug: org } : {}),
+		...(org ? { organizationSlug: org, org_id: testClerkOrgId(org) } : {}),
 		...(role ? { org_role: role } : {}),
 	}) as Parameters<
 		T["withIdentity"]
@@ -47,6 +48,7 @@ async function seedOrg(t: T, slug: string, allowed: string[] = ["sigma"]) {
 	await t.run(async (ctx) => {
 		await ctx.db.insert("client_org_mapping", {
 			clerkOrgSlug: slug,
+			clerkOrgId: testClerkOrgId(slug),
 			allowedOrchestrators: allowed,
 			scopes: ["view-own-tasks"],
 			displayName: slug,
@@ -70,7 +72,7 @@ async function seedTask(
 			createdBy: "sigma",
 			createdAt: Date.now(),
 			updatedAt: Date.now(),
-			...(orgId !== undefined ? { orgId } : {}),
+			...(orgId !== undefined ? { orgId, clerkOrgId: testClerkOrgId(orgId) } : {}),
 			...(status === "in_progress"
 				? { startedAt: Date.now(), workSegments: [{ start: Date.now() }] }
 				: {}),
@@ -240,6 +242,7 @@ describe("member acting — door-specific requirements still bind a member", () 
 				createdAt: Date.now(),
 				updatedAt: Date.now(),
 				orgId: "org-a",
+				clerkOrgId: testClerkOrgId("org-a"),
 			}),
 		);
 		await member.mutation(api.tasks.blockTask, {

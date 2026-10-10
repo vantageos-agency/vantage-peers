@@ -6,7 +6,7 @@ import { creatorValidator } from "./schema";
 import { requireResolvedCaller, withOrgScope, type OrgScope } from "./lib/auth";
 import { isFleetSystemCaller } from "./lib/systemCaller";
 import { fleetOperatorRef, fleetOperatorSlug } from "./lib/operatorOrg";
-import { ORG_KEY_OPTIONS, orgRefOfRow, orgRefOfScope } from "./lib/authOrgMapping";
+import { orgRefOfRow, orgRefOfScope } from "./lib/authOrgMapping";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Org-scope orchestrator enforcement (same defect class as
@@ -161,7 +161,6 @@ export const write = mutation({
 					orgRefOfRow(existing),
 					orgRefOfScope(scope),
 					await fleetOperatorRef(ctx.db),
-					ORG_KEY_OPTIONS,
 				)
 			) {
 				throw new ConvexError(
@@ -443,7 +442,6 @@ export const deleteDiary = mutation({
 				orgRefOfRow(entry),
 				orgRefOfScope(scope),
 				await fleetOperatorRef(ctx.db),
-				ORG_KEY_OPTIONS,
 			)
 		) {
 			throw new ConvexError(

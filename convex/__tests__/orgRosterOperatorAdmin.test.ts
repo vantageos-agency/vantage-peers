@@ -14,6 +14,7 @@
 
 import { convexTest } from "convex-test";
 import { afterEach, describe, expect, test, vi } from "vitest";
+import { testClerkOrgId } from "../../tests/fixtures/testClerkOrgId";
 import { api } from "../_generated/api";
 import schema from "../schema";
 
@@ -33,9 +34,9 @@ type Identity = Parameters<T["withIdentity"]>[0];
 const SA = "roster-test-service-account";
 const OPERATOR_ORG = "operator-org-slug";
 const CLIENT_ORG = "client-org-slug";
-const OP_ADMIN = { subject: "op", org_slug: OPERATOR_ORG, org_role: "org:admin" };
-const OP_MEMBER = { subject: "om", org_slug: OPERATOR_ORG, org_role: "org:member" };
-const CLIENT_ADMIN = { subject: "ca", org_slug: CLIENT_ORG, org_role: "org:admin" };
+const OP_ADMIN = { subject: "op", org_slug: OPERATOR_ORG, org_id: testClerkOrgId(OPERATOR_ORG), org_role: "org:admin" };
+const OP_MEMBER = { subject: "om", org_slug: OPERATOR_ORG, org_id: testClerkOrgId(OPERATOR_ORG), org_role: "org:member" };
+const CLIENT_ADMIN = { subject: "ca", org_slug: CLIENT_ORG, org_id: testClerkOrgId(CLIENT_ORG), org_role: "org:admin" };
 
 async function seed(t: T, operatorRoster: string[] = ["sigma", "eta"]) {
 	const row = (
@@ -44,6 +45,7 @@ async function seed(t: T, operatorRoster: string[] = ["sigma", "eta"]) {
 		orgKind: "operator" | "client",
 	) => ({
 		clerkOrgSlug,
+		clerkOrgId: testClerkOrgId(clerkOrgSlug),
 		allowedOrchestrators,
 		scopes: ["view-own-tasks"],
 		displayName: clerkOrgSlug,

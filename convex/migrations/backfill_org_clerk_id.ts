@@ -7,16 +7,20 @@
 //
 // SOURCE OF TRUTH. `client_org_mapping.clerkOrgId`, set per mapping by
 // clientOrgMapping:setClerkOrgId (scripts/fill-mapping-clerk-org-id.mjs resolves each
-// slug against the Clerk Backend API). THIS MIGRATION RESOLVES NOTHING EXTERNALLY: it
-// joins a row's slug to the mapping row by `by_clerk_slug` and copies that row's id.
-// The operator org is an ordinary mapping row and maps the same way.
+// slug against the Clerk Backend API). THIS MIGRATION RESOLVES NOTHING EXTERNALLY: the
+// slug-to-ID derivation is @vantageos/cloud-identity's
+// `resolveOrgIdForLabelBackfillOnly`, fed by an adapter over the mapping rows read
+// once per page. This one-off backfill is the ONLY place in this repository that
+// resolves an org from its label (M4 ruling 3); no request path does. The operator
+// org is an ordinary mapping row and maps the same way.
 //
 // NEVER GUESSES. A row is filled only when its slug names EXACTLY ONE mapping row that
 // carries a clerkOrgId. Otherwise it is left unfilled and LISTED BY ID with its reason:
-//   orgUnmapped         the slug has no client_org_mapping row;
-//   ambiguousMapping    the slug names more than one mapping row;
-//   mappingHasNoClerkId the mapping exists but its clerkOrgId is not filled yet (run
-//                       the mapping fill first).
+//   orgUnmapped          the slug has no client_org_mapping row;
+//   ambiguousMapping     the slug names more than one mapping row;
+//   mappingHasNoClerkId  the mapping exists but its clerkOrgId is not filled yet (run
+//                        the mapping fill first);
+//   mappingRecordInvalid the mapping row is not well formed for the package.
 // A row with NO slug (fleet-owned, unstamped) is counted `noSlug` and left alone:
 // backfill_org_stamp decides its slug first; this migration never invents one.
 //
@@ -32,6 +36,10 @@
 // Internal: reachable only with the deployment admin credential, so no per-caller
 // auth check exists here by design.
 
+import {
+	type OrgIdAbsenceReason,
+	resolveOrgIdForLabelBackfillOnly,
+} from "@vantageos/cloud-identity";
 import { ConvexError, v } from "convex/values";
 import type { DatabaseReader } from "../_generated/server";
 import { internalMutation, internalQuery } from "../_generated/server";
@@ -97,40 +105,85 @@ const SMALL_PAGE_SIZE: Partial<Record<OrgIdTable, number>> = {
 const MAX_PAGE_SIZE = 500;
 const MAPPING_READ_CAP = 1000;
 
-type Reason = "orgUnmapped" | "ambiguousMapping" | "mappingHasNoClerkId";
+type Reason =
+	| "orgUnmapped"
+	| "ambiguousMapping"
+	| "mappingHasNoClerkId"
+	| "mappingRecordInvalid";
 
 type Resolution =
 	| { kind: "id"; clerkOrgId: string }
 	| { kind: "undecidable"; reason: Reason };
 
-async function loadMappings(
-	db: DatabaseReader,
-): Promise<Map<string, Resolution>> {
+type MappingRow = Awaited<ReturnType<typeof loadMappingRows>>[number];
+
+async function loadMappingRows(db: DatabaseReader) {
 	const rows = await db.query("client_org_mapping").take(MAPPING_READ_CAP + 1);
 	if (rows.length > MAPPING_READ_CAP) {
 		throw new ConvexError(
 			`backfill_org_clerk_id: client_org_mapping holds more than ${MAPPING_READ_CAP} rows; refusing to decide from a truncated read.`,
 		);
 	}
-	const bySlug = new Map<string, Resolution>();
-	const seen = new Set<string>();
+	return rows;
+}
+
+/** Slug -> the mapping rows carrying it. More than one makes the slug ambiguous. */
+function indexBySlug(rows: MappingRow[]): Map<string, MappingRow[]> {
+	const bySlug = new Map<string, MappingRow[]>();
 	for (const m of rows) {
-		if (seen.has(m.clerkOrgSlug)) {
-			bySlug.set(m.clerkOrgSlug, {
-				kind: "undecidable",
-				reason: "ambiguousMapping",
-			});
-			continue;
-		}
-		seen.add(m.clerkOrgSlug);
-		bySlug.set(
-			m.clerkOrgSlug,
-			m.clerkOrgId === undefined
-				? { kind: "undecidable", reason: "mappingHasNoClerkId" }
-				: { kind: "id", clerkOrgId: m.clerkOrgId },
-		);
+		const list = bySlug.get(m.clerkOrgSlug);
+		if (list) list.push(m);
+		else bySlug.set(m.clerkOrgSlug, [m]);
 	}
 	return bySlug;
+}
+
+class AmbiguousMapping extends Error {}
+
+const REASON_OF_ABSENCE: Record<
+	Exclude<OrgIdAbsenceReason, "lookup-failed">,
+	Reason
+> = {
+	"no-label": "orgUnmapped",
+	"not-mapped": "orgUnmapped",
+	"id-not-filled": "mappingHasNoClerkId",
+	"record-invalid": "mappingRecordInvalid",
+};
+
+/**
+ * The slug's org ID, derived by the package's backfill-only resolver. The adapter
+ * answers from the rows already read; a slug carried by two rows throws, which the
+ * package reports as `lookup-failed` and this migration lists as ambiguousMapping.
+ */
+async function resolveSlug(
+	bySlug: Map<string, MappingRow[]>,
+	slug: string,
+): Promise<Resolution> {
+	const resolved = await resolveOrgIdForLabelBackfillOnly(slug, {
+		orgByLabel: (label) => {
+			const rows = bySlug.get(label) ?? [];
+			if (rows.length > 1) throw new AmbiguousMapping(label);
+			const m = rows[0];
+			if (m === undefined) return null;
+			return {
+				id: m.clerkOrgId,
+				label: m.clerkOrgSlug,
+				active: m.isActive,
+				allowedOrchestrators: m.allowedOrchestrators,
+				scopes: m.scopes,
+				orgKind: m.orgKind,
+			};
+		},
+	});
+	if (resolved.present) return { kind: "id", clerkOrgId: resolved.orgId };
+	const reason = resolved.absence.reason;
+	return {
+		kind: "undecidable",
+		reason:
+			reason === "lookup-failed"
+				? "ambiguousMapping"
+				: REASON_OF_ABSENCE[reason],
+	};
 }
 
 const mappingInventoryValidator = v.object({
@@ -192,6 +245,7 @@ const reasonCountsValidator = v.object({
 	orgUnmapped: v.number(),
 	ambiguousMapping: v.number(),
 	mappingHasNoClerkId: v.number(),
+	mappingRecordInvalid: v.number(),
 });
 
 const resultValidator = v.object({
@@ -239,7 +293,7 @@ export const run = internalMutation({
 			);
 		}
 		const { slugField, idField } = ORG_COLUMNS[args.table];
-		const mappings = await loadMappings(ctx.db);
+		const mappings = indexBySlug(await loadMappingRows(ctx.db));
 
 		const page = await ctx.db
 			.query(args.table)
@@ -254,6 +308,7 @@ export const run = internalMutation({
 			orgUnmapped: 0,
 			ambiguousMapping: 0,
 			mappingHasNoClerkId: 0,
+			mappingRecordInvalid: 0,
 		};
 		const undecidableRows: { id: string; slug: string; reason: string }[] = [];
 
@@ -268,10 +323,7 @@ export const run = internalMutation({
 				noSlug++;
 				continue;
 			}
-			const resolution = mappings.get(slug) ?? {
-				kind: "undecidable" as const,
-				reason: "orgUnmapped" as const,
-			};
+			const resolution = await resolveSlug(mappings, slug);
 			if (resolution.kind === "undecidable") {
 				byReason[resolution.reason]++;
 				undecidableRows.push({ id: row._id, slug, reason: resolution.reason });

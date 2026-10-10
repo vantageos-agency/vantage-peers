@@ -42,6 +42,7 @@
 import type { ConvexError } from "convex/values";
 import { convexTest } from "convex-test";
 import { describe, expect, test } from "vitest";
+import { testClerkOrgId } from "../../tests/fixtures/testClerkOrgId";
 import { api } from "../_generated/api";
 import type { Id } from "../_generated/dataModel";
 import schema from "../schema";
@@ -81,6 +82,7 @@ const asMember = (t: T) =>
 	t.withIdentity({
 		subject: MEMBER,
 		organizationId: "org-a",
+		org_id: testClerkOrgId("org-a"),
 		organizationSlug: "org-a",
 		org_role: "org:editor",
 	} as Parameters<typeof t.withIdentity>[0]);
@@ -89,6 +91,7 @@ const seedOrgMapping = (t: T) =>
 	t.run(async (ctx) => {
 		await ctx.db.insert("client_org_mapping", {
 			clerkOrgSlug: "org-a",
+			clerkOrgId: testClerkOrgId("org-a"),
 			allowedOrchestrators: [SEAT],
 			scopes: ["view-own-tasks"],
 			displayName: "org-a",
@@ -122,6 +125,7 @@ const seedBriefingNote = (t: T, orgId: string) =>
 			createdBy: SEAT,
 			createdAt: NOW,
 			orgId,
+			clerkOrgId: testClerkOrgId(orgId),
 		}),
 	);
 
@@ -133,6 +137,7 @@ const seedDiary = (t: T) =>
 			content: "seed entry",
 			createdAt: NOW,
 			orgId: "org-a",
+			clerkOrgId: testClerkOrgId("org-a"),
 		}),
 	);
 
@@ -144,6 +149,7 @@ const seedMessage = (t: T) =>
 			content: "seed message",
 			createdAt: NOW,
 			tenantId: "org-a",
+			tenantOrgId: testClerkOrgId("org-a"),
 		}),
 	);
 
@@ -160,6 +166,7 @@ const seedMission = (t: T) =>
 			createdAt: NOW,
 			updatedAt: NOW,
 			orgId: "org-a",
+			clerkOrgId: testClerkOrgId("org-a"),
 		}),
 	);
 
@@ -180,6 +187,7 @@ const seedSession = (t: T, sessionId: string) =>
 		ctx.db.insert("iframeEmbedSessions", {
 			sessionId,
 			tenantId: "org-a",
+			tenantOrgId: testClerkOrgId("org-a"),
 			origin: "https://acme.example.com",
 			createdAt: NOW,
 			lastSeenAt: NOW,

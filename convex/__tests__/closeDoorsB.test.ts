@@ -10,6 +10,7 @@
  */
 import { convexTest } from "convex-test";
 import { describe, expect, test } from "vitest";
+import { testClerkOrgId } from "../../tests/fixtures/testClerkOrgId";
 import { api } from "../_generated/api";
 import { UNCLAIMED_SERVICE_ACCOUNT_READS_EVERY_TENANT } from "../lib/inboxReader";
 import schema from "../schema";
@@ -31,12 +32,14 @@ const asMemberA = (t: T) =>
 	t.withIdentity({
 		subject: "member-of-org-a",
 		organizationId: "org-a",
+		org_id: testClerkOrgId("org-a"),
 		organizationSlug: "org-a",
 	} as Ident);
 const asMemberB = (t: T) =>
 	t.withIdentity({
 		subject: "member-of-org-b",
 		organizationId: "org-b",
+		org_id: testClerkOrgId("org-b"),
 		organizationSlug: "org-b",
 	} as Ident);
 const asPreOrg = (t: T) =>
@@ -49,6 +52,7 @@ const seedMappings = (t: T) =>
 		for (const slug of ["org-a", "org-b"]) {
 			await ctx.db.insert("client_org_mapping", {
 				clerkOrgSlug: slug,
+				clerkOrgId: testClerkOrgId(slug),
 				allowedOrchestrators: slug === "org-a" ? ["sigma"] : ["iris"],
 				scopes: ["view-own-tasks"],
 				displayName: slug,
@@ -178,10 +182,10 @@ describe("messages:getUnreadCount", () => {
 		const mA = await seedMsg(t, "sigma", "org-a");
 		const mB = await seedMsg(t, "sigma", "org-b");
 		await t.run(async (ctx) => {
-			await ctx.db.insert("messageReceipts", { messageId: mA, recipient: "sigma", tenantId: "org-a" });
-			await ctx.db.insert("messageReceipts", { messageId: mA, recipient: "sigma", tenantId: "org-a" });
-			await ctx.db.insert("messageReceipts", { messageId: mB, recipient: "sigma", tenantId: "org-b" });
-			await ctx.db.insert("messageReceipts", { messageId: mB, recipient: "iris", tenantId: "org-b" });
+			await ctx.db.insert("messageReceipts", { messageId: mA, recipient: "sigma", tenantId: "org-a", tenantOrgId: testClerkOrgId("org-a") });
+			await ctx.db.insert("messageReceipts", { messageId: mA, recipient: "sigma", tenantId: "org-a", tenantOrgId: testClerkOrgId("org-a") });
+			await ctx.db.insert("messageReceipts", { messageId: mB, recipient: "sigma", tenantId: "org-b", tenantOrgId: testClerkOrgId("org-b") });
+			await ctx.db.insert("messageReceipts", { messageId: mB, recipient: "iris", tenantId: "org-b", tenantOrgId: testClerkOrgId("org-b") });
 		});
 
 		refusedAs(
@@ -233,6 +237,7 @@ describe("messages:getUnreadCount served zero", () => {
 				messageId: mA,
 				recipient: "sigma",
 				tenantId: "org-a",
+				tenantOrgId: testClerkOrgId("org-a"),
 				readAt: 1,
 			});
 		});

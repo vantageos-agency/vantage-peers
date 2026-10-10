@@ -23,7 +23,7 @@ import {
 } from "@vantageos/cloud-identity";
 import type { Doc } from "../_generated/dataModel";
 import type { MutationCtx, QueryCtx } from "../_generated/server";
-import { ORG_KEY_OPTIONS, orgRefOfRow } from "./authOrgMapping";
+import { orgRefOfRow } from "./authOrgMapping";
 import { fleetOperatorRef } from "./operatorOrg";
 
 type RowOrg = { orgId?: string; clerkOrgId?: string };
@@ -55,8 +55,7 @@ export async function audienceForOrg(
 	const operator = await fleetOperatorRef(ctx.db);
 	return {
 		org: ref,
-		includeFleet:
-			operator !== undefined && sameOrg(ref, operator, ORG_KEY_OPTIONS),
+		includeFleet: operator !== undefined && sameOrg(ref, operator),
 	};
 }
 
@@ -66,7 +65,7 @@ export function mappingInAudience(
 ): boolean {
 	const ref = orgRefOfRow(row);
 	if (isFleetStamp(ref, undefined)) return audience.includeFleet;
-	return sameOrg(ref, audience.org, ORG_KEY_OPTIONS);
+	return sameOrg(ref, audience.org);
 }
 
 /** An issue is reachable through a mapping only when both name the same tenant. */
@@ -74,10 +73,5 @@ export function issueMatchesMapping(
 	issue: Pick<Doc<"issues">, "orgId" | "clerkOrgId">,
 	mapping: Pick<Doc<"githubRepoMapping">, "orgId" | "clerkOrgId">,
 ): boolean {
-	return sameTenantStamp(
-		orgRefOfRow(issue),
-		orgRefOfRow(mapping),
-		undefined,
-		ORG_KEY_OPTIONS,
-	);
+	return sameTenantStamp(orgRefOfRow(issue), orgRefOfRow(mapping), undefined);
 }

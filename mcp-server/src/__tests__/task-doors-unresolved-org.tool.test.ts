@@ -17,6 +17,7 @@ import { anyApi } from "convex/server";
 import { convexTest } from "convex-test";
 import { beforeEach, describe, expect, it } from "vitest";
 import schema from "../../../convex/schema.js";
+import { testClerkOrgId } from "../../../tests/fixtures/testClerkOrgId";
 import type { OAuthContext } from "../auth.js";
 import { registerTools } from "../tools.js";
 
@@ -202,6 +203,7 @@ beforeEach(async () => {
 		for (const slug of ["org-a", "org-b"]) {
 			await ctx.db.insert("client_org_mapping", {
 				clerkOrgSlug: slug,
+				clerkOrgId: testClerkOrgId(slug),
 				allowedOrchestrators: ["eta"],
 				scopes: ["view-own-tasks"],
 				displayName: slug,
@@ -222,6 +224,7 @@ async function seed(orgId: string, status: Status): Promise<string> {
 			priority: "low",
 			status: status === "paused" ? "in_progress" : status,
 			orgId,
+			clerkOrgId: testClerkOrgId(orgId),
 			...(status === "in_progress"
 				? { startedAt: now - 60_000, workSegments: [{ start: now - 60_000 }] }
 				: {}),
@@ -294,6 +297,7 @@ describe("a non-master bearer with no resolvable org is refused at the MCP layer
 		const member = t.withIdentity({
 			subject: "member-a",
 			org_slug: "org-a",
+			org_id: testClerkOrgId("org-a"),
 			org_role: "org:admin",
 		} as never);
 		const clerkCtx: OAuthContext = {

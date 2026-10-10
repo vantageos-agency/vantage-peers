@@ -20,6 +20,7 @@ import { convexTest } from "convex-test";
 import { api } from "../_generated/api";
 import schema from "../schema";
 import { agentIdOf } from "../../tests/lib/agentIdOf";
+import { testClerkOrgId } from "../../tests/fixtures/testClerkOrgId";
 
 const modules = Object.fromEntries(
 	Object.entries(import.meta.glob("../**/*.ts")).filter(
@@ -32,12 +33,13 @@ type T = ReturnType<typeof createT>;
 type Identity = Parameters<T["withIdentity"]>[0];
 
 const adminOf = (org: string) =>
-	({ subject: `admin-of-${org}`, org_slug: org, org_role: "org:admin" }) as Identity;
+	({ subject: `admin-of-${org}`, org_slug: org, org_id: testClerkOrgId(org), org_role: "org:admin" }) as Identity;
 
 async function seedOrg(t: T, clerkOrgSlug: string) {
 	await t.run(async (ctx) => {
 		await ctx.db.insert("client_org_mapping", {
 			clerkOrgSlug,
+			clerkOrgId: testClerkOrgId(clerkOrgSlug),
 			allowedOrchestrators: ["existing-seat"],
 			scopes: ["view-own-tasks"],
 			displayName: clerkOrgSlug,
@@ -55,12 +57,14 @@ async function seedEdges(t: T, orgSlug: string, name: string, n: number) {
 		for (let i = 0; i < n; i++) {
 			await ctx.db.insert("agent_relations", {
 				orgSlug,
+				clerkOrgId: testClerkOrgId(orgSlug),
 				parentName: name,
 				childName: `${orgSlug}-child-${i}`,
 				createdAt: Date.now(),
 			});
 			await ctx.db.insert("agent_relations", {
 				orgSlug,
+				clerkOrgId: testClerkOrgId(orgSlug),
 				parentName: `${orgSlug}-parent-${i}`,
 				childName: name,
 				createdAt: Date.now(),

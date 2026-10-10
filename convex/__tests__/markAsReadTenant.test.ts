@@ -12,6 +12,7 @@
  */
 import { convexTest } from "convex-test";
 import { describe, expect, test } from "vitest";
+import { testClerkOrgId } from "../../tests/fixtures/testClerkOrgId";
 import { api } from "../_generated/api";
 import { UNCLAIMED_SERVICE_ACCOUNT_READS_EVERY_TENANT } from "../lib/inboxReader";
 import schema from "../schema";
@@ -29,6 +30,7 @@ const asOrgA = (t: T) =>
 	t.withIdentity({
 		subject: "user-org-a",
 		organizationId: "org-a",
+		org_id: testClerkOrgId("org-a"),
 	} as Parameters<typeof t.withIdentity>[0]);
 const asMaster = (t: T) =>
 	t.withIdentity({
@@ -41,6 +43,7 @@ async function seedMappings(t: T) {
 		for (const org of ["org-a", "org-b"]) {
 			await ctx.db.insert("client_org_mapping", {
 				clerkOrgSlug: org,
+				clerkOrgId: testClerkOrgId(org),
 				allowedOrchestrators: ["seat-x"],
 				scopes: ["view-own-tasks"],
 				displayName: org,
@@ -56,6 +59,7 @@ async function seedRow(t: T, tenantId: string | undefined) {
 		const messageId = await ctx.db.insert("messages", {
 			from: "seat-x",
 			tenantId,
+			tenantOrgId: testClerkOrgId(tenantId),
 			channel: "seat-x",
 			content: "c",
 			createdAt: Date.now(),
@@ -64,6 +68,7 @@ async function seedRow(t: T, tenantId: string | undefined) {
 			messageId,
 			recipient: "seat-x",
 			tenantId,
+			tenantOrgId: testClerkOrgId(tenantId),
 			readAt: undefined,
 		});
 		return { messageId, receiptId };
@@ -184,6 +189,7 @@ describe("messages:markAsRead — claimless service account, no owner named", ()
 		await t.run(async (ctx) => {
 			await ctx.db.insert("client_org_mapping", {
 				clerkOrgSlug: "op-org",
+				clerkOrgId: testClerkOrgId("op-org"),
 				allowedOrchestrators: ["seat-x"],
 				scopes: ["view-own-tasks"],
 				displayName: "operator",

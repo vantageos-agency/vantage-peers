@@ -32,6 +32,7 @@ import { describe, expect, test } from "vitest";
 import { api } from "../_generated/api";
 import schema from "../schema";
 import { agentIdOf, seedAgents } from "../../tests/lib/agentIdOf";
+import { testClerkOrgId } from "../../tests/fixtures/testClerkOrgId";
 
 const modules = Object.fromEntries(
 	Object.entries(import.meta.glob("../**/*.ts")).filter(
@@ -49,6 +50,7 @@ async function seedOrgMapping(
 	await t.run(async (ctx) => {
 		await ctx.db.insert("client_org_mapping", {
 			clerkOrgSlug,
+			clerkOrgId: testClerkOrgId(clerkOrgSlug),
 			allowedOrchestrators,
 			scopes: ["view-own-tasks"],
 			displayName: clerkOrgSlug,
@@ -63,12 +65,14 @@ async function seedOrgMapping(
 const orgAdminIdentity = (org: string) => ({
 	subject: `admin-of-${org}`,
 	org_slug: org,
+	org_id: testClerkOrgId(org),
 	org_role: "org:admin",
 });
 
 const orgMemberIdentity = (org: string) => ({
 	subject: `member-of-${org}`,
 	org_slug: org,
+	org_id: testClerkOrgId(org),
 	org_role: "org:member",
 });
 

@@ -20,6 +20,7 @@ import { convexTest } from "convex-test";
 import { Hono } from "hono";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import schema from "../../convex/schema";
+import { testClerkOrgId } from "../../tests/fixtures/testClerkOrgId";
 import { app } from "../server-http.js";
 import {
 	_setInternalClientForTest,
@@ -93,6 +94,7 @@ beforeEach(async () => {
 		});
 		await ctx.db.insert("client_org_mapping", {
 			clerkOrgSlug: "org-a",
+			clerkOrgId: testClerkOrgId("org-a"),
 			allowedOrchestrators: ["agent-a"],
 			scopes: ["vantage:read", "vantage:write"],
 			displayName: "a",
@@ -131,6 +133,7 @@ async function agentCredential(): Promise<string> {
 		t.withIdentity({
 			subject: "admin-of-org-a",
 			org_slug: "org-a",
+			org_id: testClerkOrgId("org-a"),
 			org_role: "org:admin",
 		} as never),
 	);
@@ -305,6 +308,7 @@ describe("person token: the writer-role gate", () => {
 		await t.run(async (ctx) => {
 			await ctx.db.insert("memberWriterRoles", {
 				orgSlug: "org-a",
+				clerkOrgId: testClerkOrgId("org-a"),
 				roles: [],
 				updatedAt: Date.now(),
 			});
@@ -404,6 +408,7 @@ describe("own-state tools: mark_as_read is the receipt owner's, not a role excep
 			const messageId = await ctx.db.insert("messages", {
 				from: "agent-a",
 				tenantId: "org-a",
+				tenantOrgId: testClerkOrgId("org-a"),
 				channel: "direct",
 				content: "hello",
 				createdAt: now,
@@ -412,11 +417,13 @@ describe("own-state tools: mark_as_read is the receipt owner's, not a role excep
 				messageId,
 				recipient: "agent-a",
 				tenantId: "org-a",
+				tenantOrgId: testClerkOrgId("org-a"),
 			});
 			const other = await ctx.db.insert("messageReceipts", {
 				messageId,
 				recipient: "agent-b",
 				tenantId: "org-a",
+				tenantOrgId: testClerkOrgId("org-a"),
 			});
 			return { own: own as string, other: other as string };
 		});

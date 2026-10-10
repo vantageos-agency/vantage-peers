@@ -14,6 +14,7 @@
  */
 import { convexTest } from "convex-test";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
+import { testClerkOrgId } from "../../tests/fixtures/testClerkOrgId";
 import { api, internal } from "../_generated/api";
 import schema from "../schema";
 
@@ -41,6 +42,7 @@ const asMemberOf = (t: T, org: string) =>
 	t.withIdentity({
 		subject: `editor-of-${org}`,
 		organizationId: org,
+		org_id: testClerkOrgId(org),
 		organizationSlug: org,
 		orgRole: "org:editor",
 	} as Parameters<typeof t.withIdentity>[0]);
@@ -52,6 +54,12 @@ async function provision(t: T, slug: string, seat: string) {
 		clerkOrgSlug: slug,
 		displayName: slug,
 		orchestrators: [{ name: seat }],
+	});
+	// The operator step that follows provisioning: the mapping gets its permanent
+	// Clerk org ID. Without it no member resolves (M4: no label fallback).
+	await t.mutation(internal.clientOrgMapping.setClerkOrgId, {
+		clerkOrgSlug: slug,
+		clerkOrgId: testClerkOrgId(slug),
 	});
 }
 
@@ -68,6 +76,7 @@ async function seedMission(t: T, name: string, orgId: string, pilot: string) {
 			createdAt: Date.now(),
 			updatedAt: Date.now(),
 			orgId,
+			clerkOrgId: testClerkOrgId(orgId),
 		} as never),
 	);
 }
@@ -186,12 +195,14 @@ describe("memberScopesMigration:addDefaultMemberScopes", () => {
 			await ctx.db.insert("client_org_mapping", {
 				...base,
 				clerkOrgSlug: "legacy",
+				clerkOrgId: testClerkOrgId("legacy"),
 				scopes: ["view-own-tasks"],
 				isActive: true,
 			});
 			await ctx.db.insert("client_org_mapping", {
 				...base,
 				clerkOrgSlug: "inactive",
+				clerkOrgId: testClerkOrgId("inactive"),
 				scopes: ["view-own-tasks"],
 				isActive: false,
 			});
@@ -200,12 +211,14 @@ describe("memberScopesMigration:addDefaultMemberScopes", () => {
 				allowedOrchestrators: ["*"],
 				fleetWide: true, // the explicit flag that replaced the "*" sentinel (M1)
 				clerkOrgSlug: "master-sentinel",
+				clerkOrgId: testClerkOrgId("master-sentinel"),
 				scopes: ["cross-tenant-read"],
 				isActive: true,
 			});
 			await ctx.db.insert("client_org_mapping", {
 				...base,
 				clerkOrgSlug: "already",
+				clerkOrgId: testClerkOrgId("already"),
 				scopes: ["view-own-tasks", "view-own-missions"],
 				isActive: true,
 			});

@@ -19,7 +19,7 @@ import {
 	requireScope,
 } from "./lib/auth";
 import type { OrgScope } from "./lib/auth";
-import { ORG_KEY_OPTIONS, orgRefOfRow, orgRefOfScope } from "./lib/authOrgMapping";
+import { orgRefOfRow, orgRefOfScope } from "./lib/authOrgMapping";
 import { isFleetSystemCaller } from "./lib/systemCaller";
 import { requireId } from "./lib/ids";
 import { resolveHumanActor } from "./lib/humanActor";
@@ -155,7 +155,7 @@ function isOrgAllowedForScope(
 ): boolean {
 	if (scope.isMaster) return true;
 	if (scope.orgSlug === null) return false;
-	return sameOrg(orgRefOfRow(row), orgRefOfScope(scope), ORG_KEY_OPTIONS);
+	return sameOrg(orgRefOfRow(row), orgRefOfScope(scope));
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

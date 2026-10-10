@@ -20,9 +20,14 @@ still compare slugs.
    `cursor` until `isDone`, continue with `nextTable`; then the same with `"dryRun":false`.
 5. Re-run step 4 as a dry run: `toFill` must be 0; `undecidableRows` lists what needs a decision.
 
-The backfill covers 19 tables, `githubRepoMapping` and `issues` included. Before any prod deploy of
-the id-first readers, step 5 must report `toFill` 0: a row without an id is decided by its slug, so
-a slug a renamed org freed is still ambiguous for that row.
+The backfill covers 19 tables, `githubRepoMapping` and `issues` included. Its slug-to-ID
+derivation is `@vantageos/cloud-identity`'s `resolveOrgIdForLabelBackfillOnly`: this migration is
+the only place an org is resolved from its label.
 
-A new organisation's mapping has no id until step 2 is run for it; its rows carry the slug
-only until the backfill is re-run.
+Before any prod deploy of the ID-only readers (module M4: no label fallback on any request path),
+step 3 must show every mapping with an id AND step 5 must report `toFill` 0 on every table. On
+those readers a credential without an `org_id` claim, an `org_id` no mapping holds, and a row
+without an id are all refused: there is no slug fallback left to serve them.
+
+A new organisation's mapping has no id until step 2 is run for it; until then its members are
+refused (`org-mapping-not-found`), so step 2 is part of onboarding an organisation.

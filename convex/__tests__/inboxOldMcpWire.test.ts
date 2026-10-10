@@ -34,6 +34,7 @@
 
 import { convexTest } from "convex-test";
 import { describe, expect, test } from "vitest";
+import { testClerkOrgId } from "../../tests/fixtures/testClerkOrgId";
 import { api } from "../_generated/api";
 import type { Id } from "../_generated/dataModel";
 import { normalizeOrchestratorId } from "../_helpers/normalizeOrchestratorId";
@@ -64,6 +65,7 @@ const asMember = (t: T, org: string, subject: string) =>
 	t.withIdentity({
 		subject,
 		organizationSlug: org,
+		org_id: testClerkOrgId(org),
 		org_role: "org:editor",
 	} as Parameters<T["withIdentity"]>[0]);
 
@@ -82,6 +84,7 @@ async function seedWorld(): Promise<World> {
 		const mapping = (slug: string, names: string[], operator: boolean) =>
 			ctx.db.insert("client_org_mapping", {
 				clerkOrgSlug: slug,
+				clerkOrgId: testClerkOrgId(slug),
 				allowedOrchestrators: names,
 				scopes: ["view-own-tasks"],
 				displayName: slug,
@@ -99,6 +102,7 @@ async function seedWorld(): Promise<World> {
 		const agent = (orgSlug: string, name: string) =>
 			ctx.db.insert("agents", {
 				orgSlug,
+				clerkOrgId: testClerkOrgId(orgSlug),
 				name,
 				normalizedName: normalizeOrchestratorId(name),
 				isActive: true,
@@ -127,6 +131,7 @@ async function seedWorld(): Promise<World> {
 				channel: o.recipient,
 				content: key,
 				tenantId: o.tenantId,
+				tenantOrgId: testClerkOrgId(o.tenantId),
 				createdAt: NOW,
 			});
 			receipt[key] = await ctx.db.insert("messageReceipts", {
@@ -134,6 +139,7 @@ async function seedWorld(): Promise<World> {
 				recipient: o.recipient,
 				...(o.recipientId !== undefined ? { recipientId: o.recipientId } : {}),
 				tenantId: o.tenantId,
+				tenantOrgId: testClerkOrgId(o.tenantId),
 				readAt: undefined,
 			});
 		};
@@ -181,6 +187,7 @@ async function seedWorld(): Promise<World> {
 			channel: "nova",
 			content: "A-SENT",
 			tenantId: ORG_A,
+			tenantOrgId: testClerkOrgId(ORG_A),
 			createdAt: NOW,
 		});
 		return { agentA, agentB, fleetAgents, receipt, message };

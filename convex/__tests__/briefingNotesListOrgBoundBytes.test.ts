@@ -48,6 +48,7 @@
 
 import { convexTest } from "convex-test";
 import { describe, expect, test } from "vitest";
+import { testClerkOrgId } from "../../tests/fixtures/testClerkOrgId";
 import { api } from "../_generated/api";
 import schema from "../schema";
 
@@ -69,6 +70,7 @@ async function seedOrgMapping(
 	await t.run(async (ctx) => {
 		await ctx.db.insert("client_org_mapping", {
 			clerkOrgSlug: slug,
+			clerkOrgId: testClerkOrgId(slug),
 			allowedOrchestrators: ["*"],
 			scopes: ["view-own-tasks", "view-own-missions"],
 			displayName: slug,
@@ -82,6 +84,7 @@ function asOrg(t: ReturnType<typeof createTestConvex>, orgSlug: string) {
 	return t.withIdentity({
 		subject: `user-${orgSlug}`,
 		organizationId: orgSlug,
+		org_id: testClerkOrgId(orgSlug),
 	} as Parameters<typeof t.withIdentity>[0]);
 }
 
@@ -108,6 +111,7 @@ async function seedOtherOrgRows(
 					createdBy: "system",
 					createdAt: Date.now() + i,
 					orgId: opts.orgId,
+					clerkOrgId: testClerkOrgId(opts.orgId),
 				} as never);
 			}
 		});
@@ -154,6 +158,7 @@ describe("briefingNotes.list -- non-master scan is org-bound, not corpus-bound (
 				createdBy: "system",
 				createdAt: Date.now() + 1_000_000,
 				orgId: "acme-hr",
+				clerkOrgId: testClerkOrgId("acme-hr"),
 			} as never);
 		});
 
