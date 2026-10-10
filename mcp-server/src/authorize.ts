@@ -227,6 +227,10 @@ export function orgKeyOf(org: { id: string; slug: string | null }): string {
 
 export type OrgMappingRow = {
 	allowedOrchestrators: string[];
+	/** The roster by agent ID (module M1); optional until the backfill has run. */
+	allowedAgentIds?: string[];
+	/** The explicit fleet flag that replaces the "*" sentinel. */
+	fleetWide?: boolean;
 	scopes: string[];
 	isActive: boolean;
 } | null;

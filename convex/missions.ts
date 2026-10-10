@@ -620,7 +620,9 @@ export const listForWebhook = internalQuery({
 		const masterScope: OrgScope = {
 			userId: "internal-webhook",
 			orgSlug: null,
-			allowedOrchestrators: ["*"],
+			allowedOrchestrators: [],
+			allowedAgentIds: [],
+			fleetWide: true,
 			scopes: [
 				"cross-tenant-read",
 				"view-own-tasks",

@@ -50,6 +50,11 @@ import { actorIdResolver } from "./lib/actorIds";
 import { clerkOrgIdForSlug } from "./lib/orgClerkId";
 import { fleetOperatorSlug } from "./lib/operatorOrg";
 import {
+	agentListedAsCoordinator,
+	agentListedOnRoster,
+	rosterOf,
+} from "./lib/rosterIds";
+import {
 	fetchUnreadReceipts,
 	ownsReceipt,
 	ownsSentMessage,
@@ -275,6 +280,16 @@ async function resolveRecipientAgents(
 			`RBAC_DENIED: recipient agent "${raw}" is not an addressable agent of the sender's organisation — ${JSON.stringify({ reason: "recipient-agent-not-addressable", door: SEND_DOOR, recipientAgentId: raw })}`,
 		);
 	};
+	// The sender's roster is stored BY ID under its own organisation; the
+	// operator agents it may address directly are stored by ID beside it. Both
+	// are judged by @vantageos/cloud-identity `assertPrincipalListed`
+	// (convex/lib/rosterIds.ts): byte-equal IDs, the roster's org equal to the
+	// recipient's, no wildcard, and a missing roster admits nobody.
+	const coordinatorIds =
+		!fleetWide && reach.orgSlug !== null
+			? (await lookupOrgMapping(ctx, reach.orgSlug))
+					?.addressableFleetCoordinatorIds
+			: undefined;
 	const rows: Doc<"agents">[] = [];
 	const seen = new Set<string>();
 	for (const raw of rawIds) {
@@ -288,17 +303,42 @@ async function resolveRecipientAgents(
 		if (seen.has(id)) continue;
 		seen.add(id);
 		const row = await ctx.db.get(id);
-		if (
-			row === null ||
-			!row.isActive ||
-			targetOrg === undefined ||
-			targetOrg === null ||
-			row.orgSlug !== targetOrg ||
-			(derivedTenantId !== undefined && row.orgSlug !== derivedTenantId) ||
-			(!fleetWide && !isOrchestratorOnOrgRoster(reach, row.name))
-		) {
+		if (row === null || !row.isActive || targetOrg === undefined || targetOrg === null) {
 			return refuse(raw);
 		}
+		if (fleetWide) {
+			if (
+				row.orgSlug !== targetOrg ||
+				(derivedTenantId !== undefined && row.orgSlug !== derivedTenantId)
+			) {
+				return refuse(raw);
+			}
+			rows.push(row);
+			continue;
+		}
+		const own = await agentListedOnRoster(
+			ctx,
+			{ agentId: row._id, agentOrgId: row.orgSlug },
+			rosterOf(reach.orgSlug, reach.allowedAgentIds),
+			SEND_DOOR,
+		);
+		if (
+			own.ok &&
+			(derivedTenantId === undefined || row.orgSlug === derivedTenantId)
+		) {
+			rows.push(row);
+			continue;
+		}
+		// The ONE cross-org admission: an operator-org agent the sender's own
+		// organisation stores as an addressable fleet coordinator. The receipt
+		// stays in the sender's tenant and carries this agent's ID.
+		const coordinator = await agentListedAsCoordinator(
+			ctx,
+			row._id,
+			coordinatorIds,
+			SEND_DOOR,
+		);
+		if (!coordinator.ok) return refuse(raw);
 		rows.push(row);
 	}
 	return rows;
@@ -520,26 +560,53 @@ async function sendMessageCore(
 				const mappings = await ctx.db.query("client_org_mapping").collect();
 				const clientBound = new Set<string>();
 				for (const mapping of mappings) {
+					// A fleet-wide row names the fleet, not a client tenant.
+					if (mapping.fleetWide === true) continue;
 					for (const orchestratorId of mapping.allowedOrchestrators) {
-						if (orchestratorId !== "*") clientBound.add(orchestratorId);
+						clientBound.add(orchestratorId);
 					}
 				}
 				recipients = orchestratorIds.filter(
 					(o) => o !== args.from && !clientBound.has(o),
 				);
 			} else {
-				// Client-scoped emitter (including a client-org isMaster=true
-				// with orgSlug set — the ["*"] read-sentinel case): recipients
-				// bounded to this org's own allowedOrchestrators — never
-				// another tenant, never the internal fleet. A ["*"]
-				// allowedOrchestrators list never matches a real
-				// orchestratorId (the literal string "*" is not a
-				// registered orchestrator), so this yields zero recipients
-				// and the bounce below fires — fail-closed, not a leak.
-				const allowed = new Set(reach.allowedOrchestrators);
-				recipients = orchestratorIds.filter(
-					(o) => o !== args.from && allowed.has(o),
-				);
+				// Client-scoped emitter: the fan-out is the emitter's own ID roster
+				// (`allowedAgentIds`), each member judged by assertPrincipalListed, so
+				// it never reaches another tenant, the internal fleet, or a same-name
+				// agent of another org. A roster that is not stored, or lists nobody
+				// the emitter does not itself speak as, yields zero recipients and the
+				// bounce below fires: fail closed, not a leak. Receipts are written
+				// here, by ID, in the emitter's tenant.
+				const broadcastRows: Doc<"agents">[] = [];
+				for (const rosterId of reach.allowedAgentIds) {
+					const rosterAgentId = ctx.db.normalizeId("agents", rosterId);
+					if (rosterAgentId === null) continue;
+					const row = await ctx.db.get(rosterAgentId);
+					if (row === null || !row.isActive || row._id === fromId) continue;
+					const listed = await agentListedOnRoster(
+						ctx,
+						{ agentId: row._id, agentOrgId: row.orgSlug },
+						rosterOf(reach.orgSlug, reach.allowedAgentIds),
+						SEND_DOOR,
+					);
+					if (listed.ok) broadcastRows.push(row);
+				}
+				if (broadcastRows.length === 0) {
+					throw new ConvexError(
+						`recipient error / message non livré : "broadcast" ne correspond à aucun destinataire de l'organisation pour cet émetteur.`,
+					);
+				}
+				for (const row of broadcastRows) {
+					await ctx.db.insert("messageReceipts", {
+						messageId,
+						recipient: normalizeOrchestratorId(row.name),
+						recipientId: row._id,
+						tenantId: derivedTenantId,
+						tenantOrgId: derivedTenantOrgId,
+						readAt: undefined,
+					});
+				}
+				return messageId;
 			}
 
 			// Zero-recipient bounce contract (task k17dr97dwpe07n9zfgzzypkfm18bv6ws)
@@ -577,24 +644,12 @@ async function sendMessageCore(
 					instanceOwner.set(p.instanceId, p.orchestratorId);
 				}
 			}
-			// Pi ruling (b): the org's own roster PLUS its explicit allow-list of
-			// fleet coordinators (client_org_mapping.addressableFleetCoordinators,
-			// empty by default, written only by setAddressableFleetCoordinators).
-			// Never inferred; "*" is never a grant.
-			let coordinators: string[] = [];
-			if (!fleetWide && reach.orgSlug !== null) {
-				const orgSlug = reach.orgSlug;
-				const mapping = await ctx.db
-					.query("client_org_mapping")
-					.withIndex("by_clerk_slug", (q) => q.eq("clerkOrgSlug", orgSlug))
-					.first();
-				coordinators = (mapping?.addressableFleetCoordinators ?? [])
-					.filter((n) => n !== "*")
-					.map(normalizeOrchestratorId);
-			}
+			// A channel NAME is judged against the org's own NAME roster only. A
+			// fleet coordinator is addressed by ID (`recipientAgentIds`, judged by
+			// assertPrincipalListed against `addressableFleetCoordinatorIds`); a name
+			// cannot denote an agent of another organisation (module M1).
 			const isReachable = (orchestrator: string): boolean =>
-				isOrchestratorOnOrgRoster(reach, orchestrator) ||
-				coordinators.includes(normalizeOrchestratorId(orchestrator));
+				isOrchestratorOnOrgRoster(reach, orchestrator);
 			const isOnOwnRoster = (part: string): boolean => {
 				if (fleetWide) return true;
 				if (knownRoles.has(part) && isReachable(part)) return true;
@@ -713,6 +768,8 @@ async function resolveSeatRecipientScope(
 		userId: transportScope.userId,
 		orgSlug: seatOrgSlug,
 		allowedOrchestrators: mapping.allowedOrchestrators,
+		allowedAgentIds: mapping.allowedAgentIds ?? [],
+		fleetWide: false,
 		scopes: mapping.scopes,
 		isMaster: false,
 	};

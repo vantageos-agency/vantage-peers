@@ -96,6 +96,14 @@ export type OAuthContext = {
 	 */
 	clerkOrgSlug?: string;
 	/**
+	 * True ONLY on the Clerk-team path (2.5) when the caller's own
+	 * `client_org_mapping` row carries the explicit `fleetWide` flag (module M1).
+	 * It replaces the "*" entry the delegation check used to read out of the
+	 * roster: the flag is data on the verified caller's own row, never inferred
+	 * from a name in a list. Absent means "not fleet-wide".
+	 */
+	orgFleetWide?: true;
+	/**
 	 * Verified Clerk org role the PERSON token was minted with (OAuth person
 	 * flow, token-row path only). Read by the writer-role gate in defineTool
 	 * (src/registerTool.ts). Absent on a seat token.
@@ -196,6 +204,10 @@ const NO_CONTEXT_REFUSAL =
 // Shape returned by clientOrgMapping:getByClerkSlug
 type OrgMappingLookupResult = {
 	allowedOrchestrators: string[];
+	/** The roster by agent ID (module M1); optional until the backfill has run. */
+	allowedAgentIds?: string[];
+	/** The explicit fleet flag that replaces the "*" sentinel. */
+	fleetWide?: boolean;
 	scopes: string[];
 	isActive: boolean;
 } | null;
@@ -896,11 +908,10 @@ export function checkInstanceOfSender(
  *     via Convex `withOrgScope`/`client_org_mapping`, forwarding THIS
  *     caller's own verified Clerk JWT (`selectConvexClientForRequest`,
  *     authenticatedConvexClient.ts). This is a genuine per-caller org lookup.
- *     Allowed iff `assignedTo` is in that roster, OR the roster itself is
- *     `["*"]` — a CALLER org whose `client_org_mapping.allowedOrchestrators`
- *     is itself the wildcard (a genuinely open org, same semantics as
- *     `isMaster = allowedOrchestrators.includes("*")` elsewhere in Convex,
- *     convex/lib/auth.ts).
+ *     Allowed iff `assignedTo` is in that roster, OR the caller's own
+ *     `client_org_mapping` row carries the explicit
+ *     `fleetWide` flag (`ctx.orgFleetWide`, module M1). A "*" entry in a
+ *     roster is an ordinary string and no longer means "everyone".
  *   - non-master AND `ctx.clerkJwt` ABSENT AND the access token carries
  *     `accessTokenHash` + `clerkOrgSlug` → `getOrgRoster` MUST resolve via
  *     `orgRoster:getForAccessToken({ tokenHash })` (org derived inside
@@ -938,11 +949,11 @@ export async function checkDelegationAllowed(
 		}
 	}
 	const roster = await getOrgRoster();
-	// Wildcard allow is Clerk-JWT only (caller's own withOrgScope row).
-	// On the token-hash path, getForAccessToken returns the mapping verbatim;
-	// treating ["*"] as "every orchestrator" is the green pole §3 forbids
-	// until a dedicated red on material that REACHES this line (Eta ETA-M18).
-	if (ctx.clerkJwt && roster.includes("*")) return null;
+	// Fleet-wide allow is Clerk-JWT only and rests on the EXPLICIT `fleetWide`
+	// flag of the caller's own mapping row, carried on the verified context. A
+	// "*" entry in a roster is an ordinary string and admits nobody. On the
+	// token-hash path nothing is fleet-wide (Eta ETA-M18).
+	if (ctx.clerkJwt && ctx.orgFleetWide === true) return null;
 	if (roster.includes(assignedTo)) return null;
 	const allowed =
 		roster.length === 0
@@ -1559,6 +1570,7 @@ export function bearerAuthMiddleware(): MiddlewareHandler {
 					// per-request Convex client for this path.
 					clerkJwt: token,
 					clerkOrgSlug: orgId,
+					...(mapping.fleetWide === true ? { orgFleetWide: true as const } : {}),
 				},
 				// The verified org_id claim — the key an agent credential's org is
 				// bound to.

@@ -28,7 +28,32 @@ export type MasterSource = "service-account" | "internal" | "operator-admin";
 export interface OrgScope {
 	userId: string;
 	orgSlug: string | null;
-	allowedOrchestrators: string[]; // ["*"] = full access
+	/**
+	 * LEGACY NAME ROSTER (expand phase). Names are labels, not identity: no
+	 * decision on an AGENT reads this field any more (those read
+	 * `allowedAgentIds` through `assertPrincipalListed`). It stays only for the
+	 * readers that compare a NAME stored on a data row or typed by a caller
+	 * (task pilot/assignee, diary orchestrator, profile, business unit, channel
+	 * string); each is owned by the module that stores the name and is listed in
+	 * docs/cloud/security-multi-tenant.md. Removed by the contract PR once those
+	 * rows carry IDs. It no longer carries "*": a fleet scope is `fleetWide`.
+	 */
+	allowedOrchestrators: string[];
+	/**
+	 * The ROSTER, by agent ID: `client_org_mapping.allowedAgentIds` of the
+	 * caller's own organisation, verbatim. Empty when the organisation stores
+	 * none (nothing is admitted) and for every fleet-wide scope (a fleet scope
+	 * is not an organisation's roster). Decisions on an agent go through
+	 * `assertPrincipalListed` (convex/lib/rosterIds.ts), never a comparison here.
+	 */
+	allowedAgentIds: string[];
+	/**
+	 * The explicit fleet flag that replaces the "*" sentinel: true ONLY on the
+	 * scopes `withOrgScope` builds as master (service account, internal opt-in,
+	 * operator admin) and on the internal system scopes. It is the same fact as
+	 * `isMaster` for those scopes and is never derived from a stored list entry.
+	 */
+	fleetWide: boolean;
 	scopes: string[];
 	isMaster: boolean;
 	/**
@@ -170,7 +195,9 @@ export async function withOrgScope(
 			return {
 				userId: "internal",
 				orgSlug: null,
-				allowedOrchestrators: ["*"],
+				allowedOrchestrators: [],
+				allowedAgentIds: [],
+				fleetWide: true,
 				scopes: [
 					"cross-tenant-read",
 					"view-own-tasks",
@@ -191,6 +218,8 @@ export async function withOrgScope(
 			userId: "anonymous",
 			orgSlug: null,
 			allowedOrchestrators: [],
+			allowedAgentIds: [],
+			fleetWide: false,
 			scopes: [],
 			isMaster: false,
 			anonymous: true,
@@ -220,7 +249,9 @@ export async function withOrgScope(
 		return {
 			userId: identity.subject,
 			orgSlug: null,
-			allowedOrchestrators: ["*"],
+			allowedOrchestrators: [],
+			allowedAgentIds: [],
+			fleetWide: true,
 			scopes: [
 				"cross-tenant-read",
 				"view-own-tasks",
@@ -288,6 +319,8 @@ export async function withOrgScope(
 				userId: identity.subject,
 				orgSlug: null,
 				allowedOrchestrators: [],
+				allowedAgentIds: [],
+				fleetWide: false,
 				scopes: [],
 				isMaster: false,
 				refused: true,
@@ -346,7 +379,9 @@ export async function withOrgScope(
 		return {
 			userId: identity.subject,
 			orgSlug: null,
-			allowedOrchestrators: ["*"],
+			allowedOrchestrators: [],
+			allowedAgentIds: [],
+			fleetWide: true,
 			scopes: [
 				"cross-tenant-read",
 				"view-own-tasks",
@@ -364,6 +399,8 @@ export async function withOrgScope(
 		userId: identity.subject,
 		orgSlug,
 		allowedOrchestrators: mapping.allowedOrchestrators,
+		allowedAgentIds: mapping.allowedAgentIds ?? [],
+		fleetWide: false,
 		scopes: mapping.scopes,
 		// Pi ruling (PR #1224, decision b): a Clerk identity resolved through
 		// client_org_mapping NEVER mints the cross-tenant isMaster bypass from
@@ -467,6 +504,9 @@ export async function lookupOrgMapping(
 	orgSlug: string,
 ): Promise<{
 	allowedOrchestrators: string[];
+	allowedAgentIds?: Id<"agents">[];
+	addressableFleetCoordinatorIds?: Id<"agents">[];
+	fleetWide?: boolean;
 	scopes: string[];
 	isActive: boolean;
 	orgKind?: "operator" | "client";
@@ -479,6 +519,9 @@ export async function lookupOrgMapping(
 	if (!mapping) return null;
 	return {
 		allowedOrchestrators: mapping.allowedOrchestrators,
+		allowedAgentIds: mapping.allowedAgentIds,
+		addressableFleetCoordinatorIds: mapping.addressableFleetCoordinatorIds,
+		fleetWide: mapping.fleetWide,
 		scopes: mapping.scopes,
 		isActive: mapping.isActive,
 		orgKind: mapping.orgKind,

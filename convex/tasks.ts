@@ -1605,7 +1605,9 @@ export const listForWebhook = internalQuery({
 		const masterScope: OrgScope = {
 			userId: "internal-webhook",
 			orgSlug: null,
-			allowedOrchestrators: ["*"],
+			allowedOrchestrators: [],
+			allowedAgentIds: [],
+			fleetWide: true,
 			scopes: [
 				"cross-tenant-read",
 				"view-own-tasks",
@@ -4660,7 +4662,12 @@ export const bulkCompleteContinue = internalMutation({
 		let exceeded: boolean;
 		let gates: BulkGateResults;
 		try {
-			const scope: OrgScope = { ...args.scope, scopes: [] };
+			const scope: OrgScope = {
+				...args.scope,
+				allowedAgentIds: [],
+				fleetWide: args.scope.isMaster,
+				scopes: [],
+			};
 			const matched = await scanBulkCompleteMatches(
 				ctx,
 				args.filter,

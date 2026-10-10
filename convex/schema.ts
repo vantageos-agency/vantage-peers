@@ -1744,6 +1744,26 @@ export default defineSchema({
 		// operator roster); never inferred, and "*" is never a grant. Read only by
 		// sendMessageCore's direct-channel branch.
 		addressableFleetCoordinators: v.optional(v.array(v.string())),
+		// ── ROSTERS BY AGENT ID (module M1, expand phase) ──────────────────────
+		// Identity is the `agents` row `_id`, never a name. These three fields are
+		// the ID form of the three name-shaped fields above; every roster
+		// decision on an agent reads them through
+		// @vantageos/cloud-identity `assertPrincipalListed`. The name fields stay
+		// for the readers that still compare a stored NAME (tasks, diary, ...);
+		// the contract PR removes them once those readers carry IDs.
+		//
+		// allowedAgentIds: the agents of THIS organisation that belong to its
+		// roster. Every entry is an `agents._id` stamped with this row's own
+		// `clerkOrgSlug`. Absent means "no roster stored": nothing is admitted.
+		allowedAgentIds: v.optional(v.array(v.id("agents"))),
+		// addressableFleetCoordinatorIds: the OPERATOR-org agents (by ID) this
+		// client org may message directly. Absent or empty means none.
+		addressableFleetCoordinatorIds: v.optional(v.array(v.id("agents"))),
+		// fleetWide: the explicit flag that replaces the "*" sentinel in
+		// `allowedOrchestrators`. It names a row whose organisation is the whole
+		// fleet; it admits no agent by itself (`assertPrincipalListed` has no
+		// wildcard) and it is never inferred from an entry of a list.
+		fleetWide: v.optional(v.boolean()),
 	})
 		.index("by_clerk_slug", ["clerkOrgSlug"])
 		.index("by_clerk_org_id", ["clerkOrgId"])

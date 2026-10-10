@@ -75,12 +75,14 @@ async function seedOrgMapping(
 		allowedOrchestrators: string[];
 		isActive?: boolean;
 		orgKind?: "operator" | "client";
+		fleetWide?: boolean;
 	},
 ) {
 	await t.run(async (ctx) => {
 		await ctx.db.insert("client_org_mapping", {
 			clerkOrgSlug: opts.clerkOrgSlug,
 			allowedOrchestrators: opts.allowedOrchestrators,
+			...(opts.fleetWide === true ? { fleetWide: true } : {}),
 			scopes: ["view-own-tasks"],
 			displayName: opts.clerkOrgSlug,
 			isActive: opts.isActive ?? true,
@@ -269,6 +271,7 @@ describe("backfillReceiptTenants — report (dryRun:true) pole", () => {
 		await seedOrgMapping(t, {
 			clerkOrgSlug: "master",
 			allowedOrchestrators: ["*"],
+			fleetWide: true, // the explicit flag that replaced the "*" sentinel (M1)
 		});
 
 		// same-client-org: sender=victor, recipient=victor (both acme-client).
@@ -328,6 +331,7 @@ describe("backfillReceiptTenants — write (dryRun:false) pole", () => {
 		await seedOrgMapping(t, {
 			clerkOrgSlug: "master",
 			allowedOrchestrators: ["*"],
+			fleetWide: true, // the explicit flag that replaced the "*" sentinel (M1)
 		});
 
 		const sameOrgIds = await seedManyUndefinedTenantReceipts(
@@ -382,6 +386,7 @@ describe("backfillReceiptTenants — write (dryRun:false) pole", () => {
 		await seedOrgMapping(t, {
 			clerkOrgSlug: "master",
 			allowedOrchestrators: ["*"],
+			fleetWide: true, // the explicit flag that replaced the "*" sentinel (M1)
 		});
 
 		await seedManyUndefinedTenantReceipts(
@@ -435,6 +440,7 @@ describe("orgKind: operator-kind rows are skipped like the master sentinel", () 
 		await seedOrgMapping(t, {
 			clerkOrgSlug: "master",
 			allowedOrchestrators: ["*"],
+			fleetWide: true, // the explicit flag that replaced the "*" sentinel (M1)
 		});
 
 		const orgs = await t.query(
@@ -457,6 +463,7 @@ describe("orgKind: operator-kind rows are skipped like the master sentinel", () 
 		await seedOrgMapping(t, {
 			clerkOrgSlug: "master",
 			allowedOrchestrators: ["*"],
+			fleetWide: true, // the explicit flag that replaced the "*" sentinel (M1)
 		});
 
 		const ids = await seedManyUndefinedTenantReceipts(
@@ -490,6 +497,7 @@ describe("orgKind: operator-kind rows are skipped like the master sentinel", () 
 		await seedOrgMapping(t, {
 			clerkOrgSlug: "master",
 			allowedOrchestrators: ["*"],
+			fleetWide: true, // the explicit flag that replaced the "*" sentinel (M1)
 		});
 
 		const ids = await seedManyUndefinedTenantReceipts(
@@ -522,6 +530,7 @@ describe("orgKind: operator-kind rows are skipped like the master sentinel", () 
 		await seedOrgMapping(t, {
 			clerkOrgSlug: "master",
 			allowedOrchestrators: ["*"],
+			fleetWide: true, // the explicit flag that replaced the "*" sentinel (M1)
 		});
 
 		const ids = await seedManyUndefinedTenantReceipts(
@@ -554,6 +563,7 @@ describe("orgKind: operator-kind rows are skipped like the master sentinel", () 
 		await seedOrgMapping(t, {
 			clerkOrgSlug: "master",
 			allowedOrchestrators: ["*"],
+			fleetWide: true, // the explicit flag that replaced the "*" sentinel (M1)
 		});
 
 		const ids = await seedManyUndefinedTenantReceipts(
@@ -598,6 +608,7 @@ describe("both-directions: scoped IDENTITY read after write only sees own tenant
 		await seedOrgMapping(t, {
 			clerkOrgSlug: "master",
 			allowedOrchestrators: ["*"],
+			fleetWide: true, // the explicit flag that replaced the "*" sentinel (M1)
 		});
 
 		await seedManyUndefinedTenantReceipts(
@@ -768,6 +779,7 @@ describe("guard: an already-tenanted receipt is never re-tenanted", () => {
 		await seedOrgMapping(t, {
 			clerkOrgSlug: "master",
 			allowedOrchestrators: ["*"],
+			fleetWide: true, // the explicit flag that replaced the "*" sentinel (M1)
 		});
 
 		// Pre-stamped to "legacy-tenant" (A) BEFORE this run — the receipt is
@@ -846,6 +858,7 @@ describe("pagination: forced-small batch resumes via continueCursor across multi
 		await seedOrgMapping(t, {
 			clerkOrgSlug: "master",
 			allowedOrchestrators: ["*"],
+			fleetWide: true, // the explicit flag that replaced the "*" sentinel (M1)
 		});
 
 		// 10 same-client-org rows across a batch size of 3 forces 4 pages

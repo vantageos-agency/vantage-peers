@@ -16,8 +16,9 @@
 //   INVALID    a NAME (accented, unaccented, upper case, NFD), a malformed string,
 //              an ID of another table: a typed validation error, nothing written.
 //   CONTRACT   both channel and IDs, neither, an empty list: INVALID_RECIPIENTS.
-//   DIRECTORY  the agent directory lists IDs for the caller's own org only, exact
-//              names only, null for a name with no active agent row.
+//   DIRECTORY  the agent directory lists the STORED IDs of the caller's own org only
+//              (M1: the roster is IDs), null for an inactive agent, nothing for an ID
+//              with no agent row.
 
 import { convexTest } from "convex-test";
 import { describe, expect, test } from "vitest";
@@ -79,8 +80,15 @@ async function world(): Promise<World> {
 				createdAt: now,
 				...(orgKind ? { orgKind } : {}),
 			});
-		await org("iris-rh", ["clio", HELIOS, "marie", "victor", "nadia", "ghost"]);
-		await org("acme", [HELIOS, "bob"]);
+		const irisRow = await org("iris-rh", [
+			"clio",
+			HELIOS,
+			"marie",
+			"victor",
+			"nadia",
+			"ghost",
+		]);
+		const acmeRow = await org("acme", [HELIOS, "bob"]);
 		await org("fleet-op", ["*"], "operator");
 		const agent = (orgSlug: string, name: string, isActive = true) =>
 			ctx.db.insert("agents", {
@@ -100,6 +108,20 @@ async function world(): Promise<World> {
 		await ctx.db.delete(ids.gone);
 		ids.acmeHelios = await agent("acme", HELIOS);
 		ids.fleetPi = await agent("fleet-op", "pi");
+		// M1: the rosters are stored BY ID (the name rosters above stay beside them).
+		// iris-rh also lists a deleted agent's stale ID; "ghost" and "oscar" are not
+		// on it (no agent row / off the roster).
+		await ctx.db.patch(irisRow, {
+			allowedAgentIds: [
+				ids.clio,
+				ids.helios,
+				ids.marie,
+				ids.victor,
+				ids.nadia,
+				ids.gone,
+			],
+		});
+		await ctx.db.patch(acmeRow, { allowedAgentIds: [ids.acmeHelios] });
 		for (const n of ["clio", HELIOS, "marie", "pi"]) {
 			const p = await ctx.db.insert("profiles", {
 				orchestratorId: n,
@@ -436,14 +458,19 @@ describe("DIRECTORY — agent IDs for the caller's own organisation only", () =>
 			{ name: HELIOS, agentId: w.iris.helios },
 			{ name: "marie", agentId: w.iris.marie },
 			{ name: "victor", agentId: w.iris.victor },
-			{ name: "nadia", agentId: null }, // inactive
-			{ name: "ghost", agentId: null }, // no agents row
+			{ name: "nadia", agentId: null }, // inactive: listed, not addressable
+			// "ghost" (a name with no agent) and the deleted agent's stale ID are not
+			// listed: the roster holds IDs, and only an existing agent has a label.
 		]);
 		expect(JSON.stringify(dir)).not.toContain(w.acmeHelios);
 	});
 
-	test("a roster spelling is matched exactly: 'helios' never resolves to 'hélios'", async () => {
+	test("the legacy NAME roster is not read: retyping it changes nothing", async () => {
 		const w = await world();
+		const before = await asService(w.t).query(
+			api.orgRoster.getAgentDirectoryForAccessToken,
+			{ tokenHash: "hash-clio" },
+		);
 		await w.t.run(async (ctx) => {
 			const m = await ctx.db
 				.query("client_org_mapping")
@@ -454,14 +481,12 @@ describe("DIRECTORY — agent IDs for the caller's own organisation only", () =>
 					allowedOrchestrators: ["helios", HELIOS_NFD, "*"],
 				});
 		});
-		const dir = await asService(w.t).query(
+		const after = await asService(w.t).query(
 			api.orgRoster.getAgentDirectoryForAccessToken,
 			{ tokenHash: "hash-clio" },
 		);
-		expect(dir).toEqual([
-			{ name: "helios", agentId: null },
-			{ name: HELIOS_NFD, agentId: w.iris.helios }, // NFC of the same spelling
-		]);
+		expect(after).toEqual(before);
+		expect(after.find((e) => e.name === "helios")).toBeUndefined();
 	});
 
 	test("the token door admits the MCP service account only", async () => {
@@ -494,10 +519,7 @@ describe("DIRECTORY — agent IDs for the caller's own organisation only", () =>
 			api.orgRoster.getMyAgentDirectory,
 			{},
 		);
-		expect(mine).toEqual([
-			{ name: HELIOS, agentId: w.acmeHelios },
-			{ name: "bob", agentId: null },
-		]);
+		expect(mine).toEqual([{ name: HELIOS, agentId: w.acmeHelios }]);
 		expect(
 			await errorOf(
 				anonymous(w.t).query(api.orgRoster.getMyAgentDirectory, {}),

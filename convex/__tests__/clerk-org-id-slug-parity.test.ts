@@ -294,7 +294,9 @@ describe("TEST 2 — no-org → master guard: MCP boundary denies team/<other-or
 
 			expect(scope.isMaster).toBe(true);
 			expect(scope.orgSlug).toBeNull();
-			expect(scope.allowedOrchestrators).toContain("*");
+			// The explicit fleet flag replaced the "*" sentinel (module M1).
+			expect(scope.fleetWide).toBe(true);
+			expect(scope.allowedOrchestrators).not.toContain("*");
 		});
 	});
 

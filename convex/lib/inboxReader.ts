@@ -312,14 +312,28 @@ export function ownsReceipt(
 	receipt: Doc<"messageReceipts">,
 	recipientInstanceId?: string,
 ): boolean {
-	if (reader.tenants !== "all" && !reader.tenants.includes(receipt.tenantId)) {
-		return false;
-	}
 	if (
 		recipientInstanceId !== undefined &&
 		receipt.recipientInstanceId !== undefined &&
 		receipt.recipientInstanceId !== recipientInstanceId
 	) {
+		return false;
+	}
+	// THE ID IS THE PROOF (module M1). A receipt that carries the verified
+	// agent's own ID is that agent's whatever tenant it was written in: a client
+	// org's mail to an operator coordinator it stores by ID
+	// (`addressableFleetCoordinatorIds`) is stamped in the CLIENT's tenant with
+	// the operator agent's ID, and only the send path, after assertPrincipalListed,
+	// stamps an ID. A name never crosses orgs here.
+	if (
+		reader.agentId !== undefined &&
+		receipt.recipientId !== undefined &&
+		receipt.recipientId === reader.agentId
+	) {
+		return true;
+	}
+	// Everything else (legacy name matching included) stays in the reader's org.
+	if (reader.tenants !== "all" && !reader.tenants.includes(receipt.tenantId)) {
 		return false;
 	}
 	if (reader.agentId !== undefined) {

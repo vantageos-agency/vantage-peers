@@ -27,7 +27,7 @@ Every write is on prod (`compassionate-goldfinch-737`). Run them from the vantag
      '{"clerkOrgSlug":"<slug>","displayName":"<name>","allowedOrchestrators":["<a>","<b>"],"scopes":["view-own-tasks","view-own-missions"]}'
    CONVEX_DEPLOY_KEY=<prod key> npx convex run clientOrgMapping:setOrgKind '{"clerkOrgSlug":"<slug>","orgKind":"client"}'
    ```
-   Name every agent now. To add an agent later, append it (append-only, client orgs only, never an operator name such as pi or sigma): `CONVEX_DEPLOY_KEY=<prod key> npx convex run clientOrgMapping:addRosterMembers '{"clerkOrgSlug":"<slug>","names":["<agent>"]}'`.
+   Name every agent now (this is the label roster). The roster that decides is stored by agent ID (module M1): the agents are registered in step 4, so once step 4 is done, fill the ID roster with `CONVEX_DEPLOY_KEY=<prod key> npx convex run migrations/backfillRosterAgentIds:backfillRosterAgentIds` (a dry run: read the `unknown` and `ambiguous` lists, nothing is guessed), then again with `'{"dryRun":false}'`. To add an agent later, append its ID (append-only, client orgs only, an active agent of this org; never an operator agent): `CONVEX_DEPLOY_KEY=<prod key> npx convex run clientOrgMapping:addRosterMembers '{"clerkOrgSlug":"<slug>","agentIds":["<agents id>"]}'`. To let the client message an operator coordinator, store its ID: `npx convex run clientOrgMapping:setAddressableFleetCoordinators '{"clerkOrgSlug":"<slug>","agentIds":["<operator agent id>"]}'`.
 
 3. **Create one scope profile per agent, bound to the org.**
    ```

@@ -157,6 +157,8 @@ export async function recipientScopeOfPrincipal(
 		userId: transportScope.userId,
 		orgSlug: principal.orgId,
 		allowedOrchestrators: mapping.allowedOrchestrators,
+		allowedAgentIds: mapping.allowedAgentIds ?? [],
+		fleetWide: false,
 		scopes: mapping.scopes,
 		isMaster: false,
 	};

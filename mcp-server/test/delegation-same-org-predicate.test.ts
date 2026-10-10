@@ -335,7 +335,7 @@ describe("delegation-same-org-predicate — create_task assignee", () => {
 		expect(orgRosterQueryCalled).toBe(true);
 	});
 
-	it('clerk-team, caller org roster ["*"] → ALLOW (genuinely open caller org)', async () => {
+	it("clerk-team, caller org row carries the explicit fleetWide flag → ALLOW (genuinely open caller org)", async () => {
 		createdTaskRow = null;
 		orgRosterQueryCalled = false;
 		const result = await callTool(
@@ -345,13 +345,33 @@ describe("delegation-same-org-predicate — create_task assignee", () => {
 				createdBy: "prometheus",
 				assignedTo: "any-other-orchestrator-at-all",
 			},
-			buildClerkTeamCtx({ fromAllowList: ["prometheus"] }),
-			["*"], // THIS caller's own client_org_mapping row is itself wildcard
+			buildClerkTeamCtx({ fromAllowList: ["prometheus"], orgFleetWide: true }),
+			["prometheus"], // THIS caller's own client_org_mapping row carries fleetWide
 		);
 
 		expect(result.isError).toBeFalsy();
 		expect(getText(result)).not.toMatch(/Forbidden/i);
 		expect(createdTaskRow?.assignedTo).toBe("any-other-orchestrator-at-all");
+		expect(orgRosterQueryCalled).toBe(true);
+	});
+
+	it('clerk-team, a "*" entry in the roster WITHOUT the fleetWide flag → REFUSE (an ordinary string, no wildcard)', async () => {
+		createdTaskRow = null;
+		orgRosterQueryCalled = false;
+		const result = await callTool(
+			"create_task",
+			{
+				title: "Star entry is not a grant",
+				createdBy: "prometheus",
+				assignedTo: "any-other-orchestrator-at-all",
+			},
+			buildClerkTeamCtx({ fromAllowList: ["prometheus"] }),
+			["*"],
+		);
+
+		expect(result.isError).toBe(true);
+		expect(getText(result)).toMatch(/Forbidden/i);
+		expect(createdTaskRow).toBeNull();
 		expect(orgRosterQueryCalled).toBe(true);
 	});
 

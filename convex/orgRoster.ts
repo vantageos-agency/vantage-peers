@@ -1,13 +1,18 @@
 import { ConvexError, v } from "convex/values";
-import type { Id } from "./_generated/dataModel";
+import type { Doc, Id } from "./_generated/dataModel";
 import { type QueryCtx, query } from "./_generated/server";
-import { normalizeOrchestratorId } from "./_helpers/normalizeOrchestratorId";
 import {
 	isMcpBoundMaster,
 	lookupOrgMapping,
 	requireResolvedCaller,
 	withOrgScope,
 } from "./lib/auth";
+import {
+	agentListedAsCoordinator,
+	agentListedOnRoster,
+	type RosterVerdict,
+	rosterOf,
+} from "./lib/rosterIds";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // getMyOrgRoster — the authenticated caller's own organisation roster.
@@ -17,7 +22,7 @@ import {
 // organisation, and membership is read from DATA — client_org_mapping —
 // never a list hard-coded in code. This query is the data accessor:
 // `withOrgScope` resolves the caller's own org (Clerk JWT → client_org_mapping
-// lookup) and returns that org's `allowedOrchestrators`, exactly the roster
+// lookup) and returns that org's `allowedOrchestrators`, exactly the NAME roster
 // `checkDelegationAllowed` checks `assignedTo` against.
 //
 // `allowNoIdentityMaster` is left at its fail-closed default (unset) — this is
@@ -34,11 +39,12 @@ export const getMyOrgRoster = query({
 		// signed-in-no-org branch to a typed-empty roster instead of a throw.
 		const scope = await withOrgScope(ctx, { refuseWithoutThrow: true });
 		// The operator's own org admin is a read-only MASTER in a query
-		// (masterSource "operator-admin", roster ["*"]) but an ORDINARY MEMBER in
-		// tasks:create, which holds the real mapping roster and treats "*" as
-		// naming nobody. The picker must list what the write will accept, so
-		// re-resolve as the member the write sees. "*" is dropped: it is never an
-		// assignable name, and nothing is listed that the write would refuse.
+		// (masterSource "operator-admin", `fleetWide`) but an ORDINARY MEMBER in
+		// tasks:create, which holds the real mapping roster. The picker must list
+		// what the write will accept, so re-resolve as the member the write sees.
+		// A legacy "*" entry still stored in the name roster is dropped: it is
+		// never an assignable name, and nothing is listed that the write would
+		// refuse.
 		if (scope.masterSource === "operator-admin") {
 			const member = await withOrgScope(ctx, {
 				refuseWithoutThrow: true,
@@ -47,6 +53,13 @@ export const getMyOrgRoster = query({
 			return member.allowedOrchestrators.filter((entry) => entry !== "*");
 		}
 		if (!scope.isMaster && scope.orgSlug === null) return [];
+		// A fleet-wide scope (the service account) keeps its legacy WIRE answer
+		// `["*"]`: the dashboard gate (vantage-peers-dashboard
+		// lib/auth/dashboardGate.ts) admits only on a served, non-empty roster and
+		// documents "service account (master) -> served, ["*"]". The decision is
+		// `scope.fleetWide`; this array is only the response shape that consumer
+		// reads, and no agent decision in this backend reads it.
+		if (scope.fleetWide) return ["*"];
 		return scope.allowedOrchestrators;
 	},
 });
@@ -61,7 +74,11 @@ export const getMyOrgRoster = query({
 async function mappingOfAccessToken(
 	ctx: QueryCtx,
 	tokenHash: string,
-): Promise<{ orgSlug: string; allowedOrchestrators: string[] }> {
+): Promise<{
+	orgSlug: string;
+	allowedAgentIds: Id<"agents">[] | undefined;
+	addressableFleetCoordinatorIds: Id<"agents">[] | undefined;
+}> {
 	const token = await ctx.db
 		.query("oauth_access_tokens")
 		.withIndex("by_tokenHash", (q) => q.eq("tokenHash", tokenHash))
@@ -89,23 +106,30 @@ async function mappingOfAccessToken(
 			`RBAC_DENIED: Org "${slug}" not in client_org_mapping or inactive`,
 		);
 	}
-	return { orgSlug: slug, allowedOrchestrators: mapping.allowedOrchestrators };
+	return {
+		orgSlug: slug,
+		allowedAgentIds: mapping.allowedAgentIds,
+		addressableFleetCoordinatorIds: mapping.addressableFleetCoordinatorIds,
+	};
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Agent directory — the org roster WITH each agent's unique ID (Cloud, client
-// incident, task k1716f01f9g1a0scz7nj30118h8fx32c).
+// incident, task k1716f01f9g1a0scz7nj30118h8fx32c; module M1: by stored ID).
 //
 // A message recipient is addressed by its `agents` row ID, never by its name
 // (messages:sendMessage `recipientAgentIds`). This is where a caller learns
-// those IDs: one entry per roster name of the caller's OWN organisation, with
-// `agentId` the `_id` of the ACTIVE agents row of that org whose
-// `normalizedName` equals the roster name under normalizeOrchestratorId (NFC,
-// lowercase, trim) — an exact index read, no accent fold, no fuzzy match. A
-// roster name with no such row, an inactive row, or (impossible under
-// assertAgentNameFree, refused anyway) two rows gets `agentId: null`: listed,
-// not addressable. "*" names nobody and is dropped. Bounded at
-// AGENT_DIRECTORY_CAP entries, one indexed read each.
+// those IDs. The roster is STORED as IDs (`client_org_mapping.allowedAgentIds`,
+// plus the operator agents the org may address directly,
+// `addressableFleetCoordinatorIds`), so the directory reads the agents row of
+// each stored ID and returns that ID: no name is looked up, so an operator
+// coordinator listed on a client roster carries its own ID, and a RENAME
+// changes only the label shown. Every entry is judged by
+// `assertPrincipalListed` (convex/lib/rosterIds.ts): an ID whose agent is of
+// another organisation, or no longer exists, is not listed. An INACTIVE agent
+// is listed with `agentId: null` (listed, not addressable). An organisation
+// that stores no ID roster has an empty directory. Bounded at
+// AGENT_DIRECTORY_CAP entries, one read by ID each.
 // ─────────────────────────────────────────────────────────────────────────────
 
 export const AGENT_DIRECTORY_CAP = 200;
@@ -118,30 +142,45 @@ const agentDirectoryEntry = v.object({
 async function agentDirectoryOf(
 	ctx: QueryCtx,
 	orgSlug: string,
-	roster: readonly string[],
+	stored: {
+		rosterIds: readonly string[] | undefined;
+		coordinatorIds: readonly string[] | undefined;
+	},
+	door: string,
 ): Promise<Array<{ name: string; agentId: Id<"agents"> | null }>> {
-	const byKey = new Map<string, string>();
-	for (const entry of roster) {
-		if (entry === "*") continue;
-		const key = normalizeOrchestratorId(entry);
-		if (key === "" || byKey.has(key)) continue;
-		byKey.set(key, entry);
-		if (byKey.size >= AGENT_DIRECTORY_CAP) break;
-	}
 	const out: Array<{ name: string; agentId: Id<"agents"> | null }> = [];
-	for (const [key, label] of byKey) {
-		const rows = await ctx.db
-			.query("agents")
-			.withIndex("by_org_normalized_name", (q) =>
-				q.eq("orgSlug", orgSlug).eq("normalizedName", key),
-			)
-			.take(2);
-		// A roster names agents by LABEL (module M1 will store IDs): the entry
-		// resolves to the one active agent that carries the label NOW. A label
-		// nobody carries, an inactive holder, or two holders is `null`, listed and
-		// not addressable. No remembered former label is consulted.
-		const row = rows.length === 1 && rows[0].isActive ? rows[0] : null;
-		out.push({ name: label, agentId: row === null ? null : row._id });
+	const seen = new Set<Id<"agents">>();
+	const add = async (
+		storedId: string,
+		judge: (row: Doc<"agents">) => Promise<RosterVerdict>,
+	): Promise<void> => {
+		const id = ctx.db.normalizeId("agents", storedId);
+		if (id === null || seen.has(id) || out.length >= AGENT_DIRECTORY_CAP) return;
+		const row = await ctx.db.get(id);
+		if (row === null) return;
+		const verdict = await judge(row);
+		if (verdict.ok) {
+			seen.add(id);
+			out.push({ name: row.name, agentId: row._id });
+		} else if (verdict.refusal.reason === "principal-inactive") {
+			seen.add(id);
+			out.push({ name: row.name, agentId: null });
+		}
+	};
+	for (const id of stored.rosterIds ?? []) {
+		await add(id, (row) =>
+			agentListedOnRoster(
+				ctx,
+				{ agentId: row._id, agentOrgId: row.orgSlug },
+				rosterOf(orgSlug, stored.rosterIds),
+				door,
+			),
+		);
+	}
+	for (const id of stored.coordinatorIds ?? []) {
+		await add(id, (row) =>
+			agentListedAsCoordinator(ctx, row._id, stored.coordinatorIds, door),
+		);
 	}
 	return out;
 }
@@ -169,7 +208,11 @@ export const getAgentDirectoryForAccessToken = query({
 		return await agentDirectoryOf(
 			ctx,
 			mapping.orgSlug,
-			mapping.allowedOrchestrators,
+			{
+				rosterIds: mapping.allowedAgentIds,
+				coordinatorIds: mapping.addressableFleetCoordinatorIds,
+			},
+			"orgRoster:getAgentDirectoryForAccessToken",
 		);
 	},
 });
@@ -204,10 +247,15 @@ export const getMyAgentDirectory = query({
 				)}`,
 			);
 		}
+		const mapping = await lookupOrgMapping(ctx, scope.orgSlug);
 		return await agentDirectoryOf(
 			ctx,
 			scope.orgSlug,
-			scope.allowedOrchestrators,
+			{
+				rosterIds: scope.allowedAgentIds,
+				coordinatorIds: mapping?.addressableFleetCoordinatorIds,
+			},
+			"orgRoster:getMyAgentDirectory",
 		);
 	},
 });

@@ -134,8 +134,8 @@ export const countReceiptTenantPresence = internalAction({
 // prod. This is READ-ONLY — it patches nothing, it only counts.
 //
 // Reuses `loadRealClientOrgs` (convex/receiptTenantBackfill.ts) — the SAME
-// join the backfill uses to build its roster (excludes the master sentinel
-// `allowedOrchestrators === ["*"]` and `orgKind === "operator"` rows) — never
+// join the backfill uses to build its roster (excludes the `fleetWide` rows
+// that replaced the "*" sentinel, and `orgKind === "operator"` rows) — never
 // a duplicated predicate. A receipt's `recipient` OR `recipientInstanceId`
 // matching a roster entry counts it as withheld under that org's slug; a
 // name that sits in TWO OR MORE client rosters is ambiguous — counted once

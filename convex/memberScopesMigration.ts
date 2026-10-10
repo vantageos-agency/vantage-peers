@@ -14,7 +14,7 @@
  *  - Only the scopes in DEFAULT_MEMBER_SCOPES are ever added; never
  *    cross-tenant-read, view-stats-aggregated or view-orchestrator-summary.
  *  - Only ACTIVE mappings; inactive orgs stay as they are.
- *  - Master-sentinel mappings (allowedOrchestrators contains "*") are skipped.
+ *  - Fleet-wide mappings (the explicit `fleetWide` flag) are skipped.
  *  - Idempotent: a mapping already holding every default scope is not written.
  *  - Bounded: at most `batchSize` (default 100, max 200) mappings per call.
  */
@@ -54,7 +54,7 @@ export const addDefaultMemberScopes = internalMutation({
 		const updatedSlugs: string[] = [];
 		for (const row of page.page) {
 			if (!row.isActive) continue;
-			if (row.allowedOrchestrators.includes("*")) continue;
+			if (row.fleetWide === true) continue;
 			const missing = DEFAULT_MEMBER_SCOPES.filter(
 				(s) => !row.scopes.includes(s),
 			);

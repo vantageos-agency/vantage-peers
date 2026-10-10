@@ -59,15 +59,14 @@ import { clerkOrgIdForSlug } from "./lib/orgClerkId";
 // Master sentinel + client-org fetch
 // ─────────────────────────────────────────────────────────────────────────────
 
-const MASTER_SENTINEL = "*";
-
 export type ClientOrg = {
 	clerkOrgSlug: string;
 	allowedOrchestrators: string[];
 };
 
-// Real client orgs = active mapping rows that are NOT the master sentinel
-// (allowedOrchestrators === ["*"]) AND NOT the operator's own organisation
+// Real client orgs = active mapping rows that are NOT fleet-wide (the explicit
+// `fleetWide` flag that replaced the "*" sentinel, module M1) AND NOT the
+// operator's own organisation
 // (orgKind === "operator"). Fetched ONCE per page by the mutation below —
 // never requeried per row. Shared as a plain helper (not routed through
 // ctx.runQuery) so the self-scheduling mutation reads it inside its own
@@ -76,7 +75,7 @@ export type ClientOrg = {
 // orgKind is absent on the vast majority of existing rows — absent means
 // "client", so this filter is additive and changes nothing for any row that
 // predates the field. Only a row explicitly marked "operator" is skipped,
-// joining the existing master-sentinel skip as ONE filter predicate (never a
+// joining the fleet-wide skip as ONE filter predicate (never a
 // second code path).
 export async function loadRealClientOrgs(
 	ctx: QueryCtx | MutationCtx,
@@ -86,13 +85,7 @@ export async function loadRealClientOrgs(
 		.withIndex("by_isActive", (q) => q.eq("isActive", true))
 		.collect();
 	return rows
-		.filter(
-			(r) =>
-				!(
-					r.allowedOrchestrators.length === 1 &&
-					r.allowedOrchestrators[0] === MASTER_SENTINEL
-				) && r.orgKind !== "operator",
-		)
+		.filter((r) => r.fleetWide !== true && r.orgKind !== "operator")
 		.map((r) => ({
 			clerkOrgSlug: r.clerkOrgSlug,
 			allowedOrchestrators: r.allowedOrchestrators,
