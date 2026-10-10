@@ -1,17 +1,19 @@
 /// <reference types="vite/client" />
 //
-// Pi ruling (b), task k17axar1dx4k6grekykm9tzz098frfm3: a client org's direct
-// recipients are its own roster PLUS an explicit, data-held allow-list of
-// fleet coordinators (client_org_mapping.addressableFleetCoordinators). Empty
-// by default; never inferred; ["*"] is never a grant. An allowed coordinator
-// is reachable by role and by its instances (resolved through the profile
-// owner). The write path is the internal mutation
-// clientOrgMapping:setAddressableFleetCoordinators, which accepts only names
-// on the operator org's roster.
+// Pi ruling (b), task k17axar1dx4k6grekykm9tzz098frfm3, module M1: a client
+// org's direct recipients are its own roster PLUS an explicit, data-held
+// allow-list of fleet coordinators, stored BY AGENT ID
+// (client_org_mapping.addressableFleetCoordinatorIds). Empty by default; never
+// inferred; no wildcard. A coordinator is addressed by its ID
+// (`recipientAgentIds`) and judged by assertPrincipalListed; a channel NAME no
+// longer reaches it. The write path is the internal mutation
+// clientOrgMapping:setAddressableFleetCoordinators, which accepts only IDs of
+// active agents of an active operator org.
 
 import { convexTest } from "convex-test";
 import { describe, expect, test } from "vitest";
 import { api, internal } from "../_generated/api";
+import type { Id } from "../_generated/dataModel";
 import schema from "../schema";
 
 const modules = Object.fromEntries(
@@ -60,8 +62,43 @@ const asOrg = (t: T, org: string) =>
 		organizationId: org,
 	} as Parameters<T["withIdentity"]>[0]);
 
-async function seedWorld(t: T) {
+type World = {
+	pi: Id<"agents">;
+	sigma: Id<"agents">;
+	eta: Id<"agents">;
+	themis: Id<"agents">;
+	neo: Id<"agents">;
+	oldOp: Id<"agents">;
+};
+
+async function seedWorld(t: T): Promise<World> {
+	const ids = await t.run(async (ctx) => {
+		const agent = (orgSlug: string, name: string, isActive = true) =>
+			ctx.db.insert("agents", {
+				orgSlug,
+				name,
+				normalizedName: name,
+				isActive,
+				createdAt: Date.now(),
+			});
+		return {
+			pi: await agent("perello", "pi"),
+			sigma: await agent("perello", "sigma"),
+			eta: await agent("perello", "eta"),
+			themis: await agent("other-client", "themis"),
+			neo: await agent("cgt", "neo"),
+			oldOp: await agent("old-op", "ghost"),
+		};
+	});
 	await seedOrg(t, "perello", ["pi", "sigma", "eta"], "operator");
+	await seedOrg(t, "old-op", ["ghost"], "operator");
+	await t.run(async (ctx) => {
+		const row = await ctx.db
+			.query("client_org_mapping")
+			.withIndex("by_clerk_slug", (q) => q.eq("clerkOrgSlug", "old-op"))
+			.unique();
+		if (row) await ctx.db.patch(row._id, { isActive: false });
+	});
 	await seedOrg(t, "cgt", ["cgtbot", "neo"]);
 	await seedOrg(t, "iris-rh", ["irisbot"]);
 	await seedOrg(t, "other-client", ["themis"]);
@@ -69,6 +106,7 @@ async function seedWorld(t: T) {
 		await seedProfile(t, o);
 	}
 	await seedProfile(t, "pi", "pi-chromebook");
+	return ids;
 }
 
 async function writes(t: T) {
@@ -85,8 +123,14 @@ async function recipientsOf(t: T, messageId: string) {
 
 const BOUNCE = /recipient error/;
 
-describe("direct messages: addressableFleetCoordinators (empty by default)", () => {
-	test("CGT (no list) -> sigma: refused, nothing written", async () => {
+const setIds = (t: T, clerkOrgSlug: string, agentIds: Id<"agents">[]) =>
+	t.mutation(internal.clientOrgMapping.setAddressableFleetCoordinators, {
+		clerkOrgSlug,
+		agentIds,
+	});
+
+describe("direct messages: addressableFleetCoordinatorIds (empty by default)", () => {
+	test("CGT (no list) -> sigma by name: refused, nothing written", async () => {
 		const t = createT();
 		await seedWorld(t);
 		await expect(
@@ -99,7 +143,20 @@ describe("direct messages: addressableFleetCoordinators (empty by default)", () 
 		expect(await writes(t)).toEqual({ messages: 0, receipts: 0 });
 	});
 
-	test("CGT -> neo (own roster): delivered", async () => {
+	test("CGT (no list) -> sigma BY ID: refused, nothing written", async () => {
+		const t = createT();
+		const w = await seedWorld(t);
+		await expect(
+			asOrg(t, "cgt").mutation(api.messages.sendMessage, {
+				from: "cgtbot",
+				recipientAgentIds: [w.sigma],
+				content: "x",
+			}),
+		).rejects.toThrow(/recipient-agent-not-addressable/);
+		expect(await writes(t)).toEqual({ messages: 0, receipts: 0 });
+	});
+
+	test("CGT -> neo (own roster, by name): delivered", async () => {
 		const t = createT();
 		await seedWorld(t);
 		const id = await asOrg(t, "cgt").mutation(api.messages.sendMessage, {
@@ -110,36 +167,31 @@ describe("direct messages: addressableFleetCoordinators (empty by default)", () 
 		expect(await recipientsOf(t, id)).toEqual(["neo"]);
 	});
 
-	test("iris-rh with [pi] -> pi and -> pi-chromebook: delivered", async () => {
+	test("iris-rh with [pi] -> pi BY ID: delivered in iris-rh's tenant with pi's ID", async () => {
 		const t = createT();
-		await seedWorld(t);
-		await t.mutation(internal.clientOrgMapping.setAddressableFleetCoordinators, {
-			clerkOrgSlug: "iris-rh",
-			names: ["pi"],
-		});
-		const iris = asOrg(t, "iris-rh");
-		const m1 = await iris.mutation(api.messages.sendMessage, {
+		const w = await seedWorld(t);
+		await setIds(t, "iris-rh", [w.pi]);
+		const m1 = await asOrg(t, "iris-rh").mutation(api.messages.sendMessage, {
 			from: "irisbot",
-			channel: "pi",
+			recipientAgentIds: [w.pi],
 			content: "x",
 		});
-		expect(await recipientsOf(t, m1)).toEqual(["pi"]);
-		const m2 = await iris.mutation(api.messages.sendMessage, {
-			from: "irisbot",
-			channel: "pi-chromebook",
-			content: "x",
-		});
-		expect(await recipientsOf(t, m2)).toEqual(["pi"]);
+		const receipts = await t.run((ctx) =>
+			ctx.db
+				.query("messageReceipts")
+				.withIndex("by_message", (q) => q.eq("messageId", m1))
+				.collect(),
+		);
+		expect(receipts.map((r) => [r.recipient, r.recipientId, r.tenantId])).toEqual([
+			["pi", w.pi, "iris-rh"],
+		]);
 	});
 
-	test("iris-rh with [pi] -> eta and -> themis: refused", async () => {
+	test("iris-rh with [pi]: a channel NAME no longer reaches the coordinator", async () => {
 		const t = createT();
-		await seedWorld(t);
-		await t.mutation(internal.clientOrgMapping.setAddressableFleetCoordinators, {
-			clerkOrgSlug: "iris-rh",
-			names: ["pi"],
-		});
-		for (const channel of ["eta", "themis", "pi,eta"]) {
+		const w = await seedWorld(t);
+		await setIds(t, "iris-rh", [w.pi]);
+		for (const channel of ["pi", "pi-chromebook"]) {
 			await expect(
 				asOrg(t, "iris-rh").mutation(api.messages.sendMessage, {
 					from: "irisbot",
@@ -151,31 +203,57 @@ describe("direct messages: addressableFleetCoordinators (empty by default)", () 
 		expect(await writes(t)).toEqual({ messages: 0, receipts: 0 });
 	});
 
-	test("setter: stores normalised names and reports previous/current", async () => {
+	test("iris-rh with [pi] -> eta and -> themis BY ID, and a list with one unlisted: refused", async () => {
 		const t = createT();
-		await seedWorld(t);
-		const r = await t.mutation(
-			internal.clientOrgMapping.setAddressableFleetCoordinators,
-			{ clerkOrgSlug: "iris-rh", names: [" PI "] },
-		);
+		const w = await seedWorld(t);
+		await setIds(t, "iris-rh", [w.pi]);
+		for (const ids of [[w.eta], [w.themis], [w.pi, w.eta]]) {
+			await expect(
+				asOrg(t, "iris-rh").mutation(api.messages.sendMessage, {
+					from: "irisbot",
+					recipientAgentIds: ids,
+					content: "x",
+				}),
+			).rejects.toThrow(/recipient-agent-not-addressable/);
+		}
+		expect(await writes(t)).toEqual({ messages: 0, receipts: 0 });
+	});
+
+	test("setter: stores IDs and reports previous/current", async () => {
+		const t = createT();
+		const w = await seedWorld(t);
+		const r = await setIds(t, "iris-rh", [w.pi, w.pi, w.sigma]);
 		expect(r).toEqual({
 			clerkOrgSlug: "iris-rh",
 			previous: [],
-			current: ["pi"],
+			current: [w.pi, w.sigma],
 		});
+		const cleared = await setIds(t, "iris-rh", []);
+		expect(cleared.previous).toEqual([w.pi, w.sigma]);
+		expect(cleared.current).toEqual([]);
 	});
 
-	test("setter refuses a non-operator name, a wildcard and an unknown org", async () => {
+	test("setter refuses a client agent, an agent of an inactive operator org, a deleted agent, the operator org and an unknown org", async () => {
 		const t = createT();
-		await seedWorld(t);
-		const set = (clerkOrgSlug: string, names: string[]) =>
-			t.mutation(internal.clientOrgMapping.setAddressableFleetCoordinators, {
-				clerkOrgSlug,
-				names,
-			});
-		await expect(set("iris-rh", ["themis"])).rejects.toThrow(/NOT_OPERATOR_ORCHESTRATOR/);
-		await expect(set("iris-rh", ["neo"])).rejects.toThrow(/NOT_OPERATOR_ORCHESTRATOR/);
-		await expect(set("iris-rh", ["*"])).rejects.toThrow(/NOT_OPERATOR_ORCHESTRATOR/);
-		await expect(set("no-such-org", ["pi"])).rejects.toThrow(/ORG_MAPPING_NOT_FOUND/);
+		const w = await seedWorld(t);
+		await expect(setIds(t, "iris-rh", [w.themis])).rejects.toThrow(
+			/NOT_OPERATOR_AGENT/,
+		);
+		await expect(setIds(t, "iris-rh", [w.neo])).rejects.toThrow(
+			/NOT_OPERATOR_AGENT/,
+		);
+		await expect(setIds(t, "iris-rh", [w.oldOp])).rejects.toThrow(
+			/NOT_OPERATOR_AGENT/,
+		);
+		await t.run((ctx) => ctx.db.delete(w.eta));
+		await expect(setIds(t, "iris-rh", [w.eta])).rejects.toThrow(
+			/NOT_OPERATOR_AGENT/,
+		);
+		await expect(setIds(t, "perello", [w.pi])).rejects.toThrow(
+			/OPERATOR_ORG_HAS_NO_ALLOW_LIST/,
+		);
+		await expect(setIds(t, "no-such-org", [w.pi])).rejects.toThrow(
+			/ORG_MAPPING_NOT_FOUND/,
+		);
 	});
 });

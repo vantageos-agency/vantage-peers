@@ -81,7 +81,7 @@ async function seedWorld(): Promise<World> {
 				...(operator ? { orgKind: "operator" as const } : {}),
 			});
 		await mapping(FLEET, ["pi", "eta", "sigma"], true);
-		await mapping(IRIS, ["hélios", "clio"], false);
+		const irisRow = await mapping(IRIS, ["hélios", "clio"], false);
 		await mapping(ACME, ["hélios"], false);
 		const agent = (orgSlug: string, name: string) =>
 			ctx.db.insert("agents", {
@@ -95,6 +95,8 @@ async function seedWorld(): Promise<World> {
 		const acmeHelios = await agent(ACME, "hélios");
 		const irisClio = await agent(IRIS, "clio");
 		const sigma = await agent(FLEET, "sigma");
+		// M1: the roster is stored BY ID (the name roster above stays beside it).
+		await ctx.db.patch(irisRow, { allowedAgentIds: [irisHelios, irisClio] });
 
 		const message: Record<string, Id<"messages">> = {};
 		const receipt: Record<string, Id<"messageReceipts">> = {};

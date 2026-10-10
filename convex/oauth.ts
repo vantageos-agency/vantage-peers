@@ -934,6 +934,17 @@ export const provisionOrganization = mutation({
 			...(operatorCreate ? { orgKind: "client" as const } : {}),
 		});
 
+		// ROSTER BY AGENT ID (module M1). Each seat is an `agents` row of the
+		// organisation the mapping row just written names; the roster stores those
+		// IDs. The nested internal mutation runs in THIS transaction and takes the
+		// mapping row's ID, so the agents' org is read from that target resource and
+		// never from the argument (clientOrgMapping:seedSeatAgents). The name roster
+		// above is the expand-phase copy.
+		await ctx.runMutation(internal.clientOrgMapping.seedSeatAgents, {
+			mappingId,
+			names,
+		});
+
 		// Audit actor: hash the master token when present (unchanged), else
 		// hash the caller's verified Clerk subject (org-admin path) so the
 		// audit trail still names an actor rather than an empty string.

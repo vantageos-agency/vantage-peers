@@ -1,8 +1,10 @@
 import { ConvexError, v } from "convex/values";
+import type { Id } from "./_generated/dataModel";
 import { internalMutation, internalQuery, query } from "./_generated/server";
 import { lookupOrgMapping, withOrgScope } from "./lib/auth";
 import { normalizeOrchestratorId } from "./_helpers/normalizeOrchestratorId";
-import { CLERK_ORG_ID_PATTERN } from "./lib/orgClerkId";
+import { findAgentByName } from "./lib/agentIdentity";
+import { CLERK_ORG_ID_PATTERN, clerkOrgIdForSlug } from "./lib/orgClerkId";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // getByClerkSlug — the HTTP-layer accessor onto client_org_mapping.
@@ -52,6 +54,8 @@ export const getByClerkSlug = query({
 	returns: v.union(
 		v.object({
 			allowedOrchestrators: v.array(v.string()),
+			allowedAgentIds: v.optional(v.array(v.id("agents"))),
+			fleetWide: v.optional(v.boolean()),
 			scopes: v.array(v.string()),
 			isActive: v.boolean(),
 		}),
@@ -70,10 +74,18 @@ export const getByClerkSlug = query({
 		}
 		const mapping = await lookupOrgMapping(ctx, args.orgSlug);
 		if (!mapping) return null;
-		// Explicit three-field projection: the published contract is unchanged
-		// (orgKind is an internal input of withOrgScope, not part of this read).
+		// Explicit projection (orgKind is an internal input of withOrgScope, not
+		// part of this read). `allowedAgentIds` / `fleetWide` are the ID roster and
+		// the explicit fleet flag (module M1); both are additive optional fields,
+		// so a reader that ignores them is unchanged.
 		return {
 			allowedOrchestrators: mapping.allowedOrchestrators,
+			...(mapping.allowedAgentIds !== undefined
+				? { allowedAgentIds: mapping.allowedAgentIds }
+				: {}),
+			...(mapping.fleetWide !== undefined
+				? { fleetWide: mapping.fleetWide }
+				: {}),
 			scopes: mapping.scopes,
 			isActive: mapping.isActive,
 		};
@@ -106,7 +118,9 @@ export const setOrgKind = internalMutation({
 	handler: async (ctx, args) => {
 		const row = await ctx.db
 			.query("client_org_mapping")
-			.withIndex("by_clerk_slug", (q) => q.eq("clerkOrgSlug", args.clerkOrgSlug))
+			.withIndex("by_clerk_slug", (q) =>
+				q.eq("clerkOrgSlug", args.clerkOrgSlug),
+			)
 			.unique();
 
 		if (!row) {
@@ -131,32 +145,33 @@ export const setOrgKind = internalMutation({
 // allow-list of fleet coordinators it may message directly (Pi ruling (b),
 // task k17axar1dx4k6grekykm9tzz098frfm3). Run by the operator via
 // `npx convex run clientOrgMapping:setAddressableFleetCoordinators
-// '{"clerkOrgSlug":"...","names":["pi"]}'` — internalMutation, never wired to
-// an MCP tool or client surface.
+// '{"clerkOrgSlug":"...","agentIds":["<agents id of the operator agent>"]}'` —
+// internalMutation, never wired to an MCP tool or client surface.
 //
-// Every name must be an orchestrator on the roster of an ACTIVE row marked
-// orgKind "operator" (never a client's, never "*"). Names are stored
-// normalised and de-duplicated; an empty list clears the grant. Audited like
-// setOrgKind: the return carries {previous, current}. Only the allow-list is
-// patched; roster, scopes and isActive are untouched.
+// BY AGENT ID (module M1). Every entry is the `_id` of an ACTIVE `agents` row
+// stamped with an ACTIVE org marked orgKind "operator" (never a client's agent,
+// never a name, never "*"). Entries are de-duplicated; an empty list clears the
+// grant. Audited like setOrgKind: the return carries {previous, current} as ID
+// lists. Only `addressableFleetCoordinatorIds` is patched; roster, scopes and
+// isActive are untouched. Read by messages:sendMessage (recipientAgentIds) and
+// the agent directory through assertPrincipalListed.
 // ─────────────────────────────────────────────────────────────────────────────
-// Upper bound on active org mappings scanned to build the operator roster.
-const MAX_ACTIVE_ORG_MAPPINGS = 500;
-
 export const setAddressableFleetCoordinators = internalMutation({
 	args: {
 		clerkOrgSlug: v.string(),
-		names: v.array(v.string()),
+		agentIds: v.array(v.id("agents")),
 	},
 	returns: v.object({
 		clerkOrgSlug: v.string(),
-		previous: v.array(v.string()),
-		current: v.array(v.string()),
+		previous: v.array(v.id("agents")),
+		current: v.array(v.id("agents")),
 	}),
 	handler: async (ctx, args) => {
 		const row = await ctx.db
 			.query("client_org_mapping")
-			.withIndex("by_clerk_slug", (q) => q.eq("clerkOrgSlug", args.clerkOrgSlug))
+			.withIndex("by_clerk_slug", (q) =>
+				q.eq("clerkOrgSlug", args.clerkOrgSlug),
+			)
 			.unique();
 		if (!row) {
 			throw new ConvexError(
@@ -169,74 +184,71 @@ export const setAddressableFleetCoordinators = internalMutation({
 			);
 		}
 
-		// read-bound: active org mappings are bounded by construction (one row per onboarded org, operator-written only); the cap is enforced fail-closed below.
-		const rows = await ctx.db
-			.query("client_org_mapping")
-			.withIndex("by_isActive", (q) => q.eq("isActive", true))
-			.take(MAX_ACTIVE_ORG_MAPPINGS + 1);
-		if (rows.length > MAX_ACTIVE_ORG_MAPPINGS) {
-			throw new ConvexError(
-				`ORG_MAPPING_SCAN_CAP_EXCEEDED: more than ${MAX_ACTIVE_ORG_MAPPINGS} active client_org_mapping rows; refusing to validate against a partial operator roster`,
-			);
-		}
-		const operatorRoster = new Set<string>();
-		for (const r of rows) {
-			if (r.orgKind !== "operator" || !r.isActive) continue;
-			for (const name of r.allowedOrchestrators) {
-				if (name !== "*") operatorRoster.add(normalizeOrchestratorId(name));
-			}
-		}
-
-		const current: string[] = [];
-		for (const raw of args.names) {
-			const name = normalizeOrchestratorId(raw);
-			if (name === "*" || !operatorRoster.has(name)) {
+		const current: Id<"agents">[] = [];
+		for (const id of args.agentIds) {
+			const agent = await ctx.db.get(id);
+			const mapping =
+				agent === null ? null : await lookupOrgMapping(ctx, agent.orgSlug);
+			if (
+				agent === null ||
+				!agent.isActive ||
+				mapping === null ||
+				!mapping.isActive ||
+				mapping.orgKind !== "operator"
+			) {
 				throw new ConvexError(
-					`NOT_OPERATOR_ORCHESTRATOR: "${raw}" is not an orchestrator of the operator org roster; only operator orchestrators may be made addressable`,
+					`NOT_OPERATOR_AGENT: "${id}" is not an active agent of an active operator org; only operator agents may be made addressable`,
 				);
 			}
-			if (!current.includes(name)) current.push(name);
+			if (!current.includes(id)) current.push(id);
 		}
 
-		const previous = row.addressableFleetCoordinators ?? [];
-		await ctx.db.patch(row._id, { addressableFleetCoordinators: current });
+		const previous = row.addressableFleetCoordinatorIds ?? [];
+		await ctx.db.patch(row._id, { addressableFleetCoordinatorIds: current });
 		return { clerkOrgSlug: args.clerkOrgSlug, previous, current };
 	},
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
-// addRosterMembers — the ONE write path that edits a client org's roster
-// (client_org_mapping.allowedOrchestrators) after creation (task
-// k173nws3xcp969t7dtvet5zqd58fr8gr). Run by the operator via
+// addRosterMembers — the ONE write path that edits a client org's roster after
+// creation (task k173nws3xcp969t7dtvet5zqd58fr8gr). Run by the operator via
 // `npx convex run clientOrgMapping:addRosterMembers
-// '{"clerkOrgSlug":"...","names":["bob"]}'` — internalMutation, never wired to
-// an MCP tool or client surface.
+// '{"clerkOrgSlug":"...","agentIds":["<agents id>"]}'` — internalMutation,
+// never wired to an MCP tool or client surface.
 //
-// APPEND ONLY: existing names are never removed or reordered, and a name
-// already present is a no-op. Client orgs only — the operator org is refused,
-// as is an inactive org. Each name is normalised and must match
-// ^[a-z][a-z0-9-]{0,40}$ ("*" and "" can never match). A name on the roster of
-// an ACTIVE operator org is refused: a client org must not claim a fleet
-// orchestrator's identity. The whole call is validated before the single
-// patch, so a refusal leaves the roster untouched. Audited like setOrgKind:
-// the return carries {previous, current}. Only allowedOrchestrators is patched.
+// BY AGENT ID (module M1): the roster is `client_org_mapping.allowedAgentIds`.
+// Every entry is the `_id` of an ACTIVE `agents` row stamped with THIS org's
+// own `clerkOrgSlug`, so a client org structurally cannot list a fleet agent or
+// another org's agent (the old "name on the operator roster" refusal is now
+// impossible by construction, not by a name scan). APPEND ONLY: existing
+// entries are never removed or reordered, and an ID already present is a no-op.
+// Client orgs only — the operator org is refused, as is an inactive org. The
+// whole call is validated before the single patch, so a refusal leaves the
+// roster untouched. Audited like setOrgKind: the return carries {previous,
+// current} as ID lists.
+//
+// EXPAND-PHASE DUAL WRITE. The legacy NAME roster (`allowedOrchestrators`) still
+// feeds the readers that compare a stored name (tasks, diary, ...), so the
+// agent's current label is appended there too. That copy is a label snapshot,
+// never an authority: nothing that decides on an agent reads it, and the
+// contract PR removes the field.
 // ─────────────────────────────────────────────────────────────────────────────
-const ROSTER_NAME_PATTERN = /^[a-z][a-z0-9-]{0,40}$/;
-
 export const addRosterMembers = internalMutation({
 	args: {
 		clerkOrgSlug: v.string(),
-		names: v.array(v.string()),
+		agentIds: v.array(v.id("agents")),
 	},
 	returns: v.object({
 		clerkOrgSlug: v.string(),
-		previous: v.array(v.string()),
-		current: v.array(v.string()),
+		previous: v.array(v.id("agents")),
+		current: v.array(v.id("agents")),
 	}),
 	handler: async (ctx, args) => {
 		const row = await ctx.db
 			.query("client_org_mapping")
-			.withIndex("by_clerk_slug", (q) => q.eq("clerkOrgSlug", args.clerkOrgSlug))
+			.withIndex("by_clerk_slug", (q) =>
+				q.eq("clerkOrgSlug", args.clerkOrgSlug),
+			)
 			.unique();
 		if (!row) {
 			throw new ConvexError(
@@ -254,53 +266,76 @@ export const addRosterMembers = internalMutation({
 			);
 		}
 
-		const names: string[] = [];
-		for (const raw of args.names) {
-			const name = normalizeOrchestratorId(raw);
-			if (!ROSTER_NAME_PATTERN.test(name)) {
+		const previous = row.allowedAgentIds ?? [];
+		const current: Id<"agents">[] = [...previous];
+		const labels = [...row.allowedOrchestrators];
+		for (const id of args.agentIds) {
+			const agent = await ctx.db.get(id);
+			if (
+				agent === null ||
+				!agent.isActive ||
+				agent.orgSlug !== row.clerkOrgSlug
+			) {
 				throw new ConvexError(
-					`INVALID_ROSTER_NAME: "${raw}" must match ${ROSTER_NAME_PATTERN.source} after normalisation ("*" and the empty string are never valid)`,
+					`AGENT_NOT_IN_ORG: "${id}" is not an active agent of org "${args.clerkOrgSlug}"; a roster lists the agents of its own organisation only`,
 				);
 			}
-			if (!names.includes(name)) names.push(name);
+			if (!current.includes(id)) current.push(id);
+			const label = normalizeOrchestratorId(agent.name);
+			if (!labels.some((entry) => normalizeOrchestratorId(entry) === label)) {
+				labels.push(label);
+			}
 		}
+		await ctx.db.patch(row._id, {
+			allowedAgentIds: current,
+			allowedOrchestrators: labels,
+		});
+		return { clerkOrgSlug: args.clerkOrgSlug, previous, current };
+	},
+});
 
-		// read-bound: active org mappings are bounded by construction (one row per onboarded org, operator-written only); the cap is enforced fail-closed below.
-		const rows = await ctx.db
-			.query("client_org_mapping")
-			.withIndex("by_isActive", (q) => q.eq("isActive", true))
-			.take(MAX_ACTIVE_ORG_MAPPINGS + 1);
-		if (rows.length > MAX_ACTIVE_ORG_MAPPINGS) {
+// ─────────────────────────────────────────────────────────────────────────────
+// seedSeatAgents — gives a BRAND-NEW org's roster its agent IDs (module M1).
+// Called only by oauth:provisionOrganization, as a nested internal mutation in
+// the provisioning transaction. It takes the mapping row's ID and reads the
+// organisation from THAT ROW, so the `agents` rows it writes are stamped with
+// the org the mapping names, never with a caller argument. For each seat name:
+// the org's existing agent of that name is reused (names are unique per org
+// under normalizeOrchestratorId), else an active `agents` row is inserted. The
+// resulting IDs are stored as `allowedAgentIds`, in the order of `names`.
+// ─────────────────────────────────────────────────────────────────────────────
+export const seedSeatAgents = internalMutation({
+	args: {
+		mappingId: v.id("client_org_mapping"),
+		names: v.array(v.string()),
+	},
+	returns: v.array(v.id("agents")),
+	handler: async (ctx, args) => {
+		const mapping = await ctx.db.get(args.mappingId);
+		if (mapping === null) {
 			throw new ConvexError(
-				`ORG_MAPPING_SCAN_CAP_EXCEEDED: more than ${MAX_ACTIVE_ORG_MAPPINGS} active client_org_mapping rows; refusing to check names against a partial operator roster`,
+				`ORG_MAPPING_NOT_FOUND: no client_org_mapping row "${args.mappingId}"`,
 			);
 		}
-		const operatorRoster = new Set<string>();
-		for (const r of rows) {
-			if (r.orgKind !== "operator" || !r.isActive) continue;
-			for (const name of r.allowedOrchestrators) {
-				if (name !== "*") operatorRoster.add(normalizeOrchestratorId(name));
-			}
+		const clerkOrgId = await clerkOrgIdForSlug(ctx, mapping.clerkOrgSlug);
+		const ids: Id<"agents">[] = [];
+		for (const name of args.names) {
+			const existing = await findAgentByName(ctx, mapping.clerkOrgSlug, name);
+			const id =
+				existing !== null
+					? existing._id
+					: await ctx.db.insert("agents", {
+							orgSlug: mapping.clerkOrgSlug,
+							...(clerkOrgId !== undefined ? { clerkOrgId } : {}),
+							name,
+							normalizedName: normalizeOrchestratorId(name),
+							isActive: true,
+							createdAt: Date.now(),
+						});
+			if (!ids.includes(id)) ids.push(id);
 		}
-		for (const name of names) {
-			if (operatorRoster.has(name)) {
-				throw new ConvexError(
-					`OPERATOR_ORCHESTRATOR_NAME: "${name}" is on an active operator org roster; a client org may not claim a fleet orchestrator's name`,
-				);
-			}
-		}
-
-		const previous = row.allowedOrchestrators;
-		const current = [...previous];
-		for (const name of names) {
-			if (
-				!current.some((existing) => normalizeOrchestratorId(existing) === name)
-			) {
-				current.push(name);
-			}
-		}
-		await ctx.db.patch(row._id, { allowedOrchestrators: current });
-		return { clerkOrgSlug: args.clerkOrgSlug, previous, current };
+		await ctx.db.patch(mapping._id, { allowedAgentIds: ids });
+		return ids;
 	},
 });
 

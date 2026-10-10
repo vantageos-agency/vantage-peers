@@ -198,6 +198,7 @@ describe("memberScopesMigration:addDefaultMemberScopes", () => {
 			await ctx.db.insert("client_org_mapping", {
 				...base,
 				allowedOrchestrators: ["*"],
+				fleetWide: true, // the explicit flag that replaced the "*" sentinel (M1)
 				clerkOrgSlug: "master-sentinel",
 				scopes: ["cross-tenant-read"],
 				isActive: true,

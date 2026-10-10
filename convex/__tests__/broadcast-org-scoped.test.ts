@@ -11,8 +11,8 @@
 //
 // FIX: bound the broadcast recipient set to the emitter's own tenant, derived
 // from withOrgScope(ctx) (never the client-supplied args.tenantId):
-//   - client-scoped emitter -> recipients restricted to its own org's
-//     allowedOrchestrators (client_org_mapping.allowedOrchestrators).
+//   - client-scoped emitter -> recipients restricted to its own org's ID roster
+//     (client_org_mapping.allowedAgentIds, module M1).
 //   - master/internal emitter -> recipients restricted to orchestrators NOT
 //     bound to any active client org (i.e. all profiles minus the union of
 //     every active client_org_mapping row's allowedOrchestrators).
@@ -48,15 +48,33 @@ async function seedProfile(
 	});
 }
 
+// `agentNames` are the roster members that exist as `agents` rows of the org:
+// the roster is stored BY ID (module M1) and a client-scoped broadcast fans out
+// to those IDs. The emitter is deliberately NOT one of them (a sender that is a
+// registered agent needs its credential, which this suite does not exercise).
 async function seedOrgMapping(
 	t: ReturnType<typeof createT>,
 	clerkOrgSlug: string,
 	allowedOrchestrators: string[],
+	agentNames: string[] = [],
 ) {
 	await t.run(async (ctx) => {
+		const allowedAgentIds = [];
+		for (const name of agentNames) {
+			allowedAgentIds.push(
+				await ctx.db.insert("agents", {
+					orgSlug: clerkOrgSlug,
+					name,
+					normalizedName: name,
+					isActive: true,
+					createdAt: Date.now(),
+				}),
+			);
+		}
 		await ctx.db.insert("client_org_mapping", {
 			clerkOrgSlug,
 			allowedOrchestrators,
+			allowedAgentIds,
 			scopes: ["view-own-tasks", "view-own-missions"],
 			displayName: clerkOrgSlug,
 			isActive: true,
@@ -80,7 +98,7 @@ async function recipientsOf(
 describe("sendMessage broadcast — org-scoped fan-out (cross-tenant leak fix)", () => {
 	test("client-scoped emitter: tenant-A broadcast reaches tenant-A peer, NOT tenant-B orchestrator", async () => {
 		const t = createT();
-		await seedOrgMapping(t, "tenant-a", ["victor", "noe"]);
+		await seedOrgMapping(t, "tenant-a", ["victor", "noe"], ["noe"]);
 		await seedOrgMapping(t, "tenant-b", ["marie"]);
 		await seedProfile(t, "victor");
 		await seedProfile(t, "noe");
@@ -219,9 +237,9 @@ describe("sendMessage broadcast — org-scoped fan-out (cross-tenant leak fix)",
 
 	test("shared orchestrator in two active tenants: receives tenant-A broadcast, not tenant-B's disjoint recipient", async () => {
 		const t = createT();
-		// "shared" is listed in BOTH tenant-a and tenant-b.
-		await seedOrgMapping(t, "tenant-a", ["victor", "shared"]);
-		await seedOrgMapping(t, "tenant-b", ["marie", "shared"]);
+		// Each tenant holds ITS OWN agent named "shared" (two agents, one label).
+		await seedOrgMapping(t, "tenant-a", ["victor", "shared"], ["shared"]);
+		await seedOrgMapping(t, "tenant-b", ["marie", "shared"], ["shared"]);
 		await seedProfile(t, "victor");
 		await seedProfile(t, "marie");
 		await seedProfile(t, "shared");

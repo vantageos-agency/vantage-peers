@@ -11,6 +11,7 @@
 import { convexTest } from "convex-test";
 import { describe, expect, test } from "vitest";
 import { api } from "./_generated/api";
+import type { Id } from "./_generated/dataModel";
 import schema from "./schema";
 
 const modules = Object.fromEntries(
@@ -50,7 +51,12 @@ async function seedOrg(
 	t: T,
 	clerkOrgSlug: string,
 	allowedOrchestrators: string[],
-	opts: { isActive?: boolean; addressable?: string[] } = {},
+	opts: {
+		isActive?: boolean;
+		orgKind?: "operator";
+		agentIds?: Id<"agents">[];
+		coordinatorIds?: Id<"agents">[];
+	} = {},
 ) {
 	await t.run(async (ctx) => {
 		await ctx.db.insert("client_org_mapping", {
@@ -60,16 +66,42 @@ async function seedOrg(
 			displayName: clerkOrgSlug,
 			isActive: opts.isActive ?? true,
 			createdAt: Date.now(),
-			...(opts.addressable !== undefined
-				? { addressableFleetCoordinators: opts.addressable }
+			...(opts.orgKind !== undefined ? { orgKind: opts.orgKind } : {}),
+			// M1: the roster and the fleet coordinators are stored BY ID.
+			...(opts.agentIds !== undefined ? { allowedAgentIds: opts.agentIds } : {}),
+			...(opts.coordinatorIds !== undefined
+				? { addressableFleetCoordinatorIds: opts.coordinatorIds }
 				: {}),
 		});
 	});
 }
 
+async function seedAgent(
+	t: T,
+	orgSlug: string,
+	name: string,
+): Promise<Id<"agents">> {
+	return await t.run((ctx) =>
+		ctx.db.insert("agents", {
+			orgSlug,
+			name,
+			normalizedName: name,
+			isActive: true,
+			createdAt: Date.now(),
+		}),
+	);
+}
+
 async function seedWorld(t: T) {
+	const seat: Id<"agents">[] = [];
+	for (const name of ["neo", "hal", "mimir", "bob"]) {
+		seat.push(await seedAgent(t, SEAT_ORG, name));
+	}
+	const pi = await seedAgent(t, "perello", "pi");
+	await seedOrg(t, "perello", ["pi"], { orgKind: "operator" });
 	await seedOrg(t, SEAT_ORG, ["neo", "hal", "mimir", "bob"], {
-		addressable: ["pi"],
+		agentIds: seat,
+		coordinatorIds: [pi],
 	});
 	await seedOrg(t, "dormant-org", ["ghost"], { isActive: false });
 	await seedOrg(t, "other-client", ["themis"]);
@@ -85,6 +117,7 @@ async function seedWorld(t: T) {
 	]) {
 		await seedProfile(t, o);
 	}
+	return { pi };
 }
 
 async function writes(t: T) {
@@ -126,16 +159,24 @@ describe("messages:sendMessage — forwarded seat org on the service-account pat
 		expect(await recipientsOf(t, id)).toEqual(["neo"]);
 	});
 
-	test("(c) the same seat -> pi (addressable fleet coordinator): delivered", async () => {
+	test("(c) the same seat -> pi BY ID (stored fleet coordinator): delivered; by name: refused", async () => {
 		const t = createT();
-		await seedWorld(t);
+		const w = await seedWorld(t);
 		const id = await asServiceAccount(t).mutation(api.messages.sendMessage, {
 			from: "neo",
-			channel: "pi",
+			recipientAgentIds: [w.pi],
 			content: "x",
 			seatOrgSlug: SEAT_ORG,
 		});
 		expect(await recipientsOf(t, id)).toEqual(["pi"]);
+		await expect(
+			asServiceAccount(t).mutation(api.messages.sendMessage, {
+				from: "neo",
+				channel: "pi",
+				content: "x",
+				seatOrgSlug: SEAT_ORG,
+			}),
+		).rejects.toThrow(BOUNCE);
 	});
 
 	test("(d) service account with NO forwarded org (fleet master) -> sigma: delivered", async () => {

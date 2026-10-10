@@ -461,6 +461,27 @@ describe("human CRUD — messages:sendMessage", () => {
 
 	test("broadcast -> served, fan-out bounded to the org roster", async () => {
 		const t = await setup();
+		// M1: the org-a roster is stored BY ID; a broadcast fans out to these agents
+		// (seeded here only: as agent rows they would need a credential to SEND).
+		await t.run(async (ctx) => {
+			const row = await ctx.db
+				.query("client_org_mapping")
+				.withIndex("by_clerk_slug", (q) => q.eq("clerkOrgSlug", "org-a"))
+				.unique();
+			const ids = [];
+			for (const name of ["sigma", "pi"]) {
+				ids.push(
+					await ctx.db.insert("agents", {
+						orgSlug: "org-a",
+						name,
+						normalizedName: name,
+						isActive: true,
+						createdAt: Date.now(),
+					}),
+				);
+			}
+			if (row) await ctx.db.patch(row._id, { allowedAgentIds: ids });
+		});
 		await t.withIdentity(as("user_m", "org:editor")).mutation(api.messages.sendMessage, { ...args, channel: "broadcast" });
 		const receipts = await t.run(async (ctx) => await ctx.db.query("messageReceipts").collect());
 		expect(receipts.map((r) => r.recipient).sort()).toEqual(["pi", "sigma"]);

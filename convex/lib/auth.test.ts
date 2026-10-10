@@ -352,7 +352,9 @@ describe("filterByOrgScope", () => {
 	const masterScope: OrgScope = {
 		userId: "user-laurent",
 		orgSlug: null,
-		allowedOrchestrators: ["*"],
+		allowedOrchestrators: [],
+		allowedAgentIds: [],
+		fleetWide: true,
 		scopes: ["cross-tenant-read"],
 		isMaster: true,
 	};
@@ -361,6 +363,8 @@ describe("filterByOrgScope", () => {
 		userId: "user-nadia",
 		orgSlug: "acme-hr",
 		allowedOrchestrators: ["victor"],
+		allowedAgentIds: [],
+		fleetWide: false,
 		scopes: ["view-own-tasks", "view-own-missions"],
 		isMaster: false,
 	};
@@ -438,7 +442,9 @@ describe("requireScope", () => {
 	const masterScope: OrgScope = {
 		userId: "user-laurent",
 		orgSlug: null,
-		allowedOrchestrators: ["*"],
+		allowedOrchestrators: [],
+		allowedAgentIds: [],
+		fleetWide: true,
 		scopes: ["cross-tenant-read"],
 		isMaster: true,
 	};
@@ -447,6 +453,8 @@ describe("requireScope", () => {
 		userId: "user-nadia",
 		orgSlug: "acme-hr",
 		allowedOrchestrators: ["victor"],
+		allowedAgentIds: [],
+		fleetWide: false,
 		scopes: ["view-own-tasks"],
 		isMaster: false,
 	};

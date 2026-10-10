@@ -24,9 +24,16 @@ const CHECK_DELEGATION_END_ANCHOR = "export function checkNamespacePrefix";
 const UNGUARDED_WILDCARD_ALLOW =
 	/^\s*if\s*\(\s*roster\.includes\(\s*(["'])\*\1\s*\)\s*\)\s*return\s+null\s*;/m;
 
-/** Wildcard allow is Clerk-JWT only — either quote on the `*` literal. */
+/**
+ * Fleet-wide allow is Clerk-JWT only and rests on the EXPLICIT `fleetWide` flag
+ * carried on the verified context (module M1), never on a "*" entry of a roster.
+ */
 const CLERK_JWT_WILDCARD_ALLOW =
-	/ctx\.clerkJwt\s*&&\s*roster\.includes\(\s*(["'])\*\1\s*\)/;
+	/ctx\.clerkJwt\s*&&\s*ctx\.orgFleetWide\s*===\s*true/;
+
+/** Unguarded fleet-flag allow: must NOT match the clerkJwt-prefixed line. */
+const UNGUARDED_FLEET_ALLOW =
+	/^\s*if\s*\(\s*ctx\.orgFleetWide\b[^&\n]*\)\s*return\s+null\s*;/m;
 
 /**
  * Cut the checkDelegationAllowed body. indexOf === -1 must not reach
@@ -63,6 +70,9 @@ describe("CI invariant — provisioned client org-binding", () => {
 		expect(fn).toMatch(/clerkOrgSlug/);
 		expect(fn).toMatch(CLERK_JWT_WILDCARD_ALLOW);
 		expect(fn).not.toMatch(UNGUARDED_WILDCARD_ALLOW);
+		expect(fn).not.toMatch(UNGUARDED_FLEET_ALLOW);
+		// a "*" entry in a roster is an ordinary string: no code reads it as a grant.
+		expect(fn).not.toMatch(/roster\.includes\(\s*(["'])\*\1\s*\)/);
 	});
 
 	it("missing checkNamespacePrefix end-anchor throws REFUSING TO JUDGE (ETA-M26)", () => {

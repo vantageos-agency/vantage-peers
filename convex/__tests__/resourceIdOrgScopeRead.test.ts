@@ -649,6 +649,8 @@ const scopeOf = (over: Partial<OrgScope>): OrgScope => ({
 	userId: "u",
 	orgSlug: "org-a",
 	allowedOrchestrators: ["sigma"],
+	allowedAgentIds: [],
+	fleetWide: false,
 	scopes: [],
 	isMaster: false,
 	...over,

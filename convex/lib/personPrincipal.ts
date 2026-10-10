@@ -129,6 +129,8 @@ export async function resolveVerifiedPerson(
 		userId: principal.subject,
 		orgSlug: principal.orgSlug,
 		allowedOrchestrators: mapping.allowedOrchestrators,
+		allowedAgentIds: mapping.allowedAgentIds ?? [],
+		fleetWide: false,
 		scopes: mapping.scopes,
 		isMaster: false,
 		...(principal.orgRole !== undefined ? { orgRole: principal.orgRole } : {}),

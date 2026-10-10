@@ -1,6 +1,7 @@
 import { ConvexError, v } from "convex/values";
 import { internalMutation, internalQuery } from "./_generated/server";
 import { clerkOrgIdForSlug } from "./lib/orgClerkId";
+import { requireAgentsOfOrg } from "./lib/rosterIds";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // seedClientOrgMapping — idempotent per-org row provisioning.
@@ -31,6 +32,10 @@ export const seedClientOrgMapping = internalMutation({
 		clerkOrgSlug: v.string(),
 		displayName: v.string(),
 		allowedOrchestrators: v.array(v.string()),
+		// The roster by agent ID (module M1): active agents of THIS org.
+		allowedAgentIds: v.optional(v.array(v.id("agents"))),
+		// The explicit fleet flag that replaces a "*" entry in the name roster.
+		fleetWide: v.optional(v.boolean()),
 		scopes: v.array(v.string()),
 	},
 	returns: v.id("client_org_mapping"),
@@ -49,10 +54,16 @@ export const seedClientOrgMapping = internalMutation({
 			return existing._id;
 		}
 
+		const allowedAgentIds =
+			args.allowedAgentIds === undefined
+				? undefined
+				: await requireAgentsOfOrg(ctx, args.clerkOrgSlug, args.allowedAgentIds);
 		return await ctx.db.insert("client_org_mapping", {
 			clerkOrgSlug: args.clerkOrgSlug,
 			displayName: args.displayName,
 			allowedOrchestrators: args.allowedOrchestrators,
+			...(allowedAgentIds !== undefined ? { allowedAgentIds } : {}),
+			...(args.fleetWide === true ? { fleetWide: true } : {}),
 			scopes: args.scopes,
 			isActive: true,
 			createdAt: Date.now(),
@@ -207,7 +218,13 @@ export const deriveRosterFromProfiles = internalQuery({
 });
 
 export const setOrgRoster = internalMutation({
-	args: { clerkOrgSlug: v.string(), allowedOrchestrators: v.array(v.string()) },
+	args: {
+		clerkOrgSlug: v.string(),
+		allowedOrchestrators: v.array(v.string()),
+		// The roster by agent ID (module M1): active agents of THIS org. When
+		// given it replaces the stored ID roster; when absent it is untouched.
+		allowedAgentIds: v.optional(v.array(v.id("agents"))),
+	},
 	returns: v.id("client_org_mapping"),
 	handler: async (ctx, args) => {
 		const mapping = await ctx.db
@@ -221,8 +238,13 @@ export const setOrgRoster = internalMutation({
 				`ORG_NOT_FOUND: no client_org_mapping row for clerkOrgSlug "${args.clerkOrgSlug}"`,
 			);
 		}
+		const allowedAgentIds =
+			args.allowedAgentIds === undefined
+				? undefined
+				: await requireAgentsOfOrg(ctx, args.clerkOrgSlug, args.allowedAgentIds);
 		await ctx.db.patch(mapping._id, {
 			allowedOrchestrators: args.allowedOrchestrators,
+			...(allowedAgentIds !== undefined ? { allowedAgentIds } : {}),
 		});
 		return mapping._id;
 	},

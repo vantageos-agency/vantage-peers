@@ -10,7 +10,7 @@
 // `eq("tenantId", orgSlug)` read?". This file pins that count.
 //
 // Mirrors receiptTenantBackfill's `loadRealClientOrgs` join EXACTLY (never
-// re-implemented): master sentinel (`allowedOrchestrators === ["*"]`) and
+// re-implemented): fleet-wide rows (the `fleetWide` flag that replaced the "*" sentinel) and
 // `orgKind === "operator"` rows are excluded from the roster, same as the
 // backfill.
 
@@ -33,12 +33,14 @@ async function seedOrgMapping(
 		allowedOrchestrators: string[];
 		isActive?: boolean;
 		orgKind?: "operator" | "client";
+		fleetWide?: boolean;
 	},
 ) {
 	await t.run(async (ctx) => {
 		await ctx.db.insert("client_org_mapping", {
 			clerkOrgSlug: opts.clerkOrgSlug,
 			allowedOrchestrators: opts.allowedOrchestrators,
+			...(opts.fleetWide === true ? { fleetWide: true } : {}),
 			scopes: ["view-own-tasks"],
 			displayName: opts.clerkOrgSlug,
 			isActive: opts.isActive ?? true,
@@ -170,6 +172,7 @@ describe("receiptTenantAudit.countWithheldRecipientReceipts — positive control
 		await seedOrgMapping(t, {
 			clerkOrgSlug: "master",
 			allowedOrchestrators: ["*"],
+			fleetWide: true, // the explicit flag that replaced the "*" sentinel (M1)
 		});
 
 		await seedUntenantedReceipt(t, { from: "pi", recipient: "*" });
