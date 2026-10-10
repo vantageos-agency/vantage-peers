@@ -7,6 +7,7 @@ Covers:
   2. pass_on_valid       — commit touches convex/schema.ts AND mcp-server/src/tools/ → exit 0
   3. pass_on_override    — commit message contains override marker → exit 0
 """
+import itertools
 import json
 import os
 import subprocess
@@ -20,6 +21,18 @@ HOOK = os.path.join(
 HOOK = os.path.abspath(HOOK)
 
 
+# One TemporaryDirectory per module run, removed at interpreter exit even if a
+# test's own cleanup is skipped; each repo is a numbered child of it.
+_TMP_ROOT = tempfile.TemporaryDirectory(prefix="hooks-test-")
+_repo_counter = itertools.count()
+
+
+def _fresh_dir() -> str:
+    path = os.path.join(_TMP_ROOT.name, str(next(_repo_counter)))
+    os.mkdir(path)
+    return path
+
+
 def _new_temp_repo() -> str:
     """A THROWAWAY git repository, never the real checkout. The hook under
     test resolves its repo from the payload's own `cwd` via `git rev-parse
@@ -30,7 +43,7 @@ def _new_temp_repo() -> str:
     hook, writes/removes — on the REAL tracked tree the moment a fixture
     needs a staged file to exist on disk. Every test gets its own repo,
     destroyed after."""
-    tmpdir = tempfile.mkdtemp()
+    tmpdir = _fresh_dir()
     subprocess.run(["git", "init", "-q"], cwd=tmpdir, check=True)
     subprocess.run(["git", "config", "user.email", "t@t.t"], cwd=tmpdir, check=True)
     subprocess.run(["git", "config", "user.name", "t"], cwd=tmpdir, check=True)

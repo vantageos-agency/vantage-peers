@@ -10,6 +10,7 @@ author never probes. Read-only paths must pass: /api/query is not
 import contextlib
 import http.server
 import importlib.util
+import itertools
 import json
 import os
 import pathlib
@@ -17,9 +18,10 @@ import re
 import shutil
 import subprocess
 import sys
-import tempfile
 import threading
 import time
+
+import pytest
 
 HOOK = pathlib.Path(__file__).resolve().parent.parent / "enforce-pi-authorization-before-prod-deploy.py"
 HOOKS_DIR = HOOK.parent
@@ -28,6 +30,28 @@ HOOKS_DIR = HOOK.parent
 # pointed at a closed loopback port (connection refused -> could-not-judge);
 # the ALLOW poles point it at a local stub of `tasks:get` instead.
 DEAD_URL = "http://127.0.0.1:9"
+
+
+# Per-test scratch root. Every temp path in this file lives under pytest's
+# `tmp_path`, which pytest prunes; nothing is created with a bare `mkdtemp`
+# (1582 leaked `pi-guard-degraded-*` directories, 1.8G, before this).
+_TEST_TMP = None
+_scratch_counter = itertools.count()
+
+
+@pytest.fixture(autouse=True)
+def _per_test_tmp(tmp_path):
+    global _TEST_TMP
+    _TEST_TMP = tmp_path
+    yield
+    _TEST_TMP = None
+
+
+def _scratch_dir(prefix=""):
+    path = _TEST_TMP / f"{prefix}{next(_scratch_counter)}"
+    path.mkdir()
+    return path
+
 
 
 def run_hook(command: str, extra_env=None):
@@ -42,7 +66,7 @@ def run_hook(command: str, extra_env=None):
     # explicitly via STUB_IDENTITY_ENV.
     env.pop("VP_GUARD_CONVEX_TOKEN", None)
     env["VP_GUARD_ENV_FILE"] = "/nonexistent/hermetic/.env.local"
-    env["VP_GUARD_AUDIT_LOG"] = os.path.join(tempfile.gettempdir(), "pi-auth-test-audit.log")
+    env["VP_GUARD_AUDIT_LOG"] = str(_TEST_TMP / "pi-auth-test-audit.log")
     if extra_env:
         env.update(extra_env)
     proc = subprocess.run(
@@ -508,8 +532,8 @@ def build_degraded_world(delete_module=False, strip_carries_prod_action=False):
     `strip_carries_prod_action=True` -> world (b): the module is present but
     stale -- missing the very name the guard imports.
     """
-    tmp = tempfile.mkdtemp(prefix="pi-guard-degraded-")
-    dest_hooks = pathlib.Path(tmp) / "hooks"
+    tmp = _scratch_dir("pi-guard-degraded-")
+    dest_hooks = tmp / "hooks"
     shutil.copytree(HOOKS_DIR, dest_hooks, ignore=shutil.ignore_patterns("__pycache__"))
     module_path = dest_hooks / "_lib" / "command_predicate.py"
     if delete_module:
@@ -534,7 +558,7 @@ def run_degraded_hook(guard_path, command, extra_env=None):
     # explicitly via STUB_IDENTITY_ENV.
     env.pop("VP_GUARD_CONVEX_TOKEN", None)
     env["VP_GUARD_ENV_FILE"] = "/nonexistent/hermetic/.env.local"
-    env["VP_GUARD_AUDIT_LOG"] = os.path.join(tempfile.gettempdir(), "pi-auth-test-audit.log")
+    env["VP_GUARD_AUDIT_LOG"] = str(_TEST_TMP / "pi-auth-test-audit.log")
     if extra_env:
         env.update(extra_env)
     proc = subprocess.run(
@@ -939,7 +963,7 @@ def test_broken_credential_refuses_to_judge_rather_than_blocking():
 def test_three_states_are_distinct_in_the_audit_log():
     """ALLOW / BLOCK / REFUSE-TO-JUDGE must be three different `reason` values
     in /tmp/pi-auth-prod-deploy.log, not two."""
-    log = pathlib.Path(tempfile.mkdtemp()) / "audit.log"
+    log = _scratch_dir("audit-") / "audit.log"
     tasks = {"k17aaaaaaaaaaaaaaaaaaaaaaaaaaaaa": token_task()}
     env = {"VP_GUARD_AUDIT_LOG": str(log)}
     _run_against_door(AUTHORIZED_DEPLOY, tasks, extra_env=env)
@@ -1044,7 +1068,7 @@ def _mint_failures():
     """Run all four scenarios; return {scenario: (rc, out, audit_entries)}."""
     results = {}
     for scenario in _MINT_SCENARIOS:
-        log = pathlib.Path(tempfile.mkdtemp()) / "audit.log"
+        log = _scratch_dir("audit-") / "audit.log"
         rc, out = _run_mint_failure(scenario, log)
         entries = [json.loads(line) for line in log.read_text().splitlines() if line.strip()]
         results[scenario] = (rc, out, entries)
@@ -1080,7 +1104,7 @@ def test_identity_failure_names_its_step():
 def test_identity_failure_transport_error_names_its_exception():
     """A fifth ending: the mint call itself RAISES. It must be told apart from
     the four 'came back empty' steps, and must carry the exception, not hide it."""
-    log = pathlib.Path(tempfile.mkdtemp()) / "audit.log"
+    log = _scratch_dir("audit-") / "audit.log"
     _MINT_SCENARIOS["transport-raised"] = ["raise"]
     try:
         rc, out = _run_mint_failure("transport-raised", log)
