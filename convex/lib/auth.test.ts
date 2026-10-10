@@ -267,7 +267,7 @@ describe("withOrgScope — org not in mapping", () => {
 		} as Parameters<typeof t.withIdentity>[0]);
 
 		await expect(tWithAuth.query(api.tasks.list, {})).rejects.toThrow(
-			/RBAC_DENIED:.*"unknown-org"/,
+			/RBAC_DENIED:.*"reason":"org-mapping-not-found"/,
 		);
 	});
 });
@@ -347,7 +347,7 @@ describe("withOrgScope — inactive org mapping", () => {
 		} as Parameters<typeof t.withIdentity>[0]);
 
 		await expect(tWithAuth.query(api.tasks.list, {})).rejects.toThrow(
-			/RBAC_DENIED:.*"disabled-org"/,
+			/RBAC_DENIED:.*"reason":"organisation-not-active"/,
 		);
 	});
 });

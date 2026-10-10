@@ -131,10 +131,11 @@ describe("operator org admin -> fleet master", () => {
 		expect(await refusal(read(c))).toContain("not-fleet-master");
 	});
 
-	// The admin match is EXACT on the normalised role (readOrgRole strips one
-	// leading "org:" and lowercases). A role that merely CONTAINS "admin" is a
-	// custom role, never fleet master.
+	// The admin match is EXACT (the package's `assertOrgAdmin`: "org:admin" or
+	// "admin", no case folding, no prefix stripping). A role that merely CONTAINS
+	// "admin", or spells it in another case, is never fleet master.
 	test.each([
+		"ORG:Admin",
 		"org:billing_admin",
 		"org:admin_readonly",
 		"org:superadmin",
@@ -147,8 +148,8 @@ describe("operator org admin -> fleet master", () => {
 		expect(await refusal(read(c))).toContain("not-fleet-master");
 	});
 
-	test.each(["org:admin", "admin", "ORG:Admin"])(
-		"operator-org role %s (exact admin after normalisation) -> still master",
+	test.each(["org:admin", "admin"])(
+		"operator-org role %s (exact admin role) -> still master",
 		async (role) => {
 			const t = createT();
 			await seed(t);

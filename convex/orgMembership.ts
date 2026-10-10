@@ -1,6 +1,8 @@
 import { ConvexError, v } from "convex/values";
 import { MutationCtx, query } from "./_generated/server";
-import { withOrgScope } from "./lib/auth";
+import { sameOrg } from "@vantageos/cloud-identity";
+import { lookupOrgMapping, requireResolvedCaller, withOrgScope } from "./lib/auth";
+import { orgRefOfScope } from "./lib/authOrgMapping";
 import { clerkOrgIdForSlug } from "./lib/orgClerkId";
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -83,10 +85,14 @@ export async function upsertAdminMembership(
 // identity only (withOrgScope), never from a caller-supplied argument
 // naming who is asking.
 //
-//   args.clerkOrgSlug present  → "who administers/belongs to org X".
+//   args.clerkOrgSlug present  → "who administers/belongs to org X". X is a
+//     LABEL: it is resolved to its mapping row and read BY THE ORG'S
+//     PERMANENT ID (`by_org_clerk_id`); the caller's own org is compared by
+//     ID too. A row stamped with a label only (no org ID yet) is not served
+//     until `backfill_org_clerk_id` fills it.
 //     Master / service-account (scope.isMaster) may ask about ANY
 //     organisation. An org-scoped caller may ask ONLY about its OWN
-//     organisation (scope.orgSlug === args.clerkOrgSlug) — asking about any
+//     organisation (same org ID) — asking about any
 //     other org is refused with RBAC_DENIED, not an empty list, so there is
 //     no existence oracle.
 //
@@ -134,15 +140,9 @@ export const getMembership = query({
 		// is UNCHANGED (out of this brief's scope, a distinct caller class).
 		const scope = await withOrgScope(ctx, { refuseWithoutThrow: true });
 
-		// withOrgScope's fail-closed default for "no identity at all" is
-		// userId="anonymous", isMaster=false, scopes=[] — refuse here, before
-		// any db.query call, rather than let an empty-scopes caller fall
-		// through to a (possibly empty, possibly not) index read.
-		if (!scope.isMaster && scope.userId === "anonymous") {
-			throw new ConvexError(
-				"RBAC_DENIED: getMembership requires an authenticated caller",
-			);
-		}
+		// A caller presenting no credential at all is refused by RAISING, before
+		// any db.query call (`requireResolvedCaller`: the one refusal helper).
+		requireResolvedCaller(scope, "orgMembership:getMembership");
 
 		// A signed-in caller with no organisation yet (scope.refused) has no
 		// "own org" to compare against — a typed empty result, not a throw,
@@ -152,18 +152,33 @@ export const getMembership = query({
 		}
 
 		if (args.clerkOrgSlug !== undefined) {
-			if (!scope.isMaster && scope.orgSlug !== args.clerkOrgSlug) {
+			// The argument is a LABEL naming the org to read. It is resolved to its
+			// mapping row and the two organisations are compared by their permanent
+			// IDs (`sameOrg`): a member of a NEW org that took a freed slug is not a
+			// member of the org the stale label used to name, and a renamed org keeps
+			// its members. The service account and the operator admin (master) may
+			// read any org.
+			const target = await lookupOrgMapping(ctx, args.clerkOrgSlug);
+			if (
+				!scope.isMaster &&
+				!(
+					target?.isActive === true &&
+					sameOrg({ id: target.clerkOrgId }, orgRefOfScope(scope))
+				)
+			) {
 				throw new ConvexError(
 					`RBAC_DENIED: caller may only read membership for its own organisation — ${JSON.stringify(
-						{ requested: args.clerkOrgSlug, own: scope.orgSlug },
+						{ requested: args.clerkOrgSlug, reason: "not-own-organisation" },
 					)}`,
 				);
 			}
+			// An org no mapping holds, or one with no ID yet, has no members to name.
+			const targetOrgId = target?.clerkOrgId;
+			if (targetOrgId === undefined) return [];
+			// Narrow before bound: the read is keyed on the org ID.
 			const rows = await ctx.db
 				.query("orgMembership")
-				.withIndex("by_org", (q) =>
-					q.eq("clerkOrgSlug", args.clerkOrgSlug as string),
-				)
+				.withIndex("by_org_clerk_id", (q) => q.eq("clerkOrgId", targetOrgId))
 				.take(MEMBERSHIP_QUERY_LIMIT);
 			assertNotTruncated(rows.length, `org "${args.clerkOrgSlug}"`);
 			return rows.map(toShape);

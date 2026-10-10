@@ -1,6 +1,5 @@
 import {
 	type ActingPrincipal,
-	assertOrgAdmin,
 	assertTargetBelongsTo,
 	type IdentityRefusal,
 	requireAgentScopedIdentity,
@@ -13,6 +12,7 @@ import type { Doc, Id } from "../_generated/dataModel";
 import type { MutationCtx, QueryCtx } from "../_generated/server";
 import { normalizeOrchestratorId } from "../_helpers/normalizeOrchestratorId";
 import { principalLookups } from "./actingPrincipal";
+import { proveOrgAdmin } from "./auth";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // agentIdentity — the ADAPTER between the agent registry (convex/agents.ts,
@@ -39,21 +39,6 @@ function refuseWith(refusal: IdentityRefusal): never {
 	);
 }
 
-// Claim spellings Convex's OIDC mapping may surface (a Clerk-native session
-// token delivers snake_case). Only a STRING is a claim; anything else is absent.
-function claim(identity: object, ...keys: string[]): string | undefined {
-	const rec = identity as Record<string, unknown>;
-	for (const key of keys) {
-		const value = rec[key];
-		if (typeof value === "string" && value !== "") return value;
-	}
-	return undefined;
-}
-
-// Clerk spells the administrator role "org:admin"; the bare "admin" is the
-// spelling a custom role mapping may carry. Exact strings, no case folding.
-const ORG_ADMIN_ROLES: readonly string[] = ["org:admin", "admin"];
-
 /**
  * anonymousRefusal — the refusal a door throws when `ctx.auth` presents no
  * identity at all: `RBAC_DENIED`, reason `no-credential`, naming the door.
@@ -78,18 +63,21 @@ export function stampOrgRefusal(door: string): ConvexError<string> {
 
 /**
  * requireOrgAdminById — the caller is an ADMINISTRATOR of `targetOrgSlug`,
- * proven through @vantageos/cloud-identity, and the acting principal comes back.
+ * proven by ORG ID through @vantageos/cloud-identity (`proveOrgAdmin`,
+ * convex/lib/auth.ts), and the acting principal comes back.
  *
  * `identity` is the verified session the DOOR read from `ctx.auth` (and refused
- * when absent, `anonymousRefusal`) and hands over (the package verifies nothing about a credential, so the host reads the
- * session and passes the claims; this adapter never reads `ctx.auth` itself).
- * The credential given to `resolveActingPrincipal` is built ONLY from it:
- * subject, organisation slug, and role claim, never an argument. The person
- * row it reads is that same verified session (this backend keeps no separate
- * person table); the organisation must be an ACTIVE mapping. `assertOrgAdmin`
- * then requires a person of exactly the target organisation holding an admin
- * role. Neither the service account nor an agent is ever an administrator, so
- * there is no master carve-out.
+ * when absent, `anonymousRefusal`). The organisation is the one its verified
+ * `org_id` claim resolves in `client_org_mapping`, never the slug the token
+ * carries: a new Clerk org that took a freed slug is refused. Neither the
+ * service account nor an agent is ever an administrator, so there is no master
+ * carve-out.
+ *
+ * The returned principal's `orgId` is the org's STORED STAMP (its current
+ * `client_org_mapping.clerkOrgSlug`, read BY ID): the `agents` rows this
+ * module's doors act on are stamped with that label, and
+ * `loadAgentOfPrincipalOrg` compares those stamps. It moves to the permanent ID
+ * with the `agents.orgSlug` stamp (expand-contract), in this one place.
  */
 export async function requireOrgAdminById(
 	ctx: Ctx,
@@ -97,35 +85,8 @@ export async function requireOrgAdminById(
 	targetOrgSlug: string,
 	door: string,
 ): Promise<ActingPrincipal> {
-	const orgSlug = claim(identity, "organizationSlug", "org_slug");
-	if (orgSlug === undefined) {
-		throw new ConvexError(
-			`RBAC_DENIED: authenticated identity has no organisation attached — ${JSON.stringify({ reason: "no-verified-organisation", door })}`,
-		);
-	}
-	const role = claim(identity, "orgRole", "org_role", "organizationRole");
-	const subject = identity.subject;
-	const resolved = await resolveActingPrincipal(
-		{
-			kind: "person",
-			personId: subject,
-			verifiedOrgId: orgSlug,
-			...(role !== undefined ? { verifiedOrgRole: role } : {}),
-		},
-		{
-			...principalLookups(ctx),
-			personById: (personId, orgId) =>
-				personId === subject ? { id: personId, orgId, active: true } : null,
-		},
-		door,
-	);
-	if (!resolved.ok) return refuseWith(resolved.refusal);
-	const verdict = assertOrgAdmin(resolved.principal, targetOrgSlug, {
-		adminRoles: ORG_ADMIN_ROLES,
-		door,
-	});
-	if (!verdict.ok) return refuseWith(verdict.refusal);
-	return resolved.principal;
+	const proof = await proveOrgAdmin(ctx, identity, targetOrgSlug, door);
+	return { ...proof.principal, orgId: proof.org.label };
 }
 
 /**
