@@ -16,6 +16,7 @@ import { api } from "../../_generated/api";
 import type { Doc, Id } from "../../_generated/dataModel";
 import { normalizeOrchestratorId } from "../../_helpers/normalizeOrchestratorId";
 import schema from "../../schema";
+import { testClerkOrgId } from "../../../tests/fixtures/testClerkOrgId";
 
 const modules = Object.fromEntries(
 	Object.entries(import.meta.glob("../../**/*.ts")).filter(
@@ -44,6 +45,7 @@ async function seed() {
 		) =>
 			ctx.db.insert("client_org_mapping", {
 				clerkOrgSlug: slug,
+				clerkOrgId: testClerkOrgId(slug),
 				allowedOrchestrators: names,
 				...ids,
 				scopes: ["view-own-tasks"],
@@ -93,6 +95,7 @@ const asMember = (t: T, org: string) =>
 	t.withIdentity({
 		subject: "user-member-c",
 		organizationSlug: org,
+		org_id: testClerkOrgId(org),
 		org_role: "org:member",
 	} as Parameters<T["withIdentity"]>[0]);
 
