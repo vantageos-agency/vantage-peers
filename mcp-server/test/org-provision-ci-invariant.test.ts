@@ -127,4 +127,21 @@ describe("CI invariant — provisioned client org-binding", () => {
 		expect(http).toMatch(/admin\.post\("\/organizations"/);
 		expect(http).toMatch(/oauth:provisionOrganization/);
 	});
+
+	it("admin POST /organizations requires clerkOrgId and forwards it to the mutation", () => {
+		const here = dirname(fileURLToPath(import.meta.url));
+		const http = readFileSync(join(here, "../server-http.ts"), "utf8");
+		const start = http.indexOf('admin.post("/organizations"');
+		const end = http.indexOf("\nadmin.", start + 10);
+		const handler = http.slice(start, end === -1 ? undefined : end);
+		// Read from the body, refused (400) before any Convex call when absent or
+		// not shaped like a Clerk org ID, and passed through to the mutation.
+		expect(handler).toMatch(/body\.clerkOrgId/);
+		expect(handler).toMatch(/\^org_\[A-Za-z0-9\]\+\$/);
+		expect(handler.indexOf("clerkOrgId is required")).toBeGreaterThan(-1);
+		expect(handler.indexOf("clerkOrgId is required")).toBeLessThan(
+			handler.indexOf("oauth:provisionOrganization"),
+		);
+		expect(handler).toMatch(/clerkOrgSlug,\s*clerkOrgId,\s*displayName/);
+	});
 });

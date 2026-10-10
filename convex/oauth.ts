@@ -39,7 +39,7 @@ import { isHumanActorName } from "./lib/humanActor";
 import { liveSeatAgent, resolveSeatAgent } from "./lib/seatAgent";
 import { DEFAULT_MEMBER_SCOPES } from "./lib/memberScopes";
 import { upsertAdminMembership } from "./orgMembership";
-import { clerkOrgIdForSlug } from "./lib/orgClerkId";
+import { CLERK_ORG_ID_PATTERN, clerkOrgIdForSlug } from "./lib/orgClerkId";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Shared auth helper — master-token gate for admin mutations
@@ -749,6 +749,11 @@ export const provisionOrganization = mutation({
 	args: {
 		callerToken: v.optional(v.string()),
 		clerkOrgSlug: v.string(),
+		// M4 ruling 1: the permanent Clerk org ID is REQUIRED. It is declared
+		// optional only so a call without it reaches the handler and is refused by
+		// a typed error naming this door (CLERK_ORG_ID_REQUIRED), instead of a bare
+		// argument-validation failure. A call without it writes nothing.
+		clerkOrgId: v.optional(v.string()),
 		displayName: v.string(),
 		orchestrators: v.array(v.object({ name: v.string() })),
 		scopes: v.optional(v.array(v.string())),
@@ -820,6 +825,31 @@ export const provisionOrganization = mutation({
 				? null
 				: ((await ctx.auth.getUserIdentity())?.subject ?? null);
 
+		// M4 ruling 1: an organisation is keyed by its permanent Clerk org ID from
+		// its first row. Refused (and nothing written) without it, or with a value
+		// that is not shaped like one. Checked after authorization, so an
+		// unauthorized caller learns nothing about this requirement.
+		const clerkOrgId = args.clerkOrgId;
+		const refuseOrgId = (code: string, reason: string, detail: string): never => {
+			throw new ConvexError(
+				`${code}: ${detail} -- ${JSON.stringify({ door: "oauth:provisionOrganization", reason, clerkOrgSlug: slug })}`,
+			);
+		};
+		if (clerkOrgId === undefined || clerkOrgId === "") {
+			refuseOrgId(
+				"CLERK_ORG_ID_REQUIRED",
+				"clerk-org-id-missing",
+				"clerkOrgId (the permanent Clerk org ID, org_...) is required to provision an organisation",
+			);
+		}
+		if (clerkOrgId === undefined || !CLERK_ORG_ID_PATTERN.test(clerkOrgId)) {
+			return refuseOrgId(
+				"CLERK_ORG_ID_INVALID",
+				"clerk-org-id-malformed",
+				"clerkOrgId is not a Clerk org ID (expected org_ followed by alphanumerics)",
+			);
+		}
+
 		if (args.displayName.trim().length === 0) {
 			throw new Error("displayName is required");
 		}
@@ -867,6 +897,31 @@ export const provisionOrganization = mutation({
 			throw new Error(`Org "${slug}" exists and is inactive`);
 		}
 
+		// One ID, one organisation: an ID another mapping row holds is never
+		// shared, and a row that already carries a different ID is not re-keyed
+		// by a replay (a correction is setClerkOrgId with replace:true, on purpose).
+		const idOwners = await ctx.db
+			.query("client_org_mapping")
+			.withIndex("by_clerk_org_id", (q) => q.eq("clerkOrgId", clerkOrgId))
+			.take(2);
+		if (idOwners.some((o) => !existing || o._id !== existing._id)) {
+			refuseOrgId(
+				"CLERK_ORG_ID_TAKEN",
+				"clerk-org-id-taken",
+				`${clerkOrgId} already belongs to another organisation`,
+			);
+		}
+		if (
+			existing?.clerkOrgId !== undefined &&
+			existing.clerkOrgId !== clerkOrgId
+		) {
+			refuseOrgId(
+				"CLERK_ORG_ID_CONFLICT",
+				"clerk-org-id-conflict",
+				`"${slug}" already carries a different clerkOrgId`,
+			);
+		}
+
 		if (existing) {
 			const existingSet = [...existing.allowedOrchestrators].sort().join("\0");
 			const incomingSet = [...names].sort().join("\0");
@@ -898,6 +953,9 @@ export const provisionOrganization = mutation({
 					accessToken: null,
 					refreshToken: null,
 				});
+			}
+			if (existing.clerkOrgId === undefined) {
+				await ctx.db.patch(existing._id, { clerkOrgId });
 			}
 			if (provisioningAdminSubject) {
 				await upsertAdminMembership(ctx, slug, provisioningAdminSubject);
@@ -933,6 +991,7 @@ export const provisionOrganization = mutation({
 			scopes,
 			isActive: true,
 			createdAt: now,
+			clerkOrgId,
 			// Operator-created orgs are ALWAYS "client", never "operator". The
 			// master path leaves the field unset exactly as before.
 			...(operatorCreate ? { orgKind: "client" as const } : {}),
@@ -958,11 +1017,9 @@ export const provisionOrganization = mutation({
 				? args.callerToken
 				: ((await ctx.auth.getUserIdentity())?.subject ?? "org-admin:unknown");
 		const actorTokenHash = await sha256Hex(actorIdentitySource);
-		// The mapping row above was inserted in THIS mutation with no clerkOrgId
-		// (setClerkOrgId fills it afterwards), so this resolves to undefined today
-		// and the seat rows below carry the slug only; backfill_org_clerk_id lists
-		// and fills them once the mapping has its id.
-		const seatClerkOrgId = await clerkOrgIdForSlug(ctx, slug);
+		// The mapping row above carries the ID the caller presented, so the seat
+		// rows are stamped with that same ID from their first write.
+		const seatClerkOrgId = clerkOrgId;
 		const seats = [];
 		for (const name of names) {
 			const profileId = `${name}-${slug}`;

@@ -15,6 +15,7 @@ import { convexTest } from "convex-test";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import { api } from "../_generated/api";
 import schema from "../schema";
+import { testClerkOrgId } from "../../tests/fixtures/testClerkOrgId";
 
 const modules = Object.fromEntries(
 	Object.entries(import.meta.glob("../**/*.ts")).filter(
@@ -55,6 +56,7 @@ describe("oauth:provisionOrganization — seat refresh token", () => {
 		const result = await t.mutation(api.oauth.provisionOrganization, {
 			callerToken: MASTER,
 			clerkOrgSlug: "renew-org-alpha",
+			clerkOrgId: testClerkOrgId("renew-org-alpha"),
 			displayName: "Renew org alpha",
 			orchestrators: [{ name: "orch-renew-a" }],
 		});
@@ -110,12 +112,14 @@ describe("oauth:provisionOrganization — seat refresh token", () => {
 		await t.mutation(api.oauth.provisionOrganization, {
 			callerToken: MASTER,
 			clerkOrgSlug: "renew-org-beta",
+			clerkOrgId: testClerkOrgId("renew-org-beta"),
 			displayName: "Renew org beta",
 			orchestrators: [{ name: "orch-renew-b" }],
 		});
 		const replay = await t.mutation(api.oauth.provisionOrganization, {
 			callerToken: MASTER,
 			clerkOrgSlug: "renew-org-beta",
+			clerkOrgId: testClerkOrgId("renew-org-beta"),
 			displayName: "Renew org beta",
 			orchestrators: [{ name: "orch-renew-b" }],
 		});

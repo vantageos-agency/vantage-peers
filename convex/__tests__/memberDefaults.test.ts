@@ -52,6 +52,7 @@ async function provision(t: T, slug: string, seat: string) {
 	await t.mutation(api.oauth.provisionOrganization, {
 		callerToken: MASTER,
 		clerkOrgSlug: slug,
+		clerkOrgId: testClerkOrgId(slug),
 		displayName: slug,
 		orchestrators: [{ name: seat }],
 	});

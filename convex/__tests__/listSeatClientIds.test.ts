@@ -24,6 +24,7 @@ import { convexTest } from "convex-test";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import { api, internal } from "../_generated/api";
 import schema from "../schema";
+import { testClerkOrgId } from "../../tests/fixtures/testClerkOrgId";
 
 const modules = Object.fromEntries(
 	Object.entries(import.meta.glob("../**/*.ts")).filter(
@@ -76,6 +77,7 @@ async function provisionSeat(
 	const result = await t.mutation(api.oauth.provisionOrganization, {
 		callerToken: MASTER,
 		clerkOrgSlug,
+		clerkOrgId: testClerkOrgId(clerkOrgSlug),
 		displayName: clerkOrgSlug,
 		orchestrators: [{ name }],
 	});

@@ -77,12 +77,14 @@ describe("orgMembership — provisioning writes an idempotent audit row", () => 
 
 		await tAdmin.mutation(api.oauth.provisionOrganization, {
 			clerkOrgSlug: "org-membership-a",
+			clerkOrgId: testClerkOrgId("org-membership-a"),
 			displayName: "Org A",
 			orchestrators: [{ name: "seat-a" }],
 		});
 		// Replay: same slug, same seat set.
 		await tAdmin.mutation(api.oauth.provisionOrganization, {
 			clerkOrgSlug: "org-membership-a",
+			clerkOrgId: testClerkOrgId("org-membership-a"),
 			displayName: "Org A",
 			orchestrators: [{ name: "seat-a" }],
 		});
@@ -109,6 +111,7 @@ describe("orgMembership — provisioning writes an idempotent audit row", () => 
 			await t.mutation(api.oauth.provisionOrganization, {
 				callerToken: "test-master-secret-membership",
 				clerkOrgSlug: "org-membership-master",
+				clerkOrgId: testClerkOrgId("org-membership-master"),
 				displayName: "Master Path Org",
 				orchestrators: [{ name: "master-seat" }],
 			});
@@ -143,6 +146,7 @@ describe("orgMembership.getMembership — direction 1: who administers org X", (
 		);
 		await tAdmin.mutation(api.oauth.provisionOrganization, {
 			clerkOrgSlug: "org-membership-b",
+			clerkOrgId: testClerkOrgId("org-membership-b"),
 			displayName: "Org B",
 			orchestrators: [{ name: "seat-b" }],
 		});
@@ -170,6 +174,7 @@ describe("orgMembership.getMembership — direction 1: who administers org X", (
 		);
 		await tAdminC1.mutation(api.oauth.provisionOrganization, {
 			clerkOrgSlug: "org-membership-c1",
+			clerkOrgId: testClerkOrgId("org-membership-c1"),
 			displayName: "Org C1",
 			orchestrators: [{ name: "seat-c1" }],
 		});
@@ -194,6 +199,7 @@ describe("orgMembership.getMembership — direction 1: who administers org X", (
 			);
 			await tAdmin.mutation(api.oauth.provisionOrganization, {
 				clerkOrgSlug: "org-membership-d",
+				clerkOrgId: testClerkOrgId("org-membership-d"),
 				displayName: "Org D",
 				orchestrators: [{ name: "seat-d" }],
 			});
@@ -259,6 +265,7 @@ describe("orgMembership.getMembership — direction 2: which orgs does the calle
 		);
 		await tAdminOrg1.mutation(api.oauth.provisionOrganization, {
 			clerkOrgSlug: "org-membership-f1",
+			clerkOrgId: testClerkOrgId("org-membership-f1"),
 			displayName: "Org F1",
 			orchestrators: [{ name: "seat-f1" }],
 		});
@@ -270,6 +277,7 @@ describe("orgMembership.getMembership — direction 2: which orgs does the calle
 		);
 		await tAdminOrg2.mutation(api.oauth.provisionOrganization, {
 			clerkOrgSlug: "org-membership-f2",
+			clerkOrgId: testClerkOrgId("org-membership-f2"),
 			displayName: "Org F2",
 			orchestrators: [{ name: "seat-f2" }],
 		});
@@ -283,6 +291,7 @@ describe("orgMembership.getMembership — direction 2: which orgs does the calle
 		);
 		await tAdminOrg3.mutation(api.oauth.provisionOrganization, {
 			clerkOrgSlug: "org-membership-f3",
+			clerkOrgId: testClerkOrgId("org-membership-f3"),
 			displayName: "Org F3",
 			orchestrators: [{ name: "seat-f3" }],
 		});

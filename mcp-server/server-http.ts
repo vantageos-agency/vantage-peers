@@ -1332,6 +1332,8 @@ admin.post("/organizations", async (c) => {
 	}
 	const clerkOrgSlug =
 		typeof body.clerkOrgSlug === "string" ? body.clerkOrgSlug : null;
+	const clerkOrgId =
+		typeof body.clerkOrgId === "string" ? body.clerkOrgId : null;
 	const displayName =
 		typeof body.displayName === "string" ? body.displayName : null;
 	const orchestratorsRaw = Array.isArray(body.orchestrators)
@@ -1343,6 +1345,18 @@ admin.post("/organizations", async (c) => {
 				error: "invalid_request",
 				error_description:
 					"clerkOrgSlug, displayName, and orchestrators are required",
+			},
+			400,
+		);
+	}
+	// An organisation is keyed by its permanent Clerk org ID: refused here, before
+	// any Convex call, when absent or not shaped like one (the mutation re-checks).
+	if (!clerkOrgId || !/^org_[A-Za-z0-9]+$/.test(clerkOrgId)) {
+		return c.json(
+			{
+				error: "invalid_request",
+				error_description:
+					"clerkOrgId is required: the permanent Clerk org ID (org_ followed by alphanumerics)",
 			},
 			400,
 		);
@@ -1368,6 +1382,7 @@ admin.post("/organizations", async (c) => {
 			{
 				callerToken: masterToken,
 				clerkOrgSlug,
+				clerkOrgId,
 				displayName,
 				orchestrators,
 				scopes,

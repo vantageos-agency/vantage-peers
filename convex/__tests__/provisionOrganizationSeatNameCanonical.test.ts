@@ -25,6 +25,7 @@ import { convexTest } from "convex-test";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import { api } from "../_generated/api";
 import schema from "../schema";
+import { testClerkOrgId } from "../../tests/fixtures/testClerkOrgId";
 
 const modules = Object.fromEntries(
 	Object.entries(import.meta.glob("../**/*.ts")).filter(
@@ -64,6 +65,7 @@ describe("provisionOrganization — canonical seat names", () => {
 			t.mutation(api.oauth.provisionOrganization, {
 				callerToken: MASTER,
 				clerkOrgSlug: "org-sigma-upper",
+				clerkOrgId: testClerkOrgId("org-sigma-upper"),
 				displayName: "Org sigma upper",
 				orchestrators: [{ name: "SIGMA" }],
 			}),
@@ -89,6 +91,7 @@ describe("provisionOrganization — canonical seat names", () => {
 			t.mutation(api.oauth.provisionOrganization, {
 				callerToken: MASTER,
 				clerkOrgSlug: "org-sigma-mixed",
+				clerkOrgId: testClerkOrgId("org-sigma-mixed"),
 				displayName: "Org sigma mixed",
 				orchestrators: [{ name: "Sigma" }],
 			}),
@@ -116,6 +119,7 @@ describe("provisionOrganization — canonical seat names", () => {
 			t.mutation(api.oauth.provisionOrganization, {
 				callerToken: MASTER,
 				clerkOrgSlug: "org-new-sigma",
+				clerkOrgId: testClerkOrgId("org-new-sigma"),
 				displayName: "Org new sigma",
 				orchestrators: [{ name: "sigma" }],
 			}),
@@ -141,6 +145,7 @@ describe("provisionOrganization — canonical seat names", () => {
 			t.mutation(api.oauth.provisionOrganization, {
 				callerToken: MASTER,
 				clerkOrgSlug: "org-new-sigma-profile",
+				clerkOrgId: testClerkOrgId("org-new-sigma-profile"),
 				displayName: "Org new sigma profile",
 				orchestrators: [{ name: "sigma" }],
 			}),
@@ -152,6 +157,7 @@ describe("provisionOrganization — canonical seat names", () => {
 		const first = await t.mutation(api.oauth.provisionOrganization, {
 			callerToken: MASTER,
 			clerkOrgSlug: "org-alpha-lower",
+			clerkOrgId: testClerkOrgId("org-alpha-lower"),
 			displayName: "Org alpha lower",
 			orchestrators: [{ name: "alpha" }],
 		});
@@ -165,6 +171,7 @@ describe("provisionOrganization — canonical seat names", () => {
 			t.mutation(api.oauth.provisionOrganization, {
 				callerToken: MASTER,
 				clerkOrgSlug: "org-alpha-upper",
+				clerkOrgId: testClerkOrgId("org-alpha-upper"),
 				displayName: "Org alpha upper",
 				orchestrators: [{ name: "ALPHA" }],
 			}),
@@ -181,6 +188,7 @@ describe("provisionOrganization — canonical seat names", () => {
 		const first = await t.mutation(api.oauth.provisionOrganization, {
 			callerToken: MASTER,
 			clerkOrgSlug: "org-zoe-nfc",
+			clerkOrgId: testClerkOrgId("org-zoe-nfc"),
 			displayName: "Org zoe nfc",
 			orchestrators: [{ name: nfc }],
 		});
@@ -194,6 +202,7 @@ describe("provisionOrganization — canonical seat names", () => {
 			t.mutation(api.oauth.provisionOrganization, {
 				callerToken: MASTER,
 				clerkOrgSlug: "org-zoe-nfd",
+				clerkOrgId: testClerkOrgId("org-zoe-nfd"),
 				displayName: "Org zoe nfd",
 				orchestrators: [{ name: nfd }],
 			}),
@@ -205,6 +214,7 @@ describe("provisionOrganization — canonical seat names", () => {
 		const result = await t.mutation(api.oauth.provisionOrganization, {
 			callerToken: MASTER,
 			clerkOrgSlug: "org-canonical-allow",
+			clerkOrgId: testClerkOrgId("org-canonical-allow"),
 			displayName: "Org canonical allow",
 			orchestrators: [{ name: "canonical-fresh-name" }],
 		});
@@ -227,6 +237,7 @@ describe("provisionOrganization — canonical seat names", () => {
 			t.mutation(api.oauth.provisionOrganization, {
 				callerToken: MASTER,
 				clerkOrgSlug: "org-dup-case",
+				clerkOrgId: testClerkOrgId("org-dup-case"),
 				displayName: "Org dup case",
 				orchestrators: [{ name: "alpha" }, { name: "Alpha" }],
 			}),

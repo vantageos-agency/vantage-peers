@@ -10,6 +10,7 @@ import { convexTest } from "convex-test";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import { api } from "../_generated/api";
 import schema from "../schema";
+import { testClerkOrgId } from "../../tests/fixtures/testClerkOrgId";
 
 const modules = Object.fromEntries(
 	Object.entries(import.meta.glob("../**/*.ts")).filter(
@@ -50,6 +51,7 @@ describe("oauth:provisionOrganization", () => {
 		const result = await t.mutation(api.oauth.provisionOrganization, {
 			callerToken: MASTER,
 			clerkOrgSlug: "plan-org-alpha",
+			clerkOrgId: testClerkOrgId("plan-org-alpha"),
 			displayName: "Plan org alpha",
 			orchestrators: [{ name: "orch-a" }, { name: "orch-b" }],
 		});
@@ -99,12 +101,14 @@ describe("oauth:provisionOrganization", () => {
 		const first = await t.mutation(api.oauth.provisionOrganization, {
 			callerToken: MASTER,
 			clerkOrgSlug: "plan-org-alpha",
+			clerkOrgId: testClerkOrgId("plan-org-alpha"),
 			displayName: "Plan org alpha",
 			orchestrators: [{ name: "orch-a" }, { name: "orch-b" }],
 		});
 		const second = await t.mutation(api.oauth.provisionOrganization, {
 			callerToken: MASTER,
 			clerkOrgSlug: "plan-org-alpha",
+			clerkOrgId: testClerkOrgId("plan-org-alpha"),
 			displayName: "Plan org alpha",
 			orchestrators: [{ name: "orch-a" }, { name: "orch-b" }],
 		});
@@ -124,6 +128,7 @@ describe("oauth:provisionOrganization", () => {
 			t.mutation(api.oauth.provisionOrganization, {
 				callerToken: MASTER,
 				clerkOrgSlug: "x",
+				clerkOrgId: testClerkOrgId("x"),
 				displayName: "x",
 				orchestrators: [],
 			}),
@@ -132,6 +137,7 @@ describe("oauth:provisionOrganization", () => {
 			t.mutation(api.oauth.provisionOrganization, {
 				callerToken: MASTER,
 				clerkOrgSlug: "x",
+				clerkOrgId: testClerkOrgId("x"),
 				displayName: "x",
 				orchestrators: [{ name: "master" }],
 			}),
@@ -139,6 +145,7 @@ describe("oauth:provisionOrganization", () => {
 		await t.mutation(api.oauth.provisionOrganization, {
 			callerToken: MASTER,
 			clerkOrgSlug: "x",
+			clerkOrgId: testClerkOrgId("x"),
 			displayName: "x",
 			orchestrators: [{ name: "a" }, { name: "b" }],
 		});
@@ -146,6 +153,7 @@ describe("oauth:provisionOrganization", () => {
 			t.mutation(api.oauth.provisionOrganization, {
 				callerToken: MASTER,
 				clerkOrgSlug: "x",
+				clerkOrgId: testClerkOrgId("x"),
 				displayName: "x",
 				orchestrators: [{ name: "a" }, { name: "c" }],
 			}),
@@ -154,6 +162,7 @@ describe("oauth:provisionOrganization", () => {
 			t.mutation(api.oauth.provisionOrganization, {
 				callerToken: "wrong",
 				clerkOrgSlug: "y",
+				clerkOrgId: testClerkOrgId("y"),
 				displayName: "y",
 				orchestrators: [{ name: "a" }],
 			}),
