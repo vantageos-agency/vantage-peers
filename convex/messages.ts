@@ -644,12 +644,27 @@ async function sendMessageCore(
 					instanceOwner.set(p.instanceId, p.orchestratorId);
 				}
 			}
-			// A channel NAME is judged against the org's own NAME roster only. A
-			// fleet coordinator is addressed by ID (`recipientAgentIds`, judged by
-			// assertPrincipalListed against `addressableFleetCoordinatorIds`); a name
-			// cannot denote an agent of another organisation (module M1).
+			// Pi ruling (b): the org's own roster PLUS its explicit allow-list of
+			// fleet coordinators (client_org_mapping.addressableFleetCoordinators,
+			// empty by default). Never inferred; "*" is never a grant. This is the
+			// CURRENT channel-NAME contract and it is unchanged by module M1a, which
+			// adds the ID path beside it (`recipientAgentIds`, judged by
+			// assertPrincipalListed against `addressableFleetCoordinatorIds`); the
+			// name path is removed by M1b.
+			let coordinators: string[] = [];
+			if (!fleetWide && reach.orgSlug !== null) {
+				const orgSlug = reach.orgSlug;
+				const mapping = await ctx.db
+					.query("client_org_mapping")
+					.withIndex("by_clerk_slug", (q) => q.eq("clerkOrgSlug", orgSlug))
+					.first();
+				coordinators = (mapping?.addressableFleetCoordinators ?? [])
+					.filter((n) => n !== "*")
+					.map(normalizeOrchestratorId);
+			}
 			const isReachable = (orchestrator: string): boolean =>
-				isOrchestratorOnOrgRoster(reach, orchestrator);
+				isOrchestratorOnOrgRoster(reach, orchestrator) ||
+				coordinators.includes(normalizeOrchestratorId(orchestrator));
 			const isOnOwnRoster = (part: string): boolean => {
 				if (fleetWide) return true;
 				if (knownRoles.has(part) && isReachable(part)) return true;

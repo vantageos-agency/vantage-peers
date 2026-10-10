@@ -56,6 +56,7 @@ async function seedOrg(
 		orgKind?: "operator";
 		agentIds?: Id<"agents">[];
 		coordinatorIds?: Id<"agents">[];
+		coordinatorNames?: string[];
 	} = {},
 ) {
 	await t.run(async (ctx) => {
@@ -71,6 +72,10 @@ async function seedOrg(
 			...(opts.agentIds !== undefined ? { allowedAgentIds: opts.agentIds } : {}),
 			...(opts.coordinatorIds !== undefined
 				? { addressableFleetCoordinatorIds: opts.coordinatorIds }
+				: {}),
+			// The current channel-NAME grant, legacy data held on the row.
+			...(opts.coordinatorNames !== undefined
+				? { addressableFleetCoordinators: opts.coordinatorNames }
 				: {}),
 		});
 	});
@@ -102,6 +107,7 @@ async function seedWorld(t: T) {
 	await seedOrg(t, SEAT_ORG, ["neo", "hal", "mimir", "bob"], {
 		agentIds: seat,
 		coordinatorIds: [pi],
+		coordinatorNames: ["pi"],
 	});
 	await seedOrg(t, "dormant-org", ["ghost"], { isActive: false });
 	await seedOrg(t, "other-client", ["themis"]);
@@ -159,7 +165,7 @@ describe("messages:sendMessage — forwarded seat org on the service-account pat
 		expect(await recipientsOf(t, id)).toEqual(["neo"]);
 	});
 
-	test("(c) the same seat -> pi BY ID (stored fleet coordinator): delivered; by name: refused", async () => {
+	test("(c) the same seat -> pi BY ID (stored fleet coordinator) and by channel NAME (listed name): both delivered", async () => {
 		const t = createT();
 		const w = await seedWorld(t);
 		const id = await asServiceAccount(t).mutation(api.messages.sendMessage, {
@@ -169,14 +175,13 @@ describe("messages:sendMessage — forwarded seat org on the service-account pat
 			seatOrgSlug: SEAT_ORG,
 		});
 		expect(await recipientsOf(t, id)).toEqual(["pi"]);
-		await expect(
-			asServiceAccount(t).mutation(api.messages.sendMessage, {
-				from: "neo",
-				channel: "pi",
-				content: "x",
-				seatOrgSlug: SEAT_ORG,
-			}),
-		).rejects.toThrow(BOUNCE);
+		const byName = await asServiceAccount(t).mutation(api.messages.sendMessage, {
+			from: "neo",
+			channel: "pi",
+			content: "x",
+			seatOrgSlug: SEAT_ORG,
+		});
+		expect(await recipientsOf(t, byName)).toEqual(["pi"]);
 	});
 
 	test("(d) service account with NO forwarded org (fleet master) -> sigma: delivered", async () => {
