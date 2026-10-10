@@ -62,10 +62,6 @@ describe("M8 the agent registry selects no agent by name", () => {
 			[join("lib", "actorIds.ts")]: 1,
 			// M1 rosters / seat profiles: profile fromAllowList label
 			[join("lib", "seatAgent.ts")]: 1,
-			// M1 provisioning: the plan names the seats, each name is stamped as the
-			// ID of the org's own agent row (reused if registered ahead) before the
-			// roster is stored as IDs; nothing reads the name afterwards
-			"clientOrgMapping.ts": 1,
 		});
 	});
 });

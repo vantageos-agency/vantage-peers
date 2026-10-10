@@ -387,39 +387,94 @@ describe("WRITERS — a new org's roster is written as agent IDs", () => {
 		expect(mapping?.allowedOrchestrators).toEqual(["orch-a", "orch-b"]);
 	});
 
-	test("a seat registered ahead of provisioning is reused, never duplicated", async () => {
-		const t = createT();
-		const ahead = await t.run((ctx) =>
+	const mappingOf = (t: T, slug: string) =>
+		t.run((ctx) =>
+			ctx.db
+				.query("client_org_mapping")
+				.withIndex("by_clerk_slug", (q) => q.eq("clerkOrgSlug", slug))
+				.unique(),
+		);
+	const agentsOf = (t: T, slug: string) =>
+		t.run((ctx) =>
+			ctx.db
+				.query("agents")
+				.withIndex("by_org", (q) => q.eq("orgSlug", slug))
+				.collect(),
+		);
+	const insertAgent = (t: T, orgSlug: string, name: string) =>
+		t.run((ctx) =>
 			ctx.db.insert("agents", {
-				orgSlug: "plan-org-reuse",
-				name: "orch-a",
-				normalizedName: "orch-a",
+				orgSlug,
+				name,
+				normalizedName: normalizeOrchestratorId(name),
 				isActive: true,
 				createdAt: NOW,
 			}),
 		);
+
+	test("a seat name that collides with an existing agent of the org is refused; nothing is created or patched", async () => {
+		const t = createT();
+		const ahead = await insertAgent(t, "plan-org-collide", "orch-a");
+		const before = await agentsOf(t, "plan-org-collide");
+		await expect(
+			t.mutation(api.oauth.provisionOrganization, {
+				callerToken: "test-master-token",
+				clerkOrgSlug: "plan-org-collide",
+				displayName: "Plan org collide",
+				orchestrators: [{ name: "orch-a" }, { name: "orch-b" }],
+			}),
+		).rejects.toThrow(/AGENT_NAME_TAKEN/);
+		expect(await mappingOf(t, "plan-org-collide")).toBeNull();
+		const after = await agentsOf(t, "plan-org-collide");
+		expect(after).toEqual(before);
+		expect(after.map((a) => a._id)).toEqual([ahead]);
+	});
+
+	test("an existing agent passed by ID lands on the roster; the seats get new rows", async () => {
+		const t = createT();
+		const keeper = await insertAgent(t, "plan-org-byid", "keeper");
 		await t.mutation(api.oauth.provisionOrganization, {
 			callerToken: "test-master-token",
-			clerkOrgSlug: "plan-org-reuse",
-			displayName: "Plan org reuse",
-			orchestrators: [{ name: "orch-a" }, { name: "orch-b" }],
+			clerkOrgSlug: "plan-org-byid",
+			displayName: "Plan org by id",
+			orchestrators: [{ name: "orch-a" }],
+			agentIds: [keeper],
 		});
-		const mapping = await t.run((ctx) =>
-			ctx.db
-				.query("client_org_mapping")
-				.withIndex("by_clerk_slug", (q) =>
-					q.eq("clerkOrgSlug", "plan-org-reuse"),
-				)
-				.unique(),
-		);
-		expect(mapping?.allowedAgentIds?.[0]).toBe(ahead);
-		expect(mapping?.allowedAgentIds).toHaveLength(2);
-		const all = await t.run((ctx) =>
-			ctx.db
-				.query("agents")
-				.withIndex("by_org", (q) => q.eq("orgSlug", "plan-org-reuse"))
-				.collect(),
-		);
-		expect(all).toHaveLength(2);
+		const roster = (await mappingOf(t, "plan-org-byid"))?.allowedAgentIds ?? [];
+		expect(roster).toHaveLength(2);
+		expect(roster).toContain(keeper);
+		const rows = await agentsOf(t, "plan-org-byid");
+		expect(rows.map((r) => r.name).sort()).toEqual(["keeper", "orch-a"]);
+	});
+
+	test("an agent of ANOTHER org passed by ID is refused", async () => {
+		const t = createT();
+		const foreign = await insertAgent(t, "plan-org-other", "keeper");
+		await expect(
+			t.mutation(api.oauth.provisionOrganization, {
+				callerToken: "test-master-token",
+				clerkOrgSlug: "plan-org-foreign",
+				displayName: "Plan org foreign",
+				orchestrators: [{ name: "orch-a" }],
+				agentIds: [foreign],
+			}),
+		).rejects.toThrow(/AGENT_NOT_IN_ORG/);
+		expect(await mappingOf(t, "plan-org-foreign")).toBeNull();
+	});
+
+	test("a same-name agent of ANOTHER org does not collide", async () => {
+		const t = createT();
+		const other = await insertAgent(t, "plan-org-neighbour", "orch-a");
+		await t.mutation(api.oauth.provisionOrganization, {
+			callerToken: "test-master-token",
+			clerkOrgSlug: "plan-org-fresh",
+			displayName: "Plan org fresh",
+			orchestrators: [{ name: "orch-a" }],
+		});
+		const roster = (await mappingOf(t, "plan-org-fresh"))?.allowedAgentIds ?? [];
+		expect(roster).toHaveLength(1);
+		expect(roster).not.toContain(other);
+		const neighbour = await agentsOf(t, "plan-org-neighbour");
+		expect(neighbour.map((a) => a._id)).toEqual([other]);
 	});
 });

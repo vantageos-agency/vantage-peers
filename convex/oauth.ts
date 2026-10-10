@@ -752,6 +752,10 @@ export const provisionOrganization = mutation({
 		displayName: v.string(),
 		orchestrators: v.array(v.object({ name: v.string() })),
 		scopes: v.optional(v.array(v.string())),
+		// Agents of this organisation that already exist and belong on the roster,
+		// by ID (an agent is never picked up by its label; a seat name that
+		// collides with an existing agent is refused).
+		agentIds: v.optional(v.array(v.id("agents"))),
 	},
 	returns: v.object({
 		clerkOrgSlug: v.string(),
@@ -943,6 +947,7 @@ export const provisionOrganization = mutation({
 		await ctx.runMutation(internal.clientOrgMapping.seedSeatAgents, {
 			mappingId,
 			names,
+			...(args.agentIds !== undefined ? { agentIds: args.agentIds } : {}),
 		});
 
 		// Audit actor: hash the master token when present (unchanged), else
