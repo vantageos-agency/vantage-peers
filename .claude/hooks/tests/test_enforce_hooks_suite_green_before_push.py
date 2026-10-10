@@ -15,6 +15,7 @@ the real fleet suite):
 Also covers the repo-resolution refusal (no `cwd` in the payload) and the
 non-push / non-Bash pass-through paths.
 """
+import itertools
 import json
 import os
 import subprocess
@@ -28,11 +29,23 @@ HOOK = os.path.join(
 HOOK = os.path.abspath(HOOK)
 
 
+# One TemporaryDirectory per module run, removed at interpreter exit even if a
+# test's own cleanup is skipped; each repo is a numbered child of it.
+_TMP_ROOT = tempfile.TemporaryDirectory(prefix="hooks-test-")
+_repo_counter = itertools.count()
+
+
+def _fresh_dir() -> str:
+    path = os.path.join(_TMP_ROOT.name, str(next(_repo_counter)))
+    os.mkdir(path)
+    return path
+
+
 def _init_temp_repo(hooks_test_body: str) -> str:
     """Build a throwaway git repo with a `.claude/hooks/` directory
     containing exactly one test file with the given body. Returns the repo
     root (caller is responsible for cleanup)."""
-    tmpdir = tempfile.mkdtemp()
+    tmpdir = _fresh_dir()
     subprocess.run(["git", "init", "-q"], cwd=tmpdir, check=True)
     subprocess.run(["git", "config", "user.email", "t@t.t"], cwd=tmpdir, check=True)
     subprocess.run(["git", "config", "user.name", "t"], cwd=tmpdir, check=True)

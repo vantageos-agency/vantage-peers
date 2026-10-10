@@ -16,6 +16,7 @@ creates/removes a deny-test file there operates on the REAL tracked
 tree. That was measured to delete `convex/__tests__/auth-namespace-deny.test.ts`
 from the real checkout on every run of this suite before this fix.
 """
+import itertools
 import json
 import os
 import subprocess
@@ -29,10 +30,22 @@ HOOK = os.path.join(
 HOOK = os.path.abspath(HOOK)
 
 
+# One TemporaryDirectory per module run, removed at interpreter exit even if a
+# test's own cleanup is skipped; each repo is a numbered child of it.
+_TMP_ROOT = tempfile.TemporaryDirectory(prefix="hooks-test-")
+_repo_counter = itertools.count()
+
+
+def _fresh_dir() -> str:
+    path = os.path.join(_TMP_ROOT.name, str(next(_repo_counter)))
+    os.mkdir(path)
+    return path
+
+
 def _new_temp_repo() -> str:
     """A THROWAWAY git repository, never the real checkout — see module
     docstring. Caller is responsible for `rm -rf` cleanup."""
-    tmpdir = tempfile.mkdtemp()
+    tmpdir = _fresh_dir()
     subprocess.run(["git", "init", "-q"], cwd=tmpdir, check=True)
     subprocess.run(["git", "config", "user.email", "t@t.t"], cwd=tmpdir, check=True)
     subprocess.run(["git", "config", "user.name", "t"], cwd=tmpdir, check=True)

@@ -142,17 +142,12 @@ def test_pass_opt_out_marker_still_honored():
     assert rc == 0, f"opt-out must still pass, rc={rc} out={out}"
 
 
-def test_pass_manifest_file_source(tmp_path=None):
-    import tempfile
-    with tempfile.NamedTemporaryFile("w", suffix=".json", delete=False) as f:
-        json.dump(["manifest-only-template-v1"], f)
-        manifest = f.name
-    try:
-        brief = "Cloud mission. Template: manifest-only-template-v1\nShip it."
-        rc, out = run_hook(brief, extra_env={"MISSION_TEMPLATE_MANIFEST": manifest})
-        assert rc == 0, f"manifest-sourced template must pass, rc={rc} out={out}"
-    finally:
-        os.unlink(manifest)
+def test_pass_manifest_file_source(tmp_path):
+    manifest = tmp_path / "manifest.json"
+    manifest.write_text(json.dumps(["manifest-only-template-v1"]))
+    brief = "Cloud mission. Template: manifest-only-template-v1\nShip it."
+    rc, out = run_hook(brief, extra_env={"MISSION_TEMPLATE_MANIFEST": str(manifest)})
+    assert rc == 0, f"manifest-sourced template must pass, rc={rc} out={out}"
 
 
 # ---------------------------------------------------------------------------
