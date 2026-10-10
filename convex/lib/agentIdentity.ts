@@ -205,13 +205,18 @@ export async function resolveAgentOfPresentedSecret(
 }
 
 /**
- * findAgentByName — DEPRECATED, kept ONLY for the by-name call sites outside the
- * agent registry that have not been routed to an ID yet (convex/lib/auth.ts
- * requireVerifiedActorMatch + requireAgentCredentialMatch, convex/messages.ts,
- * convex/lib/actorIds.ts, convex/lib/seatAgent.ts, convex/lib/inboxReader.ts).
+ * findAgentByName — DEPRECATED, kept ONLY for the doors that still carry a NAME
+ * and cannot take an agent ID without another module changing first. Each
+ * caller is pinned in convex/__tests__/agentRegistryNoNameSelection.test.ts with
+ * its owner; do not add one:
+ *   - convex/lib/auth.ts (declared sender / asserted actor label)  -> M5 messaging (sender by ID)
+ *   - convex/messages.ts (seat sender screening)                   -> M5 messaging
+ *   - convex/lib/inboxReader.ts (recipient named by a verified org) -> M6 inbox
+ *   - convex/lib/actorIds.ts (task createdBy / assignedTo labels)   -> tasks doors (names in, IDs stamped)
+ *   - convex/lib/seatAgent.ts (oauth profile fromAllowList label)   -> M1 rosters / seat profiles by agent ID
  * No door of convex/agents.ts, convex/agentCredentials.ts or
  * convex/agentRelations.ts calls it: those resolve by agent ID. Delete it with
- * its last caller; do not add one.
+ * its last caller.
  */
 export async function findAgentByName(
 	ctx: QueryCtx | MutationCtx,

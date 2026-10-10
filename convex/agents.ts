@@ -51,7 +51,6 @@ const agentReturnValidator = v.object({
 	clerkOrgId: v.optional(v.string()),
 	name: v.string(),
 	normalizedName: v.optional(v.string()),
-	formerNames: v.optional(v.array(v.string())),
 	description: v.optional(v.string()),
 	address: v.optional(v.string()),
 	outboundAuthRef: v.optional(v.string()),
@@ -293,9 +292,6 @@ export const reactivateAgent = mutation({
 	},
 });
 
-/** Most former labels one agent row remembers (see `agents.formerNames`). */
-export const FORMER_NAMES_CAP = 50;
-
 /**
  * Edges rewritten per side (parent, child) per transaction by `renameAgent`
  * and its continuation. Both the read (`.take`) and the write (`patch`) are
@@ -398,17 +394,9 @@ export const renameAgent = mutation({
 
 		const oldName = existing.name;
 		const newKey = normalizeOrchestratorId(args.newName);
-		const oldKey = normalizeOrchestratorId(oldName);
-		// The label this row leaves is remembered on the row, so a roster that
-		// still names it keeps resolving to the same agent ID. A label the row
-		// takes back is no longer "former". Bounded: the newest FORMER_NAMES_CAP.
-		const formerNames = [...(existing.formerNames ?? []), oldKey]
-			.filter((key, at, all) => key !== newKey && all.indexOf(key) === at)
-			.slice(-FORMER_NAMES_CAP);
 		await ctx.db.patch(existing._id, {
 			name: args.newName,
 			normalizedName: newKey,
-			formerNames,
 		});
 
 		if (oldName !== args.newName) {

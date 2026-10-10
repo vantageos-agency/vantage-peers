@@ -1956,13 +1956,6 @@ export default defineSchema({
 		// normalizeOrchestratorId(name). Optional ONLY for the rollout of rows written before
 		// this field existed (backfilled by migrations/agentIdentityRows:backfillAgentNormalizedNames).
 		normalizedName: v.optional(v.string()),
-		// The normalized labels this agent carried BEFORE a rename (newest last, at most 50).
-		// An organisation roster (`client_org_mapping.allowedOrchestrators`) names agents by
-		// label; a rename changes the label of the row and never rewrites a roster, so a roster
-		// entry that still carries an old label keeps resolving to THIS row through this list
-		// (`orgRoster:agentDirectoryOf`). An agent whose CURRENT label equals the entry wins.
-		// Optional: absent on every row that was never renamed. Written by `agents:renameAgent` only.
-		formerNames: v.optional(v.array(v.string())),
 		description: v.optional(v.string()),
 		// `address` is the write-back target used AFTER an agent deploys — the
 		// emitter's source for a parent's remote-agent declaration (P-T3). Not

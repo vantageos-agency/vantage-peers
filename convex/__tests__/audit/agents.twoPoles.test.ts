@@ -34,7 +34,11 @@ const mapping = (t: T, slug: string, names: string[], scopes: string[]) =>
 import { normalizeOrchestratorId } from "../../_helpers/normalizeOrchestratorId";
 // RED reproduction, group R5 — agents:renameAgent. Origin: inboxByAgentId.test.ts world, orgRoster.getMyAgentDirectory.
 describe("agents:renameAgent", () => {
-	test("agents:renameAgent — after an admin renames a rostered agent, the agent stays addressable (directory still gives its agent ID) (identity: Clerk org:admin of client-c)", async () => {
+	// Fails until module M1 (task k173a1jxyvgtsenh5y1j0sjehd8fzk6c) makes rosters hold agent IDs.
+	// A roster that names agents by LABEL cannot follow a rename without identity by name
+	// (a remembered former label), which is refused. Never work around it with a name-keyed
+	// fallback: when M1 lands this assertion passes and `test.fails` must become `test`.
+	test.fails("agents:renameAgent — after an admin renames a rostered agent, the agent stays addressable (directory still gives its agent ID) (identity: Clerk org:admin of client-c)", async () => {
 		const t = createT();
 		await mapping(t, "client-c", ["ada"], ["view-own-tasks"]);
 		const ada = await t.run((ctx) =>
