@@ -1936,33 +1936,38 @@ async function listPeersFromOrgRoster(
 		return mcpRefused(LIST_PEERS, directoryDoors.directory);
 	}
 	// "*" names nobody here: a wildcard never widens a directory to
-	// other organisations. De-duplicated, bounded.
-	const agentIdOf = new Map<string, string | null>();
-	const rosterNames: string[] = [];
+	// other organisations. ONE entry per AGENT (keyed by agentId): two agents
+	// may carry the same label (a client agent and an operator coordinator)
+	// and each keeps its own ID. An entry with no ID is keyed by its
+	// normalised name. Bounded.
+	const seen = new Map<string, { name: string; agentId: string | null }>();
 	for (const entry of Array.isArray(roster) ? (roster as unknown[]) : []) {
+		let name: string | null = null;
+		let agentId: string | null = null;
 		if (typeof entry === "string") {
-			rosterNames.push(entry);
+			name = entry;
 		} else if (
 			entry !== null &&
 			typeof entry === "object" &&
 			typeof (entry as { name?: unknown }).name === "string"
 		) {
 			const en = entry as { name: string; agentId?: unknown };
-			rosterNames.push(en.name);
-			agentIdOf.set(
-				normalizeOrchestratorId(en.name),
-				typeof en.agentId === "string" ? en.agentId : null,
-			);
+			name = en.name;
+			agentId = typeof en.agentId === "string" ? en.agentId : null;
 		}
+		if (name === null || name === "*") continue;
+		const key = agentId ?? `name:${normalizeOrchestratorId(name)}`;
+		if (!seen.has(key)) seen.set(key, { name, agentId });
 	}
+	const directory = [...seen.values()].slice(0, ROSTER_LISTING_CAP);
 	const names = [
 		...new Map(
-			rosterNames
-				.filter((n) => n !== "*")
-				.map((n) => [normalizeOrchestratorId(n), n] as const),
+			directory.map(
+				(d) => [normalizeOrchestratorId(d.name), d.name] as const,
+			),
 		).values(),
-	].slice(0, ROSTER_LISTING_CAP);
-	const entries = await Promise.all(
+	];
+	const profileRows = await Promise.all(
 		names.map(async (name) => {
 			// Existing by-orchestratorId read (index by_orchestrator).
 			const rows = await convex.query("profiles:listProfiles" as any, {
@@ -1985,16 +1990,20 @@ async function listPeersFromOrgRoster(
 			return { name, row: attributable as any };
 		}),
 	);
+	const entries = profileRows;
 	if (entries.includes("refused")) {
 		return mcpRefused(LIST_PEERS, "profiles:listProfiles");
 	}
-	const orgPeers = (
-		entries as Array<{ name: string; row: any | undefined }>
-	).map(({ name, row }) =>
-		row === undefined
+	const rowOf = new Map<string, any>();
+	for (const e of entries as Array<{ name: string; row: any | undefined }>) {
+		rowOf.set(normalizeOrchestratorId(e.name), e.row);
+	}
+	const orgPeers = directory.map(({ name, agentId }) => {
+		const row = rowOf.get(normalizeOrchestratorId(name));
+		return row === undefined
 			? {
 					id: name,
-					agentId: agentIdOf.get(normalizeOrchestratorId(name)) ?? null,
+					agentId,
 					instanceId: name,
 					name,
 					role: null,
@@ -2007,7 +2016,7 @@ async function listPeersFromOrgRoster(
 					_id: row._id,
 					_creationTime: row._creationTime,
 					id: name,
-					agentId: agentIdOf.get(normalizeOrchestratorId(name)) ?? null,
+					agentId,
 					instanceId: row.instanceId ?? name,
 					name: row.name,
 					role: row.static.role,
@@ -2015,8 +2024,8 @@ async function listPeersFromOrgRoster(
 					currentTask: row.dynamic.currentTask ?? "idle",
 					lastSeen: new Date(row.dynamic.lastSeen).toISOString(),
 					sessionCount: row.dynamic.sessionCount,
-				},
-	);
+				};
+	});
 	return {
 		content: [
 			{

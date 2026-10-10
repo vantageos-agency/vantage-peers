@@ -237,17 +237,9 @@ describe("direct messages: addressableFleetCoordinatorIds (empty by default)", (
 		expect(await writes(t)).toEqual({ messages: 0, receipts: 0 });
 	});
 
-	test("(d) the two lists are independent: an ID grant alone opens no channel name; a name grant alone opens no ID", async () => {
+	test("(d) a name grant alone opens no ID path", async () => {
 		const t = createT();
 		const w = await seedWorld(t);
-		await setIds(t, "iris-rh", [w.pi]);
-		await expect(
-			asOrg(t, "iris-rh").mutation(api.messages.sendMessage, {
-				from: "irisbot",
-				channel: "pi",
-				content: "x",
-			}),
-		).rejects.toThrow(BOUNCE);
 		await setNames(t, "cgt", ["pi"]);
 		await expect(
 			asOrg(t, "cgt").mutation(api.messages.sendMessage, {
@@ -257,6 +249,42 @@ describe("direct messages: addressableFleetCoordinatorIds (empty by default)", (
 			}),
 		).rejects.toThrow(/RBAC_DENIED/);
 		expect(await writes(t)).toEqual({ messages: 0, receipts: 0 });
+	});
+
+	test("(e) dual write: the setter mirrors the listed labels into the name list, so a name grant is revocable", async () => {
+		const t = createT();
+		const w = await seedWorld(t);
+		const iris = asOrg(t, "iris-rh");
+		const send = (channel: string) =>
+			iris.mutation(api.messages.sendMessage, {
+				from: "irisbot",
+				channel,
+				content: "x",
+			});
+		const names = () =>
+			t.run(async (ctx) => {
+				const row = await ctx.db
+					.query("client_org_mapping")
+					.withIndex("by_clerk_slug", (q) => q.eq("clerkOrgSlug", "iris-rh"))
+					.unique();
+				return row?.addressableFleetCoordinators;
+			});
+
+		await setIds(t, "iris-rh", [w.pi, w.sigma]);
+		expect(await names()).toEqual(["pi", "sigma"]);
+		expect(await recipientsOf(t, await send("pi"))).toEqual(["pi"]);
+
+		// Drop pi: its label leaves the name list and the channel name bounces.
+		await setIds(t, "iris-rh", [w.sigma]);
+		expect(await names()).toEqual(["sigma"]);
+		await expect(send("pi")).rejects.toThrow(BOUNCE);
+		// PASS pole: a still-listed coordinator's name is delivered.
+		expect(await recipientsOf(t, await send("sigma"))).toEqual(["sigma"]);
+
+		// Clearing the list revokes every name.
+		await setIds(t, "iris-rh", []);
+		expect(await names()).toEqual([]);
+		await expect(send("sigma")).rejects.toThrow(BOUNCE);
 	});
 
 	test("(c) iris-rh with [pi] -> eta and -> themis BY ID, and a list with one unlisted: RBAC_DENIED, nothing written", async () => {
