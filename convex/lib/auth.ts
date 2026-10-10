@@ -18,8 +18,8 @@ import {
 	orgMappingLookups,
 	orgRefOfRow,
 	orgRefOfScope,
-	personPrincipalLookups,
 } from "./authOrgMapping";
+import { personPrincipalLookups } from "./actingPrincipal";
 
 // The join onto `client_org_mapping` lives in ./authOrgMapping (storage only); it is
 // re-exported here because every door that reads a mapping imports it from auth.

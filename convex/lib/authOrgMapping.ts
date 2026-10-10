@@ -9,10 +9,8 @@
 
 import type {
 	OperatorOrgLookups,
-	OrgKind,
 	OrgMappingLookups,
 	OrgRef,
-	PrincipalLookups,
 } from "@vantageos/cloud-identity";
 import type { Doc } from "../_generated/dataModel";
 import type { DatabaseReader } from "../_generated/server";
@@ -103,34 +101,5 @@ export function orgMappingLookups(ctx: {
 		orgByLabel: async (label) => packageRow(await lookupOrgMapping(ctx, label)),
 		activeOrganisations: async (limit) =>
 			(await readMappings(ctx.db, { activeLimit: limit })).map(packageRow),
-	};
-}
-
-/**
- * The adapters the package's principal resolver reads for a PERSON whose session
- * a door has verified, every organisation read keyed by the permanent org ID.
- * The person row is the verified session itself (this backend keeps no separate
- * person table), so `personById` answers only for the verified subject. An org
- * ID that two mapping rows claim is undecidable (`lookupOrgMapping` answers
- * null), hence not an organisation here.
- */
-export function personPrincipalLookups(
-	ctx: { db: DatabaseReader },
-	verifiedSubject: string,
-): PrincipalLookups {
-	return {
-		personById: (personId, orgId) =>
-			personId === verifiedSubject
-				? { id: personId, orgId, active: true }
-				: null,
-		organisationById: async (orgId) => {
-			const mapping = await lookupOrgMapping(ctx, { clerkOrgId: orgId });
-			return mapping === null ? null : { id: orgId, active: mapping.isActive };
-		},
-		orgKindOf: async (orgId): Promise<OrgKind | null> => {
-			const mapping = await lookupOrgMapping(ctx, { clerkOrgId: orgId });
-			if (mapping === null || !mapping.isActive) return null;
-			return mapping.orgKind === "operator" ? "operator" : "client";
-		},
 	};
 }
