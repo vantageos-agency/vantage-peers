@@ -181,6 +181,7 @@ export const run = internalMutation({
 			const orgs = resolver.agentOrgsByName.get(normalizeOrchestratorId(name));
 			if (orgs === undefined || orgs.length === 0) return "unknown";
 			if (orgs.length > 1) return "ambiguous";
+			// allow-local-identity: offline backfill with no caller; compares stored data against data
 			return orgs[0] === resolver.orgSlug ? "stamp" : "otherOrg";
 		};
 
