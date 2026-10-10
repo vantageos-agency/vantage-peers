@@ -3,7 +3,8 @@ import type { Id } from "./_generated/dataModel";
 import { internalMutation, internalQuery, query } from "./_generated/server";
 import { lookupOrgMapping, withOrgScope } from "./lib/auth";
 import { normalizeOrchestratorId } from "./_helpers/normalizeOrchestratorId";
-import { findAgentByName } from "./lib/agentIdentity";
+import { assertAgentNameFree } from "./lib/agentIdentity";
+import { requireAgentsOfOrg } from "./lib/rosterIds";
 import { CLERK_ORG_ID_PATTERN, clerkOrgIdForSlug } from "./lib/orgClerkId";
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -299,15 +300,23 @@ export const addRosterMembers = internalMutation({
 // Called only by oauth:provisionOrganization, as a nested internal mutation in
 // the provisioning transaction. It takes the mapping row's ID and reads the
 // organisation from THAT ROW, so the `agents` rows it writes are stamped with
-// the org the mapping names, never with a caller argument. For each seat name:
-// the org's existing agent of that name is reused (names are unique per org
-// under normalizeOrchestratorId), else an active `agents` row is inserted. The
-// resulting IDs are stored as `allowedAgentIds`, in the order of `names`.
+// the org the mapping names, never with a caller argument.
+//
+// A seat NAME only ever creates a NEW active `agents` row. A name is a label,
+// not an identity: if the org already holds an agent row under that label
+// (normalizeOrchestratorId) the call is REFUSED by assertAgentNameFree
+// (AGENT_NAME_TAKEN, or AGENT_INACTIVE for a retired holder; the holder is named
+// by ID) and nothing is reused. An agent that already
+// exists joins the roster solely by its ID (`agentIds`), validated by
+// requireAgentsOfOrg through @vantageos/cloud-identity. The roster is stored as
+// the new seats' IDs in the order of `names`, then `agentIds`, de-duplicated.
+// The mutation is all-or-nothing: a refusal rolls the provisioning back.
 // ─────────────────────────────────────────────────────────────────────────────
 export const seedSeatAgents = internalMutation({
 	args: {
 		mappingId: v.id("client_org_mapping"),
 		names: v.array(v.string()),
+		agentIds: v.optional(v.array(v.id("agents"))),
 	},
 	returns: v.array(v.id("agents")),
 	handler: async (ctx, args) => {
@@ -320,18 +329,26 @@ export const seedSeatAgents = internalMutation({
 		const clerkOrgId = await clerkOrgIdForSlug(ctx, mapping.clerkOrgSlug);
 		const ids: Id<"agents">[] = [];
 		for (const name of args.names) {
-			const existing = await findAgentByName(ctx, mapping.clerkOrgSlug, name);
-			const id =
-				existing !== null
-					? existing._id
-					: await ctx.db.insert("agents", {
-							orgSlug: mapping.clerkOrgSlug,
-							...(clerkOrgId !== undefined ? { clerkOrgId } : {}),
-							name,
-							normalizedName: normalizeOrchestratorId(name),
-							isActive: true,
-							createdAt: Date.now(),
-						});
+			// The org's own conflict check (the one agents:registerAgent runs): a
+			// label already held by ANY agent of this org refuses, naming the holder
+			// by ID. Nothing is selected or reused.
+			await assertAgentNameFree(ctx, mapping.clerkOrgSlug, name);
+			const id = await ctx.db.insert("agents", {
+				orgSlug: mapping.clerkOrgSlug,
+				...(clerkOrgId !== undefined ? { clerkOrgId } : {}),
+				name,
+				normalizedName: normalizeOrchestratorId(name),
+				isActive: true,
+				createdAt: Date.now(),
+			});
+			if (!ids.includes(id)) ids.push(id);
+		}
+		const existing = await requireAgentsOfOrg(
+			ctx,
+			mapping.clerkOrgSlug,
+			args.agentIds ?? [],
+		);
+		for (const id of existing) {
 			if (!ids.includes(id)) ids.push(id);
 		}
 		await ctx.db.patch(mapping._id, { allowedAgentIds: ids });
