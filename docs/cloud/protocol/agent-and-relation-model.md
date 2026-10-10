@@ -14,7 +14,6 @@ Source: `convex/schema.ts:1320-1333`.
 agents: defineTable({
 	orgSlug: v.string(),                    // client_org_mapping.clerkOrgSlug — the org that owns this agent
 	name: v.string(),                       // agent's display label, unique within its org (see by_org_name); the identity is the row _id
-	formerNames: v.optional(v.array(v.string())), // normalized labels before a rename (newest last, max 50); a roster entry keeps resolving to this row
 	description: v.optional(v.string()),
 	address: v.optional(v.string()),        // write-back target used AFTER an agent deploys
 	outboundAuthRef: v.optional(v.string()),// opaque reference to an outbound-auth credential; never the raw credential
