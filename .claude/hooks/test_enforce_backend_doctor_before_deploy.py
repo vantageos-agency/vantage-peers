@@ -462,12 +462,13 @@ MEASURED_E85618D = {
 MEASURED_E85618D_RULE_COUNTS = {
     "R-2": 6, "R-8": 2, "R-13": 108, "R-28": 7, "R-31": 18, "R-52": 4, "R-53": 113,
 }
-# The live baseline was re-measured on ONE instrument (Pi ruling, option b, task
-# k17fbwkmpetmrkv4hcyxnqh8sx8fwva5): backend-doctor@b2ecbca on vantage-peers
-# 3b141c4, `npx tsx src/cli.ts <vp@3b141c4>/convex --json-evidence <dir>/` ->
-# `MECHANICAL RULE COUNTS: R-5 62, R-53 234`. The live file may never exceed it.
-MEASURED_3B141C4_RULE_COUNTS = {
-    "R-2": 0, "R-8": 0, "R-13": 0, "R-28": 0, "R-31": 0, "R-52": 0, "R-53": 234, "R-5": 62,
+# The live baseline was re-measured on ONE instrument (Pi order 2026-10-10, task
+# k17d9dgcsjvwggvr1kc9daa32x8g0m6t): backend-doctor 0.3.0 @622caff on vantage-peers
+# 6cc7950, `npx tsx src/cli.ts <vp@6cc7950>/convex --json-evidence <dir>/` ->
+# `MECHANICAL RULE COUNTS: CR-2 251, R-5 62, R-53 254`. The live file may never exceed it.
+MEASURED_6CC7950_RULE_COUNTS = {
+    "R-2": 0, "R-8": 0, "R-13": 0, "R-28": 0, "R-31": 0, "R-52": 0, "R-53": 254, "R-5": 62,
+    "CR-2": 251,
 }
 
 
@@ -519,13 +520,13 @@ def test_ratchet_baseline_values_carry_their_command():
 
 def test_ratchet_live_baseline_carries_its_command_and_never_rose():
     live = json.loads(REAL_BASELINE.read_text())
-    assert set(live["rules"]) <= set(MEASURED_3B141C4_RULE_COUNTS)
+    assert set(live["rules"]) <= set(MEASURED_6CC7950_RULE_COUNTS)
     for rule, entry in live["rules"].items():
         assert entry["command"].startswith("cd ")
         assert "npx tsx src/cli.ts" in entry["command"]
         assert entry["output_line"].startswith(f"{rule}: {entry['count']} ")
         assert entry["cli_commit"]
-        assert entry["count"] <= MEASURED_3B141C4_RULE_COUNTS[rule], rule
+        assert entry["count"] <= MEASURED_6CC7950_RULE_COUNTS[rule], rule
 
 
 def test_ratchet_block_one_more_r53_site():
