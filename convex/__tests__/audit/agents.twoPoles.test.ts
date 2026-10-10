@@ -4,6 +4,7 @@ import { describe, expect, test } from "vitest";
 import { api } from "../../_generated/api";
 import type { Id } from "../../_generated/dataModel";
 import schema from "../../schema";
+import { testClerkOrgId } from "../../../tests/fixtures/testClerkOrgId";
 const modules = Object.fromEntries(
 	Object.entries(import.meta.glob("../../**/*.ts")).filter(
 		([path]) => !path.includes("ragSync") && !path.includes("search"),
@@ -18,6 +19,7 @@ const asMember = (t: T, org: string, role = "org:member") =>
 	t.withIdentity({
 		subject: `user-${org}-${role}`,
 		organizationSlug: org,
+		org_id: testClerkOrgId(org),
 		org_role: role,
 	} as Parameters<T["withIdentity"]>[0]);
 const mapping = (
@@ -30,6 +32,7 @@ const mapping = (
 	t.run((ctx) =>
 		ctx.db.insert("client_org_mapping", {
 			clerkOrgSlug: slug,
+			clerkOrgId: testClerkOrgId(slug),
 			allowedOrchestrators: names,
 			// M1: the roster is stored by agent ID (rosters by ID); the names stay beside it.
 			...(allowedAgentIds !== undefined ? { allowedAgentIds } : {}),

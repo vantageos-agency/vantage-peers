@@ -27,6 +27,7 @@ import { api, internal } from "../_generated/api";
 import type { Doc, Id } from "../_generated/dataModel";
 import { normalizeOrchestratorId } from "../_helpers/normalizeOrchestratorId";
 import schema from "../schema";
+import { testClerkOrgId } from "../../tests/fixtures/testClerkOrgId";
 
 const modules = Object.fromEntries(
 	Object.entries(import.meta.glob("../**/*.ts")).filter(
@@ -48,6 +49,7 @@ const asMember = (t: T, org: string, role = "org:member") =>
 	t.withIdentity({
 		subject: `user-${org}-${role}`,
 		organizationSlug: org,
+		org_id: testClerkOrgId(org),
 		org_role: role,
 	} as Identity);
 const asService = (t: T) =>
@@ -83,6 +85,7 @@ async function world() {
 		) =>
 			ctx.db.insert("client_org_mapping", {
 				clerkOrgSlug,
+				clerkOrgId: testClerkOrgId(clerkOrgSlug),
 				allowedOrchestrators,
 				scopes: ["view-own-tasks"],
 				displayName: clerkOrgSlug,
@@ -365,6 +368,7 @@ describe("WRITERS — a new org's roster is written as agent IDs", () => {
 		await t.mutation(api.oauth.provisionOrganization, {
 			callerToken: "test-master-token",
 			clerkOrgSlug: "plan-org-ids",
+			clerkOrgId: testClerkOrgId("plan-org-ids"),
 			displayName: "Plan org ids",
 			orchestrators: [{ name: "orch-a" }, { name: "orch-b" }],
 		});
@@ -420,6 +424,7 @@ describe("WRITERS — a new org's roster is written as agent IDs", () => {
 			t.mutation(api.oauth.provisionOrganization, {
 				callerToken: "test-master-token",
 				clerkOrgSlug: "plan-org-collide",
+				clerkOrgId: testClerkOrgId("plan-org-collide"),
 				displayName: "Plan org collide",
 				orchestrators: [{ name: "orch-a" }, { name: "orch-b" }],
 			}),
@@ -436,6 +441,7 @@ describe("WRITERS — a new org's roster is written as agent IDs", () => {
 		await t.mutation(api.oauth.provisionOrganization, {
 			callerToken: "test-master-token",
 			clerkOrgSlug: "plan-org-byid",
+			clerkOrgId: testClerkOrgId("plan-org-byid"),
 			displayName: "Plan org by id",
 			orchestrators: [{ name: "orch-a" }],
 			agentIds: [keeper],
@@ -454,6 +460,7 @@ describe("WRITERS — a new org's roster is written as agent IDs", () => {
 			t.mutation(api.oauth.provisionOrganization, {
 				callerToken: "test-master-token",
 				clerkOrgSlug: "plan-org-foreign",
+				clerkOrgId: testClerkOrgId("plan-org-foreign"),
 				displayName: "Plan org foreign",
 				orchestrators: [{ name: "orch-a" }],
 				agentIds: [foreign],
@@ -468,6 +475,7 @@ describe("WRITERS — a new org's roster is written as agent IDs", () => {
 		await t.mutation(api.oauth.provisionOrganization, {
 			callerToken: "test-master-token",
 			clerkOrgSlug: "plan-org-fresh",
+			clerkOrgId: testClerkOrgId("plan-org-fresh"),
 			displayName: "Plan org fresh",
 			orchestrators: [{ name: "orch-a" }],
 		});
