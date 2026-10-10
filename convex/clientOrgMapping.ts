@@ -153,8 +153,15 @@ export const setOrgKind = internalMutation({
 // stamped with an ACTIVE org marked orgKind "operator" (never a client's agent,
 // never a name, never "*"). Entries are de-duplicated; an empty list clears the
 // grant. Audited like setOrgKind: the return carries {previous, current} as ID
-// lists. Only `addressableFleetCoordinatorIds` is patched; roster, scopes and
-// isActive are untouched. Read by messages:sendMessage (recipientAgentIds) and
+// lists. `addressableFleetCoordinatorIds` is patched; roster, scopes and
+// isActive are untouched.
+//
+// EXPAND-PHASE DUAL WRITE (M1a). The channel-NAME path in messages:sendMessage
+// still reads `addressableFleetCoordinators`, so this setter REWRITES that
+// name list to exactly the labels (agents.name, normalized as the reader
+// compares) of the listed agents. Removing an ID removes its label, so a name
+// grant stays revocable. The name list is a label snapshot, never an authority;
+// M1b removes the field. Read by messages:sendMessage (recipientAgentIds) and
 // the agent directory through assertPrincipalListed.
 // ─────────────────────────────────────────────────────────────────────────────
 export const setAddressableFleetCoordinators = internalMutation({
@@ -186,6 +193,7 @@ export const setAddressableFleetCoordinators = internalMutation({
 		}
 
 		const current: Id<"agents">[] = [];
+		const labels: string[] = [];
 		for (const id of args.agentIds) {
 			const agent = await ctx.db.get(id);
 			const mapping =
@@ -202,10 +210,15 @@ export const setAddressableFleetCoordinators = internalMutation({
 				);
 			}
 			if (!current.includes(id)) current.push(id);
+			const label = normalizeOrchestratorId(agent.name);
+			if (!labels.includes(label)) labels.push(label);
 		}
 
 		const previous = row.addressableFleetCoordinatorIds ?? [];
-		await ctx.db.patch(row._id, { addressableFleetCoordinatorIds: current });
+		await ctx.db.patch(row._id, {
+			addressableFleetCoordinatorIds: current,
+			addressableFleetCoordinators: labels,
+		});
 		return { clerkOrgSlug: args.clerkOrgSlug, previous, current };
 	},
 });

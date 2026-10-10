@@ -234,6 +234,22 @@ describe("DIRECTORY — list_peers carries the agentId Convex attached", () => {
 		);
 	});
 
+	it("one entry per agent: a client agent and an operator coordinator with the same label each keep their own agentId", async () => {
+		const OPERATOR_PI_ID = "jh7operatoroperatoroperator0001";
+		const CLIENT_PI_ID = "jh7clientclientclientclient00002";
+		const h = harness(seat(), {
+			directory: [
+				{ name: "pi", agentId: CLIENT_PI_ID },
+				{ name: "pi", agentId: OPERATOR_PI_ID },
+			],
+		});
+		const list = await peers(h);
+		expect(list.map((p) => [p.id, p.agentId])).toEqual([
+			["pi", CLIENT_PI_ID],
+			["pi", OPERATOR_PI_ID],
+		]);
+	});
+
 	it("Clerk session: reads getMyAgentDirectory", async () => {
 		const h = harness(seat({ accessTokenHash: undefined, clerkJwt: "jwt" }), {
 			directory: DIRECTORY,
