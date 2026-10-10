@@ -421,6 +421,7 @@ describe("M8 3. a missing or garbled credential is refused, never an empty succe
 	});
 });
 
+// "A renamed agent stays addressable" is owned by M1 (task k173a1jxyvgtsenh5y1j0sjehd8fzk6c), not asserted here.
 describe("M8 4. a rename touches the display name only and keeps every grant", () => {
 	test("PRESENT: after a rename the credential, the directory entry, the edges and the roster all still hold", async () => {
 		const t = createT();
