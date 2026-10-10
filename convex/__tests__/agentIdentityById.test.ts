@@ -64,6 +64,18 @@ async function seedOrg(t: T, slug: string, roster: string[] = ["ada"]) {
 	);
 }
 
+/** Store the roster of an organisation as agent IDs (module M1). */
+async function storeRosterIds(t: T, slug: string, ids: Id<"agents">[]) {
+	await t.run(async (ctx) => {
+		const row = await ctx.db
+			.query("client_org_mapping")
+			.withIndex("by_clerk_slug", (q) => q.eq("clerkOrgSlug", slug))
+			.first();
+		if (row === null) throw new Error(`no mapping for ${slug}`);
+		await ctx.db.patch(row._id, { allowedAgentIds: ids });
+	});
+}
+
 async function codeOf(p: Promise<unknown>): Promise<string> {
 	try {
 		await p;
@@ -444,6 +456,7 @@ describe("M8 4. a rename touches the display name only and keeps every grant", (
 			parentAgentId: ada,
 			childAgentId: clio,
 		});
+		await storeRosterIds(t, "org-a", [ada, clio]);
 
 		await admin.mutation(api.agents.renameAgent, {
 			orgSlug: "org-a",
@@ -469,16 +482,13 @@ describe("M8 4. a rename touches the display name only and keeps every grant", (
 		});
 		expect(status.activeRows).toBe(1);
 
-		// A roster names agents by LABEL until module M1 (task
-		// k173a1jxyvgtsenh5y1j0sjehd8fzk6c) stores IDs. The label the renamed
-		// agent left names nobody now: the directory lists it, not addressable,
-		// and never resolves it to the renamed agent through a remembered label.
+		// The roster holds the agent's ID (module M1): the renamed agent stays
+		// listed and addressable, under its new label.
 		const directory = await admin.query(api.orgRoster.getMyAgentDirectory, {});
 		expect(directory).toEqual([
-			{ name: "ada", agentId: null },
+			{ name: "ada2", agentId: ada },
 			{ name: "clio", agentId: clio },
 		]);
-		expect(directory.find((e) => e.agentId === ada)).toBeUndefined();
 
 		// The row remembers no former label: a rename writes the display label only.
 		const stored = await t.run((ctx) => ctx.db.get(ada));
@@ -506,7 +516,7 @@ describe("M8 4. a rename touches the display name only and keeps every grant", (
 		expect(mapping?.allowedOrchestrators).toEqual(["ada", "clio"]);
 	});
 
-	test("a roster label is resolved to the agent that carries it NOW: after a rename the old label names nobody, a new agent registered under it takes the entry, and an agent never on the roster stays unlisted", async () => {
+	test("a roster holds an agent's ID, not its label: after a rename a new agent registered under the old label is not listed, and an agent never on the roster stays unlisted", async () => {
 		const t = createT();
 		await seedOrg(t, "org-a", ["ada"]);
 		const admin = adminOf(t, "org-a");
@@ -518,6 +528,7 @@ describe("M8 4. a rename touches the display name only and keeps every grant", (
 			orgSlug: "org-a",
 			name: "outsider",
 		});
+		await storeRosterIds(t, "org-a", [ada]);
 		await admin.mutation(api.agents.renameAgent, {
 			orgSlug: "org-a",
 			agentId: ada,
@@ -525,17 +536,18 @@ describe("M8 4. a rename touches the display name only and keeps every grant", (
 		});
 
 		const before = await admin.query(api.orgRoster.getMyAgentDirectory, {});
-		expect(before).toEqual([{ name: "ada", agentId: null }]);
+		expect(before).toEqual([{ name: "ada2", agentId: ada }]);
 		expect(before.find((e) => e.agentId === outsider)).toBeUndefined();
 
-		// Someone now carries the label the roster names: that agent takes the
-		// entry, the renamed one is never reached through it.
+		// Someone now carries the label the roster once displayed: it is a
+		// different agent with a different ID, and it is NOT on the roster.
 		const newAda = await admin.mutation(api.agents.registerAgent, {
 			orgSlug: "org-a",
 			name: "ada",
 		});
 		const after = await admin.query(api.orgRoster.getMyAgentDirectory, {});
-		expect(after).toEqual([{ name: "ada", agentId: newAda }]);
+		expect(after).toEqual([{ name: "ada2", agentId: ada }]);
+		expect(after.find((e) => e.agentId === newAda)).toBeUndefined();
 		expect(newAda).not.toBe(ada);
 	});
 

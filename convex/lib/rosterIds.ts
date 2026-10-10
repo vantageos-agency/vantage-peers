@@ -112,8 +112,14 @@ export async function requireAgentsOfOrg(
 ): Promise<Id<"agents">[]> {
 	const out: Id<"agents">[] = [];
 	for (const id of ids) {
-		const agent = await ctx.db.get(id);
-		if (agent === null || !agent.isActive || agent.orgSlug !== orgSlug) {
+		// The package decides: the agent is read by ID and must be active and
+		// stamped with `orgSlug`, in an active organisation. Nothing is compared here.
+		const resolved = await resolveActingPrincipal(
+			{ kind: "agent", agentId: id, verifiedOrgId: orgSlug },
+			principalLookups(ctx),
+			"rosterIds:requireAgentsOfOrg",
+		);
+		if (!resolved.ok) {
 			throw new ConvexError(
 				`AGENT_NOT_IN_ORG: "${id}" is not an active agent of org "${orgSlug}"; a roster lists the agents of its own organisation only`,
 			);

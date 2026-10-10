@@ -69,6 +69,7 @@ type Resolution =
 	| { kind: "none" }
 	| { kind: "many"; candidates: number };
 
+// allow-local-identity: one-time expand-contract backfill that turns a stored roster NAME into the agent ID inside one org; no request path calls it; removed by the contract PR
 async function resolveInOrg(
 	db: DatabaseReader,
 	orgSlug: string,
@@ -88,6 +89,7 @@ async function resolveInOrg(
 	return { kind: "many", candidates: rows.length };
 }
 
+// allow-local-identity: one-time expand-contract backfill reading the stored name rosters to write the ID rosters; admin credential only; removed by the contract PR
 export const backfillRosterAgentIds = internalMutation({
 	args: { dryRun: v.optional(v.boolean()) },
 	returns: v.object({

@@ -188,7 +188,7 @@ describe("DIRECTORY / RENAME — the stored ID is the answer", () => {
 		const { t, ids } = await world();
 		await asMember(t, C, "org:admin").mutation(api.agents.renameAgent, {
 			orgSlug: C,
-			name: "ada",
+			agentId: ids.cAda,
 			newName: "ada2",
 		});
 		const mapping = await t.run(async (ctx) =>

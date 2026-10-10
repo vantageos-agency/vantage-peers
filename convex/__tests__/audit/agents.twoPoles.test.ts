@@ -51,7 +51,7 @@ describe("agents:renameAgent", () => {
 		await mapping(t, "client-c", ["ada"], ["view-own-tasks"], [ada]);
 		const before = await asMember(t, "client-c", "org:admin").query(api.orgRoster.getMyAgentDirectory, {});
 		expect(before.find((e) => e.agentId === ada), "positive control: addressable before rename").toBeDefined();
-		await asMember(t, "client-c", "org:admin").mutation(api.agents.renameAgent, { orgSlug: "client-c", name: "ada", newName: "ada2" });
+		await asMember(t, "client-c", "org:admin").mutation(api.agents.renameAgent, { orgSlug: "client-c", agentId: ada, newName: "ada2" });
 		const after = await asMember(t, "client-c", "org:admin").query(api.orgRoster.getMyAgentDirectory, {});
 		expect(after.find((e) => e.agentId === ada), "renamed agent dropped out of the directory (roster not updated)").toBeDefined();
 	});
