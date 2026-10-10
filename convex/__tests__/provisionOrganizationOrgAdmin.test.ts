@@ -32,6 +32,7 @@ import { convexTest } from "convex-test";
 import { describe, expect, test } from "vitest";
 import { api } from "../_generated/api";
 import schema from "../schema";
+import { testClerkOrgId } from "../../tests/fixtures/testClerkOrgId";
 
 const modules = Object.fromEntries(
 	Object.entries(import.meta.glob("../**/*.ts")).filter(
@@ -100,6 +101,7 @@ describe("D2 provisionOrganization — org-admin authority, scoped to own org", 
 
 		const result = await tAdminX.mutation(api.oauth.provisionOrganization, {
 			clerkOrgSlug: "org-x",
+			clerkOrgId: testClerkOrgId("org-x"),
 			displayName: "Org X",
 			orchestrators: [{ name: "new-seat-x" }],
 		});
@@ -128,6 +130,7 @@ describe("D2 provisionOrganization — org-admin authority, scoped to own org", 
 		await expect(
 			tAdminX.mutation(api.oauth.provisionOrganization, {
 				clerkOrgSlug: "org-y",
+				clerkOrgId: testClerkOrgId("org-y"),
 				displayName: "Org Y",
 				orchestrators: [{ name: "sneaky-seat" }],
 			}),
@@ -154,6 +157,7 @@ describe("D2 provisionOrganization — org-admin authority, scoped to own org", 
 		await expect(
 			tMemberX.mutation(api.oauth.provisionOrganization, {
 				clerkOrgSlug: "org-x",
+				clerkOrgId: testClerkOrgId("org-x"),
 				displayName: "Org X",
 				orchestrators: [{ name: "member-attempt-seat" }],
 			}),
@@ -167,6 +171,7 @@ describe("D2 provisionOrganization — org-admin authority, scoped to own org", 
 		await expect(
 			t.mutation(api.oauth.provisionOrganization, {
 				clerkOrgSlug: "org-x",
+				clerkOrgId: testClerkOrgId("org-x"),
 				displayName: "Org X",
 				orchestrators: [{ name: "anon-attempt-seat" }],
 			}),
@@ -185,6 +190,7 @@ describe("D2 provisionOrganization — org-admin authority, scoped to own org", 
 		await expect(
 			tAdminNew.mutation(api.oauth.provisionOrganization, {
 				clerkOrgSlug: "org-brand-new",
+				clerkOrgId: testClerkOrgId("org-brand-new"),
 				displayName: "Brand New Org",
 				orchestrators: [{ name: "first-seat" }],
 			}),
@@ -199,6 +205,7 @@ describe("D2 provisionOrganization — org-admin authority, scoped to own org", 
 			const result = await t.mutation(api.oauth.provisionOrganization, {
 				callerToken: "test-master-secret-d2",
 				clerkOrgSlug: "org-master-path",
+				clerkOrgId: testClerkOrgId("org-master-path"),
 				displayName: "Master Path Org",
 				orchestrators: [{ name: "master-seat" }],
 			});
@@ -235,6 +242,7 @@ describe("D2 provisionOrganization — org-admin authority, scoped to own org", 
 
 		const result = await tAdminX.mutation(api.oauth.provisionOrganization, {
 			clerkOrgSlug: "org-x",
+			clerkOrgId: testClerkOrgId("org-x"),
 			displayName: "Org X",
 			orchestrators: [{ name: "slug-correctness-seat" }],
 		});
@@ -261,6 +269,7 @@ describe("D2 provisionOrganization — org-admin authority, scoped to own org", 
 		await expect(
 			tAdminOrgIdOnly.mutation(api.oauth.provisionOrganization, {
 				clerkOrgSlug: "org-x",
+				clerkOrgId: testClerkOrgId("org-x"),
 				displayName: "Org X",
 				orchestrators: [{ name: "org-id-only-seat" }],
 			}),
@@ -276,6 +285,7 @@ describe("D2 provisionOrganization — org-admin authority, scoped to own org", 
 				t.mutation(api.oauth.provisionOrganization, {
 					callerToken: "wrong-token",
 					clerkOrgSlug: "org-master-path-2",
+					clerkOrgId: testClerkOrgId("org-master-path-2"),
 					displayName: "Master Path Org 2",
 					orchestrators: [{ name: "master-seat-2" }],
 				}),

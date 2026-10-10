@@ -26,6 +26,7 @@ import { convexTest } from "convex-test";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import { api } from "../_generated/api";
 import schema from "../schema";
+import { testClerkOrgId } from "../../tests/fixtures/testClerkOrgId";
 
 const modules = Object.fromEntries(
 	Object.entries(import.meta.glob("../**/*.ts")).filter(
@@ -70,6 +71,7 @@ describe("provisionOrganization — cross-org seat-name collision", () => {
 		const yResult = await t.mutation(api.oauth.provisionOrganization, {
 			callerToken: MASTER,
 			clerkOrgSlug: "org-y",
+			clerkOrgId: testClerkOrgId("org-y"),
 			displayName: "Org Y",
 			orchestrators: [{ name: "alpha" }],
 		});
@@ -86,6 +88,7 @@ describe("provisionOrganization — cross-org seat-name collision", () => {
 			t.mutation(api.oauth.provisionOrganization, {
 				callerToken: MASTER,
 				clerkOrgSlug: "org-x",
+				clerkOrgId: testClerkOrgId("org-x"),
 				displayName: "Org X",
 				orchestrators: [{ name: "alpha" }],
 			}),
@@ -126,6 +129,7 @@ describe("provisionOrganization — cross-org seat-name collision", () => {
 			t.mutation(api.oauth.provisionOrganization, {
 				callerToken: MASTER,
 				clerkOrgSlug: "org-client-1",
+				clerkOrgId: testClerkOrgId("org-client-1"),
 				displayName: "Org client 1",
 				orchestrators: [{ name: "sigma" }],
 			}),
@@ -153,6 +157,7 @@ describe("provisionOrganization — cross-org seat-name collision", () => {
 			t.mutation(api.oauth.provisionOrganization, {
 				callerToken: MASTER,
 				clerkOrgSlug: "org-client-2",
+				clerkOrgId: testClerkOrgId("org-client-2"),
 				displayName: "Org client 2",
 				orchestrators: [{ name: "legacyseat" }],
 			}),
@@ -164,6 +169,7 @@ describe("provisionOrganization — cross-org seat-name collision", () => {
 		const first = await t.mutation(api.oauth.provisionOrganization, {
 			callerToken: MASTER,
 			clerkOrgSlug: "org-replay",
+			clerkOrgId: testClerkOrgId("org-replay"),
 			displayName: "Org replay",
 			orchestrators: [{ name: "beta" }],
 		});
@@ -172,6 +178,7 @@ describe("provisionOrganization — cross-org seat-name collision", () => {
 		const second = await t.mutation(api.oauth.provisionOrganization, {
 			callerToken: MASTER,
 			clerkOrgSlug: "org-replay",
+			clerkOrgId: testClerkOrgId("org-replay"),
 			displayName: "Org replay",
 			orchestrators: [{ name: "beta" }],
 		});
@@ -184,6 +191,7 @@ describe("provisionOrganization — cross-org seat-name collision", () => {
 		const first = await t.mutation(api.oauth.provisionOrganization, {
 			callerToken: MASTER,
 			clerkOrgSlug: "org-replay-admin",
+			clerkOrgId: testClerkOrgId("org-replay-admin"),
 			displayName: "Org replay admin",
 			orchestrators: [{ name: "beta-admin" }],
 		});
@@ -195,6 +203,7 @@ describe("provisionOrganization — cross-org seat-name collision", () => {
 		);
 		const second = await tAdmin.mutation(api.oauth.provisionOrganization, {
 			clerkOrgSlug: "org-replay-admin",
+			clerkOrgId: testClerkOrgId("org-replay-admin"),
 			displayName: "Org replay admin",
 			orchestrators: [{ name: "beta-admin" }],
 		});
@@ -207,12 +216,14 @@ describe("provisionOrganization — cross-org seat-name collision", () => {
 		await t.mutation(api.oauth.provisionOrganization, {
 			callerToken: MASTER,
 			clerkOrgSlug: "org-gamma",
+			clerkOrgId: testClerkOrgId("org-gamma"),
 			displayName: "Org gamma",
 			orchestrators: [{ name: "gamma-seat" }],
 		});
 		await t.mutation(api.oauth.provisionOrganization, {
 			callerToken: MASTER,
 			clerkOrgSlug: "org-delta",
+			clerkOrgId: testClerkOrgId("org-delta"),
 			displayName: "Org delta",
 			orchestrators: [{ name: "delta-seat" }],
 		});
@@ -226,6 +237,7 @@ describe("provisionOrganization — cross-org seat-name collision", () => {
 			api.oauth.provisionOrganization,
 			{
 				clerkOrgSlug: "org-gamma",
+				clerkOrgId: testClerkOrgId("org-gamma"),
 				displayName: "Org gamma",
 				orchestrators: [{ name: "gamma-seat" }],
 			},
@@ -241,6 +253,7 @@ describe("provisionOrganization — cross-org seat-name collision", () => {
 			api.oauth.provisionOrganization,
 			{
 				clerkOrgSlug: "org-delta",
+				clerkOrgId: testClerkOrgId("org-delta"),
 				displayName: "Org delta",
 				orchestrators: [{ name: "delta-seat" }],
 			},
@@ -253,6 +266,7 @@ describe("provisionOrganization — cross-org seat-name collision", () => {
 		const result = await t.mutation(api.oauth.provisionOrganization, {
 			callerToken: MASTER,
 			clerkOrgSlug: "org-brand-new-fresh",
+			clerkOrgId: testClerkOrgId("org-brand-new-fresh"),
 			displayName: "Org brand new fresh",
 			orchestrators: [{ name: "epsilon" }, { name: "zeta-fresh" }],
 		});

@@ -516,6 +516,7 @@ describe("RESERVED — no agent is ever named like a person", () => {
 		await expectCode(
 			operatorAdmin.mutation(api.oauth.provisionOrganization, {
 				clerkOrgSlug: "client-x",
+				clerkOrgId: testClerkOrgId("client-x"),
 				displayName: "x",
 				orchestrators: [{ name: "user:someone" }],
 			}),

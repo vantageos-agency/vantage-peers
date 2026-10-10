@@ -32,6 +32,7 @@ import {
 import { upsertAdminMembership } from "../orgMembership";
 import schema from "../schema";
 import { agentIdOf } from "../../tests/lib/agentIdOf";
+import { testClerkOrgId } from "../../tests/fixtures/testClerkOrgId";
 
 const modules = Object.fromEntries(
 	Object.entries(import.meta.glob("../**/*.ts")).filter(
@@ -360,42 +361,35 @@ describe("a mapping with no id yet: a member is refused, and no id is ever inven
 	}
 });
 
-describe("provisionOrganization: seat rows are written before the mapping has an id", () => {
-	test("oauth_scope_profiles and oauth_access_tokens carry the slug only, and the backfill lists then fills them", async () => {
+describe("provisionOrganization: seat rows are keyed by the ID from their first write", () => {
+	test("the mapping, oauth_scope_profiles and oauth_access_tokens carry the presented ID; the backfill has nothing to fill", async () => {
 		const t = createT();
 		const slug = "fresh-org";
+		const id = testClerkOrgId(slug);
 		await t.mutation(api.oauth.provisionOrganization, {
 			callerToken: MASTER,
 			clerkOrgSlug: slug,
+			clerkOrgId: id,
 			displayName: slug,
 			orchestrators: [{ name: "neo" }],
 		});
+		const mapping = (
+			await t.run((ctx) => ctx.db.query("client_org_mapping").collect())
+		).filter((r) => r.clerkOrgSlug === slug);
+		expect(mapping.map((r) => r.clerkOrgId)).toEqual([id]);
 		for (const table of ["oauth_scope_profiles", "oauth_access_tokens"] as const) {
 			const rows = (await rowsOf(t, table)).filter(
 				(r) => r.clerkOrgSlug === slug,
 			);
 			expect(rows.length).toBeGreaterThan(0);
-			for (const r of rows) expect(r.clerkOrgId).toBeUndefined();
-		}
-
-		// The mapping gets its id afterwards (operator step), then the backfill fills.
-		await t.run(async (ctx) => {
-			const m = await ctx.db
-				.query("client_org_mapping")
-				.withIndex("by_clerk_slug", (q) => q.eq("clerkOrgSlug", slug))
-				.unique();
-			await ctx.db.patch(m!._id, { clerkOrgId: "org_FRESH1" });
-		});
-		for (const table of ["oauth_scope_profiles", "oauth_access_tokens"] as const) {
-			await t.mutation(internal.migrations.backfill_org_clerk_id.run, {
+			for (const r of rows) expect(r.clerkOrgId).toBe(id);
+			const report = await t.mutation(internal.migrations.backfill_org_clerk_id.run, {
 				table,
-				dryRun: false,
+				dryRun: true,
 				cursor: null,
 			});
-			const rows = (await rowsOf(t, table)).filter(
-				(r) => r.clerkOrgSlug === slug,
-			);
-			for (const r of rows) expect(r.clerkOrgId).toBe("org_FRESH1");
+			expect(report.toFill).toBe(0);
+			expect(report.undecidable).toBe(0);
 		}
 	});
 });

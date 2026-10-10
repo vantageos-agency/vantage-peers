@@ -266,6 +266,7 @@ describe("R-16 — owner refusals raise a coded ConvexError naming their door", 
 			t.mutation(api.oauth.provisionOrganization, {
 				callerToken: "wrong",
 				clerkOrgSlug: "y",
+				clerkOrgId: testClerkOrgId("y"),
 				displayName: "y",
 				orchestrators: [{ name: "a" }],
 			}),

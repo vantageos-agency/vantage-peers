@@ -16,6 +16,7 @@ import { convexTest } from "convex-test";
 import { describe, expect, test } from "vitest";
 import { api } from "../_generated/api";
 import schema from "../schema";
+import { testClerkOrgId } from "../../tests/fixtures/testClerkOrgId";
 
 const modules = Object.fromEntries(
 	Object.entries(import.meta.glob("../**/*.ts")).filter(
@@ -56,6 +57,7 @@ const as = (t: T, org: string, role: string, sub = `${role}-of-${org}`) =>
 
 const args = (slug: string, names = ["acme-lead", "acme-dev"]) => ({
 	clerkOrgSlug: slug,
+	clerkOrgId: testClerkOrgId(slug),
 	displayName: `Org ${slug}`,
 	orchestrators: names.map((name) => ({ name })),
 });

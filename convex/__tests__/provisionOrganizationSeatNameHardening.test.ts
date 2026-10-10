@@ -31,6 +31,7 @@ import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import { api } from "../_generated/api";
 import { findSeatNameCollision } from "../oauth";
 import schema from "../schema";
+import { testClerkOrgId } from "../../tests/fixtures/testClerkOrgId";
 
 const modules = Object.fromEntries(
 	Object.entries(import.meta.glob("../**/*.ts")).filter(
@@ -182,6 +183,7 @@ describe("findSeatNameCollision — fleet names covered via existing memories", 
 			t.mutation(api.oauth.provisionOrganization, {
 				callerToken: MASTER,
 				clerkOrgSlug: "org-vs-unmapped-fleet",
+				clerkOrgId: testClerkOrgId("org-vs-unmapped-fleet"),
 				displayName: "Org vs unmapped fleet",
 				orchestrators: [{ name: "unmapped-fleet-name" }],
 			}),
@@ -193,6 +195,7 @@ describe("findSeatNameCollision — fleet names covered via existing memories", 
 		const result = await t.mutation(api.oauth.provisionOrganization, {
 			callerToken: MASTER,
 			clerkOrgSlug: "org-fresh-memory-check",
+			clerkOrgId: testClerkOrgId("org-fresh-memory-check"),
 			displayName: "Org fresh memory check",
 			orchestrators: [{ name: "truly-fresh-name" }],
 		});
@@ -208,6 +211,7 @@ describe("findSeatNameCollision — fleet names covered via existing memories", 
 		const first = await t.mutation(api.oauth.provisionOrganization, {
 			callerToken: MASTER,
 			clerkOrgSlug: "org-replay-memory-check",
+			clerkOrgId: testClerkOrgId("org-replay-memory-check"),
 			displayName: "Org replay memory check",
 			orchestrators: [{ name: "replay-memory-seat" }],
 		});
@@ -216,6 +220,7 @@ describe("findSeatNameCollision — fleet names covered via existing memories", 
 		const second = await t.mutation(api.oauth.provisionOrganization, {
 			callerToken: MASTER,
 			clerkOrgSlug: "org-replay-memory-check",
+			clerkOrgId: testClerkOrgId("org-replay-memory-check"),
 			displayName: "Org replay memory check",
 			orchestrators: [{ name: "replay-memory-seat" }],
 		});
