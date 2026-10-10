@@ -1837,6 +1837,65 @@ admin.post("/oauth/clients/:clientId/revoke-access-tokens-only", async (c) => {
 	}
 });
 
+// ─────────────────────────────────────────────────────────────────────────────
+// POST /admin/oauth/access-tokens/:tokenId/revoke
+//
+// Wraps Convex mutation `oauth:revokeAccessTokenById`. Revokes ONE access
+// token by its row id (plus its paired refresh token), whether or not its
+// client still has an `oauth_clients` row. Idempotent: an already-revoked
+// token answers 200 with `revoked: false` and `alreadyRevokedAt`.
+//
+// Auth: BEARER_SECRET_MASTER via masterOnlyMiddleware.
+//
+// Body schema: { reason: string (>=20 chars) }
+// Response (200): { tokenId, clientId, revoked, revokedAt, alreadyRevokedAt?, refreshRevoked }
+// ─────────────────────────────────────────────────────────────────────────────
+admin.post("/oauth/access-tokens/:tokenId/revoke", async (c) => {
+	const tokenId = c.req.param("tokenId");
+	if (!tokenId) {
+		return c.json(
+			{ error: "invalid_request", detail: "missing :tokenId" },
+			400,
+		);
+	}
+
+	let body: Record<string, unknown> = {};
+	try {
+		body = await c.req.json();
+	} catch {
+		return c.json(
+			{ error: "invalid_request", detail: "body must be valid JSON" },
+			400,
+		);
+	}
+	const reason = typeof body.reason === "string" ? body.reason : null;
+	if (!reason) {
+		return c.json(
+			{ error: "invalid_request", detail: "reason is required" },
+			400,
+		);
+	}
+
+	try {
+		const result = await internalClient().mutation(
+			// biome-ignore lint/suspicious/noExplicitAny: Convex string API
+			"oauth:revokeAccessTokenById" as any,
+			{ tokenId, reason },
+		);
+		return c.json(result as Record<string, unknown>, 200);
+	} catch (err: unknown) {
+		const message = err instanceof Error ? err.message : String(err);
+		if (/TOKEN_NOT_FOUND/.test(message)) {
+			return c.json({ error: "not_found", detail: message }, 404);
+		}
+		if (/reason must be at least|ArgumentValidationError|not a valid ID/i.test(message)) {
+			return c.json({ error: "invalid_request", detail: message }, 400);
+		}
+		console.error("[admin] revokeAccessTokenById failed:", message);
+		return c.json({ error: "server_error", detail: message }, 500);
+	}
+});
+
 app.route("/admin", admin);
 
 // ─────────────────────────────────────────────────────────────────────────────

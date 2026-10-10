@@ -88,7 +88,7 @@ async function requireMasterAuth(callerToken: string): Promise<void> {
 //
 // Fourteen public registrations in this module (seedDefaultProfiles,
 // createClient, listClients, deleteClient, patchClientScopeAndRefreshTokens,
-// revokeAccessTokensOnly, createAuthorizationCode, createAccessToken,
+// revokeAccessTokensOnly, revokeAccessTokenById, createAuthorizationCode, createAccessToken,
 // createRefreshToken, patchScopeProfileEmergency, and the four protocol steps
 // registerPublicClient, consumeAuthorizationCode, getAccessTokenByHash,
 // getRefreshTokenByHash) authorise their caller by IDENTITY (ten of them used
@@ -1978,6 +1978,93 @@ export const revokeAccessTokensOnly = mutation({
 			clientId: args.clientId,
 			accessTokensRevoked: revoked,
 			refreshTokensPreserved: preserved,
+		};
+	},
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// revokeAccessTokenById — revoke ONE access token by its row id.
+//
+// The per-token counterpart of `revokeAccessTokensOnly` (which works per
+// client and needs an `oauth_clients` row). This door needs neither: a token
+// whose client row is gone is revoked all the same.
+//
+// Refresh token: the access row's `refreshTokenHash` names its paired refresh
+// token, and THAT ONE is revoked with it. `revokeAccessTokensOnly` preserves
+// refresh tokens on purpose (a force-rotate: the connector re-mints), but
+// revoking a single named token because it must stop working would be undone
+// by the very next refresh; `deleteClient` revokes both. Only the paired
+// refresh row is touched, never another token of the same client.
+//
+// Idempotent: an already-revoked token is reported (`revoked: false`,
+// `alreadyRevokedAt`) and left as it was. An unknown id is a refusal
+// (TOKEN_NOT_FOUND naming this door). Like its sibling it writes no audit row;
+// `reason` is validated (>= 20 chars) as the operator audit contract.
+//
+// Service-account gated.
+// ─────────────────────────────────────────────────────────────────────────────
+export const revokeAccessTokenById = mutation({
+	args: {
+		tokenId: v.id("oauth_access_tokens"),
+		reason: v.string(),
+	},
+	returns: v.object({
+		tokenId: v.id("oauth_access_tokens"),
+		clientId: v.string(),
+		revoked: v.boolean(),
+		revokedAt: v.number(),
+		alreadyRevokedAt: v.optional(v.number()),
+		refreshRevoked: v.boolean(),
+	}),
+	handler: async (ctx, args) => {
+		// write-contract: MCP-transport-only — issued via mcp-server client.mutation("oauth:revokeAccessTokenById", …) at mcp-server/server-http.ts (POST /admin/oauth/access-tokens/:tokenId/revoke, imperative) and by operator tooling running as the service account; never a subscribing pre-org client shell. The no-org throw is a refusal at an imperative call, never at a render.
+		await requireServiceAccount(ctx, "oauth:revokeAccessTokenById");
+
+		if (args.reason.length < 20) {
+			throw new Error(
+				"reason must be at least 20 characters (operator audit trail)",
+			);
+		}
+
+		const row = await ctx.db.get(args.tokenId);
+		if (!row) {
+			throw new ConvexError(
+				`TOKEN_NOT_FOUND: "oauth:revokeAccessTokenById" found no access token ${args.tokenId}`,
+			);
+		}
+		if (row.revokedAt !== undefined) {
+			return {
+				tokenId: row._id,
+				clientId: row.clientId,
+				revoked: false,
+				revokedAt: row.revokedAt,
+				alreadyRevokedAt: row.revokedAt,
+				refreshRevoked: false,
+			};
+		}
+
+		const now = Date.now();
+		await ctx.db.patch(row._id, { revokedAt: now });
+
+		let refreshRevoked = false;
+		const refreshHash = row.refreshTokenHash;
+		if (refreshHash !== undefined) {
+			const refresh = await ctx.db
+				.query("oauth_refresh_tokens")
+				.withIndex("by_tokenHash", (q) => q.eq("tokenHash", refreshHash))
+				.first();
+			if (refresh && refresh.revokedAt === undefined) {
+				await ctx.db.patch(refresh._id, { revokedAt: now });
+				refreshRevoked = true;
+			}
+		}
+
+		return {
+			tokenId: row._id,
+			clientId: row.clientId,
+			revoked: true,
+			revokedAt: now,
+			refreshRevoked,
 		};
 	},
 });
