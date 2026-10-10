@@ -954,9 +954,9 @@ export const provisionOrganization = mutation({
 					refreshToken: null,
 				});
 			}
-			if (existing.clerkOrgId === undefined) {
-				await ctx.db.patch(existing._id, { clerkOrgId });
-			}
+			// A replay never writes the mapping row: a row that carries no ID is
+			// filled by the fleet-master door `clientOrgMapping:setClerkOrgId`
+			// (runbook-org-clerk-id-expand), not by an org admin's replay.
 			if (provisioningAdminSubject) {
 				await upsertAdminMembership(ctx, slug, provisioningAdminSubject);
 			}
