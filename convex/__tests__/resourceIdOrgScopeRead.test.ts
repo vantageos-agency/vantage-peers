@@ -72,6 +72,7 @@ import { api } from "../_generated/api";
 import type { Id } from "../_generated/dataModel";
 import { type OrgScope, isRowVisibleToScope } from "../lib/auth";
 import schema from "../schema";
+import { testClerkOrgId } from "../../tests/fixtures/testClerkOrgId";
 
 const modules = Object.fromEntries(
 	Object.entries(import.meta.glob("../**/*.ts")).filter(
@@ -109,6 +110,7 @@ async function seedOrgMapping(
 	await t.run(async (ctx) => {
 		await ctx.db.insert("client_org_mapping", {
 			clerkOrgSlug,
+			clerkOrgId: testClerkOrgId(clerkOrgSlug),
 			allowedOrchestrators: ["sigma"],
 			scopes: ["view-own-tasks", "view-own-missions"],
 			displayName: clerkOrgSlug,
@@ -126,6 +128,7 @@ const asOrgMember = (
 	t.withIdentity({
 		subject,
 		organizationId: orgSlug,
+		org_id: testClerkOrgId(orgSlug),
 		organizationSlug: orgSlug,
 	} as Parameters<typeof t.withIdentity>[0]);
 
@@ -155,7 +158,7 @@ async function seedTask(
 			createdBy: opts.assignedTo ?? "sigma",
 			priority: "low",
 			status: "todo",
-			...(opts.orgId === undefined ? {} : { orgId: opts.orgId }),
+			...(opts.orgId === undefined ? {} : { orgId: opts.orgId, clerkOrgId: testClerkOrgId(opts.orgId) }),
 			createdAt: Date.now(),
 			updatedAt: Date.now(),
 		}),
@@ -175,7 +178,7 @@ async function seedMission(
 			pilot: opts.pilot ?? "sigma",
 			agents: [],
 			createdBy: opts.pilot ?? "sigma",
-			...(opts.orgId === undefined ? {} : { orgId: opts.orgId }),
+			...(opts.orgId === undefined ? {} : { orgId: opts.orgId, clerkOrgId: testClerkOrgId(opts.orgId) }),
 			createdAt: Date.now(),
 			updatedAt: Date.now(),
 		}),
@@ -190,7 +193,7 @@ async function seedSession(
 	await t.run(async (ctx) => {
 		await ctx.db.insert("iframeEmbedSessions", {
 			sessionId: opts.sessionId,
-			...(opts.tenantId === undefined ? {} : { tenantId: opts.tenantId }),
+			...(opts.tenantId === undefined ? {} : { tenantId: opts.tenantId, tenantOrgId: testClerkOrgId(opts.tenantId) }),
 			origin: "https://example.test",
 			createdAt: now,
 			lastSeenAt: now,
@@ -610,6 +613,7 @@ describe("iframeEmbedSessions:getSession — authorisation derived from the TARG
 			await ctx.db.insert("iframeEmbedSessions", {
 				sessionId: "sess-expired",
 				tenantId: "org-a",
+				tenantOrgId: testClerkOrgId("org-a"),
 				origin: "https://example.test",
 				createdAt: now - 10_000,
 				lastSeenAt: now - 10_000,
@@ -645,9 +649,12 @@ describe("iframeEmbedSessions:getSession — authorisation derived from the TARG
 // survives.
 // ─────────────────────────────────────────────────────────────────────────────
 
+const A_ID = testClerkOrgId("org-a");
+const B_ID = testClerkOrgId("org-b");
 const scopeOf = (over: Partial<OrgScope>): OrgScope => ({
 	userId: "u",
 	orgSlug: "org-a",
+	orgClerkId: A_ID,
 	allowedOrchestrators: ["sigma"],
 	allowedAgentIds: [],
 	fleetWide: false,
@@ -661,21 +668,21 @@ describe("isRowVisibleToScope — each leg observed alone", () => {
 		const scope = scopeOf({ orgSlug: null, allowedOrchestrators: ["sigma"] });
 		expect(isRowVisibleToScope(scope, { assignedTo: "sigma" })).toBe(false);
 		expect(
-			isRowVisibleToScope(scope, { orgId: "org-a", assignedTo: "sigma" }),
+			isRowVisibleToScope(scope, { orgId: "org-a", clerkOrgId: A_ID, assignedTo: "sigma" }),
 		).toBe(false);
 	});
 
 	test("leg 3 alone — a row stating a DIFFERENT org is refused even when the roster admits it", () => {
 		const scope = scopeOf({});
 		expect(
-			isRowVisibleToScope(scope, { orgId: "org-b", assignedTo: "sigma" }),
+			isRowVisibleToScope(scope, { orgId: "org-b", clerkOrgId: B_ID, assignedTo: "sigma" }),
 		).toBe(false);
 	});
 
 	test("leg 4 alone — a row stating the caller's OWN org is refused when the roster does not admit it", () => {
 		const scope = scopeOf({});
 		expect(
-			isRowVisibleToScope(scope, { orgId: "org-a", assignedTo: "eta" }),
+			isRowVisibleToScope(scope, { orgId: "org-a", clerkOrgId: A_ID, assignedTo: "eta" }),
 		).toBe(false);
 	});
 
@@ -703,11 +710,11 @@ describe("isRowVisibleToScope — each leg observed alone", () => {
 		const scope = scopeOf({});
 		// Same tenant + roster admits -> visible.
 		expect(
-			isRowVisibleToScope(scope, { orgId: "org-a", assignedTo: "sigma" }),
+			isRowVisibleToScope(scope, { orgId: "org-a", clerkOrgId: A_ID, assignedTo: "sigma" }),
 		).toBe(true);
 		// Same tenant + roster refuses -> denied. The roster still narrows.
 		expect(
-			isRowVisibleToScope(scope, { orgId: "org-a", assignedTo: "eta" }),
+			isRowVisibleToScope(scope, { orgId: "org-a", clerkOrgId: A_ID, assignedTo: "eta" }),
 		).toBe(false);
 	});
 
@@ -718,13 +725,19 @@ describe("isRowVisibleToScope — each leg observed alone", () => {
 			allowedOrchestrators: [],
 		});
 		expect(
-			isRowVisibleToScope(scope, { orgId: "org-b", assignedTo: "eta" }),
+			isRowVisibleToScope(scope, { orgId: "org-b", clerkOrgId: B_ID, assignedTo: "eta" }),
 		).toBe(true);
+	});
+
+	test("slug alone — a row stating the caller's slug but no org ID is refused (M4, no label fallback)", () => {
+		expect(
+			isRowVisibleToScope(scopeOf({}), { orgId: "org-a", assignedTo: "sigma" }),
+		).toBe(false);
 	});
 
 	test("ALLOW — the ordinary case: own org, own roster", () => {
 		expect(
-			isRowVisibleToScope(scopeOf({}), { orgId: "org-a", assignedTo: "sigma" }),
+			isRowVisibleToScope(scopeOf({}), { orgId: "org-a", clerkOrgId: A_ID, assignedTo: "sigma" }),
 		).toBe(true);
 	});
 });

@@ -32,6 +32,7 @@ import { api } from "../_generated/api";
 import type { Id } from "../_generated/dataModel";
 import schema from "../schema";
 import { agentIdOf } from "../../tests/lib/agentIdOf";
+import { testClerkOrgId } from "../../tests/fixtures/testClerkOrgId";
 
 const modules = Object.fromEntries(
 	Object.entries(import.meta.glob("../**/*.ts")).filter(
@@ -57,6 +58,7 @@ const memberOf = (org: string) =>
 	t.withIdentity({
 		subject: `member-of-${org}`,
 		org_slug: org,
+		org_id: testClerkOrgId(org),
 		org_role: "org:editor",
 	} as Parameters<typeof t.withIdentity>[0]);
 
@@ -94,6 +96,7 @@ beforeEach(async () => {
 		] as const) {
 			await ctx.db.insert("client_org_mapping", {
 				clerkOrgSlug: slug,
+				clerkOrgId: testClerkOrgId(slug),
 				allowedOrchestrators: [...roster],
 				scopes: ["vantage:read", "vantage:write"],
 				displayName: slug,
@@ -169,6 +172,7 @@ async function taskIn(org: string, assignedTo: string): Promise<Id<"tasks">> {
 			status: "todo",
 			createdBy: assignedTo,
 			orgId: org,
+			clerkOrgId: testClerkOrgId(org),
 			createdAt: Date.now(),
 			updatedAt: Date.now(),
 		}),
@@ -254,6 +258,7 @@ describe("ROLE — the Convex door applies the writer role itself", () => {
 				expiresAt: Date.now() + 3_600_000,
 				createdAt: Date.now(),
 				clerkOrgSlug: "org-a",
+				clerkOrgId: testClerkOrgId("org-a"),
 				orgRole: "org:admin",
 				principal: "person",
 			});
@@ -463,6 +468,7 @@ describe("RESERVED — no agent is ever named like a person", () => {
 		t.withIdentity({
 			subject: "admin-of-org-a",
 			org_slug: "org-a",
+			org_id: testClerkOrgId("org-a"),
 			org_role: "org:admin",
 		} as Parameters<typeof t.withIdentity>[0]);
 
@@ -492,6 +498,7 @@ describe("RESERVED — no agent is ever named like a person", () => {
 		await t.run(async (ctx) => {
 			await ctx.db.insert("client_org_mapping", {
 				clerkOrgSlug: "operator-org",
+				clerkOrgId: testClerkOrgId("operator-org"),
 				allowedOrchestrators: ["op-seat"],
 				scopes: ["view-own-tasks"],
 				displayName: "operator-org",
@@ -503,6 +510,7 @@ describe("RESERVED — no agent is ever named like a person", () => {
 		const operatorAdmin = t.withIdentity({
 			subject: "user_op",
 			organizationSlug: "operator-org",
+			org_id: testClerkOrgId("operator-org"),
 			orgRole: "org:admin",
 		} as Parameters<typeof t.withIdentity>[0]);
 		await expectCode(

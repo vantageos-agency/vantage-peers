@@ -18,6 +18,7 @@ import { describe, expect, test } from "vitest";
 import { api, internal } from "../_generated/api";
 import { TEST_WEBHOOK_SECRET, signGithubBody } from "../../tests/lib/githubWebhookSignature";
 import schema from "../schema";
+import { testClerkOrgId } from "../../tests/fixtures/testClerkOrgId";
 
 const modules = Object.fromEntries(
 	Object.entries(import.meta.glob("../**/*.ts")).filter(
@@ -41,6 +42,7 @@ const asMember = (t: T) =>
 	t.withIdentity({
 		subject: MEMBER,
 		organizationId: "org-a",
+		org_id: testClerkOrgId("org-a"),
 		organizationSlug: "org-a",
 	} as Identity);
 const asNoOrg = (t: T) => t.withIdentity({ subject: NO_ORG } as Identity);
@@ -51,6 +53,7 @@ async function seedOrgA(t: T) {
 	await t.run(async (ctx) => {
 		await ctx.db.insert("client_org_mapping", {
 			clerkOrgSlug: "org-a",
+			clerkOrgId: testClerkOrgId("org-a"),
 			allowedOrchestrators: ["sigma"],
 			scopes: ["view-own-tasks"],
 			displayName: "org-a",

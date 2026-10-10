@@ -19,6 +19,7 @@
 
 import { convexTest } from "convex-test";
 import { describe, expect, test } from "vitest";
+import { testClerkOrgId } from "../../tests/fixtures/testClerkOrgId";
 import { api } from "../_generated/api";
 import type { Id } from "../_generated/dataModel";
 import { normalizeOrchestratorId } from "../_helpers/normalizeOrchestratorId";
@@ -46,6 +47,7 @@ const asMember = (t: T, org: Org, subject: string) =>
 	t.withIdentity({
 		subject,
 		organizationSlug: org,
+		org_id: testClerkOrgId(org),
 		org_role: "org:editor",
 	} as Parameters<T["withIdentity"]>[0]);
 
@@ -60,6 +62,7 @@ async function seedWorld(): Promise<{
 		for (const org of ORGS) {
 			await ctx.db.insert("client_org_mapping", {
 				clerkOrgSlug: org,
+				clerkOrgId: testClerkOrgId(org),
 				allowedOrchestrators: [...NAMES],
 				scopes: ["view-own-tasks"],
 				displayName: org,
@@ -69,6 +72,7 @@ async function seedWorld(): Promise<{
 			for (const name of NAMES) {
 				ids[`${org}/${name}`] = await ctx.db.insert("agents", {
 					orgSlug: org,
+					clerkOrgId: testClerkOrgId(org),
 					name,
 					normalizedName: normalizeOrchestratorId(name),
 					isActive: true,

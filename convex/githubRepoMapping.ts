@@ -9,7 +9,7 @@ import {
 } from "./_generated/server";
 import { sameOrg } from "@vantageos/cloud-identity";
 import { ownerOfRepo, repoOwnerBoundToOrg } from "./githubOwnerBinding";
-import { ORG_KEY_OPTIONS, orgRefOfRow, orgRefOfScope } from "./lib/authOrgMapping";
+import { orgRefOfRow, orgRefOfScope } from "./lib/authOrgMapping";
 import {
 	type OrgScope,
 	requireOrchestratorOnRoster,
@@ -65,7 +65,7 @@ function requireRowOwnedBy(
 	door: string,
 ): void {
 	if (scope.isMaster) return;
-	if (!sameOrg(orgRefOfRow(row), orgRefOfScope(scope), ORG_KEY_OPTIONS)) {
+	if (!sameOrg(orgRefOfRow(row), orgRefOfScope(scope))) {
 		throw new ConvexError(
 			`RBAC_DENIED: ${door} — repo is not owned by org "${scope.orgSlug}" — ${JSON.stringify({ door, repo: row.repo })}`,
 		);

@@ -1,9 +1,11 @@
 // Storage for the org-by-ID decisions. @vantageos/cloud-identity DECIDES which
 // organisation a credential names, whether two rows name one org, which org is
-// the operator and what a slug's org ID is. This module only READS
-// `client_org_mapping` and hands the package its rows, as the lookup adapters
-// the package asks for (`orgById`, `orgByLabel`, `activeOrganisations`). It
-// throws nothing, gates nothing and compares no org.
+// the operator. This module only READS `client_org_mapping` and hands the
+// package its rows, as the lookup adapters the package asks for (`orgById`,
+// `orgByLabel`, `activeOrganisations`). It throws nothing, gates nothing and
+// compares no org. No request path passes `labelFallback` (M4 ruling 2), so the
+// package never reaches `orgByLabel` from a request; it is read by the one-off
+// backfill (`resolveOrgIdForLabelBackfillOnly`).
 
 import type {
 	OperatorOrgLookups,
@@ -12,15 +14,6 @@ import type {
 } from "@vantageos/cloud-identity";
 import type { Doc } from "../_generated/dataModel";
 import type { DatabaseReader } from "../_generated/server";
-
-/**
- * TRANSITIONAL. Passed to every package org comparison. Rows and mappings
- * written before `backfill_org_clerk_id` carry no org ID, so the package is
- * allowed to compare labels (slugs) while either side has no ID. Two IDs that
- * differ are two orgs whatever the labels say. When the backfill reports 0
- * remaining, delete this constant and every use of it: the default is IDs only.
- */
-export const ORG_KEY_OPTIONS = { labelFallback: true } as const;
 
 /** An org as the package names it, from a row stamped with `orgId` (slug) and `clerkOrgId` (ID). */
 export function orgRefOfRow(row: {

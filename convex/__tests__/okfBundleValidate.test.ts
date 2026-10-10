@@ -20,6 +20,7 @@
 
 import { convexTest } from "convex-test";
 import { describe, expect, test } from "vitest";
+import { testClerkOrgId } from "../../tests/fixtures/testClerkOrgId";
 import {
 	assembleBundle,
 	BUNDLE_HARD_CAP_BYTES,
@@ -63,6 +64,7 @@ const asCaller = (t: ReturnType<typeof createTestConvex>) =>
 	t.withIdentity({
 		subject: "okf-validate-caller",
 		organizationSlug: "acme",
+		org_id: testClerkOrgId("acme"),
 	} as Parameters<typeof t.withIdentity>[0]);
 
 const FIXED_MS = 1_700_000_000_000;
@@ -151,6 +153,7 @@ async function storeBundle(
 		if (mapped === null)
 			await ctx.db.insert("client_org_mapping", {
 				clerkOrgSlug: "acme",
+				clerkOrgId: testClerkOrgId("acme"),
 				allowedOrchestrators: ["sigma"],
 				scopes: ["view-own-tasks"],
 				displayName: "acme",

@@ -53,6 +53,7 @@ import {
 	checkNamespacePrefix,
 	checkNamespaceWrite,
 } from "../../mcp-server/src/auth";
+import { testClerkOrgId } from "../../tests/fixtures/testClerkOrgId";
 import { withOrgScope } from "../lib/auth";
 import schema from "../schema";
 
@@ -107,6 +108,7 @@ describe("TEST 1 — org_id ↔ clerkOrgSlug claim-key parity", () => {
 		await t.run(async (ctx) => {
 			await ctx.db.insert("client_org_mapping", {
 				clerkOrgSlug: TEST_ORG_ID,
+				clerkOrgId: testClerkOrgId(TEST_ORG_ID),
 				allowedOrchestrators: ["sigma"],
 				scopes: ["view-own-tasks", "view-own-missions"],
 				displayName: "Test Org Consistency",
@@ -128,6 +130,7 @@ describe("TEST 1 — org_id ↔ clerkOrgSlug claim-key parity", () => {
 						name: "Test User",
 						email: "test@example.com",
 						organizationId: TEST_ORG_ID,
+						org_id: testClerkOrgId(TEST_ORG_ID),
 						// organizationSlug intentionally absent
 					}),
 				},
@@ -161,6 +164,7 @@ describe("TEST 1 — org_id ↔ clerkOrgSlug claim-key parity", () => {
 		await t.run(async (ctx) => {
 			await ctx.db.insert("client_org_mapping", {
 				clerkOrgSlug: SLUG,
+				clerkOrgId: testClerkOrgId(SLUG),
 				allowedOrchestrators: ["sigma"],
 				scopes: ["view-own-tasks"],
 				displayName: "Test Slug Fallback Org",
@@ -180,6 +184,7 @@ describe("TEST 1 — org_id ↔ clerkOrgSlug claim-key parity", () => {
 						issuer: "https://clerk.test",
 						tokenIdentifier: "https://clerk.test|user_slug_test_456",
 						organizationSlug: SLUG,
+						org_id: testClerkOrgId(SLUG),
 						// organizationId intentionally absent
 					}),
 				},
@@ -212,7 +217,7 @@ describe("TEST 1 — org_id ↔ clerkOrgSlug claim-key parity", () => {
 		// DB stores human slug but JWT exposes the numeric org_id
 		await t.run(async (ctx) => {
 			await ctx.db.insert("client_org_mapping", {
-				clerkOrgSlug: "human-readable-slug", // stored as slug
+				clerkOrgSlug: "human-readable-slug", clerkOrgId: testClerkOrgId("human-readable-slug"), // stored as slug
 				allowedOrchestrators: ["sigma"],
 				scopes: ["view-own-tasks"],
 				displayName: "Mismatch Test Org",
@@ -231,6 +236,7 @@ describe("TEST 1 — org_id ↔ clerkOrgSlug claim-key parity", () => {
 						tokenIdentifier: "https://clerk.test|user_mismatch_789",
 						// JWT exposes organizationId (the Clerk internal ID), not the slug
 						organizationId: "org_different_from_slug",
+						org_id: testClerkOrgId("org_different_from_slug"),
 					}),
 				},
 			};
@@ -282,7 +288,7 @@ describe("TEST 2 — no-org → master guard: MCP boundary denies team/<other-or
 							"https://clerk.test|test-service-account-user-id",
 						name: "VantagePeers Service Account",
 						email: "service-account@vantagepeers.internal",
-						// organizationId: absent
+						// organizationId: absent, org_id: testClerkOrgId(absent)
 						// organizationSlug: absent
 					}),
 				},

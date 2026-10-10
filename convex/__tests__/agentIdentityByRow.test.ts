@@ -34,6 +34,7 @@ import schema from "../schema";
 import { requireAgentCredentialMatch } from "../lib/auth";
 import { sha256Hex } from "@vantageos/cloud-identity";
 import { agentIdOf } from "../../tests/lib/agentIdOf";
+import { testClerkOrgId } from "../../tests/fixtures/testClerkOrgId";
 
 const modules = Object.fromEntries(
 	Object.entries(import.meta.glob("../**/*.ts")).filter(
@@ -52,6 +53,7 @@ const adminOf = (t: T, org: string) =>
 	t.withIdentity({
 		subject: `admin-of-${org}`,
 		org_slug: org,
+		org_id: testClerkOrgId(org),
 		org_role: "org:admin",
 	} as Parameters<typeof t.withIdentity>[0]);
 
@@ -62,6 +64,7 @@ async function seedOrg(t: T, clerkOrgSlug: string) {
 	await t.run(async (ctx) => {
 		await ctx.db.insert("client_org_mapping", {
 			clerkOrgSlug,
+			clerkOrgId: testClerkOrgId(clerkOrgSlug),
 			allowedOrchestrators: ["seat"],
 			scopes: ["view-own-tasks"],
 			displayName: clerkOrgSlug,
@@ -333,6 +336,7 @@ describe("UNIQUENESS — a name is unique within its org, per normalizeOrchestra
 		await t.run(async (ctx) => {
 			await ctx.db.insert("agents", {
 				orgSlug: "org-a",
+				clerkOrgId: testClerkOrgId("org-a"),
 				name: "Clio",
 				isActive: true,
 				createdAt: Date.now(),
@@ -348,6 +352,7 @@ describe("BACKFILL — agentId from (orgSlug, agentName), refusing never guessin
 		return await t.run(async (ctx) =>
 			ctx.db.insert("agent_credentials", {
 				orgSlug,
+				clerkOrgId: testClerkOrgId(orgSlug),
 				agentName,
 				secretHash: `hash-${orgSlug}-${agentName}`,
 				isActive: true,
@@ -402,6 +407,7 @@ describe("BACKFILL — agentId from (orgSlug, agentName), refusing never guessin
 			for (let i = 0; i < 2; i++) {
 				await ctx.db.insert("agents", {
 					orgSlug: "org-a",
+					clerkOrgId: testClerkOrgId("org-a"),
 					name: "clio",
 					isActive: true,
 					createdAt: Date.now(),
@@ -448,13 +454,13 @@ describe("BACKFILL — agentId from (orgSlug, agentName), refusing never guessin
 		await seedOrg(t, "org-b");
 		const ids = await t.run(async (ctx) => {
 			const solo = await ctx.db.insert("agents", {
-				orgSlug: "org-a", name: "Victor", isActive: true, createdAt: 1,
+				orgSlug: "org-a", clerkOrgId: testClerkOrgId("org-a"), name: "Victor", isActive: true, createdAt: 1,
 			});
 			const c1 = await ctx.db.insert("agents", {
-				orgSlug: "org-b", name: "Clio", isActive: true, createdAt: 1,
+				orgSlug: "org-b", clerkOrgId: testClerkOrgId("org-b"), name: "Clio", isActive: true, createdAt: 1,
 			});
 			const c2 = await ctx.db.insert("agents", {
-				orgSlug: "org-b", name: "clio", isActive: true, createdAt: 2,
+				orgSlug: "org-b", clerkOrgId: testClerkOrgId("org-b"), name: "clio", isActive: true, createdAt: 2,
 			});
 			return { solo, c1, c2 };
 		});
@@ -547,6 +553,7 @@ describe("LEGACY credential (agentId undefined) is inert: a label never selects 
 		await t.run(async (ctx) => {
 			await ctx.db.insert("agent_credentials", {
 				orgSlug: "org-a",
+				clerkOrgId: testClerkOrgId("org-a"),
 				agentName: "Clio",
 				secretHash: await sha256Hex(secret),
 				isActive: true,

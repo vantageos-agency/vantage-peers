@@ -9,6 +9,7 @@
 
 import { convexTest } from "convex-test";
 import { describe, expect, test } from "vitest";
+import { testClerkOrgId } from "../../tests/fixtures/testClerkOrgId";
 import { api } from "../_generated/api";
 import schema from "../schema";
 
@@ -30,6 +31,7 @@ async function seed(t: T) {
 	await t.run(async (ctx) => {
 		await ctx.db.insert("client_org_mapping", {
 			clerkOrgSlug: ORG,
+			clerkOrgId: testClerkOrgId(ORG),
 			allowedOrchestrators: ["prometheus", "sigma", "pi"],
 			scopes: ["view-own-tasks"],
 			displayName: ORG,
@@ -47,6 +49,7 @@ async function seed(t: T) {
 			from: "sigma",
 			channel: "broadcast",
 			tenantId: ORG,
+			tenantOrgId: testClerkOrgId(ORG),
 			content: "tenant row",
 			createdAt: Date.now() + 1,
 		});
@@ -61,6 +64,7 @@ describe("messages.listByChannel {} for the operator", () => {
 			.withIdentity({
 				subject: "op",
 				org_slug: ORG,
+				org_id: testClerkOrgId(ORG),
 				org_role: "org:admin",
 			} as Identity)
 			.query(api.messages.listByChannel, {});
@@ -85,6 +89,7 @@ describe("messages.listByChannel {} for the operator", () => {
 				.withIdentity({
 					subject: "op",
 					org_slug: ORG,
+					org_id: testClerkOrgId(ORG),
 					org_role: "org:admin",
 				} as Identity)
 				.query(api.messages.listByChannel, {
@@ -111,6 +116,7 @@ async function seedHistory(t: T) {
 		await ctx.db.insert("client_org_mapping", {
 			...base,
 			clerkOrgSlug: MEMBER_ORG,
+			clerkOrgId: testClerkOrgId(MEMBER_ORG),
 			displayName: MEMBER_ORG,
 			allowedOrchestrators: ["phi"],
 			orgKind: "client",
@@ -140,11 +146,13 @@ async function seedHistory(t: T) {
 const opId = {
 	subject: "op",
 	org_slug: ORG,
+	org_id: testClerkOrgId(ORG),
 	org_role: "org:admin",
 } as Identity;
 const memberId = {
 	subject: "mem",
 	org_slug: MEMBER_ORG,
+	org_id: testClerkOrgId(MEMBER_ORG),
 	org_role: "org:member",
 } as Identity;
 

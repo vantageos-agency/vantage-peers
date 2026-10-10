@@ -25,6 +25,7 @@
 
 import { convexTest } from "convex-test";
 import { describe, expect, test } from "vitest";
+import { testClerkOrgId } from "../../tests/fixtures/testClerkOrgId";
 import { api } from "../_generated/api";
 import schema from "../schema";
 
@@ -191,6 +192,7 @@ async function seedTwoOrchestratorTasks() {
 	await t.run(async (ctx) => {
 		await ctx.db.insert("client_org_mapping", {
 			clerkOrgSlug: "org-a",
+			clerkOrgId: testClerkOrgId("org-a"),
 			allowedOrchestrators: ["dummy-a"],
 			scopes: ["view-stats-aggregated"],
 			displayName: "org-a",
@@ -206,6 +208,7 @@ async function seedTwoOrchestratorTasks() {
 			status: "todo",
 			createdBy: "dummy-a",
 			orgId: "org-a",
+			clerkOrgId: testClerkOrgId("org-a"),
 		});
 		await seedTask(ctx, {
 			title: "org-b open task",
@@ -213,6 +216,7 @@ async function seedTwoOrchestratorTasks() {
 			status: "todo",
 			createdBy: "dummy-b",
 			orgId: "org-b",
+			clerkOrgId: testClerkOrgId("org-b"),
 		});
 	});
 	return t;
@@ -225,6 +229,7 @@ describe("stats.openTaskCountsByOrchestrator cross-tenant isolation", () => {
 		const tA = t.withIdentity({
 			subject: "user-org-a",
 			organizationId: "org-a",
+			org_id: testClerkOrgId("org-a"),
 		} as Parameters<typeof t.withIdentity>[0]);
 
 		const result = await tA.query(api.stats.openTaskCountsByOrchestrator, {});

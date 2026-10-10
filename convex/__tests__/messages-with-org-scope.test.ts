@@ -13,6 +13,7 @@
 
 import { convexTest } from "convex-test";
 import { describe, expect, test } from "vitest";
+import { testClerkOrgId } from "../../tests/fixtures/testClerkOrgId";
 import { api } from "../_generated/api";
 import schema from "../schema";
 
@@ -36,6 +37,7 @@ async function seedOrgMapping(
 	await t.run(async (ctx) => {
 		await ctx.db.insert("client_org_mapping", {
 			clerkOrgSlug,
+			clerkOrgId: testClerkOrgId(clerkOrgSlug),
 			allowedOrchestrators: ["sigma"],
 			scopes: ["view-own-tasks", "view-own-missions"],
 			displayName: clerkOrgSlug,
@@ -60,6 +62,7 @@ async function seedMessage(
 			channel: opts.channel ?? "sigma",
 			content: opts.content,
 			tenantId: opts.tenantId,
+			tenantOrgId: testClerkOrgId(opts.tenantId),
 			createdAt: Date.now(),
 		});
 	});
@@ -88,6 +91,7 @@ describe("listMessages — withOrgScope enforcement", () => {
 		const tA = t.withIdentity({
 			subject: "user-tenant-a",
 			organizationId: "tenant-a",
+			org_id: testClerkOrgId("tenant-a"),
 		} as Parameters<typeof t.withIdentity>[0]);
 
 		const results = await tA.query(api.messages.listMessages, {});
@@ -120,6 +124,7 @@ describe("listMessages — withOrgScope enforcement", () => {
 		const tA = t.withIdentity({
 			subject: "user-tenant-a",
 			organizationId: "tenant-a",
+			org_id: testClerkOrgId("tenant-a"),
 		} as Parameters<typeof t.withIdentity>[0]);
 
 		const results = await tA.query(api.messages.listMessages, {});
@@ -140,6 +145,7 @@ describe("listMessages — withOrgScope enforcement", () => {
 		const tA = t.withIdentity({
 			subject: "user-tenant-a",
 			organizationId: "tenant-a",
+			org_id: testClerkOrgId("tenant-a"),
 		} as Parameters<typeof t.withIdentity>[0]);
 
 		// No tenantId arg passed — must still only see tenant-a rows
@@ -188,6 +194,7 @@ describe("listMessages — withOrgScope enforcement", () => {
 		const tA = t.withIdentity({
 			subject: "user-tenant-a",
 			organizationId: "tenant-a",
+			org_id: testClerkOrgId("tenant-a"),
 		} as Parameters<typeof t.withIdentity>[0]);
 
 		const clerkResults = await tA.query(api.messages.listMessages, {
@@ -229,6 +236,7 @@ describe("searchMessagesByKeyword — withOrgScope enforcement", () => {
 		const tA = t.withIdentity({
 			subject: "user-tenant-a",
 			organizationId: "tenant-a",
+			org_id: testClerkOrgId("tenant-a"),
 		} as Parameters<typeof t.withIdentity>[0]);
 
 		const results = await tA.query(api.messages.searchMessagesByKeyword, {
@@ -261,6 +269,7 @@ describe("searchMessagesByKeyword — withOrgScope enforcement", () => {
 		const tA = t.withIdentity({
 			subject: "user-tenant-a",
 			organizationId: "tenant-a",
+			org_id: testClerkOrgId("tenant-a"),
 		} as Parameters<typeof t.withIdentity>[0]);
 
 		const results = await tA.query(api.messages.searchMessagesByKeyword, {
@@ -327,6 +336,7 @@ describe("defense-in-depth: degenerate !isMaster && orgSlug===null scope", () =>
 		const tScoped = t.withIdentity({
 			subject: "user-guard-9",
 			organizationId: "tenant-guard-9",
+			org_id: testClerkOrgId("tenant-guard-9"),
 		} as Parameters<typeof t.withIdentity>[0]);
 
 		const results = await tScoped.query(api.messages.listMessages, {});
@@ -356,6 +366,7 @@ describe("defense-in-depth: degenerate !isMaster && orgSlug===null scope", () =>
 		const tScoped = t.withIdentity({
 			subject: "user-guard-10",
 			organizationId: "tenant-guard-10",
+			org_id: testClerkOrgId("tenant-guard-10"),
 		} as Parameters<typeof t.withIdentity>[0]);
 
 		const results = await tScoped.query(

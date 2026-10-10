@@ -17,6 +17,7 @@
 import { ConvexError } from "convex/values";
 import { convexTest } from "convex-test";
 import { describe, expect, test } from "vitest";
+import { testClerkOrgId } from "../../tests/fixtures/testClerkOrgId";
 import { api } from "../_generated/api";
 import schema from "../schema";
 
@@ -48,6 +49,7 @@ const asMember = (t: T, orgSlug: string, subject: string) =>
 	t.withIdentity({
 		subject,
 		organizationId: orgSlug,
+		org_id: testClerkOrgId(orgSlug),
 		organizationSlug: orgSlug,
 	} as Identity);
 const asNoOrg = (t: T) => t.withIdentity({ subject: NO_ORG } as Identity);
@@ -92,6 +94,7 @@ async function seedOrg(t: T, slug: string, roster: string[]) {
 	await t.run(async (ctx) => {
 		await ctx.db.insert("client_org_mapping", {
 			clerkOrgSlug: slug,
+			clerkOrgId: testClerkOrgId(slug),
 			allowedOrchestrators: roster,
 			scopes: ["view-own-tasks"],
 			displayName: slug,
@@ -118,6 +121,7 @@ async function orgWorld() {
 			content: "org-a private diary",
 			createdAt: now(),
 			orgId: "org-a",
+			clerkOrgId: testClerkOrgId("org-a"),
 		});
 		await ctx.db.insert("diary", {
 			date: "2026-09-30",
@@ -125,6 +129,7 @@ async function orgWorld() {
 			content: "org-b private diary",
 			createdAt: now(),
 			orgId: "org-b",
+			clerkOrgId: testClerkOrgId("org-b"),
 		});
 		const buA = await ctx.db.insert("businessUnits", {
 			name: "BU of org a",

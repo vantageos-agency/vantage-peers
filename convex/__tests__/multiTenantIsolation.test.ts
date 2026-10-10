@@ -35,6 +35,7 @@ import { describe, expect, test } from "vitest";
 import { api } from "../_generated/api";
 import schema from "../schema";
 import { withOrgScope } from "../lib/auth";
+import { testClerkOrgId } from "../../tests/fixtures/testClerkOrgId";
 
 const modules = Object.fromEntries(
 	Object.entries(import.meta.glob("../**/*.ts")).filter(
@@ -79,6 +80,7 @@ describe("memories.listMemories cross-tenant isolation (RED — handler is unsco
 		await t.run(async (ctx) => {
 			await ctx.db.insert("client_org_mapping", {
 				clerkOrgSlug: "org-a",
+				clerkOrgId: testClerkOrgId("org-a"),
 				allowedOrchestrators: ["dummy-a"],
 				scopes: ["view-own-tasks"],
 				displayName: "org-a",
@@ -100,6 +102,7 @@ describe("memories.listMemories cross-tenant isolation (RED — handler is unsco
 		const tA = t.withIdentity({
 			subject: "user-org-a",
 			organizationId: "org-a",
+			org_id: testClerkOrgId("org-a"),
 		} as Parameters<typeof t.withIdentity>[0]);
 
 		// memories.listMemories has no auth/scope check at all — it takes
@@ -126,6 +129,7 @@ describe("memories.getMemory cross-tenant isolation (RED — handler is unscoped
 		const orgBMemoryId = await t.run(async (ctx) => {
 			await ctx.db.insert("client_org_mapping", {
 				clerkOrgSlug: "org-a",
+				clerkOrgId: testClerkOrgId("org-a"),
 				allowedOrchestrators: ["dummy-a"],
 				scopes: ["view-own-tasks"],
 				displayName: "org-a",
@@ -147,6 +151,7 @@ describe("memories.getMemory cross-tenant isolation (RED — handler is unscoped
 		const tA = t.withIdentity({
 			subject: "user-org-a",
 			organizationId: "org-a",
+			org_id: testClerkOrgId("org-a"),
 		} as Parameters<typeof t.withIdentity>[0]);
 
 		// getMemory does a bare ctx.db.get() with no scope check — it will
@@ -171,6 +176,7 @@ describe("messages.listByChannel cross-tenant isolation (RED — handler is unsc
 		await t.run(async (ctx) => {
 			await ctx.db.insert("client_org_mapping", {
 				clerkOrgSlug: "org-a",
+				clerkOrgId: testClerkOrgId("org-a"),
 				allowedOrchestrators: ["dummy-a"],
 				scopes: ["view-own-tasks"],
 				displayName: "org-a",
@@ -193,6 +199,7 @@ describe("messages.listByChannel cross-tenant isolation (RED — handler is unsc
 		const tA = t.withIdentity({
 			subject: "user-org-a",
 			organizationId: "org-a",
+			org_id: testClerkOrgId("org-a"),
 		} as Parameters<typeof t.withIdentity>[0]);
 
 		// listByChannel takes a bare `channel` string and returns matching
@@ -222,6 +229,7 @@ describe("diary.list cross-tenant isolation (RED — handler is unscoped, table 
 		await t.run(async (ctx) => {
 			await ctx.db.insert("client_org_mapping", {
 				clerkOrgSlug: "org-a",
+				clerkOrgId: testClerkOrgId("org-a"),
 				allowedOrchestrators: ["dummy-a"],
 				scopes: ["view-own-tasks"],
 				displayName: "org-a",
@@ -242,6 +250,7 @@ describe("diary.list cross-tenant isolation (RED — handler is unscoped, table 
 		const tA = t.withIdentity({
 			subject: "user-org-a",
 			organizationId: "org-a",
+			org_id: testClerkOrgId("org-a"),
 		} as Parameters<typeof t.withIdentity>[0]);
 
 		// diary.list has no auth/scope check — it filters only on the

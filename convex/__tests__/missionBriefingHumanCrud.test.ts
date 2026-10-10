@@ -13,6 +13,7 @@
 
 import { convexTest } from "convex-test";
 import { describe, expect, test } from "vitest";
+import { testClerkOrgId } from "../../tests/fixtures/testClerkOrgId";
 import { api } from "../_generated/api";
 import type { Id } from "../_generated/dataModel";
 import schema from "../schema";
@@ -34,6 +35,7 @@ const as = (subject: string, role?: string) =>
 	({
 		subject,
 		organizationSlug: "org-a",
+		org_id: testClerkOrgId("org-a"),
 		...(role !== undefined ? { org_role: role } : {}),
 	}) as Parameters<T["withIdentity"]>[0];
 
@@ -42,6 +44,7 @@ async function setup() {
 	await t.run(async (ctx) => {
 		await ctx.db.insert("client_org_mapping", {
 			clerkOrgSlug: "org-a",
+			clerkOrgId: testClerkOrgId("org-a"),
 			allowedOrchestrators: ["sigma"],
 			scopes: ["view-own-missions"],
 			displayName: "org-a",
@@ -69,7 +72,7 @@ async function seedMission(t: T, orgId: string | null = "org-a", status: "plan" 
 			createdBy: "sigma",
 			createdAt: now,
 			updatedAt: now,
-			...(orgId !== null ? { orgId } : {}),
+			...(orgId !== null ? { orgId, clerkOrgId: testClerkOrgId(orgId) } : {}),
 		}),
 	);
 }
@@ -83,7 +86,7 @@ async function seedNote(t: T, orgId: string | null = "org-a") {
 			content: "seed content",
 			createdBy: "sigma",
 			createdAt: Date.now(),
-			...(orgId !== null ? { orgId } : {}),
+			...(orgId !== null ? { orgId, clerkOrgId: testClerkOrgId(orgId) } : {}),
 		}),
 	);
 }

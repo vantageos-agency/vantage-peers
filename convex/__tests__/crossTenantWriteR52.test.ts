@@ -28,8 +28,8 @@ import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import { api, internal } from "../_generated/api";
 import type { Id } from "../_generated/dataModel";
 import { fleetOperatorSlug } from "../lib/operatorOrg";
-import { ORG_KEY_OPTIONS } from "../lib/authOrgMapping";
 import schema from "../schema";
+import { testClerkOrgId } from "../../tests/fixtures/testClerkOrgId";
 
 const modules = Object.fromEntries(
 	Object.entries(import.meta.glob("../**/*.ts")).filter(
@@ -49,7 +49,7 @@ afterEach(() => {
 
 const SEAT = "seat-x";
 const asOrg = (t: T, slug: string) =>
-	t.withIdentity({ subject: `user-${slug}`, organizationId: slug } as Parameters<
+	t.withIdentity({ subject: `user-${slug}`, organizationId: slug, org_id: testClerkOrgId(slug) } as Parameters<
 		T["withIdentity"]
 	>[0]);
 const asMaster = (t: T) =>
@@ -67,6 +67,7 @@ async function seedOrgs(t: T) {
 		for (const slug of ["org-a", "org-b"]) {
 			await ctx.db.insert("client_org_mapping", {
 				clerkOrgSlug: slug,
+				clerkOrgId: testClerkOrgId(slug),
 				allowedOrchestrators: [SEAT],
 				scopes: ["view-own-tasks", "view-own-missions"],
 				displayName: slug,
@@ -95,7 +96,7 @@ const buFields = (name: string, orgId: string | undefined) => ({
 	managementFee: 10,
 	createdAt: 1,
 	updatedAt: 1,
-	...(orgId !== undefined ? { orgId } : {}),
+	...(orgId !== undefined ? { orgId, clerkOrgId: testClerkOrgId(orgId) } : {}),
 });
 
 const NOTE = "Completed the work in commit abcdef1234567 with regression test, 3/3 pass";
@@ -172,7 +173,7 @@ const diaryRow = (orgId: string | undefined) => ({
 	orchestrator: SEAT,
 	content: "original",
 	createdAt: 1,
-	...(orgId !== undefined ? { orgId } : {}),
+	...(orgId !== undefined ? { orgId, clerkOrgId: testClerkOrgId(orgId) } : {}),
 });
 
 describe("diary:write — R-52", () => {
@@ -275,7 +276,7 @@ const missionRow = (orgId: string | undefined) => ({
 	createdBy: SEAT,
 	createdAt: 1,
 	updatedAt: 1,
-	...(orgId !== undefined ? { orgId } : {}),
+	...(orgId !== undefined ? { orgId, clerkOrgId: testClerkOrgId(orgId) } : {}),
 });
 
 async function completeTaskNaming(
@@ -374,8 +375,8 @@ describe("diary shared (seat, date) key — own-row selection, R-52 follow-up", 
 		await seedOrgs(t);
 		await t.run(async (ctx) => {
 			await ctx.db.insert("diary", { ...key, content: "fleet", createdAt: 1 });
-			await ctx.db.insert("diary", { ...key, content: "from a", createdAt: 2, orgId: "org-a" });
-			await ctx.db.insert("diary", { ...key, content: "from b", createdAt: 3, orgId: "org-b" });
+			await ctx.db.insert("diary", { ...key, content: "from a", createdAt: 2, orgId: "org-a", clerkOrgId: testClerkOrgId("org-a") });
+			await ctx.db.insert("diary", { ...key, content: "from b", createdAt: 3, orgId: "org-b", clerkOrgId: testClerkOrgId("org-b") });
 		});
 		expect(await contentOf(t, asOrg(t, "org-a"))).toBe("from a");
 		expect(await contentOf(t, asOrg(t, "org-b"))).toBe("from b");
@@ -386,8 +387,8 @@ describe("diary shared (seat, date) key — own-row selection, R-52 follow-up", 
 		const t = makeT();
 		await seedOrgs(t);
 		await t.run(async (ctx) => {
-			await ctx.db.insert("diary", { ...key, content: "from a", createdAt: 2, orgId: "org-a" });
-			await ctx.db.insert("diary", { ...key, content: "from b", createdAt: 3, orgId: "org-b" });
+			await ctx.db.insert("diary", { ...key, content: "from a", createdAt: 2, orgId: "org-a", clerkOrgId: testClerkOrgId("org-a") });
+			await ctx.db.insert("diary", { ...key, content: "from b", createdAt: 3, orgId: "org-b", clerkOrgId: testClerkOrgId("org-b") });
 			await ctx.db.insert("diary", { ...key, content: "fleet", createdAt: 1 });
 		});
 		const a = asOrg(t, "org-a");
@@ -409,6 +410,7 @@ describe("fleet equivalence after backfill_org_stamp — R-52 follow-up", () => 
 		await t.run(async (ctx) => {
 			await ctx.db.insert("client_org_mapping", {
 				clerkOrgSlug: "fleet-org",
+				clerkOrgId: testClerkOrgId("fleet-org"),
 				allowedOrchestrators: ["sigma"],
 				scopes: [],
 				displayName: "fleet-org",
@@ -418,6 +420,7 @@ describe("fleet equivalence after backfill_org_stamp — R-52 follow-up", () => 
 			});
 			await ctx.db.insert("agents", {
 				orgSlug: "fleet-org",
+				clerkOrgId: testClerkOrgId("fleet-org"),
 				name: "sigma",
 				normalizedName: "sigma",
 				isActive: true,
@@ -461,7 +464,7 @@ describe("fleet equivalence after backfill_org_stamp — R-52 follow-up", () => 
 		await seedFleet(t);
 		await t.run(async (ctx) => {
 			await ctx.db.insert("diary", { date: "2026-10-01", orchestrator: "sigma", content: "unstamped", createdAt: 1 });
-			await ctx.db.insert("diary", { date: "2026-10-01", orchestrator: "sigma", content: "operator", createdAt: 2, orgId: "fleet-org" });
+			await ctx.db.insert("diary", { date: "2026-10-01", orchestrator: "sigma", content: "operator", createdAt: 2, orgId: "fleet-org", clerkOrgId: testClerkOrgId("fleet-org") });
 		});
 		const got = await asMaster(t).query(api.diary.get, { date: "2026-10-01", orchestrator: "sigma" });
 		expect(got?.content).toBe("operator");
@@ -472,7 +475,7 @@ describe("fleet equivalence after backfill_org_stamp — R-52 follow-up", () => 
 		await seedFleet(t);
 		await seedOrgs(t);
 		const id = await t.run((ctx) =>
-			ctx.db.insert("diary", { date: "2026-10-01", orchestrator: SEAT, content: "fleet", createdAt: 1, orgId: "fleet-org" }),
+			ctx.db.insert("diary", { date: "2026-10-01", orchestrator: SEAT, content: "fleet", createdAt: 1, orgId: "fleet-org", clerkOrgId: testClerkOrgId("fleet-org") }),
 		);
 		const a = asOrg(t, "org-a");
 		expect(await a.query(api.diary.get, { date: "2026-10-01", orchestrator: SEAT })).toBeNull();
@@ -514,6 +517,7 @@ describe("operator-org member sees the fleet range — R-52 follow-up", () => {
 			for (const [slug, kind] of [["fleet-org", "operator"], ["org-a", "client"]] as const) {
 				await ctx.db.insert("client_org_mapping", {
 					clerkOrgSlug: slug,
+					clerkOrgId: testClerkOrgId(slug),
 					allowedOrchestrators: ["sigma"],
 					scopes: ["view-own-tasks"],
 					displayName: slug,
@@ -577,6 +581,7 @@ describe("operator-org member sees the fleet range — R-52 follow-up", () => {
 describe("fleetOperatorSlug fails closed — R-52 follow-up", () => {
 	const mapping = (slug: string, orgKind: "operator" | "client") => ({
 		clerkOrgSlug: slug,
+		clerkOrgId: testClerkOrgId(slug),
 		allowedOrchestrators: [],
 		scopes: [],
 		displayName: slug,
@@ -602,9 +607,9 @@ describe("fleetOperatorSlug fails closed — R-52 follow-up", () => {
 	});
 
 	test("with 2 operators, no operator slug widens: only the unstamped stamp is the fleet's", () => {
-		expect(isFleetStamp({ label: "op-1" }, undefined, ORG_KEY_OPTIONS)).toBe(false);
+		expect(isFleetStamp({ label: "op-1" }, undefined)).toBe(false);
 		expect(isFleetStamp({}, undefined)).toBe(true);
-		expect(sameTenantStamp({ label: "op-1" }, {}, undefined, ORG_KEY_OPTIONS)).toBe(false);
+		expect(sameTenantStamp({ label: "op-1" }, {}, undefined)).toBe(false);
 	});
 
 	test("with 2 active operators a master get does not read an operator-stamped row", async () => {
@@ -612,7 +617,7 @@ describe("fleetOperatorSlug fails closed — R-52 follow-up", () => {
 		await t.run(async (ctx) => {
 			await ctx.db.insert("client_org_mapping", mapping("op-1", "operator"));
 			await ctx.db.insert("client_org_mapping", mapping("op-2", "operator"));
-			await ctx.db.insert("diary", { date: "2026-10-07", orchestrator: "sigma", content: "stamped", createdAt: 1, orgId: "op-1" });
+			await ctx.db.insert("diary", { date: "2026-10-07", orchestrator: "sigma", content: "stamped", createdAt: 1, orgId: "op-1", clerkOrgId: testClerkOrgId("op-1") });
 		});
 		expect(await asMaster(t).query(api.diary.get, { date: "2026-10-07", orchestrator: "sigma" })).toBeNull();
 	});

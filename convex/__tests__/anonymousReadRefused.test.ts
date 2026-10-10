@@ -29,6 +29,7 @@
 import { ConvexError } from "convex/values";
 import { convexTest } from "convex-test";
 import { describe, expect, test } from "vitest";
+import { testClerkOrgId } from "../../tests/fixtures/testClerkOrgId";
 import { api } from "../_generated/api";
 import type { Id } from "../_generated/dataModel";
 import schema from "../schema";
@@ -61,6 +62,7 @@ const asMember = (t: T, orgSlug: string, subject: string) =>
 	t.withIdentity({
 		subject,
 		organizationId: orgSlug,
+		org_id: testClerkOrgId(orgSlug),
 		organizationSlug: orgSlug,
 	} as Identity);
 const asNoOrg = (t: T) => t.withIdentity({ subject: NO_ORG } as Identity);
@@ -107,6 +109,7 @@ async function seedOrg(t: T, slug: string, roster: string[]) {
 	await t.run(async (ctx) => {
 		await ctx.db.insert("client_org_mapping", {
 			clerkOrgSlug: slug,
+			clerkOrgId: testClerkOrgId(slug),
 			allowedOrchestrators: roster,
 			scopes: ["view-own-tasks"],
 			displayName: slug,
@@ -126,6 +129,7 @@ async function seedMessage(
 		const id = await ctx.db.insert("messages", {
 			from: "pi",
 			tenantId,
+			tenantOrgId: testClerkOrgId(tenantId),
 			channel,
 			content: "x",
 			createdAt: Date.now(),
@@ -135,6 +139,7 @@ async function seedMessage(
 				messageId: id,
 				recipient,
 				tenantId,
+				tenantOrgId: testClerkOrgId(tenantId),
 				readAt: recipient === recipients[0] ? Date.now() : undefined,
 			});
 		}

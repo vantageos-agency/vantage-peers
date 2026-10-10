@@ -19,6 +19,7 @@
 
 import { convexTest } from "convex-test";
 import { afterEach, describe, expect, test, vi } from "vitest";
+import { testClerkOrgId } from "../../tests/fixtures/testClerkOrgId";
 import { api } from "../_generated/api";
 import schema from "../schema";
 
@@ -38,7 +39,7 @@ const NOTE = "Fixed the defect in commit abcdef1234567 with regression test, 3/3
 const SLUGS = ["org-a", "org-b", "org-op"] as const;
 
 const asOrg = (t: T, slug: string) =>
-	t.withIdentity({ subject: `user-${slug}`, organizationId: slug } as Parameters<
+	t.withIdentity({ subject: `user-${slug}`, organizationId: slug, org_id: testClerkOrgId(slug) } as Parameters<
 		T["withIdentity"]
 	>[0]);
 
@@ -52,6 +53,7 @@ async function seed(t: T) {
 		for (const slug of SLUGS) {
 			await ctx.db.insert("client_org_mapping", {
 				clerkOrgSlug: slug,
+				clerkOrgId: testClerkOrgId(slug),
 				allowedOrchestrators: [ORCH],
 				scopes: ["view-own-tasks", "view-own-missions"],
 				displayName: slug,

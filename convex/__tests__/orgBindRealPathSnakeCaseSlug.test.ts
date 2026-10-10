@@ -25,6 +25,7 @@ import { describe, expect, test } from "vitest";
 import { api } from "../_generated/api";
 import schema from "../schema";
 import { agentIdOf } from "../../tests/lib/agentIdOf";
+import { testClerkOrgId } from "../../tests/fixtures/testClerkOrgId";
 
 const modules = Object.fromEntries(
 	Object.entries(import.meta.glob("../**/*.ts")).filter(
@@ -40,6 +41,7 @@ const createT = () => convexTest(schema, modules);
 const orgAdminIdentity = (org: string) => ({
 	subject: `admin-of-${org}`,
 	org_slug: org,
+	org_id: testClerkOrgId(org),
 	org_role: "org:admin",
 });
 
@@ -51,6 +53,7 @@ async function seedOrgMapping(
 	await t.run(async (ctx) => {
 		await ctx.db.insert("client_org_mapping", {
 			clerkOrgSlug,
+			clerkOrgId: testClerkOrgId(clerkOrgSlug),
 			allowedOrchestrators,
 			scopes: ["view-own-tasks"],
 			displayName: clerkOrgSlug,
@@ -105,6 +108,7 @@ describe("REAL-PATH org-bind — snake_case org_slug caller, no harness", () => 
 		const tHomeMember = t.withIdentity({
 			subject: "member-of-org-home",
 			org_slug: "org-home",
+			org_id: testClerkOrgId("org-home"),
 		} as Parameters<typeof t.withIdentity>[0]);
 
 		await expect(
@@ -128,6 +132,7 @@ describe("REAL-PATH org-bind — snake_case org_slug caller, no harness", () => 
 		const tHomeMember = t.withIdentity({
 			subject: "member-of-org-home-2",
 			org_slug: "org-home",
+			org_id: testClerkOrgId("org-home"),
 		} as Parameters<typeof t.withIdentity>[0]);
 
 		const messageId = await tHomeMember.mutation(api.messages.sendMessage, {

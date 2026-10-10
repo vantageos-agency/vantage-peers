@@ -24,6 +24,7 @@ import {
 	type ClientOrg,
 	type ReceiptPairResolution,
 } from "../receiptTenantBackfill";
+import { testClerkOrgId } from "../../tests/fixtures/testClerkOrgId";
 
 const modules = Object.fromEntries(
 	Object.entries(import.meta.glob("../**/*.ts")),
@@ -81,6 +82,7 @@ async function seedOrgMapping(
 	await t.run(async (ctx) => {
 		await ctx.db.insert("client_org_mapping", {
 			clerkOrgSlug: opts.clerkOrgSlug,
+			clerkOrgId: testClerkOrgId(opts.clerkOrgSlug),
 			allowedOrchestrators: opts.allowedOrchestrators,
 			...(opts.fleetWide === true ? { fleetWide: true } : {}),
 			scopes: ["view-own-tasks"],
@@ -144,6 +146,7 @@ async function seedStampedReceipt(
 			messageId,
 			recipient: opts.recipient,
 			tenantId: opts.tenantId,
+			tenantOrgId: testClerkOrgId(opts.tenantId),
 		});
 	});
 }
@@ -628,6 +631,7 @@ describe("both-directions: scoped IDENTITY read after write only sees own tenant
 		const tAcme = t.withIdentity({
 			subject: "user-acme",
 			organizationId: "acme-client",
+			org_id: testClerkOrgId("acme-client"),
 		} as Parameters<typeof t.withIdentity>[0]);
 		const acmeRead = await tAcme.query(
 			internal.receiptTenantBackfill._receiptsForCaller,
@@ -642,6 +646,7 @@ describe("both-directions: scoped IDENTITY read after write only sees own tenant
 		const tOther = t.withIdentity({
 			subject: "user-other",
 			organizationId: "other-client",
+			org_id: testClerkOrgId("other-client"),
 		} as Parameters<typeof t.withIdentity>[0]);
 		const otherRead = await tOther.query(
 			internal.receiptTenantBackfill._receiptsForCaller,
@@ -708,6 +713,7 @@ describe("SCAN_CAP_EXCEEDED: the read is loud on overflow, never a silent short 
 		const tAcme = t.withIdentity({
 			subject: "user-acme",
 			organizationId: "acme-client",
+			org_id: testClerkOrgId("acme-client"),
 		} as Parameters<typeof t.withIdentity>[0]);
 
 		await expect(
@@ -732,6 +738,7 @@ describe("SCAN_CAP_EXCEEDED: the read is loud on overflow, never a silent short 
 		const tAcme = t.withIdentity({
 			subject: "user-acme",
 			organizationId: "acme-client",
+			org_id: testClerkOrgId("acme-client"),
 		} as Parameters<typeof t.withIdentity>[0]);
 
 		const rows = await tAcme.query(

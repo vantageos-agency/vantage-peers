@@ -38,6 +38,7 @@
 import { ConvexError } from "convex/values";
 import { convexTest } from "convex-test";
 import { describe, expect, test } from "vitest";
+import { testClerkOrgId } from "../../tests/fixtures/testClerkOrgId";
 import { api } from "../_generated/api";
 import schema from "../schema";
 
@@ -73,6 +74,7 @@ const asMember = (t: T) =>
 	t.withIdentity({
 		subject: MEMBER,
 		organizationId: "org-a",
+		org_id: testClerkOrgId("org-a"),
 		organizationSlug: "org-a",
 	} as Parameters<typeof t.withIdentity>[0]);
 
@@ -86,6 +88,7 @@ const seedOrgMapping = (t: T) =>
 	t.run(async (ctx) => {
 		await ctx.db.insert("client_org_mapping", {
 			clerkOrgSlug: "org-a",
+			clerkOrgId: testClerkOrgId("org-a"),
 			allowedOrchestrators: ["sigma"],
 			scopes: ["view-own-tasks"],
 			displayName: "org-a",

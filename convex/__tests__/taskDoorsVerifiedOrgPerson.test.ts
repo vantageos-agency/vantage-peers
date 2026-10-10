@@ -16,6 +16,7 @@
 
 import { convexTest } from "convex-test";
 import { beforeEach, describe, expect, test } from "vitest";
+import { testClerkOrgId } from "../../tests/fixtures/testClerkOrgId";
 import { api } from "../_generated/api";
 import type { Id } from "../_generated/dataModel";
 import schema from "../schema";
@@ -46,6 +47,7 @@ beforeEach(async () => {
 		for (const slug of ["org-a", "org-b"]) {
 			await ctx.db.insert("client_org_mapping", {
 				clerkOrgSlug: slug,
+				clerkOrgId: testClerkOrgId(slug),
 				allowedOrchestrators: ["agent-a"],
 				scopes: ["vantage:read", "vantage:write"],
 				displayName: slug,
@@ -74,6 +76,7 @@ beforeEach(async () => {
 			expiresAt: now + 3_600_000,
 			createdAt: now,
 			clerkOrgSlug: "org-a",
+			clerkOrgId: testClerkOrgId("org-a"),
 			orgRole: "org:editor",
 			principal: "person",
 		});
@@ -90,6 +93,7 @@ async function taskIn(orgId: string): Promise<Id<"tasks">> {
 			priority: "high",
 			status: "todo",
 			orgId,
+			clerkOrgId: testClerkOrgId(orgId),
 			createdAt: now,
 			updatedAt: now,
 		});

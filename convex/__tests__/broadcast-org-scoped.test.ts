@@ -23,6 +23,7 @@
 
 import { convexTest } from "convex-test";
 import { describe, expect, test } from "vitest";
+import { testClerkOrgId } from "../../tests/fixtures/testClerkOrgId";
 import { api } from "../_generated/api";
 import schema from "../schema";
 
@@ -73,6 +74,7 @@ async function seedOrgMapping(
 		}
 		await ctx.db.insert("client_org_mapping", {
 			clerkOrgSlug,
+			clerkOrgId: testClerkOrgId(clerkOrgSlug),
 			allowedOrchestrators,
 			allowedAgentIds,
 			scopes: ["view-own-tasks", "view-own-missions"],
@@ -107,6 +109,7 @@ describe("sendMessage broadcast — org-scoped fan-out (cross-tenant leak fix)",
 		const tA = t.withIdentity({
 			subject: "user-tenant-a",
 			organizationId: "tenant-a",
+			org_id: testClerkOrgId("tenant-a"),
 		} as Parameters<typeof t.withIdentity>[0]);
 
 		const messageId = await tA.mutation(api.messages.sendMessage, {
@@ -198,6 +201,7 @@ describe("sendMessage broadcast — org-scoped fan-out (cross-tenant leak fix)",
 		const tWild = t.withIdentity({
 			subject: "user-tenant-wild",
 			organizationId: "tenant-wild",
+			org_id: testClerkOrgId("tenant-wild"),
 		} as Parameters<typeof t.withIdentity>[0]);
 
 		let caught: unknown;
@@ -247,6 +251,7 @@ describe("sendMessage broadcast — org-scoped fan-out (cross-tenant leak fix)",
 		const tA = t.withIdentity({
 			subject: "user-tenant-a",
 			organizationId: "tenant-a",
+			org_id: testClerkOrgId("tenant-a"),
 		} as Parameters<typeof t.withIdentity>[0]);
 
 		const messageIdA = await tA.mutation(api.messages.sendMessage, {
@@ -261,6 +266,7 @@ describe("sendMessage broadcast — org-scoped fan-out (cross-tenant leak fix)",
 		const tB = t.withIdentity({
 			subject: "user-tenant-b",
 			organizationId: "tenant-b",
+			org_id: testClerkOrgId("tenant-b"),
 		} as Parameters<typeof t.withIdentity>[0]);
 
 		const messageIdB = await tB.mutation(api.messages.sendMessage, {
@@ -284,6 +290,7 @@ describe("sendMessage broadcast — org-scoped fan-out (cross-tenant leak fix)",
 		await t.run(async (ctx) => {
 			await ctx.db.insert("client_org_mapping", {
 				clerkOrgSlug: "tenant-disabled",
+				clerkOrgId: testClerkOrgId("tenant-disabled"),
 				allowedOrchestrators: ["disabled-org-bot"],
 				scopes: ["view-own-tasks"],
 				displayName: "tenant-disabled",
@@ -342,6 +349,7 @@ describe("sendMessage broadcast — org-scoped fan-out (cross-tenant leak fix)",
 		const tA = t.withIdentity({
 			subject: "user-tenant-a",
 			organizationId: "tenant-a",
+			org_id: testClerkOrgId("tenant-a"),
 		} as Parameters<typeof t.withIdentity>[0]);
 
 		const messageId = await tA.mutation(api.messages.sendMessage, {

@@ -20,6 +20,7 @@
 
 import { convexTest } from "convex-test";
 import { describe, expect, test } from "vitest";
+import { testClerkOrgId } from "../../tests/fixtures/testClerkOrgId";
 import { api, internal } from "../_generated/api";
 import schema from "../schema";
 import { TASK_LIST_SCAN_CAP } from "../tasks";
@@ -48,6 +49,7 @@ async function seedOrgs(t: T) {
 		await ctx.db.insert("client_org_mapping", {
 			...base,
 			clerkOrgSlug: FLEET,
+			clerkOrgId: testClerkOrgId(FLEET),
 			displayName: FLEET,
 			orgKind: "operator",
 			allowedOrchestrators: ["sigma", "eta", "shared", "ghost"],
@@ -55,6 +57,7 @@ async function seedOrgs(t: T) {
 		await ctx.db.insert("client_org_mapping", {
 			...base,
 			clerkOrgSlug: OTHER,
+			clerkOrgId: testClerkOrgId(OTHER),
 			displayName: OTHER,
 			orgKind: "client",
 			allowedOrchestrators: ["sigma", "shared", "victor"],
@@ -66,6 +69,7 @@ const asMember = (t: T, org: string) =>
 	t.withIdentity({
 		subject: `${org}-member`,
 		org_slug: org,
+		org_id: testClerkOrgId(org),
 		org_role: "org:editor",
 	} as Identity);
 
@@ -89,7 +93,7 @@ async function seedTasks(t: T, seed: TaskSeed, count: number, tag: string) {
 					createdBy: "sigma",
 					createdAt: Date.now(),
 					updatedAt: Date.now(),
-					...(seed.orgId !== undefined ? { orgId: seed.orgId } : {}),
+					...(seed.orgId !== undefined ? { orgId: seed.orgId, clerkOrgId: testClerkOrgId(seed.orgId) } : {}),
 					...(seed.project !== undefined ? { project: seed.project } : {}),
 				} as never);
 			}
@@ -215,12 +219,14 @@ describe("tasks.list — member cursor walk (Eta #1430 mutant C1)", () => {
 					title: `own-${i}`,
 					status: statuses[i % 2],
 					orgId: FLEET,
+					clerkOrgId: testClerkOrgId(FLEET),
 				} as never);
 				await ctx.db.insert("tasks", {
 					...base,
 					title: `foreign-${i}`,
 					status: statuses[i % 2],
 					orgId: OTHER,
+					clerkOrgId: testClerkOrgId(OTHER),
 				} as never);
 			}
 		});
@@ -261,8 +267,8 @@ describe("missions.list / messages.listByChannel — member poles (already org-k
 				createdAt: 1,
 				updatedAt: 1,
 			};
-			await ctx.db.insert("missions", { ...base, name: "own", orgId: FLEET } as never);
-			await ctx.db.insert("missions", { ...base, name: "foreign", orgId: OTHER } as never);
+			await ctx.db.insert("missions", { ...base, name: "own", orgId: FLEET, clerkOrgId: testClerkOrgId(FLEET) } as never);
+			await ctx.db.insert("missions", { ...base, name: "foreign", orgId: OTHER, clerkOrgId: testClerkOrgId(OTHER) } as never);
 			await ctx.db.insert("missions", { ...base, name: "unstamped" } as never);
 		});
 		const rows = (await asMember(t, FLEET).query(api.missions.list, {})) as Array<{
@@ -276,8 +282,8 @@ describe("missions.list / messages.listByChannel — member poles (already org-k
 		await seedOrgs(t);
 		await t.run(async (ctx) => {
 			const base = { from: "sigma", channel: "broadcast", createdAt: 1 };
-			await ctx.db.insert("messages", { ...base, content: "own", tenantId: FLEET } as never);
-			await ctx.db.insert("messages", { ...base, content: "foreign", tenantId: OTHER } as never);
+			await ctx.db.insert("messages", { ...base, content: "own", tenantId: FLEET, tenantOrgId: testClerkOrgId(FLEET) } as never);
+			await ctx.db.insert("messages", { ...base, content: "foreign", tenantId: OTHER, tenantOrgId: testClerkOrgId(OTHER) } as never);
 			await ctx.db.insert("messages", { ...base, content: "unstamped" } as never);
 		});
 		const rows = (await asMember(t, FLEET).query(api.messages.listByChannel, {
@@ -300,6 +306,7 @@ describe("migrations/fleetOrgStamp:run — a name is a label, never an identity"
 			const agent = (orgSlug: string, name: string) =>
 				ctx.db.insert("agents", {
 					orgSlug,
+					clerkOrgId: testClerkOrgId(orgSlug),
 					name,
 					normalizedName: name.toLowerCase(),
 					isActive: true,

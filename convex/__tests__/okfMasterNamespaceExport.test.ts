@@ -26,6 +26,7 @@
 
 import { convexTest } from "convex-test";
 import { describe, expect, test } from "vitest";
+import { testClerkOrgId } from "../../tests/fixtures/testClerkOrgId";
 import { api, internal } from "../_generated/api";
 import type { Id } from "../_generated/dataModel";
 import { packTarball } from "../okfBundleNode";
@@ -55,6 +56,7 @@ async function seedOrg(t: T, slug: string) {
 	await t.run(async (ctx) => {
 		await ctx.db.insert("client_org_mapping", {
 			clerkOrgSlug: slug,
+			clerkOrgId: testClerkOrgId(slug),
 			allowedOrchestrators: ["sigma"],
 			scopes: ["view-own-tasks"],
 			displayName: slug,
@@ -83,6 +85,7 @@ function asOrg(t: T, slug: string) {
 		subject: `user-${slug}`,
 		tokenIdentifier: `test|user-${slug}`,
 		organizationSlug: slug,
+		org_id: testClerkOrgId(slug),
 	} as Parameters<typeof t.withIdentity>[0]);
 }
 

@@ -38,6 +38,7 @@ import { ConvexError } from "convex/values";
 import { describe, expect, test } from "vitest";
 import { api } from "./_generated/api";
 import schema from "./schema";
+import { testClerkOrgId } from "../tests/fixtures/testClerkOrgId";
 
 const modules = Object.fromEntries(
 	Object.entries(import.meta.glob("./**/*.ts")).filter(
@@ -77,6 +78,7 @@ async function seedOrgAMapping(t: ReturnType<typeof createT>) {
 	await t.run(async (ctx) => {
 		await ctx.db.insert("client_org_mapping", {
 			clerkOrgSlug: "org-a",
+			clerkOrgId: testClerkOrgId("org-a"),
 			allowedOrchestrators: ["seat-a"],
 			scopes: [
 				"view-own-tasks",
@@ -117,6 +119,7 @@ describe("R-50 — reactively-subscribed public queries never throw for a signed
 				.withIdentity({
 					subject: "user-org-a",
 					organizationId: "org-a",
+					org_id: testClerkOrgId("org-a"),
 				} as Parameters<typeof base.withIdentity>[0])
 				.query(api.briefingNotes.list, {});
 			expect(r).toEqual([]);
@@ -135,12 +138,14 @@ describe("R-50 — reactively-subscribed public queries never throw for a signed
 					createdBy: "seat-a",
 					createdAt: Date.now(),
 					orgId: "org-a",
+					clerkOrgId: testClerkOrgId("org-a"),
 				});
 			});
 			const r = await base
 				.withIdentity({
 					subject: "user-org-a",
 					organizationId: "org-a",
+					org_id: testClerkOrgId("org-a"),
 				} as Parameters<typeof base.withIdentity>[0])
 				.query(api.briefingNotes.list, {});
 			expect(Array.isArray(r)).toBe(true);

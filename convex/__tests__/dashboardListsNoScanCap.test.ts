@@ -28,6 +28,7 @@ import { api } from "../_generated/api";
 import schema from "../schema";
 import { BRIEFING_NOTES_LIST_SCAN_CAP } from "../briefingNotes";
 import { TASK_LIST_SCAN_CAP } from "../tasks";
+import { testClerkOrgId } from "../../tests/fixtures/testClerkOrgId";
 
 const modules = Object.fromEntries(
 	Object.entries(import.meta.glob("../**/*.ts")).filter(
@@ -58,12 +59,14 @@ async function seedOrgs(t: T) {
 		await ctx.db.insert("client_org_mapping", {
 			...base,
 			clerkOrgSlug: OPERATOR_ORG,
+			clerkOrgId: testClerkOrgId(OPERATOR_ORG),
 			displayName: OPERATOR_ORG,
 			orgKind: "operator",
 		});
 		await ctx.db.insert("client_org_mapping", {
 			...base,
 			clerkOrgSlug: SMALL_ORG,
+			clerkOrgId: testClerkOrgId(SMALL_ORG),
 			displayName: SMALL_ORG,
 			orgKind: "client",
 		});
@@ -74,12 +77,14 @@ const operator = (t: T) =>
 	t.withIdentity({
 		subject: "operator-user",
 		org_slug: OPERATOR_ORG,
+		org_id: testClerkOrgId(OPERATOR_ORG),
 		org_role: "org:admin",
 	} as Identity);
 const member = (t: T) =>
 	t.withIdentity({
 		subject: "small-member",
 		org_slug: SMALL_ORG,
+		org_id: testClerkOrgId(SMALL_ORG),
 		org_role: "org:member",
 	} as Identity);
 
@@ -97,6 +102,7 @@ async function seedTasks(t: T, orgId: string, count: number) {
 					createdAt: Date.now(),
 					updatedAt: Date.now(),
 					orgId,
+					clerkOrgId: testClerkOrgId(orgId),
 				} as never);
 			}
 		});
@@ -166,6 +172,7 @@ async function seedNotes(
 					createdBy: "system",
 					createdAt: Date.now() + i,
 					orgId,
+					clerkOrgId: testClerkOrgId(orgId),
 				} as never);
 			}
 		});

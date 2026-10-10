@@ -16,6 +16,7 @@ import { describe, expect, test } from "vitest";
 import { api } from "../_generated/api";
 import schema from "../schema";
 import { agentIdOf } from "../../tests/lib/agentIdOf";
+import { testClerkOrgId } from "../../tests/fixtures/testClerkOrgId";
 
 const modules = Object.fromEntries(
 	Object.entries(import.meta.glob("../**/*.ts")).filter(
@@ -28,12 +29,13 @@ type T = ReturnType<typeof createT>;
 type Identity = Parameters<T["withIdentity"]>[0];
 
 const adminOf = (org: string) =>
-	({ subject: `admin-of-${org}`, org_slug: org, org_role: "org:admin" }) as Identity;
+	({ subject: `admin-of-${org}`, org_slug: org, org_id: testClerkOrgId(org), org_role: "org:admin" }) as Identity;
 
 async function seedOrg(t: T, clerkOrgSlug: string) {
 	await t.run(async (ctx) => {
 		await ctx.db.insert("client_org_mapping", {
 			clerkOrgSlug,
+			clerkOrgId: testClerkOrgId(clerkOrgSlug),
 			allowedOrchestrators: ["existing-seat"],
 			scopes: ["view-own-tasks"],
 			displayName: clerkOrgSlug,
@@ -296,6 +298,7 @@ describe("agent retire surface", () => {
 		await t.run(async (ctx) => {
 			await ctx.db.insert("agent_credentials", {
 				orgSlug: "org-a",
+				clerkOrgId: testClerkOrgId("org-a"),
 				agentId: betaId,
 				agentName: "beta",
 				secretHash: "escaped-row-hash",
@@ -445,6 +448,7 @@ describe("agent retire surface", () => {
 		await t.run(async (ctx) => {
 			await ctx.db.insert("agent_credentials", {
 				orgSlug: "org-a",
+				clerkOrgId: testClerkOrgId("org-a"),
 				agentId: betaId,
 				agentName: "beta",
 				secretHash: "escaped-row-hash-7c",

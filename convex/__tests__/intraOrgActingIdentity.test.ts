@@ -17,6 +17,7 @@
 
 import { convexTest } from "convex-test";
 import { describe, expect, test } from "vitest";
+import { testClerkOrgId } from "../../tests/fixtures/testClerkOrgId";
 import { api } from "../_generated/api";
 import schema from "../schema";
 
@@ -36,6 +37,7 @@ async function fixture() {
 	await t.run(async (ctx) => {
 		await ctx.db.insert("client_org_mapping", {
 			clerkOrgSlug: "org-b",
+			clerkOrgId: testClerkOrgId("org-b"),
 			allowedOrchestrators: ["bob", "bea"],
 			scopes: ["view-own-tasks", "view-own-missions"],
 			displayName: "org-b",
@@ -53,7 +55,7 @@ async function fixture() {
 }
 
 const member = (t: T) =>
-	t.withIdentity({ subject: "member-of-org-b", organizationId: "org-b", org_role: "org:editor" } as Identity);
+	t.withIdentity({ subject: "member-of-org-b", organizationId: "org-b", org_id: testClerkOrgId("org-b"), org_role: "org:editor" } as Identity);
 const master = (t: T) =>
 	t.withIdentity({ subject: "test-service-account-user-id" } as Identity);
 
@@ -87,6 +89,7 @@ async function seedMission(t: T, orgId: string | undefined) {
 			createdAt: Date.now(),
 			updatedAt: Date.now(),
 			orgId,
+			clerkOrgId: testClerkOrgId(orgId),
 		}),
 	);
 }
@@ -285,6 +288,7 @@ describe("tasks:update — assignedTo reassignment (assignee)", () => {
 				createdAt: Date.now(),
 				updatedAt: Date.now(),
 				orgId,
+				clerkOrgId: testClerkOrgId(orgId),
 			}),
 		);
 	}

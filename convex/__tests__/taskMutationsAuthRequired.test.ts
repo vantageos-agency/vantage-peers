@@ -40,6 +40,7 @@ import { fileURLToPath } from "node:url";
 import { describe, expect, test } from "vitest";
 import { api } from "../_generated/api";
 import schema from "../schema";
+import { testClerkOrgId } from "../../tests/fixtures/testClerkOrgId";
 
 const modules = Object.fromEntries(
 	Object.entries(import.meta.glob("../**/*.ts")).filter(
@@ -61,6 +62,7 @@ async function seedOrgMapping(
 	await t.run(async (ctx) => {
 		await ctx.db.insert("client_org_mapping", {
 			clerkOrgSlug: opts.clerkOrgSlug,
+			clerkOrgId: testClerkOrgId(opts.clerkOrgSlug),
 			allowedOrchestrators: opts.allowedOrchestrators,
 			scopes: ["view-own-tasks", "view-own-missions", "view-orchestrator-summary"],
 			displayName: opts.clerkOrgSlug,
@@ -92,6 +94,7 @@ async function seedTask(
 		? t.withIdentity({
 				subject: `seed-user-${overrides.orgSlug}`,
 				organizationSlug: overrides.orgSlug,
+				org_id: testClerkOrgId(overrides.orgSlug),
 			} as Parameters<typeof t.withIdentity>[0])
 		: t.withIdentity({ subject: SERVICE_ACCOUNT_SUBJECT });
 	return await seeder
@@ -365,6 +368,7 @@ describe("CALLER_IDENTITY_MISMATCH — callerOrchestrator contradicting the veri
 		const tVictorOrg = t.withIdentity({
 			subject: "user-nadia",
 			organizationSlug: "acme-hr",
+			org_id: testClerkOrgId("acme-hr"),
 		} as Parameters<typeof t.withIdentity>[0]);
 
 		// Contradicting pole: the verified identity's org only allows "victor",
@@ -413,6 +417,7 @@ describe("CALLER_IDENTITY_MISMATCH — callerOrchestrator contradicting the veri
 		const tVictorOrg = t.withIdentity({
 			subject: "user-nadia",
 			organizationSlug: "acme-hr",
+			org_id: testClerkOrgId("acme-hr"),
 		} as Parameters<typeof t.withIdentity>[0]);
 
 		const error = await tVictorOrg

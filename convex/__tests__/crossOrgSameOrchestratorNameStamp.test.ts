@@ -26,6 +26,7 @@
 
 import { convexTest } from "convex-test";
 import { describe, expect, test } from "vitest";
+import { testClerkOrgId } from "../../tests/fixtures/testClerkOrgId";
 import { api } from "../_generated/api";
 import schema from "../schema";
 
@@ -49,6 +50,7 @@ async function seedBothOrgsSharingOrchestrator(t: ReturnType<typeof createT>) {
 		for (const slug of ["org-a", "org-b"]) {
 			await ctx.db.insert("client_org_mapping", {
 				clerkOrgSlug: slug,
+				clerkOrgId: testClerkOrgId(slug),
 				allowedOrchestrators: [SHARED_ORCHESTRATOR],
 				scopes: ["view-own-tasks", "view-own-missions"],
 				displayName: slug,
@@ -63,6 +65,7 @@ function asOrg(t: ReturnType<typeof createT>, slug: string) {
 	return t.withIdentity({
 		subject: `user-${slug}`,
 		organizationId: slug,
+		org_id: testClerkOrgId(slug),
 	} as Parameters<typeof t.withIdentity>[0]);
 }
 

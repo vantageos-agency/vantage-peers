@@ -10,6 +10,7 @@
 import { ConvexError } from "convex/values";
 import { convexTest } from "convex-test";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
+import { testClerkOrgId } from "../../tests/fixtures/testClerkOrgId";
 import { api, internal } from "../_generated/api";
 import schema from "../schema";
 
@@ -31,7 +32,7 @@ const NOTE = "Fixed the defect in commit abcdef1234567 with regression test, 3/3
 const IRP_NOTE = "Root cause: bad join. Fix: scope by org. Files: convex/tasks.ts, convex/lib/x.ts";
 
 const asOrg = (t: T, slug: string) =>
-	t.withIdentity({ subject: `user-${slug}`, organizationId: slug } as Parameters<
+	t.withIdentity({ subject: `user-${slug}`, organizationId: slug, org_id: testClerkOrgId(slug) } as Parameters<
 		T["withIdentity"]
 	>[0]);
 
@@ -41,6 +42,7 @@ async function seed(t: T) {
 		for (const slug of ["org-a", "org-b", "org-op"]) {
 			await ctx.db.insert("client_org_mapping", {
 				clerkOrgSlug: slug,
+				clerkOrgId: testClerkOrgId(slug),
 				allowedOrchestrators: [ORCH],
 				scopes: [
 					"view-own-tasks",
@@ -79,7 +81,7 @@ async function seed(t: T) {
 				orchestrator: ORCH,
 				project,
 				active: true,
-				...(orgId !== undefined ? { orgId } : {}),
+				...(orgId !== undefined ? { orgId, clerkOrgId: testClerkOrgId(orgId) } : {}),
 			});
 			await ctx.db.insert("issues", {
 				repo,
@@ -94,7 +96,7 @@ async function seed(t: T) {
 				project,
 				githubCreatedAt: 1,
 				githubUpdatedAt: 1,
-				...(orgId !== undefined ? { orgId } : {}),
+				...(orgId !== undefined ? { orgId, clerkOrgId: testClerkOrgId(orgId) } : {}),
 			});
 		}
 	});
@@ -172,7 +174,7 @@ describe("auto-link: a client org links ITS OWN issues and only its own", () => 
 				.query("issues")
 				.withIndex("by_repo_number", (q) => q.eq("repo", "org-a/repo").eq("issueNumber", 5))
 				.unique();
-			if (i) await ctx.db.patch(i._id, { orgId: "org-b" });
+			if (i) await ctx.db.patch(i._id, { orgId: "org-b", clerkOrgId: testClerkOrgId("org-b") });
 		});
 		const before = await issueOf(t, "org-a/repo");
 		await completes(asOrg(t, "org-a"), "shared-proj");

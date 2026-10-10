@@ -25,6 +25,7 @@ import { ConvexError } from "convex/values";
 import { describe, expect, test } from "vitest";
 import { api } from "../_generated/api";
 import schema from "../schema";
+import { testClerkOrgId } from "../../tests/fixtures/testClerkOrgId";
 
 const modules = Object.fromEntries(
 	Object.entries(import.meta.glob("../**/*.ts")).filter(
@@ -47,6 +48,7 @@ async function seedOrgMapping(
 	await t.run(async (ctx) => {
 		await ctx.db.insert("client_org_mapping", {
 			clerkOrgSlug: slug,
+			clerkOrgId: testClerkOrgId(slug),
 			allowedOrchestrators,
 			scopes: ["view-own-tasks", "view-own-missions"],
 			displayName: slug,
@@ -60,6 +62,7 @@ function asOrg(t: ReturnType<typeof createTestConvex>, orgSlug: string) {
 	return t.withIdentity({
 		subject: `user-${orgSlug}`,
 		organizationId: orgSlug,
+		org_id: testClerkOrgId(orgSlug),
 	} as Parameters<typeof t.withIdentity>[0]);
 }
 
@@ -87,6 +90,7 @@ async function seedNote(
 			createdBy: opts.createdBy,
 			createdAt: Date.now(),
 			orgId: opts.orgId,
+			clerkOrgId: testClerkOrgId(opts.orgId),
 		});
 		for (const participant of opts.participants) {
 			await ctx.db.insert("briefingNoteParticipants", {

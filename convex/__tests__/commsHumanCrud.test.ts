@@ -16,6 +16,7 @@
 
 import { convexTest } from "convex-test";
 import { describe, expect, test } from "vitest";
+import { testClerkOrgId } from "../../tests/fixtures/testClerkOrgId";
 import { api, internal } from "../_generated/api";
 import type { Id } from "../_generated/dataModel";
 import schema from "../schema";
@@ -37,6 +38,7 @@ const as = (subject: string, role?: string) =>
 	({
 		subject,
 		organizationSlug: "org-a",
+		org_id: testClerkOrgId("org-a"),
 		...(role !== undefined ? { org_role: role } : {}),
 	}) as Parameters<T["withIdentity"]>[0];
 
@@ -48,6 +50,7 @@ async function setup() {
 		const now = Date.now();
 		await ctx.db.insert("client_org_mapping", {
 			clerkOrgSlug: "org-a",
+			clerkOrgId: testClerkOrgId("org-a"),
 			allowedOrchestrators: ["sigma", "pi"],
 			scopes: ["view-own-tasks"],
 			displayName: "org-a",
@@ -56,6 +59,7 @@ async function setup() {
 		});
 		await ctx.db.insert("client_org_mapping", {
 			clerkOrgSlug: "org-b",
+			clerkOrgId: testClerkOrgId("org-b"),
 			allowedOrchestrators: ["eta"],
 			scopes: ["view-own-tasks"],
 			displayName: "org-b",
@@ -93,14 +97,14 @@ async function seedMessage(t: T, owner: Owner) {
 			channel: "sigma",
 			content: "seed",
 			createdAt: Date.now(),
-			...(owner === "own" ? { tenantId: "org-a" } : {}),
-			...(owner === "other" ? { tenantId: "org-b" } : {}),
+			...(owner === "own" ? { tenantId: "org-a", tenantOrgId: testClerkOrgId("org-a") } : {}),
+			...(owner === "other" ? { tenantId: "org-b", tenantOrgId: testClerkOrgId("org-b") } : {}),
 		});
 		await ctx.db.insert("messageReceipts", {
 			messageId: id,
 			recipient: "sigma",
 			readAt: undefined,
-			...(owner === "own" ? { tenantId: "org-a" } : {}),
+			...(owner === "own" ? { tenantId: "org-a", tenantOrgId: testClerkOrgId("org-a") } : {}),
 		});
 		return id;
 	});
@@ -117,8 +121,8 @@ async function seedDiary(t: T, owner: Owner) {
 			orchestrator: ownerName(owner),
 			content: "seed",
 			createdAt: Date.now(),
-			...(owner === "own" ? { orgId: "org-a" } : {}),
-			...(owner === "other" ? { orgId: "org-b" } : {}),
+			...(owner === "own" ? { orgId: "org-a", clerkOrgId: testClerkOrgId("org-a") } : {}),
+			...(owner === "other" ? { orgId: "org-b", clerkOrgId: testClerkOrgId("org-b") } : {}),
 		}),
 	);
 }
@@ -144,8 +148,8 @@ async function seedBu(t: T, owner: Owner) {
 			managementFee: 10,
 			createdAt: now,
 			updatedAt: now,
-			...(owner === "own" ? { orgId: "org-a" } : {}),
-			...(owner === "other" ? { orgId: "org-b" } : {}),
+			...(owner === "own" ? { orgId: "org-a", clerkOrgId: testClerkOrgId("org-a") } : {}),
+			...(owner === "other" ? { orgId: "org-b", clerkOrgId: testClerkOrgId("org-b") } : {}),
 		}),
 	);
 }
@@ -163,8 +167,8 @@ async function seedRecurring(t: T, owner: Owner, active = true) {
 			createdBy: "sigma",
 			createdAt: now,
 			updatedAt: now,
-			...(owner === "own" ? { orgId: "org-a" } : {}),
-			...(owner === "other" ? { orgId: "org-b" } : {}),
+			...(owner === "own" ? { orgId: "org-a", clerkOrgId: testClerkOrgId("org-a") } : {}),
+			...(owner === "other" ? { orgId: "org-b", clerkOrgId: testClerkOrgId("org-b") } : {}),
 		}),
 	);
 }
@@ -292,7 +296,7 @@ describe.each(rowDoors)("human CRUD — $name", (door) => {
 		// no organisation: refused, never treated as a human.
 		await expect(
 			door.call(
-				t.withIdentity({ subject: "svc", organizationSlug: "vantage-fleet" } as Parameters<T["withIdentity"]>[0]),
+				t.withIdentity({ subject: "svc", organizationSlug: "vantage-fleet", org_id: testClerkOrgId("vantage-fleet") } as Parameters<T["withIdentity"]>[0]),
 				id,
 			),
 		).rejects.toThrow(/RBAC_DENIED|AUTH_REQUIRED|Forbidden/);
@@ -322,11 +326,12 @@ describe("businessUnits and diary — master/agent only, no human path", () => {
 	const master = (t: T) =>
 		t.withIdentity({ subject: "test-service-account-user-id" } as Parameters<T["withIdentity"]>[0]);
 	const orgC = (t: T) =>
-		t.withIdentity({ subject: "user_c", organizationSlug: "org-c", org_role: "org:admin" } as Parameters<T["withIdentity"]>[0]);
+		t.withIdentity({ subject: "user_c", organizationSlug: "org-c", org_id: testClerkOrgId("org-c"), org_role: "org:admin" } as Parameters<T["withIdentity"]>[0]);
 	const addOrgC = (t: T) =>
 		t.run(async (ctx) => {
 			await ctx.db.insert("client_org_mapping", {
 				clerkOrgSlug: "org-c",
+				clerkOrgId: testClerkOrgId("org-c"),
 				allowedOrchestrators: ["sigma"], // the SAME roster name as org-a's
 				scopes: ["view-own-tasks"],
 				displayName: "org-c",
@@ -517,7 +522,7 @@ describe("human CRUD — messages:sendMessage", () => {
 		const t = await setup();
 		await expect(
 			t
-				.withIdentity({ subject: "svc", organizationSlug: "vantage-fleet" } as Parameters<T["withIdentity"]>[0])
+				.withIdentity({ subject: "svc", organizationSlug: "vantage-fleet", org_id: testClerkOrgId("vantage-fleet") } as Parameters<T["withIdentity"]>[0])
 				.mutation(api.messages.sendMessage, args),
 		).rejects.toThrow(/RBAC_DENIED|AUTH_REQUIRED|Forbidden/);
 		expect(await count(t, "messages")).toBe(0);
@@ -595,7 +600,7 @@ describe("human CRUD — recurringTasks:create", () => {
 		const t = await setup();
 		await expect(
 			t
-				.withIdentity({ subject: "svc", organizationSlug: "vantage-fleet" } as Parameters<T["withIdentity"]>[0])
+				.withIdentity({ subject: "svc", organizationSlug: "vantage-fleet", org_id: testClerkOrgId("vantage-fleet") } as Parameters<T["withIdentity"]>[0])
 				.mutation(api.recurringTasks.create, args),
 		).rejects.toThrow(/RBAC_DENIED|AUTH_REQUIRED|Forbidden/);
 		expect(await count(t, "recurringTasks")).toBe(0);

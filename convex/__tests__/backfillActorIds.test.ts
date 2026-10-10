@@ -20,6 +20,7 @@ import {
 } from "../migrations/backfill_actor_ids";
 import schema from "../schema";
 import { agentIdOf } from "../../tests/lib/agentIdOf";
+import { testClerkOrgId } from "../../tests/fixtures/testClerkOrgId";
 
 const modules = Object.fromEntries(
 	Object.entries(import.meta.glob("../**/*.ts")),
@@ -44,6 +45,7 @@ async function seed(t: T): Promise<World> {
 		const mapping = (slug: string, operator: boolean) =>
 			ctx.db.insert("client_org_mapping", {
 				clerkOrgSlug: slug,
+				clerkOrgId: testClerkOrgId(slug),
 				allowedOrchestrators: [],
 				scopes: [],
 				displayName: slug,
@@ -56,6 +58,7 @@ async function seed(t: T): Promise<World> {
 		const agent = (name: string, orgSlug: string) =>
 			ctx.db.insert("agents", {
 				orgSlug,
+				clerkOrgId: testClerkOrgId(orgSlug),
 				name,
 				normalizedName: name.toLowerCase(),
 				isActive: true,
@@ -312,11 +315,13 @@ describe("new writes stamp the IDs", () => {
 		t.withIdentity({
 			subject: `user-${slug}`,
 			organizationId: slug,
+			org_id: testClerkOrgId(slug),
 		} as Parameters<T["withIdentity"]>[0]);
 	const adminOf = (t: T, slug: string) =>
 		t.withIdentity({
 			subject: `admin-of-${slug}`,
 			org_slug: slug,
+			org_id: testClerkOrgId(slug),
 			org_role: "org:admin",
 		} as Parameters<T["withIdentity"]>[0]);
 
@@ -327,6 +332,7 @@ describe("new writes stamp the IDs", () => {
 		await t.run(async (ctx) => {
 			await ctx.db.insert("client_org_mapping", {
 				clerkOrgSlug: "iris-rh",
+				clerkOrgId: testClerkOrgId("iris-rh"),
 				allowedOrchestrators: ["clio", "irisonly"],
 				scopes: ["view-own-tasks", "view-own-missions"],
 				displayName: "iris-rh",
@@ -335,6 +341,7 @@ describe("new writes stamp the IDs", () => {
 			});
 			await ctx.db.insert("client_org_mapping", {
 				clerkOrgSlug: "fleet-org",
+				clerkOrgId: testClerkOrgId("fleet-org"),
 				allowedOrchestrators: [],
 				scopes: [],
 				displayName: "fleet-org",
@@ -344,6 +351,7 @@ describe("new writes stamp the IDs", () => {
 			});
 			await ctx.db.insert("agents", {
 				orgSlug: "fleet-org",
+				clerkOrgId: testClerkOrgId("fleet-org"),
 				name: "clio",
 				normalizedName: "clio",
 				isActive: true,

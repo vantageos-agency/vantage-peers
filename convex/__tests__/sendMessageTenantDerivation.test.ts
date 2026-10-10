@@ -30,6 +30,7 @@
 
 import { convexTest } from "convex-test";
 import { describe, expect, test } from "vitest";
+import { testClerkOrgId } from "../../tests/fixtures/testClerkOrgId";
 import { api, internal } from "../_generated/api";
 import schema from "../schema";
 
@@ -63,6 +64,7 @@ async function seedOrgMapping(
 	await t.run(async (ctx) => {
 		await ctx.db.insert("client_org_mapping", {
 			clerkOrgSlug,
+			clerkOrgId: testClerkOrgId(clerkOrgSlug),
 			allowedOrchestrators,
 			scopes: ["view-own-tasks", "view-own-missions"],
 			displayName: clerkOrgSlug,
@@ -80,6 +82,7 @@ function identityFor(
 	return t.withIdentity({
 		subject,
 		organizationId,
+		org_id: testClerkOrgId(organizationId),
 	} as Parameters<typeof t.withIdentity>[0]);
 }
 
@@ -309,6 +312,7 @@ describe("sendMessage — tenant-scope write symmetry", () => {
 		await t.run(async (ctx) => {
 			await ctx.db.insert("client_org_mapping", {
 				clerkOrgSlug: "dormant-co",
+				clerkOrgId: testClerkOrgId("dormant-co"),
 				allowedOrchestrators: ["pi"],
 				scopes: ["view-own-tasks"],
 				displayName: "dormant-co",

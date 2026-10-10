@@ -21,6 +21,7 @@
 
 import { convexTest } from "convex-test";
 import { describe, expect, test } from "vitest";
+import { testClerkOrgId } from "../../tests/fixtures/testClerkOrgId";
 import { api } from "../_generated/api";
 import type { Id } from "../_generated/dataModel";
 import schema from "../schema";
@@ -52,6 +53,7 @@ async function setup(
 		for (const slug of ["org-a", "org-b"]) {
 			await ctx.db.insert("client_org_mapping", {
 				clerkOrgSlug: slug,
+				clerkOrgId: testClerkOrgId(slug),
 				allowedOrchestrators: ["eta"],
 				scopes: ["view-own-tasks"],
 				displayName: slug,
@@ -67,6 +69,7 @@ async function setup(
 			priority: "low",
 			status: status === "paused" ? "in_progress" : status,
 			orgId: "org-b",
+			clerkOrgId: testClerkOrgId("org-b"),
 			...(status === "in_progress"
 				? { startedAt: now - 60_000, workSegments: [{ start: now - 60_000 }] }
 				: {}),
@@ -235,7 +238,9 @@ const didLand = (c: Case, after: Row | null): boolean =>
 
 async function setupOwn(status: Case["status"]) {
 	const s = await setup(status);
-	await s.t.run((ctx) => ctx.db.patch(s.id, { orgId: "org-a" }));
+	await s.t.run((ctx) =>
+		ctx.db.patch(s.id, { orgId: "org-a", clerkOrgId: testClerkOrgId("org-a") }),
+	);
 	return s;
 }
 
@@ -275,6 +280,7 @@ describe("org-a 'eta' vs an org-b 'eta' task, per door", () => {
 				const member = t.withIdentity({
 					subject: "member-a",
 					org_slug: "org-a",
+					org_id: testClerkOrgId("org-a"),
 					org_role: "org:admin",
 				} as Identity);
 				const err = await c.call(member as unknown as T, id, A).then(
@@ -316,7 +322,7 @@ describe("org-a 'eta' vs an org-b 'eta' task, per door", () => {
 			test("UNSTAMPED: a row stating no org is refused for a verified org", async () => {
 				const { t, id, row } = await setupOwn(c.status);
 				await t.run(async (ctx) => {
-					await ctx.db.patch(id, { orgId: undefined });
+					await ctx.db.patch(id, { orgId: undefined, clerkOrgId: undefined });
 				});
 				const before = JSON.stringify(await row());
 				const err = await c.call(asService(t), id, A).then(

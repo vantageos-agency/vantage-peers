@@ -58,7 +58,7 @@ import {
 } from "./lib/reviewRouting";
 import { isFleetSystemCaller } from "./lib/systemCaller";
 import { fleetOperatorRef } from "./lib/operatorOrg";
-import { ORG_KEY_OPTIONS, orgRefOfRow } from "./lib/authOrgMapping";
+import { orgRefOfRow } from "./lib/authOrgMapping";
 import {
 	enforceClosureGate,
 	closeTrailingSegmentOnExit,
@@ -2633,7 +2633,7 @@ export const complete = mutation({
 			if (
 				repoMapping &&
 				(isFleetStamp(orgRefOfRow(repoMapping), undefined) ||
-					sameOrg(orgRefOfRow(repoMapping), orgRefOfRow(task), ORG_KEY_OPTIONS))
+					sameOrg(orgRefOfRow(repoMapping), orgRefOfRow(task)))
 			) {
 				const dateStr = new Date().toISOString().split("T")[0];
 				const orch = task.assignedTo;
@@ -2756,7 +2756,6 @@ export const complete = mutation({
 						orgRefOfRow(mission),
 						orgRefOfRow(task),
 						await fleetOperatorRef(ctx.db),
-						ORG_KEY_OPTIONS,
 					) &&
 					mission.status !== "complete"
 				) {
@@ -4597,6 +4596,11 @@ export const bulkComplete = mutation({
 				scope: {
 					userId: callerScope.userId,
 					orgSlug: callerScope.orgSlug,
+					// The org's permanent ID: rows are matched by ID only (M4), so a
+					// continuation without it would match none of the caller's rows.
+					...(callerScope.orgClerkId !== undefined
+						? { orgClerkId: callerScope.orgClerkId }
+						: {}),
 					allowedOrchestrators: callerScope.allowedOrchestrators,
 					isMaster: callerScope.isMaster,
 				},
@@ -4644,6 +4648,7 @@ export const bulkCompleteContinue = internalMutation({
 		scope: v.object({
 			userId: v.string(),
 			orgSlug: v.union(v.string(), v.null()),
+			orgClerkId: v.optional(v.string()),
 			allowedOrchestrators: v.array(v.string()),
 			isMaster: v.boolean(),
 		}),

@@ -26,6 +26,7 @@
 
 import { convexTest } from "convex-test";
 import { describe, expect, test } from "vitest";
+import { testClerkOrgId } from "../../tests/fixtures/testClerkOrgId";
 import { api, internal } from "../_generated/api";
 import schema from "../schema";
 
@@ -43,6 +44,7 @@ async function seedBothOrgs(t: ReturnType<typeof createT>) {
 		for (const slug of ["org-a", "org-b"]) {
 			await ctx.db.insert("client_org_mapping", {
 				clerkOrgSlug: slug,
+				clerkOrgId: testClerkOrgId(slug),
 				allowedOrchestrators: [SHARED],
 				scopes: ["view-own-tasks", "view-own-missions"],
 				displayName: slug,
@@ -57,6 +59,7 @@ const asOrg = (t: ReturnType<typeof createT>, slug: string) =>
 	t.withIdentity({
 		subject: `user-${slug}`,
 		organizationId: slug,
+		org_id: testClerkOrgId(slug),
 	} as Parameters<typeof t.withIdentity>[0]);
 
 describe("recurringTasks.processDueTasks — the cron inherits the schedule's tenant", () => {

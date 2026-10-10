@@ -31,6 +31,7 @@
 
 import { convexTest } from "convex-test";
 import { describe, expect, test } from "vitest";
+import { testClerkOrgId } from "../../tests/fixtures/testClerkOrgId";
 import { api } from "../_generated/api";
 import { UNCLAIMED_SERVICE_ACCOUNT_READS_EVERY_TENANT } from "../lib/inboxReader";
 import schema from "../schema";
@@ -65,6 +66,7 @@ async function seedOrgMapping(
 	await t.run(async (ctx) => {
 		await ctx.db.insert("client_org_mapping", {
 			clerkOrgSlug,
+			clerkOrgId: testClerkOrgId(clerkOrgSlug),
 			allowedOrchestrators,
 			scopes: ["view-own-tasks", "view-own-missions"],
 			displayName: clerkOrgSlug,
@@ -82,6 +84,7 @@ function identityFor(
 	return t.withIdentity({
 		subject,
 		organizationId,
+		org_id: testClerkOrgId(organizationId),
 	} as Parameters<typeof t.withIdentity>[0]);
 }
 
@@ -103,12 +106,14 @@ async function seedMessageForRecipient(
 			channel: opts.recipient,
 			content: opts.content,
 			tenantId: opts.tenantId,
+			tenantOrgId: testClerkOrgId(opts.tenantId),
 			createdAt: Date.now(),
 		});
 		await ctx.db.insert("messageReceipts", {
 			messageId,
 			recipient: opts.recipient,
 			tenantId: opts.tenantId,
+			tenantOrgId: testClerkOrgId(opts.tenantId),
 			readAt: undefined,
 		});
 	});

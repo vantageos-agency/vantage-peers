@@ -45,6 +45,7 @@ import { api } from "../_generated/api";
 import type { Id } from "../_generated/dataModel";
 import schema from "../schema";
 import { agentIdOf } from "../../tests/lib/agentIdOf";
+import { testClerkOrgId } from "../../tests/fixtures/testClerkOrgId";
 
 const modules = Object.fromEntries(
 	Object.entries(import.meta.glob("../**/*.ts")).filter(
@@ -62,6 +63,7 @@ function createT(): ReturnType<typeof convexTest> {
 const orgAdminIdentity = (org: string) => ({
 	subject: `admin-of-${org}`,
 	org_slug: org,
+	org_id: testClerkOrgId(org),
 	org_role: "org:admin",
 });
 
@@ -77,6 +79,7 @@ async function seedOrgMapping(t: ReturnType<typeof createT>, clerkOrgSlug: strin
 	await t.run(async (ctx) => {
 		await ctx.db.insert("client_org_mapping", {
 			clerkOrgSlug,
+			clerkOrgId: testClerkOrgId(clerkOrgSlug),
 			allowedOrchestrators: ["b", "c", "recipient-role"],
 			scopes: ["view-own-tasks"],
 			displayName: clerkOrgSlug,
@@ -674,6 +677,7 @@ function asOrgCaller(t: ReturnType<typeof createT>, org: string, subject: string
 	return t.withIdentity({
 		subject,
 		organizationId: org,
+		org_id: testClerkOrgId(org),
 	} as Parameters<typeof t.withIdentity>[0]);
 }
 

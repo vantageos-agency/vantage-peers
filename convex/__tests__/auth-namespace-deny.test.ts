@@ -13,6 +13,7 @@
 
 import { convexTest } from "convex-test";
 import { describe, expect, test } from "vitest";
+import { testClerkOrgId } from "../../tests/fixtures/testClerkOrgId";
 import { api } from "../_generated/api";
 import schema from "../schema";
 
@@ -36,6 +37,7 @@ async function seedOrgMapping(
 	await t.run(async (ctx) => {
 		await ctx.db.insert("client_org_mapping", {
 			clerkOrgSlug,
+			clerkOrgId: testClerkOrgId(clerkOrgSlug),
 			allowedOrchestrators: ["sigma"],
 			scopes: ["view-own-tasks"],
 			displayName: clerkOrgSlug,
@@ -73,6 +75,7 @@ describe("AUTH_NAMESPACE_DENIED — listMemoriesScoped cross-tenant read", () =>
 		const tA = t.withIdentity({
 			subject: "user-org-a",
 			organizationId: "org-a",
+			org_id: testClerkOrgId("org-a"),
 		} as Parameters<typeof t.withIdentity>[0]);
 
 		await expect(
@@ -102,6 +105,7 @@ describe("AUTH_NAMESPACE_DENIED — listMemoriesScoped cross-tenant read", () =>
 		const tA = t.withIdentity({
 			subject: "user-org-a",
 			organizationId: "org-a",
+			org_id: testClerkOrgId("org-a"),
 		} as Parameters<typeof t.withIdentity>[0]);
 
 		const results = await tA.query(api.memoriesScoped.listMemoriesScoped, {
@@ -163,6 +167,7 @@ describe("AUTH_NAMESPACE_DENIED — listMemoriesScoped cross-tenant read", () =>
 		const tA = t.withIdentity({
 			subject: "user-org-a",
 			organizationId: "org-a",
+			org_id: testClerkOrgId("org-a"),
 		} as Parameters<typeof t.withIdentity>[0]);
 
 		await expect(
@@ -179,6 +184,7 @@ describe("AUTH_NAMESPACE_DENIED — listMemoriesScoped cross-tenant read", () =>
 		const tUnknown = t.withIdentity({
 			subject: "user-unknown",
 			organizationId: "unregistered-org",
+			org_id: testClerkOrgId("unregistered-org"),
 		} as Parameters<typeof t.withIdentity>[0]);
 
 		await expect(
@@ -202,6 +208,7 @@ describe("AUTH_NAMESPACE_DENIED — storeMemoryScoped cross-tenant write", () =>
 		const tA = t.withIdentity({
 			subject: "user-org-a",
 			organizationId: "org-a",
+			org_id: testClerkOrgId("org-a"),
 		} as Parameters<typeof t.withIdentity>[0]);
 
 		await expect(
@@ -221,6 +228,7 @@ describe("AUTH_NAMESPACE_DENIED — storeMemoryScoped cross-tenant write", () =>
 		const tA = t.withIdentity({
 			subject: "user-org-a",
 			organizationId: "org-a",
+			org_id: testClerkOrgId("org-a"),
 		} as Parameters<typeof t.withIdentity>[0]);
 
 		const id = await tA.mutation(api.memoriesScoped.storeMemoryScoped, {
@@ -240,6 +248,7 @@ describe("AUTH_NAMESPACE_DENIED — storeMemoryScoped cross-tenant write", () =>
 		const tA = t.withIdentity({
 			subject: "user-org-a",
 			organizationId: "org-a",
+			org_id: testClerkOrgId("org-a"),
 		} as Parameters<typeof t.withIdentity>[0]);
 
 		await expect(

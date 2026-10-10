@@ -4,6 +4,7 @@ import { describe, expect, test } from "vitest";
 import { api, internal } from "../_generated/api";
 import schema from "../schema";
 import { filterByOrgScope, requireScope, type OrgScope } from "./auth";
+import { testClerkOrgId } from "../../tests/fixtures/testClerkOrgId";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Module loader — same exclusion pattern as the rest of the test suite
@@ -39,6 +40,7 @@ async function seedOrgMapping(
 	await t.run(async (ctx) => {
 		await ctx.db.insert("client_org_mapping", {
 			clerkOrgSlug: opts.clerkOrgSlug,
+			clerkOrgId: testClerkOrgId(opts.clerkOrgSlug),
 			allowedOrchestrators: opts.allowedOrchestrators ?? ["victor"],
 			scopes: opts.scopes ?? [
 				"view-own-tasks",
@@ -214,6 +216,7 @@ describe("withOrgScope — normal org-scoped identity unaffected", () => {
 		const tSeed = t.withIdentity({
 			subject: "user-nadia-2",
 			organizationSlug: "acme-hr",
+			org_id: testClerkOrgId("acme-hr"),
 		} as Parameters<typeof t.withIdentity>[0]);
 		await tSeed.mutation(api.tasks.create, {
 			title: "victor task",
@@ -236,6 +239,7 @@ describe("withOrgScope — normal org-scoped identity unaffected", () => {
 				priority: "medium",
 				createdBy: "victor",
 				orgId: "acme-hr",
+				clerkOrgId: testClerkOrgId("acme-hr"),
 				createdAt: Date.now(),
 				updatedAt: Date.now(),
 			}),
@@ -259,6 +263,7 @@ describe("withOrgScope — org not in mapping", () => {
 		const tWithAuth = t.withIdentity({
 			subject: "user-unknown-org",
 			organizationSlug: "unknown-org",
+			org_id: testClerkOrgId("unknown-org"),
 		} as Parameters<typeof t.withIdentity>[0]);
 
 		await expect(tWithAuth.query(api.tasks.list, {})).rejects.toThrow(
@@ -288,6 +293,7 @@ describe("withOrgScope — active org mapping", () => {
 		const tWithAuth = t.withIdentity({
 			subject: "user-nadia",
 			organizationSlug: "acme-hr",
+			org_id: testClerkOrgId("acme-hr"),
 		} as Parameters<typeof t.withIdentity>[0]);
 		await tWithAuth.mutation(api.tasks.create, {
 			title: "victor task",
@@ -309,6 +315,7 @@ describe("withOrgScope — active org mapping", () => {
 				priority: "medium",
 				createdBy: "victor",
 				orgId: "acme-hr",
+				clerkOrgId: testClerkOrgId("acme-hr"),
 				createdAt: Date.now(),
 				updatedAt: Date.now(),
 			}),
@@ -336,6 +343,7 @@ describe("withOrgScope — inactive org mapping", () => {
 		const tWithAuth = t.withIdentity({
 			subject: "user-disabled",
 			organizationSlug: "disabled-org",
+			org_id: testClerkOrgId("disabled-org"),
 		} as Parameters<typeof t.withIdentity>[0]);
 
 		await expect(tWithAuth.query(api.tasks.list, {})).rejects.toThrow(
@@ -362,6 +370,7 @@ describe("filterByOrgScope", () => {
 	const irisRhScope: OrgScope = {
 		userId: "user-nadia",
 		orgSlug: "acme-hr",
+		orgClerkId: testClerkOrgId("acme-hr"),
 		allowedOrchestrators: ["victor"],
 		allowedAgentIds: [],
 		fleetWide: false,
@@ -369,14 +378,18 @@ describe("filterByOrgScope", () => {
 		isMaster: false,
 	};
 
+	// A row is its org's by the permanent org ID (M4: no label fallback), so each
+	// fixture carries the org's ID next to its slug.
+	const ACME_ID = testClerkOrgId("acme-hr");
+
 	// Every record states its TENANT. `filterByOrgScope` now applies the tenant
 	// gate BEFORE the roster, so a fixture with no `orgId` is invisible to any
 	// org-scoped caller — see the dedicated tenant-gate tests at the end of this
 	// describe, which pin exactly that.
 	const records = [
-		{ _id: "t1" as const, orgId: "acme-hr", assignedTo: "victor", title: "A" },
-		{ _id: "t2" as const, orgId: "acme-hr", assignedTo: "kappa", title: "B" },
-		{ _id: "t3" as const, orgId: "acme-hr", assignedTo: "sigma", title: "C" },
+		{ _id: "t1" as const, orgId: "acme-hr", clerkOrgId: ACME_ID, assignedTo: "victor", title: "A" },
+		{ _id: "t2" as const, orgId: "acme-hr", clerkOrgId: ACME_ID, assignedTo: "kappa", title: "B" },
+		{ _id: "t3" as const, orgId: "acme-hr", clerkOrgId: ACME_ID, assignedTo: "sigma", title: "C" },
 	];
 
 	// Test 6
@@ -395,8 +408,8 @@ describe("filterByOrgScope", () => {
 
 	test("pilot field takes precedence when assignedTo is absent", () => {
 		const missionRecords = [
-			{ _id: "m1", orgId: "acme-hr", pilot: "victor", name: "Mission V" },
-			{ _id: "m2", orgId: "acme-hr", pilot: "kappa", name: "Mission K" },
+			{ _id: "m1", orgId: "acme-hr", clerkOrgId: ACME_ID, pilot: "victor", name: "Mission V" },
+			{ _id: "m2", orgId: "acme-hr", clerkOrgId: ACME_ID, pilot: "kappa", name: "Mission K" },
 		];
 		const result = filterByOrgScope(missionRecords, irisRhScope);
 		expect(result).toHaveLength(1);
@@ -405,8 +418,8 @@ describe("filterByOrgScope", () => {
 
 	test("record with no pilot and no assignedTo is excluded for non-master scope", () => {
 		const mixed = [
-			{ _id: "x1", orgId: "acme-hr", title: "no owner" }, // no pilot/assignedTo
-			{ _id: "x2", orgId: "acme-hr", assignedTo: "victor", title: "victor item" },
+			{ _id: "x1", orgId: "acme-hr", clerkOrgId: ACME_ID, title: "no owner" }, // no pilot/assignedTo
+			{ _id: "x2", orgId: "acme-hr", clerkOrgId: ACME_ID, assignedTo: "victor", title: "victor item" },
 		];
 		const result = filterByOrgScope(mixed, irisRhScope);
 		expect(result).toHaveLength(1);
@@ -421,7 +434,7 @@ describe("filterByOrgScope", () => {
 	test("TENANT GATE — a record of ANOTHER org is refused even when the roster admits its orchestrator", () => {
 		// "victor" IS in acme-hr's roster. The row belongs to globex-hr.
 		const foreign = [
-			{ _id: "f1", orgId: "globex-hr", assignedTo: "victor", title: "theirs" },
+			{ _id: "f1", orgId: "globex-hr", clerkOrgId: testClerkOrgId("globex-hr"), assignedTo: "victor", title: "theirs" },
 		];
 		expect(filterByOrgScope(foreign, irisRhScope)).toHaveLength(0);
 	});

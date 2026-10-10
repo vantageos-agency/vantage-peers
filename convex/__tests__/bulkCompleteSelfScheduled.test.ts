@@ -25,6 +25,7 @@
 
 import { convexTest } from "convex-test";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
+import { testClerkOrgId } from "../../tests/fixtures/testClerkOrgId";
 import { api } from "../_generated/api";
 import schema from "../schema";
 
@@ -49,6 +50,7 @@ const asMember = (t: T, orgSlug: string) =>
 	t.withIdentity({
 		subject: `member-of-${orgSlug}`,
 		organizationId: orgSlug,
+		org_id: testClerkOrgId(orgSlug),
 		organizationSlug: orgSlug,
 	} as Identity);
 
@@ -56,6 +58,7 @@ async function seedOrg(t: T, slug: string, roster: string[]) {
 	await t.run(async (ctx) => {
 		await ctx.db.insert("client_org_mapping", {
 			clerkOrgSlug: slug,
+			clerkOrgId: testClerkOrgId(slug),
 			allowedOrchestrators: roster,
 			scopes: ["view-own-tasks"],
 			displayName: slug,
@@ -89,7 +92,7 @@ async function seedRows(
 				createdBy: o.createdBy,
 				priority: "low",
 				status: "todo",
-				...(o.orgId === undefined ? {} : { orgId: o.orgId }),
+				...(o.orgId === undefined ? {} : { orgId: o.orgId, clerkOrgId: testClerkOrgId(o.orgId) }),
 				...(o.project === undefined ? {} : { project: o.project }),
 				createdAt: now,
 				updatedAt: now,
@@ -447,6 +450,7 @@ describe("tasks.bulkComplete — self-scheduled continuation (R-31)", () => {
 		await t.run(async (ctx) => {
 			await ctx.db.insert("client_org_mapping", {
 				clerkOrgSlug: "off-org",
+				clerkOrgId: testClerkOrgId("off-org"),
 				allowedOrchestrators: ["sigma"],
 				scopes: ["view-own-tasks"],
 				displayName: "off",

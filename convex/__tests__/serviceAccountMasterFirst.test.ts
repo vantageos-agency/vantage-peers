@@ -22,6 +22,7 @@
 import { ConvexError } from "convex/values";
 import { convexTest } from "convex-test";
 import { afterEach, describe, expect, test, vi } from "vitest";
+import { testClerkOrgId } from "../../tests/fixtures/testClerkOrgId";
 import { api } from "../_generated/api";
 import schema from "../schema";
 
@@ -46,6 +47,7 @@ async function seed(t: T) {
 	await t.run(async (ctx) => {
 		await ctx.db.insert("client_org_mapping", {
 			clerkOrgSlug: ORG,
+			clerkOrgId: testClerkOrgId(ORG),
 			allowedOrchestrators: ["sigma"],
 			scopes: ["view-own-tasks"],
 			displayName: ORG,
@@ -91,6 +93,7 @@ describe("service account is master by subject, regardless of org claims", () =>
 		const c = as(t, {
 			subject: SERVICE_ACCOUNT_USER_ID,
 			org_slug: ORG,
+			org_id: testClerkOrgId(ORG),
 			org_role: "org:admin",
 		});
 		expect(await read(c)).toEqual([]);
@@ -102,6 +105,7 @@ describe("service account is master by subject, regardless of org claims", () =>
 		const c = as(t, {
 			subject: SERVICE_ACCOUNT_USER_ID,
 			organizationSlug: ORG,
+			org_id: testClerkOrgId(ORG),
 		});
 		expect(await read(c)).toEqual([]);
 	});
@@ -112,6 +116,7 @@ describe("service account is master by subject, regardless of org claims", () =>
 		const c = as(t, {
 			subject: SERVICE_ACCOUNT_USER_ID,
 			org_slug: "unmapped-org",
+			org_id: testClerkOrgId("unmapped-org"),
 		});
 		expect(await read(c)).toEqual([]);
 	});
@@ -122,6 +127,7 @@ describe("service account is master by subject, regardless of org claims", () =>
 		const c = as(t, {
 			subject: OTHER_SUBJECT,
 			org_slug: ORG,
+			org_id: testClerkOrgId(ORG),
 			org_role: "org:admin",
 			organizationSlug: ORG,
 		});
@@ -134,6 +140,7 @@ describe("service account is master by subject, regardless of org claims", () =>
 		const c = as(t, {
 			subject: OTHER_SUBJECT,
 			org_slug: ORG,
+			org_id: testClerkOrgId(ORG),
 			org_role: "org:admin",
 		});
 		let caught: unknown;
@@ -176,7 +183,13 @@ describe("service account is master by subject, regardless of org claims", () =>
 			await seed(t);
 			await expectRefused(read(as(t, { subject: SERVICE_ACCOUNT_USER_ID })));
 			await expectRefused(
-				read(as(t, { subject: SERVICE_ACCOUNT_USER_ID, org_slug: ORG })),
+				read(
+					as(t, {
+						subject: SERVICE_ACCOUNT_USER_ID,
+						org_slug: ORG,
+						org_id: testClerkOrgId(ORG),
+					}),
+				),
 			);
 		} finally {
 			if (saved !== undefined) {
@@ -189,7 +202,9 @@ describe("service account is master by subject, regardless of org claims", () =>
 		vi.stubEnv("CLERK_SERVICE_ACCOUNT_USER_ID", "");
 		const t = createT();
 		await seed(t);
-		await expectRefused(read(as(t, { subject: "", org_slug: ORG })));
+		await expectRefused(
+			read(as(t, { subject: "", org_slug: ORG, org_id: testClerkOrgId(ORG) })),
+		);
 		await expectRefused(read(as(t, { subject: OTHER_SUBJECT })));
 	});
 });

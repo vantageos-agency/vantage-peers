@@ -19,6 +19,7 @@
 
 import { convexTest } from "convex-test";
 import { describe, expect, test } from "vitest";
+import { testClerkOrgId } from "../../tests/fixtures/testClerkOrgId";
 import { api } from "../_generated/api";
 import schema from "../schema";
 
@@ -219,6 +220,7 @@ describe("briefingNotes.searchBriefingNotesByKeyword — participant visibility 
 		await t.run(async (ctx) => {
 			await ctx.db.insert("client_org_mapping", {
 				clerkOrgSlug: "acme-hr",
+				clerkOrgId: testClerkOrgId("acme-hr"),
 				allowedOrchestrators: ["prometheus"],
 				scopes: ["view-own-tasks"],
 				displayName: "acme-hr",
@@ -235,6 +237,7 @@ describe("briefingNotes.searchBriefingNotesByKeyword — participant visibility 
 				createdBy: "pi",
 				createdAt: Date.now(),
 				orgId: "acme-hr",
+				clerkOrgId: testClerkOrgId("acme-hr"),
 			});
 			await ctx.db.insert("briefingNoteParticipants", {
 				noteId: id,
@@ -246,6 +249,7 @@ describe("briefingNotes.searchBriefingNotesByKeyword — participant visibility 
 		const tScoped = t.withIdentity({
 			subject: "user-prometheus",
 			organizationId: "acme-hr",
+			org_id: testClerkOrgId("acme-hr"),
 		} as Parameters<typeof t.withIdentity>[0]);
 
 		const results = await tScoped.query(

@@ -782,6 +782,9 @@ async function resolveSeatRecipientScope(
 	return {
 		userId: transportScope.userId,
 		orgSlug: seatOrgSlug,
+		// The org's permanent ID, from the mapping row resolved above, so row
+		// ownership compares IDs (M4: no label fallback on a row compare).
+		...(mapping.clerkOrgId !== undefined ? { orgClerkId: mapping.clerkOrgId } : {}),
 		allowedOrchestrators: mapping.allowedOrchestrators,
 		allowedAgentIds: mapping.allowedAgentIds ?? [],
 		fleetWide: false,

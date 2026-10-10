@@ -20,6 +20,7 @@
 
 import { convexTest } from "convex-test";
 import { describe, expect, test } from "vitest";
+import { testClerkOrgId } from "../../tests/fixtures/testClerkOrgId";
 import { api } from "../_generated/api";
 import type { Id } from "../_generated/dataModel";
 import schema from "../schema";
@@ -38,6 +39,7 @@ const adminOf = (t: T, org: string) =>
 	t.withIdentity({
 		subject: `admin-of-${org}`,
 		org_slug: org,
+		org_id: testClerkOrgId(org),
 		org_role: "org:admin",
 	} as Identity);
 
@@ -45,6 +47,7 @@ const memberOf = (t: T, org: string) =>
 	t.withIdentity({
 		subject: `member-of-${org}`,
 		org_slug: org,
+		org_id: testClerkOrgId(org),
 		org_role: "org:member",
 	} as Identity);
 
@@ -55,6 +58,7 @@ async function seedOrg(t: T, slug: string, roster: string[] = ["ada"]) {
 	await t.run((ctx) =>
 		ctx.db.insert("client_org_mapping", {
 			clerkOrgSlug: slug,
+			clerkOrgId: testClerkOrgId(slug),
 			allowedOrchestrators: roster,
 			scopes: ["view-own-tasks"],
 			displayName: slug,
@@ -92,6 +96,7 @@ async function deletedAgentId(t: T): Promise<Id<"agents">> {
 	return await t.run(async (ctx) => {
 		const id = await ctx.db.insert("agents", {
 			orgSlug: "org-a",
+			clerkOrgId: testClerkOrgId("org-a"),
 			name: "ghost",
 			normalizedName: "ghost",
 			isActive: true,
