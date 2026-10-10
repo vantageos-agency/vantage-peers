@@ -190,6 +190,7 @@ function byParent(
 	parentOwn: Verdict,
 ): Verdict {
 	if (stamp !== undefined) {
+		// allow-local-identity: offline backfill compares stored data against data; there is no caller
 		return stamp === r.operatorSlug
 			? { kind: "fleet" }
 			: { kind: "org", orgId: stamp };

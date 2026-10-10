@@ -12,6 +12,9 @@ Two poles:
      factory that hands cleanup to the caller (mkdtemp, mkstemp, gettempdir,
      NamedTemporaryFile/TemporaryDirectory with a falsy delete= constant),
      under any import alias. Use tmp_path, or TemporaryDirectory.
+
+Not seen by the static guard: a late reference to a factory (assigned, then called later),
+`delete=not True` (a non-constant expression), and a literal "/tmp" path.
 """
 import ast
 import os

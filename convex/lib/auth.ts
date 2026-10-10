@@ -847,6 +847,7 @@ export async function requireOperatorAdminToCreateOrg(
 	};
 	const v = await resolveOperatorAdmin(ctx);
 	if (!v.ok) return deny(v.reason, v.detail);
+	// allow-local-identity: naming-collision guard on a not-yet-existing org; no ID exists and the caller is already resolved by resolveOperatorAdmin
 	if (v.operatorOrgSlug === targetOrgSlug) {
 		return deny(
 			"slug-is-operator-org",
