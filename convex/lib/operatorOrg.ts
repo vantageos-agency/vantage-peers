@@ -3,13 +3,18 @@
 // mapping row's kind, so a renamed or re-provisioned operator org needs no code
 // change. Fleet-owned rows are stamped with this org's `clerkOrgSlug`
 // (RULING 4, task k174d95s5qqy8t2r5rdrz3pr3d8fqv82). A slug stamp is a LABEL.
-// Tenant EQUALITY is decided by the permanent Clerk org id (`clerkOrgId`) the row
-// and the operator mapping both carry; the slug is compared only while either
-// side has no id yet (expand phase, until backfill_org_clerk_id reports 0
-// remaining). See `sameTenantStamp`.
+//
+// WHICH org is the operator, and whether a stamp is the fleet's, are decided by
+// @vantageos/cloud-identity (`findOperatorOrg`, `isFleetStamp`,
+// `sameTenantStamp`). This module only hands the package its rows (see
+// ./authOrgMapping) and keeps the shape its callers read.
 
+import {
+	type OrgRef,
+	findOperatorOrg as packageFindOperatorOrg,
+} from "@vantageos/cloud-identity";
 import type { DatabaseReader } from "../_generated/server";
-import { type OrgKey, sameOrgKey } from "./auth";
+import { orgMappingLookups } from "./authOrgMapping";
 
 export const OPERATOR_MAPPING_READ_CAP = 1000;
 
@@ -17,31 +22,28 @@ export type OperatorOrg =
 	| { kind: "one"; slug: string; clerkOrgId?: string }
 	| { kind: "none" }
 	| { kind: "many"; count: number }
-	| { kind: "overCap" };
+	| { kind: "overCap" }
+	| { kind: "unreadable" };
 
 export async function findOperatorOrg(
 	db: DatabaseReader,
 ): Promise<OperatorOrg> {
-	// read-bound: ACTIVE mappings only, capped; a read over the cap is never
-	// decided from (fail closed).
-	const active = await db
-		.query("client_org_mapping")
-		.withIndex("by_isActive", (q) => q.eq("isActive", true))
-		.take(OPERATOR_MAPPING_READ_CAP + 1);
-	if (active.length > OPERATOR_MAPPING_READ_CAP) return { kind: "overCap" };
-	const operators = active.filter((m) => m.orgKind === "operator");
-	if (operators.length === 1) {
+	// read-bound: ACTIVE mappings only, capped; a read over the cap, an unreadable
+	// store and a malformed row are never decided from (the package answers
+	// `overCap` / `unreadable`, and nothing here widens from either).
+	const op = await packageFindOperatorOrg(orgMappingLookups({ db }), {
+		cap: OPERATOR_MAPPING_READ_CAP,
+	});
+	if (op.kind === "one") {
 		return {
 			kind: "one",
-			slug: operators[0].clerkOrgSlug,
-			...(operators[0].clerkOrgId !== undefined
-				? { clerkOrgId: operators[0].clerkOrgId }
-				: {}),
+			slug: op.org.label,
+			...(op.org.id !== undefined ? { clerkOrgId: op.org.id } : {}),
 		};
 	}
-	return operators.length === 0
-		? { kind: "none" }
-		: { kind: "many", count: operators.length };
+	if (op.kind === "many") return { kind: "many", count: op.count };
+	if (op.kind === "none") return { kind: "none" };
+	return op.kind === "overCap" ? { kind: "overCap" } : { kind: "unreadable" };
 }
 
 // RULING 4: the FLEET's tenant is {unstamped, operator-stamped}. A master write
@@ -57,57 +59,11 @@ export async function fleetOperatorSlug(
 	return op.kind === "one" ? op.slug : undefined;
 }
 
-/** The operator org as a tenant reference: its current slug and its permanent id. */
-export type OperatorRef = { slug: string; clerkOrgId?: string };
-
-/** A row's (or a caller's) tenant stamp: the slug label and the permanent org id. */
-export type OrgStamp = OrgKey;
-
-/** The stamp of a resolved caller scope. */
-export function stampOfScope(scope: {
-	orgSlug: string | null;
-	orgClerkId?: string;
-}): OrgStamp {
-	return {
-		...(scope.orgSlug !== null ? { orgId: scope.orgSlug } : {}),
-		...(scope.orgClerkId !== undefined ? { clerkOrgId: scope.orgClerkId } : {}),
-	};
-}
-
-/** The operator org as a tenant reference, only when EXACTLY ONE active one exists. */
+/** The operator org as the package names it, only when EXACTLY ONE active one exists. */
 export async function fleetOperatorRef(
 	db: DatabaseReader,
-): Promise<OperatorRef | undefined> {
+): Promise<OrgRef | undefined> {
 	const op = await findOperatorOrg(db);
 	if (op.kind !== "one") return undefined;
-	return {
-		slug: op.slug,
-		...(op.clerkOrgId !== undefined ? { clerkOrgId: op.clerkOrgId } : {}),
-	};
-}
-
-/** Is this stamp the fleet's: unstamped, or the operator org's (by id, else slug)? */
-export function isFleetStamp(
-	stamp: OrgStamp,
-	operator: OperatorRef | undefined,
-): boolean {
-	if (stamp.orgId === undefined && stamp.clerkOrgId === undefined) return true;
-	return operator !== undefined && sameOrgKey(stamp, {
-		orgId: operator.slug,
-		clerkOrgId: operator.clerkOrgId,
-	});
-}
-
-/**
- * Do two stamps name the same tenant: the same org (by id when both carry one,
- * else by slug), or both the fleet's? Two ids that differ are two tenants even
- * when the slugs are equal (a slug a renamed org freed and another took).
- */
-export function sameTenantStamp(
-	a: OrgStamp,
-	b: OrgStamp,
-	operator: OperatorRef | undefined,
-): boolean {
-	if (isFleetStamp(a, operator) && isFleetStamp(b, operator)) return true;
-	return sameOrgKey(a, b);
+	return { id: op.clerkOrgId, label: op.slug };
 }

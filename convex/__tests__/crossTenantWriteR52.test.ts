@@ -22,11 +22,13 @@
 // rosters on purpose: the roster check alone cannot tell the two tenants
 // apart, which is exactly the gap the row stamp closes.
 
+import { isFleetStamp, sameTenantStamp } from "@vantageos/cloud-identity";
 import { convexTest } from "convex-test";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import { api, internal } from "../_generated/api";
 import type { Id } from "../_generated/dataModel";
-import { fleetOperatorSlug, isFleetStamp, sameTenantStamp } from "../lib/operatorOrg";
+import { fleetOperatorSlug } from "../lib/operatorOrg";
+import { ORG_KEY_OPTIONS } from "../lib/authOrgMapping";
 import schema from "../schema";
 
 const modules = Object.fromEntries(
@@ -600,9 +602,9 @@ describe("fleetOperatorSlug fails closed — R-52 follow-up", () => {
 	});
 
 	test("with 2 operators, no operator slug widens: only the unstamped stamp is the fleet's", () => {
-		expect(isFleetStamp({ orgId: "op-1" }, undefined)).toBe(false);
+		expect(isFleetStamp({ label: "op-1" }, undefined, ORG_KEY_OPTIONS)).toBe(false);
 		expect(isFleetStamp({}, undefined)).toBe(true);
-		expect(sameTenantStamp({ orgId: "op-1" }, {}, undefined)).toBe(false);
+		expect(sameTenantStamp({ label: "op-1" }, {}, undefined, ORG_KEY_OPTIONS)).toBe(false);
 	});
 
 	test("with 2 active operators a master get does not read an operator-stamped row", async () => {

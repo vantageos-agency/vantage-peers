@@ -1,3 +1,4 @@
+import { isFleetStamp, sameOrg, sameTenantStamp } from "@vantageos/cloud-identity";
 import { v } from "convex/values";
 import { ConvexError } from "convex/values";
 import { paginationOptsValidator } from "convex/server";
@@ -16,7 +17,6 @@ import {
 	requireScope,
 	withOrgScope,
 	requireOrchestratorOnRoster,
-	sameOrgKey,
 } from "./lib/auth";
 import type { OrgScope, VerifiedActor } from "./lib/auth";
 import { requireId } from "./lib/ids";
@@ -57,7 +57,8 @@ import {
 	resolveReviewer,
 } from "./lib/reviewRouting";
 import { isFleetSystemCaller } from "./lib/systemCaller";
-import { fleetOperatorRef, sameTenantStamp } from "./lib/operatorOrg";
+import { fleetOperatorRef } from "./lib/operatorOrg";
+import { ORG_KEY_OPTIONS, orgRefOfRow } from "./lib/authOrgMapping";
 import {
 	enforceClosureGate,
 	closeTrailingSegmentOnExit,
@@ -2631,7 +2632,8 @@ export const complete = mutation({
 			// row is the fleet's (unstamped) or the task's own org's, never another's.
 			if (
 				repoMapping &&
-				(isFleetMapping(repoMapping) || sameOrgKey(repoMapping, task))
+				(isFleetStamp(orgRefOfRow(repoMapping), undefined) ||
+					sameOrg(orgRefOfRow(repoMapping), orgRefOfRow(task), ORG_KEY_OPTIONS))
 			) {
 				const dateStr = new Date().toISOString().split("T")[0];
 				const orch = task.assignedTo;
@@ -2659,7 +2661,7 @@ export const complete = mutation({
 				// fixPatterns and its RAG entry are a GLOBAL fleet corpus with no
 				// tenant column: only a FLEET mapping may feed it. A client org's own
 				// repo still gets the GitHub comment above, never a row here.
-				if (stepNumber === 7 && args.completionNote && isFleetMapping(repoMapping)) {
+				if (stepNumber === 7 && args.completionNote && isFleetStamp(orgRefOfRow(repoMapping), undefined)) {
 					const note = args.completionNote;
 
 					// Parse structured completionNote: "Root cause: ... Fix: ... Files: ..."
@@ -2750,7 +2752,12 @@ export const complete = mutation({
 				// fleet mission is left untouched; the task completion is not refused.
 				if (
 					mission &&
-					sameTenantStamp(mission, task, await fleetOperatorRef(ctx.db)) &&
+					sameTenantStamp(
+						orgRefOfRow(mission),
+						orgRefOfRow(task),
+						await fleetOperatorRef(ctx.db),
+						ORG_KEY_OPTIONS,
+					) &&
 					mission.status !== "complete"
 				) {
 					await ctx.db.patch(task.missionId, {
@@ -3731,10 +3738,6 @@ export const REPO_MAPPING_PER_PROJECT_SCAN_CAP = 200;
  * the audience of the task's own server-stamped orgId (fleet task: fleet rows;
  * operator-org task: fleet + own rows; client-org task: own rows only).
  */
-function isFleetMapping(row: Pick<Doc<"githubRepoMapping">, "orgId" | "clerkOrgId">): boolean {
-	return row.orgId === undefined && row.clerkOrgId === undefined;
-}
-
 async function resolveRepoMappingForTask(
 	ctx: MutationCtx,
 	task: Doc<"tasks">,

@@ -1,15 +1,12 @@
+import { sameTenantStamp } from "@vantageos/cloud-identity";
 import { v, ConvexError } from "convex/values";
 import type { Doc } from "./_generated/dataModel";
 import { mutation, query, type QueryCtx } from "./_generated/server";
 import { creatorValidator } from "./schema";
 import { requireResolvedCaller, withOrgScope, type OrgScope } from "./lib/auth";
 import { isFleetSystemCaller } from "./lib/systemCaller";
-import {
-	fleetOperatorRef,
-	fleetOperatorSlug,
-	sameTenantStamp,
-	stampOfScope,
-} from "./lib/operatorOrg";
+import { fleetOperatorRef, fleetOperatorSlug } from "./lib/operatorOrg";
+import { ORG_KEY_OPTIONS, orgRefOfRow, orgRefOfScope } from "./lib/authOrgMapping";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Org-scope orchestrator enforcement (same defect class as
@@ -160,7 +157,12 @@ export const write = mutation({
 			// bound to the row's server-stamped tenant. Master is unchanged.
 			if (
 				!scope.isMaster &&
-				!sameTenantStamp(existing, stampOfScope(scope), await fleetOperatorRef(ctx.db))
+				!sameTenantStamp(
+					orgRefOfRow(existing),
+					orgRefOfScope(scope),
+					await fleetOperatorRef(ctx.db),
+					ORG_KEY_OPTIONS,
+				)
 			) {
 				throw new ConvexError(
 					`RBAC_DENIED: caller may not write diary entry ${existing._id} (orchestrator "${args.orchestrator}") — ${JSON.stringify({ orgSlug: scope.orgSlug, reason: "row-not-in-caller-org" })}`,
@@ -437,7 +439,12 @@ export const deleteDiary = mutation({
 		// roster check below keys on a name another organisation may also hold.
 		if (
 			!scope.isMaster &&
-			!sameTenantStamp(entry, stampOfScope(scope), await fleetOperatorRef(ctx.db))
+			!sameTenantStamp(
+				orgRefOfRow(entry),
+				orgRefOfScope(scope),
+				await fleetOperatorRef(ctx.db),
+				ORG_KEY_OPTIONS,
+			)
 		) {
 			throw new ConvexError(
 				`RBAC_DENIED: caller may not delete diary entry ${args.diaryId} — ${JSON.stringify({ orgSlug: scope.orgSlug, reason: "row-not-in-caller-org" })}`,

@@ -131,7 +131,9 @@ async function loadResolver(db: DatabaseReader): Promise<Resolver> {
 		throw new ConvexError(
 			operator.kind === "overCap"
 				? "backfill_org_stamp: active client_org_mapping rows exceed the read cap; refusing to derive the operator org from a truncated read."
-				: `backfill_org_stamp: expected exactly one active operator organisation (orgKind "operator"), found ${operator.kind === "none" ? 0 : operator.count}; refusing the run.`,
+				: operator.kind === "unreadable"
+					? "backfill_org_stamp: the active client_org_mapping rows could not be read or are malformed; refusing to derive the operator org."
+					: `backfill_org_stamp: expected exactly one active operator organisation (orgKind "operator"), found ${operator.kind === "none" ? 0 : operator.count}; refusing the run.`,
 		);
 	}
 	const kindBySlug = new Map<string, "operator" | "client">();

@@ -1,5 +1,6 @@
 import { v } from "convex/values";
 import { ConvexError } from "convex/values";
+import { sameOrg } from "@vantageos/cloud-identity";
 import { mutation, query, internalQuery, internalMutation } from "./_generated/server";
 import { api } from "./_generated/api";
 import {
@@ -16,9 +17,9 @@ import {
 	filterByOrgScope,
 	isRowVisibleToScope,
 	requireScope,
-	rowInScopeOrg,
 } from "./lib/auth";
 import type { OrgScope } from "./lib/auth";
+import { ORG_KEY_OPTIONS, orgRefOfRow, orgRefOfScope } from "./lib/authOrgMapping";
 import { isFleetSystemCaller } from "./lib/systemCaller";
 import { requireId } from "./lib/ids";
 import { resolveHumanActor } from "./lib/humanActor";
@@ -154,7 +155,7 @@ function isOrgAllowedForScope(
 ): boolean {
 	if (scope.isMaster) return true;
 	if (scope.orgSlug === null) return false;
-	return rowInScopeOrg(row, scope);
+	return sameOrg(orgRefOfRow(row), orgRefOfScope(scope), ORG_KEY_OPTIONS);
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

@@ -1,9 +1,25 @@
 import { QueryCtx, MutationCtx, internalQuery } from "../_generated/server";
 import type { Id } from "../_generated/dataModel";
 import { ConvexError, v } from "convex/values";
-import { requireTenantId, resolveTenantIdOrAbsent } from "@vantageos/cloud-identity";
+import {
+	requireTenantId,
+	resolveOrgFromClaim,
+	sameOrg,
+} from "@vantageos/cloud-identity";
 import { findAgentByName, resolveAgentOfPresentedSecret } from "./agentIdentity";
 import { normalizeOrchestratorId } from "../_helpers/normalizeOrchestratorId";
+import {
+	lookupOrgMapping,
+	ORG_KEY_OPTIONS,
+	orgMappingLookups,
+	orgRefOfRow,
+	orgRefOfScope,
+} from "./authOrgMapping";
+
+// The join onto `client_org_mapping` lives in ./authOrgMapping (storage only); it is
+// re-exported here because every door that reads a mapping imports it from auth.
+export { lookupOrgMapping };
+export type { OrgMappingView } from "./authOrgMapping";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // OrgScope — resolved auth + multi-tenant scope context
@@ -32,7 +48,7 @@ export interface OrgScope {
 	/**
 	 * The org's permanent Clerk org id (`client_org_mapping.clerkOrgId`), resolved
 	 * from the credential's own `org_id` claim. Rows belong to an organisation by
-	 * THIS value (see `rowInScopeOrg`). Absent only while the mapping row's id is
+	 * THIS value (see `sameOrg` in @vantageos/cloud-identity). Absent only while the mapping row's id is
 	 * not filled yet (expand phase) and on every non-member scope.
 	 */
 	orgClerkId?: string;
@@ -354,37 +370,25 @@ export async function withOrgScope(
 	}
 
 	// THE ORG COMES FROM THE CREDENTIAL'S OWN ID, not from the slug it happens to
-	// carry. A slug is a renamable label: after a rename the token can carry a slug
-	// the mapping row does not hold yet (or holds for ANOTHER org), so the slug
-	// alone resolves to no org or to the wrong one. When the credential carries the
-	// permanent `org_` id, that id selects the mapping row (`by_clerk_org_id`) and
-	// the slug claim is ignored. An id that names no mapping falls back to the slug
-	// ONLY while the slug's mapping has no id filled yet (expand phase); an id that
-	// CONTRADICTS a filled mapping is refused, never served.
-	const credentialOrgId = readCredentialOrgId(identity);
-	let mapping = await lookupOrgMapping(ctx, orgSlug);
-	let resolvedSlug: string = orgSlug;
-	if (credentialOrgId !== undefined) {
-		const byId = await lookupOrgMapping(ctx, { clerkOrgId: credentialOrgId });
-		if (byId !== null) {
-			mapping = byId;
-			resolvedSlug = byId.clerkOrgSlug;
-		} else if (
-			mapping !== null &&
-			mapping.clerkOrgId !== undefined &&
-			mapping.clerkOrgId !== credentialOrgId
-		) {
-			throw new ConvexError(
-				`RBAC_DENIED: the org id "${credentialOrgId}" of the credential is not the org "${orgSlug}" names — ${JSON.stringify({ orgSlug, reason: "org-id-contradicts-slug" })}`,
-			);
-		}
-	}
-
-	if (!mapping || !mapping.isActive) {
+	// carry, and that decision is @vantageos/cloud-identity's: the package reads the
+	// verified claims, selects the mapping row through the adapters below, and
+	// refuses (typed) on no org, an unknown or inactive org, a malformed row or an
+	// ID that contradicts the org the slug names. The slug fallback is the
+	// package's TRANSITIONAL option (ORG_KEY_OPTIONS) for mappings whose ID is not
+	// filled yet.
+	const resolved = await resolveOrgFromClaim(
+		identity as Record<string, unknown>,
+		orgMappingLookups(ctx),
+		{ ...ORG_KEY_OPTIONS, door: "withOrgScope" },
+	);
+	if (!resolved.ok) {
 		throw new ConvexError(
-			`RBAC_DENIED: Org "${orgSlug}" not in client_org_mapping or inactive — ${JSON.stringify({ orgSlug })}`,
+			resolved.refusal.reason === "org-id-contradicts-label"
+				? `RBAC_DENIED: the org id of the credential is not the org "${orgSlug}" names — ${JSON.stringify({ orgSlug, reason: "org-id-contradicts-slug" })}`
+				: `RBAC_DENIED: Org "${orgSlug}" not in client_org_mapping or inactive — ${JSON.stringify({ orgSlug, reason: resolved.refusal.reason })}`,
 		);
 	}
+	const org = resolved.org;
 
 	// OPERATOR ORG ADMIN -> FLEET MASTER FOR READS ONLY. The operator's own
 	// organisation is the row marked `orgKind: "operator"` (setOrgKind); its
@@ -403,7 +407,7 @@ export async function withOrgScope(
 	// rules with no per-door patch, and the service-account-only doors need only
 	// `isMcpBoundMaster` for the query side.
 	if (
-		mapping.orgKind === "operator" &&
+		org.orgKind === "operator" &&
 		readOrgRole(identity).role === "admin" &&
 		!opts?.operatorAsMember &&
 		isReadOnlyCtx(ctx)
@@ -429,12 +433,12 @@ export async function withOrgScope(
 	const memberRoleRaw = readOrgRole(identity).roleRaw;
 	return {
 		userId: identity.subject,
-		orgSlug: resolvedSlug,
-		...(mapping.clerkOrgId !== undefined ? { orgClerkId: mapping.clerkOrgId } : {}),
-		allowedOrchestrators: mapping.allowedOrchestrators,
-		allowedAgentIds: mapping.allowedAgentIds ?? [],
+		orgSlug: org.label,
+		...(org.id !== undefined ? { orgClerkId: org.id } : {}),
+		allowedOrchestrators: org.allowedOrchestrators,
+		allowedAgentIds: org.allowedAgentIds ?? [],
 		fleetWide: false,
-		scopes: mapping.scopes,
+		scopes: org.scopes,
 		// Pi ruling (PR #1224, decision b): a Clerk identity resolved through
 		// client_org_mapping NEVER mints the cross-tenant isMaster bypass from
 		// org membership — a `["*"]` mapping row keeps its stated roster
@@ -518,133 +522,6 @@ function readOrgRole(identity: object): {
 }
 
 /**
- * Shared org-mapping lookup — the SINGLE join point onto `client_org_mapping`
- * by `clerkOrgSlug` (the Clerk org id/slug, whichever Clerk's JWT template
- * populates onto the identity). Both `withOrgScope` above (Convex-side
- * `ctx.auth.getUserIdentity()` callers) and the public
- * `clientOrgMapping:getByClerkSlug` query (mcp-server/src/auth.ts's Path B —
- * the Clerk-JWT-as-bearer branch, which verifies the JWT itself against
- * Clerk's JWKS and therefore has no `ctx.auth` identity for Convex to
- * resolve) call this ONE function so the join logic is never duplicated
- * (task k17bf7bsfrm255x4pr5r96q5g58cw691 deliverable 1).
- *
- * Returns `null` when no row exists for `orgSlug`. Callers MUST fail closed
- * on both `null` AND `isActive === false` — this helper does not throw so
- * that read-only query callers can choose their own refusal shape.
- */
-export async function lookupOrgMapping(
-	ctx: QueryCtx | MutationCtx,
-	key: string | { clerkOrgId: string },
-): Promise<OrgMappingView | null> {
-	// ONE join point onto `client_org_mapping`, keyed either by the slug label
-	// (a string) or by the org's permanent Clerk org id (`{ clerkOrgId }`, the
-	// identity: `by_clerk_org_id`). Two rows claiming one id make that org
-	// undecidable, so an id key answers null (fail closed), never a pick between
-	// them.
-	if (typeof key !== "string") {
-		const byId = await ctx.db
-			.query("client_org_mapping")
-			.withIndex("by_clerk_org_id", (q) => q.eq("clerkOrgId", key.clerkOrgId))
-			.take(2);
-		return byId.length === 1 ? viewOfMapping(byId[0]) : null;
-	}
-	const mapping = await ctx.db
-		.query("client_org_mapping")
-		.withIndex("by_clerk_slug", (q) => q.eq("clerkOrgSlug", key))
-		.first();
-	if (!mapping) return null;
-	return viewOfMapping(mapping);
-}
-
-export type OrgMappingView = {
-	clerkOrgSlug: string;
-	allowedOrchestrators: string[];
-	allowedAgentIds?: Id<"agents">[];
-	addressableFleetCoordinatorIds?: Id<"agents">[];
-	fleetWide?: boolean;
-	scopes: string[];
-	isActive: boolean;
-	orgKind?: "operator" | "client";
-	clerkOrgId?: string;
-};
-
-function viewOfMapping(mapping: {
-	clerkOrgSlug: string;
-	allowedOrchestrators: string[];
-	scopes: string[];
-	isActive: boolean;
-	orgKind?: "operator" | "client";
-	clerkOrgId?: string;
-}): OrgMappingView {
-	return {
-		clerkOrgSlug: mapping.clerkOrgSlug,
-		allowedOrchestrators: mapping.allowedOrchestrators,
-		allowedAgentIds: mapping.allowedAgentIds,
-		addressableFleetCoordinatorIds: mapping.addressableFleetCoordinatorIds,
-		fleetWide: mapping.fleetWide,
-		scopes: mapping.scopes,
-		isActive: mapping.isActive,
-		orgKind: mapping.orgKind,
-		clerkOrgId: mapping.clerkOrgId,
-	};
-}
-
-const CLERK_ORG_ID_SHAPE = /^org_[A-Za-z0-9]+$/;
-
-/**
- * The permanent Clerk org id the CREDENTIAL itself carries, or undefined. It is
- * read from the verified identity's claims only (never an argument) and passed
- * through the package's tenant resolution, so an empty or non-string claim is an
- * absence and not an id. Only a value shaped like a Clerk org id counts: a slug
- * sitting in `organizationId` (the legacy spelling) is not an id.
- */
-function readCredentialOrgId(identity: object): string | undefined {
-	const rec = identity as Record<string, unknown>;
-	for (const claim of [rec.org_id, rec.organizationId, rec.orgId]) {
-		if (typeof claim !== "string" || !CLERK_ORG_ID_SHAPE.test(claim)) continue;
-		const resolved = resolveTenantIdOrAbsent({
-			kind: "session",
-			identity: { orgId: claim },
-		});
-		if (resolved.present) return resolved.tenantId;
-	}
-	return undefined;
-}
-
-/**
- * Does a row belong to the scope's organisation? BY ORG ID when both sides carry
- * one; the slug is compared only while either side has no id yet (expand phase:
- * a row not backfilled, a mapping not filled). A row naming no org belongs to
- * none. Slug equality never overrides two ids that differ: a slug a renamed org
- * freed and another org took does not make the first org's rows the second's.
- */
-export function rowInScopeOrg(
-	row: OrgKey,
-	scope: { orgSlug: string | null; orgClerkId?: string },
-): boolean {
-	return sameOrgKey(row, {
-		...(scope.orgSlug !== null ? { orgId: scope.orgSlug } : {}),
-		...(scope.orgClerkId !== undefined ? { clerkOrgId: scope.orgClerkId } : {}),
-	});
-}
-
-/** An org as a row (or a caller) names it: the slug label and the permanent id. */
-export type OrgKey = { orgId?: string; clerkOrgId?: string };
-
-/**
- * Do two keys name the same org? By permanent id when both carry one; by slug
- * only while either side has no id yet. A key naming no org is no org, so two
- * unstamped keys are NOT the same org here (callers that treat "both unstamped"
- * as the fleet say so themselves).
- */
-export function sameOrgKey(a: OrgKey, b: OrgKey): boolean {
-	if (a.clerkOrgId !== undefined && b.clerkOrgId !== undefined) {
-		return a.clerkOrgId === b.clerkOrgId;
-	}
-	return a.orgId !== undefined && a.orgId === b.orgId;
-}
-
-/**
  * Filters a list of records to those the scope may see. TWO controls apply, and
  * a record must clear BOTH:
  *
@@ -686,7 +563,7 @@ export function filterByOrgScope<
 	return records.filter((r) => {
 		// 1. Tenant gate. An absent `orgId` asserts nothing and so grants
 		// nothing: `undefined` never equals a resolved org slug.
-		if (!rowInScopeOrg(r, scope)) return false;
+		if (!sameOrg(orgRefOfRow(r), orgRefOfScope(scope), ORG_KEY_OPTIONS)) return false;
 		// 2. Roster, as a narrowing intersect on top of the tenant gate.
 		const orchestrator = r.pilot ?? r.assignedTo;
 		if (!orchestrator) return false;
@@ -802,7 +679,7 @@ export function isRowVisibleToScope(
 	// tenant gate explicitly here is what makes the by-id read legible on its
 	// own, and it keeps this function correct if `filterByOrgScope` is ever
 	// narrowed to a pure roster helper again.
-	if (!rowInScopeOrg(row, scope)) return false;
+	if (!sameOrg(orgRefOfRow(row), orgRefOfScope(scope), ORG_KEY_OPTIONS)) return false;
 	// Leg 4 — the ROSTER, kept as a NARROWING intersect and never as a grant.
 	// The tenant gate above is what makes two organisations disjoint; the roster
 	// is the INTRA-org delegation control and it still applies on top. Dropping
