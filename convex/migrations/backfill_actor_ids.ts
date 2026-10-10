@@ -93,7 +93,9 @@ async function loadResolver(db: DatabaseReader): Promise<Resolver> {
 		throw new ConvexError(
 			operator.kind === "overCap"
 				? "backfill_actor_ids: active client_org_mapping rows exceed the read cap; refusing to derive the operator org from a truncated read."
-				: `backfill_actor_ids: expected exactly one active operator organisation (orgKind "operator"), found ${operator.kind === "none" ? 0 : operator.count}; refusing the run.`,
+				: operator.kind === "unreadable"
+					? "backfill_actor_ids: the active client_org_mapping rows could not be read or are malformed; refusing to derive the operator org."
+					: `backfill_actor_ids: expected exactly one active operator organisation (orgKind "operator"), found ${operator.kind === "none" ? 0 : operator.count}; refusing the run.`,
 		);
 	}
 	const agents = await db.query("agents").take(AGENT_READ_CAP + 1);
