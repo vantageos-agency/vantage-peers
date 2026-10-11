@@ -3,6 +3,9 @@ import { convexTest } from "convex-test";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import { api } from "./_generated/api";
 import schema from "./schema";
+import { seedFleetAgents } from "../tests/lib/seedFleetAgents";
+
+const FILE_LABELS = ["eta", "kappa", "pi", "sigma"];
 
 // Anchor the clock to a fixed, stable, non-boundary UTC instant (midday —
 // nowhere near a midnight ISO-date rollover) instead of the wall-clock
@@ -111,6 +114,7 @@ async function seedTask(
 describe("orchestratorStats — empty table", () => {
 	test("returns empty array when no tasks exist", async () => {
 		const t = createTestConvex();
+		await seedFleetAgents(t, FILE_LABELS);
 		const result = await t.query(api.stats.orchestratorStats, {
 			window: "7d",
 		});
@@ -119,6 +123,7 @@ describe("orchestratorStats — empty table", () => {
 
 	test("returns empty for all window values", async () => {
 		const t = createTestConvex();
+		await seedFleetAgents(t, FILE_LABELS);
 		const r24h = await t.query(api.stats.orchestratorStats, { window: "24h" });
 		const r7d = await t.query(api.stats.orchestratorStats, { window: "7d" });
 		const r30d = await t.query(api.stats.orchestratorStats, { window: "30d" });
@@ -135,6 +140,7 @@ describe("orchestratorStats — empty table", () => {
 describe("orchestratorStats — single orchestrator", () => {
 	test("returns one entry with correct orchestratorId", async () => {
 		const t = createTestConvex();
+		await seedFleetAgents(t, FILE_LABELS);
 		await seedTask(t, { assignedTo: "kappa", status: "todo" });
 
 		const result = await t.query(api.stats.orchestratorStats, {
@@ -146,6 +152,7 @@ describe("orchestratorStats — single orchestrator", () => {
 
 	test("queueSize counts only todo tasks", async () => {
 		const t = createTestConvex();
+		await seedFleetAgents(t, FILE_LABELS);
 		await seedTask(t, { assignedTo: "kappa", status: "todo" });
 		await seedTask(t, { assignedTo: "kappa", status: "todo" });
 		await seedTask(t, { assignedTo: "kappa", status: "in_progress" });
@@ -158,6 +165,7 @@ describe("orchestratorStats — single orchestrator", () => {
 
 	test("blockerCount counts only blocked tasks", async () => {
 		const t = createTestConvex();
+		await seedFleetAgents(t, FILE_LABELS);
 		await seedTask(t, { assignedTo: "kappa", status: "blocked" });
 		await seedTask(t, { assignedTo: "kappa", status: "blocked" });
 		await seedTask(t, { assignedTo: "kappa", status: "todo" });
@@ -170,6 +178,7 @@ describe("orchestratorStats — single orchestrator", () => {
 
 	test("completionRate: 50% when half tasks are done", async () => {
 		const t = createTestConvex();
+		await seedFleetAgents(t, FILE_LABELS);
 		await seedTask(t, { assignedTo: "kappa", status: "done" });
 		await seedTask(t, { assignedTo: "kappa", status: "done" });
 		await seedTask(t, { assignedTo: "kappa", status: "todo" });
@@ -183,6 +192,7 @@ describe("orchestratorStats — single orchestrator", () => {
 
 	test("completionRate: 0 when no tasks are done", async () => {
 		const t = createTestConvex();
+		await seedFleetAgents(t, FILE_LABELS);
 		await seedTask(t, { assignedTo: "kappa", status: "todo" });
 		await seedTask(t, { assignedTo: "kappa", status: "in_progress" });
 
@@ -194,6 +204,7 @@ describe("orchestratorStats — single orchestrator", () => {
 
 	test("completionRate: 100 when all tasks are done", async () => {
 		const t = createTestConvex();
+		await seedFleetAgents(t, FILE_LABELS);
 		await seedTask(t, { assignedTo: "kappa", status: "done" });
 		await seedTask(t, { assignedTo: "kappa", status: "done" });
 
@@ -205,6 +216,7 @@ describe("orchestratorStats — single orchestrator", () => {
 
 	test("staleHours is 0 when no in_progress tasks", async () => {
 		const t = createTestConvex();
+		await seedFleetAgents(t, FILE_LABELS);
 		await seedTask(t, { assignedTo: "kappa", status: "todo" });
 
 		const [stat] = await t.query(api.stats.orchestratorStats, {
@@ -215,6 +227,7 @@ describe("orchestratorStats — single orchestrator", () => {
 
 	test("staleHours uses startedAt when present", async () => {
 		const t = createTestConvex();
+		await seedFleetAgents(t, FILE_LABELS);
 		await seedTask(t, {
 			assignedTo: "kappa",
 			status: "in_progress",
@@ -230,6 +243,7 @@ describe("orchestratorStats — single orchestrator", () => {
 
 	test("staleHours returns max across multiple in_progress tasks", async () => {
 		const t = createTestConvex();
+		await seedFleetAgents(t, FILE_LABELS);
 		await seedTask(t, {
 			assignedTo: "kappa",
 			status: "in_progress",
@@ -251,6 +265,7 @@ describe("orchestratorStats — single orchestrator", () => {
 
 	test("throughputByDay has 7 entries for 7d window", async () => {
 		const t = createTestConvex();
+		await seedFleetAgents(t, FILE_LABELS);
 		await seedTask(t, { assignedTo: "kappa", status: "todo" });
 
 		const [stat] = await t.query(api.stats.orchestratorStats, {
@@ -261,6 +276,7 @@ describe("orchestratorStats — single orchestrator", () => {
 
 	test("throughputByDay has 1 entry for 24h window", async () => {
 		const t = createTestConvex();
+		await seedFleetAgents(t, FILE_LABELS);
 		await seedTask(t, { assignedTo: "kappa", status: "todo" });
 
 		const [stat] = await t.query(api.stats.orchestratorStats, {
@@ -271,6 +287,7 @@ describe("orchestratorStats — single orchestrator", () => {
 
 	test("throughputByDay has 30 entries for 30d window", async () => {
 		const t = createTestConvex();
+		await seedFleetAgents(t, FILE_LABELS);
 		await seedTask(t, { assignedTo: "kappa", status: "todo" });
 
 		const [stat] = await t.query(api.stats.orchestratorStats, {
@@ -281,6 +298,7 @@ describe("orchestratorStats — single orchestrator", () => {
 
 	test("throughputByDay counts done task completed within window", async () => {
 		const t = createTestConvex();
+		await seedFleetAgents(t, FILE_LABELS);
 		await seedTask(t, {
 			assignedTo: "kappa",
 			status: "done",
@@ -297,6 +315,7 @@ describe("orchestratorStats — single orchestrator", () => {
 
 	test("throughputByDay excludes done task outside window", async () => {
 		const t = createTestConvex();
+		await seedFleetAgents(t, FILE_LABELS);
 		await seedTask(t, {
 			assignedTo: "kappa",
 			status: "done",
@@ -313,6 +332,7 @@ describe("orchestratorStats — single orchestrator", () => {
 
 	test("throughputByDay days are in ascending chronological order", async () => {
 		const t = createTestConvex();
+		await seedFleetAgents(t, FILE_LABELS);
 		await seedTask(t, { assignedTo: "kappa", status: "todo" });
 
 		const [stat] = await t.query(api.stats.orchestratorStats, {
@@ -330,6 +350,7 @@ describe("orchestratorStats — single orchestrator", () => {
 describe("orchestratorStats — multiple orchestrators", () => {
 	test("returns one entry per orchestrator that has tasks", async () => {
 		const t = createTestConvex();
+		await seedFleetAgents(t, FILE_LABELS);
 		await seedTask(t, { assignedTo: "kappa", status: "todo" });
 		await seedTask(t, { assignedTo: "sigma", status: "done" });
 		await seedTask(t, { assignedTo: "pi", status: "in_progress" });
@@ -343,6 +364,7 @@ describe("orchestratorStats — multiple orchestrators", () => {
 
 	test("stats are isolated per orchestrator", async () => {
 		const t = createTestConvex();
+		await seedFleetAgents(t, FILE_LABELS);
 		await seedTask(t, { assignedTo: "kappa", status: "done" });
 		await seedTask(t, { assignedTo: "kappa", status: "done" });
 		await seedTask(t, { assignedTo: "sigma", status: "todo" });
@@ -365,6 +387,7 @@ describe("orchestratorStats — multiple orchestrators", () => {
 
 	test("orchestrator with no tasks does not appear in results", async () => {
 		const t = createTestConvex();
+		await seedFleetAgents(t, FILE_LABELS);
 		// Only kappa has tasks — sigma has none
 		await seedTask(t, { assignedTo: "kappa", status: "todo" });
 
@@ -386,6 +409,7 @@ describe("orchestratorStats — window variants", () => {
 		// A task completed 23h ago might fall on yesterday's date depending on UTC
 		// clock position, so we use 1h ago (same UTC day as now) to avoid flakiness.
 		const t = createTestConvex();
+		await seedFleetAgents(t, FILE_LABELS);
 		await seedTask(t, {
 			assignedTo: "kappa",
 			status: "done",
@@ -402,6 +426,7 @@ describe("orchestratorStats — window variants", () => {
 
 	test("24h window: task completed 25h ago does NOT appear in throughput", async () => {
 		const t = createTestConvex();
+		await seedFleetAgents(t, FILE_LABELS);
 		await seedTask(t, {
 			assignedTo: "kappa",
 			status: "done",
@@ -418,6 +443,7 @@ describe("orchestratorStats — window variants", () => {
 
 	test("30d window: task completed 29 days ago appears in throughput", async () => {
 		const t = createTestConvex();
+		await seedFleetAgents(t, FILE_LABELS);
 		await seedTask(t, {
 			assignedTo: "kappa",
 			status: "done",
@@ -434,6 +460,7 @@ describe("orchestratorStats — window variants", () => {
 
 	test("completionRate uses all-time task history regardless of window", async () => {
 		const t = createTestConvex();
+		await seedFleetAgents(t, FILE_LABELS);
 		// Done 60 days ago — outside any window
 		await seedTask(t, {
 			assignedTo: "kappa",

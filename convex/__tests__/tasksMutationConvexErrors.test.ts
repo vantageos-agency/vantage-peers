@@ -26,6 +26,9 @@ import { convexTest } from "convex-test";
 import { describe, expect, test } from "vitest";
 import { api } from "../_generated/api";
 import schema from "../schema";
+import { insertTaskRow, seedFleetAgents } from "../../tests/lib/seedFleetAgents";
+
+const FILE_LABELS = ["eta", "gamma", "pi", "sigma"];
 
 // Exclude RAG/search/backfill modules (same pattern as all tests in this dir)
 const modules = Object.fromEntries(
@@ -78,6 +81,7 @@ function getConvexErrorMessage(error: unknown): string {
 describe("tasks.start — TASK_NOT_FOUND", () => {
 	test("throws ConvexError with TASK_NOT_FOUND prefix when task ID does not exist", async () => {
 		const t = createT();
+		await seedFleetAgents(t, FILE_LABELS);
 		// Create and immediately delete a task to get a valid-format but nonexistent ID
 		const id = await seedTask(t);
 		await t.mutation(api.tasks.deleteTask, { taskId: id, callerOrchestrator: "system" });
@@ -105,6 +109,7 @@ describe("tasks.start — TASK_NOT_FOUND", () => {
 describe("tasks.start — RBAC_DENIED", () => {
 	test("throws ConvexError with RBAC_DENIED prefix when caller is not creator or assignee", async () => {
 		const t = createT();
+		await seedFleetAgents(t, FILE_LABELS);
 		// Task assigned to sigma, created by system; eta is neither
 		const id = await seedTask(t, { assignedTo: "sigma" });
 
@@ -126,6 +131,7 @@ describe("tasks.start — RBAC_DENIED", () => {
 
 	test("system caller bypasses RBAC check (no throw)", async () => {
 		const t = createT();
+		await seedFleetAgents(t, FILE_LABELS);
 		const id = await seedTask(t, { assignedTo: "sigma" });
 		// system must not throw even though it's neither creator nor assignee
 		await expect(
@@ -150,6 +156,7 @@ describe("tasks.start — TASK_START_BLOCKED (Hephaistos repro)", () => {
 	 */
 	test("TASK_START_BLOCKED: caller already has an in_progress task", async () => {
 		const t = createT();
+		await seedFleetAgents(t, FILE_LABELS);
 
 		// Seed two tasks for sigma
 		const task1 = await seedTask(t, {
@@ -193,6 +200,7 @@ describe("tasks.start — TASK_START_BLOCKED (Hephaistos repro)", () => {
 
 	test("re-starting the in_progress target itself is refused with START_REFUSED_OPEN_SEGMENT, not TASK_START_BLOCKED", async () => {
 		const t = createT();
+		await seedFleetAgents(t, FILE_LABELS);
 		const id = await seedTask(t, { assignedTo: "sigma" });
 		// First start opens the only segment.
 		await t.mutation(api.tasks.start, { taskId: id, callerOrchestrator: "sigma" });
@@ -219,10 +227,11 @@ describe("tasks.start — TASK_START_BLOCKED (Hephaistos repro)", () => {
 describe("tasks.start — DEPENDENCY_NOT_DONE", () => {
 	test("throws DEPENDENCY_NOT_DONE when a dependsOn task is not yet done", async () => {
 		const t = createT();
+		await seedFleetAgents(t, FILE_LABELS);
 
 		const dep = await seedTask(t, { title: "Blocker dep", assignedTo: "sigma", status: "todo" });
 		const blocked = await t.run(async (ctx) =>
-			ctx.db.insert("tasks", {
+			insertTaskRow(ctx, {
 				title: "Blocked task",
 				assignedTo: "sigma",
 				priority: "medium" as const,
@@ -257,13 +266,14 @@ describe("tasks.start — DEPENDENCY_NOT_DONE", () => {
 
 	test("no DEPENDENCY_NOT_DONE when all dependsOn tasks are done", async () => {
 		const t = createT();
+		await seedFleetAgents(t, FILE_LABELS);
 
 		const dep = await seedTask(t, { title: "Completed dep", assignedTo: "sigma", status: "done" });
 		// Patch to actually done
 		await t.run(async (ctx) => ctx.db.patch(dep, { status: "done" as const }));
 
 		const task = await t.run(async (ctx) =>
-			ctx.db.insert("tasks", {
+			insertTaskRow(ctx, {
 				title: "Ready task",
 				assignedTo: "sigma",
 				priority: "medium" as const,
@@ -291,6 +301,7 @@ describe("tasks.start — DEPENDENCY_NOT_DONE", () => {
 describe("tasks.complete — TASK_NOT_FOUND", () => {
 	test("throws TASK_NOT_FOUND when completing a deleted task", async () => {
 		const t = createT();
+		await seedFleetAgents(t, FILE_LABELS);
 		const id = await seedTask(t);
 		await t.mutation(api.tasks.deleteTask, { taskId: id, callerOrchestrator: "system" });
 
@@ -318,6 +329,7 @@ describe("tasks.complete — TASK_NOT_FOUND", () => {
 describe("tasks.complete — COMPLETION_NOTE_REQUIRED", () => {
 	test("throws COMPLETION_NOTE_REQUIRED when note is empty string", async () => {
 		const t = createT();
+		await seedFleetAgents(t, FILE_LABELS);
 		const id = await seedTask(t);
 
 		let thrown: unknown;
@@ -338,6 +350,7 @@ describe("tasks.complete — COMPLETION_NOTE_REQUIRED", () => {
 
 	test("throws COMPLETION_NOTE_REQUIRED when note is whitespace only", async () => {
 		const t = createT();
+		await seedFleetAgents(t, FILE_LABELS);
 		const id = await seedTask(t);
 
 		let thrown: unknown;
@@ -363,6 +376,7 @@ describe("tasks.complete — COMPLETION_NOTE_REQUIRED", () => {
 describe("tasks.complete — RBAC_DENIED", () => {
 	test("throws RBAC_DENIED when non-assignee tries to complete", async () => {
 		const t = createT();
+		await seedFleetAgents(t, FILE_LABELS);
 		const id = await seedTask(t, { assignedTo: "sigma" });
 
 		let thrown: unknown;
@@ -389,6 +403,7 @@ describe("tasks.complete — RBAC_DENIED", () => {
 describe("tasks.update — TASK_NOT_FOUND", () => {
 	test("throws TASK_NOT_FOUND for deleted task", async () => {
 		const t = createT();
+		await seedFleetAgents(t, FILE_LABELS);
 		const id = await seedTask(t);
 		await t.mutation(api.tasks.deleteTask, { taskId: id, callerOrchestrator: "system" });
 
@@ -412,6 +427,7 @@ describe("tasks.update — TASK_NOT_FOUND", () => {
 describe("tasks.update — RBAC_DENIED", () => {
 	test("throws RBAC_DENIED when non-assignee/creator tries to update", async () => {
 		const t = createT();
+		await seedFleetAgents(t, FILE_LABELS);
 		const id = await seedTask(t, { assignedTo: "sigma" });
 
 		let thrown: unknown;
@@ -439,6 +455,7 @@ describe("tasks.update — RBAC_DENIED", () => {
 describe("tasks.deleteTask — RBAC_DENIED", () => {
 	test("throws RBAC_DENIED when non-creator tries to delete", async () => {
 		const t = createT();
+		await seedFleetAgents(t, FILE_LABELS);
 		// Task createdBy "system", not "sigma"
 		const id = await seedTask(t, { assignedTo: "sigma" });
 
@@ -459,6 +476,7 @@ describe("tasks.deleteTask — RBAC_DENIED", () => {
 
 	test("system can delete any task regardless of creator", async () => {
 		const t = createT();
+		await seedFleetAgents(t, FILE_LABELS);
 		const id = await seedTask(t, { assignedTo: "sigma" });
 		const result = await t.mutation(api.tasks.deleteTask, {
 			taskId: id,
@@ -490,6 +508,7 @@ describe("ConvexError message format — CODE: prefix contract", () => {
 
 	test("TASK_START_BLOCKED message embeds valid JSON with context fields", async () => {
 		const t = createT();
+		await seedFleetAgents(t, FILE_LABELS);
 		const t1 = await seedTask(t, { assignedTo: "sigma" });
 		const t2 = await seedTask(t, { assignedTo: "sigma" });
 		await t.mutation(api.tasks.start, { taskId: t1, callerOrchestrator: "sigma" });

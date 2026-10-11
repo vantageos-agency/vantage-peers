@@ -11,7 +11,8 @@
  * POLES (per tool)
  *   REFUSED  org-a bearer, org-b task id           -> error result, org-b row untouched
  *   PRESENT  org-a bearer, org-a task id           -> the write lands
- *   MASTER   fleet master, no verified org         -> unchanged (lands on any tenant)
+ *   MASTER   fleet master, no verified org         -> lands on a fleet-owned task (acts as the fleet's eta)
+ *   MASTER COLLISION  the same master on org-b's eta task -> RBAC_DENIED (M7: IDs, not the shared label)
  *   FORWARD  a `verifiedOrg` smuggled into the tool arguments is never read
  */
 
@@ -20,6 +21,11 @@ import { anyApi } from "convex/server";
 import { convexTest } from "convex-test";
 import { beforeEach, describe, expect, it } from "vitest";
 import schema from "../../../convex/schema.js";
+import { seedAgents } from "../../../tests/lib/agentIdOf.js";
+import {
+	insertTaskRow,
+	seedFleetAgents,
+} from "../../../tests/lib/seedFleetAgents.js";
 import type { OAuthContext } from "../auth.js";
 import { registerTools } from "../tools.js";
 
@@ -210,18 +216,26 @@ beforeEach(async () => {
 			});
 		}
 	});
+	// One label, three agents: the fleet's "eta", org-a's "eta" and org-b's "eta".
+	// The doors decide on the agent's ID, never on the shared label.
+	await seedFleetAgents(t, ["eta"]);
+	await seedAgents(t as never, [
+		["org-a", "eta"],
+		["org-b", "eta"],
+	]);
 });
 
-async function seed(orgId: string, status: Status): Promise<string> {
+// `orgId` undefined seeds a FLEET-owned task, assigned to the fleet's "eta".
+async function seed(orgId: string | undefined, status: Status): Promise<string> {
 	return await t.run(async (ctx) => {
 		const now = Date.now();
-		const id = await ctx.db.insert("tasks", {
+		const id = await insertTaskRow(ctx, {
 			title: `${orgId} task`,
 			assignedTo: "eta",
 			createdBy: "eta",
 			priority: "low",
 			status: status === "paused" ? "in_progress" : status,
-			orgId,
+			...(orgId !== undefined ? { orgId } : {}),
 			...(status === "in_progress"
 				? { startedAt: now - 60_000, workSegments: [{ start: now - 60_000 }] }
 				: {}),
@@ -266,14 +280,28 @@ describe("the ten single-task write tools carry the bearer's verified org to Con
 				expect(tool.landed(await read(id))).toBe(true);
 			});
 
-			it("MASTER: the fleet master (no verified org) keeps its reach into any tenant", async () => {
-				const id = await seed("org-b", tool.status);
+			it("MASTER: the fleet master (no verified org), acting as the fleet's own eta on a fleet-owned task, lands", async () => {
+				const id = await seed(undefined, tool.status);
 				const res = await handlersFor(t, MASTER).get(tool.name)?.(
 					tool.args(id),
 				);
 				expect(res?.isError, res?.content[0]?.text).not.toBe(true);
 				expect(tool.landed(await read(id))).toBe(true);
 			});
+
+			// checkout_task is a claim by instance, gated by tenant only, never by actor.
+			if (tool.name !== "checkout_task") {
+				it("MASTER COLLISION: the fleet's eta does NOT act on org-b's eta task (same name, different agent)", async () => {
+					const id = await seed("org-b", tool.status);
+					const before = JSON.stringify(await read(id));
+					const res = await handlersFor(t, MASTER).get(tool.name)?.(
+						tool.args(id),
+					);
+					expect(res?.isError, res?.content[0]?.text).toBe(true);
+					expect(res?.content[0]?.text).toMatch(/RBAC_DENIED/);
+					expect(JSON.stringify(await read(id))).toBe(before);
+				});
+			}
 
 			it("FORWARD: a verifiedOrg typed into the tool arguments is never read", async () => {
 				const id = await seed("org-b", tool.status);

@@ -22,6 +22,9 @@ import { convexTest } from "convex-test";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import { api } from "../_generated/api";
 import schema from "../schema";
+import { seedAgents } from "../../tests/lib/agentIdOf";
+import { insertTaskRow } from "../../tests/lib/seedFleetAgents";
+
 
 const modules = Object.fromEntries(
 	Object.entries(import.meta.glob("../**/*.ts")).filter(
@@ -60,13 +63,20 @@ async function seed(t: T) {
 			});
 		}
 	});
+	// "eta" and "someone" exist in BOTH orgs: one label, two agents each.
+	await seedAgents(t, [
+		["org-a", "eta"],
+		["org-a", "someone"],
+		["org-b", "eta"],
+		["org-b", "someone"],
+	]);
 }
 
 async function seedRows(t: T, orgId: string, n: number, by: "assigned" | "created") {
 	await t.run(async (ctx) => {
 		const now = Date.now();
 		for (let i = 0; i < n; i++) {
-			await ctx.db.insert("tasks", {
+			await insertTaskRow(ctx, {
 				title: `${orgId} ${by} ${i}`,
 				assignedTo: by === "assigned" ? "eta" : "someone",
 				createdBy: by === "created" ? "eta" : "someone",

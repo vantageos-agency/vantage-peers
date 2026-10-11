@@ -20,6 +20,14 @@ import { describe, expect, test } from "vitest";
 import { testClerkOrgId } from "../../tests/fixtures/testClerkOrgId";
 import { api } from "../_generated/api";
 import schema from "../schema";
+import {
+	actingWith,
+	insertTaskRow,
+	seedFleetAgents,
+	seedOrgAgents,
+} from "../../tests/lib/seedFleetAgents";
+
+const FILE_LABELS = ["BEA", "bea", "bob", "eta", "pi", "sigma"];
 
 const modules = Object.fromEntries(
 	Object.entries(import.meta.glob("../**/*.ts")).filter(
@@ -32,8 +40,15 @@ type Identity = Parameters<T["withIdentity"]>[0];
 const createT = (): T =>
 	convexTest(schema, modules) as unknown as ReturnType<typeof convexTest>;
 
-async function fixture() {
+// `org-b/<name>` -> credential of that org-b agent (written by fixture): a member
+// acting as an agent of its org presents it (the task doors decide on agent IDs).
+const secrets = new Map<string, string>();
+
+// `agents: false` leaves the roster names unregistered (the recurringTasks doors
+// take no per-agent credential, so they are exercised on bare roster names).
+async function fixture(opts: { agents?: boolean } = {}) {
 	const t = createT();
+	await seedFleetAgents(t, FILE_LABELS);
 	await t.run(async (ctx) => {
 		await ctx.db.insert("client_org_mapping", {
 			clerkOrgSlug: "org-b",
@@ -51,11 +66,22 @@ async function fixture() {
 			updatedAt: Date.now(),
 		});
 	});
+	if (opts.agents !== false) {
+		for (const [k, v] of await seedOrgAgents(t, [
+			["org-b", "bob"],
+			["org-b", "bea"],
+		])) {
+			secrets.set(k, v);
+		}
+	}
 	return t;
 }
 
 const member = (t: T) =>
-	t.withIdentity({ subject: "member-of-org-b", organizationId: "org-b", org_id: testClerkOrgId("org-b"), org_role: "org:editor" } as Identity);
+	actingWith(
+		t.withIdentity({ subject: "member-of-org-b", organizationId: "org-b", org_id: testClerkOrgId("org-b"), org_role: "org:editor" } as Identity),
+		(name) => secrets.get(`org-b/${name}`),
+	);
 const master = (t: T) =>
 	t.withIdentity({ subject: "test-service-account-user-id" } as Identity);
 
@@ -279,7 +305,7 @@ describe("tasks:create — createdBy already guarded; assignedTo now bound", () 
 describe("tasks:update — assignedTo reassignment (assignee)", () => {
 	async function seedTask(t: T, orgId: string | undefined) {
 		return await t.run((ctx) =>
-			ctx.db.insert("tasks", {
+			insertTaskRow(ctx, {
 				title: "t",
 				assignedTo: "bob",
 				priority: "medium",
@@ -321,15 +347,27 @@ describe("tasks:update — assignedTo reassignment (assignee)", () => {
 			title: "renamed",
 		});
 	});
-	test("MASTER unchanged: any assignee", async () => {
+	test("MASTER: an assignee must still be an agent of the task's own org (M7); an own-org agent is served", async () => {
 		const t = await fixture();
 		const taskId = await seedTask(t, "org-b");
+		// "eta" is the fleet's agent, not org-b's: an assignment resolves to an
+		// agents-row ID of the task's own org, even for the master.
+		const refusal = await refusalOf(
+			master(t).mutation(api.tasks.update, {
+				taskId,
+				callerOrchestrator: "system",
+				assignedTo: "eta",
+			}),
+		);
+		expect(refusal).toContain("RBAC_DENIED");
+		expect(refusal).toContain("assignee-not-an-agent-of-org");
+		expect((await t.run((c) => c.db.get(taskId)))?.assignedTo).toBe("bob");
 		await master(t).mutation(api.tasks.update, {
 			taskId,
 			callerOrchestrator: "system",
-			assignedTo: "eta",
+			assignedTo: "bea",
 		});
-		expect((await t.run((c) => c.db.get(taskId)))?.assignedTo).toBe("eta");
+		expect((await t.run((c) => c.db.get(taskId)))?.assignedTo).toBe("bea");
 	});
 });
 
@@ -342,7 +380,7 @@ describe("recurringTasks — one roster rule (normalised, '*' names nobody)", ()
 		createdBy: "bob",
 	});
 	test("REFUSED: create for foreign 'eta'", async () => {
-		const t = await fixture();
+		const t = await fixture({ agents: false });
 		await expectDenied(
 			member(t).mutation(api.recurringTasks.create, args("eta")),
 			"recurringTasks:create",
@@ -350,13 +388,13 @@ describe("recurringTasks — one roster rule (normalised, '*' names nobody)", ()
 		);
 	});
 	test("SERVED: create for 'Bob' (normalisation) and own roster", async () => {
-		const t = await fixture();
+		const t = await fixture({ agents: false });
 		await member(t).mutation(api.recurringTasks.create, args("Bob"));
 		await member(t).mutation(api.recurringTasks.create, args("bea"));
 		expect(await t.run((c) => c.db.query("recurringTasks").collect())).toHaveLength(2);
 	});
 	test("REFUSED: update reassigns to foreign; SERVED: to own roster", async () => {
-		const t = await fixture();
+		const t = await fixture({ agents: false });
 		const id = await member(t).mutation(api.recurringTasks.create, args("bob"));
 		await expectDenied(
 			member(t).mutation(api.recurringTasks.update, {
@@ -373,7 +411,7 @@ describe("recurringTasks — one roster rule (normalised, '*' names nobody)", ()
 		expect((await t.run((c) => c.db.get(id)))?.assignedTo).toBe("BEA");
 	});
 	test("MASTER unchanged", async () => {
-		const t = await fixture();
+		const t = await fixture({ agents: false });
 		await master(t).mutation(api.recurringTasks.create, args("eta"));
 		expect(await t.run((c) => c.db.query("recurringTasks").collect())).toHaveLength(1);
 	});

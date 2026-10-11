@@ -29,6 +29,12 @@ import { describe, expect, test } from "vitest";
 import { testClerkOrgId } from "../../tests/fixtures/testClerkOrgId";
 import { api } from "../_generated/api";
 import schema from "../schema";
+import {
+	actingWith,
+	insertTaskRow,
+	seedOrgAgents,
+} from "../../tests/lib/seedFleetAgents";
+
 
 const modules = Object.fromEntries(
 	Object.entries(import.meta.glob("../**/*.ts")).filter(
@@ -45,6 +51,10 @@ const createT = () => convexTest(schema, modules);
  */
 const SHARED_ORCHESTRATOR = "eta";
 
+// `${org}/${name}` -> credential of that org's agent: a member that acts as an
+// agent of its org presents it (the doors decide on agent IDs).
+const secrets = new Map<string, string>();
+
 async function seedBothOrgsSharingOrchestrator(t: ReturnType<typeof createT>) {
 	await t.run(async (ctx) => {
 		for (const slug of ["org-a", "org-b"]) {
@@ -59,14 +69,24 @@ async function seedBothOrgsSharingOrchestrator(t: ReturnType<typeof createT>) {
 			});
 		}
 	});
+	// The shared name is TWO agents: one per organisation.
+	for (const [k, v] of await seedOrgAgents(t, [
+		["org-a", SHARED_ORCHESTRATOR],
+		["org-b", SHARED_ORCHESTRATOR],
+	])) {
+		secrets.set(k, v);
+	}
 }
 
 function asOrg(t: ReturnType<typeof createT>, slug: string) {
-	return t.withIdentity({
-		subject: `user-${slug}`,
-		organizationId: slug,
-		org_id: testClerkOrgId(slug),
-	} as Parameters<typeof t.withIdentity>[0]);
+	return actingWith(
+		t.withIdentity({
+			subject: `user-${slug}`,
+			organizationId: slug,
+			org_id: testClerkOrgId(slug),
+		} as Parameters<typeof t.withIdentity>[0]),
+		(name) => secrets.get(`${slug}/${name}`),
+	);
 }
 
 describe("cross-org isolation when two rosters share an orchestrator name", () => {
@@ -209,7 +229,7 @@ describe("cross-org isolation when two rosters share an orchestrator name", () =
 			// A legacy row, written directly, carrying NO orgId — exactly the
 			// shape every task in production carries today.
 			const legacyId = await t.run(async (ctx) =>
-				ctx.db.insert("tasks", {
+				insertTaskRow(ctx, {
 					title: "legacy unstamped row",
 					assignedTo: SHARED_ORCHESTRATOR,
 					priority: "high",

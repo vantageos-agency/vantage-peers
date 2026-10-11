@@ -31,6 +31,8 @@ import {
 } from "../migrations/backfill_org_clerk_id";
 import { upsertAdminMembership } from "../orgMembership";
 import schema from "../schema";
+import { seedAgents } from "../../tests/lib/agentIdOf";
+import { mintAgentSecret } from "../../tests/lib/seedFleetAgents";
 import { agentIdOf } from "../../tests/lib/agentIdOf";
 import { testClerkOrgId } from "../../tests/fixtures/testClerkOrgId";
 
@@ -95,6 +97,13 @@ async function seedWorld(t: T, mappingClerkOrgId: string | undefined) {
 
 type Driver = (t: T) => Promise<unknown>;
 
+// The task doors decide on agent IDs: the seat is an agent of the org and the
+// member acting as it presents its credential.
+async function seatCredential(t: T): Promise<string> {
+	await seedAgents(t, [[ACME.slug, SEAT]]);
+	return await mintAgentSecret(t, ACME.slug, SEAT, ACME.id);
+}
+
 // A member of ACME may map a repo only with the scope and a GitHub-verified
 // owner binding for the repo's owner.
 async function mapAcmeRepo(t: T) {
@@ -145,13 +154,14 @@ const DRIVERS = {
 			content: "hello",
 			tenantId: ACME.slug,
 		}),
-	tasks: (t) =>
+	tasks: async (t) =>
 		asOrg(t, ACME.slug).mutation(api.tasks.create, {
 			title: "t",
 			assignedTo: SEAT,
 			priority: "high",
 			status: "todo",
 			createdBy: SEAT,
+			agentCredentialSecret: await seatCredential(t),
 		}),
 	messageReceipts: (t) =>
 		t.mutation(internal.messages.sendMessageInternal, {
@@ -199,11 +209,12 @@ const DRIVERS = {
 			dependencies: [],
 			kpis: [],
 		}),
-	bulk_complete_runs: (t) =>
+	bulk_complete_runs: async (t) =>
 		asOrg(t, ACME.slug).mutation(api.tasks.bulkComplete, {
 			filter: { assignedTo: SEAT },
 			dryRun: false,
 			callerOrchestrator: SEAT,
+			agentCredentialSecret: await seatCredential(t),
 		}),
 	agents: (t) =>
 		adminOf(t, ACME.slug).mutation(api.agents.registerAgent, {

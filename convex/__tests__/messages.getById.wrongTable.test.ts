@@ -21,6 +21,9 @@ import { describe, expect, test } from "vitest";
 import { api } from "../_generated/api";
 import type { Id } from "../_generated/dataModel";
 import schema from "../schema";
+import { seedFleetAgents } from "../../tests/lib/seedFleetAgents";
+
+const FILE_LABELS = ["eta", "pi", "sigma"];
 
 const modules = Object.fromEntries(
 	Object.entries(import.meta.glob("../**/*.ts")).filter(
@@ -57,6 +60,7 @@ const decodePayload = (caught: unknown): WrongTablePayload => {
 describe("messages:getById — wrong-table ID (issue #1064, reads)", () => {
 	test("a messageReceipts-table ID yields an actionable ConvexError naming messageId", async () => {
 		const t = createT().withIdentity({ subject: "test-service-account-user-id" });
+		await seedFleetAgents(t, FILE_LABELS);
 		await t.run((ctx) =>
 			ctx.db.insert("profiles", {
 				orchestratorId: "sigma",
@@ -103,6 +107,7 @@ describe("messages:getById — wrong-table ID (issue #1064, reads)", () => {
 
 	test("negative control: an ID from a THIRD table is also named, with its own value", async () => {
 		const t = createT().withIdentity({ subject: "test-service-account-user-id" });
+		await seedFleetAgents(t, FILE_LABELS);
 		const taskId = await t.mutation(api.tasks.create, {
 			title: "Unrelated task — wrong-table probe",
 			assignedTo: "pi",
@@ -129,6 +134,7 @@ describe("messages:getById — wrong-table ID (issue #1064, reads)", () => {
 
 	test("positive control: a real messageId still returns the document", async () => {
 		const t = createT().withIdentity({ subject: "test-service-account-user-id" });
+		await seedFleetAgents(t, FILE_LABELS);
 		await t.run((ctx) =>
 			ctx.db.insert("profiles", {
 				orchestratorId: "sigma",
@@ -149,6 +155,7 @@ describe("messages:getById — wrong-table ID (issue #1064, reads)", () => {
 
 	test("contract preserved: a valid messages ID that no longer exists returns null, does NOT throw", async () => {
 		const t = createT().withIdentity({ subject: "test-service-account-user-id" });
+		await seedFleetAgents(t, FILE_LABELS);
 		await t.run((ctx) =>
 			ctx.db.insert("profiles", {
 				orchestratorId: "sigma",

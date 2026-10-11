@@ -23,6 +23,9 @@ import { convexTest } from "convex-test";
 import { describe, expect, test, vi } from "vitest";
 import { api } from "../_generated/api";
 import schema from "../schema";
+import { seedFleetAgents } from "../../tests/lib/seedFleetAgents";
+
+const FILE_LABELS = ["eta", "sigma"];
 
 // Same exclusion pattern as every other test in this dir.
 const modules = Object.fromEntries(
@@ -82,6 +85,7 @@ async function seedTask(
 describe("tasks.start — per-project concurrency (Day 156 relaxation)", () => {
 	test("RED→GREEN: same orchestrator, distinct projects → 2nd start allowed", async () => {
 		const t = createT();
+		await seedFleetAgents(t, FILE_LABELS);
 		const taskA = await seedTask(t, {
 			title: "Task in repo-a",
 			assignedTo: "sigma",
@@ -123,6 +127,7 @@ describe("tasks.start — per-project concurrency (Day 156 relaxation)", () => {
 		vi.useFakeTimers();
 		try {
 			const t = createT();
+			await seedFleetAgents(t, FILE_LABELS);
 			await seedBillableConfig(t, [BILLABLE_PROJECT_A, BILLABLE_PROJECT_B]);
 
 			const taskA = await seedTask(t, {
@@ -185,6 +190,7 @@ describe("tasks.start — per-project concurrency (Day 156 relaxation)", () => {
 
 	test("BOUND (a): 2nd task in the SAME project → still refused", async () => {
 		const t = createT();
+		await seedFleetAgents(t, FILE_LABELS);
 		const task1 = await seedTask(t, {
 			title: "Repo-a task 1",
 			assignedTo: "sigma",
@@ -216,6 +222,7 @@ describe("tasks.start — per-project concurrency (Day 156 relaxation)", () => {
 
 	test("BOUND (b): instant start→complete on a billable task stays refused (billable-time-tracking guard untouched)", async () => {
 		const t = createT();
+		await seedFleetAgents(t, FILE_LABELS);
 		await seedBillableConfig(t, [BILLABLE_PROJECT_A]);
 
 		const taskId = await seedTask(t, {
@@ -241,6 +248,7 @@ describe("tasks.start — per-project concurrency (Day 156 relaxation)", () => {
 
 	test("BOUND (c): 2 tasks with project===undefined (null-project) → still mutually exclusive", async () => {
 		const t = createT();
+		await seedFleetAgents(t, FILE_LABELS);
 		const task1 = await seedTask(t, {
 			title: "No-project task 1",
 			assignedTo: "sigma",

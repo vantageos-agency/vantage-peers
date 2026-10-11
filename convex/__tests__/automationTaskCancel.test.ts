@@ -12,6 +12,9 @@ import { convexTest } from "convex-test";
 import { describe, expect, test } from "vitest";
 import { api, internal } from "../_generated/api";
 import schema from "../schema";
+import { insertTaskRow, seedFleetAgents } from "../../tests/lib/seedFleetAgents";
+
+const FILE_LABELS = ["eta", "omega", "pi", "sigma"];
 
 const modules = Object.fromEntries(
 	Object.entries(import.meta.glob("../**/*.ts")).filter(
@@ -69,6 +72,7 @@ const expectDenied = (err: unknown) => {
 describe("automation task cancel grant", () => {
 	test("RED: listed pi cancels a webhook-created chain task with a reason", async () => {
 		const t = makeT();
+		await seedFleetAgents(t, FILE_LABELS);
 		await seedCancellers(t, ["pi"]);
 		const id = (await chainTask(t)) as never;
 		const err = await cancel(t, id, "pi");
@@ -81,6 +85,7 @@ describe("automation task cancel grant", () => {
 
 	test("pi without a reason is refused", async () => {
 		const t = makeT();
+		await seedFleetAgents(t, FILE_LABELS);
 		await seedCancellers(t, ["pi"]);
 		const id = (await chainTask(t)) as never;
 		const err = await svc(t)
@@ -95,6 +100,7 @@ describe("automation task cancel grant", () => {
 
 	test("pi on a NON-automation task it neither created nor holds -> RBAC_DENIED", async () => {
 		const t = makeT();
+		await seedFleetAgents(t, FILE_LABELS);
 		await seedCancellers(t, ["pi"]);
 		const id = (await svc(t).mutation(api.tasks.create, {
 			title: "plain chore",
@@ -109,6 +115,7 @@ describe("automation task cancel grant", () => {
 
 	test("sigma (not listed) -> RBAC_DENIED", async () => {
 		const t = makeT();
+		await seedFleetAgents(t, FILE_LABELS);
 		await seedCancellers(t, ["pi"]);
 		const id = (await chainTask(t)) as never;
 		// sigma is the assignee: the ordinary path still refuses a non-creator cancel.
@@ -118,12 +125,14 @@ describe("automation task cancel grant", () => {
 
 	test("key absent -> RBAC_DENIED", async () => {
 		const t = makeT();
+		await seedFleetAgents(t, FILE_LABELS);
 		const id = (await chainTask(t)) as never;
 		expectDenied(await cancel(t, id, "pi"));
 	});
 
 	test("key present but empty -> RBAC_DENIED", async () => {
 		const t = makeT();
+		await seedFleetAgents(t, FILE_LABELS);
 		await seedCancellers(t, []);
 		const id = (await chainTask(t)) as never;
 		expectDenied(await cancel(t, id, "pi"));
@@ -131,6 +140,7 @@ describe("automation task cancel grant", () => {
 
 	test("pi changing another field on the grant path is refused, row untouched", async () => {
 		const t = makeT();
+		await seedFleetAgents(t, FILE_LABELS);
 		await seedCancellers(t, ["pi"]);
 		const id = (await chainTask(t)) as never;
 		for (const extra of [{ title: "hijack" }, { assignedTo: "omega" }]) {
@@ -145,6 +155,7 @@ describe("automation task cancel grant", () => {
 
 	test("pi cannot use the grant for another status transition (done / in_progress)", async () => {
 		const t = makeT();
+		await seedFleetAgents(t, FILE_LABELS);
 		await seedCancellers(t, ["pi"]);
 		const id = (await chainTask(t)) as never;
 		const err = await svc(t)
@@ -155,9 +166,10 @@ describe("automation task cancel grant", () => {
 
 	test("existing-row shape (createdBy system, NO origin): refused until backfilled, then granted", async () => {
 		const t = makeT();
+		await seedFleetAgents(t, FILE_LABELS);
 		await seedCancellers(t, ["pi"]);
 		const id = (await t.run(async (ctx) =>
-			ctx.db.insert("tasks", {
+			insertTaskRow(ctx, {
 				title: "[#7] T2 — verify the fix",
 				assignedTo: "sigma",
 				priority: "high",
@@ -184,8 +196,9 @@ describe("automation task cancel grant", () => {
 
 	test("backfill leaves a createdBy-system row with a non-webhook title alone", async () => {
 		const t = makeT();
+		await seedFleetAgents(t, FILE_LABELS);
 		const id = (await t.run(async (ctx) =>
-			ctx.db.insert("tasks", {
+			insertTaskRow(ctx, {
 				title: "forged by a master caller",
 				assignedTo: "sigma",
 				priority: "low",
@@ -207,6 +220,7 @@ describe("automation task cancel grant", () => {
 
 	test("an already-done automation task cannot be cancelled through the grant", async () => {
 		const t = makeT();
+		await seedFleetAgents(t, FILE_LABELS);
 		await seedCancellers(t, ["pi"]);
 		const id = (await chainTask(t)) as never;
 		await t.run(async (ctx) => ctx.db.patch(id, { status: "done" }));

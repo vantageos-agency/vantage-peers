@@ -202,3 +202,38 @@ export async function recipientScopeOfPrincipal(
 		isMaster: false,
 	};
 }
+
+/**
+ * The refusal for an ASSIGNMENT target that is not an agent of the organisation
+ * the task row lives in (unknown, or registered only in another organisation).
+ * Same RBAC_DENIED code and `{reason, door}` payload shape as every other
+ * identity refusal of this module; the target is named so the caller can fix it.
+ */
+export function assigneeNotInOrgRefusal(
+	assignee: string,
+	orgId: string | undefined,
+	door: string,
+): ConvexError<string> {
+	return new ConvexError(
+		`RBAC_DENIED: assignee "${assignee}" has no agent row in this organisation — an assignment resolves to an agents-row ID of the task's own org, a label that names no agent there (or only in another org) is refused — ${JSON.stringify({ reason: "assignee-not-an-agent-of-org", orgId: orgId ?? null, door })}`,
+	);
+}
+
+/**
+ * An assignee agent row already resolved by ID, checked through the package
+ * (active, stamped with the org, in an active organisation). The package's
+ * refusal is surfaced under this backend's stable codes.
+ */
+export async function requireAssigneeAgentActive(
+	ctx: Ctx,
+	agentId: string,
+	orgId: string,
+	door: string,
+): Promise<void> {
+	const resolved = await resolveActingPrincipal(
+		{ kind: "agent", agentId, verifiedOrgId: orgId },
+		principalLookups(ctx),
+		door,
+	);
+	if (!resolved.ok) refuseWith(resolved.refusal);
+}

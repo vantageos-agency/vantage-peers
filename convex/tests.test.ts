@@ -4,6 +4,9 @@ import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import { api } from "./_generated/api";
 import type { Id } from "./_generated/dataModel";
 import schema from "./schema";
+import { seedFleetAgents } from "../tests/lib/seedFleetAgents";
+
+const FILE_LABELS = ["eta", "phi", "pi", "sigma", "tau"];
 
 // Load all convex modules. ragSync and search are "use node" actions that call
 // the RAG component with real embeddings — they cannot run in convex-test's
@@ -46,6 +49,7 @@ function createTestConvex() {
 // block resolves to >=1 real recipient instead of bouncing.
 async function createMessagingTestConvex() {
 	const t = convexTest(schema, modules);
+	await seedFleetAgents(t, FILE_LABELS);
 	await t.run(async (ctx) => {
 		for (const orchestratorId of ["pi", "tau", "phi"]) {
 			await ctx.db.insert("profiles", {
@@ -81,6 +85,7 @@ function asMaster<T extends { withIdentity: (identity: { subject: string }) => u
 describe("Memories", () => {
 	test("store a memory and retrieve it by ID", async () => {
 		const t = createTestConvex();
+		await seedFleetAgents(t, FILE_LABELS);
 
 		const memoryId = await t.mutation(api.memories.storeMemory, {
 			namespace: "global",
@@ -104,6 +109,7 @@ describe("Memories", () => {
 
 	test("list memories by namespace", async () => {
 		const t = createTestConvex();
+		await seedFleetAgents(t, FILE_LABELS);
 
 		await t.mutation(api.memories.storeMemory, {
 			namespace: "project/alpha",
@@ -142,6 +148,7 @@ describe("Memories", () => {
 
 	test("list memories with type filter", async () => {
 		const t = createTestConvex();
+		await seedFleetAgents(t, FILE_LABELS);
 
 		await t.mutation(api.memories.storeMemory, {
 			namespace: "global",
@@ -179,6 +186,7 @@ describe("Memories", () => {
 
 	test("soft delete marks isLatest=false", async () => {
 		const t = createTestConvex();
+		await seedFleetAgents(t, FILE_LABELS);
 
 		const memoryId = await t.mutation(api.memories.storeMemory, {
 			namespace: "global",
@@ -205,6 +213,7 @@ describe("Memories", () => {
 
 	test("store memory with 'updates' relation supersedes target", async () => {
 		const t = createTestConvex();
+		await seedFleetAgents(t, FILE_LABELS);
 
 		const originalId = await t.mutation(api.memories.storeMemory, {
 			namespace: "global",
@@ -251,6 +260,7 @@ describe("Memories", () => {
 	// Regression #262 — relations must be optional; defaults to [] server-side
 	test("storeMemory without relations defaults to empty array", async () => {
 		const t = createTestConvex();
+		await seedFleetAgents(t, FILE_LABELS);
 
 		const memoryId = await t.mutation(api.memories.storeMemory, {
 			namespace: "global",
@@ -276,6 +286,7 @@ describe("Memories", () => {
 describe("Episodes", () => {
 	test("store episode creates memory with type='episode' and episode metadata", async () => {
 		const t = createTestConvex();
+		await seedFleetAgents(t, FILE_LABELS);
 
 		const episodeId = await t.mutation(api.episodes.storeEpisode, {
 			namespace: "global",
@@ -316,6 +327,7 @@ describe("Episodes", () => {
 
 	test("list episodes by namespace", async () => {
 		const t = createTestConvex();
+		await seedFleetAgents(t, FILE_LABELS);
 
 		await t.mutation(api.episodes.storeEpisode, {
 			namespace: "project/alpha",
@@ -364,6 +376,7 @@ describe("Episodes", () => {
 
 	test("get critical insights returns only severity='critical' episodes", async () => {
 		const t = createTestConvex();
+		await seedFleetAgents(t, FILE_LABELS);
 
 		await t.mutation(api.episodes.storeEpisode, {
 			namespace: "global",
@@ -433,6 +446,7 @@ describe("Profiles", () => {
 
 	test("upsert creates new profile", async () => {
 		const t = createTestConvex();
+		await seedFleetAgents(t, FILE_LABELS);
 
 		const profileId = await t.mutation(
 			api.profiles.upsertProfile,
@@ -452,6 +466,7 @@ describe("Profiles", () => {
 
 	test("upsert updates existing profile", async () => {
 		const t = createTestConvex();
+		await seedFleetAgents(t, FILE_LABELS);
 
 		await t.mutation(api.profiles.upsertProfile, sampleProfile);
 
@@ -484,6 +499,7 @@ describe("Profiles", () => {
 
 	test("get profile by orchestratorId", async () => {
 		const t = createTestConvex();
+		await seedFleetAgents(t, FILE_LABELS);
 
 		await t.mutation(api.profiles.upsertProfile, sampleProfile);
 
@@ -497,6 +513,7 @@ describe("Profiles", () => {
 
 	test("list all profiles", async () => {
 		const t = createTestConvex();
+		await seedFleetAgents(t, FILE_LABELS);
 
 		await t.mutation(api.profiles.upsertProfile, sampleProfile);
 
@@ -522,6 +539,7 @@ describe("Profiles", () => {
 
 	test("updateDynamic updates currentTask", async () => {
 		const t = createTestConvex();
+		await seedFleetAgents(t, FILE_LABELS);
 
 		await t.mutation(api.profiles.upsertProfile, sampleProfile);
 
@@ -546,6 +564,7 @@ describe("Profiles", () => {
 	// Regression #261 — lastSeen must be optional; defaults to Date.now() server-side
 	test("updateDynamic without lastSeen defaults to server Date.now()", async () => {
 		const t = createTestConvex();
+		await seedFleetAgents(t, FILE_LABELS);
 
 		await t.mutation(api.profiles.upsertProfile, sampleProfile);
 
@@ -579,6 +598,7 @@ describe("Profiles", () => {
 describe("Messages", () => {
 	test("send message creates message + receipts", async () => {
 		const t = await createMessagingTestConvex();
+		await seedFleetAgents(t, FILE_LABELS);
 
 		const messageId = await asMaster(t).mutation(api.messages.sendMessage, {
 			from: "pi",
@@ -599,6 +619,7 @@ describe("Messages", () => {
 
 	test("send broadcast creates receipts for all other orchestrators", async () => {
 		const t = await createMessagingTestConvex();
+		await seedFleetAgents(t, FILE_LABELS);
 		// profiles.upsertProfile now requires the verified fleet master
 		// (convex/lib/auth.ts's withOrgScope isMaster grant — see
 		// convex/__tests__/profilesWriteScope.test.ts).
@@ -654,6 +675,7 @@ describe("Messages", () => {
 
 	test("check new messages returns unread", async () => {
 		const t = await createMessagingTestConvex();
+		await seedFleetAgents(t, FILE_LABELS);
 
 		await asMaster(t).mutation(api.messages.sendMessage, {
 			from: "tau",
@@ -677,6 +699,7 @@ describe("Messages", () => {
 
 	test("mark as read sets readAt", async () => {
 		const t = await createMessagingTestConvex();
+		await seedFleetAgents(t, FILE_LABELS);
 
 		await asMaster(t).mutation(api.messages.sendMessage, {
 			from: "tau",
@@ -697,6 +720,7 @@ describe("Messages", () => {
 
 	test("after mark as read, checkNewMessages returns empty", async () => {
 		const t = await createMessagingTestConvex();
+		await seedFleetAgents(t, FILE_LABELS);
 
 		await asMaster(t).mutation(api.messages.sendMessage, {
 			from: "tau",
@@ -721,6 +745,7 @@ describe("Messages", () => {
 
 	test("list messages by sender", async () => {
 		const t = await createMessagingTestConvex();
+		await seedFleetAgents(t, FILE_LABELS);
 
 		await asMaster(t).mutation(api.messages.sendMessage, {
 			from: "pi",
@@ -749,6 +774,7 @@ describe("Messages", () => {
 
 	test("delete message cascades receipts", async () => {
 		const t = await createMessagingTestConvex();
+		await seedFleetAgents(t, FILE_LABELS);
 
 		// Send a message from pi to tau — creates 1 message + 1 receipt
 		const messageId = await asMaster(t).mutation(api.messages.sendMessage, {
@@ -782,6 +808,7 @@ describe("Messages", () => {
 
 	test("delete message rejects non-sender caller", async () => {
 		const t = await createMessagingTestConvex();
+		await seedFleetAgents(t, FILE_LABELS);
 
 		const messageId = await asMaster(t).mutation(api.messages.sendMessage, {
 			from: "pi",
@@ -800,6 +827,7 @@ describe("Messages", () => {
 
 	test("delete message throws on non-existent messageId", async () => {
 		const t = await createMessagingTestConvex();
+		await seedFleetAgents(t, FILE_LABELS);
 
 		// Send one message so we have a valid-shape ID, then delete it to get a
 		// missing ID for the error path
@@ -827,6 +855,7 @@ describe("Messages", () => {
 
 	test("markAsRead rejects a messages-table ID passed as a receiptId (wrong table)", async () => {
 		const t = await createMessagingTestConvex();
+		await seedFleetAgents(t, FILE_LABELS);
 
 		// Insert a message and get its _id (from the messages table, NOT messageReceipts)
 		const messageId = await asMaster(t).mutation(api.messages.sendMessage, {
@@ -846,6 +875,7 @@ describe("Messages", () => {
 
 	test("checkNewMessages response omits messageId field from each result object", async () => {
 		const t = await createMessagingTestConvex();
+		await seedFleetAgents(t, FILE_LABELS);
 
 		await asMaster(t).mutation(api.messages.sendMessage, {
 			from: "phi",
@@ -893,6 +923,7 @@ describe("Tasks", () => {
 
 	test("create task returns taskId", async () => {
 		const t = createTestConvex();
+		await seedFleetAgents(t, FILE_LABELS);
 
 		const taskId = await t.mutation(api.tasks.create, sampleTask);
 		expect(taskId).toBeDefined();
@@ -906,6 +937,7 @@ describe("Tasks", () => {
 
 	test("list tasks by assignee", async () => {
 		const t = createTestConvex();
+		await seedFleetAgents(t, FILE_LABELS);
 
 		await t.mutation(api.tasks.create, sampleTask);
 
@@ -929,6 +961,7 @@ describe("Tasks", () => {
 
 	test("update task fields", async () => {
 		const t = createTestConvex();
+		await seedFleetAgents(t, FILE_LABELS);
 
 		const taskId = await t.mutation(api.tasks.create, sampleTask);
 
@@ -948,6 +981,7 @@ describe("Tasks", () => {
 
 	test("start task sets status=in_progress and startedAt", async () => {
 		const t = createTestConvex();
+		await seedFleetAgents(t, FILE_LABELS);
 
 		const taskId = await t.mutation(api.tasks.create, sampleTask);
 
@@ -966,6 +1000,7 @@ describe("Tasks", () => {
 
 	test("complete task sets status=done, completedAt, and completionNote", async () => {
 		const t = createTestConvex();
+		await seedFleetAgents(t, FILE_LABELS);
 
 		// Day 130 closure gate — seed billableProjects config (empty: this
 		// task's project "vantage-peers" is not a billable client project).
@@ -1019,6 +1054,7 @@ describe("Missions", () => {
 
 	test("create mission", async () => {
 		const t = createTestConvex();
+		await seedFleetAgents(t, FILE_LABELS);
 
 		const missionId = await t.mutation(api.missions.create, sampleMission);
 		expect(missionId).toBeDefined();
@@ -1034,6 +1070,7 @@ describe("Missions", () => {
 
 	test("list missions by project", async () => {
 		const t = createTestConvex();
+		await seedFleetAgents(t, FILE_LABELS);
 
 		await t.mutation(api.missions.create, sampleMission);
 
@@ -1058,6 +1095,7 @@ describe("Missions", () => {
 
 	test("update mission fields", async () => {
 		const t = createTestConvex();
+		await seedFleetAgents(t, FILE_LABELS);
 
 		const missionId = await t.mutation(api.missions.create, sampleMission);
 
@@ -1078,6 +1116,7 @@ describe("Missions", () => {
 
 	test("update mission status", async () => {
 		const t = createTestConvex();
+		await seedFleetAgents(t, FILE_LABELS);
 
 		const missionId = await t.mutation(api.missions.create, sampleMission);
 
@@ -1100,6 +1139,7 @@ describe("Missions", () => {
 describe("Diary", () => {
 	test("write diary creates entry", async () => {
 		const t = createTestConvex();
+		await seedFleetAgents(t, FILE_LABELS);
 
 		const diaryId = await t.mutation(api.diary.write, {
 			date: "2026-03-25",
@@ -1123,6 +1163,7 @@ describe("Diary", () => {
 
 	test("write diary upserts (same date+orchestrator overwrites)", async () => {
 		const t = createTestConvex();
+		await seedFleetAgents(t, FILE_LABELS);
 
 		const firstId = await t.mutation(api.diary.write, {
 			date: "2026-03-25",
@@ -1152,6 +1193,7 @@ describe("Diary", () => {
 
 	test("get diary by date+orchestrator", async () => {
 		const t = createTestConvex();
+		await seedFleetAgents(t, FILE_LABELS);
 
 		await t.mutation(api.diary.write, {
 			date: "2026-03-25",
@@ -1185,6 +1227,7 @@ describe("Diary", () => {
 
 	test("list diaries", async () => {
 		const t = createTestConvex();
+		await seedFleetAgents(t, FILE_LABELS);
 
 		await t.mutation(api.diary.write, {
 			date: "2026-03-24",
@@ -1227,6 +1270,7 @@ describe("Diary", () => {
 describe("Briefing Notes", () => {
 	test("create briefing note", async () => {
 		const t = createTestConvex();
+		await seedFleetAgents(t, FILE_LABELS);
 
 		const noteId = await t.mutation(api.briefingNotes.create, {
 			title: "Architecture Review: Memory Layer",
@@ -1254,6 +1298,7 @@ describe("Briefing Notes", () => {
 
 	test("list briefing notes by topic", async () => {
 		const t = createTestConvex();
+		await seedFleetAgents(t, FILE_LABELS);
 
 		await t.mutation(api.briefingNotes.create, {
 			title: "Arch Review 1",
@@ -1319,6 +1364,7 @@ describe("List queries — fields=lite + status multi/aliases", () => {
 	// ── 1. fields=lite payload reduction (tasks) ────────────────────────────────
 	test("tasks.list fields=lite returns compact projection only", async () => {
 		const t = createTestConvex();
+		await seedFleetAgents(t, FILE_LABELS);
 
 		// Create 5 tasks assigned to pi
 		for (let i = 0; i < 5; i++) {
@@ -1373,6 +1419,7 @@ describe("List queries — fields=lite + status multi/aliases", () => {
 	// ── 2. fields="full" default (backward compat) ──────────────────────────────
 	test("tasks.list without fields returns full doc shape (backward compat)", async () => {
 		const t = createTestConvex();
+		await seedFleetAgents(t, FILE_LABELS);
 
 		await t.mutation(api.tasks.create, { ...baseTask, title: "Full compat task" });
 
@@ -1396,6 +1443,7 @@ describe("List queries — fields=lite + status multi/aliases", () => {
 	// ── 3. status multi-value array (tasks) ─────────────────────────────────────
 	test("tasks.list status=[todo,in_progress] returns only those 2 statuses", async () => {
 		const t = createTestConvex();
+		await seedFleetAgents(t, FILE_LABELS);
 
 		await t.mutation(api.tasks.create, {
 			...baseTask,
@@ -1423,6 +1471,7 @@ describe("List queries — fields=lite + status multi/aliases", () => {
 
 	test("tasks.list status=['todo'] (single-element array) === status='todo' string", async () => {
 		const t = createTestConvex();
+		await seedFleetAgents(t, FILE_LABELS);
 
 		await t.mutation(api.tasks.create, {
 			...baseTask,
@@ -1449,6 +1498,7 @@ describe("List queries — fields=lite + status multi/aliases", () => {
 	// ── 4. status alias "active" (tasks) ────────────────────────────────────────
 	test("tasks.list status='active' returns todo + in_progress only", async () => {
 		const t = createTestConvex();
+		await seedFleetAgents(t, FILE_LABELS);
 
 		await t.mutation(api.tasks.create, {
 			...baseTask,
@@ -1482,6 +1532,7 @@ describe("List queries — fields=lite + status multi/aliases", () => {
 	// ── 5. status alias "open" (tasks) ──────────────────────────────────────────
 	test("tasks.list status='open' returns all except done", async () => {
 		const t = createTestConvex();
+		await seedFleetAgents(t, FILE_LABELS);
 
 		const statuses = ["todo", "in_progress", "review", "blocked", "done"] as const;
 		for (const s of statuses) {
@@ -1502,6 +1553,7 @@ describe("List queries — fields=lite + status multi/aliases", () => {
 	// ── 6. status alias mixing rejection (tasks) ─────────────────────────────────
 	test("tasks.list status=['open','active'] throws ConvexError about alias in array", async () => {
 		const t = createTestConvex();
+		await seedFleetAgents(t, FILE_LABELS);
 
 		await expect(
 			t
@@ -1512,6 +1564,7 @@ describe("List queries — fields=lite + status multi/aliases", () => {
 	// ── 6b. status alias "all" (tasks) — Eta PR #530 delta-review fix ─────────────
 	test("tasks.list status='all' returns every status (no filter)", async () => {
 		const t = createTestConvex();
+		await seedFleetAgents(t, FILE_LABELS);
 
 		const statuses = ["todo", "in_progress", "review", "blocked", "done"] as const;
 		for (const s of statuses) {
@@ -1536,6 +1589,7 @@ describe("List queries — fields=lite + status multi/aliases", () => {
 
 	test("tasks.list status=['all'] throws ConvexError about alias in array", async () => {
 		const t = createTestConvex();
+		await seedFleetAgents(t, FILE_LABELS);
 		await expect(
 			t
 		.query(api.tasks.list, { status: ["all"] }),
@@ -1545,6 +1599,7 @@ describe("List queries — fields=lite + status multi/aliases", () => {
 	// ── 7. status invalid value (tasks) ─────────────────────────────────────────
 	test("tasks.list status='bogus' throws ConvexError about invalid status", async () => {
 		const t = createTestConvex();
+		await seedFleetAgents(t, FILE_LABELS);
 
 		await expect(
 			t
@@ -1555,6 +1610,7 @@ describe("List queries — fields=lite + status multi/aliases", () => {
 	// ── 8. missions: status alias "open" / "active" ──────────────────────────────
 	test("missions.list status='open' returns all except complete", async () => {
 		const t = createTestConvex();
+		await seedFleetAgents(t, FILE_LABELS);
 
 		const baseMission = {
 			name: "Mission",
@@ -1590,6 +1646,7 @@ describe("List queries — fields=lite + status multi/aliases", () => {
 
 	test("missions.list status='active' returns plan + execute only", async () => {
 		const t = createTestConvex();
+		await seedFleetAgents(t, FILE_LABELS);
 
 		const baseMission = {
 			name: "Mission",
@@ -1631,6 +1688,7 @@ describe("List queries — fields=lite + status multi/aliases", () => {
 	// ── 8b. missions: status alias "all" — Eta PR #530 delta-review fix ──────────
 	test("missions.list status='all' returns every status (no filter)", async () => {
 		const t = createTestConvex();
+		await seedFleetAgents(t, FILE_LABELS);
 
 		const baseMission = {
 			name: "Mission",
@@ -1658,6 +1716,7 @@ describe("List queries — fields=lite + status multi/aliases", () => {
 
 	test("missions.list status=['all'] throws ConvexError about alias in array", async () => {
 		const t = createTestConvex();
+		await seedFleetAgents(t, FILE_LABELS);
 		await expect(
 			t
 		.query(api.missions.list, { status: ["all"] }),
@@ -1667,6 +1726,7 @@ describe("List queries — fields=lite + status multi/aliases", () => {
 	// ── 9. missions: fields=lite projection ─────────────────────────────────────
 	test("missions.list fields=lite returns compact projection only", async () => {
 		const t = createTestConvex();
+		await seedFleetAgents(t, FILE_LABELS);
 
 		await t.mutation(api.missions.create, {
 			name: "Lite mission",
@@ -1702,6 +1762,7 @@ describe("List queries — fields=lite + status multi/aliases", () => {
 	// ── 10. briefingNotes: fields=lite projection ────────────────────────────────
 	test("briefingNotes.list fields=lite returns compact projection only", async () => {
 		const t = createTestConvex();
+		await seedFleetAgents(t, FILE_LABELS);
 
 		await t.mutation(api.briefingNotes.create, {
 			title: "Arch note 1",
@@ -1740,6 +1801,7 @@ describe("List queries — fields=lite + status multi/aliases", () => {
 	// ── 11. listByMission fields=lite + status filter ───────────────────────────
 	test("tasks.listByMission fields=lite + status='active' returns 2 lite rows, no done", async () => {
 		const t = createTestConvex();
+		await seedFleetAgents(t, FILE_LABELS);
 
 		const missionId = await t.mutation(api.missions.create, {
 			name: "Mission for listByMission test",
@@ -1819,6 +1881,7 @@ describe("List queries — v2.3.3 createdBy + updatedSince + auto-clamp", () => 
 
 	test("tasks.list createdBy filter returns only sigma-created tasks", async () => {
 		const t = createTestConvex();
+		await seedFleetAgents(t, FILE_LABELS);
 
 		await t.mutation(api.tasks.create, { ...baseTask, title: "sigma-1" });
 		await t.mutation(api.tasks.create, {
@@ -1845,6 +1908,7 @@ describe("List queries — v2.3.3 createdBy + updatedSince + auto-clamp", () => 
 
 	test("tasks.list createdBy + assignedTo combinatorics", async () => {
 		const t = createTestConvex();
+		await seedFleetAgents(t, FILE_LABELS);
 
 		await t.mutation(api.tasks.create, {
 			...baseTask,
@@ -1878,6 +1942,7 @@ describe("List queries — v2.3.3 createdBy + updatedSince + auto-clamp", () => 
 
 	test("tasks.list updatedSince filter returns only recently-updated rows", async () => {
 		const t = createTestConvex();
+		await seedFleetAgents(t, FILE_LABELS);
 
 		const oldId = await t.mutation(api.tasks.create, {
 			...baseTask,
@@ -1905,6 +1970,7 @@ describe("List queries — v2.3.3 createdBy + updatedSince + auto-clamp", () => 
 
 	test("tasks.list auto-clamp: fields=full + no explicit limit → ≤30", async () => {
 		const t = createTestConvex();
+		await seedFleetAgents(t, FILE_LABELS);
 
 		// Seed 35 tasks
 		for (let i = 0; i < 35; i++) {
@@ -1921,6 +1987,7 @@ describe("List queries — v2.3.3 createdBy + updatedSince + auto-clamp", () => 
 
 	test("tasks.list auto-clamp NOT triggered when fields=lite", async () => {
 		const t = createTestConvex();
+		await seedFleetAgents(t, FILE_LABELS);
 
 		for (let i = 0; i < 35; i++) {
 			await t.mutation(api.tasks.create, {
@@ -1940,6 +2007,7 @@ describe("List queries — v2.3.3 createdBy + updatedSince + auto-clamp", () => 
 
 	test("tasks.list auto-clamp NOT triggered when explicit limit passed", async () => {
 		const t = createTestConvex();
+		await seedFleetAgents(t, FILE_LABELS);
 
 		for (let i = 0; i < 35; i++) {
 			await t.mutation(api.tasks.create, {

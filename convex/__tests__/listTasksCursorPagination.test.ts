@@ -22,6 +22,9 @@ import { convexTest } from "convex-test";
 import { describe, expect, test } from "vitest";
 import { api } from "../_generated/api";
 import schema from "../schema";
+import { insertTaskRow, seedFleetAgents } from "../../tests/lib/seedFleetAgents";
+
+const FILE_LABELS = ["cancelled", "distinguish-overflow-creator", "eta", "overflow-creator", "pi", "sigma", "someone-else", "someone-else-distinguish"];
 
 const modules = Object.fromEntries(
 	Object.entries(import.meta.glob("../**/*.ts")).filter(
@@ -45,7 +48,7 @@ async function seedQueue(
 	await t.run(async (ctx: any) => {
 		for (let i = 0; i < count; i++) {
 			const now = Date.now() + i; // strictly increasing _creationTime-adjacent ordering
-			const id = await ctx.db.insert("tasks", {
+			const id = await insertTaskRow(ctx, {
 				title: `queue task ${i}`,
 				assignedTo: opts.assignedTo,
 				priority: "medium",
@@ -63,7 +66,9 @@ async function seedQueue(
 describe("tasks.list — cursor pagination walks a queue larger than one page (Day 163)", () => {
 	test("RED: every row is seen exactly once and the walk terminates", async () => {
 		const t = createT();
+		await seedFleetAgents(t, FILE_LABELS);
 		const assignedTo = "pi-cursor-queue";
+		await seedFleetAgents(t, [assignedTo]);
 		const total = 250;
 		const seededIds = await seedQueue(t, total, { assignedTo, status: "todo" });
 
@@ -108,7 +113,9 @@ describe("tasks.list — cursor pagination walks a queue larger than one page (D
 
 	test("RED: an un-continuable cursor is distinguishable from an exhausted list", async () => {
 		const t = createT();
+		await seedFleetAgents(t, FILE_LABELS);
 		const assignedTo = "pi-cursor-distinguish";
+		await seedFleetAgents(t, [assignedTo]);
 		await seedQueue(t, 5, { assignedTo, status: "todo" });
 
 		// A normal exhausted page (no more matching rows below the cursor) —
@@ -132,7 +139,7 @@ describe("tasks.list — cursor pagination walks a queue larger than one page (D
 		await t.run(async (ctx: any) => {
 			for (let i = 0; i < 2001; i++) {
 				const now = Date.now() + i;
-				await ctx.db.insert("tasks", {
+				await insertTaskRow(ctx, {
 					title: `distinguish-overflow ${i}`,
 					assignedTo: "someone-else-distinguish",
 					priority: "medium",
@@ -162,7 +169,9 @@ describe("tasks.list — cursor pagination walks a queue larger than one page (D
 
 	test("RED: widened scan overflow throws SCAN_CAP_EXCEEDED — never a silent empty page", async () => {
 		const t = createT();
+		await seedFleetAgents(t, FILE_LABELS);
 		const assignedTo = "pi-cursor-overflow";
+		await seedFleetAgents(t, [assignedTo]);
 		// updatedSince forces a bound that, combined on this branch's fallback
 		// path, cannot push into the index alongside createdBefore — but the
 		// simplest reliable overflow trigger is createdBy (always unindexed,
@@ -174,7 +183,7 @@ describe("tasks.list — cursor pagination walks a queue larger than one page (D
 		await t.run(async (ctx: any) => {
 			for (let i = 0; i < 2001; i++) {
 				const now = Date.now() + i;
-				await ctx.db.insert("tasks", {
+				await insertTaskRow(ctx, {
 					title: `overflow ${i}`,
 					assignedTo: "someone-else",
 					priority: "medium",
@@ -207,14 +216,16 @@ describe("tasks.list — cursor pagination walks a queue larger than one page (D
 	// it discriminates and cannot pass by accident.
 	test("Eta probe: cursor walk over status:['todo','in_progress'] limit=5 sees every one of 12 alternating-status tasks exactly once", async () => {
 		const t = createT();
+		await seedFleetAgents(t, FILE_LABELS);
 		const assignedTo = "eta-probe-assignee";
+		await seedFleetAgents(t, [assignedTo]);
 
 		// probe-0 (oldest) .. probe-11 (newest), alternating status.
 		// eslint-disable-next-line @typescript-eslint/no-explicit-any
 		await t.run(async (ctx: any) => {
 			for (let i = 0; i < 12; i++) {
 				const now = Date.now() + i;
-				await ctx.db.insert("tasks", {
+				await insertTaskRow(ctx, {
 					title: `probe-${i}`,
 					assignedTo,
 					priority: "medium",
@@ -291,6 +302,7 @@ describe("tasks.list — cursor pagination walks a queue larger than one page (D
 describe("tasks.listByMission — cursor pagination (Day 163)", () => {
 	test("RED/GREEN: every row is seen exactly once and the walk terminates", async () => {
 		const t = createT();
+		await seedFleetAgents(t, FILE_LABELS);
 		const total = 220;
 
 		// eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -313,7 +325,7 @@ describe("tasks.listByMission — cursor pagination (Day 163)", () => {
 		await t.run(async (ctx: any) => {
 			for (let i = 0; i < total; i++) {
 				const now = Date.now() + i;
-				const id = await ctx.db.insert("tasks", {
+				const id = await insertTaskRow(ctx, {
 					title: `mission task ${i}`,
 					assignedTo: "pi",
 					priority: "medium",

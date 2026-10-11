@@ -29,6 +29,9 @@ import { BRIEFING_NOTES_LIST_SCAN_CAP } from "../briefingNotes";
 import { MISSION_LIST_SCAN_CAP } from "../missions";
 import schema from "../schema";
 import { TASK_LIST_SCAN_CAP } from "../tasks";
+import { insertTaskRow, seedFleetAgents } from "../../tests/lib/seedFleetAgents";
+
+const FILE_LABELS = ["eta", "sigma", "test-orch-indexed-bound-decisive", "test-orch-indexed-bound-listbymission", "test-orch-indexed-bound-missions", "test-orch-indexed-bound-notes", "test-orch-indexed-bound-still-throws", "test-orch-indexed-bound-window-matters", "test-orch-indexed-bound-window-matters-alone"];
 
 const modules = Object.fromEntries(
 	Object.entries(import.meta.glob("../**/*.ts")).filter(
@@ -60,6 +63,7 @@ describe("tasks.list — updatedSince bound pushed into the index (assignedTo br
 	// so only the actually-matching rows are fetched and the call succeeds.
 	test("population far above the cap, few rows match updatedSince: succeeds and returns exactly the matches (RED before fix / GREEN after)", async () => {
 		const t = convexTest(schema, modules);
+		await seedFleetAgents(t, FILE_LABELS);
 		const ASSIGNEE = "test-orch-indexed-bound-decisive";
 		const OLD_UPDATED_AT = Date.now() - 100_000_000; // stale — excluded by the window
 		const RECENT_UPDATED_AT = Date.now(); // fresh — included
@@ -68,7 +72,7 @@ describe("tasks.list — updatedSince bound pushed into the index (assignedTo br
 		await t.run(async (ctx) => {
 			// Population comfortably larger than TASK_LIST_SCAN_CAP + 1, all stale.
 			for (let i = 0; i < TASK_LIST_SCAN_CAP + 50; i++) {
-				await ctx.db.insert("tasks", {
+				await insertTaskRow(ctx, {
 					title: `stale-task-${i}`,
 					assignedTo: ASSIGNEE,
 					priority: "medium",
@@ -80,7 +84,7 @@ describe("tasks.list — updatedSince bound pushed into the index (assignedTo br
 			}
 			// A handful of genuinely fresh rows.
 			for (let i = 0; i < 3; i++) {
-				await ctx.db.insert("tasks", {
+				await insertTaskRow(ctx, {
 					title: `fresh-task-${i}`,
 					assignedTo: ASSIGNEE,
 					priority: "medium",
@@ -129,12 +133,13 @@ describe("tasks.list — updatedSince bound pushed into the index (assignedTo br
 	// report for the full explanation. It is not modified here.
 	test("identical population: a wide window still overflows the cap, a narrow window does not — proof the window participates in the query", async () => {
 		const t = convexTest(schema, modules);
+		await seedFleetAgents(t, FILE_LABELS);
 		const ASSIGNEE = "test-orch-indexed-bound-window-matters";
 		const ROW_UPDATED_AT = Date.now() - 500;
 
 		await t.run(async (ctx) => {
 			for (let i = 0; i < TASK_LIST_SCAN_CAP + 1; i++) {
-				await ctx.db.insert("tasks", {
+				await insertTaskRow(ctx, {
 					title: `window-matters-task-${i}`,
 					assignedTo: ASSIGNEE,
 					priority: "medium",
@@ -183,12 +188,13 @@ describe("tasks.list — updatedSince bound pushed into the index (assignedTo br
 	// regardless of the window.
 	test("assignedTo-alone branch (no status arg): identical population, a wide window still overflows the cap, a narrow window does not", async () => {
 		const t = convexTest(schema, modules);
+		await seedFleetAgents(t, FILE_LABELS);
 		const ASSIGNEE = "test-orch-indexed-bound-window-matters-alone";
 		const ROW_UPDATED_AT = Date.now() - 500;
 
 		await t.run(async (ctx) => {
 			for (let i = 0; i < TASK_LIST_SCAN_CAP + 1; i++) {
-				await ctx.db.insert("tasks", {
+				await insertTaskRow(ctx, {
 					title: `window-matters-alone-task-${i}`,
 					assignedTo: ASSIGNEE,
 					priority: "medium",
@@ -231,12 +237,13 @@ describe("tasks.list — updatedSince bound pushed into the index (assignedTo br
 	// on this branch, since the bound is index-backed).
 	test("wide-enough window on a big-enough assignedTo-alone branch still overflows the cap, message names a working remedy", async () => {
 		const t = convexTest(schema, modules);
+		await seedFleetAgents(t, FILE_LABELS);
 		const ASSIGNEE = "test-orch-indexed-bound-still-throws";
 		const RECENT_UPDATED_AT = Date.now();
 
 		await t.run(async (ctx) => {
 			for (let i = 0; i < TASK_LIST_SCAN_CAP + 1; i++) {
-				await ctx.db.insert("tasks", {
+				await insertTaskRow(ctx, {
 					title: `still-throws-task-${i}`,
 					assignedTo: ASSIGNEE,
 					priority: "medium",
@@ -278,6 +285,7 @@ describe("tasks.list — updatedSince bound pushed into the index (assignedTo br
 describe("SCAN_CAP_EXCEEDED messages — false remedy removed from the remaining non-indexed branches", () => {
 	test("missions.list (project branch, no index for updatedSince): message omits the window remedy, names project/pilot/status", async () => {
 		const t = convexTest(schema, modules);
+		await seedFleetAgents(t, FILE_LABELS);
 		await t.run(async (ctx) => {
 			for (let i = 0; i < MISSION_LIST_SCAN_CAP + 1; i++) {
 				await ctx.db.insert("missions", {
@@ -312,6 +320,7 @@ describe("SCAN_CAP_EXCEEDED messages — false remedy removed from the remaining
 
 	test("tasks.listByMission (missionId branch, no index for updatedSince): message omits the window remedy, names status", async () => {
 		const t = convexTest(schema, modules);
+		await seedFleetAgents(t, FILE_LABELS);
 		const missionId = await t.run(async (ctx) => {
 			return await ctx.db.insert("missions", {
 				name: "fictitious-mission-indexed-bound-listbymission",
@@ -327,7 +336,7 @@ describe("SCAN_CAP_EXCEEDED messages — false remedy removed from the remaining
 		});
 		await t.run(async (ctx) => {
 			for (let i = 0; i < TASK_LIST_SCAN_CAP + 1; i++) {
-				await ctx.db.insert("tasks", {
+				await insertTaskRow(ctx, {
 					title: `fictitious-overcap-mission-task-${i}`,
 					assignedTo: "test-orch-indexed-bound-listbymission",
 					priority: "medium",
@@ -368,6 +377,7 @@ describe("SCAN_CAP_EXCEEDED messages — false remedy removed from the remaining
 describe("SCAN_CAP_EXCEEDED message — briefingNotes.list topic branch (now indexed)", () => {
 	test("briefingNotes.list (topic branch, now indexed): wide-enough window still overflows the cap, message names a working remedy", async () => {
 		const t = convexTest(schema, modules);
+		await seedFleetAgents(t, FILE_LABELS);
 		const RECENT_UPDATED_AT = Date.now();
 		await t.run(async (ctx) => {
 			for (let i = 0; i < BRIEFING_NOTES_LIST_SCAN_CAP + 1; i++) {

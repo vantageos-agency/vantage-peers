@@ -33,6 +33,9 @@ import { convexTest } from "convex-test";
 import { describe, expect, test } from "vitest";
 import { api } from "../_generated/api";
 import schema from "../schema";
+import { seedFleetAgents } from "../../tests/lib/seedFleetAgents";
+
+const FILE_LABELS = ["eta", "sigma", "tenant-a"];
 
 const modules = Object.fromEntries(
 	Object.entries(import.meta.glob("../**/*.ts")).filter(
@@ -89,6 +92,7 @@ async function seedBuOwnedByA(t: ReturnType<typeof createT>) {
 describe("tasks.update — omitting callerOrchestrator is refused, not exempted", () => {
 	test("B cannot mutate A's task by omitting callerOrchestrator", async () => {
 		const t = createT();
+		await seedFleetAgents(t, FILE_LABELS);
 		const taskId = await seedTaskOwnedByA(t);
 
 		await expect(
@@ -106,6 +110,7 @@ describe("tasks.update — omitting callerOrchestrator is refused, not exempted"
 
 	test("second assertion — creator/assignee A still updates its own task", async () => {
 		const t = createT();
+		await seedFleetAgents(t, FILE_LABELS);
 		const taskId = await seedTaskOwnedByA(t);
 
 		await t.mutation(api.tasks.update, {
@@ -120,6 +125,7 @@ describe("tasks.update — omitting callerOrchestrator is refused, not exempted"
 
 	test("system caller still bypasses (unaffected regression)", async () => {
 		const t = createT();
+		await seedFleetAgents(t, FILE_LABELS);
 		const taskId = await seedTaskOwnedByA(t);
 
 		await t.mutation(api.tasks.update, {
@@ -136,6 +142,7 @@ describe("tasks.update — omitting callerOrchestrator is refused, not exempted"
 describe("tasks.complete — omitting callerOrchestrator is refused, not exempted", () => {
 	test("B cannot complete A's task by omitting callerOrchestrator", async () => {
 		const t = createT();
+		await seedFleetAgents(t, FILE_LABELS);
 		const taskId = await seedTaskOwnedByA(t);
 
 		await expect(
@@ -151,6 +158,7 @@ describe("tasks.complete — omitting callerOrchestrator is refused, not exempte
 
 	test("second assertion — assignee A still completes its own task", async () => {
 		const t = createT();
+		await seedFleetAgents(t, FILE_LABELS);
 		const taskId = await seedTaskOwnedByA(t);
 		await t.run(async (ctx) => {
 			await ctx.db.insert("taskClosureConfig", {
@@ -174,6 +182,7 @@ describe("tasks.complete — omitting callerOrchestrator is refused, not exempte
 describe("tasks.start — omitting callerOrchestrator is refused, not exempted", () => {
 	test("B cannot start A's task by omitting callerOrchestrator", async () => {
 		const t = createT();
+		await seedFleetAgents(t, FILE_LABELS);
 		const taskId = await seedTaskOwnedByA(t);
 
 		await expect(
@@ -186,6 +195,7 @@ describe("tasks.start — omitting callerOrchestrator is refused, not exempted",
 
 	test("second assertion — assignee A still starts its own task", async () => {
 		const t = createT();
+		await seedFleetAgents(t, FILE_LABELS);
 		const taskId = await seedTaskOwnedByA(t);
 
 		await t.mutation(api.tasks.start, {
@@ -201,6 +211,7 @@ describe("tasks.start — omitting callerOrchestrator is refused, not exempted",
 describe("tasks.deleteTask — omitting callerOrchestrator is refused, not exempted", () => {
 	test("B cannot delete A's task by omitting callerOrchestrator", async () => {
 		const t = createT();
+		await seedFleetAgents(t, FILE_LABELS);
 		const taskId = await seedTaskOwnedByA(t);
 
 		await expect(
@@ -213,6 +224,7 @@ describe("tasks.deleteTask — omitting callerOrchestrator is refused, not exemp
 
 	test("second assertion — creator A still deletes its own task", async () => {
 		const t = createT();
+		await seedFleetAgents(t, FILE_LABELS);
 		const taskId = await seedTaskOwnedByA(t);
 
 		const result = await t.mutation(api.tasks.deleteTask, {
@@ -224,6 +236,7 @@ describe("tasks.deleteTask — omitting callerOrchestrator is refused, not exemp
 
 	test("system caller still bypasses (unaffected regression)", async () => {
 		const t = createT();
+		await seedFleetAgents(t, FILE_LABELS);
 		const taskId = await seedTaskOwnedByA(t);
 
 		const result = await t.mutation(api.tasks.deleteTask, {
@@ -237,6 +250,7 @@ describe("tasks.deleteTask — omitting callerOrchestrator is refused, not exemp
 describe("businessUnits.update — authorization derived from the TARGET row, not the caller's claim", () => {
 	test("B cannot rewrite A's BU by supplying its own identity as callerOrchestrator", async () => {
 		const t = createT();
+		await seedFleetAgents(t, FILE_LABELS);
 		const buId = await seedBuOwnedByA(t);
 
 		await expect(
@@ -253,6 +267,7 @@ describe("businessUnits.update — authorization derived from the TARGET row, no
 
 	test("second assertion — owning orchestrator A still updates its own BU", async () => {
 		const t = createT();
+		await seedFleetAgents(t, FILE_LABELS);
 		const buId = await seedBuOwnedByA(t);
 
 		await t.mutation(api.businessUnits.update, {
@@ -267,6 +282,7 @@ describe("businessUnits.update — authorization derived from the TARGET row, no
 
 	test("system caller still bypasses (unaffected regression)", async () => {
 		const t = createT();
+		await seedFleetAgents(t, FILE_LABELS);
 		const buId = await seedBuOwnedByA(t);
 
 		await t.mutation(api.businessUnits.update, {
@@ -285,6 +301,7 @@ describe("businessUnits.update — authorization derived from the TARGET row, no
 describe("briefingNotes.deleteBriefingNote — omitting callerOrchestrator is refused, not exempted", () => {
 	test("B cannot delete A's note by omitting callerOrchestrator", async () => {
 		const t = createT();
+		await seedFleetAgents(t, FILE_LABELS);
 		const noteId = await t.run((ctx) =>
 			ctx.db.insert("briefingNotes", {
 				title: "A-note",
@@ -305,6 +322,7 @@ describe("briefingNotes.deleteBriefingNote — omitting callerOrchestrator is re
 
 	test("second assertion — creator A still deletes its own note", async () => {
 		const t = createT();
+		await seedFleetAgents(t, FILE_LABELS);
 		const noteId = await t.run((ctx) =>
 			ctx.db.insert("briefingNotes", {
 				title: "A-note",
@@ -327,6 +345,7 @@ describe("briefingNotes.deleteBriefingNote — omitting callerOrchestrator is re
 describe("diary.deleteDiary — omitting callerOrchestrator is refused, not exempted", () => {
 	test("B cannot delete A's diary entry by omitting callerOrchestrator", async () => {
 		const t = createT();
+		await seedFleetAgents(t, FILE_LABELS);
 		const diaryId = await t.mutation(api.diary.write, {
 			date: "2026-07-23",
 			orchestrator: TENANT_A,
@@ -342,6 +361,7 @@ describe("diary.deleteDiary — omitting callerOrchestrator is refused, not exem
 
 	test("second assertion — owner A still deletes its own diary entry", async () => {
 		const t = createT();
+		await seedFleetAgents(t, FILE_LABELS);
 		const diaryId = await t.mutation(api.diary.write, {
 			date: "2026-07-23",
 			orchestrator: TENANT_A,
@@ -359,6 +379,7 @@ describe("diary.deleteDiary — omitting callerOrchestrator is refused, not exem
 describe("messages.deleteMessage — omitting callerOrchestrator is refused, not exempted", () => {
 	test("B cannot delete A's message by omitting callerOrchestrator", async () => {
 		const t = createT();
+		await seedFleetAgents(t, FILE_LABELS);
 		await t.run((ctx) =>
 			ctx.db.insert("profiles", {
 				orchestratorId: TENANT_B,
@@ -382,6 +403,7 @@ describe("messages.deleteMessage — omitting callerOrchestrator is refused, not
 
 	test("second assertion — sender A still deletes its own message", async () => {
 		const t = createT();
+		await seedFleetAgents(t, FILE_LABELS);
 		await t.run((ctx) =>
 			ctx.db.insert("profiles", {
 				orchestratorId: TENANT_B,

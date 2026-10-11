@@ -39,6 +39,9 @@ import { convexTest } from "convex-test";
 import { describe, expect, test, vi } from "vitest";
 import { api } from "../_generated/api";
 import schema from "../schema";
+import { insertTaskRow, seedFleetAgents } from "../../tests/lib/seedFleetAgents";
+
+const FILE_LABELS = ["eta", "sigma"];
 
 const modules = Object.fromEntries(
 	Object.entries(import.meta.glob("../**/*.ts")).filter(
@@ -77,6 +80,7 @@ describe("task-segments — pause/resume accumulate, never span", () => {
 			const t = convexTest(schema, modules).withIdentity({
 				subject: "test-service-account-user-id",
 			});
+			await seedFleetAgents(t, FILE_LABELS);
 			await seedBillableConfig(t);
 
 			const t0 = Date.parse("2026-01-01T09:00:00.000Z");
@@ -146,6 +150,7 @@ describe("task-segments — pause/resume accumulate, never span", () => {
 		const t = convexTest(schema, modules).withIdentity({
 			subject: "test-service-account-user-id",
 		});
+		await seedFleetAgents(t, FILE_LABELS);
 		await seedBillableConfig(t);
 
 		const taskId = await t.mutation(api.tasks.create, {
@@ -169,6 +174,7 @@ describe("task-segments — pause/resume accumulate, never span", () => {
 			const t = convexTest(schema, modules).withIdentity({
 				subject: "test-service-account-user-id",
 			});
+			await seedFleetAgents(t, FILE_LABELS);
 			await seedBillableConfig(t);
 			await seedMaxSegmentMinutes(t, 60); // 1h cap for this test
 
@@ -216,6 +222,7 @@ describe("task-segments — pause/resume accumulate, never span", () => {
 		const t = convexTest(schema, modules).withIdentity({
 			subject: "test-service-account-user-id",
 		});
+		await seedFleetAgents(t, FILE_LABELS);
 		await seedBillableConfig(t);
 
 		// Seeded directly via t.run — exactly what a pre-migration row looks
@@ -223,7 +230,7 @@ describe("task-segments — pause/resume accumulate, never span", () => {
 		// shape, before this deploy).
 		const taskId = await t.run(async (ctx) => {
 			const now = Date.now();
-			return await ctx.db.insert("tasks", {
+			return await insertTaskRow(ctx, {
 				title: "Pre-existing in-flight task from before pause/resume shipped",
 				project: BILLABLE_PROJECT,
 				assignedTo: "sigma",
@@ -253,6 +260,7 @@ describe("task-segments — pause/resume accumulate, never span", () => {
 		const t = convexTest(schema, modules).withIdentity({
 			subject: "test-service-account-user-id",
 		});
+		await seedFleetAgents(t, FILE_LABELS);
 		await seedBillableConfig(t);
 
 		const now = Date.now();
@@ -262,7 +270,7 @@ describe("task-segments — pause/resume accumulate, never span", () => {
 		// Row 1: segments-measured (start -> pause -> resume -> complete).
 		const t0 = now - 60 * 60_000;
 		const measuredId = await t.run(async (ctx) => {
-			return await ctx.db.insert("tasks", {
+			return await insertTaskRow(ctx, {
 				title: "Measured via segments",
 				project: BILLABLE_PROJECT,
 				assignedTo: "sigma",
@@ -283,7 +291,7 @@ describe("task-segments — pause/resume accumulate, never span", () => {
 		// Row 2: legacy (pre-migration, no segments, straight diff).
 		const legacyId = await t.run(async (ctx) => {
 			const start = now - 30 * 60_000;
-			return await ctx.db.insert("tasks", {
+			return await insertTaskRow(ctx, {
 				title: "Legacy diff-based row",
 				project: BILLABLE_PROJECT,
 				assignedTo: "sigma",
@@ -327,6 +335,7 @@ describe("resume_task / start_task RESUME semantics", () => {
 			const t = convexTest(schema, modules).withIdentity({
 				subject: "test-service-account-user-id",
 			});
+			await seedFleetAgents(t, FILE_LABELS);
 			await seedBillableConfig(t);
 
 			const t0 = Date.parse("2026-03-01T09:00:00.000Z");
@@ -371,6 +380,7 @@ describe("resume_task refuses a non-paused task", () => {
 		const t = convexTest(schema, modules).withIdentity({
 			subject: "test-service-account-user-id",
 		});
+		await seedFleetAgents(t, FILE_LABELS);
 		await seedBillableConfig(t);
 
 		const taskId = await t.mutation(api.tasks.create, {
@@ -398,6 +408,7 @@ describe("start_task refuses a second open segment", () => {
 			const t = convexTest(schema, modules).withIdentity({
 				subject: "test-service-account-user-id",
 			});
+			await seedFleetAgents(t, FILE_LABELS);
 			await seedBillableConfig(t);
 
 			const t0 = Date.parse("2026-04-01T09:00:00.000Z");
@@ -433,6 +444,7 @@ describe("start_task refuses a second open segment", () => {
 			const t = convexTest(schema, modules).withIdentity({
 				subject: "test-service-account-user-id",
 			});
+			await seedFleetAgents(t, FILE_LABELS);
 			await seedBillableConfig(t);
 
 			const t0 = Date.parse("2026-04-02T09:00:00.000Z");
@@ -486,12 +498,13 @@ describe("checkout_task refuses to overwrite an open segment", () => {
 		const t = convexTest(schema, modules).withIdentity({
 			subject: "test-service-account-user-id",
 		});
+		await seedFleetAgents(t, FILE_LABELS);
 		await seedBillableConfig(t);
 
 		const now = Date.now();
 		const openStart = now - 15 * 60_000;
 		const taskId = await t.run(async (ctx) => {
-			return await ctx.db.insert("tasks", {
+			return await insertTaskRow(ctx, {
 				title: "Blocked mid-flight, then unblocked, never closed",
 				project: BILLABLE_PROJECT,
 				assignedTo: "sigma",

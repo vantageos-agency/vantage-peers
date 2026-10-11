@@ -22,6 +22,7 @@ import { afterEach, describe, expect, test, vi } from "vitest";
 import { testClerkOrgId } from "../../tests/fixtures/testClerkOrgId";
 import { api } from "../_generated/api";
 import schema from "../schema";
+import { actingWith, seedOrgAgents } from "../../tests/lib/seedFleetAgents";
 
 const modules = Object.fromEntries(
 	Object.entries(import.meta.glob("../**/*.ts")).filter(
@@ -38,10 +39,17 @@ const ORCH = "eta";
 const NOTE = "Fixed the defect in commit abcdef1234567 with regression test, 3/3 pass";
 const SLUGS = ["org-a", "org-b", "org-op"] as const;
 
+// `${org}/${name}` -> credential of that org's agent: a member that acts as an
+// agent of its org presents it (the doors decide on agent IDs).
+const secrets = new Map<string, string>();
+
 const asOrg = (t: T, slug: string) =>
-	t.withIdentity({ subject: `user-${slug}`, organizationId: slug, org_id: testClerkOrgId(slug) } as Parameters<
-		T["withIdentity"]
-	>[0]);
+	actingWith(
+		t.withIdentity({ subject: `user-${slug}`, organizationId: slug, org_id: testClerkOrgId(slug) } as Parameters<
+			T["withIdentity"]
+		>[0]),
+		(name) => secrets.get(`${slug}/${name}`),
+	);
 
 async function seed(t: T) {
 	await t.run(async (ctx) => {
@@ -83,6 +91,12 @@ async function seed(t: T) {
 			});
 		}
 	});
+	for (const [k, v] of await seedOrgAgents(
+		t,
+		SLUGS.map((slug) => [slug, ORCH] as const),
+	)) {
+		secrets.set(k, v);
+	}
 }
 
 const issueOf = (t: T, repo: string) =>

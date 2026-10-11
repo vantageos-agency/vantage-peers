@@ -28,6 +28,14 @@ import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import { testClerkOrgId } from "../../tests/fixtures/testClerkOrgId";
 import { api } from "../_generated/api";
 import schema from "../schema";
+import {
+	actingWith,
+	insertTaskRow,
+	seedFleetAgents,
+	seedOrgAgents,
+} from "../../tests/lib/seedFleetAgents";
+
+const FILE_LABELS = ["eta", "pi-r31", "pi-r31-dry", "pi-r31-fail", "pi-r31-row", "pi-r31-small", "pi-r31-small2", "sigma", "zeta"];
 
 const modules = Object.fromEntries(
 	Object.entries(import.meta.glob("../**/*.ts")).filter(
@@ -46,13 +54,19 @@ const CAP = 500; // BULK_COMPLETE_HARD_CAP
 
 const asMaster = (t: T) =>
 	t.withIdentity({ subject: "test-service-account-user-id" } as Identity);
+// `${org}/${name}` -> the credential of that org's agent (written by seedOrg). A
+// member that acts as an agent of its org presents it: the door decides on IDs.
+const secrets = new Map<string, string>();
 const asMember = (t: T, orgSlug: string) =>
-	t.withIdentity({
-		subject: `member-of-${orgSlug}`,
-		organizationId: orgSlug,
-		org_id: testClerkOrgId(orgSlug),
-		organizationSlug: orgSlug,
-	} as Identity);
+	actingWith(
+		t.withIdentity({
+			subject: `member-of-${orgSlug}`,
+			organizationId: orgSlug,
+			org_id: testClerkOrgId(orgSlug),
+			organizationSlug: orgSlug,
+		} as Identity),
+		(name) => secrets.get(`${orgSlug}/${name}`),
+	);
 
 async function seedOrg(t: T, slug: string, roster: string[]) {
 	await t.run(async (ctx) => {
@@ -66,6 +80,12 @@ async function seedOrg(t: T, slug: string, roster: string[]) {
 			createdAt: Date.now(),
 		});
 	});
+	for (const [k, v] of await seedOrgAgents(
+		t,
+		roster.map((name) => [slug, name] as const),
+	)) {
+		secrets.set(k, v);
+	}
 }
 
 async function seedClosureConfig(t: T) {
@@ -86,7 +106,7 @@ async function seedRows(
 	await t.run(async (ctx) => {
 		for (let i = 0; i < n; i++) {
 			const now = Date.now();
-			await ctx.db.insert("tasks", {
+			await insertTaskRow(ctx, {
 				title: `row ${o.orgId ?? "none"} ${o.assignedTo} ${i}`,
 				assignedTo: o.assignedTo,
 				createdBy: o.createdBy,
@@ -120,6 +140,7 @@ describe("tasks.bulkComplete — self-scheduled continuation (R-31)", () => {
 
 	test("BOUNDED + COMPLETE + SHAPE: one batch per call, the pile drains by itself, one note across batches", async () => {
 		const t = createT();
+		await seedFleetAgents(t, FILE_LABELS);
 		await seedClosureConfig(t);
 		await seedRows(t, 1200, { assignedTo: "pi-r31", createdBy: "cron-x" });
 
@@ -156,6 +177,7 @@ describe("tasks.bulkComplete — self-scheduled continuation (R-31)", () => {
 
 	test("under the cap: no continuation is scheduled and no cappedAt/remaining is reported", async () => {
 		const t = createT();
+		await seedFleetAgents(t, FILE_LABELS);
 		await seedClosureConfig(t);
 		await seedRows(t, 42, { assignedTo: "pi-r31-small", createdBy: "cron-x" });
 		const res = await asMaster(t).mutation(api.tasks.bulkComplete, {
@@ -171,6 +193,7 @@ describe("tasks.bulkComplete — self-scheduled continuation (R-31)", () => {
 
 	test("DRY-RUN: a preview over the cap schedules nothing and closes nothing", async () => {
 		const t = createT();
+		await seedFleetAgents(t, FILE_LABELS);
 		await seedClosureConfig(t);
 		await seedRows(t, 700, { assignedTo: "pi-r31-dry", createdBy: "cron-x" });
 		const res = await asMaster(t).mutation(api.tasks.bulkComplete, {
@@ -184,6 +207,7 @@ describe("tasks.bulkComplete — self-scheduled continuation (R-31)", () => {
 
 	test("TENANT: an ordinary member's continuation closes its own org's rows and never another's", async () => {
 		const t = createT();
+		await seedFleetAgents(t, FILE_LABELS);
 		await seedClosureConfig(t);
 		await seedOrg(t, "org-a", ["sigma"]);
 		await seedOrg(t, "org-b", ["sigma"]);
@@ -205,6 +229,7 @@ describe("tasks.bulkComplete — self-scheduled continuation (R-31)", () => {
 
 	test("RBAC: the continuation keeps the creator/assignee check and does not run away", async () => {
 		const t = createT();
+		await seedFleetAgents(t, FILE_LABELS);
 		await seedClosureConfig(t);
 		// roster admits both names; the caller is "sigma", NOT eta's creator/assignee.
 		await seedOrg(t, "org-a", ["sigma", "eta"]);
@@ -237,6 +262,7 @@ describe("tasks.bulkComplete — self-scheduled continuation (R-31)", () => {
 
 	test("RUN ROW: the first call's bulkRunId polls a row that goes running -> complete with the full count", async () => {
 		const t = createT();
+		await seedFleetAgents(t, FILE_LABELS);
 		await seedClosureConfig(t);
 		await seedRows(t, 1200, { assignedTo: "pi-r31-row", createdBy: "cron-x" });
 		const res = await asMaster(t).mutation(api.tasks.bulkComplete, {
@@ -263,6 +289,7 @@ describe("tasks.bulkComplete — self-scheduled continuation (R-31)", () => {
 
 	test("RUN ROW: a small run is 'complete' at once; a dry-run writes no row; an unknown id is null", async () => {
 		const t = createT();
+		await seedFleetAgents(t, FILE_LABELS);
 		await seedClosureConfig(t);
 		await seedRows(t, 4, { assignedTo: "pi-r31-small2", createdBy: "cron-x" });
 		const filter = { autoGeneratedOnly: true, assignedTo: "pi-r31-small2" } as const;
@@ -283,6 +310,7 @@ describe("tasks.bulkComplete — self-scheduled continuation (R-31)", () => {
 
 	test("RUN ROW ISOLATION: the run's own org reads it; another org gets nothing; anonymous is refused", async () => {
 		const t = createT();
+		await seedFleetAgents(t, FILE_LABELS);
 		await seedClosureConfig(t);
 		await seedOrg(t, "org-a", ["sigma"]);
 		await seedOrg(t, "org-b", ["sigma"]);
@@ -300,6 +328,7 @@ describe("tasks.bulkComplete — self-scheduled continuation (R-31)", () => {
 
 	test("FAILURE (closure gate): a later batch that fails is recorded on the run row with its reason; nothing past the refusal closes; the re-call meets the same refusal", async () => {
 		const t = createT();
+		await seedFleetAgents(t, FILE_LABELS);
 		await t.run(async (ctx) => {
 			await ctx.db.insert("taskClosureConfig", {
 				key: "billableProjects",
@@ -350,6 +379,7 @@ describe("tasks.bulkComplete — self-scheduled continuation (R-31)", () => {
 
 	test("FAILURE (RBAC): the failed batch is on the run row, visible to the run's own org and not to another", async () => {
 		const t = createT();
+		await seedFleetAgents(t, FILE_LABELS);
 		await seedClosureConfig(t);
 		await seedOrg(t, "org-a", ["sigma", "eta"]);
 		await seedOrg(t, "org-b", ["sigma"]);
@@ -391,6 +421,7 @@ describe("tasks.bulkComplete — self-scheduled continuation (R-31)", () => {
 
 	test("VERIFIED ORG: a run made through the service account with verifiedOrg org-a is stamped org-a; org-b cannot read it even under the same creator name", async () => {
 		const t = createT();
+		await seedFleetAgents(t, FILE_LABELS);
 		await seedClosureConfig(t);
 		await seedOrg(t, "org-a", ["sigma"]);
 		await seedOrg(t, "org-b", ["sigma"]);
@@ -415,6 +446,7 @@ describe("tasks.bulkComplete — self-scheduled continuation (R-31)", () => {
 
 	test("VERIFIED ORG: a member passing verifiedOrg is REFUSED (preview and live), and nothing is closed or written", async () => {
 		const t = createT();
+		await seedFleetAgents(t, FILE_LABELS);
 		await seedClosureConfig(t);
 		await seedOrg(t, "org-a", ["sigma"]);
 		await seedOrg(t, "org-b", ["sigma"]);
@@ -437,6 +469,7 @@ describe("tasks.bulkComplete — self-scheduled continuation (R-31)", () => {
 
 	test("VERIFIED ORG: the service account naming an unknown or inactive org is refused, not stamped", async () => {
 		const t = createT();
+		await seedFleetAgents(t, FILE_LABELS);
 		await seedClosureConfig(t);
 		await seedRows(t, 2, { assignedTo: "sigma", createdBy: "sigma" });
 		await expect(
@@ -471,6 +504,7 @@ describe("tasks.bulkComplete — self-scheduled continuation (R-31)", () => {
 
 	test("VERIFIED ORG: absent, the run is stamped with the caller's own org (member) or none (master), as before", async () => {
 		const t = createT();
+		await seedFleetAgents(t, FILE_LABELS);
 		await seedClosureConfig(t);
 		await seedOrg(t, "org-a", ["sigma"]);
 		await seedRows(t, 2, { orgId: "org-a", assignedTo: "sigma", createdBy: "sigma" });

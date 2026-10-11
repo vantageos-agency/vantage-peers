@@ -10,8 +10,9 @@
  * helper every task door takes. So:
  *   REFUSED  verifiedActor + verifiedOrg org-a on an org-b row -> RBAC_DENIED, row untouched
  *   PRESENT  the same pair on an org-a row                     -> lands
- *   ALONE    verifiedActor without verifiedOrg                 -> NOT bound (pinned: no
- *            transport forwards verifiedActor alone; the MCP layer forwards verifiedOrg)
+ *   ALONE    verifiedActor without verifiedOrg                 -> RBAC_DENIED too (M7: the door
+ *            compares the actor's agent ID with the row's assignee/creator ID, and org-a's
+ *            "eta" is not org-b's "eta")
  */
 
 import { convexTest } from "convex-test";
@@ -19,6 +20,8 @@ import { describe, expect, test } from "vitest";
 import { api } from "../_generated/api";
 import type { Id } from "../_generated/dataModel";
 import schema from "../schema";
+import { insertTaskRow } from "../../tests/lib/seedFleetAgents";
+
 
 const modules = Object.fromEntries(
 	Object.entries(import.meta.glob("../**/*.ts")).filter(
@@ -59,8 +62,16 @@ async function setup() {
 			isActive: true,
 			createdAt: Date.now(),
 		});
+		// org-b has its own "eta": the same label, a different agent.
+		await ctx.db.insert("agents", {
+			orgSlug: "org-b",
+			name: "eta",
+			normalizedName: "eta",
+			isActive: true,
+			createdAt: Date.now(),
+		});
 		const now = Date.now();
-		taskId = await ctx.db.insert("tasks", {
+		taskId = await insertTaskRow(ctx, {
 			title: "org-b task",
 			assignedTo: "eta",
 			createdBy: "eta",
@@ -131,16 +142,25 @@ describe("org-a 'eta' WITH verifiedActor vs an org-b 'eta' task", () => {
 
 		test(`PRESENT: ${door} with verifiedActor + verifiedOrg org-a on an org-a row`, async () => {
 			const { t, taskId, agentId, row } = await setup();
-			await t.run((ctx) => ctx.db.patch(taskId, { orgId: "org-a" }));
+			// Re-homed: now org-a's "eta" task, assigned to and created by org-a's agent.
+			await t.run((ctx) =>
+				ctx.db.patch(taskId, {
+					orgId: "org-a",
+					assignedToId: agentId,
+					createdById: agentId,
+				}),
+			);
 			const err = await run(door, t, taskId, agentId, true);
 			expect(err).toBeNull();
 			expect(landedOf(door, await row())).toBe(true);
 		});
 
-		test(`ALONE (pinned, not bound): ${door} with verifiedActor and no verifiedOrg still reaches the org-b row`, async () => {
+		test(`ALONE: ${door} with verifiedActor and no verifiedOrg does NOT reach the org-b row (the actor is org-a's eta, the row is org-b's eta)`, async () => {
 			const { t, taskId, agentId, row } = await setup();
-			await run(door, t, taskId, agentId, false);
-			expect(landedOf(door, await row())).toBe(true);
+			const before = JSON.stringify(await row());
+			const err = await run(door, t, taskId, agentId, false);
+			expect(err, `${door} must refuse`).toContain("RBAC_DENIED");
+			expect(JSON.stringify(await row())).toBe(before);
 		});
 	}
 });

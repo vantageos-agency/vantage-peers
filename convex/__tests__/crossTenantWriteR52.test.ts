@@ -30,6 +30,8 @@ import type { Id } from "../_generated/dataModel";
 import { fleetOperatorSlug } from "../lib/operatorOrg";
 import schema from "../schema";
 import { testClerkOrgId } from "../../tests/fixtures/testClerkOrgId";
+import { seedAgents } from "../../tests/lib/agentIdOf";
+import { mintAgentSecret, seedFleetAgents } from "../../tests/lib/seedFleetAgents";
 
 const modules = Object.fromEntries(
 	Object.entries(import.meta.glob("../**/*.ts")).filter(
@@ -57,6 +59,11 @@ const asMaster = (t: T) =>
 		T["withIdentity"]
 	>[0]);
 
+// org -> the credential of that org's SEAT agent, written by seedOrgs. A task is
+// created and closed by an AGENT (M7: the doors decide on agent IDs), so the
+// member presents it.
+const seatSecrets = new Map<string, string>();
+
 async function seedOrgs(t: T) {
 	await t.run(async (ctx) => {
 		await ctx.db.insert("taskClosureConfig", {
@@ -76,6 +83,13 @@ async function seedOrgs(t: T) {
 			});
 		}
 	});
+	await seedAgents(t, [
+		["org-a", SEAT],
+		["org-b", SEAT],
+	]);
+	for (const slug of ["org-a", "org-b"]) {
+		seatSecrets.set(slug, await mintAgentSecret(t, slug, SEAT));
+	}
 }
 
 const buFields = (name: string, orgId: string | undefined) => ({
@@ -284,8 +298,11 @@ async function completeTaskNaming(
 	caller: ReturnType<typeof asOrg>,
 	missionId: Id<"missions">,
 	by: string,
+	secret?: string,
 ) {
+	const proof = secret === undefined ? {} : { agentCredentialSecret: secret };
 	const taskId = await caller.mutation(api.tasks.create, {
+		...proof,
 		title: "Close the loop",
 		assignedTo: by,
 		priority: "high",
@@ -294,6 +311,7 @@ async function completeTaskNaming(
 		missionId,
 	});
 	await caller.mutation(api.tasks.complete, {
+		...proof,
 		taskId,
 		callerOrchestrator: by,
 		completionNote: NOTE,
@@ -307,7 +325,7 @@ describe("tasks:complete mission auto-complete — R-52", () => {
 		await seedOrgs(t);
 		const missionId = await t.run((ctx) => ctx.db.insert("missions", missionRow("org-b")));
 		const before = await t.run((ctx) => ctx.db.get(missionId));
-		const task = await completeTaskNaming(t, asOrg(t, "org-a"), missionId, SEAT);
+		const task = await completeTaskNaming(t, asOrg(t, "org-a"), missionId, SEAT, seatSecrets.get("org-a"));
 		expect(task?.status).toBe("done");
 		expect(await t.run((ctx) => ctx.db.get(missionId))).toEqual(before);
 	});
@@ -317,7 +335,7 @@ describe("tasks:complete mission auto-complete — R-52", () => {
 		await seedOrgs(t);
 		const missionId = await t.run((ctx) => ctx.db.insert("missions", missionRow(undefined)));
 		const before = await t.run((ctx) => ctx.db.get(missionId));
-		await completeTaskNaming(t, asOrg(t, "org-a"), missionId, SEAT);
+		await completeTaskNaming(t, asOrg(t, "org-a"), missionId, SEAT, seatSecrets.get("org-a"));
 		expect(await t.run((ctx) => ctx.db.get(missionId))).toEqual(before);
 	});
 
@@ -325,13 +343,14 @@ describe("tasks:complete mission auto-complete — R-52", () => {
 		const t = makeT();
 		await seedOrgs(t);
 		const missionId = await t.run((ctx) => ctx.db.insert("missions", missionRow("org-a")));
-		await completeTaskNaming(t, asOrg(t, "org-a"), missionId, SEAT);
+		await completeTaskNaming(t, asOrg(t, "org-a"), missionId, SEAT, seatSecrets.get("org-a"));
 		expect((await t.run((ctx) => ctx.db.get(missionId)))?.status).toBe("complete");
 	});
 
 	test("PRESENT: a fleet (master) task on a fleet mission still completes the mission", async () => {
 		const t = makeT();
 		await seedOrgs(t);
+		await seedFleetAgents(t, ["sigma"]);
 		const missionId = await t.run((ctx) => ctx.db.insert("missions", missionRow(undefined)));
 		await completeTaskNaming(t, asMaster(t), missionId, "sigma");
 		expect((await t.run((ctx) => ctx.db.get(missionId)))?.status).toBe("complete");
@@ -502,7 +521,7 @@ describe("fleet equivalence after backfill_org_stamp — R-52 follow-up", () => 
 		await seedFleet(t);
 		await seedOrgs(t);
 		const missionId = await t.run((ctx) => ctx.db.insert("missions", missionRow("fleet-org")));
-		await completeTaskNaming(t, asOrg(t, "org-a"), missionId, SEAT);
+		await completeTaskNaming(t, asOrg(t, "org-a"), missionId, SEAT, seatSecrets.get("org-a"));
 		expect((await t.run((ctx) => ctx.db.get(missionId)))?.status).toBe("execute");
 	});
 });

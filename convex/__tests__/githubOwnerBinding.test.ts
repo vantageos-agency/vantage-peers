@@ -19,6 +19,7 @@ import {
 import schema from "../schema";
 import { TEST_WEBHOOK_SECRET, signGithubBody } from "../../tests/lib/githubWebhookSignature";
 import { testClerkOrgId } from "../../tests/fixtures/testClerkOrgId";
+import { actingWith, seedOrgAgents } from "../../tests/lib/seedFleetAgents";
 
 beforeEach(() => {
 	vi.useFakeTimers({ toFake: ["Date", "setTimeout", "clearTimeout"] });
@@ -38,10 +39,17 @@ const makeT = () => convexTest(schema, modules);
 type T = ReturnType<typeof makeT>;
 const ORCH = "eta";
 
+// `${org}/${name}` -> credential of that org's agent: a member that acts as an
+// agent of its org presents it (the task doors decide on agent IDs).
+const secrets = new Map<string, string>();
+
 const member = (t: T, slug: string) =>
-	t.withIdentity({ subject: `member-${slug}`, organizationSlug: slug, org_id: testClerkOrgId(slug), orgRole: "org:member" } as Parameters<
-		T["withIdentity"]
-	>[0]);
+	actingWith(
+		t.withIdentity({ subject: `member-${slug}`, organizationSlug: slug, org_id: testClerkOrgId(slug), orgRole: "org:member" } as Parameters<
+			T["withIdentity"]
+		>[0]),
+		(name) => secrets.get(`${slug}/${name}`),
+	);
 const master = (t: T) => t.withIdentity({ subject: "test-service-account-user-id" });
 
 async function seed(t: T, opts: { bind?: boolean } = { bind: true }) {
@@ -70,6 +78,12 @@ async function seed(t: T, opts: { bind?: boolean } = { bind: true }) {
 			}
 		}
 	});
+	for (const [k, v] of await seedOrgAgents(t, [
+		["org-a", ORCH],
+		["org-b", ORCH],
+	])) {
+		secrets.set(k, v);
+	}
 }
 
 const denied = (e: unknown, reason?: string) => {

@@ -25,6 +25,9 @@ import { convexTest } from "convex-test";
 import { describe, expect, test } from "vitest";
 import { api } from "../_generated/api";
 import schema from "../schema";
+import { insertTaskRow, seedFleetAgents } from "../../tests/lib/seedFleetAgents";
+
+const FILE_LABELS = ["eta", "sigma", "test-orch-tau", "test-orch-unassigned"];
 
 const modules = Object.fromEntries(
 	Object.entries(import.meta.glob("../**/*.ts")).filter(
@@ -72,8 +75,7 @@ async function seedTaskRows(ctx: any): Promise<void> {
 	// (positive control: these must be returned when queried by project alone
 	// or by assignedTo+status+project).
 	for (let i = 0; i < 5; i++) {
-		await ctx.db.insert(
-			"tasks",
+		await insertTaskRow(ctx,
 			makeTask({
 				title: `Real project task ${i}`,
 				assignedTo: "test-orch-tau",
@@ -86,8 +88,7 @@ async function seedTaskRows(ctx: any): Promise<void> {
 	// DIFFERENT value than the assignee-scoped rows above so the two groups
 	// stay disjoint under an assignedTo filter.
 	for (let i = 0; i < 5; i++) {
-		await ctx.db.insert(
-			"tasks",
+		await insertTaskRow(ctx,
 			makeTask({
 				title: `Real instance-project task ${i}`,
 				assignedTo: "test-orch-unassigned",
@@ -100,8 +101,7 @@ async function seedTaskRows(ctx: any): Promise<void> {
 	// Extra rows for the same assignee/instance but a DIFFERENT project, so a
 	// project filter that is silently dropped would still find rows to return.
 	for (let i = 0; i < 8; i++) {
-		await ctx.db.insert(
-			"tasks",
+		await insertTaskRow(ctx,
 			makeTask({
 				title: `Other project task ${i}`,
 				assignedTo: "test-orch-tau",
@@ -127,6 +127,7 @@ describe("tasks.list — silent filter drop (RED before fix, GREEN after)", () =
 
 	test("N1: assignedTo + project=<nonexistent> must return 0 rows (not silently drop project)", async () => {
 		const t = convexTest(schema, modules);
+		await seedFleetAgents(t, FILE_LABELS);
 		await t.run(seedTaskRows);
 
 		const result = await t.withIdentity({ subject: "test-service-account-user-id" }).query(api.tasks.list, {
@@ -142,6 +143,7 @@ describe("tasks.list — silent filter drop (RED before fix, GREEN after)", () =
 
 	test("N2: assignedToInstance + project=<nonexistent> must return 0 rows (not silently drop project)", async () => {
 		const t = convexTest(schema, modules);
+		await seedFleetAgents(t, FILE_LABELS);
 		await t.run(seedTaskRows);
 
 		const result = await t.withIdentity({ subject: "test-service-account-user-id" }).query(api.tasks.list, {
@@ -159,6 +161,7 @@ describe("tasks.list — silent filter drop (RED before fix, GREEN after)", () =
 
 	test("P1: project alone keeps working", async () => {
 		const t = convexTest(schema, modules);
+		await seedFleetAgents(t, FILE_LABELS);
 		await t.run(seedTaskRows);
 
 		const result = await t.withIdentity({ subject: "test-service-account-user-id" }).query(api.tasks.list, {
@@ -173,6 +176,7 @@ describe("tasks.list — silent filter drop (RED before fix, GREEN after)", () =
 
 	test("P2: assignedTo + status keeps working", async () => {
 		const t = convexTest(schema, modules);
+		await seedFleetAgents(t, FILE_LABELS);
 		await t.run(seedTaskRows);
 
 		const result = await t.withIdentity({ subject: "test-service-account-user-id" }).query(api.tasks.list, {
@@ -189,6 +193,7 @@ describe("tasks.list — silent filter drop (RED before fix, GREEN after)", () =
 
 	test("P3: project + status keeps working", async () => {
 		const t = convexTest(schema, modules);
+		await seedFleetAgents(t, FILE_LABELS);
 		await t.run(seedTaskRows);
 
 		const result = await t.withIdentity({ subject: "test-service-account-user-id" }).query(api.tasks.list, {
@@ -206,6 +211,7 @@ describe("tasks.list — silent filter drop (RED before fix, GREEN after)", () =
 
 	test("C1: assignedTo + project=<real> returns only matching rows, all filters honored", async () => {
 		const t = convexTest(schema, modules);
+		await seedFleetAgents(t, FILE_LABELS);
 		await t.run(seedTaskRows);
 
 		const result = await t.withIdentity({ subject: "test-service-account-user-id" }).query(api.tasks.list, {
@@ -226,6 +232,7 @@ describe("tasks.list — silent filter drop (RED before fix, GREEN after)", () =
 
 	test("C2: assignedToInstance + project=<real> returns only matching rows, all filters honored", async () => {
 		const t = convexTest(schema, modules);
+		await seedFleetAgents(t, FILE_LABELS);
 		await t.run(seedTaskRows);
 
 		const result = await t.withIdentity({ subject: "test-service-account-user-id" }).query(api.tasks.list, {
@@ -250,6 +257,7 @@ describe("tasks.list — silent filter drop (RED before fix, GREEN after)", () =
 
 	test("R1: assignedToInstance + assignedTo together is refused with a clear error, not silently resolved", async () => {
 		const t = convexTest(schema, modules);
+		await seedFleetAgents(t, FILE_LABELS);
 		await t.run(seedTaskRows);
 
 		await expect(
@@ -265,6 +273,7 @@ describe("tasks.list — silent filter drop (RED before fix, GREEN after)", () =
 
 	test("T1: a full-limit page of a narrower filter must not be confused with the broader unfiltered count", async () => {
 		const t = convexTest(schema, modules);
+		await seedFleetAgents(t, FILE_LABELS);
 		await t.run(seedTaskRows);
 
 		// Broader query (assignedTo alone, no project): 13 rows exist.

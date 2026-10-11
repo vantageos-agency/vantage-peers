@@ -33,6 +33,9 @@ import { BRIEFING_NOTES_LIST_SCAN_CAP } from "../briefingNotes";
 import { MISSION_LIST_SCAN_CAP } from "../missions";
 import schema from "../schema";
 import { TASK_LIST_SCAN_CAP } from "../tasks";
+import { insertTaskRow, seedFleetAgents } from "../../tests/lib/seedFleetAgents";
+
+const FILE_LABELS = ["eta", "sigma", "test-orch-exact-limit-over", "test-orch-exact-limit-under", "test-orch-page-filter", "test-orch-page-filter-2", "test-orch-scan-cap-atcap", "test-orch-scan-cap-over"];
 
 const modules = Object.fromEntries(
 	Object.entries(import.meta.glob("../**/*.ts")).filter(
@@ -70,9 +73,10 @@ describe("updatedSince page-filter defect — RED before fix, GREEN after", () =
 	describe("tasks.list", () => {
 		test("a recently-updated row created outside the page must still be returned", async () => {
 			const t = convexTest(schema, modules);
+			await seedFleetAgents(t, FILE_LABELS);
 			await t.run(async (ctx) => {
 				// Target row inserted FIRST → oldest in creation-descending order.
-				await ctx.db.insert("tasks", {
+				await insertTaskRow(ctx, {
 					title: "target-recently-modified-task",
 					assignedTo: "test-orch-page-filter",
 					priority: "medium",
@@ -84,7 +88,7 @@ describe("updatedSince page-filter defect — RED before fix, GREEN after", () =
 				// Padding rows inserted AFTER → all newer than the target in
 				// creation order, all stale in updatedAt.
 				for (let i = 0; i < PADDING_ROW_COUNT; i++) {
-					await ctx.db.insert("tasks", {
+					await insertTaskRow(ctx, {
 						title: `padding-task-${i}`,
 						assignedTo: "test-orch-page-filter",
 						priority: "medium",
@@ -110,9 +114,10 @@ describe("updatedSince page-filter defect — RED before fix, GREEN after", () =
 
 		test("negative pole: without updatedSince, count is unaffected by the fix", async () => {
 			const t = convexTest(schema, modules);
+			await seedFleetAgents(t, FILE_LABELS);
 			await t.run(async (ctx) => {
 				for (let i = 0; i < PADDING_ROW_COUNT; i++) {
-					await ctx.db.insert("tasks", {
+					await insertTaskRow(ctx, {
 						title: `plain-task-${i}`,
 						assignedTo: "test-orch-page-filter-2",
 						priority: "medium",
@@ -139,6 +144,7 @@ describe("updatedSince page-filter defect — RED before fix, GREEN after", () =
 	describe("tasks.listByMission", () => {
 		test("a recently-updated row created outside the page must still be returned", async () => {
 			const t = convexTest(schema, modules);
+			await seedFleetAgents(t, FILE_LABELS);
 			const missionId = await t.run(async (ctx) => {
 				return await ctx.db.insert("missions", {
 					name: "fixture-mission-page-filter",
@@ -154,7 +160,7 @@ describe("updatedSince page-filter defect — RED before fix, GREEN after", () =
 			});
 
 			await t.run(async (ctx) => {
-				await ctx.db.insert("tasks", {
+				await insertTaskRow(ctx, {
 					title: "target-recently-modified-mission-task",
 					assignedTo: "test-orch-page-filter",
 					priority: "medium",
@@ -165,7 +171,7 @@ describe("updatedSince page-filter defect — RED before fix, GREEN after", () =
 					updatedAt: RECENT_UPDATED_AT,
 				} as never);
 				for (let i = 0; i < PADDING_ROW_COUNT; i++) {
-					await ctx.db.insert("tasks", {
+					await insertTaskRow(ctx, {
 						title: `padding-mission-task-${i}`,
 						assignedTo: "test-orch-page-filter",
 						priority: "medium",
@@ -192,6 +198,7 @@ describe("updatedSince page-filter defect — RED before fix, GREEN after", () =
 
 		test("negative pole: without updatedSince, count is unaffected by the fix", async () => {
 			const t = convexTest(schema, modules);
+			await seedFleetAgents(t, FILE_LABELS);
 			const missionId = await t.run(async (ctx) => {
 				return await ctx.db.insert("missions", {
 					name: "fixture-mission-page-filter-2",
@@ -207,7 +214,7 @@ describe("updatedSince page-filter defect — RED before fix, GREEN after", () =
 			});
 			await t.run(async (ctx) => {
 				for (let i = 0; i < PADDING_ROW_COUNT; i++) {
-					await ctx.db.insert("tasks", {
+					await insertTaskRow(ctx, {
 						title: `plain-mission-task-${i}`,
 						assignedTo: "test-orch-page-filter",
 						priority: "medium",
@@ -235,6 +242,7 @@ describe("updatedSince page-filter defect — RED before fix, GREEN after", () =
 	describe("missions.list", () => {
 		test("a recently-updated mission created outside the page must still be returned", async () => {
 			const t = convexTest(schema, modules);
+			await seedFleetAgents(t, FILE_LABELS);
 			await t.run(async (ctx) => {
 				await ctx.db.insert("missions", {
 					name: "target-recently-modified-mission",
@@ -276,6 +284,7 @@ describe("updatedSince page-filter defect — RED before fix, GREEN after", () =
 
 		test("negative pole: without updatedSince, count is unaffected by the fix", async () => {
 			const t = convexTest(schema, modules);
+			await seedFleetAgents(t, FILE_LABELS);
 			await t.run(async (ctx) => {
 				for (let i = 0; i < PADDING_ROW_COUNT; i++) {
 					await ctx.db.insert("missions", {
@@ -307,6 +316,7 @@ describe("updatedSince page-filter defect — RED before fix, GREEN after", () =
 	describe("briefingNotes.list", () => {
 		test("a recently-updated note created outside the page must still be returned", async () => {
 			const t = convexTest(schema, modules);
+			await seedFleetAgents(t, FILE_LABELS);
 			await t.run(async (ctx) => {
 				await ctx.db.insert("briefingNotes", {
 					title: "target-recently-modified-note",
@@ -344,6 +354,7 @@ describe("updatedSince page-filter defect — RED before fix, GREEN after", () =
 
 		test("negative pole: without updatedSince, count is unaffected by the fix", async () => {
 			const t = convexTest(schema, modules);
+			await seedFleetAgents(t, FILE_LABELS);
 			await t.run(async (ctx) => {
 				for (let i = 0; i < PADDING_ROW_COUNT; i++) {
 					await ctx.db.insert("briefingNotes", {
@@ -397,6 +408,7 @@ describe("updatedSince page-filter defect — RED before fix, GREEN after", () =
 	describe("tasks.list — SCAN_CAP_EXCEEDED", () => {
 		test("cap + 1 candidate rows on the assignedTo branch throws, naming the cap and how to narrow", async () => {
 			const t = convexTest(schema, modules);
+			await seedFleetAgents(t, FILE_LABELS);
 			// IMPORTANT — seed rows that ACTUALLY MATCH updatedSince, not stale ones.
 			//
 			// On this branch (assignedTo alone / assignedTo+status), `updatedSince`
@@ -415,7 +427,7 @@ describe("updatedSince page-filter defect — RED before fix, GREEN after", () =
 			// seeded row's `updatedAt` >= SINCE_THRESHOLD.
 			await t.run(async (ctx) => {
 				for (let i = 0; i < TASK_LIST_SCAN_CAP + 1; i++) {
-					await ctx.db.insert("tasks", {
+					await insertTaskRow(ctx, {
 						title: `overcap-task-${i}`,
 						assignedTo: "test-orch-scan-cap-over",
 						priority: "medium",
@@ -444,8 +456,9 @@ describe("updatedSince page-filter defect — RED before fix, GREEN after", () =
 
 		test("exactly cap candidate rows on the same branch does not throw and returns the correct population", async () => {
 			const t = convexTest(schema, modules);
+			await seedFleetAgents(t, FILE_LABELS);
 			await t.run(async (ctx) => {
-				await ctx.db.insert("tasks", {
+				await insertTaskRow(ctx, {
 					title: "target-at-cap-task",
 					assignedTo: "test-orch-scan-cap-atcap",
 					priority: "medium",
@@ -455,7 +468,7 @@ describe("updatedSince page-filter defect — RED before fix, GREEN after", () =
 					updatedAt: RECENT_UPDATED_AT,
 				} as never);
 				for (let i = 0; i < TASK_LIST_SCAN_CAP - 1; i++) {
-					await ctx.db.insert("tasks", {
+					await insertTaskRow(ctx, {
 						title: `atcap-task-${i}`,
 						assignedTo: "test-orch-scan-cap-atcap",
 						priority: "medium",
@@ -481,6 +494,7 @@ describe("updatedSince page-filter defect — RED before fix, GREEN after", () =
 	describe("tasks.listByMission — SCAN_CAP_EXCEEDED", () => {
 		test("cap + 1 candidate rows on the missionId branch throws, naming the cap and how to narrow", async () => {
 			const t = convexTest(schema, modules);
+			await seedFleetAgents(t, FILE_LABELS);
 			const missionId = await t.run(async (ctx) => {
 				return await ctx.db.insert("missions", {
 					name: "fixture-mission-scan-cap-over",
@@ -496,7 +510,7 @@ describe("updatedSince page-filter defect — RED before fix, GREEN after", () =
 			});
 			await t.run(async (ctx) => {
 				for (let i = 0; i < TASK_LIST_SCAN_CAP + 1; i++) {
-					await ctx.db.insert("tasks", {
+					await insertTaskRow(ctx, {
 						title: `overcap-mission-task-${i}`,
 						assignedTo: "test-orch-scan-cap-over",
 						priority: "medium",
@@ -526,6 +540,7 @@ describe("updatedSince page-filter defect — RED before fix, GREEN after", () =
 
 		test("exactly cap candidate rows on the same branch does not throw and returns the correct population", async () => {
 			const t = convexTest(schema, modules);
+			await seedFleetAgents(t, FILE_LABELS);
 			const missionId = await t.run(async (ctx) => {
 				return await ctx.db.insert("missions", {
 					name: "fixture-mission-scan-cap-atcap",
@@ -540,7 +555,7 @@ describe("updatedSince page-filter defect — RED before fix, GREEN after", () =
 				} as never);
 			});
 			await t.run(async (ctx) => {
-				await ctx.db.insert("tasks", {
+				await insertTaskRow(ctx, {
 					title: "target-at-cap-mission-task",
 					assignedTo: "test-orch-scan-cap-atcap",
 					priority: "medium",
@@ -551,7 +566,7 @@ describe("updatedSince page-filter defect — RED before fix, GREEN after", () =
 					updatedAt: RECENT_UPDATED_AT,
 				} as never);
 				for (let i = 0; i < TASK_LIST_SCAN_CAP - 1; i++) {
-					await ctx.db.insert("tasks", {
+					await insertTaskRow(ctx, {
 						title: `atcap-mission-task-${i}`,
 						assignedTo: "test-orch-scan-cap-atcap",
 						priority: "medium",
@@ -580,6 +595,7 @@ describe("updatedSince page-filter defect — RED before fix, GREEN after", () =
 	describe("missions.list — SCAN_CAP_EXCEEDED", () => {
 		test("cap + 1 candidate rows on the project branch throws, naming the cap and how to narrow", async () => {
 			const t = convexTest(schema, modules);
+			await seedFleetAgents(t, FILE_LABELS);
 			await t.run(async (ctx) => {
 				for (let i = 0; i < MISSION_LIST_SCAN_CAP + 1; i++) {
 					await ctx.db.insert("missions", {
@@ -613,6 +629,7 @@ describe("updatedSince page-filter defect — RED before fix, GREEN after", () =
 
 		test("exactly cap candidate rows on the same branch does not throw and returns the correct population", async () => {
 			const t = convexTest(schema, modules);
+			await seedFleetAgents(t, FILE_LABELS);
 			await t.run(async (ctx) => {
 				await ctx.db.insert("missions", {
 					name: "target-at-cap-mission",
@@ -662,6 +679,7 @@ describe("updatedSince page-filter defect — RED before fix, GREEN after", () =
 		// adaptation for its now-indexed branches).
 		test("cap + 1 candidate rows on the (now-indexed) topic branch throws, naming the cap and how to narrow", async () => {
 			const t = convexTest(schema, modules);
+			await seedFleetAgents(t, FILE_LABELS);
 			await t.run(async (ctx) => {
 				for (let i = 0; i < BRIEFING_NOTES_LIST_SCAN_CAP + 1; i++) {
 					await ctx.db.insert("briefingNotes", {
@@ -693,6 +711,7 @@ describe("updatedSince page-filter defect — RED before fix, GREEN after", () =
 
 		test("exactly cap candidate rows on the same branch does not throw and returns the correct population", async () => {
 			const t = convexTest(schema, modules);
+			await seedFleetAgents(t, FILE_LABELS);
 			await t.run(async (ctx) => {
 				await ctx.db.insert("briefingNotes", {
 					title: "target-at-cap-note",
@@ -746,9 +765,10 @@ describe("updatedSince page-filter defect — RED before fix, GREEN after", () =
 	describe("tasks.list — exact re-bound to limit", () => {
 		test("population larger than limit renders EXACTLY limit rows", async () => {
 			const t = convexTest(schema, modules);
+			await seedFleetAgents(t, FILE_LABELS);
 			await t.run(async (ctx) => {
 				for (let i = 0; i < OVER_POPULATION; i++) {
-					await ctx.db.insert("tasks", {
+					await insertTaskRow(ctx, {
 						title: `exact-over-task-${i}`,
 						assignedTo: "test-orch-exact-limit-over",
 						priority: "medium",
@@ -772,9 +792,10 @@ describe("updatedSince page-filter defect — RED before fix, GREEN after", () =
 
 		test("population smaller than limit renders the FULL population, not limit", async () => {
 			const t = convexTest(schema, modules);
+			await seedFleetAgents(t, FILE_LABELS);
 			await t.run(async (ctx) => {
 				for (let i = 0; i < UNDER_POPULATION; i++) {
-					await ctx.db.insert("tasks", {
+					await insertTaskRow(ctx, {
 						title: `exact-under-task-${i}`,
 						assignedTo: "test-orch-exact-limit-under",
 						priority: "medium",
@@ -800,6 +821,7 @@ describe("updatedSince page-filter defect — RED before fix, GREEN after", () =
 	describe("tasks.listByMission — exact re-bound to limit", () => {
 		test("population larger than limit renders EXACTLY limit rows", async () => {
 			const t = convexTest(schema, modules);
+			await seedFleetAgents(t, FILE_LABELS);
 			const missionId = await t.run(async (ctx) => {
 				return await ctx.db.insert("missions", {
 					name: "fixture-mission-exact-limit-over",
@@ -815,7 +837,7 @@ describe("updatedSince page-filter defect — RED before fix, GREEN after", () =
 			});
 			await t.run(async (ctx) => {
 				for (let i = 0; i < OVER_POPULATION; i++) {
-					await ctx.db.insert("tasks", {
+					await insertTaskRow(ctx, {
 						title: `exact-over-mission-task-${i}`,
 						assignedTo: "test-orch-exact-limit-over",
 						priority: "medium",
@@ -840,6 +862,7 @@ describe("updatedSince page-filter defect — RED before fix, GREEN after", () =
 
 		test("population smaller than limit renders the FULL population, not limit", async () => {
 			const t = convexTest(schema, modules);
+			await seedFleetAgents(t, FILE_LABELS);
 			const missionId = await t.run(async (ctx) => {
 				return await ctx.db.insert("missions", {
 					name: "fixture-mission-exact-limit-under",
@@ -855,7 +878,7 @@ describe("updatedSince page-filter defect — RED before fix, GREEN after", () =
 			});
 			await t.run(async (ctx) => {
 				for (let i = 0; i < UNDER_POPULATION; i++) {
-					await ctx.db.insert("tasks", {
+					await insertTaskRow(ctx, {
 						title: `exact-under-mission-task-${i}`,
 						assignedTo: "test-orch-exact-limit-under",
 						priority: "medium",
@@ -882,6 +905,7 @@ describe("updatedSince page-filter defect — RED before fix, GREEN after", () =
 	describe("missions.list — exact re-bound to limit", () => {
 		test("population larger than limit renders EXACTLY limit rows", async () => {
 			const t = convexTest(schema, modules);
+			await seedFleetAgents(t, FILE_LABELS);
 			await t.run(async (ctx) => {
 				for (let i = 0; i < OVER_POPULATION; i++) {
 					await ctx.db.insert("missions", {
@@ -910,6 +934,7 @@ describe("updatedSince page-filter defect — RED before fix, GREEN after", () =
 
 		test("population smaller than limit renders the FULL population, not limit", async () => {
 			const t = convexTest(schema, modules);
+			await seedFleetAgents(t, FILE_LABELS);
 			await t.run(async (ctx) => {
 				for (let i = 0; i < UNDER_POPULATION; i++) {
 					await ctx.db.insert("missions", {
@@ -940,6 +965,7 @@ describe("updatedSince page-filter defect — RED before fix, GREEN after", () =
 	describe("briefingNotes.list — exact re-bound to limit", () => {
 		test("population larger than limit renders EXACTLY limit rows", async () => {
 			const t = convexTest(schema, modules);
+			await seedFleetAgents(t, FILE_LABELS);
 			await t.run(async (ctx) => {
 				for (let i = 0; i < OVER_POPULATION; i++) {
 					await ctx.db.insert("briefingNotes", {
@@ -966,6 +992,7 @@ describe("updatedSince page-filter defect — RED before fix, GREEN after", () =
 
 		test("population smaller than limit renders the FULL population, not limit", async () => {
 			const t = convexTest(schema, modules);
+			await seedFleetAgents(t, FILE_LABELS);
 			await t.run(async (ctx) => {
 				for (let i = 0; i < UNDER_POPULATION; i++) {
 					await ctx.db.insert("briefingNotes", {

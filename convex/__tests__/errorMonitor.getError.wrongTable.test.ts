@@ -15,6 +15,9 @@ import { describe, expect, test } from "vitest";
 import { api } from "../_generated/api";
 import type { Id } from "../_generated/dataModel";
 import schema from "../schema";
+import { seedFleetAgents } from "../../tests/lib/seedFleetAgents";
+
+const FILE_LABELS = ["eta", "sigma"];
 
 const modules = Object.fromEntries(
 	Object.entries(import.meta.glob("../**/*.ts")).filter(
@@ -71,6 +74,7 @@ const newTask = (t: ReturnType<typeof createT>) =>
 describe("errorMonitor:getError — wrong-table ID (issue #1064, reads)", () => {
 	test("a tasks-table ID yields an actionable ConvexError naming errorId", async () => {
 		const t = createT();
+		await seedFleetAgents(t, FILE_LABELS);
 		const taskId = await newTask(t);
 
 		let caught: unknown;
@@ -102,6 +106,7 @@ describe("errorMonitor:getError — wrong-table ID (issue #1064, reads)", () => 
 
 	test("negative control: an ID from a THIRD table is also named, with its own value", async () => {
 		const t = createT();
+		await seedFleetAgents(t, FILE_LABELS);
 		const missionId = await t.mutation(api.missions.create, {
 			name: "Probe mission",
 			project: "vantage-peers",
@@ -130,6 +135,7 @@ describe("errorMonitor:getError — wrong-table ID (issue #1064, reads)", () => 
 
 	test("positive control: a real errorId still returns the document", async () => {
 		const t = createT();
+		await seedFleetAgents(t, FILE_LABELS);
 		const errorId = await newErrorLog(t);
 		const doc = await t.query(api.errorMonitor.getError, { errorId });
 		expect(doc?._id).toBe(errorId);
@@ -138,6 +144,7 @@ describe("errorMonitor:getError — wrong-table ID (issue #1064, reads)", () => 
 
 	test("contract preserved: a valid errorLogs ID that no longer exists returns null, does NOT throw", async () => {
 		const t = createT();
+		await seedFleetAgents(t, FILE_LABELS);
 		const errorId = await newErrorLog(t);
 		await t.run(async (ctx) => {
 			await ctx.db.delete(errorId);

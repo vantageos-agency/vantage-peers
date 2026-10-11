@@ -9,6 +9,9 @@ import { convexTest } from "convex-test";
 import { describe, expect, test, vi } from "vitest";
 import { api, internal } from "../_generated/api";
 import schema from "../schema";
+import { insertTaskRow, seedFleetAgents } from "../../tests/lib/seedFleetAgents";
+
+const FILE_LABELS = ["eta", "sigma"];
 
 const modules = Object.fromEntries(
 	Object.entries(import.meta.glob("../**/*.ts")).filter(
@@ -31,7 +34,7 @@ async function seedInProgressWithOpenSegment(
 	const now = Date.now();
 	const openedAt = now - 25 * 60_000; // 25 minutes worked so far
 	return await t.run(async (ctx: any) => {
-		return await ctx.db.insert("tasks", {
+		return await insertTaskRow(ctx, {
 			title: "In-flight work",
 			assignedTo: "sigma",
 			priority: "high" as const,
@@ -49,6 +52,7 @@ async function seedInProgressWithOpenSegment(
 describe("close-segment-on-transition — reproduction + recovery", () => {
 	test("update_task to todo closes the trailing segment: row is startable again AND minutes accumulate", async () => {
 		const t = createT();
+		await seedFleetAgents(t, FILE_LABELS);
 		const taskId = await seedInProgressWithOpenSegment(t);
 
 		// This is the exact move that stranded the live row: update_task back
@@ -94,6 +98,7 @@ describe("close-segment-on-transition — reproduction + recovery", () => {
 describe("close-segment-on-transition — property preserved", () => {
 	test("a row genuinely in_progress with an open segment still refuses a second start_task", async () => {
 		const t = createT();
+		await seedFleetAgents(t, FILE_LABELS);
 		const taskId = await seedInProgressWithOpenSegment(t);
 
 		// No transition happened — the row is still in_progress with the same
@@ -111,6 +116,7 @@ describe("close-segment-on-transition — property preserved", () => {
 describe("close-segment-on-transition — one test per enumerated exit path", () => {
 	test("update_task to review closes the trailing segment", async () => {
 		const t = createT();
+		await seedFleetAgents(t, FILE_LABELS);
 		const taskId = await seedInProgressWithOpenSegment(t);
 
 		await t.mutation(api.tasks.update, {
@@ -126,6 +132,7 @@ describe("close-segment-on-transition — one test per enumerated exit path", ()
 
 	test("update_task to cancelled closes the trailing segment", async () => {
 		const t = createT();
+		await seedFleetAgents(t, FILE_LABELS);
 		const taskId = await seedInProgressWithOpenSegment(t);
 
 		await t.mutation(api.tasks.update, {
@@ -142,6 +149,7 @@ describe("close-segment-on-transition — one test per enumerated exit path", ()
 
 	test("block_task closes the trailing segment", async () => {
 		const t = createT();
+		await seedFleetAgents(t, FILE_LABELS);
 		const taskId = await seedInProgressWithOpenSegment(t);
 
 		await t.mutation(api.tasks.blockTask, {
@@ -157,6 +165,7 @@ describe("close-segment-on-transition — one test per enumerated exit path", ()
 
 	test("fail_task closes the trailing segment", async () => {
 		const t = createT();
+		await seedFleetAgents(t, FILE_LABELS);
 		const taskId = await seedInProgressWithOpenSegment(t);
 
 		await t.mutation(api.tasks.failTask, {
@@ -177,6 +186,7 @@ describe("close-segment-on-transition — one test per enumerated exit path", ()
 
 	test("resolveStaleDeployTasks (Mechanism c2 cron sweep) closes the trailing segment", async () => {
 		const t = createT();
+		await seedFleetAgents(t, FILE_LABELS);
 		const repo = "vantage-memory";
 		const title = "[Deploy] PR #4201 merged — deploy vantage-memory to prod";
 		const now = Date.now();
@@ -213,6 +223,7 @@ describe("close-segment-on-transition — one test per enumerated exit path", ()
 
 	test("closeReviewTasksForPr closes the trailing segment", async () => {
 		const t = createT();
+		await seedFleetAgents(t, FILE_LABELS);
 		const repoFullName = "vantageos-agency/vantage-memory";
 		const prNumber = 501;
 		const title = `[Review] ${repoFullName} PR #${prNumber}: Title`;
@@ -240,6 +251,7 @@ describe("close-segment-on-transition — one test per enumerated exit path", ()
 
 	test("cascadeCloseMission closes the trailing segment", async () => {
 		const t = createT();
+		await seedFleetAgents(t, FILE_LABELS);
 		const now = Date.now();
 		const missionId = await t.run(async (ctx) => {
 			return await ctx.db.insert("missions", {
@@ -269,6 +281,7 @@ describe("close-segment-on-transition — one test per enumerated exit path", ()
 
 	test("resolveStaleIrpMission closes the trailing segment", async () => {
 		const t = createT();
+		await seedFleetAgents(t, FILE_LABELS);
 		const now = Date.now();
 		const missionId = await t.run(async (ctx) => {
 			return await ctx.db.insert("missions", {

@@ -20,6 +20,9 @@ import { describe, expect, test } from "vitest";
 import { api } from "../_generated/api";
 import type { Id } from "../_generated/dataModel";
 import schema from "../schema";
+import { seedFleetAgents } from "../../tests/lib/seedFleetAgents";
+
+const FILE_LABELS = ["eta", "pi", "sigma"];
 
 const modules = Object.fromEntries(
 	Object.entries(import.meta.glob("../**/*.ts")).filter(
@@ -80,6 +83,7 @@ const newTask = (t: ReturnType<typeof createT>) =>
 describe("businessUnits:get — wrong-table ID (issue #1064, reads)", () => {
 	test("a messages-table ID yields an actionable ConvexError naming buId", async () => {
 		const t = createT();
+		await seedFleetAgents(t, FILE_LABELS);
 		await t.run((ctx) =>
 			ctx.db.insert("profiles", {
 				orchestratorId: "sigma",
@@ -123,6 +127,7 @@ describe("businessUnits:get — wrong-table ID (issue #1064, reads)", () => {
 
 	test("negative control: an ID from a THIRD table is also named, with its own value", async () => {
 		const t = createT();
+		await seedFleetAgents(t, FILE_LABELS);
 		const taskId = await newTask(t);
 
 		let caught: unknown;
@@ -143,6 +148,7 @@ describe("businessUnits:get — wrong-table ID (issue #1064, reads)", () => {
 
 	test("positive control: a real buId still returns the document", async () => {
 		const t = createT();
+		await seedFleetAgents(t, FILE_LABELS);
 		const buId = await newBu(t);
 		const doc = await t.query(api.businessUnits.get, { buId });
 		expect(doc?._id).toBe(buId);
@@ -151,6 +157,7 @@ describe("businessUnits:get — wrong-table ID (issue #1064, reads)", () => {
 
 	test("contract preserved: a valid businessUnits ID that no longer exists returns null, does NOT throw", async () => {
 		const t = createT();
+		await seedFleetAgents(t, FILE_LABELS);
 		const buId = await newBu(t);
 		await t.run(async (ctx) => {
 			await ctx.db.delete(buId);

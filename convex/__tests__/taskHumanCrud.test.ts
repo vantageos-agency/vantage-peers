@@ -15,6 +15,8 @@ import { testClerkOrgId } from "../../tests/fixtures/testClerkOrgId";
 import { api } from "../_generated/api";
 import type { Id } from "../_generated/dataModel";
 import schema from "../schema";
+import { seedAgents } from "../../tests/lib/agentIdOf";
+import { insertTaskRow } from "../../tests/lib/seedFleetAgents";
 
 const modules = Object.fromEntries(
 	Object.entries(import.meta.glob("../**/*.ts")).filter(
@@ -56,13 +58,15 @@ async function setup() {
 			updatedAt: Date.now(),
 		});
 	});
+	// "sigma" is org-a's agent: tasks are assigned to its ID.
+	await seedAgents(t, [["org-a", "sigma"]]);
 	return t;
 }
 
 async function seedTask(t: T, seed: Seed, orgId: string | null = "org-a") {
 	const now = Date.now();
 	return await t.run(async (ctx) =>
-		ctx.db.insert("tasks", {
+		insertTaskRow(ctx, {
 			title: "Human CRUD seed",
 			assignedTo: "sigma",
 			priority: "medium",

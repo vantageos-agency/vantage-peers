@@ -14,6 +14,9 @@ import { convexTest } from "convex-test";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import { api, internal } from "./_generated/api";
 import schema from "./schema";
+import { seedFleetAgents } from "../tests/lib/seedFleetAgents";
+
+const FILE_LABELS = ["eta", "sigma"];
 
 // Exclude "use node" action files that call external APIs (GitHub, RAG, etc.)
 // — they cannot run in convex-test's edge-runtime sandbox.
@@ -78,6 +81,7 @@ async function upsertError(
 describe("recurrence threshold — false-positive gate", () => {
 	test("single occurrence (count=1) does NOT set issueCreated", async () => {
 		const t = createTestConvex();
+		await seedFleetAgents(t, FILE_LABELS);
 
 		await upsertError(t, { hash: "fp-gate-1", recurrenceThreshold: 3 });
 
@@ -90,6 +94,7 @@ describe("recurrence threshold — false-positive gate", () => {
 
 	test("two occurrences (count=2, threshold=3) still does NOT set issueCreated", async () => {
 		const t = createTestConvex();
+		await seedFleetAgents(t, FILE_LABELS);
 
 		await upsertError(t, { hash: "fp-gate-2", recurrenceThreshold: 3 });
 		await upsertError(t, { hash: "fp-gate-2", recurrenceThreshold: 3 });
@@ -105,6 +110,7 @@ describe("recurrence threshold — false-positive gate", () => {
 		// With fake timers the action is queued but never executed. We verify:
 		// count=3 and no exception thrown.
 		const t = createTestConvex();
+		await seedFleetAgents(t, FILE_LABELS);
 
 		await upsertError(t, { hash: "fp-gate-3", recurrenceThreshold: 3 });
 		await upsertError(t, { hash: "fp-gate-3", recurrenceThreshold: 3 });
@@ -120,6 +126,7 @@ describe("recurrence threshold — false-positive gate", () => {
 
 	test("recurrenceThreshold omitted — row is inserted without crash", async () => {
 		const t = createTestConvex();
+		await seedFleetAgents(t, FILE_LABELS);
 
 		await t.mutation(internal.errorMonitor.upsertError, {
 			hash: "fp-default-thresh",
@@ -139,6 +146,7 @@ describe("recurrence threshold — false-positive gate", () => {
 
 	test("count is incremented correctly across multiple upserts", async () => {
 		const t = createTestConvex();
+		await seedFleetAgents(t, FILE_LABELS);
 
 		for (let i = 0; i < 5; i++) {
 			await upsertError(t, { hash: "fp-count-check", recurrenceThreshold: 10 });
@@ -158,6 +166,7 @@ describe("recurrence threshold — false-positive gate", () => {
 describe("dedup — issueCreated guard", () => {
 	test("once issueCreated=true, further upserts only bump count", async () => {
 		const t = createTestConvex();
+		await seedFleetAgents(t, FILE_LABELS);
 
 		await upsertError(t, { hash: "dedup-001", recurrenceThreshold: 1 });
 
@@ -188,6 +197,7 @@ describe("dedup — issueCreated guard", () => {
 
 	test("linkIssue sets issueCreated=true on the correct row", async () => {
 		const t = createTestConvex();
+		await seedFleetAgents(t, FILE_LABELS);
 
 		await upsertError(t, { hash: "linkissue-001" });
 
@@ -217,6 +227,7 @@ describe("dedup — issueCreated guard", () => {
 describe("resolveStaleIrpMission — cascade close", () => {
 	test("closes open tasks and sets mission status to complete", async () => {
 		const t = createTestConvex();
+		await seedFleetAgents(t, FILE_LABELS);
 
 		const missionId = await t.mutation(api.missions.create, {
 			name: "[Auto] Test IRP mission",
@@ -275,6 +286,7 @@ describe("resolveStaleIrpMission — cascade close", () => {
 
 	test("idempotent — resolving an already-complete mission does not throw", async () => {
 		const t = createTestConvex();
+		await seedFleetAgents(t, FILE_LABELS);
 
 		const missionId = await t.mutation(api.missions.create, {
 			name: "[Auto] Already closed IRP",
@@ -306,6 +318,7 @@ describe("resolveStaleIrpMission — cascade close", () => {
 
 	test("only closes todo and in_progress tasks — leaves done/review tasks alone", async () => {
 		const t = createTestConvex();
+		await seedFleetAgents(t, FILE_LABELS);
 
 		const missionId = await t.mutation(api.missions.create, {
 			name: "[Auto] Partial tasks IRP",
@@ -357,6 +370,7 @@ describe("resolveStaleIrpMission — cascade close", () => {
 describe("listStaleAutoIrp — query filter", () => {
 	test("returns issued, un-resolved rows with irpMissionId set", async () => {
 		const t = createTestConvex();
+		await seedFleetAgents(t, FILE_LABELS);
 
 		const missionId = await t.mutation(api.missions.create, {
 			name: "[Auto] Stale IRP",
@@ -398,6 +412,7 @@ describe("listStaleAutoIrp — query filter", () => {
 
 	test("excludes rows where autoResolved=true", async () => {
 		const t = createTestConvex();
+		await seedFleetAgents(t, FILE_LABELS);
 
 		const missionId = await t.mutation(api.missions.create, {
 			name: "[Auto] Already resolved",
@@ -441,6 +456,7 @@ describe("listStaleAutoIrp — query filter", () => {
 
 	test("excludes rows without irpMissionId (non-IRP errorLogs)", async () => {
 		const t = createTestConvex();
+		await seedFleetAgents(t, FILE_LABELS);
 
 		await upsertError(t, { hash: "no-mission-id" });
 

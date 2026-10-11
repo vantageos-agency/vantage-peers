@@ -35,6 +35,9 @@ import { describe, expect, test } from "vitest";
 import { api } from "../_generated/api";
 import schema from "../schema";
 import { deriveTerminalStatus } from "../tasks";
+import { seedFleetAgents } from "../../tests/lib/seedFleetAgents";
+
+const FILE_LABELS = ["eta", "sigma"];
 
 const modules = Object.fromEntries(
 	Object.entries(import.meta.glob("../**/*.ts")).filter(
@@ -72,6 +75,7 @@ describe("failed terminal — derived from completionOutcome, never a caller-cho
 
 	test("failTask records status='failed', distinguishable from done and cancelled", async () => {
 		const t = createT();
+		await seedFleetAgents(t, FILE_LABELS);
 		const taskId = await makeTask(t);
 
 		await t.mutation(api.tasks.failTask, {
@@ -89,6 +93,7 @@ describe("failed terminal — derived from completionOutcome, never a caller-cho
 
 	test("complete() hardcodes completionOutcome='succeeded' — no arg exists for a caller to set it", async () => {
 		const t = createT();
+		await seedFleetAgents(t, FILE_LABELS);
 		const taskId = await makeTask(t);
 
 		await t.mutation(api.tasks.complete, {
@@ -104,6 +109,7 @@ describe("failed terminal — derived from completionOutcome, never a caller-cho
 
 	test("update_task refuses status='failed' — the same ungated-door gate as status='blocked'", async () => {
 		const t = createT();
+		await seedFleetAgents(t, FILE_LABELS);
 		const taskId = await makeTask(t);
 
 		await expect(
@@ -125,6 +131,7 @@ describe("failed terminal — derived from completionOutcome, never a caller-cho
 
 	test("a task already done or cancelled cannot be re-terminated as failed", async () => {
 		const t = createT();
+		await seedFleetAgents(t, FILE_LABELS);
 		const doneId = await makeTask(t);
 		await t.mutation(api.tasks.complete, {
 			taskId: doneId,
@@ -157,6 +164,7 @@ describe("failed terminal — derived from completionOutcome, never a caller-cho
 
 	test("failTask requires a non-empty failureNote", async () => {
 		const t = createT();
+		await seedFleetAgents(t, FILE_LABELS);
 		const taskId = await makeTask(t);
 		await expect(
 			t.mutation(api.tasks.failTask, {
@@ -177,6 +185,7 @@ describe("failed terminal — derived from completionOutcome, never a caller-cho
 	// blocker does NOT ready its waiters; it notifies without erasing.
 	test("failTask does NOT silently ready waiters — a waiter blocked on a now-failed task stays blocked, with blockedOnTaskId intact", async () => {
 		const t = createT();
+		await seedFleetAgents(t, FILE_LABELS);
 		const blockerId = await makeTask(t, { assignedTo: "eta", createdBy: "eta" });
 		const waiterId = await makeTask(t, { assignedTo: "sigma", createdBy: "sigma" });
 
@@ -207,6 +216,7 @@ describe("failed terminal — derived from completionOutcome, never a caller-cho
 
 	test("failTask's waiter notification NAMES the failure — never 'is now done'", async () => {
 		const t = createT();
+		await seedFleetAgents(t, FILE_LABELS);
 		const blockerId = await makeTask(t, { assignedTo: "eta", createdBy: "eta" });
 		const waiterId = await makeTask(t, { assignedTo: "sigma", createdBy: "sigma" });
 
@@ -244,6 +254,7 @@ describe("failed terminal — derived from completionOutcome, never a caller-cho
 	// "todo", clears blockedOnTaskId, and says "is now done".
 	test("complete() (success) still sweeps waiters to todo, clears blockedOnTaskId, and says 'is now done' — unchanged positive control", async () => {
 		const t = createT();
+		await seedFleetAgents(t, FILE_LABELS);
 		const blockerId = await makeTask(t, { assignedTo: "eta", createdBy: "eta" });
 		const waiterId = await makeTask(t, { assignedTo: "sigma", createdBy: "sigma" });
 
@@ -278,6 +289,7 @@ describe("failed terminal — derived from completionOutcome, never a caller-cho
 
 	test("read paths (get, getById, listPaginated) carry completionOutcome without throwing", async () => {
 		const t = createT();
+		await seedFleetAgents(t, FILE_LABELS);
 		const taskId = await makeTask(t);
 		await t.mutation(api.tasks.failTask, {
 			taskId,

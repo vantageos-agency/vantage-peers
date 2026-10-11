@@ -24,6 +24,8 @@ import { testClerkOrgId } from "../../tests/fixtures/testClerkOrgId";
 import { api } from "../_generated/api";
 import schema from "../schema";
 import { TASK_LIST_SCAN_CAP } from "../tasks";
+import { seedAgents } from "../../tests/lib/agentIdOf";
+import { insertTaskRow } from "../../tests/lib/seedFleetAgents";
 
 const modules = Object.fromEntries(
 	Object.entries(import.meta.glob("../**/*.ts")).filter(
@@ -70,6 +72,16 @@ async function seedOrgs(t: T) {
 	});
 }
 
+// The assignee labels the task reads below use are agents of each org (one label,
+// two agents where both rosters carry it): tasks are listed by the assignee's
+// agent ID, never by the label.
+async function seedTaskAgents(t: T) {
+	await seedAgents(t, [
+		[FLEET, "sigma"],
+		[OTHER, "sigma"],
+	]);
+}
+
 const asMember = (t: T, org: string) =>
 	t.withIdentity({
 		subject: `${org}-member`,
@@ -90,7 +102,7 @@ async function seedTasks(t: T, seed: TaskSeed, count: number, tag: string) {
 	for (let from = 0; from < count; from += CHUNK) {
 		await t.run(async (ctx) => {
 			for (let i = from; i < Math.min(from + CHUNK, count); i++) {
-				await ctx.db.insert("tasks", {
+				await insertTaskRow(ctx, {
 					title: `${tag}-${i}`,
 					assignedTo: seed.assignedTo ?? "sigma",
 					priority: "medium",
@@ -166,6 +178,7 @@ describe("tasks.listPaginated — member of org A", () => {
 		async (_name, filter) => {
 			const t = createT();
 			await seedOrgs(t);
+		await seedTaskAgents(t);
 			// own rows OLDEST, then unstamped, then a wall of foreign rows newest:
 			// a fleet-wide page of 5 holds only foreign rows.
 			await seedTasks(t, { orgId: FLEET }, 7, "own");
@@ -187,6 +200,7 @@ describe("tasks.listPaginated — member of org A", () => {
 	test("assignedTo only, own rows in two status buckets: every own row exactly once", async () => {
 		const t = createT();
 		await seedOrgs(t);
+		await seedTaskAgents(t);
 		await seedTasks(t, { orgId: FLEET, status: "todo" }, 4, "own-todo");
 		await seedTasks(t, { orgId: FLEET, status: "in_progress" }, 4, "own-prog");
 		await seedTasks(t, { orgId: OTHER, status: "todo" }, 30, "foreign");
@@ -200,6 +214,7 @@ describe("tasks.listPaginated — member of org A", () => {
 	test("cross-org pole: the other org's member sees only its own rows", async () => {
 		const t = createT();
 		await seedOrgs(t);
+		await seedTaskAgents(t);
 		await seedTasks(t, { orgId: FLEET }, 6, "fleet");
 		await seedTasks(t, { orgId: OTHER }, 3, "other");
 		const pages = await walk(asMember(t, OTHER), {}, 5);
@@ -213,6 +228,7 @@ describe("tasks.listPaginated — member of org A", () => {
 	test("return shape is the paginated result usePaginatedQuery expects", async () => {
 		const t = createT();
 		await seedOrgs(t);
+		await seedTaskAgents(t);
 		await seedTasks(t, { orgId: FLEET }, 2, "own");
 		const res = await asMember(t, FLEET).query(api.tasks.listPaginated, {
 			paginationOpts: { numItems: 5, cursor: null },
@@ -290,14 +306,14 @@ describe("tasks.listByMission — member of org A", () => {
 					updatedAt: Date.now(),
 					missionId: mission,
 				};
-				await ctx.db.insert("tasks", {
+				await insertTaskRow(ctx, {
 					...base,
 					title: `own-${i}`,
 					status: statuses[i % 2],
 					orgId: FLEET,
 					clerkOrgId: testClerkOrgId(FLEET),
 				} as never);
-				await ctx.db.insert("tasks", {
+				await insertTaskRow(ctx, {
 					...base,
 					title: `foreign-${i}`,
 					status: statuses[i % 2],
