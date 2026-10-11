@@ -81,13 +81,13 @@ const AGENT_READ_CAP = 5000;
 
 type Reason = "unknownAgent" | "ambiguousAgent";
 
-type Resolver = {
+export type Resolver = {
 	operatorSlug: string;
 	// orgSlug -> normalized name -> every agents _id carrying it
 	agentIds: Map<string, Map<string, string[]>>;
 };
 
-async function loadResolver(db: DatabaseReader): Promise<Resolver> {
+export async function loadResolver(db: DatabaseReader): Promise<Resolver> {
 	const operator = await findOperatorOrg(db);
 	if (operator.kind !== "one") {
 		throw new ConvexError(
@@ -114,10 +114,10 @@ async function loadResolver(db: DatabaseReader): Promise<Resolver> {
 	return { operatorSlug: operator.slug, agentIds };
 }
 
-type Verdict = { id: string } | { reason: Reason };
+export type Verdict = { id: string } | { reason: Reason };
 
 // The ONE name -> ID decision, within ONE org.
-function resolveName(
+export function resolveName(
 	r: Resolver,
 	rowOrg: string | undefined,
 	name: string,

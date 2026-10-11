@@ -68,6 +68,7 @@ import type * as lib_reviewRouting from "../lib/reviewRouting.js";
 import type * as lib_rosterIds from "../lib/rosterIds.js";
 import type * as lib_seatAgent from "../lib/seatAgent.js";
 import type * as lib_systemCaller from "../lib/systemCaller.js";
+import type * as lib_taskActors from "../lib/taskActors.js";
 import type * as lib_taskClosureGate from "../lib/taskClosureGate.js";
 import type * as lib_tenantSlug from "../lib/tenantSlug.js";
 import type * as lib_verifiedOrg from "../lib/verifiedOrg.js";
@@ -86,6 +87,7 @@ import type * as migrations_backfill_actor_ids from "../migrations/backfill_acto
 import type * as migrations_backfill_org_clerk_id from "../migrations/backfill_org_clerk_id.js";
 import type * as migrations_backfill_org_stamp from "../migrations/backfill_org_stamp.js";
 import type * as migrations_backfill_review_task_origin from "../migrations/backfill_review_task_origin.js";
+import type * as migrations_backfill_task_actor_ids from "../migrations/backfill_task_actor_ids.js";
 import type * as migrations_backfill_webhook_task_origin from "../migrations/backfill_webhook_task_origin.js";
 import type * as migrations_bulkCompleteContinuationAudit from "../migrations/bulkCompleteContinuationAudit.js";
 import type * as migrations_c2_normalize_orchestrator_ids from "../migrations/c2_normalize_orchestrator_ids.js";
@@ -188,6 +190,7 @@ declare const fullApi: ApiFromModules<{
   "lib/rosterIds": typeof lib_rosterIds;
   "lib/seatAgent": typeof lib_seatAgent;
   "lib/systemCaller": typeof lib_systemCaller;
+  "lib/taskActors": typeof lib_taskActors;
   "lib/taskClosureGate": typeof lib_taskClosureGate;
   "lib/tenantSlug": typeof lib_tenantSlug;
   "lib/verifiedOrg": typeof lib_verifiedOrg;
@@ -206,6 +209,7 @@ declare const fullApi: ApiFromModules<{
   "migrations/backfill_org_clerk_id": typeof migrations_backfill_org_clerk_id;
   "migrations/backfill_org_stamp": typeof migrations_backfill_org_stamp;
   "migrations/backfill_review_task_origin": typeof migrations_backfill_review_task_origin;
+  "migrations/backfill_task_actor_ids": typeof migrations_backfill_task_actor_ids;
   "migrations/backfill_webhook_task_origin": typeof migrations_backfill_webhook_task_origin;
   "migrations/bulkCompleteContinuationAudit": typeof migrations_bulkCompleteContinuationAudit;
   "migrations/c2_normalize_orchestrator_ids": typeof migrations_c2_normalize_orchestrator_ids;

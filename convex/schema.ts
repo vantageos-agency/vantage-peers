@@ -588,6 +588,21 @@ export default defineSchema({
 	})
 		.index("by_assignee", ["assignedTo", "status"])
 		.index("by_assigneeId_status", ["assignedToId", "status"])
+		// Assignee BY ID with the filters tasks.list pushes into the index (M7: the
+		// same shapes the name-keyed by_assignee_project / by_assignee_status_updatedAt
+		// served, keyed by the agents-row ID so the scan cap bounds the matching
+		// population and a same-named agent of another org never enters it).
+		.index("by_assigneeId_project_status", ["assignedToId", "project", "status"])
+		.index("by_assigneeId_status_updatedAt", ["assignedToId", "status", "updatedAt"])
+		// The same for an org MEMBER: the tenant is the leading equality, so a page
+		// holds only the member's own org's rows of that agent.
+		.index("by_orgId_assigneeId_status", ["orgId", "assignedToId", "status"])
+		.index("by_orgId_assigneeId_project_status", [
+			"orgId",
+			"assignedToId",
+			"project",
+			"status",
+		])
 		.index("by_project", ["project", "status"])
 		.index("by_priority", ["priority", "status"])
 		.index("by_status", ["status", "createdAt"])
