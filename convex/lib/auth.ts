@@ -777,14 +777,13 @@ export async function requireOrgAdmin(
 	ctx: QueryCtx | MutationCtx,
 	targetOrgSlug: string,
 ): Promise<void> {
-	// An absent identity is forwarded to the package, which refuses it
-	// (`credential-invalid`): no caller is resolved from nothing.
-	await proveOrgAdmin(
-		ctx,
-		await ctx.auth.getUserIdentity(),
-		targetOrgSlug,
-		"lib/auth:requireOrgAdmin",
-	);
+	const identity = await ctx.auth.getUserIdentity();
+	if (!identity) {
+		throw new ConvexError(
+			"RBAC_DENIED: no authenticated identity presented for org-admin provisioning",
+		);
+	}
+	await proveOrgAdmin(ctx, identity, targetOrgSlug, "lib/auth:requireOrgAdmin");
 }
 
 /**
@@ -1376,7 +1375,7 @@ export function requireResolvedCaller(
 	// `mcpBoundOnly`: a door that is service-account-only by purpose (a
 	// credential oracle). The operator human is master for READS but is not the
 	// MCP layer (`isMcpBoundMaster`), so it is refused here like any member.
-	if (opts?.mcpBoundOnly ? isMcpBoundMaster(scope) : hasFleetRead(scope)) return;
+	if (scope.isMaster && (!opts?.mcpBoundOnly || isMcpBoundMaster(scope))) return;
 
 	if (opts?.mcpBoundOnly) {
 		throw new ConvexError(
