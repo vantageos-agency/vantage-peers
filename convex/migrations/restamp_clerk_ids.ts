@@ -217,6 +217,7 @@ export function compileMap(map: IdMap): CompiledMap {
 async function loadMappingRows(
 	db: DatabaseReader,
 ): Promise<Doc<"client_org_mapping">[]> {
+	// allow-local-identity: offline backfill compares stored data against data; there is no caller (restamp_clerk_ids, removed with this migration after the Clerk production cutover)
 	const rows = await db.query("client_org_mapping").take(MAPPING_READ_CAP + 1);
 	if (rows.length > MAPPING_READ_CAP) {
 		refuse(
@@ -263,10 +264,12 @@ export async function findConflicts(
 				? (compiled.orgFrom.get(r.clerkOrgId) ?? r.clerkOrgId)
 				: `slug:${r.clerkOrgSlug}`;
 		for (const p of map.users) {
+			// allow-local-identity: offline backfill compares stored data against data; there is no caller (restamp_clerk_ids, removed with this migration after the Clerk production cutover)
 			const fromRows = await db
 				.query("orgMembership")
 				.withIndex("by_user", (q) => q.eq("clerkUserId", p.from))
 				.take(MEMBERSHIP_READ_CAP + 1);
+			// allow-local-identity: offline backfill compares stored data against data; there is no caller (restamp_clerk_ids, removed with this migration after the Clerk production cutover)
 			const toRows = await db
 				.query("orgMembership")
 				.withIndex("by_user", (q) => q.eq("clerkUserId", p.to))
