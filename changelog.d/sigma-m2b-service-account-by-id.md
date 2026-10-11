@@ -1,0 +1,4 @@
+---
+section: Changed
+---
+- **VantagePeers Cloud: the fleet service account becomes stored data (M2 part 2, step 1 of 2: expand only, no behaviour change).** New optional schema fields `client_org_mapping.serviceAccountAgentId`, `agents.kind`, `agents.authSubject` and index `agents.by_auth_subject_kind`, plus the one-off internal migration `migrations/linkServiceAccountAgent:linkServiceAccountAgent` (dry run by default) that reads `CLERK_SERVICE_ACCOUNT_USER_ID` once and writes the operator org's service `agents` row and the mapping column. No door reads them yet: `withOrgScope` and `requireServiceAccount` still decide as before. Rollout order: schema, then the dry run, then `'{"dryRun":false}'`; the doors switch in the next step. Evidence: `convex/__tests__/linkServiceAccountAgent.test.ts`.

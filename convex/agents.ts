@@ -54,6 +54,8 @@ const agentReturnValidator = v.object({
 	description: v.optional(v.string()),
 	address: v.optional(v.string()),
 	outboundAuthRef: v.optional(v.string()),
+	kind: v.optional(v.union(v.literal("agent"), v.literal("service"))),
+	authSubject: v.optional(v.string()),
 	isActive: v.boolean(),
 	createdAt: v.number(),
 });

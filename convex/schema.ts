@@ -1773,6 +1773,14 @@ export default defineSchema({
 		// fleet; it admits no agent by itself (`assertPrincipalListed` has no
 		// wildcard) and it is never inferred from an entry of a list.
 		fleetWide: v.optional(v.boolean()),
+		// serviceAccountAgentId: the FLEET SERVICE ACCOUNT, as DATA (module M2
+		// part 2). Meaningful only on the operator-kind row (`orgKind:
+		// "operator"`): the `agents` row (kind "service") of this organisation
+		// that the MCP server authenticates as. Its `authSubject` is the verified
+		// Clerk subject it presents. Absent means no service account is linked yet.
+		// Written only by the one-off migration migrations/linkServiceAccountAgent;
+		// no request path reads it in this step (expand only).
+		serviceAccountAgentId: v.optional(v.id("agents")),
 	})
 		.index("by_clerk_slug", ["clerkOrgSlug"])
 		.index("by_clerk_org_id", ["clerkOrgId"])
@@ -1991,10 +1999,18 @@ export default defineSchema({
 		// known at registerAgent time; populated later via a dedicated update.
 		address: v.optional(v.string()),
 		outboundAuthRef: v.optional(v.string()), // opaque reference to an outbound-auth credential; never the raw credential itself
+		// kind: absent means an ordinary agent. "service" marks the fleet service
+		// account row that `client_org_mapping.serviceAccountAgentId` points at.
+		kind: v.optional(v.union(v.literal("agent"), v.literal("service"))),
+		// authSubject: the verified Clerk subject this row authenticates as. Set
+		// only on a `kind: "service"` row; the service account is recognised by
+		// THIS stored value once the doors read it (a later step).
+		authSubject: v.optional(v.string()),
 		isActive: v.boolean(),
 		createdAt: v.number(),
 	})
 		.index("by_org", ["orgSlug"])
+		.index("by_auth_subject_kind", ["authSubject", "kind"])
 		.index("by_org_clerk_id", ["clerkOrgId"])
 		.index("by_org_name", ["orgSlug", "name"])
 		.index("by_org_name_clerk_id", ["clerkOrgId", "name"])
