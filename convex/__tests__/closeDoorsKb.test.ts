@@ -91,7 +91,7 @@ async function seedChunk(t: T, orgId: string, docId: string) {
 		await ctx.db.insert("memories", {
 			content: "chunk",
 			type: "reference",
-			namespace: `team/${orgId}/${docId}`,
+			namespace: `team/${testClerkOrgId(orgId)}/${docId}`,
 			createdBy: "system",
 			relations: [],
 			isLatest: true,
@@ -108,7 +108,7 @@ async function latestCount(t: T, orgId: string, docId: string) {
 				await ctx.db
 					.query("memories")
 					.withIndex("by_namespace", (q) =>
-						q.eq("namespace", `team/${orgId}/${docId}`).eq("isLatest", true),
+						q.eq("namespace", `team/${testClerkOrgId(orgId)}/${docId}`).eq("isLatest", true),
 					)
 					.collect()
 			).length,
@@ -131,8 +131,8 @@ const storeArgs = (storageId: unknown, orgId: string, docId?: string) => ({
 	storageId,
 	mimeType: "text/plain",
 	filename: "a.txt",
-	orgId,
-	namespace: `team/${orgId}`,
+	orgId: testClerkOrgId(orgId),
+	namespace: `team/${testClerkOrgId(orgId)}`,
 	...(docId ? { docId } : {}),
 });
 
@@ -207,8 +207,8 @@ describe("kb:softDeleteDocument — caller resolution", () => {
 		await expect(
 			t.action(SOFT_DELETE, {
 				docId: "d1",
-				orgId: "org-a",
-				namespace: "team/org-a",
+				orgId: testClerkOrgId("org-a"),
+				namespace: `team/${testClerkOrgId("org-a")}`,
 			}),
 		).rejects.toThrow(/RBAC_DENIED[\s\S]*kb:softDeleteDocument/);
 		expect(await latestCount(t, "org-a", "d1")).toBe(1);
@@ -221,8 +221,8 @@ describe("kb:softDeleteDocument — caller resolution", () => {
 		await expect(
 			asNoOrg(t).action(SOFT_DELETE, {
 				docId: "d1",
-				orgId: "org-a",
-				namespace: "team/org-a",
+				orgId: testClerkOrgId("org-a"),
+				namespace: `team/${testClerkOrgId("org-a")}`,
 			}),
 		).rejects.toThrow(/RBAC_DENIED[\s\S]*kb:softDeleteDocument/);
 		expect(await latestCount(t, "org-a", "d1")).toBe(1);
@@ -236,8 +236,8 @@ describe("kb:softDeleteDocument — caller resolution", () => {
 		await expect(
 			asOrg(t, "org-a").action(SOFT_DELETE, {
 				docId: "d1",
-				orgId: "org-b",
-				namespace: "team/org-b",
+				orgId: testClerkOrgId("org-b"),
+				namespace: `team/${testClerkOrgId("org-b")}`,
 			}),
 		).rejects.toThrow(/AUTH_NAMESPACE_DENIED/);
 		expect(await latestCount(t, "org-b", "d1")).toBe(1);
@@ -251,8 +251,8 @@ describe("kb:softDeleteDocument — caller resolution", () => {
 		await seedChunk(t, "org-b", "d1");
 		const r = await asOrg(t, "org-a").action(SOFT_DELETE, {
 			docId: "d1",
-			orgId: "org-a",
-			namespace: "team/org-a",
+			orgId: testClerkOrgId("org-a"),
+			namespace: `team/${testClerkOrgId("org-a")}`,
 		});
 		expect(r).toEqual({ docId: "d1", markedCount: 1 });
 		expect(await latestCount(t, "org-a", "d1")).toBe(0);
@@ -264,8 +264,8 @@ describe("kb:softDeleteDocument — caller resolution", () => {
 		await seedChunk(t, "org-z", "d9");
 		const r = await asMaster(t).action(SOFT_DELETE, {
 			docId: "d9",
-			orgId: "org-z",
-			namespace: "team/org-z",
+			orgId: testClerkOrgId("org-z"),
+			namespace: `team/${testClerkOrgId("org-z")}`,
 		});
 		expect(r.markedCount).toBe(1);
 	});

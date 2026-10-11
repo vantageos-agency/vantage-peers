@@ -175,10 +175,10 @@ async function seedEpisode(
 describe("AUTH_NAMESPACE_DENIED — episodes:listEpisodes", () => {
 	test("anonymous caller (no credential at all) is served NO rows", async () => {
 		const t = createT();
-		await seedEpisode(t, "team/org-a", "org-a private lesson");
+		await seedEpisode(t, `team/${testClerkOrgId("org-a")}`, "org-a private lesson");
 
 		const rows = await t.query(api.episodes.listEpisodes, {
-			namespace: "team/org-a",
+			namespace: `team/${testClerkOrgId("org-a")}`,
 		});
 
 		expect(rows).toEqual([]);
@@ -186,10 +186,10 @@ describe("AUTH_NAMESPACE_DENIED — episodes:listEpisodes", () => {
 
 	test("signed-in caller with NO verified organisation gets a typed empty array, never rows", async () => {
 		const t = createT();
-		await seedEpisode(t, "team/org-a", "org-a private lesson");
+		await seedEpisode(t, `team/${testClerkOrgId("org-a")}`, "org-a private lesson");
 
 		const rows = await asNoOrg(t).query(api.episodes.listEpisodes, {
-			namespace: "team/org-a",
+			namespace: `team/${testClerkOrgId("org-a")}`,
 		});
 
 		expect(rows).toEqual([]);
@@ -199,11 +199,11 @@ describe("AUTH_NAMESPACE_DENIED — episodes:listEpisodes", () => {
 		const t = createT();
 		await seedOrgMapping(t, "org-a");
 		await seedOrgMapping(t, "org-b");
-		await seedEpisode(t, "team/org-b", "org-b private lesson");
+		await seedEpisode(t, `team/${testClerkOrgId("org-b")}`, "org-b private lesson");
 
 		const rows = await asOrgMember(t, ORDINARY_A, "org-a").query(
 			api.episodes.listEpisodes,
-			{ namespace: "team/org-b" },
+			{ namespace: `team/${testClerkOrgId("org-b")}` },
 		);
 
 		expect(rows).toEqual([]);
@@ -212,11 +212,11 @@ describe("AUTH_NAMESPACE_DENIED — episodes:listEpisodes", () => {
 	test("ALLOW pole — org A DOES read its own episodes (the grant must produce access)", async () => {
 		const t = createT();
 		await seedOrgMapping(t, "org-a");
-		await seedEpisode(t, "team/org-a", "org-a own lesson");
+		await seedEpisode(t, `team/${testClerkOrgId("org-a")}`, "org-a own lesson");
 
 		const rows = await asOrgMember(t, ORDINARY_A, "org-a").query(
 			api.episodes.listEpisodes,
-			{ namespace: "team/org-a" },
+			{ namespace: `team/${testClerkOrgId("org-a")}` },
 		);
 
 		expect(rows).toHaveLength(1);
@@ -233,8 +233,8 @@ describe("AUTH_NAMESPACE_DENIED — episodes:listEpisodes", () => {
 describe("AUTH_NAMESPACE_DENIED — episodes:getCriticalInsights (cross-namespace by design)", () => {
 	test("anonymous caller (the CONFIRMED production leak) is served NO rows", async () => {
 		const t = createT();
-		await seedEpisode(t, "team/org-a", "org-a critical");
-		await seedEpisode(t, "team/org-b", "org-b critical");
+		await seedEpisode(t, `team/${testClerkOrgId("org-a")}`, "org-a critical");
+		await seedEpisode(t, `team/${testClerkOrgId("org-b")}`, "org-b critical");
 
 		const rows = await t.query(api.episodes.getCriticalInsights, {});
 
@@ -243,7 +243,7 @@ describe("AUTH_NAMESPACE_DENIED — episodes:getCriticalInsights (cross-namespac
 
 	test("signed-in caller with NO verified organisation gets a typed empty array", async () => {
 		const t = createT();
-		await seedEpisode(t, "team/org-a", "org-a critical");
+		await seedEpisode(t, `team/${testClerkOrgId("org-a")}`, "org-a critical");
 
 		const rows = await asNoOrg(t).query(api.episodes.getCriticalInsights, {});
 
@@ -254,8 +254,8 @@ describe("AUTH_NAMESPACE_DENIED — episodes:getCriticalInsights (cross-namespac
 		const t = createT();
 		await seedOrgMapping(t, "org-a");
 		await seedOrgMapping(t, "org-b");
-		await seedEpisode(t, "team/org-a", "org-a critical");
-		await seedEpisode(t, "team/org-b", "org-b critical");
+		await seedEpisode(t, `team/${testClerkOrgId("org-a")}`, "org-a critical");
+		await seedEpisode(t, `team/${testClerkOrgId("org-b")}`, "org-b critical");
 
 		const rows = await asOrgMember(t, ORDINARY_A, "org-a").query(
 			api.episodes.getCriticalInsights,
@@ -263,14 +263,14 @@ describe("AUTH_NAMESPACE_DENIED — episodes:getCriticalInsights (cross-namespac
 		);
 
 		expect(rows.map((r) => r.insight)).toEqual(["org-a critical"]);
-		expect(rows.every((r) => r.namespace === "team/org-a")).toBe(true);
+		expect(rows.every((r) => r.namespace === `team/${testClerkOrgId("org-a")}`)).toBe(true);
 	});
 
 	test("the SAME org resolved for two DIFFERENT subjects yields IDENTICAL rows (identical inputs, identical outputs)", async () => {
 		const t = createT();
 		await seedOrgMapping(t, "org-a");
-		await seedEpisode(t, "team/org-a", "org-a critical");
-		await seedEpisode(t, "team/org-b", "org-b critical");
+		await seedEpisode(t, `team/${testClerkOrgId("org-a")}`, "org-a critical");
+		await seedEpisode(t, `team/${testClerkOrgId("org-b")}`, "org-b critical");
 
 		const first = await asOrgMember(t, ORDINARY_A, "org-a").query(
 			api.episodes.getCriticalInsights,
@@ -292,11 +292,11 @@ describe("AUTH_NAMESPACE_DENIED — episodes:getCriticalInsights (cross-namespac
 describe("AUTH_NAMESPACE_DENIED — profiles:getProfileWithMemories", () => {
 	test("anonymous caller is served NO memories", async () => {
 		const t = createT();
-		await seedMemory(t, "team/org-a", "org-a private memory");
+		await seedMemory(t, `team/${testClerkOrgId("org-a")}`, "org-a private memory");
 
 		const res = await t.query(api.profiles.getProfileWithMemories, {
 			orchestratorId: "sigma",
-			namespace: "team/org-a",
+			namespace: `team/${testClerkOrgId("org-a")}`,
 		});
 
 		expect(res.memories).toEqual([]);
@@ -305,11 +305,11 @@ describe("AUTH_NAMESPACE_DENIED — profiles:getProfileWithMemories", () => {
 
 	test("signed-in caller with NO verified organisation gets a typed empty result", async () => {
 		const t = createT();
-		await seedMemory(t, "team/org-a", "org-a private memory");
+		await seedMemory(t, `team/${testClerkOrgId("org-a")}`, "org-a private memory");
 
 		const res = await asNoOrg(t).query(api.profiles.getProfileWithMemories, {
 			orchestratorId: "sigma",
-			namespace: "team/org-a",
+			namespace: `team/${testClerkOrgId("org-a")}`,
 		});
 
 		expect(res.memories).toEqual([]);
@@ -320,11 +320,11 @@ describe("AUTH_NAMESPACE_DENIED — profiles:getProfileWithMemories", () => {
 		const t = createT();
 		await seedOrgMapping(t, "org-a");
 		await seedOrgMapping(t, "org-b");
-		await seedMemory(t, "team/org-b", "org-b private memory");
+		await seedMemory(t, `team/${testClerkOrgId("org-b")}`, "org-b private memory");
 
 		const res = await asOrgMember(t, ORDINARY_B, "org-a").query(
 			api.profiles.getProfileWithMemories,
-			{ orchestratorId: "sigma", namespace: "team/org-b" },
+			{ orchestratorId: "sigma", namespace: `team/${testClerkOrgId("org-b")}` },
 		);
 
 		expect(res.memories).toEqual([]);
@@ -333,11 +333,11 @@ describe("AUTH_NAMESPACE_DENIED — profiles:getProfileWithMemories", () => {
 	test("ALLOW pole — org A DOES read its own memories through the profile surface", async () => {
 		const t = createT();
 		await seedOrgMapping(t, "org-a");
-		await seedMemory(t, "team/org-a", "org-a own memory");
+		await seedMemory(t, `team/${testClerkOrgId("org-a")}`, "org-a own memory");
 
 		const res = await asOrgMember(t, ORDINARY_A, "org-a").query(
 			api.profiles.getProfileWithMemories,
-			{ orchestratorId: "sigma", namespace: "team/org-a" },
+			{ orchestratorId: "sigma", namespace: `team/${testClerkOrgId("org-a")}` },
 		);
 
 		expect(res.memories.map((m) => m.content)).toEqual(["org-a own memory"]);
@@ -370,11 +370,11 @@ describe("AUTH_NAMESPACE_DENIED — memoriesScoped:listMemoriesScoped (fails OPE
 
 	test("signed-in caller with NO verified organisation gets a typed empty array, never rows", async () => {
 		const t = createT();
-		await seedMemory(t, "team/org-a", "org-a private memory");
+		await seedMemory(t, `team/${testClerkOrgId("org-a")}`, "org-a private memory");
 
 		const rows = await asNoOrg(t).query(
 			api.memoriesScoped.listMemoriesScoped,
-			{ namespace: "team/org-a" },
+			{ namespace: `team/${testClerkOrgId("org-a")}` },
 		);
 
 		expect(rows).toEqual([]);
@@ -383,11 +383,11 @@ describe("AUTH_NAMESPACE_DENIED — memoriesScoped:listMemoriesScoped (fails OPE
 	test("ALLOW pole — org A DOES read its own team namespace", async () => {
 		const t = createT();
 		await seedOrgMapping(t, "org-a");
-		await seedMemory(t, "team/org-a", "org-a own memory");
+		await seedMemory(t, `team/${testClerkOrgId("org-a")}`, "org-a own memory");
 
 		const rows = await asOrgMember(t, ORDINARY_A, "org-a").query(
 			api.memoriesScoped.listMemoriesScoped,
-			{ namespace: "team/org-a" },
+			{ namespace: `team/${testClerkOrgId("org-a")}` },
 		);
 
 		expect(rows.map((r) => r.content)).toEqual(["org-a own memory"]);
@@ -404,7 +404,7 @@ describe("AUTH_NAMESPACE_DENIED — writes refuse by THROW", () => {
 
 		await expect(
 			t.mutation(api.memoriesScoped.storeMemoryScoped, {
-				namespace: "team/org-a",
+				namespace: `team/${testClerkOrgId("org-a")}`,
 				type: "project",
 				content: "written by nobody",
 				createdBy: "sigma",
@@ -423,7 +423,7 @@ describe("AUTH_NAMESPACE_DENIED — writes refuse by THROW", () => {
 
 		await expect(
 			asNoOrg(t).mutation(api.memoriesScoped.storeMemoryScoped, {
-				namespace: "team/org-a",
+				namespace: `team/${testClerkOrgId("org-a")}`,
 				type: "project",
 				content: "written with no org",
 				createdBy: "sigma",
@@ -443,7 +443,7 @@ describe("AUTH_NAMESPACE_DENIED — writes refuse by THROW", () => {
 		const id = await asOrgMember(t, ORDINARY_A, "org-a").mutation(
 			api.memoriesScoped.storeMemoryScoped,
 			{
-				namespace: "team/org-a",
+				namespace: `team/${testClerkOrgId("org-a")}`,
 				type: "project",
 				content: "org-a legitimate write",
 				createdBy: "sigma",
@@ -455,7 +455,7 @@ describe("AUTH_NAMESPACE_DENIED — writes refuse by THROW", () => {
 
 	test("kb:softDeleteDocument — anonymous caller is REFUSED by throw (orgId arg is caller-supplied, not authority)", async () => {
 		const t = createT();
-		await seedMemory(t, "team/org-a/doc-1", "org-a chunk", {
+		await seedMemory(t, `team/${testClerkOrgId("org-a")}/doc-1`, "org-a chunk", {
 			type: "reference",
 		});
 
@@ -469,8 +469,8 @@ describe("AUTH_NAMESPACE_DENIED — writes refuse by THROW", () => {
 		await expect(
 			t.action(api.kb.softDeleteDocument, {
 				docId: "doc-1",
-				orgId: "org-a",
-				namespace: "team/org-a",
+				orgId: testClerkOrgId("org-a"),
+				namespace: `team/${testClerkOrgId("org-a")}`,
 			}),
 		).rejects.toThrow(/RBAC_DENIED[\s\S]*kb:softDeleteDocument/);
 
@@ -485,18 +485,18 @@ describe("AUTH_NAMESPACE_DENIED — writes refuse by THROW", () => {
 		const t = createT();
 		await seedOrgMapping(t, "org-a");
 		await seedOrgMapping(t, "org-b");
-		await seedMemory(t, "team/org-b/doc-b", "org-b chunk", {
+		await seedMemory(t, `team/${testClerkOrgId("org-b")}/doc-b`, "org-b chunk", {
 			type: "reference",
 		});
 
 		await expect(
 			asOrgMember(t, ORDINARY_A, "org-a").action(api.kb.softDeleteDocument, {
 				docId: "doc-b",
-				orgId: "org-b",
-				namespace: "team/org-b",
+				orgId: testClerkOrgId("org-b"),
+				namespace: `team/${testClerkOrgId("org-b")}`,
 			}),
 		).rejects.toThrow(
-			'verified organisation "org-a" may not act on claimed org "org-b"',
+			`verified organisation "${testClerkOrgId("org-a")}" may not act on claimed org "${testClerkOrgId("org-b")}"`,
 		);
 
 		const rows = await t.run(async (ctx) =>
@@ -508,13 +508,13 @@ describe("AUTH_NAMESPACE_DENIED — writes refuse by THROW", () => {
 	test("ALLOW pole — org A DOES soft-delete its OWN document", async () => {
 		const t = createT();
 		await seedOrgMapping(t, "org-a");
-		await seedMemory(t, "team/org-a/doc-1", "org-a chunk", {
+		await seedMemory(t, `team/${testClerkOrgId("org-a")}/doc-1`, "org-a chunk", {
 			type: "reference",
 		});
 
 		const res = await asOrgMember(t, ORDINARY_A, "org-a").action(
 			api.kb.softDeleteDocument,
-			{ docId: "doc-1", orgId: "org-a", namespace: "team/org-a" },
+			{ docId: "doc-1", orgId: testClerkOrgId("org-a"), namespace: `team/${testClerkOrgId("org-a")}` },
 		);
 
 		expect(res.markedCount).toBe(1);

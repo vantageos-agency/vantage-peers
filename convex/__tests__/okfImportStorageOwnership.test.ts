@@ -78,7 +78,7 @@ async function storeBundle(t: T): Promise<Id<"_storage">> {
 		_id: "k179mem001" as never,
 		_creationTime: 1_700_000_000_000,
 		type: "reference",
-		namespace: "team/org-A",
+		namespace: `team/${testClerkOrgId("org-A")}`,
 		content: "Org A private memory body.",
 		createdBy: "sigma",
 		createdAt: 1_700_000_000_000,
@@ -121,7 +121,7 @@ async function memoryRowCount(t: T): Promise<number> {
 
 const importArgs = (storageId: Id<"_storage">, org: string) => ({
 	storageId,
-	targetNamespace: `team/${org}`,
+	targetNamespace: `team/${testClerkOrgId(org)}`,
 	mode: "merge" as const,
 	idempotencyKey: `own-${org}-${storageId}`,
 });
@@ -202,7 +202,7 @@ describe("import_okf_bundle — storage ownership is asserted, never claimed", (
 		await seedOrgMapping(t, "org-A");
 		await seedOrgMapping(t, "org-B");
 		const exported = await asOrg(t, "org-A").action(EXPORT_ACTION_REF, {
-			namespace: "team/org-A",
+			namespace: `team/${testClerkOrgId("org-A")}`,
 			format: "tarball",
 		});
 		const storageId = exported.storageId as Id<"_storage">;

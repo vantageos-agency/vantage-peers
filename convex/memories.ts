@@ -18,7 +18,7 @@ const TTL_EXPIRY_SCAN_CAP = 500;
 // Master scope (no identity with legacy opt-in, or identity with no Clerk org)
 // retains unrestricted access — preserves Alpha/internal behaviour unchanged.
 // A Clerk-org-scoped caller may only read namespaces under its own
-// "team/<orgSlug>" prefix; anything else is denied (never leaked cross-tenant).
+// "team/<clerkOrgId>" prefix (the org's permanent ID, never its slug); anything else is denied (never leaked cross-tenant).
 // ─────────────────────────────────────────────────────────────────────────────
 
 // The single implementation lives in lib/auth.ts (the OKF export/import gate

@@ -238,7 +238,7 @@ export async function packTarball(
  *   - Ownership is decided on the RESOLVED scope (`resolveOrgScopeForAction`:
  *     an ACTIVE `client_org_mapping` row), never on the raw org-slug claim.
  *   - The fleet master (the MCP service account) may use any namespace.
- *   - An org member may use ONLY `team/<resolvedOrgSlug>`. Every other
+ *   - An org member may use ONLY `team/<resolvedClerkOrgId>`. Every other
  *     namespace (`orchestrator/*`, `project/*`, `global`, the master namespace
  *     `project/elpi-corp`) is master-only.
  *   - Refusals are `RBAC_DENIED` naming the door (`requireTenantNamespace` ->
@@ -270,7 +270,7 @@ export async function assertCanExportNamespace(
 	// a claim naming "pi" with no mapping row used to be served
 	// `orchestrator/pi`, `project/vantage-peers` and `orchestrator/eta`. The
 	// fleet master (service account) is served any namespace; a member is served
-	// only `team/<resolvedOrgSlug>`; everything else, including the master
+	// only `team/<resolvedClerkOrgId>`; everything else, including the master
 	// namespace `project/elpi-corp`, is refused `RBAC_DENIED` naming the door.
 	const scope = await ctx.runQuery(
 		internal.lib.auth.resolveOrgScopeForAction,

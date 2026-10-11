@@ -60,7 +60,7 @@ describe("AUTH_NAMESPACE_DENIED — listMemoriesScoped cross-tenant read", () =>
 		// Seed a memory in org-b's namespace
 		await t.run(async (ctx) => {
 			await ctx.db.insert("memories", {
-				namespace: "team/org-b",
+				namespace: `team/${testClerkOrgId("org-b")}`,
 				type: "project",
 				content: "org-b secret",
 				createdBy: "sigma",
@@ -80,7 +80,7 @@ describe("AUTH_NAMESPACE_DENIED — listMemoriesScoped cross-tenant read", () =>
 
 		await expect(
 			tA.query(api.memoriesScoped.listMemoriesScoped, {
-				namespace: "team/org-b",
+				namespace: `team/${testClerkOrgId("org-b")}`,
 			}),
 		).rejects.toThrow("AUTH_NAMESPACE_DENIED");
 	});
@@ -91,7 +91,7 @@ describe("AUTH_NAMESPACE_DENIED — listMemoriesScoped cross-tenant read", () =>
 
 		await t.run(async (ctx) => {
 			await ctx.db.insert("memories", {
-				namespace: "team/org-a",
+				namespace: `team/${testClerkOrgId("org-a")}`,
 				type: "project",
 				content: "org-a own memory",
 				createdBy: "sigma",
@@ -109,7 +109,7 @@ describe("AUTH_NAMESPACE_DENIED — listMemoriesScoped cross-tenant read", () =>
 		} as Parameters<typeof t.withIdentity>[0]);
 
 		const results = await tA.query(api.memoriesScoped.listMemoriesScoped, {
-			namespace: "team/org-a",
+			namespace: `team/${testClerkOrgId("org-a")}`,
 		});
 
 		expect(results.length).toBe(1);
@@ -140,7 +140,7 @@ describe("AUTH_NAMESPACE_DENIED — listMemoriesScoped cross-tenant read", () =>
 
 		await t.run(async (ctx) => {
 			await ctx.db.insert("memories", {
-				namespace: "team/org-x",
+				namespace: `team/${testClerkOrgId("org-x")}`,
 				type: "project",
 				content: "fleet-visible memory",
 				createdBy: "sigma",
@@ -154,7 +154,7 @@ describe("AUTH_NAMESPACE_DENIED — listMemoriesScoped cross-tenant read", () =>
 		// No identity → NOT master → a typed empty array (this is a reactively
 		// subscribed read, so the refusal is a value, not a throw).
 		const results = await t.query(api.memoriesScoped.listMemoriesScoped, {
-			namespace: "team/org-x",
+			namespace: `team/${testClerkOrgId("org-x")}`,
 		});
 
 		expect(results).toEqual([]);
@@ -213,7 +213,7 @@ describe("AUTH_NAMESPACE_DENIED — storeMemoryScoped cross-tenant write", () =>
 
 		await expect(
 			tA.mutation(api.memoriesScoped.storeMemoryScoped, {
-				namespace: "team/org-b",
+				namespace: `team/${testClerkOrgId("org-b")}`,
 				type: "project",
 				content: "attempt to write into org-b",
 				createdBy: "sigma",
@@ -232,7 +232,7 @@ describe("AUTH_NAMESPACE_DENIED — storeMemoryScoped cross-tenant write", () =>
 		} as Parameters<typeof t.withIdentity>[0]);
 
 		const id = await tA.mutation(api.memoriesScoped.storeMemoryScoped, {
-			namespace: "team/org-a",
+			namespace: `team/${testClerkOrgId("org-a")}`,
 			type: "project",
 			content: "org-a writes to own namespace",
 			createdBy: "sigma",

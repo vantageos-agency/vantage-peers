@@ -103,7 +103,7 @@ async function getChunksForDoc(
 		return await ctx.db
 			.query("memories")
 			.withIndex("by_namespace", (q) =>
-				q.eq("namespace", `team/${orgId}/${docId}`).eq("isLatest", true),
+				q.eq("namespace", `team/${testClerkOrgId(orgId)}/${docId}`).eq("isLatest", true),
 			)
 			.collect();
 	});
@@ -131,8 +131,8 @@ describe("B5 KB ingest — PDF happy path", () => {
 			storageId,
 			mimeType: "application/pdf",
 			filename: "sample.pdf",
-			orgId: "team-a",
-			namespace: "team/team-a",
+			orgId: testClerkOrgId("team-a"),
+			namespace: `team/${testClerkOrgId("team-a")}`,
 		});
 
 		// Drain scheduled RAG ingestion so it doesn't fire after test exit.
@@ -150,7 +150,7 @@ describe("B5 KB ingest — PDF happy path", () => {
 		expect(chunks.length).toBeGreaterThan(0);
 		expect(chunks.length).toBe(result.chunkCount);
 		for (const chunk of chunks) {
-			expect(chunk.namespace).toBe(`team/team-a/${result.docId}`);
+			expect(chunk.namespace).toBe(`team/${testClerkOrgId("team-a")}/${result.docId}`);
 		}
 	}, 15_000);
 });
@@ -181,8 +181,8 @@ describe("B5 KB ingest — Markdown happy path", () => {
 			storageId,
 			mimeType: "text/markdown",
 			filename: "doc.md",
-			orgId: "team-a",
-			namespace: "team/team-a",
+			orgId: testClerkOrgId("team-a"),
+			namespace: `team/${testClerkOrgId("team-a")}`,
 		});
 
 		// Drain scheduled RAG ingestion so it doesn't fire after test exit.
@@ -199,7 +199,7 @@ describe("B5 KB ingest — Markdown happy path", () => {
 				.query("memories")
 				.withIndex("by_namespace_type", (q) =>
 					q
-						.eq("namespace", `team/team-a/${result.docId}`)
+						.eq("namespace", `team/${testClerkOrgId("team-a")}/${result.docId}`)
 						.eq("type", "reference")
 						.eq("isLatest", true),
 				)
@@ -235,8 +235,8 @@ describe("B5 KB ingest — TXT happy path", () => {
 			storageId,
 			mimeType: "text/plain",
 			filename: "doc.txt",
-			orgId: "team-a",
-			namespace: "team/team-a",
+			orgId: testClerkOrgId("team-a"),
+			namespace: `team/${testClerkOrgId("team-a")}`,
 		});
 
 		// Drain scheduled RAG ingestion so it doesn't fire after test exit.
@@ -278,8 +278,8 @@ describe("B5 KB ingest — cross-tenant isolation — AUTH_NAMESPACE_DENIED", ()
 			storageId,
 			mimeType: "text/markdown",
 			filename: "secret.md",
-			orgId: "team-a",
-			namespace: "team/team-a",
+			orgId: testClerkOrgId("team-a"),
+			namespace: `team/${testClerkOrgId("team-a")}`,
 		});
 
 		// Drain scheduled RAG ingestion so it doesn't fire after test exit.
@@ -291,7 +291,7 @@ describe("B5 KB ingest — cross-tenant isolation — AUTH_NAMESPACE_DENIED", ()
 		// Should throw AUTH_NAMESPACE_DENIED
 		await expect(
 			tB.query(api.memoriesScoped.listMemoriesScoped, {
-				namespace: `team/team-a/${result.docId}`,
+				namespace: `team/${testClerkOrgId("team-a")}/${result.docId}`,
 			}),
 		).rejects.toThrow(/AUTH_NAMESPACE_DENIED/);
 	});
@@ -312,8 +312,8 @@ describe("B5 KB ingest — cross-tenant isolation — AUTH_NAMESPACE_DENIED", ()
 			storageId,
 			mimeType: "text/markdown",
 			filename: "private.md",
-			orgId: "team-a",
-			namespace: "team/team-a",
+			orgId: testClerkOrgId("team-a"),
+			namespace: `team/${testClerkOrgId("team-a")}`,
 		});
 
 		// Drain scheduled RAG ingestion so it doesn't fire after test exit.
@@ -336,8 +336,8 @@ describe("B5 KB ingest — cross-tenant isolation — AUTH_NAMESPACE_DENIED", ()
 				mimeType: "text/markdown",
 				filename: "inject.md",
 				docId: result.docId,
-				orgId: "team-b",
-				namespace: "team/team-b",
+				orgId: testClerkOrgId("team-b"),
+				namespace: `team/${testClerkOrgId("team-b")}`,
 			}),
 		).resolves.toMatchObject({
 			// Succeeds into team-b's OWN namespace, not team-a's
@@ -376,8 +376,8 @@ describe("B5 KB ingest — soft-delete propagation", () => {
 			storageId,
 			mimeType: "text/plain",
 			filename: "to-delete.txt",
-			orgId: "team-a",
-			namespace: "team/team-a",
+			orgId: testClerkOrgId("team-a"),
+			namespace: `team/${testClerkOrgId("team-a")}`,
 		});
 
 		// Drain scheduled RAG ingestion so it doesn't fire after test exit.
@@ -390,8 +390,8 @@ describe("B5 KB ingest — soft-delete propagation", () => {
 		// Soft-delete the document
 		await tA.action(KB_SOFT_DELETE_REF, {
 			docId: result.docId,
-			orgId: "team-a",
-			namespace: "team/team-a",
+			orgId: testClerkOrgId("team-a"),
+			namespace: `team/${testClerkOrgId("team-a")}`,
 		});
 
 		// After soft-delete: isLatest=false, active recall returns 0
@@ -404,7 +404,7 @@ describe("B5 KB ingest — soft-delete propagation", () => {
 				.query("memories")
 				.withIndex("by_namespace", (q) =>
 					q
-						.eq("namespace", `team/team-a/${result.docId}`)
+						.eq("namespace", `team/${testClerkOrgId("team-a")}/${result.docId}`)
 						.eq("isLatest", false),
 				)
 				.collect();
@@ -477,8 +477,8 @@ describe("B5 KB ingest — chunking determinism", () => {
 				storageId,
 				mimeType: "text/plain",
 				filename: `doc-${suffix}.txt`,
-				orgId: "team-a",
-				namespace: "team/team-a",
+				orgId: testClerkOrgId("team-a"),
+				namespace: `team/${testClerkOrgId("team-a")}`,
 			});
 		}
 
@@ -525,8 +525,8 @@ describe("B5 KB ingest — TOFU storageId org-binding (M1)", () => {
 			storageId,
 			mimeType: "text/markdown",
 			filename: "tofu.md",
-			orgId: "org-A",
-			namespace: "team/org-A",
+			orgId: testClerkOrgId("org-A"),
+			namespace: `team/${testClerkOrgId("org-A")}`,
 		});
 		// Drain scheduled RAG ingestion so it doesn't fire after test exit.
 		await t.finishAllScheduledFunctions(vi.runAllTimers);
@@ -542,7 +542,7 @@ describe("B5 KB ingest — TOFU storageId org-binding (M1)", () => {
 		});
 		expect(bindingRow).not.toBeNull();
 		if (bindingRow === null) throw new Error("bindingRow unexpectedly null");
-		expect(bindingRow.orgId).toBe("org-A");
+		expect(bindingRow.orgId).toBe(testClerkOrgId("org-A"));
 		expect(bindingRow.storageId).toBe(storageId);
 	});
 
@@ -565,8 +565,8 @@ describe("B5 KB ingest — TOFU storageId org-binding (M1)", () => {
 			storageId,
 			mimeType: "text/markdown",
 			filename: "secret.md",
-			orgId: "org-A",
-			namespace: "team/org-A",
+			orgId: testClerkOrgId("org-A"),
+			namespace: `team/${testClerkOrgId("org-A")}`,
 		});
 		expect(result.chunkCount).toBeGreaterThan(0);
 
@@ -576,8 +576,8 @@ describe("B5 KB ingest — TOFU storageId org-binding (M1)", () => {
 				storageId, // same storageId as org-A's
 				mimeType: "text/markdown",
 				filename: "inject.md",
-				orgId: "org-B",
-				namespace: "team/org-B",
+				orgId: testClerkOrgId("org-B"),
+				namespace: `team/${testClerkOrgId("org-B")}`,
 			}),
 		).rejects.toThrow(/AUTH_STORAGE_NOT_OWNED/);
 
@@ -612,8 +612,8 @@ describe("B5 KB ingest — idempotent re-ingest", () => {
 				mimeType: "text/plain",
 				filename: "test-idem.txt",
 				docId,
-				orgId: "team-a",
-				namespace: "team/team-a",
+				orgId: testClerkOrgId("team-a"),
+				namespace: `team/${testClerkOrgId("team-a")}`,
 			});
 		}
 
@@ -636,7 +636,7 @@ describe("B5 KB ingest — idempotent re-ingest", () => {
 				.query("memories")
 				.withIndex("by_namespace", (q) =>
 					q
-						.eq("namespace", `team/team-a/${docId}`)
+						.eq("namespace", `team/${testClerkOrgId("team-a")}/${docId}`)
 						.eq("isLatest", false),
 				)
 				.collect();
@@ -684,8 +684,8 @@ describe("B5 KB ingest — multi-chunk re-ingest converges", () => {
 				mimeType: "text/plain",
 				filename: "multi.txt",
 				docId,
-				orgId: "team-a",
-				namespace: "team/team-a",
+				orgId: testClerkOrgId("team-a"),
+				namespace: `team/${testClerkOrgId("team-a")}`,
 			});
 		}
 		return { t, docId, ingest };
@@ -710,7 +710,7 @@ describe("B5 KB ingest — multi-chunk re-ingest converges", () => {
 			return await ctx.db
 				.query("memories")
 				.withIndex("by_namespace", (q) =>
-					q.eq("namespace", `team/team-a/${docId}`).eq("isLatest", false),
+					q.eq("namespace", `team/${testClerkOrgId("team-a")}/${docId}`).eq("isLatest", false),
 				)
 				.collect();
 		});
@@ -728,7 +728,7 @@ describe("B5 KB ingest — multi-chunk re-ingest converges", () => {
 			const rows = await ctx.db
 				.query("memories")
 				.withIndex("by_namespace", (q) =>
-					q.eq("namespace", `team/team-a/${docId}`).eq("isLatest", true),
+					q.eq("namespace", `team/${testClerkOrgId("team-a")}/${docId}`).eq("isLatest", true),
 				)
 				.collect();
 			for (const row of rows.slice(2)) await ctx.db.delete(row._id);

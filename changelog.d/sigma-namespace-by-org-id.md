@@ -1,0 +1,4 @@
+---
+section: Changed
+---
+- **Team namespaces are keyed by the organisation's Clerk org ID (`team/<clerkOrgId>`), never by its slug.** A slug rename no longer strands an org's namespace and a freed slug taken by a new org no longer reaches the old org's rows. `isNamespaceAllowedForScope` decides with `sameOrg` from `@vantageos/cloud-identity` on `orgClerkId` (`convex/lib/auth.ts`, `convex/lib/teamNamespace.ts` for the shape only); `search`, `memoriesScoped` and the KB actions share it, and `resolveOrgScopeForAction` returns `orgClerkId`. New internal migration `migrations/namespace_by_org_id` (`inventory`, `run` dry-run by default, `readBack`) rewrites `memories.namespace` and the `oauth_access_tokens` / `oauth_scope_profiles` prefixes; an unmapped slug is refused and listed, never guessed. Ships after M2 part 3; run the migration before the readers reach prod.

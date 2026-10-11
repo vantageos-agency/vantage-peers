@@ -143,7 +143,7 @@ describe("agent-engine 0.1.0-alpha.4 — the auth gate no longer blocks the call
 		const t = base.withIdentity({ org_slug: "acme", org_id: testClerkOrgId("acme") });
 			await expect(
 				t.mutation(apiAny.okfBundleDurable.startOkfBundleExportDurable, {
-					namespace: "team/acme",
+					namespace: `team/${testClerkOrgId("acme")}`,
 					totalSteps: 3,
 				}),
 			).rejects.not.toThrow(/AUTH_NO_ORG|AUTH_NAMESPACE_DENIED|AUTH_NO_IDENTITY/);
@@ -434,7 +434,7 @@ describe("okfBundleDurable — auth (V8-safe assertCanExportNamespaceV8, mirrors
 		const t = base.withIdentity({ organizationSlug: "other-org", org_id: testClerkOrgId("other-org") });
 		await expect(
 			t.mutation(apiAny.okfBundleDurable.startOkfBundleExportDurable, {
-				namespace: "team/acme",
+				namespace: `team/${testClerkOrgId("acme")}`,
 				totalSteps: 1,
 			}),
 		).rejects.toThrow(/RBAC_DENIED/);
@@ -444,7 +444,7 @@ describe("okfBundleDurable — auth (V8-safe assertCanExportNamespaceV8, mirrors
 		const t = withAgentEngine(convexTest(schema, modules));
 		await expect(
 			t.mutation(apiAny.okfBundleDurable.startOkfBundleExportDurable, {
-				namespace: "team/acme",
+				namespace: `team/${testClerkOrgId("acme")}`,
 				totalSteps: 1,
 			}),
 		).rejects.toThrow(/RBAC_DENIED/);
@@ -480,14 +480,14 @@ describe("okfBundleDurable — auth (V8-safe assertCanExportNamespaceV8, mirrors
 
 		await expect(
 			t.mutation(apiAny.okfBundleDurable.startOkfBundleExportDurable, {
-				namespace: "team/acme",
+				namespace: `team/${testClerkOrgId("acme")}`,
 				totalSteps: 3,
 			}),
 		).rejects.not.toThrow(/AUTH_NO_ORG|AUTH_NAMESPACE_DENIED|AUTH_NO_IDENTITY/);
 
 		await expect(
 			t.mutation(apiAny.okfBundleDurable.startOkfBundleExportDurable, {
-				namespace: "team/acme",
+				namespace: `team/${testClerkOrgId("acme")}`,
 				totalSteps: 3,
 			}),
 		).rejects.toThrow(/does not support async syscall|getFunctionMetadata/i);
@@ -505,7 +505,7 @@ describe("okfBundleDurable — auth (V8-safe assertCanExportNamespaceV8, mirrors
 		const t = base.withIdentity({ org_slug: "acme", org_id: testClerkOrgId("acme") });
 			await expect(
 				t.mutation(apiAny.okfBundleDurable.startOkfBundleExportDurable, {
-					namespace: "team/acme",
+					namespace: `team/${testClerkOrgId("acme")}`,
 					totalSteps: 3,
 				}),
 			).rejects.not.toThrow(/AUTH_NO_ORG|AUTH_NAMESPACE_DENIED|AUTH_NO_IDENTITY/);

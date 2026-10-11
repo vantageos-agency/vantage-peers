@@ -263,7 +263,7 @@ describe("episodes.storeEpisode — write-scope enforcement", () => {
 		const t = createT();
 		await expect(
 			t.mutation(api.episodes.storeEpisode, {
-				namespace: "team/org-a/episodes",
+				namespace: `team/${testClerkOrgId("org-a")}/episodes`,
 				createdBy: "seat-a",
 				context: "anonymous write attempt",
 				goal: "goal",
@@ -282,7 +282,7 @@ describe("episodes.storeEpisode — write-scope enforcement", () => {
 
 		await expect(
 			tA.mutation(api.episodes.storeEpisode, {
-				namespace: "team/org-b/episodes",
+				namespace: `team/${testClerkOrgId("org-b")}/episodes`,
 				createdBy: "seat-a",
 				context: "cross-tenant write attempt",
 				goal: "goal",
@@ -300,7 +300,7 @@ describe("episodes.storeEpisode — write-scope enforcement", () => {
 		const tA = asOrgA(t);
 
 		const memoryId = await tA.mutation(api.episodes.storeEpisode, {
-			namespace: "team/org-a/episodes",
+			namespace: `team/${testClerkOrgId("org-a")}/episodes`,
 			createdBy: "seat-a",
 			context: "org-a's own episode",
 			goal: "goal",
@@ -317,7 +317,7 @@ describe("episodes.storeEpisode — write-scope enforcement", () => {
 		const tMaster = asMaster(t);
 
 		const memoryId = await tMaster.mutation(api.episodes.storeEpisode, {
-			namespace: "team/org-b/episodes",
+			namespace: `team/${testClerkOrgId("org-b")}/episodes`,
 			createdBy: "master",
 			context: "master write into any namespace",
 			goal: "goal",

@@ -200,7 +200,7 @@ for (const { name, ref } of SEARCH_ACTIONS) {
 			const t = createT();
 			const rows = await asNoOrg(t).action(ref, {
 				query: "anything",
-				namespace: "team/org-a",
+				namespace: `team/${testClerkOrgId("org-a")}`,
 			});
 
 			expect(rows).toEqual([]);
@@ -228,16 +228,16 @@ for (const { name, ref } of SEARCH_ACTIONS) {
 			const t = createT();
 			await seedOrgMapping(t, "org-a");
 			await seedOrgMapping(t, "org-b");
-			installObservingSearcher(await seedMemoryKey(t, "team/org-b"));
+			installObservingSearcher(await seedMemoryKey(t, `team/${testClerkOrgId("org-b")}`));
 
 			const rows = await asOrgMember(t, ORDINARY_A, "org-a").action(ref, {
 				query: "anything",
-				namespace: "team/org-b",
+				namespace: `team/${testClerkOrgId("org-b")}`,
 			});
 
-			expect(searchedNamespaces).not.toContain("team/org-b");
+			expect(searchedNamespaces).not.toContain(`team/${testClerkOrgId("org-b")}`);
 			for (const row of rows as Array<{ namespace: string }>) {
-				expect(row.namespace).not.toBe("team/org-b");
+				expect(row.namespace).not.toBe(`team/${testClerkOrgId("org-b")}`);
 			}
 		});
 
@@ -277,14 +277,14 @@ for (const { name, ref } of SEARCH_ACTIONS) {
 		test("ALLOW pole — org A DOES search its own namespace and receives rows", async () => {
 			const t = createT();
 			await seedOrgMapping(t, "org-a");
-			installObservingSearcher(await seedMemoryKey(t, "team/org-a"));
+			installObservingSearcher(await seedMemoryKey(t, `team/${testClerkOrgId("org-a")}`));
 
 			const rows = await asOrgMember(t, ORDINARY_A, "org-a").action(ref, {
 				query: "anything",
-				namespace: "team/org-a",
+				namespace: `team/${testClerkOrgId("org-a")}`,
 			});
 
-			expect(searchedNamespaces).toEqual(["team/org-a"]);
+			expect(searchedNamespaces).toEqual([`team/${testClerkOrgId("org-a")}`]);
 			expect(rows).toHaveLength(1);
 		});
 
@@ -293,15 +293,15 @@ for (const { name, ref } of SEARCH_ACTIONS) {
 			const t = createT();
 			await seedOrgMapping(t, "org-a");
 			installObservingSearcher(
-				await seedMemoryKey(t, "team/org-a/project/x"),
+				await seedMemoryKey(t, `team/${testClerkOrgId("org-a")}/project/x`),
 			);
 
 			await asOrgMember(t, ORDINARY_A, "org-a").action(ref, {
 				query: "anything",
-				namespace: "team/org-a/project/x",
+				namespace: `team/${testClerkOrgId("org-a")}/project/x`,
 			});
 
-			expect(searchedNamespaces).toEqual(["team/org-a/project/x"]);
+			expect(searchedNamespaces).toEqual([`team/${testClerkOrgId("org-a")}/project/x`]);
 		});
 
 		// ── MASTER REGRESSION POLE — the fleet's own callers keep working

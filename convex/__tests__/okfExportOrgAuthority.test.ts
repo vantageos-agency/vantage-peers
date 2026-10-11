@@ -56,7 +56,7 @@ function asService(t: T) {
 }
 
 const args = (slug: string) => ({
-	namespace: `team/${slug}`,
+	namespace: `team/${testClerkOrgId(slug)}`,
 	format: "tarball" as const,
 });
 

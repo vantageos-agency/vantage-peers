@@ -342,8 +342,8 @@ describe("okfBundleDurable:getOkfBundleExportDurableStatus", () => {
 		t.run(async (ctx) =>
 			ctx.db.insert("okfDurableExportProgress", {
 				jobId: "job-org-a",
-				orgId: "team/org-a",
-				namespace: "team/org-a",
+				orgId: `team/${testClerkOrgId("org-a")}`,
+				namespace: `team/${testClerkOrgId("org-a")}`,
 				memoriesCursor: null,
 				memoriesDone: false,
 				briefingsCursor: null,

@@ -195,7 +195,7 @@ describe("okfBundleNode:exportOkfBundle — master namespace", () => {
 		await seedOrg(t, "team-zen");
 		await expectPassesAuthGate(
 			asOrg(t, "team-zen").action(EXPORT_REF, {
-				namespace: "team/team-zen",
+				namespace: `team/${testClerkOrgId("team-zen")}`,
 				format: "tarball",
 			}),
 		);
@@ -206,12 +206,12 @@ describe("okfBundleNode:exportOkfBundle — master namespace", () => {
 		await seedOrg(t, "team-x");
 		await expect(
 			asOrg(t, "team-x").action(EXPORT_REF, {
-				namespace: "team/team-y",
+				namespace: `team/${testClerkOrgId("team-y")}`,
 				format: "tarball",
 			}),
 		).rejects.toThrow(/RBAC_DENIED/);
 		await expect(
-			t.action(EXPORT_REF, { namespace: "team/team-y", format: "tarball" }),
+			t.action(EXPORT_REF, { namespace: `team/${testClerkOrgId("team-y")}`, format: "tarball" }),
 		).rejects.toThrow(/RBAC_DENIED/);
 	});
 });
@@ -303,7 +303,7 @@ describe("okfBundleNode:importOkfBundle — master namespace", () => {
 	test("UNCHANGED: an org member importing into its OWN tenant namespace still works", async () => {
 		const t = createT();
 		await seedOrg(t, "team-zen");
-		const storageId = await storeBundle(t, "team/team-zen");
+		const storageId = await storeBundle(t, `team/${testClerkOrgId("team-zen")}`);
 		// import ASSERTS ownership: the blob is bound by the producer path
 		// (export / upload / store), here the store path's own binding door
 		await t.mutation(internal.kbMutations.bindOrAssertStorageOwnership, {
@@ -312,7 +312,7 @@ describe("okfBundleNode:importOkfBundle — master namespace", () => {
 		});
 		const result = await asOrg(t, "team-zen").action(IMPORT_REF, {
 			storageId,
-			targetNamespace: "team/team-zen",
+			targetNamespace: `team/${testClerkOrgId("team-zen")}`,
 			mode: "merge",
 			idempotencyKey: "own-tenant",
 		});
@@ -322,11 +322,11 @@ describe("okfBundleNode:importOkfBundle — master namespace", () => {
 
 	test("UNCHANGED: anonymous import into a tenant namespace is refused RBAC_DENIED", async () => {
 		const t = createT();
-		const storageId = await storeBundle(t, "team/team-zen");
+		const storageId = await storeBundle(t, `team/${testClerkOrgId("team-zen")}`);
 		await expect(
 			t.action(IMPORT_REF, {
 				storageId,
-				targetNamespace: "team/team-zen",
+				targetNamespace: `team/${testClerkOrgId("team-zen")}`,
 				mode: "merge",
 				idempotencyKey: "anon-tenant",
 			}),

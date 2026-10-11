@@ -8,6 +8,7 @@ import {
 	getAITextEmbeddingProvider,
 	getEmbeddingModelName,
 } from "./lib/aiClient";
+import { isNamespaceAllowedForScope } from "./lib/auth";
 import { memoryTypeValidator } from "./schema";
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -169,7 +170,7 @@ function buildFilters(opts: {
 //   - master (the fleet's own callers, via withOrgScope's named by-id
 //     service-account carve-out) -> the requested namespace, unchanged;
 //   - a verified org -> the requested namespace ONLY IF it lies inside that
-//     org's own `team/<slug>` subtree, otherwise REFUSED;
+//     org's own `team/<clerkOrgId>` subtree, otherwise REFUSED;
 //   - no verified organisation -> REFUSED.
 //
 // REFUSAL SHAPE — `null`, which every call site renders as the typed empty
@@ -193,8 +194,9 @@ async function resolveSearchNamespace(
 	if (scope.isMaster) return requested;
 	if (scope.refused || scope.orgSlug === null) return null;
 
-	const ownPrefix = `team/${scope.orgSlug}`;
-	if (requested === ownPrefix || requested.startsWith(`${ownPrefix}/`)) {
+	// The org's own subtree is `team/<clerkOrgId>`: the shared predicate decides
+	// by the permanent org ID, never by the slug.
+	if (isNamespaceAllowedForScope(scope, requested)) {
 		return requested;
 	}
 	// AUTH_NAMESPACE_DENIED: a verified org asked for a namespace outside its
@@ -462,7 +464,7 @@ export const searchFixPatterns = action({
 		//   - master (withOrgScope's named by-id service-account carve-out)
 		//     -> "fixpatterns", unchanged. The fleet's own callers keep working.
 		//   - a verified org -> REFUSED, because "fixpatterns" does not lie inside
-		//     that org's `team/<slug>` subtree. This matches the decision already
+		//     that org's `team/<clerkOrgId>` subtree. This matches the decision already
 		//     taken for the fleet-common `global` namespace in the same gate ("not
 		//     this tenant's data to read") and the master-only read this repo now
 		//     applies to the `fixPatterns` table itself.

@@ -123,8 +123,8 @@ describe("T1 RED — kb.storeDocumentChunked schedules ragSync.addRagEntry per c
 			storageId,
 			mimeType: "text/plain",
 			filename: "kb-indexing-red.txt",
-			orgId: "team-a",
-			namespace: "team/team-a",
+			orgId: testClerkOrgId("team-a"),
+			namespace: `team/${testClerkOrgId("team-a")}`,
 		});
 
 		expect(result.chunkCount).toBeGreaterThan(0);

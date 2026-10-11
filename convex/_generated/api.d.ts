@@ -69,6 +69,7 @@ import type * as lib_rosterIds from "../lib/rosterIds.js";
 import type * as lib_seatAgent from "../lib/seatAgent.js";
 import type * as lib_systemCaller from "../lib/systemCaller.js";
 import type * as lib_taskClosureGate from "../lib/taskClosureGate.js";
+import type * as lib_teamNamespace from "../lib/teamNamespace.js";
 import type * as lib_tenantSlug from "../lib/tenantSlug.js";
 import type * as lib_verifiedOrg from "../lib/verifiedOrg.js";
 import type * as licenses from "../licenses.js";
@@ -95,6 +96,7 @@ import type * as migrations_diary_backfill_createdBy from "../migrations/diary_b
 import type * as migrations_drop_orphan_tables from "../migrations/drop_orphan_tables.js";
 import type * as migrations_fleetOrgStamp from "../migrations/fleetOrgStamp.js";
 import type * as migrations_linkServiceAccountAgent from "../migrations/linkServiceAccountAgent.js";
+import type * as migrations_namespace_by_org_id from "../migrations/namespace_by_org_id.js";
 import type * as migrations_reindexMemoriesByPeriod from "../migrations/reindexMemoriesByPeriod.js";
 import type * as migrations_seed_client_scope_profiles from "../migrations/seed_client_scope_profiles.js";
 import type * as migrations_seed_task_closure_config from "../migrations/seed_task_closure_config.js";
@@ -190,6 +192,7 @@ declare const fullApi: ApiFromModules<{
   "lib/seatAgent": typeof lib_seatAgent;
   "lib/systemCaller": typeof lib_systemCaller;
   "lib/taskClosureGate": typeof lib_taskClosureGate;
+  "lib/teamNamespace": typeof lib_teamNamespace;
   "lib/tenantSlug": typeof lib_tenantSlug;
   "lib/verifiedOrg": typeof lib_verifiedOrg;
   licenses: typeof licenses;
@@ -216,6 +219,7 @@ declare const fullApi: ApiFromModules<{
   "migrations/drop_orphan_tables": typeof migrations_drop_orphan_tables;
   "migrations/fleetOrgStamp": typeof migrations_fleetOrgStamp;
   "migrations/linkServiceAccountAgent": typeof migrations_linkServiceAccountAgent;
+  "migrations/namespace_by_org_id": typeof migrations_namespace_by_org_id;
   "migrations/reindexMemoriesByPeriod": typeof migrations_reindexMemoriesByPeriod;
   "migrations/seed_client_scope_profiles": typeof migrations_seed_client_scope_profiles;
   "migrations/seed_task_closure_config": typeof migrations_seed_task_closure_config;

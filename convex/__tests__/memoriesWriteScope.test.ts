@@ -57,7 +57,7 @@ async function seedOrgAMapping(t: ReturnType<typeof createT>) {
 	});
 }
 
-async function seedOrgBMemory(t: ReturnType<typeof createT>, namespace = "team/org-b/secrets") {
+async function seedOrgBMemory(t: ReturnType<typeof createT>, namespace = `team/${testClerkOrgId("org-b")}/secrets`) {
 	return await t.run(async (ctx) => {
 		return await ctx.db.insert("memories", {
 			namespace,
@@ -85,7 +85,7 @@ describe("memories.storeMemory — write-scope enforcement", () => {
 		const t = createT();
 		await expect(
 			t.mutation(api.memories.storeMemory, {
-				namespace: "team/org-a/notes",
+				namespace: `team/${testClerkOrgId("org-a")}/notes`,
 				type: "project",
 				content: "anonymous write attempt",
 				createdBy: "dummy-a",
@@ -100,7 +100,7 @@ describe("memories.storeMemory — write-scope enforcement", () => {
 
 		await expect(
 			tA.mutation(api.memories.storeMemory, {
-				namespace: "team/org-b/secrets",
+				namespace: `team/${testClerkOrgId("org-b")}/secrets`,
 				type: "project",
 				content: "cross-tenant write attempt",
 				createdBy: "dummy-a",
@@ -111,7 +111,7 @@ describe("memories.storeMemory — write-scope enforcement", () => {
 	test("an org-a caller storing into the SIBLING slug team/org-ab is refused (segment boundary)", async () => {
 		const t = createT();
 		await seedOrgAMapping(t);
-		for (const namespace of ["team/org-ab", "team/org-ab/x"]) {
+		for (const namespace of [`team/${testClerkOrgId("org-a")}b`, `team/${testClerkOrgId("org-a")}b/x`]) {
 			await expect(
 				asOrgA(t).mutation(api.memories.storeMemory, {
 					namespace,
@@ -131,7 +131,7 @@ describe("memories.storeMemory — write-scope enforcement", () => {
 
 		await expect(
 			tA.mutation(api.memories.storeMemory, {
-				namespace: "team/org-a/notes",
+				namespace: `team/${testClerkOrgId("org-a")}/notes`,
 				type: "project",
 				content: "org-a memory that tries to supersede org-b's",
 				createdBy: "dummy-a",
@@ -146,7 +146,7 @@ describe("memories.storeMemory — write-scope enforcement", () => {
 		const tA = asOrgA(t);
 
 		const memoryId = await tA.mutation(api.memories.storeMemory, {
-			namespace: "team/org-a/notes",
+			namespace: `team/${testClerkOrgId("org-a")}/notes`,
 			type: "project",
 			content: "org-a's own memory",
 			createdBy: "dummy-a",
@@ -160,14 +160,14 @@ describe("memories.storeMemory — write-scope enforcement", () => {
 		const tA = asOrgA(t);
 
 		const originalId = await tA.mutation(api.memories.storeMemory, {
-			namespace: "team/org-a/notes",
+			namespace: `team/${testClerkOrgId("org-a")}/notes`,
 			type: "project",
 			content: "org-a original",
 			createdBy: "dummy-a",
 		});
 
 		const updatedId = await tA.mutation(api.memories.storeMemory, {
-			namespace: "team/org-a/notes",
+			namespace: `team/${testClerkOrgId("org-a")}/notes`,
 			type: "project",
 			content: "org-a updated",
 			createdBy: "dummy-a",
@@ -186,7 +186,7 @@ describe("memories.storeMemory — write-scope enforcement", () => {
 		} as Parameters<typeof t.withIdentity>[0]);
 
 		const memoryId = await tMaster.mutation(api.memories.storeMemory, {
-			namespace: "team/org-a/notes",
+			namespace: `team/${testClerkOrgId("org-a")}/notes`,
 			type: "project",
 			content: "master write into any namespace",
 			createdBy: "master",
@@ -198,7 +198,7 @@ describe("memories.storeMemory — write-scope enforcement", () => {
 describe("memories.softDeleteMemory — write-scope enforcement", () => {
 	test("an anonymous (no identity) caller is refused", async () => {
 		const t = createT();
-		const memoryId = await seedOrgBMemory(t, "team/org-a/notes");
+		const memoryId = await seedOrgBMemory(t, `team/${testClerkOrgId("org-a")}/notes`);
 
 		await expect(
 			t.mutation(api.memories.softDeleteMemory, { memoryId }),
@@ -222,7 +222,7 @@ describe("memories.softDeleteMemory — write-scope enforcement", () => {
 		const tA = asOrgA(t);
 
 		const memoryId = await tA.mutation(api.memories.storeMemory, {
-			namespace: "team/org-a/notes",
+			namespace: `team/${testClerkOrgId("org-a")}/notes`,
 			type: "project",
 			content: "org-a's own memory to delete",
 			createdBy: "dummy-a",

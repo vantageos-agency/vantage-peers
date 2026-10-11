@@ -25,7 +25,12 @@
 import { v } from "convex/values";
 import type { MutationCtx, QueryCtx } from "./_generated/server";
 import { mutation, query } from "./_generated/server";
-import { type OrgScope, withOrgScope } from "./lib/auth";
+import {
+	isNamespaceAllowedForScope,
+	type OrgScope,
+	withOrgScope,
+} from "./lib/auth";
+import { teamNamespaceOf } from "./lib/teamNamespace";
 import {
 	creatorValidator,
 	memoryTypeValidator,
@@ -98,24 +103,29 @@ async function resolveCallerOrgId(
 
 	// No verified organisation: anonymous (no identity at all) OR signed in
 	// without an org. NEVER master. This is the branch that used to leak.
-	if (scope.orgSlug === null) return { orgId: null, refused: true };
+	// An organisation whose permanent ID is not filled in owns no namespace.
+	if (scope.orgSlug === null || scope.orgClerkId === undefined) {
+		return { orgId: null, refused: true };
+	}
 
-	return { orgId: scope.orgSlug, refused: false };
+	return { orgId: scope.orgClerkId, refused: false };
 }
 
 /**
- * Asserts that the caller (identified by orgId) is allowed to access the
+ * Asserts that the caller (identified by its permanent Clerk org ID) is allowed to access the
  * given namespace.
  *
  * Rules:
  *   - orgId === null (master) → always allowed
- *   - namespace starts with team/<orgId> → allowed
+ *   - namespace is team/<clerkOrgId> or under team/<clerkOrgId>/ → allowed
  *   - otherwise → AUTH_NAMESPACE_DENIED
  */
 function assertNamespaceAllowed(orgId: string | null, namespace: string): void {
 	if (orgId === null) return; // master: unrestricted
-	const ownPrefix = `team/${orgId}`;
-	if (namespace === ownPrefix || namespace.startsWith(`${ownPrefix}/`)) return;
+	const ownPrefix = teamNamespaceOf(orgId);
+	if (isNamespaceAllowedForScope({ isMaster: false, orgClerkId: orgId }, namespace)) {
+		return;
+	}
 	throw new Error(
 		`AUTH_NAMESPACE_DENIED: caller org "${orgId}" may not access namespace "${namespace}". ` +
 			`Allowed prefix: "${ownPrefix}".`,

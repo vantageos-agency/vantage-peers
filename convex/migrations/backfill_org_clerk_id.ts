@@ -105,19 +105,19 @@ const SMALL_PAGE_SIZE: Partial<Record<OrgIdTable, number>> = {
 const MAX_PAGE_SIZE = 500;
 const MAPPING_READ_CAP = 1000;
 
-type Reason =
+export type Reason =
 	| "orgUnmapped"
 	| "ambiguousMapping"
 	| "mappingHasNoClerkId"
 	| "mappingRecordInvalid";
 
-type Resolution =
+export type Resolution =
 	| { kind: "id"; clerkOrgId: string }
 	| { kind: "undecidable"; reason: Reason };
 
-type MappingRow = Awaited<ReturnType<typeof loadMappingRows>>[number];
+export type MappingRow = Awaited<ReturnType<typeof loadMappingRows>>[number];
 
-async function loadMappingRows(db: DatabaseReader) {
+export async function loadMappingRows(db: DatabaseReader) {
 	const rows = await db.query("client_org_mapping").take(MAPPING_READ_CAP + 1);
 	if (rows.length > MAPPING_READ_CAP) {
 		throw new ConvexError(
@@ -128,7 +128,7 @@ async function loadMappingRows(db: DatabaseReader) {
 }
 
 /** Slug -> the mapping rows carrying it. More than one makes the slug ambiguous. */
-function indexBySlug(rows: MappingRow[]): Map<string, MappingRow[]> {
+export function indexBySlug(rows: MappingRow[]): Map<string, MappingRow[]> {
 	const bySlug = new Map<string, MappingRow[]>();
 	for (const m of rows) {
 		const list = bySlug.get(m.clerkOrgSlug);
@@ -155,7 +155,7 @@ const REASON_OF_ABSENCE: Record<
  * answers from the rows already read; a slug carried by two rows throws, which the
  * package reports as `lookup-failed` and this migration lists as ambiguousMapping.
  */
-async function resolveSlug(
+export async function resolveSlug(
 	bySlug: Map<string, MappingRow[]>,
 	slug: string,
 ): Promise<Resolution> {

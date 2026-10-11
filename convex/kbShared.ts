@@ -32,6 +32,8 @@
 // but we do not trust the client.
 // ─────────────────────────────────────────────────────────────────────────────
 
+import { sameOrg } from "@vantageos/cloud-identity";
+
 /** Validate explicit orgId + namespace args (defense-in-depth). */
 export function assertOrgArgs(orgId: string, namespace: string): void {
 	if (!orgId || typeof orgId !== "string" || orgId.trim().length === 0) {
@@ -99,7 +101,12 @@ export function assertOrgArgs(orgId: string, namespace: string): void {
  * into a typed empty value.
  */
 export function assertScopeAuthorizesOrg(
-	scope: { isMaster: boolean; orgSlug: string | null; refused: boolean },
+	scope: {
+		isMaster: boolean;
+		orgSlug: string | null;
+		orgClerkId?: string;
+		refused: boolean;
+	},
 	claimedOrgId: string,
 ): void {
 	// Master (the fleet's own callers, via withOrgScope's named by-id
@@ -114,9 +121,12 @@ export function assertScopeAuthorizesOrg(
 		);
 	}
 
-	if (scope.orgSlug !== claimedOrgId) {
+	// The claimed org is the ID segment of `team/<orgId>/<docId>`, so the join is
+	// by the permanent org ID (the package's `sameOrg`), never by the slug. A
+	// verified org whose ID is not filled in owns no namespace.
+	if (!sameOrg({ id: claimedOrgId }, { id: scope.orgClerkId })) {
 		throw new Error(
-			`AUTH_NAMESPACE_DENIED: caller's verified organisation "${scope.orgSlug}" ` +
+			`AUTH_NAMESPACE_DENIED: caller's verified organisation "${scope.orgClerkId ?? scope.orgSlug}" ` +
 				`may not act on claimed org "${claimedOrgId}".`,
 		);
 	}

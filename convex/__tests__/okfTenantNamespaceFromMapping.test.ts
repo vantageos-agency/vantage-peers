@@ -218,20 +218,20 @@ describe.each(DOORS)("$name — tenant namespace from the mapping", (d) => {
 
 	test("REFUSED: unmapped claim naming its own team namespace", async () => {
 		const t = createT();
-		await expectRbacDenied(d.call(asOrg(t, "ghost"), "team/ghost"));
+		await expectRbacDenied(d.call(asOrg(t, "ghost"), `team/${testClerkOrgId("ghost")}`));
 	});
 
 	test("REFUSED: INACTIVE mapping, even on team/<its org>", async () => {
 		const t = createT();
 		await seedOrg(t, "dormant", false);
-		await expectRbacDenied(d.call(asOrg(t, "dormant"), "team/dormant"));
+		await expectRbacDenied(d.call(asOrg(t, "dormant"), `team/${testClerkOrgId("dormant")}`));
 	});
 
 	test("REFUSED: active member on another org's team namespace", async () => {
 		const t = createT();
 		await seedOrg(t, "acme");
 		await seedOrg(t, "other");
-		await expectRbacDenied(d.call(asOrg(t, "acme"), "team/other"), d.door);
+		await expectRbacDenied(d.call(asOrg(t, "acme"), `team/${testClerkOrgId("other")}`), d.door);
 	});
 
 	test("REFUSED: active member on a non-team namespace named after its org", async () => {
@@ -245,27 +245,27 @@ describe.each(DOORS)("$name — tenant namespace from the mapping", (d) => {
 	test("PRESENT: active member passes the gate on team/<its org>", async () => {
 		const t = createT();
 		await seedOrg(t, "acme");
-		await expectPassesAuthGate(d.call(asOrg(t, "acme"), "team/acme"));
+		await expectPassesAuthGate(d.call(asOrg(t, "acme"), `team/${testClerkOrgId("acme")}`));
 	});
 
 	test("REFUSED: member of org-a on the SIBLING slug team/org-ab (segment boundary, not prefix)", async () => {
 		const t = createT();
 		await seedOrg(t, "org-a");
 		await seedOrg(t, "org-ab");
-		await expectRbacDenied(d.call(asOrg(t, "org-a"), "team/org-ab"), d.door);
-		await expectRbacDenied(d.call(asOrg(t, "org-a"), "team/org-abc/x"), d.door);
+		await expectRbacDenied(d.call(asOrg(t, "org-a"), `team/${testClerkOrgId("org-ab")}`), d.door);
+		await expectRbacDenied(d.call(asOrg(t, "org-a"), `team/${testClerkOrgId("org-abc")}/x`), d.door);
 	});
 
 	test("PRESENT: member of org-a is served its OWN sub-namespace team/org-a/<sub>", async () => {
 		const t = createT();
 		await seedOrg(t, "org-a");
-		await expectPassesAuthGate(d.call(asOrg(t, "org-a"), "team/org-a/notes"));
+		await expectPassesAuthGate(d.call(asOrg(t, "org-a"), `team/${testClerkOrgId("org-a")}/notes`));
 	});
 
 	test("PRESENT: the service account passes the gate on any namespace", async () => {
 		const t = createT();
 		for (const ns of [
-			"team/acme",
+			`team/${testClerkOrgId("acme")}`,
 			"orchestrator/pi",
 			"project/vantage-peers",
 			"global",

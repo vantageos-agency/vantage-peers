@@ -115,7 +115,7 @@ async function seedProgress(
 describe("okfBundleDurable.cancelOkfBundleExportDurable — write-scope enforcement", () => {
 	test("an anonymous (no identity) caller is refused (existence oracle: the row is proven to exist via a direct db read)", async () => {
 		const t = createT();
-		await seedProgress(t, "job-anon", "team/org-a");
+		await seedProgress(t, "job-anon", `team/${testClerkOrgId("org-a")}`);
 
 		await expect(
 			t.mutation(api.okfBundleDurable.cancelOkfBundleExportDurable, {
@@ -147,7 +147,7 @@ describe("okfBundleDurable.cancelOkfBundleExportDurable — write-scope enforcem
 	test("a caller from a DIFFERENT org may not cancel another org's durable export (cross-tenant)", async () => {
 		const t = createT();
 		await seedOrg(t, "org-b");
-		await seedProgress(t, "job-org-a", "team/org-a");
+		await seedProgress(t, "job-org-a", `team/${testClerkOrgId("org-a")}`);
 		const tB = asOrgB(t);
 
 		await expect(
@@ -168,7 +168,7 @@ describe("okfBundleDurable.cancelOkfBundleExportDurable — write-scope enforcem
 	test("the owning org may reach the durable-job cancel call for its own export (passes the RBAC gate)", async () => {
 		const t = createT();
 		await seedOrg(t, "org-a");
-		await seedProgress(t, "job-org-a-2", "team/org-a");
+		await seedProgress(t, "job-org-a-2", `team/${testClerkOrgId("org-a")}`);
 		const tA = asOrgA(t);
 
 		// Whatever happens past the auth gate is bounded by the pre-existing,

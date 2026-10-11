@@ -22,6 +22,7 @@
 
 import { describe, expect, test } from "vitest";
 import { assertCanExportNamespace as guard } from "../okfBundleNode";
+import { testClerkOrgId } from "../../tests/fixtures/testClerkOrgId";
 
 // The guard resolves the caller's scope through
 // `internal.lib.auth.resolveOrgScopeForAction` (via ctx.runQuery) for EVERY
@@ -40,11 +41,18 @@ function ctxWithIdentity(
 		(identity?.organizationSlug as string | undefined) ??
 		(identity?.org_slug as string | undefined) ??
 		null;
+	// A mapped org carries its permanent ID; the namespaces are keyed by it.
+	// A caller with no slug is not a mapped member (refused), so it has no ID either.
+	const orgClerkId =
+		orgSlug === null
+			? undefined
+			: ((identity?.org_id as string | undefined) ?? testClerkOrgId(orgSlug));
 	const scope = opts.master
 		? { isMaster: true, orgSlug: null, refused: false, anonymous: false }
 		: {
 				isMaster: false,
 				orgSlug,
+				...(orgClerkId !== undefined ? { orgClerkId } : {}),
 				refused: orgSlug === null,
 				anonymous: identity === null,
 			};
@@ -71,14 +79,14 @@ describe("B3 — assertCanExportNamespace generalized (mission k5779qbxh)", () =
 		// (`organizationSlug`), not an id (`organizationId` — see below).
 		const ctx = ctxWithIdentity({ organizationSlug: "abc-123" });
 		await expect(
-			assertCanExportNamespace(ctx, "team/abc-123"),
+			assertCanExportNamespace(ctx, `team/${testClerkOrgId("abc-123")}`),
 		).resolves.toBeUndefined();
 	});
 
 	test("denies team/<orgSlug> when caller org slug does not match the tail (cross-tenant)", async () => {
 		const ctx = ctxWithIdentity({ organizationSlug: "other-org" });
 		await expect(
-			assertCanExportNamespace(ctx, "team/abc-123"),
+			assertCanExportNamespace(ctx, `team/${testClerkOrgId("abc-123")}`),
 		).rejects.toThrow(/RBAC_DENIED/);
 	});
 
@@ -114,7 +122,7 @@ describe("B3 — assertCanExportNamespace generalized (mission k5779qbxh)", () =
 		).rejects.toThrow(/RBAC_DENIED/);
 
 		await expect(
-			assertCanExportNamespace(noIdentityCtx, "team/whatever-org"),
+			assertCanExportNamespace(noIdentityCtx, `team/${testClerkOrgId("whatever-org")}`),
 		).rejects.toThrow(/RBAC_DENIED/);
 		await expect(
 			assertCanExportNamespace(noIdentityCtx, "project/acme-hr"),
@@ -124,10 +132,10 @@ describe("B3 — assertCanExportNamespace generalized (mission k5779qbxh)", () =
 	test("identity with organizationSlug (not organizationId) is read identically", async () => {
 		const ctx = ctxWithIdentity({ organizationSlug: "team-zen" });
 		await expect(
-			assertCanExportNamespace(ctx, "team/team-zen"),
+			assertCanExportNamespace(ctx, `team/${testClerkOrgId("team-zen")}`),
 		).resolves.toBeUndefined();
 		await expect(
-			assertCanExportNamespace(ctx, "team/other"),
+			assertCanExportNamespace(ctx, `team/${testClerkOrgId("other")}`),
 		).rejects.toThrow(/RBAC_DENIED/);
 	});
 
@@ -155,10 +163,10 @@ describe("B3 — assertCanExportNamespace generalized (mission k5779qbxh)", () =
 		// correct but denied a genuine org member.
 		const ctx = ctxWithIdentity({ org_slug: "team-zen" });
 		await expect(
-			assertCanExportNamespace(ctx, "team/team-zen"),
+			assertCanExportNamespace(ctx, `team/${testClerkOrgId("team-zen")}`),
 		).resolves.toBeUndefined();
 		await expect(
-			assertCanExportNamespace(ctx, "team/other"),
+			assertCanExportNamespace(ctx, `team/${testClerkOrgId("other")}`),
 		).rejects.toThrow(/RBAC_DENIED/);
 	});
 
@@ -178,7 +186,7 @@ describe("B3 — assertCanExportNamespace generalized (mission k5779qbxh)", () =
 			),
 		).resolves.toBeUndefined();
 		await expect(
-			assertCanExportNamespace(ctx, "team/anyone"),
+			assertCanExportNamespace(ctx, `team/${testClerkOrgId("anyone")}`),
 		).rejects.toThrow(/RBAC_DENIED/);
 	});
 
@@ -188,7 +196,7 @@ describe("B3 — assertCanExportNamespace generalized (mission k5779qbxh)", () =
 		// hot-path call. This test exercises that exact branch — no withIdentity,
 		// no mock — and asserts the guard rejects any non-master namespace.
 		await expect(
-			assertCanExportNamespace(noIdentityCtx, "team/some-tenant"),
+			assertCanExportNamespace(noIdentityCtx, `team/${testClerkOrgId("some-tenant")}`),
 		).rejects.toThrow(/RBAC_DENIED/);
 	});
 
@@ -200,14 +208,14 @@ describe("B3 — assertCanExportNamespace generalized (mission k5779qbxh)", () =
 		test("ALLOW pole: an identity carrying a real slug (organizationSlug) matching the namespace tail exports its own namespace", async () => {
 			const ctx = ctxWithIdentity({ organizationSlug: "acme" });
 			await expect(
-				assertCanExportNamespace(ctx, "team/acme"),
+				assertCanExportNamespace(ctx, `team/${testClerkOrgId("acme")}`),
 			).resolves.toBeUndefined();
 		});
 
 		test("ALLOW pole: an identity carrying only org_slug (snake_case) matching the namespace tail exports its own namespace", async () => {
 			const ctx = ctxWithIdentity({ org_slug: "acme" });
 			await expect(
-				assertCanExportNamespace(ctx, "team/acme"),
+				assertCanExportNamespace(ctx, `team/${testClerkOrgId("acme")}`),
 			).resolves.toBeUndefined();
 		});
 
