@@ -5,13 +5,17 @@
 // so until this has run a legacy row is served to the fleet master alone. Run it
 // BEFORE the doors that read the column reach production.
 //
-// `profiles` carries no organisation column: it is the fleet's own orchestrator
-// registry, so a legacy row's `orchestratorId` is resolved in the OPERATOR org
-// (the org of an unstamped row, derived at run time from `orgKind`, never a typed
-// slug) by the same decision backfill_actor_ids makes (imported, not copied):
-//   exactly one agents row carries the label -> its _id
-//   no row                                    -> BLOCKED, reason unknownAgent
-//   2+ rows                                   -> BLOCKED, reason ambiguousAgent
+// `profiles` carries no organisation column, and before the profile doors decided
+// on agent IDs the fleet master wrote a profile for ANY bearer, so a legacy row
+// may belong to a CLIENT agent. A label is therefore never resolved in the
+// operator org by default. A row's agent is decided from what the row carries:
+//   1. its `instanceId`, when exactly one agents row in the whole deployment
+//      carries that name (agents hold no instance column: the name is the only
+//      instance-to-agent link that exists);
+//   2. otherwise its `orchestratorId` label, across EVERY org:
+//        exactly one agents row carries the label -> its _id
+//        no row                                    -> BLOCKED, reason unknownAgent
+//        2+ rows (two orgs, or two in one)         -> BLOCKED, reason ambiguousAgent
 // An ID is NEVER guessed: a blocked row is left unset and listed by row ID. A row
 // that already holds an agentId is never rewritten.
 //
@@ -30,7 +34,8 @@
 import { ConvexError, v } from "convex/values";
 import type { Id } from "../_generated/dataModel";
 import { internalMutation } from "../_generated/server";
-import { loadResolver, resolveName } from "./backfill_actor_ids";
+import { normalizeOrchestratorId } from "../_helpers/normalizeOrchestratorId";
+import { loadResolver, type Resolver, type Verdict } from "./backfill_actor_ids";
 
 const DEFAULT_PAGE_SIZE = 50;
 const MAX_PAGE_SIZE = 500;
@@ -46,6 +51,16 @@ type Blocked = {
 	orchestratorId: string;
 	reason: "unknownAgent" | "ambiguousAgent";
 };
+
+// One name -> agents _id decision across EVERY org of the deployment.
+function resolveAcrossOrgs(r: Resolver, name: string): Verdict {
+	const key = normalizeOrchestratorId(name);
+	const ids: string[] = [];
+	for (const byName of r.agentIds.values()) ids.push(...(byName.get(key) ?? []));
+	if (ids.length === 0) return { reason: "unknownAgent" };
+	if (ids.length > 1) return { reason: "ambiguousAgent" };
+	return { id: ids[0] };
+}
 
 export const run = internalMutation({
 	args: {
@@ -92,7 +107,14 @@ export const run = internalMutation({
 				continue;
 			}
 			preState.without++;
-			const verdict = resolveName(resolver, undefined, row.orchestratorId);
+			const byInstance =
+				row.instanceId === undefined
+					? null
+					: resolveAcrossOrgs(resolver, row.instanceId);
+			const verdict =
+				byInstance !== null && "id" in byInstance
+					? byInstance
+					: resolveAcrossOrgs(resolver, row.orchestratorId);
 			const agentId =
 				"reason" in verdict ? null : ctx.db.normalizeId("agents", verdict.id);
 			if (agentId === null) {

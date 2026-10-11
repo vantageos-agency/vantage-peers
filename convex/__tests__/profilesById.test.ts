@@ -692,6 +692,55 @@ describe("M10d 6. backfill_profile_agent_ids (step 1)", () => {
 		expect((await t.run((ctx) => ctx.db.get(row)))?.agentId).toBeUndefined();
 	});
 
+	test("a label carried by agents of two orgs is blocked ambiguousAgent, never bound to the operator's agent", async () => {
+		const t = createT();
+		await seedOrg(t, "fleet-org", { operator: true, roster: ["alpha"] });
+		await seedOrg(t, "org-a", { roster: ["alpha"] });
+		const operatorAlpha = await registerAgent(t, "fleet-org", "alpha");
+		await registerAgent(t, "org-a", "alpha");
+		const row = await insertProfile(t, { orchestratorId: "alpha", name: "A" });
+		const dry = await t.mutation(run, {});
+		expect(dry.toFill).toBe(0);
+		expect(dry.blocked.map((b) => [b.profileId, b.reason])).toEqual([
+			[row, "ambiguousAgent"],
+		]);
+		const r = await t.mutation(run, { dryRun: false });
+		expect(r.filled).toBe(0);
+		const after = await t.run((ctx) => ctx.db.get(row));
+		expect(after?.agentId).toBeUndefined();
+		expect(after?.agentId).not.toBe(operatorAlpha);
+	});
+
+	test("the instanceId is resolved before the label: it names the client's own agent", async () => {
+		const t = createT();
+		await seedOrg(t, "fleet-org", { operator: true, roster: ["alpha"] });
+		await seedOrg(t, "org-a", { roster: ["alpha", "alpha-acme"] });
+		const operatorAlpha = await registerAgent(t, "fleet-org", "alpha");
+		await registerAgent(t, "org-a", "alpha");
+		const clientAgent = await registerAgent(t, "org-a", "alpha-acme");
+		const row = await insertProfile(t, {
+			orchestratorId: "alpha",
+			instanceId: "alpha-acme",
+			name: "A",
+		});
+		const r = await t.mutation(run, { dryRun: false });
+		expect(r.blocked).toEqual([]);
+		const after = await t.run((ctx) => ctx.db.get(row));
+		expect(after?.agentId).toBe(clientAgent);
+		expect(after?.agentId).not.toBe(operatorAlpha);
+	});
+
+	test("a label held by a single org's agent still resolves", async () => {
+		const t = createT();
+		await seedOrg(t, "fleet-org", { operator: true, roster: ["sigma"] });
+		await seedOrg(t, "org-a", { roster: ["beta"] });
+		const beta = await registerAgent(t, "org-a", "beta");
+		const row = await insertProfile(t, { orchestratorId: "beta", name: "B" });
+		const r = await t.mutation(run, { dryRun: false });
+		expect(r.blocked).toEqual([]);
+		expect((await t.run((ctx) => ctx.db.get(row)))?.agentId).toBe(beta);
+	});
+
 	test("a backfilled row is then served to the fleet agent that owns it, and to no other org", async () => {
 		const { t, sigma, fleetRow } = await legacyFleet();
 		await t.mutation(run, { dryRun: false });
