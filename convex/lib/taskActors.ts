@@ -91,11 +91,32 @@ export async function requireAssigneeId(
  * The ID a READ's assignee label names in the caller's org (operator org for the
  * fleet master), or undefined when it names no agent there - an absence, which
  * the read answers with an empty success.
+ *
+ * For an org MEMBER the resolved ID is then PROVED to be an agents row stamped
+ * with the member's own org before any ID index is read; a row of another org
+ * (or one that vanished between the two reads) is refused RBAC_DENIED, never
+ * answered with a typed empty. A person ("user:<subject>") is its own ID and has
+ * no agents row to prove.
  */
 export async function assigneeIdForRead(
 	ctx: Ctx,
 	scope: OrgScope,
 	assignee: string,
 ): Promise<string | undefined> {
-	return await actorIdResolver(ctx, scope.isMaster ? null : scope.orgSlug)(assignee);
+	const id = await actorIdResolver(ctx, scope.isMaster ? null : scope.orgSlug)(assignee);
+	if (id === undefined || scope.isMaster || isHumanActorName(id)) return id;
+	const memberOrg = scope.orgSlug;
+	if (memberOrg === null || memberOrg === undefined) return id;
+	const agentId = ctx.db.normalizeId("agents", id);
+	const agent =
+		agentId === null
+			? null
+			: await ctx.db
+					.query("agents")
+					.withIndex("by_id", (q) => q.eq("_id", agentId))
+					.unique();
+	if (agent === null || agent.orgSlug !== memberOrg) {
+		throw assigneeNotInOrgRefusal(assignee, memberOrg, "lib/taskActors:assigneeIdForRead");
+	}
+	return id;
 }

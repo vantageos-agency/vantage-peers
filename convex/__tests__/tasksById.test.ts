@@ -319,3 +319,79 @@ describe("(d) an absence stays an absence", () => {
 		expect(rows).toEqual([]);
 	});
 });
+
+// Tenant pin. The assignee-ID indexes carry no org field, so the tenant property
+// rests on two things the tests below hold together: the door resolves the label
+// inside the CALLER's org (an org-B member can only ever read by an org-B agent
+// ID), and filterByOrgScope drops any row whose orgId is not the caller's. The
+// door chosen is "resolve in the caller's org, then also check row.orgId".
+describe("(e) a row of one org naming another org's agent is never served", () => {
+	const strayRow = async (project?: string) =>
+		await t.run(async (ctx) => {
+			const now = Date.now();
+			return await ctx.db.insert("tasks", {
+				title: "stray",
+				assignedTo: "vera",
+				createdBy: "vera",
+				assignedToId: veraA, // an agent of org A ...
+				createdById: veraA,
+				priority: "medium",
+				status: "todo",
+				orgId: "org-b", // ... on a row stamped org B
+				clerkOrgId: testClerkOrgId("org-b"),
+				...(project !== undefined ? { project } : {}),
+				createdAt: now,
+				updatedAt: now,
+			});
+		});
+
+	test("list: neither the org-B nor the org-A member reads it by 'vera'", async () => {
+		const stray = await strayRow();
+		for (const org of ["org-a", "org-b"]) {
+			const rows = await memberOf(t, org).query(api.tasks.list, {
+				assignedTo: "vera",
+			});
+			expect(rows.map((r) => r._id)).not.toContain(stray);
+		}
+	});
+
+	test("list with project and with updatedSince: same verdict", async () => {
+		const stray = await strayRow("proj");
+		for (const org of ["org-a", "org-b"]) {
+			const byProject = await memberOf(t, org).query(api.tasks.list, {
+				assignedTo: "vera",
+				project: "proj",
+			});
+			expect(byProject.map((r) => r._id)).not.toContain(stray);
+			const since = await memberOf(t, org).query(api.tasks.list, {
+				assignedTo: "vera",
+				updatedSince: 1,
+			});
+			expect(since.map((r) => r._id)).not.toContain(stray);
+		}
+	});
+
+	test("listPaginated: neither member is served it", async () => {
+		const stray = await strayRow();
+		for (const org of ["org-a", "org-b"]) {
+			const res = await memberOf(t, org).query(api.tasks.listPaginated, {
+				assignedTo: "vera",
+				status: "todo",
+				paginationOpts: { numItems: 20, cursor: null },
+			});
+			expect(res.page.map((r) => r._id)).not.toContain(stray);
+		}
+	});
+
+	test("the fleet master reading by its own operator-org label is unaffected", async () => {
+		const mine = await labelOnlyRow("org-a", veraA, veraA);
+		const rows = await memberOf(t, "org-a").query(api.tasks.list, {
+			assignedTo: "clio",
+		});
+		expect(rows.map((r) => r._id)).toEqual([]);
+		const rows2 = await memberOf(t, "org-a").query(api.tasks.list, {
+			assignedTo: "vera",
+		});
+		expect(rows2.map((r) => r._id)).toEqual([mine]);
+	});
+});

@@ -1309,10 +1309,14 @@ async function runTasksList(ctx: QueryCtx, args: TasksListArgs, scope: OrgScope)
 		//
 		// ── Assignee filter: BY ID (M7) ──────────────────────────────────────────
 		// The label names an agent of the caller's own org (the operator org for the
-		// fleet master); rows are read through by_assigneeId_status, whose leading
-		// equality is that agent's ID. An agent ID belongs to exactly one org, so a
-		// same-named agent of another org, or a renamed agent's old rows, can never
-		// match. A label naming no agent there is an absence (empty success).
+		// fleet master). assigneeIdForRead PROVES, for a member, that the resolved ID
+		// is an agents row of the caller's org (RBAC_DENIED otherwise), then rows are
+		// read through the assignee-ID indexes, whose leading equality is that
+		// agent's ID. An agent ID belongs to exactly one org, so a same-named agent
+		// of another org, or a renamed agent's old rows, can never match; and
+		// filterByOrgScope below still drops any row whose orgId is not the caller's,
+		// so a row stamped for another org that names this agent is never served.
+		// A label naming no agent there is an absence (empty success).
 		if (assignedTo !== undefined) {
 			const assigneeId = await assigneeIdForRead(ctx, scope, assignedTo);
 			if (assigneeId === undefined) {
@@ -1320,51 +1324,25 @@ async function runTasksList(ctx: QueryCtx, args: TasksListArgs, scope: OrgScope)
 			} else {
 				const statusList: TaskStatus[] =
 					statuses !== undefined ? statuses : [...TASK_STATUSES];
-				// One query per status bucket (each newest-first because `status` is
-				// pinned), merged by creation time below, so the page is the true newest
-				// `limit` of the status union. For the FLEET MASTER `updatedSince` and
-				// `project` are pushed into the index (by_assigneeId_status_updatedAt /
-				// by_assigneeId_project_status) so the scan cap bounds the matching
-				// population, never a widened superset. An org MEMBER reads through the
-				// org-LEADING ID indexes (by_orgId_assigneeId_*): the tenant is the
-				// first equality, so rows of the same agent ID stamped for no org (a
-				// fleet-owned row assigned to an operator-org agent) can never crowd
-				// the member's own rows out of a page.
-				const memberWide = createdBy !== undefined || updatedSince !== undefined;
-				const idWide = memberOrg !== null ? memberWide : needsWideScan;
+				// One query per status bucket, merged by creation time below, so the
+				// page is the true newest `limit` of the status union.
+				//  - `project` given: by_assigneeId_project_status, creation-ordered, so
+				//    the cursor is pushed into the index and `limit` rows are enough.
+				//  - otherwise: by_assigneeId_status_updatedAt (ordered by updatedAt, not
+				//    creation time), so the whole bucket is read (bounded by the scan
+				//    cap, refused loudly beyond it) and the newest `limit` is chosen
+				//    after the merge. `updatedSince` is pushed into that index range.
+				const idWide =
+					project === undefined ||
+					(memberOrg !== null ? createdBy !== undefined || updatedSince !== undefined : needsWideScan);
 				const idFetch = idWide ? TASK_LIST_SCAN_CAP + 1 : limit;
 				const upper = before ?? Number.MAX_VALUE;
-				if (updatedSince !== undefined && memberOrg === null) {
+				if (updatedSince !== undefined && project === undefined) {
 					usedIndexedUpdatedSinceBound = true;
 				}
 				const buckets = await Promise.all(
 					statusList.map(async (status) => {
 						const q = ctx.db.query("tasks");
-						if (memberOrg !== null) {
-							if (project !== undefined) {
-								return await q
-									.withIndex("by_orgId_assigneeId_project_status", (i) =>
-										i
-											.eq("orgId", memberOrg)
-											.eq("assignedToId", assigneeId)
-											.eq("project", project)
-											.eq("status", status)
-											.lt("_creationTime", upper),
-									)
-									.order("desc")
-									.take(idFetch);
-							}
-							return await q
-								.withIndex("by_orgId_assigneeId_status", (i) =>
-									i
-										.eq("orgId", memberOrg)
-										.eq("assignedToId", assigneeId)
-										.eq("status", status)
-										.lt("_creationTime", upper),
-								)
-								.order("desc")
-								.take(idFetch);
-						}
 						if (project !== undefined) {
 							return await q
 								.withIndex("by_assigneeId_project_status", (i) =>
@@ -1377,23 +1355,14 @@ async function runTasksList(ctx: QueryCtx, args: TasksListArgs, scope: OrgScope)
 								.order("desc")
 								.take(idFetch);
 						}
-						if (updatedSince !== undefined) {
-							return await q
-								.withIndex("by_assigneeId_status_updatedAt", (i) =>
-									i
-										.eq("assignedToId", assigneeId)
-										.eq("status", status)
-										.gte("updatedAt", updatedSince),
-								)
-								.order("desc")
-								.take(idFetch);
-						}
 						return await q
-							.withIndex("by_assigneeId_status", (i) =>
-								i
-									.eq("assignedToId", assigneeId)
-									.eq("status", status)
-									.lt("_creationTime", upper),
+							.withIndex("by_assigneeId_status_updatedAt", (i) =>
+								updatedSince !== undefined
+									? i
+											.eq("assignedToId", assigneeId)
+											.eq("status", status)
+											.gte("updatedAt", updatedSince)
+									: i.eq("assignedToId", assigneeId).eq("status", status),
 							)
 							.order("desc")
 							.take(idFetch);
@@ -1403,7 +1372,7 @@ async function runTasksList(ctx: QueryCtx, args: TasksListArgs, scope: OrgScope)
 				// across statuses (one bound, one population); otherwise one status
 				// bucket is the unit the cap bounds.
 				const overCap =
-					updatedSince !== undefined && memberOrg === null
+					updatedSince !== undefined && project === undefined
 						? buckets.reduce((n, b) => n + b.length, 0) > TASK_LIST_SCAN_CAP
 						: buckets.some((b) => b.length > TASK_LIST_SCAN_CAP);
 				if (idWide && overCap) {
@@ -1782,40 +1751,24 @@ export const listPaginated = query({
 
 		// Select the most specific index available for the paginated scan.
 		let baseQuery;
-		if (assigneeId !== undefined && memberOrg !== null) {
-			// Org member: the tenant is the LEADING equality, the agent ID the second,
-			// so a page holds only the member's own org's rows of that agent.
+		if (assigneeId !== undefined) {
+			// By assignee ID, for member and master alike. assigneeIdForRead has
+			// already proved (member) that the ID is an agents row of the caller's
+			// org; filterByOrgScope below drops any row whose orgId is not the
+			// caller's. The page is ordered by (status, updatedAt) desc, or by
+			// updatedAt desc once a status is pinned.
 			const status = args.status;
 			baseQuery =
 				status !== undefined
 					? ctx.db
 							.query("tasks")
-							.withIndex("by_orgId_assigneeId_status", (q) =>
-								q
-									.eq("orgId", memberOrg)
-									.eq("assignedToId", assigneeId)
-									.eq("status", status),
-							)
-							.order("desc")
-					: ctx.db
-							.query("tasks")
-							.withIndex("by_orgId_assigneeId_status", (q) =>
-								q.eq("orgId", memberOrg).eq("assignedToId", assigneeId),
-							)
-							.order("desc");
-		} else if (assigneeId !== undefined) {
-			const status = args.status;
-			baseQuery =
-				status !== undefined
-					? ctx.db
-							.query("tasks")
-							.withIndex("by_assigneeId_status", (q) =>
+							.withIndex("by_assigneeId_status_updatedAt", (q) =>
 								q.eq("assignedToId", assigneeId).eq("status", status),
 							)
 							.order("desc")
 					: ctx.db
 							.query("tasks")
-							.withIndex("by_assigneeId_status", (q) =>
+							.withIndex("by_assigneeId_status_updatedAt", (q) =>
 								q.eq("assignedToId", assigneeId),
 							)
 							.order("desc");
@@ -1844,7 +1797,17 @@ export const listPaginated = query({
 			baseQuery = ctx.db.query("tasks").order("desc");
 		}
 
-		const paginatedResult = await baseQuery.paginate(args.paginationOpts);
+		// By assignee ID the index carries no tenant field, and rows of one agent ID
+		// can sit under another stamp (an unstamped fleet-owned row assigned to an
+		// operator-org agent). The member's tenant predicate therefore runs as a
+		// residual filter INSIDE the paginated scan (the index range is already the
+		// assignee ID), so every non-final page is full instead of short or empty.
+		const paginatedResult =
+			assigneeId !== undefined && memberOrg !== null
+				? await baseQuery
+						.filter((q) => q.eq(q.field("orgId"), memberOrg))
+						.paginate(args.paginationOpts)
+				: await baseQuery.paginate(args.paginationOpts);
 
 		// Apply in-memory priority filter on the page (no index for priority alone).
 		let page: TaskRow[] = paginatedResult.page;
@@ -3033,11 +2996,14 @@ async function assertNoConcurrentInProgress(
 	const inProgressTasks = (
 		await ctx.db
 			.query("tasks")
-			.withIndex("by_assigneeId_status", (q) =>
-				q.eq("assignedToId", callerId).eq("status", "in_progress"),
+			.withIndex("by_assigneeId_project_status", (q) =>
+				q
+					.eq("assignedToId", callerId)
+					.eq("project", project)
+					.eq("status", "in_progress"),
 			)
 			.take(TASK_LIST_SCAN_CAP + 1)
-	).filter((t) => t.project === project);
+	);
 
 	const others = inProgressTasks.filter((t) => t._id !== taskId);
 	if (others.length >= cap) {
