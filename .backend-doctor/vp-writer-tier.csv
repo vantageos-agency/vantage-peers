@@ -5,6 +5,8 @@ store_document_chunked,_storage+kbUploads+memories,UPSERT,org-member,orgResolver
 claim_upload,_storage+kbUploads+uploadTickets,UPSERT,org-member,orgResolver,kbMutations:claimUpload=orgResolver
 generate_upload_url,_storage+uploadTickets,CREATE,org-member,orgResolver,kbMutations:generateUploadUrl=orgResolver; kbMutations:generateUploadUrlWithTicket=orgResolver
 soft_delete_memory,,UPDATE,org-member,orgResolver,memories:softDeleteMemory=orgResolver
+set_summary,agent_credentials+agents+profiles,UPSERT,org-member,orgResolver,profiles:updateDynamic=orgResolver
+update_profile,agent_credentials+agents+profiles,UPSERT,org-member,orgResolver,profiles:upsertProfile=orgResolver
 update_task,agents+client_org_mapping+githubRepoMapping+memberWriterRoles+messageReceipts+messages+missions+oauth_access_tokens+taskClosureConfig+tasks,UPSERT,org-member,orgResolver,tasks:update=orgResolver
 send_message,agents+client_org_mapping+memberWriterRoles+messageReceipts+messages+oauth_access_tokens+profiles,CREATE,org-member,orgResolver,messages:sendMessage=orgResolver
 create_task,agents+client_org_mapping+memberWriterRoles+oauth_access_tokens+tasks,CREATE,org-member,orgResolver,tasks:create=orgResolver
@@ -54,7 +56,5 @@ soft_delete_mission_template,missionTemplates,UPDATE,master,masterOnly,missionTe
 update_mission_template,missionTemplates,UPSERT,master,masterOnly,missionTemplates:upsert=masterOnly
 add_deployment,monitoredDeployments,UPSERT,master,masterOnly,errorMonitor:addDeployment=masterOnly
 remove_deployment,monitoredDeployments,UPDATE,master,masterOnly,errorMonitor:removeDeployment=masterOnly
-set_summary,profiles,UPSERT,master,masterOnly,profiles:updateDynamic=masterOnly
-update_profile,profiles,UPSERT,master,masterOnly,profiles:upsertProfile=masterOnly
 correct_task_segment,taskClosureConfig+tasks,UPDATE,org-member,orgResolver,tasks:correctSegment=orgResolver
 checkout_task,tasks,TRANSITION,org-member,orgResolver,tasks:checkout=orgResolver

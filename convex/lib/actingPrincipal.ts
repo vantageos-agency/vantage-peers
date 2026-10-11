@@ -39,7 +39,11 @@ export function principalLookups(ctx: Ctx): PrincipalLookups {
 		agentById: async (agentId) => {
 			const id = ctx.db.normalizeId("agents", agentId);
 			if (id === null) return null;
-			const row = await ctx.db.get(id);
+			// The built-in `by_id` index: the same single read as `ctx.db.get(id)`.
+			const row = await ctx.db
+				.query("agents")
+				.withIndex("by_id", (q) => q.eq("_id", id))
+				.unique();
 			if (row === null) return null;
 			return { id: row._id, orgId: row.orgSlug, active: row.isActive };
 		},

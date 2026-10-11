@@ -35,6 +35,17 @@ type Ctx = QueryCtx | MutationCtx;
 /** The most rows one profile lookup reads: bounded, never an unbounded collect. */
 export const PROFILE_CANDIDATE_CAP = 50;
 
+/** The agents row an ID names, or null: one indexed read by the built-in `by_id`. */
+async function agentRowById(
+	ctx: Ctx,
+	agentId: Id<"agents">,
+): Promise<Doc<"agents"> | null> {
+	return await ctx.db
+		.query("agents")
+		.withIndex("by_id", (q) => q.eq("_id", agentId))
+		.unique();
+}
+
 /** The acting agent behind a proof: its resolved principal and its agents row. */
 export type ProfileAgent = {
 	principal: ActingPrincipal;
@@ -46,6 +57,33 @@ export type ProfileProof = {
 	verifiedActor?: VerifiedActor;
 	agentCredentialSecret?: string;
 };
+
+/**
+ * The acting agent a READ proves: `verifiedActor` only (believed from the fleet
+ * service account, which verified it), or undefined when the call carries none.
+ * The reads take no credential, so they reach no credential lookup.
+ */
+export async function resolveVerifiedProfileAgent(
+	ctx: Ctx,
+	scope: OrgScope,
+	verifiedActor: VerifiedActor | undefined,
+	door: string,
+): Promise<ProfileAgent | undefined> {
+	if (verifiedActor === undefined) return undefined;
+	const principal = await requireVerifiedActorPrincipal(
+		ctx,
+		scope,
+		verifiedActor,
+		door,
+	);
+	const agent = await agentRowById(ctx, verifiedActor.agentId);
+	if (agent === null) {
+		throw new ConvexError(
+			`VERIFIED_ACTOR_UNKNOWN: the verified agent has no agents row — ${JSON.stringify({ door })}`,
+		);
+	}
+	return { principal, agent };
+}
 
 /**
  * The acting agent a call proves, or undefined when it proves none.
@@ -73,19 +111,7 @@ export async function resolveProfileAgent(
 		);
 	}
 	if (proof.verifiedActor !== undefined) {
-		const principal = await requireVerifiedActorPrincipal(
-			ctx,
-			scope,
-			proof.verifiedActor,
-			door,
-		);
-		const agent = await ctx.db.get(proof.verifiedActor.agentId);
-		if (agent === null) {
-			throw new ConvexError(
-				`VERIFIED_ACTOR_UNKNOWN: the verified agent has no agents row — ${JSON.stringify({ door })}`,
-			);
-		}
-		return { principal, agent };
+		return await resolveVerifiedProfileAgent(ctx, scope, proof.verifiedActor, door);
 	}
 	if (proof.agentCredentialSecret !== undefined) {
 		const agent = await resolveAgentOfPresentedSecret(
@@ -231,7 +257,8 @@ type Target = {
 async function targetsOf(ctx: Ctx, rows: Doc<"profiles">[]): Promise<Target[]> {
 	const out: Target[] = [];
 	for (const row of rows) {
-		const agent = row.agentId === undefined ? null : await ctx.db.get(row.agentId);
+		const agent =
+			row.agentId === undefined ? null : await agentRowById(ctx, row.agentId);
 		out.push({
 			row,
 			agent,
