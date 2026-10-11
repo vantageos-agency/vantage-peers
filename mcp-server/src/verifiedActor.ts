@@ -55,6 +55,14 @@ export const VERIFIED_ACTOR_DOORS: ReadonlySet<string> = new Set([
 	"mandates:update",
 	"mandates:settle",
 	"fixPatterns:addAttempt",
+	// Recurring schedules (M10h): the creator and the assignee are recorded BY ID
+	// and the assignee is resolved in the acting agent's own organisation, which a
+	// service-account call can only learn from the verified actor.
+	"recurringTasks:create",
+	"recurringTasks:update",
+	"recurringTasks:pause",
+	"recurringTasks:resume",
+	"recurringTasks:remove",
 ]);
 
 export type VerifiedActorArg = { agentId: string; orgSlug: string };

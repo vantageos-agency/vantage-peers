@@ -16,79 +16,13 @@ const modules = Object.fromEntries(
 	),
 );
 
-const MASTER = "audit-r3-master-bearer-0001";
-
-beforeEach(() => {
-	vi.stubEnv("BEARER_SECRET_MASTER", MASTER);
-});
 afterEach(() => {
 	vi.unstubAllEnvs();
 	vi.unstubAllGlobals();
 });
 
-// ── POST /api/eta/verify-publish-token ───────────────────────────────────────
-async function seedReviewTask(t: ReturnType<typeof convexTest>, note: string, orgId?: string) {
-	return await t.run(async (ctx) => {
-		await ctx.db.insert("taskClosureConfig", {
-			key: "reviewerDefault",
-			value: ["eta"],
-			updatedAt: Date.now(),
-		});
-		const now = Date.now();
-		return await ctx.db.insert("tasks", {
-			title: "foreign tenant review",
-			assignedTo: "eta",
-			priority: "high",
-			status: "done",
-			completionNote: note,
-			createdBy: "sigma",
-			createdAt: now,
-			updatedAt: now,
-			completedAt: now,
-			...(orgId ? { orgId } : {}),
-		});
-	});
-}
-
-async function postVerify(t: ReturnType<typeof convexTest>, body: Record<string, string>) {
-	return t.fetch("/api/eta/verify-publish-token", {
-		method: "POST",
-		headers: { "Content-Type": "application/json", Authorization: `Bearer ${MASTER}` },
-		body: JSON.stringify(body),
-	});
-}
-
-// Owned by M11 (http verify-publish-token), not by M3: skipped here, red until M11 lands.
-describe.skip("http:POST /api/eta/verify-publish-token", () => {
-	// Identity: the fleet master bearer (the only credential this route accepts).
-	test("http:POST /api/eta/verify-publish-token — a REVISE note plus a one-character expectedSha is not a valid publish approval", async () => {
-		const t = convexTest(schema, modules);
-		const taskId = await seedReviewTask(t, "REVISE: needs work", "acme");
-		const res = await postVerify(t, { taskId, expectedSha: "e" });
-		const data = (await res.json()) as { valid: boolean };
-		expect(data.valid, "valid for a REVISE note matched by 1 char").toBe(false);
-	});
-
-	test("http:POST /api/eta/verify-publish-token — a refusal does not echo a client org's completionNote text", async () => {
-		const t = convexTest(schema, modules);
-		const SECRET_NOTE = "acme-confidential-note-marker-7731";
-		const taskId = await seedReviewTask(t, SECRET_NOTE, "acme");
-		const res = await postVerify(t, { taskId, expectedSha: "zzzz" });
-		const text = await res.text();
-		expect(text.includes(SECRET_NOTE), "response body contains acme's note text").toBe(false);
-	});
-
-	test("http:POST /api/eta/verify-publish-token — a task owned by a client org is not resolved", async () => {
-		const t = convexTest(schema, modules);
-		const taskId = await seedReviewTask(t, "[ETA-APPROVED] 9e5b63e7f4a2bc1d9e5b63e7f4a2bc1d9e5b63e7", "acme");
-		const res = await postVerify(t, {
-			taskId,
-			expectedSha: "9e5b63e7f4a2bc1d9e5b63e7f4a2bc1d9e5b63e7",
-		});
-		const data = (await res.json()) as { valid: boolean; reason?: string };
-		expect(data.valid, `valid:true for a task of org acme (reason=${data.reason})`).toBe(false);
-	});
-});
+// The POST /api/eta/verify-publish-token cases of the same audit are module M11's and
+// run, un-skipped, in http.verifyPublishToken.twoPoles.test.ts.
 
 // ── POST /issueBearerFromClerk ───────────────────────────────────────────────
 const ISS = "https://clerk.audit-r3.example";
