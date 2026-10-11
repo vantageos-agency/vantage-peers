@@ -1,6 +1,7 @@
 import { ConvexError, v } from "convex/values";
 import { internalMutation, internalQuery } from "./_generated/server";
 import { clerkOrgIdForSlug } from "./lib/orgClerkId";
+import { resolveProvisioningMapping } from "./lib/provisioningMapping";
 import { requireAgentsOfOrg } from "./lib/rosterIds";
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -40,18 +41,13 @@ export const seedClientOrgMapping = internalMutation({
 	},
 	returns: v.id("client_org_mapping"),
 	handler: async (ctx, args) => {
-		const existing = await ctx.db
-			.query("client_org_mapping")
-			.withIndex("by_clerk_slug", (q) =>
-				q.eq("clerkOrgSlug", args.clerkOrgSlug),
-			)
-			.first();
+		const existing = await resolveProvisioningMapping(ctx, args.clerkOrgSlug);
 
-		if (existing) {
+		if (existing.kind === "row") {
 			// Idempotent no-op: same _id, no second row, no mutation of fields.
 			// (Field updates, if ever needed, are a distinct explicit mutation —
 			// this seed's only job is "ensure the address exists exactly once".)
-			return existing._id;
+			return existing.row._id;
 		}
 
 		const allowedAgentIds =
@@ -110,12 +106,8 @@ export const bindScopeProfileToOrg = internalMutation({
 			);
 		}
 
-		const mapping = await ctx.db
-			.query("client_org_mapping")
-			.withIndex("by_clerk_slug", (q) =>
-				q.eq("clerkOrgSlug", args.clerkOrgSlug),
-			)
-			.first();
+		const provisioned = await resolveProvisioningMapping(ctx, args.clerkOrgSlug);
+		const mapping = provisioned.kind === "row" ? provisioned.row : null;
 		if (!mapping) {
 			throw new ConvexError(
 				`ORG_NOT_FOUND: no client_org_mapping row for clerkOrgSlug "${args.clerkOrgSlug}"`,
@@ -227,12 +219,8 @@ export const setOrgRoster = internalMutation({
 	},
 	returns: v.id("client_org_mapping"),
 	handler: async (ctx, args) => {
-		const mapping = await ctx.db
-			.query("client_org_mapping")
-			.withIndex("by_clerk_slug", (q) =>
-				q.eq("clerkOrgSlug", args.clerkOrgSlug),
-			)
-			.first();
+		const provisioned = await resolveProvisioningMapping(ctx, args.clerkOrgSlug);
+		const mapping = provisioned.kind === "row" ? provisioned.row : null;
 		if (!mapping) {
 			throw new ConvexError(
 				`ORG_NOT_FOUND: no client_org_mapping row for clerkOrgSlug "${args.clerkOrgSlug}"`,

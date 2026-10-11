@@ -1,3 +1,4 @@
+import { hasFleetRead } from "@vantageos/cloud-identity";
 import { ConvexError, v } from "convex/values";
 import { MutationCtx, query } from "./_generated/server";
 import { sameOrg } from "@vantageos/cloud-identity";
@@ -160,7 +161,7 @@ export const getMembership = query({
 			// read any org.
 			const target = await lookupOrgMapping(ctx, args.clerkOrgSlug);
 			if (
-				!scope.isMaster &&
+				!hasFleetRead(scope) &&
 				!(
 					target?.isActive === true &&
 					sameOrg({ id: target.clerkOrgId }, orgRefOfScope(scope))

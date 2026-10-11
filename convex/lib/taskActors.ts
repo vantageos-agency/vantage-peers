@@ -5,6 +5,7 @@
 // to the existing label -> ID lookup (lib/actorIds.ts) for the one org it is
 // legal to look in. It decides nothing about identity.
 
+import { hasFleetRead } from "@vantageos/cloud-identity";
 import type { MutationCtx, QueryCtx } from "../_generated/server";
 import { actorIdResolver, actorOrgFor } from "./actorIds";
 import { assigneeNotInOrgRefusal, requireAssigneeAgentActive } from "./actingPrincipal";
@@ -103,8 +104,8 @@ export async function assigneeIdForRead(
 	scope: OrgScope,
 	assignee: string,
 ): Promise<string | undefined> {
-	const id = await actorIdResolver(ctx, scope.isMaster ? null : scope.orgSlug)(assignee);
-	if (id === undefined || scope.isMaster || isHumanActorName(id)) return id;
+	const id = await actorIdResolver(ctx, hasFleetRead(scope) ? null : scope.orgSlug)(assignee);
+	if (id === undefined || hasFleetRead(scope) || isHumanActorName(id)) return id;
 	const memberOrg = scope.orgSlug;
 	if (memberOrg === null || memberOrg === undefined) return id;
 	const agentId = ctx.db.normalizeId("agents", id);

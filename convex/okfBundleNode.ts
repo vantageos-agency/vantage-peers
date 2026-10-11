@@ -25,6 +25,7 @@
  * Orchestrator: Sigma — VantagePeers | 2026-06-19
  */
 
+import { hasFleetRead } from "@vantageos/cloud-identity";
 import { createHash } from "node:crypto";
 import { Readable } from "node:stream";
 import { ConvexError, v } from "convex/values";
@@ -441,7 +442,7 @@ export const exportOkfBundle = action({
 			internal.lib.auth.resolveOrgScopeForAction,
 			{},
 		);
-		if (!exporterScope.isMaster && exporterScope.orgSlug !== null) {
+		if (!hasFleetRead(exporterScope) && exporterScope.orgSlug !== null) {
 			await ctx.runMutation(internal.kbMutations.bindOrAssertStorageOwnership, {
 				storageId,
 				orgId: exporterScope.orgSlug,
@@ -734,7 +735,7 @@ export const validateOkfBundle = action({
 			requireResolvedCaller(scope, "okfBundleNode:validateOkfBundle", {
 				alsoRefusePreOrg: true,
 			});
-			if (!scope.isMaster) {
+			if (!hasFleetRead(scope)) {
 				const owner: string | null = await ctx.runQuery(
 					internal.kbMutations.getStorageOwner,
 					{ storageId },
@@ -990,7 +991,7 @@ export const importOkfBundle = action({
 			requireResolvedCaller(scope, "okfBundleNode:importOkfBundle", {
 				alsoRefusePreOrg: true,
 			});
-			if (!scope.isMaster) {
+			if (!hasFleetRead(scope)) {
 				const owner: string | null = await ctx.runQuery(
 					internal.kbMutations.getStorageOwner,
 					{ storageId: args.storageId },
