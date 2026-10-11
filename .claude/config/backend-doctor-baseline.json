@@ -1,79 +1,103 @@
 {
 	"schema_version": 1,
-	"ruling": "re-baselined on backend-doctor 0.3.0 (622caff) at tree 6cc7950b2972a4e96228698270a90586dcf6b37d, Pi order 2026-10-10, task k17d9dgcsjvwggvr1kc9daa32x8g0m6t",
+	"ruling": "re-baselined on backend-doctor 0.4.0 (ebf85e4e) at tree d2e12cc4ad9084353e7f7fbb5055d3376dfb4966, Pi standing ruling (baseline = what the merged doctor prints), task k17ebecjhvjd93a48jh06k7hb18fzykg",
 	"semantics": "RATCHET ONLY. Each `count` is a CEILING of non-conforming sites/rows for one mechanical rule. A deploy refuses when the evidence count for a baselined rule is ABOVE its count, when a red mechanical rule is not listed here, when a module listed under `modules` with 0 carries a site, or when any value here is HIGHER than the same value on origin/main. Values may only go down.",
 	"evidence_contract": "The deploy evidence must carry `mechanical_rule_counts` {rule_id: int} (and `mechanical_rule_module_counts` {rule_id: {module: int}} for a rule with a zero-lane module). Without it the gate refuses; it never compares totals.",
 	"rules": {
 		"R-2": {
 			"count": 0,
-			"measured_tree_sha": "6cc7950b2972a4e96228698270a90586dcf6b37d",
-			"cli_commit": "622caff26d835d4edf87bb5f497eba3fafc511f6",
-			"command": "cd <backend-doctor clone @622caff> && npx tsx src/cli.ts <clean vantage-peers worktree @6cc7950>/convex --json-evidence <dir>/",
-			"output_line": "R-2: 0 non-conforming (109 applicable oracle rows conform); MECHANICAL RULE COUNTS: CR-2 251, R-5 62, R-53 254",
+			"measured_tree_sha": "d2e12cc4ad9084353e7f7fbb5055d3376dfb4966",
+			"cli_commit": "ebf85e4e320492076af2b83f34c9e72029a5c668",
+			"command": "npx -y @vantageos/backend-doctor@0.4.0 <vantage-peers worktree @d2e12cc>/convex --json-evidence <dir>/",
+			"output_line": "R-2: 109 applicable oracle rows conform (verb one of the closed set; `rpc` refused); 0 violations. ... [applicable=109 conform=109 non-conforming=0 could-not-judge=0]; MECHANICAL RULE COUNTS: CR-2 246, R-5 62, R-53 246, R-54 152, R-55 32, R-56 7",
 			"modules": {}
 		},
 		"R-8": {
 			"count": 0,
-			"measured_tree_sha": "6cc7950b2972a4e96228698270a90586dcf6b37d",
-			"cli_commit": "622caff26d835d4edf87bb5f497eba3fafc511f6",
-			"command": "cd <backend-doctor clone @622caff> && npx tsx src/cli.ts <clean vantage-peers worktree @6cc7950>/convex --json-evidence <dir>/",
-			"output_line": "R-8: 0 non-conforming (109 applicable oracle rows conform); MECHANICAL RULE COUNTS: CR-2 251, R-5 62, R-53 254",
+			"measured_tree_sha": "d2e12cc4ad9084353e7f7fbb5055d3376dfb4966",
+			"cli_commit": "ebf85e4e320492076af2b83f34c9e72029a5c668",
+			"command": "npx -y @vantageos/backend-doctor@0.4.0 <vantage-peers worktree @d2e12cc>/convex --json-evidence <dir>/",
+			"output_line": "R-8: 109 applicable oracle rows conform (empty/`AUCUN` scope enforcement on a row carrying a data op, with NO written stateless/read-nothing justification token → non-conforming; a genuine scope check, or a no-scope row carrying a `JUSTIFIÉ:`/`STATELESS:` token, → present (the machine decides on the token's PRESENCE, never on a person's opinion of soundness)); 0 violations. ... [applicable=109 conform=109 non-conforming=0 could-not-judge=0]; MECHANICAL RULE COUNTS: CR-2 246, R-5 62, R-53 246, R-54 152, R-55 32, R-56 7",
 			"modules": {}
 		},
 		"R-13": {
 			"count": 0,
-			"measured_tree_sha": "6cc7950b2972a4e96228698270a90586dcf6b37d",
-			"cli_commit": "622caff26d835d4edf87bb5f497eba3fafc511f6",
-			"command": "cd <backend-doctor clone @622caff> && npx tsx src/cli.ts <clean vantage-peers worktree @6cc7950>/convex --json-evidence <dir>/",
-			"output_line": "R-13: 0 non-conforming (111 applicable oracle rows conform); MECHANICAL RULE COUNTS: CR-2 251, R-5 62, R-53 254",
+			"measured_tree_sha": "d2e12cc4ad9084353e7f7fbb5055d3376dfb4966",
+			"cli_commit": "ebf85e4e320492076af2b83f34c9e72029a5c668",
+			"command": "npx -y @vantageos/backend-doctor@0.4.0 <vantage-peers worktree @d2e12cc>/convex --json-evidence <dir>/",
+			"output_line": "R-13: 111 applicable oracle rows conform (purpose non-empty; disposition decided, or undecided with owner + deadline); 0 violations. ... [applicable=111 conform=111 non-conforming=0 could-not-judge=0]; MECHANICAL RULE COUNTS: CR-2 246, R-5 62, R-53 246, R-54 152, R-55 32, R-56 7",
 			"modules": {}
 		},
 		"R-28": {
 			"count": 0,
-			"measured_tree_sha": "6cc7950b2972a4e96228698270a90586dcf6b37d",
-			"cli_commit": "622caff26d835d4edf87bb5f497eba3fafc511f6",
-			"command": "cd <backend-doctor clone @622caff> && npx tsx src/cli.ts <clean vantage-peers worktree @6cc7950>/convex --json-evidence <dir>/",
-			"output_line": "R-28: 0 non-conforming (0 applicable oracle rows); MECHANICAL RULE COUNTS: CR-2 251, R-5 62, R-53 254",
+			"measured_tree_sha": "d2e12cc4ad9084353e7f7fbb5055d3376dfb4966",
+			"cli_commit": "ebf85e4e320492076af2b83f34c9e72029a5c668",
+			"command": "npx -y @vantageos/backend-doctor@0.4.0 <vantage-peers worktree @d2e12cc>/convex --json-evidence <dir>/",
+			"output_line": "R-28: 0 applicable oracle rows conform (a non-conforming tool names a concrete CORRIGER/REVOIR remediation); 0 violations. ... [applicable=0 conform=0 non-conforming=0 could-not-judge=0]; MECHANICAL RULE COUNTS: CR-2 246, R-5 62, R-53 246, R-54 152, R-55 32, R-56 7",
 			"modules": {}
 		},
 		"R-31": {
 			"count": 0,
-			"measured_tree_sha": "6cc7950b2972a4e96228698270a90586dcf6b37d",
-			"cli_commit": "622caff26d835d4edf87bb5f497eba3fafc511f6",
-			"command": "cd <backend-doctor clone @622caff> && npx tsx src/cli.ts <clean vantage-peers worktree @6cc7950>/convex --json-evidence <dir>/",
-			"output_line": "R-31: 0 non-conforming (42 sites could-not-judge); MECHANICAL RULE COUNTS: CR-2 251, R-5 62, R-53 254",
+			"measured_tree_sha": "d2e12cc4ad9084353e7f7fbb5055d3376dfb4966",
+			"cli_commit": "ebf85e4e320492076af2b83f34c9e72029a5c668",
+			"command": "npx -y @vantageos/backend-doctor@0.4.0 <vantage-peers worktree @d2e12cc>/convex --json-evidence <dir>/",
+			"output_line": "R-31: 43 site(s) could not be judged ... [conform=22 non-conforming=0 could-not-judge=43]; MECHANICAL RULE COUNTS: CR-2 246, R-5 62, R-53 246, R-54 152, R-55 32, R-56 7",
 			"modules": {}
 		},
 		"R-52": {
 			"count": 0,
-			"measured_tree_sha": "6cc7950b2972a4e96228698270a90586dcf6b37d",
-			"cli_commit": "622caff26d835d4edf87bb5f497eba3fafc511f6",
-			"command": "cd <backend-doctor clone @622caff> && npx tsx src/cli.ts <clean vantage-peers worktree @6cc7950>/convex --json-evidence <dir>/",
-			"output_line": "R-52: 0 non-conforming (10 sites could-not-judge); MECHANICAL RULE COUNTS: CR-2 251, R-5 62, R-53 254",
+			"measured_tree_sha": "d2e12cc4ad9084353e7f7fbb5055d3376dfb4966",
+			"cli_commit": "ebf85e4e320492076af2b83f34c9e72029a5c668",
+			"command": "npx -y @vantageos/backend-doctor@0.4.0 <vantage-peers worktree @d2e12cc>/convex --json-evidence <dir>/",
+			"output_line": "R-52: 10 site(s) could not be judged ... [conform=73 non-conforming=0 could-not-judge=10]; MECHANICAL RULE COUNTS: CR-2 246, R-5 62, R-53 246, R-54 152, R-55 32, R-56 7",
 			"modules": {}
 		},
 		"R-53": {
-			"count": 254,
-			"measured_tree_sha": "6cc7950b2972a4e96228698270a90586dcf6b37d",
-			"cli_commit": "622caff26d835d4edf87bb5f497eba3fafc511f6",
-			"command": "cd <backend-doctor clone @622caff> && npx tsx src/cli.ts <clean vantage-peers worktree @6cc7950>/convex --json-evidence <dir>/",
-			"output_line": "R-53: 254 site(s) VIOLATE; MECHANICAL RULE COUNTS: CR-2 251, R-5 62, R-53 254",
+			"count": 246,
+			"measured_tree_sha": "d2e12cc4ad9084353e7f7fbb5055d3376dfb4966",
+			"cli_commit": "ebf85e4e320492076af2b83f34c9e72029a5c668",
+			"command": "npx -y @vantageos/backend-doctor@0.4.0 <vantage-peers worktree @d2e12cc>/convex --json-evidence <dir>/",
+			"output_line": "R-53: 246 site(s) VIOLATE (the principal is the package resolver's output, every write admits by comparing stored IDs with the resolved IDs, the unresolved branch refuses, and no local function decides identity). ... [conform=0 non-conforming=246 could-not-judge=0]; MECHANICAL RULE COUNTS: CR-2 246, R-5 62, R-53 246, R-54 152, R-55 32, R-56 7",
 			"modules": {}
 		},
 		"R-5": {
 			"count": 62,
-			"measured_tree_sha": "6cc7950b2972a4e96228698270a90586dcf6b37d",
-			"cli_commit": "622caff26d835d4edf87bb5f497eba3fafc511f6",
-			"command": "cd <backend-doctor clone @622caff> && npx tsx src/cli.ts <clean vantage-peers worktree @6cc7950>/convex --json-evidence <dir>/",
-			"output_line": "R-5: 62 of 85 applicable oracle rows VIOLATE; MECHANICAL RULE COUNTS: CR-2 251, R-5 62, R-53 254",
+			"measured_tree_sha": "d2e12cc4ad9084353e7f7fbb5055d3376dfb4966",
+			"cli_commit": "ebf85e4e320492076af2b83f34c9e72029a5c668",
+			"command": "npx -y @vantageos/backend-doctor@0.4.0 <vantage-peers worktree @d2e12cc>/convex --json-evidence <dir>/",
+			"output_line": "R-5: 62 of 85 applicable oracle rows VIOLATE (raw rbac_qui collapses to one of five tiers, resolved from a verified identity (not an argument)). ... [applicable=85 conform=23 non-conforming=62 could-not-judge=0]; MECHANICAL RULE COUNTS: CR-2 246, R-5 62, R-53 246, R-54 152, R-55 32, R-56 7",
 			"modules": {}
 		},
 		"CR-2": {
-			"count": 251,
-			"measured_tree_sha": "6cc7950b2972a4e96228698270a90586dcf6b37d",
-			"cli_commit": "622caff26d835d4edf87bb5f497eba3fafc511f6",
-			"command": "cd <backend-doctor clone @622caff> && npx tsx src/cli.ts <clean vantage-peers worktree @6cc7950>/convex --json-evidence <dir>/",
-			"output_line": "CR-2: 251 violation(s) (3 exempt, 0 could-not-judge); MECHANICAL RULE COUNTS: CR-2 251, R-5 62, R-53 254",
+			"count": 246,
+			"measured_tree_sha": "d2e12cc4ad9084353e7f7fbb5055d3376dfb4966",
+			"cli_commit": "ebf85e4e320492076af2b83f34c9e72029a5c668",
+			"command": "npx -y @vantageos/backend-doctor@0.4.0 <vantage-peers worktree @d2e12cc>/convex --json-evidence <dir>/",
+			"output_line": "CR-2 VERDICT: 246 violation(s) — MECHANICAL, the gate refuses; 4 exempt; 0 could-not-judge.; MECHANICAL RULE COUNTS: CR-2 246, R-5 62, R-53 246, R-54 152, R-55 32, R-56 7",
+			"modules": {}
+		},
+		"R-54": {
+			"count": 152,
+			"measured_tree_sha": "d2e12cc4ad9084353e7f7fbb5055d3376dfb4966",
+			"cli_commit": "ebf85e4e320492076af2b83f34c9e72029a5c668",
+			"command": "npx -y @vantageos/backend-doctor@0.4.0 <vantage-peers worktree @d2e12cc>/convex --json-evidence <dir>/",
+			"output_line": "R-54: 152 site(s) VIOLATE (a door resolving its caller through the organisation-scope resolver declares a verified-claim argument and refuses the call that is the service account and carries no claim, or is service-account-only, session-only, or declared fleet-wide). ... [conform=32 non-conforming=152 could-not-judge=8]; MECHANICAL RULE COUNTS: CR-2 246, R-5 62, R-53 246, R-54 152, R-55 32, R-56 7",
+			"modules": {}
+		},
+		"R-55": {
+			"count": 32,
+			"measured_tree_sha": "d2e12cc4ad9084353e7f7fbb5055d3376dfb4966",
+			"cli_commit": "ebf85e4e320492076af2b83f34c9e72029a5c668",
+			"command": "npx -y @vantageos/backend-doctor@0.4.0 <vantage-peers worktree @d2e12cc>/convex --json-evidence <dir>/",
+			"output_line": "R-55: 32 site(s) VIOLATE (every caller-dependent predicate (tenant, roster, channel, status, time cursor) sits in the index range or the query builder before .take/.paginate, or the narrowing sits in a fill loop, or a refusal on a full window stands between the bound and the narrowing). ... [conform=27 non-conforming=32 could-not-judge=0]; MECHANICAL RULE COUNTS: CR-2 246, R-5 62, R-53 246, R-54 152, R-55 32, R-56 7",
+			"modules": {}
+		},
+		"R-56": {
+			"count": 7,
+			"measured_tree_sha": "d2e12cc4ad9084353e7f7fbb5055d3376dfb4966",
+			"cli_commit": "ebf85e4e320492076af2b83f34c9e72029a5c668",
+			"command": "npx -y @vantageos/backend-doctor@0.4.0 <vantage-peers worktree @d2e12cc>/convex --json-evidence <dir>/",
+			"output_line": "R-56: 7 site(s) VIOLATE (a credential-named column holds a digest of a generated value; a refresh-token table read by hash has a consuming door; a bearer table has a revocation door and its mint revokes prior bearers or caps them (or exchanges a code or refresh token); a request-supplied commit identifier is length-checked before it is matched). ... [conform=2 non-conforming=7 could-not-judge=0]; MECHANICAL RULE COUNTS: CR-2 246, R-5 62, R-53 246, R-54 152, R-55 32, R-56 7",
 			"modules": {}
 		}
 	}
