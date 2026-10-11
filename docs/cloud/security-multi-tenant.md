@@ -520,6 +520,16 @@ A briefing note belongs to an organisation by the org's permanent Clerk ID (`cle
 - **Not covered here.** `briefingNotes:create` through the service account still stamps the note fleet-owned (the transport's `verifiedOrg` is not an input of the write), and the MCP-layer `scopeFilterList` / `passesBriefingNoteParticipantScope` remain as defence in depth over names.
 - Tests: `convex/__tests__/briefingNotesById.test.ts` (one name and one freed label in two orgs: refused, present, absent), `convex/__tests__/audit/briefingNotes.twoPoles.test.ts`.
 
+### §4.22 Episodes: the author is the verified caller, the namespace is keyed by the org ID (VantagePeers Cloud, module M14)
+
+`convex/episodes.ts` decides on the verified credential and the organisation's permanent Clerk org ID, never on a typed name.
+
+- **Author.** `storeEpisode` persists `createdBy` as the verified caller (`user:<subject>`) for every non-master write; a claimed author that is anyone else is refused `RBAC_DENIED` (`reason: "author-not-caller"`) and nothing is written. Only the transport-verified master (the MCP server) supplies the author of the seat it authenticated.
+- **Namespace.** A member owns `team/<its org ID>` and every sub-namespace under it (`convex/lib/teamNamespace.ts`: `teamNamespaceOf`, `memberNamespaceRoots`, `isEpisodeNamespaceAllowed`). A member scope with no resolved org ID owns no namespace. A session whose label equals another org's but whose verified ID differs reads and writes nothing of it.
+- **Legacy alias.** Rows written before this module live under `team/<slug>`. That label is honoured only as an alias of the organisation the verified ID resolved to; it goes away when stored namespaces are re-keyed by ID (contract step). Until then a freed slug taken by a new organisation is not closed for those legacy rows: the memories table carries no organisation stamp to judge them by.
+- **Reads.** A member reads its own namespaces through the `by_namespace_type` / `by_namespace` indexes, newest first, stopped at the requested page, and refused with `SCAN_CAP_EXCEEDED` rather than answered short. The fleet-wide scan in `getCriticalInsights` is master-only and capped the same way.
+- **Tests.** `convex/__tests__/episodesById.test.ts`, `convex/__tests__/audit/episodes.twoPoles.test.ts`.
+
 ## 5. Cloud vs Self-host — non-negotiable separation
 
 - **Cloud runbooks:** `docs/cloud/` only.

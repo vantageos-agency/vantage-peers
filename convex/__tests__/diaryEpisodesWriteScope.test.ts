@@ -301,7 +301,7 @@ describe("episodes.storeEpisode — write-scope enforcement", () => {
 
 		const memoryId = await tA.mutation(api.episodes.storeEpisode, {
 			namespace: "team/org-a/episodes",
-			createdBy: "seat-a",
+			createdBy: "user:user-org-a",
 			context: "org-a's own episode",
 			goal: "goal",
 			action: "action",
