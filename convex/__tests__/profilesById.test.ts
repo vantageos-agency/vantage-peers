@@ -80,14 +80,6 @@ async function registerAgent(t: T, org: string, name: string) {
 	});
 }
 
-async function mint(t: T, org: string, agentId: Id<"agents">) {
-	const minted = await adminOf(t, org).mutation(
-		api.agentCredentials.mintAgentCredential,
-		{ orgSlug: org, agentId },
-	);
-	return minted.secret;
-}
-
 const STATIC = { role: "backend", workspace: "/work", capabilities: [] };
 
 /** A profile row written directly, as the fleet's pre-M10d data or a stamped row. */
@@ -442,31 +434,38 @@ describe("M10d 4. a profile is written only by its own agent", () => {
 		expect(rowA?.agentId).toBe(adaA);
 	});
 
-	test("PRESENT: a member session presenting its own agent's credential writes its row", async () => {
-		const { t, adaB, profileB } = await twoOrgs();
-		const secret = await mint(t, "org-b", adaB);
-		const id = await memberOf(t, "org-b").mutation(api.profiles.upsertProfile, {
+	test("PRESENT: the agent writes its own row through verifiedActor, and the same-named agent of another org is not touched", async () => {
+		const { t, adaA, adaB, profileA, profileB } = await twoOrgs();
+		const id = await asServiceAccount(t).mutation(api.profiles.upsertProfile, {
 			orchestratorId: "ada",
 			instanceId: "ada-vps",
-			name: "via credential",
-			agentCredentialSecret: secret,
+			name: "via verifiedActor",
+			verifiedActor: actorOf(adaB, "org-b"),
 		});
 		expect(id).toBe(profileB);
+		expect((await t.run((ctx) => ctx.db.get(profileA)))?.agentId).toBe(adaA);
+		expect((await t.run((ctx) => ctx.db.get(profileA)))?.name).toBe("Ada of A");
 	});
 
-	test("REFUSED: a member of org A presenting B's credential cannot write, and B's row is untouched", async () => {
+	test("REFUSED: upsertProfile no longer has an agentCredentialSecret argument (the validator rejects it)", async () => {
 		const { t, adaB, profileB } = await twoOrgs();
-		const secret = await mint(t, "org-b", adaB);
 		const code = await codeOf(
 			memberOf(t, "org-a").mutation(api.profiles.upsertProfile, {
 				orchestratorId: "ada",
 				name: "hijack",
-				agentCredentialSecret: secret,
-			}),
+				agentCredentialSecret: "any-secret",
+			} as never),
 		);
-		expect(code).toMatch(/^ORG_MISMATCH/);
-		const rowB = await t.run((ctx) => ctx.db.get(profileB));
-		expect(rowB?.name).toBe("Ada of B");
+		expect(code).toMatch(/agentCredentialSecret/);
+		const viaActor = await codeOf(
+			asServiceAccount(t).mutation(api.profiles.upsertProfile, {
+				orchestratorId: "ada",
+				verifiedActor: actorOf(adaB, "org-b"),
+				agentCredentialSecret: "any-secret",
+			} as never),
+		);
+		expect(viaActor).toMatch(/agentCredentialSecret/);
+		expect((await t.run((ctx) => ctx.db.get(profileB)))?.name).toBe("Ada of B");
 	});
 
 	test("REFUSED: a member with no agent proof cannot write (profiles stay master-only without one)", async () => {
@@ -519,17 +518,16 @@ describe("M10d 4. a profile is written only by its own agent", () => {
 		expect((await t.run((ctx) => ctx.db.get(profileA)))?.name).toBe("Pi of A");
 	});
 
-	test("REFUSED: two proofs on one call are refused", async () => {
-		const { t, adaB } = await twoOrgs();
-		const secret = await mint(t, "org-b", adaB);
+	test("REFUSED: updateDynamic no longer has an agentCredentialSecret argument (the validator rejects it)", async () => {
+		const { t } = await twoOrgs();
 		const code = await codeOf(
-			asServiceAccount(t).mutation(api.profiles.upsertProfile, {
+			memberOf(t, "org-b").mutation(api.profiles.updateDynamic, {
 				orchestratorId: "ada",
-				verifiedActor: actorOf(adaB, "org-b"),
-				agentCredentialSecret: secret,
-			}),
+				currentTask: "x",
+				agentCredentialSecret: "any-secret",
+			} as never),
 		);
-		expect(code).toMatch(/^AGENT_PROOF_CONFLICT/);
+		expect(code).toMatch(/agentCredentialSecret/);
 	});
 
 	test("REFUSED: an anonymous caller is refused", async () => {

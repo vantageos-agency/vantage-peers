@@ -31,7 +31,7 @@ import { isNamespaceAllowedForScope } from "./memories";
 //
 // A write is accepted from exactly two callers:
 //   - the agent itself, proven by `verifiedActor` (forwarded by the fleet service
-//     account, which verified it) or by its own `agentCredentialSecret`. It writes
+//     account, which verified it; no secret is ever an argument). It writes
 //     ITS row, found by its agent ID; a same-named agent of another organisation
 //     has another ID and so another row.
 //   - the fleet master with no acting agent (its existing grant, unchanged): the
@@ -249,17 +249,13 @@ export const upsertProfile = mutation({
     // The acting agent: ONE proof per call. A profile is written only by the agent
     // that owns it (see the block above requireFleetMaster).
     verifiedActor: v.optional(verifiedActorValidator),
-    agentCredentialSecret: v.optional(v.string()),
   },
   returns: v.id("profiles"),
   handler: async (ctx, args) => {
   	// write-contract: MCP-transport-only — issued via mcp-server client.mutation("profiles:upsertProfile", …) at mcp-server/src/tools.ts:2843 (imperative), 0 hits in vantage-peers-dashboard {app,components,hooks,lib,contexts,providers} (measured 2026-10-01 at origin/main e2dc58f and 0466fac); never a subscribing pre-org client shell. The no-org throw is a refusal at an imperative MCP call, never at a render.
     const { actor } = await writerOf(
       ctx,
-      {
-        verifiedActor: args.verifiedActor,
-        agentCredentialSecret: args.agentCredentialSecret,
-      },
+      { verifiedActor: args.verifiedActor },
       `upsert profile for orchestrator ${args.orchestratorId}`,
       "profiles:upsertProfile",
     );
@@ -309,17 +305,13 @@ export const updateDynamic = mutation({
     sessionCountDelta: v.optional(v.number()),
     // The acting agent: ONE proof per call (see upsertProfile).
     verifiedActor: v.optional(verifiedActorValidator),
-    agentCredentialSecret: v.optional(v.string()),
   },
   returns: v.null(),
   handler: async (ctx, args) => {
   	// write-contract: MCP-transport-only — issued via mcp-server client.mutation("profiles:updateDynamic", …) at mcp-server/src/tools.ts:3536 (imperative), 0 hits in vantage-peers-dashboard {app,components,hooks,lib,contexts,providers} (measured 2026-10-01 at origin/main e2dc58f and 0466fac); never a subscribing pre-org client shell. The no-org throw is a refusal at an imperative MCP call, never at a render.
     const { actor } = await writerOf(
       ctx,
-      {
-        verifiedActor: args.verifiedActor,
-        agentCredentialSecret: args.agentCredentialSecret,
-      },
+      { verifiedActor: args.verifiedActor },
       `update dynamic profile for orchestrator ${args.orchestratorId}`,
       "profiles:updateDynamic",
     );

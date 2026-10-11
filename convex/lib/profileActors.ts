@@ -13,7 +13,6 @@
 import {
 	type ActingPrincipal,
 	filterTargetsBelongingTo,
-	resolveActingPrincipal,
 	sameOrg,
 } from "@vantageos/cloud-identity";
 import { ConvexError } from "convex/values";
@@ -26,7 +25,6 @@ import {
 	requireVerifiedActorPrincipal,
 } from "./actingPrincipal";
 import { actorIdResolver } from "./actorIds";
-import { resolveAgentOfPresentedSecret } from "./agentIdentity";
 import type { OrgScope, VerifiedActor } from "./auth";
 import { orgRefOfRow, orgRefOfScope } from "./authOrgMapping";
 
@@ -52,10 +50,9 @@ export type ProfileAgent = {
 	agent: Doc<"agents">;
 };
 
-/** The proofs of an acting agent a profile door accepts. One per call. */
+/** The proof of an acting agent a profile door accepts: `verifiedActor` only. */
 export type ProfileProof = {
 	verifiedActor?: VerifiedActor;
-	agentCredentialSecret?: string;
 };
 
 /**
@@ -87,14 +84,10 @@ export async function resolveVerifiedProfileAgent(
 
 /**
  * The acting agent a call proves, or undefined when it proves none.
- *
- *   - `verifiedActor`: believed from the fleet service account only (the
- *     transport that verified it); anyone else presenting it is refused.
- *   - `agentCredentialSecret`: the agent the presented secret was minted for,
- *     read BY ID; a secret resolving to no live agent is refused. A member
- *     session may present only the secret of an agent of its OWN organisation
- *     (compared by org ID); the fleet master may present any.
- *   - both: refused (one proof per call).
+ * `verifiedActor` is believed from the fleet service account only (the
+ * transport that verified it); anyone else presenting it is refused. No secret
+ * is accepted as an argument: the agent's credential is verified by the MCP
+ * transport, which forwards `verifiedActor`.
  */
 export async function resolveProfileAgent(
 	ctx: Ctx,
@@ -102,46 +95,8 @@ export async function resolveProfileAgent(
 	proof: ProfileProof,
 	door: string,
 ): Promise<ProfileAgent | undefined> {
-	// The session's own organisation, as the package names it. The fleet master
-	// carries none and may present any agent's credential.
-	const sessionOrg = orgRefOfScope(scope);
-	if (proof.verifiedActor !== undefined && proof.agentCredentialSecret !== undefined) {
-		throw new ConvexError(
-			`AGENT_PROOF_CONFLICT: a call carries ONE proof of the acting agent — agentCredentialSecret or verifiedActor, never both — ${JSON.stringify({ door })}`,
-		);
-	}
 	if (proof.verifiedActor !== undefined) {
 		return await resolveVerifiedProfileAgent(ctx, scope, proof.verifiedActor, door);
-	}
-	if (proof.agentCredentialSecret !== undefined) {
-		const agent = await resolveAgentOfPresentedSecret(
-			ctx,
-			proof.agentCredentialSecret,
-			door,
-		);
-		if (agent === null) {
-			throw new ConvexError(
-				`AGENT_IDENTITY_MISMATCH: the presented agent credential does not resolve to any active per-agent identity — ${JSON.stringify({ door })}`,
-			);
-		}
-		const resolved = await resolveActingPrincipal(
-			{ kind: "agent", agentId: agent._id, verifiedOrgId: agent.orgSlug },
-			principalLookups(ctx),
-			door,
-		);
-		if (!resolved.ok) return refuseWith(resolved.refusal);
-		if (
-			scope.orgSlug !== null &&
-			!sameOrg(
-				orgRefOfRow({ orgId: agent.orgSlug, clerkOrgId: agent.clerkOrgId }),
-				sessionOrg,
-			)
-		) {
-			throw new ConvexError(
-				`ORG_MISMATCH: the presented credential belongs to an agent of another organisation than the session's — ${JSON.stringify({ reason: "credential-other-organisation", door })}`,
-			);
-		}
-		return { principal: resolved.principal, agent };
 	}
 	return undefined;
 }
