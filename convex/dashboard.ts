@@ -6,6 +6,7 @@ import {
 	requireResolvedCaller,
 	requireScope,
 } from "./lib/auth";
+import { visibleProfiles } from "./lib/profileActors";
 
 // In-progress tasks and mandates are both small, bounded tables today; 500 rows
 // is a comfortable ceiling well above observed volume for either.
@@ -31,6 +32,7 @@ export const getDashboardSummary = query({
 				_creationTime: v.number(),
 				orchestratorId: v.string(),
 				instanceId: v.optional(v.string()),
+				agentId: v.optional(v.id("agents")),
 				name: v.string(),
 				static: v.object({
 					role: v.string(),
@@ -115,12 +117,19 @@ export const getDashboardSummary = query({
 			: [];
 		const openMandates = allMandates.filter((m) => m.status !== "settled").length;
 
-		// Profiles (small table — one row per instance). No tenant column: a
-		// member is narrowed to its org's roster.
+		// Profiles (small table — one row per instance). A profile belongs to an
+		// agent: a member is served the rows whose agent sits in its own org,
+		// judged by stored ID (a same-named agent of another org is not its row).
 		const allProfiles = await ctx.db.query("profiles").collect();
 		const profiles = scope.isMaster
 			? allProfiles
-			: allProfiles.filter((p) => scope.allowedOrchestrators.includes(p.orchestratorId));
+			: await visibleProfiles(
+					ctx,
+					scope,
+					undefined,
+					allProfiles,
+					"dashboard:getDashboardSummary",
+				);
 
 		// Unread messages — full scan bounded (receipts table is small)
 		// Index is composite [recipient, readAt] so we cannot filter by readAt alone.

@@ -134,14 +134,21 @@ describe("provisionOrganization default member scopes", () => {
 
 describe("profiles:getProfile — roster check does not depend on existence", () => {
 	async function seedProfile(t: T, orchestratorId: string) {
-		await t.run((ctx) =>
-			ctx.db.insert("profiles", {
+		await t.run(async (ctx) => {
+			// A profile belongs to an agent (M10d): the seat's own agent row, if it has one.
+			const agent = await ctx.db
+				.query("agents")
+				.withIndex("by_org", (q) => q.eq("orgSlug", "org-a"))
+				.collect()
+				.then((rows) => rows.find((r) => r.name === orchestratorId));
+			return ctx.db.insert("profiles", {
 				orchestratorId,
+				...(agent !== undefined ? { agentId: agent._id } : {}),
 				name: orchestratorId,
 				static: { role: orchestratorId, workspace: "w", capabilities: [] },
 				dynamic: { lastSeen: Date.now(), sessionCount: 1 },
-			}),
-		);
+			});
+		});
 	}
 
 	test("non-roster orchestrator WITH a row -> refused not-on-roster", async () => {

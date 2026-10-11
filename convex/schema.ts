@@ -151,6 +151,14 @@ export default defineSchema({
 
 		name: v.string(),
 
+		// The AGENT this profile belongs to: an `agents` row `_id`. A profile is
+		// owned, read and written by this ID, never by `orchestratorId` (a label that
+		// two organisations may both carry). The profile's organisation is the
+		// organisation of that agent row. Optional ONLY for the rollout: rows written
+		// before it existed are filled by migrations/backfill_profile_agent_ids, and a
+		// row without it is served to no member (an unstamped target belongs to nobody).
+		agentId: v.optional(v.id("agents")),
+
 		// Static profile — stable facts, infrequently updated
 		static: v.object({
 			role: v.string(),
@@ -170,7 +178,8 @@ export default defineSchema({
 		}),
 	})
 		.index("by_orchestrator", ["orchestratorId"])
-		.index("by_instance", ["instanceId"]),
+		.index("by_instance", ["instanceId"])
+		.index("by_agent", ["agentId"]),
 
 	// ── messages ──────────────────────────────────────────────────────────────
 	// Inter-orchestrator messaging. VantagePeers native (supersedes pre-VP legacy).

@@ -19,6 +19,7 @@ import { convexTest } from "../../tests/fixtures/convexTestWithServiceAccount";
 import { describe, expect, test } from "vitest";
 import { testClerkOrgId } from "../../tests/fixtures/testClerkOrgId";
 import { api } from "../_generated/api";
+import type { Id } from "../_generated/dataModel";
 import schema from "../schema";
 
 const modules = Object.fromEntries(
@@ -65,9 +66,29 @@ async function seed(t: T, orgAScopes: string[] = ["view-stats-aggregated"]) {
 				createdAt: now,
 			});
 		}
+		// A profile belongs to an agent (M10d): seat-a is an agent of org-a, seat-b of
+		// org-b; sigma is the fleet's own profile and has no org agent.
+		const agentOf = new Map<string, Id<"agents">>();
+		for (const [org, name] of [
+			["org-a", "seat-a"],
+			["org-b", "seat-b"],
+		] as const) {
+			agentOf.set(
+				name,
+				await ctx.db.insert("agents", {
+					orgSlug: org,
+					clerkOrgId: testClerkOrgId(org),
+					name,
+					normalizedName: name,
+					isActive: true,
+					createdAt: now,
+				}),
+			);
+		}
 		for (const name of ["seat-a", "seat-b", "sigma"]) {
 			await ctx.db.insert("profiles", {
 				orchestratorId: name,
+				...(agentOf.has(name) ? { agentId: agentOf.get(name) } : {}),
 				name,
 				static: { role: name, workspace: "w", capabilities: [] },
 				dynamic: { lastSeen: now, sessionCount: 1 },
