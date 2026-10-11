@@ -113,7 +113,7 @@ async function assertCanExportNamespaceV8(
 	ctx: QueryCtx | MutationCtx,
 	namespace: string,
 	door: string,
-): Promise<OrgScope> {
+): Promise<{ scope: OrgScope; namespace: string }> {
 	if (typeof namespace !== "string" || namespace.length === 0) {
 		throw new Error(
 			`OKF_NAMESPACE_INVALID: namespace must be a non-empty string, got "${namespace}".`,
@@ -131,7 +131,9 @@ async function assertCanExportNamespaceV8(
 	// `RBAC_DENIED` naming the door. See okfBundleNode.ts:assertCanExportNamespace.
 	const scope = await withOrgScope(ctx, { refuseWithoutThrow: true });
 	requireTenantNamespace(scope, namespace, door);
-	return scope;
+	// The namespace the resolved scope was just authorised to export: a caller
+	// writes THIS value, never the argument it came in as.
+	return { scope, namespace };
 }
 
 // The tenant marker of a job the fleet master starts: the master has no
@@ -161,12 +163,12 @@ export const startOkfBundleExportDurable = mutation({
 	returns: v.string(),
 	handler: async (ctx, args): Promise<string> => {
 		// write-contract: no caller outside convex-test — 0 call sites in mcp-server (grep of "okfBundleDurable:startOkfBundleExportDurable" under mcp-server/src and mcp-server/server-http.ts) and 0 hits in vantage-peers-dashboard {app,components,hooks,lib,contexts,providers} (measured 2026-10-01 at origin/main e2dc58f and 0466fac); callers are convex/__tests__ only. No subscribing pre-org client shell can reach it; the no-org throw is a refusal at an imperative SDK call, never at a render.
-		const scope = await assertCanExportNamespaceV8(
+		const authorised = await assertCanExportNamespaceV8(
 			ctx,
 			args.namespace,
 			"okfBundleDurable:startOkfBundleExportDurable",
 		);
-		const tenantOrgId = exportTenantOf(scope);
+		const tenantOrgId = exportTenantOf(authorised.scope);
 
 		if (args.totalSteps <= 0) {
 			throw new Error(
@@ -200,7 +202,7 @@ export const startOkfBundleExportDurable = mutation({
 			// `orgId` handed to every step is the resolved tenant; the namespace
 			// the job exports is its own field and what ownership is judged on.
 			orgId: tenantOrgId,
-			namespace: args.namespace,
+			namespace: authorised.namespace,
 			sinceMs: args.sinceMs,
 			memoriesCursor: null,
 			memoriesDone: false,
