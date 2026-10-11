@@ -1,0 +1,4 @@
+---
+section: Security
+---
+- **`messages:sendMessage` addresses by agent ID in both directions across organisations (Cloud, module M5, task k173069sdrkaapcqxz10h15btx8fz7rb).** With a forwarded acting agent and `recipientAgentIds`, the sender is the agent resolved by ID and recorded as `fromId` (no name lookup), and every address decision goes through `@vantageos/cloud-identity` `assertRecipientAddressable` (`convex/lib/actingPrincipal.ts` `addressRecipientById`). The reply direction (operator agent to a client agent that lists it in `addressableFleetCoordinatorIds`) is now delivered and stamped in the client's tenant; before, every client ID was refused to an operator agent. A same-named agent of another org, an unlisted recipient and recipients of two organisations are refused. The channel-NAME form and member or seat sends with no forwarded agent are unchanged. Tests: `convex/__tests__/messagingById.test.ts`.
