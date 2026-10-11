@@ -21,6 +21,7 @@
 import type { McpServer } from "@modelcontextprotocol/server";
 import type { ConvexHttpClient } from "convex/browser";
 import { describe, expect, it, vi } from "vitest";
+import { LOCAL_STDIO_TRUST_CTX } from "../auth.js";
 import { registerTools } from "../tools.js";
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -85,7 +86,7 @@ describe("list_tasks MCP→convex.query boundary (v2.3.5)", () => {
 	it("forwards createdBy='pi' and updatedSince=1779800000000 to tasks:list", async () => {
 		const { server, handlers } = buildFakeServer();
 		const convex = buildMockConvex();
-		registerTools(server, convex);
+		registerTools(server, convex, LOCAL_STDIO_TRUST_CTX);
 
 		const handler = handlers.get("list_tasks");
 		expect(handler, "list_tasks handler must be registered").toBeDefined();
@@ -114,7 +115,7 @@ describe("list_tasks MCP→convex.query boundary (v2.3.5)", () => {
 	it("passes limit=undefined when caller omits it (auto-clamp trigger path)", async () => {
 		const { server, handlers } = buildFakeServer();
 		const convex = buildMockConvex();
-		registerTools(server, convex);
+		registerTools(server, convex, LOCAL_STDIO_TRUST_CTX);
 
 		const handler = handlers.get("list_tasks");
 		await handler?.({ fields: "full" });
@@ -136,7 +137,7 @@ describe("list_tasks_by_mission MCP→convex.query boundary (v2.3.5)", () => {
 	it("forwards createdBy='pi' and updatedSince=1779800000000 to tasks:listByMission", async () => {
 		const { server, handlers } = buildFakeServer();
 		const convex = buildMockConvex();
-		registerTools(server, convex);
+		registerTools(server, convex, LOCAL_STDIO_TRUST_CTX);
 
 		const handler = handlers.get("list_tasks_by_mission");
 		expect(
@@ -161,7 +162,7 @@ describe("list_tasks_by_mission MCP→convex.query boundary (v2.3.5)", () => {
 	it("passes limit=undefined when caller omits it (auto-clamp trigger path)", async () => {
 		const { server, handlers } = buildFakeServer();
 		const convex = buildMockConvex();
-		registerTools(server, convex);
+		registerTools(server, convex, LOCAL_STDIO_TRUST_CTX);
 
 		const handler = handlers.get("list_tasks_by_mission");
 		await handler?.({
@@ -185,7 +186,7 @@ describe("list_missions MCP→convex.query boundary (v2.3.5)", () => {
 	it("forwards updatedSince=1779800000000 to missions:list and does not include createdBy", async () => {
 		const { server, handlers } = buildFakeServer();
 		const convex = buildMockConvex();
-		registerTools(server, convex);
+		registerTools(server, convex, LOCAL_STDIO_TRUST_CTX);
 
 		const handler = handlers.get("list_missions");
 		expect(handler, "list_missions handler must be registered").toBeDefined();
@@ -206,7 +207,7 @@ describe("list_missions MCP→convex.query boundary (v2.3.5)", () => {
 	it("passes limit=undefined when caller omits it (auto-clamp trigger path)", async () => {
 		const { server, handlers } = buildFakeServer();
 		const convex = buildMockConvex();
-		registerTools(server, convex);
+		registerTools(server, convex, LOCAL_STDIO_TRUST_CTX);
 
 		const handler = handlers.get("list_missions");
 		await handler?.({ fields: "full" });
@@ -227,7 +228,7 @@ describe("list_briefing_notes MCP→convex.query boundary (v2.3.5)", () => {
 	it("forwards updatedSince=1779800000000 to briefingNotes:list", async () => {
 		const { server, handlers } = buildFakeServer();
 		const convex = buildMockConvex();
-		registerTools(server, convex);
+		registerTools(server, convex, LOCAL_STDIO_TRUST_CTX);
 
 		const handler = handlers.get("list_briefing_notes");
 		expect(
@@ -249,7 +250,7 @@ describe("list_briefing_notes MCP→convex.query boundary (v2.3.5)", () => {
 	it("passes limit=undefined when caller omits it (auto-clamp trigger path)", async () => {
 		const { server, handlers } = buildFakeServer();
 		const convex = buildMockConvex();
-		registerTools(server, convex);
+		registerTools(server, convex, LOCAL_STDIO_TRUST_CTX);
 
 		const handler = handlers.get("list_briefing_notes");
 		await handler?.({ fields: "full" });

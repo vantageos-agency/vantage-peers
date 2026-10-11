@@ -1,8 +1,9 @@
 import { v, ConvexError } from "convex/values";
-import { mutation, query } from "./_generated/server";
+import type { Doc } from "./_generated/dataModel";
+import { mutation, query, type QueryCtx } from "./_generated/server";
 import { internal } from "./_generated/api";
 import { creatorValidator, severityValidator, relationTypeValidator } from "./schema";
-import { withOrgScope } from "./lib/auth";
+import { tenantNamespaceBounds, withOrgScope } from "./lib/auth";
 import { isNamespaceAllowedForScope } from "./memories";
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -187,6 +188,51 @@ export const listEpisodes = query({
   },
 });
 
+// An org member's episodes, read from the index ranges of its OWN namespaces
+// only: the exact `team/<org>` namespace, then each distinct sub-namespace under
+// `team/<org>/`, found by skipping forward through `by_namespace` (the bounds
+// come from `tenantNamespaceBounds`, the same rule as
+// `isNamespaceAllowedForScope`). Each namespace is then read with an equality
+// prefix on (namespace, type, isLatest). A tenant holding more distinct
+// namespaces than TENANT_NAMESPACE_WALK_CAP is refused loudly rather than
+// answered with a silently incomplete list.
+const TENANT_NAMESPACE_WALK_CAP = 500;
+
+async function readTenantEpisodes(
+  ctx: QueryCtx,
+  orgSlug: string | null,
+): Promise<Doc<"memories">[]> {
+  const bounds = tenantNamespaceBounds(orgSlug);
+  if (bounds === null) return [];
+  const readNamespace = async (namespace: string) =>
+    await ctx.db
+      .query("memories")
+      .withIndex("by_namespace_type", (q) =>
+        q.eq("namespace", namespace).eq("type", "episode").eq("isLatest", true),
+      )
+      .collect();
+  const rows = await readNamespace(bounds.exact);
+  let from = bounds.from;
+  for (let step = 0; ; step++) {
+    if (step >= TENANT_NAMESPACE_WALK_CAP) {
+      throw new ConvexError(
+        `episodes.getCriticalInsights: SCAN_CAP_EXCEEDED — your organisation holds more than ${TENANT_NAMESPACE_WALK_CAP} distinct namespaces, so the list cannot be assembled completely. The result would be incomplete and indistinguishable from a full match.`,
+      );
+    }
+    const next = await ctx.db
+      .query("memories")
+      .withIndex("by_namespace", (q) =>
+        q.gte("namespace", from).lt("namespace", bounds.to),
+      )
+      .first();
+    if (next === null) break;
+    rows.push(...(await readNamespace(next.namespace)));
+    // The smallest string strictly greater than `next.namespace`.
+    from = `${next.namespace}\u0000`;
+  }
+  return rows.sort((a, b) => b._creationTime - a._creationTime);
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // getCriticalInsights — returns all critical-severity episodes across namespaces
 // Used for cross-orchestrator learning: Pi/Tau/Phi share critical lessons.
@@ -224,13 +270,22 @@ export const getCriticalInsights = query({
 
     const limit = args.limit ?? 30;
 
-    const episodes = await ctx.db
-      .query("memories")
-      .withIndex("by_type", (q) =>
-        q.eq("type", "episode").eq("isLatest", true),
-      )
-      .order("desc")
-      .collect();
+    // The tenant predicate is applied INSIDE the read (R-11), never as a filter
+    // after an unscoped one. Master reads the type index (every tenant is its
+    // business); an org member reads only the index ranges of its OWN
+    // namespaces, so a foreign episode is never read at all.
+    let episodes: Doc<"memories">[];
+    if (scope.isMaster) {
+      episodes = await ctx.db
+        .query("memories")
+        .withIndex("by_type", (q) =>
+          q.eq("type", "episode").eq("isLatest", true),
+        )
+        .order("desc")
+        .collect();
+    } else {
+      episodes = await readTenantEpisodes(ctx, scope.orgSlug);
+    }
 
     return episodes
       .filter(

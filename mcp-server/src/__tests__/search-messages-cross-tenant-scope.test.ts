@@ -81,6 +81,8 @@ const CALLER_A: OAuthContext = {
 	namespaceWritePrefixes: ["team/org-fixture-alpha"],
 	expiresAt: Date.now() + 3600_000,
 	isMaster: false,
+	// The org this bearer was verified for: the Convex read runs under it.
+	clerkOrgSlug: "org-fixture-alpha",
 };
 
 const MSG_B_MARKER = "CANARY-BETA-msg-fx77c1";

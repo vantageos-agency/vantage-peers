@@ -1,6 +1,11 @@
 import { ConvexError, v } from "convex/values";
 import type { MutationCtx, QueryCtx } from "../_generated/server";
-import { lookupOrgMapping, type OrgScope, withOrgScope } from "./auth";
+import {
+	lookupOrgMapping,
+	type OrgMappingView,
+	type OrgScope,
+	withOrgScope,
+} from "./auth";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // verifiedOrg — the organisation the MCP transport VERIFIED for a caller it
@@ -39,18 +44,18 @@ function refuse(reason: string, door: string, detail: string): never {
 }
 
 /**
- * Returns undefined when no `verifiedOrg` is carried (the caller's own scope
- * stands, byte-unchanged). Otherwise the resolved org slug, or throws
- * RBAC_DENIED. Checks, in order:
+ * The org mapping a `verifiedOrg` claim names, or undefined when no claim is
+ * carried (the caller's own scope stands, byte-unchanged). Otherwise the
+ * ACTIVE mapping row, or throws RBAC_DENIED. Checks, in order:
  *   1. trusted from the service account only   (verified-org-not-trusted)
  *   2. the org is mapped and active            (org-not-active)
  */
-export async function resolveVerifiedOrg(
+async function resolveVerifiedOrgMapping(
 	ctx: QueryCtx | MutationCtx,
 	transportScope: OrgScope,
 	proof: VerifiedOrg | undefined,
 	door: string,
-): Promise<string | undefined> {
+): Promise<OrgMappingView | undefined> {
 	if (proof === undefined) return undefined;
 	if (
 		!(
@@ -72,7 +77,71 @@ export async function resolveVerifiedOrg(
 			`verifiedOrg names no active organisation "${proof.orgSlug}"`,
 		);
 	}
-	return proof.orgSlug;
+	return mapping;
+}
+
+/**
+ * Returns undefined when no `verifiedOrg` is carried (the caller's own scope
+ * stands, byte-unchanged). Otherwise the resolved org slug, or throws
+ * RBAC_DENIED. Checks, in order:
+ *   1. trusted from the service account only   (verified-org-not-trusted)
+ *   2. the org is mapped and active            (org-not-active)
+ */
+export async function resolveVerifiedOrg(
+	ctx: QueryCtx | MutationCtx,
+	transportScope: OrgScope,
+	proof: VerifiedOrg | undefined,
+	door: string,
+): Promise<string | undefined> {
+	const mapping = await resolveVerifiedOrgMapping(
+		ctx,
+		transportScope,
+		proof,
+		door,
+	);
+	return mapping === undefined ? undefined : proof?.orgSlug;
+}
+
+/**
+ * The READ-side entry: the scope a READ door runs under.
+ *
+ * WHY. A bearer that is not the fleet master reaches Convex as the fleet
+ * service account, so `withOrgScope` resolves MASTER with no organisation and
+ * every read would be served unscoped, leaving the MCP layer to drop foreign
+ * rows after the fact (the filter-after-read shape R-11 forbids: the foreign
+ * rows have already been read and the page already counted). When the
+ * transport carries the bearer's `verifiedOrg`, the door runs under the
+ * ORDINARY MEMBER scope of that organisation instead, shaped exactly like the
+ * one `withOrgScope` returns for a dashboard member (and `resolveVerifiedPerson`
+ * returns for a person): non-master, org slug and org ID from the mapping,
+ * roster and scopes from the same ACTIVE row. The door then runs its existing
+ * member path, whose index range is keyed on the tenant, so a foreign row is
+ * never read.
+ *
+ * It decides nothing new: the claim is believed from the service account only
+ * (same rule as `resolveVerifiedOrg`), and the scope it yields is built by
+ * `withOrgScope` itself (`actForOrgMapping`), never wider than the one the
+ * mapping grants.
+ *
+ * With no claim the transport scope is returned unchanged.
+ */
+export async function resolveVerifiedOrgScope(
+	ctx: QueryCtx | MutationCtx,
+	transportScope: OrgScope,
+	proof: VerifiedOrg | undefined,
+	door: string,
+): Promise<OrgScope> {
+	const mapping = await resolveVerifiedOrgMapping(
+		ctx,
+		transportScope,
+		proof,
+		door,
+	);
+	if (mapping === undefined) return transportScope;
+	return await withOrgScope(ctx, {
+		refuseWithoutThrow: true,
+		actForOrgMapping: mapping,
+	});
 }
 
 /**

@@ -1836,6 +1836,24 @@ function loadCoreToolNames(): string[] {
 }
 
 /**
+ * The roster claim a fleet-internal door takes (`fixPatterns:get`).
+ * allow-local-identity: forwards the bearer's already-verified roster to the Convex door as a narrowing claim; this function decides nothing from it
+ *
+ * `fixPatterns` has no tenant column, so there is no org to send. A bearer that
+ * is not the master forwards the roster of its verified oauthContext (an absent
+ * context forwards an EMPTY roster, which names nothing); the door answers
+ * `null` for a row that roster does not name, before it reads any dependent
+ * row. The master forwards nothing and reads unchanged. The claim only ever
+ * narrows what the master-only door admits.
+ */
+function rosterClaimArgs(ctx: OAuthContext | undefined): {
+	callerIdentities?: string[];
+} {
+	if (ctx !== undefined && isMasterScope(ctx)) return {};
+	return { callerIdentities: ctx?.fromAllowList ?? [] };
+}
+
+/**
  * Day 165 fix (task k175ga65p654z200ydj7s8qv5s8cnxfc) — briefingNotes
  * defense-in-depth participant check.
  *
@@ -2767,8 +2785,14 @@ export function registerTools(
 		},
 		async ({ episodeId }) => {
 			try {
+				// Tenant applied INSIDE the Convex read (`verifiedOrg`): a memory
+				// outside the caller's namespaces is answered null by the door and
+				// never reaches this process.
+				const orgDenied = unresolvedOrgDenial("get_episode");
+				if (orgDenied !== null) return orgDenied;
 				const memory = await convex.query("memories:getMemory" as any, {
 					memoryId: episodeId,
+					...verifiedOrgArgs(),
 				});
 				const filtered = scopeFilterGet(oauthCtx ?? DENIED_SCOPE_CTX, memory);
 				if (filtered === null) {
@@ -4174,16 +4198,26 @@ export function registerTools(
 				const effectiveLimit =
 					limit === undefined ? undefined : clampLimit(limit);
 
+				// The caller's tenant is applied INSIDE the Convex read: a bearer
+				// that is not the master forwards its verified org (`verifiedOrg`),
+				// and the door reads only that org's index range. A bearer whose org
+				// cannot be resolved is refused here, before any read.
+				const orgDenied = unresolvedOrgDenial("list_messages");
+				if (orgDenied !== null) return orgDenied;
+
 				// S3.1.B Wave B — scope-aware filter replaces guardMasterOnly.
 				// Master + legacy bearer pass through unchanged. Non-master clients
 				// see only messages whose createdBy ∈ fromAllowList OR whose namespace
-				// matches one of namespaceReadPrefixes (exact or '/' boundary).
+				// matches one of namespaceReadPrefixes (exact or '/' boundary) — a
+				// narrowing intersect on top of the tenant-scoped read, never the
+				// tenant boundary itself.
 				const messages = await convex.query("messages:listMessages" as any, {
 					sessionDay,
 					from,
 					limit: effectiveLimit ?? 20,
 					fields: fields ?? "lite",
 					createdBefore,
+					...verifiedOrgArgs(),
 				});
 
 				// k1780azk7n8fdb7bpnx5n91sx18b5vjf — refus-total fix. Message rows
@@ -4203,16 +4237,18 @@ export function registerTools(
 					),
 				).map(({ createdBy: _createdBy, ...rest }) => rest);
 
-				// S3.3 B8 follow-up — emit nextCursor when page is full.
+				// S3.3 B8 follow-up — emit nextCursor when the SCOPED READ's page is
+				// full. Derived from the page Convex returned for this caller's
+				// tenant, never from what survives the narrowing filter above: a
+				// full page whose rows the roster filter then dropped is still a
+				// page with more behind it.
 				const requestedLimit = effectiveLimit ?? 20;
+				const messagesPage = Array.isArray(messages)
+					? (messages as Array<{ _creationTime?: number }>)
+					: [];
 				let nextCursor: string | null = null;
-				if (
-					filteredMessages.length >= requestedLimit &&
-					filteredMessages.length > 0
-				) {
-					const last = filteredMessages[filteredMessages.length - 1] as {
-						_creationTime?: number;
-					};
+				if (messagesPage.length >= requestedLimit && messagesPage.length > 0) {
+					const last = messagesPage[messagesPage.length - 1];
 					if (typeof last._creationTime === "number") {
 						nextCursor = encodeCursor({ createdBefore: last._creationTime });
 					}
@@ -4304,6 +4340,9 @@ export function registerTools(
 		},
 		async ({ query, from, channel, sessionDay, tenantId, limit, fields }) => {
 			try {
+				// Tenant applied INSIDE the Convex read (`verifiedOrg`), see list_messages.
+				const orgDenied = unresolvedOrgDenial("search_messages_by_keyword");
+				if (orgDenied !== null) return orgDenied;
 				const results = await convex.query(
 					"messages:searchMessagesByKeyword" as any,
 					{
@@ -4314,6 +4353,7 @@ export function registerTools(
 						tenantId,
 						limit: limit ?? 20,
 						fields: fields ?? "lite",
+						...verifiedOrgArgs(),
 					},
 				);
 				// k175j2jems5deccegp4p0fy4x98b4ypn — cross-tenant content leak fix.
@@ -4409,6 +4449,11 @@ export function registerTools(
 		},
 		async ({ messageId, limit, fields }) => {
 			try {
+				// Tenant applied INSIDE the Convex read (`verifiedOrg`): the door
+				// refuses a message outside the caller's org before any receipt row
+				// is read. See list_messages.
+				const orgDenied = unresolvedOrgDenial("list_broadcast_status");
+				if (orgDenied !== null) return orgDenied;
 				// S3.1.C1 — scope-aware filter replaces guardMasterOnly.
 				const status = await convex.query(
 					"messages:listBroadcastStatus" as any,
@@ -4416,6 +4461,7 @@ export function registerTools(
 						messageId,
 						limit: limit ?? 20,
 						fields: fields ?? "lite",
+						...verifiedOrgArgs(),
 					},
 				);
 
@@ -4652,6 +4698,12 @@ export function registerTools(
 				// caller asked for lite (default) or didn't specify — the public
 				// contract is unchanged.
 				const wantsFull = fields === "full";
+				// Tenant applied INSIDE the Convex read (`verifiedOrg`): the door
+				// reads the caller's org-keyed index ranges only, so a foreign org's
+				// task is never read, counted into the page or paged past. A bearer
+				// whose org cannot be resolved is refused here, before any read.
+				const orgDenied = unresolvedOrgDenial("list_tasks");
+				if (orgDenied !== null) return orgDenied;
 				const rawTasks = await convex.query("tasks:list" as any, {
 					assignedTo,
 					assignedToInstance,
@@ -4663,6 +4715,7 @@ export function registerTools(
 					updatedSince,
 					createdBefore,
 					excludeAutoGenerated,
+					...verifiedOrgArgs(),
 				});
 				// `assignedTo` is a per-row grant (convex/tasks.ts L197-208 ORs
 				// createdBy===caller || assignedTo===caller), so a non-creator
@@ -4691,15 +4744,19 @@ export function registerTools(
 							...(t.missionId !== undefined ? { missionId: t.missionId } : {}),
 						}));
 
-				// Build nextCursor from the last row's _creationTime when the
-				// page is full (heuristic — caller can keep paging until empty).
+				// Build nextCursor from the SCOPED READ's page: the last row Convex
+				// returned for this caller's tenant, when that page is full (heuristic
+				// — caller can keep paging until empty). Never from what survives the
+				// narrowing filters above: a full page whose rows the roster filter
+				// then dropped still has more behind it.
 				const requestedLimit = effectiveLimit ?? 20;
 				const tasksArr = Array.isArray(tasks) ? tasks : [];
+				const tasksPage = Array.isArray(rawTasks)
+					? (rawTasks as Array<{ _creationTime?: number }>)
+					: [];
 				let nextCursor: string | null = null;
-				if (tasksArr.length >= requestedLimit && tasksArr.length > 0) {
-					const last = tasksArr[tasksArr.length - 1] as {
-						_creationTime?: number;
-					};
+				if (tasksPage.length >= requestedLimit && tasksPage.length > 0) {
+					const last = tasksPage[tasksPage.length - 1];
 					if (typeof last._creationTime === "number") {
 						nextCursor = encodeCursor({ createdBefore: last._creationTime });
 					}
@@ -4936,6 +4993,11 @@ export function registerTools(
 				// lite mode, etc.), for a benefit that is purely internal to
 				// this one MCP-layer filter step.
 				const wantsFull = fields === "full";
+				// Tenant applied INSIDE the Convex read (`verifiedOrg`): the search
+				// index is queried with the caller's org as an equality filter. See
+				// list_tasks.
+				const orgDenied = unresolvedOrgDenial("search_tasks_by_keyword");
+				if (orgDenied !== null) return orgDenied;
 				const results = await convex.query(
 					"tasks:searchTasksByKeyword" as any,
 					{
@@ -4946,6 +5008,7 @@ export function registerTools(
 						missionId,
 						limit: limit ?? 20,
 						fields: "full",
+						...verifiedOrgArgs(),
 					},
 				);
 				// k174y9ra7pp8zed3bcczk6xaed8cpynp — mirror get_task/list_tasks:
@@ -7005,6 +7068,11 @@ export function registerTools(
 				const callerIdentities = master
 					? undefined
 					: (oauthCtx?.fromAllowList ?? []);
+				// Tenant applied INSIDE the Convex read (`verifiedOrg`): the door reads
+				// the caller's org-keyed index range only. A bearer whose org cannot
+				// be resolved is refused here, before any read.
+				const orgDenied = unresolvedOrgDenial("list_briefing_notes");
+				if (orgDenied !== null) return orgDenied;
 				const notes = await convex.query("briefingNotes:list" as any, {
 					topic,
 					limit: effectiveLimit ?? 20,
@@ -7013,6 +7081,7 @@ export function registerTools(
 					createdBefore,
 					master,
 					callerIdentities,
+					...verifiedOrgArgs(),
 				});
 
 				// scopeFilterList only discriminates on createdBy/namespace — it
@@ -7036,14 +7105,14 @@ export function registerTools(
 						passesBriefingNoteParticipantScope(oauthCtx, n as any),
 				);
 
-				// S3.3 B8 — emit nextCursor when page is full (more likely follows).
+				// S3.3 B8 — emit nextCursor when the SCOPED READ's page is full (more
+				// likely follows). Derived from the page Convex returned for this
+				// caller's tenant (`rawNotes`), never from what survives the
+				// narrowing filter above.
 				const requestedLimit = effectiveLimit ?? 20;
 				let nextCursor: string | null = null;
-				if (
-					filteredNotes.length >= requestedLimit &&
-					filteredNotes.length > 0
-				) {
-					const last = filteredNotes[filteredNotes.length - 1] as {
+				if (rawNotes.length >= requestedLimit && rawNotes.length > 0) {
+					const last = rawNotes[rawNotes.length - 1] as {
 						_creationTime?: number;
 					};
 					if (typeof last._creationTime === "number") {
@@ -7150,6 +7219,10 @@ export function registerTools(
 				const callerIdentities = master
 					? undefined
 					: (oauthCtx?.fromAllowList ?? []);
+				// Tenant applied INSIDE the Convex read (`verifiedOrg`): the search
+				// index is queried with the caller's org as an equality filter.
+				const orgDenied = unresolvedOrgDenial("search_briefing_notes_by_keyword");
+				if (orgDenied !== null) return orgDenied;
 				const results = await convex.query(
 					"briefingNotes:searchBriefingNotesByKeyword" as any,
 					{
@@ -7160,6 +7233,7 @@ export function registerTools(
 						fields: fields ?? "lite",
 						master,
 						callerIdentities,
+						...verifiedOrgArgs(),
 					},
 				);
 				// Day 141 fix (k17fyh3bqyh8ne1zd48sdee5958b2kk4): this query was
@@ -8375,6 +8449,12 @@ export function registerTools(
 				}
 				const effectiveLimit = limit === undefined ? 20 : clampLimit(limit);
 
+				// Scope applied INSIDE the Convex read (`verifiedOrg`): the door reads
+				// only the index ranges of the orchestrators on the caller's org
+				// roster, so a foreign unit never occupies a slot of the page. A
+				// bearer whose org cannot be resolved is refused here, before any read.
+				const orgDenied = unresolvedOrgDenial("list_bus");
+				if (orgDenied !== null) return orgDenied;
 				// S3.1.C2 — scope-aware filter replaces guardMasterOnly.
 				// Convex query now returns { items, nextCursor } envelope (PR-A).
 				const envelope = await convex.query("businessUnits:list" as any, {
@@ -8383,6 +8463,7 @@ export function registerTools(
 					limit: effectiveLimit,
 					fields: fields ?? "full",
 					createdBefore,
+					...verifiedOrgArgs(),
 				});
 				const rawItems = (
 					envelope && typeof envelope === "object" && "items" in envelope
@@ -8414,20 +8495,11 @@ export function registerTools(
 					})),
 				).map(({ createdBy: _createdBy, ...rest }) => rest);
 
-				// Re-compute nextCursor from filtered set (scope filter may shrink page)
-				let nextCursor: string | null = backendNextCursor;
-				if (filteredBus.length < rawItems.length && filteredBus.length > 0) {
-					// Scope filter dropped rows — recompute from last surviving row
-					const last = filteredBus[filteredBus.length - 1] as {
-						_creationTime?: number;
-					};
-					if (typeof last._creationTime === "number") {
-						nextCursor = encodeCursor({ createdBefore: last._creationTime });
-					}
-				}
-				if (filteredBus.length === 0) {
-					nextCursor = null;
-				}
+				// nextCursor is the SCOPED READ's own cursor (the door computed it over
+				// the caller's roster ranges). It is NOT recomputed from the rows the
+				// narrowing filter kept: a page the filter shrank, or emptied, still
+				// has more behind it, and saying "exhausted" there hides real rows.
+				const nextCursor: string | null = backendNextCursor;
 
 				const busWithCursor = { items: filteredBus, nextCursor };
 
@@ -8655,11 +8727,17 @@ export function registerTools(
 
 				// S3.1.C2 — scope-aware filter replaces guardMasterOnly.
 				// Convex query now returns { items, nextCursor } envelope (PR-C).
+				// Tenant applied INSIDE the Convex read (`verifiedOrg`): the door reads
+				// the caller's `by_org` index range only. A bearer whose org cannot be
+				// resolved is refused here, before any read.
+				const orgDenied = unresolvedOrgDenial("list_repo_mappings");
+				if (orgDenied !== null) return orgDenied;
 				const envelope = await convex.query("githubRepoMapping:list" as any, {
 					limit: effectiveLimit,
 					fields: fields ?? "full",
 					cursor: convexCursor,
 					createdBefore,
+					...verifiedOrgArgs(),
 				});
 				const rawItems = (
 					envelope && typeof envelope === "object" && "items" in envelope
@@ -8689,22 +8767,11 @@ export function registerTools(
 					})),
 				).map(({ createdBy: _createdBy, ...rest }) => rest);
 
-				// Re-compute nextCursor from filtered set (scope filter may shrink page)
-				let nextCursor: string | null = backendNextCursor;
-				if (
-					filteredMappings.length < rawItems.length &&
-					filteredMappings.length > 0
-				) {
-					const last = filteredMappings[filteredMappings.length - 1] as {
-						_creationTime?: number;
-					};
-					if (typeof last._creationTime === "number") {
-						nextCursor = encodeCursor({ createdBefore: last._creationTime });
-					}
-				}
-				if (filteredMappings.length === 0) {
-					nextCursor = null;
-				}
+				// nextCursor is the SCOPED READ's own cursor (the door computed it over
+				// the caller's tenant range). It is NOT recomputed from the rows the
+				// narrowing filter kept: a page the filter shrank, or emptied, still
+				// has more behind it, and saying "exhausted" there hides real rows.
+				const nextCursor: string | null = backendNextCursor;
 
 				const mappingsWithCursor = { items: filteredMappings, nextCursor };
 
@@ -10649,7 +10716,14 @@ export function registerTools(
 		},
 		async ({ patternId }) => {
 			try {
-				const row = await convex.query("fixPatterns:get" as any, { patternId });
+				// The creator gate is applied INSIDE the Convex read: a non-master
+				// bearer forwards its verified roster (`callerIdentities`) and the door
+				// answers null for a pattern that roster does not name, before its
+				// attempts are read. Master forwards none.
+				const row = await convex.query("fixPatterns:get" as any, {
+					patternId,
+					...rosterClaimArgs(oauthCtx),
+				});
 				const filtered = scopeFilterGet(oauthCtx ?? DENIED_SCOPE_CTX, row);
 				if (filtered === null) {
 					return mcpError(`Fix pattern not found: ${patternId}`);
@@ -10828,8 +10902,13 @@ export function registerTools(
 		},
 		async ({ messageId }) => {
 			try {
+				// Tenant applied INSIDE the Convex read (`verifiedOrg`): a message of
+				// another org is refused at the door and never reaches this process.
+				const orgDenied = unresolvedOrgDenial("get_message");
+				if (orgDenied !== null) return orgDenied;
 				const row = await convex.query("messages:getById" as any, {
 					messageId,
+					...verifiedOrgArgs(),
 				});
 				// Class-sweep fix (mission vp-multitenant-zero-hole-v1, final 8):
 				// message rows (schema.ts:148) carry `from` (creatorValidator), NOT

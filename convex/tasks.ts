@@ -42,6 +42,7 @@ import {
 	assertRowInVerifiedOrg,
 	resolveDoorVerifiedOrg,
 	resolveVerifiedOrg,
+	resolveVerifiedOrgScope,
 	verifiedOrgValidator,
 } from "./lib/verifiedOrg";
 import type { VerifiedOrg } from "./lib/verifiedOrg";
@@ -1639,7 +1640,14 @@ async function runTasksList(ctx: QueryCtx, args: TasksListArgs, scope: OrgScope)
 }
 
 export const list = query({
-	args: tasksListArgsValidator,
+	args: {
+		...tasksListArgsValidator,
+		// The organisation the MCP transport VERIFIED for a bearer that reaches
+		// Convex as the fleet service account. Believed from the service account
+		// only; the read then runs under that org's member scope, so the org-keyed
+		// index ranges of `runTasksList` ARE the read (convex/lib/verifiedOrg.ts).
+		verifiedOrg: v.optional(verifiedOrgValidator),
+	},
 	// Returns: array of full task docs OR array of lite projections.
 	// Validator omitted because v.union of full+lite produces overly-strict
 	// inferred types that conflict with Doc<"tasks"> field optionality.
@@ -1652,9 +1660,16 @@ export const list = query({
 		// narrows the signed-in-no-org branch to a typed-empty result (the
 		// pre-existing requireScope inside runTasksList would otherwise throw
 		// for that same caller).
-		const scope = await withOrgScope(ctx, { refuseWithoutThrow: true });
-		if (scope.refused) return [];
-		return await runTasksList(ctx, args, scope);
+		const transportScope = await withOrgScope(ctx, { refuseWithoutThrow: true });
+		if (transportScope.refused) return [];
+		const { verifiedOrg, ...listArgs } = args;
+		const scope = await resolveVerifiedOrgScope(
+			ctx,
+			transportScope,
+			verifiedOrg,
+			"tasks:list",
+		);
+		return await runTasksList(ctx, listArgs, scope);
 	},
 });
 
@@ -2521,10 +2536,28 @@ export const listUnlinkedBlocked = query({
 		requireResolvedCaller(scope, "tasks:listUnlinkedBlocked", {
 			alsoRefusePreOrg: true,
 		});
-		const blocked = await ctx.db
-			.query("tasks")
-			.withIndex("by_status", (q) => q.eq("status", "blocked"))
-			.collect();
+		// R-11: the tenant predicate is inside the read. Master reads the fleet's
+		// blocked tasks (`by_status`); an org member reads only the index range of
+		// its OWN org (`by_orgId_status_clerk_id`, keyed on the org's permanent ID
+		// — the key `sameOrg` compares), so a foreign org's blocked task is never
+		// read. A member whose org has no ID yet (expand phase) matches no row
+		// under `sameOrg`, so it reads none. `filterByOrgScope` below stays as the
+		// roster intersect (the tenant gate it also applies removes nothing here).
+		let blocked: Doc<"tasks">[] = [];
+		const orgClerkId = scope.orgClerkId;
+		if (scope.isMaster) {
+			blocked = await ctx.db
+				.query("tasks")
+				.withIndex("by_status", (q) => q.eq("status", "blocked"))
+				.collect();
+		} else if (orgClerkId !== undefined) {
+			blocked = await ctx.db
+				.query("tasks")
+				.withIndex("by_orgId_status_clerk_id", (q) =>
+					q.eq("clerkOrgId", orgClerkId).eq("status", "blocked"),
+				)
+				.collect();
+		}
 		return filterByOrgScope(blocked, scope)
 			.filter((t) => t.blockedOnTaskId === undefined && t.blockedOnNobodyReason === undefined)
 			.map((t) => ({
@@ -5263,13 +5296,21 @@ export const searchTasksByKeyword = query({
 		missionId: v.optional(v.id("missions")),
 		limit: v.optional(v.number()),
 		fields: v.optional(v.union(v.literal("lite"), v.literal("full"))),
+		// Transport-verified org of a service-account bearer (see `list`).
+		verifiedOrg: v.optional(verifiedOrgValidator),
 	},
 	handler: async (ctx, args) => {
 		// R-50: reactively-subscribed public query — refuseWithoutThrow
 		// narrows the signed-in-no-org branch to a typed-empty result instead
 		// of a throw.
-		const scope = await withOrgScope(ctx, { refuseWithoutThrow: true });
-		if (scope.refused) return [];
+		const transportScope = await withOrgScope(ctx, { refuseWithoutThrow: true });
+		if (transportScope.refused) return [];
+		const scope = await resolveVerifiedOrgScope(
+			ctx,
+			transportScope,
+			args.verifiedOrg,
+			"tasks:searchTasksByKeyword",
+		);
 		requireScope(scope, "view-own-tasks");
 
 		const limit = Math.min(Math.max(args.limit ?? 20, 1), 200);

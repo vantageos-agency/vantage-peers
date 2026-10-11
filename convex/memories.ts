@@ -26,6 +26,10 @@ const TTL_EXPIRY_SCAN_CAP = 500;
 // cycle). Re-exported here so existing importers keep working.
 export { isNamespaceAllowedForScope } from "./lib/auth";
 import { isNamespaceAllowedForScope } from "./lib/auth";
+import {
+  resolveVerifiedOrgScope,
+  verifiedOrgValidator,
+} from "./lib/verifiedOrg";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // storeMemory
@@ -158,7 +162,15 @@ export const storeMemory = mutation({
 // ─────────────────────────────────────────────────────────────────────────────
 
 export const getMemory = query({
-  args: { memoryId: v.string() },
+  args: {
+    memoryId: v.string(),
+    // The organisation the MCP transport VERIFIED for a bearer that reaches
+    // Convex as the fleet service account. Believed from the service account
+    // only; the namespace gate below then runs under that org's member scope,
+    // so a foreign memory is never returned to the MCP process
+    // (convex/lib/verifiedOrg.ts).
+    verifiedOrg: v.optional(verifiedOrgValidator),
+  },
   returns: v.union(
     v.object({
       _id: v.id("memories"),
@@ -206,7 +218,13 @@ export const getMemory = query({
     // R-50: reactively-subscribed public query — refuseWithoutThrow narrows
     // the signed-in-no-org branch to a typed refused scope; isNamespaceAllowedForScope
     // already renders that as "not allowed" -> null, never a throw.
-    const scope = await withOrgScope(ctx, { refuseWithoutThrow: true });
+    const transportScope = await withOrgScope(ctx, { refuseWithoutThrow: true });
+    const scope = await resolveVerifiedOrgScope(
+      ctx,
+      transportScope,
+      args.verifiedOrg,
+      "memories:getMemory",
+    );
     if (!isNamespaceAllowedForScope(scope, doc.namespace)) return null;
     return doc;
   },

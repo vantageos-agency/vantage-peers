@@ -11,6 +11,10 @@ import {
 import { isFleetSystemCaller } from "./lib/systemCaller";
 import { fleetOperatorRef } from "./lib/operatorOrg";
 import { orgRefOfRow, orgRefOfScope } from "./lib/authOrgMapping";
+import {
+	resolveVerifiedOrgScope,
+	verifiedOrgValidator,
+} from "./lib/verifiedOrg";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Org-scope orchestrator enforcement (same defect class as convex/diary.ts's
@@ -438,6 +442,11 @@ export const list = query({
 		cursor: v.optional(v.string()),
 		// back-compat: keep createdBefore accepted; cursor takes precedence when both passed
 		createdBefore: v.optional(v.number()),
+		// The organisation the MCP transport VERIFIED for a bearer that reaches
+		// Convex as the fleet service account. Believed from the service account
+		// only; the read then runs under that org's member scope, so the roster's
+		// index ranges below ARE the read (convex/lib/verifiedOrg.ts).
+		verifiedOrg: v.optional(verifiedOrgValidator),
 	},
 	returns: v.object({
 		items: v.union(v.array(buObject), v.array(liteValidator)),
@@ -494,8 +503,14 @@ export const list = query({
 		// signed-in-but-not-yet-onboarded caller (`scope.refused`) keeps its R-50
 		// typed-empty result untouched — `alsoRefusePreOrg` is NOT passed. Only the
 		// anonymous pole changes shape.
-		const scope = await withOrgScope(ctx, { refuseWithoutThrow: true });
-		requireResolvedCaller(scope, "businessUnits:list");
+		const transportScope = await withOrgScope(ctx, { refuseWithoutThrow: true });
+		requireResolvedCaller(transportScope, "businessUnits:list");
+		const scope = await resolveVerifiedOrgScope(
+			ctx,
+			transportScope,
+			args.verifiedOrg,
+			"businessUnits:list",
+		);
 
 		const DEFAULT_LIMIT = 20;
 		const CAP = 200;
@@ -523,35 +538,64 @@ export const list = query({
 		const wide = cursorPayload !== undefined || args.createdBefore !== undefined;
 		const fetchLimit = wide ? BUSINESS_UNITS_LIST_SCAN_CAP + 1 : limit + 1;
 
-		let rows: Doc<"businessUnits">[];
-		if (args.orchestratorId !== undefined && args.status === undefined) {
-			rows = await ctx.db
-				.query("businessUnits")
-				.withIndex("by_orchestrator", (q) =>
-					q.eq("orchestratorId", args.orchestratorId!),
-				)
-				.order("desc")
-				.take(fetchLimit);
-		} else if (args.status !== undefined && args.orchestratorId === undefined) {
-			rows = await ctx.db
-				.query("businessUnits")
-				.withIndex("by_status", (q) => q.eq("status", args.status!))
-				.order("desc")
-				.take(fetchLimit);
-		} else if (args.orchestratorId !== undefined && args.status !== undefined) {
-			const all = await ctx.db
-				.query("businessUnits")
-				.withIndex("by_orchestrator", (q) =>
-					q.eq("orchestratorId", args.orchestratorId!),
-				)
-				.order("desc")
-				.collect();
-			rows = all.filter((r) => r.status === args.status).slice(0, fetchLimit);
+		// R-11: the caller's scope is applied INSIDE the read. An org member's
+		// rows are the units led by an orchestrator on its own roster, so it reads
+		// only the index range of each such orchestrator (`by_orchestrator`, or
+		// `by_orchestrator_status` when a status is asked for) and merges them
+		// newest-first: a foreign unit is never read, never occupies a slot of the
+		// fetched window, and so cannot make a full page of the member's own units
+		// look exhausted. The master reads the fleet, as before.
+		const status = args.status;
+		let rows: Doc<"businessUnits">[] = [];
+		if (scope.isMaster && args.orchestratorId === undefined) {
+			// The master without an orchestrator reads the fleet by status, or all.
+			rows =
+				status !== undefined
+					? await ctx.db
+							.query("businessUnits")
+							.withIndex("by_status", (q) => q.eq("status", status))
+							.order("desc")
+							.take(fetchLimit)
+					: await ctx.db
+							.query("businessUnits")
+							.order("desc")
+							.take(fetchLimit);
 		} else {
-			rows = await ctx.db
-				.query("businessUnits")
-				.order("desc")
-				.take(fetchLimit);
+			// One index range per orchestrator: the one asked for (the master), or,
+			// for an org member, each orchestrator on its roster (the asked-for one
+			// only if the roster names it).
+			const requested = args.orchestratorId;
+			let orchestrators: string[] = [];
+			if (requested !== undefined) {
+				if (isOrchestratorAllowedForScope(scope, requested)) {
+					orchestrators = [requested];
+				}
+			} else if (scope.orgSlug !== null) {
+				orchestrators = [...new Set(scope.allowedOrchestrators)];
+			}
+			for (const orchestratorId of orchestrators) {
+				const part =
+					status !== undefined
+						? await ctx.db
+								.query("businessUnits")
+								.withIndex("by_orchestrator_status", (q) =>
+									q.eq("orchestratorId", orchestratorId).eq("status", status),
+								)
+								.order("desc")
+								.take(fetchLimit)
+						: await ctx.db
+								.query("businessUnits")
+								.withIndex("by_orchestrator", (q) =>
+									q.eq("orchestratorId", orchestratorId),
+								)
+								.order("desc")
+								.take(fetchLimit);
+				rows.push(...part);
+			}
+			// Merge the ranges newest-first and keep the fetch window.
+			rows = rows
+				.sort((x, y) => y._creationTime - x._creationTime)
+				.slice(0, fetchLimit);
 		}
 
 		// The roster control, applied per ROW — the same

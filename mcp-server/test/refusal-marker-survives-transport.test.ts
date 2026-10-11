@@ -86,6 +86,8 @@ const MEMBER: OAuthContext = {
 	namespaceWritePrefixes: ["team/org-fixture-alpha"],
 	expiresAt: Date.now() + 3600_000,
 	isMaster: false,
+	// The org this bearer was verified for: the Convex read runs under it.
+	clerkOrgSlug: "org-fixture-alpha",
 };
 
 // What convex/mandates.ts and convex/profiles.ts answer an ordinary member with.

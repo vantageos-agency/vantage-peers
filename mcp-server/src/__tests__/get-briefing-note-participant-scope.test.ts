@@ -84,6 +84,8 @@ const CALLER_PROMETHEUS: OAuthContext = {
 	namespaceWritePrefixes: [],
 	expiresAt: Date.now() + 3600_000,
 	isMaster: false,
+	// The org this bearer was verified for: the Convex read runs under it.
+	clerkOrgSlug: "org-fixture-prometheus",
 };
 
 const NOTE_ID = "note-fixture-shared-001";
