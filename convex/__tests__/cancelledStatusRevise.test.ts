@@ -26,6 +26,7 @@ import schema from "../schema";
 import { seedFleetAgents } from "../../tests/lib/seedFleetAgents";
 
 const FILE_LABELS = ["eta", "sigma"];
+import { seedOperatorOrg } from "../../tests/lib/seedRosterAgents";
 
 const modules = Object.fromEntries(
 	Object.entries(import.meta.glob("../**/*.ts")).filter(
@@ -192,6 +193,7 @@ describe("missions.update — cannot cancel a complete mission", () => {
 		t: ReturnType<typeof createT>,
 		status: "brainstorm" | "plan" | "execute" | "validate" | "complete",
 	) {
+		const ids = await seedOperatorOrg(t, ["sigma"]);
 		return await t.run(async (ctx) => {
 			const now = Date.now();
 			return await ctx.db.insert("missions", {
@@ -202,6 +204,8 @@ describe("missions.update — cannot cancel a complete mission", () => {
 				pilot: "sigma",
 				agents: ["sigma"],
 				createdBy: "sigma",
+				pilotId: ids.sigma,
+				createdById: ids.sigma,
 				createdAt: now,
 				updatedAt: now,
 			});

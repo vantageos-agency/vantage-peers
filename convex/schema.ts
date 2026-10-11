@@ -341,9 +341,23 @@ export default defineSchema({
 		// when no createdBy / callerOrchestrator was supplied; derived from the
 		// verified identity (memberActorOf), never from an argument.
 		lastActedBy: v.optional(v.string()),
+		// ACTOR IDs (module M10e, expand phase). `pilot`, `agents`, `createdBy` and
+		// `cancelledBy` stay the display LABELS; the doors decide on these ID columns,
+		// each an `agents` row `_id` of the mission's own organisation (a person is
+		// "user:<verified subject>", its own stable ID). Optional until
+		// migrations/backfill_mission_actor_ids has filled the rows written before
+		// them; a row without them names nobody.
+		pilotId: v.optional(v.string()),
+		agentIds: v.optional(v.array(v.string())),
+		createdById: v.optional(v.string()),
+		cancelledById: v.optional(v.string()),
 	})
 		.index("by_project", ["project", "status"])
 		.index("by_pilot", ["pilot", "status"])
+		// Reads by pilot ID (missions:list): master through the first, an org member
+		// through the org-leading second so a page is the caller's own rows.
+		.index("by_pilotId_status", ["pilotId", "status"])
+		.index("by_orgId_pilotId_status", ["orgId", "pilotId", "status"])
 		.index("by_status", ["status", "createdAt"])
 		.index("by_priority", ["priority", "status"])
 		.index("by_orgId", ["orgId"])

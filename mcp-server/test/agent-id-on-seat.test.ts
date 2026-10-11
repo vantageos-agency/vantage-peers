@@ -451,6 +451,7 @@ describe("withVerifiedActor", () => {
 			"recurringTasks",
 			"briefingNotes",
 			"profiles",
+			"missions",
 		]) {
 			const src = readFileSync(
 				resolve(__dirname, `../../convex/${file}.ts`),

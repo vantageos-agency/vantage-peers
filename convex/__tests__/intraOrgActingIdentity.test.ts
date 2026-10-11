@@ -31,6 +31,7 @@ import {
 } from "../../tests/lib/seedFleetAgents";
 
 const FILE_LABELS = ["BEA", "bea", "bob", "eta", "pi", "sigma"];
+import { seedRosterAgents } from "../../tests/lib/seedRosterAgents";
 
 const modules = Object.fromEntries(
 	Object.entries(import.meta.glob("../**/*.ts")).filter(
@@ -101,6 +102,15 @@ async function fixture(opts: { agents?: boolean } = {}) {
 	return t;
 }
 
+// The mission doors judge pilot and creator by agents-row ID (module M10e) on the
+// org's ID roster: `seedRosterAgents` reuses the agents `fixture` registered for the
+// task doors (M7) and sets `allowedAgentIds` to them.
+async function missionFixture() {
+	const t = await fixture();
+	await seedRosterAgents(t);
+	return t;
+}
+
 const member = (t: T) =>
 	actingWith(
 		t.withIdentity({ subject: "member-of-org-b", organizationId: "org-b", org_id: testClerkOrgId("org-b"), org_role: "org:editor" } as Identity),
@@ -128,6 +138,7 @@ async function expectDenied(p: Promise<unknown>, door: string, kind: string) {
 }
 
 async function seedMission(t: T, orgId: string | undefined) {
+	const pilotId = orgId === undefined ? null : await findAgentId(t, orgId, "bob");
 	return await t.run((ctx) =>
 		ctx.db.insert("missions", {
 			name: "m",
@@ -137,6 +148,7 @@ async function seedMission(t: T, orgId: string | undefined) {
 			pilot: "bob",
 			agents: [],
 			createdBy: "bob",
+			...(pilotId !== null ? { pilotId, createdById: pilotId } : {}),
 			createdAt: Date.now(),
 			updatedAt: Date.now(),
 			orgId,
@@ -196,7 +208,7 @@ describe("missions:create — createdBy (actor) and pilot (assignee)", () => {
 		createdBy,
 	});
 	test("REFUSED: foreign createdBy", async () => {
-		const t = await fixture();
+		const t = await missionFixture();
 		await expectDenied(
 			member(t).mutation(api.missions.create, args("eta", "bob")),
 			"missions:create",
@@ -204,7 +216,7 @@ describe("missions:create — createdBy (actor) and pilot (assignee)", () => {
 		);
 	});
 	test("REFUSED: foreign pilot", async () => {
-		const t = await fixture();
+		const t = await missionFixture();
 		await expectDenied(
 			member(t).mutation(api.missions.create, args("bob", "eta")),
 			"missions:create",
@@ -213,12 +225,12 @@ describe("missions:create — createdBy (actor) and pilot (assignee)", () => {
 		expect(await t.run((c) => c.db.query("missions").collect())).toHaveLength(0);
 	});
 	test("SERVED: own roster on both", async () => {
-		const t = await fixture();
+		const t = await missionFixture();
 		await member(t).mutation(api.missions.create, args("bob", "bea"));
 		expect(await t.run((c) => c.db.query("missions").collect())).toHaveLength(1);
 	});
 	test("MASTER unchanged", async () => {
-		const t = await fixture();
+		const t = await missionFixture();
 		await master(t).mutation(api.missions.create, args("eta", "pi"));
 		expect(await t.run((c) => c.db.query("missions").collect())).toHaveLength(1);
 	});
@@ -226,7 +238,7 @@ describe("missions:create — createdBy (actor) and pilot (assignee)", () => {
 
 describe("missions:update — pilot reassignment (assignee)", () => {
 	test("REFUSED: member reassigns pilot to 'eta'", async () => {
-		const t = await fixture();
+		const t = await missionFixture();
 		const missionId = await seedMission(t, "org-b");
 		await expectDenied(
 			member(t).mutation(api.missions.update, { missionId, pilot: "eta" }),
@@ -236,14 +248,14 @@ describe("missions:update — pilot reassignment (assignee)", () => {
 		expect((await t.run((c) => c.db.get(missionId)))?.pilot).toBe("bob");
 	});
 	test("SERVED: member reassigns pilot to own-roster 'bea'; a non-pilot update is untouched", async () => {
-		const t = await fixture();
+		const t = await missionFixture();
 		const missionId = await seedMission(t, "org-b");
 		await member(t).mutation(api.missions.update, { missionId, pilot: "bea" });
 		await member(t).mutation(api.missions.update, { missionId, progress: 5 });
 		expect((await t.run((c) => c.db.get(missionId)))?.pilot).toBe("bea");
 	});
 	test("MASTER unchanged: any pilot", async () => {
-		const t = await fixture();
+		const t = await missionFixture();
 		const missionId = await seedMission(t, "org-b");
 		await master(t).mutation(api.missions.update, { missionId, pilot: "eta" });
 		expect((await t.run((c) => c.db.get(missionId)))?.pilot).toBe("eta");

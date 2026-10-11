@@ -162,6 +162,7 @@ describe("missionTemplates — instantiated child tasks inherit the MISSION's te
 		const t = createT();
 		await seedBothOrgs(t);
 		await seedTemplate(t);
+		await seedRosterAgents(t);
 
 		const missionId = await asOrg(t, "org-a").mutation(api.missions.create, {
 			name: "org-a mission",

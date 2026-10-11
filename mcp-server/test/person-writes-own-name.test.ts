@@ -25,6 +25,7 @@ import { Hono } from "hono";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import schema from "../../convex/schema";
 import { testClerkOrgId } from "../../tests/fixtures/testClerkOrgId";
+import { seedRosterAgents } from "../../tests/lib/seedRosterAgents";
 import { app } from "../server-http.js";
 import {
 	_setInternalClientForTest,
@@ -319,6 +320,8 @@ describe("pole 1 — an editor writes as itself: served, actor user:<sub>, own o
 	});
 
 	it("create_mission / update_mission", async () => {
+		// The mission pilot and participants are agents-row IDs (module M10e).
+		await seedRosterAgents(t);
 		const tools = realTools(await contextFor(await personToken("user_editor")));
 		const created = await call(tools, "create_mission", MISSION);
 		expect(created.isError, created.content[0].text).toBeUndefined();

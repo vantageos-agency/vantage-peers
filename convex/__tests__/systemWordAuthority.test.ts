@@ -32,11 +32,11 @@ import { describe, expect, test } from "vitest";
 import { api } from "../_generated/api";
 import schema from "../schema";
 import { seedRosterAgent } from "../../tests/fixtures/rosterAgent";
+import { seedRosterAgents } from "../../tests/lib/seedRosterAgents";
 import { analyse as analyseSystemWord } from "../../tests/lib/systemWordAst";
 import { testClerkOrgId } from "../../tests/fixtures/testClerkOrgId";
 import { findAgentId, seedAgents } from "../../tests/lib/agentIdOf";
 import { seedFleetAgents } from "../../tests/lib/seedFleetAgents";
-import { seedRosterAgents } from "../../tests/lib/seedRosterAgents";
 import type { Id } from "../_generated/dataModel";
 
 const modules = Object.fromEntries(
@@ -95,6 +95,8 @@ async function seedNote(t: T, createdBy: string) {
 }
 
 async function seedMission(t: T, createdBy: string) {
+	// The mission doors judge the creator by agents-row ID (module M10e).
+	const agentId = (await seedRosterAgents(t))[`org-a/${createdBy}`];
 	return await t.run((ctx) =>
 		ctx.db.insert("missions", {
 			name: "seed mission",
@@ -104,6 +106,7 @@ async function seedMission(t: T, createdBy: string) {
 			pilot: createdBy,
 			agents: [createdBy],
 			createdBy,
+			...(agentId !== undefined ? { pilotId: agentId, createdById: agentId } : {}),
 			createdAt: Date.now(),
 			updatedAt: Date.now(),
 			orgId: "org-a",

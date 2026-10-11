@@ -47,6 +47,7 @@ import { testClerkOrgId } from "../../tests/fixtures/testClerkOrgId";
 import { api } from "../_generated/api";
 import type { Id } from "../_generated/dataModel";
 import schema from "../schema";
+import { seedRosterAgents } from "../../tests/lib/seedRosterAgents";
 
 const modules = Object.fromEntries(
 	Object.entries(import.meta.glob("../**/*.ts")).filter(
@@ -379,8 +380,11 @@ const SITES: Site[] = [
 		name: "missions:create",
 		tables: ["missions"],
 		memberReturns: isString,
-		prepare: async () => (c) =>
-			c.mutation(api.missions.create, {
+		prepare: async (t) => {
+			// A mission names its pilot and creator by agents-row ID (module M10e).
+			await seedRosterAgents(t);
+			return (c) =>
+				c.mutation(api.missions.create, {
 				name: "m",
 				project: "p",
 				status: "plan",
@@ -388,7 +392,8 @@ const SITES: Site[] = [
 				pilot: SEAT,
 				agents: [SEAT],
 				createdBy: SEAT,
-			}),
+			});
+		},
 	},
 	{
 		name: "missions:updateStatus",

@@ -25,6 +25,8 @@ import { describe, expect, test } from "vitest";
 import { testClerkOrgId } from "../../tests/fixtures/testClerkOrgId";
 import { api } from "../_generated/api";
 import schema from "../schema";
+import { findAgentId } from "../../tests/lib/agentIdOf";
+import { seedRosterAgents } from "../../tests/lib/seedRosterAgents";
 
 const modules = Object.fromEntries(
 	Object.entries(import.meta.glob("../**/*.ts")).filter(
@@ -51,6 +53,7 @@ async function seedOrgAMapping(t: ReturnType<typeof createT>) {
 			updatedAt: Date.now(),
 		});
 	});
+	await seedRosterAgents(t);
 }
 
 async function seedOrgBMapping(t: ReturnType<typeof createT>) {
@@ -65,6 +68,7 @@ async function seedOrgBMapping(t: ReturnType<typeof createT>) {
 			createdAt: Date.now(),
 		});
 	});
+	await seedRosterAgents(t);
 }
 
 function asOrgA(t: ReturnType<typeof createT>) {
@@ -87,6 +91,7 @@ async function seedMission(
 	orgId: string | undefined,
 	createdBy: string,
 ) {
+	const creatorId = orgId === undefined ? null : await findAgentId(t, orgId, createdBy);
 	return await t.run(async (ctx) => {
 		return await ctx.db.insert("missions", {
 			name: "seed mission",
@@ -96,6 +101,7 @@ async function seedMission(
 			pilot: createdBy,
 			agents: [createdBy],
 			createdBy,
+			...(creatorId !== null ? { pilotId: creatorId, createdById: creatorId } : {}),
 			createdAt: Date.now(),
 			updatedAt: Date.now(),
 			orgId,
@@ -130,15 +136,16 @@ describe("missions.create — write-scope enforcement", () => {
 		const tA = asOrgA(t);
 
 		// orgId must derive from the verified scope, never from anything
-		// caller-supplied. pilot/createdBy are own-roster names: a foreign one
-		// ("seat-b") is now refused outright (intraOrgActingIdentity.test.ts).
+		// caller-supplied. pilot/createdBy/agents are labels of the caller's own
+		// org: a foreign one ("seat-b") is refused outright
+		// (intraOrgActingIdentity.test.ts, missionsById.test.ts).
 		const missionId = await tA.mutation(api.missions.create, {
 			name: "org-a mission",
 			project: "p",
 			status: "plan",
 			priority: "medium",
 			pilot: "seat-a",
-			agents: ["seat-b"],
+			agents: ["seat-a"],
 			createdBy: "seat-a",
 		});
 

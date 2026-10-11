@@ -33,6 +33,7 @@ import { upsertAdminMembership } from "../orgMembership";
 import schema from "../schema";
 import { mintAgentSecret } from "../../tests/lib/seedFleetAgents";
 import { seedRosterAgent } from "../../tests/fixtures/rosterAgent";
+import { seedRosterAgents } from "../../tests/lib/seedRosterAgents";
 import { agentIdOf, seedAgents } from "../../tests/lib/agentIdOf";
 import { testClerkOrgId } from "../../tests/fixtures/testClerkOrgId";
 
@@ -137,8 +138,11 @@ async function mapAcmeRepo(t: T) {
 
 // One REAL write path per table of ORG_COLUMNS, acting as a member of ACME.
 const DRIVERS = {
-	missions: (t) =>
-		asOrg(t, ACME.slug).mutation(api.missions.create, {
+	missions: async (t) => {
+		// A mission names its pilot, participants and creator by agents-row ID
+		// (module M10e): the roster's labels are registered as agents first.
+		await seedRosterAgents(t);
+		return await asOrg(t, ACME.slug).mutation(api.missions.create, {
 			name: "m",
 			project: "p",
 			status: "execute",
@@ -146,7 +150,8 @@ const DRIVERS = {
 			pilot: SEAT,
 			agents: [SEAT],
 			createdBy: SEAT,
-		}),
+		});
+	},
 	messages: (t) =>
 		t.mutation(internal.messages.sendMessageInternal, {
 			from: "pi",

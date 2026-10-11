@@ -30,6 +30,7 @@ import schema from "../schema";
 import { seedFleetAgents } from "../../tests/lib/seedFleetAgents";
 
 const FILE_LABELS = ["eta", "sigma"];
+import { seedOperatorOrg } from "../../tests/lib/seedRosterAgents";
 
 const modules = Object.fromEntries(
 	Object.entries(import.meta.glob("../**/*.ts")).filter(
@@ -190,6 +191,7 @@ describe("tasks.update — cancelled status", () => {
 
 describe("missions.update — cancelled status", () => {
 	async function seedMission(t: ReturnType<typeof createT>, createdBy: string) {
+		const ids = await seedOperatorOrg(t, [createdBy, "eta"]);
 		return await t.run(async (ctx) => {
 			const now = Date.now();
 			return await ctx.db.insert("missions", {
@@ -200,6 +202,8 @@ describe("missions.update — cancelled status", () => {
 				pilot: createdBy,
 				agents: [createdBy],
 				createdBy,
+				pilotId: ids[createdBy],
+				createdById: ids[createdBy],
 				createdAt: now,
 				updatedAt: now,
 			});
