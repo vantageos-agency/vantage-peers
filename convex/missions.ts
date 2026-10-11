@@ -13,14 +13,19 @@ import type { Doc, Id } from "./_generated/dataModel";
 import { creatorValidator } from "./schema";
 import {
 	withOrgScope,
-	requireOrchestratorOnRoster,
-	filterByOrgScope,
-	isRowVisibleToScope,
 	requireScope,
+	verifiedActorValidator,
 } from "./lib/auth";
 import type { OrgScope } from "./lib/auth";
 import { orgRefOfRow, orgRefOfScope } from "./lib/authOrgMapping";
 import { isFleetSystemCaller } from "./lib/systemCaller";
+import {
+	agentIdOfLabelInOrg,
+	keepMissionsOnScopeRoster,
+	missionCallerActorId,
+	requireAgentIdOfLabelInOrg,
+	requireAgentOnScopeRoster,
+} from "./lib/missionActors";
 import { requireId } from "./lib/ids";
 import { resolveHumanActor } from "./lib/humanActor";
 import {
@@ -149,13 +154,42 @@ const priorityValidator = v.union(
 // (master-created, legacy) is never visible/writable to an org caller.
 // ─────────────────────────────────────────────────────────────────────────────
 
+function tenantVerdict(
+	scope: OrgScope,
+	row: { orgId?: string; clerkOrgId?: string },
+): "fleet" | "own" | "other" {
+	if (scope.isMaster) return "fleet";
+	if (scope.orgSlug === null) return "other";
+	return sameOrg(orgRefOfRow(row), orgRefOfScope(scope)) ? "own" : "other";
+}
+
 function isOrgAllowedForScope(
 	scope: OrgScope,
 	row: { orgId?: string; clerkOrgId?: string },
 ): boolean {
-	if (scope.isMaster) return true;
-	if (scope.orgSlug === null) return false;
-	return sameOrg(orgRefOfRow(row), orgRefOfScope(scope));
+	return tenantVerdict(scope, row) !== "other";
+}
+
+// The agents-row IDs of a mission's participant labels, resolved in ONE org
+// (`orgSlug`; null = the operator org). An org member's label that names no agent
+// of its own org is refused (`strict`). For the fleet master an unresolvable label leaves
+// the whole column unset (a partial list would silently drop a participant).
+async function participantIdsOf(
+	ctx: QueryCtx,
+	strict: boolean,
+	orgSlug: string | null | undefined,
+	labels: readonly string[],
+	door: string,
+): Promise<string[] | undefined> {
+	const ids: string[] = [];
+	for (const label of labels) {
+		const id = strict
+			? await requireAgentIdOfLabelInOrg(ctx, orgSlug, label, "participant", door)
+			: await agentIdOfLabelInOrg(ctx, orgSlug, label, door);
+		if (id === undefined) return undefined;
+		if (!ids.includes(id)) ids.push(id);
+	}
+	return ids;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -181,6 +215,9 @@ export const create = mutation({
 		createdBy: v.optional(creatorValidator),
 		// A person reached through the MCP service account (convex/lib/personPrincipal.ts).
 		verifiedPerson: v.optional(verifiedPersonValidator),
+		// The agent the MCP transport verified (lib/auth.ts requireAgentCredentialMatch):
+		// its agents-row ID becomes `createdById`. Believed from the service account only.
+		verifiedActor: v.optional(verifiedActorValidator),
 	},
 	returns: v.id("missions"),
 	handler: async (ctx, args) => {
@@ -221,6 +258,7 @@ export const create = mutation({
 			pilot,
 			createdBy: claimedCreator,
 			verifiedPerson: _verifiedPerson,
+			verifiedActor,
 			...rest
 		} = args;
 		// HUMAN path (no createdBy): the actor is the verified Clerk subject, the
@@ -232,14 +270,56 @@ export const create = mutation({
 			claimedCreator === undefined
 				? await resolveHumanActor(ctx, scope, { door: "missions:create" })
 				: undefined;
+		// IDs, never names. Every label is resolved in ONE org: the caller's own
+		// (the operator org for the fleet master), and an org member may name only
+		// agents of its own roster by ID. A label that names no agent there - unknown,
+		// or registered only in another org - is refused for a member; the fleet
+		// master, whose rows may predate the agents registry, stores the column
+		// unset instead (the backfill lists it, nothing is guessed).
+		const idOrg = scope.orgSlug;
+		const isFleet = scope.isMaster;
+		let createdById = actor;
 		if (claimedCreator !== undefined) {
-			requireOrchestratorOnRoster(scope, claimedCreator, "missions:create", "actor");
+			createdById = await missionCallerActorId(
+				ctx,
+				transportScope,
+				claimedCreator,
+				verifiedActor,
+				idOrg,
+				"missions:create",
+			);
+			if (!isFleet) {
+				createdById ??= await requireAgentIdOfLabelInOrg(
+					ctx,
+					idOrg,
+					claimedCreator,
+					"actor",
+					"missions:create",
+				);
+				await requireAgentOnScopeRoster(ctx, scope, createdById, "actor", "missions:create");
+			}
 		}
-		requireOrchestratorOnRoster(scope, pilot, "missions:create", "assignee");
+		let pilotId: string | undefined;
+		if (isFleet) {
+			pilotId = await agentIdOfLabelInOrg(ctx, idOrg, pilot, "missions:create");
+		} else {
+			pilotId = await requireAgentIdOfLabelInOrg(ctx, idOrg, pilot, "assignee", "missions:create");
+			await requireAgentOnScopeRoster(ctx, scope, pilotId, "assignee", "missions:create");
+		}
+		const agentIds = await participantIdsOf(
+			ctx,
+			!isFleet,
+			idOrg,
+			rest.agents,
+			"missions:create",
+		);
 		const now = Date.now();
 		return await ctx.db.insert("missions", {
 			...rest,
 			pilot,
+			...(pilotId !== undefined ? { pilotId } : {}),
+			...(agentIds !== undefined ? { agentIds } : {}),
+			...(createdById !== undefined ? { createdById } : {}),
 			createdBy: (claimedCreator ?? actor) as string,
 			...(actor !== undefined ? { lastActedBy: actor } : {}),
 			createdAt: now,
@@ -284,6 +364,11 @@ export const get = query({
 			cancelReason: v.optional(v.string()),
 			// Admin CRUD B2 — human actor "user:<subject>" (memberActorOf).
 			lastActedBy: v.optional(v.string()),
+			// M10e - actor IDs (agents-row _id; a person is "user:<subject>").
+			pilotId: v.optional(v.string()),
+			agentIds: v.optional(v.array(v.string())),
+			createdById: v.optional(v.string()),
+			cancelledById: v.optional(v.string()),
 		}),
 		v.null(),
 	),
@@ -298,14 +383,19 @@ export const get = query({
 		const mission = await ctx.db.get(missionId);
 		if (mission === null) return null;
 		// RESOURCE-ID class — the authorisation is derived from the TARGET ROW's
-		// own organisation (its `orgId`, falling back to the `pilot`-roster control
-		// `runMissionsList` above already applies for rows that state none), never
-		// from an argument and never from the mere existence of a caller
-		// organisation. See isRowVisibleToScope in convex/lib/auth.ts.
+		// own organisation (by org ID, through the package's sameOrg) and from the
+		// caller's roster BY AGENT ID (the row's `pilotId`), never from an argument,
+		// never from a name, and never from the mere existence of a caller
+		// organisation. The fleet master reads every row.
 		// refuseWithoutThrow: a reactively-subscribed public read refuses with a
 		// typed null rather than a throw (R-50/R-51).
 		const scope = await withOrgScope(ctx, { refuseWithoutThrow: true });
-		if (!isRowVisibleToScope(scope, mission)) return null;
+		const verdict = tenantVerdict(scope, mission);
+		if (verdict === "other") return null;
+		if (verdict === "own") {
+			const visible = await keepMissionsOnScopeRoster(ctx, scope, [mission], "missions:get");
+			if (visible.length !== 1) return null;
+		}
 		return mission;
 	},
 });
@@ -421,6 +511,16 @@ async function runMissionsList(
 		);
 	}
 
+	// The pilot filter is an agents-row ID, never a name: the label is resolved in
+	// ONE org (the caller's own; the operator org for the fleet master), so a
+	// same-named pilot of another org is a different agent and is never matched.
+	// A label that names no agent there is an absence: an empty success.
+	let pilotId: string | undefined;
+	if (pilot !== undefined) {
+		pilotId = await agentIdOfLabelInOrg(ctx, orgSlug, pilot, "missions:list");
+		if (pilotId === undefined) return [];
+	}
+
 	// NON-MASTER callers read through an ORG-KEYED index: the tenant predicate is
 	// inside the query, so `take` pages the caller's OWN rows. The earlier shape
 	// (fleet-wide take, then filterByOrgScope) consulted the grant AFTER the
@@ -458,12 +558,12 @@ async function runMissionsList(
 						.order("desc")
 						.take(fetchCap);
 				}
-				if (pilot !== undefined) {
+				if (pilotId !== undefined) {
 					return await q
-						.withIndex("by_orgId_pilot_status", (i) => {
+						.withIndex("by_orgId_pilotId_status", (i) => {
 							return i
 								.eq("orgId", orgSlug)
-								.eq("pilot", pilot as MissionRow["pilot"])
+								.eq("pilotId", pilotId)
 								.eq("status", status as MissionStatus)
 								.lt("_creationTime", before);
 						})
@@ -487,10 +587,18 @@ async function runMissionsList(
 				return rows;
 			}),
 		);
-		allRows = perStatus
-			.flat()
-			.sort((a, b) => b._creationTime - a._creationTime)
-			.slice(0, fetchCap);
+		// The tenant is inside the index range above; the caller's roster BY AGENT ID
+		// (the row's pilotId) narrows the page, intersect never widen. A row with no
+		// pilotId names nobody and is withheld until the actor-ID backfill has run.
+		allRows = await keepMissionsOnScopeRoster(
+			ctx,
+			scope,
+			perStatus
+				.flat()
+				.sort((a, b) => b._creationTime - a._creationTime)
+				.slice(0, fetchCap),
+			"missions:list",
+		);
 	}
 	// Filter by project + single status — use compound index
 	else if (project !== undefined && statuses !== undefined && statuses.length === 1) {
@@ -512,20 +620,20 @@ async function runMissionsList(
 		allRows = applyStatusFilter(base);
 	}
 	// Filter by pilot + single status — use compound index
-	else if (pilot !== undefined && statuses !== undefined && statuses.length === 1) {
+	else if (pilotId !== undefined && statuses !== undefined && statuses.length === 1) {
 		allRows = await ctx.db
 			.query("missions")
-			.withIndex("by_pilot", (q) =>
-				q.eq("pilot", pilot as MissionRow["pilot"]).eq("status", statuses[0]),
+			.withIndex("by_pilotId_status", (q) =>
+				q.eq("pilotId", pilotId).eq("status", statuses[0]),
 			)
 			.order("desc")
 			.take(fetchCap);
 	}
 	// Filter by pilot only (or pilot + multi-status filtered in-memory)
-	else if (pilot !== undefined) {
+	else if (pilotId !== undefined) {
 		const base = await ctx.db
 			.query("missions")
-			.withIndex("by_pilot", (q) => q.eq("pilot", pilot as MissionRow["pilot"]))
+			.withIndex("by_pilotId_status", (q) => q.eq("pilotId", pilotId))
 			.order("desc")
 			.take(fetchCap);
 		allRows = applyStatusFilter(base);
@@ -575,9 +683,8 @@ async function runMissionsList(
 		filtered = filtered.filter((r) => r._creationTime < before);
 	}
 
-	const scoped = filterByOrgScope(filtered, scope);
-	if (lite) return scoped.map(projectMissionLite);
-	return scoped;
+	if (lite) return filtered.map(projectMissionLite);
+	return filtered;
 }
 
 const missionsListArgsValidator = {
@@ -661,6 +768,10 @@ export const update = mutation({
 		cancelReason: v.optional(v.string()),
 		// A person reached through the MCP service account (convex/lib/personPrincipal.ts).
 		verifiedPerson: v.optional(verifiedPersonValidator),
+		// The agent the MCP transport verified: its agents-row ID is the caller the
+		// creator-only cancel rule compares with `createdById`. Believed from the
+		// service account only (lib/auth.ts requireAgentCredentialMatch).
+		verifiedActor: v.optional(verifiedActorValidator),
 	},
 	returns: v.null(),
 	handler: async (ctx, args) => {
@@ -670,6 +781,7 @@ export const update = mutation({
 			callerOrchestrator,
 			cancelReason,
 			verifiedPerson,
+			verifiedActor,
 			...fields
 		} = args;
 
@@ -735,11 +847,18 @@ export const update = mutation({
 					})
 				: undefined;
 
-		// A pilot reassignment must land on the caller's own roster — a member
-		// cannot hand a mission to an orchestrator of another organisation.
-		if (fields.pilot !== undefined) {
-			requireOrchestratorOnRoster(scope, fields.pilot, "missions:update", "assignee");
-		}
+		// IDs, never names. Labels are resolved in ONE org: an org member's own, the
+		// fleet master's the MISSION's org (the operator org for a fleet-owned row).
+		const isFleet = scope.isMaster;
+		const idOrg = isFleet ? mission.orgId : scope.orgSlug;
+		const callerActorId = await missionCallerActorId(
+			ctx,
+			transportScope,
+			callerOrchestrator,
+			verifiedActor,
+			idOrg,
+			"missions:update",
+		);
 
 		// Build patch object with only provided fields
 		const patch: Record<string, any> = { updatedAt: Date.now() };
@@ -749,6 +868,34 @@ export const update = mutation({
 			}
 		}
 		if (humanActor !== undefined) patch.lastActedBy = humanActor;
+
+		// A pilot reassignment must land on an agent of the mission's own org and,
+		// for a member, on the caller's own roster by ID - a member cannot hand a
+		// mission to an agent of another organisation, whatever its label.
+		if (fields.pilot !== undefined) {
+			if (isFleet) {
+				patch.pilotId = await agentIdOfLabelInOrg(ctx, idOrg, fields.pilot, "missions:update");
+			} else {
+				const pilotId = await requireAgentIdOfLabelInOrg(
+					ctx,
+					idOrg,
+					fields.pilot,
+					"assignee",
+					"missions:update",
+				);
+				await requireAgentOnScopeRoster(ctx, scope, pilotId, "assignee", "missions:update");
+				patch.pilotId = pilotId;
+			}
+		}
+		if (fields.agents !== undefined) {
+			patch.agentIds = await participantIdsOf(
+				ctx,
+				!isFleet,
+				idOrg,
+				fields.agents,
+				"missions:update",
+			);
+		}
 
 		// Day 157 — cancelled is a terminal status, settable only by the
 		// mission's CREATOR, and requires a non-empty reason. Mirrors the
@@ -772,7 +919,7 @@ export const update = mutation({
 			if (
 				callerOrchestrator !== undefined &&
 				!isFleetSystemCaller(scope, callerOrchestrator) &&
-				mission.createdBy !== callerOrchestrator
+				(callerActorId === undefined || mission.createdById !== callerActorId)
 			) {
 				throw new ConvexError(
 					`RBAC_DENIED: Only ${mission.createdBy} (creator) or system can cancel mission ${missionId} — ${JSON.stringify({ caller: callerOrchestrator, creator: mission.createdBy, missionId })}`,
@@ -784,6 +931,7 @@ export const update = mutation({
 				);
 			}
 			patch.cancelledBy = callerOrchestrator ?? humanActor;
+			patch.cancelledById = callerActorId ?? humanActor;
 			patch.cancelReason = cancelReason;
 		}
 

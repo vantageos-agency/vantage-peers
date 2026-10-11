@@ -443,7 +443,7 @@ describe("withVerifiedActor", () => {
 		const { readFileSync } = await import("node:fs");
 		const { resolve } = await import("node:path");
 		const declared = new Set<string>();
-		for (const file of ["tasks", "messages", "profiles"]) {
+		for (const file of ["tasks", "messages", "profiles", "missions"]) {
 			const src = readFileSync(
 				resolve(__dirname, `../../convex/${file}.ts`),
 				"utf8",

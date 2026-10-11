@@ -17,6 +17,7 @@ import type { Id } from "../_generated/dataModel";
 import schema from "../schema";
 import { seedAgents } from "../../tests/lib/agentIdOf";
 import { insertTaskRow, seedOrgAgents } from "../../tests/lib/seedFleetAgents";
+import { seedRosterAgents } from "../../tests/lib/seedRosterAgents";
 
 const modules = Object.fromEntries(
 	Object.entries(import.meta.glob("../**/*.ts")).filter(
@@ -85,6 +86,7 @@ describe("missions:create — orgId and createdBy derive from the verified ident
 	test("REFUSED: a member cannot borrow another org through verifiedPerson", async () => {
 		const t = createT();
 		await seed(t);
+		await seedRosterAgents(t);
 		await expect(
 			asOrgA(t).mutation(api.missions.create, {
 				...base,
@@ -99,6 +101,7 @@ describe("missions:create — orgId and createdBy derive from the verified ident
 	test("REFUSED: a member cannot author as, or pilot to, org-b's orchestrator", async () => {
 		const t = createT();
 		await seed(t);
+		await seedRosterAgents(t);
 		await expect(
 			asOrgA(t).mutation(api.missions.create, { ...base, pilot: "seat-a", createdBy: "seat-b" }),
 		).rejects.toThrow(/RBAC_DENIED/);
@@ -111,6 +114,7 @@ describe("missions:create — orgId and createdBy derive from the verified ident
 	test("PRESENT: an own-org write succeeds and is stamped org-a", async () => {
 		const t = createT();
 		await seed(t);
+		await seedRosterAgents(t);
 		const id = await asOrgA(t).mutation(api.missions.create, {
 			...base,
 			pilot: "seat-a",
@@ -290,6 +294,7 @@ describe("human path — the boundary derives from the verified identity, not an
 		const t = await seedHuman();
 		// The assignee of a task is an agent of the task's org.
 		await seedAgents(t, [["org-a", "seat-a"]]);
+		await seedRosterAgents(t);
 		const missionId = await asOrgA(t).mutation(api.missions.create, {
 			...missionBase,
 			pilot: "seat-a",
@@ -308,6 +313,7 @@ describe("human path — the boundary derives from the verified identity, not an
 
 	test("P1 REFUSED: a human cannot create a mission naming an org-b pilot", async () => {
 		const t = await seedHuman();
+		await seedRosterAgents(t);
 		await expect(
 			asOrgA(t).mutation(api.missions.create, { ...missionBase, pilot: "seat-b" }),
 		).rejects.toThrow(/RBAC_DENIED/);

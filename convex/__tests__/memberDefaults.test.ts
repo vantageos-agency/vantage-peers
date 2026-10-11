@@ -17,6 +17,7 @@ import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import { testClerkOrgId } from "../../tests/fixtures/testClerkOrgId";
 import { api, internal } from "../_generated/api";
 import schema from "../schema";
+import { findAgentId } from "../../tests/lib/agentIdOf";
 
 const modules = Object.fromEntries(
 	Object.entries(import.meta.glob("../**/*.ts")).filter(
@@ -65,6 +66,8 @@ async function provision(t: T, slug: string, seat: string) {
 }
 
 async function seedMission(t: T, name: string, orgId: string, pilot: string) {
+	// A mission row names its pilot and creator by agents-row ID (module M10e).
+	const pilotId = await findAgentId(t, orgId, pilot);
 	await t.run((ctx) =>
 		ctx.db.insert("missions", {
 			name,
@@ -74,6 +77,7 @@ async function seedMission(t: T, name: string, orgId: string, pilot: string) {
 			pilot,
 			agents: [pilot],
 			createdBy: pilot,
+			...(pilotId !== null ? { pilotId, createdById: pilotId } : {}),
 			createdAt: Date.now(),
 			updatedAt: Date.now(),
 			orgId,

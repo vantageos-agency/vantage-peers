@@ -29,6 +29,7 @@ import { describe, expect, test } from "vitest";
 import { testClerkOrgId } from "../../tests/fixtures/testClerkOrgId";
 import { api, internal } from "../_generated/api";
 import schema from "../schema";
+import { seedRosterAgents } from "../../tests/lib/seedRosterAgents";
 
 const modules = Object.fromEntries(
 	Object.entries(import.meta.glob("../**/*.ts")).filter(
@@ -155,6 +156,7 @@ describe("missionTemplates — instantiated child tasks inherit the MISSION's te
 		const t = createT();
 		await seedBothOrgs(t);
 		await seedTemplate(t);
+		await seedRosterAgents(t);
 
 		const missionId = await asOrg(t, "org-a").mutation(api.missions.create, {
 			name: "org-a mission",

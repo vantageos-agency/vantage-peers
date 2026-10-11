@@ -23,6 +23,7 @@ import { describe, expect, test } from "vitest";
 import { testClerkOrgId } from "../../tests/fixtures/testClerkOrgId";
 import { api, internal } from "../_generated/api";
 import schema from "../schema";
+import { seedRosterAgents } from "../../tests/lib/seedRosterAgents";
 import { TASK_LIST_SCAN_CAP } from "../tasks";
 import { seedAgents } from "../../tests/lib/agentIdOf";
 import { insertTaskRow } from "../../tests/lib/seedFleetAgents";
@@ -277,6 +278,9 @@ describe("missions.list / messages.listByChannel — member poles (already org-k
 	test("missions: own stamped only", async () => {
 		const t = createT();
 		await seedOrgs(t);
+		// A mission row names its pilot by agents-row ID (module M10e).
+		const ids = await seedRosterAgents(t);
+		const sigmaId = ids[`${FLEET}/sigma`];
 		await t.run(async (ctx) => {
 			const base = {
 				description: "d",
@@ -289,7 +293,7 @@ describe("missions.list / messages.listByChannel — member poles (already org-k
 				createdAt: 1,
 				updatedAt: 1,
 			};
-			await ctx.db.insert("missions", { ...base, name: "own", orgId: FLEET, clerkOrgId: testClerkOrgId(FLEET) } as never);
+			await ctx.db.insert("missions", { ...base, name: "own", pilotId: sigmaId, createdById: sigmaId, orgId: FLEET, clerkOrgId: testClerkOrgId(FLEET) } as never);
 			await ctx.db.insert("missions", { ...base, name: "foreign", orgId: OTHER, clerkOrgId: testClerkOrgId(OTHER) } as never);
 			await ctx.db.insert("missions", { ...base, name: "unstamped" } as never);
 		});
@@ -485,6 +489,23 @@ describe("migrations/fleetOrgStamp:run — a name is a label, never an identity"
 				apply: true,
 			});
 		}
+		// The stamped mission names its pilot by label only until the actor-ID
+		// backfill (module M10e) has run; the org's roster lists the agent by ID.
+		await t.mutation(internal.migrations.backfill_mission_actor_ids.run, {
+			dryRun: false,
+		});
+		await t.run(async (ctx) => {
+			const eta = (await ctx.db.query("agents").collect()).find(
+				(a) => a.orgSlug === FLEET && a.name === "eta",
+			);
+			const mapping = await ctx.db
+				.query("client_org_mapping")
+				.withIndex("by_clerk_slug", (q) => q.eq("clerkOrgSlug", FLEET))
+				.unique();
+			if (eta && mapping) {
+				await ctx.db.patch(mapping._id, { allowedAgentIds: [eta._id] });
+			}
+		});
 		const missions = (await asMember(t, FLEET).query(api.missions.list, {})) as Array<{
 			name: string;
 		}>;

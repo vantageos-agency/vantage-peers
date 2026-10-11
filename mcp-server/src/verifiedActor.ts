@@ -40,6 +40,10 @@ export const VERIFIED_ACTOR_DOORS: ReadonlySet<string> = new Set([
 	"tasks:deleteTask",
 	"tasks:blockTask",
 	"tasks:bulkComplete",
+	// The mission doors (module M10e): the creator-only cancel compares the
+	// caller's agent ID with `createdById`, and a created mission stores it.
+	"missions:create",
+	"missions:update",
 	// The inbox doors (task k17c5q842gm1gbh0j2qjtc80g18fx5kb): an agent's inbox is
 	// read, marked and its sent mail deleted BY ITS ID, never by the recipient or
 	// acting-name argument that another org's same-named agent also carries.

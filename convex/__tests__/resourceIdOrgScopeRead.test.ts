@@ -72,6 +72,8 @@ import { api } from "../_generated/api";
 import type { Id } from "../_generated/dataModel";
 import { type OrgScope, isRowVisibleToScope } from "../lib/auth";
 import schema from "../schema";
+import { findAgentId } from "../../tests/lib/agentIdOf";
+import { seedRosterAgents } from "../../tests/lib/seedRosterAgents";
 import { testClerkOrgId } from "../../tests/fixtures/testClerkOrgId";
 
 const modules = Object.fromEntries(
@@ -118,6 +120,9 @@ async function seedOrgMapping(
 			createdAt: Date.now(),
 		});
 	});
+	// A mission names its pilot by agents-row ID (module M10e): the roster's
+	// labels are registered as agents and listed by ID.
+	await seedRosterAgents(t);
 }
 
 const asOrgMember = (
@@ -169,6 +174,10 @@ async function seedMission(
 	t: ReturnType<typeof createT>,
 	opts: { orgId?: string; pilot?: string; name?: string },
 ): Promise<Id<"missions">> {
+	const pilotId =
+		opts.orgId === undefined
+			? null
+			: await findAgentId(t, opts.orgId, opts.pilot ?? "sigma");
 	return await t.run(async (ctx) =>
 		ctx.db.insert("missions", {
 			name: opts.name ?? "a mission",
@@ -178,6 +187,7 @@ async function seedMission(
 			pilot: opts.pilot ?? "sigma",
 			agents: [],
 			createdBy: opts.pilot ?? "sigma",
+			...(pilotId === null ? {} : { pilotId, createdById: pilotId }),
 			...(opts.orgId === undefined ? {} : { orgId: opts.orgId, clerkOrgId: testClerkOrgId(opts.orgId) }),
 			createdAt: Date.now(),
 			updatedAt: Date.now(),

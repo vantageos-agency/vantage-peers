@@ -39,7 +39,9 @@ export function principalLookups(ctx: Ctx): PrincipalLookups {
 		agentById: async (agentId) => {
 			const id = ctx.db.normalizeId("agents", agentId);
 			if (id === null) return null;
-			// The built-in `by_id` index: the same single read as `ctx.db.get(id)`.
+			// Read through the primary-key index (one row by ID): the same read as
+			// `db.get`, but a keyed probe, so a list door that proves its pilots
+			// stays a list in the tool inventory instead of a list-and-get mix.
 			const row = await ctx.db
 				.query("agents")
 				.withIndex("by_id", (q) => q.eq("_id", id))

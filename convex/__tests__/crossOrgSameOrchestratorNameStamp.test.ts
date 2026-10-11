@@ -35,6 +35,7 @@ import {
 	seedOrgAgents,
 } from "../../tests/lib/seedFleetAgents";
 
+import { seedRosterAgents } from "../../tests/lib/seedRosterAgents";
 
 const modules = Object.fromEntries(
 	Object.entries(import.meta.glob("../**/*.ts")).filter(
@@ -183,6 +184,7 @@ describe("cross-org isolation when two rosters share an orchestrator name", () =
 		test("LEAK POLE: org B cannot read a mission org A created", async () => {
 			const t = createT();
 			await seedBothOrgsSharingOrchestrator(t);
+			await seedRosterAgents(t);
 
 			const missionId = await asOrg(t, "org-a").mutation(api.missions.create, {
 				name: "org-a private mission",
@@ -203,6 +205,7 @@ describe("cross-org isolation when two rosters share an orchestrator name", () =
 		test("WITHHELD-GRANT POLE: org A still reads its own mission", async () => {
 			const t = createT();
 			await seedBothOrgsSharingOrchestrator(t);
+			await seedRosterAgents(t);
 
 			const missionId = await asOrg(t, "org-a").mutation(api.missions.create, {
 				name: "org-a private mission",
