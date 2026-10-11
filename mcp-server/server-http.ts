@@ -1172,24 +1172,30 @@ app.post("/token", async (c) => {
 			return c.json({ error: "server_error" }, 500);
 		}
 
+		// ROTATION (module M3): the presented refresh token is SPENT here, after the
+		// client has authenticated and before anything is issued, in the one Convex
+		// transaction that also decides it is still live. Of two concurrent
+		// presentations exactly one gets the record; a replay of a spent token gets
+		// invalid_grant. (The lookup above only decided which client to authenticate;
+		// authenticating first means someone who merely knows a token cannot burn it.)
+		const consumed = (await internalClient().mutation(
+			// biome-ignore lint/suspicious/noExplicitAny: Convex string API
+			"oauth:consumeRefreshToken" as any,
+			{ tokenHash: refreshTokenHash },
+		)) as { clientId: string } | null;
+		if (!consumed || consumed.clientId !== record.clientId) {
+			return c.json({ error: "invalid_grant" }, 400);
+		}
+
 		const accessToken = randomOpaqueToken();
 		const accessTokenHash = await sha256Hex(accessToken);
 		const now = Date.now();
 
-		// SEAT_TOKEN_RENEWAL (k1784cq353qpmw9fmn8me551qs8ev2z9): each refresh
-		// mints a NEW refresh token rather than handing the presented one
-		// back unchanged. Without this, the refresh token itself carried a
-		// fixed 30-day expiry from the moment it was first issued and a
-		// renewing client still died at day 30 — fixing only the access
-		// token's renewal moved the fuse, it did not remove it.
-		//
-		// Deliberately NOT revoke-on-use: the OLD refresh token
-		// (`refreshTokenRaw`/`refreshTokenHash`) is left standing until its
-		// own expiry rather than revoked here. A client that ignores this
-		// response's `refresh_token` and replays the old value keeps
-		// working until that old token's own 30-day clock runs out — see
-		// PR body for why revoke-on-use rotation is deferred rather than
-		// shipped in this change.
+		// SEAT_TOKEN_RENEWAL (k1784cq353qpmw9fmn8me551qs8ev2z9): each refresh mints a
+		// NEW refresh token, so a renewing client never dies at the first token's
+		// 30-day mark. Since module M3 the presented token is also spent above
+		// (rotation): a client that keeps the old value gets invalid_grant, not a
+		// second token pair.
 		const newRefreshToken = randomOpaqueToken();
 		const newRefreshTokenHash = await sha256Hex(newRefreshToken);
 		await internalClient().mutation(

@@ -122,6 +122,13 @@ function makeFakeConvex() {
 			throw new Error(`unmocked query: ${name}`);
 		},
 		mutation: async (name: string, args: Record<string, unknown>) => {
+			if (name === "oauth:consumeRefreshToken") {
+				// Module M3: the refresh grant looks up AND spends the token.
+				const r = state.refreshTokens.get(args.tokenHash as string);
+				if (!r) return null;
+				state.refreshTokens.delete(args.tokenHash as string);
+				return r;
+			}
 			if (name === "oauth:registerPublicClient") {
 				const row: ClientRow = {
 					clientId: args.clientId as string,

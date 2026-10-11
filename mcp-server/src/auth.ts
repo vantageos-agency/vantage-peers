@@ -32,7 +32,9 @@ import {
 	type OAuthCtx as PackageOAuthCtx,
 	isMasterScope as packageIsMasterScope,
 	personActorName,
+	sha256Hex as packageSha256Hex,
 	validateMasterBearer,
+	validatePresentedBearer,
 } from "@vantageos/cloud-identity";
 import type { ConvexHttpClient } from "convex/browser";
 import type { Context, MiddlewareHandler, Next } from "hono";
@@ -270,13 +272,7 @@ export function _setInternalClientForTest(
 // SHA-256 helpers (Web Crypto API — available in Bun and Node 18+)
 // ─────────────────────────────────────────────────────────────────────────────
 
-export async function sha256Hex(input: string): Promise<string> {
-	const encoder = new TextEncoder();
-	const data = encoder.encode(input);
-	const hashBuffer = await crypto.subtle.digest("SHA-256", data);
-	const hashArray = Array.from(new Uint8Array(hashBuffer));
-	return hashArray.map((b) => b.toString(16).padStart(2, "0")).join("");
-}
+export const sha256Hex: (input: string) => Promise<string> = packageSha256Hex;
 
 /**
  * Computes base64url(SHA256(input)) per RFC 4648 §5 (no padding).
@@ -1386,19 +1382,39 @@ export function bearerAuthMiddleware(): MiddlewareHandler {
 		const tokenHash = await sha256Hex(token);
 
 		// ── (2) OAuth scoped access token — check oauth_access_tokens ───────────
-		let oauth: OAuthLookupResult = null;
-		try {
-			oauth = (await internalClient().query(
-				// biome-ignore lint/suspicious/noExplicitAny: Convex string API
-				"oauth:getAccessTokenByHash" as any,
-				{ tokenHash },
-			)) as OAuthLookupResult;
-		} catch (err: unknown) {
-			// If the oauth module is missing (pre-migration deploy), just fall
-			// through to the legacy path rather than hard-failing.
-			const message = err instanceof Error ? err.message : String(err);
-			console.warn("[auth] OAuth lookup skipped:", message);
-		}
+		// The bearer is judged by @vantageos/cloud-identity `validatePresentedBearer`
+		// (header parse, digest, constant-time digest compare, revoked / expired
+		// refusal collapsed to one answer). This server supplies the one indexed read
+		// by digest; the row it returns names the AGENT BY ID (`seatAgent.agentId`),
+		// which the package reports as the identity's agent presence.
+		const lookup: { found: OAuthLookupResult } = { found: null };
+		const presented = await validatePresentedBearer(authHeader, {
+			lookupBySecretHash: async (digest) => {
+				try {
+					lookup.found = (await internalClient().query(
+						// biome-ignore lint/suspicious/noExplicitAny: Convex string API
+						"oauth:getAccessTokenByHash" as any,
+						{ tokenHash: digest },
+					)) as OAuthLookupResult;
+				} catch (err: unknown) {
+					// If the oauth module is missing (pre-migration deploy), just fall
+					// through to the legacy path rather than hard-failing.
+					const message = err instanceof Error ? err.message : String(err);
+					console.warn("[auth] OAuth lookup skipped:", message);
+					throw err;
+				}
+				const row = lookup.found;
+				if (!row) return null;
+				return {
+					tenantId: row.clerkOrgSlug ?? `profile:${row.scopeProfile}`,
+					secretHash: digest,
+					agentId: row.seatAgent?.agentId ?? null,
+					expiresAt: row.expiresAt,
+					scopes: row.scopes,
+				};
+			},
+		});
+		const oauth: OAuthLookupResult = presented.ok ? lookup.found : null;
 
 		if (oauth) {
 			const internalUrl = process.env.CONVEX_URL_INTERNAL;

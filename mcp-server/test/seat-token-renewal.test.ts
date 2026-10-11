@@ -11,8 +11,8 @@
  *      SAME refresh token on every renewal, untouched expiry — so even a
  *      seat that renewed correctly still died at the refresh token's
  *      original 30-day mark. This file proves that fuse is gone: each
- *      refresh mints a NEW refresh token, and the OLD one is left standing
- *      (not revoked) rather than rotated-and-killed.
+ *      refresh mints a NEW refresh token. Since module M3 the OLD one is spent
+ *      by that refresh (rotation): its replay is invalid_grant.
  *
  * Harness: same in-memory Hono `app.request()` + fake ConvexHttpClient
  * pattern as oauth-d6-d7.test.ts. The refresh-token fixture mirrors what
@@ -110,6 +110,23 @@ function makeFakeConvex() {
 			throw new Error(`unmocked query: ${name}`);
 		},
 		mutation: async (name: string, args: Record<string, unknown>) => {
+			if (name === "oauth:consumeRefreshToken") {
+				// Mirror convex/oauth.ts's consumeRefreshToken: look up AND spend in one
+				// step; revoked / expired / unknown answer null.
+				for (const [raw, row] of state.refreshTokensByRaw) {
+					if ((await sha256Hex(raw)) !== args.tokenHash) continue;
+					if (row.revokedAt !== undefined) return null;
+					if (row.expiresAt < Date.now()) return null;
+					row.revokedAt = Date.now();
+					return {
+						clientId: row.clientId,
+						userId: row.userId,
+						scopeProfile: row.scopeProfile,
+						expiresAt: row.expiresAt,
+					};
+				}
+				return null;
+			}
 			if (name === "oauth:createAccessToken") {
 				state.accessTokenInserts.push({
 					tokenHash: args.tokenHash as string,
@@ -261,11 +278,15 @@ describe("seat token renewal — /token refresh_token grant", () => {
 		expect(thirdRefreshToken).not.toBe(secondRefreshToken);
 		expect(thirdRefreshToken).not.toBe(SEAT_REFRESH_RAW);
 
-		// Deliberately NOT revoke-on-use: the OLD refresh token (the one
-		// presented on the FIRST call) is still resolvable in the fixture —
-		// nothing in the refresh_token branch deletes/revokes it. This pins
-		// the brief's explicit choice: rotate-and-issue, never revoke-on-use.
-		expect(state.refreshTokensByRaw.has(SEAT_REFRESH_RAW)).toBe(true);
+		// Module M3: rotation. The OLD refresh token (the one presented on the
+		// FIRST call) was spent by that call, so its replay is refused.
+		expect(state.refreshTokensByRaw.get(SEAT_REFRESH_RAW)?.revokedAt).toBeDefined();
+		const replay = await postRefresh(
+			SEAT_REFRESH_RAW,
+			basicAuth(SEAT_CLIENT_ID, SEAT_SECRET),
+		);
+		expect(replay.status).toBe(400);
+		expect(replay.body.error).toBe("invalid_grant");
 	});
 
 	it("a revoked refresh token is refused", async () => {

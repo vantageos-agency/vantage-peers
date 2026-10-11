@@ -1332,7 +1332,10 @@ export default defineSchema({
 	// Short-lived authorization codes (RFC 6749 §4.1). TTL ~10 min.
 	// Cleaned periodically by cron (processExpiredOauthCodes).
 	oauth_authorization_codes: defineTable({
-		code: v.string(), // opaque random value
+		// SHA-256 hex of the opaque random code (module M3). The raw code is never stored; a
+		// row written before this change holds the raw value and is simply unredeemable (a
+		// code lives minutes, and its only minting door has no caller left).
+		code: v.string(),
 		clientId: v.string(),
 		redirectUri: v.string(),
 		codeChallenge: v.string(), // PKCE S256 (RFC 7636)
@@ -1481,6 +1484,13 @@ export default defineSchema({
 		// into oauth_scope_profiles (a seat profile, in particular) was
 		// self-registrable by default under that scheme.
 		selfRegistrable: v.optional(v.boolean()),
+		// MODULE M3: the `agents` row ID of the ONE agent a seat profile (`<agent>-<org>`)
+		// stands for. A seat token is minted for, and resolved to, THIS ID; the profile's
+		// `fromAllowList` name is a display label and no longer selects the agent. Optional
+		// (expand phase): written by provisionOrganization and by createAccessToken the first
+		// time it resolves a legacy profile (by name, inside the profile's own org). A profile
+		// whose agentId names an agent of another org, or an inactive one, resolves no agent.
+		agentId: v.optional(v.id("agents")),
 	})
 		.index("by_profileId", ["profileId"])
 		.index("by_clerkOrgSlug", ["clerkOrgSlug"])
