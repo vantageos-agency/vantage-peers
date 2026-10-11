@@ -4770,6 +4770,11 @@ export const bulkComplete = mutation({
 						: {}),
 					allowedOrchestrators: callerScope.allowedOrchestrators,
 					isMaster: callerScope.isMaster,
+					// Which grant made the scope master: the standing of the rebuilt scope
+					// (scopeStanding) refuses a master scope that does not say.
+					...(callerScope.masterSource !== undefined
+						? { masterSource: callerScope.masterSource }
+						: {}),
 				},
 				callerOrchestrator: args.callerOrchestrator ?? "",
 				...(callerScope.callerActorId !== undefined
@@ -4821,6 +4826,13 @@ export const bulkCompleteContinue = internalMutation({
 			orgClerkId: v.optional(v.string()),
 			allowedOrchestrators: v.array(v.string()),
 			isMaster: v.boolean(),
+			masterSource: v.optional(
+				v.union(
+					v.literal("service-account"),
+					v.literal("internal"),
+					v.literal("operator-admin"),
+				),
+			),
 		}),
 		callerOrchestrator: v.string(),
 		// The caller's actor ID (M7), carried from the first call so every batch

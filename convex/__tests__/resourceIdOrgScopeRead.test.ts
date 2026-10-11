@@ -721,6 +721,8 @@ describe("isRowVisibleToScope — each leg observed alone", () => {
 	test("leg 1 alone — master is admitted regardless of every other leg", () => {
 		const scope = scopeOf({
 			isMaster: true,
+			fleetWide: true,
+			masterSource: "internal",
 			orgSlug: null,
 			allowedOrchestrators: [],
 		});
