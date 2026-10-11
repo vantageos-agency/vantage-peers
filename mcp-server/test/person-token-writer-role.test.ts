@@ -429,16 +429,44 @@ describe("own-state tools: mark_as_read is the receipt owner's, not a role excep
 		});
 	}
 
+	/**
+	 * M6: the inbox keys on `recipientId` only, so a receipt belongs to the agent
+	 * row it names. Stamp the receipt with that agent's `_id` (inserting the row
+	 * for an agent that is not registered through the credential flow).
+	 */
+	async function addressTo(receiptId: string, name: string) {
+		await t.run(async (ctx) => {
+			const existing = (
+				await ctx.db
+					.query("agents")
+					.withIndex("by_org_name", (q) =>
+						q.eq("orgSlug", "org-a").eq("name", name),
+					)
+					.collect()
+			)[0];
+			const agentId =
+				existing?._id ??
+				(await ctx.db.insert("agents", {
+					orgSlug: "org-a",
+					clerkOrgId: testClerkOrgId("org-a"),
+					name,
+					normalizedName: name,
+					isActive: true,
+					createdAt: Date.now(),
+				}));
+			await ctx.db.patch(receiptId as never, { recipientId: agentId } as never);
+		});
+	}
+
 	const readAt = (id: string) =>
 		t.run(async (ctx) => (await ctx.db.get(id as never))?.readAt);
 
 	it("a viewer marks its OWN receipt read (presenting agent-a's credential)", async () => {
 		const ids = await seedReceipts();
+		const credential = await agentCredential();
+		await addressTo(ids.own, "agent-a");
 		const tools = realTools(
-			await contextFor(
-				await personToken("user_viewer"),
-				await agentCredential(),
-			),
+			await contextFor(await personToken("user_viewer"), credential),
 		);
 		const r = (await tools.get("mark_as_read")?.({
 			receiptIds: [ids.own],
@@ -450,11 +478,10 @@ describe("own-state tools: mark_as_read is the receipt owner's, not a role excep
 
 	it("a viewer cannot mark another member's receipt: the owner check refuses", async () => {
 		const ids = await seedReceipts();
+		const credential = await agentCredential();
+		await addressTo(ids.other, "agent-b");
 		const tools = realTools(
-			await contextFor(
-				await personToken("user_viewer"),
-				await agentCredential(),
-			),
+			await contextFor(await personToken("user_viewer"), credential),
 		);
 		const r = (await tools.get("mark_as_read")?.({
 			receiptIds: [ids.other],

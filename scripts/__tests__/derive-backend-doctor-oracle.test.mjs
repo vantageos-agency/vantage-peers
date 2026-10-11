@@ -466,9 +466,11 @@ function assertWriterTiers(rows) {
 		writer_tier: "master",
 		writer_gate: "masterOnly",
 	});
+	// M10d: profiles:upsertProfile decides on the caller's org and the agent ID
+	// (an org member writes its own agent's profile), no longer master-only.
 	expect(tier("update_profile")).toMatchObject({
-		writer_tier: "master",
-		writer_gate: "masterOnly",
+		writer_tier: "org-member",
+		writer_gate: "orgResolver",
 	});
 	expect(tier("create_bu")).toMatchObject({
 		writer_tier: "org-member",

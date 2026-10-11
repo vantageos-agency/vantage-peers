@@ -56,8 +56,12 @@ describe("M8 the agent registry selects no agent by name", () => {
 			[join("lib", "auth.ts")]: 3,
 			// M5 messaging: seat sender screened against registered labels
 			"messages.ts": 2,
-			// M6 inbox: recipient named by a verified organisation
-			[join("lib", "inboxReader.ts")]: 1,
+			// M6 inbox, two owned sites, neither selects the reader:
+			//  - recipient named by a verified organisation (the org-level token door);
+			//  - a `recipient` label sent beside a verified agent may only NARROW: it
+			//    must resolve, in that agent's own org, to the very agent the verified
+			//    claim already fixed (compared by _id). The reader is never chosen by it.
+			[join("lib", "inboxReader.ts")]: 2,
 			// tasks doors: createdBy / assignedTo labels stamped as IDs
 			[join("lib", "actorIds.ts")]: 1,
 			// M1 rosters / seat profiles: profile fromAllowList label

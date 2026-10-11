@@ -24,6 +24,7 @@
 import { makeFunctionReference } from "convex/server";
 import { convexTest } from "../../tests/fixtures/convexTestWithServiceAccount";
 import { beforeEach, describe, expect, it } from "vitest";
+import { internal } from "../../convex/_generated/api";
 import type { Id } from "../../convex/_generated/dataModel";
 import { normalizeOrchestratorId } from "../../convex/_helpers/normalizeOrchestratorId";
 import { UNCLAIMED_SERVICE_ACCOUNT_READS_EVERY_TENANT } from "../../convex/lib/inboxReader";
@@ -310,22 +311,21 @@ describe.runIf(UNCLAIMED_SERVICE_ACCOUNT_READS_EVERY_TENANT)(
 	},
 );
 
-describe("NEW WIRE (#1492): verifiedActor / verifiedOrg get the strict reader", () => {
-	it("org B's seat (verifiedActor) reads and counts its own inbox, not the same-named agent of org A", async () => {
+describe("NEW WIRE (#1492): verifiedActor / verifiedOrg get the strict reader (M6: by recipientId only)", () => {
+	it("org B's seat (verifiedActor) reads and counts its own inbox by ID, not the same-named agent of org A, and not its by-name receipt", async () => {
 		const verifiedActor = { agentId: w.agentB, orgSlug: ORG_B };
 		expect(await doorContents({ recipient: "hélios", verifiedActor })).toEqual([
 			"B-BY-ID",
-			"B-LEGACY",
 		]);
 		expect(
 			await client.query("messages:getUnreadCount", {
 				orchestratorId: "hélios",
 				verifiedActor,
 			}),
-		).toBe(2);
+		).toBe(1);
 	});
 
-	it("org B's seat marking org A's receipt is refused; marking its own is served", async () => {
+	it("org B's seat marking org A's receipt is refused; marking its own by-ID receipt is served, its by-name receipt is refused and reported", async () => {
 		const verifiedActor = { agentId: w.agentB, orgSlug: ORG_B };
 		await refusedWith(
 			client.mutation("messages:markAsRead", {
@@ -335,13 +335,29 @@ describe("NEW WIRE (#1492): verifiedActor / verifiedOrg get the strict reader", 
 			}),
 			"receipt-not-yours",
 		);
-		expect(
-			await client.mutation("messages:markAsRead", {
-				receiptIds: [w.receipt["B-BY-ID"], w.receipt["B-LEGACY"]],
+		await refusedWith(
+			client.mutation("messages:markAsRead", {
+				receiptIds: [w.receipt["B-LEGACY"]],
 				callerOrchestrator: "hélios",
 				verifiedActor,
 			}),
-		).toBe(2);
+			"receipt-not-yours",
+		);
+		expect(
+			await client.mutation("messages:markAsRead", {
+				receiptIds: [w.receipt["B-BY-ID"]],
+				callerOrchestrator: "hélios",
+				verifiedActor,
+			}),
+		).toBe(1);
+		// The by-name receipts are not delivered, they are REPORTED.
+		const audit = await w.t.query(
+			internal.receiptRecipientIdAudit.unaddressedUnreadPage,
+			{},
+		);
+		const reported = audit.unaddressed.map((r) => r.receiptId);
+		expect(reported).toContain(w.receipt["A-LEGACY"]);
+		expect(reported).toContain(w.receipt["B-LEGACY"]);
 		expect(await doorContents({ recipient: "hélios", verifiedActor })).toEqual(
 			[],
 		);
@@ -351,7 +367,7 @@ describe("NEW WIRE (#1492): verifiedActor / verifiedOrg get the strict reader", 
 				recipient: "hélios",
 				verifiedActor: { agentId: w.agentA, orgSlug: ORG_A },
 			}),
-		).toEqual(["A-BY-ID", "A-LEGACY"]);
+		).toEqual(["A-BY-ID"]);
 	});
 
 	it("an org-level token (verifiedOrg) reads its org's inbox only", async () => {
@@ -360,7 +376,7 @@ describe("NEW WIRE (#1492): verifiedActor / verifiedOrg get the strict reader", 
 				recipient: "hélios",
 				verifiedOrg: { orgSlug: ORG_A },
 			}),
-		).toEqual(["A-BY-ID", "A-LEGACY"]);
+		).toEqual(["A-BY-ID"]);
 	});
 
 	it("org A's agent naming org B as the tenant is refused", async () => {
