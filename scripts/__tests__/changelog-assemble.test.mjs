@@ -1,9 +1,9 @@
 import { spawnSync } from "node:child_process";
-import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it } from "vitest";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const SCRIPT = resolve(__dirname, "../changelog-assemble.mjs");
@@ -21,8 +21,17 @@ const BASE_CHANGELOG = [
 	"",
 ].join("\n");
 
+// Exact dirs this file created (parallel-run safe: never globs /tmp).
+const created = [];
+
+// Runs on pass and on failure alike.
+afterEach(() => {
+	for (const d of created) rmSync(d, { recursive: true, force: true });
+});
+
 function sandbox(fragments) {
 	const root = mkdtempSync(join(tmpdir(), "changelog-assemble-"));
+	created.push(root);
 	mkdirSync(join(root, "changelog.d"));
 	writeFileSync(join(root, "CHANGELOG.md"), BASE_CHANGELOG);
 	writeFileSync(join(root, "changelog.d", "README.md"), "# not a fragment\n");
@@ -126,5 +135,13 @@ describe("changelog-assemble", () => {
 		const repoRoot = resolve(__dirname, "../..");
 		const r = run(repoRoot, "--check");
 		expect(r.status, r.stderr).toBe(0);
+	});
+});
+
+// Must stay the LAST test in the file: it asserts every sandbox this file created is gone.
+describe("temp hygiene", () => {
+	it("leaves none of its own sandbox dirs behind", () => {
+		expect(created.length).toBeGreaterThan(0);
+		expect(created.filter((d) => existsSync(d))).toEqual([]);
 	});
 });
