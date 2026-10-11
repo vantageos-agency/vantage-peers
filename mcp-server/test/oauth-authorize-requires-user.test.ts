@@ -388,11 +388,16 @@ describe("consent and organisation choice", () => {
 		expect((await counts()).codes).toBe(0);
 	});
 
-	it("Deny issues no code", async () => {
+	it("Deny issues no code and sends the client error=access_denied with its state and iss", async () => {
 		const sessionToken = await harness.session("user_1");
 		const first = await getAuthorize(
 			app,
-			authorizeUrl({ clientId: CLIENT_ID, redirectUri: REDIRECT, challenge }),
+			authorizeUrl({
+				clientId: CLIENT_ID,
+				redirectUri: REDIRECT,
+				challenge,
+				state: "xyz",
+			}),
 			sessionToken,
 		);
 		const r = await postOrg(
@@ -405,7 +410,40 @@ describe("consent and organisation choice", () => {
 			},
 			sessionToken,
 		);
+		expect(r.status).toBe(302);
+		const back = new URL(r.location ?? "");
+		expect(`${back.origin}${back.pathname}`).toBe(REDIRECT);
+		expect(back.searchParams.get("error")).toBe("access_denied");
+		expect(back.searchParams.get("state")).toBe("xyz");
+		const meta = (await (
+			await app.request(
+				"http://localhost:3000/.well-known/oauth-authorization-server",
+			)
+		).json()) as { issuer: string };
+		expect(back.searchParams.get("iss")).toBe(meta.issuer);
+		expect(back.searchParams.get("code")).toBeNull();
+		expect((await counts()).codes).toBe(0);
+	});
+
+	it("Deny with a forged consentToken is refused, nothing is sent to the client", async () => {
+		const sessionToken = await harness.session("user_1");
+		const first = await getAuthorize(
+			app,
+			authorizeUrl({ clientId: CLIENT_ID, redirectUri: REDIRECT, challenge }),
+			sessionToken,
+		);
+		const r = await postOrg(
+			app,
+			{
+				state: first.picker?.state,
+				orgId: "org_A",
+				approved: "false",
+				consentToken: "forged",
+			},
+			sessionToken,
+		);
 		expect(r.status).toBe(403);
+		expect(r.location).toBeUndefined();
 		expect((await counts()).codes).toBe(0);
 	});
 
