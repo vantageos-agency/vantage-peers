@@ -25,6 +25,7 @@ import {
 	requireLabelOnScopeRoster,
 } from "./lib/rosterLabels";
 import {
+	resolveVerifiedOrgMapping,
 	resolveVerifiedOrgScope,
 	verifiedOrgValidator,
 } from "./lib/verifiedOrg";
@@ -188,13 +189,25 @@ export const create = mutation({
 		const door = "businessUnits:create";
 		const transportScope = await withOrgScope(ctx);
 		requireResolvedCaller(transportScope, door, { alsoRefusePreOrg: true });
-		const scope = await resolveVerifiedOrgScope(
+		// The org a bearer acts for is the ACTIVE mapping the transport's claim
+		// names, believed from the service account only (the guarded helper refuses
+		// anyone else). The scope this door writes the tenant stamp from is the one
+		// `withOrgScope` itself returns for that mapping: the stamp is the verified
+		// scope's, never the claim's.
+		const actingMapping = await resolveVerifiedOrgMapping(
 			ctx,
 			transportScope,
 			args.verifiedOrg,
 			door,
 		);
-		const acting = args.verifiedOrg !== undefined;
+		let scope = transportScope;
+		if (actingMapping !== undefined) {
+			scope = await withOrgScope(ctx, {
+				refuseWithoutThrow: true,
+				actForOrgMapping: actingMapping,
+			});
+		}
+		const acting = actingMapping !== undefined;
 		const fleet = !acting && (await hasFleetStanding(ctx, door));
 		// The owner BY ID. A member names an agent of its OWN org that is on its
 		// roster by ID, with a writer role; the fleet resolves the label in the
