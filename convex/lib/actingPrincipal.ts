@@ -169,7 +169,7 @@ const STABLE_CODE: Partial<Record<IdentityRefusal["reason"], string>> = {
 	"target-other-organisation": "ORG_MISMATCH",
 };
 
-function refuseWith(refusal: IdentityRefusal): never {
+export function refuseWith(refusal: IdentityRefusal): never {
 	const code = STABLE_CODE[refusal.reason] ?? refusal.code;
 	throw new ConvexError(
 		`${code}: ${refusal.detail} — ${JSON.stringify({ reason: refusal.reason, door: refusal.door })}`,

@@ -256,9 +256,22 @@ describe("profiles:getProfile", () => {
 		const t = createT();
 		await seedMappings(t);
 		await t.run(async (ctx) => {
-			for (const id of ["sigma", "iris"]) {
+			// A profile belongs to an agent (M10d): sigma is an agent of org-a, iris of org-b.
+			for (const [id, org] of [
+				["sigma", "org-a"],
+				["iris", "org-b"],
+			] as const) {
+				const agentId = await ctx.db.insert("agents", {
+					orgSlug: org,
+					clerkOrgId: testClerkOrgId(org),
+					name: id,
+					normalizedName: id,
+					isActive: true,
+					createdAt: 1,
+				});
 				await ctx.db.insert("profiles", {
 					orchestratorId: id,
+					agentId,
 					name: id,
 					static: { role: "x", workspace: "/x", capabilities: [] },
 					dynamic: { lastSeen: 1, sessionCount: 1 },

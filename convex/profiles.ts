@@ -1,33 +1,66 @@
 import { v, ConvexError } from "convex/values";
-import { mutation, query } from "./_generated/server";
+import { mutation, type QueryCtx, query } from "./_generated/server";
 import type { Doc } from "./_generated/dataModel";
 // convex-strict-mode-doc-type-import-needed-when-refactoring-list-query-from-early-return-to-accumulator-post-filter
 import { memoryTypeValidator, creatorValidator } from "./schema";
-import { requireResolvedCaller, withOrgScope } from "./lib/auth";
+import {
+  type OrgScope,
+  requireResolvedCaller,
+  verifiedActorValidator,
+  withOrgScope,
+} from "./lib/auth";
+import {
+  agentIdOfLabel,
+  findWritableProfile,
+  newProfileOwner,
+  PROFILE_CANDIDATE_CAP,
+  type ProfileAgent,
+  resolveProfileAgent,
+  visibleProfiles,
+} from "./lib/profileActors";
 import { isNamespaceAllowedForScope } from "./memories";
 
 // ─────────────────────────────────────────────────────────────────────────────
-// requireFleetMaster — profiles.ts's own single authority gate.
+// WHO MAY WRITE, AND WHICH ROW IS WHOSE (module M10d).
 //
-// `profiles` carries NO orgId/tenant field (see schema.ts:137) — it is the
-// fleet's own orchestrator-instance registry (orchestratorId is a fleet role
-// like "pi"/"tau"/"sigma", instanceId a running copy). There is no per-tenant
-// row to scope against, so the only sound authority boundary is: the caller
-// must be the verified fleet master (the real master secret / recognised
-// service-account carve-out — convex/lib/auth.ts's withOrgScope). These
-// mutations previously took NO identity check at all (defect class:
-// .claude/rules/authority-attached-to-anonymous-object.md).
+// A profile belongs to an AGENT: `profiles.agentId` is an `agents` row `_id`, and
+// the profile's organisation is the organisation of that agent row. The name on
+// a profile (`orchestratorId`) is a label two organisations may both carry; it
+// selects no row of another organisation and authorises nothing.
+//
+// A write is accepted from exactly two callers:
+//   - the agent itself, proven by `verifiedActor` (forwarded by the fleet service
+//     account, which verified it) or by its own `agentCredentialSecret`. It writes
+//     ITS row, found by its agent ID; a same-named agent of another organisation
+//     has another ID and so another row.
+//   - the fleet master with no acting agent (its existing grant, unchanged): the
+//     fleet's own orchestrator registry, found by instance / label as before.
+// Anyone else, including a verified member of an organisation, is refused
+// (defect class: .claude/rules/authority-attached-to-anonymous-object.md).
 // ─────────────────────────────────────────────────────────────────────────────
-async function requireFleetMaster(
-  ctx: Parameters<typeof withOrgScope>[0],
+function requireFleetMaster(
+  scope: OrgScope,
+  actor: ProfileAgent | undefined,
   action: string,
-): Promise<void> {
-  const scope = await withOrgScope(ctx);
-  if (!scope.isMaster) {
+): void {
+  if (!scope.isMaster && actor === undefined) {
     throw new ConvexError(
-      `RBAC_DENIED: caller may not ${action} — profiles are fleet-internal, master-only — ${JSON.stringify({ orgSlug: scope.orgSlug })}`,
+      `RBAC_DENIED: caller may not ${action} — profiles are fleet-internal, master-only unless the call proves the agent that owns the profile — ${JSON.stringify({ orgSlug: scope.orgSlug })}`,
     );
   }
+}
+
+// The caller of a write: the proven agent, or the fleet master. Refuses the rest.
+async function writerOf(
+  ctx: Parameters<typeof withOrgScope>[0],
+  proof: Parameters<typeof resolveProfileAgent>[2],
+  action: string,
+  door: string,
+): Promise<{ scope: OrgScope; actor: ProfileAgent | undefined }> {
+  const scope = await withOrgScope(ctx);
+  const actor = await resolveProfileAgent(ctx, scope, proof, door);
+  requireFleetMaster(scope, actor, action);
+  return { scope, actor };
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -39,6 +72,7 @@ const profileDocValidator = v.object({
   _creationTime: v.number(),
   orchestratorId: v.string(),
   instanceId: v.optional(v.string()),
+  agentId: v.optional(v.id("agents")),
   name: v.string(),
   static: v.object({
     role: v.string(),
@@ -62,6 +96,59 @@ const memorySnippetValidator = v.object({
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
+// findProfileForCaller — the ONE profile lookup both reads share.
+//
+//   - the fleet master with no acting agent: the legacy lookup, unchanged (the
+//     fleet's own registry, by instance or by label);
+//   - any other caller (an acting agent, an ordinary member): the label is
+//     resolved to an agent ID WITHIN THE CALLER'S OWN ORGANISATION and the row is
+//     read by that ID; whatever the lookup returned is then judged by stored ID
+//     (`visibleProfiles`), so a same-named row of another organisation, and a row
+//     with no agent, are never served.
+// ─────────────────────────────────────────────────────────────────────────────
+async function findProfileForCaller(
+  ctx: QueryCtx,
+  scope: OrgScope,
+  actor: ProfileAgent | undefined,
+  args: { orchestratorId?: string; instanceId?: string },
+  door: string,
+): Promise<Doc<"profiles"> | null> {
+  const fleetRead = actor === undefined && scope.isMaster;
+  let candidates: Doc<"profiles">[] = [];
+  if (args.instanceId !== undefined) {
+    candidates = await ctx.db
+      .query("profiles")
+      .withIndex("by_instance", (q) => q.eq("instanceId", args.instanceId!))
+      .take(PROFILE_CANDIDATE_CAP);
+  } else if (args.orchestratorId !== undefined) {
+    if (fleetRead) {
+      // Returns first match — for role-level lookup when only one instance exists
+      candidates = await ctx.db
+        .query("profiles")
+        .withIndex("by_orchestrator", (q) =>
+          q.eq("orchestratorId", args.orchestratorId!),
+        )
+        .take(1);
+    } else {
+      const orgSlug = actor !== undefined ? actor.agent.orgSlug : scope.orgSlug;
+      const agentId =
+        orgSlug === null
+          ? undefined
+          : await agentIdOfLabel(ctx, orgSlug, args.orchestratorId);
+      if (agentId !== undefined) {
+        candidates = await ctx.db
+          .query("profiles")
+          .withIndex("by_agent", (q) => q.eq("agentId", agentId))
+          .take(PROFILE_CANDIDATE_CAP);
+      }
+    }
+  }
+  if (fleetRead) return candidates[0] ?? null;
+  const visible = await visibleProfiles(ctx, scope, actor, candidates, door);
+  return visible[0] ?? null;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // getProfile — fetch by orchestratorId (role) or instanceId
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -69,6 +156,10 @@ export const getProfile = query({
   args: {
     orchestratorId: v.optional(v.string()),
     instanceId: v.optional(v.string()),
+    // The acting agent, forwarded BY ID by the fleet service account that verified
+    // it (mcp-server/src/verifiedActor.ts). The read is then judged by that
+    // agent's stored organisation ID, never by a name.
+    verifiedActor: v.optional(verifiedActorValidator),
   },
   returns: v.union(profileDocValidator, v.null()),
   handler: async (ctx, args) => {
@@ -94,7 +185,8 @@ export const getProfile = query({
     // `null` if not) — an existence oracle on orchestrators outside the org.
     // `instanceId` lookups carry no orchestrator name up front, so they are
     // checked against the fetched row (an absent row is then an absence for an
-    // instance id, which names no roster entry to leak).
+    // instance id, which names no roster entry to leak). The roster only NARROWS:
+    // WHICH row is served is decided by stored agent ID (findProfileForCaller).
     const requireOnRoster = (orchestratorId: string): void => {
       if (scope.isMaster || scope.allowedOrchestrators.includes(orchestratorId)) {
         return;
@@ -110,23 +202,24 @@ export const getProfile = query({
       );
     };
 
-    let profile: Doc<"profiles"> | null = null;
-    // Prefer instanceId lookup if provided
-    if (args.instanceId !== undefined) {
-      profile = await ctx.db
-        .query("profiles")
-        .withIndex("by_instance", (q) => q.eq("instanceId", args.instanceId!))
-        .unique();
-      if (profile !== null) requireOnRoster(profile.orchestratorId);
-    } else if (args.orchestratorId !== undefined) {
+    const actor = await resolveProfileAgent(
+      ctx,
+      scope,
+      { verifiedActor: args.verifiedActor },
+      "profiles:getProfile",
+    );
+    if (args.instanceId === undefined && args.orchestratorId !== undefined) {
       requireOnRoster(args.orchestratorId);
-      // Returns first match — for role-level lookup when only one instance exists
-      profile = await ctx.db
-        .query("profiles")
-        .withIndex("by_orchestrator", (q) =>
-          q.eq("orchestratorId", args.orchestratorId!),
-        )
-        .first();
+    }
+    const profile = await findProfileForCaller(
+      ctx,
+      scope,
+      actor,
+      args,
+      "profiles:getProfile",
+    );
+    if (args.instanceId !== undefined && profile !== null) {
+      requireOnRoster(profile.orchestratorId);
     }
     return profile;
   },
@@ -152,31 +245,29 @@ export const upsertProfile = mutation({
       lastSeen: v.number(),
       sessionCount: v.number(),
     })),
+    // The acting agent: ONE proof per call. A profile is written only by the agent
+    // that owns it (see the block above requireFleetMaster).
+    verifiedActor: v.optional(verifiedActorValidator),
+    agentCredentialSecret: v.optional(v.string()),
   },
   returns: v.id("profiles"),
   handler: async (ctx, args) => {
   	// write-contract: MCP-transport-only — issued via mcp-server client.mutation("profiles:upsertProfile", …) at mcp-server/src/tools.ts:2843 (imperative), 0 hits in vantage-peers-dashboard {app,components,hooks,lib,contexts,providers} (measured 2026-10-01 at origin/main e2dc58f and 0466fac); never a subscribing pre-org client shell. The no-org throw is a refusal at an imperative MCP call, never at a render.
-    await requireFleetMaster(ctx, `upsert profile for orchestrator ${args.orchestratorId}`);
-    // Try to find by instanceId first, then by orchestratorId
-    let existing = null;
-    if (args.instanceId !== undefined) {
-      existing = await ctx.db
-        .query("profiles")
-        .withIndex("by_instance", (q) => q.eq("instanceId", args.instanceId!))
-        .unique();
-    }
-    if (existing === null) {
-      existing = await ctx.db
-        .query("profiles")
-        .withIndex("by_orchestrator", (q) =>
-          q.eq("orchestratorId", args.orchestratorId),
-        )
-        .first();
-      // Only reuse a legacy profile (no instanceId) if we're adding instanceId to it
-      if (existing !== null && existing.instanceId !== undefined && existing.instanceId !== args.instanceId) {
-        existing = null; // Different instance — create new
-      }
-    }
+    const { actor } = await writerOf(
+      ctx,
+      {
+        verifiedActor: args.verifiedActor,
+        agentCredentialSecret: args.agentCredentialSecret,
+      },
+      `upsert profile for orchestrator ${args.orchestratorId}`,
+      "profiles:upsertProfile",
+    );
+    const existing = await findWritableProfile(
+      ctx,
+      actor,
+      { orchestratorId: args.orchestratorId, instanceId: args.instanceId },
+      true,
+    );
 
     if (existing !== null) {
       const patch: Record<string, unknown> = {};
@@ -188,8 +279,9 @@ export const upsertProfile = mutation({
       return existing._id;
     }
 
+    const owner = await newProfileOwner(ctx, actor, args.orchestratorId);
     return await ctx.db.insert("profiles", {
-      orchestratorId: args.orchestratorId,
+      ...owner,
       instanceId: args.instanceId,
       name: args.name ?? "Unknown",
       static: args.static ?? { role: "", workspace: "", capabilities: [] },
@@ -214,34 +306,36 @@ export const updateDynamic = mutation({
     // Optional: defaults to Date.now() server-side if omitted (fixes #261)
     lastSeen: v.optional(v.number()),
     sessionCountDelta: v.optional(v.number()),
+    // The acting agent: ONE proof per call (see upsertProfile).
+    verifiedActor: v.optional(verifiedActorValidator),
+    agentCredentialSecret: v.optional(v.string()),
   },
   returns: v.null(),
   handler: async (ctx, args) => {
   	// write-contract: MCP-transport-only — issued via mcp-server client.mutation("profiles:updateDynamic", …) at mcp-server/src/tools.ts:3536 (imperative), 0 hits in vantage-peers-dashboard {app,components,hooks,lib,contexts,providers} (measured 2026-10-01 at origin/main e2dc58f and 0466fac); never a subscribing pre-org client shell. The no-org throw is a refusal at an imperative MCP call, never at a render.
-    await requireFleetMaster(ctx, `update dynamic profile for orchestrator ${args.orchestratorId}`);
+    const { actor } = await writerOf(
+      ctx,
+      {
+        verifiedActor: args.verifiedActor,
+        agentCredentialSecret: args.agentCredentialSecret,
+      },
+      `update dynamic profile for orchestrator ${args.orchestratorId}`,
+      "profiles:updateDynamic",
+    );
     const lastSeen = args.lastSeen ?? Date.now();
 
-    // Try instanceId first
-    let profile = null;
-    if (args.instanceId !== undefined) {
-      profile = await ctx.db
-        .query("profiles")
-        .withIndex("by_instance", (q) => q.eq("instanceId", args.instanceId!))
-        .unique();
-    }
-    if (profile === null) {
-      profile = await ctx.db
-        .query("profiles")
-        .withIndex("by_orchestrator", (q) =>
-          q.eq("orchestratorId", args.orchestratorId),
-        )
-        .first();
-    }
+    const profile = await findWritableProfile(
+      ctx,
+      actor,
+      { orchestratorId: args.orchestratorId, instanceId: args.instanceId },
+      false,
+    );
 
     if (profile === null) {
       // Auto-create profile if it doesn't exist
+      const owner = await newProfileOwner(ctx, actor, args.orchestratorId);
       await ctx.db.insert("profiles", {
-        orchestratorId: args.orchestratorId,
+        ...owner,
         instanceId: args.instanceId,
         name: args.instanceId ?? args.orchestratorId,
         static: {
@@ -298,6 +392,8 @@ export const getProfileWithMemories = query({
     instanceId: v.optional(v.string()),
     namespace: v.string(),
     memoryLimit: v.optional(v.number()),
+    // The acting agent, forwarded by ID (see getProfile).
+    verifiedActor: v.optional(verifiedActorValidator),
   },
   returns: v.object({
     profile: v.union(profileDocValidator, v.null()),
@@ -326,20 +422,29 @@ export const getProfileWithMemories = query({
 
     const limit = args.memoryLimit ?? 20;
 
-    let profile = null;
-    if (args.instanceId !== undefined) {
-      profile = await ctx.db
-        .query("profiles")
-        .withIndex("by_instance", (q) => q.eq("instanceId", args.instanceId!))
-        .unique();
-    }
+    // The profile half is judged by stored agent ID like getProfile: a row of
+    // another organisation's same-named agent, or a row with no agent, is `null`.
+    const actor = await resolveProfileAgent(
+      ctx,
+      scope,
+      { verifiedActor: args.verifiedActor },
+      "profiles:getProfileWithMemories",
+    );
+    let profile = await findProfileForCaller(
+      ctx,
+      scope,
+      actor,
+      { instanceId: args.instanceId },
+      "profiles:getProfileWithMemories",
+    );
     if (profile === null) {
-      profile = await ctx.db
-        .query("profiles")
-        .withIndex("by_orchestrator", (q) =>
-          q.eq("orchestratorId", args.orchestratorId),
-        )
-        .first();
+      profile = await findProfileForCaller(
+        ctx,
+        scope,
+        actor,
+        { orchestratorId: args.orchestratorId },
+        "profiles:getProfileWithMemories",
+      );
     }
 
     const allMemories = await ctx.db
@@ -380,6 +485,9 @@ export const listProfiles = query({
     // S3.3 B8 follow-up batch 3 FINAL — cursor paging rollout.
     limit: v.optional(v.number()),
     createdBefore: v.optional(v.number()),
+    // The acting agent, forwarded by ID: the master's list is then narrowed to the
+    // profiles of that agent's own organisation (judged by stored ID).
+    verifiedActor: v.optional(verifiedActorValidator),
   },
   // A bare array is what the fleet master is served (rows, or a genuine
   // absence). An ORDINARY member of an active org is served the typed refusal
@@ -439,11 +547,19 @@ export const listProfiles = query({
       return { refused: true as const, items: [] };
     }
 
+    const actor = await resolveProfileAgent(
+      ctx,
+      scope,
+      { verifiedActor: args.verifiedActor },
+      "profiles:listProfiles",
+    );
+
     const take = args.limit ?? 50;
     // Widen the fetch whenever a cursor is present, so the post-take
     // `createdBefore` filter has candidate rows older than the anchor to
-    // find (mirrors tasks.ts `needsWideScan` / `fetchCap`).
-    const needsWideScan = args.createdBefore !== undefined;
+    // find (mirrors tasks.ts `needsWideScan` / `fetchCap`). An acting agent's
+    // list is filtered by stored ID AFTER the read, so it is wide too.
+    const needsWideScan = args.createdBefore !== undefined || actor !== undefined;
     const fetchCap = needsWideScan ? PROFILES_LIST_SCAN_CAP + 1 : take;
     let rows: Doc<"profiles">[];
     if (args.orchestratorId !== undefined) {
@@ -460,6 +576,9 @@ export const listProfiles = query({
     // S3.3 B8 follow-up — post-take createdBefore filter mirrors briefingNotes
     // pattern (convex/briefingNotes.ts:96-134, GREEN of PR #635). Profiles use
     // `_creationTime` as the cursor anchor.
+    if (actor !== undefined) {
+      rows = await visibleProfiles(ctx, scope, actor, rows, "profiles:listProfiles");
+    }
     if (args.createdBefore !== undefined) {
       const before = args.createdBefore;
       rows = rows.filter((r) => r._creationTime < before);

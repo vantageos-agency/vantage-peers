@@ -1,14 +1,12 @@
 import { v } from "convex/values";
-import type { Doc } from "./_generated/dataModel";
-import { type QueryCtx, query } from "./_generated/server";
+import { query } from "./_generated/server";
 import {
 	withOrgScope,
 	filterByOrgScope,
 	requireScope,
-	type OrgScope,
 } from "./lib/auth";
 import { requireFleetDoor } from "./lib/fleetStanding";
-import { agentIdOfLabelInOrg, isAgentOnScopeRoster } from "./lib/rosterLabels";
+import { visibleProfiles } from "./lib/profileActors";
 
 // In-progress tasks and mandates are both small, bounded tables today; 500 rows
 // is a comfortable ceiling well above observed volume for either.
@@ -17,48 +15,6 @@ const DASHBOARD_SCAN_CAP = 500;
 // tables but can grow faster (one receipt per recipient per message), so a
 // wider ceiling is used for those bounded scans.
 const DASHBOARD_WIDE_SCAN_CAP = 1000;
-
-// The profiles an ORG MEMBER is served. A profile row carries NO tenant column,
-// and its label `orchestratorId` is shared by every organisation that employs an
-// orchestrator of that name (the fleet's "eta" and a client's "eta" are two
-// agents), so the label alone never admits a row. A member is served a profile
-// only when its label names an agent of the member's OWN org that is on the
-// member's roster BY ID, AND does not also name an agent of the operator org: a
-// label the fleet employs may be the fleet's own profile, and no fleet profile is
-// ever served to a member org. (Both lookups are by agents-row ID, through the
-// package; the profile table itself names no agent until the profile doors move
-// to agent IDs, which closes the residual two-client-orgs-one-label case.)
-async function profilesOfCallerOrg(
-	ctx: QueryCtx,
-	scope: OrgScope,
-	profiles: readonly Doc<"profiles">[],
-	door: string,
-): Promise<Doc<"profiles">[]> {
-	const kept: Doc<"profiles">[] = [];
-	for (const profile of profiles) {
-		const ownId = await agentIdOfLabelInOrg(
-			ctx,
-			{
-				orgSlug: scope.orgSlug,
-				...(scope.orgClerkId !== undefined
-					? { clerkOrgId: scope.orgClerkId }
-					: {}),
-			},
-			profile.orchestratorId,
-			door,
-		);
-		if (ownId === undefined) continue;
-		if (!(await isAgentOnScopeRoster(ctx, scope, ownId, door))) continue;
-		const fleetId = await agentIdOfLabelInOrg(
-			ctx,
-			{ orgSlug: null },
-			profile.orchestratorId,
-			door,
-		);
-		if (fleetId === undefined || fleetId === ownId) kept.push(profile);
-	}
-	return kept;
-}
 
 // ─────────────────────────────────────────────────────────────────────────────
 // getDashboardSummary — high-level operational stats for VantagePeers dashboard
@@ -76,6 +32,7 @@ export const getDashboardSummary = query({
 				_creationTime: v.number(),
 				orchestratorId: v.string(),
 				instanceId: v.optional(v.string()),
+				agentId: v.optional(v.id("agents")),
 				name: v.string(),
 				static: v.object({
 					role: v.string(),
@@ -165,15 +122,16 @@ export const getDashboardSummary = query({
 			: [];
 		const openMandates = allMandates.filter((m) => m.status !== "settled").length;
 
-		// Profiles (small table — one row per instance). No tenant column: the
-		// fleet reads them all; a member is served the profiles of ITS OWN agents
-		// only, judged by stored agent ID and org ID (never by the shared label).
+		// Profiles (small table — one row per instance). A profile belongs to an
+		// agent: a member is served the rows whose agent sits in its own org,
+		// judged by stored ID (a same-named agent of another org is not its row).
 		const allProfiles = await ctx.db.query("profiles").collect();
 		const profiles = fleet
 			? allProfiles
-			: await profilesOfCallerOrg(
+			: await visibleProfiles(
 					ctx,
 					scope,
+					undefined,
 					allProfiles,
 					"dashboard:getDashboardSummary",
 				);

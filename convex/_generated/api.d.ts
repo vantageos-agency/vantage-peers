@@ -66,6 +66,7 @@ import type * as lib_memoryTenant from "../lib/memoryTenant.js";
 import type * as lib_operatorOrg from "../lib/operatorOrg.js";
 import type * as lib_orgClerkId from "../lib/orgClerkId.js";
 import type * as lib_personPrincipal from "../lib/personPrincipal.js";
+import type * as lib_profileActors from "../lib/profileActors.js";
 import type * as lib_repoMappingTenant from "../lib/repoMappingTenant.js";
 import type * as lib_reviewRouting from "../lib/reviewRouting.js";
 import type * as lib_provisioningMapping from "../lib/provisioningMapping.js";
@@ -95,6 +96,7 @@ import type * as migrations_backfill_business_unit_owner_ids from "../migrations
 import type * as migrations_backfill_memories_org_clerk_id from "../migrations/backfill_memories_org_clerk_id.js";
 import type * as migrations_backfill_org_clerk_id from "../migrations/backfill_org_clerk_id.js";
 import type * as migrations_backfill_org_stamp from "../migrations/backfill_org_stamp.js";
+import type * as migrations_backfill_profile_agent_ids from "../migrations/backfill_profile_agent_ids.js";
 import type * as migrations_backfill_recurring_task_actor_ids from "../migrations/backfill_recurring_task_actor_ids.js";
 import type * as migrations_backfill_review_task_origin from "../migrations/backfill_review_task_origin.js";
 import type * as migrations_backfill_task_actor_ids from "../migrations/backfill_task_actor_ids.js";
@@ -200,6 +202,7 @@ declare const fullApi: ApiFromModules<{
   "lib/operatorOrg": typeof lib_operatorOrg;
   "lib/orgClerkId": typeof lib_orgClerkId;
   "lib/personPrincipal": typeof lib_personPrincipal;
+  "lib/profileActors": typeof lib_profileActors;
   "lib/repoMappingTenant": typeof lib_repoMappingTenant;
   "lib/reviewRouting": typeof lib_reviewRouting;
   "lib/provisioningMapping": typeof lib_provisioningMapping;
@@ -229,6 +232,7 @@ declare const fullApi: ApiFromModules<{
   "migrations/backfill_memories_org_clerk_id": typeof migrations_backfill_memories_org_clerk_id;
   "migrations/backfill_org_clerk_id": typeof migrations_backfill_org_clerk_id;
   "migrations/backfill_org_stamp": typeof migrations_backfill_org_stamp;
+  "migrations/backfill_profile_agent_ids": typeof migrations_backfill_profile_agent_ids;
   "migrations/backfill_recurring_task_actor_ids": typeof migrations_backfill_recurring_task_actor_ids;
   "migrations/backfill_review_task_origin": typeof migrations_backfill_review_task_origin;
   "migrations/backfill_task_actor_ids": typeof migrations_backfill_task_actor_ids;

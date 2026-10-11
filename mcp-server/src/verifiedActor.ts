@@ -67,6 +67,15 @@ export const VERIFIED_ACTOR_DOORS: ReadonlySet<string> = new Set([
 	"recurringTasks:pause",
 	"recurringTasks:resume",
 	"recurringTasks:remove",
+	// The profile doors (module M10d): a profile belongs to an agent ID. The reader
+	// is judged by the organisation of that agent, and the writer is the agent
+	// itself, never a same-named agent of another organisation.
+	// `profiles:listProfiles` is left out on purpose: list_peers still attributes
+	// rows by instance label (tools.ts) and an ID filter would withhold the legacy
+	// rows it reads until the profile backfill has run.
+	"profiles:getProfile",
+	"profiles:upsertProfile",
+	"profiles:updateDynamic",
 ]);
 
 export type VerifiedActorArg = { agentId: string; orgSlug: string };
