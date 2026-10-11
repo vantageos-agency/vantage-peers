@@ -23,26 +23,15 @@ import {
 } from "./lib/auth";
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Auth — fleet-internal surface, no per-org owner field
-// (.claude/rules/authority-attached-to-anonymous-object.md)
+// Auth — a tenant-owned surface (.claude/rules/authority-attached-to-anonymous-object.md)
 //
-// `githubRepoMapping` routes webhook events to an orchestrator fleet-wide —
-// it has no `orgId`/owner field, and no client_org_mapping `scopes` entry
-// exists for "manage webhook routing". `add`/`remove` used to take NO
-// identity check at all. Same closure as convex/issues.ts's
-// `requireMasterScope` (mirrors convex/orgRoster.ts's
-// `getForAccessToken` idiom) — master-only, no org-scope fallback.
+// `githubRepoMapping` routes webhook events to an orchestrator. A row is the
+// fleet's (no `orgId`) or a client org's (`orgId` stamped server-side); every
+// door below decides from the verified scope (`withOrgScope`) and never from an
+// argument. There is no master-only write gate any more: `add` / `remove` admit
+// the fleet master for fleet rows and a member holding "manage-repo-mappings"
+// for its own org's rows (`resolveWriteTenant`, `requireRowOwnedBy`).
 // ─────────────────────────────────────────────────────────────────────────────
-
-async function requireMasterScope(ctx: Parameters<typeof withOrgScope>[0]) {
-	const scope = await withOrgScope(ctx);
-	if (!scope.isMaster) {
-		throw new ConvexError(
-			"RBAC_DENIED: this mutation requires master or service-account scope " +
-				"— fleet webhook-routing config has no org-scoped write authority.",
-		);
-	}
-}
 
 // WRITE TENANT. The tenant of a mapping row is derived HERE, from the verified
 // scope, and nowhere else — no mutation in this file takes an `orgId` argument.
@@ -226,8 +215,8 @@ export const list = query({
 		nextCursor: v.union(v.string(), v.null()),
 	}),
 	handler: async (ctx, args) => {
-		// Fail-closed READ counterpart of this file's own master-only WRITE gate
-		// (`requireMasterScope`, used by `add`/`remove`). Measured against LIVE
+		// Fail-closed READ counterpart of this file's WRITE gate
+		// (`resolveWriteTenant`, used by `add`/`remove`). Measured against LIVE
 		// production at commit bd8c60e9: this query served a row to a caller
 		// presenting NO CREDENTIAL AT ALL. `githubRepoMapping` carries no orgId
 		// column — it maps the FLEET's own repositories to orchestrators, and it

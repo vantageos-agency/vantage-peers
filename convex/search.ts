@@ -8,6 +8,7 @@ import {
 	getAITextEmbeddingProvider,
 	getEmbeddingModelName,
 } from "./lib/aiClient";
+import { isNamespaceAllowedForScope } from "./lib/auth";
 import { memoryTypeValidator } from "./schema";
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -190,17 +191,12 @@ async function resolveSearchNamespace(
 
 	const requested = requestedNamespace ?? "global";
 
-	if (scope.isMaster) return requested;
-	if (scope.refused || scope.orgSlug === null) return null;
-
-	const ownPrefix = `team/${scope.orgSlug}`;
-	if (requested === ownPrefix || requested.startsWith(`${ownPrefix}/`)) {
-		return requested;
-	}
-	// AUTH_NAMESPACE_DENIED: a verified org asked for a namespace outside its
-	// own subtree (including the fleet-common `global`, which is not this
-	// tenant's data to read).
-	return null;
+	// The repo's one tenant-namespace predicate decides (convex/lib/auth.ts):
+	// master -> any namespace; a verified org -> its own `team/<slug>` subtree;
+	// no verified organisation -> nothing. A namespace outside the caller's own
+	// subtree (including the fleet-common `global`, which is not this tenant's
+	// data to read) is AUTH_NAMESPACE_DENIED, answered as null.
+	return isNamespaceAllowedForScope(scope, requested) ? requested : null;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

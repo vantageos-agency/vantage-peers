@@ -23,8 +23,10 @@ import { internalMutation, internalQuery, mutation } from "./_generated/server";
 import { assertOrgArgs } from "./kbShared";
 import { sha256Hex } from "@vantageos/cloud-identity";
 import {
+	isNamespaceAllowedForScope,
 	refuseStorageOwnership,
 	requireResolvedCaller,
+	requireTenantNamespace,
 	withOrgScope,
 } from "./lib/auth";
 
@@ -210,16 +212,14 @@ export const generateUploadUrl = mutation({
 	handler: async (ctx, args) => {
 		// write-contract: MCP-transport-only — issued via mcp-server client.mutation("kbMutations:generateUploadUrl", …) at mcp-server/src/tools/kbIngest.ts:301 (imperative), 0 hits in vantage-peers-dashboard {app,components,hooks,lib,contexts,providers} (measured 2026-10-01 at origin/main 2498c00); never a subscribing pre-org client shell. The RBAC_DENIED throw is the R-16 coded refusal the MCP layer catches, not an uncaught Server Error.
 		const scope = await withOrgScope(ctx);
-		if (!scope.isMaster && scope.orgSlug === null) {
-			throw new ConvexError(
-				`RBAC_DENIED: caller may not mint a KB upload URL — ${JSON.stringify({ orgSlug: null })}`,
-			);
-		}
-		if (!scope.isMaster && args.orgId !== scope.orgSlug) {
-			throw new ConvexError(
-				`RBAC_DENIED: orgId "${args.orgId}" does not match caller's own org "${scope.orgSlug}" — ${JSON.stringify({ orgSlug: scope.orgSlug })}`,
-			);
-		}
+		// The repo's one tenant-namespace gate: the fleet master mints for any org,
+		// a member only for the org its verified scope resolves to, a caller with
+		// no organisation for none (RBAC_DENIED, raised).
+		requireTenantNamespace(
+			scope,
+			`team/${args.orgId}`,
+			"kbMutations:generateUploadUrl",
+		);
 		assertOrgArgs(args.orgId, `${args.namespace}/placeholder`);
 		return await ctx.storage.generateUploadUrl();
 	},
@@ -291,16 +291,11 @@ export const generateUploadUrlWithTicket = mutation({
 	handler: async (ctx, args) => {
 		// write-contract: MCP transport and one dashboard consumer — issued via mcp-server client.mutation("kbMutations:generateUploadUrlWithTicket", …) in mcp-server/src/tools/kbIngest.ts (generate_upload_url, imperative), and by vantage-peers-dashboard components/settings/okf/okf-validate-panel.tsx (imperative, on a user action; dashboard PR #71, branch sigma/okf-validate-ticket-flow at 3fffb85; measured 2026-10-08 with `git grep -n "generateUploadUrlWithTicket|claimUpload" 3fffb85 -- app components hooks lib contexts providers`: only okf-validate-panel.tsx and its test); never a subscribing pre-org client shell. The RBAC_DENIED throw is the R-16 coded refusal the MCP layer catches, not an uncaught Server Error.
 		const scope = await withOrgScope(ctx);
-		if (!scope.isMaster && scope.orgSlug === null) {
-			throw new ConvexError(
-				`RBAC_DENIED: caller may not mint a KB upload URL — ${JSON.stringify({ orgSlug: null })}`,
-			);
-		}
-		if (!scope.isMaster && args.orgId !== scope.orgSlug) {
-			throw new ConvexError(
-				`RBAC_DENIED: orgId "${args.orgId}" does not match caller's own org "${scope.orgSlug}" — ${JSON.stringify({ orgSlug: scope.orgSlug })}`,
-			);
-		}
+		requireTenantNamespace(
+			scope,
+			`team/${args.orgId}`,
+			"kbMutations:generateUploadUrlWithTicket",
+		);
 		assertOrgArgs(args.orgId, `${args.namespace}/placeholder`);
 		if (!SHA256_HEX.test(args.sha256))
 			throw new ConvexError(
@@ -314,11 +309,11 @@ export const generateUploadUrlWithTicket = mutation({
 		).join("");
 		const createdAt = Date.now();
 		const expiresAt = createdAt + UPLOAD_TICKET_TTL_MS;
-		// Bound to the VERIFIED org (args.orgId equals it for a member; master
-		// acts on the org it names, as in assertScopeAuthorizesOrg).
+		// Bound to the org the gate above admitted: for a member that is its own
+		// verified org (the gate admits no other), for the master the org it names.
 		await ctx.db.insert("uploadTickets", {
 			ticketHash: await sha256Hex(ticket),
-			orgId: scope.isMaster ? args.orgId : (scope.orgSlug as string),
+			orgId: args.orgId,
 			contentSha256: args.sha256,
 			createdAt,
 			expiresAt,
@@ -353,7 +348,7 @@ export const claimUpload = mutation({
 			);
 		// Org first: a foreign caller learns nothing about the ticket's state and
 		// cannot consume it.
-		if (!scope.isMaster && ticket.orgId !== scope.orgSlug)
+		if (!isNamespaceAllowedForScope(scope, `team/${ticket.orgId}`))
 			throw new ConvexError(
 				"AUTH_UPLOAD_TICKET_NOT_YOURS: this upload ticket was issued to another organisation.",
 			);
@@ -382,14 +377,10 @@ export const claimUpload = mutation({
 				"AUTH_UPLOAD_TICKET_HASH_MISMATCH: the blob's content does not match the sha256 declared for this ticket.",
 			);
 
-		// The org the blob is bound to comes from the caller's VERIFIED scope; the
-		// ticket row only vouches for it (checked above). Only the fleet master,
-		// which acts on any org, takes the org the ticket was issued for.
-		const claimOrgId = scope.isMaster ? ticket.orgId : scope.orgSlug;
-		if (claimOrgId === null)
-			throw new ConvexError(
-				"RBAC_DENIED: caller has no verified organisation — claimUpload",
-			);
+		// The org the blob is bound to is the ticket's org, which the gate above
+		// admitted for this caller: its own verified org for a member (no other
+		// ticket passes), any org for the fleet master.
+		const claimOrgId = ticket.orgId;
 		const existing = await ctx.db
 			.query("kbUploads")
 			.withIndex("by_storageId", (q) => q.eq("storageId", args.storageId))
