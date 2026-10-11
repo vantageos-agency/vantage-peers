@@ -166,6 +166,8 @@ describe("recurringTasks:create — orgId derives from the verified identity", (
 	test("PRESENT: an own-org write succeeds and is stamped org-a", async () => {
 		const t = createT();
 		await seed(t);
+		// M10h: the assignee is an agent of the org.
+		await seedAgents(t, [["org-a", "seat-a2"]]);
 		const id = await asOrgA(t).mutation(api.recurringTasks.create, {
 			...base,
 			assignedTo: "seat-a2",

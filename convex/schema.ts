@@ -1117,6 +1117,12 @@ export default defineSchema({
 		nextRunAt: v.number(),
 		active: v.boolean(),
 		createdBy: creatorValidator,
+		// M10h: the same two principals BY ID (agents-row `_id`, or "user:<subject>" for
+		// a person), resolved within the schedule's own org when it is written. The
+		// doors decide on these; the name columns above are labels. Optional during
+		// the expand phase: filled by migrations/backfill_recurring_task_actor_ids.
+		assignedToId: v.optional(v.string()),
+		createdById: v.optional(v.string()),
 		// TENANT of the SCHEDULE, stamped from the verified scope at creation.
 		// This column exists so that `processDueTasks` — a cron with no caller
 		// and therefore no scope of its own — can stamp the tasks it generates
@@ -1134,7 +1140,13 @@ export default defineSchema({
 		updatedAt: v.number(),
 	})
 		.index("by_active", ["active", "nextRunAt"])
-		.index("by_assignee", ["assignedTo"]),
+		.index("by_assignee", ["assignedTo"])
+		// M10h: the assignee BY ID (master read), and the tenant as the leading
+		// equality for a member's read, so the caller's org is the read itself.
+		.index("by_assigneeId", ["assignedToId"])
+		.index("by_orgId", ["orgId"])
+		.index("by_orgId_active", ["orgId", "active"])
+		.index("by_orgId_assigneeId", ["orgId", "assignedToId"]),
 
 	// ── fixPatterns ──────────────────────────────────────────────────────────────
 	// Knowledge base of fix patterns. Documents bugs, root causes, fix attempts

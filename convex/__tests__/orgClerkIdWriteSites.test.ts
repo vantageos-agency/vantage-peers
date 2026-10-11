@@ -178,13 +178,14 @@ const DRIVERS = {
 			content: "c",
 			createdBy: SEAT,
 		}),
-	recurringTasks: (t) =>
+	recurringTasks: async (t) =>
 		asOrg(t, ACME.slug).mutation(api.recurringTasks.create, {
 			title: "r",
 			assignedTo: SEAT,
 			priority: "low",
 			cronExpression: "0 9 * * *",
 			createdBy: SEAT,
+			agentCredentialSecret: await seatCredential(t),
 		}),
 	diary: (t) =>
 		asOrg(t, ACME.slug).mutation(api.diary.write, {

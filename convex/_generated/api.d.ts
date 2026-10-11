@@ -90,6 +90,7 @@ import type * as migrations_backfillRosterAgentIds from "../migrations/backfillR
 import type * as migrations_backfill_actor_ids from "../migrations/backfill_actor_ids.js";
 import type * as migrations_backfill_org_clerk_id from "../migrations/backfill_org_clerk_id.js";
 import type * as migrations_backfill_org_stamp from "../migrations/backfill_org_stamp.js";
+import type * as migrations_backfill_recurring_task_actor_ids from "../migrations/backfill_recurring_task_actor_ids.js";
 import type * as migrations_backfill_review_task_origin from "../migrations/backfill_review_task_origin.js";
 import type * as migrations_backfill_task_actor_ids from "../migrations/backfill_task_actor_ids.js";
 import type * as migrations_backfill_webhook_task_origin from "../migrations/backfill_webhook_task_origin.js";
@@ -218,6 +219,7 @@ declare const fullApi: ApiFromModules<{
   "migrations/backfill_actor_ids": typeof migrations_backfill_actor_ids;
   "migrations/backfill_org_clerk_id": typeof migrations_backfill_org_clerk_id;
   "migrations/backfill_org_stamp": typeof migrations_backfill_org_stamp;
+  "migrations/backfill_recurring_task_actor_ids": typeof migrations_backfill_recurring_task_actor_ids;
   "migrations/backfill_review_task_origin": typeof migrations_backfill_review_task_origin;
   "migrations/backfill_task_actor_ids": typeof migrations_backfill_task_actor_ids;
   "migrations/backfill_webhook_task_origin": typeof migrations_backfill_webhook_task_origin;

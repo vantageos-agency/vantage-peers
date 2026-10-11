@@ -19,6 +19,7 @@ import { describe, expect, test } from "vitest";
 import { testClerkOrgId } from "../../tests/fixtures/testClerkOrgId";
 import { api, internal } from "../_generated/api";
 import type { Id } from "../_generated/dataModel";
+import { seedAgents } from "../../tests/lib/agentIdOf";
 import schema from "../schema";
 
 const modules = Object.fromEntries(
@@ -554,8 +555,15 @@ describe("human CRUD — recurringTasks:create", () => {
 		cronExpression: "0 9 * * *",
 	};
 
-	test("org:editor -> own org stamped from scope, createdBy user:<subject>", async () => {
+	// M10h: the assignee is an agent of the org (resolved by ID).
+	const setupWithAssignee = async () => {
 		const t = await setup();
+		await seedAgents(t, [["org-a", "sigma"]]);
+		return t;
+	};
+
+	test("org:editor -> own org stamped from scope, createdBy user:<subject>", async () => {
+		const t = await setupWithAssignee();
 		const id = await t.withIdentity(as("user_m", "org:editor")).mutation(api.recurringTasks.create, args);
 		const row = await readRow("recurringTasks")(t, id);
 		expect(row?.orgId).toBe("org-a");
@@ -563,7 +571,7 @@ describe("human CRUD — recurringTasks:create", () => {
 	});
 
 	test("the cron materialises the human's schedule into the SAME org, authored by the human", async () => {
-		const t = await setup();
+		const t = await setupWithAssignee();
 		const id = await t.withIdentity(as("user_m", "org:editor")).mutation(api.recurringTasks.create, args);
 		await t.run(async (ctx) => ctx.db.patch(id as Id<"recurringTasks">, { nextRunAt: Date.now() - 1000 }));
 		const res = await t.mutation(internal.recurringTasks.processDueTasks, {});
@@ -606,12 +614,15 @@ describe("human CRUD — recurringTasks:create", () => {
 		expect(await count(t, "recurringTasks")).toBe(0);
 	});
 
-	test("agent path unchanged: createdBy on the roster is served as that agent", async () => {
-		const t = await setup();
+	test("agent path unchanged: createdBy on the roster is served as that label", async () => {
+		const t = await setupWithAssignee();
+		// "pi" is on the roster and registered as no agent: the label is recorded, no ID guessed.
 		const id = await t
 			.withIdentity(as("user_m", "org:editor"))
-			.mutation(api.recurringTasks.create, { ...args, createdBy: "sigma" });
-		expect((await readRow("recurringTasks")(t, id))?.createdBy).toBe("sigma");
+			.mutation(api.recurringTasks.create, { ...args, createdBy: "pi" });
+		const row = await readRow("recurringTasks")(t, id);
+		expect(row?.createdBy).toBe("pi");
+		expect(row?.createdById).toBeUndefined();
 	});
 });
 

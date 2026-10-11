@@ -44,8 +44,7 @@ const createT = (): T =>
 // acting as an agent of its org presents it (the task doors decide on agent IDs).
 const secrets = new Map<string, string>();
 
-// `agents: false` leaves the roster names unregistered (the recurringTasks doors
-// take no per-agent credential, so they are exercised on bare roster names).
+// `agents: false` leaves the roster names unregistered (bare roster names).
 async function fixture(opts: { agents?: boolean } = {}) {
 	const t = createT();
 	await seedFleetAgents(t, FILE_LABELS);
@@ -81,6 +80,8 @@ const member = (t: T) =>
 	actingWith(
 		t.withIdentity({ subject: "member-of-org-b", organizationId: "org-b", org_id: testClerkOrgId("org-b"), org_role: "org:editor" } as Identity),
 		(name) => secrets.get(`org-b/${name}`),
+		// M10h: the recurringTasks doors take the per-agent credential too.
+		/^(tasks|recurringTasks):/,
 	);
 const master = (t: T) =>
 	t.withIdentity({ subject: "test-service-account-user-id" } as Identity);
@@ -380,7 +381,7 @@ describe("recurringTasks — one roster rule (normalised, '*' names nobody)", ()
 		createdBy: "bob",
 	});
 	test("REFUSED: create for foreign 'eta'", async () => {
-		const t = await fixture({ agents: false });
+		const t = await fixture();
 		await expectDenied(
 			member(t).mutation(api.recurringTasks.create, args("eta")),
 			"recurringTasks:create",
@@ -388,13 +389,13 @@ describe("recurringTasks — one roster rule (normalised, '*' names nobody)", ()
 		);
 	});
 	test("SERVED: create for 'Bob' (normalisation) and own roster", async () => {
-		const t = await fixture({ agents: false });
+		const t = await fixture();
 		await member(t).mutation(api.recurringTasks.create, args("Bob"));
 		await member(t).mutation(api.recurringTasks.create, args("bea"));
 		expect(await t.run((c) => c.db.query("recurringTasks").collect())).toHaveLength(2);
 	});
 	test("REFUSED: update reassigns to foreign; SERVED: to own roster", async () => {
-		const t = await fixture({ agents: false });
+		const t = await fixture();
 		const id = await member(t).mutation(api.recurringTasks.create, args("bob"));
 		await expectDenied(
 			member(t).mutation(api.recurringTasks.update, {
@@ -411,7 +412,7 @@ describe("recurringTasks — one roster rule (normalised, '*' names nobody)", ()
 		expect((await t.run((c) => c.db.get(id)))?.assignedTo).toBe("BEA");
 	});
 	test("MASTER unchanged", async () => {
-		const t = await fixture({ agents: false });
+		const t = await fixture();
 		await master(t).mutation(api.recurringTasks.create, args("eta"));
 		expect(await t.run((c) => c.db.query("recurringTasks").collect())).toHaveLength(1);
 	});

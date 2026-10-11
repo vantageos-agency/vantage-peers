@@ -170,9 +170,19 @@ describe("B. recurringTasks.create: createdBy is bound to the caller's roster", 
 	});
 
 	test("ALLOW: the same member authoring as its own orchestrator is served, stamped with its own org", async () => {
-		const { t } = await twoOrgs();
+		const { t, adminA } = await twoOrgs();
 		const memberA = t.withIdentity(memberOf("org-a"));
-		await memberA.mutation(api.recurringTasks.create, args("alice"));
+		// M10h: alice is an agent of org A (the assignee, by ID) and proves it is
+		// authoring as herself with her credential.
+		const aliceId = await adminA.mutation(api.agents.registerAgent, { orgSlug: "org-a", name: "alice" });
+		const minted = await adminA.mutation(api.agentCredentials.mintAgentCredential, {
+			orgSlug: "org-a",
+			agentId: aliceId,
+		});
+		await memberA.mutation(api.recurringTasks.create, {
+			...args("alice"),
+			agentCredentialSecret: minted.secret,
+		});
 		const rows = await t.run((ctx) => ctx.db.query("recurringTasks").collect());
 		expect(rows).toHaveLength(1);
 		expect(rows[0].createdBy).toBe("alice");
