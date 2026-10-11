@@ -1,7 +1,7 @@
-import { mkdirSync, mkdtempSync, readFileSync, statSync, symlinkSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, symlinkSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it } from "vitest";
 import {
 	EXCLUDED_ROLES,
 	assertSecretPathOutsideRepo,
@@ -13,6 +13,19 @@ import {
 	validateStations,
 	writeSecretFile,
 } from "../lib/station-agents.mjs";
+
+// Exact dirs this file created (parallel-run safe: never globs /tmp).
+const created = [];
+// Runs on pass and on failure alike.
+afterEach(() => {
+	for (const d of created) rmSync(d, { recursive: true, force: true });
+});
+
+function tempDir(prefix) {
+	const d = mkdtempSync(join(tmpdir(), prefix));
+	created.push(d);
+	return d;
+}
 
 describe("parseArgs", () => {
 	it("parses value and boolean flags, both --k v and --k=v", () => {
@@ -94,7 +107,7 @@ describe("secrets handling", () => {
 	});
 	it("refuses a dir whose first segment only starts with '..' (repo/..secrets) and a symlink into the repo", () => {
 		// Eta REVISE on #1424: both landed a plaintext secret inside the work tree.
-		const base = mkdtempSync(join(tmpdir(), "stn-guard-"));
+		const base = tempDir("stn-guard-");
 		const repo = join(base, "repo");
 		mkdirSync(join(repo, "sub"), { recursive: true });
 		const outside = join(base, "outside");
@@ -106,7 +119,7 @@ describe("secrets handling", () => {
 		expect(assertSecretPathOutsideRepo(join(outside, "s"), repo)).toBe(join(outside, "s"));
 	});
 	it("writeSecretFile writes mode 0600 and returns only the path", () => {
-		const dir = join(mkdtempSync(join(tmpdir(), "stn-")), "out");
+		const dir = join(tempDir("stn-"), "out");
 		const p = writeSecretFile(dir, "eta", "s3cr3t-value");
 		expect(p).toBe(join(dir, "eta.secret"));
 		expect(statSync(p).mode & 0o777).toBe(0o600);
@@ -137,8 +150,16 @@ describe("no secret reaches stdout", () => {
 		}
 	});
 	it("a minted secret passed through writeSecretFile never appears in the returned path", () => {
-		const dir = mkdtempSync(join(tmpdir(), "stn-"));
+		const dir = tempDir("stn-");
 		const secret = "deadbeef".repeat(8);
 		expect(writeSecretFile(dir, "zeta", secret)).not.toContain(secret);
+	});
+});
+
+// Must stay the LAST test in the file: it asserts every dir this file created is gone.
+describe("temp hygiene", () => {
+	it("leaves none of its own temp dirs behind", () => {
+		expect(created.length).toBeGreaterThan(0);
+		expect(created.filter((d) => existsSync(d))).toEqual([]);
 	});
 });
