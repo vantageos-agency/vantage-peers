@@ -224,19 +224,17 @@ export const getMyAgentDirectory = query({
 	returns: v.array(agentDirectoryEntry),
 	handler: async (ctx) => {
 		// isolation-contract: server-side only — invoked by the MCP transport (mcp-server/src/tools.ts list_peers, Clerk-JWT session) via imperative client.query, never a reactive useQuery: `grep -rn "getMyAgentDirectory" app components hooks lib contexts providers` in vantage-peers-dashboard -> 0 hits (2026-10-08). So the pre-organisation caller is refused by raising (alsoRefusePreOrg).
-		const resolved = await withOrgScope(ctx, { refuseWithoutThrow: true });
-		requireResolvedCaller(resolved, "orgRoster:getMyAgentDirectory", {
+		// Resolved as a MEMBER of its own organisation (operatorAsMember): the
+		// operator's org admin is master for reads only, but the directory it may
+		// address is its org's real roster, and every other caller resolves to the
+		// same scope with or without the flag. No branch on how the scope was granted.
+		const scope = await withOrgScope(ctx, {
+			refuseWithoutThrow: true,
+			operatorAsMember: true,
+		});
+		requireResolvedCaller(scope, "orgRoster:getMyAgentDirectory", {
 			alsoRefusePreOrg: true,
 		});
-		// The operator's own org admin reads as a master; the directory it may
-		// address is its org's real roster (same re-resolution as getMyOrgRoster).
-		const scope =
-			resolved.masterSource === "operator-admin"
-				? await withOrgScope(ctx, {
-						refuseWithoutThrow: true,
-						operatorAsMember: true,
-					})
-				: resolved;
 		if (scope.orgSlug === null) {
 			throw new ConvexError(
 				`RBAC_DENIED: orgRoster.getMyAgentDirectory lists an organisation's agents and this caller resolves to none — ${JSON.stringify(
