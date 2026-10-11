@@ -277,8 +277,8 @@ export const getMyAgentDirectory = query({
 // previously read that token's org roster with no identity at all. Only
 // master/service-account callers may ask this question now — the MCP
 // server's `internalClient()`-backed transport is the only production
-// caller and always resolves isMaster=true via the by-id
-// `CLERK_SERVICE_ACCOUNT_USER_ID` carve-out, so no legitimate caller is
+// caller and always resolves isMaster=true via the stored
+// stored service-account resolution (lib/serviceAccount.ts), so no legitimate caller is
 // narrowed out (matching the #1318 `getScopeProfile` pattern).
 // ─────────────────────────────────────────────────────────────────────────────
 export const getForAccessToken = query({

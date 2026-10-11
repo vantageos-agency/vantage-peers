@@ -42,7 +42,7 @@
 // a step function, not a shortcut around it.
 // ─────────────────────────────────────────────────────────────────────────────
 
-import { convexTest } from "convex-test";
+import { convexTest } from "../../tests/fixtures/convexTestWithServiceAccount";
 import { describe, expect, test } from "vitest";
 import agentEngineSchema from "../../node_modules/@vantageos/agent-engine/dist/component/schema.js";
 import { testClerkOrgId } from "../../tests/fixtures/testClerkOrgId";

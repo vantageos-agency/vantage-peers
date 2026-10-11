@@ -19,7 +19,7 @@
  * .claude/hooks/enforce-irp-sequence.py, out of scope for this Convex file).
  */
 
-import { convexTest } from "convex-test";
+import { convexTest } from "../../tests/fixtures/convexTestWithServiceAccount";
 import { describe, expect, test, vi } from "vitest";
 import { api } from "../_generated/api";
 import schema from "../schema";

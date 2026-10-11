@@ -11,7 +11,7 @@
 //   m9748paff — Clerk callers are fail-CLOSED: foreign/omitted tenantId = 0 rows.
 //   k179fk0c  — per-tool tenancy doctrine, same pattern as tasks.list.
 
-import { convexTest } from "convex-test";
+import { convexTest } from "../../tests/fixtures/convexTestWithServiceAccount";
 import { describe, expect, test } from "vitest";
 import { testClerkOrgId } from "../../tests/fixtures/testClerkOrgId";
 import { api } from "../_generated/api";

@@ -16,7 +16,7 @@
 //   - the true internal master (isMaster && orgSlug === null) keeps
 //     fleet-wide reach.
 
-import { convexTest } from "convex-test";
+import { convexTest } from "../../tests/fixtures/convexTestWithServiceAccount";
 import { describe, expect, test } from "vitest";
 import { testClerkOrgId } from "../../tests/fixtures/testClerkOrgId";
 import { api } from "../_generated/api";

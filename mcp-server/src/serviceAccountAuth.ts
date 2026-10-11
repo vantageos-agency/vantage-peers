@@ -10,8 +10,8 @@
  * signature/issuer through the exact same auth.config.ts mechanism used for
  * every browser session — `ctx.auth.getUserIdentity()` only resolves non-null
  * because Convex already validated the signature. convex/lib/auth.ts then
- * recognizes this specific, verified Clerk user_id (CLERK_SERVICE_ACCOUNT_USER_ID)
- * and grants master scope. No shared secret exists anywhere in this flow.
+ * recognizes this specific, verified Clerk user_id as the `authSubject` of the stored
+ * fleet service-account row and grants master scope. No shared secret exists anywhere in this flow.
  *
  * Mechanism chosen: Clerk Sign-in Tokens (Backend API
  * `signInTokens.createSignInToken`) + Frontend API ticket redemption
@@ -30,10 +30,11 @@
  *                                      required for any Clerk backend usage).
  *   - CLERK_SERVICE_ACCOUNT_USER_ID   Clerk user_id of a dedicated "service
  *                                      account" user created in the Clerk
- *                                      dashboard for this purpose. Set
- *                                      identically as CLERK_SERVICE_ACCOUNT_USER_ID
- *                                      on the Convex deployment (env var, not
- *                                      a secret — see convex/lib/auth.ts).
+ *                                      dashboard for this purpose. The Convex
+ *                                      side does NOT read it per request: it
+ *                                      decides from the stored service-account
+ *                                      row whose authSubject is this value
+ *                                      (see convex/lib/serviceAccount.ts).
  *   - CLERK_DOMAIN (optional)         Defaults to the existing Frontend API
  *                                      domain already used by mcp-server/src/auth.ts
  *                                      ("https://sharp-sponge-67.clerk.accounts.dev").
@@ -163,7 +164,7 @@ function buildDefaultDeps(secretKey: string): ServiceAccountDeps {
 // Extends — does NOT replace — the fixed service-account mint flow above.
 // Unlike getServiceAccountToken (which mints a TEMPLATE-scoped token,
 // "convex", for one fixed service-account user and grants master scope via
-// convex/lib/auth.ts's CLERK_SERVICE_ACCOUNT_USER_ID allowlist), this mints
+// convex/lib/auth.ts's stored service-account resolution), this mints
 // the session's NATIVE token (no JWT template — `clerkClient.sessions.getToken`
 // called WITHOUT a template argument). Clerk's native session token carries
 // the full standard claim set (`org_id`, `org_role`, `org_slug`, `aud`)

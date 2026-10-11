@@ -11,7 +11,7 @@
  *   REFUSED  a member of org A reading org B; anonymous; a new org on a freed slug
  *   ABSENT   an org with no membership rows is an empty SUCCESS, not a refusal
  */
-import { convexTest } from "convex-test";
+import { convexTest } from "../../../tests/fixtures/convexTestWithServiceAccount";
 import { describe, expect, test } from "vitest";
 import { testClerkOrgId } from "../../../tests/fixtures/testClerkOrgId";
 import { api } from "../../_generated/api";

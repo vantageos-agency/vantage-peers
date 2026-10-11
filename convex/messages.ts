@@ -520,7 +520,7 @@ async function sendMessageCore(
 			// FAIL-CLOSED (no allowNoIdentityMaster) — consistent with the
 			// Day-156 SEC-AUDIT doctrine. The MCP server forwards its
 			// service-account identity, which resolves to master via the
-			// CLERK_SERVICE_ACCOUNT_USER_ID carve-out (lib/auth.ts:111-121),
+			// stored-service-account resolution (lib/serviceAccount.ts),
 			// so legitimate internal broadcasts still resolve to master. An
 			// anonymous/no-identity caller resolves to isMaster=false with an
 			// empty allowedOrchestrators, so it falls into the client branch

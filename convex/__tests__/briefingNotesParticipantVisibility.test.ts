@@ -17,7 +17,7 @@
 // junction table (resolved via the `by_participant_note` index — an
 // index-range predicate, never a table scan / never a post-query filter).
 
-import { convexTest } from "convex-test";
+import { convexTest } from "../../tests/fixtures/convexTestWithServiceAccount";
 import { describe, expect, test } from "vitest";
 import { testClerkOrgId } from "../../tests/fixtures/testClerkOrgId";
 import { api } from "../_generated/api";

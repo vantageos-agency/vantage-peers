@@ -30,7 +30,7 @@
  * message, so P3 goes RED; removing the declaredAgent lookup turns P2 RED.
  */
 
-import { convexTest } from "convex-test";
+import { convexTest } from "../../tests/fixtures/convexTestWithServiceAccount";
 import { describe, expect, test } from "vitest";
 import { api } from "../_generated/api";
 import schema from "../schema";

@@ -1777,9 +1777,10 @@ export default defineSchema({
 		// part 2). Meaningful only on the operator-kind row (`orgKind:
 		// "operator"`): the `agents` row (kind "service") of this organisation
 		// that the MCP server authenticates as. Its `authSubject` is the verified
-		// Clerk subject it presents. Absent means no service account is linked yet.
-		// Written only by the one-off migration migrations/linkServiceAccountAgent;
-		// no request path reads it in this step (expand only).
+		// Clerk subject it presents. Absent means NO service account exists: every
+		// service-account door refuses (fail closed). Written only by the one-off
+		// migration migrations/linkServiceAccountAgent, never read from an env var
+		// on a request path.
 		serviceAccountAgentId: v.optional(v.id("agents")),
 	})
 		.index("by_clerk_slug", ["clerkOrgSlug"])
@@ -2004,7 +2005,7 @@ export default defineSchema({
 		kind: v.optional(v.union(v.literal("agent"), v.literal("service"))),
 		// authSubject: the verified Clerk subject this row authenticates as. Set
 		// only on a `kind: "service"` row; the service account is recognised by
-		// THIS stored value once the doors read it (a later step).
+		// THIS stored value, never by an environment variable.
 		authSubject: v.optional(v.string()),
 		isActive: v.boolean(),
 		createdAt: v.number(),

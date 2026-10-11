@@ -21,7 +21,7 @@
 //   BACKFILL     dry run lists ambiguous and unknown names by row id and writes
 //                nothing; the write run is idempotent.
 
-import { convexTest } from "convex-test";
+import { convexTest } from "../../tests/fixtures/convexTestWithServiceAccount";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import { api, internal } from "../_generated/api";
 import type { Doc, Id } from "../_generated/dataModel";

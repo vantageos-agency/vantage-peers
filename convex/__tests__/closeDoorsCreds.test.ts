@@ -20,7 +20,7 @@
  * Every DENY pole below is an ORDINARY or ANONYMOUS caller. `asMaster` only
  * appears in an ALLOW pole.
  */
-import { convexTest } from "convex-test";
+import { convexTest } from "../../tests/fixtures/convexTestWithServiceAccount";
 import { describe, expect, test } from "vitest";
 import { api, internal } from "../_generated/api";
 import schema from "../schema";

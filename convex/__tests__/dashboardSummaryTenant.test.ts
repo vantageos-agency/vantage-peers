@@ -15,7 +15,7 @@
  * refused (raise for the two figure reads, `{ refused: true, items: [] }` for
  * the list read); master is unchanged.
  */
-import { convexTest } from "convex-test";
+import { convexTest } from "../../tests/fixtures/convexTestWithServiceAccount";
 import { describe, expect, test } from "vitest";
 import { testClerkOrgId } from "../../tests/fixtures/testClerkOrgId";
 import { api } from "../_generated/api";

@@ -17,7 +17,7 @@
 //   PRESENT — an operator-org member, and a fleet-scope (master) task, still
 //             link and fix the issue on the project they name.
 
-import { convexTest } from "convex-test";
+import { convexTest } from "../../tests/fixtures/convexTestWithServiceAccount";
 import { afterEach, describe, expect, test, vi } from "vitest";
 import { testClerkOrgId } from "../../tests/fixtures/testClerkOrgId";
 import { api } from "../_generated/api";

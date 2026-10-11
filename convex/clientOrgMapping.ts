@@ -33,8 +33,8 @@ import { CLERK_ORG_ID_PATTERN, clerkOrgIdForSlug } from "./lib/orgClerkId";
 // called EXCLUSIVELY via `internalClient()` (mcp-server/src/auth.ts case
 // 2.5), which always attaches the MCP server's own service-account Clerk
 // identity (`createServiceAccountConvexClient`) — `withOrgScope` resolves
-// that identity's `ctx.auth` to `isMaster=true` via the by-id
-// `CLERK_SERVICE_ACCOUNT_USER_ID` carve-out (see convex/lib/auth.ts). The
+// that identity's `ctx.auth` to `isMaster=true` from the stored
+// service-account rows (see convex/lib/serviceAccount.ts). The
 // `orgSlug` ARGUMENT is the verified end-caller's org (mcp-server's own
 // JWKS check, not Convex's `ctx.auth`) — Convex cannot re-derive it from
 // `ctx.auth` here, because `ctx.auth` on this path is the SERVICE

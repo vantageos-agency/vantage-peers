@@ -10,7 +10,7 @@
  * same-named "seat-x". A receipt or message carrying no tenantId grants
  * nothing to an org-scoped caller.
  */
-import { convexTest } from "convex-test";
+import { convexTest } from "../../tests/fixtures/convexTestWithServiceAccount";
 import { describe, expect, test } from "vitest";
 import { testClerkOrgId } from "../../tests/fixtures/testClerkOrgId";
 import { api } from "../_generated/api";

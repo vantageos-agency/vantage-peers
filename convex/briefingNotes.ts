@@ -118,8 +118,8 @@ async function callerCanRead(
 // Fix: resolve the caller's verified org scope via `withOrgScope(ctx)`
 // FIRST (same #1313 pattern as convex/messages.ts's markAsRead/
 // deleteMessage). `scope.isMaster` is derived from the VERIFIED identity —
-// the real master secret, or the recognized CLERK_SERVICE_ACCOUNT_USER_ID
-// carve-out (convex/lib/auth.ts) — never from the client-supplied `master`
+// the real master secret, or the stored fleet service account
+// (convex/lib/serviceAccount.ts, decided from data) — never from the client-supplied `master`
 // argument. A verified Clerk-org (non-master) caller may read only notes
 // whose stored `orgId` equals its own `orgSlug`, intersected with any
 // `callerIdentities` it passes; its `master` argument is IGNORED. A
