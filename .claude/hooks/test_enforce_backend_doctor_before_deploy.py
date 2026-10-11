@@ -462,13 +462,15 @@ MEASURED_E85618D = {
 MEASURED_E85618D_RULE_COUNTS = {
     "R-2": 6, "R-8": 2, "R-13": 108, "R-28": 7, "R-31": 18, "R-52": 4, "R-53": 113,
 }
-# The live baseline was re-measured on ONE instrument (Pi order 2026-10-10, task
-# k17d9dgcsjvwggvr1kc9daa32x8g0m6t): backend-doctor 0.3.0 @622caff on vantage-peers
-# 6cc7950, `npx tsx src/cli.ts <vp@6cc7950>/convex --json-evidence <dir>/` ->
-# `MECHANICAL RULE COUNTS: CR-2 251, R-5 62, R-53 254`. The live file may never exceed it.
-MEASURED_6CC7950_RULE_COUNTS = {
-    "R-2": 0, "R-8": 0, "R-13": 0, "R-28": 0, "R-31": 0, "R-52": 0, "R-53": 254, "R-5": 62,
-    "CR-2": 251,
+# The live baseline was re-measured on ONE instrument (Pi standing ruling, baseline =
+# what the merged doctor prints, task k17ebecjhvjd93a48jh06k7hb18fzykg): backend-doctor
+# 0.4.0 @ebf85e4e on vantage-peers d2e12cc, `npx -y @vantageos/backend-doctor@0.4.0
+# <vp@d2e12cc>/convex --json-evidence <dir>/` ->
+# `MECHANICAL RULE COUNTS: CR-2 246, R-5 62, R-53 246, R-54 152, R-55 32, R-56 7`.
+# The live file may never exceed it.
+MEASURED_D2E12CC_RULE_COUNTS = {
+    "R-2": 0, "R-8": 0, "R-13": 0, "R-28": 0, "R-31": 0, "R-52": 0, "R-53": 246, "R-5": 62,
+    "CR-2": 246, "R-54": 152, "R-55": 32, "R-56": 7,
 }
 
 
@@ -520,13 +522,19 @@ def test_ratchet_baseline_values_carry_their_command():
 
 def test_ratchet_live_baseline_carries_its_command_and_never_rose():
     live = json.loads(REAL_BASELINE.read_text())
-    assert set(live["rules"]) <= set(MEASURED_6CC7950_RULE_COUNTS)
+    assert set(live["rules"]) <= set(MEASURED_D2E12CC_RULE_COUNTS)
     for rule, entry in live["rules"].items():
-        assert entry["command"].startswith("cd ")
-        assert "npx tsx src/cli.ts" in entry["command"]
-        assert entry["output_line"].startswith(f"{rule}: {entry['count']} ")
+        assert entry["command"].startswith("npx -y @vantageos/backend-doctor@0.4.0 ")
+        assert entry["cli_commit"] == "ebf85e4e320492076af2b83f34c9e72029a5c668"
+        assert entry["measured_tree_sha"] == "d2e12cc4ad9084353e7f7fbb5055d3376dfb4966"
+        line = entry["output_line"]
+        assert line.startswith((f"{rule}: ", f"{rule} VERDICT: ")), rule
+        # the 0.4.0 doctor prints the count as `N site(s) VIOLATE`, `N violation(s)`
+        # or inside its `[... non-conforming=N ...]` bracket, never as a bare prefix
+        assert (f"non-conforming={entry['count']} " in line
+                or f"{entry['count']} violation(s)" in line), rule
         assert entry["cli_commit"]
-        assert entry["count"] <= MEASURED_6CC7950_RULE_COUNTS[rule], rule
+        assert entry["count"] <= MEASURED_D2E12CC_RULE_COUNTS[rule], rule
 
 
 def test_ratchet_block_one_more_r53_site():
