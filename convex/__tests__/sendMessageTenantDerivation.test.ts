@@ -28,7 +28,7 @@
 // `organizationId` resolves the mapping, matching the existing pattern in
 // convex/__tests__/broadcast-org-scoped.test.ts).
 
-import { convexTest } from "convex-test";
+import { convexTest } from "../../tests/fixtures/convexTestWithServiceAccount";
 import { describe, expect, test } from "vitest";
 import { testClerkOrgId } from "../../tests/fixtures/testClerkOrgId";
 import { api, internal } from "../_generated/api";

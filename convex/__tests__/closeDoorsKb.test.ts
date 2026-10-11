@@ -14,7 +14,7 @@
  * refusal must NOT have made (no chunk row, no storage binding, no soft-delete).
  */
 
-import { convexTest } from "convex-test";
+import { convexTest } from "../../tests/fixtures/convexTestWithServiceAccount";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import { testClerkOrgId } from "../../tests/fixtures/testClerkOrgId";
 import schema from "../schema";

@@ -15,7 +15,7 @@
  *               deactivated / moved) reports null.
  *   BACKFILL    undecidable credential rows are LISTED BY ID, never guessed.
  */
-import { convexTest } from "convex-test";
+import { convexTest } from "../../tests/fixtures/convexTestWithServiceAccount";
 import { describe, expect, test } from "vitest";
 import { api, internal } from "../_generated/api";
 import type { Id } from "../_generated/dataModel";

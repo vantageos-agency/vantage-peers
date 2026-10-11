@@ -4,7 +4,8 @@
  * and writes the service account into data (module M2 part 2).
  *
  *   - dry run (the default) writes nothing and reports the pre-state;
- *   - dryRun:false creates the operator org's service agent and the column;
+ *   - dryRun:false creates the operator org's service agent and the column, and
+ *     the doors then admit the subject from DATA (env var unset to prove it);
  *   - a replay is "already-linked" and writes nothing;
  *   - a column naming something else is never overwritten;
  *   - no operator org / no subject are reported "blocked", not thrown.
@@ -13,7 +14,7 @@
 import { convexTest } from "convex-test";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import { testClerkOrgId } from "../../tests/fixtures/testClerkOrgId";
-import { internal } from "../_generated/api";
+import { api, internal } from "../_generated/api";
 import schema from "../schema";
 
 const modules = Object.fromEntries(
@@ -79,23 +80,16 @@ describe("linkServiceAccountAgent", () => {
 		expect(await counts(t)).toEqual({ agents: 0, columns: 0 });
 	});
 
-	test("write run links the account: service row and column are stored", async () => {
+	test("write run links the account; the doors admit it from data alone", async () => {
 		const t = createT();
 		await seedOperator(t);
 		const out = await run(t, { dryRun: false });
 		expect(out.status).toBe("linked");
 		expect(await counts(t)).toEqual({ agents: 1, columns: 1 });
-		const stored = await t.run(async (ctx) => {
-			const mapping = (await ctx.db.query("client_org_mapping").collect())[0];
-			const column = mapping.serviceAccountAgentId;
-			const agent = column === undefined ? null : await ctx.db.get(column);
-			return { agent, column, orgId: mapping.clerkOrgId };
-		});
-		expect(stored.column).toBe(out.agentId);
-		expect(stored.agent?.kind).toBe("service");
-		expect(stored.agent?.authSubject).toBe(SUBJECT);
-		expect(stored.agent?.isActive).toBe(true);
-		expect(stored.agent?.clerkOrgId).toBe(stored.orgId);
+		// The env value is gone: only the stored rows can admit the subject now.
+		vi.stubEnv("CLERK_SERVICE_ACCOUNT_USER_ID", "");
+		const c = t.withIdentity({ subject: SUBJECT });
+		expect(await c.query(api.oauth.listClients, {})).toEqual([]);
 	});
 
 	test("a replay is already-linked and writes nothing", async () => {

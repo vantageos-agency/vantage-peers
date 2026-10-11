@@ -14,7 +14,7 @@
  *   B5 — count correctness: 3 clients seeded, 2 without field, 1 with "none" → scanned=3 backfilled=2
  */
 
-import { convexTest } from "convex-test";
+import { convexTest } from "../tests/fixtures/convexTestWithServiceAccount";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import { api, internal } from "./_generated/api";
 import * as oauthMigrationsModule from "./oauthMigrations";

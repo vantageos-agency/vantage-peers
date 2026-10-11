@@ -16,7 +16,7 @@
 // `ctx.db.normalizeId` via the `requireId` helper, throwing a structured
 // `ConvexError` naming the offending argument.
 
-import { convexTest } from "convex-test";
+import { convexTest } from "../../tests/fixtures/convexTestWithServiceAccount";
 import { ConvexError } from "convex/values";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import { api } from "../_generated/api";

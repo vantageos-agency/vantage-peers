@@ -22,7 +22,7 @@
  */
 
 import { makeFunctionReference } from "convex/server";
-import { convexTest } from "convex-test";
+import { convexTest } from "../../tests/fixtures/convexTestWithServiceAccount";
 import { beforeEach, describe, expect, it } from "vitest";
 import type { Id } from "../../convex/_generated/dataModel";
 import { normalizeOrchestratorId } from "../../convex/_helpers/normalizeOrchestratorId";

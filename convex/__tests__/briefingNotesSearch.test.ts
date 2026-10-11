@@ -7,7 +7,7 @@
 // orgs. Eta blocker on first review: the original handler was FAIL-OPEN
 // (no withOrgScope, no orgId filter). This test pins the fix.
 
-import { convexTest } from "convex-test";
+import { convexTest } from "../../tests/fixtures/convexTestWithServiceAccount";
 import { describe, expect, test } from "vitest";
 import { testClerkOrgId } from "../../tests/fixtures/testClerkOrgId";
 import { api } from "../_generated/api";

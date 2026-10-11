@@ -15,7 +15,7 @@
 // DELETION PROBE (not committed): remove the requireOrchestratorOnRoster call
 // in a site and that site's REFUSED pole goes RED.
 
-import { convexTest } from "convex-test";
+import { convexTest } from "../../tests/fixtures/convexTestWithServiceAccount";
 import { describe, expect, test } from "vitest";
 import { testClerkOrgId } from "../../tests/fixtures/testClerkOrgId";
 import { api } from "../_generated/api";

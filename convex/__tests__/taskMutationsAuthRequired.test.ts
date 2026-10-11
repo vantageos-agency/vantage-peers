@@ -33,7 +33,7 @@
  * file exercises.
  */
 
-import { convexTest } from "convex-test";
+import { convexTest } from "../../tests/fixtures/convexTestWithServiceAccount";
 import { readFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";

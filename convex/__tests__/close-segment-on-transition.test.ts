@@ -5,7 +5,7 @@
 // row then refuses start_task forever, and a terminal row silently drops
 // the segment's minutes. One test per exit path pins the fix.
 
-import { convexTest } from "convex-test";
+import { convexTest } from "../../tests/fixtures/convexTestWithServiceAccount";
 import { describe, expect, test, vi } from "vitest";
 import { api, internal } from "../_generated/api";
 import schema from "../schema";

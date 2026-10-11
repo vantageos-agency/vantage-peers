@@ -10,7 +10,7 @@
  * "pi" learns pi's agent ID from the directory, because sendMessage admits that same operator agent
  * by ID. Today the directory looks the name up in the client org only.
  */
-import { convexTest } from "convex-test";
+import { convexTest } from "../../../tests/fixtures/convexTestWithServiceAccount";
 import { describe, expect, test } from "vitest";
 import { api } from "../../_generated/api";
 import type { Doc, Id } from "../../_generated/dataModel";

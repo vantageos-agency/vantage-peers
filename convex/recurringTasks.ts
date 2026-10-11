@@ -44,7 +44,7 @@ import { clerkOrgIdForSlug } from "./lib/orgClerkId";
 // re-enforces the SAME master-only rule independently here — the sole
 // legitimate caller (the MCP server's dedicated service-account identity)
 // always resolves to `scope.isMaster === true` via withOrgScope's
-// CLERK_SERVICE_ACCOUNT_USER_ID carve-out, so this is byte-behavior-
+// stored-service-account resolution (lib/serviceAccount.ts), so this is byte-behavior-
 // unchanged for that live path and closes the door for anyone else holding
 // the deployment URL directly.
 //

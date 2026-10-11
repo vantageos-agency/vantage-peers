@@ -19,7 +19,7 @@
  * Bonus: fail-closed when taskClosureConfig is not seeded at all.
  */
 
-import { convexTest } from "convex-test";
+import { convexTest } from "../../tests/fixtures/convexTestWithServiceAccount";
 import { describe, expect, test } from "vitest";
 import { api, internal } from "../_generated/api";
 import schema from "../schema";

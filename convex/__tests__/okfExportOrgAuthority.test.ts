@@ -6,7 +6,7 @@
 // okfMasterNamespaceExport.test.ts; this file adds the pole that file lacks,
 // an INACTIVE org naming its own namespace, and repeats the four as one set.
 
-import { convexTest } from "convex-test";
+import { convexTest } from "../../tests/fixtures/convexTestWithServiceAccount";
 import { describe, expect, test } from "vitest";
 import { testClerkOrgId } from "../../tests/fixtures/testClerkOrgId";
 import schema from "../schema";

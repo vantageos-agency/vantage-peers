@@ -52,7 +52,7 @@ const RETRIED_METHODS = new Set(["query"]);
  *   - `clerkJwt` absent (master / OAuth-scoped) →
  *     the MCP server's own Clerk service-account identity
  *     (`createServiceAccountConvexClient`). Convex's withOrgScope
- *     service-account carve-out (CLERK_SERVICE_ACCOUNT_USER_ID) grants
+ *     stored service-account resolution (agents row + operator mapping column) grants
  *     isMaster=true for this identity. Isolation for the non-master-bearer
  *     variant among these (OAuth scoped tokens) is enforced at the MCP
  *     tool layer instead (guardRead/guardWrite/checkNamespaceRead/

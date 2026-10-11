@@ -13,7 +13,7 @@
  */
 
 import { ConvexError } from "convex/values";
-import { convexTest } from "convex-test";
+import { convexTest } from "../../tests/fixtures/convexTestWithServiceAccount";
 import { describe, expect, test } from "vitest";
 import { api, internal } from "../_generated/api";
 import { TEST_WEBHOOK_SECRET, signGithubBody } from "../../tests/lib/githubWebhookSignature";

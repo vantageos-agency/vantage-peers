@@ -10,7 +10,7 @@
 //
 // Orchestrator: Sigma — VantagePeers | 2026-06-19
 
-import { convexTest } from "convex-test";
+import { convexTest } from "../../tests/fixtures/convexTestWithServiceAccount";
 import { describe, expect, test } from "vitest";
 import { api, internal } from "../_generated/api";
 import { getNextRunTime } from "../recurringTasks";

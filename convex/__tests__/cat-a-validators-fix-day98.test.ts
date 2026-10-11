@@ -14,7 +14,7 @@
 // Issue #655/#644/#643 fixed by adding `tenantId: v.optional(v.string())`
 // to messages.listMessages returns shape.
 
-import { convexTest } from "convex-test";
+import { convexTest } from "../../tests/fixtures/convexTestWithServiceAccount";
 import { describe, expect, test } from "vitest";
 import { api } from "../_generated/api";
 import schema from "../schema";

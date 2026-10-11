@@ -17,7 +17,7 @@
  * proves the two writes now match that same enforcement, both poles.
  */
 
-import { convexTest } from "convex-test";
+import { convexTest } from "../../tests/fixtures/convexTestWithServiceAccount";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import { testClerkOrgId } from "../../tests/fixtures/testClerkOrgId";
 import { api } from "../_generated/api";

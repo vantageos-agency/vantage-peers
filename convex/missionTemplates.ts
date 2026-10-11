@@ -40,7 +40,7 @@ import { clerkOrgIdForSlug } from "./lib/orgClerkId";
 // proxima, ...) all authenticate to Convex through the MCP server's ONE
 // shared service-account identity, which always resolves to
 // `scope.isMaster === true` (convex/lib/auth.ts's
-// CLERK_SERVICE_ACCOUNT_USER_ID carve-out) — so this is byte-behaviour-
+// stored-service-account resolution in convex/lib/serviceAccount.ts) — so this is byte-behaviour-
 // unchanged for that live path and closes the door for anyone else holding
 // the deployment URL directly.
 //

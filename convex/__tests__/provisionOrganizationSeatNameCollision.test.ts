@@ -22,7 +22,7 @@
  *   org + same name set stays idempotent (replay unaffected).
  */
 
-import { convexTest } from "convex-test";
+import { convexTest } from "../../tests/fixtures/convexTestWithServiceAccount";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import { api } from "../_generated/api";
 import schema from "../schema";

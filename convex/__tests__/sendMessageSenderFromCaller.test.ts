@@ -14,7 +14,7 @@
 // DELETION PROBE (not committed): remove the requireOrchestratorOnRoster call in
 // messages:sendMessage and the REFUSED poles go RED.
 
-import { convexTest } from "convex-test";
+import { convexTest } from "../../tests/fixtures/convexTestWithServiceAccount";
 import { describe, expect, test } from "vitest";
 import { api } from "../_generated/api";
 import schema from "../schema";

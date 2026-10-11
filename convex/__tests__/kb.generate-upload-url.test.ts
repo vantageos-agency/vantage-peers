@@ -20,7 +20,10 @@
 //
 // Orchestrator: Sigma — VantagePeers | 2026-07-04
 
+import { convexTest } from "convex-test";
 import { describe, expect, test } from "vitest";
+import { seedServiceAccount } from "../../tests/fixtures/seedServiceAccount";
+import schema from "../schema";
 // biome-ignore lint/suspicious/noExplicitAny: intentional — export does not
 // exist yet on current code; this is the RED signal for T1.
 import * as kbMutations from "../kbMutations";
@@ -34,24 +37,34 @@ const STUB_URL = "https://fake-storage.convex.cloud/upload/abc123";
 
 // generateUploadUrl now derives authority from withOrgScope
 // (convex/lib/auth.ts), which calls `ctx.auth.getUserIdentity()` — this shim
-// resolves to the recognized CLERK_SERVICE_ACCOUNT_USER_ID master carve-out
-// (set in vitest.config.ts) so the pre-existing assertOrgArgs behaviour
-// this suite pins stays reachable. Cross-tenant / anonymous-refusal poles
+// resolves to the stored fleet service account (an agents row the operator
+// org's mapping names, seeded by `seedServiceAccount`; module M2 part 2) so the
+// pre-existing assertOrgArgs behaviour this suite pins stays reachable. The
+// database is a real convex-test one: the service account is decided from
+// stored rows. Cross-tenant / anonymous-refusal poles
 // live in convex/__tests__/kbMutationsWriteScope.test.ts (driven via real
 // t.mutation, not this handler shim).
-function makeFakeCtx() {
-	return {
-		auth: {
-			getUserIdentity: async () => ({
-				subject: "test-service-account-user-id",
-			}),
-		},
-		storage: {
-			getUrl: async () => null,
-			generateUploadUrl: async () => STUB_URL,
-			delete: async () => undefined,
-		},
-	} as unknown as Parameters<typeof invokeHandler>[0];
+const SERVICE_SUBJECT = "test-service-account-user-id";
+
+async function withFakeCtx(
+	body: (ctx: Parameters<typeof invokeHandler>[0]) => Promise<void>,
+): Promise<void> {
+	const t = convexTest(schema, import.meta.glob("../_generated/*.ts"));
+	await seedServiceAccount(t, SERVICE_SUBJECT);
+	await t.run(async (dbCtx) => {
+		const ctx = {
+			db: dbCtx.db,
+			auth: {
+				getUserIdentity: async () => ({ subject: SERVICE_SUBJECT }),
+			},
+			storage: {
+				getUrl: async () => null,
+				generateUploadUrl: async () => STUB_URL,
+				delete: async () => undefined,
+			},
+		} as unknown as Parameters<typeof invokeHandler>[0];
+		await body(ctx);
+	});
 }
 
 /**
@@ -75,27 +88,30 @@ function invokeHandler(ctx: any, args: { orgId: string; namespace: string }) {
 
 describe("kbMutations.generateUploadUrl", () => {
 	test("valid org: returns the stubbed non-empty upload URL", async () => {
-		const ctx = makeFakeCtx();
-		const url = await invokeHandler(ctx, {
-			orgId: "org_test123",
-			namespace: "team/org_test123",
+		await withFakeCtx(async (ctx) => {
+			const url = await invokeHandler(ctx, {
+				orgId: "org_test123",
+				namespace: "team/org_test123",
+			});
+			expect(typeof url).toBe("string");
+			expect((url as string).length).toBeGreaterThan(0);
+			expect(url).toBe(STUB_URL);
 		});
-		expect(typeof url).toBe("string");
-		expect((url as string).length).toBeGreaterThan(0);
-		expect(url).toBe(STUB_URL);
 	});
 
 	test("no-org reject: empty orgId throws AUTH_NO_ORG_ID", async () => {
-		const ctx = makeFakeCtx();
-		await expect(
-			invokeHandler(ctx, { orgId: "", namespace: "team/org_test123" }),
-		).rejects.toThrow(/AUTH_NO_ORG_ID/);
+		await withFakeCtx(async (ctx) => {
+			await expect(
+				invokeHandler(ctx, { orgId: "", namespace: "team/org_test123" }),
+			).rejects.toThrow(/AUTH_NO_ORG_ID/);
+		});
 	});
 
 	test("bad namespace: namespace not starting with team/ throws", async () => {
-		const ctx = makeFakeCtx();
-		await expect(
-			invokeHandler(ctx, { orgId: "org_test123", namespace: "global" }),
-		).rejects.toThrow(/AUTH_NO_ORG_ID/);
+		await withFakeCtx(async (ctx) => {
+			await expect(
+				invokeHandler(ctx, { orgId: "org_test123", namespace: "global" }),
+			).rejects.toThrow(/AUTH_NO_ORG_ID/);
+		});
 	});
 });

@@ -10,7 +10,7 @@
 // Hermetic: no deployment is touched. Fictitious identifiers only.
 
 import type { FunctionReturnType } from "convex/server";
-import { convexTest } from "convex-test";
+import { convexTest } from "../../tests/fixtures/convexTestWithServiceAccount";
 import { describe, expect, test } from "vitest";
 import { api, internal } from "../_generated/api";
 import {

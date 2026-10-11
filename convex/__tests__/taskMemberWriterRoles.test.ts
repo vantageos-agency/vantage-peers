@@ -8,7 +8,7 @@
  * Subjects are scoped NON-creator members carrying `org_role`, never master.
  */
 
-import { convexTest } from "convex-test";
+import { convexTest } from "../../tests/fixtures/convexTestWithServiceAccount";
 import { describe, expect, test } from "vitest";
 import { testClerkOrgId } from "../../tests/fixtures/testClerkOrgId";
 import { api, internal } from "../_generated/api";

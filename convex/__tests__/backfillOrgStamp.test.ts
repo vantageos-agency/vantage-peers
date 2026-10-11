@@ -4,7 +4,7 @@
 // stamp, or is REPORTED and left alone. Hermetic: no deployment is touched.
 
 import type { FunctionReturnType } from "convex/server";
-import { convexTest } from "convex-test";
+import { convexTest } from "../../tests/fixtures/convexTestWithServiceAccount";
 import { describe, expect, test } from "vitest";
 import { testClerkOrgId } from "../../tests/fixtures/testClerkOrgId";
 import { api, internal } from "../_generated/api";

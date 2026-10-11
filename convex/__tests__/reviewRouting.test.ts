@@ -12,7 +12,7 @@
 // ─────────────────────────────────────────────────────────────────────────────
 
 import { ConvexError } from "convex/values";
-import { convexTest } from "convex-test";
+import { convexTest } from "../../tests/fixtures/convexTestWithServiceAccount";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import { TEST_WEBHOOK_SECRET, signGithubBody } from "../../tests/lib/githubWebhookSignature";
 import { internal } from "../_generated/api";
