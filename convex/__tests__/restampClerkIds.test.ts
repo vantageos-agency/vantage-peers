@@ -90,7 +90,7 @@ async function seedMappings(t: T, opts: { svc?: Id<"agents"> } = {}) {
 
 async function seedServiceAgent(
 	t: T,
-	authSubject: string | undefined = DEV_SVC,
+	authSubject: string | null = DEV_SVC,
 ) {
 	return await t.run(async (ctx) =>
 		ctx.db.insert("agents", {
@@ -99,7 +99,7 @@ async function seedServiceAgent(
 			name: "fleet-service-account",
 			normalizedName: "fleet-service-account",
 			kind: "service",
-			...(authSubject !== undefined ? { authSubject } : {}),
+			...(authSubject !== null ? { authSubject } : {}),
 			isActive: true,
 			createdAt: NOW,
 		}),
@@ -581,7 +581,7 @@ describe("restamp_clerk_ids: the fleet service authSubject", () => {
 		});
 
 		const t2 = createT();
-		const bare = await seedServiceAgent(t2, undefined);
+		const bare = await seedServiceAgent(t2, null);
 		await seedMappings(t2, { svc: bare });
 		const absent = await t2.mutation(mig.restampServiceAccount, {
 			map: MAP,
