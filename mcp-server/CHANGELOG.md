@@ -1,5 +1,15 @@
 # Changelog
 
+## [Unreleased]
+
+### Added
+
+- Sign-in from ChatGPT and Claude: `GET /authorize/callback` resolves the person's Clerk session with Clerk's own handshake (`@vantageos/cloud-identity` `^0.19.1`, built on `@clerk/backend` `authenticateRequest()`). A return from Clerk's hosted sign-in with no session on this host used to answer `403 session-required`; it now redirects through the handshake (marked `no-store`) and continues to the organisation picker. It needs `CLERK_PUBLISHABLE_KEY`; without it the callback behaves as before. A forged handshake continues signed out, never a 500.
+
+### Changed
+
+- Deny on the organisation picker now answers like OAuth expects: a redirect to the client with `error=access_denied`, its `state` and `iss`, instead of a bare `403` JSON. The denial verifies the picker's consent token, so a forged one is refused.
+
 ## [3.0.0] — 2026-10-01
 
 Customer-facing summary of every `mcp-server/` change since 2.19.0 (commit `f718dd3`). Earlier releases are listed below.

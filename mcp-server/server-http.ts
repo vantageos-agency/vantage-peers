@@ -49,6 +49,7 @@ import {
 	startAuthorize,
 	timingSafeEqual,
 } from "@vantageos/cloud-identity";
+import { resolveClerkSessionFromRequest } from "@vantageos/cloud-identity/clerk-handshake";
 import { type Context, Hono } from "hono";
 import { cors } from "hono/cors";
 import {
@@ -709,13 +710,48 @@ app.get("/authorize/callback", async (c) => {
 		settings.settings,
 		expanderFor(redirectUriInState(state)),
 	);
+	let sessionToken = sessionTokenFrom(c);
+	// On return from Clerk's hosted sign-in the session is not on this host yet
+	// (on a development instance, or a production one on another registrable
+	// domain, it lives on the Clerk domain). Clerk's own handshake brings it:
+	// the SDK answers `handshake` (redirect + Set-Cookie) and comes back with
+	// `__session`. An explicit Bearer token is the signed-in case already;
+	// injected test collaborators skip the SDK. The handshake needs the
+	// instance's publishable key (CLERK_PUBLISHABLE_KEY); without it the
+	// session-cookie path below is unchanged.
+	const hasBearer = c.req
+		.header("authorization")
+		?.toLowerCase()
+		.startsWith("bearer ");
+	const secretKey = process.env.CLERK_SECRET_KEY ?? "";
+	const publishableKey = process.env.CLERK_PUBLISHABLE_KEY ?? "";
+	const injected = Object.keys(currentAuthorizeOverrides()).length > 0;
+	if (!hasBearer && !injected && secretKey !== "" && publishableKey !== "") {
+		const session = await resolveClerkSessionFromRequest(c.req.raw, {
+			secretKey,
+			publishableKey,
+			authorizedParties: settings.settings.authorizedParties,
+		});
+		if (session.kind === "handshake") {
+			// A raw Response bypasses the context's headers: no-store is set on it.
+			const headers = new Headers(session.headers);
+			headers.set("Cache-Control", "no-store");
+			headers.set("Referrer-Policy", "no-referrer");
+			return new Response(null, { status: session.status, headers });
+		}
+		sessionToken =
+			session.kind === "signed-in" ? session.sessionToken : undefined;
+		// The handshake return carries the cookies (`__session`,
+		// `__client_uat`) the picker's form post needs on this host.
+		if (session.kind === "signed-in") {
+			for (const cookie of session.headers.getSetCookie()) {
+				c.header("Set-Cookie", cookie, { append: true });
+			}
+		}
+	}
 	return respondToOutcome(
 		c,
-		await resumeAuthorize(
-			{ state: state ?? "", sessionToken: sessionTokenFrom(c) },
-			cfg,
-			deps,
-		),
+		await resumeAuthorize({ state: state ?? "", sessionToken }, cfg, deps),
 	);
 });
 
@@ -739,20 +775,30 @@ app.post("/authorize/org", async (c) => {
 	const field = (name: string): string | undefined =>
 		typeof form[name] === "string" ? (form[name] as string) : undefined;
 	const state = field("state");
-	if (field("approved") === "false") {
-		c.header("Cache-Control", "no-store");
-		return c.json(
-			{
-				error: "access_denied",
-				error_description: "the request was denied; close this window",
-			},
-			403,
-		);
-	}
 	const { cfg, deps } = buildAuthorizeRuntime(
 		settings.settings,
 		expanderFor(redirectUriInState(state)),
 	);
+	// A denial is the package's `denied` outcome: it verifies the signed state,
+	// the client, the session and the consent token (cloud-identity >= 0.18),
+	// then answers the redirect to the client with error=access_denied and the
+	// client's state; respondToOutcome appends `iss` like to every
+	// authorization response.
+	if (field("approved") === "false") {
+		return respondToOutcome(
+			c,
+			await resumeAuthorize(
+				{
+					state: state ?? "",
+					sessionToken: sessionTokenFrom(c),
+					denied: true,
+					consentToken: field("consentToken"),
+				},
+				cfg,
+				deps,
+			),
+		);
+	}
 	return respondToOutcome(
 		c,
 		await resumeAuthorize(
