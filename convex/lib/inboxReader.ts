@@ -4,7 +4,7 @@ import type { MutationCtx, QueryCtx } from "../_generated/server";
 import { normalizeOrchestratorId } from "../_helpers/normalizeOrchestratorId";
 import { requireVerifiedActorPrincipal } from "./actingPrincipal";
 import { findAgentByName } from "./agentIdentity";
-import { lookupOrgMapping, type OrgScope, type VerifiedActor } from "./auth";
+import type { OrgScope, VerifiedActor } from "./auth";
 import { fleetOperatorSlug } from "./operatorOrg";
 import { resolveVerifiedOrg, type VerifiedOrg } from "./verifiedOrg";
 
@@ -43,12 +43,15 @@ import { resolveVerifiedOrg, type VerifiedOrg } from "./verifiedOrg";
 //                  READS: cross-tenant by design (it can list every message),
 //                  unchanged.
 //
-// LEGACY RECEIPTS (no `recipientId`). Until backfill_actor_ids has stamped them,
-// a receipt without an ID is served to an agent reader only when BOTH hold: its
-// `tenantId` is the reader's verified org (an unstamped row grants nothing to a
-// client org; the operator org's agent also owns the unstamped fleet rows), AND
-// its `recipient` equals the agent's name under normalizeOrchestratorId. A
-// receipt that carries a DIFFERENT `recipientId` is never served by name.
+// RECEIPTS WITHOUT `recipientId` (module M6). An agent reader is served by ID
+// ONLY: a receipt is its own when `receipt.recipientId === agentId`. There is no
+// name fallback: a receipt that carries no ID is delivered to nobody, because a
+// name is not an identity (two organisations' agents share one). Such receipts
+// are filled by migrations/backfill_actor_ids (messageReceipts.recipient ->
+// recipientId, step 1 of the M6 deploy) and listed by
+// receiptRecipientIdAudit:unaddressedUnreadPage (the report). The fleet,
+// member, org-name and operator-admin readers have no agents row to hold an ID
+// and stay name-keyed inside their own tenants (see their kinds above).
 // ─────────────────────────────────────────────────────────────────────────────
 
 type Ctx = QueryCtx | MutationCtx;
@@ -118,12 +121,11 @@ async function agentReader(
 	claims: InboxClaims,
 	door: string,
 ): Promise<InboxReader> {
-	const label = normalizeOrchestratorId(agent.name);
-	if (claims.recipient !== undefined) {
-		const same =
-			claims.recipient === agent._id ||
-			normalizeOrchestratorId(claims.recipient) === label;
-		if (!same) {
+	if (claims.recipient !== undefined && claims.recipient !== agent._id) {
+		// A name may only NARROW: it must resolve, in the agent's own org, to this
+		// very agent (compared by ID, never by spelling).
+		const named = await findAgentByName(ctx, agent.orgSlug, claims.recipient);
+		if (named === null || named._id !== agent._id) {
 			refuse(
 				door,
 				"recipient-not-the-reader",
@@ -139,16 +141,6 @@ async function agentReader(
 		);
 	}
 	const operator = await fleetOperatorSlug(ctx.db);
-	// Every stored spelling of this agent's name: its label, the normalised form,
-	// and each roster spelling of its org that normalises to it (a direct send
-	// stores the roster entry as the roster spells it).
-	const names = new Set<string>([agent.name, label]);
-	const mapping = await lookupOrgMapping(ctx, agent.orgSlug);
-	for (const entry of mapping?.allowedOrchestrators ?? []) {
-		if (entry !== "*" && normalizeOrchestratorId(entry) === label) {
-			names.add(entry);
-		}
-	}
 	return {
 		kind: "agent",
 		tenants:
@@ -156,7 +148,7 @@ async function agentReader(
 				? [agent.orgSlug, undefined]
 				: [agent.orgSlug],
 		label: agent.name,
-		names: [...names],
+		names: [],
 		agentId: agent._id,
 	};
 }
@@ -319,31 +311,21 @@ export function ownsReceipt(
 	) {
 		return false;
 	}
-	// THE ID IS THE PROOF (module M1). A receipt that carries the verified
-	// agent's own ID is that agent's whatever tenant it was written in: a client
-	// org's mail to an operator coordinator it stores by ID
-	// (`addressableFleetCoordinatorIds`) is stamped in the CLIENT's tenant with
-	// the operator agent's ID, and only the send path, after assertPrincipalListed,
-	// stamps an ID. A name never crosses orgs here.
-	if (
-		reader.agentId !== undefined &&
-		receipt.recipientId !== undefined &&
-		receipt.recipientId === reader.agentId
-	) {
-		return true;
+	// An agent reader owns a receipt by its ID and by nothing else (module M6).
+	// THE ID IS THE PROOF (module M1): a receipt that carries the verified
+	// agent's own ID is that agent's whatever tenant it was written in (a client
+	// org's mail to an operator coordinator is stamped in the CLIENT's tenant with
+	// the operator agent's ID; only the send path, after assertPrincipalListed,
+	// stamps an ID). A receipt with no ID, or another agent's, is not its own.
+	if (reader.agentId !== undefined) {
+		return (
+			receipt.recipientId !== undefined &&
+			receipt.recipientId === reader.agentId
+		);
 	}
-	// Everything else (legacy name matching included) stays in the reader's org.
+	// Readers without an agents row stay inside their own tenants, by exact name.
 	if (reader.tenants !== "all" && !reader.tenants.includes(receipt.tenantId)) {
 		return false;
-	}
-	if (reader.agentId !== undefined) {
-		if (receipt.recipientId !== undefined) {
-			return receipt.recipientId === reader.agentId;
-		}
-		return (
-			normalizeOrchestratorId(receipt.recipient) ===
-			normalizeOrchestratorId(reader.label)
-		);
 	}
 	return reader.names.includes(receipt.recipient);
 }
@@ -409,6 +391,38 @@ export async function fetchUnreadReceipts(
 			if (ownsReceipt(reader, row, instance)) found.set(row._id, row);
 		}
 	};
+
+	// An agent reader: the ID index, nothing else. No name probe exists for it.
+	if (reader.agentId !== undefined) {
+		const agentId = reader.agentId;
+		keep(
+			await ctx.db
+				.query("messageReceipts")
+				.withIndex("by_recipientId_unread", (q) =>
+					q.eq("recipientId", agentId).eq("readAt", undefined),
+				)
+				.filter((f) => {
+					const parts = [];
+					if (since !== undefined) {
+						parts.push(f.gt(f.field("_creationTime"), since));
+					}
+					if (instance !== undefined) {
+						parts.push(
+							f.or(
+								f.eq(f.field("recipientInstanceId"), undefined),
+								f.eq(f.field("recipientInstanceId"), instance),
+							),
+						);
+					}
+					return parts.length === 0 ? true : f.and(...parts);
+				})
+				.take(take),
+		);
+		return [...found.values()]
+			.sort((a, b) => a._creationTime - b._creationTime)
+			.slice(0, take);
+	}
+
 	const tenants: ReadonlyArray<string | undefined | "all"> =
 		reader.tenants === "all" ? ["all"] : reader.tenants;
 
@@ -435,11 +449,6 @@ export async function fetchUnreadReceipts(
 						const parts = [];
 						if (since !== undefined) {
 							parts.push(f.gt(f.field("_creationTime"), since));
-						}
-						// An agent reader's name probe finds LEGACY receipts only; the
-						// stamped ones come from the ID probe below.
-						if (reader.agentId !== undefined) {
-							parts.push(f.eq(f.field("recipientId"), undefined));
 						}
 						if (instance !== undefined) {
 							parts.push(f.eq(f.field("recipientInstanceId"), undefined));
@@ -473,33 +482,6 @@ export async function fetchUnreadReceipts(
 					.take(take),
 			);
 		}
-	}
-
-	if (reader.agentId !== undefined) {
-		const agentId = reader.agentId;
-		keep(
-			await ctx.db
-				.query("messageReceipts")
-				.withIndex("by_recipientId_unread", (q) =>
-					q.eq("recipientId", agentId).eq("readAt", undefined),
-				)
-				.filter((f) => {
-					const parts = [];
-					if (since !== undefined) {
-						parts.push(f.gt(f.field("_creationTime"), since));
-					}
-					if (instance !== undefined) {
-						parts.push(
-							f.or(
-								f.eq(f.field("recipientInstanceId"), undefined),
-								f.eq(f.field("recipientInstanceId"), instance),
-							),
-						);
-					}
-					return parts.length === 0 ? true : f.and(...parts);
-				})
-				.take(take),
-		);
 	}
 
 	return [...found.values()]
