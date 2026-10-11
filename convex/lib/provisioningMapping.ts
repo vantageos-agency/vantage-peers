@@ -15,7 +15,6 @@ import { ConvexError } from "convex/values";
 import type { DatabaseReader } from "../_generated/server";
 import {
 	lookupOrgMapping,
-	lookupOrgMappingByLabelUnique,
 	type OrgMappingView,
 	orgMappingLookups,
 } from "./authOrgMapping";
@@ -34,17 +33,7 @@ export async function resolveProvisioningMapping(
 	ctx: { db: DatabaseReader },
 	label: string,
 ): Promise<ProvisioningMapping> {
-	const lookups = orgMappingLookups(ctx);
-	const resolved = await resolveProvisioningLabel(label, {
-		...lookups,
-		// A label two rows share raises; it is neither "unmapped" nor the first row.
-		orgByLabel: async (l) => {
-			const row = await lookupOrgMappingByLabelUnique(ctx, l);
-			return row === null
-				? null
-				: { ...row, id: row.clerkOrgId, label: row.clerkOrgSlug, active: row.isActive };
-		},
-	});
+	const resolved = await resolveProvisioningLabel(label, orgMappingLookups(ctx));
 	if (resolved.kind === "unmapped") return { kind: "unmapped" };
 	if (resolved.kind === "unreadable") {
 		throw new ConvexError(
