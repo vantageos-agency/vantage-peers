@@ -33,9 +33,10 @@ import { api } from "../_generated/api";
 import schema from "../schema";
 import { analyse as analyseSystemWord } from "../../tests/lib/systemWordAst";
 import { testClerkOrgId } from "../../tests/fixtures/testClerkOrgId";
-import { seedAgents } from "../../tests/lib/agentIdOf";
-import { mintAgentSecret, seedFleetAgents } from "../../tests/lib/seedFleetAgents";
+import { findAgentId, seedAgents } from "../../tests/lib/agentIdOf";
+import { seedFleetAgents } from "../../tests/lib/seedFleetAgents";
 import { seedRosterAgents } from "../../tests/lib/seedRosterAgents";
+import type { Id } from "../_generated/dataModel";
 
 const modules = Object.fromEntries(
 	Object.entries(import.meta.glob("../**/*.ts")).filter(
@@ -196,12 +197,16 @@ describe("briefingNotes.deleteBriefingNote — the word 'system' is not authorit
 		const t = createT();
 		await seedOrgA(t);
 		const noteId = await seedNote(t, "seat-a");
-		// M10c: the member acts as seat-a with seat-a's credential; the author is judged by ID.
+		// M10c: seat-a is proved by the agent ID the transport verified (service
+		// account); the author is judged by ID. No secret is an argument.
 		await seedAgents(t, [["org-a", "seat-a"]]);
-		const agentCredentialSecret = await mintAgentSecret(t, "org-a", "seat-a");
-		const result = await asMemberOfOrgA(t).mutation(
+		const verifiedActor = {
+			agentId: (await findAgentId(t, "org-a", "seat-a")) as Id<"agents">,
+			orgSlug: "org-a",
+		};
+		const result = await asMaster(t).mutation(
 			api.briefingNotes.deleteBriefingNote,
-			{ noteId, callerOrchestrator: "seat-a", agentCredentialSecret },
+			{ noteId, callerOrchestrator: "seat-a", verifiedActor },
 		);
 		expect(result.deleted).toBe(true);
 		expect(await t.run((ctx) => ctx.db.get(noteId))).toBeNull();
@@ -239,13 +244,17 @@ describe("briefingNotes.update — the word 'system' is not authority", () => {
 		const t = createT();
 		await seedOrgA(t);
 		const noteId = await seedNote(t, "seat-a");
-		// M10c: the member acts as seat-a with seat-a's credential; the author is judged by ID.
+		// M10c: seat-a is proved by the agent ID the transport verified (service
+		// account); the author is judged by ID. No secret is an argument.
 		await seedAgents(t, [["org-a", "seat-a"]]);
-		const agentCredentialSecret = await mintAgentSecret(t, "org-a", "seat-a");
-		await asMemberOfOrgA(t).mutation(api.briefingNotes.update, {
+		const verifiedActor = {
+			agentId: (await findAgentId(t, "org-a", "seat-a")) as Id<"agents">,
+			orgSlug: "org-a",
+		};
+		await asMaster(t).mutation(api.briefingNotes.update, {
 			noteId,
 			callerOrchestrator: "seat-a",
-			agentCredentialSecret,
+			verifiedActor,
 			title: "mine",
 		});
 		const row = await t.run((ctx) => ctx.db.get(noteId));

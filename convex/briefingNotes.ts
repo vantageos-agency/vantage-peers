@@ -282,11 +282,9 @@ export const create = mutation({
 		linkedMemoryIds: v.optional(v.array(v.id("memories"))),
 		// Absent = the HUMAN path (a dashboard org member acting in its own name).
 		createdBy: v.optional(creatorValidator),
-		// The proof of WHO the asserted createdBy is (same two carriers as the task
-		// doors): a per-agent credential, or the agent ID the MCP transport
+		// The proof of WHO the asserted createdBy is: the agent ID the MCP transport
 		// verified (believed from the fleet service account only). The author's ID
-		// is derived from the proof, never from the label.
-		agentCredentialSecret: v.optional(v.string()),
+		// is derived from the proof, never from the label. No secret is an argument.
 		verifiedActor: v.optional(verifiedActorValidator),
 	},
 	returns: v.id("briefingNotes"),
@@ -324,7 +322,6 @@ export const create = mutation({
 		// orchestrator of the caller's own org (e.g. "team/<org>/user").
 		const {
 			createdBy: claimedCreator,
-			agentCredentialSecret,
 			verifiedActor,
 			...rest
 		} = args;
@@ -340,8 +337,8 @@ export const create = mutation({
 		if (claimedCreator === undefined) {
 			createdBy = await resolveHumanActor(ctx, scope, { door: "briefingNotes:create" });
 			createdById = createdBy;
-			if (agentCredentialSecret !== undefined || verifiedActor !== undefined) {
-				await requireAuthenticatedCaller(ctx, undefined, agentCredentialSecret, verifiedActor);
+			if (verifiedActor !== undefined) {
+				await requireAuthenticatedCaller(ctx, undefined, undefined, verifiedActor);
 			}
 		} else {
 			requireOrchestratorOnRoster(scope, claimedCreator, "briefingNotes:create", "actor");
@@ -351,7 +348,7 @@ export const create = mutation({
 			const caller = await requireAuthenticatedCaller(
 				ctx,
 				claimedCreator,
-				agentCredentialSecret,
+				undefined,
 				verifiedActor,
 			);
 			createdById = caller.callerActorId;
@@ -984,7 +981,6 @@ export const deleteBriefingNote = mutation({
 		noteId: v.id("briefingNotes"),
 		callerOrchestrator: v.optional(creatorValidator),
 		// Proof of WHO callerOrchestrator is (see `create`).
-		agentCredentialSecret: v.optional(v.string()),
 		verifiedActor: v.optional(verifiedActorValidator),
 	},
 	returns: v.object({ deleted: v.boolean() }),
@@ -1045,7 +1041,7 @@ export const deleteBriefingNote = mutation({
 		const caller = await requireAuthenticatedCaller(
 			ctx,
 			args.callerOrchestrator,
-			args.agentCredentialSecret,
+			undefined,
 			args.verifiedActor,
 		);
 		if (
@@ -1076,7 +1072,6 @@ export const update = mutation({
 		// member acting in its own name); master with no caller is refused below.
 		callerOrchestrator: v.optional(creatorValidator),
 		// Proof of WHO callerOrchestrator is (see `create`).
-		agentCredentialSecret: v.optional(v.string()),
 		verifiedActor: v.optional(verifiedActorValidator),
 		title: v.optional(v.string()),
 		topic: v.optional(v.string()),
@@ -1091,7 +1086,6 @@ export const update = mutation({
 		const {
 			noteId,
 			callerOrchestrator,
-			agentCredentialSecret,
 			verifiedActor,
 			...fields
 		} = args;
@@ -1140,8 +1134,8 @@ export const update = mutation({
 			actor = await resolveHumanActor(ctx, scope, {
 				door: "briefingNotes:update",
 			});
-			if (agentCredentialSecret !== undefined || verifiedActor !== undefined) {
-				await requireAuthenticatedCaller(ctx, undefined, agentCredentialSecret, verifiedActor);
+			if (verifiedActor !== undefined) {
+				await requireAuthenticatedCaller(ctx, undefined, undefined, verifiedActor);
 			}
 		} else {
 			actor = callerOrchestrator;
@@ -1156,7 +1150,7 @@ export const update = mutation({
 				await requireAuthenticatedCaller(
 					ctx,
 					callerOrchestrator,
-					agentCredentialSecret,
+					undefined,
 					verifiedActor,
 				)
 			).callerActorId;

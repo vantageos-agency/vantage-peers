@@ -170,16 +170,20 @@ const DRIVERS = {
 			content: "hello",
 			tenantId: ACME.slug,
 		}),
-	briefingNotes: async (t) =>
-		asOrg(t, ACME.slug).mutation(api.briefingNotes.create, {
+	briefingNotes: async (t) => {
+		// The human path (no createdBy): the author is the verified subject. An
+		// agent author is proved by verifiedActor through the service account,
+		// which is a fleet scope and stamps no tenant (no secret argument exists).
+		await t.run((ctx) =>
+			ctx.db.insert("memberWriterRoles", { roles: ["org:admin"], updatedAt: NOW }),
+		);
+		return await adminOf(t, ACME.slug).mutation(api.briefingNotes.create, {
 			title: "b",
 			topic: "t",
 			participants: [SEAT],
 			content: "c",
-			createdBy: SEAT,
-			// M10c: an agent author is proved by the agent's credential.
-			agentCredentialSecret: await seatCredential(t),
-		}),
+		});
+	},
 	recurringTasks: async (t) => {
 		await seedAgents(t, [[ACME.slug, SEAT]]);
 		return await t.withIdentity({ subject: "test-service-account-user-id" }).mutation(api.recurringTasks.create, {

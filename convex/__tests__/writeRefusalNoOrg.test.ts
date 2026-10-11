@@ -44,7 +44,6 @@ import { convexTest } from "convex-test";
 import { describe, expect, test } from "vitest";
 import { seedRosterAgent } from "../../tests/fixtures/rosterAgent";
 import { testClerkOrgId } from "../../tests/fixtures/testClerkOrgId";
-import { mintAgentSecret } from "../../tests/lib/seedFleetAgents";
 import { api } from "../_generated/api";
 import type { Id } from "../_generated/dataModel";
 import schema from "../schema";
@@ -80,13 +79,13 @@ for (const subject of [PRE_ORG, MEMBER]) {
 const asPreOrg = (t: T) =>
 	t.withIdentity({ subject: PRE_ORG } as Parameters<typeof t.withIdentity>[0]);
 
-const asMember = (t: T) =>
+const asMember = (t: T, role = "org:editor") =>
 	t.withIdentity({
 		subject: MEMBER,
 		organizationId: "org-a",
 		org_id: testClerkOrgId("org-a"),
 		organizationSlug: "org-a",
-		org_role: "org:editor",
+		org_role: role,
 	} as Parameters<typeof t.withIdentity>[0]);
 
 const seedOrgMapping = (t: T) =>
@@ -116,30 +115,6 @@ async function outcome(write: () => Promise<unknown>): Promise<string> {
 		return String((e as ConvexError<string>).data ?? e);
 	}
 }
-
-// M10c: a member acts as an agent of its org with that agent's credential (the
-// author is judged by agent ID). Idempotent: the agent is registered once.
-const seatProof = async (t: T): Promise<string> => {
-	await t.run(async (ctx) => {
-		const existing = await ctx.db
-			.query("agents")
-			.withIndex("by_org_normalized_name", (q) =>
-				q.eq("orgSlug", "org-a").eq("normalizedName", SEAT),
-			)
-			.first();
-		if (existing === null) {
-			await ctx.db.insert("agents", {
-				orgSlug: "org-a",
-				clerkOrgId: testClerkOrgId("org-a"),
-				name: SEAT,
-				normalizedName: SEAT,
-				isActive: true,
-				createdAt: NOW,
-			});
-		}
-	});
-	return await mintAgentSecret(t as never, "org-a", SEAT);
-};
 
 const seedBriefingNote = (t: T, orgId: string) =>
 	t.run((ctx) =>
@@ -241,6 +216,8 @@ interface Site {
 	)[];
 	/** The exact value a legitimate member receives. */
 	memberReturns: (value: unknown) => void;
+	/** The role the legitimate member holds (default editor; a destructive human write needs admin). */
+	memberRole?: string;
 }
 
 /** Makes a seeded id nonexistent: the row existed, now it does not. */
@@ -261,15 +238,14 @@ const SITES: Site[] = [
 		tables: ["briefingNotes"],
 		memberReturns: isString,
 		prepare: async (t) => {
-			const agentCredentialSecret = await seatProof(t);
+			// The human path: no createdBy, the author is the verified subject.
+			// (An agent author rides verifiedActor through the service account only.)
 			return (c) =>
 				c.mutation(api.briefingNotes.create, {
 					title: "n",
 					topic: "handoff",
 					participants: [SEAT],
 					content: "c",
-					createdBy: SEAT,
-					agentCredentialSecret,
 				});
 		},
 	},
@@ -280,12 +256,9 @@ const SITES: Site[] = [
 		prepare: async (t, ghost) => {
 			const noteId = await seedBriefingNote(t, "org-a");
 			if (ghost) await ghostOf(t, noteId);
-			const agentCredentialSecret = await seatProof(t);
 			return (c) =>
 				c.mutation(api.briefingNotes.update, {
 					noteId,
-					callerOrchestrator: SEAT,
-					agentCredentialSecret,
 					content: "edited",
 				});
 		},
@@ -294,15 +267,13 @@ const SITES: Site[] = [
 		name: "briefingNotes:deleteBriefingNote",
 		tables: ["briefingNotes"],
 		memberReturns: isDeleted,
+		memberRole: "org:admin",
 		prepare: async (t, ghost) => {
 			const noteId = await seedBriefingNote(t, "org-a");
 			if (ghost) await ghostOf(t, noteId);
-			const agentCredentialSecret = await seatProof(t);
 			return (c) =>
 				c.mutation(api.briefingNotes.deleteBriefingNote, {
 					noteId,
-					callerOrchestrator: SEAT,
-					agentCredentialSecret,
 				});
 		},
 	},
@@ -498,7 +469,7 @@ describe("R-51 — public writes refuse a no-org caller with the coded refusal",
 				const call = await site.prepare(t, false);
 				let value: unknown;
 				try {
-					value = await call(asMember(t));
+					value = await call(asMember(t, site.memberRole));
 				} catch (e) {
 					throw new Error(
 						`member refused: ${String((e as ConvexError<string>).data ?? e)}`,
