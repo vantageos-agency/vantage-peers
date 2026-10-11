@@ -17,6 +17,7 @@ import { describe, expect, test } from "vitest";
 import { testClerkOrgId } from "../../tests/fixtures/testClerkOrgId";
 import { api, internal } from "../_generated/api";
 import type { Id } from "../_generated/dataModel";
+import { seedLabelAgent } from "../../tests/lib/seedRosterAgents";
 import schema from "../schema";
 
 const modules = Object.fromEntries(
@@ -174,6 +175,8 @@ describe("direct messages: addressableFleetCoordinatorIds (empty by default)", (
 	test("CGT -> neo (own roster, by name): delivered", async () => {
 		const t = createT();
 		await seedWorld(t);
+		// M5b: the label resolves to cgt's agent "neo", which its ID roster lists.
+		await seedLabelAgent(t, "cgt", "neo");
 		const id = await asOrg(t, "cgt").mutation(api.messages.sendMessage, {
 			from: "cgtbot",
 			channel: "neo",
@@ -202,12 +205,12 @@ describe("direct messages: addressableFleetCoordinatorIds (empty by default)", (
 		]);
 	});
 
-	// Poles (a) and (d): the CURRENT channel-NAME contract, unchanged by M1a.
-	// The names are legacy data held on the row (`addressableFleetCoordinators`).
-	test("(a) iris-rh lists [pi] by name: channel pi and channel pi-chromebook are delivered", async () => {
+	// Poles (a) and (d): the channel-NAME form. Since M5b a label is only a way to
+	// FIND an agent; the decision is the ID list (`addressableFleetCoordinatorIds`).
+	test("(a) iris-rh lists pi BY ID: channel pi and channel pi-chromebook are delivered", async () => {
 		const t = createT();
 		const w = await seedWorld(t);
-		await setNames(t, "iris-rh", ["pi"]);
+		await setIds(t, "iris-rh", [w.pi]);
 		const iris = asOrg(t, "iris-rh");
 		const m1 = await iris.mutation(api.messages.sendMessage, {
 			from: "irisbot",
@@ -224,10 +227,24 @@ describe("direct messages: addressableFleetCoordinatorIds (empty by default)", (
 		expect(w.pi).toBeDefined();
 	});
 
-	test("(d) iris-rh lists [pi] by name: channel eta, themis and pi,eta are refused, nothing written", async () => {
+	test("(d) a legacy NAME grant alone opens no label path: channel pi is refused", async () => {
 		const t = createT();
 		await seedWorld(t);
-		await setNames(t, "iris-rh", ["pi"]);
+		await setNames(t, "cgt", ["pi"]);
+		await expect(
+			asOrg(t, "cgt").mutation(api.messages.sendMessage, {
+				from: "cgtbot",
+				channel: "pi",
+				content: "x",
+			}),
+		).rejects.toThrow(BOUNCE);
+		expect(await writes(t)).toEqual({ messages: 0, receipts: 0 });
+	});
+
+	test("(d) iris-rh lists pi BY ID: channel eta, themis and pi,eta are refused, nothing written", async () => {
+		const t = createT();
+		const w = await seedWorld(t);
+		await setIds(t, "iris-rh", [w.pi]);
 		for (const channel of ["eta", "themis", "pi,eta"]) {
 			await expect(
 				asOrg(t, "iris-rh").mutation(api.messages.sendMessage, {

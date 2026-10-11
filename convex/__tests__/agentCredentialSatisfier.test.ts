@@ -33,6 +33,7 @@
 import { convexTest } from "../../tests/fixtures/convexTestWithServiceAccount";
 import { describe, expect, test } from "vitest";
 import { api } from "../_generated/api";
+import { seedLabelAgentWhereListed } from "../../tests/lib/seedRosterAgents";
 import schema from "../schema";
 import { agentIdOf, findAgentId } from "../../tests/lib/agentIdOf";
 import { testClerkOrgId } from "../../tests/fixtures/testClerkOrgId";
@@ -147,6 +148,7 @@ describe("P2 — an absent credential is refused with a code, not served", () =>
 		await seedOrg(t, "org-a");
 		await seedProfile(t, "b");
 		await seedProfile(t, "recipient-role");
+		await seedLabelAgentWhereListed(t, "recipient-role");
 		await mint(t, "org-a", "b");
 
 		await expect(
@@ -163,6 +165,7 @@ describe("P2 — an absent credential is refused with a code, not served", () =>
 		await seedOrg(t, "org-a");
 		await seedProfile(t, "b");
 		await seedProfile(t, "recipient-role");
+		await seedLabelAgentWhereListed(t, "recipient-role");
 		await mint(t, "org-a", "b");
 
 		await expect(
@@ -183,6 +186,7 @@ describe("P3 — operation pole: the credential decides, one variable apart", ()
 		await seedOrg(t, "org-b");
 		await seedProfile(t, "b");
 		await seedProfile(t, "recipient-role");
+		await seedLabelAgentWhereListed(t, "recipient-role");
 		const aCred = await mint(t, "org-a", "b");
 		const bCred = await mint(t, "org-b", "b");
 

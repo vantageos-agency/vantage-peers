@@ -60,7 +60,7 @@ async function seedWorld(): Promise<{
 	await t.run(async (ctx) => {
 		const now = Date.now();
 		for (const org of ORGS) {
-			await ctx.db.insert("client_org_mapping", {
+			const mappingId = await ctx.db.insert("client_org_mapping", {
 				clerkOrgSlug: org,
 				clerkOrgId: testClerkOrgId(org),
 				allowedOrchestrators: [...NAMES],
@@ -79,6 +79,10 @@ async function seedWorld(): Promise<{
 					createdAt: now,
 				});
 			}
+			// M5b: a name send is judged against the org's ID roster.
+			await ctx.db.patch(mappingId, {
+				allowedAgentIds: NAMES.map((name) => ids[`${org}/${name}`]),
+			});
 		}
 		await ctx.db.insert("memberWriterRoles", {
 			roles: ["org:admin", "org:editor"],

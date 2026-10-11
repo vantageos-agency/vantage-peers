@@ -17,6 +17,8 @@ import { convexTest } from "../../tests/fixtures/convexTestWithServiceAccount";
 import { describe, expect, test } from "vitest";
 import { testClerkOrgId } from "../../tests/fixtures/testClerkOrgId";
 import { api } from "../_generated/api";
+import { seedFleetAgents } from "../../tests/lib/seedFleetAgents";
+import { seedLabelAgent } from "../../tests/lib/seedRosterAgents";
 import schema from "../schema";
 
 const modules = Object.fromEntries(
@@ -80,6 +82,8 @@ async function fixture() {
 	const t = createT();
 	await seedOrg(t, "org-b", ["bob", "bea"]);
 	for (const p of ["bob", "bea", "eta"]) await seedProfile(t, p);
+	// M5b: the recipient label "bea" is an agent of org-b on its ID roster.
+	await seedLabelAgent(t, "org-b", "bea");
 	return t;
 }
 
@@ -173,6 +177,7 @@ describe("sendMessage — the instance label belongs to the verified sender", ()
 		const t = createT();
 		await seedOrg(t, "org-p", ["pi", "pi-x", "bea"]);
 		for (const p of ["pi", "pi-x", "bea"]) await seedProfile(t, p);
+		await seedLabelAgent(t, "org-p", "bea");
 		for (const fromInstanceId of ["pi-x", "pi-x-vps", "pi-x-vps-1", "PI-X-VPS"]) {
 			const refusal = await refusalOf(
 				memberOf(t, "org-p").mutation(api.messages.sendMessage, {
@@ -213,6 +218,7 @@ describe("sendMessage — the instance label belongs to the verified sender", ()
 
 	test("MASTER unchanged: the service account may label any instance", async () => {
 		const t = await fixture();
+		await seedFleetAgents(t, ["bea"]);
 		const id = await asServiceAccount(t).mutation(api.messages.sendMessage, {
 			from: "bob",
 			fromInstanceId: "eta-vps",

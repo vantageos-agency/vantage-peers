@@ -19,6 +19,7 @@ import { convexTest } from "../../tests/fixtures/convexTestWithServiceAccount";
 import { ConvexError } from "convex/values";
 import { describe, expect, test } from "vitest";
 import { api } from "../_generated/api";
+import { seedFleetAgents } from "../../tests/lib/seedFleetAgents";
 import schema from "../schema";
 
 const modules = Object.fromEntries(
@@ -172,6 +173,8 @@ describe("sendMessage — MUST_DELIVER: legitimate sends stay green", () => {
 	test("a real registered role delivers", async () => {
 		const t = createT();
 		await seedProfile(t, "pi");
+		// M5b: a label is an agent of the operator org, found by ID.
+		await seedFleetAgents(t, ["pi"]);
 
 		const messageId = await asMaster(t).mutation(api.messages.sendMessage, {
 			from: "eta",
@@ -188,6 +191,8 @@ describe("sendMessage — MUST_DELIVER: legitimate sends stay green", () => {
 	test("a real registered instance delivers", async () => {
 		const t = createT();
 		await seedProfile(t, "pi", "pi-vps");
+		// M5b: a label is an agent of the operator org, found by ID.
+		await seedFleetAgents(t, ["pi"]);
 
 		const messageId = await asMaster(t).mutation(api.messages.sendMessage, {
 			from: "eta",
@@ -205,6 +210,8 @@ describe("sendMessage — MUST_DELIVER: legitimate sends stay green", () => {
 		const t = createT();
 		await seedProfile(t, "eta");
 		await seedProfile(t, "pi");
+		// M5b: a label is an agent of the operator org, found by ID.
+		await seedFleetAgents(t, ["eta", "pi"]);
 
 		const messageId = await asMaster(t).mutation(api.messages.sendMessage, {
 			from: "tau",

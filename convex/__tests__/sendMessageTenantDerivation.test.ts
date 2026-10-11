@@ -32,6 +32,8 @@ import { convexTest } from "../../tests/fixtures/convexTestWithServiceAccount";
 import { describe, expect, test } from "vitest";
 import { testClerkOrgId } from "../../tests/fixtures/testClerkOrgId";
 import { api, internal } from "../_generated/api";
+import { seedFleetAgents } from "../../tests/lib/seedFleetAgents";
+import { seedLabelAgent } from "../../tests/lib/seedRosterAgents";
 import schema from "../schema";
 
 const modules = Object.fromEntries(
@@ -99,6 +101,7 @@ describe("sendMessage — tenant-scope write symmetry", () => {
 		await seedOrgMapping(t, "acme", ["victor", "noe"]);
 		await seedProfile(t, "victor");
 		await seedProfile(t, "noe");
+		await seedLabelAgent(t, "acme", "noe");
 
 		const sender = identityFor(t, "user-acme-victor", "acme");
 		await sender.mutation(api.messages.sendMessage, {
@@ -120,6 +123,7 @@ describe("sendMessage — tenant-scope write symmetry", () => {
 		await seedOrgMapping(t, "acme", ["victor", "noe"]);
 		await seedProfile(t, "victor");
 		await seedProfile(t, "noe");
+		await seedLabelAgent(t, "acme", "noe");
 
 		const sender = identityFor(t, "user-acme-victor", "acme");
 		await sender.mutation(api.messages.sendMessage, {
@@ -141,6 +145,7 @@ describe("sendMessage — tenant-scope write symmetry", () => {
 		await seedOrgMapping(t, "project/foreign", ["marie"]);
 		await seedProfile(t, "victor");
 		await seedProfile(t, "noe");
+		await seedLabelAgent(t, "acme", "noe");
 		await seedProfile(t, "marie");
 
 		const sender = identityFor(t, "user-acme-victor", "acme");
@@ -180,6 +185,7 @@ describe("sendMessage — tenant-scope write symmetry", () => {
 	test("RED 3: anonymous caller (no identity) sending to a known role — after fix, refused with a ConvexError naming the missing tenant", async () => {
 		const t = createT();
 		await seedProfile(t, "pi");
+		await seedFleetAgents(t, ["pi"]);
 
 		// No withIdentity() at all — anonymous. withOrgScope(ctx) with no
 		// allowNoIdentityMaster resolves isMaster=false, orgSlug=null. Pre-fix,
@@ -197,6 +203,7 @@ describe("sendMessage — tenant-scope write symmetry", () => {
 	test("MUST-PASS 1: TRUE master (service-account) send still succeeds — carve-out intact", async () => {
 		const t = createT();
 		await seedProfile(t, "pi");
+		await seedFleetAgents(t, ["pi"]);
 
 		// Service-account identity — resolves to master via the
 		// CLERK_SERVICE_ACCOUNT_USER_ID carve-out (convex/lib/auth.ts:111-121).
@@ -233,6 +240,7 @@ describe("sendMessage — tenant-scope write symmetry", () => {
 	test("RED (pre-fix documents the defect / post-fix proves the fix): master send with tenantId \"project/example-client\" is REFUSED, naming the value", async () => {
 		const t = createT();
 		await seedProfile(t, "pi");
+		await seedFleetAgents(t, ["pi"]);
 
 		await expect(
 			asMaster(t).mutation(api.messages.sendMessage, {
@@ -255,6 +263,7 @@ describe("sendMessage — tenant-scope write symmetry", () => {
 	test("GREEN: master send, no tenant — succeeds, tenant undefined", async () => {
 		const t = createT();
 		await seedProfile(t, "pi");
+		await seedFleetAgents(t, ["pi"]);
 
 		const messageId = await asMaster(t).mutation(api.messages.sendMessage, {
 			from: "eta",
@@ -271,6 +280,8 @@ describe("sendMessage — tenant-scope write symmetry", () => {
 		const t = createT();
 		await seedOrgMapping(t, "acme", ["pi"]);
 		await seedProfile(t, "pi");
+		await seedLabelAgent(t, "acme", "pi");
+		await seedFleetAgents(t, ["pi"]);
 
 		const messageId = await asMaster(t).mutation(api.messages.sendMessage, {
 			from: "eta",
@@ -287,6 +298,7 @@ describe("sendMessage — tenant-scope write symmetry", () => {
 	test("GREEN: master send, unknown slug — refused, naming it", async () => {
 		const t = createT();
 		await seedProfile(t, "pi");
+		await seedFleetAgents(t, ["pi"]);
 
 		await expect(
 			asMaster(t).mutation(api.messages.sendMessage, {
@@ -309,6 +321,7 @@ describe("sendMessage — tenant-scope write symmetry", () => {
 	test("GREEN: master send, inactive org slug — refused", async () => {
 		const t = createT();
 		await seedProfile(t, "pi");
+		await seedFleetAgents(t, ["pi"]);
 		await t.run(async (ctx) => {
 			await ctx.db.insert("client_org_mapping", {
 				clerkOrgSlug: "dormant-co",
@@ -337,6 +350,7 @@ describe("sendMessage — tenant-scope write symmetry", () => {
 	test("GREEN: master send, empty-string tenantId — refused (not treated as absent)", async () => {
 		const t = createT();
 		await seedProfile(t, "pi");
+		await seedFleetAgents(t, ["pi"]);
 
 		await expect(
 			asMaster(t).mutation(api.messages.sendMessage, {
@@ -354,6 +368,7 @@ describe("sendMessage — tenant-scope write symmetry", () => {
 		await seedOrgMapping(t, "project/foreign", ["marie"]);
 		await seedProfile(t, "victor");
 		await seedProfile(t, "noe");
+		await seedLabelAgent(t, "acme", "noe");
 
 		const sender = identityFor(t, "user-acme-victor", "acme");
 		const messageId = await sender.mutation(api.messages.sendMessage, {
@@ -373,6 +388,7 @@ describe("sendMessage — tenant-scope write symmetry", () => {
 	test("GREEN: anonymous caller — still RBAC_DENIED", async () => {
 		const t = createT();
 		await seedProfile(t, "pi");
+		await seedFleetAgents(t, ["pi"]);
 
 		await expect(
 			t.mutation(api.messages.sendMessage, {
@@ -386,6 +402,7 @@ describe("sendMessage — tenant-scope write symmetry", () => {
 	test("GREEN: webhook path (sendMessageInternal) real callers — no tenantId, still succeeds via the master no-tenant carve-out", async () => {
 		const t = createT();
 		await seedProfile(t, "pi");
+		await seedFleetAgents(t, ["pi"]);
 
 		// Mirrors every real convex/http.ts call site: internalMutation,
 		// allowNoIdentityMaster resolution (no Clerk identity for an
@@ -407,6 +424,7 @@ describe("sendMessage — tenant-scope write symmetry", () => {
 		await seedOrgMapping(t, "acme", ["victor", "noe"]);
 		await seedProfile(t, "victor");
 		await seedProfile(t, "noe");
+		await seedLabelAgent(t, "acme", "noe");
 
 		const sender = identityFor(t, "user-acme-victor", "acme");
 		const messageId = await sender.mutation(api.messages.sendMessage, {

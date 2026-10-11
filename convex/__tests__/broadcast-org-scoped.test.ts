@@ -25,6 +25,8 @@ import { convexTest } from "../../tests/fixtures/convexTestWithServiceAccount";
 import { describe, expect, test } from "vitest";
 import { testClerkOrgId } from "../../tests/fixtures/testClerkOrgId";
 import { api } from "../_generated/api";
+import { seedFleetAgents } from "../../tests/lib/seedFleetAgents";
+import { seedLabelAgent } from "../../tests/lib/seedRosterAgents";
 import schema from "../schema";
 
 const modules = Object.fromEntries(
@@ -322,6 +324,7 @@ describe("sendMessage broadcast — org-scoped fan-out (cross-tenant leak fix)",
 	test("regression: DM to a specific role still delivers (internal caller)", async () => {
 		const t = createT();
 		await seedProfile(t, "pi");
+		await seedFleetAgents(t, ["pi"]);
 
 		// Internal caller (title says so): authenticate as the service-account
 		// master identity (tenant-scope-write-symmetry closed the silent
@@ -345,6 +348,7 @@ describe("sendMessage broadcast — org-scoped fan-out (cross-tenant leak fix)",
 		await seedOrgMapping(t, "tenant-a", ["victor", "noe"]);
 		await seedProfile(t, "victor");
 		await seedProfile(t, "noe");
+		await seedLabelAgent(t, "tenant-a", "noe");
 
 		const tA = t.withIdentity({
 			subject: "user-tenant-a",

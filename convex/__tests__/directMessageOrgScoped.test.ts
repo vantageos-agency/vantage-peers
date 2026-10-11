@@ -20,6 +20,8 @@ import { convexTest } from "../../tests/fixtures/convexTestWithServiceAccount";
 import { describe, expect, test } from "vitest";
 import { testClerkOrgId } from "../../tests/fixtures/testClerkOrgId";
 import { api } from "../_generated/api";
+import { seedFleetAgents } from "../../tests/lib/seedFleetAgents";
+import { seedLabelAgent } from "../../tests/lib/seedRosterAgents";
 import schema from "../schema";
 
 const modules = Object.fromEntries(
@@ -70,13 +72,21 @@ const asMaster = (t: T) =>
 	} as Parameters<T["withIdentity"]>[0]);
 
 async function seedWorld(t: T) {
-	await seedOrg(t, "org-a", ["alice", "amy"]);
+	await seedOrg(t, "org-a", ["alice", "amy", "ann"]);
 	await seedOrg(t, "org-b", ["bob"]);
 	await seedProfile(t, "alice", "alice-vps");
 	await seedProfile(t, "amy");
 	await seedProfile(t, "bob", "bob-vps");
 	await seedProfile(t, "sigma", "sigma-vps"); // internal fleet, no mapping row
 	await seedProfile(t, "pi");
+	// M5b: every label is an agents row, found by ID in the org the sender may
+	// address: client rosters by ID, the fleet in the operator org.
+	// Only RECIPIENTS are agents here: a sender that is a registered agent must
+	// present its credential, which is not what these cases are about.
+	await seedLabelAgent(t, "org-a", "alice");
+	await seedLabelAgent(t, "org-a", "amy");
+	await seedLabelAgent(t, "org-b", "bob");
+	await seedFleetAgents(t, ["sigma"]);
 }
 
 async function writes(t: T) {
@@ -99,7 +109,7 @@ describe("sendMessage direct channel: org-scoped recipients", () => {
 		await seedWorld(t);
 		await expect(
 			asOrg(t, "org-a").mutation(api.messages.sendMessage, {
-				from: "alice",
+				from: "ann",
 				channel: "bob",
 				content: "cross-org",
 			}),
@@ -112,7 +122,7 @@ describe("sendMessage direct channel: org-scoped recipients", () => {
 		await seedWorld(t);
 		await expect(
 			asOrg(t, "org-a").mutation(api.messages.sendMessage, {
-				from: "alice",
+				from: "ann",
 				channel: "sigma",
 				content: "into the fleet",
 			}),
@@ -125,7 +135,7 @@ describe("sendMessage direct channel: org-scoped recipients", () => {
 		await seedWorld(t);
 		await expect(
 			asOrg(t, "org-a").mutation(api.messages.sendMessage, {
-				from: "alice",
+				from: "ann",
 				channel: "amy,bob",
 				content: "mixed",
 			}),
@@ -139,7 +149,7 @@ describe("sendMessage direct channel: org-scoped recipients", () => {
 		for (const channel of ["bob-vps", "sigma-vps"]) {
 			await expect(
 				asOrg(t, "org-a").mutation(api.messages.sendMessage, {
-					from: "alice",
+					from: "ann",
 					channel,
 					content: "instance",
 				}),
@@ -153,21 +163,21 @@ describe("sendMessage direct channel: org-scoped recipients", () => {
 		await seedWorld(t);
 		const a = asOrg(t, "org-a");
 		const m1 = await a.mutation(api.messages.sendMessage, {
-			from: "alice",
+			from: "ann",
 			channel: "amy",
 			content: "role",
 		});
 		expect(await recipientsOf(t, m1)).toEqual(["amy"]);
 
 		const m2 = await a.mutation(api.messages.sendMessage, {
-			from: "amy",
+			from: "ann",
 			channel: "alice,amy",
-			content: "list (self excluded)",
+			content: "list",
 		});
-		expect(await recipientsOf(t, m2)).toEqual(["alice"]);
+		expect((await recipientsOf(t, m2)).sort()).toEqual(["alice", "amy"]);
 
 		const m3 = await a.mutation(api.messages.sendMessage, {
-			from: "amy",
+			from: "ann",
 			channel: "alice-vps",
 			content: "instance",
 		});
@@ -186,9 +196,25 @@ describe("sendMessage direct channel: org-scoped recipients", () => {
 		expect(await recipientsOf(t, m1)).toEqual(["sigma"]);
 		const m2 = await m.mutation(api.messages.sendMessage, {
 			from: "pi",
-			channel: "alice,bob,sigma-vps",
+			channel: "sigma-vps",
 			content: "wide",
 		});
-		expect((await recipientsOf(t, m2)).sort()).toEqual(["alice", "bob", "sigma"]);
+		expect((await recipientsOf(t, m2)).sort()).toEqual(["sigma"]);
+		// M5b: a client-bound label is an agent of THAT org: the master names the
+		// org (tenantId) to reach it, and a bare label is never matched across orgs.
+		const m3 = await m.mutation(api.messages.sendMessage, {
+			from: "pi",
+			channel: "alice,amy",
+			tenantId: "org-a",
+			content: "named tenant",
+		});
+		expect((await recipientsOf(t, m3)).sort()).toEqual(["alice", "amy"]);
+		await expect(
+			m.mutation(api.messages.sendMessage, {
+				from: "pi",
+				channel: "alice,bob",
+				content: "no tenant",
+			}),
+		).rejects.toThrow(/recipient-label-no-agent/);
 	});
 });

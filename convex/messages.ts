@@ -31,6 +31,7 @@ import { findAgentByName } from "./lib/agentIdentity";
 import type { ActingPrincipal } from "@vantageos/cloud-identity";
 import {
 	addressRecipientById,
+	principalLookups,
 	recipientScopeOfPrincipal,
 	requireTargetOrgOfPrincipal,
 	requireVerifiedActorPrincipal,
@@ -402,6 +403,136 @@ async function resolveRecipientAgents(
 	return { rows, tenantId: replyOrg };
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// Channel LABELS resolved to agents BY ID (module M5b). The channel-NAME form
+// ("a,b") is a list of labels, and a label is only a way to FIND an agents row:
+// it is resolved in the organisations the sender may address, to ONE row, and
+// from there the decision is the ID path's (resolveRecipientAgents ->
+// addressRecipientById / the ID roster). A label that finds no row, or several in
+// the same tier, is refused; a label is never matched across organisations.
+//
+// Tiers, first non-empty wins (a tier that holds two rows is ambiguous):
+//   1. the sender's own org (fleet master without an actor: the operator org, or
+//      the declared tenant);
+//   2. the operator agents the sender's org lists as addressable fleet
+//      coordinators (`addressableFleetCoordinatorIds`, by ID);
+//   3. for an operator agent sender: the agents of every client org that lists
+//      that sender's ID.
+// A tier only finds candidates; whether the sender may ADDRESS the one found is
+// still decided by the package afterwards, per ID.
+// ─────────────────────────────────────────────────────────────────────────────
+
+interface LabelledRecipient {
+	row: Doc<"agents">;
+	// The instance label ("eta-vps") when the label named an instance of the agent.
+	instance?: string;
+}
+
+const COORDINATOR_SCAN_CAP = 50;
+
+async function agentsNamedIn(
+	ctx: MutationCtx,
+	orgSlug: string,
+	label: string,
+): Promise<Doc<"agents">[]> {
+	return await ctx.db
+		.query("agents")
+		.withIndex("by_org_normalized_name", (q) =>
+			q.eq("orgSlug", orgSlug).eq("normalizedName", normalizeOrchestratorId(label)),
+		)
+		.take(2);
+}
+
+function labelRefusal(label: string, reason: string, detail: string): ConvexError<string> {
+	return new ConvexError(
+		`RBAC_DENIED: recipient error / message non livré : "${label}" ne correspond à aucun destinataire de l'organisation (${detail}) — ${JSON.stringify({ reason, door: SEND_DOOR, recipientLabel: label })}`,
+	);
+}
+
+async function resolveChannelLabels(
+	ctx: MutationCtx,
+	reach: OrgScope,
+	derivedTenantId: string | undefined,
+	labels: readonly string[],
+	sender: ActingPrincipal | undefined,
+	allowCoordinators: boolean,
+): Promise<LabelledRecipient[]> {
+	const fleetWide = reach.isMaster && reach.orgSlug === null;
+	const ownOrg = fleetWide
+		? (derivedTenantId ?? (await fleetOperatorSlug(ctx.db)))
+		: reach.orgSlug;
+	const profiles = await ctx.db.query("profiles").collect();
+	const knownInstances = new Set(
+		profiles.map((p) => p.instanceId).filter((id): id is string => id !== undefined),
+	);
+	let coordinatorRows: Doc<"agents">[] | undefined;
+	const coordinators = async (): Promise<Doc<"agents">[]> => {
+		if (coordinatorRows !== undefined) return coordinatorRows;
+		coordinatorRows = [];
+		if (fleetWide || reach.orgSlug === null || !allowCoordinators) return coordinatorRows;
+		const ids =
+			(await lookupOrgMapping(ctx, reach.orgSlug))?.addressableFleetCoordinatorIds ?? [];
+		for (const raw of ids.slice(0, COORDINATOR_SCAN_CAP)) {
+			const id = ctx.db.normalizeId("agents", raw);
+			const row = id === null ? null : await ctx.db.get(id);
+			if (row !== null) coordinatorRows.push(row);
+		}
+		return coordinatorRows;
+	};
+	let listingClients: string[] | undefined;
+	const clientsListing = async (): Promise<string[]> => {
+		if (listingClients !== undefined) return listingClients;
+		listingClients = [];
+		if (sender === undefined) return listingClients;
+		if ((await principalLookups(ctx).orgKindOf?.(sender.orgId)) !== "operator") {
+			return listingClients;
+		}
+		const mappings = await ctx.db.query("client_org_mapping").collect();
+		for (const m of mappings) {
+			if (
+				m.isActive &&
+				m.clerkOrgSlug !== sender.orgId &&
+				(m.addressableFleetCoordinatorIds ?? []).some((id) => id === sender.principalId)
+			) {
+				listingClients.push(m.clerkOrgSlug);
+			}
+		}
+		return listingClients;
+	};
+	const find = async (label: string): Promise<Doc<"agents">[]> => {
+		const own = ownOrg === undefined || ownOrg === null ? [] : await agentsNamedIn(ctx, ownOrg, label);
+		if (own.length > 0) return own;
+		const wanted = normalizeOrchestratorId(label);
+		const viaList = (await coordinators()).filter((r) => r.normalizedName === wanted);
+		if (viaList.length > 0) return viaList;
+		const viaClients: Doc<"agents">[] = [];
+		for (const org of await clientsListing()) {
+			viaClients.push(...(await agentsNamedIn(ctx, org, label)));
+		}
+		return viaClients;
+	};
+	const out: LabelledRecipient[] = [];
+	for (const label of labels) {
+		let found = await find(label);
+		let instance: string | undefined;
+		if (found.length === 0 && label.includes("-") && knownInstances.has(label)) {
+			const segments = label.split("-");
+			for (let i = segments.length - 1; i >= 1 && found.length === 0; i--) {
+				found = await find(segments.slice(0, i).join("-"));
+				if (found.length > 0) instance = label;
+			}
+		}
+		if (found.length === 0) {
+			throw labelRefusal(label, "recipient-label-no-agent", "no agent of that name in an organisation you may address");
+		}
+		if (found.length > 1) {
+			throw labelRefusal(label, "recipient-label-ambiguous", "several agents carry that name; address one by its agent ID");
+		}
+		out.push({ row: found[0], ...(instance !== undefined ? { instance } : {}) });
+	}
+	return out;
+}
+
 async function sendMessageCore(
 	ctx: MutationCtx,
 	args: SendMessageArgs,
@@ -415,6 +546,9 @@ async function sendMessageCore(
 	// The acting agent resolved BY ID (a forwarded verifiedActor), when there is
 	// one: it is the sender's identity and the sender of every address decision.
 	senderPrincipal?: ActingPrincipal,
+	// M5b: the public door resolves the labels of a channel-NAME send to agents BY
+	// ID (resolveChannelLabels). The HMAC webhook doors do not pass it.
+	labelOptions?: { allowCoordinators: boolean },
 ): Promise<Doc<"messages">["_id"]> {
 	requireOneRecipientForm(args);
 	const reach = recipientScope ?? scope;
@@ -525,6 +659,52 @@ async function sendMessageCore(
 				);
 			}
 		}
+		// M5b: a channel-NAME send from the public door. Persons keep their own
+		// proof; every other label becomes an agents row, then the ID decision.
+		let labelRecipients: LabelledRecipient[] | undefined;
+		let labelPersons: string[] = [];
+		if (
+			labelOptions !== undefined &&
+			agentRecipients === undefined &&
+			args.channel !== undefined &&
+			args.channel !== "broadcast"
+		) {
+			const parts = args.channel
+				.split(",")
+				.map((s) => s.trim())
+				.filter((s) => s.length > 0 && s !== args.from);
+			if (parts.length === 0) {
+				throw labelRefusal(args.channel, "recipient-label-no-agent", "no recipient other than the sender");
+			}
+			labelPersons = parts.filter(isHumanActorName);
+			for (const person of labelPersons) {
+				await requirePersonRecipientInOrg(ctx, reach, person);
+			}
+			const labels = parts.filter((p) => !isHumanActorName(p));
+			const found = await resolveChannelLabels(
+				ctx,
+				reach,
+				derivedTenantId,
+				labels,
+				senderPrincipal,
+				labelOptions.allowCoordinators,
+			);
+			const instanceOf = new Map(found.map((f) => [f.row._id as string, f.instance]));
+			const decided = await resolveRecipientAgents(
+				ctx,
+				reach,
+				derivedTenantId,
+				found.map((f) => f.row._id),
+				senderPrincipal,
+			);
+			if (decided.tenantId !== undefined) derivedTenantId = decided.tenantId;
+			labelRecipients = decided.rows
+				.filter((row) => row._id !== fromId)
+				.map((row) => ({ row, instance: instanceOf.get(row._id) }));
+			if (labelRecipients.length === 0 && labelPersons.length === 0) {
+				throw labelRefusal(args.channel, "recipient-label-no-agent", "no recipient other than the sender");
+			}
+		}
 		const channel =
 			agentRecipients !== undefined
 				? agentRecipients.map(receiptLabelOf).join(",")
@@ -567,6 +747,31 @@ async function sendMessageCore(
 					messageId,
 					recipient: receiptLabelOf(row),
 					recipientId: row._id,
+					tenantId: derivedTenantId,
+					tenantOrgId: derivedTenantOrgId,
+					readAt: undefined,
+				});
+			}
+			return messageId;
+		}
+
+		if (labelRecipients !== undefined) {
+			for (const { row, instance } of labelRecipients) {
+				await ctx.db.insert("messageReceipts", {
+					messageId,
+					recipient: receiptLabelOf(row),
+					recipientId: row._id,
+					...(instance !== undefined ? { recipientInstanceId: instance } : {}),
+					tenantId: derivedTenantId,
+					tenantOrgId: derivedTenantOrgId,
+					readAt: undefined,
+				});
+			}
+			for (const person of labelPersons) {
+				await ctx.db.insert("messageReceipts", {
+					messageId,
+					recipient: person,
+					recipientId: person,
 					tenantId: derivedTenantId,
 					tenantOrgId: derivedTenantOrgId,
 					readAt: undefined,
@@ -988,12 +1193,15 @@ async function sendAsHuman(
 	const actor = await resolveHumanActor(ctx, scope, { door });
 	// Recipients by agent ID are admitted by the core against this same scope's
 	// roster (resolveRecipientAgents); only a NAME channel is checked here.
+	// A NAME channel is resolved to agents by ID and judged against the ID roster
+	// (allowedAgentIds) by the core. What this door refuses itself: a person (a
+	// human never addresses another person) and an empty list.
 	if (args.channel !== undefined && args.channel !== "broadcast") {
 		const parts = args.channel
 			.split(",")
 			.map((s) => s.trim())
 			.filter((s) => s.length > 0);
-		if (parts.length === 0 || !parts.every((p) => isRecipientOnRoster(scope, p))) {
+		if (parts.length === 0 || parts.some((p) => isHumanActorName(p))) {
 			throw new ConvexError(
 				`RBAC_DENIED: a human may message only its own organisation's orchestrators — ${JSON.stringify({ reason: "recipient-not-on-roster", door, channel: args.channel, orgSlug: scope.orgSlug })}`,
 			);
@@ -1010,6 +1218,9 @@ async function sendAsHuman(
 			tenantId: args.tenantId,
 		},
 		scope,
+		undefined,
+		undefined,
+		{ allowCoordinators: false },
 	);
 }
 
@@ -1157,6 +1368,7 @@ export const sendMessage = mutation({
 			scope,
 			recipientScope,
 			senderPrincipal,
+			{ allowCoordinators: true },
 		);
 	},
 });

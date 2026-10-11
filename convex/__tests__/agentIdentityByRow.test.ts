@@ -30,6 +30,7 @@ import { convexTest } from "../../tests/fixtures/convexTestWithServiceAccount";
 import { describe, expect, test } from "vitest";
 import { api, internal } from "../_generated/api";
 import type { Id } from "../_generated/dataModel";
+import { seedFleetAgents } from "../../tests/lib/seedFleetAgents";
 import schema from "../schema";
 import { requireAgentCredentialMatch } from "../lib/auth";
 import { sha256Hex } from "@vantageos/cloud-identity";
@@ -147,6 +148,7 @@ describe("RENAME — the credential follows the row", () => {
 		await seedProfile(t, "calliope");
 		await seedProfile(t, "clio");
 		await seedProfile(t, "recipient-role");
+		await seedFleetAgents(t, ["recipient-role"]);
 		const id = await register(t, "org-a", "clio");
 		const secret = await mint(t, "org-a", "clio");
 		await rawRename(t, id, "calliope");
@@ -501,6 +503,7 @@ describe("LEGACY credential (agentId undefined) is inert: a label never selects 
 		await seedProfile(t, "calliope");
 		await seedProfile(t, "clio");
 		await seedProfile(t, "recipient-role");
+		await seedFleetAgents(t, ["recipient-role"]);
 		await register(t, "org-a", "clio");
 		const secret = await legacyMint(t, "org-a", "clio");
 		await resolveRefused(t, secret);

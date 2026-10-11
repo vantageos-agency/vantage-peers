@@ -43,12 +43,14 @@ import { convexTest } from "../../tests/fixtures/convexTestWithServiceAccount";
 import { describe, expect, test } from "vitest";
 import { api } from "../_generated/api";
 import type { Id } from "../_generated/dataModel";
+import { seedLabelAgent } from "../../tests/lib/seedRosterAgents";
 import schema from "../schema";
 import { agentIdOf } from "../../tests/lib/agentIdOf";
 import { testClerkOrgId } from "../../tests/fixtures/testClerkOrgId";
 import { seedFleetAgents } from "../../tests/lib/seedFleetAgents";
 
-const FILE_LABELS = ["b", "c", "eta", "sigma"];
+// M5b: "recipient-role" is the label a fleet master addresses (an operator-org agent).
+const FILE_LABELS = ["b", "c", "eta", "sigma", "recipient-role"];
 
 const modules = Object.fromEntries(
 	Object.entries(import.meta.glob("../**/*.ts")).filter(
@@ -736,6 +738,7 @@ describe("[Pi ORG BIND] sendMessage (from) \u2014 same name, foreign org", () =>
 		await seedOrgMapping(t, "org-o");
 		await seedProfile(t, "b");
 		await seedProfile(t, "recipient-role");
+		await seedLabelAgent(t, "org-o", "recipient-role");
 		const legitBCred = await mintAgent(t, "org-o", "b");
 
 		const messageId = await asOrgCaller(t, "org-o", "user-org-o").mutation(

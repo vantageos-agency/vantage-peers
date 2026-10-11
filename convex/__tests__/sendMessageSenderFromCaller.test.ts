@@ -17,6 +17,8 @@
 import { convexTest } from "../../tests/fixtures/convexTestWithServiceAccount";
 import { describe, expect, test } from "vitest";
 import { api } from "../_generated/api";
+import { seedFleetAgents } from "../../tests/lib/seedFleetAgents";
+import { seedLabelAgent } from "../../tests/lib/seedRosterAgents";
 import schema from "../schema";
 import { agentIdOf } from "../../tests/lib/agentIdOf";
 import { testClerkOrgId } from "../../tests/fixtures/testClerkOrgId";
@@ -130,6 +132,8 @@ describe("sendMessage — the sender derives from the verified caller", () => {
 
 	test("SERVED: a member sending as an orchestrator on its own roster; tenant is its org", async () => {
 		const t = await fixture();
+		// M5b: the recipient label is an agent of org-b on its ID roster.
+		await seedLabelAgent(t, "org-b", "bea");
 		const id = await memberOf(t, "org-b").mutation(api.messages.sendMessage, {
 			from: "bob",
 			channel: "bea",
@@ -142,6 +146,8 @@ describe("sendMessage — the sender derives from the verified caller", () => {
 
 	test("SERVED: roster comparison is normalised (case variant of an own name)", async () => {
 		const t = await fixture();
+		// M5b: the recipient label is an agent of org-b on its ID roster.
+		await seedLabelAgent(t, "org-b", "bea");
 		const id = await memberOf(t, "org-b").mutation(api.messages.sendMessage, {
 			from: "BOB",
 			channel: "bea",
@@ -152,6 +158,7 @@ describe("sendMessage — the sender derives from the verified caller", () => {
 
 	test("AGENT CREDENTIAL: holder of bob's credential sending as 'bea' (on the roster) is refused; as 'bob' is served", async () => {
 		const t = await fixture();
+		await seedLabelAgent(t, "org-b", "bea");
 		await adminOf(t, "org-b").mutation(api.agents.registerAgent, {
 			orgSlug: "org-b",
 			name: "bob",
@@ -180,6 +187,7 @@ describe("sendMessage — the sender derives from the verified caller", () => {
 
 	test("MASTER unchanged: the service account may send as any name", async () => {
 		const t = await fixture();
+		await seedFleetAgents(t, ["pi"]);
 		const id = await asServiceAccount(t).mutation(api.messages.sendMessage, {
 			from: "eta",
 			channel: "pi",

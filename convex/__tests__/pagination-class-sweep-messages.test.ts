@@ -11,6 +11,7 @@ import { convexTest } from "../../tests/fixtures/convexTestWithServiceAccount";
 import type { FunctionReturnType } from "convex/server";
 import { describe, expect, test } from "vitest";
 import { api } from "../_generated/api";
+import { seedFleetAgents } from "../../tests/lib/seedFleetAgents";
 import schema from "../schema";
 
 type ListMessagesRow = FunctionReturnType<typeof api.messages.listMessages>[number];
@@ -52,6 +53,7 @@ describe("messages.listMessages pagination — createdBefore applied after unbou
 			dynamic: { lastSeen: Date.now(), sessionCount: 0 },
 		});
 
+		await seedFleetAgents(t, ["sweep-listener"]);
 		const seededIds: string[] = [];
 		for (let i = 0; i < TOTAL; i++) {
 			const id: string = await tInternal.mutation(api.messages.sendMessage, {

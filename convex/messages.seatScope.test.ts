@@ -103,6 +103,8 @@ async function seedWorld(t: T) {
 		seat.push(await seedAgent(t, SEAT_ORG, name));
 	}
 	const pi = await seedAgent(t, "perello", "pi");
+	// M5b: a fleet master's label is an agent of the operator org (by ID).
+	await seedAgent(t, "perello", "sigma");
 	await seedOrg(t, "perello", ["pi"], { orgKind: "operator" });
 	await seedOrg(t, SEAT_ORG, ["neo", "hal", "mimir", "bob"], {
 		agentIds: seat,

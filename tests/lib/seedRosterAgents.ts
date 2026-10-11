@@ -108,3 +108,74 @@ export async function seedOperatorOrg(
 		return ids;
 	});
 }
+
+/**
+ * TEST FIXTURE ONLY. Since module M5b a channel-NAME send resolves each label to
+ * ONE agents row by ID in the org the sender may address, and the sender's org
+ * judges that row against its ID roster (`allowedAgentIds`). Ensures one ACTIVE
+ * agents row named `name` in `orgSlug` (created once, idempotent) and, unless
+ * `onRoster` is false, that its ID is an entry of the org's `allowedAgentIds`.
+ * Returns the agents-row ID.
+ */
+export async function seedLabelAgent(
+	t: Runner,
+	orgSlug: string,
+	name: string,
+	onRoster = true,
+): Promise<Id<"agents">> {
+	return await t.run(async (ctx) => {
+		const mapping = await ctx.db
+			.query("client_org_mapping")
+			.withIndex("by_clerk_slug", (q) => q.eq("clerkOrgSlug", orgSlug))
+			.first();
+		if (mapping === null) {
+			throw new Error(`seedLabelAgent: no client_org_mapping for "${orgSlug}"`);
+		}
+		const key = normalizeOrchestratorId(name);
+		const existing = (
+			await ctx.db
+				.query("agents")
+				.withIndex("by_org", (q) => q.eq("orgSlug", orgSlug))
+				.collect()
+		).find((a) => a.normalizedName === key);
+		const id =
+			existing?._id ??
+			(await ctx.db.insert("agents", {
+				orgSlug,
+				...(mapping.clerkOrgId !== undefined ? { clerkOrgId: mapping.clerkOrgId } : {}),
+				name,
+				normalizedName: key,
+				isActive: true,
+				createdAt: 1,
+			}));
+		const roster = mapping.allowedAgentIds ?? [];
+		if (onRoster && !roster.includes(id)) {
+			await ctx.db.patch(mapping._id, { allowedAgentIds: [...roster, id] });
+		}
+		return id;
+	});
+}
+
+/**
+ * TEST FIXTURE ONLY. `seedLabelAgent` for every active org whose NAME roster
+ * (`allowedOrchestrators`) lists `name`: the legacy fixtures that seeded a
+ * recipient role by name in every org get the agent row and ID roster entry the
+ * M5b label resolution reads.
+ */
+export async function seedLabelAgentWhereListed(
+	t: Runner,
+	name: string,
+): Promise<void> {
+	const orgs = await t.run(async (ctx) =>
+		(await ctx.db.query("client_org_mapping").collect())
+			.filter(
+				(m) =>
+					m.isActive &&
+					m.allowedOrchestrators.some(
+						(n) => normalizeOrchestratorId(n) === normalizeOrchestratorId(name),
+					),
+			)
+			.map((m) => m.clerkOrgSlug),
+	);
+	for (const slug of orgs) await seedLabelAgent(t, slug, name);
+}

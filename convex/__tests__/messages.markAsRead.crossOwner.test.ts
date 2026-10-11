@@ -16,6 +16,7 @@ import { ConvexError } from "convex/values";
 import { convexTest } from "../../tests/fixtures/convexTestWithServiceAccount";
 import { describe, expect, test } from "vitest";
 import { api } from "../_generated/api";
+import { seedFleetAgents } from "../../tests/lib/seedFleetAgents";
 import schema from "../schema";
 
 const modules = Object.fromEntries(
@@ -32,6 +33,7 @@ const createT = () => convexTest(schema, modules);
 describe("markAsRead — cross-owner bypass (k179nrp3apj700pm0h1ckewm2h8b3nz7)", () => {
 	test("rejects marking a receipt read when callerOrchestrator is not the recipient", async () => {
 		const t = createT();
+		await seedFleetAgents(t, ["tau"]);
 		await t.run((ctx) =>
 			ctx.db.insert("profiles", {
 				orchestratorId: "tau",
@@ -92,6 +94,7 @@ describe("markAsRead — cross-owner bypass (k179nrp3apj700pm0h1ckewm2h8b3nz7)",
 
 	test("positive control: the true recipient can mark its own receipt read", async () => {
 		const t = createT();
+		await seedFleetAgents(t, ["tau"]);
 		await t.run((ctx) =>
 			ctx.db.insert("profiles", {
 				orchestratorId: "tau",

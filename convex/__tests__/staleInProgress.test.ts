@@ -26,6 +26,7 @@
 import { convexTest } from "../../tests/fixtures/convexTestWithServiceAccount";
 import { describe, expect, test } from "vitest";
 import { api } from "../_generated/api";
+import { seedFleetAgents } from "../../tests/lib/seedFleetAgents";
 import schema from "../schema";
 
 const modules = Object.fromEntries(
@@ -105,6 +106,7 @@ describe("checkNewMessages — frozen legacy contract (Day 130 regression guard)
 				dynamic: { lastSeen: Date.now(), sessionCount: 1 },
 			}),
 		);
+		await seedFleetAgents(t, ["tau"]);
 		// Setup send: this test exercises checkNewMessages' legacy return
 		// shape, not sendMessage's own auth — authenticate as the
 		// service-account master identity (tenant-scope-write-symmetry

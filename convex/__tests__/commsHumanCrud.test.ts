@@ -19,6 +19,7 @@ import { describe, expect, test } from "vitest";
 import { testClerkOrgId } from "../../tests/fixtures/testClerkOrgId";
 import { api, internal } from "../_generated/api";
 import type { Id } from "../_generated/dataModel";
+import { seedLabelAgent } from "../../tests/lib/seedRosterAgents";
 import schema from "../schema";
 import { seedRosterAgent } from "../../tests/fixtures/rosterAgent";
 
@@ -436,6 +437,8 @@ describe("human CRUD — messages:sendMessage", () => {
 
 	test("org:editor -> sent as user:<subject>, tenant from scope, receipts on the org roster", async () => {
 		const t = await setup();
+		// M5b: the recipient label is an agent of org-a on its ID roster.
+		await seedLabelAgent(t, "org-a", "sigma");
 		const id = await t.withIdentity(as("user_m", "org:editor")).mutation(api.messages.sendMessage, args);
 		const row = await readRow("messages")(t, id);
 		expect(row?.from).toBe("user:user_m");
@@ -445,6 +448,8 @@ describe("human CRUD — messages:sendMessage", () => {
 
 	test("a supplied foreign tenantId is overridden by the verified org", async () => {
 		const t = await setup();
+		// M5b: the recipient label is an agent of org-a on its ID roster.
+		await seedLabelAgent(t, "org-a", "sigma");
 		const id = await t
 			.withIdentity(as("user_m", "org:editor"))
 			.mutation(api.messages.sendMessage, { ...args, tenantId: "org-b" });
@@ -536,6 +541,8 @@ describe("human CRUD — messages:sendMessage", () => {
 
 	test("agent path unchanged: a roster sender with `from` is served as that sender", async () => {
 		const t = await setup();
+		// M5b: the recipient label is an agent of org-a on its ID roster.
+		await seedLabelAgent(t, "org-a", "pi");
 		const id = await t
 			.withIdentity(as("user_m", "org:editor"))
 			.mutation(api.messages.sendMessage, { ...args, channel: "pi", from: "sigma" });

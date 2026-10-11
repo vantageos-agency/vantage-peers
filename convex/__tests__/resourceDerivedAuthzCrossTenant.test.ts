@@ -379,7 +379,7 @@ describe("diary.deleteDiary — omitting callerOrchestrator is refused, not exem
 describe("messages.deleteMessage — omitting callerOrchestrator is refused, not exempted", () => {
 	test("B cannot delete A's message by omitting callerOrchestrator", async () => {
 		const t = createT();
-		await seedFleetAgents(t, FILE_LABELS);
+		await seedFleetAgents(t, [...FILE_LABELS, TENANT_B]);
 		await t.run((ctx) =>
 			ctx.db.insert("profiles", {
 				orchestratorId: TENANT_B,
@@ -403,7 +403,7 @@ describe("messages.deleteMessage — omitting callerOrchestrator is refused, not
 
 	test("second assertion — sender A still deletes its own message", async () => {
 		const t = createT();
-		await seedFleetAgents(t, FILE_LABELS);
+		await seedFleetAgents(t, [...FILE_LABELS, TENANT_B]);
 		await t.run((ctx) =>
 			ctx.db.insert("profiles", {
 				orchestratorId: TENANT_B,

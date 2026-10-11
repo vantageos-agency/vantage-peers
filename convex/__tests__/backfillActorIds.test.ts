@@ -18,6 +18,7 @@ import {
 	type ActorTable,
 	TABLE_ORDER,
 } from "../migrations/backfill_actor_ids";
+import { seedLabelAgent } from "../../tests/lib/seedRosterAgents";
 import schema from "../schema";
 import { agentIdOf } from "../../tests/lib/agentIdOf";
 import { testClerkOrgId } from "../../tests/fixtures/testClerkOrgId";
@@ -437,6 +438,8 @@ describe("new writes stamp the IDs", () => {
 	test("messages.sendMessage stamps fromId and the receipt's recipientId", async () => {
 		const t = createT();
 		const ids = await seedIris(t);
+		// M5b: the label resolves to iris-rh's agent, which its ID roster lists.
+		await seedLabelAgent(t, "iris-rh", "irisonly");
 		const messageId = await asOrg(t, "iris-rh").mutation(
 			api.messages.sendMessage,
 			{

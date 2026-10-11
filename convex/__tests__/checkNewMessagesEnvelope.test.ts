@@ -13,6 +13,7 @@
 import { convexTest } from "../../tests/fixtures/convexTestWithServiceAccount";
 import { expect, test } from "vitest";
 import { api } from "../_generated/api";
+import { seedFleetAgents } from "../../tests/lib/seedFleetAgents";
 import schema from "../schema";
 
 const modules = Object.fromEntries(
@@ -53,6 +54,8 @@ async function ensureProfile(t: ReturnType<typeof createT>, token: string) {
 			dynamic: { lastSeen: Date.now(), sessionCount: 1 },
 		});
 	});
+	// M5b: a master's label is an agent of the operator org, resolved by ID.
+	await seedFleetAgents(t, [orchestratorId]);
 }
 
 async function seed(

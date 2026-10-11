@@ -25,6 +25,7 @@ import { convexTest } from "../../tests/fixtures/convexTestWithServiceAccount";
 import { beforeEach, describe, expect, test } from "vitest";
 import { testClerkOrgId } from "../../tests/fixtures/testClerkOrgId";
 import { api } from "../_generated/api";
+import { seedLabelAgent } from "../../tests/lib/seedRosterAgents";
 import schema from "../schema";
 
 const modules = Object.fromEntries(
@@ -85,7 +86,7 @@ beforeEach(async () => {
 	const now = Date.now();
 	await t.run(async (ctx) => {
 		for (const [slug, roster] of [
-			[CGT, ["neo", "hal", "mimir", "bob"]],
+			[CGT, ["neo", "hal", "mimir", "bob", "ann"]],
 			[OTHER, ["themis"]],
 		] as const) {
 			await ctx.db.insert("client_org_mapping", {
@@ -127,6 +128,10 @@ beforeEach(async () => {
 			principal: "person",
 		});
 	});
+	// M5b: a channel label is an agent of the seat's org, on its ID roster.
+	for (const name of ["neo", "hal", "mimir", "bob"]) {
+		await seedLabelAgent(t, CGT, name);
+	}
 });
 
 /** The portal request: the PERSON writes to an agent of its org. */
@@ -303,7 +308,9 @@ describe("PART 1b — the person principal path today", () => {
 		});
 		const viaClerk = await member(CGT, "user_hal_seat").mutation(
 			api.messages.sendMessage,
-			{ from: "hal", channel: PERSON_ACTOR, content: "answer 2" },
+			// "ann" is on the name roster but is not a registered agent, so the member
+			// session needs no per-agent credential (hal, an agent, would).
+			{ from: "ann", channel: PERSON_ACTOR, content: "answer 2" },
 		);
 		const receipts = await t.run(async (ctx) =>
 			ctx.db.query("messageReceipts").collect(),

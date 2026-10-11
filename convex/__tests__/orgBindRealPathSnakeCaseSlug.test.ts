@@ -23,6 +23,7 @@
 import { convexTest } from "convex-test";
 import { describe, expect, test } from "vitest";
 import { api } from "../_generated/api";
+import { seedLabelAgentWhereListed } from "../../tests/lib/seedRosterAgents";
 import schema from "../schema";
 import { agentIdOf } from "../../tests/lib/agentIdOf";
 import { testClerkOrgId } from "../../tests/fixtures/testClerkOrgId";
@@ -97,6 +98,7 @@ describe("REAL-PATH org-bind — snake_case org_slug caller, no harness", () => 
 		await seedOrgMapping(t, "org-foreign");
 		await seedProfile(t, "b");
 		await seedProfile(t, "recipient-role");
+		await seedLabelAgentWhereListed(t, "recipient-role");
 
 		// Agent "b" minted in a DIFFERENT org than the caller's own.
 		const foreignCred = await mintAgent(t, "org-foreign", "b");
@@ -126,6 +128,7 @@ describe("REAL-PATH org-bind — snake_case org_slug caller, no harness", () => 
 		await seedOrgMapping(t, "org-home");
 		await seedProfile(t, "b");
 		await seedProfile(t, "recipient-role");
+		await seedLabelAgentWhereListed(t, "recipient-role");
 
 		const homeCred = await mintAgent(t, "org-home", "b");
 

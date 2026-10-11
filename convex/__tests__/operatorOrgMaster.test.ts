@@ -28,6 +28,7 @@ import { convexTest } from "../../tests/fixtures/convexTestWithServiceAccount";
 import { afterEach, describe, expect, test, vi } from "vitest";
 import { testClerkOrgId } from "../../tests/fixtures/testClerkOrgId";
 import { api } from "../_generated/api";
+import { seedLabelAgent } from "../../tests/lib/seedRosterAgents";
 import schema from "../schema";
 import { seedAgents } from "../../tests/lib/agentIdOf";
 import { mintAgentSecret } from "../../tests/lib/seedFleetAgents";
@@ -301,6 +302,8 @@ describe("an operator human's asserted sender is bound to the operator roster", 
 				.unique();
 			await ctx.db.patch(m!._id, { allowedOrchestrators: ["sigma", "eta"] });
 		});
+		// M5b: the recipient label "eta" is an agent of the operator org, on its ID roster.
+		await seedLabelAgent(t, OPERATOR_ORG, "eta");
 		await send(as(t, OP_ADMIN), "sigma", "eta");
 		const rows = await t.run((ctx) => ctx.db.query("messages").collect());
 		expect(rows.map((r) => r.from)).toEqual(["sigma"]);
