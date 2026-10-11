@@ -83,6 +83,8 @@ function fakeServer(): { server: McpServer; tools: Map<string, Handler> } {
 
 type Call = { name: string; args: Record<string, unknown> };
 
+let storedRow: Record<string, unknown> = {};
+
 function recordingConvex() {
 	const calls: Call[] = [];
 	const row = {
@@ -90,6 +92,7 @@ function recordingConvex() {
 		createdBy: "clio",
 		assignedTo: "clio",
 		title: "standup",
+		...storedRow,
 	};
 	return {
 		calls,
@@ -178,6 +181,7 @@ const CREATE = {
 
 let savedMode: string | undefined;
 beforeEach(async () => {
+	storedRow = {};
 	savedMode = process.env[ACTOR_CREDENTIAL_MODE_ENV];
 	delete process.env[ACTOR_CREDENTIAL_MODE_ENV];
 	_resetUnattributedClaimsForTest();
@@ -320,6 +324,7 @@ describe("the schedule doors forward the acting agent of a credential-bearing be
 		],
 	] as const) {
 		it(`${tool} -> ${door} carries verifiedActor`, async () => {
+			storedRow = { createdById: CLIO_ID };
 			const r = await callAsCtx(tool, masterWithCredential, { ...args });
 			expect(r.refused).toBe(false);
 			const call = r.calls.find((c) => c.name === door);
@@ -360,5 +365,90 @@ describe("the recurring doors are registered as verifiedActor doors", () => {
 		]) {
 			expect(VERIFIED_ACTOR_DOORS.has(door), door).toBe(true);
 		}
+	});
+});
+
+describe("update_recurring_task admits a row by the agent's ID, never by name", () => {
+	const seatCtx = (agentId: string, orgId: string): OAuthContext => ({
+		clientId: `client-clio-${orgId}`,
+		userId: "user-x",
+		scopes: ["vantage:read", "vantage:write"],
+		scopeProfile: `clio-${orgId}`,
+		// The NAME allowlist matches the row's creator in BOTH orgs.
+		fromAllowList: ["clio"],
+		namespaceReadPrefixes: ["orchestrator/clio"],
+		namespaceWritePrefixes: ["orchestrator/clio"],
+		expiresAt: Date.now() + 3_600_000,
+		isMaster: false,
+		clerkOrgSlug: orgId,
+		seatAgent: { agentId, orgId, agentName: "clio" },
+	});
+	const update = (ctx: OAuthContext) =>
+		callAsCtx("update_recurring_task", ctx, {
+			recurringTaskId: RECURRING_ID,
+			title: "changed",
+		});
+	const wrote = (calls: Call[]) =>
+		calls.some((c) => c.name === "recurringTasks:update");
+
+	it("the same-name clio of ANOTHER org is refused, nothing dispatched", async () => {
+		storedRow = { createdById: CLIO_ID, orgId: "iris-rh" };
+		const r = await update(seatCtx(CLIO_OTHER_ORG_ID, "other-org"));
+		expect(r.refused).toBe(true);
+		expect(r.text).toContain("Forbidden");
+		expect(wrote(r.calls)).toBe(false);
+	});
+
+	it("...also on a fleet-owned row (no org stamp): the ID is the other org's", async () => {
+		storedRow = { createdById: CLIO_ID };
+		const r = await update(seatCtx(CLIO_OTHER_ORG_ID, "other-org"));
+		expect(r.refused).toBe(true);
+		expect(r.text).toContain("not-creator-or-assignee-by-id");
+		expect(wrote(r.calls)).toBe(false);
+	});
+
+	it("the owner agent is served", async () => {
+		storedRow = { createdById: CLIO_ID, orgId: "iris-rh" };
+		const r = await update(seatCtx(CLIO_ID, "iris-rh"));
+		expect(r.refused).toBe(false);
+		const call = r.calls.find((c) => c.name === "recurringTasks:update");
+		expect(call?.args.verifiedActor).toEqual({
+			agentId: CLIO_ID,
+			orgSlug: "iris-rh",
+		});
+	});
+
+	it("a row stamped for another org is refused even when it names the caller's ID", async () => {
+		storedRow = { createdById: CLIO_ID, orgId: "other-org" };
+		const r = await update(seatCtx(CLIO_ID, "iris-rh"));
+		expect(r.refused).toBe(true);
+		expect(r.text).toContain("schedule-other-org");
+		expect(wrote(r.calls)).toBe(false);
+	});
+
+	it("a row without actor IDs is refused to an agent with a named reason", async () => {
+		const r = await update(seatCtx(CLIO_ID, "iris-rh"));
+		expect(r.refused).toBe(true);
+		expect(r.text).toContain("schedule-without-actor-ids");
+		expect(r.text).toContain("backfill_recurring_task_actor_ids");
+		expect(wrote(r.calls)).toBe(false);
+	});
+
+	it("the fleet master with no forwarded agent keeps its access", async () => {
+		const { actor: _a, ...master } = {
+			clientId: "master",
+			userId: "master",
+			scopes: ["vantage:read", "vantage:write"],
+			scopeProfile: "master",
+			fromAllowList: ["*"],
+			namespaceReadPrefixes: ["*"],
+			namespaceWritePrefixes: ["*"],
+			expiresAt: Date.now() + 3_600_000,
+			isMaster: true,
+			actor: undefined,
+		};
+		const r = await update(master as OAuthContext);
+		expect(r.refused).toBe(false);
+		expect(wrote(r.calls)).toBe(true);
 	});
 });

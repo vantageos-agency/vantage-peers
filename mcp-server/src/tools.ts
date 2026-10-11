@@ -44,7 +44,11 @@ import { registerValidateOkfBundle } from "./tools/validateOkfBundle.js";
 import type { VpToolResult } from "./ui-resources/schemas.js";
 import { wrapToolResult } from "./ui-resources/stream-marker.js";
 import { validateTaskPayload } from "./validate-task-payload.js";
-import { verifiedActorOf, withVerifiedActor } from "./verifiedActor.js";
+import {
+	scheduleOwnershipRefusal,
+	verifiedActorOf,
+	withVerifiedActor,
+} from "./verifiedActor.js";
 import { resolveWhoamiIdentity } from "./whoamiIdentity.js";
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -7657,6 +7661,18 @@ export function registerTools(
 					return mcpError(
 						`Forbidden: update_recurring_task cannot modify ${recurringTaskId} — the recurring task is outside your scope (cross-scope mutation refused).`,
 					);
+				}
+
+				// An acting agent owns the row by ID or does not touch it: the name
+				// allowlist above admits a same-named agent of another organisation.
+				const actingAgent = verifiedActorOf(oauthCtx);
+				if (actingAgent !== undefined) {
+					const refusal = scheduleOwnershipRefusal(
+						existing as Record<string, string | undefined>,
+						actingAgent,
+						"update_recurring_task",
+					);
+					if (refusal) return mcpError(refusal);
 				}
 
 				const result = await convex.mutation("recurringTasks:update" as any, {

@@ -88,6 +88,37 @@ export function verifiedActorOf(
 	return undefined;
 }
 
+/**
+ * Whether the acting agent owns a recurring schedule, decided on IDs only (the
+ * Convex door decides the same thing; this refuses before the round trip). A
+ * row stamped for another organisation is never the agent's, whatever IDs it
+ * carries; a fleet-owned row (no stamp) is judged on its IDs, since an agent ID
+ * belongs to one organisation. A row with no actor IDs names nobody.
+ *
+ * Returns undefined when the agent may act, else the refusal text.
+ */
+export function scheduleOwnershipRefusal(
+	row: {
+		_id?: unknown;
+		orgId?: string;
+		createdById?: string;
+		assignedToId?: string;
+	},
+	actor: VerifiedActorArg,
+	tool: string,
+): string | undefined {
+	if (row.orgId !== undefined && row.orgId !== actor.orgSlug) {
+		return `Forbidden: ${tool} cannot modify this recurring task — it belongs to another organisation (reason: schedule-other-org).`;
+	}
+	if (row.createdById === undefined && row.assignedToId === undefined) {
+		return `Forbidden: ${tool} cannot modify this recurring task — it carries no actor IDs yet, so no agent can be shown to own it (reason: schedule-without-actor-ids; run backfill_recurring_task_actor_ids).`;
+	}
+	if (row.createdById === actor.agentId || row.assignedToId === actor.agentId) {
+		return undefined;
+	}
+	return `Forbidden: ${tool} cannot modify this recurring task — the acting agent is neither its creator nor its assignee by ID (reason: not-creator-or-assignee-by-id).`;
+}
+
 type MutatingClient = {
 	mutation: (name: never, args: never, ...rest: never[]) => unknown;
 	query?: (name: never, args: never, ...rest: never[]) => unknown;

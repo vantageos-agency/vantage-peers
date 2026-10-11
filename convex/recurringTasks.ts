@@ -497,6 +497,7 @@ export const update = mutation({
 		// new assignee to the caller's own roster.
 		await authorizeScheduleActor(ctx, scope, existing, "recurringTasks:update", {
 			callerOrchestrator: args.callerOrchestrator,
+			verifiedActor: args.verifiedActor,
 		});
 		requireOrchestratorOnRoster(scope, existing.assignedTo, "recurringTasks:update", "assignee");
 
@@ -519,7 +520,7 @@ export const update = mutation({
 			// refused before anything is written.
 			patch.assignedToId = await requireAssigneeId(
 				ctx,
-				existing.orgId,
+				existing.orgId ?? (scope.isMaster ? args.verifiedActor?.orgSlug : undefined),
 				args.assignedTo,
 				"recurringTasks:update",
 			);
@@ -550,45 +551,69 @@ async function authorizeScheduleActor(
 	scope: OrgScope,
 	row: Doc<"recurringTasks">,
 	door: string,
-	opts?: { adminOnly?: boolean; callerOrchestrator?: string },
+	opts?: {
+		adminOnly?: boolean;
+		callerOrchestrator?: string;
+		verifiedActor?: VerifiedActor;
+	},
 ): Promise<void> {
-	if (scope.isMaster) return;
-	if (opts?.callerOrchestrator !== undefined) {
-		// AGENT path (M10h): decided on actor IDs. The caller's ID was derived from
-		// its proof by requireAuthenticatedCaller; a label equal to the creator's or
-		// assignee's NAME is not authority, and a row with no ID names nobody. The
-		// tenant gate comes first: an ID belongs to one org, but a row stamped for
-		// another org is never reachable from here.
-		if (!isRowVisibleToScope(scope, row)) {
-			throw new ConvexError(
-				`RBAC_DENIED: caller may not act on recurring task ${row._id} — the schedule does not belong to the caller's organisation — ${JSON.stringify({ door })}`,
-			);
-		}
-		const callerId = scope.callerActorId;
-		const isActor = (id: string | undefined): boolean =>
-			callerId !== undefined && id !== undefined && id === callerId;
-		if (!isActor(row.createdById) && !isActor(row.assignedToId)) {
-			throw new ConvexError(
-				`RBAC_DENIED: ${opts.callerOrchestrator} is not creator or assignee of recurring task ${row._id} — ${JSON.stringify({ door, taskId: row._id })}`,
-			);
-		}
-		if (opts.adminOnly === true) {
-			// Destructive: an agent may remove only what it created.
-			if (!isActor(row.createdById)) {
-				throw new ConvexError(
-					`RBAC_DENIED: ${opts.callerOrchestrator} is not the creator of recurring task ${row._id} — removal is the creator's — ${JSON.stringify({ door, taskId: row._id })}`,
-				);
-			}
-		}
+	// WHO IS ACTING, by ID. The fleet service account that forwards a verified
+	// agent (an MCP seat or credential holder) is judged ON THAT AGENT, never
+	// passed through as master; the service account with no forwarded agent keeps
+	// the fleet's access. A member naming an agent acts as the ID its proof
+	// derived (requireAuthenticatedCaller).
+	const forwarded = scope.isMaster ? opts?.verifiedActor : undefined;
+	const actor: { id: string | undefined; org: string | null | undefined } | null =
+		forwarded !== undefined
+			? { id: forwarded.agentId, org: forwarded.orgSlug }
+			: !scope.isMaster && opts?.callerOrchestrator !== undefined
+				? { id: scope.callerActorId, org: scope.orgSlug }
+				: null;
+	if (actor === null) {
+		if (scope.isMaster) return;
+		await resolveHumanActor(ctx, scope, {
+			door,
+			row,
+			rowKind: "recurring task",
+			rowId: row._id,
+			adminOnly: opts?.adminOnly,
+		});
 		return;
 	}
-	await resolveHumanActor(ctx, scope, {
-		door,
-		row,
-		rowKind: "recurring task",
-		rowId: row._id,
-		adminOnly: opts?.adminOnly,
-	});
+	// AGENT path (M10h): decided on actor IDs. A label equal to the creator's or
+	// assignee's NAME is not authority (the same name exists in other orgs). The
+	// tenant gate comes first: a row stamped for another org is never reachable,
+	// whatever IDs it carries. A fleet-owned row (no stamp) is judged on its IDs
+	// alone: an agent ID belongs to exactly one org.
+	const sameTenant = scope.isMaster
+		? row.orgId === undefined || row.orgId === actor.org
+		: isRowVisibleToScope(scope, row);
+	if (!sameTenant) {
+		throw new ConvexError(
+			`RBAC_DENIED: caller may not act on recurring task ${row._id} — the schedule does not belong to the caller's organisation — ${JSON.stringify({ door })}`,
+		);
+	}
+	if (row.createdById === undefined && row.assignedToId === undefined) {
+		// A row with no ID names nobody: refused with a reason an operator can act
+		// on, never guessed from the label.
+		throw new ConvexError(
+			`RBAC_DENIED: recurring task ${row._id} carries no actor IDs yet, so no agent can be shown to own it — run migrations/backfill_recurring_task_actor_ids — ${JSON.stringify({ door, taskId: row._id, reason: "schedule-without-actor-ids" })}`,
+		);
+	}
+	const callerId = actor.id;
+	const isActor = (id: string | undefined): boolean =>
+		callerId !== undefined && id !== undefined && id === callerId;
+	if (!isActor(row.createdById) && !isActor(row.assignedToId)) {
+		throw new ConvexError(
+			`RBAC_DENIED: the acting agent is not creator or assignee of recurring task ${row._id} — ${JSON.stringify({ door, taskId: row._id, reason: "not-creator-or-assignee-by-id" })}`,
+		);
+	}
+	if (opts?.adminOnly === true && !isActor(row.createdById)) {
+		// Destructive: an agent may remove only what it created.
+		throw new ConvexError(
+			`RBAC_DENIED: the acting agent is not the creator of recurring task ${row._id} — removal is the creator's — ${JSON.stringify({ door, taskId: row._id, reason: "not-creator-by-id" })}`,
+		);
+	}
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -624,6 +649,7 @@ export const pause = mutation({
 		if (!row) throw new Error("Recurring task not found");
 		await authorizeScheduleActor(ctx, scope, row, "recurringTasks:pause", {
 			callerOrchestrator: args.callerOrchestrator,
+			verifiedActor: args.verifiedActor,
 		});
 		await ctx.db.patch(taskId, { active: false, updatedAt: Date.now() });
 		return { taskId, active: false };
@@ -663,6 +689,7 @@ export const resume = mutation({
 		if (!task) throw new Error("Recurring task not found");
 		await authorizeScheduleActor(ctx, scope, task, "recurringTasks:resume", {
 			callerOrchestrator: args.callerOrchestrator,
+			verifiedActor: args.verifiedActor,
 		});
 
 		const nextRunAt = getNextRunTime(task.cronExpression, Date.now());
@@ -706,6 +733,8 @@ export const remove = mutation({
 		await authorizeScheduleActor(ctx, scope, row, "recurringTasks:remove", {
 			adminOnly: true,
 			callerOrchestrator: args.callerOrchestrator,
+			verifiedActor: args.verifiedActor,
+			verifiedActor: args.verifiedActor,
 		});
 		await ctx.db.delete(taskId);
 		return { deleted: true };

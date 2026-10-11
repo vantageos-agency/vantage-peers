@@ -145,3 +145,111 @@ describe("a seat reaching Convex as the service account", () => {
 		expect(await rowCount()).toBe(0);
 	});
 });
+
+describe("the schedule doors judge a forwarded agent by ID", () => {
+	const actorA = () => ({ agentId: clioA, orgSlug: "org-a" });
+	const actorB = () => ({ agentId: clioB, orgSlug: "org-b" });
+	const refusalOf = async (p: Promise<unknown>): Promise<string> => {
+		const err = await p.then(
+			() => null,
+			(e: Error) => e,
+		);
+		expect(err, "expected a refusal").not.toBeNull();
+		return `${(err as Error).message} ${JSON.stringify((err as { data?: unknown }).data ?? "")}`;
+	};
+	const get = (id: Id<"recurringTasks">) => t.run((ctx) => ctx.db.get(id));
+	const createdByA = () =>
+		svc.mutation(api.recurringTasks.create, {
+			...args,
+			verifiedActor: actorA(),
+		});
+
+	for (const door of ["update", "pause", "resume", "remove"] as const) {
+		const call = (
+			id: Id<"recurringTasks">,
+			verifiedActor?: { agentId: Id<"agents">; orgSlug: string },
+		) => {
+			const proof = verifiedActor !== undefined ? { verifiedActor } : {};
+			return door === "update"
+				? svc.mutation(api.recurringTasks.update, {
+						recurringTaskId: id,
+						title: "changed",
+						...proof,
+					})
+				: svc.mutation(api.recurringTasks[door], { taskId: id, ...proof });
+		};
+
+		test(`${door}: the same-name clio of ANOTHER org is refused, the row untouched`, async () => {
+			const id = await createdByA();
+			const out = await refusalOf(call(id, actorB()));
+			expect(out).toContain("RBAC_DENIED");
+			const row = await get(id);
+			expect(row?.title).toBe("standup");
+			expect(row?.active).toBe(true);
+		});
+
+		test(`${door}: the owner agent is served`, async () => {
+			const id = await createdByA();
+			await call(id, actorA());
+		});
+
+		test(`${door}: the service account with no forwarded agent keeps its access`, async () => {
+			const id = await createdByA();
+			await call(id);
+		});
+	}
+
+	test("a row without actor IDs is refused to an agent with a named reason, and served to the service account", async () => {
+		const id = await t.run((ctx) =>
+			ctx.db.insert("recurringTasks", {
+				title: "legacy",
+				assignedTo: "clio",
+				createdBy: "clio",
+				priority: "low",
+				cronExpression: "0 9 * * *",
+				nextRunAt: Date.now() + 1000,
+				active: true,
+				createdAt: Date.now(),
+				updatedAt: Date.now(),
+			}),
+		);
+		const out = await refusalOf(
+			svc.mutation(api.recurringTasks.pause, {
+				taskId: id,
+				verifiedActor: actorA(),
+			}),
+		);
+		expect(out).toContain("schedule-without-actor-ids");
+		expect(out).toContain("backfill_recurring_task_actor_ids");
+		expect((await get(id))?.active).toBe(true);
+		await svc.mutation(api.recurringTasks.pause, { taskId: id });
+		expect((await get(id))?.active).toBe(false);
+	});
+
+	test("a row stamped for another org is refused even when it names the caller's ID", async () => {
+		const id = await t.run((ctx) =>
+			ctx.db.insert("recurringTasks", {
+				title: "forged",
+				assignedTo: "clio",
+				assignedToId: clioA,
+				createdBy: "clio",
+				createdById: clioA,
+				priority: "low",
+				cronExpression: "0 9 * * *",
+				nextRunAt: Date.now() + 1000,
+				active: true,
+				orgId: "org-b",
+				createdAt: Date.now(),
+				updatedAt: Date.now(),
+			}),
+		);
+		const out = await refusalOf(
+			svc.mutation(api.recurringTasks.pause, {
+				taskId: id,
+				verifiedActor: actorA(),
+			}),
+		);
+		expect(out).toContain("RBAC_DENIED");
+		expect((await get(id))?.active).toBe(true);
+	});
+});
