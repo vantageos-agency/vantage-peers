@@ -10,7 +10,7 @@
  *
  * Admin-only mutations (createClient, deleteClient, listClients, seed*)
  * require the caller to be the recognised service account (the MCP server's
- * own Clerk user, matched by id inside `withOrgScope`); see
+ * own Clerk user, whose stored agents row carries its subject); see
  * `requireServiceAccount`. No secret is carried in a request argument.
  * `provisionOrganization` alone still accepts an OPTIONAL master token, and its
  * absent-token branch is an organisation-admin identity check.
@@ -93,11 +93,13 @@ async function requireMasterAuth(callerToken: string): Promise<void> {
 // registerPublicClient, consumeAuthorizationCode, getAccessTokenByHash,
 // getRefreshTokenByHash) authorise their caller by IDENTITY (ten of them used
 // to carry a shared secret in the request body; the four protocol steps used
-// to authorise no one): the caller must resolve, through `withOrgScope`, to the recognised
-// service account -- the MCP server's own Clerk user, matched by the by-id
-// grant on CLERK_SERVICE_ACCOUNT_USER_ID (never inferred from the mere absence
-// of an organisation). `withOrgScope` is called WITHOUT `allowNoIdentityMaster`,
-// so an anonymous caller resolves to no scope at all and is refused here.
+// to authorise no one): the caller must resolve, through `withOrgScope`, to the
+// recognised service account -- the MCP server's own Clerk user, whose `agents`
+// row the operator org's mapping names (`serviceAccountAgentId`) and carries the
+// verified subject as `authSubject` (convex/lib/serviceAccount.ts, judged by
+// @vantageos/cloud-identity). The id lives in data; no environment variable
+// decides it. `withOrgScope` is called WITHOUT `allowNoIdentityMaster`, so an
+// anonymous caller resolves to no scope at all and is refused here.
 //
 // The registrations stay PUBLIC on purpose: the MCP server reaches Convex
 // through a ConvexHttpClient carrying a service-account JWT, which cannot call
@@ -130,9 +132,10 @@ async function requireServiceAccount(
 		scope = await withOrgScope(ctx);
 	} catch (err: unknown) {
 		// withOrgScope refuses a signed-in caller with no organisation, or with an
-		// unmapped one, by raising. Re-raise it naming THIS door, so a reader can
-		// tell which registration refused it; anything that is not a refusal
-		// (an infrastructure failure) is not swallowed.
+		// unmapped one, and a subject that names the service account but is not
+		// admitted by the stored rows, by raising. Re-raise it naming THIS door, so
+		// a reader can tell which registration refused it; anything that is not a
+		// refusal (an infrastructure failure) is not swallowed.
 		if (err instanceof ConvexError) {
 			throw refuseNonServiceAccount(registration, null, "unresolved-caller");
 		}
@@ -140,7 +143,9 @@ async function requireServiceAccount(
 	}
 	// The door is the fleet SERVICE ACCOUNT, not "any master": an operator-org
 	// admin is a human master (masterSource "operator-admin") and must not mint
-	// access tokens or read the client registry. Decided by the grant's SOURCE.
+	// access tokens or read the client registry. Decided by the grant's SOURCE,
+	// and that grant is made by `withOrgScope` from the stored service-account
+	// rows (convex/lib/serviceAccount.ts), never from an environment variable.
 	if (!scope.isMaster || scope.masterSource !== "service-account") {
 		throw refuseNonServiceAccount(
 			registration,
@@ -462,7 +467,7 @@ export const upsertScopeProfile = internalMutation({
 // getScopeProfile — token-issuance path (mcp-server/server-http.ts's
 // loadScopeProfile, the ONLY production caller, via internalClient() —
 // the MCP server's service-account Clerk identity, which withOrgScope
-// resolves to isMaster=true through the by-id CLERK_SERVICE_ACCOUNT_USER_ID
+// resolves to isMaster=true through the stored service-account
 // carve-out).
 //
 // SECURITY: this query used to be reachable by ANY anonymous caller holding
@@ -1249,8 +1254,8 @@ export const registerPublicClient = mutation({
 // This does NOT break the real consumer: mcp-server/server-http.ts's
 // internalClient() always presents the MCP server's service-account Clerk
 // identity (see mcp-server/src/auth.ts's createServiceAccountConvexClient),
-// which withOrgScope resolves to isMaster=true via the by-id
-// CLERK_SERVICE_ACCOUNT_USER_ID carve-out — every legitimate /authorize and
+// which withOrgScope resolves to isMaster=true from the stored
+// service-account rows (lib/serviceAccount.ts) — every legitimate /authorize and
 // /token call is unaffected. Only a caller with no identity, or a non-master
 // Clerk identity, is refused.
 export const getClientByClientId = query({

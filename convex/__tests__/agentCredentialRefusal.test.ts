@@ -19,7 +19,7 @@
  * return `null` instead of calling `refuseUnresolvedCredential` (the pre-fix
  * shape) and the WRONG and ABSENT poles go RED.
  */
-import { convexTest } from "convex-test";
+import { convexTest } from "../../tests/fixtures/convexTestWithServiceAccount";
 import { describe, expect, test } from "vitest";
 import { api } from "../_generated/api";
 import schema from "../schema";

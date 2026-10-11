@@ -8,7 +8,7 @@
 // never sees another tenant's rows), for the recipientInstanceId branch that
 // backend-doctor flagged at messages.ts:313 and messages.ts:455.
 
-import { convexTest } from "convex-test";
+import { convexTest } from "../../tests/fixtures/convexTestWithServiceAccount";
 import { describe, expect, test } from "vitest";
 import { api } from "../_generated/api";
 import schema from "../schema";

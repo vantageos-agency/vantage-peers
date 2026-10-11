@@ -6,7 +6,7 @@
 // Five handlers in convex/recurringTasks.ts take a raw recurringTasks id:
 // getById, update, pause, resume, remove. All narrowed via requireId.
 
-import { convexTest } from "convex-test";
+import { convexTest } from "../../tests/fixtures/convexTestWithServiceAccount";
 import { ConvexError } from "convex/values";
 import { describe, expect, test } from "vitest";
 import { api } from "../_generated/api";

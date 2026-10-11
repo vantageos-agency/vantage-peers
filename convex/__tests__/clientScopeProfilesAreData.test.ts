@@ -18,7 +18,7 @@
  */
 
 import { execFileSync } from "node:child_process";
-import { convexTest } from "convex-test";
+import { convexTest } from "../../tests/fixtures/convexTestWithServiceAccount";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import {
 	LEGACY_CATALOG,

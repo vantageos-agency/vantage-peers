@@ -12,6 +12,7 @@ import {
 } from "@vantageos/cloud-identity";
 import type { UserIdentity } from "convex/server";
 import { findAgentByName, resolveAgentOfPresentedSecret } from "./agentIdentity";
+import { resolveServiceAccount } from "./serviceAccount";
 import { normalizeOrchestratorId } from "../_helpers/normalizeOrchestratorId";
 import {
 	lookupOrgMapping,
@@ -197,10 +198,12 @@ export interface WithOrgScopeOptions {
  *   FAIL-CLOSED: isMaster=false, allowedOrchestrators=[], scopes=[]. This is
  *   the default for any new or client-facing call site — absence of identity
  *   on a client-facing surface must never resolve to full access.
- * - Subject matches the configured CLERK_SERVICE_ACCOUNT_USER_ID (the MCP server
- *   service account) → isMaster=true, decided BY SUBJECT FIRST and regardless of
- *   any org claim the token carries (the account is also a member of orgs; an
- *   org claim must never downgrade it). Unset/empty env var grants nobody.
+ * - Subject is the `authSubject` of the active `kind: "service"` agents row that
+ *   the operator org's mapping names (`serviceAccountAgentId`) → isMaster=true,
+ *   decided BY SUBJECT FIRST and regardless of any org claim the token carries
+ *   (the account is also a member of orgs; an org claim must never downgrade
+ *   it). The stored chain is judged by @vantageos/cloud-identity; a broken chain
+ *   refuses, and the CLERK_SERVICE_ACCOUNT_USER_ID env var is no authority.
  * - No org attached (identity present), not the service account → REFUSED with
  *   RBAC_DENIED via requireTenantId — master is a named by-id grant, never
  *   inferred from the mere absence of an org (see the service-account carve-out
@@ -255,13 +258,18 @@ export async function withOrgScope(
 		};
 	}
 
-	// SERVICE ACCOUNT FIRST, BY SUBJECT. The MCP server authenticates to Convex
-	// as a real, dedicated Clerk user (see mcp-server/src/serviceAccountAuth.ts).
-	// That identity is granted master scope by matching its known, configured
-	// user id — a named, by-id check, never inferred from the absence of an org
-	// (the explicit-grant pattern @vantageos/cloud-identity 0.3.0 was built
-	// around). The decision is made on the SUBJECT ALONE, BEFORE any org claim is
-	// read: an org claim neither downgrades nor upgrades it.
+	// SERVICE ACCOUNT FIRST, BY SUBJECT, DECIDED FROM DATA. The MCP server
+	// authenticates to Convex as a real, dedicated Clerk user (see
+	// mcp-server/src/serviceAccountAuth.ts). Whether a verified subject IS that
+	// account is stored, not configured: the operator org's mapping row names an
+	// `agents` row (`serviceAccountAgentId`) that carries the subject as its
+	// `authSubject`, and @vantageos/cloud-identity builds and judges the `fleet`
+	// principal from those ID-keyed rows (convex/lib/serviceAccount.ts). An
+	// absent column, an absent or inactive row or a subject the row does not
+	// carry REFUSES; the environment variable CLERK_SERVICE_ACCOUNT_USER_ID is
+	// no longer read on any request path. The decision is made on the SUBJECT
+	// ALONE, BEFORE any org claim is read: an org claim neither downgrades nor
+	// upgrades it.
 	//
 	// Why subject-first (production incident): the service account is also a
 	// Clerk member (org:admin) of some organisations it created through the API.
@@ -270,11 +278,14 @@ export async function withOrgScope(
 	// auto-activated one of those orgs, its token carried org_slug, and the old
 	// `!orgSlug &&` condition resolved the whole fleet's MCP traffic as an
 	// ordinary member of a test org: master-only reads were refused and the
-	// fleet's own tasks became unreadable. Unset/empty
-	// CLERK_SERVICE_ACCOUNT_USER_ID grants nobody master; any other subject is
-	// never master here.
-	const serviceAccountUserId = process.env.CLERK_SERVICE_ACCOUNT_USER_ID;
-	if (serviceAccountUserId && identity.subject === serviceAccountUserId) {
+	// fleet's own tasks became unreadable. A subject that is not the `authSubject`
+	// of a service row is judged as an ordinary caller below.
+	const serviceAccount = await resolveServiceAccount(
+		ctx,
+		identity.subject,
+		"withOrgScope",
+	);
+	if (serviceAccount.ok) {
 		return {
 			userId: identity.subject,
 			orgSlug: null,
@@ -291,6 +302,14 @@ export async function withOrgScope(
 			isMaster: true,
 			masterSource: "service-account",
 		};
+	}
+	if (serviceAccount.claimsServiceAccount) {
+		// The subject is a service row's authSubject but the stored chain does not
+		// hold (no column, inactive row, ...): refused by RAISING, never a
+		// fall-through to the ordinary org path.
+		throw new ConvexError(
+			`RBAC_DENIED: the credential names the fleet service account but the stored service account does not admit it — ${JSON.stringify({ door: "withOrgScope", reason: serviceAccount.reason })}`,
+		);
 	}
 
 	// THE ORG COMES FROM THE CREDENTIAL'S OWN ID, never from the slug it happens

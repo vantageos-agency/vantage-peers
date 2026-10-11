@@ -15,7 +15,7 @@
 // delivery. Zero real recipients -> throw an actionable ConvexError, and NO
 // receipt rows are written (delivered=0 semantics).
 
-import { convexTest } from "convex-test";
+import { convexTest } from "../../tests/fixtures/convexTestWithServiceAccount";
 import { ConvexError } from "convex/values";
 import { describe, expect, test } from "vitest";
 import { api } from "../_generated/api";

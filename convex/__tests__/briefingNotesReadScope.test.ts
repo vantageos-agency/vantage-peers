@@ -20,7 +20,7 @@
 // today's behaviour exactly — `master`/`callerIdentities` are honoured for
 // it because only the MCP server holds that credential.
 
-import { convexTest } from "convex-test";
+import { convexTest } from "../../tests/fixtures/convexTestWithServiceAccount";
 import { ConvexError } from "convex/values";
 import { describe, expect, test } from "vitest";
 import { api } from "../_generated/api";

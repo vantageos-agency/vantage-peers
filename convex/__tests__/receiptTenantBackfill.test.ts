@@ -15,7 +15,7 @@
 // leaking a fleet-internal receipt to a client. Both-ends-same-org closes
 // that leak.
 
-import { convexTest } from "convex-test";
+import { convexTest } from "../../tests/fixtures/convexTestWithServiceAccount";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import { internal } from "../_generated/api";
 import schema from "../schema";

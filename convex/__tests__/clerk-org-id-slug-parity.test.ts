@@ -53,6 +53,7 @@ import {
 	checkNamespacePrefix,
 	checkNamespaceWrite,
 } from "../../mcp-server/src/auth";
+import { seedServiceAccount } from "../../tests/fixtures/seedServiceAccount";
 import { testClerkOrgId } from "../../tests/fixtures/testClerkOrgId";
 import { withOrgScope } from "../lib/auth";
 import schema from "../schema";
@@ -274,6 +275,9 @@ describe("TEST 1 — org_id ↔ clerkOrgSlug claim-key parity", () => {
 describe("TEST 2 — no-org → master guard: MCP boundary denies team/<other-org> access", () => {
 	test("Convex-direct: recognized service-account no-org identity resolves to isMaster=true", async () => {
 		const t = createT();
+		// The service account is stored data (module M2 part 2): seed the agents
+		// row and the operator org's column for the subject below.
+		await seedServiceAccount(t, "test-service-account-user-id");
 
 		await t.run(async (ctx) => {
 			const mockCtx = {

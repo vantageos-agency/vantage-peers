@@ -23,7 +23,7 @@
 // apart, which is exactly the gap the row stamp closes.
 
 import { isFleetStamp, sameTenantStamp } from "@vantageos/cloud-identity";
-import { convexTest } from "convex-test";
+import { convexTest } from "../../tests/fixtures/convexTestWithServiceAccount";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import { api, internal } from "../_generated/api";
 import type { Id } from "../_generated/dataModel";

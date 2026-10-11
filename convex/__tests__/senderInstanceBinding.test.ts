@@ -13,7 +13,7 @@
 // DELETION PROBE (not committed): remove the requireSenderInstanceOfSender
 // call in messages:sendMessage and the REFUSED poles go RED.
 
-import { convexTest } from "convex-test";
+import { convexTest } from "../../tests/fixtures/convexTestWithServiceAccount";
 import { describe, expect, test } from "vitest";
 import { testClerkOrgId } from "../../tests/fixtures/testClerkOrgId";
 import { api } from "../_generated/api";

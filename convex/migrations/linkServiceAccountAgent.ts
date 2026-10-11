@@ -1,15 +1,15 @@
 // linkServiceAccountAgent — turn the fleet service account from an environment
-// value into DATA (module M2 part 2, step 1 of 2). EXPAND phase: this step
-// only WRITES the stored rows; no request path reads them yet and the env var
-// still decides every door. The operator org's mapping row now names the
-// account, ready for the step that switches the doors to read it.
+// value into DATA (module M2 part 2). EXPAND phase: the env var stays in the
+// deployment and in the MCP server's token minting, but no request path reads
+// it any more; the operator org's mapping row now names the account.
 //
 //   CLERK_SERVICE_ACCOUNT_USER_ID (read HERE, once)
 //     -> agents row of the operator org  { kind: "service", authSubject, isActive }
 //     -> client_org_mapping.serviceAccountAgentId on the operator row
 //
-// Step 2 (a separate change) makes `withOrgScope` and `requireServiceAccount`
-// decide from the stored rows alone; this migration must have run before it.
+// This is the only code that reads that env var after the change. After it has
+// run, `withOrgScope` and `requireServiceAccount` decide from the stored rows
+// alone (convex/lib/serviceAccount.ts), and an absent column refuses.
 //
 // SHAPE. DRY RUN BY DEFAULT (`dryRun: false` writes). IDEMPOTENT: a mapping row
 // whose column already names a service row carrying this subject is left
@@ -65,7 +65,7 @@ export const linkServiceAccountAgent = internalMutation({
 	}),
 	handler: async (ctx, args) => {
 		const dryRun = args.dryRun !== false;
-		// The backfill source: the old environment value, read once.
+		// The single place the old environment value is read: the backfill source.
 		const subjectRaw =
 			args.subject ?? process.env.CLERK_SERVICE_ACCOUNT_USER_ID;
 		const subject =

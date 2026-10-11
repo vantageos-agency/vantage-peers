@@ -24,7 +24,7 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { makeFunctionReference } from "convex/server";
-import { convexTest } from "convex-test";
+import { convexTest } from "../../tests/fixtures/convexTestWithServiceAccount";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import schema from "../../convex/schema";
 import { app } from "../server-http.js";

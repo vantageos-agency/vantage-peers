@@ -18,7 +18,7 @@
  * catalog holds ONLY generic profiles (master, client-generic, public-readonly);
  * client profiles are data rows (see migrations/seed_client_scope_profiles).
  */
-import { convexTest } from "convex-test";
+import { convexTest } from "../tests/fixtures/convexTestWithServiceAccount";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import { api } from "./_generated/api";
 import schema from "./schema";

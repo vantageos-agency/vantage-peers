@@ -10,7 +10,7 @@
 // Test 3 (cursor round-trip) is the regression test: it FAILS on pre-fix code
 // and PASSES after the fix.
 
-import { convexTest } from "convex-test";
+import { convexTest } from "../../tests/fixtures/convexTestWithServiceAccount";
 import { expect, test } from "vitest";
 import { api } from "../_generated/api";
 import schema from "../schema";

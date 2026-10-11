@@ -170,7 +170,7 @@ export function deriveTerminalStatus(
 // convex/lib/auth.ts withOrgScope). It does NOT yield a single orchestrator
 // name (sigma/eta/...): the MCP server's non-browser path authenticates as
 // ONE SHARED service-account identity for every orchestrator (see
-// CLERK_SERVICE_ACCOUNT_USER_ID carve-out in withOrgScope), and a client org
+// stored service-account resolution in withOrgScope), and a client org
 // maps to a LIST of allowedOrchestrators, not a single name. An orchestrator
 // name is therefore NOT individually derivable from the JWT alone today.
 // Comparing `callerOrchestrator` against a single "derived actor" name would

@@ -413,7 +413,7 @@ describe("every *_unread index withIndex call, anywhere under convex/, binds the
 // the header comment) — it guards against a future edit reintroducing a
 // correctness bug (e.g. dropping a receipt) while "fixing" performance.
 // ---------------------------------------------------------------------------
-import { convexTest } from "convex-test";
+import { convexTest } from "../../tests/fixtures/convexTestWithServiceAccount";
 import { api } from "../_generated/api";
 import schema from "../schema";
 

@@ -14,7 +14,7 @@
  *   ABSENT    person of org-a, no verifiedOrg, org-a task    -> unchanged (lands)
  */
 
-import { convexTest } from "convex-test";
+import { convexTest } from "../../tests/fixtures/convexTestWithServiceAccount";
 import { beforeEach, describe, expect, test } from "vitest";
 import { testClerkOrgId } from "../../tests/fixtures/testClerkOrgId";
 import { api } from "../_generated/api";

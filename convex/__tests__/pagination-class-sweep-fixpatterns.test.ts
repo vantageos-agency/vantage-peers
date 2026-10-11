@@ -7,7 +7,7 @@
 // Fictitious identifiers only — no real client names.
 // ─────────────────────────────────────────────────────────────────────────────
 
-import { convexTest } from "convex-test";
+import { convexTest } from "../../tests/fixtures/convexTestWithServiceAccount";
 import type { FunctionReturnType } from "convex/server";
 import { describe, expect, test } from "vitest";
 import { api } from "../_generated/api";
