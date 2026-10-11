@@ -14,6 +14,8 @@
  * Orchestrator: Sigma — VantagePeers | 2026-07-04
  */
 
+import { isNamespaceAllowedForScope } from "./lib/auth";
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Auth: orgId + namespace are passed as explicit args by the MCP layer.
 //
@@ -102,9 +104,14 @@ export function assertScopeAuthorizesOrg(
 	scope: { isMaster: boolean; orgSlug: string | null; refused: boolean },
 	claimedOrgId: string,
 ): void {
-	// Master (the fleet's own callers, via withOrgScope's named by-id
-	// service-account carve-out) keeps acting on any org — unchanged.
-	if (scope.isMaster) return;
+	// The ownership decision is the repo's ONE tenant-namespace predicate
+	// (`isNamespaceAllowedForScope`, convex/lib/auth.ts), the same one the OKF
+	// gate and the search gate use: the fleet master (withOrgScope's named by-id
+	// service-account carve-out) acts on any org, a member only on the org its
+	// verified scope resolves to, a caller with no verified organisation on none.
+	// `assertOrgArgs` has already pinned the claimed org to one namespace segment,
+	// so `team/<claimedOrgId>` is exactly that org's tenant namespace.
+	if (isNamespaceAllowedForScope(scope, `team/${claimedOrgId}`)) return;
 
 	if (scope.refused || scope.orgSlug === null) {
 		throw new Error(
@@ -114,10 +121,8 @@ export function assertScopeAuthorizesOrg(
 		);
 	}
 
-	if (scope.orgSlug !== claimedOrgId) {
-		throw new Error(
-			`AUTH_NAMESPACE_DENIED: caller's verified organisation "${scope.orgSlug}" ` +
-				`may not act on claimed org "${claimedOrgId}".`,
-		);
-	}
+	throw new Error(
+		`AUTH_NAMESPACE_DENIED: caller's verified organisation "${scope.orgSlug}" ` +
+			`may not act on claimed org "${claimedOrgId}".`,
+	);
 }
