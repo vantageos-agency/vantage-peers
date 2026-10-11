@@ -15,6 +15,7 @@ import { ConvexError } from "convex/values";
 import type { DatabaseReader } from "../_generated/server";
 import {
 	lookupOrgMapping,
+	orgMappingRowsForLabel,
 	type OrgMappingView,
 	orgMappingLookups,
 } from "./authOrgMapping";
@@ -33,6 +34,13 @@ export async function resolveProvisioningMapping(
 	ctx: { db: DatabaseReader },
 	label: string,
 ): Promise<ProvisioningMapping> {
+	// Two rows sharing one label make the organisation undecidable: it RAISES,
+	// never the first row and never an absence (a seed would add a third).
+	if ((await orgMappingRowsForLabel(ctx, label)).length > 1) {
+		throw new ConvexError(
+			`ORG_MAPPING_AMBIGUOUS: more than one client_org_mapping row carries the label "${label}"`,
+		);
+	}
 	const resolved = await resolveProvisioningLabel(label, orgMappingLookups(ctx));
 	if (resolved.kind === "unmapped") return { kind: "unmapped" };
 	if (resolved.kind === "unreadable") {

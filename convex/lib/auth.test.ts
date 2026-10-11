@@ -390,7 +390,7 @@ describe("filterByOrgScope", () => {
 		fleetWide: true,
 		scopes: ["cross-tenant-read"],
 		isMaster: true,
-		masterSource: "internal",
+		masterSource: "service-account",
 	};
 
 	const irisRhScope: OrgScope = {
@@ -486,7 +486,7 @@ describe("requireScope", () => {
 		fleetWide: true,
 		scopes: ["cross-tenant-read"],
 		isMaster: true,
-		masterSource: "internal",
+		masterSource: "service-account",
 	};
 
 	const irisRhScope: OrgScope = {

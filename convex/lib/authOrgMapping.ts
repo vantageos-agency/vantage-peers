@@ -12,7 +12,6 @@ import type {
 	OrgMappingLookups,
 	OrgRef,
 } from "@vantageos/cloud-identity";
-import { ConvexError } from "convex/values";
 import type { Doc } from "../_generated/dataModel";
 import type { DatabaseReader } from "../_generated/server";
 
@@ -76,17 +75,16 @@ export async function lookupOrgMapping(
 		ctx.db,
 		typeof key === "string" ? { slug: key } : key,
 	);
-	if (typeof key === "string") {
-		// Two rows sharing one label make the organisation undecidable: it RAISES,
-		// never the first row and never an absence (a seed would add a third).
-		if (rows.length > 1) {
-			throw new ConvexError(
-				`ORG_MAPPING_AMBIGUOUS: more than one client_org_mapping row carries the label "${key}"`,
-			);
-		}
-		return rows[0] ?? null;
-	}
+	if (typeof key === "string") return rows[0] ?? null;
 	return rows.length === 1 ? rows[0] : null;
+}
+
+/** Up to two rows carrying a label, as stored. Counting them is the caller's business. */
+export async function orgMappingRowsForLabel(
+	ctx: { db: DatabaseReader },
+	label: string,
+): Promise<Doc<"client_org_mapping">[]> {
+	return await readMappings(ctx.db, { slug: label });
 }
 
 /** The row in the shape the package reads: its own field names beside the table's. */
