@@ -105,6 +105,7 @@ const member = (t: T) =>
 	actingWith(
 		t.withIdentity({ subject: "member-of-org-b", organizationId: "org-b", org_id: testClerkOrgId("org-b"), org_role: "org:editor" } as Identity),
 		(name) => secrets.get(`org-b/${name}`),
+		/^(tasks|briefingNotes):/,
 	);
 const master = (t: T) =>
 	t.withIdentity({ subject: "test-service-account-user-id" } as Identity);

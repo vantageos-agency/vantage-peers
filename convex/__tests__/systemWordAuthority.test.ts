@@ -33,7 +33,8 @@ import { api } from "../_generated/api";
 import schema from "../schema";
 import { analyse as analyseSystemWord } from "../../tests/lib/systemWordAst";
 import { testClerkOrgId } from "../../tests/fixtures/testClerkOrgId";
-import { seedFleetAgents } from "../../tests/lib/seedFleetAgents";
+import { seedAgents } from "../../tests/lib/agentIdOf";
+import { mintAgentSecret, seedFleetAgents } from "../../tests/lib/seedFleetAgents";
 import { seedRosterAgents } from "../../tests/lib/seedRosterAgents";
 
 const modules = Object.fromEntries(
@@ -187,7 +188,7 @@ describe("briefingNotes.deleteBriefingNote — the word 'system' is not authorit
 				noteId,
 				callerOrchestrator: "system",
 			}),
-		).rejects.toThrow(/RBAC_DENIED: only seat-b \(creator\)/);
+		).rejects.toThrow(/RBAC_DENIED: actor "system" is not an orchestrator of org "org-a"/);
 		expect(await t.run((ctx) => ctx.db.get(noteId))).not.toBeNull();
 	});
 
@@ -195,9 +196,12 @@ describe("briefingNotes.deleteBriefingNote — the word 'system' is not authorit
 		const t = createT();
 		await seedOrgA(t);
 		const noteId = await seedNote(t, "seat-a");
+		// M10c: the member acts as seat-a with seat-a's credential; the author is judged by ID.
+		await seedAgents(t, [["org-a", "seat-a"]]);
+		const agentCredentialSecret = await mintAgentSecret(t, "org-a", "seat-a");
 		const result = await asMemberOfOrgA(t).mutation(
 			api.briefingNotes.deleteBriefingNote,
-			{ noteId, callerOrchestrator: "seat-a" },
+			{ noteId, callerOrchestrator: "seat-a", agentCredentialSecret },
 		);
 		expect(result.deleted).toBe(true);
 		expect(await t.run((ctx) => ctx.db.get(noteId))).toBeNull();
@@ -226,7 +230,7 @@ describe("briefingNotes.update — the word 'system' is not authority", () => {
 				callerOrchestrator: "system",
 				title: "hijacked",
 			}),
-		).rejects.toThrow(/RBAC_DENIED: system is not creator/);
+		).rejects.toThrow(/RBAC_DENIED: actor "system" is not an orchestrator of org "org-a"/);
 		const row = await t.run((ctx) => ctx.db.get(noteId));
 		expect(row?.title).toBe("seed note");
 	});
@@ -235,9 +239,13 @@ describe("briefingNotes.update — the word 'system' is not authority", () => {
 		const t = createT();
 		await seedOrgA(t);
 		const noteId = await seedNote(t, "seat-a");
+		// M10c: the member acts as seat-a with seat-a's credential; the author is judged by ID.
+		await seedAgents(t, [["org-a", "seat-a"]]);
+		const agentCredentialSecret = await mintAgentSecret(t, "org-a", "seat-a");
 		await asMemberOfOrgA(t).mutation(api.briefingNotes.update, {
 			noteId,
 			callerOrchestrator: "seat-a",
+			agentCredentialSecret,
 			title: "mine",
 		});
 		const row = await t.run((ctx) => ctx.db.get(noteId));

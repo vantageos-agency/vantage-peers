@@ -785,6 +785,17 @@ export default defineSchema({
 		// renamable label; this is the identity (Pi ruling (d), k174d95s5qqy8t2r5rdrz3pr3d8fqv82).
 		// Optional during the expand phase: filled by migrations/backfill_org_clerk_id.
 		clerkOrgId: v.optional(v.string()),
+		// M10c: the ID of the note's author, beside the `createdBy` display label.
+		// An agents-row `_id` (resolved in the note's own org) or the person actor
+		// "user:<verified subject>". Filled on every write; a row written before
+		// M10c has none and its creator is resolved from the label in the row's
+		// OWN org on read (convex/briefingNotes.ts). Authority compares this, never
+		// the label.
+		createdById: v.optional(v.string()),
+		// M10c: the participants that name an agent (or a person) of the note's org,
+		// as IDs, beside the `participants` display labels. A label that names no
+		// agent (e.g. a human first name) has no entry.
+		participantIds: v.optional(v.array(v.string())),
 		// R-18 idempotency key for retriable OKF bundle import inserts.
 		// sha256(title + "\n" + content) computed once by the importer
 		// (convex/okfBundleNode.ts); the atomic findOrCreate in
@@ -861,7 +872,9 @@ export default defineSchema({
 		// common narrowing axes (topic, createdBy).
 		.searchIndex("search_content", {
 			searchField: "content",
-			filterFields: ["topic", "createdBy", "orgId"],
+			// clerkOrgId (M10c): the tenant filter of a member's search is the org's
+			// permanent ID, never the renamable slug in `orgId`.
+			filterFields: ["topic", "createdBy", "orgId", "clerkOrgId"],
 		}),
 
 	// ── briefingNoteParticipants ──────────────────────────────────────────────
@@ -874,8 +887,12 @@ export default defineSchema({
 	briefingNoteParticipants: defineTable({
 		noteId: v.id("briefingNotes"),
 		participant: v.string(),
+		// M10c: the ID the label names in the note's own org (agents-row `_id` or
+		// "user:<subject>"); absent when the label names no agent there.
+		participantId: v.optional(v.string()),
 	})
 		.index("by_participant_note", ["participant", "noteId"])
+		.index("by_participantId_note", ["participantId", "noteId"])
 		.index("by_note", ["noteId"]),
 
 	// ── mandates ──────────────────────────────────────────────────────────────

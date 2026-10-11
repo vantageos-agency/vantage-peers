@@ -44,6 +44,7 @@ import { convexTest } from "convex-test";
 import { describe, expect, test } from "vitest";
 import { seedRosterAgent } from "../../tests/fixtures/rosterAgent";
 import { testClerkOrgId } from "../../tests/fixtures/testClerkOrgId";
+import { mintAgentSecret } from "../../tests/lib/seedFleetAgents";
 import { api } from "../_generated/api";
 import type { Id } from "../_generated/dataModel";
 import schema from "../schema";
@@ -115,6 +116,30 @@ async function outcome(write: () => Promise<unknown>): Promise<string> {
 		return String((e as ConvexError<string>).data ?? e);
 	}
 }
+
+// M10c: a member acts as an agent of its org with that agent's credential (the
+// author is judged by agent ID). Idempotent: the agent is registered once.
+const seatProof = async (t: T): Promise<string> => {
+	await t.run(async (ctx) => {
+		const existing = await ctx.db
+			.query("agents")
+			.withIndex("by_org_normalized_name", (q) =>
+				q.eq("orgSlug", "org-a").eq("normalizedName", SEAT),
+			)
+			.first();
+		if (existing === null) {
+			await ctx.db.insert("agents", {
+				orgSlug: "org-a",
+				clerkOrgId: testClerkOrgId("org-a"),
+				name: SEAT,
+				normalizedName: SEAT,
+				isActive: true,
+				createdAt: NOW,
+			});
+		}
+	});
+	return await mintAgentSecret(t as never, "org-a", SEAT);
+};
 
 const seedBriefingNote = (t: T, orgId: string) =>
 	t.run((ctx) =>
@@ -235,14 +260,18 @@ const SITES: Site[] = [
 		name: "briefingNotes:create",
 		tables: ["briefingNotes"],
 		memberReturns: isString,
-		prepare: async () => (c) =>
-			c.mutation(api.briefingNotes.create, {
-				title: "n",
-				topic: "handoff",
-				participants: [SEAT],
-				content: "c",
-				createdBy: SEAT,
-			}),
+		prepare: async (t) => {
+			const agentCredentialSecret = await seatProof(t);
+			return (c) =>
+				c.mutation(api.briefingNotes.create, {
+					title: "n",
+					topic: "handoff",
+					participants: [SEAT],
+					content: "c",
+					createdBy: SEAT,
+					agentCredentialSecret,
+				});
+		},
 	},
 	{
 		name: "briefingNotes:update",
@@ -251,10 +280,12 @@ const SITES: Site[] = [
 		prepare: async (t, ghost) => {
 			const noteId = await seedBriefingNote(t, "org-a");
 			if (ghost) await ghostOf(t, noteId);
+			const agentCredentialSecret = await seatProof(t);
 			return (c) =>
 				c.mutation(api.briefingNotes.update, {
 					noteId,
 					callerOrchestrator: SEAT,
+					agentCredentialSecret,
 					content: "edited",
 				});
 		},
@@ -266,10 +297,12 @@ const SITES: Site[] = [
 		prepare: async (t, ghost) => {
 			const noteId = await seedBriefingNote(t, "org-a");
 			if (ghost) await ghostOf(t, noteId);
+			const agentCredentialSecret = await seatProof(t);
 			return (c) =>
 				c.mutation(api.briefingNotes.deleteBriefingNote, {
 					noteId,
 					callerOrchestrator: SEAT,
+					agentCredentialSecret,
 				});
 		},
 	},

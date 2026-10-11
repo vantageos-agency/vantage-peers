@@ -333,10 +333,28 @@ const INTENTIONAL_PROJECTIONS: Record<string, { fields: string[]; reason: string
 			"updatedBy",
 			"orgId",
 			"clerkOrgId",
+			"createdById",
+			"participantIds",
 			"contentHash",
 		],
 		reason:
 			"`fields: \"lite\"|\"full\"` API — `briefingNoteLiteValidator` is the deliberate lite projection (`projectBriefingNoteLite` maps explicitly, never spreads the raw row); `briefingNoteFullValidator` (in the same union) already COVERS.",
+	},
+	"briefingNotes.searchBriefingNotesByKeyword#briefingNoteSearchLiteValidator": {
+		fields: [
+			"content",
+			"decisions",
+			"linkedMemoryIds",
+			"updatedAt",
+			"updatedBy",
+			"orgId",
+			"clerkOrgId",
+			"createdById",
+			"participantIds",
+			"contentHash",
+		],
+		reason:
+			"`fields: \"lite\"|\"full\"` API — `briefingNoteSearchLiteValidator` is the deliberate lite projection of a keyword hit (the handler maps `_id`/`title`/`topic`/`createdBy`/`createdAt`/`participants` explicitly, never spreading the raw row); `briefingNoteFullValidator` (in the same union) already COVERS.",
 	},
 	"githubRepoMapping.list#repoMappingLiteObject": {
 		fields: ["active", "lastDeployedSHA", "lastDeployedAt", "reviewer", "fallbackReviewer", "orgId", "clerkOrgId"],

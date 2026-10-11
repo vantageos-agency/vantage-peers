@@ -15,7 +15,8 @@ import { ConvexError } from "convex/values";
 import { convexTest } from "../../tests/fixtures/convexTestWithServiceAccount";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import { testClerkOrgId } from "../../tests/fixtures/testClerkOrgId";
-import { seedFleetAgents } from "../../tests/lib/seedFleetAgents";
+import { seedAgents } from "../../tests/lib/agentIdOf";
+import { mintAgentSecret, seedFleetAgents } from "../../tests/lib/seedFleetAgents";
 import { api } from "../_generated/api";
 import schema from "../schema";
 
@@ -159,10 +160,14 @@ describe("R-16 — owner refusals raise a coded ConvexError naming their door", 
 		);
 		expect(stranger.payload.reason).toBe("not-creator");
 		expect(stranger.payload.registration).toBe("briefingNotes:deleteBriefingNote");
-		// PRESENT: the creator is still served.
+		// PRESENT: the creator is still served (M10c: it presents seat-b's credential;
+		// the author is judged by agent ID).
+		await seedAgents(t, [["org-a", "seat-b"]]);
+		const agentCredentialSecret = await mintAgentSecret(t, "org-a", "seat-b");
 		const ok = await asMemberOfOrgA(t).mutation(api.briefingNotes.deleteBriefingNote, {
 			noteId,
 			callerOrchestrator: "seat-b",
+			agentCredentialSecret,
 		});
 		expect(ok.deleted).toBe(true);
 	});

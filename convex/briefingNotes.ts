@@ -3,12 +3,21 @@ import { ConvexError } from "convex/values";
 import { mutation, query, type MutationCtx, type QueryCtx } from "./_generated/server";
 import type { Doc, Id } from "./_generated/dataModel";
 import { creatorValidator } from "./schema";
-import { withOrgScope, requireScope, requireOrchestratorOnRoster, type OrgScope } from "./lib/auth";
+import {
+	withOrgScope,
+	requireScope,
+	requireOrchestratorOnRoster,
+	lookupOrgMapping,
+	verifiedActorValidator,
+	type OrgScope,
+} from "./lib/auth";
 import { sameOrg } from "@vantageos/cloud-identity";
 import { orgRefOfRow, orgRefOfScope } from "./lib/authOrgMapping";
 import { isFleetSystemCaller } from "./lib/systemCaller";
 import { requireId } from "./lib/ids";
 import { resolveHumanActor } from "./lib/humanActor";
+import { actorIdResolver, type ActorIdResolver } from "./lib/actorIds";
+import { requireAuthenticatedCaller } from "./tasks";
 import {
 	resolveVerifiedOrgScope,
 	verifiedOrgValidator,
@@ -28,6 +37,74 @@ import {
 // unscoped/back-compat read (internal server-to-server callers).
 // ─────────────────────────────────────────────────────────────────────────────
 
+// ─────────────────────────────────────────────────────────────────────────────
+// Identity by ID (module M10c). A note's author and its participants are
+// agents of the note's OWN organisation, and authority is decided on their
+// IDs: an agents-row `_id`, or the person actor "user:<verified subject>". The
+// `createdBy` / `participants` labels stay for display. A label is turned into
+// an ID in exactly one org, the note's (`noteOrgSlug`): the same label in
+// another org names a different agent and never matches.
+// ─────────────────────────────────────────────────────────────────────────────
+
+type Ctx = QueryCtx | MutationCtx;
+
+/**
+ * The slug under which a note's org keeps its agents: read from the org's
+ * mapping BY the note's permanent org ID (a renamed org keeps its notes), else
+ * the stored label. undefined = a fleet-owned note (the operator org).
+ */
+async function noteOrgSlug(
+	ctx: Ctx,
+	note: { orgId?: string; clerkOrgId?: string },
+): Promise<string | undefined> {
+	if (note.clerkOrgId !== undefined) {
+		const mapping = await lookupOrgMapping(ctx, { clerkOrgId: note.clerkOrgId });
+		if (mapping !== null) return mapping.clerkOrgSlug;
+	}
+	return note.orgId;
+}
+
+async function labelResolverOfNote(
+	ctx: Ctx,
+	note: { orgId?: string; clerkOrgId?: string },
+): Promise<ActorIdResolver> {
+	return actorIdResolver(ctx, await noteOrgSlug(ctx, note));
+}
+
+/** The ID of a note's author: the stored `createdById`, else its label resolved in the note's own org. */
+async function noteCreatorId(
+	ctx: Ctx,
+	note: Doc<"briefingNotes">,
+): Promise<string | undefined> {
+	if (note.createdById !== undefined) return note.createdById;
+	return (await labelResolverOfNote(ctx, note))(note.createdBy);
+}
+
+/** Is `callerActorId` (the ID a verified proof named) the note's author? No ID is nobody. */
+async function isNoteAuthor(
+	ctx: Ctx,
+	note: Doc<"briefingNotes">,
+	callerActorId: string | undefined,
+): Promise<boolean> {
+	if (callerActorId === undefined) return false;
+	return callerActorId === (await noteCreatorId(ctx, note));
+}
+
+/** The IDs the labels name in `orgSlug` (undefined = operator org); labels naming nobody there have none. */
+async function idsOfLabels(
+	ctx: Ctx,
+	orgSlug: string | undefined,
+	labels: readonly string[],
+): Promise<string[]> {
+	const resolve = actorIdResolver(ctx, orgSlug);
+	const ids = new Set<string>();
+	for (const label of labels) {
+		const id = await resolve(label);
+		if (id !== undefined) ids.add(id);
+	}
+	return [...ids];
+}
+
 export async function syncParticipantIndex(
 	ctx: MutationCtx,
 	noteId: Id<"briefingNotes">,
@@ -41,9 +118,22 @@ export async function syncParticipantIndex(
 		await ctx.db.delete(row._id);
 	}
 	const unique = Array.from(new Set(participants));
+	const note = await ctx.db.get(noteId);
+	const resolve =
+		note === null ? undefined : await labelResolverOfNote(ctx, note);
+	const participantIds: string[] = [];
 	for (const participant of unique) {
-		await ctx.db.insert("briefingNoteParticipants", { noteId, participant });
+		const participantId = await resolve?.(participant);
+		await ctx.db.insert("briefingNoteParticipants", {
+			noteId,
+			participant,
+			...(participantId !== undefined ? { participantId } : {}),
+		});
+		if (participantId !== undefined && !participantIds.includes(participantId)) {
+			participantIds.push(participantId);
+		}
 	}
+	if (note !== null) await ctx.db.patch(noteId, { participantIds });
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -76,17 +166,43 @@ function isOrgAllowedForScope(
 	return sameOrg(orgRefOfRow(row), orgRefOfScope(scope));
 }
 
+// Is the caller the note's author or one of its participants, judged by ID?
+// `callerIdentities` are the seat labels the MCP handler threads; each is turned
+// into an ID in the NOTE's own org (a same-named seat of another org names a
+// different agent there, or none), then compared with the author's ID and the
+// participant IDs (the by_participantId_note index). A label naming nobody
+// matches nothing. A row written before M10c carries no IDs: its labels are
+// resolved in its own org the same way.
 async function identityMatchesParticipant(
 	ctx: QueryCtx,
 	note: Doc<"briefingNotes">,
 	callerIdentities: string[],
 ): Promise<boolean> {
-	if (callerIdentities.includes(note.createdBy)) return true;
-	for (const identity of callerIdentities) {
+	const callerIds = await idsOfLabels(
+		ctx,
+		await noteOrgSlug(ctx, note),
+		callerIdentities,
+	);
+	if (callerIds.length === 0) return false;
+	const creatorId = await noteCreatorId(ctx, note);
+	if (creatorId !== undefined && callerIds.includes(creatorId)) return true;
+	if (note.participantIds === undefined) {
+		const rows = await ctx.db
+			.query("briefingNoteParticipants")
+			.withIndex("by_note", (q) => q.eq("noteId", note._id))
+			.collect();
+		const legacy = await idsOfLabels(
+			ctx,
+			await noteOrgSlug(ctx, note),
+			rows.map((r) => r.participant),
+		);
+		return legacy.some((id) => callerIds.includes(id));
+	}
+	for (const id of callerIds) {
 		const row = await ctx.db
 			.query("briefingNoteParticipants")
-			.withIndex("by_participant_note", (q) =>
-				q.eq("participant", identity).eq("noteId", note._id),
+			.withIndex("by_participantId_note", (q) =>
+				q.eq("participantId", id).eq("noteId", note._id),
 			)
 			.first();
 		if (row !== null) return true;
@@ -166,6 +282,12 @@ export const create = mutation({
 		linkedMemoryIds: v.optional(v.array(v.id("memories"))),
 		// Absent = the HUMAN path (a dashboard org member acting in its own name).
 		createdBy: v.optional(creatorValidator),
+		// The proof of WHO the asserted createdBy is (same two carriers as the task
+		// doors): a per-agent credential, or the agent ID the MCP transport
+		// verified (believed from the fleet service account only). The author's ID
+		// is derived from the proof, never from the label.
+		agentCredentialSecret: v.optional(v.string()),
+		verifiedActor: v.optional(verifiedActorValidator),
 	},
 	returns: v.id("briefingNotes"),
 	handler: async (ctx, args) => {
@@ -200,17 +322,50 @@ export const create = mutation({
 		// client-supplied createdBy is never an identity here: with one present the
 		// unchanged agent path runs and the roster refuses any name that is not an
 		// orchestrator of the caller's own org (e.g. "team/<org>/user").
-		const { createdBy: claimedCreator, ...rest } = args;
+		const {
+			createdBy: claimedCreator,
+			agentCredentialSecret,
+			verifiedActor,
+			...rest
+		} = args;
+		// The note is stamped with the org's permanent ID: a member whose org has
+		// none yet could write a row it could never read back.
+		if (!scope.isMaster && scope.orgClerkId === undefined) {
+			throw new ConvexError(
+				`RBAC_DENIED: caller's organisation has no permanent org ID to stamp a briefing note with — ${JSON.stringify({ reason: "org-id-missing", door: "briefingNotes:create", orgSlug: scope.orgSlug })}`,
+			);
+		}
 		let createdBy: string;
+		let createdById: string | undefined;
 		if (claimedCreator === undefined) {
 			createdBy = await resolveHumanActor(ctx, scope, { door: "briefingNotes:create" });
+			createdById = createdBy;
+			if (agentCredentialSecret !== undefined || verifiedActor !== undefined) {
+				await requireAuthenticatedCaller(ctx, undefined, agentCredentialSecret, verifiedActor);
+			}
 		} else {
 			requireOrchestratorOnRoster(scope, claimedCreator, "briefingNotes:create", "actor");
+			// The author is the agent the PROOF names (credential / verifiedActor /
+			// the label looked up in the caller's own org), never the label. A member
+			// whose proof names no agent of its org may not write under that name.
+			const caller = await requireAuthenticatedCaller(
+				ctx,
+				claimedCreator,
+				agentCredentialSecret,
+				verifiedActor,
+			);
+			createdById = caller.callerActorId;
+			if (!scope.isMaster && createdById === undefined) {
+				throw new ConvexError(
+					`RBAC_DENIED: "${claimedCreator}" names no agent of the caller's organisation — a briefing note is authored by an agent resolved by ID, a label that names none is refused — ${JSON.stringify({ reason: "actor-not-an-agent-of-org", door: "briefingNotes:create", orgSlug: scope.orgSlug })}`,
+				);
+			}
 			createdBy = claimedCreator;
 		}
 		const noteId = await ctx.db.insert("briefingNotes", {
 			...rest,
 			createdBy,
+			...(createdById !== undefined ? { createdById } : {}),
 			createdAt: Date.now(),
 			orgId: scope.isMaster ? undefined : (scope.orgSlug as string),
 			clerkOrgId: scope.isMaster
@@ -238,9 +393,23 @@ const briefingNoteFullValidator = v.object({
 	// PR #360 — Beta multi-tenant scope field. Optional so pre-PR #360 docs pass.
 	orgId: v.optional(v.string()),
 	clerkOrgId: v.optional(v.string()),
+	// M10c: the author / participants as IDs (the labels above are display).
+	createdById: v.optional(v.string()),
+	participantIds: v.optional(v.array(v.string())),
 	// R-18 import idempotency key (sha256 of the OKF dedup key). Optional
 	// because only OKF-imported rows carry it.
 	contentHash: v.optional(v.string()),
+});
+
+// The lite projection of a keyword search hit (participants stay: the MCP layer's
+// independent createdBy/participants check needs them in lite mode too).
+const briefingNoteSearchLiteValidator = v.object({
+	_id: v.id("briefingNotes"),
+	title: v.string(),
+	topic: v.string(),
+	createdBy: creatorValidator,
+	createdAt: v.number(),
+	participants: v.array(v.string()),
 });
 
 const briefingNoteLiteValidator = v.object({
@@ -269,6 +438,10 @@ export const get = query({
 		// legacy unscoped call (back-compat). `master=true` bypasses the check.
 		master: v.optional(v.boolean()),
 		callerIdentities: v.optional(v.array(v.string())),
+		// Transport-verified org of a service-account bearer (see `list`): the read
+		// then runs under that org's member scope, so a seat of another org never
+		// reads this org's note by naming a seat that shares a label with one of it.
+		verifiedOrg: v.optional(verifiedOrgValidator),
 	},
 	returns: v.union(briefingNoteFullValidator, v.null()),
 	handler: async (ctx, args) => {
@@ -293,15 +466,21 @@ export const get = query({
 		// envelope). Only the ANONYMOUS caller (no credential — the dashboard sits
 		// behind clerkMiddleware, so no render exists for it) is RAISED at below,
 		// per refusal-is-distinguishable-from-absence.md rule 1.
-		const scope = await withOrgScope(ctx, { refuseWithoutThrow: true });
+		const transportScope = await withOrgScope(ctx, { refuseWithoutThrow: true });
 		// `scope.refused` is set ONLY for a signed-in caller with no org (the
 		// R-50 target case) — a typed null, never a throw. A truly anonymous
 		// caller (no identity at all) is UNCHANGED and still throws below
 		// (convex/__tests__/briefingNotesReadScope.test.ts's "anonymous get is
 		// refused" contract, out of this fix's scope).
-		if (scope.refused) {
+		if (transportScope.refused) {
 			return null;
 		}
+		const scope = await resolveVerifiedOrgScope(
+			ctx,
+			transportScope,
+			args.verifiedOrg,
+			"briefingNotes:get",
+		);
 		if (!scope.isMaster && scope.orgSlug === null) {
 			throw new ConvexError(
 				`RBAC_DENIED: caller may not read briefing notes — ${JSON.stringify({ orgSlug: null })}`,
@@ -522,6 +701,11 @@ export const list = query({
 				: args.callerIdentities !== undefined);
 		const fetchCap = needsWideScan ? BRIEFING_NOTES_LIST_SCAN_CAP + 1 : limit;
 
+		// S3.3 B8 — cursor paging anchor (forward, newest-first). Pushed INTO the
+		// index range (`_creationTime` closes every index below), so the page is the
+		// next `limit` rows older than the anchor, not the newest rows minus the
+		// ones newer than it (which paged to an empty result).
+		const before = args.createdBefore;
 		let rows: Doc<"briefingNotes">[];
 		// Issue #1260 — updatedSince pushes its bound INTO the query via an index
 		// ending in `updatedAt`, so the byte ceiling is measured against the
@@ -629,22 +813,34 @@ export const list = query({
 			// org-scoped caller that owns ZERO of those rows. Bound the read to
 			// THIS caller's own org via the orgId-prefixed index instead -- growth
 			// now tracks this org's own row count, never the platform-wide corpus.
-			const orgSlug = scope.orgSlug as string;
+			// M10c: the range is the org's PERMANENT ID (by_orgId_clerk_id /
+			// by_orgId_topic_clerk_id), never the renamable slug: a new org that took
+			// a freed slug reads none of the rows of the org that held it before.
+			const orgClerkId = scope.orgClerkId;
+			if (orgClerkId === undefined) {
+				throw new ConvexError(
+					`RBAC_DENIED: caller's organisation has no permanent org ID to read briefing notes by — ${JSON.stringify({ reason: "org-id-missing", door: "briefingNotes:list", orgSlug: scope.orgSlug })}`,
+				);
+			}
 			const capped =
 				args.topic !== undefined
 					? await fetchCappedOrOverflow(() =>
 							ctx.db
 								.query("briefingNotes")
-								.withIndex("by_orgId_topic", (q) =>
-									q.eq("orgId", orgSlug).eq("topic", args.topic as string),
-								)
+								.withIndex("by_orgId_topic_clerk_id", (q) => {
+									const r = q.eq("clerkOrgId", orgClerkId).eq("topic", args.topic as string);
+									return before === undefined ? r : r.lt("_creationTime", before);
+								})
 								.order("desc")
 								.take(fetchCap),
 						)
 					: await fetchCappedOrOverflow(() =>
 							ctx.db
 								.query("briefingNotes")
-								.withIndex("by_orgId", (q) => q.eq("orgId", orgSlug))
+								.withIndex("by_orgId_clerk_id", (q) => {
+									const r = q.eq("clerkOrgId", orgClerkId);
+									return before === undefined ? r : r.lt("_creationTime", before);
+								})
 								.order("desc")
 								.take(fetchCap),
 						);
@@ -673,7 +869,10 @@ export const list = query({
 			const capped = await fetchCappedOrOverflow(() =>
 				ctx.db
 					.query("briefingNotes")
-					.withIndex("by_topic", (q) => q.eq("topic", args.topic as string))
+					.withIndex("by_topic", (q) => {
+						const r = q.eq("topic", args.topic as string);
+						return before === undefined ? r : r.lt("_creationTime", before);
+					})
 					.order("desc")
 					.take(fetchCap),
 			);
@@ -682,7 +881,13 @@ export const list = query({
 			plainScanByteLimitHit = capped.byteLimitHit;
 		} else {
 			const capped = await fetchCappedOrOverflow(() =>
-				ctx.db.query("briefingNotes").order("desc").take(fetchCap),
+				ctx.db
+					.query("briefingNotes")
+					.withIndex("by_creation_time", (q) =>
+						before === undefined ? q : q.lt("_creationTime", before),
+					)
+					.order("desc")
+					.take(fetchCap),
 			);
 			rows = capped.rows;
 			plainScanOverflowed = capped.overflowed;
@@ -739,13 +944,13 @@ export const list = query({
 				);
 				rows = checked.filter((c) => c.visible).map((c) => c.row);
 			} else {
-				const orgSlug = scope.orgSlug as string;
+				const mine = orgRefOfScope(scope);
 				const identities = args.callerIdentities;
 				const checked = await Promise.all(
 					rows.map(async (r) => ({
 						row: r,
 						visible:
-							r.orgId === orgSlug &&
+							sameOrg(orgRefOfRow(r), mine) &&
 							(identities === undefined ||
 								(await identityMatchesParticipant(ctx, r, identities))),
 					})),
@@ -753,14 +958,14 @@ export const list = query({
 				rows = checked.filter((c) => c.visible).map((c) => c.row);
 			}
 		}
+		// The updatedSince union is read by updatedAt, not by creation time, so the
+		// anchor is applied to it here (the plain reads already carry it).
+		if (before !== undefined) {
+			rows = rows.filter((r) => r._creationTime < before);
+		}
 		// Re-bound to the requested page size now that the filter has run over
 		// the widened superset (no-op when a wide scan wasn't needed).
 		rows = rows.slice(0, limit);
-		// S3.3 B8 — cursor paging anchor: drop rows newer-or-equal to before.
-		if (args.createdBefore !== undefined) {
-			const before = args.createdBefore;
-			rows = rows.filter((r) => r._creationTime < before);
-		}
 
 		if (lite) return rows.map(projectBriefingNoteLite);
 		return rows;
@@ -777,6 +982,9 @@ export const deleteBriefingNote = mutation({
 	args: {
 		noteId: v.id("briefingNotes"),
 		callerOrchestrator: v.optional(creatorValidator),
+		// Proof of WHO callerOrchestrator is (see `create`).
+		agentCredentialSecret: v.optional(v.string()),
+		verifiedActor: v.optional(verifiedActorValidator),
 	},
 	returns: v.object({ deleted: v.boolean() }),
 	handler: async (ctx, args) => {
@@ -815,12 +1023,10 @@ export const deleteBriefingNote = mutation({
 		// A briefing note carries no orchestrator field, so the tenant stamp alone
 		// decides (tenantOnly). Master with no caller is still refused below.
 		if (args.callerOrchestrator === undefined && !scope.isMaster) {
+			// The tenant was decided above BY ID (isOrgAllowedForScope); the human gate
+			// is handed no row, so the renamable slug on the row decides nothing here.
 			await resolveHumanActor(ctx, scope, {
 				door: "briefingNotes:deleteBriefingNote",
-				row: note,
-				rowKind: "briefing note",
-				rowId: args.noteId,
-				tenantOnly: true,
 				adminOnly: true,
 			});
 			await ctx.db.delete(args.noteId);
@@ -832,9 +1038,18 @@ export const deleteBriefingNote = mutation({
 				`RBAC_DENIED: callerOrchestrator is required to delete a briefing note — omitting it is refused, not exempted — ${JSON.stringify({ registration: "briefingNotes:deleteBriefingNote", orgSlug: scope.orgSlug, reason: "caller-orchestrator-required" })}`,
 			);
 		}
+		// The caller is the agent its PROOF names (credential / verifiedActor / the
+		// label looked up in its own org) and must be the note's author BY ID.
+		requireOrchestratorOnRoster(scope, args.callerOrchestrator, "briefingNotes:deleteBriefingNote", "actor");
+		const caller = await requireAuthenticatedCaller(
+			ctx,
+			args.callerOrchestrator,
+			args.agentCredentialSecret,
+			args.verifiedActor,
+		);
 		if (
 			!isFleetSystemCaller(scope, args.callerOrchestrator) &&
-			note.createdBy !== args.callerOrchestrator
+			!(await isNoteAuthor(ctx, note, caller.callerActorId))
 		) {
 			throw new ConvexError(
 				`RBAC_DENIED: only ${note.createdBy} (creator) or system can delete this briefing note — ${JSON.stringify({ registration: "briefingNotes:deleteBriefingNote", orgSlug: scope.orgSlug, reason: "not-creator" })}`,
@@ -859,6 +1074,9 @@ export const update = mutation({
 		// j573cwcs3znp0xsvtg34x435jh84b0eg. Absent = the HUMAN path (a dashboard org
 		// member acting in its own name); master with no caller is refused below.
 		callerOrchestrator: v.optional(creatorValidator),
+		// Proof of WHO callerOrchestrator is (see `create`).
+		agentCredentialSecret: v.optional(v.string()),
+		verifiedActor: v.optional(verifiedActorValidator),
 		title: v.optional(v.string()),
 		topic: v.optional(v.string()),
 		participants: v.optional(v.array(v.string())),
@@ -869,7 +1087,13 @@ export const update = mutation({
 	returns: v.null(),
 	handler: async (ctx, args) => {
 		// write-contract: MCP-transport-only — issued via mcp-server client.mutation("briefingNotes:update", …) at mcp-server/src/tools.ts:6216 (imperative), 0 hits in vantage-peers-dashboard {app,components,hooks,lib,contexts,providers} (measured 2026-10-01 at origin/main 2498c00); never a subscribing pre-org client shell. The RBAC_DENIED throw is the R-16 coded refusal the MCP layer catches, not an uncaught Server Error.
-		const { noteId, callerOrchestrator, ...fields } = args;
+		const {
+			noteId,
+			callerOrchestrator,
+			agentCredentialSecret,
+			verifiedActor,
+			...fields
+		} = args;
 
 		// Fail-closed multi-tenant fix (same defect class as create/
 		// deleteBriefingNote above) — update used to authorize solely on the
@@ -910,20 +1134,36 @@ export const update = mutation({
 		// no orchestrator field), actor recorded in updatedBy as "user:<subject>".
 		let actor: string;
 		if (callerOrchestrator === undefined) {
+			// The tenant was decided above BY ID (isOrgAllowedForScope); the human gate
+			// is handed no row, so the renamable slug on the row decides nothing here.
 			actor = await resolveHumanActor(ctx, scope, {
 				door: "briefingNotes:update",
-				row: note,
-				rowKind: "briefing note",
-				rowId: noteId,
-				tenantOnly: true,
 			});
+			if (agentCredentialSecret !== undefined || verifiedActor !== undefined) {
+				await requireAuthenticatedCaller(ctx, undefined, agentCredentialSecret, verifiedActor);
+			}
 		} else {
 			actor = callerOrchestrator;
 		}
+		// The agent path: the caller is the agent its PROOF names, and must be the
+		// note's author BY ID (or the fleet system caller, proved by the verified
+		// scope). The asserted label decides nothing.
+		let callerActorId: string | undefined;
+		if (callerOrchestrator !== undefined) {
+			requireOrchestratorOnRoster(scope, callerOrchestrator, "briefingNotes:update", "actor");
+			callerActorId = (
+				await requireAuthenticatedCaller(
+					ctx,
+					callerOrchestrator,
+					agentCredentialSecret,
+					verifiedActor,
+				)
+			).callerActorId;
+		}
 		const isAuthorized =
 			callerOrchestrator === undefined ||
-			note.createdBy === callerOrchestrator ||
-			isFleetSystemCaller(scope, callerOrchestrator);
+			isFleetSystemCaller(scope, callerOrchestrator) ||
+			(await isNoteAuthor(ctx, note, callerActorId));
 		if (!isAuthorized) {
 			throw new ConvexError(
 				`RBAC_DENIED: ${callerOrchestrator} is not creator of this briefing note — ${JSON.stringify({ registration: "briefingNotes:update", orgSlug: scope.orgSlug, reason: "not-creator" })}`,
@@ -969,6 +1209,10 @@ export const searchBriefingNotesByKeyword = query({
 		// Transport-verified org of a service-account bearer (see `list`).
 		verifiedOrg: v.optional(verifiedOrgValidator),
 	},
+	returns: v.union(
+		v.array(briefingNoteFullValidator),
+		v.array(briefingNoteSearchLiteValidator),
+	),
 	handler: async (ctx, args) => {
 		// R-50: reactively-subscribed public query. The no-org branch must
 		// resolve to a typed-empty result BEFORE requireScope (which would
@@ -985,6 +1229,12 @@ export const searchBriefingNotesByKeyword = query({
 			"briefingNotes:searchBriefingNotesByKeyword",
 		);
 		requireScope(scope, "view-own-tasks");
+		const orgClerkId = scope.orgClerkId;
+		if (!scope.isMaster && scope.orgSlug !== null && orgClerkId === undefined) {
+			throw new ConvexError(
+				`RBAC_DENIED: caller's organisation has no permanent org ID to search briefing notes by — ${JSON.stringify({ reason: "org-id-missing", door: "briefingNotes:searchBriefingNotesByKeyword", orgSlug: scope.orgSlug })}`,
+			);
+		}
 
 		const limit = Math.min(Math.max(args.limit ?? 20, 1), 200);
 		const lite = args.fields === "lite";
@@ -996,8 +1246,10 @@ export const searchBriefingNotesByKeyword = query({
 				if (args.topic !== undefined) qb = qb.eq("topic", args.topic);
 				if (args.createdBy !== undefined)
 					qb = qb.eq("createdBy", args.createdBy);
+				// M10c: the tenant filter is the org's permanent ID (the slug in
+				// `orgId` is a renamable label). Members only: the master reads on.
 				if (!scope.isMaster && scope.orgSlug !== null) {
-					qb = qb.eq("orgId", scope.orgSlug);
+					qb = qb.eq("clerkOrgId", orgClerkId);
 				}
 				return qb;
 			})
@@ -1009,7 +1261,7 @@ export const searchBriefingNotesByKeyword = query({
 		// is the primary isolation; this is the belt-and-suspenders pass.
 		const tenantFiltered = scope.isMaster
 			? results
-			: results.filter((r) => r.orgId === scope.orgSlug);
+			: results.filter((r) => sameOrg(orgRefOfRow(r), orgRefOfScope(scope)));
 
 		// Day 165 — participant visibility, applied WITHIN the tenant set
 		// established above (never overrides tenant isolation). Resolved via

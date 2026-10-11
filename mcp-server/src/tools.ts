@@ -6965,10 +6965,16 @@ export function registerTools(
 				const callerIdentities = master
 					? undefined
 					: (oauthCtx?.fromAllowList ?? []);
+				// Tenant applied INSIDE the Convex read (`verifiedOrg`), as for
+				// list_briefing_notes: the seat labels in `callerIdentities` are resolved
+				// in the organisation the bearer was verified for, never in the note's.
+				const orgDenied = unresolvedOrgDenial("get_briefing_note");
+				if (orgDenied !== null) return orgDenied;
 				const note = await convex.query("briefingNotes:get" as any, {
 					noteId,
 					master,
 					callerIdentities,
+					...verifiedOrgArgs(),
 				});
 				// scopeFilterGet only discriminates on createdBy/namespace — it
 				// has no notion of `participants`. OR it with an independent

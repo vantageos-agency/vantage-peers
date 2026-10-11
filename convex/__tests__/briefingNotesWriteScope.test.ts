@@ -26,6 +26,7 @@
 import { convexTest } from "../../tests/fixtures/convexTestWithServiceAccount";
 import { describe, expect, test } from "vitest";
 import { testClerkOrgId } from "../../tests/fixtures/testClerkOrgId";
+import { mintAgentSecret } from "../../tests/lib/seedFleetAgents";
 import { api } from "../_generated/api";
 import schema from "../schema";
 
@@ -63,6 +64,22 @@ async function seedOrgBMapping(t: ReturnType<typeof createT>) {
 			createdAt: Date.now(),
 		});
 	});
+}
+
+// M10c: a member acts as an agent only with the proof of that agent (its
+// per-agent credential); the author is judged by agent ID, never by the label.
+async function seatAProof(t: ReturnType<typeof createT>): Promise<string> {
+	await t.run((ctx) =>
+		ctx.db.insert("agents", {
+			orgSlug: "org-a",
+			clerkOrgId: testClerkOrgId("org-a"),
+			name: "seat-a",
+			normalizedName: "seat-a",
+			isActive: true,
+			createdAt: Date.now(),
+		}),
+	);
+	return await mintAgentSecret(t, "org-a", "seat-a");
 }
 
 function asOrgA(t: ReturnType<typeof createT>) {
@@ -128,6 +145,7 @@ describe("briefingNotes.create — write-scope enforcement", () => {
 		const t = createT();
 		await seedOrgAMapping(t);
 		const tA = asOrgA(t);
+		const agentCredentialSecret = await seatAProof(t);
 
 		// orgId must derive from the verified scope, never from anything
 		// caller-supplied. createdBy is an own-roster name: a foreign one
@@ -138,6 +156,7 @@ describe("briefingNotes.create — write-scope enforcement", () => {
 			participants: ["seat-b"],
 			content: "content",
 			createdBy: "seat-a",
+			agentCredentialSecret,
 		});
 
 		const note = await t.run((ctx) => ctx.db.get(noteId));
@@ -247,10 +266,12 @@ describe("briefingNotes.update — write-scope enforcement", () => {
 		await seedOrgAMapping(t);
 		const noteId = await seedNote(t, "org-a", "seat-a");
 		const tA = asOrgA(t);
+		const agentCredentialSecret = await seatAProof(t);
 
 		await tA.mutation(api.briefingNotes.update, {
 			noteId,
 			callerOrchestrator: "seat-a",
+			agentCredentialSecret,
 			content: "updated by owner",
 		});
 
@@ -282,10 +303,12 @@ describe("briefingNotes.update — write-scope enforcement", () => {
 		await seedOrgAMapping(t);
 		const noteId = await seedNote(t, "org-a", "seat-a");
 		const tA = asOrgA(t);
+		const agentCredentialSecret = await seatAProof(t);
 
 		await tA.mutation(api.briefingNotes.update, {
 			noteId,
 			callerOrchestrator: "seat-a",
+			agentCredentialSecret,
 			title: "retitled",
 			topic: "retopic",
 			participants: ["seat-a", "seat-c"],
@@ -428,10 +451,12 @@ describe("briefingNotes.deleteBriefingNote — write-scope enforcement", () => {
 		await seedOrgAMapping(t);
 		const noteId = await seedNote(t, "org-a", "seat-a");
 		const tA = asOrgA(t);
+		const agentCredentialSecret = await seatAProof(t);
 
 		const result = await tA.mutation(api.briefingNotes.deleteBriefingNote, {
 			noteId,
 			callerOrchestrator: "seat-a",
+			agentCredentialSecret,
 		});
 		expect(result.deleted).toBe(true);
 		expect(await t.run((ctx) => ctx.db.get(noteId))).toBeNull();

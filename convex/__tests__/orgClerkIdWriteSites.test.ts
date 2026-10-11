@@ -170,13 +170,15 @@ const DRIVERS = {
 			content: "hello",
 			tenantId: ACME.slug,
 		}),
-	briefingNotes: (t) =>
+	briefingNotes: async (t) =>
 		asOrg(t, ACME.slug).mutation(api.briefingNotes.create, {
 			title: "b",
 			topic: "t",
 			participants: [SEAT],
 			content: "c",
 			createdBy: SEAT,
+			// M10c: an agent author is proved by the agent's credential.
+			agentCredentialSecret: await seatCredential(t),
 		}),
 	recurringTasks: async (t) => {
 		await seedAgents(t, [[ACME.slug, SEAT]]);

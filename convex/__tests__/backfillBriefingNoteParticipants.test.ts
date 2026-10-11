@@ -1,6 +1,7 @@
 /// <reference types="vite/client" />
 import { convexTest } from "../../tests/fixtures/convexTestWithServiceAccount";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
+import { seedFleetAgents } from "../../tests/lib/seedFleetAgents";
 import { api, internal } from "../_generated/api";
 import schema from "../schema";
 
@@ -75,6 +76,8 @@ describe("migrations:backfillBriefingNoteParticipants", () => {
 
 	test("RED then GREEN: scoped participant denied pre-migration, reads post-migration", async () => {
 		const t = createTestConvex();
+		// M10c: participants are agents of the note's org (the operator org here).
+		await seedFleetAgents(t, ["laurent", "pi"]);
 		const noteId = await seedNoteWithoutSync(t, ["laurent", "pi"]);
 
 		// Sanity: junction table has zero rows for this note (sync never ran).

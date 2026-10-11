@@ -14,6 +14,7 @@
 import { convexTest } from "convex-test";
 import { describe, expect, test } from "vitest";
 import { testClerkOrgId } from "../../tests/fixtures/testClerkOrgId";
+import { mintAgentSecret } from "../../tests/lib/seedFleetAgents";
 import { api } from "../_generated/api";
 import type { Id } from "../_generated/dataModel";
 import schema from "../schema";
@@ -300,6 +301,29 @@ describe("missions.update — agent path unchanged", () => {
 });
 
 // ── briefing notes ───────────────────────────────────────────────────────────
+// M10c: a member acts as an agent only with that agent's proof (its per-agent
+// credential); the author is judged by agent ID. Idempotent: reuses the agent.
+async function sigmaProof(t: T): Promise<string> {
+	await t.run(async (ctx) => {
+		const existing = await ctx.db
+			.query("agents")
+			.withIndex("by_org_normalized_name", (q) =>
+				q.eq("orgSlug", "org-a").eq("normalizedName", "sigma"),
+			)
+			.first();
+		if (existing !== null) return;
+		await ctx.db.insert("agents", {
+			orgSlug: "org-a",
+			clerkOrgId: testClerkOrgId("org-a"),
+			name: "sigma",
+			normalizedName: "sigma",
+			isActive: true,
+			createdAt: Date.now(),
+		});
+	});
+	return await mintAgentSecret(t, "org-a", "sigma");
+}
+
 type NDoor = { name: string; call: (c: Caller, id: Id<"briefingNotes">) => Promise<unknown> };
 const noteDoors: NDoor[] = [
 	{ name: "update", call: (c, noteId) => c.mutation(api.briefingNotes.update, { noteId, title: "Retitled by the human" }) },
@@ -415,7 +439,11 @@ describe("briefingNotes.create — human, no createdBy", () => {
 		const t = await setup();
 		const id = await t
 			.withIdentity(as("user_m", "org:viewer"))
-			.mutation(api.briefingNotes.create, { ...args, createdBy: "sigma" });
+			.mutation(api.briefingNotes.create, {
+				...args,
+				createdBy: "sigma",
+				agentCredentialSecret: await sigmaProof(t),
+			});
 		expect((await nrow(t, id))?.createdBy).toBe("sigma");
 	});
 });
@@ -426,7 +454,12 @@ describe("briefingNotes.update — agent path unchanged", () => {
 		const id = await seedNote(t);
 		await t
 			.withIdentity(as("user_m", "org:viewer"))
-			.mutation(api.briefingNotes.update, { noteId: id, callerOrchestrator: "sigma", title: "Agent edit" });
+			.mutation(api.briefingNotes.update, {
+				noteId: id,
+				callerOrchestrator: "sigma",
+				agentCredentialSecret: await sigmaProof(t),
+				title: "Agent edit",
+			});
 		expect((await nrow(t, id))?.updatedBy).toBe("sigma");
 	});
 

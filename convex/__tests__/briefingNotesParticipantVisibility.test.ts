@@ -20,6 +20,7 @@
 import { convexTest } from "../../tests/fixtures/convexTestWithServiceAccount";
 import { describe, expect, test } from "vitest";
 import { testClerkOrgId } from "../../tests/fixtures/testClerkOrgId";
+import { seedFleetAgents } from "../../tests/lib/seedFleetAgents";
 import { api } from "../_generated/api";
 import schema from "../schema";
 
@@ -55,6 +56,9 @@ async function seedNote(
 		participants: string[];
 	},
 ) {
+	// M10c: authors and participants are judged by agent ID, so each label of a
+	// fleet note names an agent of the operator org.
+	await seedFleetAgents(t, [opts.createdBy, ...opts.participants]);
 	return await t.run(async (ctx) => {
 		const noteId = await ctx.db.insert("briefingNotes", {
 			title: opts.title,
@@ -159,6 +163,7 @@ describe("briefingNotes.get — participant visibility (Day 165)", () => {
 
 	test("membership is resolved via the by_participant_note index, not the participants array field", async () => {
 		const t = createTestConvex();
+		await seedFleetAgents(t, ["pi", "sigma", "prometheus"]);
 		// A note whose `participants` array does NOT list "prometheus" but
 		// whose junction table (source of truth for the query) DOES — proves
 		// the query reads the index, not `note.participants` directly.
@@ -227,6 +232,17 @@ describe("briefingNotes.searchBriefingNotesByKeyword — participant visibility 
 				isActive: true,
 				createdAt: Date.now(),
 			});
+			// M10c: the creator and the participant are agents of the note's org.
+			for (const name of ["pi", "prometheus"]) {
+				await ctx.db.insert("agents", {
+					orgSlug: "acme-hr",
+					clerkOrgId: testClerkOrgId("acme-hr"),
+					name,
+					normalizedName: name,
+					isActive: true,
+					createdAt: 1,
+				});
+			}
 		});
 		const noteId = await t.run(async (ctx) => {
 			const id = await ctx.db.insert("briefingNotes", {
