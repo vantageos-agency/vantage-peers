@@ -309,11 +309,12 @@ export const generateUploadUrlWithTicket = mutation({
 		).join("");
 		const createdAt = Date.now();
 		const expiresAt = createdAt + UPLOAD_TICKET_TTL_MS;
-		// Bound to the org the gate above admitted: for a member that is its own
-		// verified org (the gate admits no other), for the master the org it names.
+		// Bound to the VERIFIED org: a member's scope resolves its own org (the gate
+		// above admits no other); the fleet master resolves none (`orgSlug` null)
+		// and acts on the org it names, as in assertScopeAuthorizesOrg.
 		await ctx.db.insert("uploadTickets", {
 			ticketHash: await sha256Hex(ticket),
-			orgId: args.orgId,
+			orgId: scope.orgSlug ?? args.orgId,
 			contentSha256: args.sha256,
 			createdAt,
 			expiresAt,
@@ -377,10 +378,11 @@ export const claimUpload = mutation({
 				"AUTH_UPLOAD_TICKET_HASH_MISMATCH: the blob's content does not match the sha256 declared for this ticket.",
 			);
 
-		// The org the blob is bound to is the ticket's org, which the gate above
-		// admitted for this caller: its own verified org for a member (no other
-		// ticket passes), any org for the fleet master.
-		const claimOrgId = ticket.orgId;
+		// The org the blob is bound to comes from the caller's VERIFIED scope; the
+		// ticket row only vouches for it (checked above). The fleet master resolves
+		// no org of its own (`orgSlug` null) and takes the org the ticket was
+		// issued for.
+		const claimOrgId = scope.orgSlug ?? ticket.orgId;
 		const existing = await ctx.db
 			.query("kbUploads")
 			.withIndex("by_storageId", (q) => q.eq("storageId", args.storageId))
