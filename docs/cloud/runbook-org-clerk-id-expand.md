@@ -31,3 +31,31 @@ without an id are all refused: there is no slug fallback left to serve them.
 
 A new organisation's mapping has no id until step 2 is run for it; until then its members are
 refused (`org-mapping-not-found`), so step 2 is part of onboarding an organisation.
+
+## Cutover: Clerk dev instance -> Clerk production instance (`restamp_clerk_ids`)
+
+Product: VantagePeers Cloud. After the switch every Clerk org ID and user ID changes, while M4 keys
+organisations by `clerkOrgId` and the fleet service row by `agents.authSubject`. The IDs are
+restamped from a map the operator passes as arguments (`{"orgs":[{"from":"org_..","to":"org_.."}],
+"users":[{"from":"user_..","to":"user_.."}]}`); it is never read from the environment or the source.
+Order, each phase its own task with the target named:
+
+1. **P1, build the map** from the dev and production Clerk instances (one `from`/`to` per org and per
+   user). A duplicate, chained, malformed or empty map is refused by every function below.
+2. **P2, restamp the data (still on the dev Clerk instance):**
+   a. `migrations/restamp_clerk_ids:inventory` per table (walk `cursor`/`nextTable`): every
+      `unmappedRows` entry and every `conflicts` line is decided before any write.
+   b. `migrations/restamp_clerk_ids:run` per table, dry run first (default), then `"dryRun":false`,
+      starting with `client_org_mapping`.
+   c. `migrations/restamp_clerk_ids:restampServiceAccount` dry run, then `"dryRun":false`: corrects
+      the linked service row's `authSubject`, and only when it equals a `from` of the map.
+   d. `migrations/restamp_clerk_ids:readBack` per table: the sum of `remaining` must be 0.
+   e. `migrations/restamp_clerk_ids:revokeList` per table: OAuth access/refresh tokens, codes, bearer
+      tokens and embed sessions bound to a dev user are NOT rewritten and NOT revoked by the
+      migration; revoke the listed ids in the switch window so they are re-minted.
+3. **P3, switch the environment** to the production Clerk instance (JWT issuer, keys, webhook secret)
+   and redeploy. A re-run of step 2 after the switch is a no-op (`alreadyRestamped`).
+
+Left as written on purpose: `credentialsAuditLog` (append-only record of dev-instance actors) and the
+`user:<subject>` actor labels embedded in task/message/mission text columns, which no door compares
+against a live subject.
