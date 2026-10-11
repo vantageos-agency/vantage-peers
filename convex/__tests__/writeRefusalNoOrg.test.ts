@@ -42,6 +42,7 @@
 import type { ConvexError } from "convex/values";
 import { convexTest } from "convex-test";
 import { describe, expect, test } from "vitest";
+import { seedRosterAgent } from "../../tests/fixtures/rosterAgent";
 import { testClerkOrgId } from "../../tests/fixtures/testClerkOrgId";
 import { api } from "../_generated/api";
 import type { Id } from "../_generated/dataModel";
@@ -356,6 +357,9 @@ const SITES: Site[] = [
 		},
 		prepare: async (t, ghost) => {
 			await seedTemplate(t);
+			// Since M10g the door judges the actor and every assignee (here the
+			// mission's pilot) BY agent ID on the org's roster.
+			await t.run((ctx) => seedRosterAgent(ctx, "org-a", SEAT));
 			const missionId = await seedMission(t);
 			if (ghost) await ghostOf(t, missionId);
 			return (c) =>

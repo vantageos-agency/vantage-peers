@@ -21,6 +21,7 @@
 
 import { convexTest } from "../../tests/fixtures/convexTestWithServiceAccount";
 import { describe, expect, test } from "vitest";
+import { seedRosterAgent } from "../../tests/fixtures/rosterAgent";
 import { testClerkOrgId } from "../../tests/fixtures/testClerkOrgId";
 import { api } from "../_generated/api";
 import schema from "../schema";
@@ -66,6 +67,7 @@ function asOrgA(t: ReturnType<typeof createT>) {
 		subject: "user-org-a",
 		organizationId: "org-a",
 		org_id: testClerkOrgId("org-a"),
+		org_role: "org:admin",
 	} as Parameters<typeof t.withIdentity>[0]);
 }
 
@@ -91,6 +93,7 @@ async function seedTemplate(t: ReturnType<typeof createT>, name: string) {
 async function seedMission(
 	t: ReturnType<typeof createT>,
 	orgId: string | undefined,
+	pilot = "seat-owner",
 ) {
 	return await t.run(async (ctx) => {
 		return await ctx.db.insert("missions", {
@@ -98,9 +101,9 @@ async function seedMission(
 			project: "p",
 			status: "plan",
 			priority: "medium",
-			pilot: "seat-owner",
-			agents: ["seat-owner"],
-			createdBy: "seat-owner",
+			pilot,
+			agents: [pilot],
+			createdBy: pilot,
 			createdAt: Date.now(),
 			updatedAt: Date.now(),
 			orgId,
@@ -239,8 +242,18 @@ describe("missionTemplates.instantiateTemplateIntoMission — write-scope enforc
 	test("org-a instantiating a (shared) template into its OWN mission succeeds", async () => {
 		const t = createT();
 		await seedOrgAMapping(t);
+		// Since M10g a member writes with a writer role, and the task's assignee (here
+		// the mission's pilot, the template step names none) is an agent of its own
+		// org on its roster BY ID.
+		await t.run(async (ctx) => {
+			await ctx.db.insert("memberWriterRoles", {
+				roles: ["org:admin"],
+				updatedAt: Date.now(),
+			});
+			await seedRosterAgent(ctx, "org-a", "seat-a");
+		});
 		await seedTemplate(t, "tpl");
-		const missionId = await seedMission(t, "org-a");
+		const missionId = await seedMission(t, "org-a", "seat-a");
 		const tA = asOrgA(t);
 
 		const result = await tA.mutation(

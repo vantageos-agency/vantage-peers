@@ -65,9 +65,26 @@ async function seedTaskOwnedByA(t: ReturnType<typeof createT>) {
 	});
 }
 
+// Since M10f a business unit is owned by an agent BY ID, judged inside its org
+// by the org's permanent ID: the owner is the fleet's "tenant-a" agent, stamped
+// with the operator org's ID as a registered agent is.
 async function seedBuOwnedByA(t: ReturnType<typeof createT>) {
-	return await t.run((ctx) =>
-		ctx.db.insert("businessUnits", {
+	return await t.run(async (ctx) => {
+		const operator = (await ctx.db.query("client_org_mapping").collect()).find(
+			(m) => m.orgKind === "operator",
+		);
+		const owner = (
+			await ctx.db
+				.query("agents")
+				.withIndex("by_org", (q) => q.eq("orgSlug", operator?.clerkOrgSlug ?? ""))
+				.collect()
+		).find((a) => a.name === TENANT_A);
+		if (operator === undefined || owner === undefined) {
+			throw new Error("seed: the operator org's tenant-a agent");
+		}
+		await ctx.db.patch(owner._id, { clerkOrgId: operator.clerkOrgId });
+		return ctx.db.insert("businessUnits", {
+			ownerId: owner._id,
 			name: "BU-A-original",
 			description: "d",
 			purpose: "p",
@@ -85,8 +102,8 @@ async function seedBuOwnedByA(t: ReturnType<typeof createT>) {
 			managementFee: 10,
 			createdAt: Date.now(),
 			updatedAt: Date.now(),
-		}),
-	);
+		});
+	});
 }
 
 describe("tasks.update — omitting callerOrchestrator is refused, not exempted", () => {

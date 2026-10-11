@@ -277,9 +277,12 @@ describe("derive-backend-doctor-oracle coherence tier + written justification", 
 			// scoped (org) reads and create; only businessUnits:remove is
 			// master-only. profiles: roster-scoped get_profile; list_peers and every
 			// write master-only. Neither lets a member read or write across orgs.
-			for (const r of rows.filter((x) => x.table === "businessUnits"))
+			// delete_bu reaches only the fleet-only door (the package's fleet standing,
+			// `masterOnly`): a master tier of its own; the rest are org with no side
+			// recorded.
+			for (const r of rows.filter((x) => x.table.includes("businessUnits")))
 				expect(r.rbac_coherence_table, r.outil).toBe(
-					"COHERENT(org; master-only: write)",
+					r.outil === "delete_bu" ? "COHERENT(master)" : "COHERENT(org)",
 				);
 			for (const r of rows.filter((x) => x.table === "profiles"))
 				expect(r.rbac_coherence_table, r.outil).toBe(
@@ -306,8 +309,14 @@ describe("derive-backend-doctor-oracle coherence tier + written justification", 
 			mutate(
 				root,
 				"convex/businessUnits.ts",
-				"const scope = await withOrgScope(ctx);\n\t\tif (!isOrchestratorAllowedForScope(scope, args.orchestratorId)) {",
-				"const scope = { isMaster: true, orgSlug: null };\n\t\tif (!isOrchestratorAllowedForScope(scope, args.orchestratorId)) {",
+				'const door = "businessUnits:create";\n\t\tconst scope = await withOrgScope(ctx);\n\t\trequireResolvedCaller(scope, door, { alsoRefusePreOrg: true });\n\t\tconst fleet = await hasFleetStanding(ctx, door);',
+				'const door = "businessUnits:create";\n\t\tconst scope = { isMaster: true, orgSlug: null };\n\t\tconst fleet = true;',
+			);
+			mutate(
+				root,
+				"convex/businessUnits.ts",
+				"\t\t\tawait requireMemberWriterRole(ctx, scope, door);\n",
+				"",
 			);
 			const r = derive(root);
 			expect(r.status, r.stderr).toBe(0);
@@ -403,9 +412,8 @@ const WRITE_VERBS = new Set([
 	"BULK-WRITE",
 ]);
 const BU_DOOR_GATE =
-	"\t\tconst scope = await withOrgScope(ctx);\n\t\tif (!scope.isMaster) {\n\t\t\tthrow new ConvexError(\n\t\t\t\t`RBAC_DENIED: business unit deletion";
-const BU_DOOR_REST =
-	"\n\t\t\tthrow new ConvexError(\n\t\t\t\t`RBAC_DENIED: business unit deletion";
+	"\t\tconst scope = await withOrgScope(ctx);\n\t\tawait requireFleetDoor(ctx, scope, door, { masterOnly: true });\n";
+const BU_DOOR_REST = "";
 const MASTER_TOOL_SCOPE = '\t\t{ kind: "master" },\n\t\t"delete_bu",';
 
 /** delete_bu's writer tier after rewriting its Convex door's gate. */
@@ -417,6 +425,15 @@ function deleteBuWriter(gateLines, { mcp = false } = {}) {
 		BU_DOOR_GATE,
 		`${gateLines}${BU_DOOR_REST}`,
 	);
+	// the verified-org resolver the door reaches resolves a caller itself
+	// (withOrgScope inside): a door with NO Convex gate has none of it either.
+	if (gateLines.includes("isMaster: true"))
+		mutate(
+			root,
+			"convex/businessUnits.ts",
+			"const acting = await resolveVerifiedOrgScope(\n\t\t\t\tctx,\n\t\t\t\tscope,\n\t\t\t\targs.verifiedOrg,\n\t\t\t\tdoor,\n\t\t\t);",
+			"const acting = scope;",
+		);
 	if (mcp)
 		mutate(
 			root,
@@ -523,10 +540,9 @@ describe("derive-backend-doctor-oracle writer authority (R-10 side-car)", () => 
 		TIMEOUT,
 	);
 
-	const OPEN_MASTER_GATE =
-		"\t\tconst scope = await withOrgScope(ctx);\n\t\tif (scope.isMaster === undefined) {";
+	const OPEN_MASTER_GATE = "\t\tconst scope = await withOrgScope(ctx);\n";
 	it(
-		"TIER master — the unmodified door (`if (!scope.isMaster)` refusal)",
+		"TIER master — the unmodified door (the fleet-only `masterOnly` refusal)",
 		() => {
 			expect(
 				rowsOf(COMMITTED_WRITER_CSV).find((x) => x.outil === "delete_bu"),
@@ -581,7 +597,7 @@ describe("derive-backend-doctor-oracle writer authority (R-10 side-car)", () => 
 		"TIER public — no Convex gate and a public MCP scope",
 		() => {
 			const { row } = deleteBuWriter(
-				"\t\tconst scope = { isMaster: true, orgSlug: null };\n\t\tif (scope.isMaster === undefined) {",
+				"\t\tconst scope = { isMaster: true, orgSlug: null };\n",
 				{ mcp: true },
 			);
 			expect(row).toMatchObject({
@@ -595,7 +611,7 @@ describe("derive-backend-doctor-oracle writer authority (R-10 side-car)", () => 
 		"FALLBACK — no Convex gate keeps the MCP-scope tier (master scope -> fleet-internal)",
 		() => {
 			const { row } = deleteBuWriter(
-				"\t\tconst scope = { isMaster: true, orgSlug: null };\n\t\tif (scope.isMaster === undefined) {",
+				"\t\tconst scope = { isMaster: true, orgSlug: null };\n",
 			);
 			expect(row).toMatchObject({
 				writer_tier: "fleet-internal",

@@ -51,6 +51,7 @@
 import { ConvexError } from "convex/values";
 import { convexTest } from "../../tests/fixtures/convexTestWithServiceAccount";
 import { describe, expect, test } from "vitest";
+import { seedRosterAgent } from "../../tests/fixtures/rosterAgent";
 import { testClerkOrgId } from "../../tests/fixtures/testClerkOrgId";
 import { api } from "../_generated/api";
 import schema from "../schema";
@@ -294,9 +295,28 @@ const seedIssue = (t: T, extra: Record<string, unknown> = {}) =>
 		});
 	});
 
+// Since M10f a unit is stamped with its org and owned by an agent of that org BY
+// ID. When org-a exists (a pole that serves a member) the lead is registered in it
+// and put on its roster; with no org (an anonymous or no-org pole) the unit is
+// seeded unstamped, as a fleet unit.
 const seedBusinessUnit = (t: T, orchestratorId: string) =>
 	t.run(async (ctx) => {
+		const mapping = await ctx.db
+			.query("client_org_mapping")
+			.withIndex("by_clerk_slug", (q) => q.eq("clerkOrgSlug", "org-a"))
+			.first();
+		const owner =
+			mapping === null
+				? undefined
+				: await seedRosterAgent(ctx, "org-a", orchestratorId);
 		await ctx.db.insert("businessUnits", {
+			...(owner !== undefined
+				? {
+						ownerId: owner,
+						orgId: "org-a",
+						clerkOrgId: testClerkOrgId("org-a"),
+					}
+				: {}),
 			name: `bu-${orchestratorId}`,
 			description: "d",
 			purpose: "p",

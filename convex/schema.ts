@@ -1088,11 +1088,24 @@ export default defineSchema({
 		// renamable label; this is the identity (Pi ruling (d), k174d95s5qqy8t2r5rdrz3pr3d8fqv82).
 		// Optional during the expand phase: filled by migrations/backfill_org_clerk_id.
 		clerkOrgId: v.optional(v.string()),
+		// M10f: the unit's lead orchestrator BY ID -- the `agents` row `_id` of
+		// `orchestratorId` in the unit's own organisation (the operator org for a
+		// fleet-owned unit). `orchestratorId` stays the display LABEL; the doors
+		// decide on this column. Optional only for the rollout: rows written before
+		// it are filled by migrations/backfill_business_unit_owner_ids, and a row
+		// without it names nobody (an org member does not read it).
+		ownerId: v.optional(v.string()),
 	})
+		// Expand phase: the two NAME indexes below are no longer read by any door
+		// (the doors read the ID indexes under them); the contract step drops them.
 		.index("by_orchestrator", ["orchestratorId"])
-		// R-11: the orchestratorId+status read of `businessUnits:list` is one
-		// index range, not a collect of the orchestrator's units filtered by status.
 		.index("by_orchestrator_status", ["orchestratorId", "status"])
+		// R-11: the owner+status read of `businessUnits:list` is one index range.
+		// The fleet master reads by owner ID; an org member reads through the
+		// org-leading second one, so a page is the caller's own units (the tenant
+		// and the roster entry are inside the range, never a filter after the read).
+		.index("by_ownerId_status", ["ownerId", "status"])
+		.index("by_clerkOrgId_ownerId_status", ["clerkOrgId", "ownerId", "status"])
 		.index("by_status", ["status"])
 		.index("by_name", ["name"]),
 

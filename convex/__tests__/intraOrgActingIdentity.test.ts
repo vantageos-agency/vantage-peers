@@ -74,6 +74,29 @@ async function fixture(opts: { agents?: boolean } = {}) {
 		])) {
 			secrets.set(k, v);
 		}
+		// Since M10g the template door judges the org's roster BY agent ID, inside the
+		// org by its permanent ID: the two agents carry org-b's ID and sit on the
+		// stored ID roster.
+		await t.run(async (ctx) => {
+			const ids = (
+				await ctx.db
+					.query("agents")
+					.withIndex("by_org", (q) => q.eq("orgSlug", "org-b"))
+					.collect()
+			).filter((agent) => ["bob", "bea"].includes(agent.name));
+			for (const agent of ids) {
+				await ctx.db.patch(agent._id, { clerkOrgId: testClerkOrgId("org-b") });
+			}
+			const mapping = await ctx.db
+				.query("client_org_mapping")
+				.withIndex("by_clerk_slug", (q) => q.eq("clerkOrgSlug", "org-b"))
+				.first();
+			if (mapping !== null) {
+				await ctx.db.patch(mapping._id, {
+					allowedAgentIds: ids.map((agent) => agent._id),
+				});
+			}
+		});
 	}
 	return t;
 }

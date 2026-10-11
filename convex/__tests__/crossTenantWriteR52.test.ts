@@ -153,7 +153,34 @@ describe("businessUnits:update — R-52", () => {
 	test("PRESENT: org-a creates a business unit, stamped org-a, and updates it", async () => {
 		const t = makeT();
 		await seedOrgs(t);
-		const a = asOrg(t, "org-a");
+		// Since M10f a member writes a business unit with a writer role, for an owner
+		// that is an agent of its own org on its roster BY ID.
+		await t.run(async (ctx) => {
+			await ctx.db.insert("memberWriterRoles", {
+				roles: ["org:admin"],
+				updatedAt: 1,
+			});
+			const mapping = await ctx.db
+				.query("client_org_mapping")
+				.withIndex("by_clerk_slug", (q) => q.eq("clerkOrgSlug", "org-a"))
+				.first();
+			const seat = (
+				await ctx.db
+					.query("agents")
+					.withIndex("by_org", (q) => q.eq("orgSlug", "org-a"))
+					.collect()
+			).find((agent) => agent.name === SEAT);
+			if (mapping === null || seat === undefined) throw new Error("seed: org-a seat");
+			// The agent carries its org's permanent ID, as a provisioned agent does.
+			await ctx.db.patch(seat._id, { clerkOrgId: mapping.clerkOrgId });
+			await ctx.db.patch(mapping._id, { allowedAgentIds: [seat._id] });
+		});
+		const a = t.withIdentity({
+			subject: "user-org-a",
+			organizationId: "org-a",
+			org_id: testClerkOrgId("org-a"),
+			org_role: "org:admin",
+		} as Parameters<T["withIdentity"]>[0]);
 		const { createdAt: _c, updatedAt: _u, orgId: _o, ...createArgs } = buFields("own bu", undefined);
 		const buId = await a.mutation(api.businessUnits.create, createArgs);
 		expect((await t.run((ctx) => ctx.db.get(buId)))?.orgId).toBe("org-a");

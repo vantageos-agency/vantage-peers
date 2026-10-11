@@ -34,6 +34,7 @@ import schema from "../schema";
 import { analyse as analyseSystemWord } from "../../tests/lib/systemWordAst";
 import { testClerkOrgId } from "../../tests/fixtures/testClerkOrgId";
 import { seedFleetAgents } from "../../tests/lib/seedFleetAgents";
+import { seedRosterAgents } from "../../tests/lib/seedRosterAgents";
 
 const modules = Object.fromEntries(
 	Object.entries(import.meta.glob("../**/*.ts")).filter(
@@ -63,6 +64,7 @@ function asMemberOfOrgA(t: T) {
 		subject: "user-org-a",
 		organizationId: "org-a",
 		org_id: testClerkOrgId("org-a"),
+		org_role: "org:admin",
 	} as Parameters<typeof t.withIdentity>[0]);
 }
 
@@ -106,9 +108,10 @@ async function seedMission(t: T, createdBy: string) {
 	);
 }
 
-async function seedBU(t: T, orchestratorId: string) {
+async function seedBU(t: T, orchestratorId: string, ownerId?: string) {
 	return await t.run((ctx) =>
 		ctx.db.insert("businessUnits", {
+			...(ownerId !== undefined ? { ownerId } : {}),
 			name: `bu-${orchestratorId}`,
 			description: "d",
 			purpose: "p",
@@ -256,10 +259,24 @@ describe("briefingNotes.update — the word 'system' is not authority", () => {
 
 // ── businessUnits.update ────────────────────────────────────────────────────
 describe("businessUnits.update — the word 'system' is not authority", () => {
+	// Since M10f a member writes a BU only with a writer role and for an owner
+	// that is an agent of its own org on its roster BY ID.
+	async function seedWorld(t: T) {
+		await seedOrgA(t);
+		const ids = await seedRosterAgents(t);
+		await t.run((ctx) =>
+			ctx.db.insert("memberWriterRoles", {
+				roles: ["org:admin"],
+				updatedAt: Date.now(),
+			}),
+		);
+		return ids;
+	}
+
 	test("LEAK: member seat-a typing 'system' on seat-b's BU (same org) is refused", async () => {
 		const t = createT();
-		await seedOrgA(t);
-		const buId = await seedBU(t, "seat-b");
+		const ids = await seedWorld(t);
+		const buId = await seedBU(t, "seat-b", ids["org-a/seat-b"]);
 		await expect(
 			asMemberOfOrgA(t).mutation(api.businessUnits.update, {
 				buId,
@@ -273,8 +290,8 @@ describe("businessUnits.update — the word 'system' is not authority", () => {
 
 	test("WITHHELD: member seat-a updating its own BU succeeds", async () => {
 		const t = createT();
-		await seedOrgA(t);
-		const buId = await seedBU(t, "seat-a");
+		const ids = await seedWorld(t);
+		const buId = await seedBU(t, "seat-a", ids["org-a/seat-a"]);
 		await asMemberOfOrgA(t).mutation(api.businessUnits.update, {
 			buId,
 			callerOrchestrator: "seat-a",

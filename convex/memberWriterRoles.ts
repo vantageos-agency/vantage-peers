@@ -66,6 +66,30 @@ export function assertMemberMayWrite(
 }
 
 /**
+ * The writer-role gate of a door that an ORG MEMBER reaches directly (no agent
+ * proof): the member's verified role must be on the allowlist of its own org
+ * (`loadMemberWriterRoles`, fail closed). A scope with no organisation refuses.
+ * The fleet does not pass through here: its standing is the package's, decided
+ * by the door.
+ */
+export async function requireMemberWriterRole(
+	ctx: QueryCtx | MutationCtx,
+	scope: Pick<OrgScope, "orgRole" | "orgSlug">,
+	door: string,
+): Promise<void> {
+	if (scope.orgSlug === null) {
+		throw new ConvexError(
+			`RBAC_DENIED: caller has no organisation to write in — ${JSON.stringify({ reason: "no-organisation", door })}`,
+		);
+	}
+	assertMemberMayWrite(
+		scope,
+		await loadMemberWriterRoles(ctx, scope.orgSlug),
+		door,
+	);
+}
+
+/**
  * setMemberWriterRoles — the ONE operator instrument for the list. Run:
  *   npx convex run memberWriterRoles:setMemberWriterRoles \
  *     '{"roles":["org:admin","org:editor"]}'                  # fleet default

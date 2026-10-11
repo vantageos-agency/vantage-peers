@@ -1,3 +1,4 @@
+import { sameOrg } from "@vantageos/cloud-identity";
 import { v } from "convex/values";
 import { ConvexError } from "convex/values";
 import {
@@ -8,14 +9,14 @@ import {
 	query,
 } from "./_generated/server";
 import { creatorValidator } from "./schema";
-import {
-	requireOrchestratorOnRoster,
-	requireResolvedCaller,
-	withOrgScope,
-} from "./lib/auth";
-import type { OrgScope } from "./lib/auth";
+import { requireResolvedCaller, withOrgScope } from "./lib/auth";
+import { orgRefOfRow, orgRefOfScope } from "./lib/authOrgMapping";
 import { taskActorIdFields } from "./lib/actorIds";
+import { hasFleetStanding, requireFleetDoor } from "./lib/fleetStanding";
+import { memberActorOf } from "./lib/humanActor";
 import { clerkOrgIdForSlug } from "./lib/orgClerkId";
+import { requireLabelOnScopeRoster } from "./lib/rosterLabels";
+import { requireMemberWriterRole } from "./memberWriterRoles";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Fail-closed multi-tenant fix (defect class: authority attached to an
@@ -49,19 +50,14 @@ import { clerkOrgIdForSlug } from "./lib/orgClerkId";
 // so unlike upsert/softDelete it is not master-restricted (Beta org
 // clients legitimately use it against their OWN missions, mirroring the
 // MCP tool's "filtered", not master-only, guard kind). Authority is
-// derived from the TARGET MISSION's stored `orgId` against the caller's
-// verified scope (same isOrgAllowedForScope shape as convex/missions.ts
-// and convex/briefingNotes.ts), never from a caller-supplied argument.
+// derived from the TARGET MISSION's stored org ID against the caller's
+// verified org ID (the package's `sameOrg`), never from a caller-supplied
+// argument; a member also needs a writer role, and every step assignee must be
+// an agent of its own org on its roster BY ID (M10g).
+//
+// "Is the caller the fleet?" is the package's `fleet` standing
+// (lib/fleetStanding.ts), not a flag read off the resolved scope.
 // ─────────────────────────────────────────────────────────────────────────────
-
-function isMissionAllowedForScope(
-	scope: OrgScope,
-	orgId: string | undefined,
-): boolean {
-	if (scope.isMaster) return true;
-	if (scope.orgSlug === null) return false;
-	return orgId === scope.orgSlug;
-}
 
 // missionTemplates is a small, curated table (one row per named template);
 // 1000 is a generous ceiling well above any realistic template count.
@@ -194,10 +190,13 @@ export const listNames = query({
 		// signed-in-but-not-yet-onboarded caller's throw to crash, and that caller
 		// must not be handed a fabricated absence either.
 		const scope = await withOrgScope(ctx, { refuseWithoutThrow: true });
-		requireResolvedCaller(scope, "missionTemplates:listNames", {
-			alsoRefusePreOrg: true,
-		});
-		if (!scope.isMaster) return [];
+		const fleet = await requireFleetDoor(
+			ctx,
+			scope,
+			"missionTemplates:listNames",
+			{ alsoRefusePreOrg: true, operatorHumanMayRead: true },
+		);
+		if (!fleet) return [];
 
 		const templates = await ctx.db
 			.query("missionTemplates")
@@ -226,12 +225,12 @@ export const upsert = mutation({
 		// write-contract: MCP-transport-only — issued via mcp-server client.mutation("missionTemplates:upsert", …) at mcp-server/src/tools.ts:9109 (imperative), 0 hits in vantage-peers-dashboard {app,components,hooks,lib,contexts,providers} (measured 2026-10-01 at origin/main e2dc58f and 0466fac); never a subscribing pre-org client shell. The no-org throw is a refusal at an imperative MCP call, never at a render.
 		// Master-only fail-closed fix — see the file-header comment block
 		// above for the full rationale (shared, unscoped catalog write).
+		// update_mission_template is a fleet-only operation: the catalog is shared
+		// fleet-wide, never per-org.
 		const scope = await withOrgScope(ctx);
-		if (!scope.isMaster) {
-			throw new ConvexError(
-				"RBAC_DENIED: update_mission_template is a master-only operation — the mission-template catalog is shared fleet-wide, never per-org",
-			);
-		}
+		await requireFleetDoor(ctx, scope, "missionTemplates:upsert", {
+			masterOnly: true,
+		});
 
 		const now = Date.now();
 		const existing = await ctx.db
@@ -282,12 +281,12 @@ export const softDelete = mutation({
 		// above for the full rationale (shared, unscoped catalog write).
 		// Mirrors the MCP server's own pre-existing `guardMasterOnly` gate on
 		// this same tool (soft_delete_mission_template).
+		// Soft-deleting a template is a fleet-only operation: the catalog is shared
+		// fleet-wide, never per-org.
 		const scope = await withOrgScope(ctx);
-		if (!scope.isMaster) {
-			throw new ConvexError(
-				"RBAC_DENIED: soft-deleting a mission template is a master-only operation — the mission-template catalog is shared fleet-wide, never per-org",
-			);
-		}
+		await requireFleetDoor(ctx, scope, "missionTemplates:softDelete", {
+			masterOnly: true,
+		});
 
 		if (args.templateId === undefined && args.name === undefined) {
 			throw new Error("Provide either templateId or name");
@@ -443,12 +442,10 @@ export const instantiateTemplateIntoMission = mutation({
 		// update): an anonymous caller must get RBAC_DENIED, never "Mission
 		// not found" — a get-then-scope order lets missionId existence act
 		// as an unauthenticated existence oracle.
+		const door = "missionTemplates:instantiateTemplateIntoMission";
 		const scope = await withOrgScope(ctx);
-		if (!scope.isMaster && scope.orgSlug === null) {
-			throw new ConvexError(
-				`RBAC_DENIED: caller may not instantiate a mission template — ${JSON.stringify({ orgSlug: null })}`,
-			);
-		}
+		requireResolvedCaller(scope, door, { alsoRefusePreOrg: true });
+		const fleet = await hasFleetStanding(ctx, door);
 
 		// 1. Fetch template
 		const template = await ctx.db
@@ -469,25 +466,40 @@ export const instantiateTemplateIntoMission = mutation({
 		// The template catalog is shared/global (no orgId to check), but the
 		// TARGET MISSION is org-scoped — a caller may only fan tasks out
 		// into its OWN org's mission, never a foreign org's, regardless of
-		// which (shared) template name it names.
-		if (!isMissionAllowedForScope(scope, mission.orgId)) {
+		// which (shared) template name it names. The org is compared by ID.
+		if (!fleet && !sameOrg(orgRefOfRow(mission), orgRefOfScope(scope))) {
 			throw new ConvexError(
-				`RBAC_DENIED: caller may not instantiate a template into mission ${args.missionId} (orgId "${mission.orgId ?? "none"}") — ${JSON.stringify({ orgSlug: scope.orgSlug })}`,
+				`RBAC_DENIED: caller may not instantiate a template into mission ${args.missionId} — ${JSON.stringify({ orgSlug: scope.orgSlug, door, reason: "mission-not-in-caller-org" })}`,
 			);
 		}
 
-		// The acting identity, when named, must be on the caller's own roster.
-		// Omitted stays "system" (unchanged: nothing is claimed).
-		if (args.callerOrchestrator !== undefined) {
-			requireOrchestratorOnRoster(
-				scope,
-				args.callerOrchestrator,
-				"missionTemplates:instantiateTemplateIntoMission",
-				"actor",
-			);
+		// A member writes only with a writer role, names an acting identity only
+		// from its own roster, and may assign a step only to an agent of its own
+		// org on its roster -- all by agent ID. The fleet keeps what it had.
+		const assigneeLabels = new Set<string>();
+		for (const step of template.steps) {
+			assigneeLabels.add(step.assignedTo ?? mission.pilot);
+		}
+		if (!fleet) {
+			await requireMemberWriterRole(ctx, scope, door);
+			if (args.callerOrchestrator !== undefined) {
+				await requireLabelOnScopeRoster(
+					ctx,
+					scope,
+					args.callerOrchestrator,
+					"actor",
+					door,
+				);
+			}
+			for (const label of assigneeLabels) {
+				await requireLabelOnScopeRoster(ctx, scope, label, "assignee", door);
+			}
 		}
 		const now = Date.now();
-		const createdBy = args.callerOrchestrator ?? "system";
+		// Who created the tasks: the named acting identity, else the fleet's own
+		// word for a fleet call, else the verified member (never the fleet word).
+		const createdBy =
+			args.callerOrchestrator ?? (fleet ? "system" : memberActorOf(scope));
 
 		// Copy the template's brief onto the mission ONLY when the mission
 		// doesn't already carry one. Instance-specific fields supplied by the

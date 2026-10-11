@@ -17,6 +17,7 @@
  */
 import { convexTest } from "../../tests/fixtures/convexTestWithServiceAccount";
 import { describe, expect, test } from "vitest";
+import { seedRosterAgent } from "../../tests/fixtures/rosterAgent";
 import { testClerkOrgId } from "../../tests/fixtures/testClerkOrgId";
 import { api } from "../_generated/api";
 import schema from "../schema";
@@ -64,6 +65,9 @@ async function seed(t: T, orgAScopes: string[] = ["view-stats-aggregated"]) {
 				isActive: true,
 				createdAt: now,
 			});
+			// Since M16 a member is served the profiles of ITS OWN agents: the seat is
+			// an agent of its org on the org's roster BY ID.
+			await seedRosterAgent(ctx, org, seat);
 		}
 		for (const name of ["seat-a", "seat-b", "sigma"]) {
 			await ctx.db.insert("profiles", {

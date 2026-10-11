@@ -16,6 +16,7 @@
 
 import { convexTest } from "../../tests/fixtures/convexTestWithServiceAccount";
 import { describe, expect, test } from "vitest";
+import { seedRosterAgent } from "../../tests/fixtures/rosterAgent";
 import { testClerkOrgId } from "../../tests/fixtures/testClerkOrgId";
 import { api, internal } from "../_generated/api";
 import type { Id } from "../_generated/dataModel";
@@ -130,8 +131,26 @@ async function seedDiary(t: T, owner: Owner) {
 
 async function seedBu(t: T, owner: Owner) {
 	const now = Date.now();
-	return await t.run(async (ctx) =>
-		ctx.db.insert("businessUnits", {
+	return await t.run(async (ctx) => {
+		// Since M10f a business unit's owner is an agents-row ID of its own org
+		// (registered only here: a registered agent acting elsewhere in this file
+		// would owe a per-agent credential).
+		const agentOf = async (orgSlug: string, name: string) =>
+			(
+				await ctx.db
+					.query("agents")
+					.withIndex("by_org", (q) => q.eq("orgSlug", orgSlug))
+					.collect()
+			).find((a) => a.name === name)?._id ??
+			(await seedRosterAgent(ctx, orgSlug, name));
+		const ownerId =
+			owner === "own"
+				? await agentOf("org-a", "sigma")
+				: owner === "other"
+					? await agentOf("org-b", "eta")
+					: undefined;
+		return ctx.db.insert("businessUnits", {
+			...(ownerId !== undefined ? { ownerId } : {}),
 			name: "BU seed",
 			description: "d",
 			purpose: "p",
@@ -151,8 +170,8 @@ async function seedBu(t: T, owner: Owner) {
 			updatedAt: now,
 			...(owner === "own" ? { orgId: "org-a", clerkOrgId: testClerkOrgId("org-a") } : {}),
 			...(owner === "other" ? { orgId: "org-b", clerkOrgId: testClerkOrgId("org-b") } : {}),
-		}),
-	);
+		});
+	});
 }
 
 async function seedRecurring(t: T, owner: Owner, active = true) {
@@ -368,7 +387,13 @@ describe("businessUnits and diary — master/agent only, no human path", () => {
 			refusal: /RBAC_DENIED/,
 			seed: (t) => seedBu(t, "own"),
 			humanCall: (c, id) => c.mutation(api.businessUnits.remove, { buId: id as Id<"businessUnits"> }),
-			agentCall: (c, id) => c.mutation(api.businessUnits.remove, { buId: id as Id<"businessUnits"> }),
+			// A unit stamped with a client org is deleted by the fleet only on the
+			// transport's verified claim naming that org (M10f).
+			agentCall: (c, id) =>
+				c.mutation(api.businessUnits.remove, {
+					buId: id as Id<"businessUnits">,
+					verifiedOrg: { orgSlug: "org-a" },
+				}),
 			read: readRow("businessUnits"),
 			agentServed: (r) => r === null,
 		},
@@ -416,8 +441,10 @@ describe("businessUnits and diary — master/agent only, no human path", () => {
 		test("the agent / master path is still served", async () => {
 			const t = await setup();
 			const id = await door.seed(t);
-			// remove is master-only; update and deleteDiary take the owning agent's name.
-			const caller = door.name === "businessUnits:remove" ? master(t) : t.withIdentity(as("user_m", "org:viewer"));
+			// The business-unit doors are the fleet's on the agent path (a viewer-role
+			// member typing the owner's name is refused since M10f); deleteDiary takes
+			// the owning agent's name.
+			const caller = door.name.startsWith("businessUnits:") ? master(t) : t.withIdentity(as("user_m", "org:viewer"));
 			await door.agentCall(caller, id);
 			expect(door.agentServed(await door.read(t, id))).toBe(true);
 		});
@@ -647,13 +674,27 @@ describe("agent and master paths unchanged", () => {
 		expect(res).toEqual({ deleted: true });
 	});
 
-	test("businessUnits:update — owning orchestrator with callerOrchestrator updates", async () => {
+	test("businessUnits:update — the fleet naming the owning orchestrator updates", async () => {
 		const t = await setup();
 		const id = await seedBu(t, "own");
 		await t
-			.withIdentity(as("user_m", "org:viewer"))
+			.withIdentity({ subject: "test-service-account-user-id" } as Parameters<T["withIdentity"]>[0])
 			.mutation(api.businessUnits.update, { buId: id, callerOrchestrator: "sigma", name: "By the agent" });
 		expect((await readRow("businessUnits")(t, id))?.name).toBe("By the agent");
+	});
+
+	test("businessUnits:update — a writer-role member naming the owning orchestrator updates; a viewer is refused", async () => {
+		const t = await setup();
+		const id = await seedBu(t, "own");
+		await expect(
+			t
+				.withIdentity(as("user_v", "org:viewer"))
+				.mutation(api.businessUnits.update, { buId: id, callerOrchestrator: "sigma", name: "By a viewer" }),
+		).rejects.toThrow(/RBAC_DENIED/);
+		await t
+			.withIdentity(as("user_m", "org:editor"))
+			.mutation(api.businessUnits.update, { buId: id, callerOrchestrator: "sigma", name: "By an editor" });
+		expect((await readRow("businessUnits")(t, id))?.name).toBe("By an editor");
 	});
 
 	test("businessUnits:update — agent claiming an orchestrator that does not own the row is refused", async () => {
