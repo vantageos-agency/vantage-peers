@@ -1,9 +1,11 @@
 import {
 	type ActingPrincipal,
+	assertRecipientAddressable,
 	assertTargetBelongsTo,
 	type IdentityRefusal,
 	type OrgKind,
 	type PrincipalLookups,
+	type RecipientLookups,
 	resolveActingPrincipal,
 } from "@vantageos/cloud-identity";
 import { ConvexError } from "convex/values";
@@ -310,4 +312,79 @@ export async function requireAssigneeAgentActive(
 		door,
 	);
 	if (!resolved.ok) refuseWith(resolved.refusal);
+}
+
+/**
+ * The lookups `assertRecipientAddressable` reads, both keyed by the stored org:
+ * the organisation kind (operator or client, from the mapping row) and the
+ * roster of OPERATOR-org agent IDs the client organisation stores
+ * (`addressableFleetCoordinatorIds`). No roster stored answers null, which the
+ * package refuses (`list-absent`).
+ */
+export function recipientLookups(ctx: Ctx): RecipientLookups {
+	return {
+		orgKindOf: async (orgId): Promise<OrgKind | null> =>
+			orgKindOfMapping(await lookupOrgMapping(ctx, orgId)),
+		rosterOf: async (orgId) => {
+			const mapping = await lookupOrgMapping(ctx, orgId);
+			if (mapping === null || mapping.addressableFleetCoordinatorIds === undefined) {
+				return null;
+			}
+			return { orgId, principalIds: mapping.addressableFleetCoordinatorIds };
+		},
+	};
+}
+
+export type RecipientAddress =
+	| {
+			ok: true;
+			/**
+			 * Where the recipient stands relative to the sender, decided by the
+			 * package from the two stored org IDs and their stored kinds.
+			 */
+			direction:
+				| "same-organisation"
+				| "client-to-operator"
+				| "operator-to-client";
+	  }
+	| { ok: false; refusal: IdentityRefusal };
+
+/**
+ * May the resolved AGENT `sender` address the agents row `recipient`, in either
+ * direction across organisations, by ID only? The recipient is first resolved
+ * through the package from its own stored row (active, stamped with the org it
+ * is judged in, that org active); the address decision is then
+ * `assertRecipientAddressable`, which owns every rule: same organisation,
+ * client to a listed operator agent, operator agent to a client that lists it,
+ * and nothing else. This function reads no name and decides nothing itself.
+ */
+export async function addressRecipientById(
+	ctx: Ctx,
+	sender: ActingPrincipal,
+	recipient: { _id: string; orgSlug: string },
+	door: string,
+): Promise<RecipientAddress> {
+	const lookups = principalLookups(ctx);
+	const resolved = await resolveActingPrincipal(
+		{ kind: "agent", agentId: recipient._id, verifiedOrgId: recipient.orgSlug },
+		lookups,
+		door,
+	);
+	if (!resolved.ok) return resolved;
+	const verdict = await assertRecipientAddressable(
+		sender,
+		{ agentId: resolved.principal.principalId, orgId: resolved.principal.orgId },
+		recipientLookups(ctx),
+		{ door },
+	);
+	if (!verdict.ok) return verdict;
+	if (resolved.principal.orgId === sender.orgId) {
+		return { ok: true, direction: "same-organisation" };
+	}
+	const senderKind = await lookups.orgKindOf?.(sender.orgId);
+	return {
+		ok: true,
+		direction:
+			senderKind === "operator" ? "operator-to-client" : "client-to-operator",
+	};
 }
