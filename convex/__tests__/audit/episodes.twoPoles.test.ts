@@ -125,6 +125,7 @@ describe("episodes:getCriticalInsights", () => {
 				for (let i = chunk; i < chunk + 30; i++) {
 					await ctx.db.insert("memories", {
 						namespace: "team/org-b",
+						clerkOrgId: testClerkOrgId("org-b"),
 						type: "episode",
 						content: BIG,
 						createdBy: "sigma",
@@ -140,6 +141,7 @@ describe("episodes:getCriticalInsights", () => {
 		await t.run((ctx) =>
 			ctx.db.insert("memories", {
 				namespace: "team/org-a",
+				clerkOrgId: testClerkOrgId("org-a"),
 				type: "episode",
 				content: "own",
 				createdBy: "sigma",
@@ -161,6 +163,9 @@ describe("episodes:getCriticalInsights", () => {
 			await t.run((ctx) =>
 				ctx.db.insert("memories", {
 					namespace: ns,
+					// Stamped as the M10a backfill leaves a row: the episode reads judge
+					// whose a row is by the org ID, as the memory doors do.
+					clerkOrgId: testClerkOrgId(ns === "team/org-a" ? "org-a" : "org-b"),
 					type: "episode",
 					content: ins,
 					createdBy: "sigma",

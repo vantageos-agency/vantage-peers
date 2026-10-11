@@ -4,12 +4,13 @@ import { internal } from "./_generated/api";
 import { memoryTypeValidator, creatorValidator, relationTypeValidator, severityValidator } from "./schema";
 import { requireId } from "./lib/ids";
 import { isMcpBoundMaster, withOrgScope } from "./lib/auth";
-import { memberActorOf } from "./lib/humanActor";
 import {
+  memoryAuthorOf,
+  memoryStampForWrite,
   memoryVisibleToScope,
-  stampOfNamespace,
   teamLabelOfNamespace,
 } from "./lib/memoryTenant";
+import { isTeamNamespaceAllowed } from "./lib/teamNamespace";
 import type { Doc } from "./_generated/dataModel";
 
 // expireMemoriesByTtl scans candidate rows with a ttl set; this is a bounded
@@ -40,7 +41,6 @@ const TTL_EXPIRY_SCAN_CAP = 500;
 // delegates to it; memories.ts cannot be imported from lib/auth.ts without a
 // cycle). Re-exported here so existing importers keep working.
 export { isNamespaceAllowedForScope } from "./lib/auth";
-import { isNamespaceAllowedForScope } from "./lib/auth";
 import {
   resolveVerifiedOrgScope,
   verifiedOrgValidator,
@@ -58,7 +58,9 @@ export const storeMemory = mutation({
     namespace: v.string(),
     type: memoryTypeValidator,
     content: v.string(),
-    createdBy: creatorValidator,
+    // Absent for a person (the MCP forwards none): the verified caller is the
+    // author. The service account names the seat it authenticated.
+    createdBy: v.optional(creatorValidator),
     // Optional: defaults to [] server-side if omitted (fixes #262)
     relations: v.optional(
       v.array(
@@ -95,31 +97,31 @@ export const storeMemory = mutation({
     // token; see mcp-server/src/authenticatedConvexClient.ts), so the
     // fail-closed default here never breaks that live path.
     const scope = await withOrgScope(ctx);
-    if (!isNamespaceAllowedForScope(scope, args.namespace)) {
+    // Namespace ownership is the ONE decision of convex/lib/teamNamespace.ts (the
+    // episode doors call it too): `team/<its org ID>`, or the legacy label alias of
+    // the same verified org.
+    if (!isTeamNamespaceAllowed(scope, args.namespace)) {
       throw new ConvexError(
         `RBAC_DENIED: caller may not write to namespace "${args.namespace}" — ${JSON.stringify({ orgSlug: scope.orgSlug })}`,
       );
     }
-    // AUTHOR. The seat's author is claimed only by the MCP-bound master; any
-    // other caller is a person, recorded as its verified subject, and a claimed
-    // author that is anyone else is refused before anything is written.
-    const ownAuthor = isMcpBoundMaster(scope) ? undefined : memberActorOf(scope);
-    if (ownAuthor !== undefined && args.createdBy !== ownAuthor) {
-      throw new ConvexError(
-        `RBAC_DENIED: the author of a memory is the verified caller — ${JSON.stringify({ reason: "author-not-caller", door: "memories:storeMemory", orgSlug: scope.orgSlug })}`,
-      );
-    }
-    // TENANT STAMP. A member's row is stamped with its permanent org ID (a
-    // member with none could never read the row back); the master's row is
-    // stamped with the ID of the org whose label the team namespace carries.
-    if (!scope.isMaster && scope.orgClerkId === undefined) {
-      throw new ConvexError(
-        `RBAC_DENIED: caller's organisation has no permanent org ID to stamp a memory with — ${JSON.stringify({ reason: "org-id-missing", door: "memories:storeMemory", orgSlug: scope.orgSlug })}`,
-      );
-    }
-    const clerkOrgId = scope.isMaster
-      ? await stampOfNamespace(ctx, args.namespace)
-      : scope.orgClerkId;
+    // AUTHOR + TENANT STAMP (convex/lib/memoryTenant.ts, shared with the episode
+    // doors). The MCP-bound master names the author of the seat it authenticated;
+    // any other caller is a person, recorded as its verified subject, and a claimed
+    // author that is anyone else is refused before anything is written. A member's
+    // row carries its permanent org ID; the master's the ID the namespace names.
+    const createdBy = memoryAuthorOf(
+      scope,
+      args.createdBy,
+      "memories:storeMemory",
+      isMcpBoundMaster(scope),
+    );
+    const clerkOrgId = await memoryStampForWrite(
+      ctx,
+      scope,
+      args.namespace,
+      "memories:storeMemory",
+    );
 
     const now = Date.now();
     const relations = args.relations ?? [];
@@ -148,7 +150,7 @@ export const storeMemory = mutation({
       namespace: args.namespace,
       type: args.type,
       content: args.content,
-      createdBy: ownAuthor ?? args.createdBy,
+      createdBy,
       relations,
       isLatest: true,
       ttl: args.ttl,

@@ -28,13 +28,16 @@
  * reads serve only the rows the caller's org ID owns.
  */
 
-import { ConvexError, v } from "convex/values";
+import { v } from "convex/values";
 import type { Doc } from "./_generated/dataModel";
 import type { MutationCtx, QueryCtx } from "./_generated/server";
 import { mutation, query } from "./_generated/server";
 import { isMcpBoundMaster, type OrgScope, withOrgScope } from "./lib/auth";
-import { memberActorOf } from "./lib/humanActor";
-import { memoryVisibleToScope, stampOfNamespace } from "./lib/memoryTenant";
+import {
+	memoryAuthorOf,
+	memoryStampForWrite,
+	memoryVisibleToScope,
+} from "./lib/memoryTenant";
 import {
 	creatorValidator,
 	memoryTypeValidator,
@@ -140,7 +143,8 @@ export const storeMemoryScoped = mutation({
 		namespace: v.string(),
 		type: memoryTypeValidator,
 		content: v.string(),
-		createdBy: creatorValidator,
+		// Absent for a person (the MCP forwards none): the verified caller is the author.
+		createdBy: v.optional(creatorValidator),
 		relations: v.optional(
 			v.array(
 				v.object({
@@ -180,27 +184,22 @@ export const storeMemoryScoped = mutation({
 		}
 		assertNamespaceAllowed(caller.orgId, args.namespace);
 
-		// AUTHOR: the verified caller. Only the MCP-bound master claims the author
-		// of the seat it authenticated; a member's claimed other author is refused.
-		const ownAuthor = isMcpBoundMaster(caller.scope)
-			? undefined
-			: memberActorOf(caller.scope);
-		if (ownAuthor !== undefined && args.createdBy !== ownAuthor) {
-			throw new ConvexError(
-				`RBAC_DENIED: the author of a memory is the verified caller — ${JSON.stringify({ reason: "author-not-caller", door: "memoriesScoped:storeMemoryScoped", orgSlug: caller.scope.orgSlug })}`,
-			);
-		}
-		// TENANT STAMP: the caller's permanent org ID (a member with none could
-		// never read the row back); the master's row takes the ID of the org the
-		// team namespace names.
-		if (!caller.scope.isMaster && caller.scope.orgClerkId === undefined) {
-			throw new ConvexError(
-				`RBAC_DENIED: caller's organisation has no permanent org ID to stamp a memory with — ${JSON.stringify({ reason: "org-id-missing", door: "memoriesScoped:storeMemoryScoped", orgSlug: caller.scope.orgSlug })}`,
-			);
-		}
-		const clerkOrgId = caller.scope.isMaster
-			? await stampOfNamespace(ctx, args.namespace)
-			: caller.scope.orgClerkId;
+		// AUTHOR + TENANT STAMP: shared with the other memory-table doors
+		// (convex/lib/memoryTenant.ts). The MCP-bound master names the author of the
+		// seat it authenticated; a member is the verified caller and a claimed other
+		// author is refused.
+		const createdBy = memoryAuthorOf(
+			caller.scope,
+			args.createdBy,
+			"memoriesScoped:storeMemoryScoped",
+			isMcpBoundMaster(caller.scope),
+		);
+		const clerkOrgId = await memoryStampForWrite(
+			ctx,
+			caller.scope,
+			args.namespace,
+			"memoriesScoped:storeMemoryScoped",
+		);
 
 		const now = Date.now();
 		const relations = args.relations ?? [];
@@ -215,7 +214,7 @@ export const storeMemoryScoped = mutation({
 			namespace: args.namespace,
 			type: args.type,
 			content: args.content,
-			createdBy: ownAuthor ?? args.createdBy,
+			createdBy,
 			relations,
 			isLatest: true,
 			ttl: args.ttl,

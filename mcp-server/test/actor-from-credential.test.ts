@@ -1175,17 +1175,18 @@ describe("cutover compatibility — four poles under an ordinary (non-master) ca
 		).toEqual([]);
 	});
 
-	it("a `from`-kind key (store_memory createdBy) is recorded under ITS argument name when served on a typed name", async () => {
+	it("a `from`-kind key (create_briefing_note createdBy) is recorded under ITS argument name when served on a typed name", async () => {
 		vi.stubEnv("VANTAGE_ACTOR_CREDENTIAL_MODE", "permissive");
 		const spy = vi.spyOn(console, "error").mockImplementation(() => {});
 		const { convex, calls } = buildToolConvex({});
 		const app = buildApp(() => convex);
-		const { json } = await send(app, "/tool/store_memory", {
+		const { json } = await send(app, "/tool/create_briefing_note", {
 			orgId: "org-a",
 			body: {
+				title: "t",
+				topic: "t",
+				participants: ["alice"],
 				content: "x",
-				type: "user",
-				namespace: "team/org-a",
 				createdBy: "alice",
 			},
 		});
@@ -1194,7 +1195,7 @@ describe("cutover compatibility — four poles under an ordinary (non-master) ca
 		const rec = stderrLines(spy).find((l) => l.includes("actor.unattributed"));
 		expect(rec).toBeDefined();
 		expect(JSON.parse(rec as string)).toMatchObject({
-			tool: "store_memory",
+			tool: "create_briefing_note",
 			arg: "createdBy",
 			claimed: "alice",
 		});

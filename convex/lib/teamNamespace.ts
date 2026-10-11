@@ -42,8 +42,13 @@ export function memberNamespaceRoots(
 	return roots;
 }
 
-/** May this scope read or write `namespace`? Master: any. Member: a root above. */
-export function isEpisodeNamespaceAllowed(
+/**
+ * May this scope read or write `namespace`? Master: any. Member: a root above.
+ * The ONE namespace-ownership decision of the memories table: the memory doors
+ * (M10a) and the episode doors (M14) both call it, so a row filed under
+ * `team/<orgId>` is writable and readable through either.
+ */
+export function isTeamNamespaceAllowed(
 	scope: Pick<OrgScope, "orgClerkId" | "orgSlug" | "isMaster">,
 	namespace: string,
 ): boolean {

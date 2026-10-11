@@ -4,8 +4,8 @@ import { mutation, query, type QueryCtx } from "./_generated/server";
 import { internal } from "./_generated/api";
 import { creatorValidator, severityValidator, relationTypeValidator } from "./schema";
 import { withOrgScope } from "./lib/auth";
-import { memberActorOf } from "./lib/humanActor";
-import { isEpisodeNamespaceAllowed, memberNamespaceRoots } from "./lib/teamNamespace";
+import { memoryAuthorOf, memoryStampForWrite, memoryVisibleToScope } from "./lib/memoryTenant";
+import { isTeamNamespaceAllowed, memberNamespaceRoots } from "./lib/teamNamespace";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // storeEpisode
@@ -18,7 +18,9 @@ import { isEpisodeNamespaceAllowed, memberNamespaceRoots } from "./lib/teamNames
 export const storeEpisode = mutation({
   args: {
     namespace: v.string(),
-    createdBy: creatorValidator,
+    // Absent for a person (the MCP forwards none): the verified caller is the
+    // author. The service account names the seat it authenticated.
+    createdBy: v.optional(creatorValidator),
     // The 5 episode fields (mandatory for type="episode")
     context: v.string(),
     goal: v.string(),
@@ -54,21 +56,29 @@ export const storeEpisode = mutation({
     // the namespace gate of convex/lib/teamNamespace.ts: a member owns
     // `team/<its verified org ID>` (and the legacy label alias of that same org).
     const scope = await withOrgScope(ctx);
-    if (!isEpisodeNamespaceAllowed(scope, args.namespace)) {
+    if (!isTeamNamespaceAllowed(scope, args.namespace)) {
       throw new ConvexError(
         `RBAC_DENIED: caller may not write to namespace "${args.namespace}" — ${JSON.stringify({ orgSlug: scope.orgSlug })}`,
       );
     }
-    // AUTHOR. A member's episode is authored by the verified caller
-    // ("user:<subject>"); a claimed author that is anyone else is refused, never
-    // persisted. Only the transport-verified master (the MCP server) supplies the
-    // author of the seat it authenticated.
-    const createdBy = scope.isMaster ? args.createdBy : memberActorOf(scope);
-    if (!scope.isMaster && args.createdBy !== createdBy) {
-      throw new ConvexError(
-        `RBAC_DENIED: the author of an episode is the verified caller — ${JSON.stringify({ reason: "author-not-caller", door: "episodes:storeEpisode", orgSlug: scope.orgSlug })}`,
-      );
-    }
+    // AUTHOR + TENANT STAMP. An episode is a row of the memories table, so it is
+    // authored and stamped exactly as storeMemory does it (convex/lib/memoryTenant.ts):
+    // a member's author is the verified caller ("user:<subject>") and a claimed
+    // other author is refused; the service account (the MCP server) supplies the
+    // author of the seat it authenticated. The row carries the org's permanent ID,
+    // so the memory doors and the episode doors judge it identically.
+    const createdBy = memoryAuthorOf(
+      scope,
+      args.createdBy,
+      "episodes:storeEpisode",
+      scope.isMaster,
+    );
+    const clerkOrgId = await memoryStampForWrite(
+      ctx,
+      scope,
+      args.namespace,
+      "episodes:storeEpisode",
+    );
 
     const now = Date.now();
 
@@ -97,6 +107,7 @@ export const storeEpisode = mutation({
         insight: args.insight,
         severity: args.severity,
       },
+      ...(clerkOrgId === undefined ? {} : { clerkOrgId }),
       createdAt: now,
       updatedAt: now,
     });
@@ -196,7 +207,7 @@ export const listEpisodes = query({
     // scope as the empty page. Reuses the EXACT mechanism its sibling
     // memories.ts::listMemories already uses — no second identity layer.
     const scope = await withOrgScope(ctx, { refuseWithoutThrow: true });
-    if (!isEpisodeNamespaceAllowed(scope, args.namespace)) {
+    if (!isTeamNamespaceAllowed(scope, args.namespace)) {
       return [];
     }
 
@@ -209,7 +220,9 @@ export const listEpisodes = query({
       ctx,
       args.namespace,
       limit,
-      (e) => args.severity === undefined || e.episode?.severity === args.severity,
+      (e) =>
+        memoryVisibleToScope(scope, e) &&
+        (args.severity === undefined || e.episode?.severity === args.severity),
       "episodes.listEpisodes",
     );
 
@@ -244,14 +257,18 @@ const isCritical = (e: Doc<"memories">) => e.episode?.severity === "critical";
 
 async function readTenantCritical(
   ctx: QueryCtx,
-  scope: Parameters<typeof memberNamespaceRoots>[0],
+  scope: Parameters<typeof memberNamespaceRoots>[0] & Parameters<typeof memoryVisibleToScope>[0],
   limit: number,
 ): Promise<EpisodeRow[]> {
   const door = "episodes.getCriticalInsights";
+  // The namespace roots say WHERE to read; the org stamp says whose a row is
+  // (the same predicate as the memory doors), so a freed label reused by another
+  // org, and an unstamped legacy row, are never served.
+  const keep = (e: Doc<"memories">) => isCritical(e) && memoryVisibleToScope(scope, e);
   const rows: EpisodeRow[] = [];
   let walked = 0;
   for (const root of memberNamespaceRoots(scope)) {
-    rows.push(...(await takeEpisodes(ctx, root.exact, limit, isCritical, door)));
+    rows.push(...(await takeEpisodes(ctx, root.exact, limit, keep, door)));
     let from = root.from;
     for (;;) {
       if (walked++ >= TENANT_NAMESPACE_WALK_CAP) {
@@ -266,7 +283,7 @@ async function readTenantCritical(
         )
         .first();
       if (next === null) break;
-      rows.push(...(await takeEpisodes(ctx, next.namespace, limit, isCritical, door)));
+      rows.push(...(await takeEpisodes(ctx, next.namespace, limit, keep, door)));
       // The smallest string strictly greater than `next.namespace`.
       from = `${next.namespace}\u0000`;
     }
