@@ -56,6 +56,7 @@ import type { BundleEntry } from "./okfValidator";
 import { creatorValidator, memoryTypeValidator } from "./schema";
 import { taskActorIdFields } from "./lib/actorIds";
 import { clerkOrgIdForSlug } from "./lib/orgClerkId";
+import { stampOfNamespace } from "./lib/memoryTenant";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Constants (ADR D4 + D5) — re-exported for the Node-runtime action.
@@ -676,6 +677,9 @@ export const _insertImportedMemory = internalMutation({
 			)
 			.unique();
 		if (existing !== null) return existing._id;
+		// M10a: a team row carries its org's permanent ID, or no client org could
+		// ever read it back (convex/lib/memoryTenant.ts).
+		const clerkOrgId = await stampOfNamespace(ctx, args.namespace);
 		return await ctx.db.insert("memories", {
 			namespace: args.namespace,
 			type: args.type,
@@ -684,6 +688,7 @@ export const _insertImportedMemory = internalMutation({
 			relations: [],
 			isLatest: true,
 			contentHash: args.contentHash,
+			...(clerkOrgId === undefined ? {} : { clerkOrgId }),
 			createdAt: args.now,
 			updatedAt: args.now,
 		});

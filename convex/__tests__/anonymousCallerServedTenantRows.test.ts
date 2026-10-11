@@ -120,6 +120,12 @@ const asNoOrg = (t: ReturnType<typeof createT>) =>
 		typeof t.withIdentity
 	>[0]);
 
+/** TEST FIXTURE: a `team/<label>` row carries its org's permanent ID (M10a). */
+const stampOf = (namespace: string): { clerkOrgId?: string } => {
+	const label = namespace.startsWith("team/") ? namespace.split("/")[1] : undefined;
+	return label === undefined ? {} : { clerkOrgId: testClerkOrgId(label) };
+};
+
 async function seedMemory(
 	t: ReturnType<typeof createT>,
 	namespace: string,
@@ -129,6 +135,7 @@ async function seedMemory(
 	await t.run(async (ctx) => {
 		await ctx.db.insert("memories", {
 			namespace,
+			...stampOf(namespace),
 			type: (extra.type ?? "project") as "project",
 			content,
 			createdBy: "sigma",
@@ -149,6 +156,7 @@ async function seedEpisode(
 	await t.run(async (ctx) => {
 		await ctx.db.insert("memories", {
 			namespace,
+			...stampOf(namespace),
 			type: "episode",
 			content: insight,
 			createdBy: "sigma",
@@ -446,7 +454,7 @@ describe("AUTH_NAMESPACE_DENIED — writes refuse by THROW", () => {
 				namespace: "team/org-a",
 				type: "project",
 				content: "org-a legitimate write",
-				createdBy: "sigma",
+				createdBy: `user:${ORDINARY_A}`,
 			},
 		);
 

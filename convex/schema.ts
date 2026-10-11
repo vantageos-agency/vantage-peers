@@ -122,6 +122,14 @@ export default defineSchema({
 		// insert site. The dedup index below never matches an undefined value
 		// against a real hash, so unset rows never collide.
 		contentHash: v.optional(v.string()),
+
+		// The permanent Clerk org ID of the organisation that owns this row (module
+		// M10a). The namespace `team/<slug>` carries a renamable LABEL; a read or
+		// write decides on this ID through @vantageos/cloud-identity `sameOrg`.
+		// OPTIONAL: rows written before M10a (and fleet rows in non-team namespaces)
+		// carry none; an unstamped row is served to no client org until
+		// migrations/backfill_memories_org_clerk_id fills it. Never invented.
+		clerkOrgId: v.optional(v.string()),
 	})
 		// Primary query patterns — all filtered to isLatest for active memory reads
 		.index("by_namespace", ["namespace", "isLatest"])

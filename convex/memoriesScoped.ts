@@ -20,12 +20,21 @@
  *
  * storeMemoryScoped  — enforced write: org_A cannot write to team/org_B.
  * listMemoriesScoped — enforced read: org_A cannot read from team/org_B.
+ *
+ * Module M10a (memories by ID scope): the namespace label only NARROWS where a
+ * member may act (AUTH_NAMESPACE_DENIED, pinned). Whose a row is, is decided by
+ * its permanent org ID (`memories.clerkOrgId`, convex/lib/memoryTenant.ts):
+ * writes are stamped with the caller's ID and authored by the verified caller,
+ * reads serve only the rows the caller's org ID owns.
  */
 
-import { v } from "convex/values";
+import { ConvexError, v } from "convex/values";
+import type { Doc } from "./_generated/dataModel";
 import type { MutationCtx, QueryCtx } from "./_generated/server";
 import { mutation, query } from "./_generated/server";
-import { type OrgScope, withOrgScope } from "./lib/auth";
+import { isMcpBoundMaster, type OrgScope, withOrgScope } from "./lib/auth";
+import { memberActorOf } from "./lib/humanActor";
+import { memoryVisibleToScope, stampOfNamespace } from "./lib/memoryTenant";
 import {
 	creatorValidator,
 	memoryTypeValidator,
@@ -82,7 +91,7 @@ import {
  */
 async function resolveCallerOrgId(
 	ctx: QueryCtx | MutationCtx,
-): Promise<{ orgId: string | null; refused: boolean }> {
+): Promise<{ orgId: string | null; refused: boolean; scope: OrgScope }> {
 	let scope: OrgScope;
 	try {
 		scope = await withOrgScope(ctx, { refuseWithoutThrow: true });
@@ -94,13 +103,13 @@ async function resolveCallerOrgId(
 
 	// Master keeps the null sentinel assertNamespaceAllowed reads as
 	// "unrestricted" -- unchanged for the fleet's own callers.
-	if (scope.isMaster) return { orgId: null, refused: false };
+	if (scope.isMaster) return { orgId: null, refused: false, scope };
 
 	// No verified organisation: anonymous (no identity at all) OR signed in
 	// without an org. NEVER master. This is the branch that used to leak.
-	if (scope.orgSlug === null) return { orgId: null, refused: true };
+	if (scope.orgSlug === null) return { orgId: null, refused: true, scope };
 
-	return { orgId: scope.orgSlug, refused: false };
+	return { orgId: scope.orgSlug, refused: false, scope };
 }
 
 /**
@@ -171,6 +180,28 @@ export const storeMemoryScoped = mutation({
 		}
 		assertNamespaceAllowed(caller.orgId, args.namespace);
 
+		// AUTHOR: the verified caller. Only the MCP-bound master claims the author
+		// of the seat it authenticated; a member's claimed other author is refused.
+		const ownAuthor = isMcpBoundMaster(caller.scope)
+			? undefined
+			: memberActorOf(caller.scope);
+		if (ownAuthor !== undefined && args.createdBy !== ownAuthor) {
+			throw new ConvexError(
+				`RBAC_DENIED: the author of a memory is the verified caller — ${JSON.stringify({ reason: "author-not-caller", door: "memoriesScoped:storeMemoryScoped", orgSlug: caller.scope.orgSlug })}`,
+			);
+		}
+		// TENANT STAMP: the caller's permanent org ID (a member with none could
+		// never read the row back); the master's row takes the ID of the org the
+		// team namespace names.
+		if (!caller.scope.isMaster && caller.scope.orgClerkId === undefined) {
+			throw new ConvexError(
+				`RBAC_DENIED: caller's organisation has no permanent org ID to stamp a memory with — ${JSON.stringify({ reason: "org-id-missing", door: "memoriesScoped:storeMemoryScoped", orgSlug: caller.scope.orgSlug })}`,
+			);
+		}
+		const clerkOrgId = caller.scope.isMaster
+			? await stampOfNamespace(ctx, args.namespace)
+			: caller.scope.orgClerkId;
+
 		const now = Date.now();
 		const relations = args.relations ?? [];
 
@@ -184,11 +215,12 @@ export const storeMemoryScoped = mutation({
 			namespace: args.namespace,
 			type: args.type,
 			content: args.content,
-			createdBy: args.createdBy,
+			createdBy: ownAuthor ?? args.createdBy,
 			relations,
 			isLatest: true,
 			ttl: args.ttl,
 			episode: args.episode,
+			...(clerkOrgId === undefined ? {} : { clerkOrgId }),
 			createdAt: now,
 			updatedAt: now,
 		});
@@ -231,6 +263,8 @@ const memoryRowValidator = v.object({
 	updatedAt: v.number(),
 	// R-18 import idempotency key; only OKF-imported rows carry it.
 	contentHash: v.optional(v.string()),
+	// M10a: the owning organisation's permanent ID (absent on unstamped rows).
+	clerkOrgId: v.optional(v.string()),
 });
 
 export const listMemoriesScoped = query({
@@ -260,22 +294,30 @@ export const listMemoriesScoped = query({
 		const limit = args.limit ?? 50;
 		const { namespace, type } = args;
 
+		// Rows are served by their org ID, never by the namespace label alone.
+		const owned = (rows: Doc<"memories">[]) =>
+			rows.filter((row) => memoryVisibleToScope(caller.scope, row));
+
 		if (type !== undefined) {
-			return await ctx.db
-				.query("memories")
-				.withIndex("by_namespace_type", (qi) =>
-					qi.eq("namespace", namespace).eq("type", type).eq("isLatest", true),
-				)
-				.order("desc")
-				.take(limit);
+			return owned(
+				await ctx.db
+					.query("memories")
+					.withIndex("by_namespace_type", (qi) =>
+						qi.eq("namespace", namespace).eq("type", type).eq("isLatest", true),
+					)
+					.order("desc")
+					.take(limit),
+			);
 		}
 
-		return await ctx.db
-			.query("memories")
-			.withIndex("by_namespace", (qi) =>
-				qi.eq("namespace", namespace).eq("isLatest", true),
-			)
-			.order("desc")
-			.take(limit);
+		return owned(
+			await ctx.db
+				.query("memories")
+				.withIndex("by_namespace", (qi) =>
+					qi.eq("namespace", namespace).eq("isLatest", true),
+				)
+				.order("desc")
+				.take(limit),
+		);
 	},
 });

@@ -92,6 +92,7 @@ describe("AUTH_NAMESPACE_DENIED — listMemoriesScoped cross-tenant read", () =>
 		await t.run(async (ctx) => {
 			await ctx.db.insert("memories", {
 				namespace: "team/org-a",
+				clerkOrgId: testClerkOrgId("org-a"),
 				type: "project",
 				content: "org-a own memory",
 				createdBy: "sigma",
@@ -235,7 +236,7 @@ describe("AUTH_NAMESPACE_DENIED — storeMemoryScoped cross-tenant write", () =>
 			namespace: "team/org-a",
 			type: "project",
 			content: "org-a writes to own namespace",
-			createdBy: "sigma",
+			createdBy: "user:user-org-a",
 		});
 
 		expect(typeof id).toBe("string");

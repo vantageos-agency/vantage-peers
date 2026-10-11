@@ -3,7 +3,13 @@ import { mutation, query, internalMutation } from "./_generated/server";
 import { internal } from "./_generated/api";
 import { memoryTypeValidator, creatorValidator, relationTypeValidator, severityValidator } from "./schema";
 import { requireId } from "./lib/ids";
-import { withOrgScope, type OrgScope } from "./lib/auth";
+import { isMcpBoundMaster, withOrgScope } from "./lib/auth";
+import { memberActorOf } from "./lib/humanActor";
+import {
+  memoryVisibleToScope,
+  stampOfNamespace,
+  teamLabelOfNamespace,
+} from "./lib/memoryTenant";
 import type { Doc } from "./_generated/dataModel";
 
 // expireMemoriesByTtl scans candidate rows with a ttl set; this is a bounded
@@ -19,6 +25,15 @@ const TTL_EXPIRY_SCAN_CAP = 500;
 // retains unrestricted access — preserves Alpha/internal behaviour unchanged.
 // A Clerk-org-scoped caller may only read namespaces under its own
 // "team/<orgSlug>" prefix; anything else is denied (never leaked cross-tenant).
+//
+// Module M10a (memories by ID scope): the namespace says where a row is filed,
+// never whose it is. A row belongs to an organisation by its permanent Clerk org
+// ID (`memories.clerkOrgId`), judged by @vantageos/cloud-identity `sameOrg`
+// (convex/lib/memoryTenant.ts); the slug in `team/<slug>` only NARROWS where a
+// member may write. A member's `createdBy` is the verified caller
+// ("user:<subject>"): a claimed different author is refused. Only the
+// MCP-bound master (the service account) supplies `createdBy` for the seat it
+// authenticated.
 // ─────────────────────────────────────────────────────────────────────────────
 
 // The single implementation lives in lib/auth.ts (the OKF export/import gate
@@ -85,6 +100,26 @@ export const storeMemory = mutation({
         `RBAC_DENIED: caller may not write to namespace "${args.namespace}" — ${JSON.stringify({ orgSlug: scope.orgSlug })}`,
       );
     }
+    // AUTHOR. The seat's author is claimed only by the MCP-bound master; any
+    // other caller is a person, recorded as its verified subject, and a claimed
+    // author that is anyone else is refused before anything is written.
+    const ownAuthor = isMcpBoundMaster(scope) ? undefined : memberActorOf(scope);
+    if (ownAuthor !== undefined && args.createdBy !== ownAuthor) {
+      throw new ConvexError(
+        `RBAC_DENIED: the author of a memory is the verified caller — ${JSON.stringify({ reason: "author-not-caller", door: "memories:storeMemory", orgSlug: scope.orgSlug })}`,
+      );
+    }
+    // TENANT STAMP. A member's row is stamped with its permanent org ID (a
+    // member with none could never read the row back); the master's row is
+    // stamped with the ID of the org whose label the team namespace carries.
+    if (!scope.isMaster && scope.orgClerkId === undefined) {
+      throw new ConvexError(
+        `RBAC_DENIED: caller's organisation has no permanent org ID to stamp a memory with — ${JSON.stringify({ reason: "org-id-missing", door: "memories:storeMemory", orgSlug: scope.orgSlug })}`,
+      );
+    }
+    const clerkOrgId = scope.isMaster
+      ? await stampOfNamespace(ctx, args.namespace)
+      : scope.orgClerkId;
 
     const now = Date.now();
     const relations = args.relations ?? [];
@@ -100,9 +135,9 @@ export const storeMemory = mutation({
       if (relation.type === "updates") {
         const target = await ctx.db.get(relation.targetId);
         updateTargets.set(relation.targetId, target);
-        if (target !== null && !isNamespaceAllowedForScope(scope, target.namespace)) {
+        if (target !== null && !memoryVisibleToScope(scope, target)) {
           throw new ConvexError(
-            `RBAC_DENIED: caller may not update memory ${relation.targetId} in namespace "${target.namespace}" — ${JSON.stringify({ orgSlug: scope.orgSlug })}`,
+            `RBAC_DENIED: caller may not update memory ${relation.targetId} — ${JSON.stringify({ orgSlug: scope.orgSlug, reason: "memory-not-in-caller-org" })}`,
           );
         }
       }
@@ -113,11 +148,12 @@ export const storeMemory = mutation({
       namespace: args.namespace,
       type: args.type,
       content: args.content,
-      createdBy: args.createdBy,
+      createdBy: ownAuthor ?? args.createdBy,
       relations,
       isLatest: true,
       ttl: args.ttl,
       episode: args.episode,
+      ...(clerkOrgId === undefined ? {} : { clerkOrgId }),
       createdAt: now,
       updatedAt: now,
     });
@@ -202,6 +238,7 @@ export const getMemory = query({
       updatedAt: v.number(),
       // R-18 import idempotency key; only OKF-imported rows carry it.
       contentHash: v.optional(v.string()),
+      clerkOrgId: v.optional(v.string()),
     }),
     v.null(),
   ),
@@ -225,7 +262,7 @@ export const getMemory = query({
       args.verifiedOrg,
       "memories:getMemory",
     );
-    if (!isNamespaceAllowedForScope(scope, doc.namespace)) return null;
+    if (!memoryVisibleToScope(scope, doc)) return null;
     return doc;
   },
 });
@@ -264,6 +301,8 @@ const memoryDocValidator = v.object({
   updatedAt: v.number(),
   // R-18 import idempotency key; only OKF-imported rows carry it.
   contentHash: v.optional(v.string()),
+  // M10a: the owning organisation's permanent ID (absent on unstamped rows).
+  clerkOrgId: v.optional(v.string()),
 });
 
 // Paginated return shape — compat-first: existing callers reading `.value` work unchanged.
@@ -297,21 +336,33 @@ export const listMemories = query({
     // isNamespaceAllowedForScope guard below already renders that as the
     // typed-empty page, never a throw.
     const scope = await withOrgScope(ctx, { refuseWithoutThrow: true });
-    if (!isNamespaceAllowedForScope(scope, args.namespace)) {
+    // M10a: a row is served by its org ID (memoryVisibleToScope), never by the
+    // namespace label. A caller with no org ID owns no row, and a member's rows
+    // are only ever filed under a `team/<label>` namespace, so any other
+    // namespace is the typed-empty page without reading it.
+    if (
+      !scope.isMaster &&
+      (scope.orgClerkId === undefined || teamLabelOfNamespace(args.namespace) === null)
+    ) {
       return { value: [], continueCursor: null, isDone: true };
     }
     const isLatest = args.includeSuperseded === true ? undefined : true;
     const numItems = args.paginationOpts?.numItems ?? args.limit ?? 50;
     const cursor = args.paginationOpts?.cursor ?? null;
     const createdByFilter = args.createdBy;
-    // Post-take filter helper — applied to result arrays when createdBy is set.
-    // Mirrors list_tasks createdBy semantics (Day 88 cross-tool consistency).
-    // Post-filter (not index-pushdown) is acceptable because createdBy is a
-    // rare diagnostic filter and the bounded numItems keeps the working set small.
-    const filterCreatedBy = <T extends { createdBy?: string }>(rows: T[]): T[] =>
-      createdByFilter === undefined
-        ? rows
-        : rows.filter((r) => r.createdBy === createdByFilter);
+    // Post-take filter helper — keeps the rows the caller's org owns (by ID),
+    // then applies createdBy when set. Mirrors list_tasks createdBy semantics
+    // (Day 88 cross-tool consistency). Post-filter (not index-pushdown) is
+    // acceptable because the namespace index bounds the working set and
+    // createdBy is a rare diagnostic filter.
+    const filterCreatedBy = <T extends { createdBy?: string; clerkOrgId?: string }>(
+      rows: T[],
+    ): T[] => {
+      const owned = rows.filter((r) => memoryVisibleToScope(scope, r));
+      return createdByFilter === undefined
+        ? owned
+        : owned.filter((r) => r.createdBy === createdByFilter);
+    };
 
     // ── Paginated path (paginationOpts provided) ──────────────────────────────
     if (args.paginationOpts !== undefined) {
@@ -416,6 +467,11 @@ export const softDeleteMemory = mutation({
   returns: v.null(),
   handler: async (ctx, args) => {
   	// write-contract: MCP-transport-only — issued via mcp-server client.mutation("memories:softDeleteMemory", …) at mcp-server/src/tools.ts:2075 (imperative), 0 hits in vantage-peers-dashboard {app,components,hooks,lib,contexts,providers} (measured 2026-10-01 at origin/main e2dc58f and 0466fac); never a subscribing pre-org client shell. The no-org throw is a refusal at an imperative MCP call, never at a render.
+    // The caller is resolved BEFORE the row is read, so an unresolved caller is
+    // refused identically for a live and for a deleted id (no existence oracle).
+    // withOrgScope is called WITHOUT allowNoIdentityMaster: the MCP server
+    // always presents a real Clerk identity on this path.
+    const scope = await withOrgScope(ctx);
     const memoryId = requireId(
       ctx,
       "memories",
@@ -425,19 +481,14 @@ export const softDeleteMemory = mutation({
     );
 
     const memory = await ctx.db.get(memoryId);
-    if (memory === null) {
+    if (memory === null && scope.isMaster) {
       throw new Error(`Memory ${memoryId} not found`);
     }
-
-    // Fail-closed multi-tenant fix (same defect class as
-    // storeMemory above) — softDeleteMemory used to patch ANY memory by id
-    // with no identity/scope check. withOrgScope is called WITHOUT
-    // allowNoIdentityMaster for the same reason as storeMemory: the MCP
-    // server always presents a real Clerk identity on this path.
-    const scope = await withOrgScope(ctx);
-    if (!isNamespaceAllowedForScope(scope, memory.namespace)) {
+    // A member is answered identically for a missing row and for another org's
+    // row (decided by org ID): the refusal never says which.
+    if (memory === null || !memoryVisibleToScope(scope, memory)) {
       throw new ConvexError(
-        `RBAC_DENIED: caller may not delete memory ${memoryId} in namespace "${memory.namespace}" — ${JSON.stringify({ orgSlug: scope.orgSlug })}`,
+        `RBAC_DENIED: caller may not delete memory ${memoryId} — ${JSON.stringify({ orgSlug: scope.orgSlug, reason: "memory-not-in-caller-org" })}`,
       );
     }
 
