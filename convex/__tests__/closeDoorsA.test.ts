@@ -20,6 +20,7 @@ import { describe, expect, test } from "vitest";
 import { testClerkOrgId } from "../../tests/fixtures/testClerkOrgId";
 import { api } from "../_generated/api";
 import schema from "../schema";
+import { seedRosterAgent } from "../../tests/fixtures/rosterAgent";
 
 const modules = Object.fromEntries(
 	Object.entries(import.meta.glob("../**/*.ts")).filter(
@@ -101,6 +102,7 @@ async function seedOrg(t: T, slug: string, roster: string[]) {
 			isActive: true,
 			createdAt: Date.now(),
 		});
+		for (const name of roster) await seedRosterAgent(ctx, slug, name);
 	});
 }
 

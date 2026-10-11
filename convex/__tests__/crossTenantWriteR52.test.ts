@@ -29,8 +29,8 @@ import { api, internal } from "../_generated/api";
 import type { Id } from "../_generated/dataModel";
 import { fleetOperatorSlug } from "../lib/operatorOrg";
 import schema from "../schema";
+import { seedRosterAgent } from "../../tests/fixtures/rosterAgent";
 import { testClerkOrgId } from "../../tests/fixtures/testClerkOrgId";
-import { seedAgents } from "../../tests/lib/agentIdOf";
 import { mintAgentSecret, seedFleetAgents } from "../../tests/lib/seedFleetAgents";
 
 const modules = Object.fromEntries(
@@ -81,12 +81,11 @@ async function seedOrgs(t: T) {
 				isActive: true,
 				createdAt: Date.now(),
 			});
+			// The seat is an agent of the org's ID roster: the diary judges it by agent
+			// ID (M10b) and the task doors require its credential (M7).
+			await seedRosterAgent(ctx, slug, SEAT);
 		}
 	});
-	await seedAgents(t, [
-		["org-a", SEAT],
-		["org-b", SEAT],
-	]);
 	for (const slug of ["org-a", "org-b"]) {
 		seatSecrets.set(slug, await mintAgentSecret(t, slug, SEAT));
 	}
@@ -437,14 +436,7 @@ describe("fleet equivalence after backfill_org_stamp — R-52 follow-up", () => 
 				orgKind: "operator" as const,
 				createdAt: 1,
 			});
-			await ctx.db.insert("agents", {
-				orgSlug: "fleet-org",
-				clerkOrgId: testClerkOrgId("fleet-org"),
-				name: "sigma",
-				normalizedName: "sigma",
-				isActive: true,
-				createdAt: 1,
-			});
+			await seedRosterAgent(ctx, "fleet-org", "sigma");
 		});
 	}
 	const backfill = async (t: T, table: "diary" | "missions") => {
@@ -544,6 +536,7 @@ describe("operator-org member sees the fleet range — R-52 follow-up", () => {
 					orgKind: kind,
 					createdAt: 1,
 				});
+				await seedRosterAgent(ctx, slug, "sigma");
 			}
 		});
 		await asMaster(t).mutation(api.diary.write, { date: D, orchestrator: "sigma", content: "fleet entry" });

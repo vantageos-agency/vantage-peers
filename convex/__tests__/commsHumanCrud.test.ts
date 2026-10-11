@@ -20,6 +20,7 @@ import { testClerkOrgId } from "../../tests/fixtures/testClerkOrgId";
 import { api, internal } from "../_generated/api";
 import type { Id } from "../_generated/dataModel";
 import schema from "../schema";
+import { seedRosterAgent } from "../../tests/fixtures/rosterAgent";
 
 const modules = Object.fromEntries(
 	Object.entries(import.meta.glob("../**/*.ts")).filter(
@@ -115,6 +116,10 @@ const ownerName = (owner: Owner) =>
 	owner === "own" ? "sigma" : owner === "other" ? "eta" : "ghost";
 
 async function seedDiary(t: T, owner: Owner) {
+	// The diary judges the seat by agent ID, so org-a's "sigma" is registered
+	// here and only here: a task door that finds a registered agent behind an
+	// asserted name requires its credential.
+	if (owner === "own") await t.run((ctx) => seedRosterAgent(ctx, "org-a", "sigma"));
 	return await t.run(async (ctx) =>
 		ctx.db.insert("diary", {
 			date: "2026-10-01",
@@ -338,6 +343,7 @@ describe("businessUnits and diary — master/agent only, no human path", () => {
 				isActive: true,
 				createdAt: Date.now(),
 			});
+			await seedRosterAgent(ctx, "org-c", "sigma");
 		});
 
 	type Door = {

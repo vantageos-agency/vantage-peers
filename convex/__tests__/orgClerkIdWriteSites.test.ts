@@ -31,9 +31,9 @@ import {
 } from "../migrations/backfill_org_clerk_id";
 import { upsertAdminMembership } from "../orgMembership";
 import schema from "../schema";
-import { seedAgents } from "../../tests/lib/agentIdOf";
 import { mintAgentSecret } from "../../tests/lib/seedFleetAgents";
-import { agentIdOf } from "../../tests/lib/agentIdOf";
+import { seedRosterAgent } from "../../tests/fixtures/rosterAgent";
+import { agentIdOf, seedAgents } from "../../tests/lib/agentIdOf";
 import { testClerkOrgId } from "../../tests/fixtures/testClerkOrgId";
 
 const modules = Object.fromEntries(
@@ -186,12 +186,15 @@ const DRIVERS = {
 			cronExpression: "0 9 * * *",
 			createdBy: SEAT,
 		}),
-	diary: (t) =>
-		asOrg(t, ACME.slug).mutation(api.diary.write, {
+	diary: async (t) => {
+		// The diary judges the seat by agent ID on the org's ID roster.
+		await t.run((ctx) => seedRosterAgent(ctx, ACME.slug, SEAT));
+		return await asOrg(t, ACME.slug).mutation(api.diary.write, {
 			date: "2026-10-01",
 			orchestrator: SEAT,
 			content: "d",
-		}),
+		});
+	},
 	businessUnits: (t) =>
 		asOrg(t, ACME.slug).mutation(api.businessUnits.create, {
 			name: "bu",

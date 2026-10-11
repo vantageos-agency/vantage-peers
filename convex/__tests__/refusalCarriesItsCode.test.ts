@@ -54,6 +54,7 @@ import { describe, expect, test } from "vitest";
 import { testClerkOrgId } from "../../tests/fixtures/testClerkOrgId";
 import { api } from "../_generated/api";
 import schema from "../schema";
+import { seedRosterAgent } from "../../tests/fixtures/rosterAgent";
 
 // `search` / `ragSync` / `backfill` are excluded for the SAME reason every
 // sibling suite in this directory excludes them: convex/search.ts is a
@@ -119,6 +120,7 @@ async function seedOrgMapping(t: T, clerkOrgSlug: string, roster = ["sigma"]) {
 			isActive: true,
 			createdAt: Date.now(),
 		});
+		for (const name of roster) await seedRosterAgent(ctx, clerkOrgSlug, name);
 	});
 }
 

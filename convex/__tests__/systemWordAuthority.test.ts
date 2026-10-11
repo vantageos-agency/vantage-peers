@@ -31,6 +31,7 @@ import { convexTest } from "../../tests/fixtures/convexTestWithServiceAccount";
 import { describe, expect, test } from "vitest";
 import { api } from "../_generated/api";
 import schema from "../schema";
+import { seedRosterAgent } from "../../tests/fixtures/rosterAgent";
 import { analyse as analyseSystemWord } from "../../tests/lib/systemWordAst";
 import { testClerkOrgId } from "../../tests/fixtures/testClerkOrgId";
 
@@ -54,6 +55,7 @@ async function seedOrgA(t: T) {
 			isActive: true,
 			createdAt: Date.now(),
 		});
+		for (const name of ["seat-a", "seat-b"]) await seedRosterAgent(ctx, "org-a", name);
 	});
 }
 

@@ -8,6 +8,7 @@ soft_delete_memory,,UPDATE,org-member,orgResolver,memories:softDeleteMemory=orgR
 update_task,agents+client_org_mapping+githubRepoMapping+memberWriterRoles+messageReceipts+messages+missions+oauth_access_tokens+taskClosureConfig+tasks,UPSERT,org-member,orgResolver,tasks:update=orgResolver
 send_message,agents+client_org_mapping+memberWriterRoles+messageReceipts+messages+oauth_access_tokens+profiles,CREATE,org-member,orgResolver,messages:sendMessage=orgResolver
 create_task,agents+client_org_mapping+memberWriterRoles+oauth_access_tokens+tasks,CREATE,org-member,orgResolver,tasks:create=orgResolver
+write_diary,agents+diary,UPSERT,org-member,orgResolver,diary:write=orgResolver
 complete_task,agents+fixPatterns+githubOwnerBindings+githubRepoMapping+issues+memberWriterRoles+messageReceipts+messages+taskClosureConfig+tasks,UPSERT,org-member,orgResolver,tasks:complete=orgResolver
 add_task_dependency,agents+githubRepoMapping+memberWriterRoles+messageReceipts+messages+missions+taskClosureConfig+tasks,UPSERT,org-member,orgResolver,tasks:update=orgResolver
 block_task,agents+githubRepoMapping+memberWriterRoles+messageReceipts+messages+missions+taskClosureConfig+tasks,UPSERT,org-member,orgResolver,tasks:blockTask=orgResolver; tasks:update=orgResolver
@@ -26,7 +27,6 @@ create_mission,client_org_mapping+memberWriterRoles+missions+oauth_access_tokens
 update_mission,client_org_mapping+memberWriterRoles+missions+oauth_access_tokens,TRANSITION,org-member,orgResolver,missions:update=orgResolver
 update_recurring_task,client_org_mapping+memberWriterRoles+oauth_access_tokens,UPDATE,org-member,orgResolver,recurringTasks:update=orgResolver
 create_recurring_task,client_org_mapping+memberWriterRoles+oauth_access_tokens+recurringTasks,CREATE,org-member,orgResolver,recurringTasks:create=orgResolver
-write_diary,diary,UPSERT,org-member,orgResolver,diary:write=orgResolver
 add_fix_attempt,fixAttempts+fixPatterns,UPSERT,master,masterOnly,fixPatterns:addAttempt=masterOnly
 create_fix_pattern,fixPatterns,CREATE,master,masterOnly,fixPatterns:create=masterOnly
 link_issue_to_pattern,fixPatterns,UPDATE,master,masterOnly,fixPatterns:linkIssue=masterOnly

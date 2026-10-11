@@ -6,9 +6,9 @@ import {
 	resolveActingPrincipal,
 } from "@vantageos/cloud-identity";
 import { ConvexError } from "convex/values";
-import type { Id } from "../_generated/dataModel";
+import type { Doc, Id } from "../_generated/dataModel";
 import type { MutationCtx, QueryCtx } from "../_generated/server";
-import { principalLookups } from "./actingPrincipal";
+import { principalLookups, principalLookupsOverAgents } from "./actingPrincipal";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // rosterIds — the vantage-peers ADAPTER onto @vantageos/cloud-identity's
@@ -51,6 +51,45 @@ export async function agentListedOnRoster(
 	const listed = assertPrincipalListed(resolved.principal, list, { door });
 	if (!listed.ok) return listed;
 	return { ok: true, principal: resolved.principal };
+}
+
+// A bound on the agents read for one organisation's roster. An org with more
+// agents than this has the surplus unseen, which fails closed (not listed).
+export const ROSTER_AGENT_SCAN_CAP = 500;
+
+/**
+ * The agents of organisation `orgSlug` that its stored ID roster lists, each
+ * judged by `resolveActingPrincipal` + `assertPrincipalListed` over ONE indexed
+ * read of the org's agents (no read per ID). An unlisted, inactive or foreign
+ * agent is dropped; nothing is matched by a name.
+ */
+export async function listedAgentsOfOrg(
+	ctx: Ctx,
+	orgSlug: string,
+	rosterIds: readonly string[],
+	door: string,
+): Promise<Doc<"agents">[]> {
+	if (rosterIds.length === 0) return [];
+	const agents = await ctx.db
+		.query("agents")
+		.withIndex("by_org_normalized_name", (q) => q.eq("orgSlug", orgSlug))
+		.take(ROSTER_AGENT_SCAN_CAP);
+	const listed = new Set<string>(rosterIds);
+	const lookups = principalLookupsOverAgents(ctx, agents);
+	const list = rosterOf(orgSlug, rosterIds);
+	const out: Doc<"agents">[] = [];
+	for (const agent of agents) {
+		if (!listed.has(agent._id)) continue;
+		const resolved = await resolveActingPrincipal(
+			{ kind: "agent", agentId: agent._id, verifiedOrgId: orgSlug },
+			lookups,
+			door,
+		);
+		if (!resolved.ok) continue;
+		if (!assertPrincipalListed(resolved.principal, list, { door }).ok) continue;
+		out.push(agent);
+	}
+	return out;
 }
 
 /** A roster stored under `orgId`; `ids` undefined means none is stored. */
