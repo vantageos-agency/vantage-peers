@@ -1,0 +1,4 @@
+---
+section: Security
+---
+- **Task actor IDs: indexes and backfill, no door change (module M7, step 1 of 2).** New `tasks` indexes `by_assigneeId_project_status`, `by_assigneeId_status_updatedAt`, `by_orgId_assigneeId_status`, `by_orgId_assigneeId_project_status` (additive; nothing reads them yet). New internal migration `migrations/backfill_task_actor_ids`: dry run by default, paginated (`cursor`, `pageSize`), prints the pre-state (rows with and without `assignedToId` / `createdById`), fills an ID only when the label resolves to exactly one agents row of the row's org, and lists ambiguous or unknown labels as `blocked` without guessing. It reuses the name-to-ID decision of `migrations/backfill_actor_ids` (three helpers exported). The switch that makes the task doors decide on these IDs ships separately, after this backfill has run in production. Evidence: `convex/__tests__/backfillTaskActorIds.test.ts` 5/5.
