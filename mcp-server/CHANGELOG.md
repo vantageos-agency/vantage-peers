@@ -8,6 +8,7 @@
 
 ### Changed
 
+- The consent / organisation picker uses the VantagePeers dashboard design: dark by default, light under `prefers-color-scheme`, one option card per organisation with its role (`admin`, not `(org:admin)`), the VantagePeers name above the title, Approve as the primary action. It still loads no external asset; its single inline style is hashed into the page CSP.
 - Deny on the organisation picker now answers like OAuth expects: a redirect to the client with `error=access_denied`, its `state` and `iss`, instead of a bare `403` JSON. The denial verifies the picker's consent token, so a forged one is refused.
 
 ## [3.0.0] — 2026-10-01
