@@ -2,6 +2,7 @@ import {
 	isPersonActorName,
 	PERSON_ACTOR_PREFIX,
 	personActorName,
+	resolveCallerStanding,
 	resolvePersonTenantAccess,
 } from "@vantageos/cloud-identity";
 import { ConvexError } from "convex/values";
@@ -10,6 +11,7 @@ import {
 	assertMemberMayWrite,
 	loadMemberWriterRoles,
 } from "../memberWriterRoles";
+import { personPrincipalLookups } from "./actingPrincipal";
 import type { OrgScope } from "./auth";
 import { isRowVisibleToScope } from "./auth";
 
@@ -139,7 +141,28 @@ export async function resolveHumanActor(
 		adminOnly?: boolean;
 	},
 ): Promise<string> {
-	if (scope.isMaster || scope.orgSlug === null || scope.refused === true) {
+	// WHO MAY ACT AS A HUMAN is @vantageos/cloud-identity's decision: the verified
+	// session (subject + the permanent org ID + the role claim) is resolved to a
+	// person principal of that org, and only a MEMBER or an ADMIN of it acts here.
+	// The fleet service account, an anonymous session, a session with no
+	// organisation and a session whose org ID resolves no active organisation
+	// are not members, so they are refused.
+	const standing = await resolveCallerStanding(
+		scope.orgClerkId === undefined
+			? null
+			: {
+					kind: "person",
+					personId: scope.userId,
+					verifiedOrgId: scope.orgClerkId,
+					verifiedOrgRole: scope.orgRole,
+				},
+		personPrincipalLookups(ctx, scope.userId),
+		{ adminRoles: [ADMIN_ROLE], door: opts.door },
+	);
+	if (
+		scope.orgSlug === null ||
+		(standing.standing !== "member" && standing.standing !== "admin")
+	) {
 		throw new ConvexError(
 			`RBAC_DENIED: callerOrchestrator is required — omitting it is refused, not exempted — ${JSON.stringify({ taskId: opts.taskId })}`,
 		);
