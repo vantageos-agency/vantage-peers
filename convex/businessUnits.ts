@@ -172,6 +172,11 @@ export const create = mutation({
 		dependencies: v.array(v.string()),
 		kpis: v.array(v.string()),
 		managementFee: v.optional(v.number()),
+		// The organisation the MCP transport VERIFIED for a bearer that reaches
+		// Convex as the fleet service account (convex/lib/verifiedOrg.ts), believed
+		// from the service account only. The door then acts as that org's member,
+		// never as the fleet; the bearer's writer tier is the MCP guard's.
+		verifiedOrg: v.optional(verifiedOrgValidator),
 	},
 	returns: v.id("businessUnits"),
 	handler: async (ctx, args) => {
@@ -181,9 +186,16 @@ export const create = mutation({
 		// service-account token), so the fail-closed default never breaks that
 		// live path. An anonymous caller is refused by raising.
 		const door = "businessUnits:create";
-		const scope = await withOrgScope(ctx);
-		requireResolvedCaller(scope, door, { alsoRefusePreOrg: true });
-		const fleet = await hasFleetStanding(ctx, door);
+		const transportScope = await withOrgScope(ctx);
+		requireResolvedCaller(transportScope, door, { alsoRefusePreOrg: true });
+		const scope = await resolveVerifiedOrgScope(
+			ctx,
+			transportScope,
+			args.verifiedOrg,
+			door,
+		);
+		const acting = args.verifiedOrg !== undefined;
+		const fleet = !acting && (await hasFleetStanding(ctx, door));
 		// The owner BY ID. A member names an agent of its OWN org that is on its
 		// roster by ID, with a writer role; the fleet resolves the label in the
 		// operator org (a label with no agent there leaves the column unset).
@@ -196,7 +208,7 @@ export const create = mutation({
 				door,
 			);
 		} else {
-			await requireMemberWriterRole(ctx, scope, door);
+			if (!acting) await requireMemberWriterRole(ctx, scope, door);
 			ownerId = await requireLabelOnScopeRoster(
 				ctx,
 				scope,
@@ -273,6 +285,11 @@ export const update = mutation({
 		dependencies: v.optional(v.array(v.string())),
 		kpis: v.optional(v.array(v.string())),
 		managementFee: v.optional(v.number()),
+		// The organisation the MCP transport VERIFIED for a bearer that reaches
+		// Convex as the fleet service account (convex/lib/verifiedOrg.ts), believed
+		// from the service account only. The door then acts as that org's member,
+		// never as the fleet; the bearer's writer tier is the MCP guard's.
+		verifiedOrg: v.optional(verifiedOrgValidator),
 	},
 	returns: v.null(),
 	handler: async (ctx, args) => {
@@ -285,9 +302,16 @@ export const update = mutation({
 		// decides the tenant and the owner, and the asserted label is resolved to
 		// an agent ID and judged against the row's stored owner by the package.
 		const door = "businessUnits:update";
-		const scope = await withOrgScope(ctx);
-		requireResolvedCaller(scope, door, { alsoRefusePreOrg: true });
-		const fleet = await hasFleetStanding(ctx, door);
+		const transportScope = await withOrgScope(ctx);
+		requireResolvedCaller(transportScope, door, { alsoRefusePreOrg: true });
+		const scope = await resolveVerifiedOrgScope(
+			ctx,
+			transportScope,
+			args.verifiedOrg,
+			door,
+		);
+		const acting = args.verifiedOrg !== undefined;
+		const fleet = !acting && (await hasFleetStanding(ctx, door));
 
 		const bu = await ctx.db.get(args.buId);
 		if (bu === null) {
@@ -312,8 +336,9 @@ export const update = mutation({
 
 		let newOwnerId: string | undefined;
 		if (!fleet) {
-			// A member writes only with a writer role.
-			await requireMemberWriterRole(ctx, scope, door);
+			// A member writes only with a writer role (a bearer acting for its verified
+			// org carries its writer tier in the MCP guard).
+			if (!acting) await requireMemberWriterRole(ctx, scope, door);
 			// The TARGET ROW's stored owner must be on the caller's roster by agent
 			// ID -- authorization is derived from the row, never from the caller's
 			// claim.
@@ -366,7 +391,12 @@ export const update = mutation({
 			}
 		}
 
-		const { buId, callerOrchestrator, ...fields } = args;
+		const {
+			buId,
+			callerOrchestrator,
+			verifiedOrg: _verifiedOrg,
+			...fields
+		} = args;
 
 		// Build patch object with only provided fields
 		const patch: Record<string, unknown> = { updatedAt: Date.now() };
@@ -442,7 +472,7 @@ export const get = query({
 	// measured). Narrowing inside the handler via requireId() throws a
 	// ConvexError whose payload survives redaction. Same contract as PR #1072
 	// (tasks.getById).
-	args: { buId: v.string() },
+	args: { buId: v.string(), verifiedOrg: v.optional(verifiedOrgValidator) },
 	returns: v.union(buObject, v.null()),
 	handler: async (ctx, args) => {
 		const buId = requireId(
@@ -465,11 +495,20 @@ export const get = query({
 		// (`businessUnits:list` IS subscribed; this door is not.) The MCP tool
 		// reads it one-shot.
 		const door = "businessUnits:get";
-		const scope = await withOrgScope(ctx, { refuseWithoutThrow: true });
-		requireResolvedCaller(scope, door, { alsoRefusePreOrg: true });
+		const transportScope = await withOrgScope(ctx, { refuseWithoutThrow: true });
+		requireResolvedCaller(transportScope, door, { alsoRefusePreOrg: true });
+		const scope = await resolveVerifiedOrgScope(
+			ctx,
+			transportScope,
+			args.verifiedOrg,
+			door,
+		);
 		const bu = await ctx.db.get(buId);
 		if (bu === null) return null;
-		if (await hasFleetStanding(ctx, door, { operatorHumanMayRead: true })) {
+		if (
+			args.verifiedOrg === undefined &&
+			(await hasFleetStanding(ctx, door, { operatorHumanMayRead: true }))
+		) {
 			return bu;
 		}
 		return (await memberMaySeeUnit(ctx, scope, bu, door)) ? bu : null;

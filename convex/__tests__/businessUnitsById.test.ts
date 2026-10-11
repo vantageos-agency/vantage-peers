@@ -411,3 +411,80 @@ describe("backfill_business_unit_owner_ids", () => {
 		expect(again.preState.with).toBe(2);
 	});
 });
+
+describe("a bearer acting for its verified org (the MCP transport's claim)", () => {
+  const claim = (slug: string) => ({ verifiedOrg: { orgSlug: slug } });
+
+  test("PERMISSION: the service account acting for org A creates, reads and updates A's unit as A's member, never as the fleet", async () => {
+    const t = createT();
+    const w = await seedWorld(t);
+    const id = await asService(t).mutation(api.businessUnits.create, {
+      ...fields("pi", "via-claim"),
+      ...claim(A),
+    });
+    const row = await t.run((ctx) => ctx.db.get(id));
+    expect(row?.ownerId).toBe(w.piA);
+    expect(row?.orgId).toBe(A);
+    expect(row?.clerkOrgId).toBe(testClerkOrgId(A));
+    expect(
+      (await asService(t).query(api.businessUnits.get, { buId: id, ...claim(A) }))?._id,
+    ).toBe(id);
+    await asService(t).mutation(api.businessUnits.update, {
+      buId: id,
+      callerOrchestrator: "pi",
+      description: "by the bearer",
+      ...claim(A),
+    });
+    expect((await t.run((ctx) => ctx.db.get(id)))?.description).toBe("by the bearer");
+  });
+
+  test("DENIED: acting for org B, the same bearer neither reads nor updates A's unit, nor creates for A's agent", async () => {
+    const t = createT();
+    const w = await seedWorld(t);
+    const id = await unit(t, { orgSlug: A, ownerId: w.piA });
+    expect(
+      await asService(t).query(api.businessUnits.get, { buId: id, ...claim(B) }),
+    ).toBeNull();
+    expect(
+      await refusal(
+        asService(t).mutation(api.businessUnits.update, {
+          buId: id,
+          callerOrchestrator: "pi",
+          description: "from b",
+          ...claim(B),
+        }),
+      ),
+    ).toContain("row-not-in-caller-org");
+    expect(
+      await refusal(
+        asService(t).mutation(api.businessUnits.create, {
+          ...fields("sigma", "x"),
+          ...claim(A),
+        }),
+      ),
+    ).toContain("RBAC_DENIED");
+  });
+
+  test("DENIED: a member presenting the claim is refused, not ignored; an unknown org is refused", async () => {
+    const t = createT();
+    const w = await seedWorld(t);
+    const id = await unit(t, { orgSlug: A, ownerId: w.piA });
+    expect(
+      await refusal(
+        asMember(t, A).mutation(api.businessUnits.create, {
+          ...fields("pi", "x"),
+          ...claim(A),
+        }),
+      ),
+    ).toContain("verified-org-not-trusted");
+    expect(
+      await refusal(
+        asService(t).mutation(api.businessUnits.update, {
+          buId: id,
+          callerOrchestrator: "pi",
+          ...claim("org-nope"),
+        }),
+      ),
+    ).toContain("org-not-active");
+  });
+});

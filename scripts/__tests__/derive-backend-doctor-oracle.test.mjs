@@ -309,13 +309,13 @@ describe("derive-backend-doctor-oracle coherence tier + written justification", 
 			mutate(
 				root,
 				"convex/businessUnits.ts",
-				'const door = "businessUnits:create";\n\t\tconst scope = await withOrgScope(ctx);\n\t\trequireResolvedCaller(scope, door, { alsoRefusePreOrg: true });\n\t\tconst fleet = await hasFleetStanding(ctx, door);',
-				'const door = "businessUnits:create";\n\t\tconst scope = { isMaster: true, orgSlug: null };\n\t\tconst fleet = true;',
+				'const door = "businessUnits:create";\n\t\tconst transportScope = await withOrgScope(ctx);\n\t\trequireResolvedCaller(transportScope, door, { alsoRefusePreOrg: true });\n\t\tconst scope = await resolveVerifiedOrgScope(\n\t\t\tctx,\n\t\t\ttransportScope,\n\t\t\targs.verifiedOrg,\n\t\t\tdoor,\n\t\t);\n\t\tconst acting = args.verifiedOrg !== undefined;\n\t\tconst fleet = !acting && (await hasFleetStanding(ctx, door));',
+				'const door = "businessUnits:create";\n\t\tconst scope = { isMaster: true, orgSlug: null };\n\t\tconst acting = false;\n\t\tconst fleet = true;',
 			);
 			mutate(
 				root,
 				"convex/businessUnits.ts",
-				"\t\t\tawait requireMemberWriterRole(ctx, scope, door);\n",
+				"\t\t\tif (!acting) await requireMemberWriterRole(ctx, scope, door);\n",
 				"",
 			);
 			const r = derive(root);
