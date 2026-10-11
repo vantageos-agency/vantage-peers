@@ -367,10 +367,54 @@ function escapeHtml(value: string): string {
 		.replace(/'/g, "&#39;");
 }
 
-const PICKER_STYLE =
-	"body{font-family:system-ui,sans-serif;max-width:32rem;margin:3rem auto;padding:0 1rem;line-height:1.5}" +
-	"fieldset{border:1px solid #888;padding:1rem}label{display:block;margin:.5rem 0}" +
-	"button{font:inherit;padding:.5rem 1rem;margin-right:.5rem}";
+/**
+ * The VantagePeers dashboard design tokens (vantage-peers-dashboard styles/presets/base.css at
+ * 9ca86e8a): dark first, light under `prefers-color-scheme`. Copied as values because the page
+ * loads no external asset (CSP below); a change to the dashboard preset is carried here by hand.
+ * Geist is the dashboard font; with no external fonts allowed, the system stack stands in.
+ */
+const PICKER_STYLE = [
+	":root{color-scheme:dark light;--background:oklch(0.08 0.005 265);--foreground:oklch(0.95 0.005 265);" +
+		"--card:oklch(0.11 0.005 265);--card-hover:oklch(0.14 0.005 265);--primary:oklch(0.95 0.005 265);" +
+		"--primary-foreground:oklch(0.08 0.005 265);--secondary:oklch(0.16 0.005 265);" +
+		"--muted-foreground:oklch(0.55 0.005 265);--border:oklch(0.22 0.005 265);" +
+		"--border-hover:oklch(0.30 0.005 265);--ring:oklch(0.55 0.005 265);--warning:oklch(0.75 0.18 85);" +
+		"--radius:0.75rem}",
+	"@media (prefers-color-scheme:light){:root{--background:oklch(0.98 0.003 265);" +
+		"--foreground:oklch(0.10 0.005 265);--card:oklch(1 0 0);--card-hover:oklch(0.96 0.003 265);" +
+		"--primary:oklch(0.10 0.005 265);--primary-foreground:oklch(0.98 0.003 265);" +
+		"--secondary:oklch(0.94 0.003 265);--muted-foreground:oklch(0.45 0.005 265);" +
+		"--border:oklch(0.88 0.003 265);--border-hover:oklch(0.78 0.003 265);--ring:oklch(0.45 0.005 265);" +
+		"--warning:oklch(0.65 0.18 85)}}",
+	"*{box-sizing:border-box}",
+	"body{margin:0;min-height:100vh;display:flex;align-items:center;justify-content:center;padding:1.5rem;" +
+		"background:var(--background);color:var(--foreground);" +
+		"font:15px/1.55 ui-sans-serif,system-ui,-apple-system,'Segoe UI',sans-serif}",
+	"main{width:100%;max-width:28rem;background:var(--card);border:1px solid var(--border);" +
+		"border-radius:var(--radius);padding:2rem}",
+	".brand{margin:0 0 1.25rem;font-size:.8rem;font-weight:600;letter-spacing:.06em;text-transform:uppercase;" +
+		"color:var(--muted-foreground)}",
+	"h1{margin:0 0 .5rem;font-size:1.25rem;font-weight:600;letter-spacing:-.01em}",
+	"p{margin:0 0 1rem}.muted{color:var(--muted-foreground);font-size:.875rem}",
+	"code{font-family:ui-monospace,'SF Mono',monospace;font-size:.8125rem;background:var(--secondary);" +
+		"padding:.1rem .35rem;border-radius:.375rem}",
+	".alert{border:1px solid var(--warning);border-radius:.5rem;padding:.75rem;color:var(--warning);font-size:.875rem}",
+	"fieldset{border:0;margin:0 0 1.5rem;padding:0}",
+	"legend{font-size:.8rem;font-weight:600;color:var(--muted-foreground);margin-bottom:.5rem;padding:0}",
+	".org{display:flex;align-items:center;gap:.75rem;padding:.75rem .875rem;margin-bottom:.5rem;" +
+		"border:1px solid var(--border);border-radius:.5rem;cursor:pointer}",
+	".org:hover{border-color:var(--border-hover);background:var(--card-hover)}",
+	".org:has(input:checked){border-color:var(--primary)}",
+	".org input{accent-color:var(--primary);margin:0}",
+	".name{flex:1;font-weight:500}",
+	".role{font-size:.75rem;color:var(--muted-foreground);background:var(--secondary);" +
+		"padding:.125rem .5rem;border-radius:999px}",
+	".actions{display:flex;gap:.5rem}",
+	"button{flex:1;font:inherit;font-weight:500;padding:.625rem 1rem;border-radius:.5rem;cursor:pointer;" +
+		"border:1px solid var(--border);background:transparent;color:var(--foreground)}",
+	"button.primary{background:var(--primary);color:var(--primary-foreground);border-color:var(--primary)}",
+	"button:hover{opacity:.9}button:focus-visible,.org:focus-within{outline:2px solid var(--ring);outline-offset:2px}",
+].join("");
 
 /** CSP for the picker page: no scripts, no external assets, one hashed inline style. */
 export async function pickerContentSecurityPolicy(): Promise<string> {
@@ -398,7 +442,7 @@ export function renderOrgPicker(model: OrgPickerModel): string {
 	const orgs = model.organizations
 		.map(
 			(o, i) =>
-				`<label><input type="radio" name="orgId" value="${escapeHtml(o.id)}" required${only && i === 0 ? " checked" : ""}> ${escapeHtml(o.name)} <small>(${escapeHtml(o.role)})</small></label>`,
+				`<label class="org"><input type="radio" name="orgId" value="${escapeHtml(o.id)}" required${only && i === 0 ? " checked" : ""}><span class="name">${escapeHtml(o.name)}</span><span class="role">${escapeHtml(o.role.replace(/^org:/, ""))}</span></label>`,
 		)
 		.join("\n");
 	return `<!doctype html>
@@ -407,11 +451,13 @@ export function renderOrgPicker(model: OrgPickerModel): string {
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="referrer" content="no-referrer">
+<meta name="color-scheme" content="dark light">
 <title>Connect ${escapeHtml(clientName)} to VantagePeers</title>
 <style>${PICKER_STYLE}</style>
 </head>
 <body>
 <main>
+<p class="brand">VantagePeers</p>
 <h1>Connect ${escapeHtml(clientName)}</h1>
 <p>${escapeHtml(clientName)} asks to act in VantagePeers on your behalf. Choose the organisation it may reach, then approve or deny.</p>
 <form method="post" action="/authorize/org">
@@ -421,8 +467,8 @@ export function renderOrgPicker(model: OrgPickerModel): string {
 <legend>Organisation</legend>
 ${orgs}
 </fieldset>
-<p>
-<button type="submit" name="approved" value="true">Approve</button>
+<p class="actions">
+<button class="primary" type="submit" name="approved" value="true">Approve</button>
 <button type="submit" name="approved" value="false" formnovalidate>Deny</button>
 </p>
 </form>
