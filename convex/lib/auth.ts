@@ -1245,7 +1245,7 @@ export function isOrchestratorOnOrgRoster(scope: OrgScope, name: string): boolea
  * For a caller resolved into an organisation (`scope.orgSlug !== null`), the
  * claimed sender must be an orchestrator on that org's OWN roster
  * (`scope.allowedOrchestrators`), compared after `normalizeOrchestratorId` on
- * both sides. Deliberately NOT `isInAllowList`: its "*" short-circuit would
+ * both sides. Deliberately NOT the MCP's `isInAllowList` (mcp-server/src/normalizeOrchestratorId.ts): its "*" short-circuit would
  * admit any name, and a "*" roster names nobody — it is an org's own
  * openness to READ, never licence to speak as a foreign orchestrator. The
  * true internal master (service account, `orgSlug === null`) and unresolved

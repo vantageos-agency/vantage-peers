@@ -10,7 +10,6 @@
  * "Elan", "elan", "élan" all collapse to "élan".
  *
  * Usage at write: store normalize(input).
- * Usage at compare: normalize(allowed) === normalize(presented).
  *
  * Reference: PR #667, B2 standard §6+§7.
  */
@@ -21,23 +20,4 @@
  */
 export function normalizeOrchestratorId(input: string): string {
   return input.normalize("NFC").toLowerCase().trim();
-}
-
-/**
- * Return true when `presented` matches any entry in `allowList` after
- * normalizing both sides.
- *
- * Handles: case variants, Unicode composed/decomposed forms, leading/trailing
- * whitespace. Wildcard "*" is preserved — never normalized away.
- */
-export function isInAllowList(
-  allowList: readonly string[],
-  presented: string,
-): boolean {
-  const normPresented = normalizeOrchestratorId(presented);
-  return allowList.some((entry) => {
-    // Wildcard pass-through — master scope uses "*"
-    if (entry === "*") return true;
-    return normalizeOrchestratorId(entry) === normPresented;
-  });
 }
