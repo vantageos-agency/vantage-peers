@@ -428,7 +428,7 @@ export async function withOrgScope(
 					identity as Record<string, unknown>,
 					{
 						orgLookups: orgMappingLookups(ctx),
-						principalLookups: personPrincipalLookups(ctx, identity.subject),
+						principalLookups: personPrincipalLookups(ctx),
 					},
 					{ adminRoles: ORG_ADMIN_ROLES, door: "withOrgScope" },
 				)
@@ -734,15 +734,15 @@ function refusalError(refusal: IdentityRefusal): ConvexError<string> {
  */
 export async function proveOrgAdmin(
 	ctx: QueryCtx | MutationCtx,
-	identity: UserIdentity,
+	identity: UserIdentity | null,
 	targetOrgSlug: string,
 	door: string,
 ): Promise<{ principal: ActingPrincipal; org: ResolvedOrg }> {
 	const caller = await resolveCallerFromClaims(
-		identity as Record<string, unknown>,
+		identity,
 		{
 			orgLookups: orgMappingLookups(ctx),
-			principalLookups: personPrincipalLookups(ctx, identity.subject),
+			principalLookups: personPrincipalLookups(ctx),
 		},
 		{ adminRoles: ORG_ADMIN_ROLES, door },
 	);
@@ -777,13 +777,14 @@ export async function requireOrgAdmin(
 	ctx: QueryCtx | MutationCtx,
 	targetOrgSlug: string,
 ): Promise<void> {
-	const identity = await ctx.auth.getUserIdentity();
-	if (!identity) {
-		throw new ConvexError(
-			"RBAC_DENIED: no authenticated identity presented for org-admin provisioning",
-		);
-	}
-	await proveOrgAdmin(ctx, identity, targetOrgSlug, "lib/auth:requireOrgAdmin");
+	// An absent identity is forwarded to the package, which refuses it
+	// (`credential-invalid`): no caller is resolved from nothing.
+	await proveOrgAdmin(
+		ctx,
+		await ctx.auth.getUserIdentity(),
+		targetOrgSlug,
+		"lib/auth:requireOrgAdmin",
+	);
 }
 
 /**
@@ -827,23 +828,24 @@ export async function resolveOperatorAdmin(
 	ctx: QueryCtx | MutationCtx,
 ): Promise<OperatorAdminVerdict> {
 	const door = "lib/auth:resolveOperatorAdmin";
-	const identity = await ctx.auth.getUserIdentity();
-	if (!identity) {
-		return {
-			ok: false,
-			reason: "anonymous",
-			detail: "no authenticated identity presented",
-		};
-	}
+	// An absent identity is forwarded to the package, which refuses it
+	// (`credential-invalid`); the refusal below says "anonymous".
 	const caller = await resolveCallerFromClaims(
-		identity as Record<string, unknown>,
+		await ctx.auth.getUserIdentity(),
 		{
 			orgLookups: orgMappingLookups(ctx),
-			principalLookups: personPrincipalLookups(ctx, identity.subject),
+			principalLookups: personPrincipalLookups(ctx),
 		},
 		{ adminRoles: ORG_ADMIN_ROLES, door },
 	);
 	if (!caller.ok) {
+		if (caller.refusal.reason === "credential-invalid") {
+			return {
+				ok: false,
+				reason: "anonymous",
+				detail: "no authenticated identity presented",
+			};
+		}
 		return caller.refusal.reason === "no-verified-organisation"
 			? {
 					ok: false,
@@ -873,7 +875,7 @@ export async function resolveOperatorAdmin(
 	}
 	return {
 		ok: true,
-		subject: identity.subject,
+		subject: caller.subject,
 		operatorOrgSlug: org.label,
 		operatorOrgId: org.id,
 	};
@@ -1432,10 +1434,10 @@ export function requireResolvedCaller(
  * to org-a. No resolved org: nothing.
  */
 export function isNamespaceAllowedForScope(
-	scope: Pick<OrgScope, "isMaster" | "fleetWide" | "masterSource" | "orgSlug">,
+	scope: Pick<OrgScope, "isMaster" | "orgSlug">,
 	namespace: string,
 ): boolean {
-	if (hasFleetRead(scope)) return true;
+	if (scope.isMaster) return true;
 	if (scope.orgSlug === null) return false;
 	const ownPrefix = `team/${scope.orgSlug}`;
 	return namespace === ownPrefix || namespace.startsWith(`${ownPrefix}/`);
@@ -1476,15 +1478,7 @@ export function tenantNamespaceBounds(
  * end means "refused".
  */
 export function requireTenantNamespace(
-	scope: Pick<
-		OrgScope,
-		| "isMaster"
-		| "fleetWide"
-		| "masterSource"
-		| "orgSlug"
-		| "anonymous"
-		| "refused"
-	>,
+	scope: Pick<OrgScope, "isMaster" | "orgSlug" | "anonymous" | "refused">,
 	namespace: string,
 	door: string,
 ): void {
