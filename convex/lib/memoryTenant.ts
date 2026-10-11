@@ -25,15 +25,35 @@ export function teamLabelOfNamespace(namespace: string): string | null {
 }
 
 /**
- * May this scope see / act on this memory row? The compare is by org ID only:
- * a label match never grants, and a row or scope without an ID never matches.
+ * May this scope see / act on this memory row? The compare is the package's
+ * `sameOrg`, by org ID only: a label match never grants, and a row or scope
+ * without an ID never matches. The fleet master (a verdict `withOrgScope` already
+ * reached from the verified credential, read here, not recomputed) sees every row.
  */
 export function memoryVisibleToScope(
 	scope: Pick<OrgScope, "isMaster" | "orgClerkId">,
 	row: { clerkOrgId?: string },
 ): boolean {
-	if (scope.isMaster) return true;
-	return sameOrg({ id: row.clerkOrgId }, { id: scope.orgClerkId });
+	return (
+		scope.isMaster || sameOrg({ id: row.clerkOrgId }, { id: scope.orgClerkId })
+	);
+}
+
+/**
+ * May a READ of `namespace` reach any row of this scope? A member's rows are only
+ * ever filed under a `team/<label>` namespace and are served by org ID, so a
+ * caller with no org ID, or a non-team namespace, reaches none and the read is
+ * answered without touching the table. A pre-filter for cost, never a grant: the
+ * rows themselves are still judged by `memoryVisibleToScope`.
+ */
+export function memoryNamespaceReachable(
+	scope: Pick<OrgScope, "isMaster" | "orgClerkId">,
+	namespace: string,
+): boolean {
+	return (
+		scope.isMaster ||
+		(scope.orgClerkId !== undefined && teamLabelOfNamespace(namespace) !== null)
+	);
 }
 
 /**
@@ -60,6 +80,7 @@ export async function stampOfNamespace(
  * episodes are the same table, so the same stamp): a member's row carries its
  * own permanent org ID (a member with none could never read the row back and is
  * refused); the master's row carries the ID of the org its team namespace names.
+ * The master is the one caller with a resolved scope and no org at all.
  */
 export async function memoryStampForWrite(
 	ctx: QueryCtx | MutationCtx,
@@ -67,13 +88,13 @@ export async function memoryStampForWrite(
 	namespace: string,
 	door: string,
 ): Promise<string | undefined> {
-	if (scope.isMaster) return await stampOfNamespace(ctx, namespace);
-	if (scope.orgClerkId === undefined) {
+	const memberWithoutId = !scope.isMaster && scope.orgClerkId === undefined;
+	if (memberWithoutId) {
 		throw new ConvexError(
 			`RBAC_DENIED: caller's organisation has no permanent org ID to stamp a memory with — ${JSON.stringify({ reason: "org-id-missing", door, orgSlug: scope.orgSlug })}`,
 		);
 	}
-	return scope.orgClerkId;
+	return scope.orgClerkId ?? (await stampOfNamespace(ctx, namespace));
 }
 
 /**

@@ -116,6 +116,72 @@ describe("backfill_memories_org_clerk_id", () => {
 	});
 });
 
+describe("backfill_memories_org_clerk_id — a freed slug is not its new holder's history", () => {
+	// Org A (slug acme) files unstamped rows under team/acme, then is renamed.
+	// Org B takes the freed slug. A row created BEFORE the mapping that now holds
+	// the label cannot belong to that mapping: it is undecidable (slugReused),
+	// never stamped with B's ID.
+	async function seedRenamed() {
+		const t = convexTest(schema, modules);
+		await t.run(async (ctx) => {
+			const orgA = await ctx.db.insert("client_org_mapping", {
+				clerkOrgSlug: "acme",
+				clerkOrgId: testClerkOrgId("org-a"),
+				allowedOrchestrators: [],
+				scopes: [],
+				displayName: "A",
+				isActive: true,
+				createdAt: 1,
+			});
+			await ctx.db.insert("memories", row("team/acme"));
+			await ctx.db.insert("memories", row("team/acme/notes"));
+			// A is renamed, freeing the slug ...
+			await ctx.db.patch(orgA, { clerkOrgSlug: "acme-renamed" });
+			// ... and B takes it.
+			await ctx.db.insert("client_org_mapping", {
+				clerkOrgSlug: "acme",
+				clerkOrgId: testClerkOrgId("org-b"),
+				allowedOrchestrators: [],
+				scopes: [],
+				displayName: "B",
+				isActive: true,
+				createdAt: 2,
+			});
+			// A row written after B took the slug is B's.
+			await ctx.db.insert("memories", row("team/acme/after"));
+		});
+		return t;
+	}
+
+	test("a dry run reports the pre-reuse rows as undecidable slugReused and counts only the later row toFill", async () => {
+		const t = await seedRenamed();
+		const res = await t.mutation(
+			internal.migrations.backfill_memories_org_clerk_id.run,
+			{},
+		);
+		expect(res.toFill).toBe(1);
+		expect(res.undecidable.map((u) => `${u.label}:${u.reason}`).sort()).toEqual([
+			"acme:slugReused",
+			"acme:slugReused",
+		]);
+	});
+
+	test("a real run leaves A's old rows unstamped and stamps only the row written after B took the slug", async () => {
+		const t = await seedRenamed();
+		const res = await t.mutation(
+			internal.migrations.backfill_memories_org_clerk_id.run,
+			{ dryRun: false },
+		);
+		expect(res.filled).toBe(1);
+		const rows = await t.run((ctx) => ctx.db.query("memories").collect());
+		const stamp = (ns: string) =>
+			rows.find((m) => m.namespace === ns)?.clerkOrgId;
+		expect(stamp("team/acme")).toBeUndefined();
+		expect(stamp("team/acme/notes")).toBeUndefined();
+		expect(stamp("team/acme/after")).toBe(testClerkOrgId("org-b"));
+	});
+});
+
 describe("internal writers stamp a team row", () => {
 	test("kbMutations.insertChunk stamps the org of the team namespace, none for a fleet namespace", async () => {
 		const t = await seed();

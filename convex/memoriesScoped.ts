@@ -8,7 +8,9 @@
  * carries org_A cannot read or write a memory in team/<org_B>.
  *
  * Design:
- *   - A Clerk caller with organizationId = "org_A" may only access team/org_A/*.
+ *   - A Clerk caller whose verified org ID is org_A may only access team/org_A/*
+ *     (and the legacy team/<its slug>/* alias), by the one namespace rule
+ *     isTeamNamespaceAllowed (convex/lib/teamNamespace.ts).
  *   - A caller with NO VERIFIED ORGANISATION is REFUSED. This line previously
  *     read "No-identity callers (MCP/CLI deploy key) retain master access
  *     (isMaster=true)" and that sentence WAS the production leak: an
@@ -38,6 +40,7 @@ import {
 	memoryStampForWrite,
 	memoryVisibleToScope,
 } from "./lib/memoryTenant";
+import { isTeamNamespaceAllowed, teamNamespaceOf } from "./lib/teamNamespace";
 import {
 	creatorValidator,
 	memoryTypeValidator,
@@ -94,7 +97,7 @@ import {
  */
 async function resolveCallerOrgId(
 	ctx: QueryCtx | MutationCtx,
-): Promise<{ orgId: string | null; refused: boolean; scope: OrgScope }> {
+): Promise<{ refused: boolean; scope: OrgScope }> {
 	let scope: OrgScope;
 	try {
 		scope = await withOrgScope(ctx, { refuseWithoutThrow: true });
@@ -104,33 +107,29 @@ async function resolveCallerOrgId(
 		);
 	}
 
-	// Master keeps the null sentinel assertNamespaceAllowed reads as
-	// "unrestricted" -- unchanged for the fleet's own callers.
-	if (scope.isMaster) return { orgId: null, refused: false, scope };
-
-	// No verified organisation: anonymous (no identity at all) OR signed in
-	// without an org. NEVER master. This is the branch that used to leak.
-	if (scope.orgSlug === null) return { orgId: null, refused: true, scope };
-
-	return { orgId: scope.orgSlug, refused: false, scope };
+	// Refused = no verified organisation AND not one of withOrgScope's named
+	// master grants: anonymous (no identity at all) OR signed in without an org.
+	// NEVER master. This is the branch that used to leak.
+	return { refused: !scope.isMaster && scope.orgSlug === null, scope };
 }
 
 /**
- * Asserts that the caller (identified by orgId) is allowed to access the
- * given namespace.
- *
- * Rules:
- *   - orgId === null (master) → always allowed
- *   - namespace starts with team/<orgId> → allowed
- *   - otherwise → AUTH_NAMESPACE_DENIED
+ * Asserts that the caller may access the given namespace. The decision is the
+ * ONE namespace rule of the memories table (`isTeamNamespaceAllowed`,
+ * convex/lib/teamNamespace.ts), the same predicate storeMemory, the episode
+ * doors and the OKF gate call: master any namespace; a member `team/<its org
+ * ID>` and below (and the legacy `team/<its slug>` alias); otherwise
+ * AUTH_NAMESPACE_DENIED.
  */
-function assertNamespaceAllowed(orgId: string | null, namespace: string): void {
-	if (orgId === null) return; // master: unrestricted
-	const ownPrefix = `team/${orgId}`;
-	if (namespace === ownPrefix || namespace.startsWith(`${ownPrefix}/`)) return;
+function assertNamespaceAllowed(scope: OrgScope, namespace: string): void {
+	if (isTeamNamespaceAllowed(scope, namespace)) return;
+	const allowed =
+		scope.orgClerkId === undefined
+			? "none (the organisation has no permanent org ID)"
+			: teamNamespaceOf(scope.orgClerkId);
 	throw new Error(
-		`AUTH_NAMESPACE_DENIED: caller org "${orgId}" may not access namespace "${namespace}". ` +
-			`Allowed prefix: "${ownPrefix}".`,
+		`AUTH_NAMESPACE_DENIED: caller org "${scope.orgSlug}" may not access namespace "${namespace}". ` +
+			`Allowed prefix: "${allowed}".`,
 	);
 }
 
@@ -182,7 +181,7 @@ export const storeMemoryScoped = mutation({
 					"is never promoted to master.",
 			);
 		}
-		assertNamespaceAllowed(caller.orgId, args.namespace);
+		assertNamespaceAllowed(caller.scope, args.namespace);
 
 		// AUTHOR + TENANT STAMP: shared with the other memory-table doors
 		// (convex/lib/memoryTenant.ts). The MCP-bound master names the author of the
@@ -288,7 +287,7 @@ export const listMemoriesScoped = query({
 		// and its contract is pinned by auth-namespace-deny.test.ts.
 		const caller = await resolveCallerOrgId(ctx);
 		if (caller.refused) return [];
-		assertNamespaceAllowed(caller.orgId, args.namespace);
+		assertNamespaceAllowed(caller.scope, args.namespace);
 
 		const limit = args.limit ?? 50;
 		const { namespace, type } = args;

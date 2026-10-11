@@ -21,6 +21,7 @@
 // Orchestrator: Sigma — VantagePeers | 2026-06-20
 
 import { describe, expect, test } from "vitest";
+import { testClerkOrgId } from "../../tests/fixtures/testClerkOrgId";
 import { assertCanExportNamespace as guard } from "../okfBundleNode";
 
 // The guard resolves the caller's scope through
@@ -31,7 +32,9 @@ import { assertCanExportNamespace as guard } from "../okfBundleNode";
 // poles run end-to-end in okfTenantNamespaceFromMapping.test.ts. The mock
 // mirrors that projection:
 // anonymous -> { refused, anonymous }, signed-in no-org -> { refused },
-// org member -> { orgSlug }, fleet master (service account) -> { isMaster }.
+// org member -> { orgSlug, orgClerkId }, fleet master (service account) -> { isMaster }.
+// A member's namespace is decided by its permanent org ID (the one namespace rule,
+// convex/lib/teamNamespace.ts), so the projection carries the ID the mapping holds.
 function ctxWithIdentity(
 	identity: Record<string, unknown> | null,
 	opts: { master?: boolean } = {},
@@ -53,6 +56,7 @@ function ctxWithIdentity(
 				isMaster: false,
 				fleetWide: false,
 				orgSlug,
+				...(orgSlug === null ? {} : { orgClerkId: testClerkOrgId(orgSlug) }),
 				refused: orgSlug === null,
 				anonymous: identity === null,
 			};

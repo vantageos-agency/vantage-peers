@@ -403,6 +403,7 @@ const briefingNoteFullValidator = v.object({
 
 // The lite projection of a keyword search hit (participants stay: the MCP layer's
 // independent createdBy/participants check needs them in lite mode too).
+// returns-projection: fields="lite" returns a compact search-hit projection (title/topic/author/createdAt/participants) that omits content, decisions, timestamps and the org/ID stamps; the full note is fetched via briefingNotes.get
 const briefingNoteSearchLiteValidator = v.object({
 	_id: v.id("briefingNotes"),
 	title: v.string(),

@@ -8,7 +8,7 @@ import {
   memoryAuthorOf,
   memoryStampForWrite,
   memoryVisibleToScope,
-  teamLabelOfNamespace,
+  memoryNamespaceReachable,
 } from "./lib/memoryTenant";
 import { isTeamNamespaceAllowed } from "./lib/teamNamespace";
 import type { Doc } from "./_generated/dataModel";
@@ -342,10 +342,7 @@ export const listMemories = query({
     // namespace label. A caller with no org ID owns no row, and a member's rows
     // are only ever filed under a `team/<label>` namespace, so any other
     // namespace is the typed-empty page without reading it.
-    if (
-      !scope.isMaster &&
-      (scope.orgClerkId === undefined || teamLabelOfNamespace(args.namespace) === null)
-    ) {
+    if (!memoryNamespaceReachable(scope, args.namespace)) {
       return { value: [], continueCursor: null, isDone: true };
     }
     const isLatest = args.includeSuperseded === true ? undefined : true;
@@ -483,7 +480,11 @@ export const softDeleteMemory = mutation({
     );
 
     const memory = await ctx.db.get(memoryId);
-    if (memory === null && scope.isMaster) {
+    // The fleet service account is told a missing row is missing (its contract
+    // since before M10a); every other caller gets the refusal below, identical
+    // for a missing and for a foreign row.
+    const missingForFleet = memory === null && scope.isMaster;
+    if (missingForFleet) {
       throw new Error(`Memory ${memoryId} not found`);
     }
     // A member is answered identically for a missing row and for another org's

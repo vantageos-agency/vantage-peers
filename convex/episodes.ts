@@ -255,9 +255,32 @@ const FLEET_SCAN_CAP = 16000;
 
 const isCritical = (e: Doc<"memories">) => e.episode?.severity === "critical";
 
+// The fleet's critical episodes: every namespace, newest first, stopped at
+// `limit` critical rows and capped on rows examined (FLEET_SCAN_CAP).
+async function readFleetCritical(ctx: QueryCtx, limit: number): Promise<EpisodeRow[]> {
+  const episodes: EpisodeRow[] = [];
+  let examined = 0;
+  for await (const row of ctx.db
+    .query("memories")
+    .withIndex("by_type", (q) => q.eq("type", "episode").eq("isLatest", true))
+    .order("desc")) {
+    if (++examined > FLEET_SCAN_CAP) {
+      throw new ConvexError(
+        `episodes.getCriticalInsights: SCAN_CAP_EXCEEDED — more than ${FLEET_SCAN_CAP} episodes had to be examined to find ${limit} critical ones.`,
+      );
+    }
+    if (row.episode !== undefined && isCritical(row)) {
+      episodes.push(row as EpisodeRow);
+      if (episodes.length >= limit) break;
+    }
+  }
+  return episodes;
+}
+
 async function readTenantCritical(
   ctx: QueryCtx,
-  scope: Parameters<typeof memberNamespaceRoots>[0] & Parameters<typeof memoryVisibleToScope>[0],
+  scope: Parameters<typeof memberNamespaceRoots>[0] &
+    Parameters<typeof memoryVisibleToScope>[0],
   limit: number,
 ): Promise<EpisodeRow[]> {
   const door = "episodes.getCriticalInsights";
@@ -331,27 +354,12 @@ export const getCriticalInsights = query({
     // master alone; an org member reads only the index ranges of its OWN
     // namespaces, so a foreign episode is never read at all. Both reads stop at
     // `limit` critical rows (newest first) and are capped on rows examined.
-    let episodes: EpisodeRow[];
-    if (scope.isMaster) {
-      episodes = [];
-      let examined = 0;
-      for await (const row of ctx.db
-        .query("memories")
-        .withIndex("by_type", (q) => q.eq("type", "episode").eq("isLatest", true))
-        .order("desc")) {
-        if (++examined > FLEET_SCAN_CAP) {
-          throw new ConvexError(
-            `episodes.getCriticalInsights: SCAN_CAP_EXCEEDED — more than ${FLEET_SCAN_CAP} episodes had to be examined to find ${limit} critical ones.`,
-          );
-        }
-        if (row.episode !== undefined && isCritical(row)) {
-          episodes.push(row as EpisodeRow);
-          if (episodes.length >= limit) break;
-        }
-      }
-    } else {
-      episodes = await readTenantCritical(ctx, scope, limit);
-    }
+    // The fleet's reach is the verdict withOrgScope already reached from the
+    // verified credential (read, not recomputed); a member reads its own ranges.
+    const fleetReach = scope.isMaster;
+    const episodes = fleetReach
+      ? await readFleetCritical(ctx, limit)
+      : await readTenantCritical(ctx, scope, limit);
 
     return episodes
       .slice(0, limit)

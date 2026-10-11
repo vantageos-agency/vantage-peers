@@ -23,6 +23,7 @@ import {
 	orgRefOfScope,
 } from "./authOrgMapping";
 import { personPrincipalLookups } from "./actingPrincipal";
+import { isTeamNamespaceAllowed } from "./teamNamespace";
 
 // The join onto `client_org_mapping` lives in ./authOrgMapping (storage only); it is
 // re-exported here because every door that reads a mapping imports it from auth.
@@ -1428,19 +1429,19 @@ export function requireResolvedCaller(
 /**
  * isNamespaceAllowedForScope -- THE namespace-ownership predicate (one
  * implementation; `memories.ts` re-exports it, the OKF gate delegates to it).
- * Master: any namespace. Org member: `team/<orgSlug>` exactly, or a
- * sub-namespace under `team/<orgSlug>/`. The match is on a SEGMENT boundary
- * (`team/org-a/` with the trailing slash), so `team/org-ab` is never admitted
- * to org-a. No resolved org: nothing.
+ * It IS `isTeamNamespaceAllowed` (convex/lib/teamNamespace.ts), the single rule
+ * every door that files or reads a team namespace calls: master any namespace;
+ * a member `team/<clerkOrgId>` and the sub-namespaces under it (decided by the
+ * package's `sameOrg` on the ID the namespace names), plus the legacy
+ * `team/<current slug>` alias of that same organisation while the stored
+ * namespaces are not yet re-keyed. A member whose organisation has no
+ * permanent ID owns nothing; no resolved org: nothing.
  */
 export function isNamespaceAllowedForScope(
-	scope: Pick<OrgScope, "isMaster" | "orgSlug">,
+	scope: Pick<OrgScope, "isMaster" | "orgSlug" | "orgClerkId">,
 	namespace: string,
 ): boolean {
-	if (scope.isMaster) return true;
-	if (scope.orgSlug === null) return false;
-	const ownPrefix = `team/${scope.orgSlug}`;
-	return namespace === ownPrefix || namespace.startsWith(`${ownPrefix}/`);
+	return isTeamNamespaceAllowed(scope, namespace);
 }
 
 
@@ -1480,7 +1481,7 @@ export function tenantNamespaceBounds(
 export function requireTenantNamespace(
 	scope: Pick<
 		OrgScope,
-		"isMaster" | "fleetWide" | "masterSource" | "orgSlug" | "anonymous" | "refused"
+		"isMaster" | "fleetWide" | "masterSource" | "orgSlug" | "orgClerkId" | "anonymous" | "refused"
 	>,
 	namespace: string,
 	door: string,
@@ -1601,6 +1602,13 @@ export const actionOrgScopeValidator = v.object({
 	/** The verified org slug, or null when there is no verified organisation. */
 	orgSlug: v.union(v.string(), v.null()),
 	/**
+	 * The organisation's permanent Clerk org ID, when the resolved mapping row
+	 * carries one. Namespaces (`team/<clerkOrgId>`) are keyed by it; the slug is
+	 * display text. Absent for master, for a refused caller, and while the
+	 * mapping's ID is not filled in.
+	 */
+	orgClerkId: v.optional(v.string()),
+	/**
 	 * True when the caller has NO verified organisation — anonymous (no
 	 * credential at all) or signed in without an org. The action MUST refuse when
 	 * this is true: typed-empty for a read, throw for a write.
@@ -1635,6 +1643,7 @@ export interface ActionOrgScope {
 	isMaster: boolean;
 	fleetWide: boolean;
 	orgSlug: string | null;
+	orgClerkId?: string;
 	refused: boolean;
 	anonymous: boolean;
 	masterSource?: MasterSource;
@@ -1682,6 +1691,9 @@ export const resolveOrgScopeForAction = internalQuery({
 			isMaster: false,
 			fleetWide: false,
 			orgSlug: scope.orgSlug,
+			...(scope.orgClerkId !== undefined
+				? { orgClerkId: scope.orgClerkId }
+				: {}),
 			refused: false,
 			anonymous: false,
 		};

@@ -8,10 +8,20 @@
 // mapping rows read once per page); no request path resolves an org from a label.
 //
 // NEVER GUESSES. A `team/<label>` row is filled only when its label names exactly
-// ONE mapping row that carries a clerkOrgId. Otherwise it is left unfilled and
-// LISTED BY ID with its reason (the package's absence reason, or
-// ambiguousMapping). A row in any other namespace is a fleet row: counted
-// `fleetRow` and left unstamped.
+// ONE mapping row that carries a clerkOrgId AND that row already existed when the
+// memory was written. Otherwise it is left unfilled and LISTED BY ID with its
+// reason (the package's absence reason, ambiguousMapping, or slugReused). A row in
+// any other namespace is a fleet row: counted `fleetRow` and left unstamped.
+//
+// A FREED SLUG IS NOT ITS NEW HOLDER'S HISTORY. A label names the organisation
+// that holds it NOW; a renamed organisation's older rows still carry the label it
+// had, and the org that took the freed slug must not inherit them. A row created
+// BEFORE the mapping row that now holds its label cannot have been written by that
+// organisation (`row._creationTime < holder._creationTime`): it is `slugReused`,
+// reported with its id and never stamped. The check cannot see an EXISTING
+// organisation renamed into a label (its mapping row is older than the rows): that
+// case is not decidable from the stored data, and stays an operator review of the
+// dry run before a real run.
 //
 // SHAPE. Caller-walked, cursor-paginated, one page per execution. DRY RUN BY
 // DEFAULT. Idempotent: a row that already has an ID is counted `alreadyFilled`.
@@ -22,14 +32,21 @@
 //
 // Internal: reachable only with the deployment admin credential.
 
-import { resolveOrgIdForLabelBackfillOnly } from "@vantageos/cloud-identity";
+import {
+	type OrgMappingLookups,
+	resolveOrgIdForLabelBackfillOnly,
+} from "@vantageos/cloud-identity";
 import { ConvexError, v } from "convex/values";
+import type { Doc } from "../_generated/dataModel";
 import { internalMutation } from "../_generated/server";
+import {
+	orgMappingRowsForLabel,
+	orgMappingLookups,
+} from "../lib/authOrgMapping";
 import { teamLabelOfNamespace } from "../lib/memoryTenant";
 
 const DEFAULT_PAGE_SIZE = 100;
 const MAX_PAGE_SIZE = 500;
-const MAPPING_READ_CAP = 1000;
 
 class AmbiguousMapping extends Error {}
 
@@ -64,28 +81,22 @@ export const run = internalMutation({
 				`backfill_memories_org_clerk_id: pageSize = ${pageSize} is out of expected range 1-${MAX_PAGE_SIZE}.`,
 			);
 		}
-		const mappingRows = await ctx.db
-			.query("client_org_mapping")
-			.take(MAPPING_READ_CAP + 1);
-		if (mappingRows.length > MAPPING_READ_CAP) {
-			throw new ConvexError(
-				`backfill_memories_org_clerk_id: client_org_mapping holds more than ${MAPPING_READ_CAP} rows; refusing to decide from a truncated read.`,
-			);
-		}
-		const lookups = {
-			orgByLabel: (label: string) => {
-				const rows = mappingRows.filter((m) => m.clerkOrgSlug === label);
-				if (rows.length > 1) throw new AmbiguousMapping(label);
-				const m = rows[0];
-				if (m === undefined) return null;
-				return {
-					id: m.clerkOrgId,
-					label: m.clerkOrgSlug,
-					active: m.isActive,
-					allowedOrchestrators: m.allowedOrchestrators,
-					scopes: m.scopes,
-					orgKind: m.orgKind,
-				};
+		// The mapping rows holding each label, read once per label and run page
+		// (the repo adapter; two rows for one label make it ambiguous).
+		const holders = new Map<string, Promise<Doc<"client_org_mapping">[]>>();
+		const holdersOf = (label: string) => {
+			let rows = holders.get(label);
+			if (rows === undefined) {
+				rows = orgMappingRowsForLabel(ctx, label);
+				holders.set(label, rows);
+			}
+			return rows;
+		};
+		const adapters = orgMappingLookups(ctx);
+		const lookups: OrgMappingLookups = {
+			orgByLabel: async (label) => {
+				if ((await holdersOf(label)).length > 1) throw new AmbiguousMapping(label);
+				return await adapters.orgByLabel(label);
 			},
 		};
 
@@ -119,6 +130,13 @@ export const run = internalMutation({
 							? "ambiguousMapping"
 							: resolved.absence.reason,
 				});
+				continue;
+			}
+			// The label names its CURRENT holder; a row older than that holder's
+			// mapping was written under the label before the holder had it.
+			const holder = (await holdersOf(label))[0];
+			if (holder !== undefined && row._creationTime < holder._creationTime) {
+				undecidable.push({ id: row._id, label, reason: "slugReused" });
 				continue;
 			}
 			toFill++;
