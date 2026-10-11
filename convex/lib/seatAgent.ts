@@ -3,6 +3,7 @@ import type { Doc } from "../_generated/dataModel";
 import type { MutationCtx, QueryCtx } from "../_generated/server";
 import { normalizeOrchestratorId } from "../_helpers/normalizeOrchestratorId";
 import { findAgentByName } from "./agentIdentity";
+import { clerkOrgIdForSlug } from "./orgClerkId";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // seatAgent — which `agents` ROW a one-agent seat token acts as.
@@ -43,17 +44,21 @@ export interface SeatAgentInput {
 type OrgStamp = { id: string | undefined; label: string | undefined };
 
 /**
- * Do two stamps name the same organisation? By ID through
- * @vantageos/cloud-identity `sameOrg` whenever BOTH sides carry one. A side that
- * carries no ID yet (a row not yet reached by migrations/backfill_org_clerk_id,
- * expand phase) is compared by its label, the one behaviour these rows had before
- * M3; that fallback is removed with the contract step of the ID backfill.
+ * Do two stamps name the same organisation? Always decided by org ID through
+ * @vantageos/cloud-identity `sameOrg`. A side that carries no ID yet (a row not
+ * yet reached by migrations/backfill_org_clerk_id, expand phase) is given the ID
+ * its mapping row stores for its label, read by the repo adapter; a side whose
+ * mapping holds no ID either names no organisation and never matches. No label
+ * is compared here.
  */
-function sameOrgStamp(a: OrgStamp, b: OrgStamp): boolean {
-	if (a.id !== undefined && b.id !== undefined) {
-		return sameOrg({ id: a.id }, { id: b.id });
-	}
-	return a.label !== undefined && a.label === b.label;
+async function sameOrgStamp(
+	ctx: QueryCtx | MutationCtx,
+	a: OrgStamp,
+	b: OrgStamp,
+): Promise<boolean> {
+	const idOf = async (s: OrgStamp): Promise<string | undefined> =>
+		s.id ?? (await clerkOrgIdForSlug(ctx, s.label));
+	return sameOrg({ id: await idOf(a) }, { id: await idOf(b) });
 }
 
 export async function resolveSeatAgent(
@@ -78,7 +83,7 @@ export async function resolveSeatAgent(
 		id: profile.clerkOrgId,
 		label: profile.clerkOrgSlug,
 	};
-	if (!sameOrgStamp(profileOrg, { id: token.clerkOrgId, label: org })) {
+	if (!(await sameOrgStamp(ctx, profileOrg, { id: token.clerkOrgId, label: org }))) {
 		return null;
 	}
 	if (profile.fromAllowList.length !== 1) return null;
@@ -87,7 +92,7 @@ export async function resolveSeatAgent(
 	if (profile.agentId !== undefined) {
 		const byId = await ctx.db.get(profile.agentId);
 		if (!byId || !byId.isActive) return null;
-		if (!sameOrgStamp({ id: byId.clerkOrgId, label: byId.orgSlug }, profileOrg)) {
+		if (!(await sameOrgStamp(ctx, { id: byId.clerkOrgId, label: byId.orgSlug }, profileOrg))) {
 			return null;
 		}
 		return byId;
@@ -134,10 +139,11 @@ export async function liveSeatAgent(
 		if (
 			agent &&
 			agent.isActive &&
-			sameOrgStamp(
+			(await sameOrgStamp(
+				ctx,
 				{ id: agent.clerkOrgId, label: agent.orgSlug },
 				{ id: row.clerkOrgId, label: row.clerkOrgSlug },
-			)
+			))
 		) {
 			return agent;
 		}

@@ -6,7 +6,7 @@ import { creatorValidator, severityValidator } from "./schema";
 import { verifiedActorValidator, withOrgScope } from "./lib/auth";
 import type { OrgScope } from "./lib/auth";
 import { requireFleetAgentActor } from "./lib/fleetActors";
-import { hasFleetStanding, requireFleetDoor } from "./lib/fleetStanding";
+import { requireFleetDoor, scopeWithFleetStanding } from "./lib/fleetStanding";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // requireFleetMaster — fixPatterns.ts's own single authority gate.
@@ -24,8 +24,11 @@ async function requireFleetMaster(
 	ctx: Parameters<typeof withOrgScope>[0],
 	action: string,
 ): Promise<OrgScope> {
-	const scope = await withOrgScope(ctx);
-	if (!(await hasFleetStanding(ctx, "fixPatterns:write"))) {
+	const transport = await withOrgScope(ctx);
+	// The master bit is the package's standing (convex/lib/fleetStanding.ts),
+	// carried on the scope handed back: a refusal on the verified scope.
+	const scope = await scopeWithFleetStanding(ctx, transport, "fixPatterns:write");
+	if (!scope.isMaster) {
 		throw new ConvexError(
 			`RBAC_DENIED: caller may not ${action} — fixPatterns are fleet-internal, master-only — ${JSON.stringify({ orgSlug: scope.orgSlug })}`,
 		);
@@ -108,6 +111,12 @@ export const addAttempt = mutation({
 			ctx,
 			`add an attempt to fix pattern ${args.patternId}`,
 		);
+		// requireFleetMaster above admits the fleet service account only; an
+		// ordinary or non-master caller never reaches this line. A seat of a client
+		// organisation always reaches Convex through that account WITH its
+		// verified agent (the MCP wrapper forwards it on this door), and is refused
+		// below unless it belongs to the operator organisation. The fleet's own
+		// master bearer carries no agent and keeps the access it had.
 		if (args.verifiedActor !== undefined) {
 			await requireFleetAgentActor(
 				ctx,

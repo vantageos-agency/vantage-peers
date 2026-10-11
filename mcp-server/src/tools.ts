@@ -44,11 +44,7 @@ import { registerValidateOkfBundle } from "./tools/validateOkfBundle.js";
 import type { VpToolResult } from "./ui-resources/schemas.js";
 import { wrapToolResult } from "./ui-resources/stream-marker.js";
 import { validateTaskPayload } from "./validate-task-payload.js";
-import {
-	scheduleOwnershipRefusal,
-	verifiedActorOf,
-	withVerifiedActor,
-} from "./verifiedActor.js";
+import { verifiedActorOf, withVerifiedActor } from "./verifiedActor.js";
 import { resolveWhoamiIdentity } from "./whoamiIdentity.js";
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -7663,17 +7659,9 @@ export function registerTools(
 					);
 				}
 
-				// An acting agent owns the row by ID or does not touch it: the name
-				// allowlist above admits a same-named agent of another organisation.
-				const actingAgent = verifiedActorOf(oauthCtx);
-				if (actingAgent !== undefined) {
-					const refusal = scheduleOwnershipRefusal(
-						existing as Record<string, string | undefined>,
-						actingAgent,
-						"update_recurring_task",
-					);
-					if (refusal) return mcpError(refusal);
-				}
+				// Ownership is decided by the Convex door on the forwarded agent ID
+				// (recurringTasks:update, verifiedActor); the name allowlist above only
+				// narrows what this tool dispatches.
 
 				const result = await convex.mutation("recurringTasks:update" as any, {
 					recurringTaskId: recurringTaskId as any,

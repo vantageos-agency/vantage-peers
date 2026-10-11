@@ -368,7 +368,7 @@ describe("the recurring doors are registered as verifiedActor doors", () => {
 	});
 });
 
-describe("update_recurring_task admits a row by the agent's ID, never by name", () => {
+describe("update_recurring_task decides no ownership: the Convex door does, on the forwarded agent ID", () => {
 	const seatCtx = (agentId: string, orgId: string): OAuthContext => ({
 		clientId: `client-clio-${orgId}`,
 		userId: "user-x",
@@ -391,23 +391,17 @@ describe("update_recurring_task admits a row by the agent's ID, never by name", 
 	const wrote = (calls: Call[]) =>
 		calls.some((c) => c.name === "recurringTasks:update");
 
-	it("the same-name clio of ANOTHER org is refused, nothing dispatched", async () => {
+	it("the same-name clio of ANOTHER org forwards ITS OWN agent ID, so the door can refuse it", async () => {
 		storedRow = { createdById: CLIO_ID, orgId: "iris-rh" };
 		const r = await update(seatCtx(CLIO_OTHER_ORG_ID, "other-org"));
-		expect(r.refused).toBe(true);
-		expect(r.text).toContain("Forbidden");
-		expect(wrote(r.calls)).toBe(false);
+		const call = r.calls.find((c) => c.name === "recurringTasks:update");
+		expect(call?.args.verifiedActor).toEqual({
+			agentId: CLIO_OTHER_ORG_ID,
+			orgSlug: "other-org",
+		});
 	});
 
-	it("...also on a fleet-owned row (no org stamp): the ID is the other org's", async () => {
-		storedRow = { createdById: CLIO_ID };
-		const r = await update(seatCtx(CLIO_OTHER_ORG_ID, "other-org"));
-		expect(r.refused).toBe(true);
-		expect(r.text).toContain("not-creator-or-assignee-by-id");
-		expect(wrote(r.calls)).toBe(false);
-	});
-
-	it("the owner agent is served", async () => {
+	it("the owner agent forwards its ID and org", async () => {
 		storedRow = { createdById: CLIO_ID, orgId: "iris-rh" };
 		const r = await update(seatCtx(CLIO_ID, "iris-rh"));
 		expect(r.refused).toBe(false);
@@ -416,22 +410,6 @@ describe("update_recurring_task admits a row by the agent's ID, never by name", 
 			agentId: CLIO_ID,
 			orgSlug: "iris-rh",
 		});
-	});
-
-	it("a row stamped for another org is refused even when it names the caller's ID", async () => {
-		storedRow = { createdById: CLIO_ID, orgId: "other-org" };
-		const r = await update(seatCtx(CLIO_ID, "iris-rh"));
-		expect(r.refused).toBe(true);
-		expect(r.text).toContain("schedule-other-org");
-		expect(wrote(r.calls)).toBe(false);
-	});
-
-	it("a row without actor IDs is refused to an agent with a named reason", async () => {
-		const r = await update(seatCtx(CLIO_ID, "iris-rh"));
-		expect(r.refused).toBe(true);
-		expect(r.text).toContain("schedule-without-actor-ids");
-		expect(r.text).toContain("backfill_recurring_task_actor_ids");
-		expect(wrote(r.calls)).toBe(false);
 	});
 
 	it("the fleet master with no forwarded agent keeps its access", async () => {

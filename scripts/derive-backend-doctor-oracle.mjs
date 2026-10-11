@@ -426,13 +426,23 @@ const GUARDS = [
 	"withOrgScope",
 	"requireScope",
 	"requireResolvedCaller",
+	// requireFleetDoor (convex/lib/fleetStanding.ts) is requireResolvedCaller over
+	// the package's fleet standing: the one refusal helper, said for fleet-only doors.
+	"requireFleetDoor",
 	"requireAuthenticatedCaller",
 	"filterByOrgScope",
 	"resolveOrgContext",
 	"getUserIdentity",
 ];
+// Caller-resolution libraries: convex/lib/auth*.ts and the identity plumbing the
+// fleet-only doors ask (fleetStanding / fleetActors: the package's standing and
+// the acting agent by ID; actingPrincipal / serviceAccount: the stored chain
+// those read). Their reads of agents / mapping rows are the caller's
+// resolution, not the tool's data, exactly as withOrgScope's are.
 const isAuthLib = (file) =>
-	/[\\/]convex[\\/]lib[\\/]auth[^\\/]*\.ts$/.test(file);
+	/[\\/]convex[\\/]lib[\\/](auth[^\\/]*|fleetStanding|fleetActors|actingPrincipal|serviceAccount)\.ts$/.test(
+		file,
+	);
 
 /**
  * Collect every function body reachable from `start` (in `file`): local and
@@ -983,6 +993,7 @@ function convexTierOf(text, guards) {
  */
 const REFUSING_GUARDS = [
 	"requireResolvedCaller",
+	"requireFleetDoor",
 	"requireScope",
 	"requireAuthenticatedCaller",
 ];

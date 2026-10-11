@@ -12,8 +12,8 @@
  *                the profile's own org is NOT substituted for it).
  *   CODES        an authorization code is stored as a digest, consumed once, and an
  *                expired or unknown one is refused (null).
- *   REFRESH      a refresh token is consumed on use (rotation): the second presentation
- *                is refused; expired / unknown / revoked answer the same null.
+ *   REFRESH      a refresh token is rotated on use and a replay revokes its family;
+ *                see oauthRefreshRotation.test.ts.
  *   BEARERS      a user bearer minted from a Clerk JWT is revocable by its user, and a
  *                user holds at most one live bearer.
  *   AUDIT        the master secret leaves no digest of itself in oauth_audit_log.
@@ -303,70 +303,6 @@ describe("authorization codes are stored hashed and spent once", () => {
 				code: "x",
 			}),
 		).rejects.toThrow(/RBAC_DENIED/);
-	});
-});
-
-describe("refresh tokens are rotated", () => {
-	const seedRefresh = (t: T, raw: string, expiresAt: number, revokedAt?: number) =>
-		t.run((ctx) =>
-			ctx.db.insert("oauth_refresh_tokens", {
-				tokenHash: sha(raw),
-				clientId: "c1",
-				userId: "seat",
-				scopeProfile: "clio-org-a",
-				expiresAt,
-				createdAt: Date.now(),
-				...(revokedAt !== undefined ? { revokedAt } : {}),
-			}),
-		);
-
-	test("PRESENT: consume returns the record once; the replay is null and a plain lookup agrees", async () => {
-		const t = createT();
-		const svc = asService(t);
-		await seedRefresh(t, "r1", Date.now() + 60_000);
-		const first = await svc.mutation(api.oauth.consumeRefreshToken, {
-			tokenHash: sha("r1"),
-		});
-		expect(first).toMatchObject({ clientId: "c1", scopeProfile: "clio-org-a" });
-		expect(
-			await svc.mutation(api.oauth.consumeRefreshToken, { tokenHash: sha("r1") }),
-		).toBeNull();
-		expect(
-			await svc.query(api.oauth.getRefreshTokenByHash, { tokenHash: sha("r1") }),
-		).toBeNull();
-	});
-
-	test("DENY: expired, revoked, unknown and garbled hashes all answer null", async () => {
-		const t = createT();
-		const svc = asService(t);
-		await seedRefresh(t, "r-exp", Date.now() - 1);
-		await seedRefresh(t, "r-rev", Date.now() + 60_000, Date.now() - 5);
-		for (const h of [sha("r-exp"), sha("r-rev"), sha("nobody"), "not-a-hash"]) {
-			expect(
-				await svc.mutation(api.oauth.consumeRefreshToken, { tokenHash: h }),
-			).toBeNull();
-		}
-	});
-
-	test("DENY: anonymous and ordinary members are refused and the token is not spent", async () => {
-		const t = createT();
-		await seedOrg(t, "org-a");
-		await seedRefresh(t, "r2", Date.now() + 60_000);
-		await expect(
-			t.mutation(api.oauth.consumeRefreshToken, { tokenHash: sha("r2") }),
-		).rejects.toThrow(/RBAC_DENIED/);
-		await expect(
-			asMemberOf(t, "org-a").mutation(api.oauth.consumeRefreshToken, {
-				tokenHash: sha("r2"),
-			}),
-		).rejects.toThrow(/RBAC_DENIED/);
-		const row = await t.run((ctx) =>
-			ctx.db
-				.query("oauth_refresh_tokens")
-				.withIndex("by_tokenHash", (q) => q.eq("tokenHash", sha("r2")))
-				.unique(),
-		);
-		expect(row?.revokedAt).toBeUndefined();
 	});
 });
 

@@ -19,6 +19,7 @@
 import { sha256Hex, validateMasterBearer } from "@vantageos/cloud-identity";
 import { ConvexError, v } from "convex/values";
 import { internal } from "./_generated/api";
+import type { Id } from "./_generated/dataModel";
 import type { MutationCtx, QueryCtx } from "./_generated/server";
 import {
 	internalMutation,
@@ -2249,6 +2250,82 @@ export const purgeExpiredPersonCodes = internalMutation({
 // Gated by identity — only the HTTP server may issue access tokens. Without
 // this gate an attacker with Convex HTTP access could insert a row granting
 // master-scope access and present the raw bearer to the MCP server.
+type MintAccessTokenArgs = {
+	tokenHash: string;
+	clientId: string;
+	userId: string;
+	scopes: string[];
+	scopeProfile: string;
+	fromAllowList: string[];
+	namespaceReadPrefixes: string[];
+	namespaceWritePrefixes: string[];
+	expiresAt: number;
+	refreshTokenHash?: string;
+	clerkOrgSlug?: string;
+	codeHash?: string;
+	orgRole?: string;
+	principal?: "person";
+	familyId?: string;
+};
+
+/**
+ * The one place an access token row is written. createAccessToken (mint) and
+ * rotateRefreshToken (refresh) both come through here, so the seat agent is
+ * resolved BY ID in the profile's own org on every path.
+ */
+async function mintAccessToken(
+	ctx: MutationCtx,
+	a: MintAccessTokenArgs,
+): Promise<Id<"oauth_access_tokens">> {
+	// Seat identity by ID, resolved HERE (mint and refresh both come through
+	// this door) from the profile in its own org; never from an argument.
+	const tokenClerkOrgId = await clerkOrgIdForSlug(ctx, a.clerkOrgSlug);
+	const seatAgent = await resolveSeatAgent(ctx, {
+		scopeProfile: a.scopeProfile,
+		fromAllowList: a.fromAllowList,
+		clerkOrgSlug: a.clerkOrgSlug,
+		...(tokenClerkOrgId !== undefined ? { clerkOrgId: tokenClerkOrgId } : {}),
+		principal: a.principal,
+	});
+	// A legacy seat profile (no agentId yet) that resolved its one agent inside its
+	// own org is bound to that agent's ID now, so the next mint and refresh follow
+	// the ID and the label fallback never runs again for this profile.
+	if (seatAgent) {
+		const seatProfile = await ctx.db
+			.query("oauth_scope_profiles")
+			.withIndex("by_profileId", (q) => q.eq("profileId", a.scopeProfile))
+			.unique();
+		if (seatProfile && seatProfile.agentId === undefined) {
+			await ctx.db.patch(seatProfile._id, { agentId: seatAgent._id });
+		}
+	}
+	return await ctx.db.insert("oauth_access_tokens", {
+		tokenHash: a.tokenHash,
+		clientId: a.clientId,
+		userId: a.userId,
+		scopes: a.scopes,
+		scopeProfile: a.scopeProfile,
+		fromAllowList: a.fromAllowList,
+		namespaceReadPrefixes: a.namespaceReadPrefixes,
+		namespaceWritePrefixes: a.namespaceWritePrefixes,
+		expiresAt: a.expiresAt,
+		refreshTokenHash: a.refreshTokenHash,
+		createdAt: Date.now(),
+		...(a.clerkOrgSlug !== undefined
+			? { clerkOrgSlug: a.clerkOrgSlug }
+			: {}),
+		// Permanent Clerk org id of the same org (Pi ruling (d)), from its mapping.
+		...(tokenClerkOrgId !== undefined ? { clerkOrgId: tokenClerkOrgId } : {}),
+		...(a.codeHash !== undefined ? { codeHash: a.codeHash } : {}),
+		...(a.orgRole !== undefined ? { orgRole: a.orgRole } : {}),
+		...(a.principal !== undefined ? { principal: a.principal } : {}),
+		...(a.familyId !== undefined ? { familyId: a.familyId } : {}),
+		...(seatAgent
+			? { agentId: seatAgent._id, agentOrgId: seatAgent.orgSlug }
+			: {}),
+	});
+}
+
 export const createAccessToken = mutation({
 	args: {
 		tokenHash: v.string(),
@@ -2270,52 +2347,7 @@ export const createAccessToken = mutation({
 	handler: async (ctx, args) => {
 		// write-contract: MCP-transport-only — issued via mcp-server client.mutation("oauth:createAccessToken", …) at mcp-server/server-http.ts:889, mcp-server/server-http.ts:1032, mcp-server/server-http.ts:1520 (imperative), 0 hits in vantage-peers-dashboard {app,components,hooks,lib,contexts,providers} (measured 2026-10-01 at origin/main e2dc58f and 0466fac); never a subscribing pre-org client shell. The no-org throw is a refusal at an imperative MCP call, never at a render.
 		await requireServiceAccount(ctx, "oauth:createAccessToken");
-		// Seat identity by ID, resolved HERE (mint and refresh both come through
-		// this door) from the profile in its own org; never from an argument.
-		const tokenClerkOrgId = await clerkOrgIdForSlug(ctx, args.clerkOrgSlug);
-		const seatAgent = await resolveSeatAgent(ctx, {
-			scopeProfile: args.scopeProfile,
-			fromAllowList: args.fromAllowList,
-			clerkOrgSlug: args.clerkOrgSlug,
-			...(tokenClerkOrgId !== undefined ? { clerkOrgId: tokenClerkOrgId } : {}),
-			principal: args.principal,
-		});
-		// A legacy seat profile (no agentId yet) that resolved its one agent inside its
-		// own org is bound to that agent's ID now, so the next mint and refresh follow
-		// the ID and the label fallback never runs again for this profile.
-		if (seatAgent) {
-			const seatProfile = await ctx.db
-				.query("oauth_scope_profiles")
-				.withIndex("by_profileId", (q) => q.eq("profileId", args.scopeProfile))
-				.unique();
-			if (seatProfile && seatProfile.agentId === undefined) {
-				await ctx.db.patch(seatProfile._id, { agentId: seatAgent._id });
-			}
-		}
-		return await ctx.db.insert("oauth_access_tokens", {
-			tokenHash: args.tokenHash,
-			clientId: args.clientId,
-			userId: args.userId,
-			scopes: args.scopes,
-			scopeProfile: args.scopeProfile,
-			fromAllowList: args.fromAllowList,
-			namespaceReadPrefixes: args.namespaceReadPrefixes,
-			namespaceWritePrefixes: args.namespaceWritePrefixes,
-			expiresAt: args.expiresAt,
-			refreshTokenHash: args.refreshTokenHash,
-			createdAt: Date.now(),
-			...(args.clerkOrgSlug !== undefined
-				? { clerkOrgSlug: args.clerkOrgSlug }
-				: {}),
-			// Permanent Clerk org id of the same org (Pi ruling (d)), from its mapping.
-			...(tokenClerkOrgId !== undefined ? { clerkOrgId: tokenClerkOrgId } : {}),
-			...(args.codeHash !== undefined ? { codeHash: args.codeHash } : {}),
-			...(args.orgRole !== undefined ? { orgRole: args.orgRole } : {}),
-			...(args.principal !== undefined ? { principal: args.principal } : {}),
-			...(seatAgent
-				? { agentId: seatAgent._id, agentOrgId: seatAgent.orgSlug }
-				: {}),
-		});
+		return await mintAccessToken(ctx, args);
 	},
 });
 
@@ -2468,14 +2500,14 @@ export const getRefreshTokenByHash = query({
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
-// consumeRefreshToken - service account only. The refresh grant's one door
-// (module M3): the presented token is looked up AND spent in the same
-// transaction, so of two concurrent presentations exactly one gets the record
-// and the other gets null. A refresh token that was already used, is expired,
-// revoked, unknown or garbled answers the same null. The caller issues the
-// replacement token pair only after this returns a record.
+// getRefreshTokenForGrant - service account only. The refresh grant's first
+// read: which client must authenticate before anything is spent. Unlike
+// getRefreshTokenByHash it also answers for an already-SPENT token (`spent:
+// true`), so the grant can authenticate the presenting client and then let
+// rotateRefreshToken treat the presentation as a replay. An unknown token, or an
+// unspent one past its expiry, answers null.
 // ─────────────────────────────────────────────────────────────────────────────
-export const consumeRefreshToken = mutation({
+export const getRefreshTokenForGrant = query({
 	args: { tokenHash: v.string() },
 	returns: v.union(
 		v.object({
@@ -2483,26 +2515,169 @@ export const consumeRefreshToken = mutation({
 			userId: v.string(),
 			scopeProfile: v.string(),
 			expiresAt: v.number(),
+			spent: v.boolean(),
 		}),
 		v.null(),
 	),
 	handler: async (ctx, args) => {
-		// write-contract: MCP-transport-only — issued via mcp-server client.mutation("oauth:consumeRefreshToken", …) at mcp-server/server-http.ts (the /token refresh_token grant, imperative); never from a subscribing pre-org client shell. The no-org throw is a refusal at an imperative MCP call, never at a render.
-		await requireServiceAccount(ctx, "oauth:consumeRefreshToken");
+		// isolation-contract: NO reactive subscriber — enumerated with
+		// `grep -rnE "api\.oauth\." app components hooks lib contexts providers` in vantage-peers-dashboard -> 0 hits. The refusal stays a RAISE: `requireServiceAccount` throws for any caller other than the fleet service account (the only reader is the MCP server's imperative /token call, never a useQuery).
+		await requireServiceAccount(ctx, "oauth:getRefreshTokenForGrant");
 		const row = await ctx.db
 			.query("oauth_refresh_tokens")
 			.withIndex("by_tokenHash", (q) => q.eq("tokenHash", args.tokenHash))
 			.unique();
 		if (!row) return null;
-		if (row.revokedAt !== undefined) return null;
-		if (row.expiresAt < Date.now()) return null;
-		await ctx.db.patch(row._id, { revokedAt: Date.now() });
+		const spent = row.revokedAt !== undefined;
+		if (!spent && row.expiresAt < Date.now()) return null;
 		return {
 			clientId: row.clientId,
 			userId: row.userId,
 			scopeProfile: row.scopeProfile,
 			expiresAt: row.expiresAt,
+			spent,
 		};
+	},
+});
+
+/** Tokens revoked per table, per transaction, when a refresh family is revoked. */
+export const FAMILY_REVOKE_BATCH = 500;
+
+/**
+ * Revokes up to FAMILY_REVOKE_BATCH LIVE refresh tokens and as many live access
+ * tokens of one family, reading each table through `by_familyId`
+ * (familyId, revokedAt = undefined) so a batch only ever sees rows still to do.
+ * Returns whether either table held more than one batch.
+ */
+async function revokeFamilyBatch(
+	ctx: MutationCtx,
+	familyId: string,
+): Promise<boolean> {
+	const now = Date.now();
+	const refresh = await ctx.db
+		.query("oauth_refresh_tokens")
+		.withIndex("by_familyId", (q) =>
+			q.eq("familyId", familyId).eq("revokedAt", undefined),
+		)
+		.take(FAMILY_REVOKE_BATCH + 1);
+	for (const row of refresh.slice(0, FAMILY_REVOKE_BATCH)) {
+		await ctx.db.patch(row._id, { revokedAt: now });
+	}
+	const access = await ctx.db
+		.query("oauth_access_tokens")
+		.withIndex("by_familyId", (q) =>
+			q.eq("familyId", familyId).eq("revokedAt", undefined),
+		)
+		.take(FAMILY_REVOKE_BATCH + 1);
+	for (const row of access.slice(0, FAMILY_REVOKE_BATCH)) {
+		await ctx.db.patch(row._id, { revokedAt: now });
+	}
+	return (
+		refresh.length > FAMILY_REVOKE_BATCH || access.length > FAMILY_REVOKE_BATCH
+	);
+}
+
+/** Continuation of a family revoke too large for one transaction. Internal only. */
+export const continueFamilyRevoke = internalMutation({
+	args: { familyId: v.string() },
+	returns: v.null(),
+	handler: async (ctx, args) => {
+		if (await revokeFamilyBatch(ctx, args.familyId)) {
+			await ctx.scheduler.runAfter(0, internal.oauth.continueFamilyRevoke, args);
+		}
+		return null;
+	},
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// rotateRefreshToken - service account only. The refresh grant's ONE door
+// (module M3): the presented refresh token is looked up, spent, and its
+// replacement pair minted in a single transaction.
+//
+//   ok       the token was live and belonged to `clientId`; it is spent, a new
+//            refresh token and a new access token exist, both in its FAMILY.
+//   reused   the token was ALREADY spent (or revoked): somebody holds a copy, so
+//            every access and refresh token of its family is revoked (RFC 6749
+//            s10.4, RFC 9700 s4.14), exactly as the person-code path revokes the
+//            tokens of a replayed code. Whoever redeemed first loses the pair.
+//   invalid  unknown, expired, or presented by a client that is not the token's
+//            own. Nothing is spent and nothing is minted.
+//
+// The family id is the digest of the first refresh token of the grant; each
+// rotation copies it onto the pair it mints. Of two concurrent presentations the
+// transaction serialises them: one is `ok`, the other `reused`.
+// ─────────────────────────────────────────────────────────────────────────────
+export const rotateRefreshToken = mutation({
+	args: {
+		presentedHash: v.string(),
+		// The client that authenticated at /token; must be the token's own.
+		clientId: v.string(),
+		newRefreshTokenHash: v.string(),
+		newAccessTokenHash: v.string(),
+		// The scope profile snapshot the pair is minted from (the grant re-resolves
+		// authority from the CURRENT profile row, never from the old token).
+		scopeProfile: v.string(),
+		scopes: v.array(v.string()),
+		fromAllowList: v.array(v.string()),
+		namespaceReadPrefixes: v.array(v.string()),
+		namespaceWritePrefixes: v.array(v.string()),
+		clerkOrgSlug: v.optional(v.string()),
+		accessExpiresAt: v.number(),
+		refreshExpiresAt: v.number(),
+	},
+	returns: v.object({
+		status: v.union(
+			v.literal("ok"),
+			v.literal("reused"),
+			v.literal("invalid"),
+		),
+	}),
+	handler: async (ctx, args) => {
+		// write-contract: MCP-transport-only — issued via mcp-server client.mutation("oauth:rotateRefreshToken", …) at mcp-server/server-http.ts (the /token refresh_token grant, imperative); never from a subscribing pre-org client shell. The no-org throw is a refusal at an imperative MCP call, never at a render.
+		await requireServiceAccount(ctx, "oauth:rotateRefreshToken");
+		const row = await ctx.db
+			.query("oauth_refresh_tokens")
+			.withIndex("by_tokenHash", (q) => q.eq("tokenHash", args.presentedHash))
+			.unique();
+		if (!row) return { status: "invalid" as const };
+		const familyId = row.familyId ?? row.tokenHash;
+		if (row.revokedAt !== undefined) {
+			// REPLAY of a spent token: revoke what its descent was given.
+			if (await revokeFamilyBatch(ctx, familyId)) {
+				await ctx.scheduler.runAfter(0, internal.oauth.continueFamilyRevoke, {
+					familyId,
+				});
+			}
+			return { status: "reused" as const };
+		}
+		if (row.expiresAt < Date.now()) return { status: "invalid" as const };
+		if (row.clientId !== args.clientId) return { status: "invalid" as const };
+
+		await ctx.db.patch(row._id, { revokedAt: Date.now() });
+		await ctx.db.insert("oauth_refresh_tokens", {
+			tokenHash: args.newRefreshTokenHash,
+			clientId: row.clientId,
+			userId: row.userId,
+			scopeProfile: args.scopeProfile,
+			expiresAt: args.refreshExpiresAt,
+			createdAt: Date.now(),
+			familyId,
+		});
+		await mintAccessToken(ctx, {
+			tokenHash: args.newAccessTokenHash,
+			clientId: row.clientId,
+			userId: row.userId,
+			scopes: args.scopes,
+			scopeProfile: args.scopeProfile,
+			fromAllowList: args.fromAllowList,
+			namespaceReadPrefixes: args.namespaceReadPrefixes,
+			namespaceWritePrefixes: args.namespaceWritePrefixes,
+			expiresAt: args.accessExpiresAt,
+			refreshTokenHash: args.newRefreshTokenHash,
+			...(args.clerkOrgSlug !== undefined ? { clerkOrgSlug: args.clerkOrgSlug } : {}),
+			familyId,
+		});
+		return { status: "ok" as const };
 	},
 });
 

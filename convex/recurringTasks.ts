@@ -1,3 +1,4 @@
+import { isFleetStamp } from "@vantageos/cloud-identity";
 import { v } from "convex/values";
 import { ConvexError } from "convex/values";
 import type { Doc } from "./_generated/dataModel";
@@ -9,19 +10,23 @@ import { requireId } from "./lib/ids";
 import {
 	filterByOrgScope,
 	isRowVisibleToScope,
-	type OrgScope,
 	type VerifiedActor,
 	requireResolvedCaller,
 	verifiedActorValidator,
 	withOrgScope,
 	requireOrchestratorOnRoster,
 } from "./lib/auth";
-import { requireAuthenticatedCaller } from "./tasks";
+import { type CallerScope, requireAuthenticatedCaller } from "./tasks";
 import { resolveHumanActor } from "./lib/humanActor";
 import { taskActorIdFields } from "./lib/actorIds";
+import {
+	requireTargetOrgOfPrincipal,
+	requireVerifiedActorPrincipal,
+} from "./lib/actingPrincipal";
 import { verifiedPersonValidator } from "./lib/personPrincipal";
 import { assigneeIdForRead, requireAssigneeId } from "./lib/taskActors";
 import { clerkOrgIdForSlug } from "./lib/orgClerkId";
+import { fleetOperatorRef } from "./lib/operatorOrg";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Fail-closed multi-tenant fix (defect class: authority attached to an
@@ -83,7 +88,7 @@ async function proveScheduleCaller(
 		agentCredentialSecret?: string;
 		verifiedActor?: VerifiedActor;
 	},
-): Promise<OrgScope> {
+): Promise<CallerScope> {
 	return await requireAuthenticatedCaller(
 		ctx,
 		args.callerOrchestrator,
@@ -245,7 +250,32 @@ export const create = mutation({
 		);
 		requireOrchestratorOnRoster(scope, args.assignedTo, "recurringTasks:create", "assignee");
 		// The tenant of the schedule, from the scope just resolved, never an argument.
-		const rowOrgId = scope.isMaster ? undefined : (scope.orgSlug ?? undefined);
+		// The fleet service account forwarding a verified agent of a CLIENT
+		// organisation writes in that agent's organisation: the verified actor was
+		// resolved by ID above (callerActorOrg), so the row is stamped with it. An
+		// agent of the operator organisation, or no forwarded agent, stays fleet
+		// (unstamped), exactly as before.
+		const forwardedOrg =
+			scope.isMaster && args.verifiedActor !== undefined
+				? scope.callerActorOrg
+				: undefined;
+		const forwardedOrgId = await clerkOrgIdForSlug(ctx, forwardedOrg);
+		const forwardedIsClient =
+			forwardedOrg !== undefined &&
+			!isFleetStamp(
+				{ id: forwardedOrgId, label: forwardedOrg },
+				await fleetOperatorRef(ctx.db),
+			);
+		const rowOrgId = scope.isMaster
+			? forwardedIsClient
+				? forwardedOrg
+				: undefined
+			: (scope.orgSlug ?? undefined);
+		const rowClerkOrgId = scope.isMaster
+			? forwardedIsClient
+				? forwardedOrgId
+				: undefined
+			: scope.orgClerkId;
 
 		// HUMAN path: the schedule is authored as "user:<subject>" (a colon-prefixed
 		// value no roster slug can equal, so it grants no creator authority to any
@@ -292,9 +322,7 @@ export const create = mutation({
 			// TENANT of the schedule, from the scope resolved above — never an
 			// argument. Every task this schedule later generates inherits it.
 			orgId: rowOrgId,
-			clerkOrgId: scope.isMaster
-				? undefined
-				: scope.orgClerkId,
+			clerkOrgId: rowClerkOrgId,
 			createdAt: now,
 			updatedAt: now,
 		});
@@ -520,7 +548,7 @@ export const update = mutation({
 			// refused before anything is written.
 			patch.assignedToId = await requireAssigneeId(
 				ctx,
-				existing.orgId ?? (scope.isMaster ? args.verifiedActor?.orgSlug : undefined),
+				existing.orgId ?? (scope.isMaster ? scope.callerActorOrg : undefined),
 				args.assignedTo,
 				"recurringTasks:update",
 			);
@@ -548,7 +576,7 @@ export const update = mutation({
 // claim, is refused RBAC_DENIED by resolveHumanActor (convex/lib/humanActor.ts).
 async function authorizeScheduleActor(
 	ctx: MutationCtx,
-	scope: OrgScope,
+	scope: CallerScope,
 	row: Doc<"recurringTasks">,
 	door: string,
 	opts?: {
@@ -563,13 +591,8 @@ async function authorizeScheduleActor(
 	// the fleet's access. A member naming an agent acts as the ID its proof
 	// derived (requireAuthenticatedCaller).
 	const forwarded = scope.isMaster ? opts?.verifiedActor : undefined;
-	const actor: { id: string | undefined; org: string | null | undefined } | null =
-		forwarded !== undefined
-			? { id: forwarded.agentId, org: forwarded.orgSlug }
-			: !scope.isMaster && opts?.callerOrchestrator !== undefined
-				? { id: scope.callerActorId, org: scope.orgSlug }
-				: null;
-	if (actor === null) {
+	const isMemberAgent = !scope.isMaster && opts?.callerOrchestrator !== undefined;
+	if (forwarded === undefined && !isMemberAgent) {
 		if (scope.isMaster) return;
 		await resolveHumanActor(ctx, scope, {
 			door,
@@ -584,14 +607,23 @@ async function authorizeScheduleActor(
 	// assignee's NAME is not authority (the same name exists in other orgs). The
 	// tenant gate comes first: a row stamped for another org is never reachable,
 	// whatever IDs it carries. A fleet-owned row (no stamp) is judged on its IDs
-	// alone: an agent ID belongs to exactly one org.
-	const sameTenant = scope.isMaster
-		? row.orgId === undefined || row.orgId === actor.org
-		: isRowVisibleToScope(scope, row);
-	if (!sameTenant) {
-		throw new ConvexError(
-			`RBAC_DENIED: caller may not act on recurring task ${row._id} — the schedule does not belong to the caller's organisation — ${JSON.stringify({ door })}`,
-		);
+	// alone: an agent ID belongs to exactly one org. The forwarded agent is
+	// resolved BY ID through the package and the row's organisation is checked
+	// against that principal by the package (`assertTargetBelongsTo`).
+	let callerId: string | undefined;
+	if (forwarded !== undefined) {
+		const principal = await requireVerifiedActorPrincipal(ctx, scope, forwarded, door);
+		if (row.orgId !== undefined) {
+			await requireTargetOrgOfPrincipal(ctx, principal, row.orgId, door);
+		}
+		callerId = principal.principalId;
+	} else {
+		if (!isRowVisibleToScope(scope, row)) {
+			throw new ConvexError(
+				`RBAC_DENIED: caller may not act on recurring task ${row._id} — the schedule does not belong to the caller's organisation — ${JSON.stringify({ door })}`,
+			);
+		}
+		callerId = scope.callerActorId;
 	}
 	if (row.createdById === undefined && row.assignedToId === undefined) {
 		// A row with no ID names nobody: refused with a reason an operator can act
@@ -600,7 +632,6 @@ async function authorizeScheduleActor(
 			`RBAC_DENIED: recurring task ${row._id} carries no actor IDs yet, so no agent can be shown to own it — run migrations/backfill_recurring_task_actor_ids — ${JSON.stringify({ door, taskId: row._id, reason: "schedule-without-actor-ids" })}`,
 		);
 	}
-	const callerId = actor.id;
 	const isActor = (id: string | undefined): boolean =>
 		callerId !== undefined && id !== undefined && id === callerId;
 	if (!isActor(row.createdById) && !isActor(row.assignedToId)) {
@@ -733,7 +764,6 @@ export const remove = mutation({
 		await authorizeScheduleActor(ctx, scope, row, "recurringTasks:remove", {
 			adminOnly: true,
 			callerOrchestrator: args.callerOrchestrator,
-			verifiedActor: args.verifiedActor,
 			verifiedActor: args.verifiedActor,
 		});
 		await ctx.db.delete(taskId);

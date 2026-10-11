@@ -1103,13 +1103,14 @@ app.post("/token", async (c) => {
 		const refreshTokenHash = await sha256Hex(refreshTokenRaw);
 		const record = (await internalClient().query(
 			// biome-ignore lint/suspicious/noExplicitAny: Convex string API
-			"oauth:getRefreshTokenByHash" as any,
+			"oauth:getRefreshTokenForGrant" as any,
 			{ tokenHash: refreshTokenHash },
 		)) as {
 			clientId: string;
 			userId: string;
 			scopeProfile: string;
 			expiresAt: number;
+			spent: boolean;
 		} | null;
 
 		if (!record) {
@@ -1172,61 +1173,43 @@ app.post("/token", async (c) => {
 			return c.json({ error: "server_error" }, 500);
 		}
 
-		// ROTATION (module M3): the presented refresh token is SPENT here, after the
-		// client has authenticated and before anything is issued, in the one Convex
-		// transaction that also decides it is still live. Of two concurrent
-		// presentations exactly one gets the record; a replay of a spent token gets
-		// invalid_grant. (The lookup above only decided which client to authenticate;
-		// authenticating first means someone who merely knows a token cannot burn it.)
-		const consumed = (await internalClient().mutation(
-			// biome-ignore lint/suspicious/noExplicitAny: Convex string API
-			"oauth:consumeRefreshToken" as any,
-			{ tokenHash: refreshTokenHash },
-		)) as { clientId: string } | null;
-		if (!consumed || consumed.clientId !== record.clientId) {
-			return c.json({ error: "invalid_grant" }, 400);
-		}
-
+		// ROTATION (module M3): ONE Convex mutation spends the presented refresh
+		// token and mints its replacement pair, after the client has authenticated
+		// (someone who merely knows a token cannot burn it). Each refresh mints a NEW
+		// refresh token (SEAT_TOKEN_RENEWAL, k1784cq353qpmw9fmn8me551qs8ev2z9), so a
+		// renewing client never dies at the first token's 30-day mark. A
+		// presentation of an already-spent token is a REPLAY: the door revokes the
+		// whole token family, so whoever redeemed it first loses the pair he was
+		// given, and the caller gets invalid_grant like any other refusal.
+		const newRefreshToken = randomOpaqueToken();
+		const newRefreshTokenHash = await sha256Hex(newRefreshToken);
 		const accessToken = randomOpaqueToken();
 		const accessTokenHash = await sha256Hex(accessToken);
 		const now = Date.now();
-
-		// SEAT_TOKEN_RENEWAL (k1784cq353qpmw9fmn8me551qs8ev2z9): each refresh mints a
-		// NEW refresh token, so a renewing client never dies at the first token's
-		// 30-day mark. Since module M3 the presented token is also spent above
-		// (rotation): a client that keeps the old value gets invalid_grant, not a
-		// second token pair.
-		const newRefreshToken = randomOpaqueToken();
-		const newRefreshTokenHash = await sha256Hex(newRefreshToken);
-		await internalClient().mutation(
+		const rotated = (await internalClient().mutation(
 			// biome-ignore lint/suspicious/noExplicitAny: Convex string API
-			"oauth:createRefreshToken" as any,
+			"oauth:rotateRefreshToken" as any,
 			{
-				tokenHash: newRefreshTokenHash,
+				presentedHash: refreshTokenHash,
 				clientId: record.clientId,
-				userId: record.userId,
+				newRefreshTokenHash,
+				newAccessTokenHash: accessTokenHash,
 				scopeProfile: profile.profileId,
-				expiresAt: now + REFRESH_TOKEN_TTL_SECONDS * 1000,
-			},
-		);
-		await internalClient().mutation(
-			// biome-ignore lint/suspicious/noExplicitAny: Convex string API
-			"oauth:createAccessToken" as any,
-			{
-				tokenHash: accessTokenHash,
-				clientId: record.clientId,
-				userId: record.userId,
 				// SC: standardized on mcp:full
 				scopes: ["mcp:full"],
-				scopeProfile: profile.profileId,
 				fromAllowList: profile.fromAllowList,
 				namespaceReadPrefixes: profile.namespaceReadPrefixes,
 				namespaceWritePrefixes: profile.namespaceWritePrefixes,
-				expiresAt: now + ACCESS_TOKEN_TTL_SECONDS * 1000,
-				refreshTokenHash: newRefreshTokenHash,
-				clerkOrgSlug: profile.clerkOrgSlug,
+				accessExpiresAt: now + ACCESS_TOKEN_TTL_SECONDS * 1000,
+				refreshExpiresAt: now + REFRESH_TOKEN_TTL_SECONDS * 1000,
+				...(profile.clerkOrgSlug !== undefined
+					? { clerkOrgSlug: profile.clerkOrgSlug }
+					: {}),
 			},
-		);
+		)) as { status: "ok" | "reused" | "invalid" };
+		if (rotated.status !== "ok") {
+			return c.json({ error: "invalid_grant" }, 400);
+		}
 		return c.json({
 			access_token: accessToken,
 			token_type: "Bearer",

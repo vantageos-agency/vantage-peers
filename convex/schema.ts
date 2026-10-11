@@ -1450,11 +1450,16 @@ export default defineSchema({
 		// live meanwhile).
 		agentId: v.optional(v.id("agents")),
 		agentOrgId: v.optional(v.string()),
+		// Refresh-token family (set by oauth:rotateRefreshToken): the digest of the
+		// first refresh token of the grant. A replay of a spent refresh token
+		// revokes every access and refresh token that carries the same family.
+		familyId: v.optional(v.string()),
 	})
 		.index("by_tokenHash", ["tokenHash"])
 		.index("by_clientId", ["clientId"])
 		.index("by_scopeProfile", ["scopeProfile"])
-		.index("by_codeHash", ["codeHash"]),
+		.index("by_codeHash", ["codeHash"])
+		.index("by_familyId", ["familyId", "revokedAt"]),
 
 	// ── oauth_refresh_tokens ─────────────────────────────────────────────────
 	// Refresh tokens for renewing expired access tokens. Same hashing rules.
@@ -1466,10 +1471,15 @@ export default defineSchema({
 		expiresAt: v.number(),
 		createdAt: v.number(),
 		revokedAt: v.optional(v.number()),
+		// Refresh-token family: the digest of the first refresh token of the grant,
+		// stamped on every token a rotation mints (the first token has none; its
+		// own digest is the family). See oauth:rotateRefreshToken.
+		familyId: v.optional(v.string()),
 	})
 		.index("by_tokenHash", ["tokenHash"])
 		.index("by_clientId", ["clientId"])
-		.index("by_scopeProfile", ["scopeProfile"]),
+		.index("by_scopeProfile", ["scopeProfile"])
+		.index("by_familyId", ["familyId", "revokedAt"]),
 
 	// ── oauth_scope_profiles ─────────────────────────────────────────────────
 	// Reusable scope templates. An OAuth client references a profile by

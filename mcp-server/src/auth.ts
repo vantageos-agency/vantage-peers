@@ -1397,8 +1397,9 @@ export function bearerAuthMiddleware(): MiddlewareHandler {
 						{ tokenHash: digest },
 					)) as OAuthLookupResult;
 				} catch (err: unknown) {
-					// If the oauth module is missing (pre-migration deploy), just fall
-					// through to the legacy path rather than hard-failing.
+					// A failed lookup is a refusal (fail closed): the error is rethrown to
+					// the package validator, which answers the caller with an invalid-token
+					// refusal. It never falls through to a populated default.
 					const message = err instanceof Error ? err.message : String(err);
 					console.warn("[auth] OAuth lookup skipped:", message);
 					throw err;

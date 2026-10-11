@@ -88,20 +88,20 @@ function makeFakeConvex() {
 			if (name === "oauth:getScopeProfile") {
 				return state.profiles.get(args.profileId as string) ?? null;
 			}
-			if (name === "oauth:getRefreshTokenByHash") {
-				// Mirror convex/oauth.ts's getRefreshTokenByHash EXACTLY: a
-				// revoked or expired row resolves to null, never a populated
-				// row — the refusal happens at THIS boundary, same as prod.
+			if (name === "oauth:getRefreshTokenForGrant") {
+				// Mirror convex/oauth.ts's getRefreshTokenForGrant: a spent row answers
+				// `spent: true`, an unspent expired one answers null.
 				for (const [raw, row] of state.refreshTokensByRaw) {
 					const hash = await sha256Hex(raw);
 					if (hash === args.tokenHash) {
-						if (row.revokedAt !== undefined) return null;
-						if (row.expiresAt < Date.now()) return null;
+						const spent = row.revokedAt !== undefined;
+						if (!spent && row.expiresAt < Date.now()) return null;
 						return {
 							clientId: row.clientId,
 							userId: row.userId,
 							scopeProfile: row.scopeProfile,
 							expiresAt: row.expiresAt,
+							spent,
 						};
 					}
 				}
@@ -110,37 +110,23 @@ function makeFakeConvex() {
 			throw new Error(`unmocked query: ${name}`);
 		},
 		mutation: async (name: string, args: Record<string, unknown>) => {
-			if (name === "oauth:consumeRefreshToken") {
-				// Mirror convex/oauth.ts's consumeRefreshToken: look up AND spend in one
-				// step; revoked / expired / unknown answer null.
+			if (name === "oauth:rotateRefreshToken") {
+				// Mirror convex/oauth.ts's rotateRefreshToken: ONE step spends the
+				// presented token and mints the pair; a spent token is a replay.
 				for (const [raw, row] of state.refreshTokensByRaw) {
-					if ((await sha256Hex(raw)) !== args.tokenHash) continue;
-					if (row.revokedAt !== undefined) return null;
-					if (row.expiresAt < Date.now()) return null;
+					if ((await sha256Hex(raw)) !== args.presentedHash) continue;
+					if (row.revokedAt !== undefined) return { status: "reused" };
+					if (row.expiresAt < Date.now()) return { status: "invalid" };
+					if (row.clientId !== args.clientId) return { status: "invalid" };
 					row.revokedAt = Date.now();
-					return {
-						clientId: row.clientId,
-						userId: row.userId,
-						scopeProfile: row.scopeProfile,
-						expiresAt: row.expiresAt,
-					};
+					state.newRefreshHashesSeen.push(args.newRefreshTokenHash as string);
+					state.accessTokenInserts.push({
+						tokenHash: args.newAccessTokenHash as string,
+						refreshTokenHash: args.newRefreshTokenHash as string,
+					});
+					return { status: "ok" };
 				}
-				return null;
-			}
-			if (name === "oauth:createAccessToken") {
-				state.accessTokenInserts.push({
-					tokenHash: args.tokenHash as string,
-					refreshTokenHash: args.refreshTokenHash as string | undefined,
-				});
-				return "fake-access-id";
-			}
-			if (name === "oauth:createRefreshToken") {
-				// We only have the HASH here (server-http.ts never sends the
-				// raw value to Convex) — record it keyed by hash so the test
-				// can recognise "this IS the newly minted token" by hashing
-				// the raw value the /token response returned and comparing.
-				state.newRefreshHashesSeen.push(args.tokenHash as string);
-				return "fake-refresh-id";
+				return { status: "invalid" };
 			}
 			throw new Error(`unmocked mutation: ${name}`);
 		},

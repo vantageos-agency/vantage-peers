@@ -1,0 +1,4 @@
+---
+section: Fixed
+---
+- **Cloud, security: a replayed refresh token revokes its whole family; the refresh grant is one mutation (module M3, review of #1517).** `oauth:rotateRefreshToken` spends the presented refresh token and mints the replacement refresh and access tokens in one transaction, all stamped with a `familyId`; presenting an already-spent token revokes every token of the family, so a thief who redeemed first loses the pair he was given. `oauth:consumeRefreshToken` is replaced and the `/token` refresh grant calls the single door. Fleet-only write doors (`fixPatterns`, `mandates`) read the package's standing through the scope they return, a forwarded recurring-schedule agent is judged by the package (`requireVerifiedActorPrincipal` / `assertTargetBelongsTo`) and stamps its own organisation on the schedule it creates, the seat organisation check compares org IDs only, and the MCP-side `scheduleOwnershipRefusal` copy is removed.

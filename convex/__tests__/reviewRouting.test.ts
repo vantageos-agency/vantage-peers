@@ -363,6 +363,7 @@ describe("review task reassignment RBAC", () => {
 });
 
 describe("npm-publish verify endpoint — configured reviewer set, fail-closed", () => {
+	const FULL_SHA = "abcdef1234567890abcdef1234567890abcdef12";
 	const verify = async (t: T, assignedTo: string) => {
 		const taskId = await t.run((ctx) =>
 			insertTaskRow(ctx, {
@@ -371,7 +372,7 @@ describe("npm-publish verify endpoint — configured reviewer set, fail-closed",
 				priority: "high",
 				status: "done",
 				createdBy: "system",
-				completionNote: "APPROVED abcdef1234567",
+				completionNote: `[ETA-APPROVED] reviewed ${FULL_SHA}`,
 				createdAt: Date.now(),
 				updatedAt: Date.now(),
 			}),
@@ -379,7 +380,7 @@ describe("npm-publish verify endpoint — configured reviewer set, fail-closed",
 		const res = await t.fetch("/api/eta/verify-publish-token", {
 			method: "POST",
 			headers: { Authorization: "Bearer test-master-secret", "Content-Type": "application/json" },
-			body: JSON.stringify({ taskId, expectedSha: "abcdef1234567" }),
+			body: JSON.stringify({ taskId, expectedSha: FULL_SHA }),
 		});
 		return (await res.json()) as { valid: boolean; reason?: string };
 	};

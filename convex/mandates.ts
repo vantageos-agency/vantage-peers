@@ -6,7 +6,7 @@ import { creatorValidator } from "./schema";
 import { verifiedActorValidator, withOrgScope } from "./lib/auth";
 import type { OrgScope } from "./lib/auth";
 import { fleetPartyId, requireFleetAgentActor } from "./lib/fleetActors";
-import { hasFleetStanding, requireFleetDoor } from "./lib/fleetStanding";
+import { requireFleetDoor, scopeWithFleetStanding } from "./lib/fleetStanding";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // requireFleetMaster — mandates.ts's own single authority gate.
@@ -29,8 +29,11 @@ async function requireFleetMaster(
 	ctx: Parameters<typeof withOrgScope>[0],
 	action: string,
 ): Promise<OrgScope> {
-	const scope = await withOrgScope(ctx);
-	if (!(await hasFleetStanding(ctx, "mandates:write"))) {
+	const transport = await withOrgScope(ctx);
+	// The master bit is the package's standing (convex/lib/fleetStanding.ts),
+	// carried on the scope handed back: a refusal on the verified scope.
+	const scope = await scopeWithFleetStanding(ctx, transport, "mandates:write");
+	if (!scope.isMaster) {
 		throw new ConvexError(
 			`RBAC_DENIED: caller may not ${action} — mandates are fleet-internal, master-only — ${JSON.stringify({ orgSlug: scope.orgSlug })}`,
 		);

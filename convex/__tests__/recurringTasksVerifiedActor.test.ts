@@ -182,7 +182,7 @@ describe("the schedule doors judge a forwarded agent by ID", () => {
 		test(`${door}: the same-name clio of ANOTHER org is refused, the row untouched`, async () => {
 			const id = await createdByA();
 			const out = await refusalOf(call(id, actorB()));
-			expect(out).toContain("RBAC_DENIED");
+			expect(out).toMatch(/ORG_MISMATCH|RBAC_DENIED/);
 			const row = await get(id);
 			expect(row?.title).toBe("standup");
 			expect(row?.active).toBe(true);
@@ -249,7 +249,7 @@ describe("the schedule doors judge a forwarded agent by ID", () => {
 				verifiedActor: actorA(),
 			}),
 		);
-		expect(out).toContain("RBAC_DENIED");
+		expect(out).toMatch(/ORG_MISMATCH|RBAC_DENIED/);
 		expect((await get(id))?.active).toBe(true);
 	});
 });

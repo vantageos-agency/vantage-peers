@@ -115,19 +115,34 @@ function makeFakeConvex() {
 			if (name === "clientOrgMapping:getByClerkSlug") {
 				return state.mappings.get(args.orgSlug as string) ?? null;
 			}
-			if (name === "oauth:getRefreshTokenByHash") {
+			if (name === "oauth:getRefreshTokenForGrant") {
 				const r = state.refreshTokens.get(args.tokenHash as string);
-				return r ?? null;
+				return r ? { ...r, spent: false } : null;
 			}
 			throw new Error(`unmocked query: ${name}`);
 		},
 		mutation: async (name: string, args: Record<string, unknown>) => {
-			if (name === "oauth:consumeRefreshToken") {
-				// Module M3: the refresh grant looks up AND spends the token.
-				const r = state.refreshTokens.get(args.tokenHash as string);
-				if (!r) return null;
-				state.refreshTokens.delete(args.tokenHash as string);
-				return r;
+			if (name === "oauth:rotateRefreshToken") {
+				// Module M3: ONE step spends the presented token and mints the pair.
+				const r = state.refreshTokens.get(args.presentedHash as string);
+				if (!r || r.clientId !== args.clientId) return { status: "invalid" };
+				state.refreshTokens.delete(args.presentedHash as string);
+				state.refreshTokens.set(args.newRefreshTokenHash as string, {
+					clientId: r.clientId,
+					userId: r.userId,
+					scopeProfile: args.scopeProfile as string,
+					expiresAt: args.refreshExpiresAt as number,
+				});
+				state.accessTokens.push({
+					tokenHash: args.newAccessTokenHash as string,
+					clientId: r.clientId,
+					userId: r.userId,
+					scopeProfile: args.scopeProfile as string,
+					fromAllowList: args.fromAllowList as string[],
+					clerkOrgSlug: args.clerkOrgSlug as string | undefined,
+					revoked: false,
+				});
+				return { status: "ok" };
 			}
 			if (name === "oauth:registerPublicClient") {
 				const row: ClientRow = {
