@@ -26,7 +26,7 @@
 //            master still read the fleet range.
 //   ABSENT   a scoped caller reading an empty table gets an empty SUCCESS.
 
-import { convexTest } from "convex-test";
+import { convexTest } from "../../tests/fixtures/convexTestWithServiceAccount";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import { api } from "../_generated/api";
 import type { Doc, Id } from "../_generated/dataModel";
