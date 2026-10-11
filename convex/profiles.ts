@@ -16,6 +16,7 @@ import {
   PROFILE_CANDIDATE_CAP,
   type ProfileAgent,
   resolveProfileAgent,
+  resolveVerifiedProfileAgent,
   visibleProfiles,
 } from "./lib/profileActors";
 import { isNamespaceAllowedForScope } from "./memories";
@@ -202,10 +203,10 @@ export const getProfile = query({
       );
     };
 
-    const actor = await resolveProfileAgent(
+    const actor = await resolveVerifiedProfileAgent(
       ctx,
       scope,
-      { verifiedActor: args.verifiedActor },
+      args.verifiedActor,
       "profiles:getProfile",
     );
     if (args.instanceId === undefined && args.orchestratorId !== undefined) {
@@ -424,10 +425,10 @@ export const getProfileWithMemories = query({
 
     // The profile half is judged by stored agent ID like getProfile: a row of
     // another organisation's same-named agent, or a row with no agent, is `null`.
-    const actor = await resolveProfileAgent(
+    const actor = await resolveVerifiedProfileAgent(
       ctx,
       scope,
-      { verifiedActor: args.verifiedActor },
+      args.verifiedActor,
       "profiles:getProfileWithMemories",
     );
     let profile = await findProfileForCaller(
@@ -547,10 +548,10 @@ export const listProfiles = query({
       return { refused: true as const, items: [] };
     }
 
-    const actor = await resolveProfileAgent(
+    const actor = await resolveVerifiedProfileAgent(
       ctx,
       scope,
-      { verifiedActor: args.verifiedActor },
+      args.verifiedActor,
       "profiles:listProfiles",
     );
 
