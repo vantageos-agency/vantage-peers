@@ -107,10 +107,14 @@ async function resolveCallerOrgId(
 		);
 	}
 
-	// Refused = no verified organisation AND not one of withOrgScope's named
-	// master grants: anonymous (no identity at all) OR signed in without an org.
-	// NEVER master. This is the branch that used to leak.
-	return { refused: !scope.isMaster && scope.orgSlug === null, scope };
+	// STILL LOCAL: the fleet-master pass (`scope.isMaster`), see memoryVisibleToScope.
+	if (scope.isMaster) return { refused: false, scope };
+
+	// No verified organisation: anonymous (no identity at all) OR signed in
+	// without an org. NEVER master. This is the branch that used to leak.
+	if (scope.orgSlug === null) return { refused: true, scope };
+
+	return { refused: false, scope };
 }
 
 /**

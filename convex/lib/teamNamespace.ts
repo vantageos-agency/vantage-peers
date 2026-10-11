@@ -104,5 +104,8 @@ export function isTeamNamespaceAllowed(
 	scope: Pick<OrgScope, "orgClerkId" | "orgSlug" | "isMaster">,
 	namespace: string,
 ): boolean {
-	return scope.isMaster || memberOwnsNamespace(scope, namespace);
+	// STILL LOCAL: the fleet-master verdict is `withOrgScope`'s, read here; no
+	// @vantageos/cloud-identity primitive answers "is this scope the fleet".
+	if (scope.isMaster) return true;
+	return memberOwnsNamespace(scope, namespace);
 }

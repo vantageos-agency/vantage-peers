@@ -2005,14 +2005,15 @@ export default defineSchema({
 	// (convex/okfBundleDurable.ts). One row per durable job (keyed by the
 	// `@vantageos/agent-engine` `jobId`), tracking pagination cursors across
 	// steps so a step function can resume exactly where the previous one left
-	// off. `orgId` here IS the requested namespace string (see
-	// okfBundleDurable.ts comment) — kept as its own field, never trusted as a
-	// client-supplied scope on any step: every step re-derives its DB reads
-	// from `namespace`/`orgId` on THIS row, written once at job creation by
+	// off. `orgId` is the tenant of the RESOLVED scope at job creation (the
+	// org's permanent Clerk org ID, or "fleet" for the master; rows created
+	// before this change hold the namespace instead), never a client-supplied
+	// value. The exported namespace is its own field, and every step re-derives
+	// its DB reads from `namespace` on THIS row, written once at job creation by
 	// the authenticated `startOkfBundleExportDurable` mutation.
 	okfDurableExportProgress: defineTable({
 		jobId: v.string(), // opaque id returned by durableJob.start
-		orgId: v.string(), // == namespace; tenant scope for every step read
+		orgId: v.string(), // tenant of the resolved scope (org ID, or "fleet"); ownership is judged on `namespace`
 		namespace: v.string(),
 		sinceMs: v.optional(v.number()),
 		memoriesCursor: v.union(v.string(), v.null()),

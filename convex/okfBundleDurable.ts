@@ -80,6 +80,7 @@ import {
 } from "./_generated/server";
 import { BUNDLE_PAGE_SIZE } from "./okfBundle";
 import {
+	type OrgScope,
 	requireResolvedCaller,
 	requireTenantNamespace,
 	withOrgScope,
@@ -112,7 +113,7 @@ async function assertCanExportNamespaceV8(
 	ctx: QueryCtx | MutationCtx,
 	namespace: string,
 	door: string,
-): Promise<void> {
+): Promise<OrgScope> {
 	if (typeof namespace !== "string" || namespace.length === 0) {
 		throw new Error(
 			`OKF_NAMESPACE_INVALID: namespace must be a non-empty string, got "${namespace}".`,
@@ -130,6 +131,20 @@ async function assertCanExportNamespaceV8(
 	// `RBAC_DENIED` naming the door. See okfBundleNode.ts:assertCanExportNamespace.
 	const scope = await withOrgScope(ctx, { refuseWithoutThrow: true });
 	requireTenantNamespace(scope, namespace, door);
+	return scope;
+}
+
+// The tenant marker of a job the fleet master starts: the master has no
+// organisation, and the engine treats `orgId` as an opaque tenant-scope string.
+const FLEET_EXPORT_TENANT = "fleet";
+
+/**
+ * The tenant a durable export job is keyed by, taken from the RESOLVED scope:
+ * the member's permanent Clerk org ID, or the fleet marker for the master. Never
+ * from a caller argument; the namespace being exported is its own field.
+ */
+function exportTenantOf(scope: Pick<OrgScope, "orgClerkId">): string {
+	return scope.orgClerkId ?? FLEET_EXPORT_TENANT;
 }
 
 // ─────────────────────────────────────────────────────────────────────────
@@ -146,11 +161,12 @@ export const startOkfBundleExportDurable = mutation({
 	returns: v.string(),
 	handler: async (ctx, args): Promise<string> => {
 		// write-contract: no caller outside convex-test — 0 call sites in mcp-server (grep of "okfBundleDurable:startOkfBundleExportDurable" under mcp-server/src and mcp-server/server-http.ts) and 0 hits in vantage-peers-dashboard {app,components,hooks,lib,contexts,providers} (measured 2026-10-01 at origin/main e2dc58f and 0466fac); callers are convex/__tests__ only. No subscribing pre-org client shell can reach it; the no-org throw is a refusal at an imperative SDK call, never at a render.
-		await assertCanExportNamespaceV8(
+		const scope = await assertCanExportNamespaceV8(
 			ctx,
 			args.namespace,
 			"okfBundleDurable:startOkfBundleExportDurable",
 		);
+		const tenantOrgId = exportTenantOf(scope);
 
 		if (args.totalSteps <= 0) {
 			throw new Error(
@@ -167,13 +183,10 @@ export const startOkfBundleExportDurable = mutation({
 			{
 				// `orgId` is passed as an explicit argument, NOT read from
 				// `ctx.auth`, because Convex does not propagate the caller
-				// identity across a component boundary. The calling app has
-				// already authenticated the namespace (see
-				// `assertCanExportNamespaceV8` above), and hands the engine
-				// the verified tenant scope. `args.namespace` IS our tenant
-				// scope — the same value stored as `orgId` on the
-				// `okfDurableExportProgress` row a few lines below.
-				orgId: args.namespace,
+				// identity across a component boundary. It is the tenant of the
+				// RESOLVED scope (`exportTenantOf`), already verified against the
+				// namespace by `assertCanExportNamespaceV8` above.
+				orgId: tenantOrgId,
 				kind: "vantage-peers.okf-export-durable",
 				stepFunctionHandle: stepHandle,
 				totalSteps: args.totalSteps,
@@ -184,9 +197,9 @@ export const startOkfBundleExportDurable = mutation({
 		const now = Date.now();
 		await ctx.db.insert("okfDurableExportProgress", {
 			jobId,
-			// `orgId` handed to every step IS the namespace — the engine treats
-			// `orgId` as an opaque tenant-scope string, it never interprets it.
-			orgId: args.namespace,
+			// `orgId` handed to every step is the resolved tenant; the namespace
+			// the job exports is its own field and what ownership is judged on.
+			orgId: tenantOrgId,
 			namespace: args.namespace,
 			sinceMs: args.sinceMs,
 			memoriesCursor: null,
@@ -424,7 +437,7 @@ export const getOkfBundleExportDurableStatus = query({
 			}
 			await assertCanExportNamespaceV8(
 				ctx,
-				owned.orgId,
+				owned.namespace,
 				"okfBundleDurable:getOkfBundleExportDurableStatus",
 			);
 		}
@@ -458,7 +471,7 @@ export const getOkfBundleExportDurableStatus = query({
 // durable OKF export. Fixed by reusing `assertCanExportNamespaceV8` — the
 // SAME identity/tenant-membership check `startOkfBundleExportDurable`
 // already enforces above (one identity layer, never a second resolver) —
-// against the progress row's OWN STORED `orgId` (which IS the export
+// against the progress row's OWN STORED `namespace` (the export
 // namespace, see the `okfDurableExportProgress` schema comment), never a
 // caller-supplied argument (this mutation takes no orgId/namespace arg at
 // all). The anonymous-identity check happens BEFORE the `ctx.db.get` below
@@ -487,12 +500,12 @@ export const cancelOkfBundleExportDurable = mutation({
 			);
 		}
 
-		// progress.orgId IS the export namespace string — reuse the exact
+		// progress.namespace is the stored export namespace — reuse the exact
 		// tenant-membership check startOkfBundleExportDurable already
 		// enforces, never a second resolver.
 		await assertCanExportNamespaceV8(
 			ctx,
-			progress.orgId,
+			progress.namespace,
 			"okfBundleDurable:cancelOkfBundleExportDurable",
 		);
 

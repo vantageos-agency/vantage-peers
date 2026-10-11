@@ -25,35 +25,19 @@ export function teamLabelOfNamespace(namespace: string): string | null {
 }
 
 /**
- * May this scope see / act on this memory row? The compare is the package's
+ * May this scope see / act on this memory row? The org compare is the package's
  * `sameOrg`, by org ID only: a label match never grants, and a row or scope
- * without an ID never matches. The fleet master (a verdict `withOrgScope` already
- * reached from the verified credential, read here, not recomputed) sees every row.
+ * without an ID never matches.
+ *
+ * STILL LOCAL: the fleet-master pass. The verdict is `withOrgScope`'s, read here;
+ * no @vantageos/cloud-identity primitive answers "is this scope the fleet".
  */
 export function memoryVisibleToScope(
 	scope: Pick<OrgScope, "isMaster" | "orgClerkId">,
 	row: { clerkOrgId?: string },
 ): boolean {
-	return (
-		scope.isMaster || sameOrg({ id: row.clerkOrgId }, { id: scope.orgClerkId })
-	);
-}
-
-/**
- * May a READ of `namespace` reach any row of this scope? A member's rows are only
- * ever filed under a `team/<label>` namespace and are served by org ID, so a
- * caller with no org ID, or a non-team namespace, reaches none and the read is
- * answered without touching the table. A pre-filter for cost, never a grant: the
- * rows themselves are still judged by `memoryVisibleToScope`.
- */
-export function memoryNamespaceReachable(
-	scope: Pick<OrgScope, "isMaster" | "orgClerkId">,
-	namespace: string,
-): boolean {
-	return (
-		scope.isMaster ||
-		(scope.orgClerkId !== undefined && teamLabelOfNamespace(namespace) !== null)
-	);
+	if (scope.isMaster) return true;
+	return sameOrg({ id: row.clerkOrgId }, { id: scope.orgClerkId });
 }
 
 /**
@@ -80,7 +64,8 @@ export async function stampOfNamespace(
  * episodes are the same table, so the same stamp): a member's row carries its
  * own permanent org ID (a member with none could never read the row back and is
  * refused); the master's row carries the ID of the org its team namespace names.
- * The master is the one caller with a resolved scope and no org at all.
+ *
+ * STILL LOCAL: the master/member split (`scope.isMaster`), see memoryVisibleToScope.
  */
 export async function memoryStampForWrite(
 	ctx: QueryCtx | MutationCtx,
@@ -88,13 +73,13 @@ export async function memoryStampForWrite(
 	namespace: string,
 	door: string,
 ): Promise<string | undefined> {
-	const memberWithoutId = !scope.isMaster && scope.orgClerkId === undefined;
-	if (memberWithoutId) {
+	if (scope.isMaster) return await stampOfNamespace(ctx, namespace);
+	if (scope.orgClerkId === undefined) {
 		throw new ConvexError(
 			`RBAC_DENIED: caller's organisation has no permanent org ID to stamp a memory with — ${JSON.stringify({ reason: "org-id-missing", door, orgSlug: scope.orgSlug })}`,
 		);
 	}
-	return scope.orgClerkId ?? (await stampOfNamespace(ctx, namespace));
+	return scope.orgClerkId;
 }
 
 /**

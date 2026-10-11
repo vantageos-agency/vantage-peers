@@ -3,7 +3,7 @@ import type { Doc } from "./_generated/dataModel";
 import { mutation, query, type QueryCtx } from "./_generated/server";
 import { internal } from "./_generated/api";
 import { creatorValidator, severityValidator, relationTypeValidator } from "./schema";
-import { withOrgScope } from "./lib/auth";
+import { requireResolvedCaller, withOrgScope } from "./lib/auth";
 import { memoryAuthorOf, memoryStampForWrite, memoryVisibleToScope } from "./lib/memoryTenant";
 import { isTeamNamespaceAllowed, memberNamespaceRoots } from "./lib/teamNamespace";
 
@@ -257,7 +257,14 @@ const isCritical = (e: Doc<"memories">) => e.episode?.severity === "critical";
 
 // The fleet's critical episodes: every namespace, newest first, stopped at
 // `limit` critical rows and capped on rows examined (FLEET_SCAN_CAP).
-async function readFleetCritical(ctx: QueryCtx, limit: number): Promise<EpisodeRow[]> {
+async function readFleetCritical(
+  ctx: QueryCtx,
+  scope: Parameters<typeof requireResolvedCaller>[0],
+  limit: number,
+): Promise<EpisodeRow[]> {
+  // The unbounded-by-namespace scan is master-only by construction: any other
+  // scope is refused RBAC_DENIED (naming this door) before a row is read.
+  requireResolvedCaller(scope, "episodes:getCriticalInsights", { masterOnly: true });
   const episodes: EpisodeRow[] = [];
   let examined = 0;
   for await (const row of ctx.db
@@ -354,11 +361,11 @@ export const getCriticalInsights = query({
     // master alone; an org member reads only the index ranges of its OWN
     // namespaces, so a foreign episode is never read at all. Both reads stop at
     // `limit` critical rows (newest first) and are capped on rows examined.
-    // The fleet's reach is the verdict withOrgScope already reached from the
-    // verified credential (read, not recomputed); a member reads its own ranges.
-    const fleetReach = scope.isMaster;
-    const episodes = fleetReach
-      ? await readFleetCritical(ctx, limit)
+    // STILL LOCAL: the master/member split (`scope.isMaster`). The fleet-wide
+    // scan itself refuses any non-master scope (readFleetCritical), so the
+    // member path cannot reach it even if this branch were wrong.
+    const episodes = scope.isMaster
+      ? await readFleetCritical(ctx, scope, limit)
       : await readTenantCritical(ctx, scope, limit);
 
     return episodes
