@@ -29,6 +29,8 @@ import { afterEach, describe, expect, test, vi } from "vitest";
 import { testClerkOrgId } from "../../tests/fixtures/testClerkOrgId";
 import { api } from "../_generated/api";
 import schema from "../schema";
+import { seedAgents } from "../../tests/lib/agentIdOf";
+import { mintAgentSecret } from "../../tests/lib/seedFleetAgents";
 
 const modules = Object.fromEntries(
 	Object.entries(import.meta.glob("../**/*.ts")).filter(
@@ -73,6 +75,12 @@ async function seed(t: T) {
 			row(DEAD_OPERATOR_ORG, false, "operator"),
 		);
 	});
+}
+
+// The operator org's "sigma" as an AGENT, and its credential.
+async function sigmaCredential(t: T): Promise<string> {
+	await seedAgents(t, [[OPERATOR_ORG, "sigma"]]);
+	return await mintAgentSecret(t, OPERATOR_ORG, "sigma");
 }
 
 const as = (t: T, identity: Record<string, unknown>) =>
@@ -310,12 +318,16 @@ describe("an operator human's asserted sender is bound to the operator roster", 
 	test("operator admin tasks.create createdBy=eta (not on roster) -> refused", async () => {
 		const t = createT();
 		await seed(t);
+		// "sigma" is an agent of the operator org: the human acts as it presenting
+		// its credential (the task doors decide on agent IDs).
+		const agentCredentialSecret = await sigmaCredential(t);
 		const args = {
 			title: "t",
 			assignedTo: "sigma",
 			priority: "medium",
 			status: "todo",
 			createdBy: "eta",
+			agentCredentialSecret,
 		};
 		await expect(
 			as(t, OP_ADMIN).mutation(api.tasks.create, args as never),
@@ -607,6 +619,7 @@ describe("operator human: master for READS, member for WRITES", () => {
 			assignedTo: "sigma",
 			priority: "medium",
 			status: "todo",
+			agentCredentialSecret: await sigmaCredential(t),
 		};
 		const op = as(t, OP_ADMIN);
 		await op.mutation(api.tasks.create, { ...args, createdBy: "sigma" } as never);

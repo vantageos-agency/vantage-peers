@@ -29,6 +29,9 @@ import { convexTest } from "../../tests/fixtures/convexTestWithServiceAccount";
 import { describe, expect, test } from "vitest";
 import { api } from "../_generated/api";
 import schema from "../schema";
+import { seedFleetAgents } from "../../tests/lib/seedFleetAgents";
+
+const FILE_LABELS = ["eta", "omega", "pi", "sigma"];
 
 const modules = Object.fromEntries(
 	Object.entries(import.meta.glob("../**/*.ts")).filter(
@@ -63,6 +66,7 @@ async function makeReviewTask(
 describe("attachReviewArtifact — narrow non-owner write (k1798y530ytkgsd7259nj2heb58cszv4)", () => {
 	test("ALLOWED: a non-creator/non-assignee caller attaches a ref", async () => {
 		const t = createT();
+		await seedFleetAgents(t, FILE_LABELS);
 		// createdBy: pi, assignedTo: eta — sigma is neither.
 		const taskId = await makeReviewTask(t, { createdBy: "pi", assignedTo: "eta" });
 
@@ -79,6 +83,7 @@ describe("attachReviewArtifact — narrow non-owner write (k1798y530ytkgsd7259nj
 
 	test("REFUSED (other writes unchanged): the same non-owner caller still cannot reassign/rewrite/close via update", async () => {
 		const t = createT();
+		await seedFleetAgents(t, FILE_LABELS);
 		const taskId = await makeReviewTask(t, { createdBy: "pi", assignedTo: "eta" });
 
 		// sigma successfully attaches the artifact ref (the new permission)...
@@ -111,6 +116,7 @@ describe("attachReviewArtifact — narrow non-owner write (k1798y530ytkgsd7259nj
 
 	test("REFUSED (hijack): a different orchestrator cannot overwrite an already-attached ref", async () => {
 		const t = createT();
+		await seedFleetAgents(t, FILE_LABELS);
 		const taskId = await makeReviewTask(t, { createdBy: "pi", assignedTo: "eta" });
 
 		await t.mutation(api.tasks.attachReviewArtifact, {
@@ -141,6 +147,7 @@ describe("attachReviewArtifact — narrow non-owner write (k1798y530ytkgsd7259nj
 
 	test("ALLOWED: the SAME orchestrator re-attaching (e.g. an updated PR URL) is not a hijack", async () => {
 		const t = createT();
+		await seedFleetAgents(t, FILE_LABELS);
 		const taskId = await makeReviewTask(t, { createdBy: "pi", assignedTo: "eta" });
 
 		await t.mutation(api.tasks.attachReviewArtifact, {
@@ -163,6 +170,7 @@ describe("attachReviewArtifact — narrow non-owner write (k1798y530ytkgsd7259nj
 
 	test("REFUSED (no identity): callerOrchestrator undefined is refused, not exempted", async () => {
 		const t = createT();
+		await seedFleetAgents(t, FILE_LABELS);
 		const taskId = await makeReviewTask(t, { createdBy: "pi", assignedTo: "eta" });
 
 		let thrown: unknown;
@@ -183,6 +191,7 @@ describe("attachReviewArtifact — narrow non-owner write (k1798y530ytkgsd7259nj
 
 	test("REFUSED (empty ref): an empty artifactRef is rejected", async () => {
 		const t = createT();
+		await seedFleetAgents(t, FILE_LABELS);
 		const taskId = await makeReviewTask(t, { createdBy: "pi", assignedTo: "eta" });
 
 		let thrown: unknown;

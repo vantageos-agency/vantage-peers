@@ -27,6 +27,7 @@ import { convexTest } from "convex-test";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import { api } from "../_generated/api";
 import schema from "../schema";
+import { seedAgents } from "../../tests/lib/agentIdOf";
 
 beforeEach(() => vi.useFakeTimers());
 afterEach(() => vi.useRealTimers());
@@ -51,6 +52,7 @@ const member = (t: T, slug: string, id: string) =>
 		subject: `member-of-${id}`,
 		organizationSlug: slug,
 		org_id: id,
+		org_role: "org:editor",
 	} as Parameters<T["withIdentity"]>[0]);
 
 const mapping = (
@@ -226,6 +228,11 @@ describe("the repo-mapping audience of a task follows the org ID", () => {
 	const seedRepos = async (t: T) => {
 		await t.run(async (ctx) => {
 			await ctx.db.insert("taskClosureConfig", { key: "billableProjects", value: [], updatedAt: 0 });
+			// The members below act as themselves (the human path: a writer role).
+			await ctx.db.insert("memberWriterRoles", {
+				roles: ["org:admin", "org:editor"],
+				updatedAt: 0,
+			});
 			await ctx.db.insert("client_org_mapping", mapping(OP.slug, OP.id, { operator: true }));
 			await ctx.db.insert("client_org_mapping", mapping(OTHER.slug, OTHER.id));
 			const rows: Array<[string, string, string | undefined]> = [
@@ -265,18 +272,18 @@ describe("the repo-mapping audience of a task follows the org ID", () => {
 				.withIndex("by_repo_number", (q) => q.eq("repo", repo).eq("issueNumber", 5))
 				.unique(),
 		);
+	// The member acts as ITSELF (no callerOrchestrator): the human path, whose
+	// actor is "user:<subject>". The assignee LEAD is an agent of the member's org.
 	const completes = async (caller: ReturnType<typeof member>, project: string) => {
 		const taskId = await caller.mutation(api.tasks.create, {
 			title: "Fix flaky thing #5",
 			assignedTo: LEAD,
 			priority: "high",
 			status: "todo",
-			createdBy: LEAD,
 			project,
 		});
 		await caller.mutation(api.tasks.complete, {
 			taskId,
-			callerOrchestrator: LEAD,
 			completionNote: NOTE,
 		});
 		return taskId;
@@ -286,19 +293,18 @@ describe("the repo-mapping audience of a task follows the org ID", () => {
 		const t = makeT();
 		await seedRepos(t);
 		// The task is created under the operator's OLD slug, then the org is renamed.
+		await seedAgents(t, [[OP.slug, LEAD]]);
 		const before = member(t, OP.slug, OP.id);
 		const taskId = await before.mutation(api.tasks.create, {
 			title: "Fix flaky thing #5",
 			assignedTo: LEAD,
 			priority: "high",
 			status: "todo",
-			createdBy: LEAD,
 			project: "fleet-proj",
 		});
 		await rename(t, OP.slug, "fleet-org-renamed");
 		await member(t, "fleet-org-renamed", OP.id).mutation(api.tasks.complete, {
 			taskId,
-			callerOrchestrator: LEAD,
 			completionNote: NOTE,
 		});
 		const fleet = await issueOf(t, "fleet/repo");
@@ -348,6 +354,7 @@ describe("the repo-mapping audience of a task follows the org ID", () => {
 			} as never);
 		});
 		await rename(t, ACME.slug, "acme-renamed");
+		await seedAgents(t, [["acme-renamed", LEAD]]);
 		const acme = member(t, "acme-renamed", ACME.id);
 		const fleetBefore = await issueOf(t, "fleet/repo");
 		const otherBefore = await issueOf(t, "other/repo");

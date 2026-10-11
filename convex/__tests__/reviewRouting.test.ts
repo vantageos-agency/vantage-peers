@@ -18,6 +18,9 @@ import { TEST_WEBHOOK_SECRET, signGithubBody } from "../../tests/lib/githubWebho
 import { internal } from "../_generated/api";
 import { api } from "../_generated/api";
 import schema from "../schema";
+import { insertTaskRow, seedFleetAgents } from "../../tests/lib/seedFleetAgents";
+
+const FILE_LABELS = ["argus", "eta", "omega", "pi", "sigma"];
 
 const modules = Object.fromEntries(
 	Object.entries(import.meta.glob("../**/*.ts")).filter(
@@ -50,6 +53,7 @@ const seedConfig = async (
 
 const createT = async () => {
 	const t = convexTest(schema, modules);
+	await seedFleetAgents(t, FILE_LABELS);
 	await t.run(async (ctx) => {
 		await ctx.db.insert("githubRepoMapping", {
 			repo: REPO,
@@ -125,6 +129,7 @@ const postPrOpened = (t: T) => {
 describe("review routing — reviewer is data, a stopped reviewer falls back", () => {
 	test("RED(a): eta stopped -> review task goes to the configured fallback (argus), not eta (webhook path)", async () => {
 		const t = await createT();
+		await seedFleetAgents(t, FILE_LABELS);
 		await seedConfig(t, { reviewer: "eta", fallback: "argus", stopped: ["eta"] });
 		await postPrOpened(t);
 		const tasks = await t.run((ctx) => ctx.db.query("tasks").collect());
@@ -136,6 +141,7 @@ describe("review routing — reviewer is data, a stopped reviewer falls back", (
 
 	test("RED(a'): same at the mutation level", async () => {
 		const t = await createT();
+		await seedFleetAgents(t, FILE_LABELS);
 		await seedConfig(t, { reviewer: "eta", fallback: "argus", stopped: ["eta"] });
 		const id = await openReview(t);
 		expect(await assigneeOf(t, id!)).toBe("argus");
@@ -143,6 +149,7 @@ describe("review routing — reviewer is data, a stopped reviewer falls back", (
 
 	test("running configured reviewer still receives the task (no needless fallback)", async () => {
 		const t = await createT();
+		await seedFleetAgents(t, FILE_LABELS);
 		await seedConfig(t, { reviewer: "eta", fallback: "argus", stopped: [] });
 		const id = await openReview(t);
 		expect(await assigneeOf(t, id!)).toBe("eta");
@@ -150,6 +157,7 @@ describe("review routing — reviewer is data, a stopped reviewer falls back", (
 
 	test("per-repo reviewer on the mapping row overrides the fleet default", async () => {
 		const t = await createT();
+		await seedFleetAgents(t, FILE_LABELS);
 		await seedConfig(t, { reviewer: "eta", fallback: "argus" });
 		await t.run(async (ctx) => {
 			const row = await ctx.db.query("githubRepoMapping").first();
@@ -161,6 +169,7 @@ describe("review routing — reviewer is data, a stopped reviewer falls back", (
 
 	test("webhook notification goes to the resolved assignee, not eta", async () => {
 		const t = await createT();
+		await seedFleetAgents(t, FILE_LABELS);
 		await seedConfig(t, { reviewer: "eta", fallback: "argus", stopped: ["eta"] });
 		await postPrOpened(t);
 		const msgs = await t.run((ctx) => ctx.db.query("messages").collect());
@@ -176,6 +185,7 @@ describe("review routing — reviewer is data, a stopped reviewer falls back", (
 
 	test("no reviewer configured: NO task is created (never on the repo owner), mutation returns null", async () => {
 		const t = await createT();
+		await seedFleetAgents(t, FILE_LABELS);
 		const id = await openReview(t);
 		expect(id).toBeNull();
 		expect(await reviewTasksOf(t)).toHaveLength(0);
@@ -183,6 +193,7 @@ describe("review routing — reviewer is data, a stopped reviewer falls back", (
 
 	test("REVIEWER_UNRESOLVED is surfaced to the configured coordinator channel (webhook path)", async () => {
 		const t = await createT();
+		await seedFleetAgents(t, FILE_LABELS);
 		await seedConfig(t, { coordinators: ["pi"] });
 		await postPrOpened(t);
 		expect(await reviewTasksOf(t)).toHaveLength(0);
@@ -198,6 +209,7 @@ describe("review routing — reviewer is data, a stopped reviewer falls back", (
 
 	test("unresolved with no coordinator configured: console.error, no throw, no task, no message", async () => {
 		const t = await createT();
+		await seedFleetAgents(t, FILE_LABELS);
 		const err = vi.spyOn(console, "error").mockImplementation(() => {});
 		const res = await postPrOpened(t);
 		expect(res.status).toBe(200);
@@ -209,9 +221,11 @@ describe("review routing — reviewer is data, a stopped reviewer falls back", (
 
 	test("reviewer == repo owner (author) is unresolved too, even with a fallback that is stopped", async () => {
 		const t = await createT();
+		await seedFleetAgents(t, FILE_LABELS);
 		await seedConfig(t, { reviewer: "sigma" });
 		expect(await openReview(t)).toBeNull();
 		const t2 = await createT();
+		await seedFleetAgents(t2, FILE_LABELS);
 		await seedConfig(t2, { reviewer: "eta", fallback: "sigma", stopped: ["eta"] });
 		expect(await openReview(t2)).toBeNull();
 		expect(await reviewTasksOf(t2)).toHaveLength(0);
@@ -219,6 +233,7 @@ describe("review routing — reviewer is data, a stopped reviewer falls back", (
 
 	test("an already-open review task is still updated in place when the reviewer becomes unresolved", async () => {
 		const t = await createT();
+		await seedFleetAgents(t, FILE_LABELS);
 		await seedConfig(t, { reviewer: "eta" });
 		const first = await openReview(t);
 		expect(first).not.toBeNull();
@@ -233,6 +248,7 @@ describe("review routing — reviewer is data, a stopped reviewer falls back", (
 describe("review task reassignment RBAC", () => {
 	const setup = async () => {
 		const t = await createT();
+		await seedFleetAgents(t, FILE_LABELS);
 		await seedConfig(t, { reviewer: "eta", fallback: "argus", coordinators: ["pi"] });
 		const id = (await openReview(t, "eta"))!;
 		return { t, id };
@@ -336,6 +352,7 @@ describe("review task reassignment RBAC", () => {
 
 	test("fail-closed: no coordinator configured -> pi is refused", async () => {
 		const t = await createT();
+		await seedFleetAgents(t, FILE_LABELS);
 		await seedConfig(t, { reviewer: "eta" });
 		const id = (await openReview(t, "eta"))!;
 		const err = await svc(t)
@@ -348,7 +365,7 @@ describe("review task reassignment RBAC", () => {
 describe("npm-publish verify endpoint — configured reviewer set, fail-closed", () => {
 	const verify = async (t: T, assignedTo: string) => {
 		const taskId = await t.run((ctx) =>
-			ctx.db.insert("tasks", {
+			insertTaskRow(ctx, {
 				title: "[Review] x",
 				assignedTo,
 				priority: "high",
@@ -369,6 +386,7 @@ describe("npm-publish verify endpoint — configured reviewer set, fail-closed",
 
 	test("fallback reviewer's approval is accepted", async () => {
 		const t = await createT();
+		await seedFleetAgents(t, FILE_LABELS);
 		await seedConfig(t, { reviewer: "eta", fallback: "argus" });
 		expect((await verify(t, "argus")).valid).toBe(true);
 		expect((await verify(t, "eta")).valid).toBe(true);
@@ -376,12 +394,14 @@ describe("npm-publish verify endpoint — configured reviewer set, fail-closed",
 
 	test("a non-reviewer assignee is refused", async () => {
 		const t = await createT();
+		await seedFleetAgents(t, FILE_LABELS);
 		await seedConfig(t, { reviewer: "eta", fallback: "argus" });
 		expect((await verify(t, "sigma")).reason).toBe("wrong-assignee");
 	});
 
 	test("no reviewer configured -> refused (fail-closed)", async () => {
 		const t = await createT();
+		await seedFleetAgents(t, FILE_LABELS);
 		expect((await verify(t, "eta")).reason).toBe("wrong-assignee");
 	});
 });

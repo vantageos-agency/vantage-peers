@@ -17,6 +17,7 @@ import { afterEach, describe, expect, test, vi } from "vitest";
 import { testClerkOrgId } from "../../tests/fixtures/testClerkOrgId";
 import { api } from "../_generated/api";
 import schema from "../schema";
+import { seedAgents } from "../../tests/lib/agentIdOf";
 
 const modules = Object.fromEntries(
 	Object.entries(import.meta.glob("../**/*.ts")).filter(
@@ -149,6 +150,12 @@ describe("getMyOrgRoster answers the operator admin with the roster the write en
 		await seed(t);
 		const names = await as(t, OP_ADMIN).query(api.orgRoster.getMyOrgRoster, {});
 		expect(names.length).toBeGreaterThan(0);
+		// An assignment resolves to an agents-row ID of the org: each roster name is
+		// an agent of the operator org.
+		await seedAgents(
+			t,
+			names.map((name) => [OPERATOR_ORG, name] as const),
+		);
 		for (const name of names) {
 			expect(await canCreate(t, OP_ADMIN, name)).toBe(true);
 		}

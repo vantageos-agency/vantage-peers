@@ -12,6 +12,9 @@ import { describe, expect, test } from "vitest";
 import { api } from "../_generated/api";
 import type { Id } from "../_generated/dataModel";
 import schema from "../schema";
+import { seedFleetAgents } from "../../tests/lib/seedFleetAgents";
+
+const FILE_LABELS = ["eta", "sigma"];
 
 const modules = Object.fromEntries(
 	Object.entries(import.meta.glob("../**/*.ts")).filter(
@@ -67,6 +70,7 @@ describe("recurringTasks — wrong-table ID (issue #1064, slice 6 FINAL)", () =>
 	describe("getById", () => {
 		test("a tasks-table ID yields an actionable ConvexError naming recurringTaskId", async () => {
 			const t = createT();
+			await seedFleetAgents(t, FILE_LABELS);
 			const taskId = await newTask(t);
 
 			let caught: unknown;
@@ -94,6 +98,7 @@ describe("recurringTasks — wrong-table ID (issue #1064, slice 6 FINAL)", () =>
 
 		test("positive control: a real recurringTaskId still returns the document", async () => {
 			const t = createT();
+			await seedFleetAgents(t, FILE_LABELS);
 			const recurringTaskId = await newRecurringTask(t);
 			const doc = await t.query(api.recurringTasks.getById, { recurringTaskId });
 			expect(doc?._id).toBe(recurringTaskId);
@@ -102,6 +107,7 @@ describe("recurringTasks — wrong-table ID (issue #1064, slice 6 FINAL)", () =>
 
 		test("contract preserved: a valid id pointing at a deleted doc returns null, does NOT throw", async () => {
 			const t = createT();
+			await seedFleetAgents(t, FILE_LABELS);
 			const recurringTaskId = await newRecurringTask(t);
 			await t.run(async (ctx) => {
 				await ctx.db.delete(recurringTaskId);
@@ -115,6 +121,7 @@ describe("recurringTasks — wrong-table ID (issue #1064, slice 6 FINAL)", () =>
 	describe("update", () => {
 		test("a tasks-table ID yields an actionable ConvexError naming recurringTaskId", async () => {
 			const t = createT();
+			await seedFleetAgents(t, FILE_LABELS);
 			const taskId = await newTask(t);
 
 			let caught: unknown;
@@ -140,6 +147,7 @@ describe("recurringTasks — wrong-table ID (issue #1064, slice 6 FINAL)", () =>
 
 		test("positive control: a real recurringTaskId updates and returns the id", async () => {
 			const t = createT();
+			await seedFleetAgents(t, FILE_LABELS);
 			const recurringTaskId = await newRecurringTask(t);
 			const result = await t.mutation(api.recurringTasks.update, {
 				recurringTaskId,
@@ -150,6 +158,7 @@ describe("recurringTasks — wrong-table ID (issue #1064, slice 6 FINAL)", () =>
 
 		test("contract preserved: valid id pointing at a deleted doc still throws 'not found'", async () => {
 			const t = createT();
+			await seedFleetAgents(t, FILE_LABELS);
 			const recurringTaskId = await newRecurringTask(t);
 			await t.run(async (ctx) => {
 				await ctx.db.delete(recurringTaskId);
@@ -166,6 +175,7 @@ describe("recurringTasks — wrong-table ID (issue #1064, slice 6 FINAL)", () =>
 	describe("pause", () => {
 		test("a tasks-table ID yields an actionable ConvexError naming taskId", async () => {
 			const t = createT();
+			await seedFleetAgents(t, FILE_LABELS);
 			const taskId = await newTask(t);
 
 			let caught: unknown;
@@ -190,6 +200,7 @@ describe("recurringTasks — wrong-table ID (issue #1064, slice 6 FINAL)", () =>
 
 		test("positive control: a real recurringTaskId pauses successfully", async () => {
 			const t = createT();
+			await seedFleetAgents(t, FILE_LABELS);
 			const recurringTaskId = await newRecurringTask(t);
 			const result = await t.mutation(api.recurringTasks.pause, {
 				taskId: recurringTaskId,
@@ -201,6 +212,7 @@ describe("recurringTasks — wrong-table ID (issue #1064, slice 6 FINAL)", () =>
 	describe("resume", () => {
 		test("a tasks-table ID yields an actionable ConvexError naming taskId", async () => {
 			const t = createT();
+			await seedFleetAgents(t, FILE_LABELS);
 			const taskId = await newTask(t);
 
 			let caught: unknown;
@@ -225,6 +237,7 @@ describe("recurringTasks — wrong-table ID (issue #1064, slice 6 FINAL)", () =>
 
 		test("positive control: a real recurringTaskId resumes successfully", async () => {
 			const t = createT();
+			await seedFleetAgents(t, FILE_LABELS);
 			const recurringTaskId = await newRecurringTask(t);
 			await t.mutation(api.recurringTasks.pause, { taskId: recurringTaskId });
 			const result = await t.mutation(api.recurringTasks.resume, {
@@ -236,6 +249,7 @@ describe("recurringTasks — wrong-table ID (issue #1064, slice 6 FINAL)", () =>
 
 		test("contract preserved: valid id pointing at a deleted doc still throws 'not found'", async () => {
 			const t = createT();
+			await seedFleetAgents(t, FILE_LABELS);
 			const recurringTaskId = await newRecurringTask(t);
 			await t.run(async (ctx) => {
 				await ctx.db.delete(recurringTaskId);
@@ -249,6 +263,7 @@ describe("recurringTasks — wrong-table ID (issue #1064, slice 6 FINAL)", () =>
 	describe("remove", () => {
 		test("a tasks-table ID yields an actionable ConvexError naming taskId", async () => {
 			const t = createT();
+			await seedFleetAgents(t, FILE_LABELS);
 			const taskId = await newTask(t);
 
 			let caught: unknown;
@@ -277,6 +292,7 @@ describe("recurringTasks — wrong-table ID (issue #1064, slice 6 FINAL)", () =>
 
 		test("positive control: a real recurringTaskId is deleted successfully", async () => {
 			const t = createT();
+			await seedFleetAgents(t, FILE_LABELS);
 			const recurringTaskId = await newRecurringTask(t);
 			const result = await t.mutation(api.recurringTasks.remove, {
 				taskId: recurringTaskId,

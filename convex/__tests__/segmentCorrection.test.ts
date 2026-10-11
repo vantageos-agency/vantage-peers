@@ -27,6 +27,9 @@ import { convexTest } from "../../tests/fixtures/convexTestWithServiceAccount";
 import { describe, expect, test } from "vitest";
 import { api } from "../_generated/api";
 import schema from "../schema";
+import { insertTaskRow, seedFleetAgents } from "../../tests/lib/seedFleetAgents";
+
+const FILE_LABELS = ["eta", "sigma", "sigma-g1", "sigma-g2", "sigma-r1", "sigma-r2", "sigma-r3", "sigma-r4", "sigma-r5", "sigma-r7", "sigma-red"];
 
 const modules = Object.fromEntries(
 	Object.entries(import.meta.glob("../**/*.ts")).filter(
@@ -58,7 +61,7 @@ async function seedOpenLongRunningTask(
 	// still OPEN (no `end`) days later.
 	const start = Date.parse("2026-01-01T09:00:00.000Z");
 	const taskId = await t.run(async (ctx: any) => {
-		return await ctx.db.insert("tasks", {
+		return await insertTaskRow(ctx, {
 			title: "Station session never paused",
 			project: BILLABLE_PROJECT,
 			assignedTo,
@@ -79,6 +82,7 @@ describe("segment correction — RED: an open multi-day segment has no honest cl
 		const t = convexTest(schema, modules).withIdentity({
 			subject: "test-service-account-user-id",
 		});
+		await seedFleetAgents(t, FILE_LABELS);
 		await seedMaxSegmentMinutes(t, CAP_MINUTES);
 		const { taskId } = await seedOpenLongRunningTask(t, 3 * 24 * 60, "sigma-red");
 
@@ -113,6 +117,7 @@ describe("segment correction — GREEN", () => {
 		const t = convexTest(schema, modules).withIdentity({
 			subject: "test-service-account-user-id",
 		});
+		await seedFleetAgents(t, FILE_LABELS);
 		await seedMaxSegmentMinutes(t, CAP_MINUTES);
 
 		const { taskId, start: originalStart } = await seedOpenLongRunningTask(t, 3 * 24 * 60, "sigma-g1");
@@ -154,6 +159,7 @@ describe("segment correction — GREEN", () => {
 		const t = convexTest(schema, modules).withIdentity({
 			subject: "test-service-account-user-id",
 		});
+		await seedFleetAgents(t, FILE_LABELS);
 		await seedMaxSegmentMinutes(t, CAP_MINUTES);
 
 		const { taskId, start: originalStart } = await seedOpenLongRunningTask(t, 3 * 24 * 60, "sigma-g2");
@@ -176,6 +182,7 @@ describe("segment correction — GREEN", () => {
 		const t = convexTest(schema, modules).withIdentity({
 			subject: "test-service-account-user-id",
 		});
+		await seedFleetAgents(t, FILE_LABELS);
 		await seedMaxSegmentMinutes(t, CAP_MINUTES); // cap 480
 		const { taskId, start: originalStart } = await seedOpenLongRunningTask(t, 3 * 24 * 60, "sigma-r1");
 
@@ -195,6 +202,7 @@ describe("segment correction — GREEN", () => {
 		const t = convexTest(schema, modules).withIdentity({
 			subject: "test-service-account-user-id",
 		});
+		await seedFleetAgents(t, FILE_LABELS);
 		await seedMaxSegmentMinutes(t, CAP_MINUTES);
 		const { taskId, start: originalStart } = await seedOpenLongRunningTask(t, 3 * 24 * 60, "sigma-r2");
 
@@ -214,12 +222,13 @@ describe("segment correction — GREEN", () => {
 		const t = convexTest(schema, modules).withIdentity({
 			subject: "test-service-account-user-id",
 		});
+		await seedFleetAgents(t, FILE_LABELS);
 		await seedMaxSegmentMinutes(t, CAP_MINUTES);
 
 		const start = Date.parse("2026-03-03T09:00:00.000Z");
 		const end = start + 100 * 60_000; // this segment is already CLOSED
 		const taskId = await t.run(async (ctx: any) => {
-			return await ctx.db.insert("tasks", {
+			return await insertTaskRow(ctx, {
 				title: "Closed segment, correction tries to extend past its end",
 				project: BILLABLE_PROJECT,
 				assignedTo: "sigma-r3",
@@ -249,6 +258,7 @@ describe("segment correction — GREEN", () => {
 		const t = convexTest(schema, modules).withIdentity({
 			subject: "test-service-account-user-id",
 		});
+		await seedFleetAgents(t, FILE_LABELS);
 		await seedMaxSegmentMinutes(t, CAP_MINUTES);
 		const { taskId, start: originalStart } = await seedOpenLongRunningTask(t, 3 * 24 * 60, "sigma-r4");
 
@@ -268,6 +278,7 @@ describe("segment correction — GREEN", () => {
 		const t = convexTest(schema, modules).withIdentity({
 			subject: "test-service-account-user-id",
 		});
+		await seedFleetAgents(t, FILE_LABELS);
 		await seedMaxSegmentMinutes(t, CAP_MINUTES);
 		const { taskId, start: originalStart } = await seedOpenLongRunningTask(t, 3 * 24 * 60, "sigma-r5");
 
@@ -296,6 +307,7 @@ describe("segment correction — GREEN", () => {
 		const t = convexTest(schema, modules).withIdentity({
 			subject: "test-service-account-user-id",
 		});
+		await seedFleetAgents(t, FILE_LABELS);
 		await seedMaxSegmentMinutes(t, CAP_MINUTES);
 		const { taskId, start: originalStart } = await seedOpenLongRunningTask(t, 3 * 24 * 60, "sigma-r6");
 
@@ -315,12 +327,13 @@ describe("segment correction — GREEN", () => {
 		const t = convexTest(schema, modules).withIdentity({
 			subject: "test-service-account-user-id",
 		});
+		await seedFleetAgents(t, FILE_LABELS);
 		await seedMaxSegmentMinutes(t, CAP_MINUTES);
 
 		const start = Date.parse("2026-03-07T09:00:00.000Z");
 		const end = start + 100 * 60_000;
 		const taskId = await t.run(async (ctx: any) => {
-			return await ctx.db.insert("tasks", {
+			return await insertTaskRow(ctx, {
 				title: "Already done, correction should be refused",
 				project: BILLABLE_PROJECT,
 				assignedTo: "sigma-r7",

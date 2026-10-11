@@ -23,6 +23,9 @@ import { convexTest } from "../../tests/fixtures/convexTestWithServiceAccount";
 import { describe, expect, test } from "vitest";
 import { api } from "../_generated/api";
 import schema from "../schema";
+import { seedFleetAgents } from "../../tests/lib/seedFleetAgents";
+
+const FILE_LABELS = ["eta", "sigma"];
 
 const modules = Object.fromEntries(
 	Object.entries(import.meta.glob("../**/*.ts")).filter(
@@ -68,6 +71,7 @@ async function seedAndCancel(t: ReturnType<typeof createT>) {
 describe("tasks.get / tasks.getById — cancelled task", () => {
 	test("get returns the cancelled doc without a return-validator error", async () => {
 		const t = createT();
+		await seedFleetAgents(t, FILE_LABELS);
 		const taskId = await seedAndCancel(t);
 
 		const task = await t.query(api.tasks.get, { taskId });
@@ -78,6 +82,7 @@ describe("tasks.get / tasks.getById — cancelled task", () => {
 
 	test("getById returns the cancelled doc without a return-validator error", async () => {
 		const t = createT();
+		await seedFleetAgents(t, FILE_LABELS);
 		const taskId = await seedAndCancel(t);
 
 		const task = await t.query(api.tasks.getById, { taskId });
@@ -94,6 +99,7 @@ describe("tasks.get / tasks.getById — cancelled task", () => {
 describe("tasks.listOverdue — excludes cancelled", () => {
 	test("a cancelled task with a past dueDate is NOT returned by listOverdue", async () => {
 		const t = createT();
+		await seedFleetAgents(t, FILE_LABELS);
 		const pastDue = Date.now() - 1000 * 60 * 60 * 24;
 		const taskId = await t.mutation(api.tasks.create, {
 			title: "Overdue but cancelled",
@@ -123,6 +129,7 @@ describe("tasks.listOverdue — excludes cancelled", () => {
 describe("tasks.update — cannot cancel a done task", () => {
 	test("cancelling a done task is refused (CANNOT_CANCEL_DONE)", async () => {
 		const t = createT();
+		await seedFleetAgents(t, FILE_LABELS);
 		const taskId = await t.mutation(api.tasks.create, {
 			title: "Already done",
 			assignedTo: "eta",
@@ -158,6 +165,7 @@ describe("tasks.update — cannot cancel a done task", () => {
 		"cancelling a %s task still works",
 		async (status) => {
 			const t = createT();
+			await seedFleetAgents(t, FILE_LABELS);
 			const taskId = await t.mutation(api.tasks.create, {
 				title: `Task in ${status}`,
 				assignedTo: "eta",
@@ -202,6 +210,7 @@ describe("missions.update — cannot cancel a complete mission", () => {
 
 	test("cancelling a complete mission is refused (CANNOT_CANCEL_DONE)", async () => {
 		const t = createT();
+		await seedFleetAgents(t, FILE_LABELS);
 		const missionId = await seedMission(t, "complete");
 
 		try {
@@ -222,6 +231,7 @@ describe("missions.update — cannot cancel a complete mission", () => {
 
 	test("cancelling an execute mission still works", async () => {
 		const t = createT();
+		await seedFleetAgents(t, FILE_LABELS);
 		const missionId = await seedMission(t, "execute");
 
 		await t.mutation(api.missions.update, {
@@ -243,6 +253,7 @@ describe("missions.update — cannot cancel a complete mission", () => {
 describe("tasks.update — cancelReason silent-drop guard", () => {
 	test("providing cancelReason without status='cancelled' on a non-cancelled task is refused", async () => {
 		const t = createT();
+		await seedFleetAgents(t, FILE_LABELS);
 		const taskId = await t.mutation(api.tasks.create, {
 			title: "Not cancelled",
 			assignedTo: "eta",
@@ -266,6 +277,7 @@ describe("tasks.update — cancelReason silent-drop guard", () => {
 
 	test("updating an already-cancelled task's cancelReason persists it", async () => {
 		const t = createT();
+		await seedFleetAgents(t, FILE_LABELS);
 		const taskId = await seedAndCancel(t);
 
 		await t.mutation(api.tasks.update, {

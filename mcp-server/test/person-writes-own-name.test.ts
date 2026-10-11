@@ -213,6 +213,20 @@ function idFrom(result: ToolResult, key: string): string {
 	return (JSON.parse(result.content[0].text) as Record<string, string>)[key];
 }
 
+// The assignee of a task a person creates is an agent of the person's org (an
+// assignment resolves to an agents-row ID of the task's own org).
+async function seedAssignee(): Promise<void> {
+	await t.run(async (ctx) => {
+		await ctx.db.insert("agents", {
+			orgSlug: "org-a",
+			name: "agent-a",
+			normalizedName: "agent-a",
+			isActive: true,
+			createdAt: Date.now(),
+		});
+	});
+}
+
 async function agentCredential(): Promise<string> {
 	const admin = bridge(
 		t.withIdentity({
@@ -255,6 +269,7 @@ const rows = (table: "tasks" | "missions" | "messages") =>
 
 describe("pole 1 — an editor writes as itself: served, actor user:<sub>, own org", () => {
 	it("create_task / start_task / update_task / complete_task", async () => {
+		await seedAssignee();
 		const tools = realTools(await contextFor(await personToken("user_editor")));
 		const created = await call(tools, "create_task", TASK);
 		expect(created.isError, created.content[0].text).toBeUndefined();
@@ -321,6 +336,7 @@ describe("pole 1 — an editor writes as itself: served, actor user:<sub>, own o
 	});
 
 	it("naming ITSELF (user:<own sub>) restates the token and is served as itself", async () => {
+		await seedAssignee();
 		const tools = realTools(await contextFor(await personToken("user_editor")));
 		const r = await call(tools, "create_task", {
 			...TASK,

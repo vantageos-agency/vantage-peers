@@ -22,6 +22,9 @@ import {
 import { api } from "../_generated/api";
 import type { Id } from "../_generated/dataModel";
 import schema from "../schema";
+import { seedFleetAgents } from "../../tests/lib/seedFleetAgents";
+
+const FILE_LABELS = ["eta", "sigma"];
 
 // `fixPatterns:create` schedules an internal RAG-sync job via
 // `ctx.scheduler.runAfter(0, ...)`. Under `convex-test`, a real timer lets
@@ -89,6 +92,7 @@ const newTask = (t: ReturnType<typeof createT>) =>
 describe("fixPatterns:get — wrong-table ID (issue #1064, reads)", () => {
 	test("a tasks-table ID yields an actionable ConvexError naming patternId", async () => {
 		const t = createT();
+		await seedFleetAgents(t, FILE_LABELS);
 		const taskId = await newTask(t);
 
 		let caught: unknown;
@@ -120,6 +124,7 @@ describe("fixPatterns:get — wrong-table ID (issue #1064, reads)", () => {
 
 	test("negative control: an ID from a THIRD table is also named, with its own value", async () => {
 		const t = createT();
+		await seedFleetAgents(t, FILE_LABELS);
 		const missionId = await t.mutation(api.missions.create, {
 			name: "Probe mission",
 			project: "vantage-peers",
@@ -148,6 +153,7 @@ describe("fixPatterns:get — wrong-table ID (issue #1064, reads)", () => {
 
 	test("positive control: a real patternId still returns the document with attempts", async () => {
 		const t = createT();
+		await seedFleetAgents(t, FILE_LABELS);
 		const patternId = await newFixPattern(t);
 		const doc = await t.query(api.fixPatterns.get, { patternId });
 		expect(doc?._id).toBe(patternId);
@@ -157,6 +163,7 @@ describe("fixPatterns:get — wrong-table ID (issue #1064, reads)", () => {
 
 	test("contract preserved: a valid fixPatterns ID that no longer exists returns null, does NOT throw", async () => {
 		const t = createT();
+		await seedFleetAgents(t, FILE_LABELS);
 		const patternId = await newFixPattern(t);
 		await t.run(async (ctx) => {
 			await ctx.db.delete(patternId);

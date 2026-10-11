@@ -32,6 +32,9 @@ import { convexTest } from "../../tests/fixtures/convexTestWithServiceAccount";
 import { describe, expect, test } from "vitest";
 import { api } from "../_generated/api";
 import schema from "../schema";
+import { insertTaskRow, seedFleetAgents } from "../../tests/lib/seedFleetAgents";
+
+const FILE_LABELS = ["eta", "pi", "sigma"];
 
 const modules = Object.fromEntries(
 	Object.entries(import.meta.glob("../**/*.ts")).filter(
@@ -50,7 +53,7 @@ const PAGE_OPTS = { numItems: 50, cursor: null };
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 async function seedTask(ctx: any, overrides: Record<string, unknown> = {}): Promise<string> {
 	const now = Date.now();
-	return await ctx.db.insert("tasks", {
+	return await insertTaskRow(ctx, {
 		title: "Test task",
 		assignedTo: "sigma",
 		priority: "medium" as const,
@@ -69,6 +72,7 @@ describe("tasks.listPaginated — Day 116 B1 dashboard fix", () => {
 	// ── T1: no filters → PaginationResult shape ──────────────────────────────
 	test("T1: listPaginated returns { page, isDone, continueCursor } shape", async () => {
 		const t = convexTest(schema, modules);
+		await seedFleetAgents(t, FILE_LABELS);
 
 		await t.run(async (ctx) => {
 			await seedTask(ctx, { title: "Task A" });
@@ -92,6 +96,7 @@ describe("tasks.listPaginated — Day 116 B1 dashboard fix", () => {
 	// ── T2: status=blocked filter ─────────────────────────────────────────────
 	test("T2: listPaginated status=blocked returns only blocked tasks", async () => {
 		const t = convexTest(schema, modules);
+		await seedFleetAgents(t, FILE_LABELS);
 
 		await t.run(async (ctx) => {
 			await seedTask(ctx, { title: "Blocked task", status: "blocked" });
@@ -112,6 +117,7 @@ describe("tasks.listPaginated — Day 116 B1 dashboard fix", () => {
 	// ── T3: priority=urgent filter ────────────────────────────────────────────
 	test("T3: listPaginated priority=urgent returns only urgent tasks", async () => {
 		const t = convexTest(schema, modules);
+		await seedFleetAgents(t, FILE_LABELS);
 
 		await t.run(async (ctx) => {
 			await seedTask(ctx, { title: "Urgent task", priority: "urgent" });
@@ -132,6 +138,7 @@ describe("tasks.listPaginated — Day 116 B1 dashboard fix", () => {
 	// ── T4: assignedTo filter ─────────────────────────────────────────────────
 	test("T4: listPaginated assignedTo=sigma returns only sigma tasks", async () => {
 		const t = convexTest(schema, modules);
+		await seedFleetAgents(t, FILE_LABELS);
 
 		await t.run(async (ctx) => {
 			await seedTask(ctx, { title: "Sigma task", assignedTo: "sigma" });
@@ -150,6 +157,7 @@ describe("tasks.listPaginated — Day 116 B1 dashboard fix", () => {
 	// ── T5: assignedTo + status compound filter ───────────────────────────────
 	test("T5: listPaginated assignedTo=sigma + status=blocked → intersection", async () => {
 		const t = convexTest(schema, modules);
+		await seedFleetAgents(t, FILE_LABELS);
 
 		await t.run(async (ctx) => {
 			await seedTask(ctx, { title: "Sigma blocked", assignedTo: "sigma", status: "blocked" });
@@ -170,6 +178,7 @@ describe("tasks.listPaginated — Day 116 B1 dashboard fix", () => {
 	// ── T6: orgId passthrough ─────────────────────────────────────────────────
 	test("T6: listPaginated accepts orgId without ArgumentValidationError", async () => {
 		const t = convexTest(schema, modules);
+		await seedFleetAgents(t, FILE_LABELS);
 
 		await t.run(async (ctx) => {
 			await seedTask(ctx, { title: "Org task" });
@@ -191,6 +200,7 @@ describe("tasks.list — Day 116 B1 arg extension (priority + orgId)", () => {
 	// ── T7: priority + orgId accepted ────────────────────────────────────────
 	test("T7: tasks.list accepts priority and orgId without ArgumentValidationError", async () => {
 		const t = convexTest(schema, modules);
+		await seedFleetAgents(t, FILE_LABELS);
 
 		await t.run(async (ctx) => {
 			await seedTask(ctx, { title: "High task", priority: "high" });
@@ -210,6 +220,7 @@ describe("tasks.list — Day 116 B1 arg extension (priority + orgId)", () => {
 	// ── T8: tasks.list priority filter works end-to-end ──────────────────────
 	test("T8: tasks.list priority=urgent returns only urgent tasks", async () => {
 		const t = convexTest(schema, modules);
+		await seedFleetAgents(t, FILE_LABELS);
 
 		await t.run(async (ctx) => {
 			await seedTask(ctx, { title: "Urgent", priority: "urgent" });

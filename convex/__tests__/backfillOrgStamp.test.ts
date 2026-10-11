@@ -460,7 +460,7 @@ describe("a stamped fleet task still reaches the fleet's issue on complete", () 
 				isActive: true,
 				createdAt: NOW,
 			});
-			await ctx.db.insert("agents", {
+			const sigmaId = await ctx.db.insert("agents", {
 				orgSlug: "fleet-org",
 				clerkOrgId: testClerkOrgId("fleet-org"),
 				name: "sigma",
@@ -491,9 +491,11 @@ describe("a stamped fleet task still reaches the fleet's issue on complete", () 
 			return await ctx.db.insert("tasks", {
 				title: "Fix flaky thing #5",
 				assignedTo: "sigma",
+				assignedToId: sigmaId,
 				priority: "high" as const,
 				status: "todo" as const,
 				createdBy: "sigma",
+				createdById: sigmaId,
 				project: "proj-fleet",
 				createdAt: NOW,
 				updatedAt: NOW,

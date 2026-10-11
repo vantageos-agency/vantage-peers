@@ -24,6 +24,7 @@ import { beforeAll, describe, expect, it } from "vitest";
 import schema from "../../../convex/schema.js";
 import { LOCAL_STDIO_TRUST_CTX } from "../auth.js";
 import { registerTools } from "../tools.js";
+import { seedFleetAgents } from "../../../tests/lib/seedFleetAgents.js";
 
 const modules = Object.fromEntries(
 	Object.entries(
@@ -85,10 +86,12 @@ describe("update_task MCP tool — callerOrchestrator optional at the schema, st
 	let t: ReturnType<typeof convexTest>;
 	let tools: Map<string, CapturedTool>;
 
-	beforeAll(() => {
+	beforeAll(async () => {
 		t = convexTest(schema as never, modules as never).withIdentity({
 			subject: "test-service-account-user-id",
 		});
+		// The task doors decide on agent IDs: "alpha" is an agent of the fleet.
+		await seedFleetAgents(t, ["alpha"]);
 		tools = captureTools(makeFakeConvexClient(t));
 	});
 

@@ -3,6 +3,9 @@ import { convexTest } from "../tests/fixtures/convexTestWithServiceAccount";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import { api } from "./_generated/api";
 import schema from "./schema";
+import { seedFleetAgents } from "../tests/lib/seedFleetAgents";
+
+const FILE_LABELS = ["eta", "sigma", "tau"];
 
 // Exclude RAG/search/backfill modules — same exclusion as tests.test.ts
 const modules = Object.fromEntries(
@@ -55,6 +58,7 @@ async function seedNote(
 describe("briefingNotes:update", () => {
 	test("update title only — other fields preserved", async () => {
 		const t = createTestConvex();
+		await seedFleetAgents(t, FILE_LABELS);
 		const noteId = await seedNote(t, {
 			title: "old-title",
 			content: "test-content",
@@ -73,6 +77,7 @@ describe("briefingNotes:update", () => {
 
 	test("update content only — title preserved", async () => {
 		const t = createTestConvex();
+		await seedFleetAgents(t, FILE_LABELS);
 		const noteId = await seedNote(t, {
 			title: "old-title",
 			content: "old-content",
@@ -89,6 +94,7 @@ describe("briefingNotes:update", () => {
 
 	test("update decisions replaces (not appends) prior decisions", async () => {
 		const t = createTestConvex();
+		await seedFleetAgents(t, FILE_LABELS);
 		const noteId = await seedNote(t, {
 			decisions: ["d1", "d2"],
 		});
@@ -103,6 +109,7 @@ describe("briefingNotes:update", () => {
 
 	test("invalid linkedMemoryIds (foreign-table id) rejected by validator", async () => {
 		const t = createTestConvex();
+		await seedFleetAgents(t, FILE_LABELS);
 		const noteId = await seedNote(t);
 		// Insert a tasks row to get a tasks-table id (wrong table for linkedMemoryIds)
 		const taskId = await t.mutation(api.tasks.create, {
@@ -123,6 +130,7 @@ describe("briefingNotes:update", () => {
 
 	test("RBAC reject — non-creator non-system caller throws Unauthorized", async () => {
 		const t = createTestConvex();
+		await seedFleetAgents(t, FILE_LABELS);
 		const noteId = await seedNote(t, { createdBy: "sigma" });
 		await expect(
 			t.mutation(api.briefingNotes.update, {
@@ -135,6 +143,7 @@ describe("briefingNotes:update", () => {
 
 	test("updatedAt + updatedBy set after successful patch", async () => {
 		const t = createTestConvex();
+		await seedFleetAgents(t, FILE_LABELS);
 		const noteId = await seedNote(t);
 		const before = await t.query(api.briefingNotes.get, { noteId });
 		expect(before?.updatedAt).toBeUndefined();
@@ -160,6 +169,7 @@ describe("briefingNotes:update", () => {
 describe("briefingNotes:create — linkedMemoryIds validator", () => {
 	test("create rejects a briefingNotes-table ID in linkedMemoryIds with validator error", async () => {
 		const t = createTestConvex();
+		await seedFleetAgents(t, FILE_LABELS);
 		// First create a real briefing note to obtain its ID
 		const briefingId = await seedNote(t);
 		// Pass that briefingNotes ID as a linkedMemoryIds entry — wrong table
@@ -177,6 +187,7 @@ describe("briefingNotes:create — linkedMemoryIds validator", () => {
 
 	test("create rejects a tasks-table ID in linkedMemoryIds with validator error", async () => {
 		const t = createTestConvex();
+		await seedFleetAgents(t, FILE_LABELS);
 		const taskId = await t.mutation(api.tasks.create, {
 			title: "dummy",
 			assignedTo: "sigma",
@@ -198,6 +209,7 @@ describe("briefingNotes:create — linkedMemoryIds validator", () => {
 
 	test("create succeeds when linkedMemoryIds is omitted", async () => {
 		const t = createTestConvex();
+		await seedFleetAgents(t, FILE_LABELS);
 		const noteId = await t.mutation(api.briefingNotes.create, {
 			title: "test",
 			topic: "test",

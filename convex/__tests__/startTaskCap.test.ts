@@ -13,6 +13,9 @@ import { convexTest } from "../../tests/fixtures/convexTestWithServiceAccount";
 import { describe, expect, test } from "vitest";
 import { api } from "../_generated/api";
 import schema from "../schema";
+import { seedFleetAgents } from "../../tests/lib/seedFleetAgents";
+
+const FILE_LABELS = ["eta", "sigma"];
 
 const modules = Object.fromEntries(
 	Object.entries(import.meta.glob("../**/*.ts")).filter(
@@ -90,6 +93,7 @@ async function refusal(p: Promise<unknown>): Promise<string> {
 describe("tasks.start — in_progress cap read from taskClosureConfig", () => {
 	test("cap 6: 2nd..6th start succeed, 7th refused naming cap and open ids", async () => {
 		const t = createT();
+		await seedFleetAgents(t, FILE_LABELS);
 		await seedCap(t, ["6"]);
 		const open = await startMany(t, "sigma", "proj-a", 6);
 		const seventh = await seedTask(t, "sigma", "proj-a", "seventh");
@@ -108,6 +112,7 @@ describe("tasks.start — in_progress cap read from taskClosureConfig", () => {
 
 	test("cap 6: another caller is unaffected by sigma's open tasks", async () => {
 		const t = createT();
+		await seedFleetAgents(t, FILE_LABELS);
 		await seedCap(t, ["6"]);
 		await startMany(t, "sigma", "proj-a", 6);
 		const other = await seedTask(t, "eta", "proj-a", "eta-first");
@@ -118,6 +123,7 @@ describe("tasks.start — in_progress cap read from taskClosureConfig", () => {
 
 	test("cap 6: another project is unaffected (own count)", async () => {
 		const t = createT();
+		await seedFleetAgents(t, FILE_LABELS);
 		await seedCap(t, ["6"]);
 		await startMany(t, "sigma", "proj-a", 6);
 		const inB = await seedTask(t, "sigma", "proj-b", "b-first");
@@ -128,6 +134,7 @@ describe("tasks.start — in_progress cap read from taskClosureConfig", () => {
 
 	test("no cap row: 2nd start refused (cap 1, today's behaviour)", async () => {
 		const t = createT();
+		await seedFleetAgents(t, FILE_LABELS);
 		const [first] = await startMany(t, "sigma", "proj-a", 1);
 		const second = await seedTask(t, "sigma", "proj-a", "second");
 		const msg = await refusal(
@@ -146,6 +153,7 @@ describe("tasks.start — in_progress cap read from taskClosureConfig", () => {
 		["empty value", []],
 	])("invalid cap (%s) behaves as 1", async (_label, value) => {
 		const t = createT();
+		await seedFleetAgents(t, FILE_LABELS);
 		await seedCap(t, value);
 		await startMany(t, "sigma", "proj-a", 1);
 		const second = await seedTask(t, "sigma", "proj-a", "second");
@@ -158,6 +166,7 @@ describe("tasks.start — in_progress cap read from taskClosureConfig", () => {
 
 	test("cap 2: resume of a paused task is gated by the same cap", async () => {
 		const t = createT();
+		await seedFleetAgents(t, FILE_LABELS);
 		await seedCap(t, ["2"]);
 		const [a] = await startMany(t, "sigma", "proj-a", 1);
 		await t.mutation(api.tasks.pause, { taskId: a as never, callerOrchestrator: "sigma" });

@@ -15,6 +15,8 @@ import { testClerkOrgId } from "../../tests/fixtures/testClerkOrgId";
 import { api } from "../_generated/api";
 import type { Id } from "../_generated/dataModel";
 import schema from "../schema";
+import { seedAgents } from "../../tests/lib/agentIdOf";
+import { insertTaskRow, seedOrgAgents } from "../../tests/lib/seedFleetAgents";
 
 const modules = Object.fromEntries(
 	Object.entries(import.meta.glob("../**/*.ts")).filter(
@@ -54,7 +56,7 @@ const asOrgA = (t: T) =>
 
 const seedTask = (t: T, orgId: string, createdBy: string, assignedTo: string) =>
 	t.run((ctx) =>
-		ctx.db.insert("tasks", {
+		insertTaskRow(ctx, {
 			title: "seed task",
 			assignedTo,
 			priority: "medium",
@@ -227,10 +229,17 @@ describe("tasks:complete — the target row's own org and creator/assignee decid
 	test("PRESENT: the assignee completes an own-org task; the boundary fields are untouched", async () => {
 		const t = createT();
 		await seed(t);
+		// The task doors decide on agent IDs: both seats are agents of org-a and the
+		// assignee presents its credential.
+		const secrets = await seedOrgAgents(t, [
+			["org-a", "seat-a"],
+			["org-a", "seat-a2"],
+		]);
 		const id = await seedTask(t, "org-a", "seat-a2", "seat-a");
 		await asOrgA(t).mutation(api.tasks.complete, {
 			taskId: id,
 			callerOrchestrator: "seat-a",
+			agentCredentialSecret: secrets.get("org-a/seat-a"),
 			completionNote: NOTE,
 		});
 		const row = await t.run((ctx) => ctx.db.get(id));
@@ -279,6 +288,8 @@ describe("human path — the boundary derives from the verified identity, not an
 
 	test("P0 control: an own-org human create succeeds and is stamped org-a", async () => {
 		const t = await seedHuman();
+		// The assignee of a task is an agent of the task's org.
+		await seedAgents(t, [["org-a", "seat-a"]]);
 		const missionId = await asOrgA(t).mutation(api.missions.create, {
 			...missionBase,
 			pilot: "seat-a",

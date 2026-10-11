@@ -13,6 +13,7 @@ import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import { testClerkOrgId } from "../../tests/fixtures/testClerkOrgId";
 import { api, internal } from "../_generated/api";
 import schema from "../schema";
+import { actingWith, seedOrgAgents } from "../../tests/lib/seedFleetAgents";
 
 // Scheduled jobs are recorded (read back from _scheduled_functions), never fired.
 beforeEach(() => vi.useFakeTimers());
@@ -31,10 +32,18 @@ const ORCH = "eta";
 const NOTE = "Fixed the defect in commit abcdef1234567 with regression test, 3/3 pass";
 const IRP_NOTE = "Root cause: bad join. Fix: scope by org. Files: convex/tasks.ts, convex/lib/x.ts";
 
-const asOrg = (t: T, slug: string) =>
-	t.withIdentity({ subject: `user-${slug}`, organizationId: slug, org_id: testClerkOrgId(slug) } as Parameters<
+// org -> the credential of that org's ORCH agent (written by seed). A task is
+// created and closed by an AGENT: the doors decide on agent IDs, so the member
+// presents the agent's credential.
+const secrets = new Map<string, string>();
+
+const asOrg = (t: T, slug: string) => {
+	const member = t.withIdentity({ subject: `user-${slug}`, organizationId: slug, org_id: testClerkOrgId(slug) } as Parameters<
 		T["withIdentity"]
 	>[0]);
+	const secret = secrets.get(`${slug}/${ORCH}`);
+	return secret === undefined ? member : actingWith(member, secret);
+};
 
 async function seed(t: T) {
 	await t.run(async (ctx) => {
@@ -100,6 +109,14 @@ async function seed(t: T) {
 			});
 		}
 	});
+	secrets.clear();
+	for (const [k, v] of await seedOrgAgents(t, [
+		["org-a", ORCH],
+		["org-b", ORCH],
+		["org-op", ORCH],
+	])) {
+		secrets.set(k, v);
+	}
 }
 
 const issueOf = (t: T, repo: string, n = 5) =>

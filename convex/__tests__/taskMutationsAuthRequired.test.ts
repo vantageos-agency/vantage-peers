@@ -41,6 +41,9 @@ import { describe, expect, test } from "vitest";
 import { api } from "../_generated/api";
 import schema from "../schema";
 import { testClerkOrgId } from "../../tests/fixtures/testClerkOrgId";
+import { seedFleetAgents, seedOrgAgents } from "../../tests/lib/seedFleetAgents";
+
+const FILE_LABELS = ["eta", "pi", "sigma", "victor"];
 
 const modules = Object.fromEntries(
 	Object.entries(import.meta.glob("../**/*.ts")).filter(
@@ -88,6 +91,8 @@ async function seedTask(
 		 * on the tenant gate rather than on the control it means to exercise.
 		 */
 		orgSlug: string;
+		/** The credential of the agent the (org) seeder acts as. */
+		agentCredentialSecret: string;
 	}> = {},
 ) {
 	const seeder = overrides.orgSlug
@@ -104,6 +109,9 @@ async function seedTask(
 			priority: "medium",
 			status: (overrides.status as "todo") ?? "todo",
 			createdBy: overrides.createdBy ?? overrides.assignedTo ?? "sigma",
+			...(overrides.agentCredentialSecret !== undefined
+				? { agentCredentialSecret: overrides.agentCredentialSecret }
+				: {}),
 		});
 }
 
@@ -114,6 +122,7 @@ async function seedTask(
 describe("AUTH_REQUIRED — unauthenticated callers are refused, all ten public task mutations", () => {
 	test("create: no identity -> AUTH_REQUIRED; with identity -> succeeds", async () => {
 		const t = createT();
+		await seedFleetAgents(t, FILE_LABELS);
 
 		await expect(
 			t.mutation(api.tasks.create, {
@@ -139,6 +148,7 @@ describe("AUTH_REQUIRED — unauthenticated callers are refused, all ten public 
 
 	test("update: no identity -> AUTH_REQUIRED; with identity -> succeeds", async () => {
 		const t = createT();
+		await seedFleetAgents(t, FILE_LABELS);
 		const taskId = await seedTask(t, { assignedTo: "sigma", createdBy: "sigma" });
 
 		await expect(
@@ -162,6 +172,7 @@ describe("AUTH_REQUIRED — unauthenticated callers are refused, all ten public 
 
 	test("blockTask: no identity -> AUTH_REQUIRED; with identity -> succeeds", async () => {
 		const t = createT();
+		await seedFleetAgents(t, FILE_LABELS);
 		const blockerId = await seedTask(t, { assignedTo: "eta", createdBy: "eta" });
 		const taskId = await seedTask(t, { assignedTo: "sigma", createdBy: "sigma" });
 
@@ -186,6 +197,7 @@ describe("AUTH_REQUIRED — unauthenticated callers are refused, all ten public 
 
 	test("complete: no identity -> AUTH_REQUIRED; with identity -> succeeds", async () => {
 		const t = createT();
+		await seedFleetAgents(t, FILE_LABELS);
 		const taskId = await seedTask(t, { assignedTo: "sigma", createdBy: "sigma" });
 		await t.run(async (ctx) => {
 			await ctx.db.insert("taskClosureConfig", {
@@ -216,6 +228,7 @@ describe("AUTH_REQUIRED — unauthenticated callers are refused, all ten public 
 
 	test("failTask: no identity -> AUTH_REQUIRED; with identity -> succeeds", async () => {
 		const t = createT();
+		await seedFleetAgents(t, FILE_LABELS);
 		const taskId = await seedTask(t, { assignedTo: "sigma", createdBy: "sigma" });
 
 		await expect(
@@ -239,6 +252,7 @@ describe("AUTH_REQUIRED — unauthenticated callers are refused, all ten public 
 
 	test("start: no identity -> AUTH_REQUIRED; with identity -> succeeds", async () => {
 		const t = createT();
+		await seedFleetAgents(t, FILE_LABELS);
 		const taskId = await seedTask(t, { assignedTo: "sigma", createdBy: "sigma" });
 
 		await expect(
@@ -260,6 +274,7 @@ describe("AUTH_REQUIRED — unauthenticated callers are refused, all ten public 
 
 	test("checkout: no identity -> AUTH_REQUIRED; with identity -> succeeds", async () => {
 		const t = createT();
+		await seedFleetAgents(t, FILE_LABELS);
 		const taskId = await seedTask(t, { assignedTo: "sigma", createdBy: "sigma" });
 
 		await expect(
@@ -280,6 +295,7 @@ describe("AUTH_REQUIRED — unauthenticated callers are refused, all ten public 
 
 	test("deleteTask: no identity -> AUTH_REQUIRED; with identity -> succeeds", async () => {
 		const t = createT();
+		await seedFleetAgents(t, FILE_LABELS);
 		const taskId = await seedTask(t, { assignedTo: "sigma", createdBy: "sigma" });
 
 		await expect(
@@ -300,6 +316,7 @@ describe("AUTH_REQUIRED — unauthenticated callers are refused, all ten public 
 
 	test("bulkComplete: no identity -> AUTH_REQUIRED on the dry-run preview path too", async () => {
 		const t = createT();
+		await seedFleetAgents(t, FILE_LABELS);
 		await seedTask(t, { assignedTo: "sigma", createdBy: "sigma" });
 
 		await expect(
@@ -320,6 +337,7 @@ describe("AUTH_REQUIRED — unauthenticated callers are refused, all ten public 
 
 	test("attachReviewArtifact: no identity -> AUTH_REQUIRED; with identity -> succeeds", async () => {
 		const t = createT();
+		await seedFleetAgents(t, FILE_LABELS);
 		const taskId = await seedTask(t, { assignedTo: "eta", createdBy: "pi" });
 
 		await expect(
@@ -352,10 +370,15 @@ describe("AUTH_REQUIRED — unauthenticated callers are refused, all ten public 
 describe("CALLER_IDENTITY_MISMATCH — callerOrchestrator contradicting the verified identity's scope is refused, agreeing passes", () => {
 	test("update: callerOrchestrator outside the org's allowedOrchestrators -> refused naming both; inside -> passes", async () => {
 		const t = createT();
+		await seedFleetAgents(t, FILE_LABELS);
 		await seedOrgMapping(t, {
 			clerkOrgSlug: "acme-hr",
 			allowedOrchestrators: ["victor"],
 		});
+		// "victor" is an agent of acme-hr; acting as it presents its credential.
+		const victorSecret = (await seedOrgAgents(t, [["acme-hr", "victor"]])).get(
+			"acme-hr/victor",
+		);
 		// Seeded AS acme-hr so the row carries that tenant: this test's subject is
 		// CALLER_IDENTITY_MISMATCH, and a service-account seed would stamp no
 		// tenant and make the org caller fail on the tenant gate instead.
@@ -363,6 +386,7 @@ describe("CALLER_IDENTITY_MISMATCH — callerOrchestrator contradicting the veri
 			assignedTo: "victor",
 			createdBy: "victor",
 			orgSlug: "acme-hr",
+			agentCredentialSecret: victorSecret,
 		});
 
 		const tVictorOrg = t.withIdentity({
@@ -388,6 +412,7 @@ describe("CALLER_IDENTITY_MISMATCH — callerOrchestrator contradicting the veri
 		await tVictorOrg.mutation(api.tasks.update, {
 			taskId,
 			callerOrchestrator: "victor",
+			agentCredentialSecret: victorSecret,
 			title: "agreeing-update",
 		});
 		const after = await tVictorOrg.query(api.tasks.get, { taskId });
@@ -396,15 +421,20 @@ describe("CALLER_IDENTITY_MISMATCH — callerOrchestrator contradicting the veri
 
 	test("complete: callerOrchestrator outside allowedOrchestrators -> refused; inside -> passes", async () => {
 		const t = createT();
+		await seedFleetAgents(t, FILE_LABELS);
 		await seedOrgMapping(t, {
 			clerkOrgSlug: "acme-hr",
 			allowedOrchestrators: ["victor"],
 		});
 		// Seeded AS acme-hr — same reasoning as the update test above.
+		const victorSecret = (await seedOrgAgents(t, [["acme-hr", "victor"]])).get(
+			"acme-hr/victor",
+		);
 		const taskId = await seedTask(t, {
 			assignedTo: "victor",
 			createdBy: "victor",
 			orgSlug: "acme-hr",
+			agentCredentialSecret: victorSecret,
 		});
 		await t.run(async (ctx) => {
 			await ctx.db.insert("taskClosureConfig", {
@@ -434,6 +464,7 @@ describe("CALLER_IDENTITY_MISMATCH — callerOrchestrator contradicting the veri
 		await tVictorOrg.mutation(api.tasks.complete, {
 			taskId,
 			callerOrchestrator: "victor",
+			agentCredentialSecret: victorSecret,
 			completionNote: "agreeing completion sha:deadbeef4",
 		});
 		const after = await tVictorOrg.query(api.tasks.get, { taskId });
@@ -442,6 +473,7 @@ describe("CALLER_IDENTITY_MISMATCH — callerOrchestrator contradicting the veri
 
 	test("master/service-account identity bypasses the membership check regardless of callerOrchestrator (isMaster short-circuit, unaffected regression)", async () => {
 		const t = createT();
+		await seedFleetAgents(t, FILE_LABELS);
 		const taskId = await seedTask(t, { assignedTo: "sigma", createdBy: "sigma" });
 
 		// Service account has isMaster=true (see convex/lib/auth.ts

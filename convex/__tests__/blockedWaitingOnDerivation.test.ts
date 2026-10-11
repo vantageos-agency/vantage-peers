@@ -26,6 +26,9 @@ import { describe, expect, test } from "vitest";
 import { api } from "../_generated/api";
 import schema from "../schema";
 import { deriveBlockedWaitingOn } from "../tasks";
+import { seedFleetAgents } from "../../tests/lib/seedFleetAgents";
+
+const FILE_LABELS = ["eta", "sigma"];
 
 const modules = Object.fromEntries(
 	Object.entries(import.meta.glob("../**/*.ts")).filter(
@@ -58,6 +61,7 @@ async function makeTask(
 describe("blocked waiting-on state — derived from blockedCause, not caller-written", () => {
 	test("human vs authorisation are distinguishable on the same nobody-owned shape", async () => {
 		const t = createT();
+		await seedFleetAgents(t, FILE_LABELS);
 		const humanId = await makeTask(t, { assignedTo: "sigma", createdBy: "sigma" });
 		const authId = await makeTask(t, { assignedTo: "sigma", createdBy: "sigma" });
 
@@ -108,6 +112,7 @@ describe("blocked waiting-on state — derived from blockedCause, not caller-wri
 
 	test("omitting blockedCause defaults to 'other' — old MCP callers do not break", async () => {
 		const t = createT();
+		await seedFleetAgents(t, FILE_LABELS);
 		const taskId = await makeTask(t, { assignedTo: "sigma", createdBy: "sigma" });
 
 		await t.mutation(api.tasks.blockTask, {
@@ -123,6 +128,7 @@ describe("blocked waiting-on state — derived from blockedCause, not caller-wri
 
 	test("blockedOnTaskId form also accepts a structured cause (peer-task review = authorisation)", async () => {
 		const t = createT();
+		await seedFleetAgents(t, FILE_LABELS);
 		const blockerId = await makeTask(t, { assignedTo: "eta", createdBy: "eta" });
 		const taskId = await makeTask(t, { assignedTo: "sigma", createdBy: "sigma" });
 
@@ -141,6 +147,7 @@ describe("blocked waiting-on state — derived from blockedCause, not caller-wri
 
 	test("listPaginated read path carries blockedCause without throwing (returns-validator class)", async () => {
 		const t = createT();
+		await seedFleetAgents(t, FILE_LABELS);
 		const taskId = await makeTask(t, { assignedTo: "sigma", createdBy: "sigma" });
 
 		await t.mutation(api.tasks.blockTask, {
@@ -164,6 +171,7 @@ describe("blocked waiting-on state — derived from blockedCause, not caller-wri
 	// meaningless and now refused, closing the asymmetry Eta flagged.
 	test("blockedCause='peer_task' without blockedOnTaskId is refused (BLOCKED_CAUSE_PEER_TASK_REQUIRES_LINK)", async () => {
 		const t = createT();
+		await seedFleetAgents(t, FILE_LABELS);
 		const taskId = await makeTask(t, { assignedTo: "sigma", createdBy: "sigma" });
 
 		await expect(

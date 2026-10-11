@@ -44,6 +44,7 @@ import {
 	resolveVerifiedOrg,
 	verifiedOrgValidator,
 } from "./lib/verifiedOrg";
+import type { VerifiedOrg } from "./lib/verifiedOrg";
 import {
 	assertMemberIsAdmin,
 	assertTaskVisibleToCaller,
@@ -67,6 +68,11 @@ import {
 } from "./lib/taskClosureGate";
 import type { WorkSegment } from "./lib/taskClosureGate";
 import { actorIdResolver, taskActorIdFields } from "./lib/actorIds";
+import {
+	assigneeIdForRead,
+	callerActorOf,
+	requireAssigneeId,
+} from "./lib/taskActors";
 import { clerkOrgIdForSlug } from "./lib/orgClerkId";
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -154,6 +160,14 @@ export function deriveTerminalStatus(
 // a caller that merely typed the word (see isFleetSystemCaller).
 // ─────────────────────────────────────────────────────────────────────────────
 // ─────────────────────────────────────────────────────────────────────────────
+// The scope a task door authorises with: the verified OrgScope plus, when the
+// caller asserted an actor, that actor's ID and org (see callerActorOf).
+export type CallerScope = OrgScope & {
+	callerActorId?: string;
+	// The org the caller's agent ID lives in (absent for a person).
+	callerActorOrg?: string;
+};
+
 // requireAuthenticatedCaller — SECURITY REMEDIATION (task
 // k1712yrxjr570m6ks81rnhjh5n8cryf0, ruled by Pi). Closes the open door: none
 // of the nine public task mutations consulted ctx.auth before this — any
@@ -205,7 +219,12 @@ export async function requireAuthenticatedCaller(
 	agentCredentialSecret?: string,
 	verifiedActor?: VerifiedActor,
 	verifiedPerson?: { proof: VerifiedPerson | undefined; door: string },
-): Promise<OrgScope> {
+	// The organisation the MCP transport verified for the bearer. Believed from
+	// the fleet service account only (resolveVerifiedOrg refuses anyone else); it
+	// is the one org an asserted label may be resolved in when the call carries no
+	// agent proof of its own.
+	verifiedOrg?: { proof: VerifiedOrg | undefined; door: string },
+): Promise<CallerScope> {
 	const identity = await ctx.auth.getUserIdentity();
 	if (identity === null) {
 		throw new ConvexError(
@@ -222,12 +241,23 @@ export async function requireAuthenticatedCaller(
 	const transportScope = await withOrgScope(ctx, {
 		allowNoIdentityMaster: false,
 	});
+	// The organisation the transport verified for the bearer (service account
+	// only; anyone else presenting it is refused, before any proof is weighed).
+	const verifiedOrgSlug =
+		verifiedOrg?.proof !== undefined
+			? await resolveVerifiedOrg(
+					ctx,
+					transportScope,
+					verifiedOrg.proof,
+					verifiedOrg.door,
+				)
+			: undefined;
 	// verifiedPerson (k176ch9tamzab3dnhye94kga1d8fkbhm): a PERSON reached through
 	// the MCP service account. Believed from the service account only; the
 	// person's scope is rebuilt from its token row (convex/lib/personPrincipal.ts)
 	// and every check below then runs on the PERSON, never on the service account.
 	// Absent, the scope is the transport's, byte-unchanged.
-	const scope = await resolveVerifiedPerson(
+	const scope: CallerScope = await resolveVerifiedPerson(
 		ctx,
 		transportScope,
 		verifiedPerson?.proof,
@@ -284,6 +314,18 @@ export async function requireAuthenticatedCaller(
 		);
 	}
 
+	// M7: the caller as an ACTOR ID, from the proof already verified above. Every
+	// task door that authorises by actor compares this against the row's
+	// createdById / assignedToId; the asserted label decides nothing.
+	const actor = await callerActorOf(ctx, scope, callerOrchestrator, {
+		agentCredentialSecret,
+		verifiedActor,
+		verifiedOrgSlug,
+	});
+	if (actor !== undefined) {
+		scope.callerActorId = actor.id;
+		if (actor.orgSlug !== undefined) scope.callerActorOrg = actor.orgSlug;
+	}
 	return scope;
 }
 
@@ -324,7 +366,7 @@ async function authorizeTaskActor(
 	task: Parameters<typeof assertTaskCallerAuthorized>[0],
 	callerOrchestrator: string | undefined,
 	taskId: string,
-	callerScope: OrgScope,
+	callerScope: CallerScope,
 	door: string,
 	opts?: { adminOnly?: boolean; reviewReassignGranted?: boolean },
 ): Promise<string | undefined> {
@@ -338,13 +380,15 @@ function assertTaskCallerAuthorized(
 	task: {
 		orgId?: string;
 		createdBy: string;
+		createdById?: string;
 		assignedTo?: string;
-		lastAssignedTo?: string;
+		assignedToId?: string;
+		lastAssignedToId?: string;
 		isReviewTask?: boolean;
 	},
 	callerOrchestrator: string | undefined,
 	taskId: string,
-	callerScope: OrgScope,
+	callerScope: CallerScope,
 	reviewReassignGranted?: boolean,
 ): undefined {
 	if (callerOrchestrator === undefined) {
@@ -366,11 +410,17 @@ function assertTaskCallerAuthorized(
 	// [REVIEW] task to its author could never take it back) WITHOUT widening
 	// authorization on non-review tasks — a prior assignee of a plain task
 	// remains refused, same as before this branch existed.
+	// M7: authority is decided on ACTOR IDs. A label equal to the caller's name
+	// is not authority (a renamed agent, or the same name in another org, carries
+	// the label of a different agent); a row with no ID names nobody.
+	const callerId = callerScope.callerActorId;
+	const isActor = (rowActorId: string | undefined): boolean =>
+		callerId !== undefined && rowActorId !== undefined && rowActorId === callerId;
 	const isReviewerReclaim =
-		isReviewTask(task) && task.lastAssignedTo === callerOrchestrator;
+		isReviewTask(task) && isActor(task.lastAssignedToId);
 	const isAuthorized =
-		task.createdBy === callerOrchestrator ||
-		task.assignedTo === callerOrchestrator ||
+		isActor(task.createdById) ||
+		isActor(task.assignedToId) ||
 		isFleetSystemCaller(callerScope, callerOrchestrator) ||
 		isReviewerReclaim ||
 		reviewReassignGranted === true;
@@ -598,6 +648,10 @@ async function insertTask(
 	// Server-only automation stamp: only internal callers pass it, never a
 	// public argument (createTaskArgsValidator has no `origin`).
 	origin?: "automation-webhook",
+	// The actors BY ID when the caller already holds them from a VERIFIED proof
+	// (`create`). Absent (the internal webhook / derivation paths, which have no
+	// caller) the ids are resolved from the labels within the row's own org.
+	actorIds?: { createdById?: string; assignedToId: string },
 ): Promise<import("./_generated/dataModel").Id<"tasks">> {
 	// Day 130 follow-up #2 (Eta REVISE, PR #1089) — the closure-gate
 	// exemption is NOT driven by `createdBy` (see taskClosureGate.ts):
@@ -627,10 +681,17 @@ async function insertTask(
 		orgId,
 		// R-53: the actors BY ID, resolved within the row's own org (the operator
 		// org for a fleet row) from the already-verified createdBy / assignedTo.
-		...(await taskActorIdFields(ctx, orgId, {
-			createdBy: args.createdBy,
-			assignedTo: args.assignedTo,
-		})),
+		...(actorIds !== undefined
+			? {
+					assignedToId: actorIds.assignedToId,
+					...(actorIds.createdById !== undefined
+						? { createdById: actorIds.createdById }
+						: {}),
+				}
+			: await taskActorIdFields(ctx, orgId, {
+					createdBy: args.createdBy,
+					assignedTo: args.assignedTo,
+				})),
 		// Permanent Clerk org id of the same tenant (Pi ruling (d)).
 		clerkOrgId: await clerkOrgIdForSlug(ctx, orgId),
 		...(origin !== undefined ? { origin } : {}),
@@ -687,6 +748,18 @@ export const create = mutation({
 		requireOrchestratorOnRoster(scope, args.assignedTo, "tasks:create", "assignee");
 		// The tenant is derived from the SCOPE just resolved above, never from
 		// anything the client sent.
+		const rowOrgId = orgIdForWrite(scope, "task");
+		// M7: the assignee BY ID, in the org the row will live in. A label with no
+		// active agent there (unknown, or registered only in another org) is
+		// refused before anything is written.
+		// A fleet-scoped row written for a verified agent (a seat reaching Convex as
+		// the service account) resolves its assignee in the AGENT's org.
+		const assignedToId = await requireAssigneeId(
+			ctx,
+			rowOrgId ?? scope.callerActorOrg,
+			args.assignedTo,
+			"tasks:create",
+		);
 		if (taskArgs.createdBy === undefined) {
 			// HUMAN path: createdBy is the actor "user:<subject>" (schema keeps it a
 			// string; the prefix means it can never equal a roster slug, so it grants
@@ -695,10 +768,24 @@ export const create = mutation({
 			return await insertTask(
 				ctx,
 				{ ...taskArgs, createdBy: actor, lastActedBy: actor },
-				orgIdForWrite(scope, "task"),
+				rowOrgId,
+				undefined,
+				{ createdById: actor, assignedToId },
 			);
 		}
-		return await insertTask(ctx, { ...taskArgs, createdBy: taskArgs.createdBy }, orgIdForWrite(scope, "task"));
+		// M7: createdById is the VERIFIED caller's ID (scope.callerActorId, from the
+		// credential / verifiedActor / own-org lookup), never a value the client
+		// typed. A creator label that names no agent of the caller's org (the fleet
+		// "system", an automation label) records no ID: nothing is guessed, and a
+		// row with no creator ID gives no actor creator authority.
+		const createdById = scope.callerActorId;
+		return await insertTask(
+			ctx,
+			{ ...taskArgs, createdBy: taskArgs.createdBy },
+			rowOrgId,
+			undefined,
+			{ ...(createdById !== undefined ? { createdById } : {}), assignedToId },
+		);
 	},
 });
 
@@ -1219,7 +1306,83 @@ async function runTasksList(ctx: QueryCtx, args: TasksListArgs, scope: OrgScope)
 		// filterByOrgScope's tenant gate). One query per status bucket (each
 		// newest-first because `status` is pinned), merged by creation time
 		// below, so the page is the true newest `limit` of the status union.
-		if (memberOrg !== null) {
+		//
+		// ── Assignee filter: BY ID (M7) ──────────────────────────────────────────
+		// The label names an agent of the caller's own org (the operator org for the
+		// fleet master). assigneeIdForRead PROVES, for a member, that the resolved ID
+		// is an agents row of the caller's org (RBAC_DENIED otherwise), then rows are
+		// read through the assignee-ID indexes, whose leading equality is that
+		// agent's ID. An agent ID belongs to exactly one org, so a same-named agent
+		// of another org, or a renamed agent's old rows, can never match; and
+		// filterByOrgScope below still drops any row whose orgId is not the caller's,
+		// so a row stamped for another org that names this agent is never served.
+		// A label naming no agent there is an absence (empty success).
+		if (assignedTo !== undefined) {
+			const assigneeId = await assigneeIdForRead(ctx, scope, assignedTo);
+			if (assigneeId === undefined) {
+				allRows = [];
+			} else {
+				const statusList: TaskStatus[] =
+					statuses !== undefined ? statuses : [...TASK_STATUSES];
+				// One query per status bucket, merged by creation time below, so the
+				// page is the true newest `limit` of the status union.
+				//  - `project` given: by_assigneeId_project_status, creation-ordered, so
+				//    the cursor is pushed into the index and `limit` rows are enough.
+				//  - otherwise: by_assigneeId_status_updatedAt (ordered by updatedAt, not
+				//    creation time), so the whole bucket is read (bounded by the scan
+				//    cap, refused loudly beyond it) and the newest `limit` is chosen
+				//    after the merge. `updatedSince` is pushed into that index range.
+				const idWide =
+					project === undefined ||
+					(memberOrg !== null ? createdBy !== undefined || updatedSince !== undefined : needsWideScan);
+				const idFetch = idWide ? TASK_LIST_SCAN_CAP + 1 : limit;
+				const upper = before ?? Number.MAX_VALUE;
+				if (updatedSince !== undefined && project === undefined) {
+					usedIndexedUpdatedSinceBound = true;
+				}
+				const buckets = await Promise.all(
+					statusList.map(async (status) => {
+						const q = ctx.db.query("tasks");
+						if (project !== undefined) {
+							return await q
+								.withIndex("by_assigneeId_project_status", (i) =>
+									i
+										.eq("assignedToId", assigneeId)
+										.eq("project", project)
+										.eq("status", status)
+										.lt("_creationTime", upper),
+								)
+								.order("desc")
+								.take(idFetch);
+						}
+						return await q
+							.withIndex("by_assigneeId_status_updatedAt", (i) =>
+								updatedSince !== undefined
+									? i
+											.eq("assignedToId", assigneeId)
+											.eq("status", status)
+											.gte("updatedAt", updatedSince)
+									: i.eq("assignedToId", assigneeId).eq("status", status),
+							)
+							.order("desc")
+							.take(idFetch);
+					}),
+				);
+				// With a master updatedSince window the candidates are the WHOLE window
+				// across statuses (one bound, one population); otherwise one status
+				// bucket is the unit the cap bounds.
+				const overCap =
+					updatedSince !== undefined && project === undefined
+						? buckets.reduce((n, b) => n + b.length, 0) > TASK_LIST_SCAN_CAP
+						: buckets.some((b) => b.length > TASK_LIST_SCAN_CAP);
+				if (idWide && overCap) {
+					throw new ConvexError(
+						`tasks.list: SCAN_CAP_EXCEEDED — widened scan for updatedSince/createdBy/createdBefore hit the cap of ${TASK_LIST_SCAN_CAP} candidate rows before the filter ran. The result would be incomplete and indistinguishable from a full match. Narrow with assignedTo/assignedToInstance/project/status${usedIndexedUpdatedSinceBound ? " or shrink the updatedSince window" : ""}.`,
+					);
+				}
+				allRows = buckets.flat();
+			}
+		} else if (memberOrg !== null) {
 			const statusList: TaskStatus[] =
 				statuses !== undefined ? statuses : [...TASK_STATUSES];
 			const memberWide = createdBy !== undefined || updatedSince !== undefined;
@@ -1247,31 +1410,6 @@ async function runTasksList(ctx: QueryCtx, args: TasksListArgs, scope: OrgScope)
 								i
 									.eq("orgId", memberOrg)
 									.eq("assignedToInstance", assignedToInstance)
-									.eq("status", status)
-									.lt("_creationTime", upper),
-							)
-							.order("desc")
-							.take(memberFetch);
-					}
-					if (assignedTo !== undefined && project !== undefined) {
-						return await q
-							.withIndex("by_orgId_assignee_project_status", (i) =>
-								i
-									.eq("orgId", memberOrg)
-									.eq("assignedTo", assignedTo)
-									.eq("project", project)
-									.eq("status", status)
-									.lt("_creationTime", upper),
-							)
-							.order("desc")
-							.take(memberFetch);
-					}
-					if (assignedTo !== undefined) {
-						return await q
-							.withIndex("by_orgId_assignee_status", (i) =>
-								i
-									.eq("orgId", memberOrg)
-									.eq("assignedTo", assignedTo)
 									.eq("status", status)
 									.lt("_creationTime", upper),
 							)
@@ -1362,86 +1500,6 @@ async function runTasksList(ctx: QueryCtx, args: TasksListArgs, scope: OrgScope)
 				allRows = applyStatusFilter(base);
 			}
 		}
-		// Filter by assignee + project together — matching compound index,
-		// so BOTH filters are applied, never one silently dropped.
-		else if (assignedTo !== undefined && project !== undefined) {
-			if (statuses !== undefined && statuses.length === 1) {
-				allRows = await ctx.db
-					.query("tasks")
-					.withIndex("by_assignee_project", (q) => {
-						const base = q
-							.eq("assignedTo", assignedTo)
-							.eq("project", project)
-							.eq("status", statuses[0]);
-						return canPushCursorIntoIndex
-							? base.lt("_creationTime", before as number)
-							: base;
-					})
-					.order("desc")
-					.take(canPushCursorIntoIndex ? limit : fetchCap);
-			} else {
-				const base = await ctx.db
-					.query("tasks")
-					.withIndex("by_assignee_project", (q) =>
-						q.eq("assignedTo", assignedTo).eq("project", project),
-					)
-					.order("desc")
-					.take(fetchCap);
-				allRows = applyStatusFilter(base);
-			}
-		}
-		// Filter by assignee only — the two branches measured to blow the
-		// widened-scan cap in production. When `updatedSince` is supplied, push
-		// the bound into the query via a compound index ending in `updatedAt`
-		// (by_assignee_updatedAt / by_assignee_status_updatedAt) instead of
-		// fetching a fixed-size window and filtering in-memory: narrowing the
-		// window now actually reduces the rows the DB has to examine, and the
-		// scan cap applies to the true matching population, not a widened
-		// superset. createdBy (unindexed) is still applied in-memory below.
-		else if (assignedTo !== undefined) {
-			if (updatedSince !== undefined) {
-				usedIndexedUpdatedSinceBound = true;
-				if (statuses !== undefined && statuses.length === 1) {
-					allRows = await ctx.db
-						.query("tasks")
-						.withIndex("by_assignee_status_updatedAt", (q) =>
-							q
-								.eq("assignedTo", assignedTo)
-								.eq("status", statuses[0])
-								.gte("updatedAt", updatedSince),
-						)
-						.order("desc")
-						.take(TASK_LIST_SCAN_CAP + 1);
-				} else {
-					const base = await ctx.db
-						.query("tasks")
-						.withIndex("by_assignee_updatedAt", (q) =>
-							q.eq("assignedTo", assignedTo).gte("updatedAt", updatedSince),
-						)
-						.order("desc")
-						.take(TASK_LIST_SCAN_CAP + 1);
-					allRows = applyStatusFilter(base);
-				}
-			} else if (statuses !== undefined && statuses.length === 1) {
-				allRows = await ctx.db
-					.query("tasks")
-					.withIndex("by_assignee", (q) => {
-						const base = q.eq("assignedTo", assignedTo).eq("status", statuses[0]);
-						return canPushCursorIntoIndex
-							? base.lt("_creationTime", before as number)
-							: base;
-					})
-					.order("desc")
-					.take(canPushCursorIntoIndex ? limit : fetchCap);
-			} else {
-				const base = await ctx.db
-					.query("tasks")
-					.withIndex("by_assignee", (q) => q.eq("assignedTo", assignedTo))
-					.order("desc")
-					.take(fetchCap);
-				allRows = applyStatusFilter(base);
-			}
-		}
 		// Filter by project only
 		else if (project !== undefined) {
 			if (statuses !== undefined && statuses.length === 1) {
@@ -1501,7 +1559,12 @@ async function runTasksList(ctx: QueryCtx, args: TasksListArgs, scope: OrgScope)
 		// Refuse to return a silently-incomplete page: if the widened scan
 		// itself hit its cap, there may be matching rows we never looked at.
 		// "I couldn't measure" must never render identically to "complete".
-		if (memberOrg === null && needsWideScan && allRows.length > TASK_LIST_SCAN_CAP) {
+		if (
+			memberOrg === null &&
+			assignedTo === undefined &&
+			needsWideScan &&
+			allRows.length > TASK_LIST_SCAN_CAP
+		) {
 			// "shrink the updatedSince window" is only offered when it can
 			// actually change the candidate count: on the assignedTo (+status)
 			// branch the bound is now pushed into the index, so narrowing the
@@ -1675,29 +1738,43 @@ export const listPaginated = query({
 		const memberOrg =
 			!scope.isMaster && scope.orgSlug !== null ? scope.orgSlug : null;
 
+		// Assignee filter BY ID (M7): the label names an agent of the caller's own
+		// org (the operator org for the fleet master); a label naming no agent
+		// there is an absence, answered with an empty success page.
+		const assigneeId =
+			args.assignedTo !== undefined
+				? await assigneeIdForRead(ctx, scope, args.assignedTo)
+				: undefined;
+		if (args.assignedTo !== undefined && assigneeId === undefined) {
+			return { page: [], isDone: true, continueCursor: "" };
+		}
+
 		// Select the most specific index available for the paginated scan.
 		let baseQuery;
-		if (memberOrg !== null) {
-			const assignedTo = args.assignedTo;
+		if (assigneeId !== undefined) {
+			// By assignee ID, for member and master alike. assigneeIdForRead has
+			// already proved (member) that the ID is an agents row of the caller's
+			// org; filterByOrgScope below drops any row whose orgId is not the
+			// caller's. The page is ordered by (status, updatedAt) desc, or by
+			// updatedAt desc once a status is pinned.
 			const status = args.status;
-			if (assignedTo !== undefined && status !== undefined) {
-				baseQuery = ctx.db
-					.query("tasks")
-					.withIndex("by_orgId_assignee_status", (q) =>
-						q
-							.eq("orgId", memberOrg)
-							.eq("assignedTo", assignedTo)
-							.eq("status", status),
-					)
-					.order("desc");
-			} else if (assignedTo !== undefined) {
-				baseQuery = ctx.db
-					.query("tasks")
-					.withIndex("by_orgId_assignee_status", (q) =>
-						q.eq("orgId", memberOrg).eq("assignedTo", assignedTo),
-					)
-					.order("desc");
-			} else if (status !== undefined) {
+			baseQuery =
+				status !== undefined
+					? ctx.db
+							.query("tasks")
+							.withIndex("by_assigneeId_status_updatedAt", (q) =>
+								q.eq("assignedToId", assigneeId).eq("status", status),
+							)
+							.order("desc")
+					: ctx.db
+							.query("tasks")
+							.withIndex("by_assigneeId_status_updatedAt", (q) =>
+								q.eq("assignedToId", assigneeId),
+							)
+							.order("desc");
+		} else if (memberOrg !== null) {
+			const status = args.status;
+			if (status !== undefined) {
 				baseQuery = ctx.db
 					.query("tasks")
 					.withIndex("by_orgId_status", (q) =>
@@ -1710,21 +1787,6 @@ export const listPaginated = query({
 					.withIndex("by_orgId", (q) => q.eq("orgId", memberOrg))
 					.order("desc");
 			}
-		} else if (args.assignedTo !== undefined && args.status !== undefined) {
-			const assignedTo = args.assignedTo;
-			const status = args.status;
-			baseQuery = ctx.db
-				.query("tasks")
-				.withIndex("by_assignee", (q) =>
-					q.eq("assignedTo", assignedTo).eq("status", status),
-				)
-				.order("desc");
-		} else if (args.assignedTo !== undefined) {
-			const assignedTo = args.assignedTo;
-			baseQuery = ctx.db
-				.query("tasks")
-				.withIndex("by_assignee", (q) => q.eq("assignedTo", assignedTo))
-				.order("desc");
 		} else if (args.status !== undefined) {
 			const status = args.status;
 			baseQuery = ctx.db
@@ -1735,7 +1797,17 @@ export const listPaginated = query({
 			baseQuery = ctx.db.query("tasks").order("desc");
 		}
 
-		const paginatedResult = await baseQuery.paginate(args.paginationOpts);
+		// By assignee ID the index carries no tenant field, and rows of one agent ID
+		// can sit under another stamp (an unstamped fleet-owned row assigned to an
+		// operator-org agent). The member's tenant predicate therefore runs as a
+		// residual filter INSIDE the paginated scan (the index range is already the
+		// assignee ID), so every non-final page is full instead of short or empty.
+		const paginatedResult =
+			assigneeId !== undefined && memberOrg !== null
+				? await baseQuery
+						.filter((q) => q.eq(q.field("orgId"), memberOrg))
+						.paginate(args.paginationOpts)
+				: await baseQuery.paginate(args.paginationOpts);
 
 		// Apply in-memory priority filter on the page (no index for priority alone).
 		let page: TaskRow[] = paginatedResult.page;
@@ -1812,6 +1884,7 @@ export const update = mutation({
 			agentCredentialSecret,
 			verifiedActor,
 			{ proof: verifiedPerson, door: "tasks:update" },
+			{ proof: verifiedOrg, door: "tasks:update" },
 		);
 		const verifiedOrgSlug = await resolveDoorVerifiedOrg(ctx, verifiedOrg, "tasks:update");
 		const task = await ctx.db.get(taskId);
@@ -1843,8 +1916,8 @@ export const update = mutation({
 		if (
 			reviewReassignGranted &&
 			fields.assignedTo !== undefined &&
-			callerOrchestrator !== task.assignedTo &&
-			callerOrchestrator !== task.createdBy &&
+			callerScope.callerActorId !== task.assignedToId &&
+			callerScope.callerActorId !== task.createdById &&
 			(await repoOwner(ctx, task.reviewPrRepoFullName)) ===
 				fields.assignedTo.trim().toLowerCase()
 		) {
@@ -1901,10 +1974,13 @@ export const update = mutation({
 			// A name that resolves to no agents row clears the stale ID (patch with
 			// undefined removes the field) rather than leaving the previous
 			// assignee's ID beside the new name.
-			const resolveActor = actorIdResolver(ctx, task.orgId);
-			patch.assignedToId = await resolveActor(patch.assignedTo);
-			patch.lastAssignedToId =
-				task.assignedToId ?? (await resolveActor(task.assignedTo));
+			patch.assignedToId = await requireAssigneeId(
+				ctx,
+				task.orgId,
+				patch.assignedTo,
+				"tasks:update",
+			);
+			patch.lastAssignedToId = task.assignedToId;
 		}
 
 		// Day 159 — the anonymous-block gate must live at the STATUS boundary,
@@ -1953,7 +2029,8 @@ export const update = mutation({
 			} else if (
 				!automationCancelGranted &&
 				!isFleetSystemCaller(callerScope, callerOrchestrator) &&
-				task.createdBy !== callerOrchestrator
+				(callerScope.callerActorId === undefined ||
+					task.createdById !== callerScope.callerActorId)
 			) {
 				throw new ConvexError(
 					`RBAC_DENIED: Only ${task.createdBy} (creator) or system can cancel task ${taskId} — ${JSON.stringify({ caller: callerOrchestrator, creator: task.createdBy, taskId })}`,
@@ -1967,9 +2044,7 @@ export const update = mutation({
 			patch.cancelledBy = memberActor ?? callerOrchestrator;
 			// R-53: the canceller BY ID, within the task's own org (a person is
 			// its own "user:<subject>" ID). Unresolvable stays unset.
-			patch.cancelledById = await actorIdResolver(ctx, task.orgId)(
-				patch.cancelledBy,
-			);
+			patch.cancelledById = memberActor ?? callerScope.callerActorId;
 			patch.cancelReason = cancelReason;
 		} else if (cancelReason !== undefined) {
 			// MINOR #6 (convex-reviewer REVISE) — cancelReason must never be
@@ -2119,7 +2194,8 @@ export const attachReviewArtifact = mutation({
 		if (
 			task.reviewArtifactRef !== undefined &&
 			task.reviewArtifactAttachedBy !== undefined &&
-			task.reviewArtifactAttachedBy !== args.callerOrchestrator
+			(callerScope.callerActorId === undefined ||
+				task.reviewArtifactAttachedById !== callerScope.callerActorId)
 		) {
 			throw new ConvexError(
 				`REVIEW_ARTIFACT_ALREADY_ATTACHED: task ${args.taskId} already carries a review artifact attached by ${task.reviewArtifactAttachedBy} — ${args.callerOrchestrator} may not overwrite it. Ask ${task.reviewArtifactAttachedBy} to update it, or attach on a different task — ${JSON.stringify({ taskId: args.taskId, attachedBy: task.reviewArtifactAttachedBy, caller: args.callerOrchestrator })}`,
@@ -2129,10 +2205,8 @@ export const attachReviewArtifact = mutation({
 		await ctx.db.patch(args.taskId, {
 			reviewArtifactRef: args.artifactRef,
 			reviewArtifactAttachedBy: args.callerOrchestrator,
-			// R-53: the attacher BY ID, within the task's own org.
-			reviewArtifactAttachedById: await actorIdResolver(ctx, task.orgId)(
-				args.callerOrchestrator,
-			),
+			// R-53: the attacher BY ID, from the verified caller.
+			reviewArtifactAttachedById: callerScope.callerActorId,
 			updatedAt: Date.now(),
 		});
 		return null;
@@ -2302,6 +2376,8 @@ export const blockTask = mutation({
 			args.callerOrchestrator,
 			args.agentCredentialSecret,
 			args.verifiedActor,
+			undefined,
+			{ proof: args.verifiedOrg, door: "tasks:blockTask" },
 		);
 		const verifiedOrgSlug = await resolveDoorVerifiedOrg(ctx, args.verifiedOrg, "tasks:blockTask");
 		const task = await ctx.db.get(args.taskId);
@@ -2359,7 +2435,10 @@ export const blockTask = mutation({
 					`BLOCKED_ON_TASK_CLOSED: cited task ${args.blockedOnTaskId} is already "${blocker.status}" — a closed request blocks no one. Cite a live task, or complete it and let the reciprocal unblock fire — ${JSON.stringify({ taskId: args.taskId, blockedOnTaskId: args.blockedOnTaskId, blockerStatus: blocker.status })}`,
 				);
 			}
-			if (blocker.assignedTo === task.assignedTo) {
+			if (
+				blocker.assignedToId !== undefined &&
+				blocker.assignedToId === task.assignedToId
+			) {
 				throw new ConvexError(
 					`BLOCKED_ON_OWN_TASK: cited task ${args.blockedOnTaskId} is assigned to ${blocker.assignedTo}, the same assignee as ${args.taskId} — you cannot block on your own task. Cite a task owned by someone else, or omit blockedOnTaskId and mark the reason with "# blocked-on-nobody: <reason>" — ${JSON.stringify({ taskId: args.taskId, blockedOnTaskId: args.blockedOnTaskId, assignedTo: task.assignedTo })}`,
 				);
@@ -2488,6 +2567,7 @@ export const complete = mutation({
 			args.agentCredentialSecret,
 			args.verifiedActor,
 			{ proof: args.verifiedPerson, door: "tasks:complete" },
+			{ proof: args.verifiedOrg, door: "tasks:complete" },
 		);
 		const verifiedOrgSlug = await resolveDoorVerifiedOrg(ctx, args.verifiedOrg, "tasks:complete");
 		const task = await ctx.db.get(args.taskId);
@@ -2810,6 +2890,8 @@ export const failTask = mutation({
 			args.callerOrchestrator,
 			args.agentCredentialSecret,
 			args.verifiedActor,
+			undefined,
+			{ proof: args.verifiedOrg, door: "tasks:failTask" },
 		);
 		const verifiedOrgSlug = await resolveDoorVerifiedOrg(ctx, args.verifiedOrg, "tasks:failTask");
 		const task = await ctx.db.get(args.taskId);
@@ -2896,7 +2978,7 @@ async function assertNoConcurrentInProgress(
 	callerOrchestrator: string | undefined,
 	taskId: Id<"tasks">,
 	project: string | undefined,
-	callerScope: OrgScope,
+	callerScope: CallerScope,
 ): Promise<void> {
 	// The fleet skips the per-orchestrator concurrency gate ONLY on its verified
 	// (master) scope — a typed "system" from an ordinary caller is checked like
@@ -2906,15 +2988,22 @@ async function assertNoConcurrentInProgress(
 	const cap = await getStartTaskInProgressCap(ctx);
 	// take(cap + 1): the target itself may be among the rows, so cap + 1 rows
 	// are enough to decide "at least `cap` OTHER open tasks".
-	const inProgressTasks = await ctx.db
-		.query("tasks")
-		.withIndex("by_assignee_project", (q) =>
-			q
-				.eq("assignedTo", callerOrchestrator)
-				.eq("project", project)
-				.eq("status", "in_progress"),
-		)
-		.take(cap + 1);
+	// M7: the caller's in_progress rows BY ACTOR ID. A same-named agent of another
+	// org holds a different ID and so never counts against this caller. A caller
+	// with no ID holds no rows to count.
+	const callerId = callerScope.callerActorId;
+	if (callerId === undefined) return;
+	const inProgressTasks = (
+		await ctx.db
+			.query("tasks")
+			.withIndex("by_assigneeId_project_status", (q) =>
+				q
+					.eq("assignedToId", callerId)
+					.eq("project", project)
+					.eq("status", "in_progress"),
+			)
+			.take(TASK_LIST_SCAN_CAP + 1)
+	);
 
 	const others = inProgressTasks.filter((t) => t._id !== taskId);
 	if (others.length >= cap) {
@@ -2955,6 +3044,7 @@ export const start = mutation({
 			args.agentCredentialSecret,
 			args.verifiedActor,
 			{ proof: args.verifiedPerson, door: "tasks:start" },
+			{ proof: args.verifiedOrg, door: "tasks:start" },
 		);
 		const verifiedOrgSlug = await resolveDoorVerifiedOrg(ctx, args.verifiedOrg, "tasks:start");
 		const task = await ctx.db.get(args.taskId);
@@ -3048,6 +3138,8 @@ export const pause = mutation({
 			args.callerOrchestrator,
 			args.agentCredentialSecret,
 			args.verifiedActor,
+			undefined,
+			{ proof: args.verifiedOrg, door: "tasks:pause" },
 		);
 		const verifiedOrgSlug = await resolveDoorVerifiedOrg(ctx, args.verifiedOrg, "tasks:pause");
 		const task = await ctx.db.get(args.taskId);
@@ -3115,6 +3207,8 @@ export const resume = mutation({
 			args.callerOrchestrator,
 			args.agentCredentialSecret,
 			args.verifiedActor,
+			undefined,
+			{ proof: args.verifiedOrg, door: "tasks:resume" },
 		);
 		const verifiedOrgSlug = await resolveDoorVerifiedOrg(ctx, args.verifiedOrg, "tasks:resume");
 		const task = await ctx.db.get(args.taskId);
@@ -3192,6 +3286,8 @@ export const correctSegment = mutation({
 			args.callerOrchestrator,
 			args.agentCredentialSecret,
 			args.verifiedActor,
+			undefined,
+			{ proof: args.verifiedOrg, door: "tasks:correctSegment" },
 		);
 		const verifiedOrgSlug = await resolveDoorVerifiedOrg(ctx, args.verifiedOrg, "tasks:correctSegment");
 		const task = await ctx.db.get(args.taskId);
@@ -3332,6 +3428,8 @@ export const checkout = mutation({
 			args.callerOrchestrator,
 			args.agentCredentialSecret,
 			args.verifiedActor,
+			undefined,
+			{ proof: args.verifiedOrg, door: "tasks:checkout" },
 		);
 		const verifiedOrgSlug = await resolveDoorVerifiedOrg(ctx, args.verifiedOrg, "tasks:checkout");
 		const task = await ctx.db.get(args.taskId);
@@ -3409,6 +3507,8 @@ export const deleteTask = mutation({
 			args.callerOrchestrator,
 			args.agentCredentialSecret,
 			args.verifiedActor,
+			undefined,
+			{ proof: args.verifiedOrg, door: "tasks:deleteTask" },
 		);
 		const verifiedOrgSlug = await resolveDoorVerifiedOrg(ctx, args.verifiedOrg, "tasks:deleteTask");
 		const task = await ctx.db.get(args.taskId);
@@ -3436,7 +3536,8 @@ export const deleteTask = mutation({
 		}
 		if (
 			!isFleetSystemCaller(callerScope, args.callerOrchestrator) &&
-			task.createdBy !== args.callerOrchestrator
+			(callerScope.callerActorId === undefined ||
+				task.createdById !== callerScope.callerActorId)
 		) {
 			throw new ConvexError(
 				`RBAC_DENIED: Only ${task.createdBy} (creator) or system can delete task ${args.taskId} — ${JSON.stringify({ caller: args.callerOrchestrator, creator: task.createdBy, taskId: args.taskId })}`,
@@ -3684,7 +3785,12 @@ export const listOverdue = query({
 		tasks = filterByOrgScope(tasks, scope);
 
 		if (args.assignedTo) {
-			tasks = tasks.filter((t) => t.assignedTo === args.assignedTo);
+			// M7: the assignee BY ID, in the caller's own org; a label naming no
+			// agent there matches nothing.
+			const assigneeId = await assigneeIdForRead(ctx, scope, args.assignedTo);
+			tasks = tasks.filter(
+				(t) => assigneeId !== undefined && t.assignedToId === assigneeId,
+			);
 		}
 
 		return tasks;
@@ -4305,6 +4411,27 @@ async function scanBulkCompleteMatches(
 ): Promise<Doc<"tasks">[]> {
 	const hasAutoGeneratedOnly = filter.autoGeneratedOnly === true;
 	const hasAssignedTo = filter.assignedTo !== undefined && filter.assignedTo !== "";
+	// M7: the assignee filter names an agent by its label. A row matches when the
+	// agent its assignedToId points at CARRIES that label now: the row's stored
+	// label string is never read, so a renamed agent's old rows and the same label
+	// held by another org's agent resolve to what the ID says. One read per ID.
+	const filterLabel = hasAssignedTo
+		? normalizeOrchestratorId(filter.assignedTo ?? "")
+		: undefined;
+	const assigneeMatches = new Map<string, boolean>();
+	const assigneeCarriesFilterLabel = async (
+		assignedToId: string | undefined,
+	): Promise<boolean> => {
+		if (filterLabel === undefined || assignedToId === undefined) return false;
+		const cached = assigneeMatches.get(assignedToId);
+		if (cached !== undefined) return cached;
+		const agentId = ctx.db.normalizeId("agents", assignedToId);
+		const agent = agentId === null ? null : await ctx.db.get(agentId);
+		const carries =
+			agent !== null && normalizeOrchestratorId(agent.name) === filterLabel;
+		assigneeMatches.set(assignedToId, carries);
+		return carries;
+	};
 	const matched: Doc<"tasks">[] = [];
 	const statuses: readonly BulkCompleteStatus[] =
 		filter.status !== undefined
@@ -4320,7 +4447,8 @@ async function scanBulkCompleteMatches(
 				hasAutoGeneratedOnly &&
 				(/^cron-/i.test(task.createdBy ?? "") ||
 					/^\/?check-messages$/i.test(task.title ?? ""));
-			const assignedMatch = hasAssignedTo && task.assignedTo === filter.assignedTo;
+			const assignedMatch =
+				hasAssignedTo && (await assigneeCarriesFilterLabel(task.assignedToId));
 
 			let include: boolean;
 			if (hasAutoGeneratedOnly && hasAssignedTo) {
@@ -4355,9 +4483,13 @@ async function scanBulkCompleteMatches(
  */
 function findBulkCompleteDenied(
 	batch: Doc<"tasks">[],
-	caller: string,
+	callerActorId: string | undefined,
 ): Doc<"tasks"> | undefined {
-	return batch.find((r) => r.createdBy !== caller && r.assignedTo !== caller);
+	return batch.find(
+		(r) =>
+			callerActorId === undefined ||
+			(r.createdById !== callerActorId && r.assignedToId !== callerActorId),
+	);
 }
 
 type BulkGateResults = Awaited<ReturnType<typeof enforceClosureGate>>[];
@@ -4470,6 +4602,8 @@ export const bulkComplete = mutation({
 			args.callerOrchestrator,
 			args.agentCredentialSecret,
 			args.verifiedActor,
+			undefined,
+			{ proof: args.verifiedOrg, door: "tasks:bulkComplete" },
 		);
 		// Refuses a non-service-account caller that names an org, on a preview as
 		// on a live call, before anything is read.
@@ -4528,7 +4662,7 @@ export const bulkComplete = mutation({
 		const isFleetSystem = isFleetSystemCaller(callerScope, args.callerOrchestrator);
 		if (args.callerOrchestrator !== undefined && !isFleetSystem) {
 			const caller = args.callerOrchestrator;
-			const denied = findBulkCompleteDenied(cappedResults, caller);
+			const denied = findBulkCompleteDenied(cappedResults, callerScope.callerActorId);
 			if (denied !== undefined) {
 				throw new ConvexError(
 					`RBAC_DENIED: ${caller} is not creator or assignee of task ${denied._id} — bulk close denied`,
@@ -4605,6 +4739,9 @@ export const bulkComplete = mutation({
 					isMaster: callerScope.isMaster,
 				},
 				callerOrchestrator: args.callerOrchestrator ?? "",
+				...(callerScope.callerActorId !== undefined
+					? { callerActorId: callerScope.callerActorId }
+					: {}),
 				isFleetSystem,
 				note,
 				bulkRunId,
@@ -4653,6 +4790,9 @@ export const bulkCompleteContinue = internalMutation({
 			isMaster: v.boolean(),
 		}),
 		callerOrchestrator: v.string(),
+		// The caller's actor ID (M7), carried from the first call so every batch
+		// is checked against the same verified actor.
+		callerActorId: v.optional(v.string()),
 		isFleetSystem: v.boolean(),
 		note: v.string(),
 		bulkRunId: v.string(),
@@ -4687,7 +4827,7 @@ export const bulkCompleteContinue = internalMutation({
 			batch = matched.slice(0, BULK_COMPLETE_HARD_CAP);
 
 			if (args.callerOrchestrator !== "" && !args.isFleetSystem) {
-				const denied = findBulkCompleteDenied(batch, args.callerOrchestrator);
+				const denied = findBulkCompleteDenied(batch, args.callerActorId);
 				if (denied !== undefined) {
 					throw new ConvexError(
 						`RBAC_DENIED: ${args.callerOrchestrator} is not creator or assignee of task ${denied._id} — bulk close denied`,

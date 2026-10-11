@@ -24,6 +24,8 @@ import { testClerkOrgId } from "../../tests/fixtures/testClerkOrgId";
 import { api, internal } from "../_generated/api";
 import schema from "../schema";
 import { TASK_LIST_SCAN_CAP } from "../tasks";
+import { seedAgents } from "../../tests/lib/agentIdOf";
+import { insertTaskRow } from "../../tests/lib/seedFleetAgents";
 
 const modules = Object.fromEntries(
 	Object.entries(import.meta.glob("../**/*.ts")).filter(
@@ -65,6 +67,21 @@ async function seedOrgs(t: T) {
 	});
 }
 
+// The assignee labels the task reads below use are agents of each org (one label,
+// two agents where both rosters carry it): tasks are listed by the assignee's
+// agent ID, never by the label.
+async function seedTaskAgents(t: T) {
+	await seedAgents(t, [
+		[FLEET, "sigma"],
+		[FLEET, "eta"],
+		[FLEET, "shared"],
+		[FLEET, "ghost"],
+		[OTHER, "sigma"],
+		[OTHER, "shared"],
+		[OTHER, "victor"],
+	]);
+}
+
 const asMember = (t: T, org: string) =>
 	t.withIdentity({
 		subject: `${org}-member`,
@@ -85,7 +102,7 @@ async function seedTasks(t: T, seed: TaskSeed, count: number, tag: string) {
 	for (let from = 0; from < count; from += CHUNK) {
 		await t.run(async (ctx) => {
 			for (let i = from; i < Math.min(from + CHUNK, count); i++) {
-				await ctx.db.insert("tasks", {
+				await insertTaskRow(ctx, {
 					title: `${tag}-${i}`,
 					assignedTo: seed.assignedTo ?? "sigma",
 					priority: "medium",
@@ -108,6 +125,7 @@ describe("tasks.list — member of org A", () => {
 	test("assignedTo over > cap foreign rows -> own stamped rows, no SCAN_CAP_EXCEEDED, no foreign, no unstamped", async () => {
 		const t = createT();
 		await seedOrgs(t);
+		await seedTaskAgents(t);
 		await seedTasks(t, { orgId: OTHER }, FOREIGN_ROWS, "foreign");
 		await seedTasks(t, {}, 4, "unstamped");
 		await seedTasks(t, { orgId: FLEET }, 3, "own");
@@ -121,6 +139,7 @@ describe("tasks.list — member of org A", () => {
 	test("multi-status, project, instance-free combos, and cursor all stay org-keyed", async () => {
 		const t = createT();
 		await seedOrgs(t);
+		await seedTaskAgents(t);
 		await seedTasks(t, { orgId: OTHER, project: "p" }, FOREIGN_ROWS, "foreign");
 		await seedTasks(t, { orgId: FLEET, project: "p", status: "todo" }, 2, "todo");
 		await seedTasks(t, { orgId: FLEET, project: "p", status: "in_progress" }, 2, "prog");
@@ -162,6 +181,7 @@ describe("tasks.list — member of org A", () => {
 	test("the other org's member sees only the other org's rows (cross-org pole)", async () => {
 		const t = createT();
 		await seedOrgs(t);
+		await seedTaskAgents(t);
 		await seedTasks(t, { orgId: FLEET }, 3, "fleet");
 		await seedTasks(t, { orgId: OTHER }, 2, "other");
 		const rows = await asMember(t, OTHER).query(api.tasks.list, {
@@ -174,6 +194,7 @@ describe("tasks.list — member of org A", () => {
 	test("createdBy widening is bounded by the member's own org, not the fleet's", async () => {
 		const t = createT();
 		await seedOrgs(t);
+		await seedTaskAgents(t);
 		await seedTasks(t, { orgId: OTHER }, FOREIGN_ROWS, "foreign");
 		await seedTasks(t, { orgId: FLEET }, 2, "own");
 		const rows = await asMember(t, FLEET).query(api.tasks.list, {
@@ -202,6 +223,7 @@ describe("tasks.list — member cursor walk (Eta #1430 mutant C1)", () => {
 		const OWN = 3 * LIMIT;
 		const t = createT();
 		await seedOrgs(t);
+		await seedTaskAgents(t);
 		const statuses = ["todo", "in_progress"] as const;
 		await t.run(async (ctx) => {
 			for (let i = 0; i < OWN; i++) {
@@ -214,14 +236,14 @@ describe("tasks.list — member cursor walk (Eta #1430 mutant C1)", () => {
 					createdAt: Date.now(),
 					updatedAt: Date.now(),
 				};
-				await ctx.db.insert("tasks", {
+				await insertTaskRow(ctx, {
 					...base,
 					title: `own-${i}`,
 					status: statuses[i % 2],
 					orgId: FLEET,
 					clerkOrgId: testClerkOrgId(FLEET),
 				} as never);
-				await ctx.db.insert("tasks", {
+				await insertTaskRow(ctx, {
 					...base,
 					title: `foreign-${i}`,
 					status: statuses[i % 2],
@@ -317,7 +339,7 @@ describe("migrations/fleetOrgStamp:run — a name is a label, never an identity"
 			await agent(OTHER, "sigma");
 			await agent(OTHER, "victor");
 			const task = (title: string, assignedTo: string, extra: object = {}) =>
-				ctx.db.insert("tasks", {
+				insertTaskRow(ctx, {
 					title,
 					assignedTo,
 					priority: "medium",

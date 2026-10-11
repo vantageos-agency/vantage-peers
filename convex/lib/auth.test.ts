@@ -5,6 +5,13 @@ import { api, internal } from "../_generated/api";
 import schema from "../schema";
 import { filterByOrgScope, requireScope, type OrgScope } from "./auth";
 import { testClerkOrgId } from "../../tests/fixtures/testClerkOrgId";
+import {
+	insertTaskRow,
+	seedFleetAgents,
+	seedOrgAgents,
+} from "../../tests/lib/seedFleetAgents";
+
+const FILE_LABELS = ["eta", "kappa", "sigma", "victor"];
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Module loader — same exclusion pattern as the rest of the test suite
@@ -83,6 +90,7 @@ async function seedOrgMapping(
 describe("withOrgScope — no identity → fail-closed (RBAC_DENIED)", () => {
 	test("tasks.list REFUSES an anonymous caller with no Clerk identity", async () => {
 		const t = createTestConvex();
+		await seedFleetAgents(t, FILE_LABELS);
 		// Seed two tasks assigned to different orchestrators
 		await t.withIdentity({ subject: "test-service-account-user-id" }).mutation(api.tasks.create, {
 			title: "kappa task",
@@ -105,6 +113,7 @@ describe("withOrgScope — no identity → fail-closed (RBAC_DENIED)", () => {
 
 	test("tasks.listForWebhook (internal) still returns all tasks for the HMAC-verified GitHub webhook path", async () => {
 		const t = createTestConvex();
+		await seedFleetAgents(t, FILE_LABELS);
 		await t.withIdentity({ subject: "test-service-account-user-id" }).mutation(api.tasks.create, {
 			title: "kappa task",
 			assignedTo: "kappa",
@@ -132,6 +141,7 @@ describe("withOrgScope — no identity → fail-closed (RBAC_DENIED)", () => {
 describe("withOrgScope — no org, recognized service account → master scope", () => {
 	test("tasks.list returns all tasks when authenticated as the recognized service account (no org)", async () => {
 		const t = createTestConvex();
+		await seedFleetAgents(t, FILE_LABELS);
 		await t.withIdentity({ subject: "test-service-account-user-id" }).mutation(api.tasks.create, {
 			title: "kappa task",
 			assignedTo: "kappa",
@@ -166,6 +176,7 @@ describe("withOrgScope — no org, recognized service account → master scope",
 describe("withOrgScope — no org, ARBITRARY identity (not service account) → refused", () => {
 	test("tasks.list REFUSES an arbitrary no-org identity (not master, no data)", async () => {
 		const t = createTestConvex();
+		await seedFleetAgents(t, FILE_LABELS);
 		await t.withIdentity({ subject: "test-service-account-user-id" }).mutation(api.tasks.create, {
 			title: "kappa task",
 			assignedTo: "kappa",
@@ -204,11 +215,16 @@ describe("withOrgScope — no org, ARBITRARY identity (not service account) → 
 describe("withOrgScope — normal org-scoped identity unaffected", () => {
 	test("tasks.list still returns only the mapped org's tasks", async () => {
 		const t = createTestConvex();
+		await seedFleetAgents(t, FILE_LABELS);
 		await seedOrgMapping(t, {
 			clerkOrgSlug: "acme-hr",
 			allowedOrchestrators: ["victor"],
 			scopes: ["view-own-tasks", "view-own-missions"],
 		});
+		// "victor" is an agent of acme-hr; acting as it presents its credential.
+		const victorSecret = (await seedOrgAgents(t, [["acme-hr", "victor"]])).get(
+			"acme-hr/victor",
+		);
 		// Seeded BY the org itself, so both rows carry `orgId: "acme-hr"`. Seeding
 		// under the service account would stamp no tenant and the rows would be
 		// invisible to every org caller — which would make this test pass for the
@@ -224,6 +240,7 @@ describe("withOrgScope — normal org-scoped identity unaffected", () => {
 			status: "todo",
 			priority: "medium",
 			createdBy: "victor",
+			agentCredentialSecret: victorSecret,
 		});
 		// Same tenant, but assigned OFF the roster — so the ROSTER, not the
 		// tenant gate, is what drops it. `createdBy` stays on-roster because the
@@ -232,7 +249,7 @@ describe("withOrgScope — normal org-scoped identity unaffected", () => {
 		// assign into another organisation), so the off-roster row is seeded
 		// directly with the tenant stamp the create path would have written.
 		await t.run((ctx) =>
-			ctx.db.insert("tasks", {
+			insertTaskRow(ctx, {
 				title: "kappa task",
 				assignedTo: "kappa",
 				status: "todo",
@@ -260,6 +277,7 @@ describe("withOrgScope — normal org-scoped identity unaffected", () => {
 describe("withOrgScope — org not in mapping", () => {
 	test("tasks.list throws Forbidden when org has no mapping", async () => {
 		const t = createTestConvex();
+		await seedFleetAgents(t, FILE_LABELS);
 		const tWithAuth = t.withIdentity({
 			subject: "user-unknown-org",
 			organizationSlug: "unknown-org",
@@ -279,6 +297,7 @@ describe("withOrgScope — org not in mapping", () => {
 describe("withOrgScope — active org mapping", () => {
 	test("tasks.list returns only victor's tasks for acme-hr org", async () => {
 		const t = createTestConvex();
+		await seedFleetAgents(t, FILE_LABELS);
 
 		// Seed mapping for acme-hr → can see victor only
 		await seedOrgMapping(t, {
@@ -286,6 +305,10 @@ describe("withOrgScope — active org mapping", () => {
 			allowedOrchestrators: ["victor"],
 			scopes: ["view-own-tasks", "view-own-missions"],
 		});
+		// "victor" is an agent of acme-hr; acting as it presents its credential.
+		const victorSecret = (await seedOrgAgents(t, [["acme-hr", "victor"]])).get(
+			"acme-hr/victor",
+		);
 
 		// Seed tasks AS the org, so both rows carry `orgId: "acme-hr"`. Seeding
 		// under the service account stamps no tenant, which would make this test
@@ -301,6 +324,7 @@ describe("withOrgScope — active org mapping", () => {
 			status: "todo",
 			priority: "medium",
 			createdBy: "victor",
+			agentCredentialSecret: victorSecret,
 		});
 		// Same tenant, assigned OFF the roster: the ROSTER is the discriminator
 		// here, not the tenant gate.
@@ -308,7 +332,7 @@ describe("withOrgScope — active org mapping", () => {
 		// assign into another organisation), so the off-roster row is seeded
 		// directly with the tenant stamp the create path would have written.
 		await t.run((ctx) =>
-			ctx.db.insert("tasks", {
+			insertTaskRow(ctx, {
 				title: "kappa task",
 				assignedTo: "kappa",
 				status: "todo",
@@ -334,6 +358,7 @@ describe("withOrgScope — active org mapping", () => {
 describe("withOrgScope — inactive org mapping", () => {
 	test("tasks.list throws Forbidden when org mapping is inactive", async () => {
 		const t = createTestConvex();
+		await seedFleetAgents(t, FILE_LABELS);
 
 		await seedOrgMapping(t, {
 			clerkOrgSlug: "disabled-org",

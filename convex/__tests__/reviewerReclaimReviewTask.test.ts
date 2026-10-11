@@ -31,6 +31,9 @@ import { convexTest } from "../../tests/fixtures/convexTestWithServiceAccount";
 import { describe, expect, test } from "vitest";
 import { api, internal } from "../_generated/api";
 import schema from "../schema";
+import { seedFleetAgents } from "../../tests/lib/seedFleetAgents";
+
+const FILE_LABELS = ["eta", "omega", "pi", "sigma", "tau"];
 
 const modules = Object.fromEntries(
 	Object.entries(import.meta.glob("../**/*.ts")).filter(
@@ -52,6 +55,7 @@ function getConvexErrorMessage(error: unknown): string {
 describe("reviewer-reclaim on [REVIEW] tasks (k17e1ar4s7pspb0rs74ms25hmd8dhv01)", () => {
 	test("ALLOWED: eta reassigns [REVIEW] task to sigma, then eta reclaims it", async () => {
 		const t = createT();
+		await seedFleetAgents(t, FILE_LABELS);
 		const taskId = await t.mutation(api.tasks.create, {
 			title: "[REVIEW] PR #1234 — reviewer-reclaim fix",
 			assignedTo: "eta",
@@ -89,6 +93,7 @@ describe("reviewer-reclaim on [REVIEW] tasks (k17e1ar4s7pspb0rs74ms25hmd8dhv01)"
 
 	test("DENY: a third orchestrator (never creator/assignee/prior-assignee) cannot reclaim", async () => {
 		const t = createT();
+		await seedFleetAgents(t, FILE_LABELS);
 		const taskId = await t.mutation(api.tasks.create, {
 			title: "[REVIEW] PR #5678 — unrelated review",
 			assignedTo: "eta",
@@ -124,6 +129,7 @@ describe("reviewer-reclaim on [REVIEW] tasks (k17e1ar4s7pspb0rs74ms25hmd8dhv01)"
 
 	test("DENY (scope guard): the prior-assignee reclaim path does not apply to a non-review task", async () => {
 		const t = createT();
+		await seedFleetAgents(t, FILE_LABELS);
 		const taskId = await t.mutation(api.tasks.create, {
 			title: "Ship the feature flag rollout",
 			assignedTo: "eta",
@@ -168,6 +174,7 @@ describe("reviewer-reclaim on [REVIEW] tasks (k17e1ar4s7pspb0rs74ms25hmd8dhv01)"
 	// (derive-never-type). These probes prove the forgery is refused.
 	test("PROBE 1 (title forgery) — tau stamps [Review] into a plain task's title, hands off, reclaims → REFUSED", async () => {
 		const t = createT();
+		await seedFleetAgents(t, FILE_LABELS);
 		const taskId = await t.mutation(api.tasks.create, {
 			title: "Ship the widget", // plain: isReviewTask stamped FALSE at create
 			assignedTo: "tau",
@@ -206,6 +213,7 @@ describe("reviewer-reclaim on [REVIEW] tasks (k17e1ar4s7pspb0rs74ms25hmd8dhv01)"
 
 	test("PROBE 2 (tags forgery) — tau stamps tags:['review'] onto a plain task, hands off, reclaims → REFUSED", async () => {
 		const t = createT();
+		await seedFleetAgents(t, FILE_LABELS);
 		const taskId = await t.mutation(api.tasks.create, {
 			title: "Rotate the API keys", // plain
 			assignedTo: "tau",
@@ -246,6 +254,7 @@ describe("reviewer-reclaim on [REVIEW] tasks (k17e1ar4s7pspb0rs74ms25hmd8dhv01)"
 	// automation-created review task is stamped and reclaimable.
 	test("AUTOMATION path — a review task made by createOrUpdateReviewTask is isReviewTask=true and reclaimable", async () => {
 		const t = createT();
+		await seedFleetAgents(t, FILE_LABELS);
 		const taskId = await t.mutation(internal.tasks.createOrUpdateReviewTask, {
 			repoFullName: "acme/widget",
 			prNumber: 42,

@@ -19,7 +19,8 @@ import {
 	TABLE_ORDER,
 } from "../migrations/backfill_org_clerk_id";
 import schema from "../schema";
-import { agentIdOf } from "../../tests/lib/agentIdOf";
+import { mintAgentSecret } from "../../tests/lib/seedFleetAgents";
+import { agentIdOf, seedAgents } from "../../tests/lib/agentIdOf";
 
 const modules = Object.fromEntries(
 	Object.entries(import.meta.glob("../**/*.ts")).filter(
@@ -58,6 +59,13 @@ const adminOf = (t: T, org: string) =>
 		org_id: ID_BY_SLUG[org],
 		org_role: "org:admin",
 	} as Parameters<T["withIdentity"]>[0]);
+
+// The task doors decide on agent IDs: the seat is an agent of ACME and the
+// member acting as it presents its credential.
+async function seatCredential(t: T): Promise<string> {
+	await seedAgents(t, [[ACME.slug, SEAT]]);
+	return await mintAgentSecret(t, ACME.slug, SEAT, ACME.id);
+}
 
 async function seedMappings(t: T) {
 	await t.run(async (ctx) => {
@@ -356,6 +364,7 @@ describe("new writes stamp the slug AND the Clerk org id", () => {
 			priority: "high",
 			status: "todo",
 			createdBy: SEAT,
+			agentCredentialSecret: await seatCredential(t),
 		});
 		const row = await idOf(t, id);
 		expect(row.orgId).toBe(ACME.slug);
@@ -471,6 +480,7 @@ describe("a stamped row is still READABLE through its returns validator", () => 
 			priority: "high",
 			status: "todo",
 			createdBy: SEAT,
+			agentCredentialSecret: await seatCredential(t),
 		});
 		const task = await member.query(api.tasks.get, { taskId });
 		expect(task?.clerkOrgId).toBe(ACME.id);

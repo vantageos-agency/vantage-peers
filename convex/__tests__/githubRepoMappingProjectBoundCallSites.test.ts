@@ -25,6 +25,9 @@ import { convexTest } from "../../tests/fixtures/convexTestWithServiceAccount";
 import { describe, expect, test } from "vitest";
 import { api, internal } from "../_generated/api";
 import schema from "../schema";
+import { insertTaskRow, seedFleetAgents } from "../../tests/lib/seedFleetAgents";
+
+const FILE_LABELS = ["eta", "sigma"];
 
 const modules = Object.fromEntries(
 	Object.entries(import.meta.glob("../**/*.ts")).filter(
@@ -66,6 +69,7 @@ describe("tasks.complete issue-auto-link -- githubRepoMapping read is project-bo
 			modules,
 			transactionLimits: { documentsRead: SCALED_DOCUMENTS_READ_LIMIT },
 		});
+		await seedFleetAgents(t, FILE_LABELS);
 		await seedManyIrrelevantMappings(t as unknown as ReturnType<typeof createT>);
 		await t.run(async (ctx) => {
 			// Empty billableProjects list -> RELEVANT_PROJECT is non-billable ->
@@ -101,7 +105,7 @@ describe("tasks.complete issue-auto-link -- githubRepoMapping read is project-bo
 		});
 
 		const taskId = await t.run(async (ctx) =>
-			ctx.db.insert("tasks", {
+			insertTaskRow(ctx, {
 				title: "Fix fictitious bug #700",
 				assignedTo: "sigma",
 				priority: "high" as const,
@@ -145,6 +149,7 @@ describe("createDeployTaskWithDedup bundled-deploy dedup -- githubRepoMapping re
 			modules,
 			transactionLimits: { documentsRead: SCALED_DOCUMENTS_READ_LIMIT },
 		});
+		await seedFleetAgents(t, FILE_LABELS);
 		await seedManyIrrelevantMappings(t as unknown as ReturnType<typeof createT>);
 		await t.run(async (ctx) => {
 			await ctx.db.insert("githubRepoMapping", {

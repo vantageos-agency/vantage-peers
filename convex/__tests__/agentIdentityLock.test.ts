@@ -46,6 +46,9 @@ import type { Id } from "../_generated/dataModel";
 import schema from "../schema";
 import { agentIdOf } from "../../tests/lib/agentIdOf";
 import { testClerkOrgId } from "../../tests/fixtures/testClerkOrgId";
+import { seedFleetAgents } from "../../tests/lib/seedFleetAgents";
+
+const FILE_LABELS = ["b", "c", "eta", "sigma"];
 
 const modules = Object.fromEntries(
 	Object.entries(import.meta.glob("../**/*.ts")).filter(
@@ -119,6 +122,7 @@ async function mintAgent(
 describe("[P-T5] THE LOCK — sendMessage (from)", () => {
 	test("ALLOW: HOLDER of agent-B's credential sends a message as \"b\"", async () => {
 		const t = createT();
+		await seedFleetAgents(t, FILE_LABELS);
 		await seedOrgMapping(t, "org-o");
 		await seedProfile(t, "b");
 		await seedProfile(t, "recipient-role");
@@ -135,6 +139,7 @@ describe("[P-T5] THE LOCK — sendMessage (from)", () => {
 
 	test("DENY: HOLDER of agent-B's credential asserts name \"c\" -> AGENT_IDENTITY_MISMATCH", async () => {
 		const t = createT();
+		await seedFleetAgents(t, FILE_LABELS);
 		await seedOrgMapping(t, "org-o");
 		await seedProfile(t, "c");
 		await seedProfile(t, "recipient-role");
@@ -153,6 +158,7 @@ describe("[P-T5] THE LOCK — sendMessage (from)", () => {
 
 	test("DENY (no-compat-window): a credential that resolves to no agent (garbage / org-only token) is refused", async () => {
 		const t = createT();
+		await seedFleetAgents(t, FILE_LABELS);
 		await seedOrgMapping(t, "org-o");
 		await seedProfile(t, "b");
 		await seedProfile(t, "recipient-role");
@@ -169,6 +175,7 @@ describe("[P-T5] THE LOCK — sendMessage (from)", () => {
 
 	test("NO REGRESSION: a NON-AGENT sender (declared name that does NOT resolve to an agents row) omitting agentCredentialSecret behaves exactly as before P-T5", async () => {
 		const t = createT();
+		await seedFleetAgents(t, FILE_LABELS);
 		await seedOrgMapping(t, "org-o");
 		await seedProfile(t, "b");
 		await seedProfile(t, "recipient-role");
@@ -187,6 +194,7 @@ describe("[P-T5] THE LOCK — sendMessage (from)", () => {
 
 	test("DENY (CONDITIONAL-SECRET): an AGENT sender (declared name resolves to an agents row) omitting agentCredentialSecret is refused AGENT_CREDENTIAL_REQUIRED", async () => {
 		const t = createT();
+		await seedFleetAgents(t, FILE_LABELS);
 		await seedOrgMapping(t, "org-o");
 		await seedProfile(t, "b");
 		await seedProfile(t, "recipient-role");
@@ -212,6 +220,7 @@ describe("[P-T5] THE LOCK — sendMessage (from)", () => {
 describe("[P-T5] THE LOCK — tasks.create (createdBy) / tasks.update (callerOrchestrator)", () => {
 	test("ALLOW: HOLDER of agent-B's credential creates a task as \"b\"", async () => {
 		const t = createT();
+		await seedFleetAgents(t, FILE_LABELS);
 		await seedOrgMapping(t, "org-o");
 		const bCred = await mintAgent(t, "org-o", "b");
 
@@ -228,6 +237,7 @@ describe("[P-T5] THE LOCK — tasks.create (createdBy) / tasks.update (callerOrc
 
 	test("DENY: HOLDER of agent-B's credential asserts createdBy \"c\" -> AGENT_IDENTITY_MISMATCH", async () => {
 		const t = createT();
+		await seedFleetAgents(t, FILE_LABELS);
 		await seedOrgMapping(t, "org-o");
 		const bCred = await mintAgent(t, "org-o", "b");
 		await mintAgent(t, "org-o", "c");
@@ -246,6 +256,7 @@ describe("[P-T5] THE LOCK — tasks.create (createdBy) / tasks.update (callerOrc
 
 	test("DENY: HOLDER of agent-B's credential asserts callerOrchestrator \"c\" on update -> AGENT_IDENTITY_MISMATCH", async () => {
 		const t = createT();
+		await seedFleetAgents(t, FILE_LABELS);
 		await seedOrgMapping(t, "org-o");
 		const bCred = await mintAgent(t, "org-o", "b");
 		const cCred = await mintAgent(t, "org-o", "c");
@@ -275,6 +286,7 @@ describe("[P-T5] THE LOCK — tasks.create (createdBy) / tasks.update (callerOrc
 
 	test("NO REGRESSION: tasks.create by a NON-AGENT sender (declared name that does NOT resolve to an agents row) omitting agentCredentialSecret behaves exactly as before P-T5", async () => {
 		const t = createT();
+		await seedFleetAgents(t, FILE_LABELS);
 		await seedOrgMapping(t, "org-o");
 		// Deliberately no registerAgent/mintAgent for "b" here — "b" is a
 		// legacy orchestrator name with no row in `agents`, so the
@@ -293,6 +305,7 @@ describe("[P-T5] THE LOCK — tasks.create (createdBy) / tasks.update (callerOrc
 
 	test("DENY (CONDITIONAL-SECRET): tasks.create by an AGENT sender (declared name resolves to an agents row) omitting agentCredentialSecret is refused AGENT_CREDENTIAL_REQUIRED", async () => {
 		const t = createT();
+		await seedFleetAgents(t, FILE_LABELS);
 		await seedOrgMapping(t, "org-o");
 		// "b" IS registered in `agents` for org-o — a credential is now
 		// required, per Pi ruling k1746tn3jy22. Called with an org-attached
@@ -352,6 +365,7 @@ async function seedOwnedTask(
 describe("[P-T5] gap closure — tasks.start", () => {
 	test("ALLOW: agent-B-cred asserts name \"b\" -> accepted", async () => {
 		const t = createT();
+		await seedFleetAgents(t, FILE_LABELS);
 		await seedOrgMapping(t, "org-o");
 		const bCred = await mintAgent(t, "org-o", "b");
 		const taskId = await seedOwnedTask(t, bCred);
@@ -367,6 +381,7 @@ describe("[P-T5] gap closure — tasks.start", () => {
 
 	test("DENY: agent-B-cred asserts name \"c\" -> AGENT_IDENTITY_MISMATCH", async () => {
 		const t = createT();
+		await seedFleetAgents(t, FILE_LABELS);
 		await seedOrgMapping(t, "org-o");
 		const bCred = await mintAgent(t, "org-o", "b");
 		await mintAgent(t, "org-o", "c");
@@ -385,6 +400,7 @@ describe("[P-T5] gap closure — tasks.start", () => {
 describe("[P-T5] gap closure — tasks.checkout", () => {
 	test("ALLOW: agent-B-cred asserts name \"b\" -> accepted", async () => {
 		const t = createT();
+		await seedFleetAgents(t, FILE_LABELS);
 		await seedOrgMapping(t, "org-o");
 		const bCred = await mintAgent(t, "org-o", "b");
 		const taskId = await seedOwnedTask(t, bCred, { status: "todo" });
@@ -399,6 +415,7 @@ describe("[P-T5] gap closure — tasks.checkout", () => {
 
 	test("DENY: agent-B-cred asserts name \"c\" -> AGENT_IDENTITY_MISMATCH", async () => {
 		const t = createT();
+		await seedFleetAgents(t, FILE_LABELS);
 		await seedOrgMapping(t, "org-o");
 		const bCred = await mintAgent(t, "org-o", "b");
 		await mintAgent(t, "org-o", "c");
@@ -417,6 +434,7 @@ describe("[P-T5] gap closure — tasks.checkout", () => {
 describe("[P-T5] gap closure — tasks.complete", () => {
 	test("ALLOW: agent-B-cred asserts name \"b\" -> accepted", async () => {
 		const t = createT();
+		await seedFleetAgents(t, FILE_LABELS);
 		await seedOrgMapping(t, "org-o");
 		const bCred = await mintAgent(t, "org-o", "b");
 		const taskId = await seedOwnedTask(t, bCred);
@@ -439,6 +457,7 @@ describe("[P-T5] gap closure — tasks.complete", () => {
 
 	test("DENY: agent-B-cred asserts name \"c\" -> AGENT_IDENTITY_MISMATCH", async () => {
 		const t = createT();
+		await seedFleetAgents(t, FILE_LABELS);
 		await seedOrgMapping(t, "org-o");
 		const bCred = await mintAgent(t, "org-o", "b");
 		await mintAgent(t, "org-o", "c");
@@ -463,6 +482,7 @@ describe("[P-T5] gap closure — tasks.complete", () => {
 describe("[P-T5] gap closure — tasks.failTask", () => {
 	test("ALLOW: agent-B-cred asserts name \"b\" -> accepted", async () => {
 		const t = createT();
+		await seedFleetAgents(t, FILE_LABELS);
 		await seedOrgMapping(t, "org-o");
 		const bCred = await mintAgent(t, "org-o", "b");
 		const taskId = await seedOwnedTask(t, bCred);
@@ -484,6 +504,7 @@ describe("[P-T5] gap closure — tasks.failTask", () => {
 
 	test("DENY: agent-B-cred asserts name \"c\" -> AGENT_IDENTITY_MISMATCH", async () => {
 		const t = createT();
+		await seedFleetAgents(t, FILE_LABELS);
 		await seedOrgMapping(t, "org-o");
 		const bCred = await mintAgent(t, "org-o", "b");
 		await mintAgent(t, "org-o", "c");
@@ -508,6 +529,7 @@ describe("[P-T5] gap closure — tasks.failTask", () => {
 describe("[P-T5] gap closure — tasks.blockTask", () => {
 	test("ALLOW: agent-B-cred asserts name \"b\" -> accepted", async () => {
 		const t = createT();
+		await seedFleetAgents(t, FILE_LABELS);
 		await seedOrgMapping(t, "org-o");
 		const bCred = await mintAgent(t, "org-o", "b");
 		const taskId = await seedOwnedTask(t, bCred);
@@ -529,6 +551,7 @@ describe("[P-T5] gap closure — tasks.blockTask", () => {
 
 	test("DENY: agent-B-cred asserts name \"c\" -> AGENT_IDENTITY_MISMATCH", async () => {
 		const t = createT();
+		await seedFleetAgents(t, FILE_LABELS);
 		await seedOrgMapping(t, "org-o");
 		const bCred = await mintAgent(t, "org-o", "b");
 		await mintAgent(t, "org-o", "c");
@@ -553,6 +576,7 @@ describe("[P-T5] gap closure — tasks.blockTask", () => {
 describe("[P-T5] gap closure — tasks.deleteTask", () => {
 	test("ALLOW: agent-B-cred asserts name \"b\" -> accepted", async () => {
 		const t = createT();
+		await seedFleetAgents(t, FILE_LABELS);
 		await seedOrgMapping(t, "org-o");
 		const bCred = await mintAgent(t, "org-o", "b");
 		const taskId = await seedOwnedTask(t, bCred);
@@ -567,6 +591,7 @@ describe("[P-T5] gap closure — tasks.deleteTask", () => {
 
 	test("DENY: agent-B-cred asserts name \"c\" -> AGENT_IDENTITY_MISMATCH", async () => {
 		const t = createT();
+		await seedFleetAgents(t, FILE_LABELS);
 		await seedOrgMapping(t, "org-o");
 		const bCred = await mintAgent(t, "org-o", "b");
 		await mintAgent(t, "org-o", "c");
@@ -585,6 +610,7 @@ describe("[P-T5] gap closure — tasks.deleteTask", () => {
 describe("[P-T5] gap closure — tasks.bulkComplete", () => {
 	test("ALLOW: agent-B-cred asserts name \"b\" -> accepted (dry run)", async () => {
 		const t = createT();
+		await seedFleetAgents(t, FILE_LABELS);
 		await seedOrgMapping(t, "org-o");
 		const bCred = await mintAgent(t, "org-o", "b");
 		await seedOwnedTask(t, bCred);
@@ -600,6 +626,7 @@ describe("[P-T5] gap closure — tasks.bulkComplete", () => {
 
 	test("DENY: agent-B-cred asserts name \"c\" -> AGENT_IDENTITY_MISMATCH", async () => {
 		const t = createT();
+		await seedFleetAgents(t, FILE_LABELS);
 		await seedOrgMapping(t, "org-o");
 		const bCred = await mintAgent(t, "org-o", "b");
 		await mintAgent(t, "org-o", "c");
@@ -619,6 +646,7 @@ describe("[P-T5] gap closure — tasks.bulkComplete", () => {
 describe("[P-T5] gap closure — tasks.attachReviewArtifact", () => {
 	test("ALLOW: agent-B-cred asserts name \"b\" -> accepted", async () => {
 		const t = createT();
+		await seedFleetAgents(t, FILE_LABELS);
 		await seedOrgMapping(t, "org-o");
 		const bCred = await mintAgent(t, "org-o", "b");
 		const taskId = await seedOwnedTask(t, bCred);
@@ -635,6 +663,7 @@ describe("[P-T5] gap closure — tasks.attachReviewArtifact", () => {
 
 	test("DENY: agent-B-cred asserts name \"c\" -> AGENT_IDENTITY_MISMATCH", async () => {
 		const t = createT();
+		await seedFleetAgents(t, FILE_LABELS);
 		await seedOrgMapping(t, "org-o");
 		const bCred = await mintAgent(t, "org-o", "b");
 		await mintAgent(t, "org-o", "c");
@@ -684,6 +713,7 @@ function asOrgCaller(t: ReturnType<typeof createT>, org: string, subject: string
 describe("[Pi ORG BIND] sendMessage (from) \u2014 same name, foreign org", () => {
 	test("DENY: agent-B-cred minted in FOREIGN org-p, asserted into org-o -> ORG_MISMATCH", async () => {
 		const t = createT();
+		await seedFleetAgents(t, FILE_LABELS);
 		await seedOrgMapping(t, "org-o");
 		await seedOrgMapping(t, "org-p");
 		await seedProfile(t, "b");
@@ -702,6 +732,7 @@ describe("[Pi ORG BIND] sendMessage (from) \u2014 same name, foreign org", () =>
 
 	test("ALLOW: legitimate same-org agent-B-cred (org-o) into org-o -> accepted (positive control)", async () => {
 		const t = createT();
+		await seedFleetAgents(t, FILE_LABELS);
 		await seedOrgMapping(t, "org-o");
 		await seedProfile(t, "b");
 		await seedProfile(t, "recipient-role");
@@ -723,6 +754,7 @@ describe("[Pi ORG BIND] sendMessage (from) \u2014 same name, foreign org", () =>
 describe("[Pi ORG BIND] tasks.create (createdBy) \u2014 same name, foreign org", () => {
 	test("DENY: agent-B-cred minted in FOREIGN org-p, asserted into org-o -> ORG_MISMATCH", async () => {
 		const t = createT();
+		await seedFleetAgents(t, FILE_LABELS);
 		await seedOrgMapping(t, "org-o");
 		await seedOrgMapping(t, "org-p");
 		const foreignBCred = await mintAgent(t, "org-p", "b");
@@ -741,6 +773,7 @@ describe("[Pi ORG BIND] tasks.create (createdBy) \u2014 same name, foreign org",
 
 	test("ALLOW: legitimate same-org agent-B-cred (org-o) into org-o -> accepted (positive control)", async () => {
 		const t = createT();
+		await seedFleetAgents(t, FILE_LABELS);
 		await seedOrgMapping(t, "org-o");
 		const legitBCred = await mintAgent(t, "org-o", "b");
 

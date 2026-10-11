@@ -25,6 +25,10 @@ import { testClerkOrgId } from "../../tests/fixtures/testClerkOrgId";
 import { api } from "../_generated/api";
 import type { Id } from "../_generated/dataModel";
 import schema from "../schema";
+import { seedAgents } from "../../tests/lib/agentIdOf";
+import { insertTaskRow, seedFleetAgents } from "../../tests/lib/seedFleetAgents";
+
+const FILE_LABELS = ["eta", "sigma"];
 
 const modules = Object.fromEntries(
 	Object.entries(import.meta.glob("../**/*.ts")).filter(
@@ -43,6 +47,12 @@ async function setup(
 	status: "todo" | "in_progress" | "paused" = "in_progress",
 ) {
 	const t = createT();
+	// The fleet's "eta", org-a's "eta" and org-b's "eta": one label, three agents.
+	await seedFleetAgents(t, FILE_LABELS);
+	await seedAgents(t, [
+		["org-a", "eta"],
+		["org-b", "eta"],
+	]);
 	let id!: Id<"tasks">;
 	await t.run(async (ctx) => {
 		await ctx.db.insert("taskClosureConfig", {
@@ -62,7 +72,7 @@ async function setup(
 			});
 		}
 		const now = Date.now();
-		id = await ctx.db.insert("tasks", {
+		id = await insertTaskRow(ctx, {
 			title: "org-b task",
 			assignedTo: "eta",
 			createdBy: "eta",
@@ -236,11 +246,36 @@ type Row = NonNullable<
 const didLand = (c: Case, after: Row | null): boolean =>
 	c.name === "deleteTask" ? after === null : after !== null && c.landed(after);
 
+// Re-homes the seeded row to `org` / the fleet and re-points its actor IDs at
+// that org's "eta" (the row is then THAT agent's own task).
+async function rehome(
+	s: Awaited<ReturnType<typeof setup>>,
+	org: "org-a" | undefined,
+) {
+	await s.t.run(async (ctx) => {
+		const slug =
+			org ??
+			(await ctx.db.query("client_org_mapping").collect()).find(
+				(m) => m.orgKind === "operator",
+			)?.clerkOrgSlug;
+		const eta = await ctx.db
+			.query("agents")
+			.withIndex("by_org_normalized_name", (q) =>
+				q.eq("orgSlug", slug as string).eq("normalizedName", "eta"),
+			)
+			.first();
+		await ctx.db.patch(s.id, {
+			orgId: org,
+			clerkOrgId: org === undefined ? undefined : testClerkOrgId(org),
+			assignedToId: eta?._id,
+			createdById: eta?._id,
+		});
+	});
+}
+
 async function setupOwn(status: Case["status"]) {
 	const s = await setup(status);
-	await s.t.run((ctx) =>
-		ctx.db.patch(s.id, { orgId: "org-a", clerkOrgId: testClerkOrgId("org-a") }),
-	);
+	await rehome(s, "org-a");
 	return s;
 }
 
@@ -268,10 +303,27 @@ describe("org-a 'eta' vs an org-b 'eta' task, per door", () => {
 				expect(didLand(c, await row())).toBe(true);
 			});
 
-			test("MASTER: no verifiedOrg keeps today's behaviour (service account reaches any tenant)", async () => {
+			test("MASTER: no verifiedOrg, the fleet's own 'eta' acting on a fleet-owned row lands", async () => {
+				const s = await setup(c.status);
+				await rehome(s, undefined);
+				await c.call(asService(s.t), s.id, {});
+				expect(didLand(c, await s.row())).toBe(true);
+			});
+
+			// checkout is a claim by instance and is gated by tenant only, never by actor.
+			if (c.name !== "checkout")
+				test("MASTER COLLISION: no verifiedOrg, the fleet's 'eta' does NOT act on org-b's 'eta' row (same name, different agent)", async () => {
 				const { t, id, row } = await setup(c.status);
-				await c.call(asService(t), id, {});
-				expect(didLand(c, await row())).toBe(true);
+				const before = JSON.stringify(await row());
+				const err = await c.call(asService(t), id, {}).then(
+					() => null,
+					(e: Error) => e,
+				);
+				expect(err, `${c.name} must refuse`).not.toBeNull();
+				expect(
+					`${(err as Error).message} ${JSON.stringify((err as { data?: unknown }).data ?? "")}`,
+				).toContain("RBAC_DENIED");
+				expect(JSON.stringify(await row())).toBe(before);
 			});
 
 			test("UNTRUSTED: an org member passing verifiedOrg is refused, not ignored", async () => {

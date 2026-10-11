@@ -27,6 +27,9 @@ import { convexTest } from "../../tests/fixtures/convexTestWithServiceAccount";
 import { describe, expect, test } from "vitest";
 import { api } from "../_generated/api";
 import schema from "../schema";
+import { insertTaskRow, seedFleetAgents } from "../../tests/lib/seedFleetAgents";
+
+const FILE_LABELS = ["eta", "phi", "sigma"];
 
 const modules = Object.fromEntries(
 	Object.entries(import.meta.glob("../**/*.ts")).filter(
@@ -69,6 +72,7 @@ async function makeTask(
 describe("tasks.blockTask — link validation", () => {
 	test("1: neither blockedOnTaskId nor '# blocked-on-nobody:' marker -> REFUSED", async () => {
 		const t = createT();
+		await seedFleetAgents(t, FILE_LABELS);
 		const taskId = await makeTask(t, { assignedTo: "sigma", createdBy: "sigma" });
 
 		const error = await t
@@ -84,6 +88,7 @@ describe("tasks.blockTask — link validation", () => {
 
 	test("2: citing a 'done' task -> REFUSED (a closed request blocks no one)", async () => {
 		const t = createT();
+		await seedFleetAgents(t, FILE_LABELS);
 		const blockerId = await makeTask(t, { assignedTo: "eta", createdBy: "eta" });
 		await t.mutation(api.tasks.complete, {
 			taskId: blockerId,
@@ -106,6 +111,7 @@ describe("tasks.blockTask — link validation", () => {
 
 	test("3: citing a task assigned to own assignee -> REFUSED (no self-wait)", async () => {
 		const t = createT();
+		await seedFleetAgents(t, FILE_LABELS);
 		const blockerId = await makeTask(t, { assignedTo: "sigma", createdBy: "sigma" });
 		const taskId = await makeTask(t, { assignedTo: "sigma", createdBy: "sigma" });
 
@@ -122,6 +128,7 @@ describe("tasks.blockTask — link validation", () => {
 
 	test("4: citing a live task owned by ANOTHER -> ACCEPTED", async () => {
 		const t = createT();
+		await seedFleetAgents(t, FILE_LABELS);
 		const blockerId = await makeTask(t, { assignedTo: "eta", createdBy: "eta" });
 		const taskId = await makeTask(t, { assignedTo: "sigma", createdBy: "sigma" });
 
@@ -139,6 +146,7 @@ describe("tasks.blockTask — link validation", () => {
 
 	test("5: explicit '# blocked-on-nobody:' marker -> ACCEPTED, reason stored", async () => {
 		const t = createT();
+		await seedFleetAgents(t, FILE_LABELS);
 		const taskId = await makeTask(t, { assignedTo: "sigma", createdBy: "sigma" });
 
 		await t.mutation(api.tasks.blockTask, {
@@ -159,6 +167,7 @@ describe("tasks.blockTask — link validation", () => {
 describe("tasks — reciprocal unblock on complete", () => {
 	test("6: cited task transitions to 'done' -> blocked task returns to 'todo', assignee notified", async () => {
 		const t = createT();
+		await seedFleetAgents(t, FILE_LABELS);
 		const blockerId = await makeTask(t, { assignedTo: "eta", createdBy: "eta" });
 		const taskId = await makeTask(t, { assignedTo: "sigma", createdBy: "sigma" });
 
@@ -192,6 +201,7 @@ describe("tasks — reciprocal unblock on complete", () => {
 
 	test("6b: reciprocal unblock also fires when the blocker closes via tasks.update(status='done')", async () => {
 		const t = createT();
+		await seedFleetAgents(t, FILE_LABELS);
 		const blockerId = await makeTask(t, { assignedTo: "eta", createdBy: "eta" });
 		const taskId = await makeTask(t, { assignedTo: "sigma", createdBy: "sigma" });
 
@@ -216,6 +226,7 @@ describe("tasks — reciprocal unblock on complete", () => {
 describe("tasks.update — status='blocked' boundary refusal (Day 159)", () => {
 	test("RED->GREEN: update({status:'blocked'}) with no link/marker is REFUSED, redirects to block_task", async () => {
 		const t = createT();
+		await seedFleetAgents(t, FILE_LABELS);
 		const taskId = await makeTask(t, { assignedTo: "sigma", createdBy: "sigma" });
 
 		const error = await t
@@ -234,6 +245,7 @@ describe("tasks.update — status='blocked' boundary refusal (Day 159)", () => {
 
 	test("update({status:'blocked'}) is refused even when a live blockedOnTaskId-shaped caller tries to sneak it in via update (verb bypass closed)", async () => {
 		const t = createT();
+		await seedFleetAgents(t, FILE_LABELS);
 		const blockerId = await makeTask(t, { assignedTo: "eta", createdBy: "eta" });
 		const taskId = await makeTask(t, { assignedTo: "sigma", createdBy: "sigma" });
 
@@ -253,6 +265,7 @@ describe("tasks.update — status='blocked' boundary refusal (Day 159)", () => {
 
 	test("MUST_PASS regression: update({status:'todo'}) still succeeds", async () => {
 		const t = createT();
+		await seedFleetAgents(t, FILE_LABELS);
 		const taskId = await makeTask(t, { assignedTo: "sigma", createdBy: "sigma", status: "in_progress" });
 
 		await t.mutation(api.tasks.update, {
@@ -267,6 +280,7 @@ describe("tasks.update — status='blocked' boundary refusal (Day 159)", () => {
 
 	test("MUST_PASS regression: update({status:'in_progress'}) still succeeds", async () => {
 		const t = createT();
+		await seedFleetAgents(t, FILE_LABELS);
 		const taskId = await makeTask(t, { assignedTo: "sigma", createdBy: "sigma" });
 
 		await t.mutation(api.tasks.update, {
@@ -281,6 +295,7 @@ describe("tasks.update — status='blocked' boundary refusal (Day 159)", () => {
 
 	test("MUST_PASS regression: update({status:'done'}) still succeeds AND still fires the reciprocal unblock", async () => {
 		const t = createT();
+		await seedFleetAgents(t, FILE_LABELS);
 		const blockerId = await makeTask(t, { assignedTo: "eta", createdBy: "eta" });
 		const taskId = await makeTask(t, { assignedTo: "sigma", createdBy: "sigma" });
 
@@ -310,10 +325,11 @@ describe("tasks.update — status='blocked' boundary refusal (Day 159)", () => {
 describe("tasks.listUnlinkedBlocked — migration inventory", () => {
 	test("lists pre-existing blocked tasks with neither link nor marker, never mutates them", async () => {
 		const t = createT();
+		await seedFleetAgents(t, FILE_LABELS);
 		// Simulate a pre-existing blocked row from before this gate shipped —
 		// written directly, bypassing blockTask (mirrors how legacy rows exist).
 		const legacyId = await t.run(async (ctx) =>
-			ctx.db.insert("tasks", {
+			insertTaskRow(ctx, {
 				title: "Legacy unlinked block",
 				assignedTo: "phi",
 				priority: "medium",

@@ -23,6 +23,9 @@ import { convexTest } from "../../tests/fixtures/convexTestWithServiceAccount";
 import { describe, expect, test } from "vitest";
 import { api } from "../_generated/api";
 import schema from "../schema";
+import { seedFleetAgents } from "../../tests/lib/seedFleetAgents";
+
+const FILE_LABELS = ["eta", "sigma"];
 
 const modules = Object.fromEntries(
 	Object.entries(import.meta.glob("../**/*.ts")).filter(
@@ -55,6 +58,7 @@ async function makeTask(
 describe("tasks read-path returns validators — blocked-task fields (class fix)", () => {
 	test("form A (blockedOnTaskId): get, getById, listPaginated all read a blocked task without throwing", async () => {
 		const t = createT();
+		await seedFleetAgents(t, FILE_LABELS);
 		const blockerId = await makeTask(t, { assignedTo: "eta", createdBy: "eta" });
 		const taskId = await makeTask(t, { assignedTo: "sigma", createdBy: "sigma" });
 
@@ -82,6 +86,7 @@ describe("tasks read-path returns validators — blocked-task fields (class fix)
 
 	test("form B (blockedOnNobodyReason marker): get, getById, listPaginated all read a blocked task without throwing", async () => {
 		const t = createT();
+		await seedFleetAgents(t, FILE_LABELS);
 		const taskId = await makeTask(t, { assignedTo: "sigma", createdBy: "sigma" });
 
 		await t.mutation(api.tasks.blockTask, {

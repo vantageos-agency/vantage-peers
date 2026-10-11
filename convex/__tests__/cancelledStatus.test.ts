@@ -27,6 +27,9 @@ import { convexTest } from "../../tests/fixtures/convexTestWithServiceAccount";
 import { describe, expect, test } from "vitest";
 import { api } from "../_generated/api";
 import schema from "../schema";
+import { seedFleetAgents } from "../../tests/lib/seedFleetAgents";
+
+const FILE_LABELS = ["eta", "sigma"];
 
 const modules = Object.fromEntries(
 	Object.entries(import.meta.glob("../**/*.ts")).filter(
@@ -55,6 +58,7 @@ function getConvexErrorMessage(error: unknown): string {
 describe("tasks.update — cancelled status", () => {
 	test("T1: creator can cancel with a reason — status/cancelledBy/cancelReason stored", async () => {
 		const t = createT();
+		await seedFleetAgents(t, FILE_LABELS);
 		const taskId = await t.mutation(api.tasks.create, {
 			title: "Erroneous task",
 			assignedTo: "eta",
@@ -78,6 +82,7 @@ describe("tasks.update — cancelled status", () => {
 
 	test("T2: non-creator (assignee) is REFUSED", async () => {
 		const t = createT();
+		await seedFleetAgents(t, FILE_LABELS);
 		const taskId = await t.mutation(api.tasks.create, {
 			title: "Task owned by sigma",
 			assignedTo: "eta",
@@ -113,6 +118,7 @@ describe("tasks.update — cancelled status", () => {
 
 	test("T3: empty/whitespace reason is REFUSED", async () => {
 		const t = createT();
+		await seedFleetAgents(t, FILE_LABELS);
 		const taskId = await t.mutation(api.tasks.create, {
 			title: "Task",
 			assignedTo: "eta",
@@ -139,6 +145,7 @@ describe("tasks.update — cancelled status", () => {
 
 	test("T4: cancelled task excluded from status=open/active, included in status=all", async () => {
 		const t = createT();
+		await seedFleetAgents(t, FILE_LABELS);
 		const taskId = await t.mutation(api.tasks.create, {
 			title: "To be cancelled",
 			assignedTo: "eta",
@@ -201,6 +208,7 @@ describe("missions.update — cancelled status", () => {
 
 	test("T5: creator can cancel with a reason — status/cancelledBy/cancelReason stored", async () => {
 		const t = createT();
+		await seedFleetAgents(t, FILE_LABELS);
 		const missionId = await seedMission(t, "sigma");
 
 		await t.mutation(api.missions.update, {
@@ -220,6 +228,7 @@ describe("missions.update — cancelled status", () => {
 
 	test("T6: non-creator is REFUSED", async () => {
 		const t = createT();
+		await seedFleetAgents(t, FILE_LABELS);
 		const missionId = await seedMission(t, "sigma");
 
 		try {
@@ -240,6 +249,7 @@ describe("missions.update — cancelled status", () => {
 
 	test("T7: empty/whitespace reason is REFUSED", async () => {
 		const t = createT();
+		await seedFleetAgents(t, FILE_LABELS);
 		const missionId = await seedMission(t, "sigma");
 
 		try {
@@ -262,6 +272,7 @@ describe("missions.update — cancelled status", () => {
 
 	test("T8: cancelled mission excluded from status=open/active, included in status=all", async () => {
 		const t = createT();
+		await seedFleetAgents(t, FILE_LABELS);
 		const missionId = await seedMission(t, "sigma");
 		await t.mutation(api.missions.update, {
 			missionId,

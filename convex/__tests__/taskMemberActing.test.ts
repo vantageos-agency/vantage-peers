@@ -18,6 +18,12 @@ import { testClerkOrgId } from "../../tests/fixtures/testClerkOrgId";
 import { api } from "../_generated/api";
 import type { Id } from "../_generated/dataModel";
 import schema from "../schema";
+import {
+	actingWith,
+	insertTaskRow,
+	seedOrgAgents,
+} from "../../tests/lib/seedFleetAgents";
+
 
 const modules = Object.fromEntries(
 	Object.entries(import.meta.glob("../**/*.ts")).filter(
@@ -64,7 +70,7 @@ async function seedTask(
 	status: "todo" | "in_progress",
 ): Promise<Id<"tasks">> {
 	return await t.run(async (ctx) =>
-		ctx.db.insert("tasks", {
+		insertTaskRow(ctx, {
 			title: "Member-acting seed",
 			assignedTo: "sigma",
 			priority: "medium",
@@ -196,8 +202,14 @@ describe.each(doors)("member acting — $name", (door) => {
 
 	test("agent path unchanged: named assignee served, no human actor written", async () => {
 		const { t } = await setup();
+		// The agent path acts as an agent of org-a: it holds a row and presents
+		// its credential (the doors decide on agent IDs).
+		const secrets = await seedOrgAgents(t, [["org-a", "sigma"]]);
 		const taskId = await seedTask(t, "org-a", door.seedStatus);
-		const proxy = t.withIdentity(idOf("user_agentproxy", "org-a"));
+		const proxy = actingWith(
+			t.withIdentity(idOf("user_agentproxy", "org-a")),
+			(name) => secrets.get(`org-a/${name}`),
+		);
 		await door.call(proxy, taskId, "sigma");
 		const row = await t.run(async (ctx) => ctx.db.get(taskId));
 		expect(row?.lastActedBy).toBeUndefined();
@@ -233,7 +245,7 @@ describe("member acting — door-specific requirements still bind a member", () 
 		const { t, member } = await setup();
 		const taskId = await seedTask(t, "org-a", "in_progress");
 		const blocker = await t.run(async (ctx) =>
-			ctx.db.insert("tasks", {
+			insertTaskRow(ctx, {
 				title: "peer",
 				assignedTo: "eta",
 				priority: "medium",

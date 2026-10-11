@@ -14,6 +14,8 @@ import { testClerkOrgId } from "../../tests/fixtures/testClerkOrgId";
 import { api, internal } from "../_generated/api";
 import type { Id } from "../_generated/dataModel";
 import schema from "../schema";
+import { seedAgents } from "../../tests/lib/agentIdOf";
+import { insertTaskRow, mintAgentSecret } from "../../tests/lib/seedFleetAgents";
 
 const modules = Object.fromEntries(
 	Object.entries(import.meta.glob("../**/*.ts")).filter(
@@ -85,12 +87,14 @@ async function setup(defaultRoles: string[] | null = ["org:admin", "org:editor"]
 			});
 		}
 	});
+	// "sigma" is org-a's agent: the tasks are assigned to and created by its ID.
+	await seedAgents(t, [["org-a", "sigma"]]);
 	return t;
 }
 
 async function seedTask(t: T, status: "todo" | "in_progress") {
 	return await t.run(async (ctx) =>
-		ctx.db.insert("tasks", {
+		insertTaskRow(ctx, {
 			title: "Writer-role seed",
 			assignedTo: "sigma",
 			priority: "medium",
@@ -202,18 +206,26 @@ describe.each(doors)("writer roles — $name", (door) => {
 		const t = await setup(null);
 		const id = await seedTask(t, door.seedStatus);
 		const c = t.withIdentity(as("user_proxy"));
+		// The agent path presents the credential of the agent it acts as.
+		const agentCredentialSecret = await mintAgentSecret(t, "org-a", "sigma");
 		if (door.name === "start")
-			await c.mutation(api.tasks.start, { taskId: id, callerOrchestrator: "sigma" });
+			await c.mutation(api.tasks.start, {
+				taskId: id,
+				callerOrchestrator: "sigma",
+				agentCredentialSecret,
+			});
 		else if (door.name === "complete")
 			await c.mutation(api.tasks.complete, {
 				taskId: id,
 				callerOrchestrator: "sigma",
+				agentCredentialSecret,
 				completionNote: NOTE,
 			});
 		else
 			await c.mutation(api.tasks.blockTask, {
 				taskId: id,
 				callerOrchestrator: "sigma",
+				agentCredentialSecret,
 				reason: NOBODY,
 			});
 		const row = await t.run(async (ctx) => ctx.db.get(id));
@@ -270,7 +282,7 @@ async function seedOrgTask(
 	status: "todo" | "in_progress",
 ) {
 	return await t.run(async (ctx) =>
-		ctx.db.insert("tasks", {
+		insertTaskRow(ctx, {
 			title: "Operator-acting seed",
 			assignedTo: "sigma",
 			priority: "medium",

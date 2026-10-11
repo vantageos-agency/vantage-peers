@@ -21,6 +21,9 @@ import { convexTest } from "../../tests/fixtures/convexTestWithServiceAccount";
 import { describe, expect, test, vi } from "vitest";
 import { api } from "../_generated/api";
 import schema from "../schema";
+import { insertTaskRow, seedFleetAgents } from "../../tests/lib/seedFleetAgents";
+
+const FILE_LABELS = ["eta", "sigma"];
 
 const modules = Object.fromEntries(
 	Object.entries(import.meta.glob("../**/*.ts")).filter(
@@ -47,7 +50,7 @@ async function seedCronSpam(
 	await t.run(async (ctx: any) => {
 		for (let i = 0; i < count; i++) {
 			const now = Date.now() + i;
-			await ctx.db.insert("tasks", {
+			await insertTaskRow(ctx, {
 				title: `/check-messages run ${i}`,
 				assignedTo: opts.assignedTo,
 				priority: "medium",
@@ -67,7 +70,9 @@ describe("tasks.bulkComplete — scale past the hard cap (Day 163)", () => {
 		// (see bulkCompleteSelfScheduled.test.ts for the continuation itself).
 		vi.useFakeTimers();
 		const t = createT();
+		await seedFleetAgents(t, FILE_LABELS);
 		const assignedTo = "pi-bulk-narrowest";
+		await seedFleetAgents(t, [assignedTo]);
 		await seedCronSpam(t, 800, { assignedTo });
 
 		// Old behavior: this threw BULK_HARD_CAP_EXCEEDED telling the caller
@@ -111,14 +116,16 @@ describe("tasks.bulkComplete — scale past the hard cap (Day 163)", () => {
 
 	test("RED: status filter narrows the scan and is a valid standalone reductive predicate", async () => {
 		const t = createT();
+		await seedFleetAgents(t, FILE_LABELS);
 		const assignedTo = "pi-bulk-status";
+		await seedFleetAgents(t, [assignedTo]);
 		// Seed 10 cron-spam rows in "todo" and 10 in "in_progress" — status
 		// filter must scan ONLY the requested status.
 		// eslint-disable-next-line @typescript-eslint/no-explicit-any
 		await t.run(async (ctx: any) => {
 			for (let i = 0; i < 10; i++) {
 				const now = Date.now() + i;
-				await ctx.db.insert("tasks", {
+				await insertTaskRow(ctx, {
 					title: `/check-messages todo ${i}`,
 					assignedTo,
 					priority: "medium",
@@ -127,7 +134,7 @@ describe("tasks.bulkComplete — scale past the hard cap (Day 163)", () => {
 					createdAt: now,
 					updatedAt: now,
 				});
-				await ctx.db.insert("tasks", {
+				await insertTaskRow(ctx, {
 					title: `/check-messages ip ${i}`,
 					assignedTo,
 					priority: "medium",
@@ -163,7 +170,9 @@ describe("tasks.bulkComplete — scale past the hard cap (Day 163)", () => {
 
 	test("RED: count is exact (no cappedAt/remaining) when the match count is under the cap", async () => {
 		const t = createT();
+		await seedFleetAgents(t, FILE_LABELS);
 		const assignedTo = "pi-bulk-exact";
+		await seedFleetAgents(t, [assignedTo]);
 		await seedCronSpam(t, 42, { assignedTo });
 
 		const result = await t.mutation(api.tasks.bulkComplete, {
@@ -179,7 +188,9 @@ describe("tasks.bulkComplete — scale past the hard cap (Day 163)", () => {
 
 	test("RED: dryRun preview at scale is also labelled truncated, never a bare scan-stop sentinel presented as a total", async () => {
 		const t = createT();
+		await seedFleetAgents(t, FILE_LABELS);
 		const assignedTo = "pi-bulk-dryrun-scale";
+		await seedFleetAgents(t, [assignedTo]);
 		await seedCronSpam(t, 900, { assignedTo });
 
 		const preview = await t.mutation(api.tasks.bulkComplete, {
@@ -196,6 +207,7 @@ describe("tasks.bulkComplete — scale past the hard cap (Day 163)", () => {
 
 	test("RED: empty filter is still refused regardless of the status addition (BULK_FILTER_TOO_BROAD)", async () => {
 		const t = createT();
+		await seedFleetAgents(t, FILE_LABELS);
 		await expect(
 			t.mutation(api.tasks.bulkComplete, {
 				filter: {},

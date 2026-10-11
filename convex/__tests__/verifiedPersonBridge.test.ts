@@ -33,6 +33,7 @@ import type { Id } from "../_generated/dataModel";
 import schema from "../schema";
 import { agentIdOf } from "../../tests/lib/agentIdOf";
 import { testClerkOrgId } from "../../tests/fixtures/testClerkOrgId";
+import { insertTaskRow, seedFleetAgents } from "../../tests/lib/seedFleetAgents";
 
 const modules = Object.fromEntries(
 	Object.entries(import.meta.glob("../**/*.ts")).filter(
@@ -108,6 +109,20 @@ beforeEach(async () => {
 			roles: ["org:admin", "org:editor"],
 			updatedAt: now,
 		});
+		// The assignees of the tasks a person creates are agents of its org (an
+		// assignment resolves to an agents-row ID of the task's own org).
+		for (const [orgSlug, name] of [
+			["org-a", "agent-a"],
+			["org-b", "agent-b"],
+		] as const) {
+			await ctx.db.insert("agents", {
+				orgSlug,
+				name,
+				normalizedName: name,
+				isActive: true,
+				createdAt: now,
+			});
+		}
 		await ctx.db.insert("profiles", {
 			orchestratorId: "agent-a",
 			name: "agent-a",
@@ -165,7 +180,7 @@ beforeEach(async () => {
 
 async function taskIn(org: string, assignedTo: string): Promise<Id<"tasks">> {
 	return await t.run(async (ctx) =>
-		ctx.db.insert("tasks", {
+		insertTaskRow(ctx, {
 			title: "seeded",
 			assignedTo,
 			priority: "high",
@@ -480,10 +495,7 @@ describe("RESERVED — no agent is ever named like a person", () => {
 			}),
 			"AGENT_NAME_RESERVED",
 		);
-		await admin().mutation(api.agents.registerAgent, {
-			orgSlug: "org-a",
-			name: "agent-a",
-		});
+		// "agent-a" is already org-a's agent (seeded in beforeEach).
 		await expectCode(
 			admin().mutation(api.agents.renameAgent, {
 				orgSlug: "org-a",
@@ -534,6 +546,7 @@ describe("RESERVED — no agent is ever named like a person", () => {
 
 describe("ABSENT — no verifiedPerson, the service account is unchanged", () => {
 	test("the service account naming an agent still creates as that agent", async () => {
+		await seedFleetAgents(t, ["agent-a"]);
 		const id = await service().mutation(api.tasks.create, {
 			...TASK,
 			createdBy: "agent-a",
@@ -544,6 +557,7 @@ describe("ABSENT — no verifiedPerson, the service account is unchanged", () =>
 	});
 
 	test("the service account naming nobody is still refused (it is no person)", async () => {
+		await seedFleetAgents(t, ["agent-a"]);
 		await expectCode(
 			service().mutation(api.tasks.create, TASK),
 			"callerOrchestrator is required",

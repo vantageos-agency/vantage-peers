@@ -18,6 +18,7 @@ import { beforeAll, describe, expect, it } from "vitest";
 import schema from "../../../convex/schema.js";
 import { LOCAL_STDIO_TRUST_CTX } from "../auth.js";
 import { registerTools } from "../tools.js";
+import { seedFleetAgents } from "../../../tests/lib/seedFleetAgents.js";
 
 const modules = Object.fromEntries(
 	Object.entries(
@@ -79,10 +80,12 @@ describe("block_task MCP tool — blockedCause round-trips, human vs authorisati
 	let t: ReturnType<typeof convexTest>;
 	let tools: Map<string, CapturedTool>;
 
-	beforeAll(() => {
+	beforeAll(async () => {
 		t = convexTest(schema as never, modules as never).withIdentity({
 			subject: "test-service-account-user-id",
 		});
+		// The task doors decide on agent IDs: "sigma" is an agent of the fleet.
+		await seedFleetAgents(t, ["sigma"]);
 		tools = captureTools(makeFakeConvexClient(t));
 	});
 

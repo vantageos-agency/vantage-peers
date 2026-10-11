@@ -38,6 +38,13 @@ import { testClerkOrgId } from "../../tests/fixtures/testClerkOrgId";
 import { api } from "../_generated/api";
 import type { Id } from "../_generated/dataModel";
 import schema from "../schema";
+import {
+	actingWith,
+	insertTaskRow,
+	mintAgentSecret,
+	} from "../../tests/lib/seedFleetAgents";
+import { seedAgents } from "../../tests/lib/agentIdOf";
+
 
 const modules = Object.fromEntries(
 	Object.entries(import.meta.glob("../**/*.ts")).filter(
@@ -62,13 +69,20 @@ for (const subject of [MEMBER_A, MEMBER_B]) {
 	}
 }
 
-const asMember = (t: T, subject: string, orgSlug: string) =>
-	t.withIdentity({
+// org -> the credential of that org's roster agent (written by seedOrg). An org
+// member acting as a registered agent presents it (M7: no proof, no actor).
+const orgSecrets = new Map<string, string>();
+
+const asMember = (t: T, subject: string, orgSlug: string) => {
+	const member = t.withIdentity({
 		subject,
 		organizationId: orgSlug,
 		org_id: testClerkOrgId(orgSlug),
 		organizationSlug: orgSlug,
 	} as Parameters<T["withIdentity"]>[0]);
+	const secret = orgSecrets.get(orgSlug);
+	return secret === undefined ? member : actingWith(member, secret);
+};
 
 type Acting = ReturnType<typeof asMember>;
 
@@ -94,6 +108,11 @@ async function seedOrg(t: T, slug: string, roster: string[] = ["sigma"]) {
 			createdAt: Date.now(),
 		});
 	});
+	// The first roster name is the org's agent (the door resolves actors by ID)
+	// and acts, presenting its credential; the other roster names are admitted
+	// by the roster but are not agents.
+	await seedAgents(t, [[slug, roster[0]]]);
+	orgSecrets.set(slug, await mintAgentSecret(t, slug, roster[0]));
 }
 
 async function seedClosureConfig(t: T) {
@@ -122,7 +141,7 @@ interface SeedOpts {
 async function seedTask(t: Pick<T, "run">, o: SeedOpts = {}): Promise<Id<"tasks">> {
 	const now = Date.now();
 	return await t.run(async (ctx) =>
-		ctx.db.insert("tasks", {
+		insertTaskRow(ctx, {
 			title: o.title ?? "a task",
 			assignedTo: o.assignedTo ?? "sigma",
 			createdBy: o.createdBy ?? "sigma",

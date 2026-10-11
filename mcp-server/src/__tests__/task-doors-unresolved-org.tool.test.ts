@@ -9,7 +9,8 @@
  *             Convex never reached, no row changes (org-a and org-b rows alike)
  *   MASTER    unchanged: reaches Convex and the write lands
  *   CLERK-JWT a caller on its own Clerk session is scoped by Convex's own org scope
- *             (own-org task allowed, foreign-org task refused) and forwards no verifiedOrg
+ *             (foreign-org task refused), forwards no verifiedOrg, and (M7) cannot act as a
+ *             REGISTERED agent: it carries no agent proof, a label is not an identity
  */
 
 import type { ConvexHttpClient } from "convex/browser";
@@ -18,6 +19,11 @@ import { convexTest } from "../../../tests/fixtures/convexTestWithServiceAccount
 import { beforeEach, describe, expect, it } from "vitest";
 import schema from "../../../convex/schema.js";
 import { testClerkOrgId } from "../../../tests/fixtures/testClerkOrgId";
+import { seedAgents } from "../../../tests/lib/agentIdOf.js";
+import {
+	insertTaskRow,
+	seedFleetAgents,
+} from "../../../tests/lib/seedFleetAgents.js";
 import type { OAuthContext } from "../auth.js";
 import { registerTools } from "../tools.js";
 
@@ -212,19 +218,28 @@ beforeEach(async () => {
 			});
 		}
 	});
+	// One label, three agents: the fleet's "eta", org-a's and org-b's. The doors
+	// decide on the agent's ID, never on the shared label.
+	await seedFleetAgents(t, ["eta"]);
+	await seedAgents(t as never, [
+		["org-a", "eta"],
+		["org-b", "eta"],
+	]);
 });
 
-async function seed(orgId: string, status: Status): Promise<string> {
+// `orgId` undefined seeds a FLEET-owned task, assigned to the fleet's "eta".
+async function seed(orgId: string | undefined, status: Status): Promise<string> {
 	return await t.run(async (ctx) => {
 		const now = Date.now();
-		const id = await ctx.db.insert("tasks", {
-			title: `${orgId} task`,
+		const id = await insertTaskRow(ctx, {
+			title: `${orgId ?? "fleet"} task`,
 			assignedTo: "eta",
 			createdBy: "eta",
 			priority: "low",
 			status: status === "paused" ? "in_progress" : status,
-			orgId,
-			clerkOrgId: testClerkOrgId(orgId),
+			...(orgId !== undefined
+				? { orgId, clerkOrgId: testClerkOrgId(orgId) }
+				: {}),
 			...(status === "in_progress"
 				? { startedAt: now - 60_000, workSegments: [{ start: now - 60_000 }] }
 				: {}),
@@ -260,8 +275,8 @@ describe("a non-master bearer with no resolvable org is refused at the MCP layer
 			}
 		});
 
-		it(`MASTER ${tool.name}: unchanged`, async () => {
-			const id = await seed("org-b", tool.status);
+		it(`MASTER ${tool.name}: unchanged (the fleet's own eta on a fleet-owned task)`, async () => {
+			const id = await seed(undefined, tool.status);
 			const { handlers, reached } = harness(MASTER, service);
 			const res = await handlers.get(tool.name)?.(tool.args(id));
 			expect(res?.isError, res?.content[0]?.text).not.toBe(true);
@@ -293,7 +308,7 @@ describe("a non-master bearer with no resolvable org is refused at the MCP layer
 		expect(ok.reached()).toBeGreaterThan(0);
 	});
 
-	it("CLERK-JWT: scoped by Convex's own org scope (own org allowed, foreign org refused), no verifiedOrg forwarded", async () => {
+	it("CLERK-JWT: scoped by Convex's own org scope (foreign org refused); a session with no agent proof cannot act as a registered agent, no verifiedOrg forwarded", async () => {
 		const member = t.withIdentity({
 			subject: "member-a",
 			org_slug: "org-a",
@@ -316,20 +331,26 @@ describe("a non-master bearer with no resolvable org is refused at the MCP layer
 		const theirs = await seed("org-b", "in_progress");
 		const { handlers } = harness(clerkCtx, member);
 		const note = "closing, evidence abc1234 and more words here";
+		// The foreign row is refused by Convex's own org scope.
 		const denied = await handlers.get("complete_task")?.({
 			taskId: theirs,
 			completionNote: note,
 			callerOrchestrator: "eta",
 		});
 		expect(denied?.isError, denied?.content[0]?.text).toBe(true);
-		expect(denied?.content[0]?.text).toMatch(/RBAC_DENIED/);
+		expect(denied?.content[0]?.text).toMatch(/RBAC_DENIED|AGENT_CREDENTIAL_REQUIRED/);
 		expect((await read(theirs))?.status).toBe("in_progress");
-		const ok = await handlers.get("complete_task")?.({
+		// M7: a Clerk session carries no agent proof (the transport never forwards
+		// `verifiedActor` for it), and "eta" is a registered agent of org-a, so the
+		// session cannot ACT as eta: a label is not an identity. The own-org row is
+		// refused too, and untouched.
+		const own = await handlers.get("complete_task")?.({
 			taskId: mine,
 			completionNote: note,
 			callerOrchestrator: "eta",
 		});
-		expect(ok?.isError, ok?.content[0]?.text).not.toBe(true);
-		expect((await read(mine))?.status).toBe("done");
+		expect(own?.isError, own?.content[0]?.text).toBe(true);
+		expect(own?.content[0]?.text).toMatch(/AGENT_CREDENTIAL_REQUIRED/);
+		expect((await read(mine))?.status).toBe("in_progress");
 	});
 });
