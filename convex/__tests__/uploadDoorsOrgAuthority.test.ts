@@ -9,7 +9,7 @@
 //   the fleet service acct SERVED (master by subject, any org)
 
 import { createHash } from "node:crypto";
-import { convexTest } from "convex-test";
+import { convexTest } from "../../tests/fixtures/convexTestWithServiceAccount";
 import { describe, expect, test } from "vitest";
 import { testClerkOrgId } from "../../tests/fixtures/testClerkOrgId";
 import type { Id } from "../_generated/dataModel";

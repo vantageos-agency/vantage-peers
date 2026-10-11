@@ -72,7 +72,7 @@ function orgKindOfMapping(
  * null), hence not an organisation here.
  */
 export function personPrincipalLookups(
-	ctx: Ctx,
+	ctx: Pick<Ctx, "db">,
 	verifiedSubject: string,
 ): PrincipalLookups {
 	return {
@@ -86,6 +86,41 @@ export function personPrincipalLookups(
 		},
 		orgKindOf: async (orgId): Promise<OrgKind | null> =>
 			orgKindOfMapping(await lookupOrgMapping(ctx, { clerkOrgId: orgId })),
+	};
+}
+
+/**
+ * The lookups for the FLEET SERVICE ACCOUNT: the `agents` row the operator org's
+ * mapping names, read by ID. The row answers only when it is a `kind: "service"`
+ * row that carries exactly the verified subject as its `authSubject`; any other
+ * row, kind or subject is a miss, which the package turns into a typed refusal.
+ * The organisation reads are the same ID-keyed ones the person path uses.
+ */
+export function serviceAccountPrincipalLookups(
+	ctx: Pick<Ctx, "db">,
+	verifiedSubject: string,
+): PrincipalLookups {
+	const { organisationById, orgKindOf } = personPrincipalLookups(
+		ctx,
+		verifiedSubject,
+	);
+	return {
+		organisationById,
+		orgKindOf,
+		serviceAccountById: async (serviceAccountId) => {
+			const agentId = ctx.db.normalizeId("agents", serviceAccountId);
+			if (agentId === null) return null;
+			const row = await ctx.db.get(agentId);
+			if (row === null) return null;
+			if (row.kind !== "service" || row.authSubject !== verifiedSubject) {
+				return null;
+			}
+			return {
+				id: row._id,
+				orgId: row.clerkOrgId ?? null,
+				active: row.isActive,
+			};
+		},
 	};
 }
 

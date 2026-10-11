@@ -21,7 +21,7 @@
 //
 // Orchestrator: Sigma — VantagePeers | 2026-06-20
 
-import { convexTest } from "convex-test";
+import { convexTest } from "../../tests/fixtures/convexTestWithServiceAccount";
 import { describe, expect, test } from "vitest";
 import { packTarball } from "../okfBundleNode";
 import {

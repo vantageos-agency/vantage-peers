@@ -20,7 +20,7 @@
 //              (M1: the roster is IDs), null for an inactive agent, nothing for an ID
 //              with no agent row.
 
-import { convexTest } from "convex-test";
+import { convexTest } from "../../tests/fixtures/convexTestWithServiceAccount";
 import { describe, expect, test } from "vitest";
 import { testClerkOrgId } from "../../tests/fixtures/testClerkOrgId";
 import { api, internal } from "../_generated/api";

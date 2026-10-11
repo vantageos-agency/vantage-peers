@@ -14,7 +14,7 @@
  *     (isMaster=true)" and that sentence WAS the production leak: an
  *     unauthenticated POST to the deployment URL was served real tenant rows.
  *     Master is now reachable only as withOrgScope defines it — the named
- *     by-id CLERK_SERVICE_ACCOUNT_USER_ID carve-out, never inferred from the
+ *     stored fleet service account (lib/serviceAccount.ts), never inferred from the
  *     mere ABSENCE of a credential. See resolveCallerOrgId below.
  *   - Unknown or unregistered orgs are FAIL-CLOSED (throw AUTH_NAMESPACE_DENIED).
  *
@@ -59,7 +59,7 @@ import {
  *
  * THE FIX -- reuse, do not invent. `withOrgScope` (convex/lib/auth.ts) already
  * resolves the principal fail-closed, and already owns the ONLY legitimate
- * master grants: the named by-id `CLERK_SERVICE_ACCOUNT_USER_ID` carve-out and
+ * master grants: the stored fleet service account (lib/serviceAccount.ts) and
  * the explicit `allowNoIdentityMaster` opt-in (deliberately NOT passed here).
  * A second identity layer in this module would itself be the defect, so this
  * function is a thin adapter over withOrgScope, not a reimplementation.

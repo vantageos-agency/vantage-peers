@@ -33,7 +33,7 @@
  * kept alongside each guard's negative pole.
  */
 
-import { convexTest } from "convex-test";
+import { convexTest } from "../tests/fixtures/convexTestWithServiceAccount";
 import { ConvexError } from "convex/values";
 import { describe, expect, test } from "vitest";
 import { api } from "./_generated/api";

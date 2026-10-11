@@ -17,7 +17,7 @@
 
 import type { ConvexHttpClient } from "convex/browser";
 import { anyApi } from "convex/server";
-import { convexTest } from "convex-test";
+import { convexTest } from "../../../tests/fixtures/convexTestWithServiceAccount";
 import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import schema from "../../../convex/schema.js";
 import { LOCAL_STDIO_TRUST_CTX } from "../auth.js";

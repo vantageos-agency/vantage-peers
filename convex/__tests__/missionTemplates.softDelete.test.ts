@@ -1,6 +1,6 @@
 /// <reference types="vite/client" />
 // allow-missing-refs: new test file created for this task
-import { convexTest } from "convex-test";
+import { convexTest } from "../../tests/fixtures/convexTestWithServiceAccount";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import { api } from "../_generated/api";
 import schema from "../schema";

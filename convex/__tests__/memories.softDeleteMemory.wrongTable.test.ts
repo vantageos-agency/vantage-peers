@@ -11,7 +11,7 @@
 // document must still hit the PRE-EXISTING `throw new Error(...)` path, not
 // a `requireId` rejection. This file pins both branches.
 
-import { convexTest } from "convex-test";
+import { convexTest } from "../../tests/fixtures/convexTestWithServiceAccount";
 import { ConvexError } from "convex/values";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import { api } from "../_generated/api";
