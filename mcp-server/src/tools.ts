@@ -1836,8 +1836,9 @@ function loadCoreToolNames(): string[] {
 }
 
 /**
- * The roster claim a fleet-internal door takes (`fixPatterns:get`).
- * allow-local-identity: forwards the bearer's already-verified roster to the Convex door as a narrowing claim; this function decides nothing from it
+ * The roster claim a fleet-internal door takes (`fixPatterns:get`). It forwards
+ * the bearer's already-verified roster to the Convex door and decides nothing
+ * from it (backend-doctor 0.4.3 credits this forward; no exemption marker).
  *
  * `fixPatterns` has no tenant column, so there is no org to send. A bearer that
  * is not the master forwards the roster of its verified oauthContext (an absent
