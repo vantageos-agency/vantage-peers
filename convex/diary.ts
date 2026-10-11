@@ -1,79 +1,143 @@
-import { sameTenantStamp } from "@vantageos/cloud-identity";
+import {
+	isFleetStamp,
+	type OrgRef,
+	sameOrg,
+	sameTenantStamp,
+} from "@vantageos/cloud-identity";
 import { v, ConvexError } from "convex/values";
 import type { Doc } from "./_generated/dataModel";
 import { mutation, query, type QueryCtx } from "./_generated/server";
 import { creatorValidator } from "./schema";
 import { requireResolvedCaller, withOrgScope, type OrgScope } from "./lib/auth";
 import { isFleetSystemCaller } from "./lib/systemCaller";
-import { fleetOperatorRef, fleetOperatorSlug } from "./lib/operatorOrg";
+import { fleetOperatorRef } from "./lib/operatorOrg";
 import { orgRefOfRow, orgRefOfScope } from "./lib/authOrgMapping";
+import { memberActorOf } from "./lib/humanActor";
+import { listedAgentsOfOrg } from "./lib/rosterIds";
+import { normalizeOrchestratorId } from "./_helpers/normalizeOrchestratorId";
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Org-scope orchestrator enforcement (same defect class as
-// convex/memories.ts's isNamespaceAllowedForScope and
-// convex/messages.ts's isOrchestratorAllowedForScope — see
-// .claude/rules/authority-attached-to-anonymous-object.md). diary has no
-// namespace column; the owner key here is the `orchestrator` field. Master
-// scope (no identity with legacy opt-in, or the recognized service-account
-// identity) retains unrestricted access — preserves internal/MCP-server
-// behaviour unchanged. A Clerk-org-scoped caller may only write/delete a
-// diary entry whose `orchestrator` is in its own client_org_mapping row's
-// allowedOrchestrators; anything else is denied.
-// ─────────────────────────────────────────────────────────────────────────────
-
-function isOrchestratorAllowedForScope(scope: OrgScope, orchestrator: string): boolean {
-	if (scope.isMaster) return true;
-	if (scope.orgSlug === null) return false;
-	return scope.allowedOrchestrators.includes(orchestrator);
-}
-
-// The (orchestrator, date) key is a NAME that two organisations, or the fleet,
-// can all hold, so it can name several rows. The tenants a caller may read and
-// write are the stamps of its OWN range, selected through the
-// by_org_orchestrator_date INDEX so a foreign tenant's row is never read, never
-// returned, and can never lock the caller out.
-//   master              -> the FLEET's range: operator-stamped (what
-//                          backfill_org_stamp writes) then unstamped (what a
-//                          master write writes), in that preference order.
-//   operator-org member -> the SAME fleet range (RULING 4: unstamped rows ARE
-//                          the operator org's range).
-//   any other org       -> only the rows stamped with its own org. It never
-//                          matches the unstamped range, and never the operator
-//                          slug (it is not the operator org).
+// The diary is read and written by ID scope (module M10b; see
+// .claude/rules/authority-attached-to-anonymous-object.md).
+//
+// TENANT. A row belongs to an organisation by its permanent Clerk org ID
+// (`clerkOrgId`), judged by @vantageos/cloud-identity (`sameOrg`, `isFleetStamp`,
+// `sameTenantStamp`). The slug on the row is a renamable label: a NEW org that
+// took a freed label matches no row of the org that held it before. A row whose
+// stamp carries no ID (not yet through backfill_org_clerk_id) is served to no
+// client org: nothing is guessed.
+//   master              -> the FLEET's range: rows stamped with the operator
+//                          org's ID, then unstamped rows.
+//   operator-org member -> the same fleet range.
+//   any other org       -> only the rows stamped with its own org ID, selected
+//                          through the by_org_orchestrator_date_clerk_id INDEX,
+//                          so a foreign row is never read and never a lockout.
 //   no tenant           -> nothing.
-// The operator slug is derived at run time and only when EXACTLY ONE operator
-// org is active; otherwise the fleet range is the unstamped rows alone.
-async function readableTenants(
+//
+// ORCHESTRATOR. The orchestrator a member may reach is judged by AGENT ID: the
+// name typed by the caller (or stored on the row) is looked up in the caller's
+// OWN org, and the resulting agent must be an entry of the org's stored ID
+// roster (`allowedAgentIds`) through @vantageos/cloud-identity
+// (`assertPrincipalListed`, via convex/lib/rosterIds.ts). A name on the legacy
+// name roster is no grant. Master retains unrestricted access.
+//
+// AUTHOR. A member's `createdBy` is the verified caller ("user:<subject>"). A
+// claimed author that is anyone else is refused. Only the transport-verified
+// master (the MCP server) supplies `createdBy` for the seat it authenticated.
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * The agents of the caller's own org that its stored ID roster lists
+ * (`listedAgentsOfOrg`: judged by agent ID through @vantageos/cloud-identity).
+ * Empty for a caller with no org; the master is not roster-bound and never asks.
+ */
+async function listedAgents(
 	ctx: QueryCtx,
 	scope: OrgScope,
-): Promise<(string | undefined)[]> {
-	const operatorSlug = await fleetOperatorSlug(ctx.db);
-	const fleet = operatorSlug === undefined ? [undefined] : [operatorSlug, undefined];
-	if (scope.isMaster) return fleet;
+	door: string,
+): Promise<Doc<"agents">[]> {
 	if (scope.orgSlug === null) return [];
-	return scope.orgSlug === operatorSlug ? fleet : [scope.orgSlug];
+	return await listedAgentsOfOrg(ctx, scope.orgSlug, scope.allowedAgentIds, door);
+}
+
+/** Is `name` the label of an agent on the caller's ID roster? The master reaches every orchestrator. */
+async function orchestratorListed(
+	ctx: QueryCtx,
+	scope: OrgScope,
+	name: string,
+	door: string,
+): Promise<boolean> {
+	if (scope.isMaster) return true;
+	const claimed = normalizeOrchestratorId(name);
+	return (await listedAgents(ctx, scope, door)).some(
+		(agent) => normalizeOrchestratorId(agent.name) === claimed,
+	);
+}
+
+/** The labels a listed agent's diary rows are stored under (the label, and its normalised form). */
+async function rosterNames(
+	ctx: QueryCtx,
+	scope: OrgScope,
+	door: string,
+): Promise<string[]> {
+	const names = new Set<string>();
+	for (const agent of await listedAgents(ctx, scope, door)) {
+		names.add(agent.name);
+		if (agent.normalizedName !== undefined) names.add(agent.normalizedName);
+	}
+	return [...names];
+}
+
+type Tenant = {
+	/** The clerkOrgId values whose index ranges the caller may read (undefined = unstamped). */
+	keys: (string | undefined)[];
+	/** The package's verdict on one row, applied to every row the ranges return. */
+	owns: (row: Doc<"diary">) => boolean;
+};
+
+async function callerTenant(ctx: QueryCtx, scope: OrgScope): Promise<Tenant> {
+	const operator = await fleetOperatorRef(ctx.db);
+	const fleet: Tenant = {
+		keys:
+			typeof operator?.id === "string" ? [operator.id, undefined] : [undefined],
+		owns: (row) => isFleetStamp(orgRefOfRow(row), operator),
+	};
+	if (scope.isMaster) return fleet;
+	if (scope.orgSlug === null) return { keys: [], owns: () => false };
+	const mine: OrgRef = orgRefOfScope(scope);
+	if (operator !== undefined && sameOrg(mine, operator)) return fleet;
+	return {
+		keys: scope.orgClerkId === undefined ? [] : [scope.orgClerkId],
+		owns: (row) => sameOrg(orgRefOfRow(row), mine),
+	};
 }
 
 // `.first()`, never `.unique()`: a row landing between deploy and backfill must
-// not make the selection throw. Deterministic: the first tenant in
-// readableTenants order that has a row.
+// not make the selection throw. Deterministic: the first tenant key, in
+// callerTenant order, that has a row the package says the caller owns.
 async function ownDiaryRow(
 	ctx: QueryCtx,
 	scope: OrgScope,
 	orchestrator: string,
 	date: string,
 ): Promise<Doc<"diary"> | null> {
-	for (const tenant of await readableTenants(ctx, scope)) {
-		const row = await ctx.db
+	const tenant = await callerTenant(ctx, scope);
+	for (const key of tenant.keys) {
+		const rows = await ctx.db
 			.query("diary")
-			.withIndex("by_org_orchestrator_date", (q) =>
-				q.eq("orgId", tenant).eq("orchestrator", orchestrator).eq("date", date),
+			.withIndex("by_org_orchestrator_date_clerk_id", (q) =>
+				q.eq("clerkOrgId", key).eq("orchestrator", orchestrator).eq("date", date),
 			)
-			.first();
-		if (row !== null) return row;
+			.take(8);
+		const own = rows.find(tenant.owns);
+		if (own !== undefined) return own;
 	}
 	return null;
 }
+
+// One (tenant, orchestrator) range is a handful of rows a day; the bound keeps a
+// range read from being unbounded and fails closed beyond it.
+const DIARY_RANGE_SCAN_CAP = 2000;
 
 async function readRange(
 	ctx: QueryCtx,
@@ -82,26 +146,26 @@ async function readRange(
 	from: string,
 	to: string,
 ): Promise<Doc<"diary">[]> {
-	const tenants = await readableTenants(ctx, scope);
+	const tenant = await callerTenant(ctx, scope);
 	const perRange = await Promise.all(
-		tenants.flatMap((tenant) =>
+		tenant.keys.flatMap((key) =>
 			names.map((name) =>
 				ctx.db
 					.query("diary")
-					.withIndex("by_org_orchestrator_date", (q) =>
+					.withIndex("by_org_orchestrator_date_clerk_id", (q) =>
 						q
-							.eq("orgId", tenant)
+							.eq("clerkOrgId", key)
 							.eq("orchestrator", name)
 							.gte("date", from)
 							.lte("date", to),
 					)
-					.collect(),
+					.take(DIARY_RANGE_SCAN_CAP),
 			),
 		),
 	);
-	return perRange
-		.flat()
-		.sort((a, b) => (a.date < b.date ? -1 : a.date > b.date ? 1 : 0));
+	const owned: Doc<"diary">[] = [];
+	for (const row of perRange.flat()) if (tenant.owns(row)) owned.push(row);
+	return owned.sort((a, b) => (a.date < b.date ? -1 : a.date > b.date ? 1 : 0));
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -140,9 +204,26 @@ export const write = mutation({
 		// mcp-server/src/authenticatedConvexClient.ts), so the
 		// fail-closed default here never breaks that live path.
 		const scope = await withOrgScope(ctx);
-		if (!isOrchestratorAllowedForScope(scope, args.orchestrator)) {
+		if (!(await orchestratorListed(ctx, scope, args.orchestrator, "diary:write"))) {
 			throw new ConvexError(
-				`RBAC_DENIED: caller may not write a diary entry for orchestrator "${args.orchestrator}" — ${JSON.stringify({ orgSlug: scope.orgSlug })}`,
+				`RBAC_DENIED: caller may not write a diary entry for orchestrator "${args.orchestrator}" — ${JSON.stringify({ orgSlug: scope.orgSlug, reason: "orchestrator-not-listed" })}`,
+			);
+		}
+		// The author is the verified caller (below); a member's stamp needs
+		// the org's permanent ID, or the row it wrote could never be read back.
+		// The master is the transport-verified MCP server and passes the author of
+		// the seat it authenticated; any other caller is a person, recorded as its
+		// verified subject, and a claimed author that is anyone else is refused.
+		const ownAuthor = scope.isMaster ? undefined : memberActorOf(scope);
+		if (ownAuthor !== undefined && args.createdBy !== undefined && args.createdBy !== ownAuthor) {
+			throw new ConvexError(
+				`RBAC_DENIED: the author of a diary entry is the verified caller — ${JSON.stringify({ reason: "author-not-caller", door: "diary:write", orgSlug: scope.orgSlug })}`,
+			);
+		}
+		const createdBy = ownAuthor ?? args.createdBy;
+		if (!scope.isMaster && scope.orgClerkId === undefined) {
+			throw new ConvexError(
+				`RBAC_DENIED: caller's organisation has no permanent org ID to stamp a diary entry with — ${JSON.stringify({ reason: "org-id-missing", door: "diary:write", orgSlug: scope.orgSlug })}`,
 			);
 		}
 
@@ -183,7 +264,7 @@ export const write = mutation({
 			content: args.content,
 			highlights: args.highlights,
 			blockers: args.blockers,
-			createdBy: args.createdBy,
+			createdBy,
 			createdAt: now,
 			// R-52 tenant stamp, derived from the verified scope. A master write is
 			// fleet-owned (unstamped), as `tasks` does.
@@ -236,7 +317,9 @@ export const get = query({
 		// The MCP `diary_read` tool reads it one-shot.
 		const scope = await withOrgScope(ctx, { refuseWithoutThrow: true });
 		requireResolvedCaller(scope, "diary:get", { alsoRefusePreOrg: true });
-		if (!isOrchestratorAllowedForScope(scope, args.orchestrator)) return null;
+		if (!(await orchestratorListed(ctx, scope, args.orchestrator, "diary:get"))) {
+			return null;
+		}
 		return await ownDiaryRow(ctx, scope, args.orchestrator, args.date);
 	},
 });
@@ -293,16 +376,13 @@ export const list = query({
 		const needsWideScan = args.createdBefore !== undefined;
 		const fetchCap = needsWideScan ? DIARY_LIST_SCAN_CAP + 1 : limit;
 
-		// Fail-closed org scoping: diary has no orgId/tenantId column
-		// (convex/schema.ts ~272-287), so a non-master caller is restricted to
-		// entries whose `orchestrator` is in its own allowedOrchestrators list
-		// — same mechanism lib/auth.ts:filterByOrgScope uses for tasks/missions,
-		// applied here inline since diary rows expose `orchestrator` rather than
-		// `pilot`/`assignedTo`. No org-specific literal is hardcoded: the allow
-		// list comes entirely from the caller's resolved OrgScope.
+		// Fail-closed org scoping: a non-master caller reads only the rows its
+		// organisation owns by permanent org ID (callerTenant), and only the
+		// orchestrators its org's ID roster lists (rosterNames). No org-specific
+		// literal is hardcoded: both come from the caller's resolved OrgScope.
 		// R-50: reactively-subscribed public query — refuseWithoutThrow narrows
-		// the signed-in-no-org branch to a typed refused scope (empty
-		// allowedOrchestrators), answered below with the refusal envelope, never a
+		// the signed-in-no-org branch to a typed refused scope (no org, no
+		// roster), answered below with the refusal envelope, never a
 		// throw.
 		const scope = await withOrgScope(ctx, { refuseWithoutThrow: true });
 
@@ -324,7 +404,7 @@ export const list = query({
 		}
 
 		if (!scope.isMaster && args.orchestrator !== undefined) {
-			if (!scope.allowedOrchestrators.includes(args.orchestrator)) {
+			if (!(await orchestratorListed(ctx, scope, args.orchestrator, "diary:list"))) {
 				return [];
 			}
 		}
@@ -343,34 +423,34 @@ export const list = query({
 			rows = await ctx.db.query("diary").order("desc").take(fetchCap);
 		} else {
 			// Member (with or without an `orchestrator` argument). The tenant key is
-			// the row's stamp (readableTenants: its own org, or the fleet range for
-			// the operator org), the name key is the roster: one bounded indexed
-			// read per (tenant, rostered name) instead of taking the table and
-			// filtering afterwards, which both read other tenants' rows and let
-			// their volume starve the member's page. The tenant ranges are disjoint
-			// (distinct orgId values), so the merge needs no de-duplication; merged
-			// newest-first by _creationTime, the order the table read used.
+			// the row's permanent org ID (callerTenant), the name key is the ID
+			// roster (rosterNames): one bounded indexed read per (tenant, listed
+			// orchestrator) instead of taking the table and filtering afterwards,
+			// which both read other tenants' rows and let their volume starve the
+			// member's page. The tenant ranges are disjoint (distinct clerkOrgId
+			// values), so the merge needs no de-duplication; merged newest-first by
+			// _creationTime, the order the table read used.
 			const names =
 				orchestrator !== undefined
 					? [orchestrator]
-					: [...new Set(scope.allowedOrchestrators)];
-			const tenants = await readableTenants(ctx, scope);
+					: await rosterNames(ctx, scope, "diary:list");
+			const tenant = await callerTenant(ctx, scope);
 			const perRange = await Promise.all(
-				tenants.flatMap((tenant) =>
+				tenant.keys.flatMap((key) =>
 					names.map((name) =>
 						ctx.db
 							.query("diary")
-							.withIndex("by_org_orchestrator_date", (q) =>
-								q.eq("orgId", tenant).eq("orchestrator", name),
+							.withIndex("by_org_orchestrator_date_clerk_id", (q) =>
+								q.eq("clerkOrgId", key).eq("orchestrator", name),
 							)
 							.order("desc")
 							.take(fetchCap),
 					),
 				),
 			);
-			rows = perRange
-				.flat()
-				.sort((a, b) => b._creationTime - a._creationTime);
+			rows = [];
+			for (const row of perRange.flat()) if (tenant.owns(row)) rows.push(row);
+			rows.sort((a, b) => b._creationTime - a._creationTime);
 		}
 
 		// Universal post-take createdBy filter — mirrors tasks.ts:371-373 pattern.
@@ -421,7 +501,7 @@ export const deleteDiary = mutation({
 		const scope = await withOrgScope(ctx);
 
 		// Anonymous/no-identity, non-master (isMaster===false, orgSlug===null)
-		// can never pass isOrchestratorAllowedForScope for ANY orchestrator —
+		// can never pass orchestratorListed for ANY orchestrator —
 		// refuse here, before ctx.db.get, so a non-existent diaryId cannot be
 		// distinguished from an existing-but-foreign one by an unauthenticated
 		// caller.
@@ -449,9 +529,9 @@ export const deleteDiary = mutation({
 			);
 		}
 
-		if (!isOrchestratorAllowedForScope(scope, entry.orchestrator)) {
+		if (!(await orchestratorListed(ctx, scope, entry.orchestrator, "diary:deleteDiary"))) {
 			throw new ConvexError(
-				`RBAC_DENIED: caller may not delete diary entry ${args.diaryId} (orchestrator "${entry.orchestrator}") — ${JSON.stringify({ orgSlug: scope.orgSlug })}`,
+				`RBAC_DENIED: caller may not delete diary entry ${args.diaryId} (orchestrator "${entry.orchestrator}") — ${JSON.stringify({ orgSlug: scope.orgSlug, reason: "orchestrator-not-listed" })}`,
 			);
 		}
 
@@ -513,7 +593,9 @@ export const listByDateRange = query({
 		});
 		if (args.orchestrator !== undefined) {
 			const orchestrator = args.orchestrator;
-			if (!isOrchestratorAllowedForScope(scope, orchestrator)) return [];
+			if (!(await orchestratorListed(ctx, scope, orchestrator, "diary:listByDateRange"))) {
+				return [];
+			}
 			if (scope.isMaster) {
 				return await ctx.db
 					.query("diary")
@@ -545,7 +627,7 @@ export const listByDateRange = query({
 		return await readRange(
 			ctx,
 			scope,
-			[...new Set(scope.allowedOrchestrators)],
+			await rosterNames(ctx, scope, "diary:listByDateRange"),
 			args.from,
 			args.to,
 		);

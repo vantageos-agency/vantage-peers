@@ -1,0 +1,7 @@
+---
+section: Fixed
+---
+- **The diary is read and written by ID scope (VantagePeers Cloud, module M10b).** `diary:get`, `diary:list`, `diary:listByDateRange`, `diary:write` and `diary:deleteDiary` select a member's rows through the existing `by_org_orchestrator_date_clerk_id` index by the org's permanent Clerk ID and keep a row only when `@vantageos/cloud-identity` (`sameOrg`, `isFleetStamp`) says the caller owns it. A new org that took a freed slug no longer reads, lists or collides with the entries of the org that held it before, and a renamed org keeps reading entries still stamped with its old label.
+- **The orchestrator a member may reach is judged by agent ID.** The name is looked up in the caller's own org and the agent must be on the org's stored ID roster (`allowedAgentIds`, `assertPrincipalListed`); a name on the legacy name roster alone is no grant.
+- **The author of a member's write is the verified caller.** `createdBy` is `user:<subject>`; a claimed author that is anyone else is refused (`RBAC_DENIED`, reason `author-not-caller`). The master (the MCP server) still passes the author of the seat it authenticated. A member whose org mapping has no permanent org ID is refused a write (`org-id-missing`) instead of writing a row nobody could read back.
+- **No new migration.** `backfill_org_clerk_id` already covers `diary`: a row stamped with a slug and no ID is served to no client org, so its dry run must report `toFill` 0 for `diary` before this is deployed.

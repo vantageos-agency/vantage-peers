@@ -20,6 +20,7 @@ import { seedFleetAgents } from "../../tests/lib/seedFleetAgents";
 import { api } from "../_generated/api";
 import type { Id } from "../_generated/dataModel";
 import schema from "../schema";
+import { seedRosterAgent } from "../../tests/fixtures/rosterAgent";
 
 const modules = Object.fromEntries(
 	Object.entries(import.meta.glob("../**/*.ts")).filter(
@@ -37,7 +38,12 @@ afterEach(() => {
 const createT = () => convexTest(schema, modules);
 type T = ReturnType<typeof createT>;
 
-async function seedOrgA(t: T) {
+/**
+ * `rosterAgents: false` leaves the seats unregistered: the briefing-note doors
+ * (M10c) refuse a REGISTERED agent that asserts its name without a credential
+ * (AGENT_CREDENTIAL_REQUIRED), so their non-creator poles run on bare seats.
+ */
+async function seedOrgA(t: T, rosterAgents = true) {
 	await t.run(async (ctx) => {
 		await ctx.db.insert("client_org_mapping", {
 			clerkOrgSlug: "org-a",
@@ -48,6 +54,9 @@ async function seedOrgA(t: T) {
 			isActive: true,
 			createdAt: Date.now(),
 		});
+		if (rosterAgents) {
+			for (const name of ["seat-a", "seat-b"]) await seedRosterAgent(ctx, "org-a", name);
+		}
 	});
 }
 
@@ -139,7 +148,7 @@ const seedMandate = (t: T) =>
 describe("R-16 — owner refusals raise a coded ConvexError naming their door", () => {
 	test("briefingNotes:deleteBriefingNote — omitted caller and non-creator", async () => {
 		const t = createT();
-		await seedOrgA(t);
+		await seedOrgA(t, false);
 		const noteId = await seedNote(t, "seat-b");
 		const missing = await refusalOf(
 			asMemberOfOrgA(t).mutation(api.briefingNotes.deleteBriefingNote, { noteId }),
@@ -178,7 +187,7 @@ describe("R-16 — owner refusals raise a coded ConvexError naming their door", 
 
 	test("briefingNotes:update — non-creator", async () => {
 		const t = createT();
-		await seedOrgA(t);
+		await seedOrgA(t, false);
 		const noteId = await seedNote(t, "seat-b");
 		const r = await refusalOf(
 			asMemberOfOrgA(t).mutation(api.briefingNotes.update, {

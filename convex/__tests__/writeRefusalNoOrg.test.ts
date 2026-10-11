@@ -99,6 +99,7 @@ const seedOrgMapping = (t: T) =>
 			isActive: true,
 			createdAt: Date.now(),
 		});
+		await seedRosterAgent(ctx, "org-a", SEAT);
 		// Admin CRUD B2: a member write with no caller argument is the human path.
 		await ctx.db.insert("memberWriterRoles", {
 			roles: ["org:admin", "org:editor"],

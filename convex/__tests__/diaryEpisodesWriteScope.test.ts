@@ -34,6 +34,7 @@ import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import { testClerkOrgId } from "../../tests/fixtures/testClerkOrgId";
 import { api } from "../_generated/api";
 import schema from "../schema";
+import { seedRosterAgent } from "../../tests/fixtures/rosterAgent";
 
 const modules = Object.fromEntries(
 	Object.entries(import.meta.glob("../**/*.ts")).filter(
@@ -65,6 +66,7 @@ async function seedOrgAMapping(t: ReturnType<typeof createT>) {
 			isActive: true,
 			createdAt: Date.now(),
 		});
+		await seedRosterAgent(ctx, "org-a", "seat-a");
 	});
 }
 

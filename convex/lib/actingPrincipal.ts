@@ -7,6 +7,7 @@ import {
 	resolveActingPrincipal,
 } from "@vantageos/cloud-identity";
 import { ConvexError } from "convex/values";
+import type { Doc } from "../_generated/dataModel";
 import type { MutationCtx, QueryCtx } from "../_generated/server";
 import { lookupOrgMapping, type OrgScope, type VerifiedActor } from "./auth";
 
@@ -40,6 +41,34 @@ export function principalLookups(ctx: Ctx): PrincipalLookups {
 			if (id === null) return null;
 			const row = await ctx.db.get(id);
 			if (row === null) return null;
+			return { id: row._id, orgId: row.orgSlug, active: row.isActive };
+		},
+		organisationById: async (orgId) => {
+			const mapping = await lookupOrgMapping(ctx, orgId);
+			if (mapping === null) return null;
+			return { id: orgId, active: mapping.isActive };
+		},
+		orgKindOf: async (orgId): Promise<OrgKind | null> =>
+			orgKindOfMapping(await lookupOrgMapping(ctx, orgId)),
+	};
+}
+
+/**
+ * The lookups for a reader that has ALREADY read a page of `agents` rows (one
+ * indexed list of an organisation's agents) and judges several of them: the
+ * agent is answered from that page instead of one `ctx.db.get` per ID. The
+ * decision is the same as `principalLookups` (active row, stamped with the org
+ * the credential names, in an active organisation); only the read differs.
+ */
+export function principalLookupsOverAgents(
+	ctx: Ctx,
+	agents: readonly Doc<"agents">[],
+): PrincipalLookups {
+	const byId = new Map<string, Doc<"agents">>(agents.map((a) => [a._id, a]));
+	return {
+		agentById: async (agentId) => {
+			const row = byId.get(agentId);
+			if (row === undefined) return null;
 			return { id: row._id, orgId: row.orgSlug, active: row.isActive };
 		},
 		organisationById: async (orgId) => {
