@@ -21,12 +21,20 @@ import { ConvexError, v } from "convex/values";
 import { internal } from "./_generated/api";
 import { internalMutation, internalQuery, mutation } from "./_generated/server";
 import { assertOrgArgs } from "./kbShared";
-import { sha256Hex } from "@vantageos/cloud-identity";
+import { sameOrg, sha256Hex } from "@vantageos/cloud-identity";
 import {
 	refuseStorageOwnership,
 	requireResolvedCaller,
 	withOrgScope,
 } from "./lib/auth";
+
+// ─────────────────────────────────────────────────────────────────────────────
+// The org key of an upload is the organisation's permanent Clerk org ID, never
+// its slug (a renamable label): `kbUploads.orgId` and `uploadTickets.orgId`
+// hold the ID, the same value `kb:storeDocumentChunked` receives as `orgId` and
+// the namespace segment `team/<clerkOrgId>`. The decision is the package's
+// `sameOrg` on the ID; a caller whose org ID is not filled in owns nothing.
+// ─────────────────────────────────────────────────────────────────────────────
 
 // ─────────────────────────────────────────────────────────────────────────────
 // bindOrAssertStorageOwnership — TOFU org-binding guard (M1 defense-in-depth)
@@ -64,7 +72,7 @@ export const bindOrAssertStorageOwnership = internalMutation({
 			return null;
 		}
 
-		if (existing.orgId === args.orgId) {
+		if (sameOrg({ id: existing.orgId }, { id: args.orgId })) {
 			// Same org — ownership confirmed.
 			return null;
 		}
@@ -215,9 +223,12 @@ export const generateUploadUrl = mutation({
 				`RBAC_DENIED: caller may not mint a KB upload URL — ${JSON.stringify({ orgSlug: null })}`,
 			);
 		}
-		if (!scope.isMaster && args.orgId !== scope.orgSlug) {
+		if (
+			!scope.isMaster &&
+			!sameOrg({ id: args.orgId }, { id: scope.orgClerkId })
+		) {
 			throw new ConvexError(
-				`RBAC_DENIED: orgId "${args.orgId}" does not match caller's own org "${scope.orgSlug}" — ${JSON.stringify({ orgSlug: scope.orgSlug })}`,
+				`RBAC_DENIED: orgId "${args.orgId}" does not match caller's own org "${scope.orgClerkId ?? scope.orgSlug}" — ${JSON.stringify({ orgSlug: scope.orgSlug })}`,
 			);
 		}
 		assertOrgArgs(args.orgId, `${args.namespace}/placeholder`);
@@ -296,9 +307,12 @@ export const generateUploadUrlWithTicket = mutation({
 				`RBAC_DENIED: caller may not mint a KB upload URL — ${JSON.stringify({ orgSlug: null })}`,
 			);
 		}
-		if (!scope.isMaster && args.orgId !== scope.orgSlug) {
+		if (
+			!scope.isMaster &&
+			!sameOrg({ id: args.orgId }, { id: scope.orgClerkId })
+		) {
 			throw new ConvexError(
-				`RBAC_DENIED: orgId "${args.orgId}" does not match caller's own org "${scope.orgSlug}" — ${JSON.stringify({ orgSlug: scope.orgSlug })}`,
+				`RBAC_DENIED: orgId "${args.orgId}" does not match caller's own org "${scope.orgClerkId ?? scope.orgSlug}" — ${JSON.stringify({ orgSlug: scope.orgSlug })}`,
 			);
 		}
 		assertOrgArgs(args.orgId, `${args.namespace}/placeholder`);
@@ -318,7 +332,7 @@ export const generateUploadUrlWithTicket = mutation({
 		// acts on the org it names, as in assertScopeAuthorizesOrg).
 		await ctx.db.insert("uploadTickets", {
 			ticketHash: await sha256Hex(ticket),
-			orgId: scope.isMaster ? args.orgId : (scope.orgSlug as string),
+			orgId: scope.isMaster ? args.orgId : (scope.orgClerkId as string),
 			contentSha256: args.sha256,
 			createdAt,
 			expiresAt,
@@ -353,7 +367,10 @@ export const claimUpload = mutation({
 			);
 		// Org first: a foreign caller learns nothing about the ticket's state and
 		// cannot consume it.
-		if (!scope.isMaster && ticket.orgId !== scope.orgSlug)
+		if (
+			!scope.isMaster &&
+			!sameOrg({ id: ticket.orgId }, { id: scope.orgClerkId })
+		)
 			throw new ConvexError(
 				"AUTH_UPLOAD_TICKET_NOT_YOURS: this upload ticket was issued to another organisation.",
 			);
@@ -385,8 +402,8 @@ export const claimUpload = mutation({
 		// The org the blob is bound to comes from the caller's VERIFIED scope; the
 		// ticket row only vouches for it (checked above). Only the fleet master,
 		// which acts on any org, takes the org the ticket was issued for.
-		const claimOrgId = scope.isMaster ? ticket.orgId : scope.orgSlug;
-		if (claimOrgId === null)
+		const claimOrgId = scope.isMaster ? ticket.orgId : scope.orgClerkId;
+		if (claimOrgId === undefined)
 			throw new ConvexError(
 				"RBAC_DENIED: caller has no verified organisation — claimUpload",
 			);
@@ -394,7 +411,10 @@ export const claimUpload = mutation({
 			.query("kbUploads")
 			.withIndex("by_storageId", (q) => q.eq("storageId", args.storageId))
 			.unique();
-		if (existing !== null && existing.orgId !== claimOrgId)
+		if (
+			existing !== null &&
+			!sameOrg({ id: existing.orgId }, { id: claimOrgId })
+		)
 			refuseStorageOwnership(
 				"kbMutations:claimUpload",
 				"storage-not-owned",

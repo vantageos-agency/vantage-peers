@@ -106,7 +106,12 @@ const nsOf = (t: T, id: string) =>
 
 async function walk(
 	t: T,
-	table: "memories" | "oauth_access_tokens" | "oauth_scope_profiles",
+	table:
+		| "memories"
+		| "oauth_access_tokens"
+		| "oauth_scope_profiles"
+		| "kbUploads"
+		| "uploadTickets",
 	dryRun: boolean,
 	pageSize?: number,
 ) {

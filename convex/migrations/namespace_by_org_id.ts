@@ -11,6 +11,10 @@
 //   memories              `namespace`                              -> every row
 //   oauth_access_tokens   `namespaceReadPrefixes` / `...WritePrefixes` (arrays)
 //   oauth_scope_profiles  `namespaceReadPrefixes` / `...WritePrefixes` (arrays)
+//   kbUploads             `orgId` (a bare org key: the upload's owner, asserted by ingest)
+//   uploadTickets         `orgId` (a bare org key: the org a ticket was issued to)
+// The last two hold the org itself, not a namespace; they are classified through the same
+// path as `team/<orgId>` so one derivation decides both, and written back without it.
 // Not walked, on purpose: `oauth_audit_log` (history, never read for a decision) and
 // `okfDurableExportProgress` (a transient job row, restarted rather than rewritten).
 //
@@ -68,7 +72,8 @@ type Column =
 	| {
 			kind: "array";
 			fields: readonly ["namespaceReadPrefixes", "namespaceWritePrefixes"];
-	  };
+	  }
+	| { kind: "orgKey"; fields: readonly ["orgId"] };
 
 export const NAMESPACE_COLUMNS = {
 	memories: { kind: "string", fields: ["namespace"] },
@@ -80,6 +85,8 @@ export const NAMESPACE_COLUMNS = {
 		kind: "array",
 		fields: ["namespaceReadPrefixes", "namespaceWritePrefixes"],
 	},
+	kbUploads: { kind: "orgKey", fields: ["orgId"] },
+	uploadTickets: { kind: "orgKey", fields: ["orgId"] },
 } as const satisfies Record<string, Column>;
 
 export type NamespaceTable = keyof typeof NAMESPACE_COLUMNS;
@@ -89,6 +96,8 @@ const tableValidator = v.union(
 	v.literal("memories"),
 	v.literal("oauth_access_tokens"),
 	v.literal("oauth_scope_profiles"),
+	v.literal("kbUploads"),
+	v.literal("uploadTickets"),
 );
 
 const DEFAULT_PAGE_SIZE = 100;
@@ -169,7 +178,15 @@ async function planRow(
 		return value;
 	};
 
-	if (column.kind === "string") {
+	if (column.kind === "orgKey") {
+		const field = column.fields[0];
+		const current = row[field];
+		if (typeof current === "string") {
+			// Classified as the namespace `team/<orgId>`; the prefix is dropped again on write.
+			const next = await visit(`team/${current}`);
+			if (next !== `team/${current}`) patch[field] = next.slice("team/".length);
+		}
+	} else if (column.kind === "string") {
 		const field = column.fields[0];
 		const current = row[field];
 		if (typeof current === "string") {

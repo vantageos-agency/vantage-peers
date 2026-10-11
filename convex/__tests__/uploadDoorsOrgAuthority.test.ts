@@ -67,8 +67,8 @@ const SHA = createHash("sha256").update(BYTES).digest("hex");
 type Caller = ReturnType<typeof asOrg>;
 const generate = (c: Caller, orgId: string) =>
 	c.mutation(GENERATE, {
-		orgId,
-		namespace: `team/${orgId}`,
+		orgId: testClerkOrgId(orgId),
+		namespace: `team/${testClerkOrgId(orgId)}`,
 		sha256: SHA,
 	}) as Promise<{
 		ticket: string;
@@ -117,7 +117,7 @@ describe("generateUploadUrlWithTicket — who may mint", () => {
 		const rows = await t.run(async (ctx) =>
 			ctx.db.query("uploadTickets").collect(),
 		);
-		expect(rows.map((x) => x.orgId)).toEqual(["org-A"]);
+		expect(rows.map((x) => x.orgId)).toEqual([testClerkOrgId("org-A")]);
 	});
 });
 
@@ -143,7 +143,7 @@ describe("claimUpload — who may claim", () => {
 		const { ticket } = await generate(asOrg(t, "org-A"), "org-A");
 		const storageId = await upload(t);
 		const r = await asOrg(t, "org-A").mutation(CLAIM, { storageId, ticket });
-		expect(r).toEqual({ storageId, orgId: "org-A" });
+		expect(r).toEqual({ storageId, orgId: testClerkOrgId("org-A") });
 	});
 
 	test("REFUSED — an org deactivated after it minted the ticket; nothing bound", async () => {
@@ -170,6 +170,6 @@ describe("claimUpload — who may claim", () => {
 		const { ticket } = await generate(asOrg(t, "org-A"), "org-A");
 		const storageId = await upload(t);
 		const r = await asService(t).mutation(CLAIM, { storageId, ticket });
-		expect(r).toEqual({ storageId, orgId: "org-A" });
+		expect(r).toEqual({ storageId, orgId: testClerkOrgId("org-A") });
 	});
 });

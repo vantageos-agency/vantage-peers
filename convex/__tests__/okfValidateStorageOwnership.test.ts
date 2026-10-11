@@ -81,7 +81,7 @@ async function storeBundle(t: T): Promise<Id<"_storage">> {
 async function bindOnStore(t: T, storageId: Id<"_storage">, orgId: string) {
 	await t.mutation(internal.kbMutations.bindOrAssertStorageOwnership, {
 		storageId,
-		orgId,
+		orgId: testClerkOrgId(orgId),
 	});
 }
 
@@ -117,7 +117,7 @@ describe("validate_okf_bundle — storage ownership is asserted, never claimed",
 			asOrg(t, "org-B").action(VALIDATE_ACTION_REF, { storageId }),
 		).rejects.toThrow(/AUTH_STORAGE_NOT_OWNED/);
 		const rows = await bindingsOf(t, storageId);
-		expect(rows.map((r) => r.orgId)).toEqual(["org-A"]);
+		expect(rows.map((r) => r.orgId)).toEqual([testClerkOrgId("org-A")]);
 	});
 
 	test("REFUSED — the other direction: org-A cannot validate a blob bound to org-B", async () => {

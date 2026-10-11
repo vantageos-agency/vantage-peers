@@ -308,7 +308,7 @@ describe("okfBundleNode:importOkfBundle — master namespace", () => {
 		// (export / upload / store), here the store path's own binding door
 		await t.mutation(internal.kbMutations.bindOrAssertStorageOwnership, {
 			storageId: storageId as Id<"_storage">,
-			orgId: "team-zen",
+			orgId: testClerkOrgId("team-zen"),
 		});
 		const result = await asOrg(t, "team-zen").action(IMPORT_REF, {
 			storageId,

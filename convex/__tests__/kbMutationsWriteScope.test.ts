@@ -99,8 +99,8 @@ describe("kbMutations.generateUploadUrl — write-scope enforcement", () => {
 		const tA = asOrgA(t);
 
 		const url = await tA.mutation(api.kbMutations.generateUploadUrl, {
-			orgId: "org-a",
-			namespace: "team/org-a/doc-1",
+			orgId: testClerkOrgId("org-a"),
+			namespace: `team/${testClerkOrgId("org-a")}/doc-1`,
 		});
 		expect(typeof url).toBe("string");
 		expect(url.length).toBeGreaterThan(0);

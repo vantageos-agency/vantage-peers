@@ -1461,6 +1461,29 @@ export function isNamespaceAllowedForScope(
 
 
 /**
+ * tenantNamespaceBounds -- the SAME ownership rule as
+ * `isNamespaceAllowedForScope`, said as index bounds so a read can apply it
+ * INSIDE the query instead of filtering rows after an unscoped read.
+ * (Shape from #1511, M17; keyed by the org ID here, as the predicate is.)
+ *
+ * `exact` is the org's own namespace (`team/<clerkOrgId>`, from
+ * `teamNamespaceOf`); `[from, to)` is the half-open range of every
+ * sub-namespace under it. The bounds sit on a SEGMENT boundary: `from` ends in
+ * "/" and `to` is the prefix followed by "0" (the character right after "/"),
+ * so `team/org_AB` falls outside the range for `org_A`, as the predicate
+ * refuses it. Takes the org's Clerk org ID; an org whose ID is not filled in
+ * owns no tenant namespace and gets null. The fleet master reads the whole
+ * table and never asks for bounds.
+ */
+export function tenantNamespaceBounds(
+	orgClerkId: string | undefined,
+): { exact: string; from: string; to: string } | null {
+	if (orgClerkId === undefined) return null;
+	const ownPrefix = teamNamespaceOf(orgClerkId);
+	return { exact: ownPrefix, from: `${ownPrefix}/`, to: `${ownPrefix}0` };
+}
+
+/**
  * requireTenantNamespace -- the OKF export/import namespace gate for a
  * RESOLVED scope (an ACTIVE `client_org_mapping` row, never the raw org
  * claim). A thin wrapper: when the shared `isNamespaceAllowedForScope`

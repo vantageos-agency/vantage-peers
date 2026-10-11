@@ -95,8 +95,8 @@ const sha256Of = (bytes: Uint8Array) =>
 
 async function issue(t: T, orgId: string, sha256?: string) {
 	return (await asOrg(t, orgId).mutation(GENERATE, {
-		orgId,
-		namespace: `team/${orgId}`,
+		orgId: testClerkOrgId(orgId),
+		namespace: `team/${testClerkOrgId(orgId)}`,
 		sha256: sha256 ?? sha256Of(await bundle()),
 	})) as { uploadUrl: string; ticket: string; expiresAt: number };
 }
@@ -135,7 +135,7 @@ describe("upload ticket + claim_upload — the client OKF flow without first-cla
 		const storageId = await upload(t);
 		await asOrg(t, "org-A").mutation(CLAIM, { storageId, ticket });
 		expect((await bindingsOf(t, storageId)).map((r) => r.orgId)).toEqual([
-			"org-A",
+			testClerkOrgId("org-A"),
 		]);
 
 		const result = await asOrg(t, "org-A").action(VALIDATE, { storageId });
@@ -172,7 +172,7 @@ describe("upload ticket + claim_upload — the client OKF flow without first-cla
 
 		await asOrg(t, "org-A").mutation(CLAIM, { storageId, ticket });
 		expect((await bindingsOf(t, storageId)).map((r) => r.orgId)).toEqual([
-			"org-A",
+			testClerkOrgId("org-A"),
 		]);
 	});
 
@@ -270,7 +270,7 @@ describe("upload ticket bound to the declared content sha256", () => {
 		const storageId = await upload(t, shared);
 		await asOrg(t, "org-A").mutation(CLAIM, { storageId, ticket: a.ticket });
 		const before = await bindingsOf(t, storageId);
-		expect(before.map((r) => r.orgId)).toEqual(["org-A"]);
+		expect(before.map((r) => r.orgId)).toEqual([testClerkOrgId("org-A")]);
 
 		await expect(
 			asOrg(t, "org-B").mutation(CLAIM, { storageId, ticket: b.ticket }),
@@ -280,7 +280,7 @@ describe("upload ticket bound to the declared content sha256", () => {
 		const tickets = await t.run(async (ctx) =>
 			ctx.db.query("uploadTickets").collect(),
 		);
-		const orgB = tickets.filter((r) => r.orgId === "org-B");
+		const orgB = tickets.filter((r) => r.orgId === testClerkOrgId("org-B"));
 		expect(orgB).toHaveLength(1);
 		expect(orgB[0].usedAt).toBeUndefined();
 	});
@@ -299,7 +299,7 @@ describe("upload ticket bound to the declared content sha256", () => {
 
 		const right = await upload(t, declared);
 		await asOrg(t, "org-A").mutation(CLAIM, { storageId: right, ticket });
-		expect((await bindingsOf(t, right)).map((r) => r.orgId)).toEqual(["org-A"]);
+		expect((await bindingsOf(t, right)).map((r) => r.orgId)).toEqual([testClerkOrgId("org-A")]);
 	});
 
 	test("REFUSED — generate_upload_url without a well-formed hex sha256 issues no ticket", async () => {

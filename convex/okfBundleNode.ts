@@ -28,6 +28,7 @@
 import { createHash } from "node:crypto";
 import { Readable } from "node:stream";
 import { ConvexError, v } from "convex/values";
+import { sameOrg } from "@vantageos/cloud-identity";
 import { extract, pack } from "tar-stream";
 import { internal as generatedInternal } from "./_generated/api";
 import { type ActionCtx, action } from "./_generated/server";
@@ -441,10 +442,10 @@ export const exportOkfBundle = action({
 			internal.lib.auth.resolveOrgScopeForAction,
 			{},
 		);
-		if (!exporterScope.isMaster && exporterScope.orgSlug !== null) {
+		if (!exporterScope.isMaster && exporterScope.orgClerkId !== undefined) {
 			await ctx.runMutation(internal.kbMutations.bindOrAssertStorageOwnership, {
 				storageId,
-				orgId: exporterScope.orgSlug,
+				orgId: exporterScope.orgClerkId,
 			});
 		}
 		const bundleUrl = await ctx.storage.getUrl(storageId);
@@ -745,7 +746,7 @@ export const validateOkfBundle = action({
 						"storage-unbound",
 						scope.orgSlug,
 					);
-				if (owner !== scope.orgSlug)
+				if (!sameOrg({ id: owner }, { id: scope.orgClerkId }))
 					refuseStorageOwnership(
 						"okfBundleNode:validateOkfBundle",
 						"storage-not-owned",
@@ -1001,7 +1002,7 @@ export const importOkfBundle = action({
 						"storage-unbound",
 						scope.orgSlug,
 					);
-				if (owner !== scope.orgSlug)
+				if (!sameOrg({ id: owner }, { id: scope.orgClerkId }))
 					refuseStorageOwnership(
 						"okfBundleNode:importOkfBundle",
 						"storage-not-owned",

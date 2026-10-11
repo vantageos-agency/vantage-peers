@@ -100,7 +100,7 @@ async function storeBundle(t: T): Promise<Id<"_storage">> {
 async function bindOnStore(t: T, storageId: Id<"_storage">, orgId: string) {
 	await t.mutation(internal.kbMutations.bindOrAssertStorageOwnership, {
 		storageId,
-		orgId,
+		orgId: testClerkOrgId(orgId),
 	});
 }
 
@@ -142,7 +142,7 @@ describe("import_okf_bundle — storage ownership is asserted, never claimed", (
 		).rejects.toThrow(/AUTH_STORAGE_NOT_OWNED/);
 		expect(await memoryRowCount(t)).toBe(0);
 		expect((await bindingsOf(t, storageId)).map((r) => r.orgId)).toEqual([
-			"org-A",
+			testClerkOrgId("org-A"),
 		]);
 	});
 
@@ -208,7 +208,7 @@ describe("import_okf_bundle — storage ownership is asserted, never claimed", (
 		const storageId = exported.storageId as Id<"_storage">;
 
 		expect((await bindingsOf(t, storageId)).map((r) => r.orgId)).toEqual([
-			"org-A",
+			testClerkOrgId("org-A"),
 		]);
 		const back = await asOrg(t, "org-A").action(
 			IMPORT_ACTION_REF,
@@ -235,7 +235,7 @@ describe("import_okf_bundle — storage ownership is asserted, never claimed", (
 			),
 		).rejects.toThrow(/RBAC_DENIED/);
 		expect((await bindingsOf(t, storageId)).map((r) => r.orgId)).toEqual([
-			"org-A",
+			testClerkOrgId("org-A"),
 		]);
 		expect(await memoryRowCount(t)).toBe(0);
 	});

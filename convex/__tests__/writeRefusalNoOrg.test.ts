@@ -327,8 +327,8 @@ const SITES: Site[] = [
 		memberReturns: isString,
 		prepare: async () => (c) =>
 			c.mutation(api.kbMutations.generateUploadUrl, {
-				orgId: "org-a",
-				namespace: "team/org-a/docs",
+				orgId: testClerkOrgId("org-a"),
+				namespace: `team/${testClerkOrgId("org-a")}/docs`,
 			}),
 	},
 	{

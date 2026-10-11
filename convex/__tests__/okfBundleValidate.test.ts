@@ -164,7 +164,7 @@ async function storeBundle(
 		const storageId = await ctx.storage.store(blob);
 		await ctx.db.insert("kbUploads", {
 			storageId,
-			orgId: "acme",
+			orgId: testClerkOrgId("acme"),
 			createdAt: Date.now(),
 		});
 		return storageId;
