@@ -365,6 +365,11 @@ describe("filterByOrgScope", () => {
 		fleetWide: true,
 		scopes: ["cross-tenant-read"],
 		isMaster: true,
+		// The fleet standing the package produces for the service account.
+		standing: {
+			grant: "fleet",
+			principal: { principalId: "svc", orgId: "org_operator", kind: "fleet" },
+		},
 	};
 
 	const irisRhScope: OrgScope = {
@@ -460,6 +465,11 @@ describe("requireScope", () => {
 		fleetWide: true,
 		scopes: ["cross-tenant-read"],
 		isMaster: true,
+		// The fleet standing the package produces for the service account.
+		standing: {
+			grant: "fleet",
+			principal: { principalId: "svc", orgId: "org_operator", kind: "fleet" },
+		},
 	};
 
 	const irisRhScope: OrgScope = {

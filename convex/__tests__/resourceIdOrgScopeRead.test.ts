@@ -723,6 +723,10 @@ describe("isRowVisibleToScope — each leg observed alone", () => {
 			isMaster: true,
 			orgSlug: null,
 			allowedOrchestrators: [],
+			standing: {
+				grant: "fleet",
+				principal: { principalId: "svc", orgId: "org_operator", kind: "fleet" },
+			},
 		});
 		expect(
 			isRowVisibleToScope(scope, { orgId: "org-b", clerkOrgId: B_ID, assignedTo: "eta" }),

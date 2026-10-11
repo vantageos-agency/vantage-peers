@@ -17,6 +17,7 @@ import {
 	filterByOrgScope,
 	isRowVisibleToScope,
 	requireScope,
+	INTERNAL_STANDING,
 } from "./lib/auth";
 import type { OrgScope } from "./lib/auth";
 import { orgRefOfRow, orgRefOfScope } from "./lib/authOrgMapping";
@@ -633,6 +634,7 @@ export const listForWebhook = internalQuery({
 			],
 			isMaster: true,
 			masterSource: "internal",
+			standing: INTERNAL_STANDING,
 		};
 		return await runMissionsList(ctx, args, masterScope);
 	},

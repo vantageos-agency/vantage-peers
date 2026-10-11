@@ -17,6 +17,8 @@ import {
 	requireScope,
 	withOrgScope,
 	requireOrchestratorOnRoster,
+	INTERNAL_STANDING,
+	standingValidator,
 } from "./lib/auth";
 import type { OrgScope, VerifiedActor } from "./lib/auth";
 import { requireId } from "./lib/ids";
@@ -1619,6 +1621,7 @@ export const listForWebhook = internalQuery({
 			],
 			isMaster: true,
 			masterSource: "internal",
+			standing: INTERNAL_STANDING,
 		};
 		return await runTasksList(ctx, args, masterScope);
 	},
@@ -4603,6 +4606,11 @@ export const bulkComplete = mutation({
 						: {}),
 					allowedOrchestrators: callerScope.allowedOrchestrators,
 					isMaster: callerScope.isMaster,
+					// The package-produced fleet standing travels with the job, so
+					// the continuation decides "fleet" exactly as the first call did.
+					...(callerScope.standing !== undefined
+						? { standing: callerScope.standing }
+						: {}),
 				},
 				callerOrchestrator: args.callerOrchestrator ?? "",
 				isFleetSystem,
@@ -4651,6 +4659,7 @@ export const bulkCompleteContinue = internalMutation({
 			orgClerkId: v.optional(v.string()),
 			allowedOrchestrators: v.array(v.string()),
 			isMaster: v.boolean(),
+			standing: v.optional(standingValidator),
 		}),
 		callerOrchestrator: v.string(),
 		isFleetSystem: v.boolean(),
@@ -4671,6 +4680,9 @@ export const bulkCompleteContinue = internalMutation({
 		let exceeded: boolean;
 		let gates: BulkGateResults;
 		try {
+			// A job scheduled before the standing existed carries no `standing`:
+			// it continues as a non-fleet scope (fail closed), never as a master
+			// inferred from the `isMaster` flag it also carries.
 			const scope: OrgScope = {
 				...args.scope,
 				allowedAgentIds: [],

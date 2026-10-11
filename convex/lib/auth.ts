@@ -47,6 +47,92 @@ export type { OrgMappingView } from "./authOrgMapping";
 
 export type MasterSource = "service-account" | "internal" | "operator-admin";
 
+/**
+ * The STANDING a caller holds at the fleet level, produced by
+ * @vantageos/cloud-identity and attached once, in `withOrgScope`. The five
+ * scope helpers (filterByOrgScope, isRowVisibleToScope, requireScope,
+ * requireResolvedCaller, isNamespaceAllowedForScope) decide "fleet" on THIS and
+ * on nothing else: never on `isMaster`, a name or a slug.
+ *
+ *   - "fleet": the fleet service account. `principal` is the `fleet` principal
+ *     resolveActingPrincipal built from the stored rows (convex/lib/serviceAccount.ts).
+ *   - "operator-reader": the verified `org:admin` of the operator org, master
+ *     for READS only. `principal` is the `person` principal the package
+ *     resolved by org ID and judged with assertOrgAdmin.
+ *   - "internal": the explicit `allowNoIdentityMaster` opt-in (no identity, so
+ *     the package has no principal to produce); a code-level marker written
+ *     only by server-side call sites, never derived from a request.
+ *
+ * It is a plain, serialisable value (an action bridge and a scheduled
+ * continuation carry it); `hasFleetStanding` is the only reader.
+ */
+export type StandingGrant = "fleet" | "operator-reader" | "internal";
+
+export interface Standing {
+	grant: StandingGrant;
+	principal?: {
+		principalId: string;
+		orgId: string;
+		kind: ActingPrincipal["kind"];
+	};
+}
+
+export const standingValidator = v.object({
+	grant: v.union(
+		v.literal("fleet"),
+		v.literal("operator-reader"),
+		v.literal("internal"),
+	),
+	principal: v.optional(
+		v.object({
+			principalId: v.string(),
+			orgId: v.string(),
+			kind: v.union(
+				v.literal("agent"),
+				v.literal("person"),
+				v.literal("service"),
+				v.literal("fleet"),
+			),
+		}),
+	),
+});
+
+/** The standing of a code-level internal caller (no identity, explicit opt-in). */
+export const INTERNAL_STANDING: Standing = { grant: "internal" };
+
+/** The standing of a package-resolved principal, reduced to what is carried. */
+function standingOf(grant: StandingGrant, principal: ActingPrincipal): Standing {
+	return {
+		grant,
+		principal: {
+			principalId: principal.principalId,
+			orgId: principal.orgId,
+			kind: principal.kind,
+		},
+	};
+}
+
+/**
+ * Does this caller hold fleet standing? The ONE predicate the five scope
+ * helpers share. It reads the principal the package produced: a `fleet`
+ * principal (the service account), a `person` principal the package judged an
+ * org admin of the operator org (reads only), or the explicit internal marker.
+ * A scope that merely says `isMaster: true`, with no such standing, is not the
+ * fleet here.
+ */
+export function hasFleetStanding(scope: { standing?: Standing }): boolean {
+	const standing = scope.standing;
+	if (standing === undefined) return false;
+	switch (standing.grant) {
+		case "fleet":
+			return standing.principal?.kind === "fleet";
+		case "operator-reader":
+			return standing.principal?.kind === "person";
+		case "internal":
+			return standing.principal === undefined;
+	}
+}
+
 export interface OrgScope {
 	userId: string;
 	/** The org's CURRENT slug: a renamable display label, never an identity. */
@@ -112,6 +198,13 @@ export interface OrgScope {
 	 * with `isMaster` alone.
 	 */
 	masterSource?: MasterSource;
+	/**
+	 * The fleet-level standing the package produced for this caller (see
+	 * `Standing`). Set in each master branch of `withOrgScope` and absent on
+	 * every other scope. The scope helpers decide "fleet" on `hasFleetStanding`
+	 * over this value, never on `isMaster`.
+	 */
+	standing?: Standing;
 	/**
 	 * Set ONLY when `opts.refuseWithoutThrow` was passed AND the caller has a
 	 * verified identity with NO organisation attached (and is not the
@@ -239,6 +332,7 @@ export async function withOrgScope(
 				],
 				isMaster: true,
 				masterSource: "internal",
+				standing: INTERNAL_STANDING,
 			};
 		}
 
@@ -301,6 +395,7 @@ export async function withOrgScope(
 			],
 			isMaster: true,
 			masterSource: "service-account",
+			standing: standingOf("fleet", serviceAccount.principal),
 		};
 	}
 	if (serviceAccount.claimsServiceAccount) {
@@ -390,12 +485,13 @@ export async function withOrgScope(
 	// the mapping's REAL roster. Every write path therefore applies normal org
 	// rules with no per-door patch, and the service-account-only doors need only
 	// `isMcpBoundMaster` for the query side.
-	if (
+	const operatorAdmin =
 		org.orgKind === "operator" &&
 		!opts?.operatorAsMember &&
-		isReadOnlyCtx(ctx) &&
-		(await isVerifiedOrgAdmin(ctx, identity, org.id, "withOrgScope"))
-	) {
+		isReadOnlyCtx(ctx)
+			? await verifiedOrgAdminPrincipal(ctx, identity, org.id, "withOrgScope")
+			: null;
+	if (operatorAdmin !== null) {
 		return {
 			userId: identity.subject,
 			orgSlug: null,
@@ -411,6 +507,7 @@ export async function withOrgScope(
 			],
 			isMaster: true,
 			masterSource: "operator-admin",
+			standing: standingOf("operator-reader", operatorAdmin),
 		};
 	}
 
@@ -485,14 +582,10 @@ function isReadOnlyCtx(ctx: QueryCtx | MutationCtx): boolean {
  * door that is service-account-only by purpose (secrets, hashes, credential
  * resolution, the fleet "system" word) instead of `scope.isMaster`.
  */
-export function isMcpBoundMaster(scope: {
-	isMaster: boolean;
-	masterSource?: MasterSource;
-}): boolean {
+export function isMcpBoundMaster(scope: { standing?: Standing }): boolean {
 	return (
-		scope.isMaster &&
-		(scope.masterSource === "service-account" ||
-			scope.masterSource === "internal")
+		hasFleetStanding(scope) &&
+		(scope.standing?.grant === "fleet" || scope.standing?.grant === "internal")
 	);
 }
 
@@ -554,7 +647,7 @@ export function filterByOrgScope<
 		assignedTo?: string;
 	},
 >(records: T[], scope: OrgScope): T[] {
-	if (scope.isMaster) return records;
+	if (hasFleetStanding(scope)) return records;
 	return records.filter((r) => {
 		// 1. Tenant gate. An absent `orgId` asserts nothing and so grants
 		// nothing: `undefined` never equals a resolved org slug.
@@ -658,7 +751,7 @@ export function isRowVisibleToScope(
 ): boolean {
 	// Leg 1 — master, unchanged. Master-ness comes from the CALLER's verified
 	// scope, never from anything the row does or does not state.
-	if (scope.isMaster) return true;
+	if (hasFleetStanding(scope)) return true;
 	// Leg 2 — no verified organisation (anonymous OR refused).
 	if (scope.orgSlug === null) return false;
 	// Leg 3 — the TENANT GATE. The row must STATE this caller's organisation.
@@ -739,6 +832,25 @@ async function personPrincipalOf(
 	);
 }
 
+/**
+ * The verified person's principal when the package judges them an administrator
+ * of the org it resolved by ID; null otherwise.
+ */
+async function verifiedOrgAdminPrincipal(
+	ctx: QueryCtx | MutationCtx,
+	identity: UserIdentity,
+	orgId: string,
+	door: string,
+): Promise<ActingPrincipal | null> {
+	const resolved = await personPrincipalOf(ctx, identity, orgId, door);
+	if (!resolved.ok) return null;
+	const admin = assertOrgAdmin(resolved.principal, orgId, {
+		adminRoles: ORG_ADMIN_ROLES,
+		door,
+	}).ok;
+	return admin ? resolved.principal : null;
+}
+
 /** Is the verified person an administrator of the org the package resolved by ID? */
 async function isVerifiedOrgAdmin(
 	ctx: QueryCtx | MutationCtx,
@@ -746,12 +858,7 @@ async function isVerifiedOrgAdmin(
 	orgId: string,
 	door: string,
 ): Promise<boolean> {
-	const resolved = await personPrincipalOf(ctx, identity, orgId, door);
-	if (!resolved.ok) return false;
-	return assertOrgAdmin(resolved.principal, orgId, {
-		adminRoles: ORG_ADMIN_ROLES,
-		door,
-	}).ok;
+	return (await verifiedOrgAdminPrincipal(ctx, identity, orgId, door)) !== null;
 }
 
 /**
@@ -1329,8 +1436,11 @@ export function requireSenderInstanceOfSender(
  * Master scope always passes (isMaster bypasses all scope checks).
  * Throws "Forbidden: missing scope '...'" if the check fails.
  */
-export function requireScope(scope: OrgScope, requiredScope: string): void {
-	if (scope.isMaster) return;
+export function requireScope(
+	scope: Pick<OrgScope, "standing" | "scopes" | "orgSlug">,
+	requiredScope: string,
+): void {
+	if (hasFleetStanding(scope)) return;
 	if (!scope.scopes.includes(requiredScope)) {
 		throw new ConvexError(
 			`RBAC_DENIED: Missing scope "${requiredScope}" for org "${scope.orgSlug}" — ${JSON.stringify({ requiredScope, orgSlug: scope.orgSlug })}`,
@@ -1388,7 +1498,7 @@ export function requireResolvedCaller(
 	// projection `resolveOrgScopeForAction` returns (it has no full OrgScope).
 	scope: Pick<
 		OrgScope,
-		"isMaster" | "orgSlug" | "anonymous" | "refused" | "masterSource"
+		"isMaster" | "standing" | "orgSlug" | "anonymous" | "refused" | "masterSource"
 	>,
 	registration: string,
 	opts?: {
@@ -1402,7 +1512,21 @@ export function requireResolvedCaller(
 	// `mcpBoundOnly`: a door that is service-account-only by purpose (a
 	// credential oracle). The operator human is master for READS but is not the
 	// MCP layer (`isMcpBoundMaster`), so it is refused here like any member.
-	if (scope.isMaster && (!opts?.mcpBoundOnly || isMcpBoundMaster(scope))) return;
+	//
+	// THE FLEET DECISION IS THE STANDING (`hasFleetStanding`). `isMaster` is a
+	// necessary conjunct and never sufficient: a scope that says master without
+	// the package-produced standing is refused here. It stays spelled out only
+	// because backend-doctor's predicate and refusal judges (guard-helper-flow
+	// `positiveMasterTest`) recognise the fleet carve-out of a refusing helper
+	// solely as a property named `isMaster`; read as anything else, every door
+	// guarded through requireTenantNamespace is judged to admit a non-master
+	// (R-6 at okfBundleDurable.ts:184).
+	if (
+		scope.isMaster &&
+		hasFleetStanding(scope) &&
+		(!opts?.mcpBoundOnly || isMcpBoundMaster(scope))
+	)
+		return;
 
 	if (opts?.mcpBoundOnly) {
 		throw new ConvexError(
@@ -1460,10 +1584,13 @@ export function requireResolvedCaller(
  * to org-a. No resolved org: nothing.
  */
 export function isNamespaceAllowedForScope(
-	scope: Pick<OrgScope, "isMaster" | "orgSlug">,
+	scope: Pick<OrgScope, "isMaster" | "standing" | "orgSlug">,
 	namespace: string,
 ): boolean {
-	if (scope.isMaster) return true;
+	// The fleet decision is the standing; `isMaster` is a necessary conjunct and
+	// never sufficient (a scope that says master without the package-produced
+	// standing is refused). See `requireResolvedCaller` for why it is spelled.
+	if (scope.isMaster && hasFleetStanding(scope)) return true;
 	if (scope.orgSlug === null) return false;
 	const ownPrefix = `team/${scope.orgSlug}`;
 	return namespace === ownPrefix || namespace.startsWith(`${ownPrefix}/`);
@@ -1481,7 +1608,10 @@ export function isNamespaceAllowedForScope(
  * end means "refused".
  */
 export function requireTenantNamespace(
-	scope: Pick<OrgScope, "isMaster" | "orgSlug" | "anonymous" | "refused">,
+	scope: Pick<
+		OrgScope,
+		"isMaster" | "standing" | "orgSlug" | "anonymous" | "refused"
+	>,
 	namespace: string,
 	door: string,
 ): void {
@@ -1626,6 +1756,11 @@ export const actionOrgScopeValidator = v.object({
 			v.literal("operator-admin"),
 		),
 	),
+	/**
+	 * The fleet standing the package produced (see `Standing`), carried so an
+	 * action decides "fleet" through the same `hasFleetStanding` the queries use.
+	 */
+	standing: v.optional(standingValidator),
 });
 
 /** The resolved shape actions receive from `resolveOrgScopeForAction`. */
@@ -1635,6 +1770,7 @@ export interface ActionOrgScope {
 	refused: boolean;
 	anonymous: boolean;
 	masterSource?: MasterSource;
+	standing?: Standing;
 }
 
 export const resolveOrgScopeForAction = internalQuery({
@@ -1658,6 +1794,7 @@ export const resolveOrgScopeForAction = internalQuery({
 				refused: false,
 				anonymous: false,
 				masterSource: scope.masterSource,
+				...(scope.standing !== undefined ? { standing: scope.standing } : {}),
 			};
 		}
 

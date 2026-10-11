@@ -41,7 +41,17 @@ function ctxWithIdentity(
 		(identity?.org_slug as string | undefined) ??
 		null;
 	const scope = opts.master
-		? { isMaster: true, orgSlug: null, refused: false, anonymous: false }
+		? {
+				isMaster: true,
+				orgSlug: null,
+				refused: false,
+				anonymous: false,
+				// The fleet standing the package produces for the service account.
+				standing: {
+					grant: "fleet",
+					principal: { principalId: "svc", orgId: "org_operator", kind: "fleet" },
+				},
+			}
 		: {
 				isMaster: false,
 				orgSlug,
