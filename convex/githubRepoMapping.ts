@@ -11,6 +11,10 @@ import { sameOrg } from "@vantageos/cloud-identity";
 import { ownerOfRepo, repoOwnerBoundToOrg } from "./githubOwnerBinding";
 import { orgRefOfRow, orgRefOfScope } from "./lib/authOrgMapping";
 import {
+	resolveVerifiedOrgScope,
+	verifiedOrgValidator,
+} from "./lib/verifiedOrg";
+import {
 	type OrgScope,
 	requireOrchestratorOnRoster,
 	requireResolvedCaller,
@@ -211,6 +215,11 @@ export const list = query({
 		// back-compat: keep createdBefore accepted; cursor takes precedence when both passed
 		createdBefore: v.optional(v.number()),
 		cursor: v.optional(v.string()),
+		// The organisation the MCP transport VERIFIED for a bearer that reaches
+		// Convex as the fleet service account. Believed from the service account
+		// only; the read then runs under that org's member scope, so the `by_org`
+		// index range below IS the read (convex/lib/verifiedOrg.ts).
+		verifiedOrg: v.optional(verifiedOrgValidator),
 	},
 	returns: v.object({
 		items: v.union(v.array(repoMappingFullObject), v.array(repoMappingLiteObject)),
@@ -249,10 +258,16 @@ export const list = query({
 		// So `alsoRefusePreOrg` is safe: there is no mounted render for the
 		// signed-in-but-not-yet-onboarded caller's throw to crash, and that caller
 		// must not be handed a fabricated absence either.
-		const scope = await withOrgScope(ctx, { refuseWithoutThrow: true });
-		requireResolvedCaller(scope, "githubRepoMapping:list", {
+		const transportScope = await withOrgScope(ctx, { refuseWithoutThrow: true });
+		requireResolvedCaller(transportScope, "githubRepoMapping:list", {
 			alsoRefusePreOrg: true,
 		});
+		const scope = await resolveVerifiedOrgScope(
+			ctx,
+			transportScope,
+			args.verifiedOrg,
+			"githubRepoMapping:list",
+		);
 		// A master reads the whole corpus. An org member reads ONLY the rows its
 		// own org owns (the server-stamped `orgId`), via the by_org index.
 		const memberOrg = scope.isMaster ? null : scope.orgSlug;

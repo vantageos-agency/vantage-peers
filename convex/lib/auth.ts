@@ -16,6 +16,7 @@ import { resolveServiceAccount } from "./serviceAccount";
 import { normalizeOrchestratorId } from "../_helpers/normalizeOrchestratorId";
 import {
 	lookupOrgMapping,
+	type OrgMappingView,
 	orgMappingLookups,
 	orgRefOfRow,
 	orgRefOfScope,
@@ -180,6 +181,17 @@ export interface WithOrgScopeOptions {
 	allowNoIdentityMaster?: boolean;
 	refuseWithoutThrow?: boolean;
 	/**
+	 * The ACTIVE `client_org_mapping` row of an organisation the FLEET SERVICE
+	 * ACCOUNT is acting for on a read, because the MCP transport verified that
+	 * org for the bearer it serves (`verifiedOrg`, convex/lib/verifiedOrg.ts).
+	 * Honoured on the by-id service-account branch ONLY, where it replaces the
+	 * fleet-master scope with the ordinary MEMBER scope of that org, shaped
+	 * exactly like the member scope built at the end of this function. Every
+	 * other identity ignores it. The caller (`resolveVerifiedOrgScope`) has
+	 * already proved the transport is the service account and the row is active.
+	 */
+	actForOrgMapping?: OrgMappingView;
+	/**
 	 * Resolve an operator-org admin as an ORDINARY member of the operator org
 	 * even in a read-only ctx. `resolveOrgScopeForAction` sets it: an action's
 	 * scope bridge is an internalQuery (a query ctx) but the action it serves may
@@ -286,6 +298,22 @@ export async function withOrgScope(
 		"withOrgScope",
 	);
 	if (serviceAccount.ok) {
+		const actFor = opts?.actForOrgMapping;
+		if (actFor !== undefined) {
+			return {
+				userId: identity.subject,
+				orgSlug: actFor.clerkOrgSlug,
+				// The org's permanent ID, from the row, so row ownership compares IDs.
+				...(actFor.clerkOrgId !== undefined
+					? { orgClerkId: actFor.clerkOrgId }
+					: {}),
+				allowedOrchestrators: actFor.allowedOrchestrators,
+				allowedAgentIds: actFor.allowedAgentIds ?? [],
+				fleetWide: false,
+				scopes: actFor.scopes,
+				isMaster: false,
+			};
+		}
 		return {
 			userId: identity.subject,
 			orgSlug: null,
@@ -1469,6 +1497,29 @@ export function isNamespaceAllowedForScope(
 	return namespace === ownPrefix || namespace.startsWith(`${ownPrefix}/`);
 }
 
+
+/**
+ * tenantNamespaceBounds -- the SAME ownership rule as
+ * `isNamespaceAllowedForScope`, said as index bounds so a read can apply it
+ * INSIDE the query instead of filtering rows after an unscoped read.
+ *
+ * `exact` is the org's own namespace (`team/<orgSlug>`); `[from, to)` is the
+ * half-open range of every sub-namespace under it. The bounds sit on a SEGMENT
+ * boundary: `from` ends in "/" and `to` is the prefix followed by "0" (the
+ * character right after "/"), so `team/org-ab` and `team/org-a-b` fall outside
+ * the range for org-a, exactly as the predicate refuses them.
+ *
+ * Takes the resolved org slug of an ORG MEMBER; a caller with no resolved org
+ * (null) owns no tenant namespace and gets null. The fleet master reads the
+ * whole table and never asks for bounds.
+ */
+export function tenantNamespaceBounds(
+	orgSlug: string | null,
+): { exact: string; from: string; to: string } | null {
+	if (orgSlug === null) return null;
+	const ownPrefix = `team/${orgSlug}`;
+	return { exact: ownPrefix, from: `${ownPrefix}/`, to: `${ownPrefix}0` };
+}
 
 /**
  * requireTenantNamespace -- the OKF export/import namespace gate for a

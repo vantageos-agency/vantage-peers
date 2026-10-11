@@ -207,6 +207,8 @@ describe("list_broadcast_status — scope filtering applies to receipts, not the
 			namespaceWritePrefixes: [],
 			expiresAt: Date.now() + 3600_000,
 			isMaster: false,
+			// The org this bearer was verified for: the Convex read runs under it.
+			clerkOrgSlug: "org-fixture-alpha",
 		};
 		const { server, handlers } = buildFakeServer();
 		const convex = buildMockConvex();

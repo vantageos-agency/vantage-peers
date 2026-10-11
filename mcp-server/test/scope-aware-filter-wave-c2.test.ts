@@ -74,6 +74,8 @@ function alphaCtx(): OAuthContext {
 		namespaceWritePrefixes: ["project/alpha"],
 		expiresAt: Date.now() + 3600_000,
 		isMaster: false,
+		// The org this bearer was verified for: the Convex read runs under it.
+		clerkOrgSlug: "org-alpha",
 	};
 }
 
@@ -88,6 +90,8 @@ function betaCtx(): OAuthContext {
 		namespaceWritePrefixes: ["project/beta"],
 		expiresAt: Date.now() + 3600_000,
 		isMaster: false,
+		// The org this bearer was verified for: the Convex read runs under it.
+		clerkOrgSlug: "org-beta",
 	};
 }
 

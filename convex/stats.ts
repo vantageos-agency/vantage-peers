@@ -1,4 +1,5 @@
 import { v } from "convex/values";
+import type { Doc } from "./_generated/dataModel";
 import type { QueryCtx } from "./_generated/server";
 import { query } from "./_generated/server";
 import {
@@ -398,24 +399,12 @@ export const openTaskCountsByOrchestrator = query({
 
 		const byOrchestrator = new Map<string, OpenBucket>();
 
-		// Single streamed pass over the ENTIRE tasks table — never `.collect()`
-		// or `.take()`. Buckets each task by assignedTo x status. Non-open
-		// statuses (done/cancelled/failed) are read but not counted, which is
-		// still a single linear pass (no per-status re-query, no index needed).
-		for await (const task of ctx.db.query("tasks")) {
-			// Org-scope gate — SAME `filterByOrgScope` helper as
-			// `orchestratorStats` (stats.ts:103): a client-org identity only
-			// ever buckets tasks whose `assignedTo` is in its own
-			// `allowedOrchestrators` list (doctrine comment stats.ts:82 —
-			// "client orgs see their OWN orchestrators"). Master scope is a
-			// no-op passthrough inside `filterByOrgScope`. Applied per-row
-			// here (rather than pre-materializing an array) to preserve the
-			// single streamed pass with no `.collect()`.
-			if (filterByOrgScope([task], scope).length === 0) continue;
-
+		// Buckets one OPEN task by assignedTo x status. Non-open statuses
+		// (done/cancelled/failed) are never counted.
+		const countTask = (task: Doc<"tasks">) => {
 			const status = task.status as (typeof OPEN_TASK_STATUSES)[number] | string;
 			const isOpen = (OPEN_TASK_STATUSES as readonly string[]).includes(status);
-			if (!isOpen) continue;
+			if (!isOpen) return;
 
 			let bucket = byOrchestrator.get(task.assignedTo);
 			if (bucket === undefined) {
@@ -432,27 +421,48 @@ export const openTaskCountsByOrchestrator = query({
 			if (bucket.oldestOpenMs === null || task._creationTime < bucket.oldestOpenMs) {
 				bucket.oldestOpenMs = task._creationTime;
 			}
-		}
+		};
 
-		// Second streamed pass over profiles: fold in every orchestrator that
-		// has a peer profile but zero open tasks, so it appears as an explicit
-		// 0-row instead of being absent from the result.
-		for await (const profile of ctx.db.query("profiles")) {
-			// Same org-scope gate as the task pass above — a client-org
-			// identity must not have out-of-org orchestrators folded in as
-			// explicit 0-rows either (that would still be a cross-tenant
-			// name leak, just via the zero-fill path instead of the count).
-			if (
-				filterByOrgScope(
-					[{ assignedTo: profile.orchestratorId }],
-					scope,
-				).length === 0
-			) {
-				continue;
+		if (scope.isMaster) {
+			// Master: a single streamed pass over the ENTIRE tasks table — never
+			// `.collect()` or `.take()`. Non-open statuses are read but not counted,
+			// which is still a single linear pass (no per-status re-query).
+			for await (const task of ctx.db.query("tasks")) {
+				countTask(task);
 			}
-			if (!byOrchestrator.has(profile.orchestratorId)) {
-				byOrchestrator.set(profile.orchestratorId, emptyBucket());
+			// Second streamed pass over profiles: fold in every orchestrator that
+			// has a peer profile but zero open tasks, so it appears as an explicit
+			// 0-row instead of being absent from the result.
+			for await (const profile of ctx.db.query("profiles")) {
+				if (!byOrchestrator.has(profile.orchestratorId)) {
+					byOrchestrator.set(profile.orchestratorId, emptyBucket());
+				}
 			}
+		} else if (scope.orgClerkId !== undefined) {
+			// R-11: an org member's tenant predicate is the LEADING EQUALITY of the
+			// index it reads (`by_orgId_status_clerk_id`, keyed on the org's permanent
+			// ID — the key `sameOrg` compares), one range per OPEN status, so a
+			// foreign org's task is never read, counted or bucketed: no "read
+			// everything, then filter" pass. A member whose org has no ID yet
+			// (expand phase) matches no row under `sameOrg`, so it reads none. The
+			// roster narrowing stays a per-row intersect ON TOP of the tenant range
+			// (`filterByOrgScope`, the same helper as `orchestratorStats`): a client
+			// org sees its OWN orchestrators only (doctrine comment stats.ts:82).
+			const orgClerkId = scope.orgClerkId;
+			for (const status of OPEN_TASK_STATUSES) {
+				for await (const task of ctx.db
+					.query("tasks")
+					.withIndex("by_orgId_status_clerk_id", (q) =>
+						q.eq("clerkOrgId", orgClerkId).eq("status", status),
+					)) {
+					if (filterByOrgScope([task], scope).length === 0) continue;
+					countTask(task);
+				}
+			}
+			// No profile zero-fill for a member, as before: a profile row carries no
+			// tenant stamp, so the roster filter this pass used to apply admitted
+			// none of them for an org-scoped caller. Skipping the pass changes no
+			// served row and stops reading the fleet's profiles on a member's behalf.
 		}
 
 		return Array.from(byOrchestrator.entries()).map(([orchestrator, bucket]) => ({
@@ -542,9 +552,18 @@ export const fleetStats = query({
 				generatedAt: Date.now(),
 			};
 		}
-		if (!scope.isMaster) {
-			requireScope(scope, "view-stats-aggregated");
-		}
+		// FLEET MASTER ONLY (R-11). These are fleet-wide totals over tables that
+		// are not all tenant-keyed (missions, missionTemplates and businessUnits
+		// carry no org index), and an org member holding `view-stats-aggregated`
+		// used to be served every tenant's counts. A member is refused, and
+		// refused by RAISING: a zeroed or narrowed aggregate would be a fabricated
+		// figure, not an absent one (.claude/rules/refusal-is-distinguishable-from-
+		// absence.md). isolation-contract: no reactive subscriber. Enumerated by
+		// command against vantage-peers-dashboard (bd52245):
+		//   grep -rn "fleetStats" --include=*.tsx --include=*.ts app components hooks lib contexts providers -> 0 hits
+		// and mcp-server/src (grep -rn fleetStats mcp-server/src -> 0 hits). The
+		// signed-in-no-organisation caller keeps its typed result above, unchanged.
+		requireResolvedCaller(scope, "stats:fleetStats", { masterOnly: true });
 
 		// bus (businessUnits) — no status dimension, count all rows.
 		const busTotal = await countAllStreamed(ctx, "businessUnits");

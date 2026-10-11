@@ -201,7 +201,19 @@ export const linkIssue = mutation({
 // returns-projection: attempts omit patternId — already implied by the parent pattern being fetched
 // ─────────────────────────────────────────────────────────────────────────────
 export const get = query({
-	args: { patternId: v.string() },
+	args: {
+		patternId: v.string(),
+		// The identities the MCP transport VERIFIED for a non-master bearer (its
+		// roster, from the verified oauthContext). `fixPatterns` is a fleet-
+		// internal table with no tenant column, so the only narrowing available is
+		// the creator: when this is present the pattern is read, gated on its
+		// creator BEFORE its attempts are read, and a pattern the bearer's roster
+		// does not name is answered `null` — the same bytes as an absent id, the
+		// MCP tool's "not found". Narrowing only: absent means the master reads
+		// the row unchanged, and a claim never widens what this master-only door
+		// admits (a non-master caller is refused above, before any row is read).
+		callerIdentities: v.optional(v.array(v.string())),
+	},
 	returns: v.union(
 		v.object({
 			_id: v.id("fixPatterns"),
@@ -257,6 +269,12 @@ export const get = query({
 		);
 		const pattern = await ctx.db.get(patternId);
 		if (pattern === null) return null;
+		if (
+			args.callerIdentities !== undefined &&
+			!args.callerIdentities.includes(pattern.createdBy)
+		) {
+			return null;
+		}
 
 		const attempts = await ctx.db
 			.query("fixAttempts")

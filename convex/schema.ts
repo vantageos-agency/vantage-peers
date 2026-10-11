@@ -1084,6 +1084,9 @@ export default defineSchema({
 		clerkOrgId: v.optional(v.string()),
 	})
 		.index("by_orchestrator", ["orchestratorId"])
+		// R-11: the orchestratorId+status read of `businessUnits:list` is one
+		// index range, not a collect of the orchestrator's units filtered by status.
+		.index("by_orchestrator_status", ["orchestratorId", "status"])
 		.index("by_status", ["status"])
 		.index("by_name", ["name"]),
 

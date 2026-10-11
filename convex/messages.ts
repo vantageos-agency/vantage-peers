@@ -62,7 +62,10 @@ import {
 	taskVisibleTo,
 	UNCLAIMED_SERVICE_ACCOUNT_READS_EVERY_TENANT,
 } from "./lib/inboxReader";
-import { verifiedOrgValidator } from "./lib/verifiedOrg";
+import {
+	resolveVerifiedOrgScope,
+	verifiedOrgValidator,
+} from "./lib/verifiedOrg";
 
 // getUnreadCount only needs the count, not the rows; the receipts table per
 // recipient is small, so this bound exists to guard against unbounded growth
@@ -1867,6 +1870,11 @@ export const listMessages = query({
 		limit: v.optional(v.number()),
 		// S3.3 B8 follow-up batch 2 — cursor paging anchor (newest-first).
 		createdBefore: v.optional(v.number()),
+		// The organisation the MCP transport VERIFIED for a bearer that reaches
+		// Convex as the fleet service account. Believed from the service account
+		// only; the read then runs under that org's member scope, so the tenant
+		// index range below is the read itself (convex/lib/verifiedOrg.ts).
+		verifiedOrg: v.optional(verifiedOrgValidator),
 	},
 	returns: v.array(
 		v.object({
@@ -1904,10 +1912,16 @@ export const listMessages = query({
 		// messages exist". So `alsoRefusePreOrg` raises `RBAC_DENIED` at it. The
 		// helper also runs BEFORE requireScope, which would otherwise raise for
 		// that caller with a different, un-coded message.
-		const scope = await withOrgScope(ctx, { refuseWithoutThrow: true });
-		requireResolvedCaller(scope, "messages:listMessages", {
+		const transportScope = await withOrgScope(ctx, { refuseWithoutThrow: true });
+		requireResolvedCaller(transportScope, "messages:listMessages", {
 			alsoRefusePreOrg: true,
 		});
+		const scope = await resolveVerifiedOrgScope(
+			ctx,
+			transportScope,
+			args.verifiedOrg,
+			"messages:listMessages",
+		);
 		requireScope(scope, "view-own-tasks");
 
 		const limit = args.limit ?? 100;
@@ -2103,6 +2117,8 @@ export const listBroadcastStatus = query({
 		// now declared AND applied (see `truncated` below — a capped list never
 		// looks complete).
 		limit: v.optional(v.number()),
+		// Transport-verified org of a service-account bearer (see listMessages).
+		verifiedOrg: v.optional(verifiedOrgValidator),
 	},
 	returns: v.object({
 		messageId: v.id("messages"),
@@ -2121,7 +2137,7 @@ export const listBroadcastStatus = query({
 		// must never render identically to "there are N".
 		truncated: v.boolean(),
 	}),
-	handler: async (ctx, { messageId, limit }) => {
+	handler: async (ctx, { messageId, limit, verifiedOrg }) => {
 		// GATE — membership of the message's OWN channel, resolved BEFORE the
 		// receipts are read. Measured against the serving deployment: this query
 		// answered a caller with NO CREDENTIAL AT ALL with the message's sender,
@@ -2141,10 +2157,16 @@ export const listBroadcastStatus = query({
 		// Its only consumer is the MCP `list_broadcast_status` tool (one-shot
 		// `convex.query`). So `alsoRefusePreOrg` is safe and a throw crashes no
 		// render. See .claude/rules/refusal-is-distinguishable-from-absence.md.
-		const scope = await withOrgScope(ctx, { refuseWithoutThrow: true });
-		requireResolvedCaller(scope, "messages:listBroadcastStatus", {
+		const transportScope = await withOrgScope(ctx, { refuseWithoutThrow: true });
+		requireResolvedCaller(transportScope, "messages:listBroadcastStatus", {
 			alsoRefusePreOrg: true,
 		});
+		const scope = await resolveVerifiedOrgScope(
+			ctx,
+			transportScope,
+			verifiedOrg,
+			"messages:listBroadcastStatus",
+		);
 		requireScope(scope, "view-own-tasks");
 
 		const message = await ctx.db.get(messageId);
@@ -2523,7 +2545,11 @@ export const getById = query({
 	// Narrowing inside the handler via requireId() throws a ConvexError whose
 	// payload survives redaction. Same contract as PR #1069 (markAsRead) and
 	// #1072 (tasks:getById), on a read.
-	args: { messageId: v.string() },
+	args: {
+		messageId: v.string(),
+		// Transport-verified org of a service-account bearer (see listMessages).
+		verifiedOrg: v.optional(verifiedOrgValidator),
+	},
 	handler: async (ctx, args) => {
 		// GATE — this read returned ANY message row to ANY caller by id, including
 		// one with no credential. A non-master caller must be a resolved member of
@@ -2535,10 +2561,16 @@ export const getById = query({
 		// Its only consumer is the MCP `get_message` tool (one-shot
 		// `convex.query`, tools.ts). See
 		// .claude/rules/refusal-is-distinguishable-from-absence.md.
-		const scope = await withOrgScope(ctx, { refuseWithoutThrow: true });
-		requireResolvedCaller(scope, "messages:getById", {
+		const transportScope = await withOrgScope(ctx, { refuseWithoutThrow: true });
+		requireResolvedCaller(transportScope, "messages:getById", {
 			alsoRefusePreOrg: true,
 		});
+		const scope = await resolveVerifiedOrgScope(
+			ctx,
+			transportScope,
+			args.verifiedOrg,
+			"messages:getById",
+		);
 
 		const messageId = requireId(
 			ctx,
@@ -2593,6 +2625,8 @@ export const searchMessagesByKeyword = query({
 		tenantId: v.optional(v.string()),
 		limit: v.optional(v.number()),
 		fields: v.optional(v.union(v.literal("lite"), v.literal("full"))),
+		// Transport-verified org of a service-account bearer (see listMessages).
+		verifiedOrg: v.optional(verifiedOrgValidator),
 	},
 	handler: async (ctx, args) => {
 		// ── Identity-derived tenant scope ────────────────────────────────────────
@@ -2609,10 +2643,16 @@ export const searchMessagesByKeyword = query({
 		// refused. So `alsoRefusePreOrg` raises `RBAC_DENIED` at the pre-org
 		// caller; the helper runs before requireScope for the same reason as in
 		// listMessages.
-		const scope = await withOrgScope(ctx, { refuseWithoutThrow: true });
-		requireResolvedCaller(scope, "messages:searchMessagesByKeyword", {
+		const transportScope = await withOrgScope(ctx, { refuseWithoutThrow: true });
+		requireResolvedCaller(transportScope, "messages:searchMessagesByKeyword", {
 			alsoRefusePreOrg: true,
 		});
+		const scope = await resolveVerifiedOrgScope(
+			ctx,
+			transportScope,
+			args.verifiedOrg,
+			"messages:searchMessagesByKeyword",
+		);
 		requireScope(scope, "view-own-tasks");
 
 		const limit = Math.min(Math.max(args.limit ?? 20, 1), 200);

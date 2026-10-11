@@ -116,6 +116,8 @@ function aliceCtx(): OAuthContext {
 		namespaceWritePrefixes: ["project/alice"],
 		expiresAt: Date.now() + 3600_000,
 		isMaster: false,
+		// The org this bearer was verified for: the Convex read runs under it.
+		clerkOrgSlug: "org-fixture-alpha",
 	};
 }
 

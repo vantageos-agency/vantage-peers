@@ -9,6 +9,10 @@ import { orgRefOfRow, orgRefOfScope } from "./lib/authOrgMapping";
 import { isFleetSystemCaller } from "./lib/systemCaller";
 import { requireId } from "./lib/ids";
 import { resolveHumanActor } from "./lib/humanActor";
+import {
+	resolveVerifiedOrgScope,
+	verifiedOrgValidator,
+} from "./lib/verifiedOrg";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // participant-visibility helpers (Day 165 fix — task
@@ -432,6 +436,11 @@ export const list = query({
 		// Day 165 — same caller-identity threading as `get`.
 		master: v.optional(v.boolean()),
 		callerIdentities: v.optional(v.array(v.string())),
+		// The organisation the MCP transport VERIFIED for a bearer that reaches
+		// Convex as the fleet service account. Believed from the service account
+		// only; the read then runs under that org's member scope, so the
+		// org-keyed index ranges below ARE the read (convex/lib/verifiedOrg.ts).
+		verifiedOrg: v.optional(verifiedOrgValidator),
 	},
 	// The envelope arm is the contract for the signed-in-no-organisation caller
 	// (see the isolation-contract marker below); an array is a served result.
@@ -460,10 +469,16 @@ export const list = query({
 		// (tools.ts list_briefing_notes, ui-resources/primitives/briefing-note.ts)
 		// test `isRefusedEnvelope` first. Only the ANONYMOUS caller is RAISED at
 		// below: it has no mounted shell (clerkMiddleware).
-		const scope = await withOrgScope(ctx, { refuseWithoutThrow: true });
-		if (scope.refused) {
+		const transportScope = await withOrgScope(ctx, { refuseWithoutThrow: true });
+		if (transportScope.refused) {
 			return { refused: true as const, items: [] };
 		}
+		const scope = await resolveVerifiedOrgScope(
+			ctx,
+			transportScope,
+			args.verifiedOrg,
+			"briefingNotes:list",
+		);
 		if (!scope.isMaster && scope.orgSlug === null) {
 			throw new ConvexError(
 				`RBAC_DENIED: caller may not list briefing notes — ${JSON.stringify({ orgSlug: null })}`,
@@ -512,7 +527,11 @@ export const list = query({
 		// ending in `updatedAt`, so the byte ceiling is measured against the
 		// actually-matching rows, never a fixed-size widened superset of
 		// full-content documents.
-		const usedIndexedUpdatedSinceBound = args.updatedSince !== undefined;
+		// Master only: the `updatedSince` indexes are not org-prefixed, so an org
+		// member never reads them (R-11) — it reads its own org's index range and
+		// applies the bound in memory (see the member branch below).
+		const usedIndexedUpdatedSinceBound =
+			args.updatedSince !== undefined && scope.isMaster;
 		// Set to true below if EITHER half of the updatedSince union hit its
 		// own cap — the trigger for the "scan may be incomplete" refusal.
 		let updatedSinceBranchOverflowed = false;
@@ -526,7 +545,7 @@ export const list = query({
 		// "no notes" for a refusal.
 		let plainScanByteLimitHit = false;
 
-		if (args.updatedSince !== undefined) {
+		if (args.updatedSince !== undefined && scope.isMaster) {
 			const since = args.updatedSince;
 			// PR #1261 REVISE fix — `updatedAt` is optional ("set on first
 			// update"); a row created and never edited has `updatedAt ===
@@ -632,6 +651,19 @@ export const list = query({
 			rows = capped.rows;
 			plainScanOverflowed = capped.overflowed;
 			plainScanByteLimitHit = capped.byteLimitHit;
+			// `updatedSince` for a member: the org's own index range was read above,
+			// so the bound is applied to THAT set — `(updatedAt ?? createdAt) >=
+			// since`, the same set the master's two-branch union covers, newest
+			// edit first. A foreign org's notes are never read to answer it.
+			if (args.updatedSince !== undefined) {
+				const since = args.updatedSince;
+				rows = rows
+					.filter((r) => (r.updatedAt ?? r.createdAt) >= since)
+					.sort(
+						(a, b) =>
+							(b.updatedAt ?? b.createdAt) - (a.updatedAt ?? a.createdAt),
+					);
+			}
 		} else if (args.topic !== undefined) {
 			// Master path -- unchanged scan shape, now wrapped in
 			// fetchCappedOrOverflow (same helper already used by the updatedSince
@@ -934,16 +966,24 @@ export const searchBriefingNotesByKeyword = query({
 		// orgId tenant-isolation filter below.
 		master: v.optional(v.boolean()),
 		callerIdentities: v.optional(v.array(v.string())),
+		// Transport-verified org of a service-account bearer (see `list`).
+		verifiedOrg: v.optional(verifiedOrgValidator),
 	},
 	handler: async (ctx, args) => {
 		// R-50: reactively-subscribed public query. The no-org branch must
 		// resolve to a typed-empty result BEFORE requireScope (which would
 		// otherwise throw "Missing scope" for that same signed-in-no-org
 		// caller) ever runs.
-		const scope = await withOrgScope(ctx, { refuseWithoutThrow: true });
-		if (scope.refused) {
+		const transportScope = await withOrgScope(ctx, { refuseWithoutThrow: true });
+		if (transportScope.refused) {
 			return [];
 		}
+		const scope = await resolveVerifiedOrgScope(
+			ctx,
+			transportScope,
+			args.verifiedOrg,
+			"briefingNotes:searchBriefingNotesByKeyword",
+		);
 		requireScope(scope, "view-own-tasks");
 
 		const limit = Math.min(Math.max(args.limit ?? 20, 1), 200);

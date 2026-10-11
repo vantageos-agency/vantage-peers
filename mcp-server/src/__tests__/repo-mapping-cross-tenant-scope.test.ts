@@ -86,6 +86,8 @@ const CALLER_ALPHA: OAuthContext = {
 	namespaceWritePrefixes: ["team/org-fixture-alpha"],
 	expiresAt: Date.now() + 3600_000,
 	isMaster: false,
+	// The org this bearer was verified for: the Convex read runs under it.
+	clerkOrgSlug: "org-fixture-alpha",
 };
 
 const MAPPING_ALPHA_OWN = {
