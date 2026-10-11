@@ -33,6 +33,7 @@ import { api } from "../_generated/api";
 import schema from "../schema";
 import { analyse as analyseSystemWord } from "../../tests/lib/systemWordAst";
 import { testClerkOrgId } from "../../tests/fixtures/testClerkOrgId";
+import { seedFleetAgents } from "../../tests/lib/seedFleetAgents";
 
 const modules = Object.fromEntries(
 	Object.entries(import.meta.glob("../**/*.ts")).filter(
@@ -518,42 +519,60 @@ describe("mandates.{accept,update,settle} — the word 'system' is not authority
 		expect((await t.run((ctx) => ctx.db.get(mandateId)))?.status).toBe("requested");
 	});
 
-	test("MASTER: 'system' still accepts, updates and settles", async () => {
-		const t = createT();
-		const mandateId = await seedMandate(t);
-		const tM = asMaster(t);
-		await tM.mutation(api.mandates.accept, { mandateId, callerOrchestrator: "system" });
-		expect((await t.run((ctx) => ctx.db.get(mandateId)))?.status).toBe("accepted");
-		await tM.mutation(api.mandates.update, {
-			mandateId,
-			callerOrchestrator: "system",
-			status: "delivered",
-		});
-		expect((await t.run((ctx) => ctx.db.get(mandateId)))?.status).toBe("delivered");
-		await tM.mutation(api.mandates.settle, {
-			mandateId,
-			callerOrchestrator: "system",
-			finalCost: 5,
-		});
-		expect((await t.run((ctx) => ctx.db.get(mandateId)))?.status).toBe("settled");
-	});
-
-	test("WITHHELD: master naming the row's own party still succeeds; a stranger name is refused", async () => {
+	// M11: a mandate's parties are agents, acted for by VERIFIED ID. The word
+	// 'system' is not read at all any more; the fleet transport that types it is
+	// refused like any caller that proves no party.
+	test("MASTER: 'system' no longer accepts, updates or settles - no party is proven", async () => {
 		const t = createT();
 		const mandateId = await seedMandate(t);
 		const tM = asMaster(t);
 		await expect(
-			tM.mutation(api.mandates.accept, { mandateId, callerOrchestrator: "seat-a" }),
-		).rejects.toThrow(/RBAC_DENIED: only seat-b \(fulfilledBy\)/);
-		await tM.mutation(api.mandates.accept, { mandateId, callerOrchestrator: "seat-b" });
+			tM.mutation(api.mandates.accept, { mandateId, callerOrchestrator: "system" }),
+		).rejects.toThrow(/verified-actor-required/);
+		await expect(
+			tM.mutation(api.mandates.update, {
+				mandateId,
+				callerOrchestrator: "system",
+				status: "delivered",
+			}),
+		).rejects.toThrow(/verified-actor-required/);
+		await expect(
+			tM.mutation(api.mandates.settle, {
+				mandateId,
+				callerOrchestrator: "system",
+				finalCost: 5,
+			}),
+		).rejects.toThrow(/verified-actor-required/);
+		expect((await t.run((ctx) => ctx.db.get(mandateId)))?.status).toBe("requested");
+	});
+
+	test("WITHHELD: the party, by verified agent ID, still succeeds; a stranger agent is refused", async () => {
+		const t = createT();
+		const ids = await seedFleetAgents(t, ["seat-a", "seat-b"]);
+		const mandateId = await seedMandate(t);
+		const tM = asMaster(t);
+		const orgSlug = (await t.run((ctx) => ctx.db.get(ids["seat-b"])))?.orgSlug as string;
+		await expect(
+			tM.mutation(api.mandates.accept, {
+				mandateId,
+				callerOrchestrator: "seat-a",
+				verifiedActor: { agentId: ids["seat-a"], orgSlug },
+			}),
+		).rejects.toThrow(/RBAC_DENIED: only the fulfilling agent/);
+		await tM.mutation(api.mandates.accept, {
+			mandateId,
+			callerOrchestrator: "seat-b",
+			verifiedActor: { agentId: ids["seat-b"], orgSlug },
+		});
 		expect((await t.run((ctx) => ctx.db.get(mandateId)))?.status).toBe("accepted");
 		await expect(
 			tM.mutation(api.mandates.settle, {
 				mandateId,
 				callerOrchestrator: "seat-a",
+				verifiedActor: { agentId: ids["seat-a"], orgSlug },
 				finalCost: 1,
 			}),
-		).rejects.toThrow(/RBAC_DENIED: only seat-b \(requestedBy\)/);
+		).rejects.toThrow(/RBAC_DENIED: only the requesting agent/);
 	});
 });
 
@@ -765,10 +784,12 @@ describe("the word 'system' is compared in exactly one place — on the AST", ()
 
 	test("BLOCK: mutants of the REAL convex/mandates.ts source", () => {
 		const real = allSources()["convex/mandates.ts"] as string;
-		const needle = "!isFleetSystemCaller(scope, args.callerOrchestrator) &&";
-		expect(real.split(needle).length - 1).toBe(3);
+		// mandates.ts does not read the word any more (M11): the mutants add a
+		// comparison in front of the party checks and every one must be a site.
+		const needle = "fulfiller === null || fulfiller !== actorId";
+		expect(real.split(needle).length - 1).toBe(2);
 		const blockedFiles = (repl: string, pre = "") =>
-			analyseSystemWord({ "convex/mandates.ts": pre + real.replace(needle, repl) })
+			analyseSystemWord({ "convex/mandates.ts": pre + real.replace(needle, `${repl} ${needle}`) })
 				.filter((s) => s.cls === null)
 				.map((s) => s.file);
 		expect(blockedFiles(`args.callerOrchestrator !== "system" &&`)).toEqual(["convex/mandates.ts"]);
@@ -790,13 +811,13 @@ describe("the word 'system' is compared in exactly one place — on the AST", ()
 		// REVISE 2: the reviewer's splice, on the REAL source. `etaWho = "system"`
 		// added as a STATEMENT beside the predicate (tsc: 0 errors, the old control:
 		// GREEN). The declaration is harmless; only the later assignment carries the word.
-		const ifHead = "\t\tif (\n\t\t\t!isFleetSystemCaller(scope, args.callerOrchestrator) &&";
+		const ifHead = "\t\tif (fulfiller === null || fulfiller !== actorId) {";
 		expect(real.includes(ifHead)).toBe(true);
 		const spliced = (stmt: string) =>
 			analyseSystemWord({
 				"convex/mandates.ts": real.replace(
 					ifHead,
-					`\t\tlet etaWho: string | undefined = "other";\n\t\t${stmt}\n\t\tif (\n\t\t\targs.callerOrchestrator !== etaWho &&`,
+					`\t\tlet etaWho: string | undefined = "other";\n\t\t${stmt}\n\t\tif (args.callerOrchestrator !== etaWho && fulfiller === null || fulfiller !== actorId) {`,
 				),
 			})
 				.filter((s) => s.cls === null)
@@ -808,7 +829,7 @@ describe("the word 'system' is compared in exactly one place — on the AST", ()
 		// the same splice with a harmless assignment is NOT a site
 		expect(spliced(`etaWho = "other";`)).toEqual([]);
 		// and the pristine source is clean
-		expect(blockedFiles(needle)).toEqual([]);
+		expect(blockedFiles("")).toEqual([]);
 	});
 
 	// ── PASS fixtures: the word may exist; only a COMPARISON is a site ──────

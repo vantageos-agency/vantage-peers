@@ -8,8 +8,9 @@
 //   7. validate_mandate_spending → convex/mandates.ts :: validateSpending (query)
 //
 // State machine: requested → accepted → in_progress → delivered → settled.
-// Auth: only fulfilledBy (or "system") can accept/update; only requestedBy
-// (or "system") can settle. We test happy-path + auth-refused edge.
+// Auth (M11): only the fulfilling AGENT (by verified ID) can accept/update; only
+// the requesting agent can settle, and only a delivered mandate. The word
+// "system" carries no authority. We test happy-path + auth-refused edge.
 //
 // Orchestrator: Sigma — VantagePeers | 2026-06-19
 
@@ -17,6 +18,7 @@ import { convexTest } from "../../tests/fixtures/convexTestWithServiceAccount";
 import { describe, expect, test } from "vitest";
 import { api } from "../_generated/api";
 import schema from "../schema";
+import { seedFleetAgents } from "../../tests/lib/seedFleetAgents";
 
 const modules = Object.fromEntries(
 	Object.entries(import.meta.glob("../**/*.ts")).filter(
@@ -37,6 +39,14 @@ function asMaster(t: ReturnType<typeof createTestConvex>) {
 	} as Parameters<typeof t.withIdentity>[0]);
 }
 
+// The acting agent as the MCP transport would forward it: the operator-org
+// agent row of `name`, by ID.
+async function actorOf(t: ReturnType<typeof createTestConvex>, name: string) {
+	const ids = await seedFleetAgents(t, [name]);
+	const row = await t.run((ctx) => ctx.db.get(ids[name]));
+	return { agentId: ids[name], orgSlug: row?.orgSlug as string };
+}
+
 async function seedMandate(
 	t: ReturnType<typeof createTestConvex>,
 	opts: {
@@ -49,6 +59,7 @@ async function seedMandate(
 ) {
 	const requestedBy = opts.requestedBy ?? "sigma";
 	const fulfilledBy = opts.fulfilledBy ?? "tau";
+	await seedFleetAgents(t, [requestedBy, fulfilledBy, "phi"]);
 	return await asMaster(t).mutation(api.mandates.create, {
 		requestedBy,
 		fulfilledBy,
@@ -79,6 +90,7 @@ describe("GAP-T1 accept_mandate — mandates.accept mutation", () => {
 		await asMaster(t).mutation(api.mandates.accept, {
 			mandateId,
 			callerOrchestrator: "tau",
+			verifiedActor: await actorOf(t, "tau"),
 		});
 
 		const row = await asMaster(t).query(api.mandates.get, { mandateId });
@@ -96,6 +108,7 @@ describe("GAP-T1 accept_mandate — mandates.accept mutation", () => {
 			asMaster(t).mutation(api.mandates.accept, {
 				mandateId,
 				callerOrchestrator: "phi", // not fulfilledBy, not system → refused
+				verifiedActor: await actorOf(t, "phi"),
 			}),
 		).rejects.toThrow(/RBAC_DENIED/);
 	});
@@ -113,9 +126,11 @@ describe("GAP-T1 settle_mandate — mandates.settle mutation", () => {
 			fulfilledBy: "tau",
 		});
 
+		await t.run((ctx) => ctx.db.patch(mandateId, { status: "delivered" }));
 		await asMaster(t).mutation(api.mandates.settle, {
 			mandateId,
 			callerOrchestrator: "sigma",
+			verifiedActor: await actorOf(t, "sigma"),
 			finalCost: 250,
 		});
 
@@ -136,6 +151,7 @@ describe("GAP-T1 settle_mandate — mandates.settle mutation", () => {
 			asMaster(t).mutation(api.mandates.settle, {
 				mandateId,
 				callerOrchestrator: "tau", // fulfilledBy cannot settle — only requestedBy
+				verifiedActor: await actorOf(t, "tau"),
 				finalCost: 100,
 			}),
 		).rejects.toThrow(/RBAC_DENIED/);

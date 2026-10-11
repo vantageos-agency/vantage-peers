@@ -876,6 +876,12 @@ export default defineSchema({
 	mandates: defineTable({
 		requestedBy: creatorValidator, // who needs the service
 		fulfilledBy: creatorValidator, // who will provide the service
+		// The two parties as agents-row IDs of the operator org (M11). The labels above
+		// are display text; the doors compare the acting agent's verified ID with
+		// these. Optional: a row written before M11 carries labels only and its party
+		// is resolved once in the operator org (lib/fleetActors.ts fleetPartyId).
+		requestedById: v.optional(v.string()),
+		fulfilledById: v.optional(v.string()),
 		service: v.string(), // description of what is needed
 		budget: v.number(), // token budget allocated
 		status: v.union(

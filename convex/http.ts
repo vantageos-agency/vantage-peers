@@ -1,3 +1,4 @@
+import { validateMasterBearer } from "@vantageos/cloud-identity";
 import { httpRouter } from "convex/server";
 import { internal } from "./_generated/api";
 import type { Doc, Id } from "./_generated/dataModel";
@@ -792,22 +793,24 @@ http.route({
 // an Eta APPROVED token before allowing npm publish. Curl-able from any
 // orchestrator host (no CONVEX_DEPLOYMENT required — that's the point).
 //
-// Response 200 {valid: true, taskId, completedAt, noteExcerpt} when:
-//   - master bearer valid (constant-time compare)
-//   - task exists
+// Response 200 {valid: true, taskId, completedAt} when:
+//   - master bearer valid (judged by @vantageos/cloud-identity)
+//   - expectedSha is a full 40-hex commit SHA
+//   - task exists AND is a fleet task (a task of another org answers task-not-found)
 //   - task.assignedTo is in the configured reviewer set (reviewer + fallback)
 //   - task.status === "done"
-//   - task.completionNote contains expectedSha (case-insensitive substring)
+//   - task.completionNote carries the [ETA-APPROVED] marker and the full SHA
 //
 // Response 200 {valid: false, reason: "<machine-readable>"} when any check fails.
-//   reasons: bearer-invalid / invalid-body / missing-fields / task-not-found
-//            / wrong-assignee / wrong-status / sha-not-in-note
+//   reasons: bearer-invalid / invalid-body / missing-fields / invalid-sha
+//            / task-not-found / wrong-assignee / wrong-status / not-approved
+//            / sha-not-in-note
 //
 // Response 401 when no Authorization header.
 // Response 500 when BEARER_SECRET_MASTER env var is missing (server misconfig).
 //
-// Read-only + idempotent + leaks only the verification verdict + minimal
-// audit metadata (completedAt, first 200 chars of note).
+// Read-only + idempotent + leaks only the verification verdict and completedAt:
+// no note text, no assignee, no status of a task is ever echoed.
 // ─────────────────────────────────────────────────────────────────────────────
 
 async function timingSafeEqualHttp(a: string, b: string): Promise<boolean> {
@@ -838,74 +841,48 @@ http.route({
 	method: "POST",
 	handler: httpAction(async (ctx, request) => {
 		const authHeader = request.headers.get("Authorization") ?? "";
-		const presented = authHeader.replace(/^Bearer\s+/i, "").trim();
-		if (!presented) {
+		if (authHeader.replace(/^Bearer\s+/i, "").trim() === "") {
 			return new Response("missing-bearer", { status: 401 });
 		}
 		const masterSecret = process.env.BEARER_SECRET_MASTER ?? "";
 		if (!masterSecret) {
 			return new Response("server-misconfig", { status: 500 });
 		}
-		const valid = await timingSafeEqualHttp(presented, masterSecret);
-		if (!valid) {
+		// The master bearer is judged by @vantageos/cloud-identity (hashed,
+		// constant-time); no local compare.
+		const bearer = await validateMasterBearer(authHeader, masterSecret);
+		if (!bearer.ok) {
 			return Response.json({ valid: false, reason: "bearer-invalid" });
 		}
 
-		let body: { taskId?: string; expectedSha?: string };
+		let body: { taskId?: unknown; expectedSha?: unknown };
 		try {
-			body = (await request.json()) as { taskId?: string; expectedSha?: string };
+			body = (await request.json()) as { taskId?: unknown; expectedSha?: unknown };
 		} catch {
 			return Response.json({ valid: false, reason: "invalid-body" });
 		}
 		const { taskId, expectedSha } = body;
-		if (!taskId || !expectedSha) {
+		if (typeof taskId !== "string" || typeof expectedSha !== "string") {
+			return Response.json({ valid: false, reason: "missing-fields" });
+		}
+		if (taskId === "" || expectedSha === "") {
 			return Response.json({ valid: false, reason: "missing-fields" });
 		}
 
-		// internal.tasks.getByIdForWebhook, not api.tasks.getById: this endpoint
-		// authenticates against BEARER_SECRET_MASTER above and has no Clerk
-		// identity, so the public read's org gate (which derives authorisation from
-		// the target row's own organisation) resolves the anonymous fail-closed
-		// scope and returns null for every task. Same split as
-		// tasks.listForWebhook / missions.listForWebhook.
-		const task = await ctx.runQuery(internal.tasks.getByIdForWebhook, {
-			taskId: taskId as Id<"tasks">,
+		// The verdict is computed inside the database layer (convex/publishApproval.ts):
+		// a task of another organisation answers as "task-not-found", and the
+		// response carries a reason code or the completion time, never note text.
+		const verdict = await ctx.runQuery(internal.publishApproval.verdictForPublish, {
+			taskId,
+			expectedSha,
 		});
-		if (!task) {
-			return Response.json({ valid: false, reason: "task-not-found" });
-		}
-		// Approver must be in the CONFIGURED reviewer set (reviewer + fallback,
-		// fleet and per-repo). Empty set (nothing configured) refuses: fail closed.
-		const acceptedReviewers = await ctx.runQuery(internal.reviewRouting.acceptedForRepo, {
-			repo: task.reviewPrRepoFullName,
-		});
-		if (!acceptedReviewers.includes((task.assignedTo ?? "").trim().toLowerCase())) {
-			return Response.json({
-				valid: false,
-				reason: "wrong-assignee",
-				got: task.assignedTo,
-			});
-		}
-		if (task.status !== "done") {
-			return Response.json({
-				valid: false,
-				reason: "wrong-status",
-				got: task.status,
-			});
-		}
-		const note = task.completionNote ?? "";
-		if (!note.toLowerCase().includes(expectedSha.toLowerCase())) {
-			return Response.json({
-				valid: false,
-				reason: "sha-not-in-note",
-				hint: `expected SHA prefix '${expectedSha.slice(0, 12)}' not found in completionNote (first 200 chars: ${note.slice(0, 200)})`,
-			});
+		if (!verdict.valid) {
+			return Response.json({ valid: false, reason: verdict.reason });
 		}
 		return Response.json({
 			valid: true,
 			taskId,
-			completedAt: task.completedAt ?? task.updatedAt,
-			noteExcerpt: note.slice(0, 200),
+			completedAt: verdict.completedAt,
 		});
 	}),
 });

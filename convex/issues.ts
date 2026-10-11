@@ -10,7 +10,8 @@ import { internal } from "./_generated/api";
 // convex-strict-mode-doc-type-import-needed-when-refactoring-list-query-from-early-return-to-accumulator-post-filter
 import type { Doc } from "./_generated/dataModel";
 import { mappingIsProven } from "./githubOwnerBinding";
-import { requireResolvedCaller, withOrgScope } from "./lib/auth";
+import { withOrgScope } from "./lib/auth";
+import { hasFleetStanding, requireFleetDoor } from "./lib/fleetStanding";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Auth — fleet-internal surface, no per-org owner field
@@ -30,8 +31,8 @@ import { requireResolvedCaller, withOrgScope } from "./lib/auth";
 // ─────────────────────────────────────────────────────────────────────────────
 
 async function requireMasterScope(ctx: Parameters<typeof withOrgScope>[0]) {
-	const scope = await withOrgScope(ctx);
-	if (!scope.isMaster) {
+	await withOrgScope(ctx);
+	if (!(await hasFleetStanding(ctx, "issues:write"))) {
 		throw new ConvexError(
 			"RBAC_DENIED: this mutation requires master or service-account scope " +
 				"— fleet github-issue tracking has no org-scoped write authority.",
@@ -339,9 +340,10 @@ export const getByRepoNumber = query({
 		// The only reader is the MCP tool (one-shot query, service account).
 		// See .claude/rules/refusal-is-distinguishable-from-absence.md.
 		const scope = await withOrgScope(ctx, { refuseWithoutThrow: true });
-		requireResolvedCaller(scope, "issues:getByRepoNumber", {
+		await requireFleetDoor(ctx, scope, "issues:getByRepoNumber", {
 			alsoRefusePreOrg: true,
 			masterOnly: true,
+			operatorHumanMayRead: true,
 		});
 		return await ctx.db
 			.query("issues")
@@ -384,9 +386,10 @@ export const listByProject = query({
 		// The only reader is the MCP tool (one-shot query, service account).
 		// See .claude/rules/refusal-is-distinguishable-from-absence.md.
 		const scope = await withOrgScope(ctx, { refuseWithoutThrow: true });
-		requireResolvedCaller(scope, "issues:listByProject", {
+		await requireFleetDoor(ctx, scope, "issues:listByProject", {
 			alsoRefusePreOrg: true,
 			masterOnly: true,
+			operatorHumanMayRead: true,
 		});
 		const limit = args.limit ?? 50;
 		const needsWideScan = args.createdBefore !== undefined;
@@ -439,9 +442,10 @@ export const listByOrchestrator = query({
 		// The only reader is the MCP tool (one-shot query, service account).
 		// See .claude/rules/refusal-is-distinguishable-from-absence.md.
 		const scope = await withOrgScope(ctx, { refuseWithoutThrow: true });
-		requireResolvedCaller(scope, "issues:listByOrchestrator", {
+		await requireFleetDoor(ctx, scope, "issues:listByOrchestrator", {
 			alsoRefusePreOrg: true,
 			masterOnly: true,
+			operatorHumanMayRead: true,
 		});
 		const limit = args.limit ?? 50;
 		const needsWideScan = args.createdBefore !== undefined;
@@ -517,9 +521,10 @@ export const listByStatus = query({
 		// has no consumer to read it.
 		// See .claude/rules/refusal-is-distinguishable-from-absence.md.
 		const scope = await withOrgScope(ctx, { refuseWithoutThrow: true });
-		requireResolvedCaller(scope, "issues:listByStatus", {
+		await requireFleetDoor(ctx, scope, "issues:listByStatus", {
 			alsoRefusePreOrg: true,
 			masterOnly: true,
+			operatorHumanMayRead: true,
 		});
 
 		const limit = args.limit ?? 50;
@@ -593,9 +598,10 @@ export const getStats = query({
 		// this table carries no orgId to scope a count to. They used to receive
 		// `stats` — six zeros, a FABRICATED MEASUREMENT that reads as "no open
 		// issues". They are now RAISED at, with the same RBAC_DENIED code.
-		requireResolvedCaller(scope, "issues:getStats", {
+		await requireFleetDoor(ctx, scope, "issues:getStats", {
 			alsoRefusePreOrg: true,
 			masterOnly: true,
+			operatorHumanMayRead: true,
 		});
 
 		let issues;
@@ -835,10 +841,11 @@ export const listExternalOpen = query({
 		// signed-in-but-not-yet-onboarded caller's throw to crash, and that caller
 		// must not be handed a fabricated absence either.
 		const scope = await withOrgScope(ctx, { refuseWithoutThrow: true });
-		requireResolvedCaller(scope, "issues:listExternalOpen", {
+		const fleet = await requireFleetDoor(ctx, scope, "issues:listExternalOpen", {
 			alsoRefusePreOrg: true,
+			operatorHumanMayRead: true,
 		});
-		if (!scope.isMaster) return { issues: [], nextPageToken: null };
+		if (!fleet) return { issues: [], nextPageToken: null };
 
 		return await readExternalOpen(ctx, args);
 	},

@@ -48,6 +48,13 @@ export const VERIFIED_ACTOR_DOORS: ReadonlySet<string> = new Set([
 	"messages:getUnreadCount",
 	"messages:markAsRead",
 	"messages:deleteMessage",
+	// Fleet-internal objects with agent parties (M11): a mandate is accepted,
+	// updated and settled BY the party's ID, and a fix attempt is appended only by
+	// an agent of the operator organisation.
+	"mandates:accept",
+	"mandates:update",
+	"mandates:settle",
+	"fixPatterns:addAttempt",
 ]);
 
 export type VerifiedActorArg = { agentId: string; orgSlug: string };

@@ -2,6 +2,10 @@
 /**
  * Feature D — /api/eta/verify-publish-token HTTP action tests.
  *
+ * M11: expectedSha is a FULL 40-hex SHA, the note must carry [ETA-APPROVED], a task of
+ * another org is never resolved, and the response never carries note text, the assignee
+ * or the status of a task (the 7 scenarios below keep their meaning).
+ *
  * 7 scenarios per Eta spec (hook v1.2.0 Feature D Option F):
  *   1. Known APPROVED task + correct SHA → valid:true
  *   2. Known APPROVED task + WRONG SHA → valid:false, reason:sha-not-in-note
@@ -29,7 +33,7 @@ const modules = Object.fromEntries(
 // ─── Constants ────────────────────────────────────────────────────────────────
 
 const MASTER_BEARER = "test-master-secret-featureD-abc123";
-const APPROVED_SHA = "9e5b63e7f4a2bc1d";
+const APPROVED_SHA = "9e5b63e7f4a2bc1d9e5b63e7f4a2bc1d9e5b63e7";
 const ENDPOINT = "/api/eta/verify-publish-token";
 
 /** Build a minimal valid task document for insertion. */
@@ -88,9 +92,6 @@ interface VerifyResponse {
 	reason?: string;
 	taskId?: string;
 	completedAt?: number;
-	noteExcerpt?: string;
-	hint?: string;
-	got?: string;
 }
 
 // ─── Helper ───────────────────────────────────────────────────────────────────
@@ -119,7 +120,7 @@ async function postVerify(
 describe("/api/eta/verify-publish-token — Feature D 7-scenario corpus", () => {
 	// ── Scenario 1: Known APPROVED task + correct SHA ──────────────────────────
 
-	test("1. APPROVED task + correct SHA → valid:true, returns taskId/completedAt/noteExcerpt", async () => {
+	test("1. APPROVED task + correct SHA → valid:true, returns taskId/completedAt and no note text", async () => {
 		const t = makeTestConvex();
 		await t.seedReviewer();
 
@@ -138,13 +139,12 @@ describe("/api/eta/verify-publish-token — Feature D 7-scenario corpus", () => 
 		expect(data.valid).toBe(true);
 		expect(data.taskId).toBe(taskId);
 		expect(typeof data.completedAt).toBe("number");
-		expect(typeof data.noteExcerpt).toBe("string");
-		expect(data.noteExcerpt).toContain(APPROVED_SHA);
+		expect(Object.keys(data).sort()).toEqual(["completedAt", "taskId", "valid"]);
 	});
 
 	// ── Scenario 2: Correct task + WRONG SHA ──────────────────────────────────
 
-	test("2. APPROVED task + wrong SHA → valid:false, reason:sha-not-in-note, hint present", async () => {
+	test("2. APPROVED task + wrong (full) SHA → valid:false, reason:sha-not-in-note, no hint", async () => {
 		const t = makeTestConvex();
 		await t.seedReviewer();
 
@@ -152,7 +152,7 @@ describe("/api/eta/verify-publish-token — Feature D 7-scenario corpus", () => 
 			return await ctx.db.insert("tasks", makeTask());
 		});
 
-		const wrongSha = "deadbeef00001234";
+		const wrongSha = "deadbeef00001234deadbeef00001234deadbeef";
 		const response = await postVerify(
 			t,
 			{ taskId, expectedSha: wrongSha },
@@ -162,8 +162,7 @@ describe("/api/eta/verify-publish-token — Feature D 7-scenario corpus", () => 
 		expect(response.status).toBe(200);
 		const data = (await response.json()) as VerifyResponse;
 		expect(data.valid).toBe(false);
-		expect(data.reason).toBe("sha-not-in-note");
-		expect(data.hint).toContain("deadbeef0000");
+		expect(data).toEqual({ valid: false, reason: "sha-not-in-note" });
 	});
 
 	// ── Scenario 3: Nonexistent task ID ───────────────────────────────────────
@@ -194,7 +193,7 @@ describe("/api/eta/verify-publish-token — Feature D 7-scenario corpus", () => 
 
 	// ── Scenario 4: Wrong assignee ────────────────────────────────────────────
 
-	test("4. task.assignedTo=sigma → valid:false, reason:wrong-assignee, got:sigma", async () => {
+	test("4. task.assignedTo=sigma → valid:false, reason:wrong-assignee, nothing echoed", async () => {
 		const t = makeTestConvex();
 		await t.seedReviewer();
 
@@ -217,13 +216,12 @@ describe("/api/eta/verify-publish-token — Feature D 7-scenario corpus", () => 
 		expect(response.status).toBe(200);
 		const data = (await response.json()) as VerifyResponse;
 		expect(data.valid).toBe(false);
-		expect(data.reason).toBe("wrong-assignee");
-		expect(data.got).toBe("sigma");
+		expect(data).toEqual({ valid: false, reason: "wrong-assignee" });
 	});
 
 	// ── Scenario 5: Wrong status ──────────────────────────────────────────────
 
-	test("5. task.status=todo → valid:false, reason:wrong-status, got:todo", async () => {
+	test("5. task.status=todo → valid:false, reason:wrong-status, nothing echoed", async () => {
 		const t = makeTestConvex();
 		await t.seedReviewer();
 
@@ -246,8 +244,7 @@ describe("/api/eta/verify-publish-token — Feature D 7-scenario corpus", () => 
 		expect(response.status).toBe(200);
 		const data = (await response.json()) as VerifyResponse;
 		expect(data.valid).toBe(false);
-		expect(data.reason).toBe("wrong-status");
-		expect(data.got).toBe("todo");
+		expect(data).toEqual({ valid: false, reason: "wrong-status" });
 	});
 
 	// ── Scenario 6: Missing bearer ────────────────────────────────────────────
