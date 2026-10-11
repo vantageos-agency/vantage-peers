@@ -77,7 +77,6 @@ const RECURRING_TASK_ID_HINT =
 // caller's actor ID derived from the credential / verifiedActor.
 const scheduleActorProofArgs = {
 	callerOrchestrator: v.optional(v.string()),
-	agentCredentialSecret: v.optional(v.string()),
 	verifiedActor: v.optional(verifiedActorValidator),
 };
 
@@ -85,14 +84,13 @@ async function proveScheduleCaller(
 	ctx: MutationCtx,
 	args: {
 		callerOrchestrator?: string;
-		agentCredentialSecret?: string;
 		verifiedActor?: VerifiedActor;
 	},
 ): Promise<CallerScope> {
 	return await requireAuthenticatedCaller(
 		ctx,
 		args.callerOrchestrator,
-		args.agentCredentialSecret,
+		undefined,
 		args.verifiedActor,
 	);
 }
@@ -225,9 +223,8 @@ export const create = mutation({
 		// OPTIONAL: omitting it is the HUMAN path (a dashboard org member creating a
 		// schedule in its own name, recorded "user:<Clerk subject>").
 		createdBy: v.optional(creatorValidator),
-		// M10h: the acting agent's proof, the same two carriers `tasks:create`
-		// takes. Either one binds `createdBy` to the agent it resolves to.
-		agentCredentialSecret: v.optional(v.string()),
+		// M10h: the acting agent's proof, the verified actor the MCP transport
+		// forwards. It binds `createdBy` to the agent it resolves to.
 		verifiedActor: v.optional(verifiedActorValidator),
 		// A person reached through the MCP service account.
 		verifiedPerson: v.optional(verifiedPersonValidator),
@@ -244,7 +241,7 @@ export const create = mutation({
 		const scope = await requireAuthenticatedCaller(
 			ctx,
 			args.createdBy,
-			args.agentCredentialSecret,
+			undefined,
 			args.verifiedActor,
 			{ proof: args.verifiedPerson, door: "recurringTasks:create" },
 		);

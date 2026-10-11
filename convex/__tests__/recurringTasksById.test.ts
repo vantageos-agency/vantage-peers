@@ -64,8 +64,6 @@ const asServiceAccount = (t: T) =>
 	t.withIdentity({ subject: "test-service-account-user-id" });
 
 let t: T;
-let secretClioA: string;
-let secretVeraA: string;
 let clioA: Id<"agents">;
 let veraA: Id<"agents">;
 let clioB: Id<"agents">;
@@ -110,19 +108,12 @@ beforeEach(async () => {
 	clioA = await agentIdOf(t, "org-a", "clio");
 	veraA = await agentIdOf(t, "org-a", "vera");
 	clioB = await agentIdOf(t, "org-b", "clio");
-	secretClioA = (
-		await adminOf(t, "org-a").mutation(api.agentCredentials.mintAgentCredential, {
-			orgSlug: "org-a",
-			agentId: clioA,
-		})
-	).secret;
-	secretVeraA = (
-		await adminOf(t, "org-a").mutation(api.agentCredentials.mintAgentCredential, {
-			orgSlug: "org-a",
-			agentId: veraA,
-		})
-	).secret;
 });
+
+// M10h: the MCP verifies the agent credential itself and forwards the row it
+// resolved; Convex believes it only from the fleet service account.
+const actorClioA = () => ({ agentId: clioA, orgSlug: "org-a" });
+const actorVeraA = () => ({ agentId: veraA, orgSlug: "org-a" });
 
 async function refusal(p: Promise<unknown>): Promise<string> {
 	const err = await p.then(
@@ -143,13 +134,13 @@ const createArgs = (over: Record<string, unknown> = {}) => ({
 	priority: "medium" as const,
 	cronExpression: "0 9 * * *",
 	createdBy: "clio",
-	agentCredentialSecret: secretClioA,
+	verifiedActor: actorClioA(),
 	...over,
 });
 
 describe("(a) assign: the assignee is an agent of the schedule's own org", () => {
 	test("own org: assignedToId is the assignee's row ID, createdById the credential holder's", async () => {
-		const id = await memberOf(t, "org-a").mutation(
+		const id = await asServiceAccount(t).mutation(
 			api.recurringTasks.create,
 			createArgs(),
 		);
@@ -161,7 +152,7 @@ describe("(a) assign: the assignee is an agent of the schedule's own org", () =>
 
 	test("an assignee label registered only in ANOTHER org is refused by name across orgs", async () => {
 		const out = await refusal(
-			memberOf(t, "org-a").mutation(
+			asServiceAccount(t).mutation(
 				api.recurringTasks.create,
 				createArgs({ assignedTo: "zed" }),
 			),
@@ -173,7 +164,7 @@ describe("(a) assign: the assignee is an agent of the schedule's own org", () =>
 
 	test("an assignee label naming no agent anywhere is refused, nothing written", async () => {
 		const out = await refusal(
-			memberOf(t, "org-a").mutation(
+			asServiceAccount(t).mutation(
 				api.recurringTasks.create,
 				createArgs({ assignedTo: "ghost" }),
 			),
@@ -183,12 +174,12 @@ describe("(a) assign: the assignee is an agent of the schedule's own org", () =>
 	});
 
 	test("update: reassigning to a label with no agent in the row's org is refused, the row untouched", async () => {
-		const id = await memberOf(t, "org-a").mutation(
+		const id = await asServiceAccount(t).mutation(
 			api.recurringTasks.create,
 			createArgs(),
 		);
 		const out = await refusal(
-			memberOf(t, "org-a").mutation(api.recurringTasks.update, {
+			asServiceAccount(t).mutation(api.recurringTasks.update, {
 				recurringTaskId: id,
 				assignedTo: "zed",
 			}),
@@ -200,11 +191,11 @@ describe("(a) assign: the assignee is an agent of the schedule's own org", () =>
 	});
 
 	test("update: reassigning to an agent of the org moves the ID with the label", async () => {
-		const id = await memberOf(t, "org-a").mutation(
+		const id = await asServiceAccount(t).mutation(
 			api.recurringTasks.create,
 			createArgs(),
 		);
-		await memberOf(t, "org-a").mutation(api.recurringTasks.update, {
+		await asServiceAccount(t).mutation(api.recurringTasks.update, {
 			recurringTaskId: id,
 			assignedTo: "clio",
 		});
@@ -230,9 +221,9 @@ describe("(b) create: the creator is the verified caller", () => {
 
 	test("a credential for another agent cannot be used to author as 'clio'", async () => {
 		const out = await refusal(
-			memberOf(t, "org-a").mutation(
+			asServiceAccount(t).mutation(
 				api.recurringTasks.create,
-				createArgs({ agentCredentialSecret: secretVeraA }),
+				createArgs({ verifiedActor: actorVeraA() }),
 			),
 		);
 		expect(out).toMatch(/AGENT_IDENTITY_MISMATCH/);
@@ -240,36 +231,60 @@ describe("(b) create: the creator is the verified caller", () => {
 	});
 });
 
+describe("(c2) no secret enters a schedule door as an argument", () => {
+	test("a call carrying agentCredentialSecret is rejected by the validator, nothing written", async () => {
+		const out = await refusal(
+			asServiceAccount(t).mutation(
+				api.recurringTasks.create,
+				createArgs({ verifiedActor: undefined, agentCredentialSecret: "any" }),
+			),
+		);
+		expect(out).toMatch(/agentCredentialSecret|extra field|ArgumentValidationError/);
+		expect(await rowCount()).toBe(0);
+	});
+
+	test("the same-name agent of another org is refused through verifiedActor", async () => {
+		const out = await refusal(
+			asServiceAccount(t).mutation(
+				api.recurringTasks.create,
+				createArgs({ verifiedActor: { agentId: clioB, orgSlug: "org-a" } }),
+			),
+		);
+		expect(out).toMatch(/ORG_MISMATCH/);
+		expect(await rowCount()).toBe(0);
+	});
+});
+
 describe("(c) doors on the agent path decide on IDs", () => {
 	test("the creator agent pauses, resumes and removes its schedule", async () => {
-		const id = await memberOf(t, "org-a").mutation(
+		const id = await asServiceAccount(t).mutation(
 			api.recurringTasks.create,
 			createArgs(),
 		);
 		const proof = {
 			taskId: id,
 			callerOrchestrator: "clio",
-			agentCredentialSecret: secretClioA,
+			verifiedActor: actorClioA(),
 		};
-		await memberOf(t, "org-a").mutation(api.recurringTasks.pause, proof);
+		await asServiceAccount(t).mutation(api.recurringTasks.pause, proof);
 		expect((await getRow(id))?.active).toBe(false);
-		await memberOf(t, "org-a").mutation(api.recurringTasks.resume, proof);
+		await asServiceAccount(t).mutation(api.recurringTasks.resume, proof);
 		expect((await getRow(id))?.active).toBe(true);
-		await memberOf(t, "org-a").mutation(api.recurringTasks.remove, proof);
+		await asServiceAccount(t).mutation(api.recurringTasks.remove, proof);
 		expect(await getRow(id)).toBeNull();
 	});
 
 	test("an agent that is neither creator nor assignee is refused, the row untouched", async () => {
-		const id = await memberOf(t, "org-a").mutation(
+		const id = await asServiceAccount(t).mutation(
 			api.recurringTasks.create,
 			createArgs({ assignedTo: "clio" }),
 		);
 		// vera (org-a) is neither the creator (clio) nor the assignee (clio).
 		const out = await refusal(
-			memberOf(t, "org-a").mutation(api.recurringTasks.pause, {
+			asServiceAccount(t).mutation(api.recurringTasks.pause, {
 				taskId: id,
 				callerOrchestrator: "vera",
-				agentCredentialSecret: secretVeraA,
+				verifiedActor: actorVeraA(),
 			}),
 		);
 		expect(out).toContain("RBAC_DENIED");
@@ -296,11 +311,11 @@ describe("(c) doors on the agent path decide on IDs", () => {
 			}),
 		);
 		const out = await refusal(
-			memberOf(t, "org-a").mutation(api.recurringTasks.update, {
+			asServiceAccount(t).mutation(api.recurringTasks.update, {
 				recurringTaskId: id,
 				title: "hijack",
 				callerOrchestrator: "clio",
-				agentCredentialSecret: secretClioA,
+				verifiedActor: actorClioA(),
 			}),
 		);
 		expect(out).toContain("RBAC_DENIED");
@@ -308,7 +323,7 @@ describe("(c) doors on the agent path decide on IDs", () => {
 	});
 
 	test("a member of another org cannot reach the schedule at all", async () => {
-		const id = await memberOf(t, "org-a").mutation(
+		const id = await asServiceAccount(t).mutation(
 			api.recurringTasks.create,
 			createArgs(),
 		);
@@ -379,7 +394,7 @@ describe("(d) spawn: the task carries the schedule's IDs", () => {
 
 describe("(e) list: assignee by ID, absence stays an absence", () => {
 	test("by assignee: own org's schedule is served; a label that names an agent only in another org is an absence, never that org's rows", async () => {
-		await memberOf(t, "org-a").mutation(api.recurringTasks.create, createArgs());
+		await asServiceAccount(t).mutation(api.recurringTasks.create, createArgs());
 		await memberOf(t, "org-b").mutation(api.recurringTasks.create, {
 			title: "theirs",
 			assignedTo: "zed",
@@ -423,7 +438,7 @@ describe("(f) the fleet service account keeps its grants", () => {
 		expect(row?.createdById).toBe(fleet.sigma);
 		expect(row?.orgId).toBeUndefined();
 
-		await memberOf(t, "org-a").mutation(api.recurringTasks.create, createArgs());
+		await asServiceAccount(t).mutation(api.recurringTasks.create, createArgs());
 		const all = await svc.query(api.recurringTasks.list, {});
 		expect(all.map((r) => r.title).sort()).toEqual(["fleet", "standup"]);
 		const byEta = await svc.query(api.recurringTasks.list, { assignedTo: "eta" });

@@ -178,15 +178,20 @@ const DRIVERS = {
 			content: "c",
 			createdBy: SEAT,
 		}),
-	recurringTasks: async (t) =>
-		asOrg(t, ACME.slug).mutation(api.recurringTasks.create, {
+	recurringTasks: async (t) => {
+		await seedAgents(t, [[ACME.slug, SEAT]]);
+		return await t.withIdentity({ subject: "test-service-account-user-id" }).mutation(api.recurringTasks.create, {
 			title: "r",
 			assignedTo: SEAT,
 			priority: "low",
 			cronExpression: "0 9 * * *",
 			createdBy: SEAT,
-			agentCredentialSecret: await seatCredential(t),
-		}),
+			verifiedActor: {
+				agentId: await agentIdOf(t, ACME.slug, SEAT),
+				orgSlug: ACME.slug,
+			},
+		});
+	},
 	diary: (t) =>
 		asOrg(t, ACME.slug).mutation(api.diary.write, {
 			date: "2026-10-01",

@@ -8,7 +8,7 @@
  * Identity: member(org-a) = Clerk org member (editor), NOT master, NOT the
  * service account. org-b carries the same roster name so only the stamp separates them.
  */
-import { convexTest } from "convex-test";
+import { convexTest } from "../../../tests/fixtures/convexTestWithServiceAccount";
 import { describe, expect, test } from "vitest";
 import { api } from "../../_generated/api";
 import type { Id } from "../../_generated/dataModel";
@@ -87,10 +87,10 @@ describe("recurringTasks:create — a registered agent of the caller's own org",
 		expect((await t.run((ctx) => ctx.db.get(id)))?.orgId).toBe("org-a");
 	});
 
-	test("recurringTasks:create — a member of org-a acting as its registered agent 'sigma' is served (the door must give a credential path)", async () => {
+	test("recurringTasks:create — a member of org-a acting as its registered agent 'sigma' is served (the MCP forwards its verified row)", async () => {
 		const t = await world();
-		// M10h: the door now takes the agent's credential (the path the audit asked
-		// for); a registered agent is served when it presents it.
+		// M10h: the door takes the verified actor the MCP forwards (the path the audit asked
+		// for); a registered agent is served when the MCP vouches for it.
 		const agentId = (
 			await t.run((ctx) =>
 				ctx.db
@@ -99,34 +99,23 @@ describe("recurringTasks:create — a registered agent of the caller's own org",
 					.first(),
 			)
 		)?._id as Id<"agents">;
-		const minted = await t
-			.withIdentity({
-				subject: "admin-of-org-a",
-				org_slug: "org-a",
-				org_id: testClerkOrgId("org-a"),
-				org_role: "org:admin",
-			} as Identity)
-			.mutation(api.agentCredentials.mintAgentCredential, {
-				orgSlug: "org-a",
-				agentId,
-			});
 		let ok = true;
 		let text = "";
 		try {
-			await asMember(t).mutation(api.recurringTasks.create, {
+			await t.withIdentity({ subject: "test-service-account-user-id" }).mutation(api.recurringTasks.create, {
 				title: "as-agent",
 				assignedTo: "sigma",
 				priority: "low",
 				cronExpression: "0 9 * * *",
 				createdBy: "sigma",
-				agentCredentialSecret: minted.secret,
+				verifiedActor: { agentId, orgSlug: "org-a" },
 			});
 		} catch (e) {
 			ok = false;
 			const x = e as { data?: unknown; message?: string };
 			text = `${typeof x.data === "string" ? x.data : ""} ${x.message ?? ""}`.slice(0, 160);
 		}
-		expect({ ok, text }, "rightful agent of org-a refused with no argument to present its credential").toEqual({
+		expect({ ok, text }, "rightful agent of org-a, verified by the MCP, refused").toEqual({
 			ok: true,
 			text: "",
 		});

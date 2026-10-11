@@ -18,6 +18,7 @@
 import { convexTest } from "../../tests/fixtures/convexTestWithServiceAccount";
 import { describe, expect, test } from "vitest";
 import { testClerkOrgId } from "../../tests/fixtures/testClerkOrgId";
+import { agentIdOf } from "../../tests/lib/agentIdOf";
 import { api } from "../_generated/api";
 import schema from "../schema";
 import {
@@ -80,8 +81,6 @@ const member = (t: T) =>
 	actingWith(
 		t.withIdentity({ subject: "member-of-org-b", organizationId: "org-b", org_id: testClerkOrgId("org-b"), org_role: "org:editor" } as Identity),
 		(name) => secrets.get(`org-b/${name}`),
-		// M10h: the recurringTasks doors take the per-agent credential too.
-		/^(tasks|recurringTasks):/,
 	);
 const master = (t: T) =>
 	t.withIdentity({ subject: "test-service-account-user-id" } as Identity);
@@ -380,33 +379,51 @@ describe("recurringTasks — one roster rule (normalised, '*' names nobody)", ()
 		cronExpression: "0 9 * * *",
 		createdBy: "bob",
 	});
+	// M10h: no secret travels as an argument. The MCP verifies bob's credential and
+	// forwards the row it resolved through the fleet service account.
+	// The forwarded agent is judged by ID: a foreign name has no agents row in
+	// the org, so the assignee is refused as RBAC_DENIED (not by roster label).
+	const expectNoAgentAssignee = async (p: Promise<unknown>) => {
+		const refusal = await refusalOf(p);
+		expect(refusal).toContain("RBAC_DENIED");
+		expect(refusal).toContain("assignee-not-an-agent-of-org");
+	};
+	const viaMcp = async (t: T) => {
+		const bobId = await agentIdOf(t, "org-b", "bob");
+		const svc = t.withIdentity({ subject: "test-service-account-user-id" } as Identity);
+		return {
+			mutation: (fn: never, a: Record<string, unknown>) =>
+				svc.mutation(fn, {
+					...a,
+					verifiedActor: { agentId: bobId, orgSlug: "org-b" },
+				} as never),
+		};
+	};
 	test("REFUSED: create for foreign 'eta'", async () => {
 		const t = await fixture();
-		await expectDenied(
-			member(t).mutation(api.recurringTasks.create, args("eta")),
-			"recurringTasks:create",
-			"assignee",
+		await expectNoAgentAssignee(
+			(await viaMcp(t)).mutation(api.recurringTasks.create, args("eta")),
 		);
 	});
 	test("SERVED: create for 'Bob' (normalisation) and own roster", async () => {
 		const t = await fixture();
-		await member(t).mutation(api.recurringTasks.create, args("Bob"));
-		await member(t).mutation(api.recurringTasks.create, args("bea"));
+		await (await viaMcp(t)).mutation(api.recurringTasks.create, args("Bob"));
+		await (await viaMcp(t)).mutation(api.recurringTasks.create, args("bea"));
 		expect(await t.run((c) => c.db.query("recurringTasks").collect())).toHaveLength(2);
 	});
 	test("REFUSED: update reassigns to foreign; SERVED: to own roster", async () => {
 		const t = await fixture();
-		const id = await member(t).mutation(api.recurringTasks.create, args("bob"));
-		await expectDenied(
-			member(t).mutation(api.recurringTasks.update, {
+		const id = await (await viaMcp(t)).mutation(api.recurringTasks.create, args("bob"));
+		await expectNoAgentAssignee(
+			(await viaMcp(t)).mutation(api.recurringTasks.update, {
 				recurringTaskId: id,
+				callerOrchestrator: "bob",
 				assignedTo: "eta",
 			}),
-			"recurringTasks:update",
-			"assignee",
 		);
-		await member(t).mutation(api.recurringTasks.update, {
+		await (await viaMcp(t)).mutation(api.recurringTasks.update, {
 			recurringTaskId: id,
+			callerOrchestrator: "bob",
 			assignedTo: "BEA",
 		});
 		expect((await t.run((c) => c.db.get(id)))?.assignedTo).toBe("BEA");

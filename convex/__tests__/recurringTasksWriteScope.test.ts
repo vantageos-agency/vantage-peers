@@ -31,8 +31,8 @@ import { convexTest } from "../../tests/fixtures/convexTestWithServiceAccount";
 import { describe, expect, test } from "vitest";
 import { testClerkOrgId } from "../../tests/fixtures/testClerkOrgId";
 import { api } from "../_generated/api";
-import { seedAgents } from "../../tests/lib/agentIdOf";
-import { mintAgentSecret, seedFleetAgents } from "../../tests/lib/seedFleetAgents";
+import { agentIdOf, seedAgents } from "../../tests/lib/agentIdOf";
+import { seedFleetAgents } from "../../tests/lib/seedFleetAgents";
 import schema from "../schema";
 
 const modules = Object.fromEntries(
@@ -151,11 +151,11 @@ describe("recurringTasks.create — write-scope enforcement", () => {
 	test("org-a creating a recurring task assigned to its own seat succeeds", async () => {
 		const t = createT();
 		await seedOrgAMapping(t);
-		const tA = asOrgA(t);
-		// M10h: the seat is an agent of org-a (the assignee, by ID) and proves it is
-		// the author with its credential.
+		// M10h: the seat is an agent of org-a (the assignee, by ID); the MCP
+		// verifies its credential and forwards the row through the service account.
+		const tA = t.withIdentity({ subject: "test-service-account-user-id" });
 		await seedAgents(t, [["org-a", "seat-a"]]);
-		const secret = await mintAgentSecret(t, "org-a", "seat-a");
+		const seatId = await agentIdOf(t, "org-a", "seat-a");
 
 		const id = await tA.mutation(api.recurringTasks.create, {
 			title: "org-a recurring",
@@ -163,7 +163,7 @@ describe("recurringTasks.create — write-scope enforcement", () => {
 			priority: "medium",
 			cronExpression: "0 9 * * *",
 			createdBy: "seat-a",
-			agentCredentialSecret: secret,
+			verifiedActor: { agentId: seatId, orgSlug: "org-a" },
 		});
 
 		const row = await t.run((ctx) => ctx.db.get(id));

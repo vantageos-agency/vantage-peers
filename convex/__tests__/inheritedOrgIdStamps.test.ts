@@ -24,7 +24,7 @@
  * Both are proved under an ORDINARY org identity, never master.
  */
 
-import { convexTest } from "convex-test";
+import { convexTest } from "../../tests/fixtures/convexTestWithServiceAccount";
 import { describe, expect, test } from "vitest";
 import { testClerkOrgId } from "../../tests/fixtures/testClerkOrgId";
 import { api, internal } from "../_generated/api";
@@ -63,7 +63,7 @@ const asOrg = (t: ReturnType<typeof createT>, slug: string) =>
 	} as Parameters<typeof t.withIdentity>[0]);
 
 // M10h: the assignee is an agent of the org (by ID) and the creator proves it is
-// that agent with its credential.
+// that agent through the MCP (the service account forwards the verified row).
 async function createSchedule(t: ReturnType<typeof createT>, slug: string) {
 	const agentId = await t.run((ctx) =>
 		ctx.db.insert("agents", {
@@ -74,21 +74,15 @@ async function createSchedule(t: ReturnType<typeof createT>, slug: string) {
 			createdAt: Date.now(),
 		}),
 	);
-	const minted = await t
-		.withIdentity({
-			subject: `admin-${slug}`,
-			org_slug: slug,
-			org_id: testClerkOrgId(slug),
-			org_role: "org:admin",
-		} as Parameters<typeof t.withIdentity>[0])
-		.mutation(api.agentCredentials.mintAgentCredential, { orgSlug: slug, agentId });
-	return await asOrg(t, slug).mutation(api.recurringTasks.create, {
+	return await t
+		.withIdentity({ subject: "test-service-account-user-id" })
+		.mutation(api.recurringTasks.create, {
 		title: "daily scan",
 		assignedTo: SHARED,
 		priority: "medium",
 		cronExpression: "0 9 * * *",
 		createdBy: SHARED,
-		agentCredentialSecret: minted.secret,
+		verifiedActor: { agentId, orgSlug: slug },
 	});
 }
 
