@@ -294,22 +294,24 @@ export const update = mutation({
 			throw new Error(`Business unit ${args.buId} not found`);
 		}
 
+		// R-52 -- the row's own server-stamped tenant must be the caller's, by org
+		// ID. An unstamped row is fleet-owned or not yet backfilled and is refused to
+		// every org caller; the fleet is unchanged.
+		if (
+			!fleet &&
+			!sameTenantStamp(
+				orgRefOfRow(bu),
+				orgRefOfScope(scope),
+				await fleetOperatorRef(ctx.db),
+			)
+		) {
+			throw new ConvexError(
+				`RBAC_DENIED: caller may not update business unit ${args.buId} — ${JSON.stringify({ orgSlug: scope.orgSlug, reason: "row-not-in-caller-org" })}`,
+			);
+		}
+
 		let newOwnerId: string | undefined;
 		if (!fleet) {
-			// R-52 — the row's own server-stamped tenant must be the caller's, by org
-			// ID. An unstamped row is fleet-owned or not yet backfilled and is
-			// refused to every org caller.
-			if (
-				!sameTenantStamp(
-					orgRefOfRow(bu),
-					orgRefOfScope(scope),
-					await fleetOperatorRef(ctx.db),
-				)
-			) {
-				throw new ConvexError(
-					`RBAC_DENIED: caller may not update business unit ${args.buId} — ${JSON.stringify({ orgSlug: scope.orgSlug, reason: "row-not-in-caller-org" })}`,
-				);
-			}
 			// A member writes only with a writer role.
 			await requireMemberWriterRole(ctx, scope, door);
 			// The TARGET ROW's stored owner must be on the caller's roster by agent

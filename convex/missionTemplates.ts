@@ -225,12 +225,12 @@ export const upsert = mutation({
 		// write-contract: MCP-transport-only — issued via mcp-server client.mutation("missionTemplates:upsert", …) at mcp-server/src/tools.ts:9109 (imperative), 0 hits in vantage-peers-dashboard {app,components,hooks,lib,contexts,providers} (measured 2026-10-01 at origin/main e2dc58f and 0466fac); never a subscribing pre-org client shell. The no-org throw is a refusal at an imperative MCP call, never at a render.
 		// Master-only fail-closed fix — see the file-header comment block
 		// above for the full rationale (shared, unscoped catalog write).
-		// update_mission_template is a fleet-only operation: the catalog is shared
-		// fleet-wide, never per-org.
 		const scope = await withOrgScope(ctx);
-		await requireFleetDoor(ctx, scope, "missionTemplates:upsert", {
-			masterOnly: true,
-		});
+		if (!scope.isMaster) {
+			throw new ConvexError(
+				"RBAC_DENIED: update_mission_template is a master-only operation — the mission-template catalog is shared fleet-wide, never per-org",
+			);
+		}
 
 		const now = Date.now();
 		const existing = await ctx.db
@@ -281,12 +281,12 @@ export const softDelete = mutation({
 		// above for the full rationale (shared, unscoped catalog write).
 		// Mirrors the MCP server's own pre-existing `guardMasterOnly` gate on
 		// this same tool (soft_delete_mission_template).
-		// Soft-deleting a template is a fleet-only operation: the catalog is shared
-		// fleet-wide, never per-org.
 		const scope = await withOrgScope(ctx);
-		await requireFleetDoor(ctx, scope, "missionTemplates:softDelete", {
-			masterOnly: true,
-		});
+		if (!scope.isMaster) {
+			throw new ConvexError(
+				"RBAC_DENIED: soft-deleting a mission template is a master-only operation — the mission-template catalog is shared fleet-wide, never per-org",
+			);
+		}
 
 		if (args.templateId === undefined && args.name === undefined) {
 			throw new Error("Provide either templateId or name");
@@ -496,6 +496,9 @@ export const instantiateTemplateIntoMission = mutation({
 			}
 		}
 		const now = Date.now();
+		// The tasks' tenant: a member's is its own verified org (the mission was just
+		// proved to be in it); the fleet's is the target mission's.
+		const taskOrgId = fleet ? mission.orgId : (scope.orgSlug ?? undefined);
 		// Who created the tasks: the named acting identity, else the fleet's own
 		// word for a fleet call, else the verified member (never the fleet word).
 		const createdBy =
@@ -550,7 +553,7 @@ export const instantiateTemplateIntoMission = mutation({
 				// split them if a master caller instantiated into a client's
 				// mission (the children would become fleet rows inside a client
 				// mission, invisible to the client that owns the parent).
-				orgId: mission.orgId,
+				orgId: taskOrgId,
 				...(await taskActorIdFields(ctx, mission.orgId, {
 					createdBy,
 					assignedTo: step.assignedTo ?? mission.pilot,
