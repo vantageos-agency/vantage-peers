@@ -27,6 +27,7 @@ import {
 import { actorIdResolver } from "./actorIds";
 import type { OrgScope, VerifiedActor } from "./auth";
 import { orgRefOfRow, orgRefOfScope } from "./authOrgMapping";
+import { agentListedOnRoster, rosterOf } from "./rosterIds";
 
 type Ctx = QueryCtx | MutationCtx;
 
@@ -231,7 +232,8 @@ async function targetsOf(ctx: Ctx, rows: Doc<"profiles">[]): Promise<Target[]> {
  *     the package drops another organisation's rows, the operator org's rows for
  *     a client agent and every unstamped row, and refuses on a failed lookup;
  *   - an ordinary member: the row's agent must sit in the member's organisation,
- *     compared by org ID (`sameOrg`); a row with no agent belongs to nobody;
+ *     compared by org ID (`sameOrg`) AND be on the member's roster by agent ID
+ *     (`allowedAgentIds`); a row with no agent belongs to nobody;
  *
  * The fleet master with no acting agent is NOT judged here: its existing grant
  * (every row) is applied by the caller, which does not call this.
@@ -254,17 +256,31 @@ export async function visibleProfiles(
 		if (!verdict.ok) return refuseWith(verdict.refusal);
 		return verdict.rows.map((t) => t.row);
 	}
-	return targets
-		.filter(
-			(t) =>
-				t.agent !== null &&
-				sameOrg(
-					orgRefOfRow({
-						orgId: t.agent.orgSlug,
-						clerkOrgId: t.agent.clerkOrgId,
-					}),
-					orgRefOfScope(scope),
-				),
-		)
-		.map((t) => t.row);
+	// A member is served a row only if its agent sits in the member's org AND is an
+	// entry of the member's roster (`allowedAgentIds`), both judged by stored ID;
+	// the roster check is the package's `assertPrincipalListed` (rosterIds.ts).
+	const served: Doc<"profiles">[] = [];
+	for (const t of targets) {
+		if (
+			t.agent === null ||
+			!sameOrg(
+				orgRefOfRow({
+					orgId: t.agent.orgSlug,
+					clerkOrgId: t.agent.clerkOrgId,
+				}),
+				orgRefOfScope(scope),
+			) ||
+			scope.orgSlug === null
+		) {
+			continue;
+		}
+		const listed = await agentListedOnRoster(
+			ctx,
+			{ agentId: t.agent._id, agentOrgId: scope.orgSlug },
+			rosterOf(scope.orgSlug, scope.allowedAgentIds),
+			door,
+		);
+		if (listed.ok) served.push(t.row);
+	}
+	return served;
 }
