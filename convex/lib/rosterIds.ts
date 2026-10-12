@@ -53,15 +53,16 @@ export async function agentListedOnRoster(
 	return { ok: true, principal: resolved.principal };
 }
 
-// A bound on the agents read for one organisation's roster. An org with more
-// agents than this has the surplus unseen, which fails closed (not listed).
+// A bound on the roster entries read for one organisation. An org whose roster
+// holds more IDs than this has the surplus unseen, which fails closed (not listed).
 export const ROSTER_AGENT_SCAN_CAP = 500;
 
 /**
  * The agents of organisation `orgSlug` that its stored ID roster lists, each
- * judged by `resolveActingPrincipal` + `assertPrincipalListed` over ONE indexed
- * read of the org's agents (no read per ID). An unlisted, inactive or foreign
- * agent is dropped; nothing is matched by a name.
+ * judged by `resolveActingPrincipal` + `assertPrincipalListed`. The roster IS
+ * the list of IDs, so each entry is read as ONE keyed probe of the primary-key
+ * index (`by_id`), never a scan of the org's agents. An unlisted, inactive,
+ * unknown or foreign agent is dropped; nothing is matched by a name.
  */
 export async function listedAgentsOfOrg(
 	ctx: Ctx,
@@ -70,16 +71,21 @@ export async function listedAgentsOfOrg(
 	door: string,
 ): Promise<Doc<"agents">[]> {
 	if (rosterIds.length === 0) return [];
-	const agents = await ctx.db
-		.query("agents")
-		.withIndex("by_org_normalized_name", (q) => q.eq("orgSlug", orgSlug))
-		.take(ROSTER_AGENT_SCAN_CAP);
-	const listed = new Set<string>(rosterIds);
+	const agents: Doc<"agents">[] = [];
+	for (const entry of new Set(rosterIds)) {
+		if (agents.length >= ROSTER_AGENT_SCAN_CAP) break;
+		const id = ctx.db.normalizeId("agents", entry);
+		if (id === null) continue;
+		const agent = await ctx.db
+			.query("agents")
+			.withIndex("by_id", (q) => q.eq("_id", id))
+			.unique();
+		if (agent !== null && agent.orgSlug === orgSlug) agents.push(agent);
+	}
 	const lookups = principalLookupsOverAgents(ctx, agents);
 	const list = rosterOf(orgSlug, rosterIds);
 	const out: Doc<"agents">[] = [];
 	for (const agent of agents) {
-		if (!listed.has(agent._id)) continue;
 		const resolved = await resolveActingPrincipal(
 			{ kind: "agent", agentId: agent._id, verifiedOrgId: orgSlug },
 			lookups,

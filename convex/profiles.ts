@@ -115,38 +115,50 @@ async function findProfileForCaller(
   door: string,
 ): Promise<Doc<"profiles"> | null> {
   const fleetRead = actor === undefined && scope.isMaster;
-  let candidates: Doc<"profiles">[] = [];
-  if (args.instanceId !== undefined) {
-    candidates = await ctx.db
-      .query("profiles")
-      .withIndex("by_instance", (q) => q.eq("instanceId", args.instanceId!))
-      .take(PROFILE_CANDIDATE_CAP);
-  } else if (args.orchestratorId !== undefined) {
-    if (fleetRead) {
-      // Returns first match — for role-level lookup when only one instance exists
-      candidates = await ctx.db
-        .query("profiles")
-        .withIndex("by_orchestrator", (q) =>
-          q.eq("orchestratorId", args.orchestratorId!),
-        )
-        .take(1);
-    } else {
-      const orgSlug = actor !== undefined ? actor.agent.orgSlug : scope.orgSlug;
-      const agentId =
-        orgSlug === null
-          ? undefined
-          : await agentIdOfLabel(ctx, orgSlug, args.orchestratorId);
-      if (agentId !== undefined) {
-        candidates = await ctx.db
-          .query("profiles")
-          .withIndex("by_agent", (q) => q.eq("agentId", agentId))
-          .take(PROFILE_CANDIDATE_CAP);
-      }
+  // ONE row is returned, so no candidate page is read: the matching rows are
+  // streamed and the first the caller may see ends the read (the fleet master's
+  // first row, unjudged). At most PROFILE_CANDIDATE_CAP rows are looked at.
+  const firstServed = async (
+    rows: AsyncIterable<Doc<"profiles">>,
+  ): Promise<Doc<"profiles"> | null> => {
+    let seen = 0;
+    for await (const row of rows) {
+      if (fleetRead) return row;
+      const visible = await visibleProfiles(ctx, scope, actor, [row], door);
+      if (visible.length > 0) return visible[0];
+      seen += 1;
+      if (seen >= PROFILE_CANDIDATE_CAP) break;
     }
+    return null;
+  };
+  if (args.instanceId !== undefined) {
+    return await firstServed(
+      ctx.db
+        .query("profiles")
+        .withIndex("by_instance", (q) => q.eq("instanceId", args.instanceId!)),
+    );
   }
-  if (fleetRead) return candidates[0] ?? null;
-  const visible = await visibleProfiles(ctx, scope, actor, candidates, door);
-  return visible[0] ?? null;
+  if (args.orchestratorId === undefined) return null;
+  if (fleetRead) {
+    // Returns first match — for role-level lookup when only one instance exists
+    return await ctx.db
+      .query("profiles")
+      .withIndex("by_orchestrator", (q) =>
+        q.eq("orchestratorId", args.orchestratorId!),
+      )
+      .first();
+  }
+  const orgSlug = actor !== undefined ? actor.agent.orgSlug : scope.orgSlug;
+  const agentId =
+    orgSlug === null
+      ? undefined
+      : await agentIdOfLabel(ctx, orgSlug, args.orchestratorId);
+  if (agentId === undefined) return null;
+  return await firstServed(
+    ctx.db
+      .query("profiles")
+      .withIndex("by_agent", (q) => q.eq("agentId", agentId)),
+  );
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

@@ -123,17 +123,25 @@ async function ownDiaryRow(
 ): Promise<Doc<"diary"> | null> {
 	const tenant = await callerTenant(ctx, scope);
 	for (const key of tenant.keys) {
-		const rows = await ctx.db
+		// One row is wanted: the range is streamed and the first row the package
+		// says the caller owns ends the read. At most DIARY_OWN_ROW_SCAN rows are
+		// looked at (the range is a handful of rows a day); beyond that it fails
+		// closed (no row).
+		let seen = 0;
+		for await (const row of ctx.db
 			.query("diary")
 			.withIndex("by_org_orchestrator_date_clerk_id", (q) =>
 				q.eq("clerkOrgId", key).eq("orchestrator", orchestrator).eq("date", date),
-			)
-			.take(8);
-		const own = rows.find(tenant.owns);
-		if (own !== undefined) return own;
+			)) {
+			if (tenant.owns(row)) return row;
+			seen += 1;
+			if (seen >= DIARY_OWN_ROW_SCAN) break;
+		}
 	}
 	return null;
 }
+
+const DIARY_OWN_ROW_SCAN = 8;
 
 // One (tenant, orchestrator) range is a handful of rows a day; the bound keeps a
 // range read from being unbounded and fails closed beyond it.
