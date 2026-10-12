@@ -1252,6 +1252,29 @@ export const licenseNoLookup = query({
         cx = root5 / "convex"
         (cx / "_generated").mkdir(parents=True)
         (cx / "_generated" / "api.d.ts").write_text('import type * as j from "../j.js";\n')
+        (cx / "_generated" / "api.d.ts").write_text('import type * as j from "../j.js";\nimport type * as s from "../s.js";\n')
+        # s.ts: the resolver's NAME without the package — a local namesake, and an
+        # aliased import of the real one.
+        (cx / "s.ts").write_text("""import { query } from "./_generated/server";
+import { resolveCaller as fromPackage } from "@vantageos/cloud-identity";
+
+async function resolveCaller(claims: unknown, deps: unknown) {
+\treturn { claims, deps };
+}
+
+export const localNamesake = query({
+\targs: {},
+\thandler: async (ctx) => {
+\t\tawait resolveCaller(await ctx.auth.getUserIdentity(), {});
+\t\treturn ctx.db.query("t").collect();
+\t},
+});
+
+export const aliasedImport = query({
+\targs: {},
+\thandler: async (ctx) => fromPackage(await ctx.auth.getUserIdentity(), {}),
+});
+""")
         (cx / "j.ts").write_text("""import { query } from "./_generated/server";
 import { notAResolver, resolveCaller } from "@vantageos/cloud-identity";
 
@@ -1295,6 +1318,8 @@ export const untaggedHandoff = query({
         check(st5.get("castHandoff") == "resolves-a-caller" and via5["castHandoff"] == "package-resolver:resolveCaller", "inline hand-off with an `as` cast -> resolves")
         check(st5.get("boundHandoff") == "resolves-a-caller" and via5["boundHandoff"] == "package-resolver:resolveCaller", "hand-off through a bound name -> resolves")
         check(st5.get("untaggedHandoff") == "does-not-resolve" and via5["untaggedHandoff"] == "identity-consulted-not-gated", "hand-off to an untagged function -> does-not-resolve")
+        check(st5.get("localNamesake") == "does-not-resolve" and via5["localNamesake"] == "identity-consulted-not-gated", "a LOCAL function named like a resolver -> does-not-resolve (the name proves nothing)")
+        check(st5.get("aliasedImport") == "resolves-a-caller" and via5["aliasedImport"] == "package-resolver:resolveCaller", "an aliased import of a @callerResolver -> resolves, under its original name")
         # the same tree without the package: refused to judge, naming why
         nm = root5 / "node_modules"
         nm.rename(root5 / "node_modules.off")
