@@ -26,6 +26,7 @@ import {
 	readdirSync,
 	readFileSync,
 	rmSync,
+	symlinkSync,
 	writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
@@ -104,7 +105,13 @@ afterAll(() => {
 	for (const d of scratch) rmSync(d, { recursive: true, force: true });
 });
 
-/** A copy of the corpus: non-test sources plus the generated api.d.ts. */
+/**
+ * A copy of the corpus: non-test sources plus the generated api.d.ts, beside a
+ * link to the installed identity package. The instrument derives the package's
+ * caller resolvers from its `@callerResolver` tags; without the package it
+ * refuses to judge a hand-off (the absent-package pole is the instrument's own
+ * self-test).
+ */
 function copyCorpus(): string {
 	const dir = mkdtempSync(join(tmpdir(), "resolves-caller-corpus-"));
 	scratch.push(dir);
@@ -129,6 +136,11 @@ function copyCorpus(): string {
 		}
 	};
 	walk("");
+	mkdirSync(join(dir, "node_modules", "@vantageos"), { recursive: true });
+	symlinkSync(
+		join(REPO_ROOT, "node_modules", "@vantageos", "cloud-identity"),
+		join(dir, "node_modules", "@vantageos", "cloud-identity"),
+	);
 	return dest;
 }
 
