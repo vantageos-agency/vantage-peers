@@ -6,17 +6,13 @@
 // `setClerkOrgId`) used to open their own `.query("client_org_mapping")`; they now
 // read through the adapter.
 //
-// Two poles:
-//   1. SOURCE: clientOrgMapping.ts opens no query on the table; the adapter
-//      exports the two reads those instruments need.
-//   2. BEHAVIOUR (unchanged by the move): the list includes inactive rows and
-//      carries `orgKind` defaulted to "client"; `setClerkOrgId` refuses an id
-//      that another row already holds, even when two rows already share it.
+// Where the table is read is measured by backend-doctor (CR-2, R-53), not here:
+// a source scan would know one spelling of the read. These tests pin the
+// BEHAVIOUR the move must keep: the list includes inactive rows and carries
+// `orgKind` defaulted to "client"; `setClerkOrgId` refuses an id that another
+// row already holds, even when two rows already share it.
 // Hermetic: no deployment is touched. Fictitious identifiers only.
 
-import { readFileSync } from "node:fs";
-import { dirname, join } from "node:path";
-import { fileURLToPath } from "node:url";
 import { describe, expect, test } from "vitest";
 import { internal } from "../_generated/api";
 import schema from "../schema";
@@ -28,8 +24,6 @@ const modules = Object.fromEntries(
 	),
 );
 const NOW = 1_700_000_000_000;
-const here = dirname(fileURLToPath(import.meta.url));
-const source = (rel: string) => readFileSync(join(here, rel), "utf8");
 
 const createT = () => convexTest(schema, modules);
 type T = ReturnType<typeof createT>;
@@ -53,19 +47,6 @@ async function seed(t: T) {
 		await row("fresh");
 	});
 }
-
-describe("client_org_mapping is read through the adapter only", () => {
-	test("source: clientOrgMapping.ts opens no query on the table", () => {
-		const src = source("../clientOrgMapping.ts");
-		expect(src).not.toMatch(/\.query\(\s*["']client_org_mapping["']\s*\)/);
-	});
-
-	test("source: the adapter exports the two reads the fill instruments use", () => {
-		const src = source("../lib/authOrgMapping.ts");
-		expect(src).toMatch(/export async function orgMappingRowsForClerkOrgId\b/);
-		expect(src).toMatch(/export async function listOrgMappings\b/);
-	});
-});
 
 describe("fill instruments keep their behaviour", () => {
 	test("listMappingsForClerkIdFill lists every row, inactive included, orgKind defaulted", async () => {
