@@ -1,3 +1,4 @@
+import { sameOrg } from "@vantageos/cloud-identity";
 import { v } from "convex/values";
 import { ConvexError } from "convex/values";
 import {
@@ -8,14 +9,14 @@ import {
 	query,
 } from "./_generated/server";
 import { creatorValidator } from "./schema";
-import {
-	requireOrchestratorOnRoster,
-	requireResolvedCaller,
-	withOrgScope,
-} from "./lib/auth";
-import type { OrgScope } from "./lib/auth";
+import { requireResolvedCaller, withOrgScope } from "./lib/auth";
+import { orgRefOfRow, orgRefOfScope } from "./lib/authOrgMapping";
 import { taskActorIdFields } from "./lib/actorIds";
+import { hasFleetStanding, requireFleetDoor } from "./lib/fleetStanding";
+import { memberActorOf } from "./lib/humanActor";
 import { clerkOrgIdForSlug } from "./lib/orgClerkId";
+import { requireLabelOnScopeRoster } from "./lib/rosterLabels";
+import { requireMemberWriterRole } from "./memberWriterRoles";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Fail-closed multi-tenant fix (defect class: authority attached to an
@@ -49,19 +50,14 @@ import { clerkOrgIdForSlug } from "./lib/orgClerkId";
 // so unlike upsert/softDelete it is not master-restricted (Beta org
 // clients legitimately use it against their OWN missions, mirroring the
 // MCP tool's "filtered", not master-only, guard kind). Authority is
-// derived from the TARGET MISSION's stored `orgId` against the caller's
-// verified scope (same isOrgAllowedForScope shape as convex/missions.ts
-// and convex/briefingNotes.ts), never from a caller-supplied argument.
+// derived from the TARGET MISSION's stored org ID against the caller's
+// verified org ID (the package's `sameOrg`), never from a caller-supplied
+// argument; a member also needs a writer role, and every step assignee must be
+// an agent of its own org on its roster BY ID (M10g).
+//
+// "Is the caller the fleet?" is the package's `fleet` standing
+// (lib/fleetStanding.ts), not a flag read off the resolved scope.
 // ─────────────────────────────────────────────────────────────────────────────
-
-function isMissionAllowedForScope(
-	scope: OrgScope,
-	orgId: string | undefined,
-): boolean {
-	if (scope.isMaster) return true;
-	if (scope.orgSlug === null) return false;
-	return orgId === scope.orgSlug;
-}
 
 // missionTemplates is a small, curated table (one row per named template);
 // 1000 is a generous ceiling well above any realistic template count.
@@ -194,10 +190,13 @@ export const listNames = query({
 		// signed-in-but-not-yet-onboarded caller's throw to crash, and that caller
 		// must not be handed a fabricated absence either.
 		const scope = await withOrgScope(ctx, { refuseWithoutThrow: true });
-		requireResolvedCaller(scope, "missionTemplates:listNames", {
-			alsoRefusePreOrg: true,
-		});
-		if (!scope.isMaster) return [];
+		const fleet = await requireFleetDoor(
+			ctx,
+			scope,
+			"missionTemplates:listNames",
+			{ alsoRefusePreOrg: true, operatorHumanMayRead: true },
+		);
+		if (!fleet) return [];
 
 		const templates = await ctx.db
 			.query("missionTemplates")
@@ -443,12 +442,10 @@ export const instantiateTemplateIntoMission = mutation({
 		// update): an anonymous caller must get RBAC_DENIED, never "Mission
 		// not found" — a get-then-scope order lets missionId existence act
 		// as an unauthenticated existence oracle.
+		const door = "missionTemplates:instantiateTemplateIntoMission";
 		const scope = await withOrgScope(ctx);
-		if (!scope.isMaster && scope.orgSlug === null) {
-			throw new ConvexError(
-				`RBAC_DENIED: caller may not instantiate a mission template — ${JSON.stringify({ orgSlug: null })}`,
-			);
-		}
+		requireResolvedCaller(scope, door, { alsoRefusePreOrg: true });
+		const fleet = await hasFleetStanding(ctx, door);
 
 		// 1. Fetch template
 		const template = await ctx.db
@@ -469,25 +466,43 @@ export const instantiateTemplateIntoMission = mutation({
 		// The template catalog is shared/global (no orgId to check), but the
 		// TARGET MISSION is org-scoped — a caller may only fan tasks out
 		// into its OWN org's mission, never a foreign org's, regardless of
-		// which (shared) template name it names.
-		if (!isMissionAllowedForScope(scope, mission.orgId)) {
+		// which (shared) template name it names. The org is compared by ID.
+		if (!fleet && !sameOrg(orgRefOfRow(mission), orgRefOfScope(scope))) {
 			throw new ConvexError(
-				`RBAC_DENIED: caller may not instantiate a template into mission ${args.missionId} (orgId "${mission.orgId ?? "none"}") — ${JSON.stringify({ orgSlug: scope.orgSlug })}`,
+				`RBAC_DENIED: caller may not instantiate a template into mission ${args.missionId} — ${JSON.stringify({ orgSlug: scope.orgSlug, door, reason: "mission-not-in-caller-org" })}`,
 			);
 		}
 
-		// The acting identity, when named, must be on the caller's own roster.
-		// Omitted stays "system" (unchanged: nothing is claimed).
-		if (args.callerOrchestrator !== undefined) {
-			requireOrchestratorOnRoster(
-				scope,
-				args.callerOrchestrator,
-				"missionTemplates:instantiateTemplateIntoMission",
-				"actor",
-			);
+		// A member writes only with a writer role, names an acting identity only
+		// from its own roster, and may assign a step only to an agent of its own
+		// org on its roster -- all by agent ID. The fleet keeps what it had.
+		const assigneeLabels = new Set<string>();
+		for (const step of template.steps) {
+			assigneeLabels.add(step.assignedTo ?? mission.pilot);
+		}
+		if (!fleet) {
+			await requireMemberWriterRole(ctx, scope, door);
+			if (args.callerOrchestrator !== undefined) {
+				await requireLabelOnScopeRoster(
+					ctx,
+					scope,
+					args.callerOrchestrator,
+					"actor",
+					door,
+				);
+			}
+			for (const label of assigneeLabels) {
+				await requireLabelOnScopeRoster(ctx, scope, label, "assignee", door);
+			}
 		}
 		const now = Date.now();
-		const createdBy = args.callerOrchestrator ?? "system";
+		// The tasks' tenant: a member's is its own verified org (the mission was just
+		// proved to be in it); the fleet's is the target mission's.
+		const taskOrgId = fleet ? mission.orgId : (scope.orgSlug ?? undefined);
+		// Who created the tasks: the named acting identity, else the fleet's own
+		// word for a fleet call, else the verified member (never the fleet word).
+		const createdBy =
+			args.callerOrchestrator ?? (fleet ? "system" : memberActorOf(scope));
 
 		// Copy the template's brief onto the mission ONLY when the mission
 		// doesn't already carry one. Instance-specific fields supplied by the
@@ -538,7 +553,7 @@ export const instantiateTemplateIntoMission = mutation({
 				// split them if a master caller instantiated into a client's
 				// mission (the children would become fleet rows inside a client
 				// mission, invisible to the client that owns the parent).
-				orgId: mission.orgId,
+				orgId: taskOrgId,
 				...(await taskActorIdFields(ctx, mission.orgId, {
 					createdBy,
 					assignedTo: step.assignedTo ?? mission.pilot,

@@ -35,6 +35,7 @@ import { ConvexError } from "convex/values";
 import { convexTest } from "../../tests/fixtures/convexTestWithServiceAccount";
 import { describe, expect, test } from "vitest";
 import { testClerkOrgId } from "../../tests/fixtures/testClerkOrgId";
+import { seedRosterAgents } from "../../tests/lib/seedRosterAgents";
 import { api } from "../_generated/api";
 import schema from "../schema";
 
@@ -191,7 +192,17 @@ async function seedNotes(t: T): Promise<void> {
 	});
 }
 
-const buRow = (orchestratorId: string, name: string, status = "live") => ({
+// A unit as the doors write it since M10f: stamped with its org (slug and ID)
+// and owned by the lead agent BY ID.
+const buRow = (
+	orchestratorId: string,
+	name: string,
+	status = "live",
+	owner?: { org: string; ownerId: string },
+) => ({
+	...(owner !== undefined
+		? { ownerId: owner.ownerId, ...orgOf(owner.org) }
+		: {}),
 	name,
 	description: "d",
 	purpose: "p",
@@ -217,18 +228,26 @@ const buRow = (orchestratorId: string, name: string, status = "live") => ({
 });
 
 async function seedBusinessUnits(t: T): Promise<void> {
+	// Each roster name is an agent of its org, on the org's roster by ID.
+	const agents = await seedRosterAgents(t);
 	await t.run(async (ctx) => {
 		// The three own units are the OLDEST; twenty-five foreign ones are newer.
 		for (let i = 0; i < 3; i++) {
 			await ctx.db.insert(
 				"businessUnits",
-				buRow(OWN_ROSTER, `own-bu-${i}`, i === 0 ? "idea" : "live"),
+				buRow(OWN_ROSTER, `own-bu-${i}`, i === 0 ? "idea" : "live", {
+					org: OWN,
+					ownerId: agents[`${OWN}/${OWN_ROSTER}`],
+				}),
 			);
 		}
 		for (let i = 0; i < 25; i++) {
 			await ctx.db.insert(
 				"businessUnits",
-				buRow(FOREIGN_ROSTER, `foreign-bu-${i}`),
+				buRow(FOREIGN_ROSTER, `foreign-bu-${i}`, "live", {
+					org: FOREIGN,
+					ownerId: agents[`${FOREIGN}/${FOREIGN_ROSTER}`],
+				}),
 			);
 		}
 	});
@@ -881,17 +900,51 @@ describe("businessUnits:list — a member's page is read from its roster's range
 		const t = createT();
 		await seedMappings(t);
 		await seedBusinessUnits(t);
+		// The fleet's own unit: owned by the operator org's agent "sigma" by ID. An
+		// orchestrator asked for by the fleet is a label in the OPERATOR org (the
+		// same label in a client org is a different agent).
+		await t.run(async (ctx) => {
+			const operatorId = testClerkOrgId("scope-op");
+			await ctx.db.insert("client_org_mapping", {
+				clerkOrgSlug: "scope-op",
+				clerkOrgId: operatorId,
+				allowedOrchestrators: [],
+				scopes: [],
+				displayName: "scope-op",
+				isActive: true,
+				createdAt: Date.now(),
+				orgKind: "operator",
+			});
+			const sigma = await ctx.db.insert("agents", {
+				orgSlug: "scope-op",
+				clerkOrgId: operatorId,
+				name: "sigma",
+				normalizedName: "sigma",
+				isActive: true,
+				createdAt: Date.now(),
+			});
+			await ctx.db.insert("businessUnits", {
+				...buRow("sigma", "fleet-bu", "idea"),
+				ownerId: sigma,
+			});
+		});
 		const all = await asService(t).query(api.businessUnits.list, {
 			limit: 200,
 			fields: "lite",
 		});
-		expect(all.items).toHaveLength(28);
+		expect(all.items).toHaveLength(29);
 		const idea = await asService(t).query(api.businessUnits.list, {
-			orchestratorId: OWN_ROSTER,
+			orchestratorId: "sigma",
 			status: "idea",
 			fields: "lite",
 		});
-		expect(idea.items.map((u) => u.name)).toEqual(["own-bu-0"]);
+		expect(idea.items.map((u) => u.name)).toEqual(["fleet-bu"]);
+		// A client org's agent label names nobody in the operator org.
+		const clientLabel = await asService(t).query(api.businessUnits.list, {
+			orchestratorId: OWN_ROSTER,
+			fields: "lite",
+		});
+		expect(clientLabel.items).toEqual([]);
 	});
 });
 

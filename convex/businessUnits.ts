@@ -1,48 +1,103 @@
 import { v, ConvexError } from "convex/values";
 import type { Doc } from "./_generated/dataModel";
+import type { MutationCtx, QueryCtx } from "./_generated/server";
 import { mutation, query } from "./_generated/server";
-import { sameOrg, sameTenantStamp } from "@vantageos/cloud-identity";
+import {
+	isFleetStamp,
+	sameOrg,
+	sameTenantStamp,
+} from "@vantageos/cloud-identity";
 import { requireId } from "./lib/ids";
 import {
 	requireResolvedCaller,
 	type OrgScope,
 	withOrgScope,
 } from "./lib/auth";
+import { hasFleetStanding, requireFleetDoor } from "./lib/fleetStanding";
 import { isFleetSystemCaller } from "./lib/systemCaller";
 import { fleetOperatorRef } from "./lib/operatorOrg";
 import { orgRefOfRow, orgRefOfScope } from "./lib/authOrgMapping";
 import {
+	agentIdOfLabelInOrg,
+	isAgentOnScopeRoster,
+	isAgentOwnerOfRow,
+	type LabelOrg,
+	requireLabelOnScopeRoster,
+} from "./lib/rosterLabels";
+import {
+	resolveVerifiedOrgMapping,
 	resolveVerifiedOrgScope,
 	verifiedOrgValidator,
 } from "./lib/verifiedOrg";
+import { requireMemberWriterRole } from "./memberWriterRoles";
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Org-scope orchestrator enforcement (same defect class as convex/diary.ts's
-// / convex/messages.ts's isOrchestratorAllowedForScope — see
-// .claude/rules/authority-attached-to-anonymous-object.md). `create` used to
-// insert whatever `orchestratorId` the caller supplied with NO identity/scope
-// check at all; `update` authorized solely on a client-supplied
-// `callerOrchestrator` STRING ARGUMENT (an assertion, never a verified
-// identity) — a caller could claim the literal string "system" and rewrite
-// or reassign ANY organisation's business unit; `remove` performed no check
-// whatsoever. A direct call to the public Convex deployment (bypassing the
-// MCP server's guardFrom/guardMasterOnly layer, which is not a defence for
-// this class) could create a BU under any org, reassign one across orgs, or
-// delete any org's BU. Master scope (the recognized service-account
-// identity the MCP server always presents, or the legacy no-identity opt-in)
-// retains unrestricted access — preserves existing MCP-server behaviour
-// unchanged. A Clerk-org-scoped caller may only write a BU whose
-// `orchestratorId` is in its own client_org_mapping row's
-// allowedOrchestrators.
+// Business units decide on AGENT IDs and ORG IDs, never on names (module M10f).
+//
+// A unit stores its lead orchestrator as an agents-row ID (`ownerId`, the agent
+// `orchestratorId` names in the unit's own organisation; the operator org for a
+// fleet-owned unit). `orchestratorId` stays the display label. Every decision
+// is the package's (@vantageos/cloud-identity), reached through the repo's
+// adapters:
+//   - which organisation a unit is in: `sameOrg` / `sameTenantStamp` over the
+//     stored org IDs (never a slug);
+//   - whether an agent is on the caller's roster: `assertPrincipalListed` over
+//     `allowedAgentIds` (lib/rosterLabels.ts, lib/rosterIds.ts);
+//   - whether the caller is the fleet: the package's `fleet` standing
+//     (lib/fleetStanding.ts), not a flag read off the resolved scope;
+//   - whether a member may write at all: the writer-role allowlist held as data
+//     (memberWriterRoles.ts, `resolveWriterRole` in the package).
+//
+// History (authority attached to an anonymously-registered object, see
+// .claude/rules/authority-attached-to-anonymous-object.md): `create` used to
+// insert whatever `orchestratorId` the caller supplied with no check at all;
+// `update` authorized solely on a client-supplied `callerOrchestrator` STRING;
+// `remove` performed no check. A Clerk-org member may now only write a unit
+// whose owner is an agent of its own roster, and only with a writer role.
 // ─────────────────────────────────────────────────────────────────────────────
 
-function isOrchestratorAllowedForScope(
+// The organisation a unit's labels are looked up in: its own stamp (slug and
+// permanent ID), or the operator org for a fleet-owned, unstamped unit.
+function orgOfRow(row: { orgId?: string; clerkOrgId?: string }): LabelOrg {
+	return {
+		orgSlug: row.orgId ?? null,
+		...(row.clerkOrgId !== undefined ? { clerkOrgId: row.clerkOrgId } : {}),
+	};
+}
+
+// The organisation of a verified member scope.
+function orgOfScope(scope: OrgScope): LabelOrg {
+	return {
+		orgSlug: scope.orgSlug,
+		...(scope.orgClerkId !== undefined ? { clerkOrgId: scope.orgClerkId } : {}),
+	};
+}
+
+/**
+ * Does an ORG MEMBER see this unit? The unit's organisation is the caller's (by
+ * org ID, the package's `sameTenantStamp`) AND its owner is on the caller's
+ * roster by agent ID. A unit with no stored owner names nobody and is withheld
+ * until migrations/backfill_business_unit_owner_ids has filled it.
+ */
+async function memberMaySeeUnit(
+	ctx: QueryCtx,
 	scope: OrgScope,
-	orchestratorId: string,
-): boolean {
-	if (scope.isMaster) return true;
-	if (scope.orgSlug === null) return false;
-	return scope.allowedOrchestrators.includes(orchestratorId);
+	bu: Doc<"businessUnits">,
+	door: string,
+): Promise<boolean> {
+	if (
+		!sameTenantStamp(
+			orgRefOfRow(bu),
+			orgRefOfScope(scope),
+			await fleetOperatorRef(ctx.db),
+		)
+	) {
+		return false;
+	}
+	return (
+		bu.ownerId !== undefined &&
+		(await isAgentOnScopeRoster(ctx, scope, bu.ownerId, door))
+	);
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -93,6 +148,7 @@ const buObject = v.object({
 	updatedAt: v.number(),
 	orgId: v.optional(v.string()),
 	clerkOrgId: v.optional(v.string()),
+	ownerId: v.optional(v.string()),
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -117,21 +173,61 @@ export const create = mutation({
 		dependencies: v.array(v.string()),
 		kpis: v.array(v.string()),
 		managementFee: v.optional(v.number()),
+		// The organisation the MCP transport VERIFIED for a bearer that reaches
+		// Convex as the fleet service account (convex/lib/verifiedOrg.ts), believed
+		// from the service account only. The door then acts as that org's member,
+		// never as the fleet; the bearer's writer tier is the MCP guard's.
+		verifiedOrg: v.optional(verifiedOrgValidator),
 	},
 	returns: v.id("businessUnits"),
 	handler: async (ctx, args) => {
 		// write-contract: MCP-transport-only — issued via mcp-server client.mutation("businessUnits:create", …) at mcp-server/src/tools.ts:7477 (imperative), 0 hits in vantage-peers-dashboard {app,components,hooks,lib,contexts,providers} (measured 2026-10-01 at origin/main e2dc58f and 0466fac); never a subscribing pre-org client shell. The no-org throw is a refusal at an imperative MCP call, never at a render.
-		// Fail-closed multi-tenant fix (defect class: authority attached to
-		// an anonymously-registered object — see
-		// .claude/rules/authority-attached-to-anonymous-object.md). withOrgScope
-		// is called WITHOUT allowNoIdentityMaster — the MCP server always
-		// presents a real Clerk identity (the caller's own org JWT or its
-		// service-account token), so the fail-closed default here never
-		// breaks that live path.
-		const scope = await withOrgScope(ctx);
-		if (!isOrchestratorAllowedForScope(scope, args.orchestratorId)) {
-			throw new ConvexError(
-				`RBAC_DENIED: caller may not create a business unit for orchestrator "${args.orchestratorId}" — ${JSON.stringify({ orgSlug: scope.orgSlug })}`,
+		// withOrgScope is called WITHOUT allowNoIdentityMaster: the MCP server
+		// always presents a real identity (the caller's own org JWT or its
+		// service-account token), so the fail-closed default never breaks that
+		// live path. An anonymous caller is refused by raising.
+		const door = "businessUnits:create";
+		const transportScope = await withOrgScope(ctx);
+		requireResolvedCaller(transportScope, door, { alsoRefusePreOrg: true });
+		// The org a bearer acts for is the ACTIVE mapping the transport's claim
+		// names, believed from the service account only (the guarded helper refuses
+		// anyone else). The scope this door writes the tenant stamp from is the one
+		// `withOrgScope` itself returns for that mapping: the stamp is the verified
+		// scope's, never the claim's.
+		const actingMapping = await resolveVerifiedOrgMapping(
+			ctx,
+			transportScope,
+			args.verifiedOrg,
+			door,
+		);
+		let scope = transportScope;
+		if (actingMapping !== undefined) {
+			scope = await withOrgScope(ctx, {
+				refuseWithoutThrow: true,
+				actForOrgMapping: actingMapping,
+			});
+		}
+		const acting = actingMapping !== undefined;
+		const fleet = !acting && (await hasFleetStanding(ctx, door));
+		// The owner BY ID. A member names an agent of its OWN org that is on its
+		// roster by ID, with a writer role; the fleet resolves the label in the
+		// operator org (a label with no agent there leaves the column unset).
+		let ownerId: string | undefined;
+		if (fleet) {
+			ownerId = await agentIdOfLabelInOrg(
+				ctx,
+				{ orgSlug: null },
+				args.orchestratorId,
+				door,
+			);
+		} else {
+			if (!acting) await requireMemberWriterRole(ctx, scope, door);
+			ownerId = await requireLabelOnScopeRoster(
+				ctx,
+				scope,
+				args.orchestratorId,
+				"owner",
+				door,
 			);
 		}
 
@@ -153,11 +249,12 @@ export const create = mutation({
 			dependencies: args.dependencies,
 			kpis: args.kpis,
 			managementFee: args.managementFee ?? 10,
+			...(ownerId !== undefined ? { ownerId } : {}),
 			createdAt: now,
 			updatedAt: now,
 			// R-52 tenant stamp, derived from the verified scope and never from an
-			// argument. A master write is fleet-owned (unstamped), as `tasks` does.
-			...(scope.isMaster || scope.orgSlug === null
+			// argument. A fleet write is fleet-owned (unstamped), as `tasks` does.
+			...(fleet || scope.orgSlug === null
 				? {}
 				: {
 						orgId: scope.orgSlug,
@@ -201,40 +298,44 @@ export const update = mutation({
 		dependencies: v.optional(v.array(v.string())),
 		kpis: v.optional(v.array(v.string())),
 		managementFee: v.optional(v.number()),
+		// The organisation the MCP transport VERIFIED for a bearer that reaches
+		// Convex as the fleet service account (convex/lib/verifiedOrg.ts), believed
+		// from the service account only. The door then acts as that org's member,
+		// never as the fleet; the bearer's writer tier is the MCP guard's.
+		verifiedOrg: v.optional(verifiedOrgValidator),
 	},
 	returns: v.null(),
 	handler: async (ctx, args) => {
 		// write-contract: MCP-transport-only — issued via mcp-server client.mutation("businessUnits:update", …) at mcp-server/src/tools.ts:7746 (imperative), never a subscribing pre-org client shell; the RBAC_DENIED throw is an R-16 refusal the MCP layer catches, not an uncaught Server Error.
 		//
-		// Fail-closed multi-tenant fix (same defect class as `create` above,
-		// and the sibling fix in convex/diary.ts): `callerOrchestrator` used
-		// to be trusted as a bare STRING ASSERTION with no identity behind
-		// it — any caller could type the literal "system" (or the target
-		// row's own orchestratorId) and rewrite, or cross-tenant-reassign,
-		// any organisation's business unit. withOrgScope resolves the
-		// VERIFIED identity BEFORE ctx.db.get (mirrors convex-reviewer
-		// REVISE on the diary/messages siblings) so a non-existent buId
-		// cannot be distinguished from an existing-but-foreign one by an
-		// unauthenticated caller.
-		const scope = await withOrgScope(ctx);
-		if (!scope.isMaster && scope.orgSlug === null) {
-			throw new ConvexError(
-				`RBAC_DENIED: caller may not update business unit ${args.buId} — ${JSON.stringify({ orgSlug: null })}`,
-			);
-		}
+		// `callerOrchestrator` is a bare STRING ASSERTION with no identity behind
+		// it, so it authorises nothing alone: withOrgScope resolves the VERIFIED
+		// identity BEFORE ctx.db.get (a non-existent buId cannot be told from an
+		// existing-but-foreign one by an unauthenticated caller), the target row
+		// decides the tenant and the owner, and the asserted label is resolved to
+		// an agent ID and judged against the row's stored owner by the package.
+		const door = "businessUnits:update";
+		const transportScope = await withOrgScope(ctx);
+		requireResolvedCaller(transportScope, door, { alsoRefusePreOrg: true });
+		const scope = await resolveVerifiedOrgScope(
+			ctx,
+			transportScope,
+			args.verifiedOrg,
+			door,
+		);
+		const acting = args.verifiedOrg !== undefined;
+		const fleet = !acting && (await hasFleetStanding(ctx, door));
 
 		const bu = await ctx.db.get(args.buId);
 		if (bu === null) {
 			throw new Error(`Business unit ${args.buId} not found`);
 		}
 
-		// R-52 — the row's own server-stamped tenant must be the caller's. The
-		// roster check below keys on a NAME that two organisations (or the fleet)
-		// can both hold; only the stamp tells their rows apart. An unstamped row is
-		// fleet-owned or not yet backfilled and is refused to every org caller.
-		// Master is unchanged.
+		// R-52 -- the row's own server-stamped tenant must be the caller's, by org
+		// ID. An unstamped row is fleet-owned or not yet backfilled and is refused to
+		// every org caller; the fleet is unchanged.
 		if (
-			!scope.isMaster &&
+			!fleet &&
 			!sameTenantStamp(
 				orgRefOfRow(bu),
 				orgRefOfScope(scope),
@@ -246,41 +347,69 @@ export const update = mutation({
 			);
 		}
 
-		// The TARGET ROW's current owner must be within the caller's scope —
-		// authorization is derived from bu.orchestratorId (what is actually
-		// being written to), never from the caller-supplied
-		// `callerOrchestrator` claim alone.
-		if (!isOrchestratorAllowedForScope(scope, bu.orchestratorId)) {
-			throw new ConvexError(
-				`RBAC_DENIED: caller may not update business unit ${args.buId} (orchestrator "${bu.orchestratorId}") — ${JSON.stringify({ orgSlug: scope.orgSlug })}`,
+		let newOwnerId: string | undefined;
+		if (!fleet) {
+			// A member writes only with a writer role (a bearer acting for its verified
+			// org carries its writer tier in the MCP guard).
+			if (!acting) await requireMemberWriterRole(ctx, scope, door);
+			// The TARGET ROW's stored owner must be on the caller's roster by agent
+			// ID -- authorization is derived from the row, never from the caller's
+			// claim.
+			if (
+				bu.ownerId === undefined ||
+				!(await isAgentOnScopeRoster(ctx, scope, bu.ownerId, door))
+			) {
+				throw new ConvexError(
+					`RBAC_DENIED: caller may not update business unit ${args.buId} — ${JSON.stringify({ orgSlug: scope.orgSlug, reason: "owner-not-on-roster" })}`,
+				);
+			}
+			// A reassignment must ALSO land on an agent of the caller's own roster.
+			if (args.orchestratorId !== undefined) {
+				newOwnerId = await requireLabelOnScopeRoster(
+					ctx,
+					scope,
+					args.orchestratorId,
+					"owner",
+					door,
+				);
+			}
+		} else if (args.orchestratorId !== undefined) {
+			// The fleet reassigns within the unit's own organisation (the operator
+			// org for a fleet-owned unit); a label with no agent there unsets the owner.
+			newOwnerId = await agentIdOfLabelInOrg(
+				ctx,
+				orgOfRow(bu),
+				args.orchestratorId,
+				door,
 			);
 		}
 
-		// A reassignment (new `orchestratorId` in the patch) must ALSO land
-		// within the caller's own scope — otherwise an org-scoped caller
-		// could hand its own BU off to an orchestrator it does not own.
-		if (
-			args.orchestratorId !== undefined &&
-			!isOrchestratorAllowedForScope(scope, args.orchestratorId)
-		) {
-			throw new ConvexError(
-				`RBAC_DENIED: caller may not reassign business unit ${args.buId} to orchestrator "${args.orchestratorId}" — ${JSON.stringify({ orgSlug: scope.orgSlug })}`,
+		// The asserted caller must be the unit's owner (or the fleet's own system
+		// caller): the label is resolved to an agent ID in the row's organisation
+		// and the package judges it against the stored owner.
+		if (!isFleetSystemCaller(scope, args.callerOrchestrator)) {
+			const callerId = await agentIdOfLabelInOrg(
+				ctx,
+				orgOfRow(bu),
+				args.callerOrchestrator,
+				door,
 			);
+			if (
+				callerId === undefined ||
+				!(await isAgentOwnerOfRow(ctx, bu, callerId, door))
+			) {
+				throw new ConvexError(
+					`RBAC_DENIED: ${args.callerOrchestrator} is not the owning orchestrator (${bu.orchestratorId}) of business unit ${args.buId} — ${JSON.stringify({ reason: "caller-not-owner", door })}`,
+				);
+			}
 		}
 
-		// Legacy ownership-string check, kept for backward behaviour — now
-		// harmless as a standalone bypass since the scope gate above already
-		// proved the caller's org covers bu.orchestratorId.
-		if (
-			!isFleetSystemCaller(scope, args.callerOrchestrator) &&
-			bu.orchestratorId !== args.callerOrchestrator
-		) {
-			throw new Error(
-				`RBAC_DENIED: ${args.callerOrchestrator} is not the owning orchestrator (${bu.orchestratorId}) of business unit ${args.buId}`,
-			);
-		}
-
-		const { buId, callerOrchestrator, ...fields } = args;
+		const {
+			buId,
+			callerOrchestrator,
+			verifiedOrg: _verifiedOrg,
+			...fields
+		} = args;
 
 		// Build patch object with only provided fields
 		const patch: Record<string, unknown> = { updatedAt: Date.now() };
@@ -289,6 +418,9 @@ export const update = mutation({
 				patch[key] = value;
 			}
 		}
+
+		// The owner BY ID follows a reassignment; the label above is display only.
+		if (args.orchestratorId !== undefined) patch.ownerId = newOwnerId;
 
 		await ctx.db.patch(buId, patch);
 		return null;
@@ -300,38 +432,42 @@ export const update = mutation({
 // ─────────────────────────────────────────────────────────────────────────────
 
 export const remove = mutation({
-	args: { buId: v.id("businessUnits") },
+	args: {
+		buId: v.id("businessUnits"),
+		// The organisation the MCP transport VERIFIED for a bearer that reaches
+		// Convex as the fleet service account (convex/lib/verifiedOrg.ts). It is the
+		// only way the fleet deletes a unit stamped with a client org: a claimless
+		// service account deletes the fleet's own units only.
+		verifiedOrg: v.optional(verifiedOrgValidator),
+	},
 	returns: v.object({ deleted: v.boolean() }),
 	handler: async (ctx, args) => {
 		// write-contract: MCP-transport-only — issued via mcp-server client.mutation("businessUnits:remove", …) at mcp-server/src/tools.ts:7837 (imperative), 0 hits in vantage-peers-dashboard {app,components,hooks,lib,contexts,providers} (measured 2026-10-01 at origin/main e2dc58f and 0466fac); never a subscribing pre-org client shell. The no-org throw is a refusal at an imperative MCP call, never at a render.
-		// Fail-closed multi-tenant fix — `remove` used to perform NO
-		// identity/scope check whatsoever: any caller holding the deployment
-		// URL could permanently delete any organisation's business unit.
-		// The MCP server's own `delete_bu` tool already restricts this
-		// action to master (guardMasterOnly, mcp-server/src/tools.ts) — that
-		// transport-layer gate is not a defence for this class (see
-		// .claude/rules/authority-attached-to-anonymous-object.md), so the
-		// SAME restriction is now enforced at the Convex boundary via the
-		// caller's verified identity. withOrgScope is called WITHOUT
-		// allowNoIdentityMaster — the MCP server always presents its
-		// service-account identity on this path (isMaster=true), so this
-		// never breaks the live "delete_bu" caller.
+		// Deletion is fleet-only (the MCP server's `delete_bu` tool restricts it to
+		// master; that transport-layer gate is not a defence for this class, see
+		// .claude/rules/authority-attached-to-anonymous-object.md, so Convex
+		// re-derives it). The fleet is the package's `fleet` standing, not a flag.
+		const door = "businessUnits:remove";
 		const scope = await withOrgScope(ctx);
-		if (!scope.isMaster) {
-			throw new ConvexError(
-				`RBAC_DENIED: business unit deletion is master-scope only — ${JSON.stringify({ orgSlug: scope.orgSlug })}`,
-			);
-		}
+		await requireFleetDoor(ctx, scope, door, { masterOnly: true });
 
 		const bu = await ctx.db.get(args.buId);
 		if (!bu) throw new Error("Business unit not found");
-		// R-52 defence in depth: the master-only gate above is what decides today;
-		// this reads the row's own server-stamped tenant so the delete stays bound
-		// to the caller's tenant if that gate is ever relaxed to org admins.
-		if (!scope.isMaster && !sameOrg(orgRefOfRow(bu), orgRefOfScope(scope))) {
-			throw new ConvexError(
-				`RBAC_DENIED: caller may not delete business unit ${args.buId} — ${JSON.stringify({ orgSlug: scope.orgSlug, reason: "row-not-in-caller-org" })}`,
+		// R-52: the fleet deletes what is the fleet's (unstamped, or stamped with
+		// the operator org). A unit stamped with a client org is that org's: it is
+		// deleted only on the transport's verified claim naming that same org.
+		if (!isFleetStamp(orgRefOfRow(bu), await fleetOperatorRef(ctx.db))) {
+			const acting = await resolveVerifiedOrgScope(
+				ctx,
+				scope,
+				args.verifiedOrg,
+				door,
 			);
+			if (!sameOrg(orgRefOfRow(bu), orgRefOfScope(acting))) {
+				throw new ConvexError(
+					`RBAC_DENIED: caller may not delete business unit ${args.buId} — ${JSON.stringify({ orgSlug: acting.orgSlug, reason: "row-not-in-caller-org" })}`,
+				);
+			}
 		}
 		await ctx.db.delete(args.buId);
 		return { deleted: true };
@@ -349,7 +485,7 @@ export const get = query({
 	// measured). Narrowing inside the handler via requireId() throws a
 	// ConvexError whose payload survives redaction. Same contract as PR #1072
 	// (tasks.getById).
-	args: { buId: v.string() },
+	args: { buId: v.string(), verifiedOrg: v.optional(verifiedOrgValidator) },
 	returns: v.union(buObject, v.null()),
 	handler: async (ctx, args) => {
 		const buId = requireId(
@@ -360,25 +496,35 @@ export const get = query({
 			"Use the full 32-char buId returned by businessUnits.list or businessUnits.create.",
 		);
 		// GATE — CLOSED (org-scoped): this door served any business unit by id
-		// to a caller presenting NO CREDENTIAL AT ALL. The table is org-scoped
-		// through `orchestratorId` (the roster `client_org_mapping` judges), so
-		// an ordinary member is NOT refused: it reads its own org's units via
-		// the same per-row roster check the writes use, and a unit of another
-		// org reads as null (no existence leak across tenants).
+		// to a caller presenting NO CREDENTIAL AT ALL. The fleet reads every unit
+		// (the package's `fleet` standing; the operator human is the fleet for
+		// READS). An ordinary member reads a unit of its OWN organisation (by org
+		// ID) whose owner is on its roster by agent ID; a unit of another org reads
+		// as null (no existence leak across tenants).
 		// isolation-contract: no reactive subscriber. Enumerated by command
 		// against vantage-peers-dashboard:
 		//   grep -rn "api\.businessUnits\.get\b" --include=*.tsx --include=*.ts \
 		//     app components hooks lib contexts providers  -> 0 hits
 		// (`businessUnits:list` IS subscribed; this door is not.) The MCP tool
 		// reads it one-shot.
-		const scope = await withOrgScope(ctx, { refuseWithoutThrow: true });
-		requireResolvedCaller(scope, "businessUnits:get", {
-			alsoRefusePreOrg: true,
-		});
+		const door = "businessUnits:get";
+		const transportScope = await withOrgScope(ctx, { refuseWithoutThrow: true });
+		requireResolvedCaller(transportScope, door, { alsoRefusePreOrg: true });
+		const scope = await resolveVerifiedOrgScope(
+			ctx,
+			transportScope,
+			args.verifiedOrg,
+			door,
+		);
 		const bu = await ctx.db.get(buId);
 		if (bu === null) return null;
-		if (!isOrchestratorAllowedForScope(scope, bu.orchestratorId)) return null;
-		return bu;
+		if (
+			args.verifiedOrg === undefined &&
+			(await hasFleetStanding(ctx, door, { operatorHumanMayRead: true }))
+		) {
+			return bu;
+		}
+		return (await memberMaySeeUnit(ctx, scope, bu, door)) ? bu : null;
 	},
 });
 
@@ -453,64 +599,37 @@ export const list = query({
 		nextCursor: v.union(v.string(), v.null()),
 	}),
 	handler: async (ctx, args) => {
-		// Fail-closed READ counterpart of this file's own WRITE gate. Measured
-		// against LIVE production at commit bd8c60e9: this query served a business
-		// unit to a caller presenting NO CREDENTIAL AT ALL — it consulted no
-		// identity whatsoever, while `create`/`update`/`remove` beside it already
-		// went through `isOrchestratorAllowedForScope`.
+		// Fail-closed READ counterpart of this file's WRITE gates. Measured against
+		// LIVE production at commit bd8c60e9: this query served a business unit to
+		// a caller presenting NO CREDENTIAL AT ALL.
 		//
-		// This table is ORG-SCOPED, not fleet-internal: each row names a lead
-		// `orchestratorId`, which is exactly what `client_org_mapping`'s
-		// `allowedOrchestrators` roster judges. So the correct control is NOT
-		// master-only — it is the SAME roster check the writes use, applied per
-		// row, so an ordinary org member keeps seeing its own units. The failure
-		// mode of adding a guard is a WITHHELD GRANT, and the ALLOW pole in
-		// publicRegistrationResolvesCaller.test.ts pins that it did not happen.
-		// A caller with no verified organisation has an EMPTY roster, so the same
-		// per-row filter refuses it without a second code path.
-		// REFUSAL SHAPE — the typed empty ENVELOPE, never a throw: reactively-
-		// subscribed public READ (R-50/R-51).
-		// ONE control, not two. An earlier draft of this fix also opened with
-		// `if (!scope.isMaster && scope.orgSlug === null) return { items: [],
-		// nextCursor: null }`. Mutation testing reported that line as a SURVIVOR:
-		// deleting it left the whole suite green, including all three deny poles.
-		// It was not an unobserved guard, it was a genuinely SUBSUMED one —
-		// `isOrchestratorAllowedForScope` below already returns false for every
-		// row when `scope.orgSlug === null`, so no assertion could ever
-		// distinguish its presence from its absence. It was removed rather than
-		// kept, because a second authority line that no test can observe is worse
-		// than no second line: a reviewer cannot tell which of the two is actually
-		// holding the door, and either could later be deleted as "redundant". The
-		// authority for this read is the single per-row roster filter below, and
-		// the mutation table pins exactly that line.
-		//
-		// REFUSAL SHAPE, CORRECTED (task k177hpz3cx9bb842tc9201wf118f94sa). The
-		// paragraph above reasoned correctly about R-50 and then drew the wrong
-		// conclusion for the ANONYMOUS pole. A caller with no credential at all has
-		// no mounted render for a throw to crash: the only subscribing consumer of
-		// this backend is the vantage-peers-dashboard Next.js app, every route of
-		// which sits behind `clerkMiddleware`, so no `useQuery` subscription is ever
-		// established without a Clerk session. Returning an empty SUCCESS to that
-		// caller is the defect — "you may not" and "there is nothing" come out as
-		// identical bytes, and a guard reading this door cannot tell a refusal from
-		// an absence. `missions:list` has raised RBAC_DENIED at this same pole in
-		// production all along while being reactively subscribed
-		// (components/missions/mission-board.tsx:25).
-		// The roster filter below is UNCHANGED: an ordinary org member's admission
-		// set is byte-identical to what it was, so no grant is withheld by this fix.
-		// See `.claude/rules/refusal-is-distinguishable-from-absence.md`.
-		// A dashboard `useQuery` DOES subscribe to this read, so the
-		// signed-in-but-not-yet-onboarded caller (`scope.refused`) keeps its R-50
-		// typed-empty result untouched — `alsoRefusePreOrg` is NOT passed. Only the
-		// anonymous pole changes shape.
+		// This table is ORG-SCOPED, not fleet-internal. The fleet (the package's
+		// `fleet` standing; the operator human is the fleet for READS) reads every
+		// unit. An ordinary org member reads the units of its OWN organisation
+		// (the org ID leads the index range) whose owner is an agent on its roster
+		// by ID (the owner ID is the next index key): a foreign unit is never read
+		// and cannot occupy a slot of the page. A caller with no verified
+		// organisation has no org ID and no roster, so the same range yields
+		// nothing without a second code path.
+		// REFUSAL SHAPE: the typed empty ENVELOPE for the signed-in-no-org caller
+		// (reactively-subscribed public READ, R-50/R-51; `alsoRefusePreOrg` is NOT
+		// passed); an anonymous caller is refused by RAISING
+		// (.claude/rules/refusal-is-distinguishable-from-absence.md,
+		// `missions:list` has raised at this pole in production all along).
+		const door = "businessUnits:list";
 		const transportScope = await withOrgScope(ctx, { refuseWithoutThrow: true });
-		requireResolvedCaller(transportScope, "businessUnits:list");
+		requireResolvedCaller(transportScope, door);
 		const scope = await resolveVerifiedOrgScope(
 			ctx,
 			transportScope,
 			args.verifiedOrg,
-			"businessUnits:list",
+			door,
 		);
+		// A bearer acting for a verified org reads as that org's member, never as
+		// the fleet, even though the credential on the wire is the service account.
+		const fleet =
+			args.verifiedOrg === undefined &&
+			(await hasFleetStanding(ctx, door, { operatorHumanMayRead: true }));
 
 		const DEFAULT_LIMIT = 20;
 		const CAP = 200;
@@ -538,17 +657,14 @@ export const list = query({
 		const wide = cursorPayload !== undefined || args.createdBefore !== undefined;
 		const fetchLimit = wide ? BUSINESS_UNITS_LIST_SCAN_CAP + 1 : limit + 1;
 
-		// R-11: the caller's scope is applied INSIDE the read. An org member's
-		// rows are the units led by an orchestrator on its own roster, so it reads
-		// only the index range of each such orchestrator (`by_orchestrator`, or
-		// `by_orchestrator_status` when a status is asked for) and merges them
-		// newest-first: a foreign unit is never read, never occupies a slot of the
-		// fetched window, and so cannot make a full page of the member's own units
-		// look exhausted. The master reads the fleet, as before.
+		// R-11: the caller's scope is applied INSIDE the read. The fleet reads the
+		// fleet (by status, or all; by owner ID when an orchestrator is asked for,
+		// resolved in the operator org). An org member reads one index range per
+		// agent on its roster by ID, under its own org ID, and merges the ranges
+		// newest-first.
 		const status = args.status;
 		let rows: Doc<"businessUnits">[] = [];
-		if (scope.isMaster && args.orchestratorId === undefined) {
-			// The master without an orchestrator reads the fleet by status, or all.
+		if (fleet && args.orchestratorId === undefined) {
 			rows =
 				status !== undefined
 					? await ctx.db
@@ -561,36 +677,68 @@ export const list = query({
 							.order("desc")
 							.take(fetchLimit);
 		} else {
-			// One index range per orchestrator: the one asked for (the master), or,
-			// for an org member, each orchestrator on its roster (the asked-for one
-			// only if the roster names it).
-			const requested = args.orchestratorId;
-			let orchestrators: string[] = [];
-			if (requested !== undefined) {
-				if (isOrchestratorAllowedForScope(scope, requested)) {
-					orchestrators = [requested];
+			// The owner IDs to read: the one asked for (a label resolved in ONE org:
+			// the operator org for the fleet, the caller's own for a member, which
+			// must also be on its roster), else, for a member, its whole roster.
+			let owners: string[] = [];
+			if (args.orchestratorId !== undefined) {
+				const asked = await agentIdOfLabelInOrg(
+					ctx,
+					fleet ? { orgSlug: null } : orgOfScope(scope),
+					args.orchestratorId,
+					door,
+				);
+				if (
+					asked !== undefined &&
+					(fleet || (await isAgentOnScopeRoster(ctx, scope, asked, door)))
+				) {
+					owners = [asked];
 				}
-			} else if (scope.orgSlug !== null) {
-				orchestrators = [...new Set(scope.allowedOrchestrators)];
+			} else {
+				for (const id of new Set(scope.allowedAgentIds)) {
+					if (await isAgentOnScopeRoster(ctx, scope, id, door)) owners.push(id);
+				}
 			}
-			for (const orchestratorId of orchestrators) {
-				const part =
-					status !== undefined
-						? await ctx.db
-								.query("businessUnits")
-								.withIndex("by_orchestrator_status", (q) =>
-									q.eq("orchestratorId", orchestratorId).eq("status", status),
-								)
-								.order("desc")
-								.take(fetchLimit)
-						: await ctx.db
-								.query("businessUnits")
-								.withIndex("by_orchestrator", (q) =>
-									q.eq("orchestratorId", orchestratorId),
-								)
-								.order("desc")
-								.take(fetchLimit);
-				rows.push(...part);
+			const orgClerkId = scope.orgClerkId;
+			for (const ownerId of owners) {
+				if (fleet) {
+					rows.push(
+						...(status !== undefined
+							? await ctx.db
+									.query("businessUnits")
+									.withIndex("by_ownerId_status", (q) =>
+										q.eq("ownerId", ownerId).eq("status", status),
+									)
+									.order("desc")
+									.take(fetchLimit)
+							: await ctx.db
+									.query("businessUnits")
+									.withIndex("by_ownerId_status", (q) => q.eq("ownerId", ownerId))
+									.order("desc")
+									.take(fetchLimit)),
+					);
+				} else if (orgClerkId !== undefined) {
+					rows.push(
+						...(status !== undefined
+							? await ctx.db
+									.query("businessUnits")
+									.withIndex("by_clerkOrgId_ownerId_status", (q) =>
+										q
+											.eq("clerkOrgId", orgClerkId)
+											.eq("ownerId", ownerId)
+											.eq("status", status),
+									)
+									.order("desc")
+									.take(fetchLimit)
+							: await ctx.db
+									.query("businessUnits")
+									.withIndex("by_clerkOrgId_ownerId_status", (q) =>
+										q.eq("clerkOrgId", orgClerkId).eq("ownerId", ownerId),
+									)
+									.order("desc")
+									.take(fetchLimit)),
+					);
+				}
 			}
 			// Merge the ranges newest-first and keep the fetch window.
 			rows = rows
@@ -598,13 +746,13 @@ export const list = query({
 				.slice(0, fetchLimit);
 		}
 
-		// The roster control, applied per ROW — the same
-		// `isOrchestratorAllowedForScope` the writes above use. Master passes
-		// through unchanged; a non-master caller sees only units led by an
-		// orchestrator on its own `client_org_mapping.allowedOrchestrators`.
-		// Placed BEFORE the cursor/createdBefore filters so a row the caller may
-		// not see can never occupy a slot in its page.
-		rows = rows.filter((r) => isOrchestratorAllowedForScope(scope, r.orchestratorId));
+		// Defence in depth for a member: every row read is stamped with the
+		// caller's org ID (the package's `sameOrg`), whatever the index returned.
+		if (!fleet) {
+			rows = rows.filter((r) =>
+				sameOrg(orgRefOfRow(r), orgRefOfScope(scope)),
+			);
+		}
 
 		// Apply cursor filter: exclude rows at or before the cursor anchor.
 		// Cursor encodes { time, id } — exclude rows strictly "before" in desc order:

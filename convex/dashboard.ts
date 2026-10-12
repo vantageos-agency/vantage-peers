@@ -1,11 +1,14 @@
 import { v } from "convex/values";
-import { query } from "./_generated/server";
+import type { Doc } from "./_generated/dataModel";
+import { type QueryCtx, query } from "./_generated/server";
 import {
 	withOrgScope,
 	filterByOrgScope,
-	requireResolvedCaller,
 	requireScope,
+	type OrgScope,
 } from "./lib/auth";
+import { requireFleetDoor } from "./lib/fleetStanding";
+import { agentIdOfLabelInOrg, isAgentOnScopeRoster } from "./lib/rosterLabels";
 
 // In-progress tasks and mandates are both small, bounded tables today; 500 rows
 // is a comfortable ceiling well above observed volume for either.
@@ -14,6 +17,48 @@ const DASHBOARD_SCAN_CAP = 500;
 // tables but can grow faster (one receipt per recipient per message), so a
 // wider ceiling is used for those bounded scans.
 const DASHBOARD_WIDE_SCAN_CAP = 1000;
+
+// The profiles an ORG MEMBER is served. A profile row carries NO tenant column,
+// and its label `orchestratorId` is shared by every organisation that employs an
+// orchestrator of that name (the fleet's "eta" and a client's "eta" are two
+// agents), so the label alone never admits a row. A member is served a profile
+// only when its label names an agent of the member's OWN org that is on the
+// member's roster BY ID, AND does not also name an agent of the operator org: a
+// label the fleet employs may be the fleet's own profile, and no fleet profile is
+// ever served to a member org. (Both lookups are by agents-row ID, through the
+// package; the profile table itself names no agent until the profile doors move
+// to agent IDs, which closes the residual two-client-orgs-one-label case.)
+async function profilesOfCallerOrg(
+	ctx: QueryCtx,
+	scope: OrgScope,
+	profiles: readonly Doc<"profiles">[],
+	door: string,
+): Promise<Doc<"profiles">[]> {
+	const kept: Doc<"profiles">[] = [];
+	for (const profile of profiles) {
+		const ownId = await agentIdOfLabelInOrg(
+			ctx,
+			{
+				orgSlug: scope.orgSlug,
+				...(scope.orgClerkId !== undefined
+					? { clerkOrgId: scope.orgClerkId }
+					: {}),
+			},
+			profile.orchestratorId,
+			door,
+		);
+		if (ownId === undefined) continue;
+		if (!(await isAgentOnScopeRoster(ctx, scope, ownId, door))) continue;
+		const fleetId = await agentIdOfLabelInOrg(
+			ctx,
+			{ orgSlug: null },
+			profile.orchestratorId,
+			door,
+		);
+		if (fleetId === undefined || fleetId === ownId) kept.push(profile);
+	}
+	return kept;
+}
 
 // ─────────────────────────────────────────────────────────────────────────────
 // getDashboardSummary — high-level operational stats for VantagePeers dashboard
@@ -83,10 +128,15 @@ export const getDashboardSummary = query({
 		// (reason "no-organisation" -> redirect to /closed-beta), so no mounted render
 		// reaches this read for that caller. Enumeration (run in vantage-peers-dashboard):
 		// grep -rn "api\.dashboard\.\|api\.stats\." --include=*.tsx --include=*.ts app components hooks lib contexts providers
-		requireResolvedCaller(scope, "dashboard:getDashboardSummary", {
-			alsoRefusePreOrg: true,
-		});
-		if (!scope.isMaster) {
+		// The fleet is the package's `fleet` standing (the operator human is the
+		// fleet for READS); anonymous and signed-in-no-org callers RAISE.
+		const fleet = await requireFleetDoor(
+			ctx,
+			scope,
+			"dashboard:getDashboardSummary",
+			{ alsoRefusePreOrg: true, operatorHumanMayRead: true },
+		);
+		if (!fleet) {
 			requireScope(scope, "view-stats-aggregated");
 		}
 		const orgSlug = scope.orgSlug;
@@ -95,7 +145,7 @@ export const getDashboardSummary = query({
 		// Member: the tenant index is bound BEFORE the cap (a fleet-wide index
 		// capped first and dropped foreign rows after, undercounting the member).
 		const inProgressTasksAll =
-			scope.isMaster || orgSlug === null
+			fleet || orgSlug === null
 				? await ctx.db
 						.query("tasks")
 						.withIndex("by_status", (q) => q.eq("status", "in_progress"))
@@ -110,23 +160,29 @@ export const getDashboardSummary = query({
 
 		// Open mandates — fleet-internal, no tenant column: master only. A member
 		// has no mandates of its own, so 0 is the count of ITS data, not a refusal.
-		const allMandates = scope.isMaster
+		const allMandates = fleet
 			? await ctx.db.query("mandates").take(DASHBOARD_SCAN_CAP)
 			: [];
 		const openMandates = allMandates.filter((m) => m.status !== "settled").length;
 
-		// Profiles (small table — one row per instance). No tenant column: a
-		// member is narrowed to its org's roster.
+		// Profiles (small table — one row per instance). No tenant column: the
+		// fleet reads them all; a member is served the profiles of ITS OWN agents
+		// only, judged by stored agent ID and org ID (never by the shared label).
 		const allProfiles = await ctx.db.query("profiles").collect();
-		const profiles = scope.isMaster
+		const profiles = fleet
 			? allProfiles
-			: allProfiles.filter((p) => scope.allowedOrchestrators.includes(p.orchestratorId));
+			: await profilesOfCallerOrg(
+					ctx,
+					scope,
+					allProfiles,
+					"dashboard:getDashboardSummary",
+				);
 
 		// Unread messages — full scan bounded (receipts table is small)
 		// Index is composite [recipient, readAt] so we cannot filter by readAt alone.
 		// Member: the tenant index is bound BEFORE the cap, never a post-read filter.
 		const allReceipts =
-			scope.isMaster || orgSlug === null
+			fleet || orgSlug === null
 				? await ctx.db.query("messageReceipts").take(DASHBOARD_WIDE_SCAN_CAP)
 				: await ctx.db
 						.query("messageReceipts")
@@ -137,7 +193,7 @@ export const getDashboardSummary = query({
 		// Recent activity — fetch bounded slices of each entity
 		// Fetch more tasks before filtering so client-orgs still get 20 items.
 		const recentTasksAll =
-			scope.isMaster || orgSlug === null
+			fleet || orgSlug === null
 				? await ctx.db.query("tasks").order("desc").take(100)
 				: await ctx.db
 						.query("tasks")
@@ -146,14 +202,14 @@ export const getDashboardSummary = query({
 						.take(100);
 		const recentTasks = filterByOrgScope(recentTasksAll, scope).slice(0, 20);
 		const recentMessages =
-			scope.isMaster || orgSlug === null
+			fleet || orgSlug === null
 				? await ctx.db.query("messages").order("desc").take(20)
 				: await ctx.db
 						.query("messages")
 						.withIndex("by_tenant_created", (q) => q.eq("tenantId", orgSlug))
 						.order("desc")
 						.take(20);
-		const recentMandates = scope.isMaster
+		const recentMandates = fleet
 			? await ctx.db.query("mandates").order("desc").take(20)
 			: [];
 
@@ -238,16 +294,21 @@ export const getProjectSummary = query({
 		const scope = await withOrgScope(ctx, { refuseWithoutThrow: true });
 		// Anonymous RAISES (no mounted render). Signed-in-no-org is a mounted,
 		// subscribed render: typed envelope, never a bare [] (an absence's bytes).
-		requireResolvedCaller(scope, "dashboard:getProjectSummary");
+		const fleet = await requireFleetDoor(
+			ctx,
+			scope,
+			"dashboard:getProjectSummary",
+			{ operatorHumanMayRead: true },
+		);
 		if (scope.refused) {
 			return { refused: true as const, items: [] };
 		}
-		if (!scope.isMaster) {
+		if (!fleet) {
 			requireScope(scope, "view-stats-aggregated");
 		}
 
 		// Member: tenant index bound BEFORE the cap, for tasks and missions alike.
-		const memberOrg = !scope.isMaster ? scope.orgSlug : null;
+		const memberOrg = fleet ? null : scope.orgSlug;
 		const allTasks =
 			memberOrg !== null
 				? await ctx.db

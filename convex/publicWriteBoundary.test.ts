@@ -26,6 +26,7 @@
 
 import { convexTest } from "../tests/fixtures/convexTestWithServiceAccount";
 import { describe, expect, test } from "vitest";
+import { seedRosterAgent } from "../tests/fixtures/rosterAgent";
 import { testClerkOrgId } from "../tests/fixtures/testClerkOrgId";
 import { api } from "./_generated/api";
 import schema from "./schema";
@@ -33,6 +34,20 @@ import schema from "./schema";
 const modules = import.meta.glob("./**/*.ts");
 
 const createT = () => convexTest(schema, modules);
+
+// Since module M10f a member writes a business unit only with a writer role
+// (data) and only for an owner that is an agent of its own org on its roster BY ID.
+async function seedWriterRoles(t: ReturnType<typeof createT>) {
+	await t.run(async (ctx) => {
+		const existing = await ctx.db.query("memberWriterRoles").first();
+		if (existing === null) {
+			await ctx.db.insert("memberWriterRoles", {
+				roles: ["org:admin"],
+				updatedAt: Date.now(),
+			});
+		}
+	});
+}
 
 async function seedOrgAMapping(t: ReturnType<typeof createT>) {
 	await t.run(async (ctx) => {
@@ -45,7 +60,9 @@ async function seedOrgAMapping(t: ReturnType<typeof createT>) {
 			isActive: true,
 			createdAt: Date.now(),
 		});
+		await seedRosterAgent(ctx, "org-a", "seat-a");
 	});
+	await seedWriterRoles(t);
 }
 
 async function seedOrgBMapping(t: ReturnType<typeof createT>) {
@@ -59,7 +76,9 @@ async function seedOrgBMapping(t: ReturnType<typeof createT>) {
 			isActive: true,
 			createdAt: Date.now(),
 		});
+		await seedRosterAgent(ctx, "org-b", "seat-b");
 	});
+	await seedWriterRoles(t);
 }
 
 function asOrgA(t: ReturnType<typeof createT>) {
@@ -67,6 +86,7 @@ function asOrgA(t: ReturnType<typeof createT>) {
 		subject: "user-org-a",
 		organizationId: "org-a",
 		org_id: testClerkOrgId("org-a"),
+		org_role: "org:admin",
 	} as Parameters<typeof t.withIdentity>[0]);
 }
 
@@ -75,6 +95,7 @@ function asOrgB(t: ReturnType<typeof createT>) {
 		subject: "user-org-b",
 		organizationId: "org-b",
 		org_id: testClerkOrgId("org-b"),
+		org_role: "org:admin",
 	} as Parameters<typeof t.withIdentity>[0]);
 }
 

@@ -18,6 +18,7 @@ import { ConvexError } from "convex/values";
 import { convexTest } from "../../tests/fixtures/convexTestWithServiceAccount";
 import { describe, expect, test } from "vitest";
 import { testClerkOrgId } from "../../tests/fixtures/testClerkOrgId";
+import { seedRosterAgents } from "../../tests/lib/seedRosterAgents";
 import { api } from "../_generated/api";
 import schema from "../schema";
 
@@ -114,6 +115,8 @@ async function orgWorld() {
 	const t = createT();
 	await seedOrg(t, "org-a", ["sigma"]);
 	await seedOrg(t, "org-b", ["tau"]);
+	// Since M10f a business unit is owned by an agent ID of its own org.
+	const agents = await seedRosterAgents(t);
 	const ids = await t.run(async (ctx) => {
 		const diaryA = await ctx.db.insert("diary", {
 			date: "2026-09-30",
@@ -149,6 +152,9 @@ async function orgWorld() {
 			managementFee: 10,
 			createdAt: now(),
 			updatedAt: now(),
+			orgId: "org-a",
+			clerkOrgId: testClerkOrgId("org-a"),
+			ownerId: agents["org-a/sigma"],
 		});
 		return { diaryA, buA };
 	});

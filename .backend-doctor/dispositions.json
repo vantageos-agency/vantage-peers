@@ -129,10 +129,6 @@
 		}
 	},
 	"tools": {
-		"get_bu": {
-			"disposition": "CONSERVER",
-			"reason": "live: reads one business unit by id (businessUnits:get); businessUnits is live via the dashboard; MCP tool masked"
-		},
 		"get_episode": {
 			"disposition": "CONSERVER",
 			"reason": "live: MCP-public tool; Convex door memories:getMemory(query) (the derivation names no table: the id argument is not a v.id validator)"

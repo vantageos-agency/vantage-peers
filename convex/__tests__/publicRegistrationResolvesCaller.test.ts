@@ -78,6 +78,7 @@
 import { ConvexError } from "convex/values";
 import { convexTest } from "../../tests/fixtures/convexTestWithServiceAccount";
 import { describe, expect, test } from "vitest";
+import { seedRosterAgent } from "../../tests/fixtures/rosterAgent";
 import { testClerkOrgId } from "../../tests/fixtures/testClerkOrgId";
 import { api } from "../_generated/api";
 import schema from "../schema";
@@ -346,9 +347,28 @@ const seedRecurringTask = (t: T, assignedTo = "sigma", orgId?: string) =>
 		});
 	});
 
+// Since M10f a unit is stamped with its org and owned by an agent of that org BY
+// ID. When org-a exists (a pole that serves a member) the lead is registered in it
+// and put on its roster; with no org (an anonymous or no-org pole) the unit is
+// seeded unstamped, as a fleet unit.
 const seedBusinessUnit = (t: T, orchestratorId = "sigma") =>
 	t.run(async (ctx) => {
+		const mapping = await ctx.db
+			.query("client_org_mapping")
+			.withIndex("by_clerk_slug", (q) => q.eq("clerkOrgSlug", "org-a"))
+			.first();
+		const owner =
+			mapping === null
+				? undefined
+				: await seedRosterAgent(ctx, "org-a", orchestratorId);
 		await ctx.db.insert("businessUnits", {
+			...(owner !== undefined
+				? {
+						ownerId: owner,
+						orgId: "org-a",
+						clerkOrgId: testClerkOrgId("org-a"),
+					}
+				: {}),
 			name: `bu-${orchestratorId}`,
 			description: "d",
 			purpose: "p",
@@ -632,8 +652,10 @@ describe("org-scoped read resolves its caller — businessUnits:list (1 row leak
 
 	test("DENY — an ordinary org member is NOT served a BU led by an orchestrator outside its own roster", async () => {
 		const t = createT();
-		await seedOrgMapping(t, "org-a", ["sigma"]);
+		// Seeded BEFORE the org exists: the unit is the fleet's (unstamped, owned by
+		// an agent outside org-a), so no org-a roster can list it.
 		await seedBusinessUnit(t, "omega");
+		await seedOrgMapping(t, "org-a", ["sigma"]);
 
 		const res = await asOrgMember(t, "org-a").query(api.businessUnits.list, {});
 		expect(res.items).toEqual([]);

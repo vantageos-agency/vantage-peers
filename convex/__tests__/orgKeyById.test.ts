@@ -70,9 +70,33 @@ const mapping = (
 	...(extra.operator ? { orgKind: "operator" as const } : {}),
 });
 
+// Since M10f a business unit is owned by an agent BY ID: the lead is an agent of
+// the org (carrying the org's permanent ID) on the org's roster, and a member
+// writes with a writer role (data).
 async function seedBusinessUnit(t: T, org: { slug: string; id: string }) {
-	return await t.run(async (ctx) =>
-		ctx.db.insert("businessUnits", {
+	return await t.run(async (ctx) => {
+		if ((await ctx.db.query("memberWriterRoles").first()) === null) {
+			await ctx.db.insert("memberWriterRoles", {
+				roles: ["org:admin", "org:editor"],
+				updatedAt: NOW,
+			});
+		}
+		const lead = await ctx.db.insert("agents", {
+			orgSlug: org.slug,
+			clerkOrgId: org.id,
+			name: LEAD,
+			normalizedName: LEAD,
+			isActive: true,
+			createdAt: NOW,
+		});
+		const mapping = await ctx.db
+			.query("client_org_mapping")
+			.withIndex("by_clerk_slug", (q) => q.eq("clerkOrgSlug", org.slug))
+			.unique();
+		if (mapping === null) throw new Error("seedBusinessUnit: no mapping");
+		await ctx.db.patch(mapping._id, { allowedAgentIds: [lead] });
+		return ctx.db.insert("businessUnits", {
+			ownerId: lead,
 			name: "bu",
 			description: "d",
 			purpose: "p",
@@ -93,8 +117,8 @@ async function seedBusinessUnit(t: T, org: { slug: string; id: string }) {
 			updatedAt: NOW,
 			orgId: org.slug,
 			clerkOrgId: org.id,
-		} as never),
-	);
+		} as never);
+	});
 }
 
 const rename = (t: T, from: string, to: string) =>

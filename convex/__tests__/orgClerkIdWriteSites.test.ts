@@ -198,8 +198,31 @@ const DRIVERS = {
 			orchestrator: SEAT,
 			content: "d",
 		}),
-	businessUnits: (t) =>
-		asOrg(t, ACME.slug).mutation(api.businessUnits.create, {
+	businessUnits: async (t) => {
+		// Since M10f a member writes a business unit with a writer role, for an
+		// owner that is an agent of its own org on its roster BY ID.
+		await seatCredential(t);
+		await t.run(async (ctx) => {
+			await ctx.db.insert("memberWriterRoles", {
+				roles: ["org:admin"],
+				updatedAt: NOW,
+			});
+			const mapping = await ctx.db
+				.query("client_org_mapping")
+				.withIndex("by_clerk_slug", (q) => q.eq("clerkOrgSlug", ACME.slug))
+				.unique();
+			const seat = (
+				await ctx.db
+					.query("agents")
+					.withIndex("by_org", (q) => q.eq("orgSlug", ACME.slug))
+					.collect()
+			).find((agent) => agent.name === SEAT);
+			if (mapping === null || seat === undefined) throw new Error("seed: seat");
+			// The agent carries its org's permanent ID, as a provisioned agent does.
+			await ctx.db.patch(seat._id, { clerkOrgId: mapping.clerkOrgId });
+			await ctx.db.patch(mapping._id, { allowedAgentIds: [seat._id] });
+		});
+		return await adminOf(t, ACME.slug).mutation(api.businessUnits.create, {
 			name: "bu",
 			description: "d",
 			purpose: "p",
@@ -214,7 +237,8 @@ const DRIVERS = {
 			coreProcesses: [],
 			dependencies: [],
 			kpis: [],
-		}),
+		});
+	},
 	bulk_complete_runs: async (t) =>
 		asOrg(t, ACME.slug).mutation(api.tasks.bulkComplete, {
 			filter: { assignedTo: SEAT },

@@ -62,7 +62,7 @@ const mapping = (slug: string, id: string | undefined) => ({
 
 async function seedBusinessUnit(
 	t: T,
-	stamp: { orgId: string; clerkOrgId?: string },
+	stamp: { orgId: string; clerkOrgId?: string; ownerId?: string },
 ) {
 	return await t.run(async (ctx) =>
 		ctx.db.insert("businessUnits", {
@@ -174,13 +174,38 @@ describe("a miss on the ID-keyed mapping refuses; it never falls back to the lab
 		await t.run(async (ctx) => {
 			await ctx.db.insert("client_org_mapping", mapping(ACME.slug, ACME.id));
 		});
+		// Since M10f the unit is owned by an agent of the org BY ID, on the org's
+		// roster, and a member writes with a writer role (data).
+		const lead = await t.run(async (ctx) => {
+			await ctx.db.insert("memberWriterRoles", {
+				roles: ["org:admin"],
+				updatedAt: NOW,
+			});
+			const id = await ctx.db.insert("agents", {
+				orgSlug: ACME.slug,
+				clerkOrgId: ACME.id,
+				name: LEAD,
+				normalizedName: LEAD,
+				isActive: true,
+				createdAt: NOW,
+			});
+			const row = await ctx.db
+				.query("client_org_mapping")
+				.withIndex("by_clerk_slug", (q) => q.eq("clerkOrgSlug", ACME.slug))
+				.unique();
+			if (row === null) throw new Error("seed: mapping");
+			await ctx.db.patch(row._id, { allowedAgentIds: [id] });
+			return id;
+		});
 		const bu = await seedBusinessUnit(t, {
 			orgId: ACME.slug,
 			clerkOrgId: ACME.id,
+			ownerId: lead,
 		});
 		await withClaims(t, {
 			organizationSlug: ACME.slug,
 			org_id: ACME.id,
+			org_role: "org:admin",
 		}).mutation(api.businessUnits.update, {
 			buId: bu as never,
 			callerOrchestrator: LEAD,

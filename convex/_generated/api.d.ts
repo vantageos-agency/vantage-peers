@@ -69,6 +69,7 @@ import type * as lib_repoMappingTenant from "../lib/repoMappingTenant.js";
 import type * as lib_reviewRouting from "../lib/reviewRouting.js";
 import type * as lib_provisioningMapping from "../lib/provisioningMapping.js";
 import type * as lib_rosterIds from "../lib/rosterIds.js";
+import type * as lib_rosterLabels from "../lib/rosterLabels.js";
 import type * as lib_seatAgent from "../lib/seatAgent.js";
 import type * as lib_serviceAccount from "../lib/serviceAccount.js";
 import type * as lib_systemCaller from "../lib/systemCaller.js";
@@ -88,6 +89,7 @@ import type * as migrations_agentIdentityRows from "../migrations/agentIdentityR
 import type * as migrations_backfillOrgIds from "../migrations/backfillOrgIds.js";
 import type * as migrations_backfillRosterAgentIds from "../migrations/backfillRosterAgentIds.js";
 import type * as migrations_backfill_actor_ids from "../migrations/backfill_actor_ids.js";
+import type * as migrations_backfill_business_unit_owner_ids from "../migrations/backfill_business_unit_owner_ids.js";
 import type * as migrations_backfill_org_clerk_id from "../migrations/backfill_org_clerk_id.js";
 import type * as migrations_backfill_org_stamp from "../migrations/backfill_org_stamp.js";
 import type * as migrations_backfill_recurring_task_actor_ids from "../migrations/backfill_recurring_task_actor_ids.js";
@@ -198,6 +200,7 @@ declare const fullApi: ApiFromModules<{
   "lib/reviewRouting": typeof lib_reviewRouting;
   "lib/provisioningMapping": typeof lib_provisioningMapping;
   "lib/rosterIds": typeof lib_rosterIds;
+  "lib/rosterLabels": typeof lib_rosterLabels;
   "lib/seatAgent": typeof lib_seatAgent;
   "lib/serviceAccount": typeof lib_serviceAccount;
   "lib/systemCaller": typeof lib_systemCaller;
@@ -217,6 +220,7 @@ declare const fullApi: ApiFromModules<{
   "migrations/backfillOrgIds": typeof migrations_backfillOrgIds;
   "migrations/backfillRosterAgentIds": typeof migrations_backfillRosterAgentIds;
   "migrations/backfill_actor_ids": typeof migrations_backfill_actor_ids;
+  "migrations/backfill_business_unit_owner_ids": typeof migrations_backfill_business_unit_owner_ids;
   "migrations/backfill_org_clerk_id": typeof migrations_backfill_org_clerk_id;
   "migrations/backfill_org_stamp": typeof migrations_backfill_org_stamp;
   "migrations/backfill_recurring_task_actor_ids": typeof migrations_backfill_recurring_task_actor_ids;

@@ -50,7 +50,7 @@ function refuse(reason: string, door: string, detail: string): never {
  *   1. trusted from the service account only   (verified-org-not-trusted)
  *   2. the org is mapped and active            (org-not-active)
  */
-async function resolveVerifiedOrgMapping(
+export async function resolveVerifiedOrgMapping(
 	ctx: QueryCtx | MutationCtx,
 	transportScope: OrgScope,
 	proof: VerifiedOrg | undefined,

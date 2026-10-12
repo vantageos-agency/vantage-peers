@@ -8,6 +8,7 @@ import {
 	requireScope,
 	filterByOrgScope,
 } from "./lib/auth";
+import { requireFleetDoor } from "./lib/fleetStanding";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // orchestratorStats — server-side aggregation for the VantagePeers Dashboard
@@ -102,10 +103,15 @@ export const orchestratorStats = query({
 		// (reason "no-organisation" -> redirect to /closed-beta), so no mounted render
 		// reaches this read for that caller. Enumeration (run in vantage-peers-dashboard):
 		// grep -rn "api\.dashboard\.\|api\.stats\." --include=*.tsx --include=*.ts app components hooks lib contexts providers
-		requireResolvedCaller(scope, "stats:orchestratorStats", {
-			alsoRefusePreOrg: true,
-		});
-		if (!scope.scopes.includes("view-stats-aggregated") && !scope.isMaster) {
+		// The fleet is the package's `fleet` standing (the operator human is the
+		// fleet for READS); anonymous and signed-in-no-org callers RAISE.
+		const fleet = await requireFleetDoor(
+			ctx,
+			scope,
+			"stats:orchestratorStats",
+			{ alsoRefusePreOrg: true, operatorHumanMayRead: true },
+		);
+		if (!fleet) {
 			requireScope(scope, "view-stats-aggregated");
 		}
 
@@ -125,7 +131,7 @@ export const orchestratorStats = query({
 		// bounds the org, never the fleet (a fleet-wide take(TASK_CAP) returned the
 		// oldest rows of every tenant and silently dropped a young org's rows).
 		// Unstamped rows never match `eq("orgId", slug)`: master-only.
-		const memberOrg = !scope.isMaster ? scope.orgSlug : null;
+		const memberOrg = fleet ? null : scope.orgSlug;
 		const allTasks =
 			memberOrg !== null
 				? await ctx.db

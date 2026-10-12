@@ -433,6 +433,11 @@ const GUARDS = [
 	"filterByOrgScope",
 	"resolveOrgContext",
 	"getUserIdentity",
+	// the package's fleet standing and the writer-role gate (M10f): caller
+	// resolution, recorded as a guard and not descended into.
+	"requireFleetDoor",
+	"hasFleetStanding",
+	"requireMemberWriterRole",
 ];
 // Caller-resolution libraries: convex/lib/auth*.ts and the identity plumbing the
 // fleet-only doors ask (fleetStanding / fleetActors: the package's standing and

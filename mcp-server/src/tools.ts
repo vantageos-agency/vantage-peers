@@ -8181,10 +8181,15 @@ export function registerTools(
 			managementFee,
 		}) => {
 			try {
+				// The door acts for the bearer's VERIFIED org (`verifiedOrg`), never as
+				// the fleet; a bearer whose org cannot be resolved is refused here.
+				const orgDenied = unresolvedOrgDenial("create_bu");
+				if (orgDenied !== null) return orgDenied;
 				const fromDenied = guardFrom(orchestratorId);
 				if (fromDenied) return fromDenied;
 
 				const buId = await convex.mutation("businessUnits:create" as any, {
+					...verifiedOrgArgs(),
 					name,
 					description,
 					purpose,
@@ -8289,6 +8294,8 @@ export function registerTools(
 			managementFee,
 		}) => {
 			try {
+				const orgDenied = unresolvedOrgDenial("update_bu");
+				if (orgDenied !== null) return orgDenied;
 				const callerDenied = guardFrom(callerOrchestrator);
 				if (callerDenied) return callerDenied;
 				if (orchestratorId) {
@@ -8300,6 +8307,7 @@ export function registerTools(
 				}
 
 				await convex.mutation("businessUnits:update" as any, {
+					...verifiedOrgArgs(),
 					buId: buId as any,
 					callerOrchestrator,
 					name,
@@ -8363,8 +8371,11 @@ export function registerTools(
 				// k177617dqg6z5c099p1rdp5rqn8b2rp0 — same remap as list_bus above:
 				// businessUnits rows carry `orchestratorId`, not `createdBy`/
 				// `namespace`; unmapped this refused the lead orchestrator too.
+				const orgDenied = unresolvedOrgDenial("get_bu");
+				if (orgDenied !== null) return orgDenied;
 				const bu = (await convex.query("businessUnits:get" as any, {
 					buId: buId as any,
+					...verifiedOrgArgs(),
 				})) as (Record<string, unknown> & { orchestratorId?: string }) | null;
 				const filteredBu = bu
 					? scopeFilterGet(oauthCtx ?? DENIED_SCOPE_CTX, {
@@ -8556,8 +8567,11 @@ export function registerTools(
 			const masterDenied = guardMasterOnly("delete_bu");
 			if (masterDenied) return masterDenied;
 			try {
+				// The fleet master forwards no org (none is verified for it): it deletes
+				// the fleet's own units. A client unit is deleted only on a verified claim.
 				const result = await convex.mutation("businessUnits:remove" as any, {
 					buId: buId as any,
+					...verifiedOrgArgs(),
 				});
 
 				return {

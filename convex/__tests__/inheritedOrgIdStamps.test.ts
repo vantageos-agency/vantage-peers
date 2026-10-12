@@ -27,6 +27,7 @@
 import { convexTest } from "../../tests/fixtures/convexTestWithServiceAccount";
 import { describe, expect, test } from "vitest";
 import { testClerkOrgId } from "../../tests/fixtures/testClerkOrgId";
+import { seedRosterAgents } from "../../tests/lib/seedRosterAgents";
 import { api, internal } from "../_generated/api";
 import schema from "../schema";
 
@@ -172,10 +173,28 @@ describe("missionTemplates — instantiated child tasks inherit the MISSION's te
 			createdBy: SHARED,
 		});
 
-		const { taskIds } = await asOrg(t, "org-a").mutation(
-			api.missionTemplates.instantiateTemplateIntoMission,
-			{ templateName: "tpl", missionId, callerOrchestrator: SHARED },
+		// Since M10g a member instantiates with a writer role, naming an agent of its
+		// own org on its roster BY ID (registered after the mission above, which is
+		// still created by name).
+		await seedRosterAgents(t);
+		await t.run((ctx) =>
+			ctx.db.insert("memberWriterRoles", {
+				roles: ["org:admin"],
+				updatedAt: Date.now(),
+			}),
 		);
+		const { taskIds } = await t
+			.withIdentity({
+				subject: "user-org-a",
+				organizationId: "org-a",
+				org_id: testClerkOrgId("org-a"),
+				org_role: "org:admin",
+			} as Parameters<typeof t.withIdentity>[0])
+			.mutation(api.missionTemplates.instantiateTemplateIntoMission, {
+				templateName: "tpl",
+				missionId,
+				callerOrchestrator: SHARED,
+			});
 		expect(taskIds.length).toBeGreaterThan(0);
 
 		// The stamp itself, read from the row.
