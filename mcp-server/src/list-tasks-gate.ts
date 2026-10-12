@@ -18,12 +18,16 @@
  *   - master scope                        → null (wildcard pass-through)
  *   - no filter provided                  → null (Convex layer applies
  *                                           fromAllowList intersection)
+ *   - one-agent seat token resolved to an agent BY ID (module M3):
+ *     presented value == that agent's CURRENT label → null; anything else is
+ *     Forbidden. The decision is the agent ID the token carries; the allowlist
+ *     name (a snapshot taken at mint, stale after a rename) takes no part.
  *   - presented value ∈ fromAllowList     → null (NFC + case-insensitive)
  *   - fromAllowList empty                 → legacy fallback: userId equality
  *   - otherwise                           → Forbidden error string
  */
 
-import { isMasterScope, type OAuthContext } from "./auth.js";
+import { isMasterScope, type OAuthContext, seatAgentOf } from "./auth.js";
 import { normalizeOrchestratorId } from "./normalizeOrchestratorId.js";
 
 /**
@@ -49,6 +53,19 @@ export function listTasksGate(
 	const fromAllowList = oauthCtx.fromAllowList ?? [];
 
 	const normPresented = normalizeOrchestratorId(presented);
+
+	// A one-agent seat that Convex resolved to an `agents` row ID: that row's
+	// current label is the only identity this token may filter by.
+	const seat = fromAllowList.length === 1 ? seatAgentOf(oauthCtx) : undefined;
+	if (seat !== undefined) {
+		if (normalizeOrchestratorId(seat.agentName) === normPresented) return null;
+		return (
+			`Forbidden: list_tasks requires assignedTo or createdBy to be the agent ` +
+			`this token was issued for (current: ${oauthCtx.scopeProfile}). ` +
+			`Allowed: ${seat.agentName}. Got: '${presented}'.`
+		);
+	}
+
 	const allowed =
 		fromAllowList.length > 0
 			? fromAllowList.some(

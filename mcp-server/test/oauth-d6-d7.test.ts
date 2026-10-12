@@ -12,6 +12,7 @@
  * access_tokens, refresh_tokens — only the rows the tests exercise.
  */
 
+import { createHash, randomBytes } from "node:crypto";
 import { timingSafeEqual } from "@vantageos/cloud-identity";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { app, parseBasicAuthSecret } from "../server-http.js";
@@ -115,13 +116,38 @@ function makeFakeConvex() {
 			if (name === "clientOrgMapping:getByClerkSlug") {
 				return state.mappings.get(args.orgSlug as string) ?? null;
 			}
-			if (name === "oauth:getRefreshTokenByHash") {
-				const r = state.refreshTokens.get(args.tokenHash as string);
-				return r ?? null;
+			if (name === "oauth:getRefreshTokenForGrant") {
+				const r = state.refreshTokens.get(args.presentedHash as string);
+				return r ? { ...r, spent: false } : null;
 			}
 			throw new Error(`unmocked query: ${name}`);
 		},
 		mutation: async (name: string, args: Record<string, unknown>) => {
+			if (name === "oauth:rotateRefreshToken") {
+				// Module M3: ONE step spends the presented token and mints the pair.
+				const r = state.refreshTokens.get(args.presentedHash as string);
+				if (!r || r.clientId !== args.clientId) return { status: "invalid" };
+				state.refreshTokens.delete(args.presentedHash as string);
+				const refresh = randomBytes(32).toString("hex");
+				const access = randomBytes(32).toString("hex");
+				const sha = (x: string) => createHash("sha256").update(x).digest("hex");
+				state.refreshTokens.set(sha(refresh), {
+					clientId: r.clientId,
+					userId: r.userId,
+					scopeProfile: args.scopeProfile as string,
+					expiresAt: args.refreshExpiresAt as number,
+				});
+				state.accessTokens.push({
+					tokenHash: sha(access),
+					clientId: r.clientId,
+					userId: r.userId,
+					scopeProfile: args.scopeProfile as string,
+					fromAllowList: args.fromAllowList as string[],
+					clerkOrgSlug: args.clerkOrgSlug as string | undefined,
+					revoked: false,
+				});
+				return { status: "ok", issued: { refresh, access } };
+			}
 			if (name === "oauth:registerPublicClient") {
 				const row: ClientRow = {
 					clientId: args.clientId as string,

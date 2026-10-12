@@ -3,7 +3,10 @@ import { mutation, query } from "./_generated/server";
 import { internal } from "./_generated/api";
 import { requireId } from "./lib/ids";
 import { creatorValidator, severityValidator } from "./schema";
-import { requireResolvedCaller, withOrgScope } from "./lib/auth";
+import { verifiedActorValidator, withOrgScope } from "./lib/auth";
+import type { OrgScope } from "./lib/auth";
+import { requireFleetAgentActor } from "./lib/fleetActors";
+import { requireFleetDoor, scopeWithFleetStanding } from "./lib/fleetStanding";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // requireFleetMaster — fixPatterns.ts's own single authority gate.
@@ -20,13 +23,17 @@ import { requireResolvedCaller, withOrgScope } from "./lib/auth";
 async function requireFleetMaster(
 	ctx: Parameters<typeof withOrgScope>[0],
 	action: string,
-): Promise<void> {
-	const scope = await withOrgScope(ctx);
+): Promise<OrgScope> {
+	const transport = await withOrgScope(ctx);
+	// The master bit is the package's standing (convex/lib/fleetStanding.ts),
+	// carried on the scope handed back: a refusal on the verified scope.
+	const scope = await scopeWithFleetStanding(ctx, transport, "fixPatterns:write");
 	if (!scope.isMaster) {
 		throw new ConvexError(
 			`RBAC_DENIED: caller may not ${action} — fixPatterns are fleet-internal, master-only — ${JSON.stringify({ orgSlug: scope.orgSlug })}`,
 		);
 	}
+	return scope;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -91,11 +98,33 @@ export const addAttempt = mutation({
 		worked: v.boolean(),
 		why: v.string(),
 		createdBy: creatorValidator,
+		// The agent the MCP transport verified. A fix pattern is a fleet-owned row
+		// (no organisation column): when the transport names the acting agent, that
+		// agent must belong to the operator organisation, so a seat of a client
+		// organisation cannot append attempts to a fleet pattern.
+		verifiedActor: v.optional(verifiedActorValidator),
 	},
 	returns: v.id("fixAttempts"),
 	handler: async (ctx, args) => {
 		// write-contract: MCP-transport-only — issued via mcp-server client.mutation("fixPatterns:addAttempt", …) at mcp-server/src/tools.ts:8651 (imperative), 0 hits in vantage-peers-dashboard {app,components,hooks,lib,contexts,providers} (measured 2026-10-01 at origin/main e2dc58f and 0466fac); never a subscribing pre-org client shell. The no-org throw is a refusal at an imperative MCP call, never at a render.
-		await requireFleetMaster(ctx, `add an attempt to fix pattern ${args.patternId}`);
+		const scope = await requireFleetMaster(
+			ctx,
+			`add an attempt to fix pattern ${args.patternId}`,
+		);
+		// requireFleetMaster above admits the fleet service account only; an
+		// ordinary or non-master caller never reaches this line. A seat of a client
+		// organisation always reaches Convex through that account WITH its
+		// verified agent (the MCP wrapper forwards it on this door), and is refused
+		// below unless it belongs to the operator organisation. The fleet's own
+		// master bearer carries no agent and keeps the access it had.
+		if (args.verifiedActor !== undefined) {
+			await requireFleetAgentActor(
+				ctx,
+				scope,
+				args.verifiedActor,
+				"fixPatterns:addAttempt",
+			);
+		}
 		const pattern = await ctx.db.get(args.patternId);
 		if (pattern === null) {
 			throw new Error(`Fix pattern ${args.patternId} not found`);
@@ -256,9 +285,10 @@ export const get = query({
 		// The only reader is the MCP tool (one-shot query, service account).
 		// See .claude/rules/refusal-is-distinguishable-from-absence.md.
 		const scope = await withOrgScope(ctx, { refuseWithoutThrow: true });
-		requireResolvedCaller(scope, "fixPatterns:get", {
+		await requireFleetDoor(ctx, scope, "fixPatterns:get", {
 			alsoRefusePreOrg: true,
 			masterOnly: true,
+			operatorHumanMayRead: true,
 		});
 		const patternId = requireId(
 			ctx,
@@ -346,9 +376,10 @@ export const listByProject = query({
 		// The only reader is the MCP tool (one-shot query, service account).
 		// See .claude/rules/refusal-is-distinguishable-from-absence.md.
 		const scope = await withOrgScope(ctx, { refuseWithoutThrow: true });
-		requireResolvedCaller(scope, "fixPatterns:listByProject", {
+		await requireFleetDoor(ctx, scope, "fixPatterns:listByProject", {
 			alsoRefusePreOrg: true,
 			masterOnly: true,
+			operatorHumanMayRead: true,
 		});
 		const limit = args.limit ?? 50;
 		const needsWideScan = args.createdBefore !== undefined;
@@ -429,10 +460,11 @@ export const listAll = query({
 		// signed-in-but-not-yet-onboarded caller's throw to crash, and that caller
 		// must not be handed a fabricated absence either.
 		const scope = await withOrgScope(ctx, { refuseWithoutThrow: true });
-		requireResolvedCaller(scope, "fixPatterns:listAll", {
+		const fleet = await requireFleetDoor(ctx, scope, "fixPatterns:listAll", {
 			alsoRefusePreOrg: true,
+			operatorHumanMayRead: true,
 		});
-		if (!scope.isMaster) return [];
+		if (!fleet) return [];
 
 		const limit = args.limit ?? 50;
 		const needsWideScan = args.createdBefore !== undefined;
@@ -486,9 +518,10 @@ export const listByStack = query({
 		// The only reader is the MCP tool (one-shot query, service account).
 		// See .claude/rules/refusal-is-distinguishable-from-absence.md.
 		const scope = await withOrgScope(ctx, { refuseWithoutThrow: true });
-		requireResolvedCaller(scope, "fixPatterns:listByStack", {
+		await requireFleetDoor(ctx, scope, "fixPatterns:listByStack", {
 			alsoRefusePreOrg: true,
 			masterOnly: true,
+			operatorHumanMayRead: true,
 		});
 		const limit = args.limit ?? 50;
 		const results = [];

@@ -7659,6 +7659,10 @@ export function registerTools(
 					);
 				}
 
+				// Ownership is decided by the Convex door on the forwarded agent ID
+				// (recurringTasks:update, verifiedActor); the name allowlist above only
+				// narrows what this tool dispatches.
+
 				const result = await convex.mutation("recurringTasks:update" as any, {
 					recurringTaskId: recurringTaskId as any,
 					...fields,

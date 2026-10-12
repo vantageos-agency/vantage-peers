@@ -24,7 +24,7 @@
  *     author. `tasks.create` binds the same field; the schedule now does too.
  */
 
-import { convexTest } from "convex-test";
+import { convexTest } from "../../tests/fixtures/convexTestWithServiceAccount";
 import { describe, expect, test } from "vitest";
 import { api } from "../_generated/api";
 import schema from "../schema";
@@ -170,9 +170,14 @@ describe("B. recurringTasks.create: createdBy is bound to the caller's roster", 
 	});
 
 	test("ALLOW: the same member authoring as its own orchestrator is served, stamped with its own org", async () => {
-		const { t } = await twoOrgs();
-		const memberA = t.withIdentity(memberOf("org-a"));
-		await memberA.mutation(api.recurringTasks.create, args("alice"));
+		const { t, adminA } = await twoOrgs();
+		// M10h: alice is an agent of org A (the assignee, by ID); the MCP verifies her
+		// credential and forwards the row through the fleet service account.
+		const aliceId = await adminA.mutation(api.agents.registerAgent, { orgSlug: "org-a", name: "alice" });
+		await t.withIdentity({ subject: "test-service-account-user-id" }).mutation(api.recurringTasks.create, {
+			...args("alice"),
+			verifiedActor: { agentId: aliceId, orgSlug: "org-a" },
+		});
 		const rows = await t.run((ctx) => ctx.db.query("recurringTasks").collect());
 		expect(rows).toHaveLength(1);
 		expect(rows[0].createdBy).toBe("alice");

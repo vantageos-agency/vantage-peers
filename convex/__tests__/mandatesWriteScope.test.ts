@@ -22,6 +22,7 @@ import { convexTest } from "../../tests/fixtures/convexTestWithServiceAccount";
 import { describe, expect, test } from "vitest";
 import { api } from "../_generated/api";
 import schema from "../schema";
+import { seedFleetAgents } from "../../tests/lib/seedFleetAgents";
 
 const modules = Object.fromEntries(
 	Object.entries(import.meta.glob("../**/*.ts")).filter(
@@ -55,6 +56,14 @@ async function seedOrgAMapping(t: ReturnType<typeof createT>) {
 			createdAt: Date.now(),
 		});
 	});
+}
+
+// The acting party as the MCP transport forwards it (M11): the operator-org
+// agent row of `name`, by ID. Mandate parties are acted for by verified ID.
+async function actorOf(t: ReturnType<typeof createT>, name: string) {
+	const ids = await seedFleetAgents(t, [name]);
+	const row = await t.run((ctx) => ctx.db.get(ids[name]));
+	return { agentId: ids[name], orgSlug: row?.orgSlug as string };
 }
 
 async function seedMandate(t: ReturnType<typeof createT>) {
@@ -141,6 +150,7 @@ describe("mandates.accept — write-scope enforcement", () => {
 		await tMaster.mutation(api.mandates.accept, {
 			mandateId,
 			callerOrchestrator: "tau",
+			verifiedActor: await actorOf(t, "tau"),
 		});
 		const accepted = await t.run((ctx) => ctx.db.get(mandateId));
 		expect(accepted?.status).toBe("accepted");
@@ -184,6 +194,7 @@ describe("mandates.update — write-scope enforcement", () => {
 		await tMaster.mutation(api.mandates.update, {
 			mandateId,
 			callerOrchestrator: "tau",
+			verifiedActor: await actorOf(t, "tau"),
 			tokensCost: 42,
 		});
 		const updated = await t.run((ctx) => ctx.db.get(mandateId));
@@ -208,9 +219,11 @@ describe("mandates.settle — write-scope enforcement", () => {
 		expect(untouched?.status).toBe("requested");
 
 		const tMaster = asMaster(t);
+		await t.run((ctx) => ctx.db.patch(mandateId, { status: "delivered" }));
 		await tMaster.mutation(api.mandates.settle, {
 			mandateId,
 			callerOrchestrator: "pi",
+			verifiedActor: await actorOf(t, "pi"),
 			finalCost: 900,
 		});
 		const settled = await t.run((ctx) => ctx.db.get(mandateId));

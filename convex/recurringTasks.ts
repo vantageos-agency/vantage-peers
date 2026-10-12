@@ -1,3 +1,4 @@
+import { isFleetStamp } from "@vantageos/cloud-identity";
 import { v } from "convex/values";
 import { ConvexError } from "convex/values";
 import type { Doc } from "./_generated/dataModel";
@@ -9,15 +10,23 @@ import { requireId } from "./lib/ids";
 import {
 	filterByOrgScope,
 	isRowVisibleToScope,
-	type OrgScope,
+	type VerifiedActor,
 	requireResolvedCaller,
+	verifiedActorValidator,
 	withOrgScope,
 	requireOrchestratorOnRoster,
 } from "./lib/auth";
-import { requireAuthenticatedCaller } from "./tasks";
+import { type CallerScope, requireAuthenticatedCaller } from "./tasks";
 import { resolveHumanActor } from "./lib/humanActor";
 import { taskActorIdFields } from "./lib/actorIds";
+import {
+	requireTargetOrgOfPrincipal,
+	requireVerifiedActorPrincipal,
+} from "./lib/actingPrincipal";
+import { verifiedPersonValidator } from "./lib/personPrincipal";
+import { assigneeIdForRead, requireAssigneeId } from "./lib/taskActors";
 import { clerkOrgIdForSlug } from "./lib/orgClerkId";
+import { fleetOperatorRef } from "./lib/operatorOrg";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Fail-closed multi-tenant fix (defect class: authority attached to an
@@ -61,6 +70,30 @@ import { clerkOrgIdForSlug } from "./lib/orgClerkId";
 // below, all reads/writes on the recurringTasks table.
 const RECURRING_TASK_ID_HINT =
 	"Use the full 32-char id returned by list_recurring_tasks or create_recurring_task.";
+
+// M10h: the acting-agent proof the schedule doors take beside their own
+// arguments (the same carriers as `tasks:update`). `callerOrchestrator` omitted =
+// the human path (or the fleet master); present = the agent path, decided on the
+// caller's actor ID derived from the credential / verifiedActor.
+const scheduleActorProofArgs = {
+	callerOrchestrator: v.optional(v.string()),
+	verifiedActor: v.optional(verifiedActorValidator),
+};
+
+async function proveScheduleCaller(
+	ctx: MutationCtx,
+	args: {
+		callerOrchestrator?: string;
+		verifiedActor?: VerifiedActor;
+	},
+): Promise<CallerScope> {
+	return await requireAuthenticatedCaller(
+		ctx,
+		args.callerOrchestrator,
+		undefined,
+		args.verifiedActor,
+	);
+}
 
 // Open string — any orchestrator name accepted (issue #132)
 const assigneeValidator = v.string();
@@ -190,6 +223,11 @@ export const create = mutation({
 		// OPTIONAL: omitting it is the HUMAN path (a dashboard org member creating a
 		// schedule in its own name, recorded "user:<Clerk subject>").
 		createdBy: v.optional(creatorValidator),
+		// M10h: the acting agent's proof, the verified actor the MCP transport
+		// forwards. It binds `createdBy` to the agent it resolves to.
+		verifiedActor: v.optional(verifiedActorValidator),
+		// A person reached through the MCP service account.
+		verifiedPerson: v.optional(verifiedPersonValidator),
 	},
 	returns: v.id("recurringTasks"),
 	handler: async (ctx, args) => {
@@ -200,8 +238,41 @@ export const create = mutation({
 		// one organisation cannot author a schedule as another's orchestrator.
 		// `assignedTo` is a different claim (the target of the work) and is bound
 		// separately below. Master is unchanged.
-		const scope = await requireAuthenticatedCaller(ctx, args.createdBy, undefined);
+		const scope = await requireAuthenticatedCaller(
+			ctx,
+			args.createdBy,
+			undefined,
+			args.verifiedActor,
+			{ proof: args.verifiedPerson, door: "recurringTasks:create" },
+		);
 		requireOrchestratorOnRoster(scope, args.assignedTo, "recurringTasks:create", "assignee");
+		// The tenant of the schedule, from the scope just resolved, never an argument.
+		// The fleet service account forwarding a verified agent of a CLIENT
+		// organisation writes in that agent's organisation: the verified actor was
+		// resolved by ID above (callerActorOrg), so the row is stamped with it. An
+		// agent of the operator organisation, or no forwarded agent, stays fleet
+		// (unstamped), exactly as before.
+		const forwardedOrg =
+			scope.isMaster && args.verifiedActor !== undefined
+				? scope.callerActorOrg
+				: undefined;
+		const forwardedOrgId = await clerkOrgIdForSlug(ctx, forwardedOrg);
+		const forwardedIsClient =
+			forwardedOrg !== undefined &&
+			!isFleetStamp(
+				{ id: forwardedOrgId, label: forwardedOrg },
+				await fleetOperatorRef(ctx.db),
+			);
+		const rowOrgId = scope.isMaster
+			? forwardedIsClient
+				? forwardedOrg
+				: undefined
+			: (scope.orgSlug ?? undefined);
+		const rowClerkOrgId = scope.isMaster
+			? forwardedIsClient
+				? forwardedOrgId
+				: undefined
+			: scope.orgClerkId;
 
 		// HUMAN path: the schedule is authored as "user:<subject>" (a colon-prefixed
 		// value no roster slug can equal, so it grants no creator authority to any
@@ -211,6 +282,22 @@ export const create = mutation({
 			args.createdBy !== undefined
 				? args.createdBy
 				: await resolveHumanActor(ctx, scope, { door: "recurringTasks:create" });
+		// M10h: the creator BY ID. A person is its own ID; an agent's is the VERIFIED
+		// caller's (credential / verifiedActor / own-org lookup), never a typed value.
+		// A creator label naming no agent of the org records no ID (nothing guessed).
+		const createdById =
+			args.createdBy !== undefined ? scope.callerActorId : createdBy;
+
+		// M10h: the assignee BY ID, in the org the row will live in (a fleet row
+		// written for a verified agent resolves in the AGENT's org). A label with no
+		// active agent there, or registered only in another org, is refused before
+		// anything is written.
+		const assignedToId = await requireAssigneeId(
+			ctx,
+			rowOrgId ?? scope.callerActorOrg,
+			args.assignedTo,
+			"recurringTasks:create",
+		);
 
 		const now = Date.now();
 		const nextRunAt = getNextRunTime(args.cronExpression, now);
@@ -227,12 +314,12 @@ export const create = mutation({
 			nextRunAt,
 			active: true,
 			createdBy,
+			assignedToId,
+			...(createdById !== undefined ? { createdById } : {}),
 			// TENANT of the schedule, from the scope resolved above — never an
 			// argument. Every task this schedule later generates inherits it.
-			orgId: scope.isMaster ? undefined : (scope.orgSlug ?? undefined),
-			clerkOrgId: scope.isMaster
-				? undefined
-				: scope.orgClerkId,
+			orgId: rowOrgId,
+			clerkOrgId: rowClerkOrgId,
 			createdAt: now,
 			updatedAt: now,
 		});
@@ -309,24 +396,62 @@ export const list = query({
 			? RECURRING_TASKS_LIST_SCAN_CAP + 1
 			: limit;
 
+		// M10h / R-11: the caller's tenant is the leading equality of the index it
+		// reads, never a filter after an unscoped take. A member's page therefore
+		// holds only its own org's schedules, however many newer foreign rows exist.
+		// The assignee filter is BY ID: the label names an agent of the caller's own
+		// org (the operator org for the fleet master); assigneeIdForRead proves, for a
+		// member, that the ID is an agents row of its org (RBAC_DENIED otherwise). A
+		// label naming no agent there is an absence (empty success).
+		const memberOrg = scope.isMaster ? null : scope.orgSlug;
 		let rows: Doc<"recurringTasks">[];
 		if (args.assignedTo !== undefined) {
-			rows = await ctx.db
-				.query("recurringTasks")
-				.withIndex("by_assignee", (q) => q.eq("assignedTo", args.assignedTo!))
-				.order("desc")
-				.take(fetchCap);
-			if (args.active !== undefined) {
-				rows = rows.filter((t) => t.active === args.active);
+			const assigneeId = await assigneeIdForRead(ctx, scope, args.assignedTo);
+			if (assigneeId === undefined) {
+				rows = [];
+			} else {
+				rows =
+					memberOrg !== null
+						? await ctx.db
+								.query("recurringTasks")
+								.withIndex("by_orgId_assigneeId", (q) =>
+									q.eq("orgId", memberOrg).eq("assignedToId", assigneeId),
+								)
+								.order("desc")
+								.take(fetchCap)
+						: await ctx.db
+								.query("recurringTasks")
+								.withIndex("by_assigneeId", (q) => q.eq("assignedToId", assigneeId))
+								.order("desc")
+								.take(fetchCap);
+				if (args.active !== undefined) {
+					rows = rows.filter((t) => t.active === args.active);
+				}
 			}
 		} else if (args.active !== undefined) {
-			rows = await ctx.db
-				.query("recurringTasks")
-				.withIndex("by_active", (q) => q.eq("active", args.active!))
-				.order("desc")
-				.take(fetchCap);
+			rows =
+				memberOrg !== null
+					? await ctx.db
+							.query("recurringTasks")
+							.withIndex("by_orgId_active", (q) =>
+								q.eq("orgId", memberOrg).eq("active", args.active!),
+							)
+							.order("desc")
+							.take(fetchCap)
+					: await ctx.db
+							.query("recurringTasks")
+							.withIndex("by_active", (q) => q.eq("active", args.active!))
+							.order("desc")
+							.take(fetchCap);
 		} else {
-			rows = await ctx.db.query("recurringTasks").order("desc").take(fetchCap);
+			rows =
+				memberOrg !== null
+					? await ctx.db
+							.query("recurringTasks")
+							.withIndex("by_orgId", (q) => q.eq("orgId", memberOrg))
+							.order("desc")
+							.take(fetchCap)
+					: await ctx.db.query("recurringTasks").order("desc").take(fetchCap);
 		}
 
 		// The roster control. Applied BEFORE the cursor filter so a row the caller
@@ -356,6 +481,7 @@ export const update = mutation({
 		project: v.optional(v.string()),
 		tags: v.optional(v.array(v.string())),
 		cronExpression: v.optional(v.string()),
+		...scheduleActorProofArgs,
 	},
 	returns: v.id("recurringTasks"),
 	handler: async (ctx, args) => {
@@ -366,7 +492,7 @@ export const update = mutation({
 		// AUTH_REQUIRED, never "Recurring task not found" — a get-then-scope
 		// order lets recurringTaskId existence act as an unauthenticated
 		// existence oracle.
-		const scope = await requireAuthenticatedCaller(ctx, undefined, undefined);
+		const scope = await proveScheduleCaller(ctx, args);
 
 		const recurringTaskId = requireId(
 			ctx,
@@ -394,7 +520,10 @@ export const update = mutation({
 		// is the human): writer role from memberWriterRoles on top of the tenant
 		// gate above. The assignee checks below then bind the row's current and any
 		// new assignee to the caller's own roster.
-		await authorizeScheduleActor(ctx, scope, existing, "recurringTasks:update");
+		await authorizeScheduleActor(ctx, scope, existing, "recurringTasks:update", {
+			callerOrchestrator: args.callerOrchestrator,
+			verifiedActor: args.verifiedActor,
+		});
 		requireOrchestratorOnRoster(scope, existing.assignedTo, "recurringTasks:update", "assignee");
 
 		// The row's STORED assignedTo passed the check above; a caller
@@ -409,7 +538,18 @@ export const update = mutation({
 		const patch: Record<string, any> = { updatedAt: Date.now() };
 		if (args.title !== undefined) patch.title = args.title;
 		if (args.description !== undefined) patch.description = args.description;
-		if (args.assignedTo !== undefined) patch.assignedTo = args.assignedTo;
+		if (args.assignedTo !== undefined) {
+			patch.assignedTo = args.assignedTo;
+			// M10h: the reassignment BY ID, resolved within the schedule's own org. A
+			// label naming no active agent there (unknown, or only in another org) is
+			// refused before anything is written.
+			patch.assignedToId = await requireAssigneeId(
+				ctx,
+				existing.orgId ?? (scope.isMaster ? scope.callerActorOrg : undefined),
+				args.assignedTo,
+				"recurringTasks:update",
+			);
+		}
 		if (args.priority !== undefined) patch.priority = args.priority;
 		if (args.project !== undefined) patch.project = args.project;
 		if (args.tags !== undefined) patch.tags = args.tags;
@@ -433,19 +573,75 @@ export const update = mutation({
 // claim, is refused RBAC_DENIED by resolveHumanActor (convex/lib/humanActor.ts).
 async function authorizeScheduleActor(
 	ctx: MutationCtx,
-	scope: OrgScope,
+	scope: CallerScope,
 	row: Doc<"recurringTasks">,
 	door: string,
-	opts?: { adminOnly?: boolean },
+	opts?: {
+		adminOnly?: boolean;
+		callerOrchestrator?: string;
+		verifiedActor?: VerifiedActor;
+	},
 ): Promise<void> {
-	if (scope.isMaster) return;
-	await resolveHumanActor(ctx, scope, {
-		door,
-		row,
-		rowKind: "recurring task",
-		rowId: row._id,
-		adminOnly: opts?.adminOnly,
-	});
+	// WHO IS ACTING, by ID. The fleet service account that forwards a verified
+	// agent (an MCP seat or credential holder) is judged ON THAT AGENT, never
+	// passed through as master; the service account with no forwarded agent keeps
+	// the fleet's access. A member naming an agent acts as the ID its proof
+	// derived (requireAuthenticatedCaller).
+	const forwarded = scope.isMaster ? opts?.verifiedActor : undefined;
+	const isMemberAgent = !scope.isMaster && opts?.callerOrchestrator !== undefined;
+	if (forwarded === undefined && !isMemberAgent) {
+		if (scope.isMaster) return;
+		await resolveHumanActor(ctx, scope, {
+			door,
+			row,
+			rowKind: "recurring task",
+			rowId: row._id,
+			adminOnly: opts?.adminOnly,
+		});
+		return;
+	}
+	// AGENT path (M10h): decided on actor IDs. A label equal to the creator's or
+	// assignee's NAME is not authority (the same name exists in other orgs). The
+	// tenant gate comes first: a row stamped for another org is never reachable,
+	// whatever IDs it carries. A fleet-owned row (no stamp) is judged on its IDs
+	// alone: an agent ID belongs to exactly one org. The forwarded agent is
+	// resolved BY ID through the package and the row's organisation is checked
+	// against that principal by the package (`assertTargetBelongsTo`).
+	let callerId: string | undefined;
+	if (forwarded !== undefined) {
+		const principal = await requireVerifiedActorPrincipal(ctx, scope, forwarded, door);
+		if (row.orgId !== undefined) {
+			await requireTargetOrgOfPrincipal(ctx, principal, row.orgId, door);
+		}
+		callerId = principal.principalId;
+	} else {
+		if (!isRowVisibleToScope(scope, row)) {
+			throw new ConvexError(
+				`RBAC_DENIED: caller may not act on recurring task ${row._id} — the schedule does not belong to the caller's organisation — ${JSON.stringify({ door })}`,
+			);
+		}
+		callerId = scope.callerActorId;
+	}
+	if (row.createdById === undefined && row.assignedToId === undefined) {
+		// A row with no ID names nobody: refused with a reason an operator can act
+		// on, never guessed from the label.
+		throw new ConvexError(
+			`RBAC_DENIED: recurring task ${row._id} carries no actor IDs yet, so no agent can be shown to own it — run migrations/backfill_recurring_task_actor_ids — ${JSON.stringify({ door, taskId: row._id, reason: "schedule-without-actor-ids" })}`,
+		);
+	}
+	const isActor = (id: string | undefined): boolean =>
+		callerId !== undefined && id !== undefined && id === callerId;
+	if (!isActor(row.createdById) && !isActor(row.assignedToId)) {
+		throw new ConvexError(
+			`RBAC_DENIED: the acting agent is not creator or assignee of recurring task ${row._id} — ${JSON.stringify({ door, taskId: row._id, reason: "not-creator-or-assignee-by-id" })}`,
+		);
+	}
+	if (opts?.adminOnly === true && !isActor(row.createdById)) {
+		// Destructive: an agent may remove only what it created.
+		throw new ConvexError(
+			`RBAC_DENIED: the acting agent is not the creator of recurring task ${row._id} — removal is the creator's — ${JSON.stringify({ door, taskId: row._id, reason: "not-creator-by-id" })}`,
+		);
+	}
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -453,7 +649,7 @@ async function authorizeScheduleActor(
 // ─────────────────────────────────────────────────────────────────────────────
 
 export const pause = mutation({
-	args: { taskId: v.string() },
+	args: { taskId: v.string(), ...scheduleActorProofArgs },
 	returns: v.object({ taskId: v.id("recurringTasks"), active: v.boolean() }),
 	handler: async (ctx, args) => {
 		// write-contract: MCP-transport-only — issued via mcp-server client.mutation("recurringTasks:pause", …) at mcp-server/src/tools.ts:6799 (imperative), 0 hits in vantage-peers-dashboard {app,components,hooks,lib,contexts,providers} (measured 2026-10-01 at origin/main e2dc58f and 0466fac); never a subscribing pre-org client shell. The no-org throw is a refusal at an imperative MCP call, never at a render.
@@ -462,7 +658,7 @@ export const pause = mutation({
 		// — re-enforced independently here, never trusting that MCP gate alone
 		// (.claude/rules/http-boundary-derives-from-principal.md: "a guard in
 		// the MCP server is NOT a defence").
-		const scope = await requireAuthenticatedCaller(ctx, undefined, undefined);
+		const scope = await proveScheduleCaller(ctx, args);
 		// A non-master caller with no organisation is refused BEFORE the row is
 		// read, so a stranger cannot tell a real schedule id from an absent one.
 		if (!scope.isMaster && scope.orgSlug === null) {
@@ -479,7 +675,10 @@ export const pause = mutation({
 		);
 		const row = await ctx.db.get(taskId);
 		if (!row) throw new Error("Recurring task not found");
-		await authorizeScheduleActor(ctx, scope, row, "recurringTasks:pause");
+		await authorizeScheduleActor(ctx, scope, row, "recurringTasks:pause", {
+			callerOrchestrator: args.callerOrchestrator,
+			verifiedActor: args.verifiedActor,
+		});
 		await ctx.db.patch(taskId, { active: false, updatedAt: Date.now() });
 		return { taskId, active: false };
 	},
@@ -490,7 +689,7 @@ export const pause = mutation({
 // ─────────────────────────────────────────────────────────────────────────────
 
 export const resume = mutation({
-	args: { taskId: v.string() },
+	args: { taskId: v.string(), ...scheduleActorProofArgs },
 	returns: v.object({
 		taskId: v.id("recurringTasks"),
 		active: v.boolean(),
@@ -499,7 +698,7 @@ export const resume = mutation({
 	handler: async (ctx, args) => {
 		// write-contract: MCP-transport-only — issued via mcp-server client.mutation("recurringTasks:resume", …) at mcp-server/src/tools.ts:6836 (imperative), 0 hits in vantage-peers-dashboard {app,components,hooks,lib,contexts,providers} (measured 2026-10-01 at origin/main e2dc58f and 0466fac); never a subscribing pre-org client shell. The no-org throw is a refusal at an imperative MCP call, never at a render.
 		// Master-only — see pause's identical rationale above.
-		const scope = await requireAuthenticatedCaller(ctx, undefined, undefined);
+		const scope = await proveScheduleCaller(ctx, args);
 		// A non-master caller with no organisation is refused BEFORE the row is
 		// read, so a stranger cannot tell a real schedule id from an absent one.
 		if (!scope.isMaster && scope.orgSlug === null) {
@@ -516,7 +715,10 @@ export const resume = mutation({
 		);
 		const task = await ctx.db.get(taskId);
 		if (!task) throw new Error("Recurring task not found");
-		await authorizeScheduleActor(ctx, scope, task, "recurringTasks:resume");
+		await authorizeScheduleActor(ctx, scope, task, "recurringTasks:resume", {
+			callerOrchestrator: args.callerOrchestrator,
+			verifiedActor: args.verifiedActor,
+		});
 
 		const nextRunAt = getNextRunTime(task.cronExpression, Date.now());
 		await ctx.db.patch(taskId, {
@@ -533,12 +735,12 @@ export const resume = mutation({
 // ─────────────────────────────────────────────────────────────────────────────
 
 export const remove = mutation({
-	args: { taskId: v.string() },
+	args: { taskId: v.string(), ...scheduleActorProofArgs },
 	returns: v.object({ deleted: v.boolean() }),
 	handler: async (ctx, args) => {
 		// write-contract: MCP-transport-only — issued via mcp-server client.mutation("recurringTasks:remove", …) at mcp-server/src/tools.ts:6873 (imperative), 0 hits in vantage-peers-dashboard {app,components,hooks,lib,contexts,providers} (measured 2026-10-01 at origin/main e2dc58f and 0466fac); never a subscribing pre-org client shell. The no-org throw is a refusal at an imperative MCP call, never at a render.
 		// Master-only — see pause's identical rationale above.
-		const scope = await requireAuthenticatedCaller(ctx, undefined, undefined);
+		const scope = await proveScheduleCaller(ctx, args);
 		// A non-master caller with no organisation is refused BEFORE the row is
 		// read, so a stranger cannot tell a real schedule id from an absent one.
 		if (!scope.isMaster && scope.orgSlug === null) {
@@ -558,6 +760,8 @@ export const remove = mutation({
 		// Destructive: org:admin only.
 		await authorizeScheduleActor(ctx, scope, row, "recurringTasks:remove", {
 			adminOnly: true,
+			callerOrchestrator: args.callerOrchestrator,
+			verifiedActor: args.verifiedActor,
 		});
 		await ctx.db.delete(taskId);
 		return { deleted: true };
@@ -610,6 +814,26 @@ export const processDueTasks = internalMutation({
 				const nextRunAt = getNextRunTime(recurring.cronExpression, now);
 
 				// Create the task
+				// M10h: the spawned task carries the schedule's STORED actor IDs, never
+				// only names. A schedule written before the ID columns existed (not yet
+				// through backfill_recurring_task_actor_ids) is resolved once, by label,
+				// in its own org, so the cron withholds nothing; a label naming no agent
+				// leaves the column unset (nothing is guessed).
+				const needsLookup =
+					recurring.assignedToId === undefined || recurring.createdById === undefined;
+				const looked = needsLookup
+					? await taskActorIdFields(ctx, recurring.orgId, {
+							createdBy: recurring.createdBy,
+							assignedTo: recurring.assignedTo,
+						})
+					: {};
+				const assignedToId = recurring.assignedToId ?? looked.assignedToId;
+				const createdById = recurring.createdById ?? looked.createdById;
+				const actorIds = {
+					...(assignedToId !== undefined ? { assignedToId } : {}),
+					...(createdById !== undefined ? { createdById } : {}),
+				};
+
 				await ctx.db.insert("tasks", {
 					title: recurring.title,
 					description: recurring.description,
@@ -627,10 +851,7 @@ export const processDueTasks = internalMutation({
 					// inference: the generated task belongs to whoever owns the
 					// schedule, by definition.
 					orgId: recurring.orgId,
-					...(await taskActorIdFields(ctx, recurring.orgId, {
-						createdBy: recurring.createdBy,
-						assignedTo: recurring.assignedTo,
-					})),
+					...actorIds,
 					clerkOrgId:
 						recurring.clerkOrgId ??
 						(await clerkOrgIdForSlug(ctx, recurring.orgId)),

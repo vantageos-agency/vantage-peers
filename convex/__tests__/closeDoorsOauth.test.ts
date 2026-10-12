@@ -28,6 +28,7 @@
  * createAccessToken, createRefreshToken) against an anonymous and a cross-org
  * caller, so a regression of either group fails here.
  */
+import { createHash } from "node:crypto";
 import { convexTest } from "../../tests/fixtures/convexTestWithServiceAccount";
 import { describe, expect, test } from "vitest";
 import { api } from "../_generated/api";
@@ -98,7 +99,8 @@ async function seed(t: T): Promise<void> {
 			createdAt: now,
 		});
 		await ctx.db.insert("oauth_authorization_codes", {
-			code: "code-live",
+			// Stored as a digest (module M3); the raw value "code-live" is what a caller presents.
+			code: createHash("sha256").update("code-live").digest("hex"),
 			clientId: "c1",
 			redirectUri: "https://client.example/cb",
 			codeChallenge: "challenge",

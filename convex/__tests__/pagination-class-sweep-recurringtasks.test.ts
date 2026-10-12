@@ -11,6 +11,7 @@ import { convexTest } from "../../tests/fixtures/convexTestWithServiceAccount";
 import type { FunctionReturnType } from "convex/server";
 import { describe, expect, test } from "vitest";
 import { api } from "../_generated/api";
+import { seedFleetAgents } from "../../tests/lib/seedFleetAgents";
 import schema from "../schema";
 
 
@@ -55,6 +56,8 @@ describe("recurringTasks.list pagination — createdBefore applied after unbound
 		const PAGE_LIMIT = 5;
 		const assignedTo = "sweep-assignee";
 		const seededIds: string[] = [];
+		// M10h: the assignee is an agent of the operator org, and the list filters by its ID.
+		await seedFleetAgents(t, [assignedTo, "sigma"]);
 
 		// Fail-closed multi-tenant fix (recurringTasks.ts, same class as
 		// missions.ts/missionTemplates.ts above): recurringTasks.create now

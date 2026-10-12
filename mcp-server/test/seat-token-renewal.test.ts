@@ -11,8 +11,8 @@
  *      SAME refresh token on every renewal, untouched expiry — so even a
  *      seat that renewed correctly still died at the refresh token's
  *      original 30-day mark. This file proves that fuse is gone: each
- *      refresh mints a NEW refresh token, and the OLD one is left standing
- *      (not revoked) rather than rotated-and-killed.
+ *      refresh mints a NEW refresh token. Since module M3 the OLD one is spent
+ *      by that refresh (rotation): its replay is invalid_grant.
  *
  * Harness: same in-memory Hono `app.request()` + fake ConvexHttpClient
  * pattern as oauth-d6-d7.test.ts. The refresh-token fixture mirrors what
@@ -22,6 +22,7 @@
  * Convex query enforces it at, not re-implemented here.
  */
 
+import { randomBytes } from "node:crypto";
 import { Hono } from "hono";
 import { beforeEach, describe, expect, it } from "vitest";
 import { app } from "../server-http.js";
@@ -88,20 +89,20 @@ function makeFakeConvex() {
 			if (name === "oauth:getScopeProfile") {
 				return state.profiles.get(args.profileId as string) ?? null;
 			}
-			if (name === "oauth:getRefreshTokenByHash") {
-				// Mirror convex/oauth.ts's getRefreshTokenByHash EXACTLY: a
-				// revoked or expired row resolves to null, never a populated
-				// row — the refusal happens at THIS boundary, same as prod.
+			if (name === "oauth:getRefreshTokenForGrant") {
+				// Mirror convex/oauth.ts's getRefreshTokenForGrant: a spent row answers
+				// `spent: true`, an unspent expired one answers null.
 				for (const [raw, row] of state.refreshTokensByRaw) {
 					const hash = await sha256Hex(raw);
-					if (hash === args.tokenHash) {
-						if (row.revokedAt !== undefined) return null;
-						if (row.expiresAt < Date.now()) return null;
+					if (hash === args.presentedHash) {
+						const spent = row.revokedAt !== undefined;
+						if (!spent && row.expiresAt < Date.now()) return null;
 						return {
 							clientId: row.clientId,
 							userId: row.userId,
 							scopeProfile: row.scopeProfile,
 							expiresAt: row.expiresAt,
+							spent,
 						};
 					}
 				}
@@ -110,20 +111,26 @@ function makeFakeConvex() {
 			throw new Error(`unmocked query: ${name}`);
 		},
 		mutation: async (name: string, args: Record<string, unknown>) => {
-			if (name === "oauth:createAccessToken") {
-				state.accessTokenInserts.push({
-					tokenHash: args.tokenHash as string,
-					refreshTokenHash: args.refreshTokenHash as string | undefined,
-				});
-				return "fake-access-id";
-			}
-			if (name === "oauth:createRefreshToken") {
-				// We only have the HASH here (server-http.ts never sends the
-				// raw value to Convex) — record it keyed by hash so the test
-				// can recognise "this IS the newly minted token" by hashing
-				// the raw value the /token response returned and comparing.
-				state.newRefreshHashesSeen.push(args.tokenHash as string);
-				return "fake-refresh-id";
+			if (name === "oauth:rotateRefreshToken") {
+				// Mirror convex/oauth.ts's rotateRefreshToken: ONE step spends the
+				// presented token and mints the pair; a spent token is a replay.
+				for (const [raw, row] of state.refreshTokensByRaw) {
+					if ((await sha256Hex(raw)) !== args.presentedHash) continue;
+					if (row.revokedAt !== undefined) return { status: "reused" };
+					if (row.expiresAt < Date.now()) return { status: "invalid" };
+					if (row.clientId !== args.clientId) return { status: "invalid" };
+					row.revokedAt = Date.now();
+					const refresh = randomBytes(32).toString("hex");
+					const access = randomBytes(32).toString("hex");
+					const refreshHash = await sha256Hex(refresh);
+					state.newRefreshHashesSeen.push(refreshHash);
+					state.accessTokenInserts.push({
+						tokenHash: await sha256Hex(access),
+						refreshTokenHash: refreshHash,
+					});
+					return { status: "ok", issued: { refresh, access } };
+				}
+				return { status: "invalid" };
 			}
 			throw new Error(`unmocked mutation: ${name}`);
 		},
@@ -261,11 +268,15 @@ describe("seat token renewal — /token refresh_token grant", () => {
 		expect(thirdRefreshToken).not.toBe(secondRefreshToken);
 		expect(thirdRefreshToken).not.toBe(SEAT_REFRESH_RAW);
 
-		// Deliberately NOT revoke-on-use: the OLD refresh token (the one
-		// presented on the FIRST call) is still resolvable in the fixture —
-		// nothing in the refresh_token branch deletes/revokes it. This pins
-		// the brief's explicit choice: rotate-and-issue, never revoke-on-use.
-		expect(state.refreshTokensByRaw.has(SEAT_REFRESH_RAW)).toBe(true);
+		// Module M3: rotation. The OLD refresh token (the one presented on the
+		// FIRST call) was spent by that call, so its replay is refused.
+		expect(state.refreshTokensByRaw.get(SEAT_REFRESH_RAW)?.revokedAt).toBeDefined();
+		const replay = await postRefresh(
+			SEAT_REFRESH_RAW,
+			basicAuth(SEAT_CLIENT_ID, SEAT_SECRET),
+		);
+		expect(replay.status).toBe(400);
+		expect(replay.body.error).toBe("invalid_grant");
 	});
 
 	it("a revoked refresh token is refused", async () => {

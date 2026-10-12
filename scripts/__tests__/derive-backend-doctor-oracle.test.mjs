@@ -1103,12 +1103,15 @@ describe("derive-backend-doctor-oracle R-8 scope enforcement read at the Convex 
 		rowsOf(COMMITTED_CSV).find((x) => x.outil === name);
 
 	it(
-		"PRESENT — the two public-scope data ops whose doors refuse by requireResolvedCaller carry that gate, not AUCUN",
+		"PRESENT — the two public-scope data ops whose doors refuse by requireResolvedCaller (validate_mandate_spending: its fleet-only variant requireFleetDoor) carry that gate, not AUCUN",
 		() => {
-			for (const tool of ["validate_mandate_spending", "validate_okf_bundle"]) {
+			for (const [tool, gate] of [
+				["validate_mandate_spending", "requireFleetDoor"],
+				["validate_okf_bundle", "requireResolvedCaller"],
+			]) {
 				const cell = committed(tool).scope_enforcement;
 				expect(cell, tool).not.toMatch(/AUCUN/);
-				expect(cell, tool).toMatch(/^convex-door\(requireResolvedCaller/);
+				expect(cell, tool).toMatch(new RegExp(`^convex-door\\(${gate}`));
 				expect(cell, tool).toContain("MCP transport: public");
 			}
 			// no committed data-op row keeps a bare zero-scope cell
@@ -1124,13 +1127,13 @@ describe("derive-backend-doctor-oracle R-8 scope enforcement read at the Convex 
 	);
 
 	it(
-		"ABSENT — the same door with its requireResolvedCaller gate removed is AUCUN again",
+		"ABSENT — the same door with its requireFleetDoor gate removed is AUCUN again",
 		() => {
 			const root = copyTree();
 			mutate(
 				root,
 				"convex/mandates.ts",
-				'requireResolvedCaller(scope, "mandates:validateSpending", {\n\t\t\tmasterOnly: true,\n\t\t});',
+				'await requireFleetDoor(ctx, scope, "mandates:validateSpending", {\n\t\t\tmasterOnly: true,\n\t\t\toperatorHumanMayRead: true,\n\t\t});',
 				"",
 			);
 			const r = derive(root);

@@ -10,13 +10,13 @@
  *    don't depend on the stale _generated/api.ts before `npx convex dev` runs.
  */
 
+import { sha256Hex } from "@vantageos/cloud-identity";
 import { makeFunctionReference } from "convex/server";
 import { convexTest } from "convex-test";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import type { ActionCtx } from "./_generated/server";
 import {
 	handleIssueBearerFromClerk,
-	sha256Hex,
 	verifyClerkJwt,
 } from "./credentials";
 import schema from "./schema";

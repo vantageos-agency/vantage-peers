@@ -443,7 +443,13 @@ describe("withVerifiedActor", () => {
 		const { readFileSync } = await import("node:fs");
 		const { resolve } = await import("node:path");
 		const declared = new Set<string>();
-		for (const file of ["tasks", "messages"]) {
+		for (const file of [
+			"tasks",
+			"messages",
+			"mandates",
+			"fixPatterns",
+			"recurringTasks",
+		]) {
 			const src = readFileSync(
 				resolve(__dirname, `../../convex/${file}.ts`),
 				"utf8",
@@ -457,6 +463,10 @@ describe("withVerifiedActor", () => {
 					current = "create";
 				}
 				if (/verifiedActor: v\.optional\(verifiedActorValidator\)/.test(line)) {
+					declared.add(`${file}:${current}`);
+				}
+				// recurringTasks shares the proof args through one spread object.
+				if (/\.\.\.scheduleActorProofArgs\b/.test(line)) {
 					declared.add(`${file}:${current}`);
 				}
 			}

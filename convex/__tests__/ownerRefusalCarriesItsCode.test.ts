@@ -15,6 +15,7 @@ import { ConvexError } from "convex/values";
 import { convexTest } from "../../tests/fixtures/convexTestWithServiceAccount";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import { testClerkOrgId } from "../../tests/fixtures/testClerkOrgId";
+import { seedFleetAgents } from "../../tests/lib/seedFleetAgents";
 import { api } from "../_generated/api";
 import schema from "../schema";
 
@@ -231,12 +232,16 @@ describe("R-16 — owner refusals raise a coded ConvexError naming their door", 
 		expect(await t.run((ctx) => ctx.db.get(messageId))).not.toBeNull();
 	});
 
-	test("mandates:accept / update / settle — a stranger name is refused by the master", async () => {
+	test("mandates:accept / update / settle — a stranger AGENT (by verified ID) is refused by the master", async () => {
 		const t = createT();
 		const mandateId = await seedMandate(t);
 		const tM = asMaster(t);
+		// M11: the party is proven by agent ID; "seat-a" is a stranger to the mandate.
+		const ids = await seedFleetAgents(t, ["seat-a", "seat-b"]);
+		const orgSlug = (await t.run((ctx) => ctx.db.get(ids["seat-a"])))?.orgSlug as string;
+		const verifiedActor = { agentId: ids["seat-a"], orgSlug };
 		const accept = await refusalOf(
-			tM.mutation(api.mandates.accept, { mandateId, callerOrchestrator: "seat-a" }),
+			tM.mutation(api.mandates.accept, { mandateId, callerOrchestrator: "seat-a", verifiedActor }),
 		);
 		expect(accept.payload.registration).toBe("mandates:accept");
 		expect(accept.payload.reason).toBe("not-fulfilled-by");
@@ -244,6 +249,7 @@ describe("R-16 — owner refusals raise a coded ConvexError naming their door", 
 			tM.mutation(api.mandates.update, {
 				mandateId,
 				callerOrchestrator: "seat-a",
+				verifiedActor,
 				status: "delivered",
 			}),
 		);
@@ -252,6 +258,7 @@ describe("R-16 — owner refusals raise a coded ConvexError naming their door", 
 			tM.mutation(api.mandates.settle, {
 				mandateId,
 				callerOrchestrator: "seat-a",
+				verifiedActor,
 				finalCost: 1,
 			}),
 		);

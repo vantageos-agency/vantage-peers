@@ -1,7 +1,7 @@
-import { hasFleetRead } from "@vantageos/cloud-identity";
 import { v } from "convex/values";
 import { internalMutation, internalQuery, query } from "./_generated/server";
-import { requireResolvedCaller, withOrgScope } from "./lib/auth";
+import { withOrgScope } from "./lib/auth";
+import { requireFleetDoor } from "./lib/fleetStanding";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Store stats (internal mutation — called from the action)
@@ -159,10 +159,11 @@ export const getLatest = query({
 		// signed-in-but-not-yet-onboarded caller's throw to crash, and that caller
 		// must not be handed a fabricated absence either.
 		const scope = await withOrgScope(ctx, { refuseWithoutThrow: true });
-		requireResolvedCaller(scope, "issueStatsQueries:getLatest", {
+		const fleet = await requireFleetDoor(ctx, scope, "issueStatsQueries:getLatest", {
 			alsoRefusePreOrg: true,
+			operatorHumanMayRead: true,
 		});
-		if (!hasFleetRead(scope)) return [];
+		if (!fleet) return [];
 
 		const limit = args.limit ?? 30;
 		let results;

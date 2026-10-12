@@ -14,6 +14,7 @@ import { convexTest } from "../../tests/fixtures/convexTestWithServiceAccount";
 import { describe, expect, test } from "vitest";
 import { api, internal } from "../_generated/api";
 import { getNextRunTime } from "../recurringTasks";
+import { seedFleetAgents } from "../../tests/lib/seedFleetAgents";
 import schema from "../schema";
 
 const modules = Object.fromEntries(
@@ -34,6 +35,8 @@ async function seedRecurringTask(
 	t: ReturnType<typeof createTestConvex>,
 	overrides: Partial<{ title: string; cronExpression: string }> = {},
 ) {
+	// M10h: the assignee is an agent of the operator org, resolved by ID.
+	await seedFleetAgents(t, ["sigma"]);
 	return await asMaster(t).mutation(api.recurringTasks.create, {
 		title: overrides.title ?? "GAP-T1 nightly KB compaction",
 		description: "Auto-spawned by recurring template for regression test",

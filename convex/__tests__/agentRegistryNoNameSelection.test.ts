@@ -62,6 +62,12 @@ describe("M8 the agent registry selects no agent by name", () => {
 			[join("lib", "actorIds.ts")]: 1,
 			// M1 rosters / seat profiles: profile fromAllowList label
 			[join("lib", "seatAgent.ts")]: 1,
+			// M11 mandates: a legacy row stores only the party's LABEL; fleetPartyId
+			// resolves that STORED label once, in the operator org, to the agent ID it
+			// is then compared on. The label is read from the row, never from the
+			// caller (the caller's acting agent arrives as a verified ID), and a row
+			// stamped with an ID never reaches the lookup.
+			[join("lib", "fleetActors.ts")]: 1,
 		});
 	});
 });

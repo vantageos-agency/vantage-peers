@@ -5,7 +5,8 @@ import type { Doc } from "./_generated/dataModel";
 import { computeRecurrenceDecision } from "./errorMonitorRecurrence";
 import { requireId } from "./lib/ids";
 import { closeTrailingSegmentOnExit } from "./lib/taskClosureGate";
-import { requireResolvedCaller, withOrgScope } from "./lib/auth";
+import { withOrgScope } from "./lib/auth";
+import { requireFleetDoor, scopeWithFleetStanding } from "./lib/fleetStanding";
 import {
 	internalMutation,
 	internalQuery,
@@ -34,7 +35,8 @@ import {
 
 async function requireMasterScope(ctx: Parameters<typeof withOrgScope>[0]) {
 	const scope = await withOrgScope(ctx);
-	if (!scope.isMaster) {
+	const standing = await scopeWithFleetStanding(ctx, scope, "errorMonitor:write");
+	if (!standing.isMaster) {
 		throw new ConvexError(
 			"RBAC_DENIED: this mutation requires master or service-account scope " +
 				"— fleet error-monitor deployment config has no org-scoped write authority.",
@@ -600,9 +602,10 @@ export const listDeployments = query({
 		// The only reader is the MCP tool (one-shot query, service account).
 		// See .claude/rules/refusal-is-distinguishable-from-absence.md.
 		const scope = await withOrgScope(ctx, { refuseWithoutThrow: true });
-		requireResolvedCaller(scope, "errorMonitor:listDeployments", {
+		await requireFleetDoor(ctx, scope, "errorMonitor:listDeployments", {
 			alsoRefusePreOrg: true,
 			masterOnly: true,
+			operatorHumanMayRead: true,
 		});
 		return await ctx.db
 			.query("monitoredDeployments")
@@ -704,10 +707,11 @@ export const listErrors = query({
 		// signed-in-but-not-yet-onboarded caller's throw to crash, and that caller
 		// must not be handed a fabricated absence either.
 		const scope = await withOrgScope(ctx, { refuseWithoutThrow: true });
-		requireResolvedCaller(scope, "errorMonitor:listErrors", {
+		const fleet = await requireFleetDoor(ctx, scope, "errorMonitor:listErrors", {
 			alsoRefusePreOrg: true,
+			operatorHumanMayRead: true,
 		});
-		if (!scope.isMaster) return [];
+		if (!fleet) return [];
 
 		const limit = args.limit ?? 50;
 		const deployment = args.deployment;
@@ -777,9 +781,10 @@ export const getError = query({
 		// The only reader is the MCP tool (one-shot query, service account).
 		// See .claude/rules/refusal-is-distinguishable-from-absence.md.
 		const scope = await withOrgScope(ctx, { refuseWithoutThrow: true });
-		requireResolvedCaller(scope, "errorMonitor:getError", {
+		await requireFleetDoor(ctx, scope, "errorMonitor:getError", {
 			alsoRefusePreOrg: true,
 			masterOnly: true,
+			operatorHumanMayRead: true,
 		});
 		const errorId = requireId(
 			ctx,

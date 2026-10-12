@@ -15,10 +15,13 @@
 // DELETION PROBE (not committed): remove the requireOrchestratorOnRoster call
 // in a site and that site's REFUSED pole goes RED.
 
+import type { FunctionReference } from "convex/server";
 import { convexTest } from "../../tests/fixtures/convexTestWithServiceAccount";
 import { describe, expect, test } from "vitest";
 import { testClerkOrgId } from "../../tests/fixtures/testClerkOrgId";
+import { agentIdOf } from "../../tests/lib/agentIdOf";
 import { api } from "../_generated/api";
+import type { Id } from "../_generated/dataModel";
 import schema from "../schema";
 import {
 	actingWith,
@@ -35,17 +38,15 @@ const modules = Object.fromEntries(
 	),
 );
 
-type T = ReturnType<typeof convexTest>;
+const createT = () => convexTest(schema, modules);
+type T = ReturnType<typeof createT>;
 type Identity = Parameters<T["withIdentity"]>[0];
-const createT = (): T =>
-	convexTest(schema, modules) as unknown as ReturnType<typeof convexTest>;
 
 // `org-b/<name>` -> credential of that org-b agent (written by fixture): a member
 // acting as an agent of its org presents it (the task doors decide on agent IDs).
 const secrets = new Map<string, string>();
 
-// `agents: false` leaves the roster names unregistered (the recurringTasks doors
-// take no per-agent credential, so they are exercised on bare roster names).
+// `agents: false` leaves the roster names unregistered (bare roster names).
 async function fixture(opts: { agents?: boolean } = {}) {
 	const t = createT();
 	await seedFleetAgents(t, FILE_LABELS);
@@ -379,39 +380,57 @@ describe("recurringTasks — one roster rule (normalised, '*' names nobody)", ()
 		cronExpression: "0 9 * * *",
 		createdBy: "bob",
 	});
+	// M10h: no secret travels as an argument. The MCP verifies bob's credential and
+	// forwards the row it resolved through the fleet service account.
+	// The forwarded agent is judged by ID: a foreign name has no agents row in
+	// the org, so the assignee is refused as RBAC_DENIED (not by roster label).
+	const expectNoAgentAssignee = async (p: Promise<unknown>) => {
+		const refusal = await refusalOf(p);
+		expect(refusal).toContain("RBAC_DENIED");
+		expect(refusal).toContain("assignee-not-an-agent-of-org");
+	};
+	const viaMcp = async (t: T) => {
+		const bobId = await agentIdOf(t, "org-b", "bob");
+		const svc = t.withIdentity({ subject: "test-service-account-user-id" } as Identity);
+		return {
+			mutation: (fn: FunctionReference<"mutation", "public">, a: Record<string, unknown>) =>
+				svc.mutation(fn, {
+					...a,
+					verifiedActor: { agentId: bobId, orgSlug: "org-b" },
+				} as never),
+		};
+	};
 	test("REFUSED: create for foreign 'eta'", async () => {
-		const t = await fixture({ agents: false });
-		await expectDenied(
-			member(t).mutation(api.recurringTasks.create, args("eta")),
-			"recurringTasks:create",
-			"assignee",
+		const t = await fixture();
+		await expectNoAgentAssignee(
+			(await viaMcp(t)).mutation(api.recurringTasks.create, args("eta")),
 		);
 	});
 	test("SERVED: create for 'Bob' (normalisation) and own roster", async () => {
-		const t = await fixture({ agents: false });
-		await member(t).mutation(api.recurringTasks.create, args("Bob"));
-		await member(t).mutation(api.recurringTasks.create, args("bea"));
+		const t = await fixture();
+		await (await viaMcp(t)).mutation(api.recurringTasks.create, args("Bob"));
+		await (await viaMcp(t)).mutation(api.recurringTasks.create, args("bea"));
 		expect(await t.run((c) => c.db.query("recurringTasks").collect())).toHaveLength(2);
 	});
 	test("REFUSED: update reassigns to foreign; SERVED: to own roster", async () => {
-		const t = await fixture({ agents: false });
-		const id = await member(t).mutation(api.recurringTasks.create, args("bob"));
-		await expectDenied(
-			member(t).mutation(api.recurringTasks.update, {
+		const t = await fixture();
+		const id = await (await viaMcp(t)).mutation(api.recurringTasks.create, args("bob"));
+		await expectNoAgentAssignee(
+			(await viaMcp(t)).mutation(api.recurringTasks.update, {
 				recurringTaskId: id,
+				callerOrchestrator: "bob",
 				assignedTo: "eta",
 			}),
-			"recurringTasks:update",
-			"assignee",
 		);
-		await member(t).mutation(api.recurringTasks.update, {
+		await (await viaMcp(t)).mutation(api.recurringTasks.update, {
 			recurringTaskId: id,
+			callerOrchestrator: "bob",
 			assignedTo: "BEA",
 		});
-		expect((await t.run((c) => c.db.get(id)))?.assignedTo).toBe("BEA");
+		expect((await t.run((c) => c.db.get(id as Id<"recurringTasks">)))?.assignedTo).toBe("BEA");
 	});
 	test("MASTER unchanged", async () => {
-		const t = await fixture({ agents: false });
+		const t = await fixture();
 		await master(t).mutation(api.recurringTasks.create, args("eta"));
 		expect(await t.run((c) => c.db.query("recurringTasks").collect())).toHaveLength(1);
 	});

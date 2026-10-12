@@ -1103,13 +1103,14 @@ app.post("/token", async (c) => {
 		const refreshTokenHash = await sha256Hex(refreshTokenRaw);
 		const record = (await internalClient().query(
 			// biome-ignore lint/suspicious/noExplicitAny: Convex string API
-			"oauth:getRefreshTokenByHash" as any,
-			{ tokenHash: refreshTokenHash },
+			"oauth:getRefreshTokenForGrant" as any,
+			{ presentedHash: refreshTokenHash },
 		)) as {
 			clientId: string;
 			userId: string;
 			scopeProfile: string;
 			expiresAt: number;
+			spent: boolean;
 		} | null;
 
 		if (!record) {
@@ -1172,60 +1173,46 @@ app.post("/token", async (c) => {
 			return c.json({ error: "server_error" }, 500);
 		}
 
-		const accessToken = randomOpaqueToken();
-		const accessTokenHash = await sha256Hex(accessToken);
+		// ROTATION (module M3): ONE Convex mutation spends the presented refresh
+		// token and mints its replacement pair, after the client has authenticated
+		// (someone who merely knows a token cannot burn it). Each refresh mints a NEW
+		// refresh token (SEAT_TOKEN_RENEWAL, k1784cq353qpmw9fmn8me551qs8ev2z9), so a
+		// renewing client never dies at the first token's 30-day mark. A
+		// presentation of an already-spent token is a REPLAY: the door revokes the
+		// whole token family, so whoever redeemed it first loses the pair he was
+		// given, and the caller gets invalid_grant like any other refusal.
+		// The replacement pair is generated INSIDE the Convex mutation and returned
+		// once; this server neither chooses nor sends the values.
 		const now = Date.now();
-
-		// SEAT_TOKEN_RENEWAL (k1784cq353qpmw9fmn8me551qs8ev2z9): each refresh
-		// mints a NEW refresh token rather than handing the presented one
-		// back unchanged. Without this, the refresh token itself carried a
-		// fixed 30-day expiry from the moment it was first issued and a
-		// renewing client still died at day 30 — fixing only the access
-		// token's renewal moved the fuse, it did not remove it.
-		//
-		// Deliberately NOT revoke-on-use: the OLD refresh token
-		// (`refreshTokenRaw`/`refreshTokenHash`) is left standing until its
-		// own expiry rather than revoked here. A client that ignores this
-		// response's `refresh_token` and replays the old value keeps
-		// working until that old token's own 30-day clock runs out — see
-		// PR body for why revoke-on-use rotation is deferred rather than
-		// shipped in this change.
-		const newRefreshToken = randomOpaqueToken();
-		const newRefreshTokenHash = await sha256Hex(newRefreshToken);
-		await internalClient().mutation(
+		const rotated = (await internalClient().mutation(
 			// biome-ignore lint/suspicious/noExplicitAny: Convex string API
-			"oauth:createRefreshToken" as any,
+			"oauth:rotateRefreshToken" as any,
 			{
-				tokenHash: newRefreshTokenHash,
+				presentedHash: refreshTokenHash,
 				clientId: record.clientId,
-				userId: record.userId,
 				scopeProfile: profile.profileId,
-				expiresAt: now + REFRESH_TOKEN_TTL_SECONDS * 1000,
-			},
-		);
-		await internalClient().mutation(
-			// biome-ignore lint/suspicious/noExplicitAny: Convex string API
-			"oauth:createAccessToken" as any,
-			{
-				tokenHash: accessTokenHash,
-				clientId: record.clientId,
-				userId: record.userId,
 				// SC: standardized on mcp:full
 				scopes: ["mcp:full"],
-				scopeProfile: profile.profileId,
 				fromAllowList: profile.fromAllowList,
 				namespaceReadPrefixes: profile.namespaceReadPrefixes,
 				namespaceWritePrefixes: profile.namespaceWritePrefixes,
-				expiresAt: now + ACCESS_TOKEN_TTL_SECONDS * 1000,
-				refreshTokenHash: newRefreshTokenHash,
-				clerkOrgSlug: profile.clerkOrgSlug,
+				accessExpiresAt: now + ACCESS_TOKEN_TTL_SECONDS * 1000,
+				refreshExpiresAt: now + REFRESH_TOKEN_TTL_SECONDS * 1000,
+				...(profile.clerkOrgSlug !== undefined
+					? { clerkOrgSlug: profile.clerkOrgSlug }
+					: {}),
 			},
-		);
+		)) as
+			| { status: "ok"; issued: { refresh: string; access: string } }
+			| { status: "reused" | "invalid" };
+		if (rotated.status !== "ok") {
+			return c.json({ error: "invalid_grant" }, 400);
+		}
 		return c.json({
-			access_token: accessToken,
+			access_token: rotated.issued.access,
 			token_type: "Bearer",
 			expires_in: ACCESS_TOKEN_TTL_SECONDS,
-			refresh_token: newRefreshToken,
+			refresh_token: rotated.issued.refresh,
 			// SC: standardized on mcp:full
 			scope: "mcp:full",
 		});

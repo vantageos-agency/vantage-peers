@@ -876,6 +876,12 @@ export default defineSchema({
 	mandates: defineTable({
 		requestedBy: creatorValidator, // who needs the service
 		fulfilledBy: creatorValidator, // who will provide the service
+		// The two parties as agents-row IDs of the operator org (M11). The labels above
+		// are display text; the doors compare the acting agent's verified ID with
+		// these. Optional: a row written before M11 carries labels only and its party
+		// is resolved once in the operator org (lib/fleetActors.ts fleetPartyId).
+		requestedById: v.optional(v.string()),
+		fulfilledById: v.optional(v.string()),
 		service: v.string(), // description of what is needed
 		budget: v.number(), // token budget allocated
 		status: v.union(
@@ -1111,6 +1117,12 @@ export default defineSchema({
 		nextRunAt: v.number(),
 		active: v.boolean(),
 		createdBy: creatorValidator,
+		// M10h: the same two principals BY ID (agents-row `_id`, or "user:<subject>" for
+		// a person), resolved within the schedule's own org when it is written. The
+		// doors decide on these; the name columns above are labels. Optional during
+		// the expand phase: filled by migrations/backfill_recurring_task_actor_ids.
+		assignedToId: v.optional(v.string()),
+		createdById: v.optional(v.string()),
 		// TENANT of the SCHEDULE, stamped from the verified scope at creation.
 		// This column exists so that `processDueTasks` — a cron with no caller
 		// and therefore no scope of its own — can stamp the tasks it generates
@@ -1128,7 +1140,13 @@ export default defineSchema({
 		updatedAt: v.number(),
 	})
 		.index("by_active", ["active", "nextRunAt"])
-		.index("by_assignee", ["assignedTo"]),
+		.index("by_assignee", ["assignedTo"])
+		// M10h: the assignee BY ID (master read), and the tenant as the leading
+		// equality for a member's read, so the caller's org is the read itself.
+		.index("by_assigneeId", ["assignedToId"])
+		.index("by_orgId", ["orgId"])
+		.index("by_orgId_active", ["orgId", "active"])
+		.index("by_orgId_assigneeId", ["orgId", "assignedToId"]),
 
 	// ── fixPatterns ──────────────────────────────────────────────────────────────
 	// Knowledge base of fix patterns. Documents bugs, root causes, fix attempts
@@ -1332,7 +1350,10 @@ export default defineSchema({
 	// Short-lived authorization codes (RFC 6749 §4.1). TTL ~10 min.
 	// Cleaned periodically by cron (processExpiredOauthCodes).
 	oauth_authorization_codes: defineTable({
-		code: v.string(), // opaque random value
+		// SHA-256 hex of the opaque random code (module M3). The raw code is never stored; a
+		// row written before this change holds the raw value and is simply unredeemable (a
+		// code lives minutes, and its only minting door has no caller left).
+		code: v.string(),
 		clientId: v.string(),
 		redirectUri: v.string(),
 		codeChallenge: v.string(), // PKCE S256 (RFC 7636)
@@ -1429,11 +1450,16 @@ export default defineSchema({
 		// live meanwhile).
 		agentId: v.optional(v.id("agents")),
 		agentOrgId: v.optional(v.string()),
+		// Refresh-token family (set by oauth:rotateRefreshToken): the digest of the
+		// first refresh token of the grant. A replay of a spent refresh token
+		// revokes every access and refresh token that carries the same family.
+		familyId: v.optional(v.string()),
 	})
 		.index("by_tokenHash", ["tokenHash"])
 		.index("by_clientId", ["clientId"])
 		.index("by_scopeProfile", ["scopeProfile"])
-		.index("by_codeHash", ["codeHash"]),
+		.index("by_codeHash", ["codeHash"])
+		.index("by_familyId", ["familyId", "revokedAt"]),
 
 	// ── oauth_refresh_tokens ─────────────────────────────────────────────────
 	// Refresh tokens for renewing expired access tokens. Same hashing rules.
@@ -1445,10 +1471,15 @@ export default defineSchema({
 		expiresAt: v.number(),
 		createdAt: v.number(),
 		revokedAt: v.optional(v.number()),
+		// Refresh-token family: the digest of the first refresh token of the grant,
+		// stamped on every token a rotation mints (the first token has none; its
+		// own digest is the family). See oauth:rotateRefreshToken.
+		familyId: v.optional(v.string()),
 	})
 		.index("by_tokenHash", ["tokenHash"])
 		.index("by_clientId", ["clientId"])
-		.index("by_scopeProfile", ["scopeProfile"]),
+		.index("by_scopeProfile", ["scopeProfile"])
+		.index("by_familyId", ["familyId", "revokedAt"]),
 
 	// ── oauth_scope_profiles ─────────────────────────────────────────────────
 	// Reusable scope templates. An OAuth client references a profile by
@@ -1481,6 +1512,13 @@ export default defineSchema({
 		// into oauth_scope_profiles (a seat profile, in particular) was
 		// self-registrable by default under that scheme.
 		selfRegistrable: v.optional(v.boolean()),
+		// MODULE M3: the `agents` row ID of the ONE agent a seat profile (`<agent>-<org>`)
+		// stands for. A seat token is minted for, and resolved to, THIS ID; the profile's
+		// `fromAllowList` name is a display label and no longer selects the agent. Optional
+		// (expand phase): written by provisionOrganization and by createAccessToken the first
+		// time it resolves a legacy profile (by name, inside the profile's own org). A profile
+		// whose agentId names an agent of another org, or an inactive one, resolves no agent.
+		agentId: v.optional(v.id("agents")),
 	})
 		.index("by_profileId", ["profileId"])
 		.index("by_clerkOrgSlug", ["clerkOrgSlug"])

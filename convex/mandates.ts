@@ -3,37 +3,51 @@ import type { Doc } from "./_generated/dataModel";
 import { mutation, query } from "./_generated/server";
 import { requireId } from "./lib/ids";
 import { creatorValidator } from "./schema";
-import { requireResolvedCaller, withOrgScope } from "./lib/auth";
+import { verifiedActorValidator, withOrgScope } from "./lib/auth";
 import type { OrgScope } from "./lib/auth";
-import { isFleetSystemCaller } from "./lib/systemCaller";
+import { fleetPartyId, requireFleetAgentActor } from "./lib/fleetActors";
+import { requireFleetDoor, scopeWithFleetStanding } from "./lib/fleetStanding";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // requireFleetMaster — mandates.ts's own single authority gate.
 //
-// `mandates` carries NO orgId/tenant field (see schema.ts:660) — requestedBy/
-// fulfilledBy are fleet ORCHESTRATOR names (pi/tau/sigma/alpha…), not client
-// organisations. There is no per-tenant row to scope against, so the only
-// sound authority boundary is: the caller must be the verified fleet master
-// (the real master secret / recognised service-account carve-out —
-// convex/lib/auth.ts's withOrgScope). A Clerk-org (tenant client) identity is
-// REFUSED here just like an anonymous one — a mandate is a fleet-internal
-// commercial object between orchestrators, never a client-facing write
-// surface, regardless of what callerOrchestrator string is presented
-// (defect class: .claude/rules/authority-attached-to-anonymous-object.md —
-// callerOrchestrator is a caller-supplied ASSERTION, never a verified
-// identity, and was previously the ONLY check these mutations performed).
+// `mandates` carries NO orgId/tenant field (see schema.ts) — requestedBy/
+// fulfilledBy are fleet ORCHESTRATORS (agents of the operator organisation),
+// not client organisations. There is no per-tenant row to scope against, so
+// the only sound authority boundary is: the caller must have FLEET STANDING,
+// which is the package's verdict (convex/lib/fleetStanding.ts), not a local
+// master flag. A Clerk-org (tenant client) identity is REFUSED here just like
+// an anonymous one.
+//
+// Fleet standing admits the transport; it does not make the caller a PARTY.
+// accept / update / settle additionally need the acting agent's verified ID
+// (`verifiedActor`) and compare it with the party's ID
+// (lib/fleetActors.ts). `callerOrchestrator` is a label the caller types; it is
+// never authority, and neither is the word "system".
 // ─────────────────────────────────────────────────────────────────────────────
 async function requireFleetMaster(
 	ctx: Parameters<typeof withOrgScope>[0],
 	action: string,
 ): Promise<OrgScope> {
-	const scope = await withOrgScope(ctx);
+	const transport = await withOrgScope(ctx);
+	// The master bit is the package's standing (convex/lib/fleetStanding.ts),
+	// carried on the scope handed back: a refusal on the verified scope.
+	const scope = await scopeWithFleetStanding(ctx, transport, "mandates:write");
 	if (!scope.isMaster) {
 		throw new ConvexError(
 			`RBAC_DENIED: caller may not ${action} — mandates are fleet-internal, master-only — ${JSON.stringify({ orgSlug: scope.orgSlug })}`,
 		);
 	}
 	return scope;
+}
+
+// A number a mandate stores (budget, limits, cost) is finite and not negative.
+function requireAmount(value: number, field: string, door: string): void {
+	if (!Number.isFinite(value) || value < 0) {
+		throw new ConvexError(
+			`INVALID_AMOUNT: ${field} must be a finite number >= 0 — ${JSON.stringify({ door, field })}`,
+		);
+	}
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -54,6 +68,8 @@ const mandateObject = v.object({
 	_creationTime: v.number(),
 	requestedBy: creatorValidator,
 	fulfilledBy: creatorValidator,
+	requestedById: v.optional(v.string()),
+	fulfilledById: v.optional(v.string()),
 	service: v.string(),
 	budget: v.number(),
 	status: mandateStatusValidator,
@@ -93,10 +109,26 @@ export const create = mutation({
 	handler: async (ctx, args) => {
 		// write-contract: MCP-transport-only — issued via mcp-server client.mutation("mandates:create", …) at mcp-server/src/tools.ts:7042 (imperative), 0 hits in vantage-peers-dashboard {app,components,hooks,lib,contexts,providers} (measured 2026-10-01 at origin/main e2dc58f and 0466fac); never a subscribing pre-org client shell. The no-org throw is a refusal at an imperative MCP call, never at a render.
 		await requireFleetMaster(ctx, "create a mandate");
+		const door = "mandates:create";
+		requireAmount(args.budget, "budget", door);
+		if (args.spendingLimits !== undefined) {
+			requireAmount(args.spendingLimits.maxPerTransaction, "spendingLimits.maxPerTransaction", door);
+			requireAmount(args.spendingLimits.maxPerPeriod, "spendingLimits.maxPerPeriod", door);
+			if (args.spendingLimits.periodDays !== undefined) {
+				requireAmount(args.spendingLimits.periodDays, "spendingLimits.periodDays", door);
+			}
+		}
+		// The parties as operator-org agent IDs, stamped when the labels name agents
+		// there (a label that names none leaves the column unset; the door then
+		// refuses every party act on it rather than guessing).
+		const requestedById = await fleetPartyId(ctx, undefined, args.requestedBy);
+		const fulfilledById = await fleetPartyId(ctx, undefined, args.fulfilledBy);
 		const now = Date.now();
 		return await ctx.db.insert("mandates", {
 			requestedBy: args.requestedBy,
 			fulfilledBy: args.fulfilledBy,
+			...(requestedById !== null && { requestedById }),
+			...(fulfilledById !== null && { fulfilledById }),
 			service: args.service,
 			budget: args.budget,
 			status: "requested",
@@ -116,7 +148,9 @@ export const create = mutation({
 export const accept = mutation({
 	args: {
 		mandateId: v.id("mandates"),
+		// A LABEL the caller types; never read as authority (see requireFleetMaster).
 		callerOrchestrator: creatorValidator,
+		verifiedActor: v.optional(verifiedActorValidator),
 	},
 	returns: v.null(),
 	handler: async (ctx, args) => {
@@ -126,12 +160,21 @@ export const accept = mutation({
 		if (mandate === null) {
 			throw new Error(`Mandate ${args.mandateId} not found`);
 		}
-		if (
-			!isFleetSystemCaller(scope, args.callerOrchestrator) &&
-			args.callerOrchestrator !== mandate.fulfilledBy
-		) {
+		const actorId = await requireFleetAgentActor(
+			ctx,
+			scope,
+			args.verifiedActor,
+			"mandates:accept",
+		);
+		const fulfiller = await fleetPartyId(ctx, mandate.fulfilledById, mandate.fulfilledBy);
+		if (fulfiller === null || fulfiller !== actorId) {
 			throw new ConvexError(
-				`RBAC_DENIED: only ${mandate.fulfilledBy} (fulfilledBy) or system can accept this mandate — ${JSON.stringify({ registration: "mandates:accept", orgSlug: scope.orgSlug, reason: "not-fulfilled-by" })}`,
+				`RBAC_DENIED: only the fulfilling agent can accept this mandate — ${JSON.stringify({ registration: "mandates:accept", orgSlug: scope.orgSlug, reason: "not-fulfilled-by" })}`,
+			);
+		}
+		if (mandate.status !== "requested") {
+			throw new ConvexError(
+				`INVALID_TRANSITION: only a requested mandate can be accepted — ${JSON.stringify({ registration: "mandates:accept", status: mandate.status })}`,
 			);
 		}
 		await ctx.db.patch(args.mandateId, {
@@ -149,7 +192,10 @@ export const accept = mutation({
 export const update = mutation({
 	args: {
 		mandateId: v.id("mandates"),
+		// A LABEL the caller types; never read as authority (see requireFleetMaster).
 		callerOrchestrator: creatorValidator,
+		verifiedActor: v.optional(verifiedActorValidator),
+		// "settled" is not settable here: settle is the requester's confirmation.
 		status: v.optional(mandateStatusValidator),
 		tokensCost: v.optional(v.number()),
 		linkedTaskIds: v.optional(v.array(v.id("tasks"))),
@@ -162,16 +208,33 @@ export const update = mutation({
 		if (mandate === null) {
 			throw new Error(`Mandate ${args.mandateId} not found`);
 		}
-		if (
-			!isFleetSystemCaller(scope, args.callerOrchestrator) &&
-			args.callerOrchestrator !== mandate.fulfilledBy
-		) {
+		const actorId = await requireFleetAgentActor(
+			ctx,
+			scope,
+			args.verifiedActor,
+			"mandates:update",
+		);
+		const fulfiller = await fleetPartyId(ctx, mandate.fulfilledById, mandate.fulfilledBy);
+		if (fulfiller === null || fulfiller !== actorId) {
 			throw new ConvexError(
-				`RBAC_DENIED: only ${mandate.fulfilledBy} (fulfilledBy) or system can update this mandate — ${JSON.stringify({ registration: "mandates:update", orgSlug: scope.orgSlug, reason: "not-fulfilled-by" })}`,
+				`RBAC_DENIED: only the fulfilling agent can update this mandate — ${JSON.stringify({ registration: "mandates:update", orgSlug: scope.orgSlug, reason: "not-fulfilled-by" })}`,
 			);
 		}
+		if (args.status === "settled" || args.status === "requested") {
+			throw new ConvexError(
+				`INVALID_TRANSITION: update moves a mandate to accepted, in_progress or delivered only; settling is the requester's confirmation (mandates:settle) — ${JSON.stringify({ registration: "mandates:update", requested: args.status })}`,
+			);
+		}
+		if (mandate.status === "settled") {
+			throw new ConvexError(
+				`INVALID_TRANSITION: a settled mandate is final — ${JSON.stringify({ registration: "mandates:update" })}`,
+			);
+		}
+		if (args.tokensCost !== undefined) {
+			requireAmount(args.tokensCost, "tokensCost", "mandates:update");
+		}
 
-		const { mandateId, callerOrchestrator, ...fields } = args;
+		const { mandateId, callerOrchestrator: _label, verifiedActor: _actor, ...fields } = args;
 
 		// Build patch object with only provided fields
 		const patch: Record<string, unknown> = { updatedAt: Date.now() };
@@ -193,7 +256,9 @@ export const update = mutation({
 export const settle = mutation({
 	args: {
 		mandateId: v.id("mandates"),
+		// A LABEL the caller types; never read as authority (see requireFleetMaster).
 		callerOrchestrator: creatorValidator,
+		verifiedActor: v.optional(verifiedActorValidator),
 		finalCost: v.number(),
 	},
 	returns: v.null(),
@@ -204,14 +269,24 @@ export const settle = mutation({
 		if (mandate === null) {
 			throw new Error(`Mandate ${args.mandateId} not found`);
 		}
-		if (
-			!isFleetSystemCaller(scope, args.callerOrchestrator) &&
-			args.callerOrchestrator !== mandate.requestedBy
-		) {
+		const actorId = await requireFleetAgentActor(
+			ctx,
+			scope,
+			args.verifiedActor,
+			"mandates:settle",
+		);
+		const requester = await fleetPartyId(ctx, mandate.requestedById, mandate.requestedBy);
+		if (requester === null || requester !== actorId) {
 			throw new ConvexError(
-				`RBAC_DENIED: only ${mandate.requestedBy} (requestedBy) or system can settle this mandate — ${JSON.stringify({ registration: "mandates:settle", orgSlug: scope.orgSlug, reason: "not-requested-by" })}`,
+				`RBAC_DENIED: only the requesting agent can settle this mandate — ${JSON.stringify({ registration: "mandates:settle", orgSlug: scope.orgSlug, reason: "not-requested-by" })}`,
 			);
 		}
+		if (mandate.status !== "delivered") {
+			throw new ConvexError(
+				`INVALID_TRANSITION: only a delivered mandate can be settled — ${JSON.stringify({ registration: "mandates:settle", status: mandate.status })}`,
+			);
+		}
+		requireAmount(args.finalCost, "finalCost", "mandates:settle");
 		const now = Date.now();
 		await ctx.db.patch(args.mandateId, {
 			status: "settled",
@@ -315,8 +390,10 @@ export const list = query({
 		// The fleet master alone is served the bare array (rows, or a genuine
 		// absence with NO `refused` key).
 		const scope = await withOrgScope(ctx, { refuseWithoutThrow: true });
-		requireResolvedCaller(scope, "mandates:list");
-		if (!scope.isMaster) {
+		const fleet = await requireFleetDoor(ctx, scope, "mandates:list", {
+			operatorHumanMayRead: true,
+		});
+		if (!fleet) {
 			return { refused: true as const, items: [] };
 		}
 
@@ -406,7 +483,10 @@ export const get = query({
 		// (grep "mandates\.get\b" dashboard app components hooks lib -> 0; MCP
 		// `get_mandate` one-shot), so a RAISE is safe.
 		const scope = await withOrgScope(ctx, { refuseWithoutThrow: true });
-		requireResolvedCaller(scope, "mandates:get", { masterOnly: true });
+		await requireFleetDoor(ctx, scope, "mandates:get", {
+			masterOnly: true,
+			operatorHumanMayRead: true,
+		});
 		const mandateId = requireId(
 			ctx,
 			"mandates",
@@ -441,8 +521,9 @@ export const validateSpending = query({
 		// master-only writes, no ordinary reader: masterOnly. No reactive subscriber
 		// (MCP `validate_mandate_spending` one-shot; dashboard grep -> 0).
 		const scope = await withOrgScope(ctx, { refuseWithoutThrow: true });
-		requireResolvedCaller(scope, "mandates:validateSpending", {
+		await requireFleetDoor(ctx, scope, "mandates:validateSpending", {
 			masterOnly: true,
+			operatorHumanMayRead: true,
 		});
 		const mandate = await ctx.db.get(args.mandateId);
 		if (!mandate) {

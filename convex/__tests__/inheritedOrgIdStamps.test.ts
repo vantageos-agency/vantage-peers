@@ -24,7 +24,7 @@
  * Both are proved under an ORDINARY org identity, never master.
  */
 
-import { convexTest } from "convex-test";
+import { convexTest } from "../../tests/fixtures/convexTestWithServiceAccount";
 import { describe, expect, test } from "vitest";
 import { testClerkOrgId } from "../../tests/fixtures/testClerkOrgId";
 import { api, internal } from "../_generated/api";
@@ -62,18 +62,36 @@ const asOrg = (t: ReturnType<typeof createT>, slug: string) =>
 		org_id: testClerkOrgId(slug),
 	} as Parameters<typeof t.withIdentity>[0]);
 
+// M10h: the assignee is an agent of the org (by ID) and the creator proves it is
+// that agent through the MCP (the service account forwards the verified row).
+async function createSchedule(t: ReturnType<typeof createT>, slug: string) {
+	const agentId = await t.run((ctx) =>
+		ctx.db.insert("agents", {
+			orgSlug: slug,
+			name: SHARED,
+			normalizedName: SHARED,
+			isActive: true,
+			createdAt: Date.now(),
+		}),
+	);
+	return await t
+		.withIdentity({ subject: "test-service-account-user-id" })
+		.mutation(api.recurringTasks.create, {
+		title: "daily scan",
+		assignedTo: SHARED,
+		priority: "medium",
+		cronExpression: "0 9 * * *",
+		createdBy: SHARED,
+		verifiedActor: { agentId, orgSlug: slug },
+	});
+}
+
 describe("recurringTasks.processDueTasks — the cron inherits the schedule's tenant", () => {
 	test("the schedule itself is stamped with its creator's verified org", async () => {
 		const t = createT();
 		await seedBothOrgs(t);
 
-		const id = await asOrg(t, "org-a").mutation(api.recurringTasks.create, {
-			title: "daily scan",
-			assignedTo: SHARED,
-			priority: "medium",
-			cronExpression: "0 9 * * *",
-			createdBy: SHARED,
-		});
+		const id = await createSchedule(t, "org-a");
 
 		const row = await t.run(async (ctx) => ctx.db.get(id));
 		expect(row?.orgId).toBe("org-a");
@@ -83,13 +101,7 @@ describe("recurringTasks.processDueTasks — the cron inherits the schedule's te
 		const t = createT();
 		await seedBothOrgs(t);
 
-		const id = await asOrg(t, "org-a").mutation(api.recurringTasks.create, {
-			title: "daily scan",
-			assignedTo: SHARED,
-			priority: "medium",
-			cronExpression: "0 9 * * *",
-			createdBy: SHARED,
-		});
+		const id = await createSchedule(t, "org-a");
 		// Make the schedule due without touching the clock.
 		await t.run(async (ctx) => ctx.db.patch(id, { nextRunAt: 1 }));
 
@@ -109,13 +121,7 @@ describe("recurringTasks.processDueTasks — the cron inherits the schedule's te
 		const t = createT();
 		await seedBothOrgs(t);
 
-		const id = await asOrg(t, "org-a").mutation(api.recurringTasks.create, {
-			title: "daily scan",
-			assignedTo: SHARED,
-			priority: "medium",
-			cronExpression: "0 9 * * *",
-			createdBy: SHARED,
-		});
+		const id = await createSchedule(t, "org-a");
 		await t.run(async (ctx) => ctx.db.patch(id, { nextRunAt: 1 }));
 		await t.mutation(internal.recurringTasks.processDueTasks, {});
 

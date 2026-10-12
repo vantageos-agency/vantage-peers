@@ -22,10 +22,15 @@
  * (avoids _generated/api.ts dependency before codegen runs).
  */
 
+import { sha256Hex } from "@vantageos/cloud-identity";
 import { makeFunctionReference } from "convex/server";
-import { v } from "convex/values";
-import type { ActionCtx } from "./_generated/server";
-import { internalMutation, internalQuery } from "./_generated/server";
+import { ConvexError, v } from "convex/values";
+import type { ActionCtx, MutationCtx } from "./_generated/server";
+import {
+	internalMutation,
+	internalQuery,
+	mutation,
+} from "./_generated/server";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Function references (avoids circular _generated/api dependency)
@@ -179,9 +184,8 @@ export async function verifyClerkJwt(
 		: `https://${issuerDomain}`;
 
 	if (claims.iss !== expectedIssuer) {
-		throw new Error(
-			`JWT issuer mismatch: expected ${expectedIssuer}, got ${claims.iss}`,
-		);
+		// The expected issuer is configuration; it is not said to the caller.
+		throw new Error("JWT issuer mismatch");
 	}
 
 	// aud validation — VP_CLERK_EXPECTED_AUD env var required
@@ -196,15 +200,14 @@ export async function verifyClerkJwt(
 		? audClaim.includes(expectedAud)
 		: audClaim === expectedAud;
 	if (!audMatches) {
-		throw new Error(
-			`JWT aud claim mismatch: expected ${expectedAud}, got ${JSON.stringify(audClaim)}`,
-		);
+		// The expected audience is configuration; it is not said to the caller.
+		throw new Error("JWT aud claim mismatch");
 	}
 
 	const jwksUrl = `${expectedIssuer}/.well-known/jwks.json`;
 	const jwksRes = await fetch(jwksUrl);
 	if (!jwksRes.ok) {
-		throw new Error(`Failed to fetch JWKS from ${jwksUrl}: ${jwksRes.status}`);
+		throw new Error(`Failed to fetch JWKS: ${jwksRes.status}`);
 	}
 	const jwks = (await jwksRes.json()) as JwksResponse;
 
@@ -230,18 +233,6 @@ export async function verifyClerkJwt(
 	}
 
 	return claims;
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
-// SHA-256 hex helper
-// ─────────────────────────────────────────────────────────────────────────────
-
-export async function sha256Hex(input: string): Promise<string> {
-	const encoded = new TextEncoder().encode(input);
-	const hashBuffer = await crypto.subtle.digest("SHA-256", encoded);
-	return Array.from(new Uint8Array(hashBuffer))
-		.map((b) => b.toString(16).padStart(2, "0"))
-		.join("");
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -307,6 +298,49 @@ export const _checkRateLimit = internalMutation({
 	},
 });
 
+// Upper bound on the rows one revocation sweep reads. The cap above keeps a
+// user at one live bearer, so this only bounds legacy accumulation.
+const REVOKE_SWEEP_LIMIT = 200;
+
+async function revokeLiveBearers(
+	ctx: MutationCtx,
+	clerkUserId: string,
+): Promise<number> {
+	const rows = await ctx.db
+		.query("userBearerTokens")
+		.withIndex("by_clerkUserId", (q) => q.eq("clerkUserId", clerkUserId))
+		.order("desc")
+		.take(REVOKE_SWEEP_LIMIT);
+	let revoked = 0;
+	for (const row of rows) {
+		if (!row.revoked) {
+			await ctx.db.patch(row._id, { revoked: true });
+			revoked += 1;
+		}
+	}
+	return revoked;
+}
+
+/**
+ * revokeMyBearers - a signed-in user revokes every live bearer minted for them
+ * through /issueBearerFromClerk. The user is the verified Clerk subject of the
+ * session, never an argument, so nobody revokes another user's bearer.
+ */
+export const revokeMyBearers = mutation({
+	args: {},
+	returns: v.object({ revoked: v.number() }),
+	handler: async (ctx) => {
+		// write-contract: imperative-only - called from the signed-in webapp's "sign out of the extension" click handler through useMutation(api.credentials.revokeMyBearers); never a subscribing pre-org client shell. The refusal is a raise at an imperative call, never at a render.
+		const identity = await ctx.auth.getUserIdentity();
+		if (identity === null) {
+			throw new ConvexError(
+				`RBAC_DENIED: no authenticated identity presented — ${JSON.stringify({ reason: "no-credential", door: "credentials:revokeMyBearers" })}`,
+			);
+		}
+		return { revoked: await revokeLiveBearers(ctx, identity.subject) };
+	},
+});
+
 export const _issueToken = internalMutation({
 	args: {
 		tokenHash: v.string(),
@@ -317,6 +351,11 @@ export const _issueToken = internalMutation({
 	},
 	returns: v.null(),
 	handler: async (ctx, args) => {
+		// CAP: a user holds at most one live bearer. A new mint revokes every
+		// earlier live bearer of the same verified user before it is written, so
+		// the number of live credentials a Clerk session can create is bounded
+		// (the old ones were each valid for seven days and could not be revoked).
+		await revokeLiveBearers(ctx, args.clerkUserId);
 		await ctx.db.insert("userBearerTokens", {
 			tokenHash: args.tokenHash,
 			clerkUserId: args.clerkUserId,
@@ -497,6 +536,18 @@ export async function handleIssueBearerFromClerk(
 		}
 		// allow-hardcode: dev-only fallback
 		allowedExtIds.push("mhfnnhkmnclmnnllhmoidkflgpkogjpe");
+	}
+
+	// The extension a bearer is for is not taken from the body alone: when the
+	// browser says the request comes FROM an extension (Origin chrome-extension://<id>,
+	// set by the browser, not by page script), the body's extId must be that
+	// extension. A body that names a different one is refused.
+	const originExtId = /^chrome-extension:\/\/([a-p]{32})$/.exec(origin ?? "")?.[1];
+	if (originExtId !== undefined && originExtId !== extId) {
+		return new Response(JSON.stringify({ error: "Extension not authorized" }), {
+			status: 403,
+			headers: { ...corsHdrs, "Content-Type": "application/json" },
+		});
 	}
 
 	if (!allowedExtIds.includes(extId)) {
