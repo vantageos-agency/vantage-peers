@@ -149,6 +149,10 @@
 			"disposition": "CONSERVER",
 			"reason": "live: MCP-public tool; Convex door messages:getById(query) (the derivation names no table: the id argument is not a v.id validator)"
 		},
+		"get_mission": {
+			"disposition": "CONSERVER",
+			"reason": "live: MCP-public tool; Convex door missions:get(query) (the derivation names no table: the id argument is not a v.id validator)"
+		},
 		"get_recurring_task": {
 			"disposition": "CONSERVER",
 			"reason": "live: MCP-public tool; Convex door recurringTasks:getById(query) (the derivation names no table: the id argument is not a v.id validator)"
