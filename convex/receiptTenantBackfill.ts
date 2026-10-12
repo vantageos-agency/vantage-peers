@@ -43,6 +43,7 @@
 // SAME transaction (no cross-call round-trips), and schedules its own
 // continuation with the accumulated counters until `isDone`. No execution's
 // read/write footprint depends on corpus size.
+import { hasFleetRead } from "@vantageos/cloud-identity";
 import { ConvexError, v } from "convex/values";
 import type { Id } from "./_generated/dataModel";
 import { internal } from "./_generated/api";
@@ -330,9 +331,9 @@ export const _receiptsForCaller = internalQuery({
 
 		// Defense-in-depth (mirrors listMessages's own degenerate-scope guard):
 		// a non-master scope with no org slug can serve nothing.
-		if (!scope.isMaster && scope.orgSlug === null) return [];
+		if (!hasFleetRead(scope) && scope.orgSlug === null) return [];
 
-		if (scope.isMaster) {
+		if (hasFleetRead(scope)) {
 			// Master reads the all-tenants path — not exercised by the
 			// both-directions litmus (which asserts on the two SCOPED poles),
 			// but kept honest with the rest of the repo's master/scoped split.

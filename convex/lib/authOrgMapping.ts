@@ -44,11 +44,10 @@ async function readMappings(
 	read: MappingRead,
 ): Promise<Doc<"client_org_mapping">[]> {
 	if ("slug" in read) {
-		const row = await db
+		return await db
 			.query("client_org_mapping")
 			.withIndex("by_clerk_slug", (q) => q.eq("clerkOrgSlug", read.slug))
-			.first();
-		return row === null ? [] : [row];
+			.take(2);
 	}
 	if ("clerkOrgId" in read) {
 		return await db
@@ -78,6 +77,14 @@ export async function lookupOrgMapping(
 	);
 	if (typeof key === "string") return rows[0] ?? null;
 	return rows.length === 1 ? rows[0] : null;
+}
+
+/** Up to two rows carrying a label, as stored. Counting them is the caller's business. */
+export async function orgMappingRowsForLabel(
+	ctx: { db: DatabaseReader },
+	label: string,
+): Promise<Doc<"client_org_mapping">[]> {
+	return await readMappings(ctx.db, { slug: label });
 }
 
 /** The row in the shape the package reads: its own field names beside the table's. */

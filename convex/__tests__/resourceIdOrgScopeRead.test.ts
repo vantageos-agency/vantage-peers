@@ -722,7 +722,7 @@ describe("isRowVisibleToScope — each leg observed alone", () => {
 		const scope = scopeOf({
 			isMaster: true,
 			fleetWide: true,
-			masterSource: "internal",
+			masterSource: "service-account",
 			orgSlug: null,
 			allowedOrchestrators: [],
 		});

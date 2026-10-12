@@ -4,11 +4,15 @@ import { ConvexError, v } from "convex/values";
 import {
 	type ActingPrincipal,
 	assertOrgAdmin,
+	claimsAnOrganisation,
+	hasFleetRead,
 	type IdentityRefusal,
-	resolveActingPrincipal,
+	readOrgRoleClaim,
 	type ResolvedOrg,
+	resolveCallerFromClaims,
 	resolveOrgFromClaim,
 	sameOrg,
+	scopeStanding,
 } from "@vantageos/cloud-identity";
 import type { UserIdentity } from "convex/server";
 import { findAgentByName, resolveAgentOfPresentedSecret } from "./agentIdentity";
@@ -367,7 +371,7 @@ export async function withOrgScope(
 		// of an absence for a credential that claims an org).
 		if (
 			resolved.refusal.reason === "no-verified-organisation" &&
-			!carriesOrgClaim(identity)
+			!claimsAnOrganisation(identity as Record<string, unknown>)
 		) {
 			if (opts?.refuseWithoutThrow) {
 				return {
@@ -418,12 +422,18 @@ export async function withOrgScope(
 	// the mapping's REAL roster. Every write path therefore applies normal org
 	// rules with no per-door patch, and the service-account-only doors need only
 	// `isMcpBoundMaster` for the query side.
-	if (
-		org.orgKind === "operator" &&
-		!opts?.operatorAsMember &&
-		isReadOnlyCtx(ctx) &&
-		(await isVerifiedOrgAdmin(ctx, identity, org.id, "withOrgScope"))
-	) {
+	const operatorCaller =
+		org.orgKind === "operator" && !opts?.operatorAsMember && isReadOnlyCtx(ctx)
+			? await resolveCallerFromClaims(
+					identity as Record<string, unknown>,
+					{
+						orgLookups: orgMappingLookups(ctx),
+						principalLookups: personPrincipalLookups(ctx),
+					},
+					{ adminRoles: ORG_ADMIN_ROLES, door: "withOrgScope" },
+				)
+			: undefined;
+	if (operatorCaller?.ok === true && operatorCaller.isOrgAdmin) {
 		return {
 			userId: identity.subject,
 			orgSlug: null,
@@ -442,7 +452,7 @@ export async function withOrgScope(
 		};
 	}
 
-	const memberRoleRaw = readOrgRole(identity).roleRaw;
+	const memberRoleRaw = readOrgRoleClaim(identity as Record<string, unknown>);
 	return {
 		userId: identity.subject,
 		orgSlug: org.label,
@@ -462,23 +472,6 @@ export async function withOrgScope(
 		isMaster: false,
 		...(memberRoleRaw !== null ? { orgRole: memberRoleRaw } : {}),
 	};
-}
-
-/**
- * Does the token carry ANY organisation claim at all (a slug or an id, in any
- * spelling)? It chooses only the SHAPE of a refusal, never an organisation: which
- * org a credential names is the package's decision (`resolveOrgFromClaim`, by the
- * `org_id` claim alone).
- */
-function carriesOrgClaim(identity: object): boolean {
-	const rec = identity as Record<string, unknown>;
-	return [
-		"organizationSlug",
-		"org_slug",
-		"organizationId",
-		"org_id",
-		"orgId",
-	].some((key) => rec[key] !== undefined && rec[key] !== null);
 }
 
 /**
@@ -513,35 +506,10 @@ function isReadOnlyCtx(ctx: QueryCtx | MutationCtx): boolean {
  * door that is service-account-only by purpose (secrets, hashes, credential
  * resolution, the fleet "system" word) instead of `scope.isMaster`.
  */
-export function isMcpBoundMaster(scope: {
-	isMaster: boolean;
-	masterSource?: MasterSource;
-}): boolean {
-	return (
-		scope.isMaster &&
-		(scope.masterSource === "service-account" ||
-			scope.masterSource === "internal")
-	);
-}
-
-/**
- * The caller's org role claim, verbatim ("org:admin"), read from the spellings
- * Convex's OIDC mapping may surface (Clerk's default is `org_role`). It is
- * only a CLAIM: whether it makes the caller an admin is the package's decision
- * (`assertOrgAdmin`). A claim is a role only when it is a non-empty STRING; an
- * array/object/number claim is "no role", never coerced.
- */
-function readOrgRole(identity: object): { roleRaw: string | null } {
-	const rec = identity as Record<string, unknown>;
-	const asRole = (x: unknown): string | undefined =>
-		typeof x === "string" && x !== "" ? x : undefined;
-	return {
-		roleRaw:
-			asRole(rec.orgRole) ??
-			asRole(rec.org_role) ??
-			asRole(rec.organizationRole) ??
-			null,
-	};
+export function isMcpBoundMaster(
+	scope: Pick<OrgScope, "isMaster" | "fleetWide" | "masterSource">,
+): boolean {
+	return scopeStanding(scope) === "fleet";
 }
 
 /**
@@ -582,7 +550,7 @@ export function filterByOrgScope<
 		assignedTo?: string;
 	},
 >(records: T[], scope: OrgScope): T[] {
-	if (scope.isMaster) return records;
+	if (hasFleetRead(scope)) return records;
 	return records.filter((r) => {
 		// 1. Tenant gate. An absent `orgId` asserts nothing and so grants
 		// nothing: `undefined` never equals a resolved org slug.
@@ -686,7 +654,7 @@ export function isRowVisibleToScope(
 ): boolean {
 	// Leg 1 — master, unchanged. Master-ness comes from the CALLER's verified
 	// scope, never from anything the row does or does not state.
-	if (scope.isMaster) return true;
+	if (hasFleetRead(scope)) return true;
 	// Leg 2 — no verified organisation (anonymous OR refused).
 	if (scope.orgSlug === null) return false;
 	// Leg 3 — the TENANT GATE. The row must STATE this caller's organisation.
@@ -747,46 +715,13 @@ function refusalError(refusal: IdentityRefusal): ConvexError<string> {
 	);
 }
 
-/** The verified person as a principal of the org the package resolved by ID. */
-async function personPrincipalOf(
-	ctx: QueryCtx | MutationCtx,
-	identity: UserIdentity,
-	orgId: string,
-	door: string,
-) {
-	const role = readOrgRole(identity).roleRaw;
-	return await resolveActingPrincipal(
-		{
-			kind: "person",
-			personId: identity.subject,
-			verifiedOrgId: orgId,
-			...(role !== null ? { verifiedOrgRole: role } : {}),
-		},
-		personPrincipalLookups(ctx, identity.subject),
-		door,
-	);
-}
-
-/** Is the verified person an administrator of the org the package resolved by ID? */
-async function isVerifiedOrgAdmin(
-	ctx: QueryCtx | MutationCtx,
-	identity: UserIdentity,
-	orgId: string,
-	door: string,
-): Promise<boolean> {
-	const resolved = await personPrincipalOf(ctx, identity, orgId, door);
-	if (!resolved.ok) return false;
-	return assertOrgAdmin(resolved.principal, orgId, {
-		adminRoles: ORG_ADMIN_ROLES,
-		door,
-	}).ok;
-}
-
 /**
  * proveOrgAdmin -- the verified session is an ADMINISTRATOR of `targetOrgSlug`,
- * proven by org ID through @vantageos/cloud-identity. Returns the acting
- * principal (its `orgId` is the permanent org ID) and the org the session
- * resolved to; throws `RBAC_DENIED` otherwise.
+ * proven by org ID through @vantageos/cloud-identity. `resolveCallerFromClaims`
+ * resolves the caller (org by the verified `org_id`, the person stored in that
+ * org, the role claim); `assertOrgAdmin` then compares the TARGET's org ID with
+ * the principal's. Returns the acting principal (its `orgId` is the permanent
+ * org ID) and the org the session resolved to; throws `RBAC_DENIED` otherwise.
  *
  *   ALLOW: the session's `org_id` resolves an ACTIVE mapping, the target slug
  *   names a mapping holding that SAME org ID, and the role claim is an admin
@@ -799,29 +734,30 @@ async function isVerifiedOrgAdmin(
  */
 export async function proveOrgAdmin(
 	ctx: QueryCtx | MutationCtx,
-	identity: UserIdentity,
+	identity: UserIdentity | null,
 	targetOrgSlug: string,
 	door: string,
 ): Promise<{ principal: ActingPrincipal; org: ResolvedOrg }> {
-	const callerOrg = await resolveOrgFromClaim(
-		identity as Record<string, unknown>,
-		orgMappingLookups(ctx),
-		{ door },
+	const caller = await resolveCallerFromClaims(
+		identity,
+		{
+			orgLookups: orgMappingLookups(ctx),
+			principalLookups: personPrincipalLookups(ctx),
+		},
+		{ adminRoles: ORG_ADMIN_ROLES, door },
 	);
-	if (!callerOrg.ok) throw refusalError(callerOrg.refusal);
-	const resolved = await personPrincipalOf(ctx, identity, callerOrg.org.id, door);
-	if (!resolved.ok) throw refusalError(resolved.refusal);
+	if (!caller.ok) throw refusalError(caller.refusal);
 	const target = await lookupOrgMapping(ctx, targetOrgSlug);
 	// A target that is not an active, ID-stamped mapping names no organisation to
 	// administer; it is refused with the same reason as another org's, so the
 	// refusal is no oracle for which slugs are provisioned.
 	const verdict = assertOrgAdmin(
-		resolved.principal,
+		caller.principal,
 		target?.isActive === true ? target.clerkOrgId : undefined,
 		{ adminRoles: ORG_ADMIN_ROLES, door },
 	);
 	if (!verdict.ok) throw refusalError(verdict.refusal);
-	return { principal: resolved.principal, org: callerOrg.org };
+	return { principal: caller.principal, org: caller.org };
 }
 
 /**
@@ -891,21 +827,25 @@ export async function resolveOperatorAdmin(
 	ctx: QueryCtx | MutationCtx,
 ): Promise<OperatorAdminVerdict> {
 	const door = "lib/auth:resolveOperatorAdmin";
-	const identity = await ctx.auth.getUserIdentity();
-	if (!identity) {
-		return {
-			ok: false,
-			reason: "anonymous",
-			detail: "no authenticated identity presented",
-		};
-	}
-	const callerOrg = await resolveOrgFromClaim(
-		identity as Record<string, unknown>,
-		orgMappingLookups(ctx),
-		{ door },
+	// An absent identity is forwarded to the package, which refuses it
+	// (`credential-invalid`); the refusal below says "anonymous".
+	const caller = await resolveCallerFromClaims(
+		await ctx.auth.getUserIdentity(),
+		{
+			orgLookups: orgMappingLookups(ctx),
+			principalLookups: personPrincipalLookups(ctx),
+		},
+		{ adminRoles: ORG_ADMIN_ROLES, door },
 	);
-	if (!callerOrg.ok) {
-		return callerOrg.refusal.reason === "no-verified-organisation"
+	if (!caller.ok) {
+		if (caller.refusal.reason === "credential-invalid") {
+			return {
+				ok: false,
+				reason: "anonymous",
+				detail: "no authenticated identity presented",
+			};
+		}
+		return caller.refusal.reason === "no-verified-organisation"
 			? {
 					ok: false,
 					reason: "no-organisation",
@@ -914,10 +854,10 @@ export async function resolveOperatorAdmin(
 			: {
 					ok: false,
 					reason: "caller-org-not-operator",
-					detail: `the caller's organisation is not an active provisioned organisation (${callerOrg.refusal.reason}); only the operator may create a new organisation`,
+					detail: `the caller's organisation is not an active provisioned organisation (${caller.refusal.reason}); only the operator may create a new organisation`,
 				};
 	}
-	const org = callerOrg.org;
+	const org = caller.org;
 	if (org.orgKind !== "operator") {
 		return {
 			ok: false,
@@ -925,7 +865,7 @@ export async function resolveOperatorAdmin(
 			detail: `organisation "${org.label}" is not the operator organisation; only the operator may create a new organisation`,
 		};
 	}
-	if (!(await isVerifiedOrgAdmin(ctx, identity, org.id, door))) {
+	if (!caller.isOrgAdmin) {
 		return {
 			ok: false,
 			reason: "operator-member-not-admin",
@@ -934,7 +874,7 @@ export async function resolveOperatorAdmin(
 	}
 	return {
 		ok: true,
-		subject: identity.subject,
+		subject: caller.subject,
 		operatorOrgSlug: org.label,
 		operatorOrgId: org.id,
 	};
@@ -1260,7 +1200,7 @@ export function requireOrchestratorOnRoster(
 	registration: string,
 	kind: RosterNameKind = "sender",
 ): void {
-	if (scope.isMaster || scope.orgSlug === null) return;
+	if (hasFleetRead(scope) || scope.orgSlug === null) return;
 	if (!isOrchestratorOnOrgRoster(scope, claimedName)) {
 		throw new ConvexError(
 			`RBAC_DENIED: ${kind} "${claimedName}" is not an orchestrator of org "${scope.orgSlug}" — ${JSON.stringify({ reason: `${kind}-not-on-roster`, door: registration, from: claimedName, orgSlug: scope.orgSlug })}`,
@@ -1358,7 +1298,7 @@ export function requireSenderInstanceOfSender(
  * Throws "Forbidden: missing scope '...'" if the check fails.
  */
 export function requireScope(scope: OrgScope, requiredScope: string): void {
-	if (scope.isMaster) return;
+	if (hasFleetRead(scope)) return;
 	if (!scope.scopes.includes(requiredScope)) {
 		throw new ConvexError(
 			`RBAC_DENIED: Missing scope "${requiredScope}" for org "${scope.orgSlug}" — ${JSON.stringify({ requiredScope, orgSlug: scope.orgSlug })}`,
@@ -1416,7 +1356,12 @@ export function requireResolvedCaller(
 	// projection `resolveOrgScopeForAction` returns (it has no full OrgScope).
 	scope: Pick<
 		OrgScope,
-		"isMaster" | "orgSlug" | "anonymous" | "refused" | "masterSource"
+		| "isMaster"
+		| "fleetWide"
+		| "orgSlug"
+		| "anonymous"
+		| "refused"
+		| "masterSource"
 	>,
 	registration: string,
 	opts?: {
@@ -1532,7 +1477,10 @@ export function tenantNamespaceBounds(
  * end means "refused".
  */
 export function requireTenantNamespace(
-	scope: Pick<OrgScope, "isMaster" | "orgSlug" | "anonymous" | "refused">,
+	scope: Pick<
+		OrgScope,
+		"isMaster" | "fleetWide" | "masterSource" | "orgSlug" | "anonymous" | "refused"
+	>,
 	namespace: string,
 	door: string,
 ): void {
@@ -1647,6 +1595,8 @@ export function refuseStorageOwnership(
 export const actionOrgScopeValidator = v.object({
 	/** True ONLY for withOrgScope's named master grants. */
 	isMaster: v.boolean(),
+	/** The explicit fleet flag; with `isMaster` and `masterSource` it fixes the scope's standing. */
+	fleetWide: v.boolean(),
 	/** The verified org slug, or null when there is no verified organisation. */
 	orgSlug: v.union(v.string(), v.null()),
 	/**
@@ -1682,6 +1632,7 @@ export const actionOrgScopeValidator = v.object({
 /** The resolved shape actions receive from `resolveOrgScopeForAction`. */
 export interface ActionOrgScope {
 	isMaster: boolean;
+	fleetWide: boolean;
 	orgSlug: string | null;
 	refused: boolean;
 	anonymous: boolean;
@@ -1702,9 +1653,10 @@ export const resolveOrgScopeForAction = internalQuery({
 
 		// Master: the fleet's own callers (the by-id service-account carve-out /
 		// explicit internal opt-in inside withOrgScope). Unrestricted, unchanged.
-		if (scope.isMaster) {
+		if (hasFleetRead(scope)) {
 			return {
 				isMaster: true,
+				fleetWide: true,
 				orgSlug: null,
 				refused: false,
 				anonymous: false,
@@ -1718,6 +1670,7 @@ export const resolveOrgScopeForAction = internalQuery({
 		if (scope.orgSlug === null) {
 			return {
 				isMaster: false,
+				fleetWide: false,
 				orgSlug: null,
 				refused: true,
 				anonymous: scope.anonymous === true,
@@ -1726,6 +1679,7 @@ export const resolveOrgScopeForAction = internalQuery({
 
 		return {
 			isMaster: false,
+			fleetWide: false,
 			orgSlug: scope.orgSlug,
 			refused: false,
 			anonymous: false,

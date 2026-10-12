@@ -1,3 +1,4 @@
+import { hasFleetRead } from "@vantageos/cloud-identity";
 import { v } from "convex/values";
 import { internalMutation, internalQuery, query } from "./_generated/server";
 import { requireResolvedCaller, withOrgScope } from "./lib/auth";
@@ -161,7 +162,7 @@ export const getLatest = query({
 		requireResolvedCaller(scope, "issueStatsQueries:getLatest", {
 			alsoRefusePreOrg: true,
 		});
-		if (!scope.isMaster) return [];
+		if (!hasFleetRead(scope)) return [];
 
 		const limit = args.limit ?? 30;
 		let results;

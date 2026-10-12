@@ -73,11 +73,15 @@ function orgKindOfMapping(
  */
 export function personPrincipalLookups(
 	ctx: Pick<Ctx, "db">,
-	verifiedSubject: string,
+	verifiedSubject?: string,
 ): PrincipalLookups {
 	return {
+		// With a subject, only that subject is a member. Without one, the id the
+		// package asks about is the VERIFIED claim's own subject (it is the
+		// argument `resolveCallerFromClaims` passes), so there is nothing to
+		// compare it with.
 		personById: (personId, orgId) =>
-			personId === verifiedSubject
+			verifiedSubject === undefined || personId === verifiedSubject
 				? { id: personId, orgId, active: true }
 				: null,
 		organisationById: async (orgId) => {

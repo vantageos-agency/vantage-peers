@@ -1,3 +1,4 @@
+import { hasFleetRead, scopeStanding } from "@vantageos/cloud-identity";
 import { ConvexError, v } from "convex/values";
 import type { Doc, Id } from "./_generated/dataModel";
 import { type QueryCtx, query } from "./_generated/server";
@@ -7,6 +8,7 @@ import {
 	requireResolvedCaller,
 	withOrgScope,
 } from "./lib/auth";
+import { resolveProvisioningMapping } from "./lib/provisioningMapping";
 import {
 	agentListedAsCoordinator,
 	agentListedOnRoster,
@@ -45,14 +47,14 @@ export const getMyOrgRoster = query({
 		// A legacy "*" entry still stored in the name roster is dropped: it is
 		// never an assignable name, and nothing is listed that the write would
 		// refuse.
-		if (scope.masterSource === "operator-admin") {
+		if (scopeStanding(scope) === "operator-admin") {
 			const member = await withOrgScope(ctx, {
 				refuseWithoutThrow: true,
 				operatorAsMember: true,
 			});
 			return member.allowedOrchestrators.filter((entry) => entry !== "*");
 		}
-		if (!scope.isMaster && scope.orgSlug === null) return [];
+		if (!hasFleetRead(scope) && scope.orgSlug === null) return [];
 		// A fleet-wide scope (the service account) keeps its legacy WIRE answer
 		// `["*"]`: the dashboard gate (vantage-peers-dashboard
 		// lib/auth/dashboardGate.ts) admits only on a served, non-empty roster and
@@ -314,10 +316,8 @@ export const getForAccessToken = query({
 			);
 		}
 
-		const mapping = await ctx.db
-			.query("client_org_mapping")
-			.withIndex("by_clerk_slug", (q) => q.eq("clerkOrgSlug", slug))
-			.first();
+		const provisioned = await resolveProvisioningMapping(ctx, slug);
+		const mapping = provisioned.kind === "row" ? provisioned.row : null;
 		if (!mapping || !mapping.isActive) {
 			throw new ConvexError(
 				`RBAC_DENIED: Org "${slug}" not in client_org_mapping or inactive`,

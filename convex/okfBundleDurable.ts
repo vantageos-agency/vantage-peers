@@ -67,6 +67,7 @@
  * tarball exists without that action.
  */
 
+import { hasFleetRead } from "@vantageos/cloud-identity";
 import { createFunctionHandle } from "convex/server";
 import { v } from "convex/values";
 import { components, internal as generatedInternal } from "./_generated/api";
@@ -411,7 +412,7 @@ export const getOkfBundleExportDurableStatus = query({
 		requireResolvedCaller(scope, "okfBundleDurable:getOkfBundleExportDurableStatus", {
 			alsoRefusePreOrg: true,
 		});
-		if (!scope.isMaster) {
+		if (!hasFleetRead(scope)) {
 			const owned = await ctx.db
 				.query("okfDurableExportProgress")
 				.withIndex("by_jobId", (q) => q.eq("jobId", args.jobId))

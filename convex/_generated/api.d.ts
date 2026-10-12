@@ -65,6 +65,7 @@ import type * as lib_orgClerkId from "../lib/orgClerkId.js";
 import type * as lib_personPrincipal from "../lib/personPrincipal.js";
 import type * as lib_repoMappingTenant from "../lib/repoMappingTenant.js";
 import type * as lib_reviewRouting from "../lib/reviewRouting.js";
+import type * as lib_provisioningMapping from "../lib/provisioningMapping.js";
 import type * as lib_rosterIds from "../lib/rosterIds.js";
 import type * as lib_seatAgent from "../lib/seatAgent.js";
 import type * as lib_serviceAccount from "../lib/serviceAccount.js";
@@ -189,6 +190,7 @@ declare const fullApi: ApiFromModules<{
   "lib/personPrincipal": typeof lib_personPrincipal;
   "lib/repoMappingTenant": typeof lib_repoMappingTenant;
   "lib/reviewRouting": typeof lib_reviewRouting;
+  "lib/provisioningMapping": typeof lib_provisioningMapping;
   "lib/rosterIds": typeof lib_rosterIds;
   "lib/seatAgent": typeof lib_seatAgent;
   "lib/serviceAccount": typeof lib_serviceAccount;

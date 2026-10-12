@@ -1,7 +1,9 @@
 import { ConvexError, v } from "convex/values";
 import type { Id } from "./_generated/dataModel";
 import { internalMutation, internalQuery, query } from "./_generated/server";
+import { hasFleetRead } from "@vantageos/cloud-identity";
 import { lookupOrgMapping, withOrgScope } from "./lib/auth";
+import { resolveProvisioningMapping } from "./lib/provisioningMapping";
 import { normalizeOrchestratorId } from "./_helpers/normalizeOrchestratorId";
 import { assertAgentNameFree } from "./lib/agentIdentity";
 import { requireAgentsOfOrg } from "./lib/rosterIds";
@@ -65,7 +67,7 @@ export const getByClerkSlug = query({
 	handler: async (ctx, args) => {
 		// isolation-contract: no reactive subscriber exists — enumerated at /root/coding/vantage-peers-dashboard@71da625 with `grep -rn 'api\.clientOrgMapping\.getByClerkSlug' --include=*.tsx --include=*.ts app components hooks lib contexts providers` -> 0 matches. Its caller is the MCP transport via imperative convex query (mcp-server/src/auth.ts:1194), not a subscription. R-50 declared divergence (a claim, verified against that enumeration).
 		const scope = await withOrgScope(ctx);
-		if (!scope.isMaster) {
+		if (!hasFleetRead(scope)) {
 			throw new ConvexError(
 				"RBAC_DENIED: clientOrgMapping.getByClerkSlug requires master or " +
 					"service-account scope — anonymous and org-scoped callers may " +
@@ -117,12 +119,8 @@ export const setOrgKind = internalMutation({
 		current: v.union(v.literal("operator"), v.literal("client")),
 	}),
 	handler: async (ctx, args) => {
-		const row = await ctx.db
-			.query("client_org_mapping")
-			.withIndex("by_clerk_slug", (q) =>
-				q.eq("clerkOrgSlug", args.clerkOrgSlug),
-			)
-			.unique();
+		const provisioned = await resolveProvisioningMapping(ctx, args.clerkOrgSlug);
+		const row = provisioned.kind === "row" ? provisioned.row : null;
 
 		if (!row) {
 			throw new ConvexError(
@@ -175,12 +173,8 @@ export const setAddressableFleetCoordinators = internalMutation({
 		current: v.array(v.id("agents")),
 	}),
 	handler: async (ctx, args) => {
-		const row = await ctx.db
-			.query("client_org_mapping")
-			.withIndex("by_clerk_slug", (q) =>
-				q.eq("clerkOrgSlug", args.clerkOrgSlug),
-			)
-			.unique();
+		const provisioned = await resolveProvisioningMapping(ctx, args.clerkOrgSlug);
+		const row = provisioned.kind === "row" ? provisioned.row : null;
 		if (!row) {
 			throw new ConvexError(
 				`ORG_MAPPING_NOT_FOUND: no client_org_mapping row for clerkOrgSlug "${args.clerkOrgSlug}"`,
@@ -258,12 +252,8 @@ export const addRosterMembers = internalMutation({
 		current: v.array(v.id("agents")),
 	}),
 	handler: async (ctx, args) => {
-		const row = await ctx.db
-			.query("client_org_mapping")
-			.withIndex("by_clerk_slug", (q) =>
-				q.eq("clerkOrgSlug", args.clerkOrgSlug),
-			)
-			.unique();
+		const provisioned = await resolveProvisioningMapping(ctx, args.clerkOrgSlug);
+		const row = provisioned.kind === "row" ? provisioned.row : null;
 		if (!row) {
 			throw new ConvexError(
 				`ORG_MAPPING_NOT_FOUND: no client_org_mapping row for clerkOrgSlug "${args.clerkOrgSlug}"`,
@@ -424,12 +414,8 @@ export const setClerkOrgId = internalMutation({
 				`CLERK_ORG_ID_INVALID: "${args.clerkOrgId}" is not a Clerk org id (expected org_ followed by alphanumerics).`,
 			);
 		}
-		const row = await ctx.db
-			.query("client_org_mapping")
-			.withIndex("by_clerk_slug", (q) =>
-				q.eq("clerkOrgSlug", args.clerkOrgSlug),
-			)
-			.unique();
+		const provisioned = await resolveProvisioningMapping(ctx, args.clerkOrgSlug);
+		const row = provisioned.kind === "row" ? provisioned.row : null;
 		if (!row) {
 			throw new ConvexError(
 				`ORG_MAPPING_NOT_FOUND: no client_org_mapping row for clerkOrgSlug "${args.clerkOrgSlug}"`,

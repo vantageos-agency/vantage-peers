@@ -1,3 +1,4 @@
+import { hasFleetRead } from "@vantageos/cloud-identity";
 import { v } from "convex/values";
 import { query } from "./_generated/server";
 import { filterByOrgScope, withOrgScope } from "./lib/auth";
@@ -71,7 +72,7 @@ export const scanWindow = query({
 		//     asserts nothing and grants nothing.
 		const scope = await withOrgScope(ctx, { refuseWithoutThrow: true });
 		const callerOrg = scope.orgSlug;
-		if (scope.refused || (!scope.isMaster && callerOrg === null)) {
+		if (scope.refused || (!hasFleetRead(scope) && callerOrg === null)) {
 			return {
 				countsByOrch: {},
 				countsByCategory: {
@@ -101,7 +102,7 @@ export const scanWindow = query({
 		// A non-master tenant is pushed into the `by_orgId` index BEFORE the cap,
 		// so another tenant's rows cannot crowd the caller's own out of the scan.
 		const doneTasks =
-			scope.isMaster || callerOrg === null
+			hasFleetRead(scope) || callerOrg === null
 				? await ctx.db
 						.query("tasks")
 						.withIndex("by_status", (q) => q.eq("status", "done"))
@@ -144,7 +145,7 @@ export const scanWindow = query({
 		// most-recent rows, not the alphabetically-last senders — by_from carries no
 		// time column, so ordering by it and take()-ing biases the selection (Eta #1252).
 		const recentMessages =
-			scope.isMaster || callerOrg === null
+			hasFleetRead(scope) || callerOrg === null
 				? await ctx.db
 						.query("messages")
 						.order("desc")
@@ -178,7 +179,7 @@ export const scanWindow = query({
 		// ── 3. Memories (store_memory) ────────────────────────────────────────
 		// Newest-first by _creationTime (default index) — by_creator has no time
 		// column, so ordering by it biases recency out of the selection (Eta #1252).
-		const recentMemories = scope.isMaster
+		const recentMemories = hasFleetRead(scope)
 			? await ctx.db
 					.query("memories")
 					.order("desc")

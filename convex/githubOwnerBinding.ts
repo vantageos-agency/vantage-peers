@@ -1,3 +1,4 @@
+import { hasFleetRead } from "@vantageos/cloud-identity";
 import { v } from "convex/values";
 import type { Doc } from "./_generated/dataModel";
 import {
@@ -155,7 +156,7 @@ export const listBindings = query({
 			alsoRefusePreOrg: true,
 		});
 		const opts = { numItems: pageSize(args.limit), cursor: args.cursor ?? null };
-		const page = scope.isMaster
+		const page = hasFleetRead(scope)
 			? await ctx.db.query("githubOwnerBindings").paginate(opts)
 			: await ctx.db
 					.query("githubOwnerBindings")

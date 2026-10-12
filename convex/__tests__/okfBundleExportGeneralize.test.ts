@@ -41,9 +41,17 @@ function ctxWithIdentity(
 		(identity?.org_slug as string | undefined) ??
 		null;
 	const scope = opts.master
-		? { isMaster: true, orgSlug: null, refused: false, anonymous: false }
+		? {
+				isMaster: true,
+				fleetWide: true,
+				masterSource: "service-account" as const,
+				orgSlug: null,
+				refused: false,
+				anonymous: false,
+			}
 		: {
 				isMaster: false,
+				fleetWide: false,
 				orgSlug,
 				refused: orgSlug === null,
 				anonymous: identity === null,

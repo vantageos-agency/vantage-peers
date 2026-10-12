@@ -347,4 +347,25 @@ describe("CLAIM-LESS: no verified org ID is a refusal, never master", () => {
 			);
 		});
 	});
+
+	// The absent identity is refused by RAISING at the provisioning door, with
+	// the message that names what is missing (never a silent no-op).
+	test("requireOrgAdmin: no identity raises RBAC_DENIED naming the missing identity", async () => {
+		const t = createT();
+		await seedOrg(t, "claimless-e");
+		await t.run(async (ctx) => {
+			const err = await requireOrgAdmin(ctx, "claimless-e").catch((e) => e);
+			expect(String(err?.data ?? err?.message)).toMatch(/^RBAC_DENIED: /);
+			expect(String(err?.data ?? err?.message)).toContain("no authenticated identity presented");
+		});
+	});
+
+	test("resolveOperatorAdmin: no identity answers reason anonymous, never a success", async () => {
+		const t = createT();
+		await seedOrg(t, "claimless-op2", { orgKind: "operator" });
+		await t.run(async (ctx) => {
+			const verdict = await resolveOperatorAdmin(ctx);
+			expect(verdict).toMatchObject({ ok: false, reason: "anonymous" });
+		});
+	});
 });
