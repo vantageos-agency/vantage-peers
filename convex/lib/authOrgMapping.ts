@@ -44,6 +44,7 @@ async function readMappings(
 	db: DatabaseReader,
 	read: MappingRead,
 ): Promise<Doc<"client_org_mapping">[]> {
+	// allow-local-identity: the host adapter behind the package's OrgLookups (orgById, orgByLabel, activeOrganisations); it answers raw rows and decides no identity, every decision is the package's
 	if ("slug" in read) {
 		return await db
 			.query("client_org_mapping")
