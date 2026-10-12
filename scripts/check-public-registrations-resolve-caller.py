@@ -710,7 +710,10 @@ def classify(reg: Reg, graph: Graph, mods: dict[str, Module]) -> None:
         # The result handed straight to a CALLER RESOLVER of the identity package
         # is gated by the package: it refuses an absent credential itself. The
         # resolvers are those the installed package tags `@callerResolver`; an
-        # unreadable package is a refusal to judge, never a pass.
+        # unreadable package is a refusal to judge, never a pass. Only a NAMED
+        # import (aliased or not) is credited: a call through a namespace import
+        # (`import * as ci ...; ci.resolveCallerFromClaims(...)`) is not, so it
+        # falls through and is accused. That form fails closed, never open.
         callee = identity_handed_to(t)
         if callee is not None:
             names, unreadable = CALLER_RESOLVERS["names"], CALLER_RESOLVERS["unreadable"]

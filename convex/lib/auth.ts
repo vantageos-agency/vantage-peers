@@ -3,6 +3,7 @@ import type { Id } from "../_generated/dataModel";
 import { ConvexError, v } from "convex/values";
 import {
 	type ActingPrincipal,
+	type CallerFromClaimsResult,
 	assertOrgAdmin,
 	hasFleetRead,
 	type IdentityRefusal,
@@ -749,10 +750,23 @@ export async function proveOrgAdmin(
 		{ adminRoles: ORG_ADMIN_ROLES, door },
 	);
 	if (!caller.ok) throw refusalError(caller.refusal);
+	return proveAdminOfTarget(ctx, caller, targetOrgSlug, door);
+}
+
+/**
+ * The resolved caller administers `targetOrgSlug`: the target's org ID, read
+ * from an active mapping, is compared with the principal's by `assertOrgAdmin`.
+ * A target that is not an active, ID-stamped mapping names no organisation to
+ * administer; it is refused with the same reason as another org's, so the
+ * refusal is no oracle for which slugs are provisioned.
+ */
+async function proveAdminOfTarget(
+	ctx: QueryCtx | MutationCtx,
+	caller: Extract<CallerFromClaimsResult, { ok: true }>,
+	targetOrgSlug: string,
+	door: string,
+): Promise<{ principal: ActingPrincipal; org: ResolvedOrg }> {
 	const target = await lookupOrgMapping(ctx, targetOrgSlug);
-	// A target that is not an active, ID-stamped mapping names no organisation to
-	// administer; it is refused with the same reason as another org's, so the
-	// refusal is no oracle for which slugs are provisioned.
 	const verdict = assertOrgAdmin(
 		caller.principal,
 		target?.isActive === true ? target.clerkOrgId : undefined,
@@ -767,8 +781,10 @@ export async function proveOrgAdmin(
  *
  * Authorizes an authenticated Clerk org-ADMIN to act on their OWN org, without a
  * global secret. Used by `convex/oauth.ts`'s `provisionOrganization` as an
- * ADDITIVE authority path alongside `requireMasterAuth`. A thin call into
- * `proveOrgAdmin`: see it for both poles. `targetOrgSlug` is the value the
+ * ADDITIVE authority path alongside `requireMasterAuth`. The verified identity
+ * goes straight to `resolveCallerFromClaims`; the target check is the one
+ * `proveOrgAdmin` uses (`proveAdminOfTarget`), so both poles are the same as
+ * there. `targetOrgSlug` is the value the
  * CALLING mutation validated belongs to this request (`args.clerkOrgSlug`); this
  * function proves the session's own org, by ID, is that org.
  *
@@ -779,13 +795,27 @@ export async function requireOrgAdmin(
 	ctx: QueryCtx | MutationCtx,
 	targetOrgSlug: string,
 ): Promise<void> {
-	const identity = await ctx.auth.getUserIdentity();
-	if (!identity) {
-		throw new ConvexError(
-			"RBAC_DENIED: no authenticated identity presented for org-admin provisioning",
-		);
+	const door = "lib/auth:requireOrgAdmin";
+	// The verified credential goes to the package and nowhere else. An absent
+	// credential comes back as a refusal with no subject; it keeps its own
+	// message, naming the missing identity.
+	const caller = await resolveCallerFromClaims(
+		await ctx.auth.getUserIdentity(),
+		{
+			orgLookups: orgMappingLookups(ctx),
+			principalLookups: personPrincipalLookups(ctx),
+		},
+		{ adminRoles: ORG_ADMIN_ROLES, door },
+	);
+	if (!caller.ok) {
+		if (caller.subject === undefined) {
+			throw new ConvexError(
+				"RBAC_DENIED: no authenticated identity presented for org-admin provisioning",
+			);
+		}
+		throw refusalError(caller.refusal);
 	}
-	await proveOrgAdmin(ctx, identity, targetOrgSlug, "lib/auth:requireOrgAdmin");
+	await proveAdminOfTarget(ctx, caller, targetOrgSlug, door);
 }
 
 /**
