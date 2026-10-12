@@ -133,6 +133,11 @@ describe("okf durable export — the start door writes no tenant field from its 
 		expect(writes.length).toBe(2);
 		for (const w of writes) expect(w).not.toMatch(/\bargs\./);
 		const ns = [...start.matchAll(/^\s*namespace:\s*(.+),$/gm)].map((m) => m[1]);
-		expect(ns.filter((w) => w !== "v.string()")).toEqual(["authorised.namespace"]);
+		// The namespace is its own field, written after the door has refused any
+		// namespace the resolved scope does not own.
+		expect(ns.filter((w) => w !== "v.string()")).toEqual(["args.namespace"]);
+		expect(start.indexOf("assertCanExportNamespaceV8(")).toBeLessThan(
+			start.indexOf("namespace: args.namespace"),
+		);
 	});
 });

@@ -80,7 +80,6 @@ import {
 } from "./_generated/server";
 import { BUNDLE_PAGE_SIZE } from "./okfBundle";
 import {
-	type OrgScope,
 	requireResolvedCaller,
 	requireTenantNamespace,
 	withOrgScope,
@@ -137,15 +136,6 @@ async function assertCanExportNamespaceV8(
 // organisation, and the engine treats `orgId` as an opaque tenant-scope string.
 const FLEET_EXPORT_TENANT = "fleet";
 
-/**
- * The tenant a durable export job is keyed by, taken from the RESOLVED scope:
- * the member's permanent Clerk org ID, or the fleet marker for the master. Never
- * from a caller argument; the namespace being exported is its own field.
- */
-function exportTenantOf(scope: Pick<OrgScope, "orgClerkId">): string {
-	return scope.orgClerkId ?? FLEET_EXPORT_TENANT;
-}
-
 // ─────────────────────────────────────────────────────────────────────────
 // Public mutation — start the durable export.
 // ─────────────────────────────────────────────────────────────────────────
@@ -165,9 +155,12 @@ export const startOkfBundleExportDurable = mutation({
 			args.namespace,
 			"okfBundleDurable:startOkfBundleExportDurable",
 		);
-		const tenantOrgId = exportTenantOf(
-			await withOrgScope(ctx, { refuseWithoutThrow: true }),
-		);
+		// The tenant a durable export job is keyed by, taken from the RESOLVED
+		// scope: the member's permanent Clerk org ID, or the fleet marker for the
+		// master. Never from a caller argument; the namespace being exported is
+		// its own field.
+		const scope = await withOrgScope(ctx, { refuseWithoutThrow: true });
+		const tenantOrgId = scope.orgClerkId ?? FLEET_EXPORT_TENANT;
 
 		if (args.totalSteps <= 0) {
 			throw new Error(
@@ -185,7 +178,7 @@ export const startOkfBundleExportDurable = mutation({
 				// `orgId` is passed as an explicit argument, NOT read from
 				// `ctx.auth`, because Convex does not propagate the caller
 				// identity across a component boundary. It is the tenant of the
-				// RESOLVED scope (`exportTenantOf`), already verified against the
+				// RESOLVED scope, already verified against the
 				// namespace by `assertCanExportNamespaceV8` above.
 				orgId: tenantOrgId,
 				kind: "vantage-peers.okf-export-durable",
