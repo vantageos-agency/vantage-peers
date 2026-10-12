@@ -6,7 +6,7 @@ import { computeRecurrenceDecision } from "./errorMonitorRecurrence";
 import { requireId } from "./lib/ids";
 import { closeTrailingSegmentOnExit } from "./lib/taskClosureGate";
 import { withOrgScope } from "./lib/auth";
-import { hasFleetStanding, requireFleetDoor } from "./lib/fleetStanding";
+import { requireFleetDoor, scopeWithFleetStanding } from "./lib/fleetStanding";
 import {
 	internalMutation,
 	internalQuery,
@@ -34,8 +34,9 @@ import {
 // ─────────────────────────────────────────────────────────────────────────────
 
 async function requireMasterScope(ctx: Parameters<typeof withOrgScope>[0]) {
-	await withOrgScope(ctx);
-	if (!(await hasFleetStanding(ctx, "errorMonitor:write"))) {
+	const scope = await withOrgScope(ctx);
+	const standing = await scopeWithFleetStanding(ctx, scope, "errorMonitor:write");
+	if (!standing.isMaster) {
 		throw new ConvexError(
 			"RBAC_DENIED: this mutation requires master or service-account scope " +
 				"— fleet error-monitor deployment config has no org-scoped write authority.",

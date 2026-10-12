@@ -11,7 +11,7 @@ import { internal } from "./_generated/api";
 import type { Doc } from "./_generated/dataModel";
 import { mappingIsProven } from "./githubOwnerBinding";
 import { withOrgScope } from "./lib/auth";
-import { hasFleetStanding, requireFleetDoor } from "./lib/fleetStanding";
+import { requireFleetDoor, scopeWithFleetStanding } from "./lib/fleetStanding";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Auth — fleet-internal surface, no per-org owner field
@@ -31,8 +31,9 @@ import { hasFleetStanding, requireFleetDoor } from "./lib/fleetStanding";
 // ─────────────────────────────────────────────────────────────────────────────
 
 async function requireMasterScope(ctx: Parameters<typeof withOrgScope>[0]) {
-	await withOrgScope(ctx);
-	if (!(await hasFleetStanding(ctx, "issues:write"))) {
+	const scope = await withOrgScope(ctx);
+	const standing = await scopeWithFleetStanding(ctx, scope, "issues:write");
+	if (!standing.isMaster) {
 		throw new ConvexError(
 			"RBAC_DENIED: this mutation requires master or service-account scope " +
 				"— fleet github-issue tracking has no org-scoped write authority.",
