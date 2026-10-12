@@ -40,6 +40,7 @@ const continuationArgs = (
 		...(over.orgClerkId === undefined ? {} : { orgClerkId: over.orgClerkId }),
 		allowedOrchestrators: ["a"],
 		isMaster: over.isMaster ?? false,
+		...(over.isMaster === true ? { masterSource: "internal" as const } : {}),
 	},
 	callerOrchestrator: "a",
 	isFleetSystem: false,
