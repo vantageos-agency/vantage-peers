@@ -33,7 +33,10 @@ const REPO = "vantageos-agency/author-repo";
 const OWNER_NFC = "séraphin";
 const OWNER_NFD = "séraphin";
 
-const svc = (t: ReturnType<typeof convexTest>) =>
+const createT = () => convexTest(schema, modules);
+type T = ReturnType<typeof createT>;
+
+const svc = (t: T) =>
 	t.withIdentity({ subject: "test-service-account-user-id" });
 
 beforeEach(() => {
@@ -44,7 +47,7 @@ afterEach(() => {
 });
 
 async function setup() {
-	const t = convexTest(schema, modules);
+	const t = createT();
 	await seedFleetAgents(t, ["pi", "argus"]);
 	await t.run(async (ctx) => {
 		// The accented owner is seeded by hand: seedFleetAgents returns a record
