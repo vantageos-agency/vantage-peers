@@ -677,6 +677,19 @@ def classify(reg: Reg, graph: Graph, mods: dict[str, Module]) -> None:
             reg.state, reg.via = "resolves-a-caller", "clerk-identity"
             reg.witness = witness_path(seen, nd)
             return
+        # The result handed straight to a CALLER RESOLVER of the identity package
+        # is gated by the package: it refuses an absent credential itself. The
+        # resolvers are those the installed package tags `@callerResolver`; an
+        # unreadable package is a refusal to judge, never a pass.
+        callee = identity_handed_to(t)
+        if callee is not None:
+            names, unreadable = CALLER_RESOLVERS["names"], CALLER_RESOLVERS["unreadable"]
+            if unreadable:
+                return _cnj(reg, f"getUserIdentity() is handed to `{callee}` but the caller resolvers cannot be read: {unreadable}")
+            if callee in names:
+                reg.state, reg.via = "resolves-a-caller", f"package-resolver:{callee}"
+                reg.witness = witness_path(seen, nd)
+                return
         weak.append(f"{nd[0]}.{nd[1]}")
     if weak:
         reg.state, reg.via = "does-not-resolve", "identity-consulted-not-gated"
@@ -743,6 +756,60 @@ def gate_shaped(text: str) -> bool:
     return False
 
 
+IDENTITY_PACKAGE = "@vantageos/cloud-identity"
+TAG_RE = re.compile(r"/\*\*((?:(?!\*/)[\s\S])*?)\*/\s*export\s+declare\s+function\s+([A-Za-z_$][\w$]*)")
+# The resolvers of the run's tree, set by `run()`: the names the installed package
+# tags `@callerResolver`, or the reason they could not be read.
+CALLER_RESOLVERS: dict = {"names": frozenset(), "unreadable": "not computed"}
+
+
+def caller_resolvers(start: Path) -> tuple[frozenset, str]:
+    """The functions the installed identity package marks `@callerResolver` in
+    its published declarations, searched from `start` upward. Returns the names
+    and "" or an empty set and the reason they could not be read."""
+    for d in [start, *start.parents]:
+        dist = d / "node_modules" / "@vantageos" / "cloud-identity" / "dist"
+        if dist.is_dir():
+            names = set()
+            for f in sorted(dist.rglob("*.d.ts")):
+                for m in TAG_RE.finditer(f.read_text(errors="replace")):
+                    if "@callerResolver" in m.group(1):
+                        names.add(m.group(2))
+            if not names:
+                return frozenset(), f"{dist} carries no @callerResolver tag"
+            return frozenset(names), ""
+    return frozenset(), f"{IDENTITY_PACKAGE} is not installed above {start}"
+
+
+_CAST = r"(?:\s+as\s+[^,()]+)?"
+INLINE_HANDOFF_RE = re.compile(
+    r"(?<![\w$.])([A-Za-z_$][\w$]*)\s*\(\s*\(*\s*(?:await\s*)?\(*\s*[\w$.]*auth\s*\.\s*getUserIdentity\s*\(\s*\)\s*\)*" + _CAST + r"\s*[,)]"
+)
+
+
+# A keyword followed by `(` is a grouping or a statement, never a call:
+# `return (await ctx.auth.getUserIdentity())?.subject` hands the identity to no one.
+_NOT_CALLEES = frozenset(
+    "return await typeof void if while for switch catch new throw yield case in of delete do else".split()
+)
+
+
+def identity_handed_to(text: str) -> str | None:
+    """The function a `getUserIdentity()` result is passed to as its FIRST
+    argument in `text`, either inline (`f(await ctx.auth.getUserIdentity(), …)`)
+    or through the name it is bound to (`const id = …getUserIdentity(); f(id, …)`),
+    with or without an `as` cast. None when it is passed nowhere."""
+    for m in INLINE_HANDOFF_RE.finditer(text):
+        if m.group(1) not in _NOT_CALLEES:
+            return m.group(1)
+    for b in BIND_RE.finditer(text):
+        n = re.escape(b.group(1))
+        for c in re.finditer(rf"(?<![\w$.])([A-Za-z_$][\w$]*)\s*\(\s*{n}" + _CAST + r"\s*[,)]", text[b.end():]):
+            if c.group(1) not in _NOT_CALLEES:
+                return c.group(1)
+    return None
+
+
 def _cnj(reg: Reg, why: str) -> None:
     reg.state, reg.via, reg.reason = "could-not-judge", "", why
 
@@ -779,6 +846,8 @@ class Result:
 
 
 def run(convex_dir: Path, api_dts: Path, classifier=None) -> Result:
+    names, unreadable = caller_resolvers(convex_dir.resolve())
+    CALLER_RESOLVERS["names"], CALLER_RESOLVERS["unreadable"] = names, unreadable
     listed = api_modules(api_dts)
     mods: dict[str, Module] = {}
     missing: list[str] = []
