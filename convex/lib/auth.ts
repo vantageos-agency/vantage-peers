@@ -4,13 +4,10 @@ import { ConvexError, v } from "convex/values";
 import {
 	type ActingPrincipal,
 	assertOrgAdmin,
-	claimsAnOrganisation,
 	hasFleetRead,
 	type IdentityRefusal,
-	readOrgRoleClaim,
 	type ResolvedOrg,
 	resolveCallerFromClaims,
-	resolveOrgFromClaim,
 	sameOrg,
 	scopeStanding,
 } from "@vantageos/cloud-identity";
@@ -691,7 +688,8 @@ export function isRowVisibleToScope(
 // ─────────────────────────────────────────────────────────────────────────────
 // Org-admin authority, by the verified org ID.
 //
-// WHO IS AN ADMIN OF WHICH ORG is @vantageos/cloud-identity's decision:
+// WHO IS AN ADMIN OF WHICH ORG is @vantageos/cloud-identity's decision, made in
+// one call, `resolveCallerFromClaims`, which chains the package's own steps:
 // `resolveOrgFromClaim` selects the caller's organisation from the VERIFIED
 // `org_id` claim (mapping read by ID only), `resolveActingPrincipal` makes the
 // person a principal of THAT org ID, and `assertOrgAdmin` compares the target's
