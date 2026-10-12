@@ -56,6 +56,7 @@ export async function upsertAdminMembership(
 	clerkOrgSlug: string,
 	clerkUserId: string,
 ): Promise<void> {
+	// allow-local-identity: audit-record upsert, idempotence read only; orgMembership is never an authorisation source and no caller is admitted or refused by this read (see the table comment in convex/schema.ts)
 	const now = Date.now();
 	const existing = await ctx.db
 		.query("orgMembership")
@@ -134,6 +135,7 @@ export const getMembership = query({
 	args: { clerkOrgSlug: v.optional(v.string()) },
 	returns: v.array(membershipShape),
 	handler: async (ctx, args) => {
+		// allow-local-identity: the two orgMembership reads below LIST the audit record after the package has decided who may ask (withOrgScope, hasFleetRead, sameOrg by org ID); the table is never an authorisation source (convex/schema.ts)
 		// isolation-contract: no reactive subscriber exists — enumerated at /root/coding/vantage-peers-dashboard@71da625 with `grep -rn 'api\.orgMembership\.getMembership' --include=*.tsx --include=*.ts app components hooks lib contexts providers` -> 0 matches. Only the dashboard was enumerated; other callers were not individually traced. R-50 declared divergence (a claim, verified against that enumeration).
 		// R-50: reactively-subscribed public query — refuseWithoutThrow
 		// narrows the signed-in-no-org branch to a typed refused scope
