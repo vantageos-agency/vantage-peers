@@ -311,6 +311,7 @@ class Module:
     nul: int
     segments: dict[str, tuple[int, int]] = field(default_factory=dict)
     imports: dict[str, tuple[str, str]] = field(default_factory=dict)  # local -> (mod, name)
+    pkg_imports: dict[str, str] = field(default_factory=dict)  # local -> name, from the identity package
 
 
 @dataclass
@@ -370,6 +371,7 @@ def segment_module(code: str) -> dict[str, tuple[int, int]]:
     return segs
 
 
+IDENTITY_PACKAGE = "@vantageos/cloud-identity"
 IMPORT_RE = re.compile(r"\bimport\s+(?:type\s+)?\{([^}]*)\}\s*from\s*\"([^\"]+)\"")
 
 
@@ -397,6 +399,33 @@ def parse_imports(raw: str, code: str, modname: str) -> dict[str, tuple[str, str
     return res
 
 
+def parse_package_imports(raw: str, code: str, package: str) -> dict[str, str]:
+    """Named imports from `package`: local name -> the package's own name
+    (`import { a as b }` gives b -> a). Only where `import` is real code."""
+    res: dict[str, str] = {}
+    for m in IMPORT_RE.finditer(raw):
+        if code[m.start() : m.start() + 6] != "import" or m.group(2) != package:
+            continue
+        for part in m.group(1).split(","):
+            part = re.sub(r"^type\s+", "", part.strip())
+            if not part:
+                continue
+            orig, local = ([x.strip() for x in part.split(" as ", 1)] if " as " in part else (part, part))
+            res[local] = orig
+    return res
+
+
+def shadowed(name: str, code: str) -> bool:
+    """True when the module binds `name` itself (function, class, const/let/var,
+    or a destructured binding), so a call to `name` may not reach the import."""
+    n = re.escape(name)
+    return bool(
+        re.search(rf"(?<![\w$.])(?:function\s*\*?\s*|class\s+){n}(?![\w$])", code)
+        or re.search(rf"(?<![\w$.])(?:const|let|var)\s+{n}(?![\w$])", code)
+        or re.search(rf"(?<![\w$.])(?:const|let|var)\s*[{{\[][^=;]*(?<![\w$.]){n}(?![\w$])[^=;]*[}}\]]\s*=", code)
+    )
+
+
 def load_module(root: Path, name: str) -> Module | None:
     p = root / f"{name}.ts"
     if not p.is_file():
@@ -407,6 +436,7 @@ def load_module(root: Path, name: str) -> Module | None:
     m = Module(name, raw, code, len(data), data.count(b"\x00"))
     m.segments = segment_module(code)
     m.imports = parse_imports(raw, code, name)
+    m.pkg_imports = parse_package_imports(raw, code, IDENTITY_PACKAGE)
     return m
 
 
@@ -686,8 +716,10 @@ def classify(reg: Reg, graph: Graph, mods: dict[str, Module]) -> None:
             names, unreadable = CALLER_RESOLVERS["names"], CALLER_RESOLVERS["unreadable"]
             if unreadable:
                 return _cnj(reg, f"getUserIdentity() is handed to `{callee}` but the caller resolvers cannot be read: {unreadable}")
-            if callee in names:
-                reg.state, reg.via = "resolves-a-caller", f"package-resolver:{callee}"
+            mod = graph.mods.get(nd[0])
+            orig = mod.pkg_imports.get(callee) if mod is not None else None
+            if orig is not None and orig in names and not shadowed(callee, mod.code):
+                reg.state, reg.via = "resolves-a-caller", f"package-resolver:{orig}"
                 reg.witness = witness_path(seen, nd)
                 return
         weak.append(f"{nd[0]}.{nd[1]}")
@@ -756,7 +788,6 @@ def gate_shaped(text: str) -> bool:
     return False
 
 
-IDENTITY_PACKAGE = "@vantageos/cloud-identity"
 TAG_RE = re.compile(r"/\*\*((?:(?!\*/)[\s\S])*?)\*/\s*export\s+declare\s+function\s+([A-Za-z_$][\w$]*)")
 # The resolvers of the run's tree, set by `run()`: the names the installed package
 # tags `@callerResolver`, or the reason they could not be read.
