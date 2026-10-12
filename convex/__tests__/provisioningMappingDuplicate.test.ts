@@ -13,7 +13,9 @@ const modules = Object.fromEntries(
 	Object.entries(import.meta.glob("../**/*.ts")),
 );
 
-async function seedDuplicate(t: ReturnType<typeof convexTest>, slug: string) {
+const createT = () => convexTest(schema, modules);
+
+async function seedDuplicate(t: ReturnType<typeof createT>, slug: string) {
 	await t.run(async (ctx) => {
 		for (let i = 0; i < 2; i++) {
 			await ctx.db.insert("client_org_mapping", {
@@ -30,7 +32,7 @@ async function seedDuplicate(t: ReturnType<typeof convexTest>, slug: string) {
 
 describe("provisioning label shared by two mapping rows", () => {
 	test("setOrgKind raises", async () => {
-		const t = convexTest(schema, modules);
+		const t = createT();
 		await seedDuplicate(t, "twin-org");
 		await expect(
 			t.mutation(internal.clientOrgMapping.setOrgKind, {
@@ -41,7 +43,7 @@ describe("provisioning label shared by two mapping rows", () => {
 	});
 
 	test("seedClientOrgMapping raises and creates no third row", async () => {
-		const t = convexTest(schema, modules);
+		const t = createT();
 		await seedDuplicate(t, "twin-org");
 		await expect(
 			t.mutation(internal.tenantOrgSeed.seedClientOrgMapping, {

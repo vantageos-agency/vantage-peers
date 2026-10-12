@@ -1477,7 +1477,10 @@ export function tenantNamespaceBounds(
  * end means "refused".
  */
 export function requireTenantNamespace(
-	scope: Pick<OrgScope, "isMaster" | "orgSlug" | "anonymous" | "refused">,
+	scope: Pick<
+		OrgScope,
+		"isMaster" | "fleetWide" | "masterSource" | "orgSlug" | "anonymous" | "refused"
+	>,
 	namespace: string,
 	door: string,
 ): void {
