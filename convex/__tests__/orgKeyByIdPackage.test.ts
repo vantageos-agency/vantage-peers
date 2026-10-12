@@ -132,10 +132,15 @@ describe("the org-by-ID decisions live in the package", () => {
 		for (const rel of sourceFiles(CONVEX_DIR)) {
 			if (/\bresolveOrgIdForLabel\w*\(/.test(code(rel))) callers.push(rel);
 		}
-		expect(callers).toEqual(["migrations/backfill_org_clerk_id.ts"]);
-		expect(code("migrations/backfill_org_clerk_id.ts")).toMatch(
-			/\bresolveOrgIdForLabelBackfillOnly\(/,
-		);
+		// Both are one-off, dry-run-first backfills: the generic slug-column walk, and
+		// the memories walk (a memory stores its org only as the label in its namespace).
+		expect(callers).toEqual([
+			"migrations/backfill_memories_org_clerk_id.ts",
+			"migrations/backfill_org_clerk_id.ts",
+		]);
+		for (const rel of callers) {
+			expect(code(rel)).toMatch(/\bresolveOrgIdForLabelBackfillOnly\(/);
+		}
 	});
 
 	test("every package decision is imported from the package, never from a sibling module", () => {

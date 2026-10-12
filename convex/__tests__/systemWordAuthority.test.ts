@@ -33,8 +33,10 @@ import { api } from "../_generated/api";
 import schema from "../schema";
 import { analyse as analyseSystemWord } from "../../tests/lib/systemWordAst";
 import { testClerkOrgId } from "../../tests/fixtures/testClerkOrgId";
+import { findAgentId, seedAgents } from "../../tests/lib/agentIdOf";
 import { seedFleetAgents } from "../../tests/lib/seedFleetAgents";
 import { seedRosterAgents } from "../../tests/lib/seedRosterAgents";
+import type { Id } from "../_generated/dataModel";
 
 const modules = Object.fromEntries(
 	Object.entries(import.meta.glob("../**/*.ts")).filter(
@@ -187,7 +189,7 @@ describe("briefingNotes.deleteBriefingNote — the word 'system' is not authorit
 				noteId,
 				callerOrchestrator: "system",
 			}),
-		).rejects.toThrow(/RBAC_DENIED: only seat-b \(creator\)/);
+		).rejects.toThrow(/RBAC_DENIED: actor "system" is not an orchestrator of org "org-a"/);
 		expect(await t.run((ctx) => ctx.db.get(noteId))).not.toBeNull();
 	});
 
@@ -195,9 +197,16 @@ describe("briefingNotes.deleteBriefingNote — the word 'system' is not authorit
 		const t = createT();
 		await seedOrgA(t);
 		const noteId = await seedNote(t, "seat-a");
-		const result = await asMemberOfOrgA(t).mutation(
+		// M10c: seat-a is proved by the agent ID the transport verified (service
+		// account); the author is judged by ID. No secret is an argument.
+		await seedAgents(t, [["org-a", "seat-a"]]);
+		const verifiedActor = {
+			agentId: (await findAgentId(t, "org-a", "seat-a")) as Id<"agents">,
+			orgSlug: "org-a",
+		};
+		const result = await asMaster(t).mutation(
 			api.briefingNotes.deleteBriefingNote,
-			{ noteId, callerOrchestrator: "seat-a" },
+			{ noteId, callerOrchestrator: "seat-a", verifiedActor },
 		);
 		expect(result.deleted).toBe(true);
 		expect(await t.run((ctx) => ctx.db.get(noteId))).toBeNull();
@@ -226,7 +235,7 @@ describe("briefingNotes.update — the word 'system' is not authority", () => {
 				callerOrchestrator: "system",
 				title: "hijacked",
 			}),
-		).rejects.toThrow(/RBAC_DENIED: system is not creator/);
+		).rejects.toThrow(/RBAC_DENIED: actor "system" is not an orchestrator of org "org-a"/);
 		const row = await t.run((ctx) => ctx.db.get(noteId));
 		expect(row?.title).toBe("seed note");
 	});
@@ -235,9 +244,17 @@ describe("briefingNotes.update — the word 'system' is not authority", () => {
 		const t = createT();
 		await seedOrgA(t);
 		const noteId = await seedNote(t, "seat-a");
-		await asMemberOfOrgA(t).mutation(api.briefingNotes.update, {
+		// M10c: seat-a is proved by the agent ID the transport verified (service
+		// account); the author is judged by ID. No secret is an argument.
+		await seedAgents(t, [["org-a", "seat-a"]]);
+		const verifiedActor = {
+			agentId: (await findAgentId(t, "org-a", "seat-a")) as Id<"agents">,
+			orgSlug: "org-a",
+		};
+		await asMaster(t).mutation(api.briefingNotes.update, {
 			noteId,
 			callerOrchestrator: "seat-a",
+			verifiedActor,
 			title: "mine",
 		});
 		const row = await t.run((ctx) => ctx.db.get(noteId));

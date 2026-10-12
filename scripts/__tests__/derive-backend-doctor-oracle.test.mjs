@@ -678,14 +678,20 @@ describe("derive-backend-doctor-oracle verb and guard derivation (R-37 inputs)",
 	);
 
 	it(
-		"BOTH POLES — a `db.get(id)` added to the same list handler makes the mix undecidable again",
+		"BOTH POLES — a list that also reads by id is a READ-LIST only while its returns validator declares a list",
 		() => {
+			// PRESENT: briefingNotes:list drains a list AND reads rows by id (the
+			// agents roster); the verb is the cardinality its `returns` declares,
+			// where the refusal envelope `{ refused, items: [] }` is a list envelope.
+			expect(committed("list_briefing_notes").crud).toBe("READ-LIST");
+			// ABSENT: the envelope arm stops being a list envelope (no continuation
+			// or refusal key) and the validator no longer agrees on one cardinality.
 			const root = copyTree();
 			mutate(
 				root,
 				"convex/briefingNotes.ts",
-				"// v2.3.3 — auto-clamp limit when fields=full + no explicit limit",
-				'// v2.3.3 — auto-clamp limit when fields=full + no explicit limit\n\t\tawait ctx.db.get("x" as never);',
+				"\t\t\trefused: v.literal(true),\n\t\t\titems: v.array(v.union(briefingNoteFullValidator, briefingNoteLiteValidator)),",
+				"\t\t\tflag: v.literal(true),\n\t\t\titems: v.array(v.union(briefingNoteFullValidator, briefingNoteLiteValidator)),",
 			);
 			const r = derive(root);
 			expect(r.status, r.stderr).toBe(0);
@@ -713,8 +719,8 @@ describe("derive-backend-doctor-oracle verb and guard derivation (R-37 inputs)",
 			mutate(
 				root,
 				"convex/briefingNotes.ts",
-				'requireScope(scope, "view-own-tasks");\n\n\t\tconst limit = Math.min(Math.max(args.limit ?? 20, 1), 200);',
-				'requireScope(scope, "view-own-tasks");\n\t\tfilterByOrgScope(scope, []);\n\n\t\tconst limit = Math.min(Math.max(args.limit ?? 20, 1), 200);',
+				'"briefingNotes:searchBriefingNotesByKeyword",\n\t\t);\n\t\trequireScope(scope, "view-own-tasks");',
+				'"briefingNotes:searchBriefingNotesByKeyword",\n\t\t);\n\t\trequireScope(scope, "view-own-tasks");\n\t\tfilterByOrgScope(scope, []);',
 			);
 			const r = derive(root);
 			expect(r.status, r.stderr).toBe(0);

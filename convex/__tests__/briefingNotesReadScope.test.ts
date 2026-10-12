@@ -26,6 +26,7 @@ import { describe, expect, test } from "vitest";
 import { api } from "../_generated/api";
 import schema from "../schema";
 import { testClerkOrgId } from "../../tests/fixtures/testClerkOrgId";
+import { seedBriefingNoteAgents } from "../../tests/lib/seedBriefingNoteAgents";
 
 const modules = Object.fromEntries(
 	Object.entries(import.meta.glob("../**/*.ts")).filter(
@@ -81,7 +82,7 @@ async function seedNote(
 		orgId: string;
 	},
 ) {
-	return await t.run(async (ctx) => {
+	const noteId = await t.run(async (ctx) => {
 		const noteId = await ctx.db.insert("briefingNotes", {
 			title: opts.title,
 			topic: "daily",
@@ -100,6 +101,9 @@ async function seedNote(
 		}
 		return noteId;
 	});
+	// M10c: authors and participants are agents of the note's org, judged by ID.
+	await seedBriefingNoteAgents(t);
+	return noteId;
 }
 
 const decodeRbacDenied = (caught: unknown): boolean => {

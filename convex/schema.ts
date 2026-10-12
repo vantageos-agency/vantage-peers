@@ -122,6 +122,14 @@ export default defineSchema({
 		// insert site. The dedup index below never matches an undefined value
 		// against a real hash, so unset rows never collide.
 		contentHash: v.optional(v.string()),
+
+		// The permanent Clerk org ID of the organisation that owns this row (module
+		// M10a). The namespace `team/<slug>` carries a renamable LABEL; a read or
+		// write decides on this ID through @vantageos/cloud-identity `sameOrg`.
+		// OPTIONAL: rows written before M10a (and fleet rows in non-team namespaces)
+		// carry none; an unstamped row is served to no client org until
+		// migrations/backfill_memories_org_clerk_id fills it. Never invented.
+		clerkOrgId: v.optional(v.string()),
 	})
 		// Primary query patterns — all filtered to isLatest for active memory reads
 		.index("by_namespace", ["namespace", "isLatest"])
@@ -777,6 +785,17 @@ export default defineSchema({
 		// renamable label; this is the identity (Pi ruling (d), k174d95s5qqy8t2r5rdrz3pr3d8fqv82).
 		// Optional during the expand phase: filled by migrations/backfill_org_clerk_id.
 		clerkOrgId: v.optional(v.string()),
+		// M10c: the ID of the note's author, beside the `createdBy` display label.
+		// An agents-row `_id` (resolved in the note's own org) or the person actor
+		// "user:<verified subject>". Filled on every write; a row written before
+		// M10c has none and its creator is resolved from the label in the row's
+		// OWN org on read (convex/briefingNotes.ts). Authority compares this, never
+		// the label.
+		createdById: v.optional(v.string()),
+		// M10c: the participants that name an agent (or a person) of the note's org,
+		// as IDs, beside the `participants` display labels. A label that names no
+		// agent (e.g. a human first name) has no entry.
+		participantIds: v.optional(v.array(v.string())),
 		// R-18 idempotency key for retriable OKF bundle import inserts.
 		// sha256(title + "\n" + content) computed once by the importer
 		// (convex/okfBundleNode.ts); the atomic findOrCreate in
@@ -853,7 +872,9 @@ export default defineSchema({
 		// common narrowing axes (topic, createdBy).
 		.searchIndex("search_content", {
 			searchField: "content",
-			filterFields: ["topic", "createdBy", "orgId"],
+			// clerkOrgId (M10c): the tenant filter of a member's search is the org's
+			// permanent ID, never the renamable slug in `orgId`.
+			filterFields: ["topic", "createdBy", "orgId", "clerkOrgId"],
 		}),
 
 	// ── briefingNoteParticipants ──────────────────────────────────────────────
@@ -866,8 +887,12 @@ export default defineSchema({
 	briefingNoteParticipants: defineTable({
 		noteId: v.id("briefingNotes"),
 		participant: v.string(),
+		// M10c: the ID the label names in the note's own org (agents-row `_id` or
+		// "user:<subject>"); absent when the label names no agent there.
+		participantId: v.optional(v.string()),
 	})
 		.index("by_participant_note", ["participant", "noteId"])
+		.index("by_participantId_note", ["participantId", "noteId"])
 		.index("by_note", ["noteId"]),
 
 	// ── mandates ──────────────────────────────────────────────────────────────
@@ -1980,14 +2005,15 @@ export default defineSchema({
 	// (convex/okfBundleDurable.ts). One row per durable job (keyed by the
 	// `@vantageos/agent-engine` `jobId`), tracking pagination cursors across
 	// steps so a step function can resume exactly where the previous one left
-	// off. `orgId` here IS the requested namespace string (see
-	// okfBundleDurable.ts comment) — kept as its own field, never trusted as a
-	// client-supplied scope on any step: every step re-derives its DB reads
-	// from `namespace`/`orgId` on THIS row, written once at job creation by
+	// off. `orgId` is the tenant of the RESOLVED scope at job creation (the
+	// org's permanent Clerk org ID, or "fleet" for the master; rows created
+	// before this change hold the namespace instead), never a client-supplied
+	// value. The exported namespace is its own field, and every step re-derives
+	// its DB reads from `namespace` on THIS row, written once at job creation by
 	// the authenticated `startOkfBundleExportDurable` mutation.
 	okfDurableExportProgress: defineTable({
 		jobId: v.string(), // opaque id returned by durableJob.start
-		orgId: v.string(), // == namespace; tenant scope for every step read
+		orgId: v.string(), // tenant of the resolved scope (org ID, or "fleet"); ownership is judged on `namespace`
 		namespace: v.string(),
 		sinceMs: v.optional(v.number()),
 		memoriesCursor: v.union(v.string(), v.null()),

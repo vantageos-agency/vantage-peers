@@ -79,13 +79,13 @@ for (const subject of [PRE_ORG, MEMBER]) {
 const asPreOrg = (t: T) =>
 	t.withIdentity({ subject: PRE_ORG } as Parameters<typeof t.withIdentity>[0]);
 
-const asMember = (t: T) =>
+const asMember = (t: T, role = "org:editor") =>
 	t.withIdentity({
 		subject: MEMBER,
 		organizationId: "org-a",
 		org_id: testClerkOrgId("org-a"),
 		organizationSlug: "org-a",
-		org_role: "org:editor",
+		org_role: role,
 	} as Parameters<typeof t.withIdentity>[0]);
 
 const seedOrgMapping = (t: T) =>
@@ -216,6 +216,8 @@ interface Site {
 	)[];
 	/** The exact value a legitimate member receives. */
 	memberReturns: (value: unknown) => void;
+	/** The role the legitimate member holds (default editor; a destructive human write needs admin). */
+	memberRole?: string;
 }
 
 /** Makes a seeded id nonexistent: the row existed, now it does not. */
@@ -235,14 +237,17 @@ const SITES: Site[] = [
 		name: "briefingNotes:create",
 		tables: ["briefingNotes"],
 		memberReturns: isString,
-		prepare: async () => (c) =>
-			c.mutation(api.briefingNotes.create, {
-				title: "n",
-				topic: "handoff",
-				participants: [SEAT],
-				content: "c",
-				createdBy: SEAT,
-			}),
+		prepare: async (t) => {
+			// The human path: no createdBy, the author is the verified subject.
+			// (An agent author rides verifiedActor through the service account only.)
+			return (c) =>
+				c.mutation(api.briefingNotes.create, {
+					title: "n",
+					topic: "handoff",
+					participants: [SEAT],
+					content: "c",
+				});
+		},
 	},
 	{
 		name: "briefingNotes:update",
@@ -254,7 +259,6 @@ const SITES: Site[] = [
 			return (c) =>
 				c.mutation(api.briefingNotes.update, {
 					noteId,
-					callerOrchestrator: SEAT,
 					content: "edited",
 				});
 		},
@@ -263,13 +267,13 @@ const SITES: Site[] = [
 		name: "briefingNotes:deleteBriefingNote",
 		tables: ["briefingNotes"],
 		memberReturns: isDeleted,
+		memberRole: "org:admin",
 		prepare: async (t, ghost) => {
 			const noteId = await seedBriefingNote(t, "org-a");
 			if (ghost) await ghostOf(t, noteId);
 			return (c) =>
 				c.mutation(api.briefingNotes.deleteBriefingNote, {
 					noteId,
-					callerOrchestrator: SEAT,
 				});
 		},
 	},
@@ -465,7 +469,7 @@ describe("R-51 — public writes refuse a no-org caller with the coded refusal",
 				const call = await site.prepare(t, false);
 				let value: unknown;
 				try {
-					value = await call(asMember(t));
+					value = await call(asMember(t, site.memberRole));
 				} catch (e) {
 					throw new Error(
 						`member refused: ${String((e as ConvexError<string>).data ?? e)}`,

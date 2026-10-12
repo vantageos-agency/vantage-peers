@@ -1,10 +1,12 @@
+import { hasFleetRead } from "@vantageos/cloud-identity";
 import { v, ConvexError } from "convex/values";
 import type { Doc } from "./_generated/dataModel";
 import { mutation, query, type QueryCtx } from "./_generated/server";
 import { internal } from "./_generated/api";
 import { creatorValidator, severityValidator, relationTypeValidator } from "./schema";
-import { tenantNamespaceBounds, withOrgScope } from "./lib/auth";
-import { isNamespaceAllowedForScope } from "./memories";
+import { requireResolvedCaller, withOrgScope } from "./lib/auth";
+import { memoryAuthorOf, memoryStampForWrite, memoryVisibleToScope } from "./lib/memoryTenant";
+import { isTeamNamespaceAllowed, memberNamespaceRoots } from "./lib/teamNamespace";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // storeEpisode
@@ -17,7 +19,9 @@ import { isNamespaceAllowedForScope } from "./memories";
 export const storeEpisode = mutation({
   args: {
     namespace: v.string(),
-    createdBy: creatorValidator,
+    // Absent for a person (the MCP forwards none): the verified caller is the
+    // author. The service account names the seat it authenticated.
+    createdBy: v.optional(creatorValidator),
     // The 5 episode fields (mandatory for type="episode")
     context: v.string(),
     goal: v.string(),
@@ -50,14 +54,32 @@ export const storeEpisode = mutation({
     // org JWT or its service-account token; see
     // mcp-server/src/authenticatedConvexClient.ts), so the fail-closed
     // default here never breaks that live path. Reuses
-    // isNamespaceAllowedForScope from memories.ts (the SAME check
-    // storeMemory applies) rather than duplicating the rule.
+    // the namespace gate of convex/lib/teamNamespace.ts: a member owns
+    // `team/<its verified org ID>` (and the legacy label alias of that same org).
     const scope = await withOrgScope(ctx);
-    if (!isNamespaceAllowedForScope(scope, args.namespace)) {
+    if (!isTeamNamespaceAllowed(scope, args.namespace)) {
       throw new ConvexError(
         `RBAC_DENIED: caller may not write to namespace "${args.namespace}" — ${JSON.stringify({ orgSlug: scope.orgSlug })}`,
       );
     }
+    // AUTHOR + TENANT STAMP. An episode is a row of the memories table, so it is
+    // authored and stamped exactly as storeMemory does it (convex/lib/memoryTenant.ts):
+    // a member's author is the verified caller ("user:<subject>") and a claimed
+    // other author is refused; the service account (the MCP server) supplies the
+    // author of the seat it authenticated. The row carries the org's permanent ID,
+    // so the memory doors and the episode doors judge it identically.
+    const createdBy = memoryAuthorOf(
+      scope,
+      args.createdBy,
+      "episodes:storeEpisode",
+      hasFleetRead(scope),
+    );
+    const clerkOrgId = await memoryStampForWrite(
+      ctx,
+      scope,
+      args.namespace,
+      "episodes:storeEpisode",
+    );
 
     const now = Date.now();
 
@@ -74,7 +96,7 @@ export const storeEpisode = mutation({
       namespace: args.namespace,
       type: "episode",
       content,
-      createdBy: args.createdBy,
+      createdBy,
       relations: args.relations ?? [],
       isLatest: true,
       ttl: args.ttl,
@@ -86,6 +108,7 @@ export const storeEpisode = mutation({
         insight: args.insight,
         severity: args.severity,
       },
+      ...(clerkOrgId === undefined ? {} : { clerkOrgId }),
       createdAt: now,
       updatedAt: now,
     });
@@ -101,6 +124,43 @@ export const storeEpisode = mutation({
     return memoryId;
   },
 });
+
+// Rows examined by one bounded episode read. A read that has to look at more rows
+// than this to fill its page is refused loudly: a silently short page would be
+// indistinguishable from "that is all there is".
+const EPISODE_SCAN_CAP = 16000;
+
+type EpisodeRow = Doc<"memories"> & { episode: NonNullable<Doc<"memories">["episode"]> };
+
+/** Up to `limit` newest episodes of ONE namespace that satisfy `keep`, read through the index. */
+async function takeEpisodes(
+  ctx: QueryCtx,
+  namespace: string,
+  limit: number,
+  keep: (row: Doc<"memories">) => boolean,
+  door: string,
+): Promise<EpisodeRow[]> {
+  const out: EpisodeRow[] = [];
+  if (limit <= 0) return out;
+  let examined = 0;
+  for await (const row of ctx.db
+    .query("memories")
+    .withIndex("by_namespace_type", (q) =>
+      q.eq("namespace", namespace).eq("type", "episode").eq("isLatest", true),
+    )
+    .order("desc")) {
+    if (++examined > EPISODE_SCAN_CAP) {
+      throw new ConvexError(
+        `${door}: SCAN_CAP_EXCEEDED — more than ${EPISODE_SCAN_CAP} episodes had to be examined to fill the page, so the list cannot be assembled completely.`,
+      );
+    }
+    if (row.episode !== undefined && keep(row)) {
+      out.push(row as EpisodeRow);
+      if (out.length >= limit) break;
+    }
+  }
+  return out;
+}
 
 // ─────────────────────────────────────────────────────────────────────────────
 // listEpisodes — list episodes for a namespace, ordered newest first
@@ -148,33 +208,26 @@ export const listEpisodes = query({
     // scope as the empty page. Reuses the EXACT mechanism its sibling
     // memories.ts::listMemories already uses — no second identity layer.
     const scope = await withOrgScope(ctx, { refuseWithoutThrow: true });
-    if (!isNamespaceAllowedForScope(scope, args.namespace)) {
+    if (!isTeamNamespaceAllowed(scope, args.namespace)) {
       return [];
     }
 
     const limit = args.limit ?? 20;
 
-    const episodes = await ctx.db
-      .query("memories")
-      .withIndex("by_namespace_type", (q) =>
-        q
-          .eq("namespace", args.namespace)
-          .eq("type", "episode")
-          .eq("isLatest", true),
-      )
-      .order("desc")
-      .collect();
+    // One namespace, read through its (namespace, type, isLatest) index, newest
+    // first, and stopped at `limit` matches: bounded by the page asked for and by
+    // EPISODE_SCAN_CAP rows examined, never a collect of the whole range.
+    const episodes = await takeEpisodes(
+      ctx,
+      args.namespace,
+      limit,
+      (e) =>
+        memoryVisibleToScope(scope, e) &&
+        (args.severity === undefined || e.episode?.severity === args.severity),
+      "episodes.listEpisodes",
+    );
 
-    // Filter by severity if specified (post-index, bounded by collect above)
-    const filtered =
-      args.severity !== undefined
-        ? episodes.filter((e) => e.episode?.severity === args.severity)
-        : episodes;
-
-    // Return only episodes (type guard — episode field is always set for type="episode")
-    return filtered
-      .filter((e) => e.episode !== undefined)
-      .slice(0, limit)
+    return episodes
       .map((e) => ({
         _id: e._id,
         _creationTime: e._creationTime,
@@ -188,47 +241,83 @@ export const listEpisodes = query({
   },
 });
 
-// An org member's episodes, read from the index ranges of its OWN namespaces
-// only: the exact `team/<org>` namespace, then each distinct sub-namespace under
-// `team/<org>/`, found by skipping forward through `by_namespace` (the bounds
-// come from `tenantNamespaceBounds`, the same rule as
-// `isNamespaceAllowedForScope`). Each namespace is then read with an equality
-// prefix on (namespace, type, isLatest). A tenant holding more distinct
-// namespaces than TENANT_NAMESPACE_WALK_CAP is refused loudly rather than
-// answered with a silently incomplete list.
+// An org member's critical episodes, read from the index ranges of its OWN
+// namespaces only: each owned root (`team/<org ID>`, plus the legacy label alias
+// of that same org) is read exactly, then every distinct sub-namespace under it
+// is found by skipping forward through `by_namespace` (bounds from
+// `memberNamespaceRoots`). Each namespace is then read through the
+// (namespace, type, isLatest) index, newest first, stopped at `limit`. A tenant
+// holding more distinct namespaces than TENANT_NAMESPACE_WALK_CAP is refused
+// loudly rather than answered with a silently incomplete list.
 const TENANT_NAMESPACE_WALK_CAP = 500;
 
-async function readTenantEpisodes(
+// Rows the master's fleet-wide scan may examine to find its page of critical ones.
+const FLEET_SCAN_CAP = 16000;
+
+const isCritical = (e: Doc<"memories">) => e.episode?.severity === "critical";
+
+// The fleet's critical episodes: every namespace, newest first, stopped at
+// `limit` critical rows and capped on rows examined (FLEET_SCAN_CAP).
+async function readFleetCritical(
   ctx: QueryCtx,
-  orgSlug: string | null,
-): Promise<Doc<"memories">[]> {
-  const bounds = tenantNamespaceBounds(orgSlug);
-  if (bounds === null) return [];
-  const readNamespace = async (namespace: string) =>
-    await ctx.db
-      .query("memories")
-      .withIndex("by_namespace_type", (q) =>
-        q.eq("namespace", namespace).eq("type", "episode").eq("isLatest", true),
-      )
-      .collect();
-  const rows = await readNamespace(bounds.exact);
-  let from = bounds.from;
-  for (let step = 0; ; step++) {
-    if (step >= TENANT_NAMESPACE_WALK_CAP) {
+  scope: Parameters<typeof requireResolvedCaller>[0],
+  limit: number,
+): Promise<EpisodeRow[]> {
+  // The unbounded-by-namespace scan is master-only by construction: any other
+  // scope is refused RBAC_DENIED (naming this door) before a row is read.
+  requireResolvedCaller(scope, "episodes:getCriticalInsights", { masterOnly: true });
+  const episodes: EpisodeRow[] = [];
+  let examined = 0;
+  for await (const row of ctx.db
+    .query("memories")
+    .withIndex("by_type", (q) => q.eq("type", "episode").eq("isLatest", true))
+    .order("desc")) {
+    if (++examined > FLEET_SCAN_CAP) {
       throw new ConvexError(
-        `episodes.getCriticalInsights: SCAN_CAP_EXCEEDED — your organisation holds more than ${TENANT_NAMESPACE_WALK_CAP} distinct namespaces, so the list cannot be assembled completely. The result would be incomplete and indistinguishable from a full match.`,
+        `episodes.getCriticalInsights: SCAN_CAP_EXCEEDED — more than ${FLEET_SCAN_CAP} episodes had to be examined to find ${limit} critical ones.`,
       );
     }
-    const next = await ctx.db
-      .query("memories")
-      .withIndex("by_namespace", (q) =>
-        q.gte("namespace", from).lt("namespace", bounds.to),
-      )
-      .first();
-    if (next === null) break;
-    rows.push(...(await readNamespace(next.namespace)));
-    // The smallest string strictly greater than `next.namespace`.
-    from = `${next.namespace}\u0000`;
+    if (row.episode !== undefined && isCritical(row)) {
+      episodes.push(row as EpisodeRow);
+      if (episodes.length >= limit) break;
+    }
+  }
+  return episodes;
+}
+
+async function readTenantCritical(
+  ctx: QueryCtx,
+  scope: Parameters<typeof memberNamespaceRoots>[0] &
+    Parameters<typeof memoryVisibleToScope>[0],
+  limit: number,
+): Promise<EpisodeRow[]> {
+  const door = "episodes.getCriticalInsights";
+  // The namespace roots say WHERE to read; the org stamp says whose a row is
+  // (the same predicate as the memory doors), so a freed label reused by another
+  // org, and an unstamped legacy row, are never served.
+  const keep = (e: Doc<"memories">) => isCritical(e) && memoryVisibleToScope(scope, e);
+  const rows: EpisodeRow[] = [];
+  let walked = 0;
+  for (const root of memberNamespaceRoots(scope)) {
+    rows.push(...(await takeEpisodes(ctx, root.exact, limit, keep, door)));
+    let from = root.from;
+    for (;;) {
+      if (walked++ >= TENANT_NAMESPACE_WALK_CAP) {
+        throw new ConvexError(
+          `${door}: SCAN_CAP_EXCEEDED — your organisation holds more than ${TENANT_NAMESPACE_WALK_CAP} distinct namespaces, so the list cannot be assembled completely. The result would be incomplete and indistinguishable from a full match.`,
+        );
+      }
+      const next = await ctx.db
+        .query("memories")
+        .withIndex("by_namespace", (q) =>
+          q.gte("namespace", from).lt("namespace", root.to),
+        )
+        .first();
+      if (next === null) break;
+      rows.push(...(await takeEpisodes(ctx, next.namespace, limit, keep, door)));
+      // The smallest string strictly greater than `next.namespace`.
+      from = `${next.namespace}\u0000`;
+    }
   }
   return rows.sort((a, b) => b._creationTime - a._creationTime);
 }
@@ -258,41 +347,29 @@ export const getCriticalInsights = query({
     // an unauthenticated caller drained EVERY tenant's critical insights in
     // one call — the widest of the two measured leaks.
     //
-    // There is no caller-supplied namespace to compare, so the scope is
-    // applied as a per-ROW filter: each candidate row's OWN namespace must be
-    // allowed for the resolved scope. Master (the fleet's own callers, via
+    // There is no caller-supplied namespace to compare, so the scope decides
+    // WHICH index ranges are read (below). Master (the fleet's own callers, via
     // withOrgScope's by-id service-account carve-out) keeps reading every
-    // namespace, exactly as today. An anonymous or no-org caller resolves to
-    // orgSlug=null/isMaster=false, for which isNamespaceAllowedForScope is
-    // false for every row — the typed empty array, never a throw (reactive
-    // subscriber, same reasoning as listEpisodes above).
+    // namespace. An anonymous or no-org caller owns no namespace root, so it
+    // reads nothing: the typed empty array, never a throw (reactive subscriber,
+    // same reasoning as listEpisodes above).
     const scope = await withOrgScope(ctx, { refuseWithoutThrow: true });
 
     const limit = args.limit ?? 30;
 
     // The tenant predicate is applied INSIDE the read (R-11), never as a filter
-    // after an unscoped one. Master reads the type index (every tenant is its
-    // business); an org member reads only the index ranges of its OWN
-    // namespaces, so a foreign episode is never read at all.
-    let episodes: Doc<"memories">[];
-    if (scope.isMaster) {
-      episodes = await ctx.db
-        .query("memories")
-        .withIndex("by_type", (q) =>
-          q.eq("type", "episode").eq("isLatest", true),
-        )
-        .order("desc")
-        .collect();
-    } else {
-      episodes = await readTenantEpisodes(ctx, scope.orgSlug);
-    }
+    // after an unscoped one. The fleet-wide scan (every tenant's rows) is for the
+    // master alone; an org member reads only the index ranges of its OWN
+    // namespaces, so a foreign episode is never read at all. Both reads stop at
+    // `limit` critical rows (newest first) and are capped on rows examined.
+    // The master/member split is the package's `hasFleetRead`. The fleet-wide
+    // scan itself refuses any non-master scope (readFleetCritical), so the
+    // member path cannot reach it even if this branch were wrong.
+    const episodes = hasFleetRead(scope)
+      ? await readFleetCritical(ctx, scope, limit)
+      : await readTenantCritical(ctx, scope, limit);
 
     return episodes
-      .filter(
-        (e) =>
-          e.episode?.severity === "critical" &&
-          isNamespaceAllowedForScope(scope, e.namespace),
-      )
       .slice(0, limit)
       .map((e) => ({
         _id: e._id,

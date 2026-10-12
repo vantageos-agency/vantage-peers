@@ -44,6 +44,7 @@ import { registerValidateOkfBundle } from "./tools/validateOkfBundle.js";
 import type { VpToolResult } from "./ui-resources/schemas.js";
 import { wrapToolResult } from "./ui-resources/stream-marker.js";
 import { validateTaskPayload } from "./validate-task-payload.js";
+import { memberAuthorLabel } from "./memberAuthor.js";
 import { verifiedActorOf, withVerifiedActor } from "./verifiedActor.js";
 import { resolveWhoamiIdentity } from "./whoamiIdentity.js";
 
@@ -250,6 +251,9 @@ export const diaryIdSchema = convexIdSchema("diaryId");
 const memoryTypeSchema = z
 	.enum(["user", "feedback", "project", "reference", "episode"])
 	.describe("Memory classification type");
+
+const CREATED_BY_REQUIRED =
+	"createdBy is required: name the orchestrator role this call acts as. Only a signed-in person (Clerk session) may omit it, and is then recorded under its own verified account.";
 
 export const creatorSchema = z
 	.string()
@@ -1130,6 +1134,7 @@ export const whoamiOutputSchema = z.object({
 // store_memory
 export const storeMemoryOutputSchema = z.object({
 	memoryId: z.string(),
+	createdBy: z.string().optional(),
 	namespace: z.string(),
 	type: z.enum(["user", "feedback", "project", "reference", "episode"]),
 	content: z.string(),
@@ -1162,6 +1167,7 @@ export const hybridSearchOutputSchema = z.array(
 // store_episode
 export const storeEpisodeOutputSchema = z.object({
 	memoryId: z.string(),
+	createdBy: z.string().optional(),
 	type: z.literal("episode"),
 	severity: z.enum(["critical", "major", "minor"]),
 	namespace: z.string(),
@@ -2313,7 +2319,9 @@ export function registerTools(
 			content: z
 				.string()
 				.describe("Human-readable memory content — what the memory says"),
-			createdBy: creatorSchema,
+			createdBy: creatorSchema.optional().describe(
+				"Orchestrator role name acting as the author. Omit it when you are a signed-in person: the memory is recorded under your own verified account.",
+			),
 			relatesTo: z
 				.object({
 					targetId: memoryIdSchema.describe(
@@ -2337,14 +2345,21 @@ export function registerTools(
 			openWorldHint: false,
 			destructiveHint: false,
 			title: "Store memory",
+			memberAuthorDoor: true,
 		},
 		async ({ namespace, type, content, createdBy, relatesTo, ttl }) => {
 			let contentBytes = 0;
 			try {
 				contentBytes = assertContentSize(content, "store_memory");
 
-				const fromDenied = guardFrom(createdBy);
-				if (fromDenied) return fromDenied;
+				// A Clerk-JWT member is recorded as its own verified subject by Convex;
+				// every other caller names the seat it acts as.
+				const author = memberAuthorLabel(oauthCtx) ?? createdBy;
+				if (author === undefined) return mcpError(CREATED_BY_REQUIRED);
+				if (memberAuthorLabel(oauthCtx) === undefined) {
+					const fromDenied = guardFrom(author);
+					if (fromDenied) return fromDenied;
+				}
 				const nsDenied = guardWrite(namespace);
 				if (nsDenied) return nsDenied;
 
@@ -2356,7 +2371,7 @@ export function registerTools(
 					namespace,
 					type,
 					content,
-					createdBy,
+					...(memberAuthorLabel(oauthCtx) === undefined ? { createdBy: author } : {}),
 					relations,
 					ttl,
 				});
@@ -2366,7 +2381,7 @@ export function registerTools(
 						{
 							type: "text",
 							text: JSON.stringify(
-								{ memoryId, namespace, type, content },
+								{ memoryId, namespace, type, content, createdBy: author },
 								null,
 								2,
 							),
@@ -2379,7 +2394,7 @@ export function registerTools(
 					contentBytes,
 					namespace,
 					type,
-					createdBy,
+					createdBy: createdBy ?? null,
 					errorMessage: error?.message ?? String(error),
 				});
 				return mcpConvexError(error);
@@ -2692,7 +2707,9 @@ export function registerTools(
 			namespace: z
 				.string()
 				.describe("Memory namespace — e.g. 'orchestrator/pi'"),
-			createdBy: creatorSchema,
+			createdBy: creatorSchema.optional().describe(
+				"Orchestrator role name acting as the author. Omit it when you are a signed-in person: the episode is recorded under your own verified account.",
+			),
 			context: z
 				.string()
 				.describe("Situation that triggered this episode — what was the setup"),
@@ -2711,6 +2728,7 @@ export function registerTools(
 			openWorldHint: false,
 			destructiveHint: false,
 			title: "Store episode",
+			memberAuthorDoor: true,
 		},
 		async ({
 			namespace,
@@ -2723,14 +2741,19 @@ export function registerTools(
 			severity,
 		}) => {
 			try {
-				const fromDenied = guardFrom(createdBy);
-				if (fromDenied) return fromDenied;
+				// Same author rule as store_memory (see memberAuthor.ts).
+				const author = memberAuthorLabel(oauthCtx) ?? createdBy;
+				if (author === undefined) return mcpError(CREATED_BY_REQUIRED);
+				if (memberAuthorLabel(oauthCtx) === undefined) {
+					const fromDenied = guardFrom(author);
+					if (fromDenied) return fromDenied;
+				}
 				const nsDenied = guardWrite(namespace);
 				if (nsDenied) return nsDenied;
 
 				const memoryId = await convex.mutation("episodes:storeEpisode" as any, {
 					namespace,
-					createdBy,
+					...(memberAuthorLabel(oauthCtx) === undefined ? { createdBy: author } : {}),
 					context,
 					goal,
 					action,
@@ -2744,7 +2767,7 @@ export function registerTools(
 						{
 							type: "text",
 							text: JSON.stringify(
-								{ memoryId, type: "episode", severity, namespace },
+								{ memoryId, type: "episode", severity, namespace, createdBy: author },
 								null,
 								2,
 							),
@@ -6965,10 +6988,16 @@ export function registerTools(
 				const callerIdentities = master
 					? undefined
 					: (oauthCtx?.fromAllowList ?? []);
+				// Tenant applied INSIDE the Convex read (`verifiedOrg`), as for
+				// list_briefing_notes: the seat labels in `callerIdentities` are resolved
+				// in the organisation the bearer was verified for, never in the note's.
+				const orgDenied = unresolvedOrgDenial("get_briefing_note");
+				if (orgDenied !== null) return orgDenied;
 				const note = await convex.query("briefingNotes:get" as any, {
 					noteId,
 					master,
 					callerIdentities,
+					...verifiedOrgArgs(),
 				});
 				// scopeFilterGet only discriminates on createdBy/namespace — it
 				// has no notion of `participants`. OR it with an independent

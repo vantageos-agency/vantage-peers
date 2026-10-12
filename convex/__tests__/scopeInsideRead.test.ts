@@ -275,6 +275,12 @@ async function seedRepoMappings(t: T): Promise<void> {
 	});
 }
 
+/** TEST FIXTURE: a `team/<label>` row carries its org's permanent ID (M10a). */
+const stampOf = (namespace: string): { clerkOrgId?: string } => {
+	const label = namespace.startsWith("team/") ? namespace.split("/")[1] : undefined;
+	return label === undefined ? {} : { clerkOrgId: testClerkOrgId(label) };
+};
+
 async function seedMemory(
 	t: T,
 	namespace: string,
@@ -284,6 +290,7 @@ async function seedMemory(
 	return await t.run(async (ctx) => {
 		return await ctx.db.insert("memories", {
 			namespace,
+			...stampOf(namespace),
 			type: "episode",
 			content,
 			createdBy: "sigma",

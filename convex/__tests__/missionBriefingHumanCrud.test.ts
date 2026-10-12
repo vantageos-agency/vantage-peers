@@ -11,7 +11,7 @@
  * carrying `org_role`, never master. Pole style mirrors taskHumanCrud.test.ts.
  */
 
-import { convexTest } from "convex-test";
+import { convexTest } from "../../tests/fixtures/convexTestWithServiceAccount";
 import { describe, expect, test } from "vitest";
 import { testClerkOrgId } from "../../tests/fixtures/testClerkOrgId";
 import { api } from "../_generated/api";
@@ -300,6 +300,35 @@ describe("missions.update — agent path unchanged", () => {
 });
 
 // ── briefing notes ───────────────────────────────────────────────────────────
+// M10c: an agent is acted as only with that agent's proof: the agent ID the MCP
+// transport verified, believed from the fleet service account only (no secret is
+// an argument). The author is judged by agent ID. Idempotent: reuses the agent.
+const serviceAccount = (t: T) =>
+	t.withIdentity({ subject: "test-service-account-user-id" } as Parameters<
+		T["withIdentity"]
+	>[0]);
+
+async function sigmaProof(t: T): Promise<{ agentId: Id<"agents">; orgSlug: string }> {
+	const agentId = await t.run(async (ctx) => {
+		const existing = await ctx.db
+			.query("agents")
+			.withIndex("by_org_normalized_name", (q) =>
+				q.eq("orgSlug", "org-a").eq("normalizedName", "sigma"),
+			)
+			.first();
+		if (existing !== null) return existing._id;
+		return await ctx.db.insert("agents", {
+			orgSlug: "org-a",
+			clerkOrgId: testClerkOrgId("org-a"),
+			name: "sigma",
+			normalizedName: "sigma",
+			isActive: true,
+			createdAt: Date.now(),
+		});
+	});
+	return { agentId, orgSlug: "org-a" };
+}
+
 type NDoor = { name: string; call: (c: Caller, id: Id<"briefingNotes">) => Promise<unknown> };
 const noteDoors: NDoor[] = [
 	{ name: "update", call: (c, noteId) => c.mutation(api.briefingNotes.update, { noteId, title: "Retitled by the human" }) },
@@ -413,9 +442,11 @@ describe("briefingNotes.create — human, no createdBy", () => {
 
 	test("agent path unchanged: roster createdBy recorded as given", async () => {
 		const t = await setup();
-		const id = await t
-			.withIdentity(as("user_m", "org:viewer"))
-			.mutation(api.briefingNotes.create, { ...args, createdBy: "sigma" });
+		const id = await serviceAccount(t).mutation(api.briefingNotes.create, {
+			...args,
+			createdBy: "sigma",
+			verifiedActor: await sigmaProof(t),
+		});
 		expect((await nrow(t, id))?.createdBy).toBe("sigma");
 	});
 });
@@ -424,9 +455,12 @@ describe("briefingNotes.update — agent path unchanged", () => {
 	test("roster creator updates as itself, updatedBy sigma", async () => {
 		const t = await setup();
 		const id = await seedNote(t);
-		await t
-			.withIdentity(as("user_m", "org:viewer"))
-			.mutation(api.briefingNotes.update, { noteId: id, callerOrchestrator: "sigma", title: "Agent edit" });
+		await serviceAccount(t).mutation(api.briefingNotes.update, {
+			noteId: id,
+			callerOrchestrator: "sigma",
+			verifiedActor: await sigmaProof(t),
+			title: "Agent edit",
+		});
 		expect((await nrow(t, id))?.updatedBy).toBe("sigma");
 	});
 

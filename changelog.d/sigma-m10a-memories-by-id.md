@@ -1,0 +1,4 @@
+---
+section: Security
+---
+- **Memories are read and written by the org's permanent ID, not by the namespace label (module M10a).** `memories` rows carry `clerkOrgId`; `memories:getMemory`, `listMemories`, `memoriesScoped:listMemoriesScoped` serve a member only the rows stamped with its own org ID (an org that reuses a freed `team/<slug>` label no longer reads the previous holder's rows), `storeMemory` / `storeMemoryScoped` stamp the caller's ID and refuse a member's claimed different `createdBy` (`author-not-caller`), and `softDeleteMemory` answers a foreign row and a missing one with the same `RBAC_DENIED`. Rows written before this change are served to no client org until `migrations/backfill_memories_org_clerk_id` has run. Evidence: `convex/__tests__/memoriesById.test.ts`, `convex/__tests__/memoriesBackfill.test.ts`.

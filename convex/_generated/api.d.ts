@@ -62,6 +62,7 @@ import type * as lib_ids from "../lib/ids.js";
 import type * as lib_inboxReader from "../lib/inboxReader.js";
 import type * as lib_license from "../lib/license.js";
 import type * as lib_memberScopes from "../lib/memberScopes.js";
+import type * as lib_memoryTenant from "../lib/memoryTenant.js";
 import type * as lib_operatorOrg from "../lib/operatorOrg.js";
 import type * as lib_orgClerkId from "../lib/orgClerkId.js";
 import type * as lib_personPrincipal from "../lib/personPrincipal.js";
@@ -75,6 +76,7 @@ import type * as lib_serviceAccount from "../lib/serviceAccount.js";
 import type * as lib_systemCaller from "../lib/systemCaller.js";
 import type * as lib_taskActors from "../lib/taskActors.js";
 import type * as lib_taskClosureGate from "../lib/taskClosureGate.js";
+import type * as lib_teamNamespace from "../lib/teamNamespace.js";
 import type * as lib_tenantSlug from "../lib/tenantSlug.js";
 import type * as lib_verifiedOrg from "../lib/verifiedOrg.js";
 import type * as licenses from "../licenses.js";
@@ -90,6 +92,7 @@ import type * as migrations_backfillOrgIds from "../migrations/backfillOrgIds.js
 import type * as migrations_backfillRosterAgentIds from "../migrations/backfillRosterAgentIds.js";
 import type * as migrations_backfill_actor_ids from "../migrations/backfill_actor_ids.js";
 import type * as migrations_backfill_business_unit_owner_ids from "../migrations/backfill_business_unit_owner_ids.js";
+import type * as migrations_backfill_memories_org_clerk_id from "../migrations/backfill_memories_org_clerk_id.js";
 import type * as migrations_backfill_org_clerk_id from "../migrations/backfill_org_clerk_id.js";
 import type * as migrations_backfill_org_stamp from "../migrations/backfill_org_stamp.js";
 import type * as migrations_backfill_recurring_task_actor_ids from "../migrations/backfill_recurring_task_actor_ids.js";
@@ -193,6 +196,7 @@ declare const fullApi: ApiFromModules<{
   "lib/inboxReader": typeof lib_inboxReader;
   "lib/license": typeof lib_license;
   "lib/memberScopes": typeof lib_memberScopes;
+  "lib/memoryTenant": typeof lib_memoryTenant;
   "lib/operatorOrg": typeof lib_operatorOrg;
   "lib/orgClerkId": typeof lib_orgClerkId;
   "lib/personPrincipal": typeof lib_personPrincipal;
@@ -206,6 +210,7 @@ declare const fullApi: ApiFromModules<{
   "lib/systemCaller": typeof lib_systemCaller;
   "lib/taskActors": typeof lib_taskActors;
   "lib/taskClosureGate": typeof lib_taskClosureGate;
+  "lib/teamNamespace": typeof lib_teamNamespace;
   "lib/tenantSlug": typeof lib_tenantSlug;
   "lib/verifiedOrg": typeof lib_verifiedOrg;
   licenses: typeof licenses;
@@ -221,6 +226,7 @@ declare const fullApi: ApiFromModules<{
   "migrations/backfillRosterAgentIds": typeof migrations_backfillRosterAgentIds;
   "migrations/backfill_actor_ids": typeof migrations_backfill_actor_ids;
   "migrations/backfill_business_unit_owner_ids": typeof migrations_backfill_business_unit_owner_ids;
+  "migrations/backfill_memories_org_clerk_id": typeof migrations_backfill_memories_org_clerk_id;
   "migrations/backfill_org_clerk_id": typeof migrations_backfill_org_clerk_id;
   "migrations/backfill_org_stamp": typeof migrations_backfill_org_stamp;
   "migrations/backfill_recurring_task_actor_ids": typeof migrations_backfill_recurring_task_actor_ids;

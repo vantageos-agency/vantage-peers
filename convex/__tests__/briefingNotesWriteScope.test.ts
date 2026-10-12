@@ -27,6 +27,7 @@ import { convexTest } from "../../tests/fixtures/convexTestWithServiceAccount";
 import { describe, expect, test } from "vitest";
 import { testClerkOrgId } from "../../tests/fixtures/testClerkOrgId";
 import { api } from "../_generated/api";
+import type { Id } from "../_generated/dataModel";
 import schema from "../schema";
 
 const modules = Object.fromEntries(
@@ -63,6 +64,25 @@ async function seedOrgBMapping(t: ReturnType<typeof createT>) {
 			createdAt: Date.now(),
 		});
 	});
+}
+
+// M10c: an agent is acted as only with the proof of that agent: the agent ID
+// the MCP transport verified, believed from the service account only. No secret
+// is a function argument. The author is judged by agent ID, never by the label.
+async function seatAProof(
+	t: ReturnType<typeof createT>,
+): Promise<{ agentId: Id<"agents">; orgSlug: string }> {
+	const agentId = await t.run((ctx) =>
+		ctx.db.insert("agents", {
+			orgSlug: "org-a",
+			clerkOrgId: testClerkOrgId("org-a"),
+			name: "seat-a",
+			normalizedName: "seat-a",
+			isActive: true,
+			createdAt: Date.now(),
+		}),
+	);
+	return { agentId, orgSlug: "org-a" };
 }
 
 function asOrgA(t: ReturnType<typeof createT>) {
@@ -124,24 +144,103 @@ describe("briefingNotes.create — write-scope enforcement", () => {
 		expect(all).toHaveLength(0);
 	});
 
-	test("org-a creating a note gets orgId forced to its own org, regardless of the createdBy argument it passes", async () => {
+	test("org-a creating a note gets orgId forced to its own org (human path, no createdBy)", async () => {
 		const t = createT();
 		await seedOrgAMapping(t);
-		const tA = asOrgA(t);
+		await t.run((ctx) =>
+			ctx.db.insert("memberWriterRoles", { roles: ["org:admin"], updatedAt: Date.now() }),
+		);
+		const tA = t.withIdentity({
+			subject: "user-org-a",
+			organizationId: "org-a",
+			org_id: testClerkOrgId("org-a"),
+			org_role: "org:admin",
+		} as Parameters<typeof t.withIdentity>[0]);
 
 		// orgId must derive from the verified scope, never from anything
-		// caller-supplied. createdBy is an own-roster name: a foreign one
-		// ("seat-b") is now refused outright (intraOrgActingIdentity.test.ts).
+		// caller-supplied (there is no orgId argument at all).
 		const noteId = await tA.mutation(api.briefingNotes.create, {
 			title: "org-a note",
 			topic: "handoff",
 			participants: ["seat-b"],
 			content: "content",
-			createdBy: "seat-a",
 		});
 
 		const note = await t.run((ctx) => ctx.db.get(noteId));
 		expect(note?.orgId).toBe("org-a");
+	});
+
+	test("a call carrying agentCredentialSecret is rejected by the validator on all three doors, nothing written", async () => {
+		const t = createT();
+		await seedOrgAMapping(t);
+		const noteId = await seedNote(t, "org-a", "seat-a");
+		const tm = asMaster(t);
+		const secret = { agentCredentialSecret: "a-typed-secret" };
+		await expect(
+			tm.mutation(api.briefingNotes.create, {
+				title: "x",
+				topic: "handoff",
+				participants: ["seat-a"],
+				content: "c",
+				createdBy: "seat-a",
+				...secret,
+			} as never),
+		).rejects.toThrow(/agentCredentialSecret|ArgumentValidationError/);
+		await expect(
+			tm.mutation(api.briefingNotes.update, {
+				noteId,
+				callerOrchestrator: "seat-a",
+				content: "forged",
+				...secret,
+			} as never),
+		).rejects.toThrow(/agentCredentialSecret|ArgumentValidationError/);
+		await expect(
+			tm.mutation(api.briefingNotes.deleteBriefingNote, {
+				noteId,
+				callerOrchestrator: "seat-a",
+				...secret,
+			} as never),
+		).rejects.toThrow(/agentCredentialSecret|ArgumentValidationError/);
+		expect(await t.run((ctx) => ctx.db.query("briefingNotes").collect())).toHaveLength(1);
+		expect((await t.run((ctx) => ctx.db.get(noteId)))?.content).toBe("seed content");
+	});
+
+	test("the agent path through the service account: verifiedActor of seat-a creates as seat-a; another org's seat-a is refused", async () => {
+		const t = createT();
+		await seedOrgAMapping(t);
+		const verifiedActor = await seatAProof(t);
+		const noteId = await asMaster(t).mutation(api.briefingNotes.create, {
+			title: "agent note",
+			topic: "handoff",
+			participants: ["seat-a"],
+			content: "c",
+			createdBy: "seat-a",
+			verifiedActor,
+		});
+		const row = await t.run((ctx) => ctx.db.get(noteId));
+		expect(row?.createdBy).toBe("seat-a");
+		expect(row?.createdById).toBe(verifiedActor.agentId);
+
+		// A same-named agent of ANOTHER org: its ID, claimed in org-a, is refused.
+		const otherId = await t.run((ctx) =>
+			ctx.db.insert("agents", {
+				orgSlug: "org-b",
+				clerkOrgId: testClerkOrgId("org-b"),
+				name: "seat-a",
+				normalizedName: "seat-a",
+				isActive: true,
+				createdAt: Date.now(),
+			}),
+		);
+		await expect(
+			asMaster(t).mutation(api.briefingNotes.update, {
+				noteId,
+				callerOrchestrator: "seat-a",
+				verifiedActor: { agentId: otherId, orgSlug: "org-a" },
+				content: "forged",
+			}),
+		).rejects.toThrow(/ORG_MISMATCH/);
+		expect((await t.run((ctx) => ctx.db.get(noteId)))?.content).toBe("c");
 	});
 
 	test("the master/service-account identity creates a note with no orgId (legacy/internal)", async () => {
@@ -246,11 +345,13 @@ describe("briefingNotes.update — write-scope enforcement", () => {
 		const t = createT();
 		await seedOrgAMapping(t);
 		const noteId = await seedNote(t, "org-a", "seat-a");
-		const tA = asOrgA(t);
+		const tA = asMaster(t);
+		const verifiedActor = await seatAProof(t);
 
 		await tA.mutation(api.briefingNotes.update, {
 			noteId,
 			callerOrchestrator: "seat-a",
+			verifiedActor,
 			content: "updated by owner",
 		});
 
@@ -281,11 +382,13 @@ describe("briefingNotes.update — write-scope enforcement", () => {
 		const t = createT();
 		await seedOrgAMapping(t);
 		const noteId = await seedNote(t, "org-a", "seat-a");
-		const tA = asOrgA(t);
+		const tA = asMaster(t);
+		const verifiedActor = await seatAProof(t);
 
 		await tA.mutation(api.briefingNotes.update, {
 			noteId,
 			callerOrchestrator: "seat-a",
+			verifiedActor,
 			title: "retitled",
 			topic: "retopic",
 			participants: ["seat-a", "seat-c"],
@@ -427,11 +530,13 @@ describe("briefingNotes.deleteBriefingNote — write-scope enforcement", () => {
 		const t = createT();
 		await seedOrgAMapping(t);
 		const noteId = await seedNote(t, "org-a", "seat-a");
-		const tA = asOrgA(t);
+		const tA = asMaster(t);
+		const verifiedActor = await seatAProof(t);
 
 		const result = await tA.mutation(api.briefingNotes.deleteBriefingNote, {
 			noteId,
 			callerOrchestrator: "seat-a",
+			verifiedActor,
 		});
 		expect(result.deleted).toBe(true);
 		expect(await t.run((ctx) => ctx.db.get(noteId))).toBeNull();

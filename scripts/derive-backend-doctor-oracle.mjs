@@ -599,10 +599,33 @@ const CONTINUATION_KEYS = new Set([
 	"continueCursor",
 	"nextCursor",
 	"hasMore",
+	// the refusal envelope `{ refused: true, items: [] }` a list read answers a
+	// signed-in caller with no organisation (refusal-is-distinguishable-from-absence)
+	"refused",
 ]);
+
+/** The initializer of a module-level `const <name> = ...` in the node's own file, or null. */
+function moduleConstOf(node, name) {
+	for (const st of node.getSourceFile().statements) {
+		if (!ts.isVariableStatement(st)) continue;
+		for (const d of st.declarationList.declarations)
+			if (ts.isIdentifier(d.name) && d.name.text === name && d.initializer)
+				return d.initializer;
+	}
+	return null;
+}
+
 function cardinalityOf(fn) {
+	const seen = new Set();
 	const visit = (node) => {
-		const n = node && strip(node);
+		let n = node && strip(node);
+		// A shared validator const (`briefingNoteFullValidator`) is read through to
+		// its definition, in the same file; a name seen twice is a cycle.
+		while (n && ts.isIdentifier(n) && !seen.has(n.text)) {
+			seen.add(n.text);
+			const init = moduleConstOf(n, n.text);
+			n = init ? strip(init) : null;
+		}
 		if (!n || !ts.isCallExpression(n)) return null;
 		const callee = n.expression.getText().replace(/\s+/g, "");
 		if (callee === "v.array") return "list";

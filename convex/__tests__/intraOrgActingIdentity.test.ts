@@ -19,7 +19,7 @@ import type { FunctionReference } from "convex/server";
 import { convexTest } from "../../tests/fixtures/convexTestWithServiceAccount";
 import { describe, expect, test } from "vitest";
 import { testClerkOrgId } from "../../tests/fixtures/testClerkOrgId";
-import { agentIdOf } from "../../tests/lib/agentIdOf";
+import { agentIdOf, findAgentId } from "../../tests/lib/agentIdOf";
 import { api } from "../_generated/api";
 import type { Id } from "../_generated/dataModel";
 import schema from "../schema";
@@ -105,6 +105,7 @@ const member = (t: T) =>
 	actingWith(
 		t.withIdentity({ subject: "member-of-org-b", organizationId: "org-b", org_id: testClerkOrgId("org-b"), org_role: "org:editor" } as Identity),
 		(name) => secrets.get(`org-b/${name}`),
+		/^tasks:/,
 	);
 const master = (t: T) =>
 	t.withIdentity({ subject: "test-service-account-user-id" } as Identity);
@@ -161,10 +162,21 @@ describe("briefingNotes:create — author is the caller's own", () => {
 		);
 		expect(await t.run((c) => c.db.query("briefingNotes").collect())).toHaveLength(0);
 	});
-	test("SERVED: member authoring as own-roster 'bob'", async () => {
+	test("SERVED: bob authors through the service account's verifiedActor (no secret argument exists)", async () => {
 		const t = await fixture();
-		await member(t).mutation(api.briefingNotes.create, args("bob"));
+		const bob = await findAgentId(t, "org-b", "bob");
+		await master(t).mutation(api.briefingNotes.create, {
+			...args("bob"),
+			verifiedActor: { agentId: bob as Id<"agents">, orgSlug: "org-b" },
+		});
 		expect(await t.run((c) => c.db.query("briefingNotes").collect())).toHaveLength(1);
+	});
+	test("REFUSED: a member naming its own roster 'bob' without a proof", async () => {
+		const t = await fixture();
+		await expect(
+			member(t).mutation(api.briefingNotes.create, args("bob")),
+		).rejects.toThrow(/AGENT_CREDENTIAL_REQUIRED/);
+		expect(await t.run((c) => c.db.query("briefingNotes").collect())).toHaveLength(0);
 	});
 	test("MASTER unchanged: any author", async () => {
 		const t = await fixture();

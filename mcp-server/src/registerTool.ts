@@ -31,6 +31,7 @@
 import type { McpServer } from "@modelcontextprotocol/server";
 import { resolvePersonActingName } from "@vantageos/cloud-identity";
 import { z } from "zod";
+import { isClerkMember } from "./memberAuthor.js";
 import {
 	checkActorBinding,
 	checkFromAllowed,
@@ -427,11 +428,15 @@ export function defineTool(
 	// person-token gate), never advertised to a client as a hint.
 	// `personDoor` too: the tool's Convex door admits a person acting in its own
 	// name (bindPersonActingNames), a server-side declaration, never a hint.
-	const { outputSchema, ownStateOnly, personDoor, ...annotations } =
+	// `memberAuthorDoor` likewise: the tool's Convex door records a Clerk-JWT
+	// member as "user:<verified subject>" itself, so the acting name that member
+	// typed is dropped before the handler (memberAuthor.ts).
+	const { outputSchema, ownStateOnly, personDoor, memberAuthorDoor, ...annotations } =
 		(declaredAnnotations ?? {}) as {
 			outputSchema?: z.ZodRawShape | z.ZodObject<z.ZodRawShape>;
 			ownStateOnly?: boolean;
 			personDoor?: boolean;
+			memberAuthorDoor?: boolean;
 		} & ToolAnnotations;
 
 	const actingKeys = actingNameKeys(scope, schema);
@@ -440,6 +445,22 @@ export function defineTool(
 		// First, before any argument is read: a person whose role may not write
 		// is refused on every non-read-only tool.
 		const exempt = annotations.readOnlyHint === true || ownStateOnly === true;
+		// A Clerk-JWT member writing a record that Convex authors as the member: the
+		// typed acting name is not a claim anyone can honour, so it is dropped and the
+		// verified subject is what Convex records. Every other caller is unchanged.
+		// A member presenting a per-agent credential keeps the agent rules below (a
+		// name that is not the credential's is still AGENT_IDENTITY_MISMATCH); the
+		// handler then forwards no author for it either.
+		if (
+			memberAuthorDoor === true &&
+			!exempt &&
+			isClerkMember(ctx.oauthCtx) &&
+			ctx.oauthCtx?.actor === undefined
+		) {
+			const dropped = { ...((args ?? {}) as Record<string, unknown>) };
+			for (const key of actingKeys) dropped[key] = undefined;
+			return handler(dropped, extra);
+		}
 		const roleDenied = await enforcePersonWriterRole(
 			ctx.oauthCtx,
 			name,

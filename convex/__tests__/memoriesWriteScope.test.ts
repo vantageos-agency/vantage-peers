@@ -149,7 +149,7 @@ describe("memories.storeMemory — write-scope enforcement", () => {
 			namespace: "team/org-a/notes",
 			type: "project",
 			content: "org-a's own memory",
-			createdBy: "dummy-a",
+			createdBy: "user:user-org-a",
 		});
 		expect(memoryId).toBeDefined();
 	});
@@ -163,14 +163,14 @@ describe("memories.storeMemory — write-scope enforcement", () => {
 			namespace: "team/org-a/notes",
 			type: "project",
 			content: "org-a original",
-			createdBy: "dummy-a",
+			createdBy: "user:user-org-a",
 		});
 
 		const updatedId = await tA.mutation(api.memories.storeMemory, {
 			namespace: "team/org-a/notes",
 			type: "project",
 			content: "org-a updated",
-			createdBy: "dummy-a",
+			createdBy: "user:user-org-a",
 			relations: [{ targetId: originalId, type: "updates" }],
 		});
 		expect(updatedId).toBeDefined();
@@ -225,7 +225,7 @@ describe("memories.softDeleteMemory — write-scope enforcement", () => {
 			namespace: "team/org-a/notes",
 			type: "project",
 			content: "org-a's own memory to delete",
-			createdBy: "dummy-a",
+			createdBy: "user:user-org-a",
 		});
 
 		await tA.mutation(api.memories.softDeleteMemory, { memoryId });

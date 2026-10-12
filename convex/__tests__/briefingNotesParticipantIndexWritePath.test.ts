@@ -14,6 +14,7 @@
 
 import { convexTest } from "../../tests/fixtures/convexTestWithServiceAccount";
 import { describe, expect, test } from "vitest";
+import { seedFleetAgents } from "../../tests/lib/seedFleetAgents";
 import { api } from "../_generated/api";
 import schema from "../schema";
 
@@ -61,6 +62,8 @@ async function junctionParticipants(
 describe("briefingNotes.create — populates briefingNoteParticipants via the real mutation", () => {
 	test("create through api.briefingNotes.create inserts one junction row per participant", async () => {
 		const t = createTestConvex();
+		// M10c: authors and participants are agents of the operator org, judged by ID.
+		await seedFleetAgents(t, ["pi", "sigma", "prometheus", "eta"]);
 
 		const noteId = await t.mutation(api.briefingNotes.create, {
 			title: "handoff",
@@ -76,6 +79,8 @@ describe("briefingNotes.create — populates briefingNoteParticipants via the re
 
 	test("a note created through the real path grants read to a scoped participant (end-to-end, not hand-seeded)", async () => {
 		const t = createTestConvex();
+		// M10c: authors and participants are agents of the operator org, judged by ID.
+		await seedFleetAgents(t, ["pi", "sigma", "prometheus", "eta"]);
 
 		const noteId = await t.mutation(api.briefingNotes.create, {
 			title: "handoff",
@@ -99,6 +104,8 @@ describe("briefingNotes.create — populates briefingNoteParticipants via the re
 describe("briefingNotes.update — keeps briefingNoteParticipants in sync via the real mutation", () => {
 	test("update through api.briefingNotes.update replaces junction rows to match new participants", async () => {
 		const t = createTestConvex();
+		// M10c: authors and participants are agents of the operator org, judged by ID.
+		await seedFleetAgents(t, ["pi", "sigma", "prometheus", "eta"]);
 
 		const noteId = await t.mutation(api.briefingNotes.create, {
 			title: "handoff",
@@ -120,6 +127,8 @@ describe("briefingNotes.update — keeps briefingNoteParticipants in sync via th
 
 	test("a participant added via update gains read access; a removed participant loses it (end-to-end)", async () => {
 		const t = createTestConvex();
+		// M10c: authors and participants are agents of the operator org, judged by ID.
+		await seedFleetAgents(t, ["pi", "sigma", "prometheus", "eta"]);
 
 		const noteId = await t.mutation(api.briefingNotes.create, {
 			title: "handoff",
@@ -152,6 +161,8 @@ describe("briefingNotes.update — keeps briefingNoteParticipants in sync via th
 
 	test("update WITHOUT a participants field leaves the junction table untouched", async () => {
 		const t = createTestConvex();
+		// M10c: authors and participants are agents of the operator org, judged by ID.
+		await seedFleetAgents(t, ["pi", "sigma", "prometheus", "eta"]);
 
 		const noteId = await t.mutation(api.briefingNotes.create, {
 			title: "handoff",

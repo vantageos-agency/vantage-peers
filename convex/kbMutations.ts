@@ -29,6 +29,7 @@ import {
 	requireTenantNamespace,
 	withOrgScope,
 } from "./lib/auth";
+import { stampOfNamespace } from "./lib/memoryTenant";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // bindOrAssertStorageOwnership — TOFU org-binding guard (M1 defense-in-depth)
@@ -139,6 +140,8 @@ export const insertChunk = internalMutation({
 	returns: v.id("memories"),
 	handler: async (ctx, args) => {
 		const now = Date.now();
+		// M10a: a team chunk carries its org's permanent ID (convex/lib/memoryTenant.ts).
+		const clerkOrgId = await stampOfNamespace(ctx, args.namespace);
 		return await ctx.db.insert("memories", {
 			namespace: args.namespace,
 			type: "reference",
@@ -146,6 +149,7 @@ export const insertChunk = internalMutation({
 			createdBy: "system",
 			relations: [],
 			isLatest: true,
+			...(clerkOrgId === undefined ? {} : { clerkOrgId }),
 			createdAt: now,
 			updatedAt: now,
 		});

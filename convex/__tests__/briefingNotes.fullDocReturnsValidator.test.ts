@@ -24,6 +24,7 @@
 
 import { convexTest } from "../../tests/fixtures/convexTestWithServiceAccount";
 import { describe, expect, test } from "vitest";
+import { seedFleetAgents } from "../../tests/lib/seedFleetAgents";
 import { api } from "../_generated/api";
 import schema from "../schema";
 
@@ -136,8 +137,18 @@ describe("briefingNotes.update — smoke test with orgId note shapes", () => {
 	test("T3: briefingNotes.update on note WITH orgId → updates + get returns full doc with orgId", async () => {
 		const t = createTestConvex();
 		let noteId: string | undefined;
+		let sigmaId: string | undefined;
 		await t.run(async (ctx) => {
 			noteId = await seedNoteWithOrgId(ctx);
+			// M10c: the author is judged by agent ID, proved by the transport
+			// (verifiedActor) as the agent of the note's own org.
+			sigmaId = await ctx.db.insert("agents", {
+				orgSlug: "acme-hr",
+				name: "sigma",
+				normalizedName: "sigma",
+				isActive: true,
+				createdAt: 1,
+			});
 		});
 
 		// update mutation — should not throw. Authenticated as the
@@ -147,6 +158,7 @@ describe("briefingNotes.update — smoke test with orgId note shapes", () => {
 		await asMaster(t).mutation(api.briefingNotes.update, {
 			noteId: noteId as any,
 			callerOrchestrator: "sigma",
+			verifiedActor: { agentId: sigmaId as any, orgSlug: "acme-hr" },
 			content: "Updated content after orgId fix",
 		});
 
@@ -163,6 +175,8 @@ describe("briefingNotes.update — smoke test with orgId note shapes", () => {
 		await t.run(async (ctx) => {
 			noteId = await seedNoteWithoutOrgId(ctx);
 		});
+		// M10c: the fleet author "pi" is an agent of the operator org.
+		await seedFleetAgents(t, ["pi"]);
 
 		// Authenticated as master — never anonymous (see comment above).
 		await asMaster(t).mutation(api.briefingNotes.update, {

@@ -40,6 +40,10 @@ export const VERIFIED_ACTOR_DOORS: ReadonlySet<string> = new Set([
 	"tasks:deleteTask",
 	"tasks:blockTask",
 	"tasks:bulkComplete",
+	// The briefing-note doors (module M10c): the author of a note, and the editor
+	// of one, are agents judged by ID. `deleteBriefingNote` has no MCP tool.
+	"briefingNotes:create",
+	"briefingNotes:update",
 	// The inbox doors (task k17c5q842gm1gbh0j2qjtc80g18fx5kb): an agent's inbox is
 	// read, marked and its sent mail deleted BY ITS ID, never by the recipient or
 	// acting-name argument that another org's same-named agent also carries.
