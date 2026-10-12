@@ -1166,6 +1166,73 @@ export const licenseNoLookup = query({
         check(st2.get("licenseNoLookup") == "could-not-judge", "license key read but no lookup reachable -> could-not-judge")
         check(len(r.regs) == 7 and not r.coverage_errors, "coverage holds (internalQuery is not population: 7 registrations)")
 
+    # A getUserIdentity() result handed straight to a CALLER RESOLVER of the
+    # identity package is gated by the package. The resolvers are derived from the
+    # installed package's `@callerResolver` tags; one case per hand-off form
+    # (inline, inline with a cast, through a bound name), an untagged callee, and
+    # an unreadable package (refused to judge, never a pass).
+    with tempfile.TemporaryDirectory() as td5:
+        root5 = Path(td5)
+        dist = root5 / "node_modules" / "@vantageos" / "cloud-identity" / "dist"
+        dist.mkdir(parents=True)
+        (dist / "caller.d.ts").write_text(
+            "/**\n * Resolves a verified caller.\n *\n * @callerResolver\n */\n"
+            "export declare function resolveCaller(claims: unknown, deps: unknown): Promise<unknown>;\n"
+            "/** Not a resolver. */\nexport declare function notAResolver(claims: unknown): void;\n"
+        )
+        cx = root5 / "convex"
+        (cx / "_generated").mkdir(parents=True)
+        (cx / "_generated" / "api.d.ts").write_text('import type * as j from "../j.js";\n')
+        (cx / "j.ts").write_text("""import { query } from "./_generated/server";
+import { notAResolver, resolveCaller } from "@vantageos/cloud-identity";
+
+export const inlineHandoff = query({
+\targs: {},
+\thandler: async (ctx) => {
+\t\tconst c = await resolveCaller(
+\t\t\tawait ctx.auth.getUserIdentity(),
+\t\t\t{},
+\t\t);
+\t\treturn c;
+\t},
+});
+
+export const castHandoff = query({
+\targs: {},
+\thandler: async (ctx) => resolveCaller((await ctx.auth.getUserIdentity()) as Record<string, unknown>, {}),
+});
+
+export const boundHandoff = query({
+\targs: {},
+\thandler: async (ctx) => {
+\t\tconst credential = await ctx.auth.getUserIdentity();
+\t\treturn await resolveCaller(credential, {});
+\t},
+});
+
+export const untaggedHandoff = query({
+\targs: {},
+\thandler: async (ctx) => {
+\t\tnotAResolver(await ctx.auth.getUserIdentity());
+\t\treturn ctx.db.query("t").collect();
+\t},
+});
+""")
+        r5 = run(cx, cx / "_generated" / "api.d.ts")
+        st5 = {x.name: x.state for x in r5.regs}
+        via5 = {x.name: x.via for x in r5.regs}
+        print("identity handed to a package caller resolver:")
+        check(st5.get("inlineHandoff") == "resolves-a-caller" and via5["inlineHandoff"] == "package-resolver:resolveCaller", "inline hand-off to a @callerResolver -> resolves")
+        check(st5.get("castHandoff") == "resolves-a-caller" and via5["castHandoff"] == "package-resolver:resolveCaller", "inline hand-off with an `as` cast -> resolves")
+        check(st5.get("boundHandoff") == "resolves-a-caller" and via5["boundHandoff"] == "package-resolver:resolveCaller", "hand-off through a bound name -> resolves")
+        check(st5.get("untaggedHandoff") == "does-not-resolve" and via5["untaggedHandoff"] == "identity-consulted-not-gated", "hand-off to an untagged function -> does-not-resolve")
+        # the same tree without the package: refused to judge, naming why
+        nm = root5 / "node_modules"
+        nm.rename(root5 / "node_modules.off")
+        r6b = run(cx, cx / "_generated" / "api.d.ts")
+        cnj = {x.name: x.reason for x in r6b.regs if x.state == "could-not-judge"}
+        check("inlineHandoff" in cnj and "cannot be read" in cnj["inlineHandoff"], "package unreadable -> could-not-judge naming it, never a pass")
+
     with tempfile.TemporaryDirectory() as td3:
         root3 = Path(td3)
         (root3 / "_generated").mkdir()
