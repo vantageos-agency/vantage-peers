@@ -4,13 +4,10 @@ import { ConvexError, v } from "convex/values";
 import {
 	type ActingPrincipal,
 	assertOrgAdmin,
-	claimsAnOrganisation,
 	hasFleetRead,
 	type IdentityRefusal,
-	readOrgRoleClaim,
 	type ResolvedOrg,
 	resolveCallerFromClaims,
-	resolveOrgFromClaim,
 	sameOrg,
 	scopeStanding,
 } from "@vantageos/cloud-identity";
@@ -232,10 +229,24 @@ export async function withOrgScope(
 	ctx: QueryCtx | MutationCtx,
 	opts?: WithOrgScopeOptions,
 ): Promise<OrgScope> {
-	const identity = await ctx.auth.getUserIdentity();
+	// The verified credential goes to @vantageos/cloud-identity and nowhere else:
+	// one call resolves the organisation by its verified `org_id`, the person in
+	// it, the role claim and whether it is an admin role there. The subject comes
+	// back on success AND on a refusal, so the service account is still decided by
+	// subject before any organisation is read; an absent credential is a refusal
+	// with no subject.
+	const caller = await resolveCallerFromClaims(
+		await ctx.auth.getUserIdentity(),
+		{
+			orgLookups: orgMappingLookups(ctx),
+			principalLookups: personPrincipalLookups(ctx),
+		},
+		{ adminRoles: ORG_ADMIN_ROLES, door: "withOrgScope" },
+	);
+	const subject = caller.subject;
 
 	// No Clerk identity — behaviour depends on explicit per-call-site opt-in.
-	if (!identity) {
+	if (subject === undefined) {
 		if (opts?.allowNoIdentityMaster) {
 			// Legacy/internal call sites (MCP server, Convex CLI, pre-Beta Alpha
 			// handlers) that have explicitly opted into preserving full access
@@ -298,14 +309,14 @@ export async function withOrgScope(
 	// of a service row is judged as an ordinary caller below.
 	const serviceAccount = await resolveServiceAccount(
 		ctx,
-		identity.subject,
+		subject,
 		"withOrgScope",
 	);
 	if (serviceAccount.ok) {
 		const actFor = opts?.actForOrgMapping;
 		if (actFor !== undefined) {
 			return {
-				userId: identity.subject,
+				userId: subject,
 				orgSlug: actFor.clerkOrgSlug,
 				// The org's permanent ID, from the row, so row ownership compares IDs.
 				...(actFor.clerkOrgId !== undefined
@@ -319,7 +330,7 @@ export async function withOrgScope(
 			};
 		}
 		return {
-			userId: identity.subject,
+			userId: subject,
 			orgSlug: null,
 			allowedOrchestrators: [],
 			allowedAgentIds: [],
@@ -353,12 +364,7 @@ export async function withOrgScope(
 	// mapping with the credential's slug exists, and a slug claim alone is not an
 	// organisation (a token with a slug and no `org_id` is a caller with NO
 	// verified organisation).
-	const resolved = await resolveOrgFromClaim(
-		identity as Record<string, unknown>,
-		orgMappingLookups(ctx),
-		{ door: "withOrgScope" },
-	);
-	if (!resolved.ok) {
+	if (!caller.ok) {
 		// Signed in, no verified organisation (R-50/R-51): a REAL, ordinary state
 		// (freshly onboarded) rather than a hostile caller. A reactively-subscribed
 		// public query has no call site to catch a throw, so a site that opted in
@@ -370,12 +376,12 @@ export async function withOrgScope(
 		// door, whatever the door's opt-in (a typed empty result would be the bytes
 		// of an absence for a credential that claims an org).
 		if (
-			resolved.refusal.reason === "no-verified-organisation" &&
-			!claimsAnOrganisation(identity as Record<string, unknown>)
+			caller.refusal.reason === "no-verified-organisation" &&
+			!caller.claimsOrg
 		) {
 			if (opts?.refuseWithoutThrow) {
 				return {
-					userId: identity.subject,
+					userId: subject,
 					orgSlug: null,
 					allowedOrchestrators: [],
 					allowedAgentIds: [],
@@ -386,14 +392,14 @@ export async function withOrgScope(
 				};
 			}
 			throw new ConvexError(
-				`RBAC_DENIED: No active organization on the verified credential — ${JSON.stringify({ orgSlug: null, reason: resolved.refusal.reason })}`,
+				`RBAC_DENIED: No active organization on the verified credential — ${JSON.stringify({ orgSlug: null, reason: caller.refusal.reason })}`,
 			);
 		}
 		throw new ConvexError(
-			`RBAC_DENIED: the credential's org ID resolves no active org in client_org_mapping — ${JSON.stringify({ reason: resolved.refusal.reason })}`,
+			`RBAC_DENIED: the credential's org ID resolves no active org in client_org_mapping — ${JSON.stringify({ reason: caller.refusal.reason })}`,
 		);
 	}
-	const org = resolved.org;
+	const org = caller.org;
 	// The package decides WHICH org; the ROSTER BY AGENT ID is storage the
 	// package does not carry, so it is read from that same row by the org ID the
 	// package just resolved (never by the slug). The row was found one read ago;
@@ -422,20 +428,14 @@ export async function withOrgScope(
 	// the mapping's REAL roster. Every write path therefore applies normal org
 	// rules with no per-door patch, and the service-account-only doors need only
 	// `isMcpBoundMaster` for the query side.
-	const operatorCaller =
-		org.orgKind === "operator" && !opts?.operatorAsMember && isReadOnlyCtx(ctx)
-			? await resolveCallerFromClaims(
-					identity as Record<string, unknown>,
-					{
-						orgLookups: orgMappingLookups(ctx),
-						principalLookups: personPrincipalLookups(ctx),
-					},
-					{ adminRoles: ORG_ADMIN_ROLES, door: "withOrgScope" },
-				)
-			: undefined;
-	if (operatorCaller?.ok === true && operatorCaller.isOrgAdmin) {
+	if (
+		org.orgKind === "operator" &&
+		!opts?.operatorAsMember &&
+		isReadOnlyCtx(ctx) &&
+		caller.isOrgAdmin
+	) {
 		return {
-			userId: identity.subject,
+			userId: subject,
 			orgSlug: null,
 			allowedOrchestrators: [],
 			allowedAgentIds: [],
@@ -452,9 +452,9 @@ export async function withOrgScope(
 		};
 	}
 
-	const memberRoleRaw = readOrgRoleClaim(identity as Record<string, unknown>);
+	const memberRoleRaw = caller.role;
 	return {
-		userId: identity.subject,
+		userId: subject,
 		orgSlug: org.label,
 		...(org.id !== undefined ? { orgClerkId: org.id } : {}),
 		allowedOrchestrators: org.allowedOrchestrators,
@@ -688,7 +688,8 @@ export function isRowVisibleToScope(
 // ─────────────────────────────────────────────────────────────────────────────
 // Org-admin authority, by the verified org ID.
 //
-// WHO IS AN ADMIN OF WHICH ORG is @vantageos/cloud-identity's decision:
+// WHO IS AN ADMIN OF WHICH ORG is @vantageos/cloud-identity's decision, made in
+// one call, `resolveCallerFromClaims`, which chains the package's own steps:
 // `resolveOrgFromClaim` selects the caller's organisation from the VERIFIED
 // `org_id` claim (mapping read by ID only), `resolveActingPrincipal` makes the
 // person a principal of THAT org ID, and `assertOrgAdmin` compares the target's

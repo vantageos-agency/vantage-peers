@@ -79,7 +79,9 @@ describe("the org-by-ID decisions live in the package", () => {
 		]) {
 			expect(auth, name).not.toMatch(new RegExp(`\\b${name}\\b`));
 		}
-		expect(auth).toMatch(/\bresolveOrgFromClaim\(/);
+		// the org is resolved by the package in one call (resolveCallerFromClaims
+		// chains resolveOrgFromClaim -> resolveActingPrincipal -> assertOrgAdmin)
+		expect(auth).toMatch(/\bresolveCallerFromClaims\(/);
 		expect(auth).toMatch(/\bsameOrg\(/);
 		expect(auth).toMatch(/from "@vantageos\/cloud-identity"/);
 		// the credential's org ID is no longer sniffed here

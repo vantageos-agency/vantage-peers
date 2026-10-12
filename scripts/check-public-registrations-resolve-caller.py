@@ -311,6 +311,7 @@ class Module:
     nul: int
     segments: dict[str, tuple[int, int]] = field(default_factory=dict)
     imports: dict[str, tuple[str, str]] = field(default_factory=dict)  # local -> (mod, name)
+    pkg_imports: dict[str, str] = field(default_factory=dict)  # local -> name, from the identity package
 
 
 @dataclass
@@ -370,6 +371,7 @@ def segment_module(code: str) -> dict[str, tuple[int, int]]:
     return segs
 
 
+IDENTITY_PACKAGE = "@vantageos/cloud-identity"
 IMPORT_RE = re.compile(r"\bimport\s+(?:type\s+)?\{([^}]*)\}\s*from\s*\"([^\"]+)\"")
 
 
@@ -397,6 +399,33 @@ def parse_imports(raw: str, code: str, modname: str) -> dict[str, tuple[str, str
     return res
 
 
+def parse_package_imports(raw: str, code: str, package: str) -> dict[str, str]:
+    """Named imports from `package`: local name -> the package's own name
+    (`import { a as b }` gives b -> a). Only where `import` is real code."""
+    res: dict[str, str] = {}
+    for m in IMPORT_RE.finditer(raw):
+        if code[m.start() : m.start() + 6] != "import" or m.group(2) != package:
+            continue
+        for part in m.group(1).split(","):
+            part = re.sub(r"^type\s+", "", part.strip())
+            if not part:
+                continue
+            orig, local = ([x.strip() for x in part.split(" as ", 1)] if " as " in part else (part, part))
+            res[local] = orig
+    return res
+
+
+def shadowed(name: str, code: str) -> bool:
+    """True when the module binds `name` itself (function, class, const/let/var,
+    or a destructured binding), so a call to `name` may not reach the import."""
+    n = re.escape(name)
+    return bool(
+        re.search(rf"(?<![\w$.])(?:function\s*\*?\s*|class\s+){n}(?![\w$])", code)
+        or re.search(rf"(?<![\w$.])(?:const|let|var)\s+{n}(?![\w$])", code)
+        or re.search(rf"(?<![\w$.])(?:const|let|var)\s*[{{\[][^=;]*(?<![\w$.]){n}(?![\w$])[^=;]*[}}\]]\s*=", code)
+    )
+
+
 def load_module(root: Path, name: str) -> Module | None:
     p = root / f"{name}.ts"
     if not p.is_file():
@@ -407,6 +436,7 @@ def load_module(root: Path, name: str) -> Module | None:
     m = Module(name, raw, code, len(data), data.count(b"\x00"))
     m.segments = segment_module(code)
     m.imports = parse_imports(raw, code, name)
+    m.pkg_imports = parse_package_imports(raw, code, IDENTITY_PACKAGE)
     return m
 
 
@@ -677,6 +707,21 @@ def classify(reg: Reg, graph: Graph, mods: dict[str, Module]) -> None:
             reg.state, reg.via = "resolves-a-caller", "clerk-identity"
             reg.witness = witness_path(seen, nd)
             return
+        # The result handed straight to a CALLER RESOLVER of the identity package
+        # is gated by the package: it refuses an absent credential itself. The
+        # resolvers are those the installed package tags `@callerResolver`; an
+        # unreadable package is a refusal to judge, never a pass.
+        callee = identity_handed_to(t)
+        if callee is not None:
+            names, unreadable = CALLER_RESOLVERS["names"], CALLER_RESOLVERS["unreadable"]
+            if unreadable:
+                return _cnj(reg, f"getUserIdentity() is handed to `{callee}` but the caller resolvers cannot be read: {unreadable}")
+            mod = graph.mods.get(nd[0])
+            orig = mod.pkg_imports.get(callee) if mod is not None else None
+            if orig is not None and orig in names and not shadowed(callee, mod.code):
+                reg.state, reg.via = "resolves-a-caller", f"package-resolver:{orig}"
+                reg.witness = witness_path(seen, nd)
+                return
         weak.append(f"{nd[0]}.{nd[1]}")
     if weak:
         reg.state, reg.via = "does-not-resolve", "identity-consulted-not-gated"
@@ -743,6 +788,59 @@ def gate_shaped(text: str) -> bool:
     return False
 
 
+TAG_RE = re.compile(r"/\*\*((?:(?!\*/)[\s\S])*?)\*/\s*export\s+declare\s+function\s+([A-Za-z_$][\w$]*)")
+# The resolvers of the run's tree, set by `run()`: the names the installed package
+# tags `@callerResolver`, or the reason they could not be read.
+CALLER_RESOLVERS: dict = {"names": frozenset(), "unreadable": "not computed"}
+
+
+def caller_resolvers(start: Path) -> tuple[frozenset, str]:
+    """The functions the installed identity package marks `@callerResolver` in
+    its published declarations, searched from `start` upward. Returns the names
+    and "" or an empty set and the reason they could not be read."""
+    for d in [start, *start.parents]:
+        dist = d / "node_modules" / "@vantageos" / "cloud-identity" / "dist"
+        if dist.is_dir():
+            names = set()
+            for f in sorted(dist.rglob("*.d.ts")):
+                for m in TAG_RE.finditer(f.read_text(errors="replace")):
+                    if "@callerResolver" in m.group(1):
+                        names.add(m.group(2))
+            if not names:
+                return frozenset(), f"{dist} carries no @callerResolver tag"
+            return frozenset(names), ""
+    return frozenset(), f"{IDENTITY_PACKAGE} is not installed above {start}"
+
+
+_CAST = r"(?:\s+as\s+[^,()]+)?"
+INLINE_HANDOFF_RE = re.compile(
+    r"(?<![\w$.])([A-Za-z_$][\w$]*)\s*\(\s*\(*\s*(?:await\s*)?\(*\s*[\w$.]*auth\s*\.\s*getUserIdentity\s*\(\s*\)\s*\)*" + _CAST + r"\s*[,)]"
+)
+
+
+# A keyword followed by `(` is a grouping or a statement, never a call:
+# `return (await ctx.auth.getUserIdentity())?.subject` hands the identity to no one.
+_NOT_CALLEES = frozenset(
+    "return await typeof void if while for switch catch new throw yield case in of delete do else".split()
+)
+
+
+def identity_handed_to(text: str) -> str | None:
+    """The function a `getUserIdentity()` result is passed to as its FIRST
+    argument in `text`, either inline (`f(await ctx.auth.getUserIdentity(), …)`)
+    or through the name it is bound to (`const id = …getUserIdentity(); f(id, …)`),
+    with or without an `as` cast. None when it is passed nowhere."""
+    for m in INLINE_HANDOFF_RE.finditer(text):
+        if m.group(1) not in _NOT_CALLEES:
+            return m.group(1)
+    for b in BIND_RE.finditer(text):
+        n = re.escape(b.group(1))
+        for c in re.finditer(rf"(?<![\w$.])([A-Za-z_$][\w$]*)\s*\(\s*{n}" + _CAST + r"\s*[,)]", text[b.end():]):
+            if c.group(1) not in _NOT_CALLEES:
+                return c.group(1)
+    return None
+
+
 def _cnj(reg: Reg, why: str) -> None:
     reg.state, reg.via, reg.reason = "could-not-judge", "", why
 
@@ -779,6 +877,8 @@ class Result:
 
 
 def run(convex_dir: Path, api_dts: Path, classifier=None) -> Result:
+    names, unreadable = caller_resolvers(convex_dir.resolve())
+    CALLER_RESOLVERS["names"], CALLER_RESOLVERS["unreadable"] = names, unreadable
     listed = api_modules(api_dts)
     mods: dict[str, Module] = {}
     missing: list[str] = []
@@ -1165,6 +1265,98 @@ export const licenseNoLookup = query({
         check(st2.get("licenseLookup") == "resolves-a-caller", "license key consumed by a stored-record lookup -> resolves")
         check(st2.get("licenseNoLookup") == "could-not-judge", "license key read but no lookup reachable -> could-not-judge")
         check(len(r.regs) == 7 and not r.coverage_errors, "coverage holds (internalQuery is not population: 7 registrations)")
+
+    # A getUserIdentity() result handed straight to a CALLER RESOLVER of the
+    # identity package is gated by the package. The resolvers are derived from the
+    # installed package's `@callerResolver` tags; one case per hand-off form
+    # (inline, inline with a cast, through a bound name), an untagged callee, and
+    # an unreadable package (refused to judge, never a pass).
+    with tempfile.TemporaryDirectory() as td5:
+        root5 = Path(td5)
+        dist = root5 / "node_modules" / "@vantageos" / "cloud-identity" / "dist"
+        dist.mkdir(parents=True)
+        (dist / "caller.d.ts").write_text(
+            "/**\n * Resolves a verified caller.\n *\n * @callerResolver\n */\n"
+            "export declare function resolveCaller(claims: unknown, deps: unknown): Promise<unknown>;\n"
+            "/** Not a resolver. */\nexport declare function notAResolver(claims: unknown): void;\n"
+        )
+        cx = root5 / "convex"
+        (cx / "_generated").mkdir(parents=True)
+        (cx / "_generated" / "api.d.ts").write_text('import type * as j from "../j.js";\n')
+        (cx / "_generated" / "api.d.ts").write_text('import type * as j from "../j.js";\nimport type * as s from "../s.js";\n')
+        # s.ts: the resolver's NAME without the package — a local namesake, and an
+        # aliased import of the real one.
+        (cx / "s.ts").write_text("""import { query } from "./_generated/server";
+import { resolveCaller as fromPackage } from "@vantageos/cloud-identity";
+
+async function resolveCaller(claims: unknown, deps: unknown) {
+\treturn { claims, deps };
+}
+
+export const localNamesake = query({
+\targs: {},
+\thandler: async (ctx) => {
+\t\tawait resolveCaller(await ctx.auth.getUserIdentity(), {});
+\t\treturn ctx.db.query("t").collect();
+\t},
+});
+
+export const aliasedImport = query({
+\targs: {},
+\thandler: async (ctx) => fromPackage(await ctx.auth.getUserIdentity(), {}),
+});
+""")
+        (cx / "j.ts").write_text("""import { query } from "./_generated/server";
+import { notAResolver, resolveCaller } from "@vantageos/cloud-identity";
+
+export const inlineHandoff = query({
+\targs: {},
+\thandler: async (ctx) => {
+\t\tconst c = await resolveCaller(
+\t\t\tawait ctx.auth.getUserIdentity(),
+\t\t\t{},
+\t\t);
+\t\treturn c;
+\t},
+});
+
+export const castHandoff = query({
+\targs: {},
+\thandler: async (ctx) => resolveCaller((await ctx.auth.getUserIdentity()) as Record<string, unknown>, {}),
+});
+
+export const boundHandoff = query({
+\targs: {},
+\thandler: async (ctx) => {
+\t\tconst credential = await ctx.auth.getUserIdentity();
+\t\treturn await resolveCaller(credential, {});
+\t},
+});
+
+export const untaggedHandoff = query({
+\targs: {},
+\thandler: async (ctx) => {
+\t\tnotAResolver(await ctx.auth.getUserIdentity());
+\t\treturn ctx.db.query("t").collect();
+\t},
+});
+""")
+        r5 = run(cx, cx / "_generated" / "api.d.ts")
+        st5 = {x.name: x.state for x in r5.regs}
+        via5 = {x.name: x.via for x in r5.regs}
+        print("identity handed to a package caller resolver:")
+        check(st5.get("inlineHandoff") == "resolves-a-caller" and via5["inlineHandoff"] == "package-resolver:resolveCaller", "inline hand-off to a @callerResolver -> resolves")
+        check(st5.get("castHandoff") == "resolves-a-caller" and via5["castHandoff"] == "package-resolver:resolveCaller", "inline hand-off with an `as` cast -> resolves")
+        check(st5.get("boundHandoff") == "resolves-a-caller" and via5["boundHandoff"] == "package-resolver:resolveCaller", "hand-off through a bound name -> resolves")
+        check(st5.get("untaggedHandoff") == "does-not-resolve" and via5["untaggedHandoff"] == "identity-consulted-not-gated", "hand-off to an untagged function -> does-not-resolve")
+        check(st5.get("localNamesake") == "does-not-resolve" and via5["localNamesake"] == "identity-consulted-not-gated", "a LOCAL function named like a resolver -> does-not-resolve (the name proves nothing)")
+        check(st5.get("aliasedImport") == "resolves-a-caller" and via5["aliasedImport"] == "package-resolver:resolveCaller", "an aliased import of a @callerResolver -> resolves, under its original name")
+        # the same tree without the package: refused to judge, naming why
+        nm = root5 / "node_modules"
+        nm.rename(root5 / "node_modules.off")
+        r6b = run(cx, cx / "_generated" / "api.d.ts")
+        cnj = {x.name: x.reason for x in r6b.regs if x.state == "could-not-judge"}
+        check("inlineHandoff" in cnj and "cannot be read" in cnj["inlineHandoff"], "package unreadable -> could-not-judge naming it, never a pass")
 
     with tempfile.TemporaryDirectory() as td3:
         root3 = Path(td3)
