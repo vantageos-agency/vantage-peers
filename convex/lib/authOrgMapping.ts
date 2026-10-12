@@ -36,7 +36,8 @@ export type OrgMappingView = Doc<"client_org_mapping">;
 type MappingRead =
 	| { slug: string }
 	| { clerkOrgId: string }
-	| { activeLimit: number };
+	| { activeLimit: number }
+	| { allLimit: number };
 
 /** The ONLY read of `client_org_mapping` for org resolution. Answers raw rows. */
 async function readMappings(
@@ -54,6 +55,9 @@ async function readMappings(
 			.query("client_org_mapping")
 			.withIndex("by_clerk_org_id", (q) => q.eq("clerkOrgId", read.clerkOrgId))
 			.take(2);
+	}
+	if ("allLimit" in read) {
+		return await db.query("client_org_mapping").take(read.allLimit);
 	}
 	return await db
 		.query("client_org_mapping")
@@ -85,6 +89,27 @@ export async function orgMappingRowsForLabel(
 	label: string,
 ): Promise<Doc<"client_org_mapping">[]> {
 	return await readMappings(ctx.db, { slug: label });
+}
+
+/**
+ * Up to two rows carrying a Clerk org ID, as stored. Unlike `lookupOrgMapping`
+ * (which answers null when the ID is not settled to one row) this hands back the
+ * rows themselves, for an instrument that must refuse because a second row holds
+ * the ID. Counting them is the caller's business.
+ */
+export async function orgMappingRowsForClerkOrgId(
+	ctx: { db: DatabaseReader },
+	clerkOrgId: string,
+): Promise<Doc<"client_org_mapping">[]> {
+	return await readMappings(ctx.db, { clerkOrgId });
+}
+
+/** Up to `limit` mapping rows, active or not, in table order. For the admin fill instruments. */
+export async function listOrgMappings(
+	ctx: { db: DatabaseReader },
+	limit: number,
+): Promise<Doc<"client_org_mapping">[]> {
+	return await readMappings(ctx.db, { allLimit: limit });
 }
 
 /** The row in the shape the package reads: its own field names beside the table's. */

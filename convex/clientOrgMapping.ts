@@ -3,6 +3,10 @@ import type { Id } from "./_generated/dataModel";
 import { internalMutation, internalQuery, query } from "./_generated/server";
 import { hasFleetRead } from "@vantageos/cloud-identity";
 import { lookupOrgMapping, withOrgScope } from "./lib/auth";
+import {
+	listOrgMappings,
+	orgMappingRowsForClerkOrgId,
+} from "./lib/authOrgMapping";
 import { resolveProvisioningMapping } from "./lib/provisioningMapping";
 import { normalizeOrchestratorId } from "./_helpers/normalizeOrchestratorId";
 import { assertAgentNameFree } from "./lib/agentIdentity";
@@ -378,9 +382,7 @@ export const listMappingsForClerkIdFill = internalQuery({
 		}),
 	),
 	handler: async (ctx) => {
-		const rows = await ctx.db
-			.query("client_org_mapping")
-			.take(MAPPING_FILL_READ_CAP + 1);
+		const rows = await listOrgMappings(ctx, MAPPING_FILL_READ_CAP + 1);
 		if (rows.length > MAPPING_FILL_READ_CAP) {
 			throw new ConvexError(
 				`MAPPING_FILL_OVER_CAP: client_org_mapping holds more than ${MAPPING_FILL_READ_CAP} rows; refusing to list a truncated set.`,
@@ -421,10 +423,7 @@ export const setClerkOrgId = internalMutation({
 				`ORG_MAPPING_NOT_FOUND: no client_org_mapping row for clerkOrgSlug "${args.clerkOrgSlug}"`,
 			);
 		}
-		const owners = await ctx.db
-			.query("client_org_mapping")
-			.withIndex("by_clerk_org_id", (q) => q.eq("clerkOrgId", args.clerkOrgId))
-			.take(2);
+		const owners = await orgMappingRowsForClerkOrgId(ctx, args.clerkOrgId);
 		if (owners.some((o) => o._id !== row._id)) {
 			throw new ConvexError(
 				`CLERK_ORG_ID_TAKEN: ${args.clerkOrgId} already belongs to another client_org_mapping row; two organisations cannot share an id.`,
