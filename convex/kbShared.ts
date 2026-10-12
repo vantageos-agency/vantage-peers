@@ -14,7 +14,7 @@
  * Orchestrator: Sigma — VantagePeers | 2026-07-04
  */
 
-import { isNamespaceAllowedForScope } from "./lib/auth";
+import { type ActionOrgScope, isNamespaceAllowedForScope } from "./lib/auth";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Auth: orgId + namespace are passed as explicit args by the MCP layer.
@@ -101,7 +101,15 @@ export function assertOrgArgs(orgId: string, namespace: string): void {
  * into a typed empty value.
  */
 export function assertScopeAuthorizesOrg(
-	scope: { isMaster: boolean; orgSlug: string | null; refused: boolean },
+	scope: Pick<
+		ActionOrgScope,
+		| "isMaster"
+		| "fleetWide"
+		| "masterSource"
+		| "orgSlug"
+		| "orgClerkId"
+		| "refused"
+	>,
 	claimedOrgId: string,
 ): void {
 	// The ownership decision is the repo's ONE tenant-namespace predicate

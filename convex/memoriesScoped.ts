@@ -30,6 +30,7 @@
  * reads serve only the rows the caller's org ID owns.
  */
 
+import { hasFleetRead } from "@vantageos/cloud-identity";
 import { v } from "convex/values";
 import type { Doc } from "./_generated/dataModel";
 import type { MutationCtx, QueryCtx } from "./_generated/server";
@@ -107,8 +108,7 @@ async function resolveCallerOrgId(
 		);
 	}
 
-	// STILL LOCAL: the fleet-master pass (`scope.isMaster`), see memoryVisibleToScope.
-	if (scope.isMaster) return { refused: false, scope };
+	if (hasFleetRead(scope)) return { refused: false, scope };
 
 	// No verified organisation: anonymous (no identity at all) OR signed in
 	// without an org. NEVER master. This is the branch that used to leak.

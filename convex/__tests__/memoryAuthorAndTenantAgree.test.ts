@@ -35,7 +35,8 @@ afterEach(() => {
 	vi.useRealTimers();
 });
 
-type T = ReturnType<typeof convexTest>;
+const createT = () => convexTest(schema, modules);
+type T = ReturnType<typeof createT>;
 
 const ID_A = testClerkOrgId("agree-org-a");
 const ID_B = testClerkOrgId("agree-org-b");

@@ -1438,7 +1438,10 @@ export function requireResolvedCaller(
  * permanent ID owns nothing; no resolved org: nothing.
  */
 export function isNamespaceAllowedForScope(
-	scope: Pick<OrgScope, "isMaster" | "orgSlug" | "orgClerkId">,
+	scope: Pick<
+		OrgScope,
+		"isMaster" | "fleetWide" | "masterSource" | "orgSlug" | "orgClerkId"
+	>,
 	namespace: string,
 ): boolean {
 	return isTeamNamespaceAllowed(scope, namespace);

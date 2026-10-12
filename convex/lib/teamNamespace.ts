@@ -1,4 +1,4 @@
-import { namespaceMatchesPrefix, type OrgRef, sameOrg } from "@vantageos/cloud-identity";
+import { hasFleetRead, namespaceMatchesPrefix, type OrgRef, sameOrg } from "@vantageos/cloud-identity";
 import type { OrgScope } from "./auth";
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -101,11 +101,12 @@ function memberOwnsNamespace(
  * The ONE namespace-ownership decision of the memories table.
  */
 export function isTeamNamespaceAllowed(
-	scope: Pick<OrgScope, "orgClerkId" | "orgSlug" | "isMaster">,
+	scope: Pick<
+		OrgScope,
+		"orgClerkId" | "orgSlug" | "isMaster" | "fleetWide" | "masterSource"
+	>,
 	namespace: string,
 ): boolean {
-	// STILL LOCAL: the fleet-master verdict is `withOrgScope`'s, read here; no
-	// @vantageos/cloud-identity primitive answers "is this scope the fleet".
-	if (scope.isMaster) return true;
+	if (hasFleetRead(scope)) return true;
 	return memberOwnsNamespace(scope, namespace);
 }

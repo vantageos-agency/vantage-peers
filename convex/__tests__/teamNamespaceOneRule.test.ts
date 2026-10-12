@@ -53,6 +53,7 @@ const SHAPES: { namespace: string; admitted: boolean }[] = [
 
 const member = {
 	isMaster: false,
+	fleetWide: false,
 	orgSlug: "org-a" as string | null,
 	orgClerkId: ORG_ID as string | undefined,
 	anonymous: false,
@@ -91,7 +92,14 @@ describe("one namespace rule — the pure predicate and the OKF gate agree", () 
 	});
 
 	test("the master is admitted everywhere", () => {
-		const master = { ...member, isMaster: true, orgSlug: null, orgClerkId: undefined };
+		const master = {
+			...member,
+			isMaster: true,
+			fleetWide: true,
+			masterSource: "service-account" as const,
+			orgSlug: null,
+			orgClerkId: undefined,
+		};
 		for (const { namespace } of SHAPES) {
 			expect(isTeamNamespaceAllowed(master, namespace)).toBe(true);
 			expect(isNamespaceAllowedForScope(master, namespace)).toBe(true);

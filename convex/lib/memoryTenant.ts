@@ -9,7 +9,7 @@
 //                            migration stamps it).
 //   no resolved org       -> nothing.
 
-import { sameOrg } from "@vantageos/cloud-identity";
+import { hasFleetRead, sameOrg } from "@vantageos/cloud-identity";
 import { ConvexError } from "convex/values";
 import type { MutationCtx, QueryCtx } from "../_generated/server";
 import type { OrgScope } from "./auth";
@@ -29,14 +29,16 @@ export function teamLabelOfNamespace(namespace: string): string | null {
  * `sameOrg`, by org ID only: a label match never grants, and a row or scope
  * without an ID never matches.
  *
- * STILL LOCAL: the fleet-master pass. The verdict is `withOrgScope`'s, read here;
- * no @vantageos/cloud-identity primitive answers "is this scope the fleet".
+ * The fleet pass is the package's `hasFleetRead`.
  */
 export function memoryVisibleToScope(
-	scope: Pick<OrgScope, "isMaster" | "orgClerkId">,
+	scope: Pick<
+		OrgScope,
+		"isMaster" | "fleetWide" | "masterSource" | "orgClerkId"
+	>,
 	row: { clerkOrgId?: string },
 ): boolean {
-	if (scope.isMaster) return true;
+	if (hasFleetRead(scope)) return true;
 	return sameOrg({ id: row.clerkOrgId }, { id: scope.orgClerkId });
 }
 
@@ -65,15 +67,18 @@ export async function stampOfNamespace(
  * own permanent org ID (a member with none could never read the row back and is
  * refused); the master's row carries the ID of the org its team namespace names.
  *
- * STILL LOCAL: the master/member split (`scope.isMaster`), see memoryVisibleToScope.
+ * The master/member split is the package's `hasFleetRead`.
  */
 export async function memoryStampForWrite(
 	ctx: QueryCtx | MutationCtx,
-	scope: Pick<OrgScope, "isMaster" | "orgClerkId" | "orgSlug">,
+	scope: Pick<
+		OrgScope,
+		"isMaster" | "fleetWide" | "masterSource" | "orgClerkId" | "orgSlug"
+	>,
 	namespace: string,
 	door: string,
 ): Promise<string | undefined> {
-	if (scope.isMaster) return await stampOfNamespace(ctx, namespace);
+	if (hasFleetRead(scope)) return await stampOfNamespace(ctx, namespace);
 	if (scope.orgClerkId === undefined) {
 		throw new ConvexError(
 			`RBAC_DENIED: caller's organisation has no permanent org ID to stamp a memory with — ${JSON.stringify({ reason: "org-id-missing", door, orgSlug: scope.orgSlug })}`,

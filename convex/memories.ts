@@ -1,3 +1,4 @@
+import { hasFleetRead } from "@vantageos/cloud-identity";
 import { v, ConvexError } from "convex/values";
 import { mutation, query, internalMutation } from "./_generated/server";
 import { internal } from "./_generated/api";
@@ -342,9 +343,8 @@ export const listMemories = query({
     // namespace label. A caller with no org ID owns no row, and a member's rows
     // are only ever filed under a `team/<label>` namespace, so any other
     // namespace is the typed-empty page without reading it.
-    // STILL LOCAL: the fleet-master pass (`scope.isMaster`), see memoryVisibleToScope.
     if (
-      !scope.isMaster &&
+      !hasFleetRead(scope) &&
       (scope.orgClerkId === undefined || teamLabelOfNamespace(args.namespace) === null)
     ) {
       return { value: [], continueCursor: null, isDone: true };
@@ -484,10 +484,10 @@ export const softDeleteMemory = mutation({
     );
 
     const memory = await ctx.db.get(memoryId);
-    // STILL LOCAL: the fleet service account is told a missing row is missing
+    // The fleet service account is told a missing row is missing
     // (its contract since before M10a); every other caller gets the refusal
     // below, identical for a missing and for a foreign row.
-    if (memory === null && scope.isMaster) {
+    if (memory === null && hasFleetRead(scope)) {
       throw new Error(`Memory ${memoryId} not found`);
     }
     // A member is answered identically for a missing row and for another org's

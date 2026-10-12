@@ -1,3 +1,4 @@
+import { hasFleetRead } from "@vantageos/cloud-identity";
 import { v, ConvexError } from "convex/values";
 import type { Doc } from "./_generated/dataModel";
 import { mutation, query, type QueryCtx } from "./_generated/server";
@@ -71,7 +72,7 @@ export const storeEpisode = mutation({
       scope,
       args.createdBy,
       "episodes:storeEpisode",
-      scope.isMaster,
+      hasFleetRead(scope),
     );
     const clerkOrgId = await memoryStampForWrite(
       ctx,
@@ -361,10 +362,10 @@ export const getCriticalInsights = query({
     // master alone; an org member reads only the index ranges of its OWN
     // namespaces, so a foreign episode is never read at all. Both reads stop at
     // `limit` critical rows (newest first) and are capped on rows examined.
-    // STILL LOCAL: the master/member split (`scope.isMaster`). The fleet-wide
+    // The master/member split is the package's `hasFleetRead`. The fleet-wide
     // scan itself refuses any non-master scope (readFleetCritical), so the
     // member path cannot reach it even if this branch were wrong.
-    const episodes = scope.isMaster
+    const episodes = hasFleetRead(scope)
       ? await readFleetCritical(ctx, scope, limit)
       : await readTenantCritical(ctx, scope, limit);
 
