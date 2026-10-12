@@ -269,6 +269,16 @@ describe("profiles:getProfile", () => {
 					isActive: true,
 					createdAt: 1,
 				});
+				// The member's roster lists its agent by ID (a provisioned org).
+				const mapping = await ctx.db
+					.query("client_org_mapping")
+					.withIndex("by_clerk_slug", (q) => q.eq("clerkOrgSlug", org))
+					.first();
+				if (mapping !== null) {
+					await ctx.db.patch(mapping._id, {
+						allowedAgentIds: [...(mapping.allowedAgentIds ?? []), agentId],
+					});
+				}
 				await ctx.db.insert("profiles", {
 					orchestratorId: id,
 					agentId,

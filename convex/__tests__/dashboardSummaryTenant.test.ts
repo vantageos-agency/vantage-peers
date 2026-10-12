@@ -53,6 +53,10 @@ const asNoOrg = (t: T) =>
 async function seed(t: T, orgAScopes: string[] = ["view-stats-aggregated"]) {
 	const now = Date.now();
 	await t.run(async (ctx) => {
+		// A profile belongs to an agent (M10d): seat-a is an agent of org-a, seat-b of
+		// org-b, both on their org's roster by ID; sigma is the fleet's own profile
+		// and has no org agent.
+		const agentOf = new Map<string, Id<"agents">>();
 		for (const [org, seat, scopes] of [
 			["org-a", "seat-a", orgAScopes],
 			["org-b", "seat-b", ["view-stats-aggregated"]],
@@ -68,26 +72,7 @@ async function seed(t: T, orgAScopes: string[] = ["view-stats-aggregated"]) {
 			});
 			// Since M16 a member is served the profiles of ITS OWN agents: the seat is
 			// an agent of its org on the org's roster BY ID.
-			await seedRosterAgent(ctx, org, seat);
-		}
-		// A profile belongs to an agent (M10d): seat-a is an agent of org-a, seat-b of
-		// org-b; sigma is the fleet's own profile and has no org agent.
-		const agentOf = new Map<string, Id<"agents">>();
-		for (const [org, name] of [
-			["org-a", "seat-a"],
-			["org-b", "seat-b"],
-		] as const) {
-			agentOf.set(
-				name,
-				await ctx.db.insert("agents", {
-					orgSlug: org,
-					clerkOrgId: testClerkOrgId(org),
-					name,
-					normalizedName: name,
-					isActive: true,
-					createdAt: now,
-				}),
-			);
+			agentOf.set(seat, await seedRosterAgent(ctx, org, seat));
 		}
 		for (const name of ["seat-a", "seat-b", "sigma"]) {
 			await ctx.db.insert("profiles", {

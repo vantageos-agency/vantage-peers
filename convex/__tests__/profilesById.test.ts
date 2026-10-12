@@ -73,11 +73,25 @@ async function seedOrg(
 	);
 }
 
+// A provisioned org lists its agents on its roster by ID; a member is served a
+// profile only for an agent that is on that roster (dashboard/profiles member path).
 async function registerAgent(t: T, org: string, name: string) {
-	return await adminOf(t, org).mutation(api.agents.registerAgent, {
+	const id = await adminOf(t, org).mutation(api.agents.registerAgent, {
 		orgSlug: org,
 		name,
 	});
+	await t.run(async (ctx) => {
+		const row = await ctx.db
+			.query("client_org_mapping")
+			.withIndex("by_clerk_slug", (q) => q.eq("clerkOrgSlug", org))
+			.first();
+		if (row !== null) {
+			await ctx.db.patch(row._id, {
+				allowedAgentIds: [...(row.allowedAgentIds ?? []), id],
+			});
+		}
+	});
+	return id;
 }
 
 const STATIC = { role: "backend", workspace: "/work", capabilities: [] };
