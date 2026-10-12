@@ -28,7 +28,9 @@ import {
 	verifiedPersonValidator,
 } from "./lib/personPrincipal";
 import { findAgentByName } from "./lib/agentIdentity";
+import type { ActingPrincipal } from "@vantageos/cloud-identity";
 import {
+	addressRecipientById,
 	recipientScopeOfPrincipal,
 	requireTargetOrgOfPrincipal,
 	requireVerifiedActorPrincipal,
@@ -265,12 +267,29 @@ function requireOneRecipientForm(args: {
 	}
 }
 
+// The label a receipt stores for an agent recipient: the agent's stored label,
+// normalised. It names nothing and selects nothing; the receipt is keyed by the
+// agent's ID (`recipientId`).
+function receiptLabelOf(row: Doc<"agents">): string {
+	return normalizeOrchestratorId(row.name);
+}
+
+// `sender` is the acting AGENT resolved by ID (a forwarded `verifiedActor`).
+// When present, every address decision, same organisation and across
+// organisations in both directions, is `assertRecipientAddressable`
+// (convex/lib/actingPrincipal.ts addressRecipientById). A cross-org send from
+// an operator agent is stamped in the RECIPIENT's organisation (`tenantId` of
+// the result), so that organisation's own readers see the reply; a client
+// agent's send to a listed operator agent stays in the sender's tenant. Without
+// a resolved agent (a member session, a seat with no proven agent) the
+// pre-existing roster rule applies unchanged.
 async function resolveRecipientAgents(
 	ctx: MutationCtx,
 	reach: OrgScope,
 	derivedTenantId: string | undefined,
 	rawIds: readonly string[],
-): Promise<Doc<"agents">[]> {
+	sender?: ActingPrincipal,
+): Promise<{ rows: Doc<"agents">[]; tenantId: string | undefined }> {
 	const fleetWide = reach.isMaster && reach.orgSlug === null;
 	// The organisation the receipts are stamped with is the one the recipients
 	// must belong to: the sender's own org, or (fleet master) the declared
@@ -289,12 +308,21 @@ async function resolveRecipientAgents(
 	// (convex/lib/rosterIds.ts): byte-equal IDs, the roster's org equal to the
 	// recipient's, no wildcard, and a missing roster admits nobody.
 	const coordinatorIds =
-		!fleetWide && reach.orgSlug !== null
+		sender === undefined && !fleetWide && reach.orgSlug !== null
 			? (await lookupOrgMapping(ctx, reach.orgSlug))
 					?.addressableFleetCoordinatorIds
 			: undefined;
 	const rows: Doc<"agents">[] = [];
 	const seen = new Set<string>();
+	// The organisation an operator agent's reply is stamped in, and whether any
+	// recipient stays in the sender's own tenant (the two cannot share a message).
+	let replyOrg: string | undefined;
+	let staysInSenderTenant = false;
+	const refuseSpan = (): never => {
+		throw new ConvexError(
+			`RBAC_DENIED: the recipients belong to more than one organisation, so no single tenant can carry the message — ${JSON.stringify({ reason: "recipients-span-organisations", door: SEND_DOOR })}`,
+		);
+	};
 	for (const raw of rawIds) {
 		const id = requireId(
 			ctx,
@@ -316,6 +344,35 @@ async function resolveRecipientAgents(
 			) {
 				return refuse(raw);
 			}
+			rows.push(row);
+			continue;
+		}
+		if (sender !== undefined) {
+			const verdict = await addressRecipientById(ctx, sender, row, SEND_DOOR);
+			if (!verdict.ok) return refuse(raw);
+			if (verdict.direction === "operator-to-client") {
+				if (replyOrg !== undefined && replyOrg !== row.orgSlug) {
+					return refuseSpan();
+				}
+				replyOrg = row.orgSlug;
+				rows.push(row);
+				continue;
+			}
+			if (verdict.direction === "same-organisation") {
+				const listed = await agentListedOnRoster(
+					ctx,
+					{ agentId: row._id, agentOrgId: row.orgSlug },
+					rosterOf(reach.orgSlug, reach.allowedAgentIds),
+					SEND_DOOR,
+				);
+				if (
+					!listed.ok ||
+					(derivedTenantId !== undefined && row.orgSlug !== derivedTenantId)
+				) {
+					return refuse(raw);
+				}
+			}
+			staysInSenderTenant = true;
 			rows.push(row);
 			continue;
 		}
@@ -344,7 +401,8 @@ async function resolveRecipientAgents(
 		if (!coordinator.ok) return refuse(raw);
 		rows.push(row);
 	}
-	return rows;
+	if (replyOrg !== undefined && staysInSenderTenant) return refuseSpan();
+	return { rows, tenantId: replyOrg };
 }
 
 async function sendMessageCore(
@@ -357,6 +415,9 @@ async function sendMessageCore(
 	// `resolveSeatRecipientScope`; it narrows recipients and nothing else (the
 	// tenant stamp still derives from `scope`).
 	recipientScope?: OrgScope,
+	// The acting agent resolved BY ID (a forwarded verifiedActor), when there is
+	// one: it is the sender's identity and the sender of every address decision.
+	senderPrincipal?: ActingPrincipal,
 ): Promise<Doc<"messages">["_id"]> {
 	requireOneRecipientForm(args);
 	const reach = recipientScope ?? scope;
@@ -437,20 +498,30 @@ async function sendMessageCore(
 		// tenant (the operator org for a fleet message). A name with no agents row
 		// in that org stays unset: never guessed, never matched across orgs.
 		const resolveActor = actorIdResolver(ctx, derivedTenantId);
-		const fromId = await resolveActor(args.from);
+		const fromId =
+			senderPrincipal !== undefined
+				? senderPrincipal.principalId
+				: await resolveActor(args.from);
 
 		// Recipients BY ID are resolved before anything is written; the stored
 		// channel is their labels, the same string a name send would store.
 		let agentRecipients: Doc<"agents">[] | undefined;
 		if (args.recipientAgentIds !== undefined) {
-			agentRecipients = (
-				await resolveRecipientAgents(
-					ctx,
-					reach,
-					derivedTenantId,
-					args.recipientAgentIds,
-				)
-			).filter((row) => row._id !== fromId);
+			const resolvedRecipients = await resolveRecipientAgents(
+				ctx,
+				reach,
+				derivedTenantId,
+				args.recipientAgentIds,
+				senderPrincipal,
+			);
+			// An operator agent replying to a client agent writes in the client's
+			// tenant, never in its own (the client's readers are scoped to it).
+			if (resolvedRecipients.tenantId !== undefined) {
+				derivedTenantId = resolvedRecipients.tenantId;
+			}
+			agentRecipients = resolvedRecipients.rows.filter(
+				(row) => row._id !== fromId,
+			);
 			if (agentRecipients.length === 0) {
 				throw new ConvexError(
 					`recipient error / message not delivered: recipientAgentIds names no recipient other than the sender — ${JSON.stringify({ reason: "only-self", door: SEND_DOOR })}`,
@@ -459,7 +530,7 @@ async function sendMessageCore(
 		}
 		const channel =
 			agentRecipients !== undefined
-				? agentRecipients.map((row) => normalizeOrchestratorId(row.name)).join(",")
+				? agentRecipients.map(receiptLabelOf).join(",")
 				: args.channel;
 		if (channel === undefined) {
 			// Unreachable: requireOneRecipientForm (top of this core) refused it.
@@ -497,7 +568,7 @@ async function sendMessageCore(
 			for (const row of agentRecipients) {
 				await ctx.db.insert("messageReceipts", {
 					messageId,
-					recipient: normalizeOrchestratorId(row.name),
+					recipient: receiptLabelOf(row),
 					recipientId: row._id,
 					tenantId: derivedTenantId,
 					tenantOrgId: derivedTenantOrgId,
@@ -602,7 +673,7 @@ async function sendMessageCore(
 				for (const row of broadcastRows) {
 					await ctx.db.insert("messageReceipts", {
 						messageId,
-						recipient: normalizeOrchestratorId(row.name),
+						recipient: receiptLabelOf(row),
 						recipientId: row._id,
 						tenantId: derivedTenantId,
 						tenantOrgId: derivedTenantOrgId,
@@ -1024,6 +1095,7 @@ export const sendMessage = mutation({
 		// a same-named agent of another org can neither act as this org's agent
 		// nor reach its recipients.
 		let recipientScope = seatScope;
+		let senderPrincipal: ActingPrincipal | undefined;
 		if (args.verifiedActor !== undefined) {
 			const principal = await requireVerifiedActorPrincipal(
 				ctx,
@@ -1043,6 +1115,7 @@ export const sendMessage = mutation({
 				principal,
 				SEND_DOOR,
 			);
+			senderPrincipal = principal;
 		}
 
 		if (args.from === undefined) {
@@ -1051,7 +1124,12 @@ export const sendMessage = mutation({
 		const from = args.from;
 
 		// The seat path's `from` is judged here, from data (see the function).
-		if (recipientScope !== undefined) {
+		// A sender proven BY ID that addresses recipients BY ID is judged by its
+		// resolved principal; the name guard stays for every other seat send.
+		if (
+			recipientScope !== undefined &&
+			!(senderPrincipal !== undefined && args.recipientAgentIds !== undefined)
+		) {
 			await requireSeatSenderNotForeign(ctx, recipientScope, from);
 		}
 
@@ -1081,6 +1159,7 @@ export const sendMessage = mutation({
 			{ ...sendArgs, from, fromInstanceId },
 			scope,
 			recipientScope,
+			senderPrincipal,
 		);
 	},
 });

@@ -10,20 +10,24 @@ update_briefing_note,agents+briefingNoteParticipants+briefingNotes+memberWriterR
 create_bu,agents+businessUnits,CREATE,org-member,orgResolver,businessUnits:create=orgResolver
 update_bu,agents+businessUnits+oauth_access_tokens,TRANSITION,org-member,orgResolver,businessUnits:update=orgResolver
 send_message,agents+client_org_mapping+memberWriterRoles+messageReceipts+messages+oauth_access_tokens+profiles,CREATE,org-member,orgResolver,messages:sendMessage=orgResolver
+write_diary,agents+diary,UPSERT,org-member,orgResolver,diary:write=orgResolver
 complete_task,agents+fixPatterns+githubOwnerBindings+githubRepoMapping+issues+memberWriterRoles+messageReceipts+messages+taskClosureConfig+tasks,UPSERT,org-member,orgResolver,tasks:complete=orgResolver
 update_task,agents+githubRepoMapping+memberWriterRoles+messageReceipts+messages+missions+oauth_access_tokens+taskClosureConfig+tasks,UPSERT,org-member,orgResolver,tasks:update=orgResolver
 add_task_dependency,agents+githubRepoMapping+memberWriterRoles+messageReceipts+messages+missions+taskClosureConfig+tasks,UPSERT,org-member,orgResolver,tasks:update=orgResolver
 block_task,agents+githubRepoMapping+memberWriterRoles+messageReceipts+messages+missions+taskClosureConfig+tasks,UPSERT,org-member,orgResolver,tasks:blockTask=orgResolver; tasks:update=orgResolver
 delete_message,agents+memberWriterRoles+messageReceipts+messages,DELETE,org-member,orgResolver,messages:deleteMessage=orgResolver
 fail_task,agents+memberWriterRoles+messageReceipts+messages+tasks,UPSERT,org-member,orgResolver,tasks:failTask=orgResolver
+create_mission,agents+memberWriterRoles+missions+oauth_access_tokens,CREATE,org-member,orgResolver,missions:create=orgResolver
+update_mission,agents+memberWriterRoles+missions+oauth_access_tokens,TRANSITION,org-member,orgResolver,missions:update=orgResolver
 update_recurring_task,agents+memberWriterRoles+oauth_access_tokens,UPDATE,org-member,orgResolver,recurringTasks:update=orgResolver
 create_recurring_task,agents+memberWriterRoles+oauth_access_tokens+recurringTasks,CREATE,org-member,orgResolver,recurringTasks:create=orgResolver
 create_task,agents+memberWriterRoles+oauth_access_tokens+tasks,CREATE,org-member,orgResolver,tasks:create=orgResolver
 mark_as_read,agents+messageReceipts+oauth_access_tokens,UPDATE,org-member,orgResolver,messages:markAsRead=orgResolver
 instantiate_template_into_mission,agents+missionTemplates+missions+tasks,UPSERT,org-member,orgResolver,missionTemplates:instantiateTemplateIntoMission=orgResolver
+set_summary,agents+profiles,UPSERT,org-member,orgResolver,profiles:updateDynamic=orgResolver
+update_profile,agents+profiles,UPSERT,org-member,orgResolver,profiles:upsertProfile=orgResolver
 bulk_complete_tasks,bulk_complete_runs+taskClosureConfig+tasks,UPSERT,org-member,orgResolver,tasks:bulkComplete=orgResolver
 delete_bu,businessUnits,DELETE,master,masterOnly,businessUnits:remove=masterOnly
-write_diary,diary,UPSERT,org-member,orgResolver,diary:write=orgResolver
 add_fix_attempt,fixAttempts+fixPatterns,UPSERT,master,masterOnly,fixPatterns:addAttempt=masterOnly
 create_fix_pattern,fixPatterns,CREATE,master,masterOnly,fixPatterns:create=masterOnly
 link_issue_to_pattern,fixPatterns,UPDATE,master,masterOnly,fixPatterns:linkIssue=masterOnly
@@ -41,8 +45,6 @@ delete_recurring_task,memberWriterRoles,DELETE,org-member,orgResolver,recurringT
 pause_recurring_task,memberWriterRoles,UPDATE,org-member,orgResolver,recurringTasks:pause=orgResolver
 resume_recurring_task,memberWriterRoles,UPDATE,org-member,orgResolver,recurringTasks:resume=orgResolver
 update_mission_status,memberWriterRoles+missions,TRANSITION,org-member,orgResolver,missions:updateStatus=orgResolver
-create_mission,memberWriterRoles+missions+oauth_access_tokens,CREATE,org-member,orgResolver,missions:create=orgResolver
-update_mission,memberWriterRoles+missions+oauth_access_tokens,TRANSITION,org-member,orgResolver,missions:update=orgResolver
 resume_task,memberWriterRoles+taskClosureConfig+tasks,TRANSITION,org-member,orgResolver,tasks:resume=orgResolver
 start_task,memberWriterRoles+taskClosureConfig+tasks,TRANSITION,org-member,orgResolver,tasks:start=orgResolver
 delete_task,memberWriterRoles+tasks,DELETE,org-member,orgResolver,tasks:deleteTask=orgResolver
@@ -54,7 +56,5 @@ soft_delete_mission_template,missionTemplates,UPDATE,master,masterOnly,missionTe
 update_mission_template,missionTemplates,UPSERT,master,masterOnly,missionTemplates:upsert=masterOnly
 add_deployment,monitoredDeployments,UPSERT,org-member,orgResolver,errorMonitor:addDeployment=orgResolver
 remove_deployment,monitoredDeployments,UPDATE,org-member,orgResolver,errorMonitor:removeDeployment=orgResolver
-set_summary,profiles,UPSERT,master,masterOnly,profiles:updateDynamic=masterOnly
-update_profile,profiles,UPSERT,master,masterOnly,profiles:upsertProfile=masterOnly
 correct_task_segment,taskClosureConfig+tasks,UPDATE,org-member,orgResolver,tasks:correctSegment=orgResolver
 checkout_task,tasks,TRANSITION,org-member,orgResolver,tasks:checkout=orgResolver

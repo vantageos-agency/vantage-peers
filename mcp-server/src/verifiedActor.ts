@@ -44,6 +44,10 @@ export const VERIFIED_ACTOR_DOORS: ReadonlySet<string> = new Set([
 	// of one, are agents judged by ID. `deleteBriefingNote` has no MCP tool.
 	"briefingNotes:create",
 	"briefingNotes:update",
+	// The mission doors (module M10e): the creator-only cancel compares the
+	// caller's agent ID with `createdById`, and a created mission stores it.
+	"missions:create",
+	"missions:update",
 	// The inbox doors (task k17c5q842gm1gbh0j2qjtc80g18fx5kb): an agent's inbox is
 	// read, marked and its sent mail deleted BY ITS ID, never by the recipient or
 	// acting-name argument that another org's same-named agent also carries.
@@ -67,6 +71,15 @@ export const VERIFIED_ACTOR_DOORS: ReadonlySet<string> = new Set([
 	"recurringTasks:pause",
 	"recurringTasks:resume",
 	"recurringTasks:remove",
+	// The profile doors (module M10d): a profile belongs to an agent ID. The reader
+	// is judged by the organisation of that agent, and the writer is the agent
+	// itself, never a same-named agent of another organisation.
+	// `profiles:listProfiles` is left out on purpose: list_peers still attributes
+	// rows by instance label (tools.ts) and an ID filter would withhold the legacy
+	// rows it reads until the profile backfill has run.
+	"profiles:getProfile",
+	"profiles:upsertProfile",
+	"profiles:updateDynamic",
 ]);
 
 export type VerifiedActorArg = { agentId: string; orgSlug: string };

@@ -17,6 +17,8 @@ import { testClerkOrgId } from "../../tests/fixtures/testClerkOrgId";
 import { api } from "../_generated/api";
 import type { Id } from "../_generated/dataModel";
 import schema from "../schema";
+import { findAgentId } from "../../tests/lib/agentIdOf";
+import { seedRosterAgents } from "../../tests/lib/seedRosterAgents";
 
 const modules = Object.fromEntries(
 	Object.entries(import.meta.glob("../**/*.ts")).filter(
@@ -56,11 +58,13 @@ async function setup() {
 			updatedAt: Date.now(),
 		});
 	});
+	await seedRosterAgents(t);
 	return t;
 }
 
 async function seedMission(t: T, orgId: string | null = "org-a", status: "plan" | "cancelled" = "plan") {
 	const now = Date.now();
+	const sigmaId = orgId === null ? null : await findAgentId(t, orgId, "sigma");
 	return await t.run(async (ctx) =>
 		ctx.db.insert("missions", {
 			name: "Seed mission",
@@ -70,6 +74,7 @@ async function seedMission(t: T, orgId: string | null = "org-a", status: "plan" 
 			pilot: "sigma",
 			agents: ["sigma"],
 			createdBy: "sigma",
+			...(sigmaId !== null ? { pilotId: sigmaId, createdById: sigmaId } : {}),
 			createdAt: now,
 			updatedAt: now,
 			...(orgId !== null ? { orgId, clerkOrgId: testClerkOrgId(orgId) } : {}),

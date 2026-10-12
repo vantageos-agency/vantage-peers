@@ -31,9 +31,10 @@ import {
 } from "../migrations/backfill_org_clerk_id";
 import { upsertAdminMembership } from "../orgMembership";
 import schema from "../schema";
-import { seedAgents } from "../../tests/lib/agentIdOf";
 import { mintAgentSecret } from "../../tests/lib/seedFleetAgents";
-import { agentIdOf } from "../../tests/lib/agentIdOf";
+import { seedRosterAgent } from "../../tests/fixtures/rosterAgent";
+import { seedRosterAgents } from "../../tests/lib/seedRosterAgents";
+import { agentIdOf, seedAgents } from "../../tests/lib/agentIdOf";
 import { testClerkOrgId } from "../../tests/fixtures/testClerkOrgId";
 
 const modules = Object.fromEntries(
@@ -137,8 +138,11 @@ async function mapAcmeRepo(t: T) {
 
 // One REAL write path per table of ORG_COLUMNS, acting as a member of ACME.
 const DRIVERS = {
-	missions: (t) =>
-		asOrg(t, ACME.slug).mutation(api.missions.create, {
+	missions: async (t) => {
+		// A mission names its pilot, participants and creator by agents-row ID
+		// (module M10e): the roster's labels are registered as agents first.
+		await seedRosterAgents(t);
+		return await asOrg(t, ACME.slug).mutation(api.missions.create, {
 			name: "m",
 			project: "p",
 			status: "execute",
@@ -146,7 +150,8 @@ const DRIVERS = {
 			pilot: SEAT,
 			agents: [SEAT],
 			createdBy: SEAT,
-		}),
+		});
+	},
 	messages: (t) =>
 		t.mutation(internal.messages.sendMessageInternal, {
 			from: "pi",
@@ -198,12 +203,15 @@ const DRIVERS = {
 			},
 		});
 	},
-	diary: (t) =>
-		asOrg(t, ACME.slug).mutation(api.diary.write, {
+	diary: async (t) => {
+		// The diary judges the seat by agent ID on the org's ID roster.
+		await t.run((ctx) => seedRosterAgent(ctx, ACME.slug, SEAT));
+		return await asOrg(t, ACME.slug).mutation(api.diary.write, {
 			date: "2026-10-01",
 			orchestrator: SEAT,
 			content: "d",
-		}),
+		});
+	},
 	businessUnits: async (t) => {
 		// Since M10f a member writes a business unit with a writer role, for an
 		// owner that is an agent of its own org on its roster BY ID.

@@ -20,6 +20,7 @@ import {
 } from "../migrations/backfill_org_clerk_id";
 import schema from "../schema";
 import { mintAgentSecret } from "../../tests/lib/seedFleetAgents";
+import { seedRosterAgent } from "../../tests/fixtures/rosterAgent";
 import { agentIdOf, seedAgents } from "../../tests/lib/agentIdOf";
 
 const modules = Object.fromEntries(
@@ -69,11 +70,11 @@ async function seatCredential(t: T): Promise<string> {
 
 async function seedMappings(t: T) {
 	await t.run(async (ctx) => {
-		const mapping = (
+		const mapping = async (
 			slug: string,
 			extra: { clerkOrgId?: string; operator?: boolean } = {},
-		) =>
-			ctx.db.insert("client_org_mapping", {
+		) => {
+			const id = await ctx.db.insert("client_org_mapping", {
 				clerkOrgSlug: slug,
 				allowedOrchestrators: [SEAT],
 				scopes: ["view-own-tasks", "view-own-missions"],
@@ -85,6 +86,8 @@ async function seedMappings(t: T) {
 					: {}),
 				...(extra.operator ? { orgKind: "operator" as const } : {}),
 			});
+			return id;
+		};
 		await mapping(OPERATOR.slug, { clerkOrgId: OPERATOR.id, operator: true });
 		await mapping(ACME.slug, { clerkOrgId: ACME.id });
 		// A mapping whose id has not been filled yet.
@@ -332,6 +335,7 @@ describe("new writes stamp the slug AND the Clerk org id", () => {
 	test("diary:write by an org member", async () => {
 		const t = createT();
 		await seedWorld(t);
+		await t.run((ctx) => seedRosterAgent(ctx, ACME.slug, SEAT));
 		const id = await asOrg(t, ACME.slug).mutation(api.diary.write, {
 			date: "2026-10-01",
 			orchestrator: SEAT,
@@ -345,6 +349,7 @@ describe("new writes stamp the slug AND the Clerk org id", () => {
 	test("the OPERATOR org's member stamps the operator org's id", async () => {
 		const t = createT();
 		await seedWorld(t);
+		await t.run((ctx) => seedRosterAgent(ctx, OPERATOR.slug, SEAT));
 		const id = await asOrg(t, OPERATOR.slug).mutation(api.diary.write, {
 			date: "2026-10-01",
 			orchestrator: SEAT,
@@ -484,14 +489,17 @@ describe("a stamped row is still READABLE through its returns validator", () => 
 		});
 		const task = await member.query(api.tasks.get, { taskId });
 		expect(task?.clerkOrgId).toBe(ACME.id);
+		// A diary seat apart from the task seat: the diary judges it by agent ID,
+		// and a task door requires the credential of a registered asserted name.
+		await t.run((ctx) => seedRosterAgent(ctx, ACME.slug, "diary-seat"));
 		await member.mutation(api.diary.write, {
 			date: "2026-10-01",
-			orchestrator: SEAT,
+			orchestrator: "diary-seat",
 			content: "d",
 		});
 		const entry = await member.query(api.diary.get, {
 			date: "2026-10-01",
-			orchestrator: SEAT,
+			orchestrator: "diary-seat",
 		});
 		expect(entry?.clerkOrgId).toBe(ACME.id);
 		await adminOf(t, ACME.slug).mutation(api.agents.registerAgent, {

@@ -159,6 +159,14 @@ export default defineSchema({
 
 		name: v.string(),
 
+		// The AGENT this profile belongs to: an `agents` row `_id`. A profile is
+		// owned, read and written by this ID, never by `orchestratorId` (a label that
+		// two organisations may both carry). The profile's organisation is the
+		// organisation of that agent row. Optional ONLY for the rollout: rows written
+		// before it existed are filled by migrations/backfill_profile_agent_ids, and a
+		// row without it is served to no member (an unstamped target belongs to nobody).
+		agentId: v.optional(v.id("agents")),
+
 		// Static profile — stable facts, infrequently updated
 		static: v.object({
 			role: v.string(),
@@ -178,7 +186,8 @@ export default defineSchema({
 		}),
 	})
 		.index("by_orchestrator", ["orchestratorId"])
-		.index("by_instance", ["instanceId"]),
+		.index("by_instance", ["instanceId"])
+		.index("by_agent", ["agentId"]),
 
 	// ── messages ──────────────────────────────────────────────────────────────
 	// Inter-orchestrator messaging. VantagePeers native (supersedes pre-VP legacy).
@@ -332,9 +341,23 @@ export default defineSchema({
 		// when no createdBy / callerOrchestrator was supplied; derived from the
 		// verified identity (memberActorOf), never from an argument.
 		lastActedBy: v.optional(v.string()),
+		// ACTOR IDs (module M10e, expand phase). `pilot`, `agents`, `createdBy` and
+		// `cancelledBy` stay the display LABELS; the doors decide on these ID columns,
+		// each an `agents` row `_id` of the mission's own organisation (a person is
+		// "user:<verified subject>", its own stable ID). Optional until
+		// migrations/backfill_mission_actor_ids has filled the rows written before
+		// them; a row without them names nobody.
+		pilotId: v.optional(v.string()),
+		agentIds: v.optional(v.array(v.string())),
+		createdById: v.optional(v.string()),
+		cancelledById: v.optional(v.string()),
 	})
 		.index("by_project", ["project", "status"])
 		.index("by_pilot", ["pilot", "status"])
+		// Reads by pilot ID (missions:list): master through the first, an org member
+		// through the org-leading second so a page is the caller's own rows.
+		.index("by_pilotId_status", ["pilotId", "status"])
+		.index("by_orgId_pilotId_status", ["orgId", "pilotId", "status"])
 		.index("by_status", ["status", "createdAt"])
 		.index("by_priority", ["priority", "status"])
 		.index("by_orgId", ["orgId"])

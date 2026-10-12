@@ -19,8 +19,8 @@
  * Poles (per door where it applies):
  *   REFUSED  acme's hélios reads NOTHING of iris's inbox, whatever recipient it
  *            passes (hélios / helios / iris's agent ID / nothing);
- *   PRESENT  iris's hélios reads its own mail: sent by ID and legacy by-name
- *            receipts (served by verified org + exact name until backfilled);
+ *   PRESENT  iris's hélios reads its own mail: the receipts stamped with its ID.
+ *            A receipt with no recipientId (M6) is delivered to nobody;
  *   FLEET    the service account with a name and no tenant reads the FLEET's
  *            tenant only; pi / eta still work; a client tenant is refused;
  *   OWNED    a receipt / message of another agent is refused on mark / delete.
@@ -233,16 +233,13 @@ describe("REFUSED: the namesake in another org reads nothing of iris's inbox", (
 			},
 		);
 
-		test("acme's hélios, recipient 'hélios' or nothing: reads acme's two, never iris's", async () => {
+		test("acme's hélios, recipient 'hélios' or nothing: reads acme's one by ID, never iris's", async () => {
 			const { t, acmeHelios } = await seedWorld();
 			for (const args of [
 				{ recipient: "hélios", ...actor(acmeHelios, ACME) },
 				{ ...actor(acmeHelios, ACME) },
 			]) {
-				expect(contentsOf(await check(t, args))).toEqual([
-					"ACME-BY-ID",
-					"ACME-LEGACY",
-				]);
+				expect(contentsOf(await check(t, args))).toEqual(["ACME-BY-ID"]);
 			}
 		});
 
@@ -270,15 +267,15 @@ describe("REFUSED: the namesake in another org reads nothing of iris's inbox", (
 		});
 	});
 
-	test("getUnreadCount: acme's hélios counts its own two, never iris's; a mismatch is refused", async () => {
+	test("getUnreadCount: acme's hélios counts its own one, never iris's; a mismatch is refused", async () => {
 		const { t, acmeHelios, irisHelios } = await seedWorld();
-		expect(await countOf(t, { ...actor(acmeHelios, ACME) })).toBe(2);
+		expect(await countOf(t, { ...actor(acmeHelios, ACME) })).toBe(1);
 		expect(
 			await countOf(t, {
 				orchestratorId: "hélios",
 				...actor(acmeHelios, ACME),
 			}),
-		).toBe(2);
+		).toBe(1);
 		await expect(
 			countOf(t, { orchestratorId: irisHelios, ...actor(acmeHelios, ACME) }),
 		).rejects.toThrow(/RBAC_DENIED.*messages:getUnreadCount/);
@@ -350,23 +347,22 @@ describe("REFUSED: the namesake in another org reads nothing of iris's inbox", (
 
 describe("PRESENT: a reader is served what is its own", () => {
 	describe.each(DOORS)("%s", (_name, check) => {
-		test("iris's hélios reads its ID-stamped and its legacy by-name receipts", async () => {
+		test("iris's hélios reads its ID-stamped receipts and nothing addressed by name", async () => {
 			const { t, irisHelios } = await seedWorld();
 			expect(
 				contentsOf(await check(t, { ...actor(irisHelios, IRIS) })),
-			).toEqual(["IRIS-BY-ID", "IRIS-LEGACY"]);
+			).toEqual(["IRIS-BY-ID"]);
 			expect(
 				contentsOf(
 					await check(t, { recipient: "hélios", ...actor(irisHelios, IRIS) }),
 				),
-			).toEqual(["IRIS-BY-ID", "IRIS-LEGACY"]);
+			).toEqual(["IRIS-BY-ID"]);
 		});
 
-		test("the operator org's agent reads its unstamped legacy and its stamped receipts", async () => {
+		test("the operator org's agent reads its ID-stamped receipts, not its unstamped by-name one", async () => {
 			const { t, sigma } = await seedWorld();
 			expect(contentsOf(await check(t, { ...actor(sigma, FLEET) }))).toEqual([
 				"SIGMA-BY-ID",
-				"SIGMA-LEGACY",
 			]);
 		});
 
@@ -389,7 +385,7 @@ describe("PRESENT: a reader is served what is its own", () => {
 						verifiedOrg: { orgSlug: IRIS },
 					}),
 				),
-			).toEqual(["IRIS-BY-ID", "IRIS-LEGACY"]);
+			).toEqual(["IRIS-BY-ID"]);
 			expect(
 				contentsOf(
 					await check(t, {
@@ -397,7 +393,7 @@ describe("PRESENT: a reader is served what is its own", () => {
 						verifiedOrg: { orgSlug: ACME },
 					}),
 				),
-			).toEqual(["ACME-BY-ID", "ACME-LEGACY"]);
+			).toEqual(["ACME-BY-ID"]);
 		});
 
 		test("a Clerk member of acme reading 'hélios' is confined to acme", async () => {
@@ -429,10 +425,10 @@ describe("PRESENT: a reader is served what is its own", () => {
 		expect(contentsOf(acme)).not.toContain("SENT-BY-ID");
 	});
 
-	test("getUnreadCount: iris's hélios counts both; sigma counts both; pi counts one", async () => {
+	test("getUnreadCount: iris's hélios counts its one by ID; sigma its one by ID; pi counts one", async () => {
 		const { t, irisHelios, sigma } = await seedWorld();
-		expect(await countOf(t, { ...actor(irisHelios, IRIS) })).toBe(2);
-		expect(await countOf(t, { ...actor(sigma, FLEET) })).toBe(2);
+		expect(await countOf(t, { ...actor(irisHelios, IRIS) })).toBe(1);
+		expect(await countOf(t, { ...actor(sigma, FLEET) })).toBe(1);
 		expect(await countOf(t, { orchestratorId: "pi" })).toBe(1);
 	});
 });
@@ -516,14 +512,20 @@ describe("OWNED: a receipt / message of another agent is refused", () => {
 		},
 	);
 
-	test("markAsRead: a reader marks its own (ID-stamped and legacy), and only those", async () => {
+	test("markAsRead: a reader marks its ID-stamped receipt; its by-name receipt is refused (M6)", async () => {
 		const { t, irisHelios, receipt } = await seedWorld();
-		expect(
-			await markAs(t, {
-				receiptIds: [receipt["IRIS-BY-ID"], receipt["IRIS-LEGACY"]],
+		await expect(
+			markAs(t, {
+				receiptIds: [receipt["IRIS-LEGACY"]],
 				...actor(irisHelios, IRIS),
 			}),
-		).toBe(2);
+		).rejects.toThrow(/RBAC_DENIED.*messages:markAsRead/);
+		expect(
+			await markAs(t, {
+				receiptIds: [receipt["IRIS-BY-ID"]],
+				...actor(irisHelios, IRIS),
+			}),
+		).toBe(1);
 		const acme = await t.run(
 			async (ctx) => (await ctx.db.get(receipt["ACME-BY-ID"]))?.readAt ?? null,
 		);
@@ -606,12 +608,13 @@ describe("OWNED: a receipt / message of another agent is refused", () => {
 	});
 });
 
-describe("LEGACY receipts: backfill stamps them, and nothing becomes unreadable", () => {
+describe("LEGACY receipts: backfill stamps them, and they become readable BY ID", () => {
 	test("backfill_actor_ids stamps recipientId by (tenant, exact name); the namesake's receipts are not touched", async () => {
 		const { t, irisHelios, acmeHelios, receipt } = await seedWorld();
 		const before = contentsOf(
 			await viaCheck(t, { ...actor(irisHelios, IRIS) }),
 		);
+		expect(before).toEqual(["IRIS-BY-ID"]);
 		let cursor: string | null = null;
 		for (let i = 0; i < 10; i++) {
 			const page: { isDone: boolean; nextCursor: string | null } =
@@ -635,10 +638,10 @@ describe("LEGACY receipts: backfill stamps them, and nothing becomes unreadable"
 		expect(stamped.irisLegacy).toBe(irisHelios);
 		expect(stamped.acmeLegacy).toBe(acmeHelios);
 		expect(stamped.fleetHelios).toBeNull();
-		// the same inbox, before and after.
+		// after step 1 the by-name receipt is delivered, by its new ID.
 		expect(
 			contentsOf(await viaCheck(t, { ...actor(irisHelios, IRIS) })),
-		).toEqual(before);
+		).toEqual(["IRIS-BY-ID", "IRIS-LEGACY"]);
 		// and the fleet's own "hélios" mailbox is still its own (the claimless
 		// form reads the fleet tenant only after the CONTRACT flip; before it,
 		// every tenant, as production; the receipt is served either way).

@@ -26,6 +26,10 @@ const asMember = (t: T, org: string, role = "org:member") =>
 		org_id: testClerkOrgId(org),
 		org_role: role,
 	} as Parameters<T["withIdentity"]>[0]);
+const asMaster = (t: T) =>
+	t.withIdentity({
+		subject: "test-service-account-user-id",
+	} as Parameters<T["withIdentity"]>[0]);
 const mapping = (t: T, slug: string, names: string[], scopes: string[]) =>
 	t.run((ctx) =>
 		ctx.db.insert("client_org_mapping", {
@@ -78,8 +82,8 @@ describe("dashboard:getDashboardSummary", () => {
 		const t = createT();
 		await mapping(t, "org-a", ["seat-a"], ["view-stats-aggregated"]);
 		await t.run(async (ctx) => {
-			await seedRosterAgent(ctx, "org-a", "seat-a");
-			await ctx.db.insert("profiles", { orchestratorId: "seat-a", name: "seat-a", static: { role: "r", workspace: "w", capabilities: [] }, dynamic: { lastSeen: NOW, sessionCount: 1 } });
+			const agentId = await seedRosterAgent(ctx, "org-a", "seat-a");
+			await ctx.db.insert("profiles", { orchestratorId: "seat-a", agentId, name: "seat-a", static: { role: "r", workspace: "w", capabilities: [] }, dynamic: { lastSeen: NOW, sessionCount: 1 } });
 		});
 		const r = await asMember(t, "org-a").query(api.dashboard.getDashboardSummary, {});
 		expect(r.activeOrchestrators.map((p) => p.orchestratorId)).toEqual(["seat-a"]);
@@ -91,10 +95,35 @@ describe("dashboard:getDashboardSummary", () => {
 		await mapping(t, "org-b", ["seat-b"], ["view-stats-aggregated"]);
 		await t.run(async (ctx) => {
 			await seedRosterAgent(ctx, "org-a", "seat-a");
-			await seedRosterAgent(ctx, "org-b", "seat-b");
-			await ctx.db.insert("profiles", { orchestratorId: "seat-b", name: "seat-b", static: { role: "r", workspace: "w", capabilities: [] }, dynamic: { lastSeen: NOW, sessionCount: 1 } });
+			const agentId = await seedRosterAgent(ctx, "org-b", "seat-b");
+			await ctx.db.insert("profiles", { orchestratorId: "seat-b", agentId, name: "seat-b", static: { role: "r", workspace: "w", capabilities: [] }, dynamic: { lastSeen: NOW, sessionCount: 1 } });
 		});
 		const r = await asMember(t, "org-a").query(api.dashboard.getDashboardSummary, {});
 		expect(r.activeOrchestrators).toEqual([]);
+	});
+
+	test("dashboard:getDashboardSummary — roster narrowing by ID: an own-org agent NOT on the roster is not served to a member; the master still sees both", async () => {
+		const t = createT();
+		await mapping(t, "org-a", ["seat-a"], ["view-stats-aggregated"]);
+		await t.run(async (ctx) => {
+			const onRoster = await seedRosterAgent(ctx, "org-a", "seat-a");
+			// seat-x is an active agent of org-a, stamped with the org, but NOT an entry
+			// of allowedAgentIds: inserted directly, never through seedRosterAgent.
+			const offRoster = await ctx.db.insert("agents", {
+				orgSlug: "org-a",
+				clerkOrgId: testClerkOrgId("org-a"),
+				name: "seat-x",
+				normalizedName: "seat-x",
+				isActive: true,
+				createdAt: NOW,
+			});
+			for (const [id, agentId] of [["seat-a", onRoster], ["seat-x", offRoster]] as const) {
+				await ctx.db.insert("profiles", { orchestratorId: id, agentId, name: id, static: { role: "r", workspace: "w", capabilities: [] }, dynamic: { lastSeen: NOW, sessionCount: 1 } });
+			}
+		});
+		const r = await asMember(t, "org-a").query(api.dashboard.getDashboardSummary, {});
+		expect(r.activeOrchestrators.map((p) => p.orchestratorId)).toEqual(["seat-a"]);
+		const m = await asMaster(t).query(api.dashboard.getDashboardSummary, {});
+		expect(m.activeOrchestrators.map((p) => p.orchestratorId).sort()).toEqual(["seat-a", "seat-x"]);
 	});
 });

@@ -120,6 +120,7 @@ async function seedOrgMapping(t: T, clerkOrgSlug: string, roster = ["sigma"]) {
 			isActive: true,
 			createdAt: Date.now(),
 		});
+		for (const name of roster) await seedRosterAgent(ctx, clerkOrgSlug, name);
 	});
 }
 

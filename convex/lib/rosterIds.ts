@@ -6,9 +6,9 @@ import {
 	resolveActingPrincipal,
 } from "@vantageos/cloud-identity";
 import { ConvexError } from "convex/values";
-import type { Id } from "../_generated/dataModel";
+import type { Doc, Id } from "../_generated/dataModel";
 import type { MutationCtx, QueryCtx } from "../_generated/server";
-import { principalLookups } from "./actingPrincipal";
+import { principalLookups, principalLookupsOverAgents } from "./actingPrincipal";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // rosterIds — the vantage-peers ADAPTER onto @vantageos/cloud-identity's
@@ -51,6 +51,51 @@ export async function agentListedOnRoster(
 	const listed = assertPrincipalListed(resolved.principal, list, { door });
 	if (!listed.ok) return listed;
 	return { ok: true, principal: resolved.principal };
+}
+
+// A bound on the roster entries read for one organisation. An org whose roster
+// holds more IDs than this has the surplus unseen, which fails closed (not listed).
+export const ROSTER_AGENT_SCAN_CAP = 500;
+
+/**
+ * The agents of organisation `orgSlug` that its stored ID roster lists, each
+ * judged by `resolveActingPrincipal` + `assertPrincipalListed`. The roster IS
+ * the list of IDs, so each entry is read as ONE keyed probe of the primary-key
+ * index (`by_id`), never a scan of the org's agents. An unlisted, inactive,
+ * unknown or foreign agent is dropped; nothing is matched by a name.
+ */
+export async function listedAgentsOfOrg(
+	ctx: Ctx,
+	orgSlug: string,
+	rosterIds: readonly string[],
+	door: string,
+): Promise<Doc<"agents">[]> {
+	if (rosterIds.length === 0) return [];
+	const agents: Doc<"agents">[] = [];
+	for (const entry of new Set(rosterIds)) {
+		if (agents.length >= ROSTER_AGENT_SCAN_CAP) break;
+		const id = ctx.db.normalizeId("agents", entry);
+		if (id === null) continue;
+		const agent = await ctx.db
+			.query("agents")
+			.withIndex("by_id", (q) => q.eq("_id", id))
+			.unique();
+		if (agent !== null && agent.orgSlug === orgSlug) agents.push(agent);
+	}
+	const lookups = principalLookupsOverAgents(ctx, agents);
+	const list = rosterOf(orgSlug, rosterIds);
+	const out: Doc<"agents">[] = [];
+	for (const agent of agents) {
+		const resolved = await resolveActingPrincipal(
+			{ kind: "agent", agentId: agent._id, verifiedOrgId: orgSlug },
+			lookups,
+			door,
+		);
+		if (!resolved.ok) continue;
+		if (!assertPrincipalListed(resolved.principal, list, { door }).ok) continue;
+		out.push(agent);
+	}
+	return out;
 }
 
 /** A roster stored under `orgId`; `ids` undefined means none is stored. */

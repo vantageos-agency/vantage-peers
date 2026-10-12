@@ -389,6 +389,10 @@ const INTENTIONAL_PROJECTIONS: Record<string, { fields: string[]; reason: string
 			"cancelledBy",
 			"cancelReason",
 			"lastActedBy",
+			"pilotId",
+			"agentIds",
+			"createdById",
+			"cancelledById",
 		],
 		reason:
 			"Internal cron-sweep helper (internalMutation) deliberately returns only _id/name/brief/status — the minimum needed to decide which missions to cascade-close. Handler constructs the object explicitly from `OPEN_STATUSES` batches, never spreads the raw row.",

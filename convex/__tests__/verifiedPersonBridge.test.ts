@@ -31,6 +31,7 @@ import { beforeEach, describe, expect, test } from "vitest";
 import { api } from "../_generated/api";
 import type { Id } from "../_generated/dataModel";
 import schema from "../schema";
+import { seedRosterAgents } from "../../tests/lib/seedRosterAgents";
 import { agentIdOf } from "../../tests/lib/agentIdOf";
 import { testClerkOrgId } from "../../tests/fixtures/testClerkOrgId";
 import { insertTaskRow, seedFleetAgents } from "../../tests/lib/seedFleetAgents";
@@ -226,6 +227,8 @@ describe("SERVED — a live editor token, through the service account", () => {
 	});
 
 	test("missions.create / update and messages.sendMessage", async () => {
+		// The mission pilot and participants are agents-row IDs (module M10e).
+		await seedRosterAgents(t);
 		const as = service();
 		const missionId = await as.mutation(api.missions.create, {
 			name: "m",

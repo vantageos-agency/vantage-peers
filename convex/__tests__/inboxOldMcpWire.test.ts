@@ -426,13 +426,13 @@ describe("NEW WIRE (#1492): the claim separates the two same-named seats", () =>
 			).messages
 				.map((m) => m.content)
 				.sort(),
-		).toEqual(["B-BY-ID", "B-LEGACY"]);
+		).toEqual(["B-BY-ID"]);
 		expect(
 			await sa.query(api.messages.getUnreadCount, {
 				orchestratorId: "hélios",
 				verifiedActor,
 			}),
-		).toBe(2);
+		).toBe(1);
 		await deniedWith(
 			sa.mutation(api.messages.markAsRead, {
 				receiptIds: [w.receipt["A-LEGACY"]],
@@ -441,13 +441,22 @@ describe("NEW WIRE (#1492): the claim separates the two same-named seats", () =>
 			}),
 			"receipt-not-yours",
 		);
-		expect(
-			await sa.mutation(api.messages.markAsRead, {
-				receiptIds: [w.receipt["B-BY-ID"], w.receipt["B-LEGACY"]],
+		// M6: a receipt with no recipientId is nobody's by name, not even org B's.
+		await deniedWith(
+			sa.mutation(api.messages.markAsRead, {
+				receiptIds: [w.receipt["B-LEGACY"]],
 				callerOrchestrator: "hélios",
 				verifiedActor,
 			}),
-		).toBe(2);
+			"receipt-not-yours",
+		);
+		expect(
+			await sa.mutation(api.messages.markAsRead, {
+				receiptIds: [w.receipt["B-BY-ID"]],
+				callerOrchestrator: "hélios",
+				verifiedActor,
+			}),
+		).toBe(1);
 	});
 
 	test("org A's org-level token (verifiedOrg) reads org A's hélios only", async () => {
@@ -462,7 +471,7 @@ describe("NEW WIRE (#1492): the claim separates the two same-named seats", () =>
 			).messages
 				.map((m) => m.content)
 				.sort(),
-		).toEqual(["A-BY-ID", "A-LEGACY"]);
+		).toEqual(["A-BY-ID"]);
 	});
 
 	test("a person (verifiedOrg + its own name) reads its own receipt", async () => {

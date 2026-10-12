@@ -15,6 +15,7 @@ import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import { testClerkOrgId } from "../../tests/fixtures/testClerkOrgId";
 import { api } from "../_generated/api";
 import schema from "../schema";
+import { seedRosterAgents } from "../../tests/lib/seedRosterAgents";
 
 const modules = Object.fromEntries(
 	Object.entries(import.meta.glob("../**/*.ts")).filter(
@@ -151,6 +152,9 @@ describe("provisionOrganization requires the Clerk org ID", () => {
 			...base("acme"),
 			clerkOrgId: id,
 		});
+		// A mission row names its pilot by agents-row ID (module M10e).
+		const ids = await seedRosterAgents(t);
+		const pilotId = ids["acme/seat-acme"];
 		await t.run((ctx) =>
 			ctx.db.insert("missions", {
 				name: "mission-of-acme",
@@ -160,6 +164,8 @@ describe("provisionOrganization requires the Clerk org ID", () => {
 				pilot: "seat-acme",
 				agents: ["seat-acme"],
 				createdBy: "seat-acme",
+				pilotId,
+				createdById: pilotId,
 				createdAt: Date.now(),
 				updatedAt: Date.now(),
 				orgId: "acme",

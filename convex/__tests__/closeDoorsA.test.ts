@@ -21,6 +21,7 @@ import { testClerkOrgId } from "../../tests/fixtures/testClerkOrgId";
 import { seedRosterAgents } from "../../tests/lib/seedRosterAgents";
 import { api } from "../_generated/api";
 import schema from "../schema";
+import { seedRosterAgent } from "../../tests/fixtures/rosterAgent";
 
 const modules = Object.fromEntries(
 	Object.entries(import.meta.glob("../**/*.ts")).filter(
@@ -102,6 +103,7 @@ async function seedOrg(t: T, slug: string, roster: string[]) {
 			isActive: true,
 			createdAt: Date.now(),
 		});
+		for (const name of roster) await seedRosterAgent(ctx, slug, name);
 	});
 }
 

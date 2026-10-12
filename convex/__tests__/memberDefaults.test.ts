@@ -17,6 +17,7 @@ import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import { testClerkOrgId } from "../../tests/fixtures/testClerkOrgId";
 import { api, internal } from "../_generated/api";
 import schema from "../schema";
+import { findAgentId } from "../../tests/lib/agentIdOf";
 
 const modules = Object.fromEntries(
 	Object.entries(import.meta.glob("../**/*.ts")).filter(
@@ -65,6 +66,8 @@ async function provision(t: T, slug: string, seat: string) {
 }
 
 async function seedMission(t: T, name: string, orgId: string, pilot: string) {
+	// A mission row names its pilot and creator by agents-row ID (module M10e).
+	const pilotId = await findAgentId(t, orgId, pilot);
 	await t.run((ctx) =>
 		ctx.db.insert("missions", {
 			name,
@@ -74,6 +77,7 @@ async function seedMission(t: T, name: string, orgId: string, pilot: string) {
 			pilot,
 			agents: [pilot],
 			createdBy: pilot,
+			...(pilotId !== null ? { pilotId, createdById: pilotId } : {}),
 			createdAt: Date.now(),
 			updatedAt: Date.now(),
 			orgId,
@@ -134,14 +138,21 @@ describe("provisionOrganization default member scopes", () => {
 
 describe("profiles:getProfile — roster check does not depend on existence", () => {
 	async function seedProfile(t: T, orchestratorId: string) {
-		await t.run((ctx) =>
-			ctx.db.insert("profiles", {
+		await t.run(async (ctx) => {
+			// A profile belongs to an agent (M10d): the seat's own agent row, if it has one.
+			const agent = await ctx.db
+				.query("agents")
+				.withIndex("by_org", (q) => q.eq("orgSlug", "org-a"))
+				.collect()
+				.then((rows) => rows.find((r) => r.name === orchestratorId));
+			return ctx.db.insert("profiles", {
 				orchestratorId,
+				...(agent !== undefined ? { agentId: agent._id } : {}),
 				name: orchestratorId,
 				static: { role: orchestratorId, workspace: "w", capabilities: [] },
 				dynamic: { lastSeen: Date.now(), sessionCount: 1 },
-			}),
-		);
+			});
+		});
 	}
 
 	test("non-roster orchestrator WITH a row -> refused not-on-roster", async () => {

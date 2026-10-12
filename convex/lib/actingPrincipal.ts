@@ -1,12 +1,15 @@
 import {
 	type ActingPrincipal,
+	assertRecipientAddressable,
 	assertTargetBelongsTo,
 	type IdentityRefusal,
 	type OrgKind,
 	type PrincipalLookups,
+	type RecipientLookups,
 	resolveActingPrincipal,
 } from "@vantageos/cloud-identity";
 import { ConvexError } from "convex/values";
+import type { Doc } from "../_generated/dataModel";
 import type { MutationCtx, QueryCtx } from "../_generated/server";
 import { lookupOrgMapping, type OrgScope, type VerifiedActor } from "./auth";
 
@@ -38,8 +41,42 @@ export function principalLookups(ctx: Ctx): PrincipalLookups {
 		agentById: async (agentId) => {
 			const id = ctx.db.normalizeId("agents", agentId);
 			if (id === null) return null;
-			const row = await ctx.db.get(id);
+			// Read through the primary-key index (one row by ID): the same read as
+			// `db.get`, but a keyed probe, so a list door that proves its pilots
+			// stays a list in the tool inventory instead of a list-and-get mix.
+			const row = await ctx.db
+				.query("agents")
+				.withIndex("by_id", (q) => q.eq("_id", id))
+				.unique();
 			if (row === null) return null;
+			return { id: row._id, orgId: row.orgSlug, active: row.isActive };
+		},
+		organisationById: async (orgId) => {
+			const mapping = await lookupOrgMapping(ctx, orgId);
+			if (mapping === null) return null;
+			return { id: orgId, active: mapping.isActive };
+		},
+		orgKindOf: async (orgId): Promise<OrgKind | null> =>
+			orgKindOfMapping(await lookupOrgMapping(ctx, orgId)),
+	};
+}
+
+/**
+ * The lookups for a reader that has ALREADY read a page of `agents` rows (one
+ * indexed list of an organisation's agents) and judges several of them: the
+ * agent is answered from that page instead of one `ctx.db.get` per ID. The
+ * decision is the same as `principalLookups` (active row, stamped with the org
+ * the credential names, in an active organisation); only the read differs.
+ */
+export function principalLookupsOverAgents(
+	ctx: Ctx,
+	agents: readonly Doc<"agents">[],
+): PrincipalLookups {
+	const byId = new Map<string, Doc<"agents">>(agents.map((a) => [a._id, a]));
+	return {
+		agentById: async (agentId) => {
+			const row = byId.get(agentId);
+			if (row === undefined) return null;
 			return { id: row._id, orgId: row.orgSlug, active: row.isActive };
 		},
 		organisationById: async (orgId) => {
@@ -140,7 +177,7 @@ const STABLE_CODE: Partial<Record<IdentityRefusal["reason"], string>> = {
 	"target-other-organisation": "ORG_MISMATCH",
 };
 
-function refuseWith(refusal: IdentityRefusal): never {
+export function refuseWith(refusal: IdentityRefusal): never {
 	const code = STABLE_CODE[refusal.reason] ?? refusal.code;
 	throw new ConvexError(
 		`${code}: ${refusal.detail} — ${JSON.stringify({ reason: refusal.reason, door: refusal.door })}`,
@@ -275,4 +312,79 @@ export async function requireAssigneeAgentActive(
 		door,
 	);
 	if (!resolved.ok) refuseWith(resolved.refusal);
+}
+
+/**
+ * The lookups `assertRecipientAddressable` reads, both keyed by the stored org:
+ * the organisation kind (operator or client, from the mapping row) and the
+ * roster of OPERATOR-org agent IDs the client organisation stores
+ * (`addressableFleetCoordinatorIds`). No roster stored answers null, which the
+ * package refuses (`list-absent`).
+ */
+export function recipientLookups(ctx: Ctx): RecipientLookups {
+	return {
+		orgKindOf: async (orgId): Promise<OrgKind | null> =>
+			orgKindOfMapping(await lookupOrgMapping(ctx, orgId)),
+		rosterOf: async (orgId) => {
+			const mapping = await lookupOrgMapping(ctx, orgId);
+			if (mapping === null || mapping.addressableFleetCoordinatorIds === undefined) {
+				return null;
+			}
+			return { orgId, principalIds: mapping.addressableFleetCoordinatorIds };
+		},
+	};
+}
+
+export type RecipientAddress =
+	| {
+			ok: true;
+			/**
+			 * Where the recipient stands relative to the sender, decided by the
+			 * package from the two stored org IDs and their stored kinds.
+			 */
+			direction:
+				| "same-organisation"
+				| "client-to-operator"
+				| "operator-to-client";
+	  }
+	| { ok: false; refusal: IdentityRefusal };
+
+/**
+ * May the resolved AGENT `sender` address the agents row `recipient`, in either
+ * direction across organisations, by ID only? The recipient is first resolved
+ * through the package from its own stored row (active, stamped with the org it
+ * is judged in, that org active); the address decision is then
+ * `assertRecipientAddressable`, which owns every rule: same organisation,
+ * client to a listed operator agent, operator agent to a client that lists it,
+ * and nothing else. This function reads no name and decides nothing itself.
+ */
+export async function addressRecipientById(
+	ctx: Ctx,
+	sender: ActingPrincipal,
+	recipient: { _id: string; orgSlug: string },
+	door: string,
+): Promise<RecipientAddress> {
+	const lookups = principalLookups(ctx);
+	const resolved = await resolveActingPrincipal(
+		{ kind: "agent", agentId: recipient._id, verifiedOrgId: recipient.orgSlug },
+		lookups,
+		door,
+	);
+	if (!resolved.ok) return resolved;
+	const verdict = await assertRecipientAddressable(
+		sender,
+		{ agentId: resolved.principal.principalId, orgId: resolved.principal.orgId },
+		recipientLookups(ctx),
+		{ door },
+	);
+	if (!verdict.ok) return verdict;
+	if (resolved.principal.orgId === sender.orgId) {
+		return { ok: true, direction: "same-organisation" };
+	}
+	const senderKind = await lookups.orgKindOf?.(sender.orgId);
+	return {
+		ok: true,
+		direction:
+			senderKind === "operator" ? "operator-to-client" : "client-to-operator",
+	};
 }
