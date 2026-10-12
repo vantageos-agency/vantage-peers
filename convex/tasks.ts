@@ -710,19 +710,20 @@ async function insertTask(
  * REFUSES rather than softening. A caller that is neither master nor resolved
  * to an organisation has no tenant to stamp, and a row with no tenant is a row
  * no org can ever read — so writing it would manufacture an orphan instead of
- * reporting the problem. `withOrgScope` already throws for a signed-in caller
- * with no org, which makes this branch defence-in-depth rather than the primary
- * gate; it is here so that a future change to that upstream behaviour surfaces
- * as a refusal at the write, not as silent data loss.
+ * reporting the problem. Who counts as resolved is `requireResolvedCaller`'s
+ * decision (the one refusal helper of this backend): an anonymous scope and a
+ * signed-in scope with no organisation are raised RBAC_DENIED. What is left is
+ * a fleet master (no org by construction: its `orgSlug` is null, the row is
+ * fleet-owned) or an organisation member (its `orgSlug` is the stamp).
+ * `withOrgScope` already throws for a signed-in caller with no org, which makes
+ * this defence-in-depth rather than the primary gate; it is here so that a
+ * future change to that upstream behaviour surfaces as a refusal at the write,
+ * not as silent data loss.
  */
-function orgIdForWrite(scope: OrgScope, what: string): string | undefined {
-	if (scope.isMaster) return undefined;
-	if (scope.orgSlug === null) {
-		throw new ConvexError(
-			`RBAC_DENIED: caller has no organisation to own the ${what} it is creating — refusing to write an untenanted row — ${JSON.stringify({ orgSlug: null })}`,
-		);
-	}
-	return scope.orgSlug;
+function orgIdForWrite(scope: OrgScope, door: string): string | undefined {
+	// isolation-contract: the only caller is tasks:create, a MUTATION, never a subscribed read: the pre-organisation refusal (alsoRefusePreOrg) reaches a submit handler, not a render. Enumerated with `grep -rn "api\.tasks\.create\b" app components hooks lib contexts providers` in vantage-peers-dashboard bd52245 -> 1 hit, components/tasks/task-create-dialog.tsx:39 `useMutation(api.tasks.create)` (imperative); MCP: client.mutation("tasks:create").
+	requireResolvedCaller(scope, door, { alsoRefusePreOrg: true });
+	return scope.orgSlug ?? undefined;
 }
 
 export const create = mutation({
@@ -749,7 +750,7 @@ export const create = mutation({
 		requireOrchestratorOnRoster(scope, args.assignedTo, "tasks:create", "assignee");
 		// The tenant is derived from the SCOPE just resolved above, never from
 		// anything the client sent.
-		const rowOrgId = orgIdForWrite(scope, "task");
+		const rowOrgId = orgIdForWrite(scope, "tasks:create");
 		// M7: the assignee BY ID, in the org the row will live in. A label with no
 		// active agent there (unknown, or registered only in another org) is
 		// refused before anything is written.
@@ -1842,6 +1843,29 @@ export const listPaginated = query({
 	},
 });
 
+/**
+ * Is the agent a reassignment would hand a review task to the repo's OWN
+ * orchestrator (the author side of the delivery)? Decided BY ID: the repo
+ * mapping's owner label and the typed target are each resolved to an agents-row
+ * ID within the task's own organisation (the operator org for a fleet-owned
+ * row), and the two IDs are compared. A spelling of the same agent that differs
+ * only in case, whitespace or Unicode form is the same ID; the same label held
+ * by an agent of another organisation is a different one. A label that resolves
+ * to no agent there is no owner, and the assignment is refused later by
+ * `requireAssigneeId` (an assignee must be an agent of the task's org).
+ */
+async function assigneeIsRepoOwnerAgent(
+	ctx: MutationCtx,
+	task: Doc<"tasks">,
+	assignee: string,
+): Promise<boolean> {
+	const resolveInTaskOrg = actorIdResolver(ctx, task.orgId);
+	const ownerId = await resolveInTaskOrg(
+		(await repoOwner(ctx, task.reviewPrRepoFullName)) ?? undefined,
+	);
+	return ownerId !== undefined && ownerId === (await resolveInTaskOrg(assignee));
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // update — partial update of any mutable task field
 // ─────────────────────────────────────────────────────────────────────────────
@@ -1933,8 +1957,7 @@ export const update = mutation({
 			fields.assignedTo !== undefined &&
 			callerScope.callerActorId !== task.assignedToId &&
 			callerScope.callerActorId !== task.createdById &&
-			(await repoOwner(ctx, task.reviewPrRepoFullName)) ===
-				fields.assignedTo.trim().toLowerCase()
+			(await assigneeIsRepoOwnerAgent(ctx, task, fields.assignedTo))
 		) {
 			throw new ConvexError(
 				`RBAC_DENIED: ${callerOrchestrator} may not assign review task ${taskId} to ${fields.assignedTo} — it is the repo's own orchestrator (the author); a delivery is never reviewed by its author — ${JSON.stringify({ caller: callerOrchestrator, taskId, assignedTo: fields.assignedTo })}`,

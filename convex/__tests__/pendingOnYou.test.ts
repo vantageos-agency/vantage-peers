@@ -39,6 +39,10 @@ const modules = Object.fromEntries(
 	),
 );
 
+// The stable ID a creator is recorded under (the agents-row `_id` of that
+// creator). `computePendingOnYou` decides on this ID, never on the label.
+const idOf = (label: string): string => `agent-id-of-${label}`;
+
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 async function seedBlockedTaskWithAge(
 	t: any,
@@ -56,6 +60,7 @@ async function seedBlockedTaskWithAge(
 			priority: "high" as const,
 			status: "blocked" as const,
 			createdBy,
+			createdById: idOf(createdBy),
 			createdAt: now - ageMs,
 			updatedAt: now - ageMs,
 			...(tags !== undefined ? { tags } : {}),
@@ -108,7 +113,7 @@ describe("computePendingOnYou (lib-level, unwired from envelope)", () => {
 		);
 
 		const result = await t.run(async (ctx: any) =>
-			computePendingOnYou(ctx, "victor", Date.now()),
+			computePendingOnYou(ctx, idOf("victor"), Date.now()),
 		);
 
 		expect(result.entries.length).toBe(1);
@@ -128,7 +133,41 @@ describe("computePendingOnYou (lib-level, unwired from envelope)", () => {
 		);
 
 		const result = await t.run(async (ctx: any) =>
-			computePendingOnYou(ctx, "victor", Date.now()),
+			computePendingOnYou(ctx, idOf("victor"), Date.now()),
+		);
+
+		expect(result.entries.length).toBe(0);
+		expect(result.total).toBe(0);
+	});
+
+	test("NEG (ID, not label): a same-label creator of ANOTHER agent ID is NOT listed for the caller", async () => {
+		const t = convexTest(schema, modules);
+		await t.run(async (ctx: any) => {
+			const now = Date.now();
+			// Two different agents (two orgs) both labelled "victor".
+			await ctx.db.insert("tasks", {
+				title: "[REVIEW] gate opened by the OTHER victor",
+				assignedTo: "eta",
+				priority: "high" as const,
+				status: "blocked" as const,
+				createdBy: "victor",
+				createdById: "agent-id-of-victor-in-org-b",
+				createdAt: now,
+				updatedAt: now,
+			});
+			await ctx.db.insert("tasks", {
+				title: "[REVIEW] legacy row, no creator ID stored",
+				assignedTo: "eta",
+				priority: "high" as const,
+				status: "blocked" as const,
+				createdBy: "victor",
+				createdAt: now,
+				updatedAt: now,
+			});
+		});
+
+		const result = await t.run(async (ctx: any) =>
+			computePendingOnYou(ctx, idOf("victor"), Date.now()),
 		);
 
 		expect(result.entries.length).toBe(0);
@@ -146,7 +185,7 @@ describe("computePendingOnYou (lib-level, unwired from envelope)", () => {
 		);
 
 		const result = await t.run(async (ctx: any) =>
-			computePendingOnYou(ctx, "victor", Date.now()),
+			computePendingOnYou(ctx, idOf("victor"), Date.now()),
 		);
 
 		expect(result.entries.length).toBe(1);
@@ -166,7 +205,7 @@ describe("computePendingOnYou (lib-level, unwired from envelope)", () => {
 		);
 
 		const result = await t.run(async (ctx: any) =>
-			computePendingOnYou(ctx, "victor", Date.now()),
+			computePendingOnYou(ctx, idOf("victor"), Date.now()),
 		);
 
 		expect(result.entries.length).toBe(1);
@@ -186,7 +225,7 @@ describe("computePendingOnYou (lib-level, unwired from envelope)", () => {
 		);
 
 		const result = await t.run(async (ctx: any) =>
-			computePendingOnYou(ctx, "victor", Date.now()),
+			computePendingOnYou(ctx, idOf("victor"), Date.now()),
 		);
 
 		expect(result.entries.length).toBe(0);
@@ -205,7 +244,7 @@ describe("computePendingOnYou (lib-level, unwired from envelope)", () => {
 		);
 
 		const result = await t.run(async (ctx: any) =>
-			computePendingOnYou(ctx, "victor", Date.now()),
+			computePendingOnYou(ctx, idOf("victor"), Date.now()),
 		);
 
 		expect(result.entries.length).toBe(1);
@@ -233,6 +272,7 @@ describe("computePendingOnYou (lib-level, unwired from envelope)", () => {
 					priority: "high" as const,
 					status: "blocked" as const,
 					createdBy: "omega",
+					createdById: idOf("omega"),
 					createdAt,
 					updatedAt: createdAt,
 				});
@@ -240,7 +280,7 @@ describe("computePendingOnYou (lib-level, unwired from envelope)", () => {
 		});
 
 		const result = await t.run(async (ctx: any) =>
-			computePendingOnYou(ctx, "victor", Date.now()),
+			computePendingOnYou(ctx, idOf("victor"), Date.now()),
 		);
 
 		expect(result.entries.length).toBe(1);

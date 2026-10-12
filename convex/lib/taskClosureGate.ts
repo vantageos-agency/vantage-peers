@@ -596,17 +596,22 @@ export async function getPendingOnYouCycleMs(
  * Day 133 (k176bjye4kvpgg0qf6fkrneq558btx7c) — server-derived "pendingOnYou"
  * queue. Finds `blocked` tasks whose unblock authority is `caller`.
  *
- * Signal used: `task.createdBy === caller`. This is the most robust
+ * Signal used: the task's creator, BY ID (`task.createdById`), equal to
+ * `callerId`, the caller's agents-row `_id`. This is the most robust
  * already-present signal for "who must unblock" — the task creator is the
  * one who requested the work and is structurally the party a `blocked`
  * status is waiting on (e.g. PROD-DEPLOY-AUTHORIZED / PR-MERGE-AUTHORIZED /
  * REVIEW / ETA-GATE gates are opened by whoever authored the task). Unlike
- * `assignedTo` (who is DOING the work and already sees it via
- * computeStaleInProgress), `createdBy` names who the assignee is BLOCKED on.
- * Title/description markers are NOT parsed here — `createdBy` is already
- * present on every task and is not the forgeable `origin` field (see
- * comment above on `enforceClosureGate`'s Day-130 followup); it is a plain,
- * always-set string, not a new schema field.
+ * the assignee (who is DOING the work and already sees it via
+ * computeStaleInProgress), the creator names who the assignee is BLOCKED on.
+ * Title/description markers are NOT parsed here — the creator is already
+ * stamped on every task and is not the forgeable `origin` field (see
+ * comment above on `enforceClosureGate`'s Day-130 followup).
+ *
+ * The creator is compared by ID, never by the `createdBy` label: two
+ * organisations (or a renamed agent) can carry the same label, and a label
+ * names nobody. A row that stores no `createdById` names no creator and is
+ * listed for nobody.
  *
  * Follow-up (documented, not implemented): unclosed token/merge/review
  * REQUESTS that are represented purely as unread `messages` (not tasks) are
@@ -623,7 +628,8 @@ export async function getPendingOnYouCycleMs(
  */
 export async function computePendingOnYou(
 	ctx: QueryCtx | MutationCtx,
-	caller: string,
+	// The caller's agents-row `_id`.
+	callerId: string,
 	now: number,
 ): Promise<CappedList<PendingOnYouEntry>> {
 	const cycleMs = await getPendingOnYouCycleMs(ctx);
@@ -631,7 +637,7 @@ export async function computePendingOnYou(
 	return scanByStatusMatching(
 		ctx,
 		"blocked",
-		(task) => task.createdBy === caller && !isDormant(task),
+		(task) => task.createdById === callerId && !isDormant(task),
 		(task) => {
 			const age = now - task.updatedAt;
 			const cyclesWaiting = Math.floor(age / cycleMs);
