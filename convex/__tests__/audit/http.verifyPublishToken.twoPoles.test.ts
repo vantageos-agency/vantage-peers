@@ -32,8 +32,11 @@ afterEach(() => {
 	vi.unstubAllGlobals();
 });
 
+const createT = () => convexTest(schema, modules);
+type T = ReturnType<typeof createT>;
+
 // ── POST /api/eta/verify-publish-token ───────────────────────────────────────
-async function seedReviewTask(t: ReturnType<typeof convexTest>, note: string, orgId?: string) {
+async function seedReviewTask(t: T, note: string, orgId?: string) {
 	return await t.run(async (ctx) => {
 		await ctx.db.insert("taskClosureConfig", {
 			key: "reviewerDefault",
@@ -56,7 +59,7 @@ async function seedReviewTask(t: ReturnType<typeof convexTest>, note: string, or
 	});
 }
 
-async function postVerify(t: ReturnType<typeof convexTest>, body: Record<string, string>) {
+async function postVerify(t: T, body: Record<string, string>) {
 	return t.fetch("/api/eta/verify-publish-token", {
 		method: "POST",
 		headers: { "Content-Type": "application/json", Authorization: `Bearer ${MASTER}` },
@@ -67,7 +70,7 @@ async function postVerify(t: ReturnType<typeof convexTest>, body: Record<string,
 describe("http:POST /api/eta/verify-publish-token", () => {
 	// Identity: the fleet master bearer (the only credential this route accepts).
 	test("http:POST /api/eta/verify-publish-token — a REVISE note plus a one-character expectedSha is not a valid publish approval", async () => {
-		const t = convexTest(schema, modules);
+		const t = createT();
 		const taskId = await seedReviewTask(t, "REVISE: needs work", "acme");
 		const res = await postVerify(t, { taskId, expectedSha: "e" });
 		const data = (await res.json()) as { valid: boolean };
@@ -75,7 +78,7 @@ describe("http:POST /api/eta/verify-publish-token", () => {
 	});
 
 	test("http:POST /api/eta/verify-publish-token — a refusal does not echo a client org's completionNote text", async () => {
-		const t = convexTest(schema, modules);
+		const t = createT();
 		const SECRET_NOTE = "acme-confidential-note-marker-7731";
 		const taskId = await seedReviewTask(t, SECRET_NOTE, "acme");
 		const res = await postVerify(t, { taskId, expectedSha: "zzzz" });
@@ -84,7 +87,7 @@ describe("http:POST /api/eta/verify-publish-token", () => {
 	});
 
 	test("http:POST /api/eta/verify-publish-token — a task owned by a client org is not resolved", async () => {
-		const t = convexTest(schema, modules);
+		const t = createT();
 		const taskId = await seedReviewTask(t, `[ETA-APPROVED] ${FULL_SHA}`, "acme");
 		const res = await postVerify(t, { taskId, expectedSha: FULL_SHA });
 		const data = (await res.json()) as { valid: boolean; reason?: string };
@@ -95,7 +98,7 @@ describe("http:POST /api/eta/verify-publish-token", () => {
 	// Positive control: the same request is VALID for a fleet task, so the denials
 	// above are refusals and not a route that rejects everything.
 	test("positive control — a fleet task with the marker and the full SHA is valid, and the response carries no note text", async () => {
-		const t = convexTest(schema, modules);
+		const t = createT();
 		const taskId = await seedReviewTask(t, `[ETA-APPROVED] reviewed ${FULL_SHA} all green`);
 		const res = await postVerify(t, { taskId, expectedSha: FULL_SHA });
 		const text = await res.text();
@@ -106,7 +109,7 @@ describe("http:POST /api/eta/verify-publish-token", () => {
 	});
 
 	test("a fleet task without the [ETA-APPROVED] marker is not an approval even when it cites the full SHA", async () => {
-		const t = convexTest(schema, modules);
+		const t = createT();
 		const taskId = await seedReviewTask(t, `REVISE: do not publish ${FULL_SHA}`);
 		const res = await postVerify(t, { taskId, expectedSha: FULL_SHA });
 		const data = (await res.json()) as { valid: boolean; reason?: string };
@@ -114,7 +117,7 @@ describe("http:POST /api/eta/verify-publish-token", () => {
 	});
 
 	test("a short or prefix SHA is refused before any task is read", async () => {
-		const t = convexTest(schema, modules);
+		const t = createT();
 		const taskId = await seedReviewTask(t, `[ETA-APPROVED] ${FULL_SHA}`);
 		for (const sha of [FULL_SHA.slice(0, 7), FULL_SHA.slice(0, 39), `${FULL_SHA}0`]) {
 			const res = await postVerify(t, { taskId, expectedSha: sha });
@@ -124,7 +127,7 @@ describe("http:POST /api/eta/verify-publish-token", () => {
 	});
 
 	test("a longer hex run that merely contains the SHA does not cite it", async () => {
-		const t = convexTest(schema, modules);
+		const t = createT();
 		const taskId = await seedReviewTask(t, `[ETA-APPROVED] ${FULL_SHA}ab`);
 		const res = await postVerify(t, { taskId, expectedSha: FULL_SHA });
 		const data = (await res.json()) as { valid: boolean; reason?: string };

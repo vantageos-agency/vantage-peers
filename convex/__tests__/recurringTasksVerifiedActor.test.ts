@@ -29,7 +29,8 @@ const modules = Object.fromEntries(
 	),
 );
 
-type T = ReturnType<typeof convexTest>;
+const createT = () => convexTest(schema, modules);
+type T = ReturnType<typeof createT>;
 
 const adminOf = (t: T, org: string) =>
 	t.withIdentity({

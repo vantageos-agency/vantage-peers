@@ -1104,7 +1104,7 @@ app.post("/token", async (c) => {
 		const record = (await internalClient().query(
 			// biome-ignore lint/suspicious/noExplicitAny: Convex string API
 			"oauth:getRefreshTokenForGrant" as any,
-			{ tokenHash: refreshTokenHash },
+			{ presentedHash: refreshTokenHash },
 		)) as {
 			clientId: string;
 			userId: string;
@@ -1181,10 +1181,8 @@ app.post("/token", async (c) => {
 		// presentation of an already-spent token is a REPLAY: the door revokes the
 		// whole token family, so whoever redeemed it first loses the pair he was
 		// given, and the caller gets invalid_grant like any other refusal.
-		const newRefreshToken = randomOpaqueToken();
-		const newRefreshTokenHash = await sha256Hex(newRefreshToken);
-		const accessToken = randomOpaqueToken();
-		const accessTokenHash = await sha256Hex(accessToken);
+		// The replacement pair is generated INSIDE the Convex mutation and returned
+		// once; this server neither chooses nor sends the values.
 		const now = Date.now();
 		const rotated = (await internalClient().mutation(
 			// biome-ignore lint/suspicious/noExplicitAny: Convex string API
@@ -1192,8 +1190,6 @@ app.post("/token", async (c) => {
 			{
 				presentedHash: refreshTokenHash,
 				clientId: record.clientId,
-				newRefreshTokenHash,
-				newAccessTokenHash: accessTokenHash,
 				scopeProfile: profile.profileId,
 				// SC: standardized on mcp:full
 				scopes: ["mcp:full"],
@@ -1206,15 +1202,17 @@ app.post("/token", async (c) => {
 					? { clerkOrgSlug: profile.clerkOrgSlug }
 					: {}),
 			},
-		)) as { status: "ok" | "reused" | "invalid" };
+		)) as
+			| { status: "ok"; issued: { refresh: string; access: string } }
+			| { status: "reused" | "invalid" };
 		if (rotated.status !== "ok") {
 			return c.json({ error: "invalid_grant" }, 400);
 		}
 		return c.json({
-			access_token: accessToken,
+			access_token: rotated.issued.access,
 			token_type: "Bearer",
 			expires_in: ACCESS_TOKEN_TTL_SECONDS,
-			refresh_token: newRefreshToken,
+			refresh_token: rotated.issued.refresh,
 			// SC: standardized on mcp:full
 			scope: "mcp:full",
 		});

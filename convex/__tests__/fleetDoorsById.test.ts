@@ -15,6 +15,7 @@ import { convexTest } from "../../tests/fixtures/convexTestWithServiceAccount";
 import { testClerkOrgId } from "../../tests/fixtures/testClerkOrgId";
 import { seedFleetAgents } from "../../tests/lib/seedFleetAgents";
 import { api } from "../_generated/api";
+import type { Id } from "../_generated/dataModel";
 import schema from "../schema";
 
 const modules = Object.fromEntries(
@@ -369,7 +370,7 @@ describe("fixPatterns:addAttempt - the attempting agent must belong to the fleet
 		await t.finishAllScheduledFunctions(vi.runAllTimers);
 		return id;
 	}
-	const attempt = (patternId: never, extra: object = {}) => ({
+	const attempt = (patternId: Id<"fixPatterns">, extra: object = {}) => ({
 		patternId,
 		description: "d",
 		worked: false,

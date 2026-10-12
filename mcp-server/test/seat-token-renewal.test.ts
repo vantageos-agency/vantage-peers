@@ -22,6 +22,7 @@
  * Convex query enforces it at, not re-implemented here.
  */
 
+import { randomBytes } from "node:crypto";
 import { Hono } from "hono";
 import { beforeEach, describe, expect, it } from "vitest";
 import { app } from "../server-http.js";
@@ -93,7 +94,7 @@ function makeFakeConvex() {
 				// `spent: true`, an unspent expired one answers null.
 				for (const [raw, row] of state.refreshTokensByRaw) {
 					const hash = await sha256Hex(raw);
-					if (hash === args.tokenHash) {
+					if (hash === args.presentedHash) {
 						const spent = row.revokedAt !== undefined;
 						if (!spent && row.expiresAt < Date.now()) return null;
 						return {
@@ -119,12 +120,15 @@ function makeFakeConvex() {
 					if (row.expiresAt < Date.now()) return { status: "invalid" };
 					if (row.clientId !== args.clientId) return { status: "invalid" };
 					row.revokedAt = Date.now();
-					state.newRefreshHashesSeen.push(args.newRefreshTokenHash as string);
+					const refresh = randomBytes(32).toString("hex");
+					const access = randomBytes(32).toString("hex");
+					const refreshHash = await sha256Hex(refresh);
+					state.newRefreshHashesSeen.push(refreshHash);
 					state.accessTokenInserts.push({
-						tokenHash: args.newAccessTokenHash as string,
-						refreshTokenHash: args.newRefreshTokenHash as string,
+						tokenHash: await sha256Hex(access),
+						refreshTokenHash: refreshHash,
 					});
-					return { status: "ok" };
+					return { status: "ok", issued: { refresh, access } };
 				}
 				return { status: "invalid" };
 			}

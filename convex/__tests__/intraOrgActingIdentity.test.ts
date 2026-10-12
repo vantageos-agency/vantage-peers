@@ -15,11 +15,13 @@
 // DELETION PROBE (not committed): remove the requireOrchestratorOnRoster call
 // in a site and that site's REFUSED pole goes RED.
 
+import type { FunctionReference } from "convex/server";
 import { convexTest } from "../../tests/fixtures/convexTestWithServiceAccount";
 import { describe, expect, test } from "vitest";
 import { testClerkOrgId } from "../../tests/fixtures/testClerkOrgId";
 import { agentIdOf } from "../../tests/lib/agentIdOf";
 import { api } from "../_generated/api";
+import type { Id } from "../_generated/dataModel";
 import schema from "../schema";
 import {
 	actingWith,
@@ -36,10 +38,9 @@ const modules = Object.fromEntries(
 	),
 );
 
-type T = ReturnType<typeof convexTest>;
+const createT = () => convexTest(schema, modules);
+type T = ReturnType<typeof createT>;
 type Identity = Parameters<T["withIdentity"]>[0];
-const createT = (): T =>
-	convexTest(schema, modules) as unknown as ReturnType<typeof convexTest>;
 
 // `org-b/<name>` -> credential of that org-b agent (written by fixture): a member
 // acting as an agent of its org presents it (the task doors decide on agent IDs).
@@ -392,7 +393,7 @@ describe("recurringTasks — one roster rule (normalised, '*' names nobody)", ()
 		const bobId = await agentIdOf(t, "org-b", "bob");
 		const svc = t.withIdentity({ subject: "test-service-account-user-id" } as Identity);
 		return {
-			mutation: (fn: never, a: Record<string, unknown>) =>
+			mutation: (fn: FunctionReference<"mutation", "public">, a: Record<string, unknown>) =>
 				svc.mutation(fn, {
 					...a,
 					verifiedActor: { agentId: bobId, orgSlug: "org-b" },
@@ -426,7 +427,7 @@ describe("recurringTasks — one roster rule (normalised, '*' names nobody)", ()
 			callerOrchestrator: "bob",
 			assignedTo: "BEA",
 		});
-		expect((await t.run((c) => c.db.get(id)))?.assignedTo).toBe("BEA");
+		expect((await t.run((c) => c.db.get(id as Id<"recurringTasks">)))?.assignedTo).toBe("BEA");
 	});
 	test("MASTER unchanged", async () => {
 		const t = await fixture();

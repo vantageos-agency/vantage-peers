@@ -76,9 +76,12 @@ describe("oauth:createAuthorizationCode", () => {
 	});
 });
 
+const createT = () => convexTest(schema, modules);
+type T = ReturnType<typeof createT>;
+
 describe("oauth:patchScopeProfileEmergency", () => {
 	const seedProfile = (
-		t: ReturnType<typeof convexTest>,
+		t: T,
 		profileId: string,
 		prefixes: string[],
 	) =>

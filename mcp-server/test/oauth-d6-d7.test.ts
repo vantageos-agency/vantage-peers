@@ -12,6 +12,7 @@
  * access_tokens, refresh_tokens — only the rows the tests exercise.
  */
 
+import { createHash, randomBytes } from "node:crypto";
 import { timingSafeEqual } from "@vantageos/cloud-identity";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { app, parseBasicAuthSecret } from "../server-http.js";
@@ -116,7 +117,7 @@ function makeFakeConvex() {
 				return state.mappings.get(args.orgSlug as string) ?? null;
 			}
 			if (name === "oauth:getRefreshTokenForGrant") {
-				const r = state.refreshTokens.get(args.tokenHash as string);
+				const r = state.refreshTokens.get(args.presentedHash as string);
 				return r ? { ...r, spent: false } : null;
 			}
 			throw new Error(`unmocked query: ${name}`);
@@ -127,14 +128,17 @@ function makeFakeConvex() {
 				const r = state.refreshTokens.get(args.presentedHash as string);
 				if (!r || r.clientId !== args.clientId) return { status: "invalid" };
 				state.refreshTokens.delete(args.presentedHash as string);
-				state.refreshTokens.set(args.newRefreshTokenHash as string, {
+				const refresh = randomBytes(32).toString("hex");
+				const access = randomBytes(32).toString("hex");
+				const sha = (x: string) => createHash("sha256").update(x).digest("hex");
+				state.refreshTokens.set(sha(refresh), {
 					clientId: r.clientId,
 					userId: r.userId,
 					scopeProfile: args.scopeProfile as string,
 					expiresAt: args.refreshExpiresAt as number,
 				});
 				state.accessTokens.push({
-					tokenHash: args.newAccessTokenHash as string,
+					tokenHash: sha(access),
 					clientId: r.clientId,
 					userId: r.userId,
 					scopeProfile: args.scopeProfile as string,
@@ -142,7 +146,7 @@ function makeFakeConvex() {
 					clerkOrgSlug: args.clerkOrgSlug as string | undefined,
 					revoked: false,
 				});
-				return { status: "ok" };
+				return { status: "ok", issued: { refresh, access } };
 			}
 			if (name === "oauth:registerPublicClient") {
 				const row: ClientRow = {

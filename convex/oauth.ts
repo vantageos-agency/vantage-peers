@@ -2319,11 +2319,21 @@ async function mintAccessToken(
 		...(a.codeHash !== undefined ? { codeHash: a.codeHash } : {}),
 		...(a.orgRole !== undefined ? { orgRole: a.orgRole } : {}),
 		...(a.principal !== undefined ? { principal: a.principal } : {}),
-		...(a.familyId !== undefined ? { familyId: a.familyId } : {}),
+		// The family of an access token is the family of the refresh token it is
+		// linked to: a rotation passes it explicitly; a token minted beside a first
+		// refresh token (code exchange, provisioning) belongs to the family named by
+		// that refresh token's own digest, so replaying it revokes this one too.
+		...(familyForAccessToken(a) !== undefined
+			? { familyId: familyForAccessToken(a) }
+			: {}),
 		...(seatAgent
 			? { agentId: seatAgent._id, agentOrgId: seatAgent.orgSlug }
 			: {}),
 	});
+}
+
+function familyForAccessToken(a: MintAccessTokenArgs): string | undefined {
+	return a.familyId ?? a.refreshTokenHash;
 }
 
 export const createAccessToken = mutation({
@@ -2508,7 +2518,7 @@ export const getRefreshTokenByHash = query({
 // unspent one past its expiry, answers null.
 // ─────────────────────────────────────────────────────────────────────────────
 export const getRefreshTokenForGrant = query({
-	args: { tokenHash: v.string() },
+	args: { presentedHash: v.string() },
 	returns: v.union(
 		v.object({
 			clientId: v.string(),
@@ -2525,7 +2535,7 @@ export const getRefreshTokenForGrant = query({
 		await requireServiceAccount(ctx, "oauth:getRefreshTokenForGrant");
 		const row = await ctx.db
 			.query("oauth_refresh_tokens")
-			.withIndex("by_tokenHash", (q) => q.eq("tokenHash", args.tokenHash))
+			.withIndex("by_tokenHash", (q) => q.eq("tokenHash", args.presentedHash))
 			.unique();
 		if (!row) return null;
 		const spent = row.revokedAt !== undefined;
@@ -2612,8 +2622,6 @@ export const rotateRefreshToken = mutation({
 		presentedHash: v.string(),
 		// The client that authenticated at /token; must be the token's own.
 		clientId: v.string(),
-		newRefreshTokenHash: v.string(),
-		newAccessTokenHash: v.string(),
 		// The scope profile snapshot the pair is minted from (the grant re-resolves
 		// authority from the CURRENT profile row, never from the old token).
 		scopeProfile: v.string(),
@@ -2625,13 +2633,16 @@ export const rotateRefreshToken = mutation({
 		accessExpiresAt: v.number(),
 		refreshExpiresAt: v.number(),
 	},
-	returns: v.object({
-		status: v.union(
-			v.literal("ok"),
-			v.literal("reused"),
-			v.literal("invalid"),
-		),
-	}),
+	returns: v.union(
+		v.object({
+			status: v.literal("ok"),
+			// The replacement pair, generated HERE and returned once: no caller
+			// chooses (or sends) the values it will be handed.
+			issued: v.object({ refresh: v.string(), access: v.string() }),
+		}),
+		v.object({ status: v.literal("reused") }),
+		v.object({ status: v.literal("invalid") }),
+	),
 	handler: async (ctx, args) => {
 		// write-contract: MCP-transport-only — issued via mcp-server client.mutation("oauth:rotateRefreshToken", …) at mcp-server/server-http.ts (the /token refresh_token grant, imperative); never from a subscribing pre-org client shell. The no-org throw is a refusal at an imperative MCP call, never at a render.
 		await requireServiceAccount(ctx, "oauth:rotateRefreshToken");
@@ -2653,9 +2664,13 @@ export const rotateRefreshToken = mutation({
 		if (row.expiresAt < Date.now()) return { status: "invalid" as const };
 		if (row.clientId !== args.clientId) return { status: "invalid" as const };
 
+		const refreshToken = randomOpaqueHex(32);
+		const accessToken = randomOpaqueHex(32);
+		const nextRefreshHash = await sha256Hex(refreshToken);
+		const nextAccessHash = await sha256Hex(accessToken);
 		await ctx.db.patch(row._id, { revokedAt: Date.now() });
 		await ctx.db.insert("oauth_refresh_tokens", {
-			tokenHash: args.newRefreshTokenHash,
+			tokenHash: nextRefreshHash,
 			clientId: row.clientId,
 			userId: row.userId,
 			scopeProfile: args.scopeProfile,
@@ -2664,7 +2679,7 @@ export const rotateRefreshToken = mutation({
 			familyId,
 		});
 		await mintAccessToken(ctx, {
-			tokenHash: args.newAccessTokenHash,
+			tokenHash: nextAccessHash,
 			clientId: row.clientId,
 			userId: row.userId,
 			scopes: args.scopes,
@@ -2673,11 +2688,14 @@ export const rotateRefreshToken = mutation({
 			namespaceReadPrefixes: args.namespaceReadPrefixes,
 			namespaceWritePrefixes: args.namespaceWritePrefixes,
 			expiresAt: args.accessExpiresAt,
-			refreshTokenHash: args.newRefreshTokenHash,
+			refreshTokenHash: nextRefreshHash,
 			...(args.clerkOrgSlug !== undefined ? { clerkOrgSlug: args.clerkOrgSlug } : {}),
 			familyId,
 		});
-		return { status: "ok" as const };
+		return {
+			status: "ok" as const,
+			issued: { refresh: refreshToken, access: accessToken },
+		};
 	},
 });
 
