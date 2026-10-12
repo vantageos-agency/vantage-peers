@@ -98,7 +98,7 @@ export async function agentIdOfLabelInOrg(
 		(org.orgSlug === null || org.orgSlug === undefined
 			? (await fleetOperatorRef(ctx.db))?.id
 			: row.clerkOrgId);
-	if (orgId === undefined) return undefined;
+	if (orgId == null) return undefined;
 	const resolved = await resolveActingPrincipal(
 		{ kind: "agent", agentId: row._id, verifiedOrgId: orgId },
 		agentLookupsByOrgId(ctx),
@@ -206,7 +206,7 @@ export async function isAgentOwnerOfRow(
 	const orgId =
 		row.clerkOrgId ??
 		(row.orgId === undefined ? (await fleetOperatorRef(ctx.db))?.id : undefined);
-	if (orgId === undefined) return false;
+	if (orgId == null) return false;
 	const resolved = await resolveActingPrincipal(
 		{ kind: "agent", agentId, verifiedOrgId: orgId },
 		agentLookupsByOrgId(ctx),

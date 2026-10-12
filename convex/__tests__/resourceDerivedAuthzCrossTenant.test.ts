@@ -46,10 +46,10 @@ const modules = Object.fromEntries(
 	),
 );
 
-function createT(): ReturnType<typeof convexTest> {
+function createT() {
 	return convexTest(schema, modules).withIdentity({
 		subject: "test-service-account-user-id",
-	}) as unknown as ReturnType<typeof convexTest>;
+	});
 }
 
 const TENANT_A = "tenant-a";

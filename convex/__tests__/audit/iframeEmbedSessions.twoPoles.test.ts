@@ -18,7 +18,8 @@ const modules = Object.fromEntries(
 	),
 );
 
-type T = ReturnType<typeof convexTest>;
+const createT = () => convexTest(schema, modules);
+type T = ReturnType<typeof createT>;
 const asOrg = (t: T, org: string) =>
 	t.withIdentity({
 		subject: `user-${org}`,
@@ -43,7 +44,7 @@ async function seedOrg(t: T, slug: string) {
 describe("iframeEmbedSessions:createSession", () => {
 	test("iframeEmbedSessions:createSession — a member of org B cannot re-use org A's sessionId, and org A keeps read/revoke on its own session", async () => {
 		// Identities: org A member and org B member (Clerk org claim), neither is the service account.
-		const t = convexTest(schema, modules);
+		const t = createT();
 		await seedOrg(t, "org-a");
 		await seedOrg(t, "org-b");
 		const future = Date.now() + 3_600_000;
@@ -70,7 +71,7 @@ describe("iframeEmbedSessions:createSession", () => {
 
 	test("iframeEmbedSessions:createSession — userId is taken from the verified identity, not the caller's claim", async () => {
 		// Identity: org A member.
-		const t = convexTest(schema, modules);
+		const t = createT();
 		await seedOrg(t, "org-a");
 		const tA = asOrg(t, "org-a");
 		let storedUserId: string | undefined;
