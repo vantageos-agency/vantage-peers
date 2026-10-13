@@ -7,7 +7,8 @@
 //    oauth_scope_profiles row, so a seat whose label carries an accent
 //    ("hélios") but whose profileId does not ("helios-iris-rh") never resolved
 //    its agent through the label fallback. The door binds it BY ID.
-//    REFUSED  not the service account; unknown profile; unknown agent; an
+//    (internalMutation: no client or token reaches it, run with the admin key)
+//    REFUSED  unknown profile; unknown agent; an
 //             inactive agent; an agent of another org (judged by org ID); a
 //             profile that does not name exactly one allowlist entry.
 //    PRESENT  the bind succeeds, resolveSeatAgent returns that agent.
@@ -18,7 +19,7 @@
 //      admin-minted token's `admin-mint:*` clientId) raises a CODED ConvexError
 //      (CLIENT_NOT_FOUND) whose payload survives Convex's redaction, never a plain
 //      Error.
-//    - oauth:revokeAccessTokenById revokes ONE access token by its row _id.
+//    - oauth:revokeAccessTokensOnly({ tokenId }) revokes ONE access token by its row _id.
 //    - the client token walks paginate ONE table per transaction (Convex rejects
 //      a second `.paginate` in one function; convex-test does not, so the guard
 //      reads the source).
@@ -26,7 +27,7 @@
 import { readFileSync } from "node:fs";
 import { describe, expect, test } from "vitest";
 import { convexTest } from "../../tests/fixtures/convexTestWithServiceAccount";
-import { api } from "../_generated/api";
+import { api, internal } from "../_generated/api";
 import { resolveSeatAgent } from "../lib/seatAgent";
 import schema from "../schema";
 
@@ -114,7 +115,7 @@ describe("oauth:bindScopeProfileAgent", () => {
 		expect(
 			await t.run((ctx) => resolveSeatAgent(ctx, heliosToken)),
 		).toBeNull();
-		const res = await asService(t).mutation(api.oauth.bindScopeProfileAgent, {
+		const res = await asService(t).mutation(internal.oauth.bindScopeProfileAgent, {
 			profileId: "helios-iris-rh",
 			agentId: helios,
 		});
@@ -127,22 +128,11 @@ describe("oauth:bindScopeProfileAgent", () => {
 		expect(agent?._id).toBe(helios);
 	});
 
-	test("REFUSED: not the service account", async () => {
-		const t = createT();
-		const { helios } = await seed(t);
-		await expect(
-			asMember(t).mutation(api.oauth.bindScopeProfileAgent, {
-				profileId: "helios-iris-rh",
-				agentId: helios,
-			}),
-		).rejects.toThrow(/RBAC_DENIED/);
-	});
-
 	test("REFUSED: unknown profile", async () => {
 		const t = createT();
 		const { helios } = await seed(t);
 		await expect(
-			asService(t).mutation(api.oauth.bindScopeProfileAgent, {
+			asService(t).mutation(internal.oauth.bindScopeProfileAgent, {
 				profileId: "ghost",
 				agentId: helios,
 			}),
@@ -153,7 +143,7 @@ describe("oauth:bindScopeProfileAgent", () => {
 		const t = createT();
 		const { retired } = await seed(t);
 		await expect(
-			asService(t).mutation(api.oauth.bindScopeProfileAgent, {
+			asService(t).mutation(internal.oauth.bindScopeProfileAgent, {
 				profileId: "helios-iris-rh",
 				agentId: retired,
 			}),
@@ -164,7 +154,7 @@ describe("oauth:bindScopeProfileAgent", () => {
 		const t = createT();
 		const { foreign } = await seed(t);
 		await expect(
-			asService(t).mutation(api.oauth.bindScopeProfileAgent, {
+			asService(t).mutation(internal.oauth.bindScopeProfileAgent, {
 				profileId: "helios-iris-rh",
 				agentId: foreign,
 			}),
@@ -182,7 +172,7 @@ describe("oauth:bindScopeProfileAgent", () => {
 		const t = createT();
 		const { helios } = await seed(t);
 		await expect(
-			asService(t).mutation(api.oauth.bindScopeProfileAgent, {
+			asService(t).mutation(internal.oauth.bindScopeProfileAgent, {
 				profileId: "duo-iris-rh",
 				agentId: helios,
 			}),
@@ -194,7 +184,7 @@ describe("oauth:bindScopeProfileAgent", () => {
 		const { helios } = await seed(t);
 		await t.run((ctx) => ctx.db.delete(helios));
 		await expect(
-			asService(t).mutation(api.oauth.bindScopeProfileAgent, {
+			asService(t).mutation(internal.oauth.bindScopeProfileAgent, {
 				profileId: "helios-iris-rh",
 				agentId: helios,
 			}),
@@ -231,13 +221,13 @@ describe("oauth:revokeAccessTokensOnly on a client with no row", () => {
 			);
 		expect(err).not.toBeNull();
 		expect((err as { name?: string }).name).toBe("ConvexError");
-		expect(String((err as { data?: unknown }).data)).toMatch(
-			/^CLIENT_NOT_FOUND/,
+		expect(JSON.stringify((err as { data?: unknown }).data)).toContain(
+			"CLIENT_NOT_FOUND",
 		);
 	});
 });
 
-describe("oauth:revokeAccessTokenById", () => {
+describe("oauth:revokeAccessTokensOnly({ tokenId })", () => {
 	test("PRESENT: revokes ONE token of an admin-minted client and leaves its sibling", async () => {
 		const t = createT();
 		const [one, other] = await t.run(async (ctx) => [
@@ -250,7 +240,7 @@ describe("oauth:revokeAccessTokenById", () => {
 				tokenRow("u".repeat(64), "admin-mint:abc123"),
 			),
 		]);
-		const res = await asService(t).mutation(api.oauth.revokeAccessTokenById, {
+		const res = await asService(t).mutation(api.oauth.revokeAccessTokensOnly, {
 			tokenId: one,
 			reason: REASON,
 		});
@@ -273,10 +263,10 @@ describe("oauth:revokeAccessTokenById", () => {
 			),
 		);
 		const args = { tokenId: one, reason: REASON };
-		await asService(t).mutation(api.oauth.revokeAccessTokenById, args);
+		await asService(t).mutation(api.oauth.revokeAccessTokensOnly, args);
 		const first = await t.run((ctx) => ctx.db.get(one));
 		const again = await asService(t).mutation(
-			api.oauth.revokeAccessTokenById,
+			api.oauth.revokeAccessTokensOnly,
 			args,
 		);
 		expect(again.alreadyRevoked).toBe(true);
@@ -293,11 +283,34 @@ describe("oauth:revokeAccessTokenById", () => {
 			),
 		);
 		await expect(
-			asMember(t).mutation(api.oauth.revokeAccessTokenById, {
+			asMember(t).mutation(api.oauth.revokeAccessTokensOnly, {
 				tokenId: one,
 				reason: REASON,
 			}),
 		).rejects.toThrow(/RBAC_DENIED/);
+		expect((await t.run((ctx) => ctx.db.get(one)))?.revokedAt).toBeUndefined();
+	});
+
+	test("REFUSED: neither or both targets", async () => {
+		const t = createT();
+		const one = await t.run((ctx) =>
+			ctx.db.insert(
+				"oauth_access_tokens",
+				tokenRow("t".repeat(64), "admin-mint:abc123"),
+			),
+		);
+		await expect(
+			asService(t).mutation(api.oauth.revokeAccessTokensOnly, {
+				reason: REASON,
+			}),
+		).rejects.toThrow(/INVALID_TARGET/);
+		await expect(
+			asService(t).mutation(api.oauth.revokeAccessTokensOnly, {
+				clientId: "admin-mint:abc123",
+				tokenId: one,
+				reason: REASON,
+			}),
+		).rejects.toThrow(/INVALID_TARGET/);
 		expect((await t.run((ctx) => ctx.db.get(one)))?.revokedAt).toBeUndefined();
 	});
 
@@ -310,20 +323,20 @@ describe("oauth:revokeAccessTokenById", () => {
 			),
 		);
 		await expect(
-			asService(t).mutation(api.oauth.revokeAccessTokenById, {
+			asService(t).mutation(api.oauth.revokeAccessTokensOnly, {
 				tokenId: one,
 				reason: "short",
 			}),
 		).rejects.toThrow(/REASON_TOO_SHORT/);
 		await expect(
-			asService(t).mutation(api.oauth.revokeAccessTokenById, {
+			asService(t).mutation(api.oauth.revokeAccessTokensOnly, {
 				tokenId: "not-an-id",
 				reason: REASON,
 			}),
 		).rejects.toThrow(/not a valid oauth_access_tokens ID/);
 		await t.run((ctx) => ctx.db.delete(one));
 		await expect(
-			asService(t).mutation(api.oauth.revokeAccessTokenById, {
+			asService(t).mutation(api.oauth.revokeAccessTokensOnly, {
 				tokenId: one,
 				reason: REASON,
 			}),

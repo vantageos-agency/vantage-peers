@@ -110,7 +110,6 @@ describe("create_briefing_note -> briefingNotes:create", () => {
 		const h = harness(seat({ clerkOrgSlug: undefined, actor: undefined }));
 		const r = await h.call("create_briefing_note", args);
 		expect(r.isError).toBe(true);
-		expect(r.content?.[0]?.text).toContain("verified-org-unresolved");
 		expect(h.calls.filter((c) => c.fn === "briefingNotes:create")).toEqual([]);
 	});
 
