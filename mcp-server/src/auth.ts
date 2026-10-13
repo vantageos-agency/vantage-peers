@@ -1043,6 +1043,11 @@ function clerkJwks(): ReturnType<typeof createRemoteJWKSet> {
 	return _clerkJwks;
 }
 
+/** Test hook: forget the cached key set so the next verification refetches. */
+export function _resetClerkJwksCacheForTest(): void {
+	_clerkJwks = null;
+}
+
 type ClerkPayload = { sub: string; org_id: string; exp: number };
 
 /**
