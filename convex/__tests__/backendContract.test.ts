@@ -23,6 +23,7 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { ConvexError } from "convex/values";
 import { describe, expect, test } from "vitest";
+import { listPublicConvexFunctions } from "../../scripts/lib/convex-public-functions.mjs";
 import { convexTest } from "../../tests/fixtures/convexTestWithServiceAccount";
 import { testClerkOrgId } from "../../tests/fixtures/testClerkOrgId";
 import { api } from "../_generated/api";
@@ -31,8 +32,6 @@ import {
 	BACKEND_FUNCTIONS,
 } from "../lib/backendManifest";
 import schema from "../schema";
-// @ts-expect-error -- plain ESM script helper, no type declarations
-import { listPublicConvexFunctions } from "../../scripts/lib/convex-public-functions.mjs";
 
 const CONVEX_DIR = join(dirname(fileURLToPath(import.meta.url)), "..");
 
@@ -82,7 +81,9 @@ describe("SYNC -- the manifest is the public surface of convex/", () => {
 
 	test("manifest lists its own door and is sorted, unique, well-formed", () => {
 		expect(BACKEND_FUNCTIONS).toContain("meta:backendContract");
-		expect([...BACKEND_FUNCTIONS]).toEqual([...new Set(BACKEND_FUNCTIONS)].sort());
+		expect([...BACKEND_FUNCTIONS]).toEqual(
+			[...new Set(BACKEND_FUNCTIONS)].sort(),
+		);
 		for (const id of BACKEND_FUNCTIONS) {
 			expect(id).toMatch(/^[A-Za-z0-9_/]+:[A-Za-z0-9_]+$/);
 		}
@@ -150,7 +151,9 @@ describe("REFUSED -- a refusal says so, it is not an empty success", () => {
 			org_id: testClerkOrgId("org-a"),
 			organizationSlug: "org-a",
 		} as Parameters<typeof t.withIdentity>[0]);
-		const data = await refusal(() => member.query(api.meta.backendContract, {}));
+		const data = await refusal(() =>
+			member.query(api.meta.backendContract, {}),
+		);
 		expect(data).toContain("RBAC_DENIED");
 		expect(data).toContain("meta:backendContract");
 	});

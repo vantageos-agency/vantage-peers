@@ -52,7 +52,6 @@ import {
 import { resolveClerkSessionFromRequest } from "@vantageos/cloud-identity/clerk-handshake";
 import { type Context, Hono } from "hono";
 import { cors } from "hono/cors";
-import { bootCheckOrExit } from "./src/backendContract.js";
 import {
 	bearerAuthMiddleware,
 	internalClient,
@@ -77,6 +76,7 @@ import {
 	renderOrgPicker,
 	sessionTokenFrom,
 } from "./src/authorize.js";
+import { bootCheckOrExit } from "./src/backendContract.js";
 import { registerTools } from "./src/tools.js";
 import { listUiResources, readUiResource } from "./src/ui-resources/index.js";
 

@@ -1,10 +1,10 @@
 import { v } from "convex/values";
 import { query } from "./_generated/server";
+import { requireResolvedCaller, withOrgScope } from "./lib/auth";
 import {
 	BACKEND_CONTRACT_VERSION,
 	BACKEND_FUNCTIONS,
 } from "./lib/backendManifest";
-import { requireResolvedCaller, withOrgScope } from "./lib/auth";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // backendContract -- what THIS deployed backend exposes, said by the backend.
