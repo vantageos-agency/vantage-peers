@@ -58,6 +58,38 @@ fi
 [ "$in_perimeter" != no ] || die "outside this station's perimeter: $real is neither inside $own_top nor a registered worktree of this repository"
 echo "perimeter: $in_perimeter" >&2
 
+# A LOCKED WORKTREE IS LIVE WORK, refused here whoever the caller is. `git worktree lock`
+# is the owner's explicit marker, and the removal below falls back to rm -rf when git
+# refuses, so a lock that is not read here is a lock the fallback deletes through. The
+# porcelain block for the target is matched on its resolved path, the path taken whole.
+locked_reg=no
+cur=""
+while IFS= read -r line || [ -n "$line" ]; do
+  case $line in
+    "worktree "*) cur=$(realpath -m -- "${line#worktree }" 2>/dev/null) || cur="" ;;
+    locked|"locked "*) [ -n "$cur" ] && [ "$cur" = "$real" ] && locked_reg=yes ;;
+  esac
+done <<EOF
+$(git -C "$own_top" worktree list --porcelain 2>/dev/null)
+EOF
+if [ "$locked_reg" = yes ]; then
+  echo "REFUSED $real — locked by its owner (git worktree lock): live work" >&2
+  exit 2
+fi
+# The removal below acts on the TARGET's repository, which need not be the caller's: a
+# nested foreign repository inside the caller's checkout is in the perimeter, and its
+# worktrees are absent from the caller's list. So the lock is also read from the target's
+# own git dir, where a linked worktree keeps its `locked` file. An unreadable git dir means
+# the lock cannot be judged, and an unjudged lock is never handed to the rm fallback.
+target_gitdir=$(git -C "$real" rev-parse --absolute-git-dir 2>/dev/null) && [ -n "$target_gitdir" ] || {
+  echo "REFUSED: COULD-NOT-JUDGE whether $real is locked — its git dir cannot be read, so nothing is removed" >&2
+  exit 2
+}
+if [ -f "$target_gitdir/locked" ]; then
+  echo "REFUSED $real — locked by its owner (git worktree lock): live work" >&2
+  exit 2
+fi
+
 repo=$(git -C "$real" remote get-url origin 2>/dev/null | sed -E 's#^git@[^:]+:##; s#^https?://[^/]+/##; s#\.git$##')
 [ -n "$repo" ] || die "cannot derive the repository from $real — a platform question about an unknown repository answers about nothing"
 
