@@ -99,9 +99,7 @@ async function loadResolver(
 			: null;
 	const fleet =
 		requestedSlug !== undefined
-			? requested !== null &&
-				requested.isActive &&
-				requested.orgKind === "operator"
+			? requested?.isActive === true && requested.orgKind === "operator"
 				? requested
 				: undefined
 			: operators.length === 1
