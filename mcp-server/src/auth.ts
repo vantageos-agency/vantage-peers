@@ -133,7 +133,7 @@ export type OAuthContext = {
 	 * "person" when this token acts for a signed-in person (set at mint from
 	 * the authorization-code flow); absent on a seat token. A person token's
 	 * WRITES pass the writer-role gate; a seat token's do not change.
-	 * Also read by {@link isSeatActingAsItself}: ANY present value withholds
+	 * ANY present value withholds
 	 * the seat exemption, so a principal kind added later is not exempt by
 	 * default.
 	 */
@@ -175,7 +175,7 @@ export type OAuthContext = {
 	 *                 an ORG-LEVEL seat that cannot act as an agent.
 	 *   - undefined : the provider predates the stamp (older Convex than this
 	 *                 server, reader-first deploy). The legacy single-name rule
-	 *                 applies until Convex is deployed; see {@link isSeatActingAsItself}.
+	 *                 applies until Convex is deployed.
 	 */
 	seatAgent?: {
 		agentId: string;
@@ -394,7 +394,7 @@ export const AGENT_CREDENTIAL_HEADER = "x-vantage-agent-credential";
  *
  *   strict (DEFAULT) — a typed acting name from a non-master caller with NO
  *     presented credential is REFUSED with AGENT_CREDENTIAL_REQUIRED, except
- *     a seat token naming itself ({@link isSeatActingAsItself}).
+ *     a seat token that resolved its agent BY ID.
  *   permissive (explicit opt-in only) — that same call is accepted and
  *     RECORDED as unattributed (see {@link recordUnattributedClaim}). A
  *     presented credential is still authoritative: a typed name that disagrees
@@ -470,29 +470,23 @@ export function actorCredentialMode(): ActorCredentialMode {
 }
 
 /**
- * checkActorBinding — the ONE predicate that decides whether a name a caller
- * TYPED into a tool call may be treated as the acting agent. A typed name is a
- * CLAIM; it is never an authority over a presented credential.
+ * checkActorBinding — whether a name a caller TYPED into a tool call may stand
+ * in a tool call. A typed name is a CLAIM, never an identity: the acting agent is
+ * the one the verified credential or the seat's agent ID resolved, and a typed
+ * name that is not that agent's own label is REFUSED (the stricter option).
  *
- *   - actor resolved          → the claim must EQUAL `actor.agentName` after
- *                               normalizeOrchestratorId on both sides (NFC,
- *                               lowercase, trim — the rule every sibling gate uses).
- *                               Another agent's name is AGENT_IDENTITY_MISMATCH
- *                               in EVERY mode: compatibility never means a
- *                               presented credential can be overridden by a
- *                               typed name.
- *   - no actor, master scope  → passes. The master bearer / local-stdio trust
+ *   - actor resolved (credential)   → the claim must be that agent's label
+ *                               (AGENT_IDENTITY_MISMATCH otherwise, in EVERY mode).
+ *   - seat resolved to an agent BY ID → the same, against the seat agent's label.
+ *   - no agent, master scope   → passes. The master bearer / local-stdio trust
  *                               context is an all-authority identity that is
- *                               not an agent; it already reaches every row and
- *                               every name, so a declared name here widens
- *                               nothing. Named, not hidden.
- *   - no actor, otherwise     → per {@link actorCredentialMode}:
- *                               permissive → accepted (the caller then records
- *                               it unattributed, see registerTool's
- *                               bindActingNames); strict → REFUSED
- *                               (AGENT_CREDENTIAL_REQUIRED), except a seat
- *                               token naming its own single allowlisted name
- *                               ({@link isSeatActingAsItself}).
+ *                               not an agent; a declared name widens nothing.
+ *   - no agent, otherwise      → per {@link actorCredentialMode}: permissive →
+ *                               accepted (recorded unattributed, see
+ *                               registerTool's bindActingNames); strict →
+ *                               REFUSED (AGENT_CREDENTIAL_REQUIRED). A seat that
+ *                               resolved no agent has no exemption: a typed name
+ *                               is not an identity.
  *   - no ctx at all           → REFUSED (absence is never authority).
  */
 export function checkActorBinding(
@@ -513,9 +507,6 @@ export function checkActorBinding(
 			"own resolved identity. Omit the name to act as the resolved agent."
 		);
 	}
-	// A seat token that resolved to an agent BY ID: the typed name is only
-	// checked to EQUAL that agent's name. Like a credential, it is authoritative
-	// in EVERY mode - a typed name never overrides the resolved identity.
 	const seat = seatAgentOf(ctx);
 	if (seat !== undefined) {
 		if (
@@ -536,7 +527,6 @@ export function checkActorBinding(
 	if (ctx.viaMasterBearer) return agentCredentialRequired(claimedName);
 	if (isMasterScope(ctx)) return null;
 	if (actorCredentialMode() === "permissive") return null;
-	if (isSeatActingAsItself(ctx, claimedName)) return null;
 	return agentCredentialRequired(claimedName);
 }
 
@@ -574,59 +564,6 @@ export function seatAgentOf(
 		return undefined;
 	}
 	return seat;
-}
-
-/**
- * The ONE strict-mode exemption: a SEAT token acting as itself. Every input is
- * read from the token row the bearer resolved to, never from a tool argument
- * except the claim being tested:
- *   - the context came from an OAuth token row (`accessTokenHash` set), so a
- *     Clerk-JWT session, the master bearer and the stdio trust context never
- *     qualify;
- *   - the row carries no `principal` (a person token, or any principal kind
- *     added later, is NOT exempt by default);
- *   - its `fromAllowList` holds exactly ONE name and that name is not `"*"`;
- *   - the seat resolved to an AGENT BY ID (`seatAgent`, stamped by Convex from
- *     the profile's single agent in the profile's own org), and the claimed name
- *     equals THAT AGENT'S name (normalizeOrchestratorId on both sides). The
- *     decision is the ID the token carries; the typed name is only compared to
- *     the resolved agent's name. An org-level seat (`seatAgent: null`) names no
- *     agent, so it is never exempt, whatever the allowlist says.
- *
- * TRANSITIONAL (contract step, delete with the next MCP release after Convex has
- * been deployed with the stamp): when `seatAgent` is ABSENT altogether the
- * provider is an older Convex that cannot stamp, and the legacy rule applies -
- * the claim equals the single allowlisted name. It exists only so that the
- * reader-first deploy order (railway-mcp-redeploy.md) does not strand every seat
- * between the MCP going live and Convex following. A provider that stamps
- * always sends the key (an object or null), so a stamped provider never reaches
- * this branch.
- */
-export function isSeatActingAsItself(
-	ctx: OAuthContext,
-	claimedName: string,
-): boolean {
-	if (ctx.isMaster || ctx.viaMasterBearer) return false;
-	if (ctx.accessTokenHash === undefined) return false;
-	if (ctx.principal !== undefined) return false;
-	if (ctx.fromAllowList.length !== 1) return false;
-	const only = normalizeOrchestratorId(ctx.fromAllowList[0]);
-	if (only === "" || only === "*") return false;
-	if (ctx.seatAgent === undefined) {
-		return normalizeOrchestratorId(claimedName) === only;
-	}
-	const seat = seatAgentOf(ctx);
-	if (seat === undefined) return false;
-	return sameLabel(claimedName, seat.agentName);
-}
-
-/**
- * Two display labels are the same label under normalizeOrchestratorId (NFC,
- * lowercase, trim). Used ONLY to check a typed name against the label of an
- * agent already resolved BY ID; it admits nobody on its own.
- */
-function sameLabel(left: string, right: string): boolean {
-	return normalizeOrchestratorId(left) === normalizeOrchestratorId(right);
 }
 
 /**
@@ -722,9 +659,9 @@ function agentCredentialRequired(claimedName: string): string {
 
 /**
  * True when a call is served on a TYPED name alone: a real (non-master) caller,
- * no resolved actor, a name it typed, and not a seat naming itself
- * ({@link isSeatActingAsItself}). Exactly the population that strict mode
- * would refuse — so counting it is the measurement of the cutover.
+ * no resolved agent (credential or seat), and a name it typed. Exactly the
+ * population that strict mode would refuse — so counting it is the measurement
+ * of the cutover.
  */
 export function isUnattributedClaim(
 	ctx: OAuthContext | undefined,
@@ -733,9 +670,9 @@ export function isUnattributedClaim(
 	return (
 		ctx !== undefined &&
 		!ctx.actor &&
+		seatAgentOf(ctx) === undefined &&
 		!isMasterScope(ctx) &&
-		claimedName.trim() !== "" &&
-		!isSeatActingAsItself(ctx, claimedName)
+		claimedName.trim() !== ""
 	);
 }
 
@@ -868,49 +805,11 @@ export function filterRowsToActorTenant<T extends { orgId?: unknown }>(
 }
 
 /**
- * Checks that `from` is allowed by the current OAuth context.
- * Returns null when allowed, an error message string otherwise.
- *
- * TWO gates, BOTH must hold (intersect, never widen):
- *   1. {@link checkActorBinding} — `from` is the agent the credential resolved
- *      (or the caller is master with no actor).
- *   2. the org roster (`fromAllowList`) — a roster may narrow what the actor
- *      may do; it is never a substitute for the actor.
- *
- * A missing `ctx` REFUSES (returns the refusal string), it never passes.
- * Every real auth path sets an oauthContext — the HTTP transport via
- * bearerAuthMiddleware (master, OAuth, Clerk), and the stdio transport via
- * the explicit LOCAL_STDIO_TRUST_CTX server.ts hands to registerTools. So a
- * `!ctx` here is a misconfiguration,
- * and it fails closed rather than granting max authority (clause 3,
- * `.claude/rules/one-identity-layer.md`).
- */
-export function checkFromAllowed(
-	ctx: OAuthContext | undefined,
-	from: string,
-): string | null {
-	if (!ctx) return NO_CONTEXT_REFUSAL;
-	if (isMasterScope(ctx) || ctx.fromAllowList.includes(from)) {
-		// Roster gate satisfied (or master). The actor gate is still required.
-		return checkActorBinding(ctx, from);
-	}
-	// Day 88 friction capitalize: surface the allowed values so the LLM caller
-	// can self-correct on the next attempt instead of guessing identifiers.
-	// Nadia onboarding case (2026-06-01): Claude.ai guessed "Greek letter" when
-	// the actual allowlist was ["nadia"].
-	const allowed =
-		ctx.fromAllowList.length === 0
-			? "(none — this client has no allowed 'from' identities)"
-			: ctx.fromAllowList.join(", ");
-	return `Forbidden: from='${from}' is not in this client's allowlist (scope_profile=${ctx.scopeProfile}). Allowed: ${allowed}.`;
-}
-
-/**
  * The instance label of a message is bound to the sender (mirror of
  * `requireSenderInstanceOfSender`, convex/lib/auth.ts). An OAuth access-token
  * caller reaches Convex as the service account (master), so the Convex check
  * never sees it; this is where its `fromInstanceId` is judged, beside
- * `checkFromAllowed` (which judges only `from`).
+ * the acting-name binding (which judges only `from`).
  *
  * The roster used for sibling ownership is `ctx.fromAllowList` (the only
  * roster this layer holds synchronously): the instance belongs to the LONGEST
@@ -959,7 +858,7 @@ export function checkInstanceOfSender(
 
 /**
  * Answers the DELEGATION question — is `assignedTo` a member of the CALLER'S
- * own organisation? — as distinct from `checkFromAllowed`, which answers a
+ * own organisation? — as distinct from the acting-name binding, which answers a
  * different question (may this client SPEAK AS `from`). Conflating the two
  * meant every non-master client could only delegate to the one identity in
  * its own `fromAllowList`, making cross-station dispatch impossible for any

@@ -268,8 +268,12 @@ describe("a non-master bearer with no resolvable org is refused at the MCP layer
 				const { handlers, reached } = harness(NO_ORG, service);
 				const res = await handlers.get(tool.name)?.(tool.args(id));
 				expect(res?.isError, res?.content[0]?.text).toBe(true);
-				expect(res?.content[0]?.text).toMatch(/RBAC_DENIED/);
-				expect(res?.content[0]?.text).toMatch(/verified-org-unresolved/);
+				// Refused before Convex: no agent was resolved, so a typed name is not an
+				// identity (AGENT_CREDENTIAL_REQUIRED); were it let through, the door's
+				// own RBAC_DENIED (verified-org-unresolved) would refuse it.
+				expect(res?.content[0]?.text).toMatch(
+					/AGENT_CREDENTIAL_REQUIRED|RBAC_DENIED/,
+				);
 				expect(reached()).toBe(0);
 				expect(JSON.stringify(await read(id))).toBe(before);
 			}

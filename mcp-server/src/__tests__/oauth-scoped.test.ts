@@ -1,7 +1,7 @@
 /**
  * Scope-enforcement unit tests for the OAuth scoped-tokens mission.
  *
- * These tests cover the pure predicate logic (checkFromAllowed,
+ * These tests cover the pure predicate logic (checkActorBinding,
  * checkNamespacePrefix, checkNamespaceRead, checkNamespaceWrite, isMasterScope)
  * and the master-vs-marie-vs-legacy branching that drives every MCP tool guard
  * in src/tools.ts. HTTP/end-to-end flow tests live in the OAuth integration
@@ -14,7 +14,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
 	_setInternalClientForTest,
 	bearerAuthMiddleware,
-	checkFromAllowed,
+	checkActorBinding,
 	checkNamespacePrefix,
 	checkNamespaceRead,
 	checkNamespaceWrite,
@@ -80,43 +80,29 @@ describe("isMasterScope", () => {
 	});
 });
 
-describe("checkFromAllowed", () => {
+describe("checkActorBinding (the acting-name claim a resolved agent verifies)", () => {
 	it("Marie cannot impersonate pi", () => {
-		expect(checkFromAllowed(marieCtx, "pi")).toMatch(/Forbidden/);
+		expect(checkActorBinding(marieCtx, "pi")).toMatch(/AGENT_(IDENTITY_MISMATCH|CREDENTIAL_REQUIRED)/);
 	});
 
 	it("Marie can send as marie", () => {
-		expect(checkFromAllowed(marieCtx, "marie")).toBeNull();
+		expect(checkActorBinding(marieCtx, "marie")).toBeNull();
 	});
 
 	it("master can send as any orchestrator", () => {
-		expect(checkFromAllowed(masterCtx, "marie")).toBeNull();
-		expect(checkFromAllowed(masterCtx, "pi")).toBeNull();
-		expect(checkFromAllowed(masterCtx, "random-new-client")).toBeNull();
+		expect(checkActorBinding(masterCtx, "marie")).toBeNull();
+		expect(checkActorBinding(masterCtx, "pi")).toBeNull();
+		expect(checkActorBinding(masterCtx, "random-new-client")).toBeNull();
 	});
 
 	it("generic deny-by-default rejects everyone", () => {
-		expect(checkFromAllowed(genericCtx, "marie")).toMatch(/Forbidden/);
+		expect(checkActorBinding(genericCtx, "marie")).toMatch(/AGENT_(IDENTITY_MISMATCH|CREDENTIAL_REQUIRED)/);
 	});
 
 	it("no oauthContext REFUSES from enforcement — absence is never authority", () => {
 		// Every real path now carries a context (HTTP middleware; stdio
 		// LOCAL_STDIO_TRUST_CTX). A bare undefined fails closed.
-		expect(checkFromAllowed(undefined, "anything")).not.toBeNull();
-	});
-
-	// Day 88 capitalize — Marie onboarding friction (2026-06-01).
-	it("error message surfaces the allowlist so the LLM can self-correct", () => {
-		const err = checkFromAllowed(marieCtx, "pi");
-		expect(err).not.toBeNull();
-		expect(err).toContain("Allowed: marie");
-		expect(err).toContain("scope_profile=marie-iris-rh");
-	});
-
-	it("error message handles empty allowlist (deny-by-default) gracefully", () => {
-		const err = checkFromAllowed(genericCtx, "marie");
-		expect(err).not.toBeNull();
-		expect(err).toContain("none");
+		expect(checkActorBinding(undefined, "anything")).not.toBeNull();
 	});
 });
 
@@ -248,11 +234,11 @@ describe("checkNamespaceWrite", () => {
 
 describe("Marie smoke flow (scope decisions)", () => {
 	it("send_message(from=marie) → OK", () => {
-		expect(checkFromAllowed(marieCtx, "marie")).toBeNull();
+		expect(checkActorBinding(marieCtx, "marie")).toBeNull();
 	});
 
 	it("send_message(from=pi) → 403", () => {
-		expect(checkFromAllowed(marieCtx, "pi")).toMatch(/Forbidden/);
+		expect(checkActorBinding(marieCtx, "pi")).toMatch(/AGENT_(IDENTITY_MISMATCH|CREDENTIAL_REQUIRED)/);
 	});
 
 	it("recall(namespace=orchestrator/tau) → 403", () => {
@@ -266,20 +252,20 @@ describe("Marie smoke flow (scope decisions)", () => {
 	});
 
 	it("store_memory(namespace=project/marie, createdBy=marie) → OK on both guards", () => {
-		expect(checkFromAllowed(marieCtx, "marie")).toBeNull();
+		expect(checkActorBinding(marieCtx, "marie")).toBeNull();
 		expect(checkNamespaceWrite(marieCtx, "project/marie")).toBeNull();
 	});
 
 	it("store_memory(namespace=orchestrator/pi, createdBy=marie) → 403 on namespace", () => {
-		expect(checkFromAllowed(marieCtx, "marie")).toBeNull();
+		expect(checkActorBinding(marieCtx, "marie")).toBeNull();
 		expect(checkNamespaceWrite(marieCtx, "orchestrator/pi")).toMatch(
 			/Forbidden/,
 		);
 	});
 
 	it("master flow: any from + any namespace → OK (backward compat)", () => {
-		expect(checkFromAllowed(masterCtx, "pi")).toBeNull();
-		expect(checkFromAllowed(masterCtx, "marie")).toBeNull();
+		expect(checkActorBinding(masterCtx, "pi")).toBeNull();
+		expect(checkActorBinding(masterCtx, "marie")).toBeNull();
 		expect(checkNamespaceRead(masterCtx, "orchestrator/pi")).toBeNull();
 		expect(checkNamespaceWrite(masterCtx, "project/internal")).toBeNull();
 	});
@@ -295,50 +281,50 @@ describe("Marie smoke flow (scope decisions)", () => {
 describe("Extended tool guard coverage (newly guarded tools)", () => {
 	it("create_task(assignedTo='pi', createdBy='marie') → 403 on assignee check", () => {
 		// createdBy=marie passes, but assignedTo=pi does not.
-		expect(checkFromAllowed(marieCtx, "marie")).toBeNull();
-		expect(checkFromAllowed(marieCtx, "pi")).toMatch(/Forbidden/);
+		expect(checkActorBinding(marieCtx, "marie")).toBeNull();
+		expect(checkActorBinding(marieCtx, "pi")).toMatch(/AGENT_(IDENTITY_MISMATCH|CREDENTIAL_REQUIRED)/);
 	});
 
 	it("write_diary(orchestrator='tau') from Marie → 403", () => {
-		expect(checkFromAllowed(marieCtx, "tau")).toMatch(/Forbidden/);
+		expect(checkActorBinding(marieCtx, "tau")).toMatch(/AGENT_(IDENTITY_MISMATCH|CREDENTIAL_REQUIRED)/);
 	});
 
 	it("update_profile(orchestratorId='victor') from Marie → 403", () => {
 		// Marie's allowlist is ['marie'] — she cannot write to Victor's profile
 		// identity even though she can read the victor namespace.
-		expect(checkFromAllowed(marieCtx, "victor")).toMatch(/Forbidden/);
+		expect(checkActorBinding(marieCtx, "victor")).toMatch(/AGENT_(IDENTITY_MISMATCH|CREDENTIAL_REQUIRED)/);
 	});
 
 	it("set_summary(orchestratorId='marie') from Marie → OK", () => {
-		expect(checkFromAllowed(marieCtx, "marie")).toBeNull();
+		expect(checkActorBinding(marieCtx, "marie")).toBeNull();
 	});
 
 	it("create_mandate(requestedBy='marie', fulfilledBy='pi') from Marie → 403 on fulfilledBy", () => {
-		expect(checkFromAllowed(marieCtx, "marie")).toBeNull();
-		expect(checkFromAllowed(marieCtx, "pi")).toMatch(/Forbidden/);
+		expect(checkActorBinding(marieCtx, "marie")).toBeNull();
+		expect(checkActorBinding(marieCtx, "pi")).toMatch(/AGENT_(IDENTITY_MISMATCH|CREDENTIAL_REQUIRED)/);
 	});
 
 	it("create_bu(orchestratorId='sigma') from Marie → 403", () => {
-		expect(checkFromAllowed(marieCtx, "sigma")).toMatch(/Forbidden/);
+		expect(checkActorBinding(marieCtx, "sigma")).toMatch(/AGENT_(IDENTITY_MISMATCH|CREDENTIAL_REQUIRED)/);
 	});
 
 	it("create_briefing_note(createdBy='marie') from Marie → OK", () => {
-		expect(checkFromAllowed(marieCtx, "marie")).toBeNull();
+		expect(checkActorBinding(marieCtx, "marie")).toBeNull();
 	});
 
 	it("accept_mandate(callerOrchestrator='pi') from Marie → 403", () => {
-		expect(checkFromAllowed(marieCtx, "pi")).toMatch(/Forbidden/);
+		expect(checkActorBinding(marieCtx, "pi")).toMatch(/AGENT_(IDENTITY_MISMATCH|CREDENTIAL_REQUIRED)/);
 	});
 
 	it("create_fix_pattern(createdBy='tau') from Marie → 403", () => {
-		expect(checkFromAllowed(marieCtx, "tau")).toMatch(/Forbidden/);
+		expect(checkActorBinding(marieCtx, "tau")).toMatch(/AGENT_(IDENTITY_MISMATCH|CREDENTIAL_REQUIRED)/);
 	});
 
 	it("generic deny-by-default client: every tool-guard-relevant from rejected", () => {
-		expect(checkFromAllowed(genericCtx, "marie")).toMatch(/Forbidden/);
-		expect(checkFromAllowed(genericCtx, "pi")).toMatch(/Forbidden/);
-		expect(checkFromAllowed(genericCtx, "anonymous-dcr-hijack")).toMatch(
-			/Forbidden/,
+		expect(checkActorBinding(genericCtx, "marie")).toMatch(/AGENT_(IDENTITY_MISMATCH|CREDENTIAL_REQUIRED)/);
+		expect(checkActorBinding(genericCtx, "pi")).toMatch(/AGENT_(IDENTITY_MISMATCH|CREDENTIAL_REQUIRED)/);
+		expect(checkActorBinding(genericCtx, "anonymous-dcr-hijack")).toMatch(
+			/AGENT_(IDENTITY_MISMATCH|CREDENTIAL_REQUIRED)/,
 		);
 	});
 });
@@ -495,9 +481,9 @@ describe("Day 88 — DCR auto-discovery scope isolation", () => {
 	});
 
 	it("DCR auto-flow client cannot impersonate any orchestrator (from=*)", () => {
-		expect(checkFromAllowed(dcrAutoCtx, "pi")).toMatch(/Forbidden/);
-		expect(checkFromAllowed(dcrAutoCtx, "marie")).toMatch(/Forbidden/);
-		expect(checkFromAllowed(dcrAutoCtx, "external")).toMatch(/Forbidden/);
+		expect(checkActorBinding(dcrAutoCtx, "pi")).toMatch(/AGENT_(IDENTITY_MISMATCH|CREDENTIAL_REQUIRED)/);
+		expect(checkActorBinding(dcrAutoCtx, "marie")).toMatch(/AGENT_(IDENTITY_MISMATCH|CREDENTIAL_REQUIRED)/);
+		expect(checkActorBinding(dcrAutoCtx, "external")).toMatch(/AGENT_(IDENTITY_MISMATCH|CREDENTIAL_REQUIRED)/);
 	});
 
 	// public-readonly profile — Day 88 new seed. Read global/* only.

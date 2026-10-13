@@ -17,7 +17,7 @@
 import { describe, expect, it } from "vitest";
 import {
 	checkDelegationAllowed,
-	checkFromAllowed,
+	checkActorBinding,
 	checkNamespaceRead,
 	checkNamespaceWrite,
 	type OAuthContext,
@@ -38,15 +38,15 @@ const SCOPED: OAuthContext = {
 	isMaster: false,
 };
 
-describe("checkFromAllowed — absence refuses; holder acts, non-holder refused", () => {
+describe("checkActorBinding — absence refuses; holder acts, non-holder refused", () => {
 	it("no context REFUSES (returns a refusal string, not null)", () => {
-		expect(checkFromAllowed(undefined, "prometheus")).not.toBeNull();
+		expect(checkActorBinding(undefined, "prometheus")).not.toBeNull();
 	});
-	it("holder acts (from in allowlist → allowed)", () => {
-		expect(checkFromAllowed(SCOPED, "prometheus")).toBeNull();
+	it("holder acts (the resolved agent names itself → allowed)", () => {
+		expect(checkActorBinding(SCOPED, "prometheus")).toBeNull();
 	});
-	it("non-holder refused (from not in allowlist → refusal)", () => {
-		expect(checkFromAllowed(SCOPED, "nemesis")).not.toBeNull();
+	it("non-holder refused (another agent's name → refusal)", () => {
+		expect(checkActorBinding(SCOPED, "nemesis")).not.toBeNull();
 	});
 });
 

@@ -5,7 +5,7 @@
  * `server.tool(...)` API lets an author register an MCP tool WITHOUT declaring
  * who may call it. Scope enforcement then lives inside each handler body and
  * depends on the author remembering to add a `guardRead`/`guardWrite`/
- * `guardFrom`/`guardMasterOnly`/`scopeFilterList` call. A forgotten guard is a
+ * `guardMasterOnly`/`scopeFilterList` call. A forgotten guard is a
  * silent cross-tenant hole.
  *
  * The fix is structural, not by convention: `defineTool` makes the caller
@@ -34,7 +34,6 @@ import { z } from "zod";
 import { isClerkMember } from "./memberAuthor.js";
 import {
 	checkActorBinding,
-	checkFromAllowed,
 	checkNamespaceRead,
 	checkNamespaceWrite,
 	internalClient,
@@ -161,7 +160,7 @@ function enforceScope(
 			// feeding String(undefined) to the binder would invent one.)
 			if ((from === undefined || from === null) && isMasterScope(ctx.oauthCtx))
 				return null;
-			const err = checkFromAllowed(ctx.oauthCtx, String(from));
+			const err = checkActorBinding(ctx.oauthCtx, String(from));
 			return err ? mcpError(err) : null;
 		}
 	}

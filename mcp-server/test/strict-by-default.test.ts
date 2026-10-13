@@ -5,9 +5,10 @@
  * operator keeps permissive only by writing "permissive" explicitly. Every test
  * here runs with the variable UNSET unless it says otherwise.
  *
- * Strict requires the agent credential EXCEPT for a seat acting as itself:
- * the TOKEN ROW's fromAllowList is exactly one name, not "*", no `principal`
- * on the row, and the claimed name equals that one name (Pi ruling (1)).
+ * Strict requires the agent credential EXCEPT for a seat that resolved its
+ * agent BY ID (`seatAgent`, stamped by Convex): the typed name is then only
+ * checked against that agent's label. A seat that resolved no agent has no
+ * exemption: a typed name is not an identity.
  *
  * Five poles, scoped NON-MASTER identity, env unset (Eta's contract):
  *   1 multi-name bearer, no credential            -> REFUSED
@@ -31,7 +32,6 @@ import {
 	actorCredentialMode,
 	bearerAuthMiddleware,
 	isMasterScope,
-	isSeatActingAsItself,
 	type OAuthContext,
 	resolveActorCredentialMode,
 	sha256Hex,
@@ -44,6 +44,7 @@ const SECRET_ALICE = "secret-alice-acme";
 const TEAM_TOKEN = "team-member-token";
 const SEAT_TOKEN = "seat-alice-token";
 const STAR_TOKEN = "star-allowlist-token";
+const UNBOUND_SEAT_TOKEN = "seat-alice-unbound-token";
 const COMPLETE = { taskId: "k1", completionNote: "done" };
 
 const OAUTH_ROWS: Record<string, Record<string, unknown>> = {};
@@ -171,6 +172,23 @@ beforeEach(async () => {
 		fromAllowList: ["alice"],
 		namespaceReadPrefixes: ["orchestrator/alice", "project/acme"],
 		namespaceWritePrefixes: ["orchestrator/alice", "project/acme"],
+		clerkOrgId: "org_ACME1",
+		seatAgent: {
+			agentId: "agentalice00000000000000000000001",
+			orgId: "acme",
+			agentName: "alice",
+			orgClerkId: "org_ACME1",
+		},
+	};
+	// The same seat with NO agent resolved by ID (an org-level seat).
+	OAUTH_ROWS[await sha256Hex(UNBOUND_SEAT_TOKEN)] = {
+		...base,
+		clientId: "seat-client-alice-unbound",
+		scopeProfile: "alice-acme",
+		fromAllowList: ["alice"],
+		namespaceReadPrefixes: ["orchestrator/alice", "project/acme"],
+		namespaceWritePrefixes: ["orchestrator/alice", "project/acme"],
+		seatAgent: null,
 	};
 	// A one-element allowlist that is the wildcard, on a non-master profile.
 	OAUTH_ROWS[await sha256Hex(STAR_TOKEN)] = {
@@ -259,7 +277,7 @@ describe("the five poles — scoped non-master identity, env unset", () => {
 		expect(r.mutations).toHaveLength(0);
 	});
 
-	it("POLE 2 — single-name seat naming ITSELF, no credential -> SERVED (complete_task and from-kind store_memory)", async () => {
+	it("POLE 2 — a seat that resolved its agent BY ID, naming ITSELF, no credential -> SERVED (complete_task and from-kind store_memory)", async () => {
 		const a = await post("complete_task", {
 			bearer: SEAT_TOKEN,
 			body: { ...COMPLETE, callerOrchestrator: "alice" },
@@ -279,28 +297,27 @@ describe("the five poles — scoped non-master identity, env unset", () => {
 		expect(b.refused).toBe(false);
 	});
 
-	it("POLE 3 — single-name seat naming ANOTHER agent, no credential -> AGENT_CREDENTIAL_REQUIRED", async () => {
+	it("POLE 3 — a seat bound to alice naming ANOTHER agent, no credential -> AGENT_IDENTITY_MISMATCH", async () => {
 		const r = await post("complete_task", {
 			bearer: SEAT_TOKEN,
 			body: { ...COMPLETE, callerOrchestrator: "bob" },
+		});
+		expect(r.refused).toBe(true);
+		expect(r.text).toMatch(/^AGENT_IDENTITY_MISMATCH/);
+		expect(r.mutations).toHaveLength(0);
+	});
+
+	it("POLE 3b — the legacy exemption is gone: a seat with NO agent resolved by ID, naming itself, is AGENT_CREDENTIAL_REQUIRED", async () => {
+		const r = await post("complete_task", {
+			bearer: UNBOUND_SEAT_TOKEN,
+			body: { ...COMPLETE, callerOrchestrator: "alice" },
 		});
 		expect(r.refused).toBe(true);
 		expect(r.text).toMatch(/^AGENT_CREDENTIAL_REQUIRED/);
 		expect(r.mutations).toHaveLength(0);
 	});
 
-	it("POLE 5 — a ['*'] allowlist never counts as single-name: the exemption refuses it, whatever is named", async () => {
-		const star = await ctxOf(STAR_TOKEN);
-		expect(star.fromAllowList).toEqual(["*"]);
-		expect(star.accessTokenHash).toBeDefined();
-		for (const name of ["*", "alice"]) {
-			expect(isSeatActingAsItself(star, name)).toBe(false);
-		}
-		// Contrast with the real seat row: the predicate is what tells them apart.
-		expect(isSeatActingAsItself(await ctxOf(SEAT_TOKEN), "alice")).toBe(true);
-	});
-
-	it("PIN (pre-existing, not the exemption): a ['*'] row is MASTER scope (@vantageos/cloud-identity isMasterScope), so checkActorBinding serves it on the master branch", async () => {
+	it("PIN (pre-existing): a ['*'] row is MASTER scope (@vantageos/cloud-identity isMasterScope), so checkActorBinding serves it on the master branch", async () => {
 		const star = await ctxOf(STAR_TOKEN);
 		expect(isMasterScope(star)).toBe(true);
 		const r = await post("complete_task", {
@@ -308,46 +325,6 @@ describe("the five poles — scoped non-master identity, env unset", () => {
 			body: { ...COMPLETE, callerOrchestrator: "alice" },
 		});
 		expect(r.refused).toBe(false);
-	});
-
-	it("exemption is read from the token row, never from an argument or a non-row context", () => {
-		const row: OAuthContext = {
-			clientId: "seat-client-alice",
-			userId: "u",
-			scopes: [],
-			scopeProfile: "alice-acme",
-			fromAllowList: ["alice"],
-			namespaceReadPrefixes: [],
-			namespaceWritePrefixes: [],
-			expiresAt: 0,
-			isMaster: false,
-			accessTokenHash: "h",
-		};
-		expect(isSeatActingAsItself(row, "alice")).toBe(true);
-		// Same claim, multi-name row: not exempt.
-		expect(
-			isSeatActingAsItself(
-				{ ...row, fromAllowList: ["alice", "bob"] },
-				"alice",
-			),
-		).toBe(false);
-		// Same row shape but not from a token row (e.g. a Clerk-JWT session): not exempt.
-		expect(
-			isSeatActingAsItself({ ...row, accessTokenHash: undefined }, "alice"),
-		).toBe(false);
-		// Any principal on the row withholds it, including a kind added later.
-		expect(isSeatActingAsItself({ ...row, principal: "person" }, "alice")).toBe(
-			false,
-		);
-		// A principal kind that does not exist yet: the type admits only
-		// "person" today, so the future value is forced through a cast on purpose.
-		for (const future of ["service", "agent"]) {
-			const ctx = { ...row, principal: future } as unknown as OAuthContext;
-			expect(isSeatActingAsItself(ctx, "alice")).toBe(false);
-		}
-		expect(isSeatActingAsItself({ ...row, fromAllowList: [""] }, "")).toBe(
-			false,
-		);
 	});
 
 	it("SERVED — valid agent credential naming its own agent (multi-name bearer)", async () => {
@@ -371,16 +348,16 @@ describe("the five poles — scoped non-master identity, env unset", () => {
 		expect(r.mutations).toHaveLength(1);
 	});
 
-	it("seat OMITTING the name on a from-kind tool is still refused by the roster check (pre-existing, mode-independent)", async () => {
+	it("a seat bound to alice OMITTING the name acts as alice: the name is derived from the resolved agent", async () => {
 		const r = await post("complete_task", {
 			bearer: SEAT_TOKEN,
 			body: COMPLETE,
 		});
-		expect(r.refused).toBe(true);
-		expect(r.text).toContain(
-			"from='undefined' is not in this client's allowlist",
+		expect(r.refused).toBe(false);
+		expect(r.mutations).toHaveLength(1);
+		expect((r.mutations[0].args as Record<string, unknown>).callerOrchestrator).toBe(
+			"alice",
 		);
-		expect(r.mutations).toHaveLength(0);
 	});
 });
 
