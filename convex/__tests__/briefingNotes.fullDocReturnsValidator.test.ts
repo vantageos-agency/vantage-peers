@@ -24,6 +24,7 @@
 
 import { convexTest } from "../../tests/fixtures/convexTestWithServiceAccount";
 import { describe, expect, test } from "vitest";
+import { testClerkOrgId } from "../../tests/fixtures/testClerkOrgId";
 import { seedFleetAgents } from "../../tests/lib/seedFleetAgents";
 import { api } from "../_generated/api";
 import schema from "../schema";
@@ -140,6 +141,17 @@ describe("briefingNotes.update — smoke test with orgId note shapes", () => {
 		let sigmaId: string | undefined;
 		await t.run(async (ctx) => {
 			noteId = await seedNoteWithOrgId(ctx);
+			// The verified actor's organisation must be an ACTIVE organisation: the
+			// package refuses an agent of an org with no active mapping.
+			await ctx.db.insert("client_org_mapping", {
+				clerkOrgSlug: "acme-hr",
+				clerkOrgId: testClerkOrgId("acme-hr"),
+				allowedOrchestrators: ["sigma"],
+				scopes: ["view-own-tasks"],
+				displayName: "acme-hr",
+				isActive: true,
+				createdAt: Date.now(),
+			});
 			// M10c: the author is judged by agent ID, proved by the transport
 			// (verifiedActor) as the agent of the note's own org.
 			sigmaId = await ctx.db.insert("agents", {
