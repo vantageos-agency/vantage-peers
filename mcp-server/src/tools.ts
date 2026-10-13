@@ -13,7 +13,11 @@ import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { McpServer } from "@modelcontextprotocol/server";
 import { ProtocolError, ProtocolErrorCode } from "@modelcontextprotocol/server";
-import { scopeFilterGet, scopeFilterList } from "@vantageos/cloud-identity";
+import {
+	isRowInTenant,
+	scopeFilterGet,
+	scopeFilterList,
+} from "@vantageos/cloud-identity";
 import type { ConvexHttpClient } from "convex/browser";
 import { z } from "zod";
 import {
@@ -23,6 +27,7 @@ import {
 	checkNamespaceRead,
 	checkNamespaceWrite,
 	filterRowsToActorTenant,
+	holdsMasterBearer,
 	isMasterScope,
 	type OAuthContext,
 	PERSON_ACTOR_PREFIX,
@@ -2168,7 +2173,11 @@ export function registerTools(
 	// Convex believes it from the service account only and resolves it against an
 	// active org (convex/lib/verifiedOrg.ts).
 	const verifiedOrgOf = (): string | undefined => {
-		if (!oauthCtx || oauthCtx.isMaster || oauthCtx.clerkJwt !== undefined) {
+		if (
+			!oauthCtx ||
+			holdsMasterBearer(oauthCtx) ||
+			oauthCtx.clerkJwt !== undefined
+		) {
 			return undefined;
 		}
 		return oauthCtx.actor?.orgSlug ?? oauthCtx.clerkOrgSlug;
@@ -2202,7 +2211,7 @@ export function registerTools(
 	// before Convex, instead of reaching a door that would compare names only.
 	// The fleet master and the stdio trust context are not this population.
 	const unresolvedOrgDenial = (door: string) => {
-		if (oauthCtx?.isMaster === true || oauthCtx?.clerkJwt !== undefined) {
+		if (holdsMasterBearer(oauthCtx) || oauthCtx?.clerkJwt !== undefined) {
 			return null;
 		}
 		if (verifiedOrgOf() !== undefined) return null;
@@ -4913,9 +4922,12 @@ export function registerTools(
 				// (verified actor, else the token row's) and it must EQUAL the run's;
 				// a run with no org (a fleet-master run) is not served to a
 				// non-master caller at all — client isolation never rests on a name.
-				if (!oauthCtx || !oauthCtx.isMaster) {
-					const callerOrg = oauthCtx?.actor?.orgSlug ?? oauthCtx?.clerkOrgSlug;
-					if (callerOrg === undefined || row.orgId !== callerOrg) {
+				if (!holdsMasterBearer(oauthCtx)) {
+					const inCallerTenant = isRowInTenant({
+						rowOrgId: typeof row.orgId === "string" ? row.orgId : undefined,
+						callerOrgId: oauthCtx?.actor?.orgSlug ?? oauthCtx?.clerkOrgSlug,
+					});
+					if (!inCallerTenant) {
 						return mcpError(`Bulk run not found: ${bulkRunId}`);
 					}
 				}

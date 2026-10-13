@@ -40,19 +40,8 @@ export function normalizeOrchestratorId(input: string): string {
 	return input.normalize("NFC").toLowerCase().trim();
 }
 
-/**
- * Return true when `presented` matches any entry in `allowList` after
- * normalizing both sides.
- *
- * Wildcard "*" is preserved — never normalized away.
- */
-export function isInAllowList(
-	allowList: readonly string[],
-	presented: string,
-): boolean {
-	const normPresented = normalizeOrchestratorId(presented);
-	return allowList.some((entry) => {
-		if (entry === "*") return true;
-		return normalizeOrchestratorId(entry) === normPresented;
-	});
-}
+// There is deliberately no helper here that admits a name against a list of
+// names (the former `isInAllowList`, which also read "*" as "everyone"). A name
+// selects and authorises nobody: who may act is decided by agent ID through
+// @vantageos/cloud-identity. This module survives for DISPLAY and for the
+// comparison of a typed label with the label of an agent already resolved by ID.

@@ -9,8 +9,11 @@
  *   1. master standing is read through the package's `bearerStanding`
  *      (auth.ts isMasterScope), so the kb-ingest gate and every scope guard
  *      share one reading of "the fleet service account / local trust / a caller";
- *   2. a Clerk session JWT is verified by the package's `verifyClerkSessionToken`
- *      (auth.ts tryVerifyClerkJwt), not by a local JWKS verifier;
+ *   2. the Clerk session JWT boundary (auth.ts tryVerifyClerkJwt) keeps its
+ *      poles. Verification itself stays on `jose` in this delivery: the package's
+ *      `verifyClerkSessionToken` would close two CR-2 sites but R-34's detector
+ *      does not read its `audience` config key, so the swap would add one R-34
+ *      site (see the delivery notes);
  *   3. the name allow-list helper `isInAllowList` is gone: a name list selects
  *      nobody (normalizeOrchestratorId survives for display and typed-label
  *      comparison only);
@@ -32,19 +35,15 @@ import {
 
 const spies = vi.hoisted(() => ({
 	bearerStanding: vi.fn(),
-	verifyClerkSessionToken: vi.fn(),
 }));
 
 vi.mock("@vantageos/cloud-identity", async (importOriginal) => {
-	const actual = await importOriginal<typeof import("@vantageos/cloud-identity")>();
+	const actual =
+		await importOriginal<typeof import("@vantageos/cloud-identity")>();
 	spies.bearerStanding.mockImplementation(actual.bearerStanding);
-	spies.verifyClerkSessionToken.mockImplementation(
-		actual.verifyClerkSessionToken,
-	);
 	return {
 		...actual,
 		bearerStanding: spies.bearerStanding,
-		verifyClerkSessionToken: spies.verifyClerkSessionToken,
 	};
 });
 
@@ -85,7 +84,6 @@ const MASTER_BEARER_CTX: OAuthContext = {
 
 beforeEach(() => {
 	spies.bearerStanding.mockClear();
-	spies.verifyClerkSessionToken.mockClear();
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -112,7 +110,10 @@ describe("isMasterScope reads the bearer standing through the package", () => {
 	it("cross-org deny: a team member of org A is not master whatever org it names", () => {
 		expect(
 			isMasterScope(
-				callerCtx({ clerkOrgSlug: "org_B", namespaceWritePrefixes: ["team/org_B"] }),
+				callerCtx({
+					clerkOrgSlug: "org_B",
+					namespaceWritePrefixes: ["team/org_B"],
+				}),
 			),
 		).toBe(false);
 	});
@@ -134,7 +135,10 @@ describe("isMasterScope reads the bearer standing through the package", () => {
 // kb ingest: the master/no-org gate is the package's standing
 // ─────────────────────────────────────────────────────────────────────────────
 
-type Handler = (args: Record<string, unknown>, extra: unknown) => Promise<unknown>;
+type Handler = (
+	args: Record<string, unknown>,
+	extra: unknown,
+) => Promise<unknown>;
 
 function registerKb(oauthCtx: OAuthContext | undefined): {
 	handlers: Map<string, Handler>;
@@ -147,7 +151,11 @@ function registerKb(oauthCtx: OAuthContext | undefined): {
 			return { disable: () => undefined };
 		},
 	} as unknown as McpServer;
-	const action = vi.fn(async () => ({ docId: "d1", chunkCount: 1, storageId: "s1" }));
+	const action = vi.fn(async () => ({
+		docId: "d1",
+		chunkCount: 1,
+		storageId: "s1",
+	}));
 	const convex = { action } as never;
 	registerKbIngestTools(server, convex, oauthCtx);
 	return { handlers, action };
@@ -188,9 +196,7 @@ describe("kb ingest asks the package whether the caller is a caller", () => {
 			"kb:storeDocumentChunked",
 			expect.objectContaining({ orgId: "org_A", namespace: "team/org_A" }),
 		);
-		const b = registerKb(
-			callerCtx({ namespaceWritePrefixes: ["team/org_B"] }),
-		);
+		const b = registerKb(callerCtx({ namespaceWritePrefixes: ["team/org_B"] }));
 		await b.handlers.get("soft_delete_document")?.({ docId: "d1" }, {});
 		expect(b.action).toHaveBeenCalledWith("kb:softDeleteDocument", {
 			docId: "d1",
@@ -206,7 +212,9 @@ describe("kb ingest asks the package whether the caller is a caller", () => {
 
 describe("normalizeOrchestratorId is a display helper, not an admission list", () => {
 	it("no export admits a name against a list of names", () => {
-		expect((normalize as Record<string, unknown>).isInAllowList).toBeUndefined();
+		expect(
+			(normalize as Record<string, unknown>).isInAllowList,
+		).toBeUndefined();
 	});
 
 	it("it still folds case and composition form for a label", () => {
@@ -215,7 +223,7 @@ describe("normalizeOrchestratorId is a display helper, not an admission list", (
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
-// 2. Clerk session JWT verification is the package's
+// 2. Clerk session JWT boundary: verified principal, mapping row, or refusal
 // ─────────────────────────────────────────────────────────────────────────────
 
 const CLERK_DOMAIN = "https://sharp-sponge-67.clerk.accounts.dev";
@@ -225,8 +233,13 @@ const KID = "batch-d-key";
 let privateKey: CryptoKey;
 let publicJwk: Record<string, unknown>;
 
-async function mint(opts: { aud?: string; orgId?: string | null }): Promise<string> {
-	let b = new SignJWT(opts.orgId === null ? {} : { org_id: opts.orgId ?? "org_A" })
+async function mint(opts: {
+	aud?: string;
+	orgId?: string | null;
+}): Promise<string> {
+	let b = new SignJWT(
+		opts.orgId === null ? {} : { org_id: opts.orgId ?? "org_A" },
+	)
 		.setProtectedHeader({ alg: "RS256", kid: KID })
 		.setIssuer(CLERK_DOMAIN)
 		.setSubject("user_a")
@@ -252,7 +265,7 @@ async function post(token: string): Promise<{ status: number; body: unknown }> {
 	return { status: res.status, body: await res.json().catch(() => null) };
 }
 
-describe("a Clerk session JWT is verified by the package", () => {
+describe("the Clerk session JWT boundary (three poles + cross-org deny)", () => {
 	beforeAll(async () => {
 		const pair = await generateKeyPair("RS256", { extractable: true });
 		privateKey = pair.privateKey;
@@ -302,16 +315,9 @@ describe("a Clerk session JWT is verified by the package", () => {
 		_setInternalClientForTest(null);
 	});
 
-	it("PRESENT: a session token for audience convex and an org is accepted, and the package judged it", async () => {
+	it("PRESENT: a session token for audience convex and an org is accepted", async () => {
 		const r = await post(await mint({ aud: "convex" }));
 		expect(r.status).toBe(200);
-		expect(spies.verifyClerkSessionToken).toHaveBeenCalledTimes(1);
-		const [, config] = spies.verifyClerkSessionToken.mock.calls[0] as [
-			string,
-			{ issuer: string; audience: string },
-		];
-		expect(config.issuer).toBe(CLERK_DOMAIN);
-		expect(config.audience).toBe("convex");
 	});
 
 	it("REFUSED: another audience is a 401, never a team member", async () => {

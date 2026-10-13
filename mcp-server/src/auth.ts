@@ -29,8 +29,9 @@
 
 import {
 	PERSON_ACTOR_PREFIX as CI_PERSON_ACTOR_PREFIX,
-	type OAuthCtx as PackageOAuthCtx,
+	bearerStanding,
 	isMasterScope as packageIsMasterScope,
+	isRowInTenant,
 	personActorName,
 	sha256Hex as packageSha256Hex,
 	validateMasterBearer,
@@ -298,43 +299,45 @@ export async function sha256Base64Url(input: string): Promise<string> {
 // ─────────────────────────────────────────────────────────────────────────────
 
 /**
- * Adapts this module's local `OAuthContext` shape onto the package's
- * framework-agnostic `OAuthCtx` (`@vantageos/cloud-identity`). This is a
- * field-renaming adapter only — no master/wildcard DECISION is made here,
- * that decision is entirely delegated to the package's `isMasterScope`. Local
- * `OAuthContext` carries an extra `isMaster` boolean (set explicitly by the
- * master-bearer-token middleware branch) alongside `scopeProfile`; the
- * package's `OAuthCtx.scope` field consolidates both prior conditions
- * (`ctx.isMaster || ctx.scopeProfile === "master"`) into the single `scope`
- * field the package checks — the union of conditions is preserved exactly,
- * only the representation changes.
+ * True when the bearer context holds a MASTER standing, as
+ * `@vantageos/cloud-identity`'s `bearerStanding` reads it: the network master
+ * bearer ("service-bearer", the fleet service account) or the process-local
+ * trust context ("local-trust"). A caller ("caller": a person or a seat of one
+ * organisation) and anything malformed or self-contradicting ("refused": a
+ * master-bearer flag on a non-master context) hold none. No master decision is
+ * made here; this only names the two package standings that are master.
+ * `undefined` is never master (absence is never authority) and is not put to
+ * the package.
  */
-function toPackageOAuthCtx(ctx: OAuthContext): PackageOAuthCtx {
-	return {
-		scope: ctx.isMaster ? "master" : ctx.scopeProfile,
-		fromAllowList: ctx.fromAllowList,
-		namespaceReadPrefixes: ctx.namespaceReadPrefixes,
-		namespaceWritePrefixes: ctx.namespaceWritePrefixes,
-	};
+export function holdsMasterBearer(ctx: OAuthContext | undefined): boolean {
+	if (!ctx) return false;
+	const standing = bearerStanding(ctx);
+	return standing === "service-bearer" || standing === "local-trust";
 }
 
 /**
  * Returns true when the scope profile grants full, wildcard access. Master
  * admin sessions skip every downstream enforcement check.
  *
- * Delegates the actual master/wildcard decision to
- * `@vantageos/cloud-identity`'s `isMasterScope` (0.3.0+) via `toPackageOAuthCtx`
- * above — this repo no longer reimplements that check locally. `undefined`
- * returns FALSE here (absence is never master): callers pass an optional
- * `OAuthContext`, and the package's own guard requires a non-null `OAuthCtx`
- * and throws otherwise (0.3.0's "never grant by absence" contract), so the
- * undefined check must happen before delegating, not be silently absorbed by
- * the package call. Note the direction: undefined → NOT master (this fn) AND
- * undefined → REFUSE (the check* predicates above); never undefined → grant.
+ * Both readings are the package's: the bearer standing
+ * ({@link holdsMasterBearer}) for the master bearer and the local trust
+ * context, and `@vantageos/cloud-identity`'s `isMasterScope` (0.3.0+) for an
+ * OAuth token of the wildcard master profile (its scope profile is "master" or
+ * its roster holds the wildcard). The local context is handed to the package
+ * as it is, its scope profile as the package's `scope`; nothing is read out of
+ * it here. `undefined` returns FALSE (absence is never master): the package's
+ * own guard requires a non-null context and throws otherwise (0.3.0's "never
+ * grant by absence" contract), so the undefined check happens before
+ * delegating, not absorbed by the package call. Note the direction: undefined
+ * → NOT master (this fn) AND undefined → REFUSE (the check* predicates below);
+ * never undefined → grant.
  */
 export function isMasterScope(ctx: OAuthContext | undefined): boolean {
 	if (!ctx) return false;
-	return packageIsMasterScope(toPackageOAuthCtx(ctx));
+	return (
+		holdsMasterBearer(ctx) ||
+		packageIsMasterScope({ ...ctx, scope: ctx.scopeProfile })
+	);
 }
 
 /**
@@ -780,11 +783,16 @@ export function rowVisibleToActorTenant(
 	if (!ctx) return false;
 	if (isMasterScope(ctx)) return true;
 	if (!ctx.actor) return true;
-	// `row.orgId` absent is `undefined`, which never equals a resolved org slug:
-	// the comparison itself is what makes an unstamped row deny. (An explicit
-	// `typeof === "string"` leg here was measured as an EQUIVALENT mutant — its
-	// removal left every pole green — so it is not kept as a dead guard.)
-	return row != null && row.orgId === ctx.actor.orgSlug;
+	// The tenant comparison is the package's: a row is in the actor's tenant only
+	// when it STATES an organisation, the actor has one, and the two are strictly
+	// equal. An unstamped row asserts nothing and is never visible.
+	return (
+		row != null &&
+		isRowInTenant({
+			rowOrgId: typeof row.orgId === "string" ? row.orgId : undefined,
+			callerOrgId: ctx.actor.orgSlug,
+		})
+	);
 }
 
 /**
@@ -1181,7 +1189,8 @@ type ActorResolution =
  */
 async function resolveActorFromRequest(
 	c: Context,
-	principal: { isMaster: boolean; orgSlug: string | null },
+	base: OAuthContext,
+	principalOrgSlug: string | null,
 ): Promise<ActorResolution> {
 	const presented = c.req.header(AGENT_CREDENTIAL_HEADER);
 	if (presented === undefined) return { ok: true, actor: undefined };
@@ -1242,7 +1251,17 @@ async function resolveActorFromRequest(
 		};
 	}
 
-	if (!principal.isMaster && resolved.orgSlug !== principal.orgSlug) {
+	// The agent must belong to the verified principal's own organisation: the
+	// tenant comparison is the package's (`isRowInTenant`: both sides stated,
+	// strictly equal). A master bearer holds no organisation of its own and is
+	// not bound here (its standing is the package's `bearerStanding`).
+	if (
+		!holdsMasterBearer(base) &&
+		!isRowInTenant({
+			rowOrgId: resolved.orgSlug,
+			callerOrgId: principalOrgSlug,
+		})
+	) {
 		return {
 			ok: false,
 			status: 403,
@@ -1309,10 +1328,11 @@ export function bearerAuthMiddleware(): MiddlewareHandler {
 			base: OAuthContext,
 			principalOrgSlug: string | null,
 		): Promise<Response | undefined> => {
-			const resolution = await resolveActorFromRequest(c, {
-				isMaster: base.isMaster,
-				orgSlug: principalOrgSlug,
-			});
+			const resolution = await resolveActorFromRequest(
+				c,
+				base,
+				principalOrgSlug,
+			);
 			if (!resolution.ok) {
 				c.header("WWW-Authenticate", wwwAuthHeader);
 				return c.json({ error: resolution.error }, resolution.status);

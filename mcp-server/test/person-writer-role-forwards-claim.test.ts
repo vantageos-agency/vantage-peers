@@ -11,7 +11,10 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { _setInternalClientForTest, type OAuthContext } from "../src/auth.js";
 import { defineTool } from "../src/registerTool.js";
 
-type Handler = (args: Record<string, unknown>, extra: unknown) => Promise<unknown>;
+type Handler = (
+	args: Record<string, unknown>,
+	extra: unknown,
+) => Promise<unknown>;
 
 function callerCtx(over: Partial<OAuthContext> = {}): OAuthContext {
 	return {
@@ -32,7 +35,10 @@ function callerCtx(over: Partial<OAuthContext> = {}): OAuthContext {
 	};
 }
 
-function personTool(ctx: OAuthContext, query: ReturnType<typeof vi.fn>): Handler {
+function personTool(
+	ctx: OAuthContext,
+	query: ReturnType<typeof vi.fn>,
+): Handler {
 	_setInternalClientForTest({ query } as never);
 	const handlers = new Map<string, Handler>();
 	const server = {
@@ -66,11 +72,14 @@ describe("person writer-role gate forwards the role claim and decides nothing", 
 			content: { text: string }[];
 		};
 		expect(out.content[0].text).toBe("ran");
-		expect(query).toHaveBeenCalledWith("memberWriterRoles:assertPersonMayWrite", {
-			orgSlug: "org_A",
-			role: "org:member",
-			door: "mcp:pin_write",
-		});
+		expect(query).toHaveBeenCalledWith(
+			"memberWriterRoles:assertPersonMayWrite",
+			{
+				orgSlug: "org_A",
+				role: "org:member",
+				door: "mcp:pin_write",
+			},
+		);
 	});
 
 	it("REFUSED: the door's role-not-writer refusal stops the tool", async () => {
