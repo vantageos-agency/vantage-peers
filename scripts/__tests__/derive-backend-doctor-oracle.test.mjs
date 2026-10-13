@@ -1038,6 +1038,25 @@ describe("derive-backend-doctor-oracle R-2 closed verb (no `?` on a readable han
 	);
 
 	it(
+		"BOTH POLES — a chain iterated by `for await` is a streamed list (READ-LIST); without `await` it is no readable effect (`?`)",
+		() => {
+			// PRESENT: improvisationDigest:scanWindow reads tasks, messages and memories
+			// through `for await (… of <chain>)` loops that narrow while they read.
+			expect(committed("improvisation_digest").crud).toBe("READ-LIST");
+			// ABSENT: the same loops without `await` iterate nothing the derivation
+			// reads as a list, so the tool has no readable effect again.
+			const root = copyTree();
+			const file = join(root, "convex/improvisationDigest.ts");
+			const text = readFileSync(file, "utf8");
+			expect(text.match(/for await \(/g)).toHaveLength(3);
+			writeFileSync(file, text.replaceAll("for await (", "for ("));
+			deriveOk(root);
+			expect(verbIn(root, "improvisation_digest")).toBe("?");
+		},
+		TIMEOUT,
+	);
+
+	it(
 		"BOTH POLES — a write mixing ops through a helper keeps the door's own verb; a second op in the door's own body is `?` again",
 		() => {
 			const root = copyTree();
