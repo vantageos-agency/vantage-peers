@@ -32,6 +32,7 @@ import {
 	resolveVerifiedPerson,
 	verifiedPersonValidator,
 } from "./lib/personPrincipal";
+import { isAgentOnScopeRoster } from "./lib/rosterLabels";
 import { findAgentByName } from "./lib/agentIdentity";
 import {
 	type ActingPrincipal,
@@ -88,22 +89,15 @@ import {
 const UNREAD_RECEIPTS_SCAN_CAP = 500;
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Org-scope orchestrator enforcement (same defect class as
+// Org-scope agent enforcement (same defect class as
 // convex/memories.ts's isNamespaceAllowedForScope — see
 // .claude/rules/authority-attached-to-anonymous-object.md). markAsRead and
-// deleteMessage act on a receipt/message identified by a stored orchestrator
-// name (receipt.recipient / message.from). Master scope (no identity with
-// legacy opt-in, or the recognized service-account identity) retains
-// unrestricted access — preserves internal/MCP-server behaviour unchanged. A
-// Clerk-org-scoped caller may only act on an orchestrator listed in its own
-// client_org_mapping row's allowedOrchestrators; anything else is denied.
+// deleteMessage act on a receipt/message identified by a stored agent ID
+// (receipt.recipientId / message.fromId). Master scope retains unrestricted
+// access. An organisation member may act only on an agent its own stored ID
+// roster lists, judged by @vantageos/cloud-identity; a row storing no agent ID
+// names nobody.
 // ─────────────────────────────────────────────────────────────────────────────
-
-function isOrchestratorAllowedForScope(scope: OrgScope, orchestrator: string): boolean {
-	if (hasFleetRead(scope)) return true;
-	if (scope.orgSlug === null) return false;
-	return scope.allowedOrchestrators.includes(orchestrator);
-}
 
 // Channel membership for a non-master, org-scoped caller: "broadcast" (shared),
 // a channel under its own `team/<orgSlug>` prefix, or one of the orchestrators
@@ -1822,16 +1816,8 @@ export const markAsRead = mutation({
 				scope.userId !== "" &&
 				isHumanActorName(receipt.recipient) &&
 				receipt.recipient === memberActorOf(scope);
-			if (
-				!ownPersonReceipt &&
-				!isOrchestratorAllowedForScope(scope, receipt.recipient)
-			) {
-				throw new ConvexError(
-					`RBAC_DENIED: caller may not mark receipt ${receiptId} (recipient "${receipt.recipient}") as read — ${JSON.stringify({ orgSlug: scope.orgSlug })}`,
-				);
-			}
-			// TENANT GATE. The roster above is a string membership, not a tenant
-			// boundary: two orgs may both name "seat-x". A non-master caller may
+			// TENANT GATE, before the roster: an agent ID belongs to one org, and a
+			// receipt of another org is refused as such. A non-master caller may
 			// only touch a receipt STAMPED with its own org; an absent tenantId
 			// asserts nothing and grants nothing (same stance as scopedRowFilter).
 			if (
@@ -1843,6 +1829,26 @@ export const markAsRead = mutation({
 			) {
 				throw new ConvexError(
 					`RBAC_DENIED: caller may not mark receipt ${receiptId} as read — it does not belong to the caller's organisation — ${JSON.stringify({ registration: "messages:markAsRead", orgSlug: scope.orgSlug, reason: "receipt-tenant-mismatch" })}`,
+				);
+			}
+			// The recipient is an agent on the caller's stored ID roster, judged by the
+			// package; a receipt that stores no recipient ID names nobody. The fleet
+			// reads every receipt.
+			if (
+				!ownPersonReceipt &&
+				!hasFleetRead(scope) &&
+				!(
+					receipt.recipientId !== undefined &&
+					(await isAgentOnScopeRoster(
+						ctx,
+						scope,
+						receipt.recipientId,
+						"messages:markAsRead",
+					))
+				)
+			) {
+				throw new ConvexError(
+					`RBAC_DENIED: caller may not mark receipt ${receiptId} (recipient "${receipt.recipient}") as read — ${JSON.stringify({ orgSlug: scope.orgSlug })}`,
 				);
 			}
 			if (
@@ -1973,19 +1979,31 @@ export const deleteMessage = mutation({
 			return { deleted: true, receiptsDeleted: await cascadeDeleteMessage(ctx, args.messageId) };
 		}
 
-		if (!isOrchestratorAllowedForScope(scope, message.from)) {
-			throw new ConvexError(
-				`RBAC_DENIED: caller may not delete message ${args.messageId} (sender "${message.from}") — ${JSON.stringify({ orgSlug: scope.orgSlug })}`,
-			);
-		}
-
-		// TENANT GATE (same as markAsRead): the roster check above is a name
-		// match, not a tenant boundary, and this mutation cascade-deletes the
+		// TENANT GATE (same as markAsRead), before the roster: this mutation cascade-deletes the
 		// message's receipts. A non-master caller may only delete a message
 		// stamped with its own org.
 		if (!hasFleetRead(scope) && message.tenantId !== scope.orgSlug) {
 			throw new ConvexError(
 				`RBAC_DENIED: caller may not delete message ${args.messageId} — it does not belong to the caller's organisation — ${JSON.stringify({ registration: "messages:deleteMessage", orgSlug: scope.orgSlug, reason: "message-tenant-mismatch" })}`,
+			);
+		}
+
+		// The sender is an agent on the caller's stored ID roster, judged by the
+		// package; a message that stores no sender ID names nobody.
+		if (
+			!hasFleetRead(scope) &&
+			!(
+				message.fromId !== undefined &&
+				(await isAgentOnScopeRoster(
+					ctx,
+					scope,
+					message.fromId,
+					"messages:deleteMessage",
+				))
+			)
+		) {
+			throw new ConvexError(
+				`RBAC_DENIED: caller may not delete message ${args.messageId} (sender "${message.from}") — ${JSON.stringify({ orgSlug: scope.orgSlug })}`,
 			);
 		}
 

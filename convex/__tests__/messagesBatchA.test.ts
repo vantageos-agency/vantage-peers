@@ -24,6 +24,8 @@
 
 import { describe, expect, test } from "vitest";
 import { convexTest } from "../../tests/fixtures/convexTestWithServiceAccount";
+import { seedRosterAgent } from "../../tests/fixtures/rosterAgent";
+import { agentIdInCtx } from "../../tests/lib/agentIdOf";
 import { testClerkOrgId } from "../../tests/fixtures/testClerkOrgId";
 import { api } from "../_generated/api";
 import type { Id } from "../_generated/dataModel";
@@ -83,6 +85,10 @@ async function seedOrgs(t: T) {
 				createdAt: 1,
 				orgKind: "client",
 			});
+		}
+		// The roles are agents of each org, on the org's stored ID roster.
+		for (const slug of [ALPHA, BRAVO, EMPTY]) {
+			for (const role of ["phi", "neo"]) await seedRosterAgent(ctx, slug, role);
 		}
 		for (const role of ["phi", "neo"]) {
 			await ctx.db.insert("profiles", {
@@ -389,6 +395,7 @@ describe("R-53 an organisation is its stored ID, not the slug a row carries", ()
 		const t = createT();
 		await seedOrgs(t);
 		const { foreign, own } = await t.run(async (ctx) => {
+			const phi = await agentIdInCtx(ctx, ALPHA, "phi");
 			const message = await ctx.db.insert("messages", {
 				from: "x",
 				channel: "phi",
@@ -400,6 +407,7 @@ describe("R-53 an organisation is its stored ID, not the slug a row carries", ()
 			const foreign = await ctx.db.insert("messageReceipts", {
 				messageId: message,
 				recipient: "phi",
+				...(phi !== undefined ? { recipientId: phi } : {}),
 				tenantId: ALPHA,
 				tenantOrgId: testClerkOrgId(BRAVO),
 				readAt: undefined,
@@ -407,6 +415,7 @@ describe("R-53 an organisation is its stored ID, not the slug a row carries", ()
 			const own = await ctx.db.insert("messageReceipts", {
 				messageId: message,
 				recipient: "phi",
+				...(phi !== undefined ? { recipientId: phi } : {}),
 				tenantId: ALPHA,
 				tenantOrgId: testClerkOrgId(ALPHA),
 				readAt: undefined,

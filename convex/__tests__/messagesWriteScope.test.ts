@@ -19,6 +19,8 @@
 
 import { convexTest } from "../../tests/fixtures/convexTestWithServiceAccount";
 import { describe, expect, test } from "vitest";
+import { seedRosterAgent } from "../../tests/fixtures/rosterAgent";
+import { agentIdInCtx } from "../../tests/lib/agentIdOf";
 import { testClerkOrgId } from "../../tests/fixtures/testClerkOrgId";
 import { api } from "../_generated/api";
 import schema from "../schema";
@@ -42,6 +44,7 @@ async function seedOrgAMapping(t: ReturnType<typeof createT>) {
 			isActive: true,
 			createdAt: Date.now(),
 		});
+		await seedRosterAgent(ctx, "org-a", "seat-a");
 	});
 }
 
@@ -56,6 +59,7 @@ async function seedOrgBMapping(t: ReturnType<typeof createT>) {
 			isActive: true,
 			createdAt: Date.now(),
 		});
+		await seedRosterAgent(ctx, "org-b", "seat-b");
 	});
 }
 
@@ -80,8 +84,13 @@ async function seedMessageAndReceipt(
 	tenantId?: string,
 ) {
 	return await t.run(async (ctx) => {
+		const idOf = async (name: string) =>
+			tenantId === undefined ? undefined : await agentIdInCtx(ctx, tenantId, name);
+		const fromId = await idOf(from);
+		const recipientId = await idOf(recipient);
 		const messageId = await ctx.db.insert("messages", {
 			from,
+			...(fromId !== undefined ? { fromId } : {}),
 			tenantId,
 			tenantOrgId: testClerkOrgId(tenantId),
 			channel: recipient,
@@ -91,6 +100,7 @@ async function seedMessageAndReceipt(
 		const receiptId = await ctx.db.insert("messageReceipts", {
 			messageId,
 			recipient,
+			...(recipientId !== undefined ? { recipientId } : {}),
 			tenantId,
 			tenantOrgId: testClerkOrgId(tenantId),
 			readAt: undefined,

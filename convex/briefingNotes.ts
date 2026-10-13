@@ -6,7 +6,6 @@ import { creatorValidator } from "./schema";
 import {
 	withOrgScope,
 	requireScope,
-	requireOrchestratorOnRoster,
 	lookupOrgMapping,
 	verifiedActorValidator,
 	type OrgScope,
@@ -398,7 +397,6 @@ export const create = mutation({
 				await requireAuthenticatedCaller(ctx, undefined, undefined, verifiedActor);
 			}
 		} else {
-			requireOrchestratorOnRoster(scope, claimedCreator, "briefingNotes:create", "actor");
 			// The author is the agent the PROOF names (credential / verifiedActor /
 			// the label looked up in the caller's own org), never the label. A member
 			// whose proof names no agent of its org may not write under that name.
@@ -1127,7 +1125,6 @@ export const deleteBriefingNote = mutation({
 		}
 		// The caller is the agent its PROOF names (credential / verifiedActor / the
 		// label looked up in its own org) and must be the note's author BY ID.
-		requireOrchestratorOnRoster(scope, args.callerOrchestrator, "briefingNotes:deleteBriefingNote", "actor");
 		const caller = await withCodedRosterRefusal(
 			{
 				message: `only ${note.createdBy} (creator) or system can delete this briefing note`,
@@ -1246,7 +1243,6 @@ export const update = mutation({
 		// scope). The asserted label decides nothing.
 		let callerActorId: string | undefined;
 		if (callerOrchestrator !== undefined) {
-			requireOrchestratorOnRoster(scope, callerOrchestrator, "briefingNotes:update", "actor");
 			callerActorId = (
 				await withCodedRosterRefusal(
 					{

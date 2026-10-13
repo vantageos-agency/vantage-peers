@@ -114,6 +114,17 @@ async function seedWorld(): Promise<World> {
 		}
 		const agentA = await agent(ORG_A, "hélios");
 		const agentB = await agent(ORG_B, "hélios");
+		// Each org's stored ID roster lists its hélios.
+		for (const [slug, id] of [
+			[ORG_A, agentA],
+			[ORG_B, agentB],
+		] as const) {
+			const row = await ctx.db
+				.query("client_org_mapping")
+				.withIndex("by_clerk_slug", (q) => q.eq("clerkOrgSlug", slug))
+				.first();
+			if (row !== null) await ctx.db.patch(row._id, { allowedAgentIds: [id] });
+		}
 
 		const message: Record<string, Id<"messages">> = {};
 		const receipt: Record<string, Id<"messageReceipts">> = {};
@@ -393,10 +404,19 @@ describe("Clerk-JWT seat (its own identity): unchanged, confined to its org", ()
 		).toBe(2);
 		expect(
 			await member.mutation(api.messages.markAsRead, {
-				receiptIds: [w.receipt["B-BY-ID"], w.receipt["B-LEGACY"]],
+				receiptIds: [w.receipt["B-BY-ID"]],
 				callerOrchestrator: "hélios",
 			}),
-		).toBe(2);
+		).toBe(1);
+		// A receipt that stores no recipient ID names nobody: a member cannot mark
+		// it until the backfill has stamped the agent's ID on it.
+		await deniedWith(
+			member.mutation(api.messages.markAsRead, {
+				receiptIds: [w.receipt["B-LEGACY"]],
+				callerOrchestrator: "hélios",
+			}),
+			"RBAC_DENIED",
+		);
 	});
 
 	test("cross-org: org B's member marking org A's receipt is refused", async () => {

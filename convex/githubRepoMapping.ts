@@ -13,6 +13,7 @@ import {
 	sameOrg,
 } from "@vantageos/cloud-identity";
 import { ownerOfRepo, repoOwnerBoundToOrg } from "./githubOwnerBinding";
+import { requireLabelOnScopeRoster } from "./lib/rosterLabels";
 import { orgRefOfRow, orgRefOfScope } from "./lib/authOrgMapping";
 import {
 	resolveVerifiedOrgScope,
@@ -20,7 +21,6 @@ import {
 } from "./lib/verifiedOrg";
 import {
 	type OrgScope,
-	requireOrchestratorOnRoster,
 	requireResolvedCaller,
 	requireScope,
 	withOrgScope,
@@ -374,12 +374,17 @@ export const add = mutation({
 		);
 		const tenant = resolveWriteTenant(scope, door);
 		// A member routes only to orchestrators of its OWN roster.
-		requireOrchestratorOnRoster(scope, args.orchestrator, door, "assignee");
-		if (args.reviewer !== undefined) {
-			requireOrchestratorOnRoster(scope, args.reviewer, door, "assignee");
-		}
-		if (args.fallbackReviewer !== undefined) {
-			requireOrchestratorOnRoster(scope, args.fallbackReviewer, door, "assignee");
+		// The fleet and a scope with no organisation route to any orchestrator (the
+		// package's standing decides); every other caller names agents of its own
+		// organisation that its stored roster lists, judged by agent ID.
+		if (!hasFleetRead(scope) && scope.orgSlug !== null) {
+			await requireLabelOnScopeRoster(ctx, scope, args.orchestrator, "assignee", door);
+			if (args.reviewer !== undefined) {
+				await requireLabelOnScopeRoster(ctx, scope, args.reviewer, "assignee", door);
+			}
+			if (args.fallbackReviewer !== undefined) {
+				await requireLabelOnScopeRoster(ctx, scope, args.fallbackReviewer, "assignee", door);
+			}
 		}
 		// PROOF OF OWNERSHIP. A member may map only a repo whose GitHub OWNER is
 		// bound to its own org through a GitHub-verified step
