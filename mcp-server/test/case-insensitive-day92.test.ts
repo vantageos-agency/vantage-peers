@@ -7,7 +7,7 @@
  *
  * Test variants:
  *  - Pure normalizeOrchestratorId helper (12 assertions)
- *  - isInAllowList helper (8 assertions)
+ *  - (isInAllowList helper removed in batch D)
  *  - listTasksGate via normalized comparison (10 assertions)
  *  Total: 30+ assertions
  *
@@ -16,10 +16,7 @@
  */
 
 import { describe, expect, it } from "vitest";
-import {
-	normalizeOrchestratorId,
-	isInAllowList,
-} from "../src/normalizeOrchestratorId.js";
+import { normalizeOrchestratorId } from "../src/normalizeOrchestratorId.js";
 import { listTasksGate } from "../src/list-tasks-gate.js";
 import type { OAuthContext } from "../src/auth.js";
 
@@ -132,42 +129,11 @@ describe("normalizeOrchestratorId", () => {
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
-// 2. isInAllowList helper — 8 assertions
+// 2. (removed in batch D) the isInAllowList helper admitted a name against a
+//    list of names and read "*" as everyone. A name selects nobody; the helper
+//    and its 8 assertions are gone (identity-delegation-batch-d.test.ts pins the
+//    absence).
 // ─────────────────────────────────────────────────────────────────────────────
-
-describe("isInAllowList", () => {
-  it("matches HELIOS (uppercase) against list containing Helios", () => {
-    expect(isInAllowList(TRIO_FROM_ALLOW_LIST, "HELIOS")).toBe(true);
-  });
-
-  it("matches Hélios NFC (composed) against list", () => {
-    expect(isInAllowList(TRIO_FROM_ALLOW_LIST, HELIOS_NFC)).toBe(true);
-  });
-
-  it("matches Hélios NFD (decomposed) against list after NFC normalization", () => {
-    expect(isInAllowList(TRIO_FROM_ALLOW_LIST, HELIOS_NFD)).toBe(true);
-  });
-
-  it("matches helios (lowercase) against list", () => {
-    expect(isInAllowList(TRIO_FROM_ALLOW_LIST, "helios")).toBe(true);
-  });
-
-  it("matches Clio (capitalised) against list containing clio + Clio", () => {
-    expect(isInAllowList(TRIO_FROM_ALLOW_LIST, "Clio")).toBe(true);
-  });
-
-  it("matches Victor (capitalised) against list", () => {
-    expect(isInAllowList(TRIO_FROM_ALLOW_LIST, "Victor")).toBe(true);
-  });
-
-  it("rejects Outsider not in allowList", () => {
-    expect(isInAllowList(TRIO_FROM_ALLOW_LIST, "Outsider")).toBe(false);
-  });
-
-  it("passes wildcard * regardless of presented value", () => {
-    expect(isInAllowList(["*"], "anything")).toBe(true);
-  });
-});
 
 // ─────────────────────────────────────────────────────────────────────────────
 // 3. listTasksGate with NFC-normalized comparison — 10 assertions

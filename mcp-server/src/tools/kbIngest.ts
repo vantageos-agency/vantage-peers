@@ -33,6 +33,7 @@
 
 import type { McpServer } from "@modelcontextprotocol/server";
 import { ProtocolError, ProtocolErrorCode } from "@modelcontextprotocol/server";
+import { bearerStanding } from "@vantageos/cloud-identity";
 import type { ConvexHttpClient } from "convex/browser";
 import { z } from "zod";
 import type { OAuthContext } from "../auth.js";
@@ -216,7 +217,12 @@ export function registerKbIngestTools(
 	// Validate here, once, before registering handlers.  Both tools share the
 	// same org scope for the lifetime of this request.
 	const resolveOrgContext = (): { orgId: string; namespacePrefix: string } => {
-		if (!oauthCtx || oauthCtx.isMaster) {
+		// Only a CALLER (a person or a seat of one organisation) has a team
+		// namespace. The standing is the package's `bearerStanding`: the master
+		// bearer ("service-bearer"), the local trust context ("local-trust"), no
+		// context and a malformed or self-contradicting one ("refused") are all
+		// not a caller.
+		if (!oauthCtx || bearerStanding(oauthCtx) !== "caller") {
 			// Master-scope or legacy bearer: no team namespace — KB ingest forbidden.
 			throw new ProtocolError(
 				ProtocolErrorCode.InvalidRequest,

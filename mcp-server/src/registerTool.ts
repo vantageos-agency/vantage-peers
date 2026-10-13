@@ -202,7 +202,11 @@ async function enforcePersonWriterRole(
 			"memberWriterRoles:assertPersonMayWrite" as any,
 			{
 				orgSlug: oauthCtx.clerkOrgSlug,
-				...(oauthCtx.orgRole !== undefined ? { role: oauthCtx.orgRole } : {}),
+				// The verified role claim of the token row, forwarded as it is; the
+				// door decides. An absent role is an absent key on the wire (an
+				// undefined object value is dropped by the Convex client), which the
+				// door refuses (assertMemberMayWrite: absent never means "all").
+				role: oauthCtx.orgRole,
 				door: `mcp:${toolName}`,
 			},
 		);
