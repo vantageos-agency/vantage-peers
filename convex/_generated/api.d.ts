@@ -55,6 +55,7 @@ import type * as lib_agentIdentity from "../lib/agentIdentity.js";
 import type * as lib_aiClient from "../lib/aiClient.js";
 import type * as lib_auth from "../lib/auth.js";
 import type * as lib_authOrgMapping from "../lib/authOrgMapping.js";
+import type * as lib_backendManifest from "../lib/backendManifest.js";
 import type * as lib_fleetActors from "../lib/fleetActors.js";
 import type * as lib_fleetStanding from "../lib/fleetStanding.js";
 import type * as lib_humanActor from "../lib/humanActor.js";
@@ -195,6 +196,7 @@ declare const fullApi: ApiFromModules<{
   "lib/aiClient": typeof lib_aiClient;
   "lib/auth": typeof lib_auth;
   "lib/authOrgMapping": typeof lib_authOrgMapping;
+  "lib/backendManifest": typeof lib_backendManifest;
   "lib/fleetActors": typeof lib_fleetActors;
   "lib/fleetStanding": typeof lib_fleetStanding;
   "lib/humanActor": typeof lib_humanActor;
