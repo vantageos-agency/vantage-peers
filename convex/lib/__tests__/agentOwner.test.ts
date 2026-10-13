@@ -288,8 +288,14 @@ describe("agent owner: a seat token is proven by the same package call", () => {
 	});
 });
 
-describe("agent owner: the doors that bind and unbind an owner", () => {
-	test("setAgentOwner: an org admin binds an active member; the active credential is re-stamped from the agent row", async () => {
+describe("agent owner: the operator functions that bind and unbind an owner", () => {
+	const bind = (t: T, agentId: Id<"agents">, ownerPersonId?: string) =>
+		t.mutation(internal.agents.setAgentOwner, {
+			agentId,
+			...(ownerPersonId !== undefined ? { ownerPersonId } : {}),
+		});
+
+	test("setAgentOwner: binds an active person of the agent's org; the active credential is re-stamped from the agent row", async () => {
 		const t = createT();
 		await seedOrg(t, "org-a");
 		await seedMember(t, "org-a", "person-1");
@@ -299,76 +305,82 @@ describe("agent owner: the doors that bind and unbind an owner", () => {
 			"ada",
 			undefined,
 		);
-		const out = await t
-			.withIdentity(admin("org-a"))
-			.mutation(api.agents.setAgentOwner, {
-				agentId,
-				ownerPersonId: "person-1",
-			});
-		expect(out).toEqual({ ownerPersonId: "person-1", credentialsRestamped: 1 });
+		expect(await bind(t, agentId, "person-1")).toEqual({
+			ownerPersonId: "person-1",
+			credentialsRestamped: 1,
+		});
 		expect(await resolveAsMcp(t, secret)).toMatchObject({
 			ownerPersonId: "person-1",
 		});
 	});
 
-	test("setAgentOwner: a person who is not a member of the org is refused and nothing is written", async () => {
+	test("setAgentOwner: a person unknown to the agent's org is refused and nothing is written", async () => {
 		const t = createT();
 		await seedOrg(t, "org-a");
 		const { agentId } = await ownedAgentWithCredential(t, "org-a", "ada", undefined);
-		await expect(
-			t.withIdentity(admin("org-a")).mutation(api.agents.setAgentOwner, {
-				agentId,
-				ownerPersonId: "stranger",
-			}),
-		).rejects.toThrow();
+		await expect(bind(t, agentId, "stranger")).rejects.toThrow();
 		const row = await t.run(async (ctx) => ctx.db.get(agentId));
 		expect(row?.ownerPersonId).toBeUndefined();
 	});
 
-	test("setAgentOwner: the admin of another org cannot bind this org's agent", async () => {
+	test("setAgentOwner: a person of ANOTHER org is refused", async () => {
 		const t = createT();
 		await seedOrg(t, "org-a");
 		await seedOrg(t, "org-b");
 		await seedMember(t, "org-b", "person-b");
 		const { agentId } = await ownedAgentWithCredential(t, "org-a", "ada", undefined);
-		await expect(
-			t.withIdentity(admin("org-b")).mutation(api.agents.setAgentOwner, {
-				agentId,
-				ownerPersonId: "person-b",
-			}),
-		).rejects.toThrow(/ORG_MISMATCH/);
+		await expect(bind(t, agentId, "person-b")).rejects.toThrow();
 		const row = await t.run(async (ctx) => ctx.db.get(agentId));
 		expect(row?.ownerPersonId).toBeUndefined();
 	});
 
-	test("setAgentOwner: an anonymous caller is refused", async () => {
+	test("setAgentOwner: a deactivated person is refused", async () => {
+		const t = createT();
+		await seedOrg(t, "org-a");
+		await seedMember(t, "org-a", "person-1", true);
+		const { agentId } = await ownedAgentWithCredential(t, "org-a", "ada", undefined);
+		await expect(bind(t, agentId, "person-1")).rejects.toThrow();
+	});
+
+	test("setAgentOwner: unbinding clears the owner on the agent and its active credential", async () => {
+		const t = createT();
+		await seedOrg(t, "org-a");
+		await seedMember(t, "org-a", "person-1");
+		const { agentId, secret } = await ownedAgentWithCredential(
+			t,
+			"org-a",
+			"ada",
+			"person-1",
+		);
+		expect(await bind(t, agentId)).toEqual({
+			ownerPersonId: null,
+			credentialsRestamped: 1,
+		});
+		const out = await resolveAsMcp(t, secret);
+		expect(out).not.toHaveProperty("ownerPersonId");
+	});
+
+	test("setAgentOwner: an agent that does not exist is AGENT_NOT_FOUND", async () => {
 		const t = createT();
 		await seedOrg(t, "org-a");
 		const { agentId } = await ownedAgentWithCredential(t, "org-a", "ada", undefined);
-		await expect(
-			t.mutation(api.agents.setAgentOwner, {
-				agentId,
-				ownerPersonId: "person-1",
-			}),
-		).rejects.toThrow(/RBAC_DENIED/);
+		await t.run(async (ctx) => {
+			await ctx.db.delete(agentId);
+		});
+		await expect(bind(t, agentId)).rejects.toThrow(/AGENT_NOT_FOUND/);
 	});
 
-	test("setPerson: an org admin records a person, deactivates and reactivates it; an ordinary member may not", async () => {
+	test("setPerson: records a person of an active org, deactivates and reactivates it", async () => {
 		const t = createT();
 		await seedOrg(t, "org-a");
-		const a = t.withIdentity(admin("org-a"));
-		expect(
-			await a.mutation(api.persons.setPerson, {
+		const set = (active: boolean) =>
+			t.mutation(internal.persons.setPerson, {
+				clerkOrgId: testClerkOrgId("org-a"),
 				clerkUserId: "person-1",
-				active: true,
-			}),
-		).toEqual({ recorded: true, active: true });
-		expect(
-			await a.mutation(api.persons.setPerson, {
-				clerkUserId: "person-1",
-				active: false,
-			}),
-		).toEqual({ recorded: false, active: false });
+				active,
+			});
+		expect(await set(true)).toEqual({ recorded: true, active: true });
+		expect(await set(false)).toEqual({ recorded: false, active: false });
 		const stored = await t.run(async (ctx) =>
 			ctx.db
 				.query("persons")
@@ -378,39 +390,19 @@ describe("agent owner: the doors that bind and unbind an owner", () => {
 				.unique(),
 		);
 		expect(stored?.isActive).toBe(false);
-		await a.mutation(api.persons.setPerson, {
-			clerkUserId: "person-1",
-			active: true,
-		});
-		const back = await t.run(async (ctx) => ctx.db.get(stored?._id as Id<"persons">));
-		expect(back?.isActive).toBe(true);
-		await expect(
-			t
-				.withIdentity({
-					subject: "u-org-a",
-					org_slug: "org-a",
-					org_id: testClerkOrgId("org-a"),
-					org_role: "org:member",
-				} as Identity)
-				.mutation(api.persons.setPerson, {
-					clerkUserId: "person-2",
-					active: true,
-				}),
-		).rejects.toThrow(/RBAC_DENIED/);
+		expect(stored?.orgSlug).toBe("org-a");
+		expect(await set(true)).toEqual({ recorded: false, active: true });
 	});
 
-	test("setPerson: the person is recorded in the CALLER's own org, never another", async () => {
+	test("setPerson: an organisation no active mapping holds is refused", async () => {
 		const t = createT();
-		await seedOrg(t, "org-a");
-		await seedOrg(t, "org-b");
-		await t.withIdentity(admin("org-b")).mutation(api.persons.setPerson, {
-			clerkUserId: "person-1",
-			active: true,
-		});
-		const rows = await t.run(async (ctx) => ctx.db.query("persons").collect());
-		expect(rows).toHaveLength(1);
-		expect(rows[0].clerkOrgId).toBe(testClerkOrgId("org-b"));
-		expect(rows[0].orgSlug).toBe("org-b");
+		await expect(
+			t.mutation(internal.persons.setPerson, {
+				clerkOrgId: "org_Nobody",
+				clerkUserId: "person-1",
+				active: true,
+			}),
+		).rejects.toThrow(/ORG_NOT_FOUND/);
 	});
 });
 
