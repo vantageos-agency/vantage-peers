@@ -1,0 +1,12 @@
+{
+	"$comment": "Backend-doctor ratchet baseline (task k179600rsb4xsv7a975cjkqwhs8g7qhv). Each mechanical rule count may only go DOWN. Lower a value in the same PR that lowers the count; scripts/doctor-ratchet.mjs refuses a raised value against origin/main. Measured on main a82a2ed2 with @vantageos/backend-doctor 0.4.5 after bun install --frozen-lockfile.",
+	"doctorVersion": "0.4.5",
+	"counts": {
+		"CR-2": 200,
+		"R-5": 62,
+		"R-53": 369,
+		"R-54": 148,
+		"R-55": 31,
+		"R-56": 2
+	}
+}
