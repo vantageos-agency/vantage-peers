@@ -58,8 +58,15 @@ export async function seedAgents(
 ): Promise<void> {
 	await t.run(async (ctx) => {
 		for (const [orgSlug, name] of pairs) {
+			const mapping = await ctx.db
+				.query("client_org_mapping")
+				.withIndex("by_clerk_slug", (q) => q.eq("clerkOrgSlug", orgSlug))
+				.first();
 			await ctx.db.insert("agents", {
 				orgSlug,
+				...(mapping?.clerkOrgId !== undefined
+					? { clerkOrgId: mapping.clerkOrgId }
+					: {}),
 				name,
 				normalizedName: normalizeOrchestratorId(name),
 				isActive: true,
@@ -72,4 +79,23 @@ export async function seedAgents(
 			await syncRosterIdsFromNames(ctx, orgSlug);
 		}
 	});
+}
+
+/**
+ * TEST FIXTURE ONLY. The ID of the agent row an org holds under `name`, read
+ * inside a `t.run` callback (`findAgentId` above takes the test client). Absent
+ * when the org holds no such agent. A fixture that inserts a task or a mission
+ * row directly stamps `assignedToId` / `pilotId` with it, as the write doors do.
+ */
+export async function agentIdInCtx(
+	ctx: Pick<GenericMutationCtx<DataModel>, "db">,
+	orgSlug: string,
+	name: string,
+): Promise<Id<"agents"> | undefined> {
+	const key = normalizeOrchestratorId(name);
+	const rows = await ctx.db
+		.query("agents")
+		.withIndex("by_org", (q) => q.eq("orgSlug", orgSlug))
+		.collect();
+	return rows.find((r) => normalizeOrchestratorId(r.name) === key)?._id;
 }

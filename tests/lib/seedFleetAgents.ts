@@ -244,8 +244,17 @@ export async function seedOrgAgents(
 ): Promise<Map<string, string>> {
 	await t.run(async (ctx) => {
 		for (const [orgSlug, name] of pairs) {
+			// An agent is stamped with its organisation's permanent ID, as a registered
+			// one is: the package matches an agent to an organisation by that ID only.
+			const mapping = await ctx.db
+				.query("client_org_mapping")
+				.withIndex("by_clerk_slug", (q) => q.eq("clerkOrgSlug", orgSlug))
+				.first();
 			await ctx.db.insert("agents", {
 				orgSlug,
+				...(mapping?.clerkOrgId !== undefined
+					? { clerkOrgId: mapping.clerkOrgId }
+					: {}),
 				name,
 				normalizedName: normalizeOrchestratorId(name),
 				isActive: true,

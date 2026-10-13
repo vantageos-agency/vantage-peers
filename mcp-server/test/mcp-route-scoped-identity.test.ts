@@ -168,12 +168,14 @@ beforeEach(async () => {
 		});
 		const agentId = await ctx.db.insert("agents", {
 			orgSlug: "org-a",
+			clerkOrgId: "org_A",
 			name: "agent-a",
 			isActive: true,
 			createdAt: now,
 		});
 		await ctx.db.insert("agent_credentials", {
 			orgSlug: "org-a",
+			clerkOrgId: "org_A",
 			agentId,
 			agentName: "agent-a",
 			secretHash: await sha256Hex(AGENT_A_SECRET),
