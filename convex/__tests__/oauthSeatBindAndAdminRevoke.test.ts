@@ -28,6 +28,7 @@ import { readFileSync } from "node:fs";
 import { describe, expect, test } from "vitest";
 import { convexTest } from "../../tests/fixtures/convexTestWithServiceAccount";
 import { api, internal } from "../_generated/api";
+import type { Id } from "../_generated/dataModel";
 import { resolveSeatAgent } from "../lib/seatAgent";
 import schema from "../schema";
 
@@ -166,6 +167,30 @@ describe("oauth:bindScopeProfileAgent", () => {
 				.unique(),
 		);
 		expect(row?.agentId).toBeUndefined();
+	});
+
+	test("REFUSED: a profile with a slug but no stored org ID (no label fallback)", async () => {
+		const t = createT();
+		const { helios } = await seed(t);
+		await t.run(async (ctx) => {
+			const row = await ctx.db
+				.query("oauth_scope_profiles")
+				.withIndex("by_profileId", (q) => q.eq("profileId", "helios-iris-rh"))
+				.unique();
+			if (row) await ctx.db.patch(row._id, { clerkOrgId: undefined });
+		});
+		await expect(
+			internal_bind(t, "helios-iris-rh", helios),
+		).rejects.toThrow(/ORG_ID_MISSING.*profile/s);
+	});
+
+	test("REFUSED: an agent with no stored org ID (no label fallback)", async () => {
+		const t = createT();
+		const { helios } = await seed(t);
+		await t.run((ctx) => ctx.db.patch(helios, { clerkOrgId: undefined }));
+		await expect(
+			internal_bind(t, "helios-iris-rh", helios),
+		).rejects.toThrow(/ORG_ID_MISSING.*agent/s);
 	});
 
 	test("REFUSED: a profile that does not carry exactly one allowlist entry", async () => {
@@ -357,3 +382,10 @@ describe("oauth client token walks: one paginate per transaction", () => {
 		expect(body.match(/\.paginate\(/g)?.length ?? 0).toBeLessThanOrEqual(1);
 	});
 });
+
+function internal_bind(t: T, profileId: string, agentId: Id<"agents">) {
+	return asService(t).mutation(internal.oauth.bindScopeProfileAgent, {
+		profileId,
+		agentId,
+	});
+}
