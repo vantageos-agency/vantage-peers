@@ -189,6 +189,9 @@ describe("seat token stamp at mint and at refresh", () => {
 		expect(row?.agentId).toBe(id);
 		expect(row?.agentOrgId).toBe("iris-rh");
 		const seen = await lookup(t, hash);
+		// The token's organisation is stated by permanent ID beside the slug, so a
+		// reader compares IDs (the MCP seatAgentOf does) and never the labels.
+		expect(seen?.clerkOrgId).toBe(testClerkOrgId("iris-rh"));
 		expect(seen?.seatAgent).toEqual({
 			agentId: id,
 			orgId: "iris-rh",

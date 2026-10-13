@@ -32,6 +32,7 @@ import {
 	type OAuthCtx as PackageOAuthCtx,
 	isMasterScope as packageIsMasterScope,
 	personActorName,
+	sameOrg,
 	sha256Hex as packageSha256Hex,
 	validateMasterBearer,
 	validatePresentedBearer,
@@ -98,6 +99,22 @@ export type OAuthContext = {
 	 */
 	clerkOrgSlug?: string;
 	/**
+	 * The token's organisation by its permanent Clerk org ID, as stated by
+	 * oauth:getAccessTokenByHash (the row's own, else the one its mapping stores).
+	 * The slug above is a renamable label; an organisation is told from another by
+	 * THIS value. Absent: the provider predates the field, or the org has no ID yet.
+	 */
+	clerkOrgId?: string;
+	/**
+	 * The `agents` row IDs the token's scope profile admits (operator ruling
+	 * 2026-10-13, "identify by id, not by name"), re-read live by Convex: an agent
+	 * that is retired, or no longer in the token's organisation, is not listed.
+	 * `fromAllowList` stays as the DISPLAY list of the same agents until the
+	 * contract step. Absent: the provider predates the field, or the profile lists
+	 * no IDs yet (expand phase).
+	 */
+	fromAllowListAgentIds?: string[];
+	/**
 	 * True ONLY on the Clerk-team path (2.5) when the caller's own
 	 * `client_org_mapping` row carries the explicit `fleetWide` flag (module M1).
 	 * It replaces the "*" entry the delegation check used to read out of the
@@ -153,7 +170,13 @@ export type OAuthContext = {
 	 *                 server, reader-first deploy). The legacy single-name rule
 	 *                 applies until Convex is deployed; see {@link isSeatActingAsItself}.
 	 */
-	seatAgent?: { agentId: string; orgId: string; agentName: string } | null;
+	seatAgent?: {
+		agentId: string;
+		orgId: string;
+		agentName: string;
+		/** The agent's organisation by permanent ID, to be compared with {@link OAuthContext.clerkOrgId}. */
+		orgClerkId?: string;
+	} | null;
 };
 
 declare module "hono" {
@@ -226,10 +249,19 @@ type OAuthLookupResult = {
 	expiresAt: number;
 	/** Org slug snapshotted onto the token row at mint (see OAuthContext). */
 	clerkOrgSlug?: string;
+	/** The token's organisation by permanent ID (see OAuthContext). */
+	clerkOrgId?: string;
 	orgRole?: string;
 	principal?: "person";
 	/** Absent from a Convex that predates the stamp; null when none resolved. */
-	seatAgent?: { agentId: string; orgId: string; agentName: string } | null;
+	seatAgent?: {
+		agentId: string;
+		orgId: string;
+		agentName: string;
+		orgClerkId?: string;
+	} | null;
+	/** The agent IDs the token's profile admits (see OAuthContext). */
+	fromAllowListAgentIds?: string[];
 } | null;
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -498,16 +530,29 @@ export function checkActorBinding(
 
 /**
  * The agent a seat token resolved to BY ID, or undefined when it resolved none.
- * Believed only when the stamp's org is the token's OWN org: a stamp that names
- * another org's agent is never an identity for this token.
+ * Believed only when the stamp's organisation is the token's OWN organisation,
+ * decided by permanent org ID through @vantageos/cloud-identity `sameOrg`: a stamp
+ * that names another org's agent is never an identity for this token, and a
+ * renamed slug does not break a seat. No label is compared here. A token that
+ * carries no organisation has no seat identity. When the provider states an ID on
+ * only one side, or none (a Convex that predates the ID fields), the provider is
+ * the one that vouched: it resolves the seat inside the token's own organisation,
+ * by ID, before it stamps it, and that verdict is not re-derived from labels.
  */
 export function seatAgentOf(
 	ctx: OAuthContext,
-): { agentId: string; orgId: string; agentName: string } | undefined {
+):
+	| { agentId: string; orgId: string; agentName: string; orgClerkId?: string }
+	| undefined {
 	const seat = ctx.seatAgent;
 	if (seat === undefined || seat === null) return undefined;
 	if (seat.agentId === "" || seat.agentName === "") return undefined;
-	if (ctx.clerkOrgSlug === undefined || seat.orgId !== ctx.clerkOrgSlug) {
+	if (ctx.clerkOrgSlug === undefined) return undefined;
+	if (
+		seat.orgClerkId !== undefined &&
+		ctx.clerkOrgId !== undefined &&
+		!sameOrg({ id: seat.orgClerkId }, { id: ctx.clerkOrgId })
+	) {
 		return undefined;
 	}
 	return seat;

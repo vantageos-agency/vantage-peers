@@ -16,7 +16,11 @@
  * absent-token branch is an organisation-admin identity check.
  */
 
-import { sha256Hex, validateMasterBearer } from "@vantageos/cloud-identity";
+import {
+	isServiceAccountScope,
+	sha256Hex,
+	validateMasterBearer,
+} from "@vantageos/cloud-identity";
 import { ConvexError, v } from "convex/values";
 import { internal } from "./_generated/api";
 import type { Id } from "./_generated/dataModel";
@@ -29,7 +33,6 @@ import {
 } from "./_generated/server";
 import { normalizeOrchestratorId } from "./_helpers/normalizeOrchestratorId";
 import {
-	isMcpBoundMaster,
 	lookupOrgMapping,
 	requireOperatorAdminToCreateOrg,
 	requireResolvedCaller,
@@ -39,11 +42,15 @@ import {
 } from "./lib/auth";
 import { isHumanActorName } from "./lib/humanActor";
 import {
+	liveProfileAgentIds,
 	liveSeatAgent,
+	resolveSeat,
 	resolveSeatAgent,
 	seatBindingRefusal,
 } from "./lib/seatAgent";
 import { requireId } from "./lib/ids";
+import { resolveProvisioningMapping } from "./lib/provisioningMapping";
+import { requireAgentsOfOrg } from "./lib/rosterIds";
 import { DEFAULT_MEMBER_SCOPES } from "./lib/memberScopes";
 import { upsertAdminMembership } from "./orgMembership";
 import { CLERK_ORG_ID_PATTERN, clerkOrgIdForSlug } from "./lib/orgClerkId";
@@ -135,10 +142,12 @@ async function requireServiceAccount(
 	}
 	// The door is the fleet SERVICE ACCOUNT, not "any master": an operator-org
 	// admin is a human master (masterSource "operator-admin") and must not mint
-	// access tokens or read the client registry. Decided by the grant's SOURCE,
-	// and that grant is made by `withOrgScope` from the stored service-account
-	// rows (convex/lib/serviceAccount.ts), never from an environment variable.
-	if (!scope.isMaster || scope.masterSource !== "service-account") {
+	// access tokens or read the client registry. The standing is
+	// @vantageos/cloud-identity's judgement (`isServiceAccountScope`: standing
+	// "fleet" from the "service-account" source), and that grant is made by
+	// `withOrgScope` from the stored service-account rows
+	// (convex/lib/serviceAccount.ts), never from an environment variable.
+	if (!isServiceAccountScope(scope)) {
 		throw refuseNonServiceAccount(
 			registration,
 			scope.orgSlug,
@@ -160,6 +169,9 @@ const scopeProfileShape = v.object({
 	namespaceWritePrefixes: v.array(v.string()),
 	clerkOrgSlug: v.optional(v.string()),
 	selfRegistrable: v.optional(v.boolean()),
+	// The `agents` row IDs this profile admits (display labels stay in
+	// `fromAllowList`). Optional: a profile that names no agent carries none.
+	fromAllowListAgentIds: v.optional(v.array(v.id("agents"))),
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -379,6 +391,19 @@ export const upsertScopeProfile = internalMutation({
 		const now = Date.now();
 		const actorTokenHash = await sha256Hex("internal:oauth:upsertScopeProfile");
 
+		// IDENTITY BY ID: the agent IDs a profile admits are agents of the profile's
+		// OWN organisation (active, stamped with it), never another org's and never
+		// a profile without an organisation. Refused before any write.
+		const listedAgentIds = profile.fromAllowListAgentIds;
+		if (listedAgentIds !== undefined) {
+			if (profile.clerkOrgSlug === undefined) {
+				throw new ConvexError(
+					`AGENT_NOT_IN_ORG: profile "${profile.profileId}" names agent IDs but no organisation; a profile lists the agents of its own organisation only — ${JSON.stringify({ door: "oauth:upsertScopeProfile", profileId: profile.profileId })}`,
+				);
+			}
+			await requireAgentsOfOrg(ctx, profile.clerkOrgSlug, listedAgentIds);
+		}
+
 		const existing = await ctx.db
 			.query("oauth_scope_profiles")
 			.withIndex("by_profileId", (q) => q.eq("profileId", profile.profileId))
@@ -429,8 +454,18 @@ export const upsertScopeProfile = internalMutation({
 			namespaceWritePrefixes: existing.namespaceWritePrefixes,
 		};
 
+		// A names-only upsert that changes the display list leaves the stored agent
+		// IDs describing a set the profile no longer names: they are cleared, to be
+		// refilled by migrations/agentIdentityRows:backfillProfileAgentIdLists (or
+		// passed explicitly), never left stale. An unchanged list keeps its IDs.
+		const labelsChanged =
+			existing.fromAllowList.length !== profile.fromAllowList.length ||
+			existing.fromAllowList.some((entry, i) => entry !== profile.fromAllowList[i]);
 		await ctx.db.patch(existing._id, {
 			...profile,
+			...(profile.fromAllowListAgentIds === undefined && labelsChanged
+				? { fromAllowListAgentIds: undefined }
+				: {}),
 			// The id follows the slug it is patched with. A profile that carries no
 			// slug leaves both columns as they are (patching undefined would unset).
 			...(profile.clerkOrgSlug !== undefined
@@ -489,13 +524,9 @@ export const getScopeProfile = query({
 	returns: v.union(scopeProfileShape, v.null()),
 	handler: async (ctx, args) => {
 		// isolation-contract: no reactive subscriber exists — enumerated at /root/coding/vantage-peers-dashboard@71da625 with `grep -rn 'api\.oauth\.getScopeProfile' --include=*.tsx --include=*.ts app components hooks lib contexts providers` -> 0 matches. Only the dashboard was enumerated; other callers were not individually traced. R-50 declared divergence (a claim, verified against that enumeration).
-		const scope = await withOrgScope(ctx);
-		if (!isMcpBoundMaster(scope)) {
-			throw new ConvexError(
-				"RBAC_DENIED: getScopeProfile requires master scope — " +
-					"anonymous and non-master callers may never read an OAuth scope profile's fromAllowList or namespace prefixes.",
-			);
-		}
+		// Service-account only: anonymous, org-scoped and operator-human callers may
+		// never read an OAuth scope profile's allowlist or namespace prefixes.
+		await requireServiceAccount(ctx, "oauth:getScopeProfile");
 
 		const row = await ctx.db
 			.query("oauth_scope_profiles")
@@ -510,6 +541,9 @@ export const getScopeProfile = query({
 			namespaceWritePrefixes: row.namespaceWritePrefixes,
 			...(row.clerkOrgSlug !== undefined
 				? { clerkOrgSlug: row.clerkOrgSlug }
+				: {}),
+			...(row.fromAllowListAgentIds !== undefined
+				? { fromAllowListAgentIds: row.fromAllowListAgentIds }
 				: {}),
 		};
 	},
@@ -721,8 +755,12 @@ export const canCreateOrganization = query({
 	returns: v.object({ allowed: v.boolean() }),
 	handler: async (ctx) => {
 		if (!(await ctx.auth.getUserIdentity())) {
+			// No credential at all: the anonymous projection of a scope, refused by
+			// the one helper that raises RBAC_DENIED for it. The answer below is read
+			// from the caller's own verified session (`resolveOperatorAdmin`), never
+			// from a resolved organisation scope.
 			requireResolvedCaller(
-				await withOrgScope(ctx),
+				{ isMaster: false, fleetWide: false, orgSlug: null, anonymous: true },
 				"oauth:canCreateOrganization",
 			);
 			// requireResolvedCaller raises for an anonymous caller; this is
@@ -794,33 +832,40 @@ export const provisionOrganization = mutation({
 		// identity and asserts it equals `slug`).
 		let operatorCreate: { subject: string; operatorOrgSlug: string } | null =
 			null;
+		// WHO provisioned, recorded where the authorisation is decided, so no
+		// credential argument is ever read again to name the actor (R-56: an audit
+		// row never holds a digest of the master secret the caller chose).
+		//   - master path: the FIXED label of the master credential;
+		//   - org-admin path: the verified Clerk subject. That subject is also the
+		//     one human the orgMembership AUDIT write (task
+		//     k17a7t4a9d4hx11sgj2tcdf7kx8et4cp) records; the master path has no
+		//     Clerk identity in general (a bare secret string, no session), so
+		//     nothing is written for it. See convex/orgMembership.ts: that row is
+		//     an AUDIT RECORD ONLY, never consulted by `requireOrgAdmin` or any
+		//     other authorization decision.
+		let provisioningAdminSubject: string | null = null;
+		let auditActorSource: string;
 		if (args.callerToken && args.callerToken.length > 0) {
 			await requireMasterAuth(args.callerToken);
-		} else if (
-			// OPERATOR CREATE (task k17fbbq8z7rs1bgd06gmb88x8s8fkpm3): no mapping
-			// yet for this slug -> only the operator org's verified org:admin may
-			// create it (requireOperatorAdminToCreateOrg refuses everyone else with
-			// a reason). An EXISTING slug keeps the pre-existing requireOrgAdmin
-			// path byte-for-byte (admin of THIS org only; replay returns null
-			// secrets), so another org's slug can never be hijacked.
-			(await lookupOrgMapping(ctx, slug)) === null
-		) {
-			operatorCreate = await requireOperatorAdminToCreateOrg(ctx, slug);
+			auditActorSource = MASTER_ACTOR_LABEL;
 		} else {
-			await requireOrgAdmin(ctx, slug);
+			if (
+				// OPERATOR CREATE (task k17fbbq8z7rs1bgd06gmb88x8s8fkpm3): no mapping
+				// yet for this slug -> only the operator org's verified org:admin may
+				// create it (requireOperatorAdminToCreateOrg refuses everyone else with
+				// a reason). An EXISTING slug keeps the pre-existing requireOrgAdmin
+				// path byte-for-byte (admin of THIS org only; replay returns null
+				// secrets), so another org's slug can never be hijacked.
+				(await lookupOrgMapping(ctx, slug)) === null
+			) {
+				operatorCreate = await requireOperatorAdminToCreateOrg(ctx, slug);
+			} else {
+				await requireOrgAdmin(ctx, slug);
+			}
+			provisioningAdminSubject =
+				(await ctx.auth.getUserIdentity())?.subject ?? null;
+			auditActorSource = provisioningAdminSubject ?? "org-admin:unknown";
 		}
-
-		// orgMembership audit write (task k17a7t4a9d4hx11sgj2tcdf7kx8et4cp) —
-		// only the org-admin path (empty/absent callerToken) has a real
-		// VERIFIED human subject to record here; the master path has no Clerk
-		// identity in general (a bare secret string, no session), so nothing
-		// is written for it. See convex/orgMembership.ts's table/function
-		// comments: this row is an AUDIT RECORD ONLY, never consulted by
-		// `requireOrgAdmin` or any other authorization decision.
-		const provisioningAdminSubject =
-			args.callerToken && args.callerToken.length > 0
-				? null
-				: ((await ctx.auth.getUserIdentity())?.subject ?? null);
 
 		// M4 ruling 1: an organisation is keyed by its permanent Clerk org ID from
 		// its first row. Refused (and nothing written) without it, or with a value
@@ -885,10 +930,12 @@ export const provisionOrganization = mutation({
 			seen.add(canonical);
 		}
 
-		const existing = await ctx.db
-			.query("client_org_mapping")
-			.withIndex("by_clerk_slug", (q) => q.eq("clerkOrgSlug", slug))
-			.first();
+		// The operator-typed slug becomes the organisation's mapping row at the ONE
+		// boundary built for it (resolveProvisioningMapping, convex/lib/provisioningMapping.ts):
+		// which organisation the label names is @vantageos/cloud-identity's answer, and
+		// two rows sharing a label raise instead of picking one.
+		const provisioned = await resolveProvisioningMapping(ctx, slug);
+		const existing = provisioned.kind === "row" ? provisioned.row : null;
 
 		if (existing && !existing.isActive) {
 			throw new Error(`Org "${slug}" exists and is inactive`);
@@ -897,11 +944,8 @@ export const provisionOrganization = mutation({
 		// One ID, one organisation: an ID another mapping row holds is never
 		// shared, and a row that already carries a different ID is not re-keyed
 		// by a replay (a correction is setClerkOrgId with replace:true, on purpose).
-		const idOwners = await ctx.db
-			.query("client_org_mapping")
-			.withIndex("by_clerk_org_id", (q) => q.eq("clerkOrgId", clerkOrgId))
-			.take(2);
-		if (idOwners.some((o) => !existing || o._id !== existing._id)) {
+		const idOwner = await lookupOrgMapping(ctx, { clerkOrgId });
+		if (idOwner !== null && (!existing || idOwner._id !== existing._id)) {
 			refuseOrgId(
 				"CLERK_ORG_ID_TAKEN",
 				"clerk-org-id-taken",
@@ -1009,17 +1053,13 @@ export const provisionOrganization = mutation({
 			},
 		);
 
-		// Audit actor: hash the master token when present (unchanged), else
-		// hash the caller's verified Clerk subject (org-admin path) so the
-		// audit trail still names an actor rather than an empty string.
-		// The master path records a FIXED label for the master credential, never a
+		// Audit actor: the digest of WHO was recorded at the authorisation above. The
+		// master path records a FIXED label for the master credential, never a
 		// digest of the secret itself (an unsalted sha256 of the secret in a log row
-		// is an offline-guessing oracle for it).
-		const actorIdentitySource =
-			args.callerToken && args.callerToken.length > 0
-				? MASTER_ACTOR_LABEL
-				: ((await ctx.auth.getUserIdentity())?.subject ?? "org-admin:unknown");
-		const actorTokenHash = await sha256Hex(actorIdentitySource);
+		// is an offline-guessing oracle for it); the org-admin path records the
+		// caller's verified Clerk subject, so the audit trail still names an actor
+		// rather than an empty string.
+		const actorTokenHash = await sha256Hex(auditActorSource);
 		// The mapping row above carries the ID the caller presented, so the seat
 		// rows are stamped with that same ID from their first write.
 		const seatClerkOrgId = clerkOrgId;
@@ -1034,7 +1074,9 @@ export const provisionOrganization = mutation({
 				profileId,
 				description: `Seat ${name} in org ${slug}`,
 				fromAllowList: [name],
-				...(seatAgentId !== undefined ? { agentId: seatAgentId } : {}),
+				...(seatAgentId !== undefined
+					? { agentId: seatAgentId, fromAllowListAgentIds: [seatAgentId] }
+					: {}),
 				namespaceReadPrefixes: [`orchestrator/${name}`, `project/${slug}`],
 				namespaceWritePrefixes: [`orchestrator/${name}`, `project/${slug}`],
 				createdAt: now,
@@ -1084,9 +1126,17 @@ export const provisionOrganization = mutation({
 			// first refresh, once the agent is registered.
 			const seatAgent = await resolveSeatAgent(ctx, {
 				scopeProfile: profileId,
-				fromAllowList: [name],
 				clerkOrgSlug: slug,
 				clerkOrgId: seatClerkOrgId,
+			});
+			// The agent IDs the seat's profile admits, read back BY ID from the profile
+			// just written (the same rule a later mint applies).
+			const seatAgentIds = await liveProfileAgentIds(ctx, {
+				clerkOrgSlug: slug,
+				clerkOrgId: seatClerkOrgId,
+				...(seatAgentId !== undefined
+					? { fromAllowListAgentIds: [seatAgentId] }
+					: {}),
 			});
 			await ctx.db.insert("oauth_access_tokens", {
 				tokenHash,
@@ -1103,6 +1153,9 @@ export const provisionOrganization = mutation({
 				clerkOrgSlug: slug,
 				...(seatAgent
 					? { agentId: seatAgent._id, agentOrgId: seatAgent.orgSlug }
+					: {}),
+				...(seatAgentIds !== undefined
+					? { fromAllowListAgentIds: seatAgentIds }
 					: {}),
 				clerkOrgId: seatClerkOrgId,
 			});
@@ -1278,13 +1331,9 @@ export const getClientByClientId = query({
 	),
 	handler: async (ctx, args) => {
 		// isolation-contract: no reactive subscriber exists — enumerated at /root/coding/vantage-peers-dashboard@71da625 with `grep -rn 'api\.oauth\.getClientByClientId' --include=*.tsx --include=*.ts app components hooks lib contexts providers` -> 0 matches. Only the dashboard was enumerated; other callers were not individually traced. R-50 declared divergence (a claim, verified against that enumeration).
-		const scope = await withOrgScope(ctx);
-		if (!isMcpBoundMaster(scope)) {
-			throw new ConvexError(
-				"RBAC_DENIED: getClientByClientId requires master scope — " +
-					"anonymous and non-master callers may never read an OAuth client's scopeProfile.",
-			);
-		}
+		// Service-account only: anonymous, org-scoped and operator-human callers may
+		// never read an OAuth client's scopeProfile.
+		await requireServiceAccount(ctx, "oauth:getClientByClientId");
 
 		const row = await ctx.db
 			.query("oauth_clients")
@@ -1616,6 +1665,8 @@ const tokenWalkStateFields = {
 interface ScopeProfileFields {
 	profileId: string;
 	fromAllowList: string[];
+	/** The agent IDs the profile admits, already re-read live; undefined when it lists none. */
+	fromAllowListAgentIds: Id<"agents">[] | undefined;
 	namespaceReadPrefixes: string[];
 	namespaceWritePrefixes: string[];
 	clerkOrgSlug: string | undefined;
@@ -1669,6 +1720,7 @@ async function walkClientTokensPage(
 				await ctx.db.patch(t._id, {
 					scopeProfile: walk.profile.profileId,
 					fromAllowList: walk.profile.fromAllowList,
+					fromAllowListAgentIds: walk.profile.fromAllowListAgentIds,
 					namespaceReadPrefixes: walk.profile.namespaceReadPrefixes,
 					namespaceWritePrefixes: walk.profile.namespaceWritePrefixes,
 					clerkOrgSlug: walk.profile.clerkOrgSlug,
@@ -1772,6 +1824,7 @@ export const continueClientTokenWalk = internalMutation({
 			profile = {
 				profileId: row.profileId,
 				fromAllowList: row.fromAllowList,
+				fromAllowListAgentIds: await liveProfileAgentIds(ctx, row),
 				namespaceReadPrefixes: row.namespaceReadPrefixes,
 				namespaceWritePrefixes: row.namespaceWritePrefixes,
 				clerkOrgSlug: row.clerkOrgSlug,
@@ -1932,6 +1985,7 @@ export const patchClientScopeAndRefreshTokens = mutation({
 		const walkProfile: ScopeProfileFields = {
 			profileId: args.newScopeProfile,
 			fromAllowList: newProfile.fromAllowList,
+			fromAllowListAgentIds: await liveProfileAgentIds(ctx, newProfile),
 			namespaceReadPrefixes: newProfile.namespaceReadPrefixes,
 			namespaceWritePrefixes: newProfile.namespaceWritePrefixes,
 			clerkOrgSlug: newProfile.clerkOrgSlug,
@@ -2153,13 +2207,16 @@ export const revokeAccessTokensOnly = mutation({
 // ─────────────────────────────────────────────────────────────────────────────
 // bindScopeProfileAgent: bind an agentId onto a seat scope profile
 //
-// resolveSeatAgent reads the agent a seat profile stands for BY ID
-// (`oauth_scope_profiles.agentId`). No door wrote it for a profile whose label
-// the legacy fallback cannot match (a seat label that differs from its
-// profileId). This is that door. It refuses unless the profile names
-// exactly one allowlist entry, the agent exists and is active, and the agent is
-// in the profile's own organisation, judged by org ID through
-// @vantageos/cloud-identity `sameOrg` (never by label).
+// resolveSeat reads the agent a seat profile stands for BY ID
+// (`oauth_scope_profiles.agentId`) and nothing else: a label never resolves an
+// agent, and a one-agent seat profile that carries no `agentId` refuses to mint
+// (SEAT_PROFILE_UNBOUND). The bulk way to bind is the migration
+// migrations/agentIdentityRows:bindSeatProfileAgentIds, which lists the profiles
+// it could not bind; this is the door that binds ONE of them by hand, by the
+// agent's ID. It refuses unless the profile names exactly one allowlist entry,
+// the agent exists and is active, and the agent is in the profile's own
+// organisation, judged by org ID through @vantageos/cloud-identity `sameOrg`
+// (never by label).
 //
 // INTERNAL: not part of the public API, so no client or token can reach it. An
 // operator runs it with the deployment's admin credential
@@ -2201,6 +2258,8 @@ export const bindScopeProfileAgent = internalMutation({
 		}
 		await ctx.db.patch(profile._id, {
 			agentId: args.agentId,
+			// A one-agent seat admits exactly the agent it is bound to.
+			fromAllowListAgentIds: [args.agentId],
 			updatedAt: Date.now(),
 		});
 		return {
@@ -2444,29 +2503,39 @@ type MintAccessTokenArgs = {
 async function mintAccessToken(
 	ctx: MutationCtx,
 	a: MintAccessTokenArgs,
+	door: string,
 ): Promise<Id<"oauth_access_tokens">> {
 	// Seat identity by ID, resolved HERE (mint and refresh both come through
-	// this door) from the profile in its own org; never from an argument.
+	// this door) from the profile in its own org; never from an argument and
+	// never from a label.
 	const tokenClerkOrgId = await clerkOrgIdForSlug(ctx, a.clerkOrgSlug);
-	const seatAgent = await resolveSeatAgent(ctx, {
+	const seat = await resolveSeat(ctx, {
 		scopeProfile: a.scopeProfile,
-		fromAllowList: a.fromAllowList,
 		clerkOrgSlug: a.clerkOrgSlug,
 		...(tokenClerkOrgId !== undefined ? { clerkOrgId: tokenClerkOrgId } : {}),
 		principal: a.principal,
 	});
-	// A legacy seat profile (no agentId yet) that resolved its one agent inside its
-	// own org is bound to that agent's ID now, so the next mint and refresh follow
-	// the ID and the label fallback never runs again for this profile.
-	if (seatAgent) {
-		const seatProfile = await ctx.db
-			.query("oauth_scope_profiles")
-			.withIndex("by_profileId", (q) => q.eq("profileId", a.scopeProfile))
-			.unique();
-		if (seatProfile && seatProfile.agentId === undefined) {
-			await ctx.db.patch(seatProfile._id, { agentId: seatAgent._id });
-		}
+	// A profile shaped like a one-agent seat that names no agent is refused, never
+	// guessed: nothing is written. The migration binds it once
+	// (migrations/agentIdentityRows:bindSeatProfileAgentIds).
+	if (seat.kind === "unbound") {
+		throw new ConvexError(
+			`SEAT_PROFILE_UNBOUND: ${door} refused — scope profile "${seat.profileId}" is a one-agent seat that names no agent; bind it with migrations/agentIdentityRows:bindSeatProfileAgentIds or oauth:bindScopeProfileAgent — ${JSON.stringify({ door, profileId: seat.profileId, reason: "seat-profile-unbound" })}`,
+		);
 	}
+	const seatAgent = seat.kind === "agent" ? seat.agent : null;
+	// The agent IDs the profile admits, re-read BY ID and kept while the agent is
+	// active and in the profile's own org. A person token acts as the person and
+	// carries none.
+	const profileRow =
+		a.principal === undefined
+			? await ctx.db
+					.query("oauth_scope_profiles")
+					.withIndex("by_profileId", (q) => q.eq("profileId", a.scopeProfile))
+					.unique()
+			: null;
+	const profileAgentIds =
+		profileRow === null ? undefined : await liveProfileAgentIds(ctx, profileRow);
 	return await ctx.db.insert("oauth_access_tokens", {
 		tokenHash: a.tokenHash,
 		clientId: a.clientId,
@@ -2497,6 +2566,9 @@ async function mintAccessToken(
 		...(seatAgent
 			? { agentId: seatAgent._id, agentOrgId: seatAgent.orgSlug }
 			: {}),
+		...(profileAgentIds !== undefined
+			? { fromAllowListAgentIds: profileAgentIds }
+			: {}),
 	});
 }
 
@@ -2525,7 +2597,7 @@ export const createAccessToken = mutation({
 	handler: async (ctx, args) => {
 		// write-contract: MCP-transport-only — issued via mcp-server client.mutation("oauth:createAccessToken", …) at mcp-server/server-http.ts:889, mcp-server/server-http.ts:1032, mcp-server/server-http.ts:1520 (imperative), 0 hits in vantage-peers-dashboard {app,components,hooks,lib,contexts,providers} (measured 2026-10-01 at origin/main e2dc58f and 0466fac); never a subscribing pre-org client shell. The no-org throw is a refusal at an imperative MCP call, never at a render.
 		await requireServiceAccount(ctx, "oauth:createAccessToken");
-		return await mintAccessToken(ctx, args);
+		return await mintAccessToken(ctx, args, "oauth:createAccessToken");
 	},
 });
 
@@ -2540,21 +2612,31 @@ const oauthContextShape = v.object({
 	namespaceWritePrefixes: v.array(v.string()),
 	expiresAt: v.number(),
 	clerkOrgSlug: v.optional(v.string()),
+	// The token's organisation by its permanent Clerk org ID (the row's own, else
+	// the one its mapping stores for the slug). The slug above is a renamable
+	// label; a reader that must tell two organisations apart compares this.
+	clerkOrgId: v.optional(v.string()),
 	orgRole: v.optional(v.string()),
 	principal: v.optional(v.literal("person")),
 	// The agent this token acts as, by ROW ID, re-read against the live agent
 	// (name = its CURRENT label). null: an org-level seat (no agent resolved in the
 	// profile's own org), a person token, or a stamp whose agent is no longer
 	// active. Always present, so a reader can tell "none" from "provider predates
-	// the stamp" (key absent).
+	// the stamp" (key absent). `orgClerkId` is the agent's organisation by
+	// permanent ID, to be compared with `clerkOrgId` above.
 	seatAgent: v.union(
 		v.object({
 			agentId: v.id("agents"),
 			orgId: v.string(),
 			agentName: v.string(),
+			orgClerkId: v.optional(v.string()),
 		}),
 		v.null(),
 	),
+	// The agent IDs the token's profile admits, re-read live (an agent that is no
+	// longer active, or no longer in the token's org, is not listed). Absent while
+	// the profile lists none (expand phase). `fromAllowList` above stays as display.
+	fromAllowListAgentIds: v.optional(v.array(v.id("agents"))),
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -2588,6 +2670,15 @@ export const getAccessTokenByHash = query({
 		if (row.revokedAt !== undefined) return null;
 		if (row.expiresAt < Date.now()) return null;
 		const agent = await liveSeatAgent(ctx, row);
+		const listedAgentIds = await liveProfileAgentIds(ctx, row);
+		// Both organisations by permanent ID, so the reader compares IDs and never
+		// the slugs; a row that carries none yet is given the ID its mapping stores.
+		const tokenOrgId =
+			row.clerkOrgId ?? (await clerkOrgIdForSlug(ctx, row.clerkOrgSlug));
+		const agentOrgId =
+			agent === null
+				? undefined
+				: (agent.clerkOrgId ?? (await clerkOrgIdForSlug(ctx, agent.orgSlug)));
 		return {
 			clientId: row.clientId,
 			userId: row.userId,
@@ -2600,11 +2691,20 @@ export const getAccessTokenByHash = query({
 			...(row.clerkOrgSlug !== undefined
 				? { clerkOrgSlug: row.clerkOrgSlug }
 				: {}),
+			...(tokenOrgId !== undefined ? { clerkOrgId: tokenOrgId } : {}),
 			...(row.orgRole !== undefined ? { orgRole: row.orgRole } : {}),
 			...(row.principal !== undefined ? { principal: row.principal } : {}),
 			seatAgent: agent
-				? { agentId: agent._id, orgId: agent.orgSlug, agentName: agent.name }
+				? {
+						agentId: agent._id,
+						orgId: agent.orgSlug,
+						agentName: agent.name,
+						...(agentOrgId !== undefined ? { orgClerkId: agentOrgId } : {}),
+					}
 				: null,
+			...(listedAgentIds !== undefined
+				? { fromAllowListAgentIds: listedAgentIds }
+				: {}),
 		};
 	},
 });
@@ -2846,20 +2946,24 @@ export const rotateRefreshToken = mutation({
 			createdAt: Date.now(),
 			familyId,
 		});
-		await mintAccessToken(ctx, {
-			tokenHash: nextAccessHash,
-			clientId: row.clientId,
-			userId: row.userId,
-			scopes: args.scopes,
-			scopeProfile: args.scopeProfile,
-			fromAllowList: args.fromAllowList,
-			namespaceReadPrefixes: args.namespaceReadPrefixes,
-			namespaceWritePrefixes: args.namespaceWritePrefixes,
-			expiresAt: args.accessExpiresAt,
-			refreshTokenHash: nextRefreshHash,
-			...(args.clerkOrgSlug !== undefined ? { clerkOrgSlug: args.clerkOrgSlug } : {}),
-			familyId,
-		});
+		await mintAccessToken(
+			ctx,
+			{
+				tokenHash: nextAccessHash,
+				clientId: row.clientId,
+				userId: row.userId,
+				scopes: args.scopes,
+				scopeProfile: args.scopeProfile,
+				fromAllowList: args.fromAllowList,
+				namespaceReadPrefixes: args.namespaceReadPrefixes,
+				namespaceWritePrefixes: args.namespaceWritePrefixes,
+				expiresAt: args.accessExpiresAt,
+				refreshTokenHash: nextRefreshHash,
+				...(args.clerkOrgSlug !== undefined ? { clerkOrgSlug: args.clerkOrgSlug } : {}),
+				familyId,
+			},
+			"oauth:rotateRefreshToken",
+		);
 		return {
 			status: "ok" as const,
 			issued: { refresh: refreshToken, access: accessToken },
@@ -3016,6 +3120,10 @@ export const patchScopeProfileEmergency = mutation({
 		profileId: v.string(),
 		rename: v.optional(v.string()),
 		fromAllowList: v.optional(v.array(v.string())),
+		// The `agents` row IDs the patched profile admits (agents of the profile's own
+		// organisation). A patch that replaces `fromAllowList` WITHOUT this clears the
+		// stored IDs, so they never describe a set the profile no longer names.
+		fromAllowListAgentIds: v.optional(v.array(v.id("agents"))),
 		namespaceReadPrefixes: v.optional(v.array(v.string())),
 		namespaceWritePrefixes: v.optional(v.array(v.string())),
 		cascadeRevokeTokens: v.boolean(),
@@ -3106,6 +3214,7 @@ export const patchScopeProfileEmergency = mutation({
 		const patchPayload: {
 			profileId?: string;
 			fromAllowList?: string[];
+			fromAllowListAgentIds?: Id<"agents">[] | undefined;
 			namespaceReadPrefixes?: string[];
 			namespaceWritePrefixes?: string[];
 			updatedAt: number;
@@ -3116,6 +3225,21 @@ export const patchScopeProfileEmergency = mutation({
 		}
 		if (args.fromAllowList !== undefined) {
 			patchPayload.fromAllowList = args.fromAllowList;
+			// The display list changed: the stored IDs are cleared unless the same
+			// call restates them.
+			patchPayload.fromAllowListAgentIds = undefined;
+		}
+		if (args.fromAllowListAgentIds !== undefined) {
+			if (existing.clerkOrgSlug === undefined) {
+				throw new ConvexError(
+					`AGENT_NOT_IN_ORG: profile "${args.profileId}" names agent IDs but no organisation; a profile lists the agents of its own organisation only — ${JSON.stringify({ door: "oauth:patchScopeProfileEmergency", profileId: args.profileId })}`,
+				);
+			}
+			patchPayload.fromAllowListAgentIds = await requireAgentsOfOrg(
+				ctx,
+				existing.clerkOrgSlug,
+				args.fromAllowListAgentIds,
+			);
 		}
 		if (args.namespaceReadPrefixes !== undefined) {
 			patchPayload.namespaceReadPrefixes = args.namespaceReadPrefixes;
@@ -3477,6 +3601,9 @@ export const listScopeProfiles = internalQuery({
 			profileId: r.profileId,
 			description: r.description,
 			fromAllowList: r.fromAllowList,
+			...(r.fromAllowListAgentIds !== undefined
+				? { fromAllowListAgentIds: r.fromAllowListAgentIds }
+				: {}),
 			namespaceReadPrefixes: r.namespaceReadPrefixes,
 			namespaceWritePrefixes: r.namespaceWritePrefixes,
 		}));
