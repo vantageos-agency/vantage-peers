@@ -1265,6 +1265,17 @@ app.get("/health", (c) =>
 // Used by Pi to provision OAuth clients for external users (Nadia, VIP).
 // ─────────────────────────────────────────────────────────────────────────────
 
+// The text of a failure raised by a Convex function. Convex redacts a plain
+// Error's message to "[Request ID: ..] Server Error" in production; only the
+// payload of a ConvexError survives (`err.data`). The admin routes map on that
+// coded payload and fall back to the message for a non-Convex failure.
+function convexFailureText(err: unknown): string {
+	const data = (err as { data?: unknown } | null)?.data;
+	if (typeof data === "string") return data;
+	if (data !== undefined && data !== null) return JSON.stringify(data);
+	return err instanceof Error ? err.message : String(err);
+}
+
 const admin = new Hono();
 admin.use("*", masterOnlyMiddleware());
 
@@ -1443,12 +1454,18 @@ admin.get("/oauth/clients", async (c) => {
 // DELETE /admin/oauth/clients/:clientId  — revoke client + all its tokens
 admin.delete("/oauth/clients/:clientId", async (c) => {
 	const clientId = c.req.param("clientId");
-	const result = await internalClient().mutation(
-		// biome-ignore lint/suspicious/noExplicitAny: Convex string API
-		"oauth:deleteClient" as any,
-		{ clientId },
-	);
-	return c.json(result);
+	try {
+		const result = await internalClient().mutation(
+			// biome-ignore lint/suspicious/noExplicitAny: Convex string API
+			"oauth:deleteClient" as any,
+			{ clientId },
+		);
+		return c.json(result);
+	} catch (err: unknown) {
+		const detail = convexFailureText(err);
+		console.error("[admin] deleteClient failed:", detail);
+		return c.json({ error: "server_error", detail }, 500);
+	}
 });
 
 // POST /admin/oauth/seed-profiles — idempotent; safe to re-run after deploy
@@ -1873,14 +1890,78 @@ admin.post("/oauth/clients/:clientId/revoke-access-tokens-only", async (c) => {
 		);
 		return c.json(result as Record<string, unknown>, 200);
 	} catch (err: unknown) {
-		const message = err instanceof Error ? err.message : String(err);
-		if (/client not found/i.test(message)) {
+		const message = convexFailureText(err);
+		if (/^CLIENT_NOT_FOUND|client not found/i.test(message)) {
 			return c.json({ error: "not_found", detail: message }, 404);
 		}
-		if (/reason must be at least/i.test(message)) {
+		if (/^REASON_TOO_SHORT|reason must be at least/i.test(message)) {
 			return c.json({ error: "invalid_request", detail: message }, 400);
 		}
 		console.error("[admin] revokeAccessTokensOnly failed:", message);
+		return c.json({ error: "server_error", detail: message }, 500);
+	}
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// POST /admin/oauth/access-tokens/:tokenId/revoke
+//
+// Wraps Convex mutation `oauth:revokeAccessTokensOnly` in its `tokenId` form: revokes ONE access token
+// by its row _id (sets revokedAt). The way to revoke an admin-minted token
+// (`admin-mint:*` clientId), which has no oauth_clients row for the client-level
+// routes to find. Idempotent.
+//
+// Auth: BEARER_SECRET_MASTER via masterOnlyMiddleware (mounted on /admin).
+//
+// Body: { reason: string (>= 20 chars) }
+// Response (200): { tokenId, clientId, alreadyRevoked }
+// Errors: 400 invalid body / short reason / malformed id, 404 TOKEN_NOT_FOUND,
+//         500 any other failure (coded detail).
+// ─────────────────────────────────────────────────────────────────────────────
+admin.post("/oauth/access-tokens/:tokenId/revoke", async (c) => {
+	const tokenId = c.req.param("tokenId");
+	if (!tokenId) {
+		return c.json(
+			{ error: "invalid_request", detail: "missing :tokenId" },
+			400,
+		);
+	}
+
+	let body: Record<string, unknown> = {};
+	try {
+		body = await c.req.json();
+	} catch {
+		return c.json(
+			{ error: "invalid_request", detail: "body must be valid JSON" },
+			400,
+		);
+	}
+	const reason = typeof body.reason === "string" ? body.reason : null;
+	if (!reason) {
+		return c.json(
+			{ error: "invalid_request", detail: "reason is required" },
+			400,
+		);
+	}
+
+	try {
+		const result = await internalClient().mutation(
+			// biome-ignore lint/suspicious/noExplicitAny: Convex string API
+			"oauth:revokeAccessTokensOnly" as any,
+			{ tokenId, reason },
+		);
+		return c.json(result as Record<string, unknown>, 200);
+	} catch (err: unknown) {
+		const message = convexFailureText(err);
+		if (/^TOKEN_NOT_FOUND/.test(message)) {
+			return c.json({ error: "not_found", detail: message }, 404);
+		}
+		if (
+			/^REASON_TOO_SHORT/.test(message) ||
+			/not a valid oauth_access_tokens ID|^INVALID_ID/.test(message)
+		) {
+			return c.json({ error: "invalid_request", detail: message }, 400);
+		}
+		console.error("[admin] revokeAccessTokensOnly (tokenId) failed:", message);
 		return c.json({ error: "server_error", detail: message }, 500);
 	}
 });

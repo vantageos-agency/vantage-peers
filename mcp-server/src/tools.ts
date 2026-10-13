@@ -6868,6 +6868,13 @@ export function registerTools(
 				const fromDenied = guardFrom(createdBy);
 				if (fromDenied) return fromDenied;
 
+				// A seat reaches Convex as the fleet service account (no org on ctx.auth):
+				// the note is stamped with the bearer's VERIFIED org, from the oauthContext
+				// only. A non-master bearer whose org cannot be resolved is refused here,
+				// never stored fleet-owned (its own seat could not read it back).
+				const orgDenied = unresolvedOrgDenial("create_briefing_note");
+				if (orgDenied) return orgDenied;
+
 				const noteId = await convex.mutation("briefingNotes:create" as any, {
 					title,
 					topic,
@@ -6876,6 +6883,7 @@ export function registerTools(
 					decisions: toArray(decisions),
 					linkedMemoryIds: toArray(linkedMemoryIds) as string[],
 					createdBy,
+					...verifiedOrgArgs(),
 				});
 
 				return {

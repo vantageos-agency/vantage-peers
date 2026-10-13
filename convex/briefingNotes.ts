@@ -11,7 +11,7 @@ import {
 	verifiedActorValidator,
 	type OrgScope,
 } from "./lib/auth";
-import { sameOrg } from "@vantageos/cloud-identity";
+import { hasFleetRead, sameOrg } from "@vantageos/cloud-identity";
 import { orgRefOfRow, orgRefOfScope } from "./lib/authOrgMapping";
 import { isFleetSystemCaller } from "./lib/systemCaller";
 import { requireId } from "./lib/ids";
@@ -19,6 +19,7 @@ import { resolveHumanActor } from "./lib/humanActor";
 import { actorIdResolver, type ActorIdResolver } from "./lib/actorIds";
 import { requireAuthenticatedCaller } from "./tasks";
 import {
+	resolveVerifiedOrgMapping,
 	resolveVerifiedOrgScope,
 	verifiedOrgValidator,
 } from "./lib/verifiedOrg";
@@ -161,7 +162,7 @@ function isOrgAllowedForScope(
 	scope: OrgScope,
 	row: { orgId?: string; clerkOrgId?: string },
 ): boolean {
-	if (scope.isMaster) return true;
+	if (hasFleetRead(scope)) return true;
 	if (scope.orgSlug === null) return false;
 	return sameOrg(orgRefOfRow(row), orgRefOfScope(scope));
 }
@@ -237,7 +238,7 @@ async function callerCanRead(
 //
 // Fix: resolve the caller's verified org scope via `withOrgScope(ctx)`
 // FIRST (same #1313 pattern as convex/messages.ts's markAsRead/
-// deleteMessage). `scope.isMaster` is derived from the VERIFIED identity —
+// deleteMessage). `hasFleetRead(scope)` is derived from the VERIFIED identity —
 // the real master secret, or the stored fleet service account
 // (convex/lib/serviceAccount.ts, decided from data) — never from the client-supplied `master`
 // argument. A verified Clerk-org (non-master) caller may read only notes
@@ -254,7 +255,7 @@ async function callerCanReadForScope(
 	master: boolean | undefined,
 	callerIdentities: string[] | undefined,
 ): Promise<boolean> {
-	if (scope.isMaster) {
+	if (hasFleetRead(scope)) {
 		return callerCanRead(ctx, note, master, callerIdentities);
 	}
 	// Anonymous / no-org caller (withOrgScope's fail-closed default) — the
@@ -286,6 +287,12 @@ export const create = mutation({
 		// verified (believed from the fleet service account only). The author's ID
 		// is derived from the proof, never from the label. No secret is an argument.
 		verifiedActor: v.optional(verifiedActorValidator),
+		// The organisation the MCP transport VERIFIED for a seat bearer that reaches
+		// Convex as the fleet service account (whose ctx.auth carries no org). Without
+		// it the note was stamped fleet-owned and its own seat could not read it back.
+		// Believed from the service account only; resolved against an ACTIVE mapping
+		// (convex/lib/verifiedOrg.ts). No secret is an argument.
+		verifiedOrg: v.optional(verifiedOrgValidator),
 	},
 	returns: v.id("briefingNotes"),
 	handler: async (ctx, args) => {
@@ -307,7 +314,7 @@ export const create = mutation({
 		// written can never be anything other than the caller's own
 		// `scope.orgSlug`.
 		const scope = await withOrgScope(ctx);
-		if (!scope.isMaster && scope.orgSlug === null) {
+		if (!hasFleetRead(scope) && scope.orgSlug === null) {
 			throw new ConvexError(
 				`RBAC_DENIED: caller may not create a briefing note — ${JSON.stringify({ orgSlug: null })}`,
 			);
@@ -323,13 +330,32 @@ export const create = mutation({
 		const {
 			createdBy: claimedCreator,
 			verifiedActor,
+			verifiedOrg,
 			...rest
 		} = args;
+		// The org a service-account write is made FOR: the verified org's ACTIVE
+		// mapping (slug + permanent ID), or none (the caller's own scope stands, and
+		// the fleet master's note stays fleet-owned, byte-unchanged).
+		// The stamp is the scope `withOrgScope` itself returns for that mapping
+		// (the same pattern as businessUnits:create), never the claim's own value.
+		const actingMapping = await resolveVerifiedOrgMapping(
+			ctx,
+			scope,
+			verifiedOrg,
+			"briefingNotes:create",
+		);
+		let stampScope = scope;
+		if (actingMapping !== undefined) {
+			stampScope = await withOrgScope(ctx, {
+				refuseWithoutThrow: true,
+				actForOrgMapping: actingMapping,
+			});
+		}
 		// The note is stamped with the org's permanent ID: a member whose org has
 		// none yet could write a row it could never read back.
-		if (!scope.isMaster && scope.orgClerkId === undefined) {
+		if (!hasFleetRead(stampScope) && stampScope.orgClerkId === undefined) {
 			throw new ConvexError(
-				`RBAC_DENIED: caller's organisation has no permanent org ID to stamp a briefing note with — ${JSON.stringify({ reason: "org-id-missing", door: "briefingNotes:create", orgSlug: scope.orgSlug })}`,
+				`RBAC_DENIED: caller's organisation has no permanent org ID to stamp a briefing note with — ${JSON.stringify({ reason: "org-id-missing", door: "briefingNotes:create", orgSlug: stampScope.orgSlug })}`,
 			);
 		}
 		let createdBy: string;
@@ -350,24 +376,33 @@ export const create = mutation({
 				claimedCreator,
 				undefined,
 				verifiedActor,
+				undefined,
+				{ proof: verifiedOrg, door: "briefingNotes:create" },
 			);
 			createdById = caller.callerActorId;
-			if (!scope.isMaster && createdById === undefined) {
+			if (!hasFleetRead(scope) && createdById === undefined) {
 				throw new ConvexError(
 					`RBAC_DENIED: "${claimedCreator}" names no agent of the caller's organisation — a briefing note is authored by an agent resolved by ID, a label that names none is refused — ${JSON.stringify({ reason: "actor-not-an-agent-of-org", door: "briefingNotes:create", orgSlug: scope.orgSlug })}`,
 				);
 			}
 			createdBy = claimedCreator;
 		}
+		// The note belongs to the stamping scope's organisation (slug and permanent
+		// ID, both read off the resolved scope), or to nobody: a fleet-owned note
+		// carries neither.
+		let stampedOrgSlug: string | undefined;
+		let stampedClerkOrgId: string | undefined;
+		if (!hasFleetRead(stampScope)) {
+			stampedOrgSlug = stampScope.orgSlug as string;
+			stampedClerkOrgId = stampScope.orgClerkId;
+		}
 		const noteId = await ctx.db.insert("briefingNotes", {
 			...rest,
 			createdBy,
 			...(createdById !== undefined ? { createdById } : {}),
 			createdAt: Date.now(),
-			orgId: scope.isMaster ? undefined : (scope.orgSlug as string),
-			clerkOrgId: scope.isMaster
-				? undefined
-				: scope.orgClerkId,
+			orgId: stampedOrgSlug,
+			clerkOrgId: stampedClerkOrgId,
 		});
 		await syncParticipantIndex(ctx, noteId, args.participants);
 		return noteId;
@@ -479,7 +514,7 @@ export const get = query({
 			args.verifiedOrg,
 			"briefingNotes:get",
 		);
-		if (!scope.isMaster && scope.orgSlug === null) {
+		if (!hasFleetRead(scope) && scope.orgSlug === null) {
 			throw new ConvexError(
 				`RBAC_DENIED: caller may not read briefing notes — ${JSON.stringify({ orgSlug: null })}`,
 			);
@@ -578,6 +613,13 @@ export const BRIEFING_NOTES_LIST_SCAN_CAP = 2000;
 // never the raw, unactionable platform message.
 const BYTE_LIMIT_ERROR_PATTERN = /too much data|too many bytes|16777216/i;
 
+/** The one refusal for a window that may be incomplete (row cap or byte ceiling). */
+function scanCapExceeded(windowAdvice: string): ConvexError<string> {
+	return new ConvexError(
+		`briefingNotes.list: SCAN_CAP_EXCEEDED — widened scan for updatedSince hit the cap of ${BRIEFING_NOTES_LIST_SCAN_CAP} candidate rows before the filter ran. The result would be incomplete and indistinguishable from a full match. Narrow with topic${windowAdvice}.`,
+	);
+}
+
 async function fetchCappedOrOverflow(
 	fetch: () => Promise<Doc<"briefingNotes">[]>,
 ): Promise<{
@@ -656,7 +698,7 @@ export const list = query({
 			args.verifiedOrg,
 			"briefingNotes:list",
 		);
-		if (!scope.isMaster && scope.orgSlug === null) {
+		if (!hasFleetRead(scope) && scope.orgSlug === null) {
 			throw new ConvexError(
 				`RBAC_DENIED: caller may not list briefing notes — ${JSON.stringify({ orgSlug: null })}`,
 			);
@@ -678,7 +720,7 @@ export const list = query({
 		// client bool). A master/service-account caller preserves the
 		// original opt-in shape (only widen-scan/filter when a real
 		// callerIdentities narrowing was requested and master wasn't set).
-		const needsVisibilityFilter = scope.isMaster
+		const needsVisibilityFilter = hasFleetRead(scope)
 			? args.master !== true && args.callerIdentities !== undefined
 			: true;
 		// A non-master read with NO updatedSince and NO callerIdentities has no
@@ -694,7 +736,7 @@ export const list = query({
 		// keeps its widened scan (participant visibility is a pre-slice filter).
 		const needsWideScan =
 			args.updatedSince !== undefined ||
-			(scope.isMaster
+			(hasFleetRead(scope)
 				? needsVisibilityFilter
 				: args.callerIdentities !== undefined);
 		const fetchCap = needsWideScan ? BRIEFING_NOTES_LIST_SCAN_CAP + 1 : limit;
@@ -713,7 +755,7 @@ export const list = query({
 		// member never reads them (R-11) — it reads its own org's index range and
 		// applies the bound in memory (see the member branch below).
 		const usedIndexedUpdatedSinceBound =
-			args.updatedSince !== undefined && scope.isMaster;
+			args.updatedSince !== undefined && hasFleetRead(scope);
 		// Set to true below if EITHER half of the updatedSince union hit its
 		// own cap — the trigger for the "scan may be incomplete" refusal.
 		let updatedSinceBranchOverflowed = false;
@@ -727,7 +769,7 @@ export const list = query({
 		// "no notes" for a refusal.
 		let plainScanByteLimitHit = false;
 
-		if (args.updatedSince !== undefined && scope.isMaster) {
+		if (args.updatedSince !== undefined && hasFleetRead(scope)) {
 			const since = args.updatedSince;
 			// PR #1261 REVISE fix — `updatedAt` is optional ("set on first
 			// update"); a row created and never edited has `updatedAt ===
@@ -799,7 +841,7 @@ export const list = query({
 			rows = [...branchAResult.rows, ...branchBResult.rows].sort(
 				(a, b) => (b.updatedAt ?? b.createdAt) - (a.updatedAt ?? a.createdAt),
 			);
-		} else if (!scope.isMaster) {
+		} else if (!hasFleetRead(scope)) {
 			// Issue #1294 fix -- a non-master (org-scoped) caller ALWAYS has
 			// needsVisibilityFilter=true (see above), so it ALWAYS reached this
 			// widened fetchCap. The pre-fix code below (still used for the master
@@ -845,6 +887,14 @@ export const list = query({
 			rows = capped.rows;
 			plainScanOverflowed = capped.overflowed;
 			plainScanByteLimitHit = capped.byteLimitHit;
+			// A window that may be incomplete (the row cap, or the byte ceiling) is
+			// refused HERE, before the `updatedSince` bound below narrows it: the bound
+			// then only ever runs over a window known to hold every row of the org
+			// (R-55: a refusal on a full window stands between the bound and the
+			// narrowing).
+			if ((needsWideScan && capped.overflowed) || capped.byteLimitHit) {
+				throw scanCapExceeded("");
+			}
 			// `updatedSince` for a member: the org's own index range was read above,
 			// so the bound is applied to THAT set — `(updatedAt ?? createdAt) >=
 			// since`, the same set the master's two-branch union covers, newest
@@ -918,9 +968,7 @@ export const list = query({
 			const windowAdvice = usedIndexedUpdatedSinceBound
 				? " or shrink the updatedSince window"
 				: "";
-			throw new ConvexError(
-				`briefingNotes.list: SCAN_CAP_EXCEEDED — widened scan for updatedSince hit the cap of ${BRIEFING_NOTES_LIST_SCAN_CAP} candidate rows before the filter ran. The result would be incomplete and indistinguishable from a full match. Narrow with topic${windowAdvice}.`,
-			);
+			throw scanCapExceeded(windowAdvice);
 		}
 
 		// Day 165 — participant visibility, resolved via the by_participant_note
@@ -930,9 +978,9 @@ export const list = query({
 		// above. Security fix — a non-master (org-scoped) caller ALWAYS gets
 		// the orgId isolation check here (never just the participant check),
 		// and its `master` argument is IGNORED — only a verified
-		// scope.isMaster caller reaches the legacy `callerCanRead` path.
+		// hasFleetRead(scope) caller reaches the legacy `callerCanRead` path.
 		if (needsVisibilityFilter) {
-			if (scope.isMaster) {
+			if (hasFleetRead(scope)) {
 				const identities = args.callerIdentities as string[];
 				const checked = await Promise.all(
 					rows.map(async (r) => ({
@@ -1000,7 +1048,7 @@ export const deleteBriefingNote = mutation({
 		// order lets noteId existence act as an unauthenticated existence
 		// oracle.
 		const scope = await withOrgScope(ctx);
-		if (!scope.isMaster && scope.orgSlug === null) {
+		if (!hasFleetRead(scope) && scope.orgSlug === null) {
 			throw new ConvexError(
 				`RBAC_DENIED: caller may not delete briefing note ${args.noteId} — ${JSON.stringify({ orgSlug: null })}`,
 			);
@@ -1019,7 +1067,7 @@ export const deleteBriefingNote = mutation({
 		// org member acting in its own name; deleting is destructive -> org:admin.
 		// A briefing note carries no orchestrator field, so the tenant stamp alone
 		// decides (tenantOnly). Master with no caller is still refused below.
-		if (args.callerOrchestrator === undefined && !scope.isMaster) {
+		if (args.callerOrchestrator === undefined && !hasFleetRead(scope)) {
 			// The tenant was decided above BY ID (isOrgAllowedForScope); the human gate
 			// is handed no row, so the renamable slug on the row decides nothing here.
 			await resolveHumanActor(ctx, scope, {
@@ -1104,7 +1152,7 @@ export const update = mutation({
 		// "BriefingNote ... not found" — a get-then-scope order lets noteId
 		// existence act as an unauthenticated existence oracle.
 		const scope = await withOrgScope(ctx);
-		if (!scope.isMaster && scope.orgSlug === null) {
+		if (!hasFleetRead(scope) && scope.orgSlug === null) {
 			throw new ConvexError(
 				`RBAC_DENIED: caller may not update briefing note ${noteId} — ${JSON.stringify({ orgSlug: null })}`,
 			);
@@ -1225,7 +1273,7 @@ export const searchBriefingNotesByKeyword = query({
 		);
 		requireScope(scope, "view-own-tasks");
 		const orgClerkId = scope.orgClerkId;
-		if (!scope.isMaster && scope.orgSlug !== null && orgClerkId === undefined) {
+		if (!hasFleetRead(scope) && scope.orgSlug !== null && orgClerkId === undefined) {
 			throw new ConvexError(
 				`RBAC_DENIED: caller's organisation has no permanent org ID to search briefing notes by — ${JSON.stringify({ reason: "org-id-missing", door: "briefingNotes:searchBriefingNotesByKeyword", orgSlug: scope.orgSlug })}`,
 			);
@@ -1243,7 +1291,7 @@ export const searchBriefingNotesByKeyword = query({
 					qb = qb.eq("createdBy", args.createdBy);
 				// M10c: the tenant filter is the org's permanent ID (the slug in
 				// `orgId` is a renamable label). Members only: the master reads on.
-				if (!scope.isMaster && scope.orgSlug !== null) {
+				if (!hasFleetRead(scope) && scope.orgSlug !== null) {
 					qb = qb.eq("clerkOrgId", orgClerkId);
 				}
 				return qb;
@@ -1251,12 +1299,20 @@ export const searchBriefingNotesByKeyword = query({
 			.take(limit);
 
 		// Defense-in-depth: briefingNotes have no pilot/assignedTo so
-		// filterByOrgScope() does not fit. Enforce orgId match inline for
-		// non-master scopes — the index .eq("orgId", scope.orgSlug) above
-		// is the primary isolation; this is the belt-and-suspenders pass.
-		const tenantFiltered = scope.isMaster
-			? results
-			: results.filter((r) => sameOrg(orgRefOfRow(r), orgRefOfScope(scope)));
+		// filterByOrgScope() does not fit. The tenant predicate is the search
+		// index's own `clerkOrgId` filter above, applied BEFORE the bound. This is
+		// the invariant that predicate holds: a member's window never contains a row
+		// of another organisation. A row that breaks it REFUSES the call (loud) and
+		// is never silently dropped from a window that was already counted.
+		if (
+			!hasFleetRead(scope) &&
+			results.some((r) => !sameOrg(orgRefOfRow(r), orgRefOfScope(scope)))
+		) {
+			throw new ConvexError(
+				`RBAC_DENIED: the briefing note search returned a row outside the caller's organisation — ${JSON.stringify({ reason: "tenant-window-not-confined", door: "briefingNotes:searchBriefingNotesByKeyword", orgSlug: scope.orgSlug })}`,
+			);
+		}
+		const tenantFiltered = results;
 
 		// Day 165 — participant visibility, applied WITHIN the tenant set
 		// established above (never overrides tenant isolation). Resolved via
@@ -1265,9 +1321,9 @@ export const searchBriefingNotesByKeyword = query({
 		// `get`/`list`): a non-master (org-scoped) caller's client-supplied
 		// `master` argument is IGNORED here too — a client-supplied
 		// `master: true` must never let an org-scoped caller bypass its own
-		// org's participant restriction. Only a verified scope.isMaster
+		// org's participant restriction. Only a verified hasFleetRead(scope)
 		// caller (the legacy `callerCanRead` path) honours the `master` arg.
-		const needsVisibilityFilter = scope.isMaster
+		const needsVisibilityFilter = hasFleetRead(scope)
 			? args.master !== true && args.callerIdentities !== undefined
 			: args.callerIdentities !== undefined;
 		const filtered = needsVisibilityFilter
@@ -1275,7 +1331,7 @@ export const searchBriefingNotesByKeyword = query({
 					await Promise.all(
 						tenantFiltered.map(async (r) => ({
 							row: r,
-							visible: scope.isMaster
+							visible: hasFleetRead(scope)
 								? await callerCanRead(
 										ctx,
 										r,

@@ -53,6 +53,7 @@ const _auditLogRef = makeFunctionReference<"mutation">("credentials:_auditLog");
 
 const ALLOWED_ORIGINS = ["https://vantagepeers.com", "http://localhost:3000"];
 
+// allow-local-identity: CORS origin allow-list for the browser preflight; it names web origins that may call this endpoint and admits no caller, tenant or agent
 function isAllowedOrigin(origin: string | null): boolean {
 	if (!origin) return false;
 	if (ALLOWED_ORIGINS.includes(origin)) return true;
@@ -355,7 +356,17 @@ export const _issueToken = internalMutation({
 		// earlier live bearer of the same verified user before it is written, so
 		// the number of live credentials a Clerk session can create is bounded
 		// (the old ones were each valid for seven days and could not be revoked).
-		await revokeLiveBearers(ctx, args.clerkUserId);
+		// The revocation is stated HERE, in the function that mints, so the mint and
+		// the withdrawal of the bearers it replaces are one reading and one
+		// transaction; `revokeMyBearers` shares the same bounded sweep (R-56 3b).
+		const prior = await ctx.db
+			.query("userBearerTokens")
+			.withIndex("by_clerkUserId", (q) => q.eq("clerkUserId", args.clerkUserId))
+			.order("desc")
+			.take(REVOKE_SWEEP_LIMIT);
+		for (const row of prior) {
+			if (!row.revoked) await ctx.db.patch(row._id, { revoked: true });
+		}
 		await ctx.db.insert("userBearerTokens", {
 			tokenHash: args.tokenHash,
 			clerkUserId: args.clerkUserId,
@@ -426,6 +437,7 @@ export const _getTokenByHash = internalQuery({
 // Core handler — called from http.ts httpAction wrapper
 // ─────────────────────────────────────────────────────────────────────────────
 
+// allow-local-identity: the extension-id allow-list names which browser extensions may ask for a bearer; the caller's identity is the Clerk subject the JWT proves, resolved before this list is read, and the list admits no tenant or agent
 export async function handleIssueBearerFromClerk(
 	ctx: ActionCtx,
 	request: Request,

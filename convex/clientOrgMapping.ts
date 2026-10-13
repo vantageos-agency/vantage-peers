@@ -51,6 +51,8 @@ import { CLERK_ORG_ID_PATTERN, clerkOrgIdForSlug } from "./lib/orgClerkId";
 // Returns null when no row exists for `orgSlug`, or `isActive: false` when
 // the row exists but the org has been disabled. The caller (auth.ts) MUST
 // treat BOTH as a refusal — a populated default is never synthesized here.
+//
+// fleet-wide: answers for ANY organisation named by the transport-verified slug, and only for the fleet (service account or operator); that whole-fleet reach by slug is the purpose of this accessor
 // ─────────────────────────────────────────────────────────────────────────────
 export const getByClerkSlug = query({
 	args: { orgSlug: v.string() },
@@ -367,6 +369,7 @@ export const seedSeatAgents = internalMutation({
 // ─────────────────────────────────────────────────────────────────────────────
 const MAPPING_FILL_READ_CAP = 1000;
 
+// allow-local-identity: operator instrument that LISTS the mapping table so the permanent org IDs can be filled in; it is internal, resolves no caller and admits no request
 export const listMappingsForClerkIdFill = internalQuery({
 	args: {},
 	returns: v.array(
@@ -395,6 +398,7 @@ export const listMappingsForClerkIdFill = internalQuery({
 	},
 });
 
+// allow-local-identity: operator instrument that writes the permanent org ID onto the mapping row itself and refuses an ID another row holds; it is internal, resolves no caller and admits no request
 export const setClerkOrgId = internalMutation({
 	args: {
 		clerkOrgSlug: v.string(),

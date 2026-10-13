@@ -1522,6 +1522,13 @@ export default defineSchema({
 		// live meanwhile).
 		agentId: v.optional(v.id("agents")),
 		agentOrgId: v.optional(v.string()),
+		// IDENTITY BY ID (operator ruling 2026-10-13, "identify by id, not by name"). The
+		// `agents` row IDs the token's scope profile admits, copied from the PROFILE at mint
+		// and at refresh (never from an argument; an ID of another organisation or of an
+		// inactive agent is dropped). `fromAllowList` above stays as the DISPLAY list of the
+		// same agents until the contract step. Optional (expand phase): filled by
+		// migrations/agentIdentityRows:backfillTokenAgentIdLists.
+		fromAllowListAgentIds: v.optional(v.array(v.id("agents"))),
 		// Refresh-token family (set by oauth:rotateRefreshToken): the digest of the
 		// first refresh token of the grant. A replay of a spent refresh token
 		// revokes every access and refresh token that carries the same family.
@@ -1591,6 +1598,14 @@ export default defineSchema({
 		// time it resolves a legacy profile (by name, inside the profile's own org). A profile
 		// whose agentId names an agent of another org, or an inactive one, resolves no agent.
 		agentId: v.optional(v.id("agents")),
+		// IDENTITY BY ID (operator ruling 2026-10-13): the `agents` row IDs of the agents
+		// this profile admits, in the profile's own organisation. `fromAllowList` stays as
+		// their display labels until the contract step. Optional (expand phase): written by
+		// provisionOrganization and by the operator doors, filled for the rest by
+		// migrations/agentIdentityRows:backfillProfileAgentIdLists, which lists the labels it
+		// could not resolve. A profile that names no single agent (wildcard, catalog, no
+		// organisation) carries none.
+		fromAllowListAgentIds: v.optional(v.array(v.id("agents"))),
 	})
 		.index("by_profileId", ["profileId"])
 		.index("by_clerkOrgSlug", ["clerkOrgSlug"])

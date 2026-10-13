@@ -17,6 +17,13 @@
 // `identical` and never written. Every write appends an `oauth_audit_log` row
 // (eventType `seed_client_profile`) with before/after, so the change is traceable.
 //
+// A profile may name its agents BY ID (`fromAllowListAgentIds`, beside the display
+// labels in `fromAllowList`). The IDs are validated BEFORE any write, all-or-nothing:
+// every one must be an ACTIVE agent of the profile's OWN organisation (another org's
+// agent, a retired agent, or IDs on a profile with no organisation refuse the whole
+// list). A drift patch that changes the labels WITHOUT restating the IDs clears the
+// stored IDs, so they never describe a set the profile no longer names.
+//
 // Guards (a client profile is never allowed to be broader than the contract):
 //   - the generic catalog ids (`master`, `client-generic`, `public-readonly`)
 //     are owned by `oauth:seedDefaultProfiles` and are refused here;
@@ -28,6 +35,7 @@
 import { ConvexError, v } from "convex/values";
 import { internalMutation } from "../_generated/server";
 import { clerkOrgIdForSlug } from "../lib/orgClerkId";
+import { requireAgentsOfOrg } from "../lib/rosterIds";
 
 const GENERIC_CATALOG_IDS: ReadonlySet<string> = new Set([
 	"master",
@@ -43,6 +51,8 @@ const profileInput = v.object({
 	namespaceWritePrefixes: v.array(v.string()),
 	clerkOrgSlug: v.optional(v.string()),
 	selfRegistrable: v.optional(v.boolean()),
+	// The `agents` row IDs the profile admits, in the profile's own organisation.
+	fromAllowListAgentIds: v.optional(v.array(v.id("agents"))),
 });
 
 const reportRow = v.object({
@@ -117,6 +127,14 @@ export const seedClientScopeProfiles = internalMutation({
 					`AUTH_SENDER_WILDCARD_DENIED: seedClientScopeProfiles: wildcard sender is forbidden for client profile "${p.profileId}"`,
 				);
 			}
+			if (p.fromAllowListAgentIds !== undefined) {
+				if (p.clerkOrgSlug === undefined) {
+					throw new ConvexError(
+						`AGENT_NOT_IN_ORG: seedClientScopeProfiles: profile "${p.profileId}" names agent IDs but no organisation; a profile lists the agents of its own organisation only`,
+					);
+				}
+				await requireAgentsOfOrg(ctx, p.clerkOrgSlug, p.fromAllowListAgentIds);
+			}
 		}
 
 		const now = Date.now();
@@ -145,6 +163,9 @@ export const seedClientScopeProfiles = internalMutation({
 						profileId: p.profileId,
 						description: p.description,
 						fromAllowList: p.fromAllowList,
+						...(p.fromAllowListAgentIds !== undefined
+							? { fromAllowListAgentIds: p.fromAllowListAgentIds }
+							: {}),
 						namespaceReadPrefixes: p.namespaceReadPrefixes,
 						namespaceWritePrefixes: p.namespaceWritePrefixes,
 						...(p.clerkOrgSlug !== undefined
@@ -194,6 +215,12 @@ export const seedClientScopeProfiles = internalMutation({
 			if (!sameList(existing.fromAllowList, p.fromAllowList)) {
 				driftedFields.push("fromAllowList");
 			}
+			if (
+				p.fromAllowListAgentIds !== undefined &&
+				!sameList(existing.fromAllowListAgentIds ?? [], p.fromAllowListAgentIds)
+			) {
+				driftedFields.push("fromAllowListAgentIds");
+			}
 			if (!sameList(existing.namespaceReadPrefixes, p.namespaceReadPrefixes)) {
 				driftedFields.push("namespaceReadPrefixes");
 			}
@@ -226,6 +253,13 @@ export const seedClientScopeProfiles = internalMutation({
 			await ctx.db.patch(existing._id, {
 				description: p.description,
 				fromAllowList: p.fromAllowList,
+				// The IDs follow the labels they describe: restated, they replace the stored
+				// ones; unstated while the labels drifted, they are cleared, never left stale.
+				...(p.fromAllowListAgentIds !== undefined
+					? { fromAllowListAgentIds: p.fromAllowListAgentIds }
+					: driftedFields.includes("fromAllowList")
+						? { fromAllowListAgentIds: undefined }
+						: {}),
 				namespaceReadPrefixes: p.namespaceReadPrefixes,
 				namespaceWritePrefixes: p.namespaceWritePrefixes,
 				updatedAt: now,

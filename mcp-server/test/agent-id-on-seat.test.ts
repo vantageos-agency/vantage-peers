@@ -37,6 +37,12 @@ import {
 	withVerifiedActor,
 } from "../src/verifiedActor.js";
 
+/** Permanent org IDs of the two test organisations (a slug is a label, never compared). */
+const ORG_IDS: Record<string, string> = {
+	"iris-rh": "org_IRIS1",
+	"other-org": "org_OTHER1",
+};
+
 const HEADER = "x-vantage-agent-credential";
 const COMPLETE = { taskId: "k1", completionNote: "done" };
 
@@ -162,10 +168,16 @@ beforeEach(async () => {
 		namespaceReadPrefixes: [`orchestrator/${name}`],
 		namespaceWritePrefixes: [`orchestrator/${name}`],
 		clerkOrgSlug: org,
+		clerkOrgId: ORG_IDS[org],
 	});
 	ROWS[await sha256Hex(TOKENS.clioSeat)] = {
 		...seat("clio", "iris-rh"),
-		seatAgent: { agentId: CLIO_ID, orgId: "iris-rh", agentName: "clio" },
+		seatAgent: {
+			agentId: CLIO_ID,
+			orgId: "iris-rh",
+			agentName: "clio",
+			orgClerkId: ORG_IDS["iris-rh"],
+		},
 	};
 	// The Convex stamp said NONE for this profile: it resolved no agent of its own org.
 	ROWS[await sha256Hex(TOKENS.otherOrgSeat)] = {
@@ -176,10 +188,16 @@ beforeEach(async () => {
 		...seat("clio", "iris-rh"),
 		seatAgent: null,
 	};
-	// A stamp whose org is not the token's own org: never believed.
+	// A stamp whose org is not the token's own org (decided by permanent org ID,
+	// never by the slug): never believed.
 	ROWS[await sha256Hex(TOKENS.spoofedStamp)] = {
 		...seat("clio", "other-org"),
-		seatAgent: { agentId: CLIO_ID, orgId: "iris-rh", agentName: "clio" },
+		seatAgent: {
+			agentId: CLIO_ID,
+			orgId: "iris-rh",
+			agentName: "clio",
+			orgClerkId: ORG_IDS["iris-rh"],
+		},
 	};
 	// A provider that predates the stamp: the key is absent altogether.
 	ROWS[await sha256Hex(TOKENS.oldConvexSeat)] = seat("clio", "iris-rh");
@@ -307,7 +325,13 @@ describe("a seat that resolved no agent cannot act as one", () => {
 			isMaster: false,
 			accessTokenHash: "h",
 			clerkOrgSlug: "iris-rh",
-			seatAgent: { agentId: CLIO_ID, orgId: "iris-rh", agentName: "clio" },
+			clerkOrgId: ORG_IDS["iris-rh"],
+			seatAgent: {
+				agentId: CLIO_ID,
+				orgId: "iris-rh",
+				agentName: "clio",
+				orgClerkId: ORG_IDS["iris-rh"],
+			},
 		};
 		expect(isSeatActingAsItself(row, "clio")).toBe(true);
 		expect(isSeatActingAsItself(row, "victor")).toBe(false);
@@ -316,7 +340,14 @@ describe("a seat that resolved no agent cannot act as one", () => {
 		);
 		expect(
 			isSeatActingAsItself(
-				{ ...row, seatAgent: { ...row.seatAgent!, orgId: "other-org" } },
+				{
+					...row,
+					seatAgent: {
+						...row.seatAgent!,
+						orgId: "other-org",
+						orgClerkId: ORG_IDS["other-org"],
+					},
+				},
 				"clio",
 			),
 		).toBe(false);

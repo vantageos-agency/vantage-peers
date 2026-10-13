@@ -11,8 +11,21 @@
  *     '{"dryRun":true,"cursor":null}'
  *   npx convex run migrations/agentIdentityRows:backfillCredentialAgentIds \
  *     '{"dryRun":true,"cursor":null}'
+ *   npx convex run migrations/agentIdentityRows:bindSeatProfileAgentIds \
+ *     '{"dryRun":true,"cursor":null}'
  *   npx convex run migrations/agentIdentityRows:backfillSeatTokenAgentIds \
  *     '{"dryRun":true,"cursor":null}'
+ *   npx convex run migrations/agentIdentityRows:backfillProfileAgentIdLists \
+ *     '{"dryRun":true,"cursor":null}'
+ *   npx convex run migrations/agentIdentityRows:backfillTokenAgentIdLists \
+ *     '{"dryRun":true,"cursor":null}'
+ *
+ * ORDER for the seat tokens (operator ruling 2026-10-13, "identify by id, not by
+ * name"): bindSeatProfileAgentIds FIRST (it binds the agent ID onto every seat
+ * profile whose single label resolved before the label branch was deleted), then
+ * backfillSeatTokenAgentIds, then backfillProfileAgentIdLists, then
+ * backfillTokenAgentIdLists. A seat profile that is still unbound after the first
+ * one refuses to mint (SEAT_PROFILE_UNBOUND): read its `unbound` report.
  *
  * Repeat each with `cursor` = the returned `continueCursor` until `isDone`.
  * Run the names backfill first; the two are independent but the report of the
@@ -27,10 +40,16 @@
  *  - Bounded: at most `batchSize` (default 100, max 200) rows per call.
  */
 import { v } from "convex/values";
-import type { Id } from "../_generated/dataModel";
+import type { Doc, Id } from "../_generated/dataModel";
 import { internalMutation } from "../_generated/server";
 import { normalizeOrchestratorId } from "../_helpers/normalizeOrchestratorId";
-import { resolveSeatAgent } from "../lib/seatAgent";
+import {
+	isOneAgentSeatShape,
+	liveProfileAgentIds,
+	resolveSeat,
+	sameOrgStamp,
+	seatBindingRefusal,
+} from "../lib/seatAgent";
 
 const DEFAULT_BATCH = 100;
 const MAX_BATCH = 200;
@@ -49,6 +68,7 @@ function checkBatch(batchSize: number): void {
 	}
 }
 
+// allow-local-identity: one-off backfill that WRITES the per-org uniqueness key of an agent's display label (normalizedName) and refuses on a clash; it admits no caller and selects no row for any caller
 export const backfillAgentNormalizedNames = internalMutation({
 	args: {
 		dryRun: v.boolean(),
@@ -114,6 +134,7 @@ export const backfillAgentNormalizedNames = internalMutation({
 	},
 });
 
+// allow-local-identity: one-off backfill that turns the label a legacy credential row recorded at mint into the agent ID, once, inside the row's own org; it admits no caller and every later decision follows the ID it writes
 export const backfillCredentialAgentIds = internalMutation({
 	args: {
 		dryRun: v.boolean(),
@@ -245,7 +266,8 @@ export const backfillSeatTokenAgentIds = internalMutation({
 				skipped += 1;
 				continue;
 			}
-			const agent = await resolveSeatAgent(ctx, row);
+			const seat = await resolveSeat(ctx, row);
+			const agent = seat.kind === "agent" ? seat.agent : null;
 			if (!agent) {
 				undecidableIds.push(row._id);
 				continue;
@@ -266,6 +288,427 @@ export const backfillSeatTokenAgentIds = internalMutation({
 			skipped,
 			undecidable: undecidableIds.length,
 			undecidableIds,
+			isDone: page.isDone,
+			continueCursor: page.continueCursor,
+		};
+	},
+});
+
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Seat profiles bound by agent ID (operator ruling 2026-10-13)
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * What a stored display label names INSIDE ONE organisation. The two migrations
+ * below are the only places where a stored label is turned into an agent ID, once,
+ * and the ID is what is written: the label is read from the profile row (never from
+ * a caller), the lookup is confined to the profile's own organisation, the agent's
+ * org is confirmed by org ID, a same-named agent of another org is never a
+ * candidate, and two candidates are ambiguous, never picked between.
+ */
+type LabelResolution =
+	| { kind: "agent"; agent: Doc<"agents"> }
+	| { kind: "not-found" }
+	| { kind: "ambiguous" }
+	| { kind: "inactive" }
+	| { kind: "other-org" };
+
+const bindReason = v.union(
+	v.literal("profile-id-mismatch"),
+	v.literal("agent-not-found"),
+	v.literal("agent-ambiguous"),
+	v.literal("agent-inactive"),
+	v.literal("agent-other-org"),
+);
+
+/**
+ * Binds `agentId` (and `fromAllowListAgentIds`) onto every ONE-AGENT SEAT
+ * profile whose single label resolved to its agent before the label branch of
+ * resolveSeat was deleted, so no currently-working seat breaks.
+ *
+ * "Resolved before" is exactly the deleted rule: the profile's single allowlisted
+ * label, inside the profile's own organisation, with the profile id following
+ * `<agent>-<org>` (compared in normalised form), naming one ACTIVE agent of that
+ * organisation. Anything else is NOT bound and is listed in `unbound` with the
+ * reason, for the operator to bind by hand (oauth:bindScopeProfileAgent) or to
+ * fix. A profile that is not a one-agent seat (several entries, none, the
+ * wildcard, no organisation) is `notSeat`: it is org-level by data and needs no
+ * agent.
+ *
+ * Same shape and guarantees as the sibling backfills: dry-run first,
+ * cursor-paged, IDEMPOTENT (a profile that already carries an `agentId` is
+ * counted, never rewritten), REFUSES NEVER GUESSES.
+ */
+// allow-local-identity: one-off migration that turns the single label a seat profile stored into the agent ID, once, inside the profile's own org; it admits no caller and every later decision follows the ID it writes
+export const bindSeatProfileAgentIds = internalMutation({
+	args: {
+		dryRun: v.boolean(),
+		cursor: v.union(v.string(), v.null()),
+		batchSize: v.optional(v.number()),
+	},
+	returns: v.object({
+		dryRun: v.boolean(),
+		scanned: v.number(),
+		updated: v.number(),
+		alreadyBound: v.number(),
+		notSeat: v.number(),
+		unbound: v.array(v.object({ profileId: v.string(), reason: bindReason })),
+		isDone: v.boolean(),
+		continueCursor: v.string(),
+	}),
+	handler: async (ctx, args) => {
+		const batchSize = args.batchSize ?? DEFAULT_BATCH;
+		checkBatch(batchSize);
+		const page = await ctx.db
+			.query("oauth_scope_profiles")
+			.paginate({ numItems: batchSize, cursor: args.cursor });
+
+		let updated = 0;
+		let alreadyBound = 0;
+		let notSeat = 0;
+		const unbound: Array<{
+			profileId: string;
+			reason:
+				| "profile-id-mismatch"
+				| "agent-not-found"
+				| "agent-ambiguous"
+				| "agent-inactive"
+				| "agent-other-org";
+		}> = [];
+		for (const profile of page.page) {
+			if (profile.agentId !== undefined) {
+				alreadyBound += 1;
+				continue;
+			}
+			if (!isOneAgentSeatShape(profile)) {
+				notSeat += 1;
+				continue;
+			}
+			const label = profile.fromAllowList[0];
+			const orgSlug = profile.clerkOrgSlug;
+			// The id convention `<agent>-<org>` the deleted label branch required.
+			if (
+				orgSlug === undefined ||
+				normalizeOrchestratorId(profile.profileId) !==
+					normalizeOrchestratorId(`${label}-${orgSlug}`)
+			) {
+				unbound.push({ profileId: profile.profileId, reason: "profile-id-mismatch" });
+				continue;
+			}
+			let found: LabelResolution = { kind: "not-found" };
+			// The label -> agent ID step (see the header): the label is read from the
+			// profile row, the lookup is confined to the profile's own organisation,
+			// the agent's org is confirmed by org ID, and two candidates are ambiguous.
+			if (profile.clerkOrgSlug !== undefined) {
+				const orgSlug = profile.clerkOrgSlug;
+				const normalized = normalizeOrchestratorId(label);
+				const byNormalized = await ctx.db
+					.query("agents")
+					.withIndex("by_org_normalized_name", (q) =>
+						q.eq("orgSlug", orgSlug).eq("normalizedName", normalized),
+					)
+					.take(3);
+				const byExact =
+					byNormalized.length > 0
+						? []
+						: await ctx.db
+								.query("agents")
+								.withIndex("by_org_name", (q) =>
+									q.eq("orgSlug", orgSlug).eq("name", label),
+								)
+								.take(3);
+				const candidates = [...byNormalized, ...byExact].filter(
+					(row) => normalizeOrchestratorId(row.name) === normalized,
+				);
+				if (candidates.length > 1) found = { kind: "ambiguous" };
+				else if (candidates.length === 1) {
+					const candidate = candidates[0];
+					if (!candidate.isActive) found = { kind: "inactive" };
+					else if (
+						await sameOrgStamp(
+							ctx,
+							{ id: candidate.clerkOrgId, label: candidate.orgSlug },
+							{ id: profile.clerkOrgId, label: profile.clerkOrgSlug },
+						)
+					)
+						found = { kind: "agent", agent: candidate };
+					else found = { kind: "other-org" };
+				}
+			}
+			if (found.kind !== "agent") {
+				unbound.push({
+					profileId: profile.profileId,
+					reason:
+						found.kind === "not-found"
+							? "agent-not-found"
+							: found.kind === "ambiguous"
+								? "agent-ambiguous"
+								: found.kind === "inactive"
+									? "agent-inactive"
+									: "agent-other-org",
+				});
+				continue;
+			}
+			// The same refusal oauth:bindScopeProfileAgent applies (one-agent seat,
+			// active agent, same organisation by ID).
+			const refusal = await seatBindingRefusal(ctx, profile, found.agent);
+			if (refusal !== null) {
+				unbound.push({
+					profileId: profile.profileId,
+					reason: refusal === "AGENT_INACTIVE" ? "agent-inactive" : "agent-other-org",
+				});
+				continue;
+			}
+			updated += 1;
+			if (!args.dryRun) {
+				await ctx.db.patch(profile._id, {
+					agentId: found.agent._id,
+					fromAllowListAgentIds: [found.agent._id],
+					updatedAt: Date.now(),
+				});
+			}
+		}
+		return {
+			dryRun: args.dryRun,
+			scanned: page.page.length,
+			updated,
+			alreadyBound,
+			notSeat,
+			unbound,
+			isDone: page.isDone,
+			continueCursor: page.continueCursor,
+		};
+	},
+});
+
+/**
+ * Fills `fromAllowListAgentIds` on org-bound scope profiles: the IDs of the
+ * agents their display labels name, each resolved INSIDE THE PROFILE'S OWN ORG.
+ * A profile is listed only when EVERY label resolves to one active agent of that
+ * org; one label that does not (missing, ambiguous, retired, another org's) leaves
+ * the profile unlisted and is reported in `unresolved` with the labels that
+ * failed, so a half-resolved list is never written. A bound seat is listed as its
+ * bound agent. A wildcard, an empty list and a profile with no organisation name
+ * no agent (`notListed`). Dry-run first, cursor-paged, IDEMPOTENT.
+ */
+// allow-local-identity: one-off migration that reads the labels a profile stored to turn them into agent IDs, once, inside the profile's own org; it admits no caller and every later decision follows the IDs it writes
+export const backfillProfileAgentIdLists = internalMutation({
+	args: {
+		dryRun: v.boolean(),
+		cursor: v.union(v.string(), v.null()),
+		batchSize: v.optional(v.number()),
+	},
+	returns: v.object({
+		dryRun: v.boolean(),
+		scanned: v.number(),
+		updated: v.number(),
+		alreadySet: v.number(),
+		notListed: v.number(),
+		unresolved: v.array(
+			v.object({ profileId: v.string(), labels: v.array(v.string()) }),
+		),
+		isDone: v.boolean(),
+		continueCursor: v.string(),
+	}),
+	handler: async (ctx, args) => {
+		const batchSize = args.batchSize ?? DEFAULT_BATCH;
+		checkBatch(batchSize);
+		const page = await ctx.db
+			.query("oauth_scope_profiles")
+			.paginate({ numItems: batchSize, cursor: args.cursor });
+
+		let updated = 0;
+		let alreadySet = 0;
+		let notListed = 0;
+		const unresolved: Array<{ profileId: string; labels: string[] }> = [];
+		for (const profile of page.page) {
+			if (profile.fromAllowListAgentIds !== undefined) {
+				alreadySet += 1;
+				continue;
+			}
+			const hasOrg =
+				profile.clerkOrgSlug !== undefined || profile.clerkOrgId !== undefined;
+			const labels = profile.fromAllowList;
+			if (!hasOrg || labels.length === 0 || labels.some((l) => l.trim() === "*")) {
+				notListed += 1;
+				continue;
+			}
+			const ids: Id<"agents">[] = [];
+			const failed: string[] = [];
+			if (profile.agentId !== undefined) {
+				const bound = await ctx.db.get(profile.agentId);
+				const inOrg =
+					bound !== null &&
+					bound.isActive &&
+					(await sameOrgStamp(
+						ctx,
+						{ id: bound.clerkOrgId, label: bound.orgSlug },
+						{ id: profile.clerkOrgId, label: profile.clerkOrgSlug },
+					));
+				if (inOrg && bound !== null) ids.push(bound._id);
+				else failed.push(...labels);
+			} else {
+				for (const label of labels) {
+					let found: LabelResolution = { kind: "not-found" };
+			// The label -> agent ID step (see the header): the label is read from the
+			// profile row, the lookup is confined to the profile's own organisation,
+			// the agent's org is confirmed by org ID, and two candidates are ambiguous.
+			if (profile.clerkOrgSlug !== undefined) {
+				const orgSlug = profile.clerkOrgSlug;
+				const normalized = normalizeOrchestratorId(label);
+				const byNormalized = await ctx.db
+					.query("agents")
+					.withIndex("by_org_normalized_name", (q) =>
+						q.eq("orgSlug", orgSlug).eq("normalizedName", normalized),
+					)
+					.take(3);
+				const byExact =
+					byNormalized.length > 0
+						? []
+						: await ctx.db
+								.query("agents")
+								.withIndex("by_org_name", (q) =>
+									q.eq("orgSlug", orgSlug).eq("name", label),
+								)
+								.take(3);
+				const candidates = [...byNormalized, ...byExact].filter(
+					(row) => normalizeOrchestratorId(row.name) === normalized,
+				);
+				if (candidates.length > 1) found = { kind: "ambiguous" };
+				else if (candidates.length === 1) {
+					const candidate = candidates[0];
+					if (!candidate.isActive) found = { kind: "inactive" };
+					else if (
+						await sameOrgStamp(
+							ctx,
+							{ id: candidate.clerkOrgId, label: candidate.orgSlug },
+							{ id: profile.clerkOrgId, label: profile.clerkOrgSlug },
+						)
+					)
+						found = { kind: "agent", agent: candidate };
+					else found = { kind: "other-org" };
+				}
+			}
+					if (found.kind === "agent") {
+						if (!ids.includes(found.agent._id)) ids.push(found.agent._id);
+					} else {
+						failed.push(label);
+					}
+				}
+			}
+			if (failed.length > 0) {
+				unresolved.push({ profileId: profile.profileId, labels: failed });
+				continue;
+			}
+			updated += 1;
+			if (!args.dryRun) {
+				await ctx.db.patch(profile._id, {
+					fromAllowListAgentIds: ids,
+					updatedAt: Date.now(),
+				});
+			}
+		}
+		return {
+			dryRun: args.dryRun,
+			scanned: page.page.length,
+			updated,
+			alreadySet,
+			notListed,
+			unresolved,
+			isDone: page.isDone,
+			continueCursor: page.continueCursor,
+		};
+	},
+});
+
+/**
+ * Copies a scope profile's agent IDs onto its LIVE access tokens that carry none
+ * (oauth_access_tokens.fromAllowListAgentIds), as a mint would have stamped them.
+ * The IDs are the profile's, re-read live (an inactive agent or another org's is
+ * dropped), and are copied only when the token's own org is the profile's org.
+ * Revoked, expired and person tokens are `skipped`; a token whose profile lists
+ * no IDs yet is `noProfileIds`; a token whose org is not its profile's is
+ * `orgMismatch`. Dry-run first, cursor-paged, IDEMPOTENT.
+ */
+export const backfillTokenAgentIdLists = internalMutation({
+	args: {
+		dryRun: v.boolean(),
+		cursor: v.union(v.string(), v.null()),
+		batchSize: v.optional(v.number()),
+	},
+	returns: v.object({
+		dryRun: v.boolean(),
+		scanned: v.number(),
+		updated: v.number(),
+		alreadySet: v.number(),
+		skipped: v.number(),
+		noProfileIds: v.number(),
+		orgMismatch: v.number(),
+		isDone: v.boolean(),
+		continueCursor: v.string(),
+	}),
+	handler: async (ctx, args) => {
+		const batchSize = args.batchSize ?? DEFAULT_BATCH;
+		checkBatch(batchSize);
+		const page = await ctx.db
+			.query("oauth_access_tokens")
+			.paginate({ numItems: batchSize, cursor: args.cursor });
+		const now = Date.now();
+
+		let updated = 0;
+		let alreadySet = 0;
+		let skipped = 0;
+		let noProfileIds = 0;
+		let orgMismatch = 0;
+		for (const row of page.page) {
+			if (row.fromAllowListAgentIds !== undefined) {
+				alreadySet += 1;
+				continue;
+			}
+			if (
+				row.revokedAt !== undefined ||
+				row.expiresAt < now ||
+				row.principal !== undefined
+			) {
+				skipped += 1;
+				continue;
+			}
+			const profile = await ctx.db
+				.query("oauth_scope_profiles")
+				.withIndex("by_profileId", (q) => q.eq("profileId", row.scopeProfile))
+				.unique();
+			if (profile === null || profile.fromAllowListAgentIds === undefined) {
+				noProfileIds += 1;
+				continue;
+			}
+			const sameOrg = await sameOrgStamp(
+				ctx,
+				{ id: profile.clerkOrgId, label: profile.clerkOrgSlug },
+				{ id: row.clerkOrgId, label: row.clerkOrgSlug },
+			);
+			if (!sameOrg) {
+				orgMismatch += 1;
+				continue;
+			}
+			const ids = await liveProfileAgentIds(ctx, profile);
+			if (ids === undefined) {
+				noProfileIds += 1;
+				continue;
+			}
+			updated += 1;
+			if (!args.dryRun) {
+				await ctx.db.patch(row._id, { fromAllowListAgentIds: ids });
+			}
+		}
+		return {
+			dryRun: args.dryRun,
+			scanned: page.page.length,
+			updated,
+			alreadySet,
+			skipped,
+			noProfileIds,
+			orgMismatch,
 			isDone: page.isDone,
 			continueCursor: page.continueCursor,
 		};
