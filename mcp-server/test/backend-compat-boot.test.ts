@@ -20,8 +20,8 @@
  * serve.
  */
 import { spawn, spawnSync } from "node:child_process";
-import { readFileSync, readdirSync } from "node:fs";
-import { type Server, createServer } from "node:http";
+import { readdirSync, readFileSync } from "node:fs";
+import { createServer, type Server } from "node:http";
 import type { AddressInfo } from "node:net";
 import { dirname, join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -33,10 +33,10 @@ import {
 	BACKEND_FUNCTIONS,
 } from "../../convex/lib/backendManifest";
 import {
-	MCP_CALLED_FUNCTIONS,
-	REQUIRED_CONTRACT_VERSION,
 	bootCheckOrExit,
 	checkBackendCompat,
+	MCP_CALLED_FUNCTIONS,
+	REQUIRED_CONTRACT_VERSION,
 } from "../src/backendContract";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
@@ -127,7 +127,9 @@ function convexModules(): Set<string> {
 		"utf8",
 	);
 	const names = new Set<string>();
-	for (const m of text.matchAll(/^import type \* as [\w$]+ from "\.\.\/([^"]+)\.js";/gm))
+	for (const m of text.matchAll(
+		/^import type \* as [\w$]+ from "\.\.\/([^"]+)\.js";/gm,
+	))
 		names.add(m[1]);
 	return names;
 }
@@ -303,10 +305,7 @@ describe("checkBackendCompat -- every other failure says what it is", () => {
 			"a non-string entry",
 			{ status: "success", value: { contractVersion: 1, functions: [1] } },
 		],
-		[
-			"no version",
-			{ status: "success", value: { functions: ["a:b"] } },
-		],
+		["no version", { status: "success", value: { functions: ["a:b"] } }],
 	])("a malformed manifest (%s) -> refuses, never passes", async (_n, out) => {
 		const c = await clientFor(() => out);
 		const r = await checkBackendCompat(c, { sleep: async () => {} });
@@ -348,7 +347,9 @@ describe("checkBackendCompat -- every other failure says what it is", () => {
 
 	test("deterministic refusals are NOT retried", async () => {
 		const query = vi.fn(async () => {
-			throw new Error("Could not find public function for 'meta:backendContract'");
+			throw new Error(
+				"Could not find public function for 'meta:backendContract'",
+			);
 		});
 		await checkBackendCompat({ query }, { sleep: async () => {} });
 		expect(query).toHaveBeenCalledTimes(1);

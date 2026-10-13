@@ -235,7 +235,8 @@ function classify(err: unknown): BackendCompatFailure | "transient" {
 	const text = errorText(err);
 	if (/Could not find public function/i.test(text)) return "no-manifest";
 	if (/RBAC_DENIED/.test(text)) return "refused";
-	if (/service-account (identity|token)/i.test(text)) return "cannot-authenticate";
+	if (/service-account (identity|token)/i.test(text))
+		return "cannot-authenticate";
 	return "transient";
 }
 
@@ -319,7 +320,9 @@ export async function checkBackendCompat(
 			message: `backend contract version ${manifest.contractVersion} < required ${REQUIRED_CONTRACT_VERSION} -- deploy Convex first.`,
 		};
 	}
-	const missing = MCP_CALLED_FUNCTIONS.filter((f) => !manifest.functions.has(f));
+	const missing = MCP_CALLED_FUNCTIONS.filter(
+		(f) => !manifest.functions.has(f),
+	);
 	if (missing.length > 0) {
 		return {
 			ok: false,
