@@ -1,0 +1,19 @@
+{
+ "sha": "0000000000000000000000000000000000000000",
+ "cli_commit": "x",
+ "convex_path": "convex",
+ "exit_code": 1,
+ "checked": 54,
+ "total": 56,
+ "mechanical_violations": 7,
+ "mechanical_rule_counts": {
+  "CR-2": 200,
+  "R-5": 62,
+  "R-53": 369,
+  "R-54": 148,
+  "R-55": 31,
+  "R-56": 2,
+  "R-11": 1
+ },
+ "mechanical_rule_module_counts": null
+}
