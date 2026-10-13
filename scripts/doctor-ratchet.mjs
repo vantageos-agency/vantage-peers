@@ -4,16 +4,18 @@
  * k179600rsb4xsv7a975cjkqwhs8g7qhv): a count may only go down.
  *
  *   node scripts/doctor-ratchet.mjs --baseline .backend-doctor/ratchet.json \
- *     --evidence out.json [--report report.txt] [--previous-baseline prev.json]
+ *     --evidence out.json --previous-baseline main-ratchet.json [--report report.txt]
  *
  * --evidence           the file written by `backend-doctor <repo> --json-evidence`.
+ * --previous-baseline  REQUIRED: the baseline committed on main (`git show origin/main:.backend-doctor/ratchet.json`).
+ *                      A rise is measured against IT, never against the PR's own baseline, so a PR
+ *                      cannot raise a count and bump ratchet.json in the same diff (Eta, #1529).
  * --report             the doctor's text output; any FALLBACK line is a refusal to judge.
- * --previous-baseline  the baseline on main; the PR's baseline may not exceed it.
  *
  * A rule absent from `mechanical_rule_counts` is green (the doctor lists red rules
  * only), so it counts 0. A rule absent from the baseline has a baseline of 0.
  *
- * Exit: 0 no count above its baseline; 1 a count or the baseline was raised;
+ * Exit: 0 no count above main's baseline; 1 a count or the baseline was raised;
  * 2 could not judge (bad usage, unreadable input, uncertified evidence, FALLBACK).
  */
 import { readFileSync } from "node:fs";
@@ -31,9 +33,9 @@ function parseArgs(argv) {
 		if (!key?.startsWith("--") || val === undefined) couldNotJudge(`bad argument ${key ?? ""}`);
 		out[key.slice(2)] = val;
 	}
-	if (!out.baseline || !out.evidence) {
+	if (!out.baseline || !out.evidence || !out["previous-baseline"]) {
 		couldNotJudge(
-			"usage: doctor-ratchet.mjs --baseline <file> --evidence <file> [--report <file>] [--previous-baseline <file>]",
+			"usage: doctor-ratchet.mjs --baseline <file> --evidence <file> --previous-baseline <main's ratchet.json> [--report <file>]",
 		);
 	}
 	return out;
@@ -81,12 +83,17 @@ if (args.report) {
 	}
 }
 
+const mainBaseline = baselineCounts(
+	readJson(args["previous-baseline"], "previous baseline"),
+	"previous baseline",
+);
+
 let failed = false;
-const rules = [...new Set([...Object.keys(baseline), ...Object.keys(measured)])].sort();
-const lines = ["rule    baseline  head  delta"];
 let lowered = false;
+const rules = [...new Set([...Object.keys(mainBaseline), ...Object.keys(baseline), ...Object.keys(measured)])].sort();
+const lines = ["rule    main  head  delta"];
 for (const rule of rules) {
-	const base = baseline[rule] ?? 0;
+	const base = mainBaseline[rule] ?? 0;
 	const head = measured[rule] ?? 0;
 	const delta = head - base;
 	const sign = delta > 0 ? `+${delta}` : `${delta}`;
@@ -97,34 +104,32 @@ for (const rule of rules) {
 	} else if (delta < 0) {
 		lowered = true;
 	}
-	lines.push(`${rule.padEnd(7)} ${String(base).padStart(8)}  ${String(head).padStart(4)}  ${sign}${mark}`);
+	lines.push(`${rule.padEnd(7)} ${String(base).padStart(4)}  ${String(head).padStart(4)}  ${sign}${mark}`);
 }
 console.log(lines.join("\n"));
-// One line a reviewer and Pi's merge guard read literally (task k179600rsb4xsv7a975cjkqwhs8g7qhv).
-const SIX = ["CR-2", "R-5", "R-53", "R-54", "R-55", "R-56"];
-const risen = rules.filter((r) => (measured[r] ?? 0) > (baseline[r] ?? 0)).length;
-console.log(
-	`RATCHET: ${evidence.sha ?? "unknown"} ${SIX.map((r) => `${r}=${measured[r] ?? 0}`).join(" ")} rise=${risen}`,
-);
 
-if (args["previous-baseline"]) {
-	const prev = baselineCounts(readJson(args["previous-baseline"], "previous baseline"), "previous baseline");
-	for (const rule of Object.keys({ ...prev, ...baseline })) {
-		const before = prev[rule] ?? 0;
-		const now = baseline[rule] ?? 0;
-		if (now > before) {
-			console.error(`doctor-ratchet: baseline raised for ${rule}: ${before} on main -> ${now} here. The baseline only goes down.`);
-			failed = true;
-		}
+for (const rule of Object.keys({ ...mainBaseline, ...baseline })) {
+	const before = mainBaseline[rule] ?? 0;
+	const now = baseline[rule] ?? 0;
+	if (now > before) {
+		console.log(`doctor-ratchet: baseline raised for ${rule}: ${before} on main -> ${now} here. The baseline only goes down.`);
+		failed = true;
 	}
 }
 
 if (failed) {
-	console.error("doctor-ratchet: FAIL — a mechanical count is above its baseline. Fix the new site; never raise the baseline.");
-	process.exit(1);
-}
-if (lowered) {
+	console.log("doctor-ratchet: FAIL — a mechanical count is above main's baseline. Fix the new site; never raise the baseline.");
+} else if (lowered) {
 	console.log("doctor-ratchet: PASS — counts went down; lower the baseline in .backend-doctor/ratchet.json in this PR.");
 } else {
-	console.log("doctor-ratchet: PASS — no count above its baseline.");
+	console.log("doctor-ratchet: PASS — no count above main's baseline.");
 }
+
+// LAST line, read literally by reviewers and Pi's merge guard (task k179600rsb4xsv7a975cjkqwhs8g7qhv).
+// rise = rules whose head count exceeds MAIN's baseline.
+const SIX = ["CR-2", "R-5", "R-53", "R-54", "R-55", "R-56"];
+const risen = rules.filter((r) => (measured[r] ?? 0) > (mainBaseline[r] ?? 0)).length;
+console.log(
+	`RATCHET: ${evidence.sha ?? "unknown"} ${SIX.map((r) => `${r}=${measured[r] ?? 0}`).join(" ")} rise=${risen}`,
+);
+process.exit(failed ? 1 : 0);

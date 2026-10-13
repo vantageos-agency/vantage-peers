@@ -30,8 +30,17 @@ function run(args) {
 	const r = spawnSync(process.execPath, [SCRIPT, ...args], { encoding: "utf8" });
 	return { status: r.status, out: `${r.stdout}${r.stderr}` };
 }
+// main's baseline is the committed one unless a test passes its own.
 const withBaseline = (evidence, extra = []) =>
-	run(["--baseline", BASELINE, "--evidence", join(FIX, evidence), ...extra]);
+	run([
+		"--baseline",
+		BASELINE,
+		"--evidence",
+		join(FIX, evidence),
+		"--previous-baseline",
+		BASELINE,
+		...extra,
+	]);
 
 describe("doctor-ratchet: a count may only go down", () => {
 	it("GREEN: counts equal to the baseline pass", () => {
@@ -51,6 +60,7 @@ describe("doctor-ratchet: a count may only go down", () => {
 		const r = withBaseline("lowered.json");
 		expect(r.status).toBe(0);
 		expect(r.out).toMatch(/R-53\s+369\s+360\s+-9/);
+		expect(r.out.trim().split("\n").at(-1)).toMatch(/^RATCHET: .* rise=0$/);
 		expect(r.out).toMatch(/lower the baseline/i);
 	});
 
@@ -134,5 +144,29 @@ describe("doctor-ratchet: a count may only go down", () => {
 
 	it("usage error exits 2", () => {
 		expect(run([]).status).toBe(2);
+	});
+
+	it("RED: --previous-baseline (main's baseline) is required; without it the run cannot judge", () => {
+		const r = run(["--baseline", BASELINE, "--evidence", join(FIX, "equal.json")]);
+		expect(r.status).toBe(2);
+		expect(r.out).toMatch(/previous-baseline/);
+	});
+
+	it("RED (Eta, #1529): a PR that raises a count AND bumps its own baseline still reads rise=1 against main", () => {
+		const d = tmp();
+		const bumped = join(d, "ratchet.json");
+		const base = JSON.parse(readFileSync(BASELINE, "utf8"));
+		writeFileSync(bumped, JSON.stringify({ ...base, counts: { ...base.counts, "R-53": 370 } }));
+		const r = run([
+			"--baseline",
+			bumped,
+			"--evidence",
+			join(FIX, "raised.json"),
+			"--previous-baseline",
+			BASELINE,
+		]);
+		expect(r.status).toBe(1);
+		expect(r.out).toMatch(/R-53\s+369\s+370\s+\+1\s+RAISED/);
+		expect(r.out.trim().split("\n").at(-1)).toMatch(/^RATCHET: 0{40} .*R-53=370 .*rise=1$/);
 	});
 });
