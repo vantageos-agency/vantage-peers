@@ -52,6 +52,7 @@ import { ConvexError } from "convex/values";
 import { convexTest } from "../../tests/fixtures/convexTestWithServiceAccount";
 import { describe, expect, test } from "vitest";
 import { seedRosterAgent } from "../../tests/fixtures/rosterAgent";
+import { agentIdInCtx } from "../../tests/lib/agentIdOf";
 import { testClerkOrgId } from "../../tests/fixtures/testClerkOrgId";
 import { api } from "../_generated/api";
 import schema from "../schema";
@@ -345,7 +346,10 @@ const seedBusinessUnit = (t: T, orchestratorId: string) =>
 
 const seedRecurringTask = (t: T, assignedTo: string, orgId?: string) =>
 	t.run(async (ctx) => {
+		const assigneeId =
+			orgId === undefined ? undefined : await agentIdInCtx(ctx, orgId, assignedTo);
 		await ctx.db.insert("recurringTasks", {
+			...(assigneeId !== undefined ? { assignedToId: assigneeId } : {}),
 			title: "daily scan",
 			assignedTo,
 			orgId,
@@ -362,7 +366,10 @@ const seedRecurringTask = (t: T, assignedTo: string, orgId?: string) =>
 
 const seedUnlinkedBlockedTask = (t: T, assignedTo = "sigma", orgId?: string) =>
 	t.run(async (ctx) => {
+		const assigneeId =
+			orgId === undefined ? undefined : await agentIdInCtx(ctx, orgId, assignedTo);
 		await ctx.db.insert("tasks", {
+			...(assigneeId !== undefined ? { assignedToId: assigneeId } : {}),
 			title: "blocked with no link",
 			assignedTo,
 			orgId,

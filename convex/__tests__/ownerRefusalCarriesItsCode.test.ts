@@ -20,6 +20,7 @@ import { seedFleetAgents } from "../../tests/lib/seedFleetAgents";
 import { api } from "../_generated/api";
 import type { Id } from "../_generated/dataModel";
 import schema from "../schema";
+import { agentIdInCtx } from "../../tests/lib/agentIdOf";
 import { seedRosterAgent } from "../../tests/fixtures/rosterAgent";
 import { insertDiary } from "../../tests/lib/diaryRow";
 
@@ -121,8 +122,9 @@ const seedDiary = (t: T, orchestrator: string) =>
 	);
 
 const seedMessage = (t: T, from: string) =>
-	t.run((ctx) =>
+	t.run(async (ctx) =>
 		ctx.db.insert("messages", {
+			fromId: await agentIdInCtx(ctx, "org-a", from),
 			from,
 			channel: "seat-x",
 			content: "seed message",

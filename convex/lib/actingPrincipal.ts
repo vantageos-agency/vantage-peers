@@ -278,16 +278,24 @@ export async function scopedRowFilter(
 		door,
 	);
 	if (!caller.ok) return refuseWith(caller.refusal);
+	// The roster and the organisation-kind answers are the same for every row of
+	// one read: built and read once, not per row.
+	const keys: ReadonlySet<string> = new Set(scope.allowedAgentIds);
+	const kinds = new Map<string, Promise<OrgKind | null | undefined>>();
+	const orgKindOf = (orgId: string): Promise<OrgKind | null | undefined> => {
+		const known = kinds.get(orgId);
+		if (known !== undefined) return known;
+		const answer = Promise.resolve(lookups.orgKindOf?.(orgId));
+		kinds.set(orgId, answer);
+		return answer;
+	};
 	return async <T extends RosterRow>(rows: readonly T[]): Promise<T[]> => {
 		const verdict = await filterTargetsInPersonScope(
 			caller.principal,
 			rows.map((row) => ({ orgId: row.clerkOrgId, row })),
 			{
-				orgKindOf: lookups.orgKindOf,
-				scopeOf: () => ({
-					kind: "keys",
-					keys: new Set(scope.allowedAgentIds),
-				}),
+				orgKindOf,
+				scopeOf: () => ({ kind: "keys", keys }),
 				rowScopeKeys: (target) => target.row.pilotId ?? target.row.assignedToId,
 			},
 			{ door },

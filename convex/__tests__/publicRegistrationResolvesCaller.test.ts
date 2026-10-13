@@ -79,6 +79,7 @@ import { ConvexError } from "convex/values";
 import { convexTest } from "../../tests/fixtures/convexTestWithServiceAccount";
 import { describe, expect, test } from "vitest";
 import { seedRosterAgent } from "../../tests/fixtures/rosterAgent";
+import { agentIdInCtx } from "../../tests/lib/agentIdOf";
 import { testClerkOrgId } from "../../tests/fixtures/testClerkOrgId";
 import { api } from "../_generated/api";
 import schema from "../schema";
@@ -151,6 +152,7 @@ async function seedOrgMapping(t: T, clerkOrgSlug: string, roster = ["sigma"]) {
 			isActive: true,
 			createdAt: Date.now(),
 		});
+		for (const name of roster) await seedRosterAgent(ctx, clerkOrgSlug, name);
 	});
 }
 
@@ -332,7 +334,10 @@ const seedIssue = (t: T, extra: Record<string, unknown> = {}) =>
  */
 const seedRecurringTask = (t: T, assignedTo = "sigma", orgId?: string) =>
 	t.run(async (ctx) => {
+		const assigneeId =
+			orgId === undefined ? undefined : await agentIdInCtx(ctx, orgId, assignedTo);
 		await ctx.db.insert("recurringTasks", {
+			...(assigneeId !== undefined ? { assignedToId: assigneeId } : {}),
 			title: "daily scan",
 			assignedTo,
 			orgId,
@@ -392,7 +397,10 @@ const seedBusinessUnit = (t: T, orchestratorId = "sigma") =>
 /** A blocked task with neither blockedOnTaskId nor blockedOnNobodyReason. */
 const seedUnlinkedBlockedTask = (t: T, assignedTo = "sigma", orgId?: string) =>
 	t.run(async (ctx) => {
+		const assigneeId =
+			orgId === undefined ? undefined : await agentIdInCtx(ctx, orgId, assignedTo);
 		await ctx.db.insert("tasks", {
+			...(assigneeId !== undefined ? { assignedToId: assigneeId } : {}),
 			title: "blocked with no link",
 			assignedTo,
 			orgId,

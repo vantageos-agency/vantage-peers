@@ -27,7 +27,10 @@
 import { convexTest } from "../../tests/fixtures/convexTestWithServiceAccount";
 import { describe, expect, test } from "vitest";
 import { testClerkOrgId } from "../../tests/fixtures/testClerkOrgId";
+import { seedRosterAgent } from "../../tests/fixtures/rosterAgent";
+import { agentIdInCtx } from "../../tests/lib/agentIdOf";
 import { seedRosterAgents } from "../../tests/lib/seedRosterAgents";
+import type { Id } from "../_generated/dataModel";
 import { api, internal } from "../_generated/api";
 import schema from "../schema";
 
@@ -52,6 +55,8 @@ async function seedBothOrgs(t: ReturnType<typeof createT>) {
 				isActive: true,
 				createdAt: Date.now(),
 			});
+			// The shared seat is an agent of each org, on the org's stored ID roster.
+			await seedRosterAgent(ctx, slug, SHARED);
 		}
 	});
 }
@@ -66,15 +71,7 @@ const asOrg = (t: ReturnType<typeof createT>, slug: string) =>
 // M10h: the assignee is an agent of the org (by ID) and the creator proves it is
 // that agent through the MCP (the service account forwards the verified row).
 async function createSchedule(t: ReturnType<typeof createT>, slug: string) {
-	const agentId = await t.run((ctx) =>
-		ctx.db.insert("agents", {
-			orgSlug: slug,
-			name: SHARED,
-			normalizedName: SHARED,
-			isActive: true,
-			createdAt: Date.now(),
-		}),
-	);
+	const agentId = (await t.run((ctx) => agentIdInCtx(ctx, slug, SHARED))) as Id<"agents">;
 	return await t
 		.withIdentity({ subject: "test-service-account-user-id" })
 		.mutation(api.recurringTasks.create, {

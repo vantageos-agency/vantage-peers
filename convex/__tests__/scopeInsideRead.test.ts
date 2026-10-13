@@ -35,6 +35,7 @@ import { ConvexError } from "convex/values";
 import { convexTest } from "../../tests/fixtures/convexTestWithServiceAccount";
 import { describe, expect, test } from "vitest";
 import { testClerkOrgId } from "../../tests/fixtures/testClerkOrgId";
+import { agentIdInCtx } from "../../tests/lib/agentIdOf";
 import { seedRosterAgents } from "../../tests/lib/seedRosterAgents";
 import { api } from "../_generated/api";
 import schema from "../schema";
@@ -90,6 +91,8 @@ async function seedMappings(t: T): Promise<void> {
 			});
 		}
 	});
+	// Each roster name is an agent of its org on the org's stored ID roster.
+	await seedRosterAgents(t);
 }
 
 const orgOf = (org: string) => ({
@@ -153,7 +156,9 @@ async function seedTasks(t: T): Promise<void> {
 			[FOREIGN, "foreign-hook-1"],
 		];
 		for (const [org, title] of rows) {
+			const assigneeId = await agentIdInCtx(ctx, org, rosterOf(org));
 			await ctx.db.insert("tasks", {
+				...(assigneeId !== undefined ? { assignedToId: assigneeId } : {}),
 				// The search index tokenises on whitespace: "hook" must be a token.
 				title: `hook ${title}`,
 				assignedTo: rosterOf(org),
@@ -850,7 +855,9 @@ describe("tasks:listUnlinkedBlocked — a member reads its own org's blocked tas
 				[OWN, "own-blocked"],
 				[FOREIGN, "foreign-blocked"],
 			] as const) {
+				const assigneeId = await agentIdInCtx(ctx, org, rosterOf(org));
 				await ctx.db.insert("tasks", {
+					...(assigneeId !== undefined ? { assignedToId: assigneeId } : {}),
 					title,
 					assignedTo: rosterOf(org),
 					priority: "medium",

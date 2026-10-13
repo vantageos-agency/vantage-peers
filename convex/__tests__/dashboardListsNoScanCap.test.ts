@@ -29,7 +29,8 @@ import schema from "../schema";
 import { BRIEFING_NOTES_LIST_SCAN_CAP } from "../briefingNotes";
 import { TASK_LIST_SCAN_CAP } from "../tasks";
 import { testClerkOrgId } from "../../tests/fixtures/testClerkOrgId";
-import { seedAgents } from "../../tests/lib/agentIdOf";
+import { agentIdInCtx, seedAgents } from "../../tests/lib/agentIdOf";
+import { seedRosterAgent } from "../../tests/fixtures/rosterAgent";
 
 const modules = Object.fromEntries(
 	Object.entries(import.meta.glob("../**/*.ts")).filter(
@@ -71,6 +72,8 @@ async function seedOrgs(t: T) {
 			displayName: SMALL_ORG,
 			orgKind: "client",
 		});
+		// The member's seat is an agent of its org on the org's stored ID roster.
+		await seedRosterAgent(ctx, SMALL_ORG, "sigma");
 	});
 }
 
@@ -93,8 +96,10 @@ async function seedTasks(t: T, orgId: string, count: number) {
 	const CHUNK = 500;
 	for (let from = 0; from < count; from += CHUNK) {
 		await t.run(async (ctx) => {
+			const assignee = await agentIdInCtx(ctx, orgId, "sigma");
 			for (let i = from; i < Math.min(from + CHUNK, count); i++) {
 				await ctx.db.insert("tasks", {
+					...(assignee !== undefined ? { assignedToId: assignee } : {}),
 					title: `${orgId}-task-${i}`,
 					assignedTo: "sigma",
 					priority: "medium",

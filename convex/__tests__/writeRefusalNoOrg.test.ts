@@ -42,6 +42,7 @@
 import type { ConvexError } from "convex/values";
 import { convexTest } from "convex-test";
 import { describe, expect, test } from "vitest";
+import { agentIdInCtx } from "../../tests/lib/agentIdOf";
 import { seedRosterAgent } from "../../tests/fixtures/rosterAgent";
 import { testClerkOrgId } from "../../tests/fixtures/testClerkOrgId";
 import { api } from "../_generated/api";
@@ -146,8 +147,9 @@ const seedDiary = (t: T) =>
 	);
 
 const seedMessage = (t: T) =>
-	t.run((ctx) =>
+	t.run(async (ctx) =>
 		ctx.db.insert("messages", {
+			fromId: await agentIdInCtx(ctx, "org-a", SEAT),
 			from: SEAT,
 			channel: "general",
 			content: "seed message",
@@ -158,8 +160,9 @@ const seedMessage = (t: T) =>
 	);
 
 const seedMission = (t: T) =>
-	t.run((ctx) =>
+	t.run(async (ctx) =>
 		ctx.db.insert("missions", {
+			pilotId: await agentIdInCtx(ctx, "org-a", SEAT),
 			name: "seed mission",
 			project: "p",
 			status: "plan",
