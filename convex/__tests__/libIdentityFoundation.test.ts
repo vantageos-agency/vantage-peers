@@ -28,7 +28,6 @@ import { testClerkOrgId } from "../../tests/fixtures/testClerkOrgId";
 import { convexTest } from "../../tests/fixtures/convexTestWithServiceAccount";
 import { api } from "../_generated/api";
 import type { Id } from "../_generated/dataModel";
-import type { MutationCtx } from "../_generated/server";
 import { resolvePrincipalOfPresentedSecret } from "../lib/agentIdentity";
 import {
 	memberScopeOfMapping,
