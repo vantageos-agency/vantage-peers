@@ -1,39 +1,45 @@
-import { v, ConvexError } from "convex/values";
-import { mutation, query } from "./_generated/server";
+import { requireServiceAccountStanding } from "@vantageos/cloud-identity";
+import { v } from "convex/values";
+import { type MutationCtx, mutation, query } from "./_generated/server";
 import { internal } from "./_generated/api";
 import { requireId } from "./lib/ids";
 import { creatorValidator, severityValidator } from "./schema";
-import { verifiedActorValidator, withOrgScope } from "./lib/auth";
+import {
+	requireResolvedCaller,
+	verifiedActorValidator,
+	withOrgScope,
+} from "./lib/auth";
 import type { OrgScope } from "./lib/auth";
 import { requireFleetAgentActor } from "./lib/fleetActors";
 import { requireFleetDoor, scopeWithFleetStanding } from "./lib/fleetStanding";
 
 // ─────────────────────────────────────────────────────────────────────────────
-// requireFleetMaster — fixPatterns.ts's own single authority gate.
+// requireFleetMaster — fixPatterns.ts's single write gate.
 //
-// `fixPatterns` carries NO orgId/tenant field (see schema.ts:851) — it is the
+// `fixPatterns` carries NO orgId/tenant field (see schema.ts) — it is the
 // fleet's shared cross-project bug-fix knowledge base (sourceProject is a
 // repo name, createdBy is a fleet orchestrator). There is no per-tenant row
-// to scope against, so the only sound authority boundary is: the caller must
-// be the verified fleet master (the real master secret / recognised
-// service-account carve-out — convex/lib/auth.ts's withOrgScope). These
-// mutations previously took NO identity check at all (defect class:
-// .claude/rules/authority-attached-to-anonymous-object.md).
+// to scope against, so a write is SERVICE-ACCOUNT-ONLY BY PURPOSE: the
+// standing is the package's verdict (`scopeWithFleetStanding`,
+// convex/lib/fleetStanding.ts over @vantageos/cloud-identity) and the refusal
+// is the one helper every door uses (`requireResolvedCaller` with `masterOnly`
+// + `mcpBoundOnly`). These mutations previously took NO identity check at all
+// (defect class: .claude/rules/authority-attached-to-anonymous-object.md).
+// No master flag is read in this file. The scope handed back carries the
+// package's standing, which `addAttempt` passes to the verified-actor check.
 // ─────────────────────────────────────────────────────────────────────────────
 async function requireFleetMaster(
-	ctx: Parameters<typeof withOrgScope>[0],
-	action: string,
+	ctx: MutationCtx,
+	door: string,
 ): Promise<OrgScope> {
-	const transport = await withOrgScope(ctx);
-	// The master bit is the package's standing (convex/lib/fleetStanding.ts),
-	// carried on the scope handed back: a refusal on the verified scope.
-	const scope = await scopeWithFleetStanding(ctx, transport, "fixPatterns:write");
-	if (!scope.isMaster) {
-		throw new ConvexError(
-			`RBAC_DENIED: caller may not ${action} — fixPatterns are fleet-internal, master-only — ${JSON.stringify({ orgSlug: scope.orgSlug })}`,
-		);
-	}
-	return scope;
+	const transport = await withOrgScope(ctx, { refuseWithoutThrow: true });
+	const standing = await scopeWithFleetStanding(ctx, transport, door);
+	requireResolvedCaller(standing, door, { masterOnly: true, mcpBoundOnly: true });
+	// The package's own verdict on the same scope: the fleet's SERVICE ACCOUNT, not
+	// the internal opt-in (the helper above says the refusal in this backend's wire
+	// shape; this is the standing gate R-6 / R-52 credit as the write's guard).
+	requireServiceAccountStanding(standing, door);
+	return standing;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -56,7 +62,7 @@ export const create = mutation({
 	returns: v.id("fixPatterns"),
 	handler: async (ctx, args) => {
 		// write-contract: MCP-transport-only — issued via mcp-server client.mutation("fixPatterns:create", …) at mcp-server/src/tools.ts:8594 (imperative), 0 hits in vantage-peers-dashboard {app,components,hooks,lib,contexts,providers} (measured 2026-10-01 at origin/main e2dc58f and 0466fac); never a subscribing pre-org client shell. The no-org throw is a refusal at an imperative MCP call, never at a render.
-		await requireFleetMaster(ctx, "create a fix pattern");
+		await requireFleetMaster(ctx, "fixPatterns:create");
 		const now = Date.now();
 
 		const patternId = await ctx.db.insert("fixPatterns", {
@@ -107,10 +113,7 @@ export const addAttempt = mutation({
 	returns: v.id("fixAttempts"),
 	handler: async (ctx, args) => {
 		// write-contract: MCP-transport-only — issued via mcp-server client.mutation("fixPatterns:addAttempt", …) at mcp-server/src/tools.ts:8651 (imperative), 0 hits in vantage-peers-dashboard {app,components,hooks,lib,contexts,providers} (measured 2026-10-01 at origin/main e2dc58f and 0466fac); never a subscribing pre-org client shell. The no-org throw is a refusal at an imperative MCP call, never at a render.
-		const scope = await requireFleetMaster(
-			ctx,
-			`add an attempt to fix pattern ${args.patternId}`,
-		);
+		const scope = await requireFleetMaster(ctx, "fixPatterns:addAttempt");
 		// requireFleetMaster above admits the fleet service account only; an
 		// ordinary or non-master caller never reaches this line. A seat of a client
 		// organisation always reaches Convex through that account WITH its
@@ -172,7 +175,7 @@ export const validate = mutation({
 	returns: v.null(),
 	handler: async (ctx, args) => {
 		// write-contract: MCP-transport-only — issued via mcp-server client.mutation("fixPatterns:validate", …) at mcp-server/src/tools.ts:8701 (imperative), 0 hits in vantage-peers-dashboard {app,components,hooks,lib,contexts,providers} (measured 2026-10-01 at origin/main e2dc58f and 0466fac); never a subscribing pre-org client shell. The no-org throw is a refusal at an imperative MCP call, never at a render.
-		await requireFleetMaster(ctx, `validate fix pattern ${args.patternId}`);
+		await requireFleetMaster(ctx, "fixPatterns:validate");
 		const pattern = await ctx.db.get(args.patternId);
 		if (pattern === null) {
 			throw new Error(`Fix pattern ${args.patternId} not found`);
@@ -207,7 +210,7 @@ export const linkIssue = mutation({
 	returns: v.null(),
 	handler: async (ctx, args) => {
 		// write-contract: MCP-transport-only — issued via mcp-server client.mutation("fixPatterns:linkIssue", …) at mcp-server/src/tools.ts:8961 (imperative), 0 hits in vantage-peers-dashboard {app,components,hooks,lib,contexts,providers} (measured 2026-10-01 at origin/main e2dc58f and 0466fac); never a subscribing pre-org client shell. The no-org throw is a refusal at an imperative MCP call, never at a render.
-		await requireFleetMaster(ctx, `link an issue to fix pattern ${args.patternId}`);
+		await requireFleetMaster(ctx, "fixPatterns:linkIssue");
 		const pattern = await ctx.db.get(args.patternId);
 		if (pattern === null) {
 			throw new Error(`Fix pattern ${args.patternId} not found`);
@@ -229,6 +232,7 @@ export const linkIssue = mutation({
 // get — fetch a single pattern with its attempts
 // returns-projection: attempts omit patternId — already implied by the parent pattern being fetched
 // ─────────────────────────────────────────────────────────────────────────────
+// fleet-wide: fixPatterns is the fleet's own cross-project fix knowledge base with no tenant column, so reading the whole table is this door's purpose; only the fleet standing (the service account, or the operator human on a READ) is served.
 export const get = query({
 	args: {
 		patternId: v.string(),
@@ -331,13 +335,7 @@ export const get = query({
 // listByProject — list patterns for a given project
 // ─────────────────────────────────────────────────────────────────────────────
 
-// PR #635 wide-scan-cap pattern (see convex/tasks.ts TASK_LIST_SCAN_CAP,
-// convex/profiles.ts PROFILES_LIST_SCAN_CAP, lot 1 mission k574p02m). When
-// paginating via `createdBefore`, the post-take filter only finds rows
-// older than the cursor if the FETCH is wide enough to include them —
-// mission k574p02m DEFECT 2, lot 2.
-export const FIX_PATTERNS_LIST_BY_PROJECT_SCAN_CAP = 2000;
-
+// fleet-wide: fixPatterns is the fleet's own cross-project fix knowledge base with no tenant column, so reading the whole table is this door's purpose; only the fleet standing (the service account, or the operator human on a READ) is served.
 export const listByProject = query({
 	args: {
 		sourceProject: v.string(),
@@ -382,20 +380,20 @@ export const listByProject = query({
 			operatorHumanMayRead: true,
 		});
 		const limit = args.limit ?? 50;
-		const needsWideScan = args.createdBefore !== undefined;
-		const fetchCap = needsWideScan
-			? FIX_PATTERNS_LIST_BY_PROJECT_SCAN_CAP + 1
-			: limit;
-		let rows = await ctx.db
+		const before = args.createdBefore;
+		// The project is the index range and the time cursor is part of that range
+		// (`_creationTime` is the last key of every index): the page is cut from the
+		// narrowed range, never narrowed after it is cut.
+		return await ctx.db
 			.query("fixPatterns")
-			.withIndex("by_project", (q) => q.eq("sourceProject", args.sourceProject))
+			.withIndex("by_project", (q) => {
+				const bySource = q.eq("sourceProject", args.sourceProject);
+				return before === undefined
+					? bySource
+					: bySource.lt("_creationTime", before);
+			})
 			.order("desc")
-			.take(fetchCap);
-		if (args.createdBefore !== undefined) {
-			const before = args.createdBefore;
-			rows = rows.filter((r) => r._creationTime < before);
-		}
-		return rows.slice(0, limit);
+			.take(limit);
 	},
 });
 
@@ -403,8 +401,7 @@ export const listByProject = query({
 // listAll — list all patterns ordered by creation time (newest first)
 // ─────────────────────────────────────────────────────────────────────────────
 
-export const FIX_PATTERNS_LIST_ALL_SCAN_CAP = 2000;
-
+// fleet-wide: fixPatterns is the fleet's own cross-project fix knowledge base with no tenant column, so reading the whole table is this door's purpose; only the fleet standing (the service account, or the operator human on a READ) is served.
 export const listAll = query({
 	args: {
 	fields: v.optional(v.union(v.literal("lite"), v.literal("full"))), // v2.4.12 accept (no-op for now) — closes ArgumentValidationError from MCP wrappers passing fields
@@ -467,14 +464,14 @@ export const listAll = query({
 		if (!fleet) return [];
 
 		const limit = args.limit ?? 50;
-		const needsWideScan = args.createdBefore !== undefined;
-		const fetchCap = needsWideScan ? FIX_PATTERNS_LIST_ALL_SCAN_CAP + 1 : limit;
-		let rows = await ctx.db.query("fixPatterns").order("desc").take(fetchCap);
-		if (args.createdBefore !== undefined) {
-			const before = args.createdBefore;
-			rows = rows.filter((r) => r._creationTime < before);
-		}
-		return rows.slice(0, limit);
+		const before = args.createdBefore;
+		return await ctx.db
+			.query("fixPatterns")
+			.withIndex("by_creation_time", (q) =>
+				before === undefined ? q : q.lt("_creationTime", before),
+			)
+			.order("desc")
+			.take(limit);
 	},
 });
 
@@ -483,6 +480,7 @@ export const listAll = query({
 // Uses full scan with filter (no array index in Convex)
 // ─────────────────────────────────────────────────────────────────────────────
 
+// fleet-wide: fixPatterns is the fleet's own cross-project fix knowledge base with no tenant column, so reading the whole table is this door's purpose; only the fleet standing (the service account, or the operator human on a READ) is served.
 export const listByStack = query({
 	args: {
 		stack: v.string(),

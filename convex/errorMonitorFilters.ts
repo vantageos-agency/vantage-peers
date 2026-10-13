@@ -40,6 +40,7 @@ import {
 	query,
 } from "./_generated/server";
 import { requireResolvedCaller, withOrgScope } from "./lib/auth";
+import { requireFleetDoor } from "./lib/fleetStanding";
 
 // Admin-config table (filter rules), not tenant data — 500 active rows is a
 // generous bound for the idempotency dedup scan below; the authoritative
@@ -629,6 +630,7 @@ export const disableFilterRule = internalMutation({
 	},
 });
 
+// fleet-wide: errorMonitorFilters tables (filter rules, pending-alias config) are the fleet's own noise-filtering configuration with no tenant column, so reading the whole table is this door's purpose; only the fleet standing (the service account, or the operator human on a READ) is served.
 export const listFilterRules = query({
 	args: {},
 	returns: v.array(
@@ -680,10 +682,18 @@ export const listFilterRules = query({
 		// signed-in-but-not-yet-onboarded caller's throw to crash, and that caller
 		// must not be handed a fabricated absence either.
 		const scope = await withOrgScope(ctx, { refuseWithoutThrow: true });
-		requireResolvedCaller(scope, "errorMonitorFilters:listFilterRules", {
-			alsoRefusePreOrg: true,
-		});
-		if (!scope.isMaster) return [];
+		// The fleet is the package's `fleet` standing (the operator human is the
+		// fleet for READS). Anonymous and signed-in-no-org callers RAISE; an
+		// ordinary member is served the empty list, as before (declared in
+		// .claude/rules/refusal-is-distinguishable-from-absence.md, "What this rule
+		// does NOT yet cover").
+		const fleet = await requireFleetDoor(
+			ctx,
+			scope,
+			"errorMonitorFilters:listFilterRules",
+			{ alsoRefusePreOrg: true, operatorHumanMayRead: true },
+		);
+		if (!fleet) return [];
 
 		return await ctx.db
 			.query("errorMonitorFilterRules")
@@ -703,6 +713,7 @@ export const listFilterRules = query({
  *
  * Doctrine: add aliases BEFORE pre-deploy smoke; remove (set []) once deployed.
  */
+// fleet-wide: errorMonitorFilters tables (filter rules, pending-alias config) are the fleet's own noise-filtering configuration with no tenant column, so reading the whole table is this door's purpose; only the fleet standing (the service account, or the operator human on a READ) is served.
 export const getPendingAliasReleases = query({
 	args: {},
 	returns: v.array(v.string()),

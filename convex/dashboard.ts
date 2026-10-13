@@ -4,6 +4,7 @@ import {
 	withOrgScope,
 	filterByOrgScope,
 	requireScope,
+	type OrgScope,
 } from "./lib/auth";
 import { requireFleetDoor } from "./lib/fleetStanding";
 import { visibleProfiles } from "./lib/profileActors";
@@ -15,6 +16,41 @@ const DASHBOARD_SCAN_CAP = 500;
 // tables but can grow faster (one receipt per recipient per message), so a
 // wider ceiling is used for those bounded scans.
 const DASHBOARD_WIDE_SCAN_CAP = 1000;
+// Rows one scan READS, kept or not: a member whose roster excludes most of its
+// org's rows must not scan the whole org to fill a window (a Convex function has
+// a hard read limit).
+const DASHBOARD_READ_CAP = 5000;
+
+/**
+ * Reads `rows` (an index range) and keeps the rows the caller's scope admits
+ * (`filterByOrgScope`: the tenant gate and the roster intersect) until `keepCap`
+ * are kept. The roster narrowing is applied WHILE the range is read, so a window
+ * is never cut first and narrowed after (R-55): the cap counts the rows the
+ * caller may see. `readCap` bounds how many rows are read.
+ */
+async function collectVisible<
+	T extends {
+		orgId?: string;
+		clerkOrgId?: string;
+		pilot?: string;
+		assignedTo?: string;
+	},
+>(
+	rows: AsyncIterable<T>,
+	scope: OrgScope,
+	keepCap: number,
+	readCap: number,
+): Promise<T[]> {
+	const kept: T[] = [];
+	let scanned = 0;
+	for await (const row of rows) {
+		if (++scanned > readCap) break;
+		if (filterByOrgScope([row], scope).length === 0) continue;
+		kept.push(row);
+		if (kept.length >= keepCap) break;
+	}
+	return kept;
+}
 
 // ─────────────────────────────────────────────────────────────────────────────
 // getDashboardSummary — high-level operational stats for VantagePeers dashboard
@@ -22,6 +58,7 @@ const DASHBOARD_WIDE_SCAN_CAP = 1000;
 // open mandate count, and the 20 most recent cross-entity activity events.
 // ─────────────────────────────────────────────────────────────────────────────
 
+// fleet-wide: the fleet standing (the service account, or the operator human on a READ) summarises every organisation by purpose, which is this door's reach; an organisation member holding `view-stats-aggregated` is confined to its own organisation's tenant index ranges and roster.
 export const getDashboardSummary = query({
 	args: {},
 	returns: v.object({
@@ -101,19 +138,20 @@ export const getDashboardSummary = query({
 		// Tasks in progress — uses index, bounded
 		// Member: the tenant index is bound BEFORE the cap (a fleet-wide index
 		// capped first and dropped foreign rows after, undercounting the member).
-		const inProgressTasksAll =
+		const inProgressTasks = await collectVisible(
 			fleet || orgSlug === null
-				? await ctx.db
+				? ctx.db
 						.query("tasks")
 						.withIndex("by_status", (q) => q.eq("status", "in_progress"))
-						.take(DASHBOARD_SCAN_CAP)
-				: await ctx.db
+				: ctx.db
 						.query("tasks")
 						.withIndex("by_orgId_status", (q) =>
 							q.eq("orgId", orgSlug).eq("status", "in_progress"),
-						)
-						.take(DASHBOARD_SCAN_CAP);
-		const inProgressTasks = filterByOrgScope(inProgressTasksAll, scope);
+						),
+			scope,
+			DASHBOARD_SCAN_CAP,
+			DASHBOARD_READ_CAP,
+		);
 
 		// Open mandates — fleet-internal, no tenant column: master only. A member
 		// has no mandates of its own, so 0 is the count of ITS data, not a refusal.
@@ -149,16 +187,18 @@ export const getDashboardSummary = query({
 		const unreadMessages = allReceipts.filter((r) => r.readAt === undefined).length;
 
 		// Recent activity — fetch bounded slices of each entity
-		// Fetch more tasks before filtering so client-orgs still get 20 items.
-		const recentTasksAll =
+		// The 20 newest tasks the caller may see (narrowed while read, not after).
+		const recentTasks = await collectVisible(
 			fleet || orgSlug === null
-				? await ctx.db.query("tasks").order("desc").take(100)
-				: await ctx.db
+				? ctx.db.query("tasks").order("desc")
+				: ctx.db
 						.query("tasks")
 						.withIndex("by_orgId", (q) => q.eq("orgId", orgSlug))
-						.order("desc")
-						.take(100);
-		const recentTasks = filterByOrgScope(recentTasksAll, scope).slice(0, 20);
+						.order("desc"),
+			scope,
+			20,
+			DASHBOARD_WIDE_SCAN_CAP,
+		);
 		const recentMessages =
 			fleet || orgSlug === null
 				? await ctx.db.query("messages").order("desc").take(20)
@@ -236,6 +276,7 @@ const projectSummaryObject = v.object({
 	activeOrchestrators: v.array(v.string()),
 });
 
+// fleet-wide: the fleet standing (the service account, or the operator human on a READ) summarises every organisation by purpose, which is this door's reach; an organisation member holding `view-stats-aggregated` is confined to its own organisation's tenant index ranges and roster.
 export const getProjectSummary = query({
 	args: {},
 	// Bare array for a served caller (rows or a genuine absence); the typed
@@ -267,22 +308,26 @@ export const getProjectSummary = query({
 
 		// Member: tenant index bound BEFORE the cap, for tasks and missions alike.
 		const memberOrg = fleet ? null : scope.orgSlug;
-		const allTasks =
+		const tasks = await collectVisible(
 			memberOrg !== null
-				? await ctx.db
+				? ctx.db
 						.query("tasks")
 						.withIndex("by_orgId", (q) => q.eq("orgId", memberOrg))
-						.take(DASHBOARD_WIDE_SCAN_CAP)
-				: await ctx.db.query("tasks").take(DASHBOARD_WIDE_SCAN_CAP);
-		const allMissions =
+				: ctx.db.query("tasks"),
+			scope,
+			DASHBOARD_WIDE_SCAN_CAP,
+			DASHBOARD_READ_CAP,
+		);
+		const missions = await collectVisible(
 			memberOrg !== null
-				? await ctx.db
+				? ctx.db
 						.query("missions")
 						.withIndex("by_orgId", (q) => q.eq("orgId", memberOrg))
-						.take(DASHBOARD_WIDE_SCAN_CAP)
-				: await ctx.db.query("missions").take(DASHBOARD_WIDE_SCAN_CAP);
-		const tasks = filterByOrgScope(allTasks, scope);
-		const missions = filterByOrgScope(allMissions, scope);
+				: ctx.db.query("missions"),
+			scope,
+			DASHBOARD_WIDE_SCAN_CAP,
+			DASHBOARD_READ_CAP,
+		);
 
 		const projectNames = new Set<string>();
 		for (const t of tasks) {

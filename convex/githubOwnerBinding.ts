@@ -9,6 +9,10 @@ import {
 	query,
 } from "./_generated/server";
 import { requireResolvedCaller, withOrgScope } from "./lib/auth";
+import {
+	resolveVerifiedOrgScope,
+	verifiedOrgValidator,
+} from "./lib/verifiedOrg";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // GitHub owner binding — the proof behind "this repo belongs to this org".
@@ -143,18 +147,32 @@ export function pageSize(limit: number | undefined): number {
 }
 
 // Own org's bindings (a member), or all (master), one page at a time.
+// fleet-wide: a claimless service-account call is the fleet master auditing every organisation's owner bindings, which is this door's purpose; a non-master bearer arrives with `verifiedOrg` (the MCP forwards it, and refuses a bearer whose organisation it cannot resolve before Convex) and is confined to that organisation's `by_org` index range.
 export const listBindings = query({
-	args: { limit: v.optional(v.number()), cursor: v.optional(v.string()) },
+	args: {
+		limit: v.optional(v.number()),
+		cursor: v.optional(v.string()),
+		// The organisation the MCP transport VERIFIED for a bearer that reaches
+		// Convex as the fleet service account. Believed from the service account
+		// only; the read then runs under that org's member scope, so the `by_org`
+		// index range below IS the read (convex/lib/verifiedOrg.ts).
+		verifiedOrg: v.optional(verifiedOrgValidator),
+	},
 	returns: v.object({ items: v.array(bindingView), nextCursor: v.union(v.string(), v.null()) }),
 	handler: async (ctx, args) => {
-		const scope = await withOrgScope(ctx, { refuseWithoutThrow: true });
+		const door = "githubOwnerBinding:listBindings";
+		const transportScope = await withOrgScope(ctx, { refuseWithoutThrow: true });
 		// isolation-contract: no reactive subscriber. Enumerated by command:
 		//   grep -rn "api\.githubOwnerBinding\." --include=*.tsx --include=*.ts app components hooks lib
 		// in vantage-peers-dashboard -> 0 hits (new door). So the pre-org caller
 		// may be refused by raising.
-		requireResolvedCaller(scope, "githubOwnerBinding:listBindings", {
-			alsoRefusePreOrg: true,
-		});
+		requireResolvedCaller(transportScope, door, { alsoRefusePreOrg: true });
+		const scope = await resolveVerifiedOrgScope(
+			ctx,
+			transportScope,
+			args.verifiedOrg,
+			door,
+		);
 		const opts = { numItems: pageSize(args.limit), cursor: args.cursor ?? null };
 		const page = hasFleetRead(scope)
 			? await ctx.db.query("githubOwnerBindings").paginate(opts)
@@ -206,6 +224,7 @@ export async function collectUnprovenMappings(
 
 // Existing mappings that carry an org but NO proof: reported, never silently
 // kept. Master only (the repo-mapping corpus is fleet configuration).
+// fleet-wide: the repo-mapping corpus is the fleet's own configuration, so auditing every organisation's unproven mappings is this door's purpose; only the fleet standing (the service account, or the operator human on a READ) is served.
 export const listUnprovenMappings = query({
 	args: { limit: v.optional(v.number()), cursor: v.optional(v.string()) },
 	returns: v.object({

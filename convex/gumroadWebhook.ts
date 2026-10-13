@@ -21,6 +21,7 @@
  */
 
 import { createHmac } from "node:crypto";
+import { timingSafeEqualSync } from "@vantageos/cloud-identity";
 import { v } from "convex/values";
 import { internal } from "./_generated/api";
 import { internalAction } from "./_generated/server";
@@ -501,15 +502,9 @@ function verifyGumroadSignature(
 	secret: string,
 ): boolean {
 	const expected = createHmac("sha256", secret).update(body).digest("hex");
-	// Constant-time comparison using Buffer.from to avoid timing attacks
-	const sigBuf = Buffer.from(signature);
-	const expBuf = Buffer.from(expected);
-	if (sigBuf.length !== expBuf.length) return false;
-	let diff = 0;
-	for (let i = 0; i < sigBuf.length; i++) {
-		diff |= sigBuf[i] ^ expBuf[i];
-	}
-	return diff === 0;
+	// Constant-time comparison, delegated to @vantageos/cloud-identity: the
+	// compare is not hand-rolled here.
+	return timingSafeEqualSync(signature, expected);
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

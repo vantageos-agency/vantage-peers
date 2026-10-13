@@ -1,15 +1,17 @@
-import { ConvexError, v } from "convex/values";
+import { requireServiceAccountStanding } from "@vantageos/cloud-identity";
+import { v } from "convex/values";
 import { internal } from "./_generated/api";
 // convex-strict-mode-doc-type-import-needed-when-refactoring-list-query-from-early-return-to-accumulator-post-filter
 import type { Doc } from "./_generated/dataModel";
 import { computeRecurrenceDecision } from "./errorMonitorRecurrence";
 import { requireId } from "./lib/ids";
 import { closeTrailingSegmentOnExit } from "./lib/taskClosureGate";
-import { withOrgScope } from "./lib/auth";
+import { requireResolvedCaller, withOrgScope } from "./lib/auth";
 import { requireFleetDoor, scopeWithFleetStanding } from "./lib/fleetStanding";
 import {
 	internalMutation,
 	internalQuery,
+	type MutationCtx,
 	mutation,
 	query,
 } from "./_generated/server";
@@ -22,26 +24,25 @@ import {
 // monitor cron polls fleet-wide — it has no `orgId`/owner field, and no
 // client_org_mapping `scopes` entry exists for "manage error-monitor
 // deployments". `addDeployment`/`removeDeployment` used to take NO
-// identity check at all. Same closure as convex/issues.ts's
-// `requireMasterScope` / convex/githubRepoMapping.ts's `requireMasterScope`
-// (mirrors convex/orgRoster.ts's `getForAccessToken` idiom) — master-only,
-// no org-scope fallback. Not re-exported/shared across files (each of the
-// three sites in this fix defines its own file-local copy, same as the
-// landed briefingNotes.ts/messages.ts pattern of file-local helpers) —
-// avoids introducing a second cross-file resolver per the brief's "write no
-// second resolver" instruction; this IS still the one identity layer
-// (withOrgScope), just called from a small per-file wrapper.
+// identity check at all. A write is SERVICE-ACCOUNT-ONLY BY PURPOSE: the
+// standing is the package's verdict (`scopeWithFleetStanding`,
+// convex/lib/fleetStanding.ts over @vantageos/cloud-identity) and the refusal
+// is the one helper every door uses (`requireResolvedCaller` with `masterOnly`
+// + `mcpBoundOnly`); no master flag is read in this file, and the operator
+// human (master for READS only) is refused on a write.
 // ─────────────────────────────────────────────────────────────────────────────
 
-async function requireMasterScope(ctx: Parameters<typeof withOrgScope>[0]) {
-	const scope = await withOrgScope(ctx);
-	const standing = await scopeWithFleetStanding(ctx, scope, "errorMonitor:write");
-	if (!standing.isMaster) {
-		throw new ConvexError(
-			"RBAC_DENIED: this mutation requires master or service-account scope " +
-				"— fleet error-monitor deployment config has no org-scoped write authority.",
-		);
-	}
+async function requireFleetMaster(
+	ctx: MutationCtx,
+	door: string,
+): Promise<void> {
+	const transport = await withOrgScope(ctx, { refuseWithoutThrow: true });
+	const standing = await scopeWithFleetStanding(ctx, transport, door);
+	requireResolvedCaller(standing, door, { masterOnly: true, mcpBoundOnly: true });
+	// The package's own verdict on the same scope: the fleet's SERVICE ACCOUNT, not
+	// the internal opt-in (the helper above says the refusal in this backend's wire
+	// shape; this is the standing gate R-6 / R-52 credit as the write's guard).
+	requireServiceAccountStanding(standing, door);
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -197,6 +198,7 @@ export const upsertError = internalMutation({
 	},
 });
 
+// allow-local-identity: a monitored deployment's name is the natural key of the deployments registry (the label of a Convex deployment), not the name of an agent, actor or tenant; no identity decision rests on it.
 export const updateCursor = internalMutation({
 	args: {
 		deploymentName: v.string(),
@@ -519,6 +521,7 @@ export const resolveStaleIrpMission = internalMutation({
 // Public mutations (MCP tools)
 // ─────────────────────────────────────────────────────────────────────────────
 
+// allow-local-identity: a monitored deployment's name is the natural key of the deployments registry (the label of a Convex deployment), not the name of an agent, actor or tenant; no identity decision rests on it.
 export const addDeployment = mutation({
 	args: {
 		name: v.string(),
@@ -530,7 +533,7 @@ export const addDeployment = mutation({
 	returns: v.id("monitoredDeployments"),
 	handler: async (ctx, args) => {
 		// write-contract: MCP-transport-only — issued via mcp-server client.mutation("errorMonitor:addDeployment", …) at mcp-server/src/tools.ts:9353 (imperative), 0 hits in vantage-peers-dashboard {app,components,hooks,lib,contexts,providers} (measured 2026-10-01 at origin/main e2dc58f and 0466fac); never a subscribing pre-org client shell. The no-org throw is a refusal at an imperative MCP call, never at a render.
-		await requireMasterScope(ctx);
+		await requireFleetMaster(ctx, "errorMonitor:addDeployment");
 		const existing = await ctx.db
 			.query("monitoredDeployments")
 			.withIndex("by_name", (q) => q.eq("name", args.name))
@@ -553,12 +556,13 @@ export const addDeployment = mutation({
 	},
 });
 
+// allow-local-identity: a monitored deployment's name is the natural key of the deployments registry (the label of a Convex deployment), not the name of an agent, actor or tenant; no identity decision rests on it.
 export const removeDeployment = mutation({
 	args: { name: v.string() },
 	returns: v.null(),
 	handler: async (ctx, args) => {
 		// write-contract: MCP-transport-only — issued via mcp-server client.mutation("errorMonitor:removeDeployment", …) at mcp-server/src/tools.ts:9506 (imperative), 0 hits in vantage-peers-dashboard {app,components,hooks,lib,contexts,providers} (measured 2026-10-01 at origin/main e2dc58f and 0466fac); never a subscribing pre-org client shell. The no-org throw is a refusal at an imperative MCP call, never at a render.
-		await requireMasterScope(ctx);
+		await requireFleetMaster(ctx, "errorMonitor:removeDeployment");
 		const dep = await ctx.db
 			.query("monitoredDeployments")
 			.withIndex("by_name", (q) => q.eq("name", args.name))
@@ -574,6 +578,7 @@ export const removeDeployment = mutation({
 // Public queries (MCP tools)
 // ─────────────────────────────────────────────────────────────────────────────
 
+// fleet-wide: errorMonitor tables (deployments, error logs) are the fleet's own monitoring data with no tenant column, so reading the whole table is this door's purpose; only the fleet standing (the service account, or the operator human on a READ) is served.
 export const listDeployments = query({
 	args: {},
 	returns: v.array(
@@ -614,13 +619,7 @@ export const listDeployments = query({
 	},
 });
 
-// PR #635 wide-scan-cap pattern (see convex/tasks.ts TASK_LIST_SCAN_CAP,
-// convex/profiles.ts PROFILES_LIST_SCAN_CAP, lot 1 mission k574p02m). When
-// paginating via `createdBefore`, the post-take filter only finds rows
-// older than the cursor if the FETCH is wide enough to include them —
-// mission k574p02m DEFECT 2, lot 2.
-export const ERROR_MONITOR_LIST_ERRORS_SCAN_CAP = 2000;
-
+// fleet-wide: errorMonitor tables (deployments, error logs) are the fleet's own monitoring data with no tenant column, so reading the whole table is this door's purpose; only the fleet standing (the service account, or the operator human on a READ) is served.
 export const listErrors = query({
 	args: {
 		fields: v.optional(v.union(v.literal("lite"), v.literal("full"))), // v2.4.12 accept (no-op for now) — closes ArgumentValidationError from MCP wrappers passing fields
@@ -683,7 +682,7 @@ export const listErrors = query({
 		// fleet's, never a tenant's.
 		//
 		// So, as with `addDeployment`/`removeDeployment` above
-		// (`requireMasterScope`), the read admits exactly what the write admits.
+		// (`requireFleetMaster`), the read admits exactly what the write admits.
 		// REFUSAL SHAPE — typed empty, never a throw: reactively-subscribed public
 		// READ, and a throw crashes the subscriber's render (R-50/R-51).
 		//
@@ -715,28 +714,33 @@ export const listErrors = query({
 
 		const limit = args.limit ?? 50;
 		const deployment = args.deployment;
-		const needsWideScan = args.createdBefore !== undefined;
-		const fetchCap = needsWideScan
-			? ERROR_MONITOR_LIST_ERRORS_SCAN_CAP + 1
-			: limit;
-		let rows: Doc<"errorLogs">[];
+		const before = args.createdBefore;
+		// The deployment is the index range and the time cursor is part of that
+		// range (`_creationTime` is the last key of every index): the page is cut
+		// from the narrowed range, never narrowed after it is cut.
 		if (deployment) {
-			rows = await ctx.db
+			return await ctx.db
 				.query("errorLogs")
-				.withIndex("by_deployment", (q) => q.eq("deployment", deployment))
+				.withIndex("by_deployment", (q) => {
+					const byDeployment = q.eq("deployment", deployment);
+					return before === undefined
+						? byDeployment
+						: byDeployment.lt("_creationTime", before);
+				})
 				.order("desc")
-				.take(fetchCap);
-		} else {
-			rows = await ctx.db.query("errorLogs").order("desc").take(fetchCap);
+				.take(limit);
 		}
-		if (args.createdBefore !== undefined) {
-			const before = args.createdBefore;
-			rows = rows.filter((r) => r._creationTime < before);
-		}
-		return rows.slice(0, limit);
+		return await ctx.db
+			.query("errorLogs")
+			.withIndex("by_creation_time", (q) =>
+				before === undefined ? q : q.lt("_creationTime", before),
+			)
+			.order("desc")
+			.take(limit);
 	},
 });
 
+// fleet-wide: errorMonitor tables (deployments, error logs) are the fleet's own monitoring data with no tenant column, so reading the whole table is this door's purpose; only the fleet standing (the service account, or the operator human on a READ) is served.
 export const getError = query({
 	args: { errorId: v.string() },
 	returns: v.union(

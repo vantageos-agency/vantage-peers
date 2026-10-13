@@ -923,7 +923,39 @@ function convexFacts(fnKeys) {
 					if (!indexed && chain.some((c) => c === "filter" || c === "collect"))
 						facts.reads.unindexedChains++;
 					else facts.reads.indexedChains++;
+					// A chain iterated by `for await (… of <chain>)` streams the range:
+					// the same list read as `.collect()`, read one row at a time. The
+					// chain may sit in a conditional (`cond ? chainA : chainB`) that is
+					// itself the iterated expression. A loop that RETURNS a row is a
+					// first-row probe (a get), not a list, and keeps its old reading.
+					let streamed = false;
+					{
+						let top = cur;
+						while (
+							top.parent &&
+							(ts.isParenthesizedExpression(top.parent) ||
+								ts.isAwaitExpression(top.parent) ||
+								(ts.isConditionalExpression(top.parent) &&
+									top.parent.condition !== top))
+						)
+							top = top.parent;
+						const loop = top.parent;
+						let returnsRow = false;
+						const seeReturn = (x) => {
+							if (ts.isFunctionLike(x)) return;
+							if (ts.isReturnStatement(x)) returnsRow = true;
+							ts.forEachChild(x, seeReturn);
+						};
+						if (loop && ts.isForOfStatement(loop)) seeReturn(loop.statement);
+						streamed =
+							!!loop &&
+							ts.isForOfStatement(loop) &&
+							loop.awaitModifier !== undefined &&
+							loop.expression === top &&
+							!returnsRow;
+					}
 					if (
+						streamed ||
 						chain.some(
 							(c) => c === "collect" || c === "take" || c === "paginate",
 						)

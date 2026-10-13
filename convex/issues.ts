@@ -1,7 +1,12 @@
+import {
+	resolveActingPrincipal,
+	requireServiceAccountStanding,
+} from "@vantageos/cloud-identity";
 import { ConvexError, v } from "convex/values";
 import {
 	internalMutation,
 	internalQuery,
+	type MutationCtx,
 	mutation,
 	query,
 	type QueryCtx,
@@ -10,8 +15,10 @@ import { internal } from "./_generated/api";
 // convex-strict-mode-doc-type-import-needed-when-refactoring-list-query-from-early-return-to-accumulator-post-filter
 import type { Doc } from "./_generated/dataModel";
 import { mappingIsProven } from "./githubOwnerBinding";
-import { withOrgScope } from "./lib/auth";
+import { principalLookups } from "./lib/actingPrincipal";
+import { requireResolvedCaller, withOrgScope } from "./lib/auth";
 import { requireFleetDoor, scopeWithFleetStanding } from "./lib/fleetStanding";
+import { fleetOperatorSlug } from "./lib/operatorOrg";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Auth — fleet-internal surface, no per-org owner field
@@ -22,23 +29,25 @@ import { requireFleetDoor, scopeWithFleetStanding } from "./lib/fleetStanding";
 // "manage fleet github issues". The mutations below used to take NO
 // identity check at all; any caller holding the deployment URL could mutate
 // fleet issue-tracking state. There is no legitimate non-master authority
-// for this data, so the closure is MASTER-ONLY: resolve the verified caller
-// via `withOrgScope` (same join every other fixed site in this repo uses),
-// then refuse anyone who is not the verified master / recognised
-// service-account identity — mirrors `convex/orgRoster.ts`'s
-// `getForAccessToken` (the same "master-only, no org-scope fallback"
-// idiom for a fleet-internal, non-multi-tenant surface).
+// for this data, so a write is SERVICE-ACCOUNT-ONLY BY PURPOSE: the standing
+// is the package's verdict (`scopeWithFleetStanding`, convex/lib/fleetStanding.ts
+// over @vantageos/cloud-identity) and the refusal is the one helper every door
+// uses (`requireResolvedCaller` with `masterOnly` + `mcpBoundOnly`). No master
+// flag is read in this file, and the operator human (master for READS only) is
+// refused on a write exactly as `withOrgScope` has always decided.
 // ─────────────────────────────────────────────────────────────────────────────
 
-async function requireMasterScope(ctx: Parameters<typeof withOrgScope>[0]) {
-	const scope = await withOrgScope(ctx);
-	const standing = await scopeWithFleetStanding(ctx, scope, "issues:write");
-	if (!standing.isMaster) {
-		throw new ConvexError(
-			"RBAC_DENIED: this mutation requires master or service-account scope " +
-				"— fleet github-issue tracking has no org-scoped write authority.",
-		);
-	}
+async function requireFleetMaster(
+	ctx: MutationCtx,
+	door: string,
+): Promise<void> {
+	const transport = await withOrgScope(ctx, { refuseWithoutThrow: true });
+	const standing = await scopeWithFleetStanding(ctx, transport, door);
+	requireResolvedCaller(standing, door, { masterOnly: true, mcpBoundOnly: true });
+	// The package's own verdict on the same scope: the fleet's SERVICE ACCOUNT, not
+	// the internal opt-in (the helper above says the refusal in this backend's wire
+	// shape; this is the standing gate R-6 / R-52 credit as the write's guard).
+	requireServiceAccountStanding(standing, door);
 }
 
 // getStats aggregates counts across the whole issues table (or a project
@@ -190,7 +199,7 @@ export const updateStatus = mutation({
 	},
 	handler: async (ctx, args) => {
 		// write-contract: MCP-transport-only — issued via mcp-server client.mutation("issues:updateStatus", …) at mcp-server/src/tools.ts:8354 (imperative), 0 hits in vantage-peers-dashboard {app,components,hooks,lib,contexts,providers} (measured 2026-10-01 at origin/main e2dc58f and 0466fac); never a subscribing pre-org client shell. The no-org throw is a refusal at an imperative MCP call, never at a render.
-		await requireMasterScope(ctx);
+		await requireFleetMaster(ctx, "issues:updateStatus");
 		const existing = await ctx.db
 			.query("issues")
 			.withIndex("by_repo_number", (q) =>
@@ -216,7 +225,7 @@ export const linkCommit = mutation({
 	},
 	handler: async (ctx, args) => {
 		// write-contract: MCP-transport-only — issued via mcp-server client.mutation("issues:linkCommit", …) at mcp-server/src/tools.ts:8406 (imperative), 0 hits in vantage-peers-dashboard {app,components,hooks,lib,contexts,providers} (measured 2026-10-01 at origin/main e2dc58f and 0466fac); never a subscribing pre-org client shell. The no-org throw is a refusal at an imperative MCP call, never at a render.
-		await requireMasterScope(ctx);
+		await requireFleetMaster(ctx, "issues:linkCommit");
 		const existing = await ctx.db
 			.query("issues")
 			.withIndex("by_repo_number", (q) =>
@@ -277,7 +286,7 @@ export const verify = mutation({
 	},
 	handler: async (ctx, args) => {
 		// write-contract: MCP-transport-only — issued via mcp-server client.mutation("issues:verify", …) at mcp-server/src/tools.ts:8458 (imperative), 0 hits in vantage-peers-dashboard {app,components,hooks,lib,contexts,providers} (measured 2026-10-01 at origin/main e2dc58f and 0466fac); never a subscribing pre-org client shell. The no-org throw is a refusal at an imperative MCP call, never at a render.
-		await requireMasterScope(ctx);
+		await requireFleetMaster(ctx, "issues:verify");
 		const existing = await ctx.db
 			.query("issues")
 			.withIndex("by_repo_number", (q) =>
@@ -324,6 +333,7 @@ export const close = internalMutation({
 // getByRepoNumber — fetch a single issue by repo+issueNumber
 // ─────────────────────────────────────────────────────────────────────────────
 
+// fleet-wide: issues is the fleet's own GitHub-issue tracking with no tenant column, so reading the whole table is this door's purpose; only the fleet standing (the service account, or the operator human on a READ) is served.
 export const getByRepoNumber = query({
 	args: {
 		repo: v.string(),
@@ -360,12 +370,37 @@ export const getByRepoNumber = query({
 // ─────────────────────────────────────────────────────────────────────────────
 
 // PR #635 wide-scan-cap pattern (see convex/tasks.ts TASK_LIST_SCAN_CAP,
-// convex/profiles.ts PROFILES_LIST_SCAN_CAP, lot 1 mission k574p02m). When
-// paginating via `createdBefore`, the post-take filter only finds rows
-// older than the cursor if the FETCH is wide enough to include them —
-// mission k574p02m DEFECT 2, lot 2.
+// convex/profiles.ts PROFILES_LIST_SCAN_CAP, lot 1 mission k574p02m): the cap
+// bounds how many rows a list READS. The status and the `createdBefore` cursor
+// narrow the range while it is read (`collectNarrowed`), before the page is cut.
 export const ISSUES_LIST_BY_PROJECT_SCAN_CAP = 2000;
 
+/**
+ * Reads `rows` (an index range, newest first) and keeps the ones `keep` admits
+ * until `limit` are kept: the predicate narrows BEFORE the result is bounded, so
+ * a page never comes back short while more matching rows exist (R-55). `scanCap`
+ * bounds how many rows are READ, not how many are kept — the wide-scan-cap
+ * pattern (PR #635; see convex/tasks.ts TASK_LIST_SCAN_CAP).
+ */
+async function collectNarrowed<T>(
+	rows: AsyncIterable<T>,
+	keep: (row: T) => boolean,
+	limit: number,
+	scanCap: number,
+): Promise<T[]> {
+	const out: T[] = [];
+	if (limit <= 0) return out;
+	let scanned = 0;
+	for await (const row of rows) {
+		if (++scanned > scanCap) break;
+		if (!keep(row)) continue;
+		out.push(row);
+		if (out.length >= limit) break;
+	}
+	return out;
+}
+
+// fleet-wide: issues is the fleet's own GitHub-issue tracking with no tenant column, so reading the whole table is this door's purpose; only the fleet standing (the service account, or the operator human on a READ) is served.
 export const listByProject = query({
 	args: {
 	fields: v.optional(v.union(v.literal("lite"), v.literal("full"))), // v2.4.12 accept (no-op for now) — closes ArgumentValidationError from MCP wrappers passing fields
@@ -393,26 +428,25 @@ export const listByProject = query({
 			operatorHumanMayRead: true,
 		});
 		const limit = args.limit ?? 50;
-		const needsWideScan = args.createdBefore !== undefined;
-		const fetchCap = needsWideScan
-			? ISSUES_LIST_BY_PROJECT_SCAN_CAP + 1
-			: limit;
-		// The by_project index only has ["project"], so we query by project
-		// and filter status in-memory if needed
-		let results = await ctx.db
-			.query("issues")
-			.withIndex("by_project", (q) => q.eq("project", args.project))
-			.order("desc")
-			.take(fetchCap);
-
-		if (args.status !== undefined) {
-			results = results.filter((r) => r.status === args.status);
-		}
-		if (args.createdBefore !== undefined) {
-			const before = args.createdBefore;
-			results = results.filter((r) => r._creationTime < before);
-		}
-		return results.slice(0, limit);
+		const before = args.createdBefore;
+		const wanted = args.status;
+		// The project is the index range; the time cursor is part of that range
+		// (`_creationTime` is the index's last key); the status is applied while
+		// the range is read, before the page is bounded.
+		return await collectNarrowed(
+			ctx.db
+				.query("issues")
+				.withIndex("by_project", (q) => {
+					const byProject = q.eq("project", args.project);
+					return before === undefined
+						? byProject
+						: byProject.lt("_creationTime", before);
+				})
+				.order("desc"),
+			(row) => wanted === undefined || row.status === wanted,
+			limit,
+			ISSUES_LIST_BY_PROJECT_SCAN_CAP,
+		);
 	},
 });
 
@@ -420,8 +454,15 @@ export const listByProject = query({
 // listByOrchestrator — list issues by assignedOrchestrator with optional status
 // ─────────────────────────────────────────────────────────────────────────────
 
-export const ISSUES_LIST_BY_ORCHESTRATOR_SCAN_CAP = 2000;
+const ALL_ISSUE_STATUSES = [
+	"open",
+	"in_progress",
+	"fixed",
+	"verified",
+	"closed",
+] as const;
 
+// fleet-wide: issues is the fleet's own GitHub-issue tracking with no tenant column, so reading the whole table is this door's purpose; only the fleet standing (the service account, or the operator human on a READ) is served.
 export const listByOrchestrator = query({
 	args: {
 	fields: v.optional(v.union(v.literal("lite"), v.literal("full"))), // v2.4.12 accept (no-op for now) — closes ArgumentValidationError from MCP wrappers passing fields
@@ -449,34 +490,31 @@ export const listByOrchestrator = query({
 			operatorHumanMayRead: true,
 		});
 		const limit = args.limit ?? 50;
-		const needsWideScan = args.createdBefore !== undefined;
-		const fetchCap = needsWideScan
-			? ISSUES_LIST_BY_ORCHESTRATOR_SCAN_CAP + 1
-			: limit;
-		let rows: Doc<"issues">[];
-		if (args.status !== undefined) {
-			const statusFilter = args.status;
-			rows = await ctx.db
-				.query("issues")
-				.withIndex("by_assigned", (q) =>
-					q.eq("assignedOrchestrator", args.assignedOrchestrator).eq("status", statusFilter),
-				)
-				.order("desc")
-				.take(fetchCap);
-		} else {
-			rows = await ctx.db
-				.query("issues")
-				.withIndex("by_assigned", (q) =>
-					q.eq("assignedOrchestrator", args.assignedOrchestrator),
-				)
-				.order("desc")
-				.take(fetchCap);
+		const before = args.createdBefore;
+		// The index is [assignee, status, creation time]: with the status fixed the
+		// time cursor is the next key of the range itself, so each status is read as
+		// its own newest-first range and the ranges are merged newest-first. With no
+		// status asked for, all five are read — ordering by status first would put a
+		// whole status ahead of a newer row of another and break the time cursor.
+		const statuses = args.status === undefined ? ALL_ISSUE_STATUSES : [args.status];
+		const merged: Doc<"issues">[] = [];
+		for (const status of statuses) {
+			merged.push(
+				...(await ctx.db
+					.query("issues")
+					.withIndex("by_assigned", (q) => {
+						const byStatus = q
+							.eq("assignedOrchestrator", args.assignedOrchestrator)
+							.eq("status", status);
+						return before === undefined
+							? byStatus
+							: byStatus.lt("_creationTime", before);
+					})
+					.order("desc")
+					.take(limit)),
+			);
 		}
-		if (args.createdBefore !== undefined) {
-			const before = args.createdBefore;
-			rows = rows.filter((r) => r._creationTime < before);
-		}
-		return rows.slice(0, limit);
+		return merged.sort((x, y) => y._creationTime - x._creationTime).slice(0, limit);
 	},
 });
 
@@ -484,8 +522,7 @@ export const listByOrchestrator = query({
 // listByStatus — list all issues matching a given status (no orchestrator filter)
 // ─────────────────────────────────────────────────────────────────────────────
 
-export const ISSUES_LIST_BY_STATUS_SCAN_CAP = 2000;
-
+// fleet-wide: issues is the fleet's own GitHub-issue tracking with no tenant column, so reading the whole table is this door's purpose; only the fleet standing (the service account, or the operator human on a READ) is served.
 export const listByStatus = query({
 	args: {
 	fields: v.optional(v.union(v.literal("lite"), v.literal("full"))), // v2.4.12 accept (no-op for now) — closes ArgumentValidationError from MCP wrappers passing fields
@@ -503,7 +540,7 @@ export const listByStatus = query({
 		//
 		// WHY master-only and not "an org member sees its rows": `issues` carries
 		// no orgId/tenantId column — it is the fleet's own GitHub-issue tracking,
-		// the same table whose writes are already master-only (`requireMasterScope`)
+		// the same table whose writes are already master-only (`requireFleetMaster`)
 		// and whose sibling reads `getStats` / `listExternalOpen` are master-only.
 		// There is no per-org slice to scope a member to, so serving any member
 		// would serve every org's rows. Same helper as `getStats`, same code
@@ -529,20 +566,17 @@ export const listByStatus = query({
 		});
 
 		const limit = args.limit ?? 50;
-		const needsWideScan = args.createdBefore !== undefined;
-		const fetchCap = needsWideScan
-			? ISSUES_LIST_BY_STATUS_SCAN_CAP + 1
-			: limit;
-		let rows: Doc<"issues">[] = await ctx.db
+		const before = args.createdBefore;
+		return await ctx.db
 			.query("issues")
-			.withIndex("by_status", (q) => q.eq("status", args.status))
+			.withIndex("by_status", (q) => {
+				const byStatus = q.eq("status", args.status);
+				return before === undefined
+					? byStatus
+					: byStatus.lt("_creationTime", before);
+			})
 			.order("desc")
-			.take(fetchCap);
-		if (args.createdBefore !== undefined) {
-			const before = args.createdBefore;
-			rows = rows.filter((r) => r._creationTime < before);
-		}
-		return rows.slice(0, limit);
+			.take(limit);
 	},
 });
 
@@ -550,6 +584,7 @@ export const listByStatus = query({
 // getStats — count issues per status, optionally filtered by project
 // ─────────────────────────────────────────────────────────────────────────────
 
+// fleet-wide: issues is the fleet's own GitHub-issue tracking with no tenant column, so reading the whole table is this door's purpose; only the fleet standing (the service account, or the operator human on a READ) is served.
 export const getStats = query({
 	args: {
 		project: v.optional(v.string()),
@@ -566,7 +601,7 @@ export const getStats = query({
 		const stats = { open: 0, in_progress: 0, fixed: 0, verified: 0, closed: 0, total: 0 };
 
 		// Fail-closed READ counterpart of this file's own master-only WRITE gate
-		// (`requireMasterScope`, used by updateStatus/linkCommit/verify). Measured
+		// (`requireFleetMaster`, used by updateStatus/linkCommit/verify). Measured
 		// against LIVE production at commit bd8c60e9: this query served real counts
 		// to a caller presenting NO CREDENTIAL AT ALL. `issues` carries no orgId
 		// column — it is the fleet's own GitHub-issue tracking. Master only,
@@ -640,13 +675,41 @@ export const createExternal = internalMutation({
 		externalIssueUrl: v.string(),
 		title: v.string(),
 		body: v.string(),
-		assignedOrchestrator: v.string(),
+		// The assignee is an AGENT, named by its agents-row ID (never by a typed
+		// label): the row is read by ID and its stored name is what the issue
+		// records as the display label of the assignment.
+		assignedOrchestratorId: v.id("agents"),
 		project: v.optional(v.string()),
-		priority: v.optional(v.union(v.literal("urgent"), v.literal("high"), v.literal("medium"), v.literal("low"))),
+		priority: v.optional(issuePriorityValidator),
 		forkRepo: v.optional(v.string()),
 	},
 	returns: v.id("issues"),
 	handler: async (ctx, args) => {
+		// The assignee is judged by the package over stored IDs: an ACTIVE agents
+		// row stamped with the OPERATOR organisation (an external issue is the
+		// fleet's own work; a client org's agent of the same label is another agent).
+		const door = "issues:createExternal";
+		const operatorSlug = await fleetOperatorSlug(ctx.db);
+		const resolved =
+			operatorSlug === undefined
+				? undefined
+				: await resolveActingPrincipal(
+						{
+							kind: "agent",
+							agentId: args.assignedOrchestratorId,
+							verifiedOrgId: operatorSlug,
+						},
+						principalLookups(ctx),
+						door,
+					);
+		const assignee = resolved?.ok
+			? await ctx.db.get(args.assignedOrchestratorId)
+			: null;
+		if (assignee === null) {
+			throw new ConvexError(
+				`INVALID_ASSIGNEE: ${args.assignedOrchestratorId} is no active agent of the operator organisation — an external issue is assigned to a fleet agent — ${JSON.stringify({ reason: "assignee-not-a-fleet-agent", door })}`,
+			);
+		}
 		const now = Date.now();
 		return await ctx.db.insert("issues", {
 			repo: args.externalRepo,
@@ -657,7 +720,7 @@ export const createExternal = internalMutation({
 			labels: [],
 			status: "open",
 			priority: args.priority ?? "medium",
-			assignedOrchestrator: args.assignedOrchestrator,
+			assignedOrchestrator: assignee.name,
 			project: args.project ?? "external",
 			githubCreatedAt: now,
 			githubUpdatedAt: now,
@@ -726,7 +789,7 @@ export const updatePrStatus = internalMutation({
 //     structurally unreachable from `api.*` and from the open internet; it
 //     cannot become a second public door. This is what the cron calls.
 //   * `listExternalOpen` — the PUBLIC query, now master-only, matching this
-//     file's own `requireMasterScope` write gate.
+//     file's own `requireFleetMaster` write gate.
 // ─────────────────────────────────────────────────────────────────────────────
 
 const externalOpenArgs = {
@@ -809,13 +872,14 @@ export const listExternalOpenForMonitor = internalQuery({
 	handler: async (ctx, args) => await readExternalOpen(ctx, args),
 });
 
+// fleet-wide: issues is the fleet's own GitHub-issue tracking with no tenant column, so reading the whole table is this door's purpose; only the fleet standing (the service account, or the operator human on a READ) is served.
 export const listExternalOpen = query({
 	args: externalOpenArgs,
 	// returns-projection: external-PR tracking dashboard summary row — full issue fetched via issues.get when a row is opened
 	returns: externalOpenReturns,
 	handler: async (ctx, args) => {
 		// Fail-closed READ counterpart of this file's own master-only WRITE gate
-		// (`requireMasterScope`). See the block comment above for the split that
+		// (`requireFleetMaster`). See the block comment above for the split that
 		// keeps the prMonitor cron working.
 		// REFUSAL SHAPE — the typed empty ENVELOPE, never a throw: reactively-
 		// subscribed public READ (a throw crashes the subscriber's render,
