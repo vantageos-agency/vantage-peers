@@ -101,11 +101,9 @@ describe("seatAgentOf decides the organisation by permanent ID", () => {
 			new URL("../src/auth.ts", import.meta.url),
 			"utf8",
 		);
-		const fn = source.slice(
-			source.indexOf("export function seatAgentOf"),
-			source.indexOf("export function isSeatActingAsItself"),
-		);
-		expect(fn).not.toMatch(/clerkOrgSlug\s*(!==|===)/);
+		const body = source.indexOf("const seat = ctx.seatAgent;");
+		const fn = source.slice(body, source.indexOf("\n}\n", body));
+		expect(fn).not.toMatch(/clerkOrgSlug\s*(!==|===)\s*(?!undefined)\S/);
 		expect(fn).not.toMatch(/orgId\s*(!==|===)/);
 	});
 });

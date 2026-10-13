@@ -430,7 +430,7 @@ describe("pole 5 — seat tokens and agent credentials are unchanged", () => {
 		// The seat is an agent BY ID: its profile (<agent>-<org>) names one agent and
 		// that agent exists in the profile's own org (the stamp is resolved from it).
 		await t.run(async (ctx) => {
-			await ctx.db.insert("agents", {
+			const seatAgentRow = await ctx.db.insert("agents", {
 				orgSlug: "org-a",
 				clerkOrgId: testClerkOrgId("org-a"),
 				name: "agent-a",
@@ -439,6 +439,7 @@ describe("pole 5 — seat tokens and agent credentials are unchanged", () => {
 				createdAt: Date.now(),
 			});
 			await ctx.db.insert("oauth_scope_profiles", {
+				agentId: seatAgentRow,
 				profileId: "agent-a-org-a",
 				description: "Seat agent-a in org org-a",
 				fromAllowList: ["agent-a"],
