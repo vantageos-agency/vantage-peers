@@ -434,6 +434,39 @@ describe("wiring", () => {
 	});
 
 	test.skipIf(!hasBun)(
+		"a REAL stdio server.ts process against an unusable backend exits non-zero before serving",
+		async () => {
+			const child = spawn("bun", ["run", "server.ts"], {
+				cwd: MCP_ROOT,
+				env: {
+					PATH: process.env.PATH ?? "",
+					HOME: process.env.HOME ?? "",
+					CONVEX_URL: "http://127.0.0.1:1",
+				},
+				stdio: ["pipe", "pipe", "pipe"],
+			});
+			let out = "";
+			child.stderr.on("data", (c) => {
+				out += c;
+			});
+			const code = await new Promise<number | null>((res) => {
+				const timer = setTimeout(() => {
+					child.kill("SIGKILL");
+					res(null);
+				}, 25_000);
+				child.on("exit", (c) => {
+					clearTimeout(timer);
+					res(c);
+				});
+			});
+			expect(code, out).not.toBeNull();
+			expect(code, out).not.toBe(0);
+			expect(out).toMatch(/BACKEND INCOMPATIBLE|BOOT CHECK/);
+		},
+		40_000,
+	);
+
+	test.skipIf(!hasBun)(
 		"a REAL server-http.ts process against an unusable backend never listens and exits non-zero",
 		async () => {
 			const port = 20000 + Math.floor(Math.random() * 20000);

@@ -15,6 +15,12 @@ export default defineConfig({
 		include: ["test/**/*.test.ts", "src/__tests__/**/*.test.ts"],
 		env: {
 			VP_TEST_MODE: "1",
+			// server.ts (stdio) refuses to serve against a backend that fails the
+			// compat boot check (src/backendContract.ts). Tests that boot it do so
+			// against a placeholder URL by design; the boot check itself is covered
+			// by mcp-server/test/backend-compat-boot.test.ts, which spawns server.ts
+			// WITHOUT this switch.
+			VP_BOOT_CHECK_OFFLINE: "1",
 			BEARER_SECRET_MASTER: "test-master-token",
 			PUBLIC_BASE_URL: "http://localhost:3000",
 			CONVEX_URL_INTERNAL: "http://localhost:9999",
