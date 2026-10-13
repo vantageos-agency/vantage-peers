@@ -52,6 +52,7 @@ import {
 import { resolveClerkSessionFromRequest } from "@vantageos/cloud-identity/clerk-handshake";
 import { type Context, Hono } from "hono";
 import { cors } from "hono/cors";
+import { bootCheckOrExit } from "./src/backendContract.js";
 import {
 	bearerAuthMiddleware,
 	internalClient,
@@ -1974,6 +1975,13 @@ const HOSTNAME = "0.0.0.0";
 // Bootstrap is gated so tests can `import { app }` without binding a socket.
 // VP_TEST_MODE=1 short-circuits the listener (vitest sets this in setup).
 if (process.env.VP_TEST_MODE !== "1") {
+	// BOOT CHECK -- before a socket is bound. Refuse to serve against a Convex
+	// backend that lacks a function this build calls (2026-10-12 incident: the
+	// MCP deployed ahead of Convex prod). On refusal this exits non-zero without
+	// listening, so Railway's healthcheck fails the new deployment and the
+	// previous one keeps serving. See src/backendContract.ts.
+	await bootCheckOrExit(internalClient(), { label: "http" });
+
 	// Explicit Bun.serve() — does not rely on default-export auto-detection,
 	// which can fail when started via `bun run <file>` (vs `bun <file>`).
 	// @ts-expect-error — Bun global available at runtime on Railway

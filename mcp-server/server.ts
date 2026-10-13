@@ -26,6 +26,7 @@ import { McpServer } from "@modelcontextprotocol/server";
 import { serveStdio } from "@modelcontextprotocol/server/stdio";
 import { LOCAL_STDIO_TRUST_CTX } from "./src/auth.js";
 import { createServiceAccountConvexClient } from "./src/authenticatedConvexClient.js";
+import { bootCheckOrExit } from "./src/backendContract.js";
 import { registerTools } from "./src/tools.js";
 
 // Advertised version is derived from the manifest, same pattern as
@@ -108,4 +109,16 @@ function buildServer(): McpServer {
 // client with `initialize`, and ONE instance from buildServer() is pinned for
 // the connection either way. A hand-wired `server.connect(StdioServerTransport)`
 // would serve the 2025 era only.
+// BOOT CHECK -- before the transport opens. Refuse to serve against a backend
+// that lacks a function this build calls (src/backendContract.ts). The one
+// exception is the postbuild smoke (scripts/boot-check.mjs), which boots this
+// entry against a placeholder URL by design; it sets VP_BOOT_CHECK_OFFLINE=1.
+// The HTTP entry (server-http.ts) has no such switch.
+if (process.env.VP_BOOT_CHECK_OFFLINE === "1") {
+	console.error(
+		"[vantage-peers-mcp:stdio] backend boot check SKIPPED (VP_BOOT_CHECK_OFFLINE=1) -- smoke boot only",
+	);
+} else {
+	await bootCheckOrExit(convex, { label: "stdio" });
+}
 serveStdio(buildServer);

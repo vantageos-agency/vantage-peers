@@ -164,7 +164,7 @@ function readRailwayEnvNames() {
 		return {
 			names,
 			available: false,
-			reason: `railway CLI unavailable/unauthenticated (${e?.code ?? "error"}); Railway prod auto-deploys from main`,
+			reason: `railway CLI unavailable/unauthenticated (${e?.code ?? "error"}); Railway env names were not read (the MCP boot check, not this preflight, refuses an incompatible backend)`,
 		};
 	}
 	for (const line of out.split("\n")) {
