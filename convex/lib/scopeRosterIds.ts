@@ -1,6 +1,7 @@
 import { hasFleetRead, sameOrg } from "@vantageos/cloud-identity";
+import { ConvexError } from "convex/values";
 import type { MutationCtx, QueryCtx } from "../_generated/server";
-import type { OrgScope } from "./auth";
+import type { OrgScope, RosterNameKind } from "./auth";
 import { orgRefOfRow, orgRefOfScope } from "./authOrgMapping";
 import { agentListedOnRoster, rosterOf } from "./rosterIds";
 
@@ -44,6 +45,53 @@ const agentIdOf = (row: RosterIdRow): string | undefined =>
 	row.pilotId ?? row.assignedToId;
 
 /**
+ * Is the agent `agentId` an entry of the caller's own organisation roster
+ * (`allowedAgentIds`)? Judged by the package (`assertPrincipalListed` through
+ * lib/rosterIds.ts): the agent is read BY ID, must be active and stamped with
+ * the caller's organisation, and be a byte-equal entry; no wildcard, refused by
+ * default. A scope with no verified organisation lists nobody.
+ */
+export async function isAgentIdOnScopeRoster(
+	ctx: Ctx,
+	scope: OrgScope,
+	agentId: string,
+	door: string,
+): Promise<boolean> {
+	if (scope.orgSlug === null) return false;
+	const verdict = await agentListedOnRoster(
+		ctx,
+		{ agentId, agentOrgId: scope.orgSlug },
+		rosterOf(scope.orgSlug, scope.allowedAgentIds),
+		door,
+	);
+	return verdict.ok;
+}
+
+/**
+ * The agent a write names as its sender, actor or assignee must be on the
+ * caller's own organisation roster, BY ID. The ID counterpart of
+ * `requireOrchestratorOnRoster` (lib/auth.ts), with the same carve-outs and the
+ * same refusal: the fleet read and a scope with no organisation are not held
+ * to an organisation roster (the master is bound at the MCP layer, an
+ * unresolved caller is refused by the tenant derivation in the delivery core);
+ * every other caller is refused `RBAC_DENIED`, `reason: "<kind>-not-on-roster"`,
+ * naming the door.
+ */
+export async function requireAgentIdOnScopeRoster(
+	ctx: Ctx,
+	scope: OrgScope,
+	agentId: string,
+	registration: string,
+	kind: RosterNameKind = "sender",
+): Promise<void> {
+	if (hasFleetRead(scope) || scope.orgSlug === null) return;
+	if (await isAgentIdOnScopeRoster(ctx, scope, agentId, registration)) return;
+	throw new ConvexError(
+		`RBAC_DENIED: ${kind} ${agentId} is not an agent on the roster of org "${scope.orgSlug}" — ${JSON.stringify({ reason: `${kind}-not-on-roster`, door: registration, agentId, orgSlug: scope.orgSlug })}`,
+	);
+}
+
+/**
  * Is a SINGLE row visible to this scope, judged by ID? The ID counterpart of
  * `isRowVisibleToScope`: fleet read sees it; no verified organisation never;
  * another organisation's (or an unstamped) row never; then the row's agent must
@@ -61,13 +109,7 @@ export async function isRowVisibleToScopeById(
 	if (!sameOrg(orgRefOfRow(row), orgRefOfScope(scope))) return false;
 	const agentId = agentIdOf(row);
 	if (agentId === undefined) return false;
-	const verdict = await agentListedOnRoster(
-		ctx,
-		{ agentId, agentOrgId: scope.orgSlug },
-		rosterOf(scope.orgSlug, scope.allowedAgentIds),
-		door,
-	);
-	return verdict.ok;
+	return await isAgentIdOnScopeRoster(ctx, scope, agentId, door);
 }
 
 /**
