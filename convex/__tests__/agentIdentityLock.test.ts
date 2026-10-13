@@ -47,6 +47,7 @@ import schema from "../schema";
 import { agentIdOf } from "../../tests/lib/agentIdOf";
 import { testClerkOrgId } from "../../tests/fixtures/testClerkOrgId";
 import { seedFleetAgents } from "../../tests/lib/seedFleetAgents";
+import { listRegisteredAgentsOnRoster } from "../../tests/lib/rosterSync";
 
 const FILE_LABELS = ["b", "c", "eta", "sigma"];
 
@@ -112,6 +113,8 @@ async function mintAgent(
 		orgAdminIdentity(org) as Parameters<typeof t.withIdentity>[0],
 	);
 	await tAdmin.mutation(api.agents.registerAgent, { orgSlug: org, name: agentName });
+	// Module M7 batch B: an acting agent must be on the org's roster by ID.
+	await listRegisteredAgentsOnRoster(t, [org]);
 	const minted = await tAdmin.mutation(api.agentCredentials.mintAgentCredential, {
 		orgSlug: org,
 		agentId: await agentIdOf(tAdmin, org, agentName),

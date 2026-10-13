@@ -7,6 +7,7 @@ generate_upload_url,_storage+uploadTickets,CREATE,org-member,orgResolver,kbMutat
 soft_delete_memory,,UPDATE,org-member,orgResolver,memories:softDeleteMemory=orgResolver
 create_briefing_note,agents+briefingNoteParticipants+briefingNotes+memberWriterRoles+memories,CREATE,org-member,orgResolver,briefingNotes:create=orgResolver
 update_briefing_note,agents+briefingNoteParticipants+briefingNotes+memberWriterRoles+memories,UPDATE,org-member,orgResolver,briefingNotes:update=orgResolver
+bulk_complete_tasks,agents+bulk_complete_runs+taskClosureConfig+tasks,UPSERT,org-member,orgResolver,tasks:bulkComplete=orgResolver
 create_bu,agents+businessUnits,CREATE,org-member,orgResolver,businessUnits:create=orgResolver
 update_bu,agents+businessUnits+oauth_access_tokens,TRANSITION,org-member,orgResolver,businessUnits:update=orgResolver
 send_message,agents+client_org_mapping+memberWriterRoles+messageReceipts+messages+oauth_access_tokens+profiles,CREATE,org-member,orgResolver,messages:sendMessage=orgResolver
@@ -26,7 +27,6 @@ mark_as_read,agents+messageReceipts+oauth_access_tokens,UPDATE,org-member,orgRes
 instantiate_template_into_mission,agents+missionTemplates+missions+tasks,UPSERT,org-member,orgResolver,missionTemplates:instantiateTemplateIntoMission=orgResolver
 set_summary,agents+profiles,UPSERT,org-member,orgResolver,profiles:updateDynamic=orgResolver
 update_profile,agents+profiles,UPSERT,org-member,orgResolver,profiles:upsertProfile=orgResolver
-bulk_complete_tasks,bulk_complete_runs+taskClosureConfig+tasks,UPSERT,org-member,orgResolver,tasks:bulkComplete=orgResolver
 delete_bu,businessUnits,DELETE,master,masterOnly,businessUnits:remove=masterOnly
 add_fix_attempt,fixAttempts+fixPatterns,UPSERT,fleet-internal,mcpBoundOnly,fixPatterns:addAttempt=mcpBoundOnly
 create_fix_pattern,fixPatterns,CREATE,fleet-internal,mcpBoundOnly,fixPatterns:create=mcpBoundOnly

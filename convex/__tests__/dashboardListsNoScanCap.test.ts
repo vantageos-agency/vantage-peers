@@ -29,6 +29,7 @@ import schema from "../schema";
 import { BRIEFING_NOTES_LIST_SCAN_CAP } from "../briefingNotes";
 import { TASK_LIST_SCAN_CAP } from "../tasks";
 import { testClerkOrgId } from "../../tests/fixtures/testClerkOrgId";
+import { seedAgents } from "../../tests/lib/agentIdOf";
 
 const modules = Object.fromEntries(
 	Object.entries(import.meta.glob("../**/*.ts")).filter(
@@ -145,6 +146,10 @@ describe("tasks.list {} — the dashboard's shape", () => {
 		const t = convexTest(schema, modules);
 		await seedOrgs(t);
 		await seedTasks(t, BIG_ORG, ROWS);
+		// `createdBy` selects an AGENT'S ID: "sigma" is an agent of the operator org,
+		// and none of the seeded rows was created by it, so the scan reaches the cap
+		// without meeting one and refuses instead of returning a short page.
+		await seedAgents(t, [[OPERATOR_ORG, "sigma"]]);
 		const text = await refusalText(
 			operator(t).query(api.tasks.list, { createdBy: "sigma" }),
 		);

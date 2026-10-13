@@ -21,6 +21,7 @@
 import { convexTest } from "convex-test";
 import { beforeEach, describe, expect, test } from "vitest";
 import { agentIdOf } from "../../tests/lib/agentIdOf";
+import { listRegisteredAgentsOnRoster } from "../../tests/lib/rosterSync";
 import { testClerkOrgId } from "../../tests/fixtures/testClerkOrgId";
 import { api } from "../_generated/api";
 import type { Id } from "../_generated/dataModel";
@@ -100,6 +101,10 @@ beforeEach(async () => {
 	await register("org-b", "clio");
 	await register("org-b", "vera");
 	await register("org-b", "zed");
+	// An agent registered through the production door is not on the org's roster
+	// until the roster lists it by ID (module M7 batch B): list the ones the name
+	// roster carries.
+	await listRegisteredAgentsOnRoster(t, ["org-a", "org-b"]);
 	clioA = await agentIdOf(t, "org-a", "clio");
 	veraA = await agentIdOf(t, "org-a", "vera");
 	retiredA = await agentIdOf(t, "org-a", "clio-retired");

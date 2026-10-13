@@ -23,7 +23,7 @@ import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import { api } from "../_generated/api";
 import schema from "../schema";
 import { seedAgents } from "../../tests/lib/agentIdOf";
-import { insertTaskRow } from "../../tests/lib/seedFleetAgents";
+import { insertTaskRow, seedFleetAgents } from "../../tests/lib/seedFleetAgents";
 
 
 const modules = Object.fromEntries(
@@ -140,9 +140,27 @@ describe("bulkComplete — verifiedOrg narrows the match set", () => {
 		expect(await done(t, "org-b")).toBe(0);
 	});
 
-	test("FLEET: with no verifiedOrg the master path is unchanged and reaches every tenant", async () => {
+	test("FLEET: with no verifiedOrg the master resolves the `assignedTo` label in the OPERATOR org: its own eta, never a client org's same-named agent", async () => {
 		const t = createT();
 		await seed(t);
+		// The fleet's own "eta" is an agent of the operator org; org-a and org-b hold
+		// a DIFFERENT agent under the same label. A label never selects a row: it names
+		// one agent (one ID) in one org.
+		await seedFleetAgents(t, ["eta"]);
+		await t.run(async (ctx) => {
+			const now = Date.now();
+			for (let i = 0; i < 2; i++) {
+				await insertTaskRow(ctx, {
+					title: `fleet assigned ${i}`,
+					assignedTo: "eta",
+					createdBy: "someone-fleet",
+					priority: "low",
+					status: "todo",
+					createdAt: now,
+					updatedAt: now,
+				});
+			}
+		});
 		await seedRows(t, "org-a", 2, "assigned");
 		await seedRows(t, "org-b", 2, "assigned");
 		const res = await asService(t).mutation(api.tasks.bulkComplete, {
@@ -150,7 +168,8 @@ describe("bulkComplete — verifiedOrg narrows the match set", () => {
 			dryRun: false,
 			callerOrchestrator: "system",
 		});
-		expect(res.count).toBe(4);
-		expect(await done(t, "org-b")).toBe(2);
+		expect(res.count).toBe(2);
+		expect(await done(t, "org-a")).toBe(0);
+		expect(await done(t, "org-b")).toBe(0);
 	});
 });

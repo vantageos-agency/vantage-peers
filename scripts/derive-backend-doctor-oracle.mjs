@@ -890,6 +890,12 @@ function convexFacts(fnKeys) {
 				const callee = n.expression;
 				if (ts.isIdentifier(callee) && callee.text === "fetch")
 					facts.external = true;
+				// R-55 fill loop: `collectNarrowed(<range>, keep, …)` (convex/tasks.ts)
+				// reads a db range row by row and narrows while it reads, so a page is
+				// `limit` rows the caller may see. It is the same list read as
+				// `.collect()` / `.take()` / `.paginate()`, from a range handed to a helper.
+				if (ts.isIdentifier(callee) && callee.text === "collectNarrowed")
+					facts.reads.list = true;
 				if (!ts.isPropertyAccessExpression(callee)) return;
 				const method = callee.name.text;
 				const recv = callee.expression.getText();

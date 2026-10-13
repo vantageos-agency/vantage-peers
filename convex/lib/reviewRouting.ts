@@ -1,4 +1,5 @@
 import type { QueryCtx } from "../_generated/server";
+import { actorIdResolver } from "./actorIds";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // reviewRouting — WHO reviews an automation review task is DATA.
@@ -133,22 +134,44 @@ export async function reviewCoordinators(ctx: QueryCtx): Promise<string[]> {
 }
 
 /**
- * May `caller` reassign a system-created review task? Coordinator (data) or the
- * orchestrator that owns the task's repo (githubRepoMapping.orchestrator).
- * Fail closed: no coordinator configured and no repo owner -> false.
+ * Does the acting agent `callerId` (its agents-row ID, from the verified proof)
+ * hold the review grant `grant`, decided BY ID? The configured data holds LABELS;
+ * each label is resolved to the agent it names in the ONE organisation it is legal
+ * to look in and the IDs are compared, so a same-named agent of another
+ * organisation holds nothing.
+ *
+ *   "reassign"  may hand a system-created review task to someone else: a
+ *               coordinator (data, labels of OPERATOR-org agents) or the
+ *               orchestrator that owns the task's repo (githubRepoMapping.
+ *               orchestrator, a label resolved in the task's own organisation).
+ *   "cancel"    may cancel an automation-created task it did not create: only an
+ *               OPERATOR-org agent named under taskClosureConfig
+ *               "automationTaskCancellers".
+ *
+ * Fail closed: no caller ID, no label configured, an unreadable key, a label that
+ * names no agent there, no repo owner -> false.
  */
-export async function mayReassignReviewTask(
+export async function callerHoldsReviewGrant(
 	ctx: QueryCtx,
-	caller: string,
+	callerId: string | undefined,
+	grant: "reassign" | "cancel",
 	repo: string | undefined,
+	taskOrgSlug: string | null | undefined,
 ): Promise<boolean> {
-	const who = norm(caller);
-	if ((await readConfigList(ctx, REVIEW_COORDINATORS_KEY)).includes(who)) {
-		return true;
+	if (callerId === undefined) return false;
+	const operatorOrg = actorIdResolver(ctx, null);
+	const labels = await readConfigList(
+		ctx,
+		grant === "reassign" ? REVIEW_COORDINATORS_KEY : AUTOMATION_TASK_CANCELLERS_KEY,
+	);
+	for (const label of labels) {
+		if ((await operatorOrg(label)) === callerId) return true;
 	}
-	if (repo === undefined) return false;
+	if (grant === "cancel" || repo === undefined) return false;
 	const mapping = await mappingFor(ctx, repo);
-	return mapping !== null && norm(mapping.orchestrator) === who;
+	if (mapping === null) return false;
+	const ownerId = await actorIdResolver(ctx, taskOrgSlug ?? null)(mapping.orchestrator);
+	return ownerId !== undefined && ownerId === callerId;
 }
 
 /**
@@ -157,18 +180,4 @@ export async function mayReassignReviewTask(
  */
 export function isAutomationOrigin(origin: string | undefined): boolean {
 	return origin === "automation" || origin === "automation-webhook";
-}
-
-/**
- * May `caller` cancel an automation-created task it did not create? Only a
- * caller listed (data) under taskClosureConfig "automationTaskCancellers".
- * Key absent, empty or unreadable -> false (fail closed).
- */
-export async function mayCancelAutomationTask(
-	ctx: QueryCtx,
-	caller: string,
-): Promise<boolean> {
-	return (await readConfigList(ctx, AUTOMATION_TASK_CANCELLERS_KEY)).includes(
-		norm(caller),
-	);
 }

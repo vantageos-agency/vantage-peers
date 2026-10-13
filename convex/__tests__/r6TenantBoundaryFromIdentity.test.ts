@@ -149,7 +149,7 @@ describe("recurringTasks:create — orgId derives from the verified identity", (
 				assignedTo: "seat-b",
 				createdBy: "seat-a",
 			}),
-		).rejects.toThrow(/RBAC_DENIED/);
+		).rejects.toThrow(/CALLER_IDENTITY_MISMATCH|RBAC_DENIED/);
 		expect(await t.run((ctx) => ctx.db.query("recurringTasks").collect())).toHaveLength(0);
 	});
 
@@ -170,16 +170,23 @@ describe("recurringTasks:create — orgId derives from the verified identity", (
 	test("PRESENT: an own-org write succeeds and is stamped org-a", async () => {
 		const t = createT();
 		await seed(t);
-		// M10h: the assignee is an agent of the org.
+		await t.run((ctx) =>
+			ctx.db.insert("memberWriterRoles", {
+				roles: ["org:admin", "org:editor"],
+				updatedAt: Date.now(),
+			}),
+		);
+		// M10h: the assignee is an agent of the org, on its roster by ID. The author is
+		// the member itself (the human path): an unregistered legacy label on the name
+		// roster is no agent, so it cannot be the acting identity any more.
 		await seedAgents(t, [["org-a", "seat-a2"]]);
 		const id = await asOrgA(t).mutation(api.recurringTasks.create, {
 			...base,
 			assignedTo: "seat-a2",
-			createdBy: "seat-a",
 		});
 		const row = await t.run((ctx) => ctx.db.get(id));
 		expect(row?.orgId).toBe("org-a");
-		expect(row?.createdBy).toBe("seat-a");
+		expect(row?.createdBy).toBe("user:user-org-a");
 	});
 });
 
@@ -200,7 +207,7 @@ describe("tasks:complete — the target row's own org and creator/assignee decid
 				callerOrchestrator: "seat-a",
 				completionNote: NOTE,
 			}),
-		).rejects.toThrow(/RBAC_DENIED|TASK_NOT_FOUND|not found/i);
+		).rejects.toThrow(/RBAC_DENIED|CALLER_IDENTITY_MISMATCH|TASK_NOT_FOUND|not found/i);
 		await unchanged(t, id);
 	});
 
@@ -221,11 +228,18 @@ describe("tasks:complete — the target row's own org and creator/assignee decid
 	test("REFUSED: a non-creator, non-assignee seat of the same org cannot complete", async () => {
 		const t = createT();
 		await seed(t);
+		// Both seats are agents of org-a and on its roster by ID: the refusal is the
+		// DOOR's (seat-a2 is neither creator nor assignee), not the roster's.
+		const secrets = await seedOrgAgents(t, [
+			["org-a", "seat-a"],
+			["org-a", "seat-a2"],
+		]);
 		const id = await seedTask(t, "org-a", "seat-a", "seat-a");
 		await expect(
 			asOrgA(t).mutation(api.tasks.complete, {
 				taskId: id,
 				callerOrchestrator: "seat-a2",
+				agentCredentialSecret: secrets.get("org-a/seat-a2"),
 				completionNote: NOTE,
 			}),
 		).rejects.toThrow(/RBAC_DENIED/);

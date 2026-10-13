@@ -1,6 +1,7 @@
 import type { DataModel, Id } from "../../convex/_generated/dataModel";
 import type { GenericMutationCtx } from "convex/server";
 import { normalizeOrchestratorId } from "../../convex/_helpers/normalizeOrchestratorId";
+import { syncRosterIdsFromNames } from "./rosterSync";
 
 type Runner = {
 	run: <Output>(
@@ -64,6 +65,11 @@ export async function seedAgents(
 				isActive: true,
 				createdAt: 1,
 			});
+		}
+		// Module M7 batch B: an agent registered under a label its org's mapping
+		// lists by NAME is on the org's roster by ID too.
+		for (const orgSlug of new Set(pairs.map(([slug]) => slug))) {
+			await syncRosterIdsFromNames(ctx, orgSlug);
 		}
 	});
 }

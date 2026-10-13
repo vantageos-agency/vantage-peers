@@ -34,6 +34,7 @@ import schema from "../schema";
 import { seedRosterAgents } from "../../tests/lib/seedRosterAgents";
 import { agentIdOf } from "../../tests/lib/agentIdOf";
 import { testClerkOrgId } from "../../tests/fixtures/testClerkOrgId";
+import { syncRosterIdsFromNames } from "../../tests/lib/rosterSync";
 import { insertTaskRow, seedFleetAgents } from "../../tests/lib/seedFleetAgents";
 
 const modules = Object.fromEntries(
@@ -123,6 +124,8 @@ beforeEach(async () => {
 				isActive: true,
 				createdAt: now,
 			});
+			// Module M7 batch B: an assignee is held to the org's roster BY AGENT ID.
+			await syncRosterIdsFromNames(ctx, orgSlug);
 		}
 		await ctx.db.insert("profiles", {
 			orchestratorId: "agent-a",

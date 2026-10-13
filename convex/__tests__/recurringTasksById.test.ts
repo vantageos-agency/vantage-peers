@@ -31,6 +31,7 @@ import { seedFleetAgents } from "../../tests/lib/seedFleetAgents";
 import { api, internal } from "../_generated/api";
 import type { Id } from "../_generated/dataModel";
 import schema from "../schema";
+import { listRegisteredAgentsOnRoster } from "../../tests/lib/rosterSync";
 
 const modules = Object.fromEntries(
 	Object.entries(import.meta.glob("../**/*.ts")).filter(
@@ -105,6 +106,9 @@ beforeEach(async () => {
 	await register("org-a", "vera");
 	await register("org-b", "clio");
 	await register("org-b", "zed");
+	// Module M7 batch B: an assignee is held to the org's roster BY AGENT ID; the
+	// agents registered above that the name roster carries are listed by ID.
+	await listRegisteredAgentsOnRoster(t, ["org-a", "org-b"]);
 	clioA = await agentIdOf(t, "org-a", "clio");
 	veraA = await agentIdOf(t, "org-a", "vera");
 	clioB = await agentIdOf(t, "org-b", "clio");

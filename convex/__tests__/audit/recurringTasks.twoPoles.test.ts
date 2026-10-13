@@ -13,6 +13,7 @@ import { describe, expect, test } from "vitest";
 import { api } from "../../_generated/api";
 import type { Id } from "../../_generated/dataModel";
 import { testClerkOrgId } from "../../../tests/fixtures/testClerkOrgId";
+import { syncRosterIdsFromNames } from "../../../tests/lib/rosterSync";
 import schema from "../../schema";
 
 const modules = Object.fromEntries(
@@ -56,6 +57,8 @@ async function world(): Promise<T> {
 				isActive: true,
 				createdAt: Date.now(),
 			});
+			// Module M7 batch B: an assignee is held to the org's roster BY AGENT ID.
+			await syncRosterIdsFromNames(ctx, slug);
 		}
 	});
 	return t;

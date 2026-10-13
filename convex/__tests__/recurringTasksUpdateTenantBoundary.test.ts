@@ -22,6 +22,7 @@
 
 import { convexTest } from "convex-test";
 import { describe, expect, test } from "vitest";
+import { seedRosterAgent } from "../../tests/fixtures/rosterAgent";
 import { testClerkOrgId } from "../../tests/fixtures/testClerkOrgId";
 import { api } from "../_generated/api";
 import schema from "../schema";
@@ -68,14 +69,30 @@ async function seedSchedule(
 	opts: { orgId?: string; assignedTo?: string },
 ) {
 	return await t.run(async (ctx) => {
+		// Module M7 batch B: a member may update a schedule only when its assignee is
+		// on the org's roster BY AGENT ID, so a stamped schedule carries the ID of the
+		// roster agent that holds the seat.
+		const label = opts.assignedTo ?? SHARED_SEAT;
+		let assignedToId: string | undefined;
+		if (opts.orgId !== undefined) {
+			const org = opts.orgId;
+			const existing = (
+				await ctx.db
+					.query("agents")
+					.withIndex("by_org", (q) => q.eq("orgSlug", org))
+					.collect()
+			).find((a) => a.name === label);
+			assignedToId = existing?._id ?? (await seedRosterAgent(ctx, org, label));
+		}
 		return await ctx.db.insert("recurringTasks", {
 			title: "original title",
-			assignedTo: opts.assignedTo ?? SHARED_SEAT,
+			assignedTo: label,
+			...(assignedToId !== undefined ? { assignedToId, createdById: assignedToId } : {}),
 			priority: "medium",
 			cronExpression: "0 9 * * *",
 			nextRunAt: Date.now() + 60_000,
 			active: true,
-			createdBy: opts.assignedTo ?? SHARED_SEAT,
+			createdBy: label,
 			orgId: opts.orgId,
 			clerkOrgId: testClerkOrgId(opts.orgId),
 			createdAt: Date.now(),

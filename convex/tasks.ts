@@ -1,4 +1,9 @@
-import { isFleetStamp, sameOrg, sameTenantStamp } from "@vantageos/cloud-identity";
+import {
+	hasFleetRead,
+	isFleetStamp,
+	sameOrg,
+	sameTenantStamp,
+} from "@vantageos/cloud-identity";
 import { v } from "convex/values";
 import { ConvexError } from "convex/values";
 import { paginationOptsValidator } from "convex/server";
@@ -7,7 +12,6 @@ import type { MutationCtx, QueryCtx } from "./_generated/server";
 import type { Doc, Id } from "./_generated/dataModel";
 import { internal } from "./_generated/api";
 import { creatorValidator, taskOriginValidator } from "./schema";
-import { normalizeOrchestratorId } from "./_helpers/normalizeOrchestratorId";
 import {
 	filterByOrgScope,
 	isRowVisibleToScope,
@@ -16,7 +20,6 @@ import {
 	requireResolvedCaller,
 	requireScope,
 	withOrgScope,
-	requireOrchestratorOnRoster,
 } from "./lib/auth";
 import type { OrgScope, VerifiedActor } from "./lib/auth";
 import { requireId } from "./lib/ids";
@@ -53,14 +56,13 @@ import {
 } from "./lib/humanActor";
 import {
 	isAutomationOrigin,
-	mayCancelAutomationTask,
-	mayReassignReviewTask,
+	callerHoldsReviewGrant,
 	repoOwner,
 	resolveReviewer,
 } from "./lib/reviewRouting";
 import { isFleetSystemCaller } from "./lib/systemCaller";
 import { fleetOperatorRef } from "./lib/operatorOrg";
-import { orgRefOfRow } from "./lib/authOrgMapping";
+import { orgRefOfRow, orgRefOfScope } from "./lib/authOrgMapping";
 import {
 	enforceClosureGate,
 	closeTrailingSegmentOnExit,
@@ -69,6 +71,8 @@ import {
 } from "./lib/taskClosureGate";
 import type { WorkSegment } from "./lib/taskClosureGate";
 import { actorIdResolver, taskActorIdFields } from "./lib/actorIds";
+import { isAgentOnScopeRoster } from "./lib/missionActors";
+import { agentListedOnRoster, listedAgentsOfOrg, rosterOf } from "./lib/rosterIds";
 import {
 	assigneeIdForRead,
 	callerActorOf,
@@ -177,35 +181,31 @@ export type CallerScope = OrgScope & {
 // asserting a `callerOrchestrator` string, with zero identity verification.
 //
 // CORE-A (closes the door): every public task mutation now requires a
-// verified Convex/Clerk identity. `ctx.auth.getUserIdentity() === null` is
-// refused unconditionally — no exception path.
+// verified Convex/Clerk identity. A call that presented no credential at all
+// (the scope resolver marks it `anonymous`) is refused unconditionally - no
+// exception path. This function reads no credential itself.
 //
-// STEP 3 finding (for Pi): the verified identity yields `.subject` (Clerk
-// user id) and an org claim (organizationId/organizationSlug — see
-// convex/lib/auth.ts withOrgScope). It does NOT yield a single orchestrator
-// name (sigma/eta/...): the MCP server's non-browser path authenticates as
-// ONE SHARED service-account identity for every orchestrator (see
-// stored service-account resolution in withOrgScope), and a client org
-// maps to a LIST of allowedOrchestrators, not a single name. An orchestrator
-// name is therefore NOT individually derivable from the JWT alone today.
-// Comparing `callerOrchestrator` against a single "derived actor" name would
-// be vacuous, so this function instead checks MEMBERSHIP of the asserted
-// name in the scope's `allowedOrchestrators` list (or a master/service-
-// account bypass) — that IS what's derivable. Closing the sigma-vs-eta gap
-// requires a per-orchestrator claim upstream (a Clerk JWT template / custom
-// claim); flagged to Pi as a FINDING, not fabricated here.
+// WHO THE CALLER IS (module M7, batch B). The verified identity yields a
+// subject and an org claim (see convex/lib/auth.ts withOrgScope). It does NOT
+// name a single orchestrator: the MCP server's non-browser path authenticates
+// as ONE SHARED service-account identity for every orchestrator. The acting
+// agent therefore comes from the proof the call carries (`verifiedActor`, a
+// presented per-agent credential, or the asserted label looked up in ONE org),
+// as an agents-row ID (`callerActorOf`), and the asserted label decides nothing.
 //
-// STEP 4 semantics (Pi's exact three-way rule, applied against what's
-// actually derivable):
-//   Agreeing:      callerOrchestrator is in scope.allowedOrchestrators (or
-//                  scope.isMaster) -> pass.
-//   Contradicting: callerOrchestrator is supplied and is NOT in the derived
-//                  scope's allowed set -> explicit refusal naming BOTH the
-//                  asserted name and the derived scope (allowedOrchestrators
-//                  + orgSlug).
-//   Absent:        no callerOrchestrator supplied -> the derived scope
-//                  stands alone (membership check skipped; CORE-A above
-//                  still required an identity to exist at all).
+// THE ROSTER, BY AGENT ID. A caller that is not the fleet and names an acting
+// agent is held to its organisation's roster by ID: that agent's ID must be an
+// entry of the org's stored `allowedAgentIds`, judged by the package
+// (`isAgentOnScopeRoster`). A label that names no agent of the org, a person, or
+// an agent the roster does not list, is refused CALLER_IDENTITY_MISMATCH naming
+// the asserted label and the labels of the agents the roster lists (read from
+// their rows, display only).
+//   Agreeing:      the resolved agent is on the roster, or the caller is the
+//                  fleet (hasFleetRead) -> pass.
+//   Contradicting: callerOrchestrator is supplied and its agent is not on the
+//                  roster -> explicit refusal.
+//   Absent:        no callerOrchestrator supplied -> the derived scope stands
+//                  alone (the human path decides further down).
 // ─────────────────────────────────────────────────────────────────────────────
 // Exported (Day 203 slice, task class: authority attached to an
 // anonymously-registered object — .claude/rules/authority-attached-to-anonymous-object.md)
@@ -226,22 +226,22 @@ export async function requireAuthenticatedCaller(
 	// agent proof of its own.
 	verifiedOrg?: { proof: VerifiedOrg | undefined; door: string },
 ): Promise<CallerScope> {
-	const identity = await ctx.auth.getUserIdentity();
-	if (identity === null) {
+	// withOrgScope resolves the verified credential into an OrgScope (org lookup,
+	// service-account carve-out, fail-closed default). Explicitly opt OUT of
+	// allowNoIdentityMaster: this call site must never silently upgrade a
+	// no-identity call to master; that fail-open path is reserved for pre-audited
+	// internal call sites (see convex/lib/auth.ts doc comment), not this public
+	// surface. CORE-A: a call that presented NO credential at all (the scope
+	// resolver marks it `anonymous`) is refused unconditionally, before anything
+	// else is read - no exception path. This function reads no credential itself.
+	const transportScope = await withOrgScope(ctx, {
+		allowNoIdentityMaster: false,
+	});
+	if (transportScope.anonymous === true) {
 		throw new ConvexError(
 			`AUTH_REQUIRED: no verified identity on this call — an unauthenticated caller cannot mutate tasks — ${JSON.stringify({ callerOrchestrator: callerOrchestrator ?? null })}`,
 		);
 	}
-
-	// withOrgScope re-derives the same identity into an OrgScope (org lookup,
-	// service-account carve-out, fail-closed default). Explicitly opt OUT of
-	// allowNoIdentityMaster here — CORE-A already proved an identity exists,
-	// but this call site must never silently upgrade a no-identity call to
-	// master; that fail-open path is reserved for pre-audited internal call
-	// sites (see convex/lib/auth.ts doc comment), not this public surface.
-	const transportScope = await withOrgScope(ctx, {
-		allowNoIdentityMaster: false,
-	});
 	// The organisation the transport verified for the bearer (service account
 	// only; anyone else presenting it is refused, before any proof is weighed).
 	const verifiedOrgSlug =
@@ -289,32 +289,6 @@ export async function requireAuthenticatedCaller(
 		{ scope, verifiedActor },
 	);
 
-	// LIMIT of this reconciliation (containment scope only — removed by T2
-	// k172bccwcqajfetcrmm5wtasps8cs7tc when single-actor equality lands): it
-	// refuses a callerOrchestrator that falls OUTSIDE the org's allowed list,
-	// but it does NOT distinguish one orchestrator from another INSIDE that
-	// list. On the MCP path the shared service account resolves
-	// allowedOrchestrators ["*"] + isMaster, so every in-org name passes this
-	// check. Membership ≠ single-actor identity; the equality gate is T2's job.
-	// A non-master (including the operator human in a mutation, who resolves as an
-	// ordinary member of the operator org) is held to its org's roster: compared
-	// after normalizeOrchestratorId on both sides, and a "*" entry names nobody
-	// (an org's own openness to READ, never licence to act as another name).
-	if (
-		callerOrchestrator !== undefined &&
-		!scope.isMaster &&
-		!scope.allowedOrchestrators.some(
-			(entry) =>
-				entry !== "*" &&
-				normalizeOrchestratorId(entry) ===
-					normalizeOrchestratorId(callerOrchestrator),
-		)
-	) {
-		throw new ConvexError(
-			`CALLER_IDENTITY_MISMATCH: asserted callerOrchestrator "${callerOrchestrator}" is outside the authenticated org's allowed-orchestrator list — this compares an ASSERTED name against the org's allowlist (org=${scope.orgSlug ?? "none"} allows ${JSON.stringify(scope.allowedOrchestrators)}); it does NOT verify the caller IS any particular orchestrator inside that list — ${JSON.stringify({ asserted: callerOrchestrator, derivedAllowedOrchestrators: scope.allowedOrchestrators, orgSlug: scope.orgSlug })}`,
-		);
-	}
-
 	// M7: the caller as an ACTOR ID, from the proof already verified above. Every
 	// task door that authorises by actor compares this against the row's
 	// createdById / assignedToId; the asserted label decides nothing.
@@ -326,6 +300,44 @@ export async function requireAuthenticatedCaller(
 	if (actor !== undefined) {
 		scope.callerActorId = actor.id;
 		if (actor.orgSlug !== undefined) scope.callerActorOrg = actor.orgSlug;
+	}
+
+	// A caller that is not the fleet (including the operator human in a mutation,
+	// who resolves as an ordinary member of the operator org) and names an acting
+	// agent is held to its organisation's roster BY AGENT ID: the agent the proof
+	// resolved to must be an entry of the org's stored `allowedAgentIds`, judged by
+	// the package (lib/missionActors.isAgentOnScopeRoster). A label that names no
+	// agent of the org, a person, or an agent the roster does not list, is
+	// refused. Membership is not single-actor identity: the lock above binds the
+	// credential to the agent, this binds the agent to the org's roster.
+	if (callerOrchestrator !== undefined && !hasFleetRead(scope)) {
+		const listed =
+			scope.callerActorId !== undefined &&
+			(await isAgentOnScopeRoster(
+				ctx,
+				scope,
+				scope.callerActorId,
+				"tasks:requireAuthenticatedCaller",
+			));
+		if (!listed) {
+			// Name BOTH sides in the refusal so the caller can fix it: the asserted name
+			// and the labels of the agents the org's roster lists (read from their rows
+			// by ID, for display only - nothing is decided from a label).
+			const rosterLabels =
+				scope.orgSlug === null
+					? []
+					: (
+							await listedAgentsOfOrg(
+								ctx,
+								scope.orgSlug,
+								scope.allowedAgentIds,
+								"tasks:requireAuthenticatedCaller",
+							)
+						).map((agent) => agent.name);
+			throw new ConvexError(
+				`CALLER_IDENTITY_MISMATCH: asserted callerOrchestrator "${callerOrchestrator}" is not an agent on the authenticated org's roster (org=${scope.orgSlug ?? "none"}, roster agents ${JSON.stringify(rosterLabels)}) — the roster is the org's list of agent IDs, and the agent this call resolves to is not on it — ${JSON.stringify({ asserted: callerOrchestrator, orgSlug: scope.orgSlug, rosterAgents: rosterLabels })}`,
+			);
+		}
 	}
 	return scope;
 }
@@ -745,9 +757,9 @@ export const create = mutation({
 		);
 		// createdBy is already bound to the roster inside requireAuthenticatedCaller
 		// (CALLER_IDENTITY_MISMATCH). assignedTo is NOT an asserted caller name but
-		// the target of an assignment: it must also be on the caller's own roster,
-		// so a member cannot assign work into another organisation. Master unchanged.
-		requireOrchestratorOnRoster(scope, args.assignedTo, "tasks:create", "assignee");
+		// the target of an assignment: its agent must also be on the caller's own
+		// roster (by agent ID), so a member cannot assign work into another
+		// organisation. Master unchanged.
 		// The tenant is derived from the SCOPE just resolved above, never from
 		// anything the client sent.
 		const rowOrgId = orgIdForWrite(scope, "tasks:create");
@@ -761,6 +773,7 @@ export const create = mutation({
 			rowOrgId ?? scope.callerActorOrg,
 			args.assignedTo,
 			"tasks:create",
+			{ rosterScope: scope },
 		);
 		if (taskArgs.createdBy === undefined) {
 			// HUMAN path: createdBy is the actor "user:<subject>" (schema keeps it a
@@ -1148,6 +1161,34 @@ interface TasksListArgs {
 	orgId?: string;
 }
 
+// R-55 — the FILL LOOP. Reads an ordered index range and applies the
+// caller-dependent predicate WHILE it reads, until `limit` rows are kept (or the
+// range ends). The old shape cut a window with `.take(n)` and narrowed it
+// afterwards, so a window holding rows the caller may not see (another tenant's,
+// outside the roster, the wrong priority) came back short while more matching
+// rows existed. `scanCap` bounds how many rows are READ, not how many are kept;
+// when it is exhausted before the range ends (or `limit` is reached) the answer
+// is `truncated`, which the caller must refuse or report, never present as a
+// complete result.
+export async function collectNarrowed<T>(
+	rows: AsyncIterable<T>,
+	keep: (row: T) => boolean | Promise<boolean>,
+	opts: { limit?: number; scanCap: number },
+): Promise<{ kept: T[]; truncated: boolean; scanned: number }> {
+	const kept: T[] = [];
+	let scanned = 0;
+	for await (const row of rows) {
+		scanned += 1;
+		if (scanned > opts.scanCap) return { kept, truncated: true, scanned };
+		if (!(await keep(row))) continue;
+		kept.push(row);
+		if (opts.limit !== undefined && kept.length >= opts.limit) {
+			return { kept, truncated: false, scanned };
+		}
+	}
+	return { kept, truncated: false, scanned };
+}
+
 // Shared handler body for tasks.list (public, org-scoped) and
 // tasks.listForWebhook (internal, master-scoped — SEC-AUDIT Day 156: the
 // only genuine no-identity caller was convex/http.ts's GitHub webhook
@@ -1155,489 +1196,388 @@ interface TasksListArgs {
 // identity). Splitting the caller lets the public surface go fail-closed
 // (withOrgScope default) without breaking that internal, structurally
 // unreachable-by-clients call site.
+//
+// HOW IT READS (R-55). Index selection is unchanged: the caller's tenant (and an
+// assignee BY ID) lead the index range, and the status, project and cursor
+// (`createdBefore`) are pinned in the range wherever the index allows it. What
+// the index cannot express (the roster, `createdBy` BY ID, `updatedSince`,
+// `priority`, the cron-spam filter, a multi-status request) is applied while the
+// range is read (`collectNarrowed`), so a page is `limit` rows the caller may see,
+// never a wider window cut down afterwards. Ranges that are not creation-ordered
+// (an index whose next field is not `_creationTime`) are read whole under the
+// scan cap and refused loudly beyond it (SCAN_CAP_EXCEEDED): "I could not
+// measure" must never render as "complete".
+type TaskListRange = {
+	range: AsyncIterable<Doc<"tasks">>;
+	// True when the range is newest-first by `_creationTime`, so reading can stop
+	// once `limit` rows are kept. False: the whole range is read (under the cap).
+	byCreation: boolean;
+};
+
 async function runTasksList(ctx: QueryCtx, args: TasksListArgs, scope: OrgScope) {
 	requireScope(scope, "view-own-tasks");
 
 	const statuses = expandTaskStatuses(args.status);
-		const lite = args.fields === "lite";
-		// v2.3.3 — auto-clamp limit when fields=full + no explicit limit (overflow protection)
-		const explicitLimit = args.limit !== undefined;
-		let limit = args.limit ?? 50;
-		if (!explicitLimit && !lite) {
-			limit = 30;
-			console.warn(
-				`[tasks.list] auto-clamp: limit=30 applied (fields=full, no explicit limit). Pass fields="lite" or explicit limit to override.`,
-			);
+	const lite = args.fields === "lite";
+	// v2.3.3 — auto-clamp limit when fields=full + no explicit limit (overflow protection)
+	const explicitLimit = args.limit !== undefined;
+	let limit = args.limit ?? 50;
+	if (!explicitLimit && !lite) {
+		limit = 30;
+		console.warn(
+			`[tasks.list] auto-clamp: limit=30 applied (fields=full, no explicit limit). Pass fields="lite" or explicit limit to override.`,
+		);
+	}
+	// Capture to local consts so TypeScript narrows inside closures without assertions
+	const assignedToInstance = args.assignedToInstance;
+	const assignedTo = args.assignedTo;
+	const project = args.project;
+	const createdBy = args.createdBy;
+	const updatedSince = args.updatedSince;
+	const priorityFilter = args.priority;
+	const before = args.createdBefore;
+
+	// ── Guard: mutually-exclusive index-backed filters ────────────────────────
+	// assignedToInstance and assignedTo are both index-backed but there is no
+	// compound index covering both together (and combining them via post-filter
+	// would risk the same silent-narrowing-that-looks-complete failure mode
+	// this fix closes). Refuse loudly rather than silently pick one side.
+	if (assignedToInstance !== undefined && assignedTo !== undefined) {
+		throw new Error(
+			`tasks.list: assignedToInstance and assignedTo cannot be combined in a single call ` +
+				`(received assignedToInstance="${assignedToInstance}" assignedTo="${assignedTo}"). ` +
+				`Call list once per filter, or drop one of the two args.`,
+		);
+	}
+
+	// UNFILTERED READ (`tasks.list {}` — what the dashboard's activity feed and
+	// blockers widget send): no status, assignee/instance/project, createdBy,
+	// updatedSince or cursor. A member reads the newest rows of its OWN org
+	// through `by_orgId`; the master reads the newest rows of the table.
+	const isUnfilteredRead =
+		statuses === undefined &&
+		assignedToInstance === undefined &&
+		assignedTo === undefined &&
+		project === undefined &&
+		createdBy === undefined &&
+		updatedSince === undefined &&
+		before === undefined;
+	const fleetRead = hasFleetRead(scope);
+	// Non-master caller with a resolved org and a filtered read: served from the
+	// org-keyed indexes (the member branch below).
+	const memberOrg =
+		!fleetRead && scope.orgSlug !== null && !isUnfilteredRead
+			? scope.orgSlug
+			: null;
+	const upper = before ?? Number.MAX_VALUE;
+	const statusList: TaskStatus[] =
+		statuses !== undefined ? statuses : [...TASK_STATUSES];
+
+	// ── Assignee filter: BY ID (M7) ──────────────────────────────────────────
+	// The label names an agent of the caller's own org (the operator org for the
+	// fleet master). assigneeIdForRead PROVES, for a member, that the resolved ID
+	// is an agents row of the caller's org (RBAC_DENIED otherwise), then rows are
+	// read through the assignee-ID indexes, whose leading equality is that
+	// agent's ID. An agent ID belongs to exactly one org, so a same-named agent
+	// of another org, or a renamed agent's old rows, can never match; the
+	// visibility predicate below still drops any row whose orgId is not the
+	// caller's. A label naming no agent there is an absence (empty success).
+	let assigneeId: string | undefined;
+	if (assignedTo !== undefined) {
+		assigneeId = await assigneeIdForRead(ctx, scope, assignedTo);
+		if (assigneeId === undefined) return [];
+	}
+
+	// ── Creator filter: BY ID ────────────────────────────────────────────────
+	// The label names an agent (or a person) of the caller's own org, resolved to
+	// its ID once; a row matches when its `createdById` is that ID. A label that
+	// names no agent there matches nothing (an absence): a name never selects a
+	// row, so the same label held by an agent of another org, or by an automation
+	// label that is no agent at all, selects none.
+	let creatorId: string | undefined;
+	if (createdBy !== undefined) {
+		creatorId = await actorIdResolver(ctx, fleetRead ? null : scope.orgSlug)(createdBy);
+		if (creatorId === undefined) return [];
+	}
+
+	// What the index ranges cannot express, applied while the range is read.
+	const keep = (r: Doc<"tasks">): boolean => {
+		if (statuses !== undefined && !statuses.includes(r.status)) return false;
+		if (creatorId !== undefined && r.createdById !== creatorId) return false;
+		if (updatedSince !== undefined && (r.updatedAt ?? 0) < updatedSince) {
+			return false;
 		}
-		// Capture to local consts so TypeScript narrows inside closures without assertions
-		const assignedToInstance = args.assignedToInstance;
-		const assignedTo = args.assignedTo;
-		const project = args.project;
-		const createdBy = args.createdBy;
-		const updatedSince = args.updatedSince;
-		const priorityFilter = args.priority;
-		const before = args.createdBefore;
-
-		// Day 163 (Pi, k171rbm2txe42jxzddyqakbg7n8ch7zr) — `createdBefore` was
-		// OMITTED here. On a cursor-only call fetchCap collapsed to `limit`,
-		// so the DB fetched only the `limit` NEWEST rows, then the cursor
-		// filter below dropped every one of them (they are all >= the
-		// cursor anchor by construction) → an empty page while older rows
-		// that should have been page 2 were never fetched. Empty read as
-		// end-of-list; callers silently truncated. `createdBefore` is now
-		// included so pagination widens the same as createdBy/updatedSince,
-		// and is loud (SCAN_CAP_EXCEEDED) rather than silent when it can't
-		// see far enough. See per-branch index-push below for the unbounded
-		// fix on the common single-status paths.
-		//
-		// Eta REVISE on PR #1194 @147d260 — a second, independent defect on
-		// this same line: `needsWideScan` also has to widen whenever a
-		// multi-status (or no-status) filter will be applied POST-fetch on a
-		// branch that queries through a compound index ending in `status`
-		// (by_assignee, by_project, by_instance, by_assignee_project,
-		// by_instance_project…). With only the equality prefix (e.g.
-		// assignedTo) pinned, Convex orders the remaining rows by the
-		// index's NEXT field first — `status` — then `_creationTime`, NOT by
-		// `_creationTime` alone. A narrow `.take(limit)` on that ordering
-		// grabs `limit` rows skewed toward one status bucket, never the
-		// `limit` most-recent of the STATUS-FILTERED UNION — reproduced by
-		// Eta firsthand: 12 alternating todo/in_progress tasks, cursor walk
-		// status=["todo","in_progress"] limit=5 saw 7/12 (page 1 was all
-		// "todo"; the 5 true union-newest — mixed todo/in_progress — were
-		// never fetched). This is independent of cursor presence — the same
-		// wrong 5 rows come back on a plain first call, no cursor involved.
-		// Multi-status/no-status branches now always widen; single-status
-		// branches are untouched (Eta confirmed `canPushCursorIntoIndex`
-		// correct as-is).
-		//
-		// UNFILTERED READ (`tasks.list {}` — what the dashboard's activity feed and
-		// blockers widget send, measured at vantage-peers-dashboard origin/main
-		// e2dc58f): with no status, no assignee/instance/project and no
-		// createdBy/updatedSince/createdBefore there is NO pre-slice filter, so the
-		// widening protects nothing — and once the table holds more than
-		// TASK_LIST_SCAN_CAP rows it threw SCAN_CAP_EXCEEDED at every such caller.
-		// The newest `limit` rows of the whole table are exactly `.take(limit)` for
-		// a master (scope filter is a no-op); a non-master reads the newest `limit`
-		// rows of its OWN org through `by_orgId` below (no scan cap involved).
-		const isUnfilteredRead =
-			statuses === undefined &&
-			assignedToInstance === undefined &&
-			assignedTo === undefined &&
-			project === undefined &&
-			createdBy === undefined &&
-			updatedSince === undefined &&
-			before === undefined;
-		// Holds for a member too: the roster narrowing (filterByOrgScope) runs
-		// AFTER the re-bound to `limit`, so fetching the newest `limit` rows of
-		// the member's own org (by_orgId, newest-first) yields the same page as
-		// fetching the cap and slicing. Widening there only manufactured a throw
-		// for any org holding more than the cap.
-		const unfilteredNeedsNoWidening = isUnfilteredRead;
-		const needsWideScan =
-			createdBy !== undefined ||
-			updatedSince !== undefined ||
-			before !== undefined ||
-			(statuses === undefined
-				? !unfilteredNeedsNoWidening
-				: statuses.length > 1);
-		const fetchCap = needsWideScan ? TASK_LIST_SCAN_CAP + 1 : limit;
-		// Non-master caller with a resolved org and a filtered read: served from
-		// the org-keyed indexes (see the member branch below). The unfiltered
-		// member read keeps its own by_orgId branch at the end of the chain.
-		const memberOrg =
-			!scope.isMaster && scope.orgSlug !== null && !isUnfilteredRead
-				? scope.orgSlug
-				: null;
-
-		// Preferred fix (Pi): push the cursor bound into the index RANGE
-		// instead of filtering in-memory. Every Convex index implicitly ends
-		// with `_creationTime`, so once all explicit index fields are pinned
-		// by equality (single-status branches), `.lt("_creationTime", before)`
-		// is a valid additional range clause — unbounded, no SCAN_CAP
-		// dependency. Only usable when `updatedSince` is absent (that filter
-		// already occupies the one allowed range slot on the assignedTo
-		// branch) and exactly one status is pinned (multi-status / no-status
-		// branches don't fully consume the index's equality prefix, so the
-		// next index field isn't `_creationTime`).
-		const canPushCursorIntoIndex =
-			before !== undefined &&
-			updatedSince === undefined &&
-			statuses !== undefined &&
-			statuses.length === 1;
-
-		// Helper: apply multi-status in-memory filter on a pre-fetched slice
-		type TaskRow = Doc<"tasks">;
-		const applyStatusFilter = (rows: TaskRow[]) => {
-			if (statuses === undefined) return rows;
-			if (statuses.length === 1)
-				return rows.filter((r) => r.status === statuses[0]);
-			return rows.filter((r) => statuses.includes(r.status));
-		};
-
-		let allRows: TaskRow[];
-		// Set true only when the assignedTo/assignedTo+status branch below pushed
-		// the `updatedSince` bound into the query via a compound index. Drives
-		// the SCAN_CAP_EXCEEDED message: "shrink the window" is only offered
-		// when it can actually change the candidate count.
-		let usedIndexedUpdatedSinceBound = false;
-
-		// ── Guard: mutually-exclusive index-backed filters ────────────────────────
-		// assignedToInstance and assignedTo are both index-backed but there is no
-		// compound index covering both together (and combining them via post-filter
-		// would risk the same silent-narrowing-that-looks-complete failure mode
-		// this fix closes). Refuse loudly rather than silently pick one side.
-		if (assignedToInstance !== undefined && assignedTo !== undefined) {
-			throw new Error(
-				`tasks.list: assignedToInstance and assignedTo cannot be combined in a single call ` +
-					`(received assignedToInstance="${assignedToInstance}" assignedTo="${assignedTo}"). ` +
-					`Call list once per filter, or drop one of the two args.`,
-			);
+		// The cursor: idempotent where the range already carries it.
+		if (before !== undefined && r._creationTime >= before) return false;
+		// PR-E — cron-spam filter: exclude auto-generated tasks when requested.
+		// Two signals (OR logic):
+		//   1. createdBy starts with "cron-" (dash required — "cronus"/"cron" pass through)
+		//   2. title is exactly "/check-messages" or "check-messages" (case-insensitive)
+		if (
+			args.excludeAutoGenerated === true &&
+			(/^cron-/i.test(r.createdBy ?? "") ||
+				/^\/?check-messages$/i.test(r.title ?? ""))
+		) {
+			return false;
 		}
+		// Dashboard B1 — priority filter.
+		if (priorityFilter !== undefined && r.priority !== priorityFilter) {
+			return false;
+		}
+		// The tenant gate, then the roster as a narrowing intersect.
+		return filterByOrgScope([r], scope).length === 1;
+	};
 
-		// ── Org member: ORG-KEYED index, never the fleet-wide one ───────────────
-		// The branches below read fleet-wide indexes (by_assignee, by_project, …)
-		// that carry NO tenant field, and `filterByOrgScope` drops foreign rows
-		// only AFTER the fetch. For a member that meant the widened scan
-		// (multi-status / no-status / createdBy / updatedSince) read the FLEET's
-		// rows for that assignee, hit TASK_LIST_SCAN_CAP, and threw
-		// SCAN_CAP_EXCEEDED although the member's own org held a handful of
-		// rows (measured on prod: tasks:list {assignedTo:"sigma", limit:5}).
-		// Here the tenant is the leading equality of the index, so the cap
-		// bounds the member's own org. Rows with no `orgId` never match
-		// `eq("orgId", slug)`: unstamped rows stay master-only (same verdict as
-		// filterByOrgScope's tenant gate). One query per status bucket (each
-		// newest-first because `status` is pinned), merged by creation time
-		// below, so the page is the true newest `limit` of the status union.
-		//
-		// ── Assignee filter: BY ID (M7) ──────────────────────────────────────────
-		// The label names an agent of the caller's own org (the operator org for the
-		// fleet master). assigneeIdForRead PROVES, for a member, that the resolved ID
-		// is an agents row of the caller's org (RBAC_DENIED otherwise), then rows are
-		// read through the assignee-ID indexes, whose leading equality is that
-		// agent's ID. An agent ID belongs to exactly one org, so a same-named agent
-		// of another org, or a renamed agent's old rows, can never match; and
-		// filterByOrgScope below still drops any row whose orgId is not the caller's,
-		// so a row stamped for another org that names this agent is never served.
-		// A label naming no agent there is an absence (empty success).
-		if (assignedTo !== undefined) {
-			const assigneeId = await assigneeIdForRead(ctx, scope, assignedTo);
-			if (assigneeId === undefined) {
-				allRows = [];
+	const ranges: TaskListRange[] = [];
+	if (assigneeId !== undefined) {
+		// One range per status bucket (each newest-first because `status` is pinned
+		// or the index orders by updatedAt), merged by creation time below, so the
+		// page is the true newest `limit` of the status union.
+		//  - `project` given: by_assigneeId_project_status, creation-ordered, so the
+		//    cursor is pushed into the index and `limit` rows are enough.
+		//  - otherwise: by_assigneeId_status_updatedAt (ordered by updatedAt, not
+		//    creation time), so the whole bucket is read (bounded by the scan cap,
+		//    refused loudly beyond it) and the newest `limit` is chosen after the
+		//    merge. `updatedSince` is pushed into that index range.
+		const id = assigneeId;
+		for (const status of statusList) {
+			if (project !== undefined) {
+				ranges.push({
+					range: ctx.db
+						.query("tasks")
+						.withIndex("by_assigneeId_project_status", (i) =>
+							i
+								.eq("assignedToId", id)
+								.eq("project", project)
+								.eq("status", status)
+								.lt("_creationTime", upper),
+						)
+						.order("desc"),
+					byCreation: true,
+				});
 			} else {
-				const statusList: TaskStatus[] =
-					statuses !== undefined ? statuses : [...TASK_STATUSES];
-				// One query per status bucket, merged by creation time below, so the
-				// page is the true newest `limit` of the status union.
-				//  - `project` given: by_assigneeId_project_status, creation-ordered, so
-				//    the cursor is pushed into the index and `limit` rows are enough.
-				//  - otherwise: by_assigneeId_status_updatedAt (ordered by updatedAt, not
-				//    creation time), so the whole bucket is read (bounded by the scan
-				//    cap, refused loudly beyond it) and the newest `limit` is chosen
-				//    after the merge. `updatedSince` is pushed into that index range.
-				const idWide =
-					project === undefined ||
-					(memberOrg !== null ? createdBy !== undefined || updatedSince !== undefined : needsWideScan);
-				const idFetch = idWide ? TASK_LIST_SCAN_CAP + 1 : limit;
-				const upper = before ?? Number.MAX_VALUE;
-				if (updatedSince !== undefined && project === undefined) {
-					usedIndexedUpdatedSinceBound = true;
-				}
-				const buckets = await Promise.all(
-					statusList.map(async (status) => {
-						const q = ctx.db.query("tasks");
-						if (project !== undefined) {
-							return await q
-								.withIndex("by_assigneeId_project_status", (i) =>
-									i
-										.eq("assignedToId", assigneeId)
-										.eq("project", project)
+				ranges.push({
+					range: ctx.db
+						.query("tasks")
+						.withIndex("by_assigneeId_status_updatedAt", (i) =>
+							updatedSince !== undefined
+								? i
+										.eq("assignedToId", id)
 										.eq("status", status)
-										.lt("_creationTime", upper),
-								)
-								.order("desc")
-								.take(idFetch);
-						}
-						return await q
-							.withIndex("by_assigneeId_status_updatedAt", (i) =>
-								updatedSince !== undefined
-									? i
-											.eq("assignedToId", assigneeId)
-											.eq("status", status)
-											.gte("updatedAt", updatedSince)
-									: i.eq("assignedToId", assigneeId).eq("status", status),
-							)
-							.order("desc")
-							.take(idFetch);
-					}),
-				);
-				// With a master updatedSince window the candidates are the WHOLE window
-				// across statuses (one bound, one population); otherwise one status
-				// bucket is the unit the cap bounds.
-				const overCap =
-					updatedSince !== undefined && project === undefined
-						? buckets.reduce((n, b) => n + b.length, 0) > TASK_LIST_SCAN_CAP
-						: buckets.some((b) => b.length > TASK_LIST_SCAN_CAP);
-				if (idWide && overCap) {
-					throw new ConvexError(
-						`tasks.list: SCAN_CAP_EXCEEDED — widened scan for updatedSince/createdBy/createdBefore hit the cap of ${TASK_LIST_SCAN_CAP} candidate rows before the filter ran. The result would be incomplete and indistinguishable from a full match. Narrow with assignedTo/assignedToInstance/project/status${usedIndexedUpdatedSinceBound ? " or shrink the updatedSince window" : ""}.`,
-					);
-				}
-				allRows = buckets.flat();
+										.gte("updatedAt", updatedSince)
+								: i.eq("assignedToId", id).eq("status", status),
+						)
+						.order("desc"),
+					byCreation: false,
+				});
 			}
-		} else if (memberOrg !== null) {
-			const statusList: TaskStatus[] =
-				statuses !== undefined ? statuses : [...TASK_STATUSES];
-			const memberWide = createdBy !== undefined || updatedSince !== undefined;
-			const memberFetch = memberWide ? TASK_LIST_SCAN_CAP + 1 : limit;
-			const upper = before ?? Number.MAX_VALUE;
-			const buckets = await Promise.all(
-				statusList.map(async (status) => {
-					const q = ctx.db.query("tasks");
-					if (assignedToInstance !== undefined && project !== undefined) {
-						return await q
-							.withIndex("by_orgId_instance_project_status", (i) =>
-								i
-									.eq("orgId", memberOrg)
-									.eq("assignedToInstance", assignedToInstance)
-									.eq("project", project)
-									.eq("status", status)
-									.lt("_creationTime", upper),
-							)
-							.order("desc")
-							.take(memberFetch);
-					}
-					if (assignedToInstance !== undefined) {
-						return await q
-							.withIndex("by_orgId_instance_status", (i) =>
-								i
-									.eq("orgId", memberOrg)
-									.eq("assignedToInstance", assignedToInstance)
-									.eq("status", status)
-									.lt("_creationTime", upper),
-							)
-							.order("desc")
-							.take(memberFetch);
-					}
-					if (project !== undefined) {
-						return await q
-							.withIndex("by_orgId_project_status", (i) =>
-								i
-									.eq("orgId", memberOrg)
-									.eq("project", project)
-									.eq("status", status)
-									.lt("_creationTime", upper),
-							)
-							.order("desc")
-							.take(memberFetch);
-					}
-					return await q
+		}
+	} else if (memberOrg !== null) {
+		// ── Org member: ORG-KEYED index, never the fleet-wide one ───────────────
+		// The branches below the member one read fleet-wide indexes that carry NO
+		// tenant field. Here the tenant is the leading equality of the index, so the
+		// scan cap bounds the member's own org. Rows with no `orgId` never match
+		// `eq("orgId", slug)`: unstamped rows stay master-only. One range per status
+		// bucket (each newest-first because `status` is pinned).
+		for (const status of statusList) {
+			if (assignedToInstance !== undefined && project !== undefined) {
+				ranges.push({
+					range: ctx.db
+						.query("tasks")
+						.withIndex("by_orgId_instance_project_status", (i) =>
+							i
+								.eq("orgId", memberOrg)
+								.eq("assignedToInstance", assignedToInstance)
+								.eq("project", project)
+								.eq("status", status)
+								.lt("_creationTime", upper),
+						)
+						.order("desc"),
+					byCreation: true,
+				});
+			} else if (assignedToInstance !== undefined) {
+				ranges.push({
+					range: ctx.db
+						.query("tasks")
+						.withIndex("by_orgId_instance_status", (i) =>
+							i
+								.eq("orgId", memberOrg)
+								.eq("assignedToInstance", assignedToInstance)
+								.eq("status", status)
+								.lt("_creationTime", upper),
+						)
+						.order("desc"),
+					byCreation: true,
+				});
+			} else if (project !== undefined) {
+				ranges.push({
+					range: ctx.db
+						.query("tasks")
+						.withIndex("by_orgId_project_status", (i) =>
+							i
+								.eq("orgId", memberOrg)
+								.eq("project", project)
+								.eq("status", status)
+								.lt("_creationTime", upper),
+						)
+						.order("desc"),
+					byCreation: true,
+				});
+			} else {
+				ranges.push({
+					range: ctx.db
+						.query("tasks")
 						.withIndex("by_orgId_status", (i) =>
 							i
 								.eq("orgId", memberOrg)
 								.eq("status", status)
 								.lt("_creationTime", upper),
 						)
-						.order("desc")
-						.take(memberFetch);
-				}),
-			);
-			if (memberWide && buckets.some((b) => b.length > TASK_LIST_SCAN_CAP)) {
-				throw new ConvexError(
-					`tasks.list: SCAN_CAP_EXCEEDED — widened scan for updatedSince/createdBy hit the cap of ${TASK_LIST_SCAN_CAP} candidate rows of your organisation before the filter ran. The result would be incomplete and indistinguishable from a full match. Narrow with assignedTo/assignedToInstance/project/status.`,
-				);
+						.order("desc"),
+					byCreation: true,
+				});
 			}
-			allRows = buckets.flat();
 		}
-		// Filter by instance + project together — matching compound index,
-		// so BOTH filters are applied, never one silently dropped.
-		else if (assignedToInstance !== undefined && project !== undefined) {
-			if (statuses !== undefined && statuses.length === 1) {
-				allRows = await ctx.db
+	} else if (assignedToInstance !== undefined && project !== undefined) {
+		// Filter by instance + project together — matching compound index, so BOTH
+		// filters are applied, never one silently dropped.
+		if (statuses !== undefined && statuses.length === 1) {
+			const status = statuses[0];
+			ranges.push({
+				range: ctx.db
 					.query("tasks")
-					.withIndex("by_instance_project", (q) => {
-						const base = q
+					.withIndex("by_instance_project", (q) =>
+						q
 							.eq("assignedToInstance", assignedToInstance)
 							.eq("project", project)
-							.eq("status", statuses[0]);
-						return canPushCursorIntoIndex
-							? base.lt("_creationTime", before as number)
-							: base;
-					})
-					.order("desc")
-					.take(canPushCursorIntoIndex ? limit : fetchCap);
-			} else {
-				const base = await ctx.db
+							.eq("status", status)
+							.lt("_creationTime", upper),
+					)
+					.order("desc"),
+				byCreation: true,
+			});
+		} else {
+			ranges.push({
+				range: ctx.db
 					.query("tasks")
 					.withIndex("by_instance_project", (q) =>
 						q.eq("assignedToInstance", assignedToInstance).eq("project", project),
 					)
-					.order("desc")
-					.take(fetchCap);
-				allRows = applyStatusFilter(base);
-			}
+					.order("desc"),
+				byCreation: false,
+			});
 		}
-		// Filter by instance only — use index for primary key, then filter statuses in-memory
-		else if (assignedToInstance !== undefined) {
-			if (statuses !== undefined && statuses.length === 1) {
-				allRows = await ctx.db
+	} else if (assignedToInstance !== undefined) {
+		// Filter by instance only — the index pins the primary key, statuses beyond
+		// one are applied while the range is read.
+		if (statuses !== undefined && statuses.length === 1) {
+			const status = statuses[0];
+			ranges.push({
+				range: ctx.db
 					.query("tasks")
-					.withIndex("by_instance", (q) => {
-						const base = q
+					.withIndex("by_instance", (q) =>
+						q
 							.eq("assignedToInstance", assignedToInstance)
-							.eq("status", statuses[0]);
-						return canPushCursorIntoIndex
-							? base.lt("_creationTime", before as number)
-							: base;
-					})
-					.order("desc")
-					.take(canPushCursorIntoIndex ? limit : fetchCap);
-			} else {
-				const base = await ctx.db
+							.eq("status", status)
+							.lt("_creationTime", upper),
+					)
+					.order("desc"),
+				byCreation: true,
+			});
+		} else {
+			ranges.push({
+				range: ctx.db
 					.query("tasks")
 					.withIndex("by_instance", (q) =>
 						q.eq("assignedToInstance", assignedToInstance),
 					)
-					.order("desc")
-					.take(fetchCap);
-				allRows = applyStatusFilter(base);
-			}
-		}
-		// Filter by project only
-		else if (project !== undefined) {
-			if (statuses !== undefined && statuses.length === 1) {
-				allRows = await ctx.db
-					.query("tasks")
-					.withIndex("by_project", (q) => {
-						const base = q.eq("project", project).eq("status", statuses[0]);
-						return canPushCursorIntoIndex
-							? base.lt("_creationTime", before as number)
-							: base;
-					})
-					.order("desc")
-					.take(canPushCursorIntoIndex ? limit : fetchCap);
-			} else {
-				const base = await ctx.db
-					.query("tasks")
-					.withIndex("by_project", (q) => q.eq("project", project))
-					.order("desc")
-					.take(fetchCap);
-				allRows = applyStatusFilter(base);
-			}
-		}
-		// Filter by status only. Not eligible for the index-push above: `by_status`
-		// is ["status", "createdAt"], so after pinning `status` by equality the
-		// next index field is `createdAt`, not `_creationTime` — Convex only
-		// allows a range clause on the field immediately following the pinned
-		// equality prefix, so `_creationTime` can't be reached here. Falls back
-		// to the widened-scan + loud SCAN_CAP_EXCEEDED path (still correct,
-		// just bounded).
-		else if (statuses !== undefined) {
-			if (statuses.length === 1) {
-				allRows = await ctx.db
-					.query("tasks")
-					.withIndex("by_status", (q) => q.eq("status", statuses[0]))
-					.order("desc")
-					.take(fetchCap);
-			} else {
-				// Multi-status without other filter: full table scan bounded by limit.
-				// Acceptable for bounded list sizes; no new index required per brief.
-				const base = await ctx.db.query("tasks").order("desc").take(fetchCap);
-				allRows = applyStatusFilter(base);
-			}
-		}
-		// No filters — return all, newest first. A non-master caller reads its own
-		// org's rows through `by_orgId` (tenant predicate inside the index range).
-		else if (isUnfilteredRead && !scope.isMaster && scope.orgSlug !== null) {
-			const orgSlug = scope.orgSlug;
-			allRows = await ctx.db
-				.query("tasks")
-				.withIndex("by_orgId", (q) => q.eq("orgId", orgSlug))
-				.order("desc")
-				.take(fetchCap);
-		} else {
-			allRows = await ctx.db.query("tasks").order("desc").take(fetchCap);
-		}
-
-		// Refuse to return a silently-incomplete page: if the widened scan
-		// itself hit its cap, there may be matching rows we never looked at.
-		// "I couldn't measure" must never render identically to "complete".
-		if (
-			memberOrg === null &&
-			assignedTo === undefined &&
-			needsWideScan &&
-			allRows.length > TASK_LIST_SCAN_CAP
-		) {
-			// "shrink the updatedSince window" is only offered when it can
-			// actually change the candidate count: on the assignedTo (+status)
-			// branch the bound is now pushed into the index, so narrowing the
-			// window is a real remedy. On every other branch — and whenever
-			// createdBy (unindexed) is the trigger — the fetch is still a
-			// fixed-size widened scan, so that advice would send the caller
-			// chasing a lever that does nothing; it is left out there.
-			const windowAdvice = usedIndexedUpdatedSinceBound
-				? " or shrink the updatedSince window"
-				: "";
-			throw new ConvexError(
-				`tasks.list: SCAN_CAP_EXCEEDED — widened scan for updatedSince/createdBy/createdBefore hit the cap of ${TASK_LIST_SCAN_CAP} candidate rows before the filter ran. The result would be incomplete and indistinguishable from a full match. Narrow with assignedTo/assignedToInstance/project/status${windowAdvice}.`,
-			);
-		}
-
-		// v2.3.3 — apply createdBy + updatedSince filters in-memory
-		let filtered = allRows;
-		if (createdBy !== undefined) {
-			filtered = filtered.filter((r) => r.createdBy === createdBy);
-		}
-		if (updatedSince !== undefined) {
-			filtered = filtered.filter((r) => (r.updatedAt ?? 0) >= updatedSince);
-		}
-		// Day 163 fix — the cursor (createdBefore) filter MUST run BEFORE the
-		// re-bound to `limit`, never after. This is idempotent/no-op on the
-		// branches above that already pushed the bound into the index (every
-		// row is already < before), and is the actual correctness fix on the
-		// branches that fell back to the widened scan: applying it after
-		// slicing to `limit` was silently discarding the very rows the
-		// cursor was supposed to select, independent of the fetchCap defect.
-		if (before !== undefined) {
-			filtered = filtered.filter((r) => r._creationTime < before);
-		}
-		// Eta REVISE on PR #1194 @147d260 — widening the fetch (above) was
-		// necessary but NOT sufficient. A branch that queries a compound
-		// index with only a LEADING field pinned (e.g. by_assignee with
-		// `assignedTo` pinned but `status` NOT pinned, for a multi-status or
-		// no-status request) returns rows ordered by the index's remaining
-		// fields — `status` first, THEN `_creationTime` — not by
-		// `_creationTime` alone. Filtering that array down to matching
-		// statuses preserves that scrambled order: a plain `.slice(0,
-		// limit)` after such a fetch grabs `limit` rows skewed toward
-		// whichever status sorts first, never the true `limit` most-recent
-		// of the filtered UNION. Re-sorting by `_creationTime` desc here is
-		// a no-op (stable) on branches that were already creation-time
-		// ordered (single-status index-push, plain table scans) and is the
-		// actual fix on the scrambled branches. Sort BEFORE the re-bound so
-		// `limit` always yields the N genuinely most-recent survivors.
-		filtered = [...filtered].sort((a, b) => b._creationTime - a._creationTime);
-		// Re-bound to the requested page size now that every filter AND the
-		// creation-time re-sort have run over the full candidate set.
-		filtered = filtered.slice(0, limit);
-		// PR-E — cron-spam filter: exclude auto-generated tasks when requested.
-		// Two signals (OR logic):
-		//   1. createdBy starts with "cron-" (dash required — "cronus"/"cron" pass through)
-		//   2. title is exactly "/check-messages" or "check-messages" (case-insensitive)
-		if (args.excludeAutoGenerated === true) {
-			filtered = filtered.filter((r) => {
-				const isCronCreator = /^cron-/i.test(r.createdBy ?? "");
-				const isSyntheticTitle = /^\/?check-messages$/i.test(r.title ?? "");
-				return !isCronCreator && !isSyntheticTitle;
+					.order("desc"),
+				byCreation: false,
 			});
 		}
-		// Dashboard B1 — priority filter (in-memory, applied after other filters).
-		if (priorityFilter !== undefined) {
-			filtered = filtered.filter((r) => r.priority === priorityFilter);
+	} else if (project !== undefined) {
+		// Filter by project only.
+		if (statuses !== undefined && statuses.length === 1) {
+			const status = statuses[0];
+			ranges.push({
+				range: ctx.db
+					.query("tasks")
+					.withIndex("by_project", (q) =>
+						q.eq("project", project).eq("status", status).lt("_creationTime", upper),
+					)
+					.order("desc"),
+				byCreation: true,
+			});
+		} else {
+			ranges.push({
+				range: ctx.db
+					.query("tasks")
+					.withIndex("by_project", (q) => q.eq("project", project))
+					.order("desc"),
+				byCreation: false,
+			});
 		}
+	} else if (statuses !== undefined && statuses.length === 1) {
+		// Filter by status only. Not eligible for the cursor-in-index push:
+		// `by_status` is ["status", "createdAt"], so after pinning `status` by
+		// equality the next index field is `createdAt`, not `_creationTime`; the
+		// cursor is applied while the range is read.
+		ranges.push({
+			range: ctx.db
+				.query("tasks")
+				.withIndex("by_status", (q) => q.eq("status", statuses[0]))
+				.order("desc"),
+			byCreation: true,
+		});
+	} else if (isUnfilteredRead && !fleetRead && scope.orgSlug !== null) {
+		// No filters — return all, newest first. A non-master caller reads its own
+		// org's rows through `by_orgId` (tenant predicate inside the index range).
+		const orgSlug = scope.orgSlug;
+		ranges.push({
+			range: ctx.db
+				.query("tasks")
+				.withIndex("by_orgId", (q) => q.eq("orgId", orgSlug))
+				.order("desc"),
+			byCreation: true,
+		});
+	} else {
+		// The table, newest first: multi-status or unfiltered, read by the master.
+		ranges.push({ range: ctx.db.query("tasks").order("desc"), byCreation: true });
+	}
 
-	const scoped = filterByOrgScope(filtered, scope);
-	if (lite) return scoped.map(projectTaskLite);
-	return scoped;
+	// Read every range under the scan cap. A range that cannot be read to the point
+	// the answer is known REFUSES (SCAN_CAP_EXCEEDED), never returns a short page
+	// that looks complete.
+	const merged: Doc<"tasks">[] = [];
+	// With an `updatedSince` window on the assignee index the status buckets are one
+	// population: the cap bounds what is read across ALL of them. Everywhere else
+	// each range is the unit the cap bounds.
+	const sharedBudget =
+		assigneeId !== undefined && project === undefined && updatedSince !== undefined;
+	let budget = TASK_LIST_SCAN_CAP;
+	for (const { range, byCreation } of ranges) {
+		const { kept, truncated, scanned } = await collectNarrowed(range, keep, {
+			...(byCreation ? { limit } : {}),
+			scanCap: sharedBudget ? budget : TASK_LIST_SCAN_CAP,
+		});
+		budget -= scanned;
+		if (truncated) {
+			throw new ConvexError(
+				memberOrg !== null
+					? `tasks.list: SCAN_CAP_EXCEEDED — widened scan for updatedSince/createdBy hit the cap of ${TASK_LIST_SCAN_CAP} candidate rows of your organisation before the filter ran. The result would be incomplete and indistinguishable from a full match. Narrow with assignedTo/assignedToInstance/project/status.`
+					: `tasks.list: SCAN_CAP_EXCEEDED — widened scan for updatedSince/createdBy/createdBefore hit the cap of ${TASK_LIST_SCAN_CAP} candidate rows before the filter ran. The result would be incomplete and indistinguishable from a full match. Narrow with assignedTo/assignedToInstance/project/status${assigneeId !== undefined && updatedSince !== undefined && project === undefined ? " or shrink the updatedSince window" : ""}.`,
+			);
+		}
+		merged.push(...kept);
+	}
+
+	// Re-sort by creation time desc: a no-op (stable) on creation-ordered ranges,
+	// and the actual ordering on the ranges the index orders by another field.
+	const page = merged
+		.sort((a, b) => b._creationTime - a._creationTime)
+		.slice(0, limit);
+	if (lite) return page.map(projectTaskLite);
+	return page;
 }
 
 export const list = query({
@@ -1743,8 +1683,6 @@ export const listPaginated = query({
 		}
 		requireScope(scope, "view-own-tasks");
 
-		type TaskRow = Doc<"tasks">;
-
 		// Org member: the tenant is the LEADING equality of the index, so a page
 		// holds the member's OWN rows. Paging a fleet-wide index and dropping
 		// foreign rows afterwards returned short or empty non-final pages (the
@@ -1752,7 +1690,7 @@ export const listPaginated = query({
 		// `orgId` never match `eq("orgId", slug)`: unstamped rows stay
 		// master-only. filterByOrgScope below still applies the roster narrowing.
 		const memberOrg =
-			!scope.isMaster && scope.orgSlug !== null ? scope.orgSlug : null;
+			!hasFleetRead(scope) && scope.orgSlug !== null ? scope.orgSlug : null;
 
 		// Assignee filter BY ID (M7): the label names an agent of the caller's own
 		// org (the operator org for the fleet master); a label naming no agent
@@ -1813,30 +1751,42 @@ export const listPaginated = query({
 			baseQuery = ctx.db.query("tasks").order("desc");
 		}
 
-		// By assignee ID the index carries no tenant field, and rows of one agent ID
-		// can sit under another stamp (an unstamped fleet-owned row assigned to an
-		// operator-org agent). The member's tenant predicate therefore runs as a
-		// residual filter INSIDE the paginated scan (the index range is already the
-		// assignee ID), so every non-final page is full instead of short or empty.
-		const paginatedResult =
-			assigneeId !== undefined && memberOrg !== null
-				? await baseQuery
-						.filter((q) => q.eq(q.field("orgId"), memberOrg))
-						.paginate(args.paginationOpts)
-				: await baseQuery.paginate(args.paginationOpts);
-
-		// Apply in-memory priority filter on the page (no index for priority alone).
-		let page: TaskRow[] = paginatedResult.page;
-		if (args.priority !== undefined) {
-			const priority = args.priority;
-			page = page.filter((r) => r.priority === priority);
-		}
-
-		// Apply org scope filtering.
-		const scopedPage = filterByOrgScope(page, scope);
+		// R-55: every caller-dependent predicate rides in the query builder, BEFORE the
+		// page is cut, so each non-final page is full instead of short or empty:
+		//  - the priority filter (no index for priority alone);
+		//  - for a member, the TENANT BY ORG ID (`clerkOrgId`, the key `sameOrg`
+		//    compares; an org whose ID is not filled yet matches no row) and, on the
+		//    assignee-ID index (which carries no tenant field and whose agent can hold
+		//    rows under another stamp: an unstamped fleet-owned row assigned to an
+		//    operator-org agent), the org stamp too;
+		//  - for a member, the ROSTER BY AGENT ID: the row's assignee must be an entry
+		//    of the org's stored `allowedAgentIds`. An org that stores no roster IDs
+		//    admits nothing; a row naming no assignee ID is withheld.
+		const priority = args.priority;
+		const memberClerkOrgId = scope.orgClerkId;
+		const rosterIds = memberOrg !== null ? scope.allowedAgentIds : undefined;
+		const narrowed = baseQuery.filter((q) =>
+			q.and(
+				priority === undefined ? true : q.eq(q.field("priority"), priority),
+				memberOrg === null
+					? true
+					: memberClerkOrgId === undefined
+						? false
+						: q.and(
+								q.eq(q.field("orgId"), memberOrg),
+								q.eq(q.field("clerkOrgId"), memberClerkOrgId),
+							),
+				rosterIds === undefined
+					? true
+					: rosterIds.length === 0
+						? false
+						: q.or(...rosterIds.map((id) => q.eq(q.field("assignedToId"), id))),
+			),
+		);
+		const paginatedResult = await narrowed.paginate(args.paginationOpts);
 
 		return {
-			page: scopedPage,
+			page: paginatedResult.page,
 			isDone: paginatedResult.isDone,
 			continueCursor: paginatedResult.continueCursor,
 		};
@@ -1948,7 +1898,13 @@ export const update = mutation({
 			task.isReviewTask === true &&
 			fields.assignedTo !== undefined &&
 			nonReassignFields.length === 0 &&
-			(await mayReassignReviewTask(ctx, callerOrchestrator, task.reviewPrRepoFullName));
+			(await callerHoldsReviewGrant(
+				ctx,
+				callerScope.callerActorId,
+				"reassign",
+				task.reviewPrRepoFullName,
+				task.orgId,
+			));
 		// A delivery is never reviewed by its author: the grant refuses a target
 		// equal to the repo's own orchestrator, for every caller (coordinator
 		// included). The row's own creator/assignee keep the ordinary path.
@@ -1978,7 +1934,13 @@ export const update = mutation({
 			cancelReason !== undefined &&
 			cancelReason.trim() !== "" &&
 			nonCancelFields.length === 0 &&
-			(await mayCancelAutomationTask(ctx, callerOrchestrator));
+			(await callerHoldsReviewGrant(
+				ctx,
+				callerScope.callerActorId,
+				"cancel",
+				undefined,
+				task.orgId,
+			));
 		const memberActor = await authorizeTaskActor(ctx, task, callerOrchestrator, taskId, callerScope, "tasks:update", {
 			reviewReassignGranted: reviewReassignGranted || automationCancelGranted,
 		});
@@ -1986,9 +1948,11 @@ export const update = mutation({
 		// An ASSIGNMENT target is not an asserted caller name, so the caller
 		// lock above does not cover it: without this, the cross-org assignment
 		// `create` refuses is one `update` call away. Same helper, same rule
-		// (roster-only, "*" admits nobody for a member, master unchanged).
+		// (roster-only BY AGENT ID, master unchanged).
 		if (fields.assignedTo !== undefined) {
-			requireOrchestratorOnRoster(callerScope, fields.assignedTo, "tasks:update", "assignee");
+			await requireAssigneeId(ctx, task.orgId, fields.assignedTo, "tasks:update", {
+				rosterScope: callerScope,
+			});
 		}
 
 		// Build patch object with only provided fields
@@ -2566,30 +2530,42 @@ export const listUnlinkedBlocked = query({
 		// read. A member whose org has no ID yet (expand phase) matches no row
 		// under `sameOrg`, so it reads none. `filterByOrgScope` below stays as the
 		// roster intersect (the tenant gate it also applies removes nothing here).
-		let blocked: Doc<"tasks">[] = [];
 		const orgClerkId = scope.orgClerkId;
-		if (scope.isMaster) {
-			blocked = await ctx.db
-				.query("tasks")
-				.withIndex("by_status", (q) => q.eq("status", "blocked"))
-				.collect();
-		} else if (orgClerkId !== undefined) {
-			blocked = await ctx.db
-				.query("tasks")
-				.withIndex("by_orgId_status_clerk_id", (q) =>
-					q.eq("clerkOrgId", orgClerkId).eq("status", "blocked"),
-				)
-				.collect();
+		const range = hasFleetRead(scope)
+			? ctx.db
+					.query("tasks")
+					.withIndex("by_status", (q) => q.eq("status", "blocked"))
+			: orgClerkId !== undefined
+				? ctx.db
+						.query("tasks")
+						.withIndex("by_orgId_status_clerk_id", (q) =>
+							q.eq("clerkOrgId", orgClerkId).eq("status", "blocked"),
+						)
+				: undefined;
+		if (range === undefined) return [];
+		// The roster intersect and the "unlinked" test are applied while the range is
+		// read (a fill loop under the scan cap); a range that cannot be read to its end
+		// REFUSES instead of returning a partial inventory that looks complete.
+		const { kept, truncated } = await collectNarrowed(
+			range,
+			(t) =>
+				t.blockedOnTaskId === undefined &&
+				t.blockedOnNobodyReason === undefined &&
+				isRowVisibleToScope(scope, t),
+			{ scanCap: TASK_LIST_SCAN_CAP },
+		);
+		if (truncated) {
+			throw new ConvexError(
+				`tasks.listUnlinkedBlocked: SCAN_CAP_EXCEEDED — more than ${TASK_LIST_SCAN_CAP} blocked tasks were read before the inventory ended; the result would be incomplete and indistinguishable from a full match.`,
+			);
 		}
-		return filterByOrgScope(blocked, scope)
-			.filter((t) => t.blockedOnTaskId === undefined && t.blockedOnNobodyReason === undefined)
-			.map((t) => ({
-				taskId: t._id,
-				title: t.title,
-				assignedTo: t.assignedTo,
-				createdBy: t.createdBy,
-				updatedAt: t.updatedAt,
-			}));
+		return kept.map((t) => ({
+			taskId: t._id,
+			title: t.title,
+			assignedTo: t.assignedTo,
+			createdBy: t.createdBy,
+			updatedAt: t.updatedAt,
+		}));
 	},
 });
 
@@ -3049,19 +3025,20 @@ async function assertNoConcurrentInProgress(
 	// with no ID holds no rows to count.
 	const callerId = callerScope.callerActorId;
 	if (callerId === undefined) return;
-	const inProgressTasks = (
-		await ctx.db
+	// The target itself is excluded WHILE the range is read, so the rows counted
+	// are the caller's OTHER open tasks, not a window that happened to hold them.
+	const { kept: others } = await collectNarrowed(
+		ctx.db
 			.query("tasks")
 			.withIndex("by_assigneeId_project_status", (q) =>
 				q
 					.eq("assignedToId", callerId)
 					.eq("project", project)
 					.eq("status", "in_progress"),
-			)
-			.take(TASK_LIST_SCAN_CAP + 1)
+			),
+		(t) => t._id !== taskId,
+		{ scanCap: TASK_LIST_SCAN_CAP },
 	);
-
-	const others = inProgressTasks.filter((t) => t._id !== taskId);
 	if (others.length >= cap) {
 		const conflict = others[0];
 		const openIds = others.map((t) => t._id);
@@ -3631,10 +3608,11 @@ export const listByMission = query({
 	handler: async (ctx, args) => {
 		// Same mechanism as `list`: the verified scope, fail-closed. Anonymous /
 		// no-organisation callers get a typed-empty result; an org member is
-		// served only rows its own tenant stamped (filterByOrgScope below).
+		// served only rows its own tenant stamped (the tenant gate in `keep`).
 		const scope = await withOrgScope(ctx, { refuseWithoutThrow: true });
 		if (scope.refused) return [];
-		if (!scope.isMaster && scope.orgSlug === null) return [];
+		const fleetRead = hasFleetRead(scope);
+		if (!fleetRead && scope.orgSlug === null) return [];
 		const statuses = expandTaskStatuses(args.status);
 		const lite = args.fields === "lite";
 		const missionId = args.missionId;
@@ -3650,144 +3628,116 @@ export const listByMission = query({
 			);
 		}
 
-		// Day 163 (Pi, k171rbm2txe42jxzddyqakbg7n8ch7zr) — same defect and same
-		// fix as `runTasksList` above: `createdBefore` was omitted from
-		// `needsWideScan`, so a cursor-only call fetched only `limit` rows and
-		// then filtered them all out. Included here too.
-		const before = args.createdBefore;
-		// Eta REVISE on PR #1194 @147d260 — same multi-status/no-status
-		// widen-gap as `runTasksList` above: `by_mission` is
-		// ["missionId","status"], so with only `missionId` pinned the
-		// remaining rows are ordered by `status` first, then
-		// `_creationTime` — not pure creation-time order. A narrow
-		// `.take(limit)` on a multi-status (or no-status) request grabs
-		// `limit` rows skewed to one status bucket, not the union's
-		// most-recent. Always widen for those; single-status is unaffected
-		// (untouched, per Eta's confirmation on the assignee/index-push path).
-		const needsWideScan =
-			createdBy !== undefined ||
-			updatedSince !== undefined ||
-			before !== undefined ||
-			statuses === undefined ||
-			statuses.length > 1;
-		const fetchCap = needsWideScan ? TASK_LIST_SCAN_CAP + 1 : limit;
-		// Preferred fix — push the cursor bound into the `by_mission` index
-		// range (["missionId","status"], `_creationTime` implicit last field)
-		// when a single status is pinned and updatedSince doesn't already
-		// occupy the range slot. Unbounded, no SCAN_CAP dependency.
-		const canPushCursorIntoIndex =
-			before !== undefined &&
-			updatedSince === undefined &&
-			statuses !== undefined &&
-			statuses.length === 1;
+		// Creator filter BY ID: the label names an agent (or a person) of the
+		// caller's own org (the operator org for the fleet master), resolved once;
+		// a label that names none matches nothing. A name never selects a row.
+		let creatorId: string | undefined;
+		if (createdBy !== undefined) {
+			creatorId = await actorIdResolver(ctx, fleetRead ? null : scope.orgSlug)(createdBy);
+			if (creatorId === undefined) return [];
+		}
 
-		type TaskRow = Doc<"tasks">;
-		const applyStatusFilter = (rows: TaskRow[]) => {
-			if (statuses === undefined) return rows;
-			if (statuses.length === 1)
-				return rows.filter((r) => r.status === statuses[0]);
-			return rows.filter((r) => statuses.includes(r.status));
+		// Day 163 (Pi, k171rbm2txe42jxzddyqakbg7n8ch7zr) — the cursor
+		// (`createdBefore`) is part of the read, never applied after a window was
+		// cut: pushed into the index range where the index allows it, and applied
+		// while the range is read everywhere else.
+		const before = args.createdBefore;
+		const upper = before ?? Number.MAX_VALUE;
+
+		// What the index ranges cannot express, applied while the range is read
+		// (R-55): a multi-status request, the creator BY ID, `updatedSince`, the
+		// cursor, then the tenant gate and the roster as a narrowing intersect.
+		const keep = (r: Doc<"tasks">): boolean => {
+			if (statuses !== undefined && !statuses.includes(r.status)) return false;
+			if (creatorId !== undefined && r.createdById !== creatorId) return false;
+			if (updatedSince !== undefined && (r.updatedAt ?? 0) < updatedSince) {
+				return false;
+			}
+			if (before !== undefined && r._creationTime >= before) return false;
+			return filterByOrgScope([r], scope).length === 1;
 		};
 
-		let allRows: TaskRow[];
-
-		// Org member: ORG-KEYED index, never the fleet-wide by_mission. The tenant
-		// is the leading equality, so another org's rows of this mission id are
-		// never fetched and the scan cap bounds the member's own mission. Rows
-		// with no `orgId` never match `eq("orgId", slug)`: unstamped rows stay
-		// master-only. One query per status bucket (newest-first because `status`
-		// is pinned), each bounded by the cursor inside the index range; merged
-		// by creation time below, so the page is the true newest `limit` of the
-		// status union.
-		const memberOrg = !scope.isMaster ? scope.orgSlug : null;
-		if (memberOrg !== null) {
+		const ranges: TaskListRange[] = [];
+		if (!fleetRead) {
+			// Org member: ORG-KEYED index, never the fleet-wide by_mission. The tenant
+			// is the leading equality, so another org's rows of this mission id are
+			// never fetched and the scan cap bounds the member's own mission. Rows
+			// with no `orgId` never match `eq("orgId", slug)`: unstamped rows stay
+			// master-only. One range per status bucket (newest-first because `status`
+			// is pinned), each bounded by the cursor inside the index range; merged
+			// by creation time below, so the page is the true newest `limit` of the
+			// status union.
+			const memberOrg = scope.orgSlug;
+			if (memberOrg === null) return [];
 			const statusList: TaskStatus[] =
 				statuses !== undefined ? statuses : [...TASK_STATUSES];
-			const memberWide = createdBy !== undefined || updatedSince !== undefined;
-			const memberFetch = memberWide ? TASK_LIST_SCAN_CAP + 1 : limit;
-			const upper = before ?? Number.MAX_VALUE;
-			const buckets = await Promise.all(
-				statusList.map(
-					async (status) =>
-						await ctx.db
-							.query("tasks")
-							.withIndex("by_orgId_mission_status", (i) =>
-								i
-									.eq("orgId", memberOrg)
-									.eq("missionId", missionId)
-									.eq("status", status)
-									.lt("_creationTime", upper),
-							)
-							.order("desc")
-							.take(memberFetch),
-				),
-			);
-			if (memberWide && buckets.some((b) => b.length > TASK_LIST_SCAN_CAP)) {
-				throw new ConvexError(
-					`tasks.listByMission: SCAN_CAP_EXCEEDED — widened scan for updatedSince/createdBy hit the cap of ${TASK_LIST_SCAN_CAP} candidate rows of your organisation before the filter ran. The result would be incomplete and indistinguishable from a full match. Narrow with status.`,
-				);
+			for (const status of statusList) {
+				ranges.push({
+					range: ctx.db
+						.query("tasks")
+						.withIndex("by_orgId_mission_status", (i) =>
+							i
+								.eq("orgId", memberOrg)
+								.eq("missionId", missionId)
+								.eq("status", status)
+								.lt("_creationTime", upper),
+						)
+						.order("desc"),
+					byCreation: true,
+				});
 			}
-			allRows = buckets.flat();
 		} else if (statuses !== undefined && statuses.length === 1) {
-			allRows = await ctx.db
-				.query("tasks")
-				.withIndex("by_mission", (q) => {
-					const base = q.eq("missionId", missionId).eq("status", statuses[0]);
-					return canPushCursorIntoIndex
-						? base.lt("_creationTime", before as number)
-						: base;
-				})
-				.order("desc")
-				.take(canPushCursorIntoIndex ? limit : fetchCap);
+			const status = statuses[0];
+			ranges.push({
+				range: ctx.db
+					.query("tasks")
+					.withIndex("by_mission", (q) =>
+						q.eq("missionId", missionId).eq("status", status).lt("_creationTime", upper),
+					)
+					.order("desc"),
+				byCreation: true,
+			});
 		} else {
-			const base = await ctx.db
-				.query("tasks")
-				.withIndex("by_mission", (q) => q.eq("missionId", missionId))
-				.order("desc")
-				.take(fetchCap);
-			allRows = applyStatusFilter(base);
+			// Eta REVISE on PR #1194 @147d260 — `by_mission` is ["missionId","status"],
+			// so with only `missionId` pinned the rows are ordered by `status` first,
+			// then `_creationTime`, not by creation time. The whole range is read
+			// (under the scan cap) and re-sorted below.
+			ranges.push({
+				range: ctx.db
+					.query("tasks")
+					.withIndex("by_mission", (q) => q.eq("missionId", missionId))
+					.order("desc"),
+				byCreation: false,
+			});
 		}
 
 		// Refuse a silently-incomplete page — see `list` above for rationale.
-		// Unlike `list`, this branch (missionId) was not measured to exceed the
-		// cap in production, so no index was added here — the fetch is still a
-		// fixed-size widened scan and "shrink the updatedSince window" would be
-		// a false remedy (narrowing the window doesn't change what got fetched).
-		// Left out of the message on purpose.
-		if (memberOrg === null && needsWideScan && allRows.length > TASK_LIST_SCAN_CAP) {
-			throw new ConvexError(
-				`tasks.listByMission: SCAN_CAP_EXCEEDED — widened scan for updatedSince/createdBy/createdBefore hit the cap of ${TASK_LIST_SCAN_CAP} candidate rows before the filter ran. The result would be incomplete and indistinguishable from a full match. Narrow with status.`,
-			);
+		// This branch (missionId) was not measured to exceed the cap in production,
+		// so no index was added here and "shrink the updatedSince window" would be a
+		// false remedy; it is left out of the message on purpose.
+		const merged: Doc<"tasks">[] = [];
+		for (const { range, byCreation } of ranges) {
+			const { kept, truncated } = await collectNarrowed(range, keep, {
+				...(byCreation ? { limit } : {}),
+				scanCap: TASK_LIST_SCAN_CAP,
+			});
+			if (truncated) {
+				throw new ConvexError(
+					fleetRead
+						? `tasks.listByMission: SCAN_CAP_EXCEEDED — widened scan for updatedSince/createdBy/createdBefore hit the cap of ${TASK_LIST_SCAN_CAP} candidate rows before the filter ran. The result would be incomplete and indistinguishable from a full match. Narrow with status.`
+						: `tasks.listByMission: SCAN_CAP_EXCEEDED — widened scan for updatedSince/createdBy hit the cap of ${TASK_LIST_SCAN_CAP} candidate rows of your organisation before the filter ran. The result would be incomplete and indistinguishable from a full match. Narrow with status.`,
+				);
+			}
+			merged.push(...kept);
 		}
 
-		// v2.3.3 — apply createdBy + updatedSince in-memory
-		// Tenant gate + roster (see the scope resolved at the top).
-		let filtered = filterByOrgScope(allRows, scope);
-		if (createdBy !== undefined) {
-			filtered = filtered.filter((r) => r.createdBy === createdBy);
-		}
-		if (updatedSince !== undefined) {
-			filtered = filtered.filter((r) => (r.updatedAt ?? 0) >= updatedSince);
-		}
-		// Day 163 fix — cursor filter MUST run BEFORE the re-bound to `limit`
-		// (same ordering bug as `runTasksList`). No-op on the index-pushed
-		// branch above; the actual fix on the wide-scan fallback branch.
-		if (before !== undefined) {
-			filtered = filtered.filter((r) => r._creationTime < before);
-		}
-		// Eta REVISE on PR #1194 @147d260 — same re-sort fix as
-		// `runTasksList`: the multi-status/no-status branch above fetches
-		// through `by_mission` with only `missionId` pinned, so the returned
-		// array is ordered by `status` first, then `_creationTime` — not
-		// creation-time alone. No-op on the single-status index-push branch.
-		filtered = [...filtered].sort((a, b) => b._creationTime - a._creationTime);
-		// Re-bound to the requested page size now that every filter AND the
-		// creation-time re-sort — including the cursor — has run over the
-		// full candidate set.
-		filtered = filtered.slice(0, limit);
-
-		if (lite) return filtered.map(projectTaskLite);
-		return filtered;
+		// Eta REVISE on PR #1194 @147d260 — re-sort by creation time: a no-op on the
+		// creation-ordered ranges, the actual ordering on the multi-status one.
+		const page = merged
+			.sort((a, b) => b._creationTime - a._creationTime)
+			.slice(0, limit);
+		if (lite) return page.map(projectTaskLite);
+		return page;
 	},
 });
 
@@ -3804,27 +3754,40 @@ export const listOverdue = query({
 		// Same mechanism as `list`: the verified scope, fail-closed. An
 		// anonymous caller, or one signed in with no organisation, is served a
 		// typed-empty result; an org member is served only its own tenant's
-		// rows (filterByOrgScope: tenant gate, then roster).
+		// rows (tenant gate, then roster).
 		const scope = await withOrgScope(ctx, { refuseWithoutThrow: true });
 		if (scope.refused) return [];
 		const callerOrg = scope.orgSlug;
-		if (!scope.isMaster && callerOrg === null) return [];
+		const fleetRead = hasFleetRead(scope);
+		if (!fleetRead && callerOrg === null) return [];
 		const now = Date.now();
 		const limit = args.limit ?? 50;
 
+		// M7: the assignee BY ID, in the caller's own org; a label naming no agent
+		// there matches nothing. The predicate sits in the query builder, so the
+		// page is `limit` rows of THAT assignee, not a wider window cut down.
+		let assigneeId: string | undefined;
+		if (args.assignedTo) {
+			assigneeId = await assigneeIdForRead(ctx, scope, args.assignedTo);
+			if (assigneeId === undefined) return [];
+		}
+		const assignee = assigneeId;
+
 		// A non-master caller's tenant is pushed into the `by_orgId` index BEFORE
-		// `.take(limit)`, so another tenant's overdue rows can never crowd the
-		// caller's own out of the page (the under-fill direction). Master scans
-		// the table as before.
+		// the bound, so another tenant's overdue rows can never crowd the caller's
+		// own out of the page (the under-fill direction). Master scans the table.
 		const candidates =
-			scope.isMaster || callerOrg === null
+			fleetRead || callerOrg === null
 				? ctx.db.query("tasks")
 				: ctx.db
 						.query("tasks")
 						.withIndex("by_orgId", (q) => q.eq("orgId", callerOrg));
 
-		let tasks = await candidates
-			.filter((q) =>
+		// The roster narrowing on top of the tenant gate (the exact predicate the
+		// other readers apply) is applied while the range is read: a fill loop
+		// that keeps reading until `limit` rows are kept.
+		const { kept, truncated } = await collectNarrowed(
+			candidates.filter((q) =>
 				q.and(
 					q.neq(q.field("status"), "done"),
 					// Day 157 — a cancelled task is a terminal, non-actionable state;
@@ -3832,24 +3795,20 @@ export const listOverdue = query({
 					q.neq(q.field("status"), "cancelled"),
 					q.neq(q.field("dueDate"), undefined),
 					q.lt(q.field("dueDate"), now),
+					assignee === undefined
+						? true
+						: q.eq(q.field("assignedToId"), assignee),
 				),
-			)
-			.take(limit);
-
-		// Roster narrowing on top of the tenant gate — the exact predicate the
-		// six existing readers apply.
-		tasks = filterByOrgScope(tasks, scope);
-
-		if (args.assignedTo) {
-			// M7: the assignee BY ID, in the caller's own org; a label naming no
-			// agent there matches nothing.
-			const assigneeId = await assigneeIdForRead(ctx, scope, args.assignedTo);
-			tasks = tasks.filter(
-				(t) => assigneeId !== undefined && t.assignedToId === assigneeId,
+			),
+			(row) => isRowVisibleToScope(scope, row),
+			{ limit, scanCap: TASK_LIST_SCAN_CAP },
+		);
+		if (truncated) {
+			throw new ConvexError(
+				`tasks.listOverdue: SCAN_CAP_EXCEEDED — ${TASK_LIST_SCAN_CAP} overdue candidate rows were read before ${limit} could be kept. The result would be incomplete and indistinguishable from a full match. Narrow with assignedTo or limit.`,
 			);
 		}
-
-		return tasks;
+		return kept;
 	},
 });
 
@@ -4449,15 +4408,44 @@ interface BulkCompleteFilter {
 }
 
 /**
+ * What a bulk scan needs to know about WHO is asking, as plain data so the
+ * self-scheduled continuation can carry it: whether the caller reads the whole
+ * fleet (`hasFleetRead` of the resolved scope), the caller's organisation (label
+ * and permanent ID) and its roster BY AGENT ID (`allowedAgentIds`).
+ */
+export type BulkVisibility = {
+	fleetRead: boolean;
+	orgSlug: string | null;
+	orgClerkId?: string;
+	rosterIds: string[];
+	// The org a verified acting agent lives in (a fleet service account forwarding
+	// an agent of a client org): the one org an `assignedTo` label is resolved in
+	// when the call names no verified org of its own.
+	actorOrg?: string;
+};
+
+function bulkVisibilityOf(scope: CallerScope): BulkVisibility {
+	return {
+		fleetRead: hasFleetRead(scope),
+		orgSlug: scope.orgSlug,
+		...(scope.orgClerkId !== undefined ? { orgClerkId: scope.orgClerkId } : {}),
+		rosterIds: scope.allowedAgentIds,
+		...(scope.callerActorOrg !== undefined ? { actorOrg: scope.callerActorOrg } : {}),
+	};
+}
+
+/**
  * Scans non-done tasks through the `by_status` index and returns at most
  * BULK_COMPLETE_HARD_CAP + 1 matches (the +1 is the overflow sentinel). The
- * tenant gate (`isRowVisibleToScope`) is applied to every row; a row outside
- * the caller's organisation is never matched.
+ * tenant gate (the organisation compared BY ID through the package) and the
+ * roster (the row's assignee must be an entry of the org's stored agent-ID roster,
+ * judged by the package) are applied to every row; a row outside the caller's
+ * organisation is never matched.
  */
 async function scanBulkCompleteMatches(
 	ctx: MutationCtx,
 	filter: BulkCompleteFilter,
-	scope: OrgScope,
+	visibility: BulkVisibility,
 	// The verified org the transport forwarded (`verifiedOrg`). A service-account
 	// call is master-scoped, so `scope` alone reaches every tenant and the
 	// creator/assignee check is a NAME, and names collide across orgs (an org-a
@@ -4467,26 +4455,38 @@ async function scanBulkCompleteMatches(
 ): Promise<Doc<"tasks">[]> {
 	const hasAutoGeneratedOnly = filter.autoGeneratedOnly === true;
 	const hasAssignedTo = filter.assignedTo !== undefined && filter.assignedTo !== "";
-	// M7: the assignee filter names an agent by its label. A row matches when the
-	// agent its assignedToId points at CARRIES that label now: the row's stored
-	// label string is never read, so a renamed agent's old rows and the same label
-	// held by another org's agent resolve to what the ID says. One read per ID.
-	const filterLabel = hasAssignedTo
-		? normalizeOrchestratorId(filter.assignedTo ?? "")
+	// M7: the assignee filter names an agent by its label. The label is resolved
+	// to the agent's ID ONCE, in the one organisation it is legal to look in (the
+	// verified org the transport forwarded, else the caller's own, else the
+	// operator org for the fleet master); a row matches when its `assignedToId` is
+	// that ID. The row's stored label string is never read, so a renamed agent's
+	// old rows and the same label held by another org's agent resolve to what the
+	// ID says. A label naming no agent there matches nothing.
+	const filterAssigneeId = hasAssignedTo
+		? await actorIdResolver(
+				ctx,
+				onlyOrgId ??
+					visibility.actorOrg ??
+					(visibility.fleetRead ? null : visibility.orgSlug),
+			)(filter.assignedTo)
 		: undefined;
-	const assigneeMatches = new Map<string, boolean>();
-	const assigneeCarriesFilterLabel = async (
-		assignedToId: string | undefined,
-	): Promise<boolean> => {
-		if (filterLabel === undefined || assignedToId === undefined) return false;
-		const cached = assigneeMatches.get(assignedToId);
-		if (cached !== undefined) return cached;
-		const agentId = ctx.db.normalizeId("agents", assignedToId);
-		const agent = agentId === null ? null : await ctx.db.get(agentId);
-		const carries =
-			agent !== null && normalizeOrchestratorId(agent.name) === filterLabel;
-		assigneeMatches.set(assignedToId, carries);
-		return carries;
+	const rosterVerdicts = new Map<string, boolean>();
+	const visibleToCaller = async (task: Doc<"tasks">): Promise<boolean> => {
+		if (visibility.fleetRead) return true;
+		if (visibility.orgSlug === null) return false;
+		if (!sameOrg(orgRefOfRow(task), orgRefOfScope(visibility))) return false;
+		const assignee = task.assignedToId;
+		if (assignee === undefined) return false;
+		const known = rosterVerdicts.get(assignee);
+		if (known !== undefined) return known;
+		const verdict = await agentListedOnRoster(
+			ctx,
+			{ agentId: assignee, agentOrgId: visibility.orgSlug },
+			rosterOf(visibility.orgSlug, visibility.rosterIds),
+			"tasks:bulkComplete",
+		);
+		rosterVerdicts.set(assignee, verdict.ok);
+		return verdict.ok;
 	};
 	const matched: Doc<"tasks">[] = [];
 	const statuses: readonly BulkCompleteStatus[] =
@@ -4504,7 +4504,9 @@ async function scanBulkCompleteMatches(
 				(/^cron-/i.test(task.createdBy ?? "") ||
 					/^\/?check-messages$/i.test(task.title ?? ""));
 			const assignedMatch =
-				hasAssignedTo && (await assigneeCarriesFilterLabel(task.assignedToId));
+				hasAssignedTo &&
+				filterAssigneeId !== undefined &&
+				task.assignedToId === filterAssigneeId;
 
 			let include: boolean;
 			if (hasAutoGeneratedOnly && hasAssignedTo) {
@@ -4521,7 +4523,7 @@ async function scanBulkCompleteMatches(
 			if (
 				include &&
 				(onlyOrgId === undefined || task.orgId === onlyOrgId) &&
-				isRowVisibleToScope(scope, task)
+				(await visibleToCaller(task))
 			) {
 				matched.push(task);
 				// Collect cap+1 to detect overflow without scanning entire table.
@@ -4696,7 +4698,7 @@ export const bulkComplete = mutation({
 		const matched = await scanBulkCompleteMatches(
 			ctx,
 			args.filter,
-			callerScope,
+			bulkVisibilityOf(callerScope),
 			verifiedOrgSlug,
 		);
 
@@ -4783,22 +4785,10 @@ export const bulkComplete = mutation({
 		if (exceeded) {
 			await ctx.scheduler.runAfter(0, internal.tasks.bulkCompleteContinue, {
 				filter: args.filter,
-				scope: {
-					userId: callerScope.userId,
-					orgSlug: callerScope.orgSlug,
-					// The org's permanent ID: rows are matched by ID only (M4), so a
-					// continuation without it would match none of the caller's rows.
-					...(callerScope.orgClerkId !== undefined
-						? { orgClerkId: callerScope.orgClerkId }
-						: {}),
-					allowedOrchestrators: callerScope.allowedOrchestrators,
-					isMaster: callerScope.isMaster,
-					// Which grant made the scope master: the standing of the rebuilt scope
-					// (scopeStanding) refuses a master scope that does not say.
-					...(callerScope.masterSource !== undefined
-						? { masterSource: callerScope.masterSource }
-						: {}),
-				},
+				// Who is asking, as data (see BulkVisibility): the continuation has no
+				// auth context of its own. The org's permanent ID is carried because
+				// rows are matched by ID only (M4); the roster is the org's agent IDs.
+				scope: bulkVisibilityOf(callerScope),
 				callerOrchestrator: args.callerOrchestrator ?? "",
 				...(callerScope.callerActorId !== undefined
 					? { callerActorId: callerScope.callerActorId }
@@ -4844,11 +4834,20 @@ export const bulkCompleteContinue = internalMutation({
 	args: {
 		filter: bulkCompleteFilterValidator,
 		scope: v.object({
-			userId: v.string(),
 			orgSlug: v.union(v.string(), v.null()),
 			orgClerkId: v.optional(v.string()),
-			allowedOrchestrators: v.array(v.string()),
-			isMaster: v.boolean(),
+			// Who is asking, as data (BulkVisibility). `rosterIds` is the org's stored
+			// agent-ID roster.
+			fleetRead: v.optional(v.boolean()),
+			rosterIds: v.optional(v.array(v.string())),
+			actorOrg: v.optional(v.string()),
+			// A continuation scheduled before this shape existed carries the legacy
+			// fields; they are accepted so an in-flight drain is not rejected at the
+			// validator. The legacy `isMaster` stands for `fleetRead`; the name roster
+			// is not read.
+			userId: v.optional(v.string()),
+			isMaster: v.optional(v.boolean()),
+			allowedOrchestrators: v.optional(v.array(v.string())),
 			masterSource: v.optional(
 				v.union(
 					v.literal("service-account"),
@@ -4879,16 +4878,19 @@ export const bulkCompleteContinue = internalMutation({
 		let exceeded: boolean;
 		let gates: BulkGateResults;
 		try {
-			const scope: OrgScope = {
-				...args.scope,
-				allowedAgentIds: [],
-				fleetWide: args.scope.isMaster,
-				scopes: [],
+			const visibility: BulkVisibility = {
+				fleetRead: args.scope.fleetRead ?? args.scope.isMaster ?? false,
+				orgSlug: args.scope.orgSlug,
+				...(args.scope.orgClerkId !== undefined
+					? { orgClerkId: args.scope.orgClerkId }
+					: {}),
+				rosterIds: args.scope.rosterIds ?? [],
+				...(args.scope.actorOrg !== undefined ? { actorOrg: args.scope.actorOrg } : {}),
 			};
 			const matched = await scanBulkCompleteMatches(
 				ctx,
 				args.filter,
-				scope,
+				visibility,
 				args.onlyOrgId,
 			);
 			exceeded = matched.length > BULK_COMPLETE_HARD_CAP;
@@ -4985,7 +4987,7 @@ export const getBulkCompleteRun = query({
 			.withIndex("by_bulkRunId", (q) => q.eq("bulkRunId", args.bulkRunId))
 			.first();
 		if (row === null) return null;
-		if (!scope.isMaster && (scope.orgSlug === null || row.orgId !== scope.orgSlug)) {
+		if (!hasFleetRead(scope) && (scope.orgSlug === null || row.orgId !== scope.orgSlug)) {
 			return null;
 		}
 		return {
@@ -5074,10 +5076,13 @@ export const billingSummaryByProject = query({
 		const project = args.project;
 
 		// Index-bounded scan: the period (and project, when supplied) bounds
-		// the QUERY, not an in-memory filter applied after the fetch.
-		const doneTasks =
+		// the QUERY, not an in-memory filter applied after the fetch. The tenant
+		// gate and the roster narrow the rows WHILE the range is read (R-55), so
+		// the totals are computed over the narrowed set and `truncated` says
+		// exactly that the scan cap was reached before the period ended.
+		const doneRange =
 			project !== undefined
-				? await ctx.db
+				? ctx.db
 						.query("tasks")
 						.withIndex("by_status_project_completedAt", (q) =>
 							q
@@ -5086,20 +5091,20 @@ export const billingSummaryByProject = query({
 								.gte("completedAt", args.startDate)
 								.lte("completedAt", args.endDate),
 						)
-						.take(BILLING_SUMMARY_SCAN_CAP + 1)
-				: await ctx.db
+				: ctx.db
 						.query("tasks")
 						.withIndex("by_status_completedAt", (q) =>
 							q
 								.eq("status", "done")
 								.gte("completedAt", args.startDate)
 								.lte("completedAt", args.endDate),
-						)
-						.take(BILLING_SUMMARY_SCAN_CAP + 1);
+						);
 
-		const truncated = doneTasks.length > BILLING_SUMMARY_SCAN_CAP;
-		const capped = doneTasks.slice(0, BILLING_SUMMARY_SCAN_CAP);
-		const scoped = filterByOrgScope(capped, scope);
+		const { kept: scoped, truncated } = await collectNarrowed(
+			doneRange,
+			(row) => isRowVisibleToScope(scope, row),
+			{ scanCap: BILLING_SUMMARY_SCAN_CAP },
+		);
 
 		const totals = new Map<
 			string,
@@ -5230,25 +5235,27 @@ export const taskDurationDistribution = query({
 		const to = args.to ?? Infinity;
 
 		// Index-bounded scan: the period (and project, when supplied) bounds
-		// the QUERY, not an in-memory filter applied after the fetch.
-		const doneTasks =
+		// the QUERY, not an in-memory filter applied after the fetch. The tenant
+		// gate and the roster narrow the rows WHILE the range is read (R-55), so
+		// the distribution is measured over the narrowed set.
+		const doneRange =
 			project !== undefined
-				? await ctx.db
+				? ctx.db
 						.query("tasks")
 						.withIndex("by_status_project_completedAt", (q) =>
 							q.eq("status", "done").eq("project", project).gte("completedAt", from).lte("completedAt", to),
 						)
-						.take(DURATION_DISTRIBUTION_SCAN_CAP + 1)
-				: await ctx.db
+				: ctx.db
 						.query("tasks")
 						.withIndex("by_status_completedAt", (q) =>
 							q.eq("status", "done").gte("completedAt", from).lte("completedAt", to),
-						)
-						.take(DURATION_DISTRIBUTION_SCAN_CAP + 1);
+						);
 
-		const truncated = doneTasks.length > DURATION_DISTRIBUTION_SCAN_CAP;
-		const capped = doneTasks.slice(0, DURATION_DISTRIBUTION_SCAN_CAP);
-		const scoped = filterByOrgScope(capped, scope);
+		const { kept: scoped, truncated } = await collectNarrowed(
+			doneRange,
+			(row) => isRowVisibleToScope(scope, row),
+			{ scanCap: DURATION_DISTRIBUTION_SCAN_CAP },
+		);
 
 		let negativeCount = 0;
 		let withProjectCount = 0;
@@ -5351,12 +5358,26 @@ export const searchTasksByKeyword = query({
 		const limit = Math.min(Math.max(args.limit ?? 20, 1), 200);
 		const lite = args.fields === "lite";
 
-		const results = await ctx.db
+		// The assignee filter BY ID (M7): the label names an agent of the caller's own
+		// org (the operator org for the fleet master), resolved once; the search
+		// index filters on the assignee's ID. A label that names no agent there is an
+		// absence, answered with an empty success.
+		let assigneeId: string | undefined;
+		if (args.assignedTo !== undefined) {
+			assigneeId = await assigneeIdForRead(ctx, scope, args.assignedTo);
+			if (assigneeId === undefined) return [];
+		}
+		const searchAssigneeId = assigneeId;
+
+		// R-55: the roster narrows while the relevance-ordered results are read, so
+		// the page is `limit` rows the caller may see, not a window cut down.
+		const { kept: filtered } = await collectNarrowed(
+			ctx.db
 			.query("tasks")
 			.withSearchIndex("search_title", (q) => {
 				let qb = q.search("title", args.query);
-				if (args.assignedTo !== undefined) {
-					qb = qb.eq("assignedTo", args.assignedTo);
+				if (searchAssigneeId !== undefined) {
+					qb = qb.eq("assignedToId", searchAssigneeId);
 				}
 				if (args.status !== undefined) {
 					qb = qb.eq("status", args.status);
@@ -5367,14 +5388,14 @@ export const searchTasksByKeyword = query({
 				if (args.missionId !== undefined) {
 					qb = qb.eq("missionId", args.missionId);
 				}
-				if (!scope.isMaster && scope.orgSlug !== null) {
+				if (!hasFleetRead(scope) && scope.orgSlug !== null) {
 					qb = qb.eq("orgId", scope.orgSlug);
 				}
 				return qb;
-			})
-			.take(limit);
-
-		const filtered = filterByOrgScope(results, scope);
+			}),
+			(row) => isRowVisibleToScope(scope, row),
+			{ limit, scanCap: TASK_LIST_SCAN_CAP },
+		);
 
 		if (!lite) return filtered;
 		return filtered.map((t) => ({

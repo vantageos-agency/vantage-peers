@@ -35,6 +35,8 @@
 import { convexTest } from "convex-test";
 import { describe, expect, test } from "vitest";
 import { testClerkOrgId } from "../../tests/fixtures/testClerkOrgId";
+import { syncRosterIdsFromNames } from "../../tests/lib/rosterSync";
+import { insertTaskRow } from "../../tests/lib/seedFleetAgents";
 import { api } from "../_generated/api";
 import schema from "../schema";
 
@@ -81,9 +83,21 @@ describe("T2 — wildcard-org membership never mints master, roster stays scoped
 				createdAt: Date.now(),
 			});
 
+			// The assignee filter selects an AGENT'S ID (module M7 batch B): "member-a" is
+			// an agent of org-wildcard and the roster lists it by ID.
+			await ctx.db.insert("agents", {
+				orgSlug: "org-wildcard",
+				clerkOrgId: testClerkOrgId("org-wildcard"),
+				name: "member-a",
+				normalizedName: "member-a",
+				isActive: true,
+				createdAt: 1,
+			});
+			await syncRosterIdsFromNames(ctx, "org-wildcard");
+
 			// org-wildcard's own task (NOT created by the reading identity —
 			// pilot/creator distinct from the reading member).
-			await ctx.db.insert("tasks", {
+			await insertTaskRow(ctx, {
 				title: "org-wildcard task about apples",
 				assignedTo: "member-a",
 				priority: "medium",
