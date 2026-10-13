@@ -23,6 +23,7 @@ const membershipShape = v.object({
 	role: v.union(v.literal("admin"), v.literal("member")),
 	createdAt: v.number(),
 	updatedAt: v.number(),
+	deactivatedAt: v.optional(v.number()),
 });
 
 function toShape(row: {
@@ -31,6 +32,7 @@ function toShape(row: {
 	role: "admin" | "member";
 	createdAt: number;
 	updatedAt: number;
+	deactivatedAt?: number;
 }) {
 	return {
 		clerkOrgSlug: row.clerkOrgSlug,
@@ -38,6 +40,9 @@ function toShape(row: {
 		role: row.role,
 		createdAt: row.createdAt,
 		updatedAt: row.updatedAt,
+		...(row.deactivatedAt !== undefined
+			? { deactivatedAt: row.deactivatedAt }
+			: {}),
 	};
 }
 

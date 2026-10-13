@@ -197,7 +197,7 @@ export const setAgentAddress = mutation({
  *
  * The owner must be an ACTIVE person of the agent's organisation, and that is
  * the package's decision, not this file's: `resolveActingPrincipal` reads the
- * person through the `persons` lookup and refuses an unknown, deactivated or
+ * person through the `orgMembership` lookup and refuses an unknown, deactivated or
  * foreign person. Every later resolution of the agent's credential or token
  * proves the owner again (`resolveCallerFromAgentCredential`).
  *

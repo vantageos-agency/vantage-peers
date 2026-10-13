@@ -3,7 +3,7 @@ import { convexTest } from "../../tests/fixtures/convexTestWithServiceAccount";
 import { describe, expect, test } from "vitest";
 import { api, internal } from "../_generated/api";
 import schema from "../schema";
-import { filterByOrgScope, requireScope, type OrgScope } from "./auth";
+import { requireScope, type OrgScope } from "./auth";
 import { testClerkOrgId } from "../../tests/fixtures/testClerkOrgId";
 import {
 	insertTaskRow,
@@ -378,104 +378,8 @@ describe("withOrgScope — inactive org mapping", () => {
 });
 
 // =============================================================================
-// 6–9. Pure helper tests — filterByOrgScope + requireScope
+// 6–9. Pure helper tests — requireScope (the row filter is pinned in convex/__tests__/scopeHelpersById.test.ts)
 // =============================================================================
-
-describe("filterByOrgScope", () => {
-	const masterScope: OrgScope = {
-		userId: "user-laurent",
-		orgSlug: null,
-		allowedOrchestrators: [],
-		allowedAgentIds: [],
-		fleetWide: true,
-		scopes: ["cross-tenant-read"],
-		isMaster: true,
-		masterSource: "service-account",
-	};
-
-	const irisRhScope: OrgScope = {
-		userId: "user-nadia",
-		orgSlug: "acme-hr",
-		orgClerkId: testClerkOrgId("acme-hr"),
-		allowedOrchestrators: ["victor"],
-		allowedAgentIds: [],
-		fleetWide: false,
-		scopes: ["view-own-tasks", "view-own-missions"],
-		isMaster: false,
-	};
-
-	// A row is its org's by the permanent org ID (M4: no label fallback), so each
-	// fixture carries the org's ID next to its slug.
-	const ACME_ID = testClerkOrgId("acme-hr");
-
-	// Every record states its TENANT. `filterByOrgScope` now applies the tenant
-	// gate BEFORE the roster, so a fixture with no `orgId` is invisible to any
-	// org-scoped caller — see the dedicated tenant-gate tests at the end of this
-	// describe, which pin exactly that.
-	const records = [
-		{ _id: "t1" as const, orgId: "acme-hr", clerkOrgId: ACME_ID, assignedTo: "victor", title: "A" },
-		{ _id: "t2" as const, orgId: "acme-hr", clerkOrgId: ACME_ID, assignedTo: "kappa", title: "B" },
-		{ _id: "t3" as const, orgId: "acme-hr", clerkOrgId: ACME_ID, assignedTo: "sigma", title: "C" },
-	];
-
-	// Test 6
-	test("master scope → returns all records unchanged", () => {
-		const result = filterByOrgScope(records, masterScope);
-		expect(result).toHaveLength(3);
-		expect(result).toEqual(records);
-	});
-
-	// Test 7
-	test("acme-hr scope (allowedOrchestrators=['victor']) → only victor's records", () => {
-		const result = filterByOrgScope(records, irisRhScope);
-		expect(result).toHaveLength(1);
-		expect(result[0].assignedTo).toBe("victor");
-	});
-
-	test("pilot field takes precedence when assignedTo is absent", () => {
-		const missionRecords = [
-			{ _id: "m1", orgId: "acme-hr", clerkOrgId: ACME_ID, pilot: "victor", name: "Mission V" },
-			{ _id: "m2", orgId: "acme-hr", clerkOrgId: ACME_ID, pilot: "kappa", name: "Mission K" },
-		];
-		const result = filterByOrgScope(missionRecords, irisRhScope);
-		expect(result).toHaveLength(1);
-		expect(result[0].pilot).toBe("victor");
-	});
-
-	test("record with no pilot and no assignedTo is excluded for non-master scope", () => {
-		const mixed = [
-			{ _id: "x1", orgId: "acme-hr", clerkOrgId: ACME_ID, title: "no owner" }, // no pilot/assignedTo
-			{ _id: "x2", orgId: "acme-hr", clerkOrgId: ACME_ID, assignedTo: "victor", title: "victor item" },
-		];
-		const result = filterByOrgScope(mixed, irisRhScope);
-		expect(result).toHaveLength(1);
-		expect(result[0].assignedTo).toBe("victor");
-	});
-
-	// ── THE TENANT GATE, pinned on its own ────────────────────────────────────
-	// The roster is a STRING MEMBERSHIP and was never a tenant boundary. These
-	// two tests are the reason the gate exists: without it, the records below
-	// are served to the wrong organisation.
-
-	test("TENANT GATE — a record of ANOTHER org is refused even when the roster admits its orchestrator", () => {
-		// "victor" IS in acme-hr's roster. The row belongs to globex-hr.
-		const foreign = [
-			{ _id: "f1", orgId: "globex-hr", clerkOrgId: testClerkOrgId("globex-hr"), assignedTo: "victor", title: "theirs" },
-		];
-		expect(filterByOrgScope(foreign, irisRhScope)).toHaveLength(0);
-	});
-
-	test("TENANT GATE — a record stating NO org is refused, whatever the roster says", () => {
-		// The legacy/unstamped shape. "victor" is on the roster; it does not
-		// matter. Absence of a tenant stamp asserts nothing and grants nothing.
-		const unstamped = [
-			{ _id: "u1", assignedTo: "victor", title: "legacy" },
-		];
-		expect(filterByOrgScope(unstamped, irisRhScope)).toHaveLength(0);
-		// ...and master still reads it, which is what lets the backfill find it.
-		expect(filterByOrgScope(unstamped, masterScope)).toHaveLength(1);
-	});
-});
 
 describe("requireScope", () => {
 	const masterScope: OrgScope = {

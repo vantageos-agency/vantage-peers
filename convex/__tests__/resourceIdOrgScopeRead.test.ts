@@ -157,8 +157,13 @@ async function seedTask(
 	t: ReturnType<typeof createT>,
 	opts: { orgId?: string; assignedTo?: string; title?: string },
 ): Promise<Id<"tasks">> {
+	const assigneeId =
+		opts.orgId === undefined
+			? null
+			: await findAgentId(t, opts.orgId, opts.assignedTo ?? "sigma");
 	return await t.run(async (ctx) =>
 		ctx.db.insert("tasks", {
+			...(assigneeId !== null ? { assignedToId: assigneeId } : {}),
 			title: opts.title ?? "a task",
 			assignedTo: opts.assignedTo ?? "sigma",
 			createdBy: opts.assignedTo ?? "sigma",

@@ -68,13 +68,14 @@ async function seedMember(
 	deactivated = false,
 ): Promise<void> {
 	await t.run(async (ctx) => {
-		await ctx.db.insert("persons", {
-			orgSlug: org,
+		await ctx.db.insert("orgMembership", {
+			clerkOrgSlug: org,
 			clerkOrgId: testClerkOrgId(org),
 			clerkUserId: personId,
-			isActive: !deactivated,
+			role: "member",
 			createdAt: 1,
 			updatedAt: 1,
+			...(deactivated ? { deactivatedAt: 99 } : {}),
 		});
 	});
 }
@@ -368,41 +369,6 @@ describe("agent owner: the operator functions that bind and unbind an owner", ()
 			await ctx.db.delete(agentId);
 		});
 		await expect(bind(t, agentId)).rejects.toThrow(/AGENT_NOT_FOUND/);
-	});
-
-	test("setPerson: records a person of an active org, deactivates and reactivates it", async () => {
-		const t = createT();
-		await seedOrg(t, "org-a");
-		const set = (active: boolean) =>
-			t.mutation(internal.persons.setPerson, {
-				clerkOrgId: testClerkOrgId("org-a"),
-				clerkUserId: "person-1",
-				active,
-			});
-		expect(await set(true)).toEqual({ recorded: true, active: true });
-		expect(await set(false)).toEqual({ recorded: false, active: false });
-		const stored = await t.run(async (ctx) =>
-			ctx.db
-				.query("persons")
-				.withIndex("by_org_clerk_id_user", (q) =>
-					q.eq("clerkOrgId", testClerkOrgId("org-a")).eq("clerkUserId", "person-1"),
-				)
-				.unique(),
-		);
-		expect(stored?.isActive).toBe(false);
-		expect(stored?.orgSlug).toBe("org-a");
-		expect(await set(true)).toEqual({ recorded: false, active: true });
-	});
-
-	test("setPerson: an organisation no active mapping holds is refused", async () => {
-		const t = createT();
-		await expect(
-			t.mutation(internal.persons.setPerson, {
-				clerkOrgId: "org_Nobody",
-				clerkUserId: "person-1",
-				active: true,
-			}),
-		).rejects.toThrow(/ORG_NOT_FOUND/);
 	});
 });
 
