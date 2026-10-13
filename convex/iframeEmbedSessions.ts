@@ -12,6 +12,18 @@ import {
 import { orgRefOfScope } from "./lib/authOrgMapping";
 import { hasFleetStanding } from "./lib/fleetStanding";
 import { clerkOrgIdForSlug } from "./lib/orgClerkId";
+import {
+	actingClaimOf,
+	resolveVerifiedOrgScope,
+	verifiedOrgValidator,
+} from "./lib/verifiedOrg";
+
+// The organisation the MCP transport VERIFIED for a bearer that reaches Convex as
+// the fleet service account (convex/lib/verifiedOrg.ts). The service account that
+// presents none is refused (R-54); the operator organisation's claim keeps the
+// fleet's reach; a client organisation's claim runs the door as that
+// organisation's member.
+const claimArg = { verifiedOrg: v.optional(verifiedOrgValidator) };
 
 // ─────────────────────────────────────────────────────────────────────────────
 // iframeEmbedSessions — session registry for VP Gen UI iframe embeds.
@@ -69,8 +81,9 @@ async function callerMayUseSession(
 	session: Doc<"iframeEmbedSessions">,
 	door: string,
 	operatorHumanMayRead: boolean,
+	actingAsMember: boolean,
 ): Promise<boolean> {
-	if (await hasFleetStanding(ctx, door, { operatorHumanMayRead })) {
+	if (!actingAsMember && (await hasFleetStanding(ctx, door, { operatorHumanMayRead }))) {
 		return true;
 	}
 	return sameOrg(tenantRefOfSession(session), orgRefOfScope(scope));
@@ -78,7 +91,6 @@ async function callerMayUseSession(
 
 // ── createSession ─────────────────────────────────────────────────────────────
 
-// fleet-wide: the fleet (the service account) opens a session under any tenant or none, by purpose; an organisation member is forced to its own organisation and subject
 export const createSession = mutation({
 	args: {
 		sessionId: v.string(),
@@ -86,15 +98,18 @@ export const createSession = mutation({
 		origin: v.string(),
 		userId: v.optional(v.string()),
 		expiresAt: v.number(),
+		...claimArg,
 	},
 	returns: v.id("iframeEmbedSessions"),
 	handler: async (ctx, args) => {
 		// write-contract: no caller exists outside convex-test — measured 2026-10-01 at origin/main 2498c00 with `grep -rnE "iframeEmbedSessions|createSession" /root/coding/vantage-peers-dashboard/{app,components,hooks,lib,contexts,providers} mcp-server/src --include=*.ts --include=*.tsx` (0 hits in the dashboard and mcp-server/src). A pre-organisation client shell cannot reach this write; the RBAC_DENIED throw below is the R-16 coded refusal of an unauthorised write, never an uncaught pre-org render crash.
 		const door = "iframeEmbedSessions:createSession";
-		const scope = await withOrgScope(ctx);
-		requireResolvedCaller(scope, door, { alsoRefusePreOrg: true });
-		requireStanding(scope, door, ["fleet", "member"]);
-		const fleet = await hasFleetStanding(ctx, door);
+		const transportScope = await withOrgScope(ctx);
+		requireResolvedCaller(transportScope, door, { alsoRefusePreOrg: true });
+		requireStanding(transportScope, door, ["fleet", "member"]);
+		const claim = await actingClaimOf(ctx, transportScope, args.verifiedOrg, door);
+		const scope = await resolveVerifiedOrgScope(ctx, transportScope, claim, door);
+		const fleet = claim === undefined && (await hasFleetStanding(ctx, door));
 
 		// A session id is an opaque token indexing exactly one row; it is never
 		// re-used. A second insert of the same id (another tenant's, or the same
@@ -170,10 +185,10 @@ export const createSession = mutation({
 
 // ── getSession ────────────────────────────────────────────────────────────────
 
-// fleet-wide: the fleet (the service account, or the operator human for reads) reads any session by purpose; an organisation member reads only a session stamped with its own organisation ID
 export const getSession = query({
 	args: {
 		sessionId: v.string(),
+		...claimArg,
 	},
 	returns: v.union(
 		v.object({
@@ -192,6 +207,11 @@ export const getSession = query({
 		v.null(),
 	),
 	handler: async (ctx, args) => {
+		const door = "iframeEmbedSessions:getSession";
+		// The caller is resolved BEFORE the row is read, so a service-account call
+		// that carries no verified organisation is refused (R-54) whatever the id.
+		const transportScope = await withOrgScope(ctx, { refuseWithoutThrow: true });
+		const claim = await actingClaimOf(ctx, transportScope, args.verifiedOrg, door);
 		const session = await ctx.db
 			.query("iframeEmbedSessions")
 			.withIndex("by_session_id", (q) => q.eq("sessionId", args.sessionId))
@@ -215,9 +235,8 @@ export const getSession = query({
 		// signed-in caller with no organisation yet receives the same typed null as
 		// a denied one rather than a throw that crashes the subscriber's render
 		// (R-50/R-51). The two WRITES keep throwing.
-		const door = "iframeEmbedSessions:getSession";
-		const scope = await withOrgScope(ctx, { refuseWithoutThrow: true });
-		if (!(await callerMayUseSession(ctx, scope, session, door, true))) {
+		const scope = await resolveVerifiedOrgScope(ctx, transportScope, claim, door);
+		if (!(await callerMayUseSession(ctx, scope, session, door, true, claim !== undefined))) {
 			return null;
 		}
 
@@ -229,18 +248,20 @@ export const getSession = query({
 // Update lastSeenAt to the current time. Called on each embed activity event
 // to extend the effective presence window.
 
-// fleet-wide: the fleet (the service account) touches any session by purpose; an organisation member only a session stamped with its own organisation ID
 export const touchSession = mutation({
 	args: {
 		sessionId: v.string(),
+		...claimArg,
 	},
 	returns: v.boolean(),
 	handler: async (ctx, args) => {
 		// write-contract: no caller exists outside convex-test — measured 2026-10-01 at origin/main 2498c00 with `grep -rnE "iframeEmbedSessions|touchSession" /root/coding/vantage-peers-dashboard/{app,components,hooks,lib,contexts,providers} mcp-server/src --include=*.ts --include=*.tsx` (0 hits in the dashboard and mcp-server/src). A pre-organisation client shell cannot reach this write; the RBAC_DENIED throw below is the R-16 coded refusal of an unauthorised write, never an uncaught pre-org render crash.
 		const door = "iframeEmbedSessions:touchSession";
-		const scope = await withOrgScope(ctx);
-		requireResolvedCaller(scope, door, { alsoRefusePreOrg: true });
-		requireStanding(scope, door, ["fleet", "member"]);
+		const transportScope = await withOrgScope(ctx);
+		requireResolvedCaller(transportScope, door, { alsoRefusePreOrg: true });
+		requireStanding(transportScope, door, ["fleet", "member"]);
+		const claim = await actingClaimOf(ctx, transportScope, args.verifiedOrg, door);
+		const scope = await resolveVerifiedOrgScope(ctx, transportScope, claim, door);
 
 		const session = await ctx.db
 			.query("iframeEmbedSessions")
@@ -249,7 +270,7 @@ export const touchSession = mutation({
 
 		if (session === null || session.revoked) return false;
 
-		if (!(await callerMayUseSession(ctx, scope, session, door, false))) {
+		if (!(await callerMayUseSession(ctx, scope, session, door, false, claim !== undefined))) {
 			throw new ConvexError(
 				`RBAC_DENIED: caller may not touch iframe embed session ${args.sessionId} — ${JSON.stringify({ orgSlug: scope.orgSlug, door, reason: "session-not-in-caller-org" })}`,
 			);
@@ -264,18 +285,20 @@ export const touchSession = mutation({
 // Mark a session as revoked. Revoked sessions are treated as non-existent
 // by getSession. Used for logout / security invalidation flows.
 
-// fleet-wide: the fleet (the service account) revokes any session by purpose; an organisation member only a session stamped with its own organisation ID
 export const revokeSession = mutation({
 	args: {
 		sessionId: v.string(),
+		...claimArg,
 	},
 	returns: v.boolean(),
 	handler: async (ctx, args) => {
 		// write-contract: no caller exists outside convex-test — measured 2026-10-01 at origin/main 2498c00 with `grep -rnE "iframeEmbedSessions|revokeSession" /root/coding/vantage-peers-dashboard/{app,components,hooks,lib,contexts,providers} mcp-server/src --include=*.ts --include=*.tsx` (0 hits in the dashboard and mcp-server/src). A pre-organisation client shell cannot reach this write; the RBAC_DENIED throw below is the R-16 coded refusal of an unauthorised write, never an uncaught pre-org render crash.
 		const door = "iframeEmbedSessions:revokeSession";
-		const scope = await withOrgScope(ctx);
-		requireResolvedCaller(scope, door, { alsoRefusePreOrg: true });
-		requireStanding(scope, door, ["fleet", "member"]);
+		const transportScope = await withOrgScope(ctx);
+		requireResolvedCaller(transportScope, door, { alsoRefusePreOrg: true });
+		requireStanding(transportScope, door, ["fleet", "member"]);
+		const claim = await actingClaimOf(ctx, transportScope, args.verifiedOrg, door);
+		const scope = await resolveVerifiedOrgScope(ctx, transportScope, claim, door);
 
 		const session = await ctx.db
 			.query("iframeEmbedSessions")
@@ -284,7 +307,7 @@ export const revokeSession = mutation({
 
 		if (session === null) return false;
 
-		if (!(await callerMayUseSession(ctx, scope, session, door, false))) {
+		if (!(await callerMayUseSession(ctx, scope, session, door, false, claim !== undefined))) {
 			throw new ConvexError(
 				`RBAC_DENIED: caller may not revoke iframe embed session ${args.sessionId} — ${JSON.stringify({ orgSlug: scope.orgSlug, door, reason: "session-not-in-caller-org" })}`,
 			);

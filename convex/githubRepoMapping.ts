@@ -15,6 +15,7 @@ import {
 import { ownerOfRepo, repoOwnerBoundToOrg } from "./githubOwnerBinding";
 import { orgRefOfRow, orgRefOfScope } from "./lib/authOrgMapping";
 import {
+	actingClaimOf,
 	resolveVerifiedOrgScope,
 	verifiedOrgValidator,
 } from "./lib/verifiedOrg";
@@ -113,7 +114,6 @@ async function lookupByRepo(
 // So `alsoRefusePreOrg` is safe: no mounted render exists for the throw to crash.
 // Server-side callers (convex/http.ts webhook, convex/issues.ts) run with NO
 // identity and use `getByRepoInternal` below.
-// fleet-wide: a claimless service-account call is the fleet master reading the whole repo-mapping corpus, which is this door's purpose; a non-master bearer arrives with `verifiedOrg` (the MCP forwards it, and refuses a bearer whose organisation it cannot resolve before Convex) and is confined to that organisation's rows.
 export const getByRepo = query({
 	args: {
 		repo: v.string(),
@@ -127,12 +127,8 @@ export const getByRepo = query({
 		const door = "githubRepoMapping:getByRepo";
 		const transportScope = await withOrgScope(ctx, { refuseWithoutThrow: true });
 		requireResolvedCaller(transportScope, door, { alsoRefusePreOrg: true });
-		const scope = await resolveVerifiedOrgScope(
-			ctx,
-			transportScope,
-			args.verifiedOrg,
-			door,
-		);
+		const claim = await actingClaimOf(ctx, transportScope, args.verifiedOrg, door);
+		const scope = await resolveVerifiedOrgScope(ctx, transportScope, claim, door);
 		const row = await lookupByRepo(ctx, args.repo);
 		if (row === null) return null;
 		requireRowOwnedBy(scope, row, door);
@@ -214,7 +210,6 @@ function decodeRepoCursor(cursor: string | undefined): RepoCursorPayload | undef
 }
 
 // returns-projection: fields="lite" returns a routing-view summary (repoMappingLiteObject), full mapping fetched via getByRepo
-// fleet-wide: a claimless service-account call is the fleet master reading the whole repo-mapping corpus, which is this door's purpose; a non-master bearer arrives with `verifiedOrg` (the MCP forwards it, and refuses a bearer whose organisation it cannot resolve before Convex) and is confined to that organisation's rows.
 export const list = query({
 	args: {
 		fields: v.optional(v.union(v.literal("lite"), v.literal("full"))),
@@ -269,10 +264,16 @@ export const list = query({
 		requireResolvedCaller(transportScope, "githubRepoMapping:list", {
 			alsoRefusePreOrg: true,
 		});
-		const scope = await resolveVerifiedOrgScope(
+		const claim = await actingClaimOf(
 			ctx,
 			transportScope,
 			args.verifiedOrg,
+			"githubRepoMapping:list",
+		);
+		const scope = await resolveVerifiedOrgScope(
+			ctx,
+			transportScope,
+			claim,
 			"githubRepoMapping:list",
 		);
 		// The fleet reads the whole corpus (the package's standing; the operator
@@ -347,7 +348,6 @@ export const list = query({
 	},
 });
 
-// fleet-wide: a claimless service-account call is the fleet master maintaining the FLEET's repo mappings, which is this door's purpose; a non-master bearer arrives with `verifiedOrg` (the MCP forwards it, and refuses a bearer whose organisation it cannot resolve before Convex) and writes only its own organisation's rows.
 export const add = mutation({
 	args: {
 		repo: v.string(),
@@ -366,12 +366,8 @@ export const add = mutation({
 		// write-contract: MCP-transport-only — issued via mcp-server client.mutation("githubRepoMapping:add", …) at mcp-server/src/tools.ts:7892 (imperative), 0 hits in vantage-peers-dashboard {app,components,hooks,lib,contexts,providers} (measured 2026-10-01 at origin/main e2dc58f and 0466fac); never a subscribing pre-org client shell. The no-org throw is a refusal at an imperative MCP call, never at a render.
 		const door = "githubRepoMapping:add";
 		const transportScope = await withOrgScope(ctx);
-		const scope = await resolveVerifiedOrgScope(
-			ctx,
-			transportScope,
-			args.verifiedOrg,
-			door,
-		);
+		const claim = await actingClaimOf(ctx, transportScope, args.verifiedOrg, door);
+		const scope = await resolveVerifiedOrgScope(ctx, transportScope, claim, door);
 		const tenant = resolveWriteTenant(scope, door);
 		// A member routes only to orchestrators of its OWN roster.
 		requireOrchestratorOnRoster(scope, args.orchestrator, door, "assignee");
@@ -433,7 +429,6 @@ export const add = mutation({
 	},
 });
 
-// fleet-wide: a claimless service-account call is the fleet master maintaining the FLEET's repo mappings, which is this door's purpose; a non-master bearer arrives with `verifiedOrg` (the MCP forwards it, and refuses a bearer whose organisation it cannot resolve before Convex) and writes only its own organisation's rows.
 export const remove = mutation({
 	args: {
 		repo: v.string(),
@@ -445,12 +440,8 @@ export const remove = mutation({
 		// write-contract: MCP-transport-only — issued via mcp-server client.mutation("githubRepoMapping:remove", …) at mcp-server/src/tools.ts:8085 (imperative), 0 hits in vantage-peers-dashboard {app,components,hooks,lib,contexts,providers} (measured 2026-10-01 at origin/main e2dc58f and 0466fac); never a subscribing pre-org client shell. The no-org throw is a refusal at an imperative MCP call, never at a render.
 		const door = "githubRepoMapping:remove";
 		const transportScope = await withOrgScope(ctx);
-		const scope = await resolveVerifiedOrgScope(
-			ctx,
-			transportScope,
-			args.verifiedOrg,
-			door,
-		);
+		const claim = await actingClaimOf(ctx, transportScope, args.verifiedOrg, door);
+		const scope = await resolveVerifiedOrgScope(ctx, transportScope, claim, door);
 		resolveWriteTenant(scope, door);
 		const existing = await ctx.db
 			.query("githubRepoMapping")

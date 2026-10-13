@@ -16,11 +16,21 @@ import { creatorValidator } from "./schema";
 import { requireResolvedCaller, withOrgScope } from "./lib/auth";
 import { orgRefOfRow, orgRefOfScope } from "./lib/authOrgMapping";
 import { taskActorIdFields } from "./lib/actorIds";
-import { hasFleetStanding, requireFleetDoor } from "./lib/fleetStanding";
+import {
+	hasFleetStanding,
+	requireFleetDoor,
+	scopeActingClaim,
+} from "./lib/fleetStanding";
 import { memberActorOf } from "./lib/humanActor";
 import { clerkOrgIdForSlug } from "./lib/orgClerkId";
 import { requireLabelOnScopeRoster } from "./lib/rosterLabels";
 import { requireMemberWriterRole } from "./memberWriterRoles";
+import {
+	actingClaimOf,
+	resolveVerifiedOrgScope,
+	verifiedOrgValidator,
+} from "./lib/verifiedOrg";
+import { claimedOrgArgs } from "./contentClaims";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Fail-closed multi-tenant fix (defect class: authority attached to an
@@ -127,12 +137,20 @@ async function lookupTemplateByName(
 // So `alsoRefusePreOrg` is safe: no mounted render exists for the throw to crash.
 // The webhook in convex/http.ts runs with NO identity and uses
 // `getByNameInternal` below.
-// fleet-wide: the template catalog is one shared set with no organisation column and only the fleet (the service account or the operator human) may read it; reading any template of the catalog is this door's purpose
 export const getByName = query({
-	args: { name: v.string() },
+	args: { name: v.string(), ...claimedOrgArgs },
 	returns: v.union(templateDocValidator, v.null()),
 	handler: async (ctx, args) => {
-		const scope = await withOrgScope(ctx, { refuseWithoutThrow: true });
+		const transportScope = await withOrgScope(ctx, { refuseWithoutThrow: true });
+		// R-54: the service account that presents no verified organisation is
+		// refused; a client organisation's claim runs the read as that
+		// organisation's member, which this master-only read refuses.
+		const scope = await scopeActingClaim(
+			ctx,
+			transportScope,
+			args.verifiedOrg,
+			"missionTemplates:getByName",
+		);
 		requireResolvedCaller(scope, "missionTemplates:getByName", {
 			alsoRefusePreOrg: true,
 			masterOnly: true,
@@ -167,11 +185,10 @@ export const getByNameInternal = internalQuery({
 // invisible, exactly like a superseded memory.
 // ─────────────────────────────────────────────────────────────────────────────
 
-// fleet-wide: the template catalog is one shared set with no organisation column and only the fleet (the service account or the operator human) may list it; listing every template name is this door's purpose
 export const listNames = query({
-	args: {},
+	args: { ...claimedOrgArgs },
 	returns: v.array(v.string()),
-	handler: async (ctx) => {
+	handler: async (ctx, args) => {
 		// Fail-closed READ counterpart of this file's own master-only WRITE gate
 		// (`upsert`/`softDelete` below: "the mission-template catalog is shared
 		// fleet-wide, never per-org"). Measured against LIVE production at commit
@@ -205,7 +222,8 @@ export const listNames = query({
 			ctx,
 			scope,
 			"missionTemplates:listNames",
-			{ alsoRefusePreOrg: true, operatorHumanMayRead: true },
+			{
+			claim: { verifiedOrg: args.verifiedOrg }, alsoRefusePreOrg: true, operatorHumanMayRead: true },
 		);
 		if (!fleet) return [];
 
@@ -222,7 +240,7 @@ export const listNames = query({
 // upsert — create or update a template by name
 // ─────────────────────────────────────────────────────────────────────────────
 
-// fleet-wide: writing the shared template catalog changes what every organisation later instantiates, so the fleet's service account alone may do it, by purpose
+// fleet-wide: service-account-only by purpose (requireResolvedCaller masterOnly + mcpBoundOnly); writing the shared template catalog changes what every organisation later instantiates
 export const upsert = mutation({
 	args: {
 		name: v.string(),
@@ -278,7 +296,7 @@ export const upsert = mutation({
 // carry no RAG entries, so only the flag-patch half of that motif applies.
 // ─────────────────────────────────────────────────────────────────────────────
 
-// fleet-wide: soft-deleting a template of the shared catalog changes what every organisation can instantiate, so the fleet's service account alone may do it, by purpose
+// fleet-wide: service-account-only by purpose (requireResolvedCaller masterOnly + mcpBoundOnly); soft-deleting a template of the shared catalog changes what every organisation can instantiate
 export const softDelete = mutation({
 	args: {
 		templateId: v.optional(v.id("missionTemplates")),
@@ -426,7 +444,6 @@ export const seed = internalMutation({
 // step-indexes to actual task IDs and patches each dependent task.
 // ─────────────────────────────────────────────────────────────────────────────
 
-// fleet-wide: the fleet (the service account) fans a template out into any organisation's mission by purpose; an organisation member only into a mission stamped with its own organisation ID
 export const instantiateTemplateIntoMission = mutation({
 	args: {
 		templateName: v.string(),
@@ -434,6 +451,8 @@ export const instantiateTemplateIntoMission = mutation({
 		context: v.optional(v.record(v.string(), v.string())),
 		titlePrefix: v.optional(v.string()),
 		callerOrchestrator: v.optional(v.string()),
+		// The organisation the MCP transport verified for the bearer (R-54).
+		verifiedOrg: v.optional(verifiedOrgValidator),
 	},
 	returns: v.object({
 		taskIds: v.array(v.id("tasks")),
@@ -448,10 +467,12 @@ export const instantiateTemplateIntoMission = mutation({
 		// not found" — a get-then-scope order lets missionId existence act
 		// as an unauthenticated existence oracle.
 		const door = "missionTemplates:instantiateTemplateIntoMission";
-		const scope = await withOrgScope(ctx);
-		requireResolvedCaller(scope, door, { alsoRefusePreOrg: true });
-		requireStanding(scope, door, ["fleet", "member"]);
-		const fleet = await hasFleetStanding(ctx, door);
+		const transportScope = await withOrgScope(ctx);
+		requireResolvedCaller(transportScope, door, { alsoRefusePreOrg: true });
+		requireStanding(transportScope, door, ["fleet", "member"]);
+		const claim = await actingClaimOf(ctx, transportScope, args.verifiedOrg, door);
+		const scope = await resolveVerifiedOrgScope(ctx, transportScope, claim, door);
+		const fleet = claim === undefined && (await hasFleetStanding(ctx, door));
 
 		// 1. Fetch template
 		const template = await lookupTemplateByName(ctx, args.templateName);

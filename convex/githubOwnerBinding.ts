@@ -9,7 +9,10 @@ import {
 	query,
 } from "./_generated/server";
 import { requireResolvedCaller, withOrgScope } from "./lib/auth";
+import { claimedOrgArgs } from "./contentClaims";
+import { scopeActingClaim } from "./lib/fleetStanding";
 import {
+	actingClaimOf,
 	resolveVerifiedOrgScope,
 	verifiedOrgValidator,
 } from "./lib/verifiedOrg";
@@ -147,7 +150,6 @@ export function pageSize(limit: number | undefined): number {
 }
 
 // Own org's bindings (a member), or all (master), one page at a time.
-// fleet-wide: a claimless service-account call is the fleet master auditing every organisation's owner bindings, which is this door's purpose; a non-master bearer arrives with `verifiedOrg` (the MCP forwards it, and refuses a bearer whose organisation it cannot resolve before Convex) and is confined to that organisation's `by_org` index range.
 export const listBindings = query({
 	args: {
 		limit: v.optional(v.number()),
@@ -167,12 +169,8 @@ export const listBindings = query({
 		// in vantage-peers-dashboard -> 0 hits (new door). So the pre-org caller
 		// may be refused by raising.
 		requireResolvedCaller(transportScope, door, { alsoRefusePreOrg: true });
-		const scope = await resolveVerifiedOrgScope(
-			ctx,
-			transportScope,
-			args.verifiedOrg,
-			door,
-		);
+		const claim = await actingClaimOf(ctx, transportScope, args.verifiedOrg, door);
+		const scope = await resolveVerifiedOrgScope(ctx, transportScope, claim, door);
 		const opts = { numItems: pageSize(args.limit), cursor: args.cursor ?? null };
 		const page = hasFleetRead(scope)
 			? await ctx.db.query("githubOwnerBindings").paginate(opts)
@@ -224,9 +222,12 @@ export async function collectUnprovenMappings(
 
 // Existing mappings that carry an org but NO proof: reported, never silently
 // kept. Master only (the repo-mapping corpus is fleet configuration).
-// fleet-wide: the repo-mapping corpus is the fleet's own configuration, so auditing every organisation's unproven mappings is this door's purpose; only the fleet standing (the service account, or the operator human on a READ) is served.
 export const listUnprovenMappings = query({
-	args: { limit: v.optional(v.number()), cursor: v.optional(v.string()) },
+	args: {
+		limit: v.optional(v.number()),
+		cursor: v.optional(v.string()),
+		...claimedOrgArgs,
+	},
 	returns: v.object({
 		items: v.array(
 			v.object({
@@ -239,7 +240,16 @@ export const listUnprovenMappings = query({
 		nextCursor: v.union(v.string(), v.null()),
 	}),
 	handler: async (ctx, args) => {
-		const scope = await withOrgScope(ctx, { refuseWithoutThrow: true });
+		const transportScope = await withOrgScope(ctx, { refuseWithoutThrow: true });
+		// R-54: the service account that presents no verified organisation is
+		// refused; a client organisation's claim runs the audit as that
+		// organisation's member, which this master-only audit refuses.
+		const scope = await scopeActingClaim(
+			ctx,
+			transportScope,
+			args.verifiedOrg,
+			"githubOwnerBinding:listUnprovenMappings",
+		);
 		// isolation-contract: no reactive subscriber (new door, 0 dashboard hits).
 		requireResolvedCaller(scope, "githubOwnerBinding:listUnprovenMappings", {
 			alsoRefusePreOrg: true,

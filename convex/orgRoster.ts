@@ -9,6 +9,11 @@ import {
 } from "./lib/auth";
 import { resolveProvisioningMapping } from "./lib/provisioningMapping";
 import {
+	actingClaimOf,
+	resolveVerifiedOrgScope,
+	verifiedOrgValidator,
+} from "./lib/verifiedOrg";
+import {
 	agentListedAsCoordinator,
 	agentListedOnRoster,
 	type RosterVerdict,
@@ -31,15 +36,21 @@ import {
 // resolve to a wildcard roster here (Day 108 fail-closed multi-tenant
 // doctrine, see convex/lib/auth.ts withOrgScope doc comment).
 // ─────────────────────────────────────────────────────────────────────────────
-// fleet-wide: the fleet's service account is answered the fleet-wide roster ["*"] by contract with the dashboard gate (lib/auth/dashboardGate.ts), so a whole-fleet reach is this door's purpose for that caller; a member or the operator's org admin is answered its own organisation's roster
 export const getMyOrgRoster = query({
-	args: {},
+	// The organisation the MCP transport verified for a bearer that reaches Convex
+	// as the fleet service account (R-54). The service account that presents none
+	// is refused; the operator organisation's claim keeps the fleet's answer
+	// (["*"], the dashboard gate's contract); a client organisation's claim is
+	// answered that organisation's own roster.
+	args: { verifiedOrg: v.optional(verifiedOrgValidator) },
 	returns: v.array(v.string()),
-	handler: async (ctx) => {
+	handler: async (ctx, args) => {
 		// R-50: this is a PUBLIC query (reachable from any client, including a
 		// reactively-subscribed one) — refuseWithoutThrow narrows the
 		// signed-in-no-org branch to a typed-empty roster instead of a throw.
-		const scope = await withOrgScope(ctx, { refuseWithoutThrow: true });
+		const transportScope = await withOrgScope(ctx, { refuseWithoutThrow: true });
+		const claim = await actingClaimOf(ctx, transportScope, args.verifiedOrg, "orgRoster:getMyOrgRoster");
+		const scope = await resolveVerifiedOrgScope(ctx, transportScope, claim, "orgRoster:getMyOrgRoster");
 		// The operator's own org admin is a read-only MASTER in a query
 		// (masterSource "operator-admin", `fleetWide`) but an ORDINARY MEMBER in
 		// tasks:create, which holds the real mapping roster. The picker must list

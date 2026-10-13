@@ -5,6 +5,8 @@ import { sameOrg } from "@vantageos/cloud-identity";
 import { lookupOrgMapping, requireResolvedCaller, withOrgScope } from "./lib/auth";
 import { orgRefOfScope } from "./lib/authOrgMapping";
 import { clerkOrgIdForSlug } from "./lib/orgClerkId";
+import { claimedOrgArgs } from "./contentClaims";
+import { actingClaimOf, resolveVerifiedOrgScope } from "./lib/verifiedOrg";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // orgMembership — audit record of who administers which organisation.
@@ -133,9 +135,8 @@ function assertNotTruncated(rowCount: number, describe: string): void {
 }
 
 // allow-local-identity: reads the orgMembership AUDIT record to answer "who administers which organisation"; it is never an authorisation source (schema.ts), and who may ask is decided by the package (hasFleetRead, sameOrg) over the verified scope
-// fleet-wide: the fleet (service account or operator human) may ask about ANY organisation's administrators by purpose, this is the operator audit read; an organisation-scoped caller is confined to its own organisation by org ID
 export const getMembership = query({
-	args: { clerkOrgSlug: v.optional(v.string()) },
+	args: { clerkOrgSlug: v.optional(v.string()), ...claimedOrgArgs },
 	returns: v.array(membershipShape),
 	handler: async (ctx, args) => {
 		// isolation-contract: no reactive subscriber exists — enumerated at /root/coding/vantage-peers-dashboard@71da625 with `grep -rn 'api\.orgMembership\.getMembership' --include=*.tsx --include=*.ts app components hooks lib contexts providers` -> 0 matches. Only the dashboard was enumerated; other callers were not individually traced. R-50 declared divergence (a claim, verified against that enumeration).
@@ -143,7 +144,12 @@ export const getMembership = query({
 		// narrows the signed-in-no-org branch to a typed refused scope
 		// instead of a throw. The pre-existing anonymous-caller throw below
 		// is UNCHANGED (out of this brief's scope, a distinct caller class).
-		const scope = await withOrgScope(ctx, { refuseWithoutThrow: true });
+		const transportScope = await withOrgScope(ctx, { refuseWithoutThrow: true });
+		// R-54: the service account acts only inside a transport-verified
+		// organisation; a client organisation's claim runs the read as that
+		// organisation's member.
+		const claim = await actingClaimOf(ctx, transportScope, args.verifiedOrg, "orgMembership:getMembership");
+		const scope = await resolveVerifiedOrgScope(ctx, transportScope, claim, "orgMembership:getMembership");
 
 		// A caller presenting no credential at all is refused by RAISING, before
 		// any db.query call (`requireResolvedCaller`: the one refusal helper).

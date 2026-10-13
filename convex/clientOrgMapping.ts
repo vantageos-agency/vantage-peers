@@ -2,7 +2,8 @@ import { ConvexError, v } from "convex/values";
 import type { Id } from "./_generated/dataModel";
 import { internalMutation, internalQuery, query } from "./_generated/server";
 import { hasFleetRead } from "@vantageos/cloud-identity";
-import { lookupOrgMapping, withOrgScope } from "./lib/auth";
+import { lookupOrgMapping, requireResolvedCaller, withOrgScope } from "./lib/auth";
+import { findOperatorOrg } from "./lib/operatorOrg";
 import { resolveProvisioningMapping } from "./lib/provisioningMapping";
 import { normalizeOrchestratorId } from "./_helpers/normalizeOrchestratorId";
 import { assertAgentNameFree } from "./lib/agentIdentity";
@@ -52,7 +53,7 @@ import { CLERK_ORG_ID_PATTERN, clerkOrgIdForSlug } from "./lib/orgClerkId";
 // the row exists but the org has been disabled. The caller (auth.ts) MUST
 // treat BOTH as a refusal — a populated default is never synthesized here.
 //
-// fleet-wide: answers for ANY organisation named by the transport-verified slug, and only for the fleet (service account or operator); that whole-fleet reach by slug is the purpose of this accessor
+// fleet-wide: service-account-only by purpose (requireResolvedCaller masterOnly + mcpBoundOnly); it answers for ANY organisation named by the transport-verified slug, which is the purpose of this transport accessor
 // ─────────────────────────────────────────────────────────────────────────────
 export const getByClerkSlug = query({
 	args: { orgSlug: v.string() },
@@ -77,6 +78,13 @@ export const getByClerkSlug = query({
 					"by slug.",
 			);
 		}
+		// Service-account-only by purpose: the transport asks this question about
+		// the organisation it just verified, before any claim exists, so the
+		// operator human has no use for it (R-54 exit (a)).
+		requireResolvedCaller(scope, "clientOrgMapping:getByClerkSlug", {
+			masterOnly: true,
+			mcpBoundOnly: true,
+		});
 		const mapping = await lookupOrgMapping(ctx, args.orgSlug);
 		if (!mapping) return null;
 		// Explicit projection (orgKind is an internal input of withOrgScope, not
@@ -94,6 +102,38 @@ export const getByClerkSlug = query({
 			scopes: mapping.scopes,
 			isActive: mapping.isActive,
 		};
+	},
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// getOperatorOrg — the operator organisation, for the transport that serves the
+// fleet's own stations (the master bearer).
+//
+// R-54: every door a service-account call reaches acts inside a transport-
+// verified organisation, and the fleet's own orchestrators send the OPERATOR
+// organisation as theirs. Which organisation that is, is stored data, never a
+// typed slug: the active mapping row whose kind is "operator", found by
+// @vantageos/cloud-identity (`findOperatorOrg`, through lib/operatorOrg). None,
+// several or an unreadable store answer null, and the transport then forwards no
+// claim, so the doors refuse the call.
+//
+// Service-account-only by purpose (R-54 exit (a)): it answers the transport
+// about the credential it just verified, so no human and no member asks it.
+// ─────────────────────────────────────────────────────────────────────────────
+export const getOperatorOrg = query({
+	args: {},
+	returns: v.union(v.object({ orgSlug: v.string() }), v.null()),
+	handler: async (ctx) => {
+		// isolation-contract: no reactive subscriber exists - a new door whose only
+		// caller is the MCP transport (mcp-server/src/auth.ts, imperative query);
+		// the refusal below RAISES.
+		const scope = await withOrgScope(ctx);
+		requireResolvedCaller(scope, "clientOrgMapping:getOperatorOrg", {
+			masterOnly: true,
+			mcpBoundOnly: true,
+		});
+		const operator = await findOperatorOrg(ctx.db);
+		return operator.kind === "one" ? { orgSlug: operator.slug } : null;
 	},
 });
 

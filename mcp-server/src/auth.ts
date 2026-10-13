@@ -43,6 +43,7 @@ import type { Context, MiddlewareHandler, Next } from "hono";
 import { createRemoteJWKSet, jwtVerify } from "jose";
 import { createServiceAccountConvexClient } from "./authenticatedConvexClient.js";
 import { normalizeOrchestratorId } from "./normalizeOrchestratorId.js";
+import { resolveOperatorOrgSlug } from "./operatorOrg.js";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Context types attached to Hono request
@@ -73,6 +74,16 @@ export type OAuthContext = {
 	 * name must present the per-agent credential header.
 	 */
 	viaMasterBearer?: true;
+	/**
+	 * The OPERATOR organisation's slug, set ONLY for a master standing (the master
+	 * bearer, the stdio trust context) and only when Convex answered it
+	 * (clientOrgMapping:getOperatorOrg, stored data read by
+	 * @vantageos/cloud-identity's findOperatorOrg). It is the organisation the
+	 * fleet's own stations call every claim-bound door for (operatorClaim.ts,
+	 * backend standard R-54). Absent when it could not be resolved: the doors then
+	 * refuse the claimless call.
+	 */
+	operatorOrgSlug?: string;
 	/**
 	 * The raw, already-verified Clerk session JWT presented by the caller —
 	 * set ONLY on the Clerk-team path (2.5, tryVerifyClerkJwt succeeded).
@@ -1452,6 +1463,10 @@ export function bearerAuthMiddleware(): MiddlewareHandler {
 				tenantName: "master",
 				convexUrl: internalUrl,
 			});
+			// The fleet's own stations call every claim-bound door for the OPERATOR
+			// organisation (R-54): read from stored data, never typed here. Not
+			// resolvable: no claim is forwarded and the doors refuse the call.
+			const operatorOrgSlug = await resolveOperatorOrgSlug(internalClient());
 			return await attachContextAndProceed(
 				{
 					clientId: "master",
@@ -1464,6 +1479,7 @@ export function bearerAuthMiddleware(): MiddlewareHandler {
 					expiresAt: Date.now() + 3600 * 1000,
 					isMaster: true,
 					viaMasterBearer: true,
+					...(operatorOrgSlug !== undefined ? { operatorOrgSlug } : {}),
 				},
 				null,
 			);

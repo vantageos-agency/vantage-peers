@@ -6,6 +6,7 @@ import {
 	resolveVerifiedCaller,
 } from "./auth";
 import { resolveServiceAccount } from "./serviceAccount";
+import { actingClaimOf, type VerifiedOrg } from "./verifiedOrg";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // fleetStanding — the ONE place a fleet-only door asks "is this caller the
@@ -92,6 +93,26 @@ export async function scopeWithFleetStanding(
 }
 
 /**
+ * The scope a fleet-only door judges, once the claim the transport carried is
+ * applied (R-54): the service account that presents none is REFUSED
+ * (`verified-claim-required`), the operator organisation's claim keeps the scope
+ * as it is, and a CLIENT organisation's claim demotes the call to that
+ * organisation's ordinary member (never master), which the door's own refusal or
+ * member shape then answers.
+ */
+export async function scopeActingClaim(
+	ctx: Ctx,
+	scope: OrgScope,
+	verifiedOrg: VerifiedOrg | undefined,
+	door: string,
+): Promise<OrgScope> {
+	const acting = await actingClaimOf(ctx, scope, verifiedOrg, door);
+	if (acting === undefined) return scope;
+	const { masterSource: _dropped, ...rest } = scope;
+	return { ...rest, isMaster: false, fleetWide: false };
+}
+
+/**
  * The refusal of a fleet-only door, said by `requireResolvedCaller` (the one
  * refusal helper) over the package's standing. Returns whether the caller has
  * fleet standing, so a list read can serve a refused member the typed envelope
@@ -100,6 +121,12 @@ export async function scopeWithFleetStanding(
  *   - `masterOnly`, not fleet  -> RAISES RBAC_DENIED (`not-fleet-master`)
  *   - `alsoRefusePreOrg`       -> RAISES for a signed-in session with no org
  *   - otherwise a non-fleet caller returns `false` for the door to shape.
+ *
+ * `claim` (R-54): a door that declares `verifiedOrg` passes it here. The service
+ * account that presents none is REFUSED (`verified-claim-required`); the
+ * operator organisation's claim keeps the fleet standing; a CLIENT
+ * organisation's claim demotes the call to that organisation's ordinary member,
+ * which a fleet-only door then refuses or answers with its member shape.
  */
 export async function requireFleetDoor(
 	ctx: Ctx,
@@ -109,11 +136,26 @@ export async function requireFleetDoor(
 		masterOnly?: boolean;
 		alsoRefusePreOrg?: boolean;
 		operatorHumanMayRead?: boolean;
+		claim?: { verifiedOrg: VerifiedOrg | undefined };
 	},
 ): Promise<boolean> {
-	const standing = await scopeWithFleetStanding(ctx, scope, registration, {
+	let standing = await scopeWithFleetStanding(ctx, scope, registration, {
 		operatorHumanMayRead: opts?.operatorHumanMayRead ?? false,
 	});
+	if (opts?.claim !== undefined) {
+		const claimed = await scopeActingClaim(
+			ctx,
+			scope,
+			opts.claim.verifiedOrg,
+			registration,
+		);
+		if (claimed !== scope) {
+			// A client organisation's claim: the call is that organisation's
+			// member, never the fleet, whatever the credential on the wire is.
+			const { masterSource: _dropped, ...rest } = standing;
+			standing = { ...rest, isMaster: false, fleetWide: false };
+		}
+	}
 	requireResolvedCaller(standing, registration, {
 		...(opts?.masterOnly !== undefined ? { masterOnly: opts.masterOnly } : {}),
 		...(opts?.alsoRefusePreOrg !== undefined

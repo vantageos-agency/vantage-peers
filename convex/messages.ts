@@ -78,6 +78,7 @@ import {
 	UNCLAIMED_SERVICE_ACCOUNT_READS_EVERY_TENANT,
 } from "./lib/inboxReader";
 import {
+	actingClaimOf,
 	resolveVerifiedOrgScope,
 	verifiedOrgValidator,
 } from "./lib/verifiedOrg";
@@ -2038,10 +2039,10 @@ const messageRowValidator = v.object({
 // `.take(limit)`. The window therefore holds `limit` rows the caller may see, never
 // a wider window cut down afterwards (the old wide-scan-cap workaround).
 
-// R-54 exit (c). fleet-wide: the fleet master and the operator admin read every
-// tenant's messages by design (list_messages, the dashboard console); a client caller never reaches that
-// reach: a `verifiedOrg` claim or an org session runs the member path, whose
-// index range is keyed on the caller's own tenant.
+// R-54: the service account that presents no verified organisation is refused; the
+// operator organisation's claim keeps the fleet's reach (list_messages, the dashboard console); a client
+// organisation's claim or an org session runs the member path, whose index range
+// is keyed on the caller's own tenant.
 export const listMessages = query({
 	args: {
 		fields: v.optional(v.union(v.literal("lite"), v.literal("full"))), // v2.4.12 accept (no-op for now) — closes ArgumentValidationError from MCP wrappers passing fields
@@ -2078,12 +2079,8 @@ export const listMessages = query({
 		requireResolvedCaller(transportScope, "messages:listMessages", {
 			alsoRefusePreOrg: true,
 		});
-		const scope = await resolveVerifiedOrgScope(
-			ctx,
-			transportScope,
-			args.verifiedOrg,
-			"messages:listMessages",
-		);
+		const claim = await actingClaimOf(ctx, transportScope, args.verifiedOrg, "messages:listMessages");
+		const scope = await resolveVerifiedOrgScope(ctx, transportScope, claim, "messages:listMessages");
 		requireScope(scope, "view-own-tasks");
 
 		const limit = args.limit ?? 100;
@@ -2276,10 +2273,10 @@ export const getUnreadCount = query({
 // listBroadcastStatus — show who read a broadcast message and who didn't
 // ─────────────────────────────────────────────────────────────────────────────
 
-// R-54 exit (c). fleet-wide: the fleet master and the operator admin read every
-// tenant's messages by design (list_broadcast_status for the fleet master); a client caller never reaches that
-// reach: a `verifiedOrg` claim or an org session runs the member path, whose
-// index range is keyed on the caller's own tenant.
+// R-54: the service account that presents no verified organisation is refused; the
+// operator organisation's claim keeps the fleet's reach (list_broadcast_status for the fleet master); a client
+// organisation's claim or an org session runs the member path, whose index range
+// is keyed on the caller's own tenant.
 export const listBroadcastStatus = query({
 	args: {
 		fields: v.optional(v.union(v.literal("lite"), v.literal("full"))), // v2.4.12 accept (no-op for now) — closes ArgumentValidationError from MCP wrappers passing fields
@@ -2335,12 +2332,8 @@ export const listBroadcastStatus = query({
 		requireResolvedCaller(transportScope, "messages:listBroadcastStatus", {
 			alsoRefusePreOrg: true,
 		});
-		const scope = await resolveVerifiedOrgScope(
-			ctx,
-			transportScope,
-			verifiedOrg,
-			"messages:listBroadcastStatus",
-		);
+		const claim = await actingClaimOf(ctx, transportScope, verifiedOrg, "messages:listBroadcastStatus");
+		const scope = await resolveVerifiedOrgScope(ctx, transportScope, claim, "messages:listBroadcastStatus");
 		requireScope(scope, "view-own-tasks");
 
 		const message = await ctx.db.get(messageId);
@@ -2417,14 +2410,16 @@ const listByChannelRow = v.object({
 	createdAt: v.number(),
 });
 
-// R-54 exit (c). fleet-wide: the fleet master and the operator admin read every
-// tenant's messages by design (the fleet master's channel history); a client caller never reaches that
-// reach: a `verifiedOrg` claim or an org session runs the member path, whose
-// index range is keyed on the caller's own tenant.
+// R-54: the service account that presents no verified organisation is refused; the
+// operator organisation's claim keeps the fleet's reach (the fleet master's channel history); a client
+// organisation's claim or an org session runs the member path, whose index range
+// is keyed on the caller's own tenant.
 export const listByChannel = query({
 	args: {
 		channel: v.optional(v.string()),
 		limit: v.optional(v.number()),
+		// Transport-verified org of a service-account bearer (see listMessages).
+		verifiedOrg: v.optional(verifiedOrgValidator),
 	},
 	// A bare array is a served result (rows, or a genuine absence). The
 	// envelope is the refusal, said to a caller whose render is subscribed.
@@ -2432,12 +2427,14 @@ export const listByChannel = query({
 		v.array(listByChannelRow),
 		v.object({ refused: v.literal(true), items: v.array(listByChannelRow) }),
 	),
-	handler: async (ctx, { channel, limit }) => {
+	handler: async (ctx, { channel, limit, verifiedOrg }) => {
 		const take = limit ?? 100;
 		// R-50: reactively-subscribed public query — refuseWithoutThrow narrows
 		// the signed-in-no-org branch to a typed-empty scope (isChannelAllowed
 		// below already renders that scope as "broadcast only", never a throw).
-		const scope = await withOrgScope(ctx, { refuseWithoutThrow: true });
+		const transportScope = await withOrgScope(ctx, { refuseWithoutThrow: true });
+		const claim = await actingClaimOf(ctx, transportScope, verifiedOrg, "messages:listByChannel");
+		const scope = await resolveVerifiedOrgScope(ctx, transportScope, claim, "messages:listByChannel");
 
 		// THE FAIL-OPEN POLE, CLOSED. This registration is the ONE of the fourteen
 		// measured leaks that was NOT unguarded — it resolves a scope on the line
@@ -2583,10 +2580,10 @@ function toHistoryPage(
 	};
 }
 
-// R-54 exit (c). fleet-wide: the fleet master and the operator admin read every
-// tenant's messages by design (the dashboard console's message history); a client caller never reaches that
-// reach: a `verifiedOrg` claim or an org session runs the member path, whose
-// index range is keyed on the caller's own tenant.
+// R-54: the service account that presents no verified organisation is refused; the
+// operator organisation's claim keeps the fleet's reach (the dashboard console's message history); a client
+// organisation's claim or an org session runs the member path, whose index range
+// is keyed on the caller's own tenant.
 export const listByChannelPaginated = query({
 	args: {
 		paginationOpts: paginationOptsValidator,
@@ -2594,6 +2591,8 @@ export const listByChannelPaginated = query({
 		from: v.optional(creatorValidator),
 		since: v.optional(v.number()),
 		until: v.optional(v.number()),
+		// Transport-verified org of a service-account bearer (see listMessages).
+		verifiedOrg: v.optional(verifiedOrgValidator),
 	},
 	returns: v.object({
 		page: v.array(listByChannelRow),
@@ -2602,7 +2601,9 @@ export const listByChannelPaginated = query({
 		refused: v.optional(v.literal(true)),
 	}),
 	handler: async (ctx, args) => {
-		const scope = await withOrgScope(ctx, { refuseWithoutThrow: true });
+		const transportScope = await withOrgScope(ctx, { refuseWithoutThrow: true });
+		const claim = await actingClaimOf(ctx, transportScope, args.verifiedOrg, "messages:listByChannelPaginated");
+		const scope = await resolveVerifiedOrgScope(ctx, transportScope, claim, "messages:listByChannelPaginated");
 		requireResolvedCaller(scope, "messages:listByChannelPaginated");
 		if (!hasFleetRead(scope) && scope.orgSlug === null) {
 			return {
@@ -2721,10 +2722,10 @@ export const listByChannelPaginated = query({
 // rows varies by send variant; raw row is fine for read-by-id.
 // ─────────────────────────────────────────────────────────────────────────────
 
-// R-54 exit (c). fleet-wide: the fleet master and the operator admin read every
-// tenant's messages by design (get_message for the fleet master); a client caller never reaches that
-// reach: a `verifiedOrg` claim or an org session runs the member path, whose
-// index range is keyed on the caller's own tenant.
+// R-54: the service account that presents no verified organisation is refused; the
+// operator organisation's claim keeps the fleet's reach (get_message for the fleet master); a client
+// organisation's claim or an org session runs the member path, whose index range
+// is keyed on the caller's own tenant.
 export const getById = query({
 	// A wrong-table but well-formed 32-char id passes the `v.id("messages")`
 	// validator's format check yet fails table membership, and that rejection
@@ -2754,12 +2755,8 @@ export const getById = query({
 		requireResolvedCaller(transportScope, "messages:getById", {
 			alsoRefusePreOrg: true,
 		});
-		const scope = await resolveVerifiedOrgScope(
-			ctx,
-			transportScope,
-			args.verifiedOrg,
-			"messages:getById",
-		);
+		const claim = await actingClaimOf(ctx, transportScope, args.verifiedOrg, "messages:getById");
+		const scope = await resolveVerifiedOrgScope(ctx, transportScope, claim, "messages:getById");
 
 		const messageId = requireId(
 			ctx,
@@ -2816,10 +2813,10 @@ const messageSearchLiteValidator = v.object({
 	createdAt: v.number(),
 });
 
-// R-54 exit (c). fleet-wide: the fleet master and the operator admin read every
-// tenant's messages by design (search_messages_by_keyword for the fleet master); a client caller never reaches that
-// reach: a `verifiedOrg` claim or an org session runs the member path, whose
-// index range is keyed on the caller's own tenant.
+// R-54: the service account that presents no verified organisation is refused; the
+// operator organisation's claim keeps the fleet's reach (search_messages_by_keyword for the fleet master); a client
+// organisation's claim or an org session runs the member path, whose index range
+// is keyed on the caller's own tenant.
 export const searchMessagesByKeyword = query({
 	args: {
 		query: v.string(),
@@ -2858,12 +2855,8 @@ export const searchMessagesByKeyword = query({
 		requireResolvedCaller(transportScope, "messages:searchMessagesByKeyword", {
 			alsoRefusePreOrg: true,
 		});
-		const scope = await resolveVerifiedOrgScope(
-			ctx,
-			transportScope,
-			args.verifiedOrg,
-			"messages:searchMessagesByKeyword",
-		);
+		const claim = await actingClaimOf(ctx, transportScope, args.verifiedOrg, "messages:searchMessagesByKeyword");
+		const scope = await resolveVerifiedOrgScope(ctx, transportScope, claim, "messages:searchMessagesByKeyword");
 		requireScope(scope, "view-own-tasks");
 
 		const limit = Math.min(Math.max(args.limit ?? 20, 1), 200);

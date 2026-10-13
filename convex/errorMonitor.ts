@@ -15,6 +15,7 @@ import {
 	mutation,
 	query,
 } from "./_generated/server";
+import { claimedOrgArgs } from "./contentClaims";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Auth — fleet-internal surface, no per-org owner field
@@ -578,9 +579,8 @@ export const removeDeployment = mutation({
 // Public queries (MCP tools)
 // ─────────────────────────────────────────────────────────────────────────────
 
-// fleet-wide: errorMonitor tables (deployments, error logs) are the fleet's own monitoring data with no tenant column, so reading the whole table is this door's purpose; only the fleet standing (the service account, or the operator human on a READ) is served.
 export const listDeployments = query({
-	args: {},
+	args: { ...claimedOrgArgs },
 	returns: v.array(
 		v.object({
 			_id: v.id("monitoredDeployments"),
@@ -595,7 +595,7 @@ export const listDeployments = query({
 			createdAt: v.number(),
 		}),
 	),
-	handler: async (ctx) => {
+	handler: async (ctx, args) => {
 		// GATE — fleet master only, resolved BEFORE any row is read. `monitoredDeployments`
 		// carries no orgId/tenant column (fleet-internal), so there is no per-org
 		// slice to scope a member to: serving any member would serve every
@@ -608,6 +608,7 @@ export const listDeployments = query({
 		// See .claude/rules/refusal-is-distinguishable-from-absence.md.
 		const scope = await withOrgScope(ctx, { refuseWithoutThrow: true });
 		await requireFleetDoor(ctx, scope, "errorMonitor:listDeployments", {
+			claim: { verifiedOrg: args.verifiedOrg },
 			alsoRefusePreOrg: true,
 			masterOnly: true,
 			operatorHumanMayRead: true,
@@ -619,9 +620,9 @@ export const listDeployments = query({
 	},
 });
 
-// fleet-wide: errorMonitor tables (deployments, error logs) are the fleet's own monitoring data with no tenant column, so reading the whole table is this door's purpose; only the fleet standing (the service account, or the operator human on a READ) is served.
 export const listErrors = query({
 	args: {
+		...claimedOrgArgs,
 		fields: v.optional(v.union(v.literal("lite"), v.literal("full"))), // v2.4.12 accept (no-op for now) — closes ArgumentValidationError from MCP wrappers passing fields
 		deployment: v.optional(v.string()),
 		limit: v.optional(v.number()),
@@ -707,6 +708,7 @@ export const listErrors = query({
 		// must not be handed a fabricated absence either.
 		const scope = await withOrgScope(ctx, { refuseWithoutThrow: true });
 		const fleet = await requireFleetDoor(ctx, scope, "errorMonitor:listErrors", {
+			claim: { verifiedOrg: args.verifiedOrg },
 			alsoRefusePreOrg: true,
 			operatorHumanMayRead: true,
 		});
@@ -740,9 +742,8 @@ export const listErrors = query({
 	},
 });
 
-// fleet-wide: errorMonitor tables (deployments, error logs) are the fleet's own monitoring data with no tenant column, so reading the whole table is this door's purpose; only the fleet standing (the service account, or the operator human on a READ) is served.
 export const getError = query({
-	args: { errorId: v.string() },
+	args: { errorId: v.string(), ...claimedOrgArgs },
 	returns: v.union(
 		v.object({
 			_id: v.id("errorLogs"),
@@ -786,6 +787,7 @@ export const getError = query({
 		// See .claude/rules/refusal-is-distinguishable-from-absence.md.
 		const scope = await withOrgScope(ctx, { refuseWithoutThrow: true });
 		await requireFleetDoor(ctx, scope, "errorMonitor:getError", {
+			claim: { verifiedOrg: args.verifiedOrg },
 			alsoRefusePreOrg: true,
 			masterOnly: true,
 			operatorHumanMayRead: true,

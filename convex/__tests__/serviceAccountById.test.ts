@@ -94,8 +94,15 @@ const as = (t: T, identity: Record<string, unknown>) =>
 	t.withIdentity(identity as Identity);
 
 // Door 1: master-only read through withOrgScope.
-const readMasterOnly = (c: ReturnType<typeof as>) =>
-	c.query(api.fixPatterns.listByStack, { stack: "convex" });
+// A call the fleet's own station makes names the operator organisation (backend
+// standard R-54: a claimless service-account call is refused at this door, so
+// the poles that expect to be SERVED carry the claim; the refused poles stay
+// claimless, so they still pin the standing and not the claim).
+const readMasterOnly = (c: ReturnType<typeof as>, claimed = false) =>
+	c.query(api.fixPatterns.listByStack, {
+		stack: "convex",
+		...(claimed ? { verifiedOrg: { orgSlug: OPERATOR } } : {}),
+	});
 // Door 2: a registration that calls requireServiceAccount.
 const listClients = (c: ReturnType<typeof as>) =>
 	c.query(api.oauth.listClients, {});
@@ -125,7 +132,7 @@ describe("(a) seeded service agent + column -> service doors admitted", () => {
 	test("master-only read is served", async () => {
 		const t = createT();
 		await seed(t);
-		expect(await readMasterOnly(as(t, { subject: ENV_SUBJECT }))).toEqual([]);
+		expect(await readMasterOnly(as(t, { subject: ENV_SUBJECT }), true)).toEqual([]);
 	});
 
 	test("service-account registration is served", async () => {
@@ -137,7 +144,7 @@ describe("(a) seeded service agent + column -> service doors admitted", () => {
 	test("the subject the ROW carries is admitted although it is not the env var", async () => {
 		const t = createT();
 		await seed(t, { authSubject: ROW_SUBJECT });
-		expect(await readMasterOnly(as(t, { subject: ROW_SUBJECT }))).toEqual([]);
+		expect(await readMasterOnly(as(t, { subject: ROW_SUBJECT }), true)).toEqual([]);
 		expect(await listClients(as(t, { subject: ROW_SUBJECT }))).toEqual([]);
 	});
 
@@ -150,7 +157,7 @@ describe("(a) seeded service agent + column -> service doors admitted", () => {
 			org_id: testClerkOrgId(CLIENT),
 			org_role: "org:admin",
 		});
-		expect(await readMasterOnly(c)).toEqual([]);
+		expect(await readMasterOnly(c, true)).toEqual([]);
 		expect(await listClients(c)).toEqual([]);
 	});
 });
@@ -192,7 +199,7 @@ describe("(c) the subject matches the env var but not the row -> refused", () =>
 		vi.stubEnv("CLERK_SERVICE_ACCOUNT_USER_ID", "");
 		const t = createT();
 		await seed(t);
-		expect(await readMasterOnly(as(t, { subject: ENV_SUBJECT }))).toEqual([]);
+		expect(await readMasterOnly(as(t, { subject: ENV_SUBJECT }), true)).toEqual([]);
 	});
 });
 
@@ -295,7 +302,7 @@ describe("(g) a service account of a CLIENT org is not the fleet -> refused", ()
 	test("the real operator service account is still served beside it", async () => {
 		const t = createT();
 		await seedClientService(t);
-		expect(await readMasterOnly(as(t, { subject: ENV_SUBJECT }))).toEqual([]);
+		expect(await readMasterOnly(as(t, { subject: ENV_SUBJECT }), true)).toEqual([]);
 	});
 });
 

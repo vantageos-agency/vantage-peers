@@ -19,6 +19,7 @@ import { principalLookups } from "./lib/actingPrincipal";
 import { requireResolvedCaller, withOrgScope } from "./lib/auth";
 import { requireFleetDoor, scopeWithFleetStanding } from "./lib/fleetStanding";
 import { fleetOperatorSlug } from "./lib/operatorOrg";
+import { claimedOrgArgs } from "./contentClaims";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Auth — fleet-internal surface, no per-org owner field
@@ -333,9 +334,9 @@ export const close = internalMutation({
 // getByRepoNumber — fetch a single issue by repo+issueNumber
 // ─────────────────────────────────────────────────────────────────────────────
 
-// fleet-wide: issues is the fleet's own GitHub-issue tracking with no tenant column, so reading the whole table is this door's purpose; only the fleet standing (the service account, or the operator human on a READ) is served.
 export const getByRepoNumber = query({
 	args: {
+		...claimedOrgArgs,
 		repo: v.string(),
 		issueNumber: v.number(),
 	},
@@ -352,6 +353,7 @@ export const getByRepoNumber = query({
 		// See .claude/rules/refusal-is-distinguishable-from-absence.md.
 		const scope = await withOrgScope(ctx, { refuseWithoutThrow: true });
 		await requireFleetDoor(ctx, scope, "issues:getByRepoNumber", {
+			claim: { verifiedOrg: args.verifiedOrg },
 			alsoRefusePreOrg: true,
 			masterOnly: true,
 			operatorHumanMayRead: true,
@@ -400,9 +402,9 @@ async function collectNarrowed<T>(
 	return out;
 }
 
-// fleet-wide: issues is the fleet's own GitHub-issue tracking with no tenant column, so reading the whole table is this door's purpose; only the fleet standing (the service account, or the operator human on a READ) is served.
 export const listByProject = query({
 	args: {
+		...claimedOrgArgs,
 	fields: v.optional(v.union(v.literal("lite"), v.literal("full"))), // v2.4.12 accept (no-op for now) — closes ArgumentValidationError from MCP wrappers passing fields
 		project: v.string(),
 		status: v.optional(issueStatusValidator),
@@ -423,6 +425,7 @@ export const listByProject = query({
 		// See .claude/rules/refusal-is-distinguishable-from-absence.md.
 		const scope = await withOrgScope(ctx, { refuseWithoutThrow: true });
 		await requireFleetDoor(ctx, scope, "issues:listByProject", {
+			claim: { verifiedOrg: args.verifiedOrg },
 			alsoRefusePreOrg: true,
 			masterOnly: true,
 			operatorHumanMayRead: true,
@@ -462,9 +465,9 @@ const ALL_ISSUE_STATUSES = [
 	"closed",
 ] as const;
 
-// fleet-wide: issues is the fleet's own GitHub-issue tracking with no tenant column, so reading the whole table is this door's purpose; only the fleet standing (the service account, or the operator human on a READ) is served.
 export const listByOrchestrator = query({
 	args: {
+		...claimedOrgArgs,
 	fields: v.optional(v.union(v.literal("lite"), v.literal("full"))), // v2.4.12 accept (no-op for now) — closes ArgumentValidationError from MCP wrappers passing fields
 		assignedOrchestrator: v.string(),
 		status: v.optional(issueStatusValidator),
@@ -485,6 +488,7 @@ export const listByOrchestrator = query({
 		// See .claude/rules/refusal-is-distinguishable-from-absence.md.
 		const scope = await withOrgScope(ctx, { refuseWithoutThrow: true });
 		await requireFleetDoor(ctx, scope, "issues:listByOrchestrator", {
+			claim: { verifiedOrg: args.verifiedOrg },
 			alsoRefusePreOrg: true,
 			masterOnly: true,
 			operatorHumanMayRead: true,
@@ -522,9 +526,9 @@ export const listByOrchestrator = query({
 // listByStatus — list all issues matching a given status (no orchestrator filter)
 // ─────────────────────────────────────────────────────────────────────────────
 
-// fleet-wide: issues is the fleet's own GitHub-issue tracking with no tenant column, so reading the whole table is this door's purpose; only the fleet standing (the service account, or the operator human on a READ) is served.
 export const listByStatus = query({
 	args: {
+		...claimedOrgArgs,
 	fields: v.optional(v.union(v.literal("lite"), v.literal("full"))), // v2.4.12 accept (no-op for now) — closes ArgumentValidationError from MCP wrappers passing fields
 		status: issueStatusValidator,
 		limit: v.optional(v.number()),
@@ -560,6 +564,7 @@ export const listByStatus = query({
 		// See .claude/rules/refusal-is-distinguishable-from-absence.md.
 		const scope = await withOrgScope(ctx, { refuseWithoutThrow: true });
 		await requireFleetDoor(ctx, scope, "issues:listByStatus", {
+			claim: { verifiedOrg: args.verifiedOrg },
 			alsoRefusePreOrg: true,
 			masterOnly: true,
 			operatorHumanMayRead: true,
@@ -584,9 +589,9 @@ export const listByStatus = query({
 // getStats — count issues per status, optionally filtered by project
 // ─────────────────────────────────────────────────────────────────────────────
 
-// fleet-wide: issues is the fleet's own GitHub-issue tracking with no tenant column, so reading the whole table is this door's purpose; only the fleet standing (the service account, or the operator human on a READ) is served.
 export const getStats = query({
 	args: {
+		...claimedOrgArgs,
 		project: v.optional(v.string()),
 	},
 	returns: v.object({
@@ -635,6 +640,7 @@ export const getStats = query({
 		// `stats` — six zeros, a FABRICATED MEASUREMENT that reads as "no open
 		// issues". They are now RAISED at, with the same RBAC_DENIED code.
 		await requireFleetDoor(ctx, scope, "issues:getStats", {
+			claim: { verifiedOrg: args.verifiedOrg },
 			alsoRefusePreOrg: true,
 			masterOnly: true,
 			operatorHumanMayRead: true,
@@ -872,9 +878,8 @@ export const listExternalOpenForMonitor = internalQuery({
 	handler: async (ctx, args) => await readExternalOpen(ctx, args),
 });
 
-// fleet-wide: issues is the fleet's own GitHub-issue tracking with no tenant column, so reading the whole table is this door's purpose; only the fleet standing (the service account, or the operator human on a READ) is served.
 export const listExternalOpen = query({
-	args: externalOpenArgs,
+	args: { ...externalOpenArgs, ...claimedOrgArgs },
 	// returns-projection: external-PR tracking dashboard summary row — full issue fetched via issues.get when a row is opened
 	returns: externalOpenReturns,
 	handler: async (ctx, args) => {
@@ -907,11 +912,13 @@ export const listExternalOpen = query({
 		// must not be handed a fabricated absence either.
 		const scope = await withOrgScope(ctx, { refuseWithoutThrow: true });
 		const fleet = await requireFleetDoor(ctx, scope, "issues:listExternalOpen", {
+			claim: { verifiedOrg: args.verifiedOrg },
 			alsoRefusePreOrg: true,
 			operatorHumanMayRead: true,
 		});
 		if (!fleet) return { issues: [], nextPageToken: null };
 
-		return await readExternalOpen(ctx, args);
+		const { verifiedOrg: _verifiedOrg, ...readArgs } = args;
+		return await readExternalOpen(ctx, readArgs);
 	},
 });

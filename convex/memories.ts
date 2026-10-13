@@ -463,23 +463,18 @@ export const softDeleteMemory = mutation({
     // refused identically for a live and for a deleted id (no existence oracle).
     // withOrgScope is called WITHOUT allowNoIdentityMaster: the MCP server
     // always presents a real Clerk identity on this path.
-    // fleet-wide: the master-only MCP tool soft_delete_memory retires a memory of ANY
-    // organisation; its one service-account caller is the master bearer, which has no
-    // organisation of its own, so a claimless service-account call here IS the
-    // fleet's own reach, declared rather than inferred from absence (backend standard
-    // R-54 exit (c)). A claim, when the transport carries one, still CONFINES the call
-    // to that organisation (requireClaimedScope), and a member never reaches beyond
-    // its own org's rows.
+    // The service account acts only inside a transport-verified organisation
+    // (backend standard R-54): a claimless call is refused, the operator
+    // organisation's claim keeps the fleet's reach over any memory, and a client
+    // organisation's claim confines the call to that organisation's rows
+    // (requireClaimedScope); a member never reaches beyond its own org's rows.
     const transport = await withOrgScope(ctx);
-    const scope =
-      args.verifiedOrg === undefined
-        ? transport
-        : await requireClaimedScope(
-            ctx,
-            transport,
-            args.verifiedOrg,
-            "memories:softDeleteMemory",
-          );
+    const scope = await requireClaimedScope(
+      ctx,
+      transport,
+      args.verifiedOrg,
+      "memories:softDeleteMemory",
+    );
     const memoryId = requireId(
       ctx,
       "memories",

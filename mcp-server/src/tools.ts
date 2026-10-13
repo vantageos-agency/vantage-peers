@@ -50,6 +50,7 @@ import type { VpToolResult } from "./ui-resources/schemas.js";
 import { wrapToolResult } from "./ui-resources/stream-marker.js";
 import { validateTaskPayload } from "./validate-task-payload.js";
 import { memberAuthorLabel } from "./memberAuthor.js";
+import { withOperatorClaim } from "./operatorClaim.js";
 import { verifiedActorOf, withVerifiedActor } from "./verifiedActor.js";
 import { resolveWhoamiIdentity } from "./whoamiIdentity.js";
 
@@ -2077,7 +2078,10 @@ export function registerTools(
 ): void {
 	// The acting agent's unique ID rides every actor-taking Convex door
 	// (verifiedActor.ts). Same client object when no ID was resolved.
-	const convex = withVerifiedActor(rawConvex, oauthCtx);
+	const convex = withOperatorClaim(
+		withVerifiedActor(rawConvex, oauthCtx),
+		oauthCtx,
+	);
 	// Intercept EVERY server.registerTool(...) call made below (directly or
 	// through defineTool()/registerExportOkfBundle()/registerImportOkfBundle()/
 	// registerKbIngestTools()/registerValidateOkfBundle() — they all receive

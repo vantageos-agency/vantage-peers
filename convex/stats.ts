@@ -9,6 +9,8 @@ import {
 	filterByOrgScope,
 } from "./lib/auth";
 import { requireFleetDoor } from "./lib/fleetStanding";
+import { claimedOrgArgs } from "./contentClaims";
+import { actingClaimOf, resolveVerifiedOrgScope } from "./lib/verifiedOrg";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // orchestratorStats — server-side aggregation for the VantagePeers Dashboard
@@ -73,9 +75,9 @@ function dayLabel(ts: number): string {
 	return new Date(ts).toISOString().slice(0, 10);
 }
 
-// fleet-wide: the fleet standing (the service account, or the operator human on a READ) aggregates every organisation's tasks by purpose, which is this door's reach; an organisation member is confined to its own organisation's `by_orgId` index range and its roster, and holds `view-stats-aggregated`.
 export const orchestratorStats = query({
 	args: {
+		...claimedOrgArgs,
 		window: v.union(v.literal("24h"), v.literal("7d"), v.literal("30d")),
 	},
 	returns: v.array(
@@ -116,7 +118,8 @@ export const orchestratorStats = query({
 			ctx,
 			scope,
 			"stats:orchestratorStats",
-			{ alsoRefusePreOrg: true, operatorHumanMayRead: true },
+			{
+			claim: { verifiedOrg: args.verifiedOrg }, alsoRefusePreOrg: true, operatorHumanMayRead: true },
 		);
 		if (!fleet) {
 			requireScope(scope, "view-stats-aggregated");
@@ -391,9 +394,8 @@ function emptyBucket(): OpenBucket {
 	return { todo: 0, inProgress: 0, blocked: 0, review: 0, totalOpen: 0, oldestOpenMs: null };
 }
 
-// fleet-wide: the fleet master counts every orchestrator's open tasks by purpose, which is this door's reach; an organisation member holding `view-stats-aggregated` is confined to its own organisation's tenant index range and roster.
 export const openTaskCountsByOrchestrator = query({
-	args: {},
+	args: { ...claimedOrgArgs },
 	returns: v.array(
 		v.object({
 			orchestrator: v.string(),
@@ -405,12 +407,17 @@ export const openTaskCountsByOrchestrator = query({
 			oldestOpenMs: v.union(v.number(), v.null()),
 		}),
 	),
-	handler: async (ctx) => {
+	handler: async (ctx, args) => {
 		// Fleet-operations surface — same gate as fleetStats.
 		// R-50: reactively-subscribed public query — refuseWithoutThrow
 		// narrows the signed-in-no-org branch to a typed-empty result instead
 		// of a throw.
-		const scope = await withOrgScope(ctx, { refuseWithoutThrow: true });
+		const transportScope = await withOrgScope(ctx, { refuseWithoutThrow: true });
+		// R-54: the service account acts only inside a transport-verified
+		// organisation; a client organisation's claim runs the count as that
+		// organisation's member.
+		const claim = await actingClaimOf(ctx, transportScope, args.verifiedOrg, "stats:openTaskCountsByOrchestrator");
+		const scope = await resolveVerifiedOrgScope(ctx, transportScope, claim, "stats:openTaskCountsByOrchestrator");
 		if (scope.refused) return [];
 		if (!scope.isMaster) {
 			requireScope(scope, "view-stats-aggregated");
@@ -496,9 +503,8 @@ export const openTaskCountsByOrchestrator = query({
 	},
 });
 
-// fleet-wide: these are fleet-wide totals over tables that are not tenant-keyed, so reading the whole fleet is this door's purpose; only the fleet master is served and an organisation member is refused by raising.
 export const fleetStats = query({
-	args: {},
+	args: { ...claimedOrgArgs },
 	returns: v.object({
 		bus: v.object({ total: v.number() }),
 		missions: v.object({
@@ -533,12 +539,17 @@ export const fleetStats = query({
 		}),
 		generatedAt: v.number(),
 	}),
-	handler: async (ctx) => {
+	handler: async (ctx, args) => {
 		// ── Beta multi-tenant scope gate ─────────────────────────────────────
 		// R-50: reactively-subscribed public query — refuseWithoutThrow
 		// narrows the signed-in-no-org branch to a typed-empty (all-zero)
 		// result instead of a throw.
-		const scope = await withOrgScope(ctx, { refuseWithoutThrow: true });
+		const transportScope = await withOrgScope(ctx, { refuseWithoutThrow: true });
+		// R-54: the service account acts only inside a transport-verified
+		// organisation; a client organisation's claim runs the read as that
+		// organisation's member, which this master-only measurement refuses.
+		const claim = await actingClaimOf(ctx, transportScope, args.verifiedOrg, "stats:fleetStats");
+		const scope = await resolveVerifiedOrgScope(ctx, transportScope, claim, "stats:fleetStats");
 		if (scope.refused) {
 			return {
 				bus: { total: 0 },

@@ -1,0 +1,78 @@
+// TEST FIXTURE ONLY. The doors an MCP station reaches as the fleet service
+// account that refuse a call naming no organisation (backend standard R-54), and
+// that the fleet's own orchestrators therefore call for the OPERATOR organisation.
+//
+// Production does this in the transport (mcp-server/src/operatorClaim.ts adds the
+// operator organisation's claim to every call of a claim-bound door made by the
+// master bearer). A test that calls one of these doors as the service account is
+// modelling that fleet station, so tests/fixtures/convexTestWithServiceAccount.ts
+// adds the same claim for it. The refusal itself is pinned, claimless, by
+// convex/__tests__/claimlessServiceAccountRefused.test.ts, which uses the strict
+// variant of the fixture and holds this list to its own table; a door added to
+// that table is added here on purpose.
+
+export const FLEET_STATION_CLAIM_DOORS: ReadonlySet<string> = new Set([
+	"businessUnits:create",
+	"businessUnits:get",
+	"businessUnits:list",
+	"businessUnits:remove",
+	"businessUnits:update",
+	"dashboard:getDashboardSummary",
+	"dashboard:getProjectSummary",
+	"errorMonitor:getError",
+	"errorMonitor:listDeployments",
+	"errorMonitor:listErrors",
+	"errorMonitorFilters:getPendingAliasReleases",
+	"errorMonitorFilters:listFilterRules",
+	"fixPatterns:get",
+	"fixPatterns:listAll",
+	"fixPatterns:listByProject",
+	"fixPatterns:listByStack",
+	"githubOwnerBinding:listBindings",
+	"githubOwnerBinding:listUnprovenMappings",
+	"githubRepoMapping:add",
+	"githubRepoMapping:getByRepo",
+	"githubRepoMapping:list",
+	"githubRepoMapping:remove",
+	"iframeEmbedSessions:createSession",
+	"iframeEmbedSessions:getSession",
+	"iframeEmbedSessions:revokeSession",
+	"iframeEmbedSessions:touchSession",
+	"improvisationDigest:scanWindow",
+	"issueStatsQueries:getLatest",
+	"issues:getByRepoNumber",
+	"issues:getStats",
+	"issues:listByOrchestrator",
+	"issues:listByProject",
+	"issues:listByStatus",
+	"issues:listExternalOpen",
+	"mandates:get",
+	"mandates:list",
+	"mandates:validateSpending",
+	"memories:softDeleteMemory",
+	"messages:getById",
+	"messages:listBroadcastStatus",
+	"messages:listByChannel",
+	"messages:listByChannelPaginated",
+	"messages:listMessages",
+	"messages:searchMessagesByKeyword",
+	"missionTemplates:getByName",
+	"missionTemplates:instantiateTemplateIntoMission",
+	"missionTemplates:listNames",
+	"missions:create",
+	"missions:get",
+	"missions:list",
+	"missions:update",
+	"missions:updateProgress",
+	"missions:updateStatus",
+	"orgMembership:getMembership",
+	"orgRoster:getMyOrgRoster",
+	"profiles:getProfile",
+	"profiles:getProfileWithMemories",
+	"profiles:listProfiles",
+	"profiles:updateDynamic",
+	"profiles:upsertProfile",
+	"stats:fleetStats",
+	"stats:openTaskCountsByOrchestrator",
+	"stats:orchestratorStats",
+]);

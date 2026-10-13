@@ -1,6 +1,12 @@
 import { requireServiceAccountStanding } from "@vantageos/cloud-identity";
 import { v } from "convex/values";
-import { type MutationCtx, mutation, query } from "./_generated/server";
+import {
+	type MutationCtx,
+	type QueryCtx,
+	internalQuery,
+	mutation,
+	query,
+} from "./_generated/server";
 import { internal } from "./_generated/api";
 import { requireId } from "./lib/ids";
 import { creatorValidator, severityValidator } from "./schema";
@@ -12,6 +18,7 @@ import {
 import type { OrgScope } from "./lib/auth";
 import { requireFleetAgentActor } from "./lib/fleetActors";
 import { requireFleetDoor, scopeWithFleetStanding } from "./lib/fleetStanding";
+import { claimedOrgArgs } from "./contentClaims";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // requireFleetMaster — fixPatterns.ts's single write gate.
@@ -228,26 +235,7 @@ export const linkIssue = mutation({
 	},
 });
 
-// ─────────────────────────────────────────────────────────────────────────────
-// get — fetch a single pattern with its attempts
-// returns-projection: attempts omit patternId — already implied by the parent pattern being fetched
-// ─────────────────────────────────────────────────────────────────────────────
-// fleet-wide: fixPatterns is the fleet's own cross-project fix knowledge base with no tenant column, so reading the whole table is this door's purpose; only the fleet standing (the service account, or the operator human on a READ) is served.
-export const get = query({
-	args: {
-		patternId: v.string(),
-		// The identities the MCP transport VERIFIED for a non-master bearer (its
-		// roster, from the verified oauthContext). `fixPatterns` is a fleet-
-		// internal table with no tenant column, so the only narrowing available is
-		// the creator: when this is present the pattern is read, gated on its
-		// creator BEFORE its attempts are read, and a pattern the bearer's roster
-		// does not name is answered `null` — the same bytes as an absent id, the
-		// MCP tool's "not found". Narrowing only: absent means the master reads
-		// the row unchanged, and a claim never widens what this master-only door
-		// admits (a non-master caller is refused above, before any row is read).
-		callerIdentities: v.optional(v.array(v.string())),
-	},
-	returns: v.union(
+const patternWithAttemptsValidator = v.union(
 		v.object({
 			_id: v.id("fixPatterns"),
 			_creationTime: v.number(),
@@ -276,7 +264,71 @@ export const get = query({
 			),
 		}),
 		v.null(),
-	),
+	);
+
+// The read both `get` (after its gate) and `getForSearch` (after the search
+// action's own gate) share: the pattern row, narrowed to its creator when the
+// transport narrowed it, then its attempts.
+async function readPatternWithAttempts(
+	ctx: QueryCtx,
+	args: { patternId: string; callerIdentities?: string[] },
+) {
+	const patternId = requireId(
+		ctx,
+		"fixPatterns",
+		args.patternId,
+		"patternId",
+		"Use the full 32-char patternId returned when the fix pattern was created, listed or searched.",
+	);
+	const pattern = await ctx.db.get(patternId);
+	if (pattern === null) return null;
+	if (
+		args.callerIdentities !== undefined &&
+		!args.callerIdentities.includes(pattern.createdBy)
+	) {
+		return null;
+	}
+
+	const attempts = await ctx.db
+		.query("fixAttempts")
+		.withIndex("by_pattern", (q) => q.eq("patternId", patternId))
+		.order("asc")
+		.take(100);
+
+	return {
+		...pattern,
+		attempts: attempts.map((a) => ({
+			_id: a._id,
+			description: a.description,
+			commit: a.commit,
+			worked: a.worked,
+			why: a.why,
+			createdBy: a.createdBy,
+			createdAt: a.createdAt,
+		})),
+	};
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// get — fetch a single pattern with its attempts
+// returns-projection: attempts omit patternId — already implied by the parent pattern being fetched
+// ─────────────────────────────────────────────────────────────────────────────
+export const get = query({
+	args: {
+		...claimedOrgArgs,
+		patternId: v.string(),
+		// The identities the MCP transport VERIFIED for a non-master bearer (its
+		// roster, from the verified oauthContext). `fixPatterns` is a fleet-
+		// internal table with no tenant column, so the only narrowing available is
+		// the creator: when this is present the pattern is read, gated on its
+		// creator BEFORE its attempts are read, and a pattern the bearer's roster
+		// does not name is answered `null` — the same bytes as an absent id, the
+		// MCP tool's "not found". Narrowing only: absent means the master reads
+		// the row unchanged, and a claim never widens what this master-only door
+		// admits (a non-master caller is refused above, before any row is read).
+		callerIdentities: v.optional(v.array(v.string())),
+	},
+	returns: patternWithAttemptsValidator,
 	handler: async (ctx, args) => {
 		// GATE — fleet master only, resolved BEFORE any row is read. `fixPatterns`
 		// carries no orgId/tenant column (fleet-internal), so there is no per-org
@@ -290,54 +342,33 @@ export const get = query({
 		// See .claude/rules/refusal-is-distinguishable-from-absence.md.
 		const scope = await withOrgScope(ctx, { refuseWithoutThrow: true });
 		await requireFleetDoor(ctx, scope, "fixPatterns:get", {
+			claim: { verifiedOrg: args.verifiedOrg },
 			alsoRefusePreOrg: true,
 			masterOnly: true,
 			operatorHumanMayRead: true,
 		});
-		const patternId = requireId(
-			ctx,
-			"fixPatterns",
-			args.patternId,
-			"patternId",
-			"Use the full 32-char patternId returned when the fix pattern was created, listed or searched.",
-		);
-		const pattern = await ctx.db.get(patternId);
-		if (pattern === null) return null;
-		if (
-			args.callerIdentities !== undefined &&
-			!args.callerIdentities.includes(pattern.createdBy)
-		) {
-			return null;
-		}
-
-		const attempts = await ctx.db
-			.query("fixAttempts")
-			.withIndex("by_pattern", (q) => q.eq("patternId", patternId))
-			.order("asc")
-			.take(100);
-
-		return {
-			...pattern,
-			attempts: attempts.map((a) => ({
-				_id: a._id,
-				description: a.description,
-				commit: a.commit,
-				worked: a.worked,
-				why: a.why,
-				createdBy: a.createdBy,
-				createdAt: a.createdAt,
-			})),
-		};
+		return await readPatternWithAttempts(ctx, args);
 	},
+});
+
+// Internal twin for the search action (convex/search.ts searchFixPatterns): the
+// action has already resolved its caller (`resolveSearchNamespace`) before it
+// hydrates the ids it found, and an action's run call carries no verified
+// organisation, so it reads through this internal query instead of the public
+// door. `internal.*` is never reachable from a client.
+export const getForSearch = internalQuery({
+	args: { patternId: v.string() },
+	returns: patternWithAttemptsValidator,
+	handler: async (ctx, args) => await readPatternWithAttempts(ctx, args),
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
 // listByProject — list patterns for a given project
 // ─────────────────────────────────────────────────────────────────────────────
 
-// fleet-wide: fixPatterns is the fleet's own cross-project fix knowledge base with no tenant column, so reading the whole table is this door's purpose; only the fleet standing (the service account, or the operator human on a READ) is served.
 export const listByProject = query({
 	args: {
+		...claimedOrgArgs,
 		sourceProject: v.string(),
 		limit: v.optional(v.number()),
 		fields: v.optional(v.union(v.literal("lite"), v.literal("full"))), // no-op for now — closes ArgumentValidationError from MCP wrapper (mcp-server/src/tools.ts) which always sends `fields`, mirroring the v2.4.12 fix already applied to fixPatterns:listAll.
@@ -375,6 +406,7 @@ export const listByProject = query({
 		// See .claude/rules/refusal-is-distinguishable-from-absence.md.
 		const scope = await withOrgScope(ctx, { refuseWithoutThrow: true });
 		await requireFleetDoor(ctx, scope, "fixPatterns:listByProject", {
+			claim: { verifiedOrg: args.verifiedOrg },
 			alsoRefusePreOrg: true,
 			masterOnly: true,
 			operatorHumanMayRead: true,
@@ -401,9 +433,9 @@ export const listByProject = query({
 // listAll — list all patterns ordered by creation time (newest first)
 // ─────────────────────────────────────────────────────────────────────────────
 
-// fleet-wide: fixPatterns is the fleet's own cross-project fix knowledge base with no tenant column, so reading the whole table is this door's purpose; only the fleet standing (the service account, or the operator human on a READ) is served.
 export const listAll = query({
 	args: {
+		...claimedOrgArgs,
 	fields: v.optional(v.union(v.literal("lite"), v.literal("full"))), // v2.4.12 accept (no-op for now) — closes ArgumentValidationError from MCP wrappers passing fields
 		limit: v.optional(v.number()),
 		// S3.3 B8 follow-up batch 2 — cursor paging anchor (newest-first).
@@ -458,6 +490,7 @@ export const listAll = query({
 		// must not be handed a fabricated absence either.
 		const scope = await withOrgScope(ctx, { refuseWithoutThrow: true });
 		const fleet = await requireFleetDoor(ctx, scope, "fixPatterns:listAll", {
+			claim: { verifiedOrg: args.verifiedOrg },
 			alsoRefusePreOrg: true,
 			operatorHumanMayRead: true,
 		});
@@ -480,9 +513,9 @@ export const listAll = query({
 // Uses full scan with filter (no array index in Convex)
 // ─────────────────────────────────────────────────────────────────────────────
 
-// fleet-wide: fixPatterns is the fleet's own cross-project fix knowledge base with no tenant column, so reading the whole table is this door's purpose; only the fleet standing (the service account, or the operator human on a READ) is served.
 export const listByStack = query({
 	args: {
+		...claimedOrgArgs,
 		stack: v.string(),
 		limit: v.optional(v.number()),
 	},
@@ -517,6 +550,7 @@ export const listByStack = query({
 		// See .claude/rules/refusal-is-distinguishable-from-absence.md.
 		const scope = await withOrgScope(ctx, { refuseWithoutThrow: true });
 		await requireFleetDoor(ctx, scope, "fixPatterns:listByStack", {
+			claim: { verifiedOrg: args.verifiedOrg },
 			alsoRefusePreOrg: true,
 			masterOnly: true,
 			operatorHumanMayRead: true,

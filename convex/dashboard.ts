@@ -8,6 +8,7 @@ import {
 } from "./lib/auth";
 import { requireFleetDoor } from "./lib/fleetStanding";
 import { visibleProfiles } from "./lib/profileActors";
+import { claimedOrgArgs } from "./contentClaims";
 
 // In-progress tasks and mandates are both small, bounded tables today; 500 rows
 // is a comfortable ceiling well above observed volume for either.
@@ -58,9 +59,8 @@ async function collectVisible<
 // open mandate count, and the 20 most recent cross-entity activity events.
 // ─────────────────────────────────────────────────────────────────────────────
 
-// fleet-wide: the fleet standing (the service account, or the operator human on a READ) summarises every organisation by purpose, which is this door's reach; an organisation member holding `view-stats-aggregated` is confined to its own organisation's tenant index ranges and roster.
 export const getDashboardSummary = query({
-	args: {},
+	args: { ...claimedOrgArgs },
 	returns: v.object({
 		tasksInProgress: v.number(),
 		activeOrchestrators: v.array(
@@ -100,7 +100,7 @@ export const getDashboardSummary = query({
 			}),
 		),
 	}),
-	handler: async (ctx) => {
+	handler: async (ctx, args) => {
 		// ── Beta multi-tenant scope gate ─────────────────────────────────────
 		// Master scope: the whole fleet, unchanged.
 		// Client org with view-stats-aggregated: ITS OWN TENANT ONLY — every
@@ -128,7 +128,8 @@ export const getDashboardSummary = query({
 			ctx,
 			scope,
 			"dashboard:getDashboardSummary",
-			{ alsoRefusePreOrg: true, operatorHumanMayRead: true },
+			{
+			claim: { verifiedOrg: args.verifiedOrg }, alsoRefusePreOrg: true, operatorHumanMayRead: true },
 		);
 		if (!fleet) {
 			requireScope(scope, "view-stats-aggregated");
@@ -276,9 +277,8 @@ const projectSummaryObject = v.object({
 	activeOrchestrators: v.array(v.string()),
 });
 
-// fleet-wide: the fleet standing (the service account, or the operator human on a READ) summarises every organisation by purpose, which is this door's reach; an organisation member holding `view-stats-aggregated` is confined to its own organisation's tenant index ranges and roster.
 export const getProjectSummary = query({
-	args: {},
+	args: { ...claimedOrgArgs },
 	// Bare array for a served caller (rows or a genuine absence); the typed
 	// refusal envelope for a signed-in caller with no organisation (the
 	// dashboard reads `.items` via readList — never the bytes of an absence).
@@ -286,7 +286,7 @@ export const getProjectSummary = query({
 		v.array(projectSummaryObject),
 		v.object({ refused: v.literal(true), items: v.array(projectSummaryObject) }),
 	),
-	handler: async (ctx) => {
+	handler: async (ctx, args) => {
 		// ── Beta multi-tenant scope gate ─────────────────────────────────────
 		// R-50: reactively-subscribed public query — see getDashboardSummary
 		// above for the typed-empty-not-throw rationale.
@@ -297,7 +297,8 @@ export const getProjectSummary = query({
 			ctx,
 			scope,
 			"dashboard:getProjectSummary",
-			{ operatorHumanMayRead: true },
+			{
+			claim: { verifiedOrg: args.verifiedOrg }, operatorHumanMayRead: true },
 		);
 		if (scope.refused) {
 			return { refused: true as const, items: [] };

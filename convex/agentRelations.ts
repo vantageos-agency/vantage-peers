@@ -5,10 +5,8 @@ import { type MutationCtx, type QueryCtx, mutation, query } from "./_generated/s
 import {
 	loadAgentOfPrincipalOrg,
 	anonymousRefusal,
-	stampOrgRefusal,
 	requireOrgAdminById,
 } from "./lib/agentIdentity";
-import { withOrgScope } from "./lib/auth";
 import { clerkOrgIdForSlug } from "./lib/orgClerkId";
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -105,11 +103,9 @@ export const linkChild = mutation({
 		const identity = await ctx.auth.getUserIdentity();
 		if (!identity) throw anonymousRefusal(door);
 		const principal = await requireOrgAdminById(ctx, identity, args.orgSlug, door);
-		const scope = await withOrgScope(ctx);
-		const orgSlug = scope.orgSlug;
-		if (orgSlug === null || orgSlug !== principal.orgId) {
-			throw stampOrgRefusal(door);
-		}
+		// Session-only door (R-54 exit (b)): the organisation is the verified admin
+		// principal's own, never a service account's.
+		const orgSlug = principal.orgId;
 		const { parent, child } = await endpointsOf(
 			ctx,
 			principal,

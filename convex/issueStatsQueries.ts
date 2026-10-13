@@ -2,6 +2,7 @@ import { v } from "convex/values";
 import { internalMutation, internalQuery, query } from "./_generated/server";
 import { withOrgScope } from "./lib/auth";
 import { requireFleetDoor } from "./lib/fleetStanding";
+import { claimedOrgArgs } from "./contentClaims";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Store stats (internal mutation — called from the action)
@@ -93,9 +94,9 @@ export const listActiveRepos = internalQuery({
 // Public query — read stats (for dashboard / sales page)
 // returns-projection: dashboard summary rows omit issueDetails, the bulky per-issue array; not needed for the daily trend view
 // ─────────────────────────────────────────────────────────────────────────────
-// fleet-wide: issueStats aggregates the fleet's own GitHub repositories with no tenant column, so reading the whole table is this door's purpose; only the fleet standing (the service account, or the operator human on a READ) is served.
 export const getLatest = query({
 	args: {
+		...claimedOrgArgs,
 		repo: v.optional(v.string()),
 		limit: v.optional(v.number()),
 	},
@@ -161,6 +162,7 @@ export const getLatest = query({
 		// must not be handed a fabricated absence either.
 		const scope = await withOrgScope(ctx, { refuseWithoutThrow: true });
 		const fleet = await requireFleetDoor(ctx, scope, "issueStatsQueries:getLatest", {
+			claim: { verifiedOrg: args.verifiedOrg },
 			alsoRefusePreOrg: true,
 			operatorHumanMayRead: true,
 		});

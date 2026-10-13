@@ -12,6 +12,7 @@ import {
 import type { OrgScope } from "./lib/auth";
 import { fleetPartyId, requireFleetAgentActor } from "./lib/fleetActors";
 import { requireFleetDoor, scopeWithFleetStanding } from "./lib/fleetStanding";
+import { claimedOrgArgs } from "./contentClaims";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // requireFleetMaster — mandates.ts's own single authority gate.
@@ -359,9 +360,9 @@ export const settle = mutation({
 // list — list mandates with optional filters, newest first
 // ─────────────────────────────────────────────────────────────────────────────
 
-// fleet-wide: mandates have no organisation column and every reader is the fleet (the service account or the operator human); listing the whole fleet's mandates is this door's purpose, a member is refused with the typed envelope
 export const list = query({
 	args: {
+		...claimedOrgArgs,
 	fields: v.optional(v.union(v.literal("lite"), v.literal("full"))), // v2.4.12 accept (no-op for now) — closes ArgumentValidationError from MCP wrappers passing fields
 		requestedBy: v.optional(creatorValidator),
 		fulfilledBy: v.optional(creatorValidator),
@@ -442,6 +443,7 @@ export const list = query({
 		// absence with NO `refused` key).
 		const scope = await withOrgScope(ctx, { refuseWithoutThrow: true });
 		const fleet = await requireFleetDoor(ctx, scope, "mandates:list", {
+			claim: { verifiedOrg: args.verifiedOrg },
 			operatorHumanMayRead: true,
 		});
 		if (!fleet) {
@@ -536,9 +538,8 @@ export const list = query({
 // get — fetch a single mandate by ID
 // ─────────────────────────────────────────────────────────────────────────────
 
-// fleet-wide: a mandate carries no organisation column and only the fleet (service account or operator human) is admitted; reading any fleet mandate by ID is this door's purpose
 export const get = query({
-	args: { mandateId: v.string() },
+	args: { mandateId: v.string(), ...claimedOrgArgs },
 	returns: v.union(mandateObject, v.null()),
 	handler: async (ctx, args) => {
 		// GATE — this read returned any mandate (budget, spending limits) to any
@@ -549,6 +550,7 @@ export const get = query({
 		// `get_mandate` one-shot), so a RAISE is safe.
 		const scope = await withOrgScope(ctx, { refuseWithoutThrow: true });
 		await requireFleetDoor(ctx, scope, "mandates:get", {
+			claim: { verifiedOrg: args.verifiedOrg },
 			masterOnly: true,
 			operatorHumanMayRead: true,
 		});
@@ -567,9 +569,9 @@ export const get = query({
 // validateSpending — check if a proposed spend is within mandate limits
 // ─────────────────────────────────────────────────────────────────────────────
 
-// fleet-wide: a mandate carries no organisation column and only the fleet (service account or operator human) is admitted; checking a spend against any fleet mandate is this door's purpose
 export const validateSpending = query({
 	args: {
+		...claimedOrgArgs,
 		mandateId: v.id("mandates"),
 		proposedAmount: v.number(),
 	},
@@ -588,6 +590,7 @@ export const validateSpending = query({
 		// (MCP `validate_mandate_spending` one-shot; dashboard grep -> 0).
 		const scope = await withOrgScope(ctx, { refuseWithoutThrow: true });
 		await requireFleetDoor(ctx, scope, "mandates:validateSpending", {
+			claim: { verifiedOrg: args.verifiedOrg },
 			masterOnly: true,
 			operatorHumanMayRead: true,
 		});

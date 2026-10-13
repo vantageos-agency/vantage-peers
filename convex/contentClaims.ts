@@ -1,5 +1,5 @@
-import { hasFleetRead, isServiceAccountScope } from "@vantageos/cloud-identity";
-import { ConvexError, v } from "convex/values";
+import { hasFleetRead } from "@vantageos/cloud-identity";
+import { v } from "convex/values";
 import { internalQuery } from "./_generated/server";
 import type { MutationCtx, QueryCtx } from "./_generated/server";
 import { actorIdResolver } from "./lib/actorIds";
@@ -11,6 +11,7 @@ import {
 	withOrgScope,
 } from "./lib/auth";
 import {
+	requireServiceAccountClaim,
 	resolveVerifiedOrgMapping,
 	type VerifiedOrg,
 	verifiedOrgValidator,
@@ -71,11 +72,7 @@ export async function requireClaimedScope(
 	claim: VerifiedOrg | undefined,
 	door: string,
 ): Promise<OrgScope> {
-	if (isServiceAccountScope(transport) && claim === undefined) {
-		throw new ConvexError(
-			`RBAC_DENIED: "${door}" is reached by the fleet service account and the call carries no verified organisation — a claimless service-account call is refused, never served as master — ${JSON.stringify({ reason: "verified-claim-required", door })}`,
-		);
-	}
+	requireServiceAccountClaim(transport, claim, door);
 	const mapping = await resolveVerifiedOrgMapping(ctx, transport, claim, door);
 	if (mapping === undefined) return transport;
 	const kind = await principalLookups(ctx).orgKindOf?.(mapping.clerkOrgSlug);

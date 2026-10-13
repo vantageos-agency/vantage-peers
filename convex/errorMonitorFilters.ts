@@ -39,8 +39,9 @@ import {
 	internalQuery,
 	query,
 } from "./_generated/server";
-import { requireResolvedCaller, withOrgScope } from "./lib/auth";
+import { withOrgScope } from "./lib/auth";
 import { requireFleetDoor } from "./lib/fleetStanding";
+import { claimedOrgArgs } from "./contentClaims";
 
 // Admin-config table (filter rules), not tenant data — 500 active rows is a
 // generous bound for the idempotency dedup scan below; the authoritative
@@ -630,9 +631,8 @@ export const disableFilterRule = internalMutation({
 	},
 });
 
-// fleet-wide: errorMonitorFilters tables (filter rules, pending-alias config) are the fleet's own noise-filtering configuration with no tenant column, so reading the whole table is this door's purpose; only the fleet standing (the service account, or the operator human on a READ) is served.
 export const listFilterRules = query({
-	args: {},
+	args: { ...claimedOrgArgs },
 	returns: v.array(
 		v.object({
 			_id: v.id("errorMonitorFilterRules"),
@@ -649,7 +649,7 @@ export const listFilterRules = query({
 			priority: v.optional(v.number()),
 		}),
 	),
-	handler: async (ctx) => {
+	handler: async (ctx, args) => {
 		// Fail-closed READ. Measured against LIVE production at commit bd8c60e9:
 		// 15 rows served to a caller presenting NO CREDENTIAL AT ALL — no identity
 		// was consulted. Every WRITE on this table is already an
@@ -691,7 +691,8 @@ export const listFilterRules = query({
 			ctx,
 			scope,
 			"errorMonitorFilters:listFilterRules",
-			{ alsoRefusePreOrg: true, operatorHumanMayRead: true },
+			{
+			claim: { verifiedOrg: args.verifiedOrg }, alsoRefusePreOrg: true, operatorHumanMayRead: true },
 		);
 		if (!fleet) return [];
 
@@ -713,11 +714,10 @@ export const listFilterRules = query({
  *
  * Doctrine: add aliases BEFORE pre-deploy smoke; remove (set []) once deployed.
  */
-// fleet-wide: errorMonitorFilters tables (filter rules, pending-alias config) are the fleet's own noise-filtering configuration with no tenant column, so reading the whole table is this door's purpose; only the fleet standing (the service account, or the operator human on a READ) is served.
 export const getPendingAliasReleases = query({
-	args: {},
+	args: { ...claimedOrgArgs },
 	returns: v.array(v.string()),
-	handler: async (ctx) => {
+	handler: async (ctx, args) => {
 		// GATE — fleet master only, resolved BEFORE any row is read. `errorMonitorConfig`
 		// carries no orgId/tenant column (fleet-internal), so there is no per-org
 		// slice to scope a member to: serving any member would serve every
@@ -729,9 +729,11 @@ export const getPendingAliasReleases = query({
 		// The only reader is the MCP tool (one-shot query, service account).
 		// See .claude/rules/refusal-is-distinguishable-from-absence.md.
 		const scope = await withOrgScope(ctx, { refuseWithoutThrow: true });
-		requireResolvedCaller(scope, "errorMonitorFilters:getPendingAliasReleases", {
+		await requireFleetDoor(ctx, scope, "errorMonitorFilters:getPendingAliasReleases", {
+			claim: { verifiedOrg: args.verifiedOrg },
 			alsoRefusePreOrg: true,
 			masterOnly: true,
+			operatorHumanMayRead: true,
 		});
 		const row = await ctx.db
 			.query("errorMonitorConfig")

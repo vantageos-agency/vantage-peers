@@ -43,6 +43,8 @@ type Identity = Parameters<T["withIdentity"]>[0];
 const A = "org-a";
 const B = "org-b";
 const OP = "fleet-op";
+// A client organisation that owns no binding and no mapping row.
+const EMPTY = "org-empty";
 const NOW = 1_700_000_000_000;
 
 const asService = (t: T) =>
@@ -72,6 +74,7 @@ async function seedWorld(t: T) {
 		// A holds the scope to manage repo mappings; B does not.
 		await mapping(A, ["manage-repo-mappings"]);
 		await mapping(B, []);
+		await mapping(EMPTY, []);
 		await mapping(OP, [], "operator");
 		await seedRosterAgent(ctx, A, "alpha");
 		await seedRosterAgent(ctx, B, "alpha");
@@ -354,7 +357,7 @@ describe("githubOwnerBinding:listBindings", () => {
 		await seedWorld(t);
 		const page = await asService(t).query(
 			api.githubOwnerBinding.listBindings,
-			claim(OP),
+			claim(EMPTY),
 		);
 		expect(page.items).toEqual([]);
 		expect(page.nextCursor).toBeNull();
@@ -460,7 +463,7 @@ describe("githubRepoMapping:list pages by creation time", () => {
 		await seedWorld(t);
 		const page = await asService(t).query(api.githubRepoMapping.list, {
 			fields: "lite",
-			...claim(OP),
+			...claim(EMPTY),
 		});
 		expect(page.items).toEqual([]);
 	});

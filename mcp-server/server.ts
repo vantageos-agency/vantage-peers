@@ -25,6 +25,7 @@ import { resolve } from "node:path";
 import { McpServer } from "@modelcontextprotocol/server";
 import { serveStdio } from "@modelcontextprotocol/server/stdio";
 import { LOCAL_STDIO_TRUST_CTX } from "./src/auth.js";
+import { resolveOperatorOrgSlug } from "./src/operatorOrg.js";
 import { createServiceAccountConvexClient } from "./src/authenticatedConvexClient.js";
 import { registerTools } from "./src/tools.js";
 
@@ -84,6 +85,15 @@ const convexUrl = loadConvexUrl();
 // the local-trust posture claimed below, now backed by an actual identity.
 const convex = createServiceAccountConvexClient(convexUrl);
 
+// The stdio station is the fleet's own: it calls every claim-bound door for the
+// OPERATOR organisation (backend standard R-54), read from stored data. Not
+// resolvable: no claim is forwarded and the doors refuse the call.
+const operatorOrgSlug = await resolveOperatorOrgSlug(convex);
+const stdioCtx = {
+	...LOCAL_STDIO_TRUST_CTX,
+	...(operatorOrgSlug !== undefined ? { operatorOrgSlug } : {}),
+};
+
 // stdio runs on the operator's own machine against their own CONVEX_URL, so it
 // is trusted with full LOCAL authority. That authority is now PRESENTED as an
 // explicit, named context (LOCAL_STDIO_TRUST_CTX) rather than inferred from an
@@ -95,7 +105,7 @@ function buildServer(): McpServer {
 		name: "vantage-peers",
 		version: pkg.version,
 	});
-	registerTools(server, convex, LOCAL_STDIO_TRUST_CTX);
+	registerTools(server, convex, stdioCtx);
 	return server;
 }
 

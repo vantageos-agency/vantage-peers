@@ -1,4 +1,8 @@
-import { type OrgRef, sameOrg } from "@vantageos/cloud-identity";
+import {
+	isServiceAccountScope,
+	type OrgRef,
+	sameOrg,
+} from "@vantageos/cloud-identity";
 import { ConvexError, v } from "convex/values";
 import type { MutationCtx, QueryCtx } from "../_generated/server";
 import {
@@ -8,6 +12,7 @@ import {
 	withOrgScope,
 } from "./auth";
 import { orgRefOfRow } from "./authOrgMapping";
+import { fleetOperatorRef } from "./operatorOrg";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // verifiedOrg — the organisation the MCP transport VERIFIED for a caller it
@@ -39,10 +44,83 @@ export const verifiedOrgValidator = v.object({
 
 export type VerifiedOrg = { orgSlug: string };
 
-function refuse(reason: string, door: string, detail: string): never {
-	throw new ConvexError(
+function refusalOf(reason: string, door: string, detail: string): ConvexError<string> {
+	return new ConvexError(
 		`RBAC_DENIED: ${detail} — ${JSON.stringify({ reason, door })}`,
 	);
+}
+
+function refuse(reason: string, door: string, detail: string): never {
+	throw refusalOf(reason, door, detail);
+}
+
+/**
+ * R-54: the fleet service account that presents NO verified organisation is
+ * REFUSED, never served as master. Every MCP caller reaches Convex as the one
+ * service account, so the absence of a claim cannot tell the fleet's own call
+ * from a tenant bearer's; the claim is therefore required of the service account
+ * (the fleet's own stations send the operator organisation's). Any other caller
+ * is not this population and passes, byte-unchanged. A door that also takes the
+ * agent's or the person's claim (`verifiedActor`, `verifiedPerson`) passes them
+ * as `others`: any ONE of the three is a claim. This is the ONE refusal of
+ * the claimless call: `convex/contentClaims.ts` and every door that takes
+ * `verifiedOrg` reach it, none restates it.
+ */
+export function requireServiceAccountClaim(
+	transportScope: OrgScope,
+	verifiedOrg: VerifiedOrg | undefined,
+	door: string,
+	others?: { verifiedActor?: unknown; verifiedPerson?: unknown },
+): void {
+	if (
+		isServiceAccountScope(transportScope) &&
+		verifiedOrg === undefined &&
+		others?.verifiedActor === undefined &&
+		others?.verifiedPerson === undefined
+	) {
+		throw refusalOf(
+			"verified-claim-required",
+			door,
+			`"${door}" is reached by the fleet service account and the call carries no verified organisation — a claimless service-account call is refused, never served as master`,
+		);
+	}
+}
+
+/**
+ * The claim a door ACTS ON, from the one it was handed.
+ *
+ *   service account, no claim       -> RBAC_DENIED `verified-claim-required`
+ *   not the service account, claim  -> RBAC_DENIED `verified-org-not-trusted`
+ *   claim naming no active org      -> RBAC_DENIED `org-not-active`
+ *   service account, operator claim -> undefined: the fleet's own claim keeps the
+ *                                      transport's fleet standing, so the door
+ *                                      runs its fleet path exactly as before
+ *   service account, client claim   -> the claim: the door runs as that org's member
+ *   any other caller, no claim      -> undefined: the caller's own scope stands
+ *
+ * Whether the claimed org is the operator is the package's answer over the stored
+ * rows (`findOperatorOrg` through `fleetOperatorRef`, then `sameOrg` by permanent
+ * ID); a row with no ID matches nothing, so it is a client (fail closed: less
+ * standing, never more).
+ */
+export async function actingClaimOf(
+	ctx: QueryCtx | MutationCtx,
+	transportScope: OrgScope,
+	verifiedOrg: VerifiedOrg | undefined,
+	door: string,
+	others?: { verifiedActor?: unknown; verifiedPerson?: unknown },
+): Promise<VerifiedOrg | undefined> {
+	requireServiceAccountClaim(transportScope, verifiedOrg, door, others);
+	const mapping = await resolveVerifiedOrgMapping(
+		ctx,
+		transportScope,
+		verifiedOrg,
+		door,
+	);
+	if (mapping === undefined) return undefined;
+	const operator = await fleetOperatorRef(ctx.db);
+	const claimed: OrgRef = { id: mapping.clerkOrgId, label: mapping.clerkOrgSlug };
+	return sameOrg(claimed, operator) ? undefined : verifiedOrg;
 }
 
 /**

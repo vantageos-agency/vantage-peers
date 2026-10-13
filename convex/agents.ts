@@ -13,13 +13,11 @@ import {
 	assertAgentNameFree,
 	loadAgentOfPrincipalOrg,
 	anonymousRefusal,
-	stampOrgRefusal,
 	requireOrgAdminById,
 	restampCredentialOwner,
 	revokeActiveCredentialRows,
 } from "./lib/agentIdentity";
 import { agentCallerDeps, refuseWith } from "./lib/actingPrincipal";
-import { withOrgScope } from "./lib/auth";
 import { clerkOrgIdForSlug } from "./lib/orgClerkId";
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -138,11 +136,9 @@ export const registerAgent = mutation({
 		const identity = await ctx.auth.getUserIdentity();
 		if (!identity) throw anonymousRefusal("agents:registerAgent");
 		const principal = await requireOrgAdminById(ctx, identity, args.orgSlug, "agents:registerAgent");
-		const scope = await withOrgScope(ctx);
-		const orgSlug = scope.orgSlug;
-		if (orgSlug === null || orgSlug !== principal.orgId) {
-			throw stampOrgRefusal("agents:registerAgent");
-		}
+		// Session-only door (R-54 exit (b)): the organisation is the verified admin
+		// principal's own, never a service account's.
+		const orgSlug = principal.orgId;
 
 		assertAgentLabelValid(args.name);
 		await assertAgentNameFree(ctx, orgSlug, args.name);

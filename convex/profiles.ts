@@ -22,6 +22,12 @@ import {
 } from "./lib/profileActors";
 import { isAgentOnScopeRoster } from "./lib/missionActors";
 import { isNamespaceAllowedForScope } from "./memories";
+import {
+  actingClaimOf,
+  resolveVerifiedOrgScope,
+  type VerifiedOrg,
+  verifiedOrgValidator,
+} from "./lib/verifiedOrg";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // WHO MAY WRITE, AND WHICH ROW IS WHOSE (module M10d).
@@ -56,12 +62,28 @@ function requireFleetMaster(
 // The caller of a write: the proven agent, or the fleet master. Refuses the rest.
 async function writerOf(
   ctx: Parameters<typeof withOrgScope>[0],
-  proof: Parameters<typeof resolveProfileAgent>[2],
+  proof: Parameters<typeof resolveProfileAgent>[2] & {
+    verifiedOrg?: VerifiedOrg;
+  },
   action: string,
   door: string,
 ): Promise<{ scope: OrgScope; actor: ProfileAgent | undefined }> {
-  const scope = await withOrgScope(ctx);
-  const actor = await resolveProfileAgent(ctx, scope, proof, door);
+  const transportScope = await withOrgScope(ctx);
+  // R-54: the service account acts only inside a transport-verified claim (the
+  // agent it proved, or the organisation the transport verified for the bearer).
+  const claim = await actingClaimOf(ctx, transportScope, proof.verifiedOrg, door, {
+    verifiedActor: proof.verifiedActor,
+  });
+  const scope =
+    proof.verifiedActor === undefined
+      ? await resolveVerifiedOrgScope(ctx, transportScope, claim, door)
+      : transportScope;
+  const actor = await resolveProfileAgent(
+    ctx,
+    scope,
+    { verifiedActor: proof.verifiedActor },
+    door,
+  );
   requireFleetMaster(scope, actor, action);
   return { scope, actor };
 }
@@ -167,7 +189,6 @@ async function findProfileForCaller(
 // getProfile — fetch by orchestratorId (role) or instanceId
 // ─────────────────────────────────────────────────────────────────────────────
 
-// fleet-wide: the fleet (the service account, or the operator human for reads) reads any orchestrator profile of its own registry by purpose; an organisation member is served only a profile whose agent is on its roster by agent ID, and a verified agent only its own organisation's
 export const getProfile = query({
   args: {
     orchestratorId: v.optional(v.string()),
@@ -176,6 +197,8 @@ export const getProfile = query({
     // it (mcp-server/src/verifiedActor.ts). The read is then judged by that
     // agent's stored organisation ID, never by a name.
     verifiedActor: v.optional(verifiedActorValidator),
+    // The organisation the MCP transport verified for the bearer (R-54).
+    verifiedOrg: v.optional(verifiedOrgValidator),
   },
   returns: v.union(profileDocValidator, v.null()),
   handler: async (ctx, args) => {
@@ -189,7 +212,12 @@ export const getProfile = query({
     // REFUSAL SHAPE — a RAISE. isolation-contract: no reactive subscriber.
     //   grep -rn "profiles\.getProfile\b" app components hooks lib (dashboard) -> 0
     // Its only consumer is the MCP `get_profile` tool (one-shot `convex.query`).
-    const scope = await withOrgScope(ctx, { refuseWithoutThrow: true });
+    const transportScope = await withOrgScope(ctx, { refuseWithoutThrow: true });
+    const claim = await actingClaimOf(ctx, transportScope, args.verifiedOrg, "profiles:getProfile", args);
+    const scope =
+      args.verifiedActor === undefined
+        ? await resolveVerifiedOrgScope(ctx, transportScope, claim, "profiles:getProfile")
+        : transportScope;
     requireResolvedCaller(scope, "profiles:getProfile", {
       alsoRefusePreOrg: true,
     });
@@ -263,7 +291,6 @@ export const getProfile = query({
 // upsertProfile — create or update a profile by instanceId (or orchestratorId)
 // ─────────────────────────────────────────────────────────────────────────────
 
-// fleet-wide: a profile is written over the MCP transport by the fleet service account, for the fleet's own registry (no verified agent) or for the agent it proved; writerOf refuses every other caller
 export const upsertProfile = mutation({
   args: {
     orchestratorId: v.string(),
@@ -283,13 +310,15 @@ export const upsertProfile = mutation({
     // The acting agent: ONE proof per call. A profile is written only by the agent
     // that owns it (see the block above requireFleetMaster).
     verifiedActor: v.optional(verifiedActorValidator),
+    // The organisation the MCP transport verified for the bearer (R-54).
+    verifiedOrg: v.optional(verifiedOrgValidator),
   },
   returns: v.id("profiles"),
   handler: async (ctx, args) => {
   	// write-contract: MCP-transport-only — issued via mcp-server client.mutation("profiles:upsertProfile", …) at mcp-server/src/tools.ts:2843 (imperative), 0 hits in vantage-peers-dashboard {app,components,hooks,lib,contexts,providers} (measured 2026-10-01 at origin/main e2dc58f and 0466fac); never a subscribing pre-org client shell. The no-org throw is a refusal at an imperative MCP call, never at a render.
     const { scope, actor } = await writerOf(
       ctx,
-      { verifiedActor: args.verifiedActor },
+      { verifiedActor: args.verifiedActor, verifiedOrg: args.verifiedOrg },
       `upsert profile for orchestrator ${args.orchestratorId}`,
       "profiles:upsertProfile",
     );
@@ -327,7 +356,6 @@ export const upsertProfile = mutation({
 // Supports both instanceId and orchestratorId lookup.
 // ─────────────────────────────────────────────────────────────────────────────
 
-// fleet-wide: the dynamic section is written over the MCP transport by the fleet service account, for the fleet's own registry (no verified agent) or for the agent it proved; writerOf refuses every other caller
 export const updateDynamic = mutation({
   args: {
     orchestratorId: v.string(),
@@ -341,13 +369,15 @@ export const updateDynamic = mutation({
     sessionCountDelta: v.optional(v.number()),
     // The acting agent: ONE proof per call (see upsertProfile).
     verifiedActor: v.optional(verifiedActorValidator),
+    // The organisation the MCP transport verified for the bearer (R-54).
+    verifiedOrg: v.optional(verifiedOrgValidator),
   },
   returns: v.null(),
   handler: async (ctx, args) => {
   	// write-contract: MCP-transport-only — issued via mcp-server client.mutation("profiles:updateDynamic", …) at mcp-server/src/tools.ts:3536 (imperative), 0 hits in vantage-peers-dashboard {app,components,hooks,lib,contexts,providers} (measured 2026-10-01 at origin/main e2dc58f and 0466fac); never a subscribing pre-org client shell. The no-org throw is a refusal at an imperative MCP call, never at a render.
     const { scope, actor } = await writerOf(
       ctx,
-      { verifiedActor: args.verifiedActor },
+      { verifiedActor: args.verifiedActor, verifiedOrg: args.verifiedOrg },
       `update dynamic profile for orchestrator ${args.orchestratorId}`,
       "profiles:updateDynamic",
     );
@@ -416,7 +446,6 @@ export const updateDynamic = mutation({
 // getProfileWithMemories — profile + recent typed memories in one query
 // returns-projection: memory snippet card for the profile view — full memory doc (namespace/instanceId/relations/isLatest/ttl/episode/updatedAt) fetched via memories.get when a snippet is opened
 // ─────────────────────────────────────────────────────────────────────────────
-// fleet-wide: the fleet (the service account, or the operator human for reads) reads any orchestrator profile of its own registry with its memories by purpose; the memories are served only inside a namespace the caller owns, and an organisation member's profile half is judged by stored agent ID
 export const getProfileWithMemories = query({
   args: {
     orchestratorId: v.string(),
@@ -425,6 +454,8 @@ export const getProfileWithMemories = query({
     memoryLimit: v.optional(v.number()),
     // The acting agent, forwarded by ID (see getProfile).
     verifiedActor: v.optional(verifiedActorValidator),
+    // The organisation the MCP transport verified for the bearer (R-54).
+    verifiedOrg: v.optional(verifiedOrgValidator),
   },
   returns: v.object({
     profile: v.union(profileDocValidator, v.null()),
@@ -446,7 +477,12 @@ export const getProfileWithMemories = query({
     // fleet-internal orchestrator row. Reuses withOrgScope +
     // isNamespaceAllowedForScope — the SAME mechanism memories.ts::listMemories
     // uses, never a second identity layer.
-    const scope = await withOrgScope(ctx, { refuseWithoutThrow: true });
+    const transportScope = await withOrgScope(ctx, { refuseWithoutThrow: true });
+    const claim = await actingClaimOf(ctx, transportScope, args.verifiedOrg, "profiles:getProfileWithMemories", args);
+    const scope =
+      args.verifiedActor === undefined
+        ? await resolveVerifiedOrgScope(ctx, transportScope, claim, "profiles:getProfileWithMemories")
+        : transportScope;
     if (!isNamespaceAllowedForScope(scope, args.namespace)) {
       return { profile: null, memories: [] };
     }
@@ -509,7 +545,6 @@ export const getProfileWithMemories = query({
 // wide enough to include them — mission k574p02m DEFECT 2 fix.
 export const PROFILES_LIST_SCAN_CAP = 2000;
 
-// fleet-wide: listing every orchestrator profile of the fleet's own registry is this door's purpose and only the fleet (the service account, or the operator human) is served; an organisation member receives the typed refusal envelope
 export const listProfiles = query({
   args: {
 	fields: v.optional(v.union(v.literal("lite"), v.literal("full"))), // v2.4.12 accept (no-op for now) — closes ArgumentValidationError from MCP wrappers passing fields
@@ -520,6 +555,8 @@ export const listProfiles = query({
     // The acting agent, forwarded by ID: the master's list is then narrowed to the
     // profiles of that agent's own organisation (judged by stored ID).
     verifiedActor: v.optional(verifiedActorValidator),
+    // The organisation the MCP transport verified for the bearer (R-54).
+    verifiedOrg: v.optional(verifiedOrgValidator),
   },
   // A bare array is what the fleet master is served (rows, or a genuine
   // absence). An ORDINARY member of an active org is served the typed refusal
@@ -573,7 +610,12 @@ export const listProfiles = query({
     //     empty AND says it was refused.
     //   ordinary org member  -> `{ refused: true, items: [] }`, same shape.
     // The fleet master alone is served the bare array.
-    const scope = await withOrgScope(ctx, { refuseWithoutThrow: true });
+    const transportScope = await withOrgScope(ctx, { refuseWithoutThrow: true });
+    const claim = await actingClaimOf(ctx, transportScope, args.verifiedOrg, "profiles:listProfiles", args);
+    const scope =
+      args.verifiedActor === undefined
+        ? await resolveVerifiedOrgScope(ctx, transportScope, claim, "profiles:listProfiles")
+        : transportScope;
     requireResolvedCaller(scope, "profiles:listProfiles");
     if (!hasFleetRead(scope)) {
       return { refused: true as const, items: [] };

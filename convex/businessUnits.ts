@@ -27,6 +27,7 @@ import {
 	requireLabelOnScopeRoster,
 } from "./lib/rosterLabels";
 import {
+	actingClaimOf,
 	resolveVerifiedOrgMapping,
 	resolveVerifiedOrgScope,
 	verifiedOrgValidator,
@@ -157,7 +158,6 @@ const buObject = v.object({
 // create — insert a new business unit
 // ─────────────────────────────────────────────────────────────────────────────
 
-// fleet-wide: the fleet (the service account) opens a business unit it owns, unstamped, by purpose; a bearer acting for a verified organisation, or a member, writes only as that organisation's member on its own roster
 export const create = mutation({
 	args: {
 		name: v.string(),
@@ -198,10 +198,11 @@ export const create = mutation({
 		// anyone else). The scope this door writes the tenant stamp from is the one
 		// `withOrgScope` itself returns for that mapping: the stamp is the verified
 		// scope's, never the claim's.
+		const claim = await actingClaimOf(ctx, transportScope, args.verifiedOrg, door);
 		const actingMapping = await resolveVerifiedOrgMapping(
 			ctx,
 			transportScope,
-			args.verifiedOrg,
+			claim,
 			door,
 		);
 		let scope = transportScope;
@@ -272,7 +273,6 @@ export const create = mutation({
 // update — partial update of BU fields
 // ─────────────────────────────────────────────────────────────────────────────
 
-// fleet-wide: the fleet (the service account) updates any fleet-owned business unit by purpose; a bearer acting for a verified organisation, or a member, only a unit stamped with that organisation's ID
 export const update = mutation({
 	args: {
 		buId: v.id("businessUnits"),
@@ -323,13 +323,9 @@ export const update = mutation({
 		const transportScope = await withOrgScope(ctx);
 		requireResolvedCaller(transportScope, door, { alsoRefusePreOrg: true });
 		requireStanding(transportScope, door, ["fleet", "member"]);
-		const scope = await resolveVerifiedOrgScope(
-			ctx,
-			transportScope,
-			args.verifiedOrg,
-			door,
-		);
-		const acting = args.verifiedOrg !== undefined;
+		const claim = await actingClaimOf(ctx, transportScope, args.verifiedOrg, door);
+		const scope = await resolveVerifiedOrgScope(ctx, transportScope, claim, door);
+		const acting = claim !== undefined;
 		const fleet = !acting && (await hasFleetStanding(ctx, door));
 
 		const bu = await ctx.db.get(args.buId);
@@ -437,7 +433,6 @@ export const update = mutation({
 // remove — delete a business unit by ID
 // ─────────────────────────────────────────────────────────────────────────────
 
-// fleet-wide: deleting a business unit is the fleet's act by purpose: the service account deletes the fleet's own units, and a unit stamped with a client organisation only on the transport's verified claim naming that organisation
 export const remove = mutation({
 	args: {
 		buId: v.id("businessUnits"),
@@ -458,6 +453,7 @@ export const remove = mutation({
 		const scope = await withOrgScope(ctx);
 		await requireFleetDoor(ctx, scope, door, { masterOnly: true });
 		requireServiceAccountStanding(scope, door);
+		const claim = await actingClaimOf(ctx, scope, args.verifiedOrg, door);
 
 		const bu = await ctx.db.get(args.buId);
 		if (!bu) throw new Error("Business unit not found");
@@ -465,12 +461,7 @@ export const remove = mutation({
 		// the operator org). A unit stamped with a client org is that org's: it is
 		// deleted only on the transport's verified claim naming that same org.
 		if (!isFleetStamp(orgRefOfRow(bu), await fleetOperatorRef(ctx.db))) {
-			const acting = await resolveVerifiedOrgScope(
-				ctx,
-				scope,
-				args.verifiedOrg,
-				door,
-			);
+			const acting = await resolveVerifiedOrgScope(ctx, scope, claim, door);
 			if (!sameOrg(orgRefOfRow(bu), orgRefOfScope(acting))) {
 				throw new ConvexError(
 					`RBAC_DENIED: caller may not delete business unit ${args.buId} — ${JSON.stringify({ orgSlug: acting.orgSlug, reason: "row-not-in-caller-org" })}`,
@@ -486,7 +477,6 @@ export const remove = mutation({
 // get — fetch a single BU by ID
 // ─────────────────────────────────────────────────────────────────────────────
 
-// fleet-wide: the fleet (the service account, or the operator human for reads) reads any business unit by purpose; a bearer acting for a verified organisation, or a member, reads only a unit of that organisation whose owner is on its roster
 export const get = query({
 	// Accept a raw string, not `v.id("businessUnits")`: the v.id() validator
 	// runs BEFORE the handler, so a wrong-table ID is rejected with a message
@@ -519,16 +509,12 @@ export const get = query({
 		const door = "businessUnits:get";
 		const transportScope = await withOrgScope(ctx, { refuseWithoutThrow: true });
 		requireResolvedCaller(transportScope, door, { alsoRefusePreOrg: true });
-		const scope = await resolveVerifiedOrgScope(
-			ctx,
-			transportScope,
-			args.verifiedOrg,
-			door,
-		);
+		const claim = await actingClaimOf(ctx, transportScope, args.verifiedOrg, door);
+		const scope = await resolveVerifiedOrgScope(ctx, transportScope, claim, door);
 		const bu = await ctx.db.get(buId);
 		if (bu === null) return null;
 		if (
-			args.verifiedOrg === undefined &&
+			claim === undefined &&
 			(await hasFleetStanding(ctx, door, { operatorHumanMayRead: true }))
 		) {
 			return bu;
@@ -593,7 +579,6 @@ const BU_STATUSES = ["idea", "building", "live", "revenue"] as const;
 type BuStatus = (typeof BU_STATUSES)[number];
 
 // returns-projection: fields="lite" returns a list-view card summary (liteValidator), not the full BU document
-// fleet-wide: the fleet (the service account, or the operator human for reads) lists every business unit by purpose; a bearer acting for a verified organisation, or a member, reads one index range per roster agent under its own organisation ID
 export const list = query({
 	args: {
 		fields: v.optional(v.union(v.literal("lite"), v.literal("full"))),
@@ -634,16 +619,12 @@ export const list = query({
 		const door = "businessUnits:list";
 		const transportScope = await withOrgScope(ctx, { refuseWithoutThrow: true });
 		requireResolvedCaller(transportScope, door);
-		const scope = await resolveVerifiedOrgScope(
-			ctx,
-			transportScope,
-			args.verifiedOrg,
-			door,
-		);
+		const claim = await actingClaimOf(ctx, transportScope, args.verifiedOrg, door);
+		const scope = await resolveVerifiedOrgScope(ctx, transportScope, claim, door);
 		// A bearer acting for a verified org reads as that org's member, never as
 		// the fleet, even though the credential on the wire is the service account.
 		const fleet =
-			args.verifiedOrg === undefined &&
+			claim === undefined &&
 			(await hasFleetStanding(ctx, door, { operatorHumanMayRead: true }));
 
 		const DEFAULT_LIMIT = 20;

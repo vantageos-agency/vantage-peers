@@ -513,7 +513,7 @@ export const searchFixPatterns = action({
 
 		for (const { patternId, score } of patternResults) {
 			const pattern: Awaited<ReturnType<typeof ctx.runQuery>> =
-				await ctx.runQuery(api.fixPatterns.get, {
+				await ctx.runQuery(internal.fixPatterns.getForSearch, {
 					patternId: patternId as never,
 				});
 			if (pattern !== null) {

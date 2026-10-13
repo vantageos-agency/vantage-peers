@@ -6,6 +6,8 @@ import {
 	requireResolvedCaller,
 	withOrgScope,
 } from "./lib/auth";
+import { claimedOrgArgs } from "./contentClaims";
+import { scopeActingClaim } from "./lib/fleetStanding";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // improvisationDigest — PR-I T-GREEN
@@ -54,11 +56,11 @@ const DIGEST_TASKS_SCAN_CAP = 2000;
 const DIGEST_MESSAGES_SCAN_CAP = 2000;
 const DIGEST_MEMORIES_SCAN_CAP = 2000;
 
-// fleet-wide: the digest reads tasks, messages and memories across the whole fleet by purpose and its MCP tool is master-only; the fleet standing reads every tenant, an organisation member is confined to its own tenant's tasks and messages and is served no memories.
 export const scanWindow = query({
 	args: {
 		windowDays: v.number(),
 		orchestrators: v.optional(v.array(v.string())),
+		...claimedOrgArgs,
 	},
 	returns: v.object({
 		countsByOrch: v.any(),
@@ -75,7 +77,16 @@ export const scanWindow = query({
 		//     messages only. `memories` carries no tenant stamp at all, so an
 		//     org-scoped caller is served NONE of them: absence of a stamp
 		//     asserts nothing and grants nothing.
-		const scope = await withOrgScope(ctx, { refuseWithoutThrow: true });
+		const transportScope = await withOrgScope(ctx, { refuseWithoutThrow: true });
+		// R-54: the service account that presents no verified organisation is
+		// refused; a client organisation's claim runs the digest as that
+		// organisation's member.
+		const scope = await scopeActingClaim(
+			ctx,
+			transportScope,
+			args.verifiedOrg,
+			"improvisationDigest:scanWindow",
+		);
 		const callerOrg = scope.orgSlug;
 		if (scope.refused || (!hasFleetRead(scope) && callerOrg === null)) {
 			return {

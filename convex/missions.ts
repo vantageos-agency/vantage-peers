@@ -28,6 +28,11 @@ import {
 	requireAgentOnScopeRoster,
 } from "./lib/missionActors";
 import { requireId } from "./lib/ids";
+import {
+	actingClaimOf,
+	resolveVerifiedOrgScope,
+	verifiedOrgValidator,
+} from "./lib/verifiedOrg";
 import { resolveHumanActor } from "./lib/humanActor";
 import {
 	resolveVerifiedPerson,
@@ -197,7 +202,6 @@ async function participantIdsOf(
 // create — insert a new mission
 // ─────────────────────────────────────────────────────────────────────────────
 
-// fleet-wide: the fleet (the service account) opens a mission for its own orchestrators with no organisation stamp, by purpose; an organisation member or a verified person creates only inside its own organisation, stamped from the verified scope
 export const create = mutation({
 	args: {
 		name: v.string(),
@@ -220,6 +224,10 @@ export const create = mutation({
 		// The agent the MCP transport verified (lib/auth.ts requireAgentCredentialMatch):
 		// its agents-row ID becomes `createdById`. Believed from the service account only.
 		verifiedActor: v.optional(verifiedActorValidator),
+		// The organisation the MCP transport verified for the bearer (see
+		// convex/lib/verifiedOrg.ts). A service-account call that carries none of
+		// the three claims is refused (R-54).
+		verifiedOrg: v.optional(verifiedOrgValidator),
 	},
 	returns: v.id("missions"),
 	handler: async (ctx, args) => {
@@ -237,12 +245,16 @@ export const create = mutation({
 		// dashboard member); resolveVerifiedPerson returns it unchanged unless a
 		// person is carried (convex/lib/personPrincipal.ts).
 		const transportScope = await withOrgScope(ctx);
-		const scope = await resolveVerifiedPerson(
-			ctx,
-			transportScope,
-			args.verifiedPerson,
-			{ door: "missions:create", assertedName: args.createdBy },
-		);
+		const claim = await actingClaimOf(ctx, transportScope, args.verifiedOrg, "missions:create", args);
+		const scope =
+			args.verifiedPerson === undefined
+				? await resolveVerifiedOrgScope(ctx, transportScope, claim, "missions:create")
+				: await resolveVerifiedPerson(
+						ctx,
+						transportScope,
+						args.verifiedPerson,
+						{ door: "missions:create", assertedName: args.createdBy },
+					);
 		requireResolvedCaller(scope, "missions:create", { alsoRefusePreOrg: true });
 		const standing = requireStanding(scope, "missions:create", ["fleet", "member"]);
 		const isFleet = standing === "fleet";
@@ -259,6 +271,7 @@ export const create = mutation({
 			createdBy: claimedCreator,
 			verifiedPerson: _verifiedPerson,
 			verifiedActor,
+			verifiedOrg: _verifiedOrg,
 			...rest
 		} = args;
 		// HUMAN path (no createdBy): the actor is the verified Clerk subject, the
@@ -334,9 +347,8 @@ export const create = mutation({
 // get — fetch a single mission by ID
 // ─────────────────────────────────────────────────────────────────────────────
 
-// fleet-wide: the fleet (the service account, or the operator human for reads) reads any mission by purpose; an organisation member reads only a mission stamped with its own organisation ID whose pilot is on its roster by agent ID
 export const get = query({
-	args: { missionId: v.string() },
+	args: { missionId: v.string(), verifiedOrg: v.optional(verifiedOrgValidator) },
 	returns: v.union(
 		v.object({
 			_id: v.id("missions"),
@@ -372,6 +384,10 @@ export const get = query({
 		v.null(),
 	),
 	handler: async (ctx, args) => {
+		// The caller is resolved BEFORE the row is read: a service-account call that
+		// carries no verified organisation is refused (R-54) whatever the id.
+		const transportScope = await withOrgScope(ctx, { refuseWithoutThrow: true });
+		const claim = await actingClaimOf(ctx, transportScope, args.verifiedOrg, "missions:get");
 		const missionId = requireId(
 			ctx,
 			"missions",
@@ -388,7 +404,7 @@ export const get = query({
 		// organisation. The fleet master reads every row.
 		// refuseWithoutThrow: a reactively-subscribed public read refuses with a
 		// typed null rather than a throw (R-50/R-51).
-		const scope = await withOrgScope(ctx, { refuseWithoutThrow: true });
+		const scope = await resolveVerifiedOrgScope(ctx, transportScope, claim, "missions:get");
 		const verdict = tenantVerdict(scope, mission);
 		if (verdict === "other") return null;
 		if (verdict === "own") {
@@ -741,9 +757,8 @@ const missionsListArgsValidator = {
 	createdBefore: v.optional(v.number()),
 };
 
-// fleet-wide: the fleet (the service account, or the operator human for reads) lists every mission by purpose; an organisation member reads one index range keyed by its own organisation
 export const list = query({
-	args: missionsListArgsValidator,
+	args: { ...missionsListArgsValidator, verifiedOrg: v.optional(verifiedOrgValidator) },
 	// Returns validator omitted because union of full+lite produces overly strict types vs Doc<"missions"> optionality
 	handler: async (ctx, args) => {
 		// ── Beta multi-tenant scope gate — fail-closed default (SEC-AUDIT Day
@@ -754,9 +769,12 @@ export const list = query({
 		// narrows the signed-in-no-org branch to a typed-empty result (the
 		// pre-existing requireScope inside runMissionsList would otherwise
 		// throw for that same caller).
-		const scope = await withOrgScope(ctx, { refuseWithoutThrow: true });
+		const transportScope = await withOrgScope(ctx, { refuseWithoutThrow: true });
+		const claim = await actingClaimOf(ctx, transportScope, args.verifiedOrg, "missions:list");
+		const scope = await resolveVerifiedOrgScope(ctx, transportScope, claim, "missions:list");
 		if (scope.refused) return [];
-		return await runMissionsList(ctx, args, scope);
+		const { verifiedOrg: _verifiedOrg, ...listArgs } = args;
+		return await runMissionsList(ctx, listArgs, scope);
 	},
 });
 
@@ -793,7 +811,6 @@ export const listForWebhook = internalQuery({
 // update — partial update of any mutable mission field
 // ─────────────────────────────────────────────────────────────────────────────
 
-// fleet-wide: the fleet (the service account) updates any mission by purpose; an organisation member or a verified person only a mission stamped with its own organisation ID
 export const update = mutation({
 	args: {
 		missionId: v.id("missions"),
@@ -817,6 +834,8 @@ export const update = mutation({
 		// creator-only cancel rule compares with `createdById`. Believed from the
 		// service account only (lib/auth.ts requireAgentCredentialMatch).
 		verifiedActor: v.optional(verifiedActorValidator),
+		// The organisation the MCP transport verified for the bearer (see create).
+		verifiedOrg: v.optional(verifiedOrgValidator),
 	},
 	returns: v.null(),
 	handler: async (ctx, args) => {
@@ -827,6 +846,7 @@ export const update = mutation({
 			cancelReason,
 			verifiedPerson,
 			verifiedActor,
+			verifiedOrg,
 			...fields
 		} = args;
 
@@ -848,12 +868,16 @@ export const update = mutation({
 		// dashboard member); resolveVerifiedPerson returns it unchanged unless a
 		// person is carried (convex/lib/personPrincipal.ts).
 		const transportScope = await withOrgScope(ctx);
-		const scope = await resolveVerifiedPerson(
-			ctx,
-			transportScope,
-			verifiedPerson,
-			{ door: "missions:update", assertedName: callerOrchestrator },
-		);
+		const claim = await actingClaimOf(ctx, transportScope, verifiedOrg, "missions:update", { verifiedActor, verifiedPerson });
+		const scope =
+			verifiedPerson === undefined
+				? await resolveVerifiedOrgScope(ctx, transportScope, claim, "missions:update")
+				: await resolveVerifiedPerson(
+						ctx,
+						transportScope,
+						verifiedPerson,
+						{ door: "missions:update", assertedName: callerOrchestrator },
+					);
 		requireResolvedCaller(scope, "missions:update", { alsoRefusePreOrg: true });
 		const standing = requireStanding(scope, "missions:update", ["fleet", "member"]);
 		const isFleet = standing === "fleet";
@@ -986,9 +1010,9 @@ export const update = mutation({
 // updateStatus — shortcut: sets status + updatedAt
 // ─────────────────────────────────────────────────────────────────────────────
 
-// fleet-wide: the fleet (the service account) moves any mission's status by purpose; an organisation member only a mission stamped with its own organisation ID
 export const updateStatus = mutation({
 	args: {
+		verifiedOrg: v.optional(verifiedOrgValidator),
 		missionId: v.id("missions"),
 		status: missionStatusValidator,
 	},
@@ -999,7 +1023,9 @@ export const updateStatus = mutation({
 		// `update` above) — updateStatus used to take NO caller-identity
 		// check of any kind. Resolved BEFORE ctx.db.get for the same
 		// existence-oracle reason documented on `update`.
-		const scope = await withOrgScope(ctx);
+		const transportScope = await withOrgScope(ctx);
+		const claim = await actingClaimOf(ctx, transportScope, args.verifiedOrg, "missions:updateStatus");
+		const scope = await resolveVerifiedOrgScope(ctx, transportScope, claim, "missions:updateStatus");
 		requireResolvedCaller(scope, "missions:updateStatus", { alsoRefusePreOrg: true });
 		const standing = requireStanding(scope, "missions:updateStatus", ["fleet", "member"]);
 
@@ -1047,9 +1073,9 @@ export const updateStatus = mutation({
 // updateProgress — shortcut: sets progress (0-100) + updatedAt
 // ─────────────────────────────────────────────────────────────────────────────
 
-// fleet-wide: the fleet (the service account) moves any mission's progress by purpose; an organisation member only a mission stamped with its own organisation ID
 export const updateProgress = mutation({
 	args: {
+		verifiedOrg: v.optional(verifiedOrgValidator),
 		missionId: v.id("missions"),
 		progress: v.number(),
 	},
@@ -1060,7 +1086,9 @@ export const updateProgress = mutation({
 		// `update`/`updateStatus` above) — updateProgress used to take NO
 		// caller-identity check of any kind. Resolved BEFORE ctx.db.get for
 		// the same existence-oracle reason documented on `update`.
-		const scope = await withOrgScope(ctx);
+		const transportScope = await withOrgScope(ctx);
+		const claim = await actingClaimOf(ctx, transportScope, args.verifiedOrg, "missions:updateProgress");
+		const scope = await resolveVerifiedOrgScope(ctx, transportScope, claim, "missions:updateProgress");
 		requireResolvedCaller(scope, "missions:updateProgress", { alsoRefusePreOrg: true });
 		const standing = requireStanding(scope, "missions:updateProgress", ["fleet", "member"]);
 
