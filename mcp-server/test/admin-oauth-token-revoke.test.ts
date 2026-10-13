@@ -76,7 +76,7 @@ function post(
 }
 
 describe("POST /admin/oauth/access-tokens/:tokenId/revoke", () => {
-	it("200: forwards the row id and the reason to oauth:revokeAccessTokenById", async () => {
+	it("200: forwards the row id and the reason to oauth:revokeAccessTokensOnly", async () => {
 		state.impl = async () => ({
 			tokenId: TOKEN_ID,
 			clientId: "admin-mint:abc",
@@ -89,7 +89,7 @@ describe("POST /admin/oauth/access-tokens/:tokenId/revoke", () => {
 		expect(await res.json()).toMatchObject({ tokenId: TOKEN_ID });
 		expect(state.calls).toEqual([
 			{
-				name: "oauth:revokeAccessTokenById",
+				name: "oauth:revokeAccessTokensOnly",
 				args: { tokenId: TOKEN_ID, reason: REASON },
 			},
 		]);

@@ -19,6 +19,7 @@ import { resolveHumanActor } from "./lib/humanActor";
 import { actorIdResolver, type ActorIdResolver } from "./lib/actorIds";
 import { requireAuthenticatedCaller } from "./tasks";
 import {
+	resolveVerifiedOrgMapping,
 	resolveVerifiedOrgScope,
 	verifiedOrgValidator,
 } from "./lib/verifiedOrg";
@@ -286,6 +287,12 @@ export const create = mutation({
 		// verified (believed from the fleet service account only). The author's ID
 		// is derived from the proof, never from the label. No secret is an argument.
 		verifiedActor: v.optional(verifiedActorValidator),
+		// The organisation the MCP transport VERIFIED for a seat bearer that reaches
+		// Convex as the fleet service account (whose ctx.auth carries no org). Without
+		// it the note was stamped fleet-owned and its own seat could not read it back.
+		// Believed from the service account only; resolved against an ACTIVE mapping
+		// (convex/lib/verifiedOrg.ts). No secret is an argument.
+		verifiedOrg: v.optional(verifiedOrgValidator),
 	},
 	returns: v.id("briefingNotes"),
 	handler: async (ctx, args) => {
@@ -323,13 +330,32 @@ export const create = mutation({
 		const {
 			createdBy: claimedCreator,
 			verifiedActor,
+			verifiedOrg,
 			...rest
 		} = args;
+		// The org a service-account write is made FOR: the verified org's ACTIVE
+		// mapping (slug + permanent ID), or none (the caller's own scope stands, and
+		// the fleet master's note stays fleet-owned, byte-unchanged).
+		// The stamp is the scope `withOrgScope` itself returns for that mapping
+		// (the same pattern as businessUnits:create), never the claim's own value.
+		const actingMapping = await resolveVerifiedOrgMapping(
+			ctx,
+			scope,
+			verifiedOrg,
+			"briefingNotes:create",
+		);
+		let stampScope = scope;
+		if (actingMapping !== undefined) {
+			stampScope = await withOrgScope(ctx, {
+				refuseWithoutThrow: true,
+				actForOrgMapping: actingMapping,
+			});
+		}
 		// The note is stamped with the org's permanent ID: a member whose org has
 		// none yet could write a row it could never read back.
-		if (!scope.isMaster && scope.orgClerkId === undefined) {
+		if (!stampScope.isMaster && stampScope.orgClerkId === undefined) {
 			throw new ConvexError(
-				`RBAC_DENIED: caller's organisation has no permanent org ID to stamp a briefing note with — ${JSON.stringify({ reason: "org-id-missing", door: "briefingNotes:create", orgSlug: scope.orgSlug })}`,
+				`RBAC_DENIED: caller's organisation has no permanent org ID to stamp a briefing note with — ${JSON.stringify({ reason: "org-id-missing", door: "briefingNotes:create", orgSlug: stampScope.orgSlug })}`,
 			);
 		}
 		let createdBy: string;
@@ -350,6 +376,8 @@ export const create = mutation({
 				claimedCreator,
 				undefined,
 				verifiedActor,
+				undefined,
+				{ proof: verifiedOrg, door: "briefingNotes:create" },
 			);
 			createdById = caller.callerActorId;
 			if (!scope.isMaster && createdById === undefined) {
@@ -364,10 +392,8 @@ export const create = mutation({
 			createdBy,
 			...(createdById !== undefined ? { createdById } : {}),
 			createdAt: Date.now(),
-			orgId: scope.isMaster ? undefined : (scope.orgSlug as string),
-			clerkOrgId: scope.isMaster
-				? undefined
-				: scope.orgClerkId,
+			orgId: stampScope.isMaster ? undefined : (stampScope.orgSlug as string),
+			clerkOrgId: stampScope.isMaster ? undefined : stampScope.orgClerkId,
 		});
 		await syncParticipantIndex(ctx, noteId, args.participants);
 		return noteId;

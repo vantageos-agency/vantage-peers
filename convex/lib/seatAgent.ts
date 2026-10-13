@@ -61,6 +61,34 @@ async function sameOrgStamp(
 	return sameOrg({ id: await idOf(a) }, { id: await idOf(b) });
 }
 
+export type SeatBindingRefusal =
+	| "PROFILE_NOT_SINGLE_SEAT"
+	| "AGENT_INACTIVE"
+	| "AGENT_ORG_MISMATCH";
+
+/**
+ * May this agent be bound onto this seat profile (`oauth_scope_profiles.agentId`)?
+ * Null when it may, otherwise the code of the first refusal: the profile must name
+ * exactly ONE allowlist entry, the agent must be active, and the agent must be in
+ * the profile's own organisation, decided by org ID through
+ * {@link sameOrgStamp} (@vantageos/cloud-identity `sameOrg`), never by label.
+ */
+export async function seatBindingRefusal(
+	ctx: QueryCtx | MutationCtx,
+	profile: Doc<"oauth_scope_profiles">,
+	agent: Doc<"agents">,
+): Promise<SeatBindingRefusal | null> {
+	// allow-local-identity: counts the entries of a STORED seat profile's allowlist for an operator bind door; it admits no caller and selects no agent by name
+	if (profile.fromAllowList.length !== 1) return "PROFILE_NOT_SINGLE_SEAT";
+	if (!agent.isActive) return "AGENT_INACTIVE";
+	const sameOrgAsProfile = await sameOrgStamp(
+		ctx,
+		{ id: agent.clerkOrgId, label: agent.orgSlug },
+		{ id: profile.clerkOrgId, label: profile.clerkOrgSlug },
+	);
+	return sameOrgAsProfile ? null : "AGENT_ORG_MISMATCH";
+}
+
 export async function resolveSeatAgent(
 	ctx: QueryCtx | MutationCtx,
 	token: SeatAgentInput,
