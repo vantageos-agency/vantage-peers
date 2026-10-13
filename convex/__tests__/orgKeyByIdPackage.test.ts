@@ -135,6 +135,7 @@ describe("the org-by-ID decisions live in the package", () => {
 		// Both are one-off, dry-run-first backfills: the generic slug-column walk, and
 		// the memories walk (a memory stores its org only as the label in its namespace).
 		expect(callers).toEqual([
+			"migrations/backfill_kb_upload_org_ids.ts",
 			"migrations/backfill_memories_org_clerk_id.ts",
 			"migrations/backfill_org_clerk_id.ts",
 		]);

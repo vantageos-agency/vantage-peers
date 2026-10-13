@@ -17,6 +17,7 @@
 import { convexTest } from "../../tests/fixtures/convexTestWithServiceAccount";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import { testClerkOrgId } from "../../tests/fixtures/testClerkOrgId";
+import { asFleet } from "../../tests/lib/asFleet";
 import schema from "../schema";
 
 // biome-ignore lint/suspicious/noExplicitAny: action refs by string, codegen-independent
@@ -75,9 +76,14 @@ function asNoOrg(t: T) {
 
 function asMaster(t: T) {
 	// CLERK_SERVICE_ACCOUNT_USER_ID in vitest.config.ts
-	return t.withIdentity({
-		subject: "test-service-account-user-id",
-	} as Parameters<typeof t.withIdentity>[0]);
+	// The kb doors refuse a claimless service-account call (batch F1): the fleet seat
+	// presents the operator org's verified claim, as the MCP does.
+	return asFleet(
+		t.withIdentity({
+			subject: "test-service-account-user-id",
+		} as Parameters<typeof t.withIdentity>[0]),
+		t,
+	);
 }
 
 async function storeBlob(t: T, text: string) {

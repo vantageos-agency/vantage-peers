@@ -203,6 +203,8 @@ const DIARY_OWN_ROW_SCAN = 8;
 
 // One (tenant, orchestrator) range is a handful of rows a day; the bound keeps a
 // range read from being unbounded and fails closed beyond it.
+// Organisations a fleet range read walks (a mapped org each).
+const DIARY_TENANT_CAP = 1000;
 const DIARY_RANGE_SCAN_CAP = 2000;
 
 // The tenant stamp of a diary row, derived from the verified scope: a fleet write is
@@ -249,9 +251,15 @@ async function readTenantRange(
 	from: string,
 	to: string,
 ): Promise<Doc<"diary">[]> {
-	const tenant = await callerTenant(ctx, scope);
+	// The fleet reader serves every tenant (its standing is the whole fleet): one
+	// indexed range per tenant key — the fleet's own (operator-stamped, unstamped)
+	// and each mapped organisation's permanent ID. Never one scan across tenants.
+	const fleet = await callerTenant(ctx, scope);
+	const mappings = await ctx.db.query("client_org_mapping").take(DIARY_TENANT_CAP);
+	const keys = new Set<string | undefined>(fleet.keys);
+	for (const m of mappings) if (m.clerkOrgId !== undefined) keys.add(m.clerkOrgId);
 	const perRange = await Promise.all(
-		tenant.keys.map((key) =>
+		[...keys].map((key) =>
 			ctx.db
 				.query("diary")
 				.withIndex("by_org_date_clerk_id", (q) =>
@@ -260,9 +268,9 @@ async function readTenantRange(
 				.take(DIARY_RANGE_SCAN_CAP),
 		),
 	);
-	const owned: Doc<"diary">[] = [];
-	for (const row of perRange.flat()) if (tenant.owns(row)) owned.push(row);
-	return owned.sort((a, b) => (a.date < b.date ? -1 : a.date > b.date ? 1 : 0));
+	return perRange
+		.flat()
+		.sort((x, y) => (x.date < y.date ? -1 : x.date > y.date ? 1 : 0));
 }
 
 // The predicates of a `list` page that are not the tenant or the agent: the author
