@@ -1,8 +1,14 @@
 import { hasFleetRead } from "@vantageos/cloud-identity";
 import { ConvexError, v } from "convex/values";
-import { MutationCtx, query } from "./_generated/server";
+import { MutationCtx, mutation, query } from "./_generated/server";
 import { sameOrg } from "@vantageos/cloud-identity";
-import { lookupOrgMapping, requireResolvedCaller, withOrgScope } from "./lib/auth";
+import { anonymousRefusal } from "./lib/agentIdentity";
+import {
+	lookupOrgMapping,
+	proveOrgAdmin,
+	requireResolvedCaller,
+	withOrgScope,
+} from "./lib/auth";
 import { orgRefOfScope } from "./lib/authOrgMapping";
 import { clerkOrgIdForSlug } from "./lib/orgClerkId";
 
@@ -10,11 +16,16 @@ import { clerkOrgIdForSlug } from "./lib/orgClerkId";
 // orgMembership — audit record of who administers which organisation.
 // Task k17a7t4a9d4hx11sgj2tcdf7kx8et4cp.
 //
-// AUDIT RECORD ONLY — NEVER AN AUTHORISATION SOURCE. See the table comment
-// in convex/schema.ts. `requireOrgAdmin` (convex/lib/auth.ts) keeps
-// deciding admin status from the verified `org_role` JWT claim, unchanged.
-// Nothing in this module may be used to decide whether an action is
-// allowed — it only answers "who administers/belongs to which org".
+// AUDIT RECORD, WITH ONE NARROW READ. See the table comment in
+// convex/schema.ts. `requireOrgAdmin` (convex/lib/auth.ts) keeps deciding admin
+// status from the verified `org_role` JWT claim, unchanged. Nothing in this
+// module decides whether an action is allowed — it answers "who
+// administers/belongs to which org". The one read that is not display: the
+// package's agent-owner proof (`resolveCallerFromAgentCredential`, through
+// `agentCallerDeps` in convex/lib/actingPrincipal.ts) asks, by (org ID, person
+// ID), whether an agent's OWNER is still a member. That read can only WITHHOLD:
+// it gates an agent that is already bound to an owner, and a missing or
+// deactivated row refuses it.
 // ─────────────────────────────────────────────────────────────────────────────
 
 const membershipShape = v.object({
@@ -23,6 +34,7 @@ const membershipShape = v.object({
 	role: v.union(v.literal("admin"), v.literal("member")),
 	createdAt: v.number(),
 	updatedAt: v.number(),
+	deactivatedAt: v.optional(v.number()),
 });
 
 function toShape(row: {
@@ -31,6 +43,7 @@ function toShape(row: {
 	role: "admin" | "member";
 	createdAt: number;
 	updatedAt: number;
+	deactivatedAt?: number;
 }) {
 	return {
 		clerkOrgSlug: row.clerkOrgSlug,
@@ -38,6 +51,9 @@ function toShape(row: {
 		role: row.role,
 		createdAt: row.createdAt,
 		updatedAt: row.updatedAt,
+		...(row.deactivatedAt !== undefined
+			? { deactivatedAt: row.deactivatedAt }
+			: {}),
 	};
 }
 
@@ -195,5 +211,57 @@ export const getMembership = query({
 			.take(MEMBERSHIP_QUERY_LIMIT);
 		assertNotTruncated(rows.length, `subject "${scope.userId}"`);
 		return rows.map(toShape);
+	},
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// setMember — an organisation ADMINISTRATOR records a person as a member of
+// its own organisation, or marks the person deactivated (and back). This is the
+// row the agent-owner proof reads: an agent bound to a person is served only
+// while that person's row here is present and not deactivated.
+//
+// Gated by the package's org-admin proof (`proveOrgAdmin`, org ID against the
+// verified session), no master carve-out. The row is keyed by the org's
+// permanent ID. RETURNS `{ recorded, active }`: `recorded` is true when this
+// call created the row; `active` is the state now stored.
+// ─────────────────────────────────────────────────────────────────────────────
+export const setMember = mutation({
+	args: {
+		orgSlug: v.string(),
+		clerkUserId: v.string(),
+		active: v.boolean(),
+	},
+	returns: v.object({ recorded: v.boolean(), active: v.boolean() }),
+	handler: async (ctx, args) => {
+		// write-contract: imperative admin door, no subscriber — 0 call sites in mcp-server/src, mcp-server/server-http.ts, scripts and the dashboard for "orgMembership:setMember" (new door, measured with `git grep -n "setMember" -- mcp-server scripts`); proveOrgAdmin refuses a caller with no organisation RBAC_DENIED at an imperative call, never at a render.
+		const door = "orgMembership:setMember";
+		const identity = await ctx.auth.getUserIdentity();
+		if (!identity) throw anonymousRefusal(door);
+		const proof = await proveOrgAdmin(ctx, identity, args.orgSlug, door);
+		const orgId = proof.org.id;
+		const now = Date.now();
+		const existing = await ctx.db
+			.query("orgMembership")
+			.withIndex("by_org_user_clerk_id", (q) =>
+				q.eq("clerkOrgId", orgId).eq("clerkUserId", args.clerkUserId),
+			)
+			.unique();
+		if (existing === null) {
+			await ctx.db.insert("orgMembership", {
+				clerkOrgSlug: proof.org.label,
+				clerkOrgId: orgId,
+				clerkUserId: args.clerkUserId,
+				role: "member",
+				createdAt: now,
+				updatedAt: now,
+				...(args.active ? {} : { deactivatedAt: now }),
+			});
+			return { recorded: true, active: args.active };
+		}
+		await ctx.db.patch(existing._id, {
+			updatedAt: now,
+			deactivatedAt: args.active ? undefined : (existing.deactivatedAt ?? now),
+		});
+		return { recorded: false, active: args.active };
 	},
 });

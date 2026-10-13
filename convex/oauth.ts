@@ -1154,6 +1154,9 @@ export const provisionOrganization = mutation({
 				...(seatAgent
 					? { agentId: seatAgent._id, agentOrgId: seatAgent.orgSlug }
 					: {}),
+				...(seatAgent?.ownerPersonId !== undefined
+					? { ownerPersonId: seatAgent.ownerPersonId }
+					: {}),
 				...(seatAgentIds !== undefined
 					? { fromAllowListAgentIds: seatAgentIds }
 					: {}),
@@ -2566,6 +2569,10 @@ async function mintAccessToken(
 		...(seatAgent
 			? { agentId: seatAgent._id, agentOrgId: seatAgent.orgSlug }
 			: {}),
+		// The owner is copied from the AGENT ROW, never from an argument.
+		...(seatAgent?.ownerPersonId !== undefined
+			? { ownerPersonId: seatAgent.ownerPersonId }
+			: {}),
 		...(profileAgentIds !== undefined
 			? { fromAllowListAgentIds: profileAgentIds }
 			: {}),
@@ -2630,6 +2637,8 @@ const oauthContextShape = v.object({
 			orgId: v.string(),
 			agentName: v.string(),
 			orgClerkId: v.optional(v.string()),
+			// The owner the package proved for this token (copied at mint, never an argument).
+			ownerPersonId: v.optional(v.string()),
 		}),
 		v.null(),
 	),
@@ -2669,7 +2678,11 @@ export const getAccessTokenByHash = query({
 		if (!row) return null;
 		if (row.revokedAt !== undefined) return null;
 		if (row.expiresAt < Date.now()) return null;
-		const agent = await liveSeatAgent(ctx, row);
+		const live = await liveSeatAgent(ctx, row);
+		// An agent whose OWNER the package refuses is not served at all: the token
+		// answers the same null as an unknown or revoked one.
+		if (live.kind === "refused") return null;
+		const agent = live.kind === "agent" ? live.agent : null;
 		const listedAgentIds = await liveProfileAgentIds(ctx, row);
 		// Both organisations by permanent ID, so the reader compares IDs and never
 		// the slugs; a row that carries none yet is given the ID its mapping stores.
@@ -2700,6 +2713,9 @@ export const getAccessTokenByHash = query({
 						orgId: agent.orgSlug,
 						agentName: agent.name,
 						...(agentOrgId !== undefined ? { orgClerkId: agentOrgId } : {}),
+						...(row.ownerPersonId !== undefined
+							? { ownerPersonId: row.ownerPersonId }
+							: {}),
 					}
 				: null,
 			...(listedAgentIds !== undefined

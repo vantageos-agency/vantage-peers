@@ -3,7 +3,7 @@ import {
 	assertTargetBelongsTo,
 	type IdentityRefusal,
 	requireAgentScopedIdentity,
-	resolveActingPrincipal,
+	resolveCallerFromAgentCredential,
 	validatePresentedBearer,
 } from "@vantageos/cloud-identity";
 import type { UserIdentity } from "convex/server";
@@ -11,8 +11,9 @@ import { ConvexError } from "convex/values";
 import type { Doc, Id } from "../_generated/dataModel";
 import type { MutationCtx, QueryCtx } from "../_generated/server";
 import { normalizeOrchestratorId } from "../_helpers/normalizeOrchestratorId";
-import { principalLookups } from "./actingPrincipal";
+import { agentCallerDeps, principalLookups } from "./actingPrincipal";
 import { proveOrgAdmin } from "./auth";
+import { clerkOrgIdForSlug } from "./orgClerkId";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // agentIdentity — the ADAPTER between the agent registry (convex/agents.ts,
@@ -114,46 +115,74 @@ export async function loadAgentOfPrincipalOrg(
 }
 
 /**
- * resolveAgentOfPresentedSecret — the `agents` row a PRESENTED secret was
- * minted for, or null when the secret resolves to no live agent.
- *
- * The bearer is validated by `validatePresentedBearer` (header parse, SHA-256,
- * constant-time digest compare, revocation, collapsed refusal); this module
- * supplies the one indexed read by digest. `requireAgentScopedIdentity` then
- * refuses a row carrying no agent ID (an organisation-wide token, and a legacy
- * row minted before `agentId` existed: a label never stands in for an ID), and
- * `resolveActingPrincipal` reads the agent BY ID and requires it active, stamped
- * with the organisation the bearer row carries, in an active organisation.
- * A credential is only as live as its agent.
- *
- * Trusts NO caller-declared name: the only input is the presented secret.
- * Read-only, so a QueryCtx or a MutationCtx both work.
+ * resolveAgentOfPresentedSecret: the `agents` row a PRESENTED secret was
+ * minted for, or null when the secret resolves to no live agent. The answer of
+ * {@link resolveAgentCallerOfPresentedSecret} with its refusal reason dropped.
  */
 export async function resolveAgentOfPresentedSecret(
 	ctx: Ctx,
 	presentedSecret: string,
 	door: string,
 ): Promise<Doc<"agents"> | null> {
-	const presented = await resolvePrincipalOfPresentedSecret(
+	const presented = await resolveAgentCallerOfPresentedSecret(
 		ctx,
 		presentedSecret,
 		door,
 	);
-	return presented === null ? null : presented.agent;
+	return presented.ok ? presented.agent : null;
 }
 
 /**
- * resolvePrincipalOfPresentedSecret — as {@link resolveAgentOfPresentedSecret},
- * but it hands back the package's resolved PRINCIPAL beside the `agents` row, so
- * a door can judge a target organisation against the principal's stored org ID
- * (`assertTargetBelongsTo`) instead of comparing the row's org label itself.
- * `null` when the secret resolves to no live agent.
+ * The refusals of a presented agent credential that name the agent's OWNER (or
+ * the lookup that proves it). Every other refusal (an unknown or rotated-out
+ * secret, an inactive agent, a missing organisation) is said as
+ * `credential-not-recognised`, so the door is no validity oracle for them.
  */
-export async function resolvePrincipalOfPresentedSecret(
+const OWNER_REFUSAL_REASONS: ReadonlySet<string> = new Set([
+	"agent-owner-mismatch",
+	"agent-owner-not-member",
+	"agent-not-owned",
+	"principal-lookup-failed",
+]);
+
+export type PresentedAgentRefusalReason =
+	| "credential-not-recognised"
+	| "agent-owner-mismatch"
+	| "agent-owner-not-member"
+	| "agent-not-owned"
+	| "principal-lookup-failed";
+
+export type PresentedAgent =
+	| { ok: true; agent: Doc<"agents">; principal: ActingPrincipal }
+	| { ok: false; reason: PresentedAgentRefusalReason };
+
+/**
+ * resolveAgentCallerOfPresentedSecret: who a PRESENTED agent secret is.
+ *
+ * The bearer is validated by `validatePresentedBearer` (header parse, SHA-256,
+ * constant-time digest compare, revocation, collapsed refusal); this module
+ * supplies the one indexed read by digest. `requireAgentScopedIdentity` then
+ * refuses a row carrying no agent ID (an organisation-wide token, and a legacy
+ * row minted before `agentId` existed: a label never stands in for an ID), and
+ * `resolveCallerFromAgentCredential` does the rest: the organisation by its
+ * permanent ID, the agent read BY ID (active, stamped with that organisation),
+ * and, when the credential row carries an `ownerPersonId`, the owner proven
+ * against the agent's stored owner and the owner's active membership.
+ *
+ * `ownerPersonId` is read from the VERIFIED credential row, never from an
+ * argument. Trusts NO caller-declared name: the only input is the secret.
+ * Read-only, so a QueryCtx or a MutationCtx both work.
+ */
+export async function resolveAgentCallerOfPresentedSecret(
 	ctx: Ctx,
 	presentedSecret: string,
 	door: string,
-): Promise<{ agent: Doc<"agents">; principal: ActingPrincipal } | null> {
+): Promise<PresentedAgent> {
+	const notRecognised: PresentedAgent = {
+		ok: false,
+		reason: "credential-not-recognised",
+	};
+	let storedOwner: string | undefined;
 	const bearer = await validatePresentedBearer(`Bearer ${presentedSecret}`, {
 		lookupBySecretHash: async (digest) => {
 			const row = await ctx.db
@@ -161,29 +190,42 @@ export async function resolvePrincipalOfPresentedSecret(
 				.withIndex("by_secret_hash", (q) => q.eq("secretHash", digest))
 				.unique();
 			if (row === null) return null;
+			const tenantId =
+				row.clerkOrgId ?? (await clerkOrgIdForSlug(ctx, row.orgSlug));
+			if (tenantId === undefined) return null;
+			storedOwner = row.ownerPersonId;
 			return {
-				tenantId: row.orgSlug,
+				tenantId,
 				secretHash: row.secretHash,
 				agentId: row.agentId ?? null,
 				revoked: !row.isActive,
 			};
 		},
 	});
-	if (!bearer.ok) return null;
+	if (!bearer.ok) return notRecognised;
 	const scoped = requireAgentScopedIdentity(bearer.identity);
-	if (!scoped.ok) return null;
-	const resolved = await resolveActingPrincipal(
+	if (!scoped.ok) return notRecognised;
+	const caller = await resolveCallerFromAgentCredential(
 		{
-			kind: "agent",
 			agentId: scoped.identity.agentId,
 			verifiedOrgId: scoped.identity.tenantId,
+			...(storedOwner !== undefined ? { ownerPersonId: storedOwner } : {}),
 		},
-		principalLookups(ctx),
-		door,
+		agentCallerDeps(ctx),
+		{ door },
 	);
-	if (!resolved.ok) return null;
-	const agent = await ctx.db.get(resolved.principal.principalId as Id<"agents">);
-	return agent === null ? null : { agent, principal: resolved.principal };
+	if (!caller.ok) {
+		return OWNER_REFUSAL_REASONS.has(caller.refusal.reason)
+			? {
+					ok: false,
+					reason: caller.refusal.reason as PresentedAgentRefusalReason,
+				}
+			: notRecognised;
+	}
+	const agent = await ctx.db.get(caller.principal.principalId as Id<"agents">);
+	return agent === null
+		? notRecognised
+		: { ok: true, agent, principal: caller.principal };
 }
 
 /**

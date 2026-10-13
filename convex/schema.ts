@@ -1557,6 +1557,12 @@ export default defineSchema({
 		// live meanwhile).
 		agentId: v.optional(v.id("agents")),
 		agentOrgId: v.optional(v.string()),
+		// The agent's human OWNER, copied from the AGENT ROW at mint and at refresh
+		// (oauth:createAccessToken), never from an argument. Resolution hands it to the
+		// package, which proves it against the agent's stored owner (agent-owner-mismatch)
+		// and the owner's active membership (agent-owner-not-member). Absent = the agent
+		// had no owner at mint. Backfilled by migrations/backfillAgentOwnerIds.
+		ownerPersonId: v.optional(v.string()),
 		// IDENTITY BY ID (operator ruling 2026-10-13, "identify by id, not by name"). The
 		// `agents` row IDs the token's scope profile admits, copied from the PROFILE at mint
 		// and at refresh (never from an argument; an ID of another organisation or of an
@@ -1961,13 +1967,16 @@ export default defineSchema({
 	// record of who administers which org — only Clerk did. This table is
 	// that record.
 	//
-	// AUDIT RECORD ONLY — NEVER AN AUTHORISATION SOURCE. `requireOrgAdmin`
+	// AUDIT RECORD, WITH ONE NARROW READ. `requireOrgAdmin`
 	// (convex/lib/auth.ts) keeps deciding admin status from the verified
 	// `org_role` JWT claim at request time, exactly as before this table
-	// existed. No code path may read a row here to decide whether an action
-	// is allowed — that would let a stale/replayed row grant authority the
-	// live Clerk session no longer holds. This table only answers "who
-	// administers/belongs to which org", for display/audit/reporting.
+	// existed. No code path may read a row here to GRANT an action — that
+	// would let a stale/replayed row grant authority the live Clerk session
+	// no longer holds. This table answers "who administers/belongs to which
+	// org", for display/audit/reporting. The one decision that reads it is the
+	// package's agent-owner proof (`resolveCallerFromAgentCredential`, via
+	// `agentCallerDeps`): an agent BOUND to an owner is served only while the
+	// owner's row is present and not deactivated. That read only withholds.
 	//
 	// Written ONLY at provisioning time (`convex/oauth.ts`'s
 	// `provisionOrganization`, org-admin path) — there is no Clerk webhook
@@ -1992,6 +2001,10 @@ export default defineSchema({
 		role: v.union(v.literal("admin"), v.literal("member")),
 		createdAt: v.number(),
 		updatedAt: v.number(),
+		// Set when the person stopped belonging to the organisation. Absent = active. The
+		// package reads it (as `active: false`) when it proves an agent's owner is still a
+		// member of the agent's organisation (@vantageos/cloud-identity 0.21.0).
+		deactivatedAt: v.optional(v.number()),
 	})
 		// "who administers/belongs to org X" — no table scan.
 		.index("by_org", ["clerkOrgSlug"])
@@ -2176,6 +2189,12 @@ export default defineSchema({
 		// only on a `kind: "service"` row; the service account is recognised by
 		// THIS stored value, never by an environment variable.
 		authSubject: v.optional(v.string()),
+		// The human OWNER of this agent: the verified person ID (Clerk subject) it is bound to.
+		// Expand-only: absent = an agent bound to nobody. Never read as an authority by VP; the
+		// package proves it (`resolveCallerFromAgentCredential`) against the owner's active
+		// membership of this agent's own organisation. Set by agents:setAgentOwner, by an
+		// organisation administrator only.
+		ownerPersonId: v.optional(v.string()),
 		isActive: v.boolean(),
 		createdAt: v.number(),
 	})
@@ -2254,6 +2273,9 @@ export default defineSchema({
 		// convex/lib/agentIdentity.ts: the label fallback is already gone, a row without agentId no longer resolves (agentCredentials.ts, resolveAgentOfPresentedSecret). Tightening earlier
 		// would make every un-backfilled row fail schema validation at deploy.
 		agentId: v.optional(v.id("agents")),
+		// The agent's human OWNER, copied from the AGENT ROW by mintAgentCredential, never from
+		// an argument; proven by the package on every resolution (see oauth_access_tokens).
+		ownerPersonId: v.optional(v.string()),
 		// DENORMALISED LABEL (kept, not dropped): the agent's name AT MINT TIME, for audit reports
 		// and for the legacy fallback above. It is NOT the identity and may go stale after a
 		// rename; the agent row's current `name` is what resolution reports.

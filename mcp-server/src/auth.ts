@@ -154,7 +154,13 @@ export type OAuthContext = {
 	 * on a declared name, and that is that identity's own all-authority, not a
 	 * widening.
 	 */
-	actor?: { orgSlug: string; agentName: string; agentId?: string };
+	actor?: {
+		orgSlug: string;
+		agentName: string;
+		agentId?: string;
+		/** The agent's human owner, present only when Convex PROVED it (the package's owner proof). Forwarded, never decided here. */
+		ownerPersonId?: string;
+	};
 	/**
 	 * The agent a one-agent SEAT token acts as, by `agents` ROW ID, stamped by
 	 * Convex at mint and at refresh and re-read live on every request
@@ -177,6 +183,8 @@ export type OAuthContext = {
 		agentName: string;
 		/** The agent's organisation by permanent ID, to be compared with {@link OAuthContext.clerkOrgId}. */
 		orgClerkId?: string;
+		/** The owner the package proved for this token at Convex (copied at mint). Forwarded, never decided here. */
+		ownerPersonId?: string;
 	} | null;
 };
 
@@ -260,6 +268,7 @@ type OAuthLookupResult = {
 		orgId: string;
 		agentName: string;
 		orgClerkId?: string;
+		ownerPersonId?: string;
 	} | null;
 	/** The agent IDs the token's profile admits (see OAuthContext). */
 	fromAllowListAgentIds?: string[];
@@ -545,7 +554,13 @@ export function checkActorBinding(
 export function seatAgentOf(
 	ctx: OAuthContext,
 ):
-	| { agentId: string; orgId: string; agentName: string; orgClerkId?: string }
+	| {
+			agentId: string;
+			orgId: string;
+			agentName: string;
+			orgClerkId?: string;
+			ownerPersonId?: string;
+	  }
 	| undefined {
 	const seat = ctx.seatAgent;
 	if (seat === undefined || seat === null) return undefined;
@@ -1202,6 +1217,8 @@ type ResolvedAgentLookup = {
 	agentName: string;
 	/** The agents ROW id. Absent from a Convex that predates it. */
 	agentId?: string;
+	/** The owner the package proved at Convex; absent for an unowned agent or an older Convex. */
+	ownerPersonId?: string;
 } | null;
 
 type ActorResolution =
@@ -1323,6 +1340,10 @@ async function resolveActorFromRequest(
 			agentName: resolved.agentName,
 			...(typeof resolved.agentId === "string" && resolved.agentId !== ""
 				? { agentId: resolved.agentId }
+				: {}),
+			...(typeof resolved.ownerPersonId === "string" &&
+			resolved.ownerPersonId !== ""
+				? { ownerPersonId: resolved.ownerPersonId }
 				: {}),
 		},
 	};

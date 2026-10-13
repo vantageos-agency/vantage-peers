@@ -10,7 +10,7 @@
  *
  *   memberScopeOfMapping      the ONE builder of an organisation's member scope
  *   verifiedOrg (Ref)         a verified org compared with a row BY ORG ID
- *   resolvePrincipalOfPresentedSecret   the secret's agent AND its principal
+ *   resolveAgentCallerOfPresentedSecret   the secret's agent AND its principal
  *   fleetStanding             standing is the package's reading of the scope
  *   requireResolvedCaller     a self-contradicting scope is not master
  *   requireOrgAdmin           an absent session is refused by the package
@@ -28,7 +28,7 @@ import { testClerkOrgId } from "../../tests/fixtures/testClerkOrgId";
 import { convexTest } from "../../tests/fixtures/convexTestWithServiceAccount";
 import { api } from "../_generated/api";
 import type { Id } from "../_generated/dataModel";
-import { resolvePrincipalOfPresentedSecret } from "../lib/agentIdentity";
+import { resolveAgentCallerOfPresentedSecret } from "../lib/agentIdentity";
 import {
 	memberScopeOfMapping,
 	requireAgentCredentialMatch,
@@ -289,7 +289,7 @@ describe("verifiedOrg (Ref) — a verified organisation compared with a row BY O
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
-describe("resolvePrincipalOfPresentedSecret — the secret's agent AND its principal", () => {
+describe("resolveAgentCallerOfPresentedSecret — the secret's agent AND its principal", () => {
 	async function world() {
 		const t = createT();
 		await seedOrg(t, "org-a");
@@ -309,31 +309,33 @@ describe("resolvePrincipalOfPresentedSecret — the secret's agent AND its princ
 	test("PRESENT: a live secret resolves to the agents row and a principal stamped with its org", async () => {
 		const { t, agentId, secret } = await world();
 		const out = await t.run((ctx) =>
-			resolvePrincipalOfPresentedSecret(ctx, secret, "test"),
+			resolveAgentCallerOfPresentedSecret(ctx, secret, "test"),
 		);
-		expect(out?.agent._id).toBe(agentId);
-		expect(out?.principal).toMatchObject({
+		expect(out.ok).toBe(true);
+		if (!out.ok) return;
+		expect(out.agent._id).toBe(agentId);
+		expect(out.principal).toMatchObject({
 			kind: "agent",
 			principalId: agentId,
-			orgId: "org-a",
+			orgId: testClerkOrgId("org-a"),
 		});
 	});
 
 	test("REFUSED: an unknown secret resolves to nothing", async () => {
 		const { t } = await world();
 		const out = await t.run((ctx) =>
-			resolvePrincipalOfPresentedSecret(ctx, "vp_agent_not-a-real-secret", "test"),
+			resolveAgentCallerOfPresentedSecret(ctx, "vp_agent_not-a-real-secret", "test"),
 		);
-		expect(out).toBeNull();
+		expect(out).toEqual({ ok: false, reason: "credential-not-recognised" });
 	});
 
 	test("REFUSED: a secret whose agent was deactivated resolves to nothing", async () => {
 		const { t, agentId, secret } = await world();
 		await t.run((ctx) => ctx.db.patch(agentId, { isActive: false }));
 		const out = await t.run((ctx) =>
-			resolvePrincipalOfPresentedSecret(ctx, secret, "test"),
+			resolveAgentCallerOfPresentedSecret(ctx, secret, "test"),
 		);
-		expect(out).toBeNull();
+		expect(out).toEqual({ ok: false, reason: "credential-not-recognised" });
 	});
 
 	test("CROSS-ORG: the lock refuses org-a's credential at a call targeting org-b (ORG_MISMATCH), and accepts it at org-a", async () => {

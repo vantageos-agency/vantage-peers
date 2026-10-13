@@ -1,4 +1,8 @@
-import { type ActingPrincipal, isPersonActorName } from "@vantageos/cloud-identity";
+import {
+	type ActingPrincipal,
+	isPersonActorName,
+	resolveActingPrincipal,
+} from "@vantageos/cloud-identity";
 import { ConvexError, v } from "convex/values";
 import { internal } from "./_generated/api";
 import type { Doc, Id } from "./_generated/dataModel";
@@ -13,6 +17,7 @@ import {
 	requireOrgAdminById,
 	revokeActiveCredentialRows,
 } from "./lib/agentIdentity";
+import { agentCallerDeps, refuseWith } from "./lib/actingPrincipal";
 import { withOrgScope } from "./lib/auth";
 import { clerkOrgIdForSlug } from "./lib/orgClerkId";
 
@@ -56,6 +61,7 @@ const agentReturnValidator = v.object({
 	outboundAuthRef: v.optional(v.string()),
 	kind: v.optional(v.union(v.literal("agent"), v.literal("service"))),
 	authSubject: v.optional(v.string()),
+	ownerPersonId: v.optional(v.string()),
 	isActive: v.boolean(),
 	createdAt: v.number(),
 });
@@ -178,6 +184,80 @@ export const setAgentAddress = mutation({
 
 		await ctx.db.patch(existing._id, { address: args.address });
 		return null;
+	},
+});
+
+/**
+ * setAgentOwner — binds ONE agent of the caller's own org to a human owner (a
+ * person ID, the Clerk subject), or unbinds it. Gated like every door of this
+ * file: `requireOrgAdminById`, no master carve-out. Addressed by `agentId`.
+ *
+ * The owner must be an ACTIVE member of the agent's organisation, and that is
+ * the package's decision, not this file's: `resolveActingPrincipal` reads the
+ * person through the membership lookup and refuses an unknown, deactivated or
+ * foreign person. Every later resolution of the agent's credential or token
+ * proves the owner again (`resolveCallerFromAgentCredential`).
+ *
+ * The owner on the agent's ACTIVE credential rows is re-copied from the agent
+ * row in the same transaction (never from an argument beyond this one), so a
+ * credential minted before the binding does not stay unbound. Seat tokens
+ * (oauth_access_tokens) are re-stamped by migrations/agentOwnerRows:
+ * backfillAgentOwnerIds, or by their next refresh; a token still carrying the
+ * previous owner is refused `agent-owner-mismatch` meanwhile (fail closed).
+ *
+ * RETURNS `{ ownerPersonId, credentialsRestamped }`: the owner now stored (null
+ * after an unbind) and the credential rows this call re-stamped (0 is a real
+ * zero).
+ */
+export const setAgentOwner = mutation({
+	args: {
+		orgSlug: v.string(),
+		agentId: v.id("agents"),
+		// Absent unbinds the agent from any owner.
+		ownerPersonId: v.optional(v.string()),
+	},
+	returns: v.object({
+		ownerPersonId: v.union(v.string(), v.null()),
+		credentialsRestamped: v.number(),
+	}),
+	handler: async (ctx, args) => {
+		// write-contract: imperative admin door, no subscriber — 0 call sites in mcp-server/src, mcp-server/server-http.ts and scripts for "agents:setAgentOwner" (new door, measured with `git grep -n "setAgentOwner" -- mcp-server scripts`); no subscribing pre-organisation client shell can reach it at render time; requireOrgAdminById refuses a caller with no organisation RBAC_DENIED at an imperative call, never at a render.
+		const door = "agents:setAgentOwner";
+		const identity = await ctx.auth.getUserIdentity();
+		if (!identity) throw anonymousRefusal(door);
+		const principal = await requireOrgAdminById(ctx, identity, args.orgSlug, door);
+		const agent = await requireOwnAgent(ctx, principal, args.orgSlug, args.agentId, door);
+
+		if (args.ownerPersonId !== undefined) {
+			const orgId =
+				agent.clerkOrgId ?? (await clerkOrgIdForSlug(ctx, agent.orgSlug));
+			const owner = await resolveActingPrincipal(
+				{
+					kind: "person",
+					personId: args.ownerPersonId,
+					verifiedOrgId: orgId ?? "",
+				},
+				agentCallerDeps(ctx).principalLookups,
+				door,
+			);
+			if (!owner.ok) return refuseWith(owner.refusal);
+		}
+
+		await ctx.db.patch(agent._id, { ownerPersonId: args.ownerPersonId });
+		const credentials = await ctx.db
+			.query("agent_credentials")
+			.withIndex("by_agent", (q) => q.eq("agentId", agent._id))
+			.collect();
+		let credentialsRestamped = 0;
+		for (const row of credentials) {
+			if (!row.isActive || row.ownerPersonId === args.ownerPersonId) continue;
+			await ctx.db.patch(row._id, { ownerPersonId: args.ownerPersonId });
+			credentialsRestamped += 1;
+		}
+		return {
+			ownerPersonId: args.ownerPersonId ?? null,
+			credentialsRestamped,
+		};
 	},
 });
 

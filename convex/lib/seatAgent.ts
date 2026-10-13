@@ -1,6 +1,10 @@
-import { sameOrg } from "@vantageos/cloud-identity";
+import {
+	resolveCallerFromAgentCredential,
+	sameOrg,
+} from "@vantageos/cloud-identity";
 import type { Doc } from "../_generated/dataModel";
 import type { MutationCtx, QueryCtx } from "../_generated/server";
+import { agentCallerDeps } from "./actingPrincipal";
 import { clerkOrgIdForSlug } from "./orgClerkId";
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -171,39 +175,71 @@ export async function resolveSeat(
 		: { kind: "org-level" };
 }
 
+/** The refusals of a seat token that name its agent's OWNER (see agentIdentity). */
+export type SeatOwnerRefusal =
+	| "agent-owner-mismatch"
+	| "agent-owner-not-member"
+	| "agent-not-owned"
+	| "principal-lookup-failed";
+
+const SEAT_OWNER_REFUSALS: ReadonlySet<string> = new Set([
+	"agent-owner-mismatch",
+	"agent-owner-not-member",
+	"agent-not-owned",
+	"principal-lookup-failed",
+]);
+
+export type LiveSeat =
+	/** The seat acts as this agent, proven by the package. */
+	| { kind: "agent"; agent: Doc<"agents"> }
+	/** No agent acts through this token: org-level, a person token, or an agent no longer live. */
+	| { kind: "none" }
+	/** The package refused the agent's OWNER: the token must not be honoured. */
+	| { kind: "refused"; reason: SeatOwnerRefusal };
+
 /**
- * The agent a token row acts as RIGHT NOW. A stamped row is re-read against the
- * live agent (still active, still in the stamped org, still the token's org), so
- * a deactivated or moved agent stops resolving and a rename reports the new
- * label. An unstamped row (minted before the stamp existed) is resolved live
- * through {@link resolveSeat}, by the ID its profile carries, until the
- * backfill has stamped it.
+ * The agent a token row acts as RIGHT NOW. The candidate is the stamped
+ * `agentId` (or, for a row minted before the stamp, the one its profile names,
+ * until the backfill has stamped it); @vantageos/cloud-identity
+ * `resolveCallerFromAgentCredential` then decides it: the organisation by its
+ * permanent ID, the agent read BY ID (active, stamped with that organisation),
+ * and, when the token row carries an `ownerPersonId` copied at mint, the owner
+ * proven against the agent's stored owner and the owner's active membership. A
+ * deactivated or moved agent stops resolving; a rename reports the new label.
  */
 export async function liveSeatAgent(
 	ctx: QueryCtx | MutationCtx,
 	row: Doc<"oauth_access_tokens">,
-): Promise<Doc<"agents"> | null> {
-	if (row.principal !== undefined) return null;
-	if (row.agentId !== undefined) {
-		const agent = await ctx.db.get(row.agentId);
-		// The stamped agent is still live and still in the token's own organisation,
-		// compared by org ID where both sides carry one (a renamed slug does not
-		// break it, a moved agent does).
-		if (
-			agent &&
-			agent.isActive &&
-			(await sameOrgStamp(
-				ctx,
-				{ id: agent.clerkOrgId, label: agent.orgSlug },
-				{ id: row.clerkOrgId, label: row.clerkOrgSlug },
-			))
-		) {
-			return agent;
-		}
-		return null;
+): Promise<LiveSeat> {
+	const none: LiveSeat = { kind: "none" };
+	if (row.principal !== undefined) return none;
+	let agentId = row.agentId;
+	if (agentId === undefined) {
+		const seat = await resolveSeat(ctx, row);
+		if (seat.kind !== "agent") return none;
+		agentId = seat.agent._id;
 	}
-	const seat = await resolveSeat(ctx, row);
-	return seat.kind === "agent" ? seat.agent : null;
+	const verifiedOrgId =
+		row.clerkOrgId ?? (await clerkOrgIdForSlug(ctx, row.clerkOrgSlug));
+	if (verifiedOrgId === undefined) return none;
+	const caller = await resolveCallerFromAgentCredential(
+		{
+			agentId,
+			verifiedOrgId,
+			...(row.ownerPersonId !== undefined
+				? { ownerPersonId: row.ownerPersonId }
+				: {}),
+		},
+		agentCallerDeps(ctx),
+		{ door: "lib/seatAgent:liveSeatAgent" },
+	);
+	if (!caller.ok) {
+		return SEAT_OWNER_REFUSALS.has(caller.refusal.reason)
+			? { kind: "refused", reason: caller.refusal.reason as SeatOwnerRefusal }
+			: none;
+	}
+	const agent = await ctx.db.get(agentId);
+	return agent === null ? none : { kind: "agent", agent };
 }
 
 /**

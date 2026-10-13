@@ -1,5 +1,6 @@
 import {
 	type ActingPrincipal,
+	type AgentCallerDeps,
 	assertRecipientAddressable,
 	assertTargetBelongsTo,
 	type IdentityRefusal,
@@ -18,6 +19,8 @@ import {
 	type OrgScope,
 	type VerifiedActor,
 } from "./auth";
+import { orgMappingLookups } from "./authOrgMapping";
+import { clerkOrgIdForSlug } from "./orgClerkId";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // actingPrincipal — the vantage-peers ADAPTER onto @vantageos/cloud-identity's
@@ -167,6 +170,60 @@ export function serviceAccountPrincipalLookups(
 				orgId: row.clerkOrgId ?? null,
 				active: row.isActive,
 			};
+		},
+	};
+}
+
+/**
+ * The reads `resolveCallerFromAgentCredential` asks for, every one a plain
+ * indexed read BY ID (no decision here):
+ *   - orgById          the mapping row of a permanent org ID;
+ *   - agentById        the agents row, with the org ID and owner it STORES;
+ *   - personById       the owner's membership row of that org
+ *                      (`orgMembership.by_org_user_clerk_id`), `active` while it
+ *                      carries no `deactivatedAt`;
+ *   - organisationById / orgKindOf   the same ID-keyed mapping reads the person
+ *                      path uses.
+ */
+export function agentCallerDeps(ctx: Ctx): AgentCallerDeps {
+	const { organisationById, orgKindOf } = personPrincipalLookups(ctx, "");
+	return {
+		orgLookups: orgMappingLookups(ctx),
+		principalLookups: {
+			agentById: async (agentId) => {
+				const id = ctx.db.normalizeId("agents", agentId);
+				if (id === null) return null;
+				const row = await ctx.db
+					.query("agents")
+					.withIndex("by_id", (q) => q.eq("_id", id))
+					.unique();
+				if (row === null) return null;
+				return {
+					id: row._id,
+					// The org ID the row stores, else the one its mapping stores for the
+					// slug the row is stamped with (a row not yet reached by
+					// migrations/backfill_org_clerk_id).
+					orgId: row.clerkOrgId ?? (await clerkOrgIdForSlug(ctx, row.orgSlug)) ?? null,
+					active: row.isActive,
+					ownerPersonId: row.ownerPersonId ?? null,
+				};
+			},
+			personById: async (personId, orgId) => {
+				const row = await ctx.db
+					.query("orgMembership")
+					.withIndex("by_org_user_clerk_id", (q) =>
+						q.eq("clerkOrgId", orgId).eq("clerkUserId", personId),
+					)
+					.unique();
+				if (row === null) return null;
+				return {
+					id: row.clerkUserId,
+					orgId: row.clerkOrgId ?? null,
+					active: row.deactivatedAt === undefined,
+				};
+			},
+			organisationById,
+			orgKindOf,
 		},
 	};
 }

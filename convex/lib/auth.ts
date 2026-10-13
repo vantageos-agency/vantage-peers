@@ -18,7 +18,7 @@ import {
 import type { UserIdentity } from "convex/server";
 import {
 	findAgentByName,
-	resolvePrincipalOfPresentedSecret,
+	resolveAgentCallerOfPresentedSecret,
 } from "./agentIdentity";
 import { resolveServiceAccount } from "./serviceAccount";
 import { normalizeOrchestratorId } from "../_helpers/normalizeOrchestratorId";
@@ -30,6 +30,7 @@ import {
 	orgRefOfScope,
 } from "./authOrgMapping";
 import {
+	agentCallerDeps,
 	personPrincipalLookups,
 	principalLookups,
 	refuseWith,
@@ -1196,15 +1197,15 @@ export async function requireAgentCredentialMatch(
 	// The presented secret is validated and its agent read BY ID through
 	// @vantageos/cloud-identity (convex/lib/agentIdentity.ts); no name takes part.
 	const door = "lib/auth:requireAgentCredentialMatch";
-	const resolved = await resolvePrincipalOfPresentedSecret(
+	const resolved = await resolveAgentCallerOfPresentedSecret(
 		ctx,
 		agentCredentialSecret,
 		door,
 	);
 
-	if (!resolved) {
+	if (!resolved.ok) {
 		throw new ConvexError(
-			`AGENT_IDENTITY_MISMATCH: presented agent credential does not resolve to any active per-agent identity — an org-only/shared token is not accepted at this agent-named surface, no compatibility window — ${JSON.stringify({ assertedName })}`,
+			`AGENT_IDENTITY_MISMATCH: presented agent credential does not resolve to any active per-agent identity — an org-only/shared token is not accepted at this agent-named surface, no compatibility window — ${JSON.stringify({ assertedName, reason: resolved.reason })}`,
 		);
 	}
 
@@ -1229,8 +1230,8 @@ export async function requireAgentCredentialMatch(
 	if (targetOrgSlug !== null) {
 		const target = await assertTargetBelongsTo(
 			resolved.principal,
-			{ orgId: targetOrgSlug },
-			principalLookups(ctx),
+			{ orgId: (await lookupOrgMapping(ctx, targetOrgSlug))?.clerkOrgId },
+			agentCallerDeps(ctx).principalLookups,
 			{ door },
 		);
 		if (!target.ok) return refuseWith(target.refusal);
@@ -1618,7 +1619,13 @@ export function requireTenantNamespace(
  */
 export function refuseUnresolvedCredential(
 	registration: string,
-	reason: "no-credential" | "credential-not-recognised",
+	reason:
+		| "no-credential"
+		| "credential-not-recognised"
+		| "agent-owner-mismatch"
+		| "agent-owner-not-member"
+		| "agent-not-owned"
+		| "principal-lookup-failed",
 ): never {
 	const detail =
 		reason === "no-credential"

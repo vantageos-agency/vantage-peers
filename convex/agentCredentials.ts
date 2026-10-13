@@ -11,7 +11,7 @@ import {
 	anonymousRefusal,
 	stampOrgRefusal,
 	requireOrgAdminById,
-	resolveAgentOfPresentedSecret,
+	resolveAgentCallerOfPresentedSecret,
 	revokeActiveCredentialRows,
 } from "./lib/agentIdentity";
 import { clerkOrgIdForSlug } from "./lib/orgClerkId";
@@ -56,6 +56,8 @@ const resolvedIdentityValidator = v.object({
 	agentName: v.string(),
 	// The `agents` ROW id: the identity. The name above is its current label.
 	agentId: v.id("agents"),
+	// The agent's human owner, present only when the package PROVED it on this call.
+	ownerPersonId: v.optional(v.string()),
 });
 
 /**
@@ -122,6 +124,10 @@ export const mintAgentCredential = mutation({
 			orgSlug,
 			clerkOrgId: agent.clerkOrgId ?? (await clerkOrgIdForSlug(ctx, orgSlug)),
 			agentId: agent._id,
+			// The owner is copied from the AGENT ROW, never from an argument.
+			...(agent.ownerPersonId !== undefined
+				? { ownerPersonId: agent.ownerPersonId }
+				: {}),
 			agentName: agent.name,
 			secretHash,
 			isActive: true,
@@ -247,21 +253,24 @@ export const resolveAgentCredential = query({
 				"no-credential",
 			);
 		}
-		const agent = await resolveAgentOfPresentedSecret(
+		const presented = await resolveAgentCallerOfPresentedSecret(
 			ctx,
 			args.presentedSecret,
 			"agentCredentials:resolveAgentCredential",
 		);
-		if (agent === null) {
+		if (!presented.ok) {
 			return refuseUnresolvedCredential(
 				"agentCredentials:resolveAgentCredential",
-				"credential-not-recognised",
+				presented.reason,
 			);
 		}
 		return {
-			orgSlug: agent.orgSlug,
-			agentName: agent.name,
-			agentId: agent._id,
+			orgSlug: presented.agent.orgSlug,
+			agentName: presented.agent.name,
+			agentId: presented.agent._id,
+			...(presented.principal.ownerPersonId !== undefined
+				? { ownerPersonId: presented.principal.ownerPersonId }
+				: {}),
 		};
 	},
 });
