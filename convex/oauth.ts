@@ -2156,10 +2156,11 @@ export const revokeAccessTokensOnly = mutation({
 // resolveSeatAgent reads the agent a seat profile stands for BY ID
 // (`oauth_scope_profiles.agentId`). No door wrote it for a profile whose label
 // the legacy fallback cannot match (a seat label that differs from its
-// profileId). This is that door. It refuses unless the profile names
-// exactly one allowlist entry, the agent exists and is active, and the agent is
-// in the profile's own organisation, judged by org ID through
-// @vantageos/cloud-identity `sameOrg` (never by label).
+// profileId). This is that door. It refuses unless the agent exists and is
+// active, and the agent and the profile each carry a stored org ID and are the
+// same organisation by @vantageos/cloud-identity `sameOrg` (never by label; a
+// missing ID is ORG_ID_MISSING). The seat is one agent BY ID, so the label list
+// is not consulted.
 //
 // INTERNAL: not part of the public API, so no client or token can reach it. An
 // operator runs it with the deployment's admin credential
