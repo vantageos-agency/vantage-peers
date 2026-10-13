@@ -13,6 +13,7 @@ update_bu,agents+businessUnits+oauth_access_tokens,TRANSITION,org-member,orgReso
 send_message,agents+client_org_mapping+memberWriterRoles+messageReceipts+messages+oauth_access_tokens+profiles,CREATE,org-member,orgResolver,messages:sendMessage=orgResolver
 write_diary,agents+diary,UPSERT,org-member,orgResolver,diary:write=orgResolver
 complete_task,agents+fixPatterns+githubOwnerBindings+githubRepoMapping+issues+memberWriterRoles+messageReceipts+messages+taskClosureConfig+tasks,UPSERT,org-member,orgResolver,tasks:complete=orgResolver
+add_repo_mapping,agents+githubOwnerBindings+githubRepoMapping,UPSERT,org-member,orgResolver,githubRepoMapping:add=orgResolver
 update_task,agents+githubRepoMapping+memberWriterRoles+messageReceipts+messages+missions+oauth_access_tokens+taskClosureConfig+tasks,UPSERT,org-member,orgResolver,tasks:update=orgResolver
 add_task_dependency,agents+githubRepoMapping+memberWriterRoles+messageReceipts+messages+missions+taskClosureConfig+tasks,UPSERT,org-member,orgResolver,tasks:update=orgResolver
 block_task,agents+githubRepoMapping+memberWriterRoles+messageReceipts+messages+missions+taskClosureConfig+tasks,UPSERT,org-member,orgResolver,tasks:blockTask=orgResolver; tasks:update=orgResolver
@@ -34,7 +35,6 @@ add_fix_attempt,fixAttempts+fixPatterns,UPSERT,fleet-internal,mcpBoundOnly,fixPa
 create_fix_pattern,fixPatterns,CREATE,fleet-internal,mcpBoundOnly,fixPatterns:create=mcpBoundOnly
 link_issue_to_pattern,fixPatterns,UPDATE,fleet-internal,mcpBoundOnly,fixPatterns:linkIssue=mcpBoundOnly
 validate_fix,fixPatterns,UPDATE,fleet-internal,mcpBoundOnly,fixPatterns:validate=mcpBoundOnly
-add_repo_mapping,githubOwnerBindings+githubRepoMapping,UPSERT,org-member,orgResolver,githubRepoMapping:add=orgResolver
 remove_repo_mapping,githubRepoMapping,DELETE,org-member,orgResolver,githubRepoMapping:remove=orgResolver
 link_commit_to_issue,issues,UPDATE,fleet-internal,mcpBoundOnly,issues:linkCommit=mcpBoundOnly
 update_issue_status,issues,TRANSITION,fleet-internal,mcpBoundOnly,issues:updateStatus=mcpBoundOnly
