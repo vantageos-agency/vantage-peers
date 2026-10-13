@@ -302,7 +302,6 @@ describe("agent owner: the doors that bind and unbind an owner", () => {
 		const out = await t
 			.withIdentity(admin("org-a"))
 			.mutation(api.agents.setAgentOwner, {
-				orgSlug: "org-a",
 				agentId,
 				ownerPersonId: "person-1",
 			});
@@ -318,7 +317,6 @@ describe("agent owner: the doors that bind and unbind an owner", () => {
 		const { agentId } = await ownedAgentWithCredential(t, "org-a", "ada", undefined);
 		await expect(
 			t.withIdentity(admin("org-a")).mutation(api.agents.setAgentOwner, {
-				orgSlug: "org-a",
 				agentId,
 				ownerPersonId: "stranger",
 			}),
@@ -335,11 +333,12 @@ describe("agent owner: the doors that bind and unbind an owner", () => {
 		const { agentId } = await ownedAgentWithCredential(t, "org-a", "ada", undefined);
 		await expect(
 			t.withIdentity(admin("org-b")).mutation(api.agents.setAgentOwner, {
-				orgSlug: "org-b",
 				agentId,
 				ownerPersonId: "person-b",
 			}),
-		).rejects.toThrow(/RBAC_DENIED/);
+		).rejects.toThrow(/ORG_MISMATCH/);
+		const row = await t.run(async (ctx) => ctx.db.get(agentId));
+		expect(row?.ownerPersonId).toBeUndefined();
 	});
 
 	test("setAgentOwner: an anonymous caller is refused", async () => {
@@ -348,7 +347,6 @@ describe("agent owner: the doors that bind and unbind an owner", () => {
 		const { agentId } = await ownedAgentWithCredential(t, "org-a", "ada", undefined);
 		await expect(
 			t.mutation(api.agents.setAgentOwner, {
-				orgSlug: "org-a",
 				agentId,
 				ownerPersonId: "person-1",
 			}),
@@ -361,14 +359,12 @@ describe("agent owner: the doors that bind and unbind an owner", () => {
 		const a = t.withIdentity(admin("org-a"));
 		expect(
 			await a.mutation(api.persons.setPerson, {
-				orgSlug: "org-a",
 				clerkUserId: "person-1",
 				active: true,
 			}),
 		).toEqual({ recorded: true, active: true });
 		expect(
 			await a.mutation(api.persons.setPerson, {
-				orgSlug: "org-a",
 				clerkUserId: "person-1",
 				active: false,
 			}),
@@ -383,7 +379,6 @@ describe("agent owner: the doors that bind and unbind an owner", () => {
 		);
 		expect(stored?.isActive).toBe(false);
 		await a.mutation(api.persons.setPerson, {
-			orgSlug: "org-a",
 			clerkUserId: "person-1",
 			active: true,
 		});
@@ -398,24 +393,24 @@ describe("agent owner: the doors that bind and unbind an owner", () => {
 					org_role: "org:member",
 				} as Identity)
 				.mutation(api.persons.setPerson, {
-					orgSlug: "org-a",
 					clerkUserId: "person-2",
 					active: true,
 				}),
 		).rejects.toThrow(/RBAC_DENIED/);
 	});
 
-	test("setPerson: the admin of another org cannot record a person into this org", async () => {
+	test("setPerson: the person is recorded in the CALLER's own org, never another", async () => {
 		const t = createT();
 		await seedOrg(t, "org-a");
 		await seedOrg(t, "org-b");
-		await expect(
-			t.withIdentity(admin("org-b")).mutation(api.persons.setPerson, {
-				orgSlug: "org-a",
-				clerkUserId: "person-1",
-				active: true,
-			}),
-		).rejects.toThrow(/RBAC_DENIED/);
+		await t.withIdentity(admin("org-b")).mutation(api.persons.setPerson, {
+			clerkUserId: "person-1",
+			active: true,
+		});
+		const rows = await t.run(async (ctx) => ctx.db.query("persons").collect());
+		expect(rows).toHaveLength(1);
+		expect(rows[0].clerkOrgId).toBe(testClerkOrgId("org-b"));
+		expect(rows[0].orgSlug).toBe("org-b");
 	});
 });
 

@@ -13,7 +13,6 @@ import type { MutationCtx, QueryCtx } from "../_generated/server";
 import { normalizeOrchestratorId } from "../_helpers/normalizeOrchestratorId";
 import { agentCallerDeps, principalLookups } from "./actingPrincipal";
 import { proveOrgAdmin } from "./auth";
-import { clerkOrgIdForSlug } from "./orgClerkId";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // agentIdentity — the ADAPTER between the agent registry (convex/agents.ts,
@@ -190,12 +189,12 @@ export async function resolveAgentCallerOfPresentedSecret(
 				.withIndex("by_secret_hash", (q) => q.eq("secretHash", digest))
 				.unique();
 			if (row === null) return null;
-			const tenantId =
-				row.clerkOrgId ?? (await clerkOrgIdForSlug(ctx, row.orgSlug));
-			if (tenantId === undefined) return null;
+			// A credential row not yet reached by migrations/backfill_org_clerk_id
+			// carries no organisation ID the package can match: it resolves nothing.
+			if (row.clerkOrgId === undefined) return null;
 			storedOwner = row.ownerPersonId;
 			return {
-				tenantId,
+				tenantId: row.clerkOrgId,
 				secretHash: row.secretHash,
 				agentId: row.agentId ?? null,
 				revoked: !row.isActive,

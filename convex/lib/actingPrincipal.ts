@@ -20,7 +20,6 @@ import {
 	type VerifiedActor,
 } from "./auth";
 import { orgMappingLookups } from "./authOrgMapping";
-import { clerkOrgIdForSlug } from "./orgClerkId";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // actingPrincipal — the vantage-peers ADAPTER onto @vantageos/cloud-identity's
@@ -199,10 +198,10 @@ export function agentCallerDeps(ctx: Ctx): AgentCallerDeps {
 				if (row === null) return null;
 				return {
 					id: row._id,
-					// The org ID the row stores, else the one its mapping stores for the
-					// slug the row is stamped with (a row not yet reached by
-					// migrations/backfill_org_clerk_id).
-					orgId: row.clerkOrgId ?? (await clerkOrgIdForSlug(ctx, row.orgSlug)) ?? null,
+					// The org ID the row stores. A row not yet reached by
+					// migrations/backfill_org_clerk_id is stamped with no org the package
+					// can match, so it is refused.
+					orgId: row.clerkOrgId ?? null,
 					active: row.isActive,
 					ownerPersonId: row.ownerPersonId ?? null,
 				};

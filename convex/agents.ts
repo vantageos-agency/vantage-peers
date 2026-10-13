@@ -1,7 +1,10 @@
 import {
 	type ActingPrincipal,
+	assertOrgAdmin,
+	assertTargetBelongsTo,
 	isPersonActorName,
 	resolveActingPrincipal,
+	resolveCallerFromClaims,
 } from "@vantageos/cloud-identity";
 import { ConvexError, v } from "convex/values";
 import { internal } from "./_generated/api";
@@ -18,8 +21,13 @@ import {
 	restampCredentialOwner,
 	revokeActiveCredentialRows,
 } from "./lib/agentIdentity";
-import { agentCallerDeps, refuseWith } from "./lib/actingPrincipal";
-import { withOrgScope } from "./lib/auth";
+import {
+	agentCallerDeps,
+	personPrincipalLookups,
+	refuseWith,
+} from "./lib/actingPrincipal";
+import { ORG_ADMIN_ROLES, withOrgScope } from "./lib/auth";
+import { orgMappingLookups } from "./lib/authOrgMapping";
 import { clerkOrgIdForSlug } from "./lib/orgClerkId";
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -190,8 +198,11 @@ export const setAgentAddress = mutation({
 
 /**
  * setAgentOwner — binds ONE agent of the caller's own org to a human owner (a
- * person ID, the Clerk subject), or unbinds it. Gated like every door of this
- * file: `requireOrgAdminById`, no master carve-out. Addressed by `agentId`.
+ * person ID, the Clerk subject), or unbinds it. Gated by the package's org-admin
+ * proof (`resolveCallerFromClaims` + `assertOrgAdmin`, no master carve-out); no
+ * argument names the organisation, it is the verified session's. Addressed by
+ * `agentId`; the agent must be stamped with the caller's organisation ID
+ * (`assertTargetBelongsTo`).
  *
  * The owner must be an ACTIVE member of the agent's organisation, and that is
  * the package's decision, not this file's: `resolveActingPrincipal` reads the
@@ -212,7 +223,6 @@ export const setAgentAddress = mutation({
  */
 export const setAgentOwner = mutation({
 	args: {
-		orgSlug: v.string(),
 		agentId: v.id("agents"),
 		// Absent unbinds the agent from any owner.
 		ownerPersonId: v.optional(v.string()),
@@ -222,21 +232,47 @@ export const setAgentOwner = mutation({
 		credentialsRestamped: v.number(),
 	}),
 	handler: async (ctx, args) => {
-		// write-contract: imperative admin door, no subscriber — 0 call sites in mcp-server/src, mcp-server/server-http.ts and scripts for "agents:setAgentOwner" (new door, measured with `git grep -n "setAgentOwner" -- mcp-server scripts`); no subscribing pre-organisation client shell can reach it at render time; requireOrgAdminById refuses a caller with no organisation RBAC_DENIED at an imperative call, never at a render.
+		// write-contract: imperative admin door, no subscriber — 0 call sites in mcp-server/src, mcp-server/server-http.ts and scripts for "agents:setAgentOwner" (new door, measured with `git grep -n "setAgentOwner" -- mcp-server scripts`); no subscribing pre-organisation client shell can reach it at render time; the package refuses a caller with no organisation RBAC_DENIED at an imperative call, never at a render.
 		const door = "agents:setAgentOwner";
 		const identity = await ctx.auth.getUserIdentity();
 		if (!identity) throw anonymousRefusal(door);
-		const principal = await requireOrgAdminById(ctx, identity, args.orgSlug, door);
-		const agent = await requireOwnAgent(ctx, principal, args.orgSlug, args.agentId, door);
+		// The caller and its organisation are the package's, from the verified
+		// session; the target organisation is the caller's own (no argument names it).
+		const caller = await resolveCallerFromClaims(
+			identity,
+			{
+				orgLookups: orgMappingLookups(ctx),
+				principalLookups: personPrincipalLookups(ctx),
+			},
+			{ adminRoles: ORG_ADMIN_ROLES, door },
+		);
+		if (!caller.ok) return refuseWith(caller.refusal);
+		const admin = assertOrgAdmin(caller.principal, caller.org.id, {
+			adminRoles: ORG_ADMIN_ROLES,
+			door,
+		});
+		if (!admin.ok) return refuseWith(admin.refusal);
+
+		const agent = await ctx.db.get(args.agentId);
+		if (agent === null) {
+			throw new ConvexError(
+				`AGENT_NOT_FOUND: no agent ${args.agentId} — ${JSON.stringify({ agentId: args.agentId })}`,
+			);
+		}
+		const target = await assertTargetBelongsTo(
+			caller.principal,
+			{ orgId: agent.clerkOrgId },
+			personPrincipalLookups(ctx),
+			{ door },
+		);
+		if (!target.ok) return refuseWith(target.refusal);
 
 		if (args.ownerPersonId !== undefined) {
-			const orgId =
-				agent.clerkOrgId ?? (await clerkOrgIdForSlug(ctx, agent.orgSlug));
 			const owner = await resolveActingPrincipal(
 				{
 					kind: "person",
 					personId: args.ownerPersonId,
-					verifiedOrgId: orgId ?? "",
+					verifiedOrgId: caller.org.id,
 				},
 				agentCallerDeps(ctx).principalLookups,
 				door,
