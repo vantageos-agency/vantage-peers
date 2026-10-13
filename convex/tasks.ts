@@ -13,6 +13,7 @@ import type { Doc, Id } from "./_generated/dataModel";
 import { internal } from "./_generated/api";
 import { creatorValidator, taskOriginValidator } from "./schema";
 import {
+	filterByOrgScope,
 	isRowVisibleToScope,
 	requireAgentCredentialMatch,
 	verifiedActorValidator,
@@ -55,8 +56,7 @@ import {
 } from "./lib/humanActor";
 import {
 	isAutomationOrigin,
-	mayCancelAutomationTask,
-	mayReassignReviewTask,
+	callerHoldsReviewGrant,
 	repoOwner,
 	resolveReviewer,
 } from "./lib/reviewRouting";
@@ -77,7 +77,6 @@ import {
 	assigneeIdForRead,
 	callerActorOf,
 	requireAssigneeId,
-	requireAssigneeLabelOnRoster,
 } from "./lib/taskActors";
 import { clerkOrgIdForSlug } from "./lib/orgClerkId";
 
@@ -761,7 +760,6 @@ export const create = mutation({
 		// the target of an assignment: its agent must also be on the caller's own
 		// roster (by agent ID), so a member cannot assign work into another
 		// organisation. Master unchanged.
-		await requireAssigneeLabelOnRoster(ctx, scope, args.assignedTo, "tasks:create");
 		// The tenant is derived from the SCOPE just resolved above, never from
 		// anything the client sent.
 		const rowOrgId = orgIdForWrite(scope, "tasks:create");
@@ -775,6 +773,7 @@ export const create = mutation({
 			rowOrgId ?? scope.callerActorOrg,
 			args.assignedTo,
 			"tasks:create",
+			{ rosterScope: scope },
 		);
 		if (taskArgs.createdBy === undefined) {
 			// HUMAN path: createdBy is the actor "user:<subject>" (schema keeps it a
@@ -1326,7 +1325,7 @@ async function runTasksList(ctx: QueryCtx, args: TasksListArgs, scope: OrgScope)
 			return false;
 		}
 		// The tenant gate, then the roster as a narrowing intersect.
-		return isRowVisibleToScope(scope, r);
+		return filterByOrgScope([r], scope).length === 1;
 	};
 
 	const ranges: TaskListRange[] = [];
@@ -1899,9 +1898,10 @@ export const update = mutation({
 			task.isReviewTask === true &&
 			fields.assignedTo !== undefined &&
 			nonReassignFields.length === 0 &&
-			(await mayReassignReviewTask(
+			(await callerHoldsReviewGrant(
 				ctx,
 				callerScope.callerActorId,
+				"reassign",
 				task.reviewPrRepoFullName,
 				task.orgId,
 			));
@@ -1934,7 +1934,13 @@ export const update = mutation({
 			cancelReason !== undefined &&
 			cancelReason.trim() !== "" &&
 			nonCancelFields.length === 0 &&
-			(await mayCancelAutomationTask(ctx, callerScope.callerActorId));
+			(await callerHoldsReviewGrant(
+				ctx,
+				callerScope.callerActorId,
+				"cancel",
+				undefined,
+				task.orgId,
+			));
 		const memberActor = await authorizeTaskActor(ctx, task, callerOrchestrator, taskId, callerScope, "tasks:update", {
 			reviewReassignGranted: reviewReassignGranted || automationCancelGranted,
 		});
@@ -1944,12 +1950,9 @@ export const update = mutation({
 		// `create` refuses is one `update` call away. Same helper, same rule
 		// (roster-only BY AGENT ID, master unchanged).
 		if (fields.assignedTo !== undefined) {
-			await requireAssigneeLabelOnRoster(
-				ctx,
-				callerScope,
-				fields.assignedTo,
-				"tasks:update",
-			);
+			await requireAssigneeId(ctx, task.orgId, fields.assignedTo, "tasks:update", {
+				rosterScope: callerScope,
+			});
 		}
 
 		// Build patch object with only provided fields
@@ -3651,7 +3654,7 @@ export const listByMission = query({
 				return false;
 			}
 			if (before !== undefined && r._creationTime >= before) return false;
-			return isRowVisibleToScope(scope, r);
+			return filterByOrgScope([r], scope).length === 1;
 		};
 
 		const ranges: TaskListRange[] = [];

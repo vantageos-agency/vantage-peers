@@ -134,55 +134,44 @@ export async function reviewCoordinators(ctx: QueryCtx): Promise<string[]> {
 }
 
 /**
- * Is `callerId` (the acting agent's ID, from the verified proof) one of the
- * agents the configured LABELS name? The data lists hold labels; each label is
- * resolved to an agents-row ID in the ONE organisation it is legal to look in
- * (`orgSlug`, the operator org when null) and the IDs are compared. A label that
- * names no agent there names nobody, and a same-named agent of another
- * organisation is a different ID.
+ * Does the acting agent `callerId` (its agents-row ID, from the verified proof)
+ * hold the review grant `grant`, decided BY ID? The configured data holds LABELS;
+ * each label is resolved to the agent it names in the ONE organisation it is legal
+ * to look in and the IDs are compared, so a same-named agent of another
+ * organisation holds nothing.
+ *
+ *   "reassign"  may hand a system-created review task to someone else: a
+ *               coordinator (data, labels of OPERATOR-org agents) or the
+ *               orchestrator that owns the task's repo (githubRepoMapping.
+ *               orchestrator, a label resolved in the task's own organisation).
+ *   "cancel"    may cancel an automation-created task it did not create: only an
+ *               OPERATOR-org agent named under taskClosureConfig
+ *               "automationTaskCancellers".
+ *
+ * Fail closed: no caller ID, no label configured, an unreadable key, a label that
+ * names no agent there, no repo owner -> false.
  */
-async function callerIsNamedBy(
-	ctx: QueryCtx,
-	callerId: string,
-	labels: readonly string[],
-	orgSlug: string | null,
-): Promise<boolean> {
-	const resolve = actorIdResolver(ctx, orgSlug);
-	for (const label of labels) {
-		const id = await resolve(label);
-		if (id !== undefined && id === callerId) return true;
-	}
-	return false;
-}
-
-/**
- * May the acting agent `callerId` reassign a system-created review task?
- * A coordinator (data, labels of operator-org agents) or the orchestrator that
- * owns the task's repo (githubRepoMapping.orchestrator, a label resolved in the
- * task's own organisation). Decided BY ID. Fail closed: no caller ID, no
- * coordinator configured and no repo owner -> false.
- */
-export async function mayReassignReviewTask(
+export async function callerHoldsReviewGrant(
 	ctx: QueryCtx,
 	callerId: string | undefined,
+	grant: "reassign" | "cancel",
 	repo: string | undefined,
 	taskOrgSlug: string | null | undefined,
 ): Promise<boolean> {
 	if (callerId === undefined) return false;
-	if (
-		await callerIsNamedBy(
-			ctx,
-			callerId,
-			await readConfigList(ctx, REVIEW_COORDINATORS_KEY),
-			null,
-		)
-	) {
-		return true;
+	const operatorOrg = actorIdResolver(ctx, null);
+	const labels = await readConfigList(
+		ctx,
+		grant === "reassign" ? REVIEW_COORDINATORS_KEY : AUTOMATION_TASK_CANCELLERS_KEY,
+	);
+	for (const label of labels) {
+		if ((await operatorOrg(label)) === callerId) return true;
 	}
-	if (repo === undefined) return false;
+	if (grant === "cancel" || repo === undefined) return false;
 	const mapping = await mappingFor(ctx, repo);
 	if (mapping === null) return false;
-	return await callerIsNamedBy(ctx, callerId, [mapping.orchestrator], taskOrgSlug ?? null);
+	const ownerId = await actorIdResolver(ctx, taskOrgSlug ?? null)(mapping.orchestrator);
+	return ownerId !== undefined && ownerId === callerId;
 }
 
 /**
@@ -191,23 +180,4 @@ export async function mayReassignReviewTask(
  */
 export function isAutomationOrigin(origin: string | undefined): boolean {
 	return origin === "automation" || origin === "automation-webhook";
-}
-
-/**
- * May the acting agent `callerId` cancel an automation-created task it did not
- * create? Only an agent named (data, labels of operator-org agents) under
- * taskClosureConfig "automationTaskCancellers", decided BY ID. Key absent, empty
- * or unreadable, or no caller ID -> false (fail closed).
- */
-export async function mayCancelAutomationTask(
-	ctx: QueryCtx,
-	callerId: string | undefined,
-): Promise<boolean> {
-	if (callerId === undefined) return false;
-	return await callerIsNamedBy(
-		ctx,
-		callerId,
-		await readConfigList(ctx, AUTOMATION_TASK_CANCELLERS_KEY),
-		null,
-	);
 }

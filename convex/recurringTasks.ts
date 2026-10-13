@@ -33,8 +33,7 @@ import { verifiedPersonValidator } from "./lib/personPrincipal";
 import {
 	assigneeIdForRead,
 	assigneeLabelOf,
-	requireAssigneeAgentId,
-	requireAssigneeLabelOnRoster,
+	requireAssigneeId,
 	requireAssigneeOnRoster,
 } from "./lib/taskActors";
 import { clerkOrgIdForSlug } from "./lib/orgClerkId";
@@ -259,7 +258,6 @@ export const create = mutation({
 		);
 		// The assignee is the target of an assignment, not an asserted caller name: a
 		// member may name only an agent of its own roster (by agent ID).
-		await requireAssigneeLabelOnRoster(ctx, scope, args.assignedTo, "recurringTasks:create");
 		// The tenant of the schedule, from the scope just resolved, never an argument.
 		// The fleet service account forwarding a verified agent of a CLIENT
 		// organisation writes in that agent's organisation: the verified actor was
@@ -307,11 +305,14 @@ export const create = mutation({
 		// written for a verified agent resolves in the AGENT's org). A label with no
 		// active agent there, or registered only in another org, is refused before
 		// anything is written.
-		const assignedToId = await requireAssigneeAgentId(
+		// The assignee is also the target of an assignment: a member may name only an
+		// agent of its own roster (by agent ID), and a person is never a target.
+		const assignedToId = await requireAssigneeId(
 			ctx,
 			rowOrgId ?? scope.callerActorOrg,
 			args.assignedTo,
 			"recurringTasks:create",
+			{ agentOnly: true, rosterScope: scope },
 		);
 		// The assignee is recorded under the label its own agents row carries, read
 		// BY ID: the typed string selected the agent, the row names it.
@@ -566,16 +567,16 @@ export const update = mutation({
 			// REASSIGNING the row to a new agent outside its own roster is refused the
 			// same way: the patch can never move a row to an owner the caller could not
 			// itself have created it under.
-			await requireAssigneeLabelOnRoster(ctx, scope, args.assignedTo, "recurringTasks:update");
 			// M10h: the reassignment BY ID, resolved within the schedule's own org. A
 			// label naming no active agent there (unknown, or only in another org) is
 			// refused before anything is written. The label recorded beside the ID is
 			// the one the agent's own row carries.
-			patch.assignedToId = await requireAssigneeAgentId(
+			patch.assignedToId = await requireAssigneeId(
 				ctx,
 				existing.orgId ?? (hasFleetRead(scope) ? scope.callerActorOrg : undefined),
 				args.assignedTo,
 				"recurringTasks:update",
+				{ agentOnly: true, rosterScope: scope },
 			);
 			patch.assignedTo = await assigneeLabelOf(ctx, patch.assignedToId);
 		}

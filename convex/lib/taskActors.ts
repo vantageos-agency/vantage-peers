@@ -83,11 +83,37 @@ export async function requireAssigneeId(
 	orgSlug: string | undefined | null,
 	assignee: string,
 	door: string,
+	opts?: {
+		// A target that must be an AGENT: a person is refused (a typed
+		// "user:<subject>" is a name with no verified person behind it).
+		agentOnly?: boolean;
+		// An org member may assign work only to an agent of its OWN roster, by agent
+		// ID: the label is resolved to an agents-row ID in the member's org and that ID
+		// must be an entry of the org's stored `allowedAgentIds`, judged by the package
+		// (lib/missionActors.requireAgentOnScopeRoster). A label naming no agent of the
+		// org cannot be on an ID roster and is refused with the stable reason
+		// `assignee-not-on-roster`. The fleet is not held to a roster.
+		rosterScope?: OrgScope;
+	},
 ): Promise<string> {
-	if (isHumanActorName(assignee)) return assignee;
+	const roster = opts?.rosterScope;
+	if (roster !== undefined && !hasFleetRead(roster) && roster.orgSlug !== null) {
+		const onRoster = await actorIdResolver(ctx, roster.orgSlug)(assignee);
+		if (onRoster === undefined) {
+			throw new ConvexError(
+				`RBAC_DENIED: assignee "${assignee}" is not an orchestrator of org "${roster.orgSlug}" — ${JSON.stringify({ reason: "assignee-not-on-roster", door, from: assignee, orgSlug: roster.orgSlug })}`,
+			);
+		}
+		await requireAgentOnScopeRoster(ctx, roster, onRoster, "assignee", door);
+	}
+	if (opts?.agentOnly !== true && isHumanActorName(assignee)) return assignee;
 	const org = await actorOrgFor(ctx.db, orgSlug);
 	const id = await actorIdResolver(ctx, orgSlug)(assignee);
-	if (org === undefined || id === undefined) {
+	if (
+		org === undefined ||
+		id === undefined ||
+		(opts?.agentOnly === true && isHumanActorName(id))
+	) {
 		throw assigneeNotInOrgRefusal(assignee, org, door);
 	}
 	await requireAssigneeAgentActive(ctx, id, org, door);
@@ -95,9 +121,8 @@ export async function requireAssigneeId(
 }
 
 /**
- * An org member may assign work only to an agent of its OWN roster, by agent ID:
- * the assignee's ID must be an entry of the org's stored `allowedAgentIds`, judged
- * by the package (lib/missionActors.requireAgentOnScopeRoster). The fleet is not
+ * The current assignee of a stored row (by `assignedToId`) held to the same roster:
+ * the ID must be an entry of the org's stored agent-ID roster. The fleet is not
  * held to a roster. Refused RBAC_DENIED, reason `assignee-not-on-roster`.
  */
 export async function requireAssigneeOnRoster(
@@ -108,51 +133,6 @@ export async function requireAssigneeOnRoster(
 ): Promise<void> {
 	if (hasFleetRead(scope) || scope.orgSlug === null) return;
 	await requireAgentOnScopeRoster(ctx, scope, assigneeId, "assignee", door);
-}
-
-/**
- * The same roster rule for an assignment target NAMED BY A LABEL: the label is
- * resolved to an agents-row ID in the member's own organisation, and that ID must
- * be an entry of the org's stored agent-ID roster. A label that names no agent of
- * the org cannot be on an ID roster, so it is refused with the same stable
- * reason (`assignee-not-on-roster`) the name-roster check carried, not guessed.
- * The fleet is not held to a roster.
- */
-export async function requireAssigneeLabelOnRoster(
-	ctx: Ctx,
-	scope: OrgScope,
-	assignee: string,
-	door: string,
-): Promise<void> {
-	if (hasFleetRead(scope) || scope.orgSlug === null) return;
-	const id = await actorIdResolver(ctx, scope.orgSlug)(assignee);
-	if (id === undefined) {
-		throw new ConvexError(
-			`RBAC_DENIED: assignee "${assignee}" is not an orchestrator of org "${scope.orgSlug}" — ${JSON.stringify({ reason: "assignee-not-on-roster", door, from: assignee, orgSlug: scope.orgSlug })}`,
-		);
-	}
-	await requireAgentOnScopeRoster(ctx, scope, id, "assignee", door);
-}
-
-/**
- * Like `requireAssigneeId`, for a target that must be an AGENT: a person is not
- * accepted (a typed "user:<subject>" is a name, and the schedule it would route to
- * has no verified person behind it). A label that names no active agent of the org
- * is refused RBAC_DENIED.
- */
-export async function requireAssigneeAgentId(
-	ctx: Ctx,
-	orgSlug: string | undefined | null,
-	assignee: string,
-	door: string,
-): Promise<string> {
-	const org = await actorOrgFor(ctx.db, orgSlug);
-	const id = await actorIdResolver(ctx, orgSlug)(assignee);
-	if (org === undefined || id === undefined || isHumanActorName(id)) {
-		throw assigneeNotInOrgRefusal(assignee, org, door);
-	}
-	await requireAssigneeAgentActive(ctx, id, org, door);
-	return id;
 }
 
 /**
