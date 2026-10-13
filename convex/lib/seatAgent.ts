@@ -61,34 +61,6 @@ async function sameOrgStamp(
 	return sameOrg({ id: await idOf(a) }, { id: await idOf(b) });
 }
 
-export type SeatBindingRefusal =
-	| { code: "AGENT_INACTIVE" }
-	| { code: "ORG_ID_MISSING"; side: "profile" | "agent" }
-	| { code: "AGENT_ORG_MISMATCH" };
-
-/**
- * May this agent be bound onto this seat profile (`oauth_scope_profiles.agentId`)?
- * Null when it may, otherwise the first refusal: the agent must be active, and the two STORED org IDs
- * (`profile.clerkOrgId`, `agent.clerkOrgId`) must both exist and be the same
- * organisation by @vantageos/cloud-identity `sameOrg`. A side with no stored ID is
- * refused by name (`ORG_ID_MISSING`, `side`); there is no label fallback here.
- */
-export function seatBindingRefusal(
-	profile: Doc<"oauth_scope_profiles">,
-	agent: Doc<"agents">,
-): SeatBindingRefusal | null {
-	if (!agent.isActive) return { code: "AGENT_INACTIVE" };
-	if (profile.clerkOrgId === undefined) {
-		return { code: "ORG_ID_MISSING", side: "profile" };
-	}
-	if (agent.clerkOrgId === undefined) {
-		return { code: "ORG_ID_MISSING", side: "agent" };
-	}
-	return sameOrg({ id: agent.clerkOrgId }, { id: profile.clerkOrgId })
-		? null
-		: { code: "AGENT_ORG_MISMATCH" };
-}
-
 export async function resolveSeatAgent(
 	ctx: QueryCtx | MutationCtx,
 	token: SeatAgentInput,

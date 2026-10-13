@@ -10,7 +10,7 @@
 //    (internalMutation: no client or token reaches it, run with the admin key)
 //    REFUSED  unknown profile; unknown agent; an
 //             inactive agent; an agent of another org (judged by stored org IDs);
-//             a profile or agent with no stored org ID (ORG_ID_MISSING).
+//             a profile with no stored org ID (credential-invalid); reasons are the package's.
 //    PRESENT  the bind succeeds, resolveSeatAgent returns that agent.
 //    ABSENT   (before the bind) the same profile resolves no agent.
 //
@@ -148,7 +148,7 @@ describe("oauth:bindScopeProfileAgent", () => {
 				profileId: "helios-iris-rh",
 				agentId: retired,
 			}),
-		).rejects.toThrow(/AGENT_INACTIVE/);
+		).rejects.toThrow(/principal-inactive/);
 	});
 
 	test("REFUSED: an agent of another organisation, same label", async () => {
@@ -159,7 +159,7 @@ describe("oauth:bindScopeProfileAgent", () => {
 				profileId: "helios-iris-rh",
 				agentId: foreign,
 			}),
-		).rejects.toThrow(/AGENT_ORG_MISMATCH/);
+		).rejects.toThrow(/other-organisation/);
 		const row = await t.run((ctx) =>
 			ctx.db
 				.query("oauth_scope_profiles")
@@ -181,7 +181,7 @@ describe("oauth:bindScopeProfileAgent", () => {
 		});
 		await expect(
 			internal_bind(t, "helios-iris-rh", helios),
-		).rejects.toThrow(/ORG_ID_MISSING.*profile/s);
+		).rejects.toThrow(/credential-invalid/);
 	});
 
 	test("REFUSED: an agent with no stored org ID (no label fallback)", async () => {
@@ -190,7 +190,7 @@ describe("oauth:bindScopeProfileAgent", () => {
 		await t.run((ctx) => ctx.db.patch(helios, { clerkOrgId: undefined }));
 		await expect(
 			internal_bind(t, "helios-iris-rh", helios),
-		).rejects.toThrow(/ORG_ID_MISSING.*agent/s);
+		).rejects.toThrow(/no-verified-organisation/);
 	});
 
 	test("PRESENT: the bind is by ID, whatever the label list holds", async () => {
@@ -209,7 +209,7 @@ describe("oauth:bindScopeProfileAgent", () => {
 				profileId: "helios-iris-rh",
 				agentId: helios,
 			}),
-		).rejects.toThrow(/AGENT_NOT_FOUND/);
+		).rejects.toThrow(/principal-not-found/);
 	});
 });
 
