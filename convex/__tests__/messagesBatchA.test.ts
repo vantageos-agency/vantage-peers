@@ -299,6 +299,29 @@ describe("R-55 listByChannel and listByChannelPaginated: the channel scope is cu
 		);
 	});
 
+	test("listByChannel: broadcast and the org's own team/<slug> prefix are readable, another org's team prefix is not", async () => {
+		const t = createT();
+		await seedOrgs(t);
+		const ids = await insertRows(t, [
+			{ from: "phi", channel: "broadcast", tenant: ALPHA, createdAt: 1 },
+			{ from: "phi", channel: `team/${ALPHA}`, tenant: ALPHA, createdAt: 2 },
+			{ from: "phi", channel: `team/${ALPHA}/ops`, tenant: ALPHA, createdAt: 3 },
+			{ from: "phi", channel: `team/${BRAVO}`, tenant: ALPHA, createdAt: 4 },
+			{ from: "phi", channel: "team/", tenant: ALPHA, createdAt: 5 },
+			{ from: "phi", channel: "stranger", tenant: ALPHA, createdAt: 6 },
+		]);
+		const rows = await asMember(t, ALPHA).query(api.messages.listByChannel, {});
+		const list = (Array.isArray(rows) ? rows : rows.items) as {
+			_id: Id<"messages">;
+		}[];
+		expect(list.map((r) => r._id)).toEqual([ids[2], ids[1], ids[0]]);
+		const page = await asMember(t, ALPHA).query(
+			api.messages.listByChannelPaginated,
+			{ paginationOpts: { numItems: 10, cursor: null } },
+		);
+		expect(page.page.map((r) => r._id)).toEqual([ids[2], ids[1], ids[0]]);
+	});
+
 	test("listByChannel: another organisation's rows are never served (cross-org deny)", async () => {
 		const t = createT();
 		await seedChannels(t);

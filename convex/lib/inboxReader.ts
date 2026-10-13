@@ -1,12 +1,21 @@
+import {
+	assertTargetBelongsTo,
+	hasFleetRead,
+	scopeStanding,
+} from "@vantageos/cloud-identity";
 import { ConvexError } from "convex/values";
 import type { Doc } from "../_generated/dataModel";
 import type { MutationCtx, QueryCtx } from "../_generated/server";
 import { normalizeOrchestratorId } from "../_helpers/normalizeOrchestratorId";
-import { requireVerifiedActorPrincipal } from "./actingPrincipal";
+import {
+	principalLookups,
+	requireVerifiedActorPrincipal,
+} from "./actingPrincipal";
 import { findAgentByName } from "./agentIdentity";
 import type { OrgScope, VerifiedActor } from "./auth";
+import { lookupOrgMapping } from "./authOrgMapping";
 import { fleetOperatorSlug } from "./operatorOrg";
-import { resolveVerifiedOrg, type VerifiedOrg } from "./verifiedOrg";
+import { resolveVerifiedOrgMapping, type VerifiedOrg } from "./verifiedOrg";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // inboxReader — WHO is reading an inbox, decided once, for every inbox door
@@ -133,20 +142,28 @@ async function agentReader(
 			);
 		}
 	}
-	if (claims.tenantId !== undefined && claims.tenantId !== agent.orgSlug) {
-		refuse(
-			door,
-			"tenant-not-the-readers-org",
-			`tenantId "${claims.tenantId}" is not the verified reader's organisation`,
-		);
+	// The reader's organisation as its mapping row: every organisation compare
+	// below is between stored row IDs, never between labels.
+	const own = await lookupOrgMapping(ctx, agent.orgSlug);
+	if (claims.tenantId !== undefined) {
+		// A declared tenant must name the reader's own organisation.
+		const declared = await lookupOrgMapping(ctx, claims.tenantId);
+		if (declared === null || own === null || declared._id !== own._id) {
+			refuse(
+				door,
+				"tenant-not-the-readers-org",
+				`tenantId "${claims.tenantId}" is not the verified reader's organisation`,
+			);
+		}
 	}
 	const operator = await fleetOperatorSlug(ctx.db);
+	const operatorRow =
+		operator === undefined ? null : await lookupOrgMapping(ctx, operator);
+	const inOperatorOrg =
+		operatorRow !== null && own !== null && operatorRow._id === own._id;
 	return {
 		kind: "agent",
-		tenants:
-			operator !== undefined && operator === agent.orgSlug
-				? [agent.orgSlug, undefined]
-				: [agent.orgSlug],
+		tenants: inOperatorOrg ? [agent.orgSlug, undefined] : [agent.orgSlug],
 		label: agent.name,
 		names: [],
 		agentId: agent._id,
@@ -170,15 +187,22 @@ export async function resolveInboxReader(
 			claims.verifiedActor,
 			door,
 		);
-		if (
-			claims.verifiedOrg !== undefined &&
-			claims.verifiedOrg.orgSlug !== principal.orgId
-		) {
-			return refuse(
-				door,
-				"verified-org-differs-from-actor",
-				"verifiedOrg and verifiedActor name different organisations",
+		if (claims.verifiedOrg !== undefined) {
+			// The verified organisation must be the acting agent's own: decided by
+			// the package from the stored organisation IDs (`assertTargetBelongsTo`).
+			const sameOrganisation = await assertTargetBelongsTo(
+				principal,
+				{ orgId: claims.verifiedOrg.orgSlug },
+				principalLookups(ctx),
+				{ door },
 			);
+			if (!sameOrganisation.ok) {
+				return refuse(
+					door,
+					"verified-org-differs-from-actor",
+					"verifiedOrg and verifiedActor name different organisations",
+				);
+			}
 		}
 		const id = ctx.db.normalizeId("agents", principal.principalId);
 		const agent = id === null ? null : await ctx.db.get(id);
@@ -193,15 +217,16 @@ export async function resolveInboxReader(
 	}
 
 	if (claims.verifiedOrg !== undefined) {
-		const orgSlug = await resolveVerifiedOrg(
+		const verifiedMapping = await resolveVerifiedOrgMapping(
 			ctx,
 			scope,
 			claims.verifiedOrg,
 			door,
 		);
-		if (orgSlug === undefined) {
+		if (verifiedMapping === undefined) {
 			return refuse(door, "reader-unidentified", "no verified reader");
 		}
+		const orgSlug = verifiedMapping.clerkOrgSlug;
 		if (claims.recipient === undefined) {
 			return refuse(
 				door,
@@ -209,12 +234,15 @@ export async function resolveInboxReader(
 				"a verified organisation reads the inbox of a named agent; none was named",
 			);
 		}
-		if (claims.tenantId !== undefined && claims.tenantId !== orgSlug) {
-			return refuse(
-				door,
-				"tenant-not-the-readers-org",
-				`tenantId "${claims.tenantId}" is not the verified organisation`,
-			);
+		if (claims.tenantId !== undefined) {
+			const declared = await lookupOrgMapping(ctx, claims.tenantId);
+			if (declared === null || declared._id !== verifiedMapping._id) {
+				return refuse(
+					door,
+					"tenant-not-the-readers-org",
+					`tenantId "${claims.tenantId}" is not the verified organisation`,
+				);
+			}
 		}
 		const agent = await findAgentByName(ctx, orgSlug, claims.recipient);
 		if (agent !== null) {
@@ -245,8 +273,8 @@ export async function resolveInboxReader(
 		);
 	}
 
-	if (scope.isMaster) {
-		if (scope.masterSource === "operator-admin") {
+	if (hasFleetRead(scope)) {
+		if (scopeStanding(scope) === "operator-admin") {
 			return {
 				kind: "operator-admin",
 				tenants: claims.tenantId !== undefined ? [claims.tenantId] : "all",
@@ -268,12 +296,22 @@ export async function resolveInboxReader(
 		const operator = await fleetOperatorSlug(ctx.db);
 		const fleet: Array<string | undefined> =
 			operator !== undefined ? [undefined, operator] : [undefined];
-		if (claims.tenantId !== undefined && !fleet.includes(claims.tenantId)) {
-			return refuse(
-				door,
-				"tenant-inbox-needs-verified-reader",
-				`a client organisation's inbox ("${claims.tenantId}") is read by that organisation's verified agent, never by a name`,
-			);
+		if (claims.tenantId !== undefined) {
+			// A declared tenant must be the operator organisation's own row.
+			const declared = await lookupOrgMapping(ctx, claims.tenantId);
+			const operatorRow =
+				operator === undefined ? null : await lookupOrgMapping(ctx, operator);
+			if (
+				declared === null ||
+				operatorRow === null ||
+				declared._id !== operatorRow._id
+			) {
+				return refuse(
+					door,
+					"tenant-inbox-needs-verified-reader",
+					`a client organisation's inbox ("${claims.tenantId}") is read by that organisation's verified agent, never by a name`,
+				);
+			}
 		}
 		return {
 			kind: "fleet",

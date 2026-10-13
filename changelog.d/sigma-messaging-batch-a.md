@@ -1,0 +1,4 @@
+---
+section: Security
+---
+- **Messaging reads cut their window after every predicate, and rows are owned by organisation ID.** `messages:listMessages`, `listByChannel` and `listByChannelPaginated` apply the `createdBefore` cursor, the sender and the caller's channel scope in the index range or query builder before the bound (a cursor deeper than the old 2001-row scan no longer returns nothing; a page is `numItems` readable rows). `markAsRead` and the person-recipient proof compare the stored organisation ID, never the slug a row carries. `messages:listMyInbox` refuses the fleet service account that presents no person. Standing gates in `messages.ts` and `lib/inboxReader.ts` read `@vantageos/cloud-identity` (`hasFleetRead`, `isServiceAccountScope`, `scopeStanding`). backend-doctor 0.4.4 on these two modules: R-55 4 to 0, R-54 13 to 6, R-53 42 to 31, CR-2 30 to 22. Evidence: `convex/__tests__/messagesBatchA.test.ts` 21/21, red 8/21 on `2bcb966`.
