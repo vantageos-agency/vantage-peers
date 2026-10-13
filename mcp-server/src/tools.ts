@@ -3629,6 +3629,10 @@ export function registerTools(
 
 	// ── check_messages ──────────────────────────────────────────────────────────
 
+	// oracle-justified: the reader tier is resolved in the Convex inbox reader (convex/lib/inboxReader.ts) from the
+	//   verified identity: the agent's verified ID (`verifiedActor`) or the verified org (`verifiedOrg`), never from
+	//   `recipient`, which only narrows. The one name-keyed reader is the claimless fleet master, confined to the
+	//   fleet tenant until the fleet roles have agents rows (task k17a1yprfca2cfjc4cnz4ynvvs8fwe5m).
 	defineTool(
 		server,
 		authCtx,
@@ -4159,6 +4163,10 @@ export function registerTools(
 
 	// ── list_messages ───────────────────────────────────────────────────────────
 
+	// oracle-justified: the reader tier is resolved in the Convex door from the verified identity, never from an
+	//   argument: the bearer's verified org rides as `verifiedOrg` (verifiedOrgArgs), messages:listMessages runs the
+	//   member path under that org (the sender and the createdBefore cursor are cut in the query builder before the
+	//   take, the tenant in the index range), and only the fleet master presenting no claim reads every tenant.
 	defineTool(
 		server,
 		authCtx,
@@ -4312,9 +4320,10 @@ export function registerTools(
 	// BM25 keyword search over message content. Backed by Convex
 	// `messages:searchMessagesByKeyword` using the `search_content` searchIndex.
 
-	// oracle-justified: BM25 searchIndex read that applies a post-take tenant filter in the handler
-	//   (messages:searchMessagesByKeyword), where list_messages pushes the tenant into its index range
-	//   before the take; both go through requireResolvedCaller and requireScope.
+	// oracle-justified: BM25 searchIndex read whose tenant is the index's own filter field
+	//   (messages:searchMessagesByKeyword), so the window is cut over the caller's tenant before the take, like
+	//   list_messages, which pushes the tenant into its index range; both go through requireResolvedCaller and
+	//   requireScope and run under the bearer's verified org.
 	defineTool(
 		server,
 		authCtx,
@@ -4434,6 +4443,10 @@ export function registerTools(
 	//      (messageId/from/channel/createdAt/truncated) is always returned
 	//      intact so a scoped caller still knows the broadcast exists.
 
+	// oracle-justified: the reader tier is resolved in the Convex door from the verified identity, never from an
+	//   argument: the bearer's verified org rides as `verifiedOrg` (verifiedOrgArgs) and messages:listBroadcastStatus
+	//   refuses a message outside that org, or off its channel scope, before any receipt row is read; only the
+	//   fleet master presenting no claim reads every tenant.
 	defineTool(
 		server,
 		authCtx,
@@ -10951,6 +10964,9 @@ export function registerTools(
 	// Convex messages:getById landed in Phase 2a (PR #735, commit 2ebdaba).
 	// Note: episodes were dropped from Phase 2b scope — episodes are stored as
 	// memories with episode metadata (no separate table), use get_memory instead.
+	// oracle-justified: the reader tier is resolved in the Convex door from the verified identity, never from an
+	//   argument: the bearer's verified org rides as `verifiedOrg` (verifiedOrgArgs) and messages:getById refuses a
+	//   message outside that org, or off its channel scope; only the fleet master presenting no claim reads any row.
 	defineTool(
 		server,
 		authCtx,

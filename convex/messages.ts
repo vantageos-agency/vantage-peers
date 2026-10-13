@@ -1,7 +1,12 @@
-import { type PaginationResult, paginationOptsValidator } from "convex/server";
+import {
+	type FilterBuilder,
+	type NamedTableInfo,
+	type PaginationResult,
+	paginationOptsValidator,
+} from "convex/server";
 import { ConvexError, v } from "convex/values";
 // convex-strict-mode-doc-type-import-needed-when-refactoring-list-query-from-early-return-to-accumulator-post-filter
-import type { Doc, Id } from "./_generated/dataModel";
+import type { DataModel, Doc, Id } from "./_generated/dataModel";
 import { internal } from "./_generated/api";
 import { internalMutation, mutation, query } from "./_generated/server";
 import type { MutationCtx } from "./_generated/server";
@@ -28,13 +33,21 @@ import {
 	verifiedPersonValidator,
 } from "./lib/personPrincipal";
 import { findAgentByName } from "./lib/agentIdentity";
-import type { ActingPrincipal } from "@vantageos/cloud-identity";
+import {
+	type ActingPrincipal,
+	hasFleetRead,
+	isServiceAccountScope,
+	resolveActingPrincipal,
+	sameOrg,
+} from "@vantageos/cloud-identity";
 import {
 	addressRecipientById,
+	principalLookups,
 	recipientScopeOfPrincipal,
 	requireTargetOrgOfPrincipal,
 	requireVerifiedActorPrincipal,
 } from "./lib/actingPrincipal";
+import { orgRefOfScope } from "./lib/authOrgMapping";
 import { requireId } from "./lib/ids";
 import { normalizeOrchestratorId } from "./_helpers/normalizeOrchestratorId";
 import { creatorValidator } from "./schema";
@@ -87,21 +100,60 @@ const UNREAD_RECEIPTS_SCAN_CAP = 500;
 // ─────────────────────────────────────────────────────────────────────────────
 
 function isOrchestratorAllowedForScope(scope: OrgScope, orchestrator: string): boolean {
-	if (scope.isMaster) return true;
+	if (hasFleetRead(scope)) return true;
 	if (scope.orgSlug === null) return false;
 	return scope.allowedOrchestrators.includes(orchestrator);
 }
 
 // Channel membership for a non-master, org-scoped caller: "broadcast" (shared),
 // a channel under its own `team/<orgSlug>` prefix, or one of the orchestrators
-// in its client_org_mapping roster. Same rule `listByChannel` applies inline.
+// in its client_org_mapping roster. ONE definition, read two ways: as a row
+// predicate (`isChannelOnScope`, for a single row) and as a query-builder
+// predicate (`channelScopeFilter`, so a window is cut over the channels the
+// caller may read and never narrowed after the bound: R-55).
+type ChannelScope =
+	| { all: true }
+	| { all: false; exact: readonly string[]; prefix: string | null };
+
+function channelScopeOf(scope: OrgScope): ChannelScope {
+	if (hasFleetRead(scope)) return { all: true };
+	return {
+		all: false,
+		exact: ["broadcast", ...scope.allowedOrchestrators],
+		prefix: scope.orgSlug === null ? null : `team/${scope.orgSlug}`,
+	};
+}
+
 function isChannelOnScope(scope: OrgScope, channel: string): boolean {
-	if (scope.isMaster) return true;
-	if (channel === "broadcast") return true;
-	if (scope.orgSlug !== null && channel.startsWith(`team/${scope.orgSlug}`)) {
-		return true;
+	const s = channelScopeOf(scope);
+	if (s.all) return true;
+	return (
+		s.exact.includes(channel) ||
+		(s.prefix !== null && channel.startsWith(s.prefix))
+	);
+}
+
+// The same predicate as a query-builder expression over `messages.channel`. A
+// prefix is the string range [prefix, prefix with its last code unit + 1).
+function channelScopeFilter(
+	q: FilterBuilder<NamedTableInfo<DataModel, "messages">>,
+	scope: OrgScope,
+) {
+	const s = channelScopeOf(scope);
+	if (s.all) return true;
+	const arms = s.exact.map((c) => q.eq(q.field("channel"), c));
+	if (s.prefix !== null) {
+		const upper =
+			s.prefix.slice(0, -1) +
+			String.fromCharCode(s.prefix.charCodeAt(s.prefix.length - 1) + 1);
+		arms.push(
+			q.and(
+				q.gte(q.field("channel"), s.prefix),
+				q.lt(q.field("channel"), upper),
+			),
+		);
 	}
-	return scope.allowedOrchestrators.includes(channel);
+	return q.or(...arms);
 }
 
 const staleInProgressValidator = v.array(
@@ -169,13 +221,19 @@ async function requirePersonRecipientInOrg(
 		);
 	};
 	if (reach.orgSlug === null) return refuse("person-recipient-needs-org-agent");
-	const orgSlug = reach.orgSlug;
+	// The proof is a row the person wrote, kept when its stamped organisation is
+	// the sender's own organisation BY ID (the package's `sameOrg`).
 	const written = await ctx.db
 		.query("messages")
 		.withIndex("by_from", (q) => q.eq("from", person))
 		.order("desc")
 		.take(PERSON_PROOF_SCAN);
-	if (!written.some((m) => m.tenantId === orgSlug)) {
+	const senderOrg = orgRefOfScope(reach);
+	if (
+		!written.some((m) =>
+			sameOrg({ id: m.tenantOrgId, label: m.tenantId }, senderOrg),
+		)
+	) {
 		return refuse("person-recipient-not-in-org");
 	}
 }
@@ -190,7 +248,7 @@ function assertPersonInboxOwner(
 	door: string,
 ): void {
 	if (!isHumanActorName(recipient)) return;
-	if (scope.isMaster && scope.orgSlug === null) return;
+	if (hasFleetRead(scope) && scope.orgSlug === null) return;
 	if (scope.userId !== "" && recipient === memberActorOf(scope)) return;
 	throw new ConvexError(
 		`RBAC_DENIED: a person's inbox may be read only by that person — ${JSON.stringify({ reason: "person-inbox-not-yours", door, orgSlug: scope.orgSlug })}`,
@@ -290,7 +348,7 @@ async function resolveRecipientAgents(
 	rawIds: readonly string[],
 	sender?: ActingPrincipal,
 ): Promise<{ rows: Doc<"agents">[]; tenantId: string | undefined }> {
-	const fleetWide = reach.isMaster && reach.orgSlug === null;
+	const fleetWide = hasFleetRead(reach) && reach.orgSlug === null;
 	// The organisation the receipts are stamped with is the one the recipients
 	// must belong to: the sender's own org, or (fleet master) the declared
 	// tenant, else the operator org.
@@ -312,6 +370,18 @@ async function resolveRecipientAgents(
 			? (await lookupOrgMapping(ctx, reach.orgSlug))
 					?.addressableFleetCoordinatorIds
 			: undefined;
+	// Is this agent row an ACTIVE agent of the organisation `orgSlug`? Decided by
+	// @vantageos/cloud-identity (`resolveActingPrincipal`: the row read by ID,
+	// active, stamped with that organisation, the organisation active); nothing is
+	// compared here.
+	const inOrg = async (row: Doc<"agents">, orgSlug: string): Promise<boolean> =>
+		(
+			await resolveActingPrincipal(
+				{ kind: "agent", agentId: row._id, verifiedOrgId: orgSlug },
+				principalLookups(ctx),
+				SEND_DOOR,
+			)
+		).ok;
 	const rows: Doc<"agents">[] = [];
 	const seen = new Set<string>();
 	// The organisation an operator agent's reply is stamped in, and whether any
@@ -339,8 +409,8 @@ async function resolveRecipientAgents(
 		}
 		if (fleetWide) {
 			if (
-				row.orgSlug !== targetOrg ||
-				(derivedTenantId !== undefined && row.orgSlug !== derivedTenantId)
+				!(await inOrg(row, targetOrg)) ||
+				(derivedTenantId !== undefined && !(await inOrg(row, derivedTenantId)))
 			) {
 				return refuse(raw);
 			}
@@ -351,7 +421,7 @@ async function resolveRecipientAgents(
 			const verdict = await addressRecipientById(ctx, sender, row, SEND_DOOR);
 			if (!verdict.ok) return refuse(raw);
 			if (verdict.direction === "operator-to-client") {
-				if (replyOrg !== undefined && replyOrg !== row.orgSlug) {
+				if (replyOrg !== undefined && !(await inOrg(row, replyOrg))) {
 					return refuseSpan();
 				}
 				replyOrg = row.orgSlug;
@@ -367,7 +437,7 @@ async function resolveRecipientAgents(
 				);
 				if (
 					!listed.ok ||
-					(derivedTenantId !== undefined && row.orgSlug !== derivedTenantId)
+					(derivedTenantId !== undefined && !(await inOrg(row, derivedTenantId)))
 				) {
 					return refuse(raw);
 				}
@@ -384,7 +454,7 @@ async function resolveRecipientAgents(
 		);
 		if (
 			own.ok &&
-			(derivedTenantId === undefined || row.orgSlug === derivedTenantId)
+			(derivedTenantId === undefined || (await inOrg(row, derivedTenantId)))
 		) {
 			rows.push(row);
 			continue;
@@ -429,7 +499,7 @@ async function sendMessageCore(
 		// produces a row invisible to (or spoofable across) the caller's own
 		// scoped reads. `scope` reused from the top of this handler.
 		let derivedTenantId: string | undefined;
-		if (scope.isMaster && scope.orgSlug === null) {
+		if (hasFleetRead(scope) && scope.orgSlug === null) {
 			// TRUE internal master (service account / Laurent) carve-out —
 			// mirrors the broadcast branch's isMaster && orgSlug===null
 			// discriminant below: legitimate internal fleet traffic keeps
@@ -617,7 +687,7 @@ async function sendMessageCore(
 			// fleet-wide branch is gated on BOTH isMaster AND orgSlug===null;
 			// this discriminant is applied locally here, not in lib/auth.ts
 			// (shared type, out of scope for this fix).
-			if (reach.isMaster && reach.orgSlug === null) {
+			if (hasFleetRead(reach) && reach.orgSlug === null) {
 				// True internal/master emitter: exclude every orchestrator bound
 				// to any client tenant — active OR inactive — so an internal
 				// broadcast never reaches a client orchestrator, the exact leak
@@ -711,7 +781,7 @@ async function sendMessageCore(
 			// roster is the ["*"] read sentinel, which names nobody) may reach only
 			// orchestrators on its OWN roster, directly or via one of their
 			// instances. Enforced here, in Convex, so no transport can bypass it.
-			const fleetWide = reach.isMaster && reach.orgSlug === null;
+			const fleetWide = hasFleetRead(reach) && reach.orgSlug === null;
 			const instanceOwner = new Map<string, string>();
 			for (const p of profiles) {
 				if (p.instanceId !== undefined) {
@@ -727,11 +797,7 @@ async function sendMessageCore(
 			// name path is removed by M1b.
 			let coordinators: string[] = [];
 			if (!fleetWide && reach.orgSlug !== null) {
-				const orgSlug = reach.orgSlug;
-				const mapping = await ctx.db
-					.query("client_org_mapping")
-					.withIndex("by_clerk_slug", (q) => q.eq("clerkOrgSlug", orgSlug))
-					.first();
+				const mapping = await lookupOrgMapping(ctx, reach.orgSlug);
 				coordinators = (mapping?.addressableFleetCoordinators ?? [])
 					.filter((n) => n !== "*")
 					.map(normalizeOrchestratorId);
@@ -828,12 +894,7 @@ async function resolveSeatRecipientScope(
 			`RBAC_DENIED: ${detail} — ${JSON.stringify({ reason, door })}`,
 		);
 	};
-	if (
-		!(
-			transportScope.isMaster &&
-			transportScope.masterSource === "service-account"
-		)
-	) {
+	if (!isServiceAccountScope(transportScope)) {
 		return refuse(
 			"seat-org-not-trusted",
 			"seatOrgSlug is a transport-verified claim and is accepted only from the fleet service account",
@@ -847,24 +908,26 @@ async function resolveSeatRecipientScope(
 			`seatOrgSlug "${seatOrgSlug}" is not a known, active organisation`,
 		);
 	}
-	if (tenantId !== undefined && tenantId !== seatOrgSlug) {
-		return refuse(
-			"seat-org-tenant-mismatch",
-			`seatOrgSlug "${seatOrgSlug}" and tenantId "${tenantId}" name different organisations`,
-		);
+	// A declared tenant must name the SAME organisation row as the seat's verified
+	// org: the two mapping rows are compared by their stored IDs, never by the
+	// typed labels.
+	if (tenantId !== undefined) {
+		const declared =
+			tenantId === "" ? null : await lookupOrgMapping(ctx, tenantId);
+		if (declared === null || declared._id !== mapping._id) {
+			return refuse(
+				"seat-org-tenant-mismatch",
+				`seatOrgSlug "${seatOrgSlug}" and tenantId "${tenantId}" name different organisations`,
+			);
+		}
 	}
-	return {
-		userId: transportScope.userId,
-		orgSlug: seatOrgSlug,
-		// The org's permanent ID, from the mapping row resolved above, so row
-		// ownership compares IDs (M4: no label fallback on a row compare).
-		...(mapping.clerkOrgId !== undefined ? { orgClerkId: mapping.clerkOrgId } : {}),
-		allowedOrchestrators: mapping.allowedOrchestrators,
-		allowedAgentIds: mapping.allowedAgentIds ?? [],
-		fleetWide: false,
-		scopes: mapping.scopes,
-		isMaster: false,
-	};
+	// The member scope of the seat's organisation, built by withOrgScope itself
+	// from the active mapping row the service account acts for: the roster, the
+	// scopes and the org ID are the row's own, never wider.
+	return await withOrgScope(ctx, {
+		refuseWithoutThrow: true,
+		actForOrgMapping: mapping,
+	});
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -1293,7 +1356,7 @@ export const checkNewMessages = query({
 		// answered with bytes identical to an absence, and that is REPORTED, not
 		// silent. The bare `[]` this line returns is pinned as an ARRAY by
 		// convex/__tests__/preOrgRefusalCarriesItsMarker.test.ts.
-		if (!scope.isMaster && scope.orgSlug === null) return [];
+		if (!hasFleetRead(scope) && scope.orgSlug === null) return [];
 		if (args.recipient !== undefined) {
 			assertPersonInboxOwner(scope, args.recipient, "messages:checkNewMessages");
 		}
@@ -1394,7 +1457,7 @@ export const checkNewMessagesEnvelope = query({
 		// signed-in-no-org branch to a typed-empty result instead of a throw.
 		const scope = await withOrgScope(ctx, { refuseWithoutThrow: true });
 
-		if (!scope.isMaster && scope.orgSlug === null) {
+		if (!hasFleetRead(scope) && scope.orgSlug === null) {
 			return {
 				messages: [],
 				truncated: false,
@@ -1553,6 +1616,16 @@ export const listMyInbox = query({
 		const transportScope = await withOrgScope(ctx, { refuseWithoutThrow: true });
 		requireResolvedCaller(transportScope, door);
 		if (transportScope.refused) return { refused: true as const, items: [] };
+		// The fleet service account presenting no person claim is not a person: it
+		// is refused here, before any scope is rebuilt, never served as master.
+		if (
+			args.verifiedPerson === undefined &&
+			isServiceAccountScope(transportScope)
+		) {
+			throw new ConvexError(
+				`RBAC_DENIED: "${door}" reads a person's inbox and the caller is not a person — ${JSON.stringify({ reason: "not-a-person", door, orgSlug: null })}`,
+			);
+		}
 		const scope = await resolveVerifiedPerson(
 			ctx,
 			transportScope,
@@ -1685,7 +1758,7 @@ export const markAsRead = mutation({
 		const claimed =
 			args.verifiedActor !== undefined || args.verifiedOrg !== undefined;
 		const masterNamesNoOwner =
-			!claimed && scope.isMaster && args.callerOrchestrator === undefined;
+			!claimed && hasFleetRead(scope) && args.callerOrchestrator === undefined;
 		const unclaimedMasterNamesNoOwner =
 			masterNamesNoOwner && UNCLAIMED_SERVICE_ACCOUNT_READS_EVERY_TENANT;
 		// CONTRACT: the tenants a claimless, ownerless service account may mark.
@@ -1703,7 +1776,7 @@ export const markAsRead = mutation({
 		const reader =
 			!unclaimedMasterNamesNoOwner &&
 			fleetTenants === undefined &&
-			(claimed || scope.isMaster)
+			(claimed || hasFleetRead(scope))
 				? await resolveInboxReader(
 						ctx,
 						transportScope,
@@ -1761,7 +1834,13 @@ export const markAsRead = mutation({
 			// boundary: two orgs may both name "seat-x". A non-master caller may
 			// only touch a receipt STAMPED with its own org; an absent tenantId
 			// asserts nothing and grants nothing (same stance as filterByOrgScope).
-			if (!scope.isMaster && receipt.tenantId !== scope.orgSlug) {
+			if (
+				!hasFleetRead(scope) &&
+				!sameOrg(
+					{ id: receipt.tenantOrgId, label: receipt.tenantId },
+					orgRefOfScope(scope),
+				)
+			) {
 				throw new ConvexError(
 					`RBAC_DENIED: caller may not mark receipt ${receiptId} as read — it does not belong to the caller's organisation — ${JSON.stringify({ registration: "messages:markAsRead", orgSlug: scope.orgSlug, reason: "receipt-tenant-mismatch" })}`,
 				);
@@ -1840,7 +1919,7 @@ export const deleteMessage = mutation({
 		// be distinguished from an existing-but-foreign one by an
 		// unauthenticated caller (mirrors checkNewMessages'/listMessages'
 		// `!isMaster && orgSlug===null` guard above).
-		if (!scope.isMaster && scope.orgSlug === null) {
+		if (!hasFleetRead(scope) && scope.orgSlug === null) {
 			throw new ConvexError(
 				`RBAC_DENIED: caller may not delete message ${args.messageId} — ${JSON.stringify({ orgSlug: null })}`,
 			);
@@ -1856,7 +1935,7 @@ export const deleteMessage = mutation({
 		if (
 			args.verifiedActor !== undefined ||
 			args.verifiedOrg !== undefined ||
-			(scope.isMaster &&
+			(hasFleetRead(scope) &&
 				args.callerOrchestrator !== undefined &&
 				!isFleetSystemCaller(scope, args.callerOrchestrator))
 		) {
@@ -1878,7 +1957,7 @@ export const deleteMessage = mutation({
 			return { deleted: true, receiptsDeleted: await cascadeDeleteMessage(ctx, args.messageId) };
 		}
 
-		if (args.callerOrchestrator === undefined && !scope.isMaster) {
+		if (args.callerOrchestrator === undefined && !hasFleetRead(scope)) {
 			// HUMAN path (task k17d5k5bw741p3681bc0pq76ah8fk4sn): a dashboard
 			// org:admin deletes a message of its OWN organisation (the row's
 			// tenantId stamp equals the verified org; an unstamped row is refused)
@@ -1904,7 +1983,7 @@ export const deleteMessage = mutation({
 		// match, not a tenant boundary, and this mutation cascade-deletes the
 		// message's receipts. A non-master caller may only delete a message
 		// stamped with its own org.
-		if (!scope.isMaster && message.tenantId !== scope.orgSlug) {
+		if (!hasFleetRead(scope) && message.tenantId !== scope.orgSlug) {
 			throw new ConvexError(
 				`RBAC_DENIED: caller may not delete message ${args.messageId} — it does not belong to the caller's organisation — ${JSON.stringify({ registration: "messages:deleteMessage", orgSlug: scope.orgSlug, reason: "message-tenant-mismatch" })}`,
 			);
@@ -1934,13 +2013,35 @@ export const deleteMessage = mutation({
 // listMessages — get messages for a day or from a sender (history/replay)
 // ─────────────────────────────────────────────────────────────────────────────
 
-// PR #635 wide-scan-cap pattern (see convex/tasks.ts TASK_LIST_SCAN_CAP,
-// convex/profiles.ts PROFILES_LIST_SCAN_CAP, lot 1 mission k574p02m). When
-// paginating via `createdBefore`, the post-take filter only finds rows
-// older than the cursor if the FETCH is wide enough to include them —
-// mission k574p02m DEFECT 2, lot 2.
-export const MESSAGES_LIST_SCAN_CAP = 2000;
+// One `messages` document as the history reads return it (the schema's field
+// set; `to` is a legacy field some old rows still carry).
+const messageRowValidator = v.object({
+	_id: v.id("messages"),
+	_creationTime: v.number(),
+	from: creatorValidator,
+	fromInstanceId: v.optional(v.string()),
+	fromId: v.optional(v.string()),
+	channel: v.optional(v.string()),
+	to: v.optional(creatorValidator),
+	content: v.string(),
+	sessionDay: v.optional(v.number()),
+	createdAt: v.number(),
+	// Day 98 Cat A k17e611z4 fix — issues #655, #644, #643. Multi-tenant
+	// rows carry tenantId; returns shape must declare it or Convex
+	// emits ReturnsValidationError "extra field tenantId".
+	tenantId: v.optional(v.string()),
+	tenantOrgId: v.optional(v.string()),
+});
 
+// R-55: every caller-dependent predicate (the tenant, the sender, the
+// `createdBefore` cursor) sits in the index range or the query builder BEFORE
+// `.take(limit)`. The window therefore holds `limit` rows the caller may see, never
+// a wider window cut down afterwards (the old wide-scan-cap workaround).
+
+// R-54 exit (c). fleet-wide: the fleet master and the operator admin read every
+// tenant's messages by design (list_messages, the dashboard console); a client caller never reaches that
+// reach: a `verifiedOrg` claim or an org session runs the member path, whose
+// index range is keyed on the caller's own tenant.
 export const listMessages = query({
 	args: {
 		fields: v.optional(v.union(v.literal("lite"), v.literal("full"))), // v2.4.12 accept (no-op for now) — closes ArgumentValidationError from MCP wrappers passing fields
@@ -1955,25 +2056,7 @@ export const listMessages = query({
 		// index range below is the read itself (convex/lib/verifiedOrg.ts).
 		verifiedOrg: v.optional(verifiedOrgValidator),
 	},
-	returns: v.array(
-		v.object({
-			_id: v.id("messages"),
-			_creationTime: v.number(),
-			from: creatorValidator,
-			fromInstanceId: v.optional(v.string()),
-			fromId: v.optional(v.string()),
-			channel: v.optional(v.string()),
-			to: v.optional(creatorValidator),
-			content: v.string(),
-			sessionDay: v.optional(v.number()),
-			createdAt: v.number(),
-			// Day 98 Cat A k17e611z4 fix — issues #655, #644, #643. Multi-tenant
-			// rows carry tenantId; returns shape must declare it or Convex
-			// emits ReturnsValidationError "extra field tenantId".
-			tenantId: v.optional(v.string()),
-			tenantOrgId: v.optional(v.string()),
-		}),
-	),
+	returns: v.array(messageRowValidator),
 	handler: async (ctx, args) => {
 		// ── Identity-derived tenant scope ────────────────────────────────────────
 		// m977mqck: no-identity callers (MCP server / CLI) → isMaster=true, all rows.
@@ -2005,60 +2088,68 @@ export const listMessages = query({
 
 		const limit = args.limit ?? 100;
 		const before = args.createdBefore;
-		const needsWideScan = before !== undefined;
-		const fetchCap = needsWideScan ? MESSAGES_LIST_SCAN_CAP + 1 : limit;
+		const from = args.from;
 
 		let rows: Doc<"messages">[];
 
-		if (!scope.isMaster && scope.orgSlug !== null) {
+		if (!hasFleetRead(scope) && scope.orgSlug !== null) {
 			// ── Clerk (non-master) path — tenant-scoped index ─────────────────────
 			// Push tenantId equality BEFORE .take(limit) using by_tenant_created so
 			// fleet (null-tenant) traffic cannot crowd out tenant rows in the window.
 			// sessionDay and full-scan branches are intentionally merged here: Clerk
 			// callers have no business querying a specific sessionDay of fleet traffic,
-			// so we always use the tenant-scoped index and apply `from` as a post-index
-			// .filter() (acceptable: within a single tenant, volume is low compared to
-			// the full cross-tenant table). (task k176wgsrhha0fr0dxxahctvhw588q5a1,
-			// Eta completeness edge from PR #775 verdict jn7563v34)
+			// so we always use the tenant-scoped index and apply `from` and the
+			// `createdBefore` cursor in the query builder, before the bound.
+			// (task k176wgsrhha0fr0dxxahctvhw588q5a1, Eta completeness edge from PR
+			// #775 verdict jn7563v34)
 			const orgSlug = scope.orgSlug;
 			rows = await ctx.db
 				.query("messages")
 				.withIndex("by_tenant_created", (q) => q.eq("tenantId", orgSlug))
 				.order("desc")
 				.filter((q) =>
-					args.from !== undefined ? q.eq(q.field("from"), args.from) : true,
+					q.and(
+						from !== undefined ? q.eq(q.field("from"), from) : true,
+						before !== undefined ? q.lt(q.field("_creationTime"), before) : true,
+					),
 				)
-				.take(fetchCap);
-
-			// Belt-and-suspenders: ensure no cross-tenant row leaks through.
-			rows = rows.filter((r) => r.tenantId === orgSlug);
+				.take(limit);
 		} else {
-			// ── Master path — existing index logic, unchanged ──────────────────────
+			// ── Master path — the cursor is part of the index range where the index
+			// ends in `_creationTime` (by_day, the built-in by_creation_time), and a
+			// builder predicate where it does not (by_from ends in createdAt). ──────
 			if (args.sessionDay !== undefined) {
 				const sessionDay = args.sessionDay;
 				rows = await ctx.db
 					.query("messages")
-					.withIndex("by_day", (q) => q.eq("sessionDay", sessionDay))
+					.withIndex("by_day", (q) =>
+						before !== undefined
+							? q.eq("sessionDay", sessionDay).lt("_creationTime", before)
+							: q.eq("sessionDay", sessionDay),
+					)
 					.order("asc")
-					.take(fetchCap);
-			} else if (args.from !== undefined) {
-				const from = args.from;
+					.take(limit);
+			} else if (from !== undefined) {
 				rows = await ctx.db
 					.query("messages")
 					.withIndex("by_from", (q) => q.eq("from", from))
 					.order("desc")
-					.take(fetchCap);
+					.filter((q) =>
+						before !== undefined ? q.lt(q.field("_creationTime"), before) : true,
+					)
+					.take(limit);
 			} else {
-				rows = await ctx.db.query("messages").order("desc").take(fetchCap);
+				rows = await ctx.db
+					.query("messages")
+					.withIndex("by_creation_time", (q) =>
+						before !== undefined ? q.lt("_creationTime", before) : q,
+					)
+					.order("desc")
+					.take(limit);
 			}
 		}
 
-		// S3.3 B8 follow-up batch 2 — drop rows newer-or-equal to anchor.
-		if (before !== undefined) {
-			rows = rows.filter((r) => r._creationTime < before);
-		}
-
-		return rows.slice(0, limit);
+		return rows;
 	},
 });
 
@@ -2109,7 +2200,7 @@ export const getUnreadCount = query({
 		if (
 			args.verifiedActor !== undefined ||
 			args.verifiedOrg !== undefined ||
-			scope.isMaster
+			hasFleetRead(scope)
 		) {
 			const reader = await resolveInboxReader(
 				ctx,
@@ -2185,6 +2276,10 @@ export const getUnreadCount = query({
 // listBroadcastStatus — show who read a broadcast message and who didn't
 // ─────────────────────────────────────────────────────────────────────────────
 
+// R-54 exit (c). fleet-wide: the fleet master and the operator admin read every
+// tenant's messages by design (list_broadcast_status for the fleet master); a client caller never reaches that
+// reach: a `verifiedOrg` claim or an org session runs the member path, whose
+// index range is keyed on the caller's own tenant.
 export const listBroadcastStatus = query({
 	args: {
 		fields: v.optional(v.union(v.literal("lite"), v.literal("full"))), // v2.4.12 accept (no-op for now) — closes ArgumentValidationError from MCP wrappers passing fields
@@ -2251,7 +2346,7 @@ export const listBroadcastStatus = query({
 		const message = await ctx.db.get(messageId);
 		if (!message) throw new Error("Message not found");
 
-		if (!scope.isMaster) {
+		if (!hasFleetRead(scope)) {
 			if (message.tenantId !== scope.orgSlug) {
 				throw new ConvexError(
 					`RBAC_DENIED: "messages:listBroadcastStatus" refuses a caller outside the organisation that sent message ${messageId} — ${JSON.stringify(
@@ -2322,6 +2417,10 @@ const listByChannelRow = v.object({
 	createdAt: v.number(),
 });
 
+// R-54 exit (c). fleet-wide: the fleet master and the operator admin read every
+// tenant's messages by design (the fleet master's channel history); a client caller never reaches that
+// reach: a `verifiedOrg` claim or an org session runs the member path, whose
+// index range is keyed on the caller's own tenant.
 export const listByChannel = query({
 	args: {
 		channel: v.optional(v.string()),
@@ -2393,7 +2492,7 @@ export const listByChannel = query({
 		// renders as empty AND says it was refused.
 		// See `.claude/rules/refusal-is-distinguishable-from-absence.md`.
 		requireResolvedCaller(scope, "messages:listByChannel");
-		if (!scope.isMaster && scope.orgSlug === null) {
+		if (!hasFleetRead(scope) && scope.orgSlug === null) {
 			return { refused: true as const, items: [] };
 		}
 
@@ -2405,7 +2504,7 @@ export const listByChannel = query({
 		// resolved member (cross-tenant read). A non-master caller reads only rows
 		// of its OWN tenant, pushed into the index predicate, and within that
 		// tenant only channels `isChannelOnScope` admits. The master reads all.
-		if (scope.isMaster) {
+		if (hasFleetRead(scope)) {
 			if (channel !== undefined) {
 				return await ctx.db
 					.query("messages")
@@ -2420,22 +2519,28 @@ export const listByChannel = query({
 		if (orgSlug === null) return { refused: true as const, items: [] };
 
 		if (channel !== undefined) {
-			if (!isChannelOnScope(scope, channel)) return [];
+			// A channel this caller may not read matches no row: the channel scope is
+			// part of the read, so the absence of ROWS is the answer (no verdict is
+			// drawn from the typed channel itself).
 			return await ctx.db
 				.query("messages")
 				.withIndex("by_tenant_channel", (q) =>
 					q.eq("tenantId", orgSlug).eq("channel", channel),
 				)
 				.order("desc")
+				.filter((q) => channelScopeFilter(q, scope))
 				.take(take);
 		}
 
-		const rows = await ctx.db
+		// The channel scope is part of the read itself: the window is `take` rows of
+		// the channels this caller may read, never a wider window narrowed after the
+		// bound.
+		return await ctx.db
 			.query("messages")
 			.withIndex("by_tenant_created", (q) => q.eq("tenantId", orgSlug))
 			.order("desc")
+			.filter((q) => channelScopeFilter(q, scope))
 			.take(take);
-		return rows.filter((r) => isChannelOnScope(scope, r.channel));
 	},
 });
 
@@ -2478,6 +2583,10 @@ function toHistoryPage(
 	};
 }
 
+// R-54 exit (c). fleet-wide: the fleet master and the operator admin read every
+// tenant's messages by design (the dashboard console's message history); a client caller never reaches that
+// reach: a `verifiedOrg` claim or an org session runs the member path, whose
+// index range is keyed on the caller's own tenant.
 export const listByChannelPaginated = query({
 	args: {
 		paginationOpts: paginationOptsValidator,
@@ -2495,7 +2604,7 @@ export const listByChannelPaginated = query({
 	handler: async (ctx, args) => {
 		const scope = await withOrgScope(ctx, { refuseWithoutThrow: true });
 		requireResolvedCaller(scope, "messages:listByChannelPaginated");
-		if (!scope.isMaster && scope.orgSlug === null) {
+		if (!hasFleetRead(scope) && scope.orgSlug === null) {
 			return {
 				page: [],
 				isDone: true,
@@ -2505,9 +2614,13 @@ export const listByChannelPaginated = query({
 		}
 
 		const { channel, from, since, until, paginationOpts } = args;
+		// The sender narrows inside the read, before the page is cut (R-55).
+		const senderFilter = (
+			q: FilterBuilder<NamedTableInfo<DataModel, "messages">>,
+		) => (from !== undefined ? q.eq(q.field("from"), from) : true);
 
 		let result: PaginationResult<Doc<"messages">>;
-		if (scope.isMaster) {
+		if (hasFleetRead(scope)) {
 			if (channel !== undefined) {
 				result = await ctx.db
 					.query("messages")
@@ -2520,6 +2633,7 @@ export const listByChannelPaginated = query({
 						return base;
 					})
 					.order("desc")
+					.filter((q) => senderFilter(q))
 					.paginate(paginationOpts);
 			} else if (from !== undefined) {
 				result = await ctx.db
@@ -2547,14 +2661,7 @@ export const listByChannelPaginated = query({
 					.order("desc")
 					.paginate(paginationOpts);
 			}
-			// Master + a channel + a sender: the channel index bounded the page;
-			// narrow by sender in memory.
-			return toHistoryPage(
-				result,
-				channel !== undefined && from !== undefined
-					? result.page.filter((r) => r.from === from)
-					: result.page,
-			);
+			return toHistoryPage(result, result.page);
 		}
 
 		const orgSlug = scope.orgSlug;
@@ -2566,12 +2673,6 @@ export const listByChannelPaginated = query({
 				refused: true as const,
 			};
 		}
-		if (channel !== undefined && !isChannelOnScope(scope, channel)) {
-			// A channel this caller may not read is an absence of ROWS for it, as in
-			// `listByChannel` (the tenant predicate would match nothing anyway).
-			return { page: [], isDone: true, continueCursor: "" };
-		}
-
 		result =
 			channel !== undefined
 				? await ctx.db
@@ -2585,6 +2686,11 @@ export const listByChannelPaginated = query({
 							return base;
 						})
 						.order("desc")
+						// A channel this caller may not read matches no row (the channel
+						// scope is part of the read), as in `listByChannel`.
+						.filter((q) =>
+							q.and(channelScopeFilter(q, scope), senderFilter(q)),
+						)
 						.paginate(paginationOpts)
 				: await ctx.db
 						.query("messages")
@@ -2597,15 +2703,14 @@ export const listByChannelPaginated = query({
 							return base;
 						})
 						.order("desc")
+						// The channel scope and the sender are part of the read: a page is
+						// `numItems` rows the caller may read, never a short page cut down
+						// afterwards (R-55).
+						.filter((q) =>
+							q.and(channelScopeFilter(q, scope), senderFilter(q)),
+						)
 						.paginate(paginationOpts);
-		return toHistoryPage(
-			result,
-			result.page.filter(
-				(r) =>
-					isChannelOnScope(scope, r.channel) &&
-					(from === undefined || r.from === from),
-			),
-		);
+		return toHistoryPage(result, result.page);
 	},
 });
 
@@ -2616,6 +2721,10 @@ export const listByChannelPaginated = query({
 // rows varies by send variant; raw row is fine for read-by-id.
 // ─────────────────────────────────────────────────────────────────────────────
 
+// R-54 exit (c). fleet-wide: the fleet master and the operator admin read every
+// tenant's messages by design (get_message for the fleet master); a client caller never reaches that
+// reach: a `verifiedOrg` claim or an org session runs the member path, whose
+// index range is keyed on the caller's own tenant.
 export const getById = query({
 	// A wrong-table but well-formed 32-char id passes the `v.id("messages")`
 	// validator's format check yet fails table membership, and that rejection
@@ -2629,6 +2738,7 @@ export const getById = query({
 		// Transport-verified org of a service-account bearer (see listMessages).
 		verifiedOrg: v.optional(verifiedOrgValidator),
 	},
+	returns: v.union(v.null(), messageRowValidator),
 	handler: async (ctx, args) => {
 		// GATE — this read returned ANY message row to ANY caller by id, including
 		// one with no credential. A non-master caller must be a resolved member of
@@ -2659,7 +2769,7 @@ export const getById = query({
 			"Use the full 32-char messageId returned by list_messages or checkNewMessages.",
 		);
 		const row = await ctx.db.get(messageId);
-		if (row === null || scope.isMaster) return row;
+		if (row === null || hasFleetRead(scope)) return row;
 
 		if (row.tenantId !== scope.orgSlug) {
 			throw new ConvexError(
@@ -2695,6 +2805,10 @@ export const getById = query({
 // Filter axes: from, channel, sessionDay, tenantId (matches messages.list()).
 // ─────────────────────────────────────────────────────────────────────────────
 
+// R-54 exit (c). fleet-wide: the fleet master and the operator admin read every
+// tenant's messages by design (search_messages_by_keyword for the fleet master); a client caller never reaches that
+// reach: a `verifiedOrg` claim or an org session runs the member path, whose
+// index range is keyed on the caller's own tenant.
 export const searchMessagesByKeyword = query({
 	args: {
 		query: v.string(),
@@ -2707,6 +2821,22 @@ export const searchMessagesByKeyword = query({
 		// Transport-verified org of a service-account bearer (see listMessages).
 		verifiedOrg: v.optional(verifiedOrgValidator),
 	},
+	// returns-projection: fields="lite" returns the compact row (_id, from, channel,
+	// content, sessionDay, createdAt) to spare tokens; fields="full" (the default)
+	// returns the whole message document.
+	returns: v.union(
+		v.array(messageRowValidator),
+		v.array(
+			v.object({
+				_id: v.id("messages"),
+				from: creatorValidator,
+				channel: v.string(),
+				content: v.string(),
+				sessionDay: v.optional(v.number()),
+				createdAt: v.number(),
+			}),
+		),
+	),
 	handler: async (ctx, args) => {
 		// ── Identity-derived tenant scope ────────────────────────────────────────
 		// m977mqck: no-identity callers (MCP server / CLI) → isMaster=true, all rows.
@@ -2748,7 +2878,7 @@ export const searchMessagesByKeyword = query({
 				// For Clerk callers: push scope.orgSlug into the search index filter
 				// (primary isolation). For master callers: use caller-supplied tenantId
 				// if provided (backward-compatible narrow by tenant for admin queries).
-				if (!scope.isMaster && scope.orgSlug !== null) {
+				if (!hasFleetRead(scope) && scope.orgSlug !== null) {
 					qb = qb.eq("tenantId", scope.orgSlug);
 				} else if (args.tenantId !== undefined) {
 					qb = qb.eq("tenantId", args.tenantId);
@@ -2757,16 +2887,11 @@ export const searchMessagesByKeyword = query({
 			})
 			.take(limit);
 
-		// Defense-in-depth: messages have no pilot/assignedTo so filterByOrgScope()
-		// does not fit. Enforce tenantId match inline for non-master scopes — the
-		// index .eq("tenantId", scope.orgSlug) above is the primary isolation; this
-		// is the belt-and-suspenders pass (mirrors briefingNotes pattern).
-		const filtered = !scope.isMaster
-			? results.filter((r) => r.tenantId === scope.orgSlug)
-			: results;
-
-		if (!lite) return filtered;
-		return filtered.map((m) => ({
+		// The tenant isolation is the search index's own filter field
+		// (`.eq("tenantId", scope.orgSlug)` above): the window is cut over the
+		// caller's tenant, so there is nothing to narrow after the bound (R-55).
+		if (!lite) return results;
+		return results.map((m) => ({
 			_id: m._id,
 			from: m.from,
 			channel: m.channel,
