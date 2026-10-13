@@ -13,7 +13,6 @@ import type { Doc, Id } from "./_generated/dataModel";
 import { internal } from "./_generated/api";
 import { creatorValidator, taskOriginValidator } from "./schema";
 import {
-	filterByOrgScope,
 	isRowVisibleToScope,
 	requireAgentCredentialMatch,
 	verifiedActorValidator,
@@ -2528,30 +2527,42 @@ export const listUnlinkedBlocked = query({
 		// read. A member whose org has no ID yet (expand phase) matches no row
 		// under `sameOrg`, so it reads none. `filterByOrgScope` below stays as the
 		// roster intersect (the tenant gate it also applies removes nothing here).
-		let blocked: Doc<"tasks">[] = [];
 		const orgClerkId = scope.orgClerkId;
-		if (hasFleetRead(scope)) {
-			blocked = await ctx.db
-				.query("tasks")
-				.withIndex("by_status", (q) => q.eq("status", "blocked"))
-				.collect();
-		} else if (orgClerkId !== undefined) {
-			blocked = await ctx.db
-				.query("tasks")
-				.withIndex("by_orgId_status_clerk_id", (q) =>
-					q.eq("clerkOrgId", orgClerkId).eq("status", "blocked"),
-				)
-				.collect();
+		const range = hasFleetRead(scope)
+			? ctx.db
+					.query("tasks")
+					.withIndex("by_status", (q) => q.eq("status", "blocked"))
+			: orgClerkId !== undefined
+				? ctx.db
+						.query("tasks")
+						.withIndex("by_orgId_status_clerk_id", (q) =>
+							q.eq("clerkOrgId", orgClerkId).eq("status", "blocked"),
+						)
+				: undefined;
+		if (range === undefined) return [];
+		// The roster intersect and the "unlinked" test are applied while the range is
+		// read (a fill loop under the scan cap); a range that cannot be read to its end
+		// REFUSES instead of returning a partial inventory that looks complete.
+		const { kept, truncated } = await collectNarrowed(
+			range,
+			(t) =>
+				t.blockedOnTaskId === undefined &&
+				t.blockedOnNobodyReason === undefined &&
+				isRowVisibleToScope(scope, t),
+			{ scanCap: TASK_LIST_SCAN_CAP },
+		);
+		if (truncated) {
+			throw new ConvexError(
+				`tasks.listUnlinkedBlocked: SCAN_CAP_EXCEEDED — more than ${TASK_LIST_SCAN_CAP} blocked tasks were read before the inventory ended; the result would be incomplete and indistinguishable from a full match.`,
+			);
 		}
-		return filterByOrgScope(blocked, scope)
-			.filter((t) => t.blockedOnTaskId === undefined && t.blockedOnNobodyReason === undefined)
-			.map((t) => ({
-				taskId: t._id,
-				title: t.title,
-				assignedTo: t.assignedTo,
-				createdBy: t.createdBy,
-				updatedAt: t.updatedAt,
-			}));
+		return kept.map((t) => ({
+			taskId: t._id,
+			title: t.title,
+			assignedTo: t.assignedTo,
+			createdBy: t.createdBy,
+			updatedAt: t.updatedAt,
+		}));
 	},
 });
 

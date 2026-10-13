@@ -4941,6 +4941,7 @@ export function registerTools(
 	// which uses the `search_title` searchIndex. Filter axes: assignedTo, status,
 	// project, missionId — all pushed into the index for sub-linear scan.
 
+	// oracle-justified: a BM25 relevance SEARCH over titles, ordered by relevance with the assignee filtered on its agent ID inside the search index, where list_tasks_by_mission is a chronological, mission-scoped LIST read through org-keyed index ranges; both read the same tables under the same tenant rule, only the verb, retrieval and ordering differ by purpose.
 	defineTool(
 		server,
 		authCtx,
