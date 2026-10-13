@@ -50,6 +50,9 @@ async function seedBothOrgsWithSameRoster(t: ReturnType<typeof createT>) {
 				isActive: true,
 				createdAt: Date.now(),
 			});
+			for (const rosterName of [SHARED_SEAT]) {
+				if (rosterName !== "*") await seedRosterAgent(ctx, slug, rosterName);
+			}
 		}
 	});
 }
@@ -82,7 +85,19 @@ async function seedSchedule(
 					.withIndex("by_org", (q) => q.eq("orgSlug", org))
 					.collect()
 			).find((a) => a.name === label);
-			assignedToId = existing?._id ?? (await seedRosterAgent(ctx, org, label));
+			// A seat outside the roster is an agent of the org the roster does NOT list.
+			assignedToId =
+				existing?._id ??
+				(label === SHARED_SEAT
+					? await seedRosterAgent(ctx, org, label)
+					: await ctx.db.insert("agents", {
+							orgSlug: org,
+							clerkOrgId: testClerkOrgId(org),
+							name: label,
+							normalizedName: label.toLowerCase(),
+							isActive: true,
+							createdAt: 1,
+						}));
 		}
 		return await ctx.db.insert("recurringTasks", {
 			title: "original title",

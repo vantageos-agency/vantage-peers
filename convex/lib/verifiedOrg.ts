@@ -147,26 +147,6 @@ export async function resolveVerifiedOrgScope(
 }
 
 /**
- * The door-side entry for a single-row write (a task door that takes
- * `verifiedOrg`). Reads the TRANSPORT scope itself (the same
- * `withOrgScope(allowNoIdentityMaster:false)` the door's caller resolution
- * used), so it stays correct when the door's own scope was rebuilt for a
- * person: the claim is believed from the service account only either way.
- * Returns undefined when no proof is carried (the door is byte-unchanged).
- */
-export async function resolveDoorVerifiedOrg(
-	ctx: MutationCtx,
-	proof: VerifiedOrg | undefined,
-	door: string,
-): Promise<string | undefined> {
-	if (proof === undefined) return undefined;
-	const transportScope = await withOrgScope(ctx, {
-		allowNoIdentityMaster: false,
-	});
-	return await resolveVerifiedOrg(ctx, transportScope, proof, door);
-}
-
-/**
  * As {@link resolveVerifiedOrg}, but the organisation comes back as the package
  * names it: the permanent org ID beside the current label (`OrgRef`), read from
  * the same ACTIVE mapping row. A door compares rows against THIS with
@@ -193,7 +173,7 @@ export async function resolveVerifiedOrgRef(
 
 /**
  * The door-side entry of {@link resolveVerifiedOrgRef} for a single-row write:
- * reads the TRANSPORT scope itself (as {@link resolveDoorVerifiedOrg} does), so
+ * reads the TRANSPORT scope itself (as the label form did), so
  * the claim is believed from the service account only. `undefined` when no proof
  * is carried.
  */
@@ -214,7 +194,7 @@ export async function resolveDoorVerifiedOrgRef(
  * `sameOrg` compares the row's `clerkOrgId` with the verified org's ID; a label
  * never matches and a row stamped with no ID is never matched (refused, not
  * guessed). No-op when `verified` is undefined. Same RBAC_DENIED shape and
- * reason as {@link assertRowInVerifiedOrg}, before anything is written.
+ * reason as every verified-org refusal, before anything is written.
  */
 export function assertRowInVerifiedOrgRef(
 	row: { orgId?: string; clerkOrgId?: string },
@@ -232,31 +212,3 @@ export function assertRowInVerifiedOrgRef(
 	}
 }
 
-/**
- * The target row's organisation must EQUAL the verified one. A service-account
- * call is master-scoped, so the row-level tenant gate does not narrow and the
- * creator/assignee check compares NAMES, which collide across organisations;
- * the verified org is the only thing that separates them. A row that states no
- * org never equals one (an unstamped row is refused, never matched). No-op when
- * `verifiedOrgSlug` is undefined. Refuses with the same RBAC_DENIED shape as
- * `resolveVerifiedOrg`, before anything is written.
- *
- * BY LABEL: DELETE AFTER CALLERS MIGRATE. Replacement:
- * `assertRowInVerifiedOrgRef` fed by `resolveDoorVerifiedOrgRef` (compares the
- * org ID with `sameOrg`). Importer: tasks.ts (ten task doors).
- */
-export function assertRowInVerifiedOrg(
-	row: { orgId?: string },
-	verifiedOrgSlug: string | undefined,
-	rowId: string,
-	door: string,
-): void {
-	if (verifiedOrgSlug === undefined) return;
-	if (row.orgId !== verifiedOrgSlug) {
-		refuse(
-			"row-outside-verified-org",
-			door,
-			`task ${rowId} is outside the verified organisation "${verifiedOrgSlug}" (tenant boundary)`,
-		);
-	}
-}

@@ -13,6 +13,7 @@
 
 import { beforeEach, describe, expect, test } from "vitest";
 import { agentIdOf } from "../../tests/lib/agentIdOf";
+import { listRegisteredAgentsOnRoster } from "../../tests/lib/rosterSync";
 import { seedFleetAgents } from "../../tests/lib/seedFleetAgents";
 import { convexTest } from "../../tests/fixtures/convexTestWithServiceAccount";
 import { testClerkOrgId } from "../../tests/fixtures/testClerkOrgId";
@@ -69,6 +70,8 @@ beforeEach(async () => {
 	] as const) {
 		await adminOf(t, org).mutation(api.agents.registerAgent, { orgSlug: org, name });
 	}
+	// The registered agents are on their org's stored ID roster.
+	await listRegisteredAgentsOnRoster(t, ["org-a", "org-b"]);
 });
 
 const base = {

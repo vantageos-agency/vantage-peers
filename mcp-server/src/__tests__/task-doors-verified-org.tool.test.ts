@@ -208,6 +208,7 @@ beforeEach(async () => {
 		for (const slug of ["org-a", "org-b"]) {
 			await ctx.db.insert("client_org_mapping", {
 				clerkOrgSlug: slug,
+				clerkOrgId: `org_${slug.replace("-", "")}`,
 				allowedOrchestrators: ["eta"],
 				scopes: ["view-own-tasks"],
 				displayName: slug,
@@ -235,7 +236,9 @@ async function seed(orgId: string | undefined, status: Status): Promise<string> 
 			createdBy: "eta",
 			priority: "low",
 			status: status === "paused" ? "in_progress" : status,
-			...(orgId !== undefined ? { orgId } : {}),
+			...(orgId !== undefined
+				? { orgId, clerkOrgId: `org_${orgId.replace("-", "")}` }
+				: {}),
 			...(status === "in_progress"
 				? { startedAt: now - 60_000, workSegments: [{ start: now - 60_000 }] }
 				: {}),

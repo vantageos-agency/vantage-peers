@@ -12,6 +12,7 @@ import { convexTest } from "../../../tests/fixtures/convexTestWithServiceAccount
 import { describe, expect, test } from "vitest";
 import { api } from "../../_generated/api";
 import type { Id } from "../../_generated/dataModel";
+import { agentIdInCtx } from "../../../tests/lib/agentIdOf";
 import { testClerkOrgId } from "../../../tests/fixtures/testClerkOrgId";
 import { syncRosterIdsFromNames } from "../../../tests/lib/rosterSync";
 import schema from "../../schema";
@@ -52,6 +53,7 @@ async function world(): Promise<T> {
 			// M10h: an assignee is an agents row of the org (resolved by ID).
 			await ctx.db.insert("agents", {
 				orgSlug: slug,
+				clerkOrgId: testClerkOrgId(slug),
 				name: "sigma",
 				normalizedName: "sigma",
 				isActive: true,
@@ -64,7 +66,15 @@ async function world(): Promise<T> {
 	return t;
 }
 
-const row = (orgId: string, title: string) => ({
+// The schedule names its assignee BY ID, as a created one does.
+const row = async (
+	ctx: Parameters<typeof agentIdInCtx>[0],
+	orgId: string,
+	title: string,
+) => ({
+	...(await agentIdInCtx(ctx, orgId, "sigma").then((id) =>
+		id !== undefined ? { assignedToId: id } : {},
+	)),
 	title,
 	assignedTo: "sigma",
 	priority: "low" as const,
@@ -128,7 +138,7 @@ describe("recurringTasks:create — a registered agent of the caller's own org",
 describe("recurringTasks:list — tenant predicate inside the read", () => {
 	test("positive control: with no newer foreign rows the member of org-a is served its schedule", async () => {
 		const t = await world();
-		await t.run((ctx) => ctx.db.insert("recurringTasks", row("org-a", "mine")));
+		await t.run(async (ctx) => ctx.db.insert("recurringTasks", await row(ctx, "org-a", "mine")));
 		const rows = await asMember(t).query(api.recurringTasks.list, {});
 		expect(Array.isArray(rows) ? rows.map((r) => r.title) : rows).toEqual(["mine"]);
 	});
@@ -136,9 +146,9 @@ describe("recurringTasks:list — tenant predicate inside the read", () => {
 	test("recurringTasks:list — a member of org-a is served its schedule when 60 newer org-b rows sit ahead of it", async () => {
 		const t = await world();
 		await t.run(async (ctx) => {
-			await ctx.db.insert("recurringTasks", row("org-a", "mine"));
+			await ctx.db.insert("recurringTasks", await row(ctx, "org-a", "mine"));
 			for (let i = 0; i < 60; i++) {
-				await ctx.db.insert("recurringTasks", row("org-b", `theirs-${i}`));
+				await ctx.db.insert("recurringTasks", await row(ctx, "org-b", `theirs-${i}`));
 			}
 		});
 		const rows = await asMember(t).query(api.recurringTasks.list, {});

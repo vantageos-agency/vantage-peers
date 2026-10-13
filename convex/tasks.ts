@@ -41,8 +41,8 @@ import {
 	verifiedPersonValidator,
 } from "./lib/personPrincipal";
 import {
-	assertRowInVerifiedOrg,
-	resolveDoorVerifiedOrg,
+	assertRowInVerifiedOrgRef,
+	resolveDoorVerifiedOrgRef,
 	resolveVerifiedOrg,
 	resolveVerifiedOrgScope,
 	verifiedOrgValidator,
@@ -1879,14 +1879,14 @@ export const update = mutation({
 			{ proof: verifiedPerson, door: "tasks:update" },
 			{ proof: verifiedOrg, door: "tasks:update" },
 		);
-		const verifiedOrgSlug = await resolveDoorVerifiedOrg(ctx, verifiedOrg, "tasks:update");
+		const verifiedOrgRef = await resolveDoorVerifiedOrgRef(ctx, verifiedOrg, "tasks:update");
 		const task = await ctx.db.get(taskId);
 		if (task === null) {
 			throw new ConvexError(
 				`TASK_NOT_FOUND: Task ${taskId} not found — ${JSON.stringify({ taskId })}`,
 			);
 		}
-		assertRowInVerifiedOrg(task, verifiedOrgSlug, taskId, "tasks:update");
+		assertRowInVerifiedOrgRef(task, verifiedOrgRef, taskId, "tasks:update");
 		// System-review reassignment grant (k17b5btg6cr9t9824tndte3w2s8fmzx1): an
 		// automation review task (origin "automation" + isReviewTask: system-created, only createOrUpdateReviewTask writes both) has no human
 		// creator, so nobody could move it off a stopped reviewer. The coordinator
@@ -2385,14 +2385,14 @@ export const blockTask = mutation({
 			undefined,
 			{ proof: args.verifiedOrg, door: "tasks:blockTask" },
 		);
-		const verifiedOrgSlug = await resolveDoorVerifiedOrg(ctx, args.verifiedOrg, "tasks:blockTask");
+		const verifiedOrgRef = await resolveDoorVerifiedOrgRef(ctx, args.verifiedOrg, "tasks:blockTask");
 		const task = await ctx.db.get(args.taskId);
 		if (task === null) {
 			throw new ConvexError(
 				`TASK_NOT_FOUND: Task ${args.taskId} not found — ${JSON.stringify({ taskId: args.taskId })}`,
 			);
 		}
-		assertRowInVerifiedOrg(task, verifiedOrgSlug, args.taskId, "tasks:blockTask");
+		assertRowInVerifiedOrgRef(task, verifiedOrgRef, args.taskId, "tasks:blockTask");
 		const memberActor = await authorizeTaskActor(ctx, task, args.callerOrchestrator, args.taskId, callerScope, "tasks:blockTask");
 
 		// Eta rider on PR #1208 @ def85c45 — cheap, one-directional consistency
@@ -2606,14 +2606,14 @@ export const complete = mutation({
 			{ proof: args.verifiedPerson, door: "tasks:complete" },
 			{ proof: args.verifiedOrg, door: "tasks:complete" },
 		);
-		const verifiedOrgSlug = await resolveDoorVerifiedOrg(ctx, args.verifiedOrg, "tasks:complete");
+		const verifiedOrgRef = await resolveDoorVerifiedOrgRef(ctx, args.verifiedOrg, "tasks:complete");
 		const task = await ctx.db.get(args.taskId);
 		if (task === null) {
 			throw new ConvexError(
 				`TASK_NOT_FOUND: Task ${args.taskId} not found — ${JSON.stringify({ taskId: args.taskId })}`,
 			);
 		}
-		assertRowInVerifiedOrg(task, verifiedOrgSlug, args.taskId, "tasks:complete");
+		assertRowInVerifiedOrgRef(task, verifiedOrgRef, args.taskId, "tasks:complete");
 		const memberActor = await authorizeTaskActor(ctx, task, args.callerOrchestrator, args.taskId, callerScope, "tasks:complete");
 
 		if (!args.completionNote || args.completionNote.trim() === "") {
@@ -2930,14 +2930,14 @@ export const failTask = mutation({
 			undefined,
 			{ proof: args.verifiedOrg, door: "tasks:failTask" },
 		);
-		const verifiedOrgSlug = await resolveDoorVerifiedOrg(ctx, args.verifiedOrg, "tasks:failTask");
+		const verifiedOrgRef = await resolveDoorVerifiedOrgRef(ctx, args.verifiedOrg, "tasks:failTask");
 		const task = await ctx.db.get(args.taskId);
 		if (task === null) {
 			throw new ConvexError(
 				`TASK_NOT_FOUND: Task ${args.taskId} not found — ${JSON.stringify({ taskId: args.taskId })}`,
 			);
 		}
-		assertRowInVerifiedOrg(task, verifiedOrgSlug, args.taskId, "tasks:failTask");
+		assertRowInVerifiedOrgRef(task, verifiedOrgRef, args.taskId, "tasks:failTask");
 		const memberActor = await authorizeTaskActor(ctx, task, args.callerOrchestrator, args.taskId, callerScope, "tasks:failTask");
 
 		if (!args.failureNote || args.failureNote.trim() === "") {
@@ -3084,14 +3084,14 @@ export const start = mutation({
 			{ proof: args.verifiedPerson, door: "tasks:start" },
 			{ proof: args.verifiedOrg, door: "tasks:start" },
 		);
-		const verifiedOrgSlug = await resolveDoorVerifiedOrg(ctx, args.verifiedOrg, "tasks:start");
+		const verifiedOrgRef = await resolveDoorVerifiedOrgRef(ctx, args.verifiedOrg, "tasks:start");
 		const task = await ctx.db.get(args.taskId);
 		if (task === null) {
 			throw new ConvexError(
 				`TASK_NOT_FOUND: Task ${args.taskId} not found — ${JSON.stringify({ taskId: args.taskId })}`,
 			);
 		}
-		assertRowInVerifiedOrg(task, verifiedOrgSlug, args.taskId, "tasks:start");
+		assertRowInVerifiedOrgRef(task, verifiedOrgRef, args.taskId, "tasks:start");
 		const memberActor = await authorizeTaskActor(ctx, task, args.callerOrchestrator, args.taskId, callerScope, "tasks:start");
 
 		// Block if any dependsOn tasks are not yet done.
@@ -3179,14 +3179,14 @@ export const pause = mutation({
 			undefined,
 			{ proof: args.verifiedOrg, door: "tasks:pause" },
 		);
-		const verifiedOrgSlug = await resolveDoorVerifiedOrg(ctx, args.verifiedOrg, "tasks:pause");
+		const verifiedOrgRef = await resolveDoorVerifiedOrgRef(ctx, args.verifiedOrg, "tasks:pause");
 		const task = await ctx.db.get(args.taskId);
 		if (task === null) {
 			throw new ConvexError(
 				`TASK_NOT_FOUND: Task ${args.taskId} not found — ${JSON.stringify({ taskId: args.taskId })}`,
 			);
 		}
-		assertRowInVerifiedOrg(task, verifiedOrgSlug, args.taskId, "tasks:pause");
+		assertRowInVerifiedOrgRef(task, verifiedOrgRef, args.taskId, "tasks:pause");
 		const memberActor = await authorizeTaskActor(ctx, task, args.callerOrchestrator, args.taskId, callerScope, "tasks:pause");
 
 		const segments = task.workSegments ?? [];
@@ -3248,14 +3248,14 @@ export const resume = mutation({
 			undefined,
 			{ proof: args.verifiedOrg, door: "tasks:resume" },
 		);
-		const verifiedOrgSlug = await resolveDoorVerifiedOrg(ctx, args.verifiedOrg, "tasks:resume");
+		const verifiedOrgRef = await resolveDoorVerifiedOrgRef(ctx, args.verifiedOrg, "tasks:resume");
 		const task = await ctx.db.get(args.taskId);
 		if (task === null) {
 			throw new ConvexError(
 				`TASK_NOT_FOUND: Task ${args.taskId} not found — ${JSON.stringify({ taskId: args.taskId })}`,
 			);
 		}
-		assertRowInVerifiedOrg(task, verifiedOrgSlug, args.taskId, "tasks:resume");
+		assertRowInVerifiedOrgRef(task, verifiedOrgRef, args.taskId, "tasks:resume");
 		const memberActor = await authorizeTaskActor(ctx, task, args.callerOrchestrator, args.taskId, callerScope, "tasks:resume");
 
 		if (task.pausedAt === undefined) {
@@ -3327,14 +3327,14 @@ export const correctSegment = mutation({
 			undefined,
 			{ proof: args.verifiedOrg, door: "tasks:correctSegment" },
 		);
-		const verifiedOrgSlug = await resolveDoorVerifiedOrg(ctx, args.verifiedOrg, "tasks:correctSegment");
+		const verifiedOrgRef = await resolveDoorVerifiedOrgRef(ctx, args.verifiedOrg, "tasks:correctSegment");
 		const task = await ctx.db.get(args.taskId);
 		if (task === null) {
 			throw new ConvexError(
 				`TASK_NOT_FOUND: Task ${args.taskId} not found — ${JSON.stringify({ taskId: args.taskId })}`,
 			);
 		}
-		assertRowInVerifiedOrg(task, verifiedOrgSlug, args.taskId, "tasks:correctSegment");
+		assertRowInVerifiedOrgRef(task, verifiedOrgRef, args.taskId, "tasks:correctSegment");
 		await assertTaskCallerAuthorized(ctx, task, args.callerOrchestrator, args.taskId, callerScope);
 		// assertTaskCallerAuthorized above already refuses an undefined
 		// callerOrchestrator (RBAC_DENIED) — this narrows the type for the
@@ -3469,12 +3469,12 @@ export const checkout = mutation({
 			undefined,
 			{ proof: args.verifiedOrg, door: "tasks:checkout" },
 		);
-		const verifiedOrgSlug = await resolveDoorVerifiedOrg(ctx, args.verifiedOrg, "tasks:checkout");
+		const verifiedOrgRef = await resolveDoorVerifiedOrgRef(ctx, args.verifiedOrg, "tasks:checkout");
 		const task = await ctx.db.get(args.taskId);
 		if (!task) {
 			return { claimed: false, reason: "Task not found" };
 		}
-		assertRowInVerifiedOrg(task, verifiedOrgSlug, args.taskId, "tasks:checkout");
+		assertRowInVerifiedOrgRef(task, verifiedOrgRef, args.taskId, "tasks:checkout");
 		// Tenant gate — claiming a row is a write on it.
 		await assertTaskVisibleToCaller(ctx, task, callerScope, args.taskId);
 		if (task.status !== "todo") {
@@ -3548,13 +3548,13 @@ export const deleteTask = mutation({
 			undefined,
 			{ proof: args.verifiedOrg, door: "tasks:deleteTask" },
 		);
-		const verifiedOrgSlug = await resolveDoorVerifiedOrg(ctx, args.verifiedOrg, "tasks:deleteTask");
+		const verifiedOrgRef = await resolveDoorVerifiedOrgRef(ctx, args.verifiedOrg, "tasks:deleteTask");
 		const task = await ctx.db.get(args.taskId);
 		if (!task)
 			throw new ConvexError(
 				`TASK_NOT_FOUND: Task ${args.taskId} not found — ${JSON.stringify({ taskId: args.taskId })}`,
 			);
-		assertRowInVerifiedOrg(task, verifiedOrgSlug, args.taskId, "tasks:deleteTask");
+		assertRowInVerifiedOrgRef(task, verifiedOrgRef, args.taskId, "tasks:deleteTask");
 		// Tenant gate — a hard delete of another organisation's row is the
 		// worst case of the write surface.
 		await assertTaskVisibleToCaller(ctx, task, callerScope, args.taskId);

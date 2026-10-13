@@ -8,6 +8,7 @@
  * Subjects are scoped NON-creator members carrying `org_role`, never master.
  */
 
+import { seedRosterAgent } from "../../tests/fixtures/rosterAgent";
 import { convexTest } from "../../tests/fixtures/convexTestWithServiceAccount";
 import { describe, expect, test } from "vitest";
 import { testClerkOrgId } from "../../tests/fixtures/testClerkOrgId";
@@ -80,6 +81,9 @@ async function setup(defaultRoles: string[] | null = ["org:admin", "org:editor"]
 			isActive: true,
 			createdAt: Date.now(),
 		});
+		for (const rosterName of ["sigma"]) {
+			if (rosterName !== "*") await seedRosterAgent(ctx, "org-a", rosterName);
+		}
 		if (defaultRoles !== null) {
 			await ctx.db.insert("memberWriterRoles", {
 				roles: defaultRoles,
@@ -272,6 +276,9 @@ async function setupOperator(): Promise<T> {
 			createdAt: Date.now(),
 			orgKind: "operator",
 		});
+		for (const rosterName of ["sigma"]) {
+			if (rosterName !== "*") await seedRosterAgent(ctx, "op-org", rosterName);
+		}
 	});
 	return t;
 }

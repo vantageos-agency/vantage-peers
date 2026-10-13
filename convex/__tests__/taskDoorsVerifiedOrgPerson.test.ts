@@ -14,6 +14,8 @@
  *   ABSENT    person of org-a, no verifiedOrg, org-a task    -> unchanged (lands)
  */
 
+import { agentIdInCtx } from "../../tests/lib/agentIdOf";
+import { seedRosterAgent } from "../../tests/fixtures/rosterAgent";
 import { convexTest } from "../../tests/fixtures/convexTestWithServiceAccount";
 import { beforeEach, describe, expect, test } from "vitest";
 import { testClerkOrgId } from "../../tests/fixtures/testClerkOrgId";
@@ -54,6 +56,9 @@ beforeEach(async () => {
 				isActive: true,
 				createdAt: now,
 			});
+			for (const rosterName of ["agent-a"]) {
+				if (rosterName !== "*") await seedRosterAgent(ctx, slug, rosterName);
+			}
 		}
 		await ctx.db.insert("memberWriterRoles", {
 			roles: ["org:admin", "org:editor"],
@@ -86,7 +91,9 @@ beforeEach(async () => {
 async function taskIn(orgId: string): Promise<Id<"tasks">> {
 	return await t.run(async (ctx) => {
 		const now = Date.now();
+		const assignee = await agentIdInCtx(ctx, orgId, "agent-a");
 		return await ctx.db.insert("tasks", {
+			...(assignee !== undefined ? { assignedToId: assignee } : {}),
 			title: "seeded",
 			assignedTo: "agent-a",
 			createdBy: "agent-a",
