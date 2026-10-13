@@ -33,7 +33,13 @@ function row(over: Record<string, unknown> = {}) {
 		namespaceWritePrefixes: ["orchestrator/clio"],
 		expiresAt: Date.now() + 3_600_000,
 		clerkOrgSlug: "org-a",
-		seatAgent: { agentId: "agent-clio-a", orgId: "org-a", agentName: "clio" },
+		clerkOrgId: "org_A1",
+		seatAgent: {
+			agentId: "agent-clio-a",
+			orgId: "org-a",
+			agentName: "clio",
+			orgClerkId: "org_A1",
+		},
 		...over,
 	};
 }
@@ -101,7 +107,13 @@ describe("list_tasks gate follows the agent ID of a seat token", () => {
 		isMaster: false,
 		accessTokenHash: "h",
 		clerkOrgSlug: "org-a",
-		seatAgent: { agentId: "agent-clio-a", orgId: "org-a", agentName: "clio-2" },
+		clerkOrgId: "org_A1",
+		seatAgent: {
+			agentId: "agent-clio-a",
+			orgId: "org-a",
+			agentName: "clio-2",
+			orgClerkId: "org_A1",
+		},
 		...over,
 	});
 
@@ -119,7 +131,12 @@ describe("list_tasks gate follows the agent ID of a seat token", () => {
 
 	it("DENY: a stamp naming another org's agent is ignored, the allowlist rule applies", () => {
 		const foreign = ctx({
-			seatAgent: { agentId: "agent-clio-b", orgId: "org-b", agentName: "clio-2" },
+			seatAgent: {
+				agentId: "agent-clio-b",
+				orgId: "org-b",
+				agentName: "clio-2",
+				orgClerkId: "org_B1",
+			},
 		});
 		expect(listTasksGate(foreign, "clio", undefined)).toBeNull();
 		expect(listTasksGate(foreign, "clio-2", undefined)).toMatch(/Forbidden/);

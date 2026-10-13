@@ -7,9 +7,11 @@
  *   CREDENTIAL  resolveAgentCredential returns the agents ROW id.
  *   SEAT STAMP  oauth:createAccessToken (the one door used at mint AND at
  *               refresh) stamps `agentId` + `agentOrgId` on a one-agent seat
- *               token, resolved from the profile's single agent IN THE
- *               PROFILE'S OWN ORG. A profile that does not resolve to exactly
- *               one agent of its own org stamps none.
+ *               token, from the agent ID the PROFILE carries
+ *               (`oauth_scope_profiles.agentId`), checked to be in the
+ *               PROFILE'S OWN ORG. A label never resolves an agent: a one-agent
+ *               seat profile with no `agentId` refuses (SEAT_PROFILE_UNBOUND).
+ *               An org-level profile (several entries) stamps none.
  *   LOOKUP      oauth:getAccessTokenByHash reports `seatAgent` (id, org, CURRENT
  *               name) re-read from the live agent row; a stale stamp (agent
  *               deactivated / moved) reports null.
@@ -84,6 +86,7 @@ async function seedProfile(
 	profileId: string,
 	fromAllowList: string[],
 	clerkOrgSlug: string | undefined,
+	agentId?: Id<"agents">,
 ): Promise<void> {
 	await t.run(async (ctx) => {
 		await ctx.db.insert("oauth_scope_profiles", {
@@ -95,6 +98,7 @@ async function seedProfile(
 			createdAt: Date.now(),
 			updatedAt: Date.now(),
 			...(clerkOrgSlug !== undefined ? { clerkOrgSlug } : {}),
+			...(agentId !== undefined ? { agentId } : {}),
 		});
 	});
 }
@@ -179,7 +183,7 @@ describe("seat token stamp at mint and at refresh", () => {
 		const t = createT();
 		await seedOrg(t, "iris-rh");
 		const id = await seedAgent(t, "iris-rh", "clio");
-		await seedProfile(t, "clio-iris-rh", ["clio"], "iris-rh");
+		await seedProfile(t, "clio-iris-rh", ["clio"], "iris-rh", id);
 		const hash = await mintSeatToken(t, "clio-iris-rh", ["clio"], "iris-rh");
 		const row = await tokenRow(t, hash);
 		expect(row?.agentId).toBe(id);
@@ -189,19 +193,20 @@ describe("seat token stamp at mint and at refresh", () => {
 			agentId: id,
 			orgId: "iris-rh",
 			agentName: "clio",
+			orgClerkId: testClerkOrgId("iris-rh"),
 		});
 	});
 
-	test("the same name from ANOTHER org's seat is not stamped with the first org's agent", async () => {
+	test("the same name from ANOTHER org's seat is never resolved to the first org's agent: the unbound profile refuses", async () => {
 		const t = createT();
 		await seedOrg(t, "iris-rh");
 		await seedOrg(t, "other-org");
 		await seedAgent(t, "iris-rh", "clio"); // exists ONLY in iris-rh
 		await seedProfile(t, "clio-other-org", ["clio"], "other-org");
-		const hash = await mintSeatToken(t, "clio-other-org", ["clio"], "other-org");
-		const row = await tokenRow(t, hash);
-		expect(row?.agentId).toBeUndefined();
-		expect((await lookup(t, hash))?.seatAgent).toBeNull();
+		await expect(
+			mintSeatToken(t, "clio-other-org", ["clio"], "other-org"),
+		).rejects.toThrow(/SEAT_PROFILE_UNBOUND/);
+		expect(await t.run(async (ctx) => ctx.db.query("oauth_access_tokens").collect())).toHaveLength(0);
 	});
 
 	test("a profile with two names stays an org-level seat (no stamp)", async () => {
@@ -219,12 +224,13 @@ describe("seat token stamp at mint and at refresh", () => {
 		expect((await lookup(t, hash))?.seatAgent).toBeNull();
 	});
 
-	test("a profile whose single name has no agent row stays an org-level seat", async () => {
+	test("a profile whose single name has no agent row names no agent: the mint refuses, it does not fall back to an org-level seat", async () => {
 		const t = createT();
 		await seedOrg(t, "iris-rh");
 		await seedProfile(t, "ghost-iris-rh", ["ghost"], "iris-rh");
-		const hash = await mintSeatToken(t, "ghost-iris-rh", ["ghost"], "iris-rh");
-		expect((await lookup(t, hash))?.seatAgent).toBeNull();
+		await expect(
+			mintSeatToken(t, "ghost-iris-rh", ["ghost"], "iris-rh"),
+		).rejects.toThrow(/SEAT_PROFILE_UNBOUND/);
 	});
 
 	test("a person token is never stamped", async () => {
@@ -238,20 +244,24 @@ describe("seat token stamp at mint and at refresh", () => {
 		expect((await lookup(t, hash))?.seatAgent).toBeNull();
 	});
 
-	test("a profile whose id does not follow <agent>-<org> is not stamped", async () => {
+	test("the profile id is a name and decides nothing: an unbound profile refuses whatever its id, a bound one is stamped whatever its id", async () => {
 		const t = createT();
 		await seedOrg(t, "iris-rh");
-		await seedAgent(t, "iris-rh", "clio");
+		const id = await seedAgent(t, "iris-rh", "clio");
 		await seedProfile(t, "whatever", ["clio"], "iris-rh");
-		const hash = await mintSeatToken(t, "whatever", ["clio"], "iris-rh");
-		expect((await lookup(t, hash))?.seatAgent).toBeNull();
+		await expect(
+			mintSeatToken(t, "whatever", ["clio"], "iris-rh"),
+		).rejects.toThrow(/SEAT_PROFILE_UNBOUND/);
+		await seedProfile(t, "anything-else", ["clio"], "iris-rh", id);
+		const hash = await mintSeatToken(t, "anything-else", ["clio"], "iris-rh");
+		expect((await lookup(t, hash))?.seatAgent?.agentId).toBe(id);
 	});
 
 	test("the stamp is re-read live: a deactivated agent reports no seatAgent, a rename reports the new label", async () => {
 		const t = createT();
 		await seedOrg(t, "iris-rh");
 		const id = await seedAgent(t, "iris-rh", "clio");
-		await seedProfile(t, "clio-iris-rh", ["clio"], "iris-rh");
+		await seedProfile(t, "clio-iris-rh", ["clio"], "iris-rh", id);
 		const hash = await mintSeatToken(t, "clio-iris-rh", ["clio"], "iris-rh");
 		await t.run(async (ctx) => {
 			await ctx.db.patch(id, { name: "clio-2", normalizedName: "clio-2" });
@@ -267,7 +277,7 @@ describe("seat token stamp at mint and at refresh", () => {
 		const t = createT();
 		await seedOrg(t, "iris-rh");
 		const id = await seedAgent(t, "iris-rh", "clio");
-		await seedProfile(t, "clio-iris-rh", ["clio"], "iris-rh");
+		await seedProfile(t, "clio-iris-rh", ["clio"], "iris-rh", id);
 		await t.run(async (ctx) => {
 			await ctx.db.insert("oauth_access_tokens", {
 				tokenHash: "legacy-hash",
@@ -288,6 +298,7 @@ describe("seat token stamp at mint and at refresh", () => {
 			agentId: id,
 			orgId: "iris-rh",
 			agentName: "clio",
+			orgClerkId: testClerkOrgId("iris-rh"),
 		});
 	});
 
@@ -295,7 +306,7 @@ describe("seat token stamp at mint and at refresh", () => {
 		const t = createT();
 		await seedOrg(t, "iris-rh");
 		const id = await seedAgent(t, "iris-rh", "clio");
-		await seedProfile(t, "clio-iris-rh", ["clio"], "iris-rh");
+		await seedProfile(t, "clio-iris-rh", ["clio"], "iris-rh", id);
 		await seedProfile(t, "ghost-iris-rh", ["ghost"], "iris-rh");
 		const insert = async (hash: string, profile: string, name: string) =>
 			await t.run(async (ctx) =>

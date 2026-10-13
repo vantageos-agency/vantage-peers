@@ -148,6 +148,7 @@ describe("a seat token is bound to the agent ID of its profile", () => {
 			agentId: clioA,
 			orgId: "org-a",
 			agentName: "clio-renamed",
+			orgClerkId: testClerkOrgId("org-a"),
 		});
 	});
 
