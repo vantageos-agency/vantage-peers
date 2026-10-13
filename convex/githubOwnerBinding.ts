@@ -10,7 +10,6 @@ import {
 } from "./_generated/server";
 import { requireResolvedCaller, withOrgScope } from "./lib/auth";
 import { claimedOrgArgs } from "./contentClaims";
-import { scopeActingClaim } from "./lib/fleetStanding";
 import {
 	actingClaimOf,
 	resolveVerifiedOrgScope,
@@ -244,12 +243,11 @@ export const listUnprovenMappings = query({
 		// R-54: the service account that presents no verified organisation is
 		// refused; a client organisation's claim runs the audit as that
 		// organisation's member, which this master-only audit refuses.
-		const scope = await scopeActingClaim(
-			ctx,
-			transportScope,
-			args.verifiedOrg,
-			"githubOwnerBinding:listUnprovenMappings",
-		);
+		const claim = await actingClaimOf(ctx, transportScope, args.verifiedOrg, "githubOwnerBinding:listUnprovenMappings");
+		// A client organisation's claim: the call is that organisation's member, never the fleet.
+		const { masterSource: _dropped, ...memberShape } = transportScope;
+		const scope: typeof transportScope =
+			claim === undefined ? transportScope : { ...memberShape, isMaster: false, fleetWide: false };
 		// isolation-contract: no reactive subscriber (new door, 0 dashboard hits).
 		requireResolvedCaller(scope, "githubOwnerBinding:listUnprovenMappings", {
 			alsoRefusePreOrg: true,

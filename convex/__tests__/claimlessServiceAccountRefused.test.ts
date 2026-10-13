@@ -227,6 +227,14 @@ async function world(): Promise<World> {
 			lastSeen: NOW,
 			count: 1,
 		});
+		ids.note = await ctx.db.insert("briefingNotes", {
+			title: "t",
+			topic: "topic",
+			participants: ["sigma"],
+			content: "briefing body",
+			createdBy: "sigma",
+			createdAt: NOW,
+		});
 		ids.session = "sess-existing";
 		await ctx.db.insert("iframeEmbedSessions", {
 			sessionId: ids.session,
@@ -351,6 +359,14 @@ const DOORS: Door[] = [
 	},
 	{ door: "profiles:listProfiles", kind: "query", args: () => ({}) },
 	{ door: "orgRoster:getMyOrgRoster", kind: "query", args: () => ({}) },
+	{ door: "orgRoster:getMyAgentDirectory", kind: "query", args: () => ({}) },
+	{ door: "briefingNotes:get", kind: "query", args: (w) => ({ noteId: w.ids.note }) },
+	{ door: "briefingNotes:list", kind: "query", args: () => ({}) },
+	{
+		door: "briefingNotes:searchBriefingNotesByKeyword",
+		kind: "query",
+		args: () => ({ query: "briefing" }),
+	},
 	// ── fleet-internal doors that carried a `fleet-wide:` marker (the 29) ───────
 	{ door: "errorMonitor:listDeployments", kind: "query", args: () => ({}) },
 	{ door: "errorMonitor:listErrors", kind: "query", args: () => ({}) },
@@ -624,6 +640,7 @@ describe("R-54: every door that calls a claim helper has a pole", () => {
 		const dir = join(__dirname, "..");
 		const helpers = [
 			"actingClaimOf(",
+			"requireServiceAccountClaim(",
 			"requireClaimedScope(",
 			"scopeActingClaim(",
 			"claim: { verifiedOrg",

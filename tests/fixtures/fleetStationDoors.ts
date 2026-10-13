@@ -12,6 +12,9 @@
 // that table is added here on purpose.
 
 export const FLEET_STATION_CLAIM_DOORS: ReadonlySet<string> = new Set([
+	"briefingNotes:get",
+	"briefingNotes:list",
+	"briefingNotes:searchBriefingNotesByKeyword",
 	"businessUnits:create",
 	"businessUnits:get",
 	"businessUnits:list",
@@ -66,6 +69,7 @@ export const FLEET_STATION_CLAIM_DOORS: ReadonlySet<string> = new Set([
 	"missions:updateProgress",
 	"missions:updateStatus",
 	"orgMembership:getMembership",
+	"orgRoster:getMyAgentDirectory",
 	"orgRoster:getMyOrgRoster",
 	"profiles:getProfile",
 	"profiles:getProfileWithMemories",

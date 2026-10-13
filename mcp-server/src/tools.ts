@@ -2078,10 +2078,10 @@ export function registerTools(
 ): void {
 	// The acting agent's unique ID rides every actor-taking Convex door
 	// (verifiedActor.ts). Same client object when no ID was resolved.
-	const convex = withOperatorClaim(
-		withVerifiedActor(rawConvex, oauthCtx),
-		oauthCtx,
-	);
+	const actorConvex = withVerifiedActor(rawConvex, oauthCtx);
+	// Every call of a claim-bound door names the bearer's verified organisation
+	// (operatorClaim.ts, backend standard R-54).
+	const convex = withOperatorClaim(actorConvex, oauthCtx);
 	// Intercept EVERY server.registerTool(...) call made below (directly or
 	// through defineTool()/registerExportOkfBundle()/registerImportOkfBundle()/
 	// registerKbIngestTools()/registerValidateOkfBundle() — they all receive

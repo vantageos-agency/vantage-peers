@@ -19,6 +19,7 @@ import { resolveHumanActor } from "./lib/humanActor";
 import { actorIdResolver, type ActorIdResolver } from "./lib/actorIds";
 import { requireAuthenticatedCaller } from "./tasks";
 import {
+	actingClaimOf,
 	resolveVerifiedOrgMapping,
 	resolveVerifiedOrgScope,
 	verifiedOrgValidator,
@@ -550,12 +551,8 @@ export const get = query({
 		if (transportScope.refused) {
 			return null;
 		}
-		const scope = await resolveVerifiedOrgScope(
-			ctx,
-			transportScope,
-			args.verifiedOrg,
-			"briefingNotes:get",
-		);
+		const claim = await actingClaimOf(ctx, transportScope, args.verifiedOrg, "briefingNotes:get");
+		const scope = await resolveVerifiedOrgScope(ctx, transportScope, claim, "briefingNotes:get");
 		if (!hasFleetRead(scope) && scope.orgSlug === null) {
 			throw new ConvexError(
 				`RBAC_DENIED: caller may not read briefing notes — ${JSON.stringify({ orgSlug: null })}`,
@@ -734,12 +731,8 @@ export const list = query({
 		if (transportScope.refused) {
 			return { refused: true as const, items: [] };
 		}
-		const scope = await resolveVerifiedOrgScope(
-			ctx,
-			transportScope,
-			args.verifiedOrg,
-			"briefingNotes:list",
-		);
+		const claim = await actingClaimOf(ctx, transportScope, args.verifiedOrg, "briefingNotes:list");
+		const scope = await resolveVerifiedOrgScope(ctx, transportScope, claim, "briefingNotes:list");
 		if (!hasFleetRead(scope) && scope.orgSlug === null) {
 			throw new ConvexError(
 				`RBAC_DENIED: caller may not list briefing notes — ${JSON.stringify({ orgSlug: null })}`,
@@ -1329,12 +1322,8 @@ export const searchBriefingNotesByKeyword = query({
 		if (transportScope.refused) {
 			return [];
 		}
-		const scope = await resolveVerifiedOrgScope(
-			ctx,
-			transportScope,
-			args.verifiedOrg,
-			"briefingNotes:searchBriefingNotesByKeyword",
-		);
+		const claim = await actingClaimOf(ctx, transportScope, args.verifiedOrg, "briefingNotes:searchBriefingNotesByKeyword");
+		const scope = await resolveVerifiedOrgScope(ctx, transportScope, claim, "briefingNotes:searchBriefingNotesByKeyword");
 		requireScope(scope, "view-own-tasks");
 		const orgClerkId = scope.orgClerkId;
 		if (!hasFleetRead(scope) && scope.orgSlug !== null && orgClerkId === undefined) {

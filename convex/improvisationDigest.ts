@@ -7,7 +7,7 @@ import {
 	withOrgScope,
 } from "./lib/auth";
 import { claimedOrgArgs } from "./contentClaims";
-import { scopeActingClaim } from "./lib/fleetStanding";
+import { actingClaimOf } from "./lib/verifiedOrg";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // improvisationDigest — PR-I T-GREEN
@@ -81,12 +81,11 @@ export const scanWindow = query({
 		// R-54: the service account that presents no verified organisation is
 		// refused; a client organisation's claim runs the digest as that
 		// organisation's member.
-		const scope = await scopeActingClaim(
-			ctx,
-			transportScope,
-			args.verifiedOrg,
-			"improvisationDigest:scanWindow",
-		);
+		const claim = await actingClaimOf(ctx, transportScope, args.verifiedOrg, "improvisationDigest:scanWindow");
+		// A client organisation's claim: the call is that organisation's member, never the fleet.
+		const { masterSource: _dropped, ...memberShape } = transportScope;
+		const scope: typeof transportScope =
+			claim === undefined ? transportScope : { ...memberShape, isMaster: false, fleetWide: false };
 		const callerOrg = scope.orgSlug;
 		if (scope.refused || (!hasFleetRead(scope) && callerOrg === null)) {
 			return {

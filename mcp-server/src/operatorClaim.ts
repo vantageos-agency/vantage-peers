@@ -37,6 +37,9 @@ import { holdsMasterBearer } from "./auth.js";
  * the claimless call and serves the operator organisation's.
  */
 export const CLAIM_BOUND_DOORS: ReadonlySet<string> = new Set([
+	"briefingNotes:get",
+	"briefingNotes:list",
+	"briefingNotes:searchBriefingNotesByKeyword",
 	"businessUnits:create",
 	"businessUnits:get",
 	"businessUnits:list",
@@ -113,6 +116,7 @@ export const CLAIM_BOUND_DOORS: ReadonlySet<string> = new Set([
 	"okfBundleNode:importOkfBundle",
 	"okfBundleNode:validateOkfBundle",
 	"orgMembership:getMembership",
+	"orgRoster:getMyAgentDirectory",
 	"orgRoster:getMyOrgRoster",
 	"profiles:getProfile",
 	"profiles:getProfileWithMemories",

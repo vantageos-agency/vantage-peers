@@ -235,6 +235,7 @@ export const linkIssue = mutation({
 	},
 });
 
+// returns-projection: attempts omit patternId - already implied by the parent pattern being fetched
 const patternWithAttemptsValidator = v.union(
 		v.object({
 			_id: v.id("fixPatterns"),
@@ -347,7 +348,10 @@ export const get = query({
 			masterOnly: true,
 			operatorHumanMayRead: true,
 		});
-		return await readPatternWithAttempts(ctx, args);
+		return await readPatternWithAttempts(ctx, {
+			patternId: args.patternId,
+			callerIdentities: args.callerIdentities,
+		});
 	},
 });
 

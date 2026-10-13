@@ -10,6 +10,7 @@ import {
 import { resolveProvisioningMapping } from "./lib/provisioningMapping";
 import {
 	actingClaimOf,
+	requireServiceAccountClaim,
 	resolveVerifiedOrgScope,
 	verifiedOrgValidator,
 } from "./lib/verifiedOrg";
@@ -227,18 +228,23 @@ export const getAgentDirectoryForAccessToken = query({
 // The directory of the signed-in caller's own organisation (a Clerk session on
 // the MCP). The caller's org comes from withOrgScope, never an argument.
 export const getMyAgentDirectory = query({
-	args: {},
+	// R-54: the service account that presents no verified organisation is refused.
+	args: { verifiedOrg: v.optional(verifiedOrgValidator) },
 	returns: v.array(agentDirectoryEntry),
-	handler: async (ctx) => {
+	handler: async (ctx, args) => {
 		// isolation-contract: server-side only — invoked by the MCP transport (mcp-server/src/tools.ts list_peers, Clerk-JWT session) via imperative client.query, never a reactive useQuery: `grep -rn "getMyAgentDirectory" app components hooks lib contexts providers` in vantage-peers-dashboard -> 0 hits (2026-10-08). So the pre-organisation caller is refused by raising (alsoRefusePreOrg).
 		// Resolved as a MEMBER of its own organisation (operatorAsMember): the
 		// operator's org admin is master for reads only, but the directory it may
 		// address is its org's real roster, and every other caller resolves to the
 		// same scope with or without the flag. No branch on how the scope was granted.
-		const scope = await withOrgScope(ctx, {
+		const transportScope = await withOrgScope(ctx, {
 			refuseWithoutThrow: true,
 			operatorAsMember: true,
 		});
+		// A directory is an organisation's own: ANY verified claim, the operator
+		// organisation's included, runs the read as that organisation's member.
+		requireServiceAccountClaim(transportScope, args.verifiedOrg, "orgRoster:getMyAgentDirectory");
+		const scope = await resolveVerifiedOrgScope(ctx, transportScope, args.verifiedOrg, "orgRoster:getMyAgentDirectory");
 		requireResolvedCaller(scope, "orgRoster:getMyAgentDirectory", {
 			alsoRefusePreOrg: true,
 		});

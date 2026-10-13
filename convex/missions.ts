@@ -246,15 +246,15 @@ export const create = mutation({
 		// person is carried (convex/lib/personPrincipal.ts).
 		const transportScope = await withOrgScope(ctx);
 		const claim = await actingClaimOf(ctx, transportScope, args.verifiedOrg, "missions:create", args);
-		const scope =
-			args.verifiedPerson === undefined
-				? await resolveVerifiedOrgScope(ctx, transportScope, claim, "missions:create")
-				: await resolveVerifiedPerson(
-						ctx,
-						transportScope,
-						args.verifiedPerson,
-						{ door: "missions:create", assertedName: args.createdBy },
-					);
+		let scope: OrgScope;
+		if (args.verifiedPerson === undefined) {
+			scope = await resolveVerifiedOrgScope(ctx, transportScope, claim, "missions:create");
+		} else {
+			scope = await resolveVerifiedPerson(ctx, transportScope, args.verifiedPerson, {
+				door: "missions:create",
+				assertedName: args.createdBy,
+			});
+		}
 		requireResolvedCaller(scope, "missions:create", { alsoRefusePreOrg: true });
 		const standing = requireStanding(scope, "missions:create", ["fleet", "member"]);
 		const isFleet = standing === "fleet";

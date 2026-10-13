@@ -440,8 +440,12 @@ export const remove = mutation({
 		// write-contract: MCP-transport-only — issued via mcp-server client.mutation("githubRepoMapping:remove", …) at mcp-server/src/tools.ts:8085 (imperative), 0 hits in vantage-peers-dashboard {app,components,hooks,lib,contexts,providers} (measured 2026-10-01 at origin/main e2dc58f and 0466fac); never a subscribing pre-org client shell. The no-org throw is a refusal at an imperative MCP call, never at a render.
 		const door = "githubRepoMapping:remove";
 		const transportScope = await withOrgScope(ctx);
-		const claim = await actingClaimOf(ctx, transportScope, args.verifiedOrg, door);
-		const scope = await resolveVerifiedOrgScope(ctx, transportScope, claim, door);
+		const scope = await resolveVerifiedOrgScope(
+			ctx,
+			transportScope,
+			await actingClaimOf(ctx, transportScope, args.verifiedOrg, door),
+			door,
+		);
 		resolveWriteTenant(scope, door);
 		const existing = await ctx.db
 			.query("githubRepoMapping")

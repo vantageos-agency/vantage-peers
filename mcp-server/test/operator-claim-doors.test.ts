@@ -264,6 +264,7 @@ describe("sweep: the wrapper's door list is the doors convex/ binds to a claim",
 	const convexDir = join(here, "..", "..", "convex");
 	const helpers = [
 		"actingClaimOf(",
+		"requireServiceAccountClaim(",
 		"requireClaimedScope(",
 		"scopeActingClaim(",
 		"claim: { verifiedOrg",

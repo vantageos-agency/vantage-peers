@@ -9,6 +9,7 @@ import {
 import {
 	loadAgentOfPrincipalOrg,
 	anonymousRefusal,
+	stampOrgRefusal,
 	requireOrgAdminById,
 	resolveAgentCallerOfPresentedSecret,
 	revokeActiveCredentialRows,
@@ -88,9 +89,11 @@ export const mintAgentCredential = mutation({
 		const identity = await ctx.auth.getUserIdentity();
 		if (!identity) throw anonymousRefusal(door);
 		const principal = await requireOrgAdminById(ctx, identity, args.orgSlug, door);
-		// Session-only door (R-54 exit (b)): the organisation is the verified admin
-		// principal's own, never a service account's.
-		const orgSlug = principal.orgId;
+		const scope = await withOrgScope(ctx);
+		const orgSlug = scope.orgSlug;
+		if (orgSlug === null || orgSlug !== principal.orgId) {
+			throw stampOrgRefusal(door);
+		}
 
 		const agent = await loadAgentOfPrincipalOrg(ctx, principal, args.agentId, door);
 		if (!agent) {

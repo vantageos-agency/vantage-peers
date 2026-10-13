@@ -19,7 +19,6 @@ import { taskActorIdFields } from "./lib/actorIds";
 import {
 	hasFleetStanding,
 	requireFleetDoor,
-	scopeActingClaim,
 } from "./lib/fleetStanding";
 import { memberActorOf } from "./lib/humanActor";
 import { clerkOrgIdForSlug } from "./lib/orgClerkId";
@@ -145,12 +144,11 @@ export const getByName = query({
 		// R-54: the service account that presents no verified organisation is
 		// refused; a client organisation's claim runs the read as that
 		// organisation's member, which this master-only read refuses.
-		const scope = await scopeActingClaim(
-			ctx,
-			transportScope,
-			args.verifiedOrg,
-			"missionTemplates:getByName",
-		);
+		const claim = await actingClaimOf(ctx, transportScope, args.verifiedOrg, "missionTemplates:getByName");
+		// A client organisation's claim: the call is that organisation's member, never the fleet.
+		const { masterSource: _dropped, ...memberShape } = transportScope;
+		const scope: typeof transportScope =
+			claim === undefined ? transportScope : { ...memberShape, isMaster: false, fleetWide: false };
 		requireResolvedCaller(scope, "missionTemplates:getByName", {
 			alsoRefusePreOrg: true,
 			masterOnly: true,

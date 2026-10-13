@@ -270,24 +270,6 @@ export async function resolveVerifiedOrgRef(
 }
 
 /**
- * The door-side entry of {@link resolveVerifiedOrgRef} for a single-row write:
- * reads the TRANSPORT scope itself (as {@link resolveDoorVerifiedOrg} does), so
- * the claim is believed from the service account only. `undefined` when no proof
- * is carried.
- */
-export async function resolveDoorVerifiedOrgRef(
-	ctx: MutationCtx,
-	proof: VerifiedOrg | undefined,
-	door: string,
-): Promise<OrgRef | undefined> {
-	if (proof === undefined) return undefined;
-	const transportScope = await withOrgScope(ctx, {
-		allowNoIdentityMaster: false,
-	});
-	return await resolveVerifiedOrgRef(ctx, transportScope, proof, door);
-}
-
-/**
  * The target row's organisation must be the verified one, BY ID: the package's
  * `sameOrg` compares the row's `clerkOrgId` with the verified org's ID; a label
  * never matches and a row stamped with no ID is never matched (refused, not
@@ -320,7 +302,7 @@ export function assertRowInVerifiedOrgRef(
  * `resolveVerifiedOrg`, before anything is written.
  *
  * BY LABEL: DELETE AFTER CALLERS MIGRATE. Replacement:
- * `assertRowInVerifiedOrgRef` fed by `resolveDoorVerifiedOrgRef` (compares the
+ * `assertRowInVerifiedOrgRef` fed by `resolveVerifiedOrgRef` (compares the
  * org ID with `sameOrg`). Importer: tasks.ts (ten task doors).
  */
 export function assertRowInVerifiedOrg(
