@@ -25,8 +25,8 @@ VantagePeers Cloud only. This page is the protocol-layer (`agents`/`agent_relati
 
 ## PROD — provider-first, named target, Pi-authorized token, identity read-back
 
-1. **MCP/Railway auto-redeploys on merge to `main`** — there is no manual redeploy step (`.claude/rules/railway-mcp-redeploy.md`). If this change ships with a companion `tools.ts` edit, wait for and OBSERVE that redeploy (via `check_messages` or an equivalent live call) before step 2. If it does not, proceed directly.
-2. **THEN deploy Convex prod** — from the repository root, on a full checkout, the target NAMED inline, under the Pi authorization marker:
+1. **MCP/Railway does NOT auto-deploy on merge to `main`** (`.claude/rules/railway-mcp-redeploy.md`): the MCP ships last, under the rollout token, after the Convex read-back below. If this change ships with a companion `tools.ts` edit, the MCP's boot check refuses a backend that lacks any function it calls, so Convex goes first. If it does not, there is nothing to ship on the Railway side.
+2. **Deploy Convex prod** — from the repository root, on a full checkout, the target NAMED inline, under the Pi authorization marker:
    ```
    CONVEX_DEPLOY_KEY='prod:compassionate-goldfinch-737|<KEY>' npx convex deploy --yes # pi-authorized: k<prod-task-id>
    ```

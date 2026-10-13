@@ -121,6 +121,9 @@ async function main() {
 			...process.env,
 			// Syntactically valid — never dialed by any of the 4 calls below.
 			CONVEX_URL: process.env.CONVEX_URL ?? "https://boot-check-placeholder.convex.cloud",
+			// The backend-compat boot check (src/backendContract.ts) would refuse a
+			// placeholder backend; this smoke is about MCP registration, not Convex.
+			VP_BOOT_CHECK_OFFLINE: "1",
 			// `whoami` is not in the prod CORE tool-exposure list (it stays
 			// registered but `.disable()`d — see tools.ts `registerTools`
 			// masking). Point at a boot-check-only exposure file that keeps it

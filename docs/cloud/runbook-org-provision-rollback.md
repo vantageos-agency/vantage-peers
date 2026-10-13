@@ -3,7 +3,7 @@
 **Product:** VantagePeers Cloud.  
 **Mission:** `vp-cloud-org-provision-v1` (`k573zea02k2f0xz3dntmj1za3x8cx6j3`) T-ROLLBACK `k17cj6ctwvwjcvyd98rje43nnn8cx582`.  
 **Floor SHA (pre-org-claim, #1215 only):** `58ce92c` on `vantageos-agency/vantage-peers`.  
-**Banned:** `railway up`, `railway login`. Railway MCP redeploys on merge to `main` only.
+**Banned:** `railway up`, `railway login`. The Railway MCP does not auto-deploy on merge; it ships last under the rollout token (`.claude/rules/railway-mcp-redeploy.md`).
 
 Use this if, after Convex/MCP activation, either:
 

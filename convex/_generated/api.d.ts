@@ -88,6 +88,7 @@ import type * as memberWriterRoles from "../memberWriterRoles.js";
 import type * as memories from "../memories.js";
 import type * as memoriesScoped from "../memoriesScoped.js";
 import type * as messages from "../messages.js";
+import type * as meta from "../meta.js";
 import type * as migrations from "../migrations.js";
 import type * as migrations_agentIdentityRows from "../migrations/agentIdentityRows.js";
 import type * as migrations_backfillOrgIds from "../migrations/backfillOrgIds.js";
@@ -227,6 +228,7 @@ declare const fullApi: ApiFromModules<{
   memories: typeof memories;
   memoriesScoped: typeof memoriesScoped;
   messages: typeof messages;
+  meta: typeof meta;
   migrations: typeof migrations;
   "migrations/agentIdentityRows": typeof migrations_agentIdentityRows;
   "migrations/backfillOrgIds": typeof migrations_backfillOrgIds;

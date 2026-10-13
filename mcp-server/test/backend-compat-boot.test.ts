@@ -105,7 +105,14 @@ function sourceFiles(): string[] {
 				if (["__tests__", "node_modules", "dist", "convex"].includes(e.name))
 					continue;
 				walk(p);
-			} else if (p.endsWith(".ts") && !p.endsWith(".test.ts")) out.push(p);
+			} else if (
+				p.endsWith(".ts") &&
+				!p.endsWith(".test.ts") &&
+				// The list itself is not a call site: scanning it would make this
+				// test a tautology.
+				p !== join(MCP_ROOT, "src", "backendContract.ts")
+			)
+				out.push(p);
 		}
 	};
 	walk(join(MCP_ROOT, "src"));

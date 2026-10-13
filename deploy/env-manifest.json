@@ -40,7 +40,7 @@
 		"notes": {
 			"clerk-issuer-domain": "canonical name = CLERK_JWT_ISSUER_DOMAIN on BOTH convex deployments; prod also historically carried the same value under the legacy name CLERK_ISSUER_URL (unused by auth.config.ts).",
 			"convex-prod-deploy-key": "BARE name CONVEX_DEPLOY_KEY (NOT suffixed).",
-			"auto-deploy-asymmetry": "Railway MCP auto-deploys from main on merge; Convex functions require a manual token-gated `npx convex deploy`."
+			"auto-deploy-asymmetry": "Railway MCP auto-deploy from main is OFF: the MCP ships last, under the rollout token, after the token-gated Convex rollout and its read-back. The MCP boot check (meta:backendContract) refuses a backend that lacks a function it calls."
 		}
 	}
 }
