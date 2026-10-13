@@ -43,8 +43,11 @@ export const backendContract = query({
 		functionCount: v.number(),
 	}),
 	handler: async (ctx) => {
-		const scope = await withOrgScope(ctx);
+		// isolation-contract: server-side only, no reactive subscriber — enumerated 2026-10-13 with: grep -rnE "backendContract|api\.meta\." /root/coding/vantage-peers-dashboard --exclude-dir=node_modules --exclude-dir=.next --exclude-dir=.git -> 0 hits. R-50 declared divergence.
+		const scope = await withOrgScope(ctx, { refuseWithoutThrow: true });
 		requireResolvedCaller(scope, "meta:backendContract", {
+			alsoRefusePreOrg: true,
+			masterOnly: true,
 			mcpBoundOnly: true,
 		});
 		return {
