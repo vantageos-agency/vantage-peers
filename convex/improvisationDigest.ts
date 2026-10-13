@@ -1,7 +1,11 @@
 import { hasFleetRead } from "@vantageos/cloud-identity";
 import { v } from "convex/values";
 import { query } from "./_generated/server";
-import { filterByOrgScope, withOrgScope } from "./lib/auth";
+import {
+	filterByOrgScope,
+	requireResolvedCaller,
+	withOrgScope,
+} from "./lib/auth";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // improvisationDigest — PR-I T-GREEN
@@ -50,6 +54,7 @@ const DIGEST_TASKS_SCAN_CAP = 2000;
 const DIGEST_MESSAGES_SCAN_CAP = 2000;
 const DIGEST_MEMORIES_SCAN_CAP = 2000;
 
+// fleet-wide: the digest reads tasks, messages and memories across the whole fleet by purpose and its MCP tool is master-only; the fleet standing reads every tenant, an organisation member is confined to its own tenant's tasks and messages and is served no memories.
 export const scanWindow = query({
 	args: {
 		windowDays: v.number(),
@@ -97,30 +102,30 @@ export const scanWindow = query({
 
 		const flagged: SampleEntry[] = [];
 
-		// ── 1. Tasks (complete_task) ──────────────────────────────────────────
-		// Use by_status index to get done tasks, then filter by time
-		// A non-master tenant is pushed into the `by_orgId` index BEFORE the cap,
-		// so another tenant's rows cannot crowd the caller's own out of the scan.
-		const doneTasks =
-			hasFleetRead(scope) || callerOrg === null
-				? await ctx.db
-						.query("tasks")
-						.withIndex("by_status", (q) => q.eq("status", "done"))
-						.order("desc")
-						.take(DIGEST_TASKS_SCAN_CAP)
-				: filterByOrgScope(
-						(
-							await ctx.db
-								.query("tasks")
-								.withIndex("by_orgId", (q) => q.eq("orgId", callerOrg))
-								.order("desc")
-								.take(DIGEST_TASKS_SCAN_CAP)
-						).filter((t) => t.status === "done"),
-						scope,
-					);
+		// Every source is READ through its range and narrowed while it is read: the
+		// time window and the orchestrator filter are applied to each row as it
+		// streams, and the scan cap bounds how many rows a source READS, so the cap
+		// never cuts a window first and narrows it after. Where the source is read
+		// by creation time alone, the window is part of the range itself.
+		const fleetRead = hasFleetRead(scope);
 
-		for (const task of doneTasks) {
+		// ── 1. Tasks (complete_task) ──────────────────────────────────────────
+		// A non-master tenant is pushed into the `by_orgId` index, so another
+		// tenant's rows cannot crowd the caller's own out of the scan.
+		let tasksScanned = 0;
+		for await (const task of fleetRead || callerOrg === null
+			? ctx.db
+					.query("tasks")
+					.withIndex("by_status", (q) => q.eq("status", "done"))
+					.order("desc")
+			: ctx.db
+					.query("tasks")
+					.withIndex("by_orgId", (q) => q.eq("orgId", callerOrg))
+					.order("desc")) {
+			if (++tasksScanned > DIGEST_TASKS_SCAN_CAP) break;
 			if (task._creationTime < cutoff) continue;
+			if (task.status !== "done") continue;
+			if (!fleetRead && filterByOrgScope([task], scope).length === 0) continue;
 			if (!task.completionNote) continue;
 
 			const owner = task.assignedTo;
@@ -144,19 +149,17 @@ export const scanWindow = query({
 		// Newest-first by _creationTime (the default index) so the cap selects the
 		// most-recent rows, not the alphabetically-last senders — by_from carries no
 		// time column, so ordering by it and take()-ing biases the selection (Eta #1252).
-		const recentMessages =
-			hasFleetRead(scope) || callerOrg === null
-				? await ctx.db
-						.query("messages")
-						.order("desc")
-						.take(DIGEST_MESSAGES_SCAN_CAP)
-				: await ctx.db
-						.query("messages")
-						.withIndex("by_tenant_created", (q) => q.eq("tenantId", callerOrg))
-						.order("desc")
-						.take(DIGEST_MESSAGES_SCAN_CAP);
-
-		for (const msg of recentMessages) {
+		let messagesScanned = 0;
+		for await (const msg of fleetRead || callerOrg === null
+			? ctx.db
+					.query("messages")
+					.withIndex("by_creation_time", (q) => q.gte("_creationTime", cutoff))
+					.order("desc")
+			: ctx.db
+					.query("messages")
+					.withIndex("by_tenant_created", (q) => q.eq("tenantId", callerOrg))
+					.order("desc")) {
+			if (++messagesScanned > DIGEST_MESSAGES_SCAN_CAP) break;
 			if (msg._creationTime < cutoff) continue;
 
 			const owner = msg.from;
@@ -179,31 +182,36 @@ export const scanWindow = query({
 		// ── 3. Memories (store_memory) ────────────────────────────────────────
 		// Newest-first by _creationTime (default index) — by_creator has no time
 		// column, so ordering by it biases recency out of the selection (Eta #1252).
-		const recentMemories = hasFleetRead(scope)
-			? await ctx.db
-					.query("memories")
-					.order("desc")
-					.take(DIGEST_MEMORIES_SCAN_CAP)
-			: [];
-
-		for (const mem of recentMemories) {
-			if (mem._creationTime < cutoff) continue;
-
-			const owner = mem.createdBy;
-			if (orchFilter && !orchFilter.includes(owner)) continue;
-
-			const text = mem.content;
-			if (!passesFleetFilter(text)) continue;
-			if (hasFooter(text)) continue;
-
-			flagged.push({
-				orchestrator: owner,
-				day: new Date(mem._creationTime).toISOString().slice(0, 10),
-				category: "store_memory",
-				snippet: text.slice(0, 200),
-				artifactId: mem._id,
-				creationTime: mem._creationTime,
+		// `memories` carries no tenant stamp: only the fleet reads them.
+		if (fleetRead) {
+			// `memories` is read here without a tenant predicate, so the read states
+			// its own reach: only the fleet master gets this far.
+			requireResolvedCaller(scope, "improvisationDigest:scanWindow", {
+				masterOnly: true,
 			});
+			let memoriesScanned = 0;
+			for await (const mem of ctx.db
+				.query("memories")
+				.withIndex("by_creation_time", (q) => q.gte("_creationTime", cutoff))
+				.order("desc")) {
+				if (++memoriesScanned > DIGEST_MEMORIES_SCAN_CAP) break;
+
+				const owner = mem.createdBy;
+				if (orchFilter && !orchFilter.includes(owner)) continue;
+
+				const text = mem.content;
+				if (!passesFleetFilter(text)) continue;
+				if (hasFooter(text)) continue;
+
+				flagged.push({
+					orchestrator: owner,
+					day: new Date(mem._creationTime).toISOString().slice(0, 10),
+					category: "store_memory",
+					snippet: text.slice(0, 200),
+					artifactId: mem._id,
+					creationTime: mem._creationTime,
+				});
+			}
 		}
 
 		// ── Aggregation ───────────────────────────────────────────────────────

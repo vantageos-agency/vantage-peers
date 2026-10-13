@@ -8675,6 +8675,13 @@ export function registerTools(
 			// here, the Convex door decides master / org-member / own-rows.
 			const unresolved = guardResolvedCaller("add_repo_mapping");
 			if (unresolved) return unresolved;
+			// A bearer that is not the master acts for its VERIFIED organisation
+			// (`verifiedOrg`, read from the verified oauthContext, never from an
+			// argument): Convex runs the door as that org's member. A bearer whose
+			// organisation cannot be resolved is refused here, before Convex, instead
+			// of reaching the door as the fleet service account.
+			const orgDenied = unresolvedOrgDenial("add_repo_mapping");
+			if (orgDenied !== null) return orgDenied;
 			try {
 				const id = await convex.mutation("githubRepoMapping:add" as any, {
 					repo,
@@ -8683,6 +8690,7 @@ export function registerTools(
 					active,
 					reviewer,
 					fallbackReviewer,
+					...verifiedOrgArgs(),
 				});
 
 				return {
@@ -8875,11 +8883,15 @@ export function registerTools(
 		async ({ repo }) => {
 			const unresolved = guardResolvedCaller("remove_repo_mapping");
 			if (unresolved) return unresolved;
+			// Acts for the bearer's VERIFIED organisation (see add_repo_mapping).
+			const orgDenied = unresolvedOrgDenial("remove_repo_mapping");
+			if (orgDenied !== null) return orgDenied;
 			try {
 				const result = await convex.mutation(
 					"githubRepoMapping:remove" as any,
 					{
 						repo,
+						...verifiedOrgArgs(),
 					},
 				);
 
@@ -8945,12 +8957,17 @@ export function registerTools(
 		async ({ limit, cursor, unprovenCursor }) => {
 			const unresolved = guardResolvedCaller("get_github_owner_bindings");
 			if (unresolved) return unresolved;
+			// The bindings are read as the bearer's VERIFIED organisation (see
+			// add_repo_mapping): a non-master bearer sees its own org's bindings only.
+			const orgDenied = unresolvedOrgDenial("get_github_owner_bindings");
+			if (orgDenied !== null) return orgDenied;
 			try {
 				// Both reads are cursor-paginated server-side and return { items,
 				// nextCursor }: the cursors are passed on so a page never reads as the whole list.
 				const bindingsPage = await convex.query("githubOwnerBinding:listBindings" as any, {
 					limit,
 					...(cursor !== undefined ? { cursor } : {}),
+					...verifiedOrgArgs(),
 				});
 				const unprovenPage = isMasterScope(oauthCtx)
 					? await convex.query("githubOwnerBinding:listUnprovenMappings" as any, {
@@ -10877,9 +10894,15 @@ export function registerTools(
 			title: "Get repo mapping",
 		},
 		async ({ repo }) => {
+			// Reads as the bearer's VERIFIED organisation (see add_repo_mapping): a
+			// non-master bearer is confined to its own org's row, never served the
+			// fleet's.
+			const orgDenied = unresolvedOrgDenial("get_repo_mapping");
+			if (orgDenied !== null) return orgDenied;
 			try {
 				const row = await convex.query("githubRepoMapping:getByRepo" as any, {
 					repo,
+					...verifiedOrgArgs(),
 				});
 				// Class-sweep fix (mission vp-multitenant-zero-hole-v1, final 8):
 				// githubRepoMapping rows (schema.ts:482) carry `orchestrator`, NOT

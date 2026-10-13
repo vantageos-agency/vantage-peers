@@ -32,8 +32,14 @@ import { requireFleetDoor } from "./lib/fleetStanding";
 // Median execution time target: < 500ms (verify post-deploy with console.time).
 // ─────────────────────────────────────────────────────────────────────────────
 
-// Maximum tasks to load in one pass. Defensive cap.
+// Maximum tasks to load in one pass. Defensive cap on the rows KEPT (the rows
+// the caller may see).
 const TASK_CAP = 5000;
+
+// Maximum rows one pass READS, kept or not: a member whose roster excludes most
+// of its org's rows must not scan the whole org to fill the window (a Convex
+// function has a hard read limit).
+const TASK_SCAN_CAP = 10_000;
 
 // 30-day ceiling for stale-hours calculation (720h).
 const MAX_STALE_HOURS = 720;
@@ -67,6 +73,7 @@ function dayLabel(ts: number): string {
 	return new Date(ts).toISOString().slice(0, 10);
 }
 
+// fleet-wide: the fleet standing (the service account, or the operator human on a READ) aggregates every organisation's tasks by purpose, which is this door's reach; an organisation member is confined to its own organisation's `by_orgId` index range and its roster, and holds `view-stats-aggregated`.
 export const orchestratorStats = query({
 	args: {
 		window: v.union(v.literal("24h"), v.literal("7d"), v.literal("30d")),
@@ -123,24 +130,29 @@ export const orchestratorStats = query({
 		const cutoff = now - windowMs(args.window);
 		const numDays = numDaysForWindow(args.window);
 
-		// Single bounded fetch across the full tasks table.
-		// No index needed here since we aggregate across ALL orchestrators.
-		// The by_assignee index would require N separate index scans (one per
-		// orchestrator), which is worse than one linear pass when N > 2.
-		// Org member: read the member's OWN org through the tenant index so the cap
-		// bounds the org, never the fleet (a fleet-wide take(TASK_CAP) returned the
-		// oldest rows of every tenant and silently dropped a young org's rows).
-		// Unstamped rows never match `eq("orgId", slug)`: master-only.
+		// One pass over the caller's range of the tasks table. A member reads its
+		// OWN org through the tenant index, so the cap bounds the org, never the
+		// fleet (a fleet-wide take(TASK_CAP) returned the oldest rows of every
+		// tenant and silently dropped a young org's rows). The roster narrowing
+		// (`filterByOrgScope`, the intersect on top of the tenant range) is applied
+		// WHILE the range is read: the cap counts the rows the caller may see, so a
+		// window is never cut first and narrowed after. Unstamped rows never match
+		// `eq("orgId", slug)`: master-only.
 		const memberOrg = fleet ? null : scope.orgSlug;
-		const allTasks =
+		const tasksInRange =
 			memberOrg !== null
-				? await ctx.db
+				? ctx.db
 						.query("tasks")
 						.withIndex("by_orgId", (q) => q.eq("orgId", memberOrg))
-						.take(TASK_CAP)
-				: await ctx.db.query("tasks").take(TASK_CAP);
-		// Apply org scope filter before aggregation
-		const tasks = filterByOrgScope(allTasks, scope);
+				: ctx.db.query("tasks");
+		const tasks: Doc<"tasks">[] = [];
+		let scanned = 0;
+		for await (const task of tasksInRange) {
+			if (++scanned > TASK_SCAN_CAP) break;
+			if (filterByOrgScope([task], scope).length === 0) continue;
+			tasks.push(task);
+			if (tasks.length >= TASK_CAP) break;
+		}
 
 		// Group tasks by assignedTo
 		type TaskRow = (typeof tasks)[number];
@@ -379,6 +391,7 @@ function emptyBucket(): OpenBucket {
 	return { todo: 0, inProgress: 0, blocked: 0, review: 0, totalOpen: 0, oldestOpenMs: null };
 }
 
+// fleet-wide: the fleet master counts every orchestrator's open tasks by purpose, which is this door's reach; an organisation member holding `view-stats-aggregated` is confined to its own organisation's tenant index range and roster.
 export const openTaskCountsByOrchestrator = query({
 	args: {},
 	returns: v.array(
@@ -483,6 +496,7 @@ export const openTaskCountsByOrchestrator = query({
 	},
 });
 
+// fleet-wide: these are fleet-wide totals over tables that are not tenant-keyed, so reading the whole fleet is this door's purpose; only the fleet master is served and an organisation member is refused by raising.
 export const fleetStats = query({
 	args: {},
 	returns: v.object({

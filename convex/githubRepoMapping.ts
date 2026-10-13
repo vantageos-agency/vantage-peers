@@ -7,7 +7,11 @@ import {
 	mutation,
 	query,
 } from "./_generated/server";
-import { sameOrg } from "@vantageos/cloud-identity";
+import {
+	hasFleetRead,
+	isServiceAccountScope,
+	sameOrg,
+} from "@vantageos/cloud-identity";
 import { ownerOfRepo, repoOwnerBoundToOrg } from "./githubOwnerBinding";
 import { orgRefOfRow, orgRefOfScope } from "./lib/authOrgMapping";
 import {
@@ -40,7 +44,10 @@ import {
 //                                "manage-repo-mappings" scope on its mapping
 // An unresolved caller or a signed-in caller with no organisation is refused.
 function resolveWriteTenant(scope: OrgScope, door: string): string | undefined {
-	if (scope.isMaster) return undefined;
+	// The fleet's own service account writes FLEET rows. That standing is the
+	// package's verdict over the resolved scope; a bearer acting for a verified
+	// org (`verifiedOrg`) arrives here as that org's ordinary member instead.
+	if (isServiceAccountScope(scope)) return undefined;
 	requireScope(scope, "manage-repo-mappings");
 	if (scope.orgSlug === null) {
 		throw new ConvexError(
@@ -50,14 +57,14 @@ function resolveWriteTenant(scope: OrgScope, door: string): string | undefined {
 	return scope.orgSlug;
 }
 
-// A member may touch only rows its own org owns. Master may touch any row
-// (and never changes who owns it).
+// A member may touch only rows its own org owns. The fleet may touch any row
+// (and never changes who owns it); that standing is the package's verdict.
 function requireRowOwnedBy(
 	scope: OrgScope,
 	row: Doc<"githubRepoMapping">,
 	door: string,
 ): void {
-	if (scope.isMaster) return;
+	if (hasFleetRead(scope)) return;
 	if (!sameOrg(orgRefOfRow(row), orgRefOfScope(scope))) {
 		throw new ConvexError(
 			`RBAC_DENIED: ${door} — repo is not owned by org "${scope.orgSlug}" — ${JSON.stringify({ door, repo: row.repo })}`,
@@ -106,17 +113,29 @@ async function lookupByRepo(
 // So `alsoRefusePreOrg` is safe: no mounted render exists for the throw to crash.
 // Server-side callers (convex/http.ts webhook, convex/issues.ts) run with NO
 // identity and use `getByRepoInternal` below.
+// fleet-wide: a claimless service-account call is the fleet master reading the whole repo-mapping corpus, which is this door's purpose; a non-master bearer arrives with `verifiedOrg` (the MCP forwards it, and refuses a bearer whose organisation it cannot resolve before Convex) and is confined to that organisation's rows.
 export const getByRepo = query({
-	args: { repo: v.string() },
+	args: {
+		repo: v.string(),
+		// The organisation the MCP transport VERIFIED for a bearer that reaches
+		// Convex as the fleet service account. Believed from the service account
+		// only; the read then runs as that org's member (convex/lib/verifiedOrg.ts).
+		verifiedOrg: v.optional(verifiedOrgValidator),
+	},
 	returns: repoMappingDocOrNull,
 	handler: async (ctx, args) => {
-		const scope = await withOrgScope(ctx, { refuseWithoutThrow: true });
-		requireResolvedCaller(scope, "githubRepoMapping:getByRepo", {
-			alsoRefusePreOrg: true,
-		});
+		const door = "githubRepoMapping:getByRepo";
+		const transportScope = await withOrgScope(ctx, { refuseWithoutThrow: true });
+		requireResolvedCaller(transportScope, door, { alsoRefusePreOrg: true });
+		const scope = await resolveVerifiedOrgScope(
+			ctx,
+			transportScope,
+			args.verifiedOrg,
+			door,
+		);
 		const row = await lookupByRepo(ctx, args.repo);
 		if (row === null) return null;
-		requireRowOwnedBy(scope, row, "githubRepoMapping:getByRepo");
+		requireRowOwnedBy(scope, row, door);
 		return row;
 	},
 });
@@ -194,9 +213,8 @@ function decodeRepoCursor(cursor: string | undefined): RepoCursorPayload | undef
 	}
 }
 
-export const GITHUB_REPO_MAPPING_LIST_SCAN_CAP = 2000;
-
 // returns-projection: fields="lite" returns a routing-view summary (repoMappingLiteObject), full mapping fetched via getByRepo
+// fleet-wide: a claimless service-account call is the fleet master reading the whole repo-mapping corpus, which is this door's purpose; a non-master bearer arrives with `verifiedOrg` (the MCP forwards it, and refuses a bearer whose organisation it cannot resolve before Convex) and is confined to that organisation's rows.
 export const list = query({
 	args: {
 		fields: v.optional(v.union(v.literal("lite"), v.literal("full"))),
@@ -257,10 +275,12 @@ export const list = query({
 			args.verifiedOrg,
 			"githubRepoMapping:list",
 		);
-		// A master reads the whole corpus. An org member reads ONLY the rows its
-		// own org owns (the server-stamped `orgId`), via the by_org index.
-		const memberOrg = scope.isMaster ? null : scope.orgSlug;
-		if (!scope.isMaster && memberOrg === null) return { items: [], nextCursor: null };
+		// The fleet reads the whole corpus (the package's standing; the operator
+		// human is the fleet for READS). An org member reads ONLY the rows its own
+		// org owns (the server-stamped `orgId`), via the by_org index.
+		const fleet = hasFleetRead(scope);
+		const memberOrg = fleet ? null : scope.orgSlug;
+		if (!fleet && memberOrg === null) return { items: [], nextCursor: null };
 
 		const DEFAULT_LIMIT = 20;
 		const CAP = 200;
@@ -271,46 +291,33 @@ export const list = query({
 		// Decode cursor payload; fall back to createdBefore legacy anchor
 		const cursorPayload = decodeRepoCursor(args.cursor);
 
-		// PR #635 wide-scan-cap pattern (see convex/tasks.ts TASK_LIST_SCAN_CAP,
-		// convex/profiles.ts PROFILES_LIST_SCAN_CAP, lot 1 mission k574p02m).
-		// mission k574p02m DEFECT 2, lot 2 — the previous `limit * 4 + 10` fixed
-		// multiplier is a FALLIBLE buffer: `.take(fetchLimit)` always re-reads
-		// only the TOP `fetchLimit` rows of the WHOLE ordering (not an offset
-		// continuation), so once the cursor anchor's true position exceeds this
-		// fixed window the anchor is never found and the page comes back empty
-		// before the true end. Widen the fetch to the shared scan cap.
-		// mission k574p02m lot 2 — Eta REVISE: widen on EITHER cursor source.
-		// The legacy `createdBefore` back-compat path also filters after
-		// `.take(fetchLimit)`, so it must widen too or it undershoots deep
-		// pages the same way the cursor path used to.
-		const wide = cursorPayload !== undefined || args.createdBefore !== undefined;
-		const fetchLimit = wide ? GITHUB_REPO_MAPPING_LIST_SCAN_CAP + 1 : limit + 1;
-
-		let rows: Doc<"githubRepoMapping">[] =
+		// The page is cut from a range that is already narrowed: the tenant (the
+		// `by_org` index range) and the paging anchor (`_creationTime` is the last
+		// key of every index) are part of the range itself, so a page is never cut
+		// first and narrowed after. The cursor anchors on the creation time of the
+		// last row served — a deleted anchor row cannot empty the next page. The
+		// legacy `createdBefore` anchor is the same range bound; the cursor takes
+		// precedence when both are passed.
+		const anchor = cursorPayload?.time ?? args.createdBefore;
+		const rows =
 			memberOrg === null
-				? await ctx.db.query("githubRepoMapping").order("desc").take(fetchLimit)
+				? await ctx.db
+						.query("githubRepoMapping")
+						.withIndex("by_creation_time", (q) =>
+							anchor === undefined ? q : q.lt("_creationTime", anchor),
+						)
+						.order("desc")
+						.take(limit + 1)
 				: await ctx.db
 						.query("githubRepoMapping")
-						.withIndex("by_org", (q) => q.eq("orgId", memberOrg))
+						.withIndex("by_org", (q) => {
+							const byOrg = q.eq("orgId", memberOrg);
+							return anchor === undefined
+								? byOrg
+								: byOrg.lt("_creationTime", anchor);
+						})
 						.order("desc")
-						.take(fetchLimit);
-
-		// Apply cursor filter: skip rows up to and including the anchor row.
-		if (cursorPayload !== undefined) {
-			let pastAnchor = false;
-			rows = rows.filter((r) => {
-				if (pastAnchor) return true;
-				if (r._id === cursorPayload.id) {
-					pastAnchor = true;
-					return false; // skip the anchor row itself
-				}
-				return false; // skip rows before anchor (newer in desc order)
-			});
-		} else if (args.createdBefore !== undefined) {
-			// Legacy back-compat: filter by createdBefore timestamp
-			const before = args.createdBefore;
-			rows = rows.filter((r) => r._creationTime < before);
-		}
+						.take(limit + 1);
 
 		// Detect next page
 		const hasMore = rows.length > limit;
@@ -340,6 +347,7 @@ export const list = query({
 	},
 });
 
+// fleet-wide: a claimless service-account call is the fleet master maintaining the FLEET's repo mappings, which is this door's purpose; a non-master bearer arrives with `verifiedOrg` (the MCP forwards it, and refuses a bearer whose organisation it cannot resolve before Convex) and writes only its own organisation's rows.
 export const add = mutation({
 	args: {
 		repo: v.string(),
@@ -348,18 +356,30 @@ export const add = mutation({
 		active: v.optional(v.boolean()),
 		reviewer: v.optional(v.string()),
 		fallbackReviewer: v.optional(v.string()),
+		// The organisation the MCP transport VERIFIED for a bearer that reaches
+		// Convex as the fleet service account. Believed from the service account
+		// only; the door then acts as that org's member, never as the fleet
+		// (convex/lib/verifiedOrg.ts).
+		verifiedOrg: v.optional(verifiedOrgValidator),
 	},
 	handler: async (ctx, args) => {
 		// write-contract: MCP-transport-only — issued via mcp-server client.mutation("githubRepoMapping:add", …) at mcp-server/src/tools.ts:7892 (imperative), 0 hits in vantage-peers-dashboard {app,components,hooks,lib,contexts,providers} (measured 2026-10-01 at origin/main e2dc58f and 0466fac); never a subscribing pre-org client shell. The no-org throw is a refusal at an imperative MCP call, never at a render.
-		const scope = await withOrgScope(ctx);
-		const tenant = resolveWriteTenant(scope, "githubRepoMapping:add");
+		const door = "githubRepoMapping:add";
+		const transportScope = await withOrgScope(ctx);
+		const scope = await resolveVerifiedOrgScope(
+			ctx,
+			transportScope,
+			args.verifiedOrg,
+			door,
+		);
+		const tenant = resolveWriteTenant(scope, door);
 		// A member routes only to orchestrators of its OWN roster.
-		requireOrchestratorOnRoster(scope, args.orchestrator, "githubRepoMapping:add", "assignee");
+		requireOrchestratorOnRoster(scope, args.orchestrator, door, "assignee");
 		if (args.reviewer !== undefined) {
-			requireOrchestratorOnRoster(scope, args.reviewer, "githubRepoMapping:add", "assignee");
+			requireOrchestratorOnRoster(scope, args.reviewer, door, "assignee");
 		}
 		if (args.fallbackReviewer !== undefined) {
-			requireOrchestratorOnRoster(scope, args.fallbackReviewer, "githubRepoMapping:add", "assignee");
+			requireOrchestratorOnRoster(scope, args.fallbackReviewer, door, "assignee");
 		}
 		// PROOF OF OWNERSHIP. A member may map only a repo whose GitHub OWNER is
 		// bound to its own org through a GitHub-verified step
@@ -374,7 +394,7 @@ export const add = mutation({
 			}
 			if (!(await repoOwnerBoundToOrg(ctx, args.repo, tenant))) {
 				throw new ConvexError(
-					`RBAC_DENIED: the GitHub owner of "${args.repo}" is not bound to org "${tenant}" — an owner binding for it must exist first — ${JSON.stringify({ reason: "github-owner-not-bound", door: "githubRepoMapping:add", repo: args.repo })}`,
+					`RBAC_DENIED: the GitHub owner of "${args.repo}" is not bound to org "${tenant}" — an owner binding for it must exist first — ${JSON.stringify({ reason: "github-owner-not-bound", door, repo: args.repo })}`,
 				);
 			}
 		}
@@ -384,7 +404,7 @@ export const add = mutation({
 			.withIndex("by_repo", (q) => q.eq("repo", args.repo))
 			.unique();
 		if (existing) {
-			requireRowOwnedBy(scope, existing, "githubRepoMapping:add");
+			requireRowOwnedBy(scope, existing, door);
 			await ctx.db.patch(existing._id, {
 				orchestrator: args.orchestrator,
 				project: args.project,
@@ -413,18 +433,31 @@ export const add = mutation({
 	},
 });
 
+// fleet-wide: a claimless service-account call is the fleet master maintaining the FLEET's repo mappings, which is this door's purpose; a non-master bearer arrives with `verifiedOrg` (the MCP forwards it, and refuses a bearer whose organisation it cannot resolve before Convex) and writes only its own organisation's rows.
 export const remove = mutation({
-	args: { repo: v.string() },
+	args: {
+		repo: v.string(),
+		// The organisation the MCP transport VERIFIED for a bearer that reaches
+		// Convex as the fleet service account (convex/lib/verifiedOrg.ts).
+		verifiedOrg: v.optional(verifiedOrgValidator),
+	},
 	handler: async (ctx, args) => {
 		// write-contract: MCP-transport-only — issued via mcp-server client.mutation("githubRepoMapping:remove", …) at mcp-server/src/tools.ts:8085 (imperative), 0 hits in vantage-peers-dashboard {app,components,hooks,lib,contexts,providers} (measured 2026-10-01 at origin/main e2dc58f and 0466fac); never a subscribing pre-org client shell. The no-org throw is a refusal at an imperative MCP call, never at a render.
-		const scope = await withOrgScope(ctx);
-		resolveWriteTenant(scope, "githubRepoMapping:remove");
+		const door = "githubRepoMapping:remove";
+		const transportScope = await withOrgScope(ctx);
+		const scope = await resolveVerifiedOrgScope(
+			ctx,
+			transportScope,
+			args.verifiedOrg,
+			door,
+		);
+		resolveWriteTenant(scope, door);
 		const existing = await ctx.db
 			.query("githubRepoMapping")
 			.withIndex("by_repo", (q) => q.eq("repo", args.repo))
 			.unique();
 		if (existing) {
-			requireRowOwnedBy(scope, existing, "githubRepoMapping:remove");
+			requireRowOwnedBy(scope, existing, door);
 			await ctx.db.delete(existing._id);
 			return { deleted: true };
 		}

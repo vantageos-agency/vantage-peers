@@ -93,6 +93,7 @@ export const listActiveRepos = internalQuery({
 // Public query — read stats (for dashboard / sales page)
 // returns-projection: dashboard summary rows omit issueDetails, the bulky per-issue array; not needed for the daily trend view
 // ─────────────────────────────────────────────────────────────────────────────
+// fleet-wide: issueStats aggregates the fleet's own GitHub repositories with no tenant column, so reading the whole table is this door's purpose; only the fleet standing (the service account, or the operator human on a READ) is served.
 export const getLatest = query({
 	args: {
 		repo: v.optional(v.string()),
