@@ -356,6 +356,11 @@ const INTENTIONAL_PROJECTIONS: Record<string, { fields: string[]; reason: string
 		reason:
 			"`fields: \"lite\"|\"full\"` API — `briefingNoteSearchLiteValidator` is the deliberate lite projection of a keyword hit (the handler maps `_id`/`title`/`topic`/`createdBy`/`createdAt`/`participants` explicitly, never spreading the raw row); `briefingNoteFullValidator` (in the same union) already COVERS.",
 	},
+	"messages.searchMessagesByKeyword#messageSearchLiteValidator": {
+		fields: ["fromId", "fromInstanceId", "tenantId", "tenantOrgId"],
+		reason:
+			"`fields: \"lite\"|\"full\"` API — `messageSearchLiteValidator` is the deliberate lite projection of a keyword hit (the handler maps `_id`/`from`/`channel`/`content`/`sessionDay`/`createdAt` explicitly, never spreading the raw row; the sender is carried by the display label alone, and the tenant stamps are not part of a hit); `messageRowValidator` (in the same union) already COVERS. Added when batch A put a returns validator on the door.",
+	},
 	"githubRepoMapping.list#repoMappingLiteObject": {
 		fields: ["active", "lastDeployedSHA", "lastDeployedAt", "reviewer", "fallbackReviewer", "orgId", "clerkOrgId"],
 		reason:

@@ -2805,6 +2805,17 @@ export const getById = query({
 // Filter axes: from, channel, sessionDay, tenantId (matches messages.list()).
 // ─────────────────────────────────────────────────────────────────────────────
 
+// The deliberate lite projection of a keyword hit (`fields: "lite"`): the handler
+// maps these six fields explicitly and never spreads the raw row.
+const messageSearchLiteValidator = v.object({
+	_id: v.id("messages"),
+	from: creatorValidator,
+	channel: v.string(),
+	content: v.string(),
+	sessionDay: v.optional(v.number()),
+	createdAt: v.number(),
+});
+
 // R-54 exit (c). fleet-wide: the fleet master and the operator admin read every
 // tenant's messages by design (search_messages_by_keyword for the fleet master); a client caller never reaches that
 // reach: a `verifiedOrg` claim or an org session runs the member path, whose
@@ -2826,16 +2837,7 @@ export const searchMessagesByKeyword = query({
 	// returns the whole message document.
 	returns: v.union(
 		v.array(messageRowValidator),
-		v.array(
-			v.object({
-				_id: v.id("messages"),
-				from: creatorValidator,
-				channel: v.string(),
-				content: v.string(),
-				sessionDay: v.optional(v.number()),
-				createdAt: v.number(),
-			}),
-		),
+		v.array(messageSearchLiteValidator),
 	),
 	handler: async (ctx, args) => {
 		// ── Identity-derived tenant scope ────────────────────────────────────────

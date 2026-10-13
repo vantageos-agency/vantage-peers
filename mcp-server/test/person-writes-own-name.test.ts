@@ -215,17 +215,10 @@ function idFrom(result: ToolResult, key: string): string {
 }
 
 // The assignee of a task a person creates is an agent of the person's org (an
-// assignment resolves to an agents-row ID of the task's own org).
+// assignment resolves to an agents-row ID of the task's own org) AND is listed on
+// that org's roster by ID (`allowedAgentIds`): the agents row alone is not enough.
 async function seedAssignee(): Promise<void> {
-	await t.run(async (ctx) => {
-		await ctx.db.insert("agents", {
-			orgSlug: "org-a",
-			name: "agent-a",
-			normalizedName: "agent-a",
-			isActive: true,
-			createdAt: Date.now(),
-		});
-	});
+	await seedRosterAgents(t);
 }
 
 async function agentCredential(): Promise<string> {

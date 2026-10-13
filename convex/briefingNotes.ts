@@ -91,6 +91,42 @@ async function isNoteAuthor(
 	return callerActorId === (await noteCreatorId(ctx, note));
 }
 
+/**
+ * The caller a briefing-note agent door acts as, or this door's own coded refusal.
+ *
+ * The shared caller resolver (tasks:requireAuthenticatedCaller, batch B) holds a
+ * member to its organisation's roster BY AGENT ID and says so as
+ * CALLER_IDENTITY_MISMATCH. A briefing-note door pins its refusals as
+ * RBAC_DENIED carrying the door and a reason (R-16; batch C), so the roster
+ * refusal is re-said in that shape: same denial, same payload the door already
+ * returns to every other caller that is not the author. Any other error passes.
+ */
+async function authenticatedAgentOrRefuse(
+	ctx: MutationCtx,
+	refusal: { message: string; payload: Record<string, unknown> },
+	...callerArgs: Parameters<typeof requireAuthenticatedCaller> extends [
+		unknown,
+		...infer Rest,
+	]
+		? Rest
+		: never
+): ReturnType<typeof requireAuthenticatedCaller> {
+	try {
+		return await requireAuthenticatedCaller(ctx, ...callerArgs);
+	} catch (error) {
+		if (
+			error instanceof ConvexError &&
+			typeof error.data === "string" &&
+			error.data.startsWith("CALLER_IDENTITY_MISMATCH:")
+		) {
+			throw new ConvexError(
+				`RBAC_DENIED: ${refusal.message} — ${JSON.stringify(refusal.payload)}`,
+			);
+		}
+		throw error;
+	}
+}
+
 /** The IDs the labels name in `orgSlug` (undefined = operator org); labels naming nobody there have none. */
 async function idsOfLabels(
 	ctx: Ctx,
@@ -371,8 +407,16 @@ export const create = mutation({
 			// The author is the agent the PROOF names (credential / verifiedActor /
 			// the label looked up in the caller's own org), never the label. A member
 			// whose proof names no agent of its org may not write under that name.
-			const caller = await requireAuthenticatedCaller(
+			const caller = await authenticatedAgentOrRefuse(
 				ctx,
+				{
+					message: `"${claimedCreator}" names no agent of the caller's organisation — a briefing note is authored by an agent resolved by ID, a label that names none is refused`,
+					payload: {
+						reason: "actor-not-an-agent-of-org",
+						door: "briefingNotes:create",
+						orgSlug: scope.orgSlug,
+					},
+				},
 				claimedCreator,
 				undefined,
 				verifiedActor,
@@ -1086,8 +1130,16 @@ export const deleteBriefingNote = mutation({
 		// The caller is the agent its PROOF names (credential / verifiedActor / the
 		// label looked up in its own org) and must be the note's author BY ID.
 		requireOrchestratorOnRoster(scope, args.callerOrchestrator, "briefingNotes:deleteBriefingNote", "actor");
-		const caller = await requireAuthenticatedCaller(
+		const caller = await authenticatedAgentOrRefuse(
 			ctx,
+			{
+				message: `only ${note.createdBy} (creator) or system can delete this briefing note`,
+				payload: {
+					registration: "briefingNotes:deleteBriefingNote",
+					orgSlug: scope.orgSlug,
+					reason: "not-creator",
+				},
+			},
 			args.callerOrchestrator,
 			undefined,
 			args.verifiedActor,
@@ -1195,8 +1247,16 @@ export const update = mutation({
 		if (callerOrchestrator !== undefined) {
 			requireOrchestratorOnRoster(scope, callerOrchestrator, "briefingNotes:update", "actor");
 			callerActorId = (
-				await requireAuthenticatedCaller(
+				await authenticatedAgentOrRefuse(
 					ctx,
+					{
+						message: `${callerOrchestrator} is not creator of this briefing note`,
+						payload: {
+							registration: "briefingNotes:update",
+							orgSlug: scope.orgSlug,
+							reason: "not-creator",
+						},
+					},
 					callerOrchestrator,
 					undefined,
 					verifiedActor,

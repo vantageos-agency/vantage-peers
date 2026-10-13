@@ -147,8 +147,22 @@ describe("C0.3 — add_repo_mapping master-only gate", () => {
 		// Repo mappings are tenant-owned (githubRepoMapping.orgId, stamped server-side).
 		// The mock Convex client accepts; the real door's member/scope/own-rows
 		// refusals are pinned in convex/__tests__/repoMappingTenant.test.ts.
-		const result = await callTool("add_repo_mapping", args, buildScopedCtx());
+		const result = await callTool(
+			"add_repo_mapping",
+			args,
+			buildScopedCtx({ clerkOrgSlug: "org-a" }),
+		);
 		expect(result.isError).toBeFalsy();
+	});
+
+	it("a scoped bearer whose organisation cannot be resolved is refused before Convex (a lookup miss is a deny)", async () => {
+		// Batch E: repo-mapping doors act for the bearer's VERIFIED organisation; a
+		// non-master bearer with none is refused at the MCP layer instead of reaching
+		// the door as the fleet service account.
+		const result = await callTool("add_repo_mapping", args, buildScopedCtx());
+		expect(result.isError).toBe(true);
+		expect(getText(result)).toMatch(/RBAC_DENIED/);
+		expect(getText(result)).toMatch(/verified-org-unresolved/);
 	});
 
 	it("happy path: master bearer → passes through", async () => {
@@ -175,9 +189,19 @@ describe("C0.3 — remove_repo_mapping master-only gate", () => {
 		const result = await callTool(
 			"remove_repo_mapping",
 			args,
-			buildScopedCtx(),
+			buildScopedCtx({ clerkOrgSlug: "org-a" }),
 		);
 		expect(result.isError).toBeFalsy();
+	});
+
+	it("a scoped bearer whose organisation cannot be resolved is refused before Convex (a lookup miss is a deny)", async () => {
+		const result = await callTool(
+			"remove_repo_mapping",
+			args,
+			buildScopedCtx(),
+		);
+		expect(result.isError).toBe(true);
+		expect(getText(result)).toMatch(/verified-org-unresolved/);
 	});
 
 	it("happy path: master bearer → passes through", async () => {

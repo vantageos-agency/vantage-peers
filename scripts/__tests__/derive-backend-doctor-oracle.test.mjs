@@ -374,8 +374,8 @@ describe("derive-backend-doctor-oracle coherence tier + written justification", 
 			mutate(
 				root,
 				"convex/githubRepoMapping.ts",
-				'requireResolvedCaller(scope, "githubRepoMapping:getByRepo", {\n\t\t\talsoRefusePreOrg: true,\n\t\t});',
-				'requireResolvedCaller(scope, "githubRepoMapping:getByRepo", {\n\t\t\talsoRefusePreOrg: true,\n\t\t\tmasterOnly: true,\n\t\t});',
+				"requireResolvedCaller(transportScope, door, { alsoRefusePreOrg: true });",
+				"requireResolvedCaller(transportScope, door, { alsoRefusePreOrg: true, masterOnly: true });",
 			);
 			const r = derive(root);
 			expect(r.status, r.stderr).toBe(0);
