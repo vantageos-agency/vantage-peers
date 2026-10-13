@@ -32,6 +32,7 @@ import { describe, expect, test } from "vitest";
 import { api } from "../_generated/api";
 import schema from "../schema";
 import { seedRosterAgent } from "../../tests/fixtures/rosterAgent";
+import { agentIdInCtx } from "../../tests/lib/agentIdOf";
 import { seedRosterAgents } from "../../tests/lib/seedRosterAgents";
 import { analyse as analyseSystemWord } from "../../tests/lib/systemWordAst";
 import { testClerkOrgId } from "../../tests/fixtures/testClerkOrgId";
@@ -156,8 +157,9 @@ async function seedDiary(t: T, orchestrator: string) {
 }
 
 async function seedMessage(t: T, from: string, tenantId = "org-a") {
-	return await t.run((ctx) =>
+	return await t.run(async (ctx) =>
 		ctx.db.insert("messages", {
+			fromId: await agentIdInCtx(ctx, tenantId, from),
 			from,
 			channel: "seat-x",
 			content: "seed message",
@@ -194,7 +196,7 @@ describe("briefingNotes.deleteBriefingNote — the word 'system' is not authorit
 				noteId,
 				callerOrchestrator: "system",
 			}),
-		).rejects.toThrow(/RBAC_DENIED: actor "system" is not an orchestrator of org "org-a"/);
+		).rejects.toThrow(/RBAC_DENIED: (only seat-b \(creator\)|system is not creator)/);
 		expect(await t.run((ctx) => ctx.db.get(noteId))).not.toBeNull();
 	});
 
@@ -240,7 +242,7 @@ describe("briefingNotes.update — the word 'system' is not authority", () => {
 				callerOrchestrator: "system",
 				title: "hijacked",
 			}),
-		).rejects.toThrow(/RBAC_DENIED: actor "system" is not an orchestrator of org "org-a"/);
+		).rejects.toThrow(/RBAC_DENIED: (only seat-b \(creator\)|system is not creator)/);
 		const row = await t.run((ctx) => ctx.db.get(noteId));
 		expect(row?.title).toBe("seed note");
 	});

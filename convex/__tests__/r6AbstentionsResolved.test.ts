@@ -26,6 +26,7 @@
 
 import { convexTest } from "../../tests/fixtures/convexTestWithServiceAccount";
 import { describe, expect, test } from "vitest";
+import { seedRosterAgent } from "../../tests/fixtures/rosterAgent";
 import { testClerkOrgId } from "../../tests/fixtures/testClerkOrgId";
 import { api } from "../_generated/api";
 import schema from "../schema";
@@ -67,6 +68,8 @@ async function seedOrgs(t: T) {
 				isActive: true,
 				createdAt: Date.now(),
 			});
+			// The routed seat is an agent of the org on its stored ID roster.
+			await seedRosterAgent(ctx, slug, seat);
 		}
 	});
 }

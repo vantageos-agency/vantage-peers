@@ -130,11 +130,16 @@ async function refusalOf(p: Promise<unknown>): Promise<string> {
 	throw new Error("expected a refusal, got a success");
 }
 
-async function expectDenied(p: Promise<unknown>, door: string, kind: string) {
+async function expectDenied(
+	p: Promise<unknown>,
+	door: string,
+	kind: string,
+	reason = `${kind}-not-on-roster`,
+) {
 	const refusal = await refusalOf(p);
 	expect(refusal).toContain("RBAC_DENIED");
 	expect(refusal).toContain(door);
-	expect(refusal).toMatch(new RegExp(`reason\\\\*":\\\\*"${kind}-not-on-roster`));
+	expect(refusal).toMatch(new RegExp(`reason\\\\*":\\\\*"${reason}`));
 }
 
 async function seedMission(t: T, orgId: string | undefined) {
@@ -171,6 +176,9 @@ describe("briefingNotes:create — author is the caller's own", () => {
 			member(t).mutation(api.briefingNotes.create, args("eta")),
 			"briefingNotes:create",
 			"actor",
+			// Identity by ID: a label that names no agent of the caller's org is one case
+			// (it used to split on whether a name roster listed it).
+			"actor-not-an-agent-of-org",
 		);
 		expect(await t.run((c) => c.db.query("briefingNotes").collect())).toHaveLength(0);
 	});

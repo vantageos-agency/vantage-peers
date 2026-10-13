@@ -20,6 +20,7 @@ import { describe, expect, test } from "vitest";
 import { api } from "../_generated/api";
 import type { Id } from "../_generated/dataModel";
 import schema from "../schema";
+import { testClerkOrgId } from "../../tests/fixtures/testClerkOrgId";
 import { insertTaskRow } from "../../tests/lib/seedFleetAgents";
 
 
@@ -48,6 +49,7 @@ async function setup() {
 		for (const slug of ["org-a", "org-b"]) {
 			await ctx.db.insert("client_org_mapping", {
 				clerkOrgSlug: slug,
+				clerkOrgId: testClerkOrgId(slug),
 				allowedOrchestrators: ["eta"],
 				scopes: ["view-own-tasks"],
 				displayName: slug,
@@ -57,6 +59,7 @@ async function setup() {
 		}
 		agentId = await ctx.db.insert("agents", {
 			orgSlug: "org-a",
+			clerkOrgId: testClerkOrgId("org-a"),
 			name: "eta",
 			normalizedName: "eta",
 			isActive: true,
@@ -65,6 +68,7 @@ async function setup() {
 		// org-b has its own "eta": the same label, a different agent.
 		await ctx.db.insert("agents", {
 			orgSlug: "org-b",
+			clerkOrgId: testClerkOrgId("org-b"),
 			name: "eta",
 			normalizedName: "eta",
 			isActive: true,
@@ -78,6 +82,7 @@ async function setup() {
 			priority: "low",
 			status: "in_progress",
 			orgId: "org-b",
+			clerkOrgId: testClerkOrgId("org-b"),
 			startedAt: now - 60_000,
 			workSegments: [{ start: now - 60_000 }],
 			createdAt: now,
@@ -146,6 +151,7 @@ describe("org-a 'eta' WITH verifiedActor vs an org-b 'eta' task", () => {
 			await t.run((ctx) =>
 				ctx.db.patch(taskId, {
 					orgId: "org-a",
+					clerkOrgId: testClerkOrgId("org-a"),
 					assignedToId: agentId,
 					createdById: agentId,
 				}),

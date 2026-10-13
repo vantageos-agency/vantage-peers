@@ -17,6 +17,7 @@
 import { convexTest } from "../../tests/fixtures/convexTestWithServiceAccount";
 import { describe, expect, test } from "vitest";
 import { seedRosterAgent } from "../../tests/fixtures/rosterAgent";
+import { agentIdInCtx } from "../../tests/lib/agentIdOf";
 import { testClerkOrgId } from "../../tests/fixtures/testClerkOrgId";
 import { api, internal } from "../_generated/api";
 import type { Id } from "../_generated/dataModel";
@@ -95,7 +96,15 @@ type Owner = "own" | "other" | "unowned";
 /** message tenant: own org-a, other org-b, unstamped (no tenantId). */
 async function seedMessage(t: T, owner: Owner) {
 	return await t.run(async (ctx) => {
+		// The sender is an agent of org-a on its stored ID roster, as a sent message's
+		// sender is.
+		const sigma =
+			owner === "own"
+				? ((await agentIdInCtx(ctx, "org-a", "sigma")) ??
+					(await seedRosterAgent(ctx, "org-a", "sigma")))
+				: undefined;
 		const id = await ctx.db.insert("messages", {
+			...(sigma !== undefined ? { fromId: sigma } : {}),
 			from: "sigma",
 			channel: "sigma",
 			content: "seed",
@@ -106,6 +115,7 @@ async function seedMessage(t: T, owner: Owner) {
 		await ctx.db.insert("messageReceipts", {
 			messageId: id,
 			recipient: "sigma",
+			...(sigma !== undefined ? { recipientId: sigma } : {}),
 			readAt: undefined,
 			...(owner === "own" ? { tenantId: "org-a", tenantOrgId: testClerkOrgId("org-a") } : {}),
 		});

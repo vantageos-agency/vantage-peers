@@ -129,6 +129,8 @@ async function mapAcmeRepo(t: T) {
 			active: true,
 		});
 	});
+	// The routed orchestrator is an agent of the org on its stored ID roster.
+	await seedRosterAgents(t);
 	return await asOrg(t, ACME.slug).mutation(api.githubRepoMapping.add, {
 		repo: "acme-gh/repo",
 		orchestrator: SEAT,

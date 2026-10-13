@@ -12,6 +12,8 @@
  */
 import { convexTest } from "../../tests/fixtures/convexTestWithServiceAccount";
 import { describe, expect, test } from "vitest";
+import { agentIdInCtx } from "../../tests/lib/agentIdOf";
+import { seedRosterAgent } from "../../tests/fixtures/rosterAgent";
 import { testClerkOrgId } from "../../tests/fixtures/testClerkOrgId";
 import { api } from "../_generated/api";
 import { UNCLAIMED_SERVICE_ACCOUNT_READS_EVERY_TENANT } from "../lib/inboxReader";
@@ -50,13 +52,17 @@ async function seedMappings(t: T) {
 				isActive: true,
 				createdAt: Date.now(),
 			});
+			await seedRosterAgent(ctx, org, "seat-x");
 		}
 	});
 }
 
 async function seedRow(t: T, tenantId: string | undefined) {
 	return await t.run(async (ctx) => {
+		const seat =
+			tenantId === undefined ? undefined : await agentIdInCtx(ctx, tenantId, "seat-x");
 		const messageId = await ctx.db.insert("messages", {
+			...(seat !== undefined ? { fromId: seat } : {}),
 			from: "seat-x",
 			tenantId,
 			tenantOrgId: testClerkOrgId(tenantId),
@@ -67,6 +73,7 @@ async function seedRow(t: T, tenantId: string | undefined) {
 		const receiptId = await ctx.db.insert("messageReceipts", {
 			messageId,
 			recipient: "seat-x",
+			...(seat !== undefined ? { recipientId: seat } : {}),
 			tenantId,
 			tenantOrgId: testClerkOrgId(tenantId),
 			readAt: undefined,
