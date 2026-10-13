@@ -100,6 +100,12 @@ for (const rule of rules) {
 	lines.push(`${rule.padEnd(7)} ${String(base).padStart(8)}  ${String(head).padStart(4)}  ${sign}${mark}`);
 }
 console.log(lines.join("\n"));
+// One line a reviewer and Pi's merge guard read literally (task k179600rsb4xsv7a975cjkqwhs8g7qhv).
+const SIX = ["CR-2", "R-5", "R-53", "R-54", "R-55", "R-56"];
+const risen = rules.filter((r) => (measured[r] ?? 0) > (baseline[r] ?? 0)).length;
+console.log(
+	`RATCHET: ${evidence.sha ?? "unknown"} ${SIX.map((r) => `${r}=${measured[r] ?? 0}`).join(" ")} rise=${risen}`,
+);
 
 if (args["previous-baseline"]) {
 	const prev = baselineCounts(readJson(args["previous-baseline"], "previous baseline"), "previous baseline");

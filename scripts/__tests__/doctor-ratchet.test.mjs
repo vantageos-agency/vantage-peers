@@ -37,6 +37,14 @@ describe("doctor-ratchet: a count may only go down", () => {
 	it("GREEN: counts equal to the baseline pass", () => {
 		const r = withBaseline("equal.json");
 		expect(r.status).toBe(0);
+		expect(r.out).toContain(
+			`RATCHET: ${"0".repeat(40)} CR-2=200 R-5=62 R-53=369 R-54=148 R-55=31 R-56=2 rise=0`,
+		);
+	});
+
+	it("RED: the RATCHET line reports the number of risen rules", () => {
+		const r = withBaseline("raised.json");
+		expect(r.out).toMatch(/^RATCHET: 0{40} .*R-53=370 .*rise=1$/m);
 	});
 
 	it("GREEN: lowered counts pass and say the baseline can be lowered", () => {
