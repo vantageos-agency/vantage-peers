@@ -17,6 +17,7 @@ import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import { api } from "../_generated/api";
 import type { Id } from "../_generated/dataModel";
 import schema from "../schema";
+import { asFleet } from "../../tests/lib/asFleet";
 
 const modules = Object.fromEntries(
 	Object.entries(import.meta.glob("../**/*.ts")).filter(
@@ -62,9 +63,7 @@ const decodePayload = (caught: unknown): WrongTablePayload => {
 // CLERK_SERVICE_ACCOUNT_USER_ID="test-service-account-user-id" set in
 // vitest.config.ts).
 const asMaster = (t: ReturnType<typeof createT>) =>
-	t.withIdentity({
-		subject: "test-service-account-user-id",
-	} as Parameters<typeof t.withIdentity>[0]);
+	asFleet(t.withIdentity({ subject: "test-service-account-user-id" } as Parameters<typeof t.withIdentity>[0]), t);
 
 const newMemory = (t: ReturnType<typeof createT>) =>
 	asMaster(t).mutation(api.memories.storeMemory, {

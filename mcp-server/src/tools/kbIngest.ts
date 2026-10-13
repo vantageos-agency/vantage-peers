@@ -37,6 +37,7 @@ import type { ConvexHttpClient } from "convex/browser";
 import { z } from "zod";
 import type { OAuthContext } from "../auth.js";
 import { defineTool } from "../registerTool.js";
+import { NO_VERIFIED_ORG, type VerifiedOrgArgs } from "../verifiedActor.js";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Return type shapes (mirror Convex action returns validators)
@@ -211,6 +212,10 @@ export function registerKbIngestTools(
 	server: McpServer,
 	convex: ConvexHttpClient,
 	oauthCtx: OAuthContext | undefined,
+	// The organisation THIS bearer was verified for, forwarded to every Convex door
+	// below (backend standard R-54: a service-account call that carries none is
+	// refused). Never a tool argument.
+	verifiedOrgArgs: VerifiedOrgArgs = NO_VERIFIED_ORG,
 ): void {
 	// ── Resolve orgId + namespace prefix from oauthCtx (B4 #915 pattern) ───────
 	// Validate here, once, before registering handlers.  Both tools share the
@@ -245,6 +250,12 @@ export function registerKbIngestTools(
 	};
 
 	// ── store_document_chunked ──────────────────────────────────────────────────
+	// oracle-justified: the boundary is the VERIFIED organisation, not the namespace
+	//   argument: the tool derives orgId from oauthCtx (resolveOrgContext) and the
+	//   Convex action resolves the caller again from the organisation the transport
+	//   verified for this bearer (verifiedOrg through contentClaims:scopeForAction,
+	//   kb.ts assertScopeAuthorizesOrg); a supplied orgId or namespace can only
+	//   CONFIRM that org, never re-scope the call.
 	defineTool(
 		server,
 		authCtx,
@@ -271,6 +282,7 @@ export function registerKbIngestTools(
 						docId: docId ?? undefined,
 						orgId,
 						namespace: namespacePrefix,
+						...verifiedOrgArgs(),
 					},
 				)) as StoreDocumentChunkedResult;
 
@@ -320,7 +332,7 @@ export function registerKbIngestTools(
 				type ActionRef = Parameters<ConvexHttpClient["action"]>[0];
 				const result = (await convex.action(
 					"kb:softDeleteDocument" as unknown as ActionRef,
-					{ docId, orgId, namespace: namespacePrefix },
+					{ docId, orgId, namespace: namespacePrefix, ...verifiedOrgArgs() },
 				)) as SoftDeleteDocumentResult;
 
 				return {
@@ -374,7 +386,7 @@ export function registerKbIngestTools(
 					// bound by store_document_chunked (never claimed, never validated).
 					const url = (await convex.mutation(
 						"kbMutations:generateUploadUrl" as unknown as MutationRef,
-						{ orgId, namespace: namespacePrefix },
+						{ orgId, namespace: namespacePrefix, ...verifiedOrgArgs() },
 					)) as string;
 					return {
 						content: [
@@ -391,7 +403,7 @@ export function registerKbIngestTools(
 				}
 				const { uploadUrl, ticket, expiresAt } = (await convex.mutation(
 					"kbMutations:generateUploadUrlWithTicket" as unknown as MutationRef,
-					{ orgId, namespace: namespacePrefix, sha256 },
+					{ orgId, namespace: namespacePrefix, sha256, ...verifiedOrgArgs() },
 				)) as { uploadUrl: string; ticket: string; expiresAt: number };
 
 				return {
@@ -449,7 +461,7 @@ export function registerKbIngestTools(
 				type MutationRef = Parameters<ConvexHttpClient["mutation"]>[0];
 				const result = (await convex.mutation(
 					"kbMutations:claimUpload" as unknown as MutationRef,
-					{ storageId, ticket },
+					{ storageId, ticket, ...verifiedOrgArgs() },
 				)) as { storageId: string; orgId: string };
 				return {
 					content: [{ type: "text" as const, text: JSON.stringify(result) }],

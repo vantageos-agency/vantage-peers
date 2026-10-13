@@ -35,8 +35,9 @@ import type { McpServer } from "@modelcontextprotocol/server";
 import { ProtocolError, ProtocolErrorCode } from "@modelcontextprotocol/server";
 import type { ConvexHttpClient } from "convex/browser";
 import { z } from "zod";
-import type { OAuthContext } from "../auth.js";
+import { checkNamespaceWrite, type OAuthContext } from "../auth.js";
 import { defineTool } from "../registerTool.js";
+import { NO_VERIFIED_ORG, type VerifiedOrgArgs } from "../verifiedActor.js";
 
 export interface ImportOkfBundleResult {
 	imported: { memories: number; briefings: number; tasks: number };
@@ -81,11 +82,25 @@ export function registerImportOkfBundle(
 	server: McpServer,
 	convex: ConvexHttpClient,
 	oauthCtx?: OAuthContext,
+	// The organisation THIS bearer was verified for (never a tool argument): the
+	// Convex action derives the import boundary from it and refuses a
+	// service-account call that carries none (backend standard R-54).
+	verifiedOrgArgs: VerifiedOrgArgs = NO_VERIFIED_ORG,
 ): void {
+	// oracle-justified: the boundary is the VERIFIED organisation, not the
+	//   targetNamespace argument: the Convex action derives the caller's scope from
+	//   the organisation the transport verified for this bearer (verifiedOrg
+	//   through contentClaims:scopeForAction) and refuses a target outside it
+	//   (okfBundleNode assertCanExportNamespace, the same gate as export); the
+	//   argument only names WHICH of the caller's own namespaces receives the rows.
 	defineTool(
 		server,
 		{ oauthCtx },
-		{ kind: "write", namespaceArg: "targetNamespace" },
+		{
+			kind: "filtered",
+			reason:
+				"import boundary derived from the verified organisation (verifiedOrg claim, resolved by the Convex action); targetNamespace is checked against it in the action and against the bearer's write prefixes here",
+		},
 		"import_okf_bundle",
 		"Import an OKF v0.1 bundle (memories + briefing-notes + tasks) into a target VantagePeers namespace. " +
 			"WHEN: use to restore a snapshot, migrate workspace data between tenants, or replay an export. " +
@@ -98,6 +113,15 @@ export function registerImportOkfBundle(
 			title: "Import OKF bundle",
 		},
 		async ({ bundleUrl, storageId, targetNamespace, mode, idempotencyKey }) => {
+			// The bearer's own write prefixes still bound the target here, as the
+			// `write` scope kind did before the boundary moved to the verified org.
+			const namespaceDenied = checkNamespaceWrite(oauthCtx, targetNamespace);
+			if (namespaceDenied !== null) {
+				return {
+					content: [{ type: "text" as const, text: namespaceDenied }],
+					isError: true as const,
+				};
+			}
 			try {
 				type ActionRef = Parameters<ConvexHttpClient["action"]>[0];
 				const result = (await convex.action(
@@ -108,6 +132,7 @@ export function registerImportOkfBundle(
 						targetNamespace,
 						mode,
 						idempotencyKey,
+						...verifiedOrgArgs(),
 					},
 				)) as ImportOkfBundleResult;
 

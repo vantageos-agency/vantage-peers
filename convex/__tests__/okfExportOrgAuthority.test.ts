@@ -10,6 +10,7 @@ import { convexTest } from "../../tests/fixtures/convexTestWithServiceAccount";
 import { describe, expect, test } from "vitest";
 import { testClerkOrgId } from "../../tests/fixtures/testClerkOrgId";
 import schema from "../schema";
+import { asFleet } from "../../tests/lib/asFleet";
 
 // biome-ignore lint/suspicious/noExplicitAny: string ref, codegen-lag workaround
 const EXPORT_REF = "okfBundleNode:exportOkfBundle" as any;
@@ -50,9 +51,7 @@ function asOrg(t: T, slug: string) {
 }
 
 function asService(t: T) {
-	return t.withIdentity({
-		subject: "test-service-account-user-id",
-	} as Parameters<typeof t.withIdentity>[0]);
+	return asFleet(t.withIdentity({ subject: "test-service-account-user-id" } as Parameters<typeof t.withIdentity>[0]), t);
 }
 
 const args = (slug: string) => ({

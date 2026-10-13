@@ -27,6 +27,7 @@ import { describe, expect, test } from "vitest";
 import { testClerkOrgId } from "../../tests/fixtures/testClerkOrgId";
 import { api } from "../_generated/api";
 import schema from "../schema";
+import { asFleet } from "../../tests/lib/asFleet";
 
 const modules = Object.fromEntries(
 	Object.entries(import.meta.glob("../**/*.ts")).filter(
@@ -66,9 +67,7 @@ async function seedOrg(t: T, slug: string, isActive = true) {
 }
 
 function asMaster(t: T) {
-	return t.withIdentity({
-		subject: "test-service-account-user-id",
-	} as Parameters<typeof t.withIdentity>[0]);
+	return asFleet(t.withIdentity({ subject: "test-service-account-user-id" } as Parameters<typeof t.withIdentity>[0]), t);
 }
 
 function asOrg(t: T, slug: string) {

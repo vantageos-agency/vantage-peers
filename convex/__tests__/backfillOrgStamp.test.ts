@@ -10,6 +10,7 @@ import { testClerkOrgId } from "../../tests/fixtures/testClerkOrgId";
 import { api, internal } from "../_generated/api";
 import { type StampTable, TABLE_ORDER } from "../migrations/backfill_org_stamp";
 import schema from "../schema";
+import { insertDiary } from "../../tests/lib/diaryRow";
 
 const modules = Object.fromEntries(
 	Object.entries(import.meta.glob("../**/*.ts")),
@@ -586,7 +587,7 @@ describe("backfill_org_stamp — diary and businessUnits (R-52 stamp)", () => {
 				});
 			}
 			for (const orchestrator of ["nadia", "sigma", "stranger"]) {
-				await ctx.db.insert("diary", {
+				await insertDiary(ctx, {
 					date: "2026-10-01",
 					orchestrator,
 					content: "c",

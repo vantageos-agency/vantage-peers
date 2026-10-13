@@ -32,6 +32,7 @@ import type { Id } from "../_generated/dataModel";
 import { packTarball } from "../okfBundleNode";
 import { type MemoryDoc, serializeMemory } from "../okfSerializer";
 import schema from "../schema";
+import { asFleet } from "../../tests/lib/asFleet";
 
 const modules = Object.fromEntries(
 	Object.entries(import.meta.glob("../**/*.ts")).filter(
@@ -68,9 +69,7 @@ async function seedOrg(t: T, slug: string) {
 
 function asMaster(t: T) {
 	// CLERK_SERVICE_ACCOUNT_USER_ID in vitest.config.ts
-	return t.withIdentity({
-		subject: "test-service-account-user-id",
-	} as Parameters<typeof t.withIdentity>[0]);
+	return asFleet(t.withIdentity({ subject: "test-service-account-user-id" } as Parameters<typeof t.withIdentity>[0]), t);
 }
 
 function asNoOrg(t: T) {

@@ -21,6 +21,7 @@ import { convexTest } from "../../tests/fixtures/convexTestWithServiceAccount";
 import { testClerkOrgId } from "../../tests/fixtures/testClerkOrgId";
 import { api } from "../_generated/api";
 import schema from "../schema";
+import { asFleet } from "../../tests/lib/asFleet";
 
 const modules = Object.fromEntries(
 	Object.entries(import.meta.glob("../**/*.ts")).filter(
@@ -55,7 +56,7 @@ const memberB = (t: T) => member(t, "user-b", ID_B, "beta");
 // A different organisation (different ID) that carries the SAME label as A.
 const impostor = (t: T) => member(t, "user-x", ID_IMPOSTOR, "acme");
 const asService = (t: T) =>
-	t.withIdentity({ subject: "test-service-account-user-id" });
+	asFleet(t.withIdentity({ subject: "test-service-account-user-id" }), t);
 
 async function seedOrgs(t: T) {
 	await t.run(async (ctx) => {

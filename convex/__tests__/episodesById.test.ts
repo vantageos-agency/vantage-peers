@@ -19,6 +19,7 @@ import { convexTest } from "../../tests/fixtures/convexTestWithServiceAccount";
 import { testClerkOrgId } from "../../tests/fixtures/testClerkOrgId";
 import { api } from "../_generated/api";
 import schema from "../schema";
+import { asFleet } from "../../tests/lib/asFleet";
 
 const modules = Object.fromEntries(
 	Object.entries(import.meta.glob("../**/*.ts")).filter(
@@ -45,7 +46,7 @@ const member = (t: T, label: string, id: string, subject: string) =>
 	} as Parameters<typeof t.withIdentity>[0]);
 
 const asService = (t: T) =>
-	t.withIdentity({ subject: "test-service-account-user-id" });
+	asFleet(t.withIdentity({ subject: "test-service-account-user-id" }), t);
 
 const ID_A = testClerkOrgId("org-a");
 const ID_IMPOSTOR = testClerkOrgId("impostor-org");

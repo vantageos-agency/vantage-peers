@@ -22,6 +22,8 @@ update_mission,agents+memberWriterRoles+missions+oauth_access_tokens,TRANSITION,
 update_recurring_task,agents+memberWriterRoles+oauth_access_tokens,UPDATE,org-member,orgResolver,recurringTasks:update=orgResolver
 create_recurring_task,agents+memberWriterRoles+oauth_access_tokens+recurringTasks,CREATE,org-member,orgResolver,recurringTasks:create=orgResolver
 create_task,agents+memberWriterRoles+oauth_access_tokens+tasks,CREATE,org-member,orgResolver,tasks:create=orgResolver
+store_episode,agents+memories,CREATE,org-member,orgResolver,episodes:storeEpisode=orgResolver
+store_memory,agents+memories,UPSERT,org-member,orgResolver,memories:storeMemory=orgResolver
 mark_as_read,agents+messageReceipts+oauth_access_tokens,UPDATE,org-member,orgResolver,messages:markAsRead=orgResolver
 instantiate_template_into_mission,agents+missionTemplates+missions+tasks,UPSERT,org-member,orgResolver,missionTemplates:instantiateTemplateIntoMission=orgResolver
 set_summary,agents+profiles,UPSERT,org-member,orgResolver,profiles:updateDynamic=orgResolver
@@ -50,8 +52,6 @@ start_task,memberWriterRoles+taskClosureConfig+tasks,TRANSITION,org-member,orgRe
 delete_task,memberWriterRoles+tasks,DELETE,org-member,orgResolver,tasks:deleteTask=orgResolver
 pause_task,memberWriterRoles+tasks,TRANSITION,org-member,orgResolver,tasks:pause=orgResolver
 soft_delete_document,memories,UPDATE,org-member,orgResolver,kb:softDeleteDocument=orgResolver
-store_episode,memories,CREATE,org-member,orgResolver,episodes:storeEpisode=orgResolver
-store_memory,memories,UPSERT,org-member,orgResolver,memories:storeMemory=orgResolver
 soft_delete_mission_template,missionTemplates,UPDATE,master,masterOnly,missionTemplates:softDelete=masterOnly
 update_mission_template,missionTemplates,UPSERT,master,masterOnly,missionTemplates:upsert=masterOnly
 add_deployment,monitoredDeployments,UPSERT,org-member,orgResolver,errorMonitor:addDeployment=orgResolver

@@ -40,8 +40,10 @@ export async function seedFleetAgents(
 ): Promise<Record<string, Id<"agents">>> {
 	return await t.run(async (ctx) => {
 		const mappings = await ctx.db.query("client_org_mapping").collect();
-		let slug = mappings.find((m) => m.isActive && m.orgKind === "operator")
-			?.clerkOrgSlug;
+		const operator = mappings.find(
+			(m) => m.isActive && m.orgKind === "operator",
+		);
+		let slug = operator?.clerkOrgSlug;
 		if (slug === undefined) {
 			slug = "fleet-operator";
 			await ctx.db.insert("client_org_mapping", {
@@ -55,6 +57,9 @@ export async function seedFleetAgents(
 				orgKind: "operator",
 			});
 		}
+		// The operator org is identified by its permanent ID: a fleet label resolves to
+		// the agent stamped with it (batch F1 content doors).
+		const orgClerkId = operator?.clerkOrgId ?? testClerkOrgId(slug);
 		const ids: Record<string, Id<"agents">> = {};
 		for (const name of labels) {
 			const key = normalizeOrchestratorId(name);
@@ -68,6 +73,7 @@ export async function seedFleetAgents(
 				existing?._id ??
 				(await ctx.db.insert("agents", {
 					orgSlug: slug as string,
+					clerkOrgId: orgClerkId,
 					name,
 					normalizedName: key,
 					isActive: true,

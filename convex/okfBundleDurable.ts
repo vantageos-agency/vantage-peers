@@ -71,15 +71,11 @@ import { hasFleetRead } from "@vantageos/cloud-identity";
 import { createFunctionHandle } from "convex/server";
 import { v } from "convex/values";
 import { components, internal as generatedInternal } from "./_generated/api";
-import {
-	internalMutation,
-	type MutationCtx,
-	mutation,
-	type QueryCtx,
-	query,
-} from "./_generated/server";
+import { internalMutation, mutation, query } from "./_generated/server";
+import { claimedOrgArgs, requireClaimedScope } from "./contentClaims";
 import { BUNDLE_PAGE_SIZE } from "./okfBundle";
 import {
+	type OrgScope,
 	requireResolvedCaller,
 	requireTenantNamespace,
 	withOrgScope,
@@ -105,14 +101,19 @@ const agentEngineComponents = components as any;
 // `internalMutation`s. The logic is intentionally identical — see
 // okfBundleNode.ts for the authoritative comment history (Eta REVISE
 // iter-2 #888 fail-closed fix, generalized non-master namespaces #B3).
+//
+// The caller is the scope the door resolved: the verified principal with the
+// organisation the transport VERIFIED for the bearer (`verifiedOrg`) applied
+// (convex/contentClaims.ts). A service-account call that carries none is refused
+// there (R-54).
 // ─────────────────────────────────────────────────────────────────────────
 
 
-async function assertCanExportNamespaceV8(
-	ctx: QueryCtx | MutationCtx,
+function assertCanExportNamespaceV8(
+	scope: OrgScope,
 	namespace: string,
 	door: string,
-): Promise<void> {
+): void {
 	if (typeof namespace !== "string" || namespace.length === 0) {
 		throw new Error(
 			`OKF_NAMESPACE_INVALID: namespace must be a non-empty string, got "${namespace}".`,
@@ -124,11 +125,10 @@ async function assertCanExportNamespaceV8(
 		);
 	}
 	// Ownership comes from the RESOLVED scope (an ACTIVE client_org_mapping row
-	// via `withOrgScope`), never from the raw org claim on the identity. Master
-	// is served any namespace; a member only `team/<resolvedOrgSlug>`; every
-	// other namespace, including `project/elpi-corp`, is master-only and refused
+	// via `withOrgScope`), never from the raw org claim on the identity. The fleet
+	// is served any namespace; a member only its own team namespace; every other
+	// namespace, including `project/elpi-corp`, is fleet-only and refused
 	// `RBAC_DENIED` naming the door. See okfBundleNode.ts:assertCanExportNamespace.
-	const scope = await withOrgScope(ctx, { refuseWithoutThrow: true });
 	requireTenantNamespace(scope, namespace, door);
 }
 
@@ -146,20 +146,27 @@ export const startOkfBundleExportDurable = mutation({
 		sinceMs: v.optional(v.number()),
 		totalSteps: v.number(),
 		maxAttemptsPerStep: v.optional(v.number()),
+		...claimedOrgArgs,
 	},
 	returns: v.string(),
 	handler: async (ctx, args): Promise<string> => {
 		// write-contract: no caller outside convex-test — 0 call sites in mcp-server (grep of "okfBundleDurable:startOkfBundleExportDurable" under mcp-server/src and mcp-server/server-http.ts) and 0 hits in vantage-peers-dashboard {app,components,hooks,lib,contexts,providers} (measured 2026-10-01 at origin/main e2dc58f and 0466fac); callers are convex/__tests__ only. No subscribing pre-org client shell can reach it; the no-org throw is a refusal at an imperative SDK call, never at a render.
-		await assertCanExportNamespaceV8(
+		const transport = await withOrgScope(ctx, { refuseWithoutThrow: true });
+		const scope = await requireClaimedScope(
 			ctx,
+			transport,
+			args.verifiedOrg,
+			"okfBundleDurable:startOkfBundleExportDurable",
+		);
+		assertCanExportNamespaceV8(
+			scope,
 			args.namespace,
 			"okfBundleDurable:startOkfBundleExportDurable",
 		);
 		// The tenant a durable export job is keyed by, taken from the RESOLVED
 		// scope: the member's permanent Clerk org ID, or the fleet marker for the
-		// master. Never from a caller argument; the namespace being exported is
+		// fleet. Never from a caller argument; the namespace being exported is
 		// its own field.
-		const scope = await withOrgScope(ctx, { refuseWithoutThrow: true });
 		const tenantOrgId = scope.orgClerkId ?? FLEET_EXPORT_TENANT;
 
 		if (args.totalSteps <= 0) {
@@ -382,7 +389,7 @@ export const _exportOkfBundleStepInternal = internalMutation({
 // ─────────────────────────────────────────────────────────────────────────
 
 export const getOkfBundleExportDurableStatus = query({
-	args: { jobId: v.string() },
+	args: { jobId: v.string(), ...claimedOrgArgs },
 	returns: v.object({
 		status: v.union(
 			v.literal("running"),
@@ -415,7 +422,13 @@ export const getOkfBundleExportDurableStatus = query({
 		// REFUSAL SHAPE — a RAISE. isolation-contract: no reactive subscriber
 		// (grep getOkfBundleExportDurableStatus in mcp-server/src and dashboard
 		// app components hooks lib -> 0 hits).
-		const scope = await withOrgScope(ctx, { refuseWithoutThrow: true });
+		const transport = await withOrgScope(ctx, { refuseWithoutThrow: true });
+		const scope = await requireClaimedScope(
+			ctx,
+			transport,
+			args.verifiedOrg,
+			"okfBundleDurable:getOkfBundleExportDurableStatus",
+		);
 		requireResolvedCaller(scope, "okfBundleDurable:getOkfBundleExportDurableStatus", {
 			alsoRefusePreOrg: true,
 		});
@@ -429,8 +442,8 @@ export const getOkfBundleExportDurableStatus = query({
 					`OKF_DURABLE_JOB_NOT_FOUND: no progress row for jobId="${args.jobId}".`,
 				);
 			}
-			await assertCanExportNamespaceV8(
-				ctx,
+			assertCanExportNamespaceV8(
+				scope,
 				owned.namespace,
 				"okfBundleDurable:getOkfBundleExportDurableStatus",
 			);
@@ -473,12 +486,23 @@ export const getOkfBundleExportDurableStatus = query({
 // unauthenticated existence oracle on `jobId` (mirrors
 // convex/briefingNotes.ts's deleteBriefingNote/update ordering).
 export const cancelOkfBundleExportDurable = mutation({
-	args: { jobId: v.string() },
+	args: { jobId: v.string(), ...claimedOrgArgs },
 	returns: v.null(),
 	handler: async (ctx, args) => {
 		// write-contract: no caller outside convex-test — 0 call sites in mcp-server (grep of "okfBundleDurable:cancelOkfBundleExportDurable" under mcp-server/src and mcp-server/server-http.ts) and 0 hits in vantage-peers-dashboard {app,components,hooks,lib,contexts,providers} (measured 2026-10-01 at origin/main e2dc58f and 0466fac); callers are convex/__tests__ only. No subscribing pre-org client shell can reach it; the no-org throw is a refusal at an imperative SDK call, never at a render.
-		const identity = await ctx.auth.getUserIdentity();
-		if (identity === null || identity === undefined) {
+		// Resolved BEFORE the progress row is read: an anonymous caller gets
+		// RBAC_DENIED, never an unauthenticated existence oracle on `jobId`, and a
+		// service-account call that carries no verified organisation is refused.
+		const transport = await withOrgScope(ctx, { refuseWithoutThrow: true });
+		const scope = await requireClaimedScope(
+			ctx,
+			transport,
+			args.verifiedOrg,
+			"okfBundleDurable:cancelOkfBundleExportDurable",
+		);
+		// An anonymous caller is refused BEFORE the job is looked up: the refusal is
+		// the same for a live and for an unknown jobId (no existence oracle).
+		if (scope.anonymous === true) {
 			throw new Error(
 				`AUTH_NO_IDENTITY: anonymous caller cannot cancel OKF durable export job "${args.jobId}".`,
 			);
@@ -497,8 +521,8 @@ export const cancelOkfBundleExportDurable = mutation({
 		// progress.namespace is the stored export namespace — reuse the exact
 		// tenant-membership check startOkfBundleExportDurable already
 		// enforces, never a second resolver.
-		await assertCanExportNamespaceV8(
-			ctx,
+		assertCanExportNamespaceV8(
+			scope,
 			progress.namespace,
 			"okfBundleDurable:cancelOkfBundleExportDurable",
 		);

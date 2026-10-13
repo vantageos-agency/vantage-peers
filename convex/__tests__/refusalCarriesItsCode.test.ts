@@ -55,6 +55,8 @@ import { seedRosterAgent } from "../../tests/fixtures/rosterAgent";
 import { testClerkOrgId } from "../../tests/fixtures/testClerkOrgId";
 import { api } from "../_generated/api";
 import schema from "../schema";
+import { asFleet } from "../../tests/lib/asFleet";
+import { insertDiary } from "../../tests/lib/diaryRow";
 
 // `search` / `ragSync` / `backfill` are excluded for the SAME reason every
 // sibling suite in this directory excludes them: convex/search.ts is a
@@ -105,9 +107,12 @@ const asNoOrg = (t: T) =>
 
 /** The fleet's own caller — ALLOW poles only, never to prove a denial. */
 const asMaster = (t: T) =>
-	t.withIdentity({ subject: SERVICE_ACCOUNT_USER_ID } as Parameters<
-		typeof t.withIdentity
-	>[0]);
+	asFleet(
+		t.withIdentity({ subject: SERVICE_ACCOUNT_USER_ID } as Parameters<
+			typeof t.withIdentity
+		>[0]),
+		t,
+	);
 
 async function seedOrgMapping(t: T, clerkOrgSlug: string, roster = ["sigma"]) {
 	await t.run(async (ctx) => {
@@ -965,7 +970,7 @@ const seedDiary = (
 	content = `entry of ${orchestrator}`,
 ) =>
 	t.run(async (ctx) => {
-		await ctx.db.insert("diary", {
+		await insertDiary(ctx, {
 			date,
 			orchestrator,
 			content,

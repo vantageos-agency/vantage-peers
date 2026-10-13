@@ -4,7 +4,12 @@ import type { Doc } from "./_generated/dataModel";
 import { mutation, query, type QueryCtx } from "./_generated/server";
 import { internal } from "./_generated/api";
 import { creatorValidator, severityValidator, relationTypeValidator } from "./schema";
-import { requireResolvedCaller, withOrgScope } from "./lib/auth";
+import {
+  authorIdOfLabel,
+  claimedOrgArgs,
+  requireClaimedScope,
+} from "./contentClaims";
+import { isMcpBoundMaster, requireResolvedCaller, withOrgScope } from "./lib/auth";
 import { memoryAuthorOf, memoryStampForWrite, memoryVisibleToScope } from "./lib/memoryTenant";
 import { isTeamNamespaceAllowed, memberNamespaceRoots } from "./lib/teamNamespace";
 
@@ -39,6 +44,7 @@ export const storeEpisode = mutation({
       ),
     ),
     ttl: v.optional(v.string()),
+    ...claimedOrgArgs,
   },
   returns: v.id("memories"),
   handler: async (ctx, args) => {
@@ -56,7 +62,15 @@ export const storeEpisode = mutation({
     // default here never breaks that live path. Reuses
     // the namespace gate of convex/lib/teamNamespace.ts: a member owns
     // `team/<its verified org ID>` (and the legacy label alias of that same org).
-    const scope = await withOrgScope(ctx);
+    const transport = await withOrgScope(ctx);
+    // The service account acts only inside the organisation the transport verified
+    // for the bearer (`verifiedOrg`); a claimless call is refused (R-54).
+    const scope = await requireClaimedScope(
+      ctx,
+      transport,
+      args.verifiedOrg,
+      "episodes:storeEpisode",
+    );
     if (!isTeamNamespaceAllowed(scope, args.namespace)) {
       throw new ConvexError(
         `RBAC_DENIED: caller may not write to namespace "${args.namespace}" — ${JSON.stringify({ orgSlug: scope.orgSlug })}`,
@@ -68,12 +82,15 @@ export const storeEpisode = mutation({
     // other author is refused; the service account (the MCP server) supplies the
     // author of the seat it authenticated. The row carries the org's permanent ID,
     // so the memory doors and the episode doors judge it identically.
+    // The seat's author is named by the SERVICE ACCOUNT (the transport), also when
+    // it acts inside a claimed client org's member scope.
     const createdBy = memoryAuthorOf(
       scope,
       args.createdBy,
       "episodes:storeEpisode",
-      hasFleetRead(scope),
+      isMcpBoundMaster(transport),
     );
+    const createdById = await authorIdOfLabel(ctx, scope, createdBy);
     const clerkOrgId = await memoryStampForWrite(
       ctx,
       scope,
@@ -109,6 +126,7 @@ export const storeEpisode = mutation({
         severity: args.severity,
       },
       ...(clerkOrgId === undefined ? {} : { clerkOrgId }),
+      ...(createdById === undefined ? {} : { createdById }),
       createdAt: now,
       updatedAt: now,
     });
@@ -171,6 +189,7 @@ export const listEpisodes = query({
     namespace: v.string(),
     severity: v.optional(severityValidator),
     limit: v.optional(v.number()),
+    ...claimedOrgArgs,
   },
   returns: v.array(
     v.object({
@@ -207,7 +226,13 @@ export const listEpisodes = query({
     // isNamespaceAllowedForScope gate renders both that and the anonymous
     // scope as the empty page. Reuses the EXACT mechanism its sibling
     // memories.ts::listMemories already uses — no second identity layer.
-    const scope = await withOrgScope(ctx, { refuseWithoutThrow: true });
+    const transport = await withOrgScope(ctx, { refuseWithoutThrow: true });
+    const scope = await requireClaimedScope(
+      ctx,
+      transport,
+      args.verifiedOrg,
+      "episodes:listEpisodes",
+    );
     if (!isTeamNamespaceAllowed(scope, args.namespace)) {
       return [];
     }
@@ -328,7 +353,7 @@ async function readTenantCritical(
 // returns-projection: cross-namespace digest — flattens insight/context out of episode, omits the rest of the memory document
 // ─────────────────────────────────────────────────────────────────────────────
 export const getCriticalInsights = query({
-  args: { limit: v.optional(v.number()) },
+  args: { limit: v.optional(v.number()), ...claimedOrgArgs },
   returns: v.array(
     v.object({
       _id: v.id("memories"),
@@ -353,7 +378,13 @@ export const getCriticalInsights = query({
     // namespace. An anonymous or no-org caller owns no namespace root, so it
     // reads nothing: the typed empty array, never a throw (reactive subscriber,
     // same reasoning as listEpisodes above).
-    const scope = await withOrgScope(ctx, { refuseWithoutThrow: true });
+    const transport = await withOrgScope(ctx, { refuseWithoutThrow: true });
+    const scope = await requireClaimedScope(
+      ctx,
+      transport,
+      args.verifiedOrg,
+      "episodes:getCriticalInsights",
+    );
 
     const limit = args.limit ?? 30;
 

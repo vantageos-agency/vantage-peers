@@ -22,6 +22,7 @@ import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import { api } from "../_generated/api";
 import type { Id } from "../_generated/dataModel";
 import schema from "../schema";
+import { asFleet } from "../../tests/lib/asFleet";
 
 const modules = Object.fromEntries(
 	Object.entries(import.meta.glob("../**/*.ts")).filter(
@@ -68,10 +69,9 @@ const decodePayload = (caught: unknown): WrongTablePayload => {
 // JWT is attached — so the wrong-table-ID assertions below (unrelated to
 // auth) keep exercising the same fixture.
 const newMemory = (t: ReturnType<typeof createT>) =>
-	t
-		.withIdentity({ subject: "test-service-account-user-id" } as Parameters<
+	asFleet(t.withIdentity({ subject: "test-service-account-user-id" } as Parameters<
 			typeof t.withIdentity
-		>[0])
+		>[0]), t)
 		.mutation(api.memories.storeMemory, {
 			namespace: "global",
 			type: "reference",
@@ -84,10 +84,9 @@ const newMemory = (t: ReturnType<typeof createT>) =>
 // and refuses an anonymous (no-identity) caller — seed as the
 // service-account/master identity for the same reason as newMemory above.
 const newMission = (t: ReturnType<typeof createT>) =>
-	t
-		.withIdentity({ subject: "test-service-account-user-id" } as Parameters<
+	asFleet(t.withIdentity({ subject: "test-service-account-user-id" } as Parameters<
 			typeof t.withIdentity
-		>[0])
+		>[0]), t)
 		.mutation(api.missions.create, {
 			name: "Probe mission",
 			project: "vantage-peers",
@@ -105,7 +104,7 @@ describe("memories:getMemory — wrong-table ID (issue #1064, reads)", () => {
 
 		let caught: unknown;
 		try {
-			await t.withIdentity({ subject: "test-service-account-user-id" }).query(api.memories.getMemory, {
+			await asFleet(t.withIdentity({ subject: "test-service-account-user-id" }), t).query(api.memories.getMemory, {
 				memoryId: missionId as unknown as Id<"memories">,
 			});
 			throw new Error("getMemory did not throw — expected a ConvexError");
@@ -133,7 +132,7 @@ describe("memories:getMemory — wrong-table ID (issue #1064, reads)", () => {
 	test("positive control: a real memoryId still returns the document", async () => {
 		const t = createT();
 		const memoryId = await newMemory(t);
-		const doc = await t.withIdentity({ subject: "test-service-account-user-id" }).query(api.memories.getMemory, { memoryId });
+		const doc = await asFleet(t.withIdentity({ subject: "test-service-account-user-id" }), t).query(api.memories.getMemory, { memoryId });
 		expect(doc?._id).toBe(memoryId);
 		expect(doc?.content).toBe("Probe memory");
 	});
@@ -149,7 +148,7 @@ describe("memories:getMemory — wrong-table ID (issue #1064, reads)", () => {
 		// a `null` return, not an error. Widening the validator must not turn a
 		// benign miss into a throw.
 		await expect(
-			t.withIdentity({ subject: "test-service-account-user-id" }).query(api.memories.getMemory, { memoryId }),
+			asFleet(t.withIdentity({ subject: "test-service-account-user-id" }), t).query(api.memories.getMemory, { memoryId }),
 		).resolves.toBeNull();
 	});
 });

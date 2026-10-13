@@ -22,6 +22,7 @@ import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import { testClerkOrgId } from "../../tests/fixtures/testClerkOrgId";
 import { api } from "../_generated/api";
 import schema from "../schema";
+import { asFleet } from "../../tests/lib/asFleet";
 
 const modules = Object.fromEntries(
 	Object.entries(import.meta.glob("../**/*.ts")).filter(
@@ -181,9 +182,7 @@ describe("memories.storeMemory — write-scope enforcement", () => {
 
 	test("the master/service-account identity (no org attached, service-account subject) stores as today", async () => {
 		const t = createT();
-		const tMaster = t.withIdentity({
-			subject: "test-service-account-user-id",
-		} as Parameters<typeof t.withIdentity>[0]);
+		const tMaster = asFleet(t.withIdentity({ subject: "test-service-account-user-id" } as Parameters<typeof t.withIdentity>[0]), t);
 
 		const memoryId = await tMaster.mutation(api.memories.storeMemory, {
 			namespace: "team/org-a/notes",
@@ -237,9 +236,7 @@ describe("memories.softDeleteMemory — write-scope enforcement", () => {
 	test("the master/service-account identity soft-deletes as today", async () => {
 		const t = createT();
 		const orgBMemoryId = await seedOrgBMemory(t);
-		const tMaster = t.withIdentity({
-			subject: "test-service-account-user-id",
-		} as Parameters<typeof t.withIdentity>[0]);
+		const tMaster = asFleet(t.withIdentity({ subject: "test-service-account-user-id" } as Parameters<typeof t.withIdentity>[0]), t);
 
 		await tMaster.mutation(api.memories.softDeleteMemory, {
 			memoryId: orgBMemoryId,

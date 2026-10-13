@@ -36,6 +36,7 @@ import { api } from "../_generated/api";
 import schema from "../schema";
 import { withOrgScope } from "../lib/auth";
 import { testClerkOrgId } from "../../tests/fixtures/testClerkOrgId";
+import { insertDiary } from "../../tests/lib/diaryRow";
 
 const modules = Object.fromEntries(
 	Object.entries(import.meta.glob("../**/*.ts")).filter(
@@ -239,7 +240,7 @@ describe("diary.list cross-tenant isolation (RED — handler is unscoped, table 
 			// diary has no orgId/tenantId column at all (convex/schema.ts ~272-287) —
 			// "dummy-b" here stands in for an org-b-controlled orchestrator identity,
 			// not a hardcoded business orchestrator name.
-			await ctx.db.insert("diary", {
+			await insertDiary(ctx, {
 				date: "2026-07-11",
 				orchestrator: "dummy-b",
 				content: "org-b confidential diary entry",

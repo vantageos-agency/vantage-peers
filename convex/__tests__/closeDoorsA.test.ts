@@ -22,6 +22,7 @@ import { seedRosterAgents } from "../../tests/lib/seedRosterAgents";
 import { api } from "../_generated/api";
 import schema from "../schema";
 import { seedRosterAgent } from "../../tests/fixtures/rosterAgent";
+import { fleetClaim } from "../../tests/lib/fleetClaim";
 
 const modules = Object.fromEntries(
 	Object.entries(import.meta.glob("../**/*.ts")).filter(
@@ -123,6 +124,7 @@ async function orgWorld() {
 		const diaryA = await ctx.db.insert("diary", {
 			date: "2026-09-30",
 			orchestrator: "sigma",
+			agentId: agents["org-a/sigma"],
 			content: "org-a private diary",
 			createdAt: now(),
 			orgId: "org-a",
@@ -131,6 +133,7 @@ async function orgWorld() {
 		await ctx.db.insert("diary", {
 			date: "2026-09-30",
 			orchestrator: "tau",
+			agentId: agents["org-b/tau"],
 			content: "org-b private diary",
 			createdAt: now(),
 			orgId: "org-b",
@@ -224,7 +227,10 @@ describe("diary:listByDateRange (CLOSED-a, roster-scoped)", () => {
 	});
 	test("master still reads every entry", async () => {
 		const { t } = await orgWorld();
-		const rows = await asMaster(t).query(api.diary.listByDateRange, range);
+		const rows = await asMaster(t).query(api.diary.listByDateRange, {
+			...range,
+			...(await fleetClaim(t)),
+		});
 		expect(rows).toHaveLength(2);
 	});
 });

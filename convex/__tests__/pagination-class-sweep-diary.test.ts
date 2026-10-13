@@ -14,6 +14,8 @@ import type { FunctionReturnType } from "convex/server";
 import { describe, expect, test } from "vitest";
 import { api } from "../_generated/api";
 import schema from "../schema";
+import { asFleet } from "../../tests/lib/asFleet";
+import { seedOperatorOrg } from "../../tests/lib/seedRosterAgents";
 
 // The fleet master is served the bare array; the refusal envelope is for a
 // signed-in caller with no organisation.
@@ -42,9 +44,8 @@ describe("diary.list pagination — createdBefore applied after unbounded take",
 		// CLERK_SERVICE_ACCOUNT_USER_ID="test-service-account-user-id",
 		// convex/lib/auth.ts:111-121 carve-out), mirroring
 		// broadcast-org-scoped.test.ts.
-		const tInternal = t.withIdentity({
-			subject: "test-service-account-user-id",
-		} as Parameters<typeof t.withIdentity>[0]);
+		await seedOperatorOrg(t, ["sigma"]);
+		const tInternal = asFleet(t.withIdentity({ subject: "test-service-account-user-id" } as Parameters<typeof t.withIdentity>[0]), t);
 
 		const TOTAL = 12;
 		const PAGE_LIMIT = 5;

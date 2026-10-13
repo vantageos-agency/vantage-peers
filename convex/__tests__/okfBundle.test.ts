@@ -33,8 +33,7 @@ import {
 	BUNDLE_HARD_CAP_BYTES,
 	BUNDLE_PAGE_SIZE,
 	BUNDLE_SOFT_CAP_BYTES,
-	expectedOrgIdForNamespace,
-	matchesNamespaceScope,
+	ownsRow,
 	PHASE1_NAMESPACE,
 	parseSinceArg,
 	shouldIncludeFamily,
@@ -466,38 +465,52 @@ describe("pagination cursor chain (Eta REVISE iter 2)", () => {
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
-// 8. Eta REVISE iter 2 — cross-namespace isolation (1 test)
+// 8. Eta REVISE iter 2 — cross-namespace isolation, decided BY ORGANISATION ID
 //
-// Verifies the namespace → orgId mapping + `matchesNamespaceScope` predicate
-// reject rows whose `orgId` does not match the requested namespace tail.
-// This is the unit-test layer of the defence-in-depth that the V8 internal
-// queries apply after their `by_orgId` index scan.
+// Verifies the `ownsRow` predicate rejects rows that are not stamped with the
+// requested namespace's organisation ID (a label never grants). This is the
+// unit-test layer of the defence-in-depth that the V8 internal queries apply
+// after their `by_orgId_clerk_id` index scan; the namespace -> organisation
+// mapping itself (`namespaceTarget`) is exercised end to end in
+// okfOwnershipById.test.ts.
 // ─────────────────────────────────────────────────────────────────────────────
 
 describe("cross-namespace isolation (Eta REVISE iter 2)", () => {
-	test("Phase 1 namespace maps to master (undefined orgId)", () => {
-		expect(expectedOrgIdForNamespace(PHASE1_NAMESPACE)).toBeUndefined();
+	const fleet = { kind: "fleet", operator: undefined } as const;
+	const acmeHr = {
+		kind: "org",
+		org: { id: "org_ACMEHR", label: "acme-hr" },
+		slug: "acme-hr",
+		clerkOrgId: "org_ACMEHR",
+	} as const;
+
+	test("Phase 1 namespace is the fleet's", () => {
+		expect(PHASE1_NAMESPACE).toBe("project/elpi-corp");
+		expect(ownsRow({}, fleet)).toBe(true);
 	});
 
-	test("non-Phase-1 project namespace maps to slug tail", () => {
-		expect(expectedOrgIdForNamespace("project/acme-hr")).toBe("acme-hr");
-	});
-
-	test("matchesNamespaceScope keeps only rows for the requested tenant", () => {
-		const rowsA = [
+	test("the fleet owns unstamped rows (a legacy null included), never a tenant's", () => {
+		const rows = [
 			{ _id: "a1", orgId: undefined }, // master
 			{ _id: "a2", orgId: null as unknown as undefined }, // master (legacy null)
-			{ _id: "b1", orgId: "acme-hr" }, // tenant B
-			{ _id: "b2", orgId: "acme" }, // tenant C
+			{ _id: "b1", orgId: "acme-hr", clerkOrgId: "org_ACMEHR" }, // tenant B
+			{ _id: "b2", orgId: "acme", clerkOrgId: "org_ACME" }, // tenant C
 		];
-		const keptForMaster = rowsA.filter((r) =>
-			matchesNamespaceScope(r, PHASE1_NAMESPACE),
-		);
-		expect(keptForMaster.map((r) => r._id)).toEqual(["a1", "a2"]);
+		expect(rows.filter((r) => ownsRow(r, fleet)).map((r) => r._id)).toEqual([
+			"a1",
+			"a2",
+		]);
+	});
 
-		const keptForIris = rowsA.filter((r) =>
-			matchesNamespaceScope(r, "project/acme-hr"),
-		);
-		expect(keptForIris.map((r) => r._id)).toEqual(["b1"]);
+	test("a tenant namespace keeps only rows stamped with the tenant's ID, a label alone never", () => {
+		const rows = [
+			{ _id: "a1", orgId: undefined }, // master
+			{ _id: "b1", orgId: "acme-hr", clerkOrgId: "org_ACMEHR" }, // tenant B
+			{ _id: "b2", orgId: "acme", clerkOrgId: "org_ACME" }, // tenant C
+			{ _id: "label", orgId: "acme-hr" }, // the label B once held, no ID
+		];
+		expect(rows.filter((r) => ownsRow(r, acmeHr)).map((r) => r._id)).toEqual([
+			"b1",
+		]);
 	});
 });

@@ -1,5 +1,6 @@
 import type { GenericMutationCtx } from "convex/server";
 import { normalizeOrchestratorId } from "../../convex/_helpers/normalizeOrchestratorId";
+import { testClerkOrgId } from "../fixtures/testClerkOrgId";
 import type { DataModel, Id } from "../../convex/_generated/dataModel";
 
 type Runner = {
@@ -77,6 +78,7 @@ export async function seedOperatorOrg(
 		if (operator === undefined) {
 			await ctx.db.insert("client_org_mapping", {
 				clerkOrgSlug: slug,
+				clerkOrgId: testClerkOrgId(slug),
 				allowedOrchestrators: [],
 				scopes: [],
 				displayName: slug,
@@ -86,6 +88,9 @@ export async function seedOperatorOrg(
 			});
 		}
 		const orgSlug = operator?.clerkOrgSlug ?? slug;
+		// The operator org is identified by its permanent ID: a fleet label resolves
+		// to the agent stamped with it (module F1).
+		const orgClerkId = operator?.clerkOrgId ?? testClerkOrgId(orgSlug);
 		const ids: Record<string, Id<"agents">> = {};
 		for (const name of names) {
 			const key = normalizeOrchestratorId(name);
@@ -99,6 +104,7 @@ export async function seedOperatorOrg(
 				row?._id ??
 				(await ctx.db.insert("agents", {
 					orgSlug,
+					clerkOrgId: orgClerkId,
 					name,
 					normalizedName: key,
 					isActive: true,

@@ -24,6 +24,7 @@ import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import { testClerkOrgId } from "../../tests/fixtures/testClerkOrgId";
 import { api } from "../_generated/api";
 import schema from "../schema";
+import { asFleet } from "../../tests/lib/asFleet";
 
 // Same filter as gap-t1-episodes.test.ts — ragSync module itself is excluded from
 // the test registry (cannot be driven without seeded embeddings), but the
@@ -153,10 +154,9 @@ describe("Control — memories.storeMemory schedules exactly 1 addRagEntry (non-
 		// not auth, so it runs as the service-account/master identity — the
 		// SAME identity the MCP server presents when no Clerk-org JWT is
 		// attached.
-		await t
-			.withIdentity({ subject: "test-service-account-user-id" } as Parameters<
+		await asFleet(t.withIdentity({ subject: "test-service-account-user-id" } as Parameters<
 				typeof t.withIdentity
-			>[0])
+			>[0]), t)
 			.mutation(api.memories.storeMemory, {
 				namespace: "orchestrator/sigma",
 				type: "user",

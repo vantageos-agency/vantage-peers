@@ -46,6 +46,7 @@
 
 import { convexTest } from "convex-test";
 import { describe, expect, test } from "vitest";
+import { testClerkOrgId } from "../../tests/fixtures/testClerkOrgId";
 import { BUNDLE_PAGE_SIZE } from "../okfBundle";
 import { internal } from "../_generated/api";
 import schema from "../schema";
@@ -68,6 +69,24 @@ interface DedupPage {
 }
 
 const NOW = 1_700_000_000_000;
+
+// A tenant namespace names an ACTIVE organisation, and its rows are the rows
+// stamped with that organisation's permanent ID (batch F1).
+async function seedTenants(t: ReturnType<typeof createTestConvex>) {
+	await t.run(async (ctx) => {
+		for (const slug of ["tenant-a", "tenant-b"]) {
+			await ctx.db.insert("client_org_mapping", {
+				clerkOrgSlug: slug,
+				clerkOrgId: testClerkOrgId(slug),
+				allowedOrchestrators: [],
+				scopes: [],
+				displayName: slug,
+				isActive: true,
+				createdAt: NOW,
+			});
+		}
+	});
+}
 
 async function seedMemories(t: ReturnType<typeof createTestConvex>, n: number) {
 	await t.run(async (ctx) => {
@@ -356,6 +375,7 @@ describe("Bug #1134 — dedup helpers bounded page reads", () => {
 describe("FIXED — cross-tenant dedup side-channel closed (bipolar: cross-tenant blocked, same-tenant still works)", () => {
 	test("_findBriefingByTitleAndContent: tenant A does NOT dedup against tenant B's identical title+content — imports its own copy", async () => {
 		const t = createTestConvex();
+		await seedTenants(t);
 		const tenantBId = await t.run(async (ctx) =>
 			ctx.db.insert("briefingNotes", {
 				title: "Cross-Tenant Briefing",
@@ -365,6 +385,7 @@ describe("FIXED — cross-tenant dedup side-channel closed (bipolar: cross-tenan
 				createdBy: "sigma",
 				createdAt: NOW,
 				orgId: "tenant-b",
+				clerkOrgId: testClerkOrgId("tenant-b"),
 			}),
 		);
 
@@ -398,6 +419,7 @@ describe("FIXED — cross-tenant dedup side-channel closed (bipolar: cross-tenan
 
 	test("_findTaskByTitleAndDescription: tenant A does NOT dedup against tenant B's identical title+description — imports its own copy", async () => {
 		const t = createTestConvex();
+		await seedTenants(t);
 		const tenantBId = await t.run(async (ctx) =>
 			ctx.db.insert("tasks", {
 				title: "Cross-Tenant Task",
@@ -409,6 +431,7 @@ describe("FIXED — cross-tenant dedup side-channel closed (bipolar: cross-tenan
 				createdAt: NOW,
 				updatedAt: NOW,
 				orgId: "tenant-b",
+				clerkOrgId: testClerkOrgId("tenant-b"),
 			}),
 		);
 

@@ -26,7 +26,7 @@ import {
 	BUNDLE_HARD_CAP_BYTES,
 	BUNDLE_SOFT_CAP_BYTES,
 } from "../okfBundle";
-import { assertCanValidate, packTarball } from "../okfBundleNode";
+import { packTarball } from "../okfBundleNode";
 import {
 	type BriefingNoteDoc,
 	type MemoryDoc,
@@ -135,17 +135,11 @@ async function packFixtureBundle(): Promise<Buffer> {
 	return packTarball(entries);
 }
 
-async function storeBundle(
-	t: ReturnType<typeof createTestConvex>,
-	buf: Buffer,
-): Promise<string> {
-	// convex-test exposes ctx.storage.store via the test harness `t.run`.
-	// The storageId path resolves the caller's organisation and ASSERTS the
-	// blob is bound to it (okfValidateStorageOwnership.test.ts). So the
-	// caller's org `acme` is seeded as an active mapping (asCaller is an
-	// ordinary member of it), and the blob is bound to `acme` the way the
-	// upload/store path binds it (a kbUploads row) — validate never binds.
-	return await t.run(async (ctx) => {
+// The caller's organisation `acme` as an active mapping: the gate resolves the
+// caller through the package (`contentClaims:scopeForAction`), so a caller whose
+// organisation names no active mapping is refused before anything is fetched.
+async function seedAcme(t: ReturnType<typeof createTestConvex>): Promise<void> {
+	await t.run(async (ctx) => {
 		const mapped = await ctx.db
 			.query("client_org_mapping")
 			.withIndex("by_clerk_slug", (q) => q.eq("clerkOrgSlug", "acme"))
@@ -160,11 +154,27 @@ async function storeBundle(
 				isActive: true,
 				createdAt: Date.now(),
 			});
+	});
+}
+
+async function storeBundle(
+	t: ReturnType<typeof createTestConvex>,
+	buf: Buffer,
+): Promise<string> {
+	// convex-test exposes ctx.storage.store via the test harness `t.run`.
+	// The storageId path resolves the caller's organisation and ASSERTS the
+	// blob is bound to it (okfValidateStorageOwnership.test.ts). So the
+	// caller's org `acme` is seeded as an active mapping (asCaller is an
+	// ordinary member of it), and the blob is bound to `acme` the way the
+	// upload/store path binds it (a kbUploads row) — validate never binds.
+	await seedAcme(t);
+	return await t.run(async (ctx) => {
 		const blob = new Blob([new Uint8Array(buf)]);
 		const storageId = await ctx.storage.store(blob);
 		await ctx.db.insert("kbUploads", {
 			storageId,
 			orgId: "acme",
+			clerkOrgId: testClerkOrgId("acme"),
 			createdAt: Date.now(),
 		});
 		return storageId;
@@ -362,26 +372,22 @@ describe("validate_okf_bundle action — security gates (Eta BLOCKER1)", () => {
 	// `assertCanExportNamespace` in okfBundleExportGeneralize.test.ts)
 	// because convex-test's `withIdentity({})` auto-populates a `subject`
 	// claim, which would mask this defect if driven through the action.
-	test("assertCanValidate accepts a snake_case-only identity (org_slug, no organizationSlug/organizationId/subject/tokenIdentifier)", async () => {
-		const ctx = {
-			auth: {
-				getUserIdentity: async () => ({ org_slug: "acme" }),
-			},
-		};
-		await expect(assertCanValidate(ctx)).resolves.toBeUndefined();
-	});
-
-	test("assertCanValidate accepts a snake_case-only identity (org_id, no other claim)", async () => {
-		const ctx = {
-			auth: {
-				getUserIdentity: async () => ({ org_id: "acme" }),
-			},
-		};
-		await expect(assertCanValidate(ctx)).resolves.toBeUndefined();
+	test("REFUSED: a caller whose organisation names no active mapping is refused before anything is fetched (the caller is the package-resolved scope, not an identity claim sniffed here)", async () => {
+		const t = createTestConvex();
+		await expect(
+			t
+				.withIdentity({ org_slug: "acme", org_id: "org_Tunmapped" } as Parameters<
+					typeof t.withIdentity
+				>[0])
+				.action(VALIDATE_ACTION_REF, {
+					bundleUrl: "https://example.com/bundle.tar",
+				}),
+		).rejects.toThrow(/RBAC_DENIED/);
 	});
 
 	test("bundleUrl with http:// scheme is rejected (SSRF defence — scheme allowlist)", async () => {
 		const t = createTestConvex();
+		await seedAcme(t);
 		await expect(
 			asCaller(t).action(VALIDATE_ACTION_REF, {
 				bundleUrl: "http://example.com/bundle.tar",
@@ -391,6 +397,7 @@ describe("validate_okf_bundle action — security gates (Eta BLOCKER1)", () => {
 
 	test("bundleUrl pointing at localhost is rejected (SSRF defence — loopback)", async () => {
 		const t = createTestConvex();
+		await seedAcme(t);
 		await expect(
 			asCaller(t).action(VALIDATE_ACTION_REF, {
 				bundleUrl: "https://localhost/bundle.tar",
@@ -400,6 +407,7 @@ describe("validate_okf_bundle action — security gates (Eta BLOCKER1)", () => {
 
 	test("bundleUrl pointing at 127.0.0.1 is rejected (SSRF defence — loopback IPv4)", async () => {
 		const t = createTestConvex();
+		await seedAcme(t);
 		await expect(
 			asCaller(t).action(VALIDATE_ACTION_REF, {
 				bundleUrl: "https://127.0.0.1/bundle.tar",
@@ -409,6 +417,7 @@ describe("validate_okf_bundle action — security gates (Eta BLOCKER1)", () => {
 
 	test("bundleUrl pointing at RFC 1918 10.0.0.1 is rejected (SSRF defence — private IPv4)", async () => {
 		const t = createTestConvex();
+		await seedAcme(t);
 		await expect(
 			asCaller(t).action(VALIDATE_ACTION_REF, {
 				bundleUrl: "https://10.0.0.1/bundle.tar",
@@ -418,6 +427,7 @@ describe("validate_okf_bundle action — security gates (Eta BLOCKER1)", () => {
 
 	test("bundleUrl pointing at link-local 169.254.169.254 is rejected (SSRF defence — cloud metadata)", async () => {
 		const t = createTestConvex();
+		await seedAcme(t);
 		await expect(
 			asCaller(t).action(VALIDATE_ACTION_REF, {
 				bundleUrl: "https://169.254.169.254/latest/meta-data/",
@@ -427,6 +437,7 @@ describe("validate_okf_bundle action — security gates (Eta BLOCKER1)", () => {
 
 	test("bundleUrl that is not a valid URL is rejected (OKF_VALIDATE_URL_INVALID)", async () => {
 		const t = createTestConvex();
+		await seedAcme(t);
 		await expect(
 			asCaller(t).action(VALIDATE_ACTION_REF, {
 				bundleUrl: "not a url",

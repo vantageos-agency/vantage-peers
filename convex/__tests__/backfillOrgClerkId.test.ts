@@ -13,7 +13,8 @@ import type { FunctionReturnType } from "convex/server";
 import { convexTest } from "../../tests/fixtures/convexTestWithServiceAccount";
 import { describe, expect, test } from "vitest";
 import { api, internal } from "../_generated/api";
-import {
+
+import { fleetClaim } from "../../tests/lib/fleetClaim";import {
 	type OrgIdTable,
 	ORG_COLUMNS,
 	TABLE_ORDER,
@@ -399,6 +400,7 @@ describe("new writes stamp the slug AND the Clerk org id", () => {
 	test("a fleet-master write stays unstamped on both columns", async () => {
 		const t = createT();
 		await seedWorld(t);
+		await t.run((ctx) => seedRosterAgent(ctx, OPERATOR.slug, SEAT));
 		const id = await t
 			.withIdentity({ subject: "test-service-account-user-id" } as Parameters<
 				T["withIdentity"]
@@ -407,6 +409,8 @@ describe("new writes stamp the slug AND the Clerk org id", () => {
 				date: "2026-10-01",
 				orchestrator: SEAT,
 				content: "fleet",
+				createdBy: SEAT,
+				...(await fleetClaim(t)),
 			});
 		const row = await idOf(t, id);
 		expect(row.orgId).toBeUndefined();

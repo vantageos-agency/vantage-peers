@@ -22,6 +22,7 @@ import { ProtocolError, ProtocolErrorCode } from "@modelcontextprotocol/server";
 import type { ConvexHttpClient } from "convex/browser";
 import { z } from "zod";
 import { defineTool } from "../registerTool.js";
+import { NO_VERIFIED_ORG, type VerifiedOrgArgs } from "../verifiedActor.js";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Public types (mirror the Convex action return shape)
@@ -75,6 +76,9 @@ export const validateOkfBundleArgsSchema = {
 export function registerValidateOkfBundle(
 	server: McpServer,
 	convex: ConvexHttpClient,
+	// The organisation THIS bearer was verified for (never a tool argument): the
+	// Convex action refuses a service-account call that carries none (R-54).
+	verifiedOrgArgs: VerifiedOrgArgs = NO_VERIFIED_ORG,
 ): void {
 	defineTool(
 		server,
@@ -107,6 +111,7 @@ export function registerValidateOkfBundle(
 					{
 						bundleUrl: bundleUrl ?? null,
 						storageId: storageId ?? null,
+						...verifiedOrgArgs(),
 					},
 				)) as ValidateOkfBundleResult;
 

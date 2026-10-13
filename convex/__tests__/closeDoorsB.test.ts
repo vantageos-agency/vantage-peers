@@ -347,6 +347,7 @@ describe("mandates:get and mandates:validateSpending — master-only", () => {
 describe("okfBundleNode:validateOkfBundle — an absent identity is refused, not waved through", () => {
 	test("anonymous refused; an org member passes the gate (reaches input validation)", async () => {
 		const t = createT();
+		await seedMappings(t);
 		const args = { bundleUrl: null, storageId: null };
 		refusedAs(
 			await failure(t.action(api.okfBundleNode.validateOkfBundle, args)),

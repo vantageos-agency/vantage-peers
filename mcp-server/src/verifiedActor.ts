@@ -85,6 +85,18 @@ export const VERIFIED_ACTOR_DOORS: ReadonlySet<string> = new Set([
 export type VerifiedActorArg = { agentId: string; orgSlug: string };
 
 /**
+ * The args fragment a content door takes to bind the call to the organisation the
+ * bearer was VERIFIED for: `{ verifiedOrg: { orgSlug } }`, or nothing for the
+ * master / a Clerk-JWT caller. The one implementation lives in `registerTools`
+ * (tools.ts `verifiedOrgArgs`); the tool files that register outside it receive it
+ * as a parameter. It is the ONLY source of the field (never a tool argument).
+ */
+export type VerifiedOrgArgs = () => { verifiedOrg?: { orgSlug: string } };
+
+/** No claim: the default for a registrar called without one (tests, stdio). */
+export const NO_VERIFIED_ORG: VerifiedOrgArgs = () => ({});
+
+/**
  * The acting agent's ID and org for this request, or undefined.
  *
  * A Clerk-JWT session is excluded: its Convex client carries the caller's OWN

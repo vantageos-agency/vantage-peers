@@ -14,6 +14,7 @@ import { describe, expect, test } from "vitest";
 import { testClerkOrgId } from "../../tests/fixtures/testClerkOrgId";
 import type { Id } from "../_generated/dataModel";
 import schema from "../schema";
+import { asFleet } from "../../tests/lib/asFleet";
 
 // biome-ignore lint/suspicious/noExplicitAny: string refs, codegen-lag workaround (see okfUploadTicketClaim.test.ts)
 const GENERATE = "kbMutations:generateUploadUrlWithTicket" as any;
@@ -56,9 +57,7 @@ function asOrg(t: T, orgId: string) {
 }
 
 function asService(t: T) {
-	return t.withIdentity({
-		subject: "test-service-account-user-id",
-	} as Parameters<typeof t.withIdentity>[0]);
+	return asFleet(t.withIdentity({ subject: "test-service-account-user-id" } as Parameters<typeof t.withIdentity>[0]), t);
 }
 
 const BYTES = new Uint8Array([1, 2, 3, 4, 5, 6, 7, 8]);
