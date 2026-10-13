@@ -21,7 +21,10 @@
 // EXACTLY ONE row of the `agents` table across ALL organisations (any
 // isActive state: a deactivated namesake still makes the label ambiguous), AND
 // that one agent belongs to the operator org (client_org_mapping
-// orgKind="operator", derived, never typed). The operator ROSTER is not
+// orgKind="operator", derived, never typed) BY PERMANENT ORG ID: the package's
+// `sameOrg` compares the agent row's `clerkOrgId` with the operator mapping's,
+// and a label never matches, so an agent not yet stamped with its org ID is
+// listed under `otherOrg` (run migrations/backfill_org_clerk_id first). The operator ROSTER is not
 // consulted: a roster entry is a string, an `agents` row is an identity.
 // Every other row STAYS UNSTAMPED, is never guessed, and is LISTED BY ID in the
 // result (bounded per page by the page size), in one bucket:
