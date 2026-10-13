@@ -98,19 +98,19 @@ const templateDocValidator = v.object({
 // getByName — fetch a template by its unique name
 // ─────────────────────────────────────────────────────────────────────────────
 
-// The ONE read of a catalog row by its key. allow-local-identity: the mission-template catalog is keyed by the template's own name (a document key such as "issue-resolution-v3"), never by an agent or an organisation name; nothing here identifies a caller or admits one.
-async function templateRowByName(ctx: Pick<QueryCtx, "db">, name: string) {
-	return await ctx.db
+// The ONE read of a catalog row by its key, shared by the public door, its
+// internal twin and the writes. allow-local-identity: the mission-template catalog is keyed by the template's own name (a document key such as "issue-resolution-v3"), never by an agent or an organisation name; nothing here identifies a caller or admits one.
+async function lookupTemplateByName(
+	ctx: Pick<QueryCtx, "db">,
+	name: string,
+	includeDeleted = false,
+) {
+	const template = await ctx.db
 		.query("missionTemplates")
 		.withIndex("by_name", (q) => q.eq("name", name))
 		.unique();
-}
-
-// Shared body of the public door and its internal twin.
-async function lookupTemplateByName(ctx: QueryCtx, name: string) {
-	const template = await templateRowByName(ctx, name);
 	// Soft-deleted templates are invisible to reads, like a superseded memory.
-	if (template !== null && template.deletedAt !== undefined) {
+	if (!includeDeleted && template !== null && template.deletedAt !== undefined) {
 		return null;
 	}
 	return template;
@@ -245,7 +245,7 @@ export const upsert = mutation({
 		requireServiceAccountStanding(scope, "missionTemplates:upsert");
 
 		const now = Date.now();
-		const existing = await templateRowByName(ctx, args.name);
+		const existing = await lookupTemplateByName(ctx, args.name, true);
 
 		if (existing !== null) {
 			await ctx.db.patch(existing._id, {
@@ -304,7 +304,7 @@ export const softDelete = mutation({
 
 		const template = args.templateId
 			? await ctx.db.get(args.templateId)
-			: await templateRowByName(ctx, args.name as string);
+			: await lookupTemplateByName(ctx, args.name as string, true);
 
 		if (template === null || template === undefined) {
 			const ref = args.templateId ?? args.name;
@@ -389,7 +389,7 @@ export const seed = internalMutation({
 			},
 		];
 
-		const existing = await templateRowByName(ctx, name);
+		const existing = await lookupTemplateByName(ctx, name, true);
 
 		if (existing !== null) {
 			await ctx.db.patch(existing._id, {
