@@ -240,6 +240,10 @@ export function assertRowInVerifiedOrgRef(
  * org never equals one (an unstamped row is refused, never matched). No-op when
  * `verifiedOrgSlug` is undefined. Refuses with the same RBAC_DENIED shape as
  * `resolveVerifiedOrg`, before anything is written.
+ *
+ * BY LABEL: DELETE AFTER CALLERS MIGRATE. Replacement:
+ * `assertRowInVerifiedOrgRef` fed by `resolveDoorVerifiedOrgRef` (compares the
+ * org ID with `sameOrg`). Importer: tasks.ts (ten task doors).
  */
 export function assertRowInVerifiedOrg(
 	row: { orgId?: string },
