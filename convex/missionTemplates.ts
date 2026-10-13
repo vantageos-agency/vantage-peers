@@ -1,4 +1,8 @@
-import { sameOrg } from "@vantageos/cloud-identity";
+import {
+	requireServiceAccountStanding,
+	requireStanding,
+	sameOrg,
+} from "@vantageos/cloud-identity";
 import { v } from "convex/values";
 import { ConvexError } from "convex/values";
 import {
@@ -94,14 +98,19 @@ const templateDocValidator = v.object({
 // getByName — fetch a template by its unique name
 // ─────────────────────────────────────────────────────────────────────────────
 
-// Shared body of the public door and its internal twin.
-async function lookupTemplateByName(ctx: QueryCtx, name: string) {
+// The ONE read of a catalog row by its key, shared by the public door, its
+// internal twin and the writes. allow-local-identity: the mission-template catalog is keyed by the template's own name (a document key such as "issue-resolution-v3"), never by an agent or an organisation name; nothing here identifies a caller or admits one.
+async function lookupTemplateByName(
+	ctx: Pick<QueryCtx, "db">,
+	name: string,
+	includeDeleted = false,
+) {
 	const template = await ctx.db
 		.query("missionTemplates")
 		.withIndex("by_name", (q) => q.eq("name", name))
 		.unique();
 	// Soft-deleted templates are invisible to reads, like a superseded memory.
-	if (template !== null && template.deletedAt !== undefined) {
+	if (!includeDeleted && template !== null && template.deletedAt !== undefined) {
 		return null;
 	}
 	return template;
@@ -118,6 +127,7 @@ async function lookupTemplateByName(ctx: QueryCtx, name: string) {
 // So `alsoRefusePreOrg` is safe: no mounted render exists for the throw to crash.
 // The webhook in convex/http.ts runs with NO identity and uses
 // `getByNameInternal` below.
+// fleet-wide: the template catalog is one shared set with no organisation column and only the fleet (the service account or the operator human) may read it; reading any template of the catalog is this door's purpose
 export const getByName = query({
 	args: { name: v.string() },
 	returns: v.union(templateDocValidator, v.null()),
@@ -157,6 +167,7 @@ export const getByNameInternal = internalQuery({
 // invisible, exactly like a superseded memory.
 // ─────────────────────────────────────────────────────────────────────────────
 
+// fleet-wide: the template catalog is one shared set with no organisation column and only the fleet (the service account or the operator human) may list it; listing every template name is this door's purpose
 export const listNames = query({
 	args: {},
 	returns: v.array(v.string()),
@@ -211,6 +222,7 @@ export const listNames = query({
 // upsert — create or update a template by name
 // ─────────────────────────────────────────────────────────────────────────────
 
+// fleet-wide: writing the shared template catalog changes what every organisation later instantiates, so the fleet's service account alone may do it, by purpose
 export const upsert = mutation({
 	args: {
 		name: v.string(),
@@ -226,17 +238,14 @@ export const upsert = mutation({
 		// Master-only fail-closed fix — see the file-header comment block
 		// above for the full rationale (shared, unscoped catalog write).
 		const scope = await withOrgScope(ctx);
-		if (!scope.isMaster) {
-			throw new ConvexError(
-				"RBAC_DENIED: update_mission_template is a master-only operation — the mission-template catalog is shared fleet-wide, never per-org",
-			);
-		}
+		requireResolvedCaller(scope, "missionTemplates:upsert", {
+			masterOnly: true,
+			mcpBoundOnly: true,
+		});
+		requireServiceAccountStanding(scope, "missionTemplates:upsert");
 
 		const now = Date.now();
-		const existing = await ctx.db
-			.query("missionTemplates")
-			.withIndex("by_name", (q) => q.eq("name", args.name))
-			.unique();
+		const existing = await lookupTemplateByName(ctx, args.name, true);
 
 		if (existing !== null) {
 			await ctx.db.patch(existing._id, {
@@ -269,6 +278,7 @@ export const upsert = mutation({
 // carry no RAG entries, so only the flag-patch half of that motif applies.
 // ─────────────────────────────────────────────────────────────────────────────
 
+// fleet-wide: soft-deleting a template of the shared catalog changes what every organisation can instantiate, so the fleet's service account alone may do it, by purpose
 export const softDelete = mutation({
 	args: {
 		templateId: v.optional(v.id("missionTemplates")),
@@ -282,11 +292,11 @@ export const softDelete = mutation({
 		// Mirrors the MCP server's own pre-existing `guardMasterOnly` gate on
 		// this same tool (soft_delete_mission_template).
 		const scope = await withOrgScope(ctx);
-		if (!scope.isMaster) {
-			throw new ConvexError(
-				"RBAC_DENIED: soft-deleting a mission template is a master-only operation — the mission-template catalog is shared fleet-wide, never per-org",
-			);
-		}
+		requireResolvedCaller(scope, "missionTemplates:softDelete", {
+			masterOnly: true,
+			mcpBoundOnly: true,
+		});
+		requireServiceAccountStanding(scope, "missionTemplates:softDelete");
 
 		if (args.templateId === undefined && args.name === undefined) {
 			throw new Error("Provide either templateId or name");
@@ -294,10 +304,7 @@ export const softDelete = mutation({
 
 		const template = args.templateId
 			? await ctx.db.get(args.templateId)
-			: await ctx.db
-					.query("missionTemplates")
-					.withIndex("by_name", (q) => q.eq("name", args.name as string))
-					.unique();
+			: await lookupTemplateByName(ctx, args.name as string, true);
 
 		if (template === null || template === undefined) {
 			const ref = args.templateId ?? args.name;
@@ -382,10 +389,7 @@ export const seed = internalMutation({
 			},
 		];
 
-		const existing = await ctx.db
-			.query("missionTemplates")
-			.withIndex("by_name", (q) => q.eq("name", name))
-			.unique();
+		const existing = await lookupTemplateByName(ctx, name, true);
 
 		if (existing !== null) {
 			await ctx.db.patch(existing._id, {
@@ -422,6 +426,7 @@ export const seed = internalMutation({
 // step-indexes to actual task IDs and patches each dependent task.
 // ─────────────────────────────────────────────────────────────────────────────
 
+// fleet-wide: the fleet (the service account) fans a template out into any organisation's mission by purpose; an organisation member only into a mission stamped with its own organisation ID
 export const instantiateTemplateIntoMission = mutation({
 	args: {
 		templateName: v.string(),
@@ -445,15 +450,13 @@ export const instantiateTemplateIntoMission = mutation({
 		const door = "missionTemplates:instantiateTemplateIntoMission";
 		const scope = await withOrgScope(ctx);
 		requireResolvedCaller(scope, door, { alsoRefusePreOrg: true });
+		requireStanding(scope, door, ["fleet", "member"]);
 		const fleet = await hasFleetStanding(ctx, door);
 
 		// 1. Fetch template
-		const template = await ctx.db
-			.query("missionTemplates")
-			.withIndex("by_name", (q) => q.eq("name", args.templateName))
-			.unique();
+		const template = await lookupTemplateByName(ctx, args.templateName);
 		// A soft-deleted template is invisible to reads, like a superseded memory.
-		if (!template || template.deletedAt !== undefined) {
+		if (template === null) {
 			throw new Error(`Template not found: "${args.templateName}"`);
 		}
 

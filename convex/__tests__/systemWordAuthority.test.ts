@@ -526,7 +526,7 @@ describe("mandates.{accept,update,settle} — the word 'system' is not authority
 				mandateId,
 				callerOrchestrator: "system",
 			}),
-		).rejects.toThrow(/RBAC_DENIED: caller may not accept mandate/);
+		).rejects.toThrow(/RBAC_DENIED: "mandates:accept" admits the MCP-bound fleet service account only/);
 		expect((await t.run((ctx) => ctx.db.get(mandateId)))?.status).toBe("requested");
 	});
 
@@ -540,7 +540,7 @@ describe("mandates.{accept,update,settle} — the word 'system' is not authority
 				callerOrchestrator: "system",
 				status: "delivered",
 			}),
-		).rejects.toThrow(/RBAC_DENIED: caller may not update mandate/);
+		).rejects.toThrow(/RBAC_DENIED: "mandates:update" admits the MCP-bound fleet service account only/);
 		expect((await t.run((ctx) => ctx.db.get(mandateId)))?.status).toBe("requested");
 	});
 
@@ -554,7 +554,7 @@ describe("mandates.{accept,update,settle} — the word 'system' is not authority
 				callerOrchestrator: "system",
 				finalCost: 1,
 			}),
-		).rejects.toThrow(/RBAC_DENIED: caller may not settle mandate/);
+		).rejects.toThrow(/RBAC_DENIED: "mandates:settle" admits the MCP-bound fleet service account only/);
 		expect((await t.run((ctx) => ctx.db.get(mandateId)))?.status).toBe("requested");
 	});
 

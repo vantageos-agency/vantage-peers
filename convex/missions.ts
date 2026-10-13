@@ -1,6 +1,6 @@
 import { v } from "convex/values";
 import { ConvexError } from "convex/values";
-import { sameOrg } from "@vantageos/cloud-identity";
+import { hasFleetRead, requireStanding, sameOrg } from "@vantageos/cloud-identity";
 import { mutation, query, internalQuery, internalMutation } from "./_generated/server";
 import { api } from "./_generated/api";
 import {
@@ -13,6 +13,7 @@ import type { Doc, Id } from "./_generated/dataModel";
 import { creatorValidator } from "./schema";
 import {
 	withOrgScope,
+	requireResolvedCaller,
 	requireScope,
 	verifiedActorValidator,
 } from "./lib/auth";
@@ -158,7 +159,7 @@ function tenantVerdict(
 	scope: OrgScope,
 	row: { orgId?: string; clerkOrgId?: string },
 ): "fleet" | "own" | "other" {
-	if (scope.isMaster) return "fleet";
+	if (hasFleetRead(scope)) return "fleet";
 	if (scope.orgSlug === null) return "other";
 	return sameOrg(orgRefOfRow(row), orgRefOfScope(scope)) ? "own" : "other";
 }
@@ -196,6 +197,7 @@ async function participantIdsOf(
 // create — insert a new mission
 // ─────────────────────────────────────────────────────────────────────────────
 
+// fleet-wide: the fleet (the service account) opens a mission for its own orchestrators with no organisation stamp, by purpose; an organisation member or a verified person creates only inside its own organisation, stamped from the verified scope
 export const create = mutation({
 	args: {
 		name: v.string(),
@@ -241,11 +243,9 @@ export const create = mutation({
 			args.verifiedPerson,
 			{ door: "missions:create", assertedName: args.createdBy },
 		);
-		if (!scope.isMaster && scope.orgSlug === null) {
-			throw new ConvexError(
-				`RBAC_DENIED: caller may not create a mission — ${JSON.stringify({ orgSlug: null })}`,
-			);
-		}
+		requireResolvedCaller(scope, "missions:create", { alsoRefusePreOrg: true });
+		const standing = requireStanding(scope, "missions:create", ["fleet", "member"]);
+		const isFleet = standing === "fleet";
 		// Acting identity and pilot derive from the verified caller: a member
 		// may create only as, and assign the pilot role only to, an orchestrator
 		// on its OWN resolved roster. Master unchanged.
@@ -277,7 +277,6 @@ export const create = mutation({
 		// master, whose rows may predate the agents registry, stores the column
 		// unset instead (the backfill lists it, nothing is guessed).
 		const idOrg = scope.orgSlug;
-		const isFleet = scope.isMaster;
 		let createdById = actor;
 		if (claimedCreator !== undefined) {
 			createdById = await missionCallerActorId(
@@ -324,10 +323,9 @@ export const create = mutation({
 			...(actor !== undefined ? { lastActedBy: actor } : {}),
 			createdAt: now,
 			updatedAt: now,
-			orgId: scope.isMaster ? undefined : (scope.orgSlug as string),
-			clerkOrgId: scope.isMaster
-				? undefined
-				: scope.orgClerkId,
+			...(isFleet
+				? {}
+				: { orgId: scope.orgSlug as string, clerkOrgId: scope.orgClerkId }),
 		});
 	},
 });
@@ -336,6 +334,7 @@ export const create = mutation({
 // get — fetch a single mission by ID
 // ─────────────────────────────────────────────────────────────────────────────
 
+// fleet-wide: the fleet (the service account, or the operator human for reads) reads any mission by purpose; an organisation member reads only a mission stamped with its own organisation ID whose pilot is on its roster by agent ID
 export const get = query({
 	args: { missionId: v.string() },
 	returns: v.union(
@@ -421,6 +420,46 @@ export const get = query({
 // scan itself hits its cap, we refuse to return a silently-incomplete page.
 export const MISSION_LIST_SCAN_CAP = 2000;
 
+// Rows read per batch, and batches at most, by `newestWithStatuses`.
+const MISSION_SCAN_BATCH = 200;
+const MISSION_SCAN_MAX_BATCHES = 25;
+
+/**
+ * The newest `want` missions in any of `statuses`, older than `before`, when no
+ * index leads with the status AND ends in the creation time. A FILL LOOP: it
+ * keeps reading creation-ordered batches, each bounded, until it holds `want`
+ * matches or the table ends. If the batch budget is spent first the answer is
+ * incomplete, and an incomplete page must never read as a complete one, so it is
+ * refused, naming what would narrow it.
+ */
+async function newestWithStatuses(
+	ctx: QueryCtx,
+	statuses: readonly MissionStatus[],
+	before: number,
+	want: number,
+): Promise<Doc<"missions">[]> {
+	const out: Doc<"missions">[] = [];
+	let upper = before;
+	for (let batch = 0; batch < MISSION_SCAN_MAX_BATCHES; batch++) {
+		const rows = await ctx.db
+			.query("missions")
+			.withIndex("by_creation_time", (q) => q.lt("_creationTime", upper))
+			.order("desc")
+			.take(MISSION_SCAN_BATCH);
+		for (const row of rows) {
+			if (statuses.includes(row.status as MissionStatus)) {
+				out.push(row);
+				if (out.length >= want) return out;
+			}
+		}
+		if (rows.length < MISSION_SCAN_BATCH) return out;
+		upper = rows[rows.length - 1]._creationTime;
+	}
+	throw new ConvexError(
+		`SCAN_CAP_EXCEEDED: missions.list found fewer than ${want} missions in status ${statuses.join("|")} in the ${MISSION_SCAN_BATCH * MISSION_SCAN_MAX_BATCHES} rows older than the anchor and cannot tell whether older ones exist; narrow with project or pilot, or page with a newer createdBefore — ${JSON.stringify({ door: "missions:list" })}`,
+	);
+}
+
 interface MissionsListArgs {
 	project?: string;
 	pilot?: string;
@@ -489,6 +528,11 @@ async function runMissionsList(
 	const fetchCap = needsWideScan ? MISSION_LIST_SCAN_CAP + 1 : limit;
 
 	type MissionRow = Doc<"missions">;
+	// The cursor anchor (forward paging, newest first) is a predicate of the READ:
+	// it sits in the index range, before the bound, so the page is the next
+	// `limit` rows older than the anchor and not a window cut first and filtered
+	// after (R-55). No anchor = an upper bound no creation time can reach.
+	const before = args.createdBefore ?? Number.MAX_VALUE;
 	const applyStatusFilter = (rows: MissionRow[]) => {
 		if (statuses === undefined) return rows;
 		if (statuses.length === 1) return rows.filter((r) => r.status === statuses[0]);
@@ -528,12 +572,9 @@ async function runMissionsList(
 	// orgs was served [] (PR #1394 review). Rows with NO orgId never match
 	// `eq("orgId", slug)`, so legacy rows are invisible to a member (the same
 	// verdict filterByOrgScope's tenant gate gives); master still reads them.
-	if (!scope.isMaster) {
+	const fleetRead = hasFleetRead(scope);
+	if (!fleetRead) {
 		if (orgSlug === null) return [];
-		// createdBefore (cursor anchor) is pushed INTO the index range so the
-		// page is the next `limit` rows older than the anchor, not a short page.
-		// No anchor = an upper bound no creation time can reach.
-		const before = args.createdBefore ?? Number.MAX_VALUE;
 		// [orgId, project|pilot, status, _creationTime]: a range on creation time
 		// needs `status` pinned, so project/pilot without a status fan out over
 		// every status and merge newest-first below.
@@ -600,46 +641,49 @@ async function runMissionsList(
 			"missions:list",
 		);
 	}
-	// Filter by project + single status — use compound index
-	else if (project !== undefined && statuses !== undefined && statuses.length === 1) {
-		allRows = await ctx.db
-			.query("missions")
-			.withIndex("by_project", (q) =>
-				q.eq("project", project).eq("status", statuses[0]),
-			)
-			.order("desc")
-			.take(fetchCap);
+	// Filter by project or by pilot: [project|pilotId, status, _creationTime] — a
+	// range on creation time needs `status` pinned, so the read fans out over the
+	// asked statuses (every status when none was asked) and merges newest first.
+	else if (project !== undefined || pilotId !== undefined) {
+		const statusList: readonly MissionStatus[] =
+			statuses !== undefined ? statuses : MISSION_STATUSES;
+		const perStatus = await Promise.all(
+			statusList.map(async (status) =>
+				project !== undefined
+					? await ctx.db
+							.query("missions")
+							.withIndex("by_project", (q) =>
+								q
+									.eq("project", project)
+									.eq("status", status)
+									.lt("_creationTime", before),
+							)
+							.order("desc")
+							.take(fetchCap)
+					: await ctx.db
+							.query("missions")
+							.withIndex("by_pilotId_status", (q) =>
+								q
+									.eq("pilotId", pilotId as string)
+									.eq("status", status)
+									.lt("_creationTime", before),
+							)
+							.order("desc")
+							.take(fetchCap),
+			),
+		);
+		allRows = perStatus
+			.flat()
+			.sort((a, b) => b._creationTime - a._creationTime)
+			.slice(0, fetchCap);
 	}
-	// Filter by project only (or project + multi-status filtered in-memory)
-	else if (project !== undefined) {
-		const base = await ctx.db
-			.query("missions")
-			.withIndex("by_project", (q) => q.eq("project", project))
-			.order("desc")
-			.take(fetchCap);
-		allRows = applyStatusFilter(base);
-	}
-	// Filter by pilot + single status — use compound index
-	else if (pilotId !== undefined && statuses !== undefined && statuses.length === 1) {
-		allRows = await ctx.db
-			.query("missions")
-			.withIndex("by_pilotId_status", (q) =>
-				q.eq("pilotId", pilotId).eq("status", statuses[0]),
-			)
-			.order("desc")
-			.take(fetchCap);
-	}
-	// Filter by pilot only (or pilot + multi-status filtered in-memory)
-	else if (pilotId !== undefined) {
-		const base = await ctx.db
-			.query("missions")
-			.withIndex("by_pilotId_status", (q) => q.eq("pilotId", pilotId))
-			.order("desc")
-			.take(fetchCap);
-		allRows = applyStatusFilter(base);
-	}
-	// Filter by status only
-	else if (statuses !== undefined) {
+	// Filter by status only. No index leads with the status AND ends in the
+	// creation time the anchor is compared with (`by_status` ends in `createdAt`),
+	// so an ANCHORED read fills from the creation-ordered range; an unanchored one
+	// keeps the plain reads.
+	else if (statuses !== undefined && args.createdBefore !== undefined) {
+		allRows = await newestWithStatuses(ctx, statuses, before, fetchCap);
+	} else if (statuses !== undefined) {
 		if (statuses.length === 1) {
 			allRows = await ctx.db
 				.query("missions")
@@ -653,7 +697,11 @@ async function runMissionsList(
 	}
 	// No filters — return all, newest first
 	else {
-		allRows = await ctx.db.query("missions").order("desc").take(fetchCap);
+		allRows = await ctx.db
+			.query("missions")
+			.withIndex("by_creation_time", (q) => q.lt("_creationTime", before))
+			.order("desc")
+			.take(fetchCap);
 	}
 
 	// Refuse to return a silently-incomplete page: if the widened scan
@@ -677,11 +725,6 @@ async function runMissionsList(
 	// Re-bound to the requested page size now that the filter has run over
 	// the widened superset (no-op when a wide scan wasn't needed).
 	filtered = filtered.slice(0, limit);
-	// S3.3 B8 follow-up batch 1 — cursor paging anchor: drop rows newer-or-equal to before.
-	if (args.createdBefore !== undefined) {
-		const before = args.createdBefore;
-		filtered = filtered.filter((r) => r._creationTime < before);
-	}
 
 	if (lite) return filtered.map(projectMissionLite);
 	return filtered;
@@ -698,6 +741,7 @@ const missionsListArgsValidator = {
 	createdBefore: v.optional(v.number()),
 };
 
+// fleet-wide: the fleet (the service account, or the operator human for reads) lists every mission by purpose; an organisation member reads one index range keyed by its own organisation
 export const list = query({
 	args: missionsListArgsValidator,
 	// Returns validator omitted because union of full+lite produces overly strict types vs Doc<"missions"> optionality
@@ -749,6 +793,7 @@ export const listForWebhook = internalQuery({
 // update — partial update of any mutable mission field
 // ─────────────────────────────────────────────────────────────────────────────
 
+// fleet-wide: the fleet (the service account) updates any mission by purpose; an organisation member or a verified person only a mission stamped with its own organisation ID
 export const update = mutation({
 	args: {
 		missionId: v.id("missions"),
@@ -809,11 +854,9 @@ export const update = mutation({
 			verifiedPerson,
 			{ door: "missions:update", assertedName: callerOrchestrator },
 		);
-		if (!scope.isMaster && scope.orgSlug === null) {
-			throw new ConvexError(
-				`RBAC_DENIED: caller may not update mission ${missionId} — ${JSON.stringify({ orgSlug: null })}`,
-			);
-		}
+		requireResolvedCaller(scope, "missions:update", { alsoRefusePreOrg: true });
+		const standing = requireStanding(scope, "missions:update", ["fleet", "member"]);
+		const isFleet = standing === "fleet";
 
 		const mission = await ctx.db.get(missionId);
 		if (mission === null) {
@@ -836,7 +879,7 @@ export const update = mutation({
 		// is destructive and needs org:admin. Master / agent paths unchanged.
 		const isCancel = fields.status === "cancelled";
 		const humanActor =
-			!scope.isMaster && callerOrchestrator === undefined
+			!isFleet && callerOrchestrator === undefined
 				? await resolveHumanActor(ctx, scope, {
 						door: "missions:update",
 						row: mission,
@@ -849,7 +892,6 @@ export const update = mutation({
 
 		// IDs, never names. Labels are resolved in ONE org: an org member's own, the
 		// fleet master's the MISSION's org (the operator org for a fleet-owned row).
-		const isFleet = scope.isMaster;
 		const idOrg = isFleet ? mission.orgId : scope.orgSlug;
 		const callerActorId = await missionCallerActorId(
 			ctx,
@@ -944,6 +986,7 @@ export const update = mutation({
 // updateStatus — shortcut: sets status + updatedAt
 // ─────────────────────────────────────────────────────────────────────────────
 
+// fleet-wide: the fleet (the service account) moves any mission's status by purpose; an organisation member only a mission stamped with its own organisation ID
 export const updateStatus = mutation({
 	args: {
 		missionId: v.id("missions"),
@@ -957,11 +1000,8 @@ export const updateStatus = mutation({
 		// check of any kind. Resolved BEFORE ctx.db.get for the same
 		// existence-oracle reason documented on `update`.
 		const scope = await withOrgScope(ctx);
-		if (!scope.isMaster && scope.orgSlug === null) {
-			throw new ConvexError(
-				`RBAC_DENIED: caller may not update mission ${args.missionId} — ${JSON.stringify({ orgSlug: null })}`,
-			);
-		}
+		requireResolvedCaller(scope, "missions:updateStatus", { alsoRefusePreOrg: true });
+		const standing = requireStanding(scope, "missions:updateStatus", ["fleet", "member"]);
 
 		const mission = await ctx.db.get(args.missionId);
 		if (mission === null) {
@@ -975,12 +1015,12 @@ export const updateStatus = mutation({
 		}
 
 		// HUMAN path: this door has no agent identity argument, so every
-		// non-master caller is a dashboard org member — writer role required and
+		// non-fleet caller is a dashboard org member — writer role required and
 		// recorded. Cancelling is not done here (it needs a reason and org:admin:
 		// use `update`), and a cancelled mission is reopened only by an admin.
-		// Master unchanged.
+		// The fleet is unchanged.
 		let humanActor: string | undefined;
-		if (!scope.isMaster) {
+		if (standing !== "fleet") {
 			if (args.status === "cancelled") {
 				throw new ConvexError(
 					`CANCEL_REASON_REQUIRED: cancel a mission through missions:update with a cancelReason — ${JSON.stringify({ missionId: args.missionId })}`,
@@ -1007,6 +1047,7 @@ export const updateStatus = mutation({
 // updateProgress — shortcut: sets progress (0-100) + updatedAt
 // ─────────────────────────────────────────────────────────────────────────────
 
+// fleet-wide: the fleet (the service account) moves any mission's progress by purpose; an organisation member only a mission stamped with its own organisation ID
 export const updateProgress = mutation({
 	args: {
 		missionId: v.id("missions"),
@@ -1020,11 +1061,8 @@ export const updateProgress = mutation({
 		// caller-identity check of any kind. Resolved BEFORE ctx.db.get for
 		// the same existence-oracle reason documented on `update`.
 		const scope = await withOrgScope(ctx);
-		if (!scope.isMaster && scope.orgSlug === null) {
-			throw new ConvexError(
-				`RBAC_DENIED: caller may not update mission ${args.missionId} — ${JSON.stringify({ orgSlug: null })}`,
-			);
-		}
+		requireResolvedCaller(scope, "missions:updateProgress", { alsoRefusePreOrg: true });
+		const standing = requireStanding(scope, "missions:updateProgress", ["fleet", "member"]);
 
 		const mission = await ctx.db.get(args.missionId);
 		if (mission === null) {
@@ -1037,8 +1075,8 @@ export const updateProgress = mutation({
 			);
 		}
 
-		// HUMAN path (see updateStatus): non-master = org member, writer role.
-		const humanActor = !scope.isMaster
+		// HUMAN path (see updateStatus): non-fleet = org member, writer role.
+		const humanActor = standing !== "fleet"
 			? await resolveHumanActor(ctx, scope, {
 					door: "missions:updateProgress",
 					row: mission,

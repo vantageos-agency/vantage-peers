@@ -1,4 +1,4 @@
-import { type OrgRef, sameOrg } from "@vantageos/cloud-identity";
+import { type OrgRef, requireStanding, sameOrg } from "@vantageos/cloud-identity";
 import { v, ConvexError } from "convex/values";
 import type { Doc } from "./_generated/dataModel";
 import type { QueryCtx } from "./_generated/server";
@@ -78,6 +78,7 @@ async function callerMayUseSession(
 
 // ── createSession ─────────────────────────────────────────────────────────────
 
+// fleet-wide: the fleet (the service account) opens a session under any tenant or none, by purpose; an organisation member is forced to its own organisation and subject
 export const createSession = mutation({
 	args: {
 		sessionId: v.string(),
@@ -92,6 +93,7 @@ export const createSession = mutation({
 		const door = "iframeEmbedSessions:createSession";
 		const scope = await withOrgScope(ctx);
 		requireResolvedCaller(scope, door, { alsoRefusePreOrg: true });
+		requireStanding(scope, door, ["fleet", "member"]);
 		const fleet = await hasFleetStanding(ctx, door);
 
 		// A session id is an opaque token indexing exactly one row; it is never
@@ -168,6 +170,7 @@ export const createSession = mutation({
 
 // ── getSession ────────────────────────────────────────────────────────────────
 
+// fleet-wide: the fleet (the service account, or the operator human for reads) reads any session by purpose; an organisation member reads only a session stamped with its own organisation ID
 export const getSession = query({
 	args: {
 		sessionId: v.string(),
@@ -226,6 +229,7 @@ export const getSession = query({
 // Update lastSeenAt to the current time. Called on each embed activity event
 // to extend the effective presence window.
 
+// fleet-wide: the fleet (the service account) touches any session by purpose; an organisation member only a session stamped with its own organisation ID
 export const touchSession = mutation({
 	args: {
 		sessionId: v.string(),
@@ -236,6 +240,7 @@ export const touchSession = mutation({
 		const door = "iframeEmbedSessions:touchSession";
 		const scope = await withOrgScope(ctx);
 		requireResolvedCaller(scope, door, { alsoRefusePreOrg: true });
+		requireStanding(scope, door, ["fleet", "member"]);
 
 		const session = await ctx.db
 			.query("iframeEmbedSessions")
@@ -259,6 +264,7 @@ export const touchSession = mutation({
 // Mark a session as revoked. Revoked sessions are treated as non-existent
 // by getSession. Used for logout / security invalidation flows.
 
+// fleet-wide: the fleet (the service account) revokes any session by purpose; an organisation member only a session stamped with its own organisation ID
 export const revokeSession = mutation({
 	args: {
 		sessionId: v.string(),
@@ -269,6 +275,7 @@ export const revokeSession = mutation({
 		const door = "iframeEmbedSessions:revokeSession";
 		const scope = await withOrgScope(ctx);
 		requireResolvedCaller(scope, door, { alsoRefusePreOrg: true });
+		requireStanding(scope, door, ["fleet", "member"]);
 
 		const session = await ctx.db
 			.query("iframeEmbedSessions")

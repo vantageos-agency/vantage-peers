@@ -489,7 +489,7 @@ describe("operator human: master for READS, member for WRITES", () => {
 		);
 		expect(
 			await refusal(op.query(api.orgRoster.getForAccessToken, { tokenHash: "live-token" })),
-		).toContain("getForAccessToken requires master or service-account");
+		).toContain("orgRoster:getForAccessToken");
 		expect(
 			await refusal(
 				op.query(api.agentCredentials.resolveAgentCredential, { presentedSecret: "zzz" }),
@@ -509,7 +509,7 @@ describe("operator human: master for READS, member for WRITES", () => {
 		// live and carries an org, so the call reaches past the caller gate.
 		await sa.query(api.orgRoster.getForAccessToken, { tokenHash: "live-token" }).catch((e) => {
 			expect(JSON.stringify((e as ConvexError<string>).data)).not.toContain(
-				"requires master or service-account",
+				"not-mcp-bound-master",
 			);
 		});
 		// The service account passes the caller gate and is refused only on the
