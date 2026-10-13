@@ -2301,6 +2301,10 @@ export function registerTools(
 
 	// ── store_memory ────────────────────────────────────────────────────────────
 
+	// oracle-justified: actor-bound memory write; the table set now includes agents because the door resolves the author
+	//   label (and, for diary-style callers, the roster) to an agent ID in the caller's verified org
+	//   (convex/contentClaims.ts authorIdOfLabel); the org comes from the verified `verifiedOrg` claim
+	//   the tool forwards, never from `namespace` or `createdBy`.
 	defineTool(
 		server,
 		authCtx,
@@ -2708,6 +2712,10 @@ export function registerTools(
 
 	// ── store_episode ───────────────────────────────────────────────────────────
 
+	// oracle-justified: actor-bound episode write; the table set now includes agents because the door resolves the author
+	//   label (and, for diary-style callers, the roster) to an agent ID in the caller's verified org
+	//   (convex/contentClaims.ts authorIdOfLabel); the org comes from the verified `verifiedOrg` claim
+	//   the tool forwards, never from `namespace` or `createdBy`.
 	defineTool(
 		server,
 		authCtx,
@@ -2855,6 +2863,9 @@ export function registerTools(
 	// Day 102 v2.9.0 — episode entity 5-op surface (PR-B).
 	// Thin wrapper on memories:listMemories with type='episode' forced.
 
+	// oracle-justified: namespace-scoped episode list; the table set now includes agents because the door resolves the `createdBy`
+	//   filter label to an agent ID in the caller's verified org (convex/contentClaims.ts authorIdOfLabel)
+	//   and the org comes from the forwarded `verifiedOrg` claim, so it differs from the actor-bound writes.
 	defineTool(
 		server,
 		authCtx,
@@ -3266,6 +3277,9 @@ export function registerTools(
 
 	// ── list_memories ───────────────────────────────────────────────────────────
 
+	// oracle-justified: namespace-scoped memory list; the table set now includes agents because the door resolves the `createdBy`
+	//   filter label to an agent ID in the caller's verified org (convex/contentClaims.ts authorIdOfLabel)
+	//   and the org comes from the forwarded `verifiedOrg` claim, so it differs from the actor-bound writes.
 	defineTool(
 		server,
 		authCtx,

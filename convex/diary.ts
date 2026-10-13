@@ -205,6 +205,15 @@ const DIARY_OWN_ROW_SCAN = 8;
 // range read from being unbounded and fails closed beyond it.
 const DIARY_RANGE_SCAN_CAP = 2000;
 
+// The tenant stamp of a diary row, derived from the verified scope: a fleet write is
+// fleet-owned (unstamped), as `tasks` does.
+function diaryTenantStamp(
+	scope: OrgScope,
+): { orgId: string; clerkOrgId: string | undefined } | Record<string, never> {
+	if (hasFleetRead(scope) || scope.orgSlug === null) return {};
+	return { orgId: scope.orgSlug, clerkOrgId: scope.orgClerkId };
+}
+
 async function readRange(
 	ctx: QueryCtx,
 	scope: OrgScope,
@@ -227,6 +236,28 @@ async function readRange(
 					)
 					.take(DIARY_RANGE_SCAN_CAP),
 			),
+		),
+	);
+	const owned: Doc<"diary">[] = [];
+	for (const row of perRange.flat()) if (tenant.owns(row)) owned.push(row);
+	return owned.sort((a, b) => (a.date < b.date ? -1 : a.date > b.date ? 1 : 0));
+}
+
+async function readTenantRange(
+	ctx: QueryCtx,
+	scope: OrgScope,
+	from: string,
+	to: string,
+): Promise<Doc<"diary">[]> {
+	const tenant = await callerTenant(ctx, scope);
+	const perRange = await Promise.all(
+		tenant.keys.map((key) =>
+			ctx.db
+				.query("diary")
+				.withIndex("by_org_date_clerk_id", (q) =>
+					q.eq("clerkOrgId", key).gte("date", from).lte("date", to),
+				)
+				.take(DIARY_RANGE_SCAN_CAP),
 		),
 	);
 	const owned: Doc<"diary">[] = [];
@@ -366,12 +397,7 @@ export const write = mutation({
 			createdAt: now,
 			// R-52 tenant stamp, derived from the verified scope. A fleet write is
 			// fleet-owned (unstamped), as `tasks` does.
-			...(hasFleetRead(scope) || scope.orgSlug === null
-				? {}
-				: {
-						orgId: scope.orgSlug,
-						clerkOrgId: scope.orgClerkId,
-					}),
+			...diaryTenantStamp(scope),
 		});
 	},
 });
@@ -690,13 +716,9 @@ export const listByDateRange = query({
 		}
 
 		if (hasFleetRead(scope)) {
-			return await ctx.db
-				.query("diary")
-				.withIndex("by_date", (q) =>
-					q.gte("date", args.from).lte("date", args.to),
-				)
-				.order("asc")
-				.collect();
+			// The fleet's own tenant range (operator-stamped and unstamped rows), by the
+			// index: never a scan of every tenant's rows.
+			return await readTenantRange(ctx, scope, args.from, args.to);
 		}
 		// Member without an `orchestrator` arg: one indexed range read PER
 		// (tenant range, rostered agent) — the tenant and the roster are the

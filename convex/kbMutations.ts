@@ -25,6 +25,7 @@ import { claimedOrgArgs, requireClaimedScope } from "./contentClaims";
 import { assertOrgArgs } from "./kbShared";
 import {
 	isNamespaceAllowedForScope,
+	type OrgScope,
 	refuseStorageOwnership,
 	requireResolvedCaller,
 	requireTenantNamespace,
@@ -313,6 +314,12 @@ function base64ToHex(b64: string): string {
 	return hex;
 }
 
+// The org a ticket is bound to: the VERIFIED scope's own org; only the fleet master,
+// which resolves none, acts on the org it names.
+function ticketOrgOf(scope: OrgScope, namedOrg: string): string {
+	return scope.orgSlug ?? namedOrg;
+}
+
 export const generateUploadUrlWithTicket = mutation({
 	args: {
 		orgId: v.string(),
@@ -358,7 +365,7 @@ export const generateUploadUrlWithTicket = mutation({
 		// and acts on the org it names, as in assertScopeAuthorizesOrg.
 		await ctx.db.insert("uploadTickets", {
 			ticketHash: await sha256Hex(ticket),
-			orgId: scope.orgSlug ?? args.orgId,
+			orgId: ticketOrgOf(scope, args.orgId),
 			contentSha256: args.sha256,
 			createdAt,
 			expiresAt,

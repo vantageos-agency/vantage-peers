@@ -801,6 +801,8 @@ export default defineSchema({
 		// The ID-keyed twins of the two orchestrator indexes: one agent's entries.
 		.index("by_org_agent_date_clerk_id", ["clerkOrgId", "agentId", "date"])
 		.index("by_agent_date", ["agentId", "date"])
+		// A tenant's entries over a date range (the fleet range read without an agent).
+		.index("by_org_date_clerk_id", ["clerkOrgId", "date"])
 		// R-11/R-52: the tenant is an index predicate. An undefined orgId (fleet) is
 		// matched by `.eq("orgId", undefined)`.
 		.index("by_org_orchestrator_date", ["orgId", "orchestrator", "date"])
