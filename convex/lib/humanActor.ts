@@ -11,9 +11,12 @@ import {
 	assertMemberMayWrite,
 	loadMemberWriterRoles,
 } from "../memberWriterRoles";
-import { personPrincipalLookups } from "./actingPrincipal";
+import {
+	personPrincipalLookups,
+	type RosterRow,
+	scopedRowFilter,
+} from "./actingPrincipal";
 import type { OrgScope } from "./auth";
-import { isRowVisibleToScope } from "./auth";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // resolveHumanActor — the ONE decision "may this human act on this door, and
@@ -60,33 +63,35 @@ export function memberActorOf(scope: OrgScope): string {
 }
 
 /** The TENANT compare shared by every task write site (same predicate as the readers). */
-export function assertTaskVisibleToCaller(
-	task: { orgId?: string; assignedTo?: string; pilot?: string },
+export async function assertTaskVisibleToCaller(
+	ctx: QueryCtx | MutationCtx,
+	task: RosterRow,
 	callerScope: OrgScope,
 	taskId: string,
-): void {
-	assertRowVisibleToCaller(task, callerScope, "task", taskId);
+): Promise<void> {
+	await assertRowVisibleToCaller(ctx, task, callerScope, "task", taskId);
 }
 
 /**
  * Row-generic TENANT compare (tasks, missions, briefing notes). Default: the
- * same predicate as the readers (`isRowVisibleToScope`: tenant gate, then the
- * roster as a narrowing intersect). `tenantOnly` is for a row that carries no
+ * same decision as the readers (the package's `filterTargetsInPersonScope`:
+ * the row's organisation by permanent ID, then its agent ID on the organisation's
+ * stored roster as a narrowing intersect). `tenantOnly` is for a row that carries no
  * orchestrator field at all (a briefing note): the roster leg has nothing to
  * compare and would refuse every row, so only the tenant stamp decides — an
  * absent `orgId` still never equals a resolved org slug, so an unstamped row
  * is refused.
  */
-export function assertRowVisibleToCaller(
-	row: { orgId?: string; assignedTo?: string; pilot?: string },
+export async function assertRowVisibleToCaller(
+	ctx: QueryCtx | MutationCtx,
+	row: RosterRow,
 	callerScope: OrgScope,
 	kind: string,
 	rowId: string,
 	tenantOnly = false,
-): void {
-	// tenantOnly: the organisation compare is the package's; the roster leg of
-	// `isRowVisibleToScope` is this backend's own and has nothing to compare on
-	// a row without an orchestrator field.
+): Promise<void> {
+	// tenantOnly: the organisation compare is the package's; the roster leg has
+	// nothing to compare on a row without an agent field.
 	const visible = tenantOnly
 		? callerScope.orgSlug !== null &&
 			resolvePersonTenantAccess({
@@ -98,7 +103,7 @@ export function assertRowVisibleToCaller(
 				rowOrgId: row.orgId,
 				door: kind,
 			}).ok
-		: isRowVisibleToScope(callerScope, row);
+		: (await (await scopedRowFilter(ctx, callerScope, kind))([row])).length === 1;
 	if (!visible) {
 		throw new ConvexError(
 			`RBAC_DENIED: ${kind} ${rowId} is outside the caller's organisation (tenant boundary) — ${JSON.stringify({ rowId, kind, callerOrg: callerScope.orgSlug })}`,
@@ -130,10 +135,10 @@ export async function resolveHumanActor(
 	opts: {
 		door: string;
 		/** Absent for create (the tenant is stamped from the scope, not compared). */
-		task?: { orgId?: string; assignedTo?: string; pilot?: string };
+		task?: RosterRow;
 		taskId?: string;
 		/** Row-generic form of `task`/`taskId` for missions and briefing notes. */
-		row?: { orgId?: string; assignedTo?: string; pilot?: string };
+		row?: RosterRow;
 		rowKind?: string;
 		rowId?: string;
 		/** The row has no orchestrator field (briefing note): tenant stamp only. */
@@ -168,10 +173,11 @@ export async function resolveHumanActor(
 		);
 	}
 	if (opts.task !== undefined) {
-		assertTaskVisibleToCaller(opts.task, scope, opts.taskId ?? "");
+		await assertTaskVisibleToCaller(ctx, opts.task, scope, opts.taskId ?? "");
 	}
 	if (opts.row !== undefined) {
-		assertRowVisibleToCaller(
+		await assertRowVisibleToCaller(
+			ctx,
 			opts.row,
 			scope,
 			opts.rowKind ?? "row",

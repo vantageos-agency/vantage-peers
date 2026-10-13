@@ -17,10 +17,10 @@
 import { convexTest } from "convex-test";
 import { describe, expect, test } from "vitest";
 import { testClerkOrgId } from "../../tests/fixtures/testClerkOrgId";
+import { seedRosterAgent } from "../../tests/fixtures/rosterAgent";
+import { scopedRowFilter } from "../lib/actingPrincipal";
 import { requireOrgAdminById } from "../lib/agentIdentity";
 import {
-	filterByOrgScope,
-	isRowVisibleToScope,
 	requireOrgAdmin,
 	requireOperatorAdminToCreateOrg,
 	resolveOperatorAdmin,
@@ -77,6 +77,10 @@ describe("SCOPE: rows belong to an organisation by its permanent ID", () => {
 		const t = createT();
 		await seedOrg(t, "scope-a");
 		await seedOrg(t, "scope-b");
+		const agents = await t.run(async (ctx) => ({
+			a: await seedRosterAgent(ctx, "scope-a", "seat"),
+			b: await seedRosterAgent(ctx, "scope-b", "seat"),
+		}));
 		const member = t.withIdentity(
 			session("u-a", "scope-a", testClerkOrgId("scope-a"), "org:member"),
 		);
@@ -85,22 +89,26 @@ describe("SCOPE: rows belong to an organisation by its permanent ID", () => {
 			const own = {
 				orgId: "scope-a",
 				clerkOrgId: testClerkOrgId("scope-a"),
-				pilot: "seat",
+				pilotId: agents.a,
 			};
 			const other = {
 				orgId: "scope-b",
 				clerkOrgId: testClerkOrgId("scope-b"),
-				pilot: "seat",
+				pilotId: agents.b,
 			};
-			expect(isRowVisibleToScope(scope, own)).toBe(true);
-			expect(isRowVisibleToScope(scope, other)).toBe(false);
-			expect(filterByOrgScope([own, other], scope)).toEqual([own]);
+			const visible = await scopedRowFilter(ctx, scope, "test");
+			expect(await visible([own])).toEqual([own]);
+			expect(await visible([other])).toEqual([]);
+			expect(await visible([own, other])).toEqual([own]);
 		});
 	});
 
 	test("a row stamped with the caller's slug but ANOTHER org's ID is invisible", async () => {
 		const t = createT();
 		await seedOrg(t, "scope-c");
+		const agent = await t.run(async (ctx) =>
+			seedRosterAgent(ctx, "scope-c", "seat"),
+		);
 		const member = t.withIdentity(
 			session("u-c", "scope-c", testClerkOrgId("scope-c"), "org:member"),
 		);
@@ -109,9 +117,10 @@ describe("SCOPE: rows belong to an organisation by its permanent ID", () => {
 			const stale = {
 				orgId: "scope-c",
 				clerkOrgId: "org_someOtherOrganisation",
-				pilot: "seat",
+				pilotId: agent,
 			};
-			expect(isRowVisibleToScope(scope, stale)).toBe(false);
+			const visible = await scopedRowFilter(ctx, scope, "test");
+			expect(await visible([stale])).toEqual([]);
 		});
 	});
 });

@@ -756,12 +756,16 @@ describe("stats:openTaskCountsByOrchestrator — a member counts its own org's o
 	async function world(): Promise<T> {
 		const t = createT();
 		await seedMappings(t);
+		const agents = await seedRosterAgents(t);
 		await t.run(async (ctx) => {
 			const now = Date.now();
 			const mk = (org: string, assignedTo: string, status: string) =>
 				ctx.db.insert("tasks", {
 					title: `${org}-${assignedTo}-${status}`,
 					assignedTo,
+					...(agents[`${org}/${assignedTo}`] !== undefined
+						? { assignedToId: agents[`${org}/${assignedTo}`] }
+						: {}),
 					priority: "medium",
 					status: status as "todo",
 					createdBy: assignedTo,

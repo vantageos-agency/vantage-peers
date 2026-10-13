@@ -20,6 +20,7 @@
  */
 import { describe, expect, test, vi } from "vitest";
 import { convexTest } from "../../tests/fixtures/convexTestWithServiceAccount";
+import { seedRosterAgent } from "../../tests/fixtures/rosterAgent";
 import { testClerkOrgId } from "../../tests/fixtures/testClerkOrgId";
 import { api } from "../_generated/api";
 import schema from "../schema";
@@ -68,6 +69,8 @@ async function seedOrgs(t: T, aScopes: string[] = ["view-stats-aggregated"]) {
 				isActive: true,
 				createdAt: NOW,
 			});
+			// Each roster name is an agent of the org, on its stored ID roster.
+			for (const name of roster) await seedRosterAgent(ctx, slug, name);
 		}
 	});
 }
@@ -83,8 +86,15 @@ type TaskSpec = {
 async function seedTasks(t: T, specs: TaskSpec[]) {
 	await t.run(async (ctx) => {
 		for (const s of specs) {
+			const agent = await ctx.db
+				.query("agents")
+				.withIndex("by_org_name", (q) =>
+					q.eq("orgSlug", s.org).eq("name", s.assignedTo),
+				)
+				.first();
 			for (let i = 0; i < s.count; i++) {
 				await ctx.db.insert("tasks", {
+					...(agent !== null ? { assignedToId: agent._id } : {}),
 					title: `${s.org}/${s.assignedTo}#${i}`,
 					project: s.project ?? "proj",
 					assignedTo: s.assignedTo,

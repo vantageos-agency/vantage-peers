@@ -13,7 +13,9 @@
  */
 import { describe, expect, test, vi } from "vitest";
 import { convexTest } from "../../tests/fixtures/convexTestWithServiceAccount";
+import { seedRosterAgent } from "../../tests/fixtures/rosterAgent";
 import { testClerkOrgId } from "../../tests/fixtures/testClerkOrgId";
+import { agentIdInCtx } from "../../tests/lib/agentIdOf";
 import { api } from "../_generated/api";
 import schema from "../schema";
 
@@ -58,6 +60,7 @@ async function seed(t: T) {
 				isActive: true,
 				createdAt: NOW,
 			});
+			await seedRosterAgent(ctx, slug, `seat-${slug}`);
 		}
 		// One closed task per tenant, assigned to that tenant's own seat, with a
 		// durable-artifact note and no VP-Sources footer; one fleet task.
@@ -66,7 +69,10 @@ async function seed(t: T) {
 			[B, `seat-${B}`],
 			[undefined, "sigma"],
 		] as const) {
+			const assignee =
+				orgId === undefined ? undefined : await agentIdInCtx(ctx, orgId, assignedTo);
 			await ctx.db.insert("tasks", {
+				...(assignee !== undefined ? { assignedToId: assignee } : {}),
 				title: `task ${orgId ?? "fleet"}`,
 				project: "p",
 				assignedTo,

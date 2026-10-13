@@ -25,6 +25,7 @@
 
 import { convexTest } from "../../tests/fixtures/convexTestWithServiceAccount";
 import { describe, expect, test } from "vitest";
+import { seedRosterAgent } from "../../tests/fixtures/rosterAgent";
 import { testClerkOrgId } from "../../tests/fixtures/testClerkOrgId";
 import { api } from "../_generated/api";
 import schema from "../schema";
@@ -199,12 +200,14 @@ async function seedTwoOrchestratorTasks() {
 			isActive: true,
 			createdAt: Date.now(),
 		});
+		const dummyA = await seedRosterAgent(ctx, "org-a", "dummy-a");
 		// Each row STATES its tenant. Without `orgId` both rows are untenanted
 		// and visible to no org caller at all, which would make the DENY below
 		// pass on an empty result — the isolation would be unmeasured.
 		await seedTask(ctx, {
 			title: "org-a open task",
 			assignedTo: "dummy-a",
+			assignedToId: dummyA,
 			status: "todo",
 			createdBy: "dummy-a",
 			orgId: "org-a",

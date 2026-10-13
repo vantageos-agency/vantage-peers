@@ -1,11 +1,8 @@
 import { hasFleetRead } from "@vantageos/cloud-identity";
 import { v } from "convex/values";
 import { query } from "./_generated/server";
-import {
-	filterByOrgScope,
-	requireResolvedCaller,
-	withOrgScope,
-} from "./lib/auth";
+import { scopedRowFilter } from "./lib/actingPrincipal";
+import { requireResolvedCaller, withOrgScope } from "./lib/auth";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // improvisationDigest — PR-I T-GREEN
@@ -67,7 +64,7 @@ export const scanWindow = query({
 	}),
 	handler: async (ctx, args) => {
 		// THE TENANT BOUNDARY, through the same mechanism as every other scoped
-		// reader (withOrgScope + filterByOrgScope). This digest reads three tables
+		// reader (withOrgScope + the package's scoped row filter). This digest reads three tables
 		// fleet-wide; it is a fleet tool (the MCP tool is master-only), so:
 		//   - anonymous / no-organisation caller -> typed-empty digest;
 		//   - master (the service account)       -> every tenant, unchanged;
@@ -113,6 +110,7 @@ export const scanWindow = query({
 		// A non-master tenant is pushed into the `by_orgId` index, so another
 		// tenant's rows cannot crowd the caller's own out of the scan.
 		let tasksScanned = 0;
+		const visible = await scopedRowFilter(ctx, scope, "improvisationDigest:scanWindow");
 		for await (const task of fleetRead || callerOrg === null
 			? ctx.db
 					.query("tasks")
@@ -125,7 +123,7 @@ export const scanWindow = query({
 			if (++tasksScanned > DIGEST_TASKS_SCAN_CAP) break;
 			if (task._creationTime < cutoff) continue;
 			if (task.status !== "done") continue;
-			if (!fleetRead && filterByOrgScope([task], scope).length === 0) continue;
+			if (!fleetRead && (await visible([task])).length === 0) continue;
 			if (!task.completionNote) continue;
 
 			const owner = task.assignedTo;

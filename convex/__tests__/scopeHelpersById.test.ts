@@ -1,91 +1,186 @@
+/// <reference types="vite/client" />
 import { describe, expect, test } from "vitest";
-import {
-	filterByOrgScope,
-	isRowVisibleToScope,
-	type OrgScope,
-} from "../lib/auth";
 import { testClerkOrgId } from "../../tests/fixtures/testClerkOrgId";
+import { convexTest } from "../../tests/fixtures/convexTestWithServiceAccount";
+import type { Id } from "../_generated/dataModel";
+import { scopedRowFilter } from "../lib/actingPrincipal";
+import type { OrgScope } from "../lib/auth";
+import schema from "../schema";
 
-// Module M2 part 3: the row-scope helpers decide a row's tenant by the permanent
-// org ID the row is stamped with, never by a label or a name. Four poles per
-// helper: own-org row visible, other-org row invisible, a same-NAME agent of
-// another org not admitted, an unstamped row refused to an org-scoped caller.
+// Module M2 part 3: the row filter of a roster-scoped read decides a row's
+// tenant by the permanent org ID the row is stamped with, never by a label or a
+// name, and the roster by the agent ID the row carries. The decisions are
+// @vantageos/cloud-identity's (`filterTargetsInPersonScope`); these poles pin
+// that this backend hands it IDs only. Five poles: own-org row visible (also
+// after a rename), other-org row invisible, a same-LABEL org with another ID not
+// admitted, an unstamped row refused to an org-scoped caller, an unknown org ID
+// admits nothing.
+
+const modules = Object.fromEntries(
+	Object.entries(import.meta.glob("../**/*.ts")).filter(
+		([path]) =>
+			!path.includes("ragSync") &&
+			!path.includes("search") &&
+			!path.includes("backfill"),
+	),
+);
+const createT = () => convexTest(schema, modules);
 
 const ORG_A = testClerkOrgId("org-a");
 const ORG_B = testClerkOrgId("org-b");
 
+async function world() {
+	const t = createT();
+	const ids = await t.run(async (ctx) => {
+		const out: Record<string, Id<"agents">> = {};
+		for (const [slug, name] of [
+			["org-a", "eta"],
+			["org-b", "eta"],
+		] as const) {
+			await ctx.db.insert("client_org_mapping", {
+				clerkOrgSlug: slug,
+				clerkOrgId: testClerkOrgId(slug),
+				allowedOrchestrators: [name],
+				scopes: ["view-own-tasks"],
+				displayName: slug,
+				isActive: true,
+				createdAt: 1,
+			});
+			out[slug] = await ctx.db.insert("agents", {
+				orgSlug: slug,
+				clerkOrgId: testClerkOrgId(slug),
+				name,
+				normalizedName: name,
+				isActive: true,
+				createdAt: 1,
+			});
+		}
+		return out;
+	});
+	return { t, etaA: ids["org-a"], etaB: ids["org-b"] };
+}
+
 function member(
-	slug: string,
 	clerkOrgId: string | undefined,
-	roster: string[],
+	roster: readonly string[],
 ): OrgScope {
 	return {
 		userId: "user-member",
-		orgSlug: slug,
+		orgSlug: "org-a",
 		...(clerkOrgId !== undefined ? { orgClerkId: clerkOrgId } : {}),
-		allowedOrchestrators: roster,
-		allowedAgentIds: [],
+		allowedOrchestrators: [],
+		allowedAgentIds: [...roster],
 		fleetWide: false,
 		scopes: ["view-own-tasks"],
 		isMaster: false,
 	};
 }
 
-const scopeA = member("org-a", ORG_A, ["eta"]);
-
-const ownRow = { orgId: "org-a", clerkOrgId: ORG_A, assignedTo: "eta" };
-const otherOrgRow = { orgId: "org-b", clerkOrgId: ORG_B, assignedTo: "eta" };
-// Same label as the caller's org, a DIFFERENT permanent ID: a new org that took
-// a freed slug. The label never matches.
-const sameLabelOtherIdRow = {
-	orgId: "org-a",
-	clerkOrgId: ORG_B,
-	assignedTo: "eta",
-};
-// Same ID, renamed label: still the caller's org.
-const renamedOwnRow = {
-	orgId: "org-a-old-name",
-	clerkOrgId: ORG_A,
-	assignedTo: "eta",
-};
-const unstampedRow = { assignedTo: "eta" };
-const labelOnlyRow = { orgId: "org-a", assignedTo: "eta" };
-
-describe("filterByOrgScope — rows belong to an org by its ID", () => {
-	test("own-org row is visible, also after the org's label was renamed", () => {
-		expect(filterByOrgScope([ownRow, renamedOwnRow], scopeA)).toHaveLength(2);
+describe("scopedRowFilter — rows belong to an org by its ID", () => {
+	test("PRESENT: an own-org row naming a rostered agent is visible, also after the org's label was renamed", async () => {
+		const { t, etaA } = await world();
+		const scopeA = member(ORG_A, [etaA]);
+		const own = { orgId: "org-a", clerkOrgId: ORG_A, assignedToId: etaA };
+		const renamed = { orgId: "org-a-old-name", clerkOrgId: ORG_A, assignedToId: etaA };
+		const kept = await t.run(async (ctx) =>
+			(await scopedRowFilter(ctx, scopeA, "test"))([own, renamed]),
+		);
+		expect(kept).toHaveLength(2);
 	});
-	test("other-org row is invisible", () => {
-		expect(filterByOrgScope([otherOrgRow], scopeA)).toEqual([]);
-	});
-	test("a same-NAME agent of another org is not admitted, whatever the roster says", () => {
-		// "eta" is on org A's roster and is the assignee of both rows; only the row
-		// stamped with org A's ID is admitted.
-		const kept = filterByOrgScope([otherOrgRow, sameLabelOtherIdRow], scopeA);
+
+	test("REFUSED: an other-org row is invisible", async () => {
+		const { t, etaA, etaB } = await world();
+		const scopeA = member(ORG_A, [etaA]);
+		const kept = await t.run(async (ctx) =>
+			(await scopedRowFilter(ctx, scopeA, "test"))([
+				{ orgId: "org-b", clerkOrgId: ORG_B, assignedToId: etaB },
+			]),
+		);
 		expect(kept).toEqual([]);
 	});
-	test("an unstamped row is refused to an org-scoped caller", () => {
-		expect(filterByOrgScope([unstampedRow, labelOnlyRow], scopeA)).toEqual([]);
-	});
-	test("a scope whose org ID is unknown admits nothing (a label is not an identity)", () => {
-		const noId = member("org-a", undefined, ["eta"]);
-		expect(filterByOrgScope([ownRow, labelOnlyRow], noId)).toEqual([]);
-	});
-});
 
-describe("isRowVisibleToScope — a row fetched by handle belongs to an org by its ID", () => {
-	test("own-org row is visible, also after the org's label was renamed", () => {
-		expect(isRowVisibleToScope(scopeA, ownRow)).toBe(true);
-		expect(isRowVisibleToScope(scopeA, renamedOwnRow)).toBe(true);
+	test("CROSS-ORG: a row with the caller's LABEL but another org's ID, and a same-NAME agent of another org, are not admitted", async () => {
+		const { t, etaA, etaB } = await world();
+		const scopeA = member(ORG_A, [etaA]);
+		const kept = await t.run(async (ctx) =>
+			(await scopedRowFilter(ctx, scopeA, "test"))([
+				{ orgId: "org-a", clerkOrgId: ORG_B, assignedToId: etaA },
+				{ orgId: "org-b", clerkOrgId: ORG_B, assignedToId: etaB },
+			]),
+		);
+		expect(kept).toEqual([]);
 	});
-	test("other-org row is invisible", () => {
-		expect(isRowVisibleToScope(scopeA, otherOrgRow)).toBe(false);
+
+	test("REFUSED: an unstamped row, and a row stamped with a label only, are refused to an org-scoped caller", async () => {
+		const { t, etaA } = await world();
+		const scopeA = member(ORG_A, [etaA]);
+		const kept = await t.run(async (ctx) =>
+			(await scopedRowFilter(ctx, scopeA, "test"))([
+				{ assignedToId: etaA },
+				{ orgId: "org-a", assignedToId: etaA },
+			]),
+		);
+		expect(kept).toEqual([]);
 	});
-	test("a same-NAME agent of another org is not admitted", () => {
-		expect(isRowVisibleToScope(scopeA, sameLabelOtherIdRow)).toBe(false);
+
+	test("REFUSED: a row naming an agent off the stored roster, or naming none, is dropped", async () => {
+		const { t, etaA } = await world();
+		const scopeA = member(ORG_A, []);
+		const onlyA = member(ORG_A, [etaA]);
+		const kept = await t.run(async (ctx) =>
+			(await scopedRowFilter(ctx, onlyA, "test"))([
+				{ orgId: "org-a", clerkOrgId: ORG_A },
+				{ orgId: "org-a", clerkOrgId: ORG_A, assignedToId: "someone-else" },
+			]),
+		);
+		expect(kept).toEqual([]);
+		// An organisation that stores no roster is the package's refusal, not an empty success.
+		await expect(
+			t.run(async (ctx) =>
+				(await scopedRowFilter(ctx, scopeA, "test"))([
+					{ orgId: "org-a", clerkOrgId: ORG_A, assignedToId: etaA },
+				]),
+			),
+		).rejects.toThrow(/person-scope-empty/);
 	});
-	test("an unstamped row is refused to an org-scoped caller", () => {
-		expect(isRowVisibleToScope(scopeA, unstampedRow)).toBe(false);
-		expect(isRowVisibleToScope(scopeA, labelOnlyRow)).toBe(false);
+
+	test("REFUSED: a scope whose org ID is unknown admits nothing (a label is not an identity)", async () => {
+		const { t, etaA } = await world();
+		const noId = member(undefined, [etaA]);
+		await expect(
+			t.run(async (ctx) =>
+				(await scopedRowFilter(ctx, noId, "test"))([
+					{ orgId: "org-a", assignedToId: etaA },
+				]),
+			),
+		).rejects.toThrow(/RBAC_DENIED/);
+	});
+
+	test("ABSENT: no rows is an empty success for a served member", async () => {
+		const { t, etaA } = await world();
+		const scopeA = member(ORG_A, [etaA]);
+		const kept = await t.run(async (ctx) =>
+			(await scopedRowFilter(ctx, scopeA, "test"))([]),
+		);
+		expect(kept).toEqual([]);
+	});
+
+	test("the fleet sees every row", async () => {
+		const { t } = await world();
+		const fleet: OrgScope = {
+			userId: "svc",
+			orgSlug: null,
+			allowedOrchestrators: [],
+			allowedAgentIds: [],
+			fleetWide: true,
+			scopes: [],
+			isMaster: true,
+			masterSource: "service-account",
+		};
+		const rows = [{ orgId: "org-b", clerkOrgId: ORG_B }, { assignedToId: "x" }];
+		const kept = await t.run(async (ctx) =>
+			(await scopedRowFilter(ctx, fleet, "test"))(rows),
+		);
+		expect(kept).toHaveLength(2);
 	});
 });

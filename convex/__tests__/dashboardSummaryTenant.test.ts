@@ -100,6 +100,9 @@ async function seed(t: T, orgAScopes: string[] = ["view-stats-aggregated"]) {
 				updatedAt: now,
 				orgId,
 				clerkOrgId: testClerkOrgId(orgId),
+				...(agentOf.has(assignedTo)
+					? { assignedToId: agentOf.get(assignedTo) }
+					: {}),
 			});
 			await ctx.db.insert("missions", {
 				name: `mission-${orgId ?? "fleet"}`,
@@ -107,6 +110,7 @@ async function seed(t: T, orgAScopes: string[] = ["view-stats-aggregated"]) {
 				status: "execute",
 				priority: "medium",
 				pilot: assignedTo,
+				...(agentOf.has(assignedTo) ? { pilotId: agentOf.get(assignedTo) } : {}),
 				agents: [],
 				createdBy: assignedTo,
 				createdAt: now,

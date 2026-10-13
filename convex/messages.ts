@@ -1833,7 +1833,7 @@ export const markAsRead = mutation({
 			// TENANT GATE. The roster above is a string membership, not a tenant
 			// boundary: two orgs may both name "seat-x". A non-master caller may
 			// only touch a receipt STAMPED with its own org; an absent tenantId
-			// asserts nothing and grants nothing (same stance as filterByOrgScope).
+			// asserts nothing and grants nothing (same stance as scopedRowFilter).
 			if (
 				!hasFleetRead(scope) &&
 				!sameOrg(

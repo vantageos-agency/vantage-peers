@@ -2,12 +2,8 @@ import { v } from "convex/values";
 import type { Doc } from "./_generated/dataModel";
 import type { QueryCtx } from "./_generated/server";
 import { query } from "./_generated/server";
-import {
-	withOrgScope,
-	requireResolvedCaller,
-	requireScope,
-	filterByOrgScope,
-} from "./lib/auth";
+import { scopedRowFilter } from "./lib/actingPrincipal";
+import { withOrgScope, requireResolvedCaller, requireScope } from "./lib/auth";
 import { requireFleetDoor } from "./lib/fleetStanding";
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -134,7 +130,7 @@ export const orchestratorStats = query({
 		// OWN org through the tenant index, so the cap bounds the org, never the
 		// fleet (a fleet-wide take(TASK_CAP) returned the oldest rows of every
 		// tenant and silently dropped a young org's rows). The roster narrowing
-		// (`filterByOrgScope`, the intersect on top of the tenant range) is applied
+		// (the package's `filterTargetsInPersonScope`, the intersect on top of the tenant range) is applied
 		// WHILE the range is read: the cap counts the rows the caller may see, so a
 		// window is never cut first and narrowed after. Unstamped rows never match
 		// `eq("orgId", slug)`: master-only.
@@ -147,9 +143,10 @@ export const orchestratorStats = query({
 				: ctx.db.query("tasks");
 		const tasks: Doc<"tasks">[] = [];
 		let scanned = 0;
+		const visible = await scopedRowFilter(ctx, scope, "stats:orchestratorStats");
 		for await (const task of tasksInRange) {
 			if (++scanned > TASK_SCAN_CAP) break;
-			if (filterByOrgScope([task], scope).length === 0) continue;
+			if ((await visible([task])).length === 0) continue;
 			tasks.push(task);
 			if (tasks.length >= TASK_CAP) break;
 		}
@@ -465,16 +462,21 @@ export const openTaskCountsByOrchestrator = query({
 			// everything, then filter" pass. A member whose org has no ID yet
 			// (expand phase) matches no row under `sameOrg`, so it reads none. The
 			// roster narrowing stays a per-row intersect ON TOP of the tenant range
-			// (`filterByOrgScope`, the same helper as `orchestratorStats`): a client
+			// (the same package call as `orchestratorStats`): a client
 			// org sees its OWN orchestrators only (doctrine comment stats.ts:82).
 			const orgClerkId = scope.orgClerkId;
+			const visible = await scopedRowFilter(
+				ctx,
+				scope,
+				"stats:openTaskCountsByOrchestrator",
+			);
 			for (const status of OPEN_TASK_STATUSES) {
 				for await (const task of ctx.db
 					.query("tasks")
 					.withIndex("by_orgId_status_clerk_id", (q) =>
 						q.eq("clerkOrgId", orgClerkId).eq("status", status),
 					)) {
-					if (filterByOrgScope([task], scope).length === 0) continue;
+					if ((await visible([task])).length === 0) continue;
 					countTask(task);
 				}
 			}

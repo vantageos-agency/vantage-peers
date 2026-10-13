@@ -567,11 +567,11 @@ async function runMissionsList(
 
 	// NON-MASTER callers read through an ORG-KEYED index: the tenant predicate is
 	// inside the query, so `take` pages the caller's OWN rows. The earlier shape
-	// (fleet-wide take, then filterByOrgScope) consulted the grant AFTER the
+	// (fleet-wide take, then scopedRowFilter) consulted the grant AFTER the
 	// read — a member whose missions sat behind `limit` newer rows of other
 	// orgs was served [] (PR #1394 review). Rows with NO orgId never match
 	// `eq("orgId", slug)`, so legacy rows are invisible to a member (the same
-	// verdict filterByOrgScope's tenant gate gives); master still reads them.
+	// verdict scopedRowFilter's tenant gate gives); master still reads them.
 	const fleetRead = hasFleetRead(scope);
 	if (!fleetRead) {
 		if (orgSlug === null) return [];

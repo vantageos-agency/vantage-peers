@@ -4880,7 +4880,7 @@ export function registerTools(
 	// ── bulk_complete_tasks ─────────────────────────────────────────────────────
 	// PR-F — bulk close cron-spam tasks in one mutation. dryRun=true by default.
 
-	// oracle-justified: bulk TRANSITION over a filtered set: each row is admitted individually by isRowVisibleToScope in
+	// oracle-justified: bulk TRANSITION over a filtered set: each row is admitted individually by scopedRowFilter in
 	//   tasks:bulkComplete (MCP scope `filtered`), where correct_task_segment targets one task by id and
 	//   is actor-bound (`from`, assertTaskCallerAuthorized); both go through requireAuthenticatedCaller.
 	defineTool(
@@ -5145,7 +5145,7 @@ export function registerTools(
 
 	// oracle-justified: MCP scope master (isMasterScope, global boundary) for a fleet-wide billing figure, narrower than
 	//   the data door: tasks:billingSummaryByProject itself serves a member only its own org's done
-	//   tasks (filterByOrgScope + requireScope view-own-tasks); checkout_task is an actor-bound `from`
+	//   tasks (scopedRowFilter + requireScope view-own-tasks); checkout_task is an actor-bound `from`
 	//   transition on one task; list_tasks pages with limit and cursor where the summary takes a date
 	//   range and no cursor.
 	defineTool(

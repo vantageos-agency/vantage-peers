@@ -830,7 +830,7 @@ export function _resetUnattributedClaimsForTest(): void {
  * A caller with a resolved actor reaches only rows that STATE its org
  * (`row.orgId === actor.orgSlug`). A row that states a different org is
  * another tenant's; a row that states NONE asserts nothing and therefore
- * grants nothing — the same reading convex/lib/auth.ts's `isRowVisibleToScope`
+ * grants nothing — the same reading convex/lib/auth.ts's `scopedRowFilter`
  * applies on the Convex side, so the two layers cannot disagree about who owns
  * a row. Master passes (it is the identity that finds unstamped rows to
  * backfill). A caller with no actor is unchanged here: this gate is keyed on

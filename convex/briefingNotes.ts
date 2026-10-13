@@ -1363,7 +1363,7 @@ export const searchBriefingNotesByKeyword = query({
 			.take(limit);
 
 		// Defense-in-depth: briefingNotes have no pilot/assignedTo so
-		// filterByOrgScope() does not fit. The tenant predicate is the search
+		// scopedRowFilter() does not fit. The tenant predicate is the search
 		// index's own `clerkOrgId` filter above, applied BEFORE the bound. This is
 		// the invariant that predicate holds: a member's window never contains a row
 		// of another organisation. A row that breaks it REFUSES the call (loud) and

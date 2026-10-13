@@ -12,12 +12,12 @@ import { internal, api } from "./_generated/api";
 import { creatorValidator } from "./schema";
 import { requireId } from "./lib/ids";
 import {
-	isRowVisibleToScope,
 	type VerifiedActor,
 	requireResolvedCaller,
 	verifiedActorValidator,
 	withOrgScope,
 } from "./lib/auth";
+import { scopedRowFilter } from "./lib/actingPrincipal";
 import {
 	type CallerScope,
 	collectNarrowed,
@@ -73,7 +73,7 @@ import { fleetOperatorRef } from "./lib/operatorOrg";
 // master-only) — for those, ownership/scope is derived from the row's
 // STORED `assignedTo` field against the caller's verified
 // `scope.allowedOrchestrators` (reusing the exact membership test
-// `filterByOrgScope` already applies at read time), never from a
+// `scopedRowFilter` already applies at read time), never from a
 // caller-supplied argument standing in for that proof.
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -372,7 +372,7 @@ export const list = query({
 		// beside it already went through `requireAuthenticatedCaller`.
 		//
 		// Every `recurringTasks` row names an `assignedTo` orchestrator, which is
-		// exactly what `filterByOrgScope` judges against the caller's own
+		// exactly what `scopedRowFilter` judges against the caller's own
 		// `client_org_mapping.allowedOrchestrators` — the SAME roster helper
 		// `runTasksList`/`runMissionsList` use for the collection reads of those
 		// tables. Mechanism reused, not invented: no second identity layer.
@@ -467,12 +467,13 @@ export const list = query({
 		// narrowing intersect) is the same predicate the by-id reads apply. Unlike the
 		// old wide-scan-cap window, a scan that reaches its cap before the page is
 		// full REFUSES (SCAN_CAP_EXCEEDED) instead of returning a short page.
+		const visible = await scopedRowFilter(ctx, scope, "recurringTasks:list");
 		const { kept, truncated } = await collectNarrowed(
 			range,
-			(row) =>
+			async (row) =>
 				(active === undefined || row.active === active) &&
 				(before === undefined || row._creationTime < before) &&
-				isRowVisibleToScope(scope, row),
+				(await visible([row])).length === 1,
 			{ limit, scanCap: RECURRING_TASKS_LIST_SCAN_CAP },
 		);
 		if (truncated) {
@@ -526,9 +527,10 @@ export const update = mutation({
 		// the same orchestrator would otherwise reach each other's schedules, and
 		// `processDueTasks` stamps the tasks it generates with THIS row's orgId —
 		// so a cross-org write here is injection into the victim's task queue.
-		// Same mechanism as the by-id reads (`isRowVisibleToScope`); the roster
+		// Same mechanism as the by-id reads (the package's scoped row filter); the roster
 		// check that follows stays as a narrowing intersect, never replaced.
-		if (!isRowVisibleToScope(scope, existing)) {
+		const visible = await scopedRowFilter(ctx, scope, "recurringTasks:update");
+		if ((await visible([existing])).length === 0) {
 			throw new ConvexError(
 				`RBAC_DENIED: caller may not update recurring task ${recurringTaskId} — the schedule does not belong to the caller's organisation`,
 			);
@@ -646,7 +648,8 @@ async function authorizeScheduleActor(
 		}
 		callerId = principal.principalId;
 	} else {
-		if (!isRowVisibleToScope(scope, row)) {
+		const visible = await scopedRowFilter(ctx, scope, door);
+		if ((await visible([row])).length === 0) {
 			throw new ConvexError(
 				`RBAC_DENIED: caller may not act on recurring task ${row._id} — the schedule does not belong to the caller's organisation — ${JSON.stringify({ door })}`,
 			);
@@ -968,7 +971,8 @@ export const getById = query({
 		);
 		const row = await ctx.db.get(recurringTaskId);
 		if (row === null) return null;
-		if (!isRowVisibleToScope(scope, row)) {
+		const visible = await scopedRowFilter(ctx, scope, "recurringTasks:getById");
+		if ((await visible([row])).length === 0) {
 			throw new ConvexError(
 				`RBAC_DENIED: caller may not read recurring task ${recurringTaskId} — the schedule does not belong to the caller's organisation`,
 			);

@@ -3,12 +3,15 @@ import {
 	type AgentCallerDeps,
 	assertRecipientAddressable,
 	assertTargetBelongsTo,
+	filterTargetsInPersonScope,
+	hasFleetRead,
 	type IdentityRefusal,
 	isServiceAccountScope,
 	type OrgKind,
 	type PrincipalLookups,
 	type RecipientLookups,
 	resolveActingPrincipal,
+	scopeStanding,
 } from "@vantageos/cloud-identity";
 import { ConvexError } from "convex/values";
 import type { Doc } from "../_generated/dataModel";
@@ -223,6 +226,74 @@ export function agentCallerDeps(ctx: Ctx): AgentCallerDeps {
 			organisationById,
 			orgKindOf,
 		},
+	};
+}
+
+/**
+ * A row the roster read judges: stamped with its organisation (`clerkOrgId`, the
+ * permanent ID) and naming its agent by ID (a mission's pilot, a task's assignee).
+ */
+export type RosterRow = {
+	orgId?: string;
+	clerkOrgId?: string;
+	pilotId?: string;
+	assignedToId?: string;
+};
+
+/**
+ * The row filter of a roster-scoped READ, decided by the package. GLUE ONLY: it
+ * builds the inputs `@vantageos/cloud-identity` asks for and says its refusal in
+ * this backend's wire shape; every decision is the package's.
+ *
+ *   - the fleet (`hasFleetRead`) sees every row;
+ *   - an organisation member is a person principal of its verified org
+ *     (`resolveActingPrincipal`), and `filterTargetsInPersonScope` keeps the
+ *     rows of that organisation (by permanent org ID) whose agent ID is an entry
+ *     of the organisation's stored roster `allowedAgentIds`. An organisation
+ *     that stores no roster, a scope with no organisation and a row naming no
+ *     agent are the package's refusals / drops, not decided here.
+ *
+ * The principal is resolved ONCE; the returned filter may be called per row or
+ * per page.
+ */
+export async function scopedRowFilter(
+	ctx: Ctx,
+	scope: OrgScope,
+	door: string,
+): Promise<<T extends RosterRow>(rows: readonly T[]) => Promise<T[]>> {
+	if (hasFleetRead(scope)) return async (rows) => [...rows];
+	// A scope the package reads as "refused" (anonymous, signed in without an
+	// organisation, self-contradicting) sees no row: the typed-empty answer the
+	// subscribed reads have always given such a caller (R-50). The doors that must
+	// RAISE for it do so before they reach a row.
+	if (scopeStanding(scope) === "refused") return async () => [];
+	const lookups = personPrincipalLookups(ctx, scope.userId);
+	const caller = await resolveActingPrincipal(
+		{
+			kind: "person",
+			personId: scope.userId,
+			verifiedOrgId: scope.orgClerkId ?? "",
+		},
+		lookups,
+		door,
+	);
+	if (!caller.ok) return refuseWith(caller.refusal);
+	return async <T extends RosterRow>(rows: readonly T[]): Promise<T[]> => {
+		const verdict = await filterTargetsInPersonScope(
+			caller.principal,
+			rows.map((row) => ({ orgId: row.clerkOrgId, row })),
+			{
+				orgKindOf: lookups.orgKindOf,
+				scopeOf: () => ({
+					kind: "keys",
+					keys: new Set(scope.allowedAgentIds),
+				}),
+				rowScopeKeys: (target) => target.row.pilotId ?? target.row.assignedToId,
+			},
+			{ door },
+		);
+		if (!verdict.ok) return refuseWith(verdict.refusal);
+		return verdict.rows.map((target) => target.row);
 	};
 }
 

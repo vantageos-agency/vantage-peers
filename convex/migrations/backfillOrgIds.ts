@@ -15,7 +15,7 @@
 //     MASTER row is the same fail-open shape as a resolver returning `null` on a
 //     null identity where `null` is the master sentinel.
 //
-// That premise is now inverted at the authorization layer: `isRowVisibleToScope`
+// That premise is now inverted at the authorization layer: `scopedRowFilter`
 // derives master-ness from the CALLER's verified scope (leg 1) and grants an
 // org caller nothing on account of a row's missing `orgId`. See
 // `convex/lib/auth.ts`.

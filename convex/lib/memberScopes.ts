@@ -8,10 +8,10 @@
  *
  *   view-own-tasks     INCLUDED. Gates tasks.ts / messages.ts / briefingNotes.ts
  *                      reads, every one of which then narrows rows through
- *                      filterByOrgScope / isRowVisibleToScope (tenant gate on
+ *                      scopedRowFilter / scopedRowFilter (tenant gate on
  *                      `orgId` + roster). It reveals only the caller's OWN org.
  *   view-own-missions  INCLUDED. Gates missions:list (missions.ts), which
- *                      narrows through filterByOrgScope. Own org only. Without
+ *                      narrows through scopedRowFilter. Own org only. Without
  *                      it a member of a fresh org is refused its own missions.
  *   view-orchestrator-summary
  *                      EXCLUDED. No handler gates on it today (it appears only

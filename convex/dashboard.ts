@@ -1,11 +1,7 @@
 import { v } from "convex/values";
-import { query } from "./_generated/server";
-import {
-	withOrgScope,
-	filterByOrgScope,
-	requireScope,
-	type OrgScope,
-} from "./lib/auth";
+import { type QueryCtx, query } from "./_generated/server";
+import { type RosterRow, scopedRowFilter } from "./lib/actingPrincipal";
+import { withOrgScope, requireScope, type OrgScope } from "./lib/auth";
 import { requireFleetDoor } from "./lib/fleetStanding";
 import { visibleProfiles } from "./lib/profileActors";
 
@@ -22,30 +18,28 @@ const DASHBOARD_WIDE_SCAN_CAP = 1000;
 const DASHBOARD_READ_CAP = 5000;
 
 /**
- * Reads `rows` (an index range) and keeps the rows the caller's scope admits
- * (`filterByOrgScope`: the tenant gate and the roster intersect) until `keepCap`
- * are kept. The roster narrowing is applied WHILE the range is read, so a window
- * is never cut first and narrowed after (R-55): the cap counts the rows the
- * caller may see. `readCap` bounds how many rows are read.
+ * Reads `rows` (an index range) and keeps the rows the caller may see until
+ * `keepCap` are kept. For an organisation member the package decides each row
+ * (`filterTargetsInPersonScope`: the row's permanent org ID against the caller's,
+ * then the row's pilot / assignee agent ID against the organisation's stored
+ * roster of agent IDs). The narrowing is applied WHILE the range is read, so a
+ * window is never cut first and narrowed after (R-55): the cap counts the rows
+ * the caller may see. `readCap` bounds how many rows are read.
  */
-async function collectVisible<
-	T extends {
-		orgId?: string;
-		clerkOrgId?: string;
-		pilot?: string;
-		assignedTo?: string;
-	},
->(
+async function collectVisible<T extends RosterRow>(
+	ctx: QueryCtx,
 	rows: AsyncIterable<T>,
 	scope: OrgScope,
 	keepCap: number,
 	readCap: number,
+	door: string,
 ): Promise<T[]> {
+	const visible = await scopedRowFilter(ctx, scope, door);
 	const kept: T[] = [];
 	let scanned = 0;
 	for await (const row of rows) {
 		if (++scanned > readCap) break;
-		if (filterByOrgScope([row], scope).length === 0) continue;
+		if ((await visible([row])).length === 0) continue;
 		kept.push(row);
 		if (kept.length >= keepCap) break;
 	}
@@ -139,6 +133,7 @@ export const getDashboardSummary = query({
 		// Member: the tenant index is bound BEFORE the cap (a fleet-wide index
 		// capped first and dropped foreign rows after, undercounting the member).
 		const inProgressTasks = await collectVisible(
+			ctx,
 			fleet || orgSlug === null
 				? ctx.db
 						.query("tasks")
@@ -151,6 +146,7 @@ export const getDashboardSummary = query({
 			scope,
 			DASHBOARD_SCAN_CAP,
 			DASHBOARD_READ_CAP,
+			"dashboard:getDashboardSummary",
 		);
 
 		// Open mandates — fleet-internal, no tenant column: master only. A member
@@ -189,6 +185,7 @@ export const getDashboardSummary = query({
 		// Recent activity — fetch bounded slices of each entity
 		// The 20 newest tasks the caller may see (narrowed while read, not after).
 		const recentTasks = await collectVisible(
+			ctx,
 			fleet || orgSlug === null
 				? ctx.db.query("tasks").order("desc")
 				: ctx.db
@@ -198,6 +195,7 @@ export const getDashboardSummary = query({
 			scope,
 			20,
 			DASHBOARD_WIDE_SCAN_CAP,
+			"dashboard:getDashboardSummary",
 		);
 		const recentMessages =
 			fleet || orgSlug === null
@@ -309,6 +307,7 @@ export const getProjectSummary = query({
 		// Member: tenant index bound BEFORE the cap, for tasks and missions alike.
 		const memberOrg = fleet ? null : scope.orgSlug;
 		const tasks = await collectVisible(
+			ctx,
 			memberOrg !== null
 				? ctx.db
 						.query("tasks")
@@ -317,8 +316,10 @@ export const getProjectSummary = query({
 			scope,
 			DASHBOARD_WIDE_SCAN_CAP,
 			DASHBOARD_READ_CAP,
+			"dashboard:getProjectSummary",
 		);
 		const missions = await collectVisible(
+			ctx,
 			memberOrg !== null
 				? ctx.db
 						.query("missions")
@@ -327,6 +328,7 @@ export const getProjectSummary = query({
 			scope,
 			DASHBOARD_WIDE_SCAN_CAP,
 			DASHBOARD_READ_CAP,
+			"dashboard:getProjectSummary",
 		);
 
 		const projectNames = new Set<string>();

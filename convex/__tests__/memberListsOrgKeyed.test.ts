@@ -70,12 +70,8 @@ async function seedOrgs(t: T) {
 			orgKind: "client",
 		});
 	});
-}
-
-// The assignee labels the task reads below use are agents of each org (one label,
-// two agents where both rosters carry it): tasks are listed by the assignee's
-// agent ID, never by the label.
-async function seedTaskAgents(t: T) {
+	// The assignee labels the reads below use are agents of each org, on the org's
+	// stored ID roster (the package judges a row by the agent ID it carries).
 	await seedAgents(t, [
 		[FLEET, "sigma"],
 		[OTHER, "sigma"],
@@ -120,8 +116,18 @@ async function seedTasks(t: T, seed: TaskSeed, count: number, tag: string) {
 }
 
 async function seedMission(t: T, name: string, orgId?: string, project = "p") {
-	return await t.run(async (ctx) =>
-		ctx.db.insert("missions", {
+	return await t.run(async (ctx) => {
+		const pilot =
+			orgId === undefined
+				? null
+				: await ctx.db
+						.query("agents")
+						.withIndex("by_org_name", (q) =>
+							q.eq("orgSlug", orgId).eq("name", "sigma"),
+						)
+						.first();
+		return await ctx.db.insert("missions", {
+			...(pilot !== null ? { pilotId: pilot._id } : {}),
 			name,
 			description: "d",
 			status: "execute",
@@ -133,8 +139,8 @@ async function seedMission(t: T, name: string, orgId?: string, project = "p") {
 			createdAt: 1,
 			updatedAt: 1,
 			...(orgId !== undefined ? { orgId, clerkOrgId: testClerkOrgId(orgId) } : {}),
-		} as never),
-	);
+		} as never);
+	});
 }
 
 type Row = { title: string; orgId?: string; _creationTime: number };
@@ -178,7 +184,6 @@ describe("tasks.listPaginated — member of org A", () => {
 		async (_name, filter) => {
 			const t = createT();
 			await seedOrgs(t);
-		await seedTaskAgents(t);
 			// own rows OLDEST, then unstamped, then a wall of foreign rows newest:
 			// a fleet-wide page of 5 holds only foreign rows.
 			await seedTasks(t, { orgId: FLEET }, 7, "own");
@@ -200,7 +205,6 @@ describe("tasks.listPaginated — member of org A", () => {
 	test("assignedTo only, own rows in two status buckets: every own row exactly once", async () => {
 		const t = createT();
 		await seedOrgs(t);
-		await seedTaskAgents(t);
 		await seedTasks(t, { orgId: FLEET, status: "todo" }, 4, "own-todo");
 		await seedTasks(t, { orgId: FLEET, status: "in_progress" }, 4, "own-prog");
 		await seedTasks(t, { orgId: OTHER, status: "todo" }, 30, "foreign");
@@ -214,7 +218,6 @@ describe("tasks.listPaginated — member of org A", () => {
 	test("cross-org pole: the other org's member sees only its own rows", async () => {
 		const t = createT();
 		await seedOrgs(t);
-		await seedTaskAgents(t);
 		await seedTasks(t, { orgId: FLEET }, 6, "fleet");
 		await seedTasks(t, { orgId: OTHER }, 3, "other");
 		const pages = await walk(asMember(t, OTHER), {}, 5);
@@ -228,7 +231,6 @@ describe("tasks.listPaginated — member of org A", () => {
 	test("return shape is the paginated result usePaginatedQuery expects", async () => {
 		const t = createT();
 		await seedOrgs(t);
-		await seedTaskAgents(t);
 		await seedTasks(t, { orgId: FLEET }, 2, "own");
 		const res = await asMember(t, FLEET).query(api.tasks.listPaginated, {
 			paginationOpts: { numItems: 5, cursor: null },
@@ -523,7 +525,6 @@ describe("roster narrowing stays pinned on every member path (own org, orchestra
 		await seedOrgs(t);
 		// The dashboard board narrows by the org's roster BY AGENT ID (module M7 batch
 		// B): sigma and eta are agents of the fleet org, only sigma is on its roster.
-		await seedTaskAgents(t);
 		await t.run(async (ctx) => {
 			const mapping = (await ctx.db.query("client_org_mapping").collect()).find(
 				(m) => m.clerkOrgSlug === FLEET,

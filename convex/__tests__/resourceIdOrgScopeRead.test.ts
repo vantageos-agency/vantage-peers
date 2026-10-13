@@ -19,13 +19,13 @@
  *
  * THE CONTROL, and the DECISION ON A ROW THAT CARRIES NO ORGANISATION.
  *
- * `isRowVisibleToScope` (convex/lib/auth.ts) is the single helper. For a
+ * `scopedRowFilter` (convex/lib/actingPrincipal.ts, the package's decision) is the single helper. For a
  * non-master caller with a verified org it applies, in order:
  *   (1) no verified organisation at all -> DENY;
  *   (2) the row states an `orgId` that differs from the caller's own resolved
  *       org -> DENY. This is the cross-tenant pole, and it is a hard deny.
  *   (3) the row states NO `orgId` -> it is NOT granted by that absence. It must
- *       still pass `filterByOrgScope`, the orchestrator-roster control that IS
+ *       still pass the roster control that IS
  *       the authority the COLLECTION reads (`tasks.list`, `missions.list`) apply
  *       to these same two tables today.
  *
@@ -70,7 +70,8 @@ import { convexTest } from "../../tests/fixtures/convexTestWithServiceAccount";
 import { describe, expect, test } from "vitest";
 import { api } from "../_generated/api";
 import type { Id } from "../_generated/dataModel";
-import { type OrgScope, isRowVisibleToScope } from "../lib/auth";
+import { scopedRowFilter } from "../lib/actingPrincipal";
+import type { OrgScope } from "../lib/auth";
 import schema from "../schema";
 import { findAgentId } from "../../tests/lib/agentIdOf";
 import { seedRosterAgents } from "../../tests/lib/seedRosterAgents";
@@ -642,114 +643,159 @@ describe("iframeEmbedSessions:getSession — authorisation derived from the TARG
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
-// isRowVisibleToScope — the LEGS, observed one at a time.
+// The scoped row filter — the LEGS, observed one at a time.
 //
-// WHY THIS BLOCK EXISTS, stated plainly because it was added in response to a
-// SURVIVING MUTANT. Deleting leg 2 ("no verified organisation -> not visible")
-// left every end-to-end pole above GREEN. The reason is that no scope reachable
-// through the public surface has `orgSlug === null` together with a NON-EMPTY
-// `allowedOrchestrators`: withOrgScope's anonymous branch and its
-// `refuseWithoutThrow` refused branch both return an EMPTY roster, so leg 4
-// (`filterByOrgScope`) denied the row anyway and leg 2 was unobservable from
-// outside. Leg 2 is therefore genuine defence-in-depth rather than dead code —
-// a future synthesised non-master scope carrying a roster and no org (the exact
-// shape `listForWebhook` builds, saved there only by `isMaster: true`) would
-// otherwise be granted — and it is kept, with a pole that observes IT and
-// nothing else. Reported as survived before being tightened; it no longer
-// survives.
+// The decisions are @vantageos/cloud-identity's (`filterTargetsInPersonScope`,
+// reached through `scopedRowFilter`, convex/lib/actingPrincipal.ts); each pole
+// below observes ONE leg and nothing else, by handing the filter a hand-built
+// member scope and a row. No scope reachable through the public surface has
+// `orgSlug === null` together with a populated roster, so the first leg can only
+// be observed here: a future synthesised non-master scope carrying a roster and
+// no org must still see nothing.
 // ─────────────────────────────────────────────────────────────────────────────
 
 const A_ID = testClerkOrgId("org-a");
 const B_ID = testClerkOrgId("org-b");
-const scopeOf = (over: Partial<OrgScope>): OrgScope => ({
-	userId: "u",
-	orgSlug: "org-a",
-	orgClerkId: A_ID,
-	allowedOrchestrators: ["sigma"],
-	allowedAgentIds: [],
-	fleetWide: false,
-	scopes: [],
-	isMaster: false,
-	...over,
-});
 
-describe("isRowVisibleToScope — each leg observed alone", () => {
-	test("leg 2 alone — no verified organisation is refused even with a POPULATED roster", () => {
-		const scope = scopeOf({ orgSlug: null, allowedOrchestrators: ["sigma"] });
-		expect(isRowVisibleToScope(scope, { assignedTo: "sigma" })).toBe(false);
+async function legWorld() {
+	const t = convexTest(schema, modules);
+	const ids = await t.run(async (ctx) => {
+		const out: Record<string, Id<"agents">> = {};
+		for (const [slug, names] of [
+			["org-a", ["sigma", "eta"]],
+			["org-b", ["sigma", "eta"]],
+		] as const) {
+			await ctx.db.insert("client_org_mapping", {
+				clerkOrgSlug: slug,
+				clerkOrgId: testClerkOrgId(slug),
+				allowedOrchestrators: [...names],
+				scopes: [],
+				displayName: slug,
+				isActive: true,
+				createdAt: 1,
+			});
+			for (const name of names) {
+				out[`${slug}/${name}`] = await ctx.db.insert("agents", {
+					orgSlug: slug,
+					clerkOrgId: testClerkOrgId(slug),
+					name,
+					normalizedName: name,
+					isActive: true,
+					createdAt: 1,
+				});
+			}
+		}
+		return out;
+	});
+	// The caller's roster lists sigma only; eta is an agent of org-a OFF the roster.
+	const scopeOf = (over: Partial<OrgScope>): OrgScope => ({
+		userId: "u",
+		orgSlug: "org-a",
+		orgClerkId: A_ID,
+		allowedOrchestrators: [],
+		allowedAgentIds: [ids["org-a/sigma"]],
+		fleetWide: false,
+		scopes: [],
+		isMaster: false,
+		...over,
+	});
+	const visible = async (scope: OrgScope, row: object): Promise<boolean> =>
+		await t.run(
+			async (ctx) => (await (await scopedRowFilter(ctx, scope, "test"))([row])).length === 1,
+		);
+	return { ids, scopeOf, visible };
+}
+
+describe("the scoped row filter — each leg observed alone", () => {
+	test("no verified organisation is refused even with a POPULATED roster", async () => {
+		const { ids, scopeOf, visible } = await legWorld();
+		const scope = scopeOf({
+			orgSlug: null,
+			orgClerkId: undefined,
+			allowedAgentIds: [ids["org-a/sigma"]],
+		});
+		expect(await visible(scope, { assignedToId: ids["org-a/sigma"] })).toBe(false);
 		expect(
-			isRowVisibleToScope(scope, { orgId: "org-a", clerkOrgId: A_ID, assignedTo: "sigma" }),
+			await visible(scope, { orgId: "org-a", clerkOrgId: A_ID, assignedToId: ids["org-a/sigma"] }),
 		).toBe(false);
 	});
 
-	test("leg 3 alone — a row stating a DIFFERENT org is refused even when the roster admits it", () => {
-		const scope = scopeOf({});
+	test("a row stating a DIFFERENT org is refused even when the roster lists its agent", async () => {
+		const { ids, scopeOf, visible } = await legWorld();
+		const scope = scopeOf({ allowedAgentIds: [ids["org-a/sigma"], ids["org-b/sigma"]] });
 		expect(
-			isRowVisibleToScope(scope, { orgId: "org-b", clerkOrgId: B_ID, assignedTo: "sigma" }),
+			await visible(scope, { orgId: "org-b", clerkOrgId: B_ID, assignedToId: ids["org-b/sigma"] }),
 		).toBe(false);
 	});
 
-	test("leg 4 alone — a row stating the caller's OWN org is refused when the roster does not admit it", () => {
-		const scope = scopeOf({});
+	test("a row stating the caller's OWN org is refused when the roster does not list its agent", async () => {
+		const { ids, scopeOf, visible } = await legWorld();
 		expect(
-			isRowVisibleToScope(scope, { orgId: "org-a", clerkOrgId: A_ID, assignedTo: "eta" }),
+			await visible(scopeOf({}), {
+				orgId: "org-a",
+				clerkOrgId: A_ID,
+				assignedToId: ids["org-a/eta"],
+			}),
 		).toBe(false);
 	});
 
-	// DOCTRINE INVERSION — previously "a row stating NO org is admitted only by
-	// the roster", asserting `{ assignedTo: "sigma" }` was VISIBLE. The absence
-	// of a tenant stamp is now a refusal on its own, and no roster entry can
-	// convert it into a grant. Both poles of the roster are exercised so the
-	// result is shown to be independent of it.
-	test("absence alone — a row stating NO org is refused whatever the roster says", () => {
+	// DOCTRINE: the absence of a tenant stamp is a refusal on its own, and no
+	// roster entry can convert it into a grant. Both poles of the roster are
+	// exercised so the result is shown to be independent of it.
+	test("absence alone — a row stating NO org is refused whatever the roster says", async () => {
+		const { ids, scopeOf, visible } = await legWorld();
 		const scope = scopeOf({});
-		// "sigma" IS in the roster — the old grant path — and is still refused.
-		expect(isRowVisibleToScope(scope, { assignedTo: "sigma" })).toBe(false);
-		// "eta" is NOT in the roster: refused for both reasons at once.
-		expect(isRowVisibleToScope(scope, { assignedTo: "eta" })).toBe(false);
-		// No orchestrator at all.
-		expect(isRowVisibleToScope(scope, {})).toBe(false);
+		// sigma IS on the roster and is still refused.
+		expect(await visible(scope, { assignedToId: ids["org-a/sigma"] })).toBe(false);
+		// eta is NOT on the roster: refused for both reasons at once.
+		expect(await visible(scope, { assignedToId: ids["org-a/eta"] })).toBe(false);
+		// No agent at all.
+		expect(await visible(scope, {})).toBe(false);
 	});
 
-	// THE ROSTER SURVIVES AS A NARROWING INTERSECT, never as a grant. A row
-	// that DOES state the caller's org still has to clear the intra-org
-	// delegation control; dropping it here would have widened `get` relative to
-	// the pre-change behaviour, which is the unearned-grant direction of the
-	// very defect this file pins.
-	test("tenant gate and roster are BOTH required — same org, roster refuses, row denied", () => {
+	// THE ROSTER SURVIVES AS A NARROWING INTERSECT, never as a grant: a row that
+	// DOES state the caller's org still has to clear the intra-org control.
+	test("tenant gate and roster are BOTH required — same org, roster refuses, row denied", async () => {
+		const { ids, scopeOf, visible } = await legWorld();
 		const scope = scopeOf({});
-		// Same tenant + roster admits -> visible.
 		expect(
-			isRowVisibleToScope(scope, { orgId: "org-a", clerkOrgId: A_ID, assignedTo: "sigma" }),
+			await visible(scope, { orgId: "org-a", clerkOrgId: A_ID, assignedToId: ids["org-a/sigma"] }),
 		).toBe(true);
-		// Same tenant + roster refuses -> denied. The roster still narrows.
 		expect(
-			isRowVisibleToScope(scope, { orgId: "org-a", clerkOrgId: A_ID, assignedTo: "eta" }),
+			await visible(scope, { orgId: "org-a", clerkOrgId: A_ID, assignedToId: ids["org-a/eta"] }),
 		).toBe(false);
 	});
 
-	test("leg 1 alone — master is admitted regardless of every other leg", () => {
+	test("master is admitted regardless of every other leg", async () => {
+		const { ids, scopeOf, visible } = await legWorld();
 		const scope = scopeOf({
 			isMaster: true,
 			fleetWide: true,
 			masterSource: "service-account",
 			orgSlug: null,
-			allowedOrchestrators: [],
+			orgClerkId: undefined,
+			allowedAgentIds: [],
 		});
 		expect(
-			isRowVisibleToScope(scope, { orgId: "org-b", clerkOrgId: B_ID, assignedTo: "eta" }),
+			await visible(scope, { orgId: "org-b", clerkOrgId: B_ID, assignedToId: ids["org-b/eta"] }),
 		).toBe(true);
 	});
 
-	test("slug alone — a row stating the caller's slug but no org ID is refused (M4, no label fallback)", () => {
+	test("slug alone — a row stating the caller's slug but no org ID is refused (M4, no label fallback)", async () => {
+		const { ids, scopeOf, visible } = await legWorld();
 		expect(
-			isRowVisibleToScope(scopeOf({}), { orgId: "org-a", assignedTo: "sigma" }),
+			await visible(scopeOf({}), { orgId: "org-a", assignedToId: ids["org-a/sigma"] }),
 		).toBe(false);
 	});
 
-	test("ALLOW — the ordinary case: own org, own roster", () => {
+	test("ALLOW — the ordinary case: own org, own roster", async () => {
+		const { ids, scopeOf, visible } = await legWorld();
 		expect(
-			isRowVisibleToScope(scopeOf({}), { orgId: "org-a", clerkOrgId: A_ID, assignedTo: "sigma" }),
+			await visible(scopeOf({}), {
+				orgId: "org-a",
+				clerkOrgId: A_ID,
+				assignedToId: ids["org-a/sigma"],
+			}),
 		).toBe(true);
 	});
 });

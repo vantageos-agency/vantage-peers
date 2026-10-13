@@ -21,6 +21,7 @@
  */
 import { describe, expect, test } from "vitest";
 import { convexTest } from "../../tests/fixtures/convexTestWithServiceAccount";
+import { seedRosterAgent } from "../../tests/fixtures/rosterAgent";
 import { testClerkOrgId } from "../../tests/fixtures/testClerkOrgId";
 import { api } from "../_generated/api";
 import schema from "../schema";
@@ -71,6 +72,7 @@ async function seedWorld(scopes: string[] = ["view-stats-aggregated"]) {
 				...(kind ? { orgKind: kind } : {}),
 			});
 		}
+		const seatA = await seedRosterAgent(ctx, A, "seat-a");
 		for (const [orgId, assignedTo, project] of [
 			[A, "seat-a", "proj-a"],
 			[undefined, "sigma", "proj-fleet"],
@@ -87,6 +89,7 @@ async function seedWorld(scopes: string[] = ["view-stats-aggregated"]) {
 				updatedAt: NOW,
 				orgId,
 				clerkOrgId: testClerkOrgId(orgId),
+				...(assignedTo === "seat-a" ? { assignedToId: seatA } : {}),
 			});
 		}
 	});

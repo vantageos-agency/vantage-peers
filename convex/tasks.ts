@@ -13,14 +13,13 @@ import type { Doc, Id } from "./_generated/dataModel";
 import { internal } from "./_generated/api";
 import { creatorValidator, taskOriginValidator } from "./schema";
 import {
-	filterByOrgScope,
-	isRowVisibleToScope,
 	requireAgentCredentialMatch,
 	verifiedActorValidator,
 	requireResolvedCaller,
 	requireScope,
 	withOrgScope,
 } from "./lib/auth";
+import { scopedRowFilter } from "./lib/actingPrincipal";
 import type { OrgScope, VerifiedActor } from "./lib/auth";
 import { requireId } from "./lib/ids";
 import { mappingIsProven } from "./githubOwnerBinding";
@@ -376,7 +375,7 @@ function isReviewTask(task: { isReviewTask?: boolean }): boolean {
 // (resolveHumanActor), returning the "user:<subject>" actor to record.
 async function authorizeTaskActor(
 	ctx: QueryCtx | MutationCtx,
-	task: Parameters<typeof assertTaskCallerAuthorized>[0],
+	task: Parameters<typeof assertTaskCallerAuthorized>[1],
 	callerOrchestrator: string | undefined,
 	taskId: string,
 	callerScope: CallerScope,
@@ -386,12 +385,14 @@ async function authorizeTaskActor(
 	if (callerOrchestrator === undefined) {
 		return await resolveHumanActor(ctx, callerScope, { door, task, taskId, adminOnly: opts?.adminOnly });
 	}
-	return assertTaskCallerAuthorized(task, callerOrchestrator, taskId, callerScope, opts?.reviewReassignGranted);
+	return await assertTaskCallerAuthorized(ctx, task, callerOrchestrator, taskId, callerScope, opts?.reviewReassignGranted);
 }
 
-function assertTaskCallerAuthorized(
+async function assertTaskCallerAuthorized(
+	ctx: QueryCtx | MutationCtx,
 	task: {
 		orgId?: string;
+		clerkOrgId?: string;
 		createdBy: string;
 		createdById?: string;
 		assignedTo?: string;
@@ -403,7 +404,7 @@ function assertTaskCallerAuthorized(
 	taskId: string,
 	callerScope: CallerScope,
 	reviewReassignGranted?: boolean,
-): undefined {
+): Promise<undefined> {
 	if (callerOrchestrator === undefined) {
 		// Omitting the caller REFUSES here. The human member-acting path is not
 		// this function: doors that admit it call authorizeTaskActor.
@@ -414,7 +415,7 @@ function assertTaskCallerAuthorized(
 	// TENANT GATE FIRST — a name match is only meaningful INSIDE the caller's
 	// own organisation. Two orgs whose rosters both carry "sigma" are
 	// separated by the row's stamp and by nothing else.
-	assertTaskVisibleToCaller(task, callerScope, taskId);
+	await assertTaskVisibleToCaller(ctx, task, callerScope, taskId);
 	// Reviewer-reclaim (k17e1ar4s7pspb0rs74ms25hmd8dhv01) — narrowly scoped
 	// THIRD branch: the caller is neither creator nor current assignee, but
 	// IS the immediately PRIOR assignee of a REVIEW task (decided from the
@@ -689,7 +690,7 @@ async function insertTask(
 		// reads this, never the mutable title/tags.
 		isReviewTask: computeIsReviewTask(args.title, args.tags),
 		// Stamp the TENANT once at create, from the caller's verified scope.
-		// `isRowVisibleToScope` leg 3 reads this and nothing else; a row that
+		// `scopedRowFilter` leg 3 reads this and nothing else; a row that
 		// reaches the database unstamped is readable by no org caller at all.
 		orgId,
 		// R-53: the actors BY ID, resolved within the row's own org (the operator
@@ -819,7 +820,7 @@ export const createForWebhook = internalMutation({
 		// a tenant from and no client org that could own the row. The tasks it
 		// creates are fleet automation records (deploy/review chores against
 		// this repo's own PRs). They are readable by master via
-		// `isRowVisibleToScope` leg 1 — the CALLER's verified master scope —
+		// `scopedRowFilter` leg 1 — the CALLER's verified master scope —
 		// and by no client org, which is correct: no client owns them.
 		// ORIGIN: "automation-webhook", server-stamped — the unforgeable signal
 		// that lets a configured canceller close the incident-chain tasks no
@@ -930,13 +931,14 @@ export const get = query({
 		// RESOURCE-ID class — the authorisation is derived from the TARGET ROW's
 		// own organisation, not from any argument (there is none to distrust here)
 		// and not from the mere existence of a caller organisation. See
-		// isRowVisibleToScope in convex/lib/auth.ts for the four legs and for the
+		// scopedRowFilter in convex/lib/auth.ts for the four legs and for the
 		// explicit decision on a row carrying no orgId. refuseWithoutThrow: this
 		// is a reactively-subscribed public read, so a signed-in caller with no
 		// organisation yet gets the same typed null as a denied one rather than a
 		// throw that would crash the subscriber's render (R-50/R-51).
 		const scope = await withOrgScope(ctx, { refuseWithoutThrow: true });
-		if (!isRowVisibleToScope(scope, task)) return null;
+		const visible = await scopedRowFilter(ctx, scope, "tasks:get");
+		if ((await visible([task])).length === 0) return null;
 		return task;
 	},
 });
@@ -1057,7 +1059,8 @@ export const getById = query({
 		// comment above `args`, so it matched no org-shaped field and never
 		// appeared in the count (scripts/check-public-fn-org-arg-identity.py).
 		const scope = await withOrgScope(ctx, { refuseWithoutThrow: true });
-		if (!isRowVisibleToScope(scope, task)) return null;
+		const visible = await scopedRowFilter(ctx, scope, "tasks:getById");
+		if ((await visible([task])).length === 0) return null;
 		return task;
 	},
 });
@@ -1301,7 +1304,8 @@ async function runTasksList(ctx: QueryCtx, args: TasksListArgs, scope: OrgScope)
 	}
 
 	// What the index ranges cannot express, applied while the range is read.
-	const keep = (r: Doc<"tasks">): boolean => {
+	const visible = await scopedRowFilter(ctx, scope, "tasks:list");
+	const keep = async (r: Doc<"tasks">): Promise<boolean> => {
 		if (statuses !== undefined && !statuses.includes(r.status)) return false;
 		if (creatorId !== undefined && r.createdById !== creatorId) return false;
 		if (updatedSince !== undefined && (r.updatedAt ?? 0) < updatedSince) {
@@ -1325,7 +1329,7 @@ async function runTasksList(ctx: QueryCtx, args: TasksListArgs, scope: OrgScope)
 			return false;
 		}
 		// The tenant gate, then the roster as a narrowing intersect.
-		return filterByOrgScope([r], scope).length === 1;
+		return (await visible([r])).length === 1;
 	};
 
 	const ranges: TaskListRange[] = [];
@@ -1688,7 +1692,7 @@ export const listPaginated = query({
 		// foreign rows afterwards returned short or empty non-final pages (the
 		// board stalled on "load more") while own rows existed. Rows with no
 		// `orgId` never match `eq("orgId", slug)`: unstamped rows stay
-		// master-only. filterByOrgScope below still applies the roster narrowing.
+		// master-only. scopedRowFilter below still applies the roster narrowing.
 		const memberOrg =
 			!hasFleetRead(scope) && scope.orgSlug !== null ? scope.orgSlug : null;
 
@@ -1708,7 +1712,7 @@ export const listPaginated = query({
 		if (assigneeId !== undefined) {
 			// By assignee ID, for member and master alike. assigneeIdForRead has
 			// already proved (member) that the ID is an agents row of the caller's
-			// org; filterByOrgScope below drops any row whose orgId is not the
+			// org; scopedRowFilter below drops any row whose orgId is not the
 			// caller's. The page is ordered by (status, updatedAt) desc, or by
 			// updatedAt desc once a status is pinned.
 			const status = args.status;
@@ -2188,7 +2192,7 @@ export const attachReviewArtifact = mutation({
 
 		// Tenant gate: "any orchestrator" means any orchestrator OF THE CALLER'S
 		// OWN ORGANISATION — never a member of another tenant.
-		assertTaskVisibleToCaller(task, callerScope, args.taskId);
+		await assertTaskVisibleToCaller(ctx, task, callerScope, args.taskId);
 
 		// Deliberately NOT assertTaskCallerAuthorized — this is the narrow
 		// permission the mutation exists to grant: ANY orchestrator may attach
@@ -2491,7 +2495,7 @@ export const listUnlinkedBlocked = query({
 		// Measured against LIVE production at commit bd8c60e9: 159 task rows — the
 		// largest of the fourteen — served to a caller presenting NO CREDENTIAL AT
 		// ALL. Every other collection read of this table (`runTasksList`) already
-		// applies `filterByOrgScope`; this one applied nothing. Reuses that SAME
+		// applies `scopedRowFilter`; this one applied nothing. Reuses that SAME
 		// roster helper, so the single-purpose read admits exactly what `list`
 		// admits: no new grant, and no lost one. Master unfiltered; a caller with
 		// no verified organisation has an empty roster and so is refused by the
@@ -2528,7 +2532,7 @@ export const listUnlinkedBlocked = query({
 		// its OWN org (`by_orgId_status_clerk_id`, keyed on the org's permanent ID
 		// — the key `sameOrg` compares), so a foreign org's blocked task is never
 		// read. A member whose org has no ID yet (expand phase) matches no row
-		// under `sameOrg`, so it reads none. `filterByOrgScope` below stays as the
+		// under `sameOrg`, so it reads none. `scopedRowFilter` below stays as the
 		// roster intersect (the tenant gate it also applies removes nothing here).
 		const orgClerkId = scope.orgClerkId;
 		const range = hasFleetRead(scope)
@@ -2546,12 +2550,13 @@ export const listUnlinkedBlocked = query({
 		// The roster intersect and the "unlinked" test are applied while the range is
 		// read (a fill loop under the scan cap); a range that cannot be read to its end
 		// REFUSES instead of returning a partial inventory that looks complete.
+		const visible = await scopedRowFilter(ctx, scope, "tasks:listUnlinkedBlocked");
 		const { kept, truncated } = await collectNarrowed(
 			range,
-			(t) =>
+			async (t) =>
 				t.blockedOnTaskId === undefined &&
 				t.blockedOnNobodyReason === undefined &&
-				isRowVisibleToScope(scope, t),
+				(await visible([t])).length === 1,
 			{ scanCap: TASK_LIST_SCAN_CAP },
 		);
 		if (truncated) {
@@ -3330,7 +3335,7 @@ export const correctSegment = mutation({
 			);
 		}
 		assertRowInVerifiedOrg(task, verifiedOrgSlug, args.taskId, "tasks:correctSegment");
-		assertTaskCallerAuthorized(task, args.callerOrchestrator, args.taskId, callerScope);
+		await assertTaskCallerAuthorized(ctx, task, args.callerOrchestrator, args.taskId, callerScope);
 		// assertTaskCallerAuthorized above already refuses an undefined
 		// callerOrchestrator (RBAC_DENIED) — this narrows the type for the
 		// `correction.by` write below, mirroring attachReviewArtifact's
@@ -3471,7 +3476,7 @@ export const checkout = mutation({
 		}
 		assertRowInVerifiedOrg(task, verifiedOrgSlug, args.taskId, "tasks:checkout");
 		// Tenant gate — claiming a row is a write on it.
-		assertTaskVisibleToCaller(task, callerScope, args.taskId);
+		await assertTaskVisibleToCaller(ctx, task, callerScope, args.taskId);
 		if (task.status !== "todo") {
 			return {
 				claimed: false,
@@ -3552,7 +3557,7 @@ export const deleteTask = mutation({
 		assertRowInVerifiedOrg(task, verifiedOrgSlug, args.taskId, "tasks:deleteTask");
 		// Tenant gate — a hard delete of another organisation's row is the
 		// worst case of the write surface.
-		assertTaskVisibleToCaller(task, callerScope, args.taskId);
+		await assertTaskVisibleToCaller(ctx, task, callerScope, args.taskId);
 
 		if (args.callerOrchestrator === undefined) {
 			// HUMAN path: own-org task (checked above and again in the helper),
@@ -3647,14 +3652,15 @@ export const listByMission = query({
 		// What the index ranges cannot express, applied while the range is read
 		// (R-55): a multi-status request, the creator BY ID, `updatedSince`, the
 		// cursor, then the tenant gate and the roster as a narrowing intersect.
-		const keep = (r: Doc<"tasks">): boolean => {
+		const visible = await scopedRowFilter(ctx, scope, "tasks:listByMission");
+		const keep = async (r: Doc<"tasks">): Promise<boolean> => {
 			if (statuses !== undefined && !statuses.includes(r.status)) return false;
 			if (creatorId !== undefined && r.createdById !== creatorId) return false;
 			if (updatedSince !== undefined && (r.updatedAt ?? 0) < updatedSince) {
 				return false;
 			}
 			if (before !== undefined && r._creationTime >= before) return false;
-			return filterByOrgScope([r], scope).length === 1;
+			return (await visible([r])).length === 1;
 		};
 
 		const ranges: TaskListRange[] = [];
@@ -3786,6 +3792,7 @@ export const listOverdue = query({
 		// The roster narrowing on top of the tenant gate (the exact predicate the
 		// other readers apply) is applied while the range is read: a fill loop
 		// that keeps reading until `limit` rows are kept.
+		const visible = await scopedRowFilter(ctx, scope, "tasks:listOverdue");
 		const { kept, truncated } = await collectNarrowed(
 			candidates.filter((q) =>
 				q.and(
@@ -3800,7 +3807,7 @@ export const listOverdue = query({
 						: q.eq(q.field("assignedToId"), assignee),
 				),
 			),
-			(row) => isRowVisibleToScope(scope, row),
+			async (row) => (await visible([row])).length === 1,
 			{ limit, scanCap: TASK_LIST_SCAN_CAP },
 		);
 		if (truncated) {
@@ -5100,9 +5107,10 @@ export const billingSummaryByProject = query({
 								.lte("completedAt", args.endDate),
 						);
 
+		const visible = await scopedRowFilter(ctx, scope, "tasks:billingSummaryByProject");
 		const { kept: scoped, truncated } = await collectNarrowed(
 			doneRange,
-			(row) => isRowVisibleToScope(scope, row),
+			async (row) => (await visible([row])).length === 1,
 			{ scanCap: BILLING_SUMMARY_SCAN_CAP },
 		);
 
@@ -5251,9 +5259,10 @@ export const taskDurationDistribution = query({
 							q.eq("status", "done").gte("completedAt", from).lte("completedAt", to),
 						);
 
+		const visible = await scopedRowFilter(ctx, scope, "tasks:taskDurationDistribution");
 		const { kept: scoped, truncated } = await collectNarrowed(
 			doneRange,
-			(row) => isRowVisibleToScope(scope, row),
+			async (row) => (await visible([row])).length === 1,
 			{ scanCap: DURATION_DISTRIBUTION_SCAN_CAP },
 		);
 
@@ -5371,6 +5380,7 @@ export const searchTasksByKeyword = query({
 
 		// R-55: the roster narrows while the relevance-ordered results are read, so
 		// the page is `limit` rows the caller may see, not a window cut down.
+		const visible = await scopedRowFilter(ctx, scope, "tasks:searchTasksByKeyword");
 		const { kept: filtered } = await collectNarrowed(
 			ctx.db
 			.query("tasks")
@@ -5393,7 +5403,7 @@ export const searchTasksByKeyword = query({
 				}
 				return qb;
 			}),
-			(row) => isRowVisibleToScope(scope, row),
+			async (row) => (await visible([row])).length === 1,
 			{ limit, scanCap: TASK_LIST_SCAN_CAP },
 		);
 
