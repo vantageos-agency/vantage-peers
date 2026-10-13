@@ -45,6 +45,9 @@ npx convex run migrations/agentIdentityRows:backfillProfileAgentIdLists '{"dryRu
 npx convex run migrations/agentIdentityRows:backfillTokenAgentIdLists '{"dryRun":true,"cursor":null}'
 ```
 
+MCP and Convex may deploy in either order: the new reader (`seatAgentOf`) accepts a provider that
+states no org ID, and the new provider only adds optional fields an older reader ignores.
+
 Run step 1 **immediately after the deploy**: from the deploy until it has run, a refresh of an
 unbound seat refuses with `SEAT_PROFILE_UNBOUND`, and a live token minted before the stamp
 existed reports no seat agent. Tokens already stamped keep their stamp.

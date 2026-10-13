@@ -387,13 +387,22 @@ export const create = mutation({
 			}
 			createdBy = claimedCreator;
 		}
+		// The note belongs to the stamping scope's organisation (slug and permanent
+		// ID, both read off the resolved scope), or to nobody: a fleet-owned note
+		// carries neither.
+		let stampedOrgSlug: string | undefined;
+		let stampedClerkOrgId: string | undefined;
+		if (!hasFleetRead(stampScope)) {
+			stampedOrgSlug = stampScope.orgSlug as string;
+			stampedClerkOrgId = stampScope.orgClerkId;
+		}
 		const noteId = await ctx.db.insert("briefingNotes", {
 			...rest,
 			createdBy,
 			...(createdById !== undefined ? { createdById } : {}),
 			createdAt: Date.now(),
-			orgId: hasFleetRead(stampScope) ? undefined : (stampScope.orgSlug as string),
-			clerkOrgId: hasFleetRead(stampScope) ? undefined : stampScope.orgClerkId,
+			orgId: stampedOrgSlug,
+			clerkOrgId: stampedClerkOrgId,
 		});
 		await syncParticipantIndex(ctx, noteId, args.participants);
 		return noteId;
