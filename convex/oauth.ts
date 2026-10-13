@@ -16,7 +16,12 @@
  * absent-token branch is an organisation-admin identity check.
  */
 
-import { sha256Hex, validateMasterBearer } from "@vantageos/cloud-identity";
+import {
+	IdentityRefusalError,
+	resolveActingPrincipal,
+	sha256Hex,
+	validateMasterBearer,
+} from "@vantageos/cloud-identity";
 import { ConvexError, v } from "convex/values";
 import { internal } from "./_generated/api";
 import type { Id } from "./_generated/dataModel";
@@ -38,11 +43,8 @@ import {
 	withOrgScope,
 } from "./lib/auth";
 import { isHumanActorName } from "./lib/humanActor";
-import {
-	liveSeatAgent,
-	resolveSeatAgent,
-	seatBindingRefusal,
-} from "./lib/seatAgent";
+import { personPrincipalLookups } from "./lib/actingPrincipal";
+import { liveSeatAgent, resolveSeatAgent } from "./lib/seatAgent";
 import { requireId } from "./lib/ids";
 import { DEFAULT_MEMBER_SCOPES } from "./lib/memberScopes";
 import { upsertAdminMembership } from "./orgMembership";
@@ -2158,8 +2160,8 @@ export const revokeAccessTokensOnly = mutation({
 // the legacy fallback cannot match (a seat label that differs from its
 // profileId). This is that door. It refuses unless the agent exists and is
 // active, and the agent and the profile each carry a stored org ID and are the
-// same organisation by @vantageos/cloud-identity `sameOrg` (never by label; a
-// missing ID is ORG_ID_MISSING). The seat is one agent BY ID, so the label list
+// same organisation by @vantageos/cloud-identity `sameOrg` (never by label); the
+// refusal is the package's IdentityRefusalError. The seat is one agent BY ID, so the label list
 // is not consulted.
 //
 // INTERNAL: not part of the public API, so no client or token can reach it. An
@@ -2189,18 +2191,37 @@ export const bindScopeProfileAgent = internalMutation({
 		if (profile === null) {
 			throw refuse("PROFILE_NOT_FOUND", { profileId: args.profileId });
 		}
-		const agent = await ctx.db.get(args.agentId);
-		if (agent === null) {
-			throw refuse("AGENT_NOT_FOUND", { agentId: args.agentId });
+		// The agent being bound is judged by the package alone: it must exist, be
+		// active and belong to the profile's own organisation, by stored org ID. The
+		// lookup is a plain read. A profile with no org ID fails the credential
+		// schema; the refusal is the PACKAGE's, carried untouched.
+		const agentId = ctx.db.normalizeId("agents", args.agentId);
+		if (agentId === null) {
+			throw refuse("AGENT_ID_INVALID", { agentId: args.agentId });
 		}
-		const refusal = seatBindingRefusal(profile, agent);
-		if (refusal !== null) {
-			throw refuse(refusal.code, {
-				agentId: args.agentId,
-				profileId: args.profileId,
-				...("side" in refusal ? { side: refusal.side } : {}),
-			});
-		}
+		const orgReads = personPrincipalLookups(ctx);
+		const resolved = await resolveActingPrincipal(
+			{
+				kind: "agent",
+				agentId,
+				// Cast on purpose: an absent ID must reach the package's credential
+				// schema (credential-invalid), not be papered over here.
+				verifiedOrgId: profile.clerkOrgId as string,
+			},
+			{
+				agentById: async (id) => {
+					const a = await ctx.db.get(id as Id<"agents">);
+					return a
+						? { id: a._id, orgId: a.clerkOrgId ?? null, active: a.isActive }
+						: null;
+				},
+				// The organisation reads are the shared ID-keyed ones.
+				organisationById: orgReads.organisationById,
+				orgKindOf: orgReads.orgKindOf,
+			},
+			"oauth:bindScopeProfileAgent",
+		);
+		if (!resolved.ok) throw new IdentityRefusalError(resolved.refusal);
 		await ctx.db.patch(profile._id, {
 			agentId: args.agentId,
 			updatedAt: Date.now(),
