@@ -5,7 +5,7 @@ import {
 } from "@vantageos/cloud-identity";
 import { ConvexError, v } from "convex/values";
 import type { MutationCtx, QueryCtx } from "../_generated/server";
-import { lookupOrgMapping, type OrgScope } from "./auth";
+import { lookupOrgMapping, memberScopeOfMapping, type OrgScope } from "./auth";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // verifiedPerson — the bridge that lets a PERSON signed in through the MCP
@@ -105,17 +105,17 @@ export async function resolveVerifiedPerson(
 		.withIndex("by_tokenHash", (q) => q.eq("tokenHash", proof.accessTokenHash))
 		.unique();
 	const resolved = await resolvePersonPrincipal(
+		// The stored token row as the package reads it; every optional field is
+		// handed over as stored (absent stays absent) and the package judges it.
 		row === null
 			? null
 			: {
 					subject: row.userId,
 					expiresAt: row.expiresAt,
-					...(row.principal !== undefined ? { principal: row.principal } : {}),
-					...(row.clerkOrgSlug !== undefined
-						? { orgSlug: row.clerkOrgSlug }
-						: {}),
-					...(row.orgRole !== undefined ? { orgRole: row.orgRole } : {}),
-					...(row.revokedAt !== undefined ? { revokedAt: row.revokedAt } : {}),
+					principal: row.principal,
+					orgSlug: row.clerkOrgSlug,
+					orgRole: row.orgRole,
+					revokedAt: row.revokedAt,
 				},
 		{
 			now: Date.now(),
@@ -125,19 +125,11 @@ export async function resolveVerifiedPerson(
 	);
 	if (!resolved.ok) refuseWith(resolved.refusal);
 	const { principal, organisation: mapping } = resolved;
-	return {
+	// The person's own member scope, from the mapping row the package resolved
+	// (its permanent ID rides beside the slug, so row ownership compares IDs; M4:
+	// no label fallback on a row compare).
+	return memberScopeOfMapping(mapping, {
 		userId: principal.subject,
-		orgSlug: principal.orgSlug,
-		// The org's permanent ID, from the mapping row resolved above, so row
-		// ownership compares IDs (M4: no label fallback on a row compare).
-		...(mapping.clerkOrgId !== undefined
-			? { orgClerkId: mapping.clerkOrgId }
-			: {}),
-		allowedOrchestrators: mapping.allowedOrchestrators,
-		allowedAgentIds: mapping.allowedAgentIds ?? [],
-		fleetWide: false,
-		scopes: mapping.scopes,
-		isMaster: false,
-		...(principal.orgRole !== undefined ? { orgRole: principal.orgRole } : {}),
-	};
+		orgRole: principal.orgRole,
+	});
 }

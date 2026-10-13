@@ -3,6 +3,7 @@ import {
 	assertRecipientAddressable,
 	assertTargetBelongsTo,
 	type IdentityRefusal,
+	isServiceAccountScope,
 	type OrgKind,
 	type PrincipalLookups,
 	type RecipientLookups,
@@ -11,7 +12,12 @@ import {
 import { ConvexError } from "convex/values";
 import type { Doc } from "../_generated/dataModel";
 import type { MutationCtx, QueryCtx } from "../_generated/server";
-import { lookupOrgMapping, type OrgScope, type VerifiedActor } from "./auth";
+import {
+	lookupOrgMapping,
+	memberScopeOfMapping,
+	type OrgScope,
+	type VerifiedActor,
+} from "./auth";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // actingPrincipal — the vantage-peers ADAPTER onto @vantageos/cloud-identity's
@@ -201,12 +207,9 @@ export async function requireVerifiedActorPrincipal(
 	verifiedActor: VerifiedActor,
 	door: string,
 ): Promise<ActingPrincipal> {
-	if (
-		!(
-			transportScope.isMaster &&
-			transportScope.masterSource === "service-account"
-		)
-	) {
+	// The package's standing gate: the fleet SERVICE ACCOUNT (not the internal
+	// opt-in, not the operator human).
+	if (!isServiceAccountScope(transportScope)) {
 		throw new ConvexError(
 			`RBAC_DENIED: verifiedActor is a transport-verified claim and is accepted only from the fleet service account — ${JSON.stringify({ reason: "verified-actor-not-trusted", door })}`,
 		);
@@ -263,20 +266,10 @@ export async function recipientScopeOfPrincipal(
 			`RBAC_DENIED: the acting agent's organisation is not an active organisation — ${JSON.stringify({ reason: "organisation-not-active", door })}`,
 		);
 	}
-	return {
-		userId: transportScope.userId,
-		orgSlug: principal.orgId,
-		// The org's permanent ID, from the mapping row resolved above, so row
-		// ownership compares IDs (M4: no label fallback on a row compare).
-		...(mapping.clerkOrgId !== undefined
-			? { orgClerkId: mapping.clerkOrgId }
-			: {}),
-		allowedOrchestrators: mapping.allowedOrchestrators,
-		allowedAgentIds: mapping.allowedAgentIds ?? [],
-		fleetWide: false,
-		scopes: mapping.scopes,
-		isMaster: false,
-	};
+	// The org's member scope, from the mapping row resolved above (its permanent
+	// ID rides beside the slug, so row ownership compares IDs; M4: no label
+	// fallback on a row compare).
+	return memberScopeOfMapping(mapping, { userId: transportScope.userId });
 }
 
 /**

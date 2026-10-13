@@ -25,6 +25,7 @@ import { DEFAULT_MEMBER_SCOPES } from "./lib/memberScopes";
 const DEFAULT_BATCH = 100;
 const MAX_BATCH = 200;
 
+// allow-local-identity: operator-run migration that appends default scope strings to the stored mapping rows; it resolves no caller and grants nothing to anyone
 export const addDefaultMemberScopes = internalMutation({
 	args: {
 		dryRun: v.boolean(),

@@ -1,3 +1,4 @@
+import { type OrgRef, sameOrg } from "@vantageos/cloud-identity";
 import { ConvexError, v } from "convex/values";
 import type { MutationCtx, QueryCtx } from "../_generated/server";
 import {
@@ -6,6 +7,7 @@ import {
 	type OrgScope,
 	withOrgScope,
 } from "./auth";
+import { orgRefOfRow } from "./authOrgMapping";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // verifiedOrg — the organisation the MCP transport VERIFIED for a caller it
@@ -162,6 +164,72 @@ export async function resolveDoorVerifiedOrg(
 		allowNoIdentityMaster: false,
 	});
 	return await resolveVerifiedOrg(ctx, transportScope, proof, door);
+}
+
+/**
+ * As {@link resolveVerifiedOrg}, but the organisation comes back as the package
+ * names it: the permanent org ID beside the current label (`OrgRef`), read from
+ * the same ACTIVE mapping row. A door compares rows against THIS with
+ * {@link assertRowInVerifiedOrgRef}, so ownership is decided by ID and never by
+ * the slug a row happens to carry. A mapping whose ID is not filled yet comes
+ * back with `id` undefined, which matches no row (fail closed).
+ */
+export async function resolveVerifiedOrgRef(
+	ctx: QueryCtx | MutationCtx,
+	transportScope: OrgScope,
+	proof: VerifiedOrg | undefined,
+	door: string,
+): Promise<OrgRef | undefined> {
+	const mapping = await resolveVerifiedOrgMapping(
+		ctx,
+		transportScope,
+		proof,
+		door,
+	);
+	return mapping === undefined
+		? undefined
+		: { id: mapping.clerkOrgId, label: mapping.clerkOrgSlug };
+}
+
+/**
+ * The door-side entry of {@link resolveVerifiedOrgRef} for a single-row write:
+ * reads the TRANSPORT scope itself (as {@link resolveDoorVerifiedOrg} does), so
+ * the claim is believed from the service account only. `undefined` when no proof
+ * is carried.
+ */
+export async function resolveDoorVerifiedOrgRef(
+	ctx: MutationCtx,
+	proof: VerifiedOrg | undefined,
+	door: string,
+): Promise<OrgRef | undefined> {
+	if (proof === undefined) return undefined;
+	const transportScope = await withOrgScope(ctx, {
+		allowNoIdentityMaster: false,
+	});
+	return await resolveVerifiedOrgRef(ctx, transportScope, proof, door);
+}
+
+/**
+ * The target row's organisation must be the verified one, BY ID: the package's
+ * `sameOrg` compares the row's `clerkOrgId` with the verified org's ID; a label
+ * never matches and a row stamped with no ID is never matched (refused, not
+ * guessed). No-op when `verified` is undefined. Same RBAC_DENIED shape and
+ * reason as {@link assertRowInVerifiedOrg}, before anything is written.
+ */
+export function assertRowInVerifiedOrgRef(
+	row: { orgId?: string; clerkOrgId?: string },
+	verified: OrgRef | undefined,
+	rowId: string,
+	door: string,
+): void {
+	if (verified === undefined) return;
+	if (!sameOrg(orgRefOfRow(row), verified)) {
+		refuse(
+			"row-outside-verified-org",
+			door,
+			`task ${rowId} is outside the verified organisation "${verified.label ?? ""}" (tenant boundary)`,
+		);
+	}
 }
 
 /**

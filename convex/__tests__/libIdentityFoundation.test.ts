@@ -29,6 +29,7 @@ import { testClerkOrgId } from "../../tests/fixtures/testClerkOrgId";
 import { convexTest } from "../../tests/fixtures/convexTestWithServiceAccount";
 import { api } from "../_generated/api";
 import type { Id } from "../_generated/dataModel";
+import type { MutationCtx } from "../_generated/server";
 import { resolvePrincipalOfPresentedSecret } from "../lib/agentIdentity";
 import {
 	memberScopeOfMapping,
@@ -230,7 +231,7 @@ describe("scopeRosterIds — the roster leg of a row read, by agent ID", () => {
 			...(pilotId !== undefined ? { pilotId } : {}),
 			...extra,
 		});
-		const memberA = (fn: Parameters<ReturnType<T["withIdentity"]>["run"]>[0]) =>
+		const memberA = <R>(fn: (ctx: MutationCtx) => Promise<R>): Promise<R> =>
 			t.withIdentity(session("org-a", "org:member")).run(fn);
 		return { t, ada, bea, vic, row, memberA };
 	}

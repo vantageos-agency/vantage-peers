@@ -5,15 +5,21 @@ import {
 	type ActingPrincipal,
 	type CallerFromClaimsResult,
 	assertOrgAdmin,
+	assertTargetBelongsTo,
 	hasFleetRead,
 	type IdentityRefusal,
+	isServiceAccountScope,
 	type ResolvedOrg,
 	resolveCallerFromClaims,
+	resolveActingPrincipal,
 	sameOrg,
 	scopeStanding,
 } from "@vantageos/cloud-identity";
 import type { UserIdentity } from "convex/server";
-import { findAgentByName, resolveAgentOfPresentedSecret } from "./agentIdentity";
+import {
+	findAgentByName,
+	resolvePrincipalOfPresentedSecret,
+} from "./agentIdentity";
 import { resolveServiceAccount } from "./serviceAccount";
 import { normalizeOrchestratorId } from "../_helpers/normalizeOrchestratorId";
 import {
@@ -23,7 +29,11 @@ import {
 	orgRefOfRow,
 	orgRefOfScope,
 } from "./authOrgMapping";
-import { personPrincipalLookups } from "./actingPrincipal";
+import {
+	personPrincipalLookups,
+	principalLookups,
+	refuseWith,
+} from "./actingPrincipal";
 import { isTeamNamespaceAllowed } from "./teamNamespace";
 
 // The join onto `client_org_mapping` lives in ./authOrgMapping (storage only); it is
@@ -237,14 +247,7 @@ export async function withOrgScope(
 	// back on success AND on a refusal, so the service account is still decided by
 	// subject before any organisation is read; an absent credential is a refusal
 	// with no subject.
-	const caller = await resolveCallerFromClaims(
-		await ctx.auth.getUserIdentity(),
-		{
-			orgLookups: orgMappingLookups(ctx),
-			principalLookups: personPrincipalLookups(ctx),
-		},
-		{ adminRoles: ORG_ADMIN_ROLES, door: "withOrgScope" },
-	);
+	const caller = await resolveVerifiedCaller(ctx, "withOrgScope");
 	const subject = caller.subject;
 
 	// No Clerk identity — behaviour depends on explicit per-call-site opt-in.
@@ -317,19 +320,10 @@ export async function withOrgScope(
 	if (serviceAccount.ok) {
 		const actFor = opts?.actForOrgMapping;
 		if (actFor !== undefined) {
-			return {
-				userId: subject,
-				orgSlug: actFor.clerkOrgSlug,
-				// The org's permanent ID, from the row, so row ownership compares IDs.
-				...(actFor.clerkOrgId !== undefined
-					? { orgClerkId: actFor.clerkOrgId }
-					: {}),
-				allowedOrchestrators: actFor.allowedOrchestrators,
-				allowedAgentIds: actFor.allowedAgentIds ?? [],
-				fleetWide: false,
-				scopes: actFor.scopes,
-				isMaster: false,
-			};
+			// The org's member scope, with the permanent ID from the row so row
+			// ownership compares IDs. The service account acts AS a member of that
+			// org, so the scope carries no role claim.
+			return memberScopeOfMapping(actFor, { userId: subject });
 		}
 		return {
 			userId: subject,
@@ -454,26 +448,78 @@ export async function withOrgScope(
 		};
 	}
 
-	const memberRoleRaw = caller.role;
-	return {
+	// Pi ruling (PR #1224, decision b): a Clerk identity resolved through
+	// client_org_mapping NEVER mints the cross-tenant isMaster bypass from org
+	// membership — a `["*"]` mapping row keeps its stated roster
+	// (allowedOrchestrators/scopes) but master is reachable ONLY via the master
+	// secret or the by-id service-account carve-out (allowNoIdentityMaster /
+	// serviceAccountUserId branches above), never via membership of a wildcard
+	// org. The ONE membership-derived master is the operator-org admin branch
+	// above (orgKind + verified admin role). `memberScopeOfMapping` builds the
+	// scope from the very row the package resolved (`rosterRow`, read by
+	// `org.id`) and always says `isMaster: false`.
+	return memberScopeOfMapping(rosterRow, {
 		userId: subject,
-		orgSlug: org.label,
-		...(org.id !== undefined ? { orgClerkId: org.id } : {}),
-		allowedOrchestrators: org.allowedOrchestrators,
-		allowedAgentIds: rosterRow.allowedAgentIds ?? [],
+		orgRole: caller.role,
+	});
+}
+
+/**
+ * The ORDINARY MEMBER scope of one organisation, built from its mapping row —
+ * the ONE builder of that shape. `withOrgScope` (a dashboard member, and the
+ * service account acting for a verified org), `recipientScopeOfPrincipal` (an
+ * acting agent's own org) and `resolveVerifiedPerson` (a person signed in
+ * through the MCP OAuth flow) all return exactly this scope, so none of them
+ * restates it and a field added here reaches all three.
+ *
+ * Non-master by construction: `isMaster: false`, `fleetWide: false`, no
+ * `masterSource`. The org's permanent ID rides beside its slug so row ownership
+ * compares IDs. `allowedOrchestrators` is the LEGACY name roster (see the field
+ * on {@link OrgScope}); `allowedAgentIds` is the roster that decides.
+ * `orgRole` is the VERIFIED role claim verbatim and is set only when a claim
+ * was carried; it grants nothing by itself.
+ */
+export function memberScopeOfMapping(
+	mapping: OrgMappingView,
+	who: { userId: string; orgRole?: string | null },
+): OrgScope {
+	return {
+		userId: who.userId,
+		orgSlug: mapping.clerkOrgSlug,
+		...(mapping.clerkOrgId !== undefined
+			? { orgClerkId: mapping.clerkOrgId }
+			: {}),
+		allowedOrchestrators: mapping.allowedOrchestrators,
+		allowedAgentIds: mapping.allowedAgentIds ?? [],
 		fleetWide: false,
-		scopes: org.scopes,
-		// Pi ruling (PR #1224, decision b): a Clerk identity resolved through
-		// client_org_mapping NEVER mints the cross-tenant isMaster bypass from
-		// org membership — a `["*"]` mapping row keeps its stated roster
-		// (allowedOrchestrators/scopes above) but master is reachable ONLY via
-		// the master secret or the by-id service-account carve-out
-		// (allowNoIdentityMaster / serviceAccountUserId branches above), never
-		// via membership of a wildcard org. The ONE membership-derived master is
-		// the operator-org admin branch above (orgKind + verified admin role).
+		scopes: mapping.scopes,
 		isMaster: false,
-		...(memberRoleRaw !== null ? { orgRole: memberRoleRaw } : {}),
+		...(who.orgRole !== undefined && who.orgRole !== null
+			? { orgRole: who.orgRole }
+			: {}),
 	};
+}
+
+/**
+ * The verified credential of the request, resolved by
+ * @vantageos/cloud-identity in one call: the organisation by its verified
+ * `org_id`, the person in it, the role claim and whether it is an admin role.
+ * `ctx.auth.getUserIdentity()` is read here and its value goes to the package
+ * resolver and nowhere else. The subject comes back on a success AND on a
+ * refusal; an absent credential is a refusal with no subject.
+ */
+export async function resolveVerifiedCaller(
+	ctx: QueryCtx | MutationCtx,
+	door: string,
+) {
+	return await resolveCallerFromClaims(
+		await ctx.auth.getUserIdentity(),
+		{
+			orgLookups: orgMappingLookups(ctx),
+			principalLookups: personPrincipalLookups(ctx),
+		},
+		{ adminRoles: ORG_ADMIN_ROLES, door },
+	);
 }
 
 /**
@@ -861,14 +907,7 @@ export async function resolveOperatorAdmin(
 	const door = "lib/auth:resolveOperatorAdmin";
 	// An absent identity is forwarded to the package, which refuses it
 	// (`credential-invalid`); the refusal below says "anonymous".
-	const caller = await resolveCallerFromClaims(
-		await ctx.auth.getUserIdentity(),
-		{
-			orgLookups: orgMappingLookups(ctx),
-			principalLookups: personPrincipalLookups(ctx),
-		},
-		{ adminRoles: ORG_ADMIN_ROLES, door },
-	);
+	const caller = await resolveVerifiedCaller(ctx, door);
 	if (!caller.ok) {
 		if (caller.refusal.reason === "credential-invalid") {
 			return {
@@ -963,7 +1002,10 @@ export type VerifiedActor = { agentId: Id<"agents">; orgSlug: string };
  * the service account's scope carries no org of its own.
  */
 export interface VerifiedActorProof {
-	scope: { isMaster: boolean; masterSource?: MasterSource };
+	// `fleetWide` is read by the package's standing gate together with `isMaster`
+	// and `masterSource`; a scope that omits it is never the service account
+	// (fail closed). Every scope `withOrgScope` returns carries it.
+	scope: Pick<OrgScope, "isMaster" | "masterSource"> & { fleetWide?: boolean };
 	verifiedActor: VerifiedActor | undefined;
 	declaredOrgSlug?: string;
 }
@@ -995,9 +1037,10 @@ async function requireVerifiedActorMatch(
 	const actor = verified.verifiedActor;
 	if (actor === undefined) return;
 
-	if (
-		!(verified.scope.isMaster && verified.scope.masterSource === "service-account")
-	) {
+	// The package's standing gate: the scope is the fleet SERVICE ACCOUNT
+	// (standing "fleet" with `masterSource "service-account"`, the three fields
+	// agreeing). The internal opt-in is fleet too and is NOT admitted here.
+	if (!isServiceAccountScope(verified.scope)) {
 		throw new ConvexError(
 			`RBAC_DENIED: verifiedActor is a transport-verified claim and is accepted only from the fleet service account — ${JSON.stringify(
 				{
@@ -1014,34 +1057,39 @@ async function requireVerifiedActorMatch(
 		);
 	}
 
-	const row = await ctx.db.get(actor.agentId);
-	if (!row) {
-		throw new ConvexError(
-			`VERIFIED_ACTOR_UNKNOWN: verifiedActor names agent ${actor.agentId} and no such agent exists — ${JSON.stringify({ agentId: actor.agentId, orgSlug: actor.orgSlug })}`,
-		);
-	}
-	if (!row.isActive) {
-		throw new ConvexError(
-			`VERIFIED_ACTOR_INACTIVE: verifiedActor names agent "${row.name}" (${row._id}) which is deactivated — ${JSON.stringify({ agentId: row._id, orgSlug: row.orgSlug })}`,
-		);
-	}
-	if (row.orgSlug !== actor.orgSlug) {
-		throw new ConvexError(
-			`ORG_MISMATCH: verifiedActor claims org "${actor.orgSlug}" but agent ${row._id} belongs to org "${row.orgSlug}" — ${JSON.stringify({ agentId: row._id, claimedOrgSlug: actor.orgSlug, rowOrgSlug: row.orgSlug })}`,
-		);
-	}
+	// The agent is judged BY ID by the package: the row must exist
+	// (VERIFIED_ACTOR_UNKNOWN), be active (VERIFIED_ACTOR_INACTIVE), be stamped
+	// with the org the proof claims (ORG_MISMATCH) and sit in an active org.
+	const door = "lib/auth:requireVerifiedActorMatch";
+	const resolved = await resolveActingPrincipal(
+		{
+			kind: "agent",
+			agentId: actor.agentId,
+			verifiedOrgId: actor.orgSlug,
+		},
+		principalLookups(ctx),
+		door,
+	);
+	if (!resolved.ok) return refuseWith(resolved.refusal);
+
+	// The call's own target org, when it names one, must be the org the proof was
+	// verified in: the package compares the stored org IDs (ORG_MISMATCH).
 	const callOrg = targetOrgSlug ?? verified.declaredOrgSlug ?? null;
-	if (callOrg !== null && callOrg !== actor.orgSlug) {
-		throw new ConvexError(
-			`ORG_MISMATCH: verifiedActor was verified in org "${actor.orgSlug}" but this call targets org "${callOrg}" — ${JSON.stringify({ agentId: row._id, verifiedOrgSlug: actor.orgSlug, targetOrgSlug: callOrg })}`,
+	if (callOrg !== null) {
+		const target = await assertTargetBelongsTo(
+			resolved.principal,
+			{ orgId: callOrg },
+			principalLookups(ctx),
+			{ door },
 		);
+		if (!target.ok) return refuseWith(target.refusal);
 	}
 
 	if (assertedName === undefined) return;
-	const assertedAgent = await findAgentByName(ctx, row.orgSlug, assertedName);
-	if (!assertedAgent || assertedAgent._id !== row._id) {
+	const assertedAgent = await findAgentByName(ctx, actor.orgSlug, assertedName);
+	if (!assertedAgent || assertedAgent._id !== actor.agentId) {
 		throw new ConvexError(
-			`AGENT_IDENTITY_MISMATCH: verifiedActor is agent "${row.name}" but the call asserts name "${assertedName}" — a verified actor may only act under its own identity — ${JSON.stringify({ verifiedAgentId: row._id, verifiedAgentName: row.name, assertedName })}`,
+			`AGENT_IDENTITY_MISMATCH: verifiedActor is agent ${actor.agentId} but the call asserts name "${assertedName}" — a verified actor may only act under its own identity — ${JSON.stringify({ verifiedAgentId: actor.agentId, assertedName })}`,
 		);
 	}
 }
@@ -1144,12 +1192,12 @@ export async function requireAgentCredentialMatch(
 
 	// The presented secret is validated and its agent read BY ID through
 	// @vantageos/cloud-identity (convex/lib/agentIdentity.ts); no name takes part.
-	const resolvedAgent = await resolveAgentOfPresentedSecret(
+	const door = "lib/auth:requireAgentCredentialMatch";
+	const resolved = await resolvePrincipalOfPresentedSecret(
 		ctx,
 		agentCredentialSecret,
-		"lib/auth:requireAgentCredentialMatch",
+		door,
 	);
-	const resolved = resolvedAgent === null ? null : { agent: resolvedAgent };
 
 	if (!resolved) {
 		throw new ConvexError(
@@ -1173,10 +1221,16 @@ export async function requireAgentCredentialMatch(
 		);
 	}
 
-	if (targetOrgSlug !== null && resolved.agent.orgSlug !== targetOrgSlug) {
-		throw new ConvexError(
-			`ORG_MISMATCH: presented credential resolves to agent "${resolved.agent.name}" in org "${resolved.agent.orgSlug}" but this call targets org "${targetOrgSlug}" — a same-named agent from a DIFFERENT organisation may never act here, defence in depth on top of the surrounding org scope — ${JSON.stringify({ resolvedAgentName: resolved.agent.name, resolvedOrgSlug: resolved.agent.orgSlug, targetOrgSlug })}`,
+	// ORG BIND, by the package: the call's target org against the resolved
+	// agent's stored org (ORG_MISMATCH). A fleet-wide caller has no target org.
+	if (targetOrgSlug !== null) {
+		const target = await assertTargetBelongsTo(
+			resolved.principal,
+			{ orgId: targetOrgSlug },
+			principalLookups(ctx),
+			{ door },
 		);
+		if (!target.ok) return refuseWith(target.refusal);
 	}
 }
 
@@ -1407,7 +1461,12 @@ export function requireResolvedCaller(
 	// `mcpBoundOnly`: a door that is service-account-only by purpose (a
 	// credential oracle). The operator human is master for READS but is not the
 	// MCP layer (`isMcpBoundMaster`), so it is refused here like any member.
-	if (scope.isMaster && (!opts?.mcpBoundOnly || isMcpBoundMaster(scope))) return;
+	// The standing is the package's reading of the scope (`isMaster`, `fleetWide`
+	// and `masterSource` must agree): a scope that contradicts itself is not
+	// master here, it is unresolved.
+	if (hasFleetRead(scope) && (!opts?.mcpBoundOnly || isMcpBoundMaster(scope))) {
+		return;
+	}
 
 	if (opts?.mcpBoundOnly) {
 		throw new ConvexError(

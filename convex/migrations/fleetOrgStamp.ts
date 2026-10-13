@@ -45,11 +45,13 @@
 // NOT RUN AGAINST ANY DEPLOYMENT BY ITS AUTHOR.
 // ─────────────────────────────────────────────────────────────────────────────
 
+import { type OrgRef, sameOrg } from "@vantageos/cloud-identity";
 import { ConvexError, v } from "convex/values";
 import type { Id } from "../_generated/dataModel";
 import type { DatabaseReader } from "../_generated/server";
 import { internalMutation } from "../_generated/server";
 import { normalizeOrchestratorId } from "../_helpers/normalizeOrchestratorId";
+import { lookupOrgMapping, orgMappingRowsUpTo } from "../lib/authOrgMapping";
 import { clerkOrgIdForSlug } from "../lib/orgClerkId";
 
 const DEFAULT_PAGE_SIZE = 100;
@@ -66,15 +68,18 @@ const AGENT_READ_CAP = 5000;
 
 type Resolver = {
 	orgSlug: string;
-	// normalized name -> orgSlugs of every agent row carrying it (one entry per row)
-	agentOrgsByName: Map<string, string[]>;
+	// The fleet (operator) org as the package names it: permanent ID + label.
+	fleetOrg: OrgRef;
+	// normalized name -> the organisation of every agent row carrying it (one
+	// entry per row), as the package names it: the row's stamped org ID + label
+	agentOrgsByName: Map<string, OrgRef[]>;
 };
 
 async function loadResolver(
 	db: DatabaseReader,
 	requestedSlug: string | undefined,
 ): Promise<Resolver> {
-	const mappings = await db.query("client_org_mapping").take(MAPPING_READ_CAP + 1);
+	const mappings = await orgMappingRowsUpTo({ db }, MAPPING_READ_CAP + 1);
 	if (mappings.length > MAPPING_READ_CAP) {
 		throw new ConvexError(
 			`fleetOrgStamp: client_org_mapping holds more than ${MAPPING_READ_CAP} rows; refusing to derive the operator org from a truncated read.`,
@@ -83,9 +88,19 @@ async function loadResolver(
 	const operators = mappings.filter(
 		(m) => m.isActive && m.orgKind === "operator",
 	);
+	// A requested label names a mapping through the shared label lookup; it is
+	// the fleet only when that mapping is itself an active operator org.
+	const requested =
+		requestedSlug !== undefined
+			? await lookupOrgMapping({ db }, requestedSlug)
+			: null;
 	const fleet =
 		requestedSlug !== undefined
-			? operators.find((m) => m.clerkOrgSlug === requestedSlug)
+			? requested !== null &&
+				requested.isActive &&
+				requested.orgKind === "operator"
+				? requested
+				: undefined
 			: operators.length === 1
 				? operators[0]
 				: undefined;
@@ -102,15 +117,19 @@ async function loadResolver(
 			`fleetOrgStamp: agents holds more than ${AGENT_READ_CAP} rows; refusing to resolve names from a truncated read.`,
 		);
 	}
-	const agentOrgsByName = new Map<string, string[]>();
+	const agentOrgsByName = new Map<string, OrgRef[]>();
 	for (const a of agents) {
 		// Legacy rows may lack normalizedName: derive it, never skip the row.
 		const key = a.normalizedName ?? normalizeOrchestratorId(a.name);
 		const list = agentOrgsByName.get(key) ?? [];
-		list.push(a.orgSlug);
+		list.push({ id: a.clerkOrgId, label: a.orgSlug });
 		agentOrgsByName.set(key, list);
 	}
-	return { orgSlug: fleet.clerkOrgSlug, agentOrgsByName };
+	return {
+		orgSlug: fleet.clerkOrgSlug,
+		fleetOrg: { id: fleet.clerkOrgId, label: fleet.clerkOrgSlug },
+		agentOrgsByName,
+	};
 }
 
 export const run = internalMutation({
@@ -181,8 +200,11 @@ export const run = internalMutation({
 			const orgs = resolver.agentOrgsByName.get(normalizeOrchestratorId(name));
 			if (orgs === undefined || orgs.length === 0) return "unknown";
 			if (orgs.length > 1) return "ambiguous";
-			// allow-local-identity: offline backfill with no caller; compares stored data against data
-			return orgs[0] === resolver.orgSlug ? "stamp" : "otherOrg";
+			// The agent's organisation is the fleet's only when the package says the
+			// two references are one org: by permanent ID, never by label. An agent
+			// row not yet stamped with its org ID is not matched (run
+			// backfill_org_clerk_id first); it is listed under `otherOrg`, never guessed.
+			return sameOrg(orgs[0], resolver.fleetOrg) ? "stamp" : "otherOrg";
 		};
 
 		let isDone: boolean;

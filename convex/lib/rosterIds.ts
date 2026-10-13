@@ -62,7 +62,9 @@ export const ROSTER_AGENT_SCAN_CAP = 500;
  * judged by `resolveActingPrincipal` + `assertPrincipalListed`. The roster IS
  * the list of IDs, so each entry is read as ONE keyed probe of the primary-key
  * index (`by_id`), never a scan of the org's agents. An unlisted, inactive,
- * unknown or foreign agent is dropped; nothing is matched by a name.
+ * unknown or foreign agent is dropped (the package refuses a row stamped with
+ * another organisation); nothing is matched by a name, and this function
+ * compares no organisation itself.
  */
 export async function listedAgentsOfOrg(
 	ctx: Ctx,
@@ -80,7 +82,9 @@ export async function listedAgentsOfOrg(
 			.query("agents")
 			.withIndex("by_id", (q) => q.eq("_id", id))
 			.unique();
-		if (agent !== null && agent.orgSlug === orgSlug) agents.push(agent);
+		// An agent of ANOTHER organisation is read here too and refused below:
+		// `resolveActingPrincipal` requires the row to be stamped with `orgSlug`.
+		if (agent !== null) agents.push(agent);
 	}
 	const lookups = principalLookupsOverAgents(ctx, agents);
 	const list = rosterOf(orgSlug, rosterIds);

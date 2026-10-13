@@ -3,6 +3,7 @@ import {
 	type OrgScope,
 	requireResolvedCaller,
 	resolveOperatorAdmin,
+	resolveVerifiedCaller,
 } from "./auth";
 import { resolveServiceAccount } from "./serviceAccount";
 
@@ -39,9 +40,12 @@ export async function fleetStandingOf(
 	door: string,
 	opts?: { operatorHumanMayRead?: boolean },
 ): Promise<FleetStanding> {
-	const identity = await ctx.auth.getUserIdentity();
-	if (identity === null) return null;
-	const service = await resolveServiceAccount(ctx, identity.subject, door);
+	// The verified session goes to the package's caller resolver
+	// (`resolveVerifiedCaller`); the subject comes back on success AND on a
+	// refusal, and an absent session comes back with none.
+	const caller = await resolveVerifiedCaller(ctx, door);
+	if (caller.subject === undefined) return null;
+	const service = await resolveServiceAccount(ctx, caller.subject, door);
 	if (service.ok) {
 		return service.principal.kind === "fleet" ? "fleet" : null;
 	}
@@ -74,11 +78,14 @@ export async function scopeWithFleetStanding(
 ): Promise<OrgScope> {
 	const standing = await fleetStandingOf(ctx, door, opts);
 	const { masterSource: _dropped, ...rest } = scope;
+	// `fleetWide` moves with `isMaster`: the package reads a scope as master only
+	// when `isMaster`, `fleetWide` and `masterSource` agree.
 	return standing === null
-		? { ...rest, isMaster: false }
+		? { ...rest, isMaster: false, fleetWide: false }
 		: {
 				...rest,
 				isMaster: true,
+				fleetWide: true,
 				masterSource:
 					standing === "fleet" ? "service-account" : "operator-admin",
 			};
