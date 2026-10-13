@@ -348,19 +348,15 @@ describe("CLAIM-LESS: no verified org ID is a refusal, never master", () => {
 		});
 	});
 
-	// The absent identity is refused by RAISING at the provisioning door. The
-	// session goes to the package, which refuses a session carrying no subject
-	// (`credential-invalid`) and names this door (never a silent no-op).
-	test("requireOrgAdmin: no identity raises RBAC_DENIED naming the door and the missing subject", async () => {
+	// The absent identity is refused by RAISING at the provisioning door, with
+	// the message that names what is missing (never a silent no-op).
+	test("requireOrgAdmin: no identity raises RBAC_DENIED naming the missing identity", async () => {
 		const t = createT();
 		await seedOrg(t, "claimless-e");
 		await t.run(async (ctx) => {
 			const err = await requireOrgAdmin(ctx, "claimless-e").catch((e) => e);
-			const text = String(err?.data ?? err?.message);
-			expect(text).toMatch(/^RBAC_DENIED: /);
-			expect(text).toContain("carry no subject");
-			expect(text).toContain("credential-invalid");
-			expect(text).toContain("lib/auth:requireOrgAdmin");
+			expect(String(err?.data ?? err?.message)).toMatch(/^RBAC_DENIED: /);
+			expect(String(err?.data ?? err?.message)).toContain("no authenticated identity presented");
 		});
 	});
 

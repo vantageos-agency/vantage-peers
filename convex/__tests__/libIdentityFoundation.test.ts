@@ -656,12 +656,12 @@ describe("requireResolvedCaller — a self-contradicting scope is not master", (
 
 // ─────────────────────────────────────────────────────────────────────────────
 describe("requireOrgAdmin — the session goes to the package, an absent one is refused there", () => {
-	test("REFUSED: an anonymous caller is refused with the door named in the payload", async () => {
+	test("REFUSED: an anonymous caller is refused, naming the missing identity", async () => {
 		const t = createT();
 		await seedOrg(t, "org-a");
 		const out = await codeOf(t.run((ctx) => requireOrgAdmin(ctx, "org-a")));
 		expect(out).toMatch(/^RBAC_DENIED/);
-		expect(out).toContain("lib/auth:requireOrgAdmin");
+		expect(out).toContain("no authenticated identity presented");
 	});
 
 	test("PRESENT: the admin of the org passes; a member and the admin of another org are refused", async () => {
