@@ -9,9 +9,11 @@ import {
 	assertAgentNameFree,
 	loadAgentOfPrincipalOrg,
 	anonymousRefusal,
+	stampOrgRefusal,
 	requireOrgAdminById,
 	revokeActiveCredentialRows,
 } from "./lib/agentIdentity";
+import { withOrgScope } from "./lib/auth";
 import { clerkOrgIdForSlug } from "./lib/orgClerkId";
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -129,11 +131,11 @@ export const registerAgent = mutation({
 		const identity = await ctx.auth.getUserIdentity();
 		if (!identity) throw anonymousRefusal("agents:registerAgent");
 		const principal = await requireOrgAdminById(ctx, identity, args.orgSlug, "agents:registerAgent");
-		// The organisation the agent is stamped with is the principal's own: the org
-		// the admin proof resolved BY ID from the verified session (the proof also
-		// required `args.orgSlug` to be that same organisation). No second resolver
-		// is consulted, so the door never reaches the organisation-scope resolver.
-		const orgSlug = principal.orgId;
+		const scope = await withOrgScope(ctx);
+		const orgSlug = scope.orgSlug;
+		if (orgSlug === null || orgSlug !== principal.orgId) {
+			throw stampOrgRefusal("agents:registerAgent");
+		}
 
 		assertAgentLabelValid(args.name);
 		await assertAgentNameFree(ctx, orgSlug, args.name);

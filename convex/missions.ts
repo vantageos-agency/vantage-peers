@@ -323,8 +323,9 @@ export const create = mutation({
 			...(actor !== undefined ? { lastActedBy: actor } : {}),
 			createdAt: now,
 			updatedAt: now,
-			orgId: isFleet ? undefined : (scope.orgSlug as string),
-			clerkOrgId: isFleet ? undefined : scope.orgClerkId,
+			...(isFleet
+				? {}
+				: { orgId: scope.orgSlug as string, clerkOrgId: scope.orgClerkId }),
 		});
 	},
 });
