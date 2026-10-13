@@ -9,8 +9,8 @@
 //    its agent through the label fallback. The door binds it BY ID.
 //    (internalMutation: no client or token reaches it, run with the admin key)
 //    REFUSED  unknown profile; unknown agent; an
-//             inactive agent; an agent of another org (judged by org ID); a
-//             profile that does not name exactly one allowlist entry.
+//             inactive agent; an agent of another org (judged by stored org IDs);
+//             a profile or agent with no stored org ID (ORG_ID_MISSING).
 //    PRESENT  the bind succeeds, resolveSeatAgent returns that agent.
 //    ABSENT   (before the bind) the same profile resolves no agent.
 //
@@ -193,15 +193,11 @@ describe("oauth:bindScopeProfileAgent", () => {
 		).rejects.toThrow(/ORG_ID_MISSING.*agent/s);
 	});
 
-	test("REFUSED: a profile that does not carry exactly one allowlist entry", async () => {
+	test("PRESENT: the bind is by ID, whatever the label list holds", async () => {
 		const t = createT();
 		const { helios } = await seed(t);
-		await expect(
-			asService(t).mutation(internal.oauth.bindScopeProfileAgent, {
-				profileId: "duo-iris-rh",
-				agentId: helios,
-			}),
-		).rejects.toThrow(/PROFILE_NOT_SINGLE_SEAT/);
+		const res = await internal_bind(t, "duo-iris-rh", helios);
+		expect(res.agentId).toBe(helios);
 	});
 
 	test("REFUSED: an agent id that names no row", async () => {
