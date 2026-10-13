@@ -65,17 +65,16 @@ async function seedMember(
 	t: T,
 	org: string,
 	personId: string,
-	deactivatedAt?: number,
+	deactivated = false,
 ): Promise<void> {
 	await t.run(async (ctx) => {
-		await ctx.db.insert("orgMembership", {
-			clerkOrgSlug: org,
+		await ctx.db.insert("persons", {
+			orgSlug: org,
 			clerkOrgId: testClerkOrgId(org),
 			clerkUserId: personId,
-			role: "member",
+			isActive: !deactivated,
 			createdAt: 1,
 			updatedAt: 1,
-			...(deactivatedAt !== undefined ? { deactivatedAt } : {}),
 		});
 	});
 }
@@ -112,7 +111,7 @@ describe("agent owner: the package proves the owner on every resolution", () => 
 	test("REFUSED (pole 1): an owned agent whose owner person is deactivated is agent-owner-not-member", async () => {
 		const t = createT();
 		await seedOrg(t, "org-a");
-		await seedMember(t, "org-a", "person-1", 99);
+		await seedMember(t, "org-a", "person-1", true);
 		const { secret } = await ownedAgentWithCredential(t, "org-a", "ada", "person-1");
 		await expect(resolveAsMcp(t, secret)).rejects.toThrow(
 			/RBAC_DENIED[\s\S]*agent-owner-not-member/,
@@ -262,7 +261,7 @@ describe("agent owner: a seat token is proven by the same package call", () => {
 	test("REFUSED: a token whose agent owner is deactivated is not served at all", async () => {
 		const t = createT();
 		await seedOrg(t, "org-a");
-		await seedMember(t, "org-a", "person-1", 99);
+		await seedMember(t, "org-a", "person-1", true);
 		const { agentId } = await ownedAgentWithCredential(t, "org-a", "ada", "person-1");
 		await seatTokenFor(t, "org-a", agentId, "hash-deactivated", "person-1");
 		expect(await tokenAsMcp(t, "hash-deactivated")).toBeNull();
@@ -356,19 +355,19 @@ describe("agent owner: the doors that bind and unbind an owner", () => {
 		).rejects.toThrow(/RBAC_DENIED/);
 	});
 
-	test("setMember: an org admin records a member, deactivates and reactivates it; an ordinary member may not", async () => {
+	test("setPerson: an org admin records a person, deactivates and reactivates it; an ordinary member may not", async () => {
 		const t = createT();
 		await seedOrg(t, "org-a");
 		const a = t.withIdentity(admin("org-a"));
 		expect(
-			await a.mutation(api.orgMembership.setMember, {
+			await a.mutation(api.persons.setPerson, {
 				orgSlug: "org-a",
 				clerkUserId: "person-1",
 				active: true,
 			}),
 		).toEqual({ recorded: true, active: true });
 		expect(
-			await a.mutation(api.orgMembership.setMember, {
+			await a.mutation(api.persons.setPerson, {
 				orgSlug: "org-a",
 				clerkUserId: "person-1",
 				active: false,
@@ -376,20 +375,20 @@ describe("agent owner: the doors that bind and unbind an owner", () => {
 		).toEqual({ recorded: false, active: false });
 		const stored = await t.run(async (ctx) =>
 			ctx.db
-				.query("orgMembership")
-				.withIndex("by_org_user_clerk_id", (q) =>
+				.query("persons")
+				.withIndex("by_org_clerk_id_user", (q) =>
 					q.eq("clerkOrgId", testClerkOrgId("org-a")).eq("clerkUserId", "person-1"),
 				)
 				.unique(),
 		);
-		expect(stored?.deactivatedAt).toBeTypeOf("number");
-		await a.mutation(api.orgMembership.setMember, {
+		expect(stored?.isActive).toBe(false);
+		await a.mutation(api.persons.setPerson, {
 			orgSlug: "org-a",
 			clerkUserId: "person-1",
 			active: true,
 		});
-		const back = await t.run(async (ctx) => ctx.db.get(stored?._id as Id<"orgMembership">));
-		expect(back?.deactivatedAt).toBeUndefined();
+		const back = await t.run(async (ctx) => ctx.db.get(stored?._id as Id<"persons">));
+		expect(back?.isActive).toBe(true);
 		await expect(
 			t
 				.withIdentity({
@@ -398,11 +397,24 @@ describe("agent owner: the doors that bind and unbind an owner", () => {
 					org_id: testClerkOrgId("org-a"),
 					org_role: "org:member",
 				} as Identity)
-				.mutation(api.orgMembership.setMember, {
+				.mutation(api.persons.setPerson, {
 					orgSlug: "org-a",
 					clerkUserId: "person-2",
 					active: true,
 				}),
+		).rejects.toThrow(/RBAC_DENIED/);
+	});
+
+	test("setPerson: the admin of another org cannot record a person into this org", async () => {
+		const t = createT();
+		await seedOrg(t, "org-a");
+		await seedOrg(t, "org-b");
+		await expect(
+			t.withIdentity(admin("org-b")).mutation(api.persons.setPerson, {
+				orgSlug: "org-a",
+				clerkUserId: "person-1",
+				active: true,
+			}),
 		).rejects.toThrow(/RBAC_DENIED/);
 	});
 });

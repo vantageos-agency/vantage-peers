@@ -15,6 +15,7 @@ import {
 	anonymousRefusal,
 	stampOrgRefusal,
 	requireOrgAdminById,
+	restampCredentialOwner,
 	revokeActiveCredentialRows,
 } from "./lib/agentIdentity";
 import { agentCallerDeps, refuseWith } from "./lib/actingPrincipal";
@@ -244,16 +245,10 @@ export const setAgentOwner = mutation({
 		}
 
 		await ctx.db.patch(agent._id, { ownerPersonId: args.ownerPersonId });
-		const credentials = await ctx.db
-			.query("agent_credentials")
-			.withIndex("by_agent", (q) => q.eq("agentId", agent._id))
-			.collect();
-		let credentialsRestamped = 0;
-		for (const row of credentials) {
-			if (!row.isActive || row.ownerPersonId === args.ownerPersonId) continue;
-			await ctx.db.patch(row._id, { ownerPersonId: args.ownerPersonId });
-			credentialsRestamped += 1;
-		}
+		const credentialsRestamped = await restampCredentialOwner(ctx, {
+			_id: agent._id,
+			ownerPersonId: args.ownerPersonId,
+		});
 		return {
 			ownerPersonId: args.ownerPersonId ?? null,
 			credentialsRestamped,

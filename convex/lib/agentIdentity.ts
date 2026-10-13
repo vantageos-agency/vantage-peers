@@ -338,3 +338,29 @@ export async function revokeActiveCredentialRows(
 	}
 	return revoked;
 }
+
+/**
+ * restampCredentialOwner: copies the AGENT ROW's owner onto every ACTIVE
+ * credential row of ONE agent, keyed on the agent's ID (`by_agent`). The owner
+ * is a fact of the agent row (`agents.ownerPersonId`); a credential carries a
+ * copy, and the package proves it against the agent's stored owner on every
+ * resolution. Authorization is the CALLER's job; this helper trusts that the
+ * org-admin proof already ran and takes the owner from the agent row, never from
+ * an argument. Returns the rows THIS call changed (0 is a real zero).
+ */
+export async function restampCredentialOwner(
+	ctx: MutationCtx,
+	agent: Pick<Doc<"agents">, "_id" | "ownerPersonId">,
+): Promise<number> {
+	const rows = await ctx.db
+		.query("agent_credentials")
+		.withIndex("by_agent", (q) => q.eq("agentId", agent._id))
+		.collect();
+	let restamped = 0;
+	for (const row of rows) {
+		if (!row.isActive || row.ownerPersonId === agent.ownerPersonId) continue;
+		await ctx.db.patch(row._id, { ownerPersonId: agent.ownerPersonId });
+		restamped += 1;
+	}
+	return restamped;
+}

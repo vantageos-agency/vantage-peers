@@ -179,9 +179,8 @@ export function serviceAccountPrincipalLookups(
  * indexed read BY ID (no decision here):
  *   - orgById          the mapping row of a permanent org ID;
  *   - agentById        the agents row, with the org ID and owner it STORES;
- *   - personById       the owner's membership row of that org
- *                      (`orgMembership.by_org_user_clerk_id`), `active` while it
- *                      carries no `deactivatedAt`;
+ *   - personById       the owner's `persons` row of that org, by (org ID, person
+ *                      ID), with the `isActive` it stores;
  *   - organisationById / orgKindOf   the same ID-keyed mapping reads the person
  *                      path uses.
  */
@@ -210,8 +209,8 @@ export function agentCallerDeps(ctx: Ctx): AgentCallerDeps {
 			},
 			personById: async (personId, orgId) => {
 				const row = await ctx.db
-					.query("orgMembership")
-					.withIndex("by_org_user_clerk_id", (q) =>
+					.query("persons")
+					.withIndex("by_org_clerk_id_user", (q) =>
 						q.eq("clerkOrgId", orgId).eq("clerkUserId", personId),
 					)
 					.unique();
@@ -219,7 +218,7 @@ export function agentCallerDeps(ctx: Ctx): AgentCallerDeps {
 				return {
 					id: row.clerkUserId,
 					orgId: row.clerkOrgId ?? null,
-					active: row.deactivatedAt === undefined,
+					active: row.isActive,
 				};
 			},
 			organisationById,

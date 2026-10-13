@@ -130,6 +130,7 @@ import type * as okfSerializer from "../okfSerializer.js";
 import type * as okfValidator from "../okfValidator.js";
 import type * as orgMembership from "../orgMembership.js";
 import type * as orgRoster from "../orgRoster.js";
+import type * as persons from "../persons.js";
 import type * as prMonitor from "../prMonitor.js";
 import type * as profiles from "../profiles.js";
 import type * as publishApproval from "../publishApproval.js";
@@ -274,6 +275,7 @@ declare const fullApi: ApiFromModules<{
   okfValidator: typeof okfValidator;
   orgMembership: typeof orgMembership;
   orgRoster: typeof orgRoster;
+  persons: typeof persons;
   prMonitor: typeof prMonitor;
   profiles: typeof profiles;
   publishApproval: typeof publishApproval;

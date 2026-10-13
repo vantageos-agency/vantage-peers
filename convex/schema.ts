@@ -1967,16 +1967,13 @@ export default defineSchema({
 	// record of who administers which org — only Clerk did. This table is
 	// that record.
 	//
-	// AUDIT RECORD, WITH ONE NARROW READ. `requireOrgAdmin`
+	// AUDIT RECORD ONLY — NEVER AN AUTHORISATION SOURCE. `requireOrgAdmin`
 	// (convex/lib/auth.ts) keeps deciding admin status from the verified
 	// `org_role` JWT claim at request time, exactly as before this table
-	// existed. No code path may read a row here to GRANT an action — that
-	// would let a stale/replayed row grant authority the live Clerk session
-	// no longer holds. This table answers "who administers/belongs to which
-	// org", for display/audit/reporting. The one decision that reads it is the
-	// package's agent-owner proof (`resolveCallerFromAgentCredential`, via
-	// `agentCallerDeps`): an agent BOUND to an owner is served only while the
-	// owner's row is present and not deactivated. That read only withholds.
+	// existed. No code path may read a row here to decide whether an action
+	// is allowed — that would let a stale/replayed row grant authority the
+	// live Clerk session no longer holds. This table only answers "who
+	// administers/belongs to which org", for display/audit/reporting.
 	//
 	// Written ONLY at provisioning time (`convex/oauth.ts`'s
 	// `provisionOrganization`, org-admin path) — there is no Clerk webhook
@@ -2001,10 +1998,6 @@ export default defineSchema({
 		role: v.union(v.literal("admin"), v.literal("member")),
 		createdAt: v.number(),
 		updatedAt: v.number(),
-		// Set when the person stopped belonging to the organisation. Absent = active. The
-		// package reads it (as `active: false`) when it proves an agent's owner is still a
-		// member of the agent's organisation (@vantageos/cloud-identity 0.21.0).
-		deactivatedAt: v.optional(v.number()),
 	})
 		// "who administers/belongs to org X" — no table scan.
 		.index("by_org", ["clerkOrgSlug"])
@@ -2014,6 +2007,32 @@ export default defineSchema({
 		// Idempotent upsert key at provisioning time — one row per (org, user).
 		.index("by_org_user", ["clerkOrgSlug", "clerkUserId"])
 		.index("by_org_user_clerk_id", ["clerkOrgId", "clerkUserId"]),
+
+	// ── persons ──────────────────────────────────────────────────────────────
+	// The people an organisation's agents can be bound to. One row per (organisation,
+	// person): the person is the verified Clerk subject (`clerkUserId`), the
+	// organisation is stamped like every other row (`orgSlug` label + `clerkOrgId`
+	// permanent ID). `isActive: false` is a person who no longer belongs to the
+	// organisation.
+	//
+	// STORED FACTS, NEVER A DECISION. VP reads this row BY ID and hands it to
+	// @vantageos/cloud-identity (`resolveCallerFromAgentCredential`, through
+	// `agentCallerDeps` in convex/lib/actingPrincipal.ts); the package decides whether
+	// an agent's owner is still a member of the agent's organisation
+	// (`agent-owner-not-member`). Written by `persons:setPerson`, an organisation
+	// administrator's door.
+	persons: defineTable({
+		orgSlug: v.string(),
+		// Permanent Clerk org id (org_...) of the same organisation as `orgSlug`.
+		// Optional during the expand phase, like every org stamp.
+		clerkOrgId: v.optional(v.string()),
+		clerkUserId: v.string(),
+		isActive: v.boolean(),
+		createdAt: v.number(),
+		updatedAt: v.number(),
+	})
+		.index("by_org_clerk_id_user", ["clerkOrgId", "clerkUserId"])
+		.index("by_org_user", ["orgSlug", "clerkUserId"]),
 
 	// ── userBearerTokens ─────────────────────────────────────────────────────
 	// Bearer tokens issued to VP webapp users via Clerk JWT exchange
