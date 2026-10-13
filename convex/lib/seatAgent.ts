@@ -171,21 +171,12 @@ export async function resolveSeat(
 		: { kind: "org-level" };
 }
 
-/** The agent a token acts as, or null (see {@link resolveSeat}). */
-export async function resolveSeatAgent(
-	ctx: QueryCtx | MutationCtx,
-	token: SeatAgentInput,
-): Promise<Doc<"agents"> | null> {
-	const seat = await resolveSeat(ctx, token);
-	return seat.kind === "agent" ? seat.agent : null;
-}
-
 /**
  * The agent a token row acts as RIGHT NOW. A stamped row is re-read against the
  * live agent (still active, still in the stamped org, still the token's org), so
  * a deactivated or moved agent stops resolving and a rename reports the new
  * label. An unstamped row (minted before the stamp existed) is resolved live
- * through {@link resolveSeatAgent}, by the ID its profile carries, until the
+ * through {@link resolveSeat}, by the ID its profile carries, until the
  * backfill has stamped it.
  */
 export async function liveSeatAgent(
@@ -211,15 +202,18 @@ export async function liveSeatAgent(
 		}
 		return null;
 	}
-	return await resolveSeatAgent(ctx, row);
+	const seat = await resolveSeat(ctx, row);
+	return seat.kind === "agent" ? seat.agent : null;
 }
 
 /**
  * The IDs a token minted from `profile` is stamped with: the profile's own
  * `fromAllowListAgentIds`, each re-read BY ID and kept only while the agent is
- * active and in the profile's own organisation. An ID of another organisation, a
- * retired agent or a deleted row is dropped, never carried. Undefined when the
- * profile lists none (expand phase), so the token field stays absent.
+ * active and in the profile's own organisation, decided by permanent org ID
+ * (`sameOrg`; this field is new, so no slug fallback is carried into it). An ID
+ * of another organisation, a retired agent or a deleted row is dropped, never
+ * carried. Undefined when the profile lists none (expand phase), so the token
+ * field stays absent.
  */
 export async function liveProfileAgentIds(
 	ctx: QueryCtx | MutationCtx,
@@ -230,23 +224,11 @@ export async function liveProfileAgentIds(
 ): Promise<Doc<"agents">["_id"][] | undefined> {
 	const listed = profile.fromAllowListAgentIds;
 	if (listed === undefined) return undefined;
-	const profileOrg: OrgStamp = {
-		id: profile.clerkOrgId,
-		label: profile.clerkOrgSlug,
-	};
 	const kept: Doc<"agents">["_id"][] = [];
 	for (const id of listed) {
 		const agent = await ctx.db.get(id);
 		if (!agent || !agent.isActive) continue;
-		if (
-			!(await sameOrgStamp(
-				ctx,
-				{ id: agent.clerkOrgId, label: agent.orgSlug },
-				profileOrg,
-			))
-		) {
-			continue;
-		}
+		if (!sameOrg({ id: agent.clerkOrgId }, { id: profile.clerkOrgId })) continue;
 		if (!kept.includes(agent._id)) kept.push(agent._id);
 	}
 	return kept;

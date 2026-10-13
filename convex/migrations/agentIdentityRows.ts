@@ -42,12 +42,11 @@
 import { v } from "convex/values";
 import type { Doc, Id } from "../_generated/dataModel";
 import { internalMutation } from "../_generated/server";
-import type { MutationCtx } from "../_generated/server";
 import { normalizeOrchestratorId } from "../_helpers/normalizeOrchestratorId";
 import {
 	isOneAgentSeatShape,
 	liveProfileAgentIds,
-	resolveSeatAgent,
+	resolveSeat,
 	sameOrgStamp,
 	seatBindingRefusal,
 } from "../lib/seatAgent";
@@ -267,7 +266,8 @@ export const backfillSeatTokenAgentIds = internalMutation({
 				skipped += 1;
 				continue;
 			}
-			const agent = await resolveSeatAgent(ctx, row);
+			const seat = await resolveSeat(ctx, row);
+			const agent = seat.kind === "agent" ? seat.agent : null;
 			if (!agent) {
 				undecidableIds.push(row._id);
 				continue;
@@ -299,62 +299,20 @@ export const backfillSeatTokenAgentIds = internalMutation({
 // Seat profiles bound by agent ID (operator ruling 2026-10-13)
 // ─────────────────────────────────────────────────────────────────────────────
 
+/**
+ * What a stored display label names INSIDE ONE organisation. The two migrations
+ * below are the only places where a stored label is turned into an agent ID, once,
+ * and the ID is what is written: the label is read from the profile row (never from
+ * a caller), the lookup is confined to the profile's own organisation, the agent's
+ * org is confirmed by org ID, a same-named agent of another org is never a
+ * candidate, and two candidates are ambiguous, never picked between.
+ */
 type LabelResolution =
 	| { kind: "agent"; agent: Doc<"agents"> }
 	| { kind: "not-found" }
 	| { kind: "ambiguous" }
 	| { kind: "inactive" }
 	| { kind: "other-org" };
-
-/**
- * The agent a stored display label names INSIDE ONE organisation, or why none.
- * Used by the migrations only: this is the single place where a stored label is
- * turned into an agent ID, once, and the ID is what is written. The label is read
- * from the profile row (never from a caller), the lookup is confined to the
- * profile's own organisation, and the agent's org is confirmed by org ID through
- * @vantageos/cloud-identity `sameOrg`; a same-named agent of another org is never
- * a candidate. Two candidates are ambiguous, never picked between.
- */
-// allow-local-identity: the one place a stored display label becomes an agent ID, once, inside the profile's own org, for the migrations in this file; it admits no caller and every later decision follows the ID it returns
-async function resolveLabelInProfileOrg(
-	ctx: MutationCtx,
-	profile: Doc<"oauth_scope_profiles">,
-	label: string,
-): Promise<LabelResolution> {
-	const orgSlug = profile.clerkOrgSlug;
-	if (orgSlug === undefined) return { kind: "not-found" };
-	const normalized = normalizeOrchestratorId(label);
-	const byNormalized = await ctx.db
-		.query("agents")
-		.withIndex("by_org_normalized_name", (q) =>
-			q.eq("orgSlug", orgSlug).eq("normalizedName", normalized),
-		)
-		.take(3);
-	const byExact =
-		byNormalized.length > 0
-			? []
-			: await ctx.db
-					.query("agents")
-					.withIndex("by_org_name", (q) =>
-						q.eq("orgSlug", orgSlug).eq("name", label),
-					)
-					.take(3);
-	// The index is a shortcut, the label is the truth: a stale normalizedName
-	// must not name the wrong agent.
-	const candidates = [...byNormalized, ...byExact].filter(
-		(row) => normalizeOrchestratorId(row.name) === normalized,
-	);
-	if (candidates.length === 0) return { kind: "not-found" };
-	if (candidates.length > 1) return { kind: "ambiguous" };
-	const agent = candidates[0];
-	if (!agent.isActive) return { kind: "inactive" };
-	const sameOrg = await sameOrgStamp(
-		ctx,
-		{ id: agent.clerkOrgId, label: agent.orgSlug },
-		{ id: profile.clerkOrgId, label: profile.clerkOrgSlug },
-	);
-	return sameOrg ? { kind: "agent", agent } : { kind: "other-org" };
-}
 
 const bindReason = v.union(
 	v.literal("profile-id-mismatch"),
@@ -367,7 +325,7 @@ const bindReason = v.union(
 /**
  * Binds `agentId` (and `fromAllowListAgentIds`) onto every ONE-AGENT SEAT
  * profile whose single label resolved to its agent before the label branch of
- * resolveSeatAgent was deleted, so no currently-working seat breaks.
+ * resolveSeat was deleted, so no currently-working seat breaks.
  *
  * "Resolved before" is exactly the deleted rule: the profile's single allowlisted
  * label, inside the profile's own organisation, with the profile id following
@@ -438,7 +396,46 @@ export const bindSeatProfileAgentIds = internalMutation({
 				unbound.push({ profileId: profile.profileId, reason: "profile-id-mismatch" });
 				continue;
 			}
-			const found = await resolveLabelInProfileOrg(ctx, profile, label);
+			let found: LabelResolution = { kind: "not-found" };
+			// The label -> agent ID step (see the header): the label is read from the
+			// profile row, the lookup is confined to the profile's own organisation,
+			// the agent's org is confirmed by org ID, and two candidates are ambiguous.
+			if (profile.clerkOrgSlug !== undefined) {
+				const orgSlug = profile.clerkOrgSlug;
+				const normalized = normalizeOrchestratorId(label);
+				const byNormalized = await ctx.db
+					.query("agents")
+					.withIndex("by_org_normalized_name", (q) =>
+						q.eq("orgSlug", orgSlug).eq("normalizedName", normalized),
+					)
+					.take(3);
+				const byExact =
+					byNormalized.length > 0
+						? []
+						: await ctx.db
+								.query("agents")
+								.withIndex("by_org_name", (q) =>
+									q.eq("orgSlug", orgSlug).eq("name", label),
+								)
+								.take(3);
+				const candidates = [...byNormalized, ...byExact].filter(
+					(row) => normalizeOrchestratorId(row.name) === normalized,
+				);
+				if (candidates.length > 1) found = { kind: "ambiguous" };
+				else if (candidates.length === 1) {
+					const candidate = candidates[0];
+					if (!candidate.isActive) found = { kind: "inactive" };
+					else if (
+						await sameOrgStamp(
+							ctx,
+							{ id: candidate.clerkOrgId, label: candidate.orgSlug },
+							{ id: profile.clerkOrgId, label: profile.clerkOrgSlug },
+						)
+					)
+						found = { kind: "agent", agent: candidate };
+					else found = { kind: "other-org" };
+				}
+			}
 			if (found.kind !== "agent") {
 				unbound.push({
 					profileId: profile.profileId,
@@ -553,7 +550,46 @@ export const backfillProfileAgentIdLists = internalMutation({
 				else failed.push(...labels);
 			} else {
 				for (const label of labels) {
-					const found = await resolveLabelInProfileOrg(ctx, profile, label);
+					let found: LabelResolution = { kind: "not-found" };
+			// The label -> agent ID step (see the header): the label is read from the
+			// profile row, the lookup is confined to the profile's own organisation,
+			// the agent's org is confirmed by org ID, and two candidates are ambiguous.
+			if (profile.clerkOrgSlug !== undefined) {
+				const orgSlug = profile.clerkOrgSlug;
+				const normalized = normalizeOrchestratorId(label);
+				const byNormalized = await ctx.db
+					.query("agents")
+					.withIndex("by_org_normalized_name", (q) =>
+						q.eq("orgSlug", orgSlug).eq("normalizedName", normalized),
+					)
+					.take(3);
+				const byExact =
+					byNormalized.length > 0
+						? []
+						: await ctx.db
+								.query("agents")
+								.withIndex("by_org_name", (q) =>
+									q.eq("orgSlug", orgSlug).eq("name", label),
+								)
+								.take(3);
+				const candidates = [...byNormalized, ...byExact].filter(
+					(row) => normalizeOrchestratorId(row.name) === normalized,
+				);
+				if (candidates.length > 1) found = { kind: "ambiguous" };
+				else if (candidates.length === 1) {
+					const candidate = candidates[0];
+					if (!candidate.isActive) found = { kind: "inactive" };
+					else if (
+						await sameOrgStamp(
+							ctx,
+							{ id: candidate.clerkOrgId, label: candidate.orgSlug },
+							{ id: profile.clerkOrgId, label: profile.clerkOrgSlug },
+						)
+					)
+						found = { kind: "agent", agent: candidate };
+					else found = { kind: "other-org" };
+				}
+			}
 					if (found.kind === "agent") {
 						if (!ids.includes(found.agent._id)) ids.push(found.agent._id);
 					} else {

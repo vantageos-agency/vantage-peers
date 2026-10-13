@@ -25,7 +25,16 @@ import { convexTest } from "../../tests/fixtures/convexTestWithServiceAccount";
 import { testClerkOrgId } from "../../tests/fixtures/testClerkOrgId";
 import { api, internal } from "../_generated/api";
 import type { Id } from "../_generated/dataModel";
-import { resolveSeatAgent } from "../lib/seatAgent";
+import { resolveSeat } from "../lib/seatAgent";
+
+/** The agent a token resolves to, or null (the test view of `resolveSeat`). */
+const resolveSeatAgent = async (
+	ctx: Parameters<typeof resolveSeat>[0],
+	token: Parameters<typeof resolveSeat>[1],
+) => {
+	const seat = await resolveSeat(ctx, token);
+	return seat.kind === "agent" ? seat.agent : null;
+};
 import schema from "../schema";
 
 const modules = Object.fromEntries(

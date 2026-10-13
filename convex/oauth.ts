@@ -45,7 +45,6 @@ import {
 	liveProfileAgentIds,
 	liveSeatAgent,
 	resolveSeat,
-	resolveSeatAgent,
 	seatBindingRefusal,
 } from "./lib/seatAgent";
 import { requireId } from "./lib/ids";
@@ -1124,11 +1123,12 @@ export const provisionOrganization = mutation({
 			// Seat identity by ID: stamped when the seat's agent already exists in
 			// this org; otherwise the seat starts org-level and is stamped at its
 			// first refresh, once the agent is registered.
-			const seatAgent = await resolveSeatAgent(ctx, {
+			const seat = await resolveSeat(ctx, {
 				scopeProfile: profileId,
 				clerkOrgSlug: slug,
 				clerkOrgId: seatClerkOrgId,
 			});
+			const seatAgent = seat.kind === "agent" ? seat.agent : null;
 			// The agent IDs the seat's profile admits, read back BY ID from the profile
 			// just written (the same rule a later mint applies).
 			const seatAgentIds = await liveProfileAgentIds(ctx, {
