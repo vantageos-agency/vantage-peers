@@ -495,6 +495,7 @@ export const bindSeatProfileAgentIds = internalMutation({
  * bound agent. A wildcard, an empty list and a profile with no organisation name
  * no agent (`notListed`). Dry-run first, cursor-paged, IDEMPOTENT.
  */
+// allow-local-identity: one-off migration that reads the labels a profile stored to turn them into agent IDs, once, inside the profile's own org; it admits no caller and every later decision follows the IDs it writes
 export const backfillProfileAgentIdLists = internalMutation({
 	args: {
 		dryRun: v.boolean(),

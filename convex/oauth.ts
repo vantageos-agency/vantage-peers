@@ -3352,6 +3352,7 @@ export const patchScopeProfileEmergency = mutation({
 // fromAllowList includes all case variants of Alpha, Beta, Gamma for robustness.
 // ─────────────────────────────────────────────────────────────────────────────
 
+// allow-local-identity: fixed fixture seed of the persistent test trio, run by an operator with the admin credential; it writes constant test data, resolves no caller and filters no request
 export const seedTestTenantTrio = internalMutation({
 	args: {},
 	returns: v.object({
@@ -3589,6 +3590,7 @@ export const createTestTenantTrioClients = internalMutation({
 // listScopeProfiles — internal query to enumerate all profiles
 // ─────────────────────────────────────────────────────────────────────────────
 
+// allow-local-identity: internal operator listing of the stored profiles for display; it is unreachable from any client, resolves no caller and filters no request
 export const listScopeProfiles = internalQuery({
 	args: {},
 	returns: v.array(scopeProfileShape),
@@ -3628,6 +3630,7 @@ export const listScopeProfiles = internalQuery({
 // `.collect()`), per Convex query guidelines. Read-only — no writes.
 // ─────────────────────────────────────────────────────────────────────────────
 
+// allow-local-identity: internal read-only measurement run with the admin credential before a profile patch; it counts memories whose stored author label is in the profile's display list, resolves no caller and filters no request
 export const countClientGlobalUsage = internalQuery({
 	args: { scopeProfileId: v.string() },
 	returns: v.object({
