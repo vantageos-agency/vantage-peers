@@ -590,10 +590,8 @@ export function isMcpBoundMaster(
  * is a deliberate withheld grant, chosen over keeping a cross-tenant read open;
  * master still reads those rows, which is what lets the backfill find them.
  *
- * ROSTER LEG BY NAME: DELETE AFTER CALLERS MIGRATE. Its replacement is
- * `filterByOrgScopeById` (convex/lib/scopeRosterIds.ts), which judges the same
- * two controls by agent ID. Importers still on the name path: dashboard.ts,
- * tasks.ts, recurringTasks.ts, stats.ts, improvisationDigest.ts.
+ * ROSTER LEG BY NAME: DELETE AFTER CALLERS MIGRATE. Importers still on the name
+ * path: dashboard.ts, tasks.ts, recurringTasks.ts, stats.ts, improvisationDigest.ts.
  */
 export function filterByOrgScope<
 	T extends {
@@ -1253,8 +1251,7 @@ export type RosterNameKind = "sender" | "actor" | "assignee";
  * any read that must answer without throwing): normalised on both sides, and
  * "*" names nobody.
  *
- * BY NAME: DELETE AFTER CALLERS MIGRATE. Replacement: `isAgentIdOnScopeRoster`
- * (convex/lib/scopeRosterIds.ts). Importers still on the name path: messages.ts.
+ * BY NAME: DELETE AFTER CALLERS MIGRATE. Importers still on the name path: messages.ts.
  */
 export function isOrchestratorOnOrgRoster(scope: OrgScope, name: string): boolean {
 	const claimed = normalizeOrchestratorId(name);
@@ -1288,10 +1285,8 @@ export function isOrchestratorOnOrgRoster(scope: OrgScope, name: string): boolea
  *
  * Refusal: `RBAC_DENIED`, `reason: "<kind>-not-on-roster"`, naming the door.
  *
- * BY NAME: DELETE AFTER CALLERS MIGRATE. Replacement:
- * `requireAgentIdOnScopeRoster` (convex/lib/scopeRosterIds.ts), the same
- * refusal by agent ID. Importers still on the name path: messages.ts,
- * recurringTasks.ts, briefingNotes.ts, tasks.ts, githubRepoMapping.ts.
+ * BY NAME: DELETE AFTER CALLERS MIGRATE. Importers still on the name path:
+ * messages.ts, recurringTasks.ts, briefingNotes.ts, tasks.ts, githubRepoMapping.ts.
  */
 export function requireOrchestratorOnRoster(
 	scope: OrgScope,

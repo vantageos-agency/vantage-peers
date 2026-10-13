@@ -74,7 +74,6 @@ import type * as lib_repoMappingTenant from "../lib/repoMappingTenant.js";
 import type * as lib_reviewRouting from "../lib/reviewRouting.js";
 import type * as lib_rosterIds from "../lib/rosterIds.js";
 import type * as lib_rosterLabels from "../lib/rosterLabels.js";
-import type * as lib_scopeRosterIds from "../lib/scopeRosterIds.js";
 import type * as lib_seatAgent from "../lib/seatAgent.js";
 import type * as lib_serviceAccount from "../lib/serviceAccount.js";
 import type * as lib_systemCaller from "../lib/systemCaller.js";
@@ -218,7 +217,6 @@ declare const fullApi: ApiFromModules<{
   "lib/reviewRouting": typeof lib_reviewRouting;
   "lib/rosterIds": typeof lib_rosterIds;
   "lib/rosterLabels": typeof lib_rosterLabels;
-  "lib/scopeRosterIds": typeof lib_scopeRosterIds;
   "lib/seatAgent": typeof lib_seatAgent;
   "lib/serviceAccount": typeof lib_serviceAccount;
   "lib/systemCaller": typeof lib_systemCaller;

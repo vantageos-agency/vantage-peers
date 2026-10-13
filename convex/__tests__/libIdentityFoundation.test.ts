@@ -9,7 +9,6 @@
  * deny pole:
  *
  *   memberScopeOfMapping      the ONE builder of an organisation's member scope
- *   scopeRosterIds            the roster leg of a row read, by agent ID
  *   verifiedOrg (Ref)         a verified org compared with a row BY ORG ID
  *   resolvePrincipalOfPresentedSecret   the secret's agent AND its principal
  *   fleetStanding             standing is the package's reading of the scope
@@ -40,11 +39,6 @@ import {
 } from "../lib/auth";
 import { fleetStandingOf, requireFleetDoor, scopeWithFleetStanding } from "../lib/fleetStanding";
 import { listedAgentsOfOrg } from "../lib/rosterIds";
-import {
-	filterByOrgScopeById,
-	isRowVisibleToScopeById,
-	requireAgentIdOnScopeRoster,
-} from "../lib/scopeRosterIds";
 import {
 	assertRowInVerifiedOrgRef,
 	resolveVerifiedOrgRef,
@@ -214,123 +208,6 @@ describe("memberScopeOfMapping — the ONE builder of an organisation's member s
 			.run((ctx) => withOrgScope(ctx));
 		expect(scope.orgSlug).toBe("org-d");
 		expect(scope.allowedAgentIds).toEqual([]);
-	});
-});
-
-// ─────────────────────────────────────────────────────────────────────────────
-describe("scopeRosterIds — the roster leg of a row read, by agent ID", () => {
-	async function world() {
-		const t = createT();
-		const ada = await seedAgent(t, "org-a", "ada");
-		const bea = await seedAgent(t, "org-a", "bea"); // in org-a, NOT on the roster
-		const vic = await seedAgent(t, "org-b", "vic");
-		await seedOrg(t, "org-a", { allowedAgentIds: [ada] });
-		await seedOrg(t, "org-b", { allowedAgentIds: [vic] });
-		const row = (org: string, pilotId?: string, extra: object = {}) => ({
-			orgId: org,
-			clerkOrgId: testClerkOrgId(org),
-			...(pilotId !== undefined ? { pilotId } : {}),
-			...extra,
-		});
-		const memberA = <R>(fn: (ctx: MutationCtx) => Promise<R>): Promise<R> =>
-			t.withIdentity(session("org-a", "org:member")).run(fn);
-		return { t, ada, bea, vic, row, memberA };
-	}
-
-	test("PRESENT: a row of the caller's org naming a listed agent is visible", async () => {
-		const { ada, row, memberA } = await world();
-		const out = await memberA(async (ctx) => {
-			const scope = await withOrgScope(ctx);
-			return {
-				one: await isRowVisibleToScopeById(ctx, scope, row("org-a", ada), "test"),
-				many: await filterByOrgScopeById(ctx, [row("org-a", ada)], scope, "test"),
-			};
-		});
-		expect(out.one).toBe(true);
-		expect(out.many).toHaveLength(1);
-	});
-
-	test("REFUSED: a row naming an agent of the org that is NOT on the roster is hidden", async () => {
-		const { bea, row, memberA } = await world();
-		const out = await memberA(async (ctx) => {
-			const scope = await withOrgScope(ctx);
-			return {
-				one: await isRowVisibleToScopeById(ctx, scope, row("org-a", bea), "test"),
-				many: await filterByOrgScopeById(ctx, [row("org-a", bea)], scope, "test"),
-			};
-		});
-		expect(out.one).toBe(false);
-		expect(out.many).toEqual([]);
-	});
-
-	test("ABSENT: no rows is an empty success; a row naming no agent is hidden from a member", async () => {
-		const { row, memberA } = await world();
-		const out = await memberA(async (ctx) => {
-			const scope = await withOrgScope(ctx);
-			return {
-				none: await filterByOrgScopeById(ctx, [], scope, "test"),
-				unnamed: await isRowVisibleToScopeById(ctx, scope, row("org-a"), "test"),
-			};
-		});
-		expect(out.none).toEqual([]);
-		expect(out.unnamed).toBe(false);
-	});
-
-	test("CROSS-ORG: another org's row is hidden even when it names an agent ID the caller's roster lists", async () => {
-		const { vic, row, memberA, t } = await world();
-		// org-a's stored roster is (wrongly) made to list org-b's agent: the
-		// package refuses an agent stamped with another organisation.
-		await t.run(async (ctx) => {
-			const m = await ctx.db
-				.query("client_org_mapping")
-				.withIndex("by_clerk_slug", (q) => q.eq("clerkOrgSlug", "org-a"))
-				.first();
-			if (m !== null) await ctx.db.patch(m._id, { allowedAgentIds: [vic as Id<"agents">] });
-		});
-		const out = await memberA(async (ctx) => {
-			const scope = await withOrgScope(ctx);
-			return {
-				foreignRow: await isRowVisibleToScopeById(ctx, scope, row("org-b", vic), "test"),
-				ownRowForeignAgent: await isRowVisibleToScopeById(ctx, scope, row("org-a", vic), "test"),
-			};
-		});
-		expect(out.foreignRow).toBe(false);
-		expect(out.ownRowForeignAgent).toBe(false);
-	});
-
-	test("CROSS-ORG: a row stamped with the same SLUG but another org ID is hidden (a label never matches)", async () => {
-		const { ada, memberA } = await world();
-		const out = await memberA(async (ctx) => {
-			const scope = await withOrgScope(ctx);
-			return await isRowVisibleToScopeById(
-				ctx,
-				scope,
-				{ orgId: "org-a", clerkOrgId: "org_SomeOtherOrgWithTheSameSlug", pilotId: ada },
-				"test",
-			);
-		});
-		expect(out).toBe(false);
-	});
-
-	test("REFUSED: an anonymous scope sees nothing; the fleet service account sees every row", async () => {
-		const { ada, row, t } = await world();
-		const anon = await t.run(async (ctx) => {
-			const scope = await withOrgScope(ctx);
-			return await filterByOrgScopeById(ctx, [row("org-a", ada)], scope, "test");
-		});
-		expect(anon).toEqual([]);
-		const fleet = await t
-			.withIdentity({ subject: SERVICE_SUBJECT } as Identity)
-			.run(async (ctx) => {
-				const scope = await withOrgScope(ctx);
-				return await filterByOrgScopeById(
-					ctx,
-					[row("org-a", ada), row("org-b", "x")],
-					scope,
-					"test",
-				);
-			});
-		expect(fleet).toHaveLength(2);
 	});
 });
 
@@ -708,78 +585,3 @@ describe("listedAgentsOfOrg — the roster lists agents of its own organisation 
 	});
 });
 
-// ─────────────────────────────────────────────────────────────────────────────
-describe("requireAgentIdOnScopeRoster — the sender / actor / assignee of a write, by agent ID", () => {
-	async function world() {
-		const t = createT();
-		const ada = await seedAgent(t, "org-a", "ada");
-		const bea = await seedAgent(t, "org-a", "bea"); // in org-a, not on the roster
-		const vic = await seedAgent(t, "org-b", "vic");
-		await seedOrg(t, "org-a", { allowedAgentIds: [ada] });
-		await seedOrg(t, "org-b", { allowedAgentIds: [vic] });
-		const asMemberA = <R>(fn: (ctx: MutationCtx) => Promise<R>): Promise<R> =>
-			t.withIdentity(session("org-a", "org:member")).run(fn);
-		return { t, ada, bea, vic, asMemberA };
-	}
-
-	test("PRESENT: a listed agent of the caller's org passes for every kind", async () => {
-		const { ada, asMemberA } = await world();
-		for (const kind of ["sender", "actor", "assignee"] as const) {
-			const out = await codeOf(
-				asMemberA(async (ctx) => {
-					const scope = await withOrgScope(ctx);
-					await requireAgentIdOnScopeRoster(ctx, scope, ada, "test:door", kind);
-				}),
-			);
-			expect(out).toBe("NO_ERROR");
-		}
-	});
-
-	test("REFUSED: an agent of the org that is not on the roster is refused with <kind>-not-on-roster naming the door", async () => {
-		const { bea, asMemberA } = await world();
-		const out = await codeOf(
-			asMemberA(async (ctx) => {
-				const scope = await withOrgScope(ctx);
-				await requireAgentIdOnScopeRoster(ctx, scope, bea, "test:door", "assignee");
-			}),
-		);
-		expect(out).toMatch(/^RBAC_DENIED/);
-		expect(out).toContain("assignee-not-on-roster");
-		expect(out).toContain("test:door");
-	});
-
-	test("CROSS-ORG: another org's agent is refused even by its exact ID", async () => {
-		const { vic, asMemberA } = await world();
-		const out = await codeOf(
-			asMemberA(async (ctx) => {
-				const scope = await withOrgScope(ctx);
-				await requireAgentIdOnScopeRoster(ctx, scope, vic, "test:door", "sender");
-			}),
-		);
-		expect(out).toContain("sender-not-on-roster");
-	});
-
-	test("ABSENT: an ID that names no agent is refused, not passed", async () => {
-		const { t, asMemberA } = await world();
-		const gone = await seedAgent(t, "org-a", "gone");
-		await t.run((ctx) => ctx.db.delete(gone));
-		const out = await codeOf(
-			asMemberA(async (ctx) => {
-				const scope = await withOrgScope(ctx);
-				await requireAgentIdOnScopeRoster(ctx, scope, gone, "test:door", "actor");
-			}),
-		);
-		expect(out).toContain("actor-not-on-roster");
-	});
-
-	test("PRESENT: the fleet service account is not held to an organisation roster", async () => {
-		const { vic, t } = await world();
-		const out = await codeOf(
-			t.withIdentity({ subject: SERVICE_SUBJECT } as Identity).run(async (ctx) => {
-				const scope = await withOrgScope(ctx);
-				await requireAgentIdOnScopeRoster(ctx, scope, vic, "test:door", "sender");
-			}),
-		);
-		expect(out).toBe("NO_ERROR");
-	});
-});
