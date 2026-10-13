@@ -62,31 +62,37 @@ async function sameOrgStamp(
 }
 
 export type SeatBindingRefusal =
-	| "PROFILE_NOT_SINGLE_SEAT"
-	| "AGENT_INACTIVE"
-	| "AGENT_ORG_MISMATCH";
+	| { code: "PROFILE_NOT_SINGLE_SEAT" }
+	| { code: "AGENT_INACTIVE" }
+	| { code: "ORG_ID_MISSING"; side: "profile" | "agent" }
+	| { code: "AGENT_ORG_MISMATCH" };
 
 /**
  * May this agent be bound onto this seat profile (`oauth_scope_profiles.agentId`)?
- * Null when it may, otherwise the code of the first refusal: the profile must name
- * exactly ONE allowlist entry, the agent must be active, and the agent must be in
- * the profile's own organisation, decided by org ID through
- * {@link sameOrgStamp} (@vantageos/cloud-identity `sameOrg`), never by label.
+ * Null when it may, otherwise the first refusal: the profile must name exactly ONE
+ * allowlist entry, the agent must be active, and the two STORED org IDs
+ * (`profile.clerkOrgId`, `agent.clerkOrgId`) must both exist and be the same
+ * organisation by @vantageos/cloud-identity `sameOrg`. A side with no stored ID is
+ * refused by name (`ORG_ID_MISSING`, `side`); there is no label fallback here.
  */
-export async function seatBindingRefusal(
-	ctx: QueryCtx | MutationCtx,
+export function seatBindingRefusal(
 	profile: Doc<"oauth_scope_profiles">,
 	agent: Doc<"agents">,
-): Promise<SeatBindingRefusal | null> {
-	// allow-local-identity: counts the entries of a STORED seat profile's allowlist for an operator bind door; it admits no caller and selects no agent by name
-	if (profile.fromAllowList.length !== 1) return "PROFILE_NOT_SINGLE_SEAT";
-	if (!agent.isActive) return "AGENT_INACTIVE";
-	const sameOrgAsProfile = await sameOrgStamp(
-		ctx,
-		{ id: agent.clerkOrgId, label: agent.orgSlug },
-		{ id: profile.clerkOrgId, label: profile.clerkOrgSlug },
-	);
-	return sameOrgAsProfile ? null : "AGENT_ORG_MISMATCH";
+): SeatBindingRefusal | null {
+	// allow-local-identity: counts the entries of a STORED seat profile's allowlist for an operator bind door; it admits no caller, selects no agent by name, and the org is decided below by stored IDs only
+	if (profile.fromAllowList.length !== 1) {
+		return { code: "PROFILE_NOT_SINGLE_SEAT" };
+	}
+	if (!agent.isActive) return { code: "AGENT_INACTIVE" };
+	if (profile.clerkOrgId === undefined) {
+		return { code: "ORG_ID_MISSING", side: "profile" };
+	}
+	if (agent.clerkOrgId === undefined) {
+		return { code: "ORG_ID_MISSING", side: "agent" };
+	}
+	return sameOrg({ id: agent.clerkOrgId }, { id: profile.clerkOrgId })
+		? null
+		: { code: "AGENT_ORG_MISMATCH" };
 }
 
 export async function resolveSeatAgent(
