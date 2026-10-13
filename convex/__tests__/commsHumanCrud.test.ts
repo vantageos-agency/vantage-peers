@@ -180,8 +180,21 @@ async function seedBu(t: T, owner: Owner) {
 
 async function seedRecurring(t: T, owner: Owner, active = true) {
 	const now = Date.now();
-	return await t.run(async (ctx) =>
-		ctx.db.insert("recurringTasks", {
+	return await t.run(async (ctx) => {
+		// Module M7 batch B: a member may act on a schedule only when its assignee is
+		// on the org's roster BY ID, so the owning org's schedule carries the IDs of
+		// its roster agent (the row of an org it is not, and a fleet row, need none).
+		let sigmaId: string | undefined;
+		if (owner === "own") {
+			const existing = (
+				await ctx.db
+					.query("agents")
+					.withIndex("by_org", (q) => q.eq("orgSlug", "org-a"))
+					.collect()
+			).find((a) => a.name === "sigma");
+			sigmaId = existing?._id ?? (await seedRosterAgent(ctx, "org-a", "sigma"));
+		}
+		return await ctx.db.insert("recurringTasks", {
 			title: "Weekly seed",
 			assignedTo: "sigma",
 			priority: "medium",
@@ -191,10 +204,11 @@ async function seedRecurring(t: T, owner: Owner, active = true) {
 			createdBy: "sigma",
 			createdAt: now,
 			updatedAt: now,
+			...(sigmaId !== undefined ? { assignedToId: sigmaId, createdById: sigmaId } : {}),
 			...(owner === "own" ? { orgId: "org-a", clerkOrgId: testClerkOrgId("org-a") } : {}),
 			...(owner === "other" ? { orgId: "org-b", clerkOrgId: testClerkOrgId("org-b") } : {}),
-		}),
-	);
+		});
+	});
 }
 
 // ── the destructive / mutating row doors ────────────────────────────────────
@@ -624,7 +638,9 @@ describe("human CRUD — recurringTasks:create", () => {
 	});
 
 	test("non-writer role -> refused role-not-writer, nothing inserted", async () => {
-		const t = await setup();
+		// The assignee is an agent of the org on its roster, so the refusal reached is
+		// the writer-role one (an assignee that is no agent is refused earlier).
+		const t = await setupWithAssignee();
 		await expect(
 			t.withIdentity(as("user_m", "org:viewer")).mutation(api.recurringTasks.create, args),
 		).rejects.toThrow(/RBAC_DENIED.*role-not-writer/);
@@ -646,15 +662,17 @@ describe("human CRUD — recurringTasks:create", () => {
 		expect(await count(t, "recurringTasks")).toBe(0);
 	});
 
-	test("agent path unchanged: createdBy on the roster is served as that label", async () => {
+	test("agent path: a createdBy label that names no agent of the org is refused (the roster is by agent ID)", async () => {
 		const t = await setupWithAssignee();
-		// "pi" is on the roster and registered as no agent: the label is recorded, no ID guessed.
-		const id = await t
-			.withIdentity(as("user_m", "org:editor"))
-			.mutation(api.recurringTasks.create, { ...args, createdBy: "pi" });
-		const row = await readRow("recurringTasks")(t, id);
-		expect(row?.createdBy).toBe("pi");
-		expect(row?.createdById).toBeUndefined();
+		// "pi" is on the legacy NAME roster but is registered as no agent: an acting
+		// identity is an agent on the org's ID roster, so the label is refused and
+		// nothing is guessed or recorded.
+		await expect(
+			t
+				.withIdentity(as("user_m", "org:editor"))
+				.mutation(api.recurringTasks.create, { ...args, createdBy: "pi" }),
+		).rejects.toThrow(/CALLER_IDENTITY_MISMATCH/);
+		expect(await count(t, "recurringTasks")).toBe(0);
 	});
 });
 

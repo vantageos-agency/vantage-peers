@@ -474,7 +474,9 @@ describe("recurringTasks — one roster rule (normalised, '*' names nobody)", ()
 			callerOrchestrator: "bob",
 			assignedTo: "BEA",
 		});
-		expect((await t.run((c) => c.db.get(id as Id<"recurringTasks">)))?.assignedTo).toBe("BEA");
+		// the schedule records the label the agent's own row carries ("bea"), not the
+		// spelling the caller typed ("BEA")
+		expect((await t.run((c) => c.db.get(id as Id<"recurringTasks">)))?.assignedTo).toBe("bea");
 	});
 	test("MASTER unchanged", async () => {
 		const t = await fixture();

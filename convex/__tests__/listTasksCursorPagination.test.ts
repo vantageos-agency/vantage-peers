@@ -136,7 +136,21 @@ describe("tasks.list — cursor pagination walks a queue larger than one page (D
 		// THROW ConvexError SCAN_CAP_EXCEEDED — never render as the same empty
 		// array as the genuinely-exhausted case above. Seed past the cap.
 		// eslint-disable-next-line @typescript-eslint/no-explicit-any
+		// The creator is an AGENT (a `createdBy` filter selects its ID, never a
+		// label): its rows are the OLDEST, 2001 newer rows by another creator sit
+		// above them, so the scan reaches the cap before it meets one.
+		await seedFleetAgents(t, ["distinguish-overflow-creator", "distinguish-other"]);
+		// eslint-disable-next-line @typescript-eslint/no-explicit-any
 		await t.run(async (ctx: any) => {
+			await insertTaskRow(ctx, {
+				title: "distinguish-overflow own",
+				assignedTo: "someone-else-distinguish",
+				priority: "medium",
+				status: "todo",
+				createdBy: "distinguish-overflow-creator",
+				createdAt: 1,
+				updatedAt: 1,
+			});
 			for (let i = 0; i < 2001; i++) {
 				const now = Date.now() + i;
 				await insertTaskRow(ctx, {
@@ -144,7 +158,7 @@ describe("tasks.list — cursor pagination walks a queue larger than one page (D
 					assignedTo: "someone-else-distinguish",
 					priority: "medium",
 					status: "todo",
-					createdBy: "distinguish-overflow-creator",
+					createdBy: "distinguish-other",
 					createdAt: now,
 					updatedAt: now,
 				});
@@ -180,7 +194,20 @@ describe("tasks.list — cursor pagination walks a queue larger than one page (D
 		// Seed 2001 rows matching createdBy filter distinct from assignedTo so
 		// the createdBy branch (global, no assignedTo) wide-scans everything.
 		// eslint-disable-next-line @typescript-eslint/no-explicit-any
+		// The creator is an AGENT (selected by its ID): its row is the OLDEST, 2001
+		// newer rows by another creator sit above it, so the scan reaches the cap
+		// before it meets one and REFUSES instead of returning a short page.
+		await seedFleetAgents(t, ["overflow-creator", "overflow-other"]);
 		await t.run(async (ctx: any) => {
+			await insertTaskRow(ctx, {
+				title: "overflow own",
+				assignedTo: "someone-else",
+				priority: "medium",
+				status: "todo",
+				createdBy: "overflow-creator",
+				createdAt: 1,
+				updatedAt: 1,
+			});
 			for (let i = 0; i < 2001; i++) {
 				const now = Date.now() + i;
 				await insertTaskRow(ctx, {
@@ -188,7 +215,7 @@ describe("tasks.list — cursor pagination walks a queue larger than one page (D
 					assignedTo: "someone-else",
 					priority: "medium",
 					status: "todo",
-					createdBy: "overflow-creator",
+					createdBy: "overflow-other",
 					createdAt: now,
 					updatedAt: now,
 				});

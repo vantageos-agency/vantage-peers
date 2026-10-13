@@ -1,4 +1,8 @@
-import { isFleetStamp } from "@vantageos/cloud-identity";
+import {
+	hasFleetRead,
+	isFleetStamp,
+	isServiceAccountScope,
+} from "@vantageos/cloud-identity";
 import { v } from "convex/values";
 import { ConvexError } from "convex/values";
 import type { Doc } from "./_generated/dataModel";
@@ -8,15 +12,17 @@ import { internal, api } from "./_generated/api";
 import { creatorValidator } from "./schema";
 import { requireId } from "./lib/ids";
 import {
-	filterByOrgScope,
 	isRowVisibleToScope,
 	type VerifiedActor,
 	requireResolvedCaller,
 	verifiedActorValidator,
 	withOrgScope,
-	requireOrchestratorOnRoster,
 } from "./lib/auth";
-import { type CallerScope, requireAuthenticatedCaller } from "./tasks";
+import {
+	type CallerScope,
+	collectNarrowed,
+	requireAuthenticatedCaller,
+} from "./tasks";
 import { resolveHumanActor } from "./lib/humanActor";
 import { taskActorIdFields } from "./lib/actorIds";
 import {
@@ -24,7 +30,13 @@ import {
 	requireVerifiedActorPrincipal,
 } from "./lib/actingPrincipal";
 import { verifiedPersonValidator } from "./lib/personPrincipal";
-import { assigneeIdForRead, requireAssigneeId } from "./lib/taskActors";
+import {
+	assigneeIdForRead,
+	assigneeLabelOf,
+	requireAssigneeAgentId,
+	requireAssigneeLabelOnRoster,
+	requireAssigneeOnRoster,
+} from "./lib/taskActors";
 import { clerkOrgIdForSlug } from "./lib/orgClerkId";
 import { fleetOperatorRef } from "./lib/operatorOrg";
 
@@ -245,7 +257,9 @@ export const create = mutation({
 			args.verifiedActor,
 			{ proof: args.verifiedPerson, door: "recurringTasks:create" },
 		);
-		requireOrchestratorOnRoster(scope, args.assignedTo, "recurringTasks:create", "assignee");
+		// The assignee is the target of an assignment, not an asserted caller name: a
+		// member may name only an agent of its own roster (by agent ID).
+		await requireAssigneeLabelOnRoster(ctx, scope, args.assignedTo, "recurringTasks:create");
 		// The tenant of the schedule, from the scope just resolved, never an argument.
 		// The fleet service account forwarding a verified agent of a CLIENT
 		// organisation writes in that agent's organisation: the verified actor was
@@ -253,7 +267,7 @@ export const create = mutation({
 		// agent of the operator organisation, or no forwarded agent, stays fleet
 		// (unstamped), exactly as before.
 		const forwardedOrg =
-			scope.isMaster && args.verifiedActor !== undefined
+			isServiceAccountScope(scope) && args.verifiedActor !== undefined
 				? scope.callerActorOrg
 				: undefined;
 		const forwardedOrgId = await clerkOrgIdForSlug(ctx, forwardedOrg);
@@ -263,12 +277,13 @@ export const create = mutation({
 				{ id: forwardedOrgId, label: forwardedOrg },
 				await fleetOperatorRef(ctx.db),
 			);
-		const rowOrgId = scope.isMaster
+		const fleetCaller = hasFleetRead(scope);
+		const rowOrgId = fleetCaller
 			? forwardedIsClient
 				? forwardedOrg
 				: undefined
 			: (scope.orgSlug ?? undefined);
-		const rowClerkOrgId = scope.isMaster
+		const rowClerkOrgId = fleetCaller
 			? forwardedIsClient
 				? forwardedOrgId
 				: undefined
@@ -292,12 +307,15 @@ export const create = mutation({
 		// written for a verified agent resolves in the AGENT's org). A label with no
 		// active agent there, or registered only in another org, is refused before
 		// anything is written.
-		const assignedToId = await requireAssigneeId(
+		const assignedToId = await requireAssigneeAgentId(
 			ctx,
 			rowOrgId ?? scope.callerActorOrg,
 			args.assignedTo,
 			"recurringTasks:create",
 		);
+		// The assignee is recorded under the label its own agents row carries, read
+		// BY ID: the typed string selected the agent, the row names it.
+		const assignedToLabel = await assigneeLabelOf(ctx, assignedToId);
 
 		const now = Date.now();
 		const nextRunAt = getNextRunTime(args.cronExpression, now);
@@ -305,7 +323,7 @@ export const create = mutation({
 		return await ctx.db.insert("recurringTasks", {
 			title: args.title,
 			description: args.description,
-			assignedTo: args.assignedTo,
+			assignedTo: assignedToLabel,
 			priority: args.priority,
 			project: args.project,
 			tags: args.tags,
@@ -391,10 +409,8 @@ export const list = query({
 		});
 
 		const limit = args.limit ?? 50;
-		const needsWideScan = args.createdBefore !== undefined;
-		const fetchCap = needsWideScan
-			? RECURRING_TASKS_LIST_SCAN_CAP + 1
-			: limit;
+		const before = args.createdBefore;
+		const active = args.active;
 
 		// M10h / R-11: the caller's tenant is the leading equality of the index it
 		// reads, never a filter after an unscoped take. A member's page therefore
@@ -403,67 +419,67 @@ export const list = query({
 		// org (the operator org for the fleet master); assigneeIdForRead proves, for a
 		// member, that the ID is an agents row of its org (RBAC_DENIED otherwise). A
 		// label naming no agent there is an absence (empty success).
-		const memberOrg = scope.isMaster ? null : scope.orgSlug;
-		let rows: Doc<"recurringTasks">[];
+		const memberOrg = hasFleetRead(scope) ? null : scope.orgSlug;
+		let range: AsyncIterable<Doc<"recurringTasks">>;
 		if (args.assignedTo !== undefined) {
 			const assigneeId = await assigneeIdForRead(ctx, scope, args.assignedTo);
-			if (assigneeId === undefined) {
-				rows = [];
-			} else {
-				rows =
-					memberOrg !== null
-						? await ctx.db
-								.query("recurringTasks")
-								.withIndex("by_orgId_assigneeId", (q) =>
-									q.eq("orgId", memberOrg).eq("assignedToId", assigneeId),
-								)
-								.order("desc")
-								.take(fetchCap)
-						: await ctx.db
-								.query("recurringTasks")
-								.withIndex("by_assigneeId", (q) => q.eq("assignedToId", assigneeId))
-								.order("desc")
-								.take(fetchCap);
-				if (args.active !== undefined) {
-					rows = rows.filter((t) => t.active === args.active);
-				}
-			}
-		} else if (args.active !== undefined) {
-			rows =
+			if (assigneeId === undefined) return [];
+			range =
 				memberOrg !== null
-					? await ctx.db
+					? ctx.db
 							.query("recurringTasks")
-							.withIndex("by_orgId_active", (q) =>
-								q.eq("orgId", memberOrg).eq("active", args.active!),
+							.withIndex("by_orgId_assigneeId", (q) =>
+								q.eq("orgId", memberOrg).eq("assignedToId", assigneeId),
 							)
 							.order("desc")
-							.take(fetchCap)
-					: await ctx.db
+					: ctx.db
 							.query("recurringTasks")
-							.withIndex("by_active", (q) => q.eq("active", args.active!))
-							.order("desc")
-							.take(fetchCap);
-		} else {
-			rows =
+							.withIndex("by_assigneeId", (q) => q.eq("assignedToId", assigneeId))
+							.order("desc");
+		} else if (active !== undefined) {
+			range =
 				memberOrg !== null
-					? await ctx.db
+					? ctx.db
+							.query("recurringTasks")
+							.withIndex("by_orgId_active", (q) =>
+								q.eq("orgId", memberOrg).eq("active", active),
+							)
+							.order("desc")
+					: ctx.db
+							.query("recurringTasks")
+							.withIndex("by_active", (q) => q.eq("active", active))
+							.order("desc");
+		} else {
+			range =
+				memberOrg !== null
+					? ctx.db
 							.query("recurringTasks")
 							.withIndex("by_orgId", (q) => q.eq("orgId", memberOrg))
 							.order("desc")
-							.take(fetchCap)
-					: await ctx.db.query("recurringTasks").order("desc").take(fetchCap);
+					: ctx.db.query("recurringTasks").order("desc");
 		}
 
-		// The roster control. Applied BEFORE the cursor filter so a row the caller
-		// may not see can never occupy a slot in its page.
-		rows = filterByOrgScope(rows, scope);
-
-		// S3.3 B8 follow-up batch 1 — cursor paging anchor: drop rows newer-or-equal to before.
-		if (args.createdBefore !== undefined) {
-			const before = args.createdBefore;
-			rows = rows.filter((r) => r._creationTime < before);
+		// R-55: what the index range cannot express is applied WHILE the range is read,
+		// until `limit` rows are kept, so a row the caller may not see, a row of the
+		// wrong `active` state or one past the cursor can never occupy a slot in the
+		// page. The roster control (tenant gate, then the assignee on the roster as a
+		// narrowing intersect) is the same predicate the by-id reads apply. Unlike the
+		// old wide-scan-cap window, a scan that reaches its cap before the page is
+		// full REFUSES (SCAN_CAP_EXCEEDED) instead of returning a short page.
+		const { kept, truncated } = await collectNarrowed(
+			range,
+			(row) =>
+				(active === undefined || row.active === active) &&
+				(before === undefined || row._creationTime < before) &&
+				isRowVisibleToScope(scope, row),
+			{ limit, scanCap: RECURRING_TASKS_LIST_SCAN_CAP },
+		);
+		if (truncated) {
+			throw new ConvexError(
+				`recurringTasks.list: SCAN_CAP_EXCEEDED — ${RECURRING_TASKS_LIST_SCAN_CAP} candidate rows were read before ${limit} could be kept. The result would be incomplete and indistinguishable from a full match. Narrow with assignedTo or active.`,
+			);
 		}
-		return rows.slice(0, limit);
+		return kept;
 	},
 });
 
@@ -524,31 +540,44 @@ export const update = mutation({
 			callerOrchestrator: args.callerOrchestrator,
 			verifiedActor: args.verifiedActor,
 		});
-		requireOrchestratorOnRoster(scope, existing.assignedTo, "recurringTasks:update", "assignee");
-
-		// The row's STORED assignedTo passed the check above; a caller
-		// REASSIGNING the row to a new orchestrator outside its own scope is
-		// refused the same way — the patch can never move a row to an owner
-		// the caller could not itself have created it under.
-		if (args.assignedTo !== undefined) {
-			requireOrchestratorOnRoster(scope, args.assignedTo, "recurringTasks:update", "assignee");
+		// The row's CURRENT assignee must be on the caller's roster, by agent ID. A
+		// schedule that stores no assignee ID names nobody on any roster: it is
+		// refused for a member until migrations/backfill_recurring_task_actor_ids
+		// has filled it.
+		if (!hasFleetRead(scope) && scope.orgSlug !== null) {
+			if (existing.assignedToId === undefined) {
+				throw new ConvexError(
+					`RBAC_DENIED: recurring task ${recurringTaskId} carries no assignee ID, so no roster can admit it — run migrations/backfill_recurring_task_actor_ids — ${JSON.stringify({ door: "recurringTasks:update", reason: "assignee-not-on-roster" })}`,
+				);
+			}
+			await requireAssigneeOnRoster(
+				ctx,
+				scope,
+				existing.assignedToId,
+				"recurringTasks:update",
+			);
 		}
-
 
 		const patch: Record<string, any> = { updatedAt: Date.now() };
 		if (args.title !== undefined) patch.title = args.title;
 		if (args.description !== undefined) patch.description = args.description;
 		if (args.assignedTo !== undefined) {
-			patch.assignedTo = args.assignedTo;
+			// The row's current assignee passed the roster check above; a caller
+			// REASSIGNING the row to a new agent outside its own roster is refused the
+			// same way: the patch can never move a row to an owner the caller could not
+			// itself have created it under.
+			await requireAssigneeLabelOnRoster(ctx, scope, args.assignedTo, "recurringTasks:update");
 			// M10h: the reassignment BY ID, resolved within the schedule's own org. A
 			// label naming no active agent there (unknown, or only in another org) is
-			// refused before anything is written.
-			patch.assignedToId = await requireAssigneeId(
+			// refused before anything is written. The label recorded beside the ID is
+			// the one the agent's own row carries.
+			patch.assignedToId = await requireAssigneeAgentId(
 				ctx,
-				existing.orgId ?? (scope.isMaster ? scope.callerActorOrg : undefined),
+				existing.orgId ?? (hasFleetRead(scope) ? scope.callerActorOrg : undefined),
 				args.assignedTo,
 				"recurringTasks:update",
 			);
+			patch.assignedTo = await assigneeLabelOf(ctx, patch.assignedToId);
 		}
 		if (args.priority !== undefined) patch.priority = args.priority;
 		if (args.project !== undefined) patch.project = args.project;
@@ -587,10 +616,11 @@ async function authorizeScheduleActor(
 	// passed through as master; the service account with no forwarded agent keeps
 	// the fleet's access. A member naming an agent acts as the ID its proof
 	// derived (requireAuthenticatedCaller).
-	const forwarded = scope.isMaster ? opts?.verifiedActor : undefined;
-	const isMemberAgent = !scope.isMaster && opts?.callerOrchestrator !== undefined;
+	const forwarded = isServiceAccountScope(scope) ? opts?.verifiedActor : undefined;
+	const isMemberAgent =
+		!hasFleetRead(scope) && opts?.callerOrchestrator !== undefined;
 	if (forwarded === undefined && !isMemberAgent) {
-		if (scope.isMaster) return;
+		if (hasFleetRead(scope)) return;
 		await resolveHumanActor(ctx, scope, {
 			door,
 			row,
@@ -661,7 +691,7 @@ export const pause = mutation({
 		const scope = await proveScheduleCaller(ctx, args);
 		// A non-master caller with no organisation is refused BEFORE the row is
 		// read, so a stranger cannot tell a real schedule id from an absent one.
-		if (!scope.isMaster && scope.orgSlug === null) {
+		if (!hasFleetRead(scope) && scope.orgSlug === null) {
 			throw new ConvexError(
 				"RBAC_DENIED: recurringTasks:pause requires an organisation — a non-master caller with none is refused",
 			);
@@ -701,7 +731,7 @@ export const resume = mutation({
 		const scope = await proveScheduleCaller(ctx, args);
 		// A non-master caller with no organisation is refused BEFORE the row is
 		// read, so a stranger cannot tell a real schedule id from an absent one.
-		if (!scope.isMaster && scope.orgSlug === null) {
+		if (!hasFleetRead(scope) && scope.orgSlug === null) {
 			throw new ConvexError(
 				"RBAC_DENIED: recurringTasks:resume requires an organisation — a non-master caller with none is refused",
 			);
@@ -743,7 +773,7 @@ export const remove = mutation({
 		const scope = await proveScheduleCaller(ctx, args);
 		// A non-master caller with no organisation is refused BEFORE the row is
 		// read, so a stranger cannot tell a real schedule id from an absent one.
-		if (!scope.isMaster && scope.orgSlug === null) {
+		if (!hasFleetRead(scope) && scope.orgSlug === null) {
 			throw new ConvexError(
 				"RBAC_DENIED: recurringTasks:remove requires an organisation — a non-master caller with none is refused",
 			);

@@ -521,6 +521,21 @@ describe("roster narrowing stays pinned on every member path (own org, orchestra
 	test("tasks.listPaginated", async () => {
 		const t = createT();
 		await seedOrgs(t);
+		// The dashboard board narrows by the org's roster BY AGENT ID (module M7 batch
+		// B): sigma and eta are agents of the fleet org, only sigma is on its roster.
+		await seedTaskAgents(t);
+		await t.run(async (ctx) => {
+			const mapping = (await ctx.db.query("client_org_mapping").collect()).find(
+				(m) => m.clerkOrgSlug === FLEET,
+			);
+			const agents = await ctx.db
+				.query("agents")
+				.withIndex("by_org", (q) => q.eq("orgSlug", FLEET))
+				.collect();
+			await ctx.db.patch(mapping!._id, {
+				allowedAgentIds: agents.filter((a) => a.name === "sigma").map((a) => a._id),
+			});
+		});
 		await seedTasks(t, { orgId: FLEET, assignedTo: "sigma" }, 2, "own");
 		await seedTasks(t, { orgId: FLEET, assignedTo: "eta" }, 2, "offroster");
 		const res = (await asMember(t, FLEET).query(api.tasks.listPaginated, {

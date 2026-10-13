@@ -3,6 +3,7 @@ import type { DataModel, Id } from "../../convex/_generated/dataModel";
 import { normalizeOrchestratorId } from "../../convex/_helpers/normalizeOrchestratorId";
 import { testClerkOrgId } from "../fixtures/testClerkOrgId";
 import { findAgentId } from "./agentIdOf";
+import { syncRosterIdsFromNames } from "./rosterSync";
 
 type Runner = {
 	run: <Output>(
@@ -159,6 +160,11 @@ export async function mintAgentSecret(
 	if (agentId === null) {
 		throw new Error(`mintAgentSecret: ${orgSlug} holds no agent "${label}"`);
 	}
+	// An agent a test acts as, under a label its org's mapping lists by NAME, is
+	// on the org's roster by ID (module M7 batch B).
+	await t.run(async (ctx) => {
+		await syncRosterIdsFromNames(ctx, orgSlug);
+	});
 	const admin = t.withIdentity({
 		subject: `admin-of-${orgSlug}`,
 		org_slug: orgSlug,
@@ -239,6 +245,13 @@ export async function seedOrgAgents(
 				isActive: true,
 				createdAt: 1,
 			});
+		}
+		// Module M7 batch B: a member's acting agent and an assignee are held to the
+		// org's roster BY AGENT ID. An agent a test registers under a label its org's
+		// mapping lists by NAME is listed by ID too, so the legacy name roster a test
+		// seeded keeps meaning what it meant.
+		for (const orgSlug of new Set(pairs.map(([slug]) => slug))) {
+			await syncRosterIdsFromNames(ctx, orgSlug);
 		}
 	});
 	const secrets = new Map<string, string>();

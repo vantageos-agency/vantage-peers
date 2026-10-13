@@ -31,6 +31,7 @@ import { convexTest } from "../../tests/fixtures/convexTestWithServiceAccount";
 import { describe, expect, test } from "vitest";
 import { testClerkOrgId } from "../../tests/fixtures/testClerkOrgId";
 import { api } from "../_generated/api";
+import { seedRosterAgent } from "../../tests/fixtures/rosterAgent";
 import { agentIdOf, seedAgents } from "../../tests/lib/agentIdOf";
 import { seedFleetAgents } from "../../tests/lib/seedFleetAgents";
 import schema from "../schema";
@@ -94,9 +95,23 @@ async function seedRecurringTask(
 	orgId?: string,
 ) {
 	return await t.run(async (ctx) => {
+		// Module M7 batch B: a member may update a schedule only when its assignee is
+		// on the org's roster BY AGENT ID, so a stamped schedule carries the ID of the
+		// roster agent that holds the seat.
+		let assignedToId: string | undefined;
+		if (orgId !== undefined) {
+			const existing = (
+				await ctx.db
+					.query("agents")
+					.withIndex("by_org", (q) => q.eq("orgSlug", orgId))
+					.collect()
+			).find((a) => a.name === assignedTo);
+			assignedToId = existing?._id ?? (await seedRosterAgent(ctx, orgId, assignedTo));
+		}
 		return await ctx.db.insert("recurringTasks", {
 			title: "seed recurring task",
 			assignedTo,
+			...(assignedToId !== undefined ? { assignedToId, createdById: assignedToId } : {}),
 			orgId,
 			clerkOrgId: testClerkOrgId(orgId),
 			priority: "medium",
@@ -142,7 +157,7 @@ describe("recurringTasks.create — write-scope enforcement", () => {
 				cronExpression: "0 9 * * *",
 				createdBy: "seat-a",
 			}),
-		).rejects.toThrow(/RBAC_DENIED/);
+		).rejects.toThrow(/CALLER_IDENTITY_MISMATCH|RBAC_DENIED/);
 
 		const all = await t.run((ctx) => ctx.db.query("recurringTasks").collect());
 		expect(all).toHaveLength(0);

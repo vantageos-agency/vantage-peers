@@ -1,4 +1,5 @@
 import type { QueryCtx } from "../_generated/server";
+import { actorIdResolver } from "./actorIds";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // reviewRouting — WHO reviews an automation review task is DATA.
@@ -133,22 +134,55 @@ export async function reviewCoordinators(ctx: QueryCtx): Promise<string[]> {
 }
 
 /**
- * May `caller` reassign a system-created review task? Coordinator (data) or the
- * orchestrator that owns the task's repo (githubRepoMapping.orchestrator).
- * Fail closed: no coordinator configured and no repo owner -> false.
+ * Is `callerId` (the acting agent's ID, from the verified proof) one of the
+ * agents the configured LABELS name? The data lists hold labels; each label is
+ * resolved to an agents-row ID in the ONE organisation it is legal to look in
+ * (`orgSlug`, the operator org when null) and the IDs are compared. A label that
+ * names no agent there names nobody, and a same-named agent of another
+ * organisation is a different ID.
+ */
+async function callerIsNamedBy(
+	ctx: QueryCtx,
+	callerId: string,
+	labels: readonly string[],
+	orgSlug: string | null,
+): Promise<boolean> {
+	const resolve = actorIdResolver(ctx, orgSlug);
+	for (const label of labels) {
+		const id = await resolve(label);
+		if (id !== undefined && id === callerId) return true;
+	}
+	return false;
+}
+
+/**
+ * May the acting agent `callerId` reassign a system-created review task?
+ * A coordinator (data, labels of operator-org agents) or the orchestrator that
+ * owns the task's repo (githubRepoMapping.orchestrator, a label resolved in the
+ * task's own organisation). Decided BY ID. Fail closed: no caller ID, no
+ * coordinator configured and no repo owner -> false.
  */
 export async function mayReassignReviewTask(
 	ctx: QueryCtx,
-	caller: string,
+	callerId: string | undefined,
 	repo: string | undefined,
+	taskOrgSlug: string | null | undefined,
 ): Promise<boolean> {
-	const who = norm(caller);
-	if ((await readConfigList(ctx, REVIEW_COORDINATORS_KEY)).includes(who)) {
+	if (callerId === undefined) return false;
+	if (
+		await callerIsNamedBy(
+			ctx,
+			callerId,
+			await readConfigList(ctx, REVIEW_COORDINATORS_KEY),
+			null,
+		)
+	) {
 		return true;
 	}
 	if (repo === undefined) return false;
 	const mapping = await mappingFor(ctx, repo);
-	return mapping !== null && norm(mapping.orchestrator) === who;
+	if (mapping === null) return false;
+	return await callerIsNamedBy(ctx, callerId, [mapping.orchestrator], taskOrgSlug ?? null);
 }
 
 /**
@@ -160,15 +194,20 @@ export function isAutomationOrigin(origin: string | undefined): boolean {
 }
 
 /**
- * May `caller` cancel an automation-created task it did not create? Only a
- * caller listed (data) under taskClosureConfig "automationTaskCancellers".
- * Key absent, empty or unreadable -> false (fail closed).
+ * May the acting agent `callerId` cancel an automation-created task it did not
+ * create? Only an agent named (data, labels of operator-org agents) under
+ * taskClosureConfig "automationTaskCancellers", decided BY ID. Key absent, empty
+ * or unreadable, or no caller ID -> false (fail closed).
  */
 export async function mayCancelAutomationTask(
 	ctx: QueryCtx,
-	caller: string,
+	callerId: string | undefined,
 ): Promise<boolean> {
-	return (await readConfigList(ctx, AUTOMATION_TASK_CANCELLERS_KEY)).includes(
-		norm(caller),
+	if (callerId === undefined) return false;
+	return await callerIsNamedBy(
+		ctx,
+		callerId,
+		await readConfigList(ctx, AUTOMATION_TASK_CANCELLERS_KEY),
+		null,
 	);
 }

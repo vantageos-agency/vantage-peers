@@ -21,6 +21,7 @@ import {
 import schema from "../schema";
 import { agentIdOf } from "../../tests/lib/agentIdOf";
 import { testClerkOrgId } from "../../tests/fixtures/testClerkOrgId";
+import { listRegisteredAgentsOnRoster } from "../../tests/lib/rosterSync";
 
 const modules = Object.fromEntries(
 	Object.entries(import.meta.glob("../**/*.ts")),
@@ -372,6 +373,8 @@ describe("new writes stamp the IDs", () => {
 				name,
 			});
 		}
+		// Module M7 batch B: an acting agent must be on the org's roster by ID.
+		await listRegisteredAgentsOnRoster(t, ["iris-rh"]);
 		const minted = await adminOf(t, "iris-rh").mutation(
 			api.agentCredentials.mintAgentCredential,
 			{ orgSlug: "iris-rh", agentId: await agentIdOf(t, "iris-rh", "clio") },

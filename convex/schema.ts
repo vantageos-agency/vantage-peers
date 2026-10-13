@@ -746,9 +746,20 @@ export default defineSchema({
 		// Day 102 v2.11.0 — CRUD baseline PR-C-bis option B (mission k575kc1r):
 		// Convex native BM25 search on task title, with filterFields for the
 		// common targeting axes (assignedTo, status, project, missionId).
+		// `assignedToId` is the assignee BY ID (R-53): searchTasksByKeyword filters on
+		// it, never on the typed label. Additive: `assignedTo` stays until the contract
+		// step, and the column is already stamped on every row by the M7 writers and
+		// backfilled by migrations/backfillTaskActorIds.
 		.searchIndex("search_title", {
 			searchField: "title",
-			filterFields: ["assignedTo", "status", "project", "missionId", "orgId"],
+			filterFields: [
+				"assignedTo",
+				"assignedToId",
+				"status",
+				"project",
+				"missionId",
+				"orgId",
+			],
 		}),
 
 	// ── diary ──────────────────────────────────────────────────────────────────

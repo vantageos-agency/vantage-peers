@@ -5,11 +5,17 @@
 // to the existing label -> ID lookup (lib/actorIds.ts) for the one org it is
 // legal to look in. It decides nothing about identity.
 
-import { hasFleetRead } from "@vantageos/cloud-identity";
+import { hasFleetRead, resolveActingPrincipal } from "@vantageos/cloud-identity";
+import { ConvexError } from "convex/values";
 import type { MutationCtx, QueryCtx } from "../_generated/server";
 import { actorIdResolver, actorOrgFor } from "./actorIds";
-import { assigneeNotInOrgRefusal, requireAssigneeAgentActive } from "./actingPrincipal";
+import {
+	assigneeNotInOrgRefusal,
+	principalLookups,
+	requireAssigneeAgentActive,
+} from "./actingPrincipal";
 import { resolveAgentOfPresentedSecret } from "./agentIdentity";
+import { requireAgentOnScopeRoster } from "./missionActors";
 import type { OrgScope, VerifiedActor } from "./auth";
 import { isHumanActorName } from "./humanActor";
 
@@ -89,6 +95,84 @@ export async function requireAssigneeId(
 }
 
 /**
+ * An org member may assign work only to an agent of its OWN roster, by agent ID:
+ * the assignee's ID must be an entry of the org's stored `allowedAgentIds`, judged
+ * by the package (lib/missionActors.requireAgentOnScopeRoster). The fleet is not
+ * held to a roster. Refused RBAC_DENIED, reason `assignee-not-on-roster`.
+ */
+export async function requireAssigneeOnRoster(
+	ctx: Ctx,
+	scope: OrgScope,
+	assigneeId: string,
+	door: string,
+): Promise<void> {
+	if (hasFleetRead(scope) || scope.orgSlug === null) return;
+	await requireAgentOnScopeRoster(ctx, scope, assigneeId, "assignee", door);
+}
+
+/**
+ * The same roster rule for an assignment target NAMED BY A LABEL: the label is
+ * resolved to an agents-row ID in the member's own organisation, and that ID must
+ * be an entry of the org's stored agent-ID roster. A label that names no agent of
+ * the org cannot be on an ID roster, so it is refused with the same stable
+ * reason (`assignee-not-on-roster`) the name-roster check carried, not guessed.
+ * The fleet is not held to a roster.
+ */
+export async function requireAssigneeLabelOnRoster(
+	ctx: Ctx,
+	scope: OrgScope,
+	assignee: string,
+	door: string,
+): Promise<void> {
+	if (hasFleetRead(scope) || scope.orgSlug === null) return;
+	const id = await actorIdResolver(ctx, scope.orgSlug)(assignee);
+	if (id === undefined) {
+		throw new ConvexError(
+			`RBAC_DENIED: assignee "${assignee}" is not an orchestrator of org "${scope.orgSlug}" — ${JSON.stringify({ reason: "assignee-not-on-roster", door, from: assignee, orgSlug: scope.orgSlug })}`,
+		);
+	}
+	await requireAgentOnScopeRoster(ctx, scope, id, "assignee", door);
+}
+
+/**
+ * Like `requireAssigneeId`, for a target that must be an AGENT: a person is not
+ * accepted (a typed "user:<subject>" is a name, and the schedule it would route to
+ * has no verified person behind it). A label that names no active agent of the org
+ * is refused RBAC_DENIED.
+ */
+export async function requireAssigneeAgentId(
+	ctx: Ctx,
+	orgSlug: string | undefined | null,
+	assignee: string,
+	door: string,
+): Promise<string> {
+	const org = await actorOrgFor(ctx.db, orgSlug);
+	const id = await actorIdResolver(ctx, orgSlug)(assignee);
+	if (org === undefined || id === undefined || isHumanActorName(id)) {
+		throw assigneeNotInOrgRefusal(assignee, org, door);
+	}
+	await requireAssigneeAgentActive(ctx, id, org, door);
+	return id;
+}
+
+/**
+ * The display label an agent is recorded under, read from its own agents row BY
+ * ID. A task or schedule is written with this stored label, never with the string
+ * the caller typed: the typed string selected the agent, the row names it.
+ */
+export async function assigneeLabelOf(
+	ctx: Ctx,
+	agentRowId: string,
+): Promise<string> {
+	const id = ctx.db.normalizeId("agents", agentRowId);
+	const agent = id === null ? null : await ctx.db.get(id);
+	if (agent === null) {
+		throw assigneeNotInOrgRefusal(agentRowId, undefined, "lib/taskActors:assigneeLabelOf");
+	}
+	return agent.name;
+}
+
+/**
  * The ID a READ's assignee label names in the caller's org (operator org for the
  * fleet master), or undefined when it names no agent there - an absence, which
  * the read answers with an empty success.
@@ -109,14 +193,18 @@ export async function assigneeIdForRead(
 	const memberOrg = scope.orgSlug;
 	if (memberOrg === null || memberOrg === undefined) return id;
 	const agentId = ctx.db.normalizeId("agents", id);
-	const agent =
+	// The agent row is read BY ID and judged by the package: it must be an agent of
+	// the member's own organisation (active, in an active organisation). A row of
+	// another org, or one that vanished between the two reads, is refused.
+	const resolved =
 		agentId === null
 			? null
-			: await ctx.db
-					.query("agents")
-					.withIndex("by_id", (q) => q.eq("_id", agentId))
-					.unique();
-	if (agent === null || agent.orgSlug !== memberOrg) {
+			: await resolveActingPrincipal(
+					{ kind: "agent", agentId, verifiedOrgId: memberOrg },
+					principalLookups(ctx),
+					"lib/taskActors:assigneeIdForRead",
+				);
+	if (resolved === null || !resolved.ok) {
 		throw assigneeNotInOrgRefusal(assignee, memberOrg, "lib/taskActors:assigneeIdForRead");
 	}
 	return id;

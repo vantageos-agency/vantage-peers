@@ -696,8 +696,11 @@ describe("task write surface — the tenant compare a reader performs is the one
 // ─────────────────────────────────────────────────────────────────────────────
 
 describe('the typed "system" word is not a credential', () => {
-	// A roster that ADMITS the name "system", so the caller reaches the
-	// authorisation predicate itself instead of stopping at the roster check.
+	// A roster that LISTS the name "system" (a label, not an agent). Since module M7
+	// batch B an acting identity must be an agent on the org's roster BY ID, so a
+	// member typing the word stops at the roster check (CALLER_IDENTITY_MISMATCH)
+	// instead of reaching the authorisation predicate: refused either way, and the
+	// "system" branch of the predicate stays pinned by the master poles below.
 	// The row is created by "eta" and assigned to "sigma": the ONLY branch
 	// that can authorise a caller typing "system" is the "system" branch.
 	const ROSTER = ["sigma", "system"];
@@ -723,7 +726,7 @@ describe('the typed "system" word is not a credential', () => {
 				callerOrchestrator: "system",
 				title: "FORGED",
 			}),
-		).rejects.toThrow(/RBAC_DENIED/);
+		).rejects.toThrow(/RBAC_DENIED|CALLER_IDENTITY_MISMATCH/);
 		expect((await getRow(t, taskId))?.title).toBe("a task");
 	});
 
@@ -735,7 +738,7 @@ describe('the typed "system" word is not a credential', () => {
 				callerOrchestrator: "system",
 				title: "FORGED",
 			}),
-		).rejects.toThrow(/RBAC_DENIED/);
+		).rejects.toThrow(/RBAC_DENIED|CALLER_IDENTITY_MISMATCH/);
 		expect((await getRow(t, taskId))?.title).toBe("a task");
 	});
 
@@ -771,7 +774,7 @@ describe('the typed "system" word is not a credential', () => {
 			await expect(
 				attempt(asMember(t, MEMBER_A, "org-a"), taskId),
 				`${name} must refuse a typed "system"`,
-			).rejects.toThrow(/RBAC_DENIED/);
+			).rejects.toThrow(/RBAC_DENIED|CALLER_IDENTITY_MISMATCH/);
 			const row = await getRow(t, taskId);
 			expect(row?.status, `${name} must not mutate`).toBe("todo");
 		}
@@ -784,7 +787,7 @@ describe('the typed "system" word is not a credential', () => {
 				taskId,
 				callerOrchestrator: "system",
 			}),
-		).rejects.toThrow(/RBAC_DENIED/);
+		).rejects.toThrow(/RBAC_DENIED|CALLER_IDENTITY_MISMATCH/);
 		expect(await getRow(t, taskId)).not.toBeNull();
 	});
 
@@ -797,7 +800,7 @@ describe('the typed "system" word is not a credential', () => {
 				status: "cancelled",
 				cancelReason: "forged cancellation through a typed word",
 			}),
-		).rejects.toThrow(/RBAC_DENIED/);
+		).rejects.toThrow(/RBAC_DENIED|CALLER_IDENTITY_MISMATCH/);
 		expect((await getRow(t, taskId))?.status).toBe("todo");
 	});
 
@@ -814,7 +817,7 @@ describe('the typed "system" word is not a credential', () => {
 				dryRun: false,
 				callerOrchestrator: "system",
 			}),
-		).rejects.toThrow(/RBAC_DENIED/);
+		).rejects.toThrow(/RBAC_DENIED|CALLER_IDENTITY_MISMATCH/);
 		// The typed word must not authorise a row the caller did not create or
 		// hold, and the org-b row is never reached.
 		expect((await getRow(t, taskId))?.status).toBe("todo");
@@ -846,12 +849,16 @@ describe('the typed "system" word is not a credential', () => {
 		expect(await getRow(t, taskId)).toBeNull();
 	});
 
-	test("master regression — the service account bulk-closes every tenant when it types system", async () => {
+	test("master regression — the service account types system and bulk-closes a tenant it names by its verified org", async () => {
 		const { t, taskId } = await setup();
+		// The `assignedTo` label names ONE agent in ONE org: the fleet master states
+		// which (the transport's verified org), it does not select by label across
+		// every tenant.
 		const res = await asMaster(t).mutation(api.tasks.bulkComplete, {
 			filter: { assignedTo: "sigma" },
 			dryRun: false,
 			callerOrchestrator: "system",
+			verifiedOrg: { orgSlug: "org-a" },
 		});
 		expect(res.count).toBe(1);
 		expect((await getRow(t, taskId))?.status).toBe("done");

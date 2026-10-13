@@ -175,11 +175,11 @@ describe("tasks.bulkComplete — self-scheduled continuation (R-31)", () => {
 		expect(await pendingFns(t)).toHaveLength(0);
 	});
 
-	// The rebuilt continuation scope is read by the fleet gate (`hasFleetRead`,
-	// cloud-identity `scopeStanding`), which refuses a master scope that does not
-	// say which grant made it master. Drop the masterSource forward and this run
-	// stops after its first batch.
-	test("MASTER: the continuation carries the caller's masterSource and a multi-batch master run drains", async () => {
+	// The continuation has no auth context: it carries who is asking as DATA (the
+	// caller's fleet reach, as the package reads it - `hasFleetRead` of the resolved
+	// scope - plus its org and its agent-ID roster). Drop the fleet reach and this
+	// run stops after its first batch.
+	test("MASTER: the continuation carries the caller's fleet reach and a multi-batch master run drains", async () => {
 		const t = createT();
 		await seedFleetAgents(t, FILE_LABELS);
 		await seedClosureConfig(t);
@@ -195,10 +195,10 @@ describe("tasks.bulkComplete — self-scheduled continuation (R-31)", () => {
 		const pending = await pendingFns(t);
 		expect(pending).toHaveLength(1);
 		const scheduled = (pending[0]?.args?.[0] ?? {}) as {
-			scope?: { isMaster?: boolean; masterSource?: string };
+			scope?: { fleetRead?: boolean; rosterIds?: string[] };
 		};
-		expect(scheduled.scope?.isMaster).toBe(true);
-		expect(scheduled.scope?.masterSource).toBe("service-account");
+		expect(scheduled.scope?.fleetRead).toBe(true);
+		expect(scheduled.scope?.rosterIds).toEqual([]);
 
 		await t.finishAllScheduledFunctions(vi.runAllTimers);
 		expect((await rows(t)).filter((r) => r.status === "done")).toHaveLength(CAP * 2 + 25);
