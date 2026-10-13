@@ -356,17 +356,7 @@ export const _issueToken = internalMutation({
 		// earlier live bearer of the same verified user before it is written, so
 		// the number of live credentials a Clerk session can create is bounded
 		// (the old ones were each valid for seven days and could not be revoked).
-		// The revocation is stated HERE, in the function that mints, so the mint and
-		// the withdrawal of the bearers it replaces are one reading and one
-		// transaction; `revokeMyBearers` shares the same bounded sweep (R-56 3b).
-		const prior = await ctx.db
-			.query("userBearerTokens")
-			.withIndex("by_clerkUserId", (q) => q.eq("clerkUserId", args.clerkUserId))
-			.order("desc")
-			.take(REVOKE_SWEEP_LIMIT);
-		for (const row of prior) {
-			if (!row.revoked) await ctx.db.patch(row._id, { revoked: true });
-		}
+		await revokeLiveBearers(ctx, args.clerkUserId);
 		await ctx.db.insert("userBearerTokens", {
 			tokenHash: args.tokenHash,
 			clerkUserId: args.clerkUserId,

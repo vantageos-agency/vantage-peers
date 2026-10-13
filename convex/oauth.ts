@@ -831,40 +831,33 @@ export const provisionOrganization = mutation({
 		// identity and asserts it equals `slug`).
 		let operatorCreate: { subject: string; operatorOrgSlug: string } | null =
 			null;
-		// WHO provisioned, recorded where the authorisation is decided, so no
-		// credential argument is ever read again to name the actor (R-56: an audit
-		// row never holds a digest of the master secret the caller chose).
-		//   - master path: the FIXED label of the master credential;
-		//   - org-admin path: the verified Clerk subject. That subject is also the
-		//     one human the orgMembership AUDIT write (task
-		//     k17a7t4a9d4hx11sgj2tcdf7kx8et4cp) records; the master path has no
-		//     Clerk identity in general (a bare secret string, no session), so
-		//     nothing is written for it. See convex/orgMembership.ts: that row is
-		//     an AUDIT RECORD ONLY, never consulted by `requireOrgAdmin` or any
-		//     other authorization decision.
-		let provisioningAdminSubject: string | null = null;
-		let auditActorSource: string;
 		if (args.callerToken && args.callerToken.length > 0) {
 			await requireMasterAuth(args.callerToken);
-			auditActorSource = MASTER_ACTOR_LABEL;
+		} else if (
+			// OPERATOR CREATE (task k17fbbq8z7rs1bgd06gmb88x8s8fkpm3): no mapping
+			// yet for this slug -> only the operator org's verified org:admin may
+			// create it (requireOperatorAdminToCreateOrg refuses everyone else with
+			// a reason). An EXISTING slug keeps the pre-existing requireOrgAdmin
+			// path byte-for-byte (admin of THIS org only; replay returns null
+			// secrets), so another org's slug can never be hijacked.
+			(await lookupOrgMapping(ctx, slug)) === null
+		) {
+			operatorCreate = await requireOperatorAdminToCreateOrg(ctx, slug);
 		} else {
-			if (
-				// OPERATOR CREATE (task k17fbbq8z7rs1bgd06gmb88x8s8fkpm3): no mapping
-				// yet for this slug -> only the operator org's verified org:admin may
-				// create it (requireOperatorAdminToCreateOrg refuses everyone else with
-				// a reason). An EXISTING slug keeps the pre-existing requireOrgAdmin
-				// path byte-for-byte (admin of THIS org only; replay returns null
-				// secrets), so another org's slug can never be hijacked.
-				(await lookupOrgMapping(ctx, slug)) === null
-			) {
-				operatorCreate = await requireOperatorAdminToCreateOrg(ctx, slug);
-			} else {
-				await requireOrgAdmin(ctx, slug);
-			}
-			provisioningAdminSubject =
-				(await ctx.auth.getUserIdentity())?.subject ?? null;
-			auditActorSource = provisioningAdminSubject ?? "org-admin:unknown";
+			await requireOrgAdmin(ctx, slug);
 		}
+
+		// orgMembership audit write (task k17a7t4a9d4hx11sgj2tcdf7kx8et4cp) —
+		// only the org-admin path (empty/absent callerToken) has a real
+		// VERIFIED human subject to record here; the master path has no Clerk
+		// identity in general (a bare secret string, no session), so nothing
+		// is written for it. See convex/orgMembership.ts's table/function
+		// comments: this row is an AUDIT RECORD ONLY, never consulted by
+		// `requireOrgAdmin` or any other authorization decision.
+		const provisioningAdminSubject =
+			args.callerToken && args.callerToken.length > 0
+				? null
+				: ((await ctx.auth.getUserIdentity())?.subject ?? null);
 
 		// M4 ruling 1: an organisation is keyed by its permanent Clerk org ID from
 		// its first row. Refused (and nothing written) without it, or with a value
@@ -1052,13 +1045,17 @@ export const provisionOrganization = mutation({
 			},
 		);
 
-		// Audit actor: the digest of WHO was recorded at the authorisation above. The
-		// master path records a FIXED label for the master credential, never a
+		// Audit actor: hash the master token when present (unchanged), else
+		// hash the caller's verified Clerk subject (org-admin path) so the
+		// audit trail still names an actor rather than an empty string.
+		// The master path records a FIXED label for the master credential, never a
 		// digest of the secret itself (an unsalted sha256 of the secret in a log row
-		// is an offline-guessing oracle for it); the org-admin path records the
-		// caller's verified Clerk subject, so the audit trail still names an actor
-		// rather than an empty string.
-		const actorTokenHash = await sha256Hex(auditActorSource);
+		// is an offline-guessing oracle for it).
+		const actorIdentitySource =
+			args.callerToken && args.callerToken.length > 0
+				? MASTER_ACTOR_LABEL
+				: ((await ctx.auth.getUserIdentity())?.subject ?? "org-admin:unknown");
+		const actorTokenHash = await sha256Hex(actorIdentitySource);
 		// The mapping row above carries the ID the caller presented, so the seat
 		// rows are stamped with that same ID from their first write.
 		const seatClerkOrgId = clerkOrgId;
