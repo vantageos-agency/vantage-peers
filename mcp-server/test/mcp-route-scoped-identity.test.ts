@@ -157,6 +157,9 @@ beforeEach(async () => {
 		});
 		await ctx.db.insert("client_org_mapping", {
 			clerkOrgSlug: "org-a",
+			// The permanent org ID: an agent credential is resolved by it
+			// (@vantageos/cloud-identity resolveCallerFromAgentCredential).
+			clerkOrgId: "org_A",
 			allowedOrchestrators: ["agent-a"],
 			scopes: ["vantage:read", "vantage:write"],
 			displayName: "a",
