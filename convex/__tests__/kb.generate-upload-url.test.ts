@@ -83,7 +83,13 @@ function invokeHandler(ctx: any, args: { orgId: string; namespace: string }) {
 			"generateUploadUrl is not exported (or has no ._handler) from convex/kbMutations.ts.",
 		);
 	}
-	return fn._handler(ctx, args);
+	// The fleet service account acts only inside the organisation the transport
+	// verified for the call (R-54): this shim presents the operator org's claim, the
+	// one `seedServiceAccount` converges.
+	return fn._handler(ctx, {
+		...args,
+		verifiedOrg: { orgSlug: "test-operator-org" },
+	});
 }
 
 describe("kbMutations.generateUploadUrl", () => {

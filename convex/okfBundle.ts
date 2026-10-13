@@ -40,10 +40,12 @@
  * Orchestrator: Sigma — VantagePeers | 2026-06-19
  */
 
+import { isFleetStamp, type OrgRef, sameOrg } from "@vantageos/cloud-identity";
 import { v } from "convex/values";
 import type { DatabaseReader } from "./_generated/server";
 import { internalMutation, internalQuery } from "./_generated/server";
-import { findOperatorOrg } from "./lib/operatorOrg";
+import { lookupOrgMapping, orgRefOfRow } from "./lib/authOrgMapping";
+import { fleetOperatorRef } from "./lib/operatorOrg";
 import {
 	type BriefingNoteDoc,
 	type MemoryDoc,
@@ -54,9 +56,9 @@ import {
 } from "./okfSerializer";
 import type { BundleEntry } from "./okfValidator";
 import { creatorValidator, memoryTypeValidator } from "./schema";
-import { taskActorIdFields } from "./lib/actorIds";
-import { clerkOrgIdForSlug } from "./lib/orgClerkId";
+import { actorIdResolver, taskActorIdFields } from "./lib/actorIds";
 import { stampOfNamespace } from "./lib/memoryTenant";
+import { agentIdOfLabelInOrg } from "./lib/rosterLabels";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Constants (ADR D4 + D5) — re-exported for the Node-runtime action.
@@ -76,65 +78,94 @@ const TYPE_BRIEFING = "briefing-note";
 const TYPE_TASK = "task";
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Namespace → org-scope mapping (Eta REVISE iter 2 — cross-namespace leak fix)
+// Namespace → organisation, BY ID (Eta REVISE iter 2 — cross-namespace leak fix;
+// module F1 — the organisation is its permanent Clerk org ID, never its slug).
 //
 // Phase 1 locks every export to `project/elpi-corp` (master / internal Alpha
-// tenant). Per `convex/schema.ts` lines 252-254 + 304-306, briefingNotes and
-// tasks use `orgId` for multi-tenant scoping where `null`/`undefined` ==
-// master, and a Clerk org slug like `"acme-hr"` == client-scoped row.
+// tenant). briefingNotes and tasks carry the owning organisation's permanent
+// Clerk org ID (`clerkOrgId`, beside the renamable slug label `orgId`); a row
+// with neither is the fleet's. The namespace names an organisation by that ID
+// (`team/<orgId>`) or, for a namespace written before IDs, by its slug label:
+//   - `project/elpi-corp`           -> the FLEET: rows stamped with the operator
+//                                      org's ID, and unstamped rows;
+//   - `team/<id>` / `project/<x>`   -> the active organisation the segment names
+//                                      (found by ID, else by its current label);
+//                                      its rows are the rows stamped with ITS ID.
 //
 // `memories` already has a first-class `namespace` column so it is filtered
 // directly by the existing `by_namespace` index (no extra mapping needed).
 //
-// For briefingNotes/tasks we derive the expected orgId from the requested
-// namespace:
-//   - `project/elpi-corp`           → `undefined` (master)
-//   - `project/<other>` (Phase 2)   → `<other>` (Clerk org slug)
-//
-// `matchesNamespaceScope` is applied as a belt-and-braces in-memory filter
-// after the index-bounded pagination scan to guarantee zero cross-namespace
-// leak even for legacy rows missing an orgId.
+// `ownsRow` is applied as a belt-and-braces in-memory filter after the
+// index-bounded pagination scan to guarantee zero cross-namespace leak even for
+// legacy rows missing an ID. The organisation compare is the package's
+// (`sameOrg`, `isFleetStamp`): a label match never grants.
 // ─────────────────────────────────────────────────────────────────────────────
 
-export function expectedOrgIdForNamespace(
-	namespace: string,
-): string | undefined {
-	if (namespace === PHASE1_NAMESPACE) return undefined;
+/** Where a namespace's briefing-note and task rows live. */
+export type NamespaceTarget =
+	| { kind: "fleet"; operator: OrgRef | undefined }
+	| {
+			kind: "org";
+			org: OrgRef;
+			slug: string;
+			/** The organisation's permanent ID; absent while its mapping row carries none. */
+			clerkOrgId: string | undefined;
+	  }
+	| { kind: "none" };
+
+/**
+ * The segment of a namespace that names its organisation (`team/<seg>`,
+ * `project/<seg>`), or undefined when it names none (the fleet).
+ */
+function organisationSegment(namespace: string): string | undefined {
 	const tail = namespace.split("/").slice(1).join("/");
 	return tail === "" ? undefined : tail;
 }
 
-// RULING 4 (task k174d95s5qqy8t2r5rdrz3pr3d8fqv82): the FLEET namespace owns
-// BOTH the unstamped rows (undecidable ones stay unstamped) AND the rows stamped
-// with the operator org by convex/migrations/backfill_org_stamp. The operator
-// slug is DERIVED at run time from the active orgKind "operator" mapping row
-// (convex/lib/operatorOrg.ts), never typed. `operatorSlug` is only ever
-// consulted for PHASE1_NAMESPACE; a tenant namespace is unchanged.
-export function matchesNamespaceScope(
-	row: { orgId?: string | null | undefined },
-	namespace: string,
-	operatorSlug?: string,
-): boolean {
-	const expected = expectedOrgIdForNamespace(namespace);
-	const actual = row.orgId ?? undefined;
-	if (actual === expected) return true;
-	return (
-		namespace === PHASE1_NAMESPACE &&
-		operatorSlug !== undefined &&
-		actual === operatorSlug
-	);
-}
-
-// The operator slug to ALSO read for the fleet namespace, or undefined when the
-// namespace is not the fleet's or the operator org is not exactly one (fail
-// closed: only the unstamped rows are read, nothing is widened).
-async function fleetOperatorSlug(
+export async function namespaceTarget(
 	db: DatabaseReader,
 	namespace: string,
-): Promise<string | undefined> {
-	if (namespace !== PHASE1_NAMESPACE) return undefined;
-	const op = await findOperatorOrg(db);
-	return op.kind === "one" ? op.slug : undefined;
+): Promise<NamespaceTarget> {
+	const segment =
+		namespace === PHASE1_NAMESPACE ? undefined : organisationSegment(namespace);
+	if (segment === undefined) {
+		return { kind: "fleet", operator: await fleetOperatorRef(db) };
+	}
+	const mapping =
+		(await lookupOrgMapping({ db }, { clerkOrgId: segment })) ??
+		(await lookupOrgMapping({ db }, segment));
+	if (mapping === null || !mapping.isActive) return { kind: "none" };
+	return {
+		kind: "org",
+		org: { id: mapping.clerkOrgId, label: mapping.clerkOrgSlug },
+		slug: mapping.clerkOrgSlug,
+		clerkOrgId: mapping.clerkOrgId,
+	};
+}
+
+/** The `clerkOrgId` values whose index ranges hold the target's rows (undefined = unstamped). */
+function targetKeys(target: NamespaceTarget): (string | undefined)[] {
+	if (target.kind === "none") return [];
+	if (target.kind === "org") {
+		return target.clerkOrgId === undefined ? [] : [target.clerkOrgId];
+	}
+	return typeof target.operator?.id === "string"
+		? [target.operator.id, undefined]
+		: [undefined];
+}
+
+/** Does this row belong to the namespace's organisation? Decided by ID, by the package. */
+export function ownsRow(
+	row: { orgId?: string | null; clerkOrgId?: string | null },
+	target: NamespaceTarget,
+): boolean {
+	if (target.kind === "none") return false;
+	const stamp = orgRefOfRow({
+		...(row.orgId == null ? {} : { orgId: row.orgId }),
+		...(row.clerkOrgId == null ? {} : { clerkOrgId: row.clerkOrgId }),
+	});
+	if (target.kind === "fleet") return isFleetStamp(stamp, target.operator);
+	return sameOrg(stamp, target.org);
 }
 
 type OrgPage<R> = {
@@ -144,42 +175,35 @@ type OrgPage<R> = {
 };
 type PageOpts = { numItems: number; cursor: string | null };
 
-// Reads the unstamped range, then the operator-stamped range, as ONE logical
-// paginated scan. The continuation cursor carries its phase ("U|" / "O|") so the
+// Reads the target's index ranges (one per `clerkOrgId` key) as ONE logical
+// paginated scan. The continuation cursor carries its phase ("<n>|") so the
 // callers' existing `while (!isDone)` loops are unchanged. Every page is a
 // single bounded `.paginate`.
 async function paginateOrgScopes<R>(
-	namespace: string,
-	operatorSlug: string | undefined,
+	target: NamespaceTarget,
 	opts: PageOpts,
-	read: (orgId: string | undefined, o: PageOpts) => Promise<OrgPage<R>>,
+	read: (clerkOrgId: string | undefined, o: PageOpts) => Promise<OrgPage<R>>,
 ): Promise<OrgPage<R>> {
-	if (operatorSlug === undefined) {
-		return await read(expectedOrgIdForNamespace(namespace), opts);
+	const keys = targetKeys(target);
+	const phased = opts.cursor === null ? null : /^(\d+)\|(.*)$/.exec(opts.cursor);
+	const phase = phased === null ? 0 : Number(phased[1]);
+	if (phase >= keys.length) {
+		return { page: [], isDone: true, continueCursor: "" };
 	}
-	const raw = opts.cursor;
-	const inOperator = raw?.startsWith("O|") === true;
-	const inner =
-		raw === null
-			? null
-			: raw.startsWith("U|") || raw.startsWith("O|")
-				? raw.slice(2) || null
-				: raw;
-	const r = await read(inOperator ? operatorSlug : undefined, {
-		numItems: opts.numItems,
-		cursor: inner,
-	});
-	if (inOperator) {
+	const inner = phased === null || phased[2] === "" ? null : phased[2];
+	const r = await read(keys[phase], { numItems: opts.numItems, cursor: inner });
+	if (!r.isDone) {
 		return {
 			page: r.page,
-			isDone: r.isDone,
-			continueCursor: r.isDone ? r.continueCursor : `O|${r.continueCursor}`,
+			isDone: false,
+			continueCursor: `${phase}|${r.continueCursor}`,
 		};
 	}
+	const last = phase === keys.length - 1;
 	return {
 		page: r.page,
-		isDone: false,
-		continueCursor: r.isDone ? "O|" : `U|${r.continueCursor}`,
+		isDone: last,
+		continueCursor: last ? r.continueCursor : `${phase + 1}|`,
 	};
 }
 
@@ -207,7 +231,7 @@ function byteLengthUtf8(s: string): number {
 // drives the cursor loop via `collectAllPages()` in `okfBundleNode.ts`.
 //
 // Each query MUST scope its index lookup by the requested namespace and apply
-// `matchesNamespaceScope()` as a belt-and-braces post-filter to guarantee
+// `ownsRow()` as a belt-and-braces post-filter to guarantee
 // zero cross-namespace leak. The `sinceMs` filter is applied last on the
 // already-scoped page (the original bug was that `.collect()` was unbounded
 // AND cross-namespace, defeating `assertCanExportNamespace`).
@@ -259,25 +283,21 @@ export const _fetchBriefingNotesForBundle = internalQuery({
 		paginationOpts: PAGINATION_OPTS_VALIDATOR,
 	},
 	handler: async (ctx, args) => {
-		// Use the `by_orgId` index for tenant-scoped reads. Convex treats
-		// `q.eq("orgId", undefined)` as matching rows where the field is unset
-		// (master tenant), which is the Phase 1 case for `project/elpi-corp`.
-		// The fleet namespace additionally reads the operator-stamped rows.
-		const op = await fleetOperatorSlug(ctx.db, args.namespace);
+		// Use the `by_orgId_clerk_id` index for tenant-scoped reads: the organisation
+		// is its permanent ID. The fleet namespace reads the operator-stamped range
+		// and the unstamped one.
+		const target = await namespaceTarget(ctx.db, args.namespace);
 		const result = await paginateOrgScopes(
-			args.namespace,
-			op,
+			target,
 			args.paginationOpts,
-			(orgId, o) =>
+			(clerkOrgId, o) =>
 				ctx.db
 					.query("briefingNotes")
-					.withIndex("by_orgId", (q) => q.eq("orgId", orgId))
+					.withIndex("by_orgId_clerk_id", (q) => q.eq("clerkOrgId", clerkOrgId))
 					.paginate(o),
 		);
 		const since = args.sinceMs;
-		const scoped = result.page.filter((r) =>
-			matchesNamespaceScope(r, args.namespace, op),
-		);
+		const scoped = result.page.filter((r) => ownsRow(r, target));
 		const filtered =
 			since === undefined
 				? scoped
@@ -299,21 +319,20 @@ export const _fetchTasksForBundle = internalQuery({
 		paginationOpts: PAGINATION_OPTS_VALIDATOR,
 	},
 	handler: async (ctx, args) => {
-		const op = await fleetOperatorSlug(ctx.db, args.namespace);
+		const target = await namespaceTarget(ctx.db, args.namespace);
 		const result = await paginateOrgScopes(
-			args.namespace,
-			op,
+			target,
 			args.paginationOpts,
-			(orgId, o) =>
+			(clerkOrgId, o) =>
 				ctx.db
 					.query("tasks")
-					.withIndex("by_orgId", (q) => q.eq("orgId", orgId))
+					.withIndex("by_orgId_status_clerk_id", (q) =>
+						q.eq("clerkOrgId", clerkOrgId),
+					)
 					.paginate(o),
 		);
 		const since = args.sinceMs;
-		const scoped = result.page.filter((r) =>
-			matchesNamespaceScope(r, args.namespace, op),
-		);
+		const scoped = result.page.filter((r) => ownsRow(r, target));
 		const filtered =
 			since === undefined
 				? scoped
@@ -391,6 +410,12 @@ export function shouldIncludeFamily(
  * Filter serialized memory files by subtype tokens when the caller passed a
  * memory-<sub> literal filter (no wildcard). When `memory-*` is among the
  * tokens — or no token at all — keep all memories.
+ *
+ * allow-local-identity: a false positive of the scope kind, not an identity
+ * decision. `allowed` is the set of OKF memory SUBTYPE tokens the caller asked
+ * for (`memory-user`, `memory-feedback`, ...), matched against each memory's
+ * `type`. It names no caller, tenant, roster or organisation; the doctor reads
+ * the variable name `allowed` as a caller's allow-list.
  */
 export function applyMemorySubtypeFilter(
 	files: readonly SerializedFile[],
@@ -580,26 +605,18 @@ export const _findBriefingByTitleAndContent = internalQuery({
 		// original bare `.withIndex("by_topic")` scan had no tenant dimension at
 		// all, so an import from tenant A could dedup-match a row owned by
 		// tenant B — the presence/absence of that "skip" leaked B's data across
-		// the tenant boundary. Scope by the SAME `orgId` derivation already
-		// used by the export-side reads above (`expectedOrgIdForNamespace` +
-		// `matchesNamespaceScope`), reusing the existing `by_orgId` index — no
-		// new index needed.
-		const op = await fleetOperatorSlug(ctx.db, namespace);
-		const result = await paginateOrgScopes(
-			namespace,
-			op,
-			paginationOpts,
-			(orgId, o) =>
-				ctx.db
-					.query("briefingNotes")
-					.withIndex("by_orgId", (q) => q.eq("orgId", orgId))
-					.paginate(o),
+		// the tenant boundary. Scope by the SAME organisation derivation already
+		// used by the export-side reads above (`namespaceTarget` + `ownsRow`, by
+		// permanent org ID), reusing the existing `by_orgId_clerk_id` index.
+		const target = await namespaceTarget(ctx.db, namespace);
+		const result = await paginateOrgScopes(target, paginationOpts, (clerkOrgId, o) =>
+			ctx.db
+				.query("briefingNotes")
+				.withIndex("by_orgId_clerk_id", (q) => q.eq("clerkOrgId", clerkOrgId))
+				.paginate(o),
 		);
 		const hit = result.page.find(
-			(r) =>
-				matchesNamespaceScope(r, namespace, op) &&
-				r.title === title &&
-				r.content === content,
+			(r) => ownsRow(r, target) && r.title === title && r.content === content,
 		);
 		return {
 			id: hit ? hit._id : null,
@@ -620,20 +637,18 @@ export const _findTaskByTitleAndDescription = internalQuery({
 	handler: async (ctx, { namespace, title, description, paginationOpts }) => {
 		// Same cross-tenant fix as `_findBriefingByTitleAndContent` above —
 		// see that comment for the full rationale.
-		const op = await fleetOperatorSlug(ctx.db, namespace);
-		const result = await paginateOrgScopes(
-			namespace,
-			op,
-			paginationOpts,
-			(orgId, o) =>
-				ctx.db
-					.query("tasks")
-					.withIndex("by_orgId", (q) => q.eq("orgId", orgId))
-					.paginate(o),
+		const target = await namespaceTarget(ctx.db, namespace);
+		const result = await paginateOrgScopes(target, paginationOpts, (clerkOrgId, o) =>
+			ctx.db
+				.query("tasks")
+				.withIndex("by_orgId_status_clerk_id", (q) =>
+					q.eq("clerkOrgId", clerkOrgId),
+				)
+				.paginate(o),
 		);
 		const hit = result.page.find(
 			(r) =>
-				matchesNamespaceScope(r, namespace, op) &&
+				ownsRow(r, target) &&
 				r.title === title &&
 				(r.description ?? "") === description,
 		);
@@ -680,6 +695,13 @@ export const _insertImportedMemory = internalMutation({
 		// M10a: a team row carries its org's permanent ID, or no client org could
 		// ever read it back (convex/lib/memoryTenant.ts).
 		const clerkOrgId = await stampOfNamespace(ctx, args.namespace);
+		// The author's ID, resolved in the namespace's own org (the operator org for
+		// the fleet); a label that names no agent there leaves the column unset.
+		const target = await namespaceTarget(ctx.db, args.namespace);
+		const createdById = await actorIdResolver(
+			ctx,
+			target.kind === "org" ? target.slug : null,
+		)(args.createdBy);
 		return await ctx.db.insert("memories", {
 			namespace: args.namespace,
 			type: args.type,
@@ -689,11 +711,18 @@ export const _insertImportedMemory = internalMutation({
 			isLatest: true,
 			contentHash: args.contentHash,
 			...(clerkOrgId === undefined ? {} : { clerkOrgId }),
+			...(createdById === undefined ? {} : { createdById }),
 			createdAt: args.now,
 			updatedAt: args.now,
 		});
 	},
 });
+
+// The rows that already carry a content hash in the target's index ranges, read
+// ONE bounded batch per range. The range is keyed by the organisation's permanent
+// ID; a legacy row that shares the range key but is not the target's (an
+// unstamped client row beside the fleet's unstamped range) is dropped by `ownsRow`.
+const IMPORT_DEDUP_SCAN = 8;
 
 export const _insertImportedBriefing = internalMutation({
 	args: {
@@ -704,31 +733,37 @@ export const _insertImportedBriefing = internalMutation({
 		content: v.string(),
 		createdBy: creatorValidator,
 		// R-18 idempotency key — sha256(title + "\n" + content), same TOCTOU fix
-		// as `_insertImportedMemory`. Keyed on (orgId, contentHash) because
-		// briefingNotes scope by orgId, mirroring `_findBriefingByTitleAndContent`.
+		// as `_insertImportedMemory`. Keyed on (clerkOrgId, contentHash) because
+		// briefingNotes scope by the organisation's ID, mirroring
+		// `_findBriefingByTitleAndContent`.
 		contentHash: v.string(),
 		now: v.number(),
 	},
 	returns: v.id("briefingNotes"),
 	handler: async (ctx, args) => {
-		// Tag the imported row with the SAME orgId the dedup lookup above scopes
-		// on, so a subsequent import of the same tenant's bundle actually finds
-		// its own prior copy instead of missing it because orgId was never
+		// Tag the imported row with the SAME organisation the dedup lookup above
+		// scopes on, so a subsequent import of the same tenant's bundle actually
+		// finds its own prior copy instead of missing it because the ID was never
 		// written (the row would silently fall outside the tenant's scope on
 		// every future dedup lookup, forcing perpetual duplicate imports).
 		// A NEW fleet import stays unstamped, exactly like a fresh fleet briefing
 		// (briefingNotes.create writes `orgId: undefined` for the master); the
 		// dedup lookup also finds the operator-stamped copy the backfill wrote.
-		const orgId = expectedOrgIdForNamespace(args.namespace);
-		const op = await fleetOperatorSlug(ctx.db, args.namespace);
-		for (const scope of op === undefined ? [orgId] : [orgId, op]) {
-			const existing = await ctx.db
+		const target = await namespaceTarget(ctx.db, args.namespace);
+		for (const clerkOrgId of targetKeys(target)) {
+			const candidates = await ctx.db
 				.query("briefingNotes")
-				.withIndex("by_orgId_contentHash", (q) =>
-					q.eq("orgId", scope).eq("contentHash", args.contentHash),
+				.withIndex("by_orgId_contentHash_clerk_id", (q) =>
+					q.eq("clerkOrgId", clerkOrgId).eq("contentHash", args.contentHash),
 				)
-				.first();
-			if (existing !== null) return existing._id;
+				.take(IMPORT_DEDUP_SCAN);
+			const existing = candidates.find((row) => ownsRow(row, target));
+			if (existing !== undefined) return existing._id;
+		}
+		if (target.kind === "none") {
+			throw new Error(
+				`OKF_IMPORT_NAMESPACE_UNKNOWN: namespace "${args.namespace}" names no active organisation; nothing is imported into it.`,
+			);
 		}
 		return await ctx.db.insert("briefingNotes", {
 			title: args.title,
@@ -738,8 +773,14 @@ export const _insertImportedBriefing = internalMutation({
 			createdBy: args.createdBy,
 			contentHash: args.contentHash,
 			createdAt: args.now,
-			orgId,
-			clerkOrgId: await clerkOrgIdForSlug(ctx, orgId),
+			...(target.kind === "org"
+				? {
+						orgId: target.slug,
+						...(target.clerkOrgId === undefined
+							? {}
+							: { clerkOrgId: target.clerkOrgId }),
+					}
+				: {}),
 		});
 	},
 });
@@ -749,6 +790,9 @@ export const _insertImportedTask = internalMutation({
 		namespace: v.string(),
 		title: v.string(),
 		description: v.optional(v.string()),
+		// A LABEL carried by the bundle. It is resolved to an agent of the target
+		// organisation; the row stores that agent's ID and its CURRENT label, never
+		// the typed string.
 		assignedTo: v.string(),
 		priority: v.union(
 			v.literal("urgent"),
@@ -765,43 +809,76 @@ export const _insertImportedTask = internalMutation({
 		),
 		createdBy: creatorValidator,
 		// R-18 idempotency key — sha256(title + "\n" + (description ?? "")),
-		// same TOCTOU fix. Keyed on (orgId, contentHash), mirroring
+		// same TOCTOU fix. Keyed on (clerkOrgId, contentHash), mirroring
 		// `_findTaskByTitleAndDescription`.
 		contentHash: v.string(),
 		now: v.number(),
 	},
-	returns: v.id("tasks"),
+	// null: the task's assignee names no active agent of the target organisation, so
+	// it is not imported (the importer reports it as a conflict). An assignment
+	// resolves to an agent of the task's own org, as at every task door.
+	returns: v.union(v.id("tasks"), v.null()),
 	handler: async (ctx, args) => {
-		// Same orgId-tagging rationale as `_insertImportedBriefing` above.
-		// NEW fleet import stays unstamped like a fresh fleet task (orgIdForWrite
-		// yields undefined for the master); dedup also sees the operator stamp.
-		const orgId = expectedOrgIdForNamespace(args.namespace);
-		const op = await fleetOperatorSlug(ctx.db, args.namespace);
-		for (const scope of op === undefined ? [orgId] : [orgId, op]) {
-			const existing = await ctx.db
+		// Same organisation-tagging rationale as `_insertImportedBriefing` above.
+		// NEW fleet import stays unstamped like a fresh fleet task; dedup also sees
+		// the operator stamp.
+		const target = await namespaceTarget(ctx.db, args.namespace);
+		for (const clerkOrgId of targetKeys(target)) {
+			const candidates = await ctx.db
 				.query("tasks")
-				.withIndex("by_orgId_contentHash", (q) =>
-					q.eq("orgId", scope).eq("contentHash", args.contentHash),
+				.withIndex("by_orgId_contentHash_clerk_id", (q) =>
+					q.eq("clerkOrgId", clerkOrgId).eq("contentHash", args.contentHash),
 				)
-				.first();
-			if (existing !== null) return existing._id;
+				.take(IMPORT_DEDUP_SCAN);
+			const existing = candidates.find((row) => ownsRow(row, target));
+			if (existing !== undefined) return existing._id;
 		}
+		if (target.kind === "none") {
+			throw new Error(
+				`OKF_IMPORT_NAMESPACE_UNKNOWN: namespace "${args.namespace}" names no active organisation; nothing is imported into it.`,
+			);
+		}
+		const orgSlug = target.kind === "org" ? target.slug : null;
+		const assigneeId = await agentIdOfLabelInOrg(
+			ctx,
+			target.kind === "org"
+				? {
+						orgSlug: target.slug,
+						...(target.clerkOrgId === undefined
+							? {}
+							: { clerkOrgId: target.clerkOrgId }),
+					}
+				: { orgSlug: null },
+			args.assignedTo,
+			"okfBundle:_insertImportedTask",
+		);
+		const assigneeRowId =
+			assigneeId === undefined ? null : ctx.db.normalizeId("agents", assigneeId);
+		const assignee =
+			assigneeRowId === null ? null : await ctx.db.get(assigneeRowId);
+		if (assignee === null) return null;
 		return await ctx.db.insert("tasks", {
 			title: args.title,
 			description: args.description,
-			assignedTo: args.assignedTo,
+			assignedTo: assignee.name,
+			assignedToId: assignee._id,
 			priority: args.priority,
 			status: args.status,
 			createdBy: args.createdBy,
 			contentHash: args.contentHash,
 			createdAt: args.now,
 			updatedAt: args.now,
-			orgId,
-			...(await taskActorIdFields(ctx, orgId, {
+			...(await taskActorIdFields(ctx, orgSlug, {
 				createdBy: args.createdBy,
-				assignedTo: args.assignedTo,
 			})),
-			clerkOrgId: await clerkOrgIdForSlug(ctx, orgId),
+			...(target.kind === "org"
+				? {
+						orgId: target.slug,
+						...(target.clerkOrgId === undefined
+							? {}
+							: { clerkOrgId: target.clerkOrgId }),
+					}
+				: {}),
 		});
 	},
 });

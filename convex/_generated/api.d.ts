@@ -15,6 +15,7 @@ import type * as agents from "../agents.js";
 import type * as briefingNotes from "../briefingNotes.js";
 import type * as businessUnits from "../businessUnits.js";
 import type * as clientOrgMapping from "../clientOrgMapping.js";
+import type * as contentClaims from "../contentClaims.js";
 import type * as credentials from "../credentials.js";
 import type * as crons from "../crons.js";
 import type * as dashboard from "../dashboard.js";
@@ -95,7 +96,10 @@ import type * as migrations_backfillOrgIds from "../migrations/backfillOrgIds.js
 import type * as migrations_backfillRosterAgentIds from "../migrations/backfillRosterAgentIds.js";
 import type * as migrations_backfill_actor_ids from "../migrations/backfill_actor_ids.js";
 import type * as migrations_backfill_business_unit_owner_ids from "../migrations/backfill_business_unit_owner_ids.js";
+import type * as migrations_backfill_diary_agent_ids from "../migrations/backfill_diary_agent_ids.js";
+import type * as migrations_backfill_kb_upload_org_ids from "../migrations/backfill_kb_upload_org_ids.js";
 import type * as migrations_backfill_memories_org_clerk_id from "../migrations/backfill_memories_org_clerk_id.js";
+import type * as migrations_backfill_memory_author_ids from "../migrations/backfill_memory_author_ids.js";
 import type * as migrations_backfill_mission_actor_ids from "../migrations/backfill_mission_actor_ids.js";
 import type * as migrations_backfill_org_clerk_id from "../migrations/backfill_org_clerk_id.js";
 import type * as migrations_backfill_org_stamp from "../migrations/backfill_org_stamp.js";
@@ -155,6 +159,7 @@ declare const fullApi: ApiFromModules<{
   briefingNotes: typeof briefingNotes;
   businessUnits: typeof businessUnits;
   clientOrgMapping: typeof clientOrgMapping;
+  contentClaims: typeof contentClaims;
   credentials: typeof credentials;
   crons: typeof crons;
   dashboard: typeof dashboard;
@@ -235,7 +240,10 @@ declare const fullApi: ApiFromModules<{
   "migrations/backfillRosterAgentIds": typeof migrations_backfillRosterAgentIds;
   "migrations/backfill_actor_ids": typeof migrations_backfill_actor_ids;
   "migrations/backfill_business_unit_owner_ids": typeof migrations_backfill_business_unit_owner_ids;
+  "migrations/backfill_diary_agent_ids": typeof migrations_backfill_diary_agent_ids;
+  "migrations/backfill_kb_upload_org_ids": typeof migrations_backfill_kb_upload_org_ids;
   "migrations/backfill_memories_org_clerk_id": typeof migrations_backfill_memories_org_clerk_id;
+  "migrations/backfill_memory_author_ids": typeof migrations_backfill_memory_author_ids;
   "migrations/backfill_mission_actor_ids": typeof migrations_backfill_mission_actor_ids;
   "migrations/backfill_org_clerk_id": typeof migrations_backfill_org_clerk_id;
   "migrations/backfill_org_stamp": typeof migrations_backfill_org_stamp;

@@ -2310,6 +2310,10 @@ export function registerTools(
 
 	// ── store_memory ────────────────────────────────────────────────────────────
 
+	// oracle-justified: actor-bound memory write; the table set now includes agents because the door resolves the author
+	//   label (and, for diary-style callers, the roster) to an agent ID in the caller's verified org
+	//   (convex/contentClaims.ts authorIdOfLabel); the org comes from the verified `verifiedOrg` claim
+	//   the tool forwards, never from `namespace` or `createdBy`.
 	defineTool(
 		server,
 		authCtx,
@@ -2376,6 +2380,12 @@ export function registerTools(
 					? [{ targetId: relatesTo.targetId as any, type: relatesTo.type }]
 					: [];
 
+				// Backend standard R-54: the service account acts only inside the
+				// organisation THIS bearer was verified for (`verifiedOrg`, never a tool
+				// argument); a claimless call is refused by the door.
+				const orgDenied = unresolvedOrgDenial("store_memory");
+				if (orgDenied !== null) return orgDenied;
+
 				const memoryId = await convex.mutation("memories:storeMemory" as any, {
 					namespace,
 					type,
@@ -2383,6 +2393,7 @@ export function registerTools(
 					...(memberAuthorLabel(oauthCtx) === undefined ? { createdBy: author } : {}),
 					relations,
 					ttl,
+					...verifiedOrgArgs(),
 				});
 
 				return {
@@ -2483,8 +2494,14 @@ export function registerTools(
 				// S3.1.A Wave A — scope-aware filter replaces guardMasterOnly.
 				// Non-master clients may now read their own data; cross-tenant rows
 				// collapse to a non-leaky "not found" shape (same as a missing row).
+				// Tenant applied INSIDE the Convex read (`verifiedOrg`): a memory outside
+				// the caller's namespaces is answered null by the door and never reaches
+				// this process; a claimless service-account call is refused (R-54).
+				const orgDenied = unresolvedOrgDenial("get_memory");
+				if (orgDenied !== null) return orgDenied;
 				const memory = await convex.query("memories:getMemory" as any, {
 					memoryId,
+					...verifiedOrgArgs(),
 				});
 				const filtered = scopeFilterGet(oauthCtx ?? DENIED_SCOPE_CTX, memory);
 				if (filtered === null) {
@@ -2704,6 +2721,10 @@ export function registerTools(
 
 	// ── store_episode ───────────────────────────────────────────────────────────
 
+	// oracle-justified: actor-bound episode write; the table set now includes agents because the door resolves the author
+	//   label (and, for diary-style callers, the roster) to an agent ID in the caller's verified org
+	//   (convex/contentClaims.ts authorIdOfLabel); the org comes from the verified `verifiedOrg` claim
+	//   the tool forwards, never from `namespace` or `createdBy`.
 	defineTool(
 		server,
 		authCtx,
@@ -2760,6 +2781,9 @@ export function registerTools(
 				const nsDenied = guardWrite(namespace);
 				if (nsDenied) return nsDenied;
 
+				const orgDenied = unresolvedOrgDenial("store_episode");
+				if (orgDenied !== null) return orgDenied;
+
 				const memoryId = await convex.mutation("episodes:storeEpisode" as any, {
 					namespace,
 					...(memberAuthorLabel(oauthCtx) === undefined ? { createdBy: author } : {}),
@@ -2769,6 +2793,7 @@ export function registerTools(
 					outcome,
 					insight,
 					severity,
+					...verifiedOrgArgs(),
 				});
 
 				return {
@@ -2847,6 +2872,9 @@ export function registerTools(
 	// Day 102 v2.9.0 — episode entity 5-op surface (PR-B).
 	// Thin wrapper on memories:listMemories with type='episode' forced.
 
+	// oracle-justified: namespace-scoped episode list; the table set now includes agents because the door resolves the `createdBy`
+	//   filter label to an agent ID in the caller's verified org (convex/contentClaims.ts authorIdOfLabel)
+	//   and the org comes from the forwarded `verifiedOrg` claim, so it differs from the actor-bound writes.
 	defineTool(
 		server,
 		authCtx,
@@ -2910,12 +2938,16 @@ export function registerTools(
 				const effectiveLimit =
 					limit === undefined ? undefined : clampLimit(limit);
 
+				const orgDenied = unresolvedOrgDenial("list_episodes");
+				if (orgDenied !== null) return orgDenied;
+
 				const queryArgs: Record<string, unknown> = {
 					namespace,
 					type: "episode",
 					createdBy,
 					limit: effectiveLimit ?? 20,
 					fields: fields ?? "lite",
+					...verifiedOrgArgs(),
 				};
 				if (backendCursor !== undefined) {
 					queryArgs.paginationOpts = {
@@ -3254,6 +3286,9 @@ export function registerTools(
 
 	// ── list_memories ───────────────────────────────────────────────────────────
 
+	// oracle-justified: namespace-scoped memory list; the table set now includes agents because the door resolves the `createdBy`
+	//   filter label to an agent ID in the caller's verified org (convex/contentClaims.ts authorIdOfLabel)
+	//   and the org comes from the forwarded `verifiedOrg` claim, so it differs from the actor-bound writes.
 	defineTool(
 		server,
 		authCtx,
@@ -3324,12 +3359,16 @@ export function registerTools(
 				const effectiveLimit =
 					limit === undefined ? undefined : clampLimit(limit);
 
+				const orgDenied = unresolvedOrgDenial("list_memories");
+				if (orgDenied !== null) return orgDenied;
+
 				const queryArgs: Record<string, unknown> = {
 					namespace,
 					type,
 					createdBy,
 					limit: effectiveLimit ?? 20,
 					fields: fields ?? "lite",
+					...verifiedOrgArgs(),
 				};
 				if (backendCursor !== undefined) {
 					queryArgs.paginationOpts = {
@@ -6588,6 +6627,9 @@ export function registerTools(
 				// createdBy gracefully degrades to undefined (transition period).
 				const createdBy: string | undefined = oauthCtx?.userId;
 
+				const orgDenied = unresolvedOrgDenial("write_diary");
+				if (orgDenied !== null) return orgDenied;
+
 				const diaryId = await convex.mutation("diary:write" as any, {
 					date,
 					orchestrator,
@@ -6595,6 +6637,7 @@ export function registerTools(
 					highlights: toArray(highlights),
 					blockers: toArray(blockers),
 					createdBy,
+					...verifiedOrgArgs(),
 				});
 
 				return {
@@ -6647,9 +6690,12 @@ export function registerTools(
 		async ({ date, orchestrator }) => {
 			try {
 				// S3.1.C1 — scope-aware filter replaces guardMasterOnly.
+				const orgDenied = unresolvedOrgDenial("get_diary");
+				if (orgDenied !== null) return orgDenied;
 				const entry = await convex.query("diary:get" as any, {
 					date,
 					orchestrator,
+					...verifiedOrgArgs(),
 				});
 				const filteredEntry = scopeFilterGet(
 					oauthCtx ?? DENIED_SCOPE_CTX,
@@ -6772,12 +6818,16 @@ export function registerTools(
 				const effectiveLimit =
 					limit === undefined ? undefined : clampLimit(limit);
 
+				const orgDenied = unresolvedOrgDenial("list_diaries");
+				if (orgDenied !== null) return orgDenied;
+
 				const entries = await convex.query("diary:list" as any, {
 					orchestrator,
 					createdBy,
 					limit: effectiveLimit ?? 20,
 					fields: fields ?? "lite",
 					createdBefore,
+					...verifiedOrgArgs(),
 				});
 
 				// A refusal is not an absence: say so BEFORE the `Array.isArray`
@@ -11122,26 +11172,26 @@ export function registerTools(
 	// ── export_okf_bundle (T3 — OKF Phase 1) ────────────────────────────────────
 	// Thin proxy to convex action `okfBundle:exportOkfBundle`. Registered last
 	// so its argument schema does not pollute other tool handlers' closures.
-	registerExportOkfBundle(server, convex, oauthCtx);
+	registerExportOkfBundle(server, convex, oauthCtx, verifiedOrgArgs);
 
 	// ── validate_okf_bundle (B1 — OKF Phase 2-A) ──────────────────────────────
 	// Thin proxy to convex action `okfBundleNode:validateOkfBundle`. Read-only;
 	// validates bundle conformance per RFC §3.5 without importing it. Mission
 	// k5779qbxhwrfjmj02t31yvehns8911jp, task k1796g7g7y03gn9rd6z7psenk98910vt.
-	registerValidateOkfBundle(server, convex);
+	registerValidateOkfBundle(server, convex, verifiedOrgArgs);
 
 	// ── import_okf_bundle (B2 — OKF Phase 2-B) ────────────────────────────────
 	// Thin proxy to convex action `okfBundleNode:importOkfBundle`. Mutation;
 	// imports memories+briefings+tasks into target namespace with dedup-by-content.
 	// Mission k5779qbxhwrfjmj02t31yvehns8911jp, task k17fja9v7pgnf25yvzkwrj5ch5891bb3.
-	registerImportOkfBundle(server, convex, oauthCtx);
+	registerImportOkfBundle(server, convex, oauthCtx, verifiedOrgArgs);
 
 	// ── store_document_chunked + soft_delete_document (B5 — KB ingest) ─────────
 	// Thin proxies to convex actions `kb:storeDocumentChunked` and
 	// `kb:softDeleteDocument`. Ingest pipeline: upload binary → text extract →
 	// chunk → store at namespace team/<orgId>/<docId>. Requires Clerk JWT org_id.
 	// Mission k5779qbxhwrfjmj02t31yvehns8911jp, task k17bdmhr2hffhz2t96p65j70nh891wcp.
-	registerKbIngestTools(server, convex, oauthCtx);
+	registerKbIngestTools(server, convex, oauthCtx, verifiedOrgArgs);
 
 	// ── improvisation_digest (PR-I — Bloc A T-GREEN) ──────────────────────────
 	// Advisory scan of VP tasks+messages+memories for fleet/state claims without

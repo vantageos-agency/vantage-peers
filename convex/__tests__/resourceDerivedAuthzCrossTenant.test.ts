@@ -34,6 +34,7 @@ import { describe, expect, test } from "vitest";
 import { api } from "../_generated/api";
 import schema from "../schema";
 import { seedFleetAgents } from "../../tests/lib/seedFleetAgents";
+import { fleetClaim } from "../../tests/lib/fleetClaim";
 
 const FILE_LABELS = ["eta", "sigma", "tenant-a"];
 
@@ -363,14 +364,16 @@ describe("diary.deleteDiary — omitting callerOrchestrator is refused, not exem
 	test("B cannot delete A's diary entry by omitting callerOrchestrator", async () => {
 		const t = createT();
 		await seedFleetAgents(t, FILE_LABELS);
+		const fleet = await fleetClaim(t);
 		const diaryId = await t.mutation(api.diary.write, {
 			date: "2026-07-23",
 			orchestrator: TENANT_A,
 			content: "A's day",
+			...fleet,
 		});
 
 		await expect(
-			t.mutation(api.diary.deleteDiary, { diaryId }),
+			t.mutation(api.diary.deleteDiary, { diaryId, ...fleet }),
 		).rejects.toThrow(/callerOrchestrator is required/);
 
 		expect(await t.run((ctx) => ctx.db.get(diaryId))).not.toBeNull();
@@ -379,15 +382,18 @@ describe("diary.deleteDiary — omitting callerOrchestrator is refused, not exem
 	test("second assertion — owner A still deletes its own diary entry", async () => {
 		const t = createT();
 		await seedFleetAgents(t, FILE_LABELS);
+		const fleet = await fleetClaim(t);
 		const diaryId = await t.mutation(api.diary.write, {
 			date: "2026-07-23",
 			orchestrator: TENANT_A,
 			content: "A's day",
+			...fleet,
 		});
 
 		const result = await t.mutation(api.diary.deleteDiary, {
 			diaryId,
 			callerOrchestrator: TENANT_A,
+			...fleet,
 		});
 		expect(result.deleted).toBe(true);
 	});

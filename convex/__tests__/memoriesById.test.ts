@@ -29,6 +29,7 @@ import { testClerkOrgId } from "../../tests/fixtures/testClerkOrgId";
 import { api } from "../_generated/api";
 import type { Id } from "../_generated/dataModel";
 import schema from "../schema";
+import { asFleet } from "../../tests/lib/asFleet";
 
 const modules = Object.fromEntries(
 	Object.entries(import.meta.glob("../**/*.ts")).filter(
@@ -60,7 +61,7 @@ const member = (t: T, subject: string, orgId: string, slug: string) =>
 const memberA = (t: T) => member(t, "user-a", ID_A, "acme-old");
 const memberB = (t: T) => member(t, "user-b", ID_B, "acme");
 const asServiceAccount = (t: T) =>
-	t.withIdentity({ subject: "test-service-account-user-id" });
+	asFleet(t.withIdentity({ subject: "test-service-account-user-id" }), t);
 
 async function seedOrgs(t: T) {
 	await t.run(async (ctx) => {

@@ -649,3 +649,10 @@ The envelope-safe cursor paging utility (`mcp-server/src/paging.ts`: `DEFAULT_LI
 - PR #661 — Day 92 A0+A1+A2+A3 stacked review — A1 audit matrix source of truth.
 - `mcp-server/src/list-tasks-gate.ts` — canonical `fromAllowList` gate reference implementation.
 - Test reports: `docs/test-reports/s1.5-oauth-d6-d7-2026-06-03.md`, `docs/test-reports/s1.2-mutation-2026-06-03.md`, `docs/test-reports/s2.1-d9-cascade-clients-2026-06-03.md`, `docs/test-reports/s3.1.a-scope-aware-filter-wave-a-2026-06-03.md`, `docs/test-reports/s3.1.b-scope-aware-filter-wave-b-2026-06-03.md`, `docs/test-reports/day92-vp-mcp-audit-matrix.md`.
+
+## Content doors: identity by ID and the verified claim (batch F1)
+
+- The diary, memory, episode, knowledge-base and OKF bundle doors judge ownership by the organisation's permanent ID (`clerkOrgId`) and the agent's ID (`diary.agentId`, `createdById`, `kbUploads.clerkOrgId`), never by a label.
+- Every MCP caller reaches Convex as one service account. These doors therefore refuse a service-account call that carries no `verifiedOrg` (`RBAC_DENIED`, `reason: verified-claim-required`, naming the door). The MCP fills `verifiedOrg` from the verified bearer only, never from a tool argument; a master bearer or the stdio trust context, having no organisation, is refused claimless at these doors.
+- An OKF namespace derives from verified identity: a tenant namespace must name an active mapped org (`OKF_IMPORT_NAMESPACE_UNKNOWN` otherwise), and an imported task whose assignee is not an agent of that org is reported as a conflict.
+- Rows written before this batch need the backfills `backfill_diary_agent_ids`, `backfill_memory_author_ids`, `backfill_kb_upload_org_ids` (dry-run by default, idempotent); until then diary rows without `agentId` are invisible to member reads.

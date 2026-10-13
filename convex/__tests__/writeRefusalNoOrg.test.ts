@@ -48,6 +48,7 @@ import { api } from "../_generated/api";
 import type { Id } from "../_generated/dataModel";
 import schema from "../schema";
 import { seedRosterAgents } from "../../tests/lib/seedRosterAgents";
+import { insertDiary } from "../../tests/lib/diaryRow";
 
 const modules = Object.fromEntries(
 	Object.entries(import.meta.glob("../**/*.ts")).filter(
@@ -134,7 +135,7 @@ const seedBriefingNote = (t: T, orgId: string) =>
 
 const seedDiary = (t: T) =>
 	t.run((ctx) =>
-		ctx.db.insert("diary", {
+		insertDiary(ctx, {
 			date: "2026-07-11",
 			orchestrator: SEAT,
 			content: "seed entry",

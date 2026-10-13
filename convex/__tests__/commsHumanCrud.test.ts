@@ -22,6 +22,7 @@ import { api, internal } from "../_generated/api";
 import type { Id } from "../_generated/dataModel";
 import { seedAgents } from "../../tests/lib/agentIdOf";
 import schema from "../schema";
+import { insertDiary } from "../../tests/lib/diaryRow";
 
 const modules = Object.fromEntries(
 	Object.entries(import.meta.glob("../**/*.ts")).filter(
@@ -122,7 +123,7 @@ async function seedDiary(t: T, owner: Owner) {
 	// asserted name requires its credential.
 	if (owner === "own") await t.run((ctx) => seedRosterAgent(ctx, "org-a", "sigma"));
 	return await t.run(async (ctx) =>
-		ctx.db.insert("diary", {
+		insertDiary(ctx, {
 			date: "2026-10-01",
 			orchestrator: ownerName(owner),
 			content: "seed",

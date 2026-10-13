@@ -38,6 +38,8 @@ import { testClerkOrgId } from "../../tests/fixtures/testClerkOrgId";
 import { findAgentId, seedAgents } from "../../tests/lib/agentIdOf";
 import { seedFleetAgents } from "../../tests/lib/seedFleetAgents";
 import type { Id } from "../_generated/dataModel";
+import { asFleet } from "../../tests/lib/asFleet";
+import { insertDiary } from "../../tests/lib/diaryRow";
 
 const modules = Object.fromEntries(
 	Object.entries(import.meta.glob("../**/*.ts")).filter(
@@ -73,9 +75,7 @@ function asMemberOfOrgA(t: T) {
 }
 
 function asMaster(t: T) {
-	return t.withIdentity({
-		subject: "test-service-account-user-id",
-	} as Parameters<typeof t.withIdentity>[0]);
+	return asFleet(t.withIdentity({ subject: "test-service-account-user-id" } as Parameters<typeof t.withIdentity>[0]), t);
 }
 
 // ── seeds ───────────────────────────────────────────────────────────────────
@@ -144,7 +144,7 @@ async function seedBU(t: T, orchestratorId: string, ownerId?: string) {
 
 async function seedDiary(t: T, orchestrator: string) {
 	return await t.run((ctx) =>
-		ctx.db.insert("diary", {
+		insertDiary(ctx, {
 			date: "2026-09-29",
 			orchestrator,
 			content: "seed diary",

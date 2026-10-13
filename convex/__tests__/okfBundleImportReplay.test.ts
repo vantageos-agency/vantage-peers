@@ -28,6 +28,7 @@
 import { createHash } from "node:crypto";
 import { convexTest } from "convex-test";
 import { describe, expect, test } from "vitest";
+import { testClerkOrgId } from "../../tests/fixtures/testClerkOrgId";
 import { internal } from "../_generated/api";
 import schema from "../schema";
 
@@ -44,6 +45,33 @@ const createTestConvex = () => convexTest(schema, modules);
 
 const NOW = 1_700_000_000_000;
 
+// A tenant namespace names an ACTIVE organisation, and an imported task's assignee
+// is an agent of that organisation (batch F1): every tenant this suite imports
+// into is a mapped org with one agent, "sigma".
+async function seedTenants(t: ReturnType<typeof createTestConvex>) {
+	await t.run(async (ctx) => {
+		for (const slug of ["acme-corp", "tenant-a", "tenant-b"]) {
+			await ctx.db.insert("client_org_mapping", {
+				clerkOrgSlug: slug,
+				clerkOrgId: testClerkOrgId(slug),
+				allowedOrchestrators: [],
+				scopes: [],
+				displayName: slug,
+				isActive: true,
+				createdAt: NOW,
+			});
+			await ctx.db.insert("agents", {
+				orgSlug: slug,
+				clerkOrgId: testClerkOrgId(slug),
+				name: "sigma",
+				normalizedName: "sigma",
+				isActive: true,
+				createdAt: NOW,
+			});
+		}
+	});
+}
+
 // Mirror the caller's hash inputs exactly (convex/okfBundleNode.ts).
 const hash = (input: string): string =>
 	createHash("sha256").update(input, "utf8").digest("hex");
@@ -51,6 +79,7 @@ const hash = (input: string): string =>
 describe("R-18 import replay idempotence", () => {
 	test("memory: a replayed insert returns the same _id, writes one row", async () => {
 		const t = createTestConvex();
+		await seedTenants(t);
 		const ns = "team/acme-corp";
 		const content = "Imported memory body — replay guard.";
 		const contentHash = hash(content);
@@ -91,6 +120,7 @@ describe("R-18 import replay idempotence", () => {
 	// pole proves a re-import over a superseded row creates a NEW live row.
 	test("memory: re-import over a SUPERSEDED (isLatest:false) row inserts a fresh live row", async () => {
 		const t = createTestConvex();
+		await seedTenants(t);
 		const ns = "team/acme-corp";
 		const content = "Imported memory body — supersede-then-reimport.";
 		const contentHash = hash(content);
@@ -135,6 +165,7 @@ describe("R-18 import replay idempotence", () => {
 
 	test("briefing: a replayed insert returns the same _id, writes one row", async () => {
 		const t = createTestConvex();
+		await seedTenants(t);
 		const ns = "team/acme-corp";
 		const title = "Kickoff";
 		const content = "Briefing body — replay guard.";
@@ -178,6 +209,7 @@ describe("R-18 import replay idempotence", () => {
 
 	test("task: a replayed insert returns the same _id, writes one row", async () => {
 		const t = createTestConvex();
+		await seedTenants(t);
 		const ns = "team/acme-corp";
 		const title = "Ship the fix";
 		const description = "Task body — replay guard.";
@@ -227,6 +259,7 @@ describe("R-18 idempotency key is tenant-scoped — cross-tenant deny", () => {
 	// channel. This asserts the key never crosses the tenant boundary.
 	test("task: same content, two tenants → two distinct rows, no cross-tenant match", async () => {
 		const t = createTestConvex();
+		await seedTenants(t);
 		const title = "Shared title";
 		const description = "Shared body.";
 		const contentHash = hash(`${title}\n${description}`);
@@ -283,6 +316,7 @@ describe("R-18 idempotency key is tenant-scoped — cross-tenant deny", () => {
 	// tenants must resolve to two distinct live rows, never a cross-tenant dedup match.
 	test("memory: same content, two tenants → two distinct rows, no cross-tenant match", async () => {
 		const t = createTestConvex();
+		await seedTenants(t);
 		const content = "Shared memory body.";
 		const contentHash = hash(content);
 

@@ -33,6 +33,8 @@ import {
 	type TaskDoc,
 } from "../okfSerializer";
 import schema from "../schema";
+import { asFleet } from "../../tests/lib/asFleet";
+import { seedOperatorOrg } from "../../tests/lib/seedRosterAgents";
 
 // biome-ignore lint/suspicious/noExplicitAny: codegen-lag workaround (cf. B1)
 const IMPORT_ACTION_REF = "okfBundleNode:importOkfBundle" as any;
@@ -53,7 +55,7 @@ const createTestConvex = () => convexTest(schema, modules);
 // gate closes), so they now present the service account the MCP server really
 // authenticates as (CLERK_SERVICE_ACCOUNT_USER_ID in vitest.config.ts).
 function asMaster(t: ReturnType<typeof createTestConvex>) {
-	return t.withIdentity({ subject: "test-service-account-user-id" });
+	return asFleet(t.withIdentity({ subject: "test-service-account-user-id" }), t);
 }
 
 const FIXED_MS = 1_700_000_000_000;
@@ -137,6 +139,7 @@ async function storeBundle(
 describe("import_okf_bundle action — dry-run", () => {
 	test("dry-run returns counts but inserts 0 rows", async () => {
 		const t = createTestConvex();
+		await seedOperatorOrg(t, ["sigma"]);
 		const buf = await packFixtureBundle();
 		const storageId = await storeBundle(t, buf);
 
@@ -165,6 +168,7 @@ describe("import_okf_bundle action — dry-run", () => {
 describe("import_okf_bundle action — merge mode", () => {
 	test("merge inserts new entries + dedup by content hash on re-import", async () => {
 		const t = createTestConvex();
+		await seedOperatorOrg(t, ["sigma"]);
 		const buf = await packFixtureBundle();
 		const storageId = await storeBundle(t, buf);
 
@@ -193,6 +197,7 @@ describe("import_okf_bundle action — merge mode", () => {
 describe("import_okf_bundle action — idempotency", () => {
 	test("same idempotencyKey replayed → no duplicate inserts", async () => {
 		const t = createTestConvex();
+		await seedOperatorOrg(t, ["sigma"]);
 		const buf = await packFixtureBundle();
 		const storageId = await storeBundle(t, buf);
 
@@ -219,6 +224,7 @@ describe("import_okf_bundle action — idempotency", () => {
 describe("import_okf_bundle action — cross-tenant deny", () => {
 	test("identity org X importing namespace team/Y → RBAC_DENIED", async () => {
 		const t = createTestConvex();
+		await seedOperatorOrg(t, ["sigma"]);
 		const buf = await packFixtureBundle();
 		const storageId = await storeBundle(t, buf);
 

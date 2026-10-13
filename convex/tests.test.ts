@@ -4,6 +4,7 @@ import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import { api } from "./_generated/api";
 import type { Id } from "./_generated/dataModel";
 import schema from "./schema";
+import { asFleet } from "../tests/lib/asFleet";
 import { seedFleetAgents } from "../tests/lib/seedFleetAgents";
 
 const FILE_LABELS = ["eta", "phi", "pi", "sigma", "tau"];
@@ -38,9 +39,14 @@ function createTestConvex() {
 	// mutations now require a verified identity; seed with the master
 	// service-account identity so pre-existing (non-auth-focused) test
 	// scenarios in this file are unaffected.
-	return convexTest(schema, modules).withIdentity({
-		subject: "test-service-account-user-id",
-	});
+	// The content doors (diary, memories, episodes) refuse a service-account call that
+	// carries no verified organisation (batch F1); `asFleet` presents the operator
+	// org's claim on exactly those doors, as the MCP does for a fleet seat.
+	const root = convexTest(schema, modules);
+	return asFleet(
+		root.withIdentity({ subject: "test-service-account-user-id" }),
+		root,
+	);
 }
 
 // Messages suite factory: real recipients are now derived from the

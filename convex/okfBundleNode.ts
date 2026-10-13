@@ -25,18 +25,26 @@
  * Orchestrator: Sigma — VantagePeers | 2026-06-19
  */
 
-import { hasFleetRead } from "@vantageos/cloud-identity";
+import {
+	hasFleetRead,
+	requireStanding,
+	sameOrg,
+} from "@vantageos/cloud-identity";
 import { createHash } from "node:crypto";
 import { Readable } from "node:stream";
-import { ConvexError, v } from "convex/values";
+import { v } from "convex/values";
 import { extract, pack } from "tar-stream";
 import { internal as generatedInternal } from "./_generated/api";
+import type { Id } from "./_generated/dataModel";
 import { type ActionCtx, action } from "./_generated/server";
+import { claimedOrgArgs } from "./contentClaims";
 import {
+	type ActionOrgScope,
 	refuseStorageOwnership,
 	requireResolvedCaller,
 	requireTenantNamespace,
 } from "./lib/auth";
+import type { VerifiedOrg } from "./lib/verifiedOrg";
 import {
 	applyMemorySubtypeFilter,
 	assembleBundle,
@@ -227,30 +235,58 @@ export async function packTarball(
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Auth helper (RFC §4) — kept here because the action invokes it and it has
-// no DB dependency. Pure check against ctx.auth + Phase 1 namespace constant.
+// Auth helpers (RFC §4) — the caller is the scope the internal bridge
+// `contentClaims:scopeForAction` resolves for the call: the verified principal
+// with the organisation the transport VERIFIED for the bearer (`verifiedOrg`)
+// applied. A service-account call that carries none is refused there (R-54), and
+// a client org's call runs under that org's MEMBER scope, so the namespace and
+// storage checks below judge the verified organisation, never an argument.
 // ─────────────────────────────────────────────────────────────────────────────
+
+// The standing the OKF bundle doors admit, said by @vantageos/cloud-identity: the
+// fleet (the service account acting for the operator org) or an ordinary member of
+// one organisation. A scope that is neither (absent, refused, self-contradicting)
+// is refused RBAC_DENIED naming the door.
+const OKF_STANDINGS = ["fleet", "member"] as const;
+
+/**
+ * The scope an OKF action runs under (an action has no `ctx.db`, so it reaches
+ * `withOrgScope` through the internal bridge). `door` names the action in a
+ * refusal.
+ */
+async function resolveBundleCaller(
+	ctx: Pick<ActionCtx, "runQuery">,
+	door: string,
+	verifiedOrg: VerifiedOrg | undefined,
+): Promise<ActionOrgScope> {
+	return await ctx.runQuery(internal.contentClaims.scopeForAction, {
+		door,
+		...(verifiedOrg === undefined ? {} : { verifiedOrg }),
+	});
+}
 
 /**
  * Namespace authorization for OKF export/import.
  *
  * Rules:
  *   - The namespace must be a non-empty string with no path-traversal segment.
- *   - Ownership is decided on the RESOLVED scope (`resolveOrgScopeForAction`:
+ *   - Ownership is decided on the RESOLVED scope (`contentClaims:scopeForAction`:
  *     an ACTIVE `client_org_mapping` row), never on the raw org-slug claim.
- *   - The fleet master (the MCP service account) may use any namespace.
- *   - An org member may use ONLY `team/<resolvedOrgSlug>`. Every other
- *     namespace (`orchestrator/*`, `project/*`, `global`, the master namespace
- *     `project/elpi-corp`) is master-only.
+ *   - The fleet (the MCP service account acting for the operator org) may use
+ *     any namespace.
+ *   - An org member may use ONLY `team/<its verified org ID>` (and the legacy
+ *     label alias of that same org). Every other namespace
+ *     (`orchestrator/*`, `project/*`, `global`, the master namespace
+ *     `project/elpi-corp`) is fleet-only.
  *   - Refusals are `RBAC_DENIED` naming the door (`requireTenantNamespace` ->
  *     `requireResolvedCaller`). An unmapped or inactive org is refused by
  *     `withOrgScope` itself, also `RBAC_DENIED`.
  */
-export async function assertCanExportNamespace(
-	ctx: Pick<ActionCtx, "auth" | "runQuery">,
+export function assertCanExportNamespace(
+	scope: ActionOrgScope,
 	namespace: string,
 	door: string,
-): Promise<void> {
+): void {
 	if (typeof namespace !== "string" || namespace.length === 0) {
 		throw new Error(
 			`OKF_NAMESPACE_INVALID: namespace must be a non-empty string, got "${namespace}".`,
@@ -265,19 +301,38 @@ export async function assertCanExportNamespace(
 		);
 	}
 
-	// Namespace ownership comes from the RESOLVED scope (an ACTIVE
-	// client_org_mapping row, reached from an action through
-	// `resolveOrgScopeForAction`), never from the raw org claim on the identity:
-	// a claim naming "pi" with no mapping row used to be served
-	// `orchestrator/pi`, `project/vantage-peers` and `orchestrator/eta`. The
-	// fleet master (service account) is served any namespace; a member is served
-	// only `team/<resolvedOrgSlug>`; everything else, including the master
-	// namespace `project/elpi-corp`, is refused `RBAC_DENIED` naming the door.
-	const scope = await ctx.runQuery(
-		internal.lib.auth.resolveOrgScopeForAction,
-		{},
-	);
+	// Namespace ownership comes from the RESOLVED scope, never from the raw org
+	// claim on the identity: a claim naming "pi" with no mapping row used to be
+	// served `orchestrator/pi`, `project/vantage-peers` and `orchestrator/eta`.
+	// The fleet is served any namespace; a member only its own team namespace;
+	// everything else, including the master namespace `project/elpi-corp`, is
+	// refused `RBAC_DENIED` naming the door.
 	requireTenantNamespace(scope, namespace, door);
+}
+
+/**
+ * ASSERT (never claim) that the caller's verified organisation owns the blob a
+ * `storageId` names: the binding the upload/store/export paths wrote (`kbUploads`)
+ * is judged by its organisation's permanent ID (the package's `sameOrg`), so a
+ * renamed or re-used label owns nothing. Unbound -> AUTH_STORAGE_UNBOUND; bound to
+ * another organisation (or to none yet recorded by ID) -> AUTH_STORAGE_NOT_OWNED.
+ * The fleet keeps reading any blob.
+ */
+async function assertStorageOwned(
+	ctx: Pick<ActionCtx, "runQuery">,
+	scope: ActionOrgScope,
+	storageId: Id<"_storage">,
+	door: string,
+): Promise<void> {
+	if (hasFleetRead(scope)) return;
+	const binding: { orgId: string; clerkOrgId?: string } | null =
+		await ctx.runQuery(internal.kbMutations.getStorageOwner, { storageId });
+	if (binding === null) {
+		refuseStorageOwnership(door, "storage-unbound", scope.orgSlug);
+	}
+	if (!sameOrg({ id: binding.clerkOrgId }, { id: scope.orgClerkId })) {
+		refuseStorageOwnership(door, "storage-not-owned", scope.orgSlug);
+	}
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -291,14 +346,24 @@ export const exportOkfBundle = action({
 		format: v.union(v.literal("tarball"), v.literal("tree")),
 		since: v.optional(v.union(v.string(), v.null())),
 		urlTtl: v.optional(v.number()),
+		...claimedOrgArgs,
 	},
 	handler: async (ctx, args): Promise<ExportOkfBundleResult> => {
 		// 1. Auth.
-		await assertCanExportNamespace(
+		const scope = await resolveBundleCaller(
 			ctx,
+			"okfBundleNode:exportOkfBundle",
+			args.verifiedOrg,
+		);
+		assertCanExportNamespace(
+			scope,
 			args.namespace,
 			"okfBundleNode:exportOkfBundle",
 		);
+		// The namespace gate above refuses an anonymous or organisation-less caller
+		// with its coded reason; the package's standing says the same of the scope
+		// itself: only the fleet or a member of one organisation goes on.
+		requireStanding(scope, "okfBundleNode:exportOkfBundle", OKF_STANDINGS);
 
 		// 2. Format gate — Phase 1 supports tarball only.
 		if (args.format !== "tarball") {
@@ -436,16 +501,15 @@ export const exportOkfBundle = action({
 		// path of kbMutations:getStorageOwner's contract; import and validate
 		// only ASSERT it). Unbound, the blob would be importable by any org that
 		// learned the id. The org comes from the RESOLVED scope, never an
-		// argument. The fleet master has no org slug and stays unbound (it may
-		// read any blob).
-		const exporterScope = await ctx.runQuery(
-			internal.lib.auth.resolveOrgScopeForAction,
-			{},
-		);
-		if (!hasFleetRead(exporterScope) && exporterScope.orgSlug !== null) {
+		// argument. The fleet has no org slug and stays unbound (it may read any
+		// blob).
+		if (!hasFleetRead(scope) && scope.orgSlug !== null) {
 			await ctx.runMutation(internal.kbMutations.bindOrAssertStorageOwnership, {
 				storageId,
-				orgId: exporterScope.orgSlug,
+				orgId: scope.orgSlug,
+				...(scope.orgClerkId === undefined
+					? {}
+					: { clerkOrgId: scope.orgClerkId }),
 			});
 		}
 		const bundleUrl = await ctx.storage.getUrl(storageId);
@@ -619,54 +683,6 @@ function assertBundleUrlSafe(rawUrl: string): URL {
 	return url;
 }
 
-/**
- * Authentication gate — read-only validation still leaks bytes from the
- * caller's storage object and emits an outbound fetch on a caller-supplied
- * URL, so an unauthenticated public action is an SSRF + cross-tenant peek
- * vector (Eta BLOCKER1 on PR #887). Mirror exportOkfBundle's posture: the
- * Convex CLI / deploy-key path has no identity, so accept that case; reject
- * everything else that arrives without an identity attached.
- */
-export async function assertCanValidate(ctx: {
-	auth: { getUserIdentity: () => Promise<unknown> };
-}): Promise<void> {
-	const identity = (await ctx.auth.getUserIdentity()) as Record<
-		string,
-		unknown
-	> | null;
-	if (identity === null || identity === undefined) {
-		// FAIL-OPEN CLOSED. This branch used to `return;` ("CLI / deploy-key —
-		// server-trusted"), which waved through ANY caller presenting no credential
-		// at all — the SSRF + storage-peek vector this gate exists to stop. The
-		// only callers are `validateOkfBundle` below (MCP always attaches a Clerk
-		// JWT: service-account or caller's own) and the unit tests. An absent
-		// identity is REFUSED, by raising, with the code in the payload.
-		throw new ConvexError(
-			`RBAC_DENIED: no credential presented to "okfBundleNode:validateOkfBundle" — an unidentified caller is refused — ${JSON.stringify(
-				{
-					registration: "okfBundleNode:validateOkfBundle",
-					orgSlug: null,
-					reason: "no-credential",
-				},
-			)}`,
-		);
-	}
-	// Identity attached: minimal sanity — must carry at least one usable claim
-	// so a stripped/garbled identity is rejected before we touch storage / network.
-	const hasClaim =
-		typeof identity.tokenIdentifier === "string" ||
-		typeof identity.subject === "string" ||
-		typeof identity.organizationId === "string" ||
-		typeof identity.organizationSlug === "string" ||
-		typeof identity.org_id === "string" ||
-		typeof identity.org_slug === "string";
-	if (!hasClaim) {
-		throw new Error(
-			"OKF_VALIDATE_UNAUTHENTICATED: identity present but carries no recognised claim.",
-		);
-	}
-}
-
 function countFamilies(entries: readonly BundleEntry[]): {
 	memoryCount: number;
 	briefingCount: number;
@@ -691,11 +707,24 @@ export const validateOkfBundle = action({
 	args: {
 		bundleUrl: v.optional(v.union(v.string(), v.null())),
 		storageId: v.optional(v.union(v.id("_storage"), v.null())),
+		...claimedOrgArgs,
 	},
 	handler: async (ctx, args): Promise<ValidateOkfBundleResult> => {
 		// 0. Auth gate — fail-closed before touching storage or network
-		// (Eta BLOCKER1 PR #887: SSRF + cross-tenant peek vector).
-		await assertCanValidate(ctx);
+		// (Eta BLOCKER1 PR #887: SSRF + cross-tenant peek vector). Read-only
+		// validation still leaks bytes from the caller's storage object and emits an
+		// outbound fetch on a caller-supplied URL, so an unauthenticated public
+		// action is an SSRF + cross-tenant peek vector. The caller is the scope the
+		// bridge resolves (a service-account call must carry the organisation the
+		// transport verified): an absent credential is REFUSED, by raising, with the
+		// code in the payload. The bridge replaces the identity-claim sniffing this
+		// gate used to do itself: who the caller is, is the package's decision.
+		const scope = await resolveBundleCaller(
+			ctx,
+			"okfBundleNode:validateOkfBundle",
+			args.verifiedOrg,
+		);
+		requireResolvedCaller(scope, "okfBundleNode:validateOkfBundle");
 
 		// At least one source is required.
 		const url = args.bundleUrl ?? null;
@@ -728,31 +757,15 @@ export const validateOkfBundle = action({
 			// (grep -rn "validateOkfBundle" in vantage-peers-dashboard
 			// {app,components,hooks,lib,contexts,providers} -> 0 hits).
 			// The bundleUrl branch reads no VP data and keeps its SSRF gate only.
-			const scope = await ctx.runQuery(
-				internal.lib.auth.resolveOrgScopeForAction,
-				{},
-			);
 			requireResolvedCaller(scope, "okfBundleNode:validateOkfBundle", {
 				alsoRefusePreOrg: true,
 			});
-			if (!hasFleetRead(scope)) {
-				const owner: string | null = await ctx.runQuery(
-					internal.kbMutations.getStorageOwner,
-					{ storageId },
-				);
-				if (owner === null)
-					refuseStorageOwnership(
-						"okfBundleNode:validateOkfBundle",
-						"storage-unbound",
-						scope.orgSlug,
-					);
-				if (owner !== scope.orgSlug)
-					refuseStorageOwnership(
-						"okfBundleNode:validateOkfBundle",
-						"storage-not-owned",
-						scope.orgSlug,
-					);
-			}
+			await assertStorageOwned(
+				ctx,
+				scope,
+				storageId,
+				"okfBundleNode:validateOkfBundle",
+			);
 			blob = await ctx.storage.get(storageId);
 			if (blob === null) {
 				throw new Error(
@@ -846,19 +859,6 @@ export interface ImportOkfBundleResult {
 	conflicts: Array<{ path: string; reason: string }>;
 }
 
-async function assertCanImport(
-	ctx: Pick<ActionCtx, "auth" | "runQuery">,
-	namespace: string,
-): Promise<void> {
-	// Reuse the export-side guard semantics 1:1 — import has identical
-	// cross-tenant write risk (Eta REVISE iter-2 on #888 fail-closed pattern).
-	await assertCanExportNamespace(
-		ctx,
-		namespace,
-		"okfBundleNode:importOkfBundle",
-	);
-}
-
 interface ParsedMemory {
 	kind: "memory";
 	type: "user" | "feedback" | "project" | "reference" | "episode";
@@ -884,6 +884,12 @@ interface ParsedTask {
 }
 type ParsedEntry = ParsedMemory | ParsedBriefing | ParsedTask;
 
+// allow-local-identity: a false positive of the scope kind, not an identity
+// decision. `allowed`, `allowedPrio` and `allowedStatus` are closed sets of OKF
+// FRONT-MATTER VALUES (memory subtypes, task priorities, task statuses) that the
+// parser checks a bundle entry's own fields against; they name no caller, tenant,
+// roster or organisation. The doctor reads the variable names `allowed*` as a
+// caller's allow-list.
 function parseEntry(entry: BundleEntry): ParsedEntry | null {
 	const parsed = matter(entry.content);
 	const fm = parsed.data as Record<string, unknown>;
@@ -949,10 +955,23 @@ export const importOkfBundle = action({
 			v.literal("replace"),
 		),
 		idempotencyKey: v.optional(v.string()),
+		...claimedOrgArgs,
 	},
 	handler: async (ctx, args): Promise<ImportOkfBundleResult> => {
-		// 1. Auth — fail-closed cross-tenant guard.
-		await assertCanImport(ctx, args.targetNamespace);
+		// 1. Auth — fail-closed cross-tenant guard. Import has the same cross-tenant
+		// write risk as export, so it reuses the export-side guard semantics 1:1
+		// (Eta REVISE iter-2 on #888 fail-closed pattern).
+		const scope = await resolveBundleCaller(
+			ctx,
+			"okfBundleNode:importOkfBundle",
+			args.verifiedOrg,
+		);
+		assertCanExportNamespace(
+			scope,
+			args.targetNamespace,
+			"okfBundleNode:importOkfBundle",
+		);
+		requireStanding(scope, "okfBundleNode:importOkfBundle", OKF_STANDINGS);
 
 		// 2. Source resolution.
 		if (
@@ -984,31 +1003,15 @@ export const importOkfBundle = action({
 			// `isolation-contract:` alsoRefusePreOrg — an action has no reactive
 			// subscriber (grep -rln "importOkfBundle" in vantage-peers-dashboard,
 			// excluding node_modules and .next -> 0 hits).
-			const scope = await ctx.runQuery(
-				internal.lib.auth.resolveOrgScopeForAction,
-				{},
-			);
 			requireResolvedCaller(scope, "okfBundleNode:importOkfBundle", {
 				alsoRefusePreOrg: true,
 			});
-			if (!hasFleetRead(scope)) {
-				const owner: string | null = await ctx.runQuery(
-					internal.kbMutations.getStorageOwner,
-					{ storageId: args.storageId },
-				);
-				if (owner === null)
-					refuseStorageOwnership(
-						"okfBundleNode:importOkfBundle",
-						"storage-unbound",
-						scope.orgSlug,
-					);
-				if (owner !== scope.orgSlug)
-					refuseStorageOwnership(
-						"okfBundleNode:importOkfBundle",
-						"storage-not-owned",
-						scope.orgSlug,
-					);
-			}
+			await assertStorageOwned(
+				ctx,
+				scope,
+				args.storageId,
+				"okfBundleNode:importOkfBundle",
+			);
 			const blob = await ctx.storage.get(args.storageId);
 			if (!blob) {
 				throw new Error(
@@ -1127,19 +1130,32 @@ export const importOkfBundle = action({
 					continue;
 				}
 				if (args.mode !== "dry-run") {
-					await ctx.runMutation(internal.okfBundle._insertImportedTask, {
-						namespace: args.targetNamespace,
-						title: parsed.title,
-						description: parsed.description,
-						assignedTo: parsed.assignedTo,
-						priority: parsed.priority,
-						status: parsed.status,
-						createdBy: parsed.createdBy,
-						contentHash: okfContentHash(
-							`${parsed.title}\n${parsed.description ?? ""}`,
-						),
-						now,
-					});
+					const insertedTask = await ctx.runMutation(
+						internal.okfBundle._insertImportedTask,
+						{
+							namespace: args.targetNamespace,
+							title: parsed.title,
+							description: parsed.description,
+							assignedTo: parsed.assignedTo,
+							priority: parsed.priority,
+							status: parsed.status,
+							createdBy: parsed.createdBy,
+							contentHash: okfContentHash(
+								`${parsed.title}\n${parsed.description ?? ""}`,
+							),
+							now,
+						},
+					);
+					// The assignee names no active agent of the target organisation: an
+					// assignment resolves to an agent of the task's own org, so the task is
+					// reported, not imported under a dangling label.
+					if (insertedTask === null) {
+						out.conflicts.push({
+							path: entry.path,
+							reason: `ASSIGNEE_NOT_IN_ORG: "${parsed.assignedTo}" names no active agent of the target organisation`,
+						});
+						continue;
+					}
 				}
 				out.imported.tasks++;
 			}

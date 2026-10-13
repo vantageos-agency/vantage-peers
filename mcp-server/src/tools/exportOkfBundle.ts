@@ -22,8 +22,9 @@ import type { McpServer } from "@modelcontextprotocol/server";
 import { ProtocolError, ProtocolErrorCode } from "@modelcontextprotocol/server";
 import type { ConvexHttpClient } from "convex/browser";
 import { z } from "zod";
-import type { OAuthContext } from "../auth.js";
+import { checkNamespaceRead, type OAuthContext } from "../auth.js";
 import { defineTool } from "../registerTool.js";
+import { NO_VERIFIED_ORG, type VerifiedOrgArgs } from "../verifiedActor.js";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Public types (mirror the Convex action return shape)
@@ -107,16 +108,29 @@ export function registerExportOkfBundle(
 	server: McpServer,
 	convex: ConvexHttpClient,
 	oauthCtx?: OAuthContext,
+	// The organisation THIS bearer was verified for (never a tool argument): the
+	// Convex action derives the export boundary from it and refuses a
+	// service-account call that carries none (backend standard R-54).
+	verifiedOrgArgs: VerifiedOrgArgs = NO_VERIFIED_ORG,
 ): void {
 	// oracle-justified: export and import_okf_bundle are the two directions of
 	// one bundle format over the same tables: export READS memories, briefing
 	// notes and tasks and stores the tarball in _storage (okfBundleNode:
 	// exportOkfBundle, convex/okfBundleNode.ts), import WRITES them, so their
-	// verbs differ by purpose.
+	// verbs differ by purpose. The boundary is the VERIFIED organisation, not the
+	// namespace argument: the Convex action derives the caller's scope from the
+	// organisation the transport verified for this bearer (verifiedOrg through
+	// contentClaims:scopeForAction) and refuses a namespace outside it
+	// (okfBundleNode assertCanExportNamespace); the namespace argument only names
+	// WHICH of the caller's own namespaces to export.
 	defineTool(
 		server,
 		{ oauthCtx },
-		{ kind: "read", namespaceArg: "namespace" },
+		{
+			kind: "filtered",
+			reason:
+				"export boundary derived from the verified organisation (verifiedOrg claim, resolved by the Convex action); the namespace argument is checked against it in the action and against the bearer's read prefixes here",
+		},
 		"export_okf_bundle",
 		"Export a VantagePeers namespace as an OKF v0.1 bundle (tarball). " +
 			"WHEN: use to ship a snapshot to Knowledge Catalog / RAG bridge / audit. " +
@@ -131,6 +145,15 @@ export function registerExportOkfBundle(
 			title: "Export OKF bundle",
 		},
 		async ({ namespace, types, format, since, urlTtl }) => {
+			// The bearer's own read prefixes still bound the namespace here, as the
+			// `read` scope kind did before the boundary moved to the verified org.
+			const namespaceDenied = checkNamespaceRead(oauthCtx, namespace);
+			if (namespaceDenied !== null) {
+				return {
+					content: [{ type: "text" as const, text: namespaceDenied }],
+					isError: true as const,
+				};
+			}
 			try {
 				// String FunctionReference cast mirrors the pattern used in tools.ts
 				// for newly-added Convex functions whose codegen has not yet run in
@@ -151,6 +174,7 @@ export function registerExportOkfBundle(
 						format,
 						since: since ?? null,
 						urlTtl,
+						...verifiedOrgArgs(),
 					},
 				)) as ExportOkfBundleResult;
 

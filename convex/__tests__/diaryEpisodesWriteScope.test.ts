@@ -35,6 +35,8 @@ import { testClerkOrgId } from "../../tests/fixtures/testClerkOrgId";
 import { api } from "../_generated/api";
 import schema from "../schema";
 import { seedRosterAgent } from "../../tests/fixtures/rosterAgent";
+import { fleetClaim } from "../../tests/lib/fleetClaim";
+import { seedOperatorOrg } from "../../tests/lib/seedRosterAgents";
 
 const modules = Object.fromEntries(
 	Object.entries(import.meta.glob("../**/*.ts")).filter(
@@ -125,12 +127,14 @@ describe("diary.write — write-scope enforcement", () => {
 
 	test("the master/service-account identity writes as today", async () => {
 		const t = createT();
+		await seedOperatorOrg(t, ["seat-b"]);
 		const tMaster = asMaster(t);
 
 		const diaryId = await tMaster.mutation(api.diary.write, {
 			date: "2026-09-21",
 			orchestrator: "seat-b",
 			content: "master write into any seat",
+			...(await fleetClaim(t)),
 		});
 		expect(diaryId).toBeDefined();
 	});
@@ -156,10 +160,12 @@ describe("diary.write — write-scope enforcement", () => {
 			}),
 		).rejects.toThrow(/RBAC_DENIED/);
 
+		await seedOperatorOrg(t, ["seat-b"]);
 		const rows = await asMaster(t).query(api.diary.listByDateRange, {
 			from: "2026-09-21",
 			to: "2026-09-21",
 			orchestrator: "seat-b",
+			...(await fleetClaim(t)),
 		});
 		expect(rows).toHaveLength(0);
 	});
@@ -168,10 +174,12 @@ describe("diary.write — write-scope enforcement", () => {
 describe("diary.deleteDiary — write-scope enforcement", () => {
 	test("an anonymous (no identity) caller is refused", async () => {
 		const t = createT();
+		await seedOperatorOrg(t, ["seat-b"]);
 		const diaryId = await asMaster(t).mutation(api.diary.write, {
 			date: "2026-09-21",
 			orchestrator: "seat-b",
 			content: "org-b's entry",
+			...(await fleetClaim(t)),
 		});
 
 		await expect(
@@ -188,14 +196,18 @@ describe("diary.deleteDiary — write-scope enforcement", () => {
 	// class messages.ts's deleteMessage closed on PR #1313).
 	test("an anonymous (no identity) caller deleting a non-existent diaryId gets RBAC_DENIED, not 'not found'", async () => {
 		const t = createT();
+		await seedOperatorOrg(t, ["seat-b"]);
+		const fleet = await fleetClaim(t);
 		const diaryId = await asMaster(t).mutation(api.diary.write, {
 			date: "2026-09-21",
 			orchestrator: "seat-b",
 			content: "org-b's entry, to be deleted first",
+			...fleet,
 		});
 		await asMaster(t).mutation(api.diary.deleteDiary, {
 			diaryId,
 			callerOrchestrator: "seat-b",
+			...fleet,
 		});
 
 		await expect(
@@ -209,10 +221,12 @@ describe("diary.deleteDiary — write-scope enforcement", () => {
 	test("an org-a caller deleting org-b's diary entry is refused", async () => {
 		const t = createT();
 		await seedOrgAMapping(t);
+		await seedOperatorOrg(t, ["seat-b"]);
 		const diaryId = await asMaster(t).mutation(api.diary.write, {
 			date: "2026-09-21",
 			orchestrator: "seat-b",
 			content: "org-b's entry",
+			...(await fleetClaim(t)),
 		});
 		const tA = asOrgA(t);
 
@@ -244,17 +258,21 @@ describe("diary.deleteDiary — write-scope enforcement", () => {
 
 	test("the master/service-account identity deletes as today", async () => {
 		const t = createT();
+		await seedOperatorOrg(t, ["seat-b"]);
 		const tMaster = asMaster(t);
+		const fleet = await fleetClaim(t);
 
 		const diaryId = await tMaster.mutation(api.diary.write, {
 			date: "2026-09-21",
 			orchestrator: "seat-b",
 			content: "org-b's entry",
+			...fleet,
 		});
 
 		const result = await tMaster.mutation(api.diary.deleteDiary, {
 			diaryId,
 			callerOrchestrator: "seat-b",
+			...fleet,
 		});
 		expect(result.deleted).toBe(true);
 	});
@@ -327,6 +345,7 @@ describe("episodes.storeEpisode — write-scope enforcement", () => {
 			outcome: "outcome",
 			insight: "insight",
 			severity: "minor",
+			...(await fleetClaim(t)),
 		});
 		expect(memoryId).toBeDefined();
 	});

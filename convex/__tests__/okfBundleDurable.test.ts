@@ -48,6 +48,7 @@ import agentEngineSchema from "../../node_modules/@vantageos/agent-engine/dist/c
 import { testClerkOrgId } from "../../tests/fixtures/testClerkOrgId";
 import { api, internal } from "../_generated/api";
 import schema from "../schema";
+import { asFleet } from "../../tests/lib/asFleet";
 
 const modules = Object.fromEntries(
 	Object.entries(import.meta.glob("../**/*.ts")).filter(
@@ -103,7 +104,7 @@ describe("agent-engine 0.1.0-alpha.4 — the auth gate no longer blocks the call
 	test("startOkfBundleExportDurable no longer throws Unauthenticated; it now hits the convex-test component-boundary limitation instead", async () => {
 		const base = withAgentEngine(convexTest(schema, modules));
 		// Service account: the master namespace is reserved to the fleet master.
-		const t = base.withIdentity({ subject: "test-service-account-user-id" });
+		const t = asFleet(base.withIdentity({ subject: "test-service-account-user-id" }), base);
 
 		// This proves the orgId-as-argument fix (alpha.2 -> alpha.4) reached the
 		// engine: auth is no longer the failure mode for this call. The
@@ -186,8 +187,19 @@ describe("okfBundleDurable — step function plumbing (real fixed-contract entry
 	) {
 		return await t.run(async (ctx) => {
 			const now = NOW;
-			// team/<orgId> namespace convention used elsewhere in okfBundle.ts.
+			// team/<orgId> namespace convention used elsewhere in okfBundle.ts. The
+			// namespace names an ACTIVE organisation, and its rows are the rows
+			// stamped with that organisation's permanent ID (batch F1).
 			const namespace = `team/${opts.orgId}`;
+			await ctx.db.insert("client_org_mapping", {
+				clerkOrgSlug: opts.orgId,
+				clerkOrgId: testClerkOrgId(opts.orgId),
+				allowedOrchestrators: [],
+				scopes: [],
+				displayName: opts.orgId,
+				isActive: true,
+				createdAt: now,
+			});
 			await ctx.db.insert("memories", {
 				namespace,
 				type: "project",
@@ -453,7 +465,7 @@ describe("okfBundleDurable — auth (V8-safe assertCanExportNamespaceV8, mirrors
 	test("rejects totalSteps <= 0", async () => {
 		const base = withAgentEngine(convexTest(schema, modules));
 		// Service account: the master namespace is reserved to the fleet master.
-		const t = base.withIdentity({ subject: "test-service-account-user-id" });
+		const t = asFleet(base.withIdentity({ subject: "test-service-account-user-id" }), base);
 		await expect(
 			t.mutation(apiAny.okfBundleDurable.startOkfBundleExportDurable, {
 				namespace: "project/elpi-corp",

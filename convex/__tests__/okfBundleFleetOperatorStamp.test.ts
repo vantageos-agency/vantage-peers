@@ -8,6 +8,7 @@
 
 import { convexTest } from "convex-test";
 import { describe, expect, test } from "vitest";
+import { testClerkOrgId } from "../../tests/fixtures/testClerkOrgId";
 import { internal } from "../_generated/api";
 import { PHASE1_NAMESPACE } from "../okfBundle";
 import schema from "../schema";
@@ -25,6 +26,7 @@ async function seed(t: T) {
 	return await t.run(async (ctx) => {
 		await ctx.db.insert("client_org_mapping", {
 			clerkOrgSlug: OP,
+			clerkOrgId: testClerkOrgId(OP),
 			allowedOrchestrators: [],
 			scopes: [],
 			displayName: OP,
@@ -34,6 +36,7 @@ async function seed(t: T) {
 		});
 		await ctx.db.insert("agents", {
 			orgSlug: OP,
+			clerkOrgId: testClerkOrgId(OP),
 			name: "sigma",
 			normalizedName: "sigma",
 			isActive: true,
@@ -112,6 +115,9 @@ describe("fleet OKF bundle after the operator-slug stamp", () => {
 		const k = await t.run((ctx) => ctx.db.get(s.taskStamped));
 		expect(n?.orgId).toBe(OP);
 		expect(k?.orgId).toBe(OP);
+		// The fleet is judged by the operator org's permanent ID (batch F1).
+		expect(n?.clerkOrgId).toBe(testClerkOrgId(OP));
+		expect(k?.clerkOrgId).toBe(testClerkOrgId(OP));
 	});
 
 	test("PRESENT: export returns operator-stamped AND unstamped rows, never a client org's", async () => {
@@ -243,7 +249,7 @@ describe("fleet OKF bundle after the operator-slug stamp", () => {
 		expect(await drain(t, "_fetchTasksForBundle")).toEqual(["legacy"]);
 	});
 
-	test("PAGINATION: a multi-page export crosses the U| -> O| boundary with no loss and no duplicate", async () => {
+	test("PAGINATION: a multi-page export crosses the operator-stamped -> unstamped phase boundary (0| -> 1|) with no loss and no duplicate", async () => {
 		const t = createT();
 		await seed(t);
 		// 5 more unstamped (no resolvable creator) and 5 more fleet rows (stamped by the run).
@@ -281,10 +287,11 @@ describe("fleet OKF bundle after the operator-slug stamp", () => {
 			phases.push(r.continueCursor.slice(0, 2));
 			cursor = r.continueCursor;
 		}
-		// Several pages in each phase, and exactly one U| -> O| transition.
-		expect(phases.filter((p) => p === "U|").length).toBeGreaterThan(1);
-		expect(phases.filter((p) => p === "O|").length).toBeGreaterThan(1);
-		expect(phases.indexOf("O|")).toBeGreaterThan(phases.lastIndexOf("U|"));
+		// Several pages in each phase, and exactly one 0| -> 1| transition: phase 0 is
+		// the operator org's range (by its permanent ID), phase 1 the unstamped range.
+		expect(phases.filter((p) => p === "0|").length).toBeGreaterThan(1);
+		expect(phases.filter((p) => p === "1|").length).toBeGreaterThan(1);
+		expect(phases.indexOf("1|")).toBeGreaterThan(phases.lastIndexOf("0|"));
 		// 6 unstamped + 6 operator-stamped, each exactly once; the client row never.
 		expect(titles.length).toBe(new Set(titles).size);
 		expect(titles.sort()).toEqual(

@@ -29,8 +29,10 @@ import { afterEach, describe, expect, test, vi } from "vitest";
 import { testClerkOrgId } from "../../tests/fixtures/testClerkOrgId";
 import { api } from "../_generated/api";
 import schema from "../schema";
+import { fleetClaim } from "../../tests/lib/fleetClaim";
 import { seedAgents } from "../../tests/lib/agentIdOf";
 import { mintAgentSecret } from "../../tests/lib/seedFleetAgents";
+import { insertDiary } from "../../tests/lib/diaryRow";
 
 const modules = Object.fromEntries(
 	Object.entries(import.meta.glob("../**/*.ts")).filter(
@@ -423,7 +425,7 @@ async function seedFleet(t: T) {
 			createdBy: "pi",
 			createdAt: 1,
 		} as never);
-		const diary = await ctx.db.insert("diary", {
+		const diary = await insertDiary(ctx, {
 			orchestrator: "pi",
 			date: "2026-10-01",
 			content: "x",
@@ -569,6 +571,7 @@ describe("operator human: master for READS, member for WRITES", () => {
 		await sa.mutation(api.diary.deleteDiary, {
 			diaryId: ids.diary,
 			callerOrchestrator: "system",
+			...(await fleetClaim(t)),
 		} as never);
 		expect(await t.run((ctx) => ctx.db.query("diary").collect())).toHaveLength(0);
 	});

@@ -1,10 +1,14 @@
 import { hasFleetRead } from "@vantageos/cloud-identity";
+import type { OrderedQuery } from "convex/server";
 import { v, ConvexError } from "convex/values";
 import { mutation, query, internalMutation } from "./_generated/server";
+import type { QueryCtx } from "./_generated/server";
 import { internal } from "./_generated/api";
 import { memoryTypeValidator, creatorValidator, relationTypeValidator, severityValidator } from "./schema";
+import { authorIdOfLabel, claimedOrgArgs, requireClaimedScope } from "./contentClaims";
 import { requireId } from "./lib/ids";
 import { isMcpBoundMaster, withOrgScope } from "./lib/auth";
+import type { OrgScope } from "./lib/auth";
 import {
   memoryAuthorOf,
   memoryStampForWrite,
@@ -12,7 +16,7 @@ import {
   teamLabelOfNamespace,
 } from "./lib/memoryTenant";
 import { isTeamNamespaceAllowed } from "./lib/teamNamespace";
-import type { Doc } from "./_generated/dataModel";
+import type { DataModel, Doc } from "./_generated/dataModel";
 
 // expireMemoriesByTtl scans candidate rows with a ttl set; this is a bounded
 // cron batch size, not an expected total-row count, so 500 is a safe ceiling
@@ -42,10 +46,6 @@ const TTL_EXPIRY_SCAN_CAP = 500;
 // delegates to it; memories.ts cannot be imported from lib/auth.ts without a
 // cycle). Re-exported here so existing importers keep working.
 export { isNamespaceAllowedForScope } from "./lib/auth";
-import {
-  resolveVerifiedOrgScope,
-  verifiedOrgValidator,
-} from "./lib/verifiedOrg";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // storeMemory
@@ -83,6 +83,7 @@ export const storeMemory = mutation({
         severity: severityValidator,
       }),
     ),
+    ...claimedOrgArgs,
   },
   returns: v.id("memories"),
   handler: async (ctx, args) => {
@@ -97,7 +98,15 @@ export const storeMemory = mutation({
     // Clerk identity (the caller's own org JWT or its service-account
     // token; see mcp-server/src/authenticatedConvexClient.ts), so the
     // fail-closed default here never breaks that live path.
-    const scope = await withOrgScope(ctx);
+    const transport = await withOrgScope(ctx);
+    // The service account acts only inside the organisation the transport verified
+    // for the bearer (`verifiedOrg`); a claimless call is refused (R-54).
+    const scope = await requireClaimedScope(
+      ctx,
+      transport,
+      args.verifiedOrg,
+      "memories:storeMemory",
+    );
     // Namespace ownership is the ONE decision of convex/lib/teamNamespace.ts (the
     // episode doors call it too): `team/<its org ID>`, or the legacy label alias of
     // the same verified org.
@@ -111,12 +120,15 @@ export const storeMemory = mutation({
     // any other caller is a person, recorded as its verified subject, and a claimed
     // author that is anyone else is refused before anything is written. A member's
     // row carries its permanent org ID; the master's the ID the namespace names.
+    // The seat's author is named by the SERVICE ACCOUNT (the transport), also when
+    // it acts inside a claimed client org's member scope.
     const createdBy = memoryAuthorOf(
       scope,
       args.createdBy,
       "memories:storeMemory",
-      isMcpBoundMaster(scope),
+      isMcpBoundMaster(transport),
     );
+    const createdById = await authorIdOfLabel(ctx, scope, createdBy);
     const clerkOrgId = await memoryStampForWrite(
       ctx,
       scope,
@@ -157,6 +169,7 @@ export const storeMemory = mutation({
       ttl: args.ttl,
       episode: args.episode,
       ...(clerkOrgId === undefined ? {} : { clerkOrgId }),
+      ...(createdById === undefined ? {} : { createdById }),
       createdAt: now,
       updatedAt: now,
     });
@@ -196,84 +209,7 @@ export const storeMemory = mutation({
   },
 });
 
-// ─────────────────────────────────────────────────────────────────────────────
-// getMemory — fetch single memory by ID
-// ─────────────────────────────────────────────────────────────────────────────
-
-export const getMemory = query({
-  args: {
-    memoryId: v.string(),
-    // The organisation the MCP transport VERIFIED for a bearer that reaches
-    // Convex as the fleet service account. Believed from the service account
-    // only; the namespace gate below then runs under that org's member scope,
-    // so a foreign memory is never returned to the MCP process
-    // (convex/lib/verifiedOrg.ts).
-    verifiedOrg: v.optional(verifiedOrgValidator),
-  },
-  returns: v.union(
-    v.object({
-      _id: v.id("memories"),
-      _creationTime: v.number(),
-      namespace: v.string(),
-      type: memoryTypeValidator,
-      content: v.string(),
-      createdBy: creatorValidator,
-      instanceId: v.optional(v.string()),
-      relations: v.array(
-        v.object({
-          targetId: v.id("memories"),
-          type: relationTypeValidator,
-        }),
-      ),
-      isLatest: v.boolean(),
-      ttl: v.optional(v.string()),
-      episode: v.optional(
-        v.object({
-          context: v.string(),
-          goal: v.string(),
-          action: v.string(),
-          outcome: v.string(),
-          insight: v.string(),
-          severity: severityValidator,
-        }),
-      ),
-      createdAt: v.number(),
-      updatedAt: v.number(),
-      // R-18 import idempotency key; only OKF-imported rows carry it.
-      contentHash: v.optional(v.string()),
-      clerkOrgId: v.optional(v.string()),
-    }),
-    v.null(),
-  ),
-  handler: async (ctx, args) => {
-    const memoryId = requireId(
-      ctx,
-      "memories",
-      args.memoryId,
-      "memoryId",
-      "Use the full 32-char memoryId returned by recall or store_memory.",
-    );
-    const doc = await ctx.db.get(memoryId);
-    if (doc === null) return null;
-    // R-50: reactively-subscribed public query — refuseWithoutThrow narrows
-    // the signed-in-no-org branch to a typed refused scope; isNamespaceAllowedForScope
-    // already renders that as "not allowed" -> null, never a throw.
-    const transportScope = await withOrgScope(ctx, { refuseWithoutThrow: true });
-    const scope = await resolveVerifiedOrgScope(
-      ctx,
-      transportScope,
-      args.verifiedOrg,
-      "memories:getMemory",
-    );
-    if (!memoryVisibleToScope(scope, doc)) return null;
-    return doc;
-  },
-});
-
-// ─────────────────────────────────────────────────────────────────────────────
-// listMemories — list active memories by namespace, with optional type filter
-// ─────────────────────────────────────────────────────────────────────────────
-
+// Full memory document shape — used in query returns.
 const memoryDocValidator = v.object({
   _id: v.id("memories"),
   _creationTime: v.number(),
@@ -306,7 +242,56 @@ const memoryDocValidator = v.object({
   contentHash: v.optional(v.string()),
   // M10a: the owning organisation's permanent ID (absent on unstamped rows).
   clerkOrgId: v.optional(v.string()),
+  // F1: the author's ID (an agents row ID, or "user:<subject>"); absent until backfilled.
+  createdById: v.optional(v.string()),
 });
+
+// ─────────────────────────────────────────────────────────────────────────────
+// getMemory — fetch single memory by ID
+// ─────────────────────────────────────────────────────────────────────────────
+
+export const getMemory = query({
+  args: {
+    memoryId: v.string(),
+    // The organisation the MCP transport VERIFIED for a bearer that reaches
+    // Convex as the fleet service account. Believed from the service account
+    // only; the namespace gate below then runs under that org's member scope,
+    // so a foreign memory is never returned to the MCP process
+    // (convex/lib/verifiedOrg.ts). A service-account call that carries none is
+    // refused (convex/contentClaims.ts).
+    ...claimedOrgArgs,
+  },
+  returns: v.union(memoryDocValidator, v.null()),
+  handler: async (ctx, args) => {
+    const memoryId = requireId(
+      ctx,
+      "memories",
+      args.memoryId,
+      "memoryId",
+      "Use the full 32-char memoryId returned by recall or store_memory.",
+    );
+    // R-50: reactively-subscribed public query — refuseWithoutThrow narrows
+    // the signed-in-no-org branch to a typed refused scope; isNamespaceAllowedForScope
+    // already renders that as "not allowed" -> null, never a throw. The caller is
+    // resolved BEFORE the row is read, so an unclaimed service-account call is
+    // refused identically for a live and for a deleted id.
+    const transport = await withOrgScope(ctx, { refuseWithoutThrow: true });
+    const scope = await requireClaimedScope(
+      ctx,
+      transport,
+      args.verifiedOrg,
+      "memories:getMemory",
+    );
+    const doc = await ctx.db.get(memoryId);
+    if (doc === null) return null;
+    if (!memoryVisibleToScope(scope, doc)) return null;
+    return doc;
+  },
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// listMemories — list active memories by namespace, with optional type filter
+// ─────────────────────────────────────────────────────────────────────────────
 
 // Paginated return shape — compat-first: existing callers reading `.value` work unchanged.
 const listMemoriesResultValidator = v.object({
@@ -315,11 +300,79 @@ const listMemoriesResultValidator = v.object({
   isDone: v.boolean(),
 });
 
+// The page of memories one namespace holds for a scope, as ONE ordered query: every
+// predicate that decides which rows belong to the page (the tenant, the type, the
+// author, the latest flag) sits in the index range or the query builder, so the
+// bound that follows (`.take` / `.paginate`) counts only rows the caller may see.
+// A member's range is its own org's rows (`by_namespace_org`: the org's permanent
+// ID is an index predicate), the fleet's is the whole namespace.
+type MemoryQuery = OrderedQuery<DataModel["memories"]>;
+
+export function memoryPageQuery(
+  ctx: QueryCtx,
+  scope: Pick<OrgScope, "isMaster" | "fleetWide" | "masterSource" | "orgClerkId">,
+  args: {
+    namespace: string;
+    type: Doc<"memories">["type"] | undefined;
+    latestOnly: boolean;
+    createdById: string | undefined;
+  },
+): MemoryQuery {
+  const { namespace, type, latestOnly, createdById } = args;
+  const fleet = hasFleetRead(scope);
+  const tenantId = fleet ? undefined : scope.orgClerkId;
+  // Fail closed: a scope that is not the fleet's and carries no org ID owns no
+  // range. It is never read as the fleet's (the whole namespace).
+  if (!fleet && tenantId === undefined) {
+    throw new ConvexError(
+      `RBAC_DENIED: the caller's organisation has no permanent org ID to read a namespace by — ${JSON.stringify({ reason: "org-id-missing", door: "memories:memoryPageQuery" })}`,
+    );
+  }
+  let rows: MemoryQuery;
+  if (tenantId !== undefined) {
+    rows = ctx.db
+      .query("memories")
+      .withIndex("by_namespace_org", (q) =>
+        latestOnly
+          ? q.eq("namespace", namespace).eq("clerkOrgId", tenantId).eq("isLatest", true)
+          : q.eq("namespace", namespace).eq("clerkOrgId", tenantId),
+      )
+      .order("desc");
+    if (type !== undefined) {
+      rows = rows.filter((f) => f.eq(f.field("type"), type));
+    }
+  } else if (type !== undefined) {
+    rows = ctx.db
+      .query("memories")
+      .withIndex("by_namespace_type", (q) =>
+        latestOnly
+          ? q.eq("namespace", namespace).eq("type", type).eq("isLatest", true)
+          : q.eq("namespace", namespace).eq("type", type),
+      )
+      .order("desc");
+  } else {
+    rows = ctx.db
+      .query("memories")
+      .withIndex("by_namespace", (q) =>
+        latestOnly
+          ? q.eq("namespace", namespace).eq("isLatest", true)
+          : q.eq("namespace", namespace),
+      )
+      .order("desc");
+  }
+  if (createdById !== undefined) {
+    rows = rows.filter((f) => f.eq(f.field("createdById"), createdById));
+  }
+  return rows;
+}
+
 export const listMemories = query({
   args: {
 	fields: v.optional(v.union(v.literal("lite"), v.literal("full"))), // v2.4.12 accept (no-op for now) — closes ArgumentValidationError from MCP wrappers passing fields
     namespace: v.string(),
     type: v.optional(memoryTypeValidator),
+    // A LABEL the caller types. It selects nothing by itself: it is resolved to the
+    // author's ID in the caller's own org, and the page is read by that ID.
     createdBy: v.optional(creatorValidator),
     includeSuperseded: v.optional(v.boolean()),
     limit: v.optional(v.number()),
@@ -331,6 +384,7 @@ export const listMemories = query({
         cursor: v.union(v.string(), v.null()),
       }),
     ),
+    ...claimedOrgArgs,
   },
   returns: listMemoriesResultValidator,
   handler: async (ctx, args) => {
@@ -338,8 +392,14 @@ export const listMemories = query({
     // the signed-in-no-org branch to a typed refused scope; the pre-existing
     // isNamespaceAllowedForScope guard below already renders that as the
     // typed-empty page, never a throw.
-    const scope = await withOrgScope(ctx, { refuseWithoutThrow: true });
-    // M10a: a row is served by its org ID (memoryVisibleToScope), never by the
+    const transport = await withOrgScope(ctx, { refuseWithoutThrow: true });
+    const scope = await requireClaimedScope(
+      ctx,
+      transport,
+      args.verifiedOrg,
+      "memories:listMemories",
+    );
+    // M10a: a row is served by its org ID (the tenant range below), never by the
     // namespace label. A caller with no org ID owns no row, and a member's rows
     // are only ever filed under a `team/<label>` namespace, so any other
     // namespace is the typed-empty page without reading it.
@@ -349,114 +409,43 @@ export const listMemories = query({
     ) {
       return { value: [], continueCursor: null, isDone: true };
     }
-    const isLatest = args.includeSuperseded === true ? undefined : true;
+    // The author filter, by ID: the typed label is resolved in the caller's org. A
+    // label that names nobody there matches no row (an empty page, not an error).
+    const createdById =
+      args.createdBy === undefined
+        ? undefined
+        : await authorIdOfLabel(ctx, scope, args.createdBy);
+    if (args.createdBy !== undefined && createdById === undefined) {
+      return { value: [], continueCursor: null, isDone: true };
+    }
+    const rows = memoryPageQuery(ctx, scope, {
+      namespace: args.namespace,
+      type: args.type,
+      latestOnly: args.includeSuperseded !== true,
+      createdById,
+    });
     const numItems = args.paginationOpts?.numItems ?? args.limit ?? 50;
-    const cursor = args.paginationOpts?.cursor ?? null;
-    const createdByFilter = args.createdBy;
-    // Post-take filter helper — keeps the rows the caller's org owns (by ID),
-    // then applies createdBy when set. Mirrors list_tasks createdBy semantics
-    // (Day 88 cross-tool consistency). Post-filter (not index-pushdown) is
-    // acceptable because the namespace index bounds the working set and
-    // createdBy is a rare diagnostic filter.
-    const filterCreatedBy = <T extends { createdBy?: string; clerkOrgId?: string }>(
-      rows: T[],
-    ): T[] => {
-      const owned = rows.filter((r) => memoryVisibleToScope(scope, r));
-      return createdByFilter === undefined
-        ? owned
-        : owned.filter((r) => r.createdBy === createdByFilter);
-    };
 
     // ── Paginated path (paginationOpts provided) ──────────────────────────────
     if (args.paginationOpts !== undefined) {
-      const opts = { numItems, cursor };
-      const type = args.type;
-
-      if (type !== undefined && isLatest !== undefined) {
-        const r = await ctx.db
-          .query("memories")
-          .withIndex("by_namespace_type", (q) =>
-            q.eq("namespace", args.namespace).eq("type", type).eq("isLatest", true),
-          )
-          .order("desc")
-          .paginate(opts);
-        return { value: filterCreatedBy(r.page), continueCursor: r.isDone ? null : r.continueCursor, isDone: r.isDone };
-      }
-
-      if (type !== undefined) {
-        const r = await ctx.db
-          .query("memories")
-          .withIndex("by_namespace_type", (q) =>
-            q.eq("namespace", args.namespace).eq("type", type),
-          )
-          .order("desc")
-          .paginate(opts);
-        return { value: filterCreatedBy(r.page), continueCursor: r.isDone ? null : r.continueCursor, isDone: r.isDone };
-      }
-
-      if (isLatest !== undefined) {
-        const r = await ctx.db
-          .query("memories")
-          .withIndex("by_namespace", (q) =>
-            q.eq("namespace", args.namespace).eq("isLatest", true),
-          )
-          .order("desc")
-          .paginate(opts);
-        return { value: filterCreatedBy(r.page), continueCursor: r.isDone ? null : r.continueCursor, isDone: r.isDone };
-      }
-
-      const r = await ctx.db
-        .query("memories")
-        .withIndex("by_namespace", (q) => q.eq("namespace", args.namespace))
-        .order("desc")
-        .paginate(opts);
-      return { value: filterCreatedBy(r.page), continueCursor: r.isDone ? null : r.continueCursor, isDone: r.isDone };
+      const r = await rows.paginate({
+        numItems,
+        cursor: args.paginationOpts.cursor,
+      });
+      return {
+        value: r.page,
+        continueCursor: r.isDone ? null : r.continueCursor,
+        isDone: r.isDone,
+      };
     }
 
     // ── Bounded default path (no paginationOpts) — compat with existing callers ──
     // Returns value + continueCursor=null + isDone=true so new callers don't crash.
-    const limit = numItems;
-    const type = args.type;
-
-    if (type !== undefined && isLatest !== undefined) {
-      const page = await ctx.db
-        .query("memories")
-        .withIndex("by_namespace_type", (q) =>
-          q.eq("namespace", args.namespace).eq("type", type).eq("isLatest", true),
-        )
-        .order("desc")
-        .take(limit);
-      return { value: filterCreatedBy(page), continueCursor: null, isDone: true };
-    }
-
-    if (type !== undefined) {
-      const page = await ctx.db
-        .query("memories")
-        .withIndex("by_namespace_type", (q) =>
-          q.eq("namespace", args.namespace).eq("type", type),
-        )
-        .order("desc")
-        .take(limit);
-      return { value: filterCreatedBy(page), continueCursor: null, isDone: true };
-    }
-
-    if (isLatest !== undefined) {
-      const page = await ctx.db
-        .query("memories")
-        .withIndex("by_namespace", (q) =>
-          q.eq("namespace", args.namespace).eq("isLatest", true),
-        )
-        .order("desc")
-        .take(limit);
-      return { value: filterCreatedBy(page), continueCursor: null, isDone: true };
-    }
-
-    const page = await ctx.db
-      .query("memories")
-      .withIndex("by_namespace", (q) => q.eq("namespace", args.namespace))
-      .order("desc")
-      .take(limit);
-    return { value: filterCreatedBy(page), continueCursor: null, isDone: true };
+    return {
+      value: await rows.take(numItems),
+      continueCursor: null,
+      isDone: true,
+    };
   },
 });
 
@@ -466,7 +455,7 @@ export const listMemories = query({
 // ─────────────────────────────────────────────────────────────────────────────
 
 export const softDeleteMemory = mutation({
-  args: { memoryId: v.string() },
+  args: { memoryId: v.string(), ...claimedOrgArgs },
   returns: v.null(),
   handler: async (ctx, args) => {
   	// write-contract: MCP-transport-only — issued via mcp-server client.mutation("memories:softDeleteMemory", …) at mcp-server/src/tools.ts:2075 (imperative), 0 hits in vantage-peers-dashboard {app,components,hooks,lib,contexts,providers} (measured 2026-10-01 at origin/main e2dc58f and 0466fac); never a subscribing pre-org client shell. The no-org throw is a refusal at an imperative MCP call, never at a render.
@@ -474,7 +463,23 @@ export const softDeleteMemory = mutation({
     // refused identically for a live and for a deleted id (no existence oracle).
     // withOrgScope is called WITHOUT allowNoIdentityMaster: the MCP server
     // always presents a real Clerk identity on this path.
-    const scope = await withOrgScope(ctx);
+    // fleet-wide: the master-only MCP tool soft_delete_memory retires a memory of ANY
+    // organisation; its one service-account caller is the master bearer, which has no
+    // organisation of its own, so a claimless service-account call here IS the
+    // fleet's own reach, declared rather than inferred from absence (backend standard
+    // R-54 exit (c)). A claim, when the transport carries one, still CONFINES the call
+    // to that organisation (requireClaimedScope), and a member never reaches beyond
+    // its own org's rows.
+    const transport = await withOrgScope(ctx);
+    const scope =
+      args.verifiedOrg === undefined
+        ? transport
+        : await requireClaimedScope(
+            ctx,
+            transport,
+            args.verifiedOrg,
+            "memories:softDeleteMemory",
+          );
     const memoryId = requireId(
       ctx,
       "memories",

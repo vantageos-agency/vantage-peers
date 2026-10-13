@@ -130,9 +130,20 @@ export default defineSchema({
 		// carry none; an unstamped row is served to no client org until
 		// migrations/backfill_memories_org_clerk_id fills it. Never invented.
 		clerkOrgId: v.optional(v.string()),
+
+		// The ID of the author (module F1): the author's `agents` row ID for an
+		// agent, "user:<verified subject>" for a person. `createdBy` is a LABEL; a
+		// read that filters by author compares THIS column, never the label.
+		// OPTIONAL (expand phase): rows written before this column carry none and
+		// are not served to an author filter until
+		// migrations/backfill_memory_author_ids fills it. Never invented.
+		createdById: v.optional(v.string()),
 	})
 		// Primary query patterns — all filtered to isLatest for active memory reads
 		.index("by_namespace", ["namespace", "isLatest"])
+		// A member's read of one namespace: the tenant (the org's permanent ID) is an
+		// index predicate, so a foreign org's rows are never read and never eat a page.
+		.index("by_namespace_org", ["namespace", "clerkOrgId", "isLatest"])
 		.index("by_type", ["type", "isLatest"])
 		.index("by_creator", ["createdBy", "isLatest"])
 		.index("by_namespace_type", ["namespace", "type", "isLatest"])
@@ -785,8 +796,24 @@ export default defineSchema({
 		// renamable label; this is the identity (Pi ruling (d), k174d95s5qqy8t2r5rdrz3pr3d8fqv82).
 		// Optional during the expand phase: filled by migrations/backfill_org_clerk_id.
 		clerkOrgId: v.optional(v.string()),
+		// The orchestrator's `agents` row ID (module F1). `orchestrator` is the
+		// agent's LABEL at write time; the doors select, admit and key by THIS
+		// column. OPTIONAL (expand phase): a row written before it carries none and
+		// is served to nobody by an ID read until migrations/backfill_diary_agent_ids
+		// fills it. Never invented.
+		agentId: v.optional(v.id("agents")),
+		// The author's ID (module F1): the author's `agents` row ID for an agent,
+		// "user:<verified subject>" for a person. `createdBy` is a label; an author
+		// filter compares THIS column. OPTIONAL (expand phase): filled by
+		// migrations/backfill_diary_agent_ids. Never invented.
+		createdById: v.optional(v.string()),
 	})
 		.index("by_orchestrator_date", ["orchestrator", "date"])
+		// The ID-keyed twins of the two orchestrator indexes: one agent's entries.
+		.index("by_org_agent_date_clerk_id", ["clerkOrgId", "agentId", "date"])
+		.index("by_agent_date", ["agentId", "date"])
+		// A tenant's entries over a date range (the fleet range read without an agent).
+		.index("by_org_date_clerk_id", ["clerkOrgId", "date"])
 		// R-11/R-52: the tenant is an index predicate. An undefined orgId (fleet) is
 		// matched by `.eq("orgId", undefined)`.
 		.index("by_org_orchestrator_date", ["orgId", "orchestrator", "date"])
@@ -1363,7 +1390,15 @@ export default defineSchema({
 	// Index: by_storageId — O(1) ownership lookup before ctx.storage.get().
 	kbUploads: defineTable({
 		storageId: v.id("_storage"),
+		// The org KEY the binding was written under (a slug label or an org ID, as the
+		// writer held it). A label is renamable and re-usable, so it decides nothing.
 		orgId: v.string(),
+		// The bound organisation's permanent Clerk org ID (module F1): the readers
+		// (okfBundleNode validate/import, kbMutations bind/claim) judge ownership by
+		// this ID through @vantageos/cloud-identity `sameOrg`. OPTIONAL (expand
+		// phase): a binding written before this column is owned by nobody until
+		// migrations/backfill_kb_upload_org_ids fills it. Never invented.
+		clerkOrgId: v.optional(v.string()),
 		createdAt: v.number(),
 	}).index("by_storageId", ["storageId"]),
 

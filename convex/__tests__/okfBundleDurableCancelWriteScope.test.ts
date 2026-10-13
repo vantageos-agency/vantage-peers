@@ -33,6 +33,7 @@ import { describe, expect, test } from "vitest";
 import { testClerkOrgId } from "../../tests/fixtures/testClerkOrgId";
 import { api } from "../_generated/api";
 import schema from "../schema";
+import { asFleet } from "../../tests/lib/asFleet";
 
 const modules = Object.fromEntries(
 	Object.entries(import.meta.glob("../**/*.ts")).filter(
@@ -62,9 +63,7 @@ function asOrgB(t: ReturnType<typeof createT>) {
 }
 
 function asMaster(t: ReturnType<typeof createT>) {
-	return t.withIdentity({
-		subject: "test-service-account-user-id",
-	} as Parameters<typeof t.withIdentity>[0]);
+	return asFleet(t.withIdentity({ subject: "test-service-account-user-id" } as Parameters<typeof t.withIdentity>[0]), t);
 }
 
 // Tenant namespace ownership comes from an ACTIVE client_org_mapping row, not
@@ -207,6 +206,8 @@ describe("okfBundleDurable.cancelOkfBundleExportDurable — write-scope enforcem
 
 	test("no progress row for jobId is a distinct, non-auth refusal", async () => {
 		const t = createT();
+		// The caller is the package-resolved scope of an ACTIVE organisation.
+		await seedOrg(t, "org-a");
 		const tA = asOrgA(t);
 		await expect(
 			tA.mutation(api.okfBundleDurable.cancelOkfBundleExportDurable, {

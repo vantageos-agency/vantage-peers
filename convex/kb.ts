@@ -38,13 +38,16 @@
  * Orchestrator: Sigma — VantagePeers | 2026-06-27
  */
 
+import { requireStanding } from "@vantageos/cloud-identity";
 import { randomUUID } from "node:crypto";
 import { v } from "convex/values";
 import { internal } from "./_generated/api";
 import type { Id } from "./_generated/dataModel";
 import { type ActionCtx, action } from "./_generated/server";
+import { claimedOrgArgs } from "./contentClaims";
 import { assertOrgArgs, assertScopeAuthorizesOrg } from "./kbShared";
 import { requireResolvedCaller } from "./lib/auth";
+import type { VerifiedOrg } from "./lib/verifiedOrg";
 
 // NOTE: the upload-URL-minting mutation lives in convex/kbMutations.ts
 // (V8 runtime), NOT here. Convex rejects public mutations defined in a
@@ -174,7 +177,11 @@ export function chunkText(text: string): string[] {
 // resolveKbCaller — the ONE way a KB action resolves and refuses its caller.
 //
 // An action has no ctx.db, so it cannot call `withOrgScope` directly; it reaches
-// it through the internal bridge `resolveOrgScopeForAction` (convex/lib/auth.ts).
+// it through the internal bridge `contentClaims:scopeForAction`, which is
+// `resolveOrgScopeForAction` (convex/lib/auth.ts) with the organisation the
+// transport VERIFIED for the bearer (`verifiedOrg`) applied: a service-account
+// call that carries none is refused, a client org's call runs under that org's
+// member scope (backend standard R-54).
 // This wraps that bridge and the refusal in one place, exactly as
 // `resolveSearchNamespace` does in convex/search.ts, so both KB doors bind the
 // resolved scope and refuse an unresolved caller by the same helper every read
@@ -193,14 +200,24 @@ export function chunkText(text: string): string[] {
 // returned scope to `assertScopeAuthorizesOrg` (args.orgId may confirm the
 // resolved org, never re-scope the call).
 // ─────────────────────────────────────────────────────────────────────────────
-async function resolveKbCaller(ctx: ActionCtx, registration: string) {
-	const scope = await ctx.runQuery(
-		internal.lib.auth.resolveOrgScopeForAction,
-		{},
-	);
+async function resolveKbCaller(
+	ctx: ActionCtx,
+	registration: string,
+	verifiedOrg: VerifiedOrg | undefined,
+) {
+	const scope = await ctx.runQuery(internal.contentClaims.scopeForAction, {
+		door: registration,
+		...(verifiedOrg === undefined ? {} : { verifiedOrg }),
+	});
 	requireResolvedCaller(scope, registration, { alsoRefusePreOrg: true });
 	return scope;
 }
+
+// The standing the KB writes admit, said by @vantageos/cloud-identity: the fleet
+// service account, or an ordinary member of one organisation. A scope that is
+// neither (absent, refused, self-contradicting) is refused RBAC_DENIED naming the
+// door, so a KB write never continues on an unresolved principal.
+const KB_WRITE_STANDINGS = ["fleet", "member"] as const;
 
 // ─────────────────────────────────────────────────────────────────────────────
 // storeDocumentChunked — main public action
@@ -214,6 +231,7 @@ export const storeDocumentChunked = action({
 		docId: v.optional(v.string()),
 		orgId: v.string(),
 		namespace: v.string(),
+		...claimedOrgArgs,
 	},
 	returns: v.object({
 		docId: v.string(),
@@ -262,7 +280,12 @@ export const storeDocumentChunked = action({
 		// THROW -- this is an imperative WRITE. See
 		// .claude/rules/authority-attached-to-anonymous-object.md.
 		assertOrgArgs(args.orgId, `${args.namespace}/placeholder`);
-		const scope = await resolveKbCaller(ctx, "kb:storeDocumentChunked");
+		const scope = await resolveKbCaller(
+			ctx,
+			"kb:storeDocumentChunked",
+			args.verifiedOrg,
+		);
+		requireStanding(scope, "kb:storeDocumentChunked", KB_WRITE_STANDINGS);
 		assertScopeAuthorizesOrg(scope, args.orgId);
 
 		// 2. Resolve docId and full namespace
@@ -276,6 +299,9 @@ export const storeDocumentChunked = action({
 		await ctx.runMutation(internal.kbMutations.bindOrAssertStorageOwnership, {
 			storageId: args.storageId,
 			orgId: args.orgId,
+			...(scope.orgClerkId === undefined
+				? {}
+				: { clerkOrgId: scope.orgClerkId }),
 		});
 
 		// 4. Fetch binary from Convex storage
@@ -353,6 +379,7 @@ export const softDeleteDocument = action({
 		docId: v.string(),
 		orgId: v.string(),
 		namespace: v.string(),
+		...claimedOrgArgs,
 	},
 	returns: v.object({
 		docId: v.string(),
@@ -382,7 +409,12 @@ export const softDeleteDocument = action({
 		// THROW -- this is an imperative WRITE. See
 		// .claude/rules/authority-attached-to-anonymous-object.md.
 		assertOrgArgs(args.orgId, `${args.namespace}/placeholder`);
-		const scope = await resolveKbCaller(ctx, "kb:softDeleteDocument");
+		const scope = await resolveKbCaller(
+			ctx,
+			"kb:softDeleteDocument",
+			args.verifiedOrg,
+		);
+		requireStanding(scope, "kb:softDeleteDocument", KB_WRITE_STANDINGS);
 		assertScopeAuthorizesOrg(scope, args.orgId);
 
 		const namespace = `${args.namespace}/${args.docId}`;

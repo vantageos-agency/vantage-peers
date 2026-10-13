@@ -17,13 +17,15 @@
  * Orchestrator: Sigma — VantagePeers | 2026-06-27
  */
 
+import { sameOrg, sha256Hex } from "@vantageos/cloud-identity";
 import { ConvexError, v } from "convex/values";
 import { internal } from "./_generated/api";
 import { internalMutation, internalQuery, mutation } from "./_generated/server";
+import { claimedOrgArgs, requireClaimedScope } from "./contentClaims";
 import { assertOrgArgs } from "./kbShared";
-import { sha256Hex } from "@vantageos/cloud-identity";
 import {
 	isNamespaceAllowedForScope,
+	type OrgScope,
 	refuseStorageOwnership,
 	requireResolvedCaller,
 	requireTenantNamespace,
@@ -49,9 +51,15 @@ export const bindOrAssertStorageOwnership = internalMutation({
 	args: {
 		storageId: v.id("_storage"),
 		orgId: v.string(),
+		// The binding org's permanent Clerk org ID, when the caller's verified scope
+		// carries one. Absent, it is read from the team namespace the org key names
+		// (a master acting on an org the claim or the namespace names).
+		clerkOrgId: v.optional(v.string()),
 	},
 	returns: v.null(),
 	handler: async (ctx, args) => {
+		const clerkOrgId =
+			args.clerkOrgId ?? (await stampOfNamespace(ctx, `team/${args.orgId}`));
 		const existing = await ctx.db
 			.query("kbUploads")
 			.withIndex("by_storageId", (q) => q.eq("storageId", args.storageId))
@@ -62,12 +70,17 @@ export const bindOrAssertStorageOwnership = internalMutation({
 			await ctx.db.insert("kbUploads", {
 				storageId: args.storageId,
 				orgId: args.orgId,
+				...(clerkOrgId === undefined ? {} : { clerkOrgId }),
 				createdAt: Date.now(),
 			});
 			return null;
 		}
 
-		if (existing.orgId === args.orgId) {
+		// The bound org is judged by its permanent ID (the package's `sameOrg`): a
+		// label match never grants. A binding written before the ID column existed
+		// carries none, so it is owned by nobody until
+		// migrations/backfill_kb_upload_org_ids fills it.
+		if (sameOrg({ id: existing.clerkOrgId }, { id: clerkOrgId })) {
 			// Same org — ownership confirmed.
 			return null;
 		}
@@ -87,18 +100,30 @@ export const bindOrAssertStorageOwnership = internalMutation({
 // For READ paths (okfBundleNode:validateOkfBundle) that must ASSERT ownership
 // and never claim it: the binding is written only by the upload/store paths
 // (bindOrAssertStorageOwnership above, from kb:storeDocumentChunked, and the
-// export path). Returns the bound orgId, or null when the storageId is unbound.
+// export path). Returns the binding (the org key it was written under and the
+// org's permanent ID, absent on a binding written before the ID column), or null
+// when the storageId is unbound. The reader judges the ID with `sameOrg`.
 // ─────────────────────────────────────────────────────────────────────────────
 
 export const getStorageOwner = internalQuery({
 	args: { storageId: v.id("_storage") },
-	returns: v.union(v.string(), v.null()),
+	returns: v.union(
+		v.object({
+			orgId: v.string(),
+			clerkOrgId: v.optional(v.string()),
+		}),
+		v.null(),
+	),
 	handler: async (ctx, args) => {
 		const row = await ctx.db
 			.query("kbUploads")
 			.withIndex("by_storageId", (q) => q.eq("storageId", args.storageId))
 			.unique();
-		return row === null ? null : row.orgId;
+		if (row === null) return null;
+		return {
+			orgId: row.orgId,
+			...(row.clerkOrgId === undefined ? {} : { clerkOrgId: row.clerkOrgId }),
+		};
 	},
 });
 
@@ -211,11 +236,20 @@ export const generateUploadUrl = mutation({
 	args: {
 		orgId: v.string(),
 		namespace: v.string(),
+		...claimedOrgArgs,
 	},
 	returns: v.string(),
 	handler: async (ctx, args) => {
 		// write-contract: MCP-transport-only — issued via mcp-server client.mutation("kbMutations:generateUploadUrl", …) at mcp-server/src/tools/kbIngest.ts:301 (imperative), 0 hits in vantage-peers-dashboard {app,components,hooks,lib,contexts,providers} (measured 2026-10-01 at origin/main 2498c00); never a subscribing pre-org client shell. The RBAC_DENIED throw is the R-16 coded refusal the MCP layer catches, not an uncaught Server Error.
-		const scope = await withOrgScope(ctx);
+		// The service account acts only inside the organisation the transport
+		// verified for the bearer (`verifiedOrg`); a claimless call is refused.
+		const transport = await withOrgScope(ctx);
+		const scope = await requireClaimedScope(
+			ctx,
+			transport,
+			args.verifiedOrg,
+			"kbMutations:generateUploadUrl",
+		);
 		// The repo's one tenant-namespace gate: the fleet master mints for any org,
 		// a member only for the org its verified scope resolves to, a caller with
 		// no organisation for none (RBAC_DENIED, raised).
@@ -280,12 +314,19 @@ function base64ToHex(b64: string): string {
 	return hex;
 }
 
+// The org a ticket is bound to: the VERIFIED scope's own org; only the fleet master,
+// which resolves none, acts on the org it names.
+function ticketOrgOf(scope: OrgScope, namedOrg: string): string {
+	return scope.orgSlug ?? namedOrg;
+}
+
 export const generateUploadUrlWithTicket = mutation({
 	args: {
 		orgId: v.string(),
 		namespace: v.string(),
 		// lowercase hex sha256 of the file the client is about to upload
 		sha256: v.string(),
+		...claimedOrgArgs,
 	},
 	returns: v.object({
 		uploadUrl: v.string(),
@@ -294,7 +335,13 @@ export const generateUploadUrlWithTicket = mutation({
 	}),
 	handler: async (ctx, args) => {
 		// write-contract: MCP transport and one dashboard consumer — issued via mcp-server client.mutation("kbMutations:generateUploadUrlWithTicket", …) in mcp-server/src/tools/kbIngest.ts (generate_upload_url, imperative), and by vantage-peers-dashboard components/settings/okf/okf-validate-panel.tsx (imperative, on a user action; dashboard PR #71, branch sigma/okf-validate-ticket-flow at 3fffb85; measured 2026-10-08 with `git grep -n "generateUploadUrlWithTicket|claimUpload" 3fffb85 -- app components hooks lib contexts providers`: only okf-validate-panel.tsx and its test); never a subscribing pre-org client shell. The RBAC_DENIED throw is the R-16 coded refusal the MCP layer catches, not an uncaught Server Error.
-		const scope = await withOrgScope(ctx);
+		const transport = await withOrgScope(ctx);
+		const scope = await requireClaimedScope(
+			ctx,
+			transport,
+			args.verifiedOrg,
+			"kbMutations:generateUploadUrlWithTicket",
+		);
 		requireTenantNamespace(
 			scope,
 			`team/${args.orgId}`,
@@ -318,7 +365,7 @@ export const generateUploadUrlWithTicket = mutation({
 		// and acts on the org it names, as in assertScopeAuthorizesOrg.
 		await ctx.db.insert("uploadTickets", {
 			ticketHash: await sha256Hex(ticket),
-			orgId: scope.orgSlug ?? args.orgId,
+			orgId: ticketOrgOf(scope, args.orgId),
 			contentSha256: args.sha256,
 			createdAt,
 			expiresAt,
@@ -333,11 +380,18 @@ export const claimUpload = mutation({
 	args: {
 		storageId: v.id("_storage"),
 		ticket: v.string(),
+		...claimedOrgArgs,
 	},
 	returns: v.object({ storageId: v.id("_storage"), orgId: v.string() }),
 	handler: async (ctx, args) => {
 		// write-contract: MCP transport and one dashboard consumer — issued via mcp-server client.mutation("kbMutations:claimUpload", …) in mcp-server/src/tools/kbIngest.ts (claim_upload, imperative), and by components/settings/okf/okf-validate-panel.tsx (same measurement as generateUploadUrlWithTicket above); the RBAC_DENIED / AUTH_UPLOAD_TICKET_* throws are coded refusals the MCP layer surfaces.
-		const scope = await withOrgScope(ctx);
+		const transport = await withOrgScope(ctx);
+		const scope = await requireClaimedScope(
+			ctx,
+			transport,
+			args.verifiedOrg,
+			"kbMutations:claimUpload",
+		);
 		requireResolvedCaller(scope, "kbMutations:claimUpload", {
 			alsoRefusePreOrg: true,
 		});
@@ -387,11 +441,19 @@ export const claimUpload = mutation({
 		// no org of its own (`orgSlug` null) and takes the org the ticket was
 		// issued for.
 		const claimOrgId = scope.orgSlug ?? ticket.orgId;
+		// The permanent ID the blob is bound to: the verified scope's own, or (for the
+		// fleet master, which resolves none) the ID of the org the ticket names.
+		const claimClerkOrgId =
+			scope.orgClerkId ??
+			(await stampOfNamespace(ctx, `team/${ticket.orgId}`));
 		const existing = await ctx.db
 			.query("kbUploads")
 			.withIndex("by_storageId", (q) => q.eq("storageId", args.storageId))
 			.unique();
-		if (existing !== null && existing.orgId !== claimOrgId)
+		if (
+			existing !== null &&
+			!sameOrg({ id: existing.clerkOrgId }, { id: claimClerkOrgId })
+		)
 			refuseStorageOwnership(
 				"kbMutations:claimUpload",
 				"storage-not-owned",
@@ -401,6 +463,9 @@ export const claimUpload = mutation({
 			await ctx.db.insert("kbUploads", {
 				storageId: args.storageId,
 				orgId: claimOrgId,
+				...(claimClerkOrgId === undefined
+					? {}
+					: { clerkOrgId: claimClerkOrgId }),
 				createdAt: now,
 			});
 		await ctx.db.patch(ticket._id, { usedAt: now, storageId: args.storageId });

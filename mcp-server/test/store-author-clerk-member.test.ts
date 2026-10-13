@@ -23,7 +23,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { convexTest } from "../../tests/fixtures/convexTestWithServiceAccount";
 import schema from "../../convex/schema";
 import { testClerkOrgId } from "../../tests/fixtures/testClerkOrgId";
-import { LOCAL_STDIO_TRUST_CTX, type OAuthContext } from "../src/auth.js";
+import { type OAuthContext } from "../src/auth.js";
 import { registerTools } from "../src/tools.js";
 
 const modules = Object.fromEntries(
@@ -231,12 +231,23 @@ describe("(b) Convex still refuses a member that is handed another author", () =
 	});
 });
 
+// A seat bearer: a service-account transport (no Clerk JWT) whose verified
+// agent credential names the org it acts for. Since batch F1 a claimless
+// service-account call at a content door is refused, so the seat forwards its org.
+const seatCtx = (): OAuthContext =>
+	clerkMemberCtx({
+		clerkJwt: undefined,
+		scopeProfile: "client-seat",
+		fromAllowList: ["pi"],
+		actor: { orgSlug: "author-org", agentName: "pi" },
+	});
+
 describe("(c) the fleet service account is unchanged", () => {
 	const seat = (): ReturnType<T["withIdentity"]> =>
 		t.withIdentity({ subject: SERVICE_ACCOUNT_ID });
 
 	it("store_memory and store_episode record the label of the seat", async () => {
-		const map = tools(seat(), LOCAL_STDIO_TRUST_CTX);
+		const map = tools(seat(), seatCtx());
 		const m = await map.get("store_memory")?.({
 			namespace: "team/author-org",
 			type: "project",
@@ -252,14 +263,14 @@ describe("(c) the fleet service account is unchanged", () => {
 	});
 
 	it("a seat that names no author is refused by the tool, not invented one", async () => {
-		const map = tools(seat(), LOCAL_STDIO_TRUST_CTX);
+		const map = tools(seat(), { ...seatCtx(), actor: undefined });
 		const m = await map.get("store_memory")?.({
 			namespace: "team/author-org",
 			type: "project",
 			content: "no author",
 		});
 		expect(m?.isError).toBe(true);
-		expect(m?.content[0]?.text).toMatch(/createdBy/);
+		expect(m?.content[0]?.text).toMatch(/createdBy|from=/);
 		expect(await rows()).toHaveLength(0);
 	});
 });

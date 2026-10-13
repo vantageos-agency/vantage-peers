@@ -38,6 +38,7 @@ import { testClerkOrgId } from "../../tests/fixtures/testClerkOrgId";
 import { seedRosterAgents } from "../../tests/lib/seedRosterAgents";
 import { api } from "../_generated/api";
 import schema from "../schema";
+import { asFleet } from "../../tests/lib/asFleet";
 
 const modules = Object.fromEntries(
 	Object.entries(import.meta.glob("../**/*.ts")).filter(
@@ -57,7 +58,7 @@ const FOREIGN = "org-b";
 const OWN_ROSTER = "alice";
 const FOREIGN_ROSTER = "mallory";
 
-const asService = (t: T) => t.withIdentity({ subject: SERVICE_ACCOUNT });
+const asService = (t: T) => asFleet(t.withIdentity({ subject: SERVICE_ACCOUNT }), t);
 const asMember = (t: T, org: string) =>
 	t.withIdentity({
 		subject: `member-of-${org}`,

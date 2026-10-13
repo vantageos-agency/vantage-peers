@@ -31,6 +31,7 @@ import { convexTest } from "convex-test";
 import { describe, expect, test } from "vitest";
 import { api } from "../_generated/api";
 import schema from "../schema";
+import { insertDiary } from "../../tests/lib/diaryRow";
 
 const modules = Object.fromEntries(
 	Object.entries(import.meta.glob("../**/*.ts")).filter(
@@ -158,7 +159,7 @@ describe("allowNoIdentityMaster — anonymous (no Clerk identity) direct caller 
 	test("diary.list — anonymous caller must be refused", async () => {
 		const t = createT();
 		await t.run(async (ctx) => {
-			await ctx.db.insert("diary", {
+			await insertDiary(ctx, {
 				date: "2026-07-11",
 				orchestrator: "dummy-b",
 				content: "org-b confidential diary entry",

@@ -32,14 +32,19 @@
 
 import { hasFleetRead } from "@vantageos/cloud-identity";
 import { v } from "convex/values";
-import type { Doc } from "./_generated/dataModel";
 import type { MutationCtx, QueryCtx } from "./_generated/server";
 import { mutation, query } from "./_generated/server";
+import {
+	authorIdOfLabel,
+	claimedOrgArgs,
+	requireClaimedScope,
+} from "./contentClaims";
+import { memoryPageQuery } from "./memories";
 import { isMcpBoundMaster, type OrgScope, withOrgScope } from "./lib/auth";
+import type { VerifiedOrg } from "./lib/verifiedOrg";
 import {
 	memoryAuthorOf,
 	memoryStampForWrite,
-	memoryVisibleToScope,
 } from "./lib/memoryTenant";
 import { isTeamNamespaceAllowed, teamNamespaceOf } from "./lib/teamNamespace";
 import {
@@ -98,23 +103,29 @@ import {
  */
 async function resolveCallerOrgId(
 	ctx: QueryCtx | MutationCtx,
-): Promise<{ refused: boolean; scope: OrgScope }> {
-	let scope: OrgScope;
+	claim: VerifiedOrg | undefined,
+	door: string,
+): Promise<{ refused: boolean; scope: OrgScope; transport: OrgScope }> {
+	let transport: OrgScope;
 	try {
-		scope = await withOrgScope(ctx, { refuseWithoutThrow: true });
+		transport = await withOrgScope(ctx, { refuseWithoutThrow: true });
 	} catch (err: unknown) {
 		throw new Error(
 			`AUTH_NAMESPACE_DENIED: ${err instanceof Error ? err.message : String(err)}`,
 		);
 	}
+	// R-54: the service account acts only inside the organisation the transport
+	// verified for the bearer. A claimless service-account call is refused with its
+	// own code (RBAC_DENIED `verified-claim-required`), not relabelled.
+	const scope = await requireClaimedScope(ctx, transport, claim, door);
 
-	if (hasFleetRead(scope)) return { refused: false, scope };
+	if (hasFleetRead(scope)) return { refused: false, scope, transport };
 
 	// No verified organisation: anonymous (no identity at all) OR signed in
 	// without an org. NEVER master. This is the branch that used to leak.
-	if (scope.orgSlug === null) return { refused: true, scope };
+	if (scope.orgSlug === null) return { refused: true, scope, transport };
 
-	return { refused: false, scope };
+	return { refused: false, scope, transport };
 }
 
 /**
@@ -168,6 +179,7 @@ export const storeMemoryScoped = mutation({
 				severity: severityValidator,
 			}),
 		),
+		...claimedOrgArgs,
 	},
 	returns: v.id("memories"),
 	handler: async (ctx, args) => {
@@ -177,7 +189,11 @@ export const storeMemoryScoped = mutation({
 		// call site to catch the refusal, and a write refusal must never be
 		// softened into a typed empty value (that would silently report success
 		// for a write that never happened).
-		const caller = await resolveCallerOrgId(ctx);
+		const caller = await resolveCallerOrgId(
+			ctx,
+			args.verifiedOrg,
+			"memoriesScoped:storeMemoryScoped",
+		);
 		if (caller.refused) {
 			throw new Error(
 				"AUTH_NAMESPACE_DENIED: caller has no verified organisation — " +
@@ -195,8 +211,9 @@ export const storeMemoryScoped = mutation({
 			caller.scope,
 			args.createdBy,
 			"memoriesScoped:storeMemoryScoped",
-			isMcpBoundMaster(caller.scope),
+			isMcpBoundMaster(caller.transport),
 		);
+		const createdById = await authorIdOfLabel(ctx, caller.scope, createdBy);
 		const clerkOrgId = await memoryStampForWrite(
 			ctx,
 			caller.scope,
@@ -223,6 +240,7 @@ export const storeMemoryScoped = mutation({
 			ttl: args.ttl,
 			episode: args.episode,
 			...(clerkOrgId === undefined ? {} : { clerkOrgId }),
+			...(createdById === undefined ? {} : { createdById }),
 			createdAt: now,
 			updatedAt: now,
 		});
@@ -267,6 +285,8 @@ const memoryRowValidator = v.object({
 	contentHash: v.optional(v.string()),
 	// M10a: the owning organisation's permanent ID (absent on unstamped rows).
 	clerkOrgId: v.optional(v.string()),
+	// F1: the author's ID (an agents row ID, or "user:<subject>"); absent until backfilled.
+	createdById: v.optional(v.string()),
 });
 
 export const listMemoriesScoped = query({
@@ -274,6 +294,7 @@ export const listMemoriesScoped = query({
 		namespace: v.string(),
 		type: v.optional(memoryTypeValidator),
 		limit: v.optional(v.number()),
+		...claimedOrgArgs,
 	},
 	returns: v.array(memoryRowValidator),
 	handler: async (ctx, args) => {
@@ -289,37 +310,22 @@ export const listMemoriesScoped = query({
 		// have a verified org keeps THROWING AUTH_NAMESPACE_DENIED below -- that
 		// is an active boundary violation, not an ordinary unauthenticated state,
 		// and its contract is pinned by auth-namespace-deny.test.ts.
-		const caller = await resolveCallerOrgId(ctx);
+		const caller = await resolveCallerOrgId(
+			ctx,
+			args.verifiedOrg,
+			"memoriesScoped:listMemoriesScoped",
+		);
 		if (caller.refused) return [];
 		assertNamespaceAllowed(caller.scope, args.namespace);
 
-		const limit = args.limit ?? 50;
-		const { namespace, type } = args;
-
-		// Rows are served by their org ID, never by the namespace label alone.
-		const owned = (rows: Doc<"memories">[]) =>
-			rows.filter((row) => memoryVisibleToScope(caller.scope, row));
-
-		if (type !== undefined) {
-			return owned(
-				await ctx.db
-					.query("memories")
-					.withIndex("by_namespace_type", (qi) =>
-						qi.eq("namespace", namespace).eq("type", type).eq("isLatest", true),
-					)
-					.order("desc")
-					.take(limit),
-			);
-		}
-
-		return owned(
-			await ctx.db
-				.query("memories")
-				.withIndex("by_namespace", (qi) =>
-					qi.eq("namespace", namespace).eq("isLatest", true),
-				)
-				.order("desc")
-				.take(limit),
-		);
+		// Rows are served by their org ID, never by the namespace label alone: a
+		// member's page is read from its own org's index range (memoryPageQuery), so a
+		// foreign row never eats it.
+		return await memoryPageQuery(ctx, caller.scope, {
+			namespace: args.namespace,
+			type: args.type,
+			latestOnly: true,
+			createdById: undefined,
+		}).take(args.limit ?? 50);
 	},
 });

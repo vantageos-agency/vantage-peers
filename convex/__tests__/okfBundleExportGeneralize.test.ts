@@ -68,11 +68,18 @@ function ctxWithIdentity(
 	};
 }
 
-type GuardCtx = Parameters<typeof guard>[0];
-const assertCanExportNamespace = (
+// The guard judges the scope the bridge (`contentClaims:scopeForAction`) resolved for
+// the call: this stands in for it with the projection the mock builds above.
+type GuardScope = Parameters<typeof guard>[0];
+const assertCanExportNamespace = async (
 	ctx: ReturnType<typeof ctxWithIdentity>,
 	namespace: string,
-) => guard(ctx as unknown as GuardCtx, namespace, "okfBundleNode:exportOkfBundle");
+) =>
+	guard(
+		(await ctx.runQuery()) as unknown as GuardScope,
+		namespace,
+		"okfBundleNode:exportOkfBundle",
+	);
 
 const noIdentityCtx = ctxWithIdentity(null);
 

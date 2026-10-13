@@ -18,6 +18,7 @@ import { convexTest } from "../../tests/fixtures/convexTestWithServiceAccount";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import { api } from "../_generated/api";
 import schema from "../schema";
+import { asFleet } from "../../tests/lib/asFleet";
 
 const modules = Object.fromEntries(
 	Object.entries(import.meta.glob("../**/*.ts")).filter(
@@ -47,8 +48,7 @@ describe("GAP-T1 store_episode — storeEpisode mutation", () => {
 		// convex/episodes.ts. Use the service-account/master identity, the
 		// SAME identity the MCP server presents when no Clerk-org JWT is
 		// attached.
-		const memoryId = await t
-			.withIdentity({ subject: "test-service-account-user-id" })
+		const memoryId = await asFleet(t.withIdentity({ subject: "test-service-account-user-id" }), t)
 			.mutation(api.episodes.storeEpisode, {
 			namespace: "orchestrator/sigma",
 			createdBy: "sigma",
@@ -103,8 +103,7 @@ describe("GAP-T1 get_episode — memories.getMemory query", () => {
 	test("happy path — returns full episode row for a known id", async () => {
 		const t = createTestConvex();
 
-		const memoryId = await t
-			.withIdentity({ subject: "test-service-account-user-id" })
+		const memoryId = await asFleet(t.withIdentity({ subject: "test-service-account-user-id" }), t)
 			.mutation(api.episodes.storeEpisode, {
 				namespace: "orchestrator/sigma",
 				createdBy: "sigma",
@@ -116,7 +115,7 @@ describe("GAP-T1 get_episode — memories.getMemory query", () => {
 				severity: "minor",
 			});
 
-		const row = await t.withIdentity({ subject: "test-service-account-user-id" }).query(api.memories.getMemory, { memoryId });
+		const row = await asFleet(t.withIdentity({ subject: "test-service-account-user-id" }), t).query(api.memories.getMemory, { memoryId });
 		expect(row).not.toBeNull();
 		expect(row?._id).toBe(memoryId);
 		expect(row?.type).toBe("episode");
@@ -143,7 +142,7 @@ describe("GAP-T1 get_episode — memories.getMemory query", () => {
 			return tmp;
 		});
 
-		const row = await t.withIdentity({ subject: "test-service-account-user-id" }).query(api.memories.getMemory, { memoryId: id });
+		const row = await asFleet(t.withIdentity({ subject: "test-service-account-user-id" }), t).query(api.memories.getMemory, { memoryId: id });
 		expect(row).toBeNull();
 	});
 });

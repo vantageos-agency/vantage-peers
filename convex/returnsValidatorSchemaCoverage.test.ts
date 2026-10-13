@@ -285,17 +285,17 @@ const INTENTIONAL_PROJECTIONS: Record<string, { fields: string[]; reason: string
 			"Deliberately narrow page-reader projection (_id/messageId/recipient/recipientInstanceId) for the #1257 backfill's one-shot scan — the both-ends resolver (post-leak-fix) keys on recipient AND the message's sender (looked up via messageId), so messageId is now PRESENT. tenantId is undefined by construction on this population (it is what the backfill sets), and readAt is irrelevant to tenant resolution. Handler maps to this shape explicitly, never spreads the raw row.",
 	},
 	"episodes.listEpisodes": {
-		fields: ["type", "instanceId", "relations", "ttl", "updatedAt", "contentHash", "clerkOrgId"],
+		fields: ["type", "instanceId", "relations", "ttl", "updatedAt", "contentHash", "clerkOrgId", "createdById"],
 		reason:
 			"Deliberately narrows the memories row to the episode-relevant subset (namespace/createdBy/content/isLatest/createdAt/episode) for a cross-orchestrator episode feed — type is implied by the presence of `episode`. Handler constructs the object explicitly. contentHash is the OKF-import idempotency hash (R-18) — an internal write-dedup key, never part of an episode feed. clerkOrgId is the owning org's permanent ID (M10a), a tenant-stamp column the projection does not expose.",
 	},
 	"episodes.getCriticalInsights": {
-		fields: ["type", "content", "instanceId", "relations", "isLatest", "ttl", "episode", "updatedAt", "contentHash", "clerkOrgId"],
+		fields: ["type", "content", "instanceId", "relations", "isLatest", "ttl", "episode", "updatedAt", "contentHash", "clerkOrgId", "createdById"],
 		reason:
 			"Cross-namespace critical-insight digest deliberately flattens to namespace/createdBy/insight/context/createdAt — not the full memory row. Handler constructs the object explicitly. contentHash is the OKF-import idempotency hash (R-18) — an internal write-dedup key, never part of an insight digest. clerkOrgId is the owning org's permanent ID (M10a), a tenant-stamp column the projection does not expose.",
 	},
 	"profiles.getProfileWithMemories#memorySnippetValidator": {
-		fields: ["namespace", "instanceId", "relations", "isLatest", "ttl", "episode", "updatedAt", "contentHash", "clerkOrgId"],
+		fields: ["namespace", "instanceId", "relations", "isLatest", "ttl", "episode", "updatedAt", "contentHash", "clerkOrgId", "createdById"],
 		reason:
 			"`memorySnippetValidator` is a named, deliberately narrow snippet shape (_id/type/content/createdBy/createdAt) for the profile+recent-memories combo query. Handler maps to this shape explicitly, never spreads the raw row. contentHash is the OKF-import idempotency hash (R-18) — an internal write-dedup key, never part of a profile snippet. clerkOrgId is the owning org's permanent ID (M10a), a tenant-stamp column the projection does not expose.",
 	},

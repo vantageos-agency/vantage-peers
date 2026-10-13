@@ -28,9 +28,11 @@
 
 import { convexTest } from "../../tests/fixtures/convexTestWithServiceAccount";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
+import type { MutationCtx } from "../_generated/server";
 import { api } from "../_generated/api";
 import type { Doc, Id } from "../_generated/dataModel";
 import { normalizeOrchestratorId } from "../_helpers/normalizeOrchestratorId";
+import { fleetClaim } from "../../tests/lib/fleetClaim";
 import schema from "../schema";
 
 const modules = Object.fromEntries(
@@ -137,6 +139,23 @@ const row = (
 	...over,
 });
 
+// A diary row names its orchestrator by AGENT ID (F1): this inserts a seeded row with
+// the agent of that label in the row's own org (the operator org for an unstamped row).
+async function put(
+	ctx: { db: MutationCtx["db"] },
+	doc: ReturnType<typeof row>,
+): Promise<Id<"diary">> {
+	const orgId = doc.clerkOrgId ?? OP_ID;
+	const agents = await ctx.db.query("agents").collect();
+	const agent = agents.find(
+		(a) => a.clerkOrgId === orgId && a.name === doc.orchestrator,
+	);
+	return await ctx.db.insert("diary", {
+		...doc,
+		...(agent === undefined ? {} : { agentId: agent._id }),
+	});
+}
+
 const A_ROW = { orgId: OLD_LABEL, clerkOrgId: A_ID };
 const B_ROW = { orgId: B_SLUG, clerkOrgId: B_ID };
 
@@ -165,7 +184,7 @@ async function errorOf(p: Promise<unknown>): Promise<string> {
 describe("diary reads — a same-NAME, same-LABEL principal of another org is refused", () => {
 	test("REFUSED: diary:get — B (label 'acme', seat-x) does not receive A's entry", async () => {
 		const { t } = await world();
-		await t.run((ctx) => ctx.db.insert("diary", row("A's private", A_ROW)));
+		await t.run((ctx) => put(ctx, row("A's private", A_ROW)));
 		const got = await asMember(t, B_SLUG, B_ID, "user-b").query(api.diary.get, {
 			date: DATE,
 			orchestrator: SEAT,
@@ -175,14 +194,14 @@ describe("diary reads — a same-NAME, same-LABEL principal of another org is re
 
 	test("REFUSED: diary:list — B's list holds none of A's entries", async () => {
 		const { t } = await world();
-		await t.run((ctx) => ctx.db.insert("diary", row("A's private", A_ROW)));
+		await t.run((ctx) => put(ctx, row("A's private", A_ROW)));
 		const got = await asMember(t, B_SLUG, B_ID, "user-b").query(api.diary.list, {});
 		expect(got).toEqual([]);
 	});
 
 	test("REFUSED: diary:listByDateRange — B's range read holds none of A's entries", async () => {
 		const { t } = await world();
-		await t.run((ctx) => ctx.db.insert("diary", row("A's private", A_ROW)));
+		await t.run((ctx) => put(ctx, row("A's private", A_ROW)));
 		const got = await asMember(t, B_SLUG, B_ID, "user-b").query(
 			api.diary.listByDateRange,
 			{ from: "2026-01-01", to: "2026-12-31", orchestrator: SEAT },
@@ -198,7 +217,7 @@ describe("diary reads — a same-NAME, same-LABEL principal of another org is re
 	test("REFUSED: a member listed by NAME but not by agent ID is served nothing (C)", async () => {
 		const { t } = await world();
 		await t.run((ctx) =>
-			ctx.db.insert("diary", row("C's seat-x entry", { orgId: C_SLUG, clerkOrgId: C_ID })),
+			put(ctx, row("C's seat-x entry", { orgId: C_SLUG, clerkOrgId: C_ID })),
 		);
 		const c = asMember(t, C_SLUG, C_ID, "user-c");
 		expect(await c.query(api.diary.get, { date: DATE, orchestrator: SEAT })).toBeNull();
@@ -219,7 +238,7 @@ describe("diary reads — a same-NAME, same-LABEL principal of another org is re
 describe("diary writes — the other org's entry is never altered and never a lockout", () => {
 	test("REFUSED: B's write leaves A's entry byte-identical and lands B's own", async () => {
 		const { t } = await world();
-		const aId = await t.run((ctx) => ctx.db.insert("diary", row("A's private", A_ROW)));
+		const aId = await t.run((ctx) => put(ctx, row("A's private", A_ROW)));
 		const before = await t.run((ctx) => ctx.db.get(aId));
 		const mine = await asMember(t, B_SLUG, B_ID, "user-b").mutation(api.diary.write, {
 			date: DATE,
@@ -235,7 +254,7 @@ describe("diary writes — the other org's entry is never altered and never a lo
 
 	test("REFUSED: B cannot delete A's entry", async () => {
 		const { t } = await world();
-		const aId = await t.run((ctx) => ctx.db.insert("diary", row("A's private", A_ROW)));
+		const aId = await t.run((ctx) => put(ctx, row("A's private", A_ROW)));
 		const msg = await errorOf(
 			asMember(t, B_SLUG, B_ID, "user-b").mutation(api.diary.deleteDiary, {
 				diaryId: aId,
@@ -265,7 +284,7 @@ describe("diary writes — the other org's entry is never altered and never a lo
 describe("diary — the owner is served by ID", () => {
 	test("PRESENT: A (renamed) reads its own entry still stamped with the OLD label", async () => {
 		const { t } = await world();
-		await t.run((ctx) => ctx.db.insert("diary", row("A's private", A_ROW)));
+		await t.run((ctx) => put(ctx, row("A's private", A_ROW)));
 		const a = asMember(t, A_SLUG, A_ID, "user-a");
 		const got = await a.query(api.diary.get, { date: DATE, orchestrator: SEAT });
 		expect(got?.content).toBe("A's private");
@@ -280,7 +299,7 @@ describe("diary — the owner is served by ID", () => {
 
 	test("PRESENT: A (renamed) upserts the entry stamped with the old label, it does not fork", async () => {
 		const { t } = await world();
-		const aId = await t.run((ctx) => ctx.db.insert("diary", row("v1", A_ROW)));
+		const aId = await t.run((ctx) => put(ctx, row("v1", A_ROW)));
 		const got = await asMember(t, A_SLUG, A_ID, "user-a").mutation(api.diary.write, {
 			date: DATE,
 			orchestrator: SEAT,
@@ -293,8 +312,8 @@ describe("diary — the owner is served by ID", () => {
 	test("PRESENT: B reads its own entry, and only its own, next to A's", async () => {
 		const { t } = await world();
 		await t.run(async (ctx) => {
-			await ctx.db.insert("diary", row("A's private", A_ROW));
-			await ctx.db.insert("diary", row("B's own", B_ROW));
+			await put(ctx, row("A's private", A_ROW));
+			await put(ctx, row("B's own", B_ROW));
 		});
 		const b = asMember(t, B_SLUG, B_ID, "user-b");
 		expect((await b.query(api.diary.get, { date: DATE, orchestrator: SEAT }))?.content).toBe("B's own");
@@ -327,7 +346,7 @@ describe("diary — the owner is served by ID", () => {
 
 	test("PRESENT: B deletes its own entry", async () => {
 		const { t } = await world();
-		const id = await t.run((ctx) => ctx.db.insert("diary", row("B's own", B_ROW)));
+		const id = await t.run((ctx) => put(ctx, row("B's own", B_ROW)));
 		const out = await asMember(t, B_SLUG, B_ID, "user-b").mutation(api.diary.deleteDiary, {
 			diaryId: id,
 			callerOrchestrator: SEAT,
@@ -339,7 +358,7 @@ describe("diary — the owner is served by ID", () => {
 	test("PRESENT: a member listed by agent ID is served the orchestrator it lists (C: other)", async () => {
 		const { t } = await world();
 		await t.run((ctx) =>
-			ctx.db.insert("diary", row("C's other entry", { orgId: C_SLUG, clerkOrgId: C_ID }, { orchestrator: "other" })),
+			put(ctx, row("C's other entry", { orgId: C_SLUG, clerkOrgId: C_ID }, { orchestrator: "other" })),
 		);
 		const c = asMember(t, C_SLUG, C_ID, "user-c");
 		expect((await c.query(api.diary.get, { date: DATE, orchestrator: "other" }))?.content).toBe("C's other entry");
@@ -354,10 +373,14 @@ describe("diary — the fleet range", () => {
 	test("PRESENT: master reads the fleet entry and a member of the operator org reads it too", async () => {
 		const { t } = await world();
 		await t.run(async (ctx) => {
-			await ctx.db.insert("diary", row("fleet unstamped", {}, { orchestrator: "pi" }));
-			await ctx.db.insert("diary", row("A's private", A_ROW, { orchestrator: "pi" }));
+			await put(ctx, row("fleet unstamped", {}, { orchestrator: "pi" }));
+			await put(ctx, row("A's private", A_ROW, { orchestrator: "pi" }));
 		});
-		const m = await asMaster(t).query(api.diary.get, { date: DATE, orchestrator: "pi" });
+		const m = await asMaster(t).query(api.diary.get, {
+			date: DATE,
+			orchestrator: "pi",
+			...(await fleetClaim(t)),
+		});
 		expect(m?.content).toBe("fleet unstamped");
 		const op = asMember(t, OP_SLUG, OP_ID, "user-op");
 		const got = await op.query(api.diary.get, { date: DATE, orchestrator: "pi" });
@@ -367,7 +390,7 @@ describe("diary — the fleet range", () => {
 
 	test("REFUSED: a client member never reads the fleet (unstamped) entry of the same name", async () => {
 		const { t } = await world();
-		await t.run((ctx) => ctx.db.insert("diary", row("fleet unstamped", {})));
+		await t.run((ctx) => put(ctx, row("fleet unstamped", {})));
 		const b = asMember(t, B_SLUG, B_ID, "user-b");
 		expect(await b.query(api.diary.get, { date: DATE, orchestrator: SEAT })).toBeNull();
 		expect(await b.query(api.diary.list, {})).toEqual([]);
