@@ -1,3 +1,4 @@
+import { hasFleetRead, requireStanding } from "@vantageos/cloud-identity";
 import { v, ConvexError } from "convex/values";
 import { mutation, type QueryCtx, query } from "./_generated/server";
 import type { Doc } from "./_generated/dataModel";
@@ -19,6 +20,7 @@ import {
   resolveVerifiedProfileAgent,
   visibleProfiles,
 } from "./lib/profileActors";
+import { isAgentOnScopeRoster } from "./lib/missionActors";
 import { isNamespaceAllowedForScope } from "./memories";
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -44,7 +46,7 @@ function requireFleetMaster(
   actor: ProfileAgent | undefined,
   action: string,
 ): void {
-  if (!scope.isMaster && actor === undefined) {
+  if (!hasFleetRead(scope) && actor === undefined) {
     throw new ConvexError(
       `RBAC_DENIED: caller may not ${action} — profiles are fleet-internal, master-only unless the call proves the agent that owns the profile — ${JSON.stringify({ orgSlug: scope.orgSlug })}`,
     );
@@ -114,7 +116,7 @@ async function findProfileForCaller(
   args: { orchestratorId?: string; instanceId?: string },
   door: string,
 ): Promise<Doc<"profiles"> | null> {
-  const fleetRead = actor === undefined && scope.isMaster;
+  const fleetRead = actor === undefined && hasFleetRead(scope);
   // ONE row is returned, so no candidate page is read: the matching rows are
   // streamed and the first the caller may see ends the read (the fleet master's
   // first row, unjudged). At most PROFILE_CANDIDATE_CAP rows are looked at.
@@ -165,6 +167,7 @@ async function findProfileForCaller(
 // getProfile — fetch by orchestratorId (role) or instanceId
 // ─────────────────────────────────────────────────────────────────────────────
 
+// fleet-wide: the fleet (the service account, or the operator human for reads) reads any orchestrator profile of its own registry by purpose; an organisation member is served only a profile whose agent is on its roster by agent ID, and a verified agent only its own organisation's
 export const getProfile = query({
   args: {
     orchestratorId: v.optional(v.string()),
@@ -200,8 +203,26 @@ export const getProfile = query({
     // checked against the fetched row (an absent row is then an absence for an
     // instance id, which names no roster entry to leak). The roster only NARROWS:
     // WHICH row is served is decided by stored agent ID (findProfileForCaller).
-    const requireOnRoster = (orchestratorId: string): void => {
-      if (scope.isMaster || scope.allowedOrchestrators.includes(orchestratorId)) {
+    //
+    // The roster is the member's ROSTER OF AGENT IDs: the requested label is
+    // resolved to an agent of the member's OWN organisation and that ID is judged
+    // by the package (`assertPrincipalListed`, via lib/missionActors). A label
+    // that names no agent there is on no roster.
+    const requireOnRoster = async (orchestratorId: string): Promise<void> => {
+      if (hasFleetRead(scope)) return;
+      const requestedAgentId =
+        scope.orgSlug === null
+          ? undefined
+          : await agentIdOfLabel(ctx, scope.orgSlug, orchestratorId);
+      if (
+        requestedAgentId !== undefined &&
+        (await isAgentOnScopeRoster(
+          ctx,
+          scope,
+          requestedAgentId,
+          "profiles:getProfile",
+        ))
+      ) {
         return;
       }
       throw new ConvexError(
@@ -222,7 +243,7 @@ export const getProfile = query({
       "profiles:getProfile",
     );
     if (args.instanceId === undefined && args.orchestratorId !== undefined) {
-      requireOnRoster(args.orchestratorId);
+      await requireOnRoster(args.orchestratorId);
     }
     const profile = await findProfileForCaller(
       ctx,
@@ -232,7 +253,7 @@ export const getProfile = query({
       "profiles:getProfile",
     );
     if (args.instanceId !== undefined && profile !== null) {
-      requireOnRoster(profile.orchestratorId);
+      await requireOnRoster(profile.orchestratorId);
     }
     return profile;
   },
@@ -242,6 +263,7 @@ export const getProfile = query({
 // upsertProfile — create or update a profile by instanceId (or orchestratorId)
 // ─────────────────────────────────────────────────────────────────────────────
 
+// fleet-wide: a profile is written over the MCP transport by the fleet service account, for the fleet's own registry (no verified agent) or for the agent it proved; writerOf refuses every other caller
 export const upsertProfile = mutation({
   args: {
     orchestratorId: v.string(),
@@ -265,12 +287,13 @@ export const upsertProfile = mutation({
   returns: v.id("profiles"),
   handler: async (ctx, args) => {
   	// write-contract: MCP-transport-only — issued via mcp-server client.mutation("profiles:upsertProfile", …) at mcp-server/src/tools.ts:2843 (imperative), 0 hits in vantage-peers-dashboard {app,components,hooks,lib,contexts,providers} (measured 2026-10-01 at origin/main e2dc58f and 0466fac); never a subscribing pre-org client shell. The no-org throw is a refusal at an imperative MCP call, never at a render.
-    const { actor } = await writerOf(
+    const { scope, actor } = await writerOf(
       ctx,
       { verifiedActor: args.verifiedActor },
       `upsert profile for orchestrator ${args.orchestratorId}`,
       "profiles:upsertProfile",
     );
+    requireStanding(scope, "profiles:upsertProfile", ["fleet", "member"]);
     const existing = await findWritableProfile(
       ctx,
       actor,
@@ -304,6 +327,7 @@ export const upsertProfile = mutation({
 // Supports both instanceId and orchestratorId lookup.
 // ─────────────────────────────────────────────────────────────────────────────
 
+// fleet-wide: the dynamic section is written over the MCP transport by the fleet service account, for the fleet's own registry (no verified agent) or for the agent it proved; writerOf refuses every other caller
 export const updateDynamic = mutation({
   args: {
     orchestratorId: v.string(),
@@ -321,12 +345,13 @@ export const updateDynamic = mutation({
   returns: v.null(),
   handler: async (ctx, args) => {
   	// write-contract: MCP-transport-only — issued via mcp-server client.mutation("profiles:updateDynamic", …) at mcp-server/src/tools.ts:3536 (imperative), 0 hits in vantage-peers-dashboard {app,components,hooks,lib,contexts,providers} (measured 2026-10-01 at origin/main e2dc58f and 0466fac); never a subscribing pre-org client shell. The no-org throw is a refusal at an imperative MCP call, never at a render.
-    const { actor } = await writerOf(
+    const { scope, actor } = await writerOf(
       ctx,
       { verifiedActor: args.verifiedActor },
       `update dynamic profile for orchestrator ${args.orchestratorId}`,
       "profiles:updateDynamic",
     );
+    requireStanding(scope, "profiles:updateDynamic", ["fleet", "member"]);
     const lastSeen = args.lastSeen ?? Date.now();
 
     const profile = await findWritableProfile(
@@ -391,6 +416,7 @@ export const updateDynamic = mutation({
 // getProfileWithMemories — profile + recent typed memories in one query
 // returns-projection: memory snippet card for the profile view — full memory doc (namespace/instanceId/relations/isLatest/ttl/episode/updatedAt) fetched via memories.get when a snippet is opened
 // ─────────────────────────────────────────────────────────────────────────────
+// fleet-wide: the fleet (the service account, or the operator human for reads) reads any orchestrator profile of its own registry with its memories by purpose; the memories are served only inside a namespace the caller owns, and an organisation member's profile half is judged by stored agent ID
 export const getProfileWithMemories = query({
   args: {
     orchestratorId: v.string(),
@@ -483,6 +509,7 @@ export const getProfileWithMemories = query({
 // wide enough to include them — mission k574p02m DEFECT 2 fix.
 export const PROFILES_LIST_SCAN_CAP = 2000;
 
+// fleet-wide: listing every orchestrator profile of the fleet's own registry is this door's purpose and only the fleet (the service account, or the operator human) is served; an organisation member receives the typed refusal envelope
 export const listProfiles = query({
   args: {
 	fields: v.optional(v.union(v.literal("lite"), v.literal("full"))), // v2.4.12 accept (no-op for now) — closes ArgumentValidationError from MCP wrappers passing fields
@@ -548,7 +575,7 @@ export const listProfiles = query({
     // The fleet master alone is served the bare array.
     const scope = await withOrgScope(ctx, { refuseWithoutThrow: true });
     requireResolvedCaller(scope, "profiles:listProfiles");
-    if (!scope.isMaster) {
+    if (!hasFleetRead(scope)) {
       return { refused: true as const, items: [] };
     }
 
@@ -560,33 +587,31 @@ export const listProfiles = query({
     );
 
     const take = args.limit ?? 50;
-    // Widen the fetch whenever a cursor is present, so the post-take
-    // `createdBefore` filter has candidate rows older than the anchor to
-    // find (mirrors tasks.ts `needsWideScan` / `fetchCap`). An acting agent's
-    // list is filtered by stored ID AFTER the read, so it is wide too.
-    const needsWideScan = args.createdBefore !== undefined || actor !== undefined;
-    const fetchCap = needsWideScan ? PROFILES_LIST_SCAN_CAP + 1 : take;
+    // The cursor anchor (`_creationTime` of the last row served) is a predicate
+    // of the READ: it sits in the index range, before the bound, so the page is
+    // the next rows older than the anchor and not a window cut first and filtered
+    // after (R-55). No anchor = an upper bound no creation time can reach. An
+    // acting agent's list is judged by stored ID AFTER the read, so it is wide.
+    const before = args.createdBefore ?? Number.MAX_VALUE;
+    const fetchCap = actor !== undefined ? PROFILES_LIST_SCAN_CAP + 1 : take;
     let rows: Doc<"profiles">[];
     if (args.orchestratorId !== undefined) {
       rows = await ctx.db
         .query("profiles")
         .withIndex("by_orchestrator", (q) =>
-          q.eq("orchestratorId", args.orchestratorId!),
+          q.eq("orchestratorId", args.orchestratorId!).lt("_creationTime", before),
         )
         .order("desc")
         .take(fetchCap);
     } else {
-      rows = await ctx.db.query("profiles").order("desc").take(fetchCap);
+      rows = await ctx.db
+        .query("profiles")
+        .withIndex("by_creation_time", (q) => q.lt("_creationTime", before))
+        .order("desc")
+        .take(fetchCap);
     }
-    // S3.3 B8 follow-up — post-take createdBefore filter mirrors briefingNotes
-    // pattern (convex/briefingNotes.ts:96-134, GREEN of PR #635). Profiles use
-    // `_creationTime` as the cursor anchor.
     if (actor !== undefined) {
       rows = await visibleProfiles(ctx, scope, actor, rows, "profiles:listProfiles");
-    }
-    if (args.createdBefore !== undefined) {
-      const before = args.createdBefore;
-      rows = rows.filter((r) => r._creationTime < before);
     }
     return rows.slice(0, take);
   },

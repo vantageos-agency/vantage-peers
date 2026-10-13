@@ -1,9 +1,14 @@
+import { requireServiceAccountStanding } from "@vantageos/cloud-identity";
 import { v, ConvexError } from "convex/values";
 import type { Doc } from "./_generated/dataModel";
-import { mutation, query } from "./_generated/server";
+import { mutation, type QueryCtx, query } from "./_generated/server";
 import { requireId } from "./lib/ids";
 import { creatorValidator } from "./schema";
-import { verifiedActorValidator, withOrgScope } from "./lib/auth";
+import {
+	requireResolvedCaller,
+	verifiedActorValidator,
+	withOrgScope,
+} from "./lib/auth";
 import type { OrgScope } from "./lib/auth";
 import { fleetPartyId, requireFleetAgentActor } from "./lib/fleetActors";
 import { requireFleetDoor, scopeWithFleetStanding } from "./lib/fleetStanding";
@@ -27,18 +32,66 @@ import { requireFleetDoor, scopeWithFleetStanding } from "./lib/fleetStanding";
 // ─────────────────────────────────────────────────────────────────────────────
 async function requireFleetMaster(
 	ctx: Parameters<typeof withOrgScope>[0],
-	action: string,
+	door: string,
 ): Promise<OrgScope> {
 	const transport = await withOrgScope(ctx);
 	// The master bit is the package's standing (convex/lib/fleetStanding.ts),
-	// carried on the scope handed back: a refusal on the verified scope.
-	const scope = await scopeWithFleetStanding(ctx, transport, "mandates:write");
-	if (!scope.isMaster) {
-		throw new ConvexError(
-			`RBAC_DENIED: caller may not ${action} — mandates are fleet-internal, master-only — ${JSON.stringify({ orgSlug: scope.orgSlug })}`,
-		);
-	}
+	// carried on the scope handed back: a refusal on the verified scope. Every
+	// mandate write is the MCP-bound fleet service account's alone; the refusal is
+	// the repo's one coded helper and names the door and the reason.
+	const scope = await scopeWithFleetStanding(ctx, transport, door);
+	requireResolvedCaller(scope, door, { masterOnly: true, mcpBoundOnly: true });
 	return scope;
+}
+
+const MANDATE_STATUSES = [
+	"requested",
+	"accepted",
+	"in_progress",
+	"delivered",
+	"settled",
+] as const;
+type MandateStatus = (typeof MANDATE_STATUSES)[number];
+
+// Rows read per batch, and batches at most, by `newestWithStatus`.
+const MANDATE_SCAN_BATCH = 200;
+const MANDATE_SCAN_MAX_BATCHES = 25;
+
+/**
+ * The newest `limit` mandates of one status older than `before`, when no index
+ * leads with the status AND ends in the creation time (`by_status` ends in
+ * `createdAt`, which is not what the cursor anchor is compared with). A FILL
+ * LOOP: it keeps reading creation-ordered batches, each bounded, until it holds
+ * `limit` matches or the table ends. If the batch budget is spent first the
+ * answer is incomplete, and an incomplete page must never read as a complete
+ * one, so it is refused, naming what would narrow it.
+ */
+async function newestWithStatus(
+	ctx: QueryCtx,
+	status: MandateStatus,
+	before: number,
+	limit: number,
+): Promise<Doc<"mandates">[]> {
+	const out: Doc<"mandates">[] = [];
+	let upper = before;
+	for (let batch = 0; batch < MANDATE_SCAN_MAX_BATCHES; batch++) {
+		const rows = await ctx.db
+			.query("mandates")
+			.withIndex("by_creation_time", (q) => q.lt("_creationTime", upper))
+			.order("desc")
+			.take(MANDATE_SCAN_BATCH);
+		for (const row of rows) {
+			if (row.status === status) {
+				out.push(row);
+				if (out.length >= limit) return out;
+			}
+		}
+		if (rows.length < MANDATE_SCAN_BATCH) return out;
+		upper = rows[rows.length - 1]._creationTime;
+	}
+	throw new ConvexError(
+		`SCAN_CAP_EXCEEDED: mandates.list found fewer than ${limit} mandates with status "${status}" in the newest ${MANDATE_SCAN_BATCH * MANDATE_SCAN_MAX_BATCHES} rows and cannot tell whether older ones exist; narrow with requestedBy or fulfilledBy, or page with createdBefore — ${JSON.stringify({ door: "mandates:list", status })}`,
+	);
 }
 
 // A number a mandate stores (budget, limits, cost) is finite and not negative.
@@ -108,8 +161,9 @@ export const create = mutation({
 	returns: v.id("mandates"),
 	handler: async (ctx, args) => {
 		// write-contract: MCP-transport-only — issued via mcp-server client.mutation("mandates:create", …) at mcp-server/src/tools.ts:7042 (imperative), 0 hits in vantage-peers-dashboard {app,components,hooks,lib,contexts,providers} (measured 2026-10-01 at origin/main e2dc58f and 0466fac); never a subscribing pre-org client shell. The no-org throw is a refusal at an imperative MCP call, never at a render.
-		await requireFleetMaster(ctx, "create a mandate");
 		const door = "mandates:create";
+		const scope = await requireFleetMaster(ctx, door);
+		requireServiceAccountStanding(scope, door);
 		requireAmount(args.budget, "budget", door);
 		if (args.spendingLimits !== undefined) {
 			requireAmount(args.spendingLimits.maxPerTransaction, "spendingLimits.maxPerTransaction", door);
@@ -155,7 +209,8 @@ export const accept = mutation({
 	returns: v.null(),
 	handler: async (ctx, args) => {
 		// write-contract: MCP-transport-only — issued via mcp-server client.mutation("mandates:accept", …) at mcp-server/src/tools.ts:7100 (imperative), 0 hits in vantage-peers-dashboard {app,components,hooks,lib,contexts,providers} (measured 2026-10-01 at origin/main e2dc58f and 0466fac); never a subscribing pre-org client shell. The no-org throw is a refusal at an imperative MCP call, never at a render.
-		const scope = await requireFleetMaster(ctx, `accept mandate ${args.mandateId}`);
+		const scope = await requireFleetMaster(ctx, "mandates:accept");
+		requireServiceAccountStanding(scope, "mandates:accept");
 		const mandate = await ctx.db.get(args.mandateId);
 		if (mandate === null) {
 			throw new Error(`Mandate ${args.mandateId} not found`);
@@ -203,7 +258,8 @@ export const update = mutation({
 	returns: v.null(),
 	handler: async (ctx, args) => {
 		// write-contract: MCP-transport-only — issued via mcp-server client.mutation("mandates:update", …) at mcp-server/src/tools.ts:7161 (imperative), 0 hits in vantage-peers-dashboard {app,components,hooks,lib,contexts,providers} (measured 2026-10-01 at origin/main e2dc58f and 0466fac); never a subscribing pre-org client shell. The no-org throw is a refusal at an imperative MCP call, never at a render.
-		const scope = await requireFleetMaster(ctx, `update mandate ${args.mandateId}`);
+		const scope = await requireFleetMaster(ctx, "mandates:update");
+		requireServiceAccountStanding(scope, "mandates:update");
 		const mandate = await ctx.db.get(args.mandateId);
 		if (mandate === null) {
 			throw new Error(`Mandate ${args.mandateId} not found`);
@@ -264,7 +320,8 @@ export const settle = mutation({
 	returns: v.null(),
 	handler: async (ctx, args) => {
 		// write-contract: MCP-transport-only — issued via mcp-server client.mutation("mandates:settle", …) at mcp-server/src/tools.ts:7214 (imperative), 0 hits in vantage-peers-dashboard {app,components,hooks,lib,contexts,providers} (measured 2026-10-01 at origin/main e2dc58f and 0466fac); never a subscribing pre-org client shell. The no-org throw is a refusal at an imperative MCP call, never at a render.
-		const scope = await requireFleetMaster(ctx, `settle mandate ${args.mandateId}`);
+		const scope = await requireFleetMaster(ctx, "mandates:settle");
+		requireServiceAccountStanding(scope, "mandates:settle");
 		const mandate = await ctx.db.get(args.mandateId);
 		if (mandate === null) {
 			throw new Error(`Mandate ${args.mandateId} not found`);
@@ -302,13 +359,7 @@ export const settle = mutation({
 // list — list mandates with optional filters, newest first
 // ─────────────────────────────────────────────────────────────────────────────
 
-// PR #635 wide-scan-cap pattern (see convex/tasks.ts TASK_LIST_SCAN_CAP,
-// convex/profiles.ts PROFILES_LIST_SCAN_CAP, lot 1 mission k574p02m). When
-// paginating via `createdBefore`, the post-take filter only finds rows
-// older than the cursor if the FETCH is wide enough to include them —
-// mission k574p02m DEFECT 2, lot 2.
-export const MANDATES_LIST_SCAN_CAP = 2000;
-
+// fleet-wide: mandates have no organisation column and every reader is the fleet (the service account or the operator human); listing the whole fleet's mandates is this door's purpose, a member is refused with the typed envelope
 export const list = query({
 	args: {
 	fields: v.optional(v.union(v.literal("lite"), v.literal("full"))), // v2.4.12 accept (no-op for now) — closes ArgumentValidationError from MCP wrappers passing fields
@@ -398,10 +449,12 @@ export const list = query({
 		}
 
 		const limit = args.limit ?? 50;
-		const needsWideScan = args.createdBefore !== undefined;
-		const fetchCap = needsWideScan ? MANDATES_LIST_SCAN_CAP + 1 : limit;
-
-		let rows: Doc<"mandates">[];
+		// The cursor anchor (forward paging, newest first) is a predicate of the
+		// READ: it sits in the index range, before the bound, so the page is the
+		// next `limit` rows older than the anchor and not a window cut first and
+		// filtered after (R-55). No anchor = an upper bound no creation time can
+		// reach.
+		const before = args.createdBefore ?? Number.MAX_VALUE;
 
 		// Guard: requestedBy + fulfilledBy together is NOT covered by any
 		// compound index. The branches below pick ONE of {requestedBy,
@@ -417,54 +470,65 @@ export const list = query({
 			);
 		}
 
-		if (args.requestedBy !== undefined && args.status !== undefined) {
-			rows = await ctx.db
-				.query("mandates")
-				.withIndex("by_requestedBy", (q) =>
-					q.eq("requestedBy", args.requestedBy!).eq("status", args.status!),
-				)
-				.order("desc")
-				.take(fetchCap);
-		} else if (args.requestedBy !== undefined) {
-			rows = await ctx.db
-				.query("mandates")
-				.withIndex("by_requestedBy", (q) =>
-					q.eq("requestedBy", args.requestedBy!),
-				)
-				.order("desc")
-				.take(fetchCap);
-		} else if (args.fulfilledBy !== undefined && args.status !== undefined) {
-			rows = await ctx.db
-				.query("mandates")
-				.withIndex("by_fulfilledBy", (q) =>
-					q.eq("fulfilledBy", args.fulfilledBy!).eq("status", args.status!),
-				)
-				.order("desc")
-				.take(fetchCap);
-		} else if (args.fulfilledBy !== undefined) {
-			rows = await ctx.db
-				.query("mandates")
-				.withIndex("by_fulfilledBy", (q) =>
-					q.eq("fulfilledBy", args.fulfilledBy!),
-				)
-				.order("desc")
-				.take(fetchCap);
-		} else if (args.status !== undefined) {
-			rows = await ctx.db
-				.query("mandates")
-				.withIndex("by_status", (q) => q.eq("status", args.status!))
-				.order("desc")
-				.take(fetchCap);
-		} else {
-			rows = await ctx.db.query("mandates").order("desc").take(fetchCap);
-		}
+		// [party, status, _creationTime]: a range on creation time needs `status`
+		// pinned, so a party without a status fans out over every status and the
+		// ranges are merged newest first.
+		const statusesAsked: readonly MandateStatus[] =
+			args.status !== undefined ? [args.status] : MANDATE_STATUSES;
+		const newestFirst = (
+			perStatus: Doc<"mandates">[][],
+		): Doc<"mandates">[] =>
+			perStatus
+				.flat()
+				.sort((x, y) => y._creationTime - x._creationTime)
+				.slice(0, limit);
 
-		// S3.3 B8 follow-up batch 1 — cursor paging anchor: drop rows newer-or-equal to before.
-		if (args.createdBefore !== undefined) {
-			const before = args.createdBefore;
-			rows = rows.filter((r) => r._creationTime < before);
+		if (args.requestedBy !== undefined) {
+			const requestedBy = args.requestedBy;
+			return newestFirst(
+				await Promise.all(
+					statusesAsked.map((status) =>
+						ctx.db
+							.query("mandates")
+							.withIndex("by_requestedBy", (q) =>
+								q
+									.eq("requestedBy", requestedBy)
+									.eq("status", status)
+									.lt("_creationTime", before),
+							)
+							.order("desc")
+							.take(limit),
+					),
+				),
+			);
 		}
-		return rows.slice(0, limit);
+		if (args.fulfilledBy !== undefined) {
+			const fulfilledBy = args.fulfilledBy;
+			return newestFirst(
+				await Promise.all(
+					statusesAsked.map((status) =>
+						ctx.db
+							.query("mandates")
+							.withIndex("by_fulfilledBy", (q) =>
+								q
+									.eq("fulfilledBy", fulfilledBy)
+									.eq("status", status)
+									.lt("_creationTime", before),
+							)
+							.order("desc")
+							.take(limit),
+					),
+				),
+			);
+		}
+		if (args.status !== undefined) {
+			return await newestWithStatus(ctx, args.status, before, limit);
+		}
+		return await ctx.db
+			.query("mandates")
+			.withIndex("by_creation_time", (q) => q.lt("_creationTime", before))
+			.order("desc")
+			.take(limit);
 	},
 });
 
@@ -472,6 +536,7 @@ export const list = query({
 // get — fetch a single mandate by ID
 // ─────────────────────────────────────────────────────────────────────────────
 
+// fleet-wide: a mandate carries no organisation column and only the fleet (service account or operator human) is admitted; reading any fleet mandate by ID is this door's purpose
 export const get = query({
 	args: { mandateId: v.string() },
 	returns: v.union(mandateObject, v.null()),
@@ -502,6 +567,7 @@ export const get = query({
 // validateSpending — check if a proposed spend is within mandate limits
 // ─────────────────────────────────────────────────────────────────────────────
 
+// fleet-wide: a mandate carries no organisation column and only the fleet (service account or operator human) is admitted; checking a spend against any fleet mandate is this door's purpose
 export const validateSpending = query({
 	args: {
 		mandateId: v.id("mandates"),

@@ -50,6 +50,8 @@ function toShape(row: {
 // Idempotent: provisioning the same org twice (the mutation's replay
 // branch) must leave exactly one row for (clerkOrgSlug, clerkUserId), never
 // a duplicate — looked up by the `by_org_user` index with `.unique()`.
+//
+// allow-local-identity: writes the orgMembership AUDIT record (schema.ts: "AUDIT RECORD ONLY - NEVER AN AUTHORISATION SOURCE"); nothing here decides whether anyone may act, that stays the package's org-admin proof over the verified session
 // ─────────────────────────────────────────────────────────────────────────────
 export async function upsertAdminMembership(
 	ctx: MutationCtx,
@@ -130,6 +132,8 @@ function assertNotTruncated(rowCount: number, describe: string): void {
 	}
 }
 
+// allow-local-identity: reads the orgMembership AUDIT record to answer "who administers which organisation"; it is never an authorisation source (schema.ts), and who may ask is decided by the package (hasFleetRead, sameOrg) over the verified scope
+// fleet-wide: the fleet (service account or operator human) may ask about ANY organisation's administrators by purpose, this is the operator audit read; an organisation-scoped caller is confined to its own organisation by org ID
 export const getMembership = query({
 	args: { clerkOrgSlug: v.optional(v.string()) },
 	returns: v.array(membershipShape),

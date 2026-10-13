@@ -5,10 +5,8 @@ import { type MutationCtx, type QueryCtx, mutation, query } from "./_generated/s
 import {
 	loadAgentOfPrincipalOrg,
 	anonymousRefusal,
-	stampOrgRefusal,
 	requireOrgAdminById,
 } from "./lib/agentIdentity";
-import { withOrgScope } from "./lib/auth";
 import { clerkOrgIdForSlug } from "./lib/orgClerkId";
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -105,11 +103,9 @@ export const linkChild = mutation({
 		const identity = await ctx.auth.getUserIdentity();
 		if (!identity) throw anonymousRefusal(door);
 		const principal = await requireOrgAdminById(ctx, identity, args.orgSlug, door);
-		const scope = await withOrgScope(ctx);
-		const orgSlug = scope.orgSlug;
-		if (orgSlug === null || orgSlug !== principal.orgId) {
-			throw stampOrgRefusal(door);
-		}
+		// The edge is stamped with the principal's own organisation, the one the
+		// admin proof resolved BY ID from the verified session; no second resolver.
+		const orgSlug = principal.orgId;
 		const { parent, child } = await endpointsOf(
 			ctx,
 			principal,

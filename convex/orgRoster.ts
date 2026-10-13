@@ -3,7 +3,6 @@ import { ConvexError, v } from "convex/values";
 import type { Doc, Id } from "./_generated/dataModel";
 import { type QueryCtx, query } from "./_generated/server";
 import {
-	isMcpBoundMaster,
 	lookupOrgMapping,
 	requireResolvedCaller,
 	withOrgScope,
@@ -32,6 +31,7 @@ import {
 // resolve to a wildcard roster here (Day 108 fail-closed multi-tenant
 // doctrine, see convex/lib/auth.ts withOrgScope doc comment).
 // ─────────────────────────────────────────────────────────────────────────────
+// fleet-wide: the fleet's service account is answered the fleet-wide roster ["*"] by contract with the dashboard gate (lib/auth/dashboardGate.ts), so a whole-fleet reach is this door's purpose for that caller; a member or the operator's org admin is answered its own organisation's roster
 export const getMyOrgRoster = query({
 	args: {},
 	returns: v.array(v.string()),
@@ -196,16 +196,10 @@ export const getAgentDirectoryForAccessToken = query({
 	handler: async (ctx, args) => {
 		// isolation-contract: server-side only — invoked by the MCP transport (mcp-server/src/tools.ts list_peers) via imperative client.query, never a reactive useQuery: `grep -rn "getAgentDirectory" app components hooks lib contexts providers` in vantage-peers-dashboard -> 0 hits (2026-10-08). R-50 declared divergence.
 		const scope = await withOrgScope(ctx);
-		if (!isMcpBoundMaster(scope)) {
-			throw new ConvexError(
-				`RBAC_DENIED: orgRoster.getAgentDirectoryForAccessToken requires the MCP service account — ${JSON.stringify(
-					{
-						registration: "orgRoster:getAgentDirectoryForAccessToken",
-						reason: scope.anonymous ? "no-credential" : "not-mcp-bound-master",
-					},
-				)}`,
-			);
-		}
+		requireResolvedCaller(scope, "orgRoster:getAgentDirectoryForAccessToken", {
+			masterOnly: true,
+			mcpBoundOnly: true,
+		});
 		const mapping = await mappingOfAccessToken(ctx, args.tokenHash);
 		return await agentDirectoryOf(
 			ctx,
@@ -286,14 +280,13 @@ export const getForAccessToken = query({
 	returns: v.array(v.string()),
 	handler: async (ctx, args) => {
 		// isolation-contract: server-side only — invoked by the MCP transport via imperative client.query (mcp-server/src/auth.ts getOrgRoster + tools.ts:1897), never a reactive client useQuery. The fail-closed AUTH_REQUIRED/RBAC_DENIED throws are caught by the MCP auth layer's try/catch and returned as refusals, so no subscribing client ever receives an uncaught Server Error. R-50 declared divergence (a claim, verified here against the call sites).
+		// Anonymous and org-scoped callers may never resolve another organisation's
+		// roster by token hash: the MCP-bound service account only.
 		const scope = await withOrgScope(ctx);
-		if (!isMcpBoundMaster(scope)) {
-			throw new ConvexError(
-				"RBAC_DENIED: orgRoster.getForAccessToken requires master or " +
-					"service-account scope — anonymous and org-scoped callers may " +
-					"never resolve another organisation's roster by token hash.",
-			);
-		}
+		requireResolvedCaller(scope, "orgRoster:getForAccessToken", {
+			masterOnly: true,
+			mcpBoundOnly: true,
+		});
 
 		const token = await ctx.db
 			.query("oauth_access_tokens")

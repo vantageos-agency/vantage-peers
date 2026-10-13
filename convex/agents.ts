@@ -9,11 +9,9 @@ import {
 	assertAgentNameFree,
 	loadAgentOfPrincipalOrg,
 	anonymousRefusal,
-	stampOrgRefusal,
 	requireOrgAdminById,
 	revokeActiveCredentialRows,
 } from "./lib/agentIdentity";
-import { withOrgScope } from "./lib/auth";
 import { clerkOrgIdForSlug } from "./lib/orgClerkId";
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -131,11 +129,11 @@ export const registerAgent = mutation({
 		const identity = await ctx.auth.getUserIdentity();
 		if (!identity) throw anonymousRefusal("agents:registerAgent");
 		const principal = await requireOrgAdminById(ctx, identity, args.orgSlug, "agents:registerAgent");
-		const scope = await withOrgScope(ctx);
-		const orgSlug = scope.orgSlug;
-		if (orgSlug === null || orgSlug !== principal.orgId) {
-			throw stampOrgRefusal("agents:registerAgent");
-		}
+		// The organisation the agent is stamped with is the principal's own: the org
+		// the admin proof resolved BY ID from the verified session (the proof also
+		// required `args.orgSlug` to be that same organisation). No second resolver
+		// is consulted, so the door never reaches the organisation-scope resolver.
+		const orgSlug = principal.orgId;
 
 		assertAgentLabelValid(args.name);
 		await assertAgentNameFree(ctx, orgSlug, args.name);
@@ -320,8 +318,10 @@ async function renameRelationsBatch(
 			q.eq("orgSlug", orgSlug).eq("parentName", oldName),
 		)
 		.take(RENAME_RELATIONS_BATCH_SIZE);
+	let parentsPatched = 0;
 	for (const edge of asParent) {
 		await ctx.db.patch(edge._id, { parentName: newName });
+		if (edge.parentName !== newName) parentsPatched += 1;
 	}
 	const asChild = await ctx.db
 		.query("agent_relations")
@@ -329,12 +329,14 @@ async function renameRelationsBatch(
 			q.eq("orgSlug", orgSlug).eq("childName", oldName),
 		)
 		.take(RENAME_RELATIONS_BATCH_SIZE);
+	let childrenPatched = 0;
 	for (const edge of asChild) {
 		await ctx.db.patch(edge._id, { childName: newName });
+		if (edge.childName !== newName) childrenPatched += 1;
 	}
 	return (
-		asParent.length === RENAME_RELATIONS_BATCH_SIZE ||
-		asChild.length === RENAME_RELATIONS_BATCH_SIZE
+		parentsPatched === RENAME_RELATIONS_BATCH_SIZE ||
+		childrenPatched === RENAME_RELATIONS_BATCH_SIZE
 	);
 }
 
@@ -401,20 +403,21 @@ export const renameAgent = mutation({
 			normalizedName: newKey,
 		});
 
-		if (oldName !== args.newName) {
-			const more = await renameRelationsBatch(
-				ctx,
-				args.orgSlug,
+		// Renaming to the same spelling changes nothing: the batch counts only the
+		// edges whose stored copy actually changed and reports more work only when
+		// a full page changed, so the self-scheduled continuation cannot loop.
+		const more = await renameRelationsBatch(
+			ctx,
+			args.orgSlug,
+			oldName,
+			args.newName,
+		);
+		if (more) {
+			await ctx.scheduler.runAfter(0, internal.agents.renameAgentRelations, {
+				orgSlug: args.orgSlug,
 				oldName,
-				args.newName,
-			);
-			if (more) {
-				await ctx.scheduler.runAfter(0, internal.agents.renameAgentRelations, {
-					orgSlug: args.orgSlug,
-					oldName,
-					newName: args.newName,
-				});
-			}
+				newName: args.newName,
+			});
 		}
 		return null;
 	},

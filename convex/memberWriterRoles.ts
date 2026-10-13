@@ -2,7 +2,7 @@ import { resolveWriterRole } from "@vantageos/cloud-identity";
 import { ConvexError, v } from "convex/values";
 import type { MutationCtx, QueryCtx } from "./_generated/server";
 import { internalMutation, query } from "./_generated/server";
-import { isMcpBoundMaster, type OrgScope, withOrgScope } from "./lib/auth";
+import { type OrgScope, requireResolvedCaller, withOrgScope } from "./lib/auth";
 import { clerkOrgIdForSlug } from "./lib/orgClerkId";
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -18,7 +18,11 @@ import { clerkOrgIdForSlug } from "./lib/orgClerkId";
 // that is absent, or not in the list, is refused — never inherited.
 // ─────────────────────────────────────────────────────────────────────────────
 
-/** Resolve the writer-role list for an org; `[]` when no list exists anywhere. */
+/**
+ * Resolve the writer-role list for an org; `[]` when no list exists anywhere.
+ *
+ * allow-local-identity: reads the writer-role allowlist, which is policy DATA and holds no membership: the table name merely contains "member"; who may write is decided by resolveWriterRole in @vantageos/cloud-identity (assertMemberMayWrite below) over this list
+ */
 export async function loadMemberWriterRoles(
 	ctx: QueryCtx | MutationCtx,
 	orgSlug: string,
@@ -96,6 +100,8 @@ export async function requireMemberWriterRole(
  *   npx convex run memberWriterRoles:setMemberWriterRoles \
  *     '{"orgSlug":"acme-hr","roles":["org:admin"]}'           # one org override
  * internalMutation: never reachable from a client or an MCP tool.
+ *
+ * allow-local-identity: writes the writer-role allowlist, which is policy DATA and holds no membership: the table name merely contains "member"; who may write is decided by resolveWriterRole in @vantageos/cloud-identity over this list
  */
 export const setMemberWriterRoles = internalMutation({
 	args: {
@@ -161,11 +167,10 @@ export const assertPersonMayWrite = query({
 	handler: async (ctx, args) => {
 		// isolation-contract: no reactive subscriber exists — enumerated with `grep -rnE "api\.memberWriterRoles\." app components hooks lib contexts providers` in vantage-peers-dashboard 71da625 -> 0 matches. The only caller is the MCP server's imperative defineTool gate (mcp-server/src/registerTool.ts), so a throw cannot crash a render. R-50 declared divergence.
 		const scope = await withOrgScope(ctx);
-		if (!isMcpBoundMaster(scope)) {
-			throw new ConvexError(
-				"RBAC_DENIED: memberWriterRoles.assertPersonMayWrite admits the MCP service account only",
-			);
-		}
+		requireResolvedCaller(scope, "memberWriterRoles:assertPersonMayWrite", {
+			masterOnly: true,
+			mcpBoundOnly: true,
+		});
 		const writerRoles = await loadMemberWriterRoles(ctx, args.orgSlug);
 		assertMemberMayWrite(
 			{ orgRole: args.role, orgSlug: args.orgSlug },

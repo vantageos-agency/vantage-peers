@@ -4,6 +4,8 @@ import type { MutationCtx, QueryCtx } from "./_generated/server";
 import { mutation, query } from "./_generated/server";
 import {
 	isFleetStamp,
+	requireServiceAccountStanding,
+	requireStanding,
 	sameOrg,
 	sameTenantStamp,
 } from "@vantageos/cloud-identity";
@@ -155,6 +157,7 @@ const buObject = v.object({
 // create — insert a new business unit
 // ─────────────────────────────────────────────────────────────────────────────
 
+// fleet-wide: the fleet (the service account) opens a business unit it owns, unstamped, by purpose; a bearer acting for a verified organisation, or a member, writes only as that organisation's member on its own roster
 export const create = mutation({
 	args: {
 		name: v.string(),
@@ -189,6 +192,7 @@ export const create = mutation({
 		const door = "businessUnits:create";
 		const transportScope = await withOrgScope(ctx);
 		requireResolvedCaller(transportScope, door, { alsoRefusePreOrg: true });
+		requireStanding(transportScope, door, ["fleet", "member"]);
 		// The org a bearer acts for is the ACTIVE mapping the transport's claim
 		// names, believed from the service account only (the guarded helper refuses
 		// anyone else). The scope this door writes the tenant stamp from is the one
@@ -268,6 +272,7 @@ export const create = mutation({
 // update — partial update of BU fields
 // ─────────────────────────────────────────────────────────────────────────────
 
+// fleet-wide: the fleet (the service account) updates any fleet-owned business unit by purpose; a bearer acting for a verified organisation, or a member, only a unit stamped with that organisation's ID
 export const update = mutation({
 	args: {
 		buId: v.id("businessUnits"),
@@ -317,6 +322,7 @@ export const update = mutation({
 		const door = "businessUnits:update";
 		const transportScope = await withOrgScope(ctx);
 		requireResolvedCaller(transportScope, door, { alsoRefusePreOrg: true });
+		requireStanding(transportScope, door, ["fleet", "member"]);
 		const scope = await resolveVerifiedOrgScope(
 			ctx,
 			transportScope,
@@ -431,6 +437,7 @@ export const update = mutation({
 // remove — delete a business unit by ID
 // ─────────────────────────────────────────────────────────────────────────────
 
+// fleet-wide: deleting a business unit is the fleet's act by purpose: the service account deletes the fleet's own units, and a unit stamped with a client organisation only on the transport's verified claim naming that organisation
 export const remove = mutation({
 	args: {
 		buId: v.id("businessUnits"),
@@ -450,6 +457,7 @@ export const remove = mutation({
 		const door = "businessUnits:remove";
 		const scope = await withOrgScope(ctx);
 		await requireFleetDoor(ctx, scope, door, { masterOnly: true });
+		requireServiceAccountStanding(scope, door);
 
 		const bu = await ctx.db.get(args.buId);
 		if (!bu) throw new Error("Business unit not found");
@@ -478,6 +486,7 @@ export const remove = mutation({
 // get — fetch a single BU by ID
 // ─────────────────────────────────────────────────────────────────────────────
 
+// fleet-wide: the fleet (the service account, or the operator human for reads) reads any business unit by purpose; a bearer acting for a verified organisation, or a member, reads only a unit of that organisation whose owner is on its roster
 export const get = query({
 	// Accept a raw string, not `v.id("businessUnits")`: the v.id() validator
 	// runs BEFORE the handler, so a wrong-table ID is rejected with a message
@@ -576,9 +585,15 @@ function decodeCursor(cursor: string | undefined): CursorPayload | undefined {
 	}
 }
 
-export const BUSINESS_UNITS_LIST_SCAN_CAP = 2000;
+// Rows a cursor page reads beyond the page itself, for units created in the very
+// instant of the anchor row (the cursor resumes at that instant, inclusive).
+const CURSOR_TIE_ALLOWANCE = 50;
+
+const BU_STATUSES = ["idea", "building", "live", "revenue"] as const;
+type BuStatus = (typeof BU_STATUSES)[number];
 
 // returns-projection: fields="lite" returns a list-view card summary (liteValidator), not the full BU document
+// fleet-wide: the fleet (the service account, or the operator human for reads) lists every business unit by purpose; a bearer acting for a verified organisation, or a member, reads one index range per roster agent under its own organisation ID
 export const list = query({
 	args: {
 		fields: v.optional(v.union(v.literal("lite"), v.literal("full"))),
@@ -640,40 +655,54 @@ export const list = query({
 		// Decode cursor payload; fall back to createdBefore legacy anchor
 		const cursorPayload = decodeCursor(args.cursor);
 
-		// PR #635 wide-scan-cap pattern (see convex/tasks.ts TASK_LIST_SCAN_CAP,
-		// convex/profiles.ts PROFILES_LIST_SCAN_CAP, lot 1 mission k574p02m).
-		// mission k574p02m DEFECT 2, lot 2 — the previous `limit * 4 + 10` fixed
-		// multiplier is a FALLIBLE buffer: `.take(fetchLimit)` always re-reads
-		// only the TOP `fetchLimit` rows of the WHOLE ordering (not an offset
-		// continuation), so once the cursor anchor's true position exceeds this
-		// fixed window the anchor is never found, every row is filtered out,
-		// and the page comes back empty before the true end. Widen the fetch to
-		// the same scan cap the other carriers use instead of a multiplier that
-		// degrades with page depth.
-		// mission k574p02m lot 2 — Eta REVISE: widen on EITHER cursor source.
-		// The legacy `createdBefore` back-compat path also filters after
-		// `.take(fetchLimit)`, so it must widen too or it undershoots deep
-		// pages the same way the cursor path used to.
-		const wide = cursorPayload !== undefined || args.createdBefore !== undefined;
-		const fetchLimit = wide ? BUSINESS_UNITS_LIST_SCAN_CAP + 1 : limit + 1;
+		// History (mission k574p02m, DEFECT 2): the cursor used to be applied AFTER
+		// `.take(fetchLimit)`, so the anchor had to be found inside a window cut
+		// first (a fixed multiplier, then the 2000-row scan cap), and a deep page
+		// came back empty before the true end.
+		// A cursor resumes AT the anchor's creation time (inclusive, so same-instant
+		// peers of the anchor are still reached) and the legacy `createdBefore`
+		// anchor is strictly older: both are predicates of the READ, so they sit in
+		// the index range, before the bound (R-55). The page therefore never has
+		// to be widened to find the anchor in a window cut first; only a cursor
+		// reads a small allowance beyond the page for rows that share the anchor's
+		// instant.
+		const fetchLimit =
+			limit + 1 + (cursorPayload !== undefined ? CURSOR_TIE_ALLOWANCE : 0);
+		const inclusive = cursorPayload !== undefined;
+		const anchored = inclusive || args.createdBefore !== undefined;
+		// No anchor = an upper bound no creation time can reach.
+		const upper = cursorPayload?.time ?? args.createdBefore ?? Number.MAX_VALUE;
 
 		// R-11: the caller's scope is applied INSIDE the read. The fleet reads the
 		// fleet (by status, or all; by owner ID when an orchestrator is asked for,
 		// resolved in the operator org). An org member reads one index range per
 		// agent on its roster by ID, under its own org ID, and merges the ranges
-		// newest-first.
+		// newest-first. A range on creation time needs `status` pinned (the owner
+		// indexes end `[..., status]`), so an anchored read with no status asked
+		// fans out over every status; an unanchored one reads the plain range.
 		const status = args.status;
+		const statusesRead: readonly (BuStatus | undefined)[] =
+			status !== undefined ? [status] : anchored ? BU_STATUSES : [undefined];
 		let rows: Doc<"businessUnits">[] = [];
 		if (fleet && args.orchestratorId === undefined) {
 			rows =
 				status !== undefined
 					? await ctx.db
 							.query("businessUnits")
-							.withIndex("by_status", (q) => q.eq("status", status))
+							.withIndex("by_status", (q) =>
+								inclusive
+									? q.eq("status", status).lte("_creationTime", upper)
+									: q.eq("status", status).lt("_creationTime", upper),
+							)
 							.order("desc")
 							.take(fetchLimit)
 					: await ctx.db
 							.query("businessUnits")
+							.withIndex("by_creation_time", (q) =>
+								inclusive
+									? q.lte("_creationTime", upper)
+									: q.lt("_creationTime", upper),
+							)
 							.order("desc")
 							.take(fetchLimit);
 		} else {
@@ -701,43 +730,53 @@ export const list = query({
 			}
 			const orgClerkId = scope.orgClerkId;
 			for (const ownerId of owners) {
-				if (fleet) {
-					rows.push(
-						...(status !== undefined
-							? await ctx.db
-									.query("businessUnits")
-									.withIndex("by_ownerId_status", (q) =>
-										q.eq("ownerId", ownerId).eq("status", status),
-									)
-									.order("desc")
-									.take(fetchLimit)
-							: await ctx.db
-									.query("businessUnits")
-									.withIndex("by_ownerId_status", (q) => q.eq("ownerId", ownerId))
-									.order("desc")
-									.take(fetchLimit)),
-					);
-				} else if (orgClerkId !== undefined) {
-					rows.push(
-						...(status !== undefined
-							? await ctx.db
-									.query("businessUnits")
-									.withIndex("by_clerkOrgId_ownerId_status", (q) =>
-										q
-											.eq("clerkOrgId", orgClerkId)
-											.eq("ownerId", ownerId)
-											.eq("status", status),
-									)
-									.order("desc")
-									.take(fetchLimit)
-							: await ctx.db
-									.query("businessUnits")
-									.withIndex("by_clerkOrgId_ownerId_status", (q) =>
-										q.eq("clerkOrgId", orgClerkId).eq("ownerId", ownerId),
-									)
-									.order("desc")
-									.take(fetchLimit)),
-					);
+				for (const st of statusesRead) {
+					if (fleet) {
+						rows.push(
+							...(st !== undefined
+								? await ctx.db
+										.query("businessUnits")
+										.withIndex("by_ownerId_status", (q) => {
+											const pinned = q.eq("ownerId", ownerId).eq("status", st);
+											return inclusive
+												? pinned.lte("_creationTime", upper)
+												: pinned.lt("_creationTime", upper);
+										})
+										.order("desc")
+										.take(fetchLimit)
+								: await ctx.db
+										.query("businessUnits")
+										.withIndex("by_ownerId_status", (q) =>
+											q.eq("ownerId", ownerId),
+										)
+										.order("desc")
+										.take(fetchLimit)),
+						);
+					} else if (orgClerkId !== undefined) {
+						rows.push(
+							...(st !== undefined
+								? await ctx.db
+										.query("businessUnits")
+										.withIndex("by_clerkOrgId_ownerId_status", (q) => {
+											const pinned = q
+												.eq("clerkOrgId", orgClerkId)
+												.eq("ownerId", ownerId)
+												.eq("status", st);
+											return inclusive
+												? pinned.lte("_creationTime", upper)
+												: pinned.lt("_creationTime", upper);
+										})
+										.order("desc")
+										.take(fetchLimit)
+								: await ctx.db
+										.query("businessUnits")
+										.withIndex("by_clerkOrgId_ownerId_status", (q) =>
+											q.eq("clerkOrgId", orgClerkId).eq("ownerId", ownerId),
+										)
+										.order("desc")
+										.take(fetchLimit)),
+						);
+					}
 				}
 			}
 			// Merge the ranges newest-first and keep the fetch window.
@@ -746,36 +785,14 @@ export const list = query({
 				.slice(0, fetchLimit);
 		}
 
-		// Defence in depth for a member: every row read is stamped with the
-		// caller's org ID (the package's `sameOrg`), whatever the index returned.
-		if (!fleet) {
-			rows = rows.filter((r) =>
-				sameOrg(orgRefOfRow(r), orgRefOfScope(scope)),
-			);
-		}
-
-		// Apply cursor filter: exclude rows at or before the cursor anchor.
-		// Cursor encodes { time, id } — exclude rows strictly "before" in desc order:
-		//   time > cursor.time → already seen (newer, came before in desc order)
-		//   time === cursor.time AND id === cursor.id → the exact last-seen row
-		//   time === cursor.time AND id !== cursor.id → same-ms peers, keep them
-		// We order desc, so "already seen" = _creationTime >= cursor.time (for the anchor row).
-		// Precise rule: skip if (_creationTime > cursor.time) OR (_creationTime === cursor.time AND _id === cursor.id) or older same-ms seen peers.
-		// Simplest correct rule for desc ordering: skip all rows up to and including cursor.id.
+		// A member's rows were read through ranges led by its own organisation ID
+		// (`clerkOrgId`), so every row above is already the caller's; nothing is
+		// narrowed after the bound. A cursor resumes AFTER the anchor row of the
+		// merged, newest-first window (the read above already stopped at the
+		// anchor's creation time, so the anchor sits at its head).
 		if (cursorPayload !== undefined) {
-			let pastAnchor = false;
-			rows = rows.filter((r) => {
-				if (pastAnchor) return true;
-				if (r._id === cursorPayload.id) {
-					pastAnchor = true;
-					return false; // skip the anchor row itself
-				}
-				return false; // skip rows before anchor (newer in desc order)
-			});
-		} else if (args.createdBefore !== undefined) {
-			// Legacy back-compat: filter by createdBefore timestamp
-			const before = args.createdBefore;
-			rows = rows.filter((r) => r._creationTime < before);
+			const anchorAt = rows.findIndex((r) => r._id === cursorPayload.id);
+			if (anchorAt >= 0) rows = rows.slice(anchorAt + 1);
 		}
 
 		// Detect next page

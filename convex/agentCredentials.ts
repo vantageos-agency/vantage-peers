@@ -9,7 +9,6 @@ import {
 import {
 	loadAgentOfPrincipalOrg,
 	anonymousRefusal,
-	stampOrgRefusal,
 	requireOrgAdminById,
 	resolveAgentOfPresentedSecret,
 	revokeActiveCredentialRows,
@@ -87,11 +86,9 @@ export const mintAgentCredential = mutation({
 		const identity = await ctx.auth.getUserIdentity();
 		if (!identity) throw anonymousRefusal(door);
 		const principal = await requireOrgAdminById(ctx, identity, args.orgSlug, door);
-		const scope = await withOrgScope(ctx);
-		const orgSlug = scope.orgSlug;
-		if (orgSlug === null || orgSlug !== principal.orgId) {
-			throw stampOrgRefusal(door);
-		}
+		// The credential is stamped with the principal's own organisation, the one
+		// the admin proof resolved BY ID from the verified session; no second resolver.
+		const orgSlug = principal.orgId;
 
 		const agent = await loadAgentOfPrincipalOrg(ctx, principal, args.agentId, door);
 		if (!agent) {
