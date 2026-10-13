@@ -134,6 +134,26 @@ export async function resolveAgentOfPresentedSecret(
 	presentedSecret: string,
 	door: string,
 ): Promise<Doc<"agents"> | null> {
+	const presented = await resolvePrincipalOfPresentedSecret(
+		ctx,
+		presentedSecret,
+		door,
+	);
+	return presented === null ? null : presented.agent;
+}
+
+/**
+ * resolvePrincipalOfPresentedSecret — as {@link resolveAgentOfPresentedSecret},
+ * but it hands back the package's resolved PRINCIPAL beside the `agents` row, so
+ * a door can judge a target organisation against the principal's stored org ID
+ * (`assertTargetBelongsTo`) instead of comparing the row's org label itself.
+ * `null` when the secret resolves to no live agent.
+ */
+export async function resolvePrincipalOfPresentedSecret(
+	ctx: Ctx,
+	presentedSecret: string,
+	door: string,
+): Promise<{ agent: Doc<"agents">; principal: ActingPrincipal } | null> {
 	const bearer = await validatePresentedBearer(`Bearer ${presentedSecret}`, {
 		lookupBySecretHash: async (digest) => {
 			const row = await ctx.db
@@ -162,7 +182,8 @@ export async function resolveAgentOfPresentedSecret(
 		door,
 	);
 	if (!resolved.ok) return null;
-	return await ctx.db.get(resolved.principal.principalId as Id<"agents">);
+	const agent = await ctx.db.get(resolved.principal.principalId as Id<"agents">);
+	return agent === null ? null : { agent, principal: resolved.principal };
 }
 
 /**

@@ -43,6 +43,7 @@ import {
 import { ConvexError, v } from "convex/values";
 import type { DatabaseReader } from "../_generated/server";
 import { internalMutation, internalQuery } from "../_generated/server";
+import { orgMappingRowsUpTo, packageOrgRow } from "../lib/authOrgMapping";
 import { findOperatorOrg } from "../lib/operatorOrg";
 
 type Column = { slugField: string; idField: string };
@@ -118,7 +119,7 @@ type Resolution =
 type MappingRow = Awaited<ReturnType<typeof loadMappingRows>>[number];
 
 async function loadMappingRows(db: DatabaseReader) {
-	const rows = await db.query("client_org_mapping").take(MAPPING_READ_CAP + 1);
+	const rows = await orgMappingRowsUpTo({ db }, MAPPING_READ_CAP + 1);
 	if (rows.length > MAPPING_READ_CAP) {
 		throw new ConvexError(
 			`backfill_org_clerk_id: client_org_mapping holds more than ${MAPPING_READ_CAP} rows; refusing to decide from a truncated read.`,
@@ -163,16 +164,9 @@ async function resolveSlug(
 		orgByLabel: (label) => {
 			const rows = bySlug.get(label) ?? [];
 			if (rows.length > 1) throw new AmbiguousMapping(label);
-			const m = rows[0];
-			if (m === undefined) return null;
-			return {
-				id: m.clerkOrgId,
-				label: m.clerkOrgSlug,
-				active: m.isActive,
-				allowedOrchestrators: m.allowedOrchestrators,
-				scopes: m.scopes,
-				orgKind: m.orgKind,
-			};
+			// The row in the shape the package reads (the shared adapter's own
+			// translation), or an absence when the label names no mapping.
+			return packageOrgRow(rows[0] ?? null);
 		},
 	});
 	if (resolved.present) return { kind: "id", clerkOrgId: resolved.orgId };
@@ -211,9 +205,7 @@ export const inventory = internalQuery({
 		),
 	}),
 	handler: async (ctx) => {
-		const rows = await ctx.db
-			.query("client_org_mapping")
-			.take(MAPPING_READ_CAP + 1);
+		const rows = await orgMappingRowsUpTo(ctx, MAPPING_READ_CAP + 1);
 		if (rows.length > MAPPING_READ_CAP) {
 			throw new ConvexError(
 				`backfill_org_clerk_id: client_org_mapping holds more than ${MAPPING_READ_CAP} rows; refusing to list a truncated set.`,
@@ -226,16 +218,16 @@ export const inventory = internalQuery({
 			orgKind: m.orgKind ?? ("client" as const),
 		}));
 		const operator = await findOperatorOrg(ctx.db);
-		const operatorSlug = operator.kind === "one" ? operator.slug : null;
 		return {
 			mappings,
 			mappingsWithoutClerkId: mappings
 				.filter((m) => m.clerkOrgId === null)
 				.map((m) => m.clerkOrgSlug),
-			operatorSlug,
+			operatorSlug: operator.kind === "one" ? operator.slug : null,
+			// The operator org's permanent ID as the package found it with the
+			// operator (`findOperatorOrg`), not re-derived from its slug.
 			operatorClerkOrgId:
-				mappings.find((m) => m.clerkOrgSlug === operatorSlug)?.clerkOrgId ??
-				null,
+				operator.kind === "one" ? (operator.clerkOrgId ?? null) : null,
 			tables: TABLE_ORDER.map((table) => ({ table, ...ORG_COLUMNS[table] })),
 		};
 	},

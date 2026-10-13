@@ -54,7 +54,12 @@ import {
 	type QueryCtx,
 } from "./_generated/server";
 import { withOrgScope } from "./lib/auth";
+import { activeOrgMappingRowsUpTo } from "./lib/authOrgMapping";
 import { clerkOrgIdForSlug } from "./lib/orgClerkId";
+
+// A bound on the active mapping rows the client-org fetch reads (a small config
+// registry; over the bound the run is refused).
+const CLIENT_ORG_READ_CAP = 1000;
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Master sentinel + client-org fetch
@@ -81,10 +86,15 @@ export type ClientOrg = {
 export async function loadRealClientOrgs(
 	ctx: QueryCtx | MutationCtx,
 ): Promise<ClientOrg[]> {
-	const rows = await ctx.db
-		.query("client_org_mapping")
-		.withIndex("by_isActive", (q) => q.eq("isActive", true))
-		.collect();
+	// The registry's active rows through the shared mapping adapter, bounded; a
+	// read over the bound is refused, never decided from (a truncated list would
+	// leave an org out of the "real client org" population).
+	const rows = await activeOrgMappingRowsUpTo(ctx, CLIENT_ORG_READ_CAP + 1);
+	if (rows.length > CLIENT_ORG_READ_CAP) {
+		throw new ConvexError(
+			`receiptTenantBackfill: more than ${CLIENT_ORG_READ_CAP} active client_org_mapping rows; refusing to decide from a truncated read.`,
+		);
+	}
 	return rows
 		.filter((r) => r.fleetWide !== true && r.orgKind !== "operator")
 		.map((r) => ({
@@ -151,10 +161,12 @@ export function resolveReceiptPair(
 		org.allowedOrchestrators.includes(recipient),
 	);
 
+	// Both ends are filtered out of the SAME loaded list, so "the same org" is the
+	// same ENTRY (one mapping row), not a label that two entries happen to share.
 	if (
 		senderOrgs.length === 1 &&
 		recipientOrgs.length === 1 &&
-		senderOrgs[0].clerkOrgSlug === recipientOrgs[0].clerkOrgSlug
+		senderOrgs[0] === recipientOrgs[0]
 	) {
 		return {
 			state: "same-client-org",

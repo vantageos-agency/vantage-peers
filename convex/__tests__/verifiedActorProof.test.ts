@@ -402,7 +402,7 @@ describe("HELPER — which masters are trusted for verifiedActor (R3 ruling)", (
 		return await t.run(async (ctx) =>
 			outcome(
 				requireAgentCredentialMatch(ctx, undefined, "clio", null, {
-					scope: { isMaster: true, masterSource },
+					scope: { isMaster: true, fleetWide: true, masterSource },
 					verifiedActor: { agentId: clioA, orgSlug: "org-a" },
 				}),
 			),

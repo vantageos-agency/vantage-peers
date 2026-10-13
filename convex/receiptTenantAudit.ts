@@ -14,11 +14,16 @@
 // rows", never "the scan could not see the table". Paginated so it is correct for
 // any table size (a bare .collect() would silently truncate past the read cap —
 // the exact measure-nothing failure this audit exists to avoid).
-import { v } from "convex/values";
+import { ConvexError, v } from "convex/values";
 import type { Id } from "./_generated/dataModel";
 import { internal } from "./_generated/api";
 import { internalAction, internalQuery } from "./_generated/server";
+import { orgMappingRowsUpTo } from "./lib/authOrgMapping";
 import { loadRealClientOrgs } from "./receiptTenantBackfill";
+
+// A bound on the registry rows `_allClientOrgSlugs` reads. The table is a small
+// config registry; a read over this bound is refused, never decided from.
+const ALL_SLUGS_READ_CAP = 1000;
 
 export const _receiptTenantPage = internalQuery({
 	args: { cursor: v.union(v.string(), v.null()) },
@@ -533,7 +538,14 @@ export const _allClientOrgSlugs = internalQuery({
 		v.object({ clerkOrgSlug: v.string(), isActive: v.boolean() }),
 	),
 	handler: async (ctx) => {
-		const rows = await ctx.db.query("client_org_mapping").collect();
+		const rows = await orgMappingRowsUpTo(ctx, ALL_SLUGS_READ_CAP + 1);
+		if (rows.length > ALL_SLUGS_READ_CAP) {
+			// Orphan detection asks "is there ANY registration for this slug": a
+			// truncated list would call a real tenant an orphan, so it is refused.
+			throw new ConvexError(
+				`receiptTenantAudit: client_org_mapping holds more than ${ALL_SLUGS_READ_CAP} rows; refusing to list a truncated set.`,
+			);
+		}
 		return rows.map((r) => ({
 			clerkOrgSlug: r.clerkOrgSlug,
 			isActive: r.isActive,

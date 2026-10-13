@@ -55,6 +55,7 @@ import type { Id } from "../_generated/dataModel";
 import type { DatabaseReader, MutationCtx } from "../_generated/server";
 import { internalMutation } from "../_generated/server";
 import { normalizeOrchestratorId } from "../_helpers/normalizeOrchestratorId";
+import { orgMappingRowsUpTo } from "../lib/authOrgMapping";
 import { findOperatorOrg } from "../lib/operatorOrg";
 import { clerkOrgIdForSlug } from "../lib/orgClerkId";
 import { ORG_COLUMNS } from "./backfill_org_clerk_id";
@@ -118,9 +119,7 @@ type Resolver = {
 };
 
 async function loadResolver(db: DatabaseReader): Promise<Resolver> {
-	const mappings = await db
-		.query("client_org_mapping")
-		.take(MAPPING_READ_CAP + 1);
+	const mappings = await orgMappingRowsUpTo({ db }, MAPPING_READ_CAP + 1);
 	if (mappings.length > MAPPING_READ_CAP) {
 		throw new ConvexError(
 			`backfill_org_stamp: client_org_mapping holds more than ${MAPPING_READ_CAP} rows; refusing to decide from a truncated read.`,
@@ -192,8 +191,10 @@ function byParent(
 	parentOwn: Verdict,
 ): Verdict {
 	if (stamp !== undefined) {
-		// allow-local-identity: offline backfill compares stored data against data; there is no caller
-		return stamp === r.operatorSlug
+		// Whether the stamp is the fleet's is the STORED KIND of the org it names
+		// (`kindBySlug`, read from the mapping rows), the same way rule A decides:
+		// the operator org's stamp is the fleet stamp, any other stamp is an org.
+		return r.kindBySlug.get(stamp) === "operator"
 			? { kind: "fleet" }
 			: { kind: "org", orgId: stamp };
 	}

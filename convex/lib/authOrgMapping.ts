@@ -36,13 +36,18 @@ export type OrgMappingView = Doc<"client_org_mapping">;
 type MappingRead =
 	| { slug: string }
 	| { clerkOrgId: string }
-	| { activeLimit: number };
+	| { activeLimit: number }
+	| { anyLimit: number };
 
+// allow-local-identity: the storage adapter the package asks the host for (OrgMappingLookups orgById / orgByLabel / activeOrganisations); it reads rows by the key it is handed and decides nothing, and every other module reaches the table through it
 /** The ONLY read of `client_org_mapping` for org resolution. Answers raw rows. */
 async function readMappings(
 	db: DatabaseReader,
 	read: MappingRead,
 ): Promise<Doc<"client_org_mapping">[]> {
+	if ("anyLimit" in read) {
+		return await db.query("client_org_mapping").take(read.anyLimit);
+	}
 	if ("slug" in read) {
 		return await db
 			.query("client_org_mapping")
@@ -87,8 +92,30 @@ export async function orgMappingRowsForLabel(
 	return await readMappings(ctx.db, { slug: label });
 }
 
+/**
+ * Every mapping row, active or not, at most `limit` of them. For the offline
+ * operator jobs that walk the whole registry (a migration, an audit): the caller
+ * asks for `cap + 1` and refuses to decide from a read that came back over
+ * `cap`. Request paths never call it: they reach a mapping by the verified
+ * org ID.
+ */
+export async function orgMappingRowsUpTo(
+	ctx: { db: DatabaseReader },
+	limit: number,
+): Promise<Doc<"client_org_mapping">[]> {
+	return await readMappings(ctx.db, { anyLimit: limit });
+}
+
+/** The ACTIVE mapping rows, at most `limit` of them (offline jobs; same contract as above). */
+export async function activeOrgMappingRowsUpTo(
+	ctx: { db: DatabaseReader },
+	limit: number,
+): Promise<Doc<"client_org_mapping">[]> {
+	return await readMappings(ctx.db, { activeLimit: limit });
+}
+
 /** The row in the shape the package reads: its own field names beside the table's. */
-function packageRow(row: Doc<"client_org_mapping"> | null) {
+export function packageOrgRow(row: Doc<"client_org_mapping"> | null) {
 	if (row === null) return null;
 	return {
 		...row,
@@ -104,9 +131,9 @@ export function orgMappingLookups(ctx: {
 }): Required<OrgMappingLookups> & Required<OperatorOrgLookups> {
 	return {
 		orgById: async (orgId) =>
-			packageRow(await lookupOrgMapping(ctx, { clerkOrgId: orgId })),
-		orgByLabel: async (label) => packageRow(await lookupOrgMapping(ctx, label)),
+			packageOrgRow(await lookupOrgMapping(ctx, { clerkOrgId: orgId })),
+		orgByLabel: async (label) => packageOrgRow(await lookupOrgMapping(ctx, label)),
 		activeOrganisations: async (limit) =>
-			(await readMappings(ctx.db, { activeLimit: limit })).map(packageRow),
+			(await readMappings(ctx.db, { activeLimit: limit })).map(packageOrgRow),
 	};
 }
