@@ -38,7 +38,12 @@ import {
 	withOrgScope,
 } from "./lib/auth";
 import { isHumanActorName } from "./lib/humanActor";
-import { liveSeatAgent, resolveSeatAgent } from "./lib/seatAgent";
+import {
+	liveSeatAgent,
+	resolveSeatAgent,
+	seatBindingRefusal,
+} from "./lib/seatAgent";
+import { requireId } from "./lib/ids";
 import { DEFAULT_MEMBER_SCOPES } from "./lib/memberScopes";
 import { upsertAdminMembership } from "./orgMembership";
 import { CLERK_ORG_ID_PATTERN, clerkOrgIdForSlug } from "./lib/orgClerkId";
@@ -1680,10 +1685,34 @@ async function walkClientTokensPage(
 	}
 
 	if (!state.refreshDone) {
-		const page = await ctx.db
+		// NOT `.paginate`: Convex allows ONE paginated query per function and the
+		// access table above already uses it, so a second one made every deleteClient
+		// / retarget raise "ran multiple paginated queries" (prod 500). The refresh
+		// table advances by `_creationTime` (the implicit last field of every index,
+		// unique per row): the cursor is the last creation time read.
+		// A cursor that is not a creation time (a continuation scheduled before this
+		// change carried a paginate cursor) restarts the walk; every per-row rule is
+		// idempotent, so re-reading a row it already touched changes nothing.
+		const parsedCursor =
+			state.refreshCursor === null ? null : Number(state.refreshCursor);
+		const afterCreation =
+			parsedCursor === null || Number.isNaN(parsedCursor) ? null : parsedCursor;
+		const refreshRows = await ctx.db
 			.query("oauth_refresh_tokens")
-			.withIndex("by_clientId", (q) => q.eq("clientId", walk.clientId))
-			.paginate({ numItems: CLIENT_TOKEN_BATCH, cursor: state.refreshCursor });
+			.withIndex("by_clientId", (q) =>
+				afterCreation === null
+					? q.eq("clientId", walk.clientId)
+					: q.eq("clientId", walk.clientId).gt("_creationTime", afterCreation),
+			)
+			.take(CLIENT_TOKEN_BATCH);
+		const page = {
+			page: refreshRows,
+			isDone: refreshRows.length < CLIENT_TOKEN_BATCH,
+			continueCursor:
+				refreshRows.length === 0
+					? state.refreshCursor
+					: String(refreshRows[refreshRows.length - 1]._creationTime),
+		};
 		for (const r of page.page) {
 			refreshSeen++;
 			if (walk.op === "retarget_scope") {
@@ -1975,53 +2004,129 @@ export const patchClientScopeAndRefreshTokens = mutation({
 // credentials (the refresh token stays alive). This mutation is the
 // minimum-friction force-rotate.
 //
+// ONE token by its row _id: pass `tokenId` INSTEAD of `clientId`. An admin-minted
+// token (`admin-mint:*` clientId) has no oauth_clients row, so the client-wide
+// form cannot reach it; this sets `revokedAt` on exactly that row (its siblings
+// and every refresh token are untouched). Idempotent: a token already revoked
+// keeps its first timestamp and answers `alreadyRevoked: true`. The token's hash
+// is never an argument or a return value. Exactly one of the two is required.
+//
 // Service-account gated. Returns the number of access tokens revoked.
 // ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Revoke ONE access token by its row _id (sets `revokedAt` once; a token already
+ * revoked keeps its first timestamp). Coded refusals: a malformed id, or no such
+ * row (TOKEN_NOT_FOUND).
+ */
+async function revokeOneAccessToken(
+	ctx: MutationCtx,
+	rawTokenId: string,
+	now: number,
+): Promise<{
+	tokenId: Id<"oauth_access_tokens">;
+	clientId: string;
+	alreadyRevoked: boolean;
+}> {
+	const tokenId = requireId(
+		ctx,
+		"oauth_access_tokens",
+		rawTokenId,
+		"tokenId",
+		"Use the access-token row _id.",
+	);
+	const row = await ctx.db.get(tokenId);
+	if (row === null) {
+		throw new ConvexError(
+			`TOKEN_NOT_FOUND: no access token row ${rawTokenId} — ${JSON.stringify({ door: "oauth:revokeAccessTokensOnly" })}`,
+		);
+	}
+	const alreadyRevoked = row.revokedAt !== undefined;
+	if (!alreadyRevoked) await ctx.db.patch(tokenId, { revokedAt: now });
+	return { tokenId, clientId: row.clientId, alreadyRevoked };
+}
+
 export const revokeAccessTokensOnly = mutation({
 	args: {
-		clientId: v.string(),
+		clientId: v.optional(v.string()),
+		// The row _id of ONE access token, as a string so a malformed id is refused
+		// with a coded ConvexError instead of an argument-validation error.
+		tokenId: v.optional(v.string()),
 		reason: v.string(),
 	},
 	returns: v.object({
 		clientId: v.string(),
 		accessTokensRevoked: v.number(),
 		refreshTokensPreserved: v.number(),
+		tokenId: v.optional(v.id("oauth_access_tokens")),
+		alreadyRevoked: v.optional(v.boolean()),
 	}),
 	handler: async (ctx, args) => {
 		// write-contract: MCP-transport-only — issued via mcp-server client.mutation("oauth:revokeAccessTokensOnly", …) at mcp-server/server-http.ts:1693 (imperative), 0 hits in vantage-peers-dashboard {app,components,hooks,lib,contexts,providers} (measured 2026-10-01 at origin/main e2dc58f and 0466fac); never a subscribing pre-org client shell. The no-org throw is a refusal at an imperative MCP call, never at a render.
 		await requireServiceAccount(ctx, "oauth:revokeAccessTokensOnly");
 
+		// CODED ConvexErrors, never a plain Error: Convex redacts a plain Error's
+		// message to "Server Error" in production, so the admin route could not tell
+		// "no such client" from a crash and answered 500. The payload of a
+		// ConvexError survives (`err.data`) and the route maps on its code.
 		if (args.reason.length < 20) {
-			throw new Error(
-				"reason must be at least 20 characters (operator audit trail)",
+			throw new ConvexError(
+				`REASON_TOO_SHORT: reason must be at least 20 characters (operator audit trail) — ${JSON.stringify({ door: "oauth:revokeAccessTokensOnly" })}`,
 			);
 		}
 
-		const client = await ctx.db
-			.query("oauth_clients")
-			.withIndex("by_clientId", (q) => q.eq("clientId", args.clientId))
-			.unique();
-		if (!client) {
-			throw new Error(`client not found: ${args.clientId}`);
+		const { clientId, tokenId: rawTokenId } = args;
+		if ((clientId === undefined) === (rawTokenId === undefined)) {
+			throw new ConvexError(
+				`INVALID_TARGET: pass exactly one of clientId or tokenId — ${JSON.stringify({ door: "oauth:revokeAccessTokensOnly" })}`,
+			);
 		}
 
 		const now = Date.now();
-		// Access tokens: first batch here, the rest through the scheduler. The
-		// refresh table is only COUNTED (never written), so it is not walked.
-		const first = await walkClientTokensPage(
-			ctx,
-			{ op: "revoke_access_only", clientId: args.clientId, now, profile: null },
-			{ accessCursor: null, accessDone: false, refreshCursor: null, refreshDone: true },
-		);
-		if (!first.state.accessDone) {
-			await ctx.scheduler.runAfter(0, internal.oauth.continueClientTokenWalk, {
-				op: "revoke_access_only",
-				clientId: args.clientId,
-				now,
-				...first.state,
-			});
+		let targetClientId: string;
+		let accessTokensRevoked: number;
+		let revokedTokenId: Id<"oauth_access_tokens"> | undefined;
+		let alreadyRevoked: boolean | undefined;
+
+		if (rawTokenId !== undefined) {
+			// ONE token by its row _id (an admin-minted token has no client row).
+			const one = await revokeOneAccessToken(ctx, rawTokenId, now);
+			alreadyRevoked = one.alreadyRevoked;
+			targetClientId = one.clientId;
+			accessTokensRevoked = one.alreadyRevoked ? 0 : 1;
+			revokedTokenId = one.tokenId;
+		} else {
+			// The whole client (clientId is defined: exactly one target was given).
+			const wholeClientId = clientId as string;
+			const client = await ctx.db
+				.query("oauth_clients")
+				.withIndex("by_clientId", (q) => q.eq("clientId", wholeClientId))
+				.unique();
+			if (!client) {
+				// An admin-minted token (`admin-mint:*` clientId) has no oauth_clients
+				// row: revoke one by its row _id with `tokenId`.
+				throw new ConvexError(
+					`CLIENT_NOT_FOUND: client not found: ${wholeClientId} — ${JSON.stringify({ door: "oauth:revokeAccessTokensOnly", clientId: wholeClientId })}`,
+				);
+			}
+			// Access tokens: first batch here, the rest through the scheduler. The
+			// refresh table is only COUNTED (never written), so it is not walked.
+			const first = await walkClientTokensPage(
+				ctx,
+				{ op: "revoke_access_only", clientId: wholeClientId, now, profile: null },
+				{ accessCursor: null, accessDone: false, refreshCursor: null, refreshDone: true },
+			);
+			if (!first.state.accessDone) {
+				await ctx.scheduler.runAfter(0, internal.oauth.continueClientTokenWalk, {
+					op: "revoke_access_only",
+					clientId: wholeClientId,
+					now,
+					...first.state,
+				});
+			}
+			targetClientId = wholeClientId;
+			accessTokensRevoked = first.accessTouched;
 		}
-		const revoked = first.accessTouched;
 
 		// Count surviving refresh tokens (no patch). Useful in the response
 		// so the operator can confirm the refresh-flow can proceed. Read to at
@@ -2029,16 +2134,79 @@ export const revokeAccessTokensOnly = mutation({
 		// more than that.
 		const refreshTokens = await ctx.db
 			.query("oauth_refresh_tokens")
-			.withIndex("by_clientId", (q) => q.eq("clientId", args.clientId))
+			.withIndex("by_clientId", (q) => q.eq("clientId", targetClientId))
 			.take(CLIENT_TOKEN_BATCH);
 		const preserved = refreshTokens.filter(
 			(r) => r.revokedAt === undefined && r.expiresAt > now,
 		).length;
 
 		return {
-			clientId: args.clientId,
-			accessTokensRevoked: revoked,
+			clientId: targetClientId,
+			accessTokensRevoked,
 			refreshTokensPreserved: preserved,
+			...(revokedTokenId !== undefined ? { tokenId: revokedTokenId } : {}),
+			...(alreadyRevoked !== undefined ? { alreadyRevoked } : {}),
+		};
+	},
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// bindScopeProfileAgent: bind an agentId onto a seat scope profile
+//
+// resolveSeatAgent reads the agent a seat profile stands for BY ID
+// (`oauth_scope_profiles.agentId`). No door wrote it for a profile whose label
+// the legacy fallback cannot match (a "hélios" label under the profileId
+// "helios-iris-rh"). This is that door. It refuses unless the profile names
+// exactly one allowlist entry, the agent exists and is active, and the agent is
+// in the profile's own organisation, judged by org ID through
+// @vantageos/cloud-identity `sameOrg` (never by label).
+//
+// INTERNAL: not part of the public API, so no client or token can reach it. An
+// operator runs it with the deployment's admin credential
+// (`npx convex run oauth:bindScopeProfileAgent '{"profileId":..., "agentId":...}'`),
+// which is the same authority as the profile backfills beside it.
+// ─────────────────────────────────────────────────────────────────────────────
+export const bindScopeProfileAgent = internalMutation({
+	args: {
+		profileId: v.string(),
+		agentId: v.id("agents"),
+	},
+	returns: v.object({
+		profileId: v.string(),
+		agentId: v.id("agents"),
+		previousAgentId: v.union(v.id("agents"), v.null()),
+	}),
+	handler: async (ctx, args) => {
+		const refuse = (code: string, detail: Record<string, unknown>) =>
+			new ConvexError(
+				`${code}: oauth:bindScopeProfileAgent refused — ${JSON.stringify({ door: "oauth:bindScopeProfileAgent", ...detail })}`,
+			);
+		const profile = await ctx.db
+			.query("oauth_scope_profiles")
+			.withIndex("by_profileId", (q) => q.eq("profileId", args.profileId))
+			.unique();
+		if (profile === null) {
+			throw refuse("PROFILE_NOT_FOUND", { profileId: args.profileId });
+		}
+		const agent = await ctx.db.get(args.agentId);
+		if (agent === null) {
+			throw refuse("AGENT_NOT_FOUND", { agentId: args.agentId });
+		}
+		const refusal = await seatBindingRefusal(ctx, profile, agent);
+		if (refusal !== null) {
+			throw refuse(refusal, {
+				agentId: args.agentId,
+				profileId: args.profileId,
+			});
+		}
+		await ctx.db.patch(profile._id, {
+			agentId: args.agentId,
+			updatedAt: Date.now(),
+		});
+		return {
+			profileId: profile.profileId,
+			agentId: args.agentId,
+			previousAgentId: profile.agentId ?? null,
 		};
 	},
 });
