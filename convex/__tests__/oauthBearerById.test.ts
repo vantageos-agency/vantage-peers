@@ -186,13 +186,16 @@ describe("a seat token is bound to the agent ID of its profile", () => {
 		expect((await lookup(t, hash))?.seatAgent).toBeNull();
 	});
 
-	test("ABSENT: a profile with no agentId still resolves the single agent of its own org (expand phase) and the token is stamped", async () => {
+	test("REFUSED: a one-agent profile with no agentId never resolves an agent by its label; the mint refuses loudly (SEAT_PROFILE_UNBOUND) and writes no token", async () => {
 		const t = createT();
 		await seedOrg(t, "org-a");
-		const clioA = await seedAgent(t, "org-a", "clio");
+		await seedAgent(t, "org-a", "clio");
 		await seedProfile(t, "clio-org-a", "org-a");
-		const hash = await mintSeatToken(t, "clio-org-a", "org-a");
-		expect((await lookup(t, hash))?.seatAgent?.agentId).toBe(clioA);
+		await expect(mintSeatToken(t, "clio-org-a", "org-a")).rejects.toThrow(
+			/SEAT_PROFILE_UNBOUND/,
+		);
+		const rows = await t.run((ctx) => ctx.db.query("oauth_access_tokens").collect());
+		expect(rows).toHaveLength(0);
 	});
 
 	test("provisionOrganization writes the agent ID of each seat onto its profile and its token", async () => {
