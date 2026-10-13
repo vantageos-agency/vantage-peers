@@ -92,7 +92,8 @@ async function isNoteAuthor(
 }
 
 /**
- * The caller a briefing-note agent door acts as, or this door's own coded refusal.
+ * Runs a briefing-note door's caller resolution and re-says the roster refusal as
+ * this door's own coded RBAC_DENIED.
  *
  * The shared caller resolver (tasks:requireAuthenticatedCaller, batch B) holds a
  * member to its organisation's roster BY AGENT ID and says so as
@@ -101,18 +102,12 @@ async function isNoteAuthor(
  * refusal is re-said in that shape: same denial, same payload the door already
  * returns to every other caller that is not the author. Any other error passes.
  */
-async function authenticatedAgentOrRefuse(
-	ctx: MutationCtx,
+async function withCodedRosterRefusal<T>(
 	refusal: { message: string; payload: Record<string, unknown> },
-	...callerArgs: Parameters<typeof requireAuthenticatedCaller> extends [
-		unknown,
-		...infer Rest,
-	]
-		? Rest
-		: never
-): ReturnType<typeof requireAuthenticatedCaller> {
+	resolve: () => Promise<T>,
+): Promise<T> {
 	try {
-		return await requireAuthenticatedCaller(ctx, ...callerArgs);
+		return await resolve();
 	} catch (error) {
 		if (
 			error instanceof ConvexError &&
@@ -407,8 +402,7 @@ export const create = mutation({
 			// The author is the agent the PROOF names (credential / verifiedActor /
 			// the label looked up in the caller's own org), never the label. A member
 			// whose proof names no agent of its org may not write under that name.
-			const caller = await authenticatedAgentOrRefuse(
-				ctx,
+			const caller = await withCodedRosterRefusal(
 				{
 					message: `"${claimedCreator}" names no agent of the caller's organisation — a briefing note is authored by an agent resolved by ID, a label that names none is refused`,
 					payload: {
@@ -417,11 +411,15 @@ export const create = mutation({
 						orgSlug: scope.orgSlug,
 					},
 				},
-				claimedCreator,
-				undefined,
-				verifiedActor,
-				undefined,
-				{ proof: verifiedOrg, door: "briefingNotes:create" },
+				() =>
+					requireAuthenticatedCaller(
+						ctx,
+						claimedCreator,
+						undefined,
+						verifiedActor,
+						undefined,
+						{ proof: verifiedOrg, door: "briefingNotes:create" },
+					),
 			);
 			createdById = caller.callerActorId;
 			if (!hasFleetRead(scope) && createdById === undefined) {
@@ -1130,8 +1128,7 @@ export const deleteBriefingNote = mutation({
 		// The caller is the agent its PROOF names (credential / verifiedActor / the
 		// label looked up in its own org) and must be the note's author BY ID.
 		requireOrchestratorOnRoster(scope, args.callerOrchestrator, "briefingNotes:deleteBriefingNote", "actor");
-		const caller = await authenticatedAgentOrRefuse(
-			ctx,
+		const caller = await withCodedRosterRefusal(
 			{
 				message: `only ${note.createdBy} (creator) or system can delete this briefing note`,
 				payload: {
@@ -1140,9 +1137,13 @@ export const deleteBriefingNote = mutation({
 					reason: "not-creator",
 				},
 			},
-			args.callerOrchestrator,
-			undefined,
-			args.verifiedActor,
+			() =>
+				requireAuthenticatedCaller(
+					ctx,
+					args.callerOrchestrator,
+					undefined,
+					args.verifiedActor,
+				),
 		);
 		if (
 			!isFleetSystemCaller(scope, args.callerOrchestrator) &&
@@ -1247,8 +1248,7 @@ export const update = mutation({
 		if (callerOrchestrator !== undefined) {
 			requireOrchestratorOnRoster(scope, callerOrchestrator, "briefingNotes:update", "actor");
 			callerActorId = (
-				await authenticatedAgentOrRefuse(
-					ctx,
+				await withCodedRosterRefusal(
 					{
 						message: `${callerOrchestrator} is not creator of this briefing note`,
 						payload: {
@@ -1257,9 +1257,13 @@ export const update = mutation({
 							reason: "not-creator",
 						},
 					},
-					callerOrchestrator,
-					undefined,
-					verifiedActor,
+					() =>
+						requireAuthenticatedCaller(
+							ctx,
+							callerOrchestrator,
+							undefined,
+							verifiedActor,
+						),
 				)
 			).callerActorId;
 		}
