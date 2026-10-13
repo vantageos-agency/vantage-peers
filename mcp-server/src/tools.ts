@@ -6184,6 +6184,9 @@ export function registerTools(
 
 	// ── list_missions ───────────────────────────────────────────────────────────
 
+	// oracle-justified: the reader tier is decided in the Convex door, from the verified identity and never from an argument:
+	//   missions:list serves the fleet every mission and an org member one index range keyed by its OWN organisation,
+	//   narrowed to missions whose pilot is on its roster by agent ID (convex/missions.ts, convex/lib/missionActors.ts).
 	defineTool(
 		server,
 		authCtx,
@@ -6312,6 +6315,9 @@ export function registerTools(
 
 	// ── get_mission ─────────────────────────────────────────────────────────────
 
+	// oracle-justified: the reader tier is decided in the Convex door, from the verified identity and never from an argument:
+	//   missions:get compares the row's stamped organisation ID with the caller's (the package's sameOrg) and its pilot ID
+	//   with the roster by agent ID; the fleet reads every row (convex/missions.ts).
 	defineTool(
 		server,
 		authCtx,
@@ -9872,6 +9878,9 @@ export function registerTools(
 
 	// ── get_mission_template ────────────────────────────────────────────────────
 
+	// oracle-justified: the template catalog is shared fleet-wide with no organisation column, so missionTemplates:getByName
+	//   admits the fleet only (masterOnly, convex/missionTemplates.ts) and refuses an organisation member by raising;
+	//   the tier is the door's, from the verified identity, never an argument.
 	defineTool(
 		server,
 		authCtx,
@@ -10026,6 +10035,10 @@ export function registerTools(
 
 	// ── instantiate_template_into_mission ───────────────────────────────────────
 
+	// oracle-justified: the writer and reader tier are decided in the Convex door, from the verified identity and never from an argument:
+	//   missionTemplates:instantiateTemplateIntoMission compares the target mission's stamped organisation ID with the
+	//   caller's (the package's sameOrg), requires a writer role and a roster entry by agent ID for every assignee of a
+	//   member, and leaves the fleet unrestricted (convex/missionTemplates.ts).
 	defineTool(
 		server,
 		authCtx,
