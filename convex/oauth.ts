@@ -2192,11 +2192,12 @@ export const bindScopeProfileAgent = internalMutation({
 		if (agent === null) {
 			throw refuse("AGENT_NOT_FOUND", { agentId: args.agentId });
 		}
-		const refusal = await seatBindingRefusal(ctx, profile, agent);
+		const refusal = seatBindingRefusal(profile, agent);
 		if (refusal !== null) {
-			throw refuse(refusal, {
+			throw refuse(refusal.code, {
 				agentId: args.agentId,
 				profileId: args.profileId,
+				...("side" in refusal ? { side: refusal.side } : {}),
 			});
 		}
 		await ctx.db.patch(profile._id, {
