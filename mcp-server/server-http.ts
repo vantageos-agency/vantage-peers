@@ -726,9 +726,10 @@ app.get("/authorize/callback", async (c) => {
 	// domain, it lives on the Clerk domain). Clerk's own handshake brings it:
 	// the SDK answers `handshake` (redirect + Set-Cookie) and comes back with
 	// `__session`. An explicit Bearer token is the signed-in case already;
-	// injected test collaborators skip the SDK. The handshake needs the
-	// instance's publishable key (CLERK_PUBLISHABLE_KEY); without it the
-	// session-cookie path below is unchanged.
+	// injected test collaborators skip the SDK. The handshake needs both the
+	// secret key and the instance's publishable key. With only one of them set,
+	// a request carrying a session token (cookie or Bearer) is served as before;
+	// a request with none is refused server-misconfigured (below).
 	const hasBearer = c.req
 		.header("authorization")
 		?.toLowerCase()
@@ -738,10 +739,13 @@ app.get("/authorize/callback", async (c) => {
 	const injected = Object.keys(currentAuthorizeOverrides()).length > 0;
 	const handshake = clerkHandshakeConfig(process.env);
 	// Half of the handshake configuration is a deployment error, not a signed-out
-	// visitor: refuse with the package's server-misconfigured reason and name the
-	// variable in the log, instead of skipping the handshake and answering
-	// session-required.
+	// visitor: a request that carries NO session token (no Bearer, no `__session`
+	// cookie on this host) is refused with the package's server-misconfigured
+	// reason and the variable is named in the log, instead of skipping the
+	// handshake and answering session-required. A request that already carries a
+	// session token proceeds to resumeAuthorize exactly as before.
 	if (
+		sessionToken === undefined &&
 		!hasBearer &&
 		!injected &&
 		!handshake.configured &&
