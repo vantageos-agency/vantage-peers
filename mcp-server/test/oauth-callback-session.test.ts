@@ -189,6 +189,26 @@ describe("(c) a Bearer session token", () => {
 	});
 });
 
+describe("(c') one key set + a __session cookie on this host", () => {
+	it("is served by resumeAuthorize, not refused server-misconfigured", async () => {
+		delete process.env.CLERK_PUBLISHABLE_KEY;
+		const state = await signedState();
+		const res = await app.request(
+			`${BASE}/authorize/callback?authorize_state=${state}`,
+			{
+				headers: { ...doc, cookie: "__session=not.a.real-token" },
+				redirect: "manual",
+			},
+		);
+		const body = (await res.json()) as { error_description: string };
+		// The cookie is judged by the package (here: not a valid token), which is
+		// the same outcome as before this change; the misconfiguration refusal
+		// is reserved for a request that carries no session at all.
+		expect(body.error_description).not.toBe("server-misconfigured");
+		expect(body.error_description).not.toBe("session-required");
+	});
+});
+
 describe("(d) both keys set, signed out", () => {
 	it("still answers session-required", async () => {
 		const state = await signedState();
