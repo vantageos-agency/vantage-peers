@@ -68,13 +68,13 @@ describe("GET /authorize/callback without a session on this host", () => {
 		).toBe(false);
 	});
 
-	it("without CLERK_PUBLISHABLE_KEY no handshake is attempted (the session-cookie path is unchanged)", async () => {
+	it("without CLERK_PUBLISHABLE_KEY no handshake is attempted and the callback refuses loudly (server-misconfigured, not a silent skip)", async () => {
 		delete process.env.CLERK_PUBLISHABLE_KEY;
 		const res = await app.request(
 			`${BASE}/authorize/callback?authorize_state=x&__clerk_db_jwt=dvb_abc`,
 			{ headers: doc, redirect: "manual" },
 		);
 		expect(res.status).not.toBe(307);
-		expect(res.status).toBeLessThan(500);
+		expect(res.status).toBe(500);
 	});
 });
