@@ -358,6 +358,50 @@ export function redirectUriInState(state: string | undefined): string | null {
 	}
 }
 
+/**
+ * Whether Clerk's handshake can run: it needs BOTH the instance secret key and
+ * its publishable key. Names only, never values. The first missing name wins
+ * (secret key first), so a /health reader and the callback log agree.
+ * Configuration validation only: no identity decision is made here.
+ */
+export type HandshakeConfig =
+	| { configured: true }
+	| { configured: false; missing: string };
+
+export function clerkHandshakeConfig(env: NodeJS.ProcessEnv): HandshakeConfig {
+	for (const name of ["CLERK_SECRET_KEY", "CLERK_PUBLISHABLE_KEY"]) {
+		if ((env[name] ?? "") === "") return { configured: false, missing: name };
+	}
+	return { configured: true };
+}
+
+/** The `/health` word for {@link clerkHandshakeConfig}. */
+export function handshakeHealth(env: NodeJS.ProcessEnv): string {
+	const cfg = clerkHandshakeConfig(env);
+	return cfg.configured ? "configured" : `missing:${cfg.missing}`;
+}
+
+/**
+ * Reads `cid` (the client_id) out of a signed state blob WITHOUT verifying
+ * it. LOG HINT ONLY, never a decision: resumeAuthorize verifies the HMAC
+ * before it believes any field. Restricted to a short identifier charset so a
+ * forged state cannot inject into a log line.
+ */
+export function clientIdInState(state: string | undefined): string | null {
+	if (!state) return null;
+	try {
+		const payload = state.split(".")[0] ?? "";
+		const json = atob(payload.replace(/-/g, "+").replace(/_/g, "/"));
+		const parsed = JSON.parse(json) as { cid?: unknown };
+		return typeof parsed.cid === "string" &&
+			/^[A-Za-z0-9._:-]{1,128}$/.test(parsed.cid)
+			? parsed.cid
+			: null;
+	} catch {
+		return null;
+	}
+}
+
 function escapeHtml(value: string): string {
 	return value
 		.replace(/&/g, "&amp;")

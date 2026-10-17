@@ -65,9 +65,12 @@ import {
 import { selectConvexClientForRequest } from "./src/authenticatedConvexClient.js";
 import {
 	buildAuthorizeRuntime,
+	clerkHandshakeConfig,
+	clientIdInState,
 	convexCodeStore,
 	currentAuthorizeOverrides,
 	getClerkUser,
+	handshakeHealth,
 	lookupOrgMapping,
 	orgKeyOf,
 	pickerContentSecurityPolicy,
@@ -655,6 +658,7 @@ function expanderFor(
 async function respondToOutcome(
 	c: Context,
 	outcome: AuthorizeOutcome,
+	state?: string,
 ): Promise<Response> {
 	c.header("Cache-Control", "no-store");
 	c.header("Referrer-Policy", "no-referrer");
@@ -672,6 +676,11 @@ async function respondToOutcome(
 			c.header("Content-Security-Policy", await pickerContentSecurityPolicy());
 			return c.html(renderOrgPicker(outcome.model));
 		case "refused": {
+			// One line per refusal: the code, the route and (when the state names
+			// one) the client. Never a token, a secret or a query value.
+			console.error(
+				`[oauth] ${c.req.path} refused: reason=${outcome.refusal.reason} client_id=${clientIdInState(state) ?? "unknown"}`,
+			);
 			const mapped = oauthErrorFor(outcome.refusal);
 			return c.json(
 				{ error: mapped.error, error_description: outcome.refusal.reason },
@@ -727,7 +736,30 @@ app.get("/authorize/callback", async (c) => {
 	const secretKey = process.env.CLERK_SECRET_KEY ?? "";
 	const publishableKey = process.env.CLERK_PUBLISHABLE_KEY ?? "";
 	const injected = Object.keys(currentAuthorizeOverrides()).length > 0;
-	if (!hasBearer && !injected && secretKey !== "" && publishableKey !== "") {
+	const handshake = clerkHandshakeConfig(process.env);
+	// Half of the handshake configuration is a deployment error, not a signed-out
+	// visitor: refuse with the package's server-misconfigured reason and name the
+	// variable in the log, instead of skipping the handshake and answering
+	// session-required.
+	if (
+		!hasBearer &&
+		!injected &&
+		!handshake.configured &&
+		(secretKey !== "" || publishableKey !== "")
+	) {
+		console.error(
+			`[oauth] /authorize/callback handshake unconfigured: missing ${handshake.missing}`,
+		);
+		return respondToOutcome(
+			c,
+			{
+				kind: "refused",
+				refusal: { code: "AUTHORIZE_REFUSED", reason: "server-misconfigured" },
+			},
+			state,
+		);
+	}
+	if (!hasBearer && !injected && handshake.configured) {
 		const session = await resolveClerkSessionFromRequest(c.req.raw, {
 			secretKey,
 			publishableKey,
@@ -753,6 +785,7 @@ app.get("/authorize/callback", async (c) => {
 	return respondToOutcome(
 		c,
 		await resumeAuthorize({ state: state ?? "", sessionToken }, cfg, deps),
+		state,
 	);
 });
 
@@ -798,6 +831,7 @@ app.post("/authorize/org", async (c) => {
 				cfg,
 				deps,
 			),
+			state,
 		);
 	}
 	return respondToOutcome(
@@ -813,6 +847,7 @@ app.post("/authorize/org", async (c) => {
 			cfg,
 			deps,
 		),
+		state,
 	);
 });
 
@@ -1242,6 +1277,9 @@ app.get("/health", (c) =>
 		transport: "streamable-http",
 		oauth: "supported",
 		scopes: ["mcp:full"],
+		// Names only: whether /authorize/callback can run Clerk's handshake, or
+		// which environment variable stops it.
+		authorize: { handshake: handshakeHealth(process.env) },
 		// Publishes the ACTIVE actor-credential mode plus its provenance. The
 		// mode alone cannot tell "an operator chose permissive" from "nobody set
 		// the variable" (prod ran the latter for weeks, unobserved). `source` is
