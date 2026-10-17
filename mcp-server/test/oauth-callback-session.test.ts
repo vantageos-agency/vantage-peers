@@ -13,6 +13,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { app } from "../server-http.js";
 import { _setInternalClientForTest } from "../src/auth.js";
+import { clientIdInState } from "../src/authorize.js";
 
 const BASE = "http://localhost:3000";
 const FAPI = "sharp-sponge-67.clerk.accounts.dev";
@@ -219,5 +220,97 @@ describe("(d) both keys set, signed out", () => {
 		const body = (await res.json()) as { error_description: string };
 		expect(body.error_description).toBe("session-required");
 		expect(logged()).toContain("session-required");
+	});
+});
+
+/**
+ * clientIdInState is a LOG SANITIZER: it reads `cid` from the UNVERIFIED state
+ * blob and must return either a short safe identifier or null, never anything
+ * that can forge or colour a log line.
+ */
+describe("clientIdInState (log sanitizer for the unverified state)", () => {
+	const state = (obj: unknown): string =>
+		`${Buffer.from(JSON.stringify(obj)).toString("base64url")}.sig`;
+	const UUID = "d3e878db-d37c-4b0e-9a3a-1f2e3d4c5b6a";
+
+	describe("PRESENT: returns the cid", () => {
+		it("a well-formed state returns its cid", () => {
+			expect(clientIdInState(state({ cid: UUID }))).toBe(UUID);
+		});
+
+		it("every allowed character class (letters, digits, . _ : -) is returned", () => {
+			const cid = "Abc.xyz_09:Z-9";
+			expect(clientIdInState(state({ cid }))).toBe(cid);
+		});
+
+		it("exactly 128 characters is returned", () => {
+			const cid = "a".repeat(128);
+			expect(clientIdInState(state({ cid }))).toBe(cid);
+		});
+
+		it("decodes the base64url alphabet ('-' and '_')", () => {
+			const obj = { cid: "url-safe_ok", pad: "???>>>~~~" };
+			const std = Buffer.from(JSON.stringify(obj)).toString("base64");
+			const url = Buffer.from(JSON.stringify(obj)).toString("base64url");
+			expect(std).toMatch(/[+/]/);
+			expect(url).toMatch(/[-_]/);
+			expect(url).not.toMatch(/[+/]/);
+			expect(clientIdInState(`${url}.sig`)).toBe("url-safe_ok");
+		});
+	});
+
+	describe("REFUSED: returns null", () => {
+		it("undefined", () => {
+			expect(clientIdInState(undefined)).toBeNull();
+		});
+
+		it("empty string", () => {
+			expect(clientIdInState("")).toBeNull();
+		});
+
+		it("non-base64 garbage", () => {
+			expect(clientIdInState("!!!not base64***.sig")).toBeNull();
+		});
+
+		it("base64 of non-JSON", () => {
+			const s = `${Buffer.from("this is not json").toString("base64url")}.sig`;
+			expect(clientIdInState(s)).toBeNull();
+		});
+
+		it("JSON without a cid", () => {
+			expect(clientIdInState(state({ other: UUID }))).toBeNull();
+		});
+
+		it("cid that is a number", () => {
+			expect(clientIdInState(state({ cid: 12345 }))).toBeNull();
+		});
+
+		it("cid that is an object", () => {
+			expect(clientIdInState(state({ cid: { a: "b" } }))).toBeNull();
+		});
+
+		it("cid of 129 characters", () => {
+			expect(clientIdInState(state({ cid: "a".repeat(129) }))).toBeNull();
+		});
+
+		it("cid with a newline (log injection)", () => {
+			expect(clientIdInState(state({ cid: "abc\n[oauth] forged" }))).toBeNull();
+		});
+
+		it("cid with a space", () => {
+			expect(clientIdInState(state({ cid: "abc def" }))).toBeNull();
+		});
+
+		it("cid with <script>", () => {
+			expect(clientIdInState(state({ cid: "<script>" }))).toBeNull();
+		});
+
+		it("cid with an ANSI escape", () => {
+			expect(clientIdInState(state({ cid: "\u001b[31m" }))).toBeNull();
+		});
+
+		it("empty cid", () => {
+			expect(clientIdInState(state({ cid: "" }))).toBeNull();
+		});
 	});
 });
