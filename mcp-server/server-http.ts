@@ -49,7 +49,10 @@ import {
 	startAuthorize,
 	timingSafeEqual,
 } from "@vantageos/cloud-identity";
-import { resolveClerkSessionFromRequest } from "@vantageos/cloud-identity/clerk-handshake";
+import {
+	resolveClerkSessionForFormPost,
+	resolveClerkSessionFromRequest,
+} from "@vantageos/cloud-identity/clerk-handshake";
 import { type Context, Hono } from "hono";
 import { cors } from "hono/cors";
 import {
@@ -779,6 +782,36 @@ app.post("/authorize/org", async (c) => {
 		settings.settings,
 		expanderFor(redirectUriInState(state)),
 	);
+	// The person's session. Under the same guard as the callback (no Bearer, no
+	// injected collaborators, both Clerk keys set) the identity package decides
+	// it: a production instance names its cookie `__session_<suffix>` and the
+	// session JWT is short-lived, so reading `__session` here would see no
+	// token. The package refuses a post that is not same-origin and refreshes
+	// an expired token (Set-Cookie on `session.headers`). Outside the guard the
+	// Bearer / bare-cookie read is unchanged.
+	let sessionToken = sessionTokenFrom(c);
+	const hasBearer = c.req
+		.header("authorization")
+		?.toLowerCase()
+		.startsWith("bearer ");
+	const secretKey = process.env.CLERK_SECRET_KEY ?? "";
+	const publishableKey = process.env.CLERK_PUBLISHABLE_KEY ?? "";
+	const injected = Object.keys(currentAuthorizeOverrides()).length > 0;
+	if (!hasBearer && !injected && secretKey !== "" && publishableKey !== "") {
+		const session = await resolveClerkSessionForFormPost(c.req.raw, {
+			secretKey,
+			publishableKey,
+			authorizedParties: settings.settings.authorizedParties,
+			expectedOrigin: resolveIssuer(c.req.raw),
+		});
+		sessionToken =
+			session.kind === "signed-in" ? session.sessionToken : undefined;
+		if (session.kind === "signed-in") {
+			for (const cookie of session.headers.getSetCookie()) {
+				c.header("Set-Cookie", cookie, { append: true });
+			}
+		}
+	}
 	// A denial is the package's `denied` outcome: it verifies the signed state,
 	// the client, the session and the consent token (cloud-identity >= 0.18),
 	// then answers the redirect to the client with error=access_denied and the
@@ -790,7 +823,7 @@ app.post("/authorize/org", async (c) => {
 			await resumeAuthorize(
 				{
 					state: state ?? "",
-					sessionToken: sessionTokenFrom(c),
+					sessionToken,
 					denied: true,
 					consentToken: field("consentToken"),
 				},
@@ -804,7 +837,7 @@ app.post("/authorize/org", async (c) => {
 		await resumeAuthorize(
 			{
 				state: state ?? "",
-				sessionToken: sessionTokenFrom(c),
+				sessionToken,
 				orgId: field("orgId"),
 				approved: field("approved") === "true",
 				consentToken: field("consentToken"),
