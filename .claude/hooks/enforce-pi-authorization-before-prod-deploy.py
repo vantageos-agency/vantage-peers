@@ -1012,11 +1012,14 @@ def is_convex_run_only(command: str) -> bool:
     anywhere in the shell line: it always wins. Only a Pi authorization or the
     Laurent override opens it.
 
+    The CLI's write subcommands (`import`, `env set`, `env remove`; see
+    PROD_WRITE_VERBS) belong to that class too: the marker never admits them.
+
     DECLARED RESIDUAL (not a silent one): the marker is a TRACE, not a proof.
-    A caller who writes `# read-only-query: peek` on `convex import --prod`
-    passes -- exactly as a caller who writes a false `# pi-authorized:` would.
-    The marker is greppable and every use is written to the audit log; it
-    lowers the ceremony of a prod READ, it does not certify one.
+    `convex run --prod` of a MUTATION passes under it, because a query and a
+    mutation look the same in argv. The marker is greppable and every use is
+    written to the audit log; it lowers the ceremony of a prod READ, it does
+    not certify one.
     """
     command = strip_heredocs(command)
     prod_read = False
@@ -1030,11 +1033,27 @@ def is_convex_run_only(command: str) -> bool:
         action = _segment_prod_action(tokens)
         if action is None:
             continue
-        if action.is_deploy:
+        if action.is_deploy or is_prod_write(action):
             is_deploy_class = True
         else:
             prod_read = True
     return prod_read and not is_deploy_class
+
+
+# The CLI's own WRITE subcommands (Pi ruling b, task k17chc5nf667yv5byc7dhp3y818ggxmx).
+# A `# read-only-query:` marker admits a prod READ and never one of these: measured
+# before this list, `convex import --prod x.jsonl # read-only-query: peek` passed.
+# This is the CLI's mechanism (which subcommands write), not business knowledge.
+# DECLARED RESIDUAL: `convex run` stays admitted under the marker, because whether
+# the function it runs is a query or a mutation cannot be decided from argv; and a
+# writer the CLI adds later passes until it is named here.
+PROD_WRITE_VERBS = {("import",), ("env", "set"), ("env", "remove")}
+
+
+def is_prod_write(action) -> bool:
+    """True if a prod `convex` action is one of the CLI's write subcommands."""
+    path = tuple(action.verb_path)
+    return any(path[: len(verb)] == verb for verb in PROD_WRITE_VERBS)
 
 
 def has_readonly_marker(command: str) -> bool:
@@ -1256,8 +1275,10 @@ def run_hook(command: str) -> int:
             "Exception (rare, Laurent-only): command contains `# laurent-direct-deploy`\n"
             "  -> allow (Laurent manual override always possible).\n"
             "\n"
-            "Read-only exception (k174v3sw): a `convex run --prod` QUERY (not a deploy)\n"
-            "  can be allowed via `# read-only-query: <reason>` (reason >= 3 chars).\n"
+            "Read-only exception (k174v3sw): a prod READ -- `convex data`, `convex logs`,\n"
+            "  `convex env list`, `convex run` of a query -- can be allowed via\n"
+            "  `# read-only-query: <reason>` (reason >= 3 chars). The marker never covers a\n"
+            "  prod write: `convex import`, `convex env set`, `convex env remove`, `deploy`.\n"
             "\n"
             "Audit trail: /tmp/pi-auth-prod-deploy.log\n",
             file=sys.stderr,
