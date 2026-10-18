@@ -11,7 +11,7 @@
         "@modelcontextprotocol/sdk": "^1.27.1",
         "@types/pdf-parse": "^1.1.5",
         "@vantageos/agent-engine": "0.1.0-alpha.4",
-        "@vantageos/cloud-identity": "^0.20.2",
+        "@vantageos/cloud-identity": "^0.21.2",
         "ai": "^6.0.134",
         "convex": "^1.42.1",
         "convex-helpers": "^0.1.114",
@@ -44,7 +44,7 @@
         "@clerk/backend": "^3.11.4",
         "@mcp-ui/server": "^6.1.0",
         "@modelcontextprotocol/server": "^2.3.0",
-        "@vantageos/cloud-identity": "^0.20.2",
+        "@vantageos/cloud-identity": "^0.21.2",
         "@vantageos/mosaic": "^0.1.2",
         "convex": ">=1.0.0",
         "dotenv": "^17.4.2",
@@ -325,7 +325,7 @@
 
     "@vantageos/agent-engine": ["@vantageos/agent-engine@0.1.0-alpha.4", "", { "dependencies": { "@convex-dev/agent": "0.6.4", "@convex-dev/aggregate": "^0.2.2", "@convex-dev/crons": "^0.2.2", "@convex-dev/rate-limiter": "^0.3.2", "@convex-dev/sharded-counter": "^0.2.1", "@convex-dev/workflow": "0.4.4", "@convex-dev/workpool": "0.4.7", "ai": "6.0.35", "convex": "1.42.1", "convex-helpers": "0.1.103" } }, "sha512-9RYRtgDhkPhlnOH087n44byREyg1s3hjckbBGPSgl3v3xOrdBz2B2AR4k8qYJHaEm0Sd5F+1lQtrwm8ZOUPmgw=="],
 
-    "@vantageos/cloud-identity": ["@vantageos/cloud-identity@0.20.2", "", { "dependencies": { "@clerk/backend": "^3.23.2", "zod": "^4.4.3" } }, "sha512-Jy0fO9pI3mrevSMDFMZ7NbQPfoPzNf/dMcELtDdJ7RmIcKDaOQputmt9GrkMQaFfj7HSSzz+UBb8O4WNf0+edw=="],
+    "@vantageos/cloud-identity": ["@vantageos/cloud-identity@0.21.2", "", { "dependencies": { "@clerk/backend": "^3.23.2", "zod": "^4.4.3" } }, "sha512-QwQMeTj6rvAKT9uNmNn8B6RC9prltFV1npQ8EEFzopH1zD/SwhOUGOEyrOIbsv7HablAaj1Cxk57fQ1JECvdoA=="],
 
     "@vantageos/mosaic": ["@vantageos/mosaic@0.1.2", "", { "dependencies": { "@lit-labs/react": "1.0.6", "@mcp-ui/server": "6.1.0", "@tanstack/react-virtual": "3.13.6", "dompurify": "3.2.4", "marked": "15.0.7", "zod": "3.25.28" }, "peerDependencies": { "@mcp-ui/client": "7.1.1", "react": "^19.1.0", "react-dom": "^19.1.0", "react-i18next": "15.5.2", "rxjs": "^7.8.0" }, "optionalPeers": ["@mcp-ui/client", "react-i18next", "rxjs"] }, "sha512-ZQScmdoQynePQpWIhsfjIPI0dCzqY4EDQzXKVWLiZGPbkO50c5KAPYb0KKf0UUsGqo8Uq0N++hUtFouAgMIXjA=="],
 
@@ -520,8 +520,6 @@
     "istanbul-lib-report": ["istanbul-lib-report@3.0.1", "", { "dependencies": { "istanbul-lib-coverage": "^3.0.0", "make-dir": "^4.0.0", "supports-color": "^7.1.0" } }, "sha512-GCfE1mtsHGOELCU8e/Z7YWzpmybrx/+dSTfLrvY8qRmaY6zXTKWn6WQIjaAFw069icm6GVMNkgu0NzI4iPZUNw=="],
 
     "istanbul-reports": ["istanbul-reports@3.2.0", "", { "dependencies": { "html-escaper": "^2.0.0", "istanbul-lib-report": "^3.0.0" } }, "sha512-HGYWWS/ehqTV3xN10i23tkPkpH46MLCIMFNCaaKNavAXTF1RkqxawEPtnjnGZ6XKSInBKkiOA5BKS+aZiY3AvA=="],
-
-    "jiti": ["jiti@1.21.7", "", { "bin": { "jiti": "bin/jiti.js" } }, "sha512-/imKNG4EbWNrVjoNC/1H5/9GFy+tqjGBHCaSsN+P2RnPqjsLmv6UD3Ej+Kj8nBWaRAwyk7kK5ZUc+OEatnTR3A=="],
 
     "jose": ["jose@6.2.2", "", {}, "sha512-d7kPDd34KO/YnzaDOlikGpOurfF0ByC2sEV4cANCtdqLlTfBlw2p14O/5d/zv40gJPbIQxfES3nSx1/oYNyuZQ=="],
 
