@@ -444,11 +444,20 @@ AUTHORIZED_TASK_RE = re.compile(r"\bk[a-z0-9]{15,40}\b")
 #   VP_GUARD_CONVEX_TOKEN  -- an already-minted bearer, when a caller has one.
 #   CLERK_SECRET_KEY       -- Clerk Backend API key, to mint one.
 #   CLERK_SERVICE_ACCOUNT_USER_ID -- the service-account user to mint it for.
-#   VP_GUARD_ENV_FILE      -- dotenv to read the two above from when they are
+#   CLERK_DOMAIN           -- the Clerk Frontend API origin of the instance that
+#                             CLERK_SECRET_KEY belongs to, where the sign-in
+#                             ticket is redeemed. Read like the two names above.
+#   VP_GUARD_ENV_FILE      -- dotenv to read the three above from when they are
 #                             absent from the hook process environment (a hook
 #                             does not inherit the shell's `.env.local`).
 #                             Defaults to the repo-root `.env.local`.
-CLERK_DEFAULT_DOMAIN = "https://sharp-sponge-67.clerk.accounts.dev"
+#
+# There is NO default domain. The guard once hardcoded the development
+# instance's domain; when VantagePeers moved to its production Clerk instance
+# the guard went on redeeming tickets on the retired instance and every
+# authorized production deploy of the fleet was refused (HTTP 401, caller null).
+# The domain is configuration, carried next to the secret it must match; when
+# it is missing the guard says so and refuses to judge.
 CLERK_API = "https://api.clerk.com/v1"
 
 
@@ -591,7 +600,13 @@ def guard_identity() -> tuple[str | None, str]:
             "by VP_GUARD_ENV_FILE (default: the repo-root .env.local)."
         )
 
-    domain = os.environ.get("CLERK_DOMAIN") or CLERK_DEFAULT_DOMAIN
+    domain = (_credential("CLERK_DOMAIN") or "").rstrip("/")
+    if not domain:
+        return None, (
+            "no Clerk frontend domain is configured for the credential. Checked: "
+            "CLERK_DOMAIN_VANTAGE_PEERS then CLERK_DOMAIN, in the environment and in "
+            "the dotenv named by VP_GUARD_ENV_FILE (default: the repo-root .env.local)."
+        )
     template = os.environ.get("CLERK_JWT_TEMPLATE") or "convex"
     try:
         ticket = _post_json(
@@ -1293,7 +1308,7 @@ def run_hook(command: str) -> int:
             "To restore it, make ONE of these readable by the hook process "
             "(names only -- never put a value in a command line, a log or a commit):\n"
             "  - VP_GUARD_CONVEX_TOKEN        an already-minted Convex bearer\n"
-            "  - CLERK_SECRET_KEY + CLERK_SERVICE_ACCOUNT_USER_ID   to mint one,\n"
+            "  - CLERK_SECRET_KEY + CLERK_SERVICE_ACCOUNT_USER_ID + CLERK_DOMAIN   to mint one,\n"
             "    in the environment or in the dotenv named by VP_GUARD_ENV_FILE\n"
             "    (default: the repo-root .env.local)\n"
             "\n"
