@@ -138,6 +138,157 @@ export const bindScopeProfileToOrg = internalMutation({
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
+// moveScopeProfileToOrg — the deliberate, named move of a seat profile.
+// ─────────────────────────────────────────────────────────────────────────────
+//
+// `bindScopeProfileToOrg` refuses PROFILE_ALREADY_BOUND_ELSEWHERE on purpose:
+// moving a credential across tenants is not a seed's job. This is the separate,
+// explicit operation for the case where an operator really means it (test seat
+// profiles parked in probe orgs, relocated into one test org). Nothing is
+// deleted: the profile row, its tokens and its agent all survive.
+//
+// internalMutation (admin credential only): unreachable from any client call.
+// Operator command (name the deployment from `<url>/instance_name`):
+//   npx convex run tenantOrgSeed:moveScopeProfileToOrg \
+//     '{"profileId":"<id>","targetClerkOrgSlug":"<org-slug>",
+//       "confirmProfileId":"<id>","reason":"<why, >= 10 chars>"}'
+//
+// Refusals — each its own code, each writes nothing:
+//   PROFILE_NOT_FOUND            no oauth_scope_profiles row for profileId
+//   ORG_NOT_FOUND                no client_org_mapping row for the target slug
+//   ORG_INACTIVE                 the target mapping has isActive === false
+//   OPERATOR_ORG_OUT_OF_SCOPE    the target is the operator's own org (orgKind "operator")
+//   MOVE_NOT_NAMED               confirmProfileId !== profileId (the move names what it moves)
+//   MOVE_REASON_REQUIRED         reason shorter than 10 characters once trimmed
+//   TOKEN_SCAN_CAP_EXCEEDED      the profile has more tokens than one bounded scan can see
+//
+// A successful move: re-stamps clerkOrgSlug and clerkOrgId from the target,
+// CLEARS agentId (the old agent belongs to the old org; re-bind afterwards with
+// oauth:bindScopeProfileAgent), and revokes every live access and refresh token
+// of the profile so no token keeps the old org. Both token tables are read
+// through their `by_scopeProfile` index, bounded by MOVE_TOKEN_SCAN_CAP; a
+// profile over the cap is REFUSED rather than decided on a partial view.
+//
+// IDEMPOTENCE: a profile already on the target slug returns moved:false with no
+// write at all (updatedAt and tokens untouched).
+
+const MOVE_TOKEN_SCAN_CAP = 2000;
+const MOVE_REASON_MIN_LENGTH = 10;
+
+export const moveScopeProfileToOrg = internalMutation({
+	args: {
+		profileId: v.string(),
+		targetClerkOrgSlug: v.string(),
+		confirmProfileId: v.string(),
+		reason: v.string(),
+	},
+	returns: v.object({
+		profileId: v.string(),
+		previousOrgSlug: v.union(v.string(), v.null()),
+		targetOrgSlug: v.string(),
+		moved: v.boolean(),
+		revokedAccessTokens: v.number(),
+		revokedRefreshTokens: v.number(),
+		previousAgentId: v.union(v.id("agents"), v.null()),
+	}),
+	handler: async (ctx, args) => {
+		const profile = await ctx.db
+			.query("oauth_scope_profiles")
+			.withIndex("by_profileId", (q) => q.eq("profileId", args.profileId))
+			.unique();
+		if (!profile) {
+			throw new ConvexError(
+				`PROFILE_NOT_FOUND: no oauth_scope_profiles row for profileId "${args.profileId}"`,
+			);
+		}
+
+		const provisioned = await resolveProvisioningMapping(ctx, args.targetClerkOrgSlug);
+		const mapping = provisioned.kind === "row" ? provisioned.row : null;
+		if (!mapping) {
+			throw new ConvexError(
+				`ORG_NOT_FOUND: no client_org_mapping row for clerkOrgSlug "${args.targetClerkOrgSlug}"`,
+			);
+		}
+		if (!mapping.isActive) {
+			throw new ConvexError(
+				`ORG_INACTIVE: client_org_mapping for "${args.targetClerkOrgSlug}" exists but isActive is false`,
+			);
+		}
+		if (mapping.orgKind === "operator") {
+			throw new ConvexError(
+				`OPERATOR_ORG_OUT_OF_SCOPE: "${args.targetClerkOrgSlug}" is the operator's own organisation, refusing to move a profile into it`,
+			);
+		}
+
+		if (args.confirmProfileId !== args.profileId) {
+			throw new ConvexError(
+				`MOVE_NOT_NAMED: confirmProfileId must equal profileId "${args.profileId}" exactly`,
+			);
+		}
+		if (args.reason.trim().length < MOVE_REASON_MIN_LENGTH) {
+			throw new ConvexError(
+				`MOVE_REASON_REQUIRED: reason must be at least ${MOVE_REASON_MIN_LENGTH} characters once trimmed`,
+			);
+		}
+
+		const previousOrgSlug =
+			profile.clerkOrgSlug !== undefined && profile.clerkOrgSlug !== ""
+				? profile.clerkOrgSlug
+				: null;
+
+		if (profile.clerkOrgSlug === args.targetClerkOrgSlug) {
+			return {
+				profileId: args.profileId,
+				previousOrgSlug,
+				targetOrgSlug: args.targetClerkOrgSlug,
+				moved: false,
+				revokedAccessTokens: 0,
+				revokedRefreshTokens: 0,
+				previousAgentId: profile.agentId ?? null,
+			};
+		}
+
+		// Read both token sets BEFORE any write: a refused scan must leave nothing behind.
+		const accessTokens = await ctx.db
+			.query("oauth_access_tokens")
+			.withIndex("by_scopeProfile", (q) => q.eq("scopeProfile", args.profileId))
+			.take(MOVE_TOKEN_SCAN_CAP + 1);
+		const refreshTokens = await ctx.db
+			.query("oauth_refresh_tokens")
+			.withIndex("by_scopeProfile", (q) => q.eq("scopeProfile", args.profileId))
+			.take(MOVE_TOKEN_SCAN_CAP + 1);
+		if (accessTokens.length > MOVE_TOKEN_SCAN_CAP || refreshTokens.length > MOVE_TOKEN_SCAN_CAP) {
+			throw new ConvexError(
+				`TOKEN_SCAN_CAP_EXCEEDED: profile "${args.profileId}" has more than ${MOVE_TOKEN_SCAN_CAP} access or refresh tokens, refusing to decide on a partial view`,
+			);
+		}
+
+		const now = Date.now();
+		const liveAccess = accessTokens.filter((tok) => tok.revokedAt === undefined);
+		const liveRefresh = refreshTokens.filter((tok) => tok.revokedAt === undefined);
+		for (const tok of liveAccess) await ctx.db.patch(tok._id, { revokedAt: now });
+		for (const tok of liveRefresh) await ctx.db.patch(tok._id, { revokedAt: now });
+
+		await ctx.db.patch(profile._id, {
+			clerkOrgSlug: args.targetClerkOrgSlug,
+			clerkOrgId: await clerkOrgIdForSlug(ctx, args.targetClerkOrgSlug),
+			agentId: undefined,
+			updatedAt: now,
+		});
+
+		return {
+			profileId: args.profileId,
+			previousOrgSlug,
+			targetOrgSlug: args.targetClerkOrgSlug,
+			moved: true,
+			revokedAccessTokens: liveAccess.length,
+			revokedRefreshTokens: liveRefresh.length,
+			previousAgentId: profile.agentId ?? null,
+		};
+	},
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
 // deriveRosterFromProfiles / setOrgRoster — roster correction.
 // ─────────────────────────────────────────────────────────────────────────────
 //
