@@ -1012,8 +1012,9 @@ def is_convex_run_only(command: str) -> bool:
     anywhere in the shell line: it always wins. Only a Pi authorization or the
     Laurent override opens it.
 
-    The CLI's write subcommands (`import`, `env set`, `env remove`; see
-    PROD_WRITE_VERBS) belong to that class too: the marker never admits them.
+    Every prod action outside the closed set of reads (PROD_READ_VERBS) belongs to
+    that class too: the marker never admits an import, an env write, a deletion, or
+    a subcommand it does not know.
 
     DECLARED RESIDUAL (not a silent one): the marker is a TRACE, not a proof.
     `convex run --prod` of a MUTATION passes under it, because a query and a
@@ -1040,20 +1041,30 @@ def is_convex_run_only(command: str) -> bool:
     return prod_read and not is_deploy_class
 
 
-# The CLI's own WRITE subcommands (Pi ruling b, task k17chc5nf667yv5byc7dhp3y818ggxmx).
-# A `# read-only-query:` marker admits a prod READ and never one of these: measured
-# before this list, `convex import --prod x.jsonl # read-only-query: peek` passed.
-# This is the CLI's mechanism (which subcommands write), not business knowledge.
-# DECLARED RESIDUAL: `convex run` stays admitted under the marker, because whether
-# the function it runs is a query or a mutation cannot be decided from argv; and a
-# writer the CLI adds later passes until it is named here.
-PROD_WRITE_VERBS = {("import",), ("env", "set"), ("env", "remove")}
+# The prod READS a `# read-only-query:` marker may admit -- a CLOSED set (Pi ruling b,
+# task k17chc5nf667yv5byc7dhp3y818ggxmx; Eta #1535). Everything else that targets prod
+# stays in the class no marker excuses. A list of WRITERS was tried first and is the
+# open-list defect this file retired for readers: measured, `env remove` was refused while
+# its aliases `env rm` / `env unset`, `deployment delete` and `env default set` passed.
+# An unknown or future subcommand is therefore refused, never admitted.
+# DECLARED RESIDUAL: `convex run` is admitted, because whether the function it runs is a
+# query or a mutation cannot be decided from argv. `export` (a bulk snapshot) is not in the
+# set until Pi rules on it.
+PROD_READ_VERBS = {
+    ("data",),
+    ("logs",),
+    ("env", "list"),
+    ("env", "get"),
+    ("function-spec",),
+    ("insights",),
+    ("run",),
+}
 
 
 def is_prod_write(action) -> bool:
-    """True if a prod `convex` action is one of the CLI's write subcommands."""
+    """True unless a prod `convex` action is one of the closed set of reads."""
     path = tuple(action.verb_path)
-    return any(path[: len(verb)] == verb for verb in PROD_WRITE_VERBS)
+    return not any(path[: len(verb)] == verb for verb in PROD_READ_VERBS)
 
 
 def has_readonly_marker(command: str) -> bool:
@@ -1276,9 +1287,10 @@ def run_hook(command: str) -> int:
             "  -> allow (Laurent manual override always possible).\n"
             "\n"
             "Read-only exception (k174v3sw): a prod READ -- `convex data`, `convex logs`,\n"
-            "  `convex env list`, `convex run` of a query -- can be allowed via\n"
-            "  `# read-only-query: <reason>` (reason >= 3 chars). The marker never covers a\n"
-            "  prod write: `convex import`, `convex env set`, `convex env remove`, `deploy`.\n"
+            "  `convex env list`, `convex env get`, `convex function-spec`, `convex insights`,\n"
+            "  `convex run` of a query -- can be allowed via `# read-only-query: <reason>`\n"
+            "  (reason >= 3 chars). Nothing else on prod is covered: not `import`, `env set`,\n"
+            "  `env remove`, `deploy`, nor any other subcommand.\n"
             "\n"
             "Audit trail: /tmp/pi-auth-prod-deploy.log\n",
             file=sys.stderr,
