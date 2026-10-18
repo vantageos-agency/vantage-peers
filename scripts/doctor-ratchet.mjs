@@ -4,20 +4,25 @@
  * k179600rsb4xsv7a975cjkqwhs8g7qhv): a count may only go down.
  *
  *   node scripts/doctor-ratchet.mjs --baseline .backend-doctor/ratchet.json \
- *     --evidence out.json --previous-baseline main-ratchet.json [--report report.txt]
+ *     --evidence out.json --previous-baseline main-ratchet.json --report report.txt --tree <dir>
  *
  * --evidence           the file written by `backend-doctor <repo> --json-evidence`.
  * --previous-baseline  REQUIRED: the baseline committed on main (`git show origin/main:.backend-doctor/ratchet.json`).
  *                      A rise is measured against IT, never against the PR's own baseline, so a PR
  *                      cannot raise a count and bump ratchet.json in the same diff (Eta, #1529).
- * --report             the doctor's text output; any FALLBACK line is a refusal to judge.
+ * --report             REQUIRED: the doctor's text output; any FALLBACK line is a refusal to judge
+ *                      (a missing install prints "sinks: FALLBACK", and the counts move with it).
+ * --tree               REQUIRED: the checkout the doctor measured. `git status --porcelain` there must
+ *                      be empty: an untracked or modified file is counted by the doctor and is not
+ *                      in the commit the RATCHET line names.
  *
  * A rule absent from `mechanical_rule_counts` is green (the doctor lists red rules
  * only), so it counts 0. A rule absent from the baseline has a baseline of 0.
  *
  * Exit: 0 no count above main's baseline; 1 a count or the baseline was raised;
- * 2 could not judge (bad usage, unreadable input, uncertified evidence, FALLBACK).
+ * 2 could not judge (bad usage, unreadable input, uncertified evidence, FALLBACK, a dirty tree).
  */
+import { execFileSync } from "node:child_process";
 import { readFileSync } from "node:fs";
 
 function couldNotJudge(msg) {
@@ -33,9 +38,9 @@ function parseArgs(argv) {
 		if (!key?.startsWith("--") || val === undefined) couldNotJudge(`bad argument ${key ?? ""}`);
 		out[key.slice(2)] = val;
 	}
-	if (!out.baseline || !out.evidence || !out["previous-baseline"]) {
+	if (!out.baseline || !out.evidence || !out["previous-baseline"] || !out.report || !out.tree) {
 		couldNotJudge(
-			"usage: doctor-ratchet.mjs --baseline <file> --evidence <file> --previous-baseline <main's ratchet.json> [--report <file>]",
+			"usage: doctor-ratchet.mjs --baseline <file> --evidence <file> --previous-baseline <main's ratchet.json> --report <doctor output> --tree <measured checkout>",
 		);
 	}
 	return out;
@@ -70,7 +75,25 @@ if (evidence.mechanical_violations === null || evidence.mechanical_rule_counts =
 const measured = evidence.mechanical_rule_counts;
 if (!measured || typeof measured !== "object") couldNotJudge("evidence has no mechanical_rule_counts");
 
-if (args.report) {
+{
+	let status;
+	try {
+		status = execFileSync("git", ["-C", args.tree, "status", "--porcelain", "--untracked-files=all"], {
+			encoding: "utf8",
+			stdio: ["ignore", "pipe", "pipe"],
+		});
+	} catch (e) {
+		couldNotJudge(`--tree ${args.tree} is not a readable git checkout: ${e.message.split("\n")[0]}`);
+	}
+	const dirty = status.split("\n").filter(Boolean);
+	if (dirty.length > 0) {
+		couldNotJudge(
+			`the measured tree is not clean (${dirty.length} path(s) differ from its commit):\n${dirty.slice(0, 10).join("\n")}`,
+		);
+	}
+}
+
+{
 	let report;
 	try {
 		report = readFileSync(args.report, "utf8");
