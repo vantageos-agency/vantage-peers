@@ -12,9 +12,10 @@
  *                      cannot raise a count and bump ratchet.json in the same diff (Eta, #1529).
  * --report             REQUIRED: the doctor's text output; any FALLBACK line is a refusal to judge
  *                      (a missing install prints "sinks: FALLBACK", and the counts move with it).
- * --tree               REQUIRED: the checkout the doctor measured. `git status --porcelain` there must
- *                      be empty: an untracked or modified file is counted by the doctor and is not
- *                      in the commit the RATCHET line names.
+ * --tree               REQUIRED: the checkout the doctor measured. Its HEAD must be the commit the
+ *                      evidence names (`sha`), and `git status --porcelain` there must be empty: an
+ *                      untracked or modified file is counted by the doctor and is not in that commit.
+ *                      Ignored files are not checked: node_modules is ignored and MUST be present.
  *
  * A rule absent from `mechanical_rule_counts` is green (the doctor lists red rules
  * only), so it counts 0. A rule absent from the baseline has a baseline of 0.
@@ -76,6 +77,21 @@ const measured = evidence.mechanical_rule_counts;
 if (!measured || typeof measured !== "object") couldNotJudge("evidence has no mechanical_rule_counts");
 
 {
+	if (typeof evidence.sha !== "string" || !/^[0-9a-f]{40}$/.test(evidence.sha)) {
+		couldNotJudge("the evidence names no commit (sha), so it cannot be bound to the measured tree");
+	}
+	let head;
+	try {
+		head = execFileSync("git", ["-C", args.tree, "rev-parse", "HEAD"], {
+			encoding: "utf8",
+			stdio: ["ignore", "pipe", "pipe"],
+		}).trim();
+	} catch (e) {
+		couldNotJudge(`--tree ${args.tree} is not a readable git checkout: ${e.message.split("\n")[0]}`);
+	}
+	if (head !== evidence.sha) {
+		couldNotJudge(`--tree HEAD ${head} does not match the evidence commit ${evidence.sha}`);
+	}
 	let status;
 	try {
 		status = execFileSync("git", ["-C", args.tree, "status", "--porcelain", "--untracked-files=all"], {
