@@ -252,7 +252,8 @@ describe("doctor-ratchet: a count may only go down", () => {
 			git("add", "a.ts");
 			git("-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "-m", "init");
 			writeFileSync(join(tree, "stray.ts"), "export const b = 2;\n");
-			const r = run([...required, "--tree", tree]);
+			const head = git("rev-parse", "HEAD").stdout.trim();
+			const r = run([...stampEvidence(required, head), "--tree", tree]);
 			expect(r.status).toBe(2);
 			expect(r.out).toMatch(/not clean/);
 			expect(r.out).toMatch(/stray\.ts/);
