@@ -1229,6 +1229,9 @@ _READS_UNDER_MARKER = [
     "npx convex logs --prod # read-only-query: read the boot line",
     "npx convex env list --prod # read-only-query: names only",
     "npx convex run --prod leases:list # read-only-query: G3 count",
+    "npx convex env get FOO --prod # read-only-query: read one value",
+    "npx convex function-spec --prod # read-only-query: list the functions",
+    "npx convex insights --prod # read-only-query: read the insights",
 ]
 _WRITES_UNDER_MARKER = [
     ("npx convex import --prod x.jsonl # read-only-query: peek", "import"),
@@ -1236,6 +1239,14 @@ _WRITES_UNDER_MARKER = [
     ("npx convex env set FOO bar --prod # read-only-query: peek", "env set"),
     ("npx convex env remove FOO --prod # read-only-query: peek", "env remove"),
     ("npx convex deploy --yes # read-only-query: peek", "deploy"),
+    # Eta #1535: aliases and verbs an open writer list missed (convex 1.42.1 cli/env.js:117
+    # Command("remove").alias("rm").alias("unset")). The marker admits a CLOSED set of reads.
+    ("npx convex env rm FOO --prod # read-only-query: peek", "env rm"),
+    ("npx convex env unset FOO --prod # read-only-query: peek", "env unset"),
+    ("npx convex deployment delete --prod # read-only-query: peek", "deployment delete"),
+    ("npx convex env default set FOO bar --prod # read-only-query: peek", "env default set"),
+    ("npx convex export --prod --path snap.zip # read-only-query: peek", "export"),
+    ("npx convex some-future-verb --prod # read-only-query: peek", "unknown verb"),
 ]
 
 
