@@ -1214,6 +1214,54 @@ def test_no_domain_means_no_clerk_call_and_no_default():
     assert "accounts.dev" not in HOOK.read_text(), "a hardcoded Clerk instance domain is back"
 
 
+# ---------------------------------------------------------------------------
+# THE READ-ONLY MARKER COVERS READS ONLY (Pi ruling b, task k17chc5nf667yv5byc7dhp3y818ggxmx).
+#
+# Measured on the guard before this change: `npx convex import --prod x.jsonl
+# # read-only-query: peek` -> rc=0 -- a prod WRITE admitted by a marker named
+# "read-only". The marker now admits a prod READ and nothing the CLI itself
+# defines as a write. `convex run` stays admitted: whether the function it
+# runs is a query or a mutation cannot be decided from argv (declared).
+# ---------------------------------------------------------------------------
+
+_READS_UNDER_MARKER = [
+    "npx convex data --prod leases # read-only-query: G3 count of leases",
+    "npx convex logs --prod # read-only-query: read the boot line",
+    "npx convex env list --prod # read-only-query: names only",
+    "npx convex run --prod leases:list # read-only-query: G3 count",
+]
+_WRITES_UNDER_MARKER = [
+    ("npx convex import --prod x.jsonl # read-only-query: peek", "import"),
+    ("npx convex import --replace --prod x.jsonl # read-only-query: peek", "import"),
+    ("npx convex env set FOO bar --prod # read-only-query: peek", "env set"),
+    ("npx convex env remove FOO --prod # read-only-query: peek", "env remove"),
+    ("npx convex deploy --yes # read-only-query: peek", "deploy"),
+]
+
+
+def test_read_only_marker_admits_prod_reads():
+    for command in _READS_UNDER_MARKER:
+        rc, out = run_hook(command)
+        assert rc == 0, f"a prod READ under the marker must pass: {command!r} rc={rc} out={out}"
+
+
+def test_read_only_marker_never_admits_a_prod_write():
+    for command, verb in _WRITES_UNDER_MARKER:
+        rc, out = run_hook(command)
+        assert rc == 2, f"a prod WRITE must be refused even with the marker: {command!r} rc={rc}"
+        assert "BLOCKED" in out, out
+
+
+def test_refusal_names_what_the_marker_covers():
+    rc, out = run_hook("npx convex data --prod leases")
+    assert rc == 2
+    for verb in ("convex data", "convex logs", "convex env list", "convex run"):
+        assert verb in out, f"the refusal must name {verb!r} as covered by the marker: {out}"
+    assert "import" in out and "env set" in out and "env remove" in out, (
+        f"the refusal must name the writes the marker never covers: {out}"
+    )
+
+
 if __name__ == "__main__":
     fails = 0
     for name, fn in sorted(globals().items()):
