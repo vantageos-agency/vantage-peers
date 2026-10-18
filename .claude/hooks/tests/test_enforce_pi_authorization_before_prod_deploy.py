@@ -995,12 +995,14 @@ def test_three_states_are_distinct_in_the_audit_log():
 
 _FAKE_SECRET = "sk_test_placeholder_never_a_real_secret"
 _FAKE_USER = "user_placeholder_service_account"
+_FAKE_DOMAIN = "https://clerk.placeholder.invalid"
 
 # What each scripted Clerk transport answers, in call order. A callable raises.
 # None of these carries a bearer, so the ONLY thing that differs between the
 # four scenarios is which step of the mint flow came back empty.
 _MINT_SCENARIOS = {
     "credentials-absent": None,  # no Clerk call is ever made
+    "domain-absent": [],  # secret and user present, no domain: no Clerk call either
     "no-sign-in-ticket": [{}],
     "no-session-from-exchange": [{"token": "t"}, {}],
     "no-jwt-for-template": [{"token": "t"}, {"response": {"created_session_id": "s"}}, {}],
@@ -1010,6 +1012,7 @@ _MINT_SCENARIOS = {
 # these keep a reworded reason from drifting away from the step it names.
 _STEP_MARKER = {
     "credentials-absent": "no credential is reachable",
+    "domain-absent": "no Clerk frontend domain is configured",
     "no-sign-in-ticket": "no sign-in ticket",
     "no-session-from-exchange": "returned no session",
     "no-jwt-for-template": "no JWT",
@@ -1038,8 +1041,9 @@ def _run_mint_failure(scenario, audit_log_path):
     script = _MINT_SCENARIOS[scenario]
     env = dict(os.environ)
     for name in ("PI_AUTHORIZED_TASK_ID", "PI_AUTH_ORCHESTRATOR", "VP_GUARD_CONVEX_TOKEN",
-                 "CLERK_SECRET_KEY", "CLERK_SERVICE_ACCOUNT_USER_ID"):
+                 "CLERK_SECRET_KEY", "CLERK_SERVICE_ACCOUNT_USER_ID", "CLERK_DOMAIN"):
         env.pop(name, None)
+        env.pop(name + "_VANTAGE_PEERS", None)
     env.update({
         "VP_CONVEX_URL": DEAD_URL,
         "VP_GUARD_ENV_FILE": "/nonexistent/hermetic/.env.local",
@@ -1050,6 +1054,8 @@ def _run_mint_failure(scenario, audit_log_path):
     if script is not None:
         env["CLERK_SECRET_KEY"] = _FAKE_SECRET
         env["CLERK_SERVICE_ACCOUNT_USER_ID"] = _FAKE_USER
+        if scenario != "domain-absent":
+            env["CLERK_DOMAIN"] = _FAKE_DOMAIN
     payload = json.dumps({"tool_name": "Bash", "tool_input": {"command": AUTHORIZED_DEPLOY}})
     proc = subprocess.run(
         [sys.executable, "-c", _MINT_DRIVER], input=payload,
@@ -1084,8 +1090,8 @@ def test_identity_failure_names_its_step():
     """
     results = _mint_failures()
     whys = {scenario: _what_happened(out) for scenario, (_, out, _) in results.items()}
-    assert len(set(whys.values())) == 4, (
-        f"four different failed steps collapsed into fewer distinct texts: {whys}"
+    assert len(set(whys.values())) == len(_MINT_SCENARIOS), (
+        f"different failed steps collapsed into fewer distinct texts: {whys}"
     )
     for scenario, why in whys.items():
         assert _STEP_MARKER[scenario] in why, (
@@ -1150,6 +1156,62 @@ def test_identity_failure_names_the_preminted_token_escape():
             f"{scenario!r}: the refusal no longer names the VP_GUARD_CONVEX_TOKEN "
             f"escape outside its reason line, out={out}"
         )
+
+
+_URL_DRIVER = r"""
+import importlib.util, json, os, sys
+spec = importlib.util.spec_from_file_location("guard_under_domain_test", os.environ["MINT_TEST_HOOK"])
+guard = importlib.util.module_from_spec(spec)
+guard._TESTING = True
+spec.loader.exec_module(guard)
+answers = iter([{"token": "t"}, {"response": {"created_session_id": "s"}}, {"jwt": "j"}])
+urls = []
+def recording_post_json(url, payload, headers, *, form=None):
+    urls.append(url)
+    return next(answers)
+guard._post_json = recording_post_json
+token, why = guard.guard_identity()
+print(json.dumps({"token": token, "why": why, "urls": urls}))
+"""
+
+
+def _identity_with(env_extra):
+    env = dict(os.environ)
+    for name in ("VP_GUARD_CONVEX_TOKEN", "CLERK_SECRET_KEY", "CLERK_SERVICE_ACCOUNT_USER_ID",
+                 "CLERK_DOMAIN"):
+        env.pop(name, None)
+        env.pop(name + "_VANTAGE_PEERS", None)
+    env.update({"VP_GUARD_ENV_FILE": "/nonexistent/hermetic/.env.local",
+                "MINT_TEST_HOOK": str(HOOK)})
+    env.update(env_extra)
+    proc = subprocess.run([sys.executable, "-c", _URL_DRIVER], capture_output=True,
+                          text=True, timeout=15, env=env)
+    return json.loads(proc.stdout.strip().splitlines()[-1])
+
+
+def test_ticket_is_redeemed_on_the_configured_domain():
+    """The sign-in ticket must be redeemed on the instance the secret belongs to,
+    read from configuration -- the project-suffixed name first, like the secret."""
+    out = _identity_with({
+        "CLERK_SECRET_KEY_VANTAGE_PEERS": _FAKE_SECRET,
+        "CLERK_SERVICE_ACCOUNT_USER_ID_VANTAGE_PEERS": _FAKE_USER,
+        "CLERK_DOMAIN_VANTAGE_PEERS": _FAKE_DOMAIN + "/",
+        "CLERK_DOMAIN": "https://bare-name-of-another-project.invalid",
+    })
+    assert out["token"] == "j", out
+    assert out["urls"][1] == _FAKE_DOMAIN + "/v1/client/sign_ins", out["urls"]
+
+
+def test_no_domain_means_no_clerk_call_and_no_default():
+    """Without a configured domain the guard must not fall back to any instance:
+    it makes no Clerk call at all and names the missing variable."""
+    out = _identity_with({
+        "CLERK_SECRET_KEY": _FAKE_SECRET,
+        "CLERK_SERVICE_ACCOUNT_USER_ID": _FAKE_USER,
+    })
+    assert out["token"] is None and out["urls"] == [], out
+    assert "CLERK_DOMAIN_VANTAGE_PEERS" in out["why"], out
+    assert "accounts.dev" not in HOOK.read_text(), "a hardcoded Clerk instance domain is back"
 
 
 if __name__ == "__main__":
