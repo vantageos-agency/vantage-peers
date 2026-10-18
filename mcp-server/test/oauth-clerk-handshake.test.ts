@@ -134,14 +134,14 @@ describe("GET /authorize/callback without a session on this host", () => {
 describe("POST /authorize/org on a production-shaped Clerk instance", () => {
 	const PROD_FAPI = "clerk.example.test";
 	const PROD_PK = `pk_live_${Buffer.from(`${PROD_FAPI}$`).toString("base64")}`;
-	const SFX = getCookieSuffix(PROD_PK);
+	let sfx = "";
 	const KID = "ins_test_kid";
 	let privateKey: CryptoKey;
 	let publicJwk: JWK;
 
 	async function sessionJwt(): Promise<string> {
 		const now = Math.floor(Date.now() / 1000);
-		return new SignJWT({ sid: "sess_test", sts: "active", v: 2 })
+		return new SignJWT({ sid: "sess_test", sts: "active", v: 2, azp: BASE })
 			.setProtectedHeader({ alg: "RS256", kid: KID, typ: "JWT" })
 			.setSubject("user_test")
 			.setIssuer(`https://${PROD_FAPI}`)
@@ -151,11 +151,14 @@ describe("POST /authorize/org on a production-shaped Clerk instance", () => {
 			.sign(privateKey);
 	}
 
-	async function post(headers: Record<string, string>): Promise<Response> {
+	async function post(
+		headers: Record<string, string>,
+		approved = "true",
+	): Promise<Response> {
 		const body = new URLSearchParams({
 			state: await signedState(),
 			orgId: "org_test",
-			approved: "true",
+			approved,
 			consentToken: "not-a-real-consent",
 		});
 		return app.request(`${BASE}/authorize/org`, {
@@ -173,12 +176,13 @@ describe("POST /authorize/org on a production-shaped Clerk instance", () => {
 	async function cookie(): Promise<string> {
 		const jwt = await sessionJwt();
 		const uat = Math.floor(Date.now() / 1000) - 60;
-		return `__session_${SFX}=${jwt}; __client_uat_${SFX}=${uat}`;
+		return `__session_${sfx}=${jwt}; __client_uat_${sfx}=${uat}`;
 	}
 
 	const reasonOf = (res: Response): Promise<string> => res.text();
 
 	beforeAll(async () => {
+		sfx = await getCookieSuffix(PROD_PK);
 		const pair = await generateKeyPair("RS256");
 		privateKey = pair.privateKey;
 		publicJwk = {
@@ -199,14 +203,24 @@ describe("POST /authorize/org on a production-shaped Clerk instance", () => {
 			}),
 			// biome-ignore lint/suspicious/noExplicitAny: minimal ConvexHttpClient stand-in
 		} as any);
+		process.env.CLERK_DOMAIN = `https://${PROD_FAPI}`;
 		process.env.CLERK_SECRET_KEY = `sk_live_${"x".repeat(40)}`;
 		process.env.CLERK_PUBLISHABLE_KEY = PROD_PK;
 		vi.stubGlobal(
 			"fetch",
 			vi.fn(async (input: RequestInfo | URL) => {
 				const url = typeof input === "string" ? input : input.toString();
-				if (url.endsWith("/v1/jwks")) {
+				if (
+					url.endsWith("/v1/jwks") ||
+					url.endsWith("/.well-known/jwks.json")
+				) {
 					return new Response(JSON.stringify({ keys: [publicJwk] }), {
+						status: 200,
+						headers: { "Content-Type": "application/json" },
+					});
+				}
+				if (url.includes("/organization_memberships")) {
+					return new Response(JSON.stringify({ data: [], total_count: 0 }), {
 						status: 200,
 						headers: { "Content-Type": "application/json" },
 					});
@@ -223,6 +237,14 @@ describe("POST /authorize/org on a production-shaped Clerk instance", () => {
 
 	it("the suffixed cookie with the server's own Origin reaches the picker logic (not session-required)", async () => {
 		const res = await post({ cookie: await cookie(), origin: BASE });
+		// Session resolved, state verified, memberships read: the person has none,
+		// which is the picker's own refusal, past the session check.
+		expect(res.status).toBe(403);
+		expect(await reasonOf(res)).toContain("no-organization");
+	});
+
+	it("the denial branch resolves the session the same way (not session-required)", async () => {
+		const res = await post({ cookie: await cookie(), origin: BASE }, "false");
 		expect(await reasonOf(res)).not.toContain("session-required");
 	});
 
