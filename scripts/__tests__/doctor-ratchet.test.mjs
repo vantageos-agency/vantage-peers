@@ -9,7 +9,7 @@ import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 
 const REPO = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
 const SCRIPT = join(REPO, "scripts", "doctor-ratchet.mjs");
@@ -26,9 +26,35 @@ function tmp() {
 	return d;
 }
 
-function run(args) {
+// A committed, clean git tree and an empty doctor report: the two inputs a run
+// must now name. run() supplies them unless the test passes its own (or asks
+// for the bare argument list with runRaw()).
+let CLEAN_TREE;
+let CLEAN_REPORT;
+beforeAll(() => {
+	CLEAN_TREE = mkdtempSync(join(tmpdir(), "doctor-ratchet-tree-"));
+	const git = (...a) => spawnSync("git", ["-C", CLEAN_TREE, ...a], { encoding: "utf8" });
+	git("init", "-q");
+	writeFileSync(join(CLEAN_TREE, "a.ts"), "export const a = 1;\n");
+	git("add", "a.ts");
+	git("-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "-m", "init");
+	CLEAN_REPORT = join(CLEAN_TREE, "..", `${CLEAN_TREE.split("/").pop()}-report.txt`);
+	writeFileSync(CLEAN_REPORT, "MECHANICAL RULE COUNTS: CR-2 200\n");
+});
+afterAll(() => {
+	rmSync(CLEAN_TREE, { recursive: true, force: true });
+	rmSync(CLEAN_REPORT, { force: true });
+});
+
+function runRaw(args) {
 	const r = spawnSync(process.execPath, [SCRIPT, ...args], { encoding: "utf8" });
 	return { status: r.status, out: `${r.stdout}${r.stderr}` };
+}
+function run(args) {
+	const extra = [];
+	if (!args.includes("--report")) extra.push("--report", CLEAN_REPORT);
+	if (!args.includes("--tree")) extra.push("--tree", CLEAN_TREE);
+	return runRaw([...args, ...extra]);
 }
 // main's baseline is the committed one unless a test passes its own.
 const withBaseline = (evidence, extra = []) =>
@@ -143,11 +169,14 @@ describe("doctor-ratchet: a count may only go down", () => {
 	});
 
 	it("usage error exits 2", () => {
-		expect(run([]).status).toBe(2);
+		expect(runRaw([]).status).toBe(2);
 	});
 
 	it("RED: --previous-baseline (main's baseline) is required; without it the run cannot judge", () => {
-		const r = run(["--baseline", BASELINE, "--evidence", join(FIX, "equal.json")]);
+		const r = runRaw([
+			"--baseline", BASELINE, "--evidence", join(FIX, "equal.json"),
+			"--report", CLEAN_REPORT, "--tree", CLEAN_TREE,
+		]);
 		expect(r.status).toBe(2);
 		expect(r.out).toMatch(/previous-baseline/);
 	});
@@ -168,5 +197,60 @@ describe("doctor-ratchet: a count may only go down", () => {
 		expect(r.status).toBe(1);
 		expect(r.out).toMatch(/R-53\s+369\s+370\s+\+1\s+RAISED/);
 		expect(r.out.trim().split("\n").at(-1)).toMatch(/^RATCHET: 0{40} .*R-53=370 .*rise=1$/);
+	});
+
+	// A reading is only a reading of the tree it names, with its dependencies
+	// installed. Measured 2026-10-18: a checkout with no node_modules printed
+	// "sinks: FALLBACK ... cloud-identity is not installed" and counted
+	// CR-2 +2 / R-53 +2 on a clean main, because --report was optional and was
+	// not passed.
+	describe("the run refuses to judge anything but a clean, installed tree", () => {
+		const required = ["--baseline", BASELINE, "--evidence", join(FIX, "equal.json"), "--previous-baseline", BASELINE];
+
+		it("RED: without --report the run cannot judge (the FALLBACK check would be skipped)", () => {
+			const r = runRaw([...required, "--tree", CLEAN_TREE]);
+			expect(r.status).toBe(2);
+			expect(r.out).toMatch(/--report/);
+		});
+
+		it("RED: without --tree the run cannot judge (nothing says which tree was measured)", () => {
+			const r = runRaw([...required, "--report", CLEAN_REPORT]);
+			expect(r.status).toBe(2);
+			expect(r.out).toMatch(/--tree/);
+		});
+
+		it("RED: the doctor's own missing-dependency line refuses", () => {
+			const report = join(tmp(), "report.txt");
+			writeFileSync(report, "sinks: FALLBACK (cloud-identity is not installed; static sink list)\n");
+			const r = run([...required, "--report", report]);
+			expect(r.status).toBe(2);
+			expect(r.out).toMatch(/FALLBACK/);
+		});
+
+		it("RED: an untracked file in the measured tree refuses, naming it", () => {
+			const tree = tmp();
+			const git = (...a) => spawnSync("git", ["-C", tree, ...a], { encoding: "utf8" });
+			git("init", "-q");
+			writeFileSync(join(tree, "a.ts"), "export const a = 1;\n");
+			git("add", "a.ts");
+			git("-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "-m", "init");
+			writeFileSync(join(tree, "stray.ts"), "export const b = 2;\n");
+			const r = run([...required, "--tree", tree]);
+			expect(r.status).toBe(2);
+			expect(r.out).toMatch(/not clean/);
+			expect(r.out).toMatch(/stray\.ts/);
+		});
+
+		it("RED: a --tree that is not a git checkout refuses", () => {
+			const r = run([...required, "--tree", tmp()]);
+			expect(r.status).toBe(2);
+			expect(r.out).toMatch(/git/);
+		});
+
+		it("GREEN: a clean tree and a clean report pass", () => {
+			const r = run(required);
+			expect(r.status).toBe(0);
+			expect(r.out.trim().split("\n").at(-1)).toMatch(/^RATCHET: .* rise=0$/);
+		});
 	});
 });
