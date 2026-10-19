@@ -25,6 +25,8 @@ import subprocess
 import sys
 import tempfile
 
+import pytest
+
 HOOK = pathlib.Path(__file__).with_name("enforce-backend-doctor-before-deploy.py")
 
 _spec = importlib.util.spec_from_file_location("_bd_gate", HOOK)
@@ -478,8 +480,7 @@ def _ratchet_repo(tmp, main_baseline=None, head_baseline=None):
     """Temp repo whose origin/main carries `main_baseline` (default: the real
     committed baseline) and whose HEAD carries `head_baseline` (default: same)."""
     repo, _ = _init_repo(tmp)
-    real = json.loads(E85618D_BASELINE.read_text())
-    on_main = real if main_baseline is None else main_baseline
+    on_main = _copy_baseline() if main_baseline is None else main_baseline
     path = repo / BASELINE_REL
     path.parent.mkdir(parents=True)
     path.write_text(json.dumps(on_main, indent=2))
@@ -495,13 +496,31 @@ def _ratchet_repo(tmp, main_baseline=None, head_baseline=None):
     return repo, head
 
 
-def _copy_baseline():
-    return json.loads(E85618D_BASELINE.read_text())
+# A ceiling means something only under the instrument that measured it (Pi ruling
+# 2026-10-19, task k1778c2hvae8e8vz9f5bbbbbb98g62hw): the baseline names a
+# `doctor_version` and the evidence must come from that same published version. The
+# frozen e85618d fixture predates the field, so the mechanism tests run it under one
+# named version; the fixture file itself stays byte-frozen.
+DOCTOR_VERSION = "0.4.5"
+
+
+def _npm_cli(version):
+    """`cli_commit` exactly as backend-doctor's cliCommit() writes it for a run of
+    the published package (src/cli.ts: `npm @vantageos/backend-doctor@<version>`)."""
+    return f"npm @vantageos/backend-doctor@{version}"
+
+
+def _copy_baseline(doctor_version=DOCTOR_VERSION):
+    frozen = json.loads(E85618D_BASELINE.read_text())
+    if doctor_version is not None:
+        frozen["doctor_version"] = doctor_version
+    return frozen
 
 
 def _write_measured(repo, head, counts=None, extra=None, mech=None):
     ev = dict(MEASURED_E85618D)
     ev["sha"] = head
+    ev["cli_commit"] = _npm_cli(DOCTOR_VERSION)
     if counts is not False:
         ev["mechanical_rule_counts"] = dict(
             MEASURED_E85618D_RULE_COUNTS if counts is None else counts)
@@ -522,9 +541,12 @@ def test_ratchet_baseline_values_carry_their_command():
 
 def test_ratchet_live_baseline_carries_its_command_and_never_rose():
     live = json.loads(REAL_BASELINE.read_text())
+    # the ceilings below were measured with 0.4.5, and the file says so
+    assert live["doctor_version"] == "0.4.5"
     assert set(live["rules"]) <= set(MEASURED_586C3DA_RULE_COUNTS)
     for rule, entry in live["rules"].items():
-        assert entry["command"].startswith("npx -y @vantageos/backend-doctor@0.4.5 ")
+        assert entry["command"].startswith(
+            f"npx -y @vantageos/backend-doctor@{live['doctor_version']} ")
         assert entry["cli_commit"] == "39a73874bdc117459fb23b2f1d4a48344edfc3a0"
         assert entry["measured_tree_sha"] == "586c3da53ad0745bc69881e0f602bae5e933477a"
         line = entry["output_line"]
@@ -651,7 +673,7 @@ def test_ratchet_block_baseline_absent_on_origin_main():
         _git(repo, "update-ref", "refs/remotes/origin/main", "HEAD")
         path = repo / BASELINE_REL
         path.parent.mkdir(parents=True)
-        path.write_text(E85618D_BASELINE.read_text())
+        path.write_text(json.dumps(_copy_baseline(), indent=2))
         _git(repo, "add", "-A")
         _git(repo, "commit", "-q", "-m", "unmerged baseline")
         head = subprocess.run(["git", "rev-parse", "HEAD"], cwd=repo,
@@ -702,3 +724,215 @@ def test_ratchet_pass_rule_gone_green_drops_out():
         verdict, msg = _mod.evaluate(str(repo), str(repo))
         assert verdict == "pass", msg
         assert _run(repo) == 0
+
+
+# ---------------------------------------------------------------------------
+# DOCTOR VERSION (task k1778c2hvae8e8vz9f5bbbbbb98g62hw, Pi ruling 2026-10-19): a
+# ceiling measured by one instrument version is meaningless under another. The
+# baseline names `doctor_version`; the evidence's version is derived from its own
+# `cli_commit` (`npm @vantageos/backend-doctor@<semver>`); counts are compared only
+# when the two are equal. A ceiling may rise against origin/main only together
+# with a doctor_version RAISE on the branch. Refusals first.
+# ---------------------------------------------------------------------------
+
+def test_version_block_evidence_from_another_doctor_version():
+    """0.4.5 baseline, 0.4.6 evidence, counts AT the ceilings: still refused, and
+    the refusal names both versions -- never a count comparison across them."""
+    with tempfile.TemporaryDirectory() as tmp:
+        repo, head = _ratchet_repo(tmp)
+        _write_measured(repo, head, extra={"cli_commit": _npm_cli("0.4.6")})
+        verdict, msg = _mod.evaluate(str(repo), str(repo))
+        assert verdict == "version", msg
+        assert "0.4.5" in msg and "0.4.6" in msg
+        assert "re-measure" in msg
+        assert "above its baseline" not in msg  # no count was compared
+        assert _run(repo) == 2
+
+
+def test_version_block_evidence_from_another_version_below_ceilings():
+    """Even an evidence count far UNDER every ceiling is refused when the
+    instrument differs: a lower number from another doctor is not a fall."""
+    with tempfile.TemporaryDirectory() as tmp:
+        repo, head = _ratchet_repo(tmp)
+        counts = dict(MEASURED_E85618D_RULE_COUNTS, **{"R-53": 1})
+        _write_measured(repo, head, counts=counts,
+                        extra={"cli_commit": _npm_cli("0.4.4")})
+        verdict, msg = _mod.evaluate(str(repo), str(repo))
+        assert verdict == "version" and "0.4.4" in msg and "0.4.5" in msg
+        assert _run(repo) == 2
+
+
+def test_version_block_refusal_reaches_stderr(capsys):
+    with tempfile.TemporaryDirectory() as tmp:
+        repo, head = _ratchet_repo(tmp)
+        _write_measured(repo, head, extra={"cli_commit": _npm_cli("0.4.6")})
+        assert _run(repo) == 2
+        err = capsys.readouterr().err
+        assert "Reason (version)" in err and "0.4.5" in err and "0.4.6" in err
+
+
+def test_version_block_baseline_without_doctor_version():
+    with tempfile.TemporaryDirectory() as tmp:
+        unversioned = _copy_baseline(doctor_version=None)
+        repo, head = _ratchet_repo(tmp, main_baseline=unversioned)
+        _write_measured(repo, head)
+        verdict, msg = _mod.evaluate(str(repo), str(repo))
+        assert verdict == "incomplete", msg
+        assert "doctor_version" in msg and "could-not-judge" in msg
+        assert _run(repo) == 2
+
+
+
+@pytest.mark.parametrize("bad", ["0.4", "latest", "v0.4.5", " 0.4.5", 45, None, ""])
+def test_version_block_baseline_doctor_version_not_exact_semver(bad):
+    with tempfile.TemporaryDirectory() as tmp:
+        base = _copy_baseline()
+        base["doctor_version"] = bad
+        repo, head = _ratchet_repo(tmp, main_baseline=base)
+        _write_measured(repo, head)
+        verdict, msg = _mod.evaluate(str(repo), str(repo))
+        assert verdict in ("incomplete", "ratchet"), msg
+        assert "doctor_version" in msg
+        assert _run(repo) == 2
+
+
+@pytest.mark.parametrize("cli_commit", [
+    "39a73874bdc117459fb23b2f1d4a48344edfc3a0",          # a git checkout run
+    "39a73874bdc117459fb23b2f1d4a48344edfc3a0+dirty",    # a dirty checkout run
+    "npm @vantageos/backend-doctor@latest",
+    "npm @vantageos/backend-doctor@0.4",
+    "npm @evil/backend-doctor@0.4.5",                     # another package
+    "npm @vantageos/backend-doctor@0.4.5 ",               # not the exact form
+    "not a git repo",
+    "",
+    7,
+    None,
+])
+def test_version_block_evidence_version_underivable(cli_commit):
+    with tempfile.TemporaryDirectory() as tmp:
+        repo, head = _ratchet_repo(tmp)
+        _write_measured(repo, head, extra={"cli_commit": cli_commit})
+        verdict, msg = _mod.evaluate(str(repo), str(repo))
+        assert verdict == "incomplete", msg
+        assert "0.4.5" in msg and "cli_commit" in msg
+        assert _run(repo) == 2
+
+
+def test_version_block_evidence_without_cli_commit():
+    with tempfile.TemporaryDirectory() as tmp:
+        repo, head = _ratchet_repo(tmp)
+        _write_measured(repo, head)
+        p = repo / "qa" / f"backend-doctor-{head}.json"
+        ev = json.loads(p.read_text())
+        del ev["cli_commit"]
+        p.write_text(json.dumps(ev))
+        verdict, msg = _mod.evaluate(str(repo), str(repo))
+        assert verdict == "incomplete" and "cli_commit" in msg
+        assert _run(repo) == 2
+
+
+def test_version_block_ceiling_raise_without_doctor_version_change():
+    with tempfile.TemporaryDirectory() as tmp:
+        raised = _copy_baseline()
+        raised["rules"]["R-53"]["count"] = 150
+        repo, head = _ratchet_repo(tmp, head_baseline=raised)
+        _write_measured(repo, head,
+                        counts=dict(MEASURED_E85618D_RULE_COUNTS, **{"R-53": 150}))
+        verdict, msg = _mod.evaluate(str(repo), str(repo))
+        assert verdict == "ratchet", msg
+        assert "R-53.count 113 -> 150" in msg and "doctor_version" in msg
+        assert _run(repo) == 2
+
+
+def test_version_block_ceiling_raise_with_doctor_version_downgrade():
+    """A re-baseline licenses a rise only on a NEWER instrument: going back to an
+    older doctor is not a re-measure, it is a way to buy a higher ceiling."""
+    with tempfile.TemporaryDirectory() as tmp:
+        older = _copy_baseline(doctor_version="0.4.4")
+        older["rules"]["R-53"]["count"] = 150
+        repo, head = _ratchet_repo(tmp, head_baseline=older)
+        _write_measured(repo, head,
+                        counts=dict(MEASURED_E85618D_RULE_COUNTS, **{"R-53": 150}),
+                        extra={"cli_commit": _npm_cli("0.4.4")})
+        verdict, msg = _mod.evaluate(str(repo), str(repo))
+        assert verdict == "ratchet", msg
+        assert "0.4.5" in msg and "0.4.4" in msg and "R-53" in msg
+        assert _run(repo) == 2
+
+
+def test_version_block_ceiling_raise_when_main_names_no_doctor_version():
+    """origin/main's baseline names no version (the legacy shape): naming one on
+    the branch is not a re-measure and licenses no rise."""
+    with tempfile.TemporaryDirectory() as tmp:
+        legacy = _copy_baseline(doctor_version=None)
+        raised = _copy_baseline()
+        raised["rules"]["R-53"]["count"] = 150
+        repo, head = _ratchet_repo(tmp, main_baseline=legacy, head_baseline=raised)
+        _write_measured(repo, head,
+                        counts=dict(MEASURED_E85618D_RULE_COUNTS, **{"R-53": 150}))
+        verdict, msg = _mod.evaluate(str(repo), str(repo))
+        assert verdict == "ratchet" and "R-53.count 113 -> 150" in msg
+        assert _run(repo) == 2
+
+
+def test_version_block_rebaseline_with_old_version_evidence():
+    """The branch re-baselines to 0.4.6 but the deploy evidence is still 0.4.5."""
+    with tempfile.TemporaryDirectory() as tmp:
+        newer = _copy_baseline(doctor_version="0.4.6")
+        newer["rules"]["R-53"]["count"] = 150
+        repo, head = _ratchet_repo(tmp, head_baseline=newer)
+        _write_measured(repo, head)  # 0.4.5 evidence
+        verdict, msg = _mod.evaluate(str(repo), str(repo))
+        assert verdict == "version" and "0.4.6" in msg and "0.4.5" in msg
+        assert _run(repo) == 2
+
+
+def test_version_pass_matching_version_unchanged_behaviour():
+    with tempfile.TemporaryDirectory() as tmp:
+        repo, head = _ratchet_repo(tmp)
+        _write_measured(repo, head)
+        verdict, msg = _mod.evaluate(str(repo), str(repo))
+        assert verdict == "pass", msg
+        assert _run(repo) == 0
+
+
+def test_version_pass_ceiling_raise_with_doctor_version_raise():
+    """The re-baseline shape: doctor_version 0.4.5 -> 0.4.6 on the branch, a
+    ceiling rises and a NEW rule appears, and the deploy evidence is 0.4.6."""
+    with tempfile.TemporaryDirectory() as tmp:
+        newer = _copy_baseline(doctor_version="0.4.6")
+        newer["rules"]["R-53"]["count"] = 150
+        newer["rules"]["CR-2"] = dict(newer["rules"]["R-2"], count=264)
+        repo, head = _ratchet_repo(tmp, head_baseline=newer)
+        counts = dict(MEASURED_E85618D_RULE_COUNTS, **{"R-53": 150, "CR-2": 264})
+        _write_measured(repo, head, counts=counts, mech=8,
+                        extra={"cli_commit": _npm_cli("0.4.6")})
+        verdict, msg = _mod.evaluate(str(repo), str(repo))
+        assert verdict == "pass", msg
+        assert _run(repo) == 0
+
+
+def test_version_pass_naming_the_version_first_time_without_a_rise():
+    """THIS pull request's own transition: origin/main names no doctor_version,
+    the branch names 0.4.5 and changes no ceiling."""
+    with tempfile.TemporaryDirectory() as tmp:
+        legacy = _copy_baseline(doctor_version=None)
+        repo, head = _ratchet_repo(tmp, main_baseline=legacy,
+                                   head_baseline=_copy_baseline())
+        _write_measured(repo, head)
+        verdict, msg = _mod.evaluate(str(repo), str(repo))
+        assert verdict == "pass", msg
+        assert _run(repo) == 0
+
+
+def test_version_pass_live_baseline_against_its_own_evidence_shape():
+    """The committed baseline judges a 0.4.5 npm run at its own counts."""
+    live = json.loads(REAL_BASELINE.read_text())
+    with tempfile.TemporaryDirectory() as tmp:
+        repo, head = _ratchet_repo(tmp, main_baseline=live)
+        counts = {r: e["count"] for r, e in live["rules"].items()}
+        _write_measured(repo, head, counts=counts,
+                        mech=sum(1 for v in counts.values() if v > 0),
+                        extra={"cli_commit": _npm_cli(live["doctor_version"])})
+        verdict, msg = _mod.evaluate(str(repo), str(repo))
+        assert verdict == "pass", msg
