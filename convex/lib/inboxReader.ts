@@ -3,7 +3,7 @@ import type { Doc } from "../_generated/dataModel";
 import type { MutationCtx, QueryCtx } from "../_generated/server";
 import { normalizeOrchestratorId } from "../_helpers/normalizeOrchestratorId";
 import { requireVerifiedActorPrincipal } from "./actingPrincipal";
-import { agentCarriesLabel, findAgentByName } from "./agentIdentity";
+import { findAgentByName } from "./agentIdentity";
 import type { OrgScope, VerifiedActor } from "./auth";
 import { fleetOperatorSlug } from "./operatorOrg";
 import { resolveVerifiedOrg, type VerifiedOrg } from "./verifiedOrg";
@@ -121,17 +121,10 @@ async function agentReader(
 	claims: InboxClaims,
 	door: string,
 ): Promise<InboxReader> {
-	if (claims.recipient !== undefined && claims.recipient !== agent._id) {
-		// A name may only NARROW: it is compared with the verified agent's own
-		// label (nothing is looked up by it, nobody is selected by it).
-		if (!agentCarriesLabel(agent, claims.recipient)) {
-			refuse(
-				door,
-				"recipient-not-the-reader",
-				`recipient "${claims.recipient}" is not the verified reader (agent ${agent._id}); an inbox is read by the verified agent's ID and a name may only narrow it`,
-			);
-		}
-	}
+	// The reader is the agent already fixed by ID (a verified actor) or selected
+	// by the verified organisation. A `recipient` claim beside it takes no part
+	// in the decision: the inbox read is always this agent's own (`label`,
+	// `agentId` below come from the row), never the one the claim names.
 	if (claims.tenantId !== undefined && claims.tenantId !== agent.orgSlug) {
 		refuse(
 			door,

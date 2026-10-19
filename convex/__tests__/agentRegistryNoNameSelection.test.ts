@@ -53,14 +53,13 @@ describe("M8 the agent registry selects no agent by name", () => {
 		}
 		expect(Object.fromEntries(callers)).toEqual({
 			// M5 messaging: declared sender must hold a credential once it is a known agent
-			[join("lib", "auth.ts")]: 1,
+			[join("lib", "auth.ts")]: 3,
 			// M5 messaging: seat sender screened against registered labels
 			"messages.ts": 2,
-			// M6 inbox, two owned sites, neither selects the reader:
-			//  - recipient named by a verified organisation (the org-level token door);
-			//  - a `recipient` label sent beside a verified agent may only NARROW: it
-			//    must resolve, in that agent's own org, to the very agent the verified
-			//    claim already fixed (compared by _id). The reader is never chosen by it.
+			// M6 inbox, one owned site: the recipient named by a verified
+			// organisation (the org-level token door). A `recipient` label sent beside
+			// a verified agent no longer takes part in any decision: the reader is the
+			// agent fixed by ID, and its own inbox is what is read.
 			[join("lib", "inboxReader.ts")]: 1,
 			// tasks doors: createdBy / assignedTo labels stamped as IDs
 			[join("lib", "actorIds.ts")]: 1,
