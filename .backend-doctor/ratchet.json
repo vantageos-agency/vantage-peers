@@ -1,8 +1,8 @@
 {
-	"$comment": "Backend-doctor ratchet baseline (task k179600rsb4xsv7a975cjkqwhs8g7qhv). Each mechanical rule count may only go DOWN. Lower a value in the same PR that lowers the count; scripts/doctor-ratchet.mjs refuses a raised value against origin/main. Measured on main a82a2ed2 with @vantageos/backend-doctor 0.4.5 after bun install --frozen-lockfile.",
-	"doctorVersion": "0.4.5",
+	"$comment": "Backend-doctor ratchet baseline (task k179600rsb4xsv7a975cjkqwhs8g7qhv). Each mechanical rule count may only go DOWN. Lower a value in the same PR that lowers the count; scripts/doctor-ratchet.mjs refuses a raised value against origin/main, except in a re-baseline that raises doctorVersion to a newer version, and refuses evidence from any other doctor version (task k172gy1ykcbz6drqb4n85q5a1n8gkaf3). Must agree with .claude/config/backend-doctor-baseline.json (scripts/__tests__/doctor-baselines-agree.test.mjs). Measured with `npx -y @vantageos/backend-doctor@0.4.7 <clean full checkout @053c463b61d564076147e9a830c207c972685cef>/convex` (deps installed, 0 FALLBACK), PR #1544.",
+	"doctorVersion": "0.4.7",
 	"counts": {
-		"CR-2": 200,
+		"CR-2": 264,
 		"R-5": 62,
 		"R-53": 369,
 		"R-54": 148,

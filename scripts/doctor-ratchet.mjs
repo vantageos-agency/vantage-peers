@@ -30,9 +30,22 @@
  * A rule absent from `mechanical_rule_counts` is green (the doctor lists red rules
  * only), so it counts 0. A rule absent from the baseline has a baseline of 0.
  *
- * Exit: 0 no count above main's baseline; 1 a count, a marker or the baseline was raised;
- * 2 could not judge (bad usage, unreadable input, uncertified evidence, FALLBACK, a dirty tree,
- * an unresolvable --main-ref, a failing git grep).
+ * Doctor version (task k172gy1ykcbz6drqb4n85q5a1n8gkaf3, mirroring the deploy gate
+ * .claude/hooks/enforce-backend-doctor-before-deploy.py): a count means something only
+ * under the backend-doctor version that printed it. Both baselines carry a top-level
+ * `doctorVersion` (exact semver). The evidence's version is derived from its own
+ * `cli_commit`, exact form `npm @vantageos/backend-doctor@<semver>` only (a git-checkout
+ * run names a commit, not a version): anything else, a --baseline without `doctorVersion`,
+ * or one that differs from the evidence's version, is a refusal to judge naming both
+ * versions. A count may rise against main's baseline only in a re-baseline: this branch's
+ * `doctorVersion` strictly NEWER (numeric semver order) than main's. Then main's counts,
+ * measured with another instrument, are not compared; the evidence is compared with this
+ * branch's baseline. Same, older or unversioned main: a raised baseline fails, naming both.
+ *
+ * Exit: 0 no count above main's baseline (or, under a re-baseline, above this branch's);
+ * 1 a count, a marker or the baseline was raised; 2 could not judge (bad usage, unreadable
+ * input, uncertified evidence, an underivable or mismatched doctor version, a baseline with
+ * no doctorVersion, FALLBACK, a dirty tree, an unresolvable --main-ref, a failing git grep).
  *
  * LAST line: `RATCHET: <sha> CR-2=.. R-5=.. R-53=.. R-54=.. R-55=.. R-56=.. M-allow-local-identity=..
  * M-fleet-wide=.. M-oracle-justified=.. rise=<n>`, followed by ` raised=<names>` when a marker rose.
@@ -87,11 +100,47 @@ function baselineCounts(doc, what) {
 	return counts;
 }
 
+const SEMVER = "(\\d+)\\.(\\d+)\\.(\\d+)(?:-([0-9A-Za-z.-]+))?";
+const SEMVER_RE = new RegExp(`^${SEMVER}$`);
+// backend-doctor src/cli.ts cliCommit() for a run of the published package. Exact form
+// only: no trim, no prefix match (the deploy gate's _NPM_CLI_RE).
+const NPM_CLI_RE = new RegExp(`^npm @vantageos/backend-doctor@(${SEMVER})$`);
+const NO_VERSION = Symbol("no doctorVersion");
+
+// Ordering key for an exact semver: numeric fields, a pre-release below its release.
+function semverKey(v) {
+	const [, major, minor, patch, pre] = SEMVER_RE.exec(v);
+	return [Number(major), Number(minor), Number(patch), pre ? 0 : 1, pre ?? ""];
+}
+function semverNewer(a, b) {
+	const ka = semverKey(a);
+	const kb = semverKey(b);
+	for (let i = 0; i < ka.length; i++) {
+		if (ka[i] !== kb[i]) return ka[i] > kb[i];
+	}
+	return false;
+}
+
+function baselineVersion(doc, what) {
+	if (!doc || typeof doc !== "object" || !("doctorVersion" in doc))
+		return NO_VERSION;
+	const v = doc.doctorVersion;
+	if (typeof v !== "string" || !SEMVER_RE.test(v))
+		couldNotJudge(
+			`${what}: doctorVersion=${JSON.stringify(v)} is not an exact semver string`,
+		);
+	return v;
+}
+
 const args = parseArgs(process.argv.slice(2));
-const baseline = baselineCounts(
-	readJson(args.baseline, "baseline"),
-	"baseline",
-);
+const baselineDoc = readJson(args.baseline, "baseline");
+const baseline = baselineCounts(baselineDoc, "baseline");
+const baselineV = baselineVersion(baselineDoc, "baseline");
+if (baselineV === NO_VERSION) {
+	couldNotJudge(
+		`baseline ${args.baseline} names no doctorVersion, so the backend-doctor version its counts were measured with is unknown and no count can be compared with them. Add a top-level "doctorVersion": "<exact semver>" naming the published @vantageos/backend-doctor that printed them.`,
+	);
+}
 const evidence = readJson(args.evidence, "evidence");
 
 if (
@@ -105,6 +154,22 @@ if (
 const measured = evidence.mechanical_rule_counts;
 if (!measured || typeof measured !== "object")
 	couldNotJudge("evidence has no mechanical_rule_counts");
+
+{
+	const cli = evidence.cli_commit;
+	const m = typeof cli === "string" ? NPM_CLI_RE.exec(cli) : null;
+	if (!m) {
+		couldNotJudge(
+			`the backend-doctor version that produced the evidence cannot be derived: cli_commit=${JSON.stringify(cli ?? null)} is not of the form \`npm @vantageos/backend-doctor@<semver>\` (a git-checkout run names a commit, not a published version). The baseline's counts were measured with backend-doctor ${baselineV}; score this commit with \`npx -y @vantageos/backend-doctor@${baselineV} <repo>/convex --json-evidence <dir>\`.`,
+		);
+	}
+	const evidenceV = m[1];
+	if (evidenceV !== baselineV) {
+		couldNotJudge(
+			`the evidence was produced by backend-doctor ${evidenceV} while the baseline ${args.baseline} names doctorVersion ${baselineV}: its counts were measured with ${baselineV} and mean nothing under ${evidenceV}, so no count is compared across the two versions. The baseline must be re-measured with the running version ${evidenceV} (doctorVersion ${evidenceV} and every count as ${evidenceV} prints it, in one reviewed PR), or this commit scored with \`npx -y @vantageos/backend-doctor@${baselineV} <repo>/convex --json-evidence <dir>\`.`,
+		);
+	}
+}
 
 {
 	if (
@@ -236,7 +301,9 @@ function countMarker(commit, literal) {
 	// refuse to judge rather than under-read a marker count.
 	const summary = lines.find((l) => l.startsWith("Binary file"));
 	if (summary !== undefined) {
-		couldNotJudge(`git grep ${literal} at ${commit} returned a summary line, not matches: ${summary}`);
+		couldNotJudge(
+			`git grep ${literal} at ${commit} returned a summary line, not matches: ${summary}`,
+		);
 	}
 	return lines.length;
 }
@@ -248,13 +315,19 @@ function countMarker(commit, literal) {
 function assertRegularFiles(commit) {
 	let out;
 	try {
-		out = execFileSync("git", ["-C", args.tree, "ls-tree", "-r", commit, "--", ...MARKER_PATHS], {
-			encoding: "utf8",
-			stdio: ["ignore", "pipe", "pipe"],
-			maxBuffer: 64 * 1024 * 1024,
-		});
+		out = execFileSync(
+			"git",
+			["-C", args.tree, "ls-tree", "-r", commit, "--", ...MARKER_PATHS],
+			{
+				encoding: "utf8",
+				stdio: ["ignore", "pipe", "pipe"],
+				maxBuffer: 64 * 1024 * 1024,
+			},
+		);
 	} catch (e) {
-		couldNotJudge(`git ls-tree at ${commit} failed: ${String(e.stderr ?? e.message).split("\n")[0]}`);
+		couldNotJudge(
+			`git ls-tree at ${commit} failed: ${String(e.stderr ?? e.message).split("\n")[0]}`,
+		);
 	}
 	const odd = out
 		.split("\n")
@@ -276,10 +349,25 @@ const markerCounts = MARKERS.map(([name, literal]) => ({
 	head: countMarker("HEAD", literal),
 }));
 
-const mainBaseline = baselineCounts(
-	readJson(args["previous-baseline"], "previous baseline"),
+const mainBaselineDoc = readJson(
+	args["previous-baseline"],
 	"previous baseline",
 );
+const mainBaseline = baselineCounts(mainBaselineDoc, "previous baseline");
+const mainV = baselineVersion(mainBaselineDoc, "previous baseline");
+// A re-baseline: this branch names a strictly newer doctor than main. Main's counts were
+// measured with another instrument, so the evidence is compared with this branch's.
+const rebaselined = mainV !== NO_VERSION && semverNewer(baselineV, mainV);
+const reference = rebaselined ? baseline : mainBaseline;
+const mainNamed =
+	mainV === NO_VERSION
+		? "main's baseline names no doctorVersion"
+		: `main's baseline names doctorVersion ${mainV}`;
+if (rebaselined) {
+	console.log(
+		`doctor-ratchet: re-baseline — backend-doctor ${mainV} -> ${baselineV}; counts are compared with this branch's baseline, not main's (measured with ${mainV}).`,
+	);
+}
 
 let failed = false;
 let lowered = false;
@@ -290,9 +378,11 @@ const rules = [
 		...Object.keys(measured),
 	]),
 ].sort();
-const lines = ["rule    main  head  delta"];
+const lines = [
+	rebaselined ? "rule    base  head  delta" : "rule    main  head  delta",
+];
 for (const rule of rules) {
-	const base = mainBaseline[rule] ?? 0;
+	const base = reference[rule] ?? 0;
 	const head = measured[rule] ?? 0;
 	const delta = head - base;
 	const sign = delta > 0 ? `+${delta}` : `${delta}`;
@@ -321,12 +411,14 @@ for (const m of markerCounts) {
 }
 console.log(lines.join("\n"));
 
-for (const rule of Object.keys({ ...mainBaseline, ...baseline })) {
+for (const rule of rebaselined
+	? []
+	: Object.keys({ ...mainBaseline, ...baseline })) {
 	const before = mainBaseline[rule] ?? 0;
 	const now = baseline[rule] ?? 0;
 	if (now > before) {
 		console.log(
-			`doctor-ratchet: baseline raised for ${rule}: ${before} on main -> ${now} here. The baseline only goes down.`,
+			`doctor-ratchet: baseline raised for ${rule}: ${before} on main -> ${now} here. The baseline only goes down, except in a re-baseline that raises doctorVersion: ${mainNamed} and this branch names ${baselineV}, which is not a newer version.`,
 		);
 		failed = true;
 	}
@@ -341,15 +433,20 @@ if (failed) {
 		"doctor-ratchet: PASS — counts went down; lower the baseline in .backend-doctor/ratchet.json in this PR.",
 	);
 } else {
-	console.log("doctor-ratchet: PASS — no count above main's baseline.");
+	console.log(
+		rebaselined
+			? "doctor-ratchet: PASS — no count above this branch's re-baseline."
+			: "doctor-ratchet: PASS — no count above main's baseline.",
+	);
 }
 
 // LAST line, read literally by reviewers and Pi's merge guard (task k179600rsb4xsv7a975cjkqwhs8g7qhv).
-// rise = rules whose head count exceeds MAIN's baseline + markers whose head count exceeds main's.
+// rise = rules whose head count exceeds MAIN's baseline (this branch's under a re-baseline)
+// + markers whose head count exceeds main's.
 // raised= (only when a marker rose) names every risen rule, then every risen marker.
 const SIX = ["CR-2", "R-5", "R-53", "R-54", "R-55", "R-56"];
 const risenRules = rules.filter(
-	(r) => (measured[r] ?? 0) > (mainBaseline[r] ?? 0),
+	(r) => (measured[r] ?? 0) > (reference[r] ?? 0),
 );
 const risenMarkers = markerCounts
 	.filter((m) => m.head > m.main)
