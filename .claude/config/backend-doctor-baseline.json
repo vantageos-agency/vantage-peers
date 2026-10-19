@@ -1,7 +1,8 @@
 {
 	"schema_version": 1,
+	"doctor_version": "0.4.5",
 	"ruling": "re-baselined on backend-doctor 0.4.5 (39a73874) at tree 586c3da53ad0745bc69881e0f602bae5e933477a, Pi standing ruling (baseline = what the merged doctor prints), task k172vfc2cz7aejd9r9ef1jkfv58gh6ef; R-53 rises 246 -> 369 on the instrument change alone (same tree under 0.4.2: R-53 210), named in the PR",
-	"semantics": "RATCHET ONLY. Each `count` is a CEILING of non-conforming sites/rows for one mechanical rule. A deploy refuses when the evidence count for a baselined rule is ABOVE its count, when a red mechanical rule is not listed here, when a module listed under `modules` with 0 carries a site, or when any value here is HIGHER than the same value on origin/main. Values may only go down.",
+	"semantics": "RATCHET ONLY. Each `count` is a CEILING of non-conforming sites/rows for one mechanical rule. A deploy refuses when the evidence count for a baselined rule is ABOVE its count, when a red mechanical rule is not listed here, when a module listed under `modules` with 0 carries a site, or when any value here is HIGHER than the same value on origin/main. Values may only go down. Every count here was measured with the published @vantageos/backend-doctor named by `doctor_version`; the gate compares an evidence count with them only when the evidence's `cli_commit` reads `npm @vantageos/backend-doctor@<doctor_version>`, and refuses otherwise. A ceiling may rise against origin/main only in a re-baseline that raises `doctor_version` to a newer version in the same change (task k1778c2hvae8e8vz9f5bbbbbb98g62hw).",
 	"evidence_contract": "The deploy evidence must carry `mechanical_rule_counts` {rule_id: int} (and `mechanical_rule_module_counts` {rule_id: {module: int}} for a rule with a zero-lane module). Without it the gate refuses; it never compares totals.",
 	"rules": {
 		"R-2": {
