@@ -809,18 +809,40 @@ http.route({
 			return new Response("Missing organisation slug", { status: 400 });
 		}
 
+		// Event time (ms): the payload's own `updated_at` when it carries one, else
+		// the delivery's svix-timestamp (seconds, already validated by the
+		// signature check). Ordering is decided on this, never on arrival order.
+		const updatedAt = (data as { updated_at?: unknown }).updated_at;
+		const eventAt =
+			typeof updatedAt === "number" && Number.isFinite(updatedAt)
+				? updatedAt
+				: Number(request.headers.get("svix-timestamp")) * 1000;
+
 		const outcome = await ctx.runMutation(
 			internal.orgMembership.applyClerkMembershipEvent,
 			type === "organizationMembership.deleted"
-				? { kind: "delete", clerkOrgId, clerkUserId }
+				? {
+						kind: "delete",
+						clerkOrgId,
+						clerkUserId,
+						clerkOrgSlug:
+							typeof clerkOrgSlug === "string" ? clerkOrgSlug : undefined,
+						eventAt,
+					}
 				: {
 						kind: "upsert",
 						clerkOrgId,
 						clerkOrgSlug: clerkOrgSlug as string,
 						clerkUserId,
 						clerkRole: typeof data.role === "string" ? data.role : undefined,
+						eventAt,
 					},
 		);
+		if (outcome === "stale") {
+			console.log(
+				`[clerkWebhook] stale ${String(type)} ignored (event time ${eventAt} is not newer than the applied state)`,
+			);
+		}
 		return new Response(`OK - ${outcome}`, { status: 200 });
 	}),
 });
