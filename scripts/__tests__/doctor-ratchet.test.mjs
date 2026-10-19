@@ -524,6 +524,24 @@ describe("doctor-ratchet: a count may only go down", () => {
 			expect(last(r)).toMatch(/ rise=1 raised=M-oracle-justified$/);
 		});
 
+		it("RED (Eta, #1540 round 2): a symlink under a counted path cannot hide markers; the run refuses to judge", () => {
+			// git grep reads a symlink's TEXT (its target path), while the doctor and the
+			// oracle follow the link: markers in the target would be honoured and not counted.
+			const repo = markerRepo(MAIN, {
+				"elsewhere/k.ts":
+					"// oracle-justified: a\n// oracle-justified: b\n// oracle-justified: c\n",
+			});
+			spawnSync("ln", ["-s", "../../elsewhere/k.ts", join(repo.tree, "mcp-server/src/k.ts")]);
+			spawnSync("git", ["-C", repo.tree, "add", "-A"]);
+			spawnSync("git", ["-C", repo.tree, "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "--amend", "--no-edit"]);
+			repo.head = spawnSync("git", ["-C", repo.tree, "rev-parse", "HEAD"], { encoding: "utf8" }).stdout.trim();
+			const r = runMarkers(repo);
+			expect(r.status).toBe(2);
+			expect(r.out).toMatch(/could-not-judge/);
+			expect(r.out).toMatch(/mcp-server\/src\/k\.ts/);
+			expect(r.out).toMatch(/120000/);
+		});
+
 		it("RED: an unresolvable --main-ref cannot judge", () => {
 			const repo = markerRepo(MAIN, {});
 			const r = runMarkers(repo, "equal.json", "no-such-ref");
