@@ -936,3 +936,82 @@ def test_version_pass_live_baseline_against_its_own_evidence_shape():
                         extra={"cli_commit": _npm_cli(live["doctor_version"])})
         verdict, msg = _mod.evaluate(str(repo), str(repo))
         assert verdict == "pass", msg
+
+
+# ---------------------------------------------------------------------------
+# DOCTOR VERSION on a CLEAN report (coordinator decision on Pi's ruling, task
+# k1778c2hvae8e8vz9f5bbbbbb98g62hw): the gate refuses whenever the running doctor
+# differs from the baseline's, green or red -- otherwise an older, more lenient
+# doctor yields a green report that passes. Applies where a baseline exists; a
+# repository with no baseline file keeps the plain clean verdict.
+# ---------------------------------------------------------------------------
+
+_ABSENT = object()
+
+
+def _write_clean(repo, head, cli_commit):
+    ev = dict(MEASURED_E85618D, sha=head, exit_code=0, mechanical_violations=0,
+              mechanical_rule_counts={r: 0 for r in MEASURED_E85618D_RULE_COUNTS})
+    if cli_commit is _ABSENT:
+        ev.pop("cli_commit")
+    else:
+        ev["cli_commit"] = cli_commit
+    (repo / "qa" / f"backend-doctor-{head}.json").write_text(json.dumps(ev))
+
+
+
+def test_version_clean_block_older_doctor_version():
+    with tempfile.TemporaryDirectory() as tmp:
+        repo, head = _ratchet_repo(tmp)
+        _write_clean(repo, head, _npm_cli("0.4.4"))
+        verdict, msg = _mod.evaluate(str(repo), str(repo))
+        assert verdict == "version", msg
+        assert "0.4.4" in msg and "0.4.5" in msg and "re-measure" in msg
+        assert "mechanically clean" in msg
+        assert _run(repo) == 2
+
+
+@pytest.mark.parametrize("cli_commit", [
+    "39a73874bdc117459fb23b2f1d4a48344edfc3a0",
+    "39a73874bdc117459fb23b2f1d4a48344edfc3a0+dirty",
+    "npm @vantageos/backend-doctor@latest",
+    _ABSENT,
+])
+def test_version_clean_block_underivable_version(cli_commit):
+    with tempfile.TemporaryDirectory() as tmp:
+        repo, head = _ratchet_repo(tmp)
+        _write_clean(repo, head, cli_commit)
+        verdict, msg = _mod.evaluate(str(repo), str(repo))
+        assert verdict == "incomplete", msg
+        assert "could-not-judge" in msg and "cli_commit" in msg and "0.4.5" in msg
+        assert _run(repo) == 2
+
+
+def test_version_clean_block_baseline_without_doctor_version():
+    with tempfile.TemporaryDirectory() as tmp:
+        repo, head = _ratchet_repo(tmp, main_baseline=_copy_baseline(doctor_version=None))
+        _write_clean(repo, head, _npm_cli("0.4.5"))
+        verdict, msg = _mod.evaluate(str(repo), str(repo))
+        assert verdict == "incomplete" and "doctor_version" in msg, msg
+        assert _run(repo) == 2
+
+
+def test_version_clean_pass_same_doctor_version():
+    with tempfile.TemporaryDirectory() as tmp:
+        repo, head = _ratchet_repo(tmp)
+        _write_clean(repo, head, _npm_cli("0.4.5"))
+        verdict, msg = _mod.evaluate(str(repo), str(repo))
+        assert verdict == "pass", msg
+        assert "mechanically clean" in msg
+        assert _run(repo) == 0
+
+
+def test_version_clean_pass_without_baseline_file_unchanged():
+    """No baseline in the repository: nothing names a version, the plain clean
+    verdict stands for any instrument (pre-ratchet repositories)."""
+    with tempfile.TemporaryDirectory() as tmp:
+        repo, head = _init_repo(tmp)
+        _write_clean(repo, head, "39a73874bdc117459fb23b2f1d4a48344edfc3a0")
+        verdict, msg = _mod.evaluate(str(repo), str(repo))
+        assert verdict == "pass", msg
+        assert _run(repo) == 0
