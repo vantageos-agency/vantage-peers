@@ -20,6 +20,7 @@ import {
 } from "../migrations/backfill_actor_ids";
 import schema from "../schema";
 import { agentIdOf } from "../../tests/lib/agentIdOf";
+import { ownAgent } from "../../tests/lib/ownAgent";
 import { testClerkOrgId } from "../../tests/fixtures/testClerkOrgId";
 
 const modules = Object.fromEntries(
@@ -376,6 +377,8 @@ describe("new writes stamp the IDs", () => {
 			api.agentCredentials.mintAgentCredential,
 			{ orgSlug: "iris-rh", agentId: await agentIdOf(t, "iris-rh", "clio") },
 		);
+		// A credential resolves only for an agent bound to a live member owner.
+		await ownAgent(t, "iris-rh", "clio");
 		const agentId = (name: string) =>
 			t.run(async (ctx) => {
 				const row = await ctx.db

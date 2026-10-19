@@ -1,7 +1,4 @@
-import {
-	resolveCallerFromAgentCredential,
-	sha256Hex,
-} from "@vantageos/cloud-identity";
+import { sha256Hex } from "@vantageos/cloud-identity";
 import { ConvexError, v } from "convex/values";
 import { mutation, query } from "./_generated/server";
 import {
@@ -14,11 +11,9 @@ import {
 	anonymousRefusal,
 	stampOrgRefusal,
 	requireOrgAdminById,
-	resolveAgentOfPresentedSecret,
+	resolveOwnedAgentOfPresentedSecret,
 	revokeActiveCredentialRows,
 } from "./lib/agentIdentity";
-import { agentCredentialPrincipalLookups } from "./lib/actingPrincipal";
-import { orgMappingLookups } from "./lib/authOrgMapping";
 import { clerkOrgIdForSlug } from "./lib/orgClerkId";
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -258,52 +253,22 @@ export const resolveAgentCredential = query({
 				"no-credential",
 			);
 		}
-		const agent = await resolveAgentOfPresentedSecret(
+		// An agent credential is bound to its human OWNER (task
+		// k1778c2hvae8e8vz9f5bbbbbb98g62hw, item 4b): one shared composition,
+		// lib/agentIdentity.ts resolveOwnedAgentOfPresentedSecret, decided by
+		// @vantageos/cloud-identity.
+		const owned = await resolveOwnedAgentOfPresentedSecret(
 			ctx,
 			args.presentedSecret,
 			"agentCredentials:resolveAgentCredential",
 		);
-		if (agent === null) {
+		if (!owned.ok) {
 			return refuseUnresolvedCredential(
 				"agentCredentials:resolveAgentCredential",
-				"credential-not-recognised",
+				owned.reason,
 			);
 		}
-		// An agent credential is bound to its human OWNER (task
-		// k1778c2hvae8e8vz9f5bbbbbb98g62hw, item 4b). Every value below is read off
-		// the VERIFIED stored row the secret matched, never from an argument. The
-		// two guards only name an absent stored value; the owner and membership
-		// decision is @vantageos/cloud-identity's.
-		if (agent.ownerPersonId === undefined) {
-			return refuseUnresolvedCredential(
-				"agentCredentials:resolveAgentCredential",
-				"owner-missing",
-			);
-		}
-		if (agent.clerkOrgId === undefined) {
-			return refuseUnresolvedCredential(
-				"agentCredentials:resolveAgentCredential",
-				"org-id-missing",
-			);
-		}
-		const caller = await resolveCallerFromAgentCredential(
-			{
-				agentId: agent._id,
-				verifiedOrgId: agent.clerkOrgId,
-				ownerPersonId: agent.ownerPersonId,
-			},
-			{
-				orgLookups: orgMappingLookups(ctx),
-				principalLookups: agentCredentialPrincipalLookups(ctx),
-			},
-			{ door: "agentCredentials:resolveAgentCredential" },
-		);
-		if (!caller.ok) {
-			return refuseUnresolvedCredential(
-				"agentCredentials:resolveAgentCredential",
-				caller.refusal.reason,
-			);
-		}
+		const agent = owned.agent;
 		return {
 			orgSlug: agent.orgSlug,
 			agentName: agent.name,

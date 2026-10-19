@@ -9,7 +9,7 @@ import { hasFleetRead } from "@vantageos/cloud-identity";
 import type { MutationCtx, QueryCtx } from "../_generated/server";
 import { actorIdResolver, actorOrgFor } from "./actorIds";
 import { assigneeNotInOrgRefusal, requireAssigneeAgentActive } from "./actingPrincipal";
-import { resolveAgentOfPresentedSecret } from "./agentIdentity";
+import { resolveOwnedAgentOfPresentedSecret } from "./agentIdentity";
 import type { OrgScope, VerifiedActor } from "./auth";
 import { isHumanActorName } from "./humanActor";
 
@@ -53,12 +53,16 @@ export async function callerActorOf(
 		};
 	}
 	if (proof.agentCredentialSecret !== undefined) {
-		const agent = await resolveAgentOfPresentedSecret(
+		// An agent with no live member owner resolves to nothing (same helper as
+		// the lock and resolveAgentCredential); the callers already refuse undefined.
+		const owned = await resolveOwnedAgentOfPresentedSecret(
 			ctx,
 			proof.agentCredentialSecret,
 			"lib/taskActors:callerActorOf",
 		);
-		return agent === null ? undefined : { id: agent._id, orgSlug: agent.orgSlug };
+		return owned.ok
+			? { id: owned.agent._id, orgSlug: owned.agent.orgSlug }
+			: undefined;
 	}
 	const org = proof.verifiedOrgSlug ?? scope.orgSlug;
 	const id = await actorIdResolver(ctx, org)(assertedName);

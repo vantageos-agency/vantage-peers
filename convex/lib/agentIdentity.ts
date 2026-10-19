@@ -4,6 +4,7 @@ import {
 	type IdentityRefusal,
 	requireAgentScopedIdentity,
 	resolveActingPrincipal,
+	resolveCallerFromAgentCredential,
 	validatePresentedBearer,
 } from "@vantageos/cloud-identity";
 import type { UserIdentity } from "convex/server";
@@ -11,8 +12,12 @@ import { ConvexError } from "convex/values";
 import type { Doc, Id } from "../_generated/dataModel";
 import type { MutationCtx, QueryCtx } from "../_generated/server";
 import { normalizeOrchestratorId } from "../_helpers/normalizeOrchestratorId";
-import { principalLookups } from "./actingPrincipal";
+import {
+	agentCredentialPrincipalLookups,
+	principalLookups,
+} from "./actingPrincipal";
 import { proveOrgAdmin } from "./auth";
+import { orgMappingLookups } from "./authOrgMapping";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // agentIdentity — the ADAPTER between the agent registry (convex/agents.ts,
@@ -163,6 +168,64 @@ export async function resolveAgentOfPresentedSecret(
 	);
 	if (!resolved.ok) return null;
 	return await ctx.db.get(resolved.principal.principalId as Id<"agents">);
+}
+
+/** Why a presented agent secret was not accepted as a live, owned agent. */
+export type OwnedAgentRefusalReason =
+	| "credential-not-recognised"
+	| "owner-missing"
+	| "org-id-missing"
+	| IdentityRefusal["reason"];
+
+export type OwnedAgentOfSecret =
+	| { ok: true; agent: Doc<"agents"> }
+	| { ok: false; reason: OwnedAgentRefusalReason };
+
+/**
+ * resolveOwnedAgentOfPresentedSecret — `resolveAgentOfPresentedSecret` plus the
+ * OWNER binding (task k1778c2hvae8e8vz9f5bbbbbb98g62hw, item 4b): the one
+ * composition every door that accepts an agent secret goes through
+ * (`agentCredentials:resolveAgentCredential`, `requireAgentCredentialMatch`,
+ * `callerActorOf`). A credential is accepted only for an agent whose stored row
+ * names an owner and an organisation id, and whose owner is a live member of
+ * that organisation.
+ *
+ * Composition only: the owner and membership decision is
+ * `@vantageos/cloud-identity`'s `resolveCallerFromAgentCredential`; the two
+ * guards below only name an absent STORED value the package cannot be asked
+ * about. Every value read is off the verified stored row the secret matched,
+ * never an argument. It never throws: each door says the refusal in its own
+ * shape. Lives here (not in actingPrincipal.ts) because it needs
+ * `resolveAgentOfPresentedSecret`, and actingPrincipal.ts is imported by this
+ * module: the reverse import would be a cycle.
+ */
+export async function resolveOwnedAgentOfPresentedSecret(
+	ctx: Ctx,
+	presentedSecret: string,
+	door: string,
+): Promise<OwnedAgentOfSecret> {
+	const agent = await resolveAgentOfPresentedSecret(ctx, presentedSecret, door);
+	if (agent === null) return { ok: false, reason: "credential-not-recognised" };
+	if (agent.ownerPersonId === undefined) {
+		return { ok: false, reason: "owner-missing" };
+	}
+	if (agent.clerkOrgId === undefined) {
+		return { ok: false, reason: "org-id-missing" };
+	}
+	const caller = await resolveCallerFromAgentCredential(
+		{
+			agentId: agent._id,
+			verifiedOrgId: agent.clerkOrgId,
+			ownerPersonId: agent.ownerPersonId,
+		},
+		{
+			orgLookups: orgMappingLookups(ctx),
+			principalLookups: agentCredentialPrincipalLookups(ctx),
+		},
+		{ door },
+	);
+	if (!caller.ok) return { ok: false, reason: caller.refusal.reason };
+	return { ok: true, agent };
 }
 
 /**

@@ -45,6 +45,7 @@ import { api } from "../_generated/api";
 import type { Id } from "../_generated/dataModel";
 import schema from "../schema";
 import { agentIdOf } from "../../tests/lib/agentIdOf";
+import { ownAgent } from "../../tests/lib/ownAgent";
 import { testClerkOrgId } from "../../tests/fixtures/testClerkOrgId";
 import { seedFleetAgents } from "../../tests/lib/seedFleetAgents";
 
@@ -116,6 +117,8 @@ async function mintAgent(
 		orgSlug: org,
 		agentId: await agentIdOf(tAdmin, org, agentName),
 	});
+	// A credential resolves only for an agent bound to a live member owner.
+	await ownAgent(t, org, agentName);
 	return minted.secret;
 }
 

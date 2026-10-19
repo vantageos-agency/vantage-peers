@@ -19,6 +19,7 @@ import { describe, expect, test } from "vitest";
 import { api } from "../_generated/api";
 import schema from "../schema";
 import { agentIdOf } from "../../tests/lib/agentIdOf";
+import { ownAgent } from "../../tests/lib/ownAgent";
 import { testClerkOrgId } from "../../tests/fixtures/testClerkOrgId";
 
 const modules = Object.fromEntries(
@@ -160,6 +161,8 @@ describe("sendMessage — the sender derives from the verified caller", () => {
 			api.agentCredentials.mintAgentCredential,
 			{ orgSlug: "org-b", agentId: await agentIdOf(t, "org-b", "bob") },
 		);
+		// A credential resolves only for an agent bound to a live member owner.
+		await ownAgent(t, "org-b", "bob");
 		const refusal = await refusalOf(
 			memberOf(t, "org-b").mutation(api.messages.sendMessage, {
 				from: "bea",
