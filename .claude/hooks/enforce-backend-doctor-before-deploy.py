@@ -69,7 +69,9 @@ Before ANY count is compared the gate derives the version that produced the
 evidence from the evidence's own `cli_commit`, which backend-doctor's
 cliCommit() (src/cli.ts) writes as `npm @vantageos/backend-doctor@<version>`
 for a published-package run (a git-checkout run writes a commit sha, which
-names no published version). Then it REFUSES when:
+names no published version). This applies to a mechanically RED report and,
+wherever a baseline file exists, to a mechanically CLEAN one too (an older, more
+lenient doctor's green is not a green). Then it REFUSES when:
   * the working-tree baseline has no `doctor_version`, or one that is not an
     exact semver (could-not-judge, verdict "incomplete");
   * the evidence's version cannot be derived from `cli_commit` (absent, a git
@@ -517,6 +519,36 @@ def _baseline_rises(cur: dict[str, dict], ref: dict[str, dict]) -> list[str]:
     return rises
 
 
+def _version_verdict(r: dict, cur_v: str, head: str) -> tuple[str, str] | None:
+    """None when the evidence was produced by backend-doctor `cur_v` (the
+    baseline's doctor_version); otherwise the refusal. Applies to a red AND a
+    clean report: an older, more lenient doctor's green is not a green."""
+    ev_v = _evidence_doctor_version(r)
+    if ev_v is None:
+        return "incomplete", (
+            f"{head}, but the backend-doctor version that produced it cannot be "
+            f"derived: cli_commit={r.get('cli_commit', None)!r} is not of the form "
+            "`npm @vantageos/backend-doctor@<semver>` (a git-checkout run names a "
+            "commit, not a published version). The baseline's ceilings were "
+            f"measured with backend-doctor {cur_v}; a count from an unnamed "
+            "instrument cannot be compared with them -- a could-not-judge. Score "
+            f"this commit with `npx -y @vantageos/backend-doctor@{cur_v} "
+            "<repo>/convex --json-evidence qa/`."
+        )
+    if ev_v != cur_v:
+        return "version", (
+            f"{head}, but it was produced by backend-doctor {ev_v} while "
+            f"{BASELINE_PATH} names doctor_version {cur_v}: its ceilings were "
+            f"measured with {cur_v} and mean nothing under {ev_v}, so no count is "
+            f"compared across the two versions. The baseline must be re-measured "
+            f"with the running version {ev_v} (doctor_version {ev_v} and every "
+            f"ceiling as {ev_v} prints it, in one reviewed PR), or this commit "
+            f"scored with `npx -y @vantageos/backend-doctor@{cur_v} <repo>/convex "
+            "--json-evidence qa/`."
+        )
+    return None
+
+
 def _ratchet(r: dict, repo_root: str, pin_note: str) -> tuple[str, str] | None:
     """Judge a MECHANICALLY RED report against the ratchet baseline.
 
@@ -567,29 +599,9 @@ def _ratchet(r: dict, repo_root: str, pin_note: str) -> tuple[str, str] | None:
             f"and this branch names {cur_v}, which is not a newer version."
         )
 
-    ev_v = _evidence_doctor_version(r)
-    if ev_v is None:
-        return "incomplete", (
-            f"{head}, but the backend-doctor version that produced it cannot be "
-            f"derived: cli_commit={r.get('cli_commit', None)!r} is not of the form "
-            "`npm @vantageos/backend-doctor@<semver>` (a git-checkout run names a "
-            "commit, not a published version). The baseline's ceilings were "
-            f"measured with backend-doctor {cur_v}; a count from an unnamed "
-            "instrument cannot be compared with them -- a could-not-judge. Score "
-            f"this commit with `npx -y @vantageos/backend-doctor@{cur_v} "
-            "<repo>/convex --json-evidence qa/`."
-        )
-    if ev_v != cur_v:
-        return "version", (
-            f"{head}, but it was produced by backend-doctor {ev_v} while "
-            f"{BASELINE_PATH} names doctor_version {cur_v}: its ceilings were "
-            f"measured with {cur_v} and mean nothing under {ev_v}, so no count is "
-            f"compared across the two versions. The baseline must be re-measured "
-            f"with the running version {ev_v} (doctor_version {ev_v} and every "
-            f"ceiling as {ev_v} prints it, in one reviewed PR), or this commit "
-            f"scored with `npx -y @vantageos/backend-doctor@{cur_v} <repo>/convex "
-            "--json-evidence qa/`."
-        )
+    mismatch = _version_verdict(r, cur_v, head)
+    if mismatch is not None:
+        return mismatch
 
     counts = r.get("mechanical_rule_counts", _MISSING)
     if counts is _MISSING or not isinstance(counts, dict) or not all(
@@ -652,6 +664,32 @@ def _ratchet(r: dict, repo_root: str, pin_note: str) -> tuple[str, str] | None:
     )
 
 
+def _clean_version_check(r: dict, repo_root: str, pin_note: str) -> tuple[str, str] | None:
+    """A MECHANICALLY CLEAN report in a repository that has a baseline is judged
+    against the baseline's doctor_version too (Pi ruling 2026-10-19): the gate
+    refuses whenever the running doctor differs, green or red. No baseline file:
+    None (nothing names a version; the plain clean verdict stands). An unreadable
+    baseline or one without doctor_version refuses, never passes."""
+    path = os.path.join(repo_root, BASELINE_PATH)
+    if not os.path.exists(path):
+        return None
+    head = (f"backend-doctor evidence {os.path.basename(r['_path'])} {pin_note} "
+            "and is mechanically clean")
+    try:
+        with open(path, "r", encoding="utf-8") as fh:
+            cur_v = _baseline_doctor_version(fh.read(), BASELINE_PATH)
+    except (OSError, BaselineError) as exc:
+        return "incomplete", (f"{head}; the baseline's doctor_version cannot be "
+                              f"read: {exc}.")
+    if cur_v is _NO_VERSION:
+        return "incomplete", (
+            f"{head}; {BASELINE_PATH} names no `doctor_version`, so the instrument "
+            "this report must come from is unknown -- a could-not-judge. Add a "
+            "top-level \"doctor_version\": \"<exact semver>\"."
+        )
+    return _version_verdict(r, cur_v, head)
+
+
 def _judge(r: dict, pin_note: str, repo_root: str | None = None) -> tuple[str, str]:
     """Verdict for ONE report already accepted as covering HEAD."""
     clean, incomplete = _clean_verdict(r)
@@ -663,6 +701,10 @@ def _judge(r: dict, pin_note: str, repo_root: str | None = None) -> tuple[str, s
             "certifies nothing -- it is a could-not-judge, never a pass."
         )
     if clean:
+        if repo_root is not None:
+            refused = _clean_version_check(r, repo_root, pin_note)
+            if refused is not None:
+                return refused
         return "pass", (
             f"backend-doctor evidence {os.path.basename(r['_path'])} {pin_note} "
             f"and is mechanically clean "
