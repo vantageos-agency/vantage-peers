@@ -1917,8 +1917,8 @@ export default defineSchema({
 	// ONE authorisation use, and only because the table is kept live: the
 	// owner-membership lookup `ownerMembershipLookups` (convex/lib/actingPrincipal.ts),
 	// which proves an agent's `ownerPersonId` is a member of the agent's org
-	// (key: clerkOrgId + clerkUserId; existence only, the `role` is never read
-	// for it). That is safe only while the rows follow Clerk: the Clerk webhook
+	// (key: clerkOrgId + clerkUserId; existence of a NON-tombstoned row only,
+	// the `role` is never read for it). That is safe only while the rows follow Clerk: the Clerk webhook
 	// `POST /clerk/webhook` (convex/http.ts, `orgMembership:applyClerkMembershipEvent`)
 	// upserts/removes on organizationMembership.created/updated/deleted, and
 	// `orgMembership:backfillFromClerk` (dry run by default) reconciles from the
@@ -1941,6 +1941,16 @@ export default defineSchema({
 		role: v.union(v.literal("admin"), v.literal("member")),
 		createdAt: v.number(),
 		updatedAt: v.number(),
+		// Event time (ms) of the last Clerk event or backfill applied to this
+		// (org, user) pair. An event with a time <= this is stale and ignored, so a
+		// late `created` can never undo a newer `deleted`. Absent on rows written
+		// at provisioning only.
+		lastEventAt: v.optional(v.number()),
+		// TOMBSTONE: set when Clerk removed the member (event time, or backfill
+		// time). The row is kept, role included, so the ordering guard has
+		// something to compare against. A tombstoned row is NOT a member: every
+		// reader skips it. A newer created/updated clears it.
+		deletedAt: v.optional(v.number()),
 	})
 		// "who administers/belongs to org X" — no table scan.
 		.index("by_org", ["clerkOrgSlug"])

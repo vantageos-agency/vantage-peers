@@ -150,7 +150,10 @@ export function ownerMembershipLookups(
 					q.eq("clerkOrgId", orgId).eq("clerkUserId", personId),
 				)
 				.unique();
-			return row === null ? null : { id: personId, orgId, active: true };
+			// A tombstoned row (Clerk removed the member) is absent.
+			return row === null || row.deletedAt !== undefined
+				? null
+				: { id: personId, orgId, active: true };
 		},
 	};
 }

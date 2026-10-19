@@ -252,11 +252,15 @@ describe("POST /clerk/webhook", () => {
 		const t = makeT();
 		await deliver(
 			t,
-			membershipEvent("organizationMembership.created", "org:member"),
+			membershipEvent("organizationMembership.created", "org:member", {
+				updatedAt: 1000,
+			}),
 		);
 		await deliver(
 			t,
-			membershipEvent("organizationMembership.updated", "org:admin"),
+			membershipEvent("organizationMembership.updated", "org:admin", {
+				updatedAt: 2000,
+			}),
 		);
 		const all = await rows(t);
 		expect(all).toHaveLength(1);
@@ -267,11 +271,15 @@ describe("POST /clerk/webhook", () => {
 		const t = makeT();
 		await deliver(
 			t,
-			membershipEvent("organizationMembership.created", "org:member"),
+			membershipEvent("organizationMembership.created", "org:member", {
+				updatedAt: 1000,
+			}),
 		);
 		const res = await deliver(
 			t,
-			membershipEvent("organizationMembership.deleted", "org:member"),
+			membershipEvent("organizationMembership.deleted", "org:member", {
+				updatedAt: 2000,
+			}),
 		);
 		expect(res.status).toBe(200);
 		expect(await live(t)).toHaveLength(0);
