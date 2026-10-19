@@ -1,111 +1,111 @@
 {
 	"schema_version": 1,
-	"doctor_version": "0.4.7",
+	"doctor_version": "0.4.8",
 	"ruling": "re-baselined on backend-doctor 0.4.7 (245eddf4) at tree 053c463b61d564076147e9a830c207c972685cef (clean full checkout, deps installed, 0 FALLBACK — the CHANGELOG rule of backend-doctor #78), Pi standing ruling (baseline = what the merged doctor prints), task k1778c2hvae8e8vz9f5bbbbbb98g62hw; CR-2 200 -> 264 is the instrument change 0.4.5 -> 0.4.6/0.4.7 alone (0.4.6 already read 264 on 03ad21d), licensed by the doctor_version raise",
 	"semantics": "RATCHET ONLY. Each `count` is a CEILING of non-conforming sites/rows for one mechanical rule. A deploy refuses when the evidence count for a baselined rule is ABOVE its count, when a red mechanical rule is not listed here, when a module listed under `modules` with 0 carries a site, or when any value here is HIGHER than the same value on origin/main. Values may only go down. Every count here was measured with the published @vantageos/backend-doctor named by `doctor_version`; the gate compares an evidence count with them only when the evidence's `cli_commit` reads `npm @vantageos/backend-doctor@<doctor_version>`, and refuses otherwise. A ceiling may rise against origin/main only in a re-baseline that raises `doctor_version` to a newer version in the same change (task k1778c2hvae8e8vz9f5bbbbbb98g62hw).",
 	"evidence_contract": "The deploy evidence must carry `mechanical_rule_counts` {rule_id: int} (and `mechanical_rule_module_counts` {rule_id: {module: int}} for a rule with a zero-lane module). Without it the gate refuses; it never compares totals.",
 	"rules": {
 		"R-2": {
 			"count": 0,
-			"measured_tree_sha": "053c463b61d564076147e9a830c207c972685cef",
-			"cli_commit": "245eddf447c5e933cd2e66afda5d9febc3e3e9c1",
-			"command": "npx -y @vantageos/backend-doctor@0.4.7 <vantage-peers clean full checkout @053c463, deps installed>/convex --json-evidence <dir>/",
+			"measured_tree_sha": "226067389ad98f0f56eccfad38d5f39ea6908542",
+			"cli_commit": "0121921dc96b6b5b48feecfe53637f1faa0e9edf",
+			"command": "npx -y @vantageos/backend-doctor@0.4.8 <vantage-peers clean full checkout @2260673, deps installed>/convex --json-evidence <dir>/",
 			"output_line": "R-2: 109 applicable oracle rows conform (verb one of the closed set; `rpc` refused); 0 violations. [applicable=109 conform=109 non-conforming=0 could-not-judge=0]; MECHANICAL RULE COUNTS: CR-2 264, R-5 62, R-53 369, R-54 148, R-55 31, R-56 2",
 			"modules": {}
 		},
 		"R-8": {
 			"count": 0,
-			"measured_tree_sha": "053c463b61d564076147e9a830c207c972685cef",
-			"cli_commit": "245eddf447c5e933cd2e66afda5d9febc3e3e9c1",
-			"command": "npx -y @vantageos/backend-doctor@0.4.7 <vantage-peers clean full checkout @053c463, deps installed>/convex --json-evidence <dir>/",
+			"measured_tree_sha": "226067389ad98f0f56eccfad38d5f39ea6908542",
+			"cli_commit": "0121921dc96b6b5b48feecfe53637f1faa0e9edf",
+			"command": "npx -y @vantageos/backend-doctor@0.4.8 <vantage-peers clean full checkout @2260673, deps installed>/convex --json-evidence <dir>/",
 			"output_line": "R-8: 109 applicable oracle rows conform (empty/`AUCUN` scope enforcement on a row carrying a data op, with NO written stateless/read-nothing justification token → non-conforming; a genuine scope check, or a no-scope row carrying a `JUSTIFIÉ:`/`STATELESS:` token, → present (the machine decides on the token's PRESENCE, never on a person's opinion of soundness)); 0 violations. [applicable=109 conform=109 non-conforming=0 could-not-judge=0]; MECHANICAL RULE COUNTS: CR-2 264, R-5 62, R-53 369, R-54 148, R-55 31, R-56 2",
 			"modules": {}
 		},
 		"R-13": {
 			"count": 0,
-			"measured_tree_sha": "053c463b61d564076147e9a830c207c972685cef",
-			"cli_commit": "245eddf447c5e933cd2e66afda5d9febc3e3e9c1",
-			"command": "npx -y @vantageos/backend-doctor@0.4.7 <vantage-peers clean full checkout @053c463, deps installed>/convex --json-evidence <dir>/",
+			"measured_tree_sha": "226067389ad98f0f56eccfad38d5f39ea6908542",
+			"cli_commit": "0121921dc96b6b5b48feecfe53637f1faa0e9edf",
+			"command": "npx -y @vantageos/backend-doctor@0.4.8 <vantage-peers clean full checkout @2260673, deps installed>/convex --json-evidence <dir>/",
 			"output_line": "R-13: 111 applicable oracle rows conform (purpose non-empty; disposition decided, or undecided with owner + deadline); 0 violations. [applicable=111 conform=111 non-conforming=0 could-not-judge=0]; MECHANICAL RULE COUNTS: CR-2 264, R-5 62, R-53 369, R-54 148, R-55 31, R-56 2",
 			"modules": {}
 		},
 		"R-28": {
 			"count": 0,
-			"measured_tree_sha": "053c463b61d564076147e9a830c207c972685cef",
-			"cli_commit": "245eddf447c5e933cd2e66afda5d9febc3e3e9c1",
-			"command": "npx -y @vantageos/backend-doctor@0.4.7 <vantage-peers clean full checkout @053c463, deps installed>/convex --json-evidence <dir>/",
+			"measured_tree_sha": "226067389ad98f0f56eccfad38d5f39ea6908542",
+			"cli_commit": "0121921dc96b6b5b48feecfe53637f1faa0e9edf",
+			"command": "npx -y @vantageos/backend-doctor@0.4.8 <vantage-peers clean full checkout @2260673, deps installed>/convex --json-evidence <dir>/",
 			"output_line": "R-28: 0 applicable oracle rows conform (a non-conforming tool names a concrete CORRIGER/REVOIR remediation); 0 violations. [applicable=0 conform=0 non-conforming=0 could-not-judge=0]; MECHANICAL RULE COUNTS: CR-2 264, R-5 62, R-53 369, R-54 148, R-55 31, R-56 2",
 			"modules": {}
 		},
 		"R-31": {
 			"count": 0,
-			"measured_tree_sha": "053c463b61d564076147e9a830c207c972685cef",
-			"cli_commit": "245eddf447c5e933cd2e66afda5d9febc3e3e9c1",
-			"command": "npx -y @vantageos/backend-doctor@0.4.7 <vantage-peers clean full checkout @053c463, deps installed>/convex --json-evidence <dir>/",
+			"measured_tree_sha": "226067389ad98f0f56eccfad38d5f39ea6908542",
+			"cli_commit": "0121921dc96b6b5b48feecfe53637f1faa0e9edf",
+			"command": "npx -y @vantageos/backend-doctor@0.4.8 <vantage-peers clean full checkout @2260673, deps installed>/convex --json-evidence <dir>/",
 			"output_line": "R-31: 46 site(s) could not be judged — convex/clientOrgMapping.ts:423 (setClerkOrgId: bounded read on \"client_org_mapping\" via `.take(n)`/`.paginate` but no `ctx.scheduler.runAfter` self-reschedule visible in the mutation — whether one page covers the whole set or the drain is continued elsewhere is not statically decidable (human verifies)); convex/deliveryLedger.ts:83 (purgeExpired: bounded read on \"webhookDeliveries\" via `.take(n)`/`.paginate` but no `ctx.scheduler.runAfter` self-reschedule visible in the mutation — whether one page covers the whole set or the drain is continued elsewhere is not statically decidable (human verifies)); convex/errorMonitor.ts:271 (linkIrpMissionByIssueNumber: bounded read on \"errorLogs\" via `.take(n)`/`.paginate` but no `ctx.scheduler.runAfter` self-reschedule visible in the mutation — whether one page covers the whole set or the drain is continued elsewhere is not statically decidable (human verifies)). This is NOT a clean bill. [conform=28 non-conforming=0 could-not-judge=46]; MECHANICAL RULE COUNTS: CR-2 264, R-5 62, R-53 369, R-54 148, R-55 31, R-56 2",
 			"modules": {}
 		},
 		"R-52": {
 			"count": 0,
-			"measured_tree_sha": "053c463b61d564076147e9a830c207c972685cef",
-			"cli_commit": "245eddf447c5e933cd2e66afda5d9febc3e3e9c1",
-			"command": "npx -y @vantageos/backend-doctor@0.4.7 <vantage-peers clean full checkout @053c463, deps installed>/convex --json-evidence <dir>/",
+			"measured_tree_sha": "226067389ad98f0f56eccfad38d5f39ea6908542",
+			"cli_commit": "0121921dc96b6b5b48feecfe53637f1faa0e9edf",
+			"command": "npx -y @vantageos/backend-doctor@0.4.8 <vantage-peers clean full checkout @2260673, deps installed>/convex --json-evidence <dir>/",
 			"output_line": "R-52: 10 site(s) could not be judged — convex/agents.ts:180 (setAgentAddress: patch — selector `existing._id` is caller-choosable (argument args.orgSlug + argument args.agentId) but its table cannot be resolved); convex/agents.ts:222 (deactivateAgent: patch — selector `existing._id` is caller-choosable (argument args.orgSlug + argument args.agentId) but its table cannot be resolved); convex/agents.ts:292 (reactivateAgent: patch — selector `existing._id` is caller-choosable (argument args.orgSlug + argument args.agentId) but its table cannot be resolved). This is NOT a clean bill. [conform=76 non-conforming=0 could-not-judge=10]; MECHANICAL RULE COUNTS: CR-2 264, R-5 62, R-53 369, R-54 148, R-55 31, R-56 2",
 			"modules": {}
 		},
 		"R-53": {
 			"count": 369,
-			"measured_tree_sha": "053c463b61d564076147e9a830c207c972685cef",
-			"cli_commit": "245eddf447c5e933cd2e66afda5d9febc3e3e9c1",
-			"command": "npx -y @vantageos/backend-doctor@0.4.7 <vantage-peers clean full checkout @053c463, deps installed>/convex --json-evidence <dir>/",
+			"measured_tree_sha": "226067389ad98f0f56eccfad38d5f39ea6908542",
+			"cli_commit": "0121921dc96b6b5b48feecfe53637f1faa0e9edf",
+			"command": "npx -y @vantageos/backend-doctor@0.4.8 <vantage-peers clean full checkout @2260673, deps installed>/convex --json-evidence <dir>/",
 			"output_line": "R-53: 369 site(s) VIOLATE (the principal is the package resolver's output, every write admits by comparing stored IDs with the resolved IDs, the unresolved branch refuses, and no local function decides identity). [conform=0 non-conforming=369 could-not-judge=0] Violations: convex/diary.ts:64 (orchestratorListed: (d) local identity layer — compares names to admit (`normalizeOrchestratorId(agent.name) === claimed`, line 73); decides identity through name resolver `listedAgents` (line 72)); convex/lib/agentIdentity.ts:182 (findAgentByName: (d) local identity layer — compares names to admit (`normalizeOrchestratorId(byNormalized.name) === normalized`, line 196); selects a row by name (`withIndex(\"by_org_normalized_name\")` on `normalizedName`, line 191); selects a row by name (`withIndex(\"by_org_name\")` on `name`, line 201)); convex/lib/auth.ts:547 (filterByOrgScope: (d) local identity layer — compares names to admit (`scope.allowedOrchestrators.includes(orchestrator)`, line 563)).; MECHANICAL RULE COUNTS: CR-2 264, R-5 62, R-53 369, R-54 148, R-55 31, R-56 2",
 			"modules": {}
 		},
 		"R-5": {
 			"count": 62,
-			"measured_tree_sha": "053c463b61d564076147e9a830c207c972685cef",
-			"cli_commit": "245eddf447c5e933cd2e66afda5d9febc3e3e9c1",
-			"command": "npx -y @vantageos/backend-doctor@0.4.7 <vantage-peers clean full checkout @053c463, deps installed>/convex --json-evidence <dir>/",
+			"measured_tree_sha": "226067389ad98f0f56eccfad38d5f39ea6908542",
+			"cli_commit": "0121921dc96b6b5b48feecfe53637f1faa0e9edf",
+			"command": "npx -y @vantageos/backend-doctor@0.4.8 <vantage-peers clean full checkout @2260673, deps installed>/convex --json-evidence <dir>/",
 			"output_line": "R-5: 62 of 85 applicable oracle rows VIOLATE (raw rbac_qui collapses to one of five tiers, resolved from a verified identity (not an argument)). [applicable=85 conform=23 non-conforming=62 could-not-judge=0] Examples: row#1 \"import_okf_bundle\" — reader tier not resolved from a verified identity — boundary derives from a caller argument namespace_ou_org=\"namespace(arg=targetNamespace)\" (label rbac_qui=\"toutes_orgs(scope-filtered)\" does not override the boundary evidence); row#2 \"export_okf_bundle\" — reader tier not resolved from a verified identity — boundary derives from a caller argument namespace_ou_org=\"namespace(arg=namespace)\" (label rbac_qui=\"toutes_orgs(scope-filtered)\" does not override the boundary evidence); row#4 \"store_document_chunked\" — tier maps to org-member but rbac_qui=\"toutes_orgs(in-handler-filtered)\"/namespace_ou_org=\"orgId/allowedOrchestrators\" do not evidence identity-resolution, and no written JUSTIFIÉ:/JUSTIFIED: token is recorded in the remediation cell (rbac_adjustment_needed=\"source reason (filtered): tenant namespace derived in-handler from oauthCtx via resolveOrgContext(); fails closed with AUTH_NO_ORG_ID\"); R-11 flags the locus.; MECHANICAL RULE COUNTS: CR-2 264, R-5 62, R-53 369, R-54 148, R-55 31, R-56 2",
 			"modules": {}
 		},
 		"CR-2": {
 			"count": 264,
-			"measured_tree_sha": "053c463b61d564076147e9a830c207c972685cef",
-			"cli_commit": "245eddf447c5e933cd2e66afda5d9febc3e3e9c1",
-			"command": "npx -y @vantageos/backend-doctor@0.4.7 <vantage-peers clean full checkout @053c463, deps installed>/convex --json-evidence <dir>/",
+			"measured_tree_sha": "226067389ad98f0f56eccfad38d5f39ea6908542",
+			"cli_commit": "0121921dc96b6b5b48feecfe53637f1faa0e9edf",
+			"command": "npx -y @vantageos/backend-doctor@0.4.8 <vantage-peers clean full checkout @2260673, deps installed>/convex --json-evidence <dir>/",
 			"output_line": "CR-2 VERDICT: 264 violation(s) — MECHANICAL, the gate refuses; 6 exempt; 1 could-not-judge.; MECHANICAL RULE COUNTS: CR-2 264, R-5 62, R-53 369, R-54 148, R-55 31, R-56 2",
 			"modules": {}
 		},
 		"R-54": {
 			"count": 148,
-			"measured_tree_sha": "053c463b61d564076147e9a830c207c972685cef",
-			"cli_commit": "245eddf447c5e933cd2e66afda5d9febc3e3e9c1",
-			"command": "npx -y @vantageos/backend-doctor@0.4.7 <vantage-peers clean full checkout @053c463, deps installed>/convex --json-evidence <dir>/",
+			"measured_tree_sha": "226067389ad98f0f56eccfad38d5f39ea6908542",
+			"cli_commit": "0121921dc96b6b5b48feecfe53637f1faa0e9edf",
+			"command": "npx -y @vantageos/backend-doctor@0.4.8 <vantage-peers clean full checkout @2260673, deps installed>/convex --json-evidence <dir>/",
 			"output_line": "R-54: 148 site(s) VIOLATE (a door resolving its caller through the organisation-scope resolver declares a verified-claim argument and refuses the call that is the service account and carries no claim, or is service-account-only, session-only, or declared fleet-wide). [conform=40 non-conforming=148 could-not-judge=8] Violations: convex/agentCredentials.ts:78 (mintAgentCredential: (A) resolves its caller through the organisation-scope resolver (the service account is master here) and declares no claim argument (verifiedActor / verifiedOrg / verifiedPerson)); convex/agentRelations.ts:95 (linkChild: (A) resolves its caller through the organisation-scope resolver (the service account is master here) and declares no claim argument (verifiedActor / verifiedOrg / verifiedPerson)); convex/agents.ts:120 (registerAgent: (A) resolves its caller through the organisation-scope resolver (the service account is master here) and declares no claim argument (verifiedActor / verifiedOrg / verifiedPerson)). Conform site(s): convex/agentCredentials.ts:160 (revokeAgentCredential: exit (b): callers resolve only through a verified session; the door never reaches the organisation-scope resolver); convex/agentCredentials.ts:233 (resolveAgentCredential: exit (a): service-account-only by purpose (requireServiceAccount / requireResolvedCaller masterOnly+mcpBoundOnly)); convex/agentCredentials.ts:278 (getAgentCredentialStatus: exit (b): callers resolve only through a verified session; the door never reaches the organisation-scope resolver). could-not-judge sites (not decided; each names why): convex/kb.ts:209 (storeDocumentChunked: caller scope arrives through a run call (ctx.runQuery / ctx.runMutation); its resolution is not read here); convex/kb.ts:351 (softDeleteDocument: caller scope arrives through a run call (ctx.runQuery / ctx.runMutation); its resolution is not read here); convex/okfBundleNode.ts:287 (exportOkfBundle: caller scope arrives through a run call (ctx.runQuery / ctx.runMutation); its resolution is not read here).; MECHANICAL RULE COUNTS: CR-2 264, R-5 62, R-53 369, R-54 148, R-55 31, R-56 2",
 			"modules": {}
 		},
 		"R-55": {
 			"count": 31,
-			"measured_tree_sha": "053c463b61d564076147e9a830c207c972685cef",
-			"cli_commit": "245eddf447c5e933cd2e66afda5d9febc3e3e9c1",
-			"command": "npx -y @vantageos/backend-doctor@0.4.7 <vantage-peers clean full checkout @053c463, deps installed>/convex --json-evidence <dir>/",
+			"measured_tree_sha": "226067389ad98f0f56eccfad38d5f39ea6908542",
+			"cli_commit": "0121921dc96b6b5b48feecfe53637f1faa0e9edf",
+			"command": "npx -y @vantageos/backend-doctor@0.4.8 <vantage-peers clean full checkout @2260673, deps installed>/convex --json-evidence <dir>/",
 			"output_line": "R-55: 31 site(s) VIOLATE (every caller-dependent predicate (tenant, roster, channel, status, time cursor) sits in the index range or the query builder before .take/.paginate, or the narrowing sits in a fill loop, or a refusal on a full window stands between the bound and the narrowing). [conform=33 non-conforming=31 could-not-judge=0] Violations: convex/briefingNotes.ts:631 (list: bounded read (take) at line 784, then a caller-dependent narrowing after the bound — line 880: rows .filter((r) => (r.updatedAt ?? r.createdAt) >= since); the window holds rows the caller may not see and drops rows it may); convex/briefingNotes.ts:1218 (searchBriefingNotesByKeyword: bounded read (take) at line 1263, then a caller-dependent narrowing after the bound — line 1285: results.filter((r) => sameOrg(orgRefOfRow(r), orgRefOfScope(scope))); the window holds rows the caller may not see and drops rows it may); convex/businessUnits.ts:582 (list: bounded read (take) at line 668, then a caller-dependent narrowing after the bound — line 752: rows.filter((r) => sameOrg(orgRefOfRow(r), orgRefOfScope(scope)), ); line 767: rows.filter((r) => { if (pastAnchor) return true; if (r._id === cursorPayload.id) { pastAn; line 778: rows.filter((r) => r._creationTime < before); the window holds rows the caller may not see and drops rows it may). Conform site(s): convex/diary.ts:361 (list: bounded read (take) at line 423; every caller-dependent predicate sits before the bound); convex/errorMonitor.ts:577 (listDeployments: bounded read (take) at line 610; every caller-dependent predicate sits before the bound); convex/errorMonitorFilters.ts:632 (listFilterRules: bounded read (take) at line 688; every caller-dependent predicate sits before the bound).; MECHANICAL RULE COUNTS: CR-2 264, R-5 62, R-53 369, R-54 148, R-55 31, R-56 2",
 			"modules": {}
 		},
 		"R-56": {
 			"count": 2,
-			"measured_tree_sha": "053c463b61d564076147e9a830c207c972685cef",
-			"cli_commit": "245eddf447c5e933cd2e66afda5d9febc3e3e9c1",
-			"command": "npx -y @vantageos/backend-doctor@0.4.7 <vantage-peers clean full checkout @053c463, deps installed>/convex --json-evidence <dir>/",
+			"measured_tree_sha": "226067389ad98f0f56eccfad38d5f39ea6908542",
+			"cli_commit": "0121921dc96b6b5b48feecfe53637f1faa0e9edf",
+			"command": "npx -y @vantageos/backend-doctor@0.4.8 <vantage-peers clean full checkout @2260673, deps installed>/convex --json-evidence <dir>/",
 			"output_line": "R-56: 2 site(s) VIOLATE (a credential-named column holds a digest of a generated value; a refresh-token table read by hash has a consuming door; a bearer table has a revocation door and its mint revokes prior bearers or caps them (or exchanges a code or refresh token); a request-supplied commit identifier is length-checked before it is matched). [conform=4 non-conforming=2 could-not-judge=0] Violations: convex/oauth.ts:1124 (provisionOrganization: (1) persists actorTokenHash as a digest of args.callerToken, a chosen secret — an unsalted digest of a chosen secret is an offline-checkable copy of it); convex/credentials.ts:359 (_issueToken: (3b) mints into userBearerTokens with neither a revoke-prior nor a cap on a principal's live bearers, and no code or refresh-token exchange links it to a family). Conform site(s): convex/oauth.ts:2261 (createAuthorizationCode: (1) stores code as a digest); convex/oauth.ts:2811 (rotateRefreshToken: (2) oauth_refresh_tokens is consumed by hash (rotateRefreshToken)); convex/oauth.ts:1093 (provisionOrganization: (3) oauth_access_tokens has a revocation door (walkClientTokensPage, revokeAccessTokensForCode, revokeFamilyBatch, revokeTokenBatch, moveScopeProfileToOrg) and its mint is bounded by its family (clause 2)).; MECHANICAL RULE COUNTS: CR-2 264, R-5 62, R-53 369, R-54 148, R-55 31, R-56 2",
 			"modules": {}
 		},
 		"R-11": {
 			"count": 0,
-			"measured_tree_sha": "053c463b61d564076147e9a830c207c972685cef",
-			"cli_commit": "245eddf447c5e933cd2e66afda5d9febc3e3e9c1",
-			"command": "npx -y @vantageos/backend-doctor@0.4.7 <vantage-peers clean full checkout @053c463, deps installed>/convex --json-evidence <dir>/",
+			"measured_tree_sha": "226067389ad98f0f56eccfad38d5f39ea6908542",
+			"cli_commit": "0121921dc96b6b5b48feecfe53637f1faa0e9edf",
+			"command": "npx -y @vantageos/backend-doctor@0.4.8 <vantage-peers clean full checkout @2260673, deps installed>/convex --json-evidence <dir>/",
 			"output_line": "R-11: 38 applicable site(s) conform (a .filter on a scope key is paired with an adjacent .withIndex/.withSearchIndex .eq on that key; an unbounded read of a tenant table in a door a non-master caller is served carries the tenant key in its index range); 0 violations. [conform=38 non-conforming=0 could-not-judge=0] Conform: convex/messages.ts:2038 (post-query .filter on tenantId paired with an adjacent .withIndex/.withSearchIndex .eq(\"tenantId\") — belt-and-suspenders over an indexed scope); convex/messages.ts:2769 (post-query .filter on tenantId paired with an adjacent .withIndex/.withSearchIndex .eq(\"tenantId\") — belt-and-suspenders over an indexed scope); convex/okfBundle.ts:240 (post-query .filter on namespace paired with an adjacent .withIndex/.withSearchIndex .eq(\"namespace\") — belt-and-suspenders over an indexed scope).; MECHANICAL RULE COUNTS: CR-2 264, R-5 62, R-53 369, R-54 148, R-55 31, R-56 2",
 			"modules": {}
 		}
