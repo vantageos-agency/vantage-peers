@@ -207,6 +207,9 @@ function countMarker(commit, literal) {
 				"-C",
 				args.tree,
 				"grep",
+				// -a: a path marked `binary` in .gitattributes would otherwise print one
+				// "Binary file … matches" line instead of its matches (Eta, #1540).
+				"-a",
 				"-o",
 				"-h",
 				"-F",
@@ -228,7 +231,14 @@ function countMarker(commit, literal) {
 			`git grep ${literal} at ${commit} failed: ${String(e.stderr ?? e.message).split("\n")[0]}`,
 		);
 	}
-	return out.split("\n").filter(Boolean).length;
+	const lines = out.split("\n").filter(Boolean);
+	// A grep form that collapses a file into one summary line counts that file as 1:
+	// refuse to judge rather than under-read a marker count.
+	const summary = lines.find((l) => l.startsWith("Binary file"));
+	if (summary !== undefined) {
+		couldNotJudge(`git grep ${literal} at ${commit} returned a summary line, not matches: ${summary}`);
+	}
+	return lines.length;
 }
 
 const mainCommit = resolveCommit(args["main-ref"] ?? "origin/main");
