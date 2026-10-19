@@ -1327,6 +1327,7 @@ export const checkNewMessages = query({
 					messageId: receipt.messageId,
 					from: message.from,
 					fromInstanceId: message.fromInstanceId,
+					...(message.fromId !== undefined ? { fromId: message.fromId } : {}),
 					channel: message.channel,
 					content: message.content,
 					createdAt: message.createdAt,
@@ -1447,6 +1448,7 @@ export const checkNewMessagesEnvelope = query({
 			messageId: Doc<"messages">["_id"];
 			from: Doc<"messages">["from"];
 			fromInstanceId?: string;
+			fromId?: string;
 			channel?: string;
 			content: string;
 			createdAt: number;
@@ -1467,6 +1469,7 @@ export const checkNewMessagesEnvelope = query({
 				messageId: receipt.messageId,
 				from: message.from,
 				fromInstanceId: message.fromInstanceId,
+				...(message.fromId !== undefined ? { fromId: message.fromId } : {}),
 				channel: message.channel,
 				content: message.content,
 				createdAt: message.createdAt,
@@ -1589,6 +1592,7 @@ export const listMyInbox = query({
 				messageId: receipt.messageId,
 				from: message.from,
 				fromInstanceId: message.fromInstanceId,
+				...(message.fromId !== undefined ? { fromId: message.fromId } : {}),
 				channel: message.channel,
 				content: message.content,
 				createdAt: message.createdAt,

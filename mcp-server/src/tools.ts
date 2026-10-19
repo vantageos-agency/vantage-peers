@@ -3728,6 +3728,7 @@ export function registerTools(
 						receiptId: string;
 						from: string;
 						fromInstanceId?: string;
+						fromId?: string;
 						channel?: string;
 						content: string;
 						createdAt: number;
@@ -3780,6 +3781,7 @@ export function registerTools(
 					receiptId: m.receiptId,
 					from: m.from,
 					fromInstanceId: m.fromInstanceId,
+					...(m.fromId !== undefined ? { fromId: m.fromId } : {}),
 					channel: m.channel,
 					content: m.content,
 					createdAt: m.createdAt,
