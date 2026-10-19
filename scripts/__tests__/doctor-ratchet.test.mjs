@@ -19,8 +19,10 @@ import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 
 const REPO = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
 const SCRIPT = join(REPO, "scripts", "doctor-ratchet.mjs");
-const BASELINE = join(REPO, ".backend-doctor", "ratchet.json");
 const FIX = join(REPO, "scripts", "__tests__", "fixtures", "doctor-ratchet");
+// A fixture baseline (doctorVersion 0.4.5), not the live .backend-doctor/ratchet.json:
+// a re-baseline must not rewrite these tests. The fixtures' cli_commit names 0.4.5.
+const BASELINE = join(FIX, "baseline.json");
 
 const tmpDirs = [];
 afterEach(() => {
@@ -531,10 +533,27 @@ describe("doctor-ratchet: a count may only go down", () => {
 				"elsewhere/k.ts":
 					"// oracle-justified: a\n// oracle-justified: b\n// oracle-justified: c\n",
 			});
-			spawnSync("ln", ["-s", "../../elsewhere/k.ts", join(repo.tree, "mcp-server/src/k.ts")]);
+			spawnSync("ln", [
+				"-s",
+				"../../elsewhere/k.ts",
+				join(repo.tree, "mcp-server/src/k.ts"),
+			]);
 			spawnSync("git", ["-C", repo.tree, "add", "-A"]);
-			spawnSync("git", ["-C", repo.tree, "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "--amend", "--no-edit"]);
-			repo.head = spawnSync("git", ["-C", repo.tree, "rev-parse", "HEAD"], { encoding: "utf8" }).stdout.trim();
+			spawnSync("git", [
+				"-C",
+				repo.tree,
+				"-c",
+				"user.name=t",
+				"-c",
+				"user.email=t@t",
+				"commit",
+				"-q",
+				"--amend",
+				"--no-edit",
+			]);
+			repo.head = spawnSync("git", ["-C", repo.tree, "rev-parse", "HEAD"], {
+				encoding: "utf8",
+			}).stdout.trim();
 			const r = runMarkers(repo);
 			expect(r.status).toBe(2);
 			expect(r.out).toMatch(/could-not-judge/);
@@ -556,6 +575,174 @@ describe("doctor-ratchet: a count may only go down", () => {
 			expect(last(r)).toMatch(
 				/ R-56=\d+ M-allow-local-identity=0 M-fleet-wide=0 M-oracle-justified=0 rise=0$/,
 			);
+		});
+	});
+
+	// The counts mean something only under the doctor version that printed them
+	// (task k172gy1ykcbz6drqb4n85q5a1n8gkaf3, Eta on #1544): 0.4.7 evidence read
+	// against a 0.4.5 baseline printed FAIL rise=1 without naming the cause.
+	describe("the evidence's doctor version must be the baseline's", () => {
+		const base = () => JSON.parse(readFileSync(BASELINE, "utf8"));
+		function evidenceWith(cli, counts) {
+			const doc = JSON.parse(readFileSync(join(FIX, "equal.json"), "utf8"));
+			const out = join(tmp(), "evidence.json");
+			const next = {
+				...doc,
+				mechanical_rule_counts: counts ?? doc.mechanical_rule_counts,
+			};
+			if (cli === undefined) delete next.cli_commit;
+			else next.cli_commit = cli;
+			writeFileSync(out, JSON.stringify(next));
+			return out;
+		}
+		function baselineFile(doc) {
+			const out = join(tmp(), "ratchet.json");
+			writeFileSync(out, JSON.stringify(doc));
+			return out;
+		}
+		const judge = (baseline, evidence, previous = BASELINE) =>
+			run([
+				"--baseline",
+				baseline,
+				"--evidence",
+				evidence,
+				"--previous-baseline",
+				previous,
+			]);
+		const last = (r) => r.out.trim().split("\n").at(-1);
+
+		it("RED: evidence from another doctor version is refused, naming both versions", () => {
+			const r = judge(
+				BASELINE,
+				evidenceWith("npm @vantageos/backend-doctor@0.4.7"),
+			);
+			expect(r.status).toBe(2);
+			expect(r.out).toMatch(/could-not-judge/);
+			expect(r.out).toContain("0.4.7");
+			expect(r.out).toContain("0.4.5");
+			expect(r.out).toMatch(/re-measured/);
+			expect(r.out).not.toMatch(/^RATCHET:/m);
+		});
+
+		for (const cli of [
+			undefined,
+			"x",
+			"245eddf447c5e933cd2e66afda5d9febc3e3e9c1",
+			"npm @vantageos/backend-doctor@0.4",
+			" npm @vantageos/backend-doctor@0.4.5",
+			"npm @vantageos/backend-doctor@0.4.5 ",
+			"npm @other/backend-doctor@0.4.5",
+		]) {
+			it(`RED: an underivable version (cli_commit=${JSON.stringify(cli)}) cannot judge, naming the value`, () => {
+				const r = judge(BASELINE, evidenceWith(cli));
+				expect(r.status).toBe(2);
+				expect(r.out).toMatch(/could-not-judge/);
+				expect(r.out).toMatch(/cli_commit/);
+				expect(r.out).toContain(JSON.stringify(cli ?? null));
+				expect(r.out).not.toMatch(/^RATCHET:/m);
+			});
+		}
+
+		it("RED: a baseline without doctorVersion cannot judge", () => {
+			const { doctorVersion: _drop, ...unversioned } = base();
+			const r = judge(baselineFile(unversioned), join(FIX, "equal.json"));
+			expect(r.status).toBe(2);
+			expect(r.out).toMatch(/could-not-judge/);
+			expect(r.out).toMatch(/doctorVersion/);
+		});
+
+		it("RED: a baseline whose doctorVersion is not an exact semver cannot judge", () => {
+			const r = judge(
+				baselineFile({ ...base(), doctorVersion: "v0.4.5" }),
+				join(FIX, "equal.json"),
+			);
+			expect(r.status).toBe(2);
+			expect(r.out).toMatch(/doctorVersion/);
+		});
+
+		it("GREEN: a raise against main licensed by a strictly newer doctorVersion passes, measured against the re-baseline", () => {
+			const counts = { ...base().counts, "CR-2": 264 };
+			const head = baselineFile({ ...base(), doctorVersion: "0.4.7", counts });
+			const r = judge(
+				head,
+				evidenceWith("npm @vantageos/backend-doctor@0.4.7", counts),
+			);
+			expect(r.status).toBe(0);
+			expect(r.out).toMatch(/0\.4\.5 -> 0\.4\.7/);
+			expect(last(r)).toMatch(
+				new RegExp(`^RATCHET: ${CLEAN_HEAD} CR-2=264 .* rise=0$`),
+			);
+		});
+
+		it("GREEN: numeric semver order — 0.4.9 on main, 0.4.10 here licenses the raise", () => {
+			const counts = { ...base().counts, "CR-2": 264 };
+			const prev = baselineFile({ ...base(), doctorVersion: "0.4.9" });
+			const head = baselineFile({ ...base(), doctorVersion: "0.4.10", counts });
+			const r = judge(
+				head,
+				evidenceWith("npm @vantageos/backend-doctor@0.4.10", counts),
+				prev,
+			);
+			expect(r.status).toBe(0);
+			expect(last(r)).toMatch(/ rise=0$/);
+		});
+
+		it("RED: under a re-baseline, a count above the NEW baseline still fails", () => {
+			const counts = { ...base().counts, "CR-2": 264 };
+			const head = baselineFile({ ...base(), doctorVersion: "0.4.7", counts });
+			const r = judge(
+				head,
+				evidenceWith("npm @vantageos/backend-doctor@0.4.7", {
+					...counts,
+					"CR-2": 265,
+				}),
+			);
+			expect(r.status).toBe(1);
+			expect(r.out).toMatch(/CR-2\s+264\s+265\s+\+1\s+RAISED/);
+			expect(last(r)).toMatch(/ rise=1$/);
+		});
+
+		for (const [label, mainVersion, headVersion] of [
+			["the same version", "0.4.7", "0.4.7"],
+			["an older version", "0.4.7", "0.4.5"],
+			["numeric order: 0.4.10 on main, 0.4.9 here", "0.4.10", "0.4.9"],
+		]) {
+			it(`RED: a raise against main with ${label} is refused, naming both versions`, () => {
+				const counts = { ...base().counts, "CR-2": 264 };
+				const prev = baselineFile({ ...base(), doctorVersion: mainVersion });
+				const head = baselineFile({
+					...base(),
+					doctorVersion: headVersion,
+					counts,
+				});
+				const r = judge(
+					head,
+					evidenceWith(`npm @vantageos/backend-doctor@${headVersion}`, counts),
+					prev,
+				);
+				expect(r.status).toBe(1);
+				expect(r.out).toMatch(
+					/baseline raised for CR-2: 200 on main -> 264 here/,
+				);
+				expect(r.out).toContain(`doctorVersion ${mainVersion}`);
+				expect(r.out).toContain(`names ${headVersion}`);
+				expect(last(r)).toMatch(/ rise=1$/);
+			});
+		}
+
+		it("RED: a raise against an unversioned main baseline is refused, saying main names no version", () => {
+			const counts = { ...base().counts, "CR-2": 264 };
+			const { doctorVersion: _drop, ...unversioned } = base();
+			const prev = baselineFile(unversioned);
+			const head = baselineFile({ ...base(), doctorVersion: "0.4.7", counts });
+			const r = judge(
+				head,
+				evidenceWith("npm @vantageos/backend-doctor@0.4.7", counts),
+				prev,
+			);
+			expect(r.status).toBe(1);
+			expect(r.out).toMatch(/baseline raised for CR-2/);
+			expect(r.out).toMatch(/names no doctorVersion/);
 		});
 	});
 });
