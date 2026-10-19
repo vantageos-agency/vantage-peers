@@ -241,7 +241,35 @@ function countMarker(commit, literal) {
 	return lines.length;
 }
 
+// git grep reads a symlink's own text and skips a gitlink, while the doctor and the
+// oracle follow them: a marker reached that way is honoured and never counted
+// (Eta, #1540 round 2). Every entry under a counted path must be a regular file, at
+// both commits, or the run refuses to judge. One predicate on modes, not one per form.
+function assertRegularFiles(commit) {
+	let out;
+	try {
+		out = execFileSync("git", ["-C", args.tree, "ls-tree", "-r", commit, "--", ...MARKER_PATHS], {
+			encoding: "utf8",
+			stdio: ["ignore", "pipe", "pipe"],
+			maxBuffer: 64 * 1024 * 1024,
+		});
+	} catch (e) {
+		couldNotJudge(`git ls-tree at ${commit} failed: ${String(e.stderr ?? e.message).split("\n")[0]}`);
+	}
+	const odd = out
+		.split("\n")
+		.filter(Boolean)
+		.filter((l) => !/^100(644|755) /.test(l));
+	if (odd.length > 0) {
+		couldNotJudge(
+			`at ${commit}, ${odd.length} entr${odd.length === 1 ? "y" : "ies"} under ${MARKER_PATHS.join(", ")} not a regular file (git grep cannot count markers through them):\n${odd.slice(0, 5).join("\n")}`,
+		);
+	}
+}
+
 const mainCommit = resolveCommit(args["main-ref"] ?? "origin/main");
+assertRegularFiles(mainCommit);
+assertRegularFiles("HEAD");
 const markerCounts = MARKERS.map(([name, literal]) => ({
 	name,
 	main: countMarker(mainCommit, literal),
