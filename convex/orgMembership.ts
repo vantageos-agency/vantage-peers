@@ -1,20 +1,34 @@
-import { hasFleetRead } from "@vantageos/cloud-identity";
+import { hasFleetRead, sameOrg } from "@vantageos/cloud-identity";
 import { ConvexError, v } from "convex/values";
-import { MutationCtx, query } from "./_generated/server";
-import { sameOrg } from "@vantageos/cloud-identity";
-import { lookupOrgMapping, requireResolvedCaller, withOrgScope } from "./lib/auth";
+import { internal } from "./_generated/api";
+import {
+	internalAction,
+	internalMutation,
+	type MutationCtx,
+	query,
+} from "./_generated/server";
+import {
+	lookupOrgMapping,
+	requireResolvedCaller,
+	withOrgScope,
+} from "./lib/auth";
 import { orgRefOfScope } from "./lib/authOrgMapping";
 import { clerkOrgIdForSlug } from "./lib/orgClerkId";
 
 // ─────────────────────────────────────────────────────────────────────────────
-// orgMembership — audit record of who administers which organisation.
-// Task k17a7t4a9d4hx11sgj2tcdf7kx8et4cp.
+// orgMembership — who belongs to which organisation, kept live from Clerk.
+// Task k17a7t4a9d4hx11sgj2tcdf7kx8et4cp (audit record), then
+// k1778c2hvae8e8vz9f5bbbbbb98g62hw item 4a (live source).
 //
-// AUDIT RECORD ONLY — NEVER AN AUTHORISATION SOURCE. See the table comment
-// in convex/schema.ts. `requireOrgAdmin` (convex/lib/auth.ts) keeps
-// deciding admin status from the verified `org_role` JWT claim, unchanged.
-// Nothing in this module may be used to decide whether an action is
-// allowed — it only answers "who administers/belongs to which org".
+// Written by: provisioning (`upsertAdminMembership`), the Clerk webhook
+// `POST /clerk/webhook` (`applyClerkMembershipEvent`, convex/http.ts) and the
+// one-time `backfillFromClerk`. Read as an authorisation source by exactly one
+// consumer: `ownerMembershipLookups` (convex/lib/actingPrincipal.ts), the
+// "is the agent's owner an active member of the agent's org" lookup.
+//
+// STILL NEVER the source of org-admin status: `requireOrgAdmin`
+// (convex/lib/auth.ts) keeps deciding admin status from the verified
+// `org_role` JWT claim. See the table comment in convex/schema.ts.
 // ─────────────────────────────────────────────────────────────────────────────
 
 const membershipShape = v.object({
@@ -191,5 +205,318 @@ export const getMembership = query({
 			.take(MEMBERSHIP_QUERY_LIMIT);
 		assertNotTruncated(rows.length, `subject "${scope.userId}"`);
 		return rows.map(toShape);
+	},
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Clerk-driven sync. Keyed by (clerkOrgId, clerkUserId) — the permanent Clerk
+// ids — through `by_org_user_clerk_id`. The slug is a renamable label, stored
+// from the payload and refreshed when it changes.
+//
+// Idempotent by construction: the same state delivered twice writes nothing.
+// A row written at provisioning (slug only, no `clerkOrgId` yet) is adopted by
+// the first Clerk event for the same (slug, user) instead of duplicated.
+// ─────────────────────────────────────────────────────────────────────────────
+
+/** Clerk `org:admin` is the one role mapped to "admin"; every other role is "member". */
+export function mapClerkRole(
+	clerkRole: string | undefined,
+): "admin" | "member" {
+	return clerkRole === "org:admin" ? "admin" : "member";
+}
+
+export type UpsertOutcome = "inserted" | "updated" | "unchanged";
+
+export async function upsertClerkMembership(
+	ctx: MutationCtx,
+	args: {
+		clerkOrgId: string;
+		clerkOrgSlug: string;
+		clerkUserId: string;
+		role: "admin" | "member";
+	},
+	opts: { dryRun?: boolean } = {},
+): Promise<UpsertOutcome> {
+	const byId = await ctx.db
+		.query("orgMembership")
+		.withIndex("by_org_user_clerk_id", (q) =>
+			q.eq("clerkOrgId", args.clerkOrgId).eq("clerkUserId", args.clerkUserId),
+		)
+		.unique();
+	const legacy =
+		byId !== null
+			? null
+			: await ctx.db
+					.query("orgMembership")
+					.withIndex("by_org_user", (q) =>
+						q
+							.eq("clerkOrgSlug", args.clerkOrgSlug)
+							.eq("clerkUserId", args.clerkUserId),
+					)
+					.filter((q) => q.eq(q.field("clerkOrgId"), undefined))
+					.first();
+	const existing = byId ?? legacy;
+	const now = Date.now();
+
+	if (existing === null) {
+		if (!opts.dryRun) {
+			await ctx.db.insert("orgMembership", {
+				clerkOrgSlug: args.clerkOrgSlug,
+				clerkOrgId: args.clerkOrgId,
+				clerkUserId: args.clerkUserId,
+				role: args.role,
+				createdAt: now,
+				updatedAt: now,
+			});
+		}
+		return "inserted";
+	}
+	if (
+		existing.role === args.role &&
+		existing.clerkOrgSlug === args.clerkOrgSlug &&
+		existing.clerkOrgId === args.clerkOrgId
+	) {
+		return "unchanged";
+	}
+	if (!opts.dryRun) {
+		await ctx.db.patch(existing._id, {
+			role: args.role,
+			clerkOrgSlug: args.clerkOrgSlug,
+			clerkOrgId: args.clerkOrgId,
+			updatedAt: now,
+		});
+	}
+	return "updated";
+}
+
+export async function removeClerkMembership(
+	ctx: MutationCtx,
+	args: { clerkOrgId: string; clerkUserId: string },
+): Promise<number> {
+	const rows = await ctx.db
+		.query("orgMembership")
+		.withIndex("by_org_user_clerk_id", (q) =>
+			q.eq("clerkOrgId", args.clerkOrgId).eq("clerkUserId", args.clerkUserId),
+		)
+		.take(10);
+	for (const row of rows) await ctx.db.delete(row._id);
+	return rows.length;
+}
+
+/**
+ * One Clerk `organizationMembership.*` event, already signature-verified by the
+ * HTTP route. `created` and `updated` upsert, `deleted` removes.
+ */
+export const applyClerkMembershipEvent = internalMutation({
+	args: {
+		kind: v.union(v.literal("upsert"), v.literal("delete")),
+		clerkOrgId: v.string(),
+		clerkOrgSlug: v.optional(v.string()),
+		clerkUserId: v.string(),
+		clerkRole: v.optional(v.string()),
+	},
+	returns: v.union(
+		v.literal("inserted"),
+		v.literal("updated"),
+		v.literal("unchanged"),
+		v.literal("removed"),
+		v.literal("absent"),
+	),
+	handler: async (ctx, args) => {
+		if (args.kind === "delete") {
+			const n = await removeClerkMembership(ctx, args);
+			return n > 0 ? "removed" : "absent";
+		}
+		if (args.clerkOrgSlug === undefined) {
+			throw new ConvexError(
+				"CLERK_MEMBERSHIP_SLUG_REQUIRED: an upsert needs the organisation slug from the payload",
+			);
+		}
+		return await upsertClerkMembership(ctx, {
+			clerkOrgId: args.clerkOrgId,
+			clerkOrgSlug: args.clerkOrgSlug,
+			clerkUserId: args.clerkUserId,
+			role: mapClerkRole(args.clerkRole),
+		});
+	},
+});
+
+// Bounds for the backfill. A page is Clerk's maximum; an organisation larger
+// than MAX_MEMBERS_PER_ORG is reported as failed (not read in full), never
+// partially reconciled.
+const CLERK_PAGE_SIZE = 100;
+const MAX_PAGES = 1000;
+const MAX_MEMBERS_PER_ORG = 4000;
+
+/**
+ * Reconcile ONE organisation with the full member list read from Clerk: upsert
+ * every member, remove every stored row of that org not in the list. Callable
+ * only with a list the action read to the end.
+ */
+export const reconcileOrgFromClerk = internalMutation({
+	args: {
+		clerkOrgId: v.string(),
+		clerkOrgSlug: v.string(),
+		members: v.array(v.object({ userId: v.string(), role: v.string() })),
+		dryRun: v.boolean(),
+	},
+	returns: v.object({ upserted: v.number(), removed: v.number() }),
+	handler: async (ctx, args) => {
+		let upserted = 0;
+		const present = new Set<string>();
+		for (const m of args.members) {
+			present.add(m.userId);
+			const outcome = await upsertClerkMembership(
+				ctx,
+				{
+					clerkOrgId: args.clerkOrgId,
+					clerkOrgSlug: args.clerkOrgSlug,
+					clerkUserId: m.userId,
+					role: mapClerkRole(m.role),
+				},
+				{ dryRun: args.dryRun },
+			);
+			if (outcome !== "unchanged") upserted++;
+		}
+		const stored = await ctx.db
+			.query("orgMembership")
+			.withIndex("by_org_clerk_id", (q) => q.eq("clerkOrgId", args.clerkOrgId))
+			.take(MAX_MEMBERS_PER_ORG + 1);
+		if (stored.length > MAX_MEMBERS_PER_ORG) {
+			throw new ConvexError(
+				`MEMBERSHIP_QUERY_INCOMPLETE: org ${args.clerkOrgId} holds more than ${MAX_MEMBERS_PER_ORG} stored rows — refusing to reconcile a partial read`,
+			);
+		}
+		let removed = 0;
+		for (const row of stored) {
+			if (present.has(row.clerkUserId)) continue;
+			removed++;
+			if (!args.dryRun) await ctx.db.delete(row._id);
+		}
+		return { upserted, removed };
+	},
+});
+
+type ClerkPage = { data?: unknown[]; total_count?: number };
+
+async function clerkGet(
+	path: string,
+	params: Record<string, string>,
+	secretKey: string,
+): Promise<unknown[]> {
+	const url = new URL(`https://api.clerk.com${path}`);
+	for (const [k, val] of Object.entries(params)) url.searchParams.set(k, val);
+	const res = await fetch(url.toString(), {
+		headers: { Authorization: `Bearer ${secretKey}` },
+	});
+	// The status is named, the key and the response body never are.
+	if (!res.ok) throw new Error(`Clerk API ${path} answered HTTP ${res.status}`);
+	const json = (await res.json()) as ClerkPage | unknown[];
+	return Array.isArray(json) ? json : (json.data ?? []);
+}
+
+async function clerkReadAll(
+	path: string,
+	secretKey: string,
+	limit: number,
+): Promise<unknown[]> {
+	const all: unknown[] = [];
+	for (let page = 0; page < MAX_PAGES; page++) {
+		const items = await clerkGet(
+			path,
+			{
+				limit: String(CLERK_PAGE_SIZE),
+				offset: String(page * CLERK_PAGE_SIZE),
+			},
+			secretKey,
+		);
+		all.push(...items);
+		if (items.length < CLERK_PAGE_SIZE) return all;
+		if (all.length > limit) {
+			throw new Error(`${path} returned more than ${limit} items`);
+		}
+	}
+	throw new Error(`${path} did not end within ${MAX_PAGES} pages`);
+}
+
+/**
+ * One-time backfill of orgMembership from the Clerk Backend API. DRY RUN BY
+ * DEFAULT: pass `{ dryRun: false }` to write. Removal happens only for an
+ * organisation whose full member list was read; an organisation whose read
+ * failed is left untouched and named in `failedOrgs`.
+ */
+export const backfillFromClerk = internalAction({
+	args: { dryRun: v.optional(v.boolean()) },
+	returns: v.object({
+		dryRun: v.boolean(),
+		orgs: v.number(),
+		memberships: v.number(),
+		upserted: v.number(),
+		removed: v.number(),
+		failedOrgs: v.array(v.string()),
+	}),
+	handler: async (ctx, args) => {
+		const dryRun = args.dryRun !== false;
+		const secretKey = process.env.CLERK_SECRET_KEY;
+		if (!secretKey) {
+			throw new ConvexError(
+				"CLERK_SECRET_KEY is not set — refusing to read Clerk memberships",
+			);
+		}
+		const orgs = (await clerkReadAll("/v1/organizations", secretKey, 100000))
+			.map((o) => o as { id?: unknown; slug?: unknown })
+			.filter(
+				(o): o is { id: string; slug: string } =>
+					typeof o.id === "string" && typeof o.slug === "string",
+			);
+
+		let memberships = 0;
+		let upserted = 0;
+		let removed = 0;
+		const failedOrgs: string[] = [];
+		for (const org of orgs) {
+			try {
+				const raw = await clerkReadAll(
+					`/v1/organizations/${encodeURIComponent(org.id)}/memberships`,
+					secretKey,
+					MAX_MEMBERS_PER_ORG,
+				);
+				const members = raw.flatMap((m) => {
+					const mm = m as {
+						role?: unknown;
+						public_user_data?: { user_id?: unknown };
+					};
+					const userId = mm.public_user_data?.user_id;
+					return typeof userId === "string"
+						? [{ userId, role: typeof mm.role === "string" ? mm.role : "" }]
+						: [];
+				});
+				const r: { upserted: number; removed: number } = await ctx.runMutation(
+					internal.orgMembership.reconcileOrgFromClerk,
+					{
+						clerkOrgId: org.id,
+						clerkOrgSlug: org.slug,
+						members,
+						dryRun,
+					},
+				);
+				memberships += members.length;
+				upserted += r.upserted;
+				removed += r.removed;
+			} catch (err) {
+				failedOrgs.push(org.id);
+				console.error(
+					`[clerkBackfill] org ${org.id} not reconciled: ${err instanceof Error ? err.message : "unknown error"}`,
+				);
+			}
+		}
+		return {
+			dryRun,
+			orgs: orgs.length,
+			memberships,
+			upserted,
+			removed,
+			failedOrgs,
+		};
 	},
 });

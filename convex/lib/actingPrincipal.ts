@@ -131,6 +131,31 @@ export function personPrincipalLookups(
 }
 
 /**
+ * The lookup `resolveCallerFromAgentCredential` reads to prove an agent's OWNER
+ * is a member of the agent's organisation: `personById(personId, orgId)` where
+ * `orgId` is the permanent Clerk org id. Storage adapter only: it reads the
+ * `orgMembership` row keyed (clerkOrgId, clerkUserId) — kept live by the Clerk
+ * webhook `POST /clerk/webhook` and `orgMembership:backfillFromClerk` — and
+ * answers the row's existence. No role logic, no fallback, no name; a miss is
+ * null.
+ */
+export function ownerMembershipLookups(
+	ctx: Pick<Ctx, "db">,
+): Pick<PrincipalLookups, "personById"> {
+	return {
+		personById: async (personId, orgId) => {
+			const row = await ctx.db
+				.query("orgMembership")
+				.withIndex("by_org_user_clerk_id", (q) =>
+					q.eq("clerkOrgId", orgId).eq("clerkUserId", personId),
+				)
+				.unique();
+			return row === null ? null : { id: personId, orgId, active: true };
+		},
+	};
+}
+
+/**
  * The lookups for the FLEET SERVICE ACCOUNT: the `agents` row the operator org's
  * mapping names, read by ID. The row answers only when it is a `kind: "service"`
  * row that carries exactly the verified subject as its `authSubject`; any other
@@ -327,7 +352,10 @@ export function recipientLookups(ctx: Ctx): RecipientLookups {
 			orgKindOfMapping(await lookupOrgMapping(ctx, orgId)),
 		rosterOf: async (orgId) => {
 			const mapping = await lookupOrgMapping(ctx, orgId);
-			if (mapping === null || mapping.addressableFleetCoordinatorIds === undefined) {
+			if (
+				mapping === null ||
+				mapping.addressableFleetCoordinatorIds === undefined
+			) {
 				return null;
 			}
 			return { orgId, principalIds: mapping.addressableFleetCoordinatorIds };
@@ -373,7 +401,10 @@ export async function addressRecipientById(
 	if (!resolved.ok) return resolved;
 	const verdict = await assertRecipientAddressable(
 		sender,
-		{ agentId: resolved.principal.principalId, orgId: resolved.principal.orgId },
+		{
+			agentId: resolved.principal.principalId,
+			orgId: resolved.principal.orgId,
+		},
 		recipientLookups(ctx),
 		{ door },
 	);
