@@ -61,6 +61,31 @@ A count BELOW its ceiling passes and the message names the ceiling to lower.
 backend-doctor@1bda92f does NOT emit `mechanical_rule_counts`; until it does,
 its raw evidence still refuses on a red tree (verdict "incomplete").
 
+DOCTOR VERSION (v1.4.0, task k1778c2hvae8e8vz9f5bbbbbb98g62hw, Pi ruling
+2026-10-19: "a ceiling measured by one instrument version is meaningless under
+another"). The baseline carries a top-level `doctor_version`, the exact semver
+of the published @vantageos/backend-doctor its ceilings were measured with.
+Before ANY count is compared the gate derives the version that produced the
+evidence from the evidence's own `cli_commit`, which backend-doctor's
+cliCommit() (src/cli.ts) writes as `npm @vantageos/backend-doctor@<version>`
+for a published-package run (a git-checkout run writes a commit sha, which
+names no published version). Then it REFUSES when:
+  * the working-tree baseline has no `doctor_version`, or one that is not an
+    exact semver (could-not-judge, verdict "incomplete");
+  * the evidence's version cannot be derived from `cli_commit` (absent, a git
+    sha, `+dirty`, another package, anything but the exact npm form) --
+    verdict "incomplete";
+  * the evidence's version differs from the baseline's -- verdict "version",
+    naming both; counts are never compared across versions.
+The origin/main ratchet is version-aware: a ceiling rise, an added rule or a
+deleted zero lane against origin/main is licensed ONLY when the branch's
+`doctor_version` is strictly NEWER than origin/main's (a re-baseline on a new
+instrument). Same version, an older version, or an origin/main baseline that
+names no version (the legacy shape) license nothing: every rise refuses as
+before. Lowering is always allowed. A re-baseline therefore lands as ONE
+change: `doctor_version` raised and every ceiling set to what that version
+prints, judged against evidence from that same version.
+
 WHAT IT MUST NOT DO
 -------------------
 * NEVER refuse on a judgement/process rule (the doctor marks those; the gate
@@ -121,7 +146,7 @@ from _lib.command_predicate import (  # noqa: E402
     raw_carries_action_words,
 )
 
-VERSION = "1.3.0"
+VERSION = "1.4.0"
 
 # `convex run <module>:<fn>` executes an existing function; it pushes no code.
 # (`run --push` does, and raw_carries_action_words keeps that case closed.)
@@ -377,8 +402,53 @@ class BaselineError(Exception):
     """The baseline (working tree or origin/main) cannot be read as data."""
 
 
+_SEMVER = r"(\d+)\.(\d+)\.(\d+)(?:-([0-9A-Za-z.-]+))?"
+_SEMVER_RE = re.compile(_SEMVER)
+# backend-doctor src/cli.ts cliCommit(): `npm @vantageos/backend-doctor@${toolVersion()}`
+# for a run of the published package. Exact form only -- no strip, no prefix match.
+_NPM_CLI_RE = re.compile(r"npm @vantageos/backend-doctor@(" + _SEMVER + r")")
+_NO_VERSION = object()
+
+
+def _semver_key(v: str) -> tuple:
+    """Ordering key for an exact semver. A pre-release sorts below its release;
+    pre-release identifiers compare as plain strings (approximation, sufficient to
+    tell an upgrade from a downgrade of the published doctor)."""
+    m = _SEMVER_RE.fullmatch(v)
+    major, minor, patch, pre = m.groups()
+    return (int(major), int(minor), int(patch), 0 if pre else 1, pre or "")
+
+
+def _evidence_doctor_version(r: dict) -> str | None:
+    """The published backend-doctor version that produced this evidence, derived
+    from its own `cli_commit`, or None when that field names no published version."""
+    cli = r.get("cli_commit")
+    if not isinstance(cli, str):
+        return None
+    m = _NPM_CLI_RE.fullmatch(cli)
+    return m.group(1) if m else None
+
+
 def _nonneg_int(v) -> bool:
     return isinstance(v, int) and not isinstance(v, bool) and v >= 0
+
+
+def _baseline_doctor_version(text: str, where: str):
+    """The baseline's top-level `doctor_version`: an exact semver string, or
+    `_NO_VERSION` when the key is absent. Present but not an exact semver raises."""
+    try:
+        doc = json.loads(text)
+    except json.JSONDecodeError as exc:
+        raise BaselineError(f"{where} is not JSON ({exc})") from exc
+    if not isinstance(doc, dict) or "doctor_version" not in doc:
+        return _NO_VERSION
+    v = doc["doctor_version"]
+    if not isinstance(v, str) or not _SEMVER_RE.fullmatch(v):
+        raise BaselineError(
+            f"{where}: doctor_version={v!r} is not an exact semver string "
+            "(e.g. \"0.4.5\"), so the instrument its ceilings were measured with "
+            "is unknown -- a could-not-judge")
+    return v
 
 
 def _parse_baseline(text: str, where: str) -> dict[str, dict]:
@@ -405,8 +475,9 @@ def _parse_baseline(text: str, where: str) -> dict[str, dict]:
     return out
 
 
-def _baseline_on_ref(repo_root: str) -> dict[str, dict] | None:
-    """The baseline as committed on origin/main, or None when absent there.
+def _baseline_on_ref(repo_root: str):
+    """(rules, doctor_version) as committed on origin/main, or None when the file
+    is absent there. doctor_version is `_NO_VERSION` for the legacy shape.
     A git failure other than "path not in that tree" raises (fail-closed)."""
     r = subprocess.run(
         ["git", "show", f"{BASELINE_REF}:{BASELINE_PATH}"],
@@ -420,7 +491,8 @@ def _baseline_on_ref(repo_root: str) -> dict[str, dict] | None:
             f"`git show {BASELINE_REF}:{BASELINE_PATH}` failed "
             f"(exit {r.returncode}): {err}"
         )
-    return _parse_baseline(r.stdout, f"{BASELINE_REF}:{BASELINE_PATH}")
+    where = f"{BASELINE_REF}:{BASELINE_PATH}"
+    return _parse_baseline(r.stdout, where), _baseline_doctor_version(r.stdout, where)
 
 
 def _baseline_rises(cur: dict[str, dict], ref: dict[str, dict]) -> list[str]:
@@ -459,20 +531,64 @@ def _ratchet(r: dict, repo_root: str, pin_note: str) -> tuple[str, str] | None:
     head = f"backend-doctor evidence {name} {pin_note} and is mechanically red"
     try:
         with open(path, "r", encoding="utf-8") as fh:
-            cur = _parse_baseline(fh.read(), BASELINE_PATH)
-        ref = _baseline_on_ref(repo_root)
+            text = fh.read()
+        cur = _parse_baseline(text, BASELINE_PATH)
+        cur_v = _baseline_doctor_version(text, BASELINE_PATH)
     except (OSError, BaselineError) as exc:
         return "ratchet", f"{head}; the ratchet baseline cannot be read: {exc}."
-    if ref is None:
+    if cur_v is _NO_VERSION:
+        return "incomplete", (
+            f"{head}; {BASELINE_PATH} names no `doctor_version`, so the instrument "
+            "its ceilings were measured with is unknown and no count can be "
+            "compared with them -- a could-not-judge. Add a top-level "
+            "\"doctor_version\": \"<exact semver>\" naming the published "
+            "@vantageos/backend-doctor that printed those ceilings."
+        )
+    try:
+        on_ref = _baseline_on_ref(repo_root)
+    except (OSError, BaselineError) as exc:
+        return "ratchet", f"{head}; the ratchet baseline cannot be read: {exc}."
+    if on_ref is None:
         return "ratchet", (
             f"{head}; {BASELINE_PATH} does not exist on {BASELINE_REF}. An "
             "unmerged baseline has never been reviewed and certifies nothing."
         )
+    ref, ref_v = on_ref
     rises = _baseline_rises(cur, ref)
-    if rises:
+    rebaselined = (ref_v is not _NO_VERSION
+                   and _semver_key(cur_v) > _semver_key(ref_v))
+    if rises and not rebaselined:
+        ref_named = ("names no doctor_version" if ref_v is _NO_VERSION
+                     else f"names doctor_version {ref_v}")
         return "ratchet", (
             f"{head}; {BASELINE_PATH} is HIGHER than on {BASELINE_REF}: "
-            + "; ".join(rises) + ". A baseline may only go down."
+            + "; ".join(rises) + ". A baseline may only go down, except in a "
+            f"re-baseline that raises doctor_version: {BASELINE_REF} {ref_named} "
+            f"and this branch names {cur_v}, which is not a newer version."
+        )
+
+    ev_v = _evidence_doctor_version(r)
+    if ev_v is None:
+        return "incomplete", (
+            f"{head}, but the backend-doctor version that produced it cannot be "
+            f"derived: cli_commit={r.get('cli_commit', None)!r} is not of the form "
+            "`npm @vantageos/backend-doctor@<semver>` (a git-checkout run names a "
+            "commit, not a published version). The baseline's ceilings were "
+            f"measured with backend-doctor {cur_v}; a count from an unnamed "
+            "instrument cannot be compared with them -- a could-not-judge. Score "
+            f"this commit with `npx -y @vantageos/backend-doctor@{cur_v} "
+            "<repo>/convex --json-evidence qa/`."
+        )
+    if ev_v != cur_v:
+        return "version", (
+            f"{head}, but it was produced by backend-doctor {ev_v} while "
+            f"{BASELINE_PATH} names doctor_version {cur_v}: its ceilings were "
+            f"measured with {cur_v} and mean nothing under {ev_v}, so no count is "
+            f"compared across the two versions. The baseline must be re-measured "
+            f"with the running version {ev_v} (doctor_version {ev_v} and every "
+            f"ceiling as {ev_v} prints it, in one reviewed PR), or this commit "
+            f"scored with `npx -y @vantageos/backend-doctor@{cur_v} <repo>/convex "
+            "--json-evidence qa/`."
         )
 
     counts = r.get("mechanical_rule_counts", _MISSING)
@@ -625,7 +741,7 @@ def _clean_verdict(report: dict) -> tuple[bool, str | None]:
 
 def evaluate(repo_root: str, cwd: str | None) -> tuple[str, str]:
     """(verdict, message). verdict in {"pass", "absent", "stale", "red",
-    "incomplete", "diverged", "ambiguous", "refuse"}. Only "pass" allows; every other
+    "incomplete", "diverged", "ambiguous", "ratchet", "version", "refuse"}. Only "pass" allows; every other
     verdict refuses.
 
     ANCESTOR-EVIDENCE RELAXATION: evidence for a commit cannot be committed
@@ -769,7 +885,9 @@ def _print_block(verdict: str, detail: str, ship_hint: str) -> None:
         "    3. The gate reads that file, verifies sha == `git rev-parse HEAD`,\n"
         "       and that mechanical_violations == 0, or (RULING 6) that every\n"
         "       red rule in `mechanical_rule_counts` is at or under its ceiling in\n"
-        f"       {BASELINE_PATH}.\n"
+        f"       {BASELINE_PATH}, judged only when the evidence's `cli_commit`\n"
+        "       (`npm @vantageos/backend-doctor@<v>`) names the baseline's\n"
+        "       `doctor_version`.\n"
         "\n"
         "  The gate refuses ONLY on MECHANICAL non-conformance -- never on a "
         "judgement/process rule (a report with exit_code=1 but "
