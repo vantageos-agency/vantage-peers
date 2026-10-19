@@ -301,4 +301,20 @@ describe("(b) the refusals of the deleted guard survive", () => {
 		expect(bulk.result.isError).toBe(true);
 		expect(bulk.mutations).toBe(0);
 	});
+
+	// Eta M5 on #1549 @cfa4916 (https://github.com/vantageos-agency/vantage-peers/pull/1549#issuecomment-6275124614):
+	// the guardAssignee self-name shortcut keeps the package roster conjunct.
+	it("permissive, no credential: a typed assignee off the roster is not admitted by the self-name shortcut", async () => {
+		vi.stubEnv("VANTAGE_ACTOR_CREDENTIAL_MODE", "permissive");
+		const r = await call(ROSTER_ONLY, "create_mandate", {
+			requestedBy: "alpha-role", fulfilledBy: "beta-role", service: "review", budget: 10,
+		});
+		expect(r.result.isError).toBe(true);
+		expect(r.mutations).toBe(0);
+		const own = await call(ROSTER_ONLY, "create_mandate", {
+			requestedBy: "alpha-role", fulfilledBy: "alpha-role", service: "review", budget: 10,
+		});
+		expect(own.result.isError).not.toBe(true);
+		expect(own.mutations).toBe(1);
+	});
 });
