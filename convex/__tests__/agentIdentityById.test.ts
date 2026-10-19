@@ -21,6 +21,7 @@
 import { convexTest } from "../../tests/fixtures/convexTestWithServiceAccount";
 import { describe, expect, test } from "vitest";
 import { testClerkOrgId } from "../../tests/fixtures/testClerkOrgId";
+import { ownAgent } from "../../tests/lib/ownAgent";
 import { api } from "../_generated/api";
 import type { Id } from "../_generated/dataModel";
 import schema from "../schema";
@@ -299,6 +300,7 @@ describe("M8 3. a missing or garbled credential is refused, never an empty succe
 			orgSlug: "org-a",
 			name: "ada",
 		});
+		await ownAgent(t, "org-a", "ada");
 		const minted = await admin.mutation(api.agentCredentials.mintAgentCredential, {
 			orgSlug: "org-a",
 			agentId: ada,
@@ -452,6 +454,7 @@ describe("M8 4. a rename touches the display name only and keeps every grant", (
 			orgSlug: "org-a",
 			name: "clio",
 		});
+		await ownAgent(t, "org-a", "ada");
 		const { secret } = await admin.mutation(api.agentCredentials.mintAgentCredential, {
 			orgSlug: "org-a",
 			agentId: ada,

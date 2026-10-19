@@ -24,6 +24,7 @@ import { describe, expect, test } from "vitest";
 import { api } from "../_generated/api";
 import schema from "../schema";
 import { agentIdOf, findAgentId } from "../../tests/lib/agentIdOf";
+import { ownAgent } from "../../tests/lib/ownAgent";
 import { testClerkOrgId } from "../../tests/fixtures/testClerkOrgId";
 
 const modules = Object.fromEntries(
@@ -68,6 +69,7 @@ async function register(t: T, org: string, name: string) {
 		orgSlug: org,
 		name,
 	});
+	await ownAgent(t, org, name);
 }
 
 async function mint(t: T, org: string, name: string): Promise<string> {

@@ -22,6 +22,7 @@ import type { Id } from "../_generated/dataModel";
 import schema from "../schema";
 import { agentIdOf } from "../../tests/lib/agentIdOf";
 import { testClerkOrgId } from "../../tests/fixtures/testClerkOrgId";
+import { ownAgent } from "../../tests/lib/ownAgent";
 
 const modules = Object.fromEntries(
 	Object.entries(import.meta.glob("../**/*.ts")).filter(
@@ -67,7 +68,7 @@ async function seedAgent(
 	name: string,
 	isActive = true,
 ): Promise<Id<"agents">> {
-	return await t.run(async (ctx) =>
+	const id = await t.run(async (ctx) =>
 		ctx.db.insert("agents", {
 			orgSlug,
 			clerkOrgId: testClerkOrgId(orgSlug),
@@ -77,6 +78,8 @@ async function seedAgent(
 			createdAt: Date.now(),
 		}),
 	);
+	await ownAgent(t, orgSlug, name);
+	return id;
 }
 
 async function seedProfile(

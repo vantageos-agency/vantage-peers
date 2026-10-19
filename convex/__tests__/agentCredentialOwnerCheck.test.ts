@@ -19,7 +19,7 @@ import { describe, expect, test } from "vitest";
 import { api } from "../_generated/api";
 import schema from "../schema";
 import { agentIdOf } from "../../tests/lib/agentIdOf";
-import { ownAgent, ownerOf } from "../../tests/lib/ownAgent";
+import { ownAgent, ownerOf, tombstoneOwnerMembership } from "../../tests/lib/ownAgent";
 import { testClerkOrgId } from "../../tests/fixtures/testClerkOrgId";
 
 const modules = Object.fromEntries(
@@ -130,16 +130,7 @@ describe("resolveAgentCredential — the credential is bound to its human owner"
 		await ownAgent(t, ORG, "bot");
 		// Control: it resolves before the tombstone.
 		await resolve(t, secret);
-		await t.run(async (ctx) => {
-			const row = await ctx.db
-				.query("orgMembership")
-				.withIndex("by_org_user_clerk_id", (q) =>
-					q.eq("clerkOrgId", testClerkOrgId(ORG)).eq("clerkUserId", ownerOf(ORG)),
-				)
-				.unique();
-			if (row === null) throw new Error("fixture: no membership row");
-			await ctx.db.patch(row._id, { deletedAt: 5 });
-		});
+		await tombstoneOwnerMembership(t, ORG, 5);
 		expectRefused(await refusalOf(resolve(t, secret)), "agent-owner-not-member");
 	});
 

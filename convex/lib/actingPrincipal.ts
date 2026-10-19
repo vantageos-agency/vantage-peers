@@ -154,6 +154,44 @@ export function ownerMembershipLookups(
 }
 
 /**
+ * The lookups `resolveCallerFromAgentCredential` reads for an AGENT credential,
+ * every one keyed by the permanent Clerk org id (`clerkOrgId`), the ID the
+ * package resolves the organisation to:
+ *   - `agentById`: the `agents` row by its ID, answered with the org id the ROW
+ *     is stamped with (`clerkOrgId`, never the slug label) and its stored
+ *     `ownerPersonId`; a row not yet stamped with a `clerkOrgId` carries no org
+ *     and is refused by the package.
+ *   - `organisationById` / `orgKindOf`: the same ID-keyed mapping reads the
+ *     person path uses (`personPrincipalLookups`).
+ *   - `personById`: the owner's live `orgMembership` row (`ownerMembershipLookups`);
+ *     a tombstoned or absent row is not a member.
+ * Storage adapter only: it decides nothing about the owner or the membership.
+ */
+export function agentCredentialPrincipalLookups(ctx: Ctx): PrincipalLookups {
+	const { organisationById, orgKindOf } = personPrincipalLookups(ctx);
+	return {
+		agentById: async (agentId) => {
+			const id = ctx.db.normalizeId("agents", agentId);
+			if (id === null) return null;
+			const row = await ctx.db
+				.query("agents")
+				.withIndex("by_id", (q) => q.eq("_id", id))
+				.unique();
+			if (row === null) return null;
+			return {
+				id: row._id,
+				orgId: row.clerkOrgId ?? null,
+				active: row.isActive,
+				ownerPersonId: row.ownerPersonId ?? null,
+			};
+		},
+		organisationById,
+		orgKindOf,
+		...ownerMembershipLookups(ctx),
+	};
+}
+
+/**
  * The lookups for the FLEET SERVICE ACCOUNT: the `agents` row the operator org's
  * mapping names, read by ID. The row answers only when it is a `kind: "service"`
  * row that carries exactly the verified subject as its `authSubject`; any other
