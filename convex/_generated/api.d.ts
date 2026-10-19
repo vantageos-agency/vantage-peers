@@ -76,7 +76,6 @@ import type * as lib_rosterIds from "../lib/rosterIds.js";
 import type * as lib_rosterLabels from "../lib/rosterLabels.js";
 import type * as lib_seatAgent from "../lib/seatAgent.js";
 import type * as lib_serviceAccount from "../lib/serviceAccount.js";
-import type * as lib_svixSignature from "../lib/svixSignature.js";
 import type * as lib_systemCaller from "../lib/systemCaller.js";
 import type * as lib_taskActors from "../lib/taskActors.js";
 import type * as lib_taskClosureGate from "../lib/taskClosureGate.js";
@@ -218,7 +217,6 @@ declare const fullApi: ApiFromModules<{
   "lib/rosterLabels": typeof lib_rosterLabels;
   "lib/seatAgent": typeof lib_seatAgent;
   "lib/serviceAccount": typeof lib_serviceAccount;
-  "lib/svixSignature": typeof lib_svixSignature;
   "lib/systemCaller": typeof lib_systemCaller;
   "lib/taskActors": typeof lib_taskActors;
   "lib/taskClosureGate": typeof lib_taskClosureGate;
