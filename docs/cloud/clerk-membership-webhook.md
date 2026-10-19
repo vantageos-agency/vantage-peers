@@ -25,7 +25,7 @@ Clerk `org:admin` is stored as `admin`; every other role is stored as `member`. 
 
 ## Ordering and removal
 
-Events are ordered by event time (`data.updated_at` when the payload has it, else the `svix-timestamp` header in ms), not by arrival. A removed member is kept as a tombstone (`deletedAt` set) that every reader treats as absent; an event at or before the applied time is answered 200 and ignored, so a late `created` cannot re-add a removed member, and a newer one revives it. An event without `updated_at` has only second resolution: two such events in the same second are ordered as equal and the second is ignored.
+Events are ordered by event time (`data.updated_at` when the payload has it, else the `svix-timestamp` header in ms), not by arrival. A removed member is kept as a tombstone (`deletedAt` set) that every reader treats as absent; an event at or before the applied time is answered 200 and ignored, so a late `created` cannot re-add a removed member, and a newer one revives it. A `deleted` is timed max(`updated_at`, `svix-timestamp`) and wins a tie with the applied state (a create or update at exactly a delete's time stays ignored), so a removed admin cannot stay live on equal times. An event without `updated_at` has only second resolution: two such events in the same second are ordered as equal and the second is ignored.
 
 ## One-time backfill
 
