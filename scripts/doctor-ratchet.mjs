@@ -4,7 +4,8 @@
  * k179600rsb4xsv7a975cjkqwhs8g7qhv): a count may only go down.
  *
  *   node scripts/doctor-ratchet.mjs --baseline .backend-doctor/ratchet.json \
- *     --evidence out.json --previous-baseline main-ratchet.json --report report.txt --tree <dir>
+ *     --evidence out.json --previous-baseline main-ratchet.json --report report.txt --tree <dir> \
+ *     [--main-ref origin/main]
  *
  * --evidence           the file written by `backend-doctor <repo> --json-evidence`.
  * --previous-baseline  REQUIRED: the baseline committed on main (`git show origin/main:.backend-doctor/ratchet.json`).
@@ -16,12 +17,25 @@
  *                      evidence names (`sha`), and `git status --porcelain` there must be empty: an
  *                      untracked or modified file is counted by the doctor and is not in that commit.
  *                      Ignored files are not checked: node_modules is ignored and MUST be present.
+ * --main-ref           the commit main is read at, in the --tree repo (default origin/main). An
+ *                      unresolvable ref is a refusal to judge.
+ *
+ * Exemption markers (task k1778c2hvae8e8vz9f5bbbbbb98g62hw): `allow-local-identity:`,
+ * `fleet-wide:` and `oracle-justified:` are counted (occurrences, not files) under convex/ and
+ * mcp-server/src/ at HEAD and at --main-ref, by `git grep` on the two commits — never from an
+ * argument or a baseline file. A marker count may only go down. Measured on a branch whose
+ * every rule count looked fine: fleet-wide: 0 -> 66, allow-local-identity: 7 -> 29. An
+ * exemption silences a rule, so the rule counts alone cannot see a branch adding them.
  *
  * A rule absent from `mechanical_rule_counts` is green (the doctor lists red rules
  * only), so it counts 0. A rule absent from the baseline has a baseline of 0.
  *
- * Exit: 0 no count above main's baseline; 1 a count or the baseline was raised;
- * 2 could not judge (bad usage, unreadable input, uncertified evidence, FALLBACK, a dirty tree).
+ * Exit: 0 no count above main's baseline; 1 a count, a marker or the baseline was raised;
+ * 2 could not judge (bad usage, unreadable input, uncertified evidence, FALLBACK, a dirty tree,
+ * an unresolvable --main-ref, a failing git grep).
+ *
+ * LAST line: `RATCHET: <sha> CR-2=.. R-5=.. R-53=.. R-54=.. R-55=.. R-56=.. M-allow-local-identity=..
+ * M-fleet-wide=.. M-oracle-justified=.. rise=<n>`, followed by ` raised=<names>` when a marker rose.
  */
 import { execFileSync } from "node:child_process";
 import { readFileSync } from "node:fs";
@@ -36,10 +50,17 @@ function parseArgs(argv) {
 	for (let i = 0; i < argv.length; i += 2) {
 		const key = argv[i];
 		const val = argv[i + 1];
-		if (!key?.startsWith("--") || val === undefined) couldNotJudge(`bad argument ${key ?? ""}`);
+		if (!key?.startsWith("--") || val === undefined)
+			couldNotJudge(`bad argument ${key ?? ""}`);
 		out[key.slice(2)] = val;
 	}
-	if (!out.baseline || !out.evidence || !out["previous-baseline"] || !out.report || !out.tree) {
+	if (
+		!out.baseline ||
+		!out.evidence ||
+		!out["previous-baseline"] ||
+		!out.report ||
+		!out.tree
+	) {
 		couldNotJudge(
 			"usage: doctor-ratchet.mjs --baseline <file> --evidence <file> --previous-baseline <main's ratchet.json> --report <doctor output> --tree <measured checkout>",
 		);
@@ -57,28 +78,42 @@ function readJson(path, what) {
 
 function baselineCounts(doc, what) {
 	const counts = doc?.counts;
-	if (!counts || typeof counts !== "object") couldNotJudge(`${what} has no "counts" object`);
+	if (!counts || typeof counts !== "object")
+		couldNotJudge(`${what} has no "counts" object`);
 	for (const [rule, n] of Object.entries(counts)) {
-		if (!Number.isInteger(n) || n < 0) couldNotJudge(`${what}: ${rule} is not a non-negative integer`);
+		if (!Number.isInteger(n) || n < 0)
+			couldNotJudge(`${what}: ${rule} is not a non-negative integer`);
 	}
 	return counts;
 }
 
 const args = parseArgs(process.argv.slice(2));
-const baseline = baselineCounts(readJson(args.baseline, "baseline"), "baseline");
+const baseline = baselineCounts(
+	readJson(args.baseline, "baseline"),
+	"baseline",
+);
 const evidence = readJson(args.evidence, "evidence");
 
-if (evidence.mechanical_violations === null || evidence.mechanical_rule_counts === null) {
+if (
+	evidence.mechanical_violations === null ||
+	evidence.mechanical_rule_counts === null
+) {
 	couldNotJudge(
 		"the doctor did not certify its counts (mechanical_violations / mechanical_rule_counts is null: an unclassified rule, incomplete coverage, a CRUD self-check failure, or a tree that differs from HEAD)",
 	);
 }
 const measured = evidence.mechanical_rule_counts;
-if (!measured || typeof measured !== "object") couldNotJudge("evidence has no mechanical_rule_counts");
+if (!measured || typeof measured !== "object")
+	couldNotJudge("evidence has no mechanical_rule_counts");
 
 {
-	if (typeof evidence.sha !== "string" || !/^[0-9a-f]{40}$/.test(evidence.sha)) {
-		couldNotJudge("the evidence names no commit (sha), so it cannot be bound to the measured tree");
+	if (
+		typeof evidence.sha !== "string" ||
+		!/^[0-9a-f]{40}$/.test(evidence.sha)
+	) {
+		couldNotJudge(
+			"the evidence names no commit (sha), so it cannot be bound to the measured tree",
+		);
 	}
 	let head;
 	try {
@@ -87,19 +122,29 @@ if (!measured || typeof measured !== "object") couldNotJudge("evidence has no me
 			stdio: ["ignore", "pipe", "pipe"],
 		}).trim();
 	} catch (e) {
-		couldNotJudge(`--tree ${args.tree} is not a readable git checkout: ${e.message.split("\n")[0]}`);
+		couldNotJudge(
+			`--tree ${args.tree} is not a readable git checkout: ${e.message.split("\n")[0]}`,
+		);
 	}
 	if (head !== evidence.sha) {
-		couldNotJudge(`--tree HEAD ${head} does not match the evidence commit ${evidence.sha}`);
+		couldNotJudge(
+			`--tree HEAD ${head} does not match the evidence commit ${evidence.sha}`,
+		);
 	}
 	let status;
 	try {
-		status = execFileSync("git", ["-C", args.tree, "status", "--porcelain", "--untracked-files=all"], {
-			encoding: "utf8",
-			stdio: ["ignore", "pipe", "pipe"],
-		});
+		status = execFileSync(
+			"git",
+			["-C", args.tree, "status", "--porcelain", "--untracked-files=all"],
+			{
+				encoding: "utf8",
+				stdio: ["ignore", "pipe", "pipe"],
+			},
+		);
 	} catch (e) {
-		couldNotJudge(`--tree ${args.tree} is not a readable git checkout: ${e.message.split("\n")[0]}`);
+		couldNotJudge(
+			`--tree ${args.tree} is not a readable git checkout: ${e.message.split("\n")[0]}`,
+		);
 	}
 	const dirty = status.split("\n").filter(Boolean);
 	if (dirty.length > 0) {
@@ -116,11 +161,82 @@ if (!measured || typeof measured !== "object") couldNotJudge("evidence has no me
 	} catch (e) {
 		couldNotJudge(`cannot read report ${args.report}: ${e.message}`);
 	}
-	const fallback = report.split("\n").filter((l) => /FALLBACK/.test(l) && !/\b0 FALLBACK\b/.test(l));
+	const fallback = report
+		.split("\n")
+		.filter((l) => /FALLBACK/.test(l) && !/\b0 FALLBACK\b/.test(l));
 	if (fallback.length > 0) {
-		couldNotJudge(`the doctor report carries ${fallback.length} FALLBACK line(s):\n${fallback.slice(0, 5).join("\n")}`);
+		couldNotJudge(
+			`the doctor report carries ${fallback.length} FALLBACK line(s):\n${fallback.slice(0, 5).join("\n")}`,
+		);
 	}
 }
+
+// Exemption markers, counted by the script itself on the two commits.
+const MARKERS = [
+	["M-allow-local-identity", "allow-local-identity:"],
+	["M-fleet-wide", "fleet-wide:"],
+	["M-oracle-justified", "oracle-justified:"],
+];
+const MARKER_PATHS = ["convex", "mcp-server/src"];
+
+function resolveCommit(ref) {
+	if (typeof ref !== "string" || ref === "" || ref.startsWith("-"))
+		couldNotJudge(`--main-ref ${ref} is not a ref`);
+	try {
+		return execFileSync(
+			"git",
+			["-C", args.tree, "rev-parse", "--verify", "--quiet", `${ref}^{commit}`],
+			{
+				encoding: "utf8",
+				stdio: ["ignore", "pipe", "pipe"],
+			},
+		).trim();
+	} catch {
+		couldNotJudge(
+			`--main-ref ${ref} does not resolve to a commit in ${args.tree}`,
+		);
+	}
+}
+
+function countMarker(commit, literal) {
+	let out;
+	try {
+		out = execFileSync(
+			"git",
+			[
+				"-C",
+				args.tree,
+				"grep",
+				"-o",
+				"-h",
+				"-F",
+				"-e",
+				literal,
+				commit,
+				"--",
+				...MARKER_PATHS,
+			],
+			{
+				encoding: "utf8",
+				stdio: ["ignore", "pipe", "pipe"],
+				maxBuffer: 64 * 1024 * 1024,
+			},
+		);
+	} catch (e) {
+		if (e.status === 1 && !String(e.stderr ?? "").trim()) return 0; // git grep: no match
+		couldNotJudge(
+			`git grep ${literal} at ${commit} failed: ${String(e.stderr ?? e.message).split("\n")[0]}`,
+		);
+	}
+	return out.split("\n").filter(Boolean).length;
+}
+
+const mainCommit = resolveCommit(args["main-ref"] ?? "origin/main");
+const markerCounts = MARKERS.map(([name, literal]) => ({
+	name,
+	main: countMarker(mainCommit, literal),
+	head: countMarker("HEAD", literal),
+}));
 
 const mainBaseline = baselineCounts(
 	readJson(args["previous-baseline"], "previous baseline"),
@@ -129,7 +245,13 @@ const mainBaseline = baselineCounts(
 
 let failed = false;
 let lowered = false;
-const rules = [...new Set([...Object.keys(mainBaseline), ...Object.keys(baseline), ...Object.keys(measured)])].sort();
+const rules = [
+	...new Set([
+		...Object.keys(mainBaseline),
+		...Object.keys(baseline),
+		...Object.keys(measured),
+	]),
+].sort();
 const lines = ["rule    main  head  delta"];
 for (const rule of rules) {
 	const base = mainBaseline[rule] ?? 0;
@@ -143,7 +265,21 @@ for (const rule of rules) {
 	} else if (delta < 0) {
 		lowered = true;
 	}
-	lines.push(`${rule.padEnd(7)} ${String(base).padStart(4)}  ${String(head).padStart(4)}  ${sign}${mark}`);
+	lines.push(
+		`${rule.padEnd(7)} ${String(base).padStart(4)}  ${String(head).padStart(4)}  ${sign}${mark}`,
+	);
+}
+for (const m of markerCounts) {
+	const delta = m.head - m.main;
+	const sign = delta > 0 ? `+${delta}` : `${delta}`;
+	let mark = "";
+	if (delta > 0) {
+		mark = "  RAISED";
+		failed = true;
+	}
+	lines.push(
+		`${m.name.padEnd(7)} ${String(m.main).padStart(4)}  ${String(m.head).padStart(4)}  ${sign}${mark}`,
+	);
 }
 console.log(lines.join("\n"));
 
@@ -151,24 +287,41 @@ for (const rule of Object.keys({ ...mainBaseline, ...baseline })) {
 	const before = mainBaseline[rule] ?? 0;
 	const now = baseline[rule] ?? 0;
 	if (now > before) {
-		console.log(`doctor-ratchet: baseline raised for ${rule}: ${before} on main -> ${now} here. The baseline only goes down.`);
+		console.log(
+			`doctor-ratchet: baseline raised for ${rule}: ${before} on main -> ${now} here. The baseline only goes down.`,
+		);
 		failed = true;
 	}
 }
 
 if (failed) {
-	console.log("doctor-ratchet: FAIL — a mechanical count is above main's baseline. Fix the new site; never raise the baseline.");
+	console.log(
+		"doctor-ratchet: FAIL — a mechanical count or an exemption marker is above main's. Fix the new site; never raise the baseline.",
+	);
 } else if (lowered) {
-	console.log("doctor-ratchet: PASS — counts went down; lower the baseline in .backend-doctor/ratchet.json in this PR.");
+	console.log(
+		"doctor-ratchet: PASS — counts went down; lower the baseline in .backend-doctor/ratchet.json in this PR.",
+	);
 } else {
 	console.log("doctor-ratchet: PASS — no count above main's baseline.");
 }
 
 // LAST line, read literally by reviewers and Pi's merge guard (task k179600rsb4xsv7a975cjkqwhs8g7qhv).
-// rise = rules whose head count exceeds MAIN's baseline.
+// rise = rules whose head count exceeds MAIN's baseline + markers whose head count exceeds main's.
+// raised= (only when a marker rose) names every risen rule, then every risen marker.
 const SIX = ["CR-2", "R-5", "R-53", "R-54", "R-55", "R-56"];
-const risen = rules.filter((r) => (measured[r] ?? 0) > (mainBaseline[r] ?? 0)).length;
+const risenRules = rules.filter(
+	(r) => (measured[r] ?? 0) > (mainBaseline[r] ?? 0),
+);
+const risenMarkers = markerCounts
+	.filter((m) => m.head > m.main)
+	.map((m) => m.name);
+const risen = [...risenRules, ...risenMarkers];
+const raisedSuffix =
+	risenMarkers.length > 0 ? ` raised=${risen.join(",")}` : "";
 console.log(
-	`RATCHET: ${evidence.sha ?? "unknown"} ${SIX.map((r) => `${r}=${measured[r] ?? 0}`).join(" ")} rise=${risen}`,
+	`RATCHET: ${evidence.sha ?? "unknown"} ${SIX.map((r) => `${r}=${measured[r] ?? 0}`).join(" ")} ${markerCounts
+		.map((m) => `${m.name}=${m.head}`)
+		.join(" ")} rise=${risen.length}${raisedSuffix}`,
 );
 process.exit(failed ? 1 : 0);
