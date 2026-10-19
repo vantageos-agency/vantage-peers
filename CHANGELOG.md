@@ -2,6 +2,9 @@
 
 ## [Unreleased]
 
+### Changed
+- **Merge gate: `scripts/doctor-ratchet.mjs` refuses a rise in exemption markers against main (task k1778c2hvae8e8vz9f5bbbbbb98g62hw).** The script counts `allow-local-identity:`, `fleet-wide:` and `oracle-justified:` occurrences under `convex/` and `mcp-server/src/` itself, with `git grep` at HEAD and at a new `--main-ref` (default `origin/main`) in the `--tree` repo. A higher head count is a `RAISED` row and exit 1; an unresolvable `--main-ref` or a failing `git grep` is exit 2. The RATCHET line appends `M-allow-local-identity=.. M-fleet-wide=.. M-oracle-justified=..` after `R-56`, `rise` counts rules and markers, and ` raised=<names>` ends the line when a marker rose. Origin: a branch whose every rule count looked fine took `fleet-wide:` 0 -> 66 and `allow-local-identity:` 7 -> 29. Main d70b607 reads 7 / 0 / 35. Tests: `scripts/__tests__/doctor-ratchet.test.mjs` (28).
+
 ### Fixed
 - **Cloud: a delivered message names its sender by agent ID (task k17bxcx1wz2c7sn86k25nx3j718ggf9f).** A message sent with `verifiedActor` is stored with `fromId` (measured on prod: row jn7c3978ct63kk0qahp3pfbdfd8gke7k carries the sender's `agents` `_id`), but `checkNewMessages`, `checkNewMessagesEnvelope` and `listMyInbox` dropped it from their items, and the MCP `check_messages` tool never rendered it, so the recipient saw the sender only by label. The three projections now carry `fromId` when the row has one (the declared return validators are unchanged; the envelope's byte budget counts it), and `check_messages` items include `fromId` when present; an item from a message without `fromId` has exactly the previous keys. No new Convex function is called by the MCP, so the backend contract is unchanged; deploy Convex first, then the MCP. Tests: `convex/__tests__/inboxSenderId.test.ts` (7), `mcp-server/test/check-messages-sender-id.test.ts` (2).
 
