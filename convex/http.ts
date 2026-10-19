@@ -813,10 +813,18 @@ http.route({
 		// the delivery's svix-timestamp (seconds, already validated by the
 		// signature check). Ordering is decided on this, never on arrival order.
 		const updatedAt = (data as { updated_at?: unknown }).updated_at;
-		const eventAt =
+		const deliveredAtMs = Number(request.headers.get("svix-timestamp")) * 1000;
+		const payloadAtMs =
 			typeof updatedAt === "number" && Number.isFinite(updatedAt)
 				? updatedAt
-				: Number(request.headers.get("svix-timestamp")) * 1000;
+				: undefined;
+		// A DELETE is timed max(updated_at, svix-timestamp): a removal is never
+		// dated before the moment Clerk sent it, so it cannot lose to an earlier
+		// create or update (Eta REVISE #1541). Other events keep updated_at.
+		const eventAt =
+			type === "organizationMembership.deleted"
+				? Math.max(payloadAtMs ?? 0, deliveredAtMs)
+				: (payloadAtMs ?? deliveredAtMs);
 
 		const outcome = await ctx.runMutation(
 			internal.orgMembership.applyClerkMembershipEvent,
