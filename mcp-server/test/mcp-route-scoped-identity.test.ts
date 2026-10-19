@@ -29,6 +29,8 @@ import { makeFunctionReference } from "convex/server";
 import { convexTest } from "../../tests/fixtures/convexTestWithServiceAccount";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import schema from "../../convex/schema";
+import { testClerkOrgId } from "../../tests/fixtures/testClerkOrgId";
+import { ownerOf } from "../../tests/lib/ownAgent";
 import { app } from "../server-http.js";
 import {
 	_setInternalClientForTest,
@@ -157,6 +159,7 @@ beforeEach(async () => {
 		});
 		await ctx.db.insert("client_org_mapping", {
 			clerkOrgSlug: "org-a",
+			clerkOrgId: testClerkOrgId("org-a"),
 			allowedOrchestrators: ["agent-a"],
 			scopes: ["vantage:read", "vantage:write"],
 			displayName: "a",
@@ -165,9 +168,20 @@ beforeEach(async () => {
 		});
 		const agentId = await ctx.db.insert("agents", {
 			orgSlug: "org-a",
+			clerkOrgId: testClerkOrgId("org-a"),
+			ownerPersonId: ownerOf("org-a"),
 			name: "agent-a",
 			isActive: true,
 			createdAt: now,
+		});
+		// The agent's owner is a live member of its organisation (item 4b).
+		await ctx.db.insert("orgMembership", {
+			clerkOrgSlug: "org-a",
+			clerkOrgId: testClerkOrgId("org-a"),
+			clerkUserId: ownerOf("org-a"),
+			role: "member",
+			createdAt: now,
+			updatedAt: now,
 		});
 		await ctx.db.insert("agent_credentials", {
 			orgSlug: "org-a",
