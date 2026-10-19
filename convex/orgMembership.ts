@@ -269,16 +269,22 @@ async function findMembershipRow(
 		.first();
 }
 
-/** An event at or before the time already applied is stale (replay or late). */
+/**
+ * An event at or before the time already applied is stale (replay or late).
+ * A DELETE is stale only when strictly older (`strict`): at a tie the removal
+ * wins, so a removed member (an admin included) never stays live because a
+ * create or update carried the same event time (Eta REVISE #1541). A create or
+ * update at exactly a delete's time is still ignored, by the non-strict rule.
+ */
 function isStale(
 	existing: { lastEventAt?: number } | null,
 	eventAt: number,
+	opts: { strict?: boolean } = {},
 ): boolean {
-	return (
-		existing !== null &&
-		existing.lastEventAt !== undefined &&
-		eventAt <= existing.lastEventAt
-	);
+	if (existing === null || existing.lastEventAt === undefined) return false;
+	return opts.strict
+		? eventAt < existing.lastEventAt
+		: eventAt <= existing.lastEventAt;
 }
 
 /**
@@ -343,7 +349,7 @@ export async function tombstoneClerkMembership(
 	opts: { eventAt: number; dryRun?: boolean },
 ): Promise<"removed" | "absent" | "stale"> {
 	const existing = await findMembershipRow(ctx, args);
-	if (isStale(existing, opts.eventAt)) return "stale";
+	if (isStale(existing, opts.eventAt, { strict: true })) return "stale";
 	const now = Date.now();
 	if (existing === null) {
 		if (!opts.dryRun) {
