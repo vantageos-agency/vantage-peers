@@ -1547,12 +1547,23 @@ export function requireTenantNamespace(
  */
 export function refuseUnresolvedCredential(
 	registration: string,
-	reason: "no-credential" | "credential-not-recognised",
+	reason:
+		| "no-credential"
+		| "credential-not-recognised"
+		| "owner-missing"
+		| "org-id-missing"
+		| IdentityRefusal["reason"],
 ): never {
 	const detail =
 		reason === "no-credential"
 			? `no agent credential presented to "${registration}" — an empty secret is not a credential`
-			: `the presented agent credential does not resolve to an active agent for "${registration}" — refused, not "nothing found"`;
+			: reason === "credential-not-recognised"
+				? `the presented agent credential does not resolve to an active agent for "${registration}" — refused, not "nothing found"`
+				: reason === "owner-missing"
+					? `the agent behind the presented credential has no human owner for "${registration}" — an owner is required for an agent credential to resolve`
+					: reason === "org-id-missing"
+						? `the agent behind the presented credential carries no permanent organisation id for "${registration}" — refused`
+						: `the presented agent credential is not bound to a live member owner for "${registration}" (${reason}) — refused`;
 	throw new ConvexError(
 		`RBAC_DENIED: ${detail} — ${JSON.stringify({ registration, orgSlug: null, reason })}`,
 	);

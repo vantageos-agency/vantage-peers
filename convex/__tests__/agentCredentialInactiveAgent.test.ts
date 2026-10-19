@@ -26,6 +26,7 @@ import { describe, expect, test } from "vitest";
 import { api } from "../_generated/api";
 import schema from "../schema";
 import { agentIdOf } from "../../tests/lib/agentIdOf";
+import { ownAgent } from "../../tests/lib/ownAgent";
 import { testClerkOrgId } from "../../tests/fixtures/testClerkOrgId";
 
 const modules = Object.fromEntries(
@@ -66,6 +67,7 @@ async function mintAgent(
 		orgAdminIdentity(org) as Parameters<typeof t.withIdentity>[0],
 	);
 	await admin.mutation(api.agents.registerAgent, { orgSlug: org, name });
+	await ownAgent(t, org, name);
 	const minted = await admin.mutation(
 		api.agentCredentials.mintAgentCredential,
 		{

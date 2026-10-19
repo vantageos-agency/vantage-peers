@@ -50,3 +50,21 @@ export async function ownAgent(
 		}
 	});
 }
+
+/** TEST FIXTURE ONLY. Tombstones the owner's membership of `orgSlug`, as the Clerk webhook does on a delete. */
+export async function tombstoneOwnerMembership(
+	t: Runner,
+	orgSlug: string,
+	deletedAt: number,
+): Promise<void> {
+	await t.run(async (ctx) => {
+		const row = await ctx.db
+			.query("orgMembership")
+			.withIndex("by_org_user_clerk_id", (q) =>
+				q.eq("clerkOrgId", testClerkOrgId(orgSlug)).eq("clerkUserId", ownerOf(orgSlug)),
+			)
+			.unique();
+		if (row === null) throw new Error(`fixture: no membership row for ${orgSlug}`);
+		await ctx.db.patch(row._id, { deletedAt });
+	});
+}

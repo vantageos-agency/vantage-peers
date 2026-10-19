@@ -1,4 +1,7 @@
-import { sha256Hex } from "@vantageos/cloud-identity";
+import {
+	resolveCallerFromAgentCredential,
+	sha256Hex,
+} from "@vantageos/cloud-identity";
 import { ConvexError, v } from "convex/values";
 import { mutation, query } from "./_generated/server";
 import {
@@ -14,6 +17,8 @@ import {
 	resolveAgentOfPresentedSecret,
 	revokeActiveCredentialRows,
 } from "./lib/agentIdentity";
+import { agentCredentialPrincipalLookups } from "./lib/actingPrincipal";
+import { orgMappingLookups } from "./lib/authOrgMapping";
 import { clerkOrgIdForSlug } from "./lib/orgClerkId";
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -204,6 +209,12 @@ export const revokeAgentCredential = mutation({
  * credential, not an unresolved principal, so the envelope shape reserved for
  * a subscribed list does not apply.
  *
+ * OWNER BINDING. The agent row must carry `ownerPersonId` and `clerkOrgId`, and
+ * the package (`resolveCallerFromAgentCredential`) must prove the owner is a live
+ * (non-tombstoned) `orgMembership` of that organisation: otherwise RAISES with
+ * reason `owner-missing`, `org-id-missing`, or the package's own reason
+ * (`agent-owner-not-member`, ...).
+ *
  * THREE OUTCOMES, never two:
  *   - resolves            -> { orgSlug, agentName, agentId }
  *   - empty secret        -> RAISES reason "no-credential"
@@ -256,6 +267,41 @@ export const resolveAgentCredential = query({
 			return refuseUnresolvedCredential(
 				"agentCredentials:resolveAgentCredential",
 				"credential-not-recognised",
+			);
+		}
+		// An agent credential is bound to its human OWNER (task
+		// k1778c2hvae8e8vz9f5bbbbbb98g62hw, item 4b). Every value below is read off
+		// the VERIFIED stored row the secret matched, never from an argument. The
+		// two guards only name an absent stored value; the owner and membership
+		// decision is @vantageos/cloud-identity's.
+		if (agent.ownerPersonId === undefined) {
+			return refuseUnresolvedCredential(
+				"agentCredentials:resolveAgentCredential",
+				"owner-missing",
+			);
+		}
+		if (agent.clerkOrgId === undefined) {
+			return refuseUnresolvedCredential(
+				"agentCredentials:resolveAgentCredential",
+				"org-id-missing",
+			);
+		}
+		const caller = await resolveCallerFromAgentCredential(
+			{
+				agentId: agent._id,
+				verifiedOrgId: agent.clerkOrgId,
+				ownerPersonId: agent.ownerPersonId,
+			},
+			{
+				orgLookups: orgMappingLookups(ctx),
+				principalLookups: agentCredentialPrincipalLookups(ctx),
+			},
+			{ door: "agentCredentials:resolveAgentCredential" },
+		);
+		if (!caller.ok) {
+			return refuseUnresolvedCredential(
+				"agentCredentials:resolveAgentCredential",
+				caller.refusal.reason,
 			);
 		}
 		return {

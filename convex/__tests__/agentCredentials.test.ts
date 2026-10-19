@@ -36,6 +36,7 @@ import { describe, expect, test } from "vitest";
 import { api } from "../_generated/api";
 import schema from "../schema";
 import { agentIdOf } from "../../tests/lib/agentIdOf";
+import { ownAgent } from "../../tests/lib/ownAgent";
 import { testClerkOrgId } from "../../tests/fixtures/testClerkOrgId";
 
 const modules = Object.fromEntries(
@@ -92,6 +93,7 @@ describe("[P-T4] agentCredentials — per-agent secret, hashed at rest", () => {
 			orgSlug: "org-o",
 			name: "a1",
 		});
+		await ownAgent(t, "org-o", "a1");
 
 		const minted = await tAdminO.mutation(
 			api.agentCredentials.mintAgentCredential,
@@ -119,6 +121,7 @@ describe("[P-T4] agentCredentials — per-agent secret, hashed at rest", () => {
 			orgSlug: "org-o",
 			name: "a1",
 		});
+		await ownAgent(t, "org-o", "a1");
 		const minted = await tAdminO.mutation(
 			api.agentCredentials.mintAgentCredential,
 			{ orgSlug: "org-o", agentId: await agentIdOf(tAdminO, "org-o", "a1") },
@@ -148,6 +151,7 @@ describe("[P-T4] agentCredentials — per-agent secret, hashed at rest", () => {
 			orgSlug: "org-o",
 			name: "a1",
 		});
+		await ownAgent(t, "org-o", "a1");
 		await tAdminO.mutation(api.agentCredentials.mintAgentCredential, {
 			orgSlug: "org-o",
 			agentId: await agentIdOf(tAdminO, "org-o", "a1"),
@@ -170,6 +174,7 @@ describe("[P-T4] agentCredentials — per-agent secret, hashed at rest", () => {
 			orgSlug: "org-o",
 			name: "a1",
 		});
+		await ownAgent(t, "org-o", "a1");
 
 		const first = await tAdminO.mutation(
 			api.agentCredentials.mintAgentCredential,
@@ -227,10 +232,12 @@ describe("[P-T4] agentCredentials — per-agent secret, hashed at rest", () => {
 			orgSlug: "org-o",
 			name: "a1",
 		});
+		await ownAgent(t, "org-o", "a1");
 		await tAdminO.mutation(api.agents.registerAgent, {
 			orgSlug: "org-o",
 			name: "a2",
 		});
+		await ownAgent(t, "org-o", "a2");
 
 		const mintedA1 = await tAdminO.mutation(
 			api.agentCredentials.mintAgentCredential,
@@ -281,6 +288,7 @@ describe("[P-T4] agentCredentials — per-agent secret, hashed at rest", () => {
 			orgSlug: "org-o",
 			name: "a1",
 		});
+		await ownAgent(t, "org-o", "a1");
 
 		const tMemberO = t.withIdentity(
 			orgMemberIdentity("org-o") as Parameters<typeof t.withIdentity>[0],

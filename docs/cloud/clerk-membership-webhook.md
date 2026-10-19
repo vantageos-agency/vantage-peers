@@ -37,3 +37,9 @@ npx convex run orgMembership:backfillFromClerk '{"dryRun": false}'
 ```
 
 It returns `{ dryRun, orgs, memberships, upserted, removed, failedOrgs }`. A member Clerk no longer reports becomes a tombstone (not a hard delete) and one it reports is revived, both stamped with the run's start time. Tombstoning happens only for organisations whose full member list was read; an organisation whose read failed is left untouched and listed in `failedOrgs`. Re-run it to close any gap from missed deliveries.
+
+## Who consumes the membership
+
+Since item 4b of task k1778c2hvae8e8vz9f5bbbbbb98g62hw, `agentCredentials:resolveAgentCredential` (the MCP agent-credential login) reads it. After the secret finds the agent row, `@vantageos/cloud-identity` `resolveCallerFromAgentCredential` requires that the agent's `ownerPersonId` is a live member of the agent's organisation, read through `ownerMembershipLookups` by (`clerkOrgId`, `clerkUserId`). A missing row, a row of another organisation and a tombstoned row (`deletedAt` set) all refuse the credential `RBAC_DENIED` (`agent-owner-not-member`); an agent with no owner is refused `owner-missing`.
+
+Operational consequence: this webhook and `orgMembership:backfillFromClerk` now keep agent logins alive. A member removed in Clerk stops their agents authenticating as soon as the delete event is applied; a missed delivery leaves them working until the backfill runs. Before deploying, give every active agent an owner (`agents:listAgentsWithoutOwner`, `agents:setAgentOwner`) and run the backfill, or those agents are refused.

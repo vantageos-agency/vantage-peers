@@ -16,6 +16,7 @@ import { describe, expect, test } from "vitest";
 import { api } from "../_generated/api";
 import schema from "../schema";
 import { agentIdOf } from "../../tests/lib/agentIdOf";
+import { ownAgent } from "../../tests/lib/ownAgent";
 import { testClerkOrgId } from "../../tests/fixtures/testClerkOrgId";
 
 const modules = Object.fromEntries(
@@ -53,6 +54,7 @@ async function seedThreeAgents(t: T) {
 	const secrets: Record<string, string> = {};
 	for (const name of NAMES) {
 		await admin.mutation(api.agents.registerAgent, { orgSlug: "org-a", name });
+		await ownAgent(t, "org-a", name);
 		const minted = await admin.mutation(api.agentCredentials.mintAgentCredential, {
 			orgSlug: "org-a",
 			agentId: await agentIdOf(admin, "org-a", name),
@@ -370,6 +372,7 @@ describe("agent retire surface", () => {
 		await seedOrg(t, "org-b");
 		const adminB = t.withIdentity(adminOf("org-b"));
 		await adminB.mutation(api.agents.registerAgent, { orgSlug: "org-b", name: "beta" });
+		await ownAgent(t, "org-b", "beta");
 		const minted = await adminB.mutation(api.agentCredentials.mintAgentCredential, {
 			orgSlug: "org-b",
 			agentId: await agentIdOf(adminB, "org-b", "beta"),

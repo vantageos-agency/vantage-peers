@@ -34,6 +34,7 @@ import schema from "../schema";
 import { requireAgentCredentialMatch } from "../lib/auth";
 import { sha256Hex } from "@vantageos/cloud-identity";
 import { agentIdOf } from "../../tests/lib/agentIdOf";
+import { ownAgent } from "../../tests/lib/ownAgent";
 import { testClerkOrgId } from "../../tests/fixtures/testClerkOrgId";
 
 const modules = Object.fromEntries(
@@ -86,10 +87,12 @@ async function seedProfile(t: T, orchestratorId: string) {
 }
 
 async function register(t: T, org: string, name: string): Promise<Id<"agents">> {
-	return await adminOf(t, org).mutation(api.agents.registerAgent, {
+	const id = await adminOf(t, org).mutation(api.agents.registerAgent, {
 		orgSlug: org,
 		name,
 	});
+	await ownAgent(t, org, name);
+	return id;
 }
 
 async function mint(t: T, org: string, agentName: string): Promise<string> {
