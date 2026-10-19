@@ -229,11 +229,26 @@ export async function resolveOwnedAgentOfPresentedSecret(
 }
 
 /**
+ * agentCarriesLabel — a REFUSAL-ONLY comparison: does the asserted label name
+ * the row ALREADY resolved by ID? Nothing is read and nothing is selected; the
+ * label can only fail to match, never pick an agent. The rule is the one
+ * `findAgentByName` applied to the stored `name` (the truth, not the
+ * `normalizedName` shortcut): `normalizeOrchestratorId` (NFC, lowercase, trim)
+ * on both sides.
+ */
+export function agentCarriesLabel(
+	agent: Pick<Doc<"agents">, "name">,
+	label: string,
+): boolean {
+	return normalizeOrchestratorId(agent.name) === normalizeOrchestratorId(label);
+}
+
+/**
  * findAgentByName — DEPRECATED, kept ONLY for the doors that still carry a NAME
  * and cannot take an agent ID without another module changing first. Each
  * caller is pinned in convex/__tests__/agentRegistryNoNameSelection.test.ts with
  * its owner; do not add one:
- *   - convex/lib/auth.ts (declared sender / asserted actor label)  -> M5 messaging (sender by ID)
+ *   - convex/lib/auth.ts (declared sender, no proof presented)      -> M5 messaging (sender by ID)
  *   - convex/messages.ts (seat sender screening)                   -> M5 messaging
  *   - convex/lib/inboxReader.ts (recipient named by a verified org) -> M6 inbox
  *   - convex/lib/actorIds.ts (task createdBy / assignedTo labels)   -> tasks doors (names in, IDs stamped)

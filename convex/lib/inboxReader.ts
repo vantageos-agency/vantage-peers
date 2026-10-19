@@ -3,7 +3,7 @@ import type { Doc } from "../_generated/dataModel";
 import type { MutationCtx, QueryCtx } from "../_generated/server";
 import { normalizeOrchestratorId } from "../_helpers/normalizeOrchestratorId";
 import { requireVerifiedActorPrincipal } from "./actingPrincipal";
-import { findAgentByName } from "./agentIdentity";
+import { agentCarriesLabel, findAgentByName } from "./agentIdentity";
 import type { OrgScope, VerifiedActor } from "./auth";
 import { fleetOperatorSlug } from "./operatorOrg";
 import { resolveVerifiedOrg, type VerifiedOrg } from "./verifiedOrg";
@@ -122,10 +122,9 @@ async function agentReader(
 	door: string,
 ): Promise<InboxReader> {
 	if (claims.recipient !== undefined && claims.recipient !== agent._id) {
-		// A name may only NARROW: it must resolve, in the agent's own org, to this
-		// very agent (compared by ID, never by spelling).
-		const named = await findAgentByName(ctx, agent.orgSlug, claims.recipient);
-		if (named === null || named._id !== agent._id) {
+		// A name may only NARROW: it is compared with the verified agent's own
+		// label (nothing is looked up by it, nobody is selected by it).
+		if (!agentCarriesLabel(agent, claims.recipient)) {
 			refuse(
 				door,
 				"recipient-not-the-reader",

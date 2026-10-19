@@ -1124,12 +1124,11 @@ export const sendMessage = mutation({
 		const from = args.from;
 
 		// The seat path's `from` is judged here, from data (see the function).
-		// A sender proven BY ID that addresses recipients BY ID is judged by its
-		// resolved principal; the name guard stays for every other seat send.
-		if (
-			recipientScope !== undefined &&
-			!(senderPrincipal !== undefined && args.recipientAgentIds !== undefined)
-		) {
+		// A sender proven BY ID is judged by its resolved principal: its `from` is
+		// compared with that agent's own label by requireAgentCredentialMatch just
+		// below, so a name screening adds nothing. The name guard stays for the seat
+		// sends that carry no proof.
+		if (recipientScope !== undefined && senderPrincipal === undefined) {
 			await requireSeatSenderNotForeign(ctx, recipientScope, from);
 		}
 
