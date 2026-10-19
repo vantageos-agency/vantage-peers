@@ -912,6 +912,38 @@ def test_version_pass_ceiling_raise_with_doctor_version_raise():
         assert _run(repo) == 0
 
 
+def test_version_pass_numeric_order_0_4_9_to_0_4_10_licenses_a_rise():
+    """Numeric, not string, order (Eta, #1543): 0.4.10 is NEWER than 0.4.9."""
+    with tempfile.TemporaryDirectory() as tmp:
+        main = _copy_baseline(doctor_version="0.4.9")
+        newer = _copy_baseline(doctor_version="0.4.10")
+        newer["rules"]["R-53"]["count"] = 150
+        repo, head = _ratchet_repo(tmp, main_baseline=main, head_baseline=newer)
+        _write_measured(repo, head,
+                        counts=dict(MEASURED_E85618D_RULE_COUNTS, **{"R-53": 150}),
+                        extra={"cli_commit": _npm_cli("0.4.10")})
+        verdict, msg = _mod.evaluate(str(repo), str(repo))
+        assert verdict == "pass", msg
+        assert _run(repo) == 0
+
+
+def test_version_block_numeric_order_0_4_10_to_0_4_9_licenses_no_rise():
+    """Under string order "0.4.9" > "0.4.10", so a downgrade would license a rise
+    (Eta, #1543): numeric order must refuse it."""
+    with tempfile.TemporaryDirectory() as tmp:
+        main = _copy_baseline(doctor_version="0.4.10")
+        older = _copy_baseline(doctor_version="0.4.9")
+        older["rules"]["R-53"]["count"] = 150
+        repo, head = _ratchet_repo(tmp, main_baseline=main, head_baseline=older)
+        _write_measured(repo, head,
+                        counts=dict(MEASURED_E85618D_RULE_COUNTS, **{"R-53": 150}),
+                        extra={"cli_commit": _npm_cli("0.4.9")})
+        verdict, msg = _mod.evaluate(str(repo), str(repo))
+        assert verdict == "ratchet", msg
+        assert "0.4.10" in msg and "0.4.9" in msg
+        assert _run(repo) == 2
+
+
 def test_version_pass_naming_the_version_first_time_without_a_rise():
     """THIS pull request's own transition: origin/main names no doctor_version,
     the branch names 0.4.5 and changes no ceiling."""
