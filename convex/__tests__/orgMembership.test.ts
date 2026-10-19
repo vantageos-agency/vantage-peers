@@ -24,8 +24,8 @@
  * convex/orgMembership.ts's module comment.
  */
 
-import { convexTest } from "../../tests/fixtures/convexTestWithServiceAccount";
 import { describe, expect, test } from "vitest";
+import { convexTest } from "../../tests/fixtures/convexTestWithServiceAccount";
 import { testClerkOrgId } from "../../tests/fixtures/testClerkOrgId";
 import { api } from "../_generated/api";
 import { MEMBERSHIP_QUERY_LIMIT } from "../orgMembership";
@@ -302,16 +302,18 @@ describe("orgMembership.getMembership — direction 2: which orgs does the calle
 		// requirement); the result is keyed on subject, not on this session's
 		// active org, so both f1 and f2 come back — and f3 does NOT.
 		const rows = await tAdminOrg1.query(api.orgMembership.getMembership, {});
-		const slugs = rows.map((r: { clerkOrgSlug: string }) => r.clerkOrgSlug).sort();
+		const slugs = rows
+			.map((r: { clerkOrgSlug: string }) => r.clerkOrgSlug)
+			.sort();
 		expect(slugs).toEqual(["org-membership-f1", "org-membership-f2"]);
 		expect(slugs).not.toContain("org-membership-f3");
 	});
 
 	test("anonymous caller is refused with RBAC_DENIED on the self-lookup direction too", async () => {
 		const t = createT();
-		await expect(
-			t.query(api.orgMembership.getMembership, {}),
-		).rejects.toThrow(/RBAC_DENIED/);
+		await expect(t.query(api.orgMembership.getMembership, {})).rejects.toThrow(
+			/RBAC_DENIED/,
+		);
 	});
 });
 
@@ -342,10 +344,9 @@ describe("orgMembership.getMembership — MEMBERSHIP_QUERY_INCOMPLETE bound", ()
 		});
 
 		const tAdminBound = t.withIdentity(
-			orgAdminIdentity(
-				"admin-bound-0",
-				"org-membership-bound",
-			) as Parameters<typeof t.withIdentity>[0],
+			orgAdminIdentity("admin-bound-0", "org-membership-bound") as Parameters<
+				typeof t.withIdentity
+			>[0],
 		);
 
 		await expect(
@@ -353,5 +354,44 @@ describe("orgMembership.getMembership — MEMBERSHIP_QUERY_INCOMPLETE bound", ()
 				clerkOrgSlug: "org-membership-bound",
 			}),
 		).rejects.toThrow(/MEMBERSHIP_QUERY_INCOMPLETE/);
+	});
+});
+
+describe("orgMembership - tombstoned rows are not members", () => {
+	test("getMembership skips a tombstoned row for both directions and keeps live rows unchanged", async () => {
+		const t = createT();
+		await seedOrgMapping(t, "org-tomb");
+		const orgId = testClerkOrgId("org-tomb");
+		await t.run(async (ctx) => {
+			for (const [user, deletedAt] of [
+				["live-user", undefined],
+				["gone-user", 5],
+			] as const) {
+				await ctx.db.insert("orgMembership", {
+					clerkOrgSlug: "org-tomb",
+					clerkOrgId: orgId,
+					clerkUserId: user,
+					role: "member",
+					createdAt: 1,
+					updatedAt: 1,
+					...(deletedAt === undefined ? {} : { deletedAt, lastEventAt: 5 }),
+				});
+			}
+		});
+		const asLive = t.withIdentity(
+			orgAdminIdentity("live-user", "org-tomb") as Parameters<
+				typeof t.withIdentity
+			>[0],
+		);
+		const byOrg = await asLive.query(api.orgMembership.getMembership, {
+			clerkOrgSlug: "org-tomb",
+		});
+		expect(byOrg.map((r) => r.clerkUserId)).toEqual(["live-user"]);
+		const asGone = t.withIdentity(
+			orgAdminIdentity("gone-user", "org-tomb") as Parameters<
+				typeof t.withIdentity
+			>[0],
+		);
+		expect(await asGone.query(api.orgMembership.getMembership, {})).toEqual([]);
 	});
 });

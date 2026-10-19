@@ -48,7 +48,12 @@ function sign(
 function membershipEvent(
 	type: string,
 	role: string,
-	overrides: { orgId?: string; slug?: string; userId?: string } = {},
+	overrides: {
+		orgId?: string;
+		slug?: string;
+		userId?: string;
+		updatedAt?: number;
+	} = {},
 ) {
 	return JSON.stringify({
 		object: "event",
@@ -57,6 +62,9 @@ function membershipEvent(
 		data: {
 			id: "orgmem_1",
 			role,
+			...(overrides.updatedAt === undefined
+				? {}
+				: { updated_at: overrides.updatedAt }),
 			organization: {
 				id: overrides.orgId ?? ORG_ID,
 				slug: overrides.slug ?? ORG_SLUG,
@@ -90,6 +98,9 @@ function deliver(
 	if (opts.omit) delete headers[opts.omit];
 	return t.fetch("/clerk/webhook", { method: "POST", headers, body });
 }
+
+const live = async (t: T) =>
+	(await rows(t)).filter((r) => r.deletedAt === undefined);
 
 const rows = (t: T) =>
 	t.run(async (ctx) => await ctx.db.query("orgMembership").collect());
@@ -252,7 +263,7 @@ describe("POST /clerk/webhook", () => {
 		expect(all[0].role).toBe("admin");
 	});
 
-	test("deleted removes the row", async () => {
+	test("deleted leaves a tombstone: no live row, the row kept with deletedAt", async () => {
 		const t = makeT();
 		await deliver(
 			t,
@@ -263,7 +274,11 @@ describe("POST /clerk/webhook", () => {
 			membershipEvent("organizationMembership.deleted", "org:member"),
 		);
 		expect(res.status).toBe(200);
-		expect(await rows(t)).toHaveLength(0);
+		expect(await live(t)).toHaveLength(0);
+		const all = await rows(t);
+		expect(all).toHaveLength(1);
+		expect(all[0].deletedAt).toBeTypeOf("number");
+		expect(all[0].role).toBe("member");
 	});
 
 	test("replay of the same delivery is a no-op (no second row, no write)", async () => {
@@ -453,12 +468,15 @@ describe("orgMembership:backfillFromClerk", () => {
 			"user_gone",
 			"user_kept",
 		]);
+		expect(all.every((r) => r.deletedAt === undefined)).toBe(true);
+		expect(all.every((r) => r.lastEventAt === undefined)).toBe(true);
 	});
 
 	test("dryRun:false upserts, removes only in orgs it fully read, and never sends the key anywhere but the header", async () => {
 		const t = makeT();
 		await seedStale(t);
 		const calls = stubClerk({ failMembershipsFor: "org_broken" });
+		const before = Date.now();
 		const res = await t.action(internal.orgMembership.backfillFromClerk, {
 			dryRun: false,
 		});
@@ -469,10 +487,18 @@ describe("orgMembership:backfillFromClerk", () => {
 			removed: 1,
 		});
 		const all = await rows(t);
-		expect(all.map((r) => `${r.clerkOrgId}/${r.clerkUserId}`).sort()).toEqual([
-			`${ORG_ID}/${USER_ID}`,
-			"org_broken/user_kept",
-		]);
+		// user_gone is a tombstone, not a hard delete; org_broken was not fully
+		// read, so user_kept stays live.
+		expect(
+			(await live(t)).map((r) => `${r.clerkOrgId}/${r.clerkUserId}`).sort(),
+		).toEqual([`${ORG_ID}/${USER_ID}`, "org_broken/user_kept"]);
+		const gone = all.find((r) => r.clerkUserId === "user_gone");
+		expect(gone?.deletedAt).toBeTypeOf("number");
+		expect(gone?.lastEventAt).toBe(gone?.deletedAt);
+		expect(gone?.lastEventAt).toBeGreaterThanOrEqual(before);
+		expect(
+			all.find((r) => r.clerkUserId === USER_ID)?.lastEventAt,
+		).toBeGreaterThanOrEqual(before);
 		expect(calls.join(" ")).not.toContain("sk_test_backfill_secret_do_not_log");
 	});
 
@@ -483,5 +509,175 @@ describe("orgMembership:backfillFromClerk", () => {
 			t.action(internal.orgMembership.backfillFromClerk, { dryRun: false }),
 		).rejects.toThrow(/CLERK_SECRET_KEY/);
 		expect(await rows(t)).toHaveLength(0);
+	});
+});
+
+describe("event ordering: a late event never re-adds a removed member", () => {
+	beforeEach(() => {
+		process.env.CLERK_WEBHOOK_SECRET = SECRET;
+		vi.spyOn(console, "error").mockImplementation(() => {});
+		vi.spyOn(console, "log").mockImplementation(() => {});
+	});
+	afterEach(() => {
+		delete process.env.CLERK_WEBHOOK_SECRET;
+		vi.restoreAllMocks();
+	});
+
+	const send = (
+		t: T,
+		type: string,
+		role: string,
+		updatedAt: number | undefined,
+	) => deliver(t, membershipEvent(type, role, { updatedAt }));
+	const personById = (t: T) =>
+		t.run(
+			async (ctx) =>
+				await ownerMembershipLookups(ctx).personById?.(USER_ID, ORG_ID),
+		);
+
+	test("deleted then a STALE created: 200, still no live row, personById null", async () => {
+		const t = makeT();
+		await send(t, "organizationMembership.created", "org:member", 1000);
+		await send(t, "organizationMembership.deleted", "org:member", 3000);
+		const res = await send(
+			t,
+			"organizationMembership.created",
+			"org:admin",
+			2000,
+		);
+		expect(res.status).toBe(200);
+		expect(await live(t)).toHaveLength(0);
+		expect(await personById(t)).toBeNull();
+		const all = await rows(t);
+		expect(all).toHaveLength(1);
+		expect(all[0].lastEventAt).toBe(3000);
+	});
+
+	test("a created at EXACTLY the delete's event time is ignored", async () => {
+		const t = makeT();
+		await send(t, "organizationMembership.created", "org:member", 1000);
+		await send(t, "organizationMembership.deleted", "org:member", 3000);
+		await send(t, "organizationMembership.created", "org:member", 3000);
+		expect(await live(t)).toHaveLength(0);
+	});
+
+	test("deleted then a NEWER created revives the row and clears the tombstone", async () => {
+		const t = makeT();
+		await send(t, "organizationMembership.created", "org:member", 1000);
+		await send(t, "organizationMembership.deleted", "org:member", 3000);
+		await send(t, "organizationMembership.created", "org:admin", 4000);
+		const all = await rows(t);
+		expect(all).toHaveLength(1);
+		expect(all[0].deletedAt).toBeUndefined();
+		expect(all[0].role).toBe("admin");
+		expect(all[0].lastEventAt).toBe(4000);
+		expect(await personById(t)).toEqual({
+			id: USER_ID,
+			orgId: ORG_ID,
+			active: true,
+		});
+	});
+
+	test("an updated OLDER than the current state is ignored; a newer one applies", async () => {
+		const t = makeT();
+		await send(t, "organizationMembership.created", "org:member", 2000);
+		await send(t, "organizationMembership.updated", "org:admin", 1000);
+		expect((await rows(t))[0].role).toBe("member");
+		await send(t, "organizationMembership.updated", "org:admin", 3000);
+		const row = (await rows(t))[0];
+		expect(row.role).toBe("admin");
+		expect(row.lastEventAt).toBe(3000);
+	});
+
+	test("a delete that arrives BEFORE the created leaves a tombstone, so the late created stays absent", async () => {
+		const t = makeT();
+		await send(t, "organizationMembership.deleted", "org:member", 3000);
+		await send(t, "organizationMembership.created", "org:member", 2000);
+		expect(await live(t)).toHaveLength(0);
+		expect(await personById(t)).toBeNull();
+		expect(await rows(t)).toHaveLength(1);
+	});
+
+	test("without data.updated_at the svix-timestamp (ms) is the event time", async () => {
+		const t = makeT();
+		const ts = nowSec() - 60;
+		await deliver(
+			t,
+			membershipEvent("organizationMembership.created", "org:member"),
+			{ timestamp: String(ts) },
+		);
+		expect((await rows(t))[0].lastEventAt).toBe(ts * 1000);
+	});
+
+	test("personById answers null for a tombstoned row", async () => {
+		const t = makeT();
+		await t.run(async (ctx) => {
+			await ctx.db.insert("orgMembership", {
+				clerkOrgSlug: ORG_SLUG,
+				clerkOrgId: ORG_ID,
+				clerkUserId: USER_ID,
+				role: "admin",
+				createdAt: 1,
+				updatedAt: 1,
+				lastEventAt: 5,
+				deletedAt: 5,
+			});
+		});
+		expect(await personById(t)).toBeNull();
+	});
+});
+
+describe("orgMembership:backfillFromClerk revives a tombstone Clerk still reports", () => {
+	beforeEach(() => {
+		process.env.CLERK_SECRET_KEY = "sk_test_backfill_secret_do_not_log";
+		vi.spyOn(console, "log").mockImplementation(() => {});
+		vi.spyOn(console, "error").mockImplementation(() => {});
+	});
+	afterEach(() => {
+		delete process.env.CLERK_SECRET_KEY;
+		vi.unstubAllGlobals();
+		vi.restoreAllMocks();
+	});
+
+	test("tombstoned (older) + reported by Clerk -> live again, lastEventAt = backfill time", async () => {
+		const t = makeT();
+		await t.run(async (ctx) => {
+			await ctx.db.insert("orgMembership", {
+				clerkOrgSlug: ORG_SLUG,
+				clerkOrgId: ORG_ID,
+				clerkUserId: USER_ID,
+				role: "member",
+				createdAt: 1,
+				updatedAt: 1,
+				lastEventAt: 10,
+				deletedAt: 10,
+			});
+		});
+		const json = (b: unknown) =>
+			new Response(JSON.stringify(b), { status: 200 });
+		vi.stubGlobal(
+			"fetch",
+			vi.fn(async (input: string | URL | Request) => {
+				const u = new URL(String(input));
+				if (u.pathname === "/v1/organizations")
+					return json({ data: [{ id: ORG_ID, slug: ORG_SLUG }] });
+				return json({
+					data: [
+						{
+							role: "org:admin",
+							public_user_data: { user_id: USER_ID },
+						},
+					],
+				});
+			}),
+		);
+		const before = Date.now();
+		await t.action(internal.orgMembership.backfillFromClerk, {
+			dryRun: false,
+		});
+		const row = (await rows(t))[0];
+		expect(row.deletedAt).toBeUndefined();
+		expect(row.role).toBe("admin");
+		expect(row.lastEventAt).toBeGreaterThanOrEqual(before);
 	});
 });
