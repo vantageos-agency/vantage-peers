@@ -233,12 +233,13 @@ export const getMembership = query({
 // ids — through `by_org_user_clerk_id`. The slug is a renamable label, stored
 // from the payload and refreshed when it changes.
 //
-// Idempotent by construction: the same state delivered twice writes nothing.
-// A row written at provisioning (slug only, no `clerkOrgId` yet) is adopted by
-// the first Clerk event for the same (slug, user) instead of duplicated.
+// A replayed state is refused as stale by the package's decision
+// (`decideMembershipEvent`), so the writers below patch what it decided and
+// compare nothing locally. A row is found by org id and person id only: a row
+// written at provisioning with no `clerkOrgId` is not adopted by slug.
 // ─────────────────────────────────────────────────────────────────────────────
 
-export type UpsertOutcome = "inserted" | "updated" | "unchanged";
+export type UpsertOutcome = "inserted" | "updated";
 
 type MembershipArgs = {
 	clerkOrgId: string;
@@ -246,37 +247,27 @@ type MembershipArgs = {
 };
 
 /**
- * The row for (org id, user id), tombstoned or not; failing that, a row written
- * at provisioning (slug only, no org id yet) for the same slug and user.
- * A plain indexed read: no decision is made here.
+ * The row for (org id, user id), tombstoned or not. A miss is a miss: there is
+ * no lookup by slug. A plain indexed read: no decision is made here.
  */
 async function findMembershipRow(
 	ctx: Pick<MutationCtx, "db">,
-	args: { clerkOrgId: string; clerkUserId: string; clerkOrgSlug?: string },
+	args: { clerkOrgId: string; clerkUserId: string },
 ) {
-	const byId = await ctx.db
+	return await ctx.db
 		.query("orgMembership")
 		.withIndex("by_org_user_clerk_id", (q) =>
 			q.eq("clerkOrgId", args.clerkOrgId).eq("clerkUserId", args.clerkUserId),
 		)
 		.unique();
-	if (byId !== null || args.clerkOrgSlug === undefined) return byId;
-	const slug = args.clerkOrgSlug;
-	return await ctx.db
-		.query("orgMembership")
-		.withIndex("by_org_user", (q) =>
-			q.eq("clerkOrgSlug", slug).eq("clerkUserId", args.clerkUserId),
-		)
-		.filter((q) => q.eq(q.field("clerkOrgId"), undefined))
-		.first();
 }
 
 type MembershipDoc = NonNullable<Awaited<ReturnType<typeof findMembershipRow>>>;
 
 /**
  * WRITE an upsert the package already decided to apply (`decideMembershipEvent`
- * or `planMembershipReconcile`). Revives a tombstone. The state is compared, but
- * `lastEventAt` always advances so the ordering guard stays exact.
+ * or `planMembershipReconcile`). Revives a tombstone. The decided state is
+ * patched as it is; `lastEventAt` advances so the ordering guard stays exact.
  */
 async function writeMembershipUpsert(
 	ctx: MutationCtx,
@@ -299,22 +290,16 @@ async function writeMembershipUpsert(
 		}
 		return "inserted";
 	}
-	const sameState =
-		existing.role === args.role &&
-		existing.clerkOrgSlug === args.clerkOrgSlug &&
-		existing.clerkOrgId === args.clerkOrgId &&
-		existing.deletedAt === undefined;
 	if (!opts.dryRun) {
 		await ctx.db.patch(existing._id, {
 			role: args.role,
 			clerkOrgSlug: args.clerkOrgSlug,
-			clerkOrgId: args.clerkOrgId,
 			deletedAt: undefined,
 			lastEventAt: opts.eventAt,
-			...(sameState ? {} : { updatedAt: now }),
+			updatedAt: now,
 		});
 	}
-	return sameState ? "unchanged" : "updated";
+	return "updated";
 }
 
 /**
@@ -346,16 +331,14 @@ async function writeMembershipTombstone(
 		}
 		return "absent";
 	}
-	const wasLive = existing.deletedAt === undefined;
 	if (!opts.dryRun) {
 		await ctx.db.patch(existing._id, {
-			clerkOrgId: args.clerkOrgId,
-			deletedAt: wasLive ? opts.eventAt : existing.deletedAt,
+			deletedAt: opts.eventAt,
 			lastEventAt: opts.eventAt,
-			...(wasLive ? { updatedAt: now } : {}),
+			updatedAt: now,
 		});
 	}
-	return wasLive ? "removed" : "absent";
+	return "removed";
 }
 
 /**
@@ -378,7 +361,6 @@ export const applyClerkMembershipEvent = internalMutation({
 	returns: v.union(
 		v.literal("inserted"),
 		v.literal("updated"),
-		v.literal("unchanged"),
 		v.literal("removed"),
 		v.literal("absent"),
 		v.literal("stale"),
@@ -470,12 +452,11 @@ export const reconcileOrgFromClerk = internalMutation({
 		);
 		let upserted = 0;
 		for (const u of plan.upserts) {
-			const outcome = await writeMembershipUpsert(
+			await writeMembershipUpsert(
 				ctx,
 				await findMembershipRow(ctx, {
 					clerkOrgId: u.orgId,
 					clerkUserId: u.personId,
-					clerkOrgSlug: args.clerkOrgSlug,
 				}),
 				{
 					clerkOrgId: u.orgId,
@@ -485,7 +466,7 @@ export const reconcileOrgFromClerk = internalMutation({
 				},
 				{ eventAt: u.eventAt, dryRun: args.dryRun },
 			);
-			if (outcome === "inserted" || outcome === "updated") upserted++;
+			upserted++;
 		}
 		for (const t of plan.tombstones) {
 			await writeMembershipTombstone(
