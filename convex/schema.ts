@@ -623,8 +623,16 @@ export default defineSchema({
 		// is needed, and none is added (tasks sits at the 32-index ceiling, pinned by
 		// convex/__tests__/schemaIndexBudget.test.ts). by_assigneeId_status_updatedAt
 		// also serves (assignedToId, status) by its prefix, replacing by_assigneeId_status.
-		.index("by_assigneeId_project_status", ["assignedToId", "project", "status"])
-		.index("by_assigneeId_status_updatedAt", ["assignedToId", "status", "updatedAt"])
+		.index("by_assigneeId_project_status", [
+			"assignedToId",
+			"project",
+			"status",
+		])
+		.index("by_assigneeId_status_updatedAt", [
+			"assignedToId",
+			"status",
+			"updatedAt",
+		])
 		.index("by_project", ["project", "status"])
 		.index("by_status", ["status", "createdAt"])
 		.index("by_mission", ["missionId", "status"])
@@ -1900,27 +1908,29 @@ export default defineSchema({
 	// record of who administers which org — only Clerk did. This table is
 	// that record.
 	//
-	// AUDIT RECORD ONLY — NEVER AN AUTHORISATION SOURCE. `requireOrgAdmin`
+	// NEVER THE SOURCE OF ORG-ADMIN STATUS. `requireOrgAdmin`
 	// (convex/lib/auth.ts) keeps deciding admin status from the verified
-	// `org_role` JWT claim at request time, exactly as before this table
-	// existed. No code path may read a row here to decide whether an action
-	// is allowed — that would let a stale/replayed row grant authority the
-	// live Clerk session no longer holds. This table only answers "who
-	// administers/belongs to which org", for display/audit/reporting.
+	// `org_role` JWT claim at request time. No code path may read a row here to
+	// decide whether someone is an org admin, or to authorise any action other
+	// than the one named next.
 	//
-	// Written ONLY at provisioning time (`convex/oauth.ts`'s
-	// `provisionOrganization`, org-admin path) — there is no Clerk webhook
-	// yet to keep it in sync with later member add/remove in Clerk itself.
-	// Until that webhook exists, this table records provisioning-time
-	// membership only.
+	// ONE authorisation use, and only because the table is kept live: the
+	// owner-membership lookup `ownerMembershipLookups` (convex/lib/actingPrincipal.ts),
+	// which proves an agent's `ownerPersonId` is a member of the agent's org
+	// (key: clerkOrgId + clerkUserId; existence only, the `role` is never read
+	// for it). That is safe only while the rows follow Clerk: the Clerk webhook
+	// `POST /clerk/webhook` (convex/http.ts, `orgMembership:applyClerkMembershipEvent`)
+	// upserts/removes on organizationMembership.created/updated/deleted, and
+	// `orgMembership:backfillFromClerk` (dry run by default) reconciles from the
+	// Clerk Backend API. Provisioning (`provisionOrganization`) still writes the
+	// creating admin. Delivery gaps are closed by re-running the backfill.
 	//
 	// clerkOrgSlug: the Clerk organisation SLUG — same slug-to-slug
 	//   convention as `client_org_mapping.clerkOrgSlug` (see the long
 	//   comment on `requireOrgAdmin` in convex/lib/auth.ts for why the slug,
 	//   and never `organizationId`, is the compared claim).
 	// clerkUserId: the Clerk `sub` (subject) claim of the administering user.
-	// role: "admin" (the only role this table currently writes) or "member"
-	//   (reserved for the future webhook-driven sync).
+	// role: "admin" (Clerk org:admin) or "member" (any other Clerk role).
 	orgMembership: defineTable({
 		clerkOrgSlug: v.string(),
 		// Permanent Clerk org id (org_...) of the same organisation as `clerkOrgSlug`. The slug is a

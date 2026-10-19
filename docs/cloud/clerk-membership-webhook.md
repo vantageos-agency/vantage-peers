@@ -1,0 +1,35 @@
+# Clerk membership webhook (VantagePeers Cloud)
+
+Keeps `orgMembership` in step with Clerk, so the owner-membership lookup (`ownerMembershipLookups`, `convex/lib/actingPrincipal.ts`) can rely on it. The table is never read to decide org-admin status (that stays the verified `org_role` claim).
+
+## Environment (Convex deployment, set from the Convex dashboard)
+
+| Variable | Used by | Form |
+|---|---|---|
+| `CLERK_WEBHOOK_SECRET` | `POST /clerk/webhook` | `whsec_<base64>`, the signing secret of the Clerk endpoint below |
+| `CLERK_SECRET_KEY` | `orgMembership:backfillFromClerk` only | Clerk Backend API key (`sk_...`), never logged |
+
+Without `CLERK_WEBHOOK_SECRET` (or with one not in `whsec_` form) every delivery is refused with HTTP 500 and nothing is written. A missing header, a timestamp more than 5 minutes off, or a signature no `v1,` candidate matches is HTTP 401.
+
+## Clerk dashboard (operator step, once per Clerk instance)
+
+1. Webhooks, Add Endpoint. URL: `https://<convex-site>/clerk/webhook` (the deployment's `.convex.site` host, not `.convex.cloud`).
+2. Subscribe to exactly: `organizationMembership.created`, `organizationMembership.updated`, `organizationMembership.deleted`.
+3. Copy the endpoint's Signing Secret into `CLERK_WEBHOOK_SECRET`.
+
+Any other event type is answered 200 and ignored.
+
+## Roles
+
+Clerk `org:admin` is stored as `admin`; every other role is stored as `member`. Rows are keyed by (`clerkOrgId`, `clerkUserId`); the slug is stored from the payload and refreshed when it changes.
+
+## One-time backfill
+
+Run after the webhook is live (events before that were never delivered). Dry run by default, it writes nothing:
+
+```
+npx convex run orgMembership:backfillFromClerk '{}'
+npx convex run orgMembership:backfillFromClerk '{"dryRun": false}'
+```
+
+It returns `{ dryRun, orgs, memberships, upserted, removed, failedOrgs }`. Rows are removed only for organisations whose full member list was read; an organisation whose read failed is left untouched and listed in `failedOrgs`. Re-run it to close any gap from missed deliveries.

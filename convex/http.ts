@@ -5,6 +5,7 @@ import type { Doc, Id } from "./_generated/dataModel";
 import { httpAction } from "./_generated/server";
 import { isKillSwitchActive } from "./errorMonitorKillSwitch";
 import { prTouchesDeployableConvex } from "./githubDeployGate";
+import { verifySvixSignature } from "./lib/svixSignature";
 
 // The orchestrator field in githubRepoMapping is stored as plain string.
 // We cast it to the union type expected by missions/tasks at runtime —
@@ -732,6 +733,95 @@ http.route({
 		}
 
 		return new Response("OK", { status: 200 });
+	}),
+});
+
+// ── Clerk webhook — keeps orgMembership live ─────────────────────────────────
+// POST /clerk/webhook
+// Svix-signed (headers svix-id, svix-timestamp, svix-signature; secret
+// CLERK_WEBHOOK_SECRET = whsec_<base64>). FAIL CLOSED like /github/webhook: a
+// deployment without the secret refuses every delivery, and nothing is written
+// before the signature has been verified. Handles organizationMembership.
+// created / updated / deleted; any other event type is acknowledged and ignored.
+http.route({
+	path: "/clerk/webhook",
+	method: "POST",
+	handler: httpAction(async (ctx, request) => {
+		const body = await request.text();
+
+		const secret = process.env.CLERK_WEBHOOK_SECRET;
+		if (!secret) {
+			console.error(
+				"[clerkWebhook] CLERK_WEBHOOK_SECRET is not set — refusing delivery",
+			);
+			return new Response("Server misconfiguration", { status: 500 });
+		}
+		const verdict = await verifySvixSignature({
+			secret,
+			id: request.headers.get("svix-id"),
+			timestamp: request.headers.get("svix-timestamp"),
+			signatureHeader: request.headers.get("svix-signature"),
+			body,
+			nowMs: Date.now(),
+		});
+		if (!verdict.ok) {
+			if (verdict.reason === "secret-malformed") {
+				console.error(
+					"[clerkWebhook] CLERK_WEBHOOK_SECRET is not in whsec_<base64> form — refusing delivery",
+				);
+				return new Response("Server misconfiguration", { status: 500 });
+			}
+			console.error(`[clerkWebhook] delivery refused: ${verdict.reason}`);
+			return new Response("Invalid signature", { status: 401 });
+		}
+
+		let event: { type?: unknown; data?: unknown };
+		try {
+			event = JSON.parse(body);
+		} catch {
+			return new Response("Invalid JSON", { status: 400 });
+		}
+		const type = event.type;
+		if (
+			type !== "organizationMembership.created" &&
+			type !== "organizationMembership.updated" &&
+			type !== "organizationMembership.deleted"
+		) {
+			console.log(`[clerkWebhook] ignored event type: ${String(type)}`);
+			return new Response("OK - event ignored", { status: 200 });
+		}
+
+		const data = (event.data ?? {}) as {
+			role?: unknown;
+			organization?: { id?: unknown; slug?: unknown };
+			public_user_data?: { user_id?: unknown };
+		};
+		const clerkOrgId = data.organization?.id;
+		const clerkOrgSlug = data.organization?.slug;
+		const clerkUserId = data.public_user_data?.user_id;
+		if (typeof clerkOrgId !== "string" || typeof clerkUserId !== "string") {
+			return new Response("Missing organisation or user id", { status: 400 });
+		}
+		if (
+			type !== "organizationMembership.deleted" &&
+			typeof clerkOrgSlug !== "string"
+		) {
+			return new Response("Missing organisation slug", { status: 400 });
+		}
+
+		const outcome = await ctx.runMutation(
+			internal.orgMembership.applyClerkMembershipEvent,
+			type === "organizationMembership.deleted"
+				? { kind: "delete", clerkOrgId, clerkUserId }
+				: {
+						kind: "upsert",
+						clerkOrgId,
+						clerkOrgSlug: clerkOrgSlug as string,
+						clerkUserId,
+						clerkRole: typeof data.role === "string" ? data.role : undefined,
+					},
+		);
+		return new Response(`OK - ${outcome}`, { status: 200 });
 	}),
 });
 

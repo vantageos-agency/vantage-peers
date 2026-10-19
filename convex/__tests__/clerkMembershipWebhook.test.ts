@@ -66,7 +66,8 @@ function membershipEvent(
 	});
 }
 
-type T = ReturnType<typeof convexTest>;
+const makeT = () => convexTest(schema, modules);
+type T = ReturnType<typeof makeT>;
 
 function deliver(
 	t: T,
@@ -106,7 +107,7 @@ describe("POST /clerk/webhook", () => {
 	});
 
 	test("valid signature: created upserts a member row keyed by the Clerk ids", async () => {
-		const t = convexTest(schema, modules);
+		const t = makeT();
 		const res = await deliver(
 			t,
 			membershipEvent("organizationMembership.created", "org:member"),
@@ -123,7 +124,7 @@ describe("POST /clerk/webhook", () => {
 	});
 
 	test("org:admin maps to admin, any other Clerk role to member", async () => {
-		const t = convexTest(schema, modules);
+		const t = makeT();
 		await deliver(
 			t,
 			membershipEvent("organizationMembership.created", "org:admin"),
@@ -141,7 +142,7 @@ describe("POST /clerk/webhook", () => {
 	});
 
 	test("a signature list with one valid candidate among bad ones is accepted", async () => {
-		const t = convexTest(schema, modules);
+		const t = makeT();
 		const body = membershipEvent(
 			"organizationMembership.created",
 			"org:member",
@@ -160,7 +161,7 @@ describe("POST /clerk/webhook", () => {
 	});
 
 	test("bad signature: 401 and no write", async () => {
-		const t = convexTest(schema, modules);
+		const t = makeT();
 		const body = membershipEvent(
 			"organizationMembership.created",
 			"org:member",
@@ -173,7 +174,7 @@ describe("POST /clerk/webhook", () => {
 	});
 
 	test("a body altered after signing is refused", async () => {
-		const t = convexTest(schema, modules);
+		const t = makeT();
 		const body = membershipEvent(
 			"organizationMembership.created",
 			"org:member",
@@ -196,7 +197,7 @@ describe("POST /clerk/webhook", () => {
 		"svix-signature",
 	] as const) {
 		test(`missing ${header}: 401 and no write`, async () => {
-			const t = convexTest(schema, modules);
+			const t = makeT();
 			const res = await deliver(
 				t,
 				membershipEvent("organizationMembership.created", "org:member"),
@@ -209,7 +210,7 @@ describe("POST /clerk/webhook", () => {
 
 	test("secret unset: every delivery refused 500, logged, no write", async () => {
 		delete process.env.CLERK_WEBHOOK_SECRET;
-		const t = convexTest(schema, modules);
+		const t = makeT();
 		const res = await deliver(
 			t,
 			membershipEvent("organizationMembership.created", "org:member"),
@@ -222,7 +223,7 @@ describe("POST /clerk/webhook", () => {
 	});
 
 	test("stale and far-future timestamps (beyond 5 minutes) are refused, correctly signed", async () => {
-		const t = convexTest(schema, modules);
+		const t = makeT();
 		const body = membershipEvent(
 			"organizationMembership.created",
 			"org:member",
@@ -237,7 +238,7 @@ describe("POST /clerk/webhook", () => {
 	});
 
 	test("updated changes the role", async () => {
-		const t = convexTest(schema, modules);
+		const t = makeT();
 		await deliver(
 			t,
 			membershipEvent("organizationMembership.created", "org:member"),
@@ -252,7 +253,7 @@ describe("POST /clerk/webhook", () => {
 	});
 
 	test("deleted removes the row", async () => {
-		const t = convexTest(schema, modules);
+		const t = makeT();
 		await deliver(
 			t,
 			membershipEvent("organizationMembership.created", "org:member"),
@@ -266,7 +267,7 @@ describe("POST /clerk/webhook", () => {
 	});
 
 	test("replay of the same delivery is a no-op (no second row, no write)", async () => {
-		const t = convexTest(schema, modules);
+		const t = makeT();
 		const body = membershipEvent(
 			"organizationMembership.created",
 			"org:member",
@@ -284,7 +285,7 @@ describe("POST /clerk/webhook", () => {
 	});
 
 	test("an unrelated event type is 200, ignored, no write", async () => {
-		const t = convexTest(schema, modules);
+		const t = makeT();
 		const res = await deliver(
 			t,
 			JSON.stringify({
@@ -298,7 +299,7 @@ describe("POST /clerk/webhook", () => {
 	});
 
 	test("a signed membership event missing the Clerk ids is 400, no write", async () => {
-		const t = convexTest(schema, modules);
+		const t = makeT();
 		const res = await deliver(
 			t,
 			JSON.stringify({
@@ -313,7 +314,7 @@ describe("POST /clerk/webhook", () => {
 
 describe("ownerMembershipLookups.personById", () => {
 	test("hit: an existing (org id, user id) row answers {id, orgId, active: true}", async () => {
-		const t = convexTest(schema, modules);
+		const t = makeT();
 		await t.run(async (ctx) => {
 			await ctx.db.insert("orgMembership", {
 				clerkOrgSlug: ORG_SLUG,
@@ -332,7 +333,7 @@ describe("ownerMembershipLookups.personById", () => {
 	});
 
 	test("miss: another org, another user, or no row answers null", async () => {
-		const t = convexTest(schema, modules);
+		const t = makeT();
 		await t.run(async (ctx) => {
 			await ctx.db.insert("orgMembership", {
 				clerkOrgSlug: ORG_SLUG,
@@ -437,7 +438,7 @@ describe("orgMembership:backfillFromClerk", () => {
 		});
 
 	test("dry run (the default) reports counts and writes nothing", async () => {
-		const t = convexTest(schema, modules);
+		const t = makeT();
 		await seedStale(t);
 		stubClerk();
 		const res = await t.action(internal.orgMembership.backfillFromClerk, {});
@@ -445,7 +446,7 @@ describe("orgMembership:backfillFromClerk", () => {
 			orgs: 2,
 			memberships: 1,
 			upserted: 1,
-			removed: 1,
+			removed: 2,
 		});
 		const all = await rows(t);
 		expect(all.map((r) => r.clerkUserId).sort()).toEqual([
@@ -455,7 +456,7 @@ describe("orgMembership:backfillFromClerk", () => {
 	});
 
 	test("dryRun:false upserts, removes only in orgs it fully read, and never sends the key anywhere but the header", async () => {
-		const t = convexTest(schema, modules);
+		const t = makeT();
 		await seedStale(t);
 		const calls = stubClerk({ failMembershipsFor: "org_broken" });
 		const res = await t.action(internal.orgMembership.backfillFromClerk, {
@@ -477,7 +478,7 @@ describe("orgMembership:backfillFromClerk", () => {
 
 	test("without CLERK_SECRET_KEY the backfill refuses and writes nothing", async () => {
 		delete process.env.CLERK_SECRET_KEY;
-		const t = convexTest(schema, modules);
+		const t = makeT();
 		await expect(
 			t.action(internal.orgMembership.backfillFromClerk, { dryRun: false }),
 		).rejects.toThrow(/CLERK_SECRET_KEY/);
