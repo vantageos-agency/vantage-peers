@@ -520,6 +520,10 @@ describe("orgMembership:backfillFromClerk", () => {
 	});
 });
 
+// Event times sit ahead of the svix-timestamp the helper stamps on each delivery,
+// because a delete is timed max(updated_at, svix-timestamp) (Eta REVISE #1541).
+const B = Date.now() + 60_000;
+
 describe("event ordering: a late event never re-adds a removed member", () => {
 	beforeEach(() => {
 		process.env.CLERK_WEBHOOK_SECRET = SECRET;
@@ -545,8 +549,8 @@ describe("event ordering: a late event never re-adds a removed member", () => {
 
 	test("deleted then a STALE created: 200, still no live row, personById null", async () => {
 		const t = makeT();
-		await send(t, "organizationMembership.created", "org:member", 1000);
-		await send(t, "organizationMembership.deleted", "org:member", 3000);
+		await send(t, "organizationMembership.created", "org:member", B + 1000);
+		await send(t, "organizationMembership.deleted", "org:member", B + 3000);
 		const res = await send(
 			t,
 			"organizationMembership.created",
@@ -558,27 +562,27 @@ describe("event ordering: a late event never re-adds a removed member", () => {
 		expect(await personById(t)).toBeNull();
 		const all = await rows(t);
 		expect(all).toHaveLength(1);
-		expect(all[0].lastEventAt).toBe(3000);
+		expect(all[0].lastEventAt).toBe(B + 3000);
 	});
 
 	test("a created at EXACTLY the delete's event time is ignored", async () => {
 		const t = makeT();
-		await send(t, "organizationMembership.created", "org:member", 1000);
-		await send(t, "organizationMembership.deleted", "org:member", 3000);
-		await send(t, "organizationMembership.created", "org:member", 3000);
+		await send(t, "organizationMembership.created", "org:member", B + 1000);
+		await send(t, "organizationMembership.deleted", "org:member", B + 3000);
+		await send(t, "organizationMembership.created", "org:member", B + 3000);
 		expect(await live(t)).toHaveLength(0);
 	});
 
 	test("deleted then a NEWER created revives the row and clears the tombstone", async () => {
 		const t = makeT();
-		await send(t, "organizationMembership.created", "org:member", 1000);
-		await send(t, "organizationMembership.deleted", "org:member", 3000);
-		await send(t, "organizationMembership.created", "org:admin", 4000);
+		await send(t, "organizationMembership.created", "org:member", B + 1000);
+		await send(t, "organizationMembership.deleted", "org:member", B + 3000);
+		await send(t, "organizationMembership.created", "org:admin", B + 4000);
 		const all = await rows(t);
 		expect(all).toHaveLength(1);
 		expect(all[0].deletedAt).toBeUndefined();
 		expect(all[0].role).toBe("admin");
-		expect(all[0].lastEventAt).toBe(4000);
+		expect(all[0].lastEventAt).toBe(B + 4000);
 		expect(await personById(t)).toEqual({
 			id: USER_ID,
 			orgId: ORG_ID,
@@ -588,19 +592,19 @@ describe("event ordering: a late event never re-adds a removed member", () => {
 
 	test("an updated OLDER than the current state is ignored; a newer one applies", async () => {
 		const t = makeT();
-		await send(t, "organizationMembership.created", "org:member", 2000);
-		await send(t, "organizationMembership.updated", "org:admin", 1000);
+		await send(t, "organizationMembership.created", "org:member", B + 2000);
+		await send(t, "organizationMembership.updated", "org:admin", B + 1000);
 		expect((await rows(t))[0].role).toBe("member");
-		await send(t, "organizationMembership.updated", "org:admin", 3000);
+		await send(t, "organizationMembership.updated", "org:admin", B + 3000);
 		const row = (await rows(t))[0];
 		expect(row.role).toBe("admin");
-		expect(row.lastEventAt).toBe(3000);
+		expect(row.lastEventAt).toBe(B + 3000);
 	});
 
 	test("a delete that arrives BEFORE the created leaves a tombstone, so the late created stays absent", async () => {
 		const t = makeT();
-		await send(t, "organizationMembership.deleted", "org:member", 3000);
-		await send(t, "organizationMembership.created", "org:member", 2000);
+		await send(t, "organizationMembership.deleted", "org:member", B + 3000);
+		await send(t, "organizationMembership.created", "org:member", B + 2000);
 		expect(await live(t)).toHaveLength(0);
 		expect(await personById(t)).toBeNull();
 		expect(await rows(t)).toHaveLength(1);
@@ -632,6 +636,41 @@ describe("event ordering: a late event never re-adds a removed member", () => {
 			});
 		});
 		expect(await personById(t)).toBeNull();
+	});
+	test("MUST_BLOCK (Eta REVISE #1541): created and deleted at the SAME event time -> removal wins, no live row, personById null", async () => {
+		const t = makeT();
+		await send(t, "organizationMembership.created", "org:admin", B + 1000);
+		await send(t, "organizationMembership.deleted", "org:admin", B + 1000);
+		expect(await live(t)).toHaveLength(0);
+		expect(await personById(t)).toBeNull();
+		expect((await rows(t))[0].deletedAt).toBeTypeOf("number");
+	});
+
+	test("MUST_BLOCK (Eta REVISE #1541): created 1000, updated to org:admin 2000, deleted 2000 -> no live row", async () => {
+		const t = makeT();
+		await send(t, "organizationMembership.created", "org:member", B + 1000);
+		await send(t, "organizationMembership.updated", "org:admin", B + 2000);
+		expect((await rows(t))[0].role).toBe("admin");
+		await send(t, "organizationMembership.deleted", "org:admin", B + 2000);
+		expect(await live(t)).toHaveLength(0);
+		expect(await personById(t)).toBeNull();
+	});
+
+	test("a deleted whose payload time is OLDER than the delivery still removes (event time is max(updated_at, svix-timestamp))", async () => {
+		const t = makeT();
+		await deliver(
+			t,
+			membershipEvent("organizationMembership.created", "org:member", {
+				updatedAt: 1000,
+			}),
+		);
+		await deliver(
+			t,
+			membershipEvent("organizationMembership.deleted", "org:member", {
+				updatedAt: 1000,
+			}),
+		);
+		expect(await live(t)).toHaveLength(0);
 	});
 });
 
