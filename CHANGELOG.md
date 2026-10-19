@@ -2,6 +2,9 @@
 
 ## [Unreleased]
 
+### Added
+- **Cloud: an agent can carry the person who owns it, by ID (expand only; task k1778c2hvae8e8vz9f5bbbbbb98g62hw item 3).** New optional column `agents.ownerPersonId` (a Clerk `user_...` ID), written only by the new internal mutation `agents:setAgentOwner` (1 to 100 agents per call; `AGENT_OWNER_BATCH_INVALID`, `OWNER_PERSON_ID_INVALID`, `OWNER_REASON_REQUIRED` of at least 10 characters, `AGENT_NOT_FOUND`, `AGENT_INACTIVE`, `OWNER_CONFLICT` unless `replace: true`; every check runs before any write; the same owner again is `changed: false`) and listed by `agents:listAgentsWithoutOwner` (active agents with no owner; scan capped at 2000, `AGENT_SCAN_CAP_EXCEEDED` over it). Nothing refuses an agent without an owner and no request path reads the field yet; a later delivery passes it to `@vantageos/cloud-identity` `resolveCallerFromAgentCredential`. No MCP tool by design. Tests: `convex/__tests__/agentOwner.test.ts`.
+
 ### Changed
 - **Merge gate: `scripts/doctor-ratchet.mjs` refuses a rise in exemption markers against main (task k1778c2hvae8e8vz9f5bbbbbb98g62hw).** The script counts `allow-local-identity:`, `fleet-wide:` and `oracle-justified:` occurrences under `convex/` and `mcp-server/src/` itself, with `git grep` at HEAD and at a new `--main-ref` (default `origin/main`) in the `--tree` repo. A higher head count is a `RAISED` row and exit 1; an unresolvable `--main-ref` or a failing `git grep` is exit 2. The RATCHET line appends `M-allow-local-identity=.. M-fleet-wide=.. M-oracle-justified=..` after `R-56`, `rise` counts rules and markers, and ` raised=<names>` ends the line when a marker rose. Origin: a branch whose every rule count looked fine took `fleet-wide:` 0 -> 66 and `allow-local-identity:` 7 -> 29. Main d70b607 reads 7 / 0 / 35. Tests: `scripts/__tests__/doctor-ratchet.test.mjs` (28).
 

@@ -2115,6 +2115,10 @@ export default defineSchema({
 		// only on a `kind: "service"` row; the service account is recognised by
 		// THIS stored value, never by an environment variable.
 		authSubject: v.optional(v.string()),
+		// The Clerk user ID (`user_...`) of the person who owns this agent. Optional during
+		// the expand phase; written only by agents:setAgentOwner; read later by the
+		// @vantageos/cloud-identity agent-caller path (`ownerPersonId` of the credential).
+		ownerPersonId: v.optional(v.string()),
 		isActive: v.boolean(),
 		createdAt: v.number(),
 	})
