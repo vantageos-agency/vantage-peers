@@ -16,8 +16,6 @@
  *                object that is the scope argument of a defineTool call.
  *   schema-decl  `callerOrchestrator: <zod expression>` inside the schema
  *                object that is the schema argument of a defineTool call.
- *   guard        `guardFrom(callerOrchestrator)` where the argument RESOLVES
- *                (symbol, not spelling) to the bound args.
  *   use          an identifier / property that provably flows from the bound
  *                args object: destructured from (or read off) the first
  *                parameter of a defineTool handler, or forwarded from such a
@@ -63,7 +61,6 @@ export const ACTING_TOKEN = "callerOrchestrator";
 export type SiteClass =
 	| "scope-decl"
 	| "schema-decl"
-	| "guard"
 	| "prose"
 	| "use"
 	| "mechanism";
@@ -594,15 +591,10 @@ export function analyse(files: Record<string, string>): Site[] {
 			if (writeContext(id) !== null) {
 				return { cls: null, reason: WRITE_TARGET };
 			}
-			if (
-				ts.isCallExpression(parent) &&
-				ts.isIdentifier(parent.expression) &&
-				parent.expression.text === "guardFrom" &&
-				parent.arguments.length === 1 &&
-				parent.arguments[0] === id
-			) {
-				return { cls: "guard", reason: "guardFrom(<bound args' name>)" };
-			}
+			// A call that passes the bound args' name to a check is a use like any
+			// other: the in-handler acting-name check (`guardFrom`) that had its own
+			// class was deleted, because defineTool judges the name before the
+			// handler (task k1778c2hvae8e8vz9f5bbbbbb98g62hw slice 1).
 			return { cls: "use", reason: "reference to the bound args' value" };
 		};
 

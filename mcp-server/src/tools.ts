@@ -13,29 +13,39 @@ import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { McpServer } from "@modelcontextprotocol/server";
 import { ProtocolError, ProtocolErrorCode } from "@modelcontextprotocol/server";
-import { scopeFilterGet, scopeFilterList } from "@vantageos/cloud-identity";
+import {
+	passesScopeFilter,
+	scopeFilterGet,
+	scopeFilterList,
+} from "@vantageos/cloud-identity";
 import type { ConvexHttpClient } from "convex/browser";
 import { z } from "zod";
 import {
+	checkActorBinding,
 	checkDelegationAllowed,
-	checkFromAllowed,
 	checkInstanceOfSender,
 	checkNamespaceRead,
 	checkNamespaceWrite,
 	filterRowsToActorTenant,
 	isMasterScope,
+	NO_CONTEXT_REFUSAL,
 	type OAuthContext,
 	PERSON_ACTOR_PREFIX,
 	personActorOf,
 	resolveSeatOrg,
 	rowVisibleToActorTenant,
+	toPackageOAuthCtx,
 } from "./auth.js";
 import { FreshStateGuardError, guardFreshState } from "./fresh-state-guard.js";
 import { listTasksGate } from "./list-tasks-gate.js";
 import { normalizeOrchestratorId } from "./normalizeOrchestratorId.js";
 import { clampLimit, decodeCursor, encodeCursor } from "./paging.js";
 import { isRefusedEnvelope } from "./refusal.js";
-import { defineTool, type ToolAuthContext } from "./registerTool.js";
+import {
+	defineTool,
+	fromNotOnRosterRefusal,
+	type ToolAuthContext,
+} from "./registerTool.js";
 import { resolveStateTokens, StateTokenError } from "./state-tokens.js";
 import { registerExportOkfBundle } from "./tools/exportOkfBundle.js";
 import { registerImportOkfBundle } from "./tools/importOkfBundle.js";
@@ -2122,10 +2132,12 @@ export function registerTools(
 	// legitimately reaches registerTools without one is the stdio transport,
 	// which now hands in the explicit LOCAL_STDIO_TRUST_CTX. So `undefined` here
 	// means "misconfigured / no identity" and each guard below fails closed.
-	const guardFrom = (from: string) => {
-		const err = checkFromAllowed(oauthCtx, from);
-		return err ? mcpError(err) : null;
-	};
+	//
+	// The acting name (`callerOrchestrator`, a `from` tool's `fromArg`) is NOT
+	// re-checked in a handler: defineTool judges it once, before the handler
+	// (registerTool.ts: bindActingNames for the actor, the `from` scope kind for
+	// the roster). The one `filtered` tool that takes an acting name,
+	// bulk_complete_tasks, applies the roster itself (see there).
 	// A PERSON acting in its own name (k176ch9tamzab3dnhye94kga1d8fkbhm): when
 	// no acting name reaches the handler, the Convex door is handed the hash of
 	// the bearer this person presented, and nothing else. The door believes it
@@ -2212,7 +2224,7 @@ export function registerTools(
 	};
 	const PERSON_DOOR_NOTE =
 		" A person signed in to its organisation omits it and acts in its own name.";
-	// Delegation guard — distinct question from guardFrom (identity CLAIM).
+	// Delegation guard — distinct question from the acting-name gates (identity CLAIM).
 	// Applies ONLY to the ASSIGNEE (delegation target): is `assignedTo` a
 	// member of the CALLER's own organisation? Membership is read from DATA
 	// (convex/orgRoster.ts getMyOrgRoster for Clerk JWT, getForAccessToken
@@ -2249,11 +2261,18 @@ export function registerTools(
 	// binds (callerOrchestrator / the scope's fromArg, see registerTool.ts
 	// actingNameKeys). An assignee is not an identity claim, so it is never
 	// refused as AGENT_IDENTITY_MISMATCH (task k1748jbt7yfgrv747p8gky1f358fk1r5).
-	// The caller naming itself passes exactly as guardFrom always let it; any
-	// other name must be a member of the caller's OWN organisation roster —
-	// the same delegation gate create_task applies to assignedTo.
+	// The caller naming ITSELF passes: a name its credential binds
+	// (checkActorBinding) AND its roster lists (@vantageos/cloud-identity
+	// passesScopeFilter), the same two gates an acting name passes. Any other
+	// name must be a member of the caller's OWN organisation roster — the same
+	// delegation gate create_task applies to assignedTo.
 	const guardAssignee = async (field: string, name: string) => {
-		if (guardFrom(name) === null) return null;
+		if (
+			oauthCtx !== undefined &&
+			checkActorBinding(oauthCtx, name) === null &&
+			passesScopeFilter(toPackageOAuthCtx(oauthCtx), { createdBy: name })
+		)
+			return null;
 		return guardDelegation(name, field);
 	};
 	const guardRead = (namespace: string | undefined) => {
@@ -2293,10 +2312,9 @@ export function registerTools(
 	};
 
 	// Auth context threaded into every defineTool registration. The wrapper reads
-	// the declared scope and applies the SAME shared predicates the in-handler
-	// guards use (checkNamespace*/checkFromAllowed/isMasterScope), so migrated
-	// tools are behavior-identical — the pre-check duplicates a gate the handler
-	// still runs. See registerTool.ts.
+	// the declared scope and applies the shared predicates (checkNamespace*,
+	// isMasterScope, and for the `from` kind the actor binding plus the
+	// package's passesScopeFilter roster). See registerTool.ts.
 	const authCtx: ToolAuthContext = { oauthCtx };
 
 	// ── store_memory ────────────────────────────────────────────────────────────
@@ -2356,10 +2374,6 @@ export function registerTools(
 				// every other caller names the seat it acts as.
 				const author = memberAuthorLabel(oauthCtx) ?? createdBy;
 				if (author === undefined) return mcpError(CREATED_BY_REQUIRED);
-				if (memberAuthorLabel(oauthCtx) === undefined) {
-					const fromDenied = guardFrom(author);
-					if (fromDenied) return fromDenied;
-				}
 				const nsDenied = guardWrite(namespace);
 				if (nsDenied) return nsDenied;
 
@@ -2744,10 +2758,6 @@ export function registerTools(
 				// Same author rule as store_memory (see memberAuthor.ts).
 				const author = memberAuthorLabel(oauthCtx) ?? createdBy;
 				if (author === undefined) return mcpError(CREATED_BY_REQUIRED);
-				if (memberAuthorLabel(oauthCtx) === undefined) {
-					const fromDenied = guardFrom(author);
-					if (fromDenied) return fromDenied;
-				}
 				const nsDenied = guardWrite(namespace);
 				if (nsDenied) return nsDenied;
 
@@ -3212,9 +3222,6 @@ export function registerTools(
 		},
 		async ({ orchestratorId, name, static: staticFields, dynamic }) => {
 			try {
-				const fromDenied = guardFrom(orchestratorId);
-				if (fromDenied) return fromDenied;
-
 				const profileId = await convex.mutation(
 					"profiles:upsertProfile" as any,
 					{
@@ -3467,8 +3474,6 @@ export function registerTools(
 				// Convex human door (a person has no instance).
 				let senderInstance: string | undefined = fromInstanceId;
 				if (from !== undefined) {
-					const fromDenied = guardFrom(from);
-					if (fromDenied) return fromDenied;
 					const instanceCheck = checkInstanceOfSender(
 						oauthCtx,
 						from,
@@ -3912,11 +3917,6 @@ export function registerTools(
 		},
 		async ({ messageId, callerOrchestrator }) => {
 			try {
-				if (callerOrchestrator) {
-					const fromDenied = guardFrom(callerOrchestrator);
-					if (fromDenied) return fromDenied;
-				}
-
 				const orgUnresolved = unresolvedOrgDenial("delete_message");
 				if (orgUnresolved) return orgUnresolved;
 				const result = await convex.mutation("messages:deleteMessage" as any, {
@@ -3975,9 +3975,6 @@ export function registerTools(
 		},
 		async ({ orchestratorId, instanceId, summary, endOfDayIndex }) => {
 			try {
-				const fromDenied = guardFrom(orchestratorId);
-				if (fromDenied) return fromDenied;
-
 				await convex.mutation("profiles:updateDynamic" as any, {
 					orchestratorId,
 					instanceId,
@@ -4610,10 +4607,6 @@ export function registerTools(
 			createdBy,
 		}) => {
 			try {
-				if (createdBy !== undefined) {
-					const fromDenied = guardFrom(createdBy);
-					if (fromDenied) return fromDenied;
-				}
 				const assigneeDenied = await guardDelegation(assignedTo);
 				if (assigneeDenied) return assigneeDenied;
 
@@ -4830,7 +4823,7 @@ export function registerTools(
 		{
 			kind: "filtered",
 			reason:
-				"claimed callerOrchestrator identity is guarded MCP-side (guardFrom) before dispatch; tasks:bulkComplete then scopes matched tasks against that verified identity",
+				"claimed callerOrchestrator identity is bound to the credential (bindActingNames) and narrowed by the roster (passesScopeFilter) MCP-side before dispatch; tasks:bulkComplete then scopes matched tasks against that verified identity",
 		},
 		BULK_COMPLETE_TASKS_TOOL_NAME,
 		BULK_COMPLETE_TASKS_TOOL_DESCRIPTION,
@@ -4851,12 +4844,21 @@ export function registerTools(
 				// client-SUPPLIED callerOrchestrator — it never verifies the caller
 				// claiming that identity actually IS it. A scoped (non-master) OAuth
 				// client could pass any other orchestrator's name and bulk-close
-				// that orchestrator's tasks. Mirrors delete_message (tools.ts
-				// ~3157-3181): guard the claimed identity against the caller's own
-				// fromAllowList before the mutation runs.
+				// that orchestrator's tasks. The claim is bound to the credential by
+				// defineTool (bindActingNames: callerOrchestrator is a declared acting
+				// name) before this handler; a `filtered` tool gets no `from` scope
+				// check, so the roster that narrows it is applied here, by the
+				// package, before the mutation runs.
 				if (callerOrchestrator) {
-					const fromDenied = guardFrom(callerOrchestrator);
-					if (fromDenied) return fromDenied;
+					if (!oauthCtx) return mcpError(NO_CONTEXT_REFUSAL);
+					if (
+						!passesScopeFilter(toPackageOAuthCtx(oauthCtx), {
+							createdBy: callerOrchestrator,
+						})
+					)
+						return mcpError(
+							fromNotOnRosterRefusal(oauthCtx, callerOrchestrator),
+						);
 				}
 
 				const verifiedOrg = verifiedOrgOf();
@@ -5224,10 +5226,6 @@ export function registerTools(
 			try {
 				const orgDenied = unresolvedOrgDenial("update_task");
 				if (orgDenied) return orgDenied;
-				if (callerOrchestrator) {
-					const fromDenied = guardFrom(callerOrchestrator);
-					if (fromDenied) return fromDenied;
-				}
 				if (assignedTo) {
 					const assigneeDenied = await guardDelegation(assignedTo);
 					if (assigneeDenied) return assigneeDenied;
@@ -5302,11 +5300,6 @@ export function registerTools(
 			try {
 				const orgDenied = unresolvedOrgDenial("complete_task");
 				if (orgDenied) return orgDenied;
-				if (callerOrchestrator) {
-					const fromDenied = guardFrom(callerOrchestrator);
-					if (fromDenied) return fromDenied;
-				}
-
 				await convex.mutation("tasks:complete" as any, {
 					taskId: taskId as any,
 					completionNote,
@@ -5366,11 +5359,6 @@ export function registerTools(
 			try {
 				const orgDenied = unresolvedOrgDenial("fail_task");
 				if (orgDenied) return orgDenied;
-				if (callerOrchestrator) {
-					const fromDenied = guardFrom(callerOrchestrator);
-					if (fromDenied) return fromDenied;
-				}
-
 				await convex.mutation("tasks:failTask" as any, {
 					taskId: taskId as any,
 					failureNote,
@@ -5420,11 +5408,6 @@ export function registerTools(
 			try {
 				const orgDenied = unresolvedOrgDenial("start_task");
 				if (orgDenied) return orgDenied;
-				if (callerOrchestrator) {
-					const fromDenied = guardFrom(callerOrchestrator);
-					if (fromDenied) return fromDenied;
-				}
-
 				await convex.mutation("tasks:start" as any, {
 					taskId: taskId as any,
 					callerOrchestrator,
@@ -5475,11 +5458,6 @@ export function registerTools(
 			try {
 				const orgDenied = unresolvedOrgDenial("pause_task");
 				if (orgDenied) return orgDenied;
-				if (callerOrchestrator) {
-					const fromDenied = guardFrom(callerOrchestrator);
-					if (fromDenied) return fromDenied;
-				}
-
 				await convex.mutation("tasks:pause" as any, {
 					taskId: taskId as any,
 					callerOrchestrator,
@@ -5527,11 +5505,6 @@ export function registerTools(
 			try {
 				const orgDenied = unresolvedOrgDenial("resume_task");
 				if (orgDenied) return orgDenied;
-				if (callerOrchestrator) {
-					const fromDenied = guardFrom(callerOrchestrator);
-					if (fromDenied) return fromDenied;
-				}
-
 				await convex.mutation("tasks:resume" as any, {
 					taskId: taskId as any,
 					callerOrchestrator,
@@ -5620,11 +5593,6 @@ export function registerTools(
 			try {
 				const orgDenied = unresolvedOrgDenial("correct_task_segment");
 				if (orgDenied) return orgDenied;
-				if (callerOrchestrator) {
-					const fromDenied = guardFrom(callerOrchestrator);
-					if (fromDenied) return fromDenied;
-				}
-
 				await convex.mutation("tasks:correctSegment" as any, {
 					taskId: taskId as any,
 					segmentIndex,
@@ -5684,9 +5652,6 @@ export function registerTools(
 			try {
 				const orgDenied = unresolvedOrgDenial("checkout_task");
 				if (orgDenied) return orgDenied;
-				const fromDenied = guardFrom(callerOrchestrator);
-				if (fromDenied) return fromDenied;
-
 				const result = await convex.mutation("tasks:checkout" as any, {
 					taskId: taskId as any,
 					callerOrchestrator,
@@ -5739,11 +5704,6 @@ export function registerTools(
 			try {
 				const orgDenied = unresolvedOrgDenial("delete_task");
 				if (orgDenied) return orgDenied;
-				if (callerOrchestrator) {
-					const fromDenied = guardFrom(callerOrchestrator);
-					if (fromDenied) return fromDenied;
-				}
-
 				const result = await convex.mutation("tasks:deleteTask" as any, {
 					taskId: taskId as any,
 					callerOrchestrator,
@@ -5820,11 +5780,6 @@ export function registerTools(
 			try {
 				const orgDenied = unresolvedOrgDenial("block_task");
 				if (orgDenied) return orgDenied;
-				if (callerOrchestrator) {
-					const fromDenied = guardFrom(callerOrchestrator);
-					if (fromDenied) return fromDenied;
-				}
-
 				const blockArgs: Record<string, any> = {
 					taskId: taskId as any,
 				};
@@ -5902,11 +5857,6 @@ export function registerTools(
 			try {
 				const orgDenied = unresolvedOrgDenial("add_task_dependency");
 				if (orgDenied) return orgDenied;
-				if (callerOrchestrator) {
-					const fromDenied = guardFrom(callerOrchestrator);
-					if (fromDenied) return fromDenied;
-				}
-
 				const updateArgs: Record<string, any> = {
 					taskId: taskId as any,
 					dependsOn: dependsOn.map((id: string) => id as any),
@@ -6143,10 +6093,6 @@ export function registerTools(
 			createdBy,
 		}) => {
 			try {
-				if (createdBy !== undefined) {
-					const fromDenied = guardFrom(createdBy);
-					if (fromDenied) return fromDenied;
-				}
 				const pilotDenied = await guardAssignee("pilot", pilot);
 				if (pilotDenied) return pilotDenied;
 
@@ -6435,11 +6381,6 @@ export function registerTools(
 					const pilotDenied = await guardAssignee("pilot", pilot);
 					if (pilotDenied) return pilotDenied;
 				}
-				if (callerOrchestrator) {
-					const fromDenied = guardFrom(callerOrchestrator);
-					if (fromDenied) return fromDenied;
-				}
-
 				await convex.mutation("missions:update" as any, {
 					missionId: missionId as any,
 					name,
@@ -6519,7 +6460,7 @@ export function registerTools(
 
 	// ── write_diary ─────────────────────────────────────────────────────────────
 
-	// oracle-justified: actor-bound upsert: MCP scope `from` (checkFromAllowed + checkActorBinding on `orchestrator`)
+	// oracle-justified: actor-bound upsert: MCP scope `from` (checkActorBinding + roster passesScopeFilter on `orchestrator`)
 	//   and diary:write admits only orchestrators on the caller's roster (isOrchestratorAllowedForScope,
 	//   convex/diary.ts); get_diary is a read filtered in-handler by the same roster predicate.
 	defineTool(
@@ -6547,9 +6488,6 @@ export function registerTools(
 			let contentBytes = 0;
 			try {
 				contentBytes = assertContentSize(content, "write_diary");
-
-				const fromDenied = guardFrom(orchestrator);
-				if (fromDenied) return fromDenied;
 
 				// v2.4.8: derive createdBy from auth context (oauthCtx.userId).
 				// This is the anti-spoof authored-by — distinct from orchestrator
@@ -6841,9 +6779,6 @@ export function registerTools(
 			try {
 				contentBytes = assertContentSize(content, "create_briefing_note");
 
-				const fromDenied = guardFrom(createdBy);
-				if (fromDenied) return fromDenied;
-
 				// A seat reaches Convex as the fleet service account (no org on ctx.auth):
 				// the note is stamped with the bearer's VERIFIED org, from the oauthContext
 				// only. A non-master bearer whose org cannot be resolved is refused here,
@@ -6921,9 +6856,6 @@ export function registerTools(
 				if (content !== undefined) {
 					contentBytes = assertContentSize(content, "update_briefing_note");
 				}
-
-				const fromDenied = guardFrom(callerOrchestrator);
-				if (fromDenied) return fromDenied;
 
 				await convex.mutation("briefingNotes:update" as any, {
 					noteId: noteId as any,
@@ -7358,8 +7290,6 @@ export function registerTools(
 			createdBy,
 		}) => {
 			try {
-				const fromDenied = guardFrom(createdBy);
-				if (fromDenied) return fromDenied;
 				const assigneeDenied = await guardDelegation(assignedTo);
 				if (assigneeDenied) return assigneeDenied;
 
@@ -7775,8 +7705,6 @@ export function registerTools(
 			mandateDocument,
 		}) => {
 			try {
-				const fromDenied = guardFrom(requestedBy);
-				if (fromDenied) return fromDenied;
 				const fulfillerDenied = await guardAssignee("fulfilledBy", fulfilledBy);
 				if (fulfillerDenied) return fulfillerDenied;
 
@@ -7839,9 +7767,6 @@ export function registerTools(
 		},
 		async ({ mandateId, callerOrchestrator }) => {
 			try {
-				const fromDenied = guardFrom(callerOrchestrator);
-				if (fromDenied) return fromDenied;
-
 				await convex.mutation("mandates:accept" as any, {
 					mandateId: mandateId as any,
 					callerOrchestrator,
@@ -7900,9 +7825,6 @@ export function registerTools(
 			linkedTaskIds,
 		}) => {
 			try {
-				const fromDenied = guardFrom(callerOrchestrator);
-				if (fromDenied) return fromDenied;
-
 				await convex.mutation("mandates:update" as any, {
 					mandateId: mandateId as any,
 					callerOrchestrator,
@@ -7953,9 +7875,6 @@ export function registerTools(
 		},
 		async ({ mandateId, callerOrchestrator, finalCost }) => {
 			try {
-				const fromDenied = guardFrom(callerOrchestrator);
-				if (fromDenied) return fromDenied;
-
 				await convex.mutation("mandates:settle" as any, {
 					mandateId: mandateId as any,
 					callerOrchestrator,
@@ -8224,9 +8143,6 @@ export function registerTools(
 				// the fleet; a bearer whose org cannot be resolved is refused here.
 				const orgDenied = unresolvedOrgDenial("create_bu");
 				if (orgDenied !== null) return orgDenied;
-				const fromDenied = guardFrom(orchestratorId);
-				if (fromDenied) return fromDenied;
-
 				const buId = await convex.mutation("businessUnits:create" as any, {
 					...verifiedOrgArgs(),
 					name,
@@ -8335,8 +8251,6 @@ export function registerTools(
 			try {
 				const orgDenied = unresolvedOrgDenial("update_bu");
 				if (orgDenied !== null) return orgDenied;
-				const callerDenied = guardFrom(callerOrchestrator);
-				if (callerDenied) return callerDenied;
 				if (orchestratorId) {
 					const leadDenied = await guardAssignee(
 						"orchestratorId",
@@ -9483,9 +9397,6 @@ export function registerTools(
 			linkedIssueIds,
 		}) => {
 			try {
-				const fromDenied = guardFrom(createdBy);
-				if (fromDenied) return fromDenied;
-
 				const patternId = await convex.mutation("fixPatterns:create" as any, {
 					symptom,
 					rootCause,
@@ -9539,9 +9450,6 @@ export function registerTools(
 		},
 		async ({ patternId, description, worked, why, createdBy, commit }) => {
 			try {
-				const fromDenied = guardFrom(createdBy);
-				if (fromDenied) return fromDenied;
-
 				const attemptId = await convex.mutation(
 					"fixPatterns:addAttempt" as any,
 					{
@@ -10001,9 +9909,6 @@ export function registerTools(
 		},
 		async ({ name, description, brief, steps, createdBy, isDefault }) => {
 			try {
-				const fromDenied = guardFrom(createdBy);
-				if (fromDenied) return fromDenied;
-
 				const templateId = await convex.mutation(
 					"missionTemplates:upsert" as any,
 					{

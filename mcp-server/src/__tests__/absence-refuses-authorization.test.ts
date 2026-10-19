@@ -15,9 +15,9 @@
  */
 
 import { describe, expect, it } from "vitest";
+import { fromGate } from "../../test/lib/fromGate.js";
 import {
 	checkDelegationAllowed,
-	checkFromAllowed,
 	checkNamespaceRead,
 	checkNamespaceWrite,
 	type OAuthContext,
@@ -38,15 +38,19 @@ const SCOPED: OAuthContext = {
 	isMaster: false,
 };
 
-describe("checkFromAllowed — absence refuses; holder acts, non-holder refused", () => {
-	it("no context REFUSES (returns a refusal string, not null)", () => {
-		expect(checkFromAllowed(undefined, "prometheus")).not.toBeNull();
+// The `from` gate of a real `from`-scoped tool (fromGate), which replaced the
+// deleted local predicate checkFromAllowed (task k1778c2hvae8e8vz9f5bbbbbb98g62hw).
+describe("from gate — absence refuses; holder acts, non-holder refused", () => {
+	it("no context REFUSES (returns a refusal string, not null)", async () => {
+		expect(await fromGate(undefined, "prometheus")).not.toBeNull();
+		expect(await fromGate(undefined, undefined)).not.toBeNull();
 	});
-	it("holder acts (from in allowlist → allowed)", () => {
-		expect(checkFromAllowed(SCOPED, "prometheus")).toBeNull();
+	it("holder acts (from in allowlist → allowed)", async () => {
+		expect(await fromGate(SCOPED, "prometheus")).toBeNull();
 	});
-	it("non-holder refused (from not in allowlist → refusal)", () => {
-		expect(checkFromAllowed(SCOPED, "nemesis")).not.toBeNull();
+	it("non-holder refused (from not in allowlist → refusal)", async () => {
+		expect(await fromGate(SCOPED, "nemesis")).not.toBeNull();
+		expect(await fromGate(SCOPED, "nemesis", "permissive")).not.toBeNull();
 	});
 });
 

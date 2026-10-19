@@ -199,7 +199,7 @@ export const LOCAL_STDIO_TRUST_CTX: OAuthContext = {
  * LOCAL_STDIO_TRUST_CTX), so this branch fires only for a misconfigured/future
  * caller — and it fails closed.
  */
-const NO_CONTEXT_REFUSAL =
+export const NO_CONTEXT_REFUSAL =
 	"Forbidden: no authorization context on this request — a scope predicate " +
 	"was reached without an identity. Refusing (absence is never master).";
 
@@ -309,7 +309,7 @@ export async function sha256Base64Url(input: string): Promise<string> {
  * field the package checks — the union of conditions is preserved exactly,
  * only the representation changes.
  */
-function toPackageOAuthCtx(ctx: OAuthContext): PackageOAuthCtx {
+export function toPackageOAuthCtx(ctx: OAuthContext): PackageOAuthCtx {
 	return {
 		scope: ctx.isMaster ? "master" : ctx.scopeProfile,
 		fromAllowList: ctx.fromAllowList,
@@ -800,49 +800,11 @@ export function filterRowsToActorTenant<T extends { orgId?: unknown }>(
 }
 
 /**
- * Checks that `from` is allowed by the current OAuth context.
- * Returns null when allowed, an error message string otherwise.
- *
- * TWO gates, BOTH must hold (intersect, never widen):
- *   1. {@link checkActorBinding} — `from` is the agent the credential resolved
- *      (or the caller is master with no actor).
- *   2. the org roster (`fromAllowList`) — a roster may narrow what the actor
- *      may do; it is never a substitute for the actor.
- *
- * A missing `ctx` REFUSES (returns the refusal string), it never passes.
- * Every real auth path sets an oauthContext — the HTTP transport via
- * bearerAuthMiddleware (master, OAuth, Clerk), and the stdio transport via
- * the explicit LOCAL_STDIO_TRUST_CTX server.ts hands to registerTools. So a
- * `!ctx` here is a misconfiguration,
- * and it fails closed rather than granting max authority (clause 3,
- * `.claude/rules/one-identity-layer.md`).
- */
-export function checkFromAllowed(
-	ctx: OAuthContext | undefined,
-	from: string,
-): string | null {
-	if (!ctx) return NO_CONTEXT_REFUSAL;
-	if (isMasterScope(ctx) || ctx.fromAllowList.includes(from)) {
-		// Roster gate satisfied (or master). The actor gate is still required.
-		return checkActorBinding(ctx, from);
-	}
-	// Day 88 friction capitalize: surface the allowed values so the LLM caller
-	// can self-correct on the next attempt instead of guessing identifiers.
-	// Nadia onboarding case (2026-06-01): Claude.ai guessed "Greek letter" when
-	// the actual allowlist was ["nadia"].
-	const allowed =
-		ctx.fromAllowList.length === 0
-			? "(none — this client has no allowed 'from' identities)"
-			: ctx.fromAllowList.join(", ");
-	return `Forbidden: from='${from}' is not in this client's allowlist (scope_profile=${ctx.scopeProfile}). Allowed: ${allowed}.`;
-}
-
-/**
  * The instance label of a message is bound to the sender (mirror of
  * `requireSenderInstanceOfSender`, convex/lib/auth.ts). An OAuth access-token
  * caller reaches Convex as the service account (master), so the Convex check
- * never sees it; this is where its `fromInstanceId` is judged, beside
- * `checkFromAllowed` (which judges only `from`).
+ * never sees it; this is where its `fromInstanceId` is judged, beside the
+ * `from` gates of defineTool (registerTool.ts), which judge only `from`.
  *
  * The roster used for sibling ownership is `ctx.fromAllowList` (the only
  * roster this layer holds synchronously): the instance belongs to the LONGEST
@@ -891,7 +853,8 @@ export function checkInstanceOfSender(
 
 /**
  * Answers the DELEGATION question — is `assignedTo` a member of the CALLER'S
- * own organisation? — as distinct from `checkFromAllowed`, which answers a
+ * own organisation? — as distinct from the acting-name gates of defineTool
+ * (registerTool.ts: the actor binding and the `from` roster), which answer a
  * different question (may this client SPEAK AS `from`). Conflating the two
  * meant every non-master client could only delegate to the one identity in
  * its own `fromAllowList`, making cross-station dispatch impossible for any

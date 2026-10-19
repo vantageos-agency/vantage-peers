@@ -1285,7 +1285,7 @@ export function requireOrchestratorOnRoster(
  * the service account (master, `orgSlug === null`), so this check is skipped
  * for it here; the same rule is applied at the MCP layer
  * (`checkInstanceOfSender`, mcp-server/src/auth.ts), where `from` is also
- * validated (`checkFromAllowed`).
+ * validated (defineTool's acting-name gates, mcp-server/src/registerTool.ts).
  *
  * Master (`orgSlug === null`) is unchanged (returns the instance as given).
  * Refusal: `RBAC_DENIED`, `reason: "instance-not-of-sender"`, naming the door.

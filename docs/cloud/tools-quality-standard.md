@@ -593,10 +593,13 @@ if (!isMasterScope(oauthCtx)) {
 // Option B — identity ownership gate (for domain tools with owner concept)
 const record = await convex.query(api.components.getComponent, { id: args.id });
 if (!record) throw new ConvexError({ code: "NOT_FOUND", message: "Component not found." });
-checkFromAllowed(oauthCtx, record.createdBy);  // throws ConvexError on mismatch
+// The acting name is judged by defineTool before the handler: declare the tool
+// `{ kind: "from", fromArg: "createdBy" }` (actor binding via bindActingNames,
+// roster via @vantageos/cloud-identity passesScopeFilter). Never re-check it
+// in the handler with a local predicate.
 ```
 
-**Pre-commit hook recommendation:** `enforce-scope-gate-on-write-tools.py` — block any commit adding a `server.tool(...)` call where the tool matches `ECRITURE` category and the handler contains no auth guard (`isMasterScope`, `checkFromAllowed`, `checkNamespaceWrite`, or `masterOnlyMiddleware`).
+**Pre-commit hook recommendation:** `enforce-scope-gate-on-write-tools.py` — block any commit adding a `server.tool(...)` call where the tool matches `ECRITURE` category and the handler contains no auth guard (`isMasterScope`, a `from` scope declaration, `checkNamespaceWrite`, or `masterOnlyMiddleware`).
 
 **Before / After example:**
 
@@ -703,7 +706,7 @@ server.tool(
 | §9 ConvexError mapping | HTTP layer | `mcp-server/server-http.ts` | PR #621, commit `5fd6354` |
 | §10 TDD workflow | RED/GREEN phases | `mcp-server/src/__tests__/` | commit `8065a7a` (RED), `5231811` (GREEN) |
 | §11 P0 tools list | A1 audit matrix | `docs/test-reports/day92-vp-mcp-audit-matrix.md` | commit `d03d2d7` |
-| §11 P0 gate pattern | `checkFromAllowed` | `mcp-server/src/auth.ts` | PR #639, commit `1bd6886` |
+| §11 P0 gate pattern | `from` scope kind of `defineTool` (`checkFromAllowed` deleted, task k1778c2hvae8e8vz9f5bbbbbb98g62hw slice 1) | `mcp-server/src/registerTool.ts` | PR #639, commit `1bd6886` (original) |
 
 ---
 
