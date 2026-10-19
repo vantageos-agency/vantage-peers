@@ -13,11 +13,7 @@ import {
 	scopeStanding,
 } from "@vantageos/cloud-identity";
 import type { UserIdentity } from "convex/server";
-import {
-	agentCarriesLabel,
-	findAgentByName,
-	resolveOwnedAgentOfPresentedSecret,
-} from "./agentIdentity";
+import { findAgentByName, resolveOwnedAgentOfPresentedSecret } from "./agentIdentity";
 import { resolveServiceAccount } from "./serviceAccount";
 import { normalizeOrchestratorId } from "../_helpers/normalizeOrchestratorId";
 import {
@@ -1042,9 +1038,8 @@ async function requireVerifiedActorMatch(
 	}
 
 	if (assertedName === undefined) return;
-	// The row is already fixed by `verifiedActor.agentId`; the asserted name is a
-	// label compared with THAT row's own label and selects nobody.
-	if (!agentCarriesLabel(row, assertedName)) {
+	const assertedAgent = await findAgentByName(ctx, row.orgSlug, assertedName);
+	if (!assertedAgent || assertedAgent._id !== row._id) {
 		throw new ConvexError(
 			`AGENT_IDENTITY_MISMATCH: verifiedActor is agent "${row.name}" but the call asserts name "${assertedName}" — a verified actor may only act under its own identity — ${JSON.stringify({ verifiedAgentId: row._id, verifiedAgentName: row.name, assertedName })}`,
 		);
@@ -1164,11 +1159,17 @@ export async function requireAgentCredentialMatch(
 	}
 	const resolved = { agent: owned.agent };
 
-	// IDENTITY IS THE ROW, not the string. The asserted name is a label compared
-	// with the label of the row the credential resolved to (no lookup by name).
-	// A rename therefore keeps the credential working (the new label is the
-	// row's label), and the old label stops matching.
-	if (!agentCarriesLabel(resolved.agent, assertedName)) {
+	// IDENTITY IS THE ROW, not the string. The asserted name is a label: look it
+	// up in the credential's OWN org and require the row it names to be the row
+	// the credential resolved to. A rename therefore keeps the credential
+	// working (the new label names the same row), and the old label stops
+	// matching. A name that names no agent there matches nothing.
+	const assertedAgent = await findAgentByName(
+		ctx,
+		resolved.agent.orgSlug,
+		assertedName,
+	);
+	if (!assertedAgent || assertedAgent._id !== resolved.agent._id) {
 		throw new ConvexError(
 			`AGENT_IDENTITY_MISMATCH: presented credential resolves to agent "${resolved.agent.name}" but the call asserts name "${assertedName}" — a credential holder may only act under its own resolved identity — ${JSON.stringify({ resolvedAgentName: resolved.agent.name, resolvedAgentId: resolved.agent._id, assertedName })}`,
 		);

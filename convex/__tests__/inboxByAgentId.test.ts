@@ -243,12 +243,13 @@ describe("REFUSED: the namesake in another org reads nothing of iris's inbox", (
 			}
 		});
 
-		test("acme's hélios naming 'helios' or iris hélios's ID is REFUSED, RBAC_DENIED naming the door", async () => {
+		test("acme's hélios naming 'helios' or iris hélios's ID reads acme's own inbox, never iris's", async () => {
 			const { t, acmeHelios, irisHelios } = await seedWorld();
 			for (const recipient of ["helios", irisHelios]) {
-				await expect(
-					check(t, { recipient, ...actor(acmeHelios, ACME) }),
-				).rejects.toThrow(new RegExp(`RBAC_DENIED.*${door}`));
+				const got = contentsOf(
+					await check(t, { recipient, ...actor(acmeHelios, ACME) }),
+				);
+				expect(got).toEqual(["ACME-BY-ID"]);
 			}
 		});
 
@@ -267,7 +268,7 @@ describe("REFUSED: the namesake in another org reads nothing of iris's inbox", (
 		});
 	});
 
-	test("getUnreadCount: acme's hélios counts its own one, never iris's; a mismatch is refused", async () => {
+	test("getUnreadCount: acme's hélios counts its own one, never iris's, whatever orchestratorId it names", async () => {
 		const { t, acmeHelios, irisHelios } = await seedWorld();
 		expect(await countOf(t, { ...actor(acmeHelios, ACME) })).toBe(1);
 		expect(
@@ -276,12 +277,11 @@ describe("REFUSED: the namesake in another org reads nothing of iris's inbox", (
 				...actor(acmeHelios, ACME),
 			}),
 		).toBe(1);
-		await expect(
-			countOf(t, { orchestratorId: irisHelios, ...actor(acmeHelios, ACME) }),
-		).rejects.toThrow(/RBAC_DENIED.*messages:getUnreadCount/);
-		await expect(
-			countOf(t, { orchestratorId: "helios", ...actor(acmeHelios, ACME) }),
-		).rejects.toThrow(/RBAC_DENIED.*messages:getUnreadCount/);
+		for (const orchestratorId of [irisHelios, "helios"]) {
+			expect(
+				await countOf(t, { orchestratorId, ...actor(acmeHelios, ACME) }),
+			).toBe(1);
+		}
 	});
 
 	// CONTRACT pole (inboxReader.ts UNCLAIMED_SERVICE_ACCOUNT_READS_EVERY_TENANT):
