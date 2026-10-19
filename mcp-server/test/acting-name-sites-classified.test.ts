@@ -7,10 +7,12 @@
  *
  * `callerOrchestrator` stopped being an authority: defineTool (registerTool.ts)
  * binds it to the credential-resolved actor for EVERY tool whose schema
- * declares it. What is left at a site is one of six classes (see the helper's
+ * declares it. What is left at a site is one of five classes (see the helper's
  * header for the exact syntactic definition of each): scope-decl, schema-decl,
- * guard, prose, use, mechanism. A site that fits none is a BLOCK and fails the
- * suite.
+ * prose, use, mechanism. A site that fits none is a BLOCK and fails the suite.
+ * (A sixth class, `guard`, named the in-handler check `guardFrom`; it was
+ * deleted with that check, task k1778c2hvae8e8vz9f5bbbbbb98g62hw slice 1. The
+ * fixtures below still call a declared `guardFrom` as an arbitrary function.)
  *
  * WHY AST, not regex. The first version classified lines by regex and was
  * blind in both directions. Measured before this rewrite, by appending to
@@ -95,7 +97,6 @@ describe("callerOrchestrator sites — every one classified through the AST, eve
 		for (const cls of [
 			"scope-decl",
 			"schema-decl",
-			"guard",
 			"prose",
 			"use",
 			"mechanism",
@@ -628,7 +629,7 @@ const MUST_PASS: {
 				'await convex.mutation("tasks:complete", { taskId, callerOrchestrator: callerOrchestrator });\n' +
 				"return denied;",
 		),
-		expect: { use: 6, guard: 1 },
+		expect: { use: 7 },
 	},
 	{
 		name: "the write and default refusals are not a blanket: reading, forwarding, and assigning the args' value onto another object stay classified",
@@ -638,12 +639,12 @@ const MUST_PASS: {
 				"const { callerOrchestrator } = args; const o = { x: callerOrchestrator, ...{ callerOrchestrator } };\n" +
 				"const [q] = [callerOrchestrator]; return [a, o, q, guardFrom(callerOrchestrator)];",
 		),
-		expect: { use: 6, guard: 1 },
+		expect: { use: 7 },
 	},
 	{
 		name: "a function-expression handler is a handler too",
 		source: `${PRELUDE}defineTool(server, ctx, { kind: "public", reason: "fixture" }, "t", "d", {}, async function ({ callerOrchestrator }: any) { return guardFrom(callerOrchestrator); });\n`,
-		expect: { use: 1, guard: 1 },
+		expect: { use: 2 },
 	},
 	{
 		name: "prose: a comment and strings that merely mention the token",

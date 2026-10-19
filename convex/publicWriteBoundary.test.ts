@@ -10,7 +10,7 @@
  * identity — so any caller could type the literal "system" and rewrite, or
  * cross-tenant-reassign, any organisation's business unit.
  * `businessUnits.remove` performed no check whatsoever. A direct call to the
- * public Convex deployment (bypassing the MCP server's guardFrom /
+ * public Convex deployment (bypassing the MCP server's acting-name /
  * guardMasterOnly layer, which is NOT a defence for this class — see
  * .claude/rules/authority-attached-to-anonymous-object.md and
  * .claude/rules/http-boundary-derives-from-principal.md) could create,

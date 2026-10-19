@@ -1,8 +1,11 @@
 /**
  * Scope-enforcement unit tests for the OAuth scoped-tokens mission.
  *
- * These tests cover the pure predicate logic (checkFromAllowed,
- * checkNamespacePrefix, checkNamespaceRead, checkNamespaceWrite, isMasterScope)
+ * These tests cover the pure predicate logic (checkNamespacePrefix,
+ * checkNamespaceRead, checkNamespaceWrite, isMasterScope) and the `from` gate
+ * of a real `from`-scoped tool (fromGate: defineTool's actor binding, then the
+ * roster through @vantageos/cloud-identity passesScopeFilter; it replaced the
+ * deleted local predicate checkFromAllowed, task k1778c2hvae8e8vz9f5bbbbbb98g62hw)
  * and the master-vs-marie-vs-legacy branching that drives every MCP tool guard
  * in src/tools.ts. HTTP/end-to-end flow tests live in the OAuth integration
  * harness (spun up separately against a Bun server + convex-test fixture).
@@ -11,10 +14,10 @@
 import type { ConvexHttpClient } from "convex/browser";
 import { Hono } from "hono";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { fromGate } from "../../test/lib/fromGate.js";
 import {
 	_setInternalClientForTest,
 	bearerAuthMiddleware,
-	checkFromAllowed,
 	checkNamespacePrefix,
 	checkNamespaceRead,
 	checkNamespaceWrite,
@@ -80,41 +83,55 @@ describe("isMasterScope", () => {
 	});
 });
 
-describe("checkFromAllowed", () => {
-	it("Marie cannot impersonate pi", () => {
-		expect(checkFromAllowed(marieCtx, "pi")).toMatch(/Forbidden/);
+// The roster refusal text (src/registerTool.ts fromNotOnRosterRefusal).
+const ROSTER_REFUSAL =
+	/^Forbidden: from='[^']+' is not in this client's allowlist/;
+
+describe("from gate (defineTool: actor binding, then roster)", () => {
+	it("Marie cannot impersonate pi", async () => {
+		expect(await fromGate(marieCtx, "pi")).toMatch(/AGENT_IDENTITY_MISMATCH/);
 	});
 
-	it("Marie can send as marie", () => {
-		expect(checkFromAllowed(marieCtx, "marie")).toBeNull();
+	it("Marie can send as marie", async () => {
+		expect(await fromGate(marieCtx, "marie")).toBeNull();
 	});
 
-	it("master can send as any orchestrator", () => {
-		expect(checkFromAllowed(masterCtx, "marie")).toBeNull();
-		expect(checkFromAllowed(masterCtx, "pi")).toBeNull();
-		expect(checkFromAllowed(masterCtx, "random-new-client")).toBeNull();
+	it("master can send as any orchestrator", async () => {
+		expect(await fromGate(masterCtx, "marie")).toBeNull();
+		expect(await fromGate(masterCtx, "pi")).toBeNull();
+		expect(await fromGate(masterCtx, "random-new-client")).toBeNull();
 	});
 
-	it("generic deny-by-default rejects everyone", () => {
-		expect(checkFromAllowed(genericCtx, "marie")).toMatch(/Forbidden/);
+	it("generic deny-by-default rejects everyone", async () => {
+		expect(await fromGate(genericCtx, "marie")).toMatch(
+			/AGENT_CREDENTIAL_REQUIRED/,
+		);
+		expect(await fromGate(genericCtx, "marie", "permissive")).toMatch(
+			ROSTER_REFUSAL,
+		);
 	});
 
-	it("no oauthContext REFUSES from enforcement — absence is never authority", () => {
+	it("no oauthContext REFUSES from enforcement — absence is never authority", async () => {
 		// Every real path now carries a context (HTTP middleware; stdio
 		// LOCAL_STDIO_TRUST_CTX). A bare undefined fails closed.
-		expect(checkFromAllowed(undefined, "anything")).not.toBeNull();
+		expect(await fromGate(undefined, "anything")).not.toBeNull();
 	});
 
 	// Day 88 capitalize — Marie onboarding friction (2026-06-01).
-	it("error message surfaces the allowlist so the LLM can self-correct", () => {
-		const err = checkFromAllowed(marieCtx, "pi");
+	it("error message surfaces the allowlist so the LLM can self-correct", async () => {
+		// The roster refusal is reached when the actor gate passes: a credential
+		// for "pi" on Marie's client, whose roster lists only "marie".
+		const err = await fromGate(
+			{ ...marieCtx, actor: { orgSlug: "marie-org", agentName: "pi" } },
+			"pi",
+		);
 		expect(err).not.toBeNull();
 		expect(err).toContain("Allowed: marie");
 		expect(err).toContain("scope_profile=marie-iris-rh");
 	});
 
-	it("error message handles empty allowlist (deny-by-default) gracefully", () => {
-		const err = checkFromAllowed(genericCtx, "marie");
+	it("error message handles empty allowlist (deny-by-default) gracefully", async () => {
+		const err = await fromGate(genericCtx, "marie", "permissive");
 		expect(err).not.toBeNull();
 		expect(err).toContain("none");
 	});
@@ -247,12 +264,12 @@ describe("checkNamespaceWrite", () => {
 // ─────────────────────────────────────────────────────────────────────────────
 
 describe("Marie smoke flow (scope decisions)", () => {
-	it("send_message(from=marie) → OK", () => {
-		expect(checkFromAllowed(marieCtx, "marie")).toBeNull();
+	it("send_message(from=marie) → OK", async () => {
+		expect(await fromGate(marieCtx, "marie")).toBeNull();
 	});
 
-	it("send_message(from=pi) → 403", () => {
-		expect(checkFromAllowed(marieCtx, "pi")).toMatch(/Forbidden/);
+	it("send_message(from=pi) → 403", async () => {
+		expect(await fromGate(marieCtx, "pi")).toMatch(/AGENT_IDENTITY_MISMATCH/);
 	});
 
 	it("recall(namespace=orchestrator/tau) → 403", () => {
@@ -265,21 +282,21 @@ describe("Marie smoke flow (scope decisions)", () => {
 		expect(checkNamespaceRead(marieCtx, "orchestrator/victor")).toBeNull();
 	});
 
-	it("store_memory(namespace=project/marie, createdBy=marie) → OK on both guards", () => {
-		expect(checkFromAllowed(marieCtx, "marie")).toBeNull();
+	it("store_memory(namespace=project/marie, createdBy=marie) → OK on both guards", async () => {
+		expect(await fromGate(marieCtx, "marie")).toBeNull();
 		expect(checkNamespaceWrite(marieCtx, "project/marie")).toBeNull();
 	});
 
-	it("store_memory(namespace=orchestrator/pi, createdBy=marie) → 403 on namespace", () => {
-		expect(checkFromAllowed(marieCtx, "marie")).toBeNull();
+	it("store_memory(namespace=orchestrator/pi, createdBy=marie) → 403 on namespace", async () => {
+		expect(await fromGate(marieCtx, "marie")).toBeNull();
 		expect(checkNamespaceWrite(marieCtx, "orchestrator/pi")).toMatch(
 			/Forbidden/,
 		);
 	});
 
-	it("master flow: any from + any namespace → OK (backward compat)", () => {
-		expect(checkFromAllowed(masterCtx, "pi")).toBeNull();
-		expect(checkFromAllowed(masterCtx, "marie")).toBeNull();
+	it("master flow: any from + any namespace → OK (backward compat)", async () => {
+		expect(await fromGate(masterCtx, "pi")).toBeNull();
+		expect(await fromGate(masterCtx, "marie")).toBeNull();
 		expect(checkNamespaceRead(masterCtx, "orchestrator/pi")).toBeNull();
 		expect(checkNamespaceWrite(masterCtx, "project/internal")).toBeNull();
 	});
@@ -293,53 +310,70 @@ describe("Marie smoke flow (scope decisions)", () => {
 // ─────────────────────────────────────────────────────────────────────────────
 
 describe("Extended tool guard coverage (newly guarded tools)", () => {
-	it("create_task(assignedTo='pi', createdBy='marie') → 403 on assignee check", () => {
+	it("create_task(assignedTo='pi', createdBy='marie') → 403 on assignee check", async () => {
 		// createdBy=marie passes, but assignedTo=pi does not.
-		expect(checkFromAllowed(marieCtx, "marie")).toBeNull();
-		expect(checkFromAllowed(marieCtx, "pi")).toMatch(/Forbidden/);
+		expect(await fromGate(marieCtx, "marie")).toBeNull();
+		expect(await fromGate(marieCtx, "pi")).toMatch(/AGENT_IDENTITY_MISMATCH/);
 	});
 
-	it("write_diary(orchestrator='tau') from Marie → 403", () => {
-		expect(checkFromAllowed(marieCtx, "tau")).toMatch(/Forbidden/);
+	it("write_diary(orchestrator='tau') from Marie → 403", async () => {
+		expect(await fromGate(marieCtx, "tau")).toMatch(/AGENT_IDENTITY_MISMATCH/);
 	});
 
-	it("update_profile(orchestratorId='victor') from Marie → 403", () => {
+	it("update_profile(orchestratorId='victor') from Marie → 403", async () => {
 		// Marie's allowlist is ['marie'] — she cannot write to Victor's profile
 		// identity even though she can read the victor namespace.
-		expect(checkFromAllowed(marieCtx, "victor")).toMatch(/Forbidden/);
-	});
-
-	it("set_summary(orchestratorId='marie') from Marie → OK", () => {
-		expect(checkFromAllowed(marieCtx, "marie")).toBeNull();
-	});
-
-	it("create_mandate(requestedBy='marie', fulfilledBy='pi') from Marie → 403 on fulfilledBy", () => {
-		expect(checkFromAllowed(marieCtx, "marie")).toBeNull();
-		expect(checkFromAllowed(marieCtx, "pi")).toMatch(/Forbidden/);
-	});
-
-	it("create_bu(orchestratorId='sigma') from Marie → 403", () => {
-		expect(checkFromAllowed(marieCtx, "sigma")).toMatch(/Forbidden/);
-	});
-
-	it("create_briefing_note(createdBy='marie') from Marie → OK", () => {
-		expect(checkFromAllowed(marieCtx, "marie")).toBeNull();
-	});
-
-	it("accept_mandate(callerOrchestrator='pi') from Marie → 403", () => {
-		expect(checkFromAllowed(marieCtx, "pi")).toMatch(/Forbidden/);
-	});
-
-	it("create_fix_pattern(createdBy='tau') from Marie → 403", () => {
-		expect(checkFromAllowed(marieCtx, "tau")).toMatch(/Forbidden/);
-	});
-
-	it("generic deny-by-default client: every tool-guard-relevant from rejected", () => {
-		expect(checkFromAllowed(genericCtx, "marie")).toMatch(/Forbidden/);
-		expect(checkFromAllowed(genericCtx, "pi")).toMatch(/Forbidden/);
-		expect(checkFromAllowed(genericCtx, "anonymous-dcr-hijack")).toMatch(
-			/Forbidden/,
+		expect(await fromGate(marieCtx, "victor")).toMatch(
+			/AGENT_IDENTITY_MISMATCH/,
 		);
+	});
+
+	it("set_summary(orchestratorId='marie') from Marie → OK", async () => {
+		expect(await fromGate(marieCtx, "marie")).toBeNull();
+	});
+
+	it("create_mandate(requestedBy='marie', fulfilledBy='pi') from Marie → 403 on fulfilledBy", async () => {
+		expect(await fromGate(marieCtx, "marie")).toBeNull();
+		expect(await fromGate(marieCtx, "pi")).toMatch(/AGENT_IDENTITY_MISMATCH/);
+	});
+
+	it("create_bu(orchestratorId='sigma') from Marie → 403", async () => {
+		expect(await fromGate(marieCtx, "sigma")).toMatch(
+			/AGENT_IDENTITY_MISMATCH/,
+		);
+	});
+
+	it("create_briefing_note(createdBy='marie') from Marie → OK", async () => {
+		expect(await fromGate(marieCtx, "marie")).toBeNull();
+	});
+
+	it("accept_mandate(callerOrchestrator='pi') from Marie → 403", async () => {
+		expect(await fromGate(marieCtx, "pi")).toMatch(/AGENT_IDENTITY_MISMATCH/);
+	});
+
+	it("create_fix_pattern(createdBy='tau') from Marie → 403", async () => {
+		expect(await fromGate(marieCtx, "tau")).toMatch(/AGENT_IDENTITY_MISMATCH/);
+	});
+
+	it("generic deny-by-default client: every tool-guard-relevant from rejected", async () => {
+		expect(await fromGate(genericCtx, "marie")).toMatch(
+			/AGENT_CREDENTIAL_REQUIRED/,
+		);
+		expect(await fromGate(genericCtx, "marie", "permissive")).toMatch(
+			ROSTER_REFUSAL,
+		);
+		expect(await fromGate(genericCtx, "pi")).toMatch(
+			/AGENT_CREDENTIAL_REQUIRED/,
+		);
+		expect(await fromGate(genericCtx, "pi", "permissive")).toMatch(
+			ROSTER_REFUSAL,
+		);
+		expect(await fromGate(genericCtx, "anonymous-dcr-hijack")).toMatch(
+			/AGENT_CREDENTIAL_REQUIRED/,
+		);
+		expect(
+			await fromGate(genericCtx, "anonymous-dcr-hijack", "permissive"),
+		).toMatch(ROSTER_REFUSAL);
 	});
 });
 
@@ -362,7 +396,10 @@ describe("bearerAuthMiddleware DCR path removed (#556 path retired, k173r2p1y)",
 		_setInternalClientForTest(null);
 	});
 
-	function buildMockConvex(): { client: ConvexHttpClient; queryFn: ReturnType<typeof vi.fn> } {
+	function buildMockConvex(): {
+		client: ConvexHttpClient;
+		queryFn: ReturnType<typeof vi.fn>;
+	} {
 		// Only layer 2 (oauth:getAccessTokenByHash) is ever consulted now — the
 		// removed DCR/mcpTenants branches never issue a lookup at all.
 		const queryFn = vi.fn(async (name: string) => {
@@ -494,10 +531,25 @@ describe("Day 88 — DCR auto-discovery scope isolation", () => {
 		);
 	});
 
-	it("DCR auto-flow client cannot impersonate any orchestrator (from=*)", () => {
-		expect(checkFromAllowed(dcrAutoCtx, "pi")).toMatch(/Forbidden/);
-		expect(checkFromAllowed(dcrAutoCtx, "marie")).toMatch(/Forbidden/);
-		expect(checkFromAllowed(dcrAutoCtx, "external")).toMatch(/Forbidden/);
+	it("DCR auto-flow client cannot impersonate any orchestrator (from=*)", async () => {
+		expect(await fromGate(dcrAutoCtx, "pi")).toMatch(
+			/AGENT_CREDENTIAL_REQUIRED/,
+		);
+		expect(await fromGate(dcrAutoCtx, "pi", "permissive")).toMatch(
+			ROSTER_REFUSAL,
+		);
+		expect(await fromGate(dcrAutoCtx, "marie")).toMatch(
+			/AGENT_CREDENTIAL_REQUIRED/,
+		);
+		expect(await fromGate(dcrAutoCtx, "marie", "permissive")).toMatch(
+			ROSTER_REFUSAL,
+		);
+		expect(await fromGate(dcrAutoCtx, "external")).toMatch(
+			/AGENT_CREDENTIAL_REQUIRED/,
+		);
+		expect(await fromGate(dcrAutoCtx, "external", "permissive")).toMatch(
+			ROSTER_REFUSAL,
+		);
 	});
 
 	// public-readonly profile — Day 88 new seed. Read global/* only.

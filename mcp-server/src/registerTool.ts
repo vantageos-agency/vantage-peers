@@ -5,8 +5,8 @@
  * `server.tool(...)` API lets an author register an MCP tool WITHOUT declaring
  * who may call it. Scope enforcement then lives inside each handler body and
  * depends on the author remembering to add a `guardRead`/`guardWrite`/
- * `guardFrom`/`guardMasterOnly`/`scopeFilterList` call. A forgotten guard is a
- * silent cross-tenant hole.
+ * `guardMasterOnly`/`scopeFilterList` call or an acting-name check. A forgotten
+ * guard is a silent cross-tenant hole.
  *
  * The fix is structural, not by convention: `defineTool` makes the caller
  * authorization a REQUIRED positional argument (`scope`, 3rd position).
@@ -22,28 +22,38 @@
  * `@vantageos/cloud-identity` (isMasterScope 0.3.0+). `defineTool` only decides
  * WHEN to call those predicates, from the declared `scope`. The positional
  * signature mirrors `server.tool(name, description, schema, annotations?, cb)`
- * with `scope` promoted ahead of `name`, so a migration is a one-line change
- * and every handler body stays byte-identical (behavior-preserving for tools
- * that already guard in-handler — the wrapper's pre-check duplicates a gate the
- * handler still runs).
+ * with `scope` promoted ahead of `name`, so a migration is a one-line change.
+ *
+ * The `from` kind is the ONLY place the acting name of a `from`-scoped tool is
+ * judged; a handler does not re-check it (task k1778c2hvae8e8vz9f5bbbbbb98g62hw
+ * slice 1 removed the in-handler copies, which re-decided an answered question).
+ * Two gates, both before the handler, intersect and never widen:
+ *   1. the actor binding — {@link bindActingNames} runs `checkActorBinding` on
+ *      every declared acting name (`callerOrchestrator`, the `fromArg`);
+ *   2. the roster (`fromAllowList`) — {@link enforceScope}, decided by
+ *      `@vantageos/cloud-identity` `passesScopeFilter`.
  */
 
 import type { McpServer } from "@modelcontextprotocol/server";
-import { resolvePersonActingName } from "@vantageos/cloud-identity";
+import {
+	passesScopeFilter,
+	resolvePersonActingName,
+} from "@vantageos/cloud-identity";
 import { z } from "zod";
 import { isClerkMember } from "./memberAuthor.js";
 import {
 	checkActorBinding,
-	checkFromAllowed,
 	checkNamespaceRead,
 	checkNamespaceWrite,
 	internalClient,
 	isMasterScope,
 	isUnattributedClaim,
+	NO_CONTEXT_REFUSAL,
 	type OAuthContext,
 	personActorOf,
 	recordUnattributedClaim,
 	seatAgentOf,
+	toPackageOAuthCtx,
 } from "./auth.js";
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -101,6 +111,24 @@ type McpTextResult = {
 
 function mcpError(message: string): McpTextResult {
 	return { content: [{ type: "text", text: message }], isError: true };
+}
+
+/**
+ * The refusal text for an acting name the caller's roster does not list. Text
+ * only: the decision is `passesScopeFilter`'s, made at the call site. It
+ * surfaces the allowed values so an LLM caller can self-correct instead of
+ * guessing identifiers (Day 88, Nadia onboarding: Claude.ai guessed "Greek
+ * letter" when the allowlist was ["nadia"]).
+ */
+export function fromNotOnRosterRefusal(
+	ctx: OAuthContext,
+	from: string,
+): string {
+	const allowed =
+		ctx.fromAllowList.length === 0
+			? "(none — this client has no allowed 'from' identities)"
+			: ctx.fromAllowList.join(", ");
+	return `Forbidden: from='${from}' is not in this client's allowlist (scope_profile=${ctx.scopeProfile}). Allowed: ${allowed}.`;
 }
 
 // Tool handler as accepted by the MCP SDK — (args, extra) => result.
@@ -161,8 +189,18 @@ function enforceScope(
 			// feeding String(undefined) to the binder would invent one.)
 			if ((from === undefined || from === null) && isMasterScope(ctx.oauthCtx))
 				return null;
-			const err = checkFromAllowed(ctx.oauthCtx, String(from));
-			return err ? mcpError(err) : null;
+			if (!ctx.oauthCtx) return mcpError(NO_CONTEXT_REFUSAL);
+			// The actor gate already ran: bindActingNames applied checkActorBinding
+			// to this same argument (or derived it from the resolved actor) before
+			// this call. What is left is the roster, which narrows the actor and
+			// never substitutes for it. An omitted name for a non-master caller
+			// reaches here as "undefined", which no roster lists: refused.
+			const name = String(from);
+			if (
+				passesScopeFilter(toPackageOAuthCtx(ctx.oauthCtx), { createdBy: name })
+			)
+				return null;
+			return mcpError(fromNotOnRosterRefusal(ctx.oauthCtx, name));
 		}
 	}
 }
