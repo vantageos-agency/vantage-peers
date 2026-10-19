@@ -53,7 +53,7 @@ describe("M8 the agent registry selects no agent by name", () => {
 		}
 		expect(Object.fromEntries(callers)).toEqual({
 			// M5 messaging: declared sender must hold a credential once it is a known agent
-			[join("lib", "auth.ts")]: 3,
+			[join("lib", "auth.ts")]: 1,
 			// M5 messaging: seat sender screened against registered labels
 			"messages.ts": 2,
 			// M6 inbox, two owned sites, neither selects the reader:
@@ -61,7 +61,7 @@ describe("M8 the agent registry selects no agent by name", () => {
 			//  - a `recipient` label sent beside a verified agent may only NARROW: it
 			//    must resolve, in that agent's own org, to the very agent the verified
 			//    claim already fixed (compared by _id). The reader is never chosen by it.
-			[join("lib", "inboxReader.ts")]: 2,
+			[join("lib", "inboxReader.ts")]: 1,
 			// tasks doors: createdBy / assignedTo labels stamped as IDs
 			[join("lib", "actorIds.ts")]: 1,
 			// M1 rosters / seat profiles: profile fromAllowList label
