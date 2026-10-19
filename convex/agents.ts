@@ -2,7 +2,7 @@ import { type ActingPrincipal, isPersonActorName } from "@vantageos/cloud-identi
 import { ConvexError, v } from "convex/values";
 import { internal } from "./_generated/api";
 import type { Doc, Id } from "./_generated/dataModel";
-import { internalMutation, mutation, query } from "./_generated/server";
+import { internalMutation, internalQuery, mutation, query } from "./_generated/server";
 import type { MutationCtx } from "./_generated/server";
 import { normalizeOrchestratorId } from "./_helpers/normalizeOrchestratorId";
 import {
@@ -56,6 +56,7 @@ const agentReturnValidator = v.object({
 	outboundAuthRef: v.optional(v.string()),
 	kind: v.optional(v.union(v.literal("agent"), v.literal("service"))),
 	authSubject: v.optional(v.string()),
+	ownerPersonId: v.optional(v.string()),
 	isActive: v.boolean(),
 	createdAt: v.number(),
 });
@@ -470,3 +471,143 @@ export const listAgentsByOrg = query({
 // Re-exported for callers that need the Id type without importing
 // _generated/dataModel directly.
 export type AgentId = Id<"agents">;
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Agent owner (EXPAND ONLY) — task k1778c2hvae8e8vz9f5bbbbbb98g62hw item 3.
+// ─────────────────────────────────────────────────────────────────────────────
+//
+// `agents.ownerPersonId` is the Clerk user ID of the human who owns an agent, so a
+// later delivery can hand it to `@vantageos/cloud-identity`
+// `resolveCallerFromAgentCredential`. These two operator doors only STORE and LIST
+// that ID (rule one-identity-layer: no local identity decision). Nothing refuses an
+// agent without an owner and no request path reads the field yet.
+//
+// Refusal codes of setAgentOwner (all checked before any write):
+//   AGENT_OWNER_BATCH_INVALID  agentIds empty or longer than 100
+//   OWNER_PERSON_ID_INVALID    ownerPersonId is not `user_` + alphanumerics
+//   OWNER_REASON_REQUIRED      reason shorter than 10 characters once trimmed
+//   AGENT_NOT_FOUND            an id names no agent row
+//   AGENT_INACTIVE             an id names an inactive agent
+//   OWNER_CONFLICT             the agent has a different owner and replace is not true
+
+const OWNER_BATCH_MAX = 100;
+const OWNER_REASON_MIN_LENGTH = 10;
+const OWNER_PERSON_ID_PATTERN = /^user_[A-Za-z0-9]+$/;
+const OWNER_SCAN_CAP = 2000;
+
+export const setAgentOwner = internalMutation({
+	args: {
+		agentIds: v.array(v.id("agents")),
+		ownerPersonId: v.string(),
+		reason: v.string(),
+		replace: v.optional(v.boolean()),
+	},
+	returns: v.object({
+		results: v.array(
+			v.object({
+				agentId: v.id("agents"),
+				previous: v.union(v.string(), v.null()),
+				current: v.string(),
+				changed: v.boolean(),
+			}),
+		),
+	}),
+	handler: async (ctx, args) => {
+		if (args.agentIds.length < 1 || args.agentIds.length > OWNER_BATCH_MAX) {
+			throw new ConvexError(
+				`AGENT_OWNER_BATCH_INVALID: agentIds must hold 1 to ${OWNER_BATCH_MAX} ids, got ${args.agentIds.length}`,
+			);
+		}
+		if (!OWNER_PERSON_ID_PATTERN.test(args.ownerPersonId)) {
+			throw new ConvexError(
+				"OWNER_PERSON_ID_INVALID: ownerPersonId must be a Clerk user ID (user_ followed by letters and digits)",
+			);
+		}
+		if (args.reason.trim().length < OWNER_REASON_MIN_LENGTH) {
+			throw new ConvexError(
+				`OWNER_REASON_REQUIRED: reason must be at least ${OWNER_REASON_MIN_LENGTH} characters once trimmed`,
+			);
+		}
+
+		// Phase 1: judge every agent, write nothing.
+		const plan: Array<{ agentId: Id<"agents">; previous: string | null; changed: boolean }> = [];
+		const planned = new Map<string, string | null>();
+		for (const agentId of args.agentIds) {
+			const agent = await ctx.db.get(agentId);
+			if (agent === null) {
+				throw new ConvexError(`AGENT_NOT_FOUND: no agent ${agentId}`);
+			}
+			if (!agent.isActive) {
+				throw new ConvexError(`AGENT_INACTIVE: agent ${agentId} is not active`);
+			}
+			// A repeated id sees the owner an earlier occurrence in this call would leave.
+			const previous = planned.has(agentId)
+				? (planned.get(agentId) ?? null)
+				: (agent.ownerPersonId ?? null);
+			if (
+				previous !== null &&
+				previous !== args.ownerPersonId &&
+				args.replace !== true
+			) {
+				throw new ConvexError(
+					`OWNER_CONFLICT: agent ${agentId} already belongs to another person; pass replace: true to move it`,
+				);
+			}
+			plan.push({ agentId, previous, changed: previous !== args.ownerPersonId });
+			planned.set(agentId, args.ownerPersonId);
+		}
+
+		// Phase 2: write.
+		const written = new Set<string>();
+		for (const step of plan) {
+			if (step.changed && !written.has(step.agentId)) {
+				await ctx.db.patch(step.agentId, { ownerPersonId: args.ownerPersonId });
+				written.add(step.agentId);
+			}
+		}
+		return {
+			results: plan.map((s) => ({
+				agentId: s.agentId,
+				previous: s.previous,
+				current: args.ownerPersonId,
+				changed: s.changed,
+			})),
+		};
+	},
+});
+
+/**
+ * listAgentsWithoutOwner — the operator's worklist for the owner backfill: every
+ * ACTIVE agent with no `ownerPersonId`. Labels (`orgSlug`, `name`, `kind`) are for the
+ * operator's reading only and decide nothing. The scan is bounded; over the cap it
+ * REFUSES rather than answering from a partial view.
+ */
+export const listAgentsWithoutOwner = internalQuery({
+	args: {},
+	returns: v.array(
+		v.object({
+			agentId: v.id("agents"),
+			orgSlug: v.string(),
+			clerkOrgId: v.union(v.string(), v.null()),
+			name: v.string(),
+			kind: v.union(v.literal("agent"), v.literal("service"), v.null()),
+		}),
+	),
+	handler: async (ctx) => {
+		const all = await ctx.db.query("agents").take(OWNER_SCAN_CAP + 1);
+		if (all.length > OWNER_SCAN_CAP) {
+			throw new ConvexError(
+				`AGENT_SCAN_CAP_EXCEEDED: more than ${OWNER_SCAN_CAP} agents, refusing to list from a partial view`,
+			);
+		}
+		return all
+			.filter((a) => a.isActive && a.ownerPersonId === undefined)
+			.map((a) => ({
+				agentId: a._id,
+				orgSlug: a.orgSlug,
+				clerkOrgId: a.clerkOrgId ?? null,
+				name: a.name,
+				kind: a.kind ?? null,
+			}));
+	},
+});
