@@ -116,12 +116,14 @@ const createAsB = (t: T, secret: string) =>
 		agentCredentialSecret: secret,
 	});
 
-const actorOf = (t: T, secret: string) =>
-	t.run((ctx) =>
+// t.run serialises a Convex value, so the function's `undefined` comes back as
+// null; normalise it back so the poles assert the function's own answer.
+const actorOf = async (t: T, secret: string) =>
+	(await t.run((ctx) =>
 		callerActorOf(ctx, {} as unknown as OrgScope, "b", {
 			agentCredentialSecret: secret,
 		}),
-	);
+	)) ?? undefined;
 
 describe("requireAgentCredentialMatch (via tasks:create) — owner check", () => {
 	test("PRESENT: owned agent with a live membership is accepted", async () => {

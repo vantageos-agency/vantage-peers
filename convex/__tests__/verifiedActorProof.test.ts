@@ -36,6 +36,7 @@ import type { Id } from "../_generated/dataModel";
 import schema from "../schema";
 import { requireAgentCredentialMatch } from "../lib/auth";
 import { agentIdOf } from "../../tests/lib/agentIdOf";
+import { ownAgent } from "../../tests/lib/ownAgent";
 import { testClerkOrgId } from "../../tests/fixtures/testClerkOrgId";
 
 const modules = Object.fromEntries(
@@ -106,6 +107,8 @@ async function mint(t: T, org: string, agentName: string): Promise<string> {
 		api.agentCredentials.mintAgentCredential,
 		{ orgSlug: org, agentId: await agentIdOf(t, org, agentName) },
 	);
+	// A credential resolves only for an agent bound to a live member owner.
+	await ownAgent(t, org, agentName);
 	return minted.secret;
 }
 

@@ -3,6 +3,7 @@ import type { DataModel, Id } from "../../convex/_generated/dataModel";
 import { normalizeOrchestratorId } from "../../convex/_helpers/normalizeOrchestratorId";
 import { testClerkOrgId } from "../fixtures/testClerkOrgId";
 import { findAgentId } from "./agentIdOf";
+import { ownAgent } from "./ownAgent";
 
 type Runner = {
 	run: <Output>(
@@ -169,6 +170,16 @@ export async function mintAgentSecret(
 		api.agentCredentials.mintAgentCredential as never,
 		{ orgSlug, agentId } as never,
 	)) as { secret: string };
+	// A credential resolves only for an agent that carries its permanent org id
+	// and is bound to a live member owner. Rows a fixture inserted directly may
+	// carry only the slug: stamp the id the way registerAgent does.
+	await t.run(async (ctx) => {
+		const row = await ctx.db.get(agentId);
+		if (row !== null && row.clerkOrgId === undefined) {
+			await ctx.db.patch(agentId, { clerkOrgId });
+		}
+	});
+	await ownAgent(t, orgSlug, label, clerkOrgId);
 	return minted.secret;
 }
 

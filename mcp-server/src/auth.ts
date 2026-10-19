@@ -1208,8 +1208,9 @@ async function resolveActorFromRequest(
 				ok: false,
 				status: 401,
 				error:
-					"AGENT_CREDENTIAL_INVALID: the presented agent credential does not " +
-					"resolve to an active agent",
+					"AGENT_CREDENTIAL_INVALID: the presented agent credential is not " +
+					"accepted (unknown, rotated out, inactive agent, or an agent with no " +
+					"live member owner)",
 			};
 		}
 		const message = err instanceof Error ? err.message : String(err);

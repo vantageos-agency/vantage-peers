@@ -13,7 +13,7 @@ import {
 	scopeStanding,
 } from "@vantageos/cloud-identity";
 import type { UserIdentity } from "convex/server";
-import { findAgentByName, resolveAgentOfPresentedSecret } from "./agentIdentity";
+import { findAgentByName, resolveOwnedAgentOfPresentedSecret } from "./agentIdentity";
 import { resolveServiceAccount } from "./serviceAccount";
 import { normalizeOrchestratorId } from "../_helpers/normalizeOrchestratorId";
 import {
@@ -1144,18 +1144,20 @@ export async function requireAgentCredentialMatch(
 
 	// The presented secret is validated and its agent read BY ID through
 	// @vantageos/cloud-identity (convex/lib/agentIdentity.ts); no name takes part.
-	const resolvedAgent = await resolveAgentOfPresentedSecret(
+	// The same owner-bound composition as agentCredentials:resolveAgentCredential:
+	// an agent with no live member owner is refused here too, said in this
+	// door's own shape (AGENT_IDENTITY_MISMATCH, the reason in the payload).
+	const owned = await resolveOwnedAgentOfPresentedSecret(
 		ctx,
 		agentCredentialSecret,
 		"lib/auth:requireAgentCredentialMatch",
 	);
-	const resolved = resolvedAgent === null ? null : { agent: resolvedAgent };
-
-	if (!resolved) {
+	if (!owned.ok) {
 		throw new ConvexError(
-			`AGENT_IDENTITY_MISMATCH: presented agent credential does not resolve to any active per-agent identity — an org-only/shared token is not accepted at this agent-named surface, no compatibility window — ${JSON.stringify({ assertedName })}`,
+			`AGENT_IDENTITY_MISMATCH: presented agent credential does not resolve to any active per-agent identity bound to a live member owner — an org-only/shared token, or an agent with no live member owner, is not accepted at this agent-named surface, no compatibility window — ${JSON.stringify({ assertedName, reason: owned.reason })}`,
 		);
 	}
+	const resolved = { agent: owned.agent };
 
 	// IDENTITY IS THE ROW, not the string. The asserted name is a label: look it
 	// up in the credential's OWN org and require the row it names to be the row

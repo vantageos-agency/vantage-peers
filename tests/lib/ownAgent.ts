@@ -21,6 +21,7 @@ export async function ownAgent(
 	t: Runner,
 	orgSlug: string,
 	name: string,
+	clerkOrgId: string = testClerkOrgId(orgSlug),
 ): Promise<void> {
 	await t.run(async (ctx) => {
 		const agent = await ctx.db
@@ -31,7 +32,6 @@ export async function ownAgent(
 		if (!agent) throw new Error(`fixture: no agent ${orgSlug}/${name}`);
 		const owner = ownerOf(orgSlug);
 		await ctx.db.patch(agent._id, { ownerPersonId: owner });
-		const clerkOrgId = testClerkOrgId(orgSlug);
 		const existing = await ctx.db
 			.query("orgMembership")
 			.withIndex("by_org_user_clerk_id", (q) =>

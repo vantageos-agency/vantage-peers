@@ -21,6 +21,7 @@
 import { convexTest } from "convex-test";
 import { beforeEach, describe, expect, test } from "vitest";
 import { agentIdOf } from "../../tests/lib/agentIdOf";
+import { ownAgent } from "../../tests/lib/ownAgent";
 import { testClerkOrgId } from "../../tests/fixtures/testClerkOrgId";
 import { api } from "../_generated/api";
 import type { Id } from "../_generated/dataModel";
@@ -110,6 +111,8 @@ beforeEach(async () => {
 		{ orgSlug: "org-a", agentId: clioA },
 	);
 	secretA = minted.secret;
+	// A credential resolves only for an agent bound to a live member owner.
+	await ownAgent(t, "org-a", "clio");
 });
 
 async function refusal(p: Promise<unknown>): Promise<string> {
