@@ -24,6 +24,7 @@ import { convexTest } from "../../tests/fixtures/convexTestWithServiceAccount";
 import { Hono } from "hono";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import schema from "../../convex/schema";
+import { ownAgent } from "../../tests/lib/ownAgent";
 import { testClerkOrgId } from "../../tests/fixtures/testClerkOrgId";
 import { seedRosterAgents } from "../../tests/lib/seedRosterAgents";
 import { app } from "../server-http.js";
@@ -241,6 +242,7 @@ async function agentCredential(): Promise<string> {
 		orgSlug: "org-a",
 		name: "agent-a",
 	})) as string;
+	await ownAgent(t, "org-a", "agent-a");
 	const minted = (await admin.mutation("agentCredentials:mintAgentCredential", {
 		orgSlug: "org-a",
 		agentId,
