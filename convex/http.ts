@@ -1,11 +1,14 @@
-import { validateMasterBearer } from "@vantageos/cloud-identity";
+import {
+	clerkMembershipEvent,
+	validateMasterBearer,
+	verifySvixWebhook,
+} from "@vantageos/cloud-identity";
 import { httpRouter } from "convex/server";
 import { internal } from "./_generated/api";
 import type { Doc, Id } from "./_generated/dataModel";
 import { httpAction } from "./_generated/server";
 import { isKillSwitchActive } from "./errorMonitorKillSwitch";
 import { prTouchesDeployableConvex } from "./githubDeployGate";
-import { verifySvixSignature } from "./lib/svixSignature";
 
 // The orchestrator field in githubRepoMapping is stored as plain string.
 // We cast it to the union type expected by missions/tasks at runtime —
@@ -756,99 +759,62 @@ http.route({
 			);
 			return new Response("Server misconfiguration", { status: 500 });
 		}
-		const verdict = await verifySvixSignature({
-			secret,
-			id: request.headers.get("svix-id"),
-			timestamp: request.headers.get("svix-timestamp"),
-			signatureHeader: request.headers.get("svix-signature"),
-			body,
-			nowMs: Date.now(),
-		});
+		const verdict = await verifySvixWebhook(
+			{
+				id: request.headers.get("svix-id"),
+				timestamp: request.headers.get("svix-timestamp"),
+				signature: request.headers.get("svix-signature"),
+				rawBody: body,
+			},
+			{ secret },
+		);
 		if (!verdict.ok) {
-			if (verdict.reason === "secret-malformed") {
+			if (verdict.refusal.reason === "webhook-secret-invalid") {
 				console.error(
 					"[clerkWebhook] CLERK_WEBHOOK_SECRET is not in whsec_<base64> form — refusing delivery",
 				);
 				return new Response("Server misconfiguration", { status: 500 });
 			}
-			console.error(`[clerkWebhook] delivery refused: ${verdict.reason}`);
+			console.error(
+				`[clerkWebhook] delivery refused: ${verdict.refusal.reason}`,
+			);
 			return new Response("Invalid signature", { status: 401 });
 		}
 
-		let event: { type?: unknown; data?: unknown };
+		let payload: unknown;
 		try {
-			event = JSON.parse(body);
+			payload = JSON.parse(body);
 		} catch {
 			return new Response("Invalid JSON", { status: 400 });
 		}
-		const type = event.type;
-		if (
-			type !== "organizationMembership.created" &&
-			type !== "organizationMembership.updated" &&
-			type !== "organizationMembership.deleted"
-		) {
-			console.log(`[clerkWebhook] ignored event type: ${String(type)}`);
-			return new Response("OK - event ignored", { status: 200 });
-		}
-
-		const data = (event.data ?? {}) as {
-			role?: unknown;
-			organization?: { id?: unknown; slug?: unknown };
-			public_user_data?: { user_id?: unknown };
-		};
-		const clerkOrgId = data.organization?.id;
-		const clerkOrgSlug = data.organization?.slug;
-		const clerkUserId = data.public_user_data?.user_id;
-		if (typeof clerkOrgId !== "string" || typeof clerkUserId !== "string") {
+		const parsed = clerkMembershipEvent(payload, {
+			svixTimestampSeconds: Number(request.headers.get("svix-timestamp")),
+		});
+		if (!parsed.ok) {
 			return new Response("Missing organisation or user id", { status: 400 });
 		}
-		if (
-			type !== "organizationMembership.deleted" &&
-			typeof clerkOrgSlug !== "string"
-		) {
+		if (parsed.kind === "ignore") {
+			console.log("[clerkWebhook] ignored event type");
+			return new Response("OK - event ignored", { status: 200 });
+		}
+		if (parsed.kind === "upsert" && parsed.orgSlug === undefined) {
 			return new Response("Missing organisation slug", { status: 400 });
 		}
 
-		// Event time (ms): the payload's own `updated_at` when it carries one, else
-		// the delivery's svix-timestamp (seconds, already validated by the
-		// signature check). Ordering is decided on this, never on arrival order.
-		const updatedAt = (data as { updated_at?: unknown }).updated_at;
-		const deliveredAtMs = Number(request.headers.get("svix-timestamp")) * 1000;
-		const payloadAtMs =
-			typeof updatedAt === "number" && Number.isFinite(updatedAt)
-				? updatedAt
-				: undefined;
-		// A DELETE is timed max(updated_at, svix-timestamp): a removal is never
-		// dated before the moment Clerk sent it, so it cannot lose to an earlier
-		// create or update (Eta REVISE #1541). Other events keep updated_at.
-		const eventAt =
-			type === "organizationMembership.deleted"
-				? Math.max(payloadAtMs ?? 0, deliveredAtMs)
-				: (payloadAtMs ?? deliveredAtMs);
-
 		const outcome = await ctx.runMutation(
 			internal.orgMembership.applyClerkMembershipEvent,
-			type === "organizationMembership.deleted"
-				? {
-						kind: "delete",
-						clerkOrgId,
-						clerkUserId,
-						clerkOrgSlug:
-							typeof clerkOrgSlug === "string" ? clerkOrgSlug : undefined,
-						eventAt,
-					}
-				: {
-						kind: "upsert",
-						clerkOrgId,
-						clerkOrgSlug: clerkOrgSlug as string,
-						clerkUserId,
-						clerkRole: typeof data.role === "string" ? data.role : undefined,
-						eventAt,
-					},
+			{
+				kind: parsed.kind,
+				clerkOrgId: parsed.orgId,
+				clerkOrgSlug: parsed.orgSlug,
+				clerkUserId: parsed.personId,
+				role: parsed.role,
+				eventAt: parsed.eventAt,
+			},
 		);
 		if (outcome === "stale") {
 			console.log(
-				`[clerkWebhook] stale ${String(type)} ignored (event time ${eventAt} is not newer than the applied state)`,
+				`[clerkWebhook] stale ${parsed.kind} ignored (event time ${parsed.eventAt} is not newer than the applied state)`,
 			);
 		}
 		return new Response(`OK - ${outcome}`, { status: 200 });

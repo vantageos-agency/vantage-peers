@@ -5,6 +5,7 @@ import {
 	type IdentityRefusal,
 	type OrgKind,
 	type PrincipalLookups,
+	membershipPersonLookups,
 	type RecipientLookups,
 	resolveActingPrincipal,
 } from "@vantageos/cloud-identity";
@@ -142,20 +143,14 @@ export function personPrincipalLookups(
 export function ownerMembershipLookups(
 	ctx: Pick<Ctx, "db">,
 ): Pick<PrincipalLookups, "personById"> {
-	return {
-		personById: async (personId, orgId) => {
-			const row = await ctx.db
-				.query("orgMembership")
-				.withIndex("by_org_user_clerk_id", (q) =>
-					q.eq("clerkOrgId", orgId).eq("clerkUserId", personId),
-				)
-				.unique();
-			// A tombstoned row (Clerk removed the member) is absent.
-			return row === null || row.deletedAt !== undefined
-				? null
-				: { id: personId, orgId, active: true };
-		},
-	};
+	return membershipPersonLookups((orgId, personId) =>
+		ctx.db
+			.query("orgMembership")
+			.withIndex("by_org_user_clerk_id", (q) =>
+				q.eq("clerkOrgId", orgId).eq("clerkUserId", personId),
+			)
+			.unique(),
+	);
 }
 
 /**
