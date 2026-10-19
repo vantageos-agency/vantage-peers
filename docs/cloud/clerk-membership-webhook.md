@@ -23,6 +23,10 @@ Any other event type is answered 200 and ignored.
 
 Clerk `org:admin` is stored as `admin`; every other role is stored as `member`. Rows are keyed by (`clerkOrgId`, `clerkUserId`); the slug is stored from the payload and refreshed when it changes.
 
+## Ordering and removal
+
+Events are ordered by event time (`data.updated_at` when the payload has it, else the `svix-timestamp` header in ms), not by arrival. A removed member is kept as a tombstone (`deletedAt` set) that every reader treats as absent; an event at or before the applied time is answered 200 and ignored, so a late `created` cannot re-add a removed member, and a newer one revives it. An event without `updated_at` has only second resolution: two such events in the same second are ordered as equal and the second is ignored.
+
 ## One-time backfill
 
 Run after the webhook is live (events before that were never delivered). Dry run by default, it writes nothing:
@@ -32,4 +36,4 @@ npx convex run orgMembership:backfillFromClerk '{}'
 npx convex run orgMembership:backfillFromClerk '{"dryRun": false}'
 ```
 
-It returns `{ dryRun, orgs, memberships, upserted, removed, failedOrgs }`. Rows are removed only for organisations whose full member list was read; an organisation whose read failed is left untouched and listed in `failedOrgs`. Re-run it to close any gap from missed deliveries.
+It returns `{ dryRun, orgs, memberships, upserted, removed, failedOrgs }`. A member Clerk no longer reports becomes a tombstone (not a hard delete) and one it reports is revived, both stamped with the run's start time. Tombstoning happens only for organisations whose full member list was read; an organisation whose read failed is left untouched and listed in `failedOrgs`. Re-run it to close any gap from missed deliveries.

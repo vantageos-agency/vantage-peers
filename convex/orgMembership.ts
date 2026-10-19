@@ -39,6 +39,11 @@ const membershipShape = v.object({
 	updatedAt: v.number(),
 });
 
+/** A tombstoned row (deletedAt set) is a removed member, not a member. */
+function isLive(row: { deletedAt?: number }): boolean {
+	return row.deletedAt === undefined;
+}
+
 function toShape(row: {
 	clerkOrgSlug: string;
 	clerkUserId: string;
@@ -79,8 +84,14 @@ export async function upsertAdminMembership(
 		.unique();
 
 	if (existing) {
-		if (existing.role !== "admin") {
-			await ctx.db.patch(existing._id, { role: "admin", updatedAt: now });
+		// A tombstoned row is revived: provisioning is driven by a verified
+		// org-admin session, a present fact. The event time stays as it was.
+		if (existing.role !== "admin" || existing.deletedAt !== undefined) {
+			await ctx.db.patch(existing._id, {
+				role: "admin",
+				deletedAt: undefined,
+				updatedAt: now,
+			});
 		}
 		return;
 	}
@@ -196,7 +207,7 @@ export const getMembership = query({
 				.withIndex("by_org_clerk_id", (q) => q.eq("clerkOrgId", targetOrgId))
 				.take(MEMBERSHIP_QUERY_LIMIT);
 			assertNotTruncated(rows.length, `org "${args.clerkOrgSlug}"`);
-			return rows.map(toShape);
+			return rows.filter(isLive).map(toShape);
 		}
 
 		const rows = await ctx.db
@@ -204,7 +215,7 @@ export const getMembership = query({
 			.withIndex("by_user", (q) => q.eq("clerkUserId", scope.userId))
 			.take(MEMBERSHIP_QUERY_LIMIT);
 		assertNotTruncated(rows.length, `subject "${scope.userId}"`);
-		return rows.map(toShape);
+		return rows.filter(isLive).map(toShape);
 	},
 });
 
@@ -225,37 +236,63 @@ export function mapClerkRole(
 	return clerkRole === "org:admin" ? "admin" : "member";
 }
 
-export type UpsertOutcome = "inserted" | "updated" | "unchanged";
+export type UpsertOutcome = "inserted" | "updated" | "unchanged" | "stale";
 
-export async function upsertClerkMembership(
+type MembershipArgs = {
+	clerkOrgId: string;
+	clerkOrgSlug: string;
+	clerkUserId: string;
+};
+
+/**
+ * The row for (org id, user id), tombstoned or not; failing that, a row written
+ * at provisioning (slug only, no org id yet) for the same slug and user.
+ */
+async function findMembershipRow(
 	ctx: MutationCtx,
-	args: {
-		clerkOrgId: string;
-		clerkOrgSlug: string;
-		clerkUserId: string;
-		role: "admin" | "member";
-	},
-	opts: { dryRun?: boolean } = {},
-): Promise<UpsertOutcome> {
+	args: { clerkOrgId: string; clerkUserId: string; clerkOrgSlug?: string },
+) {
 	const byId = await ctx.db
 		.query("orgMembership")
 		.withIndex("by_org_user_clerk_id", (q) =>
 			q.eq("clerkOrgId", args.clerkOrgId).eq("clerkUserId", args.clerkUserId),
 		)
 		.unique();
-	const legacy =
-		byId !== null
-			? null
-			: await ctx.db
-					.query("orgMembership")
-					.withIndex("by_org_user", (q) =>
-						q
-							.eq("clerkOrgSlug", args.clerkOrgSlug)
-							.eq("clerkUserId", args.clerkUserId),
-					)
-					.filter((q) => q.eq(q.field("clerkOrgId"), undefined))
-					.first();
-	const existing = byId ?? legacy;
+	if (byId !== null || args.clerkOrgSlug === undefined) return byId;
+	const slug = args.clerkOrgSlug;
+	return await ctx.db
+		.query("orgMembership")
+		.withIndex("by_org_user", (q) =>
+			q.eq("clerkOrgSlug", slug).eq("clerkUserId", args.clerkUserId),
+		)
+		.filter((q) => q.eq(q.field("clerkOrgId"), undefined))
+		.first();
+}
+
+/** An event at or before the time already applied is stale (replay or late). */
+function isStale(
+	existing: { lastEventAt?: number } | null,
+	eventAt: number,
+): boolean {
+	return (
+		existing !== null &&
+		existing.lastEventAt !== undefined &&
+		eventAt <= existing.lastEventAt
+	);
+}
+
+/**
+ * Upsert from an event or a backfill read at `eventAt` (ms). A stale event
+ * writes nothing. A newer one revives a tombstone. The state is compared, but
+ * `lastEventAt` always advances so the guard stays exact.
+ */
+export async function upsertClerkMembership(
+	ctx: MutationCtx,
+	args: MembershipArgs & { role: "admin" | "member" },
+	opts: { eventAt: number; dryRun?: boolean },
+): Promise<UpsertOutcome> {
+	const existing = await findMembershipRow(ctx, args);
+	if (isStale(existing, opts.eventAt)) return "stale";
 	const now = Date.now();
 
 	if (existing === null) {
@@ -267,40 +304,72 @@ export async function upsertClerkMembership(
 				role: args.role,
 				createdAt: now,
 				updatedAt: now,
+				lastEventAt: opts.eventAt,
 			});
 		}
 		return "inserted";
 	}
-	if (
+	const sameState =
 		existing.role === args.role &&
 		existing.clerkOrgSlug === args.clerkOrgSlug &&
-		existing.clerkOrgId === args.clerkOrgId
-	) {
-		return "unchanged";
-	}
+		existing.clerkOrgId === args.clerkOrgId &&
+		existing.deletedAt === undefined;
 	if (!opts.dryRun) {
 		await ctx.db.patch(existing._id, {
 			role: args.role,
 			clerkOrgSlug: args.clerkOrgSlug,
 			clerkOrgId: args.clerkOrgId,
-			updatedAt: now,
+			deletedAt: undefined,
+			lastEventAt: opts.eventAt,
+			...(sameState ? {} : { updatedAt: now }),
 		});
 	}
-	return "updated";
+	return sameState ? "unchanged" : "updated";
 }
 
-export async function removeClerkMembership(
+/**
+ * Tombstone the member as of `eventAt`: the row is kept (role included) with
+ * `deletedAt` set. With no row at all a tombstone is inserted, so a `created`
+ * that arrives after its own `deleted` is still refused as stale. The label is
+ * the payload's slug, else the existing row's, else "" (never a real slug).
+ */
+export async function tombstoneClerkMembership(
 	ctx: MutationCtx,
-	args: { clerkOrgId: string; clerkUserId: string },
-): Promise<number> {
-	const rows = await ctx.db
-		.query("orgMembership")
-		.withIndex("by_org_user_clerk_id", (q) =>
-			q.eq("clerkOrgId", args.clerkOrgId).eq("clerkUserId", args.clerkUserId),
-		)
-		.take(10);
-	for (const row of rows) await ctx.db.delete(row._id);
-	return rows.length;
+	args: {
+		clerkOrgId: string;
+		clerkUserId: string;
+		clerkOrgSlug?: string;
+	},
+	opts: { eventAt: number; dryRun?: boolean },
+): Promise<"removed" | "absent" | "stale"> {
+	const existing = await findMembershipRow(ctx, args);
+	if (isStale(existing, opts.eventAt)) return "stale";
+	const now = Date.now();
+	if (existing === null) {
+		if (!opts.dryRun) {
+			await ctx.db.insert("orgMembership", {
+				clerkOrgSlug: args.clerkOrgSlug ?? "",
+				clerkOrgId: args.clerkOrgId,
+				clerkUserId: args.clerkUserId,
+				role: "member",
+				createdAt: now,
+				updatedAt: now,
+				lastEventAt: opts.eventAt,
+				deletedAt: opts.eventAt,
+			});
+		}
+		return "absent";
+	}
+	const wasLive = existing.deletedAt === undefined;
+	if (!opts.dryRun) {
+		await ctx.db.patch(existing._id, {
+			clerkOrgId: args.clerkOrgId,
+			deletedAt: wasLive ? opts.eventAt : existing.deletedAt,
+			lastEventAt: opts.eventAt,
+			...(wasLive ? { updatedAt: now } : {}),
+		});
+	}
+	return wasLive ? "removed" : "absent";
 }
 
 /**
@@ -314,6 +383,9 @@ export const applyClerkMembershipEvent = internalMutation({
 		clerkOrgSlug: v.optional(v.string()),
 		clerkUserId: v.string(),
 		clerkRole: v.optional(v.string()),
+		// Event time in ms: the payload's `data.updated_at` when present, else the
+		// svix-timestamp header (chosen by the HTTP route).
+		eventAt: v.number(),
 	},
 	returns: v.union(
 		v.literal("inserted"),
@@ -321,23 +393,35 @@ export const applyClerkMembershipEvent = internalMutation({
 		v.literal("unchanged"),
 		v.literal("removed"),
 		v.literal("absent"),
+		v.literal("stale"),
 	),
 	handler: async (ctx, args) => {
 		if (args.kind === "delete") {
-			const n = await removeClerkMembership(ctx, args);
-			return n > 0 ? "removed" : "absent";
+			return await tombstoneClerkMembership(
+				ctx,
+				{
+					clerkOrgId: args.clerkOrgId,
+					clerkUserId: args.clerkUserId,
+					clerkOrgSlug: args.clerkOrgSlug,
+				},
+				{ eventAt: args.eventAt },
+			);
 		}
 		if (args.clerkOrgSlug === undefined) {
 			throw new ConvexError(
 				"CLERK_MEMBERSHIP_SLUG_REQUIRED: an upsert needs the organisation slug from the payload",
 			);
 		}
-		return await upsertClerkMembership(ctx, {
-			clerkOrgId: args.clerkOrgId,
-			clerkOrgSlug: args.clerkOrgSlug,
-			clerkUserId: args.clerkUserId,
-			role: mapClerkRole(args.clerkRole),
-		});
+		return await upsertClerkMembership(
+			ctx,
+			{
+				clerkOrgId: args.clerkOrgId,
+				clerkOrgSlug: args.clerkOrgSlug,
+				clerkUserId: args.clerkUserId,
+				role: mapClerkRole(args.clerkRole),
+			},
+			{ eventAt: args.eventAt },
+		);
 	},
 });
 
@@ -359,6 +443,8 @@ export const reconcileOrgFromClerk = internalMutation({
 		clerkOrgSlug: v.string(),
 		members: v.array(v.object({ userId: v.string(), role: v.string() })),
 		dryRun: v.boolean(),
+		// The backfill's own time (ms): the event time of everything it applies.
+		eventAt: v.number(),
 	},
 	returns: v.object({ upserted: v.number(), removed: v.number() }),
 	handler: async (ctx, args) => {
@@ -374,9 +460,9 @@ export const reconcileOrgFromClerk = internalMutation({
 					clerkUserId: m.userId,
 					role: mapClerkRole(m.role),
 				},
-				{ dryRun: args.dryRun },
+				{ eventAt: args.eventAt, dryRun: args.dryRun },
 			);
-			if (outcome !== "unchanged") upserted++;
+			if (outcome === "inserted" || outcome === "updated") upserted++;
 		}
 		const stored = await ctx.db
 			.query("orgMembership")
@@ -390,8 +476,16 @@ export const reconcileOrgFromClerk = internalMutation({
 		let removed = 0;
 		for (const row of stored) {
 			if (present.has(row.clerkUserId)) continue;
+			// Already a tombstone, or touched by an event newer than this read.
+			if (row.deletedAt !== undefined || isStale(row, args.eventAt)) continue;
 			removed++;
-			if (!args.dryRun) await ctx.db.delete(row._id);
+			if (!args.dryRun) {
+				await ctx.db.patch(row._id, {
+					deletedAt: args.eventAt,
+					lastEventAt: args.eventAt,
+					updatedAt: Date.now(),
+				});
+			}
 		}
 		return { upserted, removed };
 	},
@@ -442,7 +536,8 @@ async function clerkReadAll(
 /**
  * One-time backfill of orgMembership from the Clerk Backend API. DRY RUN BY
  * DEFAULT: pass `{ dryRun: false }` to write. Removal happens only for an
- * organisation whose full member list was read; an organisation whose read
+ * organisation whose full member list was read (a member Clerk no longer
+ * reports becomes a tombstone, never a hard delete); an organisation whose read
  * failed is left untouched and named in `failedOrgs`.
  */
 export const backfillFromClerk = internalAction({
@@ -463,6 +558,9 @@ export const backfillFromClerk = internalAction({
 				"CLERK_SECRET_KEY is not set — refusing to read Clerk memberships",
 			);
 		}
+		// One time for the whole run, taken before the first read: a webhook event
+		// stamped after it is newer than what this run saw and wins.
+		const eventAt = Date.now();
 		const orgs = (await clerkReadAll("/v1/organizations", secretKey, 100000))
 			.map((o) => o as { id?: unknown; slug?: unknown })
 			.filter(
@@ -498,6 +596,7 @@ export const backfillFromClerk = internalAction({
 						clerkOrgSlug: org.slug,
 						members,
 						dryRun,
+						eventAt,
 					},
 				);
 				memberships += members.length;
