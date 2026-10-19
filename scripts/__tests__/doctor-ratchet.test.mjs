@@ -509,6 +509,21 @@ describe("doctor-ratchet: a count may only go down", () => {
 			expect(last(r)).toMatch(/ M-oracle-justified=1 rise=0$/);
 		});
 
+		it("RED (Eta, #1540): a .gitattributes binary attribute cannot hide markers from the count", () => {
+			// `git grep -o` on a file git treats as binary prints one "Binary file … matches"
+			// line instead of the matches, so 5 real markers would read as 1 at head and
+			// main's 2 as 1, and a rise would read as "no change".
+			const repo = markerRepo(MAIN, {
+				".gitattributes": "mcp-server/src/b.ts binary\n",
+				"mcp-server/src/b.ts":
+					"// oracle-justified: one\n// oracle-justified: two\n// oracle-justified: three\n// oracle-justified: four\n// oracle-justified: five\n",
+			});
+			const r = runMarkers(repo);
+			expect(r.status).toBe(1);
+			expect(r.out).toMatch(/M-oracle-justified\s+2\s+5\s+\+3\s+RAISED/);
+			expect(last(r)).toMatch(/ rise=1 raised=M-oracle-justified$/);
+		});
+
 		it("RED: an unresolvable --main-ref cannot judge", () => {
 			const repo = markerRepo(MAIN, {});
 			const r = runMarkers(repo, "equal.json", "no-such-ref");
