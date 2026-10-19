@@ -548,7 +548,11 @@ def test_ratchet_live_baseline_carries_its_command_and_never_rose():
         assert entry["command"].startswith(
             f"npx -y @vantageos/backend-doctor@{live['doctor_version']} ")
         assert entry["cli_commit"] == "0121921dc96b6b5b48feecfe53637f1faa0e9edf"
-        assert entry["measured_tree_sha"] == "226067389ad98f0f56eccfad38d5f39ea6908542"
+        # R-53 was lowered by slice 1 of the deletion series, measured at 6058f82
+        assert entry["measured_tree_sha"] in {
+            "226067389ad98f0f56eccfad38d5f39ea6908542",
+            "6058f82974caa7cacbeda815a2e60334989b5120",
+        }
         line = entry["output_line"]
         assert line.startswith((f"{rule}: ", f"{rule} VERDICT: ")), rule
         # the 0.4.7/0.4.8 doctor prints the count as `N site(s) VIOLATE`, `N violation(s)`
