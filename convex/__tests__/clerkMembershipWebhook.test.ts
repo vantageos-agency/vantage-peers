@@ -15,6 +15,7 @@ import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import { internal } from "../_generated/api";
 import { ownerMembershipLookups } from "../lib/actingPrincipal";
 import schema from "../schema";
+import fixture from "./fixtures/clerk-organizationMembership-deleted.example.json";
 
 const modules = Object.fromEntries(
 	Object.entries(import.meta.glob("../**/*.ts")).filter(
@@ -726,5 +727,62 @@ describe("orgMembership:backfillFromClerk revives a tombstone Clerk still report
 		expect(row.deletedAt).toBeUndefined();
 		expect(row.role).toBe("admin");
 		expect(row.lastEventAt).toBeGreaterThanOrEqual(before);
+	});
+});
+
+describe("the documented Clerk organizationMembership.deleted payload (Eta REVISE #1541 item 4)", () => {
+	const DOC_ORG = "org_2g7np7Hrk0SN6kj5EDMLDaKNL0S";
+	const DOC_USER = "user_2h8op3Isl1QR7tKu5FGNfaLKEoU";
+	const documented = JSON.stringify(fixture.payload);
+	const asCreated = JSON.stringify({
+		...fixture.payload,
+		type: "organizationMembership.created",
+	});
+
+	beforeEach(() => {
+		process.env.CLERK_WEBHOOK_SECRET = SECRET;
+		vi.spyOn(console, "error").mockImplementation(() => {});
+		vi.spyOn(console, "log").mockImplementation(() => {});
+	});
+	afterEach(() => {
+		delete process.env.CLERK_WEBHOOK_SECRET;
+		vi.restoreAllMocks();
+	});
+
+	test("the fixture carries the ids at the paths the handler reads", () => {
+		expect(fixture.payload.type).toBe("organizationMembership.deleted");
+		expect(fixture.payload.data.organization.id).toBe(DOC_ORG);
+		expect(fixture.payload.data.public_user_data.user_id).toBe(DOC_USER);
+		expect(fixture.payload.data.updated_at).toBe(
+			fixture.payload.data.created_at,
+		);
+	});
+
+	test("created at the documented updated_at, then the documented deleted as posted: no live row, personById null", async () => {
+		const t = makeT();
+		const created = await deliver(t, asCreated);
+		expect(created.status).toBe(200);
+		const seeded = await rows(t);
+		expect(seeded).toHaveLength(1);
+		expect(seeded[0]).toMatchObject({
+			clerkOrgId: DOC_ORG,
+			clerkUserId: DOC_USER,
+			clerkOrgSlug: "acme-corp",
+			role: "member",
+		});
+		expect(seeded[0].deletedAt).toBeUndefined();
+
+		const deleted = await deliver(t, documented);
+		expect(deleted.status).toBe(200);
+		expect(
+			(await live(t)).filter(
+				(r) => r.clerkOrgId === DOC_ORG && r.clerkUserId === DOC_USER,
+			),
+		).toHaveLength(0);
+		const found = await t.run(
+			async (ctx) =>
+				await ownerMembershipLookups(ctx).personById?.(DOC_USER, DOC_ORG),
+		);
+		expect(found).toBeNull();
 	});
 });
