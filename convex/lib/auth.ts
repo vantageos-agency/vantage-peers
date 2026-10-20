@@ -991,9 +991,9 @@ async function requireVerifiedActorMatch(
 	assertedName: string | undefined,
 	targetOrgSlug: string | null,
 	verified: VerifiedActorProof,
-): Promise<void> {
+): Promise<string | undefined> {
 	const actor = verified.verifiedActor;
-	if (actor === undefined) return;
+	if (actor === undefined) return undefined;
 
 	if (
 		!(verified.scope.isMaster && verified.scope.masterSource === "service-account")
@@ -1037,13 +1037,15 @@ async function requireVerifiedActorMatch(
 		);
 	}
 
-	if (assertedName === undefined) return;
-	const assertedAgent = await findAgentByName(ctx, row.orgSlug, assertedName);
-	if (!assertedAgent || assertedAgent._id !== row._id) {
+	if (assertedName === undefined) return undefined;
+	// The row is already in hand BY ID: the asserted label is compared with that
+	// row's own label, no name lookup takes part.
+	if (normalizeOrchestratorId(assertedName) !== normalizeOrchestratorId(row.name)) {
 		throw new ConvexError(
 			`AGENT_IDENTITY_MISMATCH: verifiedActor is agent "${row.name}" but the call asserts name "${assertedName}" — a verified actor may only act under its own identity — ${JSON.stringify({ verifiedAgentId: row._id, verifiedAgentName: row.name, assertedName })}`,
 		);
 	}
+	return row.name;
 }
 
 /**
@@ -1071,6 +1073,14 @@ async function requireVerifiedActorMatch(
  * `assertedName === undefined` is a no-op unconditionally: there is no
  * declared name to compare the resolved identity against, and none to look
  * up in `agents` either.
+ *
+ * RETURNS the LABEL of the verified row (the resolved agent's own `name`) when
+ * the call is proven BY ID (a verifiedActor, or a presented credential) and a
+ * name was asserted; `undefined` for every unproven call. The asserted name is
+ * only COMPARED with that row's label here; a door that decides on, or writes,
+ * the caller's name afterwards uses the returned label, never the asserted
+ * string. A mismatch still refuses (`AGENT_IDENTITY_MISMATCH`), it never
+ * overwrites silently.
  *
  * [Pi ruling k1746tn3jy22k0jphbx48vzmvd8d0y50] CONDITIONAL-SECRET — "CLOSE
  * it for agents, TRACE it for the rest": omitting `agentCredentialSecret` is
@@ -1115,31 +1125,30 @@ export async function requireAgentCredentialMatch(
 	assertedName: string | undefined,
 	targetOrgSlug: string | null,
 	verified: VerifiedActorProof,
-): Promise<void> {
+): Promise<string | undefined> {
 	if (verified.verifiedActor !== undefined) {
-		await requireVerifiedActorMatch(
+		return await requireVerifiedActorMatch(
 			ctx,
 			agentCredentialSecret,
 			assertedName,
 			targetOrgSlug,
 			verified,
 		);
-		return;
 	}
-	if (assertedName === undefined) return;
+	if (assertedName === undefined) return undefined;
 
 	if (agentCredentialSecret === undefined) {
 		// CONDITIONAL-SECRET (Pi ruling k1746tn3jy22): a declared sender that
 		// RESOLVES to an existing `agents` row for the target org must present
 		// a credential; a sender that does not resolve keeps the legacy no-op.
-		if (targetOrgSlug === null) return;
+		if (targetOrgSlug === null) return undefined;
 		const declaredAgent = await findAgentByName(ctx, targetOrgSlug, assertedName);
 		if (declaredAgent) {
 			throw new ConvexError(
 				`AGENT_CREDENTIAL_REQUIRED: sender "${assertedName}" resolves to a registered agent in org "${targetOrgSlug}" — this surface requires a per-agent credential (agentCredentialSecret) once the sender is a known agent identity, no fallback — ${JSON.stringify({ assertedName, targetOrgSlug })}`,
 			);
 		}
-		return;
+		return undefined;
 	}
 
 	// The presented secret is validated and its agent read BY ID through
@@ -1159,17 +1168,14 @@ export async function requireAgentCredentialMatch(
 	}
 	const resolved = { agent: owned.agent };
 
-	// IDENTITY IS THE ROW, not the string. The asserted name is a label: look it
-	// up in the credential's OWN org and require the row it names to be the row
-	// the credential resolved to. A rename therefore keeps the credential
-	// working (the new label names the same row), and the old label stops
-	// matching. A name that names no agent there matches nothing.
-	const assertedAgent = await findAgentByName(
-		ctx,
-		resolved.agent.orgSlug,
-		assertedName,
-	);
-	if (!assertedAgent || assertedAgent._id !== resolved.agent._id) {
+	// IDENTITY IS THE ROW, not the string. The credential resolved to a row BY ID;
+	// the asserted name is only a label, compared with that row's own label. A
+	// rename therefore keeps the credential working (the new label is the row's),
+	// and the old label stops matching. No name lookup takes part.
+	if (
+		normalizeOrchestratorId(assertedName) !==
+		normalizeOrchestratorId(resolved.agent.name)
+	) {
 		throw new ConvexError(
 			`AGENT_IDENTITY_MISMATCH: presented credential resolves to agent "${resolved.agent.name}" but the call asserts name "${assertedName}" — a credential holder may only act under its own resolved identity — ${JSON.stringify({ resolvedAgentName: resolved.agent.name, resolvedAgentId: resolved.agent._id, assertedName })}`,
 		);
@@ -1180,6 +1186,7 @@ export async function requireAgentCredentialMatch(
 			`ORG_MISMATCH: presented credential resolves to agent "${resolved.agent.name}" in org "${resolved.agent.orgSlug}" but this call targets org "${targetOrgSlug}" — a same-named agent from a DIFFERENT organisation may never act here, defence in depth on top of the surrounding org scope — ${JSON.stringify({ resolvedAgentName: resolved.agent.name, resolvedOrgSlug: resolved.agent.orgSlug, targetOrgSlug })}`,
 		);
 	}
+	return resolved.agent.name;
 }
 
 /**

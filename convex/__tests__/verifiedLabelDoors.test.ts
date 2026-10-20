@@ -345,6 +345,6 @@ describe("source scan: no door reads the asserted name for authority or attribut
 	test("messages.ts: the sender written by sendMessage is the derived label", () => {
 		const call = /return await sendMessageCore\(\s*ctx,\s*\{ \.\.\.sendArgs, from, fromInstanceId \}/;
 		expect(call.test(messages)).toBe(true);
-		expect(/const from = args\.from;/.test(messages)).toBe(false);
+		expect(/const from = provenLabel \?\? assertedFrom;/.test(messages)).toBe(true);
 	});
 });
