@@ -155,6 +155,13 @@ export async function keepMissionsOnScopeRoster<
 }
 
 /**
+ * `actorId` is the caller's ID; `label` is the VERIFIED row's own label, set only
+ * when the call is proven BY ID (a verifiedActor) and a name was asserted. A door
+ * that decides on, or writes, the caller's NAME uses `label ?? asserted`.
+ */
+export type MissionCaller = { actorId: string | undefined; label?: string };
+
+/**
  * The actor a mission door's caller IS: an agents-row ID (or a person's
  * "user:<subject>"), or undefined when no name was asserted or it names nobody.
  *
@@ -174,11 +181,11 @@ export async function missionCallerActorId(
 	verifiedActor: VerifiedActor | undefined,
 	labelOrgSlug: string | null | undefined,
 	door: string,
-): Promise<string | undefined> {
-	if (assertedName === undefined) return undefined;
-	if (isHumanActorName(assertedName)) return assertedName;
+): Promise<MissionCaller> {
+	if (assertedName === undefined) return { actorId: undefined };
+	if (isHumanActorName(assertedName)) return { actorId: assertedName };
 	if (verifiedActor !== undefined) {
-		await requireAgentCredentialMatch(
+		const label = await requireAgentCredentialMatch(
 			ctx,
 			undefined,
 			assertedName,
@@ -191,7 +198,7 @@ export async function missionCallerActorId(
 			verifiedActor,
 			door,
 		);
-		return principal.principalId;
+		return { actorId: principal.principalId, label };
 	}
-	return await agentIdOfLabelInOrg(ctx, labelOrgSlug, assertedName, door);
+	return { actorId: await agentIdOfLabelInOrg(ctx, labelOrgSlug, assertedName, door) };
 }
