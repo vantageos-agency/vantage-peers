@@ -250,6 +250,29 @@ describe("site 3: agentReader reads the verified row's own inbox whatever recipi
 			} as never),
 		).rejects.toThrow(/RBAC_DENIED.*tenant-not-the-readers-org/);
 	});
+	// The reader's label is load-bearing (ownsSentMessage keys a legacy
+	// name-keyed delete on it), so a claimed label must never become it.
+	test("a claimed label never lets the verified row delete a peer's legacy (name-keyed) message", async () => {
+		const { t, alpha } = await inboxWorld();
+		const legacy = await t.run(async (ctx) =>
+			ctx.db.insert("messages", {
+				from: "peer",
+				channel: "alpha",
+				content: "PEER-SENT-LEGACY",
+				tenantId: ORG_A,
+				tenantOrgId: testClerkOrgId(ORG_A),
+				createdAt: NOW,
+			}),
+		);
+		await asServiceAccount(t)
+			.mutation(api.messages.deleteMessage, {
+				messageId: legacy,
+				callerOrchestrator: "peer",
+				verifiedActor: { agentId: alpha, orgSlug: ORG_A },
+			} as never)
+			.catch(() => undefined);
+		expect((await t.run(async (ctx) => ctx.db.get(legacy)))?.content).toBe("PEER-SENT-LEGACY");
+	});
 });
 
 describe("site 4: sendMessage does not re-screen a proven sender by name", () => {
