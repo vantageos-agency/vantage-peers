@@ -279,8 +279,10 @@ export const create = mutation({
 		const idOrg = scope.orgSlug;
 		const isFleet = scope.isMaster;
 		let createdById = actor;
+		// The label of the VERIFIED row when the call is proven by ID, else the claim.
+		let creatorLabel = claimedCreator;
 		if (claimedCreator !== undefined) {
-			createdById = await missionCallerActorId(
+			const creator = await missionCallerActorId(
 				ctx,
 				transportScope,
 				claimedCreator,
@@ -288,6 +290,8 @@ export const create = mutation({
 				idOrg,
 				"missions:create",
 			);
+			createdById = creator.actorId;
+			creatorLabel = creator.label ?? claimedCreator;
 			if (!isFleet) {
 				createdById ??= await requireAgentIdOfLabelInOrg(
 					ctx,
@@ -320,7 +324,7 @@ export const create = mutation({
 			...(pilotId !== undefined ? { pilotId } : {}),
 			...(agentIds !== undefined ? { agentIds } : {}),
 			...(createdById !== undefined ? { createdById } : {}),
-			createdBy: (claimedCreator ?? actor) as string,
+			createdBy: (creatorLabel ?? actor) as string,
 			...(actor !== undefined ? { lastActedBy: actor } : {}),
 			createdAt: now,
 			updatedAt: now,
@@ -851,7 +855,7 @@ export const update = mutation({
 		// fleet master's the MISSION's org (the operator org for a fleet-owned row).
 		const isFleet = scope.isMaster;
 		const idOrg = isFleet ? mission.orgId : scope.orgSlug;
-		const callerActorId = await missionCallerActorId(
+		const caller = await missionCallerActorId(
 			ctx,
 			transportScope,
 			callerOrchestrator,
@@ -859,6 +863,10 @@ export const update = mutation({
 			idOrg,
 			"missions:update",
 		);
+		const callerActorId = caller.actorId;
+		// The name this door decides on and writes: the VERIFIED row's label when the
+		// call is proven by ID, else the asserted string (unproven path unchanged).
+		const actingName = caller.label ?? callerOrchestrator;
 
 		// Build patch object with only provided fields
 		const patch: Record<string, any> = { updatedAt: Date.now() };
@@ -918,7 +926,7 @@ export const update = mutation({
 			// (resolveHumanActor adminOnly); the creator rule binds the agent path.
 			if (
 				callerOrchestrator !== undefined &&
-				!isFleetSystemCaller(scope, callerOrchestrator) &&
+				!isFleetSystemCaller(scope, actingName) &&
 				(callerActorId === undefined || mission.createdById !== callerActorId)
 			) {
 				throw new ConvexError(
@@ -930,7 +938,7 @@ export const update = mutation({
 					`CANCEL_REASON_REQUIRED: cancelReason is required to cancel mission ${missionId} — ${JSON.stringify({ missionId })}`,
 				);
 			}
-			patch.cancelledBy = callerOrchestrator ?? humanActor;
+			patch.cancelledBy = actingName ?? humanActor;
 			patch.cancelledById = callerActorId ?? humanActor;
 			patch.cancelReason = cancelReason;
 		}

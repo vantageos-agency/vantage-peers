@@ -16,7 +16,7 @@ import {
 	withOrgScope,
 	requireOrchestratorOnRoster,
 } from "./lib/auth";
-import { type CallerScope, requireAuthenticatedCaller } from "./tasks";
+import { actingNameOf, type CallerScope, requireAuthenticatedCaller } from "./tasks";
 import { resolveHumanActor } from "./lib/humanActor";
 import { taskActorIdFields } from "./lib/actorIds";
 import {
@@ -280,7 +280,7 @@ export const create = mutation({
 		// inherits the org stamp below, so the materialised task stays in this org.
 		const createdBy =
 			args.createdBy !== undefined
-				? args.createdBy
+				? actingNameOf(scope, args.createdBy)
 				: await resolveHumanActor(ctx, scope, { door: "recurringTasks:create" });
 		// M10h: the creator BY ID. A person is its own ID; an agent's is the VERIFIED
 		// caller's (credential / verifiedActor / own-org lookup), never a typed value.

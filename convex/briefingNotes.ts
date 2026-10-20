@@ -17,7 +17,7 @@ import { isFleetSystemCaller } from "./lib/systemCaller";
 import { requireId } from "./lib/ids";
 import { resolveHumanActor } from "./lib/humanActor";
 import { actorIdResolver, type ActorIdResolver } from "./lib/actorIds";
-import { requireAuthenticatedCaller } from "./tasks";
+import { actingNameOf, requireAuthenticatedCaller } from "./tasks";
 import {
 	resolveVerifiedOrgMapping,
 	resolveVerifiedOrgScope,
@@ -385,7 +385,7 @@ export const create = mutation({
 					`RBAC_DENIED: "${claimedCreator}" names no agent of the caller's organisation — a briefing note is authored by an agent resolved by ID, a label that names none is refused — ${JSON.stringify({ reason: "actor-not-an-agent-of-org", door: "briefingNotes:create", orgSlug: scope.orgSlug })}`,
 				);
 			}
-			createdBy = claimedCreator;
+			createdBy = actingNameOf(caller, claimedCreator);
 		}
 		const noteId = await ctx.db.insert("briefingNotes", {
 			...rest,
@@ -1070,8 +1070,9 @@ export const deleteBriefingNote = mutation({
 			undefined,
 			args.verifiedActor,
 		);
+		const actingName = actingNameOf(caller, args.callerOrchestrator);
 		if (
-			!isFleetSystemCaller(scope, args.callerOrchestrator) &&
+			!isFleetSystemCaller(scope, actingName) &&
 			!(await isNoteAuthor(ctx, note, caller.callerActorId))
 		) {
 			throw new ConvexError(
@@ -1154,6 +1155,10 @@ export const update = mutation({
 		// HUMAN path: writer role from the allowlist, tenant stamp only (a note has
 		// no orchestrator field), actor recorded in updatedBy as "user:<subject>".
 		let actor: string;
+		// The agent path: the caller is the agent its PROOF names, and must be the
+		// note's author BY ID (or the fleet system caller, proved by the verified
+		// scope). The name decided on and written is the VERIFIED row's label.
+		let callerActorId: string | undefined;
 		if (callerOrchestrator === undefined) {
 			// The tenant was decided above BY ID (isOrgAllowedForScope); the human gate
 			// is handed no row, so the renamable slug on the row decides nothing here.
@@ -1164,26 +1169,19 @@ export const update = mutation({
 				await requireAuthenticatedCaller(ctx, undefined, undefined, verifiedActor);
 			}
 		} else {
-			actor = callerOrchestrator;
-		}
-		// The agent path: the caller is the agent its PROOF names, and must be the
-		// note's author BY ID (or the fleet system caller, proved by the verified
-		// scope). The asserted label decides nothing.
-		let callerActorId: string | undefined;
-		if (callerOrchestrator !== undefined) {
 			requireOrchestratorOnRoster(scope, callerOrchestrator, "briefingNotes:update", "actor");
-			callerActorId = (
-				await requireAuthenticatedCaller(
-					ctx,
-					callerOrchestrator,
-					undefined,
-					verifiedActor,
-				)
-			).callerActorId;
+			const caller = await requireAuthenticatedCaller(
+				ctx,
+				callerOrchestrator,
+				undefined,
+				verifiedActor,
+			);
+			callerActorId = caller.callerActorId;
+			actor = actingNameOf(caller, callerOrchestrator);
 		}
 		const isAuthorized =
 			callerOrchestrator === undefined ||
-			isFleetSystemCaller(scope, callerOrchestrator) ||
+			isFleetSystemCaller(scope, actor) ||
 			(await isNoteAuthor(ctx, note, callerActorId));
 		if (!isAuthorized) {
 			throw new ConvexError(

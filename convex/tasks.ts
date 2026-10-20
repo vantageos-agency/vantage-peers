@@ -178,10 +178,19 @@ export type CallerScope = OrgScope & {
 // BY ID, else the asserted string unchanged (service account / master with no
 // proof keeps today's behaviour). Names no one: it only chooses between two
 // strings the lock has already reconciled.
-const actingNameOf = (
+// Exported for the mission-adjacent doors that call requireAuthenticatedCaller
+// (recurring tasks, briefing notes): one derivation, no per-file variant.
+export function actingNameOf(callerScope: CallerScope, asserted: string): string;
+export function actingNameOf(
 	callerScope: CallerScope,
 	asserted: string | undefined,
-): string | undefined => callerScope.callerLabel ?? asserted;
+): string | undefined;
+export function actingNameOf(
+	callerScope: CallerScope,
+	asserted: string | undefined,
+): string | undefined {
+	return callerScope.callerLabel ?? asserted;
+}
 
 // requireAuthenticatedCaller — SECURITY REMEDIATION (task
 // k1712yrxjr570m6ks81rnhjh5n8cryf0, ruled by Pi). Closes the open door: none
