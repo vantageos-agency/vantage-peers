@@ -1121,7 +1121,7 @@ export const sendMessage = mutation({
 		if (args.from === undefined) {
 			return await sendAsHuman(ctx, sendArgs, scope);
 		}
-		const from = args.from;
+		const assertedFrom = args.from;
 
 		// The seat path's `from` is judged here, from data (see the function).
 		// A sender proven BY ID is judged by its resolved principal: its `from` is
@@ -1129,16 +1129,20 @@ export const sendMessage = mutation({
 		// below, so a name screening adds nothing. The name guard stays for the seat
 		// sends that carry no proof.
 		if (recipientScope !== undefined && senderPrincipal === undefined) {
-			await requireSeatSenderNotForeign(ctx, recipientScope, from);
+			await requireSeatSenderNotForeign(ctx, recipientScope, assertedFrom);
 		}
 
-		await requireAgentCredentialMatch(
+		const provenLabel = await requireAgentCredentialMatch(
 			ctx,
 			args.agentCredentialSecret,
-			from,
+			assertedFrom,
 			scope.orgSlug,
 			{ scope, verifiedActor: args.verifiedActor, declaredOrgSlug: args.tenantId },
 		);
+		// A sender proven BY ID speaks under its row's own label; the asserted
+		// string was only compared with it above. An unproven sender keeps the
+		// asserted string unchanged.
+		const from = provenLabel ?? assertedFrom;
 
 		// The sender derives from the verified caller: a member of an org may
 		// only speak as an orchestrator on its own roster (see

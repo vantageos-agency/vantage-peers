@@ -53,7 +53,8 @@ describe("M8 the agent registry selects no agent by name", () => {
 		}
 		expect(Object.fromEntries(callers)).toEqual({
 			// M5 messaging: declared sender must hold a credential once it is a known agent
-			[join("lib", "auth.ts")]: 3,
+			// (the one lookup left; the two label compares of a PROVEN actor read the row)
+			[join("lib", "auth.ts")]: 1,
 			// M5 messaging: seat sender screened against registered labels
 			"messages.ts": 2,
 			// M6 inbox, one owned site: the recipient named by a verified

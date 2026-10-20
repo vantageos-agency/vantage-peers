@@ -233,7 +233,7 @@ export async function resolveOwnedAgentOfPresentedSecret(
  * and cannot take an agent ID without another module changing first. Each
  * caller is pinned in convex/__tests__/agentRegistryNoNameSelection.test.ts with
  * its owner; do not add one:
- *   - convex/lib/auth.ts (declared sender / asserted actor label)  -> M5 messaging (sender by ID)
+ *   - convex/lib/auth.ts (declared sender with NO proof: known-agent credential check) -> M5 messaging (sender by ID)
  *   - convex/messages.ts (seat sender screening)                   -> M5 messaging
  *   - convex/lib/inboxReader.ts (recipient named by a verified org) -> M6 inbox
  *   - convex/lib/actorIds.ts (task createdBy / assignedTo labels)   -> tasks doors (names in, IDs stamped)

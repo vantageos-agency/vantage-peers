@@ -167,7 +167,21 @@ export type CallerScope = OrgScope & {
 	callerActorId?: string;
 	// The org the caller's agent ID lives in (absent for a person).
 	callerActorOrg?: string;
+	// The label of the VERIFIED agent row, set only when the call is proven BY ID
+	// (a verifiedActor or a presented agent credential) and a name was asserted.
+	// A door that decides on, or writes, the caller's NAME reads this in place of
+	// the asserted string (see actingNameOf); absent on every unproven call.
+	callerLabel?: string;
 };
+
+// The name a door acts under: the verified row's label when the call is proven
+// BY ID, else the asserted string unchanged (service account / master with no
+// proof keeps today's behaviour). Names no one: it only chooses between two
+// strings the lock has already reconciled.
+const actingNameOf = (
+	callerScope: CallerScope,
+	asserted: string | undefined,
+): string | undefined => callerScope.callerLabel ?? asserted;
 
 // requireAuthenticatedCaller — SECURITY REMEDIATION (task
 // k1712yrxjr570m6ks81rnhjh5n8cryf0, ruled by Pi). Closes the open door: none
@@ -281,13 +295,14 @@ export async function requireAuthenticatedCaller(
 	// operation's target org — a same-named agent credential from a
 	// DIFFERENT organisation is refused (ORG_MISMATCH) even though the name
 	// matches.
-	await requireAgentCredentialMatch(
+	const provenLabel = await requireAgentCredentialMatch(
 		ctx,
 		agentCredentialSecret,
 		callerOrchestrator,
 		scope.orgSlug,
 		{ scope, verifiedActor },
 	);
+	if (provenLabel !== undefined) scope.callerLabel = provenLabel;
 
 	// LIMIT of this reconciliation (containment scope only — removed by T2
 	// k172bccwcqajfetcrmm5wtasps8cs7tc when single-actor equality lands): it
@@ -415,6 +430,7 @@ function assertTaskCallerAuthorized(
 	// is not authority (a renamed agent, or the same name in another org, carries
 	// the label of a different agent); a row with no ID names nobody.
 	const callerId = callerScope.callerActorId;
+	const actingName = actingNameOf(callerScope, callerOrchestrator);
 	const isActor = (rowActorId: string | undefined): boolean =>
 		callerId !== undefined && rowActorId !== undefined && rowActorId === callerId;
 	const isReviewerReclaim =
@@ -422,12 +438,12 @@ function assertTaskCallerAuthorized(
 	const isAuthorized =
 		isActor(task.createdById) ||
 		isActor(task.assignedToId) ||
-		isFleetSystemCaller(callerScope, callerOrchestrator) ||
+		isFleetSystemCaller(callerScope, actingName) ||
 		isReviewerReclaim ||
 		reviewReassignGranted === true;
 	if (!isAuthorized) {
 		throw new ConvexError(
-			`RBAC_DENIED: ${callerOrchestrator} is not creator or assignee of task ${taskId} — ${JSON.stringify({ caller: callerOrchestrator, taskId })}`,
+			`RBAC_DENIED: ${actingName} is not creator or assignee of task ${taskId} — ${JSON.stringify({ caller: actingName, taskId })}`,
 		);
 	}
 	return undefined;
@@ -783,7 +799,7 @@ export const create = mutation({
 		const createdById = scope.callerActorId;
 		return await insertTask(
 			ctx,
-			{ ...taskArgs, createdBy: taskArgs.createdBy },
+			{ ...taskArgs, createdBy: scope.callerLabel ?? taskArgs.createdBy },
 			rowOrgId,
 			undefined,
 			{ ...(createdById !== undefined ? { createdById } : {}), assignedToId },
@@ -1925,6 +1941,7 @@ export const update = mutation({
 			{ proof: verifiedPerson, door: "tasks:update" },
 			{ proof: verifiedOrg, door: "tasks:update" },
 		);
+		const actingName = actingNameOf(callerScope, callerOrchestrator);
 		const verifiedOrgSlug = await resolveDoorVerifiedOrg(ctx, verifiedOrg, "tasks:update");
 		const task = await ctx.db.get(taskId);
 		if (task === null) {
@@ -1943,12 +1960,12 @@ export const update = mutation({
 			([k, val]) => val !== undefined && k !== "assignedTo" && k !== "assignedToInstance",
 		);
 		const reviewReassignGranted =
-			callerOrchestrator !== undefined &&
+			actingName !== undefined &&
 			task.origin === "automation" &&
 			task.isReviewTask === true &&
 			fields.assignedTo !== undefined &&
 			nonReassignFields.length === 0 &&
-			(await mayReassignReviewTask(ctx, callerOrchestrator, task.reviewPrRepoFullName));
+			(await mayReassignReviewTask(ctx, actingName, task.reviewPrRepoFullName));
 		// A delivery is never reviewed by its author: the grant refuses a target
 		// equal to the repo's own orchestrator, for every caller (coordinator
 		// included). The row's own creator/assignee keep the ordinary path.
@@ -1960,7 +1977,7 @@ export const update = mutation({
 			(await assigneeIsRepoOwnerAgent(ctx, task, fields.assignedTo))
 		) {
 			throw new ConvexError(
-				`RBAC_DENIED: ${callerOrchestrator} may not assign review task ${taskId} to ${fields.assignedTo} — it is the repo's own orchestrator (the author); a delivery is never reviewed by its author — ${JSON.stringify({ caller: callerOrchestrator, taskId, assignedTo: fields.assignedTo })}`,
+				`RBAC_DENIED: ${actingName} may not assign review task ${taskId} to ${fields.assignedTo} — it is the repo's own orchestrator (the author); a delivery is never reviewed by its author — ${JSON.stringify({ caller: actingName, taskId, assignedTo: fields.assignedTo })}`,
 			);
 		}
 		// Automation-task cancel grant (k17d351cphxtad91yqeqrhmhqx8fnktg): an
@@ -1972,14 +1989,14 @@ export const update = mutation({
 			([k, val]) => val !== undefined && k !== "status",
 		);
 		const automationCancelGranted =
-			callerOrchestrator !== undefined &&
+			actingName !== undefined &&
 			isAutomationOrigin(task.origin) &&
 			fields.status === "cancelled" &&
 			cancelReason !== undefined &&
 			cancelReason.trim() !== "" &&
 			nonCancelFields.length === 0 &&
-			(await mayCancelAutomationTask(ctx, callerOrchestrator));
-		const memberActor = await authorizeTaskActor(ctx, task, callerOrchestrator, taskId, callerScope, "tasks:update", {
+			(await mayCancelAutomationTask(ctx, actingName));
+		const memberActor = await authorizeTaskActor(ctx, task, actingName, taskId, callerScope, "tasks:update", {
 			reviewReassignGranted: reviewReassignGranted || automationCancelGranted,
 		});
 
@@ -2066,12 +2083,12 @@ export const update = mutation({
 				assertMemberIsAdmin(callerScope, "tasks:update");
 			} else if (
 				!automationCancelGranted &&
-				!isFleetSystemCaller(callerScope, callerOrchestrator) &&
+				!isFleetSystemCaller(callerScope, actingName) &&
 				(callerScope.callerActorId === undefined ||
 					task.createdById !== callerScope.callerActorId)
 			) {
 				throw new ConvexError(
-					`RBAC_DENIED: Only ${task.createdBy} (creator) or system can cancel task ${taskId} — ${JSON.stringify({ caller: callerOrchestrator, creator: task.createdBy, taskId })}`,
+					`RBAC_DENIED: Only ${task.createdBy} (creator) or system can cancel task ${taskId} — ${JSON.stringify({ caller: actingName, creator: task.createdBy, taskId })}`,
 				);
 			}
 			if (!cancelReason || cancelReason.trim() === "") {
@@ -2079,7 +2096,7 @@ export const update = mutation({
 					`CANCEL_REASON_REQUIRED: cancelReason is required to cancel task ${taskId} — ${JSON.stringify({ taskId })}`,
 				);
 			}
-			patch.cancelledBy = memberActor ?? callerOrchestrator;
+			patch.cancelledBy = memberActor ?? actingName;
 			// R-53: the canceller BY ID, within the task's own org (a person is
 			// its own "user:<subject>" ID). Unresolvable stays unset.
 			patch.cancelledById = memberActor ?? callerScope.callerActorId;
@@ -2205,7 +2222,8 @@ export const attachReviewArtifact = mutation({
 			args.agentCredentialSecret,
 			args.verifiedActor,
 		);
-		if (args.callerOrchestrator === undefined) {
+		const actingName = actingNameOf(callerScope, args.callerOrchestrator);
+		if (actingName === undefined) {
 			throw new ConvexError(
 				`RBAC_DENIED: callerOrchestrator is required to attach a review artifact — omitting it is refused, not exempted — ${JSON.stringify({ taskId: args.taskId })}`,
 			);
@@ -2236,13 +2254,13 @@ export const attachReviewArtifact = mutation({
 				task.reviewArtifactAttachedById !== callerScope.callerActorId)
 		) {
 			throw new ConvexError(
-				`REVIEW_ARTIFACT_ALREADY_ATTACHED: task ${args.taskId} already carries a review artifact attached by ${task.reviewArtifactAttachedBy} — ${args.callerOrchestrator} may not overwrite it. Ask ${task.reviewArtifactAttachedBy} to update it, or attach on a different task — ${JSON.stringify({ taskId: args.taskId, attachedBy: task.reviewArtifactAttachedBy, caller: args.callerOrchestrator })}`,
+				`REVIEW_ARTIFACT_ALREADY_ATTACHED: task ${args.taskId} already carries a review artifact attached by ${task.reviewArtifactAttachedBy} — ${actingName} may not overwrite it. Ask ${task.reviewArtifactAttachedBy} to update it, or attach on a different task — ${JSON.stringify({ taskId: args.taskId, attachedBy: task.reviewArtifactAttachedBy, caller: actingName })}`,
 			);
 		}
 
 		await ctx.db.patch(args.taskId, {
 			reviewArtifactRef: args.artifactRef,
-			reviewArtifactAttachedBy: args.callerOrchestrator,
+			reviewArtifactAttachedBy: actingName,
 			// R-53: the attacher BY ID, from the verified caller.
 			reviewArtifactAttachedById: callerScope.callerActorId,
 			updatedAt: Date.now(),
@@ -2425,7 +2443,7 @@ export const blockTask = mutation({
 			);
 		}
 		assertRowInVerifiedOrg(task, verifiedOrgSlug, args.taskId, "tasks:blockTask");
-		const memberActor = await authorizeTaskActor(ctx, task, args.callerOrchestrator, args.taskId, callerScope, "tasks:blockTask");
+		const memberActor = await authorizeTaskActor(ctx, task, actingNameOf(callerScope, args.callerOrchestrator), args.taskId, callerScope, "tasks:blockTask");
 
 		// Eta rider on PR #1208 @ def85c45 — cheap, one-directional consistency
 		// check: blockedCause="peer_task" literally means "waiting on a peer
@@ -2633,7 +2651,7 @@ export const complete = mutation({
 			);
 		}
 		assertRowInVerifiedOrg(task, verifiedOrgSlug, args.taskId, "tasks:complete");
-		const memberActor = await authorizeTaskActor(ctx, task, args.callerOrchestrator, args.taskId, callerScope, "tasks:complete");
+		const memberActor = await authorizeTaskActor(ctx, task, actingNameOf(callerScope, args.callerOrchestrator), args.taskId, callerScope, "tasks:complete");
 
 		if (!args.completionNote || args.completionNote.trim() === "") {
 			throw new ConvexError(
@@ -2957,7 +2975,7 @@ export const failTask = mutation({
 			);
 		}
 		assertRowInVerifiedOrg(task, verifiedOrgSlug, args.taskId, "tasks:failTask");
-		const memberActor = await authorizeTaskActor(ctx, task, args.callerOrchestrator, args.taskId, callerScope, "tasks:failTask");
+		const memberActor = await authorizeTaskActor(ctx, task, actingNameOf(callerScope, args.callerOrchestrator), args.taskId, callerScope, "tasks:failTask");
 
 		if (!args.failureNote || args.failureNote.trim() === "") {
 			throw new ConvexError(
@@ -3031,7 +3049,7 @@ export const failTask = mutation({
 
 async function assertNoConcurrentInProgress(
 	ctx: MutationCtx,
-	callerOrchestrator: string | undefined,
+	actingName: string | undefined,
 	taskId: Id<"tasks">,
 	project: string | undefined,
 	callerScope: CallerScope,
@@ -3039,7 +3057,7 @@ async function assertNoConcurrentInProgress(
 	// The fleet skips the per-orchestrator concurrency gate ONLY on its verified
 	// (master) scope — a typed "system" from an ordinary caller is checked like
 	// any other name.
-	if (!callerOrchestrator || isFleetSystemCaller(callerScope, callerOrchestrator))
+	if (!actingName || isFleetSystemCaller(callerScope, actingName))
 		return;
 	const cap = await getStartTaskInProgressCap(ctx);
 	// take(cap + 1): the target itself may be among the rows, so cap + 1 rows
@@ -3066,7 +3084,7 @@ async function assertNoConcurrentInProgress(
 		const conflict = others[0];
 		const openIds = others.map((t) => t._id);
 		throw new ConvexError(
-			`TASK_START_BLOCKED: Cannot start task ${taskId} — caller ${callerOrchestrator} already holds ${others.length} unclosed in_progress task(s) in project ${JSON.stringify(project ?? null)} (cap ${cap}): ${openIds.join(", ")}; first "${conflict.title}". Call complete_task with completionNote first — ${JSON.stringify({ currentInProgressTaskId: conflict._id, currentInProgressTitle: conflict.title, openInProgressTaskIds: openIds, cap, attemptedTaskId: taskId, project: project ?? null })}`,
+			`TASK_START_BLOCKED: Cannot start task ${taskId} — caller ${actingName} already holds ${others.length} unclosed in_progress task(s) in project ${JSON.stringify(project ?? null)} (cap ${cap}): ${openIds.join(", ")}; first "${conflict.title}". Call complete_task with completionNote first — ${JSON.stringify({ currentInProgressTaskId: conflict._id, currentInProgressTitle: conflict.title, openInProgressTaskIds: openIds, cap, attemptedTaskId: taskId, project: project ?? null })}`,
 		);
 	}
 }
@@ -3110,7 +3128,7 @@ export const start = mutation({
 			);
 		}
 		assertRowInVerifiedOrg(task, verifiedOrgSlug, args.taskId, "tasks:start");
-		const memberActor = await authorizeTaskActor(ctx, task, args.callerOrchestrator, args.taskId, callerScope, "tasks:start");
+		const memberActor = await authorizeTaskActor(ctx, task, actingNameOf(callerScope, args.callerOrchestrator), args.taskId, callerScope, "tasks:start");
 
 		// Block if any dependsOn tasks are not yet done.
 		if (task.dependsOn && task.dependsOn.length > 0) {
@@ -3132,7 +3150,7 @@ export const start = mutation({
 		// project is one shared stream.
 		await assertNoConcurrentInProgress(
 			ctx,
-			args.callerOrchestrator,
+			actingNameOf(callerScope, args.callerOrchestrator),
 			args.taskId,
 			task.project,
 			callerScope,
@@ -3205,7 +3223,7 @@ export const pause = mutation({
 			);
 		}
 		assertRowInVerifiedOrg(task, verifiedOrgSlug, args.taskId, "tasks:pause");
-		const memberActor = await authorizeTaskActor(ctx, task, args.callerOrchestrator, args.taskId, callerScope, "tasks:pause");
+		const memberActor = await authorizeTaskActor(ctx, task, actingNameOf(callerScope, args.callerOrchestrator), args.taskId, callerScope, "tasks:pause");
 
 		const segments = task.workSegments ?? [];
 		const lastIndex = segments.length - 1;
@@ -3274,7 +3292,7 @@ export const resume = mutation({
 			);
 		}
 		assertRowInVerifiedOrg(task, verifiedOrgSlug, args.taskId, "tasks:resume");
-		const memberActor = await authorizeTaskActor(ctx, task, args.callerOrchestrator, args.taskId, callerScope, "tasks:resume");
+		const memberActor = await authorizeTaskActor(ctx, task, actingNameOf(callerScope, args.callerOrchestrator), args.taskId, callerScope, "tasks:resume");
 
 		if (task.pausedAt === undefined) {
 			throw new ConvexError(
@@ -3284,7 +3302,7 @@ export const resume = mutation({
 
 		await assertNoConcurrentInProgress(
 			ctx,
-			args.callerOrchestrator,
+			actingNameOf(callerScope, args.callerOrchestrator),
 			args.taskId,
 			task.project,
 			callerScope,
@@ -3358,7 +3376,7 @@ export const correctSegment = mutation({
 		// callerOrchestrator (RBAC_DENIED) — this narrows the type for the
 		// `correction.by` write below, mirroring attachReviewArtifact's
 		// explicit undefined check.
-		const callerOrchestrator = args.callerOrchestrator;
+		const callerOrchestrator = actingNameOf(callerScope, args.callerOrchestrator);
 		if (callerOrchestrator === undefined) {
 			throw new ConvexError(
 				`RBAC_DENIED: callerOrchestrator is required to correct a work segment — ${JSON.stringify({ taskId: args.taskId })}`,
@@ -3590,13 +3608,14 @@ export const deleteTask = mutation({
 			await ctx.db.delete(args.taskId);
 			return { deleted: true };
 		}
+		const actingName = actingNameOf(callerScope, args.callerOrchestrator);
 		if (
-			!isFleetSystemCaller(callerScope, args.callerOrchestrator) &&
+			!isFleetSystemCaller(callerScope, actingName) &&
 			(callerScope.callerActorId === undefined ||
 				task.createdById !== callerScope.callerActorId)
 		) {
 			throw new ConvexError(
-				`RBAC_DENIED: Only ${task.createdBy} (creator) or system can delete task ${args.taskId} — ${JSON.stringify({ caller: args.callerOrchestrator, creator: task.createdBy, taskId: args.taskId })}`,
+				`RBAC_DENIED: Only ${task.createdBy} (creator) or system can delete task ${args.taskId} — ${JSON.stringify({ caller: actingName, creator: task.createdBy, taskId: args.taskId })}`,
 			);
 		}
 
@@ -4715,9 +4734,10 @@ export const bulkComplete = mutation({
 		// (any write requires dryRun=false, and BULK_CALLER_REQUIRED above
 		// already makes callerOrchestrator mandatory before a write can happen —
 		// omission never bypasses a mutation here, class sweep 2026-07-23).
-		const isFleetSystem = isFleetSystemCaller(callerScope, args.callerOrchestrator);
-		if (args.callerOrchestrator !== undefined && !isFleetSystem) {
-			const caller = args.callerOrchestrator;
+		const actingName = actingNameOf(callerScope, args.callerOrchestrator);
+		const isFleetSystem = isFleetSystemCaller(callerScope, actingName);
+		if (actingName !== undefined && !isFleetSystem) {
+			const caller = actingName;
 			const denied = findBulkCompleteDenied(cappedResults, callerScope.callerActorId);
 			if (denied !== undefined) {
 				throw new ConvexError(
@@ -4772,7 +4792,7 @@ export const bulkComplete = mutation({
 			// caller's own scope; absent only for a fleet-master run.
 			...(runOrgSlug !== undefined ? { orgId: runOrgSlug } : {}),
 			...(runClerkOrgId !== undefined ? { clerkOrgId: runClerkOrgId } : {}),
-			createdBy: args.callerOrchestrator ?? "",
+			createdBy: actingName ?? "",
 			status: exceeded ? "running" : "complete",
 			closed: count,
 			remaining: exceeded,
@@ -4799,7 +4819,7 @@ export const bulkComplete = mutation({
 						? { masterSource: callerScope.masterSource }
 						: {}),
 				},
-				callerOrchestrator: args.callerOrchestrator ?? "",
+				callerOrchestrator: actingName ?? "",
 				...(callerScope.callerActorId !== undefined
 					? { callerActorId: callerScope.callerActorId }
 					: {}),
