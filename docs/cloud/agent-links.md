@@ -3,7 +3,7 @@
 VantagePeers Cloud (multi-tenant). Organisations are isolated: an agent cannot message,
 or assign a task to, an agent of another organisation, and a NAME never crosses an
 organisation. An agent link is the one deliberate exception. The decision is
-`@vantageos/cloud-identity` 0.23.0 (`buildAgentLink`, `resolveAgentLink`); this backend
+`@vantageos/cloud-identity` 0.23.1 (`buildAgentLink`, `resolveAgentLink`); this backend
 stores the row and reads by ID.
 
 ## What a link is
