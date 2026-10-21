@@ -5,6 +5,7 @@ import {
 } from "@vantageos/cloud-identity";
 import type { Doc } from "../_generated/dataModel";
 import type { MutationCtx, QueryCtx } from "../_generated/server";
+import { membershipRecordOf } from "../orgMembership";
 import { personPrincipalLookups } from "./actingPrincipal";
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -46,22 +47,7 @@ export function agentLinkLookups(ctx: Ctx): AgentLinkLookups {
 			if (row === null) return null;
 			return { id: row._id, orgId: row.clerkOrgId ?? null, active: row.isActive };
 		},
-		lookupMembership: async (personId, orgId) =>
-			await ctx.db
-				.query("orgMembership")
-				.withIndex("by_org_user_clerk_id", (q) =>
-					q.eq("clerkOrgId", orgId).eq("clerkUserId", personId),
-				)
-				.unique()
-				.then((row) =>
-					row === null
-						? null
-						: {
-								active: row.deletedAt === undefined,
-								role: row.role,
-								orgId: row.clerkOrgId ?? null,
-							},
-				),
+		lookupMembership: (personId, orgId) => membershipRecordOf(ctx, orgId, personId),
 		adminRoles: AGENT_LINK_ADMIN_ROLES,
 	};
 }
