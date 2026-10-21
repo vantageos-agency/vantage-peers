@@ -27,7 +27,6 @@ import {
 	ACTOR_CREDENTIAL_MODE_ENV,
 	actingClaimRefusal,
 	bearerAuthMiddleware,
-	isSeatActingAsItself,
 	type OAuthContext,
 	sha256Hex,
 } from "../src/auth.js";
@@ -36,6 +35,7 @@ import {
 	VERIFIED_ACTOR_DOORS,
 	withVerifiedActor,
 } from "../src/verifiedActor.js";
+import { seatExempt } from "./lib/seatExempt.js";
 
 const HEADER = "x-vantage-agent-credential";
 const COMPLETE = { taskId: "k1", completionNote: "done" };
@@ -294,7 +294,7 @@ describe("a seat that resolved no agent cannot act as one", () => {
 		expect(r.mutations).toHaveLength(0);
 	});
 
-	it("isSeatActingAsItself decides on the stamp, not on the allowlist or the name", () => {
+	it("seatExempt decides on the stamp, not on the allowlist or the name", () => {
 		const row: OAuthContext = {
 			clientId: "c",
 			userId: "u",
@@ -309,13 +309,13 @@ describe("a seat that resolved no agent cannot act as one", () => {
 			clerkOrgSlug: "iris-rh",
 			seatAgent: { agentId: CLIO_ID, orgId: "iris-rh", agentName: "clio" },
 		};
-		expect(isSeatActingAsItself(row, "clio")).toBe(true);
-		expect(isSeatActingAsItself(row, "victor")).toBe(false);
-		expect(isSeatActingAsItself({ ...row, seatAgent: null }, "clio")).toBe(
+		expect(seatExempt(row, "clio")).toBe(true);
+		expect(seatExempt(row, "victor")).toBe(false);
+		expect(seatExempt({ ...row, seatAgent: null }, "clio")).toBe(
 			false,
 		);
 		expect(
-			isSeatActingAsItself(
+			seatExempt(
 				{ ...row, seatAgent: { ...row.seatAgent!, orgId: "other-org" } },
 				"clio",
 			),

@@ -31,13 +31,13 @@ import {
 	actorCredentialMode,
 	bearerAuthMiddleware,
 	isMasterScope,
-	isSeatActingAsItself,
 	type OAuthContext,
 	resolveActorCredentialMode,
 	sha256Hex,
 	unattributedClaimCounts,
 } from "../src/auth.js";
 import { registerTools } from "../src/tools.js";
+import { seatExempt } from "./lib/seatExempt.js";
 
 const HEADER = "x-vantage-agent-credential";
 const SECRET_ALICE = "secret-alice-acme";
@@ -298,10 +298,10 @@ describe("the five poles — scoped non-master identity, env unset", () => {
 		expect(star.fromAllowList).toEqual(["*"]);
 		expect(star.accessTokenHash).toBeDefined();
 		for (const name of ["*", "alice"]) {
-			expect(isSeatActingAsItself(star, name)).toBe(false);
+			expect(seatExempt(star, name)).toBe(false);
 		}
 		// Contrast with the real seat row: the predicate is what tells them apart.
-		expect(isSeatActingAsItself(await ctxOf(SEAT_TOKEN), "alice")).toBe(true);
+		expect(seatExempt(await ctxOf(SEAT_TOKEN), "alice")).toBe(true);
 	});
 
 	it("PIN (pre-existing, not the exemption): a ['*'] row is MASTER scope (@vantageos/cloud-identity isMasterScope), so actingClaimRefusal serves it on the master branch", async () => {
@@ -327,29 +327,29 @@ describe("the five poles — scoped non-master identity, env unset", () => {
 			isMaster: false,
 			accessTokenHash: "h",
 		};
-		expect(isSeatActingAsItself(row, "alice")).toBe(true);
+		expect(seatExempt(row, "alice")).toBe(true);
 		// Same claim, multi-name row: not exempt.
 		expect(
-			isSeatActingAsItself(
+			seatExempt(
 				{ ...row, fromAllowList: ["alice", "bob"] },
 				"alice",
 			),
 		).toBe(false);
 		// Same row shape but not from a token row (e.g. a Clerk-JWT session): not exempt.
 		expect(
-			isSeatActingAsItself({ ...row, accessTokenHash: undefined }, "alice"),
+			seatExempt({ ...row, accessTokenHash: undefined }, "alice"),
 		).toBe(false);
 		// Any principal on the row withholds it, including a kind added later.
-		expect(isSeatActingAsItself({ ...row, principal: "person" }, "alice")).toBe(
+		expect(seatExempt({ ...row, principal: "person" }, "alice")).toBe(
 			false,
 		);
 		// A principal kind that does not exist yet: the type admits only
 		// "person" today, so the future value is forced through a cast on purpose.
 		for (const future of ["service", "agent"]) {
 			const ctx = { ...row, principal: future } as unknown as OAuthContext;
-			expect(isSeatActingAsItself(ctx, "alice")).toBe(false);
+			expect(seatExempt(ctx, "alice")).toBe(false);
 		}
-		expect(isSeatActingAsItself({ ...row, fromAllowList: [""] }, "")).toBe(
+		expect(seatExempt({ ...row, fromAllowList: [""] }, "")).toBe(
 			false,
 		);
 	});
