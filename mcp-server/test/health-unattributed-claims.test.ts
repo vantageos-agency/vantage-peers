@@ -1,7 +1,7 @@
 /**
  * /health publishes the unattributed-claim aggregate; the per-client breakdown
  * lives behind the master-only /admin/actor-claims. Publication only: neither
- * the mode default nor checkActorBinding changes (controls 4 and 5).
+ * the mode default nor actingClaimRefusal changes (controls 4 and 5).
  *
  * Counts are driven through the REAL recordUnattributedClaim and asserted
  * against the number this file recorded, never against a literal.
@@ -11,7 +11,7 @@ import { app } from "../server-http.js";
 import {
 	_resetUnattributedClaimsForTest,
 	ACTOR_CREDENTIAL_MODE_ENV,
-	checkActorBinding,
+	actingClaimRefusal,
 	isUnattributedClaim,
 	type OAuthContext,
 	recordUnattributedClaim,
@@ -117,21 +117,21 @@ describe("/health unattributed_claims", () => {
 	});
 });
 
-describe("5 (control) checkActorBinding unchanged in both modes", () => {
+describe("5 (control) actingClaimRefusal unchanged in both modes", () => {
 	const ctx = orgCtx("client-a");
 	it("default (unset) is strict: typed name refused AGENT_CREDENTIAL_REQUIRED", () => {
 		delete process.env[ACTOR_CREDENTIAL_MODE_ENV];
-		expect(checkActorBinding(ctx, "alice")).toMatch(
+		expect(actingClaimRefusal(ctx, "alice")).toMatch(
 			/^AGENT_CREDENTIAL_REQUIRED/,
 		);
 	});
 	it("explicit permissive: typed name accepted", () => {
 		process.env[ACTOR_CREDENTIAL_MODE_ENV] = "permissive";
-		expect(checkActorBinding(ctx, "alice")).toBeNull();
+		expect(actingClaimRefusal(ctx, "alice")).toBeNull();
 	});
 	it("strict: typed name refused AGENT_CREDENTIAL_REQUIRED", () => {
 		process.env[ACTOR_CREDENTIAL_MODE_ENV] = "strict";
-		expect(checkActorBinding(ctx, "alice")).toMatch(
+		expect(actingClaimRefusal(ctx, "alice")).toMatch(
 			/^AGENT_CREDENTIAL_REQUIRED/,
 		);
 	});
@@ -145,11 +145,11 @@ describe("5 (control) checkActorBinding unchanged in both modes", () => {
 			namespaceReadPrefixes: ["*"],
 			namespaceWritePrefixes: ["*"],
 		};
-		expect(checkActorBinding(master, "alice")).toBeNull();
+		expect(actingClaimRefusal(master, "alice")).toBeNull();
 	});
-	it("checkActorBinding itself records nothing", async () => {
+	it("actingClaimRefusal itself records nothing", async () => {
 		delete process.env[ACTOR_CREDENTIAL_MODE_ENV];
-		checkActorBinding(ctx, "alice");
+		actingClaimRefusal(ctx, "alice");
 		expect((await health()).unattributed_claims.strict_would_refuse).toBe(0);
 	});
 });

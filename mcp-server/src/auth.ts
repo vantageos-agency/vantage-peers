@@ -28,11 +28,13 @@
  */
 
 import {
+	type ActingCaller,
 	PERSON_ACTOR_PREFIX as CI_PERSON_ACTOR_PREFIX,
+	decideActingClaim,
 	type OAuthCtx as PackageOAuthCtx,
 	isMasterScope as packageIsMasterScope,
-	personActorName,
 	sha256Hex as packageSha256Hex,
+	personActorName,
 	validateMasterBearer,
 	validatePresentedBearer,
 } from "@vantageos/cloud-identity";
@@ -66,7 +68,7 @@ export type OAuthContext = {
 	 * True ONLY on auth branch (1): the request presented the HTTP master bearer
 	 * (the fleet service account). Distinguishes it from LOCAL_STDIO_TRUST_CTX
 	 * (also master scope, but no network bearer and no header to present).
-	 * checkActorBinding is STRICT for this population whatever
+	 * the package's `master-bearer` row is STRICT for this population whatever
 	 * VANTAGE_ACTOR_CREDENTIAL_MODE says: a fleet caller that types an acting
 	 * name must present the per-agent credential header.
 	 */
@@ -131,7 +133,7 @@ export type OAuthContext = {
 	 *
 	 * Absent means "no agent credential was presented" — an org-only caller.
 	 * Absence is NEVER defaulted into a name: every acting-name surface
-	 * (checkActorBinding) refuses a non-master caller that claims a name
+	 * (`decideActingClaim`, via `actingClaimRefusal`) refuses a non-master caller that claims a name
 	 * without one. Only the master bearer / local-stdio trust context may act
 	 * on a declared name, and that is that identity's own all-authority, not a
 	 * widening.
@@ -357,8 +359,8 @@ export const AGENT_CREDENTIAL_HEADER = "x-vantage-agent-credential";
  *     with it is AGENT_IDENTITY_MISMATCH in both modes.
  *
  * Read in exactly ONE place ({@link resolveActorCredentialMode}), shared by
- * {@link actorCredentialMode} — which {@link checkActorBinding} calls to
- * ENFORCE — and by /health, which only PUBLISHES it. One read, so the mode
+ * {@link actorCredentialMode} — which {@link actingClaimRefusal} passes to the
+ * package as `mode` to ENFORCE — and by /health, which only PUBLISHES it. One read, so the mode
  * that is published can never disagree with the mode that is applied.
  * There is no per-tool flag. Unset or empty means STRICT (a fail-closed
  * default lives in code, railway-mcp-redeploy.md): permissive is reached only
@@ -425,75 +427,86 @@ export function actorCredentialMode(): ActorCredentialMode {
 	return r.mode;
 }
 
+/** The door this module names on every acting-claim refusal. */
+export const ACTING_CLAIM_DOOR = "mcp:acting-claim";
+
 /**
- * checkActorBinding — the ONE predicate that decides whether a name a caller
- * TYPED into a tool call may be treated as the acting agent. A typed name is a
- * CLAIM; it is never an authority over a presented credential.
+ * Maps the context onto the package's {@link ActingCaller}. FIELD MAPPING
+ * ONLY: the kind is chosen from the same context fields, in the same order, and
+ * nothing is decided here: the decision is `decideActingClaim`'s.
  *
- *   - actor resolved          → the claim must EQUAL `actor.agentName` after
- *                               normalizeOrchestratorId on both sides (NFC,
- *                               lowercase, trim — the rule every sibling gate uses).
- *                               Another agent's name is AGENT_IDENTITY_MISMATCH
- *                               in EVERY mode: compatibility never means a
- *                               presented credential can be overridden by a
- *                               typed name.
- *   - no actor, master scope  → passes. The master bearer / local-stdio trust
- *                               context is an all-authority identity that is
- *                               not an agent; it already reaches every row and
- *                               every name, so a declared name here widens
- *                               nothing. Named, not hidden.
- *   - no actor, otherwise     → per {@link actorCredentialMode}:
- *                               permissive → accepted (the caller then records
- *                               it unattributed, see registerTool's
- *                               bindActingNames); strict → REFUSED
- *                               (AGENT_CREDENTIAL_REQUIRED), except a seat
- *                               token naming its own single allowlisted name
- *                               ({@link isSeatActingAsItself}).
- *   - no ctx at all           → REFUSED (absence is never authority).
+ *   ctx absent                              -> null
+ *   ctx.actor                               -> agent-credential (agentId, label, orgSlug)
+ *   seatAgentOf(ctx) set                    -> seat (agentId, label, orgId)
+ *   ctx.viaMasterBearer                     -> master-bearer
+ *   isMasterScope(ctx)                      -> master-scope
+ *   opaque-token seat, no principal, not a
+ *     master, stamp ABSENT (transitional)   -> seat-unresolved (its allowlist)
+ *   anything else                           -> org-member
  */
-export function checkActorBinding(
+export function actingCallerOf(
+	ctx: OAuthContext | undefined,
+): ActingCaller | null {
+	if (!ctx) return null;
+	if (ctx.actor) {
+		return {
+			kind: "agent-credential",
+			agentId: ctx.actor.agentId ?? "",
+			agentLabel: ctx.actor.agentName,
+			orgSlug: ctx.actor.orgSlug,
+		};
+	}
+	const seat = seatAgentOf(ctx);
+	if (seat !== undefined) {
+		return {
+			kind: "seat",
+			agentId: seat.agentId,
+			agentLabel: seat.agentName,
+			orgId: seat.orgId,
+		};
+	}
+	if (ctx.viaMasterBearer) return { kind: "master-bearer" };
+	if (isMasterScope(ctx)) return { kind: "master-scope" };
+	if (
+		ctx.seatAgent === undefined &&
+		ctx.accessTokenHash !== undefined &&
+		ctx.principal === undefined
+	) {
+		return { kind: "seat-unresolved", allowlist: ctx.fromAllowList };
+	}
+	return { kind: "org-member" };
+}
+
+/**
+ * The ONE place a name a caller TYPED into a call is judged: a delegation to
+ * `decideActingClaim` (@vantageos/cloud-identity). A typed name is a CLAIM,
+ * never an authority over a presented credential. The deployment's cutover
+ * switch ({@link actorCredentialMode}) is read here and passed EXPLICITLY as
+ * the package's `mode`; it is never defaulted to permissive.
+ *
+ * Returns null when the claim is admitted, else the refusal as the string the
+ * callers return, CODE FIRST (`AGENT_IDENTITY_MISMATCH: ...`,
+ * `AGENT_CREDENTIAL_REQUIRED: ...`, `RBAC_DENIED: ...`).
+ */
+export function actingClaimRefusal(
 	ctx: OAuthContext | undefined,
 	claimedName: string,
 ): string | null {
-	if (!ctx) return NO_CONTEXT_REFUSAL;
-	if (ctx.actor) {
-		if (
-			normalizeOrchestratorId(claimedName) ===
-			normalizeOrchestratorId(ctx.actor.agentName)
-		)
-			return null;
-		return (
-			`AGENT_IDENTITY_MISMATCH: the presented agent credential resolves to ` +
-			`"${ctx.actor.agentName}" (org "${ctx.actor.orgSlug}") but this call ` +
-			`names "${claimedName}" — a credential holder may only act under its ` +
-			"own resolved identity. Omit the name to act as the resolved agent."
-		);
-	}
-	// A seat token that resolved to an agent BY ID: the typed name is only
-	// checked to EQUAL that agent's name. Like a credential, it is authoritative
-	// in EVERY mode - a typed name never overrides the resolved identity.
-	const seat = seatAgentOf(ctx);
-	if (seat !== undefined) {
-		if (
-			normalizeOrchestratorId(claimedName) ===
-			normalizeOrchestratorId(seat.agentName)
-		)
-			return null;
-		return (
-			`AGENT_IDENTITY_MISMATCH: this seat acts as agent "${seat.agentName}" ` +
-			`(${seat.agentId}, org "${seat.orgId}") but this call names ` +
-			`"${claimedName}" — a seat may only act under its own resolved ` +
-			"identity. Omit the name to act as the resolved agent."
-		);
-	}
-	// Fleet callers (HTTP master bearer) are strict regardless of the env mode —
-	// a fail-closed default lives in code, never in a Railway variable
-	// (railway-mcp-redeploy.md). The stdio trust context is NOT this population.
-	if (ctx.viaMasterBearer) return agentCredentialRequired(claimedName);
-	if (isMasterScope(ctx)) return null;
-	if (actorCredentialMode() === "permissive") return null;
-	if (isSeatActingAsItself(ctx, claimedName)) return null;
-	return agentCredentialRequired(claimedName);
+	const decision = decideActingClaim({
+		claimed: claimedName,
+		caller: actingCallerOf(ctx),
+		mode: actorCredentialMode(),
+		door: ACTING_CLAIM_DOOR,
+	});
+	if (decision.ok) return null;
+	const { code, reason, detail, door } = decision.refusal;
+	// The package's sentence is deployment-neutral; this transport knows the
+	// header a caller must present, so it is named here (text only, no decision).
+	const hint =
+		code === "AGENT_CREDENTIAL_REQUIRED"
+			? ` Present the per-agent credential in the ${AGENT_CREDENTIAL_HEADER} header.`
+			: "";
+	return `${code}: ${detail} (${reason}, door ${door}).${hint}`;
 }
 
 /**
@@ -646,15 +659,6 @@ export function resolveSeatOrg(
 		};
 	}
 	return { kind: "org", orgSlug };
-}
-
-function agentCredentialRequired(claimedName: string): string {
-	return (
-		`AGENT_CREDENTIAL_REQUIRED: this call names "${claimedName}" but the ` +
-		`request carried no per-agent credential (header ${AGENT_CREDENTIAL_HEADER}) — ` +
-		"an org-level bearer authenticates the organisation, not an agent, so a " +
-		"typed name is not accepted as an identity."
-	);
 }
 
 /**
@@ -1126,7 +1130,7 @@ type ActorResolution =
  * REFUSE, never default:
  *   - header absent            → no actor (an org-only caller). Not a refusal
  *                                here: every acting-name surface refuses a
- *                                non-master claim without one (checkActorBinding).
+ *                                non-master claim without one (decideActingClaim).
  *   - header present but empty → 401. A malformed credential is not absence.
  *   - lookup throws            → 401. A failure is a DENY, never a fall-through
  *                                to the org-only grant the caller already holds.

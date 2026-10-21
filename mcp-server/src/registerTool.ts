@@ -28,7 +28,7 @@
  * judged; a handler does not re-check it (task k1778c2hvae8e8vz9f5bbbbbb98g62hw
  * slice 1 removed the in-handler copies, which re-decided an answered question).
  * Two gates, both before the handler, intersect and never widen:
- *   1. the actor binding — {@link bindActingNames} runs `checkActorBinding` on
+ *   1. the actor binding — {@link bindActingNames} runs `decideActingClaim` (via `actingClaimRefusal`) on
  *      every declared acting name (`callerOrchestrator`, the `fromArg`);
  *   2. the roster (`fromAllowList`) — {@link enforceScope}, decided by
  *      `@vantageos/cloud-identity` `passesScopeFilter`.
@@ -40,9 +40,8 @@ import {
 	resolvePersonActingName,
 } from "@vantageos/cloud-identity";
 import { z } from "zod";
-import { isClerkMember } from "./memberAuthor.js";
 import {
-	checkActorBinding,
+	actingClaimRefusal,
 	checkNamespaceRead,
 	checkNamespaceWrite,
 	internalClient,
@@ -55,6 +54,7 @@ import {
 	seatAgentOf,
 	toPackageOAuthCtx,
 } from "./auth.js";
+import { isClerkMember } from "./memberAuthor.js";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Scope declaration — a discriminated union. Every registration MUST pick one.
@@ -185,12 +185,12 @@ function enforceScope(
 		case "from": {
 			const from = args[scope.fromArg];
 			// No claim made by a master caller: nothing to verify, nothing to
-			// refuse. (A claim is handled by bindActingNames + checkActorBinding;
+			// refuse. (A claim is handled by bindActingNames + decideActingClaim;
 			// feeding String(undefined) to the binder would invent one.)
 			if ((from === undefined || from === null) && isMasterScope(ctx.oauthCtx))
 				return null;
 			if (!ctx.oauthCtx) return mcpError(NO_CONTEXT_REFUSAL);
-			// The actor gate already ran: bindActingNames applied checkActorBinding
+			// The actor gate already ran: bindActingNames applied decideActingClaim
 			// to this same argument (or derived it from the resolved actor) before
 			// this call. What is left is the roster, which narrows the actor and
 			// never substitutes for it. An omitted name for a non-master caller
@@ -279,7 +279,7 @@ export function actingNameKeys(
 
 /**
  * bindActingNames — an acting-name argument is a CLAIM the resolved actor
- * verifies, never an authority (checkActorBinding). Runs BEFORE the tool's
+ * verifies, never an authority (decideActingClaim). Runs BEFORE the tool's
  * scope check and BEFORE the handler, once, for every tool.
  *
  *   - claimed and it disagrees with the actor → refused, nothing dispatched
@@ -320,7 +320,7 @@ function bindActingNames(
 			}
 			continue;
 		}
-		const err = checkActorBinding(oauthCtx, String(claimed));
+		const err = actingClaimRefusal(oauthCtx, String(claimed));
 		if (err) return { denied: mcpError(err) };
 		// A typed name with no credential behind it (permissive mode only — strict
 		// refused above). Collected here, RECORDED by the caller only once the

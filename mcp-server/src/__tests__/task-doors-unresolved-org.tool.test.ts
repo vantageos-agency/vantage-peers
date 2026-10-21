@@ -15,9 +15,9 @@
 
 import type { ConvexHttpClient } from "convex/browser";
 import { anyApi } from "convex/server";
-import { convexTest } from "../../../tests/fixtures/convexTestWithServiceAccount";
 import { beforeEach, describe, expect, it } from "vitest";
 import schema from "../../../convex/schema.js";
+import { convexTest } from "../../../tests/fixtures/convexTestWithServiceAccount";
 import { testClerkOrgId } from "../../../tests/fixtures/testClerkOrgId";
 import { seedAgents } from "../../../tests/lib/agentIdOf.js";
 import {
@@ -319,7 +319,7 @@ describe("a non-master bearer with no resolvable org is refused at the MCP layer
 			...NO_ORG,
 			clerkJwt: "verified.jwt.token",
 			clerkOrgSlug: "org-a",
-			actor: { orgSlug: "org-a", agentName: "eta" },
+			actor: { orgSlug: "org-a", agentName: "eta", agentId: "agent-eta" },
 		};
 		await t.run(async (ctx) => {
 			await ctx.db.insert("memberWriterRoles", {

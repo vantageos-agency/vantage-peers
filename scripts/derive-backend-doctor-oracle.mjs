@@ -1526,7 +1526,7 @@ function authorityOf(scope) {
 		case "from":
 			return {
 				rbac: "toutes_orgs(identity-gated)",
-				enforce: "bearer_scope_profile(passesScopeFilter)+checkActorBinding",
+				enforce: "bearer_scope_profile(passesScopeFilter)+decideActingClaim",
 				ns: `clerkUserId/orchestratorId(arg=${scope.fromArg})`,
 				tier: "identite",
 			};

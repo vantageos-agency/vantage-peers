@@ -20,8 +20,8 @@
 
 import { makeFunctionReference } from "convex/server";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { convexTest } from "../../tests/fixtures/convexTestWithServiceAccount";
 import schema from "../../convex/schema";
+import { convexTest } from "../../tests/fixtures/convexTestWithServiceAccount";
 import { testClerkOrgId } from "../../tests/fixtures/testClerkOrgId";
 import { LOCAL_STDIO_TRUST_CTX, type OAuthContext } from "../src/auth.js";
 import { registerTools } from "../src/tools.js";
@@ -172,7 +172,7 @@ describe("(a) a Clerk-JWT member writes in its own name", () => {
 
 	it("a member that also presents an agent credential keeps the agent rules: a name that is not the credential's is refused", async () => {
 		const ctx = clerkMemberCtx({
-			actor: { orgSlug: "author-org", agentName: "alice" },
+			actor: { orgSlug: "author-org", agentName: "alice", agentId: "agent-alice" },
 			fromAllowList: ["alice"],
 		});
 		const store = tools(member(), ctx).get("store_memory");

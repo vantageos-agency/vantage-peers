@@ -123,7 +123,11 @@ const CREDENTIAL: OAuthContext = {
 	...base,
 	scopeProfile: "tenant",
 	fromAllowList: ["alpha-role", "beta-role"],
-	actor: { orgSlug: "org-fixture", agentName: "alpha-role" },
+	actor: {
+		orgSlug: "org-fixture",
+		agentName: "alpha-role",
+		agentId: "agent-alpha",
+	},
 };
 
 /** A seat token that resolved to alpha-role BY ID in its own org. */

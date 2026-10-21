@@ -42,7 +42,7 @@ function installInternalClient(): void {
 			if (name === "agentCredentials:resolveAgentCredential") {
 				const { presentedSecret } = args as { presentedSecret: string };
 				if (presentedSecret === SECRET_ALICE) {
-					return { orgSlug: "fleet", agentName: "alice" };
+					return { orgSlug: "fleet", agentName: "alice", agentId: "agent-alice" };
 				}
 				throw Object.assign(new Error("[Request ID: x] Server Error"), {
 					data: `RBAC_DENIED: not recognised for "agentCredentials:resolveAgentCredential"`,

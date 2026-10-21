@@ -113,7 +113,7 @@ describe("send_message — sender bound to the verified caller (MCP layer)", () 
 
 	it("ACTOR: a resolved agent 'bob' sending as 'bea' (on the roster) is refused", async () => {
 		const { send, mutations } = harness(
-			memberCtx({ actor: { orgSlug: "org-b", agentName: "bob" } }),
+			memberCtx({ actor: { orgSlug: "org-b", agentName: "bob", agentId: "agent-bob" } }),
 		);
 		const r = await send({ from: "bea", channel: "bob", content: "x" });
 		expect(r.isError).toBe(true);
