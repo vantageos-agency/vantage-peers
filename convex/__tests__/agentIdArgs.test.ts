@@ -442,6 +442,24 @@ describe("messages:sendMessage fromAgentId", () => {
 		).toBe("AGENT_IDENTITY_MISMATCH");
 		expect(await messageRows(w.t)).toHaveLength(0);
 	});
+	test("UNPROVEN org member naming an agent by ID gets no more than a name would: AGENT_CREDENTIAL_REQUIRED, zero messages", async () => {
+		const w = await world();
+		const member = w.t.withIdentity({
+			subject: "user_member_1",
+			org_slug: ORG_A,
+			org_id: testClerkOrgId(ORG_A),
+			org_role: "org:member",
+		});
+		const got = await code(
+			member.mutation(api.messages.sendMessage, {
+				fromAgentId: w.quillA,
+				channel: "peer",
+				content: "hello",
+			} as never),
+		);
+		expect(got).toBe("AGENT_CREDENTIAL_REQUIRED");
+		expect(await messageRows(w.t)).toHaveLength(0);
+	});
 	test("PROVEN caller with its OWN fromAgentId (no `from`) sends under the row's label", async () => {
 		const w = await world();
 		expect(

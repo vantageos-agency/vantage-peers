@@ -1,7 +1,7 @@
 import { ConvexError } from "convex/values";
 import type { Doc } from "../_generated/dataModel";
 import type { MutationCtx, QueryCtx } from "../_generated/server";
-import { normalizeOrchestratorId } from "../_helpers/normalizeOrchestratorId";
+import { actorIdResolver } from "./actorIds";
 import { requireAssigneeAgentActive } from "./actingPrincipal";
 import { requireId } from "./ids";
 
@@ -17,7 +17,7 @@ import { requireId } from "./ids";
 // argument is a string that must be an `agents` ID (a name or another table's ID
 // is a typed validation error, never a lookup), and an ID given beside a name must
 // name the SAME agent (`AGENT_IDENTITY_MISMATCH`, nothing written, because the
-// caller's mutation throws before its first write).
+// caller's mutation throws before its first write), judged by ID.
 // ─────────────────────────────────────────────────────────────────────────────
 
 type Ctx = QueryCtx | MutationCtx;
@@ -62,14 +62,17 @@ export async function resolveAgentIdArg(
 			`RBAC_DENIED: ${args.field} "${args.agentId}" names no agent — ${JSON.stringify({ reason: "agent-id-unknown", door: args.door, field: args.field })}`,
 		);
 	}
-	if (
-		args.assertedName !== undefined &&
-		normalizeOrchestratorId(args.assertedName) !==
-			normalizeOrchestratorId(row.name)
-	) {
-		throw new ConvexError(
-			`AGENT_IDENTITY_MISMATCH: ${args.field} "${args.agentId}" is agent "${row.name}" but the call also names "${args.assertedName}" — an ID and a name must name the same agent — ${JSON.stringify({ door: args.door, field: args.field, agentId: args.agentId, resolvedAgentName: row.name, assertedName: args.assertedName })}`,
-		);
+	// An ID and a name must name the SAME agent, judged by ID: the name is read
+	// through the one existing label -> ID resolver (lib/actorIds.ts) in this same
+	// org and its answer is compared with the row's ID, so no name comparison takes
+	// part. A name that names no agent there disagrees with the ID too.
+	if (args.assertedName !== undefined) {
+		const named = await actorIdResolver(ctx, args.orgSlug)(args.assertedName);
+		if (named !== row._id) {
+			throw new ConvexError(
+				`AGENT_IDENTITY_MISMATCH: ${args.field} "${args.agentId}" and the name "${args.assertedName}" do not name the same agent — an ID and a name must name the same agent — ${JSON.stringify({ door: args.door, field: args.field, agentId: args.agentId, assertedName: args.assertedName })}`,
+			);
+		}
 	}
 	return row;
 }

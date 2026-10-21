@@ -1090,11 +1090,7 @@ export const sendMessage = mutation({
 		// (reused below by sendMessageCore — never re-derived).
 		requireOneRecipientForm(args);
 		const { verifiedPerson, seatOrgSlug, fromAgentId, ...sendArgs } = args;
-		if (fromAgentId !== undefined && verifiedPerson !== undefined) {
-			throw new ConvexError(
-				`RBAC_DENIED: a person acting in its own name may not present an agent ID as the sender — ${JSON.stringify({ reason: "agent-id-on-person-path", door: SEND_DOOR })}`,
-			);
-		}
+
 		// The transport's own scope is bound first (the service account, or the
 		// dashboard member); resolveVerifiedPerson returns it unchanged unless a
 		// person is carried (convex/lib/personPrincipal.ts).
