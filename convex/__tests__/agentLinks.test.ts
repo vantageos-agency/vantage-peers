@@ -598,7 +598,7 @@ describe("TASKS — assignedToAgentId across two organisations", () => {
 		expect(await taskRows(w.t)).toHaveLength(0);
 	});
 
-	test("update: pi reassigns its own task to victor with the link; the row moves to iris-rh", async () => {
+	test("REFUSED: update to an agent of another organisation WITH a link: a reassign never moves a task between tenants", async () => {
 		const w = await world();
 		await marieGrantsPiToVictor(w);
 		const taskId = await w.t.run((ctx) =>
@@ -616,20 +616,70 @@ describe("TASKS — assignedToAgentId across two organisations", () => {
 				updatedAt: Date.now(),
 			} as never),
 		);
+		const msg = await errorOf(
+			asService(w.t).mutation(api.tasks.update, {
+				taskId,
+				callerOrchestrator: "pi",
+				assignedToAgentId: w.victor,
+				verifiedActor: { agentId: w.pi, orgSlug: PERELLO },
+			} as never),
+		);
+		expect(msg).toContain("ORG_MISMATCH");
+		const row = await w.t.run((ctx) => ctx.db.get(taskId));
+		expect(row?.orgId).toBe(PERELLO);
+		expect(row?.clerkOrgId).toBe(testClerkOrgId(PERELLO));
+		expect(row?.assignedToId).toBe(w.pi);
+		expect(await listAs(w, IRIS, MARIE)).toEqual([]);
+	});
+
+	test("ALLOWED: a same-organisation reassign still works and keeps the task in its org", async () => {
+		const w = await world();
+		const peer = await w.t.run((ctx) =>
+			ctx.db.insert("agents", {
+				orgSlug: PERELLO,
+				clerkOrgId: testClerkOrgId(PERELLO),
+				name: "pia",
+				normalizedName: "pia",
+				isActive: true,
+				createdAt: Date.now(),
+			}),
+		);
+		await w.t.run(async (ctx) => {
+			const m = await ctx.db
+				.query("client_org_mapping")
+				.withIndex("by_clerk_slug", (q) => q.eq("clerkOrgSlug", PERELLO))
+				.unique();
+			if (m === null) throw new Error("fixture: no mapping");
+			await ctx.db.patch(m._id, {
+				allowedOrchestrators: ["pi", "pia"],
+				allowedAgentIds: [w.pi, peer],
+			});
+		});
+		const taskId = await w.t.run((ctx) =>
+			ctx.db.insert("tasks", {
+				title: "same org",
+				status: "todo",
+				priority: "low",
+				assignedTo: "pi",
+				assignedToId: w.pi,
+				createdBy: "pi",
+				createdById: w.pi,
+				orgId: PERELLO,
+				clerkOrgId: testClerkOrgId(PERELLO),
+				createdAt: Date.now(),
+				updatedAt: Date.now(),
+			} as never),
+		);
 		await asService(w.t).mutation(api.tasks.update, {
 			taskId,
 			callerOrchestrator: "pi",
-			assignedToAgentId: w.victor,
+			assignedToAgentId: peer,
 			verifiedActor: { agentId: w.pi, orgSlug: PERELLO },
 		} as never);
 		const row = await w.t.run((ctx) => ctx.db.get(taskId));
-		expect(row?.orgId).toBe(IRIS);
-		expect(row?.clerkOrgId).toBe(testClerkOrgId(IRIS));
-		expect(row?.assignedToId).toBe(w.victor);
-		expect((await listAs(w, IRIS, MARIE)).map((r) => r.title)).toEqual([
-			"hand over",
-		]);
-		expect(await listAs(w, ACME, ZOE)).toEqual([]);
+		expect(row?.orgId).toBe(PERELLO);
+		expect(row?.assignedToId).toBe(peer);
+		expect(row?.assignedTo).toBe("pia");
 	});
 
 	test("REFUSED: after the hand-over pi may not re-assign the task to any OTHER agent of iris-rh (one exact pair)", async () => {
