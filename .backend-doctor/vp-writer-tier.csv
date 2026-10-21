@@ -15,7 +15,6 @@ complete_task,agents+fixPatterns+githubOwnerBindings+githubRepoMapping+issues+me
 update_task,agents+githubRepoMapping+memberWriterRoles+messageReceipts+messages+missions+nameOnlyCalls+oauth_access_tokens+taskClosureConfig+tasks,UPSERT,org-member,orgResolver,tasks:update=orgResolver
 add_task_dependency,agents+githubRepoMapping+memberWriterRoles+messageReceipts+messages+missions+nameOnlyCalls+taskClosureConfig+tasks,UPSERT,org-member,orgResolver,tasks:update=orgResolver
 block_task,agents+githubRepoMapping+memberWriterRoles+messageReceipts+messages+missions+nameOnlyCalls+taskClosureConfig+tasks,UPSERT,org-member,orgResolver,tasks:blockTask=orgResolver; tasks:update=orgResolver
-create_mandate,agents+mandates+nameOnlyCalls+oauth_access_tokens,UPSERT,master,masterOnly,mandates:create=masterOnly
 delete_message,agents+memberWriterRoles+messageReceipts+messages,DELETE,org-member,orgResolver,messages:deleteMessage=orgResolver
 fail_task,agents+memberWriterRoles+messageReceipts+messages+tasks,UPSERT,org-member,orgResolver,tasks:failTask=orgResolver
 create_mission,agents+memberWriterRoles+missions+oauth_access_tokens,CREATE,org-member,orgResolver,missions:create=orgResolver
@@ -40,6 +39,7 @@ update_issue_status,issues,TRANSITION,org-member,orgResolver,issues:updateStatus
 verify_issue,issues,TRANSITION,org-member,orgResolver,issues:verify=orgResolver
 accept_mandate,mandates,TRANSITION,master,masterOnly,mandates:accept=masterOnly
 settle_mandate,mandates,TRANSITION,master,masterOnly,mandates:settle=masterOnly
+create_mandate,mandates+nameOnlyCalls+oauth_access_tokens,UPSERT,master,masterOnly,mandates:create=masterOnly
 update_mandate,mandates+tasks,TRANSITION,master,masterOnly,mandates:update=masterOnly
 delete_recurring_task,memberWriterRoles,DELETE,org-member,orgResolver,recurringTasks:remove=orgResolver
 pause_recurring_task,memberWriterRoles,UPDATE,org-member,orgResolver,recurringTasks:pause=orgResolver
