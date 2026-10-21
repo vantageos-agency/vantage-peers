@@ -14,7 +14,7 @@
 		},
 		"agentLinks": {
 			"disposition": "CONSERVER",
-			"reason": "live: read by MCP-public tool(s) send_message, create_task, update_task (an explicit agent link admits a cross-organisation send or assignment, resolved by ID)"
+			"reason": "live: read by MCP-public tool(s) send_message, create_task (an explicit agent link admits a cross-organisation send or task creation, resolved by ID)"
 		},
 		"agent_credentials": {
 			"disposition": "CONSERVER",
@@ -120,7 +120,7 @@
 		},
 		"orgMembership": {
 			"disposition": "CONSERVER",
-			"reason": "live: read by MCP-public tool(s) send_message, create_task, update_task (the agent link voids when its grantor stops being an active admin of the target organisation)"
+			"reason": "live: read by MCP-public tool(s) send_message, create_task (the agent link voids when its grantor stops being an active admin of the target organisation)"
 		},
 		"profiles": {
 			"disposition": "CONSERVER",

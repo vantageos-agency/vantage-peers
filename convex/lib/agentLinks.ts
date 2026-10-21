@@ -1,11 +1,11 @@
 import {
 	type AgentLinkLookups,
+	membershipPersonLookups,
 	resolveAgentLink,
 	type StoredAgentLink,
 } from "@vantageos/cloud-identity";
 import type { Doc } from "../_generated/dataModel";
 import type { MutationCtx, QueryCtx } from "../_generated/server";
-import { membershipRecordOf } from "../orgMembership";
 import { personPrincipalLookups } from "./actingPrincipal";
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -47,7 +47,17 @@ export function agentLinkLookups(ctx: Ctx): AgentLinkLookups {
 			if (row === null) return null;
 			return { id: row._id, orgId: row.clerkOrgId ?? null, active: row.isActive };
 		},
-		lookupMembership: (personId, orgId) => membershipRecordOf(ctx, orgId, personId),
+		// The role is the package's to read: `membershipPersonLookups` answers
+		// lookupMembership from the stored row ((orgId, personId) -> the row, a
+		// tombstone is not active). The row is passed as stored.
+		...membershipPersonLookups((clerkOrgId, clerkUserId) =>
+			ctx.db
+				.query("orgMembership")
+				.withIndex("by_org_user_clerk_id", (q) =>
+					q.eq("clerkOrgId", clerkOrgId).eq("clerkUserId", clerkUserId),
+				)
+				.unique(),
+		),
 		adminRoles: AGENT_LINK_ADMIN_ROLES,
 	};
 }
