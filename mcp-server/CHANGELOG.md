@@ -4,6 +4,8 @@
 
 ### Added
 
+- Optional agent-ID arguments, each described as the `agentId` list_peers returns: `send_message` `fromAgentId`, `create_task` and `update_task` `assignedToAgentId`, `create_mandate` `fulfilledByAgentId`. They are forwarded verbatim beside the name (the delegation and roster guards still read the name, so `update_task` refuses an ID with no `assignedTo`, and `send_message` refuses a `fromAgentId` that is not the verified agent, or one with neither a verified agent nor a `from`). Every existing argument is unchanged. The MCP now requires backend contract version 2: it refuses to boot against a Convex build older than this one, so deploy Convex first.
+
 - Sign-in from ChatGPT and Claude: `GET /authorize/callback` resolves the person's Clerk session with Clerk's own handshake (`@vantageos/cloud-identity` `^0.19.1`, built on `@clerk/backend` `authenticateRequest()`). A return from Clerk's hosted sign-in with no session on this host used to answer `403 session-required`; it now redirects through the handshake (marked `no-store`) and continues to the organisation picker. It needs `CLERK_PUBLISHABLE_KEY`; without it the callback behaves as before. A forged handshake continues signed out, never a 500.
 
 ### Changed
