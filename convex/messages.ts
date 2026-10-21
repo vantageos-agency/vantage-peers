@@ -27,7 +27,7 @@ import {
 	resolveVerifiedPerson,
 	verifiedPersonValidator,
 } from "./lib/personPrincipal";
-import { findAgentByName } from "./lib/agentIdentity";
+import { findAgentByName, resolveOwnedAgentOfPresentedSecret } from "./lib/agentIdentity";
 import type { ActingPrincipal } from "@vantageos/cloud-identity";
 import {
 	addressRecipientById,
@@ -48,7 +48,9 @@ import {
 	computeStaleInProgress,
 	computeStuckInProgress,
 } from "./lib/taskClosureGate";
-import { actorIdResolver } from "./lib/actorIds";
+import { actorIdResolver, actorOrgFor } from "./lib/actorIds";
+import { resolveAgentIdArg } from "./lib/agentIdArgs";
+import { recordNameOnlyCall } from "./lib/nameOnlyCalls";
 import { clerkOrgIdForSlug } from "./lib/orgClerkId";
 import { fleetOperatorSlug } from "./lib/operatorOrg";
 import {
@@ -403,6 +405,26 @@ async function resolveRecipientAgents(
 	}
 	if (replyOrg !== undefined && staysInSenderTenant) return refuseSpan();
 	return { rows, tenantId: replyOrg };
+}
+
+// Counts a `channel` that names an agent of the message's organisation: the name
+// form of a recipient that `recipientAgentIds` now carries by ID. "broadcast" and
+// a person ("user:<subject>") have no ID form and are not counted. Once per call.
+async function recordChannelNameCall(
+	ctx: MutationCtx,
+	channel: string | undefined,
+	orgSlug: string | null | undefined,
+): Promise<void> {
+	if (channel === undefined || channel === "broadcast") return;
+	const resolve = actorIdResolver(ctx, orgSlug);
+	for (const part of channel.split(",")) {
+		const name = part.trim();
+		if (name === "" || isHumanActorName(name)) continue;
+		if ((await resolve(name)) !== undefined) {
+			await recordNameOnlyCall(ctx, "messages:sendMessage:channel");
+			return;
+		}
+	}
 }
 
 async function sendMessageCore(
@@ -1022,6 +1044,14 @@ export const sendMessage = mutation({
 		// speaking in its own name). The sender is then derived from the verified
 		// identity as "user:<Clerk subject>", never taken from the client.
 		from: v.optional(creatorValidator),
+		// The sender by AGENT ID (`agents` row `_id`, list_peers `agentId`), beside
+		// or instead of `from`. Resolved by ID in the organisation the message is
+		// written in; given beside `from` it must name the same agent
+		// (AGENT_IDENTITY_MISMATCH); on a proven call (verifiedActor, a presented
+		// credential) it must be the proven agent. The written `from` is the row's
+		// label. A call carrying `from` and no `fromAgentId` is counted
+		// (lib/nameOnlyCalls.ts).
+		fromAgentId: v.optional(v.string()),
 		fromInstanceId: v.optional(v.string()),
 		// Recipients by NAME: "broadcast" | a fleet role | an instance | a person
 		// | a comma list. Exactly one of `channel` and `recipientAgentIds`.
@@ -1059,7 +1089,12 @@ export const sendMessage = mutation({
 		// against the SAME `orgSlug` the rest of this handler already derives
 		// (reused below by sendMessageCore — never re-derived).
 		requireOneRecipientForm(args);
-		const { verifiedPerson, seatOrgSlug, ...sendArgs } = args;
+		const { verifiedPerson, seatOrgSlug, fromAgentId, ...sendArgs } = args;
+		if (fromAgentId !== undefined && verifiedPerson !== undefined) {
+			throw new ConvexError(
+				`RBAC_DENIED: a person acting in its own name may not present an agent ID as the sender — ${JSON.stringify({ reason: "agent-id-on-person-path", door: SEND_DOOR })}`,
+			);
+		}
 		// The transport's own scope is bound first (the service account, or the
 		// dashboard member); resolveVerifiedPerson returns it unchanged unless a
 		// person is carried (convex/lib/personPrincipal.ts).
@@ -1118,10 +1153,60 @@ export const sendMessage = mutation({
 			senderPrincipal = principal;
 		}
 
-		if (args.from === undefined) {
+		// The sender BY ID: resolved in the organisation this message is written in
+		// (the proven agent's own org on a proven call), refused when it is not an
+		// active agent there, when it names a different agent than `from`, or when a
+		// proven call names an agent other than the proven one. Its label then
+		// stands wherever `from` would have.
+		let declaredFrom = args.from;
+		if (fromAgentId !== undefined) {
+			let provenAgentId: string | undefined;
+			let senderOrg: string | null | undefined =
+				recipientScope?.orgSlug ?? scope.orgSlug ?? args.tenantId;
+			if (senderPrincipal !== undefined) {
+				provenAgentId = senderPrincipal.principalId;
+				senderOrg = senderPrincipal.orgId;
+			} else if (args.agentCredentialSecret !== undefined) {
+				const owned = await resolveOwnedAgentOfPresentedSecret(
+					ctx,
+					args.agentCredentialSecret,
+					SEND_DOOR,
+				);
+				if (owned.ok) {
+					provenAgentId = owned.agent._id;
+					senderOrg = owned.agent.orgSlug;
+				}
+			}
+			const sender = await resolveAgentIdArg(ctx, {
+				orgSlug: await actorOrgFor(ctx.db, senderOrg),
+				agentId: fromAgentId,
+				assertedName: args.from,
+				field: "fromAgentId",
+				door: SEND_DOOR,
+			});
+			if (provenAgentId !== undefined && provenAgentId !== sender._id) {
+				throw new ConvexError(
+					`AGENT_IDENTITY_MISMATCH: fromAgentId "${fromAgentId}" is not the agent this call is proven as — a proven caller may only send as itself — ${JSON.stringify({ door: SEND_DOOR, fromAgentId, provenAgentId })}`,
+				);
+			}
+			declaredFrom = sender.name;
+		}
+
+		// The read-only counter of calls that still name an agent by NAME. A
+		// measurement only (lib/nameOnlyCalls.ts); it changes nothing below.
+		if (args.from !== undefined && fromAgentId === undefined) {
+			await recordNameOnlyCall(ctx, "messages:sendMessage:from");
+		}
+		await recordChannelNameCall(
+			ctx,
+			args.channel,
+			senderPrincipal?.orgId ?? recipientScope?.orgSlug ?? scope.orgSlug ?? args.tenantId,
+		);
+
+		if (declaredFrom === undefined) {
 			return await sendAsHuman(ctx, sendArgs, scope);
 		}
-		const assertedFrom = args.from;
+		const assertedFrom = declaredFrom;
 
 		// The seat path's `from` is judged here, from data (see the function).
 		// A sender proven BY ID is judged by its resolved principal: its `from` is

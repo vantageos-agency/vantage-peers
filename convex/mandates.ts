@@ -7,6 +7,9 @@ import { verifiedActorValidator, withOrgScope } from "./lib/auth";
 import type { OrgScope } from "./lib/auth";
 import { fleetPartyId, requireFleetAgentActor } from "./lib/fleetActors";
 import { requireFleetDoor, scopeWithFleetStanding } from "./lib/fleetStanding";
+import { resolveAgentIdArg } from "./lib/agentIdArgs";
+import { recordNameOnlyCall } from "./lib/nameOnlyCalls";
+import { fleetOperatorSlug } from "./lib/operatorOrg";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // requireFleetMaster — mandates.ts's own single authority gate.
@@ -94,7 +97,12 @@ const mandateObject = v.object({
 export const create = mutation({
 	args: {
 		requestedBy: creatorValidator,
-		fulfilledBy: creatorValidator,
+		// The fulfiller by NAME or by AGENT ID (list_peers `agentId`), at least one.
+		// Both given must name the same agent. The ID is resolved by ID in the
+		// operator organisation (a mandate's parties are operator-org agents); a name
+		// alone still works and is counted (lib/nameOnlyCalls.ts).
+		fulfilledBy: v.optional(creatorValidator),
+		fulfilledByAgentId: v.optional(v.string()),
 		service: v.string(),
 		budget: v.number(),
 		spendingLimits: v.optional(v.object({
@@ -122,11 +130,31 @@ export const create = mutation({
 		// there (a label that names none leaves the column unset; the door then
 		// refuses every party act on it rather than guessing).
 		const requestedById = await fleetPartyId(ctx, undefined, args.requestedBy);
-		const fulfilledById = await fleetPartyId(ctx, undefined, args.fulfilledBy);
+		let fulfilledBy: string;
+		let fulfilledById: string | null;
+		if (args.fulfilledByAgentId !== undefined) {
+			const fulfiller = await resolveAgentIdArg(ctx, {
+				orgSlug: await fleetOperatorSlug(ctx.db),
+				agentId: args.fulfilledByAgentId,
+				assertedName: args.fulfilledBy,
+				field: "fulfilledByAgentId",
+				door,
+			});
+			fulfilledBy = fulfiller.name;
+			fulfilledById = fulfiller._id;
+		} else if (args.fulfilledBy !== undefined) {
+			fulfilledBy = args.fulfilledBy;
+			fulfilledById = await fleetPartyId(ctx, undefined, fulfilledBy);
+			await recordNameOnlyCall(ctx, "mandates:create:fulfilledBy");
+		} else {
+			throw new ConvexError(
+				`INVALID_FULFILLER: ${door} needs the fulfiller, as \`fulfilledBy\` (a name) or \`fulfilledByAgentId\` (an agent ID from list_peers \`agentId\`) — ${JSON.stringify({ door })}`,
+			);
+		}
 		const now = Date.now();
 		return await ctx.db.insert("mandates", {
 			requestedBy: args.requestedBy,
-			fulfilledBy: args.fulfilledBy,
+			fulfilledBy,
 			...(requestedById !== null && { requestedById }),
 			...(fulfilledById !== null && { fulfilledById }),
 			service: args.service,

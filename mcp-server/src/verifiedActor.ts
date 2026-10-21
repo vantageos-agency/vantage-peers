@@ -142,7 +142,8 @@ export function withVerifiedActor<T extends MutatingClient>(
 			a.agentCredentialSecret !== undefined;
 		const senderless =
 			name === "messages:sendMessage" &&
-			(a.from === undefined || a.from === null);
+			(a.from === undefined || a.from === null) &&
+			(a.fromAgentId === undefined || a.fromAgentId === null);
 		return carriesProof || senderless ? args : { ...a, verifiedActor: actor };
 	};
 	return new Proxy(convex, {

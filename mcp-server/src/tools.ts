@@ -3412,6 +3412,13 @@ export function registerTools(
 				.describe(
 					`Sender role (e.g. pi, tau, phi, sigma, omega, zeta, eta, kappa, alpha, lambda, epsilon, omicron, upsilon, or any custom role).${PERSON_DOOR_NOTE}`,
 				),
+			fromAgentId: z
+				.string()
+				.min(1)
+				.optional()
+				.describe(
+					"Sender BY AGENT ID: the sender's own `agentId` as returned by list_peers (agent ID as returned by list_peers agentId). Optional, beside or instead of `from`; given beside `from` both must name the same agent. A call carrying a verified agent may only name that agent. The message is written under the agent's stored label.",
+				),
 			fromInstanceId: z
 				.string()
 				.optional()
@@ -3453,6 +3460,7 @@ export function registerTools(
 		},
 		async ({
 			from,
+			fromAgentId,
 			fromInstanceId,
 			channel,
 			recipientAgentIds,
@@ -3462,6 +3470,24 @@ export function registerTools(
 		}) => {
 			let contentBytes = 0;
 			try {
+				// A sender named BY ID is judged against the agent this call is
+				// verified as, before anything is sent; Convex judges it again
+				// (messages:sendMessage). Without a verified agent the ID cannot
+				// stand alone: the roster / binding gates read `from`, so it must
+				// accompany the ID.
+				if (fromAgentId !== undefined) {
+					const proven = verifiedActorOf(oauthCtx);
+					if (proven !== undefined && proven.agentId !== fromAgentId) {
+						return mcpError(
+							"AGENT_IDENTITY_MISMATCH: fromAgentId is not the agent this call is verified as — a verified caller may only send as itself.",
+						);
+					}
+					if (proven === undefined && from === undefined) {
+						return mcpError(
+							"INVALID_SENDER: fromAgentId needs a verified agent identity or `from` beside it — pass `from` (the sender's name) with fromAgentId.",
+						);
+					}
+				}
 				// Exactly one recipient form. Refused here, before anything is
 				// resolved or sent; Convex refuses the same (INVALID_RECIPIENTS).
 				if ((channel === undefined) === (recipientAgentIds === undefined)) {
@@ -3579,6 +3605,7 @@ export function registerTools(
 				if ("denied" in seatDoor) return seatDoor.denied;
 				const messageId = await convex.mutation("messages:sendMessage" as any, {
 					from: normFrom,
+					...(fromAgentId !== undefined ? { fromAgentId } : {}),
 					fromInstanceId: senderInstance,
 					...(recipientAgentIds !== undefined
 						? { recipientAgentIds }
@@ -4557,6 +4584,13 @@ export function registerTools(
 				.describe("Project name — e.g. 'vantage-starter', 'perfect-ai-agent'"),
 			tags: flexArrayOptional.describe("Optional tags for categorization"),
 			assignedTo: assigneeSchema,
+			assignedToAgentId: z
+				.string()
+				.min(1)
+				.optional()
+				.describe(
+					"The assignee BY AGENT ID (agent ID as returned by list_peers agentId). Optional, sent beside assignedTo: both must name the same agent, and an ID that is not an active agent of your organisation is refused.",
+				),
 			assignedToInstance: z
 				.string()
 				.optional()
@@ -4597,6 +4631,7 @@ export function registerTools(
 			project,
 			tags,
 			assignedTo,
+			assignedToAgentId,
 			assignedToInstance,
 			priority,
 			status,
@@ -4617,6 +4652,7 @@ export function registerTools(
 					project,
 					tags: toArray(tags),
 					assignedTo: normalizeOrchestratorId(assignedTo),
+					...(assignedToAgentId !== undefined ? { assignedToAgentId } : {}),
 					assignedToInstance,
 					priority,
 					status,
@@ -5161,6 +5197,13 @@ export function registerTools(
 			project: z.string().optional().describe("New project"),
 			tags: flexArrayOptional.describe("New tags"),
 			assignedTo: assigneeSchema.optional().describe("Reassign to"),
+			assignedToAgentId: z
+				.string()
+				.min(1)
+				.optional()
+				.describe(
+					"Reassign to this agent BY ID (agent ID as returned by list_peers agentId). Optional; send it beside assignedTo (both must name the same agent). An ID that is not an active agent of the task's organisation is refused.",
+				),
 			priority: prioritySchema.optional().describe("New priority"),
 			status: updateTaskStatusSchema.optional(),
 			dependsOn: z
@@ -5211,6 +5254,7 @@ export function registerTools(
 			project,
 			tags,
 			assignedTo,
+			assignedToAgentId,
 			priority,
 			status,
 			dependsOn,
@@ -5226,6 +5270,13 @@ export function registerTools(
 			try {
 				const orgDenied = unresolvedOrgDenial("update_task");
 				if (orgDenied) return orgDenied;
+				// The delegation guard below reads the assignee NAME, so an ID cannot
+				// stand alone here: it would skip the guard.
+				if (assignedToAgentId !== undefined && !assignedTo) {
+					return mcpError(
+						"INVALID_ASSIGNEE: assignedToAgentId needs assignedTo beside it — pass the assignee's name with its agent ID (the delegation guard reads the name).",
+					);
+				}
 				if (assignedTo) {
 					const assigneeDenied = await guardDelegation(assignedTo);
 					if (assigneeDenied) return assigneeDenied;
@@ -5238,6 +5289,7 @@ export function registerTools(
 					project,
 					tags: toArray(tags),
 					assignedTo,
+					...(assignedToAgentId !== undefined ? { assignedToAgentId } : {}),
 					priority,
 					status,
 					dependsOn: toArray(dependsOn) as any,
@@ -7670,6 +7722,13 @@ export function registerTools(
 			fulfilledBy: creatorSchema.describe(
 				"Orchestrator who will provide the service",
 			),
+			fulfilledByAgentId: z
+				.string()
+				.min(1)
+				.optional()
+				.describe(
+					"The fulfiller BY AGENT ID (agent ID as returned by list_peers agentId). Optional, sent beside fulfilledBy: both must name the same agent, and an ID that is not an active agent of the operator organisation is refused.",
+				),
 			service: z.string().describe("Description of what service is needed"),
 			budget: z.number().describe("Token budget allocated for this mandate"),
 			spendingLimits: z
@@ -7698,6 +7757,7 @@ export function registerTools(
 		async ({
 			requestedBy,
 			fulfilledBy,
+			fulfilledByAgentId,
 			service,
 			budget,
 			spendingLimits,
@@ -7711,6 +7771,7 @@ export function registerTools(
 				const mandateId = await convex.mutation("mandates:create" as any, {
 					requestedBy,
 					fulfilledBy,
+					...(fulfilledByAgentId !== undefined ? { fulfilledByAgentId } : {}),
 					service,
 					budget,
 					spendingLimits,

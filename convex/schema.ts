@@ -967,6 +967,22 @@ export default defineSchema({
 		.index("by_fulfilledBy", ["fulfilledBy", "status"])
 		.index("by_status", ["status", "createdAt"]),
 
+	// ── nameOnlyCalls ─────────────────────────────────────────────────────────
+	// Identity-zero slice 2b: a read-only MEASUREMENT of calls that name an agent by
+	// NAME where an agent ID is now accepted. It decides slice 2c (refuse names) and
+	// gates nothing. One row per (door, UTC day, shard); a call increments one
+	// randomly chosen shard so concurrent sends do not contend on a single row.
+	// Stores no secret, no message body, no agent name and no organisation: the
+	// door's identifier, the day, the shard and the count.
+	nameOnlyCalls: defineTable({
+		door: v.string(), // "<module>:<function>:<argument>", see convex/lib/nameOnlyCalls.ts
+		day: v.string(), // UTC day, "YYYY-MM-DD"
+		shard: v.number(),
+		count: v.number(),
+	})
+		.index("by_door_day_shard", ["door", "day", "shard"])
+		.index("by_day", ["day"]),
+
 	// ── issues ────────────────────────────────────────────────────────────────
 	// GitHub issues tracked in VantagePeers. Synced via webhook.
 	issues: defineTable({

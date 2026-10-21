@@ -51,6 +51,7 @@ import type * as kbMutations from "../kbMutations.js";
 import type * as kbShared from "../kbShared.js";
 import type * as lib_actingPrincipal from "../lib/actingPrincipal.js";
 import type * as lib_actorIds from "../lib/actorIds.js";
+import type * as lib_agentIdArgs from "../lib/agentIdArgs.js";
 import type * as lib_agentIdentity from "../lib/agentIdentity.js";
 import type * as lib_aiClient from "../lib/aiClient.js";
 import type * as lib_auth from "../lib/auth.js";
@@ -65,6 +66,7 @@ import type * as lib_license from "../lib/license.js";
 import type * as lib_memberScopes from "../lib/memberScopes.js";
 import type * as lib_memoryTenant from "../lib/memoryTenant.js";
 import type * as lib_missionActors from "../lib/missionActors.js";
+import type * as lib_nameOnlyCalls from "../lib/nameOnlyCalls.js";
 import type * as lib_operatorOrg from "../lib/operatorOrg.js";
 import type * as lib_orgClerkId from "../lib/orgClerkId.js";
 import type * as lib_personPrincipal from "../lib/personPrincipal.js";
@@ -118,6 +120,7 @@ import type * as migrations_seed_client_scope_profiles from "../migrations/seed_
 import type * as migrations_seed_task_closure_config from "../migrations/seed_task_closure_config.js";
 import type * as missionTemplates from "../missionTemplates.js";
 import type * as missions from "../missions.js";
+import type * as nameOnlyCalls from "../nameOnlyCalls.js";
 import type * as oauth from "../oauth.js";
 import type * as oauthMigrations from "../oauthMigrations.js";
 import type * as okfBundle from "../okfBundle.js";
@@ -192,6 +195,7 @@ declare const fullApi: ApiFromModules<{
   kbShared: typeof kbShared;
   "lib/actingPrincipal": typeof lib_actingPrincipal;
   "lib/actorIds": typeof lib_actorIds;
+  "lib/agentIdArgs": typeof lib_agentIdArgs;
   "lib/agentIdentity": typeof lib_agentIdentity;
   "lib/aiClient": typeof lib_aiClient;
   "lib/auth": typeof lib_auth;
@@ -206,6 +210,7 @@ declare const fullApi: ApiFromModules<{
   "lib/memberScopes": typeof lib_memberScopes;
   "lib/memoryTenant": typeof lib_memoryTenant;
   "lib/missionActors": typeof lib_missionActors;
+  "lib/nameOnlyCalls": typeof lib_nameOnlyCalls;
   "lib/operatorOrg": typeof lib_operatorOrg;
   "lib/orgClerkId": typeof lib_orgClerkId;
   "lib/personPrincipal": typeof lib_personPrincipal;
@@ -259,6 +264,7 @@ declare const fullApi: ApiFromModules<{
   "migrations/seed_task_closure_config": typeof migrations_seed_task_closure_config;
   missionTemplates: typeof missionTemplates;
   missions: typeof missions;
+  nameOnlyCalls: typeof nameOnlyCalls;
   oauth: typeof oauth;
   oauthMigrations: typeof oauthMigrations;
   okfBundle: typeof okfBundle;
