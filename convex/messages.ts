@@ -407,23 +407,23 @@ async function resolveRecipientAgents(
 	return { rows, tenantId: replyOrg };
 }
 
-// Counts a `channel` that names an agent of the message's organisation: the name
-// form of a recipient that `recipientAgentIds` now carries by ID. "broadcast" and
-// a person ("user:<subject>") have no ID form and are not counted. Once per call.
+// Counts a `channel` use, the name form of a recipient that `recipientAgentIds`
+// now carries by ID. "broadcast" and a person ("user:<subject>") have no ID form
+// and are not counted. Once per call. This is an UPPER BOUND: a channel part is
+// not resolved here (no name -> ID lookup is added to this door for a
+// measurement), so an instance label ("pi-vps") or a role with no agents row is
+// counted as well.
 async function recordChannelNameCall(
 	ctx: MutationCtx,
 	channel: string | undefined,
-	orgSlug: string | null | undefined,
 ): Promise<void> {
 	if (channel === undefined || channel === "broadcast") return;
-	const resolve = actorIdResolver(ctx, orgSlug);
-	for (const part of channel.split(",")) {
-		const name = part.trim();
-		if (name === "" || isHumanActorName(name)) continue;
-		if ((await resolve(name)) !== undefined) {
-			await recordNameOnlyCall(ctx, "messages:sendMessage:channel");
-			return;
-		}
+	const parts = channel
+		.split(",")
+		.map((part) => part.trim())
+		.filter((part) => part !== "" && !isHumanActorName(part));
+	if (parts.length > 0) {
+		await recordNameOnlyCall(ctx, "messages:sendMessage:channel");
 	}
 }
 
@@ -1176,7 +1176,6 @@ export const sendMessage = mutation({
 			const sender = await resolveAgentIdArg(ctx, {
 				orgSlug: await actorOrgFor(ctx.db, senderOrg),
 				agentId: fromAgentId,
-				assertedName: args.from,
 				field: "fromAgentId",
 				door: SEND_DOOR,
 			});
@@ -1193,11 +1192,7 @@ export const sendMessage = mutation({
 		if (args.from !== undefined && fromAgentId === undefined) {
 			await recordNameOnlyCall(ctx, "messages:sendMessage:from");
 		}
-		await recordChannelNameCall(
-			ctx,
-			args.channel,
-			senderPrincipal?.orgId ?? recipientScope?.orgSlug ?? scope.orgSlug ?? args.tenantId,
-		);
+		await recordChannelNameCall(ctx, args.channel);
 
 		if (declaredFrom === undefined) {
 			return await sendAsHuman(ctx, sendArgs, scope);
