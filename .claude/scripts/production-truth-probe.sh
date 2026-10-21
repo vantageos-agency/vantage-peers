@@ -459,8 +459,8 @@ def P4_backend():
 
 BACK_GUARDS = [("requireScope", "return;"), ("requireResolvedCaller", "return;"), ("requireOrgAdmin", "return;"),
                ("requireAgentCredentialMatch", "return;"), ("filterByOrgScope", "return records;"), ("isRowVisibleToScope", "return true;")]
-MCP_GUARDS = [("checkNamespaceRead", "return null;"), ("checkNamespaceWrite", "return null;"), ("checkFromAllowed", "return null;"),
-              ("checkActorBinding", "return null;", ["test/actor-from-credential.test.ts"]), ("rowVisibleToActorTenant", "return true;", ["test/actor-from-credential.test.ts"])]
+MCP_GUARDS = [("checkNamespaceRead", "return null;"), ("checkNamespaceWrite", "return null;"),
+              ("actingClaimRefusal", "return null;", ["test/actor-from-credential.test.ts"]), ("rowVisibleToActorTenant", "return true;", ["test/actor-from-credential.test.ts"])]
 
 def guards(a, cwd, rel_src, glist, tdirs, cglobs, extended, unit_dirs=()):
     p = "P5"
