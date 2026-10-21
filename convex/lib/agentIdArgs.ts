@@ -2,7 +2,10 @@ import { ConvexError } from "convex/values";
 import type { Doc } from "../_generated/dataModel";
 import type { MutationCtx, QueryCtx } from "../_generated/server";
 import { actorIdResolver } from "./actorIds";
-import { requireAssigneeAgentActive } from "./actingPrincipal";
+import {
+	assigneeNotInOrgRefusal,
+	requireAssigneeAgentActive,
+} from "./actingPrincipal";
 import { requireId } from "./ids";
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -50,17 +53,13 @@ export async function resolveAgentIdArg(
 		`${args.door} takes an agent ID as returned by list_peers \`agentId\`; a name is never matched here.`,
 	);
 	if (args.orgSlug === undefined || args.orgSlug === null) {
-		throw new ConvexError(
-			`RBAC_DENIED: ${args.field} "${args.agentId}" cannot be resolved: no organisation to resolve it in — ${JSON.stringify({ reason: "no-organisation", door: args.door, field: args.field })}`,
-		);
+		throw assigneeNotInOrgRefusal(args.agentId, undefined, args.door);
 	}
 	await requireAssigneeAgentActive(ctx, id, args.orgSlug, args.door);
 	const row = await ctx.db.get(id);
 	if (row === null) {
 		// The package just resolved this row; absent here means it vanished mid-call.
-		throw new ConvexError(
-			`RBAC_DENIED: ${args.field} "${args.agentId}" names no agent — ${JSON.stringify({ reason: "agent-id-unknown", door: args.door, field: args.field })}`,
-		);
+		throw assigneeNotInOrgRefusal(args.agentId, args.orgSlug, args.door);
 	}
 	// An ID and a name must name the SAME agent, judged by ID: the name is read
 	// through the one existing label -> ID resolver (lib/actorIds.ts) in this same
