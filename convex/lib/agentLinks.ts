@@ -144,15 +144,3 @@ export async function agentLinkAdmits(
 	const org = await personPrincipalLookups(ctx).organisationById?.(reach.toOrgId);
 	return org !== null && org !== undefined && org.active;
 }
-
-/**
- * Switch a stored link off. Storage only: the caller (agentLinks:revoke) has
- * already proven the session administers the target organisation.
- */
-export async function markLinkRevoked(
-	ctx: MutationCtx,
-	linkId: Doc<"agentLinks">["_id"],
-	at: number,
-): Promise<void> {
-	await ctx.db.patch(linkId, { revokedAt: at });
-}
