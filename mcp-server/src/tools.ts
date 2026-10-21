@@ -3417,7 +3417,7 @@ export function registerTools(
 				.min(1)
 				.optional()
 				.describe(
-					"Sender BY AGENT ID: the sender's own `agentId` as returned by list_peers (agent ID as returned by list_peers agentId). Optional, beside or instead of `from`; given beside `from` both must name the same agent. A call carrying a verified agent may only name that agent. The message is written under the agent's stored label.",
+					"Sender BY AGENT ID: the sender's own `agentId` as returned by list_peers (agent ID as returned by list_peers agentId). Optional, beside or instead of `from`; given beside `from` the ID alone decides. A call carrying a verified agent may only name that agent. The message is written under the agent's stored label.",
 				),
 			fromInstanceId: z
 				.string()
@@ -4589,7 +4589,7 @@ export function registerTools(
 				.min(1)
 				.optional()
 				.describe(
-					"The assignee BY AGENT ID (agent ID as returned by list_peers agentId). Optional, sent beside assignedTo: both must name the same agent, and an ID that is not an active agent of your organisation is refused.",
+					"The assignee BY AGENT ID (agent ID as returned by list_peers agentId). Optional, sent beside assignedTo: the ID alone decides, and an ID that is not an active agent of your organisation is refused.",
 				),
 			assignedToInstance: z
 				.string()
@@ -5202,7 +5202,7 @@ export function registerTools(
 				.min(1)
 				.optional()
 				.describe(
-					"Reassign to this agent BY ID (agent ID as returned by list_peers agentId). Optional; send it beside assignedTo (both must name the same agent). An ID that is not an active agent of the task's organisation is refused.",
+					"Reassign to this agent BY ID (agent ID as returned by list_peers agentId). Optional; send it beside assignedTo (the ID alone decides). An ID that is not an active agent of the task's organisation is refused.",
 				),
 			priority: prioritySchema.optional().describe("New priority"),
 			status: updateTaskStatusSchema.optional(),
@@ -7727,7 +7727,7 @@ export function registerTools(
 				.min(1)
 				.optional()
 				.describe(
-					"The fulfiller BY AGENT ID (agent ID as returned by list_peers agentId). Optional, sent beside fulfilledBy: both must name the same agent, and an ID that is not an active agent of the operator organisation is refused.",
+					"The fulfiller BY AGENT ID (agent ID as returned by list_peers agentId). Optional, sent beside fulfilledBy: the ID alone decides, and an ID that is not an active agent of the operator organisation is refused.",
 				),
 			service: z.string().describe("Description of what service is needed"),
 			budget: z.number().describe("Token budget allocated for this mandate"),

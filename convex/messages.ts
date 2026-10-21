@@ -1046,8 +1046,7 @@ export const sendMessage = mutation({
 		from: v.optional(creatorValidator),
 		// The sender by AGENT ID (`agents` row `_id`, list_peers `agentId`), beside
 		// or instead of `from`. Resolved by ID in the organisation the message is
-		// written in; given beside `from` it must name the same agent
-		// (AGENT_IDENTITY_MISMATCH); on a proven call (verifiedActor, a presented
+		// written in; given beside `from` it alone decides; on a proven call (verifiedActor, a presented
 		// credential) it must be the proven agent. The written `from` is the row's
 		// label. A call carrying `from` and no `fromAgentId` is counted
 		// (lib/nameOnlyCalls.ts).
