@@ -52,6 +52,8 @@ type World = {
 	retired: Id<"agents">; // an inactive agent of the operator org
 	deleted: Id<"agents">; // a well-formed ID whose row no longer exists
 	quillA: Id<"agents">; // an agent of a client org with a roster, for the proven pole
+	peerA: Id<"agents">; // on org-a's roster
+	strangerA: Id<"agents">; // active in org-a, NOT on its roster
 };
 
 const ORG_A = "org-a";
@@ -115,7 +117,8 @@ async function world(): Promise<World> {
 				createdAt: 1,
 			});
 		const quillA = await inA("quill");
-		await inA("peer");
+		const peerA = await inA("peer");
+		const strangerA = await inA("stranger");
 		await ctx.db.insert("profiles", {
 			orchestratorId: "peer",
 			name: "peer",
@@ -128,7 +131,7 @@ async function world(): Promise<World> {
 			static: { role: "pi", workspace: "w", capabilities: [] },
 			dynamic: { lastSeen: 1, sessionCount: 1 },
 		});
-		return { orgSlug: op.clerkOrgSlug, foreignSigma, retired, deleted, quillA };
+		return { orgSlug: op.clerkOrgSlug, foreignSigma, retired, deleted, quillA, peerA, strangerA };
 	});
 	return { t, sigma: ids.sigma, pi: ids.pi, ...seeded };
 }
@@ -331,6 +334,71 @@ describe("tasks:update assignedToAgentId (reassign)", () => {
 		const id = await seedTask(w);
 		expect(await reassign(w, id, { priority: "high" })).toBe("NO_ERROR");
 		expect(await counted(w.t, "tasks:update:assignedTo")).toBe(0);
+	});
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// The roster rule on the ID path, under a SCOPED caller (not the master bypass):
+// an org:admin Clerk session of org-a acting in its own name (no createdBy: the
+// human path), whose scope is org-a's with roster ["quill","peer"]. The service
+// account is master and skips the roster rule entirely.
+describe("assignee by ID is held to the caller's roster (scoped caller)", () => {
+	const admin = (w: World) =>
+		w.t.withIdentity({
+			subject: "user_admin_a",
+			org_slug: ORG_A,
+			org_id: testClerkOrgId(ORG_A),
+			org_role: "org:admin",
+		});
+	const ROSTER = "assignee-not-on-roster";
+	// A human writer needs the role on the writer allowlist (fleet-wide row).
+	const seedWriters = (w: World) =>
+		w.t.run((ctx) =>
+			ctx.db.insert("memberWriterRoles", { roles: ["org:admin"], updatedAt: 1 }),
+		);
+	const { createdBy: _by, ...humanBase } = taskBase;
+	const createAs = (w: World, extra: Record<string, unknown>) =>
+		text(admin(w).mutation(api.tasks.create, { ...humanBase, ...extra } as never));
+	const updateAs = (w: World, id: Id<"tasks">, extra: Record<string, unknown>) =>
+		text(admin(w).mutation(api.tasks.update, { taskId: id, ...extra } as never));
+	const ownTask = async (w: World) =>
+		(await admin(w).mutation(api.tasks.create, {
+			...humanBase,
+			assignedTo: "quill",
+		} as never)) as Id<"tasks">;
+
+	test("create ALLOW: an on-roster org-a agent by ID is written", async () => {
+		const w = await world();
+		await seedWriters(w);
+		expect(await createAs(w, { assignedToAgentId: w.peerA })).toBe("NO_ERROR");
+		const rows = await taskRows(w.t);
+		expect(rows).toHaveLength(1);
+		expect(rows[0]?.assignedTo).toBe("peer");
+		expect(rows[0]?.assignedToId).toBe(w.peerA);
+	});
+	test("create DENY: an active org-a agent NOT on the roster -> roster refusal, zero rows", async () => {
+		const w = await world();
+		await seedWriters(w);
+		const msg = await createAs(w, { assignedToAgentId: w.strangerA });
+		expect(msg).toContain("RBAC_DENIED");
+		expect(msg).toContain(ROSTER);
+		expect(await taskRows(w.t)).toHaveLength(0);
+	});
+	test("update ALLOW: reassign by ID to an on-roster agent", async () => {
+		const w = await world();
+		await seedWriters(w);
+		const id = await ownTask(w);
+		expect(await updateAs(w, id, { assignedToAgentId: w.peerA })).toBe("NO_ERROR");
+		expect((await w.t.run((c) => c.db.get(id)))?.assignedTo).toBe("peer");
+	});
+	test("update DENY: reassign by ID to an off-roster agent -> roster refusal, task unchanged", async () => {
+		const w = await world();
+		await seedWriters(w);
+		const id = await ownTask(w);
+		const msg = await updateAs(w, id, { assignedToAgentId: w.strangerA });
+		expect(msg).toContain("RBAC_DENIED");
+		expect(msg).toContain(ROSTER);
+		expect((await w.t.run((c) => c.db.get(id)))?.assignedTo).toBe("quill");
 	});
 });
 

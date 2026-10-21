@@ -1150,9 +1150,9 @@ export const sendMessage = mutation({
 
 		// The sender BY ID: resolved in the organisation this message is written in
 		// (the proven agent's own org on a proven call), refused when it is not an
-		// active agent there, when it names a different agent than `from`, or when a
-		// proven call names an agent other than the proven one. Its label then
-		// stands wherever `from` would have.
+		// active agent there, or when a proven call names an agent other than the
+		// proven one. A `from` beside it is ignored; the ID's label stands wherever
+		// `from` would have.
 		let declaredFrom = args.from;
 		if (fromAgentId !== undefined) {
 			let provenAgentId: string | undefined;
