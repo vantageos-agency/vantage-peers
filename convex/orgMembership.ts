@@ -2,6 +2,7 @@ import {
 	clerkMembershipEvent,
 	decideMembershipEvent,
 	hasFleetRead,
+	type MembershipRecord,
 	planMembershipReconcile,
 	sameOrg,
 } from "@vantageos/cloud-identity";
@@ -11,6 +12,7 @@ import {
 	internalAction,
 	internalMutation,
 	type MutationCtx,
+	type QueryCtx,
 	query,
 } from "./_generated/server";
 import {
@@ -66,6 +68,30 @@ function toShape(row: {
 		role: row.role,
 		createdAt: row.createdAt,
 		updatedAt: row.updatedAt,
+	};
+}
+
+// The membership of ONE person in ONE organisation, in the shape
+// `@vantageos/cloud-identity` reads (`MembershipRecord`): `active` is false for a
+// tombstoned row (a removed member), `role` is the stored role as written by the
+// Clerk webhook. Storage only, keyed by the permanent org ID; the decision (is
+// this person an admin of that org) is the package's (agent link, convex/lib/agentLinks.ts).
+export async function membershipRecordOf(
+	ctx: Pick<QueryCtx, "db">,
+	clerkOrgId: string,
+	clerkUserId: string,
+): Promise<MembershipRecord | null> {
+	const row = await ctx.db
+		.query("orgMembership")
+		.withIndex("by_org_user_clerk_id", (q) =>
+			q.eq("clerkOrgId", clerkOrgId).eq("clerkUserId", clerkUserId),
+		)
+		.unique();
+	if (row === null) return null;
+	return {
+		active: row.deletedAt === undefined,
+		role: row.role,
+		orgId: row.clerkOrgId ?? null,
 	};
 }
 
