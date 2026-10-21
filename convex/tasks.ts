@@ -2053,41 +2053,35 @@ export const update = mutation({
 		assertRowInVerifiedOrg(task, verifiedOrgSlug, taskId, "tasks:update");
 		// The assignee BY ID, resolved in the task's own org; it becomes the row's
 		// label so every decision below reads the same string a name would carry.
-		// An agent of ANOTHER organisation that the PROVEN caller may reach under an
-		// explicit agent link (task k17965eh23twqzsbjc8mjgfcmx8gpxmh): the task then
-		// moves to that agent's organisation (stamped below, after the caller is
-		// authorised on the row). Without a link the assignee is resolved in the
-		// task's own org, as ever.
-		const linkedAssignee = await linkedAssigneeOf(ctx, {
-			callerActorId: callerScope.callerActorId,
-			proven: agentCredentialSecret !== undefined || verifiedActor !== undefined,
-			assignedToAgentId,
-			door: "tasks:update",
-		});
-		// A caller of a CLIENT organisation holds authority over a task of another
-		// organisation only because a link handed it there. It may re-assign that
-		// task to the one agent the link names, never to any other agent of the
-		// organisation the task moved to (an agent link covers one exact pair).
+		// A cross-organisation REASSIGN is refused, link or not (task
+		// k17965eh23twqzsbjc8mjgfcmx8gpxmh, Pi ruling): an agent link admits a task
+		// only at tasks:create. Moving a task between tenants is a tenant move, never
+		// a side effect of reassigning, so the assignee is always resolved in the
+		// task's own org (ORG_MISMATCH for an agent of another org). A caller of a
+		// CLIENT organisation that holds a task of ANOTHER organisation (it created
+		// it there through a link) may not re-assign it at all.
 		if (
-			assignedToAgentId !== undefined &&
-			linkedAssignee === undefined &&
+			(assignedToAgentId !== undefined || fields.assignedTo !== undefined) &&
 			callerScope.callerActorOrg !== undefined &&
 			task.orgId !== undefined &&
 			callerScope.callerActorOrg !== task.orgId &&
 			(await lookupOrgMapping(ctx, callerScope.callerActorOrg))?.orgKind !== "operator"
 		) {
-			throw assigneeNotInOrgRefusal(assignedToAgentId, callerScope.callerActorOrg, "tasks:update");
+			throw assigneeNotInOrgRefusal(
+				assignedToAgentId ?? String(fields.assignedTo),
+				callerScope.callerActorOrg,
+				"tasks:update",
+			);
 		}
 		const assigneeById =
 			assignedToAgentId === undefined
 				? undefined
-				: (linkedAssignee ??
-					(await resolveAgentIdArg(ctx, {
+				: await resolveAgentIdArg(ctx, {
 						orgSlug: await actorOrgFor(ctx.db, task.orgId),
 						agentId: assignedToAgentId,
 						field: "assignedToAgentId",
 						door: "tasks:update",
-					})));
+					});
 		if (assigneeById !== undefined) fields.assignedTo = assigneeById.name;
 		// System-review reassignment grant (k17b5btg6cr9t9824tndte3w2s8fmzx1): an
 		// automation review task (origin "automation" + isReviewTask: system-created, only createOrUpdateReviewTask writes both) has no human
@@ -2144,9 +2138,7 @@ export const update = mutation({
 		// `create` refuses is one `update` call away. Same helper, same rule
 		// (roster-only, "*" admits nobody for a member, master unchanged).
 		if (fields.assignedTo !== undefined) {
-			if (linkedAssignee === undefined) {
-				requireOrchestratorOnRoster(callerScope, fields.assignedTo, "tasks:update", "assignee");
-			}
+			requireOrchestratorOnRoster(callerScope, fields.assignedTo, "tasks:update", "assignee");
 			if (assigneeById === undefined) {
 				await recordNameOnlyCall(ctx, "tasks:update:assignedTo");
 			}
@@ -2167,17 +2159,7 @@ export const update = mutation({
 		// assertTaskCallerAuthorized's reclaim branch reads; it is written
 		// unconditionally on every reassignment (review task or not) so the
 		// gate can decide review-tasks-only scoping at read time.
-		if (
-			patch.assignedTo !== undefined &&
-			(patch.assignedTo !== task.assignedTo || linkedAssignee !== undefined)
-		) {
-			// Across an agent link the row moves to the assignee's organisation: the
-			// stamp the target's members read it by (isRowVisibleToScope), label and
-			// permanent ID together.
-			if (linkedAssignee !== undefined) {
-				patch.orgId = linkedAssignee.orgSlug;
-				patch.clerkOrgId = linkedAssignee.clerkOrgId;
-			}
+		if (patch.assignedTo !== undefined && patch.assignedTo !== task.assignedTo) {
 			patch.lastAssignedTo = task.assignedTo;
 			// R-53: the same reassignment BY ID, resolved within the task's own org.
 			// A name that resolves to no agents row clears the stale ID (patch with
