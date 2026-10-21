@@ -232,6 +232,7 @@ describe("GRANT — the admin of the TARGET organisation, as the verified person
 		const rows = (await linkRows(w.t)) as Array<Record<string, unknown>>;
 		expect(rows).toHaveLength(1);
 		expect(rows[0]).toMatchObject({
+			orgSlug: IRIS,
 			fromAgentId: w.pi,
 			fromOrgId: testClerkOrgId(PERELLO),
 			toAgentId: w.victor,
