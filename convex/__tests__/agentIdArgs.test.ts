@@ -10,8 +10,8 @@
  *
  * An ID is resolved BY ID inside the organisation the write lives in; another
  * org's agent, an unknown ID and an inactive agent are refused with a coded
- * error and nothing is written. An ID and a name that name different agents are
- * refused (AGENT_IDENTITY_MISMATCH). A proven caller's fromAgentId must be the
+ * error and nothing is written. When an ID is given it alone decides: a name beside it, even
+ * the name of a different agent, is ignored and the call is not counted. A proven caller's fromAgentId must be the
  * proven agent. A call that names an agent by NAME alone still works and is
  * COUNTED, read-only, in `nameOnlyCalls`; the ID path is not counted. The counter
  * is a measurement: it never changes what a door does.
@@ -237,12 +237,15 @@ describe("tasks:create assignedToAgentId", () => {
 		expect(await create(w, { assignedToAgentId: w.retired })).toBe(INACTIVE);
 		expect(await taskRows(w.t)).toHaveLength(0);
 	});
-	test("BOTH-MISMATCH REFUSE: the ID names sigma, the name names pi -> AGENT_IDENTITY_MISMATCH, zero writes, not counted", async () => {
+	test("ID WINS: the ID names sigma, a contradictory name names pi -> sigma is assigned, label stored, not counted", async () => {
 		const w = await world();
 		expect(
 			await create(w, { assignedTo: "pi", assignedToAgentId: w.sigma }),
-		).toBe("AGENT_IDENTITY_MISMATCH");
-		expect(await taskRows(w.t)).toHaveLength(0);
+		).toBe("NO_ERROR");
+		const rows = await taskRows(w.t);
+		expect(rows).toHaveLength(1);
+		expect(rows[0]?.assignedTo).toBe("sigma");
+		expect(rows[0]?.assignedToId).toBe(w.sigma);
 		expect(await counted(w.t, "tasks:create:assignedTo")).toBe(0);
 	});
 	test("NAME-ONLY unchanged: still creates, stamps the ID, and is COUNTED", async () => {
@@ -304,13 +307,17 @@ describe("tasks:update assignedToAgentId (reassign)", () => {
 		expect(await reassign(w, id, { assignedToAgentId: w.retired })).toBe(INACTIVE);
 		expect((await rowOf(w, id))?.assignedTo).toBe("sigma");
 	});
-	test("BOTH-MISMATCH REFUSE: name pi, ID sigma -> AGENT_IDENTITY_MISMATCH, unchanged", async () => {
+	test("ID WINS: contradictory name sigma, ID pi -> reassigned to pi, label stored, not counted", async () => {
 		const w = await world();
 		const id = await seedTask(w);
+		const before = await counted(w.t, "tasks:update:assignedTo");
 		expect(
 			await reassign(w, id, { assignedTo: "sigma", assignedToAgentId: w.pi }),
-		).toBe("AGENT_IDENTITY_MISMATCH");
-		expect((await rowOf(w, id))?.assignedTo).toBe("sigma");
+		).toBe("NO_ERROR");
+		const r = await rowOf(w, id);
+		expect(r?.assignedTo).toBe("pi");
+		expect(r?.assignedToId).toBe(w.pi);
+		expect(await counted(w.t, "tasks:update:assignedTo")).toBe(before);
 	});
 	test("NAME-ONLY unchanged: reassigns by name and is COUNTED", async () => {
 		const w = await world();
@@ -353,12 +360,16 @@ describe("mandates:create fulfilledByAgentId", () => {
 		}
 		expect(await mandateRows(w.t)).toHaveLength(0);
 	});
-	test("BOTH-MISMATCH REFUSE: name pi, ID sigma -> AGENT_IDENTITY_MISMATCH, zero writes", async () => {
+	test("ID WINS: contradictory name pi, ID sigma -> fulfilledBy is sigma, ID stored, not counted", async () => {
 		const w = await world();
 		expect(
 			await create(w, { fulfilledBy: "pi", fulfilledByAgentId: w.sigma }),
-		).toBe("AGENT_IDENTITY_MISMATCH");
-		expect(await mandateRows(w.t)).toHaveLength(0);
+		).toBe("NO_ERROR");
+		const rows = await mandateRows(w.t);
+		expect(rows).toHaveLength(1);
+		expect(rows[0]?.fulfilledBy).toBe("sigma");
+		expect(rows[0]?.fulfilledById).toBe(w.sigma);
+		expect(await counted(w.t, "mandates:create:fulfilledBy")).toBe(0);
 	});
 	test("NAME-ONLY unchanged: still creates and is COUNTED", async () => {
 		const w = await world();
@@ -408,7 +419,7 @@ describe("messages:sendMessage fromAgentId", () => {
 		}
 		expect(await messageRows(w.t)).toHaveLength(0);
 	});
-	test("BOTH-MISMATCH REFUSE: from pi, fromAgentId sigma -> AGENT_IDENTITY_MISMATCH, zero messages", async () => {
+	test("ID WINS: from pi (contradictory), fromAgentId sigma -> sent as sigma, not counted", async () => {
 		const w = await world();
 		expect(
 			await send(w, {
@@ -416,8 +427,12 @@ describe("messages:sendMessage fromAgentId", () => {
 				fromAgentId: w.sigma,
 				recipientAgentIds: [w.pi],
 			}),
-		).toBe("AGENT_IDENTITY_MISMATCH");
-		expect(await messageRows(w.t)).toHaveLength(0);
+		).toBe("NO_ERROR");
+		const rows = await messageRows(w.t);
+		expect(rows).toHaveLength(1);
+		expect(rows[0]?.from).toBe("sigma");
+		expect(rows[0]?.fromId).toBe(w.sigma);
+		expect(await counted(w.t, "messages:sendMessage:from")).toBe(0);
 	});
 	test("NAME-ONLY unchanged: `from` + `channel` naming an agent still sends, and both are COUNTED", async () => {
 		const w = await world();

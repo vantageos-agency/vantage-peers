@@ -633,7 +633,7 @@ const createTaskArgsValidator = {
 const createTaskArgsValidatorWithCredential = {
 	...createTaskArgsValidator,
 	// The assignee by NAME or by AGENT ID (list_peers `agentId`), at least one.
-	// Both given must name the same agent (AGENT_IDENTITY_MISMATCH). The ID is
+	// When the ID is given it alone decides (a name beside it is ignored). The ID is
 	// resolved by ID in the org the row will live in (lib/agentIdArgs.ts); a name
 	// alone still works and is counted (lib/nameOnlyCalls.ts).
 	assignedTo: v.optional(assigneeValidator),
@@ -1944,7 +1944,7 @@ export const update = mutation({
 		tags: v.optional(v.array(v.string())),
 		assignedTo: v.optional(assigneeValidator),
 		// The new assignee by AGENT ID (list_peers `agentId`), resolved in the
-		// task's own org. Given beside `assignedTo` it must name the same agent.
+		// task's own org. Given beside `assignedTo` it alone decides.
 		assignedToAgentId: v.optional(v.string()),
 		priority: v.optional(priorityValidator),
 		status: v.optional(statusValidator),

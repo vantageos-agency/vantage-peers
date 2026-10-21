@@ -98,7 +98,7 @@ export const create = mutation({
 	args: {
 		requestedBy: creatorValidator,
 		// The fulfiller by NAME or by AGENT ID (list_peers `agentId`), at least one.
-		// Both given must name the same agent. The ID is resolved by ID in the
+		// When the ID is given it alone decides (a name beside it is ignored). The ID is resolved by ID in the
 		// operator organisation (a mandate's parties are operator-org agents); a name
 		// alone still works and is counted (lib/nameOnlyCalls.ts).
 		fulfilledBy: v.optional(creatorValidator),
