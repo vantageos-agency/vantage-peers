@@ -57,10 +57,14 @@ organisation by its ID (`list_peers` `agentId`).
 - A message is stamped in the RECIPIENT's organisation, so the target reads it in its
   own inbox and no other organisation does.
 - A task is stamped in the ASSIGNEE's organisation (`orgId`, `clerkOrgId`) and to the
-  assignee (`assignedToId`), so the target organisation's members read it in their task
-  list. It leaves the source organisation's list; the source agent stays the creator.
-  After the hand-over the source agent may re-assign the task only along a link, never to
-  another agent of the target organisation.
+  assignee (`assignedToId`) at `tasks:create` only, so the target organisation's members
+  read it in their task list. It is not in the source organisation's list; the source
+  agent stays the creator.
+- `tasks:update` never crosses organisations, link or not: an `assignedToAgentId` of
+  another organisation is refused `ORG_MISMATCH`, the task unchanged. Moving a task
+  between tenants is a tenant move, not a side effect of reassigning. A client-org
+  agent that holds a task of another organisation (created there through a link) may
+  not re-assign it at all.
 - Every refusal is the ordinary one (`recipient-agent-not-addressable`, `ORG_MISMATCH`,
   `assignee-not-an-agent-of-org`); it never says whether a link exists.
 
