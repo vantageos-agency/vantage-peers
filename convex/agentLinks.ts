@@ -1,0 +1,123 @@
+import { buildAgentLink } from "@vantageos/cloud-identity";
+import { ConvexError, v } from "convex/values";
+import { mutation } from "./_generated/server";
+import { refuseWith } from "./lib/actingPrincipal";
+import { lookupOrgMapping } from "./lib/auth";
+import { anonymousRefusal, requireOrgAdminById } from "./lib/agentIdentity";
+import { agentLinkLookups, linkRowForPair } from "./lib/agentLinks";
+
+// ─────────────────────────────────────────────────────────────────────────────
+// agentLinks — the grant and revoke doors of an explicit agent link (task
+// k17965eh23twqzsbjc8mjgfcmx8gpxmh). A link lets ONE agent of an organisation
+// reach ONE agent of another, by ID, in ONE direction; the decision is
+// @vantageos/cloud-identity's (`buildAgentLink` here, `resolveAgentLink` at every
+// consumption door, convex/lib/agentLinks.ts).
+//
+// WHO MAY GRANT. A signed-in PERSON who is an ADMIN of the TARGET agent's
+// organisation (the side that receives the traffic decides to accept it), proven
+// twice: the live `org_role` claim of the verified session by org ID
+// (`requireOrgAdminById`, the gate agents.ts and agentCredentials.ts use) and the
+// package's own membership proof over the stored `orgMembership` row
+// (`buildAgentLink`), the same lookup that voids the link when the grantor stops
+// being an admin. `grantedBy` is the verified session's own subject: it is not an
+// argument and no internal door grants on a person's behalf. The service account
+// and an agent are never administrators, so neither can grant.
+//
+// MCP: these doors are NOT exposed as MCP tools. A person's session reaches
+// them (the dashboard, or a Convex client holding the person's Clerk token); the
+// MCP carries an agent or a bearer, never an organisation admin's session.
+// ─────────────────────────────────────────────────────────────────────────────
+
+const GRANT_DOOR = "agentLinks:grant";
+const REVOKE_DOOR = "agentLinks:revoke";
+
+// One refusal for "no such target / no such link / not the administrator", so the
+// door is no oracle for which agents or links exist in another organisation.
+function notAdministered(door: string): ConvexError<string> {
+	return new ConvexError(
+		`RBAC_DENIED: no agent link can be changed by this caller — an agent link is granted and revoked by an administrator of the TARGET agent's organisation — ${JSON.stringify({ reason: "agent-link-not-administered", door })}`,
+	);
+}
+
+/**
+ * grant — an admin of the TARGET organisation lets `fromAgentId` (an agent of
+ * another organisation) reach `toAgentId`. One call, one direction: "both ways" is
+ * two grants, the reverse made by an admin of the OTHER organisation. A second
+ * grant of the same pair re-activates the one stored row (new grantor, cleared
+ * revocation), never a duplicate.
+ */
+export const grant = mutation({
+	args: {
+		fromAgentId: v.id("agents"),
+		toAgentId: v.id("agents"),
+		reason: v.string(),
+	},
+	returns: v.id("agentLinks"),
+	handler: async (ctx, args) => {
+		// write-contract: imperative person-session door, no subscriber — 0 call sites in mcp-server/src (a person's admin session does not travel the MCP) and no `useQuery`; a pre-organisation caller is refused RBAC_DENIED by requireOrgAdminById at an imperative call, an R-16 refusal, never at a render.
+		const identity = await ctx.auth.getUserIdentity();
+		if (identity === null) throw anonymousRefusal(GRANT_DOOR);
+		const to = await ctx.db.get(args.toAgentId);
+		if (to === null) throw notAdministered(GRANT_DOOR);
+		// The live session administers the TARGET agent's organisation, by org ID.
+		await requireOrgAdminById(ctx, identity, to.orgSlug, GRANT_DOOR);
+		const from = await ctx.db.get(args.fromAgentId);
+		if (from === null) throw notAdministered(GRANT_DOOR);
+		const built = await buildAgentLink(
+			{
+				fromAgentId: from._id,
+				fromOrgId: from.clerkOrgId ?? "",
+				toAgentId: to._id,
+				toOrgId: to.clerkOrgId ?? "",
+				// The verified person, never an argument.
+				grantedBy: identity.subject,
+				reason: args.reason,
+				now: Date.now(),
+			},
+			agentLinkLookups(ctx),
+		);
+		if (!built.ok) return refuseWith(built.refusal);
+		const existing = await linkRowForPair(ctx, from._id, to._id);
+		const row = {
+			fromAgentId: built.link.fromAgentId as typeof from._id,
+			fromOrgId: built.link.fromOrgId,
+			toAgentId: built.link.toAgentId as typeof to._id,
+			toOrgId: built.link.toOrgId,
+			grantedBy: built.link.grantedBy,
+			grantedAt: built.link.grantedAt,
+			revokedAt: null,
+			reason: built.link.reason,
+		};
+		if (existing !== null) {
+			await ctx.db.replace(existing._id, row);
+			return existing._id;
+		}
+		return await ctx.db.insert("agentLinks", row);
+	},
+});
+
+/**
+ * revoke — an admin of the TARGET organisation switches the (from, to) link off
+ * (`revokedAt`). Any current admin of the target organisation may revoke, not
+ * only the grantor. Revoking a link already revoked changes nothing.
+ */
+export const revoke = mutation({
+	args: {
+		fromAgentId: v.id("agents"),
+		toAgentId: v.id("agents"),
+	},
+	returns: v.null(),
+	handler: async (ctx, args) => {
+		// write-contract: imperative person-session door, no subscriber — 0 call sites in mcp-server/src and no `useQuery`; refused RBAC_DENIED at an imperative call, never at a render.
+		const identity = await ctx.auth.getUserIdentity();
+		if (identity === null) throw anonymousRefusal(REVOKE_DOOR);
+		const link = await linkRowForPair(ctx, args.fromAgentId, args.toAgentId);
+		if (link === null) throw notAdministered(REVOKE_DOOR);
+		const target = await lookupOrgMapping(ctx, { clerkOrgId: link.toOrgId });
+		if (target === null) throw notAdministered(REVOKE_DOOR);
+		await requireOrgAdminById(ctx, identity, target.clerkOrgSlug, REVOKE_DOOR);
+		if (typeof link.revokedAt === "number") return null;
+		await ctx.db.patch(link._id, { revokedAt: Date.now() });
+		return null;
+	},
+});

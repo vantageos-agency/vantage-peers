@@ -14,12 +14,15 @@ import {
 	requireAgentCredentialMatch,
 	verifiedActorValidator,
 	requireResolvedCaller,
+	lookupOrgMapping,
 	requireScope,
 	withOrgScope,
 	requireOrchestratorOnRoster,
 } from "./lib/auth";
+import { assigneeNotInOrgRefusal } from "./lib/actingPrincipal";
 import type { OrgScope, VerifiedActor } from "./lib/auth";
 import { requireId } from "./lib/ids";
+import { agentLinkAdmits } from "./lib/agentLinks";
 import { mappingIsProven } from "./githubOwnerBinding";
 import {
 	afterDeliveryWork,
@@ -759,6 +762,40 @@ function orgIdForWrite(scope: OrgScope, door: string): string | undefined {
 	return scope.orgSlug ?? undefined;
 }
 
+// The assignee BY ID when it is an agent of ANOTHER organisation that the PROVEN
+// calling agent may reach under an explicit agent link (task
+// k17965eh23twqzsbjc8mjgfcmx8gpxmh), else undefined and the ordinary same-org
+// resolution (and its refusals) apply unchanged. Only a call carrying an agent
+// PROOF (a verifiedActor or a presented credential, whose id is
+// `callerActorId`) can use a link; the decision is the package's
+// (convex/lib/agentLinks.ts). `ownOrgSlug` is the organisation the row lives in.
+async function linkedAssigneeOf(
+	ctx: MutationCtx,
+	input: {
+		callerActorId: string | undefined;
+		proven: boolean;
+		ownOrgSlug: string | undefined;
+		assignedToAgentId: string | undefined;
+		door: string;
+	},
+): Promise<Doc<"agents"> | undefined> {
+	if (
+		!input.proven ||
+		input.callerActorId === undefined ||
+		input.ownOrgSlug === undefined ||
+		input.assignedToAgentId === undefined
+	) {
+		return undefined;
+	}
+	const id = ctx.db.normalizeId("agents", input.assignedToAgentId);
+	if (id === null) return undefined;
+	const row = await ctx.db.get(id);
+	if (row === null || row.orgSlug === input.ownOrgSlug) return undefined;
+	return (await agentLinkAdmits(ctx, input.callerActorId, row, input.door))
+		? row
+		: undefined;
+}
+
 export const create = mutation({
 	args: createTaskArgsValidatorWithCredential,
 	returns: v.id("tasks"),
@@ -802,7 +839,20 @@ export const create = mutation({
 		// the service account) resolves its assignee in the AGENT's org.
 		let assignedTo: string;
 		let assignedToId: string;
-		if (assignedToAgentId !== undefined) {
+		// A task assigned across organisations under an agent link is stamped in
+		// the ASSIGNEE's organisation (below), so its members, and only they, read
+		// it. Absent a link the assignee is resolved in the row's own org, as ever.
+		const linkedAssignee = await linkedAssigneeOf(ctx, {
+			callerActorId: scope.callerActorId,
+			proven: agentCredentialSecret !== undefined || verifiedActor !== undefined,
+			ownOrgSlug: await actorOrgFor(ctx.db, rowOrgId ?? scope.callerActorOrg),
+			assignedToAgentId,
+			door: "tasks:create",
+		});
+		if (linkedAssignee !== undefined) {
+			assignedTo = linkedAssignee.name;
+			assignedToId = linkedAssignee._id;
+		} else if (assignedToAgentId !== undefined) {
 			const assignee = await resolveAgentIdArg(ctx, {
 				orgSlug: await actorOrgFor(ctx.db, rowOrgId ?? scope.callerActorOrg),
 				agentId: assignedToAgentId,
@@ -834,7 +884,7 @@ export const create = mutation({
 			return await insertTask(
 				ctx,
 				{ ...taskArgs, assignedTo, createdBy: actor, lastActedBy: actor },
-				rowOrgId,
+				linkedAssignee?.orgSlug ?? rowOrgId,
 				undefined,
 				{ createdById: actor, assignedToId },
 			);
@@ -848,7 +898,7 @@ export const create = mutation({
 		return await insertTask(
 			ctx,
 			{ ...taskArgs, assignedTo, createdBy: scope.callerLabel ?? taskArgs.createdBy },
-			rowOrgId,
+			linkedAssignee?.orgSlug ?? rowOrgId,
 			undefined,
 			{ ...(createdById !== undefined ? { createdById } : {}), assignedToId },
 		);
@@ -2004,15 +2054,42 @@ export const update = mutation({
 		assertRowInVerifiedOrg(task, verifiedOrgSlug, taskId, "tasks:update");
 		// The assignee BY ID, resolved in the task's own org; it becomes the row's
 		// label so every decision below reads the same string a name would carry.
+		// An agent of ANOTHER organisation that the PROVEN caller may reach under an
+		// explicit agent link (task k17965eh23twqzsbjc8mjgfcmx8gpxmh): the task then
+		// moves to that agent's organisation (stamped below, after the caller is
+		// authorised on the row). Without a link the assignee is resolved in the
+		// task's own org, as ever.
+		const linkedAssignee = await linkedAssigneeOf(ctx, {
+			callerActorId: callerScope.callerActorId,
+			proven: agentCredentialSecret !== undefined || verifiedActor !== undefined,
+			ownOrgSlug: await actorOrgFor(ctx.db, task.orgId),
+			assignedToAgentId,
+			door: "tasks:update",
+		});
+		// A caller of a CLIENT organisation holds authority over a task of another
+		// organisation only because a link handed it there. It may re-assign that
+		// task to the one agent the link names, never to any other agent of the
+		// organisation the task moved to (an agent link covers one exact pair).
+		if (
+			assignedToAgentId !== undefined &&
+			linkedAssignee === undefined &&
+			callerScope.callerActorOrg !== undefined &&
+			task.orgId !== undefined &&
+			callerScope.callerActorOrg !== task.orgId &&
+			(await lookupOrgMapping(ctx, callerScope.callerActorOrg))?.orgKind !== "operator"
+		) {
+			throw assigneeNotInOrgRefusal(assignedToAgentId, callerScope.callerActorOrg, "tasks:update");
+		}
 		const assigneeById =
 			assignedToAgentId === undefined
 				? undefined
-				: await resolveAgentIdArg(ctx, {
+				: (linkedAssignee ??
+					(await resolveAgentIdArg(ctx, {
 						orgSlug: await actorOrgFor(ctx.db, task.orgId),
 						agentId: assignedToAgentId,
 						field: "assignedToAgentId",
 						door: "tasks:update",
-					});
+					})));
 		if (assigneeById !== undefined) fields.assignedTo = assigneeById.name;
 		// System-review reassignment grant (k17b5btg6cr9t9824tndte3w2s8fmzx1): an
 		// automation review task (origin "automation" + isReviewTask: system-created, only createOrUpdateReviewTask writes both) has no human
@@ -2069,7 +2146,9 @@ export const update = mutation({
 		// `create` refuses is one `update` call away. Same helper, same rule
 		// (roster-only, "*" admits nobody for a member, master unchanged).
 		if (fields.assignedTo !== undefined) {
-			requireOrchestratorOnRoster(callerScope, fields.assignedTo, "tasks:update", "assignee");
+			if (linkedAssignee === undefined) {
+				requireOrchestratorOnRoster(callerScope, fields.assignedTo, "tasks:update", "assignee");
+			}
 			if (assigneeById === undefined) {
 				await recordNameOnlyCall(ctx, "tasks:update:assignedTo");
 			}
@@ -2090,7 +2169,17 @@ export const update = mutation({
 		// assertTaskCallerAuthorized's reclaim branch reads; it is written
 		// unconditionally on every reassignment (review task or not) so the
 		// gate can decide review-tasks-only scoping at read time.
-		if (patch.assignedTo !== undefined && patch.assignedTo !== task.assignedTo) {
+		if (
+			patch.assignedTo !== undefined &&
+			(patch.assignedTo !== task.assignedTo || linkedAssignee !== undefined)
+		) {
+			// Across an agent link the row moves to the assignee's organisation: the
+			// stamp the target's members read it by (isRowVisibleToScope), label and
+			// permanent ID together.
+			if (linkedAssignee !== undefined) {
+				patch.orgId = linkedAssignee.orgSlug;
+				patch.clerkOrgId = linkedAssignee.clerkOrgId;
+			}
 			patch.lastAssignedTo = task.assignedTo;
 			// R-53: the same reassignment BY ID, resolved within the task's own org.
 			// A name that resolves to no agents row clears the stale ID (patch with

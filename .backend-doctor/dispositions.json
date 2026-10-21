@@ -12,6 +12,10 @@
 			"reason": "live: served by MCP-public tool(s) export_okf_bundle, generate_upload_url, import_okf_bundle, store_document_chunked",
 			"purpose": "Convex file storage: uploaded knowledge-base documents and OKF bundle tarballs (generate_upload_url, store_document_chunked, export/import/validate_okf_bundle)."
 		},
+		"agentLinks": {
+			"disposition": "CONSERVER",
+			"reason": "live: read by MCP-public tool(s) send_message, create_task, update_task (an explicit agent link admits a cross-organisation send or assignment, resolved by ID)"
+		},
 		"agent_credentials": {
 			"disposition": "CONSERVER",
 			"reason": "live: read by MCP-public tool(s) send_message, create_task, update_task (agent credential resolved by ID, slice 2b)"
@@ -113,6 +117,10 @@
 		"oauth_access_tokens": {
 			"disposition": "CONSERVER",
 			"reason": "live: served by MCP-public tool(s) create_mission, create_recurring_task, create_task, send_message …"
+		},
+		"orgMembership": {
+			"disposition": "CONSERVER",
+			"reason": "live: read by MCP-public tool(s) send_message, create_task, update_task (the agent link voids when its grantor stops being an active admin of the target organisation)"
 		},
 		"profiles": {
 			"disposition": "CONSERVER",

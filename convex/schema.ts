@@ -1928,10 +1928,17 @@ export default defineSchema({
 	// (convex/lib/auth.ts) keeps deciding admin status from the verified
 	// `org_role` JWT claim at request time. No code path may read a row here to
 	// decide whether someone is an org admin, or to authorise any action other
-	// than the one named next.
+	// than the two named next.
 	//
-	// ONE authorisation use, and only because the table is kept live: the
-	// owner-membership lookup `ownerMembershipLookups` (convex/lib/actingPrincipal.ts),
+	// TWO authorisation uses, and only because the table is kept live. The
+	// second: the agent-link lookup `agentLinkLookups` (convex/lib/agentLinks.ts)
+	// answers `@vantageos/cloud-identity` `resolveAgentLink` whether the GRANTOR of
+	// a link is still an ACTIVE ADMIN of the target organisation at every
+	// cross-organisation request (no session exists there to carry an `org_role`
+	// claim): a removed (tombstoned) or demoted grantor voids the link. The
+	// package, not this file, decides; the grant door additionally requires the
+	// live `org_role` claim (`requireOrgAdminById`).
+	// The first: the owner-membership lookup `ownerMembershipLookups` (convex/lib/actingPrincipal.ts),
 	// which proves an agent's `ownerPersonId` is a member of the agent's org
 	// (key: clerkOrgId + clerkUserId; existence of a NON-tombstoned row only,
 	// the `role` is never read for it). That is safe only while the rows follow Clerk: the Clerk webhook
@@ -2193,6 +2200,30 @@ export default defineSchema({
 		.index("by_parent_clerk_id", ["clerkOrgId", "parentName"])
 		.index("by_child", ["orgSlug", "childName"])
 		.index("by_child_clerk_id", ["clerkOrgId", "childName"]),
+
+	// ── agentLinks ───────────────────────────────────────────────────────────
+	// Task k17965eh23twqzsbjc8mjgfcmx8gpxmh. An explicit, revocable channel
+	// between ONE agent of an organisation and ONE agent of another, decided by
+	// @vantageos/cloud-identity (`buildAgentLink` / `resolveAgentLink`); this
+	// table is its storage only (the package's `StoredAgentLink`, one row per
+	// DIRECTION). Organisations are otherwise isolated: a name never crosses.
+	//   - fromAgentId/fromOrgId: the agent allowed to reach the other, and its
+	//     permanent Clerk org id. toAgentId/toOrgId: the agent that may be reached
+	//     and ITS permanent Clerk org id (the grantor administers it).
+	//   - grantedBy: the Clerk subject of the verified person who granted it, an
+	//     admin of toOrgId. Written from the verified session, never an argument.
+	//   - revokedAt: absent/null while standing; set by `agentLinks:revoke`.
+	// One row per (fromAgentId, toAgentId): a re-grant patches the row.
+	agentLinks: defineTable({
+		fromAgentId: v.id("agents"),
+		fromOrgId: v.string(),
+		toAgentId: v.id("agents"),
+		toOrgId: v.string(),
+		grantedBy: v.string(),
+		grantedAt: v.number(),
+		revokedAt: v.optional(v.union(v.number(), v.null())),
+		reason: v.string(),
+	}).index("by_from_agent_and_to_agent", ["fromAgentId", "toAgentId"]),
 
 	// ── agent_credentials ────────────────────────────────────────────────────
 	// [P-T4] the per-agent CREDENTIAL — today the token identifies the
