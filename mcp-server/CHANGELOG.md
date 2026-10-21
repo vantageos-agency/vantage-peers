@@ -10,6 +10,7 @@
 
 ### Changed
 
+- A typed acting name is now judged by the identity package (`@vantageos/cloud-identity` 0.22.0, `decideActingClaim`) instead of a local predicate. Refusal codes are unchanged (`AGENT_IDENTITY_MISMATCH`, `AGENT_CREDENTIAL_REQUIRED`, with the credential header named). A call with no authorization context is now refused `RBAC_DENIED` (reason `no-context`), and a credential whose lookup carries no agent ID is refused `RBAC_DENIED` (reason `caller-invalid`) when it types a name; omit the name to act as the resolved agent.
 - An acting name (`callerOrchestrator`, `createdBy`, `from`, ...) is judged once, before the tool runs, instead of a second time inside each tool. Refusals are unchanged: another agent's name is still `AGENT_IDENTITY_MISMATCH`, and a name the client's allowlist does not list still answers `Forbidden: from='<name>' is not in this client's allowlist`. (`checkFromAllowed` removed; task k1778c2hvae8e8vz9f5bbbbbb98g62hw.)
 - The consent / organisation picker uses the VantagePeers dashboard design: dark by default, light under `prefers-color-scheme`, one option card per organisation with its role (`admin`, not `(org:admin)`), the VantagePeers name above the title, Approve as the primary action. It still loads no external asset; its single inline style is hashed into the page CSP.
 - Deny on the organisation picker now answers like OAuth expects: a redirect to the client with `error=access_denied`, its `state` and `iss`, instead of a bare `403` JSON. The denial verifies the picker's consent token, so a forged one is refused.
