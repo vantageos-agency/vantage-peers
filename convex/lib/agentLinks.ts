@@ -1,6 +1,5 @@
 import {
 	type AgentLinkLookups,
-	membershipPersonLookups,
 	resolveAgentLink,
 	type StoredAgentLink,
 } from "@vantageos/cloud-identity";
@@ -47,24 +46,22 @@ export function agentLinkLookups(ctx: Ctx): AgentLinkLookups {
 			if (row === null) return null;
 			return { id: row._id, orgId: row.clerkOrgId ?? null, active: row.isActive };
 		},
-		lookupMembership: async (personId, orgId) => {
-			// Liveness is the package's (`membershipPersonLookups`: a tombstoned or
-			// absent row is not a member); the stored role is read off the same row.
-			let role: string | null = null;
-			const { personById } = membershipPersonLookups(async (org, person) => {
-				const row = await ctx.db
-					.query("orgMembership")
-					.withIndex("by_org_user_clerk_id", (q) =>
-						q.eq("clerkOrgId", org).eq("clerkUserId", person),
-					)
-					.unique();
-				role = row?.role ?? null;
-				return row;
-			});
-			const member = await personById?.(personId, orgId);
-			if (member === null || member === undefined) return null;
-			return { active: member.active, role, orgId: member.orgId ?? orgId };
-		},
+		lookupMembership: async (personId, orgId) =>
+			await ctx.db
+				.query("orgMembership")
+				.withIndex("by_org_user_clerk_id", (q) =>
+					q.eq("clerkOrgId", orgId).eq("clerkUserId", personId),
+				)
+				.unique()
+				.then((row) =>
+					row === null
+						? null
+						: {
+								active: row.deletedAt === undefined,
+								role: row.role,
+								orgId: row.clerkOrgId ?? null,
+							},
+				),
 		adminRoles: AGENT_LINK_ADMIN_ROLES,
 	};
 }
@@ -125,7 +122,6 @@ export async function agentLinkAdmits(
 	) {
 		return false;
 	}
-	const lookups = agentLinkLookups(ctx);
 	const reach = await resolveAgentLink(
 		{
 			fromAgent: { agentId: caller._id, orgId: caller.clerkOrgId },
@@ -133,7 +129,7 @@ export async function agentLinkAdmits(
 			door,
 		},
 		{
-			...lookups,
+			...agentLinkLookups(ctx),
 			lookupAgentLink: async (fromAgentId, toAgentId) => {
 				const from = ctx.db.normalizeId("agents", fromAgentId);
 				const to = ctx.db.normalizeId("agents", toAgentId);
