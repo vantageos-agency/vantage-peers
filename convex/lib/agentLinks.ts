@@ -1,11 +1,12 @@
 import {
 	type AgentLinkLookups,
-	type StoredAgentLink,
+	membershipPersonLookups,
 	resolveAgentLink,
+	type StoredAgentLink,
 } from "@vantageos/cloud-identity";
 import type { Doc } from "../_generated/dataModel";
 import type { MutationCtx, QueryCtx } from "../_generated/server";
-import { lookupOrgMapping } from "./authOrgMapping";
+import { personPrincipalLookups } from "./actingPrincipal";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // agentLinks — the vantage-peers ADAPTER onto @vantageos/cloud-identity's agent
@@ -47,18 +48,22 @@ export function agentLinkLookups(ctx: Ctx): AgentLinkLookups {
 			return { id: row._id, orgId: row.clerkOrgId ?? null, active: row.isActive };
 		},
 		lookupMembership: async (personId, orgId) => {
-			const row = await ctx.db
-				.query("orgMembership")
-				.withIndex("by_org_user_clerk_id", (q) =>
-					q.eq("clerkOrgId", orgId).eq("clerkUserId", personId),
-				)
-				.unique();
-			if (row === null) return null;
-			return {
-				active: row.deletedAt === undefined,
-				role: row.role,
-				orgId: row.clerkOrgId ?? null,
-			};
+			// Liveness is the package's (`membershipPersonLookups`: a tombstoned or
+			// absent row is not a member); the stored role is read off the same row.
+			let role: string | null = null;
+			const { personById } = membershipPersonLookups(async (org, person) => {
+				const row = await ctx.db
+					.query("orgMembership")
+					.withIndex("by_org_user_clerk_id", (q) =>
+						q.eq("clerkOrgId", org).eq("clerkUserId", person),
+					)
+					.unique();
+				role = row?.role ?? null;
+				return row;
+			});
+			const member = await personById?.(personId, orgId);
+			if (member === null || member === undefined) return null;
+			return { active: member.active, role, orgId: member.orgId ?? orgId };
 		},
 		adminRoles: AGENT_LINK_ADMIN_ROLES,
 	};
@@ -96,7 +101,7 @@ export async function linkRowForPair(
  * May the PROVEN calling agent `callerAgentId` reach `toAgent`, an agent of
  * ANOTHER organisation, under a stored agent link? True only when the package's
  * `resolveAgentLink` grants for exactly this pair AND the target row is the one
- * the grant names, in an ACTIVE organisation, stamped with the same slug.
+ * the grant names, in an ACTIVE organisation (read by its permanent ID).
  * Anything else, a lookup that throws included, is false: this never grants on
  * an error path and never says why (a refusal is no oracle for another org).
  *
@@ -142,10 +147,8 @@ export async function agentLinkAdmits(
 	if (reach.toAgentId !== toAgent._id || reach.toOrgId !== toAgent.clerkOrgId) {
 		return false;
 	}
-	const mapping = await lookupOrgMapping(ctx, { clerkOrgId: reach.toOrgId });
-	return (
-		mapping !== null &&
-		mapping.isActive &&
-		mapping.clerkOrgSlug === toAgent.orgSlug
-	);
+	// The target's organisation is read by its permanent ID, through the same
+	// ID-keyed adapter the person path uses, and must be active.
+	const org = await personPrincipalLookups(ctx).organisationById?.(reach.toOrgId);
+	return org !== null && org !== undefined && org.active;
 }

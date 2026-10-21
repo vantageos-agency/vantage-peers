@@ -1,8 +1,9 @@
 import { buildAgentLink } from "@vantageos/cloud-identity";
+import type { UserIdentity } from "convex/server";
 import { ConvexError, v } from "convex/values";
+import type { MutationCtx } from "./_generated/server";
 import { mutation } from "./_generated/server";
 import { refuseWith } from "./lib/actingPrincipal";
-import { lookupOrgMapping } from "./lib/auth";
 import { anonymousRefusal, requireOrgAdminById } from "./lib/agentIdentity";
 import { agentLinkLookups, linkRowForPair } from "./lib/agentLinks";
 
@@ -31,11 +32,18 @@ import { agentLinkLookups, linkRowForPair } from "./lib/agentLinks";
 const GRANT_DOOR = "agentLinks:grant";
 const REVOKE_DOOR = "agentLinks:revoke";
 
-// One refusal for "no such target / no such link / not the administrator", so the
-// door is no oracle for which agents or links exist in another organisation.
-function notAdministered(door: string): ConvexError<string> {
-	return new ConvexError(
-		`RBAC_DENIED: no agent link can be changed by this caller — an agent link is granted and revoked by an administrator of the TARGET agent's organisation — ${JSON.stringify({ reason: "agent-link-not-administered", door })}`,
+// "No such target / no such link" is refused exactly as "not the administrator":
+// the admin proof is run against a label no organisation holds, so it always
+// refuses with the package's own refusal and the door is no oracle for which
+// agents or links exist in another organisation.
+async function refuseNotAdministered(
+	ctx: MutationCtx,
+	identity: UserIdentity,
+	door: string,
+): Promise<never> {
+	await requireOrgAdminById(ctx, identity, "", door);
+	throw new ConvexError(
+		`AGENT_LINK_UNREACHABLE: the admin proof admitted an organisation with no label — ${JSON.stringify({ door })}`,
 	);
 }
 
@@ -58,11 +66,11 @@ export const grant = mutation({
 		const identity = await ctx.auth.getUserIdentity();
 		if (identity === null) throw anonymousRefusal(GRANT_DOOR);
 		const to = await ctx.db.get(args.toAgentId);
-		if (to === null) throw notAdministered(GRANT_DOOR);
+		if (to === null) return await refuseNotAdministered(ctx, identity, GRANT_DOOR);
 		// The live session administers the TARGET agent's organisation, by org ID.
 		await requireOrgAdminById(ctx, identity, to.orgSlug, GRANT_DOOR);
 		const from = await ctx.db.get(args.fromAgentId);
-		if (from === null) throw notAdministered(GRANT_DOOR);
+		if (from === null) return await refuseNotAdministered(ctx, identity, GRANT_DOOR);
 		const built = await buildAgentLink(
 			{
 				fromAgentId: from._id,
@@ -79,6 +87,8 @@ export const grant = mutation({
 		if (!built.ok) return refuseWith(built.refusal);
 		const existing = await linkRowForPair(ctx, from._id, to._id);
 		const row = {
+			// The target organisation's label, from its own agent row.
+			orgSlug: to.orgSlug,
 			fromAgentId: built.link.fromAgentId as typeof from._id,
 			fromOrgId: built.link.fromOrgId,
 			toAgentId: built.link.toAgentId as typeof to._id,
@@ -111,11 +121,16 @@ export const revoke = mutation({
 		// write-contract: imperative person-session door, no subscriber — 0 call sites in mcp-server/src and no `useQuery`; refused RBAC_DENIED at an imperative call, never at a render.
 		const identity = await ctx.auth.getUserIdentity();
 		if (identity === null) throw anonymousRefusal(REVOKE_DOOR);
+		const to = await ctx.db.get(args.toAgentId);
+		if (to === null) return await refuseNotAdministered(ctx, identity, REVOKE_DOOR);
+		// The live session administers the TARGET agent's organisation, by org ID.
+		await requireOrgAdminById(ctx, identity, to.orgSlug, REVOKE_DOOR);
 		const link = await linkRowForPair(ctx, args.fromAgentId, args.toAgentId);
-		if (link === null) throw notAdministered(REVOKE_DOOR);
-		const target = await lookupOrgMapping(ctx, { clerkOrgId: link.toOrgId });
-		if (target === null) throw notAdministered(REVOKE_DOOR);
-		await requireOrgAdminById(ctx, identity, target.clerkOrgSlug, REVOKE_DOOR);
+		if (link === null || link.toOrgId !== to.clerkOrgId) {
+			throw new ConvexError(
+				`AGENT_LINK_NOT_FOUND: no agent link is stored for this pair of agents — ${JSON.stringify({ door: REVOKE_DOOR })}`,
+			);
+		}
 		if (typeof link.revokedAt === "number") return null;
 		await ctx.db.patch(link._id, { revokedAt: Date.now() });
 		return null;

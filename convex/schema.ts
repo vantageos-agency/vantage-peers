@@ -2215,6 +2215,10 @@ export default defineSchema({
 	//   - revokedAt: absent/null while standing; set by `agentLinks:revoke`.
 	// One row per (fromAgentId, toAgentId): a re-grant patches the row.
 	agentLinks: defineTable({
+		// The label of the TARGET organisation (`toOrgId`'s `client_org_mapping.clerkOrgSlug`),
+		// the tenant stamp every table of this backend carries. Display and stamp
+		// only: the identity of the link's organisations is `fromOrgId` / `toOrgId`.
+		orgSlug: v.string(),
 		fromAgentId: v.id("agents"),
 		fromOrgId: v.string(),
 		toAgentId: v.id("agents"),
