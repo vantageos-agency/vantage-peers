@@ -1,11 +1,12 @@
 import { buildAgentLink } from "@vantageos/cloud-identity";
 import type { UserIdentity } from "convex/server";
 import { ConvexError, v } from "convex/values";
+import type { Id } from "./_generated/dataModel";
 import type { MutationCtx } from "./_generated/server";
 import { mutation } from "./_generated/server";
 import { refuseWith } from "./lib/actingPrincipal";
 import { anonymousRefusal, requireOrgAdminById } from "./lib/agentIdentity";
-import { agentLinkLookups, linkRowForPair } from "./lib/agentLinks";
+import { agentLinkLookups, linkRowForPair, markLinkRevoked } from "./lib/agentLinks";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // agentLinks — the grant and revoke doors of an explicit agent link (task
@@ -32,18 +33,33 @@ import { agentLinkLookups, linkRowForPair } from "./lib/agentLinks";
 const GRANT_DOOR = "agentLinks:grant";
 const REVOKE_DOOR = "agentLinks:revoke";
 
-// "No such target / no such link" is refused exactly as "not the administrator":
-// the admin proof is run against a label no organisation holds, so it always
-// refuses with the package's own refusal and the door is no oracle for which
-// agents or links exist in another organisation.
-async function refuseNotAdministered(
+// A missing agent is refused by the package, never by a local proof: the IDs go
+// to `buildAgentLink`, whose lookups find no agent and whose refusal
+// (`refuseWith`, code RBAC_DENIED) is the one every other denial of this door
+// carries. The code is the same as "not the administrator"; only the refusal's
+// `reason` word differs (residual, visible to a signed-in caller only, and the
+// ids are validated `agents` ids).
+async function refuseMissingAgent(
 	ctx: MutationCtx,
 	identity: UserIdentity,
-	door: string,
+	ids: { fromAgentId: Id<"agents">; toAgentId: Id<"agents"> },
+	reason: string,
 ): Promise<never> {
-	await requireOrgAdminById(ctx, identity, "", door);
+	const built = await buildAgentLink(
+		{
+			fromAgentId: ids.fromAgentId,
+			fromOrgId: "",
+			toAgentId: ids.toAgentId,
+			toOrgId: "",
+			grantedBy: identity.subject,
+			reason,
+			now: Date.now(),
+		},
+		agentLinkLookups(ctx),
+	);
+	if (!built.ok) return refuseWith(built.refusal);
 	throw new ConvexError(
-		`AGENT_LINK_UNREACHABLE: the admin proof admitted an organisation with no label — ${JSON.stringify({ door })}`,
+		`AGENT_LINK_UNREACHABLE: a link was built for an agent that does not exist — ${JSON.stringify({ door: "agentLinks" })}`,
 	);
 }
 
@@ -66,11 +82,13 @@ export const grant = mutation({
 		const identity = await ctx.auth.getUserIdentity();
 		if (identity === null) throw anonymousRefusal(GRANT_DOOR);
 		const to = await ctx.db.get(args.toAgentId);
-		if (to === null) return await refuseNotAdministered(ctx, identity, GRANT_DOOR);
+		const from = await ctx.db.get(args.fromAgentId);
+		if (to === null || from === null) {
+			return await refuseMissingAgent(ctx, identity, args, args.reason);
+		}
+		// The live session administers the TARGET agent's organisation, by org ID.
 		// The live session administers the TARGET agent's organisation, by org ID.
 		await requireOrgAdminById(ctx, identity, to.orgSlug, GRANT_DOOR);
-		const from = await ctx.db.get(args.fromAgentId);
-		if (from === null) return await refuseNotAdministered(ctx, identity, GRANT_DOOR);
 		const built = await buildAgentLink(
 			{
 				fromAgentId: from._id,
@@ -122,7 +140,15 @@ export const revoke = mutation({
 		const identity = await ctx.auth.getUserIdentity();
 		if (identity === null) throw anonymousRefusal(REVOKE_DOOR);
 		const to = await ctx.db.get(args.toAgentId);
-		if (to === null) return await refuseNotAdministered(ctx, identity, REVOKE_DOOR);
+		if (to === null) {
+			return await refuseMissingAgent(
+				ctx,
+				identity,
+				args,
+				"revoke of an agent link whose target agent is missing",
+			);
+		}
+		// The live session administers the TARGET agent's organisation, by org ID.
 		// The live session administers the TARGET agent's organisation, by org ID.
 		await requireOrgAdminById(ctx, identity, to.orgSlug, REVOKE_DOOR);
 		const link = await linkRowForPair(ctx, args.fromAgentId, args.toAgentId);
@@ -132,7 +158,7 @@ export const revoke = mutation({
 			);
 		}
 		if (typeof link.revokedAt === "number") return null;
-		await ctx.db.patch(link._id, { revokedAt: Date.now() });
+		await markLinkRevoked(ctx, link._id, Date.now());
 		return null;
 	},
 });
