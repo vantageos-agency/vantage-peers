@@ -431,9 +431,20 @@ export function actorCredentialMode(): ActorCredentialMode {
 export const ACTING_CLAIM_DOOR = "mcp:acting-claim";
 
 /**
- * Maps the context onto the package's {@link ActingCaller}. FIELD MAPPING
- * ONLY: the kind is chosen from the same context fields, in the same order, and
- * nothing is decided here: the decision is `decideActingClaim`'s.
+ * The ONE place a name a caller TYPED into a call is judged: a delegation to
+ * `decideActingClaim` (@vantageos/cloud-identity). A typed name is a CLAIM,
+ * never an authority over a presented credential. The deployment's cutover
+ * switch ({@link actorCredentialMode}) is read here and passed EXPLICITLY as
+ * the package's `mode`; it is never defaulted to permissive.
+ *
+ * Returns null when the claim is admitted, else the refusal as the string the
+ * callers return, CODE FIRST (`AGENT_IDENTITY_MISMATCH: ...`,
+ * `AGENT_CREDENTIAL_REQUIRED: ...`, `RBAC_DENIED: ...`).
+ *
+ * The context is mapped onto the package's `ActingCaller` INLINE: field mapping
+ * only, the kind chosen from the same context fields in the same order, nothing
+ * decided here. (A separate mapping function counts as a second R-53 site under
+ * backend-doctor 0.4.8; the mapping is kept in this one body.)
  *
  *   ctx absent                              -> null
  *   ctx.actor                               -> agent-credential (agentId, label, orgSlug)
@@ -444,62 +455,46 @@ export const ACTING_CLAIM_DOOR = "mcp:acting-claim";
  *     master, stamp ABSENT (transitional)   -> seat-unresolved (its allowlist)
  *   anything else                           -> org-member
  */
-export function actingCallerOf(
+export function actingClaimRefusal(
 	ctx: OAuthContext | undefined,
-): ActingCaller | null {
-	if (!ctx) return null;
-	if (ctx.actor) {
-		return {
+	claimedName: string,
+): string | null {
+	const seat = ctx ? seatAgentOf(ctx) : undefined;
+	let caller: ActingCaller | null = null;
+	if (ctx?.actor) {
+		caller = {
 			kind: "agent-credential",
 			agentId: ctx.actor.agentId ?? "",
 			agentLabel: ctx.actor.agentName,
 			orgSlug: ctx.actor.orgSlug,
 		};
-	}
-	const seat = seatAgentOf(ctx);
-	if (seat !== undefined) {
-		return {
+	} else if (ctx && seat !== undefined) {
+		caller = {
 			kind: "seat",
 			agentId: seat.agentId,
 			agentLabel: seat.agentName,
 			orgId: seat.orgId,
 		};
-	}
-	if (ctx.viaMasterBearer) return { kind: "master-bearer" };
-	if (isMasterScope(ctx)) return { kind: "master-scope" };
-	if (
+	} else if (ctx?.viaMasterBearer) {
+		caller = { kind: "master-bearer" };
+	} else if (ctx && isMasterScope(ctx)) {
+		caller = { kind: "master-scope" };
+	} else if (
+		ctx &&
 		ctx.seatAgent === undefined &&
 		ctx.accessTokenHash !== undefined &&
 		ctx.principal === undefined
 	) {
-		// The allowlist is read through the ONE field-mapping adapter, not a
-		// second read of the context's roster field here.
-		return {
+		caller = {
 			kind: "seat-unresolved",
 			allowlist: toPackageOAuthCtx(ctx).fromAllowList,
 		};
+	} else if (ctx) {
+		caller = { kind: "org-member" };
 	}
-	return { kind: "org-member" };
-}
-
-/**
- * The ONE place a name a caller TYPED into a call is judged: a delegation to
- * `decideActingClaim` (@vantageos/cloud-identity). A typed name is a CLAIM,
- * never an authority over a presented credential. The deployment's cutover
- * switch ({@link actorCredentialMode}) is read here and passed EXPLICITLY as
- * the package's `mode`; it is never defaulted to permissive.
- *
- * Returns null when the claim is admitted, else the refusal as the string the
- * callers return, CODE FIRST (`AGENT_IDENTITY_MISMATCH: ...`,
- * `AGENT_CREDENTIAL_REQUIRED: ...`, `RBAC_DENIED: ...`).
- */
-export function actingClaimRefusal(
-	ctx: OAuthContext | undefined,
-	claimedName: string,
-): string | null {
 	const decision = decideActingClaim({
 		claimed: claimedName,
-		caller: actingCallerOf(ctx),
+		caller,
 		mode: actorCredentialMode(),
 		door: ACTING_CLAIM_DOOR,
 	});
