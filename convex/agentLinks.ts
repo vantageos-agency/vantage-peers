@@ -6,7 +6,7 @@ import type { MutationCtx } from "./_generated/server";
 import { mutation } from "./_generated/server";
 import { refuseWith } from "./lib/actingPrincipal";
 import { anonymousRefusal, requireOrgAdminById } from "./lib/agentIdentity";
-import { agentLinkLookups, linkRowForPair, markLinkRevoked } from "./lib/agentLinks";
+import { agentLinkLookups, linkRowForPair } from "./lib/agentLinks";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // agentLinks — the grant and revoke doors of an explicit agent link (task
@@ -158,7 +158,7 @@ export const revoke = mutation({
 			);
 		}
 		if (typeof link.revokedAt === "number") return null;
-		await markLinkRevoked(ctx, link._id, Date.now());
+		await ctx.db.patch(link._id, { revokedAt: Date.now() });
 		return null;
 	},
 });
