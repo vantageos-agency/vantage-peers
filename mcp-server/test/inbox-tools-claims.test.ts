@@ -213,12 +213,25 @@ describe.each(TOOLS)("%s: the proof that rides the call", (tool, args) => {
 		expect(r.calls[0].args).not.toHaveProperty("verifiedPerson");
 	});
 
-	it("ORG-LEVEL credential without an agent ID: verifiedOrg, never both", async () => {
+	// ADAPTED (slice 3a): for the two tools that carry an acting name this pole
+	// used to be SERVED (verifiedOrg, no verifiedActor) on a label comparison. The
+	// package decision (decideActingClaim, @vantageos/cloud-identity 0.22.0)
+	// judges a credential caller BY ID and refuses one that carries none:
+	// RBAC_DENIED / caller-invalid, in every mode. check_messages types no acting
+	// name, so no claim is judged and its pole is unchanged.
+	it("ORG-LEVEL credential without an agent ID: verifiedOrg, never both (no acting name) or RBAC_DENIED caller-invalid (acting name)", async () => {
 		const r = await run(tool, ORG_CREDENTIAL_NO_ID, args);
-		expect(r.refused).toBe(false);
-		expect(r.calls).toHaveLength(1);
-		expect(r.calls[0].args.verifiedOrg).toEqual({ orgSlug: ORG });
-		expect(r.calls[0].args).not.toHaveProperty("verifiedActor");
+		if (tool === "check_messages") {
+			expect(r.refused).toBe(false);
+			expect(r.calls).toHaveLength(1);
+			expect(r.calls[0].args.verifiedOrg).toEqual({ orgSlug: ORG });
+			expect(r.calls[0].args).not.toHaveProperty("verifiedActor");
+			return;
+		}
+		expect(r.refused).toBe(true);
+		expect(r.text).toContain("RBAC_DENIED");
+		expect(r.text).toContain("caller-invalid");
+		expect(r.calls).toHaveLength(0);
 	});
 
 	it("UNRESOLVED org: Convex is NEVER called and the refusal is returned", async () => {

@@ -60,7 +60,7 @@ const ACTOR_A: OAuthContext = {
 	scopes: ["mcp:full"],
 	scopeProfile: "tenant",
 	fromAllowList: ["alpha-role"],
-	actor: { orgSlug: "org-a", agentName: "alpha-role" },
+	actor: { orgSlug: "org-a", agentName: "alpha-role", agentId: "agent-alpha-role" },
 	namespaceReadPrefixes: ["team/org-a"],
 	namespaceWritePrefixes: ["team/org-a"],
 	expiresAt: Date.now() + 3600_000,
@@ -161,7 +161,7 @@ describe("get_bulk_complete_run", () => {
 		const orgB: OAuthContext = {
 			...ACTOR_A,
 			clientId: "client-b",
-			actor: { orgSlug: "org-b", agentName: "alpha-role" },
+			actor: { orgSlug: "org-b", agentName: "alpha-role", agentId: "agent-alpha-role" },
 			namespaceReadPrefixes: ["team/org-b"],
 		};
 		const { result } = await call(orgB, { ...RUN, orgId: "org-a" });

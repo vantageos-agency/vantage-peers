@@ -18,10 +18,10 @@
 
 import type { ConvexHttpClient } from "convex/browser";
 import { anyApi } from "convex/server";
-import { convexTest } from "../../../tests/fixtures/convexTestWithServiceAccount";
 import { beforeEach, describe, expect, it } from "vitest";
 import schema from "../../../convex/schema.js";
-import { seedAgents } from "../../../tests/lib/agentIdOf.js";
+import { convexTest } from "../../../tests/fixtures/convexTestWithServiceAccount";
+import { agentIdOf, seedAgents } from "../../../tests/lib/agentIdOf.js";
 import {
 	insertTaskRow,
 	seedFleetAgents,
@@ -68,7 +68,9 @@ function handlersFor(t: T, ctx: OAuthContext): Map<string, Handler> {
 }
 
 const FUTURE = Date.now() + 3_600_000;
-const ORG_A_ETA: OAuthContext = {
+// `actor.agentId` is the seeded org-a "eta" row's real ID, set in beforeEach:
+// the package's acting-claim decision judges a credential caller BY ID.
+let ORG_A_ETA: OAuthContext = {
 	clientId: "client-a",
 	userId: "user-a",
 	scopes: ["mcp:full"],
@@ -223,6 +225,14 @@ beforeEach(async () => {
 		["org-a", "eta"],
 		["org-b", "eta"],
 	]);
+	ORG_A_ETA = {
+		...ORG_A_ETA,
+		actor: {
+			orgSlug: "org-a",
+			agentName: "eta",
+			agentId: String(await agentIdOf(t as never, "org-a", "eta")),
+		},
+	};
 });
 
 // `orgId` undefined seeds a FLEET-owned task, assigned to the fleet's "eta".

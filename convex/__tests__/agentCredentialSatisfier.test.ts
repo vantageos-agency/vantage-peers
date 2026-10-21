@@ -4,8 +4,8 @@
  * who a caller is, and that another organisation's credential decides nothing.
  *
  * VantagePeers Cloud (multi-tenant). Strict-mode readiness (see
- * mcp-server/src/auth.ts `checkActorBinding`): the door is only worth closing
- * when every legitimate caller can hold a credential.
+ * mcp-server/src/auth.ts, `decideActingClaim` via `actingClaimRefusal`): the
+ * door is only worth closing when every legitimate caller can hold a credential.
  *
  * Identities (named per pole; none is master):
  *   - `admin-of-<org>`   org:admin, mints credentials
@@ -30,13 +30,13 @@
  * message, so P3 goes RED; removing the declaredAgent lookup turns P2 RED.
  */
 
-import { convexTest } from "../../tests/fixtures/convexTestWithServiceAccount";
 import { describe, expect, test } from "vitest";
-import { api } from "../_generated/api";
-import schema from "../schema";
+import { convexTest } from "../../tests/fixtures/convexTestWithServiceAccount";
+import { testClerkOrgId } from "../../tests/fixtures/testClerkOrgId";
 import { agentIdOf, findAgentId } from "../../tests/lib/agentIdOf";
 import { ownAgent } from "../../tests/lib/ownAgent";
-import { testClerkOrgId } from "../../tests/fixtures/testClerkOrgId";
+import { api } from "../_generated/api";
+import schema from "../schema";
 
 const modules = Object.fromEntries(
 	Object.entries(import.meta.glob("../**/*.ts")).filter(

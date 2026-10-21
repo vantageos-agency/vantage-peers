@@ -58,7 +58,7 @@ const ACTOR_CTX: OAuthContext = {
 	expiresAt: Date.now() + 3_600_000,
 	isMaster: false,
 	clerkJwt: "verified-clerk-jwt",
-	actor: { orgSlug: "org-a", agentName: "alice" },
+	actor: { orgSlug: "org-a", agentName: "alice", agentId: "agent-alice" },
 };
 
 function register(): {

@@ -57,7 +57,11 @@ function installInternalClient(): void {
 			if (name === "agentCredentials:resolveAgentCredential") {
 				const { presentedSecret } = args as { presentedSecret: string };
 				if (presentedSecret === SECRET_ALICE) {
-					return { orgSlug: "acme", agentName: "alice" };
+					return {
+						orgSlug: "acme",
+						agentName: "alice",
+						agentId: "agent-alice",
+					};
 				}
 				throw Object.assign(new Error("[Request ID: x] Server Error"), {
 					data: `RBAC_DENIED: not recognised for "agentCredentials:resolveAgentCredential"`,
@@ -300,7 +304,7 @@ describe("the five poles — scoped non-master identity, env unset", () => {
 		expect(isSeatActingAsItself(await ctxOf(SEAT_TOKEN), "alice")).toBe(true);
 	});
 
-	it("PIN (pre-existing, not the exemption): a ['*'] row is MASTER scope (@vantageos/cloud-identity isMasterScope), so checkActorBinding serves it on the master branch", async () => {
+	it("PIN (pre-existing, not the exemption): a ['*'] row is MASTER scope (@vantageos/cloud-identity isMasterScope), so actingClaimRefusal serves it on the master branch", async () => {
 		const star = await ctxOf(STAR_TOKEN);
 		expect(isMasterScope(star)).toBe(true);
 		const r = await post("complete_task", {

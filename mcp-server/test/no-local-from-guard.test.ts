@@ -9,7 +9,7 @@
  *
  * `checkFromAllowed` was two gates, and each survives without the deleted names:
  *   1. the actor binding: `defineTool`'s `bindActingNames` already runs
- *      `checkActorBinding` on every declared acting name before the scope check
+ *      `decideActingClaim` (via `actingClaimRefusal`) on every declared acting name before the scope check
  *      and before the handler, so the second call inside `checkFromAllowed`
  *      re-decided a question that had been answered;
  *   2. the roster (`fromAllowList`, deleted in slice 3): decided by the
@@ -126,7 +126,11 @@ const ALPHA: OAuthContext = {
 	...base,
 	scopeProfile: "tenant",
 	fromAllowList: ["alpha-role", "beta-role"],
-	actor: { orgSlug: "org-fixture", agentName: "alpha-role" },
+	actor: {
+		orgSlug: "org-fixture",
+		agentName: "alpha-role",
+		agentId: "agent-alpha",
+	},
 };
 
 /** The same credential, but a roster that does not list its own agent. */

@@ -45,7 +45,7 @@ const marieCtx: OAuthContext = {
 	scopes: ["vantage:read", "vantage:write"],
 	scopeProfile: "marie-iris-rh",
 	fromAllowList: ["marie"],
-	actor: { orgSlug: "marie-org", agentName: "marie" },
+	actor: { orgSlug: "marie-org", agentName: "marie", agentId: "agent-marie" },
 	namespaceReadPrefixes: ["orchestrator/victor", "project/marie", "global"],
 	namespaceWritePrefixes: ["orchestrator/victor", "project/marie", "global"],
 	expiresAt: now + 3600_000,
@@ -122,7 +122,7 @@ describe("from gate (defineTool: actor binding, then roster)", () => {
 		// The roster refusal is reached when the actor gate passes: a credential
 		// for "pi" on Marie's client, whose roster lists only "marie".
 		const err = await fromGate(
-			{ ...marieCtx, actor: { orgSlug: "marie-org", agentName: "pi" } },
+			{ ...marieCtx, actor: { orgSlug: "marie-org", agentName: "pi", agentId: "agent-pi" } },
 			"pi",
 		);
 		expect(err).not.toBeNull();

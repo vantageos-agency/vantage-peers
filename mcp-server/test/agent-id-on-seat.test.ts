@@ -25,8 +25,8 @@ import {
 	_resetUnattributedClaimsForTest,
 	_setInternalClientForTest,
 	ACTOR_CREDENTIAL_MODE_ENV,
+	actingClaimRefusal,
 	bearerAuthMiddleware,
-	checkActorBinding,
 	isSeatActingAsItself,
 	type OAuthContext,
 	sha256Hex,
@@ -320,7 +320,7 @@ describe("a seat that resolved no agent cannot act as one", () => {
 				"clio",
 			),
 		).toBe(false);
-		expect(checkActorBinding({ ...row, seatAgent: null }, "clio")).toContain(
+		expect(actingClaimRefusal({ ...row, seatAgent: null }, "clio")).toContain(
 			"AGENT_CREDENTIAL_REQUIRED",
 		);
 	});
@@ -356,15 +356,33 @@ describe("reader-first: an older Convex keeps working", () => {
 		expect(r.mutations[0].args).not.toHaveProperty("verifiedActor");
 	});
 
-	it("a credential answer without agentId forwards no actor", async () => {
+	it("a credential answer without agentId forwards no actor (the name is omitted, so it is derived)", async () => {
+		credentialAnswer = { orgSlug: "iris-rh", agentName: "alice" };
+		const r = await post("complete_task", {
+			bearer: TOKENS.team,
+			credential: "secret-alice",
+			body: { ...COMPLETE },
+		});
+		expect(r.refused).toBe(false);
+		expect(r.mutations[0].args).not.toHaveProperty("verifiedActor");
+	});
+
+	// ADAPTED (slice 3a): this pole used to type the agent's own name beside an
+	// agentless credential answer and be served on a label comparison. The
+	// package decision (decideActingClaim, @vantageos/cloud-identity 0.22.0)
+	// judges a credential caller BY ID and refuses one that carries none:
+	// RBAC_DENIED / caller-invalid, in every mode. A label never stands in for an ID.
+	it("a typed name beside a credential answer without agentId is refused RBAC_DENIED (caller-invalid)", async () => {
 		credentialAnswer = { orgSlug: "iris-rh", agentName: "alice" };
 		const r = await post("complete_task", {
 			bearer: TOKENS.team,
 			credential: "secret-alice",
 			body: { ...COMPLETE, callerOrchestrator: "alice" },
 		});
-		expect(r.refused).toBe(false);
-		expect(r.mutations[0].args).not.toHaveProperty("verifiedActor");
+		expect(r.refused).toBe(true);
+		expect(r.text).toContain("RBAC_DENIED");
+		expect(r.text).toContain("caller-invalid");
+		expect(r.mutations).toHaveLength(0);
 	});
 });
 

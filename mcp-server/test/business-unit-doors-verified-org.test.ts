@@ -60,7 +60,7 @@ const scoped = (over: Partial<OAuthContext> = {}): OAuthContext => ({
 	isMaster: false,
 	clerkOrgSlug: "org-a",
 	// the bearer carries an agent credential, as a seat naming itself does
-	actor: { orgSlug: "org-a", agentName: "alpha" },
+	actor: { orgSlug: "org-a", agentName: "alpha", agentId: "agent-alpha" },
 	...over,
 });
 

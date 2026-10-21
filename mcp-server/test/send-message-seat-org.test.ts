@@ -103,7 +103,7 @@ describe("send_message — the seat's verified org is forwarded to Convex", () =
 
 	it("agent-credential seat: forwards the credential-bound actor's org", async () => {
 		const { send, mutations } = harness(
-			seatCtx({ actor: { orgSlug: "cgt-alsachimie", agentName: "neo" } }),
+			seatCtx({ actor: { orgSlug: "cgt-alsachimie", agentName: "neo", agentId: "agent-neo" } }),
 		);
 		const r = await send({ from: "neo", channel: "sigma", content: "x" });
 		expect(r.isError).toBeFalsy();
@@ -128,7 +128,7 @@ describe("send_message — the seat's verified org is forwarded to Convex", () =
 		const { send, mutations } = harness(
 			seatCtx({
 				clerkOrgSlug: "cgt-alsachimie",
-				actor: { orgSlug: "other-client", agentName: "neo" },
+				actor: { orgSlug: "other-client", agentName: "neo", agentId: "agent-neo" },
 			}),
 		);
 		const r = await send({ from: "neo", channel: "hal", content: "x" });

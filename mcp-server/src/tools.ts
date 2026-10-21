@@ -21,7 +21,7 @@ import {
 import type { ConvexHttpClient } from "convex/browser";
 import { z } from "zod";
 import {
-	checkActorBinding,
+	actingClaimRefusal,
 	checkDelegationAllowed,
 	checkInstanceOfSender,
 	checkNamespaceRead,
@@ -38,6 +38,7 @@ import {
 } from "./auth.js";
 import { FreshStateGuardError, guardFreshState } from "./fresh-state-guard.js";
 import { listTasksGate } from "./list-tasks-gate.js";
+import { memberAuthorLabel } from "./memberAuthor.js";
 import { normalizeOrchestratorId } from "./normalizeOrchestratorId.js";
 import { clampLimit, decodeCursor, encodeCursor } from "./paging.js";
 import { isRefusedEnvelope } from "./refusal.js";
@@ -54,7 +55,6 @@ import { registerValidateOkfBundle } from "./tools/validateOkfBundle.js";
 import type { VpToolResult } from "./ui-resources/schemas.js";
 import { wrapToolResult } from "./ui-resources/stream-marker.js";
 import { validateTaskPayload } from "./validate-task-payload.js";
-import { memberAuthorLabel } from "./memberAuthor.js";
 import { verifiedActorOf, withVerifiedActor } from "./verifiedActor.js";
 import { resolveWhoamiIdentity } from "./whoamiIdentity.js";
 
@@ -2262,14 +2262,14 @@ export function registerTools(
 	// actingNameKeys). An assignee is not an identity claim, so it is never
 	// refused as AGENT_IDENTITY_MISMATCH (task k1748jbt7yfgrv747p8gky1f358fk1r5).
 	// The caller naming ITSELF passes: a name its credential binds
-	// (checkActorBinding) AND its roster lists (@vantageos/cloud-identity
+	// (decideActingClaim) AND its roster lists (@vantageos/cloud-identity
 	// passesScopeFilter), the same two gates an acting name passes. Any other
 	// name must be a member of the caller's OWN organisation roster — the same
 	// delegation gate create_task applies to assignedTo.
 	const guardAssignee = async (field: string, name: string) => {
 		if (
 			oauthCtx !== undefined &&
-			checkActorBinding(oauthCtx, name) === null &&
+			actingClaimRefusal(oauthCtx, name) === null &&
 			passesScopeFilter(toPackageOAuthCtx(oauthCtx), { createdBy: name })
 		)
 			return null;
@@ -6512,7 +6512,7 @@ export function registerTools(
 
 	// ── write_diary ─────────────────────────────────────────────────────────────
 
-	// oracle-justified: actor-bound upsert: MCP scope `from` (checkActorBinding + roster passesScopeFilter on `orchestrator`)
+	// oracle-justified: actor-bound upsert: MCP scope `from` (decideActingClaim + roster passesScopeFilter on `orchestrator`)
 	//   and diary:write admits only orchestrators on the caller's roster (isOrchestratorAllowedForScope,
 	//   convex/diary.ts); get_diary is a read filtered in-handler by the same roster predicate.
 	defineTool(
@@ -6879,7 +6879,7 @@ export function registerTools(
 
 	// oracle-justified: the boundary key differs from create_briefing_note only in the name of the actor argument:
 	//   update binds the editing caller (callerOrchestrator), create binds the note's author
-	//   (createdBy); both are `from` scope checked by checkActorBinding.
+	//   (createdBy); both are `from` scope checked by decideActingClaim.
 	defineTool(
 		server,
 		authCtx,

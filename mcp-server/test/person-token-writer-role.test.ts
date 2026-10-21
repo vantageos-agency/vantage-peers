@@ -16,12 +16,12 @@
  */
 
 import { makeFunctionReference } from "convex/server";
-import { convexTest } from "../../tests/fixtures/convexTestWithServiceAccount";
 import { Hono } from "hono";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import schema from "../../convex/schema";
-import { ownAgent } from "../../tests/lib/ownAgent";
+import { convexTest } from "../../tests/fixtures/convexTestWithServiceAccount";
 import { testClerkOrgId } from "../../tests/fixtures/testClerkOrgId";
+import { ownAgent } from "../../tests/lib/ownAgent";
 import { app } from "../server-http.js";
 import {
 	_setInternalClientForTest,
@@ -568,7 +568,7 @@ describe("a seat token (not a person) is unchanged", () => {
 
 describe("strict default composes with the writer-role gate (person token)", () => {
 	// Env unset = strict. Gate order in defineTool: writer-role gate, then the
-	// acting-name binder (checkActorBinding), then the tool's scope check.
+	// acting-name binder (actingClaimRefusal), then the tool's scope check.
 	const UNSET = undefined as unknown as string;
 	const textOf = (r: ToolResult) => r.content[0].text;
 

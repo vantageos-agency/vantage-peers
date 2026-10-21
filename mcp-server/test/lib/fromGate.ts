@@ -4,7 +4,7 @@
  * Task k1778c2hvae8e8vz9f5bbbbbb98g62hw slice 1 deleted the local predicate
  * `checkFromAllowed`. What decides an acting name now is defineTool itself
  * (src/registerTool.ts): `bindActingNames` binds the name to the credential's
- * actor (`checkActorBinding`), then the `from` scope kind applies the roster
+ * actor (`actingClaimRefusal`), then the `from` scope kind applies the roster
  * through `@vantageos/cloud-identity` `passesScopeFilter`. This helper
  * registers one probe tool declared `{ kind: "from", fromArg: "from" }` on a
  * stub server and calls its guarded handler, so a test reads the exact
