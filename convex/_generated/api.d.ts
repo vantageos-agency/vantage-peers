@@ -10,6 +10,7 @@
 
 import type * as _helpers_normalizeOrchestratorId from "../_helpers/normalizeOrchestratorId.js";
 import type * as agentCredentials from "../agentCredentials.js";
+import type * as agentLinks from "../agentLinks.js";
 import type * as agentRelations from "../agentRelations.js";
 import type * as agents from "../agents.js";
 import type * as briefingNotes from "../briefingNotes.js";
@@ -53,6 +54,7 @@ import type * as lib_actingPrincipal from "../lib/actingPrincipal.js";
 import type * as lib_actorIds from "../lib/actorIds.js";
 import type * as lib_agentIdArgs from "../lib/agentIdArgs.js";
 import type * as lib_agentIdentity from "../lib/agentIdentity.js";
+import type * as lib_agentLinks from "../lib/agentLinks.js";
 import type * as lib_aiClient from "../lib/aiClient.js";
 import type * as lib_auth from "../lib/auth.js";
 import type * as lib_authOrgMapping from "../lib/authOrgMapping.js";
@@ -154,6 +156,7 @@ import type {
 declare const fullApi: ApiFromModules<{
   "_helpers/normalizeOrchestratorId": typeof _helpers_normalizeOrchestratorId;
   agentCredentials: typeof agentCredentials;
+  agentLinks: typeof agentLinks;
   agentRelations: typeof agentRelations;
   agents: typeof agents;
   briefingNotes: typeof briefingNotes;
@@ -197,6 +200,7 @@ declare const fullApi: ApiFromModules<{
   "lib/actorIds": typeof lib_actorIds;
   "lib/agentIdArgs": typeof lib_agentIdArgs;
   "lib/agentIdentity": typeof lib_agentIdentity;
+  "lib/agentLinks": typeof lib_agentLinks;
   "lib/aiClient": typeof lib_aiClient;
   "lib/auth": typeof lib_auth;
   "lib/authOrgMapping": typeof lib_authOrgMapping;
