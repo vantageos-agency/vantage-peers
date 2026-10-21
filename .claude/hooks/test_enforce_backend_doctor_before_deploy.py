@@ -552,6 +552,8 @@ def test_ratchet_live_baseline_carries_its_command_and_never_rose():
         assert entry["measured_tree_sha"] in {
             "226067389ad98f0f56eccfad38d5f39ea6908542",
             "6058f82974caa7cacbeda815a2e60334989b5120",
+            # R-53 raised 341 -> 342 on purpose by the agent-link doors (task k17965eh23twqzsbjc8mjgfcmx8gpxmh)
+            "6bd81e848a0c129eb544d95562d16a64a6c3c311",
         }
         line = entry["output_line"]
         assert line.startswith((f"{rule}: ", f"{rule} VERDICT: ")), rule
