@@ -51,7 +51,10 @@ type World = {
 	foreignSigma: Id<"agents">; // an active agent of ANOTHER organisation
 	retired: Id<"agents">; // an inactive agent of the operator org
 	deleted: Id<"agents">; // a well-formed ID whose row no longer exists
+	quillA: Id<"agents">; // an agent of a client org with a roster, for the proven pole
 };
+
+const ORG_A = "org-a";
 
 async function world(): Promise<World> {
 	const t = createT();
@@ -93,15 +96,56 @@ async function world(): Promise<World> {
 			createdAt: 1,
 		});
 		await ctx.db.delete(deleted);
+		await ctx.db.insert("client_org_mapping", {
+			clerkOrgSlug: ORG_A,
+			clerkOrgId: testClerkOrgId(ORG_A),
+			allowedOrchestrators: ["quill", "peer"],
+			scopes: ["view-own-tasks"],
+			displayName: ORG_A,
+			isActive: true,
+			createdAt: 1,
+		});
+		const inA = (name: string) =>
+			ctx.db.insert("agents", {
+				orgSlug: ORG_A,
+				clerkOrgId: testClerkOrgId(ORG_A),
+				name,
+				normalizedName: name,
+				isActive: true,
+				createdAt: 1,
+			});
+		const quillA = await inA("quill");
+		await inA("peer");
+		await ctx.db.insert("profiles", {
+			orchestratorId: "peer",
+			name: "peer",
+			static: { role: "peer", workspace: "w", capabilities: [] },
+			dynamic: { lastSeen: 1, sessionCount: 1 },
+		});
 		await ctx.db.insert("profiles", {
 			orchestratorId: "pi",
 			name: "pi",
 			static: { role: "pi", workspace: "w", capabilities: [] },
 			dynamic: { lastSeen: 1, sessionCount: 1 },
 		});
-		return { orgSlug: op.clerkOrgSlug, foreignSigma, retired, deleted };
+		return { orgSlug: op.clerkOrgSlug, foreignSigma, retired, deleted, quillA };
 	});
 	return { t, sigma: ids.sigma, pi: ids.pi, ...seeded };
+}
+
+// The refusals of an ID are the package's own coded errors, said by
+// requireAssigneeAgentActive (lib/actingPrincipal.ts) and naming the door.
+const FOREIGN = "ORG_MISMATCH";
+const UNKNOWN = "VERIFIED_ACTOR_UNKNOWN";
+const INACTIVE = "VERIFIED_ACTOR_INACTIVE";
+
+async function text(p: Promise<unknown>): Promise<string> {
+	try {
+		await p;
+		return "NO_ERROR";
+	} catch (e) {
+		return e instanceof ConvexError ? String(e.data) : String(e);
+	}
 }
 
 async function code(p: Promise<unknown>): Promise<string> {
@@ -170,19 +214,27 @@ describe("tasks:create assignedToAgentId", () => {
 		expect((await taskRows(w.t))[0]?.assignedTo).toBe("sigma");
 		expect(await counted(w.t, "tasks:create:assignedTo")).toBe(0);
 	});
-	test("ID REFUSE: an agent of another organisation -> coded RBAC_DENIED, zero writes", async () => {
+	test("ID REFUSE: an agent of another organisation -> ORG_MISMATCH naming the door, zero writes", async () => {
 		const w = await world();
-		expect(await create(w, { assignedToAgentId: w.foreignSigma })).toBe("RBAC_DENIED");
+		const msg = await text(
+			svc(w.t).mutation(api.tasks.create, {
+				...taskBase,
+				assignedToAgentId: w.foreignSigma,
+			} as never),
+		);
+		expect(msg).toContain(FOREIGN);
+		expect(msg).toContain("tasks:create");
+		expect(await taskRows(w.t)).toHaveLength(0);
+		expect(await counted(w.t, "tasks:create:assignedTo")).toBe(0);
+	});
+	test("ID REFUSE: an unknown (deleted) ID -> VERIFIED_ACTOR_UNKNOWN, zero writes", async () => {
+		const w = await world();
+		expect(await create(w, { assignedToAgentId: w.deleted })).toBe(UNKNOWN);
 		expect(await taskRows(w.t)).toHaveLength(0);
 	});
-	test("ID REFUSE: an unknown (deleted) ID -> coded refusal, zero writes", async () => {
+	test("ID REFUSE: an inactive agent -> VERIFIED_ACTOR_INACTIVE, zero writes", async () => {
 		const w = await world();
-		expect(await create(w, { assignedToAgentId: w.deleted })).toBe("RBAC_DENIED");
-		expect(await taskRows(w.t)).toHaveLength(0);
-	});
-	test("ID REFUSE: an inactive agent -> coded refusal, zero writes", async () => {
-		const w = await world();
-		expect(await create(w, { assignedToAgentId: w.retired })).toBe("RBAC_DENIED");
+		expect(await create(w, { assignedToAgentId: w.retired })).toBe(INACTIVE);
 		expect(await taskRows(w.t)).toHaveLength(0);
 	});
 	test("BOTH-MISMATCH REFUSE: the ID names sigma, the name names pi -> AGENT_IDENTITY_MISMATCH, zero writes, not counted", async () => {
@@ -241,15 +293,15 @@ describe("tasks:update assignedToAgentId (reassign)", () => {
 		const w = await world();
 		const id = await seedTask(w);
 		expect(await reassign(w, id, { assignedToAgentId: w.foreignSigma })).toBe(
-			"RBAC_DENIED",
+			FOREIGN,
 		);
 		expect((await rowOf(w, id))?.assignedTo).toBe("sigma");
 	});
 	test("ID REFUSE: unknown and inactive IDs -> coded refusal, the task is unchanged", async () => {
 		const w = await world();
 		const id = await seedTask(w);
-		expect(await reassign(w, id, { assignedToAgentId: w.deleted })).toBe("RBAC_DENIED");
-		expect(await reassign(w, id, { assignedToAgentId: w.retired })).toBe("RBAC_DENIED");
+		expect(await reassign(w, id, { assignedToAgentId: w.deleted })).toBe(UNKNOWN);
+		expect(await reassign(w, id, { assignedToAgentId: w.retired })).toBe(INACTIVE);
 		expect((await rowOf(w, id))?.assignedTo).toBe("sigma");
 	});
 	test("BOTH-MISMATCH REFUSE: name pi, ID sigma -> AGENT_IDENTITY_MISMATCH, unchanged", async () => {
@@ -290,10 +342,14 @@ describe("mandates:create fulfilledByAgentId", () => {
 		expect(rows[0]?.fulfilledById).toBe(w.sigma);
 		expect(await counted(w.t, "mandates:create:fulfilledBy")).toBe(0);
 	});
-	test("ID REFUSE: another organisation's / unknown / inactive agent -> coded refusal, zero writes", async () => {
+	test("ID REFUSE: another organisation's / unknown / inactive agent -> coded refusal (ORG_MISMATCH / UNKNOWN / INACTIVE), zero writes", async () => {
 		const w = await world();
-		for (const id of [w.foreignSigma, w.deleted, w.retired]) {
-			expect(await create(w, { fulfilledByAgentId: id })).toBe("RBAC_DENIED");
+		for (const [id, want] of [
+			[w.foreignSigma, FOREIGN],
+			[w.deleted, UNKNOWN],
+			[w.retired, INACTIVE],
+		] as const) {
+			expect(await create(w, { fulfilledByAgentId: id })).toBe(want);
 		}
 		expect(await mandateRows(w.t)).toHaveLength(0);
 	});
@@ -341,10 +397,14 @@ describe("messages:sendMessage fromAgentId", () => {
 	});
 	test("ID REFUSE: another organisation's / unknown / inactive sender -> coded refusal, zero messages", async () => {
 		const w = await world();
-		for (const id of [w.foreignSigma, w.deleted, w.retired]) {
+		for (const [id, want] of [
+			[w.foreignSigma, FOREIGN],
+			[w.deleted, UNKNOWN],
+			[w.retired, INACTIVE],
+		] as const) {
 			expect(
 				await send(w, { fromAgentId: id, recipientAgentIds: [w.pi] }),
-			).toBe("RBAC_DENIED");
+			).toBe(want);
 		}
 		expect(await messageRows(w.t)).toHaveLength(0);
 	});
@@ -376,22 +436,27 @@ describe("messages:sendMessage fromAgentId", () => {
 		expect(
 			await send(w, {
 				fromAgentId: w.pi,
-				channel: "pi",
+				recipientAgentIds: [w.sigma],
 				verifiedActor: { agentId: w.sigma, orgSlug: w.orgSlug },
 			}),
 		).toBe("AGENT_IDENTITY_MISMATCH");
 		expect(await messageRows(w.t)).toHaveLength(0);
 	});
-	test("PROVEN caller with its OWN fromAgentId sends under the row's label", async () => {
+	test("PROVEN caller with its OWN fromAgentId (no `from`) sends under the row's label", async () => {
 		const w = await world();
 		expect(
 			await send(w, {
-				fromAgentId: w.sigma,
-				channel: "pi",
-				verifiedActor: { agentId: w.sigma, orgSlug: w.orgSlug },
+				fromAgentId: w.quillA,
+				channel: "peer",
+				seatOrgSlug: ORG_A,
+				verifiedActor: { agentId: w.quillA, orgSlug: ORG_A },
 			}),
 		).toBe("NO_ERROR");
-		expect((await messageRows(w.t))[0]?.from).toBe("sigma");
+		const rows = await messageRows(w.t);
+		expect(rows).toHaveLength(1);
+		expect(rows[0]?.from).toBe("quill");
+		expect(rows[0]?.fromId).toBe(w.quillA);
+		expect(await counted(w.t, "messages:sendMessage:from")).toBe(0);
 	});
 });
 

@@ -68,7 +68,9 @@ import {
 	getStartTaskInProgressCap,
 } from "./lib/taskClosureGate";
 import type { WorkSegment } from "./lib/taskClosureGate";
-import { actorIdResolver, taskActorIdFields } from "./lib/actorIds";
+import { actorIdResolver, actorOrgFor, taskActorIdFields } from "./lib/actorIds";
+import { resolveAgentIdArg } from "./lib/agentIdArgs";
+import { recordNameOnlyCall } from "./lib/nameOnlyCalls";
 import {
 	assigneeIdForRead,
 	callerActorOf,
@@ -630,6 +632,12 @@ const createTaskArgsValidator = {
 // omitted.
 const createTaskArgsValidatorWithCredential = {
 	...createTaskArgsValidator,
+	// The assignee by NAME or by AGENT ID (list_peers `agentId`), at least one.
+	// Both given must name the same agent (AGENT_IDENTITY_MISMATCH). The ID is
+	// resolved by ID in the org the row will live in (lib/agentIdArgs.ts); a name
+	// alone still works and is counted (lib/nameOnlyCalls.ts).
+	assignedTo: v.optional(assigneeValidator),
+	assignedToAgentId: v.optional(v.string()),
 	// Optional on the PUBLIC door only: omitted = a dashboard human creating in
 	// its own name (recorded "user:<subject>"). The webhook door keeps it required.
 	createdBy: v.optional(creatorValidator),
@@ -756,8 +764,14 @@ export const create = mutation({
 	returns: v.id("tasks"),
 	handler: async (ctx, args) => {
 		// write-contract: MCP-transport-only — issued via mcp-server client.mutation("tasks:create", …) at mcp-server/src/tools.ts:4117 (imperative), 0 hits in vantage-peers-dashboard {app,components,hooks,lib,contexts,providers} (measured 2026-10-01 at origin/main e2dc58f and 0466fac); never a subscribing pre-org client shell. The no-org throw is a refusal at an imperative MCP call, never at a render.
-		const { agentCredentialSecret, verifiedActor, verifiedPerson, ...taskArgs } =
-			args;
+		const {
+			agentCredentialSecret,
+			verifiedActor,
+			verifiedPerson,
+			assignedTo: assignedToName,
+			assignedToAgentId,
+			...taskArgs
+		} = args;
 		// SECURITY REMEDIATION (task k1712yrxjr570m6ks81rnhjh5n8cryf0) — this
 		// is the PUBLIC client-facing path; it now requires a verified
 		// identity. See requireAuthenticatedCaller for the full rationale.
@@ -772,7 +786,12 @@ export const create = mutation({
 		// (CALLER_IDENTITY_MISMATCH). assignedTo is NOT an asserted caller name but
 		// the target of an assignment: it must also be on the caller's own roster,
 		// so a member cannot assign work into another organisation. Master unchanged.
-		requireOrchestratorOnRoster(scope, args.assignedTo, "tasks:create", "assignee");
+		// A NAME is checked here, before the tenant is derived (the order callers
+		// have always seen); an ID needs the tenant first and is checked by the
+		// same roster rule once it has become the row's label.
+		if (assignedToAgentId === undefined && assignedToName !== undefined) {
+			requireOrchestratorOnRoster(scope, assignedToName, "tasks:create", "assignee");
+		}
 		// The tenant is derived from the SCOPE just resolved above, never from
 		// anything the client sent.
 		const rowOrgId = orgIdForWrite(scope, "tasks:create");
@@ -781,12 +800,33 @@ export const create = mutation({
 		// refused before anything is written.
 		// A fleet-scoped row written for a verified agent (a seat reaching Convex as
 		// the service account) resolves its assignee in the AGENT's org.
-		const assignedToId = await requireAssigneeId(
-			ctx,
-			rowOrgId ?? scope.callerActorOrg,
-			args.assignedTo,
-			"tasks:create",
-		);
+		let assignedTo: string;
+		let assignedToId: string;
+		if (assignedToAgentId !== undefined) {
+			const assignee = await resolveAgentIdArg(ctx, {
+				orgSlug: await actorOrgFor(ctx.db, rowOrgId ?? scope.callerActorOrg),
+				agentId: assignedToAgentId,
+				assertedName: assignedToName,
+				field: "assignedToAgentId",
+				door: "tasks:create",
+			});
+			assignedTo = assignee.name;
+			assignedToId = assignee._id;
+			requireOrchestratorOnRoster(scope, assignedTo, "tasks:create", "assignee");
+		} else if (assignedToName !== undefined) {
+			assignedTo = assignedToName;
+			assignedToId = await requireAssigneeId(
+				ctx,
+				rowOrgId ?? scope.callerActorOrg,
+				assignedTo,
+				"tasks:create",
+			);
+			await recordNameOnlyCall(ctx, "tasks:create:assignedTo");
+		} else {
+			throw new ConvexError(
+				`INVALID_ASSIGNEE: tasks:create needs the assignee, as \`assignedTo\` (a name) or \`assignedToAgentId\` (an agent ID from list_peers \`agentId\`) — ${JSON.stringify({ door: "tasks:create" })}`,
+			);
+		}
 		if (taskArgs.createdBy === undefined) {
 			// HUMAN path: createdBy is the actor "user:<subject>" (schema keeps it a
 			// string; the prefix means it can never equal a roster slug, so it grants
@@ -794,7 +834,7 @@ export const create = mutation({
 			const actor = await resolveHumanActor(ctx, scope, { door: "tasks:create" });
 			return await insertTask(
 				ctx,
-				{ ...taskArgs, createdBy: actor, lastActedBy: actor },
+				{ ...taskArgs, assignedTo, createdBy: actor, lastActedBy: actor },
 				rowOrgId,
 				undefined,
 				{ createdById: actor, assignedToId },
@@ -808,7 +848,7 @@ export const create = mutation({
 		const createdById = scope.callerActorId;
 		return await insertTask(
 			ctx,
-			{ ...taskArgs, createdBy: scope.callerLabel ?? taskArgs.createdBy },
+			{ ...taskArgs, assignedTo, createdBy: scope.callerLabel ?? taskArgs.createdBy },
 			rowOrgId,
 			undefined,
 			{ ...(createdById !== undefined ? { createdById } : {}), assignedToId },
@@ -1904,6 +1944,9 @@ export const update = mutation({
 		project: v.optional(v.string()),
 		tags: v.optional(v.array(v.string())),
 		assignedTo: v.optional(assigneeValidator),
+		// The new assignee by AGENT ID (list_peers `agentId`), resolved in the
+		// task's own org. Given beside `assignedTo` it must name the same agent.
+		assignedToAgentId: v.optional(v.string()),
 		priority: v.optional(priorityValidator),
 		status: v.optional(statusValidator),
 		missionId: v.optional(v.id("missions")),
@@ -1940,6 +1983,7 @@ export const update = mutation({
 			verifiedActor,
 			verifiedPerson,
 			verifiedOrg,
+			assignedToAgentId,
 			...fields
 		} = args;
 		const callerScope = await requireAuthenticatedCaller(
@@ -1959,6 +2003,19 @@ export const update = mutation({
 			);
 		}
 		assertRowInVerifiedOrg(task, verifiedOrgSlug, taskId, "tasks:update");
+		// The assignee BY ID, resolved in the task's own org; it becomes the row's
+		// label so every decision below reads the same string a name would carry.
+		const assigneeById =
+			assignedToAgentId === undefined
+				? undefined
+				: await resolveAgentIdArg(ctx, {
+						orgSlug: await actorOrgFor(ctx.db, task.orgId),
+						agentId: assignedToAgentId,
+						assertedName: fields.assignedTo,
+						field: "assignedToAgentId",
+						door: "tasks:update",
+					});
+		if (assigneeById !== undefined) fields.assignedTo = assigneeById.name;
 		// System-review reassignment grant (k17b5btg6cr9t9824tndte3w2s8fmzx1): an
 		// automation review task (origin "automation" + isReviewTask: system-created, only createOrUpdateReviewTask writes both) has no human
 		// creator, so nobody could move it off a stopped reviewer. The coordinator
@@ -2015,6 +2072,9 @@ export const update = mutation({
 		// (roster-only, "*" admits nobody for a member, master unchanged).
 		if (fields.assignedTo !== undefined) {
 			requireOrchestratorOnRoster(callerScope, fields.assignedTo, "tasks:update", "assignee");
+			if (assigneeById === undefined) {
+				await recordNameOnlyCall(ctx, "tasks:update:assignedTo");
+			}
 		}
 
 		// Build patch object with only provided fields
@@ -2038,12 +2098,14 @@ export const update = mutation({
 			// A name that resolves to no agents row clears the stale ID (patch with
 			// undefined removes the field) rather than leaving the previous
 			// assignee's ID beside the new name.
-			patch.assignedToId = await requireAssigneeId(
-				ctx,
-				task.orgId,
-				patch.assignedTo,
-				"tasks:update",
-			);
+			patch.assignedToId =
+				assigneeById?._id ??
+				(await requireAssigneeId(
+					ctx,
+					task.orgId,
+					patch.assignedTo,
+					"tasks:update",
+				));
 			patch.lastAssignedToId = task.assignedToId;
 		}
 
