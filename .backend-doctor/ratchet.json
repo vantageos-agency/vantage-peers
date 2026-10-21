@@ -1,10 +1,10 @@
 {
-	"$comment": "Backend-doctor ratchet baseline (task k179600rsb4xsv7a975cjkqwhs8g7qhv). Each mechanical rule count may only go DOWN. Lower a value in the same PR that lowers the count; scripts/doctor-ratchet.mjs refuses a raised value against origin/main, except in a re-baseline that raises doctorVersion to a newer version, and refuses evidence from any other doctor version (task k172gy1ykcbz6drqb4n85q5a1n8gkaf3). Must agree with .claude/config/backend-doctor-baseline.json (scripts/__tests__/doctor-baselines-agree.test.mjs). Measured with `npx -y @vantageos/backend-doctor@0.4.7 <clean full checkout @053c463b61d564076147e9a830c207c972685cef>/convex` (deps installed, 0 FALLBACK), PR #1544.",
+	"$comment": "Backend-doctor ratchet baseline (task k179600rsb4xsv7a975cjkqwhs8g7qhv). Each mechanical rule count may only go DOWN. Lower a value in the same PR that lowers the count; scripts/doctor-ratchet.mjs refuses a raised value against origin/main, except in a re-baseline that raises doctorVersion to a newer version, and refuses evidence from any other doctor version (task k172gy1ykcbz6drqb4n85q5a1n8gkaf3). Must agree with .claude/config/backend-doctor-baseline.json (scripts/__tests__/doctor-baselines-agree.test.mjs). Measured with `npx -y @vantageos/backend-doctor@0.4.7 <clean full checkout @053c463b61d564076147e9a830c207c972685cef>/convex` (deps installed, 0 FALLBACK), PR #1544. R-53 raised 341 -> 342 on purpose, measured with `npx -y @vantageos/backend-doctor@0.4.8 <clean full checkout @6bd81e848a0c129eb544d95562d16a64a6c3c311>/convex` (deps installed, 0 FALLBACK): two new person-admin doors (agentLinks:grant, agentLinks:revoke, task k17965eh23twqzsbjc8mjgfcmx8gpxmh); clause (a) has no conformant form in this repo yet (0/340 doors conform, doctor 0.4.8 scanR53Detailed at 00e8ddf); returns to 340 when the principal-by-package slice makes one door conform.",
 	"doctorVersion": "0.4.8",
 	"counts": {
 		"CR-2": 264,
 		"R-5": 62,
-		"R-53": 341,
+		"R-53": 342,
 		"R-54": 148,
 		"R-55": 31,
 		"R-56": 2
