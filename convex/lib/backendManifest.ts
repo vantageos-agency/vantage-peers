@@ -14,6 +14,8 @@ export const BACKEND_FUNCTIONS: readonly string[] = [
 	"agentCredentials:mintAgentCredential",
 	"agentCredentials:resolveAgentCredential",
 	"agentCredentials:revokeAgentCredential",
+	"agentLinks:grant",
+	"agentLinks:revoke",
 	"agentRelations:childrenOf",
 	"agentRelations:graphByOrg",
 	"agentRelations:linkChild",

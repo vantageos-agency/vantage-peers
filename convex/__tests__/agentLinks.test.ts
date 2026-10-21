@@ -631,6 +631,22 @@ describe("TASKS — assignedToAgentId across two organisations", () => {
 		expect(await listAs(w, ACME, ZOE)).toEqual([]);
 	});
 
+	test("REFUSED: after the hand-over pi may not re-assign the task to any OTHER agent of iris-rh (one exact pair)", async () => {
+		const w = await world();
+		await marieGrantsPiToVictor(w);
+		const taskId = await piCreatesTask(w);
+		await errorOf(
+			asService(w.t).mutation(api.tasks.update, {
+				taskId,
+				callerOrchestrator: "pi",
+				assignedToAgentId: w.clio,
+				verifiedActor: { agentId: w.pi, orgSlug: PERELLO },
+			} as never),
+		);
+		const row = await w.t.run((ctx) => ctx.db.get(taskId as Id<"tasks">));
+		expect(row?.assignedToId).toBe(w.victor);
+	});
+
 	test("REFUSED: update to an agent of another organisation without a link, the row is unchanged", async () => {
 		const w = await world();
 		const taskId = await w.t.run((ctx) =>
