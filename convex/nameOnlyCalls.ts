@@ -7,6 +7,8 @@ import { internalQuery } from "./_generated/server";
 // absent from the result (an absence of rows, not a refusal): read an empty
 // array as "no name-only call in that window".
 export const MAX_WINDOW_DAYS = 400;
+// One row per (door, day, shard): 5 doors x 8 shards x MAX_WINDOW_DAYS = 16,000.
+export const SUMMARY_ROW_CAP = 20_000;
 
 const DAY = /^\d{4}-\d{2}-\d{2}$/;
 
@@ -32,13 +34,12 @@ export const summary = internalQuery({
 			);
 		}
 		const totals = new Map<string, number>();
-		// Bounded: one row per (door, day, shard), 5 doors x 8 shards x <= 400 days.
 		const rows = await ctx.db
 			.query("nameOnlyCalls")
 			.withIndex("by_day", (q) =>
 				q.gte("day", args.fromDay).lte("day", args.toDay),
 			)
-			.take(20_000);
+			.take(SUMMARY_ROW_CAP);
 		for (const row of rows) {
 			totals.set(row.door, (totals.get(row.door) ?? 0) + row.count);
 		}
