@@ -136,7 +136,6 @@ export const create = mutation({
 			const fulfiller = await resolveAgentIdArg(ctx, {
 				orgSlug: await fleetOperatorSlug(ctx.db),
 				agentId: args.fulfilledByAgentId,
-				assertedName: args.fulfilledBy,
 				field: "fulfilledByAgentId",
 				door,
 			});
