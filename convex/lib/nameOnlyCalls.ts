@@ -15,10 +15,13 @@ import type { MutationCtx } from "../_generated/server";
 //   tasks:update:assignedTo        `assignedTo` without `assignedToAgentId`
 //   mandates:create:fulfilledBy    `fulfilledBy` without `fulfilledByAgentId`
 //   messages:sendMessage:from      `from` without `fromAgentId`
-//   messages:sendMessage:channel   a `channel` part that names an agent of the
-//                                  message's organisation (broadcast and a
-//                                  person have no ID form and are not counted;
-//                                  `recipientAgentIds` is the ID path)
+//   messages:sendMessage:channel   a `channel` that is not "broadcast" and not a
+//                                  person ("user:<subject>"), which have no ID
+//                                  form; `recipientAgentIds` is the ID path.
+//                                  An UPPER BOUND: the channel is not resolved
+//                                  to agents (no name lookup is added to the
+//                                  door for a measurement), so an instance
+//                                  label or a role with no agents row counts too
 // A call a door REFUSES rolls back with the rest of its transaction and is not
 // counted. Reads that filter by a name (tasks:listPaginated, mandates:list, ...)
 // are queries and are NOT counted.
