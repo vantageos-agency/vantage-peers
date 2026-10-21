@@ -1176,6 +1176,7 @@ export const sendMessage = mutation({
 			const sender = await resolveAgentIdArg(ctx, {
 				orgSlug: await actorOrgFor(ctx.db, senderOrg),
 				agentId: fromAgentId,
+				assertedName: args.from,
 				field: "fromAgentId",
 				door: SEND_DOOR,
 			});

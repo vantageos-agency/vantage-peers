@@ -806,6 +806,7 @@ export const create = mutation({
 			const assignee = await resolveAgentIdArg(ctx, {
 				orgSlug: await actorOrgFor(ctx.db, rowOrgId ?? scope.callerActorOrg),
 				agentId: assignedToAgentId,
+				assertedName: assignedToName,
 				field: "assignedToAgentId",
 				door: "tasks:create",
 			});
@@ -2010,6 +2011,7 @@ export const update = mutation({
 				: await resolveAgentIdArg(ctx, {
 						orgSlug: await actorOrgFor(ctx.db, task.orgId),
 						agentId: assignedToAgentId,
+						assertedName: fields.assignedTo,
 						field: "assignedToAgentId",
 						door: "tasks:update",
 					});
