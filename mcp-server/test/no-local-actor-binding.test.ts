@@ -22,7 +22,7 @@ import { fileURLToPath } from "node:url";
 import type { McpServer } from "@modelcontextprotocol/server";
 import type { ConvexHttpClient } from "convex/browser";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import type { OAuthContext } from "../src/auth.js";
+import { actingClaimRefusal, type OAuthContext } from "../src/auth.js";
 import { registerTools } from "../src/tools.js";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
@@ -255,4 +255,33 @@ describe("(b) every row of the acting-claim table decides as before", () => {
 		expect(r.text).toContain("no-context");
 		expect(r.mutations).toBe(0);
 	});
+});
+
+// ── (c) a PERSON token is never the seat-as-itself exemption ───────────────
+// The decision lives in the adapter inside actingClaimRefusal: a ctx maps to
+// the package's `seat-unresolved` kind only with NO `principal`. Driven in
+// STRICT mode (mode absent), where the exemption is the only way a typed name
+// is admitted.
+
+describe("(c) the seat exemption excludes a person token (strict mode)", () => {
+	const SEAT_ROW: OAuthContext = {
+		...base,
+		scopeProfile: "tenant",
+		fromAllowList: ["x"],
+		accessTokenHash: "hash-fixture",
+	};
+
+	it("principal + accessTokenHash + seatAgent absent + allowlist [x], claim x: AGENT_CREDENTIAL_REQUIRED", () => {
+		vi.stubEnv("VANTAGE_ACTOR_CREDENTIAL_MODE", "");
+		const person: OAuthContext = { ...SEAT_ROW, principal: "person" };
+		expect(actingClaimRefusal(person, "x")).toMatch(
+			/^AGENT_CREDENTIAL_REQUIRED/,
+		);
+	});
+
+	it("its twin without principal is admitted (seat-own-label)", () => {
+		vi.stubEnv("VANTAGE_ACTOR_CREDENTIAL_MODE", "");
+		expect(actingClaimRefusal(SEAT_ROW, "x")).toBeNull();
+	});
+
 });

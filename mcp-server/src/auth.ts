@@ -29,6 +29,8 @@
 
 import {
 	type ActingCaller,
+	type ActingClaimMode,
+	type ActingClaimResult,
 	PERSON_ACTOR_PREFIX as CI_PERSON_ACTOR_PREFIX,
 	decideActingClaim,
 	type OAuthCtx as PackageOAuthCtx,
@@ -117,7 +119,7 @@ export type OAuthContext = {
 	 * "person" when this token acts for a signed-in person (set at mint from
 	 * the authorization-code flow); absent on a seat token. A person token's
 	 * WRITES pass the writer-role gate; a seat token's do not change.
-	 * Also read by {@link isSeatActingAsItself}: ANY present value withholds
+	 * Also read by {@link actingClaimDecision}: ANY present value withholds
 	 * the seat exemption, so a principal kind added later is not exempt by
 	 * default.
 	 */
@@ -153,7 +155,7 @@ export type OAuthContext = {
 	 *                 an ORG-LEVEL seat that cannot act as an agent.
 	 *   - undefined : the provider predates the stamp (older Convex than this
 	 *                 server, reader-first deploy). The legacy single-name rule
-	 *                 applies until Convex is deployed; see {@link isSeatActingAsItself}.
+	 *                 applies until Convex is deployed; see {@link actingClaimDecision}.
 	 */
 	seatAgent?: { agentId: string; orgId: string; agentName: string } | null;
 };
@@ -352,7 +354,7 @@ export const AGENT_CREDENTIAL_HEADER = "x-vantage-agent-credential";
  *
  *   strict (DEFAULT) — a typed acting name from a non-master caller with NO
  *     presented credential is REFUSED with AGENT_CREDENTIAL_REQUIRED, except
- *     a seat token naming itself ({@link isSeatActingAsItself}).
+ *     a seat token naming itself ({@link actingClaimDecision}).
  *   permissive (explicit opt-in only) — that same call is accepted and
  *     RECORDED as unattributed (see {@link recordUnattributedClaim}). A
  *     presented credential is still authoritative: a typed name that disagrees
@@ -431,7 +433,8 @@ export function actorCredentialMode(): ActorCredentialMode {
 export const ACTING_CLAIM_DOOR = "mcp:acting-claim";
 
 /**
- * The ONE place a name a caller TYPED into a call is judged: a delegation to
+ * The ONE place a name a caller TYPED into a call is judged (with {@link actingClaimRefusal}
+ * as its string form): a delegation to
  * `decideActingClaim` (@vantageos/cloud-identity). A typed name is a CLAIM,
  * never an authority over a presented credential. The deployment's cutover
  * switch ({@link actorCredentialMode}) is read here and passed EXPLICITLY as
@@ -455,10 +458,11 @@ export const ACTING_CLAIM_DOOR = "mcp:acting-claim";
  *     master, stamp ABSENT (transitional)   -> seat-unresolved (its allowlist)
  *   anything else                           -> org-member
  */
-export function actingClaimRefusal(
+export function actingClaimDecision(
 	ctx: OAuthContext | undefined,
 	claimedName: string,
-): string | null {
+	mode: ActingClaimMode,
+): ActingClaimResult {
 	const seat = ctx ? seatAgentOf(ctx) : undefined;
 	let caller: ActingCaller | null = null;
 	if (ctx?.actor) {
@@ -492,12 +496,23 @@ export function actingClaimRefusal(
 	} else if (ctx) {
 		caller = { kind: "org-member" };
 	}
-	const decision = decideActingClaim({
+	return decideActingClaim({
 		claimed: claimedName,
 		caller,
-		mode: actorCredentialMode(),
+		mode,
 		door: ACTING_CLAIM_DOOR,
 	});
+}
+
+/**
+ * {@link actingClaimDecision} at the deployment's cutover mode, as the string
+ * the callers return: null when admitted, else `CODE: detail (reason, door ...)`.
+ */
+export function actingClaimRefusal(
+	ctx: OAuthContext | undefined,
+	claimedName: string,
+): string | null {
+	const decision = actingClaimDecision(ctx, claimedName, actorCredentialMode());
 	if (decision.ok) return null;
 	const { code, reason, detail, door } = decision.refusal;
 	// The package's sentence is deployment-neutral; this transport knows the
@@ -524,59 +539,6 @@ export function seatAgentOf(
 		return undefined;
 	}
 	return seat;
-}
-
-/**
- * The ONE strict-mode exemption: a SEAT token acting as itself. Every input is
- * read from the token row the bearer resolved to, never from a tool argument
- * except the claim being tested:
- *   - the context came from an OAuth token row (`accessTokenHash` set), so a
- *     Clerk-JWT session, the master bearer and the stdio trust context never
- *     qualify;
- *   - the row carries no `principal` (a person token, or any principal kind
- *     added later, is NOT exempt by default);
- *   - its `fromAllowList` holds exactly ONE name and that name is not `"*"`;
- *   - the seat resolved to an AGENT BY ID (`seatAgent`, stamped by Convex from
- *     the profile's single agent in the profile's own org), and the claimed name
- *     equals THAT AGENT'S name (normalizeOrchestratorId on both sides). The
- *     decision is the ID the token carries; the typed name is only compared to
- *     the resolved agent's name. An org-level seat (`seatAgent: null`) names no
- *     agent, so it is never exempt, whatever the allowlist says.
- *
- * TRANSITIONAL (contract step, delete with the next MCP release after Convex has
- * been deployed with the stamp): when `seatAgent` is ABSENT altogether the
- * provider is an older Convex that cannot stamp, and the legacy rule applies -
- * the claim equals the single allowlisted name. It exists only so that the
- * reader-first deploy order (railway-mcp-redeploy.md) does not strand every seat
- * between the MCP going live and Convex following. A provider that stamps
- * always sends the key (an object or null), so a stamped provider never reaches
- * this branch.
- */
-export function isSeatActingAsItself(
-	ctx: OAuthContext,
-	claimedName: string,
-): boolean {
-	if (ctx.isMaster || ctx.viaMasterBearer) return false;
-	if (ctx.accessTokenHash === undefined) return false;
-	if (ctx.principal !== undefined) return false;
-	if (ctx.fromAllowList.length !== 1) return false;
-	const only = normalizeOrchestratorId(ctx.fromAllowList[0]);
-	if (only === "" || only === "*") return false;
-	if (ctx.seatAgent === undefined) {
-		return normalizeOrchestratorId(claimedName) === only;
-	}
-	const seat = seatAgentOf(ctx);
-	if (seat === undefined) return false;
-	return sameLabel(claimedName, seat.agentName);
-}
-
-/**
- * Two display labels are the same label under normalizeOrchestratorId (NFC,
- * lowercase, trim). Used ONLY to check a typed name against the label of an
- * agent already resolved BY ID; it admits nobody on its own.
- */
-function sameLabel(left: string, right: string): boolean {
-	return normalizeOrchestratorId(left) === normalizeOrchestratorId(right);
 }
 
 /**
@@ -662,22 +624,20 @@ export function resolveSeatOrg(
 }
 
 /**
- * True when a call is served on a TYPED name alone: a real (non-master) caller,
- * no resolved actor, a name it typed, and not a seat naming itself
- * ({@link isSeatActingAsItself}). Exactly the population that strict mode
- * would refuse — so counting it is the measurement of the cutover.
+ * True when a call is served on a TYPED name alone: the package decision admits
+ * it only as `permissive-unattributed` (a real, non-master caller with no
+ * resolved agent, not a seat naming itself). Exactly the population strict mode
+ * would refuse, so counting it is the measurement of the cutover. It reads the
+ * SAME decision as {@link actingClaimRefusal}, with `mode: "permissive"` passed
+ * explicitly because the question is "would it be served unattributed", which
+ * is mode-independent; the answer is never used to admit anything.
  */
 export function isUnattributedClaim(
 	ctx: OAuthContext | undefined,
 	claimedName: string,
 ): boolean {
-	return (
-		ctx !== undefined &&
-		!ctx.actor &&
-		!isMasterScope(ctx) &&
-		claimedName.trim() !== "" &&
-		!isSeatActingAsItself(ctx, claimedName)
-	);
+	const decision = actingClaimDecision(ctx, claimedName, "permissive");
+	return decision.ok && decision.via === "permissive-unattributed";
 }
 
 const unattributedCounts = new Map<string, number>();
