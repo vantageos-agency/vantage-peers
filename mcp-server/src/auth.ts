@@ -472,7 +472,12 @@ export function actingCallerOf(
 		ctx.accessTokenHash !== undefined &&
 		ctx.principal === undefined
 	) {
-		return { kind: "seat-unresolved", allowlist: ctx.fromAllowList };
+		// The allowlist is read through the ONE field-mapping adapter, not a
+		// second read of the context's roster field here.
+		return {
+			kind: "seat-unresolved",
+			allowlist: toPackageOAuthCtx(ctx).fromAllowList,
+		};
 	}
 	return { kind: "org-member" };
 }
