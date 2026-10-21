@@ -768,13 +768,12 @@ function orgIdForWrite(scope: OrgScope, door: string): string | undefined {
 // resolution (and its refusals) apply unchanged. Only a call carrying an agent
 // PROOF (a verifiedActor or a presented credential, whose id is
 // `callerActorId`) can use a link; the decision is the package's
-// (convex/lib/agentLinks.ts). `ownOrgSlug` is the organisation the row lives in.
+// (convex/lib/agentLinks.ts).
 async function linkedAssigneeOf(
 	ctx: MutationCtx,
 	input: {
 		callerActorId: string | undefined;
 		proven: boolean;
-		ownOrgSlug: string | undefined;
 		assignedToAgentId: string | undefined;
 		door: string;
 	},
@@ -782,7 +781,6 @@ async function linkedAssigneeOf(
 	if (
 		!input.proven ||
 		input.callerActorId === undefined ||
-		input.ownOrgSlug === undefined ||
 		input.assignedToAgentId === undefined
 	) {
 		return undefined;
@@ -790,7 +788,9 @@ async function linkedAssigneeOf(
 	const id = ctx.db.normalizeId("agents", input.assignedToAgentId);
 	if (id === null) return undefined;
 	const row = await ctx.db.get(id);
-	if (row === null || row.orgSlug === input.ownOrgSlug) return undefined;
+	// A same-organisation assignee is never reached through a link: the package
+	// refuses a link whose two agents share an organisation ID.
+	if (row === null) return undefined;
 	return (await agentLinkAdmits(ctx, input.callerActorId, row, input.door))
 		? row
 		: undefined;
@@ -845,7 +845,6 @@ export const create = mutation({
 		const linkedAssignee = await linkedAssigneeOf(ctx, {
 			callerActorId: scope.callerActorId,
 			proven: agentCredentialSecret !== undefined || verifiedActor !== undefined,
-			ownOrgSlug: await actorOrgFor(ctx.db, rowOrgId ?? scope.callerActorOrg),
 			assignedToAgentId,
 			door: "tasks:create",
 		});
@@ -2062,7 +2061,6 @@ export const update = mutation({
 		const linkedAssignee = await linkedAssigneeOf(ctx, {
 			callerActorId: callerScope.callerActorId,
 			proven: agentCredentialSecret !== undefined || verifiedActor !== undefined,
-			ownOrgSlug: await actorOrgFor(ctx.db, task.orgId),
 			assignedToAgentId,
 			door: "tasks:update",
 		});
