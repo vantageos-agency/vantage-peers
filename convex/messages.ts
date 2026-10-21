@@ -35,6 +35,7 @@ import {
 	requireTargetOrgOfPrincipal,
 	requireVerifiedActorPrincipal,
 } from "./lib/actingPrincipal";
+import { agentLinkAdmits } from "./lib/agentLinks";
 import { requireId } from "./lib/ids";
 import { normalizeOrchestratorId } from "./_helpers/normalizeOrchestratorId";
 import { creatorValidator } from "./schema";
@@ -351,8 +352,23 @@ async function resolveRecipientAgents(
 		}
 		if (sender !== undefined) {
 			const verdict = await addressRecipientById(ctx, sender, row, SEND_DOOR);
-			if (!verdict.ok) return refuse(raw);
-			if (verdict.direction === "operator-to-client") {
+			// The ONE other cross-org admission besides an operator agent's reply: an
+			// explicit agent link, decided by the package (convex/lib/agentLinks.ts),
+			// for exactly this (sender, recipient) pair of agents. Like that reply, the
+			// message is stamped in the RECIPIENT's organisation, so the target's own
+			// readers see it and no other organisation does. Any other outcome is the
+			// same single refusal as before.
+			let direction: "linked" | undefined;
+			if (!verdict.ok) {
+				if (!(await agentLinkAdmits(ctx, sender.principalId, row, SEND_DOOR))) {
+					return refuse(raw);
+				}
+				direction = "linked";
+			}
+			if (
+				direction === "linked" ||
+				(verdict.ok && verdict.direction === "operator-to-client")
+			) {
 				if (replyOrg !== undefined && replyOrg !== row.orgSlug) {
 					return refuseSpan();
 				}
@@ -360,7 +376,7 @@ async function resolveRecipientAgents(
 				rows.push(row);
 				continue;
 			}
-			if (verdict.direction === "same-organisation") {
+			if (verdict.ok && verdict.direction === "same-organisation") {
 				const listed = await agentListedOnRoster(
 					ctx,
 					{ agentId: row._id, agentOrgId: row.orgSlug },

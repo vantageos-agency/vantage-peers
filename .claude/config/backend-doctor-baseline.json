@@ -54,12 +54,13 @@
 			"modules": {}
 		},
 		"R-53": {
-			"count": 341,
-			"measured_tree_sha": "6058f82974caa7cacbeda815a2e60334989b5120",
+			"count": 342,
+			"measured_tree_sha": "6bd81e848a0c129eb544d95562d16a64a6c3c311",
 			"cli_commit": "0121921dc96b6b5b48feecfe53637f1faa0e9edf",
-			"command": "npx -y @vantageos/backend-doctor@0.4.8 <vantage-peers clean full checkout @6058f82, deps installed>/convex --json-evidence <dir>/",
-			"output_line": "R-53: 341 site(s) VIOLATE (the principal is the package resolver's output, every write admits by comparing stored IDs with the resolved IDs, the unresolved branch refuses, and no local function decides identity). [conform=0 non-conforming=341 could-not-judge=0] Violations: convex/diary.ts:64 (orchestratorListed: (d) local identity layer — compares names to admit (`normalizeOrchestratorId(agent.name) === claimed`, line 73); decides identity through name resolver `listedAgents` (line 72)); convex/lib/agentIdentity.ts:245 (findAgentByName: (d) local identity layer — compares names to admit (`normalizeOrchestratorId(byNormalized.name) === normalized`, line 259); selects a row by name (`withIndex(\"by_org_normalized_name\")` on `normalizedName`, line 254); selects a row by name (`withIndex(\"by_org_name\")` on `name`, line 264)); convex/lib/auth.ts:547 (filterByOrgScope: (d) local identity layer — compares names to admit (`scope.allowedOrchestrators.includes(orchestrator)`, line 563)).; MECHANICAL RULE COUNTS: CR-2 264, R-5 62, R-53 341, R-54 148, R-55 31, R-56 2",
-			"modules": {}
+			"command": "npx -y @vantageos/backend-doctor@0.4.8 <vantage-peers clean full checkout @6bd81e8, deps installed>/convex --json-evidence <dir>/",
+			"output_line": "R-53: 342 site(s) VIOLATE (the principal is the package resolver's output, every write admits by comparing stored IDs with the resolved IDs, the unresolved branch refuses, and no local function decides identity). [conform=0 non-conforming=342 could-not-judge=0] Violations: convex/diary.ts:64 (orchestratorListed: (d) local identity layer — compares names to admit (`normalizeOrchestratorId(agent.name) === claimed`, line 73); decides identity through name resolver `listedAgents` (line 72)); convex/lib/agentIdentity.ts:245 (findAgentByName: (d) local identity layer — compares names to admit (`normalizeOrchestratorId(byNormalized.name) === normalized`, line 259); selects a row by name (`withIndex(\"by_org_normalized_name\")` on `normalizedName`, line 254); selects a row by name (`withIndex(\"by_org_name\")` on `name`, line 264)); convex/lib/auth.ts:547 (filterByOrgScope: (d) local identity layer — compares names to admit (`scope.allowedOrchestrators.includes(orchestrator)`, line 563)).; MECHANICAL RULE COUNTS: CR-2 262, R-5 62, R-53 342, R-54 148, R-55 31, R-56 2",
+			"modules": {},
+			"reason": "two new person-admin doors (agentLinks:grant, agentLinks:revoke, task k17965eh23twqzsbjc8mjgfcmx8gpxmh); clause (a) has no conformant form in this repo yet (0/340 doors conform, doctor 0.4.8 scanR53Detailed at 00e8ddf); returns to 340 when the principal-by-package slice makes one door conform"
 		},
 		"R-5": {
 			"count": 62,
