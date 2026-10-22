@@ -35,12 +35,12 @@ Vitruve took four launches on 2026-10-05 (friction memory j571rgt58mdzv734b42fcx
 
 - **Fails:** `set_summary` returns `AGENT_IDENTITY_MISMATCH`, and every write is refused.
 - **Check:** the mint plan says `REGISTER+MINT`, `SKIP` (already live) or `BLOCKED` (deactivated row).
-- **Fix applied:** `scripts/mint-station-agents.mjs` runs under our org-admin identity (`CLERK_SECRET_KEY_VANTAGE_PEERS` and `CLERK_ORG_ADMIN_USER_ID_VANTAGE_PEERS` from the gitignored `.env.local`), against prod `compassionate-goldfinch-737`. The org comes from the admin JWT and is always `perello-consulting-1782214787064836324`. The secret is written only to `<secrets-dir>/<role>.secret`, mode 600. The run is idempotent; rotating a credential is `--rotate` on the mint script.
+- **Fix applied:** `scripts/mint-station-agents.mjs` runs under our org-admin identity (`CLERK_SECRET_KEY_VANTAGE_PEERS` and `CLERK_ORG_ADMIN_USER_ID_VANTAGE_PEERS` from the gitignored `.env.local`), against prod `compassionate-goldfinch-737`. The org comes from the admin JWT and is always `perello-consulting-1782214787064836324`. The secret transits a memory-backed directory (`/dev/shm`, removed on exit) and is written to the Infisical vault at `/agent-secrets/<host-slug>/<ROLE>_SECRET`, then verified by hash readback; it never reaches a disk file. The run is idempotent; rotating a credential is `--rotate` on the mint script.
 
 ### 2. Wiring: no VantagePeers server in the workspace
 
 - **Fails:** the station has no `vantage-peers` or `vantage-registry` tools at all.
-- **Fix applied:** the script installs `.claude/scripts/mcp-headers.sh` with `ROLE` set to the role, and adds both http servers to `.mcp.json` with that helper. The workspace's other servers are kept, and the file is set to mode 600. The workspace never holds a secret; the helper reads it at connect time.
+- **Fix applied:** the script installs `.claude/scripts/mcp-headers.sh` as a 3-line relay to the shared vault helper `/opt/vantage-secrets/mcp_headers_vault.py` with the role set, and adds both http servers to `.mcp.json` with that helper. The workspace's other servers are kept, and the file is set to mode 600. The workspace never holds a secret; the helper reads it from the vault at connect time.
 
 ### 3. Trust: the helper never runs
 
@@ -84,7 +84,7 @@ Vitruve took four launches on 2026-10-05 (friction memory j571rgt58mdzv734b42fcx
 
 ## Known gap, being closed
 
-Every station currently runs as the Unix user `elpi` and shares `/home/elpi/.vantage-agent-secrets`, so any station can read any agent's credential. Task k17es28ny4frcyc7xaqcxd86rs8fpe1b moves each station to its own Unix user, with its credential in its own space. When that lands, this script creates the user too. Until then, run it as `elpi`.
+Every station currently runs as the Unix user `elpi` and shares the host identity in `/home/elpi/.env.local`, which opens the host's vault folder, so any station can read any agent's credential. Task k17es28ny4frcyc7xaqcxd86rs8fpe1b moves each station to its own Unix user, with its credential in its own space. When that lands, this script creates the user too. Until then, run it as `elpi`.
 
 ## Reference
 
