@@ -5,6 +5,9 @@
 #   scripts/onboard-orchestrator.sh <role> <workspace-dir> [--dry-run] [--repo <owner/repo> --project <slug>]
 #
 # Always run from the vantage-memory repo root. Prints no secret value.
+# The minted credential goes to the Infisical vault (/agent-secrets/<host-slug>/<ROLE>_SECRET) and
+# never to disk: it transits a memory-backed directory (/dev/shm) removed on exit. The workspace
+# gets a 3-line relay to the shared vault helper, never a copy of it.
 set -euo pipefail
 
 USAGE="usage: onboard-orchestrator.sh <role> <workspace-dir> [--dry-run] [--repo <owner/repo> --project <slug>]"
@@ -22,23 +25,46 @@ while [ $# -gt 0 ]; do
 done
 { [ -n "$GH_REPO" ] && [ -z "$PROJECT" ]; } || { [ -z "$GH_REPO" ] && [ -n "$PROJECT" ]; } && { echo "--repo and --project go together" >&2; exit 2; }
 REPO="$(git rev-parse --show-toplevel)"
-SECRETS="${VP_AGENT_SECRETS_DIR:-/home/elpi/.vantage-agent-secrets}"
+ENV_FILE="${VP_ONBOARD_ENV_FILE:-$REPO/.env.local}"
+VAULT_DIR="${VP_VAULT_DIR:-/opt/vantage-secrets}"
+VAULT_CONFIG="${VP_INFISICAL_CONFIG:-$VAULT_DIR/infisical-hosts.json}"
+ONBOARD_HOST="${VP_ONBOARD_HOST:-$(hostname)}"
+SHM="${VP_ONBOARD_SHM:-/dev/shm}"
 PROD_CONVEX="https://compassionate-goldfinch-737.convex.cloud"
 VP_MCP="https://vantage-peers-production.up.railway.app/mcp"
 VR_MCP="https://vantage-registry-mcp-production.up.railway.app/mcp"
-TEMPLATE="$REPO/.claude/scripts/mcp-headers.sh"
 
 [[ "$ROLE" =~ ^[a-z][a-z0-9-]*$ ]] || { echo "role must be lowercase: $ROLE" >&2; exit 2; }
 [ -d "$WS" ] || { echo "workspace not found: $WS" >&2; exit 2; }
 
+# 0. Vault target, resolved from the host config (same hosts file the relay reads), never typed.
+SLUG="$(python3 - "$VAULT_CONFIG" "$ONBOARD_HOST" <<'PY'
+import json, sys
+try:
+    print(json.load(open(sys.argv[1]))["hosts"][sys.argv[2]]["slug"])
+except Exception as exc:
+    sys.stderr.write("host %r not resolvable in %s (%s)\n" % (sys.argv[2], sys.argv[1], type(exc).__name__))
+    sys.exit(1)
+PY
+)" || exit 1
+KEY="$(printf '%s' "$ROLE" | tr '[:lower:]-' '[:upper:]_')_SECRET"
+FOLDER="/agent-secrets/$SLUG"
+RELAY="#!/usr/bin/env bash
+# headersHelper relay: this station reads its MCP credentials from Infisical through the shared helper.
+exec python3 $VAULT_DIR/mcp_headers_vault.py --role $ROLE --config $VAULT_DIR/infisical-hosts.json"
+echo "plan: vault $FOLDER/$KEY (host $ONBOARD_HOST, config $VAULT_CONFIG)"
+echo "plan: relay $WS/.claude/scripts/mcp-headers.sh"
+echo "$RELAY"
+
 # 1. Org-admin identity of OUR org (perello-consulting). Values live in the gitignored .env.local.
-set -a; . "$REPO/.env.local"; set +a
+set -a; . "$ENV_FILE"; set +a
 export CLERK_SECRET_KEY="${CLERK_SECRET_KEY_VANTAGE_PEERS:?missing in .env.local}"
 export CLERK_ORG_ADMIN_USER_ID="${CLERK_ORG_ADMIN_USER_ID_VANTAGE_PEERS:?missing in .env.local}"
 export CONVEX_URL="$PROD_CONVEX"
 unset CONVEX_DEPLOYMENT
 
-TMPD="$(mktemp -d)"; chmod 700 "$TMPD"; trap 'rm -rf "$TMPD"' EXIT
+[ -d "$SHM" ] || { echo "memory-backed directory $SHM not found; refusing to stage a secret on disk" >&2; exit 1; }
+TMPD="$(mktemp -d -p "$SHM")"; chmod 700 "$TMPD"; trap 'rm -rf "$TMPD"' EXIT
 STATIONS="$TMPD/stations.json"
 printf '[{"role":"%s","instanceId":"%s-vps"}]\n' "$ROLE" "$ROLE" > "$STATIONS"
 
@@ -48,14 +74,16 @@ if [ "$DRY" = "--dry-run" ]; then
   [ -n "$GH_REPO" ] && echo "plan: repo mapping $GH_REPO -> $ROLE (project $PROJECT)"
   echo "dry run: nothing written"; exit 0
 fi
-bun run "$REPO/scripts/mint-station-agents.mjs" --stations "$STATIONS" --secrets-dir "$SECRETS"
-[ -s "$SECRETS/$ROLE.secret" ] || { echo "no secret file for $ROLE" >&2; exit 1; }
+bun run "$REPO/scripts/mint-station-agents.mjs" --stations "$STATIONS" --secrets-dir "$TMPD/minted"
+[ -s "$TMPD/minted/$ROLE.secret" ] || { echo "no credential minted for $ROLE (a live one already exists; rotate it with --rotate on the mint script)" >&2; exit 1; }
+python3 "$REPO/scripts/vault-put-agent-secret.py" --role "$ROLE" --secret-file "$TMPD/minted/$ROLE.secret" \
+  --config "$VAULT_CONFIG" --host "$ONBOARD_HOST" || { echo "vault write FAILED for $FOLDER/$KEY" >&2; exit 1; }
 
-# 3. Header helper in the workspace, role substituted.
+# 3. Vault relay in the workspace, role substituted.
 mkdir -p "$WS/.claude/scripts"
-sed -E "s/^ROLE = \"[a-z0-9-]+\"/ROLE = \"$ROLE\"/" "$TEMPLATE" > "$WS/.claude/scripts/mcp-headers.sh"
+printf '%s\n' "$RELAY" > "$WS/.claude/scripts/mcp-headers.sh"
 chmod 755 "$WS/.claude/scripts/mcp-headers.sh"
-grep -q "^ROLE = \"$ROLE\"" "$WS/.claude/scripts/mcp-headers.sh"
+grep -q -- "--role $ROLE --config" "$WS/.claude/scripts/mcp-headers.sh"
 
 # 4. vantage-peers + vantage-registry in the workspace .mcp.json (other servers kept; mode 600).
 python3 - "$WS" "$VP_MCP" "$VR_MCP" <<'EOF'
@@ -117,7 +145,7 @@ PY
 #    the helper output goes to python on stdin, and curl reads its headers from 0600 files.
 cd "$WS"
 umask 077
-CLAUDE_CODE_MCP_SERVER_NAME=vantage-peers python3 .claude/scripts/mcp-headers.sh | python3 -c '
+CLAUDE_CODE_MCP_SERVER_NAME=vantage-peers bash .claude/scripts/mcp-headers.sh | python3 -c '
 import json, sys
 h = json.load(sys.stdin); d = sys.argv[1]
 common = "Authorization: %s\ncontent-type: application/json\naccept: application/json, text/event-stream\n" % h["Authorization"]
