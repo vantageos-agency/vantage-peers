@@ -40,7 +40,7 @@
     "@ai-sdk/openai-compatible": "^2.0.37",
     "@convex-dev/rag": "^0.7.2",
     "@convex-dev/workpool": "^0.4.6",
-    "@modelcontextprotocol/sdk": "^1.27.1",
+    "@modelcontextprotocol/sdk": "^1.32.0",
     "@types/pdf-parse": "^1.1.5",
     "@vantageos/agent-engine": "0.1.0-alpha.4",
     "@vantageos/cloud-identity": "^0.22.0",
@@ -64,5 +64,12 @@
     "convex-test": "^0.0.44",
     "typescript": "^5.9.3",
     "vitest": "^4.1.1"
+  },
+  "overrides": {
+    "vite": "^8.1.6",
+    "proxy-addr": "^2.0.8",
+    "dompurify": "^3.4.17",
+    "fast-uri": "3.1.9",
+    "@modelcontextprotocol/sdk": "^1.32.0"
   }
 }

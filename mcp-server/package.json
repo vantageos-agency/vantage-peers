@@ -88,7 +88,12 @@
 		"vitest": "^4.1.8"
 	},
 	"overrides": {
-		"path-to-regexp": "^8.4.0"
+		"path-to-regexp": "^8.4.0",
+		"proxy-addr": "^2.0.8",
+		"dompurify": "^3.4.17",
+		"fast-uri": "3.1.9",
+		"vite": "^8.1.6",
+		"@modelcontextprotocol/sdk": "^1.32.0"
 	},
 	"engines": {
 		"node": ">=20"
