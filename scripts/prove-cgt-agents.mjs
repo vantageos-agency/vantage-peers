@@ -3,7 +3,11 @@
  * prove-cgt-agents.mjs — prove each CGT Alsachimie agent on the VantagePeers MCP
  * (task k17bnmfdan9xgxgyy3ny61ebps8fr0gw).
  *
- *   node scripts/prove-cgt-agents.mjs --env prod --agents neo,hal,mimir [--secrets-dir <dir>]
+ *   node scripts/prove-cgt-agents.mjs --env prod --agents neo,hal,mimir --secrets-dir <dir>
+ *
+ * --secrets-dir is required and has no default: the script names no credential directory of its
+ * own. <dir> is the client organisation's own store, owned by the client user and passed by the
+ * operator running the proof as that user (runbooks/onboard-client-org.md). No station path.
  *
  * Per agent, with its OWN bearer (and agent credential, when present) read from
  * <secrets-dir>/<agent>.bearer and <secrets-dir>/<agent>.secret (0600, never printed):
@@ -33,7 +37,8 @@ const arg = (k, d) => {
 const url = URLS[arg("env", "prod")];
 if (!url) throw new Error("--env must be prod");
 const agents = (arg("agents", "neo,hal,mimir") || "").split(",").filter(Boolean);
-const dir = arg("secrets-dir", "/home/cgt-alsachimie/.vantage-agent-secrets");
+const dir = arg("secrets-dir", "");
+if (!dir) throw new Error("--secrets-dir is required: the client organisation's own credential store");
 const reverseFile = arg("reverse-bearer-file", "");
 
 const readOpt = (p) => {

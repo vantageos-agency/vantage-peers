@@ -55,7 +55,7 @@ Every write is on prod (`compassionate-goldfinch-737`). Run them from the vantag
 
 7. **Prove it.**
    ```
-   sudo -u <user> node scripts/prove-cgt-agents.mjs --env prod --agents <a>,<b>
+   sudo -u <user> node scripts/prove-cgt-agents.mjs --env prod --agents <a>,<b> --secrets-dir /home/<user>/.vantage-agent-secrets
    ```
    Per agent, the script checks:
    - whoami lands in the org;
