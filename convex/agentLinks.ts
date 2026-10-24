@@ -87,8 +87,9 @@ export const grant = mutation({
 		// write-contract: imperative person-session door, no subscriber — 0 call sites in mcp-server/src (a person's admin session does not travel the MCP) and no `useQuery`; a pre-organisation caller is refused RBAC_DENIED by the package's caller resolver at an imperative call, an R-16 refusal, never at a render.
 		// The verified session goes to the package and nowhere else: the caller,
 		// its subject and its org-admin standing are the package's output.
+		const identity = await ctx.auth.getUserIdentity();
 		const caller = await resolveCallerFromClaims(
-			await ctx.auth.getUserIdentity(),
+			identity,
 			{
 				orgLookups: orgMappingLookups(ctx),
 				principalLookups: personPrincipalLookups(ctx),
@@ -158,8 +159,9 @@ export const revoke = mutation({
 	returns: v.null(),
 	handler: async (ctx, args) => {
 		// write-contract: imperative person-session door, no subscriber — 0 call sites in mcp-server/src and no `useQuery`; refused RBAC_DENIED at an imperative call, never at a render.
+		const identity = await ctx.auth.getUserIdentity();
 		const caller = await resolveCallerFromClaims(
-			await ctx.auth.getUserIdentity(),
+			identity,
 			{
 				orgLookups: orgMappingLookups(ctx),
 				principalLookups: personPrincipalLookups(ctx),
