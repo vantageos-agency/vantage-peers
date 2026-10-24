@@ -1,12 +1,17 @@
-import { buildAgentLink } from "@vantageos/cloud-identity";
-import type { UserIdentity } from "convex/server";
+import {
+	assertOrgAdmin,
+	buildAgentLink,
+	resolveCallerFromClaims,
+} from "@vantageos/cloud-identity";
 import { ConvexError, v } from "convex/values";
 import type { Id } from "./_generated/dataModel";
 import type { MutationCtx } from "./_generated/server";
 import { mutation } from "./_generated/server";
-import { refuseWith } from "./lib/actingPrincipal";
-import { anonymousRefusal, requireOrgAdminById } from "./lib/agentIdentity";
+import { personPrincipalLookups, refuseWith } from "./lib/actingPrincipal";
+import { anonymousRefusal } from "./lib/agentIdentity";
 import { agentLinkLookups, linkRowForPair } from "./lib/agentLinks";
+import { ORG_ADMIN_ROLES, refusalError } from "./lib/auth";
+import { orgMappingLookups } from "./lib/authOrgMapping";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // agentLinks — the grant and revoke doors of an explicit agent link (task
@@ -18,7 +23,8 @@ import { agentLinkLookups, linkRowForPair } from "./lib/agentLinks";
 // WHO MAY GRANT. A signed-in PERSON who is an ADMIN of the TARGET agent's
 // organisation (the side that receives the traffic decides to accept it), proven
 // twice: the live `org_role` claim of the verified session by org ID
-// (`requireOrgAdminById`, the gate agents.ts and agentCredentials.ts use) and the
+// (`resolveCallerFromClaims` + `assertOrgAdmin` over the target agent's stored
+// `clerkOrgId`, the package's own proof) and the
 // package's own membership proof over the stored `orgMembership` row
 // (`buildAgentLink`), the same lookup that voids the link when the grantor stops
 // being an admin. `grantedBy` is the verified session's own subject: it is not an
@@ -41,7 +47,7 @@ const REVOKE_DOOR = "agentLinks:revoke";
 // ids are validated `agents` ids).
 async function refuseMissingAgent(
 	ctx: MutationCtx,
-	identity: UserIdentity,
+	grantedBy: string,
 	ids: { fromAgentId: Id<"agents">; toAgentId: Id<"agents"> },
 	reason: string,
 ): Promise<never> {
@@ -51,7 +57,7 @@ async function refuseMissingAgent(
 			fromOrgId: "",
 			toAgentId: ids.toAgentId,
 			toOrgId: "",
-			grantedBy: identity.subject,
+			grantedBy,
 			reason,
 			now: Date.now(),
 		},
@@ -78,24 +84,40 @@ export const grant = mutation({
 	},
 	returns: v.id("agentLinks"),
 	handler: async (ctx, args) => {
-		// write-contract: imperative person-session door, no subscriber — 0 call sites in mcp-server/src (a person's admin session does not travel the MCP) and no `useQuery`; a pre-organisation caller is refused RBAC_DENIED by requireOrgAdminById at an imperative call, an R-16 refusal, never at a render.
-		const identity = await ctx.auth.getUserIdentity();
-		if (identity === null) throw anonymousRefusal(GRANT_DOOR);
+		// write-contract: imperative person-session door, no subscriber — 0 call sites in mcp-server/src (a person's admin session does not travel the MCP) and no `useQuery`; a pre-organisation caller is refused RBAC_DENIED by the package's caller resolver at an imperative call, an R-16 refusal, never at a render.
+		// The verified session goes to the package and nowhere else: the caller,
+		// its subject and its org-admin standing are the package's output.
+		const caller = await resolveCallerFromClaims(
+			await ctx.auth.getUserIdentity(),
+			{
+				orgLookups: orgMappingLookups(ctx),
+				principalLookups: personPrincipalLookups(ctx),
+			},
+			{ adminRoles: ORG_ADMIN_ROLES, door: GRANT_DOOR },
+		);
+		if (!caller.ok) {
+			if (caller.subject === undefined) throw anonymousRefusal(GRANT_DOOR);
+			throw refusalError(caller.refusal);
+		}
 		const to = await ctx.db.get(args.toAgentId);
 		const from = await ctx.db.get(args.fromAgentId);
 		if (to === null || from === null) {
-			return await refuseMissingAgent(ctx, identity, args, args.reason);
+			return await refuseMissingAgent(ctx, caller.subject, args, args.reason);
 		}
 		// The live session administers the TARGET agent's organisation, by org ID.
-		await requireOrgAdminById(ctx, identity, to.orgSlug, GRANT_DOOR);
+		const admin = assertOrgAdmin(caller.principal, to.clerkOrgId, {
+			adminRoles: ORG_ADMIN_ROLES,
+			door: GRANT_DOOR,
+		});
+		if (!admin.ok) throw refusalError(admin.refusal);
 		const built = await buildAgentLink(
 			{
 				fromAgentId: from._id,
 				fromOrgId: from.clerkOrgId ?? "",
 				toAgentId: to._id,
 				toOrgId: to.clerkOrgId ?? "",
-				// The verified person, never an argument.
-				grantedBy: identity.subject,
+				// The verified person (the package resolver's subject), never an argument.
+				grantedBy: caller.subject,
 				reason: args.reason,
 				now: Date.now(),
 			},
@@ -136,19 +158,33 @@ export const revoke = mutation({
 	returns: v.null(),
 	handler: async (ctx, args) => {
 		// write-contract: imperative person-session door, no subscriber — 0 call sites in mcp-server/src and no `useQuery`; refused RBAC_DENIED at an imperative call, never at a render.
-		const identity = await ctx.auth.getUserIdentity();
-		if (identity === null) throw anonymousRefusal(REVOKE_DOOR);
+		const caller = await resolveCallerFromClaims(
+			await ctx.auth.getUserIdentity(),
+			{
+				orgLookups: orgMappingLookups(ctx),
+				principalLookups: personPrincipalLookups(ctx),
+			},
+			{ adminRoles: ORG_ADMIN_ROLES, door: REVOKE_DOOR },
+		);
+		if (!caller.ok) {
+			if (caller.subject === undefined) throw anonymousRefusal(REVOKE_DOOR);
+			throw refusalError(caller.refusal);
+		}
 		const to = await ctx.db.get(args.toAgentId);
 		if (to === null) {
 			return await refuseMissingAgent(
 				ctx,
-				identity,
+				caller.subject,
 				args,
 				"revoke of an agent link whose target agent is missing",
 			);
 		}
 		// The live session administers the TARGET agent's organisation, by org ID.
-		await requireOrgAdminById(ctx, identity, to.orgSlug, REVOKE_DOOR);
+		const admin = assertOrgAdmin(caller.principal, to.clerkOrgId, {
+			adminRoles: ORG_ADMIN_ROLES,
+			door: REVOKE_DOOR,
+		});
+		if (!admin.ok) throw refusalError(admin.refusal);
 		const link = await linkRowForPair(ctx, args.fromAgentId, args.toAgentId);
 		if (link === null || link.toOrgId !== to.clerkOrgId) {
 			throw new ConvexError(
