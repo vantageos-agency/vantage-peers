@@ -7,11 +7,11 @@ import { ConvexError, v } from "convex/values";
 import type { Id } from "./_generated/dataModel";
 import type { MutationCtx } from "./_generated/server";
 import { mutation } from "./_generated/server";
-import { personPrincipalLookups, refuseWith } from "./lib/actingPrincipal";
+import { refuseWith } from "./lib/actingPrincipal";
 import { anonymousRefusal } from "./lib/agentIdentity";
 import { agentLinkLookups, linkRowForPair } from "./lib/agentLinks";
 import { ORG_ADMIN_ROLES, refusalError } from "./lib/auth";
-import { orgMappingLookups } from "./lib/authOrgMapping";
+import { orgByIdLookups, orgByIdPrincipalLookups } from "./lib/orgIdLookups";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // agentLinks — the grant and revoke doors of an explicit agent link (task
@@ -91,8 +91,8 @@ export const grant = mutation({
 		const caller = await resolveCallerFromClaims(
 			identity,
 			{
-				orgLookups: orgMappingLookups(ctx),
-				principalLookups: personPrincipalLookups(ctx),
+				orgLookups: orgByIdLookups(ctx),
+				principalLookups: orgByIdPrincipalLookups(ctx),
 			},
 			{ adminRoles: ORG_ADMIN_ROLES, door: GRANT_DOOR },
 		);
@@ -163,8 +163,8 @@ export const revoke = mutation({
 		const caller = await resolveCallerFromClaims(
 			identity,
 			{
-				orgLookups: orgMappingLookups(ctx),
-				principalLookups: personPrincipalLookups(ctx),
+				orgLookups: orgByIdLookups(ctx),
+				principalLookups: orgByIdPrincipalLookups(ctx),
 			},
 			{ adminRoles: ORG_ADMIN_ROLES, door: REVOKE_DOOR },
 		);
