@@ -708,11 +708,11 @@ export function isRowVisibleToScope(
 
 // Clerk spells the administrator role "org:admin"; the bare "admin" is the
 // spelling a custom role mapping may carry. Exact strings, no case folding.
-const ORG_ADMIN_ROLES: readonly string[] = ["org:admin", "admin"];
+export const ORG_ADMIN_ROLES: readonly string[] = ["org:admin", "admin"];
 
 // The package's typed refusal, said in this backend's wire shape: its code as
 // the prefix, {reason, door} as the payload, so a reader branches on content.
-function refusalError(refusal: IdentityRefusal): ConvexError<string> {
+export function refusalError(refusal: IdentityRefusal): ConvexError<string> {
 	return new ConvexError(
 		`${refusal.code}: ${refusal.detail} — ${JSON.stringify({ reason: refusal.reason, door: refusal.door })}`,
 	);
