@@ -70,7 +70,7 @@ export function orgByIdPrincipalLookups(
 				.query("client_org_mapping")
 				.withIndex("by_clerk_org_id", (q) => q.eq("clerkOrgId", orgId))
 				.unique();
-			if (mapping === null || !mapping.isActive) return null;
+			if (mapping === null) return null;
 			return mapping.orgKind === "operator" ? "operator" : "client";
 		},
 	};
