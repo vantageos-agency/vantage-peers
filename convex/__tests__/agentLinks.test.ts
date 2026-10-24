@@ -273,6 +273,20 @@ describe("GRANT — the admin of the TARGET organisation, as the verified person
 		expect(await linkRows(w.t)).toHaveLength(0);
 	});
 
+	test("REFUSED: an admin of an INACTIVE target organisation cannot grant, nothing is written", async () => {
+		const w = await world();
+		await deactivateOrg(w, IRIS);
+		const msg = await errorOf(
+			person(w.t, IRIS, MARIE, "org:admin").mutation(api.agentLinks.grant, {
+				fromAgentId: w.pi,
+				toAgentId: w.victor,
+				reason: REASON,
+			}),
+		);
+		expect(msg).toContain("RBAC_DENIED");
+		expect(await linkRows(w.t)).toHaveLength(0);
+	});
+
 	test("REFUSED: an admin of the SOURCE organisation only (the grant is the receiving side's)", async () => {
 		const w = await world();
 		const msg = await errorOf(
