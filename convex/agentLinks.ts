@@ -87,7 +87,6 @@ export const grant = mutation({
 			return await refuseMissingAgent(ctx, identity, args, args.reason);
 		}
 		// The live session administers the TARGET agent's organisation, by org ID.
-		// The live session administers the TARGET agent's organisation, by org ID.
 		await requireOrgAdminById(ctx, identity, to.orgSlug, GRANT_DOOR);
 		const built = await buildAgentLink(
 			{
@@ -148,7 +147,6 @@ export const revoke = mutation({
 				"revoke of an agent link whose target agent is missing",
 			);
 		}
-		// The live session administers the TARGET agent's organisation, by org ID.
 		// The live session administers the TARGET agent's organisation, by org ID.
 		await requireOrgAdminById(ctx, identity, to.orgSlug, REVOKE_DOOR);
 		const link = await linkRowForPair(ctx, args.fromAgentId, args.toAgentId);

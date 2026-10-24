@@ -83,11 +83,7 @@ async function world(): Promise<World> {
 	const t = createT();
 	const ids = await t.run(async (ctx) => {
 		const now = Date.now();
-		const org = (
-			slug: string,
-			orchestrators: string[],
-			orgKind?: "operator",
-		) =>
+		const org = (slug: string, orchestrators: string[], orgKind?: "operator") =>
 			ctx.db.insert("client_org_mapping", {
 				clerkOrgSlug: slug,
 				clerkOrgId: testClerkOrgId(slug),
@@ -155,13 +151,16 @@ async function errorOf(p: Promise<unknown>): Promise<string> {
 
 const linkRows = (t: T) =>
 	t.run((ctx) =>
-		(ctx.db as unknown as {
-			query: (table: string) => { collect: () => Promise<unknown[]> };
-		})
+		(
+			ctx.db as unknown as {
+				query: (table: string) => { collect: () => Promise<unknown[]> };
+			}
+		)
 			.query("agentLinks")
 			.collect(),
 	);
-const messageRows = (t: T) => t.run((ctx) => ctx.db.query("messages").collect());
+const messageRows = (t: T) =>
+	t.run((ctx) => ctx.db.query("messages").collect());
 const receiptRows = (t: T) =>
 	t.run((ctx) => ctx.db.query("messageReceipts").collect());
 const taskRows = (t: T) => t.run((ctx) => ctx.db.query("tasks").collect());
@@ -222,6 +221,24 @@ const listAs = (
 	subject: string,
 ): Promise<Array<{ title: string; assignedToId?: string; orgId?: string }>> =>
 	person(w.t, org, subject, "org:admin").query(api.tasks.list, {}) as never;
+
+/** Marie revokes pi -> victor. */
+const marieRevokesPiToVictor = (w: World) =>
+	person(w.t, IRIS, MARIE, "org:admin").mutation(api.agentLinks.revoke, {
+		fromAgentId: w.pi,
+		toAgentId: w.victor,
+	});
+
+/** Mark an organisation inactive on its mapping row (`client_org_mapping.isActive`). */
+const deactivateOrg = (w: World, slug: string) =>
+	w.t.run(async (ctx) => {
+		const m = await ctx.db
+			.query("client_org_mapping")
+			.withIndex("by_clerk_slug", (q) => q.eq("clerkOrgSlug", slug))
+			.unique();
+		if (m === null) throw new Error("fixture: no mapping");
+		await ctx.db.patch(m._id, { isActive: false });
+	});
 
 // ─────────────────────────────────────────────────────────────────────────────
 describe("GRANT — the admin of the TARGET organisation, as the verified person", () => {
@@ -382,7 +399,10 @@ describe("REVOKE — an admin of the TARGET organisation", () => {
 		await marieGrantsPiToVictor(w);
 		const args = { fromAgentId: w.pi, toAgentId: w.victor };
 		await errorOf(
-			person(w.t, IRIS, BOB, "org:member").mutation(api.agentLinks.revoke, args),
+			person(w.t, IRIS, BOB, "org:member").mutation(
+				api.agentLinks.revoke,
+				args,
+			),
 		);
 		await errorOf(
 			person(w.t, PERELLO, LAURENT, "org:admin").mutation(
@@ -392,6 +412,27 @@ describe("REVOKE — an admin of the TARGET organisation", () => {
 		);
 		await errorOf(w.t.mutation(api.agentLinks.revoke, args));
 		const rows = (await linkRows(w.t)) as Array<{ revokedAt?: number | null }>;
+		expect(rows[0].revokedAt ?? null).toBeNull();
+	});
+
+	test("REFUSED: a link whose stored toOrgId is not the target agent's current org changes nothing", async () => {
+		const w = await world();
+		await marieGrantsPiToVictor(w);
+		// The stored link names an organisation other than victor's current one.
+		await w.t.run(async (ctx) => {
+			const db = ctx.db as unknown as {
+				query: (t: string) => {
+					unique: () => Promise<{ _id: Id<"agentLinks"> }>;
+				};
+				patch: (id: Id<"agentLinks">, v: object) => Promise<void>;
+			};
+			const row = await db.query("agentLinks").unique();
+			await db.patch(row._id, { toOrgId: testClerkOrgId(ACME) });
+		});
+		const msg = await errorOf(marieRevokesPiToVictor(w));
+		expect(msg).toContain("AGENT_LINK_NOT_FOUND");
+		const rows = (await linkRows(w.t)) as Array<{ revokedAt?: number | null }>;
+		expect(rows).toHaveLength(1);
 		expect(rows[0].revokedAt ?? null).toBeNull();
 	});
 });
@@ -411,7 +452,9 @@ describe("MESSAGES — recipientAgentIds across two organisations", () => {
 		expect(receipts[0].tenantId).toBe(IRIS);
 
 		const victorInbox = await inbox(w, "victor", IRIS);
-		expect(victorInbox.messages.map((m) => m.content)).toEqual(["hello victor"]);
+		expect(victorInbox.messages.map((m) => m.content)).toEqual([
+			"hello victor",
+		]);
 		expect(victorInbox.messages[0].from).toBe("pi");
 		// Not in any other organisation's inbox: acme's, nor pi's own.
 		expect((await inbox(w, "ada", ACME)).messages).toEqual([]);
@@ -514,6 +557,34 @@ describe("MESSAGES — recipientAgentIds across two organisations", () => {
 		expect(await messageRows(w.t)).toHaveLength(0);
 	});
 
+	test("a RE-GRANT after a revoke delivers again (the revocation is cleared, one row)", async () => {
+		const w = await world();
+		await marieGrantsPiToVictor(w);
+		await marieRevokesPiToVictor(w);
+		await errorOf(piSends(w, { recipientAgentIds: [w.victor] }));
+		expect(await messageRows(w.t)).toHaveLength(0);
+
+		await marieGrantsPiToVictor(w);
+		const rows = (await linkRows(w.t)) as Array<{ revokedAt?: number | null }>;
+		expect(rows).toHaveLength(1);
+		expect(rows[0].revokedAt ?? null).toBeNull();
+		const messageId = await piSends(w, { recipientAgentIds: [w.victor] });
+		const message = await w.t.run((ctx) => ctx.db.get(messageId));
+		expect(message?.tenantId).toBe(IRIS);
+		expect(
+			(await inbox(w, "victor", IRIS)).messages.map((m) => m.content),
+		).toEqual(["hello victor"]);
+	});
+
+	test("REFUSED: the TARGET organisation is inactive, a live link does not reach it, nothing is written", async () => {
+		const w = await world();
+		await marieGrantsPiToVictor(w);
+		await deactivateOrg(w, IRIS);
+		await errorOf(piSends(w, { recipientAgentIds: [w.victor] }));
+		expect(await messageRows(w.t)).toHaveLength(0);
+		expect(await receiptRows(w.t)).toHaveLength(0);
+	});
+
 	test("same-organisation sends are unchanged", async () => {
 		const w = await world();
 		const messageId = await asService(w.t).mutation(api.messages.sendMessage, {
@@ -580,6 +651,101 @@ describe("TASKS — assignedToAgentId across two organisations", () => {
 		);
 		await errorOf(piCreatesTask(w));
 		expect(await taskRows(w.t)).toHaveLength(0);
+	});
+
+	test("a RE-GRANT after a revoke lets pi create the task again", async () => {
+		const w = await world();
+		await marieGrantsPiToVictor(w);
+		await marieRevokesPiToVictor(w);
+		await errorOf(piCreatesTask(w));
+		expect(await taskRows(w.t)).toHaveLength(0);
+
+		await marieGrantsPiToVictor(w);
+		const taskId = await piCreatesTask(w);
+		const row = await w.t.run((ctx) => ctx.db.get(taskId as Id<"tasks">));
+		expect(row?.orgId).toBe(IRIS);
+		expect(row?.assignedToId).toBe(w.victor);
+	});
+
+	test("REFUSED: the TARGET organisation is inactive, a live link does not reach it, nothing is written", async () => {
+		const w = await world();
+		await marieGrantsPiToVictor(w);
+		await deactivateOrg(w, IRIS);
+		await errorOf(piCreatesTask(w));
+		expect(await taskRows(w.t)).toHaveLength(0);
+	});
+
+	test("REFUSED: an UNPROVEN caller (no verifiedActor, no credential) does not inherit the link", async () => {
+		const w = await world();
+		await marieGrantsPiToVictor(w);
+		await errorOf(
+			asService(w.t).mutation(api.tasks.create, {
+				title: "cross-org task",
+				priority: "low",
+				status: "todo",
+				createdBy: "pi",
+				assignedToAgentId: w.victor,
+			} as never),
+		);
+		expect(await taskRows(w.t)).toHaveLength(0);
+	});
+
+	test("REFUSED: a perello SESSION naming pi as creator (no agent proof) does not inherit pi's link", async () => {
+		const w = await world();
+		await marieGrantsPiToVictor(w);
+		await errorOf(
+			person(w.t, PERELLO, LAURENT, "org:admin").mutation(api.tasks.create, {
+				title: "cross-org task",
+				priority: "low",
+				status: "todo",
+				createdBy: "pi",
+				assignedToAgentId: w.victor,
+			} as never),
+		);
+		expect(await taskRows(w.t)).toHaveLength(0);
+	});
+
+	test("REFUSED: an UNPROVEN service call naming an OPERATOR-org agent that holds a link does not inherit it (`proven` is the only guard)", async () => {
+		const w = await world();
+		// The one population that reaches linkedAssigneeOf with a defined
+		// `callerActorId` and NO proof: the service account (no org of its own)
+		// asserts the NAME of an agent of the operator org; the name resolves in the
+		// operator org without a credential check (targetOrgSlug is null). That
+		// agent holds a standing link to victor.
+		const op = await w.t.run((ctx) =>
+			ctx.db.insert("agents", {
+				orgSlug: "fleet-op",
+				clerkOrgId: testClerkOrgId("fleet-op"),
+				name: "opsig",
+				normalizedName: "opsig",
+				isActive: true,
+				createdAt: Date.now(),
+			}),
+		);
+		await person(w.t, IRIS, MARIE, "org:admin").mutation(api.agentLinks.grant, {
+			fromAgentId: op,
+			toAgentId: w.victor,
+			reason: REASON,
+		});
+		const unproven = {
+			title: "cross-org task",
+			priority: "low",
+			status: "todo",
+			createdBy: "opsig",
+			assignedToAgentId: w.victor,
+		};
+		await errorOf(asService(w.t).mutation(api.tasks.create, unproven as never));
+		expect(await taskRows(w.t)).toHaveLength(0);
+
+		// The same call WITH the agent proof is the linked create: the refusal
+		// above is the missing proof, not a broken link.
+		const taskId = await asService(w.t).mutation(api.tasks.create, {
+			...unproven,
+			verifiedActor: { agentId: op, orgSlug: "fleet-op" },
+		} as never);
+		const row = await w.t.run((ctx) => ctx.db.get(taskId as Id<"tasks">));
+		expect(row?.orgId).toBe(IRIS);
+		expect(row?.assignedToId).toBe(w.victor);
 	});
 
 	test("REFUSED: a third agent of iris-rh is not covered", async () => {
