@@ -35,7 +35,17 @@ the Clerk webhook, `docs/cloud/clerk-membership-webhook.md`), so a grantor missi
 
 The MCP does not carry an organisation admin's session, so there is no MCP tool for
 these doors (`MCP_CALLED_FUNCTIONS` and the backend contract version are unchanged).
-Call them from the dashboard or a Convex client holding the person's Clerk token:
+Call them from the dashboard or a Convex client holding the person's Clerk token. The
+repository ships one such client, `scripts/agent-link.mjs` (its argument contract is
+pinned by `scripts/__tests__/agent-link-client.test.mjs`):
+
+```bash
+CONVEX_URL=<deployment url> AGENT_LINK_SESSION_TOKEN=<your own Clerk session token> \
+  node scripts/agent-link.mjs grant <fromAgentId> <toAgentId> "HR onboarding coordination"
+CONVEX_URL=… AGENT_LINK_SESSION_TOKEN=… node scripts/agent-link.mjs revoke <fromAgentId> <toAgentId>
+```
+
+The same call from code:
 
 ```ts
 await client.mutation(api.agentLinks.grant, {
