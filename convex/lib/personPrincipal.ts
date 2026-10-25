@@ -1,10 +1,17 @@
 import {
+	assertTargetBelongsTo,
 	checkPersonCallShape,
+	isServiceAccountScope,
 	type PersonRefusal,
+	resolveActingPrincipal,
 	resolvePersonPrincipal,
 } from "@vantageos/cloud-identity";
 import { ConvexError, v } from "convex/values";
 import type { MutationCtx, QueryCtx } from "../_generated/server";
+import {
+	personPrincipalLookups,
+	refuseWith as refuseIdentity,
+} from "./actingPrincipal";
 import { lookupOrgMapping, type OrgScope } from "./auth";
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -79,12 +86,7 @@ export async function resolveVerifiedPerson(
 	if (proof === undefined) return transportScope;
 	const { door } = opts;
 
-	if (
-		!(
-			transportScope.isMaster &&
-			transportScope.masterSource === "service-account"
-		)
-	) {
+	if (!isServiceAccountScope(transportScope)) {
 		refuse(
 			"verified-person-not-trusted",
 			door,
@@ -125,6 +127,35 @@ export async function resolveVerifiedPerson(
 	);
 	if (!resolved.ok) refuseWith(resolved.refusal);
 	const { principal, organisation: mapping } = resolved;
+	// `resolvePersonPrincipal` selects the organisation by the LABEL the token
+	// was minted under, and a label is renamable: after a rename another
+	// organisation can hold it, and the lookup above then answers THAT
+	// organisation. Where the token carries the permanent org ID, the package
+	// proves the person in that organisation by ID, and the organisation the
+	// label resolved to must be that same one, or the call is refused.
+	if (row?.clerkOrgId !== undefined) {
+		const lookups = personPrincipalLookups(ctx, principal.subject);
+		const byId = await resolveActingPrincipal(
+			{
+				kind: "person",
+				personId: principal.subject,
+				verifiedOrgId: row.clerkOrgId,
+				...(principal.orgRole !== undefined
+					? { verifiedOrgRole: principal.orgRole }
+					: {}),
+			},
+			lookups,
+			door,
+		);
+		if (!byId.ok) refuseIdentity(byId.refusal);
+		const sameOrganisation = await assertTargetBelongsTo(
+			byId.principal,
+			{ orgId: mapping.clerkOrgId },
+			lookups,
+			{ door },
+		);
+		if (!sameOrganisation.ok) refuseIdentity(sameOrganisation.refusal);
+	}
 	return {
 		userId: principal.subject,
 		orgSlug: principal.orgSlug,

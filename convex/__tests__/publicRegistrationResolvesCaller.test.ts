@@ -599,8 +599,15 @@ for (const site of masterOnlyReads) {
 			await site.seed(t);
 
 			const got = () => site.read(asOrgMember(t, "org-a"));
-			if (site.registration === "issues:getStats") {
-				// A zeroed aggregate is a FABRICATED MEASUREMENT, never a refusal.
+			if (
+				site.registration === "issues:getStats" ||
+				site.registration === "errorMonitorFilters:listFilterRules"
+			) {
+				// issues:getStats: a zeroed aggregate is a FABRICATED MEASUREMENT, never
+				// a refusal. errorMonitorFilters:listFilterRules: no reactive subscriber,
+				// and `[]` is the bytes of "no rules exist" -- the member is RAISED at
+				// (task k177jrz8k2dr7naqe7yzmp0px18g77n5, the follow-up the
+				// refusal-is-distinguishable-from-absence rule listed for this site).
 				await expectRefusalCarryingItsCode(got, site.registration);
 			} else if (
 				site.registration === "mandates:list" ||

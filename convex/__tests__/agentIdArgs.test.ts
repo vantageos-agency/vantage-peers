@@ -190,8 +190,10 @@ const taskBase = {
 
 // ─────────────────────────────────────────────────────────────────────────────
 describe("contract: the manifest says the new args exist", () => {
-	test("BACKEND_CONTRACT_VERSION is 2", () => {
-		expect(BACKEND_CONTRACT_VERSION).toBe(2);
+	test("BACKEND_CONTRACT_VERSION is 3", () => {
+		// 3: memberWriterRoles:assertPersonMayWrite takes the verifiedPerson claim
+		// instead of an organisation and a role argument (task k177jrz8k2dr7naqe7yzmp0px18g77n5).
+		expect(BACKEND_CONTRACT_VERSION).toBe(3);
 	});
 });
 
