@@ -229,18 +229,20 @@ async function enforcePersonWriterRole(
 	exempt: boolean,
 ): Promise<McpTextResult | null> {
 	if (exempt || oauthCtx?.principal !== "person") return null;
-	if (!oauthCtx.clerkOrgSlug) {
+	if (!oauthCtx.clerkOrgSlug || oauthCtx.accessTokenHash === undefined) {
 		return mcpError(
 			`Forbidden: ${toolName} refused — person token carries no organisation.`,
 		);
 	}
 	try {
+		// The door is handed the hash of the bearer the person presented and
+		// nothing else: it re-reads the organisation and the role from that token
+		// row. Neither travels as an argument, so neither can be asserted.
 		await internalClient().query(
 			// biome-ignore lint/suspicious/noExplicitAny: Convex string API
 			"memberWriterRoles:assertPersonMayWrite" as any,
 			{
-				orgSlug: oauthCtx.clerkOrgSlug,
-				...(oauthCtx.orgRole !== undefined ? { role: oauthCtx.orgRole } : {}),
+				verifiedPerson: { accessTokenHash: oauthCtx.accessTokenHash },
 				door: `mcp:${toolName}`,
 			},
 		);

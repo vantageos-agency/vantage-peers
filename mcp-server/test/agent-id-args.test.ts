@@ -20,7 +20,7 @@
  *             fromAgentId with neither a verified agent nor a `from`, is refused
  *             before any Convex call; update_task: an ID with no name is refused
  *   DESCRIBE  each description says the ID is the list_peers `agentId`
- *   CONTRACT  rollout order: the MCP requires contract 2, Convex serves 2
+ *   CONTRACT  rollout order: the MCP requires contract 3, Convex serves 3
  */
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
@@ -240,11 +240,11 @@ describe("DESCRIBE — the ID is the list_peers agentId", () => {
 });
 
 describe("CONTRACT — rollout order, Convex first", () => {
-	it("the MCP requires contract 2 and Convex serves 2", () => {
-		expect(REQUIRED_CONTRACT_VERSION).toBe(2);
-		expect(BACKEND_CONTRACT_VERSION).toBe(2);
+	it("the MCP requires contract 3 and Convex serves 3", () => {
+		expect(REQUIRED_CONTRACT_VERSION).toBe(3);
+		expect(BACKEND_CONTRACT_VERSION).toBe(3);
 	});
-	it("the MCP calls no Convex function the manifest of contract 2 lacks", () => {
+	it("the MCP calls no Convex function the manifest of contract 3 lacks", () => {
 		expect(MCP_CALLED_FUNCTIONS).not.toContain("nameOnlyCalls:summary");
 	});
 });

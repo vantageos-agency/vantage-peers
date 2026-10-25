@@ -26,15 +26,15 @@
  */
 
 import { beforeEach, describe, expect, test } from "vitest";
-import { api } from "../_generated/api";
-import type { Id } from "../_generated/dataModel";
-import schema from "../schema";
 import { convexTest } from "../../tests/fixtures/convexTestWithServiceAccount";
 import { testClerkOrgId } from "../../tests/fixtures/testClerkOrgId";
+import { api } from "../_generated/api";
+import type { Id } from "../_generated/dataModel";
 import { requireVerifiedActorPrincipal } from "../lib/actingPrincipal";
 import { type OrgScope, withOrgScope } from "../lib/auth";
 import { resolveVerifiedPerson } from "../lib/personPrincipal";
 import { listedAgentsOfOrg } from "../lib/rosterIds";
+import schema from "../schema";
 
 const modules = Object.fromEntries(
 	Object.entries(import.meta.glob("../**/*.ts")).filter(
@@ -240,10 +240,7 @@ describe("memberWriterRoles:assertPersonMayWrite — the role and the org come f
 
 	test("NOT A PERSON — a seat token's hash is refused", async () => {
 		await expectRefused(
-			service().query(
-				api.memberWriterRoles.assertPersonMayWrite,
-				gate(SEAT_A),
-			),
+			service().query(api.memberWriterRoles.assertPersonMayWrite, gate(SEAT_A)),
 			"not-a-person-token",
 		);
 	});

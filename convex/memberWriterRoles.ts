@@ -2,8 +2,12 @@ import { resolveWriterRole } from "@vantageos/cloud-identity";
 import { ConvexError, v } from "convex/values";
 import type { MutationCtx, QueryCtx } from "./_generated/server";
 import { internalMutation, query } from "./_generated/server";
-import { isMcpBoundMaster, type OrgScope, withOrgScope } from "./lib/auth";
+import { type OrgScope, withOrgScope } from "./lib/auth";
 import { clerkOrgIdForSlug } from "./lib/orgClerkId";
+import {
+	resolveVerifiedPerson,
+	verifiedPersonValidator,
+} from "./lib/personPrincipal";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Writer-role allowlist for the member-acting path (tasks.start / complete /
@@ -141,37 +145,35 @@ export const setMemberWriterRoles = internalMutation({
  * assertPersonMayWrite — the writer-role gate for an MCP PERSON token.
  *
  * A person token reaches Convex under the MCP server's service-account
- * identity, so the verified person's role is not on `ctx.auth` here; the MCP
- * server passes the role it read from the token row (minted from the verified
- * Clerk membership) and the org the token is bound to. The decision is the same
- * pair of functions the member-acting path uses: `loadMemberWriterRoles` (org
- * row, else fleet default, else none) and `assertMemberMayWrite` (fail closed:
- * an absent role, an absent list or an empty list never means "all").
- *
- * Service account only: any other caller is refused, so the role argument can
- * never be supplied by the person it describes.
+ * identity, so the verified person's role is not on `ctx.auth` here. The MCP
+ * server forwards the ONE claim it holds, the hash of the bearer the person
+ * presented (`verifiedPerson`, the same proof the task and mission doors take),
+ * and nothing else: the organisation and the role are re-read from that token
+ * row by `resolveVerifiedPerson`, which believes the claim from the service
+ * account only and refuses a token that is not live, not a person's, or bound to
+ * no active organisation. The claim is MANDATORY: a call that names an
+ * organisation or a role by argument, or carries no token, has no way in. The
+ * decision is then the same pair the member-acting path uses:
+ * `loadMemberWriterRoles` (org row, else fleet default, else none) and
+ * `assertMemberMayWrite` (fail closed: an absent role, an absent list or an
+ * empty list never means "all").
  */
 export const assertPersonMayWrite = query({
 	args: {
-		orgSlug: v.string(),
-		role: v.optional(v.string()),
+		verifiedPerson: verifiedPersonValidator,
 		door: v.string(),
 	},
 	returns: v.object({ allowed: v.literal(true) }),
 	handler: async (ctx, args) => {
 		// isolation-contract: no reactive subscriber exists — enumerated with `grep -rnE "api\.memberWriterRoles\." app components hooks lib contexts providers` in vantage-peers-dashboard 71da625 -> 0 matches. The only caller is the MCP server's imperative defineTool gate (mcp-server/src/registerTool.ts), so a throw cannot crash a render. R-50 declared divergence.
-		const scope = await withOrgScope(ctx);
-		if (!isMcpBoundMaster(scope)) {
-			throw new ConvexError(
-				"RBAC_DENIED: memberWriterRoles.assertPersonMayWrite admits the MCP service account only",
-			);
-		}
-		const writerRoles = await loadMemberWriterRoles(ctx, args.orgSlug);
-		assertMemberMayWrite(
-			{ orgRole: args.role, orgSlug: args.orgSlug },
-			writerRoles,
-			args.door,
+		const transportScope = await withOrgScope(ctx);
+		const person = await resolveVerifiedPerson(
+			ctx,
+			transportScope,
+			args.verifiedPerson,
+			{ door: args.door },
 		);
+		await requireMemberWriterRole(ctx, person, args.door);
 		return { allowed: true as const };
 	},
 });

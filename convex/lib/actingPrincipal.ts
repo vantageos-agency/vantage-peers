@@ -3,6 +3,7 @@ import {
 	assertRecipientAddressable,
 	assertTargetBelongsTo,
 	type IdentityRefusal,
+	isServiceAccountScope,
 	type OrgKind,
 	type PrincipalLookups,
 	membershipPersonLookups,
@@ -106,8 +107,8 @@ function orgKindOfMapping(
  * read keyed by the permanent org ID (the ID-keyed sibling of `principalLookups`).
  * The person row is the verified session itself (this backend keeps no separate
  * person table), so `personById` answers only for the verified subject. An org
- * ID that two mapping rows claim is undecidable (`lookupOrgMapping` answers
- * null), hence not an organisation here.
+ * ID that two mapping rows claim is undecidable (the keyed read throws and the
+ * package refuses a throwing lookup), hence not an organisation here.
  */
 export function personPrincipalLookups(
 	ctx: Pick<Ctx, "db">,
@@ -122,12 +123,25 @@ export function personPrincipalLookups(
 			verifiedSubject === undefined || personId === verifiedSubject
 				? { id: personId, orgId, active: true }
 				: null,
+		// Both organisation reads are keyed by the permanent org ID the package
+		// hands over, through `by_clerk_org_id`. Two rows claiming one ID make
+		// `.unique()` throw, and the package refuses a throwing lookup, so such an
+		// org is undecidable and refused, never picked between.
 		organisationById: async (orgId) => {
-			const mapping = await lookupOrgMapping(ctx, { clerkOrgId: orgId });
+			const mapping = await ctx.db
+				.query("client_org_mapping")
+				.withIndex("by_clerk_org_id", (q) => q.eq("clerkOrgId", orgId))
+				.unique();
 			return mapping === null ? null : { id: orgId, active: mapping.isActive };
 		},
-		orgKindOf: async (orgId): Promise<OrgKind | null> =>
-			orgKindOfMapping(await lookupOrgMapping(ctx, { clerkOrgId: orgId })),
+		orgKindOf: async (orgId): Promise<OrgKind | null> => {
+			const mapping = await ctx.db
+				.query("client_org_mapping")
+				.withIndex("by_clerk_org_id", (q) => q.eq("clerkOrgId", orgId))
+				.unique();
+			if (mapping === null || !mapping.isActive) return null;
+			return mapping.orgKind === "operator" ? "operator" : "client";
+		},
 	};
 }
 
@@ -262,12 +276,7 @@ export async function requireVerifiedActorPrincipal(
 	verifiedActor: VerifiedActor,
 	door: string,
 ): Promise<ActingPrincipal> {
-	if (
-		!(
-			transportScope.isMaster &&
-			transportScope.masterSource === "service-account"
-		)
-	) {
+	if (!isServiceAccountScope(transportScope)) {
 		throw new ConvexError(
 			`RBAC_DENIED: verifiedActor is a transport-verified claim and is accepted only from the fleet service account — ${JSON.stringify({ reason: "verified-actor-not-trusted", door })}`,
 		);

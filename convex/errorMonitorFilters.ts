@@ -680,10 +680,14 @@ export const listFilterRules = query({
 		// signed-in-but-not-yet-onboarded caller's throw to crash, and that caller
 		// must not be handed a fabricated absence either.
 		const scope = await withOrgScope(ctx, { refuseWithoutThrow: true });
+		// An ORDINARY member of an active organisation is resolved and is still not
+		// the fleet master: there is nothing to serve it, and `[]` would be the
+		// bytes of "no rules exist". `masterOnly` refuses it with RBAC_DENIED, so
+		// this handler holds no membership gate of its own.
 		requireResolvedCaller(scope, "errorMonitorFilters:listFilterRules", {
 			alsoRefusePreOrg: true,
+			masterOnly: true,
 		});
-		if (!scope.isMaster) return [];
 
 		return await ctx.db
 			.query("errorMonitorFilterRules")
