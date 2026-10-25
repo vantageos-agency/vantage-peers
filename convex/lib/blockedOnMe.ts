@@ -30,8 +30,9 @@ export type BlockedOnMeResult = CappedList<BlockedOnMeEntry> & {
 const LIVE_STATUSES = ["todo", "in_progress", "review", "blocked"] as const;
 
 /**
- * Bounded two-level walk. Level 1: the reader's live tasks via `by_assignee`
- * (name-keyed, so `taskVisibleTo` re-judges tenant and agent ID on every row).
+ * Bounded two-level walk. Level 1: the reader's live tasks by assignee agent ID
+ * (`by_assigneeId_status_updatedAt`; name-keyed `by_assignee` only as the declared
+ * fallback for a reader with no agent ID). `taskVisibleTo` re-judges every row.
  * Level 2: for each, the `blocked` rows citing it via `by_blockedOnTaskId`.
  * Both levels share STATUS_SCAN_BUDGET documents; hitting it sets `truncated`,
  * and `total` is then a lower bound -- never a silent partial set.
@@ -49,11 +50,27 @@ export async function computeBlockedOnMe(
 	let oldestAge = 0;
 
 	outer: for (const status of LIVE_STATUSES) {
-		const mine = ctx.db
-			.query("tasks")
-			.withIndex("by_assignee", (q) =>
-				q.eq("assignedTo", reader.label).eq("status", status),
-			);
+		const agentId = reader.agentId;
+		// Agent reader: select by the assignee's agents-row ID, so a task assigned
+		// by ID is found whatever its `assignedTo` label says. The name-keyed
+		// `by_assignee` index is a DECLARED FALLBACK, used ONLY when the reader has
+		// no agent ID (a member / org-name / operator reader naming a bare label,
+		// which resolveInboxReader serves by name by design); taskVisibleTo
+		// re-judges tenant (and agent ID) on every row either way.
+		const mine =
+			agentId !== undefined
+				? ctx.db
+						.query("tasks")
+						.withIndex("by_assigneeId_status_updatedAt", (q) =>
+							q
+								.eq("assignedToId", agentId as Id<"agents">)
+								.eq("status", status),
+						)
+				: ctx.db
+						.query("tasks")
+						.withIndex("by_assignee", (q) =>
+							q.eq("assignedTo", reader.label).eq("status", status),
+						);
 		for await (const target of mine) {
 			scanned += 1;
 			if (scanned > STATUS_SCAN_BUDGET) {
@@ -73,9 +90,13 @@ export async function computeBlockedOnMe(
 					break outer;
 				}
 				if (blocked.status !== "blocked") continue;
-				// The blocked row must be inside the reader's tenants too: a row
-				// stamped with another organisation never surfaces, whatever it cites.
-				if (reader.tenants !== "all" && !reader.tenants.includes(blocked.orgId)) {
+				// The blocked row belongs to someone else, so only the TENANT half of
+				// taskVisibleTo applies (the reader's agent ID is dropped: it names the
+				// owner of the target, not of the waiter). A row stamped with another
+				// organisation never surfaces, whatever it cites.
+				if (
+					!taskVisibleTo({ ...reader, agentId: undefined }, blocked, "assignee")
+				) {
 					continue;
 				}
 				const age = Math.max(0, now - blocked.updatedAt);
