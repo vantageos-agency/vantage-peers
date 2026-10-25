@@ -70,7 +70,7 @@ type Resolution =
 	| { kind: "many"; candidates: number };
 
 // allow-local-identity: one-time expand-contract backfill that turns a stored roster NAME into the agent ID inside one org; no request path calls it; removed by the contract PR
-async function resolveInOrg(
+export async function resolveInOrg(
 	db: DatabaseReader,
 	orgSlug: string,
 	name: string,
