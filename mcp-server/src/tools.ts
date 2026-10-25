@@ -3842,6 +3842,110 @@ export function registerTools(
 		},
 	);
 
+	// ── list_blocked_on_me ──────────────────────────────────────────────────────
+
+	defineTool(
+		server,
+		authCtx,
+		{
+			kind: "filtered",
+			reason:
+				"recipient restricted in-handler via isMasterScope( ) plus the fromAllowList/userId speak-as check; the reader itself is resolved by Convex from the verified identity",
+		},
+		"list_blocked_on_me",
+		"List the tasks that other peers have BLOCKED on one of YOUR live tasks (blockedOnTaskId), oldest wait first, with the age of each wait. " +
+			"A dedicated opt-in read: check_messages returns messages only and never carries this list. " +
+			"WHEN: call after check_messages, or before picking new work, to see who is waiting on you. " +
+			"EXAMPLE: list_blocked_on_me recipient='sigma'. " +
+			"Returns { entries[{ blockedTaskId, blockedTitle, blockedAssignee, onTaskId, onTaskTitle, age }], total, truncated, oldestAge }; ages are ms. Default limit 20, cap 200. " +
+			"truncated=true means the bounded scan stopped early and total is a lower bound. An empty list is a real absence; a refusal is an error, never an empty list.",
+		{
+			recipient: creatorSchema
+				.optional()
+				.describe(
+					"Orchestrator whose waiters to list. Omit it only when the credential resolves exactly one agent (a seat or an agent credential); an org-level token and the fleet master must name it.",
+				),
+			tenantId: z
+				.string()
+				.optional()
+				.describe("Restrict to this tenant only"),
+			limit: z
+				.number()
+				.int()
+				.min(1)
+				.max(200)
+				.optional()
+				.describe(
+					"Max entries to return (1-200, default 20). `total` still counts every waiter found, so a trimmed list is visible as entries.length < total.",
+				),
+		},
+		{
+			readOnlyHint: true,
+			openWorldHint: false,
+			destructiveHint: false,
+			title: "List tasks blocked on me",
+		},
+		async ({ recipient, tenantId, limit }) => {
+			try {
+				// Same speak-as gate as check_messages: a non-master bearer may only
+				// read the waiters of an identity it is authorized to speak as.
+				if (recipient !== undefined && oauthCtx && !isMasterScope(oauthCtx)) {
+					const normRecipient = normalizeOrchestratorId(recipient);
+					const allowed =
+						(oauthCtx.fromAllowList?.length ?? 0) > 0
+							? oauthCtx.fromAllowList.some(
+									(a) => normalizeOrchestratorId(a) === normRecipient,
+								)
+							: normRecipient === normalizeOrchestratorId(oauthCtx.userId);
+					if (!allowed) {
+						return mcpError(
+							`Forbidden: list_blocked_on_me can only read the waiters of an identity you are authorized to speak as (token userId='${oauthCtx.userId}', allowed senders=[${(oauthCtx.fromAllowList ?? []).join(", ")}]); requested recipient '${recipient}' is not in that set.`,
+						);
+					}
+				}
+
+				const orgUnresolved = unresolvedOrgDenial("list_blocked_on_me");
+				if (orgUnresolved) return orgUnresolved;
+				const result = await convex.query(
+					// biome-ignore lint/suspicious/noExplicitAny: Convex string API
+					"tasks:listBlockedOnMe" as any,
+					{
+						...(recipient !== undefined ? { recipient } : {}),
+						...(tenantId !== undefined ? { tenantId } : {}),
+						...inboxOrgArgs(recipient),
+					},
+				);
+				const waiters = (result ?? {}) as {
+					entries?: unknown[];
+					total?: number;
+					truncated?: boolean;
+					oldestAge?: number;
+				};
+				const entries = waiters.entries ?? [];
+				const shown = entries.slice(0, limit ?? 20);
+				return {
+					content: [
+						{
+							type: "text",
+							text: JSON.stringify(
+								{
+									entries: shown,
+									total: waiters.total ?? entries.length,
+									truncated: waiters.truncated ?? false,
+									oldestAge: waiters.oldestAge ?? 0,
+								},
+								null,
+								2,
+							),
+						},
+					],
+				};
+			} catch (error: any) {
+				return mcpConvexError(error);
+			}
+		},
+	);
+
 	// ── mark_as_read ────────────────────────────────────────────────────────────
 
 	defineTool(

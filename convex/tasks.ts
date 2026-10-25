@@ -22,6 +22,8 @@ import {
 import { assigneeNotInOrgRefusal } from "./lib/actingPrincipal";
 import type { OrgScope, VerifiedActor } from "./lib/auth";
 import { requireId } from "./lib/ids";
+import { computeBlockedOnMe } from "./lib/blockedOnMe";
+import { resolveInboxReader } from "./lib/inboxReader";
 import { agentLinkAdmits } from "./lib/agentLinks";
 import { mappingIsProven } from "./githubOwnerBinding";
 import {
@@ -2746,6 +2748,69 @@ export const listUnlinkedBlocked = query({
 				createdBy: t.createdBy,
 				updatedAt: t.updatedAt,
 			}));
+	},
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// listBlockedOnMe — the dedicated opt-in read of "who is waiting on me".
+//
+// For each LIVE task assigned to the reader, the `blocked` tasks that cite it
+// through `blockedOnTaskId`. It is NOT part of the check_messages envelope
+// (operator ruling: check_messages returns messages only). Who the reader is
+// comes from the verified identity through `resolveInboxReader` (the same
+// resolution checkNewMessagesEnvelope uses) -- a `recipient` name is honoured
+// only for the callers that door already honours it for, never as authority.
+// Four callers (.claude/rules/refusal-is-distinguishable-from-absence.md):
+//   anonymous / signed in with no organisation   RAISES RBAC_DENIED
+//   a reader                                      the list; a real absence is
+//                                                 an empty SUCCESS (entries: [])
+// ─────────────────────────────────────────────────────────────────────────────
+
+const blockedOnMeEntryValidator = v.object({
+	blockedTaskId: v.id("tasks"),
+	blockedTitle: v.string(),
+	blockedAssignee: v.string(),
+	onTaskId: v.id("tasks"),
+	onTaskTitle: v.string(),
+	age: v.number(),
+});
+
+export const listBlockedOnMe = query({
+	args: {
+		recipient: v.optional(creatorValidator),
+		tenantId: v.optional(v.string()),
+		verifiedActor: v.optional(verifiedActorValidator),
+		verifiedOrg: v.optional(verifiedOrgValidator),
+	},
+	returns: v.object({
+		entries: v.array(blockedOnMeEntryValidator),
+		total: v.number(),
+		truncated: v.boolean(),
+		oldestAge: v.number(),
+	}),
+	handler: async (ctx, args) => {
+		// isolation-contract: no reactive subscriber. Enumerated by command against
+		// the only subscribing consumer (vantage-peers-dashboard):
+		//   grep -rn "api\.tasks\.listBlockedOnMe" --include=*.tsx app components hooks lib
+		// -> no hit (the function is new; the MCP tool list_blocked_on_me is its only
+		// caller). So `alsoRefusePreOrg` is safe: no mounted render exists for that
+		// caller's throw to crash.
+		const scope = await withOrgScope(ctx, { refuseWithoutThrow: true });
+		requireResolvedCaller(scope, "tasks:listBlockedOnMe", {
+			alsoRefusePreOrg: true,
+		});
+		const reader = await resolveInboxReader(
+			ctx,
+			scope,
+			{
+				recipient: args.recipient,
+				tenantId: args.tenantId,
+				verifiedActor: args.verifiedActor,
+				verifiedOrg: args.verifiedOrg,
+			},
+			"tasks:listBlockedOnMe",
+		);
+		return await computeBlockedOnMe(ctx, reader, Date.now());
 	},
 });
 

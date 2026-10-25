@@ -53,6 +53,7 @@ export const VERIFIED_ACTOR_DOORS: ReadonlySet<string> = new Set([
 	// acting-name argument that another org's same-named agent also carries.
 	"messages:checkNewMessages",
 	"messages:checkNewMessagesEnvelope",
+	"tasks:listBlockedOnMe",
 	"messages:getUnreadCount",
 	"messages:markAsRead",
 	"messages:deleteMessage",

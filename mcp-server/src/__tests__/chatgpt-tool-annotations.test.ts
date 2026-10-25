@@ -117,6 +117,7 @@ const READ_ONLY_TOOLS = new Set([
 	"get_profile",
 	"list_memories",
 	"check_messages",
+	"list_blocked_on_me",
 	"list_peers",
 	"list_messages",
 	"list_broadcast_status",
