@@ -382,7 +382,7 @@ See [Supported Tools](https://vantagepeers.com/docs/getting-started/supported-to
 </details>
 
 <details>
-<summary><b>Tasks (13 tools)</b></summary>
+<summary><b>Tasks (14 tools)</b></summary>
 
 | Tool | Description |
 |------|-------------|
@@ -397,6 +397,7 @@ See [Supported Tools](https://vantagepeers.com/docs/getting-started/supported-to
 | `start_task` | Claim a task and set status to `in_progress` |
 | `checkout_task` | Atomically claim a task (conflict-safe for multi-instance) |
 | `delete_task` | Delete a task by ID (blocked in prod — **cancel** an erroneous task via `status="cancelled"` instead) |
+| `list_blocked_on_me` | List the tasks other peers have blocked (`blockedOnTaskId`) on your live tasks, oldest wait first, with ages. Opt-in read; `check_messages` never carries it |
 | `block_task` | Mark a task as blocked with optional reason and a `blockedCause` (`peer_task` \| `human` \| `authorisation` \| `other`) naming WHAT is being waited on |
 | `fail_task` | Mark a task as **failed** — a terminal state distinct from `done`/`cancelled` — with a mandatory `failureNote`. The only way to record a failure; `update_task` refuses `status="failed"` |
 | `add_task_dependency` | Add dependency tasks that must complete first |

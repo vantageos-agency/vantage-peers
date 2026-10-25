@@ -200,6 +200,7 @@ export const BACKEND_FUNCTIONS: readonly string[] = [
 	"tasks:getBulkCompleteRun",
 	"tasks:getById",
 	"tasks:list",
+	"tasks:listBlockedOnMe",
 	"tasks:listByMission",
 	"tasks:listOverdue",
 	"tasks:listPaginated",

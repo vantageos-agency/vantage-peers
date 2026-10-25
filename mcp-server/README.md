@@ -159,7 +159,7 @@ Your organisation's credential authenticates the **organisation**. An individual
 - `resume_recurring_task` (write) — Resume a paused recurring task template and recalculate its next scheduled run time.
 - `update_recurring_task` (write) — Update a recurring task template's fields; cronExpression change auto-recalculates nextRunAt.
 
-### Tasks (16)
+### Tasks (17)
 
 - `add_task_dependency` (write) — Add dependency task IDs to a task so it cannot start until all listed tasks complete.
 - `block_task` (write, destructive) — Mark a task as blocked with an optional reason and blocking task IDs, setting status to blocked.
@@ -171,6 +171,7 @@ Your organisation's credential authenticates the **organisation**. An individual
 - `delete_task` (write, destructive) — Permanently delete a task; only the creator or system role may delete.
 - `fail_task` (write) — Mark a task as failed (a terminal state distinct from done/cancelled) with a mandatory failureNote describing how the work ended.
 - `get_task` (read) — Fetch a single task by its Convex document ID with all fields: title, description, status, priority, assignment, dependencies, mission link, completion note.
+- `list_blocked_on_me` (read) — List the tasks other peers have blocked on one of your live tasks, oldest wait first, with each wait's age; a dedicated opt-in read, never part of check_messages.
 - `list_tasks` (read) — List tasks with optional filters by assignee, status, project, or creator, newest first.
 - `pause_task` (write) — Close the task's open work segment and stop the duration clock, without ending the task.
 - `resume_task` (write) — Open a new work segment on a paused task and set it back to in_progress.

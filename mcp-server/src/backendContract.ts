@@ -175,6 +175,7 @@ export const MCP_CALLED_FUNCTIONS: readonly string[] = [
 	"tasks:getBulkCompleteRun",
 	"tasks:getById",
 	"tasks:list",
+	"tasks:listBlockedOnMe",
 	"tasks:listByMission",
 	"tasks:pause",
 	"tasks:resume",

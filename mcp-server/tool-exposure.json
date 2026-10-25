@@ -40,6 +40,7 @@
 		"improvisation_digest",
 		"instantiate_template_into_mission",
 		"link_issue_to_pattern",
+		"list_blocked_on_me",
 		"list_briefing_notes",
 		"list_broadcast_status",
 		"list_diaries",

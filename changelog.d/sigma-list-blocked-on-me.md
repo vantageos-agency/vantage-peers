@@ -1,0 +1,4 @@
+---
+section: Added
+---
+- **`list_blocked_on_me` MCP tool and `tasks:listBlockedOnMe` read: a responder sees who is waiting on it.** For each live task assigned to the caller, lists the `blocked` tasks that cite it through `blockedOnTaskId` (`blockedTaskId`, `blockedTitle`, `blockedAssignee`, `onTaskId`, `onTaskTitle`, `age`) plus `total`, `oldestAge` and `truncated` (bounded scan, never a silent partial set). The reader comes from the verified identity (same resolution as `check_messages`), a blocked row outside the reader's tenants never appears, an anonymous caller is refused with `RBAC_DENIED`, and an empty result is a real absence. A dedicated opt-in read: `check_messages` still returns messages only. Additive: the new function is in `MCP_CALLED_FUNCTIONS` and the generated backend manifest (no contract-version bump). Tests: `convex/__tests__/listBlockedOnMe.test.ts`, `mcp-server/test/list-blocked-on-me.test.ts`.
