@@ -1,8 +1,7 @@
 /**
  * list_blocked_on_me: the tool calls tasks:listBlockedOnMe and forwards the
- * reader's PROOF the way check_messages does (verifiedActor for a seat,
- * verifiedOrg for an org-level token, never both, nothing for an unresolved
- * org). VantagePeers Cloud (multi-tenant). The tool never invents an empty list
+ * reader's PROOF (verifiedActor for a seat; nothing else: the read serves a
+ * verified agent by ID only, so no name and no organisation are forwarded). VantagePeers Cloud (multi-tenant). The tool never invents an empty list
  * from a refusal.
  */
 
@@ -125,10 +124,10 @@ describe("list_blocked_on_me", () => {
 		expect(JSON.parse(r.text)).toEqual(RESULT);
 	});
 
-	it("ORG-LEVEL token: sends verifiedOrg and never the recipient name, never verifiedActor", async () => {
+	it("ORG-LEVEL token: forwards no organisation and no name, so Convex has no agent to serve and refuses", async () => {
 		const r = await run(ORG_TOKEN, { recipient: "clio" });
 		expect(r.calls[0].name).toBe("tasks:listBlockedOnMe");
-		expect(r.calls[0].args.verifiedOrg).toEqual({ orgSlug: ORG });
+		expect(r.calls[0].args).not.toHaveProperty("verifiedOrg");
 		expect(r.calls[0].args).not.toHaveProperty("recipient");
 		expect(r.calls[0].args).not.toHaveProperty("verifiedActor");
 	});
