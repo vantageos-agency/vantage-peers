@@ -71,6 +71,7 @@ import type * as lib_missionActors from "../lib/missionActors.js";
 import type * as lib_nameOnlyCalls from "../lib/nameOnlyCalls.js";
 import type * as lib_operatorOrg from "../lib/operatorOrg.js";
 import type * as lib_orgClerkId from "../lib/orgClerkId.js";
+import type * as lib_orgIdLookups from "../lib/orgIdLookups.js";
 import type * as lib_personPrincipal from "../lib/personPrincipal.js";
 import type * as lib_profileActors from "../lib/profileActors.js";
 import type * as lib_provisioningMapping from "../lib/provisioningMapping.js";
@@ -217,6 +218,7 @@ declare const fullApi: ApiFromModules<{
   "lib/nameOnlyCalls": typeof lib_nameOnlyCalls;
   "lib/operatorOrg": typeof lib_operatorOrg;
   "lib/orgClerkId": typeof lib_orgClerkId;
+  "lib/orgIdLookups": typeof lib_orgIdLookups;
   "lib/personPrincipal": typeof lib_personPrincipal;
   "lib/profileActors": typeof lib_profileActors;
   "lib/provisioningMapping": typeof lib_provisioningMapping;
