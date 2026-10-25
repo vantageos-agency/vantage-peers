@@ -1,6 +1,6 @@
 /// <reference types="vite/client" />
 //
-// remove_ghost_roster_names — drops from `client_org_mapping.allowedOrchestrators`
+// backfillRosterAgentIds { removeUnknown } — drops from `client_org_mapping.allowedOrchestrators`
 // the names that resolve to NO agents row in the row's own org (Pi ruling (c),
 // task k1778c2hvae8e8vz9f5bbbbbb98g62hw). Hermetic: nothing touches a deployment.
 //
@@ -19,8 +19,7 @@ const modules = Object.fromEntries(
 	Object.entries(import.meta.glob("../**/*.ts")),
 );
 const NOW = 1_700_000_000_000;
-const run =
-	internal.migrations.remove_ghost_roster_names.removeGhostRosterNames;
+const run = internal.migrations.backfillRosterAgentIds.backfillRosterAgentIds;
 
 async function world() {
 	const t = convexTest(schema, modules);
@@ -71,12 +70,12 @@ describe("remove_ghost_roster_names", () => {
 	test("the dry run lists ghosts per row and changes nothing", async () => {
 		const { t, rows, snapshot } = await world();
 		const before = await snapshot();
-		const report = await t.mutation(run, {});
+		const report = await t.mutation(run, { removeUnknown: true });
 		expect(report.dryRun).toBe(true);
 		expect(report.scanned).toBe(2);
 		expect(report.patched).toBe(0);
-		expect(report.removedTotal).toBe(2);
-		const dirty = report.rows.find((r) => r.rowId === rows.dirty);
+		expect(report.removal?.removedTotal).toBe(2);
+		const dirty = report.removal?.rows.find((r) => r.rowId === rows.dirty);
 		expect(dirty?.removed.sort()).toEqual(["ghost-1", "other"]);
 		expect(dirty?.kept).toEqual(["eve", "twin", "*"]);
 		expect(await snapshot()).toEqual(before);
@@ -84,15 +83,14 @@ describe("remove_ghost_roster_names", () => {
 
 	test("the write removes only ghosts and keeps resolvable names and allowedAgentIds", async () => {
 		const { t, rows, agents, snapshot } = await world();
-		const report = await t.mutation(run, { dryRun: false });
+		const report = await t.mutation(run, {
+			dryRun: false,
+			removeUnknown: true,
+		});
 		expect(report.dryRun).toBe(false);
 		expect(report.patched).toBe(1);
-		expect(report.preState).toEqual([
-			{
-				rowId: rows.dirty,
-				allowedOrchestrators: ["eve", "ghost-1", "other", "twin", "*"],
-			},
-		]);
+		const entry = report.removal?.rows.find((r) => r.rowId === rows.dirty);
+		expect(entry?.preState).toEqual(["eve", "ghost-1", "other", "twin", "*"]);
 		const after = await snapshot();
 		const dirty = after.find((r) => r._id === rows.dirty);
 		expect(dirty?.allowedOrchestrators).toEqual(["eve", "twin", "*"]);
@@ -102,7 +100,7 @@ describe("remove_ghost_roster_names", () => {
 
 	test("an ambiguous name is kept and listed", async () => {
 		const { t, rows } = await world();
-		const report = await t.mutation(run, {});
+		const report = await t.mutation(run, { removeUnknown: true });
 		expect(report.ambiguous).toEqual([
 			{
 				rowId: rows.dirty,
@@ -111,30 +109,49 @@ describe("remove_ghost_roster_names", () => {
 				candidates: 2,
 			},
 		]);
-		const dirty = report.rows.find((r) => r.rowId === rows.dirty);
+		const dirty = report.removal?.rows.find((r) => r.rowId === rows.dirty);
 		expect(dirty?.removed).not.toContain("twin");
 		expect(dirty?.kept).toContain("twin");
 	});
 
 	test("the second run is a no-op", async () => {
 		const { t, snapshot } = await world();
-		await t.mutation(run, { dryRun: false });
+		await t.mutation(run, { dryRun: false, removeUnknown: true });
 		const afterFirst = await snapshot();
-		const second = await t.mutation(run, { dryRun: false });
-		expect(second.removedTotal).toBe(0);
+		const second = await t.mutation(run, {
+			dryRun: false,
+			removeUnknown: true,
+		});
+		expect(second.removal?.removedTotal).toBe(0);
 		expect(second.patched).toBe(0);
-		expect(second.preState).toEqual([]);
+		expect(second.removal?.rows.flatMap((r) => r.removed)).toEqual([]);
 		expect(await snapshot()).toEqual(afterFirst);
 	});
 
 	test("a row with no ghosts is untouched", async () => {
 		const { t, rows, snapshot } = await world();
 		const before = (await snapshot()).find((r) => r._id === rows.clean);
-		const report = await t.mutation(run, { dryRun: false });
-		const entry = report.rows.find((r) => r.rowId === rows.clean);
+		const report = await t.mutation(run, {
+			dryRun: false,
+			removeUnknown: true,
+		});
+		const entry = report.removal?.rows.find((r) => r.rowId === rows.clean);
 		expect(entry?.removed).toEqual([]);
 		expect(entry?.kept).toEqual(["ada"]);
 		const after = (await snapshot()).find((r) => r._id === rows.clean);
+		expect(after).toEqual(before);
+	});
+
+	test("removeUnknown absent: no name is removed (the backfill's old behaviour)", async () => {
+		const { t, rows, snapshot } = await world();
+		const before = await snapshot();
+		const report = await t.mutation(run, { dryRun: false });
+		expect(report.removal).toBeUndefined();
+		expect(report.patched).toBe(0);
+		const after = await snapshot();
+		expect(
+			after.find((r) => r._id === rows.dirty)?.allowedOrchestrators,
+		).toEqual(["eve", "ghost-1", "other", "twin", "*"]);
 		expect(after).toEqual(before);
 	});
 });
