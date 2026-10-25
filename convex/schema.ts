@@ -1,5 +1,11 @@
 import { defineSchema, defineTable } from "convex/server";
 import { v } from "convex/values";
+import {
+	debateRoomFields,
+	debateSettingsValidator,
+	debateTemplateFields,
+	debateTurnFields,
+} from "./lib/debateTemplate";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Shared validators (reused across tables)
@@ -2292,4 +2298,35 @@ export default defineSchema({
 		.index("by_org_agent_clerk_id", ["clerkOrgId", "agentName"])
 		.index("by_agent", ["agentId"])
 		.index("by_secret_hash", ["secretHash"]),
+
+	// ── debate rooms ───────────────────────────────────────────────────────────
+	// A room is a record with a turn pointer; `debate:postTurn` is the only public
+	// writer of turns. Participants, order, wording and limits are DATA (the frozen
+	// `template` / `settings` copies below), never constants in the functions.
+	// Tenant-scoped by the permanent org ID (`tenantOrgId`, the identity) beside the
+	// slug (`tenantId`, the label). Design: sigma-scratch/debate/design.md sections 1, 8.
+	debateTemplates: defineTable(debateTemplateFields).index(
+		"by_tenantOrgId_and_templateKey",
+		["tenantOrgId", "templateKey"],
+	),
+
+	// One row per tenant.
+	debateSettings: defineTable({
+		tenantId: v.string(),
+		tenantOrgId: v.string(),
+		...debateSettingsValidator.fields,
+		updatedBy: v.string(),
+		updatedAt: v.number(),
+	}).index("by_tenantOrgId", ["tenantOrgId"]),
+
+	// A debate room: subject, frozen template and settings copies, the turn pointer
+	// (round, position, turnSeq), who is awaited, and the per-participant skip state.
+	debateRooms: defineTable(debateRoomFields),
+
+	// The transcript of a room, one row per turn (answer, operator turn, skip, drop,
+	// refusal, system note); `writer` names the function that wrote it.
+	debateTurns: defineTable(debateTurnFields).index("by_room_seq", [
+		"roomId",
+		"turnSeq",
+	]),
 });

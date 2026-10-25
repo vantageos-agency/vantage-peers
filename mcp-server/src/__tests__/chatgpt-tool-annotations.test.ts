@@ -177,6 +177,9 @@ const READ_ONLY_TOOLS = new Set([
 	// PR-I — improvisation_digest is a pure read query (improvisationDigest:scanWindow),
 	// ADVISORY-only; readOnlyHint=true is semantically correct.
 	"improvisation_digest",
+	// Debate room: a read of the caller's own room (debate:getRoom). debate_post_turn
+	// writes, so it is deliberately NOT in this set.
+	"debate_get_room",
 ]);
 
 const DESTRUCTIVE_TOOLS = new Set([

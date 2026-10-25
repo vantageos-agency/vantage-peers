@@ -257,6 +257,7 @@ export const recurringTaskIdSchema = convexIdSchema("recurringTaskId");
 export const buIdSchema = convexIdSchema("buId");
 export const episodeIdSchema = convexIdSchema("episodeId");
 export const diaryIdSchema = convexIdSchema("diaryId");
+export const debateRoomIdSchema = convexIdSchema("roomId");
 
 const memoryTypeSchema = z
 	.enum(["user", "feedback", "project", "reference", "episode"])
@@ -1205,6 +1206,22 @@ export const listMemoriesOutputSchema = z.union([
 		page: z.array(z.record(z.string(), z.unknown())).optional(),
 	}),
 ]);
+
+// debate_post_turn: the accepted answer. A refusal is not this shape: it is an
+// ERROR result whose text opens `REFUSED (<reason>)`.
+export const debatePostTurnOutputSchema = z.object({
+	accepted: z.literal(true),
+	turnSeq: z.number(),
+	closed: z.boolean(),
+	closeReason: z.string().optional(),
+	workDuringTurn: z.string(),
+});
+
+// debate_get_room
+export const debateGetRoomOutputSchema = z.object({
+	room: z.record(z.string(), z.unknown()),
+	turns: z.array(z.record(z.string(), z.unknown())),
+});
 
 // send_message
 export const sendMessageOutputSchema = z.object({
@@ -8085,6 +8102,122 @@ export function registerTools(
 					mandateId: mandateId as any,
 					proposedAmount,
 				});
+				return {
+					content: [{ type: "text", text: JSON.stringify(result, null, 2) }],
+				};
+			} catch (error: any) {
+				return mcpConvexError(error);
+			}
+		},
+	);
+
+	// ── debate_post_turn ────────────────────────────────────────────────────────
+
+	defineTool(
+		server,
+		authCtx,
+		{
+			kind: "public",
+			reason:
+				"the caller is derived by Convex from the credential (verifiedActor, forwarded by the wrapped client) and judged against the room's own participant list at the door; the tool takes no acting name",
+		},
+		"debate_post_turn",
+		"Post your answer to the debate-room turn you were asked for; the only way a turn enters a room. " +
+			"WHEN: the [DEBATE-TURN] message in your inbox asks for it, exactly once per turnSeq, then mark that message read. " +
+			"EXAMPLE: debate_post_turn roomId='<roomId from the message>' turnSeq=3 text='...' done=false. " +
+			"A refusal (not_your_turn, stale_turn, too_long, room_closed, ...) is returned as an error result, never as a success.",
+		{
+			roomId: debateRoomIdSchema.describe("Room ID from the [DEBATE-TURN] message"),
+			turnSeq: z
+				.number()
+				.int()
+				.min(1)
+				.describe("turnSeq from the [DEBATE-TURN] message (a stale one is refused)"),
+			text: z.string().describe("Your answer, within the character limit the message states"),
+			done: z
+				.boolean()
+				.optional()
+				.describe("true when you have nothing to add (the room closes when every agent says so in one round)"),
+		},
+		{
+			readOnlyHint: false,
+			openWorldHint: false,
+			destructiveHint: false,
+			title: "Post a debate-room turn",
+		},
+		async ({ roomId, turnSeq, text, done }) => {
+			try {
+				const result = (await convex.mutation("debate:postTurn" as any, {
+					roomId: roomId as any,
+					turnSeq,
+					text,
+					...(done !== undefined ? { done } : {}),
+				})) as
+					| { refused: string; awaiting: string | null; turnSeq: number }
+					| { accepted: true; turnSeq: number; closed: boolean };
+				if ("refused" in result) {
+					return {
+						content: [
+							{
+								type: "text" as const,
+								text:
+									`REFUSED (${result.refused}): the turn was not recorded. ` +
+									`The room is at turnSeq ${result.turnSeq}, awaiting ${result.awaiting ?? "nobody"}.`,
+							},
+						],
+						isError: true,
+					};
+				}
+				return {
+					content: [{ type: "text", text: JSON.stringify(result, null, 2) }],
+				};
+			} catch (error: any) {
+				return mcpConvexError(error);
+			}
+		},
+	);
+
+	// ── debate_get_room ─────────────────────────────────────────────────────────
+
+	defineTool(
+		server,
+		authCtx,
+		{
+			kind: "public",
+			reason:
+				"the caller is derived by Convex from the credential (verifiedActor) and served only a room it created or is a listed participant of; any other room answers like a missing one",
+		},
+		"debate_get_room",
+		"Read a debate room: its subject, frozen template, pointer and the full transcript. Read-only. " +
+			"WHEN: the [DEBATE-TURN] message says earlier turns were omitted, or you need the whole transcript. " +
+			"EXAMPLE: debate_get_room roomId='<roomId from the message>'.",
+		{
+			roomId: debateRoomIdSchema.describe("Room ID from the [DEBATE-TURN] message"),
+		},
+		{
+			readOnlyHint: true,
+			openWorldHint: false,
+			destructiveHint: false,
+			title: "Get a debate room",
+		},
+		async ({ roomId }) => {
+			try {
+				const result = await convex.query("debate:getRoom" as any, {
+					roomId: roomId as any,
+				});
+				if (result === null) {
+					return {
+						content: [
+							{
+								type: "text" as const,
+								text:
+									"ROOM NOT AVAILABLE: no room with this id is visible to the caller " +
+									"(it does not exist, or the caller is neither its operator nor a listed participant). This is not an empty room.",
+							},
+						],
+						isError: true,
+					};
+				}
 				return {
 					content: [{ type: "text", text: JSON.stringify(result, null, 2) }],
 				};

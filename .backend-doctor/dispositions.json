@@ -44,6 +44,14 @@
 			"disposition": "CONSERVER",
 			"reason": "live: served by MCP-public tool(s) create_mission, create_recurring_task, create_task, send_message …"
 		},
+		"debateRooms": {
+			"disposition": "CONSERVER",
+			"reason": "live: served by MCP-public tool(s) debate_get_room, debate_post_turn"
+		},
+		"debateTurns": {
+			"disposition": "CONSERVER",
+			"reason": "live: served by MCP-public tool(s) debate_get_room, debate_post_turn"
+		},
 		"diary": {
 			"disposition": "CONSERVER",
 			"reason": "live: served by MCP-public tool(s) get_diary, list_diaries, write_diary",

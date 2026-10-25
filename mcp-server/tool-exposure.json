@@ -16,6 +16,8 @@
 		"create_mission",
 		"create_recurring_task",
 		"create_task",
+		"debate_get_room",
+		"debate_post_turn",
 		"delete_message",
 		"delete_recurring_task",
 		"delete_task",
