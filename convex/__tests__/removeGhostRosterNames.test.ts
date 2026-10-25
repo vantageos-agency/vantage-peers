@@ -19,7 +19,8 @@ const modules = Object.fromEntries(
 	Object.entries(import.meta.glob("../**/*.ts")),
 );
 const NOW = 1_700_000_000_000;
-const run = internal.migrations.remove_ghost_roster_names.removeGhostRosterNames;
+const run =
+	internal.migrations.remove_ghost_roster_names.removeGhostRosterNames;
 
 async function world() {
 	const t = convexTest(schema, modules);
