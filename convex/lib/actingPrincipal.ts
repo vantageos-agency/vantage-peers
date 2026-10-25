@@ -3,11 +3,12 @@ import {
 	assertRecipientAddressable,
 	assertTargetBelongsTo,
 	type IdentityRefusal,
-	isServiceAccountScope,
+	IdentityRefusalError,
 	type OrgKind,
 	type PrincipalLookups,
 	membershipPersonLookups,
 	type RecipientLookups,
+	requireServiceAccountStanding,
 	resolveActingPrincipal,
 } from "@vantageos/cloud-identity";
 import { ConvexError } from "convex/values";
@@ -107,8 +108,8 @@ function orgKindOfMapping(
  * read keyed by the permanent org ID (the ID-keyed sibling of `principalLookups`).
  * The person row is the verified session itself (this backend keeps no separate
  * person table), so `personById` answers only for the verified subject. An org
- * ID that two mapping rows claim is undecidable (the keyed read throws and the
- * package refuses a throwing lookup), hence not an organisation here.
+ * ID that two mapping rows claim is undecidable (`lookupOrgMapping` answers
+ * null), hence not an organisation here.
  */
 export function personPrincipalLookups(
 	ctx: Pick<Ctx, "db">,
@@ -123,25 +124,12 @@ export function personPrincipalLookups(
 			verifiedSubject === undefined || personId === verifiedSubject
 				? { id: personId, orgId, active: true }
 				: null,
-		// Both organisation reads are keyed by the permanent org ID the package
-		// hands over, through `by_clerk_org_id`. Two rows claiming one ID make
-		// `.unique()` throw, and the package refuses a throwing lookup, so such an
-		// org is undecidable and refused, never picked between.
 		organisationById: async (orgId) => {
-			const mapping = await ctx.db
-				.query("client_org_mapping")
-				.withIndex("by_clerk_org_id", (q) => q.eq("clerkOrgId", orgId))
-				.unique();
+			const mapping = await lookupOrgMapping(ctx, { clerkOrgId: orgId });
 			return mapping === null ? null : { id: orgId, active: mapping.isActive };
 		},
-		orgKindOf: async (orgId): Promise<OrgKind | null> => {
-			const mapping = await ctx.db
-				.query("client_org_mapping")
-				.withIndex("by_clerk_org_id", (q) => q.eq("clerkOrgId", orgId))
-				.unique();
-			if (mapping === null || !mapping.isActive) return null;
-			return mapping.orgKind === "operator" ? "operator" : "client";
-		},
+		orgKindOf: async (orgId): Promise<OrgKind | null> =>
+			orgKindOfMapping(await lookupOrgMapping(ctx, { clerkOrgId: orgId })),
 	};
 }
 
@@ -259,6 +247,37 @@ export function refuseWith(refusal: IdentityRefusal): never {
 	);
 }
 
+// The wire reason of the two transport-verified claims the fleet service
+// account alone is believed on. Pinned by convex/__tests__/verifiedActorProof
+// and verifiedPersonBridge (R-16: a reason never changes meaning).
+const CLAIM_NOT_TRUSTED_REASON = {
+	verifiedActor: "verified-actor-not-trusted",
+	verifiedPerson: "verified-person-not-trusted",
+} as const;
+
+/**
+ * A transport-verified claim (`verifiedActor`, `verifiedPerson`) is believed from
+ * the fleet service account only. WHO the service account is, is the package's
+ * decision (`requireServiceAccountStanding`: master, fleet-wide and a
+ * service-account source, all three agreeing); this function only says its
+ * refusal in the wire reason these doors have always carried. It compares no
+ * field of the scope itself.
+ */
+export function requireServiceAccountForClaim(
+	transportScope: OrgScope,
+	claim: keyof typeof CLAIM_NOT_TRUSTED_REASON,
+	door: string,
+): void {
+	try {
+		requireServiceAccountStanding(transportScope, door);
+	} catch (err) {
+		if (!(err instanceof IdentityRefusalError)) throw err;
+		throw new ConvexError(
+			`${err.refusal.code}: ${claim} is a transport-verified claim and is accepted only from the fleet service account — ${JSON.stringify({ reason: CLAIM_NOT_TRUSTED_REASON[claim], door })}`,
+		);
+	}
+}
+
 /**
  * The acting AGENT behind a `verifiedActor` the MCP transport forwarded, resolved
  * BY ID through the package, or a thrown RBAC_DENIED.
@@ -276,11 +295,7 @@ export async function requireVerifiedActorPrincipal(
 	verifiedActor: VerifiedActor,
 	door: string,
 ): Promise<ActingPrincipal> {
-	if (!isServiceAccountScope(transportScope)) {
-		throw new ConvexError(
-			`RBAC_DENIED: verifiedActor is a transport-verified claim and is accepted only from the fleet service account — ${JSON.stringify({ reason: "verified-actor-not-trusted", door })}`,
-		);
-	}
+	requireServiceAccountForClaim(transportScope, "verifiedActor", door);
 	const resolved = await resolveActingPrincipal(
 		{
 			kind: "agent",

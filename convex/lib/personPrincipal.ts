@@ -1,7 +1,6 @@
 import {
 	assertTargetBelongsTo,
 	checkPersonCallShape,
-	isServiceAccountScope,
 	type PersonRefusal,
 	resolveActingPrincipal,
 	resolvePersonPrincipal,
@@ -11,6 +10,7 @@ import type { MutationCtx, QueryCtx } from "../_generated/server";
 import {
 	personPrincipalLookups,
 	refuseWith as refuseIdentity,
+	requireServiceAccountForClaim,
 } from "./actingPrincipal";
 import { lookupOrgMapping, type OrgScope } from "./auth";
 
@@ -52,12 +52,6 @@ export const verifiedPersonValidator = v.object({
 
 export type VerifiedPerson = { accessTokenHash: string };
 
-function refuse(reason: string, door: string, detail: string): never {
-	throw new ConvexError(
-		`RBAC_DENIED: ${detail} — ${JSON.stringify({ reason, door })}`,
-	);
-}
-
 // The package's typed refusal, said in this backend's wire shape. The DECISION
 // is @vantageos/cloud-identity's; only the transport (a ConvexError carrying
 // its code as the prefix and {reason, door} as the payload) is local.
@@ -86,13 +80,7 @@ export async function resolveVerifiedPerson(
 	if (proof === undefined) return transportScope;
 	const { door } = opts;
 
-	if (!isServiceAccountScope(transportScope)) {
-		refuse(
-			"verified-person-not-trusted",
-			door,
-			"verifiedPerson is a transport-verified claim and is accepted only from the fleet service account",
-		);
-	}
+	requireServiceAccountForClaim(transportScope, "verifiedPerson", door);
 	const shape = checkPersonCallShape({
 		door,
 		...(opts.agentProof === true ? { agentProof: true } : {}),

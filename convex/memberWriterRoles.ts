@@ -2,7 +2,7 @@ import { resolveWriterRole } from "@vantageos/cloud-identity";
 import { ConvexError, v } from "convex/values";
 import type { MutationCtx, QueryCtx } from "./_generated/server";
 import { internalMutation, query } from "./_generated/server";
-import { type OrgScope, withOrgScope } from "./lib/auth";
+import { type OrgScope, requireResolvedCaller, withOrgScope } from "./lib/auth";
 import { clerkOrgIdForSlug } from "./lib/orgClerkId";
 import {
 	resolveVerifiedPerson,
@@ -166,7 +166,14 @@ export const assertPersonMayWrite = query({
 	returns: v.object({ allowed: v.literal(true) }),
 	handler: async (ctx, args) => {
 		// isolation-contract: no reactive subscriber exists — enumerated with `grep -rnE "api\.memberWriterRoles\." app components hooks lib contexts providers` in vantage-peers-dashboard 71da625 -> 0 matches. The only caller is the MCP server's imperative defineTool gate (mcp-server/src/registerTool.ts), so a throw cannot crash a render. R-50 declared divergence.
-		const transportScope = await withOrgScope(ctx);
+		const transportScope = await withOrgScope(ctx, {
+			refuseWithoutThrow: true,
+		});
+		requireResolvedCaller(
+			transportScope,
+			"memberWriterRoles:assertPersonMayWrite",
+			{ alsoRefusePreOrg: true, masterOnly: true, mcpBoundOnly: true },
+		);
 		const person = await resolveVerifiedPerson(
 			ctx,
 			transportScope,
