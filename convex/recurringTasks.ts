@@ -780,25 +780,54 @@ export const PROCESS_DUE_PAGE = 100;
 const OPEN_INSTANCE_STATUSES = ["todo", "in_progress", "review", "blocked"] as const;
 
 /**
- * Bound on the legacy same-title lookup, per (tenant, assignee, status) bucket.
+ * Bound on the legacy same-title lookup, per (assignee, status) bucket.
  * If a bucket reaches it, the lookup cannot prove absence, so the answer is
  * "unknown" and the tick SKIPS (creating on an unknown state is the stacking
  * defect itself).
+ *
+ * A schedule WITHOUT `assignedToId` reads the name-keyed `by_assignee` rows and
+ * drops the other tenants' rows in memory; its `truncated` is computed on the RAW
+ * rows before that filter. So a busy assignee with >= bound stamped tasks leaves
+ * an unstamped legacy schedule `unknown` (a visible skip reason, never a create).
  */
 export const LEGACY_OPEN_LOOKUP_BOUND = 1000;
+
+/**
+ * Rows ALL `loadBucket` calls together may read in ONE `processDueTasks`
+ * transaction (same pattern as STATUS_SCAN_BUDGET in lib/taskClosureGate.ts).
+ * Once spent, a lookup answers `unknown` and the tick skips with a recorded
+ * reason, so a page of 100 schedules over busy assignees cannot approach
+ * Convex's per-transaction read limits.
+ */
+export const PROCESS_DUE_SCAN_BUDGET = 4000;
 
 type OpenInstance =
 	| { kind: "open"; taskId: Id<"tasks">; status: string; adopt: boolean }
 	| { kind: "none" }
-	| { kind: "unknown" };
+	| { kind: "unknown"; cause: "bound" | "budget" };
 
 type BucketRow = { _id: Id<"tasks">; title: string; orgId: string | undefined };
-type Bucket = { rows: BucketRow[]; truncated: boolean };
-/** One scan per bucket per transaction, shared by every schedule in the page. */
-type BucketCache = Map<string, Bucket>;
+type Bucket = { rows: BucketRow[]; truncated: boolean; budgetHit: boolean };
+/**
+ * One scan per bucket per transaction, shared by every schedule in the page,
+ * plus the running count of rows read (the shared scan budget).
+ */
+type BucketCache = { buckets: Map<string, Bucket>; scanned: number };
 
-const bucketKey = (orgId: string | undefined, assignedTo: string, status: string) =>
-	`${orgId ?? ""}\u0000${assignedTo}\u0000${status}`;
+/** ID-keyed and name-keyed buckets never share a key. */
+const bucketKey = (
+	orgId: string | undefined,
+	assignee: { assignedToId: string } | { assignedTo: string },
+	status: string,
+) =>
+	"assignedToId" in assignee
+		? `${orgId ?? ""}\u0000id:${assignee.assignedToId}\u0000${status}`
+		: `${orgId ?? ""}\u0000name:${assignee.assignedTo}\u0000${status}`;
+
+const keyOf = (recurring: Doc<"recurringTasks">, status: string) =>
+	recurring.assignedToId !== undefined
+		? bucketKey(recurring.orgId, { assignedToId: recurring.assignedToId }, status)
+		: bucketKey(recurring.orgId, { assignedTo: recurring.assignedTo }, status);
 
 async function loadBucket(
 	ctx: MutationCtx,
@@ -806,35 +835,57 @@ async function loadBucket(
 	status: (typeof OPEN_INSTANCE_STATUSES)[number],
 	cache: BucketCache,
 ): Promise<Bucket> {
-	const key = bucketKey(recurring.orgId, recurring.assignedTo, status);
-	const hit = cache.get(key);
+	const key = keyOf(recurring, status);
+	const hit = cache.buckets.get(key);
 	if (hit) return hit;
-	// A stamped schedule reads only its own tenant's bucket; an unstamped one
-	// reads the assignee bucket and keeps only unstamped rows (never crosses over).
-	const rows =
-		recurring.orgId !== undefined
-			? await ctx.db
-					.query("tasks")
-					.withIndex("by_orgId_assignee_status", (q) =>
-						q
-							.eq("orgId", recurring.orgId)
-							.eq("assignedTo", recurring.assignedTo)
-							.eq("status", status),
-					)
-					.take(LEGACY_OPEN_LOOKUP_BOUND)
-			: await ctx.db
-					.query("tasks")
-					.withIndex("by_assignee", (q) =>
-						q.eq("assignedTo", recurring.assignedTo).eq("status", status),
-					)
-					.take(LEGACY_OPEN_LOOKUP_BOUND);
+	const remaining = PROCESS_DUE_SCAN_BUDGET - cache.scanned;
+	if (remaining <= 0) {
+		// Not cached: it holds no rows and must not mask a later transaction.
+		return { rows: [], truncated: true, budgetHit: true };
+	}
+	const limit = Math.min(LEGACY_OPEN_LOOKUP_BOUND, remaining);
+	const assigneeId = recurring.assignedToId;
+	let rows: Doc<"tasks">[];
+	if (assigneeId !== undefined) {
+		// By agent ID: the ID belongs to exactly one org; the tenant filter below
+		// stays as the in-memory defence it has always been.
+		rows = await ctx.db
+			.query("tasks")
+			.withIndex("by_assigneeId_status_updatedAt", (q) =>
+				q.eq("assignedToId", assigneeId).eq("status", status),
+			)
+			.take(limit);
+	} else {
+		// allow-local-identity: internal cron compares stored data against data; there is no caller (legacy schedule without assignedToId; lastTaskId takes over after the first created run)
+		const byName = recurring.assignedTo;
+		rows =
+			recurring.orgId !== undefined
+				? await ctx.db
+						.query("tasks")
+						.withIndex("by_orgId_assignee_status", (q) =>
+							q
+								.eq("orgId", recurring.orgId)
+								.eq("assignedTo", byName)
+								.eq("status", status),
+						)
+						.take(limit)
+				: await ctx.db
+						.query("tasks")
+						.withIndex("by_assignee", (q) =>
+							q.eq("assignedTo", byName).eq("status", status),
+						)
+						.take(limit);
+	}
+	cache.scanned += rows.length;
+	const reached = rows.length >= limit;
 	const bucket: Bucket = {
 		rows: rows
 			.filter((r) => r.orgId === recurring.orgId)
 			.map((r) => ({ _id: r._id, title: r.title, orgId: r.orgId })),
-		truncated: rows.length >= LEGACY_OPEN_LOOKUP_BOUND,
+		truncated: reached,
+		budgetHit: reached && limit < LEGACY_OPEN_LOOKUP_BOUND,
 	};
-	cache.set(key, bucket);
+	cache.buckets.set(key, bucket);
 	return bucket;
 }
 
@@ -844,7 +895,8 @@ async function loadBucket(
  * 1. `lastTaskId` set: authoritative. Read that task; open status means open,
  *    closed or deleted means none.
  * 2. Legacy row (no `lastTaskId`): bounded lookup of each open status bucket
- *    (tenant, assignee, status), matched on title. Same tenant only: an
+ *    (tenant, assignee, status), matched on title. Keyed by `assignedToId` when
+ *    the schedule carries one, by assignee name only when it does not. Same tenant only: an
  *    unstamped task never blocks a stamped schedule. A bucket that hit the
  *    bound is "unknown", not "none".
  */
@@ -860,16 +912,18 @@ async function findOpenInstance(
 		}
 		return { kind: "none" };
 	}
-	let unknown = false;
+	let unknown: "bound" | "budget" | null = null;
 	for (const status of OPEN_INSTANCE_STATUSES) {
 		const bucket = await loadBucket(ctx, recurring, status, cache);
 		const match = bucket.rows.find((r) => r.title === recurring.title);
 		if (match) {
 			return { kind: "open", taskId: match._id, status, adopt: true };
 		}
-		if (bucket.truncated) unknown = true;
+		if (bucket.truncated) {
+			unknown = bucket.budgetHit || unknown === "budget" ? "budget" : "bound";
+		}
 	}
-	return unknown ? { kind: "unknown" } : { kind: "none" };
+	return unknown !== null ? { kind: "unknown", cause: unknown } : { kind: "none" };
 }
 
 export const processDueTasks = internalMutation({
@@ -894,7 +948,7 @@ export const processDueTasks = internalMutation({
 		let created = 0;
 		let failed = 0;
 		let skipped = 0;
-		const bucketCache: BucketCache = new Map();
+		const bucketCache: BucketCache = { buckets: new Map(), scanned: 0 };
 
 		for (const recurring of dueTasks) {
 
@@ -945,7 +999,9 @@ export const processDueTasks = internalMutation({
 					const reason =
 						open.kind === "open"
 							? `previous instance ${open.taskId} still open (status ${open.status})`
-							: `open-instance lookup hit its bound (${LEGACY_OPEN_LOOKUP_BOUND} per status bucket) for assignee ${recurring.assignedTo}; state unknown, not creating`;
+							: open.cause === "budget"
+								? `open-instance lookup scan budget (${PROCESS_DUE_SCAN_BUDGET} rows per transaction) exhausted for assignee ${recurring.assignedTo}; state unknown, not creating`
+								: `open-instance lookup hit its bound (${LEGACY_OPEN_LOOKUP_BOUND} per status bucket) for assignee ${recurring.assignedTo}; state unknown, not creating`;
 					const log = open.kind === "open" ? console.log : console.error;
 					log(`Recurring tasks: skipped schedule ${recurring._id} — ${reason}`);
 					await ctx.db.patch(recurring._id, {
@@ -989,8 +1045,8 @@ export const processDueTasks = internalMutation({
 
 				// A later schedule in this page with the same title, assignee and
 				// tenant must see this instance as open.
-				bucketCache
-					.get(bucketKey(recurring.orgId, recurring.assignedTo, "todo"))
+				bucketCache.buckets
+					.get(keyOf(recurring, "todo"))
 					?.rows.push({
 						_id: insertedId,
 						title: recurring.title,
