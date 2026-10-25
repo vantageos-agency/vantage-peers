@@ -42,7 +42,11 @@
  *                    from the defineTool `scope` literal (mcp-server/src/
  *                    registerTool.ts ToolScope), in the vocabulary the day-158
  *                    audit used for the same kinds (1:1 in that audit), plus the
- *                    Convex-side caller-resolution helpers reached.
+ *                    Convex-side caller-resolution helpers reached. A `public`
+ *                    tool every reached door of which refuses by
+ *                    `requireResolvedCaller` (none fleet-only) is
+ *                    `toutes_orgs(identity-gated)` over `orgId(verified-credential)`:
+ *                    the door, not the transport label, resolves the caller.
  *   tokens_estime_contexte  ceil(chars(name + description + input-schema
  *                    source) / 4) — a method-stated estimate.
  *   doublon_alias    no code source => "".
@@ -1914,6 +1918,14 @@ for (const t of tools) {
 		cf.refusingGates.every((g) => g.length > 0)
 			? [...new Set(cf.refusingGates.flat())]
 			: null;
+	// ... and when that gate is a CALLER RESOLVER (requireResolvedCaller) and no
+	// reached door is fleet-only, the reader tier is resolved from the verified
+	// credential by the door, never from an argument: the cells say so (R-5
+	// reads `identity-gated` with a boundary that is not an `arg=`).
+	const identityGated =
+		doorGates !== null &&
+		cf.refusingGates.every((g) => g.includes("requireResolvedCaller")) &&
+		!doorGates.some((g) => /masterOnly|requireFleetDoor|requireFleetMaster/.test(g));
 	const enforce = doorGates
 		? `convex-door(${doorGates.join("/")}) + convex:${convexGuards.join("/")} (MCP transport: public, no transport check)`
 		: convexGuards.length
@@ -1970,9 +1982,9 @@ for (const t of tools) {
 		operation_detail: opDetail,
 		search_mecanisme: retrievalCell(verb, cf, sf, mcpText),
 		surface: coreNames.has(t.name) ? "MCP-public" : "hors-MCP",
-		rbac_qui: auth.rbac,
+		rbac_qui: identityGated ? "toutes_orgs(identity-gated)" : auth.rbac,
 		scope_enforcement: enforce,
-		namespace_ou_org: auth.ns,
+		namespace_ou_org: identityGated ? "orgId(verified-credential)" : auth.ns,
 		tokens_estime_contexte: String(tokens),
 		doublon_alias: "",
 		rbac_coherence_table: "",
