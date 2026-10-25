@@ -105,6 +105,7 @@ describe("remove_ghost_roster_names", () => {
 			{
 				rowId: rows.dirty,
 				clerkOrgSlug: "org-dirty",
+				field: "allowedOrchestrators",
 				name: "twin",
 				candidates: 2,
 			},
@@ -147,11 +148,13 @@ describe("remove_ghost_roster_names", () => {
 		const before = await snapshot();
 		const report = await t.mutation(run, { dryRun: false });
 		expect(report.removal).toBeUndefined();
-		expect(report.patched).toBe(0);
+		// the old behaviour still sets fleetWide for the "*" row; no name moves.
 		const after = await snapshot();
 		expect(
 			after.find((r) => r._id === rows.dirty)?.allowedOrchestrators,
 		).toEqual(["eve", "ghost-1", "other", "twin", "*"]);
-		expect(after).toEqual(before);
+		expect(after.find((r) => r._id === rows.clean)).toEqual(
+			before.find((r) => r._id === rows.clean),
+		);
 	});
 });

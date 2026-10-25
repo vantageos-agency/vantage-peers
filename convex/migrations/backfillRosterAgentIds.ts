@@ -30,6 +30,18 @@
 //   npx convex run migrations/backfillRosterAgentIds:backfillRosterAgentIds
 //   npx convex run migrations/backfillRosterAgentIds:backfillRosterAgentIds '{"dryRun":false}'
 //
+// OPT-IN GHOST REMOVAL (`removeUnknown: true`, default false, Pi ruling (c) of
+// 2026-10-25, task k1778c2hvae8e8vz9f5bbbbbb98g62hw). Also drops from
+// `allowedOrchestrators` the names that resolve to NO agents row in the row's own
+// org (exactly the `unknown` list above). "*" is kept; an AMBIGUOUS name is kept
+// and stays listed under `ambiguous`; `allowedAgentIds` is never touched by the
+// removal; no row or org is deleted. Still gated by `dryRun`. The result then
+// carries `removal`: per row { rowId, clerkOrgSlug, removed, kept, preState }
+// (preState = the full stored `allowedOrchestrators` before the run, the audit
+// record of a write). Without the flag the result and the writes are unchanged.
+// A second write run removes nothing.
+//   npx convex run migrations/backfillRosterAgentIds:backfillRosterAgentIds '{"removeUnknown":true}'
+//
 // Internal: reachable only with the deployment admin credential, so no
 // per-caller auth check exists here by design.
 
@@ -70,7 +82,7 @@ type Resolution =
 	| { kind: "many"; candidates: number };
 
 // allow-local-identity: one-time expand-contract backfill that turns a stored roster NAME into the agent ID inside one org; no request path calls it; removed by the contract PR
-export async function resolveInOrg(
+async function resolveInOrg(
 	db: DatabaseReader,
 	orgSlug: string,
 	name: string,
@@ -91,7 +103,10 @@ export async function resolveInOrg(
 
 // allow-local-identity: one-time expand-contract backfill reading the stored name rosters to write the ID rosters; admin credential only; removed by the contract PR
 export const backfillRosterAgentIds = internalMutation({
-	args: { dryRun: v.optional(v.boolean()) },
+	args: {
+		dryRun: v.optional(v.boolean()),
+		removeUnknown: v.optional(v.boolean()),
+	},
 	returns: v.object({
 		dryRun: v.boolean(),
 		scanned: v.number(),
@@ -99,9 +114,25 @@ export const backfillRosterAgentIds = internalMutation({
 		patched: v.number(),
 		unknown: v.array(unknownEntry),
 		ambiguous: v.array(ambiguousEntry),
+		// Present only when `removeUnknown` was passed.
+		removal: v.optional(
+			v.object({
+				removedTotal: v.number(),
+				rows: v.array(
+					v.object({
+						rowId: v.id("client_org_mapping"),
+						clerkOrgSlug: v.string(),
+						removed: v.array(v.string()),
+						kept: v.array(v.string()),
+						preState: v.array(v.string()),
+					}),
+				),
+			}),
+		),
 	}),
 	handler: async (ctx, args) => {
 		const dryRun = args.dryRun !== false;
+		const removeUnknown = args.removeUnknown === true;
 		// read-bound: one row per onboarded organisation; the cap is enforced fail-closed below.
 		const rows: Doc<"client_org_mapping">[] = await ctx.db
 			.query("client_org_mapping")
@@ -125,6 +156,14 @@ export const backfillRosterAgentIds = internalMutation({
 			name: string;
 			candidates: number;
 		}> = [];
+		const removalRows: Array<{
+			rowId: Id<"client_org_mapping">;
+			clerkOrgSlug: string;
+			removed: string[];
+			kept: string[];
+			preState: string[];
+		}> = [];
+		let removedTotal = 0;
 		let wouldPatch = 0;
 		let patched = 0;
 
@@ -132,7 +171,10 @@ export const backfillRosterAgentIds = internalMutation({
 			const patch: Partial<
 				Pick<
 					Doc<"client_org_mapping">,
-					"allowedAgentIds" | "addressableFleetCoordinatorIds" | "fleetWide"
+					| "allowedAgentIds"
+					| "addressableFleetCoordinatorIds"
+					| "fleetWide"
+					| "allowedOrchestrators"
 				>
 			> = {};
 
@@ -141,6 +183,8 @@ export const backfillRosterAgentIds = internalMutation({
 				patch.fleetWide = true;
 			}
 
+			// Names of the roster that resolved to no agent / to exactly one or several.
+			const ghostNames: string[] = [];
 			const resolveField = async (
 				field: "allowedOrchestrators" | "addressableFleetCoordinators",
 				names: readonly string[],
@@ -170,6 +214,7 @@ export const backfillRosterAgentIds = internalMutation({
 							field,
 							name,
 						});
+						if (field === "allowedOrchestrators") ghostNames.push(name);
 					}
 				}
 				return ids;
@@ -182,6 +227,21 @@ export const backfillRosterAgentIds = internalMutation({
 			);
 			if (row.allowedAgentIds === undefined && rosterIds.length > 0) {
 				patch.allowedAgentIds = rosterIds;
+			}
+
+			if (removeUnknown) {
+				const kept = row.allowedOrchestrators.filter(
+					(name) => !ghostNames.includes(name),
+				);
+				removalRows.push({
+					rowId: row._id,
+					clerkOrgSlug: row.clerkOrgSlug,
+					removed: ghostNames,
+					kept,
+					preState: [...row.allowedOrchestrators],
+				});
+				removedTotal += ghostNames.length;
+				if (ghostNames.length > 0) patch.allowedOrchestrators = kept;
 			}
 
 			const coordinatorNames = row.addressableFleetCoordinators ?? [];
@@ -212,6 +272,9 @@ export const backfillRosterAgentIds = internalMutation({
 			patched,
 			unknown,
 			ambiguous,
+			...(removeUnknown
+				? { removal: { removedTotal, rows: removalRows } }
+				: {}),
 		};
 	},
 });
