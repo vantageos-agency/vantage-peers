@@ -3850,7 +3850,7 @@ export function registerTools(
 		{
 			kind: "filtered",
 			reason:
-				"no in-handler recipient gate: tasks:listBlockedOnMe serves only the agent resolved by ID from the verified identity (a seat's verifiedActor, or a verified organisation naming one of its own agents), and refuses a label-only reader and the claimless service account; recipient grants nothing",
+				"no in-handler recipient gate: tasks:listBlockedOnMe serves only the agent resolved by ID from the verified identity (a seat's verifiedActor), refuses a label-only reader and the claimless service account; recipient is ignored and never forwarded",
 		},
 		"list_blocked_on_me",
 		"List the tasks that other peers have BLOCKED on one of YOUR live tasks (blockedOnTaskId), oldest wait first, with the age of each wait. " +
@@ -3863,7 +3863,7 @@ export function registerTools(
 			recipient: creatorSchema
 				.optional()
 				.describe(
-					"Ignored for authority: the waiters listed are those of the verified agent the credential resolves (a seat or an agent credential). An org-level token may name one of its own organisation's agents; the fleet master and a label-only caller are refused by the backend.",
+					"Ignored (kept for compatibility): the waiters listed are those of the verified agent the credential resolves (a seat or an agent credential). A name is never forwarded or used to select tasks; an org-level token, the fleet master and a label-only caller are refused by the backend.",
 				),
 			tenantId: z
 				.string()
@@ -3885,19 +3885,18 @@ export function registerTools(
 			destructiveHint: false,
 			title: "List tasks blocked on me",
 		},
-		async ({ recipient, tenantId, limit }) => {
+		async ({ tenantId, limit }) => {
 			try {
-				// No speak-as gate here: Convex serves only the verified agent, by ID.
-				// `recipient` is a hint that selects nothing and grants nothing.
+				// No speak-as gate and no name forwarded: Convex serves only the verified
+				// agent, by ID. `recipient` is accepted for compatibility and ignored.
 				const orgUnresolved = unresolvedOrgDenial("list_blocked_on_me");
 				if (orgUnresolved) return orgUnresolved;
 				const result = await convex.query(
 					// biome-ignore lint/suspicious/noExplicitAny: Convex string API
 					"tasks:listBlockedOnMe" as any,
 					{
-						...(recipient !== undefined ? { recipient } : {}),
 						...(tenantId !== undefined ? { tenantId } : {}),
-						...inboxOrgArgs(recipient),
+						...inboxOrgArgs(undefined),
 					},
 				);
 				const waiters = (result ?? {}) as {

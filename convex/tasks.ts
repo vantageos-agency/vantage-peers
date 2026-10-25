@@ -10,6 +10,7 @@ import { creatorValidator, taskOriginValidator } from "./schema";
 import { normalizeOrchestratorId } from "./_helpers/normalizeOrchestratorId";
 import {
 	filterByOrgScope,
+	isMcpBoundMaster,
 	isRowVisibleToScope,
 	requireAgentCredentialMatch,
 	verifiedActorValidator,
@@ -2801,7 +2802,7 @@ export const listBlockedOnMe = query({
 		});
 		// R-54: the claimless service-account call is refused, never served as master.
 		if (
-			scope.isMaster &&
+			isMcpBoundMaster(scope) &&
 			args.verifiedActor === undefined &&
 			args.verifiedOrg === undefined
 		) {

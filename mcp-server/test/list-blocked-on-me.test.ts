@@ -125,12 +125,11 @@ describe("list_blocked_on_me", () => {
 		expect(JSON.parse(r.text)).toEqual(RESULT);
 	});
 
-	it("ORG-LEVEL token: sends verifiedOrg and the named recipient, never verifiedActor", async () => {
+	it("ORG-LEVEL token: sends verifiedOrg and never the recipient name, never verifiedActor", async () => {
 		const r = await run(ORG_TOKEN, { recipient: "clio" });
-		expect(r.refused).toBe(false);
 		expect(r.calls[0].name).toBe("tasks:listBlockedOnMe");
 		expect(r.calls[0].args.verifiedOrg).toEqual({ orgSlug: ORG });
-		expect(r.calls[0].args.recipient).toBe("clio");
+		expect(r.calls[0].args).not.toHaveProperty("recipient");
 		expect(r.calls[0].args).not.toHaveProperty("verifiedActor");
 	});
 
@@ -141,10 +140,11 @@ describe("list_blocked_on_me", () => {
 		expect(r.text).toContain("RBAC_DENIED");
 	});
 
-	it("a recipient name is not an authority gate: it is forwarded as a hint and Convex decides", async () => {
+	it("a recipient name is not an authority gate and is never forwarded: Convex decides by the verified ID", async () => {
 		const r = await run(SEAT, { recipient: "someone-else" });
 		expect(r.refused).toBe(false);
 		expect(r.calls).toHaveLength(1);
+		expect(r.calls[0].args).not.toHaveProperty("recipient");
 		expect(r.calls[0].args.verifiedActor).toEqual({
 			agentId: CLIO_ID,
 			orgSlug: ORG,
