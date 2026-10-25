@@ -44,13 +44,28 @@ export function orgByIdLookups(
 	};
 }
 
-/** `organisationById` and `orgKindOf` for the package's principal resolver. */
+/**
+ * `organisationById`, `orgKindOf`, `personById` and `agentById` for the package's
+ * principal resolver. `agentById` is one keyed read of the `agents` row by its
+ * ID, answered with the org ID the ROW is stamped with (`clerkOrgId`, null when
+ * not yet stamped, which the package refuses).
+ */
 export function orgByIdPrincipalLookups(
 	ctx: Ctx,
 ): Required<
-	Pick<PrincipalLookups, "organisationById" | "orgKindOf" | "personById">
+	Pick<
+		PrincipalLookups,
+		"organisationById" | "orgKindOf" | "personById" | "agentById"
+	>
 > {
 	return {
+		agentById: async (agentId: string) => {
+			const id = ctx.db.normalizeId("agents", agentId);
+			if (id === null) return null;
+			const row = await ctx.db.get(id);
+			if (row === null) return null;
+			return { id: row._id, orgId: row.clerkOrgId ?? null, active: row.isActive };
+		},
 		// The person row is the verified session itself: this backend keeps no
 		// separate person table, so the package's own subject is the member.
 		personById: (personId: string, orgId: string) => ({

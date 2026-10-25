@@ -75,7 +75,14 @@ const SETTINGS: DebateSettings = {
 	maxTurnMessageChars: 4000,
 	pollSeconds: 5,
 	maxAnswerCharsCeiling: 500,
+	maxLabelChars: 40,
+	maxTurnInstructionChars: 400,
+	maxActiveRooms: 10,
 };
+
+// The agent IDs of the world under test (set by `world()`): a template names its
+// agents by ID, so the builders read them here.
+let AGENT = {} as Record<"sigma" | "eta" | "foreignSigma", Id<"agents">>;
 
 const withHuman = (over: Partial<DebateTemplate> = {}): DebateTemplate => ({
 	id: "review",
@@ -84,8 +91,8 @@ const withHuman = (over: Partial<DebateTemplate> = {}): DebateTemplate => ({
 	turnInstruction: "Answer in one paragraph.",
 	participants: [
 		{ id: "p1", label: "operator", kind: "human", transport: "human", deadlineSeconds: null },
-		{ id: "p2", label: "sigma", kind: "agent", channel: "sigma", transport: "waker" },
-		{ id: "p3", label: "eta", kind: "agent", channel: "eta", transport: "waker" },
+		{ id: "p2", label: "sigma", kind: "agent", agentId: AGENT.sigma, transport: "waker" },
+		{ id: "p3", label: "eta", kind: "agent", agentId: AGENT.eta, transport: "waker" },
 	],
 	roundLimit: 2,
 	maxAnswerChars: 100,
@@ -99,8 +106,8 @@ const agentsOnly = (over: Partial<DebateTemplate> = {}): DebateTemplate =>
 	withHuman({
 		id: "agents",
 		participants: [
-			{ id: "p2", label: "sigma", kind: "agent", channel: "sigma", transport: "waker" },
-			{ id: "p3", label: "eta", kind: "agent", channel: "eta", transport: "waker" },
+			{ id: "p2", label: "sigma", kind: "agent", agentId: AGENT.sigma, transport: "waker" },
+			{ id: "p3", label: "eta", kind: "agent", agentId: AGENT.eta, transport: "waker" },
 		],
 		...over,
 	});
@@ -144,6 +151,7 @@ async function world(settings: Partial<DebateSettings> = {}): Promise<World> {
 		});
 		return { sigma, eta, foreignSigma };
 	});
+	AGENT = agents;
 	await asAdmin(t).mutation(api.debate.upsertSettings, { ...SETTINGS, ...settings });
 	return { t, agents };
 }
@@ -338,17 +346,41 @@ describe("createRoom", () => {
 		expect(scheduled.some((s) => s.includes("deliverTurn") && s.includes('"turnSeq":1'))).toBe(true);
 	});
 
-	test("DENY: an agent channel that is not on the tenant's roster is refused and no room is written", async () => {
+	test("DENY: a seat naming an agent that is not an active agent of this organisation is refused at save and at creation, and no room is written", async () => {
 		const w = await world();
-		const t = withHuman({
-			participants: [
-				{ id: "p1", label: "operator", kind: "human", transport: "human", deadlineSeconds: null },
-				{ id: "p2", label: "zeta", kind: "agent", channel: "zeta", transport: "waker" },
-			],
+		const seat = (agentId: Id<"agents">): DebateTemplate =>
+			withHuman({
+				participants: [
+					{ id: "p1", label: "operator", kind: "human", transport: "human", deadlineSeconds: null },
+					{ id: "p2", label: "zeta", kind: "agent", agentId, transport: "waker" },
+				],
+			});
+		// another organisation's agent
+		const foreign = await failure(makeRoom(w, seat(w.agents.foreignSigma)));
+		expect(foreign).toContain("RBAC_DENIED");
+		// an agent of this organisation that was switched off
+		const off = await w.t.run((ctx) => seedRosterAgent(ctx, ORG, "zeta"));
+		await w.t.run((ctx) => ctx.db.patch(off, { isActive: false }));
+		const inactive = await failure(makeRoom(w, seat(off)));
+		expect(inactive).toContain("RBAC_DENIED");
+		expect(inactive).toContain("principal-inactive");
+		// a row that is no agent at all
+		const gone = await w.t.run(async (ctx) => {
+			const id = await seedRosterAgent(ctx, ORG, "ghost");
+			await ctx.db.delete(id);
+			return id;
 		});
-		const msg = await failure(makeRoom(w, t));
-		expect(msg).toContain("RBAC_DENIED");
-		expect(msg).toContain("participant-not-on-roster");
+		expect(await failure(makeRoom(w, seat(gone)))).toContain("RBAC_DENIED");
+		expect(await w.t.run((ctx) => ctx.db.query("debateRooms").collect())).toHaveLength(0);
+		expect(await asAdmin(w.t).query(api.debate.listTemplates, {})).toHaveLength(0);
+	});
+
+	test("DENY: a template saved while its agent was valid is judged again at creation (the agent was switched off since)", async () => {
+		const w = await world();
+		const templateId = await asAdmin(w.t).mutation(api.debate.upsertTemplate, { template: withHuman() });
+		await w.t.run((ctx) => ctx.db.patch(w.agents.eta, { isActive: false }));
+		const msg = await failure(asAdmin(w.t).mutation(api.debate.createRoom, { templateId, subject: "s" }));
+		expect(msg).toContain("principal-inactive");
 		expect(await w.t.run((ctx) => ctx.db.query("debateRooms").collect())).toHaveLength(0);
 	});
 
@@ -631,13 +663,17 @@ describe("B9 / B11 / B12 / B13 stop rules", () => {
 		// refused poles first: nothing may change
 		const stranger = await failure(asStranger(w.t).mutation(api.debate.closeRoom, { roomId }));
 		expect(stranger).toContain("RBAC_DENIED");
-		expect(stranger).toContain("not_operator");
-		const agent = await failure(
-			svc(w.t).mutation(api.debate.closeRoom, { roomId, verifiedActor: { agentId: w.agents.sigma, orgSlug: ORG } }),
-		);
-		expect(agent).toContain("not_operator"); // the service account is fleet master, the AGENT it carries is not
+		expect(stranger).toContain("role-not-admin"); // the package: a member of the room's organisation is no administrator
+		const agent = await failure(svc(w.t).mutation(api.debate.closeRoom, { roomId })); // an agent never closes: the door is session-only
+		expect(agent).toContain("RBAC_DENIED");
+		expect(agent).toContain("debate:closeRoom");
 		const outsider = await failure(asOutsider(w.t).mutation(api.debate.closeRoom, { roomId }));
 		expect(outsider).toContain("RBAC_DENIED");
+		expect(outsider).toContain("debate:closeRoom");
+		// a room that does not exist is refused exactly like another organisation's room
+		const absent = await makeRoom(w, withHuman({ id: "to-delete" }));
+		await w.t.run((ctx) => ctx.db.delete(absent));
+		expect(await failure(asOutsider(w.t).mutation(api.debate.closeRoom, { roomId: absent }))).toBe(outsider);
 		expect((await roomOf(w, roomId)).status).toBe("active");
 
 		// allowed poles
@@ -981,5 +1017,327 @@ describe("B1 the only writers of debateTurns", () => {
 		expect(hits).toEqual(["../debate.ts"]);
 		const count = (sources["../debate.ts"].match(/insert\(\s*["']debateTurns["']/g) ?? []).length;
 		expect(count).toBe(1);
+	});
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// R-53: a seat is admitted by the agents-row ID frozen at createRoom, never by a name
+// ─────────────────────────────────────────────────────────────────────────────
+describe("admission to an agent seat is by agent ID", () => {
+	test("the room freezes each agent seat's agents-row ID as the template named it; a human seat carries none", async () => {
+		const w = await world();
+		const room = await roomOf(w, await makeRoom(w, withHuman()));
+		const seat = (id: string) =>
+			room.template.participants.find((p: DebateTemplate["participants"][number]) => p.id === id);
+		expect(seat("p2")?.agentId).toBe(w.agents.sigma);
+		expect(seat("p3")?.agentId).toBe(w.agents.eta);
+		expect(seat("p1")?.agentId).toBeUndefined();
+		expect(room.template.participants.every((p: DebateTemplate["participants"][number]) => p.kind === "human" || p.channel === undefined)).toBe(true);
+	});
+
+	test("DENY: a seat that names another organisation's agent by ID is refused, however the agent is called", async () => {
+		const w = await world();
+		const t = withHuman();
+		t.participants[1] = { ...t.participants[1], agentId: w.agents.foreignSigma };
+		const msg = await failure(asAdmin(w.t).mutation(api.debate.upsertTemplate, { template: t }));
+		expect(msg).toContain("RBAC_DENIED");
+		expect(await asAdmin(w.t).query(api.debate.listTemplates, {})).toHaveLength(0);
+	});
+
+	test("PRESENT: an agent renamed after the room was created keeps its seat", async () => {
+		const w = await world();
+		const roomId = await makeRoom(w, agentsOnly());
+		await w.t.run((ctx) => ctx.db.patch(w.agents.sigma, { name: "sigma-renamed", normalizedName: "sigma-renamed" }));
+		expect(asAccepted(await postAgent(w, "sigma", roomId, 1)).turnSeq).toBe(1);
+	});
+
+	test("DENY: a different agent of the same organisation that carries the listed NAME is not the seat", async () => {
+		const w = await world();
+		const roomId = await makeRoom(w, agentsOnly());
+		const impostor = await w.t.run((ctx) =>
+			ctx.db.insert("agents", {
+				orgSlug: ORG,
+				clerkOrgId: testClerkOrgId(ORG),
+				name: "sigma",
+				normalizedName: "sigma",
+				isActive: true,
+				createdAt: 1,
+			}),
+		);
+		const before = await turnsOf(w, roomId);
+		const call = { roomId, turnSeq: 1, text: "I am sigma" };
+		const refused = await svc(w.t).mutation(api.debate.postTurn, {
+			...call,
+			verifiedActor: { agentId: impostor, orgSlug: ORG },
+		});
+		expect(asRefused(refused)).toEqual({ refused: "not_a_participant", awaiting: null, turnSeq: 1 });
+		expect(
+			await svc(w.t).query(api.debate.getRoom, { roomId, verifiedActor: { agentId: impostor, orgSlug: ORG } }),
+		).toBeNull();
+		expect(await turnsOf(w, roomId)).toEqual(before);
+	});
+
+	test("DENY: an agent of the same organisation that is not in the template is not_a_participant (and nothing is written)", async () => {
+		const w = await world();
+		const roomId = await makeRoom(w, withHuman());
+		const zeta = await w.t.run((ctx) => seedRosterAgent(ctx, ORG, "zeta"));
+		const before = await turnsOf(w, roomId);
+		const r = await svc(w.t).mutation(api.debate.postTurn, {
+			roomId,
+			turnSeq: 1,
+			text: "let me in",
+			verifiedActor: { agentId: zeta, orgSlug: ORG },
+		});
+		expect(asRefused(r)).toEqual({ refused: "not_a_participant", awaiting: null, turnSeq: 1 });
+		expect(await turnsOf(w, roomId)).toEqual(before);
+		expect(
+			await svc(w.t).query(api.debate.getRoom, { roomId, verifiedActor: { agentId: zeta, orgSlug: ORG } }),
+		).toBeNull();
+	});
+
+	test("DENY: a stored template whose two seats are one agent (past upsert) is refused at createRoom, no room written", async () => {
+		const w = await world();
+		const templateId = await asAdmin(w.t).mutation(api.debate.upsertTemplate, { template: agentsOnly() });
+		await w.t.run(async (ctx) => {
+			const row = await ctx.db.get(templateId);
+			if (row === null) throw new Error("template vanished");
+			const seats = row.template.participants.map((p: DebateTemplate["participants"][number], i: number) =>
+				i === 1 ? { ...p, agentId: AGENT.sigma } : p,
+			);
+			await ctx.db.patch(templateId, { template: { ...row.template, participants: seats } });
+		});
+		const msg = await failure(asAdmin(w.t).mutation(api.debate.createRoom, { templateId, subject: "s" }));
+		expect(msg).toContain("DEBATE_TEMPLATE_INVALID");
+		expect(msg).toContain("participants[1].agentId");
+		expect(await w.t.run((ctx) => ctx.db.query("debateRooms").collect())).toHaveLength(0);
+	});
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+describe("postTurn: the refusal for a non-participant says nothing about the room", () => {
+	test("the turnSeq returned is the caller's own, for an existing room and for a missing one, whatever the room's live turn", async () => {
+		const w = await world();
+		const roomId = await makeRoom(w, withHuman());
+		await postOperator(w, roomId, 1); // the room is now at turnSeq 2
+		const zeta = await w.t.run((ctx) => seedRosterAgent(ctx, ORG, "zeta"));
+		const ASKED = 41;
+		const callers: Array<[string, Promise<unknown>]> = [
+			["unlisted member", asStranger(w.t).mutation(api.debate.postTurn, { roomId, turnSeq: ASKED, text: "x" })],
+			["other tenant admin", asOutsider(w.t).mutation(api.debate.postTurn, { roomId, turnSeq: ASKED, text: "x" })],
+			[
+				"same-org agent not in the template",
+				svc(w.t).mutation(api.debate.postTurn, {
+					roomId,
+					turnSeq: ASKED,
+					text: "x",
+					verifiedActor: { agentId: zeta, orgSlug: ORG },
+				}),
+			],
+			[
+				"other tenant agent",
+				svc(w.t).mutation(api.debate.postTurn, {
+					roomId,
+					turnSeq: ASKED,
+					text: "x",
+					verifiedActor: { agentId: w.agents.foreignSigma, orgSlug: OTHER_ORG },
+				}),
+			],
+		];
+		for (const [who, call] of callers) {
+			expect(asRefused(await call), who).toEqual({ refused: "not_a_participant", awaiting: null, turnSeq: ASKED });
+		}
+		await w.t.run((ctx) => ctx.db.delete(roomId));
+		expect(asRefused(await postOperator(w, roomId, ASKED)).turnSeq).toBe(ASKED);
+	});
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+describe("a human seat other than the creator", () => {
+	const seatFor = (subject: string, over: Partial<DebateTemplate> = {}): DebateTemplate =>
+		withHuman({
+			id: `seat-${subject}`,
+			participants: [
+				{ id: "p1", label: "reviewer", kind: "human", transport: "human", channel: `user:${subject}`, deadlineSeconds: null },
+				{ id: "p2", label: "sigma", kind: "agent", agentId: AGENT.sigma, transport: "waker" },
+				{ id: "p3", label: "eta", kind: "agent", agentId: AGENT.eta, transport: "waker" },
+			],
+			...over,
+		});
+
+	test("ALLOW: the person the seat names posts as that seat (kind operator, participant p1); the creator, who is not that person, may not", async () => {
+		const w = await world();
+		const roomId = await makeRoom(w, seatFor(ADMIN_2));
+		expect(asRefused(await postOperator(w, roomId, 1)).refused).toBe("not_a_participant"); // ADMIN created it, is not the seat
+		expect(asRefused(await asStranger(w.t).mutation(api.debate.postTurn, { roomId, turnSeq: 1, text: "x" })).refused).toBe(
+			"not_a_participant",
+		);
+		const ok = asAccepted(await asAdmin2(w.t).mutation(api.debate.postTurn, { roomId, turnSeq: 1, text: "my view" }));
+		expect(ok).toMatchObject({ turnSeq: 1, closed: false, workDuringTurn: "not_applicable" });
+		expect((await turnsOf(w, roomId))[0]).toMatchObject({ kind: "operator", participantId: "p1", text: "my view" });
+		expect((await roomOf(w, roomId)).awaiting?.participantId).toBe("p2");
+	});
+
+	test("the seat's person reads the room it sits in; a member who is not a seat reads nothing", async () => {
+		const w = await world();
+		const roomId = await makeRoom(w, seatFor(STRANGER));
+		expect((await asStranger(w.t).query(api.debate.getRoom, { roomId }))?.room._id).toBe(roomId);
+		const other = await makeRoom(w, seatFor(ADMIN_2, { id: "other" }));
+		expect(await asStranger(w.t).query(api.debate.getRoom, { roomId: other })).toBeNull();
+	});
+
+	test("WRITER ROLE: a seat whose person has no writer role is refused at postTurn exactly as createRoom refuses it; a writer role posts", async () => {
+		const w = await world();
+		const VIEWER = "user_viewer_acme";
+		const asViewer = as(w.t, VIEWER, ORG, "org:viewer");
+		const roomId = await makeRoom(w, seatFor(VIEWER));
+		const before = await turnsOf(w, roomId);
+		const msg = await failure(asViewer.mutation(api.debate.postTurn, { roomId, turnSeq: 1, text: "viewing" }));
+		expect(msg).toContain("RBAC_DENIED");
+		expect(msg).toContain("role-not-writer");
+		expect(msg).toContain("debate:postTurn");
+		expect(await turnsOf(w, roomId)).toEqual(before);
+		expect((await roomOf(w, roomId)).turnSeq).toBe(1);
+
+		// the same seat with a writer role (org:member is on the list) is accepted
+		const memberRoom = await makeRoom(w, seatFor(STRANGER, { id: "member-seat" }));
+		expect(asAccepted(await asStranger(w.t).mutation(api.debate.postTurn, { roomId: memberRoom, turnSeq: 1, text: "ok" })).turnSeq).toBe(1);
+	});
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+describe("limits that keep a room's data bounded", () => {
+	test("template name, seat label and turn instruction above the settings caps are refused with their path; nothing is stored", async () => {
+		const w = await world();
+		const tooLong = withHuman({
+			name: "n".repeat(SETTINGS.maxLabelChars + 1),
+			turnInstruction: "i".repeat(SETTINGS.maxTurnInstructionChars + 1),
+		});
+		tooLong.participants[1] = { ...tooLong.participants[1], label: "l".repeat(SETTINGS.maxLabelChars + 1) };
+		const msg = await failure(asAdmin(w.t).mutation(api.debate.upsertTemplate, { template: tooLong }));
+		expect(msg).toContain("DEBATE_TEMPLATE_INVALID");
+		for (const path of ["name", "turnInstruction", "participants[1].label"]) expect(msg).toContain(path);
+		expect(await asAdmin(w.t).query(api.debate.listTemplates, {})).toHaveLength(0);
+		// at the caps it is accepted
+		const atCap = withHuman({
+			name: "n".repeat(SETTINGS.maxLabelChars),
+			turnInstruction: "i".repeat(SETTINGS.maxTurnInstructionChars),
+		});
+		await asAdmin(w.t).mutation(api.debate.upsertTemplate, { template: atCap });
+		expect(await asAdmin(w.t).query(api.debate.listTemplates, {})).toHaveLength(1);
+	});
+
+	test("rooms that are not closed (active or stalled) are capped per organisation; closing one frees a place; another organisation is unaffected", async () => {
+		const w = await world({ maxActiveRooms: 2 });
+		const templateId = await asAdmin(w.t).mutation(api.debate.upsertTemplate, { template: withHuman() });
+		const create = () => asAdmin(w.t).mutation(api.debate.createRoom, { templateId, subject: "s" });
+		const first = await create();
+		const second = await create();
+		const refused = await failure(create());
+		expect(refused).toContain("DEBATE_ROOM_LIMIT");
+		expect(await w.t.run((ctx) => ctx.db.query("debateRooms").collect())).toHaveLength(2);
+
+		// a stalled room still holds its place
+		await w.t.run((ctx) => ctx.db.patch(second, { status: "stalled" }));
+		expect(await failure(create())).toContain("DEBATE_ROOM_LIMIT");
+
+		await asAdmin(w.t).mutation(api.debate.closeRoom, { roomId: first });
+		await create();
+		expect(await failure(create())).toContain("DEBATE_ROOM_LIMIT");
+
+		// another organisation has its own count
+		await asOutsider(w.t).mutation(api.debate.upsertSettings, { ...SETTINGS, maxActiveRooms: 1 });
+		const otherTemplate = await asOutsider(w.t).mutation(api.debate.upsertTemplate, {
+			template: withHuman({
+				id: "g",
+				participants: [
+					{ id: "p1", label: "operator", kind: "human", transport: "human", deadlineSeconds: null },
+					{ id: "p2", label: "sigma", kind: "agent", agentId: AGENT.foreignSigma, transport: "waker" },
+				],
+			}),
+		});
+		const theirs = await asOutsider(w.t).mutation(api.debate.createRoom, { templateId: otherTemplate, subject: "s" });
+		expect((await roomOf(w, theirs)).tenantOrgId).toBe(testClerkOrgId(OTHER_ORG));
+	});
+
+	test("settings whose largest transcript would not fit the read bound are refused at upsert", async () => {
+		const w = await world();
+		const msg = await failure(
+			asAdmin(w.t).mutation(api.debate.upsertSettings, { ...SETTINGS, maxRoundLimit: 5000 }),
+		);
+		expect(msg).toContain("DEBATE_SETTINGS_INVALID");
+		expect(msg).toContain("maxRoundLimit");
+		expect((await asAdmin(w.t).query(api.debate.getSettings, {}))?.maxRoundLimit).toBe(SETTINGS.maxRoundLimit);
+	});
+
+	test("a room read is whole or refused: 2000 rows are served, 2001 raise DEBATE_TRANSCRIPT_TOO_LARGE instead of dropping the newest", async () => {
+		const w = await world();
+		const roomId = await makeRoom(w, withHuman());
+		const seed = (n: number) =>
+			w.t.run(async (ctx) => {
+				for (let i = 0; i < n; i++) {
+					await ctx.db.insert("debateTurns", {
+						roomId,
+						turnSeq: 1,
+						round: 1,
+						position: 0,
+						kind: "system",
+						writer: "deliverTurn",
+						text: `row ${i}`,
+						postedAt: i,
+					});
+				}
+			});
+		await seed(2000);
+		const whole = await asAdmin(w.t).query(api.debate.getRoom, { roomId });
+		expect(whole?.turns).toHaveLength(2000);
+		await seed(1);
+		const msg = await failure(asAdmin(w.t).query(api.debate.getRoom, { roomId }));
+		expect(msg).toContain("DEBATE_TRANSCRIPT_TOO_LARGE");
+	});
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// R-54: a door the service account can reach acts inside a transport-verified claim
+// ─────────────────────────────────────────────────────────────────────────────
+describe("the fleet service account is refused when it carries no claim", () => {
+	test("all eight debate doors refuse a claimless service-account call with RBAC_DENIED, naming the door; nothing is written", async () => {
+		const w = await world();
+		const roomId = await makeRoom(w, withHuman());
+		const templateId = (await asAdmin(w.t).query(api.debate.listTemplates, {}))[0]._id;
+		const calls: Array<[string, Promise<unknown>]> = [
+			["debate:getSettings", svc(w.t).query(api.debate.getSettings, {})],
+			["debate:listTemplates", svc(w.t).query(api.debate.listTemplates, {})],
+			["debate:upsertSettings", svc(w.t).mutation(api.debate.upsertSettings, SETTINGS)],
+			["debate:upsertTemplate", svc(w.t).mutation(api.debate.upsertTemplate, { template: withHuman() })],
+			["debate:createRoom", svc(w.t).mutation(api.debate.createRoom, { templateId, subject: "s" })],
+			["debate:getRoom", svc(w.t).query(api.debate.getRoom, { roomId })],
+			["debate:closeRoom", svc(w.t).mutation(api.debate.closeRoom, { roomId })],
+			["debate:postTurn", svc(w.t).mutation(api.debate.postTurn, { roomId, turnSeq: 1, text: "x" })],
+		];
+		for (const [door, call] of calls) {
+			const msg = await failure(call);
+			expect(msg, door).toContain("RBAC_DENIED");
+			expect(msg, door).toContain(door);
+		}
+		expect((await roomOf(w, roomId)).turnSeq).toBe(1);
+		expect(await turnsOf(w, roomId)).toEqual([]);
+		expect(await w.t.run((ctx) => ctx.db.query("debateRooms").collect())).toHaveLength(1);
+	});
+
+	test("ALLOW: a verifiedActor lifts the refusal of the two doors an agent uses; the agent is then judged by its seat", async () => {
+		const w = await world();
+		const roomId = await makeRoom(w, withHuman());
+		const asAgent = await svc(w.t).query(api.debate.getRoom, {
+			roomId,
+			verifiedActor: { agentId: w.agents.sigma, orgSlug: ORG },
+		});
+		expect(asAgent?.room._id).toBe(roomId);
+		const posted = await svc(w.t).mutation(api.debate.postTurn, {
+			roomId,
+			turnSeq: 1,
+			text: "not my turn",
+			verifiedActor: { agentId: w.agents.sigma, orgSlug: ORG },
+		});
+		expect(asRefused(posted).refused).toBe("not_your_turn");
 	});
 });

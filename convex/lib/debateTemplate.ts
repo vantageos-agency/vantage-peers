@@ -16,9 +16,13 @@ export const participantValidator = v.object({
 	id: v.string(),
 	label: v.string(),
 	kind: v.union(v.literal("agent"), v.literal("human")),
-	// Where the turn message goes (agents). For a human seat: the person it is
-	// ("user:<subject>"); absent = the room creator.
+	// A human seat: the person it is ("user:<subject>"); absent = the room creator.
+	// An agent seat carries none: it is named by `agentId`.
 	channel: v.optional(v.string()),
+	// An agent seat: the agents-row ID of the agent that sits there. Admission to the
+	// seat compares this ID and nothing else; the agent's name is looked up from the
+	// row at delivery and is a transport address, never an identity.
+	agentId: v.optional(v.id("agents")),
 	instanceId: v.optional(v.string()),
 	transport: v.union(
 		v.literal("waker"),
@@ -53,6 +57,11 @@ export const debateSettingsValidator = v.object({
 	maxTurnMessageChars: v.number(),
 	pollSeconds: v.number(),
 	maxAnswerCharsCeiling: v.number(),
+	// caps on the template's free text (a name, a seat label; the turn instruction)
+	maxLabelChars: v.number(),
+	maxTurnInstructionChars: v.number(),
+	// rooms of one organisation that are not closed (active or stalled) at once
+	maxActiveRooms: v.number(),
 });
 
 export const closeReasonValidator = v.union(
@@ -181,6 +190,28 @@ export type RefusalReason = Infer<typeof refusalReasonValidator>;
 
 export type TemplateIssue = { path: string; message: string };
 
+/**
+ * Rows of `debateTurns` one transaction may read for a room (a read bound, not a
+ * business limit). `validateSettings` refuses limits whose largest transcript
+ * would not fit, and the reader refuses rather than drop rows past it.
+ */
+export const TURN_ROWS_READ_BOUND = 2000;
+
+/**
+ * The most rows a room can ever hold under `settings`: per seat per round at most
+ * two (a `skipped` row and the `dropped` row it triggers), the refusal rows up to
+ * their cap, and three `system` rows (the close, a stall, the operator's stop).
+ */
+export function maxTurnRows(
+	settings: Pick<DebateSettings, "maxRoundLimit" | "maxParticipants" | "maxRefusalRows">,
+): number {
+	return (
+		settings.maxRoundLimit * settings.maxParticipants * 2 +
+		settings.maxRefusalRows +
+		3
+	);
+}
+
 const blank = (s: string | undefined): boolean =>
 	s === undefined || s.trim().length === 0;
 const positiveInt = (n: number): boolean => Number.isInteger(n) && n > 0;
@@ -212,9 +243,17 @@ export function validateTemplate(
 
 	if (blank(template.id)) add("id", "id must not be empty");
 	if (blank(template.name)) add("name", "name must not be empty");
+	else if (template.name.length > settings.maxLabelChars) {
+		add("name", `name must be at most ${settings.maxLabelChars} characters, got ${template.name.length}`);
+	}
 	if (blank(template.language)) add("language", "language must not be empty");
 	if (blank(template.turnInstruction)) {
 		add("turnInstruction", "turnInstruction must not be empty");
+	} else if (template.turnInstruction.length > settings.maxTurnInstructionChars) {
+		add(
+			"turnInstruction",
+			`turnInstruction must be at most ${settings.maxTurnInstructionChars} characters, got ${template.turnInstruction.length}`,
+		);
 	}
 
 	if (!positiveInt(template.roundLimit) || template.roundLimit > settings.maxRoundLimit) {
@@ -260,15 +299,46 @@ export function validateTemplate(
 	}
 
 	const seen = new Set<string>();
+	// one seat, one participant: a person or an agent ID may sit once only, else
+	// the second seat could never be reached
+	const channels = new Set<string>();
+	const agentIds = new Set<string>();
 	ps.forEach((p, i) => {
 		const at = `participants[${i}]`;
 		if (blank(p.id)) add(`${at}.id`, "id must not be empty");
 		else if (seen.has(p.id)) add(`${at}.id`, `id "${p.id}" is used twice`);
 		seen.add(p.id);
 		if (blank(p.label)) add(`${at}.label`, "label must not be empty");
+		else if (p.label.length > settings.maxLabelChars) {
+			add(`${at}.label`, `label must be at most ${settings.maxLabelChars} characters, got ${p.label.length}`);
+		}
+		// a human seat with no channel is the room's creator: two such seats are one person
+		if (p.kind === "human") {
+			const personKey = p.channel === undefined ? "" : p.channel;
+			if (channels.has(personKey)) {
+				add(
+					`${at}.channel`,
+					p.channel === undefined
+						? "two human seats name nobody: each would be the room's creator"
+						: `channel "${p.channel}" is already used by another human seat`,
+				);
+			}
+			channels.add(personKey);
+		}
+		if (p.agentId !== undefined) {
+			if (agentIds.has(p.agentId)) {
+				add(`${at}.agentId`, "two seats resolve to the same agent");
+			}
+			agentIds.add(p.agentId);
+		}
 
 		if (p.kind === "agent") {
-			if (blank(p.channel)) add(`${at}.channel`, "an agent needs a channel");
+			if (p.agentId === undefined) {
+				add(`${at}.agentId`, "an agent seat is named by the agentId of the agent that sits there");
+			}
+			if (p.channel !== undefined) {
+				add(`${at}.channel`, "an agent seat carries no channel: it is named by agentId");
+			}
 			if (p.transport === "human") {
 				add(`${at}.transport`, "an agent cannot have transport human");
 			}
@@ -336,6 +406,9 @@ export function validateSettings(settings: DebateSettings): TemplateIssue[] {
 		"maxTurnMessageChars",
 		"pollSeconds",
 		"maxAnswerCharsCeiling",
+		"maxLabelChars",
+		"maxTurnInstructionChars",
+		"maxActiveRooms",
 	];
 	for (const k of keys) {
 		if (!positiveInt(settings[k])) {
@@ -347,6 +420,20 @@ export function validateSettings(settings: DebateSettings): TemplateIssue[] {
 			path: "maxRefusalRows",
 			message: `maxRefusalRows must be an integer >= 0, got ${settings.maxRefusalRows}`,
 		});
+	}
+	// The reader takes at most TURN_ROWS_READ_BOUND rows; limits whose largest
+	// transcript exceeds it would drop the NEWEST turns silently, so they are refused.
+	const intact = [settings.maxRoundLimit, settings.maxParticipants, settings.maxRefusalRows].every(
+		(n) => Number.isInteger(n) && n >= 0,
+	);
+	if (intact && maxTurnRows(settings) > TURN_ROWS_READ_BOUND) {
+		const worst = maxTurnRows(settings);
+		const message = `the largest transcript these limits allow is ${worst} rows (maxRoundLimit x maxParticipants x 2 + maxRefusalRows + 3), above the ${TURN_ROWS_READ_BOUND} a room is read with`;
+		issues.push({ path: "maxRoundLimit", message });
+		issues.push({ path: "maxParticipants", message });
+		if (settings.maxRefusalRows + 3 > TURN_ROWS_READ_BOUND) {
+			issues.push({ path: "maxRefusalRows", message });
+		}
 	}
 	return issues;
 }
@@ -387,7 +474,10 @@ export type FrameInput = {
 // comparisons, so a kind added to `turnKindValidator` is a type error here until
 // it is rendered.
 const TURN_INDENT = "      ";
-const indented = (s: string): string => s.replace(/\r?\n/g, `\n${TURN_INDENT}`);
+// EVERY line terminator ends the line (CRLF, LF, CR, VT, FF, FS, GS, RS, NEL, LS,
+// PS), so no participant text can start a column-0 line inside a relayed turn.
+const LINE_TERMINATORS = /\r\n|[\n\r\u000b\u000c\u001c-\u001e\u0085\u2028\u2029]/g;
+const indented = (s: string): string => s.replace(LINE_TERMINATORS, `\n${TURN_INDENT}`);
 const RENDER_TURN: Record<TurnKind, (t: FrameTurn, head: string) => string> = {
 	answer: (t, head) => head + indented(t.text ?? ""),
 	operator: (t, head) => head + indented(t.text ?? ""),

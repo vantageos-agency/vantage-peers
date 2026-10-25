@@ -1,4 +1,13 @@
-import { sameOrg } from "@vantageos/cloud-identity";
+import {
+	type ActingPrincipal,
+	assertOrgAdmin,
+	assertTargetBelongsTo,
+	resolveCallerFromAgentCredential,
+	resolveCallerFromClaims,
+	resolveWriterRole,
+	sameOrg,
+	scopeStanding,
+} from "@vantageos/cloud-identity";
 import { ConvexError, v } from "convex/values";
 import { internal } from "./_generated/api";
 import type { Doc, Id } from "./_generated/dataModel";
@@ -9,15 +18,15 @@ import {
 	type QueryCtx,
 	query,
 } from "./_generated/server";
-import { normalizeOrchestratorId } from "./_helpers/normalizeOrchestratorId";
+import { anonymousRefusal } from "./lib/agentIdentity";
 import {
-	type OrgScope,
-	ORG_ADMIN_ROLES,
+	isMcpBoundMaster,
 	isOrchestratorOnOrgRoster,
 	lookupOrgMapping,
-	proveOrgAdmin,
+	ORG_ADMIN_ROLES,
+	type OrgScope,
+	refusalError,
 	requireAgentCredentialMatch,
-	requireOrchestratorOnRoster,
 	requireResolvedCaller,
 	verifiedActorValidator,
 	withOrgScope,
@@ -40,10 +49,14 @@ import {
 	type ParticipantState,
 	type RefusalReason,
 	refusalReasonValidator,
+	TURN_ROWS_READ_BOUND,
 	validateSettings,
 	validateTemplate,
 } from "./lib/debateTemplate";
 import { isHumanActorName, memberActorOf, resolveHumanActor } from "./lib/humanActor";
+import { orgByIdLookups, orgByIdPrincipalLookups } from "./lib/orgIdLookups";
+import { refuseWith as refuseWithPerson } from "./lib/personPrincipal";
+import { loadMemberWriterRoles } from "./memberWriterRoles";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Debate room: the functions. Design: sigma-scratch/debate/design.md.
@@ -63,13 +76,12 @@ import { isHumanActorName, memberActorOf, resolveHumanActor } from "./lib/humanA
 // Participants, order, wording and every limit are DATA read from the room's
 // FROZEN template / settings copies; this file holds no participant name, no
 // channel, no voice and no limit constant. The one number below,
-// `TURN_READ_BOUND`, bounds a transaction read, not a business rule.
+// `TURN_ROWS_READ_BOUND` (lib/debateTemplate.ts), bounds a transaction read, not
+// a business rule; the settings validator refuses limits that would not fit it.
 // ─────────────────────────────────────────────────────────────────────────────
 
 type TurnWriter = Doc<"debateTurns">["writer"];
 
-/** Upper bound on turn rows read in one transaction (a read bound, not a limit of the product). */
-const TURN_READ_BOUND = 2000;
 const TEMPLATE_LIST_BOUND = 200;
 
 const refusedValidator = v.object({
@@ -99,13 +111,11 @@ const turnDocValidator = v.object({
 });
 
 // ── refusals ────────────────────────────────────────────────────────────────
-
-/** `RBAC_DENIED`, said in the backend's wire shape: the code as prefix, {reason, door} as payload. */
-function refuse(door: string, reason: string, detail: string): never {
-	throw new ConvexError(
-		`RBAC_DENIED: ${detail} — ${JSON.stringify({ reason, door })}`,
-	);
-}
+//
+// Every identity refusal in this file is said by the package (`refusalError` of a
+// package refusal) or by an existing door helper (`anonymousRefusal`,
+// `requireResolvedCaller`); the file builds none of its own. The refusals below
+// are DATA refusals (a missing settings row, an invalid template), not identity ones.
 
 function refuseData(code: string, detail: unknown): never {
 	throw new ConvexError(`${code}: ${JSON.stringify(detail)}`);
@@ -113,45 +123,91 @@ function refuseData(code: string, detail: unknown): never {
 
 // ── caller resolution ───────────────────────────────────────────────────────
 
-type Tenant = { orgSlug: string; orgId: string };
+type Ctx = QueryCtx | MutationCtx;
 
-/** A tenant door needs a resolved organisation with a permanent ID. */
-function tenantOf(scope: OrgScope, door: string): Tenant {
-	if (scope.orgSlug === null || scope.orgClerkId === undefined) {
-		return refuse(
-			door,
-			"no-organisation",
-			`"${door}" works inside one organisation and the caller resolves to none`,
-		);
+/**
+ * The signed-in PERSON behind a dashboard session, resolved by the package from
+ * the verified claims: the organisation by its permanent ID, the person stored in
+ * it, its role claim. The session goes to the package and nowhere else. An absent
+ * session raises `anonymousRefusal`; a session the package refuses raises its refusal.
+ */
+async function sessionCaller(ctx: Ctx, door: string) {
+	const caller = await resolveCallerFromClaims(
+		await ctx.auth.getUserIdentity(),
+		{ orgLookups: orgByIdLookups(ctx), principalLookups: orgByIdPrincipalLookups(ctx) },
+		{ adminRoles: ORG_ADMIN_ROLES, door },
+	);
+	if (!caller.ok) {
+		if (caller.subject === undefined) throw anonymousRefusal(door);
+		throw refusalError(caller.refusal);
 	}
-	return { orgSlug: scope.orgSlug, orgId: scope.orgClerkId };
+	return caller;
+}
+
+/** The target row is stamped with the principal's own organisation ID, judged by the package. */
+async function requireRowOfOrg(
+	ctx: Ctx,
+	principal: ActingPrincipal,
+	rowOrgId: string,
+	door: string,
+): Promise<void> {
+	const belongs = await assertTargetBelongsTo(
+		principal,
+		{ orgId: rowOrgId },
+		orgByIdPrincipalLookups(ctx),
+		{ door },
+	);
+	if (!belongs.ok) throw refusalError(belongs.refusal);
+}
+
+/**
+ * Each agent seat of `template` is an ACTIVE agent of organisation `orgId`, judged
+ * by the package from the seat's own `agentId` (the agent's row is read by that
+ * ID and must be stamped with the organisation). A name is never resolved here:
+ * the template names its agents by ID.
+ */
+async function requireSeatsOfOrg(
+	ctx: Ctx,
+	orgId: string,
+	template: DebateTemplate,
+	door: string,
+): Promise<void> {
+	for (const seat of template.participants) {
+		if (seat.kind !== "agent") continue;
+		const resolved = await resolveCallerFromAgentCredential(
+			seat.agentId === undefined ? null : { agentId: seat.agentId, verifiedOrgId: orgId },
+			{ orgLookups: orgByIdLookups(ctx), principalLookups: orgByIdPrincipalLookups(ctx) },
+			{ door },
+		);
+		if (!resolved.ok) throw refusalError(resolved.refusal);
+	}
 }
 
 type Caller =
 	| { kind: "person"; actor: string; orgId: string; orgRole: string | undefined }
-	| { kind: "agent"; agent: Doc<"agents"> }
+	| { kind: "agent"; agentId: string; orgId: string }
 	| { kind: "none" };
 
 /**
- * Who is calling a room door. An agent is the row a `verifiedActor` names (a
- * scoped member presenting one is refused `verified-actor-not-trusted`); a
- * person is a resolved member of an organisation. Anything else is `none`, which
- * is a participant of no room.
+ * Who is calling a room door, from the scope the door resolved. An agent is the
+ * `agents` row a `verifiedActor` names, which the existing agent-proof helper
+ * believes from the fleet service account only (a scoped member presenting one is
+ * refused). A person is a resolved member of an organisation. The agent's
+ * organisation is the one STAMPED ON ITS ROW (`clerkOrgId`), never a claimed slug.
  */
-async function resolveCaller(
-	ctx: QueryCtx | MutationCtx,
+async function roomCaller(
+	ctx: Ctx,
 	scope: OrgScope,
 	verifiedActor: { agentId: Id<"agents">; orgSlug: string } | undefined,
 ): Promise<Caller> {
 	if (verifiedActor !== undefined) {
-		await requireAgentCredentialMatch(ctx, undefined, undefined, null, {
-			scope,
-			verifiedActor,
-		});
+		await requireAgentCredentialMatch(ctx, undefined, undefined, null, { scope, verifiedActor });
 		const agent = await ctx.db.get(verifiedActor.agentId);
-		return agent === null ? { kind: "none" } : { kind: "agent", agent };
+		return agent === null || agent.clerkOrgId === undefined
+			? { kind: "none" }
+			: { kind: "agent", agentId: agent._id, orgId: agent.clerkOrgId };
 	}
-	if (!scope.isMaster && scope.orgSlug !== null && scope.orgClerkId !== undefined) {
+	if (scopeStanding(scope) === "member" && scope.orgClerkId !== undefined) {
 		return {
 			kind: "person",
 			actor: memberActorOf(scope),
@@ -168,15 +224,11 @@ function participantOf(
 	caller: Caller,
 ): DebateTemplate["participants"][number] | undefined {
 	if (caller.kind === "agent") {
-		if (!sameOrg({ id: caller.agent.clerkOrgId }, { id: room.tenantOrgId })) {
-			return undefined;
-		}
-		const name = normalizeOrchestratorId(caller.agent.name);
+		if (!sameOrg({ id: caller.orgId }, { id: room.tenantOrgId })) return undefined;
+		// By the agents-row ID frozen on the seat. The seat carries no name to admit:
+		// a renamed agent keeps its seat, a different agent with the same name has none.
 		return room.template.participants.find(
-			(p) =>
-				p.kind === "agent" &&
-				p.channel !== undefined &&
-				normalizeOrchestratorId(p.channel) === name,
+			(p) => p.kind === "agent" && p.agentId !== undefined && p.agentId === caller.agentId,
 		);
 	}
 	if (caller.kind === "person") {
@@ -188,7 +240,7 @@ function participantOf(
 	return undefined;
 }
 
-/** The room's creator, or an administrator of the room's organisation. */
+/** The room's creator, or an administrator of the room's organisation (a view, not a stop). */
 function isOperatorOf(room: Doc<"debateRooms">, caller: Caller): boolean {
 	if (caller.kind !== "person") return false;
 	if (!sameOrg({ id: caller.orgId }, { id: room.tenantOrgId })) return false;
@@ -216,6 +268,9 @@ function settingsOf(row: Doc<"debateSettings">): DebateSettings {
 		maxTurnMessageChars: row.maxTurnMessageChars,
 		pollSeconds: row.pollSeconds,
 		maxAnswerCharsCeiling: row.maxAnswerCharsCeiling,
+		maxLabelChars: row.maxLabelChars,
+		maxTurnInstructionChars: row.maxTurnInstructionChars,
+		maxActiveRooms: row.maxActiveRooms,
 	};
 }
 
@@ -240,14 +295,26 @@ async function appendTurn(ctx: MutationCtx, row: TurnInsert): Promise<void> {
 	await ctx.db.insert("debateTurns", row);
 }
 
+/**
+ * Every row of a room, oldest first. The settings validator guarantees the largest
+ * transcript the room's limits allow fits the bound; a room that nevertheless holds
+ * more is REFUSED, never read as a shorter transcript that lacks its newest turns.
+ */
 async function loadTurns(
 	ctx: QueryCtx | MutationCtx,
 	roomId: Id<"debateRooms">,
 ): Promise<Doc<"debateTurns">[]> {
-	return await ctx.db
+	const rows = await ctx.db
 		.query("debateTurns")
 		.withIndex("by_room_seq", (q) => q.eq("roomId", roomId))
-		.take(TURN_READ_BOUND);
+		.take(TURN_ROWS_READ_BOUND + 1);
+	if (rows.length > TURN_ROWS_READ_BOUND) {
+		return refuseData("DEBATE_TRANSCRIPT_TOO_LARGE", {
+			roomId,
+			reason: `the room holds more than ${TURN_ROWS_READ_BOUND} rows; reading it would drop its newest turns`,
+		});
+	}
+	return rows;
 }
 
 /**
@@ -312,11 +379,8 @@ export const getSettings = query({
 	args: {},
 	returns: v.union(debateSettingsValidator, v.null()),
 	handler: async (ctx) => {
-		const door = "debate:getSettings";
-		const scope = await withOrgScope(ctx, { operatorAsMember: true });
-		requireResolvedCaller(scope, door);
-		const tenant = tenantOf(scope, door);
-		const row = await settingsRow(ctx, tenant.orgId);
+		const caller = await sessionCaller(ctx, "debate:getSettings");
+		const row = await settingsRow(ctx, caller.org.id);
 		return row === null ? null : settingsOf(row);
 	},
 });
@@ -326,22 +390,36 @@ export const upsertSettings = mutation({
 	returns: v.null(),
 	handler: async (ctx, args) => {
 		const door = "debate:upsertSettings";
-		const scope = await withOrgScope(ctx, { operatorAsMember: true });
-		requireResolvedCaller(scope, door);
-		const tenant = tenantOf(scope, door);
-		await proveOrgAdmin(ctx, await ctx.auth.getUserIdentity(), tenant.orgSlug, door);
-		const issues = validateSettings(args);
+		const caller = await sessionCaller(ctx, door);
+		const admin = assertOrgAdmin(caller.principal, caller.org.id, { adminRoles: ORG_ADMIN_ROLES, door });
+		if (!admin.ok) throw refusalError(admin.refusal);
+		const limits: DebateSettings = {
+			maxRoundLimit: args.maxRoundLimit,
+			maxParticipants: args.maxParticipants,
+			maxRefusalRows: args.maxRefusalRows,
+			maxTurnMessageChars: args.maxTurnMessageChars,
+			pollSeconds: args.pollSeconds,
+			maxAnswerCharsCeiling: args.maxAnswerCharsCeiling,
+			maxLabelChars: args.maxLabelChars,
+			maxTurnInstructionChars: args.maxTurnInstructionChars,
+			maxActiveRooms: args.maxActiveRooms,
+		};
+		const issues = validateSettings(limits);
 		if (issues.length > 0) return refuseData("DEBATE_SETTINGS_INVALID", issues);
-		const existing = await settingsRow(ctx, tenant.orgId);
+		const existing = await settingsRow(ctx, caller.org.id);
 		const fields = {
-			tenantId: tenant.orgSlug,
-			tenantOrgId: tenant.orgId,
-			...args,
-			updatedBy: memberActorOf(scope),
+			tenantId: caller.org.label,
+			tenantOrgId: caller.org.id,
+			...limits,
+			updatedBy: caller.actorName,
 			updatedAt: Date.now(),
 		};
-		if (existing === null) await ctx.db.insert("debateSettings", fields);
-		else await ctx.db.replace(existing._id, fields);
+		if (existing === null) {
+			await ctx.db.insert("debateSettings", fields);
+			return null;
+		}
+		await requireRowOfOrg(ctx, caller.principal, existing.tenantOrgId, door);
+		await ctx.db.replace(existing._id, fields);
 		return null;
 	},
 });
@@ -356,17 +434,11 @@ export const listTemplates = query({
 		}),
 	),
 	handler: async (ctx) => {
-		const door = "debate:listTemplates";
-		const scope = await withOrgScope(ctx, { operatorAsMember: true });
-		requireResolvedCaller(scope, door);
-		const tenant = tenantOf(scope, door);
-		const rows = await ctx.db
+		const caller = await sessionCaller(ctx, "debate:listTemplates");
+		return await ctx.db
 			.query("debateTemplates")
-			.withIndex("by_tenantOrgId_and_templateKey", (q) =>
-				q.eq("tenantOrgId", tenant.orgId),
-			)
+			.withIndex("by_tenantOrgId_and_templateKey", (q) => q.eq("tenantOrgId", caller.org.id))
 			.take(TEMPLATE_LIST_BOUND);
-		return rows;
 	},
 });
 
@@ -375,28 +447,29 @@ export const upsertTemplate = mutation({
 	returns: v.id("debateTemplates"),
 	handler: async (ctx, args) => {
 		const door = "debate:upsertTemplate";
-		const scope = await withOrgScope(ctx, { operatorAsMember: true });
-		requireResolvedCaller(scope, door);
-		const tenant = tenantOf(scope, door);
-		await proveOrgAdmin(ctx, await ctx.auth.getUserIdentity(), tenant.orgSlug, door);
-		const settings = await requireSettings(ctx, tenant.orgId);
+		const caller = await sessionCaller(ctx, door);
+		const admin = assertOrgAdmin(caller.principal, caller.org.id, { adminRoles: ORG_ADMIN_ROLES, door });
+		if (!admin.ok) throw refusalError(admin.refusal);
+		const settings = await requireSettings(ctx, caller.org.id);
 		const issues = validateTemplate(args.template, settings);
 		if (issues.length > 0) return refuseData("DEBATE_TEMPLATE_INVALID", issues);
+		await requireSeatsOfOrg(ctx, caller.org.id, args.template, door);
 		const existing = await ctx.db
 			.query("debateTemplates")
 			.withIndex("by_tenantOrgId_and_templateKey", (q) =>
-				q.eq("tenantOrgId", tenant.orgId).eq("templateKey", args.template.id),
+				q.eq("tenantOrgId", caller.org.id).eq("templateKey", args.template.id),
 			)
 			.first();
 		const fields = {
-			tenantId: tenant.orgSlug,
-			tenantOrgId: tenant.orgId,
+			tenantId: caller.org.label,
+			tenantOrgId: caller.org.id,
 			templateKey: args.template.id,
 			template: args.template,
-			updatedBy: memberActorOf(scope),
+			updatedBy: caller.actorName,
 			updatedAt: Date.now(),
 		};
 		if (existing === null) return await ctx.db.insert("debateTemplates", fields);
+		await requireRowOfOrg(ctx, caller.principal, existing.tenantOrgId, door);
 		await ctx.db.replace(existing._id, fields);
 		return existing._id;
 	},
@@ -409,12 +482,28 @@ export const createRoom = mutation({
 	returns: v.id("debateRooms"),
 	handler: async (ctx, args) => {
 		const door = "debate:createRoom";
-		const scope = await withOrgScope(ctx, { operatorAsMember: true });
-		requireResolvedCaller(scope, door);
-		const tenant = tenantOf(scope, door);
 		// The creator is the verified person in its own organisation, with a writer
 		// role: the same human gate every dashboard write door runs.
-		const actor = await resolveHumanActor(ctx, scope, { door });
+		const identity = await ctx.auth.getUserIdentity();
+		const caller = await resolveCallerFromClaims(
+			identity,
+			{ orgLookups: orgByIdLookups(ctx), principalLookups: orgByIdPrincipalLookups(ctx) },
+			{ adminRoles: ORG_ADMIN_ROLES, door },
+		);
+		if (!caller.ok) {
+			if (caller.subject === undefined) throw anonymousRefusal(door);
+			throw refusalError(caller.refusal);
+		}
+		const writer = resolveWriterRole({
+			role: caller.role,
+			writerRoles: await loadMemberWriterRoles(ctx, caller.org.label),
+			door,
+			orgSlug: caller.org.label,
+		});
+		if (!writer.ok) return refuseWithPerson(writer.refusal);
+
+		// The organisation the verified session resolves to: every row below is stamped with it.
+		const tenant = { orgSlug: caller.org.label, orgId: caller.org.id };
 
 		// Another tenant's template answers like a missing one.
 		const templateRow = await ctx.db.get(args.templateId);
@@ -422,20 +511,19 @@ export const createRoom = mutation({
 			return refuseData("DEBATE_TEMPLATE_NOT_FOUND", { templateId: args.templateId });
 		}
 		const settings = await requireSettings(ctx, tenant.orgId);
+		// The limits are judged as they are today, not as they were when saved.
+		const settingsIssues = validateSettings(settings);
+		if (settingsIssues.length > 0) return refuseData("DEBATE_SETTINGS_INVALID", settingsIssues);
 		const subject = args.subject.trim();
 		if (subject.length === 0 || subject.length > settings.maxAnswerCharsCeiling) {
 			return refuseData("DEBATE_SUBJECT_INVALID", {
 				reason: `subject must be 1..${settings.maxAnswerCharsCeiling} characters`,
 			});
 		}
-		// The template is judged against the limits of today, not of the day it was saved.
 		const template = templateRow.template;
 		const issues = validateTemplate(template, settings);
 		if (issues.length > 0) return refuseData("DEBATE_TEMPLATE_INVALID", issues);
 		for (const p of template.participants) {
-			if (p.kind === "agent" && p.channel !== undefined) {
-				requireOrchestratorOnRoster(scope, p.channel, door, "participant");
-			}
 			if (p.kind === "human" && p.channel !== undefined && !isHumanActorName(p.channel)) {
 				return refuseData("DEBATE_TEMPLATE_INVALID", [
 					{
@@ -444,6 +532,26 @@ export const createRoom = mutation({
 					},
 				]);
 			}
+		}
+		// Every agent seat is an active, rostered agent of THIS organisation today.
+		await requireSeatsOfOrg(ctx, tenant.orgId, template, door);
+
+		// Rooms of one organisation that are not closed (active or stalled) are capped by its settings.
+		let open = 0;
+		for (const status of ["active", "stalled"] as const) {
+			open += (
+				await ctx.db
+					.query("debateRooms")
+					.withIndex("by_tenantOrgId_and_status", (q) =>
+						q.eq("tenantOrgId", tenant.orgId).eq("status", status),
+					)
+					.take(settings.maxActiveRooms)
+			).length;
+		}
+		if (open >= settings.maxActiveRooms) {
+			return refuseData("DEBATE_ROOM_LIMIT", {
+				reason: `this organisation already has ${open} rooms that are not closed; the limit is ${settings.maxActiveRooms}`,
+			});
 		}
 
 		const roomId = await ctx.db.insert("debateRooms", {
@@ -459,8 +567,8 @@ export const createRoom = mutation({
 			turnSeq: 1,
 			awaiting: { participantId: template.participants[0].id },
 			participantState: initialParticipantState(template),
-			createdBy: actor,
-			createdById: actor,
+			createdBy: caller.actorName,
+			createdById: caller.actorName,
 			createdAt: Date.now(),
 			refusalRows: 0,
 			refusalsOverflow: 0,
@@ -486,7 +594,9 @@ export const getRoom = query({
 		const door = "debate:getRoom";
 		const scope = await withOrgScope(ctx, { operatorAsMember: true });
 		requireResolvedCaller(scope, door);
-		const caller = await resolveCaller(ctx, scope, args.verifiedActor);
+		// The fleet service account acts in an organisation only through a claim.
+		if (isMcpBoundMaster(scope) && args.verifiedActor === undefined) throw anonymousRefusal(door);
+		const caller = await roomCaller(ctx, scope, args.verifiedActor);
 		const room = await ctx.db.get(args.roomId);
 		// A room the caller may not see answers like a room that does not exist.
 		if (room === null) return null;
@@ -498,25 +608,25 @@ export const getRoom = query({
 });
 
 export const closeRoom = mutation({
-	args: {
-		roomId: v.id("debateRooms"),
-		verifiedActor: v.optional(verifiedActorValidator),
-	},
+	args: { roomId: v.id("debateRooms") },
 	returns: v.null(),
 	handler: async (ctx, args) => {
 		const door = "debate:closeRoom";
-		const scope = await withOrgScope(ctx, { operatorAsMember: true });
-		requireResolvedCaller(scope, door);
-		const caller = await resolveCaller(ctx, scope, args.verifiedActor);
+		const caller = await sessionCaller(ctx, door);
 		const room = await ctx.db.get(args.roomId);
-		// One refusal for a participant, another tenant and a room that is not there.
-		if (room === null || !isOperatorOf(room, caller)) {
-			return refuse(
+		// One refusal for a participant, another tenant and a room that is not there:
+		// the creator stops it, else an administrator of ITS organisation does, and
+		// for a room that is absent or another organisation's there is none to administer.
+		const ownRoom = room !== null && sameOrg({ id: room.tenantOrgId }, { id: caller.org.id });
+		if (!(ownRoom && room.createdById === caller.actorName)) {
+			const admin = assertOrgAdmin(caller.principal, ownRoom ? room.tenantOrgId : undefined, {
+				adminRoles: ORG_ADMIN_ROLES,
 				door,
-				"not_operator",
-				"only the room's creator or an administrator of its organisation may stop it",
-			);
+			});
+			if (!admin.ok) throw refusalError(admin.refusal);
 		}
+		if (room === null) return null;
+		await requireRowOfOrg(ctx, caller.principal, room.tenantOrgId, door);
 		if (room.status === "closed") return null;
 		const now = Date.now();
 		await appendTurn(ctx, {
@@ -555,19 +665,24 @@ export const postTurn = mutation({
 		const door = "debate:postTurn";
 		const scope = await withOrgScope(ctx, { operatorAsMember: true });
 		requireResolvedCaller(scope, door);
-		const caller = await resolveCaller(ctx, scope, args.verifiedActor);
+		// The fleet service account acts in an organisation only through a claim.
+		if (isMcpBoundMaster(scope) && args.verifiedActor === undefined) throw anonymousRefusal(door);
+		const caller = await roomCaller(ctx, scope, args.verifiedActor);
 		const room = await ctx.db.get(args.roomId);
 
 		// Not a participant (or no such room): refused with nothing about the room,
-		// and nothing written.
+		// and nothing written. The turnSeq is the caller's own, in both cases: the
+		// room's live one would tell a stranger that the room exists.
 		const participant = room === null ? undefined : participantOf(room, caller);
 		if (room === null || participant === undefined) {
 			return {
 				refused: "not_a_participant" as const,
 				awaiting: null,
-				turnSeq: room === null ? args.turnSeq : room.turnSeq,
+				turnSeq: args.turnSeq,
 			};
 		}
+		// A person posts under the same writer-role gate that created the room.
+		if (caller.kind === "person") await resolveHumanActor(ctx, scope, { door });
 
 		const awaitingLabel =
 			room.awaiting === undefined
@@ -715,12 +830,19 @@ export const deliverTurn = internalMutation({
 			return null;
 		}
 
-		const channel = participant.channel;
+		// The seat names its agent by ID. The agent's row, read by that ID, gives the
+		// address its message is delivered to (a transport label, never an admission).
+		const seatAgent = participant.agentId === undefined ? null : await ctx.db.get(participant.agentId);
 		const mapping = await lookupOrgMapping(ctx, { clerkOrgId: room.tenantOrgId });
-		if (channel === undefined) {
-			await stallRoom(ctx, room, `participant "${participant.label}" has no channel`);
+		if (seatAgent === null || !seatAgent.isActive || seatAgent.clerkOrgId !== room.tenantOrgId) {
+			await stallRoom(
+				ctx,
+				room,
+				`participant "${participant.label}" is not an active agent of the room's organisation`,
+			);
 			return null;
 		}
+		const channel = seatAgent.name;
 		if (mapping === null || !mapping.isActive) {
 			await stallRoom(ctx, room, "the room's organisation is not an active organisation");
 			return null;
