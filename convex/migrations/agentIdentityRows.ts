@@ -5,7 +5,7 @@
  *   agent_credentials.agentId       (the credential's identity: the agents row)
  *
  * INTERNAL ONLY — never client-facing, never run automatically. Operator-run,
- * cursor-paged, DRY-RUN FIRST (same shape as memberScopesMigration.ts):
+ * cursor-paged, DRY-RUN FIRST:
  *
  *   npx convex run migrations/agentIdentityRows:backfillAgentNormalizedNames \
  *     '{"dryRun":true,"cursor":null}'
