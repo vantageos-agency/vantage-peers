@@ -80,8 +80,6 @@ import { loadMemberWriterRoles } from "./memberWriterRoles";
 // a business rule; the settings validator refuses limits that would not fit it.
 // ─────────────────────────────────────────────────────────────────────────────
 
-type TurnWriter = Doc<"debateTurns">["writer"];
-
 const TEMPLATE_LIST_BOUND = 200;
 
 const refusedValidator = v.object({
