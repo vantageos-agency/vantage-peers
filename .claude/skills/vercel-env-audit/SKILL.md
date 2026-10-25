@@ -8,8 +8,8 @@ description: >
 ---
 
 Audit layer of rule `vercel-build-cache-policy` v1.0.0. The reactive layer is the hook
-`enforce-vercel-cache-policy.py`, which refuses a `vercel deploy` on a target where the
-variable is not listed.
+`enforce-vercel-cache-policy.py`, which refuses a `vercel`/`vc` deploy of a project where the
+variable is not listed on any one of production, preview and development.
 
 ## Preconditions — measure them, never assume them
 
