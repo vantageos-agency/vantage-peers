@@ -23,7 +23,7 @@ import { assigneeNotInOrgRefusal } from "./lib/actingPrincipal";
 import type { OrgScope, VerifiedActor } from "./lib/auth";
 import { requireId } from "./lib/ids";
 import { computeBlockedOnMe } from "./lib/blockedOnMe";
-import { resolveInboxReader } from "./lib/inboxReader";
+import { rbacDenied, resolveInboxReader } from "./lib/inboxReader";
 import { agentLinkAdmits } from "./lib/agentLinks";
 import { mappingIsProven } from "./githubOwnerBinding";
 import {
@@ -2799,6 +2799,18 @@ export const listBlockedOnMe = query({
 		requireResolvedCaller(scope, "tasks:listBlockedOnMe", {
 			alsoRefusePreOrg: true,
 		});
+		// R-54: the claimless service-account call is refused, never served as master.
+		if (
+			scope.isMaster &&
+			args.verifiedActor === undefined &&
+			args.verifiedOrg === undefined
+		) {
+			throw rbacDenied(
+				"tasks:listBlockedOnMe",
+				"claimless-service-account",
+				"the service account reads who is blocked on an agent only with that agent's verified identity",
+			);
+		}
 		const reader = await resolveInboxReader(
 			ctx,
 			scope,

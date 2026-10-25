@@ -141,11 +141,15 @@ describe("list_blocked_on_me", () => {
 		expect(r.text).toContain("RBAC_DENIED");
 	});
 
-	it("a recipient outside the token's allow-list is refused before Convex", async () => {
+	it("a recipient name is not an authority gate: it is forwarded as a hint and Convex decides", async () => {
 		const r = await run(SEAT, { recipient: "someone-else" });
-		expect(r.refused).toBe(true);
-		expect(r.calls).toHaveLength(0);
-		expect(r.text).toContain("Forbidden");
+		expect(r.refused).toBe(false);
+		expect(r.calls).toHaveLength(1);
+		expect(r.calls[0].args.verifiedActor).toEqual({
+			agentId: CLIO_ID,
+			orgSlug: ORG,
+		});
+		expect(r.text).not.toContain("Forbidden");
 	});
 
 	it("a backend refusal surfaces as an error, never as an empty list", async () => {

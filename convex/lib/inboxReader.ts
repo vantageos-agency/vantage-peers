@@ -102,10 +102,23 @@ export type InboxReader = {
 	agentId?: string;
 };
 
-function refuse(door: string, reason: string, detail: string): never {
-	throw new ConvexError(
+/**
+ * The ONE RBAC_DENIED error of the inbox readers, returned so a door can `throw`
+ * it in its own handler (a refusal the reader of the source can see). Same code,
+ * same payload shape as `refuse`; never a second shape.
+ */
+export function rbacDenied(
+	door: string,
+	reason: string,
+	detail: string,
+): ConvexError<string> {
+	return new ConvexError(
 		`RBAC_DENIED: ${detail} — ${JSON.stringify({ reason, door })}`,
 	);
+}
+
+function refuse(door: string, reason: string, detail: string): never {
+	throw rbacDenied(door, reason, detail);
 }
 
 export type InboxClaims = {
