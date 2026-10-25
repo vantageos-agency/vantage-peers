@@ -2321,7 +2321,11 @@ export default defineSchema({
 
 	// A debate room: subject, frozen template and settings copies, the turn pointer
 	// (round, position, turnSeq), who is awaited, and the per-participant skip state.
-	debateRooms: defineTable(debateRoomFields),
+	// by_tenantOrgId_and_status: the cap on rooms an organisation may hold open.
+	debateRooms: defineTable(debateRoomFields).index("by_tenantOrgId_and_status", [
+		"tenantOrgId",
+		"status",
+	]),
 
 	// The transcript of a room, one row per turn (answer, operator turn, skip, drop,
 	// refusal, system note); `writer` names the function that wrote it.

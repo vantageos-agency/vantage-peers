@@ -55,7 +55,7 @@ export type VerifiedPerson = { accessTokenHash: string };
 // The package's typed refusal, said in this backend's wire shape. The DECISION
 // is @vantageos/cloud-identity's; only the transport (a ConvexError carrying
 // its code as the prefix and {reason, door} as the payload) is local.
-function refuseWith(r: PersonRefusal): never {
+export function refuseWith(r: PersonRefusal): never {
 	throw new ConvexError(
 		`${r.code}: ${r.detail} — ${JSON.stringify({ reason: r.reason, door: r.door })}`,
 	);
