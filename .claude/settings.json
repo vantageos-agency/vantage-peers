@@ -151,6 +151,11 @@
           {
             "type": "command",
             "command": "python3 \"/root/coding/vantage-memory/.claude/hooks/enforce-pr-opened-via-skill.py\""
+          },
+          {
+            "type": "command",
+            "command": "python3 /root/coding/vantage-memory/.claude/hooks/enforce-vercel-cache-policy.py",
+            "timeout": 30
           }
         ]
       },
