@@ -486,6 +486,7 @@ describe("withVerifiedActor", () => {
 			"profiles",
 			"missions",
 			"improvisationDigest",
+			"debate",
 		]) {
 			const src = readFileSync(
 				resolve(__dirname, `../../convex/${file}.ts`),

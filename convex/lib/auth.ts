@@ -1196,14 +1196,17 @@ export async function requireAgentCredentialMatch(
  * cannot assign work into another organisation). The kind names the refusal's
  * `reason` (`<kind>-not-on-roster`) and is the only thing that varies.
  */
-export type RosterNameKind = "sender" | "actor" | "assignee";
+export type RosterNameKind = "sender" | "actor" | "assignee" | "participant";
 
 /**
  * The ONE roster-membership predicate behind requireOrchestratorOnRoster (and
  * any read that must answer without throwing): normalised on both sides, and
  * "*" names nobody.
  */
-export function isOrchestratorOnOrgRoster(scope: OrgScope, name: string): boolean {
+export function isOrchestratorOnOrgRoster(
+	scope: Pick<OrgScope, "allowedOrchestrators">,
+	name: string,
+): boolean {
 	const claimed = normalizeOrchestratorId(name);
 	return scope.allowedOrchestrators.some(
 		(entry) => entry !== "*" && normalizeOrchestratorId(entry) === claimed,

@@ -85,6 +85,10 @@ export const VERIFIED_ACTOR_DOORS: ReadonlySet<string> = new Set([
 	// so Convex serves it only with the acting agent's verified ID and refuses the
 	// claimless call (RBAC_DENIED verified-actor-required).
 	"improvisationDigest:scanWindow",
+	// The debate-room doors: the participant is the agent the transport verified,
+	// matched against the room's own participant list, never a name in an argument.
+	"debate:postTurn",
+	"debate:getRoom",
 ]);
 
 export type VerifiedActorArg = { agentId: string; orgSlug: string };
