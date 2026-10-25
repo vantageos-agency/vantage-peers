@@ -1,7 +1,7 @@
 import { isFleetStamp } from "@vantageos/cloud-identity";
 import { v } from "convex/values";
 import { ConvexError } from "convex/values";
-import type { Doc } from "./_generated/dataModel";
+import type { Doc, Id } from "./_generated/dataModel";
 import { mutation, query, internalMutation } from "./_generated/server";
 import type { MutationCtx } from "./_generated/server";
 import { internal, api } from "./_generated/api";
@@ -776,6 +776,102 @@ export const remove = mutation({
 /** Schedules read per `processDueTasks` transaction (R-31). */
 export const PROCESS_DUE_PAGE = 100;
 
+/** Task statuses that count as an OPEN instance of a routine. */
+const OPEN_INSTANCE_STATUSES = ["todo", "in_progress", "review", "blocked"] as const;
+
+/**
+ * Bound on the legacy same-title lookup, per (tenant, assignee, status) bucket.
+ * If a bucket reaches it, the lookup cannot prove absence, so the answer is
+ * "unknown" and the tick SKIPS (creating on an unknown state is the stacking
+ * defect itself).
+ */
+export const LEGACY_OPEN_LOOKUP_BOUND = 1000;
+
+type OpenInstance =
+	| { kind: "open"; taskId: Id<"tasks">; status: string; adopt: boolean }
+	| { kind: "none" }
+	| { kind: "unknown" };
+
+type BucketRow = { _id: Id<"tasks">; title: string; orgId: string | undefined };
+type Bucket = { rows: BucketRow[]; truncated: boolean };
+/** One scan per bucket per transaction, shared by every schedule in the page. */
+type BucketCache = Map<string, Bucket>;
+
+const bucketKey = (orgId: string | undefined, assignedTo: string, status: string) =>
+	`${orgId ?? ""}\u0000${assignedTo}\u0000${status}`;
+
+async function loadBucket(
+	ctx: MutationCtx,
+	recurring: Doc<"recurringTasks">,
+	status: (typeof OPEN_INSTANCE_STATUSES)[number],
+	cache: BucketCache,
+): Promise<Bucket> {
+	const key = bucketKey(recurring.orgId, recurring.assignedTo, status);
+	const hit = cache.get(key);
+	if (hit) return hit;
+	// A stamped schedule reads only its own tenant's bucket; an unstamped one
+	// reads the assignee bucket and keeps only unstamped rows (never crosses over).
+	const rows =
+		recurring.orgId !== undefined
+			? await ctx.db
+					.query("tasks")
+					.withIndex("by_orgId_assignee_status", (q) =>
+						q
+							.eq("orgId", recurring.orgId)
+							.eq("assignedTo", recurring.assignedTo)
+							.eq("status", status),
+					)
+					.take(LEGACY_OPEN_LOOKUP_BOUND)
+			: await ctx.db
+					.query("tasks")
+					.withIndex("by_assignee", (q) =>
+						q.eq("assignedTo", recurring.assignedTo).eq("status", status),
+					)
+					.take(LEGACY_OPEN_LOOKUP_BOUND);
+	const bucket: Bucket = {
+		rows: rows
+			.filter((r) => r.orgId === recurring.orgId)
+			.map((r) => ({ _id: r._id, title: r.title, orgId: r.orgId })),
+		truncated: rows.length >= LEGACY_OPEN_LOOKUP_BOUND,
+	};
+	cache.set(key, bucket);
+	return bucket;
+}
+
+/**
+ * Is the previous instance of this schedule still open?
+ *
+ * 1. `lastTaskId` set: authoritative. Read that task; open status means open,
+ *    closed or deleted means none.
+ * 2. Legacy row (no `lastTaskId`): bounded lookup of each open status bucket
+ *    (tenant, assignee, status), matched on title. Same tenant only: an
+ *    unstamped task never blocks a stamped schedule. A bucket that hit the
+ *    bound is "unknown", not "none".
+ */
+async function findOpenInstance(
+	ctx: MutationCtx,
+	recurring: Doc<"recurringTasks">,
+	cache: BucketCache,
+): Promise<OpenInstance> {
+	if (recurring.lastTaskId !== undefined) {
+		const prev = await ctx.db.get(recurring.lastTaskId);
+		if (prev !== null && (OPEN_INSTANCE_STATUSES as readonly string[]).includes(prev.status)) {
+			return { kind: "open", taskId: prev._id, status: prev.status, adopt: false };
+		}
+		return { kind: "none" };
+	}
+	let unknown = false;
+	for (const status of OPEN_INSTANCE_STATUSES) {
+		const bucket = await loadBucket(ctx, recurring, status, cache);
+		const match = bucket.rows.find((r) => r.title === recurring.title);
+		if (match) {
+			return { kind: "open", taskId: match._id, status, adopt: true };
+		}
+		if (bucket.truncated) unknown = true;
+	}
+	return unknown ? { kind: "unknown" } : { kind: "none" };
+}
+
 export const processDueTasks = internalMutation({
 	args: { cursor: v.optional(v.union(v.string(), v.null())) },
 	returns: v.object({ created: v.number(), failed: v.number() }),
@@ -797,6 +893,8 @@ export const processDueTasks = internalMutation({
 
 		let created = 0;
 		let failed = 0;
+		let skipped = 0;
+		const bucketCache: BucketCache = new Map();
 
 		for (const recurring of dueTasks) {
 
@@ -834,7 +932,37 @@ export const processDueTasks = internalMutation({
 					...(createdById !== undefined ? { createdById } : {}),
 				};
 
-				await ctx.db.insert("tasks", {
+				// ONE OPEN INSTANCE PER ROUTINE (k1770awc8jq7bqa6w78jbz5gqx8cdvxj).
+				// DESIGN: SKIP, not "postpone onto the open instance". The open
+				// instance already carries the work; re-dating it would rewrite
+				// the history of a task someone may be acting on, and the
+				// schedule's own cadence stays honest. The skip is not silent: it
+				// is logged and recorded on the schedule row (skippedRuns,
+				// lastSkippedAt, lastSkipReason). nextRunAt still advances, so the
+				// schedule does not re-fire on every 15-minute tick.
+				const open = await findOpenInstance(ctx, recurring, bucketCache);
+				if (open.kind !== "none") {
+					const reason =
+						open.kind === "open"
+							? `previous instance ${open.taskId} still open (status ${open.status})`
+							: `open-instance lookup hit its bound (${LEGACY_OPEN_LOOKUP_BOUND} per status bucket) for assignee ${recurring.assignedTo}; state unknown, not creating`;
+					const log = open.kind === "open" ? console.log : console.error;
+					log(`Recurring tasks: skipped schedule ${recurring._id} — ${reason}`);
+					await ctx.db.patch(recurring._id, {
+						nextRunAt,
+						updatedAt: now,
+						lastSkippedAt: now,
+						skippedRuns: (recurring.skippedRuns ?? 0) + 1,
+						lastSkipReason: reason,
+						// A legacy row adopts the open task it found, so the next
+						// tick reads it directly instead of searching again.
+						...(open.kind === "open" && open.adopt ? { lastTaskId: open.taskId } : {}),
+					});
+					skipped++;
+					continue;
+				}
+
+				const insertedId = await ctx.db.insert("tasks", {
 					title: recurring.title,
 					description: recurring.description,
 					assignedTo: recurring.assignedTo,
@@ -859,11 +987,23 @@ export const processDueTasks = internalMutation({
 					updatedAt: now,
 				});
 
+				// A later schedule in this page with the same title, assignee and
+				// tenant must see this instance as open.
+				bucketCache
+					.get(bucketKey(recurring.orgId, recurring.assignedTo, "todo"))
+					?.rows.push({
+						_id: insertedId,
+						title: recurring.title,
+						orgId: recurring.orgId,
+					});
+
 				// Update the recurring task
 				await ctx.db.patch(recurring._id, {
 					lastCreatedAt: now,
 					nextRunAt,
 					updatedAt: now,
+					lastTaskId: insertedId,
+					skippedRuns: 0,
 				});
 
 				created++;
@@ -880,6 +1020,11 @@ export const processDueTasks = internalMutation({
 
 		if (created > 0) {
 			console.log(`Recurring tasks: created ${created} task(s)`);
+		}
+		if (skipped > 0) {
+			console.log(
+				`Recurring tasks: ${skipped} schedule(s) skipped, previous instance still open`,
+			);
 		}
 		if (failed > 0) {
 			console.error(
