@@ -459,7 +459,7 @@ export async function withOrgScope(
 		userId: subject,
 		orgSlug: org.label,
 		...(org.id !== undefined ? { orgClerkId: org.id } : {}),
-		allowedOrchestrators: org.allowedOrchestrators,
+		allowedOrchestrators: org.allowedOrchestrators ?? [],
 		allowedAgentIds: rosterRow.allowedAgentIds ?? [],
 		fleetWide: false,
 		scopes: org.scopes,

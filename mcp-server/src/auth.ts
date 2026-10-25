@@ -491,7 +491,7 @@ export function actingClaimDecision(
 	) {
 		caller = {
 			kind: "seat-unresolved",
-			allowlist: toPackageOAuthCtx(ctx).fromAllowList,
+			allowlist: ctx.fromAllowList,
 		};
 	} else if (ctx) {
 		caller = { kind: "org-member" };
