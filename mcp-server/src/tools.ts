@@ -3850,7 +3850,7 @@ export function registerTools(
 		{
 			kind: "filtered",
 			reason:
-				"no in-handler recipient gate: tasks:listBlockedOnMe serves only the agent resolved by ID from the verified identity (a seat's verifiedActor), refuses a label-only reader and the claimless service account; recipient is ignored and never forwarded",
+				"no in-handler recipient gate: tasks:listBlockedOnMe serves only the agent resolved by ID from the verified identity (a seat's verifiedActor); refuses a label-only reader and the claimless service account; recipient is ignored and never forwarded",
 		},
 		"list_blocked_on_me",
 		"List the tasks that other peers have BLOCKED on one of YOUR live tasks (blockedOnTaskId), oldest wait first, with the age of each wait. " +
@@ -3863,7 +3863,7 @@ export function registerTools(
 			recipient: creatorSchema
 				.optional()
 				.describe(
-					"Ignored (kept for compatibility): the waiters listed are those of the verified agent the credential resolves (a seat or an agent credential). A name is never forwarded or used to select tasks; an org-level token, the fleet master and a label-only caller are refused by the backend.",
+					"Ignored (kept for compatibility): the waiters listed are those of the verified agent the credential resolves (a seat or an agent credential). A name is never forwarded or used to select tasks; a caller with no verified agent (an org-level token, the fleet master, a label-only caller) is refused by the backend.",
 				),
 			tenantId: z
 				.string()
@@ -3896,7 +3896,6 @@ export function registerTools(
 					"tasks:listBlockedOnMe" as any,
 					{
 						...(tenantId !== undefined ? { tenantId } : {}),
-						...inboxOrgArgs(undefined),
 					},
 				);
 				const waiters = (result ?? {}) as {
