@@ -18,7 +18,10 @@ import { convexTest } from "convex-test";
 import { beforeEach, describe, expect, test } from "vitest";
 import { internal } from "../_generated/api";
 import type { Id } from "../_generated/dataModel";
-import { LEGACY_OPEN_LOOKUP_BOUND } from "../recurringTasks";
+import {
+	LEGACY_OPEN_LOOKUP_BOUND,
+	PROCESS_DUE_SCAN_BUDGET,
+} from "../recurringTasks";
 import schema from "../schema";
 
 const modules = Object.fromEntries(
@@ -34,7 +37,12 @@ const DAY = 24 * 60 * 60 * 1000;
 
 async function seedSchedule(
 	t: T,
-	opts: { title?: string; assignedTo?: string; orgId?: string } = {},
+	opts: {
+		title?: string;
+		assignedTo?: string;
+		orgId?: string;
+		assignedToId?: string;
+	} = {},
 ): Promise<Id<"recurringTasks">> {
 	const past = Date.now() - 60_000;
 	return await t.run(async (ctx) =>
@@ -47,6 +55,9 @@ async function seedSchedule(
 			active: true,
 			createdBy: "sigma",
 			...(opts.orgId !== undefined ? { orgId: opts.orgId } : {}),
+			...(opts.assignedToId !== undefined
+				? { assignedToId: opts.assignedToId }
+				: {}),
 			createdAt: past,
 			updatedAt: past,
 		}),
@@ -300,5 +311,132 @@ describe("processDueTasks — different schedules do not block each other", () =
 		expect(await tasksTitled(t, "Routine B")).toHaveLength(1);
 		expect((await row(t, a))?.skippedRuns).toBe(0);
 		expect((await row(t, b))?.skippedRuns).toBe(1);
+	});
+});
+
+describe("processDueTasks — the open-instance lookup keys on the assignee agent ID", () => {
+	let t: T;
+	beforeEach(() => {
+		t = createT();
+	});
+
+	async function seedTask(opts: {
+		title: string;
+		assignedTo: string;
+		assignedToId?: string;
+		orgId?: string;
+	}) {
+		return await t.run(async (ctx) =>
+			ctx.db.insert("tasks", {
+				title: opts.title,
+				assignedTo: opts.assignedTo,
+				...(opts.assignedToId !== undefined
+					? { assignedToId: opts.assignedToId }
+					: {}),
+				priority: "medium" as const,
+				status: "todo" as const,
+				createdBy: "sigma",
+				...(opts.orgId !== undefined ? { orgId: opts.orgId } : {}),
+				createdAt: Date.now() - DAY,
+				updatedAt: Date.now() - DAY,
+			}),
+		);
+	}
+
+	test("(a) a schedule with assignedToId finds its open instance by ID even when the task's assignedTo name differs", async () => {
+		const id = await seedSchedule(t, {
+			orgId: "org-a",
+			assignedTo: "sigma",
+			assignedToId: "agent-sigma-1",
+		});
+		const open = await seedTask({
+			title: "Daily routine",
+			assignedTo: "sigma-renamed",
+			assignedToId: "agent-sigma-1",
+			orgId: "org-a",
+		});
+		await tick(t);
+		expect(await tasksTitled(t, "Daily routine")).toHaveLength(1);
+		const r = await row(t, id);
+		expect(r?.skippedRuns).toBe(1);
+		expect(r?.lastTaskId).toBe(open);
+	});
+
+	test("(a) the ID path stays inside the schedule's tenant", async () => {
+		await seedSchedule(t, { orgId: "org-a", assignedToId: "agent-sigma-1" });
+		await seedTask({
+			title: "Daily routine",
+			assignedTo: "sigma",
+			assignedToId: "agent-sigma-1",
+			orgId: "org-b",
+		});
+		await tick(t);
+		const mine = (await tasksTitled(t, "Daily routine")).filter(
+			(x) => x.orgId === "org-a",
+		);
+		expect(mine).toHaveLength(1);
+	});
+
+	test("(b) a schedule WITHOUT assignedToId still finds its open instance by assignee name", async () => {
+		const id = await seedSchedule(t, { orgId: "org-a", assignedTo: "sigma" });
+		const open = await seedTask({
+			title: "Daily routine",
+			assignedTo: "sigma",
+			assignedToId: "agent-sigma-1",
+			orgId: "org-a",
+		});
+		await tick(t);
+		expect(await tasksTitled(t, "Daily routine")).toHaveLength(1);
+		expect((await row(t, id))?.lastTaskId).toBe(open);
+	});
+
+	test("(c) once the per-transaction scan budget is spent, a lookup answers unknown: the tick skips with a recorded reason", async () => {
+		const assignees = ["a1", "a2", "a3", "a4", "a5"];
+		const perAssignee = 900;
+		expect(perAssignee * assignees.length).toBeGreaterThan(
+			PROCESS_DUE_SCAN_BUDGET,
+		);
+		expect(perAssignee).toBeLessThan(LEGACY_OPEN_LOOKUP_BOUND);
+		const ids: Id<"recurringTasks">[] = [];
+		for (const a of assignees) {
+			ids.push(
+				await seedSchedule(t, {
+					orgId: "org-a",
+					assignedTo: a,
+					assignedToId: `agent-${a}`,
+				}),
+			);
+		}
+		await t.run(async (ctx) => {
+			for (const a of assignees) {
+				for (let i = 0; i < perAssignee; i++) {
+					await ctx.db.insert("tasks", {
+						title: `unrelated ${a} ${i}`,
+						assignedTo: a,
+						assignedToId: `agent-${a}`,
+						priority: "low" as const,
+						status: "todo" as const,
+						createdBy: "sigma",
+						orgId: "org-a",
+						createdAt: Date.now(),
+						updatedAt: Date.now(),
+					});
+				}
+			}
+		});
+		await tick(t);
+		const rows = await Promise.all(ids.map((i) => row(t, i)));
+		const skipped = rows.filter((r) => (r?.skippedRuns ?? 0) === 1);
+		expect(skipped.length).toBeGreaterThanOrEqual(1);
+		for (const r of skipped) {
+			expect(r?.lastSkipReason).toContain("scan budget");
+			expect(r?.lastTaskId).toBeUndefined();
+		}
+		// A schedule inside the budget is unaffected: it created its task.
+		expect(rows.filter((r) => (r?.skippedRuns ?? 0) === 0).length).toBeGreaterThanOrEqual(1);
+		const created = (await t.run(async (ctx) => ctx.db.query("tasks").collect())).filter(
+			(x) => x.title === "Daily routine",
+		);
+		expect(created).toHaveLength(rows.length - skipped.length);
 	});
 });
