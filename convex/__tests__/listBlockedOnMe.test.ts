@@ -191,7 +191,12 @@ describe("tasks:listBlockedOnMe", () => {
 		const w = await seedWorld();
 		await putTask(w, w.irisAlpha, "T");
 		const r = await readAs(w, w.irisAlpha);
-		expect(r).toEqual({ entries: [], total: 0, truncated: false, oldestAge: 0 });
+		expect(r).toEqual({
+			entries: [],
+			total: 0,
+			truncated: false,
+			oldestAge: 0,
+		});
 	});
 
 	test("NOT-MINE: B is blocked on a task assigned to C -> A does not see it, C does", async () => {
@@ -218,6 +223,36 @@ describe("tasks:listBlockedOnMe", () => {
 		await putTask(w, w.irisBeta, "U resumed", {
 			status: "in_progress",
 			blockedOn: live,
+			ageMs: MIN,
+		});
+		expect((await readAs(w, w.irisAlpha)).total).toBe(0);
+	});
+
+	test("PRESENT: a task assigned to A by ID but carrying another assignedTo label is still found", async () => {
+		const w = await seedWorld();
+		const T = await putTask(w, w.irisAlpha, "T relabelled");
+		await w.t.run(async (ctx) => {
+			await ctx.db.patch(T, { assignedTo: "legacy-label" });
+		});
+		const U = await putTask(w, w.irisBeta, "U", {
+			status: "blocked",
+			blockedOn: T,
+			ageMs: MIN,
+		});
+		const r = await readAs(w, w.irisAlpha);
+		expect(r.total).toBe(1);
+		expect(r.entries[0]).toMatchObject({ blockedTaskId: U, onTaskId: T });
+	});
+
+	test("CROSS-TENANT: a cross-org blocked row citing a relabelled task of A is not returned", async () => {
+		const w = await seedWorld();
+		const T = await putTask(w, w.irisAlpha, "T relabelled");
+		await w.t.run(async (ctx) => {
+			await ctx.db.patch(T, { assignedTo: "legacy-label" });
+		});
+		await putTask(w, w.acmeBeta, "acme U", {
+			status: "blocked",
+			blockedOn: T,
 			ageMs: MIN,
 		});
 		expect((await readAs(w, w.irisAlpha)).total).toBe(0);
