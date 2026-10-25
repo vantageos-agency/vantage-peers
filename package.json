@@ -43,18 +43,18 @@
     "@modelcontextprotocol/sdk": "^1.32.0",
     "@types/pdf-parse": "^1.1.5",
     "@vantageos/agent-engine": "0.1.0-alpha.4",
-    "@vantageos/cloud-identity": "^0.23.1",
+    "@vantageos/cloud-identity": "^0.25.0",
     "ai": "^6.0.134",
     "convex": "^1.42.1",
     "convex-helpers": "^0.1.114",
     "dotenv": "^17.3.1",
     "gray-matter": "^4.0.3",
-    "js-yaml": "^4.2.0",
+    "js-yaml": "^4.3.2",
     "openai": "^6.32.0",
     "pdf-parse": "^2.4.5",
     "tar-stream": "^3.2.0",
     "yaml": "^2.9.0",
-    "zod": "^4.3.6"
+    "zod": "^4.6.7"
   },
   "devDependencies": {
     "@biomejs/biome": "^2.4.10",
@@ -70,6 +70,12 @@
     "proxy-addr": "^2.0.8",
     "dompurify": "^3.4.17",
     "fast-uri": "3.1.9",
-    "@modelcontextprotocol/sdk": "^1.32.0"
+    "@modelcontextprotocol/sdk": "^1.32.0",
+    "body-parser": "^2.4.0",
+    "hono": "^4.12.25",
+    "ip-address": "^10.3.1",
+    "path-to-regexp": "^8.4.0",
+    "source-map-js": "^1.2.2",
+    "ws": "^8.21.0"
   }
 }

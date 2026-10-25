@@ -71,11 +71,11 @@
 		"@clerk/backend": "^3.11.4",
 		"@mcp-ui/server": "^6.1.0",
 		"@modelcontextprotocol/server": "^2.3.0",
-		"@vantageos/cloud-identity": "^0.23.1",
+		"@vantageos/cloud-identity": "^0.25.0",
 		"@vantageos/mosaic": "^0.1.2",
 		"convex": ">=1.0.0",
 		"dotenv": "^17.4.2",
-		"zod": "^4.3.6"
+		"zod": "^4.6.7"
 	},
 	"peerDependencies": {
 		"convex": ">=1.0.0"
@@ -93,7 +93,12 @@
 		"dompurify": "^3.4.17",
 		"fast-uri": "3.1.9",
 		"vite": "^8.1.6",
-		"@modelcontextprotocol/sdk": "^1.32.0"
+		"@modelcontextprotocol/sdk": "^1.32.0",
+		"body-parser": "^2.4.0",
+		"hono": "^4.12.25",
+		"ip-address": "^10.3.1",
+		"source-map-js": "^1.2.2",
+		"ws": "^8.21.0"
 	},
 	"engines": {
 		"node": ">=20"
