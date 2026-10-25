@@ -1,0 +1,4 @@
+---
+section: Added
+---
+- **`vercel deploy` is refused on a target where `VERCEL_FORCE_NO_BUILD_CACHE` is not set (rule `vercel-build-cache-policy` v1.0.0).** New PreToolUse Bash hook `.claude/hooks/enforce-vercel-cache-policy.py`, wired in `.claude/settings.json`: it reads the real command through `_lib/command_predicate.py`, gates `vercel`, `vercel <path>`, `vercel deploy` and `vercel redeploy` on their target (`--prod`, `--target`), and measures the project with `vercel env ls <target>` (forwarding `--cwd`/`--scope`/`--token`). `--force` and `--build-env VERCEL_FORCE_NO_BUILD_CACHE=1` pass; `vercel env` is never gated; an absent CLI or a failing listing is allowed with a `NOT MEASURED` line on stderr. Override `// allow-vercel-cache: <reason>`. 26 tests in `.claude/hooks/tests/test_enforce_vercel_cache_policy.py` against a fake CLI on PATH. New skill `.claude/skills/vercel-env-audit/SKILL.md` for the fleet audit.
