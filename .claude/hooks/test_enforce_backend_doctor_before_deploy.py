@@ -541,23 +541,26 @@ def test_ratchet_baseline_values_carry_their_command():
 
 def test_ratchet_live_baseline_carries_its_command_and_never_rose():
     live = json.loads(REAL_BASELINE.read_text())
-    # the ceilings below were measured with 0.4.8, and the file says so
-    assert live["doctor_version"] == "0.4.8"
+    # the ceilings below were measured with 0.4.9, and the file says so
+    assert live["doctor_version"] == "0.4.9"
     assert set(live["rules"]) <= set(MEASURED_2260673_RULE_COUNTS)
     for rule, entry in live["rules"].items():
         assert entry["command"].startswith(
             f"npx -y @vantageos/backend-doctor@{live['doctor_version']} ")
-        assert entry["cli_commit"] == "0121921dc96b6b5b48feecfe53637f1faa0e9edf"
+        # 0.4.9 was published from backend-doctor main 1f79319 (#82, task k1770gq4ws86dmzkmx93xy281x8gqg49)
+        assert entry["cli_commit"] == "1f79319cce01a9e448b0580fcccf9059662b8146"
         # R-53 was lowered by slice 1 of the deletion series, measured at 6058f82
         assert entry["measured_tree_sha"] in {
             "226067389ad98f0f56eccfad38d5f39ea6908542",
             "6058f82974caa7cacbeda815a2e60334989b5120",
             # R-53 raised 341 -> 342 on purpose by the agent-link doors (task k17965eh23twqzsbjc8mjgfcmx8gpxmh)
             "6bd81e848a0c129eb544d95562d16a64a6c3c311",
+            # re-baselined on 0.4.9: R-53 342 -> 340, CR-2 264 -> 262 (task k1770gq4ws86dmzkmx93xy281x8gqg49)
+            "bb66482fa3ad4b1d7928a2d48371702d76dd5cd9",
         }
         line = entry["output_line"]
         assert line.startswith((f"{rule}: ", f"{rule} VERDICT: ")), rule
-        # the 0.4.7/0.4.8 doctor prints the count as `N site(s) VIOLATE`, `N violation(s)`
+        # the 0.4.7/0.4.8/0.4.9 doctor prints the count as `N site(s) VIOLATE`, `N violation(s)`
         # or inside its `[... non-conforming=N ...]` bracket, never as a bare prefix
         assert (f"non-conforming={entry['count']} " in line
                 or f"{entry['count']} violation(s)" in line), rule
