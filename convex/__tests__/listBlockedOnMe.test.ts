@@ -127,6 +127,16 @@ const readAs = (w: World, who: Agent) =>
 		verifiedActor: { agentId: who.id, orgSlug: who.org },
 	});
 
+async function refusalOf(p: Promise<unknown>): Promise<string> {
+	try {
+		await p;
+	} catch (e) {
+		expect(e).toBeInstanceOf(ConvexError);
+		return String((e as ConvexError<string>).data);
+	}
+	throw new Error("expected a refusal, got a success");
+}
+
 describe("tasks:listBlockedOnMe", () => {
 	test("PRESENT: A owns live T, B blocks U on T -> A sees U", async () => {
 		const w = await seedWorld();
@@ -173,7 +183,7 @@ describe("tasks:listBlockedOnMe", () => {
 		expect(r.oldestAge).toBe(r.entries[0].age);
 	});
 
-	test("PRESENT: an org member naming its own agent is served the same rows", async () => {
+	test("REFUSED: an org member naming an agent by label is refused, not served and not an empty list", async () => {
 		const w = await seedWorld();
 		const T = await putTask(w, w.irisAlpha, "T");
 		await putTask(w, w.irisBeta, "U", {
@@ -181,10 +191,32 @@ describe("tasks:listBlockedOnMe", () => {
 			blockedOn: T,
 			ageMs: MIN,
 		});
-		const r = await asMember(w.t, IRIS).query(api.tasks.listBlockedOnMe, {
-			recipient: "alpha",
+		const data = await refusalOf(
+			asMember(w.t, IRIS).query(api.tasks.listBlockedOnMe, {
+				recipient: "alpha",
+			}),
+		);
+		expect(data).toContain("RBAC_DENIED");
+		expect(data).toContain("blocked-on-me-needs-agent-id");
+		expect(data).toContain("tasks:listBlockedOnMe");
+	});
+
+	test("REFUSED: the service account with no claim is refused; with a verifiedActor it is served", async () => {
+		const w = await seedWorld();
+		const T = await putTask(w, w.irisAlpha, "T");
+		await putTask(w, w.irisBeta, "U", {
+			status: "blocked",
+			blockedOn: T,
+			ageMs: MIN,
 		});
-		expect(r.total).toBe(1);
+		const data = await refusalOf(
+			asServiceAccount(w.t).query(api.tasks.listBlockedOnMe, {
+				recipient: "alpha",
+			}),
+		);
+		expect(data).toContain("RBAC_DENIED");
+		expect(data).toContain("claimless-service-account");
+		expect((await readAs(w, w.irisAlpha)).total).toBe(1);
 	});
 
 	test("ABSENT: nobody is blocked on A's task -> an empty SUCCESS, not a throw", async () => {

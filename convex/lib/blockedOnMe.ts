@@ -1,7 +1,7 @@
 import type { Doc, Id } from "../_generated/dataModel";
 import type { QueryCtx } from "../_generated/server";
 import type { InboxReader } from "./inboxReader";
-import { taskVisibleTo } from "./inboxReader";
+import { rbacDenied, taskVisibleTo } from "./inboxReader";
 import { MATCH_ENTRY_CAP, STATUS_SCAN_BUDGET } from "./taskClosureGate";
 import type { CappedList } from "./taskClosureGate";
 
@@ -31,8 +31,8 @@ const LIVE_STATUSES = ["todo", "in_progress", "review", "blocked"] as const;
 
 /**
  * Bounded two-level walk. Level 1: the reader's live tasks by assignee agent ID
- * (`by_assigneeId_status_updatedAt`; name-keyed `by_assignee` only as the declared
- * fallback for a reader with no agent ID). `taskVisibleTo` re-judges every row.
+ * (`by_assigneeId_status_updatedAt`); a reader with no agent ID is refused.
+ * `taskVisibleTo` re-judges every row.
  * Level 2: for each, the `blocked` rows citing it via `by_blockedOnTaskId`.
  * Both levels share STATUS_SCAN_BUDGET documents; hitting it sets `truncated`,
  * and `total` is then a lower bound -- never a silent partial set.
@@ -49,28 +49,24 @@ export async function computeBlockedOnMe(
 	let truncated = false;
 	let oldestAge = 0;
 
+	// A task is owned by an agents-row ID; a label never selects a row. A reader
+	// with no agent ID (org-name / fleet / operator-admin) is REFUSED, not served
+	// an empty list: "you may not" must not read as "nobody is waiting".
+	const agentId = reader.agentId as Id<"agents"> | undefined;
+	if (agentId === undefined) {
+		throw rbacDenied(
+			"tasks:listBlockedOnMe",
+			"blocked-on-me-needs-agent-id",
+			"list_blocked_on_me is read by a verified agent, by ID; a name selects nothing",
+		);
+	}
+
 	outer: for (const status of LIVE_STATUSES) {
-		const agentId = reader.agentId;
-		// Agent reader: select by the assignee's agents-row ID, so a task assigned
-		// by ID is found whatever its `assignedTo` label says. The name-keyed
-		// `by_assignee` index is a DECLARED FALLBACK, used ONLY when the reader has
-		// no agent ID (a member / org-name / operator reader naming a bare label,
-		// which resolveInboxReader serves by name by design); taskVisibleTo
-		// re-judges tenant (and agent ID) on every row either way.
-		const mine =
-			agentId !== undefined
-				? ctx.db
-						.query("tasks")
-						.withIndex("by_assigneeId_status_updatedAt", (q) =>
-							q
-								.eq("assignedToId", agentId as Id<"agents">)
-								.eq("status", status),
-						)
-				: ctx.db
-						.query("tasks")
-						.withIndex("by_assignee", (q) =>
-							q.eq("assignedTo", reader.label).eq("status", status),
-						);
+		const mine = ctx.db
+			.query("tasks")
+			.withIndex("by_assigneeId_status_updatedAt", (q) =>
+				q.eq("assignedToId", agentId).eq("status", status),
+			);
 		for await (const target of mine) {
 			scanned += 1;
 			if (scanned > STATUS_SCAN_BUDGET) {
