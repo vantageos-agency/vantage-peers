@@ -36,6 +36,7 @@ export function orgByIdLookups(
 				label: row.clerkOrgSlug,
 				active: row.isActive,
 				allowedOrchestrators: row.allowedOrchestrators,
+				allowedAgentIds: row.allowedAgentIds,
 				scopes: row.scopes,
 				orgKind: row.orgKind,
 			};
