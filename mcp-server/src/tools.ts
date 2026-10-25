@@ -7388,6 +7388,7 @@ export function registerTools(
 		"list_recurring_tasks",
 		"List recurring task templates filtered by assignee or active status, newest first. " +
 			"WHEN: use to audit which schedules are active or find templates to pause/resume/update. " +
+			"Each row also reports one-open-instance state: lastTaskId (task made by the last run), skippedRuns (consecutive ticks skipped because that task was still open), lastSkippedAt, lastSkipReason. " +
 			"EXAMPLE: list_recurring_tasks assignedTo='beta' active=true limit=20. " +
 			"Default limit 20. cap 200.",
 		{
@@ -10991,6 +10992,7 @@ export function registerTools(
 		},
 		"get_recurring_task",
 		"Fetch a single recurring task definition by its Convex document ID with cron schedule, prompt, assignee, and last-fire metadata. " +
+			"Two open instances of one routine never coexist: when the previous instance is still open the tick creates nothing and the row records lastTaskId, skippedRuns (consecutive skips, reset to 0 when an instance is created), lastSkippedAt and lastSkipReason. " +
 			"WHEN: use when you have a recurringTaskId from list_recurring_tasks and need the full row before pause_recurring_task / update_recurring_task / delete_recurring_task. " +
 			"EXAMPLE: get_recurring_task recurringTaskId='k57dy3049btafda9m2f5d2ggk987ph3f'.",
 		{

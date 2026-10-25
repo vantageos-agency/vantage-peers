@@ -1221,6 +1221,18 @@ export default defineSchema({
 		// renamable label; this is the identity (Pi ruling (d), k174d95s5qqy8t2r5rdrz3pr3d8fqv82).
 		// Optional during the expand phase: filled by migrations/backfill_org_clerk_id.
 		clerkOrgId: v.optional(v.string()),
+		// One open instance per routine (task k1770awc8jq7bqa6w78jbz5gqx8cdvxj).
+		// `lastTaskId` is the task the last created run produced; `processDueTasks`
+		// reads it to see whether that instance is still open. The three skip
+		// fields make a skipped tick VISIBLE on the schedule: `skippedRuns` counts
+		// consecutive skips since the last created instance (0 once one is
+		// created), `lastSkippedAt` is when the latest skip happened, and
+		// `lastSkipReason` names the open task that caused it. All optional
+		// (additive): rows written before this existed carry none of them.
+		lastTaskId: v.optional(v.id("tasks")),
+		lastSkippedAt: v.optional(v.number()),
+		skippedRuns: v.optional(v.number()),
+		lastSkipReason: v.optional(v.string()),
 		createdAt: v.number(),
 		updatedAt: v.number(),
 	})

@@ -1,0 +1,4 @@
+---
+section: Fixed
+---
+- **A recurring routine no longer stacks one task per day while its previous instance is still open.** `recurringTasks:processDueTasks` now looks for the previous instance (`lastTaskId`, or for legacy rows a bounded same-title, same-assignee, same-org lookup on `tasks.by_orgId_assignee_status`, or `tasks.by_assignee` for an unstamped schedule) before inserting. If it is open (todo, in_progress, review, blocked) the tick creates nothing, advances `nextRunAt` as a normal run would, and records the skip on the schedule (`skippedRuns`, `lastSkippedAt`, `lastSkipReason`, all new optional fields; `lastTaskId` too). A lookup that hits its bound (1000 per status bucket) counts as unknown and skips rather than creating. Design: skip, not re-date the open task. `get_recurring_task` / `list_recurring_tasks` descriptions name the new fields. Tests: `convex/__tests__/recurringTasks.oneOpenInstance.test.ts`. Task k1770awc8jq7bqa6w78jbz5gqx8cdvxj.
