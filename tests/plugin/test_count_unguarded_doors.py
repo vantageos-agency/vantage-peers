@@ -459,6 +459,10 @@ _EXPECTED_UNGUARDED_FILTERED = {
     "bulk_complete_tasks",
     "list_missions",
     "list_diaries",
+    # Guarded in Convex (tasks:listBlockedOnMe serves the verified agent by ID
+    # only); the instrument cannot read a Convex-side gate yet. Fix tracked by
+    # task k1735h1xs805q1dwh3xd3vhzw98gygdy, which removes it from this set.
+    "list_blocked_on_me",
 }
 
 
@@ -472,7 +476,7 @@ def test_real_slice_unguarded_filtered_set_matches_reviewed_doors():
         if d.kind == "filtered" and classify_door(d) == "unguarded"
     }
     assert unguarded == _EXPECTED_UNGUARDED_FILTERED, (
-        f"unguarded filtered set drifted from the reviewed four -- got {unguarded}"
+        f"unguarded filtered set drifted from the reviewed five -- got {unguarded}"
     )
 
 
@@ -558,9 +562,9 @@ def test_dataflow_returned_call_stays_guarded():
     assert classify_door(door) == "guarded"
 
 
-def test_dataflow_real_slice_still_four_unguarded():
+def test_dataflow_real_slice_matches_reviewed_unguarded_set():
     """The two doors guarded by this task (list_tasks, update_recurring_task)
-    consume their scope-filter result, so --dataflow leaves the count at four —
+    consume their scope-filter result, so --dataflow leaves the count at the reviewed set —
     no regression from the tightening."""
     text = REAL_TOOLS_TS.read_text(encoding="utf-8")
     result = scan_source(text, dataflow=True)
