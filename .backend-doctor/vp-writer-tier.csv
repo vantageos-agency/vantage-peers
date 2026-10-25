@@ -28,7 +28,7 @@ set_summary,agents+profiles,UPSERT,org-member,orgResolver,profiles:updateDynamic
 update_profile,agents+profiles,UPSERT,org-member,orgResolver,profiles:upsertProfile=orgResolver
 bulk_complete_tasks,bulk_complete_runs+taskClosureConfig+tasks,UPSERT,org-member,orgResolver,tasks:bulkComplete=orgResolver
 delete_bu,businessUnits,DELETE,master,masterOnly,businessUnits:remove=masterOnly
-debate_post_turn,debateRooms+debateTurns,UPSERT,org-member,orgResolver,debate:postTurn=orgResolver
+debate_post_turn,debateRooms+debateTurns+memberWriterRoles,UPSERT,org-member,orgResolver,debate:postTurn=orgResolver
 add_fix_attempt,fixAttempts+fixPatterns,UPSERT,master,masterOnly,fixPatterns:addAttempt=masterOnly
 create_fix_pattern,fixPatterns,CREATE,master,masterOnly,fixPatterns:create=masterOnly
 link_issue_to_pattern,fixPatterns,UPDATE,master,masterOnly,fixPatterns:linkIssue=masterOnly
