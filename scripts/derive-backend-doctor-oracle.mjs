@@ -1384,7 +1384,7 @@ for (const file of mcpFiles) {
 		const scope = {};
 		for (const [k, v] of Object.entries(scopeProps))
 			scope[k] = evalString(file, v) ?? v.getText();
-		const schemaNode = strip(a[5]);
+		const schemaNode = sharedShapeOf(strip(a[5]));
 		const handler = a[a.length - 1];
 		const markers = markersOf(file, n);
 		const justification = markers.get("justified");
@@ -1713,6 +1713,33 @@ function identityAuthorityOf(doors) {
 		ns: "agentId(verifiedActor)",
 		tier: "identite",
 	};
+}
+
+/**
+ * A tool whose input schema is a shared `export const XArgsSchema = z.object({...})`
+ * passed as `XArgsSchema.shape` is read through to that object literal, in the
+ * same file, so its declared `limit` bounds are seen (list_tasks read `max:?`
+ * while its `.max(200)` sat one hop away). Anything else is returned unchanged.
+ */
+function sharedShapeOf(node) {
+	if (
+		!node ||
+		!ts.isPropertyAccessExpression(node) ||
+		node.name.text !== "shape" ||
+		!ts.isIdentifier(node.expression)
+	)
+		return node;
+	const init = moduleConstOf(node, node.expression.text);
+	const call = init && strip(init);
+	if (
+		call &&
+		ts.isCallExpression(call) &&
+		call.expression.getText().replace(/\s+/g, "") === "z.object" &&
+		call.arguments[0] &&
+		ts.isObjectLiteralExpression(strip(call.arguments[0]))
+	)
+		return strip(call.arguments[0]);
+	return node;
 }
 
 function schemaFacts(schemaNode) {
