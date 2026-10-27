@@ -42,8 +42,14 @@
  * measured with another instrument, are not compared; the evidence is compared with this
  * branch's baseline. Same, older or unversioned main: a raised baseline fails, naming both.
  *
- * Exit: 0 no count above main's baseline (or, under a re-baseline, above this branch's);
- * 1 a count, a marker or the baseline was raised; 2 could not judge (bad usage, unreadable
+ * A count measured BELOW this branch's own ratchet.json is a FAIL too (#1566, #1567): the
+ * drop must be written into the baseline in the same PR, else a later PR spends the
+ * headroom with rise=0. Each such rule is named: `CR-2: measured 256, ratchet.json says
+ * 262 -> write "CR-2": 256`. Mechanical rule counts only; the M-* markers are unaffected.
+ *
+ * Exit: 0 no count above main's baseline (or, under a re-baseline, above this branch's) and
+ * none below this branch's ratchet.json;
+ * 1 a count, a marker or the baseline was raised, or a count dropped without the baseline; 2 could not judge (bad usage, unreadable
  * input, uncertified evidence, an underivable or mismatched doctor version, a baseline with
  * no doctorVersion, FALLBACK, a dirty tree, an unresolvable --main-ref, a failing git grep).
  *
@@ -370,7 +376,6 @@ if (rebaselined) {
 }
 
 let failed = false;
-let lowered = false;
 const rules = [
 	...new Set([
 		...Object.keys(mainBaseline),
@@ -390,8 +395,6 @@ for (const rule of rules) {
 	if (delta > 0) {
 		mark = "  RAISED";
 		failed = true;
-	} else if (delta < 0) {
-		lowered = true;
 	}
 	lines.push(
 		`${rule.padEnd(7)} ${String(base).padStart(4)}  ${String(head).padStart(4)}  ${sign}${mark}`,
@@ -424,19 +427,33 @@ for (const rule of rebaselined
 	}
 }
 
+// A mechanical count measured BELOW this PR's own ratchet.json is headroom a later PR
+// spends with rise=0 (#1566 CR-2 262->256, #1567 CR-2 262->261 shipped that way): the
+// drop must be written into the baseline in the same PR. Mechanical rules only; the
+// M-* markers are compared with main by git grep and have no entry in ratchet.json.
+const unlowered = rules.filter((r) => (measured[r] ?? 0) < (baseline[r] ?? 0));
+for (const rule of unlowered) {
+	console.log(
+		`doctor-ratchet: ${rule}: measured ${measured[rule] ?? 0}, ratchet.json says ${baseline[rule]} -> write "${rule}": ${measured[rule] ?? 0}`,
+	);
+}
+
 if (failed) {
 	console.log(
 		"doctor-ratchet: FAIL — a mechanical count or an exemption marker is above main's. Fix the new site; never raise the baseline.",
 	);
-} else if (lowered) {
+}
+if (unlowered.length > 0) {
 	console.log(
-		"doctor-ratchet: PASS — counts went down; lower the baseline in .backend-doctor/ratchet.json in this PR.",
+		`doctor-ratchet: FAIL — ${unlowered.length} count(s) went down and .backend-doctor/ratchet.json was not lowered to match; write the value(s) above in this PR.`,
 	);
-} else {
+	failed = true;
+}
+if (!failed) {
 	console.log(
 		rebaselined
-			? "doctor-ratchet: PASS — no count above this branch's re-baseline."
-			: "doctor-ratchet: PASS — no count above main's baseline.",
+			? "doctor-ratchet: PASS — no count above this branch's re-baseline, none below it."
+			: "doctor-ratchet: PASS — no count above main's baseline, none below ratchet.json.",
 	);
 }
 
