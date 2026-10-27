@@ -3857,7 +3857,7 @@ export function registerTools(
 			"A dedicated opt-in read: check_messages returns messages only and never carries this list. " +
 			"WHEN: call after check_messages, or before picking new work, to see who is waiting on you. " +
 			"EXAMPLE: list_blocked_on_me. " +
-			"Returns { entries[{ blockedTaskId, blockedTitle, blockedAssignee, onTaskId, onTaskTitle, age }], total, truncated, oldestAge }; ages are ms. Default limit 20, cap 200. " +
+			"Returns { entries[{ blockedTaskId, blockedTitle, blockedAssignee, onTaskId, onTaskTitle, age }], total, truncated, oldestAge }; ages are ms. Default limit 50, cap 200. " +
 			"truncated=true means the bounded scan stopped early and total is a lower bound. An empty list is a real absence; a refusal is an error, never an empty list.",
 		{
 			recipient: creatorSchema
@@ -3876,7 +3876,7 @@ export function registerTools(
 				.max(200)
 				.optional()
 				.describe(
-					"Max entries to return (1-200, default 20). `total` still counts every waiter found, so a trimmed list is visible as entries.length < total.",
+					"Max entries to return (1-200, default 50, as list_tasks). `total` still counts every waiter found, so a trimmed list is visible as entries.length < total.",
 				),
 		},
 		{
@@ -3905,7 +3905,7 @@ export function registerTools(
 					oldestAge?: number;
 				};
 				const entries = waiters.entries ?? [];
-				const shown = entries.slice(0, limit ?? 20);
+				const shown = entries.slice(0, limit ?? 50);
 				return {
 					content: [
 						{
