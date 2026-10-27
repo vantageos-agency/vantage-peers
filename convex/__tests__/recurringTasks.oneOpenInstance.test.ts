@@ -242,14 +242,39 @@ describe("processDueTasks — legacy rows without lastTaskId", () => {
 		expect(mine).toHaveLength(1);
 	});
 
-	test("the same title for ANOTHER assignee does not block", async () => {
-		await seedSchedule(t, { orgId: "org-a" });
-		await seedOpenTask("Daily routine", { assignedTo: "clio", orgId: "org-a" });
+	test("the same title for ANOTHER assignee agent ID does not block", async () => {
+		await seedSchedule(t, { orgId: "org-a", assignedToId: "agent-sigma-1" });
+		await t.run(async (ctx) =>
+			ctx.db.insert("tasks", {
+				title: "Daily routine",
+				assignedTo: "clio",
+				assignedToId: "agent-clio-1",
+				priority: "medium" as const,
+				status: "todo" as const,
+				createdBy: "sigma",
+				orgId: "org-a",
+				createdAt: Date.now() - DAY,
+				updatedAt: Date.now() - DAY,
+			}),
+		);
 		await tick(t);
 		const mine = (await tasksTitled(t, "Daily routine")).filter(
 			(x) => x.assignedTo === "sigma",
 		);
 		expect(mine).toHaveLength(1);
+	});
+
+	test("a schedule WITHOUT an agent ID never compares an assignee name: a same-title open task in its org blocks, whoever holds it", async () => {
+		const id = await seedSchedule(t, { orgId: "org-a" });
+		const other = await seedOpenTask("Daily routine", {
+			assignedTo: "clio",
+			orgId: "org-a",
+		});
+		await tick(t);
+		expect(await tasksTitled(t, "Daily routine")).toHaveLength(1);
+		const r = await row(t, id);
+		expect(r?.skippedRuns).toBe(1);
+		expect(r?.lastTaskId).toBe(other);
 	});
 
 	test("a lookup that hits its bound is UNKNOWN: the tick skips loudly instead of creating", async () => {
@@ -377,7 +402,7 @@ describe("processDueTasks — the open-instance lookup keys on the assignee agen
 		expect(mine).toHaveLength(1);
 	});
 
-	test("(b) a schedule WITHOUT assignedToId still finds its open instance by assignee name", async () => {
+	test("(b) a schedule WITHOUT assignedToId still finds its open instance, by title within its tenant", async () => {
 		const id = await seedSchedule(t, { orgId: "org-a", assignedTo: "sigma" });
 		const open = await seedTask({
 			title: "Daily routine",

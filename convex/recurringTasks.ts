@@ -780,15 +780,13 @@ export const PROCESS_DUE_PAGE = 100;
 const OPEN_INSTANCE_STATUSES = ["todo", "in_progress", "review", "blocked"] as const;
 
 /**
- * Bound on the legacy same-title lookup, per (assignee, status) bucket.
+ * Bound on the legacy same-title lookup, per status bucket (keyed by the
+ * assignee agent ID, or by the tenant alone for a schedule without one).
  * If a bucket reaches it, the lookup cannot prove absence, so the answer is
  * "unknown" and the tick SKIPS (creating on an unknown state is the stacking
- * defect itself).
- *
- * A schedule WITHOUT `assignedToId` reads the name-keyed `by_assignee` rows and
- * drops the other tenants' rows in memory; its `truncated` is computed on the RAW
- * rows before that filter. So a busy assignee with >= bound stamped tasks leaves
- * an unstamped legacy schedule `unknown` (a visible skip reason, never a create).
+ * defect itself). A schedule WITHOUT `assignedToId` reads its tenant's whole
+ * open bucket (`by_orgId_status`), so a busy tenant leaves it `unknown` (a
+ * visible skip reason, never a create) until `lastTaskId` takes over.
  */
 export const LEGACY_OPEN_LOOKUP_BOUND = 1000;
 
@@ -814,20 +812,11 @@ type Bucket = { rows: BucketRow[]; truncated: boolean; budgetHit: boolean };
  */
 type BucketCache = { buckets: Map<string, Bucket>; scanned: number };
 
-/** ID-keyed and name-keyed buckets never share a key. */
-const bucketKey = (
-	orgId: string | undefined,
-	assignee: { assignedToId: string } | { assignedTo: string },
-	status: string,
-) =>
-	"assignedToId" in assignee
-		? `${orgId ?? ""}\u0000id:${assignee.assignedToId}\u0000${status}`
-		: `${orgId ?? ""}\u0000name:${assignee.assignedTo}\u0000${status}`;
-
+/** ID-keyed and org-wide buckets never share a key. */
 const keyOf = (recurring: Doc<"recurringTasks">, status: string) =>
 	recurring.assignedToId !== undefined
-		? bucketKey(recurring.orgId, { assignedToId: recurring.assignedToId }, status)
-		: bucketKey(recurring.orgId, { assignedTo: recurring.assignedTo }, status);
+		? `${recurring.orgId ?? ""}\u0000id:${recurring.assignedToId}\u0000${status}`
+		: `${recurring.orgId ?? ""}\u0000org\u0000${status}`;
 
 async function loadBucket(
 	ctx: MutationCtx,
@@ -856,25 +845,16 @@ async function loadBucket(
 			)
 			.take(limit);
 	} else {
-		// allow-local-identity: internal cron compares stored data against data; there is no caller (legacy schedule without assignedToId; lastTaskId takes over after the first created run)
-		const byName = recurring.assignedTo;
-		rows =
-			recurring.orgId !== undefined
-				? await ctx.db
-						.query("tasks")
-						.withIndex("by_orgId_assignee_status", (q) =>
-							q
-								.eq("orgId", recurring.orgId)
-								.eq("assignedTo", byName)
-								.eq("status", status),
-						)
-						.take(limit)
-				: await ctx.db
-						.query("tasks")
-						.withIndex("by_assignee", (q) =>
-							q.eq("assignedTo", byName).eq("status", status),
-						)
-						.take(limit);
+		// No agent ID on the schedule: the whole open bucket of its tenant,
+		// matched on title by the caller. No assignee name is compared, so a
+		// same-title open task of another assignee in the same org also counts
+		// as open (the tick skips with a recorded reason, never a duplicate).
+		rows = await ctx.db
+			.query("tasks")
+			.withIndex("by_orgId_status", (q) =>
+				q.eq("orgId", recurring.orgId).eq("status", status),
+			)
+			.take(limit);
 	}
 	cache.scanned += rows.length;
 	const reached = rows.length >= limit;
@@ -895,8 +875,8 @@ async function loadBucket(
  * 1. `lastTaskId` set: authoritative. Read that task; open status means open,
  *    closed or deleted means none.
  * 2. Legacy row (no `lastTaskId`): bounded lookup of each open status bucket
- *    (tenant, assignee, status), matched on title. Keyed by `assignedToId` when
- *    the schedule carries one, by assignee name only when it does not. Same tenant only: an
+ *    (tenant, assignee agent ID, status), matched on title; a schedule without
+ *    `assignedToId` reads its tenant's bucket, never an assignee name. Same tenant only: an
  *    unstamped task never blocks a stamped schedule. A bucket that hit the
  *    bound is "unknown", not "none".
  */
