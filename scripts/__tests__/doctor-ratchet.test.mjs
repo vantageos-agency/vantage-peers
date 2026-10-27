@@ -128,12 +128,12 @@ describe("doctor-ratchet: a count may only go down", () => {
 		);
 	});
 
-	it("GREEN: lowered counts pass and say the baseline can be lowered", () => {
+	it("RED: lowered counts with the baseline left unlowered fail, naming the value to write", () => {
 		const r = withBaseline("lowered.json");
-		expect(r.status).toBe(0);
+		expect(r.status).toBe(1);
 		expect(r.out).toMatch(/R-53\s+369\s+360\s+-9/);
+		expect(r.out).toContain('"R-53": 360');
 		expect(r.out.trim().split("\n").at(-1)).toMatch(/^RATCHET: .* rise=0$/);
-		expect(r.out).toMatch(/lower the baseline/i);
 	});
 
 	it("RED: one count raised fails and names the rule", () => {
@@ -743,6 +743,145 @@ describe("doctor-ratchet: a count may only go down", () => {
 			expect(r.status).toBe(1);
 			expect(r.out).toMatch(/baseline raised for CR-2/);
 			expect(r.out).toMatch(/names no doctorVersion/);
+		});
+	});
+
+	// A drop left unlowered is headroom a later PR spends with rise=0 (#1566 CR-2
+	// 262->256, #1567 CR-2 262->261 both shipped through a PASS that only asked).
+	describe("a count below the PR's own baseline must be written into it", () => {
+		const base = () => JSON.parse(readFileSync(BASELINE, "utf8"));
+		const CR2_BASE = 262;
+		const counts = (cr2) => ({ ...base().counts, "CR-2": cr2 });
+		function evidenceCr2(cr2) {
+			const doc = JSON.parse(readFileSync(join(FIX, "equal.json"), "utf8"));
+			const out = join(tmp(), "evidence.json");
+			writeFileSync(
+				out,
+				JSON.stringify({ ...doc, mechanical_rule_counts: counts(cr2) }),
+			);
+			return out;
+		}
+		function baselineCr2(cr2, extra = {}) {
+			const out = join(tmp(), "ratchet.json");
+			writeFileSync(
+				out,
+				JSON.stringify({ ...base(), counts: counts(cr2), ...extra }),
+			);
+			return out;
+		}
+		// main says 262; the PR's baseline says `own`; the doctor measured `measured`.
+		const judge = (own, measured) =>
+			run([
+				"--baseline",
+				baselineCr2(own),
+				"--evidence",
+				evidenceCr2(measured),
+				"--previous-baseline",
+				baselineCr2(CR2_BASE),
+			]);
+		const last = (r) => r.out.trim().split("\n").at(-1);
+
+		it("RED (#1566): CR-2 measured 256, ratchet.json still 262 -> exit 1 naming rule, count and value to write", () => {
+			const r = judge(262, 256);
+			expect(r.status).toBe(1);
+			expect(r.out).toContain(
+				'CR-2: measured 256, ratchet.json says 262 -> write "CR-2": 256',
+			);
+			expect(last(r)).toMatch(/^RATCHET: .* CR-2=256 .* rise=0$/);
+		});
+
+		it("GREEN (#1566): the same tree with ratchet.json lowered to 256 passes", () => {
+			const r = judge(256, 256);
+			expect(r.status).toBe(0);
+			expect(last(r)).toMatch(/^RATCHET: .* CR-2=256 .* rise=0$/);
+		});
+
+		it("RED (#1567): CR-2 261 vs 262 unlowered -> exit 1", () => {
+			const r = judge(262, 261);
+			expect(r.status).toBe(1);
+			expect(r.out).toContain(
+				'CR-2: measured 261, ratchet.json says 262 -> write "CR-2": 261',
+			);
+		});
+
+		it("GREEN (#1567): CR-2 261 with ratchet.json lowered to 261 passes", () => {
+			expect(judge(261, 261).status).toBe(0);
+		});
+
+		it("GREEN: an unchanged count passes", () => {
+			expect(judge(262, 262).status).toBe(0);
+		});
+
+		it("RED: a rise above main's baseline still fails", () => {
+			expect(judge(263, 263).status).toBe(1);
+		});
+
+		it("RED: every unlowered rule is named, not only the first", () => {
+			const doc = JSON.parse(readFileSync(join(FIX, "lowered.json"), "utf8"));
+			const out = join(tmp(), "evidence.json");
+			writeFileSync(
+				out,
+				JSON.stringify({
+					...doc,
+					mechanical_rule_counts: { ...counts(256), "R-5": 60 },
+				}),
+			);
+			const r = run([
+				"--baseline",
+				baselineCr2(262),
+				"--evidence",
+				out,
+				"--previous-baseline",
+				baselineCr2(262),
+			]);
+			expect(r.status).toBe(1);
+			expect(r.out).toContain('write "CR-2": 256');
+			expect(r.out).toContain('write "R-5": 60');
+		});
+
+		it("GREEN: a marker count below main does not need a baseline edit (markers are not in ratchet.json)", () => {
+			// covered by "fewer markers than main pass"; asserted here as the separation pole
+			expect(judge(262, 262).out).not.toMatch(/write "M-/);
+		});
+
+		it("could-not-judge: missing evidence still exits 2", () => {
+			const r = runRaw([
+				"--baseline",
+				baselineCr2(262),
+				"--evidence",
+				join(tmp(), "absent.json"),
+				"--previous-baseline",
+				baselineCr2(262),
+				"--report",
+				CLEAN_REPORT,
+				"--tree",
+				CLEAN_TREE,
+			]);
+			expect(r.status).toBe(2);
+		});
+
+		it("GREEN: a re-baseline (doctorVersion raise) lowering nothing still passes", () => {
+			const prev = baselineCr2(262);
+			const head = baselineCr2(264, { doctorVersion: "0.4.7" });
+			const doc = JSON.parse(readFileSync(join(FIX, "equal.json"), "utf8"));
+			const ev = join(tmp(), "evidence.json");
+			writeFileSync(
+				ev,
+				JSON.stringify({
+					...doc,
+					cli_commit: "npm @vantageos/backend-doctor@0.4.7",
+					mechanical_rule_counts: counts(264),
+				}),
+			);
+			const r = run([
+				"--baseline",
+				head,
+				"--evidence",
+				ev,
+				"--previous-baseline",
+				prev,
+			]);
+			expect(r.status).toBe(0);
 		});
 	});
 });
