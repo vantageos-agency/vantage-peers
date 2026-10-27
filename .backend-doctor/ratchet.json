@@ -1,8 +1,8 @@
 {
-	"$comment": "Backend-doctor ratchet baseline (task k179600rsb4xsv7a975cjkqwhs8g7qhv). Each mechanical rule count may only go DOWN. Lower a value in the same PR that lowers the count; scripts/doctor-ratchet.mjs refuses a raised value against origin/main, except in a re-baseline that raises doctorVersion to a newer version, and refuses evidence from any other doctor version (task k172gy1ykcbz6drqb4n85q5a1n8gkaf3). Must agree with .claude/config/backend-doctor-baseline.json (scripts/__tests__/doctor-baselines-agree.test.mjs). Measured with `npx -y @vantageos/backend-doctor@0.4.9 <clean full checkout @bb66482fa3ad4b1d7928a2d48371702d76dd5cd9>/convex` (deps installed, 0 FALLBACK), PR #1555: R-53 342 -> 340 (agentLinks:grant/revoke resolve their principal through the package, conform under 0.4.9), CR-2 264 -> 262, R-54 148 now measured honestly on main too (0.4.9 removes the tasks:create false conform); task k1770gq4ws86dmzkmx93xy281x8gqg49.",
+	"$comment": "Backend-doctor ratchet baseline (task k179600rsb4xsv7a975cjkqwhs8g7qhv). Each mechanical rule count may only go DOWN. Lower a value in the same PR that lowers the count; scripts/doctor-ratchet.mjs refuses a raised value against origin/main, except in a re-baseline that raises doctorVersion to a newer version, and refuses evidence from any other doctor version (task k172gy1ykcbz6drqb4n85q5a1n8gkaf3). Must agree with .claude/config/backend-doctor-baseline.json (scripts/__tests__/doctor-baselines-agree.test.mjs). Measured with `npx -y @vantageos/backend-doctor@0.4.9 <clean full checkout @bb66482fa3ad4b1d7928a2d48371702d76dd5cd9>/convex` (deps installed, 0 FALLBACK), PR #1555: R-53 342 -> 340 (agentLinks:grant/revoke resolve their principal through the package, conform under 0.4.9), CR-2 264 -> 262, R-54 148 now measured honestly on main too (0.4.9 removes the tasks:create false conform); task k1770gq4ws86dmzkmx93xy281x8gqg49. PR #1567 @f5a0637: CR-2 262 -> 261 (memberScopesMigration deleted, spent in production), task k17ehajqbef6qg266skqqqrp1x8gzdd0.",
 	"doctorVersion": "0.4.9",
 	"counts": {
-		"CR-2": 262,
+		"CR-2": 261,
 		"R-5": 62,
 		"R-53": 340,
 		"R-54": 148,
