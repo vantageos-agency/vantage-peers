@@ -559,6 +559,8 @@ def test_ratchet_live_baseline_carries_its_command_and_never_rose():
             "bb66482fa3ad4b1d7928a2d48371702d76dd5cd9",
             # CR-2 262 -> 261, memberScopesMigration deleted, PR #1567 (task k17ehajqbef6qg266skqqqrp1x8gzdd0)
             "f5a0637a5a9add7a3ab8c1cd0877cb4fed7887a1",
+            # CR-2 261 -> 255, R-53 340 -> 337, R-54 148 -> 147, orphan identity files by ID, PR #1566 (task k17dppj4g8gfe594v06v2nec818gz274)
+            "d0bb0fadae2178638d80c4674db5334178cba6fb",
         }
         line = entry["output_line"]
         assert line.startswith((f"{rule}: ", f"{rule} VERDICT: ")), rule
