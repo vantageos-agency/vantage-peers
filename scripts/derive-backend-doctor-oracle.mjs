@@ -615,6 +615,36 @@ function moduleConstOf(node, name) {
 	return null;
 }
 
+/**
+ * A query chain iterated row by row: `for await (const r of db.query(...)...)`,
+ * or a `const q = db.query(...)...` that a `for await (... of q)` in the same
+ * function drains. Convex streams the rows, so it is a list read exactly like
+ * `.collect()` / `.take()` (convex/lib/blockedOnMe.ts reads this way).
+ */
+function drainedByForAwait(top) {
+	const isDrain = (n, expr) =>
+		ts.isForOfStatement(n) && n.awaitModifier !== undefined && expr(n.expression);
+	const parent = top.parent;
+	if (parent && isDrain(parent, (e) => e === top)) return true;
+	if (
+		!parent ||
+		!ts.isVariableDeclaration(parent) ||
+		parent.initializer !== top ||
+		!ts.isIdentifier(parent.name)
+	)
+		return false;
+	const name = parent.name.text;
+	let scope = parent.parent;
+	while (scope && !ts.isFunctionLike(scope) && !ts.isSourceFile(scope))
+		scope = scope.parent;
+	if (!scope) return false;
+	let found = false;
+	forEachDeep(scope, (n) => {
+		if (isDrain(n, (e) => ts.isIdentifier(e) && e.text === name)) found = true;
+	});
+	return found;
+}
+
 function cardinalityOf(fn) {
 	const seen = new Set();
 	const visit = (node) => {
@@ -828,6 +858,9 @@ function convexFacts(fnKeys) {
 		reads: {
 			list: false,
 			get: false,
+			// a query chain drained by `for await` (drainedByForAwait): a stream is
+			// a list read OR a first-match get, so its verb is the declared `returns`
+			streamed: false,
 			// get evidence split: `db.get(id)` (a by-id fetch) vs a table's
 			// `.first()`/`.unique()` chain; and the tables a list chain drains.
 			getById: false,
@@ -926,8 +959,10 @@ function convexFacts(fnKeys) {
 					if (
 						chain.some(
 							(c) => c === "collect" || c === "take" || c === "paginate",
-						)
+						) ||
+						drainedByForAwait(cur)
 					) {
+						if (drainedByForAwait(cur)) facts.reads.streamed = true;
 						facts.reads.list = true;
 						facts.reads.listTables.add(litTable);
 					}
@@ -1150,6 +1185,14 @@ function verbOf(f) {
 	// declared with what it touches (`_storage`, standard §2 R-2 / R-25).
 	if ((f.external || f.storage.size > 0) && !f.reads.list && !f.reads.get)
 		return "EXTERNAL-EFFECT";
+	// A streamed read (`for await` over a query) may end at the first match: only
+	// the reached queries' declared `returns` cardinality says list or get.
+	if (f.reads.streamed) {
+		const c = new Set(f.cardinalities);
+		if (c.size === 1 && c.has("list")) return "READ-LIST";
+		if (c.size === 1 && c.has("get")) return "READ-GET";
+		return UNKNOWN;
+	}
 	if (f.reads.list && !f.reads.get) return "READ-LIST";
 	if (f.reads.get && !f.reads.list) return "READ-GET";
 	// list + get: a list tool that also does a per-row existence/visibility probe
@@ -1563,6 +1606,115 @@ function authorityOf(scope) {
 	}
 }
 
+// ── identity-bound `filtered` doors (task k1735h1xs805q1dwh3xd3vhzw98gygdy) ──
+//
+// A `filtered` tool whose caller gate lives in its CONVEX function, not in the
+// handler: the MCP injects the verified agent's ID (`verifiedActor`) and the
+// Convex door refuses a call that carries none. Same derivation as
+// scripts/count_unguarded_doors.py and mcp-server/src/__tests__/scope-guard-
+// coverage.test.ts (IDENTITY-BOUND), from source, never a typed door list. ALL
+// of:
+//   (a)  the handler reaches at least one Convex function, and EVERY one is in
+//        VERIFIED_ACTOR_DOORS (mcp-server/src/verifiedActor.ts, the Set
+//        literal: the wrapped client injects `verifiedActor` into exactly
+//        those doors);
+//   (a2) no Convex call's argument text names `verifiedOrg` or spreads a call
+//        result (a verified organisation lets an inbox-style door select its
+//        agent by NAME; the MCP forwards one only through spread helpers);
+//   (b)  each function's own handler (comments and strings masked) refuses a
+//        call without the verified actor:
+//        `if (... args.verifiedActor === undefined ...) { throw`.
+// Any unreadable input flips nothing: the row keeps its `filtered` authority.
+
+/** The members of `export const VERIFIED_ACTOR_DOORS = new Set([...])`, or null. */
+function verifiedActorDoors() {
+	const file = join(MCP_SRC, "verifiedActor.ts");
+	if (!existsSync(file)) return null;
+	let found = null;
+	forEachDeep(sourceOf(file), (n) => {
+		if (
+			ts.isVariableDeclaration(n) &&
+			ts.isIdentifier(n.name) &&
+			n.name.text === "VERIFIED_ACTOR_DOORS" &&
+			n.initializer &&
+			ts.isNewExpression(n.initializer) &&
+			n.initializer.arguments?.[0] &&
+			ts.isArrayLiteralExpression(n.initializer.arguments[0])
+		)
+			found = new Set(
+				n.initializer.arguments[0].elements
+					.filter(ts.isStringLiteral)
+					.map((e) => e.text),
+			);
+	});
+	return found;
+}
+const VERIFIED_ACTOR_DOORS = verifiedActorDoors();
+
+/** A node's text with its string / template / regex literals blanked, then its comments removed. */
+function codeOf(node) {
+	const start = node.getStart();
+	const chars = node.getText().split("");
+	forEachDeep(node, (n) => {
+		if (
+			ts.isStringLiteral(n) ||
+			ts.isNoSubstitutionTemplateLiteral(n) ||
+			ts.isRegularExpressionLiteral(n) ||
+			n.kind === ts.SyntaxKind.TemplateHead ||
+			n.kind === ts.SyntaxKind.TemplateMiddle ||
+			n.kind === ts.SyntaxKind.TemplateTail
+		)
+			for (let i = n.getStart() - start; i < n.getEnd() - start; i++)
+				if (chars[i] !== "\n") chars[i] = " ";
+	});
+	return withoutComments(chars.join(""));
+}
+
+const ORG_CLAIM_RE = /verifiedOrg|\.\.\.\s*[A-Za-z_$][\w$]*\s*\(/;
+const REFUSES_WITHOUT_ACTOR_RE =
+	/\bif\s*\((?:(?!\bif\s*\()[^{};])*?\bargs\.verifiedActor\s*===\s*undefined(?:(?!\bif\s*\()[^{};])*?\)\s*\{?\s*throw\b/;
+
+/**
+ * The Convex functions that make a `filtered` tool identity-bound (conditions
+ * (a), (a2), (b) above), or [] when it is not.
+ */
+function identityBoundDoorsOf(scope, mcpNodes, convexRefs) {
+	if (scope.kind !== "filtered" || VERIFIED_ACTOR_DOORS === null) return [];
+	const fns = [...convexRefs].sort();
+	if (fns.length === 0) return [];
+	for (const fn of fns) {
+		if (!VERIFIED_ACTOR_DOORS.has(fn)) return [];
+		const target = convexFns.get(fn);
+		if (!target?.handler) return [];
+		if (!REFUSES_WITHOUT_ACTOR_RE.test(codeOf(target.handler))) return [];
+	}
+	let claimsOrg = false;
+	for (const [, node] of mcpNodes)
+		forEachDeep(node, (n) => {
+			if (
+				!ts.isCallExpression(n) ||
+				!ts.isPropertyAccessExpression(n.expression) ||
+				!/^(query|mutation|action)$/.test(n.expression.name.text) ||
+				!n.arguments[0] ||
+				convexRefOf(n.arguments[0]) === null
+			)
+				return;
+			for (const arg of n.arguments.slice(1))
+				if (ORG_CLAIM_RE.test(codeOf(arg))) claimsOrg = true;
+		});
+	return claimsOrg ? [] : fns;
+}
+
+/** The authority cells of an identity-bound `filtered` tool. */
+function identityAuthorityOf(doors) {
+	return {
+		rbac: "toutes_orgs(identity-gated)",
+		enforce: `convex-door(${doors.join("/")}: refuses without verifiedActor)`,
+		ns: "agentId(verifiedActor)",
+		tier: "identite",
+	};
+}
+
 function schemaFacts(schemaNode) {
 	const props = objProps(schemaNode) ?? {};
 	const limitText = props.limit ? props.limit.getText() : "";
@@ -1719,7 +1871,11 @@ for (const t of tools) {
 	// file storage touched through ctx.storage.* is declared like a table
 	if (cf.storage.size > 0) tables.add("_storage");
 	const table = [...tables].sort().join("+");
-	const auth = authorityOf(t.scope);
+	const identityDoors = identityBoundDoorsOf(t.scope, mcpNodes, convexRefs);
+	const auth =
+		identityDoors.length > 0
+			? identityAuthorityOf(identityDoors)
+			: authorityOf(t.scope);
 	const convexGuards = [...cf.guards].sort();
 	// A `public` MCP scope is the TRANSPORT label: a direct caller of the
 	// public backend never crosses it. When EVERY reached Convex door refuses

@@ -54,7 +54,13 @@ own declaration:
                 (call-shaped) in the handler slice (textual presence — see the
                 IMPORTANT caveat above; in `--dataflow` mode the mechanism's
                 result must also be consumed, not discarded).
-  - UNGUARDED — kind is `filtered` AND EITHER (a) its reason names NO
+  - GUARDED (identity-bound) — kind is `filtered` AND the caller gate lives in
+                its Convex function: every Convex function the handler calls
+                is in VERIFIED_ACTOR_DOORS (mcp-server/src/verifiedActor.ts),
+                no call forwards a verified organisation, and each function's
+                own source refuses a call without `verifiedActor`. Derived
+                from source; see IDENTITY-BOUND above `scan_source`.
+  - UNGUARDED — kind is `filtered`, it is not identity-bound, AND EITHER (a) its reason names NO
                 mechanism (no call-shaped identifier — nobody wrote what
                 guards the rows), OR (b) its reason names a mechanism that is
                 ABSENT from the handler slice. Case (b) is the LYING
@@ -215,6 +221,10 @@ class Door:
     # The mechanism identifiers this door's reason NAMED (call-shaped). Empty
     # when the reason named none. Retained for diagnostics/tests.
     filtered_reason_mechanisms: tuple[str, ...] = ()
+    # For `filtered` doors only: the Convex functions whose own source refuses a
+    # call without the verified actor the MCP injects (see IDENTITY-BOUND below);
+    # non-empty => the door is guarded at its Convex door. Empty otherwise.
+    identity_bound_doors: tuple[str, ...] = ()
 
 
 @dataclass
@@ -631,7 +641,145 @@ def _first_top_level_name_token(
     return None
 
 
-def scan_source(text: str, dataflow: bool = False) -> ScanResult:
+# ── IDENTITY-BOUND `filtered` doors (task k1735h1xs805q1dwh3xd3vhzw98gygdy) ──
+#
+# A `filtered` door whose caller gate lives in its CONVEX function, not in the
+# handler: the MCP forwards the verified agent's ID and the Convex door refuses a
+# call that carries none. Derived from source, never a typed door list. ALL of:
+#
+#   (a) the handler slice calls Convex (`.query(`/`.mutation(`/`.action(` with a
+#       string-literal function name) at least once, and EVERY function it calls
+#       is in VERIFIED_ACTOR_DOORS (read from mcp-server/src/verifiedActor.ts:
+#       the wrapped client injects `verifiedActor` into exactly those doors);
+#   (a2) no such call's argument text names `verifiedOrg` or spreads a call
+#       result (`...helper(`): a verified ORGANISATION is the claim that lets an
+#       inbox-style door select its agent by NAME (convex/lib/inboxReader.ts),
+#       and the MCP forwards it only through spread helpers (verifiedOrgArgs /
+#       inboxOrgArgs, tools.ts);
+#   (b) the Convex export of each such function (convex/<module>.ts, `export
+#       const <name> =`, comments and strings masked) contains a refusal whose
+#       condition tests the verified actor's absence:
+#       `if (... args.verifiedActor === undefined ...) { throw`.
+#
+# Any input that cannot be read (verifiedActor.ts, a Convex module, an export)
+# leaves the door UNGUARDED: an unread gate is never a gate.
+
+_CONVEX_CALL_RE = re.compile(r"\.(?:query|mutation|action)\(")
+_FN_LITERAL_RE = re.compile(r'\s*"([\w/]+:\w+)"')
+_VERIFIED_ACTOR_SET_RE = re.compile(
+    r"export\s+const\s+VERIFIED_ACTOR_DOORS\b[^=]*=\s*new\s+Set\(\s*\[(.*?)\]\s*\)",
+    re.S,
+)
+_ORG_CLAIM_RE = re.compile(r"verifiedOrg|\.\.\.\s*[A-Za-z_$][\w$]*\s*\(")
+_REFUSES_WITHOUT_ACTOR_RE = re.compile(
+    r"\bif\s*\((?:(?!\bif\s*\()[^{};])*?\bargs\.verifiedActor\s*===\s*undefined"
+    r"(?:(?!\bif\s*\()[^{};])*?\)\s*\{?\s*throw\b",
+    re.S,
+)
+
+
+@dataclass
+class IdentityContext:
+    """The two source inputs condition (a)/(b) read. `verified_actor_doors` is
+    None when verifiedActor.ts could not be read: then no door flips."""
+
+    verified_actor_doors: frozenset[str] | None
+    convex_root: Path
+
+
+def _masked(text: str) -> str:
+    """`text` with every comment, string and regex body blanked to spaces
+    (offsets preserved), so a pattern in prose never reads as code."""
+    mask = _build_code_mask(text)
+    return "".join(c if mask[i] or c == "\n" else " " for i, c in enumerate(text))
+
+
+def parse_verified_actor_doors(text: str) -> frozenset[str] | None:
+    m = _VERIFIED_ACTOR_SET_RE.search(text)
+    if m is None:
+        return None
+    # The Set's literal entries, comments inside the array ignored.
+    body = re.sub(r"//[^\n]*", "", m.group(1))
+    return frozenset(re.findall(r'"([\w/]+:\w+)"', body))
+
+
+def load_identity_context(repo_root: Path) -> IdentityContext:
+    va = repo_root / "mcp-server" / "src" / "verifiedActor.ts"
+    try:
+        doors = parse_verified_actor_doors(va.read_text(encoding="utf-8"))
+    except (OSError, UnicodeDecodeError):
+        doors = None
+    return IdentityContext(doors, repo_root / "convex")
+
+
+def convex_calls(handler_text: str) -> list[tuple[str | None, str]] | None:
+    """Every Convex call in a handler slice: (function name or None when the
+    first argument is not a string literal, the call's argument text). None
+    when a call does not balance (unreadable)."""
+    code = _masked(handler_text)
+    calls: list[tuple[str | None, str]] = []
+    for m in _CONVEX_CALL_RE.finditer(code):
+        open_idx = m.end() - 1
+        close_idx = _find_matching_paren(handler_text, open_idx)
+        if close_idx is None:
+            return None
+        arg_text = handler_text[open_idx + 1 : close_idx]
+        # The first argument may follow a `// biome-ignore` comment line.
+        stripped = re.sub(r"^(?:\s*//[^\n]*\n)*", "", arg_text)
+        lit = _FN_LITERAL_RE.match(stripped)
+        calls.append((lit.group(1) if lit else None, arg_text))
+    return calls
+
+
+def convex_export_slice(convex_root: Path, fn: str) -> str | None:
+    """The masked source of `export const <name> =` in convex/<module>.ts, up
+    to the next top-level `export`, or None when it cannot be read."""
+    module, _, name = fn.partition(":")
+    path = convex_root / f"{module}.ts"
+    try:
+        code = _masked(path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeDecodeError):
+        return None
+    m = re.search(rf"^export\s+const\s+{re.escape(name)}\s*=", code, re.M)
+    if m is None:
+        return None
+    nxt = re.search(r"^export\s", code[m.end() :], re.M)
+    return code[m.start() : m.end() + nxt.start()] if nxt else code[m.start() :]
+
+
+def convex_refuses_without_verified_actor(convex_root: Path, fn: str) -> bool:
+    body = convex_export_slice(convex_root, fn)
+    return body is not None and _REFUSES_WITHOUT_ACTOR_RE.search(body) is not None
+
+
+def identity_bound_doors_of(
+    handler_text: str, identity: IdentityContext | None
+) -> tuple[str, ...]:
+    """The Convex functions that make this `filtered` handler identity-bound
+    (conditions (a), (a2), (b) above), or () when it is not."""
+    if identity is None or identity.verified_actor_doors is None:
+        return ()
+    calls = convex_calls(handler_text)
+    if not calls:
+        return ()
+    fns: list[str] = []
+    for fn, arg_text in calls:
+        if fn is None or fn not in identity.verified_actor_doors:
+            return ()
+        if _ORG_CLAIM_RE.search(_masked(arg_text)):
+            return ()
+        if not convex_refuses_without_verified_actor(identity.convex_root, fn):
+            return ()
+        if fn not in fns:
+            fns.append(fn)
+    return tuple(fns)
+
+
+def scan_source(
+    text: str,
+    dataflow: bool = False,
+    identity: IdentityContext | None = None,
+) -> ScanResult:
     result = ScanResult()
     code_mask = _build_code_mask(text)
     const_table = _build_const_string_table(text)
@@ -698,14 +846,16 @@ def scan_source(text: str, dataflow: bool = False) -> ScanResult:
                     verified, mechanisms = _classify_filtered(
                         reason, handler_arg, dataflow
                     )
+                    identity_doors = identity_bound_doors_of(handler_arg, identity)
                 else:
-                    verified, mechanisms = False, ()
+                    verified, mechanisms, identity_doors = False, (), ()
                 result.doors.append(
                     Door(
                         name=name,
                         kind=kind,
                         filtered_reason_verified=verified,
                         filtered_reason_mechanisms=mechanisms,
+                        identity_bound_doors=identity_doors,
                     )
                 )
             else:
@@ -736,7 +886,9 @@ def classify_door(door: Door) -> str:
     if door.kind in ENVELOPE_GUARANTEED_KINDS:
         return "guarded"
     if door.kind == "filtered":
-        return "guarded" if door.filtered_reason_verified else "unguarded"
+        if door.filtered_reason_verified or door.identity_bound_doors:
+            return "guarded"
+        return "unguarded"
     # An unrecognised kind string is not one of the five ToolScope members --
     # treat as unreadable-equivalent by classifying unguarded is wrong (that
     # would silently trust an unknown kind); callers should have already
@@ -767,6 +919,15 @@ def main(argv: list[str] | None = None) -> int:
             "guarded, closing the dead-unused-result blind spot."
         ),
     )
+    parser.add_argument(
+        "--repo-root",
+        default=None,
+        help=(
+            "Repository whose mcp-server/src/verifiedActor.ts and convex/ the "
+            "identity-bound rule reads (default: the repository containing "
+            "this script)"
+        ),
+    )
     args = parser.parse_args(argv)
 
     path = Path(args.path)
@@ -790,7 +951,15 @@ def main(argv: list[str] | None = None) -> int:
         print("total=0")
         return 2
 
-    result = scan_source(text, dataflow=args.dataflow)
+    # The identity-bound rule reads verifiedActor.ts and the Convex tree of the
+    # repository (an unreadable input flips no door: see IDENTITY-BOUND).
+    repo_root = (
+        Path(args.repo_root)
+        if args.repo_root is not None
+        else Path(__file__).resolve().parents[1]
+    )
+    identity = load_identity_context(repo_root)
+    result = scan_source(text, dataflow=args.dataflow, identity=identity)
     buckets = [classify_door(d) for d in result.doors]
     guarded = buckets.count("guarded")
     unguarded = buckets.count("unguarded")

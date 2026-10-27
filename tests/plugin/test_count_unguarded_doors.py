@@ -38,9 +38,13 @@ BASELINE_FILE = REPO_ROOT / "scripts" / "unguarded-doors.baseline"
 
 sys.path.insert(0, str(REPO_ROOT / "scripts"))
 from count_unguarded_doors import (  # noqa: E402
+    IdentityContext,
     classify_door,
+    load_identity_context,
     scan_source,
 )
+
+REAL_IDENTITY = load_identity_context(REPO_ROOT)
 
 
 def run(args):
@@ -459,16 +463,12 @@ _EXPECTED_UNGUARDED_FILTERED = {
     "bulk_complete_tasks",
     "list_missions",
     "list_diaries",
-    # Guarded in Convex (tasks:listBlockedOnMe serves the verified agent by ID
-    # only); the instrument cannot read a Convex-side gate yet. Fix tracked by
-    # task k1735h1xs805q1dwh3xd3vhzw98gygdy, which removes it from this set.
-    "list_blocked_on_me",
 }
 
 
 def test_real_slice_unguarded_filtered_set_matches_reviewed_doors():
     text = REAL_TOOLS_TS.read_text(encoding="utf-8")
-    result = scan_source(text)
+    result = scan_source(text, identity=REAL_IDENTITY)
     assert result.unreadable == []
     unguarded = {
         d.name
@@ -476,7 +476,7 @@ def test_real_slice_unguarded_filtered_set_matches_reviewed_doors():
         if d.kind == "filtered" and classify_door(d) == "unguarded"
     }
     assert unguarded == _EXPECTED_UNGUARDED_FILTERED, (
-        f"unguarded filtered set drifted from the reviewed five -- got {unguarded}"
+        f"unguarded filtered set drifted from the reviewed four -- got {unguarded}"
     )
 
 
@@ -562,12 +562,12 @@ def test_dataflow_returned_call_stays_guarded():
     assert classify_door(door) == "guarded"
 
 
-def test_dataflow_real_slice_matches_reviewed_unguarded_set():
+def test_dataflow_real_slice_still_four_unguarded():
     """The two doors guarded by this task (list_tasks, update_recurring_task)
-    consume their scope-filter result, so --dataflow leaves the count at the reviewed set —
+    consume their scope-filter result, so --dataflow leaves the count at four —
     no regression from the tightening."""
     text = REAL_TOOLS_TS.read_text(encoding="utf-8")
-    result = scan_source(text, dataflow=True)
+    result = scan_source(text, dataflow=True, identity=REAL_IDENTITY)
     assert result.unreadable == []
     unguarded = {
         d.name
@@ -575,3 +575,164 @@ def test_dataflow_real_slice_matches_reviewed_unguarded_set():
         if d.kind == "filtered" and classify_door(d) == "unguarded"
     }
     assert unguarded == _EXPECTED_UNGUARDED_FILTERED
+
+
+# ── Identity-bound `filtered` doors (task k1735h1xs805q1dwh3xd3vhzw98gygdy) ───
+#
+# A `filtered` door whose caller gate lives in its Convex function: every Convex
+# function its handler calls is in VERIFIED_ACTOR_DOORS (read from
+# verifiedActor.ts), no call forwards a verified organisation, and the Convex
+# export refuses a call without `verifiedActor`. Each fixture builds its own
+# small repository (verifiedActor.ts + convex/<module>.ts + tools.ts).
+
+_VERIFIED_ACTOR_TS = (
+    "export const VERIFIED_ACTOR_DOORS: ReadonlySet<string> = new Set([\n"
+    '\t"widgets:mine",\n'
+    '\t// "widgets:commented" is a comment, never a member\n'
+    '\t"widgets:open",\n'
+    "]);\n"
+)
+_WIDGETS_CONVEX = (
+    "export const mine = query({\n"
+    "\targs: { verifiedActor: v.optional(verifiedActorValidator) },\n"
+    "\thandler: async (ctx, args) => {\n"
+    "\t\tconst scope = await withOrgScope(ctx);\n"
+    "\t\tif (isMcpBoundMaster(scope) && args.verifiedActor === undefined) {\n"
+    '\t\t\tthrow rbacDenied("widgets:mine", "claimless", "no agent");\n'
+    "\t\t}\n"
+    "\t\treturn [];\n"
+    "\t},\n"
+    "});\n"
+    "\n"
+    "export const open = query({\n"
+    "\targs: { verifiedActor: v.optional(verifiedActorValidator) },\n"
+    "\thandler: async (ctx, args) => {\n"
+    "\t\t// if (args.verifiedActor === undefined) { throw ... } -- prose only\n"
+    "\t\treturn [];\n"
+    "\t},\n"
+    "});\n"
+    "\n"
+    "export const elsewhere = query({\n"
+    "\targs: {},\n"
+    "\thandler: async (ctx, args) => {\n"
+    "\t\tif (args.verifiedActor === undefined) {\n"
+    '\t\t\tthrow new ConvexError("RBAC_DENIED");\n'
+    "\t\t}\n"
+    "\t\treturn [];\n"
+    "\t},\n"
+    "});\n"
+)
+_IDENTITY_REASON = '{ kind: "filtered", reason: "the Convex door serves the verified agent by ID" }'
+
+
+def _identity_repo(tmp_path, handler_body, verified_actor_ts=_VERIFIED_ACTOR_TS):
+    (tmp_path / "mcp-server" / "src").mkdir(parents=True)
+    (tmp_path / "convex").mkdir()
+    if verified_actor_ts is not None:
+        (tmp_path / "mcp-server" / "src" / "verifiedActor.ts").write_text(
+            verified_actor_ts, encoding="utf-8"
+        )
+    (tmp_path / "convex" / "widgets.ts").write_text(_WIDGETS_CONVEX, encoding="utf-8")
+    tools = tmp_path / "mcp-server" / "src" / "tools.ts"
+    tools.write_text(
+        _defineTool_fixture(_IDENTITY_REASON, "list_my_widgets", handler_body),
+        encoding="utf-8",
+    )
+    return tools
+
+
+def _identity_bucket(tmp_path, handler_body, **kw):
+    tools = _identity_repo(tmp_path, handler_body, **kw)
+    p = run([str(tools), "--repo-root", str(tmp_path)])
+    counts = parse_counts(p.stdout)
+    assert counts["unreadable"] == 0, p.stdout
+    door = scan_source(
+        tools.read_text(encoding="utf-8"),
+        identity=load_identity_context(tmp_path),
+    ).doors[0]
+    bucket = classify_door(door)
+    # The CLI and the library agree on the one door.
+    assert counts[bucket] == 1, p.stdout
+    return bucket, door
+
+
+_CALL_MINE = (
+    "\t\tconst r = await convex.query(\n"
+    "\t\t\t// biome-ignore lint/suspicious/noExplicitAny: Convex string API\n"
+    '\t\t\t"widgets:mine" as any,\n'
+    "\t\t\t{ ...(tenantId !== undefined ? { tenantId } : {}) },\n"
+    "\t\t);\n"
+)
+
+
+def test_identity_bound_door_whose_convex_door_refuses_is_guarded(tmp_path):
+    bucket, door = _identity_bucket(tmp_path, _CALL_MINE)
+    assert bucket == "guarded"
+    assert door.identity_bound_doors == ("widgets:mine",)
+
+
+def test_identity_bound_convex_door_that_does_not_refuse_stays_unguarded(tmp_path):
+    """In the set, but its Convex export only MENTIONS the refusal in a comment."""
+    handler = _CALL_MINE.replace("widgets:mine", "widgets:open")
+    bucket, door = _identity_bucket(tmp_path, handler)
+    assert bucket == "unguarded"
+    assert door.identity_bound_doors == ()
+
+
+def test_identity_bound_function_outside_the_set_stays_unguarded(tmp_path):
+    """Refuses without verifiedActor, but the MCP never injects it there."""
+    handler = _CALL_MINE.replace("widgets:mine", "widgets:elsewhere")
+    bucket, _ = _identity_bucket(tmp_path, handler)
+    assert bucket == "unguarded"
+
+
+def test_identity_bound_a_commented_set_entry_is_not_a_member(tmp_path):
+    handler = _CALL_MINE.replace("widgets:mine", "widgets:commented")
+    bucket, _ = _identity_bucket(tmp_path, handler)
+    assert bucket == "unguarded"
+
+
+def test_identity_bound_forwarding_a_verified_org_stays_unguarded(tmp_path):
+    """A verified organisation lets an inbox-style door select its agent by name."""
+    handler = _CALL_MINE.replace(
+        "{ ...(tenantId !== undefined ? { tenantId } : {}) }",
+        "{ ...inboxOrgArgs(recipient) }",
+    )
+    bucket, _ = _identity_bucket(tmp_path, handler)
+    assert bucket == "unguarded"
+
+
+def test_identity_bound_a_second_call_outside_the_set_stays_unguarded(tmp_path):
+    handler = _CALL_MINE + (
+        '\t\tawait convex.query("widgets:elsewhere" as any, {});\n'
+    )
+    bucket, _ = _identity_bucket(tmp_path, handler)
+    assert bucket == "unguarded"
+
+
+def test_identity_bound_unreadable_verified_actor_file_flips_nothing(tmp_path):
+    bucket, _ = _identity_bucket(tmp_path, _CALL_MINE, verified_actor_ts=None)
+    assert bucket == "unguarded"
+
+
+def test_identity_bound_without_identity_context_flips_nothing(tmp_path):
+    tools = _identity_repo(tmp_path, _CALL_MINE)
+    door = scan_source(tools.read_text(encoding="utf-8")).doors[0]
+    assert classify_door(door) == "unguarded"
+    empty = IdentityContext(frozenset(), tmp_path / "convex")
+    door = scan_source(tools.read_text(encoding="utf-8"), identity=empty).doors[0]
+    assert classify_door(door) == "unguarded"
+
+
+def test_real_slice_list_blocked_on_me_reads_identity_bound():
+    """list_blocked_on_me is guarded at tasks:listBlockedOnMe (claimless
+    service-account refusal, convex/tasks.ts); check_messages is NOT: its Convex
+    door serves a member or the fleet reader by name, so it stays unguarded."""
+    text = REAL_TOOLS_TS.read_text(encoding="utf-8")
+    by_name = {d.name: d for d in scan_source(text, identity=REAL_IDENTITY).doors}
+    door = by_name["list_blocked_on_me"]
+    assert door.kind == "filtered"
+    assert door.identity_bound_doors == ("tasks:listBlockedOnMe",)
+    assert classify_door(door) == "guarded"
+    assert by_name["check_messages"].identity_bound_doors == ()
+    assert classify_door(by_name["check_messages"]) == "unguarded"
