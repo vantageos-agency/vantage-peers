@@ -1311,6 +1311,10 @@ app.get("/health", (c) =>
 		// string, never a value shaped like a SHA (would be indistinguishable
 		// from a real commit and defeat the whole point of this field).
 		commit: process.env.RAILWAY_GIT_COMMIT_SHA ?? "unknown",
+		// The runtime actually serving, read from the process itself, so a Node
+		// pin is verified on the service rather than inferred from the build
+		// declaration (task k178pdkzk74t7c8zh9c5d502xx8h26g5).
+		node: process.version,
 		transport: "streamable-http",
 		oauth: "supported",
 		scopes: ["mcp:full"],
