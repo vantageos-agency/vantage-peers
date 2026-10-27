@@ -100,7 +100,7 @@
 		"ws": "^8.21.0"
 	},
 	"engines": {
-		"node": ">=20"
+		"node": "26.12.1"
 	},
 	"publishConfig": {
 		"access": "public"
