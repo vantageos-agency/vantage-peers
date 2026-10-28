@@ -1,11 +1,13 @@
 /**
- * /health names the Node runtime that is actually serving, and the build
- * declaration pins the patched line (task k178pdkzk74t7c8zh9c5d502xx8h26g5).
+ * /health names the runtime that is actually serving, and the build
+ * declaration pins the patched Node line (task k178pdkzk74t7c8zh9c5d502xx8h26g5).
  *
- * Without the runtime on /health, "the service runs v26.12.1" could only be
- * inferred from the build declaration, never read from the service itself.
- * The pin is exact on purpose: a range (">=20") lets the build image choose,
- * and the October 2026 security release is fixed in v26.12.1.
+ * Railway serves this app with Bun (`bun run dist/server-http.js`). Under Bun
+ * `process.version` is an EMULATED Node version, so `node` alone misreports the
+ * runtime; `runtime` and `bun` are authoritative. The build-declaration tests
+ * below pin the build image's Node (engines.node / .node-version), not the
+ * server runtime. The pin is exact on purpose: a range (">=20") lets the build
+ * image choose, and the October 2026 security release is fixed in v26.12.1.
  */
 import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
@@ -16,8 +18,15 @@ import { app } from "../server-http.js";
 const PINNED = "26.12.1";
 const root = join(dirname(fileURLToPath(import.meta.url)), "..");
 
-describe("/health node runtime", () => {
-	it("publishes process.version under `node`", async () => {
+describe("/health serving runtime", () => {
+	it("names the serving runtime and the Bun version", async () => {
+		const res = await app.request("/health");
+		expect(res.status).toBe(200);
+		const body = (await res.json()) as Record<string, unknown>;
+		expect(body.runtime).toBe(process.versions.bun ? "bun" : "node");
+		expect(body.bun).toBe(process.versions.bun ?? null);
+	});
+	it("keeps process.version under `node` for existing readers", async () => {
 		const res = await app.request("/health");
 		expect(res.status).toBe(200);
 		const body = (await res.json()) as Record<string, unknown>;

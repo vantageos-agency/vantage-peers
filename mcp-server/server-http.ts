@@ -1311,9 +1311,13 @@ app.get("/health", (c) =>
 		// string, never a value shaped like a SHA (would be indistinguishable
 		// from a real commit and defeat the whole point of this field).
 		commit: process.env.RAILWAY_GIT_COMMIT_SHA ?? "unknown",
-		// The runtime actually serving, read from the process itself, so a Node
-		// pin is verified on the service rather than inferred from the build
-		// declaration (task k178pdkzk74t7c8zh9c5d502xx8h26g5).
+		// The runtime actually serving, read from the process itself rather than
+		// inferred from the build declaration (task k178pdkzk74t7c8zh9c5d502xx8h26g5).
+		// Railway serves this app with Bun, so `runtime` and `bun` are the
+		// authoritative fields. `node` is kept for existing readers, but under
+		// Bun it is Bun's EMULATED Node version, not a Node binary.
+		runtime: process.versions.bun ? "bun" : "node",
+		bun: process.versions.bun ?? null,
 		node: process.version,
 		transport: "streamable-http",
 		oauth: "supported",
