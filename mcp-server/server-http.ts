@@ -664,7 +664,7 @@ async function respondToOutcome(
 	state?: string,
 ): Promise<Response> {
 	c.header("Cache-Control", "no-store");
-	c.header("Referrer-Policy", "no-referrer");
+	c.header("Referrer-Policy", "same-origin");
 	switch (outcome.kind) {
 		case "redirect-to-sign-in":
 			return c.redirect(outcome.url, 302);
