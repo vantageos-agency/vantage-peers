@@ -44,7 +44,10 @@
  *                    audit used for the same kinds (1:1 in that audit), plus the
  *                    Convex-side caller-resolution helpers reached. A `public`
  *                    tool every reached door of which refuses by
- *                    `requireResolvedCaller` (none fleet-only) is
+ *                    `requireResolvedCaller` (none fleet-only), or by a refusal
+ *                    `if (!x.ok) throw` on the result of a package export the
+ *                    installed @vantageos/cloud-identity tags `@callerResolver`
+ *                    (derived from its .d.ts, callerResolverGatesOf), is
  *                    `toutes_orgs(identity-gated)` over `orgId(verified-credential)`:
  *                    the door, not the transport label, resolves the caller.
  *   tokens_estime_contexte  ceil(chars(name + description + input-schema
@@ -197,6 +200,59 @@ const REQUIRED_INPUTS = [
 			missing.map((f) => `required input missing: ${relative(ROOT, f)}`),
 		);
 }
+
+// ── The package's caller resolvers, DERIVED from its declarations ──────────
+// A door is identity-gated when its handler refuses on the result of a call to
+// a @vantageos/cloud-identity export the installed package tags
+// `@callerResolver` in its JSDoc (the same tag backend-doctor derives its
+// "caller-resolver sinks" from). The set is read from the installed package's
+// `dist/*.d.ts`, never typed here: a new resolver needs no edit of this file.
+// The package is looked up at or above --root, then beside this script (a test
+// copy of the inputs carries no node_modules). Not found, or no tagged export:
+// REFUSED, because an empty set would silently strip every such door's gate.
+const IDENTITY_PACKAGE = "@vantageos/cloud-identity";
+function identityPackageDir() {
+	const starts = [ROOT, resolve(dirname(fileURLToPath(import.meta.url)), "..")];
+	for (const start of starts) {
+		for (let d = start; ; d = dirname(d)) {
+			const cand = join(d, "node_modules", ...IDENTITY_PACKAGE.split("/"));
+			if (existsSync(join(cand, "dist"))) return cand;
+			if (dirname(d) === d) break;
+		}
+	}
+	return null;
+}
+const CALLER_RESOLVER_SOURCE = (() => {
+	const dir = identityPackageDir();
+	if (dir === null)
+		refusePopulation([
+			`${IDENTITY_PACKAGE} is not installed at or above ${ROOT}: its @callerResolver set cannot be derived`,
+		]);
+	const names = new Set();
+	const tagged =
+		/\/\*\*((?:(?!\*\/)[\s\S])*?)\*\/\s*export\s+declare\s+function\s+(\w+)/g;
+	const dts = [];
+	const walkDts = (d) => {
+		for (const e of readdirSync(d, { withFileTypes: true })) {
+			const f = join(d, e.name);
+			if (e.isDirectory()) walkDts(f);
+			else if (e.name.endsWith(".d.ts")) dts.push(f);
+		}
+	};
+	walkDts(join(dir, "dist"));
+	for (const f of dts)
+		for (const m of readFileSync(f, "utf8").matchAll(tagged))
+			if (/@callerResolver\b/.test(m[1])) names.add(m[2]);
+	if (names.size === 0)
+		refusePopulation([
+			`${IDENTITY_PACKAGE} at ${dir} declares no @callerResolver export`,
+		]);
+	const version = JSON.parse(
+		readFileSync(join(dir, "package.json"), "utf8"),
+	).version;
+	return { names, version };
+})();
+const CALLER_RESOLVERS = CALLER_RESOLVER_SOURCE.names;
 
 const COLUMNS = [
 	"table",
@@ -1021,7 +1077,10 @@ function convexFacts(fnKeys) {
 			});
 		}
 		facts.tiers.add(convexTierOf(fnText, fnGuards));
-		facts.refusingGates.push(refusingGatesOf(fnText, fnGuards));
+		facts.refusingGates.push([
+			...refusingGatesOf(fnText, fnGuards),
+			...callerResolverGatesOf(fn),
+		]);
 		if (fn.kind !== "query")
 			facts.writeDoors.push({ key, gate: writerGateOf(fnText, fnGuards) });
 	}
@@ -1064,6 +1123,88 @@ const REFUSING_GUARDS = [
 	"requireScope",
 	"requireAuthenticatedCaller",
 ];
+/** Local name -> exported name, for the named imports of `file` from the identity package (root or subpath). */
+const pkgImportCache = new Map();
+function identityImportsOf(file) {
+	let map = pkgImportCache.get(file);
+	if (map) return map;
+	map = new Map();
+	for (const st of sourceOf(file).statements) {
+		if (!ts.isImportDeclaration(st) || !st.importClause?.namedBindings)
+			continue;
+		const spec = st.moduleSpecifier.text;
+		if (spec !== IDENTITY_PACKAGE && !spec.startsWith(`${IDENTITY_PACKAGE}/`))
+			continue;
+		if (
+			st.importClause.isTypeOnly ||
+			!ts.isNamedImports(st.importClause.namedBindings)
+		)
+			continue;
+		for (const el of st.importClause.namedBindings.elements)
+			if (!el.isTypeOnly)
+				map.set(el.name.text, (el.propertyName ?? el.name).text);
+	}
+	pkgImportCache.set(file, map);
+	return map;
+}
+
+/**
+ * The refusals of ONE door's own handler on a package caller resolver's
+ * result: `const x = [await] <r>(…)` where `<r>` is a named import of a
+ * @callerResolver export of the identity package (CALLER_RESOLVERS, derived),
+ * and, in the same handler, `if (!x.ok) throw …` (the throw directly the then
+ * branch, or a statement of its block). Each is the gate
+ * `callerResolver(<export>)`. A call whose result is never refused, a
+ * non-tagged export, or a local function of the same name is not one.
+ */
+function callerResolverGatesOf(fn) {
+	const imports = identityImportsOf(fn.file);
+	const results = new Map(); // local variable -> exported resolver
+	forEachDeep(fn.handler, (n) => {
+		if (
+			!ts.isVariableDeclaration(n) ||
+			!ts.isIdentifier(n.name) ||
+			!n.initializer
+		)
+			return;
+		let init = strip(n.initializer);
+		if (ts.isAwaitExpression(init)) init = strip(init.expression);
+		if (!ts.isCallExpression(init) || !ts.isIdentifier(init.expression)) return;
+		const exported = imports.get(init.expression.text);
+		if (exported !== undefined && CALLER_RESOLVERS.has(exported))
+			results.set(n.name.text, exported);
+	});
+	const gates = new Set();
+	if (results.size === 0) return [];
+	forEachDeep(fn.handler, (n) => {
+		if (!ts.isIfStatement(n)) return;
+		const c = strip(n.expression);
+		if (
+			!ts.isPrefixUnaryExpression(c) ||
+			c.operator !== ts.SyntaxKind.ExclamationToken
+		)
+			return;
+		const operand = strip(c.operand);
+		if (
+			!ts.isPropertyAccessExpression(operand) ||
+			operand.name.text !== "ok" ||
+			!ts.isIdentifier(operand.expression)
+		)
+			return;
+		const exported = results.get(operand.expression.text);
+		if (exported === undefined) return;
+		const then = n.thenStatement;
+		const throws =
+			ts.isThrowStatement(then) ||
+			(ts.isBlock(then) &&
+				then.statements.some((st) => ts.isThrowStatement(st)));
+		if (throws) gates.add(`callerResolver(${exported})`);
+	});
+	return [...gates];
+}
+
+const isCallerResolverGate = (g) => g.startsWith("callerResolver(");
+
 function refusingGatesOf(code, guards) {
 	const gates = REFUSING_GUARDS.filter((g) => guards.has(g));
 	if (/\brequireOrgAdmin\s*\(/.test(code)) gates.push("requireOrgAdmin");
@@ -1918,14 +2059,20 @@ for (const t of tools) {
 		cf.refusingGates.every((g) => g.length > 0)
 			? [...new Set(cf.refusingGates.flat())]
 			: null;
-	// ... and when that gate is a CALLER RESOLVER (requireResolvedCaller) and no
+	// ... and when that gate is a CALLER RESOLVER (requireResolvedCaller, or a
+	// refusal on a package @callerResolver result, callerResolverGatesOf) and no
 	// reached door is fleet-only, the reader tier is resolved from the verified
 	// credential by the door, never from an argument: the cells say so (R-5
 	// reads `identity-gated` with a boundary that is not an `arg=`).
 	const identityGated =
 		doorGates !== null &&
-		cf.refusingGates.every((g) => g.includes("requireResolvedCaller")) &&
-		!doorGates.some((g) => /masterOnly|requireFleetDoor|requireFleetMaster/.test(g));
+		cf.refusingGates.every(
+			(g) =>
+				g.includes("requireResolvedCaller") || g.some(isCallerResolverGate),
+		) &&
+		!doorGates.some((g) =>
+			/masterOnly|requireFleetDoor|requireFleetMaster/.test(g),
+		);
 	const enforce = doorGates
 		? `convex-door(${doorGates.join("/")}) + convex:${convexGuards.join("/")} (MCP transport: public, no transport check)`
 		: convexGuards.length
@@ -2166,6 +2313,9 @@ writeFileSync(WRITER_OUT, writerCsv);
 const count = (pred) => rows.filter(pred).length;
 console.log(
 	`wrote ${relative(ROOT, OUT)}: ${rows.length} rows (one per defineTool registration)`,
+);
+console.log(
+	`  caller resolvers: DERIVED from @callerResolver in ${IDENTITY_PACKAGE}@${CALLER_RESOLVER_SOURCE.version} (${CALLER_RESOLVERS.size}): ${[...CALLER_RESOLVERS].sort().join(", ")}`,
 );
 console.log(
 	`  surface MCP-public=${count((r) => r.surface === "MCP-public")} hors-MCP=${count((r) => r.surface === "hors-MCP")}`,
