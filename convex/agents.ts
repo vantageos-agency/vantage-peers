@@ -57,6 +57,7 @@ const agentReturnValidator = v.object({
 	kind: v.optional(v.union(v.literal("agent"), v.literal("service"))),
 	authSubject: v.optional(v.string()),
 	ownerPersonId: v.optional(v.string()),
+	personalAgentOf: v.optional(v.string()),
 	isActive: v.boolean(),
 	createdAt: v.number(),
 });
@@ -609,5 +610,109 @@ export const listAgentsWithoutOwner = internalQuery({
 				name: a.name,
 				kind: a.kind ?? null,
 			}));
+	},
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Personal agent — task k17ee3efn6xz4zpapcg68sgvnh8h43gt.
+// ─────────────────────────────────────────────────────────────────────────────
+//
+// `agents.personalAgentOf` is the Clerk user ID of the person whose personal agent an
+// agent is. A person token of that person, in the agent's org, acts as that agent when it
+// is the ONE active agent of the org that designates them (`resolvePersonalAgent`, applied
+// in `oauth:getAccessTokenByHash`). This door only STORES the designation (rule
+// one-identity-layer: no local identity decision besides refusing a write that would make
+// the package's rule ambiguous). It is an internalMutation like `setAgentOwner`: reachable
+// by the operator (`convex run`) and by no client, so it has no public gate to forget.
+//
+// Refusal codes (all checked before any write):
+//   PERSONAL_AGENT_PERSON_ID_INVALID  personId is not `user_` + alphanumerics (null clears)
+//   PERSONAL_AGENT_REASON_REQUIRED    reason shorter than 10 characters once trimmed
+//   AGENT_NOT_FOUND                   the id names no agent row
+//   AGENT_INACTIVE                    the agent is not active (to designate; clearing is allowed)
+//   PERSONAL_AGENT_SERVICE_ACCOUNT    the row is the fleet service account (kind "service")
+//   PERSONAL_AGENT_CONFLICT           the agent designates another person and replace is not true
+//   PERSONAL_AGENT_AMBIGUOUS          another ACTIVE agent of the same org already designates the person
+
+const PERSONAL_AGENT_REASON_MIN_LENGTH = 10;
+const PERSONAL_AGENT_PERSON_ID_PATTERN = /^user_[A-Za-z0-9]+$/;
+const PERSONAL_AGENT_SCAN_CAP = 50;
+
+export const setPersonalAgentOf = internalMutation({
+	args: {
+		agentId: v.id("agents"),
+		// null clears the designation.
+		personId: v.union(v.string(), v.null()),
+		reason: v.string(),
+		replace: v.optional(v.boolean()),
+	},
+	returns: v.object({
+		agentId: v.id("agents"),
+		previous: v.union(v.string(), v.null()),
+		current: v.union(v.string(), v.null()),
+		changed: v.boolean(),
+	}),
+	handler: async (ctx, args) => {
+		if (
+			args.personId !== null &&
+			!PERSONAL_AGENT_PERSON_ID_PATTERN.test(args.personId)
+		) {
+			throw new ConvexError(
+				"PERSONAL_AGENT_PERSON_ID_INVALID: personId must be a Clerk user ID (user_ followed by letters and digits), or null to clear",
+			);
+		}
+		if (args.reason.trim().length < PERSONAL_AGENT_REASON_MIN_LENGTH) {
+			throw new ConvexError(
+				`PERSONAL_AGENT_REASON_REQUIRED: reason must be at least ${PERSONAL_AGENT_REASON_MIN_LENGTH} characters once trimmed`,
+			);
+		}
+		const agent = await ctx.db.get(args.agentId);
+		if (agent === null) {
+			throw new ConvexError(`AGENT_NOT_FOUND: no agent ${args.agentId}`);
+		}
+		const previous = agent.personalAgentOf ?? null;
+		if (args.personId !== null) {
+			if (!agent.isActive) {
+				throw new ConvexError(
+					`AGENT_INACTIVE: agent ${args.agentId} is not active`,
+				);
+			}
+			if (agent.kind === "service") {
+				throw new ConvexError(
+					`PERSONAL_AGENT_SERVICE_ACCOUNT: agent ${args.agentId} is the fleet service account and cannot be a person's agent`,
+				);
+			}
+			if (
+				previous !== null &&
+				previous !== args.personId &&
+				args.replace !== true
+			) {
+				throw new ConvexError(
+					`PERSONAL_AGENT_CONFLICT: agent ${args.agentId} already belongs to another person; pass replace: true to move it`,
+				);
+			}
+			const holders = await ctx.db
+				.query("agents")
+				.withIndex("by_personal_agent_of", (q) =>
+					q.eq("personalAgentOf", args.personId as string).eq("orgSlug", agent.orgSlug),
+				)
+				.take(PERSONAL_AGENT_SCAN_CAP + 1);
+			if (holders.length > PERSONAL_AGENT_SCAN_CAP) {
+				throw new ConvexError(
+					`PERSONAL_AGENT_AMBIGUOUS: more than ${PERSONAL_AGENT_SCAN_CAP} agents of this org already designate this person`,
+				);
+			}
+			const other = holders.find((h) => h._id !== args.agentId && h.isActive);
+			if (other !== undefined) {
+				throw new ConvexError(
+					`PERSONAL_AGENT_AMBIGUOUS: active agent ${other._id} of the same org already designates this person; clear it first (a person acts as an agent only when exactly one designates them)`,
+				);
+			}
+		}
+		const changed = previous !== args.personId;
+		if (changed) {
+			await ctx.db.patch(args.agentId, { personalAgentOf: args.personId ?? undefined });
+		}
+		return { agentId: args.agentId, previous, current: args.personId, changed };
 	},
 });

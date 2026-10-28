@@ -2174,10 +2174,18 @@ export default defineSchema({
 		// the expand phase; written only by agents:setAgentOwner; read later by the
 		// @vantageos/cloud-identity agent-caller path (`ownerPersonId` of the credential).
 		ownerPersonId: v.optional(v.string()),
+		// The Clerk user ID (`user_...`) of the person whose PERSONAL agent this is. A person
+		// token (the claude.ai connector) of that person, in this agent's org, acts as this
+		// agent when this is the ONE active agent of the org that designates them
+		// (@vantageos/cloud-identity `resolvePersonalAgent`; zero or several -> the person
+		// stays the person). Written only by the operator door agents:setPersonalAgentOf,
+		// never by a request. Optional: absent means "designates nobody".
+		personalAgentOf: v.optional(v.string()),
 		isActive: v.boolean(),
 		createdAt: v.number(),
 	})
 		.index("by_org", ["orgSlug"])
+		.index("by_personal_agent_of", ["personalAgentOf", "orgSlug"])
 		.index("by_auth_subject_kind", ["authSubject", "kind"])
 		.index("by_org_clerk_id", ["clerkOrgId"])
 		.index("by_org_name", ["orgSlug", "name"])

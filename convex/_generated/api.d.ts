@@ -74,6 +74,7 @@ import type * as lib_operatorOrg from "../lib/operatorOrg.js";
 import type * as lib_orgClerkId from "../lib/orgClerkId.js";
 import type * as lib_orgIdLookups from "../lib/orgIdLookups.js";
 import type * as lib_personPrincipal from "../lib/personPrincipal.js";
+import type * as lib_personalAgent from "../lib/personalAgent.js";
 import type * as lib_profileActors from "../lib/profileActors.js";
 import type * as lib_provisioningMapping from "../lib/provisioningMapping.js";
 import type * as lib_repoMappingTenant from "../lib/repoMappingTenant.js";
@@ -221,6 +222,7 @@ declare const fullApi: ApiFromModules<{
   "lib/orgClerkId": typeof lib_orgClerkId;
   "lib/orgIdLookups": typeof lib_orgIdLookups;
   "lib/personPrincipal": typeof lib_personPrincipal;
+  "lib/personalAgent": typeof lib_personalAgent;
   "lib/profileActors": typeof lib_profileActors;
   "lib/provisioningMapping": typeof lib_provisioningMapping;
   "lib/repoMappingTenant": typeof lib_repoMappingTenant;
