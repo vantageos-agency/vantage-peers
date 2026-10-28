@@ -578,20 +578,20 @@ export function personActorOf(
 }
 
 /**
- * The acting agent of a PERSON token that designates one (`personalAgent`,
- * decided by Convex through `@vantageos/cloud-identity` `resolvePersonalAgent`),
+ * The acting agent of a PERSON token that designates one (`personalAgent`),
  * shaped as the `actor` of a person that presented an agent credential, so every
  * downstream surface (acting-name binding, `verifiedActor`, whoami) takes the one
- * path it already has. The writer-role gate is unchanged: the token is still a
- * person's. Believed only when the agent's org is the token's OWN org; anything
- * else leaves the person as the person. An explicit agent credential presented
- * on the request replaces it (attachContextAndProceed).
+ * path it already has. WHICH agent, and that it belongs to the token's own
+ * organisation, is decided by Convex through `@vantageos/cloud-identity`
+ * `resolvePersonalAgent` (agent and organisation by stored ID); this function
+ * compares no identity and only maps the answer. The writer-role gate is
+ * unchanged. An explicit agent credential presented on the request replaces it
+ * (attachContextAndProceed).
  */
 export function personalActorOf(
 	oauth:
 		| {
 				principal?: "person";
-				clerkOrgSlug?: string;
 				personalAgent?: {
 					agentId: string;
 					orgId: string;
@@ -604,8 +604,7 @@ export function personalActorOf(
 	if (oauth?.principal !== "person") return undefined;
 	const agent = oauth.personalAgent;
 	if (agent === undefined || agent === null) return undefined;
-	if (agent.agentId === "" || agent.agentName === "") return undefined;
-	if (oauth.clerkOrgSlug === undefined || agent.orgId !== oauth.clerkOrgSlug) {
+	if (agent.agentId === "" || agent.agentName === "" || agent.orgId === "") {
 		return undefined;
 	}
 	return {
