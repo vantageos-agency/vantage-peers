@@ -82,11 +82,40 @@ function derive(root, ...args) {
 	});
 }
 
+/** The anchor a fixture rewrites must still be in the file: a drifted anchor
+ * is a NAMED failure (file + anchor), never a silent no-op that lets a pole
+ * pass or fail on the unmutated tree. */
+function anchorAt(rel, text, from) {
+	const at = text.indexOf(from);
+	if (at === -1)
+		throw new Error(
+			`mutation anchor not found in ${rel} — the fixture drifted from the source; re-anchor it: ${JSON.stringify(from)}`,
+		);
+	return at;
+}
+
 function mutate(root, rel, from, to) {
 	const file = join(root, rel);
 	const text = readFileSync(file, "utf8");
-	expect(text.includes(from)).toBe(true);
-	writeFileSync(file, text.replace(from, to));
+	anchorAt(rel, text, from);
+	writeFileSync(
+		file,
+		text.replace(from, () => to),
+	);
+}
+
+/** Replace the span from `start` through the first `end` after it (both
+ * included). Each anchor must be present, `end` after `start`. */
+function mutateSpan(root, rel, start, end, to) {
+	const file = join(root, rel);
+	const text = readFileSync(file, "utf8");
+	const a = anchorAt(rel, text, start);
+	const b = text.indexOf(end, a);
+	if (b === -1)
+		throw new Error(
+			`mutation span end not found after its start in ${rel} — re-anchor it: ${JSON.stringify(end)}`,
+		);
+	writeFileSync(file, text.slice(0, a) + to + text.slice(b + end.length));
 }
 
 describe("derive-backend-doctor-oracle population guard", () => {
@@ -420,23 +449,33 @@ const WRITE_VERBS = new Set([
 	"UPSERT",
 	"BULK-WRITE",
 ]);
-const BU_DOOR_GATE =
-	"\t\tconst scope = await withOrgScope(ctx);\n\t\tawait requireFleetDoor(ctx, scope, door, { masterOnly: true });\n";
-const BU_DOOR_REST = "";
+// businessUnits:remove resolves the caller (withOrgScope), runs the human
+// org:admin branch for a caller without fleet standing, then refuses every
+// other caller but the fleet master (requireFleetDoor masterOnly).
+const BU_DOOR_SCOPE = "\t\tconst scope = await withOrgScope(ctx);\n";
+const BU_MASTER_REFUSAL =
+	"\t\tawait requireFleetDoor(ctx, scope, door, { masterOnly: true });\n";
 const MASTER_TOOL_SCOPE = '\t\t{ kind: "master" },\n\t\t"delete_bu",';
 
-/** delete_bu's writer tier after rewriting its Convex door's gate. */
-function deleteBuWriter(gateLines, { mcp = false } = {}) {
+/** delete_bu's writer tier after rewriting its Convex door's gate.
+ * `refusal`: lines that replace ONLY the master refusal (the caller resolution
+ * and the human branch stay). `gateLines`: lines that replace the door's WHOLE
+ * gate (resolution, human branch, refusal) — a door with no Convex gate. */
+function deleteBuWriter({ refusal, gateLines }, { mcp = false } = {}) {
 	const root = copyTree();
-	mutate(
-		root,
-		"convex/businessUnits.ts",
-		BU_DOOR_GATE,
-		`${gateLines}${BU_DOOR_REST}`,
-	);
+	if (gateLines === undefined)
+		mutate(root, "convex/businessUnits.ts", BU_MASTER_REFUSAL, refusal);
+	else
+		mutateSpan(
+			root,
+			"convex/businessUnits.ts",
+			BU_DOOR_SCOPE,
+			BU_MASTER_REFUSAL,
+			gateLines,
+		);
 	// the verified-org resolver the door reaches resolves a caller itself
 	// (withOrgScope inside): a door with NO Convex gate has none of it either.
-	if (gateLines.includes("isMaster: true"))
+	if (gateLines?.includes("isMaster: true"))
 		mutate(
 			root,
 			"convex/businessUnits.ts",
@@ -508,9 +547,7 @@ describe("derive-backend-doctor-oracle writer authority (R-10 side-car)", () => 
 			// upload ticket, CREATE) and claim_upload (binds the blob, UPSERT).
 			// + export_okf_bundle, which binds the blob it creates to the exporter's
 			// org (CREATE) and so now has a writer row.
-			expect(
-				side.find((r) => r.outil === "export_okf_bundle"),
-			).toBeDefined();
+			expect(side.find((r) => r.outil === "export_okf_bundle")).toBeDefined();
 			expect(
 				side.find((r) => r.outil === "validate_okf_bundle"),
 			).toBeUndefined();
@@ -537,12 +574,11 @@ describe("derive-backend-doctor-oracle writer authority (R-10 side-car)", () => 
 		"REFUSED — a stale side-car fails --check",
 		() => {
 			const root = copyTree();
-			writeFileSync(
-				writerOut(root),
-				readFileSync(writerOut(root), "utf8").replace(
-					"delete_bu,businessUnits,DELETE,master",
-					"delete_bu,businessUnits,DELETE,org-member",
-				),
+			mutate(
+				root,
+				".backend-doctor/vp-writer-tier.csv",
+				"delete_bu,businessUnits+memberWriterRoles,DELETE,master",
+				"delete_bu,businessUnits+memberWriterRoles,DELETE,org-member",
 			);
 			const r = derive(root, "--check");
 			expect(r.status).toBe(1);
@@ -551,7 +587,6 @@ describe("derive-backend-doctor-oracle writer authority (R-10 side-car)", () => 
 		TIMEOUT,
 	);
 
-	const OPEN_MASTER_GATE = "\t\tconst scope = await withOrgScope(ctx);\n";
 	it(
 		"TIER master — the unmodified door (the fleet-only `masterOnly` refusal)",
 		() => {
@@ -564,7 +599,7 @@ describe("derive-backend-doctor-oracle writer authority (R-10 side-car)", () => 
 	it(
 		"TIER org-member — the same door with its master refusal removed",
 		() => {
-			const { row } = deleteBuWriter(OPEN_MASTER_GATE);
+			const { row } = deleteBuWriter({ refusal: "" });
 			expect(row).toMatchObject({
 				writer_tier: "org-member",
 				writer_gate: "orgResolver",
@@ -575,12 +610,9 @@ describe("derive-backend-doctor-oracle writer authority (R-10 side-car)", () => 
 	it(
 		"TIER org-admin — the same door gated by requireOrgAdmin",
 		() => {
-			const { row } = deleteBuWriter(
-				OPEN_MASTER_GATE.replace(
-					"\n",
-					'\n\t\tawait requireOrgAdmin(ctx, "acme");\n',
-				),
-			);
+			const { row } = deleteBuWriter({
+				refusal: '\t\tawait requireOrgAdmin(ctx, "acme");\n',
+			});
 			expect(row).toMatchObject({
 				writer_tier: "org-admin",
 				writer_gate: "orgAdmin",
@@ -591,12 +623,10 @@ describe("derive-backend-doctor-oracle writer authority (R-10 side-car)", () => 
 	it(
 		"TIER fleet-internal — the same door gated by requireResolvedCaller({ mcpBoundOnly: true })",
 		() => {
-			const { row } = deleteBuWriter(
-				OPEN_MASTER_GATE.replace(
-					"\n",
-					'\n\t\trequireResolvedCaller(scope, "businessUnits:remove", { mcpBoundOnly: true });\n',
-				),
-			);
+			const { row } = deleteBuWriter({
+				refusal:
+					'\t\trequireResolvedCaller(scope, "businessUnits:remove", { mcpBoundOnly: true });\n',
+			});
 			expect(row).toMatchObject({
 				writer_tier: "fleet-internal",
 				writer_gate: "mcpBoundOnly",
@@ -608,7 +638,7 @@ describe("derive-backend-doctor-oracle writer authority (R-10 side-car)", () => 
 		"TIER public — no Convex gate and a public MCP scope",
 		() => {
 			const { row } = deleteBuWriter(
-				"\t\tconst scope = { isMaster: true, orgSlug: null };\n",
+				{ gateLines: "\t\tconst scope = { isMaster: true, orgSlug: null };\n" },
 				{ mcp: true },
 			);
 			expect(row).toMatchObject({
@@ -621,9 +651,9 @@ describe("derive-backend-doctor-oracle writer authority (R-10 side-car)", () => 
 	it(
 		"FALLBACK — no Convex gate keeps the MCP-scope tier (master scope -> fleet-internal)",
 		() => {
-			const { row } = deleteBuWriter(
-				"\t\tconst scope = { isMaster: true, orgSlug: null };\n",
-			);
+			const { row } = deleteBuWriter({
+				gateLines: "\t\tconst scope = { isMaster: true, orgSlug: null };\n",
+			});
 			expect(row).toMatchObject({
 				writer_tier: "fleet-internal",
 				writer_gate: "mcp-scope:master",
@@ -907,8 +937,8 @@ describe("derive-backend-doctor-oracle verb and guard derivation (R-37 inputs)",
 			mutate(
 				named,
 				"convex/businessUnits.ts",
-				"const {\n\t\t\tbuId,\n\t\t\tcallerOrchestrator,\n\t\t\tverifiedOrg: _verifiedOrg,\n\t\t\t...fields\n\t\t} = args;",
-				"const {\n\t\t\tbuId,\n\t\t\tcallerOrchestrator,\n\t\t\tverifiedOrg: _verifiedOrg,\n\t\t\tstatus: _status,\n\t\t\t...fields\n\t\t} = args;",
+				"const {\n\t\t\tbuId,\n\t\t\tcallerOrchestrator: _callerOrchestrator,\n\t\t\tverifiedOrg: _verifiedOrg,\n\t\t\t...fields\n\t\t} = args;",
+				"const {\n\t\t\tbuId,\n\t\t\tcallerOrchestrator: _callerOrchestrator,\n\t\t\tverifiedOrg: _verifiedOrg,\n\t\t\tstatus: _status,\n\t\t\t...fields\n\t\t} = args;",
 			);
 			expect(verbOfTool(named, "update_bu")).toBe("UPDATE");
 		},
@@ -954,8 +984,8 @@ describe("derive-backend-doctor-oracle verb and guard derivation (R-37 inputs)",
 			mutate(
 				ambiguous,
 				"convex/businessUnits.ts",
-				"const {\n\t\t\tbuId,\n\t\t\tcallerOrchestrator,\n\t\t\tverifiedOrg: _verifiedOrg,\n\t\t\t...fields\n\t\t} = args;",
-				"const {\n\t\t\tbuId,\n\t\t\tcallerOrchestrator,\n\t\t\tverifiedOrg: _verifiedOrg,\n\t\t\t...fields\n\t\t} = args;\n\t\t{\n\t\t\tconst { callerOrchestrator: _c, ...fields } = args;\n\t\t\tvoid fields;\n\t\t}",
+				"const {\n\t\t\tbuId,\n\t\t\tcallerOrchestrator: _callerOrchestrator,\n\t\t\tverifiedOrg: _verifiedOrg,\n\t\t\t...fields\n\t\t} = args;",
+				"const {\n\t\t\tbuId,\n\t\t\tcallerOrchestrator: _callerOrchestrator,\n\t\t\tverifiedOrg: _verifiedOrg,\n\t\t\t...fields\n\t\t} = args;\n\t\t{\n\t\t\tconst { callerOrchestrator: _c, ...fields } = args;\n\t\t\tvoid fields;\n\t\t}",
 			);
 			expect(verbOfTool(ambiguous, "update_bu")).toBe("?");
 		},
