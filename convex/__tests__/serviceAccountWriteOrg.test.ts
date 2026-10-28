@@ -416,20 +416,65 @@ describe("githubRepoMapping:add/remove — a service-account write for a verifie
 		expect(await mappingRows(t)).toEqual([]);
 	});
 
+	// org-a's mapping holds the scope, and the GitHub owner "acme" is bound to it
+	// (the proof add() requires of a member).
+	async function grantRepoScope(t: T): Promise<void> {
+		await t.run(async (ctx) => {
+			const m = (await ctx.db.query("client_org_mapping").collect()).find(
+				(r) => r.clerkOrgSlug === "org-a",
+			);
+			if (m === undefined) throw new Error("org-a not seeded");
+			await ctx.db.patch(m._id, {
+				scopes: [...m.scopes, "manage-repo-mappings"],
+			});
+			await ctx.db.insert("githubOwnerBindings", {
+				owner: "acme",
+				orgId: "org-a",
+				installationId: 1,
+				accountType: "Organization",
+				githubUserLogin: "gh-org-a",
+				boundBy: "admin-org-a",
+				boundAt: 1,
+				active: true,
+			});
+		});
+	}
+
+	test("ALLOWED (seat): a bearer verified for org-a that holds the scope maps its own repo, stamped in org-a, and removes it", async () => {
+		const t = createT();
+		await seed(t);
+		await grantRepoScope(t);
+		await asServiceAccount(t).mutation(api.githubRepoMapping.add, {
+			...MAPPING,
+			verifiedOrg: { orgSlug: "org-a" },
+		});
+		const [row] = await mappingRows(t);
+		expect(row.orgId).toBe("org-a");
+		const removed = await asServiceAccount(t).mutation(
+			api.githubRepoMapping.remove,
+			{ repo: MAPPING.repo, verifiedOrg: { orgSlug: "org-a" } },
+		);
+		expect(removed).toEqual({ deleted: true });
+		expect(await mappingRows(t)).toEqual([]);
+	});
+
 	test("FLEET (unchanged): the service account with no verifiedOrg writes a fleet row", async () => {
 		const t = createT();
 		await seed(t);
+		await grantRepoScope(t);
 		await asServiceAccount(t).mutation(api.githubRepoMapping.add, MAPPING);
 		const [row] = await mappingRows(t);
 		expect(row.orgId).toBeUndefined();
+		// The seat HOLDS the scope, so the refusal below is row ownership.
 		const removed = await asServiceAccount(t)
 			.mutation(api.githubRepoMapping.remove, {
 				repo: MAPPING.repo,
 				verifiedOrg: { orgSlug: "org-a" },
 			})
 			.catch((e: unknown) => e);
-		// A bearer verified for org-a may not remove the fleet's mapping.
-		expect(String(removed)).toMatch(/RBAC_DENIED/);
+		expect(String(removed)).toMatch(
+			/RBAC_DENIED[\s\S]*repo is not owned by org "org-a"/,
+		);
 		expect(await mappingRows(t)).toHaveLength(1);
 	});
 });

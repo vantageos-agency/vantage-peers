@@ -243,6 +243,31 @@ export function actingNameOf(
 //                  stands alone (membership check skipped; CORE-A above
 //                  still required an identity to exist at all).
 // ─────────────────────────────────────────────────────────────────────────────
+// The asserted caller name must be on the resolved scope's roster. Master is
+// exempt (the fleet service account resolves allowedOrchestrators ["*"]); a "*"
+// entry names nobody. Shared by requireAuthenticatedCaller and by a create that
+// the service account makes FOR a verified org, whose scope is rebuilt as that
+// org's ordinary member after stamping.
+function assertCallerOnRoster(
+	scope: CallerScope,
+	callerOrchestrator: string | undefined,
+): void {
+	if (
+		callerOrchestrator !== undefined &&
+		!scope.isMaster &&
+		!scope.allowedOrchestrators.some(
+			(entry) =>
+				entry !== "*" &&
+				normalizeOrchestratorId(entry) ===
+					normalizeOrchestratorId(callerOrchestrator),
+		)
+	) {
+		throw new ConvexError(
+			`CALLER_IDENTITY_MISMATCH: asserted callerOrchestrator "${callerOrchestrator}" is outside the authenticated org's allowed-orchestrator list — this compares an ASSERTED name against the org's allowlist (org=${scope.orgSlug ?? "none"} allows ${JSON.stringify(scope.allowedOrchestrators)}); it does NOT verify the caller IS any particular orchestrator inside that list — ${JSON.stringify({ asserted: callerOrchestrator, derivedAllowedOrchestrators: scope.allowedOrchestrators, orgSlug: scope.orgSlug })}`,
+		);
+	}
+}
+
 // Exported (Day 203 slice, task class: authority attached to an
 // anonymously-registered object — .claude/rules/authority-attached-to-anonymous-object.md)
 // so convex/recurringTasks.ts, convex/missions.ts and convex/missionTemplates.ts
@@ -337,20 +362,7 @@ export async function requireAuthenticatedCaller(
 	// ordinary member of the operator org) is held to its org's roster: compared
 	// after normalizeOrchestratorId on both sides, and a "*" entry names nobody
 	// (an org's own openness to READ, never licence to act as another name).
-	if (
-		callerOrchestrator !== undefined &&
-		!scope.isMaster &&
-		!scope.allowedOrchestrators.some(
-			(entry) =>
-				entry !== "*" &&
-				normalizeOrchestratorId(entry) ===
-					normalizeOrchestratorId(callerOrchestrator),
-		)
-	) {
-		throw new ConvexError(
-			`CALLER_IDENTITY_MISMATCH: asserted callerOrchestrator "${callerOrchestrator}" is outside the authenticated org's allowed-orchestrator list — this compares an ASSERTED name against the org's allowlist (org=${scope.orgSlug ?? "none"} allows ${JSON.stringify(scope.allowedOrchestrators)}); it does NOT verify the caller IS any particular orchestrator inside that list — ${JSON.stringify({ asserted: callerOrchestrator, derivedAllowedOrchestrators: scope.allowedOrchestrators, orgSlug: scope.orgSlug })}`,
-		);
-	}
+	assertCallerOnRoster(scope, callerOrchestrator);
 
 	// M7: the caller as an ACTOR ID, from the proof already verified above. Every
 	// task door that authorises by actor compares this against the row's
@@ -827,7 +839,7 @@ export const create = mutation({
 		// SECURITY REMEDIATION (task k1712yrxjr570m6ks81rnhjh5n8cryf0) — this
 		// is the PUBLIC client-facing path; it now requires a verified
 		// identity. See requireAuthenticatedCaller for the full rationale.
-		const scope = await requireAuthenticatedCaller(
+		const callerScope = await requireAuthenticatedCaller(
 			ctx,
 			args.createdBy,
 			agentCredentialSecret,
@@ -835,6 +847,7 @@ export const create = mutation({
 			{ proof: verifiedPerson, door: "tasks:create" },
 			{ proof: verifiedOrg, door: "tasks:create" },
 		);
+		let scope: CallerScope = callerScope;
 		// createdBy is already bound to the roster inside requireAuthenticatedCaller
 		// (CALLER_IDENTITY_MISMATCH). assignedTo is NOT an asserted caller name but
 		// the target of an assignment: it must also be on the caller's own roster,
@@ -858,6 +871,29 @@ export const create = mutation({
 					: undefined,
 			door: "tasks:create",
 		});
+		// A stamped create runs as an ordinary member of the stamped org, exactly
+		// like missions:create: its creator and assignee are judged on THAT org's
+		// roster, not waved through by the service account's master scope. The
+		// proofs already carried (actor ID, label, verified org) travel with it.
+		if (forOrg !== undefined) {
+			const memberScope: CallerScope = await withOrgScope(ctx, {
+				refuseWithoutThrow: true,
+				actForOrgMapping: forOrg.mapping,
+			});
+			if (callerScope.callerActorId !== undefined)
+				memberScope.callerActorId = callerScope.callerActorId;
+			if (callerScope.callerActorOrg !== undefined)
+				memberScope.callerActorOrg = callerScope.callerActorOrg;
+			if (callerScope.callerLabel !== undefined)
+				memberScope.callerLabel = callerScope.callerLabel;
+			if (callerScope.callerVerifiedOrg !== undefined)
+				memberScope.callerVerifiedOrg = callerScope.callerVerifiedOrg;
+			scope = memberScope;
+			assertCallerOnRoster(scope, args.createdBy);
+			if (assignedToAgentId === undefined && assignedToName !== undefined) {
+				requireOrchestratorOnRoster(scope, assignedToName, "tasks:create", "assignee");
+			}
+		}
 		const rowOrgId = forOrg?.orgSlug ?? orgIdForWrite(scope, "tasks:create");
 		// M7: the assignee BY ID, in the org the row will live in. A label with no
 		// active agent there (unknown, or registered only in another org) is

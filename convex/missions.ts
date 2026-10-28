@@ -259,13 +259,15 @@ export const create = mutation({
 		// refused, never stored unstamped (k176y0q5jcz3m8m673bf61kva98h49js). The
 		// agent proof is checked BY ID before its org is believed.
 		let scope = personScope;
+		// Resolved BEFORE the master branch so a verifiedOrg from anyone but the
+		// service account is REFUSED, never ignored (as tasks:create does).
+		const verifiedOrgSlug = await resolveVerifiedOrg(
+			ctx,
+			transportScope,
+			args.verifiedOrg,
+			"missions:create",
+		);
 		if (personScope.isMaster) {
-			const verifiedOrgSlug = await resolveVerifiedOrg(
-				ctx,
-				transportScope,
-				args.verifiedOrg,
-				"missions:create",
-			);
 			if (args.verifiedActor !== undefined) {
 				await requireAgentCredentialMatch(ctx, undefined, undefined, null, {
 					scope: transportScope,
