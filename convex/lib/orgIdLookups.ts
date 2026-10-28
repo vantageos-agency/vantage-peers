@@ -39,6 +39,7 @@ export function orgByIdLookups(
 				allowedAgentIds: row.allowedAgentIds,
 				scopes: row.scopes,
 				orgKind: row.orgKind,
+				serviceAccountId: row.serviceAccountAgentId,
 			};
 		},
 	};
