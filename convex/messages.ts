@@ -617,9 +617,6 @@ async function sendMessageCore(
 		}
 
 		let recipients: string[];
-		// Listed fleet coordinators of the sender's client org, by normalised name,
-		// each with the agent ID the SAME mapping lists for it (name path only).
-		const coordinatorIdByName = new Map<string, Id<"agents">>();
 		if (channel === "broadcast") {
 			// Dynamic: get all registered orchestrators from profiles
 			const profiles = await ctx.db.query("profiles").collect();
@@ -776,38 +773,24 @@ async function sendMessageCore(
 				coordinators = (mapping?.addressableFleetCoordinators ?? [])
 					.filter((n) => n !== "*")
 					.map(normalizeOrchestratorId);
-				// A name admitted only as a listed coordinator is stamped with the ID
-				// that same mapping lists for it, judged by assertPrincipalListed
-				// (agentListedAsCoordinator): an active operator-org agent on the
-				// list. A name matching no listed ID keeps no recipientId.
-				for (const rawId of new Set(
-					mapping?.addressableFleetCoordinatorIds ?? [],
-				)) {
-					const agentId = ctx.db.normalizeId("agents", rawId);
-					if (agentId === null) continue;
-					const row = await ctx.db.get(agentId);
-					if (row === null || !row.isActive) continue;
-					const verdict = await agentListedAsCoordinator(
-						ctx,
-						row._id,
-						mapping?.addressableFleetCoordinatorIds,
-						SEND_DOOR,
-					);
-					if (!verdict.ok) continue;
-					const key = normalizeOrchestratorId(row.name);
-					if (coordinators.includes(key) && !coordinatorIdByName.has(key)) {
-						coordinatorIdByName.set(key, row._id);
+			}
+			// How a part is admitted: through the sender's own roster (directly, or
+			// through the owner of an instance), only through the org's listed fleet
+			// coordinators, or not at all. The own roster wins.
+			const admittedVia = (part: string): "roster" | "coordinator" | "none" => {
+				if (fleetWide) return "roster";
+				let via: "coordinator" | "none" = "none";
+				for (const role of [
+					knownRoles.has(part) ? part : undefined,
+					instanceOwner.get(part),
+				]) {
+					if (role === undefined) continue;
+					if (isOrchestratorOnOrgRoster(reach, role)) return "roster";
+					if (coordinators.includes(normalizeOrchestratorId(role))) {
+						via = "coordinator";
 					}
 				}
-			}
-			const isReachable = (orchestrator: string): boolean =>
-				isOrchestratorOnOrgRoster(reach, orchestrator) ||
-				coordinators.includes(normalizeOrchestratorId(orchestrator));
-			const isOnOwnRoster = (part: string): boolean => {
-				if (fleetWide) return true;
-				if (knownRoles.has(part) && isReachable(part)) return true;
-				const owner = instanceOwner.get(part);
-				return owner !== undefined && isReachable(owner);
+				return via;
 			};
 
 			const rawParts = channel
@@ -834,8 +817,19 @@ async function sendMessageCore(
 				}
 				const isKnown = knownRoles.has(part) || knownInstances.has(part);
 				// One foreign or unknown part refuses the WHOLE send (same bounce).
-				if (!isKnown || !isOnOwnRoster(part)) {
+				const via = isKnown ? admittedVia(part) : "none";
+				if (via === "none") {
 					bounce();
+				}
+				// A part admitted ONLY as a listed fleet coordinator is refused by
+				// name: a name receipt carries no recipientId, so the coordinator's
+				// agent reader (which owns receipts by ID) could never read it and
+				// the send would be lost silently. A coordinator is addressed by its
+				// agent ID. The fleet master and own-roster names are unaffected.
+				if (via === "coordinator") {
+					throw new ConvexError(
+						`RBAC_DENIED: "${part}" is a fleet coordinator, and a fleet coordinator is addressed by its agent ID — use recipientAgentIds (list_peers agentId); a name would deliver nothing to its inbox — ${JSON.stringify({ reason: "coordinator-by-name-refused", door: SEND_DOOR })}`,
+					);
 				}
 			}
 
@@ -851,12 +845,7 @@ async function sendMessageCore(
 			const isInstance = !isHumanActorName(recipient) && recipient.includes("-");
 			const role = isInstance ? recipient.split("-")[0] : recipient;
 
-			// A listed fleet coordinator that is not on the sender's own roster
-			// resolves to no agent in the sender's org: it takes the ID its client
-			// mapping lists for it, else stays unset.
-			const recipientId =
-				(await resolveActor(role)) ??
-				coordinatorIdByName.get(normalizeOrchestratorId(role));
+			const recipientId = await resolveActor(role);
 			await ctx.db.insert("messageReceipts", {
 				messageId,
 				recipient: role,

@@ -165,7 +165,7 @@ describe("messages:sendMessage — forwarded seat org on the service-account pat
 		expect(await recipientsOf(t, id)).toEqual(["neo"]);
 	});
 
-	test("(c) the same seat -> pi BY ID (stored fleet coordinator) and by channel NAME (listed name): both delivered", async () => {
+	test("(c) the same seat -> pi BY ID (stored fleet coordinator) and by channel NAME (listed name): by ID delivered, by NAME refused (coordinator-by-name-refused)", async () => {
 		const t = createT();
 		const w = await seedWorld(t);
 		const id = await asServiceAccount(t).mutation(api.messages.sendMessage, {
@@ -175,13 +175,14 @@ describe("messages:sendMessage — forwarded seat org on the service-account pat
 			seatOrgSlug: SEAT_ORG,
 		});
 		expect(await recipientsOf(t, id)).toEqual(["pi"]);
-		const byName = await asServiceAccount(t).mutation(api.messages.sendMessage, {
-			from: "neo",
-			channel: "pi",
-			content: "x",
-			seatOrgSlug: SEAT_ORG,
-		});
-		expect(await recipientsOf(t, byName)).toEqual(["pi"]);
+		await expect(
+			asServiceAccount(t).mutation(api.messages.sendMessage, {
+				from: "neo",
+				channel: "pi",
+				content: "x",
+				seatOrgSlug: SEAT_ORG,
+			}),
+		).rejects.toThrow(/coordinator-by-name-refused/);
 	});
 
 	test("(d) service account with NO forwarded org (fleet master) -> sigma: delivered", async () => {

@@ -204,38 +204,40 @@ describe("direct messages: addressableFleetCoordinatorIds (empty by default)", (
 
 	// Poles (a) and (d): the CURRENT channel-NAME contract, unchanged by M1a.
 	// The names are legacy data held on the row (`addressableFleetCoordinators`).
-	test("(a) iris-rh lists [pi] by name: channel pi and channel pi-chromebook are delivered", async () => {
+	test("(a) iris-rh lists [pi] by name: channel pi and channel pi-chromebook are REFUSED (a coordinator is addressed by ID, see the last describe), nothing written", async () => {
 		const t = createT();
-		const w = await seedWorld(t);
+		await seedWorld(t);
 		await setNames(t, "iris-rh", ["pi"]);
 		const iris = asOrg(t, "iris-rh");
-		const m1 = await iris.mutation(api.messages.sendMessage, {
-			from: "irisbot",
-			channel: "pi",
-			content: "x",
-		});
-		expect(await recipientsOf(t, m1)).toEqual(["pi"]);
-		const m2 = await iris.mutation(api.messages.sendMessage, {
-			from: "irisbot",
-			channel: "pi-chromebook",
-			content: "x",
-		});
-		expect(await recipientsOf(t, m2)).toEqual(["pi"]);
-		expect(w.pi).toBeDefined();
+		for (const channel of ["pi", "pi-chromebook"]) {
+			await expect(
+				iris.mutation(api.messages.sendMessage, {
+					from: "irisbot",
+					channel,
+					content: "x",
+				}),
+			).rejects.toThrow(/coordinator-by-name-refused/);
+		}
+		expect(await writes(t)).toEqual({ messages: 0, receipts: 0 });
 	});
 
 	test("(d) iris-rh lists [pi] by name: channel eta, themis and pi,eta are refused, nothing written", async () => {
 		const t = createT();
 		await seedWorld(t);
 		await setNames(t, "iris-rh", ["pi"]);
-		for (const channel of ["eta", "themis", "pi,eta"]) {
+		// "pi,eta": pi is refused as a name-addressed coordinator before eta is judged.
+		for (const [channel, refusal] of [
+			["eta", BOUNCE],
+			["themis", BOUNCE],
+			["pi,eta", /coordinator-by-name-refused/],
+		] as const) {
 			await expect(
 				asOrg(t, "iris-rh").mutation(api.messages.sendMessage, {
 					from: "irisbot",
 					channel,
 					content: "x",
 				}),
-			).rejects.toThrow(BOUNCE);
+			).rejects.toThrow(refusal);
 		}
 		expect(await writes(t)).toEqual({ messages: 0, receipts: 0 });
 	});
@@ -275,14 +277,14 @@ describe("direct messages: addressableFleetCoordinatorIds (empty by default)", (
 
 		await setIds(t, "iris-rh", [w.pi, w.sigma]);
 		expect(await names()).toEqual(["pi", "sigma"]);
-		expect(await recipientsOf(t, await send("pi"))).toEqual(["pi"]);
+		await expect(send("pi")).rejects.toThrow(/coordinator-by-name-refused/);
 
 		// Drop pi: its label leaves the name list and the channel name bounces.
 		await setIds(t, "iris-rh", [w.sigma]);
 		expect(await names()).toEqual(["sigma"]);
 		await expect(send("pi")).rejects.toThrow(BOUNCE);
-		// PASS pole: a still-listed coordinator's name is delivered.
-		expect(await recipientsOf(t, await send("sigma"))).toEqual(["sigma"]);
+		// A still-listed coordinator's name is refused as a name (use its ID).
+		await expect(send("sigma")).rejects.toThrow(/coordinator-by-name-refused/);
 
 		// Clearing the list revokes every name.
 		await setIds(t, "iris-rh", []);
@@ -345,47 +347,91 @@ describe("direct messages: addressableFleetCoordinatorIds (empty by default)", (
 	});
 });
 
-// Task k17a1q56g4w9yw6s8gzpe6h8hx8h3hmy: a client agent's NAME-addressed message
-// to a listed fleet coordinator must reach the coordinator's agent-reader inbox,
-// which owns receipts by recipientId only. The id is taken from the SAME client
-// mapping's addressableFleetCoordinatorIds, never by a name lookup elsewhere.
-describe("name-addressed message to a listed fleet coordinator reaches its inbox", () => {
+// Task k17a1q56g4w9yw6s8gzpe6h8hx8h3hmy (Eta REVISE @ 0e32b07d): a client agent
+// addressing a fleet coordinator BY NAME is refused and pointed to
+// recipientAgentIds. A name receipt carries no recipientId, so the coordinator's
+// agent reader (which owns receipts by ID) could never read it: the send was lost
+// silently. Refusal is distinguishable from delivery; the ID path delivers.
+describe("a fleet coordinator is addressed by ID; by name it is refused", () => {
 	const asService = (t: T) =>
 		t.withIdentity({ subject: "test-service-account-user-id" });
+	const REFUSED = /RBAC_DENIED.*coordinator-by-name-refused.*messages:sendMessage/s;
 
-	const receiptsOf = (t: T, messageId: Id<"messages">) =>
-		t.run((ctx) =>
-			ctx.db
-				.query("messageReceipts")
-				.withIndex("by_message", (q) => q.eq("messageId", messageId))
-				.collect(),
-		);
+	const sendTo = (t: T, channel: string) =>
+		asOrg(t, "iris-rh").mutation(api.messages.sendMessage, {
+			from: "irisbot",
+			channel,
+			content: "x",
+		});
 
-	test("RED/GREEN: channel pi (listed by name and by ID) is read by pi's agent inbox and markAsRead works", async () => {
+	test("(a) channel pi (pi listed by name and ID) is refused, 0 messages 0 receipts", async () => {
 		const t = createT();
 		const w = await seedWorld(t);
 		await setIds(t, "iris-rh", [w.pi]);
-		const m1 = await asOrg(t, "iris-rh").mutation(api.messages.sendMessage, {
+		await expect(sendTo(t, "pi")).rejects.toThrow(REFUSED);
+		expect(await writes(t)).toEqual({ messages: 0, receipts: 0 });
+	});
+
+	test("(b) the instance form pi-chromebook, and a list with an own-roster name beside pi, are refused whole", async () => {
+		const t = createT();
+		const w = await seedWorld(t);
+		await setIds(t, "iris-rh", [w.pi]);
+		await seedProfile(t, "clio");
+		await t.run(async (ctx) => {
+			const row = await ctx.db
+				.query("client_org_mapping")
+				.withIndex("by_clerk_slug", (q) => q.eq("clerkOrgSlug", "iris-rh"))
+				.unique();
+			if (row) {
+				await ctx.db.patch(row._id, {
+					allowedOrchestrators: ["irisbot", "clio"],
+				});
+			}
+		});
+		for (const channel of ["pi-chromebook", "clio,pi"]) {
+			await expect(sendTo(t, channel)).rejects.toThrow(REFUSED);
+		}
+		expect(await writes(t)).toEqual({ messages: 0, receipts: 0 });
+	});
+
+	test("a name-only listed coordinator is refused the same way", async () => {
+		const t = createT();
+		await seedWorld(t);
+		await setNames(t, "iris-rh", ["pi"]);
+		await expect(sendTo(t, "pi")).rejects.toThrow(REFUSED);
+		expect(await writes(t)).toEqual({ messages: 0, receipts: 0 });
+	});
+
+	test("(c) the same agent by recipientAgentIds=[pi's ID] is delivered and pi's agent inbox reads it and marks it read", async () => {
+		const t = createT();
+		const w = await seedWorld(t);
+		await setIds(t, "iris-rh", [w.pi]);
+		const m = await asOrg(t, "iris-rh").mutation(api.messages.sendMessage, {
 			from: "irisbot",
-			channel: "pi",
+			recipientAgentIds: [w.pi],
 			content: "hello-coordinator",
 		});
-		const receipts = await receiptsOf(t, m1);
+		const receipts = await t.run((ctx) =>
+			ctx.db
+				.query("messageReceipts")
+				.withIndex("by_message", (q) => q.eq("messageId", m))
+				.collect(),
+		);
 		expect(
 			receipts.map((r) => [r.recipient, r.recipientId, r.tenantId]),
 		).toEqual([["pi", w.pi, "iris-rh"]]);
-
 		const actor = { verifiedActor: { agentId: w.pi, orgSlug: "perello" } };
 		const inbox = await asService(t).query(
 			api.messages.checkNewMessagesEnvelope,
 			actor as never,
 		);
-		expect(inbox.messages.map((m) => m.content)).toEqual(["hello-coordinator"]);
-		const marked = await asService(t).mutation(api.messages.markAsRead, {
-			receiptIds: [inbox.messages[0]?.receiptId as string],
-			...actor,
-		} as never);
-		expect(marked).toBe(1);
+		expect(inbox.messages.map((x) => x.content)).toEqual(["hello-coordinator"]);
+		expect(
+			await asService(t).mutation(api.messages.markAsRead, {
+				receiptIds: [inbox.messages[0]?.receiptId as string],
+				...actor,
+			} as never),
+		).toBe(1);
 		const after = await asService(t).query(
 			api.messages.checkNewMessagesEnvelope,
 			actor as never,
@@ -393,51 +439,78 @@ describe("name-addressed message to a listed fleet coordinator reaches its inbox
 		expect(after.messages).toEqual([]);
 	});
 
-	test("instance form pi-chromebook carries the same recipientId plus recipientInstanceId", async () => {
+	test("(d) a name on the sender's OWN roster is still delivered by name, with no coordinator ID", async () => {
 		const t = createT();
 		const w = await seedWorld(t);
 		await setIds(t, "iris-rh", [w.pi]);
-		const m = await asOrg(t, "iris-rh").mutation(api.messages.sendMessage, {
-			from: "irisbot",
-			channel: "pi-chromebook",
-			content: "x",
+		await seedProfile(t, "clio");
+		await t.run(async (ctx) => {
+			const row = await ctx.db
+				.query("client_org_mapping")
+				.withIndex("by_clerk_slug", (q) => q.eq("clerkOrgSlug", "iris-rh"))
+				.unique();
+			if (row) {
+				await ctx.db.patch(row._id, {
+					allowedOrchestrators: ["irisbot", "clio"],
+				});
+			}
 		});
-		expect(
-			(await receiptsOf(t, m)).map((r) => [
-				r.recipient,
-				r.recipientId,
-				r.recipientInstanceId,
-				r.tenantId,
-			]),
-		).toEqual([["pi", w.pi, "pi-chromebook", "iris-rh"]]);
+		const m = await sendTo(t, "clio");
+		const rs = await t.run((ctx) =>
+			ctx.db
+				.query("messageReceipts")
+				.withIndex("by_message", (q) => q.eq("messageId", m))
+				.collect(),
+		);
+		expect(rs.map((r) => [r.recipient, r.recipientId, r.tenantId])).toEqual([
+			["clio", undefined, "iris-rh"],
+		]);
 	});
 
-	test("a coordinator listed by NAME only (no ID) gets no recipientId, tenant still the client's", async () => {
+	test("a name on the sender's OWN roster AND listed as a coordinator is delivered by name (own roster wins)", async () => {
 		const t = createT();
-		await seedWorld(t);
-		await setNames(t, "iris-rh", ["pi"]);
-		const m = await asOrg(t, "iris-rh").mutation(api.messages.sendMessage, {
-			from: "irisbot",
-			channel: "pi",
-			content: "x",
+		const w = await seedWorld(t);
+		await setIds(t, "iris-rh", [w.pi]);
+		await t.run(async (ctx) => {
+			const row = await ctx.db
+				.query("client_org_mapping")
+				.withIndex("by_clerk_slug", (q) => q.eq("clerkOrgSlug", "iris-rh"))
+				.unique();
+			if (row) {
+				await ctx.db.patch(row._id, {
+					allowedOrchestrators: ["irisbot", "pi"],
+				});
+			}
 		});
-		const r = await receiptsOf(t, m);
-		expect(r.map((x) => [x.recipient, x.recipientId, x.tenantId])).toEqual([
+		const m = await sendTo(t, "pi");
+		const rs = await t.run((ctx) =>
+			ctx.db
+				.query("messageReceipts")
+				.withIndex("by_message", (q) => q.eq("messageId", m))
+				.collect(),
+		);
+		// No coordinator ID is stamped on a client's internal message.
+		expect(rs.map((r) => [r.recipient, r.recipientId, r.tenantId])).toEqual([
 			["pi", undefined, "iris-rh"],
 		]);
 	});
 
-	test("an unlisted fleet agent (sigma) is still bounced with pi listed, nothing written", async () => {
+	test("(e) an unlisted fleet agent (sigma) is still bounced with pi listed, nothing written", async () => {
 		const t = createT();
 		const w = await seedWorld(t);
 		await setIds(t, "iris-rh", [w.pi]);
-		await expect(
-			asOrg(t, "iris-rh").mutation(api.messages.sendMessage, {
-				from: "irisbot",
-				channel: "sigma",
-				content: "x",
-			}),
-		).rejects.toThrow(BOUNCE);
+		await expect(sendTo(t, "sigma")).rejects.toThrow(BOUNCE);
 		expect(await writes(t)).toEqual({ messages: 0, receipts: 0 });
+	});
+
+	test("the fleet master addressing pi by name is unchanged (delivered)", async () => {
+		const t = createT();
+		await seedWorld(t);
+		const m = await asService(t).mutation(api.messages.sendMessage, {
+			from: "sigma",
+			channel: "pi",
+			content: "x",
+		});
+		expect(await recipientsOf(t, m)).toEqual(["pi"]);
 	});
 });
