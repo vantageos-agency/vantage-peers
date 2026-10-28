@@ -348,10 +348,22 @@ export const add = mutation({
 		active: v.optional(v.boolean()),
 		reviewer: v.optional(v.string()),
 		fallbackReviewer: v.optional(v.string()),
+		// The organisation the MCP transport VERIFIED for a bearer that reaches
+		// Convex as the fleet service account (task k176y0q5jcz3m8m673bf61kva98h49js).
+		// Without it a seat's mapping was written as a FLEET row, exempt from the
+		// owner-binding proof, and its own `list` (which takes verifiedOrg) could not
+		// read it back. The write then runs under that org's member scope, exactly
+		// as its read sibling does. Believed from the service account only.
+		verifiedOrg: v.optional(verifiedOrgValidator),
 	},
 	handler: async (ctx, args) => {
 		// write-contract: MCP-transport-only — issued via mcp-server client.mutation("githubRepoMapping:add", …) at mcp-server/src/tools.ts:7892 (imperative), 0 hits in vantage-peers-dashboard {app,components,hooks,lib,contexts,providers} (measured 2026-10-01 at origin/main e2dc58f and 0466fac); never a subscribing pre-org client shell. The no-org throw is a refusal at an imperative MCP call, never at a render.
-		const scope = await withOrgScope(ctx);
+		const scope = await resolveVerifiedOrgScope(
+			ctx,
+			await withOrgScope(ctx),
+			args.verifiedOrg,
+			"githubRepoMapping:add",
+		);
 		const tenant = resolveWriteTenant(scope, "githubRepoMapping:add");
 		// A member routes only to orchestrators of its OWN roster.
 		requireOrchestratorOnRoster(scope, args.orchestrator, "githubRepoMapping:add", "assignee");
@@ -414,10 +426,19 @@ export const add = mutation({
 });
 
 export const remove = mutation({
-	args: { repo: v.string() },
+	args: {
+		repo: v.string(),
+		// See `add`: the bearer's verified org; the removal runs under its member scope.
+		verifiedOrg: v.optional(verifiedOrgValidator),
+	},
 	handler: async (ctx, args) => {
 		// write-contract: MCP-transport-only — issued via mcp-server client.mutation("githubRepoMapping:remove", …) at mcp-server/src/tools.ts:8085 (imperative), 0 hits in vantage-peers-dashboard {app,components,hooks,lib,contexts,providers} (measured 2026-10-01 at origin/main e2dc58f and 0466fac); never a subscribing pre-org client shell. The no-org throw is a refusal at an imperative MCP call, never at a render.
-		const scope = await withOrgScope(ctx);
+		const scope = await resolveVerifiedOrgScope(
+			ctx,
+			await withOrgScope(ctx),
+			args.verifiedOrg,
+			"githubRepoMapping:remove",
+		);
 		resolveWriteTenant(scope, "githubRepoMapping:remove");
 		const existing = await ctx.db
 			.query("githubRepoMapping")
