@@ -8,7 +8,7 @@
         "@clerk/backend": "^3.11.4",
         "@mcp-ui/server": "^6.1.0",
         "@modelcontextprotocol/server": "^2.3.0",
-        "@vantageos/cloud-identity": "^0.25.0",
+        "@vantageos/cloud-identity": "^0.27.0",
         "convex": ">=1.0.0",
         "dotenv": "^17.4.2",
         "zod": "^4.6.7",
@@ -207,7 +207,7 @@
 
     "@types/node": ["@types/node@24.12.2", "", { "dependencies": { "undici-types": "~7.16.0" } }, "sha512-A1sre26ke7HDIuY/M23nd9gfB+nrmhtYyMINbjI1zHJxYteKR6qSMX56FsmjMcDb3SMcjJg5BiRRgOCC/yBD0g=="],
 
-    "@vantageos/cloud-identity": ["@vantageos/cloud-identity@0.25.0", "", { "dependencies": { "@clerk/backend": "^3.23.2", "zod": "^4.6.7" } }, "sha512-lotr7E+V82CfMY31diRCv1i8tZVnd8HNME8xCbaN1p9ZRoBCM6GC9Z11cp5xeftbhdhv7Wq7Y9BkER0jomIRqg=="],
+    "@vantageos/cloud-identity": ["@vantageos/cloud-identity@0.27.0", "", { "dependencies": { "@clerk/backend": "^3.23.2", "zod": "^4.6.7" } }, "sha512-ZNopwe6xWuq3f/GgtO1SsxRovhgeMS8UMF16fQVzIiEiKrSk1cm7GhAK67je4TKAAsinpOuvBaJcbtkDBEUCvg=="],
 
     "@vitest/coverage-v8": ["@vitest/coverage-v8@4.1.8", "", { "dependencies": { "@bcoe/v8-coverage": "^1.0.2", "@vitest/utils": "4.1.8", "ast-v8-to-istanbul": "^1.0.0", "istanbul-lib-coverage": "^3.2.2", "istanbul-lib-report": "^3.0.1", "istanbul-reports": "^3.2.0", "magicast": "^0.5.2", "obug": "^2.1.1", "std-env": "^4.0.0-rc.1", "tinyrainbow": "^3.1.0" }, "peerDependencies": { "@vitest/browser": "4.1.8", "vitest": "4.1.8" }, "optionalPeers": ["@vitest/browser"] }, "sha512-lt3kovsyHwYe00wq4D1ti0Z974fWj4NLp6siqiyEufUpyFwK9Yhi7rBhac9JL5aA0zoMrJqc4vYPZRUnI7l7nw=="],
 
