@@ -11,6 +11,7 @@ create_briefing_note,agents+briefingNoteParticipants+briefingNotes+memberWriterR
 update_briefing_note,agents+briefingNoteParticipants+briefingNotes+memberWriterRoles+memories,UPDATE,org-member,orgResolver,briefingNotes:update=orgResolver
 create_bu,agents+businessUnits,CREATE,org-member,orgResolver,businessUnits:create=orgResolver
 update_bu,agents+businessUnits+oauth_access_tokens,TRANSITION,org-member,orgResolver,businessUnits:update=orgResolver
+debate_post_turn,agents+client_org_mapping+debateRooms+debateTurns+memberWriterRoles,UPSERT,org-member,orgResolver,debate:postTurn=orgResolver
 write_diary,agents+diary,UPSERT,org-member,orgResolver,diary:write=orgResolver
 complete_task,agents+fixPatterns+githubOwnerBindings+githubRepoMapping+issues+memberWriterRoles+messageReceipts+messages+taskClosureConfig+tasks,UPSERT,org-member,orgResolver,tasks:complete=orgResolver
 update_task,agents+githubRepoMapping+memberWriterRoles+messageReceipts+messages+missions+nameOnlyCalls+oauth_access_tokens+taskClosureConfig+tasks,UPSERT,org-member,orgResolver,tasks:update=orgResolver
@@ -28,7 +29,6 @@ set_summary,agents+profiles,UPSERT,org-member,orgResolver,profiles:updateDynamic
 update_profile,agents+profiles,UPSERT,org-member,orgResolver,profiles:upsertProfile=orgResolver
 bulk_complete_tasks,bulk_complete_runs+taskClosureConfig+tasks,UPSERT,org-member,orgResolver,tasks:bulkComplete=orgResolver
 delete_bu,businessUnits,DELETE,master,masterOnly,businessUnits:remove=masterOnly
-debate_post_turn,client_org_mapping+debateRooms+debateTurns+memberWriterRoles,UPSERT,org-member,orgResolver,debate:postTurn=orgResolver
 add_fix_attempt,fixAttempts+fixPatterns,UPSERT,master,masterOnly,fixPatterns:addAttempt=masterOnly
 create_fix_pattern,fixPatterns,CREATE,master,masterOnly,fixPatterns:create=masterOnly
 link_issue_to_pattern,fixPatterns,UPDATE,master,masterOnly,fixPatterns:linkIssue=masterOnly

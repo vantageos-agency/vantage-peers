@@ -2,8 +2,7 @@ import {
 	type ActingPrincipal,
 	assertOrgAdmin,
 	assertTargetBelongsTo,
-	IdentityRefusalError,
-	resolveAgentWriter,
+	resolveAgentWriterFromIdentity,
 	resolveCallerFromAgentCredential,
 	resolveCallerFromClaims,
 	resolveWriterRole,
@@ -56,7 +55,11 @@ import {
 	validateTemplate,
 } from "./lib/debateTemplate";
 import { isHumanActorName, memberActorOf } from "./lib/humanActor";
-import { orgByIdLookups, orgByIdPrincipalLookups } from "./lib/orgIdLookups";
+import {
+	orgByIdLookups,
+	orgByIdPrincipalLookups,
+	serviceAccountIdentityLookups,
+} from "./lib/orgIdLookups";
 import { refuseWith as refuseWithPerson } from "./lib/personPrincipal";
 import { loadMemberWriterRoles } from "./memberWriterRoles";
 
@@ -216,38 +219,6 @@ async function roomCaller(
 		};
 	}
 	return { kind: "none" };
-}
-
-/**
- * The agent behind a WRITE a `verifiedActor` vouches for, resolved by the package's
- * one decision (`resolveAgentWriter`): the caller must be the fleet service account,
- * the claim exactly `{ agentId, orgId }`, and the agent row (read BY ID) active and
- * stamped with that organisation. The claim's organisation ID is the one stamped on
- * the agent's own row; the slug the transport also sends authorises nothing, because
- * a name never selects or authorises a row. Whether the agent may speak in a room is
- * decided afterwards by stored IDs (`participantOf`). The package's refusal is
- * relayed in this backend's wire shape (`refusalError`), unchanged in code, reason
- * and door.
- */
-async function agentWriterOf(
-	ctx: Ctx,
-	scope: OrgScope,
-	agentId: Id<"agents">,
-	door: string,
-): Promise<Caller> {
-	const row = await ctx.db.get(agentId);
-	if (row === null || row.clerkOrgId === undefined) throw anonymousRefusal(door);
-	try {
-		const principal = await resolveAgentWriter(
-			{ scope, verifiedActor: { agentId, orgId: row.clerkOrgId } },
-			{ principalLookups: orgByIdPrincipalLookups(ctx) },
-			{ door },
-		);
-		return { kind: "agent", agentId: principal.principalId, orgId: principal.orgId };
-	} catch (err) {
-		if (err instanceof IdentityRefusalError) throw refusalError(err.refusal);
-		throw err;
-	}
 }
 
 /** The participant of `room` the caller is, or undefined. Organisations are compared by ID. */
@@ -695,12 +666,10 @@ export const postTurn = mutation({
 	returns: v.union(refusedValidator, acceptedValidator),
 	handler: async (ctx, args) => {
 		const door = "debate:postTurn";
-		// The fleet service account acts in an organisation only through a claim.
-		const scope = await withOrgScope(ctx);
-		requireResolvedCaller(scope, door);
-		if (isMcpBoundMaster(scope) && args.verifiedActor === undefined) throw anonymousRefusal(door);
-		// An agent write is resolved by the package from the service account's claim;
-		// a person's is resolved from the verified session. A caller with neither is refused.
+		// An agent write is resolved by the package from the transport and the service
+		// account's claim; a person's from the verified session. Both refuse an absent
+		// identity, and the service account acts in an organisation only through a claim
+		// (without one it is judged as a session).
 		const person = args.verifiedActor === undefined ? await sessionCaller(ctx, door) : undefined;
 		let caller: Caller;
 		if (person !== undefined) {
@@ -711,7 +680,35 @@ export const postTurn = mutation({
 				orgRole: person.role ?? undefined,
 			};
 		} else if (args.verifiedActor !== undefined) {
-			caller = await agentWriterOf(ctx, scope, args.verifiedActor.agentId, door);
+			// The package reads the transport itself (`ctx.auth`) and decides that the
+			// caller is the fleet service account, then that the claim is exactly
+			// `{ agentId, orgId }` and the agent row (read BY ID) active and stamped with
+			// that organisation. The claim's organisation ID is the one stamped on the
+			// agent's own row; an absent or unstamped row is no claim at all, refused by
+			// the package AFTER the standing, so a caller that is not the service account
+			// learns nothing about the row. The slug the transport also sends authorises
+			// nothing. The refusal is relayed unchanged in code, reason and door.
+			const agentId = args.verifiedActor.agentId;
+			const stampedOrgId = (await ctx.db.get(agentId))?.clerkOrgId;
+			const writer = await resolveAgentWriterFromIdentity(
+				ctx.auth,
+				{
+					verifiedActor:
+						stampedOrgId === undefined ? null : { agentId, orgId: stampedOrgId },
+				},
+				{
+					principalLookups: orgByIdPrincipalLookups(ctx),
+					orgLookups: orgByIdLookups(ctx),
+					serviceAccountLookups: serviceAccountIdentityLookups(ctx),
+				},
+				{ door },
+			);
+			if (!writer.ok) throw refusalError(writer.refusal);
+			caller = {
+				kind: "agent",
+				agentId: writer.principal.principalId,
+				orgId: writer.principal.orgId,
+			};
 		} else {
 			throw anonymousRefusal(door);
 		}
