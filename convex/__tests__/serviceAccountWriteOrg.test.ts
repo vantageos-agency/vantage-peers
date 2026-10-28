@@ -126,6 +126,76 @@ describe("tasks:create — a service-account write for a verified org", () => {
 		expect(row.clerkOrgId).toBe(testClerkOrgId("org-a"));
 	});
 
+	// An agent that exists and is active in org-a but is NOT on org-a's roster
+	// (the mapping lists "telemaque" only).
+	async function addOffRosterAgent(t: T): Promise<Id<"agents">> {
+		return await t.run(async (ctx) =>
+			ctx.db.insert("agents", {
+				orgSlug: "org-a",
+				clerkOrgId: testClerkOrgId("org-a"),
+				name: "extra",
+				normalizedName: "extra",
+				isActive: true,
+				createdAt: Date.now(),
+			}),
+		);
+	}
+
+	test("ROSTER (stamped): a verifiedOrg-only bearer may not assign to an agent off its org's roster", async () => {
+		const t = createT();
+		await seed(t);
+		await addOffRosterAgent(t);
+		await expect(
+			asServiceAccount(t).mutation(api.tasks.create, {
+				...TASK,
+				assignedTo: "extra",
+				verifiedOrg: { orgSlug: "org-a" },
+			}),
+		).rejects.toThrow(/RBAC_DENIED[\s\S]*assignee-not-on-roster/);
+		expect(await tasksRows(t)).toEqual([]);
+	});
+
+	test("ROSTER (stamped): a verifiedOrg-only bearer may not assert an off-roster agent as createdBy", async () => {
+		const t = createT();
+		await seed(t);
+		await addOffRosterAgent(t);
+		await expect(
+			asServiceAccount(t).mutation(api.tasks.create, {
+				...TASK,
+				createdBy: "extra",
+				verifiedOrg: { orgSlug: "org-a" },
+			}),
+		).rejects.toThrow(/CALLER_IDENTITY_MISMATCH/);
+		expect(await tasksRows(t)).toEqual([]);
+	});
+
+	test("ROSTER (stamped): a proven actor cannot assert a different agent as createdBy", async () => {
+		const t = createT();
+		const ids = await seed(t);
+		await addOffRosterAgent(t);
+		await expect(
+			asServiceAccount(t).mutation(api.tasks.create, {
+				...TASK,
+				createdBy: "extra",
+				verifiedActor: { agentId: ids["org-a"], orgSlug: "org-a" },
+			}),
+		).rejects.toThrow();
+		expect(await tasksRows(t)).toEqual([]);
+	});
+
+	test("ROSTER (stamped, served): an on-roster creator and assignee are served and stamped", async () => {
+		const t = createT();
+		await seed(t);
+		await asServiceAccount(t).mutation(api.tasks.create, {
+			...TASK,
+			verifiedOrg: { orgSlug: "org-a" },
+		});
+		const [row] = await tasksRows(t);
+		expect(row.orgId).toBe("org-a");
+		expect(row.createdBy).toBe("telemaque");
+		expect(row.assignedTo).toBe("telemaque");
+	});
+
 	test("OTHER ORG: a reader verified for org-b does not see org-a's task", async () => {
 		const t = createT();
 		const ids = await seed(t);
@@ -235,6 +305,23 @@ describe("missions:create — a service-account write for a verified org", () =>
 		});
 		const [row] = await missionRows(t);
 		expect(row.orgId).toBe("org-a");
+	});
+
+	test("REFUSED (not trusted): a non-service-account caller sending verifiedOrg is refused, never ignored", async () => {
+		const t = createT();
+		await seed(t);
+		const asMember = t.withIdentity({
+			subject: "member-1",
+			org_slug: "org-a",
+			org_id: testClerkOrgId("org-a"),
+		});
+		await expect(
+			asMember.mutation(api.missions.create, {
+				...MISSION,
+				verifiedOrg: { orgSlug: "org-a" },
+			}),
+		).rejects.toThrow(/RBAC_DENIED[\s\S]*verified-org-not-trusted/);
+		expect(await missionRows(t)).toEqual([]);
 	});
 
 	test("FLEET (unchanged): an operator-org agent, with or without the verifiedOrg the new MCP sends, writes a fleet mission", async () => {
