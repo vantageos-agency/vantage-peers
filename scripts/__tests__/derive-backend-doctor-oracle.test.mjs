@@ -1180,6 +1180,94 @@ describe("derive-backend-doctor-oracle R-8 scope enforcement read at the Convex 
 	);
 });
 
+// ── identity-gated by a package caller resolver: a door is identity-gated when
+// its handler refuses on the result of a @vantageos/cloud-identity export the
+// installed package tags `@callerResolver` (`if (!x.ok) throw …`). The set is
+// DERIVED from the package's declarations, never a name list in the script. ──
+describe("derive-backend-doctor-oracle identity gate derived from @callerResolver", () => {
+	const DOOR = "convex/okfBundleNode.ts";
+	const GATE = 'requireResolvedCaller(scope, "okfBundleNode:validateOkfBundle", {\n\t\t\t\talsoRefusePreOrg: true,\n\t\t\t});';
+	const IMPORT = 'import { hasFleetRead } from "@vantageos/cloud-identity";';
+	const withExport = (root, name, body) => {
+		mutate(root, DOOR, IMPORT, `import { ${name}, hasFleetRead } from "@vantageos/cloud-identity";`);
+		mutate(root, DOOR, GATE, body);
+	};
+	const call = (name) =>
+		`const who = await ${name}(await ctx.auth.getUserIdentity(), {} as never, { adminRoles: ["org:admin"] } as never);`;
+	const row = (root) => rowsOf(outOf(root)).find((x) => x.outil === "validate_okf_bundle");
+
+	it(
+		"PRESENT — a door that throws on the result of a @callerResolver export is identity-gated over the verified credential",
+		() => {
+			const root = copyTree();
+			withExport(root, "resolveCallerFromClaims", `${call("resolveCallerFromClaims")}\n\t\t\tif (!who.ok) throw new Error("refused");`);
+			const r = derive(root);
+			expect(r.status, r.stderr).toBe(0);
+			const x = row(root);
+			expect(x.scope_enforcement).toMatch(/^convex-door\(callerResolver\(resolveCallerFromClaims\)\)/);
+			expect(x.rbac_qui).toBe("toutes_orgs(identity-gated)");
+			expect(x.namespace_ou_org).toBe("orgId(verified-credential)");
+		},
+		TIMEOUT,
+	);
+
+	it(
+		"ABSENT — the same door calling the @callerResolver export WITHOUT throwing on !ok stays AUCUN (no scope check)",
+		() => {
+			const root = copyTree();
+			withExport(root, "resolveCallerFromClaims", `${call("resolveCallerFromClaims")}\n\t\t\tvoid who;`);
+			const r = derive(root);
+			expect(r.status, r.stderr).toBe(0);
+			const x = row(root);
+			expect(x.scope_enforcement).toMatch(/^AUCUN\(public_no_scope_check\)/);
+			expect(x.rbac_qui).not.toContain("identity-gated");
+		},
+		TIMEOUT,
+	);
+
+	it(
+		"ABSENT — a package export NOT tagged @callerResolver with the same throw is not identity-gated",
+		() => {
+			const root = copyTree();
+			withExport(root, "assertOrgAdmin", `${call("assertOrgAdmin")}\n\t\t\tif (!who.ok) throw new Error("refused");`);
+			const r = derive(root);
+			expect(r.status, r.stderr).toBe(0);
+			const x = row(root);
+			expect(x.scope_enforcement).toMatch(/^AUCUN\(public_no_scope_check\)/);
+			expect(x.rbac_qui).not.toContain("identity-gated");
+		},
+		TIMEOUT,
+	);
+
+	it(
+		"ABSENT — a LOCAL function named like a caller resolver is not the package's: not identity-gated",
+		() => {
+			const root = copyTree();
+			mutate(
+				root,
+				DOOR,
+				GATE,
+				`const resolveCallerFromClaims = async (..._a: unknown[]) => ({ ok: true as boolean });\n\t\t\t${call("resolveCallerFromClaims")}\n\t\t\tif (!who.ok) throw new Error("refused");`,
+			);
+			const r = derive(root);
+			expect(r.status, r.stderr).toBe(0);
+			expect(row(root).scope_enforcement).toMatch(/^AUCUN\(public_no_scope_check\)/);
+		},
+		TIMEOUT,
+	);
+
+	it(
+		"the resolver set is DERIVED from the installed package, and the run says so",
+		() => {
+			const r = derive(copyTree());
+			expect(r.status, r.stderr).toBe(0);
+			expect(r.stdout).toMatch(/caller resolvers: DERIVED from @callerResolver in @vantageos\/cloud-identity@\S+ \(\d+\)/);
+			expect(r.stdout).toContain("resolveCallerFromClaims");
+		},
+		TIMEOUT,
+	);
+});
+
 // ── R-13: the disposition is DATA (.backend-doctor/dispositions.json), one
 // entry per table (or per tool whose table the derivation cannot name), read
 // into `table_conserver_supprimer`; never a constant in code. ──
