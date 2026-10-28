@@ -2,6 +2,7 @@ import type {
 	OrgKind,
 	OrgMappingLookups,
 	PrincipalLookups,
+	ServiceAccountIdentityLookups,
 } from "@vantageos/cloud-identity";
 import type { MutationCtx, QueryCtx } from "../_generated/server";
 
@@ -39,6 +40,7 @@ export function orgByIdLookups(
 				allowedAgentIds: row.allowedAgentIds,
 				scopes: row.scopes,
 				orgKind: row.orgKind,
+				serviceAccountId: row.serviceAccountAgentId,
 			};
 		},
 	};
@@ -88,6 +90,34 @@ export function orgByIdPrincipalLookups(
 				.unique();
 			if (mapping === null) return null;
 			return mapping.orgKind === "operator" ? "operator" : "client";
+		},
+	};
+}
+
+/**
+ * `serviceAccountsBySubject` for the package's `resolveAgentWriterFromIdentity`:
+ * one indexed read of the `kind: "service"` agents rows carrying the verified
+ * subject (bounded, the same bound as `resolveServiceAccount`). Whether one of
+ * them IS the fleet service account (subject byte-equal, named back by its
+ * organisation's `orgById` row, operator org, active) is the package's decision.
+ */
+export function serviceAccountIdentityLookups(
+	ctx: Ctx,
+): Required<ServiceAccountIdentityLookups> {
+	return {
+		serviceAccountsBySubject: async (subject: string) => {
+			const rows = await ctx.db
+				.query("agents")
+				.withIndex("by_auth_subject_kind", (q) =>
+					q.eq("authSubject", subject).eq("kind", "service"),
+				)
+				.take(8);
+			return rows.map((row) => ({
+				id: row._id,
+				orgId: row.clerkOrgId ?? null,
+				active: row.isActive,
+				subject: row.authSubject ?? "",
+			}));
 		},
 	};
 }
