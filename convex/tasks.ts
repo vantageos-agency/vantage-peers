@@ -1,4 +1,9 @@
-import { isFleetStamp, sameOrg, sameTenantStamp } from "@vantageos/cloud-identity";
+import {
+	isFleetStamp,
+	isServiceAccountScope,
+	sameOrg,
+	sameTenantStamp,
+} from "@vantageos/cloud-identity";
 import { v } from "convex/values";
 import { ConvexError } from "convex/values";
 import { paginationOptsValidator } from "convex/server";
@@ -11,6 +16,7 @@ import { normalizeOrchestratorId } from "./_helpers/normalizeOrchestratorId";
 import {
 	filterByOrgScope,
 	isMcpBoundMaster,
+	isOrchestratorOnOrgRoster,
 	isRowVisibleToScope,
 	requireAgentCredentialMatch,
 	verifiedActorValidator,
@@ -243,31 +249,6 @@ export function actingNameOf(
 //                  stands alone (membership check skipped; CORE-A above
 //                  still required an identity to exist at all).
 // ─────────────────────────────────────────────────────────────────────────────
-// The asserted caller name must be on the resolved scope's roster. Master is
-// exempt (the fleet service account resolves allowedOrchestrators ["*"]); a "*"
-// entry names nobody. Shared by requireAuthenticatedCaller and by a create that
-// the service account makes FOR a verified org, whose scope is rebuilt as that
-// org's ordinary member after stamping.
-function assertCallerOnRoster(
-	scope: CallerScope,
-	callerOrchestrator: string | undefined,
-): void {
-	if (
-		callerOrchestrator !== undefined &&
-		!scope.isMaster &&
-		!scope.allowedOrchestrators.some(
-			(entry) =>
-				entry !== "*" &&
-				normalizeOrchestratorId(entry) ===
-					normalizeOrchestratorId(callerOrchestrator),
-		)
-	) {
-		throw new ConvexError(
-			`CALLER_IDENTITY_MISMATCH: asserted callerOrchestrator "${callerOrchestrator}" is outside the authenticated org's allowed-orchestrator list — this compares an ASSERTED name against the org's allowlist (org=${scope.orgSlug ?? "none"} allows ${JSON.stringify(scope.allowedOrchestrators)}); it does NOT verify the caller IS any particular orchestrator inside that list — ${JSON.stringify({ asserted: callerOrchestrator, derivedAllowedOrchestrators: scope.allowedOrchestrators, orgSlug: scope.orgSlug })}`,
-		);
-	}
-}
-
 // Exported (Day 203 slice, task class: authority attached to an
 // anonymously-registered object — .claude/rules/authority-attached-to-anonymous-object.md)
 // so convex/recurringTasks.ts, convex/missions.ts and convex/missionTemplates.ts
@@ -362,7 +343,20 @@ export async function requireAuthenticatedCaller(
 	// ordinary member of the operator org) is held to its org's roster: compared
 	// after normalizeOrchestratorId on both sides, and a "*" entry names nobody
 	// (an org's own openness to READ, never licence to act as another name).
-	assertCallerOnRoster(scope, callerOrchestrator);
+	if (
+		callerOrchestrator !== undefined &&
+		!scope.isMaster &&
+		!scope.allowedOrchestrators.some(
+			(entry) =>
+				entry !== "*" &&
+				normalizeOrchestratorId(entry) ===
+					normalizeOrchestratorId(callerOrchestrator),
+		)
+	) {
+		throw new ConvexError(
+			`CALLER_IDENTITY_MISMATCH: asserted callerOrchestrator "${callerOrchestrator}" is outside the authenticated org's allowed-orchestrator list — this compares an ASSERTED name against the org's allowlist (org=${scope.orgSlug ?? "none"} allows ${JSON.stringify(scope.allowedOrchestrators)}); it does NOT verify the caller IS any particular orchestrator inside that list — ${JSON.stringify({ asserted: callerOrchestrator, derivedAllowedOrchestrators: scope.allowedOrchestrators, orgSlug: scope.orgSlug })}`,
+		);
+	}
 
 	// M7: the caller as an ACTOR ID, from the proof already verified above. Every
 	// task door that authorises by actor compares this against the row's
@@ -863,12 +857,28 @@ export const create = mutation({
 		// A write the fleet service account makes FOR a verified org (the bearer's
 		// `verifiedOrg`, or the client org of the agent it proved) is stamped with
 		// that org, or refused; never stored unstamped (k176y0q5jcz3m8m673bf61kva98h49js).
+		// Each proof's org label is resolved to its stored mapping row here; the
+		// decision compares rows (serviceAccountWriteOrg). Only the service account
+		// can carry either proof into a stamp, so no other caller pays the reads.
+		const asServiceAccount = isServiceAccountScope(scope);
+		const verifiedLabel = asServiceAccount ? scope.callerVerifiedOrg : undefined;
+		const actorLabel =
+			asServiceAccount &&
+			(agentCredentialSecret !== undefined || verifiedActor !== undefined)
+				? scope.callerActorOrg
+				: undefined;
 		const forOrg = await serviceAccountWriteOrg(ctx, scope, {
-			verifiedOrgSlug: scope.callerVerifiedOrg,
-			provenActorOrg:
-				agentCredentialSecret !== undefined || verifiedActor !== undefined
-					? scope.callerActorOrg
-					: undefined,
+			verified:
+				verifiedLabel === undefined
+					? undefined
+					: {
+							label: verifiedLabel,
+							mapping: await lookupOrgMapping(ctx, verifiedLabel),
+						},
+			provenActor:
+				actorLabel === undefined
+					? undefined
+					: { label: actorLabel, mapping: await lookupOrgMapping(ctx, actorLabel) },
 			door: "tasks:create",
 		});
 		// A stamped create runs as an ordinary member of the stamped org, exactly
@@ -889,7 +899,16 @@ export const create = mutation({
 			if (callerScope.callerVerifiedOrg !== undefined)
 				memberScope.callerVerifiedOrg = callerScope.callerVerifiedOrg;
 			scope = memberScope;
-			assertCallerOnRoster(scope, args.createdBy);
+			// The same roster rule requireAuthenticatedCaller applies to createdBy,
+			// now on the stamped org (an actForOrgMapping scope is never master).
+			if (
+				args.createdBy !== undefined &&
+				!isOrchestratorOnOrgRoster(scope, args.createdBy)
+			) {
+				throw new ConvexError(
+					`CALLER_IDENTITY_MISMATCH: asserted callerOrchestrator "${args.createdBy}" is outside the stamped organisation's allowed-orchestrator list — ${JSON.stringify({ asserted: args.createdBy, orgSlug: scope.orgSlug, door: "tasks:create" })}`,
+				);
+			}
 			if (assignedToAgentId === undefined && assignedToName !== undefined) {
 				requireOrchestratorOnRoster(scope, assignedToName, "tasks:create", "assignee");
 			}

@@ -2180,21 +2180,22 @@ export function registerTools(
 	// verified org) and seatOrgSlug (a seat's org for a recipient-scoped door),
 	// each forwarded exactly when the DOOR accepts it. Every tool goes through
 	// it, write and read alike, so a write can never carry less scope than its
-	// read sibling. The facts are read from the verified oauthContext only.
-	const doorScopeFacts = (): DoorScopeFacts => {
-		const verifiedOrgSlug = verifiedOrgOf();
-		return {
-			...(personActorOf(oauthCtx) !== undefined &&
-			oauthCtx?.accessTokenHash !== undefined
-				? { personAccessTokenHash: oauthCtx.accessTokenHash }
-				: {}),
-			...(verifiedOrgSlug !== undefined ? { verifiedOrgSlug } : {}),
-			hasVerifiedActor: verifiedActorOf(oauthCtx) !== undefined,
-			seat: resolveSeatOrg(oauthCtx),
-		};
+	// read sibling. The facts are read from the verified oauthContext only, ONCE
+	// per registration: the context is this connection's verified principal and
+	// nothing in the server mutates it after authentication, so every door call
+	// reads the same facts and identity is derived at this one point.
+	const verifiedOrgSlug = verifiedOrgOf();
+	const doorFacts: DoorScopeFacts = {
+		...(personActorOf(oauthCtx) !== undefined &&
+		oauthCtx?.accessTokenHash !== undefined
+			? { personAccessTokenHash: oauthCtx.accessTokenHash }
+			: {}),
+		...(verifiedOrgSlug !== undefined ? { verifiedOrgSlug } : {}),
+		hasVerifiedActor: verifiedActorOf(oauthCtx) !== undefined,
+		seat: resolveSeatOrg(oauthCtx),
 	};
 	const doorScope = (door: string, actingName: string | undefined) =>
-		resolveDoorScope(door, actingName, doorScopeFacts());
+		resolveDoorScope(door, actingName, doorFacts);
 	// The args fragment for a door that cannot refuse on scope (no seatOrgSlug).
 	const doorScopeArgs = (
 		door: string,
