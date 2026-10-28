@@ -525,6 +525,14 @@ describe("human CRUD — diary and businessUnits", () => {
 			expect((await readRow("businessUnits")(t, id))?.name).toBe("Renamed");
 		});
 
+		test("a member judges its own org's unit, not an owner it never claimed: a unit of its org with no stored owner is renamed", async () => {
+			const t = await setup();
+			const id = await seedBu(t, "own");
+			await t.run((ctx) => ctx.db.patch(id as Id<"businessUnits">, { ownerId: undefined }));
+			await upd(inOrg(t, "org-a", "user_m", "org:editor"), id);
+			expect((await readRow("businessUnits")(t, id))?.name).toBe("Renamed");
+		});
+
 		test.each([["org:viewer"], [undefined]])("role %s -> refused role-not-writer, unit unchanged", async (role) => {
 			const t = await setup();
 			const id = await seedBu(t, "own");
