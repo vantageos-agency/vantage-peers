@@ -16,7 +16,7 @@
 
 import { makeFunctionReference } from "convex/server";
 import { Hono } from "hono";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import schema from "../../convex/schema";
 import { convexTest } from "../../tests/fixtures/convexTestWithServiceAccount";
 import { testClerkOrgId } from "../../tests/fixtures/testClerkOrgId";
@@ -82,6 +82,7 @@ async function mint(
 	org: string,
 	roster: string[],
 	raw: string,
+	principal: "person" | null = "person",
 ): Promise<string> {
 	await t.withIdentity({ subject: SERVICE_ACCOUNT_ID }).mutation(
 		makeFunctionReference<"mutation">("oauth:createAccessToken") as never,
@@ -97,7 +98,7 @@ async function mint(
 			expiresAt: Date.now() + 3_600_000,
 			clerkOrgSlug: org,
 			orgRole: "org:editor",
-			principal: "person",
+			...(principal !== null ? { principal } : {}),
 		} as never,
 	);
 	return raw;
@@ -192,7 +193,12 @@ beforeEach(async () => {
 				clerkOrgSlug: slug,
 				clerkOrgId: testClerkOrgId(slug),
 				allowedOrchestrators: [...roster],
-				scopes: ["vantage:read", "vantage:write"],
+				scopes: [
+					"vantage:read",
+					"vantage:write",
+					"view-own-tasks",
+					"view-own-missions",
+				],
 				displayName: slug,
 				isActive: true,
 				createdAt: now,
@@ -217,16 +223,21 @@ beforeEach(async () => {
 			if (m !== null) await ctx.db.patch(m._id, { allowedAgentIds: [id] });
 		}
 	});
-	const sCtx = await contextOf(await mint(STEPHANE, "org-a", ["telemaque"], "raw-stephane"));
+	const sCtx = await contextOf(
+		await mint(STEPHANE, "org-a", ["telemaque"], "raw-stephane"),
+	);
 	expect(sCtx.actor?.agentName).toBe("telemaque");
 	stephane = realTools(sCtx);
-	const bCtx = await contextOf(await mint(BRUNO, "org-b", ["mentor"], "raw-bruno"));
+	const bCtx = await contextOf(
+		await mint(BRUNO, "org-b", ["mentor"], "raw-bruno"),
+	);
 	expect(bCtx.actor?.agentName).toBe("mentor");
 	bruno = realTools(bCtx);
 });
 
 afterEach(() => {
 	_setInternalClientForTest(null);
+	vi.unstubAllEnvs();
 });
 
 describe("create_task: a person reads back the task it created", () => {
@@ -250,9 +261,10 @@ describe("create_task: a person reads back the task it created", () => {
 			expect(listed.isError, listed.content[0].text).toBeUndefined();
 			expect(listedIds(listed)).toContain(taskId);
 
-			const row = await t.run((ctx) =>
-				ctx.db.get(taskId as never),
-			) as { orgId?: string; clerkOrgId?: string } | null;
+			const row = (await t.run((ctx) => ctx.db.get(taskId as never))) as {
+				orgId?: string;
+				clerkOrgId?: string;
+			} | null;
 			expect(row?.orgId).toBe("org-a");
 			expect(row?.clerkOrgId).toBe(testClerkOrgId("org-a"));
 		});
@@ -269,7 +281,39 @@ describe("create_task: a person reads back the task it created", () => {
 		const got = await call(bruno, "get_task", { taskId });
 		expect(got.isError).toBe(true);
 		const listed = await call(bruno, "list_tasks", {});
-		if (listed.isError !== true) expect(listedIds(listed)).not.toContain(taskId);
+		if (listed.isError !== true)
+			expect(listedIds(listed)).not.toContain(taskId);
+	});
+});
+
+describe("create_task: an org-level bearer (no single agent ID) reads back the task it created", () => {
+	// No verifiedActor rides this call (the bearer is the organisation's, it names
+	// no single agent), so the ONLY carrier of its org is the verifiedOrg the
+	// resolver forwards.
+	it("org token reads back the task it created (permissive acting-claim mode)", async () => {
+		// Under the STRICT default a typed name with no agent credential is refused
+		// at the MCP (AGENT_CREDENTIAL_REQUIRED); this population writes only in
+		// permissive mode, which is where it was write-only.
+		vi.stubEnv("VANTAGE_ACTOR_CREDENTIAL_MODE", "permissive");
+		const ctx = await contextOf(
+			await mint("org-a-token", "org-a", ["telemaque"], "raw-org-token", null),
+		);
+		expect(ctx.actor).toBeUndefined();
+		expect(ctx.principal).toBeUndefined();
+		const tools = realTools(ctx);
+		const created = await call(tools, "create_task", {
+			...TASK,
+			createdBy: "telemaque",
+		});
+		expect(created.isError, created.content[0].text).toBeUndefined();
+		const taskId = idFrom(created, "taskId");
+		const listed = await call(tools, "list_tasks", {});
+		expect(listed.isError, listed.content[0].text).toBeUndefined();
+		expect(listedIds(listed)).toContain(taskId);
+		const row = (await t.run((ctx) => ctx.db.get(taskId as never))) as {
+			orgId?: string;
+		} | null;
+		expect(row?.orgId).toBe("org-a");
 	});
 });
 
@@ -282,7 +326,7 @@ describe("create_mission: a person reads back the mission it created", () => {
 		expect(created.isError, created.content[0].text).toBeUndefined();
 		const missionId = idFrom(created, "missionId");
 
-		const row = await t.run((ctx) => ctx.db.get(missionId as never)) as {
+		const row = (await t.run((ctx) => ctx.db.get(missionId as never))) as {
 			orgId?: string;
 			clerkOrgId?: string;
 		} | null;

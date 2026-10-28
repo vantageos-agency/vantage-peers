@@ -36,6 +36,11 @@ import {
 	rowVisibleToActorTenant,
 	toPackageOAuthCtx,
 } from "./auth.js";
+import {
+	type DoorScopeArgs,
+	type DoorScopeFacts,
+	resolveDoorScope,
+} from "./doorScope.js";
 import { FreshStateGuardError, guardFreshState } from "./fresh-state-guard.js";
 import { listTasksGate } from "./list-tasks-gate.js";
 import { memberAuthorLabel } from "./memberAuthor.js";
@@ -2155,39 +2160,6 @@ export function registerTools(
 	// (registerTool.ts: bindActingNames for the actor, the `from` scope kind for
 	// the roster). The one `filtered` tool that takes an acting name,
 	// bulk_complete_tasks, applies the roster itself (see there).
-	// A PERSON acting in its own name (k176ch9tamzab3dnhye94kga1d8fkbhm): when
-	// no acting name reaches the handler, the Convex door is handed the hash of
-	// the bearer this person presented, and nothing else. The door believes it
-	// from the service account only and re-reads subject, org and role from the
-	// token row (convex/lib/personPrincipal.ts). Every other caller, and a
-	// person acting as an agent, forwards nothing.
-	const personDoorArgs = (
-		actingName: string | undefined,
-	): { verifiedPerson?: { accessTokenHash: string } } =>
-		actingName === undefined &&
-		personActorOf(oauthCtx) !== undefined &&
-		oauthCtx?.accessTokenHash !== undefined
-			? { verifiedPerson: { accessTokenHash: oauthCtx.accessTokenHash } }
-			: {};
-	// The seat's VERIFIED org for a door that scopes RECIPIENTS by org
-	// (messages:sendMessage). A seat reaches Convex as the service account
-	// (fleet master, no org), so without this the org scope never applies to it
-	// (task k174f54w3fv3amnk16v68tb3jh8frxxt). Read from the resolved principal
-	// (resolveSeatOrg), never from a tool argument. A person acting in its own
-	// name forwards verifiedPerson instead (Convex rebuilds its org scope).
-	const seatOrgDoorArgs = (
-		actingName: string | undefined,
-	):
-		| { args: { seatOrgSlug?: string } }
-		| { denied: ReturnType<typeof mcpError> } => {
-		if (Object.keys(personDoorArgs(actingName)).length > 0) return { args: {} };
-		const seat = resolveSeatOrg(oauthCtx);
-		if (seat.kind === "refused") return { denied: mcpError(seat.error) };
-		return seat.kind === "org"
-			? { args: { seatOrgSlug: seat.orgSlug } }
-			: { args: {} };
-	};
-
 	// The organisation THIS bearer was verified for, for a call that reaches
 	// Convex as the fleet service account (so `ctx.auth` there carries no org).
 	// Read from the verified oauthContext only: the agent credential's org
@@ -2202,28 +2174,36 @@ export function registerTools(
 		}
 		return oauthCtx.actor?.orgSlug ?? oauthCtx.clerkOrgSlug;
 	};
-	// The args fragment a single-task write door takes to bind the call to the
-	// bearer's verified org: `{ verifiedOrg: { orgSlug } }`, or nothing for the
-	// master / a Clerk-JWT caller. Spread into the door call; it is the ONLY
-	// source of that field (never a tool argument).
-	const verifiedOrgArgs = (): { verifiedOrg?: { orgSlug: string } } => {
-		const orgSlug = verifiedOrgOf();
-		return orgSlug !== undefined ? { verifiedOrg: { orgSlug } } : {};
+	// THE one resolver of the scope a door call carries (doorScope.ts, task
+	// k176y0q5jcz3m8m673bf61kva98h49js): verifiedPerson (a PERSON acting in its
+	// own name, k176ch9tamzab3dnhye94kga1d8fkbhm), verifiedOrg (the bearer's
+	// verified org) and seatOrgSlug (a seat's org for a recipient-scoped door),
+	// each forwarded exactly when the DOOR accepts it. Every tool goes through
+	// it, write and read alike, so a write can never carry less scope than its
+	// read sibling. The facts are read from the verified oauthContext only.
+	const doorScopeFacts = (): DoorScopeFacts => {
+		const verifiedOrgSlug = verifiedOrgOf();
+		return {
+			...(personActorOf(oauthCtx) !== undefined &&
+			oauthCtx?.accessTokenHash !== undefined
+				? { personAccessTokenHash: oauthCtx.accessTokenHash }
+				: {}),
+			...(verifiedOrgSlug !== undefined ? { verifiedOrgSlug } : {}),
+			hasVerifiedActor: verifiedActorOf(oauthCtx) !== undefined,
+			seat: resolveSeatOrg(oauthCtx),
+		};
 	};
-	// The inbox doors (check_messages, mark_as_read, delete_message) identify the
-	// reader BY ID. A bearer that resolved ONE agent forwards its ID
-	// (verifiedActor.ts, added to the call by the wrapped client). A bearer that
-	// names several agents behind one org-level token has no single ID: it
-	// forwards its VERIFIED org instead, and Convex resolves the name in that org
-	// only. Never both, never a tool argument, and nothing for a person acting in
-	// its own name (that call carries verifiedPerson).
-	const inboxOrgArgs = (
+	const doorScope = (door: string, actingName: string | undefined) =>
+		resolveDoorScope(door, actingName, doorScopeFacts());
+	// The args fragment for a door that cannot refuse on scope (no seatOrgSlug).
+	const doorScopeArgs = (
+		door: string,
 		actingName: string | undefined,
-	): { verifiedOrg?: { orgSlug: string } } =>
-		verifiedActorOf(oauthCtx) !== undefined ||
-		Object.keys(personDoorArgs(actingName)).length > 0
-			? {}
-			: verifiedOrgArgs();
+	): DoorScopeArgs => {
+		const resolved = doorScope(door, actingName);
+		if ("denied" in resolved) throw new Error(resolved.denied);
+		return resolved.args;
+	};
 	// A lookup miss at this boundary is a DENY, never a fall-through
 	// (.claude/rules/http-boundary-derives-from-principal.md): a NON-master bearer
 	// whose organisation cannot be resolved (no verified actor, no token-row org,
@@ -2843,7 +2823,7 @@ export function registerTools(
 				if (orgDenied !== null) return orgDenied;
 				const memory = await convex.query("memories:getMemory" as any, {
 					memoryId: episodeId,
-					...verifiedOrgArgs(),
+					...doorScopeArgs("memories:getMemory", undefined),
 				});
 				const filtered = scopeFilterGet(oauthCtx ?? DENIED_SCOPE_CTX, memory);
 				if (filtered === null) {
@@ -3512,7 +3492,7 @@ export function registerTools(
 						"INVALID_RECIPIENTS: send_message takes exactly one of `recipientAgentIds` (agent IDs from list_peers `agentId`) or `channel` (broadcast, a fleet role, an instance).",
 					);
 				}
-				// No sender named: a person acting in its own name (personDoorArgs).
+				// No sender named: a person acting in its own name (doorScope verifiedPerson).
 				// An instance label, if typed, is forwarded and refused by the
 				// Convex human door (a person has no instance).
 				let senderInstance: string | undefined = fromInstanceId;
@@ -3617,9 +3597,9 @@ export function registerTools(
 						? channel
 						: normalizeOrchestratorId(channel);
 				// The seat's verified org rides along so Convex scopes the
-				// RECIPIENTS to it (see seatOrgDoorArgs). Resolved before any write.
-				const seatDoor = seatOrgDoorArgs(from);
-				if ("denied" in seatDoor) return seatDoor.denied;
+				// RECIPIENTS to it (doorScope seatOrgSlug). Resolved before any write.
+				const seatDoor = doorScope("messages:sendMessage", from);
+				if ("denied" in seatDoor) return mcpError(seatDoor.denied);
 				const messageId = await convex.mutation("messages:sendMessage" as any, {
 					from: normFrom,
 					...(fromAgentId !== undefined ? { fromAgentId } : {}),
@@ -3630,7 +3610,6 @@ export function registerTools(
 					content: resolvedContent,
 					sessionDay: derivedSessionDay,
 					tenantId,
-					...personDoorArgs(from),
 					...seatDoor.args,
 				});
 				const sender = from ?? personActorOf(oauthCtx);
@@ -3766,7 +3745,7 @@ export function registerTools(
 						tenantId,
 						since,
 						limit,
-						...inboxOrgArgs(recipient),
+						...doorScopeArgs("messages:checkNewMessagesEnvelope", recipient),
 					},
 				);
 				// Day-156 reader-first: extra envelope fields are ignored;
@@ -4004,8 +3983,7 @@ export function registerTools(
 				const count = await convex.mutation("messages:markAsRead" as any, {
 					receiptIds: receiptIdsArray,
 					callerOrchestrator,
-					...personDoorArgs(callerOrchestrator),
-					...inboxOrgArgs(callerOrchestrator),
+					...doorScopeArgs("messages:markAsRead", callerOrchestrator),
 				});
 
 				return {
@@ -4058,7 +4036,7 @@ export function registerTools(
 				const result = await convex.mutation("messages:deleteMessage" as any, {
 					messageId: messageId as any,
 					callerOrchestrator,
-					...inboxOrgArgs(callerOrchestrator),
+					...doorScopeArgs("messages:deleteMessage", callerOrchestrator),
 				});
 
 				return {
@@ -4376,7 +4354,7 @@ export function registerTools(
 					limit: effectiveLimit ?? 20,
 					fields: fields ?? "lite",
 					createdBefore,
-					...verifiedOrgArgs(),
+					...doorScopeArgs("messages:listMessages", undefined),
 				});
 
 				// k1780azk7n8fdb7bpnx5n91sx18b5vjf — refus-total fix. Message rows
@@ -4512,7 +4490,7 @@ export function registerTools(
 						tenantId,
 						limit: limit ?? 20,
 						fields: fields ?? "lite",
-						...verifiedOrgArgs(),
+						...doorScopeArgs("messages:searchMessagesByKeyword", undefined),
 					},
 				);
 				// k175j2jems5deccegp4p0fy4x98b4ypn — cross-tenant content leak fix.
@@ -4620,7 +4598,7 @@ export function registerTools(
 						messageId,
 						limit: limit ?? 20,
 						fields: fields ?? "lite",
-						...verifiedOrgArgs(),
+						...doorScopeArgs("messages:listBroadcastStatus", undefined),
 					},
 				);
 
@@ -4773,7 +4751,7 @@ export function registerTools(
 						createdBy === undefined
 							? undefined
 							: normalizeOrchestratorId(createdBy),
-					...personDoorArgs(createdBy),
+					...doorScopeArgs("tasks:create", createdBy),
 				});
 
 				return {
@@ -4879,7 +4857,7 @@ export function registerTools(
 					updatedSince,
 					createdBefore,
 					excludeAutoGenerated,
-					...verifiedOrgArgs(),
+					...doorScopeArgs("tasks:list", undefined),
 				});
 				// `assignedTo` is a per-row grant (convex/tasks.ts L197-208 ORs
 				// createdBy===caller || assignedTo===caller), so a non-creator
@@ -5006,7 +4984,6 @@ export function registerTools(
 						);
 				}
 
-				const verifiedOrg = verifiedOrgOf();
 				const result = await convex.mutation("tasks:bulkComplete" as any, {
 					filter,
 					dryRun,
@@ -5014,7 +4991,7 @@ export function registerTools(
 					callerOrchestrator,
 					// The run's status row is stamped with this org (and a run is
 					// readable only by it), never with a name.
-					...(verifiedOrg !== undefined ? { verifiedOrg: { orgSlug: verifiedOrg } } : {}),
+					...doorScopeArgs("tasks:bulkComplete", callerOrchestrator),
 				});
 				return {
 					content: [
@@ -5181,7 +5158,7 @@ export function registerTools(
 						missionId,
 						limit: limit ?? 20,
 						fields: "full",
-						...verifiedOrgArgs(),
+						...doorScopeArgs("tasks:searchTasksByKeyword", undefined),
 					},
 				);
 				// k174y9ra7pp8zed3bcczk6xaed8cpynp — mirror get_task/list_tasks:
@@ -5410,8 +5387,7 @@ export function registerTools(
 					dueDate,
 					callerOrchestrator,
 					cancelReason,
-					...personDoorArgs(callerOrchestrator),
-					...verifiedOrgArgs(),
+					...doorScopeArgs("tasks:update", callerOrchestrator),
 				});
 
 				return {
@@ -5465,8 +5441,7 @@ export function registerTools(
 					taskId: taskId as any,
 					completionNote,
 					callerOrchestrator,
-					...personDoorArgs(callerOrchestrator),
-					...verifiedOrgArgs(),
+					...doorScopeArgs("tasks:complete", callerOrchestrator),
 				});
 
 				return {
@@ -5524,7 +5499,7 @@ export function registerTools(
 					taskId: taskId as any,
 					failureNote,
 					callerOrchestrator,
-					...verifiedOrgArgs(),
+					...doorScopeArgs("tasks:failTask", undefined),
 				});
 
 				return {
@@ -5572,8 +5547,7 @@ export function registerTools(
 				await convex.mutation("tasks:start" as any, {
 					taskId: taskId as any,
 					callerOrchestrator,
-					...personDoorArgs(callerOrchestrator),
-					...verifiedOrgArgs(),
+					...doorScopeArgs("tasks:start", callerOrchestrator),
 				});
 
 				return {
@@ -5622,7 +5596,7 @@ export function registerTools(
 				await convex.mutation("tasks:pause" as any, {
 					taskId: taskId as any,
 					callerOrchestrator,
-					...verifiedOrgArgs(),
+					...doorScopeArgs("tasks:pause", undefined),
 				});
 
 				return {
@@ -5669,7 +5643,7 @@ export function registerTools(
 				await convex.mutation("tasks:resume" as any, {
 					taskId: taskId as any,
 					callerOrchestrator,
-					...verifiedOrgArgs(),
+					...doorScopeArgs("tasks:resume", undefined),
 				});
 
 				return {
@@ -5761,7 +5735,7 @@ export function registerTools(
 					end,
 					reason,
 					callerOrchestrator,
-					...verifiedOrgArgs(),
+					...doorScopeArgs("tasks:correctSegment", undefined),
 				});
 
 				return {
@@ -5817,7 +5791,7 @@ export function registerTools(
 					taskId: taskId as any,
 					callerOrchestrator,
 					callerInstance,
-					...verifiedOrgArgs(),
+					...doorScopeArgs("tasks:checkout", undefined),
 				});
 
 				return {
@@ -5868,7 +5842,7 @@ export function registerTools(
 				const result = await convex.mutation("tasks:deleteTask" as any, {
 					taskId: taskId as any,
 					callerOrchestrator,
-					...verifiedOrgArgs(),
+					...doorScopeArgs("tasks:deleteTask", undefined),
 				});
 
 				return {
@@ -5950,7 +5924,7 @@ export function registerTools(
 				if (callerOrchestrator)
 					blockArgs.callerOrchestrator = callerOrchestrator;
 
-				Object.assign(blockArgs, verifiedOrgArgs());
+				Object.assign(blockArgs, doorScopeArgs("tasks:blockTask", callerOrchestrator));
 				await convex.mutation("tasks:blockTask" as any, blockArgs);
 
 				if (blockedBy && blockedBy.length > 0) {
@@ -5958,7 +5932,7 @@ export function registerTools(
 						taskId: taskId as any,
 						dependsOn: blockedBy.map((id: string) => id as any),
 						...(callerOrchestrator ? { callerOrchestrator } : {}),
-						...verifiedOrgArgs(),
+						...doorScopeArgs("tasks:update", callerOrchestrator),
 					});
 				}
 
@@ -6025,7 +5999,7 @@ export function registerTools(
 				if (callerOrchestrator)
 					updateArgs.callerOrchestrator = callerOrchestrator;
 
-				Object.assign(updateArgs, verifiedOrgArgs());
+				Object.assign(updateArgs, doorScopeArgs("tasks:update", callerOrchestrator));
 				await convex.mutation("tasks:update" as any, updateArgs);
 
 				return {
@@ -6270,7 +6244,7 @@ export function registerTools(
 					targetDate,
 					progress,
 					createdBy,
-					...personDoorArgs(createdBy),
+					...doorScopeArgs("missions:create", createdBy),
 				});
 
 				return {
@@ -6557,7 +6531,7 @@ export function registerTools(
 					progress,
 					callerOrchestrator,
 					cancelReason,
-					...personDoorArgs(callerOrchestrator),
+					...doorScopeArgs("missions:update", callerOrchestrator),
 				});
 
 				return {
@@ -6955,7 +6929,7 @@ export function registerTools(
 					decisions: toArray(decisions),
 					linkedMemoryIds: toArray(linkedMemoryIds) as string[],
 					createdBy,
-					...verifiedOrgArgs(),
+					...doorScopeArgs("briefingNotes:create", undefined),
 				});
 
 				return {
@@ -7100,7 +7074,7 @@ export function registerTools(
 					noteId,
 					master,
 					callerIdentities,
-					...verifiedOrgArgs(),
+					...doorScopeArgs("briefingNotes:get", undefined),
 				});
 				// scopeFilterGet only discriminates on createdBy/namespace — it
 				// has no notion of `participants`. OR it with an independent
@@ -7214,7 +7188,7 @@ export function registerTools(
 					createdBefore,
 					master,
 					callerIdentities,
-					...verifiedOrgArgs(),
+					...doorScopeArgs("briefingNotes:list", undefined),
 				});
 
 				// scopeFilterList only discriminates on createdBy/namespace — it
@@ -7366,7 +7340,7 @@ export function registerTools(
 						fields: fields ?? "lite",
 						master,
 						callerIdentities,
-						...verifiedOrgArgs(),
+						...doorScopeArgs("briefingNotes:searchBriefingNotesByKeyword", undefined),
 					},
 				);
 				// Day 141 fix (k17fyh3bqyh8ne1zd48sdee5958b2kk4): this query was
@@ -8431,7 +8405,7 @@ export function registerTools(
 				const orgDenied = unresolvedOrgDenial("create_bu");
 				if (orgDenied !== null) return orgDenied;
 				const buId = await convex.mutation("businessUnits:create" as any, {
-					...verifiedOrgArgs(),
+					...doorScopeArgs("businessUnits:create", undefined),
 					name,
 					description,
 					purpose,
@@ -8547,7 +8521,7 @@ export function registerTools(
 				}
 
 				await convex.mutation("businessUnits:update" as any, {
-					...verifiedOrgArgs(),
+					...doorScopeArgs("businessUnits:update", undefined),
 					buId: buId as any,
 					callerOrchestrator,
 					name,
@@ -8615,7 +8589,7 @@ export function registerTools(
 				if (orgDenied !== null) return orgDenied;
 				const bu = (await convex.query("businessUnits:get" as any, {
 					buId: buId as any,
-					...verifiedOrgArgs(),
+					...doorScopeArgs("businessUnits:get", undefined),
 				})) as (Record<string, unknown> & { orchestratorId?: string }) | null;
 				const filteredBu = bu
 					? scopeFilterGet(oauthCtx ?? DENIED_SCOPE_CTX, {
@@ -8719,7 +8693,7 @@ export function registerTools(
 					limit: effectiveLimit,
 					fields: fields ?? "full",
 					createdBefore,
-					...verifiedOrgArgs(),
+					...doorScopeArgs("businessUnits:list", undefined),
 				});
 				const rawItems = (
 					envelope && typeof envelope === "object" && "items" in envelope
@@ -8811,7 +8785,7 @@ export function registerTools(
 				// the fleet's own units. A client unit is deleted only on a verified claim.
 				const result = await convex.mutation("businessUnits:remove" as any, {
 					buId: buId as any,
-					...verifiedOrgArgs(),
+					...doorScopeArgs("businessUnits:remove", undefined),
 				});
 
 				return {
@@ -8887,6 +8861,10 @@ export function registerTools(
 			const unresolved = guardResolvedCaller("add_repo_mapping");
 			if (unresolved) return unresolved;
 			try {
+				// The mapping is written IN the bearer's verified org, as its read
+				// sibling list_repo_mappings reads it (task k176y0q5jcz3m8m673bf61kva98h49js).
+				const orgDenied = unresolvedOrgDenial("add_repo_mapping");
+				if (orgDenied) return orgDenied;
 				const id = await convex.mutation("githubRepoMapping:add" as any, {
 					repo,
 					orchestrator,
@@ -8894,6 +8872,7 @@ export function registerTools(
 					active,
 					reviewer,
 					fallbackReviewer,
+					...doorScopeArgs("githubRepoMapping:add", undefined),
 				});
 
 				return {
@@ -8996,7 +8975,7 @@ export function registerTools(
 					fields: fields ?? "full",
 					cursor: convexCursor,
 					createdBefore,
-					...verifiedOrgArgs(),
+					...doorScopeArgs("githubRepoMapping:list", undefined),
 				});
 				const rawItems = (
 					envelope && typeof envelope === "object" && "items" in envelope
@@ -9087,10 +9066,13 @@ export function registerTools(
 			const unresolved = guardResolvedCaller("remove_repo_mapping");
 			if (unresolved) return unresolved;
 			try {
+				const orgDenied = unresolvedOrgDenial("remove_repo_mapping");
+				if (orgDenied) return orgDenied;
 				const result = await convex.mutation(
 					"githubRepoMapping:remove" as any,
 					{
 						repo,
+						...doorScopeArgs("githubRepoMapping:remove", undefined),
 					},
 				);
 
@@ -11158,7 +11140,7 @@ export function registerTools(
 				if (orgDenied !== null) return orgDenied;
 				const row = await convex.query("messages:getById" as any, {
 					messageId,
-					...verifiedOrgArgs(),
+					...doorScopeArgs("messages:getById", undefined),
 				});
 				// Class-sweep fix (mission vp-multitenant-zero-hole-v1, final 8):
 				// message rows (schema.ts:148) carry `from` (creatorValidator), NOT
