@@ -3844,6 +3844,11 @@ export function registerTools(
 
 	// ── list_blocked_on_me ──────────────────────────────────────────────────────
 
+	// oracle-justified: identity-gated by its Convex door tasks:listBlockedOnMe (verifiedActor agent ID), not
+	//   in-handler org filtering like list_tasks; bounded opt-in read with no cursor; isolation at the
+	//   convex-door, boundary key agentId(verifiedActor). The instrument has no category for a door guarded
+	//   in Convex: task k1735h1xs805q1dwh3xd3vhzw98gygdy. Ruled by Pi 2026-10-28 (msg receipt
+	//   k978emevw7gpnz3vy01s3p0ntd8h5sch).
 	defineTool(
 		server,
 		authCtx,
