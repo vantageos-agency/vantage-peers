@@ -12,8 +12,8 @@
 // clientOrgMapping:setAddressableFleetCoordinators, which accepts only IDs of
 // active agents of an active operator org.
 
-import { convexTest } from "convex-test";
 import { describe, expect, test } from "vitest";
+import { convexTest } from "../../tests/fixtures/convexTestWithServiceAccount";
 import { testClerkOrgId } from "../../tests/fixtures/testClerkOrgId";
 import { api, internal } from "../_generated/api";
 import type { Id } from "../_generated/dataModel";
@@ -342,5 +342,102 @@ describe("direct messages: addressableFleetCoordinatorIds (empty by default)", (
 		await expect(setIds(t, "no-such-org", [w.pi])).rejects.toThrow(
 			/ORG_MAPPING_NOT_FOUND/,
 		);
+	});
+});
+
+// Task k17a1q56g4w9yw6s8gzpe6h8hx8h3hmy: a client agent's NAME-addressed message
+// to a listed fleet coordinator must reach the coordinator's agent-reader inbox,
+// which owns receipts by recipientId only. The id is taken from the SAME client
+// mapping's addressableFleetCoordinatorIds, never by a name lookup elsewhere.
+describe("name-addressed message to a listed fleet coordinator reaches its inbox", () => {
+	const asService = (t: T) =>
+		t.withIdentity({ subject: "test-service-account-user-id" });
+
+	const receiptsOf = (t: T, messageId: Id<"messages">) =>
+		t.run((ctx) =>
+			ctx.db
+				.query("messageReceipts")
+				.withIndex("by_message", (q) => q.eq("messageId", messageId))
+				.collect(),
+		);
+
+	test("RED/GREEN: channel pi (listed by name and by ID) is read by pi's agent inbox and markAsRead works", async () => {
+		const t = createT();
+		const w = await seedWorld(t);
+		await setIds(t, "iris-rh", [w.pi]);
+		const m1 = await asOrg(t, "iris-rh").mutation(api.messages.sendMessage, {
+			from: "irisbot",
+			channel: "pi",
+			content: "hello-coordinator",
+		});
+		const receipts = await receiptsOf(t, m1);
+		expect(
+			receipts.map((r) => [r.recipient, r.recipientId, r.tenantId]),
+		).toEqual([["pi", w.pi, "iris-rh"]]);
+
+		const actor = { verifiedActor: { agentId: w.pi, orgSlug: "perello" } };
+		const inbox = await asService(t).query(
+			api.messages.checkNewMessagesEnvelope,
+			actor as never,
+		);
+		expect(inbox.messages.map((m) => m.content)).toEqual(["hello-coordinator"]);
+		const marked = await asService(t).mutation(api.messages.markAsRead, {
+			receiptIds: [inbox.messages[0]?.receiptId as string],
+			...actor,
+		} as never);
+		expect(marked).toBe(1);
+		const after = await asService(t).query(
+			api.messages.checkNewMessagesEnvelope,
+			actor as never,
+		);
+		expect(after.messages).toEqual([]);
+	});
+
+	test("instance form pi-chromebook carries the same recipientId plus recipientInstanceId", async () => {
+		const t = createT();
+		const w = await seedWorld(t);
+		await setIds(t, "iris-rh", [w.pi]);
+		const m = await asOrg(t, "iris-rh").mutation(api.messages.sendMessage, {
+			from: "irisbot",
+			channel: "pi-chromebook",
+			content: "x",
+		});
+		expect(
+			(await receiptsOf(t, m)).map((r) => [
+				r.recipient,
+				r.recipientId,
+				r.recipientInstanceId,
+				r.tenantId,
+			]),
+		).toEqual([["pi", w.pi, "pi-chromebook", "iris-rh"]]);
+	});
+
+	test("a coordinator listed by NAME only (no ID) gets no recipientId, tenant still the client's", async () => {
+		const t = createT();
+		await seedWorld(t);
+		await setNames(t, "iris-rh", ["pi"]);
+		const m = await asOrg(t, "iris-rh").mutation(api.messages.sendMessage, {
+			from: "irisbot",
+			channel: "pi",
+			content: "x",
+		});
+		const r = await receiptsOf(t, m);
+		expect(r.map((x) => [x.recipient, x.recipientId, x.tenantId])).toEqual([
+			["pi", undefined, "iris-rh"],
+		]);
+	});
+
+	test("an unlisted fleet agent (sigma) is still bounced with pi listed, nothing written", async () => {
+		const t = createT();
+		const w = await seedWorld(t);
+		await setIds(t, "iris-rh", [w.pi]);
+		await expect(
+			asOrg(t, "iris-rh").mutation(api.messages.sendMessage, {
+				from: "irisbot",
+				channel: "sigma",
+				content: "x",
+			}),
+		).rejects.toThrow(BOUNCE);
+		expect(await writes(t)).toEqual({ messages: 0, receipts: 0 });
 	});
 });

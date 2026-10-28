@@ -617,6 +617,9 @@ async function sendMessageCore(
 		}
 
 		let recipients: string[];
+		// Listed fleet coordinators of the sender's client org, by normalised name,
+		// each with the agent ID the SAME mapping lists for it (name path only).
+		const coordinatorIdByName = new Map<string, Id<"agents">>();
 		if (channel === "broadcast") {
 			// Dynamic: get all registered orchestrators from profiles
 			const profiles = await ctx.db.query("profiles").collect();
@@ -773,6 +776,29 @@ async function sendMessageCore(
 				coordinators = (mapping?.addressableFleetCoordinators ?? [])
 					.filter((n) => n !== "*")
 					.map(normalizeOrchestratorId);
+				// A name admitted only as a listed coordinator is stamped with the ID
+				// that same mapping lists for it, judged by assertPrincipalListed
+				// (agentListedAsCoordinator): an active operator-org agent on the
+				// list. A name matching no listed ID keeps no recipientId.
+				for (const rawId of new Set(
+					mapping?.addressableFleetCoordinatorIds ?? [],
+				)) {
+					const agentId = ctx.db.normalizeId("agents", rawId);
+					if (agentId === null) continue;
+					const row = await ctx.db.get(agentId);
+					if (row === null || !row.isActive) continue;
+					const verdict = await agentListedAsCoordinator(
+						ctx,
+						row._id,
+						mapping?.addressableFleetCoordinatorIds,
+						SEND_DOOR,
+					);
+					if (!verdict.ok) continue;
+					const key = normalizeOrchestratorId(row.name);
+					if (coordinators.includes(key) && !coordinatorIdByName.has(key)) {
+						coordinatorIdByName.set(key, row._id);
+					}
+				}
 			}
 			const isReachable = (orchestrator: string): boolean =>
 				isOrchestratorOnOrgRoster(reach, orchestrator) ||
@@ -825,7 +851,12 @@ async function sendMessageCore(
 			const isInstance = !isHumanActorName(recipient) && recipient.includes("-");
 			const role = isInstance ? recipient.split("-")[0] : recipient;
 
-			const recipientId = await resolveActor(role);
+			// A listed fleet coordinator that is not on the sender's own roster
+			// resolves to no agent in the sender's org: it takes the ID its client
+			// mapping lists for it, else stays unset.
+			const recipientId =
+				(await resolveActor(role)) ??
+				coordinatorIdByName.get(normalizeOrchestratorId(role));
 			await ctx.db.insert("messageReceipts", {
 				messageId,
 				recipient: role,
