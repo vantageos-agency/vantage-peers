@@ -210,8 +210,9 @@ export function assertRowInVerifiedOrg(
  *     the org. A proven actor of ANOTHER org beside it is a contradiction and
  *     is refused (`actor-outside-verified-org`).
  *   - else a proven actor of a CLIENT org writes in that org (the precedent of
- *     `recurringTasks:create`). An actor of the operator org, or no proven
- *     actor, is the fleet's own write: undefined, unstamped, as before.
+ *     `recurringTasks:create`).
+ *   - the resolved org, from either source, being the OPERATOR org (or no org
+ *     at all) is the fleet's own write: undefined, unstamped, as before.
  *   - REFUSE, never store unstamped: a client-org actor whose org resolves to
  *     no ACTIVE mapping is refused (`write-org-unresolved`), naming the door.
  * It yields the org and its mapping; it widens nothing.
@@ -248,13 +249,14 @@ export async function serviceAccountWriteOrg(
 	const orgSlug = verifiedOrgSlug ?? provenActorOrg;
 	if (orgSlug === undefined) return undefined;
 	const mapping = await lookupOrgMapping(ctx, orgSlug);
-	if (verifiedOrgSlug === undefined) {
-		const stamp = {
-			...(mapping?.clerkOrgId !== undefined ? { id: mapping.clerkOrgId } : {}),
-			label: orgSlug,
-		};
-		if (isFleetStamp(stamp, await fleetOperatorRef(ctx.db))) return undefined;
-	}
+	// The fleet test runs on the resolved org WHATEVER its source: an operator
+	// org named by `verifiedOrg` (what an operator-org agent credential sends)
+	// is the fleet's own write, exactly like an operator-org proven actor.
+	const stamp = {
+		...(mapping?.clerkOrgId !== undefined ? { id: mapping.clerkOrgId } : {}),
+		label: orgSlug,
+	};
+	if (isFleetStamp(stamp, await fleetOperatorRef(ctx.db))) return undefined;
 	if (mapping === null || !mapping.isActive) {
 		refuse(
 			"write-org-unresolved",
