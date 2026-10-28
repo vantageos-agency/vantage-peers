@@ -2,6 +2,9 @@
 
 ## [Unreleased]
 
+### Fixed
+- **Cloud: the org picker's form post no longer fails with `session-required` in a real browser (task k17bmj21n9kwyfna5zbfk3822n8ghv6z).** The picker was served with `Referrer-Policy: no-referrer` (`mcp-server/server-http.ts` `respondToOutcome`) and a matching `<meta name="referrer">` (`mcp-server/src/authorize.ts`), so a browser sent `Origin: null` on the same-origin POST to `/authorize/org`, and the package's same-origin check refused it. Both are now `same-origin`: no Referer reaches Clerk or the client's `redirect_uri`, and the form post carries the real Origin. The Origin check is unchanged and `Origin: null` is still refused. The raw handshake redirect keeps `no-referrer`. Tests: `mcp-server/test/oauth-authorize-requires-user.test.ts`, `mcp-server/test/oauth-clerk-handshake.test.ts` (`-t "authorize org session"`).
+
 ### Docs
 - **Cloud: design note for durable scoped test identities (task k177c6v8kpcj4726zt3yx546fd8csfdt).** `analysis/durable-scoped-test-identities-2026-10-28.md`. Two dedicated client orgs that hold no client data (`probe-tenant-a`, `probe-tenant-b`), provisioned through the existing client-onboarding runbook: a seat bearer minted by the service account once per rotation, plus an agent credential minted by the org admin. Secrets live in Infisical, rotation is a recurring task 14 days before expiry, and the three-reading probe is own ALLOW, foreign DENY by error, then a master control. No code change. Provisioning waits for a Pi token, on dev first.
 

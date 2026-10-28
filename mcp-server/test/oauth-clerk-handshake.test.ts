@@ -262,4 +262,38 @@ describe("POST /authorize/org on a production-shaped Clerk instance", () => {
 		expect(res.status).toBe(403);
 		expect(await reasonOf(res)).toContain("session-required");
 	});
+
+	/**
+	 * The browser rule (Fetch, "serializing a request origin"): a request whose
+	 * method is neither GET nor HEAD and whose referrer policy is `no-referrer`
+	 * is sent with `Origin: null`; under `same-origin` a same-origin request
+	 * carries the real origin.
+	 */
+	function browserOriginFor(policy: string, pageOrigin: string): string {
+		return policy === "no-referrer" ? "null" : pageOrigin;
+	}
+
+	it("authorize org session: a no-referrer picker makes the browser send Origin null, which the session check refuses", async () => {
+		const origin = browserOriginFor("no-referrer", BASE);
+		expect(origin).toBe("null");
+		const res = await post({ cookie: await cookie(), origin });
+		expect(res.status).toBe(403);
+		expect(await reasonOf(res)).toContain("session-required");
+	});
+
+	it("authorize org session: a same-origin picker makes the browser send the real Origin, which passes the session check", async () => {
+		const origin = browserOriginFor("same-origin", BASE);
+		expect(origin).toBe(BASE);
+		const res = await post({ cookie: await cookie(), origin });
+		expect(await reasonOf(res)).not.toContain("session-required");
+	});
+
+	it("authorize org session: a real cross-origin POST is still refused", async () => {
+		const res = await post({
+			cookie: await cookie(),
+			origin: "https://evil.example",
+		});
+		expect(res.status).toBe(403);
+		expect(await reasonOf(res)).toContain("session-required");
+	});
 });

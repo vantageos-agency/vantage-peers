@@ -494,7 +494,7 @@ export function renderOrgPicker(model: OrgPickerModel): string {
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="referrer" content="no-referrer">
+<meta name="referrer" content="same-origin">
 <meta name="color-scheme" content="dark light">
 <title>Connect ${escapeHtml(clientName)} to VantagePeers</title>
 <style>${PICKER_STYLE}</style>

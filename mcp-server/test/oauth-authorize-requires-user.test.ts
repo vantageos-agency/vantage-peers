@@ -262,6 +262,17 @@ describe("GET /authorize needs a person", () => {
 		expect(res.headers.get("cache-control")).toBe("no-store");
 	});
 
+	it("authorize org session: the picker's referrer policy lets the browser send its Origin on the form post", async () => {
+		const res = await app.request(
+			authorizeUrl({ clientId: CLIENT_ID, redirectUri: REDIRECT, challenge }),
+			{ headers: { cookie: `__session=${await harness.session("user_1")}` } },
+		);
+		const html = await res.text();
+		expect(res.headers.get("referrer-policy")).toBe("same-origin");
+		expect(html).toContain('<meta name="referrer" content="same-origin">');
+		expect(html).not.toContain('content="no-referrer"');
+	});
+
 	it("the Clerk session may arrive as an Authorization bearer too", async () => {
 		const res = await app.request(
 			authorizeUrl({ clientId: CLIENT_ID, redirectUri: REDIRECT, challenge }),
