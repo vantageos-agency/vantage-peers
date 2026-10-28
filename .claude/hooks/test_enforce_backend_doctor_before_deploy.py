@@ -565,6 +565,8 @@ def test_ratchet_live_baseline_carries_its_command_and_never_rose():
             "c45c49ebe557ce33cb1a12f24540cbe9e2046ae0",
             # R-54 147 -> 142, R-55 31 -> 29, M21 unowned modules (task k1700vs1d5v3a82cgph88n5jbs8g6p8p)
             "93256251919d6726ee731a220a6c20e13d10436d",
+            # R-53 336 -> 331, one door-scope resolver + stamped-or-refused create, PR #1577 (task k176y0q5jcz3m8m673bf61kva98h49js)
+            "f37f6756a13bb7c03a234c6ce56a646b5fda43fd",
         }
         line = entry["output_line"]
         assert line.startswith((f"{rule}: ", f"{rule} VERDICT: ")), rule
