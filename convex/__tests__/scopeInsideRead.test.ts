@@ -36,6 +36,7 @@ import { convexTest } from "../../tests/fixtures/convexTestWithServiceAccount";
 import { describe, expect, test } from "vitest";
 import { testClerkOrgId } from "../../tests/fixtures/testClerkOrgId";
 import { seedRosterAgents } from "../../tests/lib/seedRosterAgents";
+import { withFleetClaim } from "../../tests/lib/withFleetClaim";
 import { api } from "../_generated/api";
 import schema from "../schema";
 
@@ -793,7 +794,7 @@ describe("stats:openTaskCountsByOrchestrator — a member counts its own org's o
 
 	test("MASTER: the service account counts both orgs", async () => {
 		const t = await world();
-		const rows = await asService(t).query(
+		const rows = await withFleetClaim(asService(t)).query(
 			api.stats.openTaskCountsByOrchestrator,
 			{},
 		);
@@ -813,7 +814,7 @@ describe("stats:fleetStats — fleet-wide totals are the fleet master's", () => 
 
 	test("MASTER: the real fleet totals are served", async () => {
 		const t = await world();
-		const stats = await asService(t).query(api.stats.fleetStats, {});
+		const stats = await withFleetClaim(asService(t)).query(api.stats.fleetStats, {});
 		expect(stats.tasks.total).toBe(5);
 		expect(stats.tasks.byStatus.todo).toBe(5);
 	});

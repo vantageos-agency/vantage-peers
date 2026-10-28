@@ -1,6 +1,11 @@
 import { v } from "convex/values";
 import { internalMutation, internalQuery, query } from "./_generated/server";
-import { withOrgScope } from "./lib/auth";
+import {
+	isMcpBoundMaster,
+	verifiedActorValidator,
+	withOrgScope,
+} from "./lib/auth";
+import { requireFleetAgentActor } from "./lib/fleetActors";
 import { requireFleetDoor } from "./lib/fleetStanding";
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -97,6 +102,10 @@ export const getLatest = query({
 	args: {
 		repo: v.optional(v.string()),
 		limit: v.optional(v.number()),
+		// The acting agent the MCP transport verified, for a call that reaches
+		// Convex as the fleet service account (which carries no organisation of
+		// its own). Required of that account: the claimless call is refused.
+		verifiedActor: v.optional(verifiedActorValidator),
 	},
 	returns: v.array(
 		v.object({
@@ -159,11 +168,24 @@ export const getLatest = query({
 		// signed-in-but-not-yet-onboarded caller's throw to crash, and that caller
 		// must not be handed a fabricated absence either.
 		const scope = await withOrgScope(ctx, { refuseWithoutThrow: true });
-		const fleet = await requireFleetDoor(ctx, scope, "issueStatsQueries:getLatest", {
+		// R-54: the fleet service account is master over every tenant, so it is
+		// served only with the acting agent's verified ID. `requireFleetAgentActor`
+		// believes the claim from that account alone, loads the agents row BY ID
+		// and refuses an agent of any other organisation than the operator's;
+		// with no claim it refuses (RBAC_DENIED `verified-actor-required`). A
+		// dashboard session is not the service account and carries no claim.
+		if (isMcpBoundMaster(scope) || args.verifiedActor !== undefined) {
+			await requireFleetAgentActor(ctx, scope, args.verifiedActor, "issueStatsQueries:getLatest");
+		}
+		// Fleet only. An ordinary org member is RESOLVED and is still not the fleet:
+		// it is refused by RAISING (`masterOnly`), never answered `[]`, which is the
+		// byte-for-byte shape of "there are no stats". No subscriber exists
+		// (enumeration above), so a raise crashes no render.
+		await requireFleetDoor(ctx, scope, "issueStatsQueries:getLatest", {
 			alsoRefusePreOrg: true,
+			masterOnly: true,
 			operatorHumanMayRead: true,
 		});
-		if (!fleet) return [];
 
 		const limit = args.limit ?? 30;
 		let results;

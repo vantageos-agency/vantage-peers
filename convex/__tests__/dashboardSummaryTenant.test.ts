@@ -19,6 +19,7 @@ import { convexTest } from "../../tests/fixtures/convexTestWithServiceAccount";
 import { describe, expect, test } from "vitest";
 import { seedRosterAgent } from "../../tests/fixtures/rosterAgent";
 import { testClerkOrgId } from "../../tests/fixtures/testClerkOrgId";
+import { withFleetClaim } from "../../tests/lib/withFleetClaim";
 import { api } from "../_generated/api";
 import type { Id } from "../_generated/dataModel";
 import schema from "../schema";
@@ -273,7 +274,7 @@ describe("stats:orchestratorStats", () => {
 	test("master is unchanged: every orchestrator", async () => {
 		const t = createT();
 		await seed(t);
-		const r = await asMaster(t).query(api.stats.orchestratorStats, {
+		const r = await withFleetClaim(asMaster(t)).query(api.stats.orchestratorStats, {
 			window: "7d",
 		});
 		expect(r.map((o) => o.orchestratorId).sort()).toEqual([

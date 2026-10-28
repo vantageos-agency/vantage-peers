@@ -447,6 +447,21 @@ describe("withVerifiedActor", () => {
 		expect(calls[1].args).toHaveProperty("verifiedActor");
 	});
 
+	it("improvisationDigest:scanWindow (a query door) carries the resolved agent's verifiedActor", async () => {
+		const seen: Array<{ name: string; args: Record<string, unknown> }> = [];
+		const client = {
+			mutation: async () => null,
+			query: async (name: string, args: Record<string, unknown>) => {
+				seen.push({ name, args });
+				return null;
+			},
+		};
+		await withVerifiedActor(client, ctx).query("improvisationDigest:scanWindow", {
+			windowDays: 7,
+		});
+		expect(seen[0].args).toHaveProperty("verifiedActor");
+	});
+
 	it("does not overwrite a proof the call already carries", async () => {
 		const { client, calls } = fakeClient();
 		const wrapped = withVerifiedActor(client, ctx);
@@ -470,6 +485,7 @@ describe("withVerifiedActor", () => {
 			"briefingNotes",
 			"profiles",
 			"missions",
+			"improvisationDigest",
 		]) {
 			const src = readFileSync(
 				resolve(__dirname, `../../convex/${file}.ts`),

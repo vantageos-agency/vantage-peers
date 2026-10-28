@@ -26,6 +26,7 @@
 import { convexTest } from "../../tests/fixtures/convexTestWithServiceAccount";
 import { describe, expect, test } from "vitest";
 import { testClerkOrgId } from "../../tests/fixtures/testClerkOrgId";
+import { withFleetClaim } from "../../tests/lib/withFleetClaim";
 import { api } from "../_generated/api";
 import schema from "../schema";
 
@@ -76,7 +77,7 @@ describe("stats.openTaskCountsByOrchestrator — TRUE non-page-capped per-orches
 			await seedTask(ctx, { title: "review-1", status: "review" });
 		});
 
-		const result = await t.withIdentity({ subject: "test-service-account-user-id" }).query(api.stats.openTaskCountsByOrchestrator, {});
+		const result = await withFleetClaim(t.withIdentity({ subject: "test-service-account-user-id" })).query(api.stats.openTaskCountsByOrchestrator, {});
 		const sigma = result.find((r) => r.orchestrator === "sigma");
 
 		expect(sigma).toBeDefined();
@@ -98,7 +99,7 @@ describe("stats.openTaskCountsByOrchestrator — TRUE non-page-capped per-orches
 			await seedTask(ctx, { title: "failed-1", status: "failed" });
 		});
 
-		const result = await t.withIdentity({ subject: "test-service-account-user-id" }).query(api.stats.openTaskCountsByOrchestrator, {});
+		const result = await withFleetClaim(t.withIdentity({ subject: "test-service-account-user-id" })).query(api.stats.openTaskCountsByOrchestrator, {});
 		const sigma = result.find((r) => r.orchestrator === "sigma");
 
 		expect(sigma!.totalOpen).toBe(1);
@@ -115,7 +116,7 @@ describe("stats.openTaskCountsByOrchestrator — TRUE non-page-capped per-orches
 			await seedTask(ctx, { title: "pi-review", assignedTo: "pi", status: "review" });
 		});
 
-		const result = await t.withIdentity({ subject: "test-service-account-user-id" }).query(api.stats.openTaskCountsByOrchestrator, {});
+		const result = await withFleetClaim(t.withIdentity({ subject: "test-service-account-user-id" })).query(api.stats.openTaskCountsByOrchestrator, {});
 		const kappa = result.find((r) => r.orchestrator === "kappa");
 		const pi = result.find((r) => r.orchestrator === "pi");
 
@@ -136,7 +137,7 @@ describe("stats.openTaskCountsByOrchestrator — TRUE non-page-capped per-orches
 			await seedProfile(ctx, "quiet-station");
 		});
 
-		const result = await t.withIdentity({ subject: "test-service-account-user-id" }).query(api.stats.openTaskCountsByOrchestrator, {});
+		const result = await withFleetClaim(t.withIdentity({ subject: "test-service-account-user-id" })).query(api.stats.openTaskCountsByOrchestrator, {});
 		const quiet = result.find((r) => r.orchestrator === "quiet-station");
 
 		expect(quiet).toBeDefined();
@@ -162,7 +163,7 @@ describe("stats.openTaskCountsByOrchestrator — TRUE non-page-capped per-orches
 			task._creationTime < min._creationTime ? task : min,
 		);
 
-		const result = await t.withIdentity({ subject: "test-service-account-user-id" }).query(api.stats.openTaskCountsByOrchestrator, {});
+		const result = await withFleetClaim(t.withIdentity({ subject: "test-service-account-user-id" })).query(api.stats.openTaskCountsByOrchestrator, {});
 		const kappa = result.find((r) => r.orchestrator === "kappa");
 
 		expect(kappa!.oldestOpenMs).toBe(earliest._creationTime);
@@ -244,7 +245,7 @@ describe("stats.openTaskCountsByOrchestrator cross-tenant isolation", () => {
 
 		const tMaster = t.withIdentity({ subject: "test-service-account-user-id" });
 
-		const result = await tMaster.query(
+		const result = await withFleetClaim(tMaster).query(
 			api.stats.openTaskCountsByOrchestrator,
 			{},
 		);

@@ -61,6 +61,7 @@
 
 import { convexTest } from "../../tests/fixtures/convexTestWithServiceAccount";
 import { describe, expect, test } from "vitest";
+import { withFleetClaim } from "../../tests/lib/withFleetClaim";
 import { api } from "../_generated/api";
 import schema from "../schema";
 
@@ -83,9 +84,11 @@ const modules = Object.fromEntries(
 const asFleet = <T extends { withIdentity: (i: { subject: string }) => unknown }>(
 	t: T,
 ) =>
-	t.withIdentity({ subject: "test-service-account-user-id" }) as ReturnType<
-		T["withIdentity"]
-	>;
+	withFleetClaim(
+		t.withIdentity({ subject: "test-service-account-user-id" }) as ReturnType<
+			T["withIdentity"]
+		>,
+	);
 
 // ─── Seed helpers ─────────────────────────────────────────────────────────────
 

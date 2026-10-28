@@ -1,3 +1,4 @@
+import { hasFleetRead } from "@vantageos/cloud-identity";
 import { v } from "convex/values";
 import type { Doc } from "./_generated/dataModel";
 import type { QueryCtx } from "./_generated/server";
@@ -7,7 +8,10 @@ import {
 	requireResolvedCaller,
 	requireScope,
 	filterByOrgScope,
+	isMcpBoundMaster,
+	verifiedActorValidator,
 } from "./lib/auth";
+import { requireFleetAgentActor } from "./lib/fleetActors";
 import { requireFleetDoor } from "./lib/fleetStanding";
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -70,6 +74,9 @@ function dayLabel(ts: number): string {
 export const orchestratorStats = query({
 	args: {
 		window: v.union(v.literal("24h"), v.literal("7d"), v.literal("30d")),
+		// The acting agent the MCP transport verified, for a call that reaches
+		// Convex as the fleet service account. Required of that account.
+		verifiedActor: v.optional(verifiedActorValidator),
 	},
 	returns: v.array(
 		v.object({
@@ -93,6 +100,15 @@ export const orchestratorStats = query({
 		// of a throw (the requireScope call below would otherwise throw for
 		// that same caller).
 		const scope = await withOrgScope(ctx, { refuseWithoutThrow: true });
+		// R-54: the fleet service account is master over every tenant, so it is
+		// served only with the acting agent's verified ID. `requireFleetAgentActor`
+		// believes the claim from that account alone, loads the agents row BY ID
+		// and refuses an agent of any other organisation than the operator's;
+		// with no claim it refuses (RBAC_DENIED `verified-actor-required`). A
+		// dashboard session is not the service account and carries no claim.
+		if (isMcpBoundMaster(scope) || args.verifiedActor !== undefined) {
+			await requireFleetAgentActor(ctx, scope, args.verifiedActor, "stats:orchestratorStats");
+		}
 		// Coded refusal, never an empty array: anonymous and signed-in-no-org
 		// callers RAISE RBAC_DENIED (the dashboard route error boundary renders
 		// it as a refusal), a member lacking the scope is refused by requireScope.
@@ -127,20 +143,29 @@ export const orchestratorStats = query({
 		// No index needed here since we aggregate across ALL orchestrators.
 		// The by_assignee index would require N separate index scans (one per
 		// orchestrator), which is worse than one linear pass when N > 2.
-		// Org member: read the member's OWN org through the tenant index so the cap
-		// bounds the org, never the fleet (a fleet-wide take(TASK_CAP) returned the
-		// oldest rows of every tenant and silently dropped a young org's rows).
+		// R-55: every caller-dependent predicate is applied BEFORE the cap.
+		//   - tenant: the member's own org leads the index range (`by_orgId`), so a
+		//     foreign org's row is never read and cannot occupy a slot;
+		//   - roster: `filterByOrgScope` runs per streamed row, ahead of the count
+		//     that the cap bounds, so a row the roster does not admit never uses a
+		//     slot either (a flood of out-of-roster rows older than the cap used to
+		//     push a rostered row out of the window and the aggregate silently
+		//     dropped it).
+		// The aggregates below are computed over this narrowed set.
 		// Unstamped rows never match `eq("orgId", slug)`: master-only.
 		const memberOrg = fleet ? null : scope.orgSlug;
-		const allTasks =
-			memberOrg !== null
-				? await ctx.db
-						.query("tasks")
-						.withIndex("by_orgId", (q) => q.eq("orgId", memberOrg))
-						.take(TASK_CAP)
-				: await ctx.db.query("tasks").take(TASK_CAP);
-		// Apply org scope filter before aggregation
-		const tasks = filterByOrgScope(allTasks, scope);
+		const tasks: Doc<"tasks">[] = [];
+		if (memberOrg !== null) {
+			for await (const task of ctx.db
+				.query("tasks")
+				.withIndex("by_orgId", (q) => q.eq("orgId", memberOrg))) {
+				if (filterByOrgScope([task], scope).length === 0) continue;
+				tasks.push(task);
+				if (tasks.length >= TASK_CAP) break;
+			}
+		} else if (hasFleetRead(scope)) {
+			tasks.push(...(await ctx.db.query("tasks").take(TASK_CAP)));
+		}
 
 		// Group tasks by assignedTo
 		type TaskRow = (typeof tasks)[number];
@@ -380,7 +405,12 @@ function emptyBucket(): OpenBucket {
 }
 
 export const openTaskCountsByOrchestrator = query({
-	args: {},
+	args: {
+		// The acting agent the MCP transport verified, for a call that reaches
+		// Convex as the fleet service account (which carries no organisation of
+		// its own). Required of that account: the claimless call is refused.
+		verifiedActor: v.optional(verifiedActorValidator),
+	},
 	returns: v.array(
 		v.object({
 			orchestrator: v.string(),
@@ -392,12 +422,21 @@ export const openTaskCountsByOrchestrator = query({
 			oldestOpenMs: v.union(v.number(), v.null()),
 		}),
 	),
-	handler: async (ctx) => {
+	handler: async (ctx, args) => {
 		// Fleet-operations surface — same gate as fleetStats.
 		// R-50: reactively-subscribed public query — refuseWithoutThrow
 		// narrows the signed-in-no-org branch to a typed-empty result instead
 		// of a throw.
 		const scope = await withOrgScope(ctx, { refuseWithoutThrow: true });
+		// R-54: the fleet service account is master over every tenant, so it is
+		// served only with the acting agent's verified ID. `requireFleetAgentActor`
+		// believes the claim from that account alone, loads the agents row BY ID
+		// and refuses an agent of any other organisation than the operator's;
+		// with no claim it refuses (RBAC_DENIED `verified-actor-required`). A
+		// dashboard session is not the service account and carries no claim.
+		if (isMcpBoundMaster(scope) || args.verifiedActor !== undefined) {
+			await requireFleetAgentActor(ctx, scope, args.verifiedActor, "stats:openTaskCountsByOrchestrator");
+		}
 		if (scope.refused) return [];
 		if (!scope.isMaster) {
 			requireScope(scope, "view-stats-aggregated");
@@ -484,7 +523,12 @@ export const openTaskCountsByOrchestrator = query({
 });
 
 export const fleetStats = query({
-	args: {},
+	args: {
+		// The acting agent the MCP transport verified, for a call that reaches
+		// Convex as the fleet service account (which carries no organisation of
+		// its own). Required of that account: the claimless call is refused.
+		verifiedActor: v.optional(verifiedActorValidator),
+	},
 	returns: v.object({
 		bus: v.object({ total: v.number() }),
 		missions: v.object({
@@ -519,12 +563,21 @@ export const fleetStats = query({
 		}),
 		generatedAt: v.number(),
 	}),
-	handler: async (ctx) => {
+	handler: async (ctx, args) => {
 		// ── Beta multi-tenant scope gate ─────────────────────────────────────
 		// R-50: reactively-subscribed public query — refuseWithoutThrow
 		// narrows the signed-in-no-org branch to a typed-empty (all-zero)
 		// result instead of a throw.
 		const scope = await withOrgScope(ctx, { refuseWithoutThrow: true });
+		// R-54: the fleet service account is master over every tenant, so it is
+		// served only with the acting agent's verified ID. `requireFleetAgentActor`
+		// believes the claim from that account alone, loads the agents row BY ID
+		// and refuses an agent of any other organisation than the operator's;
+		// with no claim it refuses (RBAC_DENIED `verified-actor-required`). A
+		// dashboard session is not the service account and carries no claim.
+		if (isMcpBoundMaster(scope) || args.verifiedActor !== undefined) {
+			await requireFleetAgentActor(ctx, scope, args.verifiedActor, "stats:fleetStats");
+		}
 		if (scope.refused) {
 			return {
 				bus: { total: 0 },
