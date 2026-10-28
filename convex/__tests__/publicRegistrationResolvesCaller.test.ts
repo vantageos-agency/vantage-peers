@@ -80,6 +80,7 @@ import { convexTest } from "../../tests/fixtures/convexTestWithServiceAccount";
 import { describe, expect, test } from "vitest";
 import { seedRosterAgent } from "../../tests/fixtures/rosterAgent";
 import { testClerkOrgId } from "../../tests/fixtures/testClerkOrgId";
+import { withFleetClaim } from "../../tests/lib/withFleetClaim";
 import { api } from "../_generated/api";
 import schema from "../schema";
 
@@ -136,9 +137,11 @@ const asNoOrg = (t: T) =>
  * withOrgScope. Used ONLY in ALLOW poles — never to prove a denial.
  */
 const asMaster = (t: T) =>
-	t.withIdentity({ subject: SERVICE_ACCOUNT_USER_ID } as Parameters<
-		typeof t.withIdentity
-	>[0]);
+	withFleetClaim(
+		t.withIdentity({ subject: SERVICE_ACCOUNT_USER_ID } as Parameters<
+			typeof t.withIdentity
+		>[0]),
+	);
 
 async function seedOrgMapping(t: T, clerkOrgSlug: string, roster = ["sigma"]) {
 	await t.run(async (ctx) => {
@@ -601,6 +604,7 @@ for (const site of masterOnlyReads) {
 			const got = () => site.read(asOrgMember(t, "org-a"));
 			if (
 				site.registration === "issues:getStats" ||
+				site.registration === "issueStatsQueries:getLatest" ||
 				site.registration === "errorMonitorFilters:listFilterRules"
 			) {
 				// issues:getStats: a zeroed aggregate is a FABRICATED MEASUREMENT, never
@@ -608,6 +612,8 @@ for (const site of masterOnlyReads) {
 				// and `[]` is the bytes of "no rules exist" -- the member is RAISED at
 				// (task k177jrz8k2dr7naqe7yzmp0px18g77n5, the follow-up the
 				// refusal-is-distinguishable-from-absence rule listed for this site).
+				// issueStatsQueries:getLatest: no reactive subscriber either, fleet only
+				// (task k1700vs1d5v3a82cgph88n5jbs8g6p8p).
 				await expectRefusalCarryingItsCode(got, site.registration);
 			} else if (
 				site.registration === "mandates:list" ||

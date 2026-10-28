@@ -22,6 +22,7 @@
 import { describe, expect, test } from "vitest";
 import { convexTest } from "../../tests/fixtures/convexTestWithServiceAccount";
 import { testClerkOrgId } from "../../tests/fixtures/testClerkOrgId";
+import { withFleetClaim } from "../../tests/lib/withFleetClaim";
 import { api } from "../_generated/api";
 import schema from "../schema";
 
@@ -106,7 +107,7 @@ const refusal = async (p: Promise<unknown>): Promise<string> => {
 describe("PERMISSION", () => {
 	test("the service account and the operator org's admin read every tenant's rows", async () => {
 		const t = await seedWorld();
-		for (const caller of [asService(t), asMember(t, OP, "org:admin")]) {
+		for (const caller of [withFleetClaim(asService(t)), asMember(t, OP, "org:admin")]) {
 			const summary = await caller.query(api.dashboard.getDashboardSummary, {});
 			expect(summary.tasksInProgress).toBe(3);
 			const projects = await caller.query(api.dashboard.getProjectSummary, {});

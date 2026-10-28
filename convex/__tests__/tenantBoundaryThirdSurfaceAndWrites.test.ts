@@ -35,6 +35,7 @@
 import { convexTest } from "../../tests/fixtures/convexTestWithServiceAccount";
 import { describe, expect, test } from "vitest";
 import { testClerkOrgId } from "../../tests/fixtures/testClerkOrgId";
+import { withFleetClaim } from "../../tests/lib/withFleetClaim";
 import { api } from "../_generated/api";
 import type { Id } from "../_generated/dataModel";
 import schema from "../schema";
@@ -87,9 +88,11 @@ const asMember = (t: T, subject: string, orgSlug: string) => {
 type Acting = ReturnType<typeof asMember>;
 
 const asMaster = (t: T) =>
-	t.withIdentity({ subject: SERVICE_ACCOUNT_USER_ID } as Parameters<
-		T["withIdentity"]
-	>[0]);
+	withFleetClaim(
+		t.withIdentity({ subject: SERVICE_ACCOUNT_USER_ID } as Parameters<
+			T["withIdentity"]
+		>[0]),
+	);
 
 /**
  * Both orgs carry the SAME orchestrator name "sigma" in their roster — the

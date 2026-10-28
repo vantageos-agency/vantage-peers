@@ -53,6 +53,7 @@ import { convexTest } from "../../tests/fixtures/convexTestWithServiceAccount";
 import { describe, expect, test } from "vitest";
 import { seedRosterAgent } from "../../tests/fixtures/rosterAgent";
 import { testClerkOrgId } from "../../tests/fixtures/testClerkOrgId";
+import { withFleetClaim } from "../../tests/lib/withFleetClaim";
 import { api } from "../_generated/api";
 import schema from "../schema";
 
@@ -417,7 +418,8 @@ type Site = {
 	emptyValue: unknown;
 };
 
-const asMasterAllow = async (t: T) => asMaster(t) as unknown as T;
+const asMasterAllow = async (t: T) =>
+	withFleetClaim(asMaster(t)) as unknown as T;
 const asRosterAllow = async (t: T) => {
 	await seedOrgMapping(t, "org-a", ["sigma"]);
 	return asOrgMember(t, "org-a") as unknown as T;

@@ -190,10 +190,12 @@ const taskBase = {
 
 // ─────────────────────────────────────────────────────────────────────────────
 describe("contract: the manifest says the new args exist", () => {
-	test("BACKEND_CONTRACT_VERSION is 3", () => {
+	test("BACKEND_CONTRACT_VERSION is 4", () => {
 		// 3: memberWriterRoles:assertPersonMayWrite takes the verifiedPerson claim
 		// instead of an organisation and a role argument (task k177jrz8k2dr7naqe7yzmp0px18g77n5).
-		expect(BACKEND_CONTRACT_VERSION).toBe(3);
+		// 4: improvisationDigest:scanWindow takes the verifiedActor claim and
+		// refuses the claimless service account (task k1700vs1d5v3a82cgph88n5jbs8g6p8p).
+		expect(BACKEND_CONTRACT_VERSION).toBe(4);
 	});
 });
 

@@ -80,6 +80,10 @@ export const VERIFIED_ACTOR_DOORS: ReadonlySet<string> = new Set([
 	"profiles:getProfile",
 	"profiles:upsertProfile",
 	"profiles:updateDynamic",
+	// The improvisation digest (M21): the fleet service account reads every tenant,
+	// so Convex serves it only with the acting agent's verified ID and refuses the
+	// claimless call (RBAC_DENIED verified-actor-required).
+	"improvisationDigest:scanWindow",
 ]);
 
 export type VerifiedActorArg = { agentId: string; orgSlug: string };

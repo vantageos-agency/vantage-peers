@@ -4,6 +4,7 @@ import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import { api } from "./_generated/api";
 import schema from "./schema";
 import { seedFleetAgents } from "../tests/lib/seedFleetAgents";
+import { withFleetClaim } from "../tests/lib/withFleetClaim";
 
 const FILE_LABELS = ["eta", "kappa", "pi", "sigma"];
 
@@ -48,9 +49,11 @@ function createTestConvex() {
 	// identity only resolves to master when its subject matches the
 	// recognized CLERK_SERVICE_ACCOUNT_USER_ID (see vitest.config.ts) — any
 	// other no-org identity is refused.
-	return convexTest(schema, modules).withIdentity({
-		subject: "test-service-account-user-id",
-	});
+	return withFleetClaim(
+		convexTest(schema, modules).withIdentity({
+			subject: "test-service-account-user-id",
+		}),
+	);
 }
 
 // ── Seed helpers ─────────────────────────────────────────────────────────────
