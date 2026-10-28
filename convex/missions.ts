@@ -1,6 +1,6 @@
 import { v } from "convex/values";
 import { ConvexError } from "convex/values";
-import { sameOrg } from "@vantageos/cloud-identity";
+import { isServiceAccountScope, sameOrg } from "@vantageos/cloud-identity";
 import { mutation, query, internalQuery, internalMutation } from "./_generated/server";
 import { api } from "./_generated/api";
 import {
@@ -12,6 +12,7 @@ import type { QueryCtx } from "./_generated/server";
 import type { Doc, Id } from "./_generated/dataModel";
 import { creatorValidator } from "./schema";
 import {
+	lookupOrgMapping,
 	withOrgScope,
 	requireAgentCredentialMatch,
 	requireScope,
@@ -274,9 +275,27 @@ export const create = mutation({
 					verifiedActor: args.verifiedActor,
 				});
 			}
+			// Each proof's org label is resolved to its stored mapping row here; the
+			// decision compares rows (serviceAccountWriteOrg).
+			const asServiceAccount = isServiceAccountScope(transportScope);
+			const actorLabel = asServiceAccount
+				? args.verifiedActor?.orgSlug
+				: undefined;
 			const forOrg = await serviceAccountWriteOrg(ctx, transportScope, {
-				verifiedOrgSlug,
-				provenActorOrg: args.verifiedActor?.orgSlug,
+				verified:
+					asServiceAccount && verifiedOrgSlug !== undefined
+						? {
+								label: verifiedOrgSlug,
+								mapping: await lookupOrgMapping(ctx, verifiedOrgSlug),
+							}
+						: undefined,
+				provenActor:
+					actorLabel === undefined
+						? undefined
+						: {
+								label: actorLabel,
+								mapping: await lookupOrgMapping(ctx, actorLabel),
+							},
 				door: "missions:create",
 			});
 			if (forOrg !== undefined) {

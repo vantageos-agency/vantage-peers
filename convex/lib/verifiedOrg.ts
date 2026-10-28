@@ -1,4 +1,4 @@
-import { isFleetStamp } from "@vantageos/cloud-identity";
+import { isFleetStamp, isServiceAccountScope } from "@vantageos/cloud-identity";
 import { ConvexError, v } from "convex/values";
 import type { MutationCtx, QueryCtx } from "../_generated/server";
 import {
@@ -191,6 +191,14 @@ export function assertRowInVerifiedOrg(
 	}
 }
 
+export type WriteOrgCandidate = {
+	// The organisation's label, as the proof named it (for the refusal text and
+	// the fleet stamp's label only; nothing is decided on it).
+	label: string;
+	// The mapping row that label resolves to (`lookupOrgMapping`), or null.
+	mapping: OrgMappingView | null;
+};
+
 /**
  * The organisation a fleet-service-account CREATE is made for, or undefined
  * when the write is the fleet's own (task k176y0q5jcz3m8m673bf61kva98h49js).
@@ -206,8 +214,7 @@ export function assertRowInVerifiedOrg(
  *
  * WHAT. Only for a SERVICE-ACCOUNT transport (anyone else: undefined, the
  * door's own scope stands, byte-unchanged).
- *   - `verifiedOrgSlug` (already resolved active by `resolveVerifiedOrg`) is
- *     the org. A proven actor of ANOTHER org beside it is a contradiction and
+ *   - `verified` (already resolved active by `resolveVerifiedOrg`) is the org. A proven actor of ANOTHER org beside it is a contradiction and
  *     is refused (`actor-outside-verified-org`).
  *   - else a proven actor of a CLIENT org writes in that org (the precedent of
  *     `recurringTasks:create`).
@@ -215,54 +222,54 @@ export function assertRowInVerifiedOrg(
  *     at all) is the fleet's own write: undefined, unstamped, as before.
  *   - REFUSE, never store unstamped: a client-org actor whose org resolves to
  *     no ACTIVE mapping is refused (`write-org-unresolved`), naming the door.
- * It yields the org and its mapping; it widens nothing.
+ * It yields the org and its mapping; it widens nothing. The caller resolves
+ * each proof's label to its mapping row (`lookupOrgMapping`) and hands both in;
+ * this function decides on the stored rows, never on a label comparison.
  */
 export async function serviceAccountWriteOrg(
 	ctx: MutationCtx,
 	transportScope: OrgScope,
 	input: {
-		verifiedOrgSlug: string | undefined;
-		provenActorOrg: string | undefined;
+		verified: WriteOrgCandidate | undefined;
+		provenActor: WriteOrgCandidate | undefined;
 		door: string;
 	},
 ): Promise<{ orgSlug: string; mapping: OrgMappingView } | undefined> {
+	if (!isServiceAccountScope(transportScope)) return undefined;
+	const { verified, provenActor, door } = input;
+	// Two proofs name the same organisation only when they resolve to the SAME
+	// stored mapping row, compared by row ID. A proven actor whose org resolves
+	// to no row beside a verified org is a contradiction as well.
 	if (
-		!(
-			transportScope.isMaster &&
-			transportScope.masterSource === "service-account"
-		)
-	) {
-		return undefined;
-	}
-	const { verifiedOrgSlug, provenActorOrg, door } = input;
-	if (
-		verifiedOrgSlug !== undefined &&
-		provenActorOrg !== undefined &&
-		provenActorOrg !== verifiedOrgSlug
+		verified !== undefined &&
+		provenActor !== undefined &&
+		(verified.mapping === null ||
+			provenActor.mapping === null ||
+			verified.mapping._id !== provenActor.mapping._id)
 	) {
 		refuse(
 			"actor-outside-verified-org",
 			door,
-			`the acting agent belongs to organisation "${provenActorOrg}" and the bearer was verified for "${verifiedOrgSlug}"`,
+			`the acting agent belongs to organisation "${provenActor.label}" and the bearer was verified for "${verified.label}"`,
 		);
 	}
-	const orgSlug = verifiedOrgSlug ?? provenActorOrg;
-	if (orgSlug === undefined) return undefined;
-	const mapping = await lookupOrgMapping(ctx, orgSlug);
+	const chosen = verified ?? provenActor;
+	if (chosen === undefined) return undefined;
+	const { label, mapping } = chosen;
 	// The fleet test runs on the resolved org WHATEVER its source: an operator
 	// org named by `verifiedOrg` (what an operator-org agent credential sends)
 	// is the fleet's own write, exactly like an operator-org proven actor.
 	const stamp = {
 		...(mapping?.clerkOrgId !== undefined ? { id: mapping.clerkOrgId } : {}),
-		label: orgSlug,
+		label,
 	};
 	if (isFleetStamp(stamp, await fleetOperatorRef(ctx.db))) return undefined;
 	if (mapping === null || !mapping.isActive) {
 		refuse(
 			"write-org-unresolved",
 			door,
-			`this write is made for organisation "${orgSlug}", which resolves to no active organisation; it is refused rather than stored with no organisation`,
+			`this write is made for organisation "${label}", which resolves to no active organisation; it is refused rather than stored with no organisation`,
 		);
 	}
-	return { orgSlug, mapping };
+	return { orgSlug: label, mapping };
 }
