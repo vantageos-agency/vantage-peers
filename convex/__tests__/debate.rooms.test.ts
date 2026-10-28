@@ -827,6 +827,45 @@ describe("B16 tenancy and listing", () => {
 		expect(await asAdmin(w.t).query(api.debate.getRoom, { roomId })).toBeNull();
 	});
 
+	test("the agent write goes through resolveAgentWriter: ALLOWED for a valid claim, REFUSED claimless, REFUSED across organisations", async () => {
+		const w = await world();
+		const roomId = await makeRoom(w, withHuman());
+		await postOperator(w, roomId, 1);
+		// ALLOWED: the service account vouches for the room's own agent in its own organisation.
+		const ok = await postAgent(w, "sigma", roomId, 2, "an answer");
+		expect(ok).toMatchObject({ accepted: true });
+		// REFUSED: the service account without a claim (it acts in an organisation only through one).
+		const claimless = await failure(
+			svc(w.t).mutation(api.debate.postTurn, { roomId, turnSeq: 3, text: "x" }),
+		);
+		expect(claimless).toContain("RBAC_DENIED");
+		expect(claimless).toContain("debate:postTurn");
+		// REFUSED: another organisation's agent (resolved by its stored IDs) is no participant; nothing is written.
+		const before = await turnsOf(w, roomId);
+		const crossOrg = await svc(w.t).mutation(api.debate.postTurn, {
+			roomId,
+			turnSeq: 3,
+			text: "x",
+			verifiedActor: { agentId: w.agents.foreignSigma, orgSlug: ORG },
+		});
+		expect(asRefused(crossOrg)).toEqual({ refused: "not_a_participant", awaiting: null, turnSeq: 3 });
+		expect(await turnsOf(w, roomId)).toEqual(before);
+		// REFUSED: the scoped member cannot vouch for an agent (covered by the next test); a deleted agent is refused by the package.
+		const gone = await w.t.run(async (ctx) => {
+			await ctx.db.delete(w.agents.eta);
+			return w.agents.eta;
+		});
+		const missing = await failure(
+			svc(w.t).mutation(api.debate.postTurn, {
+				roomId,
+				turnSeq: 3,
+				text: "x",
+				verifiedActor: { agentId: gone, orgSlug: ORG },
+			}),
+		);
+		expect(missing).toContain("RBAC_DENIED");
+	});
+
 	test("an agent whose verifiedActor is not what the service account may vouch for is refused", async () => {
 		const w = await world();
 		const roomId = await makeRoom(w, withHuman());
@@ -839,7 +878,9 @@ describe("B16 tenancy and listing", () => {
 				verifiedActor: { agentId: w.agents.sigma, orgSlug: ORG },
 			}),
 		);
-		expect(msg).toContain("verified-actor-not-trusted");
+		expect(msg).toContain("RBAC_DENIED");
+		expect(msg).toContain("standing-not-allowed");
+		expect(msg).toContain("debate:postTurn");
 	});
 });
 

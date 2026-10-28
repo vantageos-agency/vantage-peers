@@ -2,6 +2,8 @@ import {
 	type ActingPrincipal,
 	assertOrgAdmin,
 	assertTargetBelongsTo,
+	IdentityRefusalError,
+	resolveAgentWriter,
 	resolveCallerFromAgentCredential,
 	resolveCallerFromClaims,
 	resolveWriterRole,
@@ -53,7 +55,7 @@ import {
 	validateSettings,
 	validateTemplate,
 } from "./lib/debateTemplate";
-import { isHumanActorName, memberActorOf, resolveHumanActor } from "./lib/humanActor";
+import { isHumanActorName, memberActorOf } from "./lib/humanActor";
 import { orgByIdLookups, orgByIdPrincipalLookups } from "./lib/orgIdLookups";
 import { refuseWith as refuseWithPerson } from "./lib/personPrincipal";
 import { loadMemberWriterRoles } from "./memberWriterRoles";
@@ -214,6 +216,38 @@ async function roomCaller(
 		};
 	}
 	return { kind: "none" };
+}
+
+/**
+ * The agent behind a WRITE a `verifiedActor` vouches for, resolved by the package's
+ * one decision (`resolveAgentWriter`): the caller must be the fleet service account,
+ * the claim exactly `{ agentId, orgId }`, and the agent row (read BY ID) active and
+ * stamped with that organisation. The claim's organisation ID is the one stamped on
+ * the agent's own row; the slug the transport also sends authorises nothing, because
+ * a name never selects or authorises a row. Whether the agent may speak in a room is
+ * decided afterwards by stored IDs (`participantOf`). The package's refusal is
+ * relayed in this backend's wire shape (`refusalError`), unchanged in code, reason
+ * and door.
+ */
+async function agentWriterOf(
+	ctx: Ctx,
+	scope: OrgScope,
+	agentId: Id<"agents">,
+	door: string,
+): Promise<Caller> {
+	const row = await ctx.db.get(agentId);
+	if (row === null || row.clerkOrgId === undefined) throw anonymousRefusal(door);
+	try {
+		const principal = await resolveAgentWriter(
+			{ scope, verifiedActor: { agentId, orgId: row.clerkOrgId } },
+			{ principalLookups: orgByIdPrincipalLookups(ctx) },
+			{ door },
+		);
+		return { kind: "agent", agentId: principal.principalId, orgId: principal.orgId };
+	} catch (err) {
+		if (err instanceof IdentityRefusalError) throw refusalError(err.refusal);
+		throw err;
+	}
 }
 
 /** The participant of `room` the caller is, or undefined. Organisations are compared by ID. */
@@ -661,11 +695,26 @@ export const postTurn = mutation({
 	returns: v.union(refusedValidator, acceptedValidator),
 	handler: async (ctx, args) => {
 		const door = "debate:postTurn";
-		const scope = await withOrgScope(ctx, { operatorAsMember: true });
-		requireResolvedCaller(scope, door);
 		// The fleet service account acts in an organisation only through a claim.
+		const scope = await withOrgScope(ctx);
+		requireResolvedCaller(scope, door);
 		if (isMcpBoundMaster(scope) && args.verifiedActor === undefined) throw anonymousRefusal(door);
-		const caller = await roomCaller(ctx, scope, args.verifiedActor);
+		// An agent write is resolved by the package from the service account's claim;
+		// a person's is resolved from the verified session. A caller with neither is refused.
+		const person = args.verifiedActor === undefined ? await sessionCaller(ctx, door) : undefined;
+		let caller: Caller;
+		if (person !== undefined) {
+			caller = {
+				kind: "person",
+				actor: person.actorName,
+				orgId: person.org.id,
+				orgRole: person.role ?? undefined,
+			};
+		} else if (args.verifiedActor !== undefined) {
+			caller = await agentWriterOf(ctx, scope, args.verifiedActor.agentId, door);
+		} else {
+			throw anonymousRefusal(door);
+		}
 		const room = await ctx.db.get(args.roomId);
 
 		// Not a participant (or no such room): refused with nothing about the room,
@@ -680,7 +729,15 @@ export const postTurn = mutation({
 			};
 		}
 		// A person posts under the same writer-role gate that created the room.
-		if (caller.kind === "person") await resolveHumanActor(ctx, scope, { door });
+		if (person !== undefined) {
+			const writer = resolveWriterRole({
+				role: person.role,
+				writerRoles: await loadMemberWriterRoles(ctx, person.org.label),
+				door,
+				orgSlug: person.org.label,
+			});
+			if (!writer.ok) refuseWithPerson(writer.refusal);
+		}
 
 		const awaitingLabel =
 			room.awaiting === undefined
