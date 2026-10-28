@@ -55,10 +55,10 @@
 		},
 		"R-53": {
 			"count": 336,
-			"measured_tree_sha": "d0bb0fadae2178638d80c4674db5334178cba6fb",
+			"measured_tree_sha": "c45c49ebe557ce33cb1a12f24540cbe9e2046ae0",
 			"cli_commit": "1f79319cce01a9e448b0580fcccf9059662b8146",
-			"command": "npx -y @vantageos/backend-doctor@0.4.9 <vantage-peers clean full checkout @d0bb0fa (PR #1566), deps installed>/convex --json-evidence <dir>/",
-			"output_line": "R-53: 337 site(s) VIOLATE (the principal is the package resolver's output, every write admits by comparing stored IDs with the resolved IDs, the unresolved branch refuses, and no local function decides identity). [conform=2 non-conforming=337 could-not-judge=0] Violations: convex/diary.ts:64 (orchestratorListed: (d) local identity layer — compares names to admit (`normalizeOrchestratorId(agent.name) === claimed`, line 73)); convex/lib/agentIdentity.ts:245 (findAgentByName: (d) local identity layer — compares names to admit (`normalizeOrchestratorId(byNormalized.name) === normalized`, line 259); selects a row by name (`withIndex(\"by_org_normalized_name\")` on `normalizedName`, line 254); selects a row by name (`withIndex(\"by_org_name\")` on `name`, line 264)); convex/lib/auth.ts:547 (filterByOrgScope: (d) local identity layer — compares names to admit (`scope.allowedOrchestrators.includes(orchestrator)`, line 563)). Conform site(s): convex/agentLinks.ts:79 (grant: principal from @vantageos/cloud-identity, target admitted by stored-ID comparison, unresolved refused); convex/agentLinks.ts:154 (revoke: principal from @vantageos/cloud-identity, target admitted by stored-ID comparison, unresolved refused).; MECHANICAL RULE COUNTS: CR-2 255, R-5 62, R-53 337, R-54 147, R-55 31, R-56 2",
+			"command": "npx -y @vantageos/backend-doctor@0.4.9 <vantage-peers clean full checkout @c45c49e (PR #1571, task k17a1q56g4w9yw6s8gzpe6h8hx8h3hmy), deps installed>/convex --json-evidence <dir>/",
+			"output_line": "R-53: 336 site(s) VIOLATE (the principal is the package resolver's output, every write admits by comparing stored IDs with the resolved IDs, the unresolved branch refuses, and no local function decides identity). [conform=2 non-conforming=336 could-not-judge=0] Violations: convex/diary.ts:64 (orchestratorListed: (d) local identity layer — compares names to admit (`normalizeOrchestratorId(agent.name) === claimed`, line 73)); convex/lib/agentIdentity.ts:245 (findAgentByName: (d) local identity layer — compares names to admit (`normalizeOrchestratorId(byNormalized.name) === normalized`, line 259); selects a row by name (`withIndex(\"by_org_normalized_name\")` on `normalizedName`, line 254); selects a row by name (`withIndex(\"by_org_name\")` on `name`, line 264)); convex/lib/auth.ts:547 (filterByOrgScope: (d) local identity layer — compares names to admit (`scope.allowedOrchestrators.includes(orchestrator)`, line 563)). Conform site(s): convex/agentLinks.ts:79 (grant: principal from @vantageos/cloud-identity, target admitted by stored-ID comparison, unresolved refused); convex/agentLinks.ts:154 (revoke: principal from @vantageos/cloud-identity, target admitted by stored-ID comparison, unresolved refused).; MECHANICAL RULE COUNTS: CR-2 254, R-5 62, R-53 336, R-54 147, R-55 31, R-56 2",
 			"modules": {}
 		},
 		"R-5": {
@@ -71,10 +71,10 @@
 		},
 		"CR-2": {
 			"count": 254,
-			"measured_tree_sha": "d0bb0fadae2178638d80c4674db5334178cba6fb",
+			"measured_tree_sha": "c45c49ebe557ce33cb1a12f24540cbe9e2046ae0",
 			"cli_commit": "1f79319cce01a9e448b0580fcccf9059662b8146",
-			"command": "npx -y @vantageos/backend-doctor@0.4.9 <vantage-peers clean full checkout @d0bb0fa (PR #1566), deps installed>/convex --json-evidence <dir>/",
-			"output_line": "CR-2 VERDICT: 255 violation(s) — MECHANICAL, the gate refuses; 6 exempt; 1 could-not-judge.; MECHANICAL RULE COUNTS: CR-2 255, R-5 62, R-53 337, R-54 147, R-55 31, R-56 2",
+			"command": "npx -y @vantageos/backend-doctor@0.4.9 <vantage-peers clean full checkout @c45c49e (PR #1571, task k17a1q56g4w9yw6s8gzpe6h8hx8h3hmy), deps installed>/convex --json-evidence <dir>/",
+			"output_line": "CR-2 VERDICT: 254 violation(s) — MECHANICAL, the gate refuses; 6 exempt; 1 could-not-judge.; MECHANICAL RULE COUNTS: CR-2 254, R-5 62, R-53 336, R-54 147, R-55 31, R-56 2",
 			"modules": {}
 		},
 		"R-54": {
