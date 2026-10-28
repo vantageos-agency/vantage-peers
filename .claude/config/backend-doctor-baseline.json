@@ -54,7 +54,7 @@
 			"modules": {}
 		},
 		"R-53": {
-			"count": 337,
+			"count": 336,
 			"measured_tree_sha": "d0bb0fadae2178638d80c4674db5334178cba6fb",
 			"cli_commit": "1f79319cce01a9e448b0580fcccf9059662b8146",
 			"command": "npx -y @vantageos/backend-doctor@0.4.9 <vantage-peers clean full checkout @d0bb0fa (PR #1566), deps installed>/convex --json-evidence <dir>/",
@@ -70,7 +70,7 @@
 			"modules": {}
 		},
 		"CR-2": {
-			"count": 255,
+			"count": 254,
 			"measured_tree_sha": "d0bb0fadae2178638d80c4674db5334178cba6fb",
 			"cli_commit": "1f79319cce01a9e448b0580fcccf9059662b8146",
 			"command": "npx -y @vantageos/backend-doctor@0.4.9 <vantage-peers clean full checkout @d0bb0fa (PR #1566), deps installed>/convex --json-evidence <dir>/",
