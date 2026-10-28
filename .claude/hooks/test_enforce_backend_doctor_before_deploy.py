@@ -561,6 +561,8 @@ def test_ratchet_live_baseline_carries_its_command_and_never_rose():
             "f5a0637a5a9add7a3ab8c1cd0877cb4fed7887a1",
             # CR-2 261 -> 255, R-53 340 -> 337, R-54 148 -> 147, orphan identity files by ID, PR #1566 (task k17dppj4g8gfe594v06v2nec818gz274)
             "d0bb0fadae2178638d80c4674db5334178cba6fb",
+            # CR-2 255 -> 254, R-53 337 -> 336, coordinator by name refused, PR #1571 (task k17a1q56g4w9yw6s8gzpe6h8hx8h3hmy)
+            "c45c49ebe557ce33cb1a12f24540cbe9e2046ae0",
         }
         line = entry["output_line"]
         assert line.startswith((f"{rule}: ", f"{rule} VERDICT: ")), rule
