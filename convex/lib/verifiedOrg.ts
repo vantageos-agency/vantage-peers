@@ -1,3 +1,4 @@
+import { isFleetStamp } from "@vantageos/cloud-identity";
 import { ConvexError, v } from "convex/values";
 import type { MutationCtx, QueryCtx } from "../_generated/server";
 import {
@@ -6,6 +7,7 @@ import {
 	type OrgScope,
 	withOrgScope,
 } from "./auth";
+import { fleetOperatorRef } from "./operatorOrg";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // verifiedOrg — the organisation the MCP transport VERIFIED for a caller it
@@ -187,4 +189,78 @@ export function assertRowInVerifiedOrg(
 			`task ${rowId} is outside the verified organisation "${verifiedOrgSlug}" (tenant boundary)`,
 		);
 	}
+}
+
+/**
+ * The organisation a fleet-service-account CREATE is made for, or undefined
+ * when the write is the fleet's own (task k176y0q5jcz3m8m673bf61kva98h49js).
+ *
+ * WHY. A non-master bearer (a seat, an org-level token, a person acting as its
+ * personal agent) reaches Convex as the fleet service account, so the door's
+ * own scope is MASTER and a create stamped from it is stored with no org at
+ * all: every org-scoped read then filters the row out, and the caller cannot
+ * read back what it wrote. The transport did verify the organisation, in one
+ * of two existing proofs: `verifiedOrg` (the bearer's org) or `verifiedActor`
+ * (the agent the bearer acts as, already checked BY ID, active and in its own
+ * org, by `requireAgentCredentialMatch`). This reads those, and nothing else.
+ *
+ * WHAT. Only for a SERVICE-ACCOUNT transport (anyone else: undefined, the
+ * door's own scope stands, byte-unchanged).
+ *   - `verifiedOrgSlug` (already resolved active by `resolveVerifiedOrg`) is
+ *     the org. A proven actor of ANOTHER org beside it is a contradiction and
+ *     is refused (`actor-outside-verified-org`).
+ *   - else a proven actor of a CLIENT org writes in that org (the precedent of
+ *     `recurringTasks:create`). An actor of the operator org, or no proven
+ *     actor, is the fleet's own write: undefined, unstamped, as before.
+ *   - REFUSE, never store unstamped: a client-org actor whose org resolves to
+ *     no ACTIVE mapping is refused (`write-org-unresolved`), naming the door.
+ * It yields the org and its mapping; it widens nothing.
+ */
+export async function serviceAccountWriteOrg(
+	ctx: MutationCtx,
+	transportScope: OrgScope,
+	input: {
+		verifiedOrgSlug: string | undefined;
+		provenActorOrg: string | undefined;
+		door: string;
+	},
+): Promise<{ orgSlug: string; mapping: OrgMappingView } | undefined> {
+	if (
+		!(
+			transportScope.isMaster &&
+			transportScope.masterSource === "service-account"
+		)
+	) {
+		return undefined;
+	}
+	const { verifiedOrgSlug, provenActorOrg, door } = input;
+	if (
+		verifiedOrgSlug !== undefined &&
+		provenActorOrg !== undefined &&
+		provenActorOrg !== verifiedOrgSlug
+	) {
+		refuse(
+			"actor-outside-verified-org",
+			door,
+			`the acting agent belongs to organisation "${provenActorOrg}" and the bearer was verified for "${verifiedOrgSlug}"`,
+		);
+	}
+	const orgSlug = verifiedOrgSlug ?? provenActorOrg;
+	if (orgSlug === undefined) return undefined;
+	const mapping = await lookupOrgMapping(ctx, orgSlug);
+	if (verifiedOrgSlug === undefined) {
+		const stamp = {
+			...(mapping?.clerkOrgId !== undefined ? { id: mapping.clerkOrgId } : {}),
+			label: orgSlug,
+		};
+		if (isFleetStamp(stamp, await fleetOperatorRef(ctx.db))) return undefined;
+	}
+	if (mapping === null || !mapping.isActive) {
+		refuse(
+			"write-org-unresolved",
+			door,
+			`this write is made for organisation "${orgSlug}", which resolves to no active organisation; it is refused rather than stored with no organisation`,
+		);
+	}
+	return { orgSlug, mapping };
 }

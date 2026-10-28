@@ -13,9 +13,15 @@ import type { Doc, Id } from "./_generated/dataModel";
 import { creatorValidator } from "./schema";
 import {
 	withOrgScope,
+	requireAgentCredentialMatch,
 	requireScope,
 	verifiedActorValidator,
 } from "./lib/auth";
+import {
+	resolveVerifiedOrg,
+	serviceAccountWriteOrg,
+	verifiedOrgValidator,
+} from "./lib/verifiedOrg";
 import type { OrgScope } from "./lib/auth";
 import { orgRefOfRow, orgRefOfScope } from "./lib/authOrgMapping";
 import { isFleetSystemCaller } from "./lib/systemCaller";
@@ -218,6 +224,11 @@ export const create = mutation({
 		// The agent the MCP transport verified (lib/auth.ts requireAgentCredentialMatch):
 		// its agents-row ID becomes `createdById`. Believed from the service account only.
 		verifiedActor: v.optional(verifiedActorValidator),
+		// The organisation the MCP transport VERIFIED for a bearer that reaches Convex
+		// as the fleet service account (task k176y0q5jcz3m8m673bf61kva98h49js): the
+		// mission is created IN that org, never stored with none. Believed from the
+		// service account only (convex/lib/verifiedOrg.ts).
+		verifiedOrg: v.optional(verifiedOrgValidator),
 	},
 	returns: v.id("missions"),
 	handler: async (ctx, args) => {
@@ -235,12 +246,44 @@ export const create = mutation({
 		// dashboard member); resolveVerifiedPerson returns it unchanged unless a
 		// person is carried (convex/lib/personPrincipal.ts).
 		const transportScope = await withOrgScope(ctx);
-		const scope = await resolveVerifiedPerson(
+		const personScope = await resolveVerifiedPerson(
 			ctx,
 			transportScope,
 			args.verifiedPerson,
 			{ door: "missions:create", assertedName: args.createdBy },
 		);
+		// A create the fleet service account makes FOR a verified org (the bearer's
+		// `verifiedOrg`, or the client org of the agent it proved) runs as an
+		// ordinary member of that org, so the mission is stamped there and its
+		// labels are judged on that org's roster; an org that cannot be resolved is
+		// refused, never stored unstamped (k176y0q5jcz3m8m673bf61kva98h49js). The
+		// agent proof is checked BY ID before its org is believed.
+		let scope = personScope;
+		if (personScope.isMaster) {
+			const verifiedOrgSlug = await resolveVerifiedOrg(
+				ctx,
+				transportScope,
+				args.verifiedOrg,
+				"missions:create",
+			);
+			if (args.verifiedActor !== undefined) {
+				await requireAgentCredentialMatch(ctx, undefined, undefined, null, {
+					scope: transportScope,
+					verifiedActor: args.verifiedActor,
+				});
+			}
+			const forOrg = await serviceAccountWriteOrg(ctx, transportScope, {
+				verifiedOrgSlug,
+				provenActorOrg: args.verifiedActor?.orgSlug,
+				door: "missions:create",
+			});
+			if (forOrg !== undefined) {
+				scope = await withOrgScope(ctx, {
+					refuseWithoutThrow: true,
+					actForOrgMapping: forOrg.mapping,
+				});
+			}
+		}
 		if (!scope.isMaster && scope.orgSlug === null) {
 			throw new ConvexError(
 				`RBAC_DENIED: caller may not create a mission — ${JSON.stringify({ orgSlug: null })}`,
@@ -258,6 +301,7 @@ export const create = mutation({
 			pilot,
 			createdBy: claimedCreator,
 			verifiedPerson: _verifiedPerson,
+			verifiedOrg: _verifiedOrg,
 			verifiedActor,
 			...rest
 		} = args;

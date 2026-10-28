@@ -49,6 +49,7 @@ import {
 	resolveDoorVerifiedOrg,
 	resolveVerifiedOrg,
 	resolveVerifiedOrgScope,
+	serviceAccountWriteOrg,
 	verifiedOrgValidator,
 } from "./lib/verifiedOrg";
 import type { VerifiedOrg } from "./lib/verifiedOrg";
@@ -180,6 +181,10 @@ export type CallerScope = OrgScope & {
 	// A door that decides on, or writes, the caller's NAME reads this in place of
 	// the asserted string (see actingNameOf); absent on every unproven call.
 	callerLabel?: string;
+	// The organisation the MCP transport verified for the bearer (`verifiedOrg`,
+	// believed from the service account only and resolved ACTIVE), when the door
+	// was handed one. A create door reads it to stamp the row (serviceAccountWriteOrg).
+	callerVerifiedOrg?: string;
 };
 
 // The name a door acts under: the verified row's label when the call is proven
@@ -359,6 +364,7 @@ export async function requireAuthenticatedCaller(
 		scope.callerActorId = actor.id;
 		if (actor.orgSlug !== undefined) scope.callerActorOrg = actor.orgSlug;
 	}
+	if (verifiedOrgSlug !== undefined) scope.callerVerifiedOrg = verifiedOrgSlug;
 	return scope;
 }
 
@@ -651,6 +657,11 @@ const createTaskArgsValidatorWithCredential = {
 	verifiedActor: v.optional(verifiedActorValidator),
 	// A person reached through the MCP service account (convex/lib/personPrincipal.ts).
 	verifiedPerson: v.optional(verifiedPersonValidator),
+	// The organisation the MCP transport VERIFIED for a bearer that reaches Convex
+	// as the fleet service account (task k176y0q5jcz3m8m673bf61kva98h49js). Without
+	// it a seat or org-level token's task was stored with no org and its own reads
+	// filtered it out. Believed from the service account only (lib/verifiedOrg.ts).
+	verifiedOrg: v.optional(verifiedOrgValidator),
 };
 
 interface CreateTaskArgs {
@@ -808,6 +819,7 @@ export const create = mutation({
 			agentCredentialSecret,
 			verifiedActor,
 			verifiedPerson,
+			verifiedOrg,
 			assignedTo: assignedToName,
 			assignedToAgentId,
 			...taskArgs
@@ -821,6 +833,7 @@ export const create = mutation({
 			agentCredentialSecret,
 			verifiedActor,
 			{ proof: verifiedPerson, door: "tasks:create" },
+			{ proof: verifiedOrg, door: "tasks:create" },
 		);
 		// createdBy is already bound to the roster inside requireAuthenticatedCaller
 		// (CALLER_IDENTITY_MISMATCH). assignedTo is NOT an asserted caller name but
@@ -834,7 +847,18 @@ export const create = mutation({
 		}
 		// The tenant is derived from the SCOPE just resolved above, never from
 		// anything the client sent.
-		const rowOrgId = orgIdForWrite(scope, "tasks:create");
+		// A write the fleet service account makes FOR a verified org (the bearer's
+		// `verifiedOrg`, or the client org of the agent it proved) is stamped with
+		// that org, or refused; never stored unstamped (k176y0q5jcz3m8m673bf61kva98h49js).
+		const forOrg = await serviceAccountWriteOrg(ctx, scope, {
+			verifiedOrgSlug: scope.callerVerifiedOrg,
+			provenActorOrg:
+				agentCredentialSecret !== undefined || verifiedActor !== undefined
+					? scope.callerActorOrg
+					: undefined,
+			door: "tasks:create",
+		});
+		const rowOrgId = forOrg?.orgSlug ?? orgIdForWrite(scope, "tasks:create");
 		// M7: the assignee BY ID, in the org the row will live in. A label with no
 		// active agent there (unknown, or registered only in another org) is
 		// refused before anything is written.
