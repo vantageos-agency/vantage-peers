@@ -313,6 +313,16 @@ const CALLERS: Record<string, Ctx> = {
 		userId: "user_p",
 		principal: "person",
 	},
+	// The operator org's own agent: the MCP still forwards the bearer's verified
+	// org for it (verifiedOrgOf has no operator exception), so Convex must treat
+	// that claim as the fleet's own write (serviceAccountWriteOrg). Pinned here
+	// because the org-a kinds above cannot show it.
+	"operator-org agent credential": {
+		...base,
+		clerkOrgSlug: "org-op",
+		accessTokenHash: "h",
+		actor: { orgSlug: "org-op", agentName: "agent-op", agentId: "agent_op" },
+	},
 	"person, personal agent": {
 		...base,
 		clerkOrgSlug: "org-a",
@@ -347,8 +357,14 @@ const DEFECT_CALLERS = new Set([
 	"one-agent seat",
 	"org token, several agents",
 	"agent credential",
+	"operator-org agent credential",
 	"person, personal agent",
 ]);
+// The org each defect caller is verified for (a literal, not derived from the
+// code under test).
+const ORG_OF: Record<string, string> = {
+	"operator-org agent credential": "org-op",
+};
 
 describe("pin 3 — identical args for every caller kind not in the defect", () => {
 	for (const [tool, door, legacy, personDoor] of SITES) {
@@ -383,7 +399,7 @@ describe("pin 3 — identical args for every caller kind not in the defect", () 
 						expect(after).toEqual({
 							args: {
 								...("args" in before ? before.args : {}),
-								verifiedOrg: { orgSlug: "org-a" },
+								verifiedOrg: { orgSlug: ORG_OF[caller] ?? "org-a" },
 							},
 						});
 					});
@@ -395,6 +411,15 @@ describe("pin 3 — identical args for every caller kind not in the defect", () 
 			}
 		}
 	}
+
+	it("an operator-org agent credential sends verifiedOrg (the operator org) to both create doors", () => {
+		const ctx = CALLERS["operator-org agent credential"];
+		for (const door of ["tasks:create", "missions:create"]) {
+			expect(resolveDoorScope(door, "agent-op", facts(ctx))).toEqual({
+				args: { verifiedOrg: { orgSlug: "org-op" } },
+			});
+		}
+	});
 
 	it("SITES covers every resolver call in tools.ts", () => {
 		const inSource = [
