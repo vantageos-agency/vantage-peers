@@ -2,6 +2,9 @@
 
 ## [Unreleased]
 
+### Docs
+- **Cloud: design note for durable scoped test identities (task k177c6v8kpcj4726zt3yx546fd8csfdt).** `analysis/durable-scoped-test-identities-2026-10-28.md`. Two dedicated client orgs that hold no client data (`probe-tenant-a`, `probe-tenant-b`), provisioned through the existing client-onboarding runbook: a seat bearer minted by the service account once per rotation, plus an agent credential minted by the org admin. Secrets live in Infisical, rotation is a recurring task 14 days before expiry, and the three-reading probe is own ALLOW, foreign DENY by error, then a master control. No code change. Provisioning waits for a Pi token, on dev first.
+
 ### Tests
 - **`tasks.list` / `tasks.listByMission`: the cursor-into-index guard can no longer be relaxed silently (task k1796new6573dscmveetyvnqe98chbnb).** New `convex/__tests__/listTasksCursorIndexGuard.test.ts`. If `updatedSince === undefined` is dropped from `canPushCursorIntoIndex`, 4 behavioural tests and 1 structural test go red, because fresh rows are lost behind a `take(limit)` of stale rows. The `statuses.length === 1` clause is an equivalent mutant today: every consumer already sits under a single-status branch. A source-text pin holds it instead. Convex rule: equality on a prefix, then at most one range on the next field (docs.convex.dev/database/reading-data/indexes).
 
