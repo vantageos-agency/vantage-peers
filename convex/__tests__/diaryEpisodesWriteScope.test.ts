@@ -67,6 +67,11 @@ async function seedOrgAMapping(t: ReturnType<typeof createT>) {
 			createdAt: Date.now(),
 		});
 		await seedRosterAgent(ctx, "org-a", "seat-a");
+		// A member writes or deletes a diary entry with a writer role (data).
+		await ctx.db.insert("memberWriterRoles", {
+			roles: ["org:admin", "org:editor"],
+			updatedAt: Date.now(),
+		});
 	});
 }
 
@@ -75,6 +80,7 @@ function asOrgA(t: ReturnType<typeof createT>) {
 		subject: "user-org-a",
 		organizationId: "org-a",
 		org_id: testClerkOrgId("org-a"),
+		org_role: "org:editor",
 	} as Parameters<typeof t.withIdentity>[0]);
 }
 

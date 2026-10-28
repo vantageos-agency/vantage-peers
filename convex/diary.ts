@@ -12,7 +12,8 @@ import { requireResolvedCaller, withOrgScope, type OrgScope } from "./lib/auth";
 import { isFleetSystemCaller } from "./lib/systemCaller";
 import { fleetOperatorRef } from "./lib/operatorOrg";
 import { orgRefOfRow, orgRefOfScope } from "./lib/authOrgMapping";
-import { memberActorOf } from "./lib/humanActor";
+import { memberActorOf, resolveHumanActor } from "./lib/humanActor";
+import { requireMemberWriterRole } from "./memberWriterRoles";
 import { listedAgentsOfOrg } from "./lib/rosterIds";
 import { normalizeOrchestratorId } from "./_helpers/normalizeOrchestratorId";
 
@@ -217,6 +218,9 @@ export const write = mutation({
 				`RBAC_DENIED: caller may not write a diary entry for orchestrator "${args.orchestrator}" — ${JSON.stringify({ orgSlug: scope.orgSlug, reason: "orchestrator-not-listed" })}`,
 			);
 		}
+		// A person writes only with a writer role (data: convex/memberWriterRoles.ts);
+		// the master is the transport-verified MCP server and carries no member role.
+		if (!scope.isMaster) await requireMemberWriterRole(ctx, scope, "diary:write");
 		// The author is the verified caller (below); a member's stamp needs
 		// the org's permanent ID, or the row it wrote could never be read back.
 		// The master is the transport-verified MCP server and passes the author of
@@ -537,12 +541,31 @@ export const deleteDiary = mutation({
 			);
 		}
 
+		// HUMAN path (task k17d5k5bw741p3681bc0pq76ah8fk4sn): a dashboard org:admin
+		// deletes an entry of its OWN organisation in its own name, whichever agent
+		// wrote it. Destructive: admin only (same decision as messages:deleteMessage).
+		if (args.callerOrchestrator === undefined && !scope.isMaster) {
+			await resolveHumanActor(ctx, scope, {
+				door: "diary:deleteDiary",
+				row: { orgId: entry.orgId },
+				rowKind: "diary entry",
+				rowId: args.diaryId,
+				tenantOnly: true,
+				adminOnly: true,
+			});
+			await ctx.db.delete(args.diaryId);
+			return { deleted: true };
+		}
+
 		if (!(await orchestratorListed(ctx, scope, entry.orchestrator, "diary:deleteDiary"))) {
 			throw new ConvexError(
 				`RBAC_DENIED: caller may not delete diary entry ${args.diaryId} (orchestrator "${entry.orchestrator}") — ${JSON.stringify({ orgSlug: scope.orgSlug, reason: "orchestrator-not-listed" })}`,
 			);
 		}
 
+		// A session typing an owner's name is still a person: it needs a writer role
+		// (a viewer cannot delete by typing a name). The fleet is not a member.
+		if (!scope.isMaster) await requireMemberWriterRole(ctx, scope, "diary:deleteDiary");
 		if (args.callerOrchestrator === undefined) {
 			throw new ConvexError(
 				`RBAC_DENIED: callerOrchestrator is required to delete a diary entry — omitting it is refused, not exempted — ${JSON.stringify({ registration: "diary:deleteDiary", orgSlug: scope.orgSlug, reason: "caller-orchestrator-required" })}`,

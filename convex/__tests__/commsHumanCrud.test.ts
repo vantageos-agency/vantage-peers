@@ -340,17 +340,24 @@ describe.each(rowDoors)("human CRUD — $name", (door) => {
 });
 
 
-// ── businessUnits and diary: NO human path (Pi ruling (b), PR #1437) ────────
-// Neither table carries an org stamp; the only tenant key is a roster NAME that
-// two orgs can share. A human admin of the owning org is therefore refused too,
-// and so is the colliding org's admin: no human may act on these rows until the
-// tables are stamped. The agent / master paths are unchanged.
+// ── diary and businessUnits: the human path (residues of B2) ────────────────
+// Both tables are stamped with the owning org's permanent ID, so a human org
+// member acts on its OWN org's rows in its own name: diary:write needs a writer
+// role; diary:deleteDiary and businessUnits:remove need org:admin;
+// businessUnits:update (callerOrchestrator now optional) needs a writer role.
+// Another org (even one holding the same roster label) and unstamped rows are
+// refused. The agent / fleet service-account paths are unchanged.
 
-describe("businessUnits and diary — master/agent only, no human path", () => {
+describe("human CRUD — diary and businessUnits", () => {
 	const master = (t: T) =>
 		t.withIdentity({ subject: "test-service-account-user-id" } as Parameters<T["withIdentity"]>[0]);
-	const orgC = (t: T) =>
-		t.withIdentity({ subject: "user_c", organizationSlug: "org-c", org_id: testClerkOrgId("org-c"), org_role: "org:admin" } as Parameters<T["withIdentity"]>[0]);
+	const inOrg = (t: T, orgSlug: string, subject: string, role?: string) =>
+		t.withIdentity({
+			subject,
+			organizationSlug: orgSlug,
+			org_id: testClerkOrgId(orgSlug),
+			...(role !== undefined ? { org_role: role } : {}),
+		} as Parameters<T["withIdentity"]>[0]);
 	const addOrgC = (t: T) =>
 		t.run(async (ctx) => {
 			await ctx.db.insert("client_org_mapping", {
@@ -364,94 +371,185 @@ describe("businessUnits and diary — master/agent only, no human path", () => {
 			});
 			await seedRosterAgent(ctx, "org-c", "sigma");
 		});
+	const diaryArgs = { date: "2026-10-02", orchestrator: "sigma", content: "human entry" };
 
-	type Door = {
-		name: string;
-		seed: (t: T) => Promise<string>;
-		humanCall: (c: Caller, id: string) => Promise<unknown>;
-		/** how the human call is refused (update: `callerOrchestrator` is required again, so the argument validator refuses first). */
-		refusal: RegExp;
-		agentCall: (c: Caller, id: string) => Promise<unknown>;
-		read: (t: T, id: string) => Promise<Record<string, unknown> | null>;
-		agentServed: (row: Record<string, unknown> | null) => boolean;
-	};
-	const doors: Door[] = [
-		{
-			name: "businessUnits:update",
-			refusal: /callerOrchestrator|ArgumentValidationError/,
-			seed: (t) => seedBu(t, "own"),
-			humanCall: (c, id) => // callerOrchestrator is required again, so a human call omits it against the type on purpose.
-				c.mutation(api.businessUnits.update, { buId: id as Id<"businessUnits">, name: "Renamed" } as never),
-			agentCall: (c, id) =>
-				c.mutation(api.businessUnits.update, { buId: id as Id<"businessUnits">, callerOrchestrator: "sigma", name: "Renamed" }),
-			read: readRow("businessUnits"),
-			agentServed: (r) => r?.name === "Renamed",
-		},
-		{
-			name: "businessUnits:remove",
-			refusal: /RBAC_DENIED/,
-			seed: (t) => seedBu(t, "own"),
-			humanCall: (c, id) => c.mutation(api.businessUnits.remove, { buId: id as Id<"businessUnits"> }),
-			// A unit stamped with a client org is deleted by the fleet only on the
-			// transport's verified claim naming that org (M10f).
-			agentCall: (c, id) =>
-				c.mutation(api.businessUnits.remove, {
-					buId: id as Id<"businessUnits">,
-					verifiedOrg: { orgSlug: "org-a" },
-				}),
-			read: readRow("businessUnits"),
-			agentServed: (r) => r === null,
-		},
-		{
-			name: "diary:deleteDiary",
-			refusal: /RBAC_DENIED/,
-			seed: (t) => seedDiary(t, "own"),
-			humanCall: (c, id) => c.mutation(api.diary.deleteDiary, { diaryId: id as Id<"diary"> }),
-			agentCall: (c, id) =>
-				c.mutation(api.diary.deleteDiary, { diaryId: id as Id<"diary">, callerOrchestrator: "sigma" }),
-			read: readRow("diary"),
-			agentServed: (r) => r === null,
-		},
-	];
+	describe("diary:write", () => {
+		test.each(["org:admin", "org:editor"])("%s of the owning org writes its seat's entry, authored by the person", async (role) => {
+			const t = await setup();
+			await t.run((ctx) => seedRosterAgent(ctx, "org-a", "sigma"));
+			const id = await inOrg(t, "org-a", "user_m", role).mutation(api.diary.write, diaryArgs);
+			const row = await readRow("diary")(t, id);
+			expect(row?.content).toBe("human entry");
+			expect(row?.createdBy).toBe("user:user_m");
+		});
 
-	describe.each(doors)("$name", (door) => {
-		test.each(["org:admin", "org:editor", "org:viewer"])(
-			"%s of the OWNING org with no caller name -> refused, row unchanged",
-			async (role) => {
-				const t = await setup();
-				const id = await door.seed(t);
-				const before = await door.read(t, id);
-				await expect(door.humanCall(t.withIdentity(as("user_m", role)), id)).rejects.toThrow(door.refusal);
-				expect(await door.read(t, id)).toEqual(before);
-			},
-		);
+		test.each([["org:viewer"], [undefined]])("role %s -> refused role-not-writer, nothing written", async (role) => {
+			const t = await setup();
+			await t.run((ctx) => seedRosterAgent(ctx, "org-a", "sigma"));
+			await expect(
+				inOrg(t, "org-a", "user_v", role).mutation(api.diary.write, diaryArgs),
+			).rejects.toThrow(/RBAC_DENIED.*role-not-writer/);
+			expect(await count(t, "diary")).toBe(0);
+		});
 
-		test("an admin of a COLLIDING org (same roster name) -> refused, row unchanged", async () => {
+		test("an editor of ANOTHER org naming org-a's seat -> refused, nothing written", async () => {
+			const t = await setup();
+			await t.run((ctx) => seedRosterAgent(ctx, "org-a", "sigma"));
+			await expect(
+				inOrg(t, "org-b", "user_b", "org:editor").mutation(api.diary.write, diaryArgs),
+			).rejects.toThrow(ANY_CALLER);
+			expect(await count(t, "diary")).toBe(0);
+		});
+
+		test("the fleet service account is still served", async () => {
+			const t = await setup();
+			await master(t).mutation(api.diary.write, diaryArgs);
+			expect(await count(t, "diary")).toBe(1);
+		});
+	});
+
+	describe("diary:deleteDiary", () => {
+		const del = (c: Caller, id: string, callerOrchestrator?: string) =>
+			c.mutation(api.diary.deleteDiary, {
+				diaryId: id as Id<"diary">,
+				...(callerOrchestrator !== undefined ? { callerOrchestrator } : {}),
+			});
+
+		test("org:admin of the owning org deletes in its own name", async () => {
+			const t = await setup();
+			const id = await seedDiary(t, "own");
+			expect(await del(inOrg(t, "org-a", "user_m", "org:admin"), id)).toEqual({ deleted: true });
+			expect(await readRow("diary")(t, id)).toBeNull();
+		});
+
+		test("org:editor -> refused role-not-admin, org:viewer -> refused role-not-writer, row survives", async () => {
+			const t = await setup();
+			const id = await seedDiary(t, "own");
+			await expect(del(inOrg(t, "org-a", "user_m", "org:editor"), id)).rejects.toThrow(/RBAC_DENIED.*role-not-admin/);
+			await expect(del(inOrg(t, "org-a", "user_v", "org:viewer"), id)).rejects.toThrow(/RBAC_DENIED.*role-not-writer/);
+			expect(await readRow("diary")(t, id)).not.toBeNull();
+		});
+
+		test("an admin of ANOTHER org, of a COLLIDING org, and any admin on an unstamped row -> refused, row survives", async () => {
 			const t = await setup();
 			await addOrgC(t);
-			const id = await door.seed(t);
-			const before = await door.read(t, id);
-			await expect(door.humanCall(orgC(t), id)).rejects.toThrow(door.refusal);
-			expect(await door.read(t, id)).toEqual(before);
+			const own = await seedDiary(t, "own");
+			const unowned = await seedDiary(t, "unowned");
+			await expect(del(inOrg(t, "org-b", "user_b", "org:admin"), own)).rejects.toThrow(ANY_CALLER);
+			await expect(del(inOrg(t, "org-c", "user_c", "org:admin"), own)).rejects.toThrow(ANY_CALLER);
+			await expect(del(inOrg(t, "org-a", "user_m", "org:admin"), unowned)).rejects.toThrow(ANY_CALLER);
+			expect(await readRow("diary")(t, own)).not.toBeNull();
+			expect(await readRow("diary")(t, unowned)).not.toBeNull();
 		});
 
-		test("no identity -> refused, row unchanged", async () => {
+		test("no identity -> refused", async () => {
 			const t = await setup();
-			const id = await door.seed(t);
-			const before = await door.read(t, id);
-			await expect(door.humanCall(t as unknown as Caller, id)).rejects.toThrow(/AUTH_REQUIRED|RBAC_DENIED|Unauthenticated|callerOrchestrator|ArgumentValidationError/);
-			expect(await door.read(t, id)).toEqual(before);
+			const id = await seedDiary(t, "own");
+			await expect(del(t as unknown as Caller, id)).rejects.toThrow(ANY_CALLER);
+			expect(await readRow("diary")(t, id)).not.toBeNull();
 		});
 
-		test("the agent / master path is still served", async () => {
+		test("a session typing the owner's name: a viewer is refused role-not-writer, a writer is served", async () => {
 			const t = await setup();
-			const id = await door.seed(t);
-			// The business-unit doors are the fleet's on the agent path (a viewer-role
-			// member typing the owner's name is refused since M10f); deleteDiary takes
-			// the owning agent's name.
-			const caller = door.name.startsWith("businessUnits:") ? master(t) : t.withIdentity(as("user_m", "org:viewer"));
-			await door.agentCall(caller, id);
-			expect(door.agentServed(await door.read(t, id))).toBe(true);
+			const id = await seedDiary(t, "own");
+			await expect(del(inOrg(t, "org-a", "user_v", "org:viewer"), id, "sigma")).rejects.toThrow(/RBAC_DENIED.*role-not-writer/);
+			expect(await readRow("diary")(t, id)).not.toBeNull();
+			expect(await del(inOrg(t, "org-a", "user_m", "org:editor"), id, "sigma")).toEqual({ deleted: true });
+		});
+
+		test("the fleet service account naming the owner is still served", async () => {
+			const t = await setup();
+			const id = await seedDiary(t, "own");
+			await del(master(t), id, "sigma");
+			expect(await readRow("diary")(t, id)).toBeNull();
+		});
+	});
+
+	describe("businessUnits:remove", () => {
+		const rm = (c: Caller, id: string) =>
+			c.mutation(api.businessUnits.remove, { buId: id as Id<"businessUnits"> });
+
+		test("org:admin of the owning org deletes its unit", async () => {
+			const t = await setup();
+			const id = await seedBu(t, "own");
+			expect(await rm(inOrg(t, "org-a", "user_m", "org:admin"), id)).toEqual({ deleted: true });
+			expect(await readRow("businessUnits")(t, id)).toBeNull();
+		});
+
+		test("org:editor -> role-not-admin, org:viewer -> role-not-writer, row survives", async () => {
+			const t = await setup();
+			const id = await seedBu(t, "own");
+			await expect(rm(inOrg(t, "org-a", "user_m", "org:editor"), id)).rejects.toThrow(/RBAC_DENIED.*role-not-admin/);
+			await expect(rm(inOrg(t, "org-a", "user_v", "org:viewer"), id)).rejects.toThrow(/RBAC_DENIED.*role-not-writer/);
+			expect(await readRow("businessUnits")(t, id)).not.toBeNull();
+		});
+
+		test("an admin of ANOTHER org, of a COLLIDING org, and any admin on an unstamped unit -> refused, row survives", async () => {
+			const t = await setup();
+			await addOrgC(t);
+			const own = await seedBu(t, "own");
+			const unowned = await seedBu(t, "unowned");
+			await expect(rm(inOrg(t, "org-b", "user_b", "org:admin"), own)).rejects.toThrow(/RBAC_DENIED.*row-not-in-caller-org/);
+			await expect(rm(inOrg(t, "org-c", "user_c", "org:admin"), own)).rejects.toThrow(/RBAC_DENIED.*row-not-in-caller-org/);
+			await expect(rm(inOrg(t, "org-a", "user_m", "org:admin"), unowned)).rejects.toThrow(/RBAC_DENIED/);
+			expect(await readRow("businessUnits")(t, own)).not.toBeNull();
+			expect(await readRow("businessUnits")(t, unowned)).not.toBeNull();
+		});
+
+		test("no identity -> refused", async () => {
+			const t = await setup();
+			const id = await seedBu(t, "own");
+			await expect(rm(t as unknown as Caller, id)).rejects.toThrow(ANY_CALLER);
+			expect(await readRow("businessUnits")(t, id)).not.toBeNull();
+		});
+
+		test("the fleet service account naming the verified org is still served", async () => {
+			const t = await setup();
+			const id = await seedBu(t, "own");
+			await master(t).mutation(api.businessUnits.remove, {
+				buId: id,
+				verifiedOrg: { orgSlug: "org-a" },
+			});
+			expect(await readRow("businessUnits")(t, id)).toBeNull();
+		});
+	});
+
+	describe("businessUnits:update with no callerOrchestrator", () => {
+		const upd = (c: Caller, id: string, name = "Renamed") =>
+			c.mutation(api.businessUnits.update, { buId: id as Id<"businessUnits">, name });
+
+		test.each(["org:admin", "org:editor"])("%s of the owning org renames its unit in its own name", async (role) => {
+			const t = await setup();
+			const id = await seedBu(t, "own");
+			await upd(inOrg(t, "org-a", "user_m", role), id);
+			expect((await readRow("businessUnits")(t, id))?.name).toBe("Renamed");
+		});
+
+		test.each([["org:viewer"], [undefined]])("role %s -> refused role-not-writer, unit unchanged", async (role) => {
+			const t = await setup();
+			const id = await seedBu(t, "own");
+			await expect(upd(inOrg(t, "org-a", "user_v", role), id)).rejects.toThrow(/RBAC_DENIED.*role-not-writer/);
+			expect((await readRow("businessUnits")(t, id))?.name).toBe("BU seed");
+		});
+
+		test("an editor of ANOTHER org, of a COLLIDING org, and any editor on an unstamped unit -> refused, unit unchanged", async () => {
+			const t = await setup();
+			await addOrgC(t);
+			const own = await seedBu(t, "own");
+			const unowned = await seedBu(t, "unowned");
+			await expect(upd(inOrg(t, "org-b", "user_b", "org:editor"), own)).rejects.toThrow(/RBAC_DENIED.*row-not-in-caller-org/);
+			await expect(upd(inOrg(t, "org-c", "user_c", "org:editor"), own)).rejects.toThrow(/RBAC_DENIED.*row-not-in-caller-org/);
+			await expect(upd(inOrg(t, "org-a", "user_m", "org:editor"), unowned)).rejects.toThrow(/RBAC_DENIED/);
+			expect((await readRow("businessUnits")(t, own))?.name).toBe("BU seed");
+			expect((await readRow("businessUnits")(t, unowned))?.name).toBe("BU seed");
+		});
+
+		test("no identity -> refused; the fleet service account must still name an owner", async () => {
+			const t = await setup();
+			const id = await seedBu(t, "own");
+			await expect(upd(t as unknown as Caller, id)).rejects.toThrow(ANY_CALLER);
+			await expect(upd(master(t), id)).rejects.toThrow(/RBAC_DENIED.*caller-orchestrator-required/);
+			expect((await readRow("businessUnits")(t, id))?.name).toBe("BU seed");
 		});
 	});
 });
@@ -674,7 +772,7 @@ describe("agent and master paths unchanged", () => {
 		const t = await setup();
 		const id = await seedDiary(t, "own");
 		const res = await t
-			.withIdentity(as("user_m", "org:viewer"))
+			.withIdentity(as("user_m", "org:editor"))
 			.mutation(api.diary.deleteDiary, { diaryId: id, callerOrchestrator: "sigma" });
 		expect(res).toEqual({ deleted: true });
 	});

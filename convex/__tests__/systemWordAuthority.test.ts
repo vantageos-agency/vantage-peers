@@ -50,6 +50,8 @@ type T = ReturnType<typeof createT>;
 
 async function seedOrgA(t: T) {
 	await t.run(async (ctx) => {
+		// A member writes or deletes a diary entry with a writer role (data).
+		await ctx.db.insert("memberWriterRoles", { roles: ["org:admin", "org:editor"], updatedAt: 1 });
 		await ctx.db.insert("client_org_mapping", {
 			clerkOrgSlug: "org-a",
 			clerkOrgId: testClerkOrgId("org-a"),

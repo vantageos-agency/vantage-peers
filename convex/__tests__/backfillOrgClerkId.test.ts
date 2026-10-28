@@ -52,6 +52,7 @@ const asOrg = (t: T, slug: string) =>
 		subject: `user-${slug}`,
 		organizationId: slug,
 		org_id: ID_BY_SLUG[slug],
+		org_role: "org:editor",
 	} as Parameters<T["withIdentity"]>[0]);
 const adminOf = (t: T, org: string) =>
 	t.withIdentity({
@@ -70,6 +71,8 @@ async function seatCredential(t: T): Promise<string> {
 
 async function seedMappings(t: T) {
 	await t.run(async (ctx) => {
+		// A member writes or deletes a diary entry with a writer role (data).
+		await ctx.db.insert("memberWriterRoles", { roles: ["org:admin", "org:editor"], updatedAt: 1 });
 		const mapping = async (
 			slug: string,
 			extra: { clerkOrgId?: string; operator?: boolean } = {},
