@@ -158,6 +158,12 @@ export type OAuthContext = {
 	 *                 applies until Convex is deployed; see {@link actingClaimDecision}.
 	 */
 	seatAgent?: { agentId: string; orgId: string; agentName: string } | null;
+	/**
+	 * The agent a PERSON token designates (see {@link personalActorOf}); already
+	 * folded into {@link OAuthContext.actor} at the bearer boundary. Kept for
+	 * diagnosis only: no decision reads it.
+	 */
+	personalAgent?: { agentId: string; orgId: string; agentName: string } | null;
 };
 
 declare module "hono" {
@@ -234,6 +240,13 @@ type OAuthLookupResult = {
 	principal?: "person";
 	/** Absent from a Convex that predates the stamp; null when none resolved. */
 	seatAgent?: { agentId: string; orgId: string; agentName: string } | null;
+	/**
+	 * The agent a PERSON token acts as (the one active agent of the token's org
+	 * that designates the person), decided by Convex through
+	 * `@vantageos/cloud-identity` `resolvePersonalAgent`. Absent from a Convex that
+	 * predates the field; null when the person stays the person.
+	 */
+	personalAgent?: { agentId: string; orgId: string; agentName: string } | null;
 } | null;
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -562,6 +575,44 @@ export function personActorOf(
 	if (ctx?.principal !== "person" || ctx.actor !== undefined) return undefined;
 	if (ctx.accessTokenHash === undefined || ctx.userId === "") return undefined;
 	return personActorName(ctx.userId);
+}
+
+/**
+ * The acting agent of a PERSON token that designates one (`personalAgent`,
+ * decided by Convex through `@vantageos/cloud-identity` `resolvePersonalAgent`),
+ * shaped as the `actor` of a person that presented an agent credential, so every
+ * downstream surface (acting-name binding, `verifiedActor`, whoami) takes the one
+ * path it already has. The writer-role gate is unchanged: the token is still a
+ * person's. Believed only when the agent's org is the token's OWN org; anything
+ * else leaves the person as the person. An explicit agent credential presented
+ * on the request replaces it (attachContextAndProceed).
+ */
+export function personalActorOf(
+	oauth:
+		| {
+				principal?: "person";
+				clerkOrgSlug?: string;
+				personalAgent?: {
+					agentId: string;
+					orgId: string;
+					agentName: string;
+				} | null;
+		  }
+		| null
+		| undefined,
+): { orgSlug: string; agentName: string; agentId: string } | undefined {
+	if (oauth?.principal !== "person") return undefined;
+	const agent = oauth.personalAgent;
+	if (agent === undefined || agent === null) return undefined;
+	if (agent.agentId === "" || agent.agentName === "") return undefined;
+	if (oauth.clerkOrgSlug === undefined || agent.orgId !== oauth.clerkOrgSlug) {
+		return undefined;
+	}
+	return {
+		orgSlug: agent.orgId,
+		agentName: agent.agentName,
+		agentId: agent.agentId,
+	};
 }
 
 /**
@@ -1363,11 +1414,14 @@ export function bearerAuthMiddleware(): MiddlewareHandler {
 			// The token row's snapshotted org (`clerkOrgSlug`) is the principal's
 			// org for binding an agent credential; an unattached profile has none,
 			// so a credential presented with it cannot be bound and is refused.
+			// A person that designates one agent acts as it (see personalActorOf).
+			const personalActor = personalActorOf(oauth);
 			return await attachContextAndProceed(
 				{
 					...oauth,
 					isMaster: false,
 					accessTokenHash: tokenHash,
+					...(personalActor !== undefined ? { actor: personalActor } : {}),
 				},
 				oauth.clerkOrgSlug ?? null,
 			);

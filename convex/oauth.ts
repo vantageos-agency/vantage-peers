@@ -45,6 +45,7 @@ import {
 import { isHumanActorName } from "./lib/humanActor";
 import { personPrincipalLookups } from "./lib/actingPrincipal";
 import { liveSeatAgent, resolveSeatAgent } from "./lib/seatAgent";
+import { personalAgentOfToken } from "./lib/personalAgent";
 import { requireId } from "./lib/ids";
 import { DEFAULT_MEMBER_SCOPES } from "./lib/memberScopes";
 import { upsertAdminMembership } from "./orgMembership";
@@ -2578,6 +2579,21 @@ const oauthContextShape = v.object({
 		}),
 		v.null(),
 	),
+	// The agent a PERSON token acts as: the one active agent of the token's org whose
+	// `personalAgentOf` is this person (@vantageos/cloud-identity `resolvePersonalAgent`),
+	// by ROW ID with its CURRENT label. null: the person stays the person (not a person
+	// token, or no / several / inactive designations). Optional so a reader built before
+	// this field existed is unaffected; always emitted by this lookup.
+	personalAgent: v.optional(
+		v.union(
+			v.object({
+				agentId: v.id("agents"),
+				orgId: v.string(),
+				agentName: v.string(),
+			}),
+			v.null(),
+		),
+	),
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -2611,6 +2627,13 @@ export const getAccessTokenByHash = query({
 		if (row.revokedAt !== undefined) return null;
 		if (row.expiresAt < Date.now()) return null;
 		const agent = await liveSeatAgent(ctx, row);
+		// A PERSON token acts as the agent that person designates, decided by the
+		// package (convex/lib/personalAgent.ts); every other token resolves none.
+		const personal = await personalAgentOfToken(
+			ctx,
+			row,
+			"oauth:getAccessTokenByHash",
+		);
 		return {
 			clientId: row.clientId,
 			userId: row.userId,
@@ -2628,6 +2651,7 @@ export const getAccessTokenByHash = query({
 			seatAgent: agent
 				? { agentId: agent._id, orgId: agent.orgSlug, agentName: agent.name }
 				: null,
+			personalAgent: personal,
 		};
 	},
 });

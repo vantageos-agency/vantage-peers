@@ -19,6 +19,8 @@
 //             and refuses to make a designation ambiguous.
 
 import { createHash } from "node:crypto";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import { describe, expect, test } from "vitest";
 import { api, internal } from "../_generated/api";
 import type { Id } from "../_generated/dataModel";
@@ -162,7 +164,7 @@ describe("a person token acts as the one agent that designates the person", () =
 		expect(row?.personalAgent).toBeNull();
 	});
 
-	test("INACTIVE ORG: the token's organisation is deactivated -> no personal agent (never a populated default)", async () => {
+	test("INACTIVE ORG: the token's organisation is deactivated while a designation exists -> refused, never the person", async () => {
 		const t = await world();
 		const tele = await seedAgent(t, "org-a", "telemaque");
 		await designate(t, tele, STEPHANE);
@@ -174,8 +176,9 @@ describe("a person token acts as the one agent that designates the person", () =
 				.unique();
 			if (m) await ctx.db.patch(m._id, { isActive: false });
 		});
-		const row = await lookup(t, hash);
-		expect(row?.personalAgent ?? null).toBeNull();
+		// The package refuses (organisation-not-active); the lookup RAISES rather than
+		// turning a failed resolution into "the person".
+		await expect(lookup(t, hash)).rejects.toThrow(/RBAC_DENIED|organisation-not-active|ORG/);
 	});
 });
 
@@ -229,8 +232,10 @@ describe("another organisation's agent is never selected", () => {
 });
 
 describe("agents:setPersonalAgentOf — the operator door", () => {
-	test("it is an internal function: not part of the public API", () => {
-		expect((api.agents as Record<string, unknown>).setPersonalAgentOf).toBeUndefined();
+	test("it is registered internal: no client can call it, only the operator", () => {
+		const source = readFileSync(join(__dirname, "..", "agents.ts"), "utf8");
+		expect(source).toMatch(/export const setPersonalAgentOf = internalMutation\(/);
+		expect(source).not.toMatch(/export const setPersonalAgentOf = mutation\(/);
 	});
 
 	test("SET then CLEAR, returning previous and current; a replay is changed:false", async () => {
