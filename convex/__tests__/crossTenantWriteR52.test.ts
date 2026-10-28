@@ -51,7 +51,7 @@ afterEach(() => {
 
 const SEAT = "seat-x";
 const asOrg = (t: T, slug: string) =>
-	t.withIdentity({ subject: `user-${slug}`, organizationId: slug, org_id: testClerkOrgId(slug) } as Parameters<
+	t.withIdentity({ subject: `user-${slug}`, organizationId: slug, org_id: testClerkOrgId(slug), org_role: "org:editor" } as Parameters<
 		T["withIdentity"]
 	>[0]);
 const asMaster = (t: T) =>
@@ -69,6 +69,11 @@ async function seedOrgs(t: T) {
 		await ctx.db.insert("taskClosureConfig", {
 			key: "billableProjects",
 			value: [],
+			updatedAt: 0,
+		});
+		// A member writes or deletes a diary entry with a writer role (data).
+		await ctx.db.insert("memberWriterRoles", {
+			roles: ["org:admin", "org:editor"],
 			updatedAt: 0,
 		});
 		for (const slug of ["org-a", "org-b"]) {
@@ -565,6 +570,7 @@ describe("operator-org member sees the fleet range — R-52 follow-up", () => {
 				});
 				await seedRosterAgent(ctx, slug, "sigma");
 			}
+			await ctx.db.insert("memberWriterRoles", { roles: ["org:admin", "org:editor"], updatedAt: 1 });
 		});
 		await asMaster(t).mutation(api.diary.write, { date: D, orchestrator: "sigma", content: "fleet entry" });
 	}

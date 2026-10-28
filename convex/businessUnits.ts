@@ -29,6 +29,7 @@ import {
 	resolveVerifiedOrgScope,
 	verifiedOrgValidator,
 } from "./lib/verifiedOrg";
+import { resolveHumanActor } from "./lib/humanActor";
 import { requireMemberWriterRole } from "./memberWriterRoles";
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -281,7 +282,9 @@ export const update = mutation({
 		// caller could claim its own identity and still rewrite anyone's BU.
 		// Authorization must be derived from the row being targeted
 		// (bu.orchestratorId), never from a value the caller supplies.
-		callerOrchestrator: v.string(),
+		// Optional: a HUMAN org member omits it and acts in its own name (writer
+		// role + its own organisation's unit); the agent / fleet path still names it.
+		callerOrchestrator: v.optional(v.string()),
 		name: v.optional(v.string()),
 		description: v.optional(v.string()),
 		purpose: v.optional(v.string()),
@@ -325,6 +328,15 @@ export const update = mutation({
 		);
 		const acting = args.verifiedOrg !== undefined;
 		const fleet = !acting && (await hasFleetStanding(ctx, door));
+		// The caller named no orchestrator: only a person acting in its own name
+		// may omit it. The fleet and a bearer acting for its verified org name one.
+		const callerOrchestrator = args.callerOrchestrator;
+		const asMember = callerOrchestrator === undefined;
+		if (asMember && (fleet || acting)) {
+			throw new ConvexError(
+				`RBAC_DENIED: callerOrchestrator is required — omitting it is refused, not exempted — ${JSON.stringify({ registration: door, orgSlug: scope.orgSlug, reason: "caller-orchestrator-required" })}`,
+			);
+		}
 
 		const bu = await ctx.db.get(args.buId);
 		if (bu === null) {
@@ -355,9 +367,12 @@ export const update = mutation({
 			// The TARGET ROW's stored owner must be on the caller's roster by agent
 			// ID -- authorization is derived from the row, never from the caller's
 			// claim.
+			// A person in its own name is judged by its organisation (above) and its
+			// role, not by an owner it never claimed.
 			if (
-				bu.ownerId === undefined ||
-				!(await isAgentOnScopeRoster(ctx, scope, bu.ownerId, door))
+				!asMember &&
+				(bu.ownerId === undefined ||
+					!(await isAgentOnScopeRoster(ctx, scope, bu.ownerId, door)))
 			) {
 				throw new ConvexError(
 					`RBAC_DENIED: caller may not update business unit ${args.buId} — ${JSON.stringify({ orgSlug: scope.orgSlug, reason: "owner-not-on-roster" })}`,
@@ -387,11 +402,11 @@ export const update = mutation({
 		// The asserted caller must be the unit's owner (or the fleet's own system
 		// caller): the label is resolved to an agent ID in the row's organisation
 		// and the package judges it against the stored owner.
-		if (!isFleetSystemCaller(scope, args.callerOrchestrator)) {
+		if (callerOrchestrator !== undefined && !isFleetSystemCaller(scope, callerOrchestrator)) {
 			const callerId = await agentIdOfLabelInOrg(
 				ctx,
 				orgOfRow(bu),
-				args.callerOrchestrator,
+				callerOrchestrator,
 				door,
 			);
 			if (
@@ -399,14 +414,14 @@ export const update = mutation({
 				!(await isAgentOwnerOfRow(ctx, bu, callerId, door))
 			) {
 				throw new ConvexError(
-					`RBAC_DENIED: ${args.callerOrchestrator} is not the owning orchestrator (${bu.orchestratorId}) of business unit ${args.buId} — ${JSON.stringify({ reason: "caller-not-owner", door })}`,
+					`RBAC_DENIED: ${callerOrchestrator} is not the owning orchestrator (${bu.orchestratorId}) of business unit ${args.buId} — ${JSON.stringify({ reason: "caller-not-owner", door })}`,
 				);
 			}
 		}
 
 		const {
 			buId,
-			callerOrchestrator,
+			callerOrchestrator: _callerOrchestrator,
 			verifiedOrg: _verifiedOrg,
 			...fields
 		} = args;
@@ -443,12 +458,29 @@ export const remove = mutation({
 	returns: v.object({ deleted: v.boolean() }),
 	handler: async (ctx, args) => {
 		// write-contract: MCP-transport-only — issued via mcp-server client.mutation("businessUnits:remove", …) at mcp-server/src/tools.ts:7837 (imperative), 0 hits in vantage-peers-dashboard {app,components,hooks,lib,contexts,providers} (measured 2026-10-01 at origin/main e2dc58f and 0466fac); never a subscribing pre-org client shell. The no-org throw is a refusal at an imperative MCP call, never at a render.
-		// Deletion is fleet-only (the MCP server's `delete_bu` tool restricts it to
+		// Deletion is the fleet's or an org:admin's of the unit's own organisation
+		// (the MCP server's `delete_bu` tool restricts it to
 		// master; that transport-layer gate is not a defence for this class, see
 		// .claude/rules/authority-attached-to-anonymous-object.md, so Convex
 		// re-derives it). The fleet is the package's `fleet` standing, not a flag.
 		const door = "businessUnits:remove";
 		const scope = await withOrgScope(ctx);
+		if (!(await hasFleetStanding(ctx, door))) {
+			// HUMAN path (task k17d5k5bw741p3681bc0pq76ah8fk4sn): an org:admin of the
+			// unit's OWN organisation deletes it in its own name. The caller is
+			// resolved first (anonymous and pre-org raise, never "not found").
+			requireResolvedCaller(scope, door, { alsoRefusePreOrg: true });
+			await resolveHumanActor(ctx, scope, { door, adminOnly: true });
+			const own = await ctx.db.get(args.buId);
+			if (!own) throw new Error("Business unit not found");
+			if (!sameOrg(orgRefOfRow(own), orgRefOfScope(scope))) {
+				throw new ConvexError(
+					`RBAC_DENIED: caller may not delete business unit ${args.buId} — ${JSON.stringify({ orgSlug: scope.orgSlug, reason: "row-not-in-caller-org" })}`,
+				);
+			}
+			await ctx.db.delete(args.buId);
+			return { deleted: true };
+		}
 		await requireFleetDoor(ctx, scope, door, { masterOnly: true });
 
 		const bu = await ctx.db.get(args.buId);

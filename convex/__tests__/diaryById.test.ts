@@ -64,7 +64,7 @@ const asMember = (t: T, slug: string, orgId: string, subject: string) =>
 		subject,
 		organizationSlug: slug,
 		org_id: orgId,
-		org_role: "org:member",
+		org_role: "org:editor",
 	} as Identity);
 const asMaster = (t: T) =>
 	t.withIdentity({ subject: "test-service-account-user-id" } as Identity);
@@ -78,6 +78,8 @@ async function world(): Promise<World> {
 	const t = createT();
 	const ids: Record<string, Id<"agents">> = {};
 	await t.run(async (ctx) => {
+		// A member writes or deletes a diary entry with a writer role (data).
+		await ctx.db.insert("memberWriterRoles", { roles: ["org:admin", "org:editor"], updatedAt: 1 });
 		const agent = (orgSlug: string, clerkOrgId: string, name: string) =>
 			ctx.db.insert("agents", {
 				orgSlug,

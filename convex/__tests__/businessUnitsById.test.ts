@@ -321,12 +321,12 @@ describe("DENIED - a name never admits", () => {
 		expect((await asService(t).query(api.businessUnits.get, { buId: id }))?._id).toBe(id);
 	});
 
-	test("deletion: a member is refused, a claimless service account is refused on a client unit, a claim naming another org is refused", async () => {
+	test("deletion: an editor member is refused (an org:admin of the unit's own org is served, see commsHumanCrud), a claimless service account is refused on a client unit, a claim naming another org is refused", async () => {
 		const t = createT();
 		const w = await seedWorld(t);
 		const id = await unit(t, { orgSlug: A, ownerId: w.piA });
 		expect(
-			await refusal(asMember(t, A).mutation(api.businessUnits.remove, { buId: id })),
+			await refusal(asMember(t, A, "org:editor").mutation(api.businessUnits.remove, { buId: id })),
 		).toContain("RBAC_DENIED");
 		expect(
 			await refusal(asService(t).mutation(api.businessUnits.remove, { buId: id })),

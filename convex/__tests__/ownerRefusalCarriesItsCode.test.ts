@@ -45,6 +45,8 @@ type T = ReturnType<typeof createT>;
  */
 async function seedOrgA(t: T, rosterAgents = true) {
 	await t.run(async (ctx) => {
+		// A member writes or deletes a diary entry with a writer role (data).
+		await ctx.db.insert("memberWriterRoles", { roles: ["org:admin", "org:editor"], updatedAt: 1 });
 		await ctx.db.insert("client_org_mapping", {
 			clerkOrgSlug: "org-a",
 			clerkOrgId: testClerkOrgId("org-a"),
@@ -61,6 +63,15 @@ async function seedOrgA(t: T, rosterAgents = true) {
 }
 
 const asMemberOfOrgA = (t: T) =>
+	t.withIdentity({
+		subject: "user-org-a",
+		organizationId: "org-a",
+		org_id: testClerkOrgId("org-a"),
+		org_role: "org:editor",
+	} as Parameters<typeof t.withIdentity>[0]);
+
+// No role claim: an omitted caller from it is the HUMAN path, refused role-not-writer.
+const asRolelessMemberOfOrgA = (t: T) =>
 	t.withIdentity({
 		subject: "user-org-a",
 		organizationId: "org-a",
@@ -151,7 +162,7 @@ describe("R-16 — owner refusals raise a coded ConvexError naming their door", 
 		await seedOrgA(t, false);
 		const noteId = await seedNote(t, "seat-b");
 		const missing = await refusalOf(
-			asMemberOfOrgA(t).mutation(api.briefingNotes.deleteBriefingNote, { noteId }),
+			asRolelessMemberOfOrgA(t).mutation(api.briefingNotes.deleteBriefingNote, { noteId }),
 		);
 		// Admin CRUD B2: an omitted caller from a non-master member is the HUMAN
 		// path; this member carries no writer role, so it is refused as such (still
@@ -208,10 +219,18 @@ describe("R-16 — owner refusals raise a coded ConvexError naming their door", 
 		await seedOrgA(t);
 		const diaryId = await seedDiary(t, "seat-b");
 		const missing = await refusalOf(
-			asMemberOfOrgA(t).mutation(api.diary.deleteDiary, { diaryId }),
+			asRolelessMemberOfOrgA(t).mutation(api.diary.deleteDiary, { diaryId }),
 		);
-		expect(missing.payload.registration).toBe("diary:deleteDiary");
-		expect(missing.payload.reason).toBe("caller-orchestrator-required");
+		// Omitting the caller from an org member is the HUMAN path (task
+		// k17d5k5bw741p3681bc0pq76ah8fk4sn): no writer role claim -> role-not-writer,
+		// naming its door. The MASTER omitting it is still caller-orchestrator-required.
+		expect((missing.payload as unknown as { door: string }).door).toBe("diary:deleteDiary");
+		expect(missing.payload.reason).toBe("role-not-writer");
+		const masterMissing = await refusalOf(
+			asMaster(t).mutation(api.diary.deleteDiary, { diaryId }),
+		);
+		expect(masterMissing.payload.registration).toBe("diary:deleteDiary");
+		expect(masterMissing.payload.reason).toBe("caller-orchestrator-required");
 		const stranger = await refusalOf(
 			asMemberOfOrgA(t).mutation(api.diary.deleteDiary, {
 				diaryId,
@@ -227,7 +246,7 @@ describe("R-16 — owner refusals raise a coded ConvexError naming their door", 
 		await seedOrgA(t);
 		const messageId = await seedMessage(t, "seat-b");
 		const missing = await refusalOf(
-			asMemberOfOrgA(t).mutation(api.messages.deleteMessage, { messageId }),
+			asRolelessMemberOfOrgA(t).mutation(api.messages.deleteMessage, { messageId }),
 		);
 		// Omitting the caller from an org member is now the HUMAN path (task
 		// k17d5k5bw741p3681bc0pq76ah8fk4sn): a member with no writer role claim is

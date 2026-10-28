@@ -58,6 +58,7 @@ const asOrg = (t: T, slug: string) =>
 		subject: `user-${slug}`,
 		organizationId: slug,
 		org_id: ID_BY_SLUG[slug],
+		org_role: "org:editor",
 	} as Identity);
 const adminOf = (t: T, org: string) =>
 	t.withIdentity({
@@ -71,6 +72,8 @@ const serviceAccount = (t: T) =>
 
 async function seedWorld(t: T, mappingClerkOrgId: string | undefined) {
 	await t.run(async (ctx) => {
+		// A member writes or deletes a diary entry with a writer role (data).
+		await ctx.db.insert("memberWriterRoles", { roles: ["org:admin", "org:editor"], updatedAt: 1 });
 		await ctx.db.insert("client_org_mapping", {
 			clerkOrgSlug: ACME.slug,
 			allowedOrchestrators: [SEAT],
