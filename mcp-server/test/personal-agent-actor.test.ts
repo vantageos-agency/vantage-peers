@@ -3,7 +3,7 @@
  * through the one path a person with an agent credential already has: `actor`
  * (acting names bound, `verifiedActor` forwarded, no `verifiedPerson`). Convex
  * decides WHICH agent (resolvePersonalAgent); this side only refuses to believe
- * a stamp that is not for the token's own org, or that rides a non-person token.
+ * a stamp riding a non-person token (the org check is Convex's, by stored ID).
  * Task k17ee3efn6xz4zpapcg68sgvnh8h43gt.
  */
 import { describe, expect, it } from "vitest";
@@ -47,13 +47,6 @@ describe("personalActorOf", () => {
 		expect(personalActorOf(personToken({ personalAgent: { ...AGENT, agentId: "" } }))).toBeUndefined();
 		expect(personalActorOf(personToken({ personalAgent: { ...AGENT, agentName: "" } }))).toBeUndefined();
 		expect(personalActorOf(null)).toBeUndefined();
-	});
-
-	it("DENY: an agent stamped for ANOTHER org is never believed (cross-tenant)", () => {
-		expect(
-			personalActorOf(personToken({ personalAgent: { ...AGENT, orgId: "org-b" } })),
-		).toBeUndefined();
-		expect(personalActorOf(personToken({ clerkOrgSlug: undefined, personalAgent: AGENT }))).toBeUndefined();
 	});
 
 	it("DENY: a token that is not a person's never takes the stamp (a seat is a seat)", () => {

@@ -23,7 +23,7 @@ Clerk user ID when EXACTLY ONE active agent of O designates that person.
 The decision is `resolvePersonalAgent` in `@vantageos/cloud-identity` (README, "The agent a person acts as").
 Convex only supplies the by-ID reads (`convex/lib/personalAgent.ts`) and applies it in
 `oauth:getAccessTokenByHash`; the MCP bearer middleware folds the result into `actor`
-(`personalActorOf`, `mcp-server/src/auth.ts`).
+(`personalActorOf`, `mcp-server/src/auth.ts`; it only maps, the organisation is judged by ID in Convex).
 
 The person keeps the person's organisation role: the writer-role gate still applies. A request that
 presents an explicit agent credential acts as that credential's agent instead.
