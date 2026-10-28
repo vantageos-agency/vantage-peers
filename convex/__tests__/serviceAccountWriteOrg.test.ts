@@ -197,8 +197,15 @@ describe("tasks:create — a service-account write for a verified org", () => {
 			verifiedActor: { agentId: sigma.id, orgSlug: sigma.orgSlug },
 		});
 		await asServiceAccount(t).mutation(api.tasks.create, fleetTask);
+		// What the NEW MCP sends for an operator-org agent credential: the proven
+		// actor AND the bearer's verified org (the operator org). Still a fleet row.
+		await asServiceAccount(t).mutation(api.tasks.create, {
+			...fleetTask,
+			verifiedActor: { agentId: sigma.id, orgSlug: sigma.orgSlug },
+			verifiedOrg: { orgSlug: sigma.orgSlug },
+		});
 		const rows = await tasksRows(t);
-		expect(rows).toHaveLength(2);
+		expect(rows).toHaveLength(3);
 		for (const row of rows) {
 			expect(row.orgId).toBeUndefined();
 			expect(row.clerkOrgId).toBeUndefined();
@@ -228,6 +235,50 @@ describe("missions:create — a service-account write for a verified org", () =>
 		});
 		const [row] = await missionRows(t);
 		expect(row.orgId).toBe("org-a");
+	});
+
+	test("FLEET (unchanged): an operator-org agent, with or without the verifiedOrg the new MCP sends, writes a fleet mission", async () => {
+		const t = createT();
+		await seed(t);
+		await asServiceAccount(t).query(api.tasks.list, {});
+		const sigma = await t.run(async (ctx) => {
+			const op = (await ctx.db.query("client_org_mapping").collect()).find(
+				(m) => m.orgKind === "operator",
+			);
+			if (op === undefined) throw new Error("operator org not seeded");
+			const id = await ctx.db.insert("agents", {
+				orgSlug: op.clerkOrgSlug,
+				...(op.clerkOrgId !== undefined ? { clerkOrgId: op.clerkOrgId } : {}),
+				name: "sigma",
+				normalizedName: "sigma",
+				isActive: true,
+				createdAt: Date.now(),
+			});
+			return { id, orgSlug: op.clerkOrgSlug };
+		});
+		const fleetMission = {
+			...MISSION,
+			pilot: "sigma",
+			agents: ["sigma"],
+			createdBy: "sigma",
+		};
+		await asServiceAccount(t).mutation(api.missions.create, {
+			...fleetMission,
+			name: "m-actor",
+			verifiedActor: { agentId: sigma.id, orgSlug: sigma.orgSlug },
+		});
+		await asServiceAccount(t).mutation(api.missions.create, {
+			...fleetMission,
+			name: "m-actor-and-org",
+			verifiedActor: { agentId: sigma.id, orgSlug: sigma.orgSlug },
+			verifiedOrg: { orgSlug: sigma.orgSlug },
+		});
+		const rows = await missionRows(t);
+		expect(rows).toHaveLength(2);
+		for (const row of rows) {
+			expect(row.orgId).toBeUndefined();
+			expect(row.clerkOrgId).toBeUndefined();
+		}
 	});
 
 	test("REFUSED (unresolved): an agent whose org has no active mapping, nothing written", async () => {
