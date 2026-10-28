@@ -147,8 +147,20 @@ describe("C0.3 — add_repo_mapping master-only gate", () => {
 		// Repo mappings are tenant-owned (githubRepoMapping.orgId, stamped server-side).
 		// The mock Convex client accepts; the real door's member/scope/own-rows
 		// refusals are pinned in convex/__tests__/repoMappingTenant.test.ts.
-		const result = await callTool("add_repo_mapping", args, buildScopedCtx());
+		const result = await callTool(
+			"add_repo_mapping",
+			args,
+			buildScopedCtx({ clerkOrgSlug: "org-a" }),
+		);
 		expect(result.isError).toBeFalsy();
+	});
+
+	it("scoped bearer with NO resolvable org is refused at the MCP layer (it used to write a fleet row; task k176y0q5jcz3m8m673bf61kva98h49js)", async () => {
+		const result = await callTool("add_repo_mapping", args, buildScopedCtx());
+		expect(result.isError).toBe(true);
+		expect(getText(result)).toMatch(
+			/RBAC_DENIED[\s\S]*verified-org-unresolved/,
+		);
 	});
 
 	it("happy path: master bearer → passes through", async () => {
@@ -175,9 +187,21 @@ describe("C0.3 — remove_repo_mapping master-only gate", () => {
 		const result = await callTool(
 			"remove_repo_mapping",
 			args,
-			buildScopedCtx(),
+			buildScopedCtx({ clerkOrgSlug: "org-a" }),
 		);
 		expect(result.isError).toBeFalsy();
+	});
+
+	it("scoped bearer with NO resolvable org is refused at the MCP layer (task k176y0q5jcz3m8m673bf61kva98h49js)", async () => {
+		const result = await callTool(
+			"remove_repo_mapping",
+			args,
+			buildScopedCtx(),
+		);
+		expect(result.isError).toBe(true);
+		expect(getText(result)).toMatch(
+			/RBAC_DENIED[\s\S]*verified-org-unresolved/,
+		);
 	});
 
 	it("happy path: master bearer → passes through", async () => {
