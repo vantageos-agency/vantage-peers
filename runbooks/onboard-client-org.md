@@ -35,12 +35,21 @@ Every write is on prod (`compassionate-goldfinch-737`). Run them from the vantag
      '{"profile":{"profileId":"<agent>-<slug>","description":"Seat <agent> in org <slug>","fromAllowList":["<agent>"],"namespaceReadPrefixes":["orchestrator/<agent>","project/<slug>"],"namespaceWritePrefixes":["orchestrator/<agent>","project/<slug>"],"clerkOrgSlug":"<slug>"}}'
    ```
 
-4. **Mint the seat bearers and the agent credentials.** This uses the service account for the seats, and the org-admin JWT of **this** org for the agent registry.
+4. **Mint the seat bearers and the agent credentials.** This uses the service account for the seats, and an org-admin JWT minted **for this org** for the agent registry.
    ```
    bun run scripts/provision-client-org-agents.mjs --org <slug> --clerk-org-id <org_…> \
      --agents <a>,<b> --stage-dir /home/elpi/.vantage-client-secrets/<slug> --ttl-days 90
    ```
    The environment comes from `.env.local`: `CLERK_SECRET_KEY=$CLERK_SECRET_KEY_VANTAGE_PEERS`, plus `CONVEX_URL` set to the prod URL.
+
+   **The org is checked before anything is written.** A sign-in ticket opens a session on the admin's *active* Clerk org (the last one created), and the registry takes its org from the token. So the script makes `--clerk-org-id` the session's active org, requests the `convex` JWT template token (override with `CLERK_ORG_ADMIN_JWT_TEMPLATE`), and refuses unless the token's `org_id` equals `--clerk-org-id`. On a mismatch it exits 1 with `ORG_MISMATCH: … org_id=<got> but the requested Clerk org is <wanted>`, and nothing is registered, seats included. Read the line `org-admin token verified: org_id = <org_…>` in the output.
+
+   **4b. Set each agent's owner (operator command, mandatory).** `registerAgent` and `mintAgentCredential` do not set `agents.ownerPersonId`, and without it every agent credential is refused (`AGENT_CREDENTIAL_INVALID`). `agents:setAgentOwner` is an *internal* mutation, so no JWT can call it and the script cannot either. The script ends by printing the exact command (agent IDs and the org admin's Clerk user ID, no secret); run it with the deploy key of the deployment you are provisioning:
+   ```
+   CONVEX_DEPLOY_KEY=<prod key> npx convex run agents:setAgentOwner \
+     '{"agentIds":["<agents id>"],"ownerPersonId":"<org admin user_…>","reason":"client org <slug>: onboarding, owner is the org admin that registered the agent"}'
+   ```
+   Re-running it with the same owner changes nothing. Do step 5 and the proof (step 7) only after it.
 
 5. **Hand the files to the client user.**
    ```
