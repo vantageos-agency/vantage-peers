@@ -5438,10 +5438,6 @@ export const billingSummaryByProject = query({
 		// over an unfiltered scan (that would reproduce the same "bound applied
 		// after the fetch" defect this handler was fixed for).
 		project: v.optional(v.string()),
-		// R-54: the fleet service account is served only inside a transport-verified
-		// organisation (convex/lib/taskDoorClaim.ts).
-		verifiedActor: v.optional(verifiedActorValidator),
-		verifiedOrg: v.optional(verifiedOrgValidator),
 	},
 	returns: v.object({
 		byProject: v.array(
@@ -5474,20 +5470,18 @@ export const billingSummaryByProject = query({
 		// R-50: reactively-subscribed public query — refuseWithoutThrow
 		// narrows the signed-in-no-org branch to a typed-empty summary
 		// instead of a throw.
-		const transportScope = await withOrgScope(ctx, { refuseWithoutThrow: true });
+		// R-54 is NOT closed here: the `billing_summary_by_project` MCP tool calls this
+		// door with no claim for the master bearer (mcp-server/src/tools.ts, kind
+		// "master"), so refusing the claimless service account would break it. It
+		// needs the MCP to forward a claim first (task k17er5a6yyccvxdh6gjcm5cand8fztkv).
+		const scope = await withOrgScope(ctx, { refuseWithoutThrow: true });
 		const emptySummary = {
 			byProject: [],
 			unattributedTaskCount: 0,
 			invalidDurationTaskCount: 0,
 			truncated: false,
 		};
-		if (transportScope.refused) return emptySummary;
-		const scope = await resolveClaimedReadScope(
-			ctx,
-			transportScope,
-			{ verifiedActor: args.verifiedActor, verifiedOrg: args.verifiedOrg },
-			"tasks:billingSummaryByProject",
-		);
+		if (scope.refused) return emptySummary;
 		requireScope(scope, "view-own-tasks");
 
 		const project = args.project;
