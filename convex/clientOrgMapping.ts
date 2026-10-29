@@ -335,7 +335,7 @@ export const seedSeatAgents = internalMutation({
 			// The org's own conflict check (the one agents:registerAgent runs): a
 			// label already held by ANY agent of this org refuses, naming the holder
 			// by ID. Nothing is selected or reused.
-			await assertAgentNameFree(ctx, mapping.clerkOrgSlug, name);
+			await assertAgentNameFree(ctx, { id: clerkOrgId, label: mapping.clerkOrgSlug }, name);
 			const id = await ctx.db.insert("agents", {
 				orgSlug: mapping.clerkOrgSlug,
 				...(clerkOrgId !== undefined ? { clerkOrgId } : {}),

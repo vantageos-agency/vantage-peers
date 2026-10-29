@@ -163,7 +163,7 @@ export const registerAgent = mutation({
 		const stamp = { orgSlug: caller.org.label, clerkOrgId: caller.org.id };
 
 		assertAgentLabelValid(args.name);
-		await assertAgentNameFree(ctx, stamp.orgSlug, args.name);
+		await assertAgentNameFree(ctx, caller.org, args.name);
 
 		return await ctx.db.insert("agents", {
 			...stamp,
@@ -346,14 +346,14 @@ export const RENAME_RELATIONS_BATCH_SIZE = 100;
  */
 async function renameRelationsBatch(
 	ctx: MutationCtx,
-	orgSlug: string,
+	orgId: string,
 	oldName: string,
 	newName: string,
 ): Promise<boolean> {
 	const asParent = await ctx.db
 		.query("agent_relations")
-		.withIndex("by_parent", (q) =>
-			q.eq("orgSlug", orgSlug).eq("parentName", oldName),
+		.withIndex("by_parent_clerk_id", (q) =>
+			q.eq("clerkOrgId", orgId).eq("parentName", oldName),
 		)
 		.take(RENAME_RELATIONS_BATCH_SIZE);
 	for (const edge of asParent) {
@@ -361,8 +361,8 @@ async function renameRelationsBatch(
 	}
 	const asChild = await ctx.db
 		.query("agent_relations")
-		.withIndex("by_child", (q) =>
-			q.eq("orgSlug", orgSlug).eq("childName", oldName),
+		.withIndex("by_child_clerk_id", (q) =>
+			q.eq("clerkOrgId", orgId).eq("childName", oldName),
 		)
 		.take(RENAME_RELATIONS_BATCH_SIZE);
 	for (const edge of asChild) {
@@ -377,17 +377,17 @@ async function renameRelationsBatch(
 /**
  * renameAgentRelations — the self-scheduled continuation of `renameAgent`.
  * Internal only: the caller was authorised (`resolveSessionCaller`) by the public
- * mutation that scheduled it, and `orgSlug` is the one that call proved. The
- * edge set is scoped by `(orgSlug, oldName)` so another org's edges that carry
- * the same label are never read.
+ * mutation that scheduled it, and `orgId` is the permanent org id that call
+ * proved. The edge set is keyed by `(clerkOrgId, oldName)`, never by the slug, so
+ * another org's edges (or those of an org that once held the slug) are never read.
  */
 export const renameAgentRelations = internalMutation({
-	args: { orgSlug: v.string(), oldName: v.string(), newName: v.string() },
+	args: { orgId: v.string(), oldName: v.string(), newName: v.string() },
 	returns: v.null(),
 	handler: async (ctx, args) => {
 		const more = await renameRelationsBatch(
 			ctx,
-			args.orgSlug,
+			args.orgId,
 			args.oldName,
 			args.newName,
 		);
@@ -432,8 +432,7 @@ export const renameAgent = mutation({
 		assertAgentLabelValid(args.newName);
 
 		const existing = await requireOwnAgent(ctx, caller, args.agentId, door);
-		const orgSlug = caller.org.label;
-		await assertAgentNameFree(ctx, orgSlug, args.newName, existing._id);
+		await assertAgentNameFree(ctx, caller.org, args.newName, existing._id);
 
 		const oldName = existing.name;
 		const newKey = normalizeOrchestratorId(args.newName);
@@ -445,13 +444,13 @@ export const renameAgent = mutation({
 		if (oldName !== args.newName) {
 			const more = await renameRelationsBatch(
 				ctx,
-				orgSlug,
+				caller.org.id,
 				oldName,
 				args.newName,
 			);
 			if (more) {
 				await ctx.scheduler.runAfter(0, internal.agents.renameAgentRelations, {
-					orgSlug,
+					orgId: caller.org.id,
 					oldName,
 					newName: args.newName,
 				});
@@ -510,7 +509,7 @@ export const listAgentsByOrg = query({
 
 		return await ctx.db
 			.query("agents")
-			.withIndex("by_org", (q) => q.eq("orgSlug", caller.org.label))
+			.withIndex("by_org_clerk_id", (q) => q.eq("clerkOrgId", caller.org.id))
 			.collect();
 	},
 });

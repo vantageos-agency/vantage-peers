@@ -95,7 +95,7 @@ export const linkServiceAccountAgent = internalMutation({
 			try {
 				await assertAgentNameFree(
 					ctx,
-					mapping.clerkOrgSlug,
+					{ id: mapping.clerkOrgId, label: mapping.clerkOrgSlug },
 					SERVICE_ACCOUNT_AGENT_NAME,
 				);
 			} catch (err: unknown) {
