@@ -42,7 +42,11 @@ import {
 	resolveDoorScope,
 	verifiedOrgSlugOf,
 } from "./doorScope.js";
-import { FreshStateGuardError, guardFreshState } from "./fresh-state-guard.js";
+import {
+	BareStateLiteralError,
+	FreshStateGuardError,
+	guardFreshState,
+} from "./fresh-state-guard.js";
 import { listTasksGate } from "./list-tasks-gate.js";
 import { memberAuthorLabel } from "./memberAuthor.js";
 import { normalizeOrchestratorId } from "./normalizeOrchestratorId.js";
@@ -3595,6 +3599,12 @@ export function registerTools(
 						throw new ProtocolError(
 							ProtocolErrorCode.InvalidParams,
 							`ÉTAT PÉRIMÉ — send_message aborted, nothing was sent: ${guardError.message}`,
+						);
+					}
+					if (guardError instanceof BareStateLiteralError) {
+						throw new ProtocolError(
+							ProtocolErrorCode.InvalidParams,
+							`ÉTAT SANS COMMANDE — send_message aborted, nothing was sent: ${guardError.message}`,
 						);
 					}
 					throw guardError;
