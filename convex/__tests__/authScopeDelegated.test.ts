@@ -17,7 +17,7 @@
 import { convexTest } from "convex-test";
 import { describe, expect, test } from "vitest";
 import { testClerkOrgId } from "../../tests/fixtures/testClerkOrgId";
-import { requireOrgAdminById } from "../lib/agentIdentity";
+import { api } from "../_generated/api";
 import {
 	filterByOrgScope,
 	isRowVisibleToScope,
@@ -218,17 +218,13 @@ describe("SLUG REUSE: a new org that takes a freed slug is not admin of the old 
 			});
 	});
 
-	test("requireOrgAdminById (agent doors) refuses a new org_id carrying the old slug", async () => {
+	test("the agent registry doors refuse a new org_id carrying the old slug", async () => {
 		const t = createT();
 		await seedOrg(t, "agent-slug");
 		const identity = session("attacker5", "agent-slug", "org_NewOrgTookAgentSlug");
-		await t.withIdentity(identity).run(async (ctx) => {
-			const who = await ctx.auth.getUserIdentity();
-			if (who === null) throw new Error("test identity missing");
-			await expect(
-				requireOrgAdminById(ctx, who, "agent-slug", "test:door"),
-			).rejects.toThrow(/RBAC_DENIED/);
-		});
+		await expect(
+			t.withIdentity(identity).query(api.agents.listAgentsByOrg, { orgSlug: "agent-slug" }),
+		).rejects.toThrow(/RBAC_DENIED/);
 	});
 
 	test("withOrgScope never resolves the old org's scope for a new org_id", async () => {
