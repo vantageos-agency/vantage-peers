@@ -294,21 +294,25 @@ export async function assertAgentNameFree(
 ): Promise<void> {
 	const normalized = normalizeOrchestratorId(name);
 	// The organisation's agents, keyed on its permanent ID: a slug is a label that
-	// another organisation can take over, and no label selects a row. An
-	// organisation whose mapping carries no ID yet is checked against the rows
-	// stamped with no ID under its label (the only rows it can own).
-	const roster =
+	// another organisation can take over, and no label selects a row. A row that
+	// was written before the ID existed carries no ID at all, so its owner cannot
+	// be told apart from the label; for a NAME-UNIQUENESS refusal (which can only
+	// refuse, never grant) it counts as a holder under the organisation's label.
+	// A row stamped with ANOTHER organisation's ID never does.
+	const unstamped = (
+		await ctx.db
+			.query("agents")
+			.withIndex("by_org", (q) => q.eq("orgSlug", org.label))
+			.collect()
+	).filter((row) => row.clerkOrgId === undefined);
+	const stamped =
 		org.id !== undefined
 			? await ctx.db
 					.query("agents")
 					.withIndex("by_org_clerk_id", (q) => q.eq("clerkOrgId", org.id as string))
 					.collect()
-			: (
-					await ctx.db
-						.query("agents")
-						.withIndex("by_org", (q) => q.eq("orgSlug", org.label))
-						.collect()
-				).filter((row) => row.clerkOrgId === undefined);
+			: [];
+	const roster = [...stamped, ...unstamped];
 	const clash = roster.find(
 		(row) =>
 			row._id !== exceptId &&
