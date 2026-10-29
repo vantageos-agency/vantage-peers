@@ -687,6 +687,54 @@ describe("doctor-ratchet: a count may only go down", () => {
 			expect(last(r)).toMatch(/ rise=0$/);
 		});
 
+		// The 0.4.9 -> 0.5.0 shape (task k1755rzrkbr397hpeftnjcqb2d8h7yhg): the newer doctor
+		// prints a rule key, CR-3, that main's baseline has never carried.
+		it("GREEN: a rule key absent from main is licensed by a strictly newer doctorVersion that carries it", () => {
+			const counts = { ...base().counts, "CR-3": 16 };
+			const prev = baselineFile({ ...base(), doctorVersion: "0.4.9" });
+			const head = baselineFile({ ...base(), doctorVersion: "0.5.0", counts });
+			const r = judge(
+				head,
+				evidenceWith("npm @vantageos/backend-doctor@0.5.0", counts),
+				prev,
+			);
+			expect(r.status).toBe(0);
+			expect(r.out).toMatch(/CR-3\s+16\s+16\s+0/);
+			expect(last(r)).toMatch(/ rise=0$/);
+		});
+
+		it("RED: the same new rule key under the same doctorVersion is a raise against main", () => {
+			const counts = { ...base().counts, "CR-3": 16 };
+			const prev = baselineFile({ ...base(), doctorVersion: "0.5.0" });
+			const head = baselineFile({ ...base(), doctorVersion: "0.5.0", counts });
+			const r = judge(
+				head,
+				evidenceWith("npm @vantageos/backend-doctor@0.5.0", counts),
+				prev,
+			);
+			expect(r.status).toBe(1);
+			expect(r.out).toMatch(/CR-3\s+0\s+16\s+\+16\s+RAISED/);
+			expect(r.out).toMatch(/baseline raised for CR-3: 0 on main -> 16 here/);
+			expect(last(r)).toMatch(/ rise=1$/);
+		});
+
+		it("RED: under the 0.5.0 re-baseline, one CR-3 site above the new ceiling fails", () => {
+			const counts = { ...base().counts, "CR-3": 16 };
+			const prev = baselineFile({ ...base(), doctorVersion: "0.4.9" });
+			const head = baselineFile({ ...base(), doctorVersion: "0.5.0", counts });
+			const r = judge(
+				head,
+				evidenceWith("npm @vantageos/backend-doctor@0.5.0", {
+					...counts,
+					"CR-3": 17,
+				}),
+				prev,
+			);
+			expect(r.status).toBe(1);
+			expect(r.out).toMatch(/CR-3\s+16\s+17\s+\+1\s+RAISED/);
+			expect(last(r)).toMatch(/ rise=1$/);
+		});
+
 		it("RED: under a re-baseline, a count above the NEW baseline still fails", () => {
 			const counts = { ...base().counts, "CR-2": 264 };
 			const head = baselineFile({ ...base(), doctorVersion: "0.4.7", counts });
