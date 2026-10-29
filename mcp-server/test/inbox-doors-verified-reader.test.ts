@@ -23,8 +23,8 @@ const seat: OAuthContext = {
 	expiresAt: 0,
 	isMaster: false,
 	accessTokenHash: "h",
-	clerkOrgSlug: "iris-rh",
-	seatAgent: { agentId: CLIO_ID, orgId: "iris-rh", agentName: "clio" },
+	clerkOrgSlug: "acme-hr",
+	seatAgent: { agentId: CLIO_ID, orgId: "acme-hr", agentName: "clio" },
 };
 
 function fake() {
@@ -71,7 +71,7 @@ describe("the inbox doors carry the verified agent ID", () => {
 			name: "messages:checkNewMessagesEnvelope",
 			args: {
 				recipient: "hélios",
-				verifiedActor: { agentId: CLIO_ID, orgSlug: "iris-rh" },
+				verifiedActor: { agentId: CLIO_ID, orgSlug: "acme-hr" },
 			},
 		});
 	});
@@ -84,7 +84,7 @@ describe("the inbox doors carry the verified agent ID", () => {
 		for (const call of calls) {
 			expect((call.args as { verifiedActor: unknown }).verifiedActor).toEqual({
 				agentId: CLIO_ID,
-				orgSlug: "iris-rh",
+				orgSlug: "acme-hr",
 			});
 		}
 	});

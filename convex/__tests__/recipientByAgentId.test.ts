@@ -1,11 +1,11 @@
 /// <reference types="vite/client" />
 //
-// VantagePeers Cloud — client incident Iris RH, task k1716f01f9g1a0scz7nj30118h8fx32c.
+// VantagePeers Cloud — client incident Acme HR, task k1716f01f9g1a0scz7nj30118h8fx32c.
 // Operator decision 2026-10-08: a message recipient is resolved by its AGENT ID,
 // never by its name (no accent fold, no name tolerance).
 //
-// World: two organisations each hold an agent named "hélios" (iris-rh and acme),
-// the same label for two different agents. iris-rh also holds an inactive agent,
+// World: two organisations each hold an agent named "hélios" (acme-hr and acme),
+// the same label for two different agents. acme-hr also holds an inactive agent,
 // an agent off its roster and an agent with no profile row (victor).
 //
 // Poles:
@@ -83,7 +83,7 @@ async function world(): Promise<World> {
 				createdAt: now,
 				...(orgKind ? { orgKind } : {}),
 			});
-		const irisRow = await org("iris-rh", [
+		const irisRow = await org("acme-hr", [
 			"clio",
 			HELIOS,
 			"marie",
@@ -102,18 +102,18 @@ async function world(): Promise<World> {
 				isActive,
 				createdAt: now,
 			});
-		ids.clio = await agent("iris-rh", "clio");
-		ids.helios = await agent("iris-rh", HELIOS);
-		ids.marie = await agent("iris-rh", "marie");
-		ids.victor = await agent("iris-rh", "victor"); // no profile row
-		ids.nadia = await agent("iris-rh", "nadia", false); // inactive
-		ids.offRoster = await agent("iris-rh", "oscar"); // not on iris's roster
-		ids.gone = await agent("iris-rh", "marie-old");
+		ids.clio = await agent("acme-hr", "clio");
+		ids.helios = await agent("acme-hr", HELIOS);
+		ids.marie = await agent("acme-hr", "marie");
+		ids.victor = await agent("acme-hr", "victor"); // no profile row
+		ids.nadia = await agent("acme-hr", "nadia", false); // inactive
+		ids.offRoster = await agent("acme-hr", "oscar"); // not on iris's roster
+		ids.gone = await agent("acme-hr", "marie-old");
 		await ctx.db.delete(ids.gone);
 		ids.acmeHelios = await agent("acme", HELIOS);
 		ids.fleetPi = await agent("fleet-op", "pi");
 		// M1: the rosters are stored BY ID (the name rosters above stay beside them).
-		// iris-rh also lists a deleted agent's stale ID; "ghost" and "oscar" are not
+		// acme-hr also lists a deleted agent's stale ID; "ghost" and "oscar" are not
 		// on it (no agent row / off the roster).
 		await ctx.db.patch(irisRow, {
 			allowedAgentIds: [
@@ -140,14 +140,14 @@ async function world(): Promise<World> {
 			clientId: "client-clio",
 			userId: "clio",
 			scopes: ["vantage:read", "vantage:write"],
-			scopeProfile: "clio-iris-rh",
+			scopeProfile: "clio-acme-hr",
 			fromAllowList: ["clio"],
-			namespaceReadPrefixes: ["team/iris-rh"],
-			namespaceWritePrefixes: ["team/iris-rh"],
+			namespaceReadPrefixes: ["team/acme-hr"],
+			namespaceWritePrefixes: ["team/acme-hr"],
 			expiresAt: now + 3_600_000,
 			createdAt: now,
-			clerkOrgSlug: "iris-rh",
-			clerkOrgId: testClerkOrgId("iris-rh"),
+			clerkOrgSlug: "acme-hr",
+			clerkOrgId: testClerkOrgId("acme-hr"),
 		});
 	});
 	return {
@@ -173,8 +173,8 @@ const clioSends = (w: World, extra: Record<string, unknown>) =>
 	asService(w.t).mutation(api.messages.sendMessage, {
 		from: "clio",
 		content: "hello",
-		seatOrgSlug: "iris-rh",
-		verifiedActor: { agentId: w.iris.clio, orgSlug: "iris-rh" },
+		seatOrgSlug: "acme-hr",
+		verifiedActor: { agentId: w.iris.clio, orgSlug: "acme-hr" },
 		...extra,
 	} as never);
 
@@ -227,16 +227,16 @@ describe("DELIVERED — a recipient addressed by its agent ID", () => {
 		expect(receipts).toHaveLength(1);
 		expect(receipts[0].recipientId).toBe(w.iris.helios);
 		expect(receipts[0].recipient).toBe(HELIOS);
-		expect(receipts[0].tenantId).toBe("iris-rh");
+		expect(receipts[0].tenantId).toBe("acme-hr");
 		const message = await w.t.run((ctx) => ctx.db.get(messageId));
 		expect(message?.channel).toBe(HELIOS);
-		expect(message?.tenantId).toBe("iris-rh");
+		expect(message?.tenantId).toBe("acme-hr");
 	});
 
 	test("iris hélios's check_messages sees it; acme hélios's does not", async () => {
 		const w = await world();
 		await clioSends(w, { recipientAgentIds: [w.iris.helios] });
-		const irisInbox = await inbox(w, HELIOS, "iris-rh");
+		const irisInbox = await inbox(w, HELIOS, "acme-hr");
 		expect(irisInbox.messages.map((m) => m.content)).toEqual(["hello"]);
 		expect(irisInbox.messages[0].from).toBe("clio");
 		const acmeInbox = await inbox(w, HELIOS, "acme");
@@ -262,7 +262,7 @@ describe("DELIVERED — a recipient addressed by its agent ID", () => {
 		await expect(
 			clioSends(w, { recipientAgentIds: [w.iris.victor] }),
 		).resolves.toBeTruthy();
-		expect((await inbox(w, "victor", "iris-rh")).messages).toHaveLength(1);
+		expect((await inbox(w, "victor", "acme-hr")).messages).toHaveLength(1);
 	});
 
 	test("several IDs: one receipt each; a repeated ID is one receipt", async () => {
@@ -279,7 +279,7 @@ describe("DELIVERED — a recipient addressed by its agent ID", () => {
 			asService(w.t).mutation(api.messages.sendMessage, {
 				from: "clio",
 				content: "x",
-				seatOrgSlug: "iris-rh",
+				seatOrgSlug: "acme-hr",
 				recipientAgentIds: ids,
 			});
 		await expect(send([w.iris.helios])).resolves.toBeTruthy();
@@ -300,11 +300,11 @@ describe("DELIVERED — a recipient addressed by its agent ID", () => {
 	test("an org member (human path) reaches its own org's agent by ID, not acme's", async () => {
 		const w = await world();
 		await w.t.mutation(internal.memberWriterRoles.setMemberWriterRoles, {
-			orgSlug: "iris-rh",
+			orgSlug: "acme-hr",
 			roles: ["org:admin"],
 		});
 		const send = (ids: string[]) =>
-			adminOf(w.t, "iris-rh").mutation(api.messages.sendMessage, {
+			adminOf(w.t, "acme-hr").mutation(api.messages.sendMessage, {
 				content: "from a person",
 				recipientAgentIds: ids,
 			});
@@ -327,8 +327,8 @@ describe("DELIVERED — a recipient addressed by its agent ID", () => {
 		expect(await errorOf(send([w.iris.helios]))).toContain(
 			"recipient-agent-not-addressable",
 		);
-		await expect(send([w.iris.helios], "iris-rh")).resolves.toBeTruthy();
-		expect(await errorOf(send([w.acmeHelios], "iris-rh"))).toContain(
+		await expect(send([w.iris.helios], "acme-hr")).resolves.toBeTruthy();
+		expect(await errorOf(send([w.acmeHelios], "acme-hr"))).toContain(
 			"recipient-agent-not-addressable",
 		);
 	});
@@ -479,7 +479,7 @@ describe("DIRECTORY — agent IDs for the caller's own organisation only", () =>
 		await w.t.run(async (ctx) => {
 			const m = await ctx.db
 				.query("client_org_mapping")
-				.withIndex("by_clerk_slug", (q) => q.eq("clerkOrgSlug", "iris-rh"))
+				.withIndex("by_clerk_slug", (q) => q.eq("clerkOrgSlug", "acme-hr"))
 				.first();
 			if (m)
 				await ctx.db.patch(m._id, {
@@ -496,7 +496,7 @@ describe("DIRECTORY — agent IDs for the caller's own organisation only", () =>
 
 	test("the token door admits the MCP service account only", async () => {
 		const w = await world();
-		for (const caller of [anonymous(w.t), adminOf(w.t, "iris-rh")]) {
+		for (const caller of [anonymous(w.t), adminOf(w.t, "acme-hr")]) {
 			expect(
 				await errorOf(
 					caller.query(api.orgRoster.getAgentDirectoryForAccessToken, {
@@ -546,6 +546,6 @@ describe("DIRECTORY — agent IDs for the caller's own organisation only", () =>
 		const helios = dir.find((e) => e.name === HELIOS)?.agentId;
 		expect(helios).toBeTruthy();
 		await clioSends(w, { recipientAgentIds: [helios as string] });
-		expect((await inbox(w, HELIOS, "iris-rh")).messages).toHaveLength(1);
+		expect((await inbox(w, HELIOS, "acme-hr")).messages).toHaveLength(1);
 	});
 });

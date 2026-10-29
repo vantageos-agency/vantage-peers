@@ -9,7 +9,7 @@
  * neither name its own org's agent as assignee nor be recorded as the creator.
  *
  * Poles, each through the real tool:
- *   SEAT CREATES   a seat for clio-iris-rh creating a schedule: the door receives
+ *   SEAT CREATES   a seat for clio-acme-hr creating a schedule: the door receives
  *                  clio's ID and org, and the creator name derived from the seat.
  *   CREDENTIAL     a master-scope bearer acting through a credential pauses /
  *                  resumes / deletes / updates: each door receives the agent ID.
@@ -38,7 +38,7 @@ const CLIO_OTHER_ORG_ID = "agentclio0000000000000000000002";
 const RECURRING_ID = "j57aaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
 
 const TOKENS = {
-	clioSeat: "seat-clio-iris-rh",
+	clioSeat: "seat-clio-acme-hr",
 	otherOrgSeat: "seat-clio-other-org",
 	otherOrgStamped: "seat-clio-other-org-stamped",
 	oldConvexSeat: "seat-old-convex",
@@ -47,7 +47,7 @@ const TOKENS = {
 const ROWS: Record<string, Record<string, unknown>> = {};
 // Each organisation's own roster, read from DATA by the delegation guard.
 const ROSTERS: Record<string, string[]> = {
-	"iris-rh": ["clio", "vera"],
+	"acme-hr": ["clio", "vera"],
 	"other-org": ["clio"],
 };
 
@@ -202,8 +202,8 @@ beforeEach(async () => {
 		clerkOrgSlug: org,
 	});
 	ROWS[await sha256Hex(TOKENS.clioSeat)] = {
-		...seat("clio", "iris-rh"),
-		seatAgent: { agentId: CLIO_ID, orgId: "iris-rh", agentName: "clio" },
+		...seat("clio", "acme-hr"),
+		seatAgent: { agentId: CLIO_ID, orgId: "acme-hr", agentName: "clio" },
 	};
 	// The same name in another org, with NO agent of that name there: no stamp.
 	ROWS[await sha256Hex(TOKENS.otherOrgSeat)] = {
@@ -219,7 +219,7 @@ beforeEach(async () => {
 			agentName: "clio",
 		},
 	};
-	ROWS[await sha256Hex(TOKENS.oldConvexSeat)] = seat("clio", "iris-rh");
+	ROWS[await sha256Hex(TOKENS.oldConvexSeat)] = seat("clio", "acme-hr");
 	installInternalClient();
 });
 
@@ -232,7 +232,7 @@ afterEach(() => {
 });
 
 describe("create_recurring_task forwards the seat's agent", () => {
-	it("a seat for clio-iris-rh: the door receives clio's ID and org, creator derived from the seat", async () => {
+	it("a seat for clio-acme-hr: the door receives clio's ID and org, creator derived from the seat", async () => {
 		const r = await postAsSeat("create_recurring_task", TOKENS.clioSeat, CREATE);
 		expect(r.text).not.toContain("Forbidden");
 		expect(r.refused, r.text).toBe(false);
@@ -241,7 +241,7 @@ describe("create_recurring_task forwards the seat's agent", () => {
 		expect(create?.args.createdBy).toBe("clio");
 		expect(create?.args.verifiedActor).toEqual({
 			agentId: CLIO_ID,
-			orgSlug: "iris-rh",
+			orgSlug: "acme-hr",
 		});
 	});
 
@@ -257,7 +257,7 @@ describe("create_recurring_task forwards the seat's agent", () => {
 		);
 	});
 
-	it("an agent of another org cannot assign into iris-rh: vera is not on its roster, nothing dispatched", async () => {
+	it("an agent of another org cannot assign into acme-hr: vera is not on its roster, nothing dispatched", async () => {
 		const r = await postAsSeat("create_recurring_task", TOKENS.otherOrgStamped, {
 			...CREATE,
 			assignedTo: "vera",
@@ -269,7 +269,7 @@ describe("create_recurring_task forwards the seat's agent", () => {
 		);
 	});
 
-	it("the same name from another org that has its own clio forwards ITS ID, never iris-rh's", async () => {
+	it("the same name from another org that has its own clio forwards ITS ID, never acme-hr's", async () => {
 		const r = await postAsSeat("create_recurring_task", TOKENS.otherOrgStamped, {
 			...CREATE,
 			assignedTo: "clio",
@@ -281,7 +281,7 @@ describe("create_recurring_task forwards the seat's agent", () => {
 		});
 		expect(create?.args.verifiedActor).not.toEqual({
 			agentId: CLIO_ID,
-			orgSlug: "iris-rh",
+			orgSlug: "acme-hr",
 		});
 	});
 
@@ -309,9 +309,9 @@ describe("the schedule doors forward the acting agent of a credential-bearing be
 		namespaceWritePrefixes: ["*"],
 		expiresAt: Date.now() + 3_600_000,
 		isMaster: true,
-		actor: { orgSlug: "iris-rh", agentName: "clio", agentId: CLIO_ID },
+		actor: { orgSlug: "acme-hr", agentName: "clio", agentId: CLIO_ID },
 	};
-	const expected = { agentId: CLIO_ID, orgSlug: "iris-rh" };
+	const expected = { agentId: CLIO_ID, orgSlug: "acme-hr" };
 
 	for (const [tool, door, args] of [
 		["pause_recurring_task", "recurringTasks:pause", { taskId: RECURRING_ID }],
@@ -392,7 +392,7 @@ describe("update_recurring_task decides no ownership: the Convex door does, on t
 		calls.some((c) => c.name === "recurringTasks:update");
 
 	it("the same-name clio of ANOTHER org forwards ITS OWN agent ID, so the door can refuse it", async () => {
-		storedRow = { createdById: CLIO_ID, orgId: "iris-rh" };
+		storedRow = { createdById: CLIO_ID, orgId: "acme-hr" };
 		const r = await update(seatCtx(CLIO_OTHER_ORG_ID, "other-org"));
 		const call = r.calls.find((c) => c.name === "recurringTasks:update");
 		expect(call?.args.verifiedActor).toEqual({
@@ -402,13 +402,13 @@ describe("update_recurring_task decides no ownership: the Convex door does, on t
 	});
 
 	it("the owner agent forwards its ID and org", async () => {
-		storedRow = { createdById: CLIO_ID, orgId: "iris-rh" };
-		const r = await update(seatCtx(CLIO_ID, "iris-rh"));
+		storedRow = { createdById: CLIO_ID, orgId: "acme-hr" };
+		const r = await update(seatCtx(CLIO_ID, "acme-hr"));
 		expect(r.refused).toBe(false);
 		const call = r.calls.find((c) => c.name === "recurringTasks:update");
 		expect(call?.args.verifiedActor).toEqual({
 			agentId: CLIO_ID,
-			orgSlug: "iris-rh",
+			orgSlug: "acme-hr",
 		});
 	});
 

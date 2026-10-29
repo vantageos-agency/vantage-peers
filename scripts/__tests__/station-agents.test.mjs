@@ -48,7 +48,7 @@ describe("validateStations", () => {
 	it("keeps an explicit instanceId and agentName override", () => {
 		expect(validateStations([{ role: "pi", instanceId: "pi-chromebook", agentName: "pi" }])[0].instanceId).toBe("pi-chromebook");
 	});
-	it("refuses the excluded BU (Marie / Iris RH), as role and as agentName", () => {
+	it("refuses the excluded BU (Marie / Acme HR), as role and as agentName", () => {
 		for (const r of EXCLUDED_ROLES) expect(() => validateStations([{ role: r }])).toThrow(/excluded/);
 		expect(() => validateStations([{ role: "eta", agentName: "victor" }])).toThrow(/excluded/);
 	});

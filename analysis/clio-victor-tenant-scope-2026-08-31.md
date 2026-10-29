@@ -3,8 +3,8 @@
 Task `k171w53mm7gmga4crhwt3kv1hs8dhkkn` (Pi, urgent). Investigation only — no
 code shipped; the cause and route return to Pi for the review line.
 
-Org: Iris RH / Marie Parrent. Orchestrators: Helios, Clio (Marie's, in ChatGPT,
-`Clio-chatgpt`), Victor (`/root/coding/victor-iris-rh`, VPS).
+Org: Acme HR / Marie Parrent. Orchestrators: Helios, Clio (Marie's, in ChatGPT,
+`Clio-chatgpt`), Victor (`/root/coding/victor-acme-hr`, VPS).
 
 Pinned against `convex/messages.ts` and `mcp-server/src/tools.ts` @ commit
 `298a225` (main, 2026-08-31).
@@ -17,7 +17,7 @@ Pinned against `convex/messages.ts` and `mcp-server/src/tools.ts` @ commit
 `args.tenantId`, never derived from the sender's authenticated org — while the
 READ side forces `.eq("tenantId", scope.orgSlug)`. A message a client sends
 without a tenant is stored with `tenantId: undefined`, and a scoped read
-excludes it, because in Convex `.eq("tenantId", "project/iris-rh")` does not
+excludes it, because in Convex `.eq("tenantId", "project/acme-hr")` does not
 match a row where the field is absent.** Two authorities disagree: the write
 trusts the client, the read trusts the org — and the null row falls in the gap.
 
@@ -48,9 +48,9 @@ the absence silently — no derivation, no write-time refusal.
 ### Is a null tenantId excluded, included, or a wildcard? — MEASURED
 **Excluded.** Firsthand control (both directions, reader ≠ sender):
 
-- Sent two receipts to `sigma`: PROBE-A with `tenantId="project/iris-rh"`,
+- Sent two receipts to `sigma`: PROBE-A with `tenantId="project/acme-hr"`,
   PROBE-B with none.
-- `check_messages recipient=sigma tenantId="project/iris-rh"` → returns **only
+- `check_messages recipient=sigma tenantId="project/acme-hr"` → returns **only
   PROBE-A**. PROBE-B (null tenant) is invisible.
 - `check_messages recipient=sigma` (no tenant) → returns **both** — positive
   control: the read CAN return rows; the null-tenant receipt is missing *only*
@@ -68,7 +68,7 @@ returns only the original #237 introduction; the send-path stamp has been
 R-30, #1249 R-51) touch the READ scoping, never the send stamp.
 
 Measured on the four Clio messages:
-- `jn7eweb34ge3hc1f9yve806gad8dbxem` (day 176) → `tenantId: "project/iris-rh"`.
+- `jn7eweb34ge3hc1f9yve806gad8dbxem` (day 176) → `tenantId: "project/acme-hr"`.
 - `jn7ftmrwvrxjdera6404jrv69x8dg3av`, `jn7b3mw5aqw576kbg5g2hce0q58dhv2m`,
   `jn72j1adx299s9asdj466zpqsh8dg4nr` (day 179) → NO `tenantId` field.
 
@@ -122,8 +122,8 @@ The class closes by making the WRITE derive what the READ already derives:
 3. **Registration path** gives every external/Clerk orchestrator a `profiles`
    row so it is addressable — closing the one-way channel generically.
 4. **Backfill** (separate, careful): the existing null-tenant receipts for
-   Iris RH orchestrators (`from` in {clio,helios,victor}, `fromInstanceId`
-   `*-chatgpt`/org-bound) can be stamped `project/iris-rh` from the sender's
+   Acme HR orchestrators (`from` in {clio,helios,victor}, `fromInstanceId`
+   `*-chatgpt`/org-bound) can be stamped `project/acme-hr` from the sender's
    known org — derived, not invented. Out of scope until 1–3 land.
 
 ## What remains unmeasured

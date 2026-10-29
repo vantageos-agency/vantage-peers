@@ -144,10 +144,10 @@ describe("S3.4 B4 — seedDefaultProfiles upsert semantics", () => {
 				createdAt: now,
 				updatedAt: now,
 			});
-			// Also seed a post-D9-rename row (`iris-rh`) that would normally
-			// be re-shadowed by `marie-iris-rh` if the upsert were destructive.
+			// Also seed a post-D9-rename row (`acme-hr`) that would normally
+			// be re-shadowed by `marie-acme-hr` if the upsert were destructive.
 			await ctx.db.insert("oauth_scope_profiles", {
-				profileId: "iris-rh",
+				profileId: "acme-hr",
 				description: "Renamed post-D9, must survive seed re-runs.",
 				fromAllowList: ["marie", "victor"],
 				namespaceReadPrefixes: ["orchestrator/marie", "orchestrator/victor"],
@@ -166,7 +166,7 @@ describe("S3.4 B4 — seedDefaultProfiles upsert semantics", () => {
 		expect(custom?.fromAllowList).toEqual(["tenant-x"]);
 
 		const renamed = await asServiceAccount(t).query(api.oauth.getScopeProfile, {
-			profileId: "iris-rh",
+			profileId: "acme-hr",
 		});
 		expect(renamed).not.toBeNull();
 		expect(renamed?.fromAllowList).toEqual(["marie", "victor"]);

@@ -129,8 +129,8 @@ class ProseExtractionError(RuntimeError):
 # EXCLUDED, class 1 -- repository FILE PATHS / module-invocation strings:
 #   A finding whose matched text is (or sits inside) a repository file path
 #   or a Convex module-invocation string -- e.g.
-#   `convex/migrations/patch_marie_iris_rh_scope.ts` or the `bunx convex run
-#   "migrations/patch_marie_iris_rh_scope:patchMarieIrisRhScope"` invocation
+#   `convex/migrations/patch_<client>_scope.ts` or the `bunx convex run
+#   "migrations/patch_<client>_scope:patch<Client>Scope"` invocation
 #   line -- is OUT OF SCOPE for this guard. The migration's own FILENAME
 #   carries the client slug; rewording the PROSE that cites that filename
 #   cannot close this class without breaking a live invocation path

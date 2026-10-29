@@ -35,7 +35,7 @@ const createT = () => convexTest(schema, modules);
 type T = ReturnType<typeof createT>;
 type Identity = Parameters<T["withIdentity"]>[0];
 
-const ORG = "iris-rh";
+const ORG = "acme-hr";
 const NOW = 1_700_000_000_000;
 const SERVICE = "test-service-account-user-id";
 const PERSON = "user_portal1";

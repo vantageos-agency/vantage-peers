@@ -53,7 +53,7 @@ const modules = Object.fromEntries(
 );
 
 const MASTER_TOKEN = "test-master-token-client-scope-global-fix-deadbeef";
-const PROFILE_ID = "marie-iris-rh";
+const PROFILE_ID = "marie-acme-hr";
 
 beforeEach(() => {
 	vi.stubEnv("BEARER_SECRET_MASTER", MASTER_TOKEN);

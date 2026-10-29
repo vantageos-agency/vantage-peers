@@ -43,7 +43,7 @@ const marieCtx: OAuthContext = {
 	clientId: "marie-client-id",
 	userId: "marie",
 	scopes: ["vantage:read", "vantage:write"],
-	scopeProfile: "marie-iris-rh",
+	scopeProfile: "marie-acme-hr",
 	fromAllowList: ["marie"],
 	actor: { orgSlug: "marie-org", agentName: "marie", agentId: "agent-marie" },
 	namespaceReadPrefixes: ["orchestrator/victor", "project/marie", "global"],
@@ -127,7 +127,7 @@ describe("from gate (defineTool: actor binding, then roster)", () => {
 		);
 		expect(err).not.toBeNull();
 		expect(err).toContain("Allowed: marie");
-		expect(err).toContain("scope_profile=marie-iris-rh");
+		expect(err).toContain("scope_profile=marie-acme-hr");
 	});
 
 	it("error message handles empty allowlist (deny-by-default) gracefully", async () => {
@@ -214,7 +214,7 @@ describe("checkNamespaceRead", () => {
 		const err = checkNamespaceRead(marieCtx, undefined);
 		expect(err).toMatch(/Forbidden/);
 		expect(err).toMatch(/explicit namespace argument/);
-		expect(err).toMatch(/marie-iris-rh/);
+		expect(err).toMatch(/marie-acme-hr/);
 		// the error must hint at which prefixes the client may use
 		expect(err).toMatch(/orchestrator\/victor/);
 	});

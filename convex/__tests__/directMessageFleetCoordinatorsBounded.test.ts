@@ -72,7 +72,7 @@ describe("setAddressableFleetCoordinators: by ID, no org scan", () => {
 				orgKind: "operator",
 			},
 			{
-				clerkOrgSlug: "iris-rh",
+				clerkOrgSlug: "acme-hr",
 				allowedOrchestrators: ["irisbot"],
 				isActive: true,
 			},
@@ -86,7 +86,7 @@ describe("setAddressableFleetCoordinators: by ID, no org scan", () => {
 		}
 		await seed(t, rows);
 		const pi = await agentOf(t, "perello", "pi");
-		expect((await set(t, "iris-rh", [pi])).current).toEqual([pi]);
+		expect((await set(t, "acme-hr", [pi])).current).toEqual([pi]);
 	});
 
 	test("an agent of an INACTIVE operator org is refused; an active operator agent is served", async () => {
@@ -105,16 +105,16 @@ describe("setAddressableFleetCoordinators: by ID, no org scan", () => {
 				orgKind: "operator",
 			},
 			{
-				clerkOrgSlug: "iris-rh",
+				clerkOrgSlug: "acme-hr",
 				allowedOrchestrators: ["irisbot"],
 				isActive: true,
 			},
 		]);
 		const pi = await agentOf(t, "perello", "pi");
 		const ghost = await agentOf(t, "old-op", "ghost");
-		await expect(set(t, "iris-rh", [ghost])).rejects.toThrow(
+		await expect(set(t, "acme-hr", [ghost])).rejects.toThrow(
 			/NOT_OPERATOR_AGENT/,
 		);
-		expect((await set(t, "iris-rh", [pi])).current).toEqual([pi]);
+		expect((await set(t, "acme-hr", [pi])).current).toEqual([pi]);
 	});
 });

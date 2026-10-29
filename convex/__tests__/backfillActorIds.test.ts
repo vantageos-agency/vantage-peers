@@ -5,7 +5,7 @@
 // messageReceipts.recipientId.
 //   - backfill_actor_ids fills a same-org name, leaves unknown / ambiguous names
 //     undecidable (listed by row ID), and NEVER matches another org's agent (the
-//     clio / iris-rh case);
+//     clio / acme-hr case);
 //   - new writes stamp the IDs from the resolved principal and target rows.
 // Hermetic: no deployment is touched.
 
@@ -40,7 +40,7 @@ type World = {
 	dup2: Id<"agents">;
 };
 
-// fleet-org (operator): sigma, clio, dup, dup.   iris-rh (client): clio, irisonly.
+// fleet-org (operator): sigma, clio, dup, dup.   acme-hr (client): clio, irisonly.
 async function seed(t: T): Promise<World> {
 	return await t.run(async (ctx) => {
 		const mapping = (slug: string, operator: boolean) =>
@@ -55,7 +55,7 @@ async function seed(t: T): Promise<World> {
 				...(operator ? { orgKind: "operator" as const } : {}),
 			});
 		await mapping("fleet-org", true);
-		await mapping("iris-rh", false);
+		await mapping("acme-hr", false);
 		const agent = (name: string, orgSlug: string) =>
 			ctx.db.insert("agents", {
 				orgSlug,
@@ -70,8 +70,8 @@ async function seed(t: T): Promise<World> {
 			fleetClio: await agent("clio", "fleet-org"),
 			dup1: await agent("dup", "fleet-org"),
 			dup2: await agent("Dup", "fleet-org"),
-			irisClio: await agent("clio", "iris-rh"),
-			irisOnly: await agent("irisonly", "iris-rh"),
+			irisClio: await agent("clio", "acme-hr"),
+			irisOnly: await agent("irisonly", "acme-hr"),
 		};
 	});
 }
@@ -140,26 +140,26 @@ describe("backfill_actor_ids", () => {
 		const w = await seed(t);
 		const tFleet = await task(t, { createdBy: "sigma", assignedTo: "clio" });
 		const tIris = await task(t, {
-			orgId: "iris-rh",
+			orgId: "acme-hr",
 			createdBy: "clio",
 			assignedTo: "irisonly",
 			lastAssignedTo: "clio",
 		});
 		const tCancelled = await task(t, {
-			orgId: "iris-rh",
+			orgId: "acme-hr",
 			status: "cancelled",
 			cancelledBy: "clio",
 			reviewArtifactAttachedBy: "irisonly",
 		});
 		const tPerson = await task(t, {
-			orgId: "iris-rh",
+			orgId: "acme-hr",
 			createdBy: "user:abc123",
 			assignedTo: "irisonly",
 		});
 		const m = await message(t, "sigma");
-		const mp = await message(t, "user:abc123", "iris-rh");
+		const mp = await message(t, "user:abc123", "acme-hr");
 		const r = await receipt(t, m, "clio");
-		const rp = await receipt(t, mp, "irisonly", "iris-rh");
+		const rp = await receipt(t, mp, "irisonly", "acme-hr");
 
 		await walkAll(t, false);
 
@@ -189,11 +189,11 @@ describe("backfill_actor_ids", () => {
 		expect((await get("messageReceipts", rp))?.recipientId).toBe(w.irisOnly);
 	});
 
-	test("the same name in two orgs resolves to each org's OWN agent, never the other's (clio / iris-rh)", async () => {
+	test("the same name in two orgs resolves to each org's OWN agent, never the other's (clio / acme-hr)", async () => {
 		const t = createT();
 		const w = await seed(t);
 		const fleet = await task(t, { createdBy: "clio" });
-		const iris = await task(t, { createdBy: "clio", orgId: "iris-rh" });
+		const iris = await task(t, { createdBy: "clio", orgId: "acme-hr" });
 		await walkAll(t, false);
 		const f = await t.run((ctx) => ctx.db.get("tasks", fleet));
 		const i = await t.run((ctx) => ctx.db.get("tasks", iris));
@@ -205,10 +205,10 @@ describe("backfill_actor_ids", () => {
 	test("an other-org name is NEVER matched: a name only the other org has stays undecidable", async () => {
 		const t = createT();
 		await seed(t);
-		// "irisonly" exists only in iris-rh; a fleet-owned row naming it must not match.
+		// "irisonly" exists only in acme-hr; a fleet-owned row naming it must not match.
 		const fleetRow = await task(t, { createdBy: "irisonly" });
-		// "sigma" exists only in fleet-org; an iris-rh row naming it must not match.
-		const irisRow = await task(t, { createdBy: "sigma", orgId: "iris-rh" });
+		// "sigma" exists only in fleet-org; an acme-hr row naming it must not match.
+		const irisRow = await task(t, { createdBy: "sigma", orgId: "acme-hr" });
 		const results = await walkAll(t, false);
 		const rows = await t.run(async (ctx) => [
 			await ctx.db.get("tasks", fleetRow),
@@ -326,17 +326,17 @@ describe("new writes stamp the IDs", () => {
 			org_role: "org:admin",
 		} as Parameters<T["withIdentity"]>[0]);
 
-	// iris-rh registers clio + irisonly through the real door and mints clio a
+	// acme-hr registers clio + irisonly through the real door and mints clio a
 	// credential; fleet-org (operator) ALSO has an agent named clio, a different
 	// agents row that must never be the one stamped.
 	async function seedIris(t: T) {
 		await t.run(async (ctx) => {
 			await ctx.db.insert("client_org_mapping", {
-				clerkOrgSlug: "iris-rh",
-				clerkOrgId: testClerkOrgId("iris-rh"),
+				clerkOrgSlug: "acme-hr",
+				clerkOrgId: testClerkOrgId("acme-hr"),
 				allowedOrchestrators: ["clio", "irisonly"],
 				scopes: ["view-own-tasks", "view-own-missions"],
-				displayName: "iris-rh",
+				displayName: "acme-hr",
 				isActive: true,
 				createdAt: NOW,
 			});
@@ -368,22 +368,22 @@ describe("new writes stamp the IDs", () => {
 			}
 		});
 		for (const name of ["clio", "irisonly"]) {
-			await adminOf(t, "iris-rh").mutation(api.agents.registerAgent, {
+			await adminOf(t, "acme-hr").mutation(api.agents.registerAgent, {
 				name,
 			});
 		}
-		const minted = await adminOf(t, "iris-rh").mutation(
+		const minted = await adminOf(t, "acme-hr").mutation(
 			api.agentCredentials.mintAgentCredential,
-			{ agentId: await agentIdOf(t, "iris-rh", "clio") },
+			{ agentId: await agentIdOf(t, "acme-hr", "clio") },
 		);
 		// A credential resolves only for an agent bound to a live member owner.
-		await ownAgent(t, "iris-rh", "clio");
+		await ownAgent(t, "acme-hr", "clio");
 		const agentId = (name: string) =>
 			t.run(async (ctx) => {
 				const row = await ctx.db
 					.query("agents")
 					.withIndex("by_org_name", (q) =>
-						q.eq("orgSlug", "iris-rh").eq("name", name),
+						q.eq("orgSlug", "acme-hr").eq("name", name),
 					)
 					.unique();
 				return row?._id;
@@ -398,7 +398,7 @@ describe("new writes stamp the IDs", () => {
 	test("tasks.create stamps createdById / assignedToId from the caller's own org (not the same-named agent of another org)", async () => {
 		const t = createT();
 		const ids = await seedIris(t);
-		const taskId = await asOrg(t, "iris-rh").mutation(api.tasks.create, {
+		const taskId = await asOrg(t, "acme-hr").mutation(api.tasks.create, {
 			title: "t",
 			assignedTo: "irisonly",
 			priority: "high",
@@ -415,7 +415,7 @@ describe("new writes stamp the IDs", () => {
 	test("tasks.update stamps the reassignment: assignedToId follows, lastAssignedToId is the prior assignee", async () => {
 		const t = createT();
 		const ids = await seedIris(t);
-		const taskId = await asOrg(t, "iris-rh").mutation(api.tasks.create, {
+		const taskId = await asOrg(t, "acme-hr").mutation(api.tasks.create, {
 			title: "t",
 			assignedTo: "irisonly",
 			priority: "high",
@@ -423,7 +423,7 @@ describe("new writes stamp the IDs", () => {
 			createdBy: "clio",
 			agentCredentialSecret: ids.secret,
 		});
-		await asOrg(t, "iris-rh").mutation(api.tasks.update, {
+		await asOrg(t, "acme-hr").mutation(api.tasks.update, {
 			taskId,
 			callerOrchestrator: "clio",
 			agentCredentialSecret: ids.secret,
@@ -439,7 +439,7 @@ describe("new writes stamp the IDs", () => {
 	test("messages.sendMessage stamps fromId and the receipt's recipientId", async () => {
 		const t = createT();
 		const ids = await seedIris(t);
-		const messageId = await asOrg(t, "iris-rh").mutation(
+		const messageId = await asOrg(t, "acme-hr").mutation(
 			api.messages.sendMessage,
 			{
 				from: "clio",

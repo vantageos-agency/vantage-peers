@@ -1,7 +1,7 @@
 /**
  * send_message addresses an agent BY ID; list_peers hands out the IDs.
  *
- * VantagePeers Cloud, client incident Iris RH (task
+ * VantagePeers Cloud, client incident Acme HR (task
  * k1716f01f9g1a0scz7nj30118h8fx32c). Operator decision 2026-10-08: a recipient
  * is resolved by its agent ID, never by its name. The MCP never turns a name
  * into an ID itself: it forwards the IDs the caller passes, verbatim, and
@@ -39,15 +39,15 @@ function seat(over: Partial<OAuthContext> = {}): OAuthContext {
 		clientId: "client-clio",
 		userId: "user-clio",
 		scopes: ["vantage:read", "vantage:write"],
-		scopeProfile: "clio-iris-rh",
+		scopeProfile: "clio-acme-hr",
 		fromAllowList: ["clio"],
-		namespaceReadPrefixes: ["team/iris-rh"],
-		namespaceWritePrefixes: ["team/iris-rh"],
+		namespaceReadPrefixes: ["team/acme-hr"],
+		namespaceWritePrefixes: ["team/acme-hr"],
 		expiresAt: Date.now() + 3_600_000,
 		isMaster: false,
 		accessTokenHash: "hash-clio",
-		clerkOrgSlug: "iris-rh",
-		seatAgent: { agentId: IRIS_CLIO_ID, orgId: "iris-rh", agentName: "clio" },
+		clerkOrgSlug: "acme-hr",
+		seatAgent: { agentId: IRIS_CLIO_ID, orgId: "acme-hr", agentName: "clio" },
 		...over,
 	};
 }
@@ -122,10 +122,10 @@ describe("FORWARD — recipientAgentIds reach Convex verbatim", () => {
 		expect(sent).toHaveLength(1);
 		expect(sent[0].args.recipientAgentIds).toEqual([IRIS_HELIOS_ID]);
 		expect("channel" in sent[0].args).toBe(false);
-		expect(sent[0].args.seatOrgSlug).toBe("iris-rh");
+		expect(sent[0].args.seatOrgSlug).toBe("acme-hr");
 		expect(sent[0].args.verifiedActor).toEqual({
 			agentId: IRIS_CLIO_ID,
-			orgSlug: "iris-rh",
+			orgSlug: "acme-hr",
 		});
 		expect(JSON.parse(res.content[0].text)).toMatchObject({
 			messageId: "msg-id",

@@ -2,7 +2,7 @@
 //
 // VantagePeers Cloud — explicit agent link (task k17965eh23twqzsbjc8mjgfcmx8gpxmh).
 //
-// pi (an agent of the organisation `perello`) and victor (an agent of `iris-rh`)
+// pi (an agent of the organisation `perello`) and victor (an agent of `acme-hr`)
 // must reach each other, in two organisations. The cross-org NAME match is closed;
 // the one way across is an agent link decided by @vantageos/cloud-identity 0.23.0
 // (`buildAgentLink` / `resolveAgentLink`):
@@ -47,7 +47,7 @@ type T = ReturnType<typeof createT>;
 type Identity = Parameters<T["withIdentity"]>[0];
 
 const PERELLO = "perello-consulting";
-const IRIS = "iris-rh";
+const IRIS = "acme-hr";
 const ACME = "acme";
 const REASON = "HR onboarding coordination between the two organisations";
 
@@ -66,16 +66,16 @@ const person = (
 		org_role: role,
 	} as Identity);
 
-const MARIE = "user_marie"; // admin of iris-rh
+const MARIE = "user_marie"; // admin of acme-hr
 const LAURENT = "user_laurent"; // admin of perello-consulting
-const BOB = "user_bob"; // plain member of iris-rh
+const BOB = "user_bob"; // plain member of acme-hr
 const ZOE = "user_zoe"; // admin of acme
 
 type World = {
 	t: T;
 	pi: Id<"agents">;
 	victor: Id<"agents">;
-	clio: Id<"agents">; // a third agent of iris-rh
+	clio: Id<"agents">; // a third agent of acme-hr
 	ada: Id<"agents">; // an agent of acme
 };
 
@@ -165,7 +165,7 @@ const receiptRows = (t: T) =>
 	t.run((ctx) => ctx.db.query("messageReceipts").collect());
 const taskRows = (t: T) => t.run((ctx) => ctx.db.query("tasks").collect());
 
-/** Marie (admin of iris-rh) grants pi -> victor, the TARGET side's admin. */
+/** Marie (admin of acme-hr) grants pi -> victor, the TARGET side's admin. */
 const marieGrantsPiToVictor = (w: World) =>
 	person(w.t, IRIS, MARIE, "org:admin").mutation(api.agentLinks.grant, {
 		fromAgentId: w.pi,
@@ -242,7 +242,7 @@ const deactivateOrg = (w: World, slug: string) =>
 
 // ─────────────────────────────────────────────────────────────────────────────
 describe("GRANT — the admin of the TARGET organisation, as the verified person", () => {
-	test("Marie (admin of iris-rh) grants pi -> victor: one row, grantedBy is her verified subject", async () => {
+	test("Marie (admin of acme-hr) grants pi -> victor: one row, grantedBy is her verified subject", async () => {
 		const w = await world();
 		const id = await marieGrantsPiToVictor(w);
 		expect(id).toBeTruthy();
@@ -453,7 +453,7 @@ describe("REVOKE — an admin of the TARGET organisation", () => {
 
 // ─────────────────────────────────────────────────────────────────────────────
 describe("MESSAGES — recipientAgentIds across two organisations", () => {
-	test("with the link, pi -> victor is delivered into iris-rh's tenant and victor's inbox only", async () => {
+	test("with the link, pi -> victor is delivered into acme-hr's tenant and victor's inbox only", async () => {
 		const w = await world();
 		await marieGrantsPiToVictor(w);
 		const messageId = await piSends(w, { recipientAgentIds: [w.victor] });
@@ -615,7 +615,7 @@ describe("MESSAGES — recipientAgentIds across two organisations", () => {
 
 // ─────────────────────────────────────────────────────────────────────────────
 describe("TASKS — assignedToAgentId across two organisations", () => {
-	test("create with the link: the task is stamped to iris-rh and victor, visible to iris-rh only", async () => {
+	test("create with the link: the task is stamped to acme-hr and victor, visible to acme-hr only", async () => {
 		const w = await world();
 		await marieGrantsPiToVictor(w);
 		const taskId = await piCreatesTask(w);
@@ -762,7 +762,7 @@ describe("TASKS — assignedToAgentId across two organisations", () => {
 		expect(row?.assignedToId).toBe(w.victor);
 	});
 
-	test("REFUSED: a third agent of iris-rh is not covered", async () => {
+	test("REFUSED: a third agent of acme-hr is not covered", async () => {
 		const w = await world();
 		await marieGrantsPiToVictor(w);
 		await errorOf(piCreatesTask(w, { assignedToAgentId: w.clio }));
@@ -862,7 +862,7 @@ describe("TASKS — assignedToAgentId across two organisations", () => {
 		expect(row?.assignedTo).toBe("pia");
 	});
 
-	test("REFUSED: after the hand-over pi may not re-assign the task to any OTHER agent of iris-rh (one exact pair)", async () => {
+	test("REFUSED: after the hand-over pi may not re-assign the task to any OTHER agent of acme-hr (one exact pair)", async () => {
 		const w = await world();
 		await marieGrantsPiToVictor(w);
 		const taskId = await piCreatesTask(w);

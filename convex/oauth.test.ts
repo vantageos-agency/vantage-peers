@@ -85,7 +85,7 @@ describe("oauth.getScopeProfile", () => {
 		await seedLegacyClientProfiles(t);
 
 		const profile = await asServiceAccount(t).query(api.oauth.getScopeProfile, {
-			profileId: "marie-iris-rh",
+			profileId: "marie-acme-hr",
 		});
 		expect(profile).not.toBeNull();
 		expect(profile?.fromAllowList).toEqual(["marie"]);
@@ -121,13 +121,13 @@ describe("oauth.createClient + listClients + deleteClient", () => {
 			clientSecretHash: "a".repeat(64),
 			name: "marie-test",
 			redirectUris: ["https://claude.ai/api/mcp/auth_callback"],
-			scopeProfile: "marie-iris-rh",
+			scopeProfile: "marie-acme-hr",
 		});
 
 		const rows = await asServiceAccount(t).query(api.oauth.listClients, {});
 		expect(rows).toHaveLength(1);
 		expect(rows[0].clientId).toBe(clientId);
-		expect(rows[0].scopeProfile).toBe("marie-iris-rh");
+		expect(rows[0].scopeProfile).toBe("marie-acme-hr");
 	});
 
 	test("rejects unknown scope_profile", async () => {
@@ -170,7 +170,7 @@ describe("oauth.createClient + listClients + deleteClient", () => {
 			clientSecretHash: "a".repeat(64),
 			name: "delete-me",
 			redirectUris: [],
-			scopeProfile: "marie-iris-rh",
+			scopeProfile: "marie-acme-hr",
 		});
 
 		// Seed an access token + refresh token against this client
@@ -179,7 +179,7 @@ describe("oauth.createClient + listClients + deleteClient", () => {
 			clientId,
 			userId: "marie",
 			scopes: ["vantage:read"],
-			scopeProfile: "marie-iris-rh",
+			scopeProfile: "marie-acme-hr",
 			fromAllowList: ["marie"],
 			namespaceReadPrefixes: ["global"],
 			namespaceWritePrefixes: ["global"],
@@ -190,7 +190,7 @@ describe("oauth.createClient + listClients + deleteClient", () => {
 			tokenHash: "c".repeat(64),
 			clientId,
 			userId: "marie",
-			scopeProfile: "marie-iris-rh",
+			scopeProfile: "marie-acme-hr",
 			expiresAt: Date.now() + 30 * 24 * 3600_000,
 		});
 
@@ -279,7 +279,7 @@ describe("oauth.createAccessToken + getAccessTokenByHash", () => {
 			clientId: "marie-client",
 			userId: "marie",
 			scopes: ["vantage:read", "vantage:write"],
-			scopeProfile: "marie-iris-rh",
+			scopeProfile: "marie-acme-hr",
 			fromAllowList: ["marie"],
 			namespaceReadPrefixes: ["orchestrator/victor", "global"],
 			namespaceWritePrefixes: ["global"],
@@ -291,7 +291,7 @@ describe("oauth.createAccessToken + getAccessTokenByHash", () => {
 			{ tokenHash },
 		);
 		expect(row).not.toBeNull();
-		expect(row?.scopeProfile).toBe("marie-iris-rh");
+		expect(row?.scopeProfile).toBe("marie-acme-hr");
 		expect(row?.fromAllowList).toEqual(["marie"]);
 	});
 

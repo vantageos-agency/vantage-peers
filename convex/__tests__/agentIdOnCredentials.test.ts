@@ -178,28 +178,28 @@ describe("resolveAgentCredential carries the agent ID", () => {
 });
 
 describe("seat token stamp at mint and at refresh", () => {
-	test("a seat for clio-iris-rh is stamped with clio's ID and the org key, and the lookup reports it", async () => {
+	test("a seat for clio-acme-hr is stamped with clio's ID and the org key, and the lookup reports it", async () => {
 		const t = createT();
-		await seedOrg(t, "iris-rh");
-		const id = await seedAgent(t, "iris-rh", "clio");
-		await seedProfile(t, "clio-iris-rh", ["clio"], "iris-rh");
-		const hash = await mintSeatToken(t, "clio-iris-rh", ["clio"], "iris-rh");
+		await seedOrg(t, "acme-hr");
+		const id = await seedAgent(t, "acme-hr", "clio");
+		await seedProfile(t, "clio-acme-hr", ["clio"], "acme-hr");
+		const hash = await mintSeatToken(t, "clio-acme-hr", ["clio"], "acme-hr");
 		const row = await tokenRow(t, hash);
 		expect(row?.agentId).toBe(id);
-		expect(row?.agentOrgId).toBe("iris-rh");
+		expect(row?.agentOrgId).toBe("acme-hr");
 		const seen = await lookup(t, hash);
 		expect(seen?.seatAgent).toEqual({
 			agentId: id,
-			orgId: "iris-rh",
+			orgId: "acme-hr",
 			agentName: "clio",
 		});
 	});
 
 	test("the same name from ANOTHER org's seat is not stamped with the first org's agent", async () => {
 		const t = createT();
-		await seedOrg(t, "iris-rh");
+		await seedOrg(t, "acme-hr");
 		await seedOrg(t, "other-org");
-		await seedAgent(t, "iris-rh", "clio"); // exists ONLY in iris-rh
+		await seedAgent(t, "acme-hr", "clio"); // exists ONLY in acme-hr
 		await seedProfile(t, "clio-other-org", ["clio"], "other-org");
 		const hash = await mintSeatToken(t, "clio-other-org", ["clio"], "other-org");
 		const row = await tokenRow(t, hash);
@@ -209,33 +209,33 @@ describe("seat token stamp at mint and at refresh", () => {
 
 	test("a profile with two names stays an org-level seat (no stamp)", async () => {
 		const t = createT();
-		await seedOrg(t, "iris-rh");
-		await seedAgent(t, "iris-rh", "clio");
-		await seedAgent(t, "iris-rh", "victor");
-		await seedProfile(t, "team-iris-rh", ["clio", "victor"], "iris-rh");
+		await seedOrg(t, "acme-hr");
+		await seedAgent(t, "acme-hr", "clio");
+		await seedAgent(t, "acme-hr", "victor");
+		await seedProfile(t, "team-acme-hr", ["clio", "victor"], "acme-hr");
 		const hash = await mintSeatToken(
 			t,
-			"team-iris-rh",
+			"team-acme-hr",
 			["clio", "victor"],
-			"iris-rh",
+			"acme-hr",
 		);
 		expect((await lookup(t, hash))?.seatAgent).toBeNull();
 	});
 
 	test("a profile whose single name has no agent row stays an org-level seat", async () => {
 		const t = createT();
-		await seedOrg(t, "iris-rh");
-		await seedProfile(t, "ghost-iris-rh", ["ghost"], "iris-rh");
-		const hash = await mintSeatToken(t, "ghost-iris-rh", ["ghost"], "iris-rh");
+		await seedOrg(t, "acme-hr");
+		await seedProfile(t, "ghost-acme-hr", ["ghost"], "acme-hr");
+		const hash = await mintSeatToken(t, "ghost-acme-hr", ["ghost"], "acme-hr");
 		expect((await lookup(t, hash))?.seatAgent).toBeNull();
 	});
 
 	test("a person token is never stamped", async () => {
 		const t = createT();
-		await seedOrg(t, "iris-rh");
-		await seedAgent(t, "iris-rh", "clio");
-		await seedProfile(t, "clio-iris-rh", ["clio"], "iris-rh");
-		const hash = await mintSeatToken(t, "clio-iris-rh", ["clio"], "iris-rh", {
+		await seedOrg(t, "acme-hr");
+		await seedAgent(t, "acme-hr", "clio");
+		await seedProfile(t, "clio-acme-hr", ["clio"], "acme-hr");
+		const hash = await mintSeatToken(t, "clio-acme-hr", ["clio"], "acme-hr", {
 			principal: "person",
 		});
 		expect((await lookup(t, hash))?.seatAgent).toBeNull();
@@ -243,19 +243,19 @@ describe("seat token stamp at mint and at refresh", () => {
 
 	test("a profile whose id does not follow <agent>-<org> is not stamped", async () => {
 		const t = createT();
-		await seedOrg(t, "iris-rh");
-		await seedAgent(t, "iris-rh", "clio");
-		await seedProfile(t, "whatever", ["clio"], "iris-rh");
-		const hash = await mintSeatToken(t, "whatever", ["clio"], "iris-rh");
+		await seedOrg(t, "acme-hr");
+		await seedAgent(t, "acme-hr", "clio");
+		await seedProfile(t, "whatever", ["clio"], "acme-hr");
+		const hash = await mintSeatToken(t, "whatever", ["clio"], "acme-hr");
 		expect((await lookup(t, hash))?.seatAgent).toBeNull();
 	});
 
 	test("the stamp is re-read live: a deactivated agent reports no seatAgent, a rename reports the new label", async () => {
 		const t = createT();
-		await seedOrg(t, "iris-rh");
-		const id = await seedAgent(t, "iris-rh", "clio");
-		await seedProfile(t, "clio-iris-rh", ["clio"], "iris-rh");
-		const hash = await mintSeatToken(t, "clio-iris-rh", ["clio"], "iris-rh");
+		await seedOrg(t, "acme-hr");
+		const id = await seedAgent(t, "acme-hr", "clio");
+		await seedProfile(t, "clio-acme-hr", ["clio"], "acme-hr");
+		const hash = await mintSeatToken(t, "clio-acme-hr", ["clio"], "acme-hr");
 		await t.run(async (ctx) => {
 			await ctx.db.patch(id, { name: "clio-2", normalizedName: "clio-2" });
 		});
@@ -268,38 +268,38 @@ describe("seat token stamp at mint and at refresh", () => {
 
 	test("a legacy token row minted before the stamp existed is resolved live, not left org-level", async () => {
 		const t = createT();
-		await seedOrg(t, "iris-rh");
-		const id = await seedAgent(t, "iris-rh", "clio");
-		await seedProfile(t, "clio-iris-rh", ["clio"], "iris-rh");
+		await seedOrg(t, "acme-hr");
+		const id = await seedAgent(t, "acme-hr", "clio");
+		await seedProfile(t, "clio-acme-hr", ["clio"], "acme-hr");
 		await t.run(async (ctx) => {
 			await ctx.db.insert("oauth_access_tokens", {
 				tokenHash: "legacy-hash",
 				clientId: "c",
 				userId: "clio",
 				scopes: ["mcp:full"],
-				scopeProfile: "clio-iris-rh",
+				scopeProfile: "clio-acme-hr",
 				fromAllowList: ["clio"],
 				namespaceReadPrefixes: [],
 				namespaceWritePrefixes: [],
 				expiresAt: Date.now() + 3_600_000,
 				createdAt: Date.now(),
-				clerkOrgSlug: "iris-rh",
-				clerkOrgId: testClerkOrgId("iris-rh"),
+				clerkOrgSlug: "acme-hr",
+				clerkOrgId: testClerkOrgId("acme-hr"),
 			});
 		});
 		expect((await lookup(t, "legacy-hash"))?.seatAgent).toEqual({
 			agentId: id,
-			orgId: "iris-rh",
+			orgId: "acme-hr",
 			agentName: "clio",
 		});
 	});
 
 	test("the token backfill stamps legacy rows, is dry-run first, and lists undecidable rows by id", async () => {
 		const t = createT();
-		await seedOrg(t, "iris-rh");
-		const id = await seedAgent(t, "iris-rh", "clio");
-		await seedProfile(t, "clio-iris-rh", ["clio"], "iris-rh");
-		await seedProfile(t, "ghost-iris-rh", ["ghost"], "iris-rh");
+		await seedOrg(t, "acme-hr");
+		const id = await seedAgent(t, "acme-hr", "clio");
+		await seedProfile(t, "clio-acme-hr", ["clio"], "acme-hr");
+		await seedProfile(t, "ghost-acme-hr", ["ghost"], "acme-hr");
 		const insert = async (hash: string, profile: string, name: string) =>
 			await t.run(async (ctx) =>
 				ctx.db.insert("oauth_access_tokens", {
@@ -313,12 +313,12 @@ describe("seat token stamp at mint and at refresh", () => {
 					namespaceWritePrefixes: [],
 					expiresAt: Date.now() + 3_600_000,
 					createdAt: Date.now(),
-					clerkOrgSlug: "iris-rh",
-					clerkOrgId: testClerkOrgId("iris-rh"),
+					clerkOrgSlug: "acme-hr",
+					clerkOrgId: testClerkOrgId("acme-hr"),
 				}),
 			);
-		const good = await insert("h-good", "clio-iris-rh", "clio");
-		const bad = await insert("h-bad", "ghost-iris-rh", "ghost");
+		const good = await insert("h-good", "clio-acme-hr", "clio");
+		const bad = await insert("h-bad", "ghost-acme-hr", "ghost");
 		const dry = await t.mutation(
 			internal.migrations.agentIdentityRows.backfillSeatTokenAgentIds,
 			{ dryRun: true, cursor: null },
@@ -332,7 +332,7 @@ describe("seat token stamp at mint and at refresh", () => {
 		);
 		const stamped = await t.run(async (ctx) => ctx.db.get(good));
 		expect(stamped?.agentId).toBe(id);
-		expect(stamped?.agentOrgId).toBe("iris-rh");
+		expect(stamped?.agentOrgId).toBe("acme-hr");
 		expect((await t.run(async (ctx) => ctx.db.get(bad)))?.agentId).toBeUndefined();
 	});
 });

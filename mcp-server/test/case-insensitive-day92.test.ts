@@ -48,12 +48,12 @@ const TRIO_FROM_ALLOW_LIST = [
 function heliosCtx(fromAllowList = TRIO_FROM_ALLOW_LIST): OAuthContext {
   return {
     clientId: "2e5d41df-b8f8-4f1a-95aa-2eb0d6bdadb7",
-    userId: "helios-iris-rh",
+    userId: "helios-acme-hr",
     scopes: ["vantage:read", "vantage:write"],
-    scopeProfile: "helios-iris-rh",
+    scopeProfile: "helios-acme-hr",
     fromAllowList,
-    namespaceReadPrefixes: ["orchestrator/helios-iris-rh"],
-    namespaceWritePrefixes: ["orchestrator/helios-iris-rh"],
+    namespaceReadPrefixes: ["orchestrator/helios-acme-hr"],
+    namespaceWritePrefixes: ["orchestrator/helios-acme-hr"],
     expiresAt: Date.now() + 3_600_000,
     isMaster: false,
   };

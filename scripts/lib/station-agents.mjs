@@ -11,7 +11,7 @@ import { chmodSync, existsSync, mkdirSync, realpathSync, writeFileSync } from "n
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 
 /** Roles that must never be minted by this tool (BU excluded by the roster). */
-export const EXCLUDED_ROLES = Object.freeze(["victor", "marie", "iris", "iris-rh"]);
+export const EXCLUDED_ROLES = Object.freeze(["victor", "marie", "iris", "acme-hr"]);
 
 const ROLE_RE = /^[a-z][a-z0-9-]{0,62}$/;
 
@@ -99,7 +99,7 @@ export function validateStations(json) {
 			throw new Error(`Station #${idx}: role "${entry.role}" is not a valid agent name (^[a-z][a-z0-9-]*$).`);
 		}
 		if (EXCLUDED_ROLES.includes(role)) {
-			throw new Error(`Station #${idx}: role "${role}" is excluded by the roster (Marie / Iris RH BU). Refusing.`);
+			throw new Error(`Station #${idx}: role "${role}" is excluded by the roster (Marie / Acme HR BU). Refusing.`);
 		}
 		const agentName = normalizeRole(entry.agentName ?? role);
 		if (!ROLE_RE.test(agentName) || EXCLUDED_ROLES.includes(agentName)) {

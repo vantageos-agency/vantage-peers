@@ -404,7 +404,7 @@ def scan_file(
     # THE NAME IS PART OF THE ARTIFACT.
     #
     # A guard that reads what is INSIDE a file and never what it is CALLED is blind
-    # to a leak that is visible in `ls`. `convex/migrations/patch_marie_iris_rh_scope.ts`
+    # to a leak that is visible in `ls`. `convex/migrations/patch_<client>_scope.ts`
     # is tracked on the PUBLIC main branch: the client's contact and org are in the
     # FILE NAME, and every content scan ever run over this repo reported it clean,
     # because it was — inside.
