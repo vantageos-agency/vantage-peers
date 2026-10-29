@@ -209,28 +209,27 @@ export const registerAgentInOrgById = internalMutation({
 	args: { clerkOrgId: v.string(), name: v.string() },
 	returns: v.id("agents"),
 	handler: async (ctx, args) => {
-		const mapping = await ctx.db
-			.query("client_org_mapping")
-			.withIndex("by_clerk_org_id", (q) => q.eq("clerkOrgId", args.clerkOrgId))
-			.unique();
-		if (mapping === null) {
+		// The organisation by its permanent ID, through the org-ID adapter every
+		// ID-keyed door shares (convex/lib/orgIdLookups.ts, `by_clerk_org_id`).
+		const org = await orgByIdLookups(ctx).orgById(args.clerkOrgId);
+		if (org === null) {
 			throw new ConvexError(
 				`ORG_NOT_FOUND: no organisation maps the id ${args.clerkOrgId}; nothing written.`,
 			);
 		}
-		if (!mapping.isActive) {
+		if (org.active !== true) {
 			throw new ConvexError(
-				`ORG_INACTIVE: the organisation ${args.clerkOrgId} ("${mapping.clerkOrgSlug}") is not active; nothing written.`,
+				`ORG_INACTIVE: the organisation ${args.clerkOrgId} ("${org.label}") is not active; nothing written.`,
 			);
 		}
 		assertAgentLabelValid(args.name);
 		await assertAgentNameFree(
 			ctx,
-			{ id: args.clerkOrgId, label: mapping.clerkOrgSlug },
+			{ id: args.clerkOrgId, label: org.label },
 			args.name,
 		);
 		return await ctx.db.insert("agents", {
-			orgSlug: mapping.clerkOrgSlug,
+			orgSlug: org.label,
 			clerkOrgId: args.clerkOrgId,
 			name: args.name,
 			normalizedName: normalizeOrchestratorId(args.name),
