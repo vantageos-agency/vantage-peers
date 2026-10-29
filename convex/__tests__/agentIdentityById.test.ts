@@ -629,31 +629,46 @@ describe("M8 5. the organisation and the authority come from the verified sessio
 		});
 	});
 
-	test("REFUSED: an organisation argument is rejected at every registry door, never read, never ignored", async () => {
+	test("expand step: orgSlug is an optional echo of the session -- absent served, equal served, different refused with org-argument-mismatch at every registry door", async () => {
 		const { t, admin } = await renamedOrg();
 		const ada = await admin.mutation(api.agents.registerAgent, { name: "ada" });
+		const clio = await admin.mutation(api.agents.registerAgent, { orgSlug: "org-a-renamed", name: "clio" });
 		await seedOrg(t, "org-b");
-		// The org's own old slug (stale after the rename), its current label, another
-		// org's slug and a slug naming nothing: the answer is the same for all.
-		for (const orgSlug of ["org-a", "org-a-renamed", "org-b", "no-such-org"]) {
-			const attempts = [
-				() => admin.query(api.agents.getAgent, { orgSlug, agentId: ada } as never),
-				() => admin.query(api.agents.listAgentsByOrg, { orgSlug } as never),
-				() => admin.mutation(api.agents.registerAgent, { orgSlug, name: "x" } as never),
-				() =>
-					admin.mutation(api.agentCredentials.mintAgentCredential, {
-						orgSlug,
-						agentId: ada,
-					} as never),
-				() => admin.query(api.agentRelations.graphByOrg, { orgSlug } as never),
-			];
-			for (const attempt of attempts) {
-				expect(await codeOf(attempt())).toMatch(/orgSlug/);
+		const doors = (orgSlug: string | undefined) => [
+			() => admin.query(api.agents.getAgent, { orgSlug, agentId: ada }),
+			() => admin.query(api.agents.listAgentsByOrg, { orgSlug }),
+			() => admin.mutation(api.agents.registerAgent, { orgSlug, name: `n-${String(orgSlug)}` }),
+			() => admin.mutation(api.agents.setAgentAddress, { orgSlug, agentId: ada, address: "https://a.example" }),
+			() => admin.mutation(api.agents.renameAgent, { orgSlug, agentId: ada, newName: "ada" }),
+			() => admin.mutation(api.agents.deactivateAgent, { orgSlug, agentId: clio }),
+			() => admin.mutation(api.agents.reactivateAgent, { orgSlug, agentId: clio }),
+			() => admin.mutation(api.agentCredentials.mintAgentCredential, { orgSlug, agentId: ada }),
+			() => admin.mutation(api.agentCredentials.revokeAgentCredential, { orgSlug, agentId: ada }),
+			() => admin.query(api.agentCredentials.getAgentCredentialStatus, { orgSlug, agentId: ada }),
+			() => admin.mutation(api.agentRelations.linkChild, { orgSlug, parentAgentId: ada, childAgentId: clio }),
+			() => admin.query(api.agentRelations.childrenOf, { orgSlug, parentAgentId: ada }),
+			() => admin.query(api.agentRelations.parentsOf, { orgSlug, childAgentId: clio }),
+			() => admin.mutation(api.agentRelations.unlinkChild, { orgSlug, parentAgentId: ada, childAgentId: clio }),
+			() => admin.query(api.agentRelations.graphByOrg, { orgSlug }),
+		];
+		// absent -> served from the session; present and equal (the CURRENT label) -> served
+		for (const echo of [undefined, "org-a-renamed"]) {
+			for (const door of doors(echo)) {
+				expect(await codeOf(door())).toBe("NO-REFUSAL");
 			}
 		}
-		// Nothing was written by the rejected calls.
-		const rows = await t.run((ctx) => ctx.db.query("agents").collect());
-		expect(rows.map((r) => r.name)).toEqual(["ada"]);
+		// present and different (stale old slug, another org's, unknown) -> refused with the code
+		const before = await t.run((ctx) => ctx.db.query("agents").collect());
+		for (const echo of ["org-a", "org-b", "no-such-org"]) {
+			for (const door of doors(echo)) {
+				const code = await codeOf(door());
+				expect(code).toMatch(/^RBAC_DENIED/);
+				expect(code).toContain("org-argument-mismatch");
+			}
+		}
+		// the refused calls wrote nothing
+		const after = await t.run((ctx) => ctx.db.query("agents").collect());
+		expect(after.map((r) => r.name).sort()).toEqual(before.map((r) => r.name).sort());
 	});
 
 	test("PRESENT: mint and linkChild need no organisation argument; the rows carry the verified org id", async () => {

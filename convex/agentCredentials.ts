@@ -15,6 +15,7 @@ import {
 import {
 	anonymousRefusal,
 	loadAgentOfPrincipalOrg,
+	requireOrgEcho,
 	resolveSessionCaller,
 	resolveOwnedAgentOfPresentedSecret,
 	revokeActiveCredentialRows,
@@ -82,6 +83,7 @@ const resolvedIdentityValidator = v.object({
  */
 export const mintAgentCredential = mutation({
 	args: {
+		orgSlug: v.optional(v.string()),
 		agentId: v.id("agents"),
 	},
 	returns: mintResultValidator,
@@ -101,6 +103,7 @@ export const mintAgentCredential = mutation({
 			if (caller.subject === undefined) throw anonymousRefusal(door);
 			throw refusalError(caller.refusal);
 		}
+		requireOrgEcho(caller, args.orgSlug, door);
 		const admin = assertOrgAdmin(caller.principal, caller.org.id, {
 			adminRoles: ORG_ADMIN_ROLES,
 			door: door,
@@ -175,12 +178,13 @@ export const mintAgentCredential = mutation({
  * (convex/lib/agentIdentity.ts), keyed on the agent's ID.
  */
 export const revokeAgentCredential = mutation({
-	args: { agentId: v.id("agents") },
+	args: { orgSlug: v.optional(v.string()), agentId: v.id("agents") },
 	returns: v.object({ revoked: v.number() }),
 	handler: async (ctx, args) => {
 		// write-contract: no mcp-server/src/tools.ts wiring and no dashboard reference exists for "agentCredentials:revokeAgentCredential" (same grep, 0 hits). Its only callers are convex-test direct mutations; a pre-organisation client has no render path to a credential revoke, and resolveSessionCaller refuses it RBAC_DENIED at an imperative call, an R-16 refusal, never an uncaught Server Error.
 		const door = "agentCredentials:revokeAgentCredential";
 		const caller = await resolveSessionCaller(ctx, door);
+		requireOrgEcho(caller, args.orgSlug, door);
 		const admin = assertOrgAdmin(caller.principal, caller.org.id, {
 			adminRoles: ORG_ADMIN_ROLES,
 			door: door,
@@ -307,7 +311,7 @@ export const resolveAgentCredential = query({
  * `agentName: null`).
  */
 export const getAgentCredentialStatus = query({
-	args: { agentId: v.id("agents") },
+	args: { orgSlug: v.optional(v.string()), agentId: v.id("agents") },
 	returns: v.object({
 		orgSlug: v.string(),
 		agentId: v.id("agents"),
@@ -320,6 +324,7 @@ export const getAgentCredentialStatus = query({
 		// isolation-contract: no reactive subscriber — enumerated 2026-10-03 with: `git -C <dashboard> grep -nE "api\.(agents|agentCredentials)\." origin/main -- app components hooks lib contexts providers` (dashboard origin/main 00a43cf, measured 2026-10-03) -> the only reader is components/agents/agents-admin.tsx:68, an imperative convex.query (no useQuery/useSubscription); server-side callers: grep -rnE "agentCredentials|resolveAgentCredential" convex mcp-server/src scripts. R-50 declared divergence.
 		const door = "agentCredentials:getAgentCredentialStatus";
 		const caller = await resolveSessionCaller(ctx, door);
+		requireOrgEcho(caller, args.orgSlug, door);
 		const admin = assertOrgAdmin(caller.principal, caller.org.id, {
 			adminRoles: ORG_ADMIN_ROLES,
 			door: door,

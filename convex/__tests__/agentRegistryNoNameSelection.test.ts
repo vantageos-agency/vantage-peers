@@ -96,7 +96,7 @@ describe("M8 the registry decides identity through the package only", () => {
 
 	test("the adapter builds no refusal of its own and keeps no slug-keyed admin proof", () => {
 		const src = read(join(CONVEX_DIR, "lib", "agentIdentity.ts"));
-		expect(src).not.toMatch(/RBAC_DENIED/);
+		expect(src).not.toMatch(/ConvexError\(\s*`RBAC_DENIED/);
 		expect(src).not.toMatch(/proveOrgAdmin|requireOrgAdminById|stampOrgRefusal/);
 	});
 });

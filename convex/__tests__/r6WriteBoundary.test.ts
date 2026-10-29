@@ -81,14 +81,14 @@ const agentsOf = (t: T, org: string) =>
 describe("A. requireOrgAdmin doors: a write names an org only if the verified claim equals it", () => {
 	test("registerAgent: admin of A naming org B is refused and B gains no agent; own org is served", async () => {
 		const { t, adminA } = await twoOrgs();
-		// A cannot NAME org B at all: no door takes an organisation argument, so the
-		// attempt is rejected by the validator and B gains nothing.
+		// A naming org B is refused (the echo must equal the session's org slug)
+		// and B gains nothing.
 		await expect(
 			adminA.mutation(api.agents.registerAgent, {
 				orgSlug: "org-b",
 				name: "intruder",
-			} as never),
-		).rejects.toThrow(/orgSlug/);
+			}),
+		).rejects.toThrow(/RBAC_DENIED/);
 		expect((await agentsOf(t, "org-b")).map((a) => a.name)).toEqual(["bob"]);
 
 		await adminA.mutation(api.agents.registerAgent, { name: "alice" });
