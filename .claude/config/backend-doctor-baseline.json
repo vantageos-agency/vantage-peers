@@ -70,19 +70,19 @@
 			"modules": {}
 		},
 		"CR-2": {
-			"count": 252,
-			"measured_tree_sha": "b922b075b4f79b15cd2a9b82158750a8786a8437",
+			"count": 248,
+			"measured_tree_sha": "0df3cbc5970c0cc09d660d6b607d7b724881d059",
 			"cli_commit": "1f79319cce01a9e448b0580fcccf9059662b8146",
-			"command": "npx -y @vantageos/backend-doctor@0.4.9 <vantage-peers clean full checkout @b922b07 (rebased on 466239c2, task k17dcydcvcdzh1gp1zd1ebt23s8fyjde), deps installed> --json-evidence <dir>/",
-			"output_line": "CR-2 VERDICT: 252 violation(s) — MECHANICAL, the gate refuses; 6 exempt; 1 could-not-judge.; MECHANICAL RULE COUNTS: CR-2 252, R-5 62, R-53 323, R-54 139, R-55 29, R-56 2",
+			"command": "npx -y @vantageos/backend-doctor@0.4.9 <vantage-peers clean full checkout @0df3cbc (M3 rebased on b5d147f5, task k177pske4qj37sfw7nw2787msd8fzp0e), deps installed>/convex --json-evidence <dir>/",
+			"output_line": "CR-2 VERDICT: 248 violation(s) — MECHANICAL, the gate refuses; 6 exempt; 1 could-not-judge.; MECHANICAL RULE COUNTS: CR-2 248, R-5 62, R-53 323, R-54 137, R-55 29, R-56 2",
 			"modules": {}
 		},
 		"R-54": {
-			"count": 139,
-			"measured_tree_sha": "b922b075b4f79b15cd2a9b82158750a8786a8437",
+			"count": 137,
+			"measured_tree_sha": "0df3cbc5970c0cc09d660d6b607d7b724881d059",
 			"cli_commit": "1f79319cce01a9e448b0580fcccf9059662b8146",
-			"command": "npx -y @vantageos/backend-doctor@0.4.9 <vantage-peers clean full checkout @b922b07 (rebased on 466239c2, task k17dcydcvcdzh1gp1zd1ebt23s8fyjde), deps installed> --json-evidence <dir>/",
-			"output_line": "R-54: 139 site(s) VIOLATE (a door resolving its caller through the organisation-scope resolver declares a verified-claim argument and refuses the call that is the service account and carries no claim, or is service-account-only, session-only, or declared fleet-wide). [conform=60 non-conforming=139 could-not-judge=8] Violations: convex/briefingNotes.ts:276 (create: (B) the claim is optional: accepts verifiedActor, verifiedOrg but no branch refuses the claimless service-account call, so the absence of a claim leaves the call master); convex/briefingNotes.ts:452 (get: (B) the claim is optional: accepts verifiedOrg but no branch refuses the claimless service-account call, so the absence of a cla; MECHANICAL RULE COUNTS: CR-2 252, R-5 62, R-53 323, R-54 139, R-55 29, R-56 2",
+			"command": "npx -y @vantageos/backend-doctor@0.4.9 <vantage-peers clean full checkout @0df3cbc (M3 rebased on b5d147f5, task k177pske4qj37sfw7nw2787msd8fzp0e), deps installed>/convex --json-evidence <dir>/",
+			"output_line": "R-54: 137 site(s) VIOLATE (a door resolving its caller through the organisation-scope resolver declares a verified-claim argument and refuses the call that is the service account and carries no claim, or is service-account-only, session-only, or declared fleet-wide). [conform=62 non-conforming=137 could-not-judge=8] Violations: convex/briefingNotes.ts:276 (create: (B) the claim is optional: accepts verifiedActor, verifiedOrg but no branch refuses the claimless service-account call, so the absence of a claim leaves the call master); convex/briefingNotes.ts:452 (get: (B) the claim is optional: accepts verifiedOrg but no branch refuses the claimless service-account call, so the absence of a claim leaves the call master); convex/briefingNotes.ts:631 (list: (B) the claim is optional: accepts verifiedOrg but no branch refuses the claimless service-account call, so the absence of a claim leaves the call master). Conform site(s): convex/agentCredentials.ts:83 (mintAgentCredential: exit (b): callers resolve only through a verified session; the door never reaches the organisation-scope resolver); convex/agentCredentials.ts:179 (revokeAgentCredential: exit (b): callers resolve only through a verified session; the door never reaches the organisation-scope resolver); convex/agentCredentials.ts:262 (resolveAgentCredential: exit (a): service-account-only by purpose (requireServiceAccount / requireResolvedCaller masterOnly+mcpBoundOnly)). could-not-judge sites (not decided; each names why): convex/kb.ts:209 (storeDocumentChunked: caller scope arrives through a run call (ctx.runQuery / ctx.runMutation); its resolution is not read here); convex/kb.ts:351 (softDeleteDocument: caller scope arrives through a run call (ctx.runQuery / ctx.runMutation); its resolution is not read here); convex/okfBundleNode.ts:287 (exportOkfBundle: caller scope arrives through a run call (ctx.runQuery / ctx.runMutation); its resolution is not read here).",
 			"modules": {}
 		},
 		"R-55": {
