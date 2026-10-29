@@ -148,3 +148,156 @@ describe("backfill_org_stamp oversize row", () => {
 		expect(six).toBe(one);
 	});
 });
+
+// stampOne — the per-id door for rows the page path lists as oversize
+// (task k17d10f1j2k2crgx9cw9bvw1vs8h7fda). The page path's size test is the UTF-8
+// length of JSON.stringify(row), which counts every `"` as two bytes; Convex
+// counts a string as its raw UTF-8 + 2 (getDocumentSize). A note of quotes is
+// ~2x larger as JSON than as a Convex document, so it is listed as oversize
+// although the platform stores (and can patch) it.
+const stampOne = internal.migrations.backfill_org_stamp.stampOne;
+
+async function seedAcme(t: T) {
+	await t.run(async (ctx) => {
+		await ctx.db.insert("client_org_mapping", {
+			clerkOrgSlug: "acme-hr",
+			clerkOrgId: testClerkOrgId("acme-hr"),
+			allowedOrchestrators: [],
+			scopes: [],
+			displayName: "acme-hr",
+			isActive: true,
+			createdAt: NOW,
+		});
+		await ctx.db.insert("agents", {
+			orgSlug: "acme-hr",
+			clerkOrgId: testClerkOrgId("acme-hr"),
+			name: "nadia",
+			normalizedName: "nadia",
+			isActive: true,
+			createdAt: NOW,
+		});
+	});
+}
+
+async function noteBy(
+	t: T,
+	createdBy: string,
+	content: string,
+	orgId?: string,
+) {
+	return await t.run(async (ctx) =>
+		ctx.db.insert("briefingNotes", {
+			title: "n",
+			topic: "t",
+			participants: [],
+			content,
+			createdBy,
+			createdAt: NOW,
+			...(orgId === undefined ? {} : { orgId }),
+		}),
+	);
+}
+
+const rowOf = (t: T, id: Awaited<ReturnType<typeof note>>) =>
+	t.run(async (ctx) => ctx.db.get(id));
+
+describe("backfill_org_stamp:stampOne", () => {
+	test("stampOne: a note the page path lists as oversize is stamped by id, content untouched", async () => {
+		const t = createT();
+		await seedOrgs(t);
+		await seedAcme(t);
+		const content = '"'.repeat(600_000);
+		const id = await noteBy(t, "nadia", content);
+		const pages = await walkNotes(t, false);
+		expect(pages.flatMap((p) => p.oversizeIds)).toEqual([id]);
+		const before = await rowOf(t, id);
+		const r = await t.mutation(stampOne, {
+			table: "briefingNotes",
+			id,
+			dryRun: false,
+		});
+		expect(r).toMatchObject({
+			id,
+			decided: "org",
+			stampedTo: "acme-hr",
+			dryRun: false,
+		});
+		expect(r.approxBytes).toBeGreaterThan(600_000);
+		const after = await rowOf(t, id);
+		expect(after?.orgId).toBe("acme-hr");
+		expect(after?.clerkOrgId).toBe(testClerkOrgId("acme-hr"));
+		const { orgId: _o, clerkOrgId: _c, ...rest } = after ?? {};
+		expect(rest).toEqual(before);
+		expect(after?.content).toBe(content);
+	});
+
+	test("stampOne: a fleet-owned note takes the operator org", async () => {
+		const t = createT();
+		await seedOrgs(t);
+		const id = await noteBy(t, "sigma", "hello");
+		const r = await t.mutation(stampOne, {
+			table: "briefingNotes",
+			id,
+			dryRun: false,
+		});
+		expect(r).toMatchObject({ decided: "fleet", stampedTo: "fleet-org" });
+		expect((await rowOf(t, id))?.orgId).toBe("fleet-org");
+	});
+
+	test("stampOne: dryRun defaults to true and writes nothing", async () => {
+		const t = createT();
+		await seedOrgs(t);
+		const id = await noteBy(t, "sigma", "hello");
+		const r = await t.mutation(stampOne, { table: "briefingNotes", id });
+		expect(r).toMatchObject({
+			decided: "fleet",
+			stampedTo: "fleet-org",
+			dryRun: true,
+		});
+		expect((await rowOf(t, id))?.orgId).toBeUndefined();
+	});
+
+	test("stampOne: an undecidable author is reported and never written", async () => {
+		const t = createT();
+		await seedOrgs(t);
+		const id = await noteBy(t, "nobody-knows", "hello");
+		const r = await t.mutation(stampOne, {
+			table: "briefingNotes",
+			id,
+			dryRun: false,
+		});
+		expect(r).toMatchObject({ decided: "undecidable", stampedTo: null });
+		expect((await rowOf(t, id))?.orgId).toBeUndefined();
+	});
+
+	test("stampOne: an already-stamped note is untouched", async () => {
+		const t = createT();
+		await seedOrgs(t);
+		const id = await noteBy(t, "sigma", "hello", "acme-hr");
+		const r = await t.mutation(stampOne, {
+			table: "briefingNotes",
+			id,
+			dryRun: false,
+		});
+		expect(r).toMatchObject({ decided: "alreadyStamped", stampedTo: null });
+		const row = await rowOf(t, id);
+		expect(row?.orgId).toBe("acme-hr");
+		expect(row?.clerkOrgId).toBeUndefined();
+	});
+
+	test("stampOne: an id of another table is refused", async () => {
+		const t = createT();
+		await seedOrgs(t);
+		const agentId = await t.run(async (ctx) => {
+			const a = await ctx.db.query("agents").first();
+			return a?._id as string;
+		});
+		await expect(
+			t.mutation(stampOne, {
+				table: "briefingNotes",
+				id: agentId,
+				dryRun: false,
+			}),
+		).rejects.toThrow(/not a briefingNotes id/);
+	});
+});
