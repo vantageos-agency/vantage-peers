@@ -289,23 +289,16 @@ describe("list_broadcast_status — receipts removed by the scope filter after t
 	});
 });
 
-describe("scopeFiltered is never a count for a token bound to no organisation", () => {
+describe.each(SITES)("$tool — a token bound to no organisation", (s) => {
 	const noOrg = (): OAuthContext => {
 		const { clerkOrgSlug: _drop, ...rest } = alphaCtx();
 		return rest as OAuthContext;
 	};
 
-	it("list_mandates: removed rows are not counted, the cursor is still kept", async () => {
-		const tools = capture(
-			{
-				"mandates:list": [
-					{ _id: "m1", _creationTime: 99, requestedBy: "beta", fulfilledBy: "beta" },
-					{ _id: "m2", _creationTime: 98, requestedBy: "beta", fulfilledBy: "beta" },
-				],
-			},
-			noOrg(),
-		);
-		const res = await tools.get("list_mandates")!({ limit: 2 });
+	it("gets NO scopeFiltered count but keeps its continuation cursor", async () => {
+		const tools = capture({ [s.path]: [s.foreign(1), s.foreign(2)] }, noOrg());
+		const res = await tools.get(s.tool)!(s.args);
+		expect(res.isError).not.toBe(true);
 		const out = JSON.parse(res.content[0].text);
 		expect(out.scopeFiltered).toBeUndefined();
 		expect(typeof out.nextCursor).toBe("string");
