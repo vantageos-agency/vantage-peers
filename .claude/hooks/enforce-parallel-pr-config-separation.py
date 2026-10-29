@@ -23,7 +23,8 @@ Decision, three states (never two):
   (exit 2)            be read (unresolvable `cd`, no origin, --repo naming
                       another repository, gh failure). Never a silent pass.
 The repository judged is the one `gh pr create` runs in: the payload cwd, or
-the last literal `cd <path>` before it (`cd X && ...`, `(cd X; ...)`).
+every literal `cd <path>` / `pushd <path>` before it (`cd X && ...`,
+`(cd X; ...)`); `popd`, `cd -` and a bare `cd` refuse to judge.
 
 Override (one PR, documented): put
     # allow-config-feature-bundle: <reason, 6+ characters>
@@ -61,34 +62,34 @@ def is_feature(path):
     return not is_config(path) and not path.endswith(".md") and not path.startswith("docs/")
 
 
-def find_pr_create(command):
-    """(argv of the first real `gh pr create`, argument of the last `cd` before
-    it or None), or (None, None) when the command opens no pull request."""
-    cd_arg = None
+DIR_CHANGERS = {"cd", "pushd", "popd"}
+
+
+def find_pr_create(command, base):
+    """(argv of the first real `gh pr create`, the directory it runs in or None
+    with a reason when a directory change before it cannot be resolved
+    statically), or (None, None, None) when the command opens no pull request.
+    `cd <path>` and `pushd <path>` are followed; `popd`, `cd -`, a bare `cd` or
+    `pushd`, and a target built from a variable or substitution are not."""
+    cur, why = base, None
     for _segment, tokens in iter_real_commands(command):
         if not tokens:
             continue
-        if tokens[0] == "cd" and len(tokens) > 1:
-            cd_arg = tokens[1]
+        if tokens[0] in DIR_CHANGERS:
+            args = [t for t in tokens[1:] if not t.startswith("-") or t == "-"]
+            target = args[0] if args and tokens[0] != "popd" else None
+            if target is None or target == "-" or "$" in target or "`" in target:
+                cur, why = None, f"`{' '.join(tokens)}` cannot be resolved statically"
+            elif cur is not None:
+                path = os.path.expanduser(target)
+                cur = os.path.normpath(path if os.path.isabs(path) else os.path.join(cur, path))
+            continue
         if not head_matches(tokens, "gh"):
             continue
         for i in range(1, len(tokens) - 1):
             if tokens[i] == "pr" and tokens[i + 1] == "create":
-                return tokens, cd_arg
-    return None, None
-
-
-def effective_dir(base, cd_arg):
-    """The directory `gh pr create` runs in, or None when a `cd` target cannot
-    be resolved statically (variable, substitution, `cd -`)."""
-    if cd_arg is None:
-        return base
-    if cd_arg == "-" or "$" in cd_arg or "`" in cd_arg:
-        return None
-    path = os.path.expanduser(cd_arg)
-    if not os.path.isabs(path):
-        path = os.path.join(base, path)
-    return os.path.normpath(path)
+                return tokens, cur, why
+    return None, None, None
 
 
 def flag_value(tokens, *names):
@@ -141,15 +142,14 @@ def main():
     if payload.get("tool_name") != "Bash":
         sys.exit(0)
     command = (payload.get("tool_input") or {}).get("command") or ""
-    tokens, cd_arg = find_pr_create(command)
+    base_dir = payload.get("cwd") or os.getcwd()
+    tokens, cwd, why = find_pr_create(command, base_dir)
     if tokens is None:
         sys.exit(0)
-    base_dir = payload.get("cwd") or os.getcwd()
     if has_override(command, tokens, base_dir):
         sys.exit(0)
-    cwd = effective_dir(base_dir, cd_arg)
     if cwd is None:
-        could_not_judge(f"`cd {cd_arg}` cannot be resolved statically")
+        could_not_judge(why)
 
     origin = run(cwd, "git", "remote", "get-url", "origin")
     if not origin:
