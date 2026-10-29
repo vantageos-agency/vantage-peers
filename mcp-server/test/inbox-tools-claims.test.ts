@@ -39,7 +39,7 @@ import {
 import { registerTools } from "../src/tools.js";
 
 const CLIO_ID = "agentclio0000000000000000000001";
-const ORG = "iris-rh";
+const ORG = "acme-hr";
 const RECEIPT = "j57aaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
 const MESSAGE = "j57bbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
 

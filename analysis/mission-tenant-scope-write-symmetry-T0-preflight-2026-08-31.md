@@ -45,9 +45,9 @@ reissued (k177c6v8). T4's prod pole uses the Pi-issued token, not these.
 Reader ≠ sender (sent from `pi`, read `sigma`'s inbox); scope toggled via the
 `tenantId` arg, `since` window pinned to this cycle:
 
-- Probe sent: `send_message from=pi channel=sigma tenantId="project/iris-rh"` →
+- Probe sent: `send_message from=pi channel=sigma tenantId="project/acme-hr"` →
   message `jn7dnw98ydqk4yhx1hmyw22kn18dhbz8`.
-- **Positive pole**: `check_messages recipient=sigma tenantId="project/iris-rh"`
+- **Positive pole**: `check_messages recipient=sigma tenantId="project/acme-hr"`
   → returns the probe (receipt `k970m5dp548bh2n5jjgp9r7k598dh6t0`).
 - **Negative pole**: `check_messages recipient=sigma
   tenantId="project/some-other-tenant"` → returns nothing.

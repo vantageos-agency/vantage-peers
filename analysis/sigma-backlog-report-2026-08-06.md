@@ -58,14 +58,14 @@ Class : le code renvoie un résultat faux sans planter. Plusieurs partagent la *
 | ID (32c) | Statut | Prio | Titre |
 |---|---|---|---|
 | `k17djze1znkfq06rb5a3m10yjx8aaj2q` | blocked | urgent | [SEC-PURGE] Purge repo PUBLIC vantage-peers — redécoupée en 3 volets (texte / migration namespace / renommages) |
-| `k17a917qnqzhfzy88jb3ghkgyd8aegew` | todo | urgent | [SEC-PURGE T-b] Migration du namespace client `project/iris-rh` — MIGRATION DE DONNÉES, pas une purge |
+| `k17a917qnqzhfzy88jb3ghkgyd8aegew` | todo | urgent | [SEC-PURGE T-b] Migration du namespace client `project/acme-hr` — MIGRATION DE DONNÉES, pas une purge |
 | `k174tj63n9swcvhcvn6dgbqttx8afcmp` | todo | high | [SEC-PURGE T-c] Renommer le fichier portant le nom du client + le profil de scope OAuth |
 | `k170xwqveg15kzrqwvfq5ynqd58b263s` | todo | high | Les profils d'autorisation client sortent du CODE et deviennent DONNÉE — le nom du client quitte le dépôt public sans être renommé |
 | `k171rr45j8vn5qg07h54g5a5bx8aaq19` | blocked | urgent | T8 — Sortir les alias clients nommés du repo PUBLIC (seed `oauth.ts`) vers config privée |
 | `k1765aj59v2qkh8jngr7fk6nfn8aa07s` | blocked | urgent | T6 — Marie : retirer l'accès global, borner à son org |
 | `k173gx04rewrrba788rp561h218abd8y` / `k17bmfz3v70p70v18bv2qb0x698abxq9` / `k170zq2smtg1g02amy52h6jbnx8abd4e` / `k176pa3qsp37yg51ngc88djcw18aagqt` | blocked | med/urgent | T7/T5/T3/T2 — vérif finale / génériciser deploy-name / retirer dossiers internes / migrer doc interne |
-| `k173wamy80xmz2z9761d616ybh87zhf7` | blocked | urgent | [SECURITY] patch scope `marie-iris-rh` : drop `global` + `orchestrator/victor` namespaceRead (fuite : Marie voit memories fleet) |
-| `k17bzgx2jeh405w7bbe3yk51es87zh2t` | blocked | urgent | [BLOCKER VISIO] ajouter `list_briefing_notes` scoped + `get_briefing_note` au scope `marie-iris-rh` (write-only = inutilisable) |
+| `k173wamy80xmz2z9761d616ybh87zhf7` | blocked | urgent | [SECURITY] patch scope `marie-acme-hr` : drop `global` + `orchestrator/victor` namespaceRead (fuite : Marie voit memories fleet) |
+| `k17bzgx2jeh405w7bbe3yk51es87zh2t` | blocked | urgent | [BLOCKER VISIO] ajouter `list_briefing_notes` scoped + `get_briefing_note` au scope `marie-acme-hr` (write-only = inutilisable) |
 
 **Note** : `k173wamy` (fuite Marie voit memories fleet) est un vrai trou de confidentialité **indépendant** du choix public/privé — à traiter même si le reste de SEC-PURGE est ré-arbitré.
 

@@ -5,7 +5,7 @@
 //
 // 1. oauth:bindScopeProfileAgent: no door bound an agentId onto an
 //    oauth_scope_profiles row, so a seat whose label carries an accent
-//    ("hélios") but whose profileId does not ("helios-iris-rh") never resolved
+//    ("hélios") but whose profileId does not ("helios-acme-hr") never resolved
 //    its agent through the label fallback. The door binds it BY ID.
 //    (internalMutation: no client or token reaches it, run with the admin key)
 //    REFUSED  unknown profile; unknown agent; an
@@ -46,8 +46,8 @@ const asService = (t: T) =>
 const asMember = (t: T) =>
 	t.withIdentity({
 		subject: "ordinary-member",
-		organizationId: "iris-rh",
-		organizationSlug: "iris-rh",
+		organizationId: "acme-hr",
+		organizationSlug: "acme-hr",
 		org_id: "org_IRIS1",
 	} as Identity);
 
@@ -72,29 +72,29 @@ async function seed(t: T) {
 				isActive,
 				createdAt: NOW,
 			});
-		const helios = await agent("iris-rh", IRIS_ID, "hélios");
-		const retired = await agent("iris-rh", IRIS_ID, "retired", false);
+		const helios = await agent("acme-hr", IRIS_ID, "hélios");
+		const retired = await agent("acme-hr", IRIS_ID, "retired", false);
 		const foreign = await agent("other", OTHER_ID, "hélios");
 		const profile = (profileId: string, fromAllowList: string[]) =>
 			ctx.db.insert("oauth_scope_profiles", {
 				profileId,
 				description: "seat",
 				fromAllowList,
-				namespaceReadPrefixes: ["team/iris-rh"],
-				namespaceWritePrefixes: ["team/iris-rh"],
+				namespaceReadPrefixes: ["team/acme-hr"],
+				namespaceWritePrefixes: ["team/acme-hr"],
 				createdAt: NOW,
 				updatedAt: NOW,
-				clerkOrgSlug: "iris-rh",
+				clerkOrgSlug: "acme-hr",
 				clerkOrgId: IRIS_ID,
 			});
-		await profile("helios-iris-rh", ["hélios"]);
-		await profile("duo-iris-rh", ["hélios", "retired"]);
+		await profile("helios-acme-hr", ["hélios"]);
+		await profile("duo-acme-hr", ["hélios", "retired"]);
 		await ctx.db.insert("client_org_mapping", {
-			clerkOrgSlug: "iris-rh",
+			clerkOrgSlug: "acme-hr",
 			clerkOrgId: IRIS_ID,
 			allowedOrchestrators: ["hélios", "retired"],
 			scopes: ["view-own-tasks"],
-			displayName: "iris-rh",
+			displayName: "acme-hr",
 			isActive: true,
 			createdAt: NOW,
 		});
@@ -103,9 +103,9 @@ async function seed(t: T) {
 }
 
 const heliosToken = {
-	scopeProfile: "helios-iris-rh",
+	scopeProfile: "helios-acme-hr",
 	fromAllowList: ["hélios"],
-	clerkOrgSlug: "iris-rh",
+	clerkOrgSlug: "acme-hr",
 	clerkOrgId: IRIS_ID,
 };
 
@@ -117,11 +117,11 @@ describe("oauth:bindScopeProfileAgent", () => {
 			await t.run((ctx) => resolveSeatAgent(ctx, heliosToken)),
 		).toBeNull();
 		const res = await asService(t).mutation(internal.oauth.bindScopeProfileAgent, {
-			profileId: "helios-iris-rh",
+			profileId: "helios-acme-hr",
 			agentId: helios,
 		});
 		expect(res).toEqual({
-			profileId: "helios-iris-rh",
+			profileId: "helios-acme-hr",
 			agentId: helios,
 			previousAgentId: null,
 		});
@@ -145,7 +145,7 @@ describe("oauth:bindScopeProfileAgent", () => {
 		const { retired } = await seed(t);
 		await expect(
 			asService(t).mutation(internal.oauth.bindScopeProfileAgent, {
-				profileId: "helios-iris-rh",
+				profileId: "helios-acme-hr",
 				agentId: retired,
 			}),
 		).rejects.toThrow(/principal-inactive/);
@@ -156,14 +156,14 @@ describe("oauth:bindScopeProfileAgent", () => {
 		const { foreign } = await seed(t);
 		await expect(
 			asService(t).mutation(internal.oauth.bindScopeProfileAgent, {
-				profileId: "helios-iris-rh",
+				profileId: "helios-acme-hr",
 				agentId: foreign,
 			}),
 		).rejects.toThrow(/other-organisation/);
 		const row = await t.run((ctx) =>
 			ctx.db
 				.query("oauth_scope_profiles")
-				.withIndex("by_profileId", (q) => q.eq("profileId", "helios-iris-rh"))
+				.withIndex("by_profileId", (q) => q.eq("profileId", "helios-acme-hr"))
 				.unique(),
 		);
 		expect(row?.agentId).toBeUndefined();
@@ -175,12 +175,12 @@ describe("oauth:bindScopeProfileAgent", () => {
 		await t.run(async (ctx) => {
 			const row = await ctx.db
 				.query("oauth_scope_profiles")
-				.withIndex("by_profileId", (q) => q.eq("profileId", "helios-iris-rh"))
+				.withIndex("by_profileId", (q) => q.eq("profileId", "helios-acme-hr"))
 				.unique();
 			if (row) await ctx.db.patch(row._id, { clerkOrgId: undefined });
 		});
 		await expect(
-			internal_bind(t, "helios-iris-rh", helios),
+			internal_bind(t, "helios-acme-hr", helios),
 		).rejects.toThrow(/credential-invalid/);
 	});
 
@@ -189,14 +189,14 @@ describe("oauth:bindScopeProfileAgent", () => {
 		const { helios } = await seed(t);
 		await t.run((ctx) => ctx.db.patch(helios, { clerkOrgId: undefined }));
 		await expect(
-			internal_bind(t, "helios-iris-rh", helios),
+			internal_bind(t, "helios-acme-hr", helios),
 		).rejects.toThrow(/no-verified-organisation/);
 	});
 
 	test("PRESENT: the bind is by ID, whatever the label list holds", async () => {
 		const t = createT();
 		const { helios } = await seed(t);
-		const res = await internal_bind(t, "duo-iris-rh", helios);
+		const res = await internal_bind(t, "duo-acme-hr", helios);
 		expect(res.agentId).toBe(helios);
 	});
 
@@ -206,7 +206,7 @@ describe("oauth:bindScopeProfileAgent", () => {
 		await t.run((ctx) => ctx.db.delete(helios));
 		await expect(
 			asService(t).mutation(internal.oauth.bindScopeProfileAgent, {
-				profileId: "helios-iris-rh",
+				profileId: "helios-acme-hr",
 				agentId: helios,
 			}),
 		).rejects.toThrow(/principal-not-found/);
@@ -219,7 +219,7 @@ function tokenRow(tokenHash: string, clientId: string) {
 		clientId,
 		userId: "admin",
 		scopes: ["vantage:read"],
-		scopeProfile: "helios-iris-rh",
+		scopeProfile: "helios-acme-hr",
 		fromAllowList: ["hélios"],
 		namespaceReadPrefixes: [],
 		namespaceWritePrefixes: [],

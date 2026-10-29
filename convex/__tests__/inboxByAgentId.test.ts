@@ -2,16 +2,16 @@
 /**
  * convex/__tests__/inboxByAgentId.test.ts
  *
- * Cloud security, class of the Iris RH incident (task k17c5q842gm1gbh0j2qjtc80g18fx5kb).
+ * Cloud security, class of the Acme HR incident (task k17c5q842gm1gbh0j2qjtc80g18fx5kb).
  * The inbox doors (checkNewMessages, checkNewMessagesEnvelope, getUnreadCount,
  * markAsRead, deleteMessage) used to key on the `recipient` NAME. The wire shape
  * of ANOTHER org's same-named agent's seat calling check_messages (the fleet
- * service account, a name, no tenant) read iris-rh's mail. The inbox is now read
+ * service account, a name, no tenant) read acme-hr's mail. The inbox is now read
  * by the caller's VERIFIED agent ID (`verifiedActor`), in the caller's verified
  * org; a name only ever NARROWS (it must equal the verified agent) and a mismatch
  * is a raised RBAC_DENIED naming the door.
  *
- * World: two client orgs (iris-rh, acme) each with an agent named "hélios", one
+ * World: two client orgs (acme-hr, acme) each with an agent named "hélios", one
  * operator org (vantage-fleet) whose roles pi / eta have NO agents row (the
  * fleet-role gap, task k17a1yprfca2cfjc4cnz4ynvvs8fwe5m) and whose agent "sigma"
  * has one.
@@ -45,7 +45,7 @@ const createT = () => convexTest(schema, modules);
 type T = ReturnType<typeof createT>;
 
 const FLEET = "vantage-fleet";
-const IRIS = "iris-rh";
+const IRIS = "acme-hr";
 const ACME = "acme";
 const NOW = 1_700_000_000_000;
 
@@ -132,7 +132,7 @@ async function seedWorld(): Promise<World> {
 				readAt: undefined,
 			});
 		};
-		// iris-rh: one stamped with the agent ID, one LEGACY (name only).
+		// acme-hr: one stamped with the agent ID, one LEGACY (name only).
 		await put("IRIS-BY-ID", {
 			from: "clio",
 			fromId: irisClio,
@@ -253,7 +253,7 @@ describe("REFUSED: the namesake in another org reads nothing of iris's inbox", (
 			}
 		});
 
-		test("acme's hélios naming iris-rh as the tenant is REFUSED", async () => {
+		test("acme's hélios naming acme-hr as the tenant is REFUSED", async () => {
 			const { t, acmeHelios } = await seedWorld();
 			await expect(
 				check(t, { tenantId: IRIS, ...actor(acmeHelios, ACME) }),

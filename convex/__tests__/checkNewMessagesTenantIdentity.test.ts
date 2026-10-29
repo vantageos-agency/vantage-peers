@@ -247,7 +247,7 @@ describe("checkNewMessages / checkNewMessagesEnvelope — read-half tenant ident
 
 	// Task k17c5q842gm1gbh0j2qjtc80g18fx5kb (inbox by agent ID): the two tests that
 	// stood here asserted that the service account, naming a recipient, reads ALL
-	// tenants' mail and any NAMED tenant's mail. That is the Iris RH defect: the
+	// tenants' mail and any NAMED tenant's mail. That is the Acme HR defect: the
 	// wire shape of another org's same-named agent's seat. The service account
 	// with no claim now reads the FLEET's tenant only and a client tenant is a
 	// raised refusal; a client org's mail is read through a verified identity

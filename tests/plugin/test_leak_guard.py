@@ -867,7 +867,7 @@ def test_leak_guard_main_fails_loud_without_any_vocabulary_source(monkeypatch, t
 # names, namespace constants. Correcting an over-matcher produced an
 # under-matcher, and nobody looked back.
 #
-# `convex/migrations/patch_marie_iris_rh_scope.ts` is tracked on the PUBLIC main
+# `convex/migrations/patch_<client>_scope.ts` is tracked on the PUBLIC main
 # branch. Every content scan ever run over this repo called it clean — and it
 # was, inside. The leak is in the NAME.
 #

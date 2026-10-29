@@ -1,8 +1,8 @@
 /**
  * list_peers lists the caller's ORGANISATION roster, not its fromAllowList.
  *
- * VantagePeers Cloud, org Iris RH, client incident (task
- * k1716f01f9g1a0scz7nj30118h8fx32c). Each Iris RH seat token was narrowed to
+ * VantagePeers Cloud, org Northwind HR, client incident (task
+ * k1716f01f9g1a0scz7nj30118h8fx32c). Each Northwind HR seat token was narrowed to
  * its own name (clio -> ["clio"]) so that it only reads messages addressed to
  * it. list_peers filtered profiles on that same allowlist, so Clio saw only
  * herself and concluded Helios was not in the org. `fromAllowList` governs who
@@ -63,12 +63,12 @@ const FILLERS = Array.from({ length: 24 }, (_, i) =>
 	profile(`filler-${i}`, 1780000008500 - i, `filler-${i}-other`),
 );
 const PROFILES = [
-	profile("clio", 1780000009000, "clio-iris-rh"),
+	profile("clio", 1780000009000, "clio-northwind-hr"),
 	...FILLERS,
-	profile(HELIOS, 1780000008000, `${HELIOS}-iris-rh`),
+	profile(HELIOS, 1780000008000, `${HELIOS}-northwind-hr`),
 	// SAME NAME, OTHER ORG: must never lend its dynamic fields to Iris.
 	profile("marie", 1780000007500, "marie-acme", "SECRET-ACME-TASK"),
-	profile("marie", 1780000007000, "marie-iris-rh"),
+	profile("marie", 1780000007000, "marie-northwind-hr"),
 	profile("zoe-other-org", 1780000005000, "zoe-other-org-acme"),
 	profile("beta", 1780000004000, "beta-acme"),
 ];
@@ -80,12 +80,12 @@ function seat(over: Partial<OAuthContext>): OAuthContext {
 		scopes: ["mcp:full"],
 		scopeProfile: "tenant",
 		fromAllowList: ["clio"],
-		namespaceReadPrefixes: ["team/iris-rh"],
-		namespaceWritePrefixes: ["team/iris-rh"],
+		namespaceReadPrefixes: ["team/northwind-hr"],
+		namespaceWritePrefixes: ["team/northwind-hr"],
 		expiresAt: Date.now() + 3600_000,
 		isMaster: false,
 		accessTokenHash: "hash-clio",
-		clerkOrgSlug: "iris-rh",
+		clerkOrgSlug: "northwind-hr",
 		...over,
 	};
 }
@@ -190,7 +190,7 @@ describe("list_peers - org roster listing for a non-master token with an org", (
 		expect(marie).toHaveLength(1);
 		expect(JSON.stringify(peers)).not.toContain("SECRET-ACME-TASK");
 		expect(JSON.stringify(peers)).not.toContain("marie-acme");
-		expect(marie[0].instanceId).toBe("marie-iris-rh");
+		expect(marie[0].instanceId).toBe("marie-northwind-hr");
 	});
 
 	it("a roster name with only another org's row is listed WITHOUT that row's data", async () => {

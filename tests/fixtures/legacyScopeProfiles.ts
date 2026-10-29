@@ -29,7 +29,7 @@ export interface ProfileSnapshot {
 
 export const LEGACY_CLIENT_PROFILES: ProfileSnapshot[] = [
 	{
-		"profileId": "marie-iris-rh",
+		"profileId": "marie-acme-hr",
 		"description": "Marie (the onboarding client) — send_message as 'marie' only; read/write bounded to her own organisation's namespaces: orchestrator/marie + orchestrator/victor (her own second orchestrator seat) + project/marie. Leak fix (task k173wamy80xmz2z9761d616ybh87zhf7, reworked per operator countermand): removed only the fleet-common `global` prefix — VantagePeers is sold multi-organisation and a client profile must never read/write the shared global namespace. `orchestrator/victor` is KEPT — it is this same client's own orchestrator seat, not another org's namespace, and removing it would have cut the client from their own orchestrator.",
 		"fromAllowList": [
 			"marie"
@@ -46,7 +46,7 @@ export const LEGACY_CLIENT_PROFILES: ProfileSnapshot[] = [
 		]
 	},
 	{
-		"profileId": "clio-iris-rh",
+		"profileId": "clio-acme-hr",
 		"description": "Clio (the onboarding client's ChatGPT orchestrator persona) — send/check as Clio + cross-persona read of Hélios + Victor inboxes; read/write the shared project workspace + the other two personas' orchestrator namespaces.",
 		"fromAllowList": [
 			"Clio",
@@ -67,7 +67,7 @@ export const LEGACY_CLIENT_PROFILES: ProfileSnapshot[] = [
 			"orchestrator/hélios",
 			"orchestrator/Victor",
 			"orchestrator/victor",
-			"project/iris-rh"
+			"project/acme-hr"
 		],
 		"namespaceWritePrefixes": [
 			"orchestrator/Clio",
@@ -78,11 +78,11 @@ export const LEGACY_CLIENT_PROFILES: ProfileSnapshot[] = [
 			"orchestrator/hélios",
 			"orchestrator/Victor",
 			"orchestrator/victor",
-			"project/iris-rh"
+			"project/acme-hr"
 		]
 	},
 	{
-		"profileId": "helios-iris-rh",
+		"profileId": "helios-acme-hr",
 		"description": "Hélios (the onboarding client's Claude.ai orchestrator persona) — send/check as Hélios + cross-persona read of Clio + Victor inboxes; read/write the shared project workspace + the other two personas' orchestrator namespaces.",
 		"fromAllowList": [
 			"Hélios",
@@ -103,7 +103,7 @@ export const LEGACY_CLIENT_PROFILES: ProfileSnapshot[] = [
 			"orchestrator/clio",
 			"orchestrator/Victor",
 			"orchestrator/victor",
-			"project/iris-rh"
+			"project/acme-hr"
 		],
 		"namespaceWritePrefixes": [
 			"orchestrator/Hélios",
@@ -114,7 +114,7 @@ export const LEGACY_CLIENT_PROFILES: ProfileSnapshot[] = [
 			"orchestrator/clio",
 			"orchestrator/Victor",
 			"orchestrator/victor",
-			"project/iris-rh"
+			"project/acme-hr"
 		]
 	}
 ];

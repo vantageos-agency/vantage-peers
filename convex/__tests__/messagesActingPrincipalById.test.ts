@@ -38,7 +38,7 @@ const createT = () => convexTest(schema, modules);
 type T = ReturnType<typeof createT>;
 
 const NAMES = ["clio", "victor", "hélios", "eta"] as const;
-const ORGS = ["iris-rh", "other-hr"] as const;
+const ORGS = ["acme-hr", "other-hr"] as const;
 type Org = (typeof ORGS)[number];
 
 const asServiceAccount = (t: T) =>
@@ -115,14 +115,14 @@ async function tenantsOf(t: T, messageId: Id<"messages">) {
 // ── the live case (copied from sigma/connector-agent-identity) ──────────────
 
 describe("connector agent credential", () => {
-	test("another org's clio cannot act as the iris-rh clio: ORG_MISMATCH", async () => {
+	test("another org's clio cannot act as the acme-hr clio: ORG_MISMATCH", async () => {
 		const { t, ids } = await seedWorld();
 		await expect(
 			asServiceAccount(t).mutation(api.messages.sendMessage, {
 				from: "clio",
 				channel: "hélios",
 				content: "x",
-				seatOrgSlug: "iris-rh",
+				seatOrgSlug: "acme-hr",
 				verifiedActor: {
 					agentId: ids["other-hr/clio"],
 					orgSlug: "other-hr",
@@ -143,14 +143,14 @@ describe.each(
 )("shared name %s — sendMessage by verifiedActor", (name) => {
 	const peer = peerOf(name);
 
-	test("REFUSED: other-hr's agent with the iris-rh seat org", async () => {
+	test("REFUSED: other-hr's agent with the acme-hr seat org", async () => {
 		const { t, ids } = await seedWorld();
 		await expect(
 			asServiceAccount(t).mutation(api.messages.sendMessage, {
 				from: name,
 				channel: peer,
 				content: "x",
-				seatOrgSlug: "iris-rh",
+				seatOrgSlug: "acme-hr",
 				verifiedActor: {
 					agentId: ids[`other-hr/${name}`],
 					orgSlug: "other-hr",
@@ -159,14 +159,14 @@ describe.each(
 		).rejects.toThrow(/ORG_MISMATCH.*target-other-organisation/);
 	});
 
-	test("REFUSED: other-hr's agent declaring tenantId iris-rh", async () => {
+	test("REFUSED: other-hr's agent declaring tenantId acme-hr", async () => {
 		const { t, ids } = await seedWorld();
 		await expect(
 			asServiceAccount(t).mutation(api.messages.sendMessage, {
 				from: name,
 				channel: peer,
 				content: "x",
-				tenantId: "iris-rh",
+				tenantId: "acme-hr",
 				verifiedActor: {
 					agentId: ids[`other-hr/${name}`],
 					orgSlug: "other-hr",
@@ -175,15 +175,15 @@ describe.each(
 		).rejects.toThrow(/ORG_MISMATCH.*target-other-organisation/);
 	});
 
-	test("REFUSED: other-hr's agent presented as verified in iris-rh", async () => {
+	test("REFUSED: other-hr's agent presented as verified in acme-hr", async () => {
 		const { t, ids } = await seedWorld();
 		await expect(
 			asServiceAccount(t).mutation(api.messages.sendMessage, {
 				from: name,
 				channel: peer,
 				content: "x",
-				seatOrgSlug: "iris-rh",
-				verifiedActor: { agentId: ids[`other-hr/${name}`], orgSlug: "iris-rh" },
+				seatOrgSlug: "acme-hr",
+				verifiedActor: { agentId: ids[`other-hr/${name}`], orgSlug: "acme-hr" },
 			}),
 		).rejects.toThrow(/ORG_MISMATCH.*"other-organisation"/);
 	});
@@ -201,18 +201,18 @@ describe.each(
 		expect(tenants.receipts).toEqual(["other-hr"]);
 	});
 
-	test("PRESENT: iris-rh's agent with the iris-rh seat org is served", async () => {
+	test("PRESENT: acme-hr's agent with the acme-hr seat org is served", async () => {
 		const { t, ids } = await seedWorld();
 		const id = await asServiceAccount(t).mutation(api.messages.sendMessage, {
 			from: name,
 			channel: peer,
 			content: "x",
-			seatOrgSlug: "iris-rh",
-			verifiedActor: { agentId: ids[`iris-rh/${name}`], orgSlug: "iris-rh" },
+			seatOrgSlug: "acme-hr",
+			verifiedActor: { agentId: ids[`acme-hr/${name}`], orgSlug: "acme-hr" },
 		});
 		const tenants = await tenantsOf(t, id);
-		expect(tenants.message).toBe("iris-rh");
-		expect(tenants.receipts).toEqual(["iris-rh"]);
+		expect(tenants.message).toBe("acme-hr");
+		expect(tenants.receipts).toEqual(["acme-hr"]);
 	});
 
 	test("HUMAN: an other-hr member addressing the name stays in other-hr", async () => {
@@ -233,15 +233,15 @@ describe("verifiedActor resolution refuses by default", () => {
 	test("an inactive agent is refused (VERIFIED_ACTOR_INACTIVE)", async () => {
 		const { t, ids } = await seedWorld();
 		await t.run(async (ctx) => {
-			await ctx.db.patch(ids["iris-rh/clio"], { isActive: false });
+			await ctx.db.patch(ids["acme-hr/clio"], { isActive: false });
 		});
 		await expect(
 			asServiceAccount(t).mutation(api.messages.sendMessage, {
 				from: "clio",
 				channel: "eta",
 				content: "x",
-				seatOrgSlug: "iris-rh",
-				verifiedActor: { agentId: ids["iris-rh/clio"], orgSlug: "iris-rh" },
+				seatOrgSlug: "acme-hr",
+				verifiedActor: { agentId: ids["acme-hr/clio"], orgSlug: "acme-hr" },
 			}),
 		).rejects.toThrow(/VERIFIED_ACTOR_INACTIVE.*principal-inactive/);
 	});
@@ -268,11 +268,11 @@ describe("verifiedActor resolution refuses by default", () => {
 	test("an org member presenting a verifiedActor is refused (verified-actor-not-trusted)", async () => {
 		const { t, ids } = await seedWorld();
 		await expect(
-			asMember(t, "iris-rh", "user_iris").mutation(api.messages.sendMessage, {
+			asMember(t, "acme-hr", "user_iris").mutation(api.messages.sendMessage, {
 				from: "clio",
 				channel: "eta",
 				content: "x",
-				verifiedActor: { agentId: ids["iris-rh/clio"], orgSlug: "iris-rh" },
+				verifiedActor: { agentId: ids["acme-hr/clio"], orgSlug: "acme-hr" },
 			}),
 		).rejects.toThrow(/RBAC_DENIED.*verified-actor-not-trusted/);
 	});

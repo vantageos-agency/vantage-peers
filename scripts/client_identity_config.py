@@ -395,7 +395,7 @@ def load_raw_config(path: Path) -> dict:
 #:     acme-hr                       -> caught
 #:     acme_hr                       -> caught
 #:     nadia_acme_hr                 -> INVISIBLE
-#:     patch_marie_iris_rh_scope.ts  -> INVISIBLE   <- and this file is on public main
+#:     patch_<client>_scope.ts  -> INVISIBLE   <- and this file is on public main
 #:
 #: That is the SYMMETRIC error of the one this guard was built to avoid. The first
 #: purge did substring matching and renamed "summaries" because it contains the

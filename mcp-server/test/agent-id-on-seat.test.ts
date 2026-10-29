@@ -8,7 +8,7 @@
  * only checked to EQUAL the resolved agent's name, or omitted.
  *
  * Poles, each through bearerAuthMiddleware + a real tool, both directions:
- *   SEAT BY ID      a seat for clio-iris-rh acts as clio; the call carries
+ *   SEAT BY ID      a seat for clio-acme-hr acts as clio; the call carries
  *                   verifiedActor { agentId, orgSlug } to the Convex door.
  *   OTHER ORG       the same name from another org's seat (no agent of that name
  *                   in its own org -> no stamp) is refused.
@@ -44,7 +44,7 @@ const CLIO_ID = "agentclio0000000000000000000001";
 const ALICE_ID = "agentalice000000000000000000001";
 
 const TOKENS = {
-	clioSeat: "seat-clio-iris-rh",
+	clioSeat: "seat-clio-acme-hr",
 	otherOrgSeat: "seat-clio-other-org",
 	orgLevelSeat: "seat-orglevel",
 	spoofedStamp: "seat-spoofed-stamp",
@@ -164,8 +164,8 @@ beforeEach(async () => {
 		clerkOrgSlug: org,
 	});
 	ROWS[await sha256Hex(TOKENS.clioSeat)] = {
-		...seat("clio", "iris-rh"),
-		seatAgent: { agentId: CLIO_ID, orgId: "iris-rh", agentName: "clio" },
+		...seat("clio", "acme-hr"),
+		seatAgent: { agentId: CLIO_ID, orgId: "acme-hr", agentName: "clio" },
 	};
 	// The Convex stamp said NONE for this profile: it resolved no agent of its own org.
 	ROWS[await sha256Hex(TOKENS.otherOrgSeat)] = {
@@ -173,24 +173,24 @@ beforeEach(async () => {
 		seatAgent: null,
 	};
 	ROWS[await sha256Hex(TOKENS.orgLevelSeat)] = {
-		...seat("clio", "iris-rh"),
+		...seat("clio", "acme-hr"),
 		seatAgent: null,
 	};
 	// A stamp whose org is not the token's own org: never believed.
 	ROWS[await sha256Hex(TOKENS.spoofedStamp)] = {
 		...seat("clio", "other-org"),
-		seatAgent: { agentId: CLIO_ID, orgId: "iris-rh", agentName: "clio" },
+		seatAgent: { agentId: CLIO_ID, orgId: "acme-hr", agentName: "clio" },
 	};
 	// A provider that predates the stamp: the key is absent altogether.
-	ROWS[await sha256Hex(TOKENS.oldConvexSeat)] = seat("clio", "iris-rh");
+	ROWS[await sha256Hex(TOKENS.oldConvexSeat)] = seat("clio", "acme-hr");
 	ROWS[await sha256Hex(TOKENS.team)] = {
 		...base,
 		clientId: "team-client",
 		scopeProfile: "team-member",
 		fromAllowList: ["alice", "clio"],
-		namespaceReadPrefixes: ["team/iris-rh"],
-		namespaceWritePrefixes: ["team/iris-rh"],
-		clerkOrgSlug: "iris-rh",
+		namespaceReadPrefixes: ["team/acme-hr"],
+		namespaceWritePrefixes: ["team/acme-hr"],
+		clerkOrgSlug: "acme-hr",
 	};
 	installInternalClient();
 });
@@ -204,7 +204,7 @@ afterEach(() => {
 });
 
 describe("a seat acts as its agent BY ID", () => {
-	it("a seat for clio-iris-rh naming clio is served and the door receives clio's ID and org", async () => {
+	it("a seat for clio-acme-hr naming clio is served and the door receives clio's ID and org", async () => {
 		const r = await post("complete_task", {
 			bearer: TOKENS.clioSeat,
 			body: { ...COMPLETE, callerOrchestrator: "clio" },
@@ -214,7 +214,7 @@ describe("a seat acts as its agent BY ID", () => {
 		expect(r.mutations[0].name).toBe("tasks:complete");
 		expect(r.mutations[0].args.verifiedActor).toEqual({
 			agentId: CLIO_ID,
-			orgSlug: "iris-rh",
+			orgSlug: "acme-hr",
 		});
 	});
 
@@ -227,7 +227,7 @@ describe("a seat acts as its agent BY ID", () => {
 		expect(r.mutations[0].args.callerOrchestrator).toBe("clio");
 		expect(r.mutations[0].args.verifiedActor).toEqual({
 			agentId: CLIO_ID,
-			orgSlug: "iris-rh",
+			orgSlug: "acme-hr",
 		});
 	});
 
@@ -254,7 +254,7 @@ describe("a seat acts as its agent BY ID", () => {
 	it("a rename is followed: the typed OLD label is refused, the new label (current name) is served", async () => {
 		ROWS[await sha256Hex(TOKENS.clioSeat)] = {
 			...ROWS[await sha256Hex(TOKENS.clioSeat)],
-			seatAgent: { agentId: CLIO_ID, orgId: "iris-rh", agentName: "clio-2" },
+			seatAgent: { agentId: CLIO_ID, orgId: "acme-hr", agentName: "clio-2" },
 		};
 		const old = await post("complete_task", {
 			bearer: TOKENS.clioSeat,
@@ -299,15 +299,15 @@ describe("a seat that resolved no agent cannot act as one", () => {
 			clientId: "c",
 			userId: "u",
 			scopes: [],
-			scopeProfile: "clio-iris-rh",
+			scopeProfile: "clio-acme-hr",
 			fromAllowList: ["clio"],
 			namespaceReadPrefixes: [],
 			namespaceWritePrefixes: [],
 			expiresAt: 0,
 			isMaster: false,
 			accessTokenHash: "h",
-			clerkOrgSlug: "iris-rh",
-			seatAgent: { agentId: CLIO_ID, orgId: "iris-rh", agentName: "clio" },
+			clerkOrgSlug: "acme-hr",
+			seatAgent: { agentId: CLIO_ID, orgId: "acme-hr", agentName: "clio" },
 		};
 		expect(seatExempt(row, "clio")).toBe(true);
 		expect(seatExempt(row, "victor")).toBe(false);
@@ -329,7 +329,7 @@ describe("a seat that resolved no agent cannot act as one", () => {
 describe("a credential's agentId flows to the door", () => {
 	it("team bearer + agent credential: tasks:complete receives { agentId, orgSlug }", async () => {
 		credentialAnswer = {
-			orgSlug: "iris-rh",
+			orgSlug: "acme-hr",
 			agentName: "alice",
 			agentId: ALICE_ID,
 		};
@@ -341,7 +341,7 @@ describe("a credential's agentId flows to the door", () => {
 		expect(r.refused).toBe(false);
 		expect(r.mutations[0].args.verifiedActor).toEqual({
 			agentId: ALICE_ID,
-			orgSlug: "iris-rh",
+			orgSlug: "acme-hr",
 		});
 	});
 });
@@ -357,7 +357,7 @@ describe("reader-first: an older Convex keeps working", () => {
 	});
 
 	it("a credential answer without agentId forwards no actor (the name is omitted, so it is derived)", async () => {
-		credentialAnswer = { orgSlug: "iris-rh", agentName: "alice" };
+		credentialAnswer = { orgSlug: "acme-hr", agentName: "alice" };
 		const r = await post("complete_task", {
 			bearer: TOKENS.team,
 			credential: "secret-alice",
@@ -373,7 +373,7 @@ describe("reader-first: an older Convex keeps working", () => {
 	// judges a credential caller BY ID and refuses one that carries none:
 	// RBAC_DENIED / caller-invalid, in every mode. A label never stands in for an ID.
 	it("a typed name beside a credential answer without agentId is refused RBAC_DENIED (caller-invalid)", async () => {
-		credentialAnswer = { orgSlug: "iris-rh", agentName: "alice" };
+		credentialAnswer = { orgSlug: "acme-hr", agentName: "alice" };
 		const r = await post("complete_task", {
 			bearer: TOKENS.team,
 			credential: "secret-alice",
@@ -398,8 +398,8 @@ describe("withVerifiedActor", () => {
 		expiresAt: 0,
 		isMaster: false,
 		accessTokenHash: "h",
-		clerkOrgSlug: "iris-rh",
-		seatAgent: { agentId: CLIO_ID, orgId: "iris-rh", agentName: "clio" },
+		clerkOrgSlug: "acme-hr",
+		seatAgent: { agentId: CLIO_ID, orgId: "acme-hr", agentName: "clio" },
 	};
 	const fakeClient = () => {
 		const calls: Array<{ name: string; args: Record<string, unknown> }> = [];
@@ -434,7 +434,7 @@ describe("withVerifiedActor", () => {
 		expect(calls[0].args).toEqual({ a: 1 });
 		expect(calls[1].args.verifiedActor).toEqual({
 			agentId: CLIO_ID,
-			orgSlug: "iris-rh",
+			orgSlug: "acme-hr",
 		});
 	});
 

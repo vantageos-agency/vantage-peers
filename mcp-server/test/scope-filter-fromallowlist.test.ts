@@ -3,7 +3,7 @@
  * of list_messages, list_briefing_notes, list_peers).
  *
  * Root cause: PR #625 commit 28db616 introduced a pre-gate in list_tasks that
- * compares assignedTo|createdBy to oauthCtx.userId ("helios-iris-rh") instead
+ * compares assignedTo|createdBy to oauthCtx.userId ("helios-acme-hr") instead
  * of checking membership in oauthCtx.fromAllowList (["Clio","clio","Hélios",
  * "Helios","helios","hélios","Victor","victor"]).
  *
@@ -44,12 +44,12 @@ const TRIO_FROM_ALLOW_LIST = [
 function heliosCtx(): OAuthContext {
 	return {
 		clientId: "2e5d41df-b8f8-4f1a-95aa-2eb0d6bdadb7",
-		userId: "helios-iris-rh",
+		userId: "helios-acme-hr",
 		scopes: ["vantage:read", "vantage:write"],
-		scopeProfile: "helios-iris-rh",
+		scopeProfile: "helios-acme-hr",
 		fromAllowList: TRIO_FROM_ALLOW_LIST,
-		namespaceReadPrefixes: ["orchestrator/helios-iris-rh"],
-		namespaceWritePrefixes: ["orchestrator/helios-iris-rh"],
+		namespaceReadPrefixes: ["orchestrator/helios-acme-hr"],
+		namespaceWritePrefixes: ["orchestrator/helios-acme-hr"],
 		expiresAt: Date.now() + 3_600_000,
 		isMaster: false,
 	};
@@ -86,7 +86,7 @@ describe("list_tasks — fromAllowList gate (Day 92 regression)", () => {
 		});
 	});
 
-	describe("non-master helios-iris-rh scope with TRIO fromAllowList", () => {
+	describe("non-master helios-acme-hr scope with TRIO fromAllowList", () => {
 		const ctx = heliosCtx();
 
 		it("allows assignedTo=Helios (exact match in list)", () => {
@@ -153,10 +153,10 @@ describe("list_tasks — fromAllowList gate (Day 92 regression)", () => {
 			expect(listTasksGate(ctx, undefined, "Outsider")).toMatch(/Forbidden/);
 		});
 
-		it("rejects assignedTo=helios-iris-rh (the profile name is NOT a valid filter)", () => {
-			// The profile name "helios-iris-rh" is not in fromAllowList — it's not
+		it("rejects assignedTo=helios-acme-hr (the profile name is NOT a valid filter)", () => {
+			// The profile name "helios-acme-hr" is not in fromAllowList — it's not
 			// an orchestrator identity. Orchestrators identify as "Helios"/"helios"/etc.
-			expect(listTasksGate(ctx, "helios-iris-rh", undefined)).toMatch(
+			expect(listTasksGate(ctx, "helios-acme-hr", undefined)).toMatch(
 				/Forbidden/,
 			);
 		});
@@ -247,7 +247,7 @@ describe("list_briefing_notes — scopeFilterList symmetric audit", () => {
 	});
 
 	it("non-master: row with namespace matching prefix passes", () => {
-		const rows = [{ namespace: "orchestrator/helios-iris-rh/notes" }];
+		const rows = [{ namespace: "orchestrator/helios-acme-hr/notes" }];
 		expect(scopeFilterList(ctx as unknown as OAuthCtx, rows)).toHaveLength(1);
 	});
 });

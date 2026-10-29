@@ -403,14 +403,14 @@ describe("R7 — atomicity: Convex mutation transaction guarantee", () => {
 // R8 — D9 workspace rename E2E happy path
 // ─────────────────────────────────────────────────────────────────────────────
 
-describe("R8 — D9 workspace rename E2E: marie-iris-rh → iris-rh", () => {
+describe("R8 — D9 workspace rename E2E: marie-acme-hr → acme-hr", () => {
 	test("profile renamed, client scopeProfile updated, no orphan, no global in result, audit captures previous global", async () => {
 		const t = createTestConvex();
 
-		// Seed the leaked Day 90 state: marie-iris-rh has global in prefixes
+		// Seed the leaked Day 90 state: marie-acme-hr has global in prefixes
 		await t.run(async (ctx) => {
 			await ctx.db.insert("oauth_scope_profiles", {
-				profileId: "marie-iris-rh",
+				profileId: "marie-acme-hr",
 				description: "Marie — Day 88 seeded state with global leak",
 				fromAllowList: ["marie"],
 				namespaceReadPrefixes: [
@@ -429,41 +429,41 @@ describe("R8 — D9 workspace rename E2E: marie-iris-rh → iris-rh", () => {
 				updatedAt: Date.now(),
 			});
 		});
-		await seedClient(t, "client-marie-iris", "marie-iris-rh");
+		await seedClient(t, "client-marie-iris", "marie-acme-hr");
 
 		const result = await asServiceAccount(t).mutation(
 			api.oauth.patchScopeProfileEmergency,
 			{
-				profileId: "marie-iris-rh",
-				rename: "iris-rh",
+				profileId: "marie-acme-hr",
+				rename: "acme-hr",
 				fromAllowList: ["marie", "victor"],
 				namespaceReadPrefixes: [
 					"orchestrator/marie",
 					"orchestrator/victor",
-					"project/iris-rh",
+					"project/acme-hr",
 				],
-				namespaceWritePrefixes: ["orchestrator/marie", "project/iris-rh"],
+				namespaceWritePrefixes: ["orchestrator/marie", "project/acme-hr"],
 				cascadeRevokeTokens: false,
 				reason:
-					"D9 workspace rename marie-iris-rh → iris-rh + drop global D4 remediation",
+					"D9 workspace rename marie-acme-hr → acme-hr + drop global D4 remediation",
 			},
 		);
 
 		// Profile renamed
-		expect(result.patchedProfileId).toBe("iris-rh");
+		expect(result.patchedProfileId).toBe("acme-hr");
 		// Client retargeted (1 client)
 		expect(result.clientsRetargeted).toBe(1);
 
-		// Verify no orphan: client now points to iris-rh
+		// Verify no orphan: client now points to acme-hr
 		const clients = await t.run(async (ctx) => {
 			return await ctx.db.query("oauth_clients").collect();
 		});
 		expect(clients).toHaveLength(1);
-		expect(clients[0].scopeProfile).toBe("iris-rh");
+		expect(clients[0].scopeProfile).toBe("acme-hr");
 
 		// Verify profile has no global
 		const profile = await asServiceAccount(t).query(api.oauth.getScopeProfile, {
-			profileId: "iris-rh",
+			profileId: "acme-hr",
 		});
 		expect(profile).not.toBeNull();
 		expect(profile?.namespaceReadPrefixes).not.toContain("global");
@@ -473,7 +473,7 @@ describe("R8 — D9 workspace rename E2E: marie-iris-rh → iris-rh", () => {
 		const oldProfile = await asServiceAccount(t).query(
 			api.oauth.getScopeProfile,
 			{
-				profileId: "marie-iris-rh",
+				profileId: "marie-acme-hr",
 			},
 		);
 		expect(oldProfile).toBeNull();
@@ -485,7 +485,7 @@ describe("R8 — D9 workspace rename E2E: marie-iris-rh → iris-rh", () => {
 		expect(
 			(auditRow as Record<string, unknown> | null)?.previousState,
 		).toMatchObject({
-			profileId: "marie-iris-rh",
+			profileId: "marie-acme-hr",
 			namespaceReadPrefixes: expect.arrayContaining(["global"]),
 			namespaceWritePrefixes: expect.arrayContaining(["global"]),
 		});

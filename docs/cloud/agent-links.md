@@ -80,11 +80,11 @@ organisation by its ID (`list_peers` `agentId`).
 
 ## Example: pi and victor
 
-pi is an agent of `perello-consulting`; victor is an agent of `iris-rh`.
+pi is an agent of `perello-consulting`; victor is an agent of `acme-hr`.
 
 | Direction | Row | Granted by |
 |---|---|---|
-| pi to victor | `fromAgentId` = pi, `toAgentId` = victor | Marie, admin of `iris-rh` (victor's organisation) |
+| pi to victor | `fromAgentId` = pi, `toAgentId` = victor | Marie, admin of `acme-hr` (victor's organisation) |
 | victor to pi | `fromAgentId` = victor, `toAgentId` = pi | an admin of `perello-consulting` (the operator's organisation) |
 
 Each admin signs in and calls `agentLinks:grant` once. Until both rows exist, only the

@@ -393,7 +393,7 @@ describe("filterByOrgScope", () => {
 		masterSource: "service-account",
 	};
 
-	const irisRhScope: OrgScope = {
+	const acmeHrScope: OrgScope = {
 		userId: "user-nadia",
 		orgSlug: "acme-hr",
 		orgClerkId: testClerkOrgId("acme-hr"),
@@ -427,7 +427,7 @@ describe("filterByOrgScope", () => {
 
 	// Test 7
 	test("acme-hr scope (allowedOrchestrators=['victor']) → only victor's records", () => {
-		const result = filterByOrgScope(records, irisRhScope);
+		const result = filterByOrgScope(records, acmeHrScope);
 		expect(result).toHaveLength(1);
 		expect(result[0].assignedTo).toBe("victor");
 	});
@@ -437,7 +437,7 @@ describe("filterByOrgScope", () => {
 			{ _id: "m1", orgId: "acme-hr", clerkOrgId: ACME_ID, pilot: "victor", name: "Mission V" },
 			{ _id: "m2", orgId: "acme-hr", clerkOrgId: ACME_ID, pilot: "kappa", name: "Mission K" },
 		];
-		const result = filterByOrgScope(missionRecords, irisRhScope);
+		const result = filterByOrgScope(missionRecords, acmeHrScope);
 		expect(result).toHaveLength(1);
 		expect(result[0].pilot).toBe("victor");
 	});
@@ -447,7 +447,7 @@ describe("filterByOrgScope", () => {
 			{ _id: "x1", orgId: "acme-hr", clerkOrgId: ACME_ID, title: "no owner" }, // no pilot/assignedTo
 			{ _id: "x2", orgId: "acme-hr", clerkOrgId: ACME_ID, assignedTo: "victor", title: "victor item" },
 		];
-		const result = filterByOrgScope(mixed, irisRhScope);
+		const result = filterByOrgScope(mixed, acmeHrScope);
 		expect(result).toHaveLength(1);
 		expect(result[0].assignedTo).toBe("victor");
 	});
@@ -462,7 +462,7 @@ describe("filterByOrgScope", () => {
 		const foreign = [
 			{ _id: "f1", orgId: "globex-hr", clerkOrgId: testClerkOrgId("globex-hr"), assignedTo: "victor", title: "theirs" },
 		];
-		expect(filterByOrgScope(foreign, irisRhScope)).toHaveLength(0);
+		expect(filterByOrgScope(foreign, acmeHrScope)).toHaveLength(0);
 	});
 
 	test("TENANT GATE — a record stating NO org is refused, whatever the roster says", () => {
@@ -471,7 +471,7 @@ describe("filterByOrgScope", () => {
 		const unstamped = [
 			{ _id: "u1", assignedTo: "victor", title: "legacy" },
 		];
-		expect(filterByOrgScope(unstamped, irisRhScope)).toHaveLength(0);
+		expect(filterByOrgScope(unstamped, acmeHrScope)).toHaveLength(0);
 		// ...and master still reads it, which is what lets the backfill find it.
 		expect(filterByOrgScope(unstamped, masterScope)).toHaveLength(1);
 	});
@@ -489,7 +489,7 @@ describe("requireScope", () => {
 		masterSource: "service-account",
 	};
 
-	const irisRhScope: OrgScope = {
+	const acmeHrScope: OrgScope = {
 		userId: "user-nadia",
 		orgSlug: "acme-hr",
 		allowedOrchestrators: ["victor"],
@@ -511,11 +511,11 @@ describe("requireScope", () => {
 	// Test 9
 	test("non-master scope + missing scope → throws Forbidden", () => {
 		expect(() =>
-			requireScope(irisRhScope, "view-stats-aggregated"),
+			requireScope(acmeHrScope, "view-stats-aggregated"),
 		).toThrow(/RBAC_DENIED:.*view-stats-aggregated/);
 	});
 
 	test("non-master scope + granted scope → no throw", () => {
-		expect(() => requireScope(irisRhScope, "view-own-tasks")).not.toThrow();
+		expect(() => requireScope(acmeHrScope, "view-own-tasks")).not.toThrow();
 	});
 });

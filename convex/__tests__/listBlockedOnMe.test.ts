@@ -30,7 +30,7 @@ const modules = Object.fromEntries(
 const createT = () => convexTest(schema, modules);
 type T = ReturnType<typeof createT>;
 
-const IRIS = "iris-rh";
+const IRIS = "acme-hr";
 const ACME = "acme";
 const MIN = 60_000;
 

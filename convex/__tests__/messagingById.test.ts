@@ -7,8 +7,8 @@
 // authorises.
 //
 // World: an operator org (fleet-op) with agents "pi" and "eta"; two client orgs
-// (iris-rh, acme). BOTH clients also hold an agent named "pi" (the fleet
-// coordinator's name), and each holds a "helios". iris-rh stores the fleet "pi" ID
+// (acme-hr, acme). BOTH clients also hold an agent named "pi" (the fleet
+// coordinator's name), and each holds a "helios". acme-hr stores the fleet "pi" ID
 // as an addressable fleet coordinator; acme stores none. Every caller below is a
 // SCOPED identity: the agent is forwarded BY ID (`verifiedActor`) through the MCP
 // service account, exactly as the MCP does, and is resolved to its own org.
@@ -76,7 +76,7 @@ async function world(): Promise<World> {
 				createdAt: now,
 				...(orgKind ? { orgKind } : {}),
 			});
-		const irisRow = await org("iris-rh", ["clio", "helios", "pi"]);
+		const irisRow = await org("acme-hr", ["clio", "helios", "pi"]);
 		const acmeRow = await org("acme", ["helios", "pi"]);
 		await org("fleet-op", ["*"], "operator");
 		const agent = async (orgSlug: string, name: string) => {
@@ -92,16 +92,16 @@ async function world(): Promise<World> {
 		};
 		await agent("fleet-op", "pi");
 		await agent("fleet-op", "eta");
-		await agent("iris-rh", "clio");
-		await agent("iris-rh", "helios");
-		await agent("iris-rh", "pi");
+		await agent("acme-hr", "clio");
+		await agent("acme-hr", "helios");
+		await agent("acme-hr", "pi");
 		await agent("acme", "helios");
 		await agent("acme", "pi");
 		await ctx.db.patch(irisRow, {
 			allowedAgentIds: [
-				made["iris-rh/clio"].id,
-				made["iris-rh/helios"].id,
-				made["iris-rh/pi"].id,
+				made["acme-hr/clio"].id,
+				made["acme-hr/helios"].id,
+				made["acme-hr/pi"].id,
 			],
 			// The fleet "pi" (by ID), and only it.
 			addressableFleetCoordinatorIds: [made["fleet-op/pi"].id],
@@ -114,9 +114,9 @@ async function world(): Promise<World> {
 		t,
 		fleetPi: made["fleet-op/pi"],
 		fleetEta: made["fleet-op/eta"],
-		irisClio: made["iris-rh/clio"],
-		irisHelios: made["iris-rh/helios"],
-		irisPi: made["iris-rh/pi"],
+		irisClio: made["acme-hr/clio"],
+		irisHelios: made["acme-hr/helios"],
+		irisPi: made["acme-hr/pi"],
 		acmeHelios: made["acme/helios"],
 		acmePi: made["acme/pi"],
 	};
@@ -185,11 +185,11 @@ describe("DELIVERED — by agent ID, in both directions", () => {
 		const w = await world();
 		const id = await sends(w, w.irisClio, [w.fleetPi]);
 		const message = await w.t.run((ctx) => ctx.db.get(id));
-		expect(message?.tenantId).toBe("iris-rh");
+		expect(message?.tenantId).toBe("acme-hr");
 		expect(message?.fromId).toBe(w.irisClio.id);
 		const receipts = await receiptsOf(w, id);
 		expect(receipts.map((r) => [r.recipientId, r.tenantId])).toEqual([
-			[w.fleetPi.id, "iris-rh"],
+			[w.fleetPi.id, "acme-hr"],
 		]);
 	});
 
@@ -197,21 +197,21 @@ describe("DELIVERED — by agent ID, in both directions", () => {
 		const w = await world();
 		const id = await sends(w, w.fleetPi, [w.irisHelios]);
 		const message = await w.t.run((ctx) => ctx.db.get(id));
-		expect(message?.tenantId).toBe("iris-rh");
-		// The sender is the FLEET pi. iris-rh holds its own agent named "pi": it is
+		expect(message?.tenantId).toBe("acme-hr");
+		// The sender is the FLEET pi. acme-hr holds its own agent named "pi": it is
 		// a different agent and is never recorded as the sender.
 		expect(message?.fromId).toBe(w.fleetPi.id);
 		expect(message?.fromId).not.toBe(w.irisPi.id);
 		const receipts = await receiptsOf(w, id);
 		expect(receipts.map((r) => [r.recipientId, r.tenantId])).toEqual([
-			[w.irisHelios.id, "iris-rh"],
+			[w.irisHelios.id, "acme-hr"],
 		]);
 	});
 
 	test("the reply is read by iris's agent and by nobody of acme", async () => {
 		const w = await world();
 		await sends(w, w.fleetPi, [w.irisHelios]);
-		expect((await inbox(w, "helios", "iris-rh")).messages.map((m) => m.content)).toEqual([
+		expect((await inbox(w, "helios", "acme-hr")).messages.map((m) => m.content)).toEqual([
 			"hello",
 		]);
 		expect((await inbox(w, "helios", "acme")).messages).toEqual([]);
@@ -236,7 +236,7 @@ describe("REFUSED — a same-NAME agent of another org is not addressable", () =
 		expect(await counts(w)).toEqual({ messages: 0, receipts: 0 });
 	});
 
-	test("iris clio -> iris-rh's OWN 'pi' is a different agent from the fleet pi: still by ID", async () => {
+	test("iris clio -> acme-hr's OWN 'pi' is a different agent from the fleet pi: still by ID", async () => {
 		const w = await world();
 		const id = await sends(w, w.irisClio, [w.irisPi]);
 		expect((await receiptsOf(w, id)).map((r) => r.recipientId)).toEqual([
@@ -328,7 +328,7 @@ describe("SPAN and REVOKE", () => {
 		await w.t.run(async (ctx) => {
 			const iris = await ctx.db
 				.query("client_org_mapping")
-				.withIndex("by_clerk_slug", (q) => q.eq("clerkOrgSlug", "iris-rh"))
+				.withIndex("by_clerk_slug", (q) => q.eq("clerkOrgSlug", "acme-hr"))
 				.first();
 			if (iris) {
 				await ctx.db.patch(iris._id, { addressableFleetCoordinatorIds: [] });
