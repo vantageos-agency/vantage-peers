@@ -51,6 +51,13 @@ Every write is on prod (`compassionate-goldfinch-737`). Run them from the vantag
    ```
    Re-running it with the same owner changes nothing. Do step 5 and the proof (step 7) only after it.
 
+   **4a. Adding an agent to an org that already exists.** Name the new agent in `--agents` (the existing ones may stay in the list). If a name is not yet on the org's roster, the script registers it by ID (`agents:registerAgent`, org-admin of this org), mints nothing for any agent, prints `ROSTER_STEP_REQUIRED`, and exits 3. Run the two printed operator commands in order, then re-run the script. The roster is written by agent ID, never by writing a label:
+   ```
+   CONVEX_DEPLOY_KEY=<prod key> npx convex run clientOrgMapping:addRosterMembers '{"clerkOrgSlug":"<slug>","agentIds":["<agents id>"]}'
+   CONVEX_DEPLOY_KEY=<prod key> npx convex run agents:setAgentOwner '{"agentIds":["<agents id>"],"ownerPersonId":"<org admin user_…>","reason":"client org <slug>: onboarding, owner is the org admin that registered the agent"}'
+   ```
+   `addRosterMembers` is internal (operator only), append-only, and refuses an agent of another organisation (`AGENT_NOT_IN_ORG`).
+
 5. **Hand the files to the client user.**
    ```
    sudo install -d -o <user> -g <user> -m 700 /home/<user>/.vantage-agent-secrets
@@ -120,4 +127,4 @@ The seat bearer expires after `--ttl-days`, 90 days by default. Re-run step 4, t
 ## Known gaps
 
 - The raw Clerk-JWT bearer branch (`mcp-server/src/auth.ts`, about line 1331) looks up the mapping by `org_id`. Mappings are keyed by slug, so that branch refuses client orgs with `RBAC_DENIED: org "org_…" not in client_org_mapping`. It does not affect the person sign-in path or the agents.
-- No write path edits an org's roster after it is created.
+- Roster edits are append-only: `clientOrgMapping:addRosterMembers` adds agents by ID (step 4a). No path removes a roster member.
