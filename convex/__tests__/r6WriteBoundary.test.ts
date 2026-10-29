@@ -81,18 +81,14 @@ const agentsOf = (t: T, org: string) =>
 describe("A. requireOrgAdmin doors: a write names an org only if the verified claim equals it", () => {
 	test("registerAgent: admin of A naming org B is refused and B gains no agent; own org is served", async () => {
 		const { t, adminA } = await twoOrgs();
-		// A naming org B is refused (the echo must equal the session's org slug)
-		// and B gains nothing.
-		await expect(
-			adminA.mutation(api.agents.registerAgent, {
-				orgSlug: "org-b",
-				name: "intruder",
-			}),
-		).rejects.toThrow(/RBAC_DENIED/);
+		// orgSlug is a deprecated, ignored argument: A naming org B registers in A
+		// (its own session's org) and B gains nothing.
+		await adminA.mutation(api.agents.registerAgent, { orgSlug: "org-b", name: "intruder" });
 		expect((await agentsOf(t, "org-b")).map((a) => a.name)).toEqual(["bob"]);
+		expect((await agentsOf(t, "org-a")).map((a) => a.name)).toEqual(["intruder"]);
 
 		await adminA.mutation(api.agents.registerAgent, { name: "alice" });
-		expect((await agentsOf(t, "org-a")).map((a) => a.name)).toEqual(["alice"]);
+		expect((await agentsOf(t, "org-a")).map((a) => a.name).sort()).toEqual(["alice", "intruder"]);
 	});
 
 	test("setAgentAddress: admin of A cannot rewrite B's agent address; own org is served", async () => {

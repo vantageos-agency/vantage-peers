@@ -223,11 +223,11 @@ describe("[P-T3] agent_relations — the parent-child edge graph", () => {
 		expect(graphForB.nodes).toHaveLength(0);
 		expect(graphForB.edges).toHaveLength(0);
 
-		// B naming A's organisation is REFUSED (the echo must equal the session's
-		// org slug), never answered with B's own graph ("A has none").
-		await expect(
-			tAdminB.query(api.agentRelations.graphByOrg, { orgSlug: "org-a" }),
-		).rejects.toThrow(/RBAC_DENIED/);
+		// orgSlug is a deprecated, ignored argument: B passing A's slug gets exactly
+		// what it gets without it -- B's own graph, never A's.
+		expect(
+			await tAdminB.query(api.agentRelations.graphByOrg, { orgSlug: "org-a" }),
+		).toEqual(graphForB);
 
 		await expect(
 			tAdminB.query(api.agentRelations.childrenOf, {

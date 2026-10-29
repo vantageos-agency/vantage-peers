@@ -148,11 +148,11 @@ describe("[P-T2] agents — entity carrying its organisation", () => {
 		const rowsForB = await tAdminB.query(api.agents.listAgentsByOrg, {});
 		expect(rowsForB).toHaveLength(0);
 
-		// B naming A's organisation is REFUSED (the echo must equal the session's
-		// org slug), never answered with B's own roster ("A has none").
-		await expect(
-			tAdminB.query(api.agents.listAgentsByOrg, { orgSlug: "org-a" }),
-		).rejects.toThrow(/RBAC_DENIED/);
+		// orgSlug is a deprecated, ignored argument: B passing A's slug gets exactly
+		// what it gets without it -- B's own roster, never A's.
+		expect(
+			await tAdminB.query(api.agents.listAgentsByOrg, { orgSlug: "org-a" }),
+		).toEqual(rowsForB);
 
 		await expect(
 			tAdminB.query(api.agents.getAgent, {
