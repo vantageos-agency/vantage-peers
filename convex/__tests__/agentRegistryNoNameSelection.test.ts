@@ -82,10 +82,16 @@ describe("M8 the registry decides identity through the package only", () => {
 	test("no registry door resolves an organisation by a slug or compares a label to admit", () => {
 		for (const file of owned) {
 			const src = read(join(CONVEX_DIR, file));
-			expect(src, file).not.toMatch(/requireOrgAdminById|withOrgScope|stampOrgRefusal/);
-			expect(src, file).not.toMatch(/clerkOrgIdForSlug/);
+			expect(src, file).not.toMatch(/requireOrgAdminById|stampOrgRefusal|clerkOrgIdForSlug/);
 			expect(src, file).not.toMatch(/orgSlug\s*!==|!==\s*[a-z.]*orgSlug/);
 		}
+		// The registry never resolves its caller through the organisation-scope
+		// resolver, except the one service-account-only door of agentCredentials.ts.
+		expect(read(join(CONVEX_DIR, "agents.ts"))).not.toMatch(/withOrgScope/);
+		expect(read(join(CONVEX_DIR, "agentRelations.ts"))).not.toMatch(/withOrgScope/);
+		expect(
+			(read(join(CONVEX_DIR, "agentCredentials.ts")).match(/withOrgScope\(/g) ?? []).length,
+		).toBe(1);
 	});
 
 	test("the adapter builds no refusal of its own and keeps no slug-keyed admin proof", () => {

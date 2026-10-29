@@ -49,12 +49,12 @@ describe("agents:renameAgent", () => {
 	test("agents:renameAgent — after an admin renames a rostered agent, the agent stays addressable (directory still gives its agent ID) (identity: Clerk org:admin of client-c)", async () => {
 		const t = createT();
 		const ada = await t.run((ctx) =>
-			ctx.db.insert("agents", { orgSlug: "client-c", name: "ada", normalizedName: normalizeOrchestratorId("ada"), isActive: true, createdAt: NOW }),
+			ctx.db.insert("agents", { orgSlug: "client-c", clerkOrgId: testClerkOrgId("client-c"), name: "ada", normalizedName: normalizeOrchestratorId("ada"), isActive: true, createdAt: NOW }),
 		);
 		await mapping(t, "client-c", ["ada"], ["view-own-tasks"], [ada]);
 		const before = await asMember(t, "client-c", "org:admin").query(api.orgRoster.getMyAgentDirectory, {});
 		expect(before.find((e) => e.agentId === ada), "positive control: addressable before rename").toBeDefined();
-		await asMember(t, "client-c", "org:admin").mutation(api.agents.renameAgent, { orgSlug: "client-c", agentId: ada, newName: "ada2" });
+		await asMember(t, "client-c", "org:admin").mutation(api.agents.renameAgent, { agentId: ada, newName: "ada2" });
 		const after = await asMember(t, "client-c", "org:admin").query(api.orgRoster.getMyAgentDirectory, {});
 		expect(after.find((e) => e.agentId === ada), "renamed agent dropped out of the directory (roster not updated)").toBeDefined();
 	});

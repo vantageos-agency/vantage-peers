@@ -1,4 +1,8 @@
-import { type ActingPrincipal, isPersonActorName } from "@vantageos/cloud-identity";
+import {
+	assertOrgAdmin,
+	isPersonActorName,
+	resolveCallerFromClaims,
+} from "@vantageos/cloud-identity";
 import { ConvexError, v } from "convex/values";
 import { internal } from "./_generated/api";
 import type { Doc, Id } from "./_generated/dataModel";
@@ -6,15 +10,15 @@ import { internalMutation, internalQuery, mutation, query } from "./_generated/s
 import type { MutationCtx } from "./_generated/server";
 import { normalizeOrchestratorId } from "./_helpers/normalizeOrchestratorId";
 import {
+	anonymousRefusal,
 	assertAgentNameFree,
 	loadAgentOfPrincipalOrg,
-	anonymousRefusal,
-	stampOrgRefusal,
-	requireOrgAdminById,
+	resolveSessionCaller,
 	revokeActiveCredentialRows,
+	type SessionCaller,
 } from "./lib/agentIdentity";
-import { withOrgScope } from "./lib/auth";
-import { clerkOrgIdForSlug } from "./lib/orgClerkId";
+import { ORG_ADMIN_ROLES, refusalError } from "./lib/auth";
+import { orgByIdLookups, orgByIdPrincipalLookups } from "./lib/orgIdLookups";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // [P-T2] agents — the agent as an ENTITY carrying its organisation.
@@ -31,11 +35,15 @@ import { clerkOrgIdForSlug } from "./lib/orgClerkId";
 // ON TOP of this table in a separate layer (docs-subagents.md: "A declared
 // subagent inherits nothing from the root's authored slots").
 //
-// Authorization: every door here proves the caller an ADMINISTRATOR of
-// `args.orgSlug` through @vantageos/cloud-identity (`requireOrgAdminById`,
-// convex/lib/agentIdentity.ts: `resolveActingPrincipal` + `assertOrgAdmin`),
+// Authorization: every door here proves the caller an ADMINISTRATOR of its OWN
+// organisation through @vantageos/cloud-identity (`resolveSessionCaller`,
+// convex/lib/agentIdentity.ts: `resolveCallerFromClaims` + `assertOrgAdmin`),
 // built only from the verified session, never from an argument (see
-// `.claude/rules/authority-attached-to-anonymous-object.md`).
+// `.claude/rules/authority-attached-to-anonymous-object.md`). The organisation a
+// door acts in is the one the session's `org_id` resolves to: no door takes an
+// organisation, slug or label as an argument, so a caller can name neither its own
+// org nor another's, and the only way to reach an agent of another organisation is
+// by its ID, which is refused.
 //
 // IDENTITY IS THE AGENT ID. Every door that acts on an existing agent takes its
 // `agentId` (the `agents` row id). A name is a display label: it is checked for
@@ -85,15 +93,14 @@ function assertAgentLabelValid(name: string): void {
 // here: `loadAgentOfPrincipalOrg` refuses it RBAC_DENIED first.
 async function requireOwnAgent(
 	ctx: MutationCtx,
-	principal: ActingPrincipal,
-	orgSlug: string,
+	caller: SessionCaller,
 	agentId: Id<"agents">,
 	door: string,
 ): Promise<Doc<"agents">> {
-	const agent = await loadAgentOfPrincipalOrg(ctx, principal, agentId, door);
+	const agent = await loadAgentOfPrincipalOrg(ctx, caller.principal, agentId, door);
 	if (!agent) {
 		throw new ConvexError(
-			`AGENT_NOT_FOUND: no agent ${agentId} in org "${orgSlug}" — ${JSON.stringify({ orgSlug, agentId })}`,
+			`AGENT_NOT_FOUND: no agent ${agentId} in org "${caller.org.label}" — ${JSON.stringify({ orgSlug: caller.org.label, agentId })}`,
 		);
 	}
 	return agent;
@@ -104,10 +111,10 @@ async function requireOwnAgent(
  * ID. That ID is the agent's identity from now on.
  *
  * Gated to the organisation ADMINISTRATOR through @vantageos/cloud-identity
- * (`requireOrgAdminById`): the caller's own verified org must equal
- * `args.orgSlug`, its role must be an admin role, and `args.orgSlug` must be an
- * ACTIVE row in `client_org_mapping`. There is no master carve-out — an
- * org-admin identity is required every time.
+ * (`resolveSessionCaller`): the caller's verified `org_id` must resolve to an
+ * ACTIVE organisation and its role must be an admin role there. The agent is
+ * stamped with THAT organisation's permanent id and current label. There is no
+ * master carve-out — an org-admin identity is required every time.
  *
  * `name` is a DISPLAY LABEL, unique per org under `normalizeOrchestratorId`
  * (`Ada` vs `ada` is the same label). A label already held by another agent of
@@ -120,7 +127,6 @@ async function requireOwnAgent(
  */
 export const registerAgent = mutation({
 	args: {
-		orgSlug: v.string(),
 		name: v.string(),
 		description: v.optional(v.string()),
 		outboundAuthRef: v.optional(v.string()),
@@ -128,23 +134,37 @@ export const registerAgent = mutation({
 	returns: v.id("agents"),
 	handler: async (ctx, args) => {
 		// write-contract: imperative dashboard caller, no subscriber — components/agents/register-agent-form.tsx:30 (useMutation(api.agents.registerAgent), invoked from an event handler, never a render subscription); operator script scripts/mint-station-agents.mjs:147 client.mutation(api.agents.registerAgent) (imperative); 0 call sites in mcp-server/src and mcp-server/server-http.ts. Measured 2026-10-03 with `grep -rn "agents:registerAgent\|agents\.registerAgent" mcp-server/src mcp-server/server-http.ts scripts` -> scripts/mint-station-agents.mjs:147 only and `git -C <dashboard> grep -nE "api\.(agents|agentCredentials)\." origin/main -- app components hooks lib contexts providers` (dashboard origin/main 00a43cf, measured 2026-10-03); also convex/__tests__. No subscribing pre-org client shell can reach it at render time; the no-org throw is a refusal at an imperative call, never at a render.
-		// The stamp is the caller's RESOLVED scope organisation (the admin proof
-		// already required it to equal `args.orgSlug`), never the argument.
+		// The stamp is the verified session's organisation (its permanent id and
+		// current label, resolved by the package), never an argument.
+		const door = "agents:registerAgent";
 		const identity = await ctx.auth.getUserIdentity();
-		if (!identity) throw anonymousRefusal("agents:registerAgent");
-		const principal = await requireOrgAdminById(ctx, identity, args.orgSlug, "agents:registerAgent");
-		const scope = await withOrgScope(ctx);
-		const orgSlug = scope.orgSlug;
-		if (orgSlug === null || orgSlug !== principal.orgId) {
-			throw stampOrgRefusal("agents:registerAgent");
+		const caller = await resolveCallerFromClaims(
+			identity,
+			{
+				orgLookups: orgByIdLookups(ctx),
+				principalLookups: orgByIdPrincipalLookups(ctx),
+			},
+			{ adminRoles: ORG_ADMIN_ROLES, door },
+		);
+		if (!caller.ok) {
+			if (caller.subject === undefined) throw anonymousRefusal(door);
+			throw refusalError(caller.refusal);
 		}
+		const admin = assertOrgAdmin(caller.principal, caller.org.id, {
+			adminRoles: ORG_ADMIN_ROLES,
+			door,
+		});
+		if (!admin.ok) throw refusalError(admin.refusal);
+
+		// The organisation the verified session resolves to: the row is stamped with
+		// its permanent id and current label (the stamp debate.ts also builds).
+		const stamp = { orgSlug: caller.org.label, clerkOrgId: caller.org.id };
 
 		assertAgentLabelValid(args.name);
-		await assertAgentNameFree(ctx, orgSlug, args.name);
+		await assertAgentNameFree(ctx, stamp.orgSlug, args.name);
 
 		return await ctx.db.insert("agents", {
-			orgSlug,
-			clerkOrgId: await clerkOrgIdForSlug(ctx, orgSlug),
+			...stamp,
 			name: args.name,
 			normalizedName: normalizeOrchestratorId(args.name),
 			description: args.description,
@@ -165,7 +185,6 @@ export const registerAgent = mutation({
  */
 export const setAgentAddress = mutation({
 	args: {
-		orgSlug: v.string(),
 		agentId: v.id("agents"),
 		address: v.string(),
 	},
@@ -173,10 +192,13 @@ export const setAgentAddress = mutation({
 	handler: async (ctx, args) => {
 		// write-contract: imperative dashboard caller, no subscriber — components/agents/agent-row.tsx:122 (useMutation(api.agents.setAgentAddress), invoked from an event handler, never a render subscription); 0 call sites in mcp-server/src, mcp-server/server-http.ts and scripts. Measured 2026-10-03 with `grep -rn "agents:setAgentAddress\|agents\.setAgentAddress" mcp-server/src mcp-server/server-http.ts scripts` -> 0 hits and `git -C <dashboard> grep -nE "api\.(agents|agentCredentials)\." origin/main -- app components hooks lib contexts providers` (dashboard origin/main 00a43cf, measured 2026-10-03); also convex/__tests__. No subscribing pre-org client shell can reach it at render time; the no-org throw is a refusal at an imperative call, never at a render.
 		const door = "agents:setAgentAddress";
-		const identity = await ctx.auth.getUserIdentity();
-		if (!identity) throw anonymousRefusal(door);
-		const principal = await requireOrgAdminById(ctx, identity, args.orgSlug, door);
-		const existing = await requireOwnAgent(ctx, principal, args.orgSlug, args.agentId, door);
+		const caller = await resolveSessionCaller(ctx, door);
+		const admin = assertOrgAdmin(caller.principal, caller.org.id, {
+			adminRoles: ORG_ADMIN_ROLES,
+			door: door,
+		});
+		if (!admin.ok) throw refusalError(admin.refusal);
+		const existing = await requireOwnAgent(ctx, caller, args.agentId, door);
 
 		await ctx.db.patch(existing._id, { address: args.address });
 		return null;
@@ -188,7 +210,7 @@ export const setAgentAddress = mutation({
  * `isActive: false` AND revokes every active credential of that agent, in the
  * SAME mutation (one transaction). A retirement that depends on the operator
  * remembering a second call leaves a retired agent holding a key that still
- * resolves. Gated identically to `registerAgent`: `requireOrgAdminById`, no
+ * resolves. Gated identically to `registerAgent`: `resolveSessionCaller`, no
  * master carve-out. PATCH, never delete; the audit trail is preserved.
  *
  * The credential revoke runs even when the agent was already inactive, so a
@@ -207,15 +229,18 @@ export const setAgentAddress = mutation({
  * (.claude/rules/refusal-is-distinguishable-from-absence.md).
  */
 export const deactivateAgent = mutation({
-	args: { orgSlug: v.string(), agentId: v.id("agents") },
+	args: { agentId: v.id("agents") },
 	returns: v.object({ deactivated: v.boolean(), revoked: v.number() }),
 	handler: async (ctx, args) => {
-		// write-contract: imperative dashboard caller, no subscriber — components/agents/agent-row.tsx:123 (useMutation(api.agents.deactivateAgent), invoked from an event handler, never a render subscription); 0 call sites in mcp-server/src, mcp-server/server-http.ts and scripts. Measured 2026-10-03 with `grep -rn "agents:deactivateAgent\|agents\.deactivateAgent" mcp-server/src mcp-server/server-http.ts scripts` -> 0 hits and `git -C <dashboard> grep -nE "api\.(agents|agentCredentials)\." origin/main -- app components hooks lib contexts providers` (dashboard origin/main 00a43cf, measured 2026-10-03); also convex/__tests__. A signed-in caller with no organisation is refused RBAC_DENIED by requireOrgAdminById, an R-16 refusal thrown at an imperative call, never at a render.
+		// write-contract: imperative dashboard caller, no subscriber — components/agents/agent-row.tsx:123 (useMutation(api.agents.deactivateAgent), invoked from an event handler, never a render subscription); 0 call sites in mcp-server/src, mcp-server/server-http.ts and scripts. Measured 2026-10-03 with `grep -rn "agents:deactivateAgent\|agents\.deactivateAgent" mcp-server/src mcp-server/server-http.ts scripts` -> 0 hits and `git -C <dashboard> grep -nE "api\.(agents|agentCredentials)\." origin/main -- app components hooks lib contexts providers` (dashboard origin/main 00a43cf, measured 2026-10-03); also convex/__tests__. A signed-in caller with no organisation is refused RBAC_DENIED by resolveSessionCaller / assertOrgAdmin, an R-16 refusal thrown at an imperative call, never at a render.
 		const door = "agents:deactivateAgent";
-		const identity = await ctx.auth.getUserIdentity();
-		if (!identity) throw anonymousRefusal(door);
-		const principal = await requireOrgAdminById(ctx, identity, args.orgSlug, door);
-		const existing = await requireOwnAgent(ctx, principal, args.orgSlug, args.agentId, door);
+		const caller = await resolveSessionCaller(ctx, door);
+		const admin = assertOrgAdmin(caller.principal, caller.org.id, {
+			adminRoles: ORG_ADMIN_ROLES,
+			door: door,
+		});
+		if (!admin.ok) throw refusalError(admin.refusal);
+		const existing = await requireOwnAgent(ctx, caller, args.agentId, door);
 
 		const revoked = await revokeActiveCredentialRows(ctx, existing._id);
 		const deactivated = existing.isActive;
@@ -228,7 +253,7 @@ export const deactivateAgent = mutation({
 
 /**
  * reactivateAgent — the explicit door back for a retired agent: patches
- * `isActive: true`. Gated by `requireOrgAdminById`, no master carve-out. It is the
+ * `isActive: true`. Gated by `resolveSessionCaller`, no master carve-out. It is the
  * answer to "an unconditional refusal in `registerAgent` would burn a retired
  * name forever": the name is reusable, but only by a deliberate call.
  *
@@ -261,15 +286,18 @@ export const deactivateAgent = mutation({
  * rows this call swept (0 is a real zero).
  */
 export const reactivateAgent = mutation({
-	args: { orgSlug: v.string(), agentId: v.id("agents") },
+	args: { agentId: v.id("agents") },
 	returns: v.object({ reactivated: v.boolean(), revoked: v.number() }),
 	handler: async (ctx, args) => {
-		// write-contract: imperative dashboard caller, no subscriber — components/agents/agent-row.tsx:124 (useMutation(api.agents.reactivateAgent), invoked from an event handler, never a render subscription); 0 call sites in mcp-server/src, mcp-server/server-http.ts and scripts. Measured 2026-10-03 with `grep -rn "agents:reactivateAgent\|agents\.reactivateAgent" mcp-server/src mcp-server/server-http.ts scripts` -> 0 hits and `git -C <dashboard> grep -nE "api\.(agents|agentCredentials)\." origin/main -- app components hooks lib contexts providers` (dashboard origin/main 00a43cf, measured 2026-10-03); also convex/__tests__. This is the way BACK for a retired identity and also sweeps credentials, so it is a deliberately chosen admin act; requireOrgAdminById refuses it RBAC_DENIED at an imperative call, an R-16 refusal rather than an uncaught Server Error.
+		// write-contract: imperative dashboard caller, no subscriber — components/agents/agent-row.tsx:124 (useMutation(api.agents.reactivateAgent), invoked from an event handler, never a render subscription); 0 call sites in mcp-server/src, mcp-server/server-http.ts and scripts. Measured 2026-10-03 with `grep -rn "agents:reactivateAgent\|agents\.reactivateAgent" mcp-server/src mcp-server/server-http.ts scripts` -> 0 hits and `git -C <dashboard> grep -nE "api\.(agents|agentCredentials)\." origin/main -- app components hooks lib contexts providers` (dashboard origin/main 00a43cf, measured 2026-10-03); also convex/__tests__. This is the way BACK for a retired identity and also sweeps credentials, so it is a deliberately chosen admin act; resolveSessionCaller refuses it RBAC_DENIED at an imperative call, an R-16 refusal rather than an uncaught Server Error.
 		const door = "agents:reactivateAgent";
-		const identity = await ctx.auth.getUserIdentity();
-		if (!identity) throw anonymousRefusal(door);
-		const principal = await requireOrgAdminById(ctx, identity, args.orgSlug, door);
-		const existing = await requireOwnAgent(ctx, principal, args.orgSlug, args.agentId, door);
+		const caller = await resolveSessionCaller(ctx, door);
+		const admin = assertOrgAdmin(caller.principal, caller.org.id, {
+			adminRoles: ORG_ADMIN_ROLES,
+			door: door,
+		});
+		if (!admin.ok) throw refusalError(admin.refusal);
+		const existing = await requireOwnAgent(ctx, caller, args.agentId, door);
 
 		// THE SWEEP IS SCOPED TO THE inactive -> active TRANSITION, and that
 		// bound is load-bearing. Sweeping unconditionally — which this handler
@@ -342,7 +370,7 @@ async function renameRelationsBatch(
 
 /**
  * renameAgentRelations — the self-scheduled continuation of `renameAgent`.
- * Internal only: the caller was authorised (`requireOrgAdminById`) by the public
+ * Internal only: the caller was authorised (`resolveSessionCaller`) by the public
  * mutation that scheduled it, and `orgSlug` is the one that call proved. The
  * edge set is scoped by `(orgSlug, oldName)` so another org's edges that carry
  * the same label are never read.
@@ -383,18 +411,22 @@ export const renameAgentRelations = internalMutation({
  * stored label copy follows the rename.
  */
 export const renameAgent = mutation({
-	args: { orgSlug: v.string(), agentId: v.id("agents"), newName: v.string() },
+	args: { agentId: v.id("agents"), newName: v.string() },
 	returns: v.null(),
 	handler: async (ctx, args) => {
-		// write-contract: imperative dashboard caller, no subscriber — components/agents/agent-row.tsx:121 (useMutation(api.agents.renameAgent), invoked from an event handler, never a render subscription); 0 call sites in mcp-server/src, mcp-server/server-http.ts and scripts. Measured 2026-10-03 with `grep -rn "agents:renameAgent\|agents\.renameAgent" mcp-server/src mcp-server/server-http.ts scripts` -> 0 hits and `git -C <dashboard> grep -nE "api\.(agents|agentCredentials)\." origin/main -- app components hooks lib contexts providers` (dashboard origin/main 00a43cf, measured 2026-10-03); also convex/__tests__. requireOrgAdminById refuses it RBAC_DENIED at an imperative call, never at a render.
+		// write-contract: imperative dashboard caller, no subscriber — components/agents/agent-row.tsx:121 (useMutation(api.agents.renameAgent), invoked from an event handler, never a render subscription); 0 call sites in mcp-server/src, mcp-server/server-http.ts and scripts. Measured 2026-10-03 with `grep -rn "agents:renameAgent\|agents\.renameAgent" mcp-server/src mcp-server/server-http.ts scripts` -> 0 hits and `git -C <dashboard> grep -nE "api\.(agents|agentCredentials)\." origin/main -- app components hooks lib contexts providers` (dashboard origin/main 00a43cf, measured 2026-10-03); also convex/__tests__. resolveSessionCaller refuses it RBAC_DENIED at an imperative call, never at a render.
 		const door = "agents:renameAgent";
-		const identity = await ctx.auth.getUserIdentity();
-		if (!identity) throw anonymousRefusal(door);
-		const principal = await requireOrgAdminById(ctx, identity, args.orgSlug, door);
+		const caller = await resolveSessionCaller(ctx, door);
+		const admin = assertOrgAdmin(caller.principal, caller.org.id, {
+			adminRoles: ORG_ADMIN_ROLES,
+			door: door,
+		});
+		if (!admin.ok) throw refusalError(admin.refusal);
 		assertAgentLabelValid(args.newName);
 
-		const existing = await requireOwnAgent(ctx, principal, args.orgSlug, args.agentId, door);
-		await assertAgentNameFree(ctx, args.orgSlug, args.newName, existing._id);
+		const existing = await requireOwnAgent(ctx, caller, args.agentId, door);
+		const orgSlug = caller.org.label;
+		await assertAgentNameFree(ctx, orgSlug, args.newName, existing._id);
 
 		const oldName = existing.name;
 		const newKey = normalizeOrchestratorId(args.newName);
@@ -406,13 +438,13 @@ export const renameAgent = mutation({
 		if (oldName !== args.newName) {
 			const more = await renameRelationsBatch(
 				ctx,
-				args.orgSlug,
+				orgSlug,
 				oldName,
 				args.newName,
 			);
 			if (more) {
 				await ctx.scheduler.runAfter(0, internal.agents.renameAgentRelations, {
-					orgSlug: args.orgSlug,
+					orgSlug,
 					oldName,
 					newName: args.newName,
 				});
@@ -424,47 +456,52 @@ export const renameAgent = mutation({
 
 /**
  * getAgent — an agent of the caller's org, read BY ID. Gated by the org
- * administrator proof so that `args.orgSlug` is bound to the CALLER'S OWN org —
- * a caller of org B passing org A's slug is REFUSED (RBAC_DENIED), never
- * silently emptied. An ID naming ANOTHER organisation's agent is refused the
- * same way, so the row is never returned; an ID naming no row is an absence
+ * administrator proof, which binds the call to the CALLER'S OWN org (the
+ * session's `org_id`). An ID naming ANOTHER organisation's agent is refused
+ * RBAC_DENIED, so the row is never returned; an ID naming no row is an absence
  * (null).
  */
 export const getAgent = query({
-	args: { orgSlug: v.string(), agentId: v.id("agents") },
+	args: { agentId: v.id("agents") },
 	returns: v.union(agentReturnValidator, v.null()),
 	handler: async (ctx, args) => {
 		// isolation-contract: NO reactive subscriber — enumerated 2026-10-03 with
 		// `git -C <dashboard> grep -nE "api\.(agents|agentCredentials)\." origin/main -- app components hooks lib contexts providers` (dashboard origin/main 00a43cf, measured 2026-10-03) -> the dashboard calls it imperatively (components/agents/agents-admin.tsx:60, convex.query), no useQuery. Zero `useQuery` hits.
-		// The refusal stays a RAISE: `requireOrgAdminById` throws RBAC_DENIED for the anonymous, the no-organisation and the wrong-organisation caller alike, and no render exists for a throw to crash.
+		// The refusal stays a RAISE: `resolveSessionCaller` throws RBAC_DENIED for the anonymous, the no-organisation and the wrong-organisation caller alike, and no render exists for a throw to crash.
 		const door = "agents:getAgent";
-		const identity = await ctx.auth.getUserIdentity();
-		if (!identity) throw anonymousRefusal(door);
-		const principal = await requireOrgAdminById(ctx, identity, args.orgSlug, door);
+		const caller = await resolveSessionCaller(ctx, door);
+		const admin = assertOrgAdmin(caller.principal, caller.org.id, {
+			adminRoles: ORG_ADMIN_ROLES,
+			door: door,
+		});
+		if (!admin.ok) throw refusalError(admin.refusal);
 
-		return await loadAgentOfPrincipalOrg(ctx, principal, args.agentId, door);
+		return await loadAgentOfPrincipalOrg(ctx, caller.principal, args.agentId, door);
 	},
 });
 
 /**
- * listAgentsByOrg — org-scoped listing. Gated via `requireOrgAdminById` so that
- * `args.orgSlug` is bound to the CALLER'S OWN org — never a free-form
- * cross-org read.
+ * listAgentsByOrg — the CALLER'S OWN org's agents. Gated via
+ * `resolveSessionCaller`: the org listed is the one the session's `org_id`
+ * resolves to, never a free-form cross-org read.
  */
 export const listAgentsByOrg = query({
-	args: { orgSlug: v.string() },
+	args: {},
 	returns: v.array(agentReturnValidator),
 	handler: async (ctx, args) => {
 		// isolation-contract: NO reactive subscriber — enumerated 2026-10-03 with
 		// `git -C <dashboard> grep -nE "api\.(agents|agentCredentials)\." origin/main -- app components hooks lib contexts providers` (dashboard origin/main 00a43cf, measured 2026-10-03) -> the dashboard calls it imperatively (components/agents/agents-admin.tsx:60, convex.query), no useQuery. Zero `useQuery` hits.
-		// The refusal stays a RAISE: `requireOrgAdminById` throws RBAC_DENIED for the anonymous, the no-organisation and the wrong-organisation caller alike, and no render exists for a throw to crash.
-		const identity = await ctx.auth.getUserIdentity();
-		if (!identity) throw anonymousRefusal("agents:listAgentsByOrg");
-		await requireOrgAdminById(ctx, identity, args.orgSlug, "agents:listAgentsByOrg");
+		// The refusal stays a RAISE: `resolveSessionCaller` throws RBAC_DENIED for the anonymous, the no-organisation and the wrong-organisation caller alike, and no render exists for a throw to crash.
+		const caller = await resolveSessionCaller(ctx, "agents:listAgentsByOrg");
+		const admin = assertOrgAdmin(caller.principal, caller.org.id, {
+			adminRoles: ORG_ADMIN_ROLES,
+			door: "agents:listAgentsByOrg",
+		});
+		if (!admin.ok) throw refusalError(admin.refusal);
 
 		return await ctx.db
 			.query("agents")
-			.withIndex("by_org", (q) => q.eq("orgSlug", args.orgSlug))
+			.withIndex("by_org", (q) => q.eq("orgSlug", caller.org.label))
 			.collect();
 	},
 });

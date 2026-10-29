@@ -18,8 +18,9 @@ VantagePeers Cloud only. This page is the protocol-layer (`agents`/`agent_relati
    ```
 2. **Prove the change by activation, not by exit code.** Read back the schema/table presence with a query that NAMES the deployment the tool actually reports, e.g.:
    ```
-   npx convex run agents:listAgentsByOrg '{"orgSlug":"<dev-org-slug>"}'
+   npx convex run agents:listAgentsByOrg '{}'
    ```
+   (`listAgentsByOrg` takes no organisation argument: the org is the one the calling org-admin session's `org_id` resolves to, so run it with that session.)
    Confirm the returned deployment name in the CLI output is the DEV deployment you targeted — never assume it from the command you typed.
 3. Exercise the lock end-to-end in dev before touching prod: mint a credential (`agentCredentials:mintAgentCredential`), present it on a guarded surface (e.g. `tasks:create` with `agentCredentialSecret` + `callerOrchestrator`), and confirm both poles — matching name passes, mismatched name refuses `AGENT_IDENTITY_MISMATCH`.
 
@@ -33,7 +34,7 @@ VantagePeers Cloud only. This page is the protocol-layer (`agents`/`agent_relati
 3. **Read the RETURNED identity** — it must be `compassionate-goldfinch-737`. A returned name that differs is a stop, not a retry (deploy-target-explicit doctrine).
 4. **Activation read-back** — run a prod query/mutation whose RESULT proves the new table/mutation is live, e.g.:
    ```
-   CONVEX_DEPLOY_KEY=prod:compassionate-goldfinch-737\|<KEY> npx convex run agents:listAgentsByOrg '{"orgSlug":"<prod-org-slug>"}'
+   CONVEX_DEPLOY_KEY=prod:compassionate-goldfinch-737\|<KEY> npx convex run agents:listAgentsByOrg '{}'
    ```
    A successful call that returns `[]` for a real, already-provisioned org is NOT proof of a fresh empty table by itself — see "the two-zeros rule" below.
 5. **Second-orchestrator confirmation** — a second orchestrator re-runs the same read-back independently before the activation is considered closed (mirrors the `railway-mcp-redeploy.md` two-orchestrator step).

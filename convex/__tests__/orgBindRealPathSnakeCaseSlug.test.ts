@@ -83,9 +83,8 @@ async function mintAgent(
 	const tAdmin = t.withIdentity(
 		orgAdminIdentity(org) as Parameters<typeof t.withIdentity>[0],
 	);
-	await tAdmin.mutation(api.agents.registerAgent, { orgSlug: org, name: agentName });
+	await tAdmin.mutation(api.agents.registerAgent, { name: agentName });
 	const minted = await tAdmin.mutation(api.agentCredentials.mintAgentCredential, {
-		orgSlug: org,
 		agentId: await agentIdOf(tAdmin, org, agentName),
 	});
 	// A credential resolves only for an agent bound to a live member owner.

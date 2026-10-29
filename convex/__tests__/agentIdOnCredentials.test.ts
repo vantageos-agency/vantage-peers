@@ -148,7 +148,7 @@ describe("resolveAgentCredential carries the agent ID", () => {
 		const id = await seedAgent(t, "org-a", "clio");
 		const { secret } = await adminOf(t, "org-a").mutation(
 			api.agentCredentials.mintAgentCredential,
-			{ orgSlug: "org-a", agentId: await agentIdOf(t, "org-a", "clio") },
+			{ agentId: await agentIdOf(t, "org-a", "clio") },
 		);
 		const resolved = await asServiceAccount(t).query(
 			api.agentCredentials.resolveAgentCredential,
@@ -163,7 +163,7 @@ describe("resolveAgentCredential carries the agent ID", () => {
 		await seedAgent(t, "org-a", "clio");
 		const { secret } = await adminOf(t, "org-a").mutation(
 			api.agentCredentials.mintAgentCredential,
-			{ orgSlug: "org-a", agentId: await agentIdOf(t, "org-a", "clio") },
+			{ agentId: await agentIdOf(t, "org-a", "clio") },
 		);
 		await t.run(async (ctx) => {
 			const row = (await ctx.db.query("agent_credentials").collect())[0];

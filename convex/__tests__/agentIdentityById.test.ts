@@ -114,11 +114,9 @@ describe("M8 1. the agent's own record is resolved by ID under a scoped identity
 		await seedOrg(t, "org-a");
 		const admin = adminOf(t, "org-a");
 		const ada = await admin.mutation(api.agents.registerAgent, {
-			orgSlug: "org-a",
 			name: "ada",
 		});
 		const row = await admin.query(api.agents.getAgent, {
-			orgSlug: "org-a",
 			agentId: ada,
 		});
 		expect(row?._id).toBe(ada);
@@ -130,7 +128,6 @@ describe("M8 1. the agent's own record is resolved by ID under a scoped identity
 		await seedOrg(t, "org-a");
 		const ghost = await deletedAgentId(t);
 		const row = await adminOf(t, "org-a").query(api.agents.getAgent, {
-			orgSlug: "org-a",
 			agentId: ghost,
 		});
 		expect(row).toBeNull();
@@ -140,12 +137,10 @@ describe("M8 1. the agent's own record is resolved by ID under a scoped identity
 		const t = createT();
 		await seedOrg(t, "org-a");
 		const ada = await adminOf(t, "org-a").mutation(api.agents.registerAgent, {
-			orgSlug: "org-a",
 			name: "ada",
 		});
 		const code = await codeOf(
 			memberOf(t, "org-a").query(api.agents.getAgent, {
-				orgSlug: "org-a",
 				agentId: ada,
 			}),
 		);
@@ -156,12 +151,10 @@ describe("M8 1. the agent's own record is resolved by ID under a scoped identity
 		const t = createT();
 		await seedOrg(t, "org-a");
 		const ada = await adminOf(t, "org-a").mutation(api.agents.registerAgent, {
-			orgSlug: "org-a",
 			name: "ada",
 		});
 		const code = await codeOf(
 			asServiceAccount(t).query(api.agents.getAgent, {
-				orgSlug: "org-a",
 				agentId: ada,
 			}),
 		);
@@ -172,7 +165,7 @@ describe("M8 1. the agent's own record is resolved by ID under a scoped identity
 		const t = createT();
 		await seedOrg(t, "org-a");
 		const admin = adminOf(t, "org-a");
-		await admin.mutation(api.agents.registerAgent, { orgSlug: "org-a", name: "ada" });
+		await admin.mutation(api.agents.registerAgent, { name: "ada" });
 		const code = await codeOf(
 			admin.query(api.agents.getAgent, {
 				orgSlug: "org-a",
@@ -189,11 +182,9 @@ describe("M8 2. the same name in another org is refused or not returned", () => 
 		await seedOrg(t, "org-a");
 		await seedOrg(t, "org-b");
 		const etaA = await adminOf(t, "org-a").mutation(api.agents.registerAgent, {
-			orgSlug: "org-a",
 			name: "eta",
 		});
 		const etaB = await adminOf(t, "org-b").mutation(api.agents.registerAgent, {
-			orgSlug: "org-b",
 			name: "eta",
 		});
 		return { t, etaA, etaB };
@@ -203,7 +194,6 @@ describe("M8 2. the same name in another org is refused or not returned", () => 
 		const { t, etaA, etaB } = await twoOrgs();
 		expect(etaA).not.toBe(etaB);
 		const a = await adminOf(t, "org-a").query(api.agents.getAgent, {
-			orgSlug: "org-a",
 			agentId: etaA,
 		});
 		expect(a?._id).toBe(etaA);
@@ -213,7 +203,6 @@ describe("M8 2. the same name in another org is refused or not returned", () => 
 		const { t, etaB } = await twoOrgs();
 		const code = await codeOf(
 			adminOf(t, "org-a").query(api.agents.getAgent, {
-				orgSlug: "org-a",
 				agentId: etaB,
 			}),
 		);
@@ -225,22 +214,18 @@ describe("M8 2. the same name in another org is refused or not returned", () => 
 		const admin = adminOf(t, "org-a");
 		const attempts = [
 			admin.mutation(api.agents.renameAgent, {
-				orgSlug: "org-a",
 				agentId: etaB,
 				newName: "stolen",
 			}),
-			admin.mutation(api.agents.deactivateAgent, { orgSlug: "org-a", agentId: etaB }),
+			admin.mutation(api.agents.deactivateAgent, { agentId: etaB }),
 			admin.mutation(api.agents.setAgentAddress, {
-				orgSlug: "org-a",
 				agentId: etaB,
 				address: "https://evil.example",
 			}),
 			admin.mutation(api.agentCredentials.mintAgentCredential, {
-				orgSlug: "org-a",
 				agentId: etaB,
 			}),
 			admin.mutation(api.agentCredentials.revokeAgentCredential, {
-				orgSlug: "org-a",
 				agentId: etaB,
 			}),
 		];
@@ -264,7 +249,6 @@ describe("M8 2. the same name in another org is refused or not returned", () => 
 		const { t, etaB } = await twoOrgs();
 		const code = await codeOf(
 			adminOf(t, "org-a").query(api.agents.getAgent, {
-				orgSlug: "org-b",
 				agentId: etaB,
 			}),
 		);
@@ -275,7 +259,6 @@ describe("M8 2. the same name in another org is refused or not returned", () => 
 		const { t, etaA } = await twoOrgs();
 		const refusal = await codeOf(
 			adminOf(t, "org-a").mutation(api.agents.registerAgent, {
-				orgSlug: "org-a",
 				name: "ETA",
 			}),
 		);
@@ -297,12 +280,10 @@ describe("M8 3. a missing or garbled credential is refused, never an empty succe
 		await seedOrg(t, "org-a");
 		const admin = adminOf(t, "org-a");
 		const ada = await admin.mutation(api.agents.registerAgent, {
-			orgSlug: "org-a",
 			name: "ada",
 		});
 		await ownAgent(t, "org-a", "ada");
 		const minted = await admin.mutation(api.agentCredentials.mintAgentCredential, {
-			orgSlug: "org-a",
 			agentId: ada,
 		});
 		return { t, admin, ada, secret: minted.secret };
@@ -349,7 +330,6 @@ describe("M8 3. a missing or garbled credential is refused, never an empty succe
 	test("REFUSED: a rotated-out secret and a secret of a deactivated agent are refused", async () => {
 		const { t, admin, ada, secret } = await withCredential();
 		await admin.mutation(api.agentCredentials.mintAgentCredential, {
-			orgSlug: "org-a",
 			agentId: ada,
 		});
 		expect(
@@ -395,7 +375,6 @@ describe("M8 3. a missing or garbled credential is refused, never an empty succe
 		expect(
 			await codeOf(
 				admin.mutation(api.agentCredentials.mintAgentCredential, {
-					orgSlug: "org-a",
 					agentId: ghost,
 				}),
 			),
@@ -403,7 +382,6 @@ describe("M8 3. a missing or garbled credential is refused, never an empty succe
 		expect(
 			await codeOf(
 				admin.mutation(api.agentCredentials.revokeAgentCredential, {
-					orgSlug: "org-a",
 					agentId: ghost,
 				}),
 			),
@@ -411,11 +389,9 @@ describe("M8 3. a missing or garbled credential is refused, never an empty succe
 		const garbled = "not-an-id" as unknown as Id<"agents">;
 		for (const attempt of [
 			admin.mutation(api.agentCredentials.mintAgentCredential, {
-				orgSlug: "org-a",
 				agentId: garbled,
 			}),
 			admin.mutation(api.agentCredentials.revokeAgentCredential, {
-				orgSlug: "org-a",
 				agentId: garbled,
 			}),
 		]) {
@@ -428,11 +404,9 @@ describe("M8 3. a missing or garbled credential is refused, never an empty succe
 		await seedOrg(t, "org-a");
 		const admin = adminOf(t, "org-a");
 		const bare = await admin.mutation(api.agents.registerAgent, {
-			orgSlug: "org-a",
 			name: "bare",
 		});
 		const status = await admin.query(api.agentCredentials.getAgentCredentialStatus, {
-			orgSlug: "org-a",
 			agentId: bare,
 		});
 		expect(status.hasActiveCredential).toBe(false);
@@ -447,33 +421,28 @@ describe("M8 4. a rename touches the display name only and keeps every grant", (
 		await seedOrg(t, "org-a", ["ada", "clio"]);
 		const admin = adminOf(t, "org-a");
 		const ada = await admin.mutation(api.agents.registerAgent, {
-			orgSlug: "org-a",
 			name: "ada",
 		});
 		const clio = await admin.mutation(api.agents.registerAgent, {
-			orgSlug: "org-a",
 			name: "clio",
 		});
 		await ownAgent(t, "org-a", "ada");
 		const { secret } = await admin.mutation(api.agentCredentials.mintAgentCredential, {
-			orgSlug: "org-a",
 			agentId: ada,
 		});
 		await admin.mutation(api.agentRelations.linkChild, {
-			orgSlug: "org-a",
 			parentAgentId: ada,
 			childAgentId: clio,
 		});
 		await storeRosterIds(t, "org-a", [ada, clio]);
 
 		await admin.mutation(api.agents.renameAgent, {
-			orgSlug: "org-a",
 			agentId: ada,
 			newName: "ada2",
 		});
 
 		// The id is unchanged and carries the new label.
-		const row = await admin.query(api.agents.getAgent, { orgSlug: "org-a", agentId: ada });
+		const row = await admin.query(api.agents.getAgent, { agentId: ada });
 		expect(row?._id).toBe(ada);
 		expect(row?.name).toBe("ada2");
 
@@ -485,7 +454,6 @@ describe("M8 4. a rename touches the display name only and keeps every grant", (
 		expect(resolved.agentId).toBe(ada);
 		expect(resolved.agentName).toBe("ada2");
 		const status = await admin.query(api.agentCredentials.getAgentCredentialStatus, {
-			orgSlug: "org-a",
 			agentId: ada,
 		});
 		expect(status.activeRows).toBe(1);
@@ -504,12 +472,10 @@ describe("M8 4. a rename touches the display name only and keeps every grant", (
 
 		// The edge still reaches both agents, by id.
 		const children = await admin.query(api.agentRelations.childrenOf, {
-			orgSlug: "org-a",
 			parentAgentId: ada,
 		});
 		expect(children).toHaveLength(1);
 		const parents = await admin.query(api.agentRelations.parentsOf, {
-			orgSlug: "org-a",
 			childAgentId: clio,
 		});
 		expect(parents).toHaveLength(1);
@@ -529,16 +495,13 @@ describe("M8 4. a rename touches the display name only and keeps every grant", (
 		await seedOrg(t, "org-a", ["ada"]);
 		const admin = adminOf(t, "org-a");
 		const ada = await admin.mutation(api.agents.registerAgent, {
-			orgSlug: "org-a",
 			name: "ada",
 		});
 		const outsider = await admin.mutation(api.agents.registerAgent, {
-			orgSlug: "org-a",
 			name: "outsider",
 		});
 		await storeRosterIds(t, "org-a", [ada]);
 		await admin.mutation(api.agents.renameAgent, {
-			orgSlug: "org-a",
 			agentId: ada,
 			newName: "ada2",
 		});
@@ -550,7 +513,6 @@ describe("M8 4. a rename touches the display name only and keeps every grant", (
 		// Someone now carries the label the roster once displayed: it is a
 		// different agent with a different ID, and it is NOT on the roster.
 		const newAda = await admin.mutation(api.agents.registerAgent, {
-			orgSlug: "org-a",
 			name: "ada",
 		});
 		const after = await admin.query(api.orgRoster.getMyAgentDirectory, {});
@@ -564,21 +526,17 @@ describe("M8 4. a rename touches the display name only and keeps every grant", (
 		await seedOrg(t, "org-a");
 		const admin = adminOf(t, "org-a");
 		const ada = await admin.mutation(api.agents.registerAgent, {
-			orgSlug: "org-a",
 			name: "ada",
 		});
 		await admin.mutation(api.agents.renameAgent, {
-			orgSlug: "org-a",
 			agentId: ada,
 			newName: "ada2",
 		});
 		const off = await admin.mutation(api.agents.deactivateAgent, {
-			orgSlug: "org-a",
 			agentId: ada,
 		});
 		expect(off.deactivated).toBe(true);
 		const on = await admin.mutation(api.agents.reactivateAgent, {
-			orgSlug: "org-a",
 			agentId: ada,
 		});
 		expect(on.reactivated).toBe(true);
@@ -589,13 +547,11 @@ describe("M8 4. a rename touches the display name only and keeps every grant", (
 		await seedOrg(t, "org-a");
 		const admin = adminOf(t, "org-a");
 		const ada = await admin.mutation(api.agents.registerAgent, {
-			orgSlug: "org-a",
 			name: "ada",
 		});
-		await admin.mutation(api.agents.registerAgent, { orgSlug: "org-a", name: "clio" });
+		await admin.mutation(api.agents.registerAgent, { name: "clio" });
 		const code = await codeOf(
 			admin.mutation(api.agents.renameAgent, {
-				orgSlug: "org-a",
 				agentId: ada,
 				newName: "CLIO",
 			}),
@@ -611,7 +567,6 @@ describe("M8 4. a rename touches the display name only and keeps every grant", (
 		const ghost = await deletedAgentId(t);
 		const code = await codeOf(
 			adminOf(t, "org-a").mutation(api.agents.renameAgent, {
-				orgSlug: "org-a",
 				agentId: ghost,
 				newName: "x",
 			}),
@@ -657,13 +612,11 @@ describe("M8 5. the organisation and the authority come from the verified sessio
 		expect(row?.orgSlug).toBe("org-a-renamed");
 	});
 
-	test("PRESENT: the registry doors serve the admin with no organisation argument, and a stale slug argument does not change the answer", async () => {
-		const { t, admin } = await renamedOrg();
+	test("PRESENT: the registry doors serve the admin with no organisation argument", async () => {
+		const { admin } = await renamedOrg();
 		const ada = await admin.mutation(api.agents.registerAgent, { name: "ada" });
 		const bare = await admin.query(api.agents.getAgent, { agentId: ada });
-		const stale = await admin.query(api.agents.getAgent, { orgSlug: "org-a", agentId: ada });
 		expect(bare?._id).toBe(ada);
-		expect(stale?._id).toBe(ada);
 		const listed = await admin.query(api.agents.listAgentsByOrg, {});
 		expect(listed.map((r) => r._id)).toEqual([ada]);
 		const status = await admin.query(api.agentCredentials.getAgentCredentialStatus, {
@@ -674,7 +627,33 @@ describe("M8 5. the organisation and the authority come from the verified sessio
 			nodes: [],
 			edges: [],
 		});
-		expect(t).toBeDefined();
+	});
+
+	test("REFUSED: an organisation argument is rejected at every registry door, never read, never ignored", async () => {
+		const { t, admin } = await renamedOrg();
+		const ada = await admin.mutation(api.agents.registerAgent, { name: "ada" });
+		await seedOrg(t, "org-b");
+		// The org's own old slug (stale after the rename), its current label, another
+		// org's slug and a slug naming nothing: the answer is the same for all.
+		for (const orgSlug of ["org-a", "org-a-renamed", "org-b", "no-such-org"]) {
+			const attempts = [
+				() => admin.query(api.agents.getAgent, { orgSlug, agentId: ada } as never),
+				() => admin.query(api.agents.listAgentsByOrg, { orgSlug } as never),
+				() => admin.mutation(api.agents.registerAgent, { orgSlug, name: "x" } as never),
+				() =>
+					admin.mutation(api.agentCredentials.mintAgentCredential, {
+						orgSlug,
+						agentId: ada,
+					} as never),
+				() => admin.query(api.agentRelations.graphByOrg, { orgSlug } as never),
+			];
+			for (const attempt of attempts) {
+				expect(await codeOf(attempt())).toMatch(/orgSlug/);
+			}
+		}
+		// Nothing was written by the rejected calls.
+		const rows = await t.run((ctx) => ctx.db.query("agents").collect());
+		expect(rows.map((r) => r.name)).toEqual(["ada"]);
 	});
 
 	test("PRESENT: mint and linkChild need no organisation argument; the rows carry the verified org id", async () => {
@@ -701,16 +680,21 @@ describe("M8 5. the organisation and the authority come from the verified sessio
 		const { t, admin } = await renamedOrg();
 		const ada = await admin.mutation(api.agents.registerAgent, { name: "ada" });
 		await seedOrg(t, "org-b");
-		for (const who of [memberOf(t, "org-a"), adminOf(t, "org-b")]) {
-			const attempts = [
-				who.mutation(api.agents.registerAgent, { name: "intruder" }),
-				who.query(api.agents.getAgent, { agentId: ada }),
-				who.mutation(api.agents.renameAgent, { agentId: ada, newName: "taken" }),
-				who.mutation(api.agentCredentials.mintAgentCredential, { agentId: ada }),
-			];
-			for (const attempt of attempts) {
-				expect(await codeOf(attempt)).toMatch(/^RBAC_DENIED/);
-			}
+		// Org B's admin may register in ORG B (its own org); every other door and
+		// the member's every door act on org A's agent or org A's registry.
+		const reach = (who: ReturnType<typeof memberOf>) => [
+			() => who.query(api.agents.getAgent, { agentId: ada }),
+			() => who.mutation(api.agents.renameAgent, { agentId: ada, newName: "taken" }),
+			() => who.mutation(api.agentCredentials.mintAgentCredential, { agentId: ada }),
+		];
+		const member = memberOf(t, "org-a");
+		const attempts = [
+			() => member.mutation(api.agents.registerAgent, { name: "intruder" }),
+			...reach(member),
+			...reach(adminOf(t, "org-b")),
+		];
+		for (const attempt of attempts) {
+			expect(await codeOf(attempt())).toMatch(/^RBAC_DENIED/);
 		}
 		const row = await t.run((ctx) => ctx.db.get(ada));
 		expect(row?.name).toBe("ada");
@@ -722,15 +706,15 @@ describe("M8 5. the organisation and the authority come from the verified sessio
 		const legacy = await unstampedAgent(t);
 		const admin = adminOf(t, "org-a");
 		const attempts = [
-			admin.query(api.agents.getAgent, { orgSlug: "org-a", agentId: legacy }),
-			admin.mutation(api.agents.deactivateAgent, { orgSlug: "org-a", agentId: legacy }),
-			admin.mutation(api.agentCredentials.mintAgentCredential, {
-				orgSlug: "org-a",
-				agentId: legacy,
-			}),
+			() => admin.query(api.agents.getAgent, { agentId: legacy }),
+			() => admin.mutation(api.agents.deactivateAgent, { agentId: legacy }),
+			() =>
+				admin.mutation(api.agentCredentials.mintAgentCredential, {
+					agentId: legacy,
+				}),
 		];
 		for (const attempt of attempts) {
-			const code = await codeOf(attempt);
+			const code = await codeOf(attempt());
 			expect(code).toMatch(/^RBAC_DENIED/);
 			expect(code).toContain("target-unstamped");
 		}
@@ -743,16 +727,17 @@ describe("M8 5. the organisation and the authority come from the verified sessio
 		await seedOrg(t, "org-a");
 		const ada = await adminOf(t, "org-a").mutation(api.agents.registerAgent, { name: "ada" });
 		const attempts = [
-			t.mutation(api.agents.registerAgent, { name: "x" }),
-			t.query(api.agents.getAgent, { agentId: ada }),
-			t.query(api.agents.listAgentsByOrg, {}),
-			t.mutation(api.agentCredentials.mintAgentCredential, { agentId: ada }),
-			t.query(api.agentCredentials.getAgentCredentialStatus, { agentId: ada }),
-			t.mutation(api.agentRelations.linkChild, { parentAgentId: ada, childAgentId: ada }),
-			t.query(api.agentRelations.graphByOrg, {}),
+			() => t.mutation(api.agents.registerAgent, { name: "x" }),
+			() => t.query(api.agents.getAgent, { agentId: ada }),
+			() => t.query(api.agents.listAgentsByOrg, {}),
+			() => t.mutation(api.agentCredentials.mintAgentCredential, { agentId: ada }),
+			() => t.query(api.agentCredentials.getAgentCredentialStatus, { agentId: ada }),
+			() =>
+				t.mutation(api.agentRelations.linkChild, { parentAgentId: ada, childAgentId: ada }),
+			() => t.query(api.agentRelations.graphByOrg, {}),
 		];
 		for (const attempt of attempts) {
-			const code = await codeOf(attempt);
+			const code = await codeOf(attempt());
 			expect(code).toMatch(/^RBAC_DENIED/);
 			expect(code).toContain("no-verified-subject");
 		}

@@ -1,6 +1,7 @@
 import type { DataModel, Id } from "../../convex/_generated/dataModel";
 import type { GenericMutationCtx } from "convex/server";
 import { normalizeOrchestratorId } from "../../convex/_helpers/normalizeOrchestratorId";
+import { testClerkOrgId } from "../fixtures/testClerkOrgId";
 
 type Runner = {
 	run: <Output>(
@@ -59,6 +60,29 @@ export async function seedAgents(
 		for (const [orgSlug, name] of pairs) {
 			await ctx.db.insert("agents", {
 				orgSlug,
+				name,
+				normalizedName: normalizeOrchestratorId(name),
+				isActive: true,
+				createdAt: 1,
+			});
+		}
+	});
+}
+
+/**
+ * TEST FIXTURE ONLY. Like `seedAgents`, but each row carries the permanent org id
+ * of its organisation (`testClerkOrgId`), exactly as a row written by
+ * `agents:registerAgent` does. The registry doors act only on a stamped row.
+ */
+export async function seedStampedAgents(
+	t: Runner,
+	pairs: ReadonlyArray<readonly [orgSlug: string, name: string]>,
+): Promise<void> {
+	await t.run(async (ctx) => {
+		for (const [orgSlug, name] of pairs) {
+			await ctx.db.insert("agents", {
+				orgSlug,
+				clerkOrgId: testClerkOrgId(orgSlug),
 				name,
 				normalizedName: normalizeOrchestratorId(name),
 				isActive: true,

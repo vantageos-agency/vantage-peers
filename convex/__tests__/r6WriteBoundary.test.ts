@@ -66,7 +66,7 @@ async function twoOrgs() {
 	await seedOrg(t, "org-b", ["bob"]);
 	const adminA = t.withIdentity(adminOf("org-a"));
 	const adminB = t.withIdentity(adminOf("org-b"));
-	await adminB.mutation(api.agents.registerAgent, { orgSlug: "org-b", name: "bob" });
+	await adminB.mutation(api.agents.registerAgent, { name: "bob" });
 	return { t, adminA, adminB };
 }
 
@@ -81,12 +81,17 @@ const agentsOf = (t: T, org: string) =>
 describe("A. requireOrgAdmin doors: a write names an org only if the verified claim equals it", () => {
 	test("registerAgent: admin of A naming org B is refused and B gains no agent; own org is served", async () => {
 		const { t, adminA } = await twoOrgs();
+		// A cannot NAME org B at all: no door takes an organisation argument, so the
+		// attempt is rejected by the validator and B gains nothing.
 		await expect(
-			adminA.mutation(api.agents.registerAgent, { orgSlug: "org-b", name: "intruder" }),
-		).rejects.toThrow(/RBAC_DENIED/);
+			adminA.mutation(api.agents.registerAgent, {
+				orgSlug: "org-b",
+				name: "intruder",
+			} as never),
+		).rejects.toThrow(/orgSlug/);
 		expect((await agentsOf(t, "org-b")).map((a) => a.name)).toEqual(["bob"]);
 
-		await adminA.mutation(api.agents.registerAgent, { orgSlug: "org-a", name: "alice" });
+		await adminA.mutation(api.agents.registerAgent, { name: "alice" });
 		expect((await agentsOf(t, "org-a")).map((a) => a.name)).toEqual(["alice"]);
 	});
 
@@ -94,16 +99,14 @@ describe("A. requireOrgAdmin doors: a write names an org only if the verified cl
 		const { t, adminA } = await twoOrgs();
 		await expect(
 			adminA.mutation(api.agents.setAgentAddress, {
-				orgSlug: "org-b",
 				agentId: await agentIdOf(adminA, "org-b", "bob"),
 				address: "https://evil.example/hook",
 			}),
 		).rejects.toThrow(/RBAC_DENIED/);
 		expect((await agentsOf(t, "org-b"))[0].address).toBeUndefined();
 
-		await adminA.mutation(api.agents.registerAgent, { orgSlug: "org-a", name: "alice" });
+		await adminA.mutation(api.agents.registerAgent, { name: "alice" });
 		await adminA.mutation(api.agents.setAgentAddress, {
-			orgSlug: "org-a",
 			agentId: await agentIdOf(adminA, "org-a", "alice"),
 			address: "https://a.example/hook",
 		});
@@ -114,16 +117,14 @@ describe("A. requireOrgAdmin doors: a write names an org only if the verified cl
 		const { t, adminA } = await twoOrgs();
 		await expect(
 			adminA.mutation(api.agents.renameAgent, {
-				orgSlug: "org-b",
 				agentId: await agentIdOf(adminA, "org-b", "bob"),
 				newName: "mallory",
 			}),
 		).rejects.toThrow(/RBAC_DENIED/);
 		expect((await agentsOf(t, "org-b")).map((a) => a.name)).toEqual(["bob"]);
 
-		await adminA.mutation(api.agents.registerAgent, { orgSlug: "org-a", name: "alice" });
+		await adminA.mutation(api.agents.registerAgent, { name: "alice" });
 		await adminA.mutation(api.agents.renameAgent, {
-			orgSlug: "org-a",
 			agentId: await agentIdOf(adminA, "org-a", "alice"),
 			newName: "alicia",
 		});
@@ -134,15 +135,13 @@ describe("A. requireOrgAdmin doors: a write names an org only if the verified cl
 		const { t, adminA } = await twoOrgs();
 		await expect(
 			adminA.mutation(api.agentCredentials.mintAgentCredential, {
-				orgSlug: "org-b",
 				agentId: await agentIdOf(adminA, "org-b", "bob"),
 			}),
 		).rejects.toThrow(/RBAC_DENIED/);
 		expect(await t.run((ctx) => ctx.db.query("agent_credentials").collect())).toHaveLength(0);
 
-		await adminA.mutation(api.agents.registerAgent, { orgSlug: "org-a", name: "alice" });
+		await adminA.mutation(api.agents.registerAgent, { name: "alice" });
 		const minted = await adminA.mutation(api.agentCredentials.mintAgentCredential, {
-			orgSlug: "org-a",
 			agentId: await agentIdOf(adminA, "org-a", "alice"),
 		});
 		expect(minted.secret).toMatch(/^[0-9a-f]{64}$/);
@@ -173,7 +172,7 @@ describe("B. recurringTasks.create: createdBy is bound to the caller's roster", 
 		const { t, adminA } = await twoOrgs();
 		// M10h: alice is an agent of org A (the assignee, by ID); the MCP verifies her
 		// credential and forwards the row through the fleet service account.
-		const aliceId = await adminA.mutation(api.agents.registerAgent, { orgSlug: "org-a", name: "alice" });
+		const aliceId = await adminA.mutation(api.agents.registerAgent, { name: "alice" });
 		await t.withIdentity({ subject: "test-service-account-user-id" }).mutation(api.recurringTasks.create, {
 			...args("alice"),
 			verifiedActor: { agentId: aliceId, orgSlug: "org-a" },

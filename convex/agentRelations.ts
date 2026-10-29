@@ -1,15 +1,15 @@
-import type { ActingPrincipal } from "@vantageos/cloud-identity";
+import { assertOrgAdmin, resolveCallerFromClaims } from "@vantageos/cloud-identity";
 import { ConvexError, v } from "convex/values";
 import type { Doc, Id } from "./_generated/dataModel";
 import { type MutationCtx, type QueryCtx, mutation, query } from "./_generated/server";
 import {
-	loadAgentOfPrincipalOrg,
 	anonymousRefusal,
-	stampOrgRefusal,
-	requireOrgAdminById,
+	loadAgentOfPrincipalOrg,
+	resolveSessionCaller,
+	type SessionCaller,
 } from "./lib/agentIdentity";
-import { withOrgScope } from "./lib/auth";
-import { clerkOrgIdForSlug } from "./lib/orgClerkId";
+import { ORG_ADMIN_ROLES, refusalError } from "./lib/auth";
+import { orgByIdLookups, orgByIdPrincipalLookups } from "./lib/orgIdLookups";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // [P-T3] agent_relations — the parent-child EDGE, on top of P-T2's `agents`
@@ -29,12 +29,13 @@ import { clerkOrgIdForSlug } from "./lib/orgClerkId";
 // child at exactly one parent and could not represent the shared-child case
 // the cap analysis calls out).
 //
-// Authorization: every door proves the caller an ADMINISTRATOR of `orgSlug`
-// through @vantageos/cloud-identity (`requireOrgAdminById`,
-// convex/lib/agentIdentity.ts) — the SAME gate `agents.ts` uses — scoped to the
-// CALLER'S OWN org, never trusting a caller-supplied `orgSlug` argument to
-// select which org's edges are visible (see `.claude/rules/authority-
-// attached-to-anonymous-object.md`). There is no master carve-out.
+// Authorization: every door proves the caller an ADMINISTRATOR of its OWN
+// organisation through @vantageos/cloud-identity (`resolveSessionCaller`,
+// convex/lib/agentIdentity.ts) — the SAME gate `agents.ts` uses. The organisation
+// is the one the verified session's `org_id` resolves to; no door takes an
+// organisation, slug or label as an argument (see
+// `.claude/rules/authority-attached-to-anonymous-object.md`).
+// There is no master carve-out.
 //
 // AGENTS ARE NAMED BY ID. The doors take `parentAgentId` / `childAgentId`; each
 // must be an `agents` row of the caller's organisation (another organisation's
@@ -56,17 +57,16 @@ const edgeReturnValidator = v.object({
 // The endpoint labels of an edge, read from the agent rows the IDs name.
 async function endpointsOf(
 	ctx: QueryCtx | MutationCtx,
-	principal: ActingPrincipal,
-	orgSlug: string,
+	caller: SessionCaller,
 	ids: Record<string, Id<"agents">>,
 	door: string,
 ): Promise<Record<string, Doc<"agents">>> {
 	const out: Record<string, Doc<"agents">> = {};
 	for (const [role, agentId] of Object.entries(ids)) {
-		const agent = await loadAgentOfPrincipalOrg(ctx, principal, agentId, door);
+		const agent = await loadAgentOfPrincipalOrg(ctx, caller.principal, agentId, door);
 		if (!agent) {
 			throw new ConvexError(
-				`AGENT_NOT_FOUND: no ${role} agent ${agentId} in org "${orgSlug}" — ${JSON.stringify({ orgSlug, role, agentId })}`,
+				`AGENT_NOT_FOUND: no ${role} agent ${agentId} in org "${caller.org.label}" — ${JSON.stringify({ orgSlug: caller.org.label, role, agentId })}`,
 			);
 		}
 		out[role] = agent;
@@ -84,7 +84,7 @@ const graphEdgeValidator = v.object({
  * linkChild — records a parent→child edge in the CALLER'S OWN org, between two
  * agents named BY ID.
  *
- * Gated to the organisation ADMINISTRATOR via `requireOrgAdminById`, identical
+ * Gated to the organisation ADMINISTRATOR via `resolveSessionCaller`, identical
  * to `agents.ts`'s `registerAgent`. Idempotent on the (parent, child) pair: a
  * second identical call does not insert a duplicate row.
  *
@@ -94,7 +94,6 @@ const graphEdgeValidator = v.object({
  */
 export const linkChild = mutation({
 	args: {
-		orgSlug: v.string(),
 		parentAgentId: v.id("agents"),
 		childAgentId: v.id("agents"),
 	},
@@ -103,17 +102,26 @@ export const linkChild = mutation({
 		// write-contract: no caller outside convex-test — 0 call sites in mcp-server (grep of "agentRelations:linkChild" under mcp-server/src and mcp-server/server-http.ts) and 0 hits in vantage-peers-dashboard {app,components,hooks,lib,contexts,providers} (measured 2026-10-01 at origin/main e2dc58f and 0466fac); callers are convex/__tests__ only. No subscribing pre-org client shell can reach it; the no-org throw is a refusal at an imperative SDK call, never at a render.
 		const door = "agentRelations:linkChild";
 		const identity = await ctx.auth.getUserIdentity();
-		if (!identity) throw anonymousRefusal(door);
-		const principal = await requireOrgAdminById(ctx, identity, args.orgSlug, door);
-		const scope = await withOrgScope(ctx);
-		const orgSlug = scope.orgSlug;
-		if (orgSlug === null || orgSlug !== principal.orgId) {
-			throw stampOrgRefusal(door);
+		const caller = await resolveCallerFromClaims(
+			identity,
+			{
+				orgLookups: orgByIdLookups(ctx),
+				principalLookups: orgByIdPrincipalLookups(ctx),
+			},
+			{ adminRoles: ORG_ADMIN_ROLES, door },
+		);
+		if (!caller.ok) {
+			if (caller.subject === undefined) throw anonymousRefusal(door);
+			throw refusalError(caller.refusal);
 		}
+		const admin = assertOrgAdmin(caller.principal, caller.org.id, {
+			adminRoles: ORG_ADMIN_ROLES,
+			door: door,
+		});
+		if (!admin.ok) throw refusalError(admin.refusal);
 		const { parent, child } = await endpointsOf(
 			ctx,
-			principal,
-			args.orgSlug,
+			caller,
 			{ parent: args.parentAgentId, child: args.childAgentId },
 			door,
 		);
@@ -121,7 +129,7 @@ export const linkChild = mutation({
 		const existing = await ctx.db
 			.query("agent_relations")
 			.withIndex("by_parent", (q) =>
-				q.eq("orgSlug", args.orgSlug).eq("parentName", parent.name),
+				q.eq("orgSlug", caller.org.label).eq("parentName", parent.name),
 			)
 			.filter((q) => q.eq(q.field("childName"), child.name))
 			.unique();
@@ -130,9 +138,11 @@ export const linkChild = mutation({
 			return existing._id;
 		}
 
+		// The organisation the verified session resolves to (both agents belong to it:
+		// the stored-ID check above): the edge is stamped with its id and label.
+		const stamp = { orgSlug: caller.org.label, clerkOrgId: caller.org.id };
 		return await ctx.db.insert("agent_relations", {
-			orgSlug,
-			clerkOrgId: await clerkOrgIdForSlug(ctx, orgSlug),
+			...stamp,
 			parentName: parent.name,
 			childName: child.name,
 			createdAt: Date.now(),
@@ -147,7 +157,6 @@ export const linkChild = mutation({
  */
 export const unlinkChild = mutation({
 	args: {
-		orgSlug: v.string(),
 		parentAgentId: v.id("agents"),
 		childAgentId: v.id("agents"),
 	},
@@ -155,13 +164,16 @@ export const unlinkChild = mutation({
 	handler: async (ctx, args) => {
 		// write-contract: no caller outside convex-test — 0 call sites in mcp-server (grep of "agentRelations:unlinkChild" under mcp-server/src and mcp-server/server-http.ts) and 0 hits in vantage-peers-dashboard {app,components,hooks,lib,contexts,providers} (measured 2026-10-01 at origin/main e2dc58f and 0466fac); callers are convex/__tests__ only. No subscribing pre-org client shell can reach it; the no-org throw is a refusal at an imperative SDK call, never at a render.
 		const door = "agentRelations:unlinkChild";
-		const identity = await ctx.auth.getUserIdentity();
-		if (!identity) throw anonymousRefusal(door);
-		const principal = await requireOrgAdminById(ctx, identity, args.orgSlug, door);
+		const caller = await resolveSessionCaller(ctx, door);
+		const admin = assertOrgAdmin(caller.principal, caller.org.id, {
+			adminRoles: ORG_ADMIN_ROLES,
+			door: door,
+		});
+		if (!admin.ok) throw refusalError(admin.refusal);
+		const orgSlug = caller.org.label;
 		const { parent, child } = await endpointsOf(
 			ctx,
-			principal,
-			args.orgSlug,
+			caller,
 			{ parent: args.parentAgentId, child: args.childAgentId },
 			door,
 		);
@@ -169,7 +181,7 @@ export const unlinkChild = mutation({
 		const existing = await ctx.db
 			.query("agent_relations")
 			.withIndex("by_parent", (q) =>
-				q.eq("orgSlug", args.orgSlug).eq("parentName", parent.name),
+				q.eq("orgSlug", orgSlug).eq("parentName", parent.name),
 			)
 			.filter((q) => q.eq(q.field("childName"), child.name))
 			.unique();
@@ -182,25 +194,28 @@ export const unlinkChild = mutation({
 });
 
 /**
- * childrenOf — all children of the agent `parentAgentId`, org-scoped via
- * `requireOrgAdminById` so that a caller of org B passing org A's slug is
- * REFUSED (RBAC_DENIED), never silently emptied.
+ * childrenOf — all children of the agent `parentAgentId`, org-scoped by the
+ * session (`resolveSessionCaller` + `assertOrgAdmin`): a caller of org B naming
+ * org A's agent by ID is REFUSED (RBAC_DENIED), never silently emptied.
  */
 export const childrenOf = query({
-	args: { orgSlug: v.string(), parentAgentId: v.id("agents") },
+	args: { parentAgentId: v.id("agents") },
 	returns: v.array(edgeReturnValidator),
 	handler: async (ctx, args) => {
 		// isolation-contract: NO reactive subscriber — enumerated with
 		// `git -C /root/coding/vantage-peers-dashboard grep -nE "api\.agentRelations\." {origin/main,0466fac} -- app components hooks lib contexts providers` -> 0 hits at both commits
-		// (vantage-peers-dashboard e2dc58f and 0466fac). The refusal stays a RAISE: `requireOrgAdminById` throws RBAC_DENIED for the anonymous, the no-organisation and the wrong-organisation caller alike, and no render exists for a throw to crash.
+		// (vantage-peers-dashboard e2dc58f and 0466fac). The refusal stays a RAISE: `resolveSessionCaller` throws RBAC_DENIED for the anonymous, the no-organisation and the wrong-organisation caller alike, and no render exists for a throw to crash.
 		const door = "agentRelations:childrenOf";
-		const identity = await ctx.auth.getUserIdentity();
-		if (!identity) throw anonymousRefusal(door);
-		const principal = await requireOrgAdminById(ctx, identity, args.orgSlug, door);
+		const caller = await resolveSessionCaller(ctx, door);
+		const admin = assertOrgAdmin(caller.principal, caller.org.id, {
+			adminRoles: ORG_ADMIN_ROLES,
+			door: door,
+		});
+		if (!admin.ok) throw refusalError(admin.refusal);
+		const orgSlug = caller.org.label;
 		const { parent } = await endpointsOf(
 			ctx,
-			principal,
-			args.orgSlug,
+			caller,
 			{ parent: args.parentAgentId },
 			door,
 		);
@@ -208,7 +223,7 @@ export const childrenOf = query({
 		return await ctx.db
 			.query("agent_relations")
 			.withIndex("by_parent", (q) =>
-				q.eq("orgSlug", args.orgSlug).eq("parentName", parent.name),
+				q.eq("orgSlug", orgSlug).eq("parentName", parent.name),
 			)
 			.collect();
 	},
@@ -216,24 +231,27 @@ export const childrenOf = query({
 
 /**
  * parentsOf — all parents of the agent `childAgentId` (proves the shared-child
- * case: a child linked from two parents returns BOTH rows). Org-scoped via
- * `requireOrgAdminById`.
+ * case: a child linked from two parents returns BOTH rows). Org-scoped by the
+ * session (`resolveSessionCaller` + `assertOrgAdmin`).
  */
 export const parentsOf = query({
-	args: { orgSlug: v.string(), childAgentId: v.id("agents") },
+	args: { childAgentId: v.id("agents") },
 	returns: v.array(edgeReturnValidator),
 	handler: async (ctx, args) => {
 		// isolation-contract: NO reactive subscriber — enumerated with
 		// `git -C /root/coding/vantage-peers-dashboard grep -nE "api\.agentRelations\." {origin/main,0466fac} -- app components hooks lib contexts providers` -> 0 hits at both commits
-		// (vantage-peers-dashboard e2dc58f and 0466fac). The refusal stays a RAISE: `requireOrgAdminById` throws RBAC_DENIED for the anonymous, the no-organisation and the wrong-organisation caller alike, and no render exists for a throw to crash.
+		// (vantage-peers-dashboard e2dc58f and 0466fac). The refusal stays a RAISE: `resolveSessionCaller` throws RBAC_DENIED for the anonymous, the no-organisation and the wrong-organisation caller alike, and no render exists for a throw to crash.
 		const door = "agentRelations:parentsOf";
-		const identity = await ctx.auth.getUserIdentity();
-		if (!identity) throw anonymousRefusal(door);
-		const principal = await requireOrgAdminById(ctx, identity, args.orgSlug, door);
+		const caller = await resolveSessionCaller(ctx, door);
+		const admin = assertOrgAdmin(caller.principal, caller.org.id, {
+			adminRoles: ORG_ADMIN_ROLES,
+			door: door,
+		});
+		if (!admin.ok) throw refusalError(admin.refusal);
+		const orgSlug = caller.org.label;
 		const { child } = await endpointsOf(
 			ctx,
-			principal,
-			args.orgSlug,
+			caller,
 			{ child: args.childAgentId },
 			door,
 		);
@@ -241,7 +259,7 @@ export const parentsOf = query({
 		return await ctx.db
 			.query("agent_relations")
 			.withIndex("by_child", (q) =>
-				q.eq("orgSlug", args.orgSlug).eq("childName", child.name),
+				q.eq("orgSlug", orgSlug).eq("childName", child.name),
 			)
 			.collect();
 	},
@@ -251,11 +269,11 @@ export const parentsOf = query({
  * graphByOrg — the whole org's parent-child graph as nodes + edges. Nodes are
  * the DISTINCT set of names appearing as either a parent or a child across
  * this org's edges (a name registered in `agents` but never linked does not
- * appear here — this is the EDGE graph, not the agent roster). Org-scoped via
- * `requireOrgAdminById`.
+ * appear here — this is the EDGE graph, not the agent roster). Org-scoped by the
+ * session (`resolveSessionCaller` + `assertOrgAdmin`).
  */
 export const graphByOrg = query({
-	args: { orgSlug: v.string() },
+	args: {},
 	returns: v.object({
 		nodes: v.array(graphNodeValidator),
 		edges: v.array(graphEdgeValidator),
@@ -263,14 +281,17 @@ export const graphByOrg = query({
 	handler: async (ctx, args) => {
 		// isolation-contract: NO reactive subscriber — enumerated with
 		// `git -C /root/coding/vantage-peers-dashboard grep -nE "api\.agentRelations\." {origin/main,0466fac} -- app components hooks lib contexts providers` -> 0 hits at both commits
-		// (vantage-peers-dashboard e2dc58f and 0466fac). The refusal stays a RAISE: `requireOrgAdminById` throws RBAC_DENIED for the anonymous, the no-organisation and the wrong-organisation caller alike, and no render exists for a throw to crash.
-		const identity = await ctx.auth.getUserIdentity();
-		if (!identity) throw anonymousRefusal("agentRelations:graphByOrg");
-		await requireOrgAdminById(ctx, identity, args.orgSlug, "agentRelations:graphByOrg");
+		// (vantage-peers-dashboard e2dc58f and 0466fac). The refusal stays a RAISE: `resolveSessionCaller` throws RBAC_DENIED for the anonymous, the no-organisation and the wrong-organisation caller alike, and no render exists for a throw to crash.
+		const caller = await resolveSessionCaller(ctx, "agentRelations:graphByOrg");
+		const admin = assertOrgAdmin(caller.principal, caller.org.id, {
+			adminRoles: ORG_ADMIN_ROLES,
+			door: "agentRelations:graphByOrg",
+		});
+		if (!admin.ok) throw refusalError(admin.refusal);
 
 		const rows = await ctx.db
 			.query("agent_relations")
-			.withIndex("by_org", (q) => q.eq("orgSlug", args.orgSlug))
+			.withIndex("by_org", (q) => q.eq("orgSlug", caller.org.label))
 			.collect();
 
 		const names = new Set<string>();

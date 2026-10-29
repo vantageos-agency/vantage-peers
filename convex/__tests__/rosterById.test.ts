@@ -64,6 +64,7 @@ async function world() {
 		const agent = (orgSlug: string, name: string) =>
 			ctx.db.insert("agents", {
 				orgSlug,
+				clerkOrgId: testClerkOrgId(orgSlug),
 				name,
 				normalizedName: normalizeOrchestratorId(name),
 				isActive: true,
@@ -190,7 +191,6 @@ describe("DIRECTORY / RENAME — the stored ID is the answer", () => {
 	test("a rename keeps every grant: the ID stays listed, addressable and in the directory", async () => {
 		const { t, ids } = await world();
 		await asMember(t, C, "org:admin").mutation(api.agents.renameAgent, {
-			orgSlug: C,
 			agentId: ids.cAda,
 			newName: "ada2",
 		});

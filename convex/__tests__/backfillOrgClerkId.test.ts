@@ -447,14 +447,12 @@ describe("new writes stamp the slug AND the Clerk org id", () => {
 		const agentId = await adminOf(t, ACME.slug).mutation(
 			api.agents.registerAgent,
 			{
-				orgSlug: ACME.slug,
 				name: "neo",
 			},
 		);
 		await adminOf(t, ACME.slug).mutation(
 			api.agentCredentials.mintAgentCredential,
 			{
-				orgSlug: ACME.slug,
 				agentId: await agentIdOf(t, ACME.slug, "neo"),
 			},
 		);
@@ -506,11 +504,9 @@ describe("a stamped row is still READABLE through its returns validator", () => 
 		});
 		expect(entry?.clerkOrgId).toBe(ACME.id);
 		await adminOf(t, ACME.slug).mutation(api.agents.registerAgent, {
-			orgSlug: ACME.slug,
 			name: "neo",
 		});
 		const agent = await adminOf(t, ACME.slug).query(api.agents.getAgent, {
-			orgSlug: ACME.slug,
 			agentId: await agentIdOf(t, ACME.slug, "neo"),
 		});
 		expect(agent?.clerkOrgId).toBe(ACME.id);

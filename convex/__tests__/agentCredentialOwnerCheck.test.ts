@@ -64,12 +64,11 @@ const adminOf = (t: T, org: string) =>
 async function mintUnowned(t: T, org: string): Promise<string> {
 	await seedOrg(t, org);
 	await adminOf(t, org).mutation(api.agents.registerAgent, {
-		orgSlug: org,
 		name: "bot",
 	});
 	const minted = await adminOf(t, org).mutation(
 		api.agentCredentials.mintAgentCredential,
-		{ orgSlug: org, agentId: await agentIdOf(t, org, "bot") },
+		{ agentId: await agentIdOf(t, org, "bot") },
 	);
 	return minted.secret;
 }

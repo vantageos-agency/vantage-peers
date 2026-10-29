@@ -154,12 +154,11 @@ describe("sendMessage — the sender derives from the verified caller", () => {
 	test("AGENT CREDENTIAL: holder of bob's credential sending as 'bea' (on the roster) is refused; as 'bob' is served", async () => {
 		const t = await fixture();
 		await adminOf(t, "org-b").mutation(api.agents.registerAgent, {
-			orgSlug: "org-b",
 			name: "bob",
 		});
 		const minted = await adminOf(t, "org-b").mutation(
 			api.agentCredentials.mintAgentCredential,
-			{ orgSlug: "org-b", agentId: await agentIdOf(t, "org-b", "bob") },
+			{ agentId: await agentIdOf(t, "org-b", "bob") },
 		);
 		// A credential resolves only for an agent bound to a live member owner.
 		await ownAgent(t, "org-b", "bob");

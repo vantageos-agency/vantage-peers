@@ -265,30 +265,26 @@ const DRIVERS = {
 		}),
 	agents: (t) =>
 		adminOf(t, ACME.slug).mutation(api.agents.registerAgent, {
-			orgSlug: ACME.slug,
 			name: "neo",
 		}),
 	agent_relations: async (t) => {
 		for (const name of ["neo", "trinity"]) {
 			await adminOf(t, ACME.slug).mutation(api.agents.registerAgent, {
-				orgSlug: ACME.slug,
 				name,
 			});
 		}
 		return await adminOf(t, ACME.slug).mutation(api.agentRelations.linkChild, {
-			orgSlug: ACME.slug,
 			parentAgentId: await agentIdOf(t, ACME.slug, "neo"),
 			childAgentId: await agentIdOf(t, ACME.slug, "trinity"),
 		});
 	},
 	agent_credentials: async (t) => {
 		await adminOf(t, ACME.slug).mutation(api.agents.registerAgent, {
-			orgSlug: ACME.slug,
 			name: "neo",
 		});
 		return await adminOf(t, ACME.slug).mutation(
 			api.agentCredentials.mintAgentCredential,
-			{ orgSlug: ACME.slug, agentId: await agentIdOf(t, ACME.slug, "neo") },
+			{ agentId: await agentIdOf(t, ACME.slug, "neo") },
 		);
 	},
 	orgMembership: (t) =>

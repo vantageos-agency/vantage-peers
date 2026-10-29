@@ -88,7 +88,6 @@ async function seedProfile(t: T, orchestratorId: string) {
 
 async function register(t: T, org: string, name: string): Promise<Id<"agents">> {
 	const id = await adminOf(t, org).mutation(api.agents.registerAgent, {
-		orgSlug: org,
 		name,
 	});
 	await ownAgent(t, org, name);
@@ -98,7 +97,7 @@ async function register(t: T, org: string, name: string): Promise<Id<"agents">> 
 async function mint(t: T, org: string, agentName: string): Promise<string> {
 	const minted = await adminOf(t, org).mutation(
 		api.agentCredentials.mintAgentCredential,
-		{ orgSlug: org, agentId: await agentIdOf(t, org, agentName) },
+		{ agentId: await agentIdOf(t, org, agentName) },
 	);
 	return minted.secret;
 }
@@ -192,7 +191,6 @@ describe("RENAME — the credential follows the row", () => {
 
 		const taken = await codeOf(
 			adminOf(t, "org-a").mutation(api.agents.renameAgent, {
-				orgSlug: "org-a",
 				agentId: await agentIdOf(t, "org-a", "clio"),
 				newName: "Victor",
 			}),
@@ -200,7 +198,6 @@ describe("RENAME — the credential follows the row", () => {
 		expect(taken).toMatch(/^AGENT_NAME_TAKEN/);
 
 		await adminOf(t, "org-a").mutation(api.agents.renameAgent, {
-			orgSlug: "org-a",
 			agentId: await agentIdOf(t, "org-a", "clio"),
 			newName: "calliope",
 		});
@@ -282,7 +279,7 @@ describe("REVOKED — a rotated-out credential stays dead through a rename", () 
 
 		const res = await adminOf(t, "org-a").mutation(
 			api.agentCredentials.revokeAgentCredential,
-			{ orgSlug: "org-a", agentId: await agentIdOf(t, "org-a", "calliope") },
+			{ agentId: await agentIdOf(t, "org-a", "calliope") },
 		);
 		expect(res).toEqual({ revoked: 1 });
 		const dead = await codeOf(
@@ -509,7 +506,6 @@ describe("LEGACY credential (agentId undefined) is inert: a label never selects 
 		await resolveRefused(t, secret);
 
 		await adminOf(t, "org-a").mutation(api.agents.renameAgent, {
-			orgSlug: "org-a",
 			agentId: await agentIdOf(t, "org-a", "clio"),
 			newName: "calliope",
 		});
@@ -534,7 +530,6 @@ describe("LEGACY credential (agentId undefined) is inert: a label never selects 
 		const oldId = await register(t, "org-a", "clio");
 		const secret = await legacyMint(t, "org-a", "clio");
 		await adminOf(t, "org-a").mutation(api.agents.renameAgent, {
-			orgSlug: "org-a",
 			agentId: oldId,
 			newName: "calliope",
 		});
@@ -544,7 +539,7 @@ describe("LEGACY credential (agentId undefined) is inert: a label never selects 
 		await resolveRefused(t, secret);
 		const status = await adminOf(t, "org-a").query(
 			api.agentCredentials.getAgentCredentialStatus,
-			{ orgSlug: "org-a", agentId: newId },
+			{ agentId: newId },
 		);
 		expect(status.hasActiveCredential).toBe(false);
 	});
@@ -567,7 +562,7 @@ describe("LEGACY credential (agentId undefined) is inert: a label never selects 
 		await resolveRefused(t, secret);
 		const status = await adminOf(t, "org-a").query(
 			api.agentCredentials.getAgentCredentialStatus,
-			{ orgSlug: "org-a", agentId: id },
+			{ agentId: id },
 		);
 		expect(status.hasActiveCredential).toBe(false);
 	});

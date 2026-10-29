@@ -151,14 +151,14 @@ for (const agent of agents) {
 		continue;
 	}
 	// 3. agent registry, by ID, in THIS org
-	let row = agentRowByLabel(await admin.query(api.agents.listAgentsByOrg, { orgSlug: org }), agent);
+	let row = agentRowByLabel(await admin.query(api.agents.listAgentsByOrg, {}), agent);
 	if (!row) {
-		const agentId = await admin.mutation(api.agents.registerAgent, { orgSlug: org, name: agent, description: `Agent ${agent} of ${org}` });
-		row = await admin.query(api.agents.getAgent, { orgSlug: org, agentId });
+		const agentId = await admin.mutation(api.agents.registerAgent, { name: agent, description: `Agent ${agent} of ${org}` });
+		row = await admin.query(api.agents.getAgent, { agentId });
 	}
 	let secretPath = join(stage, `${agent}.secret`);
 	if (!existsSync(secretPath)) {
-		const { secret } = await admin.mutation(api.agentCredentials.mintAgentCredential, { orgSlug: org, agentId: row._id });
+		const { secret } = await admin.mutation(api.agentCredentials.mintAgentCredential, { agentId: row._id });
 		secretPath = writeSecret(`${agent}.secret`, secret);
 	}
 	console.log(

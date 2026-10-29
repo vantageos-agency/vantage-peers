@@ -73,13 +73,12 @@ async function seedOrg(t: T, clerkOrgSlug: string) {
 async function mint(t: T, org: string, name: string): Promise<string> {
 	await seedOrg(t, org);
 	await adminOf(t, org).mutation(api.agents.registerAgent, {
-		orgSlug: org,
 		name,
 	});
 	await ownAgent(t, org, name);
 	const minted = await adminOf(t, org).mutation(
 		api.agentCredentials.mintAgentCredential,
-		{ orgSlug: org, agentId: await agentIdOf(t, org, name) },
+		{ agentId: await agentIdOf(t, org, name) },
 	);
 	return minted.secret;
 }

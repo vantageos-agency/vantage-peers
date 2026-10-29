@@ -77,7 +77,6 @@ async function seedOrg(
 // profile only for an agent that is on that roster (dashboard/profiles member path).
 async function registerAgent(t: T, org: string, name: string) {
 	const id = await adminOf(t, org).mutation(api.agents.registerAgent, {
-		orgSlug: org,
 		name,
 	});
 	await t.run(async (ctx) => {

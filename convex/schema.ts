@@ -1955,7 +1955,7 @@ export default defineSchema({
 	// cross-organisation request (no session exists there to carry an `org_role`
 	// claim): a removed (tombstoned) or demoted grantor voids the link. The
 	// package, not this file, decides; the grant door additionally requires the
-	// live `org_role` claim (`requireOrgAdminById`).
+	// live `org_role` claim (`resolveSessionCaller` + `assertOrgAdmin`).
 	// The first: the owner-membership lookup `ownerMembershipLookups` (convex/lib/actingPrincipal.ts),
 	// which proves an agent's `ownerPersonId` is a member of the agent's org
 	// (key: clerkOrgId + clerkUserId; existence of a NON-tombstoned row only,

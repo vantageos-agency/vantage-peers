@@ -84,7 +84,6 @@ async function seedOrg(slug: string, roster: string[]) {
 
 async function register(org: string, name: string): Promise<Id<"agents">> {
 	return await adminOf(t, org).mutation(api.agents.registerAgent, {
-		orgSlug: org,
 		name,
 	});
 }
@@ -108,7 +107,7 @@ beforeEach(async () => {
 	veraB = await agentIdOf(t, "org-b", "vera");
 	const minted = await adminOf(t, "org-a").mutation(
 		api.agentCredentials.mintAgentCredential,
-		{ orgSlug: "org-a", agentId: clioA },
+		{ agentId: clioA },
 	);
 	secretA = minted.secret;
 	// A credential resolves only for an agent bound to a live member owner.

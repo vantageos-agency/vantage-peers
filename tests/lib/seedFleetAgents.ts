@@ -160,6 +160,16 @@ export async function mintAgentSecret(
 	if (agentId === null) {
 		throw new Error(`mintAgentSecret: ${orgSlug} holds no agent "${label}"`);
 	}
+	// The registry doors act only on an agent that carries its permanent org id
+	// (a row stamped with none names no organisation), and a credential resolves
+	// only for one too. Rows a fixture inserted directly may carry only the slug:
+	// stamp the id the way registerAgent does BEFORE the mint.
+	await t.run(async (ctx) => {
+		const row = await ctx.db.get(agentId);
+		if (row !== null && row.clerkOrgId === undefined) {
+			await ctx.db.patch(agentId, { clerkOrgId });
+		}
+	});
 	const admin = t.withIdentity({
 		subject: `admin-of-${orgSlug}`,
 		org_slug: orgSlug,
@@ -168,17 +178,8 @@ export async function mintAgentSecret(
 	} as never);
 	const minted = (await admin.mutation(
 		api.agentCredentials.mintAgentCredential as never,
-		{ orgSlug, agentId } as never,
+		{ agentId } as never,
 	)) as { secret: string };
-	// A credential resolves only for an agent that carries its permanent org id
-	// and is bound to a live member owner. Rows a fixture inserted directly may
-	// carry only the slug: stamp the id the way registerAgent does.
-	await t.run(async (ctx) => {
-		const row = await ctx.db.get(agentId);
-		if (row !== null && row.clerkOrgId === undefined) {
-			await ctx.db.patch(agentId, { clerkOrgId });
-		}
-	});
 	await ownAgent(t, orgSlug, label, clerkOrgId);
 	return minted.secret;
 }

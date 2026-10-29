@@ -31,7 +31,7 @@ import { convexTest } from "convex-test";
 import { describe, expect, test } from "vitest";
 import { api } from "../_generated/api";
 import schema from "../schema";
-import { agentIdOf, seedAgents } from "../../tests/lib/agentIdOf";
+import { agentIdOf, seedStampedAgents } from "../../tests/lib/agentIdOf";
 import { testClerkOrgId } from "../../tests/fixtures/testClerkOrgId";
 
 const modules = Object.fromEntries(
@@ -79,25 +79,22 @@ const orgMemberIdentity = (org: string) => ({
 describe("[P-T3] agent_relations — the parent-child edge graph", () => {
 	test("POLE ALLOW: org:admin of A links two parents to one shared child — parentsOf returns both, graphByOrg returns 3 nodes + 2 edges", async () => {
 		const t = createT();
-		await seedAgents(t, [["org-a", "parent1"], ["org-a", "child"], ["org-a", "parent2"]]);
+		await seedStampedAgents(t, [["org-a", "parent1"], ["org-a", "child"], ["org-a", "parent2"]]);
 		await seedOrgMapping(t, "org-a");
 		const tAdminA = t.withIdentity(
 			orgAdminIdentity("org-a") as Parameters<typeof t.withIdentity>[0],
 		);
 
 		await tAdminA.mutation(api.agentRelations.linkChild, {
-			orgSlug: "org-a",
 			parentAgentId: await agentIdOf(tAdminA, "org-a", "parent1"),
 			childAgentId: await agentIdOf(tAdminA, "org-a", "child"),
 		});
 		await tAdminA.mutation(api.agentRelations.linkChild, {
-			orgSlug: "org-a",
 			parentAgentId: await agentIdOf(tAdminA, "org-a", "parent2"),
 			childAgentId: await agentIdOf(tAdminA, "org-a", "child"),
 		});
 
 		const parents = await tAdminA.query(api.agentRelations.parentsOf, {
-			orgSlug: "org-a",
 			childAgentId: await agentIdOf(tAdminA, "org-a", "child"),
 		});
 		expect(parents).toHaveLength(2);
@@ -107,15 +104,12 @@ describe("[P-T3] agent_relations — the parent-child edge graph", () => {
 		]);
 
 		const children = await tAdminA.query(api.agentRelations.childrenOf, {
-			orgSlug: "org-a",
 			parentAgentId: await agentIdOf(tAdminA, "org-a", "parent1"),
 		});
 		expect(children).toHaveLength(1);
 		expect(children[0].childName).toBe("child");
 
-		const graph = await tAdminA.query(api.agentRelations.graphByOrg, {
-			orgSlug: "org-a",
-		});
+		const graph = await tAdminA.query(api.agentRelations.graphByOrg, {});
 		expect(graph.nodes).toHaveLength(3);
 		expect(graph.nodes.map((n) => n.name).sort()).toEqual([
 			"child",
@@ -127,25 +121,22 @@ describe("[P-T3] agent_relations — the parent-child edge graph", () => {
 
 	test("linkChild is idempotent on the (parent id, child id) pair — a second identical call does not duplicate the row", async () => {
 		const t = createT();
-		await seedAgents(t, [["org-a", "parent1"], ["org-a", "child"]]);
+		await seedStampedAgents(t, [["org-a", "parent1"], ["org-a", "child"]]);
 		await seedOrgMapping(t, "org-a");
 		const tAdminA = t.withIdentity(
 			orgAdminIdentity("org-a") as Parameters<typeof t.withIdentity>[0],
 		);
 
 		await tAdminA.mutation(api.agentRelations.linkChild, {
-			orgSlug: "org-a",
 			parentAgentId: await agentIdOf(tAdminA, "org-a", "parent1"),
 			childAgentId: await agentIdOf(tAdminA, "org-a", "child"),
 		});
 		await tAdminA.mutation(api.agentRelations.linkChild, {
-			orgSlug: "org-a",
 			parentAgentId: await agentIdOf(tAdminA, "org-a", "parent1"),
 			childAgentId: await agentIdOf(tAdminA, "org-a", "child"),
 		});
 
 		const children = await tAdminA.query(api.agentRelations.childrenOf, {
-			orgSlug: "org-a",
 			parentAgentId: await agentIdOf(tAdminA, "org-a", "parent1"),
 		});
 		expect(children).toHaveLength(1);
@@ -153,25 +144,22 @@ describe("[P-T3] agent_relations — the parent-child edge graph", () => {
 
 	test("unlinkChild removes the edge; is a no-op when the edge does not exist", async () => {
 		const t = createT();
-		await seedAgents(t, [["org-a", "parent1"], ["org-a", "child"]]);
+		await seedStampedAgents(t, [["org-a", "parent1"], ["org-a", "child"]]);
 		await seedOrgMapping(t, "org-a");
 		const tAdminA = t.withIdentity(
 			orgAdminIdentity("org-a") as Parameters<typeof t.withIdentity>[0],
 		);
 
 		await tAdminA.mutation(api.agentRelations.linkChild, {
-			orgSlug: "org-a",
 			parentAgentId: await agentIdOf(tAdminA, "org-a", "parent1"),
 			childAgentId: await agentIdOf(tAdminA, "org-a", "child"),
 		});
 		await tAdminA.mutation(api.agentRelations.unlinkChild, {
-			orgSlug: "org-a",
 			parentAgentId: await agentIdOf(tAdminA, "org-a", "parent1"),
 			childAgentId: await agentIdOf(tAdminA, "org-a", "child"),
 		});
 
 		const children = await tAdminA.query(api.agentRelations.childrenOf, {
-			orgSlug: "org-a",
 			parentAgentId: await agentIdOf(tAdminA, "org-a", "parent1"),
 		});
 		expect(children).toHaveLength(0);
@@ -179,7 +167,6 @@ describe("[P-T3] agent_relations — the parent-child edge graph", () => {
 		// No-op deletion on an already-absent edge does not throw.
 		await expect(
 			tAdminA.mutation(api.agentRelations.unlinkChild, {
-				orgSlug: "org-a",
 				parentAgentId: await agentIdOf(tAdminA, "org-a", "parent1"),
 				childAgentId: await agentIdOf(tAdminA, "org-a", "child"),
 			}),
@@ -188,7 +175,7 @@ describe("[P-T3] agent_relations — the parent-child edge graph", () => {
 
 	test("POLE DENY (direction 1): non-admin member of A is refused linkChild (RBAC_DENIED)", async () => {
 		const t = createT();
-		await seedAgents(t, [["org-a", "parent1"], ["org-a", "sneaky-child"]]);
+		await seedStampedAgents(t, [["org-a", "parent1"], ["org-a", "sneaky-child"]]);
 		await seedOrgMapping(t, "org-a");
 		const tMemberA = t.withIdentity(
 			orgMemberIdentity("org-a") as Parameters<typeof t.withIdentity>[0],
@@ -196,7 +183,6 @@ describe("[P-T3] agent_relations — the parent-child edge graph", () => {
 
 		await expect(
 			tMemberA.mutation(api.agentRelations.linkChild, {
-				orgSlug: "org-a",
 				parentAgentId: await agentIdOf(tMemberA, "org-a", "parent1"),
 				childAgentId: await agentIdOf(tMemberA, "org-a", "sneaky-child"),
 			}),
@@ -214,7 +200,7 @@ describe("[P-T3] agent_relations — the parent-child edge graph", () => {
 
 	test("POLE DENY (direction 2): identity of org B does not see org A's edges via graphByOrg/childrenOf/parentsOf", async () => {
 		const t = createT();
-		await seedAgents(t, [["org-a", "parent-a"], ["org-a", "child-a"]]);
+		await seedStampedAgents(t, [["org-a", "parent-a"], ["org-a", "child-a"]]);
 		await seedOrgMapping(t, "org-a");
 		await seedOrgMapping(t, "org-b");
 
@@ -222,7 +208,6 @@ describe("[P-T3] agent_relations — the parent-child edge graph", () => {
 			orgAdminIdentity("org-a") as Parameters<typeof t.withIdentity>[0],
 		);
 		await tAdminA.mutation(api.agentRelations.linkChild, {
-			orgSlug: "org-a",
 			parentAgentId: await agentIdOf(tAdminA, "org-a", "parent-a"),
 			childAgentId: await agentIdOf(tAdminA, "org-a", "child-a"),
 		});
@@ -234,29 +219,25 @@ describe("[P-T3] agent_relations — the parent-child edge graph", () => {
 		// Positive control first: prove the instrument can tell present from
 		// absent — B legitimately sees ITS OWN (empty) graph, not a swallowed
 		// grant of A's graph.
-		const graphForB = await tAdminB.query(api.agentRelations.graphByOrg, {
-			orgSlug: "org-b",
-		});
+		const graphForB = await tAdminB.query(api.agentRelations.graphByOrg, {});
 		expect(graphForB.nodes).toHaveLength(0);
 		expect(graphForB.edges).toHaveLength(0);
 
-		// B attempting to read A's graph by passing A's slug is refused, not
-		// silently emptied — the scoping wrapper binds orgSlug to the caller's
-		// OWN identity, a caller-supplied arg never substitutes for it.
+		// B cannot name A's organisation at all: no door takes an organisation
+		// argument, so the attempt is REJECTED by the validator, never answered
+		// with B's own graph (which would read as "A has none").
 		await expect(
-			tAdminB.query(api.agentRelations.graphByOrg, { orgSlug: "org-a" }),
-		).rejects.toThrow(/RBAC_DENIED/);
+			tAdminB.query(api.agentRelations.graphByOrg, { orgSlug: "org-a" } as never),
+		).rejects.toThrow(/orgSlug/);
 
 		await expect(
 			tAdminB.query(api.agentRelations.childrenOf, {
-				orgSlug: "org-a",
 				parentAgentId: await agentIdOf(tAdminB, "org-a", "parent-a"),
 			}),
 		).rejects.toThrow(/RBAC_DENIED/);
 
 		await expect(
 			tAdminB.query(api.agentRelations.parentsOf, {
-				orgSlug: "org-a",
 				childAgentId: await agentIdOf(tAdminB, "org-a", "child-a"),
 			}),
 		).rejects.toThrow(/RBAC_DENIED/);
@@ -264,11 +245,10 @@ describe("[P-T3] agent_relations — the parent-child edge graph", () => {
 
 	test("POLE DENY: no identity at all is refused linkChild", async () => {
 		const t = createT();
-		await seedAgents(t, [["org-a", "parent1"], ["org-a", "child"]]);
+		await seedStampedAgents(t, [["org-a", "parent1"], ["org-a", "child"]]);
 		await seedOrgMapping(t, "org-a");
 		await expect(
 			t.mutation(api.agentRelations.linkChild, {
-				orgSlug: "org-a",
 				parentAgentId: await agentIdOf(t, "org-a", "parent1"),
 				childAgentId: await agentIdOf(t, "org-a", "child"),
 			}),
@@ -277,10 +257,9 @@ describe("[P-T3] agent_relations — the parent-child edge graph", () => {
 
 	test("MASTER note (bypass, not proof): there is no master carve-out on linkChild — an unmapped org is refused even with no client_org_mapping row", async () => {
 		const t = createT();
-		await seedAgents(t, [["org-master-bypass", "parent1"], ["org-master-bypass", "child"]]);
+		await seedStampedAgents(t, [["org-master-bypass", "parent1"], ["org-master-bypass", "child"]]);
 		await expect(
 			t.mutation(api.agentRelations.linkChild, {
-				orgSlug: "org-master-bypass",
 				parentAgentId: await agentIdOf(t, "org-master-bypass", "parent1"),
 				childAgentId: await agentIdOf(t, "org-master-bypass", "child"),
 			}),

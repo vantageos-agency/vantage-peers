@@ -76,10 +76,10 @@ const asServiceAccount = (t: T) =>
 async function mintUnowned(t: T): Promise<string> {
 	await seedFleetAgents(t, ["b"]);
 	await seedOrg(t);
-	await adminOf(t).mutation(api.agents.registerAgent, { orgSlug: ORG, name: "b" });
+	await adminOf(t).mutation(api.agents.registerAgent, { name: "b" });
 	const minted = await adminOf(t).mutation(
 		api.agentCredentials.mintAgentCredential,
-		{ orgSlug: ORG, agentId: await agentIdOf(t, ORG, "b") },
+		{ agentId: await agentIdOf(t, ORG, "b") },
 	);
 	return minted.secret;
 }

@@ -66,12 +66,11 @@ async function mintAgent(
 	const admin = t.withIdentity(
 		orgAdminIdentity(org) as Parameters<typeof t.withIdentity>[0],
 	);
-	await admin.mutation(api.agents.registerAgent, { orgSlug: org, name });
+	await admin.mutation(api.agents.registerAgent, { name });
 	await ownAgent(t, org, name);
 	const minted = await admin.mutation(
 		api.agentCredentials.mintAgentCredential,
 		{
-			orgSlug: org,
 			agentId: await agentIdOf(admin, org, name),
 		},
 	);
