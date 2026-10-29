@@ -50,7 +50,7 @@
 // Internal: reachable only with the deployment admin credential, so no
 // per-caller auth check exists here by design.
 
-import { ConvexError, v } from "convex/values";
+import { ConvexError, getDocumentSize, v } from "convex/values";
 import type { Id } from "../_generated/dataModel";
 import type { DatabaseReader, MutationCtx } from "../_generated/server";
 import { internalMutation } from "../_generated/server";
@@ -105,6 +105,12 @@ const PAGE_BYTES_BUDGET = 8 * 1024 * 1024;
 // the added fields; Convex counts a document differently (field names, ids,
 // numbers), so the 64 KiB margin absorbs that difference. Dry run uses the same
 // estimate, so the inventory lists these rows before any write.
+// The estimate OVER-COUNTS: JSON escapes (a quote becomes two bytes, a newline
+// two, a control character six) that Convex does not store (a Convex string is
+// its raw UTF-8 + 2 bytes, see getDocumentSize). Such a row is listed here but
+// is not necessarily over the platform limit: the per-id door `stampOne` (end of
+// file) stamps it, org fields only, and lets the platform refuse if it really is
+// too large.
 const DOC_LIMIT_BYTES = 1024 * 1024;
 const DOC_SAFETY_MARGIN_BYTES = 64 * 1024;
 const STAMP_FIELDS_BYTES = 256; // orgId/tenantId + clerk org id + keys, rounded up
@@ -524,6 +530,91 @@ export const run = internalMutation({
 			isDone,
 			nextCursor: isDone ? null : nextCursor,
 			nextTable: isDone ? (TABLE_ORDER[idx + 1] ?? null) : args.table,
+		};
+	},
+});
+
+const stampOneResultValidator = v.object({
+	id: v.string(),
+	decided: v.union(
+		v.literal("org"),
+		v.literal("fleet"),
+		v.literal("undecidable"),
+		v.literal("alreadyStamped"),
+	),
+	// The slug written (or that a real run would write); null when nothing is written.
+	stampedTo: v.union(v.string(), v.null()),
+	dryRun: v.boolean(),
+	// Convex's own measure of the document read (getDocumentSize), not the JSON estimate.
+	approxBytes: v.number(),
+});
+
+// The per-id door for rows the page path lists as oversize. It reads ONE row,
+// decides its org with the SAME resolver and rule A the page path uses, and
+// patches only the org columns (slug + Clerk org id) the page path writes. It
+// never rewrites content. A patch the platform refuses for size is NOT caught: the
+// transaction fails and the platform's error is the report.
+//
+//   npx convex run migrations/backfill_org_stamp:stampOne \
+//     '{"table":"briefingNotes","id":"<id>","dryRun":false}'
+export const stampOne = internalMutation({
+	args: {
+		table: v.literal("briefingNotes"),
+		id: v.string(),
+		dryRun: v.optional(v.boolean()),
+	},
+	returns: stampOneResultValidator,
+	handler: async (ctx, args) => {
+		const dryRun = args.dryRun !== false;
+		const id = ctx.db.normalizeId("briefingNotes", args.id);
+		if (id === null) {
+			throw new ConvexError(
+				`backfill_org_stamp:stampOne: ${args.id} is not a briefingNotes id; refusing.`,
+			);
+		}
+		const row = await ctx.db.get(id);
+		if (row === null) {
+			throw new ConvexError(
+				`backfill_org_stamp:stampOne: briefingNotes ${id} not found.`,
+			);
+		}
+		const approxBytes = getDocumentSize(row);
+		if (row.orgId !== undefined) {
+			return {
+				id,
+				decided: "alreadyStamped" as const,
+				stampedTo: null,
+				dryRun,
+				approxBytes,
+			};
+		}
+		const resolver = await loadResolver(ctx.db);
+		const verdict = byAgent(resolver, row.createdBy);
+		const stamp = stampOf(resolver, verdict);
+		if (stamp === null) {
+			return {
+				id,
+				decided: "undecidable" as const,
+				stampedTo: null,
+				dryRun,
+				approxBytes,
+			};
+		}
+		if (!dryRun) {
+			const clerkOrgId = await clerkOrgIdForSlug(ctx, stamp);
+			await ctx.db.patch("briefingNotes", id, {
+				orgId: stamp,
+				...(clerkOrgId === undefined
+					? {}
+					: { [ORG_COLUMNS.briefingNotes.idField]: clerkOrgId }),
+			} as never);
+		}
+		return {
+			id,
+			decided: verdict.kind === "fleet" ? ("fleet" as const) : ("org" as const),
+			stampedTo: stamp,
+			dryRun,
+			approxBytes,
 		};
 	},
 });
