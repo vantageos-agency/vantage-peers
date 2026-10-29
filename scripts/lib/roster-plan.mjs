@@ -9,7 +9,7 @@
  * (agents:registerAgent, org-admin). So an agent that is off the roster is never a dead end:
  * register it (if it has no row yet), then the operator appends its ID.
  */
-import { agentRowByLabel } from "./station-agents.mjs";
+import { agentRowByLabel, normalizeRole } from "./station-agents.mjs";
 
 /**
  * @param {{ mapping: { allowedOrchestrators?: string[] }, agents: string[], rows?: Array<{ name: string }>, seatOnly?: boolean }} input
@@ -18,7 +18,11 @@ import { agentRowByLabel } from "./station-agents.mjs";
  *   toRegister — the subset of `missing` that has no agents row in the org yet
  */
 export function planRoster({ mapping, agents, rows = [], seatOnly = false }) {
-	const missing = seatOnly ? [] : agents.filter((a) => !(mapping.allowedOrchestrators ?? []).includes(a));
+	// Compared normalised, like the write (addRosterMembers stores normalizeOrchestratorId(name):
+	// NFC, lowercase, trimmed) and the row lookup (agentRowByLabel): a case-exact compare would
+	// call "Hal" missing forever once the operator stored "hal".
+	const labels = (mapping.allowedOrchestrators ?? []).map(normalizeRole);
+	const missing = seatOnly ? [] : agents.filter((a) => !labels.includes(normalizeRole(a)));
 	const toRegister = missing.filter((a) => agentRowByLabel(rows, a) === null);
 	return { missing, toRegister };
 }
