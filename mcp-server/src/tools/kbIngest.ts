@@ -36,6 +36,7 @@ import { ProtocolError, ProtocolErrorCode } from "@modelcontextprotocol/server";
 import type { ConvexHttpClient } from "convex/browser";
 import { z } from "zod";
 import type { OAuthContext } from "../auth.js";
+import { resolveDoorScope, verifiedOrgSlugOf } from "../doorScope.js";
 import { defineTool } from "../registerTool.js";
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -197,10 +198,11 @@ function uploadClaimNotAvailable(path: string) {
 /**
  * Register store_document_chunked + soft_delete_document MCP tools.
  *
- * oauthCtx must be provided for tenant-scoped callers.  The Clerk JWT layer 2.5
- * (auth.ts:443-444) mints oauthCtx.namespaceWritePrefixes = ["team/<orgId>"].
- * We extract orgId + namespace from that prefix and pass them as explicit args
- * to the Convex action — NO ctx.auth call inside the action.
+ * oauthCtx must be provided for tenant-scoped callers.  A seat or token bearer's
+ * org is its VERIFIED org (doorScope.ts verifiedOrgSlugOf), forwarded as
+ * `verifiedOrg` to every KB door; a Clerk team bearer's org is the
+ * `team/<orgId>` write prefix its layer 2.5 mints (auth.ts), found by shape.
+ * Either way orgId + namespace are explicit args to the Convex door.
  *
  * Why: ConvexHttpClient (server-http.ts:1437) is constructed without setAuth,
  * so ctx.auth.getUserIdentity() is always null over HTTP.  The previous
@@ -212,26 +214,64 @@ export function registerKbIngestTools(
 	convex: ConvexHttpClient,
 	oauthCtx: OAuthContext | undefined,
 ): void {
-	// ── Resolve orgId + namespace prefix from oauthCtx (B4 #915 pattern) ───────
-	// Validate here, once, before registering handlers.  Both tools share the
-	// same org scope for the lifetime of this request.
-	const resolveOrgContext = (): { orgId: string; namespacePrefix: string } => {
+	// ── Resolve the org a KB call acts on ──────────────────────────────────────
+	// Validate here, once per call, before any Convex round-trip.
+	//
+	// The org is the bearer's VERIFIED org (doorScope.ts verifiedOrgSlugOf: the
+	// agent credential's org, or the org snapshotted on the access-token row),
+	// the same source whoami reports as org_slug. It is NEVER read from the order
+	// of namespaceWritePrefixes: a client seat's list starts with
+	// `orchestrator/<agent>`, so position 0 names no organisation.
+	//
+	// A Clerk team bearer has no such claim here (its own org reaches Convex on the
+	// forwarded JWT): its org is the `team/<orgId>` write prefix the Clerk branch
+	// mints (auth.ts), found by SHAPE among the prefixes, unchanged.
+	const resolveOrgContext = (): {
+		orgId: string;
+		namespacePrefix: string;
+		verifiedOrg?: { orgSlug: string };
+	} => {
 		if (!oauthCtx || oauthCtx.isMaster) {
 			// Master-scope or legacy bearer: no team namespace — KB ingest forbidden.
 			throw new ProtocolError(
 				ProtocolErrorCode.InvalidRequest,
-				"AUTH_NO_ORG_ID: store_document_chunked requires a Clerk JWT with org_id claim (team-scoped bearer). Master-scope and legacy bearers cannot write to team/* namespace.",
+				"AUTH_NO_ORG_ID: store_document_chunked requires a verified organisation (a seat or team-scoped bearer). Master-scope and legacy bearers cannot write to team/* namespace.",
 			);
 		}
-		const prefix = oauthCtx.namespaceWritePrefixes[0];
-		if (!prefix || !/^team\/[^/]+$/.test(prefix)) {
+		const verified = verifiedOrgSlugOf(oauthCtx);
+		if (verified !== undefined) {
+			return {
+				orgId: verified,
+				namespacePrefix: `team/${verified}`,
+				verifiedOrg: { orgSlug: verified },
+			};
+		}
+		const prefix = oauthCtx.namespaceWritePrefixes.find((p) =>
+			/^team\/[^/]+$/.test(p),
+		);
+		if (prefix === undefined) {
 			throw new ProtocolError(
 				ProtocolErrorCode.InvalidRequest,
-				`AUTH_NO_ORG_ID: oauthCtx.namespaceWritePrefixes[0] = '${prefix ?? ""}' does not match ^team\\/[^/]+$ — cannot derive orgId for KB ingest.`,
+				"AUTH_NO_ORG_ID: this bearer resolves no verified organisation and carries no team/<orgId> write prefix — cannot derive orgId for KB ingest.",
 			);
 		}
-		const orgId = prefix.slice("team/".length);
-		return { orgId, namespacePrefix: prefix };
+		return { orgId: prefix.slice("team/".length), namespacePrefix: prefix };
+	};
+
+	// The scope arguments a KB door is handed (doorScope.ts DOOR_SCOPE): the
+	// verified org, exactly when the door takes it and the bearer has one.
+	const scopeArgs = (door: string): { verifiedOrg?: { orgSlug: string } } => {
+		const resolved = resolveDoorScope(door, undefined, {
+			...(verifiedOrgSlugOf(oauthCtx) !== undefined
+				? { verifiedOrgSlug: verifiedOrgSlugOf(oauthCtx) as string }
+				: {}),
+			hasVerifiedActor: false,
+			seat: { kind: "none" },
+		});
+		if ("denied" in resolved) throw new Error(resolved.denied);
+		return resolved.args.verifiedOrg !== undefined
+			? { verifiedOrg: resolved.args.verifiedOrg }
+			: {};
 	};
 
 	// All KB-ingest tools enforce tenant isolation in-handler via
@@ -241,7 +281,7 @@ export function registerKbIngestTools(
 	const kbFilteredScope = {
 		kind: "filtered" as const,
 		reason:
-			"tenant namespace derived in-handler from oauthCtx via resolveOrgContext(); fails closed with AUTH_NO_ORG_ID",
+			"tenant namespace derived in-handler from the verified org via resolveOrgContext(); fails closed with AUTH_NO_ORG_ID",
 	};
 
 	// ── store_document_chunked ──────────────────────────────────────────────────
@@ -271,6 +311,7 @@ export function registerKbIngestTools(
 						docId: docId ?? undefined,
 						orgId,
 						namespace: namespacePrefix,
+						...scopeArgs("kb:storeDocumentChunked"),
 					},
 				)) as StoreDocumentChunkedResult;
 
@@ -320,7 +361,12 @@ export function registerKbIngestTools(
 				type ActionRef = Parameters<ConvexHttpClient["action"]>[0];
 				const result = (await convex.action(
 					"kb:softDeleteDocument" as unknown as ActionRef,
-					{ docId, orgId, namespace: namespacePrefix },
+					{
+						docId,
+						orgId,
+						namespace: namespacePrefix,
+						...scopeArgs("kb:softDeleteDocument"),
+					},
 				)) as SoftDeleteDocumentResult;
 
 				return {
@@ -374,7 +420,11 @@ export function registerKbIngestTools(
 					// bound by store_document_chunked (never claimed, never validated).
 					const url = (await convex.mutation(
 						"kbMutations:generateUploadUrl" as unknown as MutationRef,
-						{ orgId, namespace: namespacePrefix },
+						{
+							orgId,
+							namespace: namespacePrefix,
+							...scopeArgs("kbMutations:generateUploadUrl"),
+						},
 					)) as string;
 					return {
 						content: [
@@ -391,7 +441,12 @@ export function registerKbIngestTools(
 				}
 				const { uploadUrl, ticket, expiresAt } = (await convex.mutation(
 					"kbMutations:generateUploadUrlWithTicket" as unknown as MutationRef,
-					{ orgId, namespace: namespacePrefix, sha256 },
+					{
+						orgId,
+						namespace: namespacePrefix,
+						sha256,
+						...scopeArgs("kbMutations:generateUploadUrlWithTicket"),
+					},
 				)) as { uploadUrl: string; ticket: string; expiresAt: number };
 
 				return {
@@ -449,7 +504,7 @@ export function registerKbIngestTools(
 				type MutationRef = Parameters<ConvexHttpClient["mutation"]>[0];
 				const result = (await convex.mutation(
 					"kbMutations:claimUpload" as unknown as MutationRef,
-					{ storageId, ticket },
+					{ storageId, ticket, ...scopeArgs("kbMutations:claimUpload") },
 				)) as { storageId: string; orgId: string };
 				return {
 					content: [{ type: "text" as const, text: JSON.stringify(result) }],

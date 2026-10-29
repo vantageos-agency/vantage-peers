@@ -45,6 +45,7 @@ import type { Id } from "./_generated/dataModel";
 import { type ActionCtx, action } from "./_generated/server";
 import { assertOrgArgs, assertScopeAuthorizesOrg } from "./kbShared";
 import { requireResolvedCaller } from "./lib/auth";
+import { verifiedOrgValidator } from "./lib/verifiedOrg";
 
 // NOTE: the upload-URL-minting mutation lives in convex/kbMutations.ts
 // (V8 runtime), NOT here. Convex rejects public mutations defined in a
@@ -193,13 +194,56 @@ export function chunkText(text: string): string[] {
 // returned scope to `assertScopeAuthorizesOrg` (args.orgId may confirm the
 // resolved org, never re-scope the call).
 // ─────────────────────────────────────────────────────────────────────────────
-async function resolveKbCaller(ctx: ActionCtx, registration: string) {
-	const scope = await ctx.runQuery(
-		internal.lib.auth.resolveOrgScopeForAction,
-		{},
-	);
+//
+// `verifiedOrg` is the organisation the MCP transport verified for a SEAT bearer
+// (one that reaches Convex as the fleet service account, so `ctx.auth` carries no
+// org). When present the scope is the ordinary member scope of that active
+// organisation (convex/kbMutations.ts resolveKbCallerScope: believed from the
+// service account only), never wider; absent, the bridge is unchanged.
+async function resolveKbCaller(
+	ctx: ActionCtx,
+	registration: string,
+	verifiedOrg?: { orgSlug: string },
+) {
+	const scope =
+		verifiedOrg === undefined
+			? await ctx.runQuery(internal.lib.auth.resolveOrgScopeForAction, {})
+			: await ctx.runQuery(internal.kbMutations.resolveKbCallerScope, {
+					verifiedOrg,
+					door: registration,
+				});
 	requireResolvedCaller(scope, registration, { alsoRefusePreOrg: true });
 	return scope;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// kbTarget -- the namespace root and ownership key a KB call acts on, AFTER the
+// caller has been authorised for `args.orgId`.
+//
+// Without a `verifiedOrg` the caller's own arguments stand (a Clerk team bearer
+// names its permanent org ID; the fleet master names any org), unchanged. With
+// one (a seat bearer: the MCP knows only the org's slug) the document root is the
+// org's permanent ID, `team/<clerkOrgId>`, the key every team namespace is filed
+// under (convex/lib/teamNamespace.ts), and the storage-ownership key is the org
+// slug the upload ticket and `claimUpload` bind (kbMutations.ts), so a blob a
+// seat claimed is a blob the same seat can ingest. A verified org whose mapping
+// carries no ID was already refused by assertScopeAuthorizesOrg.
+// ─────────────────────────────────────────────────────────────────────────────
+function kbTarget(
+	scope: { orgSlug: string | null; orgClerkId?: string },
+	args: {
+		orgId: string;
+		namespace: string;
+		verifiedOrg?: { orgSlug: string };
+	},
+): { namespace: string; ownerKey: string } {
+	if (args.verifiedOrg === undefined || scope.orgClerkId === undefined) {
+		return { namespace: args.namespace, ownerKey: args.orgId };
+	}
+	return {
+		namespace: `team/${scope.orgClerkId}`,
+		ownerKey: scope.orgSlug ?? args.orgId,
+	};
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -214,6 +258,7 @@ export const storeDocumentChunked = action({
 		docId: v.optional(v.string()),
 		orgId: v.string(),
 		namespace: v.string(),
+		verifiedOrg: v.optional(verifiedOrgValidator),
 	},
 	returns: v.object({
 		docId: v.string(),
@@ -262,12 +307,17 @@ export const storeDocumentChunked = action({
 		// THROW -- this is an imperative WRITE. See
 		// .claude/rules/authority-attached-to-anonymous-object.md.
 		assertOrgArgs(args.orgId, `${args.namespace}/placeholder`);
-		const scope = await resolveKbCaller(ctx, "kb:storeDocumentChunked");
+		const scope = await resolveKbCaller(
+			ctx,
+			"kb:storeDocumentChunked",
+			args.verifiedOrg,
+		);
 		assertScopeAuthorizesOrg(scope, args.orgId);
+		const target = kbTarget(scope, args);
 
 		// 2. Resolve docId and full namespace
 		const docId = args.docId ?? randomUUID();
-		const namespace = `${args.namespace}/${docId}`;
+		const namespace = `${target.namespace}/${docId}`;
 
 		// 3. TOFU storageId org-binding (M1 defense-in-depth, PR #992 follow-up).
 		//    Binds this storageId to args.orgId on first ingest; rejects cross-tenant
@@ -275,7 +325,7 @@ export const storeDocumentChunked = action({
 		//    Must execute BEFORE ctx.storage.get() to close the attack vector.
 		await ctx.runMutation(internal.kbMutations.bindOrAssertStorageOwnership, {
 			storageId: args.storageId,
-			orgId: args.orgId,
+			orgId: target.ownerKey,
 		});
 
 		// 4. Fetch binary from Convex storage
@@ -353,6 +403,7 @@ export const softDeleteDocument = action({
 		docId: v.string(),
 		orgId: v.string(),
 		namespace: v.string(),
+		verifiedOrg: v.optional(verifiedOrgValidator),
 	},
 	returns: v.object({
 		docId: v.string(),
@@ -382,10 +433,13 @@ export const softDeleteDocument = action({
 		// THROW -- this is an imperative WRITE. See
 		// .claude/rules/authority-attached-to-anonymous-object.md.
 		assertOrgArgs(args.orgId, `${args.namespace}/placeholder`);
-		const scope = await resolveKbCaller(ctx, "kb:softDeleteDocument");
+		const scope = await resolveKbCaller(
+			ctx,
+			"kb:softDeleteDocument",
+			args.verifiedOrg,
+		);
 		assertScopeAuthorizesOrg(scope, args.orgId);
-
-		const namespace = `${args.namespace}/${args.docId}`;
+		const namespace = `${kbTarget(scope, args).namespace}/${args.docId}`;
 
 		const markedCount = (await ctx.runMutation(
 			internal.kbMutations.markDocSoftDeleted,

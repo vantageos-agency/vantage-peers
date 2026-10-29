@@ -20,6 +20,8 @@ import { describe, expect, it } from "vitest";
 import * as briefingNotes from "../../convex/briefingNotes";
 import * as businessUnits from "../../convex/businessUnits";
 import * as githubRepoMapping from "../../convex/githubRepoMapping";
+import * as kb from "../../convex/kb";
+import * as kbMutations from "../../convex/kbMutations";
 import * as memories from "../../convex/memories";
 import * as messages from "../../convex/messages";
 import * as missions from "../../convex/missions";
@@ -44,6 +46,8 @@ const MODULES: Record<string, Record<string, unknown>> = {
 	briefingNotes,
 	businessUnits,
 	githubRepoMapping,
+	kb,
+	kbMutations,
 	memories,
 	messages,
 	missions,
@@ -82,6 +86,28 @@ function near(anchor: string, index: number): boolean {
 	const at = TOOLS_SRC.lastIndexOf(anchor, index);
 	return at !== -1 && index - at < 2000;
 }
+
+describe("pin 2b — the KB tools (tools/kbIngest.ts) call their doors through the resolver", () => {
+	const KB_SRC = readFileSync(resolve(HERE, "../src/tools/kbIngest.ts"), "utf8");
+	const calls = [
+		...KB_SRC.matchAll(
+			/convex\.(?:mutation|action)\(\s*"([A-Za-z0-9_]+):([A-Za-z0-9_]+)"/g,
+		),
+	];
+	it("finds the five KB door calls", () => {
+		expect(calls.length).toBe(5);
+	});
+	it("each names its door in a scopeArgs call within the same call", () => {
+		const missing: string[] = [];
+		for (const m of calls) {
+			const door = `${m[1]}:${m[2]}`;
+			const window = KB_SRC.slice(m.index, m.index + 600);
+			if (DOOR_SCOPE[door] === undefined || !window.includes(`scopeArgs("${door}")`))
+				missing.push(door);
+		}
+		expect(missing).toEqual([]);
+	});
+});
 
 describe("pin 2 — every scope-taking door call goes through the resolver", () => {
 	const calls = [

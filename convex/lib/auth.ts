@@ -1705,6 +1705,50 @@ export interface ActionOrgScope {
 	masterSource?: MasterSource;
 }
 
+/**
+ * Project a resolved {@link OrgScope} into the shape an action receives. Shared by
+ * `resolveOrgScopeForAction` and the KB bridge that resolves under a transport
+ * `verifiedOrg` (convex/kbMutations.ts), so both report a caller the same way.
+ */
+export function projectActionOrgScope(scope: OrgScope): ActionOrgScope {
+	// Master: the fleet's own callers (the by-id service-account carve-out /
+	// explicit internal opt-in inside withOrgScope). Unrestricted, unchanged.
+	if (hasFleetRead(scope)) {
+		return {
+			isMaster: true,
+			fleetWide: true,
+			orgSlug: null,
+			refused: false,
+			anonymous: false,
+			masterSource: scope.masterSource,
+		};
+	}
+
+	// No verified organisation -> REFUSED. Never master. withOrgScope returns
+	// this same empty shape for both the anonymous branch and the
+	// signed-in-no-org branch, so one check covers both.
+	if (scope.orgSlug === null) {
+		return {
+			isMaster: false,
+			fleetWide: false,
+			orgSlug: null,
+			refused: true,
+			anonymous: scope.anonymous === true,
+		};
+	}
+
+	return {
+		isMaster: false,
+		fleetWide: false,
+		orgSlug: scope.orgSlug,
+		...(scope.orgClerkId !== undefined
+			? { orgClerkId: scope.orgClerkId }
+			: {}),
+		refused: false,
+		anonymous: false,
+	};
+}
+
 export const resolveOrgScopeForAction = internalQuery({
 	args: {},
 	returns: actionOrgScopeValidator,
@@ -1717,41 +1761,6 @@ export const resolveOrgScopeForAction = internalQuery({
 			operatorAsMember: true,
 		});
 
-		// Master: the fleet's own callers (the by-id service-account carve-out /
-		// explicit internal opt-in inside withOrgScope). Unrestricted, unchanged.
-		if (hasFleetRead(scope)) {
-			return {
-				isMaster: true,
-				fleetWide: true,
-				orgSlug: null,
-				refused: false,
-				anonymous: false,
-				masterSource: scope.masterSource,
-			};
-		}
-
-		// No verified organisation -> REFUSED. Never master. withOrgScope returns
-		// this same empty shape for both the anonymous branch and the
-		// signed-in-no-org branch, so one check covers both.
-		if (scope.orgSlug === null) {
-			return {
-				isMaster: false,
-				fleetWide: false,
-				orgSlug: null,
-				refused: true,
-				anonymous: scope.anonymous === true,
-			};
-		}
-
-		return {
-			isMaster: false,
-			fleetWide: false,
-			orgSlug: scope.orgSlug,
-			...(scope.orgClerkId !== undefined
-				? { orgClerkId: scope.orgClerkId }
-				: {}),
-			refused: false,
-			anonymous: false,
-		};
+		return projectActionOrgScope(scope);
 	},
 });

@@ -40,6 +40,7 @@ import {
 	type DoorScopeArgs,
 	type DoorScopeFacts,
 	resolveDoorScope,
+	verifiedOrgSlugOf,
 } from "./doorScope.js";
 import { FreshStateGuardError, guardFreshState } from "./fresh-state-guard.js";
 import { listTasksGate } from "./list-tasks-gate.js";
@@ -2200,12 +2201,7 @@ export function registerTools(
 	// and a Clerk-JWT caller (whose own org Convex already sees) forward none.
 	// Convex believes it from the service account only and resolves it against an
 	// active org (convex/lib/verifiedOrg.ts).
-	const verifiedOrgOf = (): string | undefined => {
-		if (!oauthCtx || oauthCtx.isMaster || oauthCtx.clerkJwt !== undefined) {
-			return undefined;
-		}
-		return oauthCtx.actor?.orgSlug ?? oauthCtx.clerkOrgSlug;
-	};
+	const verifiedOrgOf = (): string | undefined => verifiedOrgSlugOf(oauthCtx);
 	// THE one resolver of the scope a door call carries (doorScope.ts, task
 	// k176y0q5jcz3m8m673bf61kva98h49js): verifiedPerson (a PERSON acting in its
 	// own name, k176ch9tamzab3dnhye94kga1d8fkbhm), verifiedOrg (the bearer's
