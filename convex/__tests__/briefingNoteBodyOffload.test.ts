@@ -461,6 +461,64 @@ describe("writes on an offloaded note", () => {
 		expect(await rowOf(t, id)).toBeNull();
 		expect(await chunksOf(t, id)).toHaveLength(0);
 	});
+
+	test("deleteBriefingNote by the fleet system caller (agent path) removes the chunks too", async () => {
+		const t = createT();
+		await seedOrgs(t);
+		const id = await seedNote(t, bodyOf(350_000), {
+			createdBy: "sigma",
+			stamped: "fleet-org",
+		});
+		await offload(t, id);
+		const master = t.withIdentity({
+			subject: "test-service-account-user-id",
+		} as Parameters<typeof t.withIdentity>[0]);
+		await master.mutation(api.briefingNotes.deleteBriefingNote, {
+			noteId: id,
+			callerOrchestrator: "system",
+		});
+		expect(await rowOf(t, id)).toBeNull();
+		expect(await chunksOf(t, id)).toHaveLength(0);
+	});
+});
+
+describe("a damaged stored body is a refusal, never a partial", () => {
+	test("get raises BODY_CHUNKS_CORRUPT when a chunk is missing", async () => {
+		const t = createT();
+		await seedOrgs(t);
+		const id = await seedNote(t, bodyOf(350_000));
+		await offload(t, id);
+		await t.run(async (ctx) => {
+			const last = (
+				await ctx.db
+					.query("briefingNoteBodyChunks")
+					.withIndex("by_note_idx", (q) => q.eq("noteId", id))
+					.order("desc")
+					.first()
+			)?._id;
+			if (last) await ctx.db.delete(last);
+		});
+		await expect(
+			asOrg(t, "acme-hr").query(api.briefingNotes.get, { noteId: id }),
+		).rejects.toThrow(/BODY_CHUNKS_CORRUPT/);
+	});
+
+	test("get raises BODY_CHUNKS_CORRUPT when a chunk was altered", async () => {
+		const t = createT();
+		await seedOrgs(t);
+		const id = await seedNote(t, bodyOf(350_000));
+		await offload(t, id);
+		await t.run(async (ctx) => {
+			const first = await ctx.db
+				.query("briefingNoteBodyChunks")
+				.withIndex("by_note_idx", (q) => q.eq("noteId", id))
+				.first();
+			if (first) await ctx.db.patch(first._id, { text: `${first.text}zz` });
+		});
+		await expect(
+			asOrg(t, "acme-hr").query(api.briefingNotes.get, { noteId: id }),
+		).rejects.toThrow(/BODY_CHUNKS_CORRUPT/);
+	});
 });
 
 describe("agents:registerAgentInOrgById", () => {
