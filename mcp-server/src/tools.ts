@@ -285,6 +285,28 @@ export const severitySchema = z
 export const flexArray = z.union([z.array(z.string()), z.string()]);
 const flexArrayOptional = flexArray.optional();
 
+// The artifact a task claims to deliver (an npm export today). Setting it makes
+// the backend read the npm registry and record a delivery state beside the typed
+// status; get_task/list_tasks then expose `deliverableDivergence`.
+const deliverableSchema = z
+	.object({
+		pkg: z
+			.string()
+			.min(1)
+			.max(214)
+			.describe("npm package name, e.g. '@vantageos/widget'"),
+		export: z
+			.string()
+			.min(1)
+			.max(200)
+			.describe("Exported identifier the package must publish, e.g. 'WidgetPanel'"),
+	})
+	.strict()
+	.optional()
+	.describe(
+		"Optional artifact this task delivers. The backend checks the npm registry (latest version) for the named export; get_task then shows deliverableState and deliverableDivergence='delivered-but-open' when it is published while the task is still open.",
+	);
+
 // ─────────────────────────────────────────────────────────────────────────────
 // list_bus — exported description + args schema (PR-A envelope safety)
 // ─────────────────────────────────────────────────────────────────────────────
@@ -4705,6 +4727,7 @@ export function registerTools(
 			createdBy: creatorSchema
 				.optional()
 				.describe(`${creatorSchema.description}${PERSON_DOOR_NOTE}`),
+			deliverable: deliverableSchema,
 		},
 		{
 			readOnlyHint: false,
@@ -4728,6 +4751,7 @@ export function registerTools(
 			estimatedMinutes,
 			dueDate,
 			createdBy,
+			deliverable,
 		}) => {
 			try {
 				const assigneeDenied = await guardDelegation(assignedTo);
@@ -4752,6 +4776,7 @@ export function registerTools(
 						createdBy === undefined
 							? undefined
 							: normalizeOrchestratorId(createdBy),
+					...(deliverable !== undefined ? { deliverable } : {}),
 					...doorScopeArgs("tasks:create", createdBy),
 				});
 
@@ -4885,6 +4910,10 @@ export function registerTools(
 							priority: t.priority,
 							assignedTo: t.assignedTo,
 							...(t.missionId !== undefined ? { missionId: t.missionId } : {}),
+							// Derived by the backend from stored fields; lite carries this one only.
+							...(t.deliverableDivergence !== undefined
+								? { deliverableDivergence: t.deliverableDivergence }
+								: {}),
 						}));
 
 				// Build nextCursor from the SCOPED READ's page: the last row Convex
@@ -5326,6 +5355,7 @@ export function registerTools(
 						"creator (or 'system') may set status='cancelled'; callerOrchestrator " +
 						"must be the creator.",
 				),
+			deliverable: deliverableSchema,
 		},
 		{
 			readOnlyHint: false,
@@ -5353,6 +5383,7 @@ export function registerTools(
 			dueDate,
 			callerOrchestrator,
 			cancelReason,
+			deliverable,
 		}) => {
 			try {
 				const orgDenied = unresolvedOrgDenial("update_task");
@@ -5388,6 +5419,7 @@ export function registerTools(
 					dueDate,
 					callerOrchestrator,
 					cancelReason,
+					...(deliverable !== undefined ? { deliverable } : {}),
 					...doorScopeArgs("tasks:update", callerOrchestrator),
 				});
 

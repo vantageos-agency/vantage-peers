@@ -12,6 +12,7 @@ const crons = cronJobs();
 //   - errorMonitorAutoResolver.autoResolveStaleIrp -> limit:50 (errorMonitorAutoResolver.ts:119)
 //   - tasks.resolveStaleDeployTasks       -> RESOLVE_STALE_DEPLOY_TASKS_SCAN_CAP (tasks.ts)
 //   - issueClosedSweep.sweepIssueClosed   -> SWEEP_MISSION_FANOUT_CAP (issueClosedSweep.ts)
+//   - taskDeliverable.recheckOpenDeliverables -> RECHECK_SCAN_PER_STATUS / RECHECK_MAX_PER_RUN (lib/taskDeliverable.ts)
 
 // Process recurring tasks every 15 minutes
 crons.interval(
@@ -100,6 +101,17 @@ crons.interval(
 	"issue closed sweep",
 	{ hours: 6 },
 	internal.issueClosedSweep.sweepIssueClosed,
+	{},
+);
+
+// Re-resolve open tasks that carry a deliverable ({ pkg, export }) against the
+// npm registry (taskDeliverable.recheckOpenDeliverables): reads at most 300 rows
+// per open status through by_status, schedules at most 100 resolutions per run
+// and skips readings younger than 30 minutes.
+crons.interval( // allow-time-estimate: polling interval — cron config
+	"re-resolve task deliverables",
+	{ hours: 1 },
+	internal.taskDeliverable.recheckOpenDeliverables,
 	{},
 );
 
