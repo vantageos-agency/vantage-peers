@@ -63,6 +63,30 @@
  * the inspected text — reserved for verbatim citation of historical claims,
  * matching the existing hook convention (`enforce-full-ids.py`).
  *
+ * BARE LITERAL REFUSED (Pi ruling, option b — task k17205kc0zy1qfvq20yw35rvzs8ah4jv):
+ *   A live-state literal (PR state, task status, npm dist-tag value) on an
+ *   `evidence:` line is REFUSED when the SAME line carries no command, even
+ *   when the literal is TRUE. A true literal with no command is a conclusion
+ *   that expires the moment its subject changes (.claude/rules/
+ *   a-claim-carries-its-command.md). Two legal forms, both named in the error:
+ *     1. the command that produced it, same line:
+ *          evidence: gh pr view 1584 -R o/r --json state -> MERGED
+ *     2. the token: {{pr:owner/repo#N}} / {{npm:pkg@tag}} / {{task:id}}
+ *   A line that carries a command passes this check and is still verified
+ *   live as before (a FALSE state is still refused). A resolved token
+ *   (`[resolved <ISO instant>]`, appended by `resolveStateTokens`) counts as
+ *   the token form. Command detection is LEXICAL (see COMMAND_RE): it proves
+ *   a command is written on the line, not that it was run.
+ *
+ * ADOPTION COUNTER (operator reads this): every message that reaches the
+ * guard with at least one state line adds to an in-memory total
+ * ({withToken, withCommand, bareLiteralRefused}, since process start) and
+ * writes one stderr line `[fresh-state-guard] adoption ...`. Read it with
+ * `grep "fresh-state-guard\] adoption" ` in the MCP server log (Railway logs);
+ * the last line is the running total. Resets on every deploy/restart. The
+ * pure classifier `countStateEvidenceAdoption(messages)` computes the same
+ * three numbers over any set of message bodies.
+ *
  * WHAT THIS GUARD NEVER TOUCHES: ratios ("788/788"), bare SHAs, unified
  * diffs — no claim grammar, no match. Content with no `evidence:` field, or
  * an `evidence:` field with no recognized claim, passes through unmodified.
@@ -117,6 +141,13 @@ const OVERRIDE_RE = /\/\/\s*allow-stale-state-claim:\s*\S.{5,}/;
 const PR_CLAIM_RE =
 	/\bPR\s*#(\d+)\s*(?:\(([\w.-]+\/[\w.-]+)\))?\s*->\s*(OPEN|MERGED|CLOSED)\b/g;
 
+/**
+ * The command form of a PR claim: `gh pr view 1092 -R o/r --json state -> MERGED`.
+ * Group 1 = number, group 2 = repo (optional), group 3 = the typed state.
+ */
+const GH_PR_CMD_CLAIM_RE =
+	/\bgh\s+pr\s+view\s+(\d+)(?:\s+(?:-R|--repo)\s+([\w.-]+\/[\w.-]+))?[^\n]*?->\s*(OPEN|MERGED|CLOSED)\b/g;
+
 const NPM_CLAIM_RE =
 	/(@?[\w.-]+(?:\/[\w.-]+)?)@([\w.-]+)\s*->\s*([0-9][\w.+-]*)/g;
 
@@ -124,8 +155,123 @@ const TASK_CLAIM_RE =
 	/\btask\s+(k[0-9a-z]{6,32})\s*->\s*(todo|in_progress|review|blocked|done)\b/g;
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Guard error
+// Bare-literal classification (one evidence LINE at a time)
 // ─────────────────────────────────────────────────────────────────────────────
+
+/** A token as the author typed it (before resolution). */
+const RAW_TOKEN_RE = /\{\{(?:pr|npm|task):[^}]+\}\}/;
+
+/** A token as `resolveStateTokens` left it (the resolution instant). */
+const RESOLVED_TOKEN_RE = /\[resolved \d{4}-\d{2}-\d{2}T[\d:.]+Z\]/;
+
+/**
+ * A recognisable invocation. Lexical only: a command word followed by an
+ * argument, or a read-tool call name. It shows a command is WRITTEN on the
+ * line; it cannot show it was run.
+ */
+const COMMAND_RE =
+	/(?<![\w./-])(?:(?:gh|git|npx|curl|node|python3|bun)\s+\S|npm\s+(?:view|dist-tag|info|show)\b|(?:get_task|list_tasks|check_messages|search_tasks_by_keyword|get_mission|list_missions)\b)/;
+
+function hasLiveStateLiteral(line: string): boolean {
+	for (const re of [
+		PR_CLAIM_RE,
+		GH_PR_CMD_CLAIM_RE,
+		NPM_CLAIM_RE,
+		TASK_CLAIM_RE,
+	]) {
+		re.lastIndex = 0;
+		const found = re.test(line);
+		re.lastIndex = 0;
+		if (found) return true;
+	}
+	return false;
+}
+
+type EvidenceLineKind = "token" | "command" | "bare";
+
+/** null when the line asserts no live state and carries no token. */
+function classifyEvidenceLine(line: string): EvidenceLineKind | null {
+	const tokenised = RAW_TOKEN_RE.test(line) || RESOLVED_TOKEN_RE.test(line);
+	if (tokenised) return "token";
+	if (!hasLiveStateLiteral(line)) return null;
+	return COMMAND_RE.test(line) ? "command" : "bare";
+}
+
+export interface StateEvidenceAdoption {
+	withToken: number;
+	withCommand: number;
+	bareLiteralRefused: number;
+}
+
+/**
+ * Pure. Over the `evidence:` lines of the given message bodies, count the
+ * lines that assert live state by form: a token, a command, or a bare
+ * literal (the form the guard refuses). A line with both a token and a
+ * command counts as a token. Lines outside `evidence:` and lines asserting no
+ * live state are not counted.
+ */
+export function countStateEvidenceAdoption(
+	messages: string | readonly string[],
+): StateEvidenceAdoption {
+	const bodies = typeof messages === "string" ? [messages] : messages;
+	const out: StateEvidenceAdoption = {
+		withToken: 0,
+		withCommand: 0,
+		bareLiteralRefused: 0,
+	};
+	for (const body of bodies) {
+		for (const line of evidenceScope(body).split("\n")) {
+			const kind = classifyEvidenceLine(line);
+			if (kind === "token") out.withToken += 1;
+			else if (kind === "command") out.withCommand += 1;
+			else if (kind === "bare") out.bareLiteralRefused += 1;
+		}
+	}
+	return out;
+}
+
+const adoptionTotals: StateEvidenceAdoption = {
+	withToken: 0,
+	withCommand: 0,
+	bareLiteralRefused: 0,
+};
+
+/** Running total since process start (in memory; resets on restart). */
+export function getStateEvidenceAdoption(): StateEvidenceAdoption {
+	return { ...adoptionTotals };
+}
+
+/** Test seam. */
+export function resetStateEvidenceAdoption(): void {
+	adoptionTotals.withToken = 0;
+	adoptionTotals.withCommand = 0;
+	adoptionTotals.bareLiteralRefused = 0;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Guard errors
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Thrown when an `evidence:` line states a live-state literal with no
+ * command on the same line, whether or not the literal is true.
+ */
+export class BareStateLiteralError extends Error {
+	readonly line: string;
+
+	constructor(line: string) {
+		super(
+			`bare live-state literal on an evidence: line — a state with no command is a conclusion that expires, true or not: "${line.trim()}". ` +
+				`Legal form 1: put the command that produced it on the same line, e.g. ` +
+				`\`evidence: gh pr view 1584 -R owner/repo --json state -> MERGED\`. ` +
+				`Legal form 2: use the token, which the server resolves at send time: ` +
+				`{{pr:owner/repo#N}} / {{npm:pkg@tag}} / {{task:id}}. ` +
+				`If this is a verbatim historical citation: \`// allow-stale-state-claim: <reason>\`.`,
+		);
+		this.name = "BareStateLiteralError";
+		this.line = line;
+	}
+}
 
 /**
  * Thrown when a hand-typed claim in `evidence:` contradicts the live
@@ -168,6 +314,8 @@ export interface FreshStateGuardDeps extends StateTokenResolutionDeps {
 	defaultRepo?: string;
 	/** Optional Convex query name override for task status lookups (test seam). */
 	taskQueryName?: string;
+	/** Sink for the adoption log line. Defaults to console.error (stderr). */
+	log?: (message: string) => void;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -180,7 +328,14 @@ async function checkPrClaims(
 	warn: (message: string) => void,
 ): Promise<void> {
 	PR_CLAIM_RE.lastIndex = 0;
-	const matches = [...text.matchAll(PR_CLAIM_RE)];
+	GH_PR_CMD_CLAIM_RE.lastIndex = 0;
+	// One claim per line: the explicit `PR #N (repo) -> STATE` grammar wins,
+	// the `gh pr view` command form is read only on a line without it.
+	const matches: RegExpMatchArray[] = [];
+	for (const line of text.split("\n")) {
+		const explicit = [...line.matchAll(PR_CLAIM_RE)];
+		matches.push(...(explicit.length > 0 ? explicit : [...line.matchAll(GH_PR_CMD_CLAIM_RE)]));
+	}
 	for (const m of matches) {
 		const [, number, repoInClaim, typedState] = m;
 		const repo = repoInClaim ?? deps.defaultRepo;
@@ -383,6 +538,31 @@ export async function guardFreshState(
 
 	const scope = evidenceScope(content);
 	if (!scope.trim()) return;
+
+	// Bare-literal check, before any network call: a refusal that needs no
+	// live read cannot be turned into a pass by an unreachable registry.
+	const log =
+		deps.log ?? ((message: string) => console.error(`[fresh-state-guard] ${message}`));
+	const lines = scope.split("\n");
+	let firstBare: string | undefined;
+	let any = false;
+	for (const line of lines) {
+		const kind = classifyEvidenceLine(line);
+		if (kind === null) continue;
+		any = true;
+		if (kind === "token") adoptionTotals.withToken += 1;
+		else if (kind === "command") adoptionTotals.withCommand += 1;
+		else {
+			adoptionTotals.bareLiteralRefused += 1;
+			firstBare ??= line;
+		}
+	}
+	if (any) {
+		log(
+			`adoption withToken=${adoptionTotals.withToken} withCommand=${adoptionTotals.withCommand} bareLiteralRefused=${adoptionTotals.bareLiteralRefused} (running total since process start)`,
+		);
+	}
+	if (firstBare !== undefined) throw new BareStateLiteralError(firstBare);
 
 	await checkPrClaims(scope, deps, warn);
 	await checkNpmClaims(scope, deps, warn);
