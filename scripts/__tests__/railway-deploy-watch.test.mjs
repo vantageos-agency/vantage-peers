@@ -329,3 +329,31 @@ describe("source grep", () => {
 		expect(hits).toEqual([]);
 	});
 });
+
+describe("a run that judged nothing refuses to judge (exit 2), never green", () => {
+	const allHealth = (h) =>
+		Object.fromEntries(
+			Array.from({ length: 7 }, (_, i) => [`svc-fictive-${i + 1}`, h]),
+		);
+	const cases = [
+		["every /health unreachable", (s) => fleet({ healthCommit: allHealth("unreachable") })],
+		["every deployment mid-flight", () => fleet().map((x, i) => ({ ...x, status: ["DEPLOYING", "QUEUED", "WAITING"][i % 3] }))],
+		["every deployment REMOVED", () => fleet().map((x) => ({ ...x, status: "REMOVED" }))],
+		["no health exposes a commit", () => fleet({ healthCommit: allHealth({ status: "ok" }) })],
+	];
+	for (const [label, build] of cases) {
+		it(`${label} -> exit 2, reasons named, notify called`, async () => {
+			const sent = [];
+			const r = await runWatch({
+				env,
+				fetchImpl: stubFetch(build()),
+				notify: async (b) => sent.push(b),
+				notifyEnabled: true,
+			});
+			expect(r.exitCode).toBe(2);
+			expect(r.report).toMatch(/REFUSING TO JUDGE/);
+			expect(r.report).toMatch(/not judged:/);
+			expect(sent).toHaveLength(1);
+		});
+	}
+});

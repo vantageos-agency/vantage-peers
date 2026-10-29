@@ -149,7 +149,16 @@ export function buildReport(entries) {
 	lines.push(
 		`SUMMARY: ${entries.length} services, ${green.length} ok, ${red.length} RED, ${nj.length} not judged`,
 	);
-	return { exitCode: red.length > 0 ? 1 : 0, report: lines.join("\n") };
+	if (red.length > 0) return { exitCode: 1, report: lines.join("\n") };
+	// A run that judged nothing is not green: zero ok and zero RED with services
+	// listed means every reason above stopped the instrument, so it refuses.
+	if (green.length === 0) {
+		lines.push(
+			`REFUSING TO JUDGE — no service could be judged (${nj.length} not judged, reasons above)`,
+		);
+		return { exitCode: 2, report: lines.join("\n") };
+	}
+	return { exitCode: 0, report: lines.join("\n") };
 }
 
 async function callApi(fetchImpl, token) {
