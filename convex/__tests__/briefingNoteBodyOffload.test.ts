@@ -13,6 +13,9 @@ import { describe, expect, test, vi } from "vitest";
 import { convexTest } from "../../tests/fixtures/convexTestWithServiceAccount";
 import { testClerkOrgId } from "../../tests/fixtures/testClerkOrgId";
 import { api, internal } from "../_generated/api";
+import * as agentsModule from "../agents";
+import * as briefingNotesModule from "../briefingNotes";
+import { BODY_CHUNK_CHARS, previewOf, splitBody } from "../briefingNoteBodies";
 import schema from "../schema";
 
 // The injection seam of the sha-mismatch pole: when `corrupt.on` is set, the
@@ -68,6 +71,10 @@ async function seedOrgs(t: T) {
 				...(kind === undefined ? {} : { orgKind: kind }),
 			});
 		}
+		await ctx.db.insert("memberWriterRoles", {
+			roles: ["org:admin", "org:member"],
+			updatedAt: NOW,
+		});
 		await ctx.db.insert("agents", {
 			orgSlug: "fleet-org",
 			clerkOrgId: testClerkOrgId("fleet-org"),
@@ -274,7 +281,7 @@ describe("reads of an offloaded note", () => {
 			limit: 6,
 		});
 		expect(Array.isArray(rows)).toBe(true);
-		const list = rows as Array<{
+		const list = rows as unknown as Array<{
 			_id: string;
 			content: string;
 			contentTruncated?: boolean;
@@ -325,7 +332,7 @@ describe("reads of an offloaded note", () => {
 		const hit = (await member.query(
 			api.briefingNotes.searchBriefingNotesByKeyword,
 			{ query: "zebrafinch" },
-		)) as Array<{ _id: string; content: string }>;
+		)) as unknown as Array<{ _id: string; content: string }>;
 		expect(hit.map((h) => h._id)).toEqual([id]);
 		expect(hit[0].content).toBe(body);
 		const miss = await member.query(
@@ -341,13 +348,22 @@ describe("reads of an offloaded note", () => {
 		const body = bodyOf(350_000);
 		const id = await seedNote(t, body, { createdBy: "sigma" });
 		await offload(t, id);
-		const page = await t.query(internal.okfBundle._fetchBriefingNotesForBundle, {
-			namespace: "fleet",
-			paginationOpts: { numItems: 50, cursor: null },
-		});
-		const row = page.page.find((r: { _id: string }) => r._id === id) as
-			| { contentTruncated?: boolean }
-			| undefined;
+		const rows: Array<{ _id: string; contentTruncated?: boolean }> = [];
+		let cursor: string | null = null;
+		for (let guard = 0; guard < 10; guard++) {
+			const page: {
+				page: Array<{ _id: string; contentTruncated?: boolean }>;
+				isDone: boolean;
+				continueCursor: string;
+			} = await t.query(internal.okfBundle._fetchBriefingNotesForBundle, {
+				namespace: "project/elpi-corp",
+				paginationOpts: { numItems: 50, cursor },
+			});
+			rows.push(...page.page);
+			if (page.isDone) break;
+			cursor = page.continueCursor;
+		}
+		const row = rows.find((r) => r._id === id);
 		expect(row?.contentTruncated).toBe(true);
 		expect(await t.query(internal.briefingNoteBodies.readBody, { id })).toBe(body);
 	});
@@ -358,13 +374,40 @@ describe("reads of an offloaded note", () => {
 		const body = bodyOf(350_000);
 		const id = await seedNote(t, body, { createdBy: "sigma" });
 		await offload(t, id);
-		const r = await t.query(internal.okfBundle._findBriefingByTitleAndContent, {
-			namespace: "fleet",
+		let found: string | null = null;
+		let cursor: string | null = null;
+		for (let guard = 0; guard < 10 && found === null; guard++) {
+			const r: { id: string | null; isDone: boolean; continueCursor: string } =
+				await t.query(internal.okfBundle._findBriefingByTitleAndContent, {
+					namespace: "project/elpi-corp",
+					title: "big note",
+					content: body,
+					paginationOpts: { numItems: 50, cursor },
+				});
+			found = r.id;
+			if (r.isDone) break;
+			cursor = r.continueCursor;
+		}
+		const r = { id: found };
+		expect(r.id).toBe(id);
+		// Same size, one character different: not the same note.
+		const other = await t.query(internal.okfBundle._findBriefingByTitleAndContent, {
+			namespace: "project/elpi-corp",
 			title: "big note",
-			content: body,
+			content: `${body.slice(0, -1)}!`,
 			paginationOpts: { numItems: 50, cursor: null },
 		});
-		expect(r.id).toBe(id);
+		expect(other.id).toBeNull();
+		const unstampedPhase = await t.query(
+			internal.okfBundle._findBriefingByTitleAndContent,
+			{
+				namespace: "project/elpi-corp",
+				title: "big note",
+				content: `${body.slice(0, -1)}!`,
+				paginationOpts: { numItems: 50, cursor: "O|" },
+			},
+		);
+		expect(unstampedPhase.id).toBeNull();
 	});
 });
 
@@ -507,9 +550,10 @@ describe("agents:registerAgentInOrgById", () => {
 	});
 
 	test("is not a public function", () => {
+		// A public registration has no `isInternal` marker; this one must.
 		expect(
-			(api.agents as Record<string, unknown>).registerAgentInOrgById,
-		).toBeUndefined();
+			(agentsModule.registerAgentInOrgById as { isInternal?: boolean }).isInternal,
+		).toBe(true);
 	});
 });
 
@@ -566,7 +610,35 @@ describe("briefingNotes:deleteTestNoteById", () => {
 
 	test("is not a public function", () => {
 		expect(
-			(api.briefingNotes as Record<string, unknown>).deleteTestNoteById,
-		).toBeUndefined();
+			(briefingNotesModule.deleteTestNoteById as { isInternal?: boolean })
+				.isInternal,
+		).toBe(true);
+	});
+});
+
+describe("splitBody / previewOf", () => {
+	test("chunks join back to the original and none cuts a surrogate pair", () => {
+		// 3 UTF-16 units per repeat: BODY_CHUNK_CHARS is not a multiple of 3, so a
+		// naive slice lands inside a pair.
+		const body = "a\u{1F600}".repeat(Math.ceil((BODY_CHUNK_CHARS * 3) / 3) + 7);
+		const parts = splitBody(body);
+		expect(parts.length).toBeGreaterThan(2);
+		expect(parts.join("")).toBe(body);
+		for (const p of parts) {
+			expect(p.isWellFormed()).toBe(true);
+			expect(p.length).toBeLessThanOrEqual(BODY_CHUNK_CHARS);
+		}
+	});
+
+	test("previewOf is a well-formed prefix", () => {
+		const body = "\u{1F600}".repeat(5_000);
+		const pv = previewOf(body);
+		expect(pv.isWellFormed()).toBe(true);
+		expect(body.startsWith(pv)).toBe(true);
+		expect(pv.length).toBeLessThanOrEqual(4_000);
+	});
+
+	test("an empty body has no chunks", () => {
+		expect(splitBody("")).toEqual([]);
 	});
 });

@@ -178,6 +178,60 @@ export const registerAgent = mutation({
 });
 
 /**
+ * registerAgentInOrgById — OPERATOR DOOR: create an active agent in the organisation
+ * an operator names BY ITS PERMANENT ID.
+ *
+ * Why it exists: `registerAgent` is an org-admin session door and stamps the
+ * caller's own organisation; an operator holding the deployment admin credential
+ * has no such session. This door takes the organisation as an argument, which is
+ * safe ONLY because it is internal: reachable with the deployment admin
+ * credential or from another Convex function, never from a client.
+ *
+ * The slug is derived from `client_org_mapping` by the ID (the `by_clerk_org_id`
+ * index), never typed. No mapping, or an inactive one, is REFUSED (ORG_NOT_FOUND /
+ * ORG_INACTIVE); a name already held in that org is REFUSED by
+ * `assertAgentNameFree` (AGENT_NAME_TAKEN / AGENT_INACTIVE). It writes ONE agents
+ * row and touches no roster (`allowedAgentIds`, `allowedOrchestrators`) and no
+ * credential.
+ *
+ *   npx convex run agents:registerAgentInOrgById '{"clerkOrgId":"org_...","name":"..."}'
+ */
+export const registerAgentInOrgById = internalMutation({
+	args: { clerkOrgId: v.string(), name: v.string() },
+	returns: v.id("agents"),
+	handler: async (ctx, args) => {
+		const mapping = await ctx.db
+			.query("client_org_mapping")
+			.withIndex("by_clerk_org_id", (q) => q.eq("clerkOrgId", args.clerkOrgId))
+			.unique();
+		if (mapping === null) {
+			throw new ConvexError(
+				`ORG_NOT_FOUND: no organisation maps the id ${args.clerkOrgId}; nothing written.`,
+			);
+		}
+		if (!mapping.isActive) {
+			throw new ConvexError(
+				`ORG_INACTIVE: the organisation ${args.clerkOrgId} ("${mapping.clerkOrgSlug}") is not active; nothing written.`,
+			);
+		}
+		assertAgentLabelValid(args.name);
+		await assertAgentNameFree(
+			ctx,
+			{ id: args.clerkOrgId, label: mapping.clerkOrgSlug },
+			args.name,
+		);
+		return await ctx.db.insert("agents", {
+			orgSlug: mapping.clerkOrgSlug,
+			clerkOrgId: args.clerkOrgId,
+			name: args.name,
+			normalizedName: normalizeOrchestratorId(args.name),
+			isActive: true,
+			createdAt: Date.now(),
+		});
+	},
+});
+
+/**
  * setAgentAddress — the write-back path used AFTER an agent deploys. The
  * emitter (P-T3's parent-child edge layer) reads this address as the source
  * for a parent's remote-agent declaration. Gated identically to

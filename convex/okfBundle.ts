@@ -57,6 +57,7 @@ import { creatorValidator, memoryTypeValidator } from "./schema";
 import { taskActorIdFields } from "./lib/actorIds";
 import { clerkOrgIdForSlug } from "./lib/orgClerkId";
 import { stampOfNamespace } from "./lib/memoryTenant";
+import { sha256Hex } from "./briefingNoteBodies";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Constants (ADR D4 + D5) — re-exported for the Node-runtime action.
@@ -284,8 +285,16 @@ export const _fetchBriefingNotesForBundle = internalQuery({
 				: scoped.filter(
 						(r) => (r.updatedAt ?? r.createdAt ?? r._creationTime) >= since,
 					);
+		// An offloaded note's `content` is a PREVIEW (convex/briefingNoteBodies.ts); a
+		// page cannot hold the bodies of many near-1 MiB notes inside one execution.
+		// The row is therefore MARKED `contentTruncated: true` and the export actions
+		// fetch each body whole with `briefingNoteBodies:readBody` before they
+		// serialise it. A preview never reaches a bundle unmarked.
+		const marked = filtered.map((r) =>
+			r.bodyRef === undefined ? r : { ...r, contentTruncated: true as const },
+		);
 		return {
-			page: filtered,
+			page: marked,
 			isDone: result.isDone,
 			continueCursor: result.continueCursor,
 		};
@@ -595,12 +604,21 @@ export const _findBriefingByTitleAndContent = internalQuery({
 					.withIndex("by_orgId", (q) => q.eq("orgId", orgId))
 					.paginate(o),
 		);
-		const hit = result.page.find(
-			(r) =>
-				matchesNamespaceScope(r, namespace, op) &&
-				r.title === title &&
-				r.content === content,
-		);
+		// An offloaded note's `content` is a preview, so it is compared by the sha256
+		// of its whole body (`bodyRef.sha256`), computed over the incoming content once.
+		let contentSha: string | undefined;
+		let hit: (typeof result.page)[number] | undefined;
+		for (const r of result.page) {
+			if (!matchesNamespaceScope(r, namespace, op) || r.title !== title) continue;
+			if (r.bodyRef === undefined) {
+				if (r.content !== content) continue;
+			} else {
+				contentSha ??= await sha256Hex(content);
+				if (r.bodyRef.sha256 !== contentSha) continue;
+			}
+			hit = r;
+			break;
+		}
 		return {
 			id: hit ? hit._id : null,
 			isDone: result.isDone,

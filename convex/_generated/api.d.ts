@@ -13,6 +13,7 @@ import type * as agentCredentials from "../agentCredentials.js";
 import type * as agentLinks from "../agentLinks.js";
 import type * as agentRelations from "../agentRelations.js";
 import type * as agents from "../agents.js";
+import type * as briefingNoteBodies from "../briefingNoteBodies.js";
 import type * as briefingNotes from "../briefingNotes.js";
 import type * as businessUnits from "../businessUnits.js";
 import type * as clientOrgMapping from "../clientOrgMapping.js";
@@ -126,6 +127,7 @@ import type * as migrations_diary_backfill_createdBy from "../migrations/diary_b
 import type * as migrations_drop_orphan_tables from "../migrations/drop_orphan_tables.js";
 import type * as migrations_fleetOrgStamp from "../migrations/fleetOrgStamp.js";
 import type * as migrations_linkServiceAccountAgent from "../migrations/linkServiceAccountAgent.js";
+import type * as migrations_offloadNoteBody from "../migrations/offloadNoteBody.js";
 import type * as migrations_reindexMemoriesByPeriod from "../migrations/reindexMemoriesByPeriod.js";
 import type * as migrations_restamp_clerk_ids from "../migrations/restamp_clerk_ids.js";
 import type * as migrations_seed_client_scope_profiles from "../migrations/seed_client_scope_profiles.js";
@@ -171,6 +173,7 @@ declare const fullApi: ApiFromModules<{
   agentLinks: typeof agentLinks;
   agentRelations: typeof agentRelations;
   agents: typeof agents;
+  briefingNoteBodies: typeof briefingNoteBodies;
   briefingNotes: typeof briefingNotes;
   businessUnits: typeof businessUnits;
   clientOrgMapping: typeof clientOrgMapping;
@@ -284,6 +287,7 @@ declare const fullApi: ApiFromModules<{
   "migrations/drop_orphan_tables": typeof migrations_drop_orphan_tables;
   "migrations/fleetOrgStamp": typeof migrations_fleetOrgStamp;
   "migrations/linkServiceAccountAgent": typeof migrations_linkServiceAccountAgent;
+  "migrations/offloadNoteBody": typeof migrations_offloadNoteBody;
   "migrations/reindexMemoriesByPeriod": typeof migrations_reindexMemoriesByPeriod;
   "migrations/restamp_clerk_ids": typeof migrations_restamp_clerk_ids;
   "migrations/seed_client_scope_profiles": typeof migrations_seed_client_scope_profiles;
