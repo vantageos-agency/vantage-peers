@@ -22,10 +22,14 @@
  * (avoids _generated/api.ts dependency before codegen runs).
  */
 
-import { sha256Hex } from "@vantageos/cloud-identity";
+import {
+	requireSubjectFromIdentity,
+	sha256Hex,
+} from "@vantageos/cloud-identity";
 import { makeFunctionReference } from "convex/server";
-import { ConvexError, v } from "convex/values";
+import { v } from "convex/values";
 import type { ActionCtx, MutationCtx } from "./_generated/server";
+import { relayIdentityRefusal } from "./lib/identityRefusalWire";
 import {
 	internalMutation,
 	internalQuery,
@@ -330,14 +334,16 @@ export const revokeMyBearers = mutation({
 	args: {},
 	returns: v.object({ revoked: v.number() }),
 	handler: async (ctx) => {
-		// write-contract: imperative-only - called from the signed-in webapp's "sign out of the extension" click handler through useMutation(api.credentials.revokeMyBearers); never a subscribing pre-org client shell. The refusal is a raise at an imperative call, never at a render.
 		const identity = await ctx.auth.getUserIdentity();
-		if (identity === null) {
-			throw new ConvexError(
-				`RBAC_DENIED: no authenticated identity presented — ${JSON.stringify({ reason: "no-credential", door: "credentials:revokeMyBearers" })}`,
-			);
-		}
-		return { revoked: await revokeLiveBearers(ctx, identity.subject) };
+		// write-contract: imperative-only - called from the signed-in webapp's "sign out of the extension" click handler through useMutation(api.credentials.revokeMyBearers); never a subscribing pre-org client shell. The refusal is a raise at an imperative call, never at a render.
+		// The subject is the package's to read from the verified identity; an
+		// absent identity is its refusal, relayed to the wire unchanged.
+		const subject = relayIdentityRefusal(() =>
+			requireSubjectFromIdentity(identity, {
+				door: "credentials:revokeMyBearers",
+			}),
+		);
+		return { revoked: await revokeLiveBearers(ctx, subject) };
 	},
 });
 
