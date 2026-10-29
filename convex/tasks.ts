@@ -4328,7 +4328,7 @@ export const listByMission = query({
 		filtered = filtered.slice(0, limit);
 
 		if (lite) return filtered.map(projectTaskLite);
-		return filtered;
+		return filtered.map(withDeliverableDivergence);
 	},
 });
 
@@ -4408,10 +4408,11 @@ export const listOverdue = query({
 				q.lt(q.field("dueDate"), now),
 			),
 		);
-		return await (scopeFilter === undefined
+		const rows = await (scopeFilter === undefined
 			? overdue
 			: overdue.filter(scopeFilter)
 		).take(limit);
+		return rows.map(withDeliverableDivergence);
 	},
 });
 

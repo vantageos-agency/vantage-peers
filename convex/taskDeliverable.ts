@@ -28,6 +28,7 @@ const REGISTRY = "https://registry.npmjs.org";
 const FETCH_TIMEOUT_MS = 20_000;
 const MAX_TARBALL_BYTES = 10 * 1024 * 1024;
 const MAX_UNPACKED_BYTES = 32 * 1024 * 1024;
+const MAX_MANIFEST_BYTES = 2 * 1024 * 1024;
 const REASON_MAX = 240;
 /** Spacing between the resolutions a cron run schedules (registry politeness). */
 const STAGGER_MS = 250;
@@ -38,10 +39,43 @@ function unresolved(reason: string): Reading {
 	return { state: "unresolved", reason: reason.slice(0, REASON_MAX) };
 }
 
+/**
+ * Reads a response body up to `max` bytes, counting what actually arrives (a
+ * missing or false content-length does not bound it). null = over the cap.
+ */
+async function readBodyCapped(res: Response, max: number): Promise<Uint8Array | null> {
+	const reader = res.body?.getReader();
+	if (reader === undefined) {
+		const buf = new Uint8Array(await res.arrayBuffer());
+		return buf.length > max ? null : buf;
+	}
+	const chunks: Uint8Array[] = [];
+	let total = 0;
+	for (;;) {
+		const { done, value } = await reader.read();
+		if (done) break;
+		total += value.length;
+		if (total > max) {
+			await reader.cancel();
+			return null;
+		}
+		chunks.push(value);
+	}
+	const out = new Uint8Array(total);
+	let at = 0;
+	for (const c of chunks) {
+		out.set(c, at);
+		at += c.length;
+	}
+	return out;
+}
+
 async function fetchChecked(url: string): Promise<Response | Reading> {
 	let res: Response;
 	try {
-		res = await fetch(url, { signal: AbortSignal.timeout(FETCH_TIMEOUT_MS) });
+		// redirect "manual": a 3xx is never followed, so the host guard on the URL
+		// string cannot be bypassed by a registry-side redirect.
+		res = await fetch(url, { signal: AbortSignal.timeout(FETCH_TIMEOUT_MS), redirect: "manual" });
 	} catch (err) {
 		return unresolved(`fetch_failed: ${err instanceof Error ? err.message : String(err)}`);
 	}
@@ -58,7 +92,9 @@ async function readDeliverable(pkg: string, name: string): Promise<Reading> {
 	if (!(manifestRes instanceof Response)) return manifestRes;
 	let manifest: Record<string, unknown>;
 	try {
-		const parsed: unknown = await manifestRes.json();
+		const body = await readBodyCapped(manifestRes, MAX_MANIFEST_BYTES);
+		if (body === null) return unresolved("registry_json_too_large");
+		const parsed: unknown = JSON.parse(new TextDecoder().decode(body));
 		if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
 			return unresolved("registry_json_invalid: not an object");
 		}
@@ -87,18 +123,26 @@ async function readDeliverable(pkg: string, name: string): Promise<Reading> {
 	if (declared > MAX_TARBALL_BYTES) return unresolved("tarball_too_large");
 	let files;
 	try {
-		const gz = new Uint8Array(await tarRes.arrayBuffer());
-		if (gz.length > MAX_TARBALL_BYTES) return unresolved("tarball_too_large");
+		const gz = await readBodyCapped(tarRes, MAX_TARBALL_BYTES);
+		if (gz === null) return unresolved("tarball_too_large");
 		const tar = gunzipSync(gz, { maxOutputLength: MAX_UNPACKED_BYTES });
 		files = readTarFiles(new Uint8Array(tar.buffer, tar.byteOffset, tar.byteLength));
 	} catch (err) {
 		return unresolved(`tarball_unreadable: ${err instanceof Error ? err.message : String(err)}`);
 	}
 
-	const check = checkExportPublished(manifest, files, name);
+	let check;
+	try {
+		check = checkExportPublished(manifest, files, name);
+	} catch (err) {
+		return { ...unresolved(`export_check_failed: ${err instanceof Error ? err.message : String(err)}`), version };
+	}
 	if (check.kind === "found") return { state: "delivered", version };
 	if (check.kind === "absent") {
 		return { state: "not_found", version, reason: `export "${name}" not declared by the entry files of ${pkg}@${version}` };
+	}
+	if (check.kind === "incomplete") {
+		return { ...unresolved(`${check.reason} in ${pkg}@${version}`), version };
 	}
 	return { ...unresolved(`no_entry_point_in_tarball of ${pkg}@${version}`), version };
 }
@@ -111,7 +155,14 @@ export const resolveTaskDeliverable = internalAction({
 	},
 	returns: v.null(),
 	handler: async (ctx, args) => {
-		const reading = await readDeliverable(args.pkg, args.export);
+		// ANY throw (not only the named failures) is recorded as unresolved: an
+		// unwritten state leaves the task first in line for every recheck.
+		let reading: Reading;
+		try {
+			reading = await readDeliverable(args.pkg, args.export);
+		} catch (err) {
+			reading = unresolved(`resolver_threw: ${err instanceof Error ? err.message : String(err)}`);
+		}
 		const written: boolean = await ctx.runMutation(
 			internal.taskDeliverableDb.recordDeliverableState,
 			{

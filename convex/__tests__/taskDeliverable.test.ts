@@ -32,6 +32,12 @@ import {
 	seedOrgAgents,
 } from "../../tests/lib/seedFleetAgents";
 
+// Passthrough spy: lets one test make the export check throw.
+vi.mock("../lib/npmExportCheck", async (importOriginal) => {
+	const orig = await importOriginal<typeof import("../lib/npmExportCheck")>();
+	return { ...orig, checkExportPublished: vi.fn(orig.checkExportPublished) };
+});
+
 const modules = Object.fromEntries(
 	Object.entries(import.meta.glob("../**/*.ts")).filter(
 		([path]) =>
@@ -601,5 +607,144 @@ describe("cron: bounded re-resolution of open tasks carrying a deliverable", () 
 		}
 		const scheduled = await t.action(internal.taskDeliverable.recheckOpenDeliverables, {});
 		expect(scheduled).toBe(RECHECK_MAX_PER_RUN);
+	});
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+describe("Eta REVISE (PR #1588): a search that cannot finish is never a negative", () => {
+	async function resolveWith(
+		files: Record<string, string>,
+		manifest?: Record<string, unknown>,
+	) {
+		const t = createT();
+		await seedFleetAgents(t, ["eta"]);
+		const id = await seedRow(t, { deliverable: DELIVERABLE });
+		stubRegistry({ pkg: DELIVERABLE.pkg, files, manifest });
+		await t.action(internal.taskDeliverable.resolveTaskDeliverable, {
+			taskId: id,
+			pkg: DELIVERABLE.pkg,
+			export: DELIVERABLE.export,
+		});
+		return (await t.run(async (ctx) => ctx.db.get(id)))?.deliverableState;
+	}
+
+	test("BLOCKER 1: a re-export graph larger than the visit cap -> unresolved visit_cap_reached, NOT not_found", async () => {
+		const files: Record<string, string> = { "index.d.ts": 'export * from "./f0";\n' };
+		for (let i = 0; i < 450; i++) {
+			files[`f${i}.d.ts`] = `export * from "./f${i + 1}";\n`;
+		}
+		files["f450.d.ts"] = "export declare const Other: number;\n";
+		const state = await resolveWith(files);
+		expect(state?.state).toBe("unresolved");
+		expect(state?.reason).toMatch(/visit_cap_reached/);
+	});
+
+	test("BLOCKER 1 control: a graph under the cap that really lacks the name is still not_found", async () => {
+		const files: Record<string, string> = { "index.d.ts": 'export * from "./f0";\n' };
+		for (let i = 0; i < 50; i++) files[`f${i}.d.ts`] = `export * from "./f${i + 1}";\n`;
+		files["f50.d.ts"] = "export declare const Other: number;\n";
+		expect((await resolveWith(files))?.state).toBe("not_found");
+	});
+
+	test("BLOCKER 2: a pathological comment run inside the cap is read in linear time", async () => {
+		const evil = "/*a".repeat(60000); // 180 KB, unclosed block comments
+		const started = performance.now();
+		const state = await resolveWith({ "index.d.ts": `${evil}\nexport declare const Other: number;\n` });
+		const elapsed = performance.now() - started;
+		// quadratic version: 120 KB -> ~1 s, 180 KB -> ~2.3 s on the reviewer's host
+		expect(elapsed).toBeLessThan(1000);
+		expect(state?.state).toBe("not_found"); // the file was fully read: a comment swallows the rest
+	});
+
+	test("BLOCKER 2: unclosed `export {` runs inside the cap are read in linear time (was 5.9 s at 192 KB)", async () => {
+		const started = performance.now();
+		const state = await resolveWith({ "index.d.ts": "export {".repeat(24000) });
+		expect(performance.now() - started).toBeLessThan(1000);
+		expect(state?.state).toBe("not_found");
+	});
+
+	test("BLOCKER 2: a file over the scan cap -> unresolved scan_cap_reached within a time bound", async () => {
+		const started = performance.now();
+		const state = await resolveWith({ "index.d.ts": "/*a".repeat(200000) });
+		expect(performance.now() - started).toBeLessThan(2000);
+		expect(state?.state).toBe("unresolved");
+		expect(state?.reason).toMatch(/scan_cap_reached/);
+	});
+
+	test("BLOCKER 3: ANY throw in the export check writes unresolved with the error named", async () => {
+		const mod = await import("../lib/npmExportCheck");
+		vi.mocked(mod.checkExportPublished).mockImplementationOnce(() => {
+			throw new Error("boom-in-check");
+		});
+		const state = await resolveWith({
+			"index.d.ts": "export declare const WidgetPanel: number;\n",
+		});
+		expect(state?.state).toBe("unresolved");
+		expect(state?.reason).toMatch(/export_check_failed: boom-in-check/);
+		expect(typeof state?.checkedAt).toBe("number");
+	});
+
+	test("correction: a body with no content-length that exceeds the cap is cut -> unresolved tarball_too_large", async () => {
+		const t = createT();
+		await seedFleetAgents(t, ["eta"]);
+		const id = await seedRow(t, { deliverable: DELIVERABLE });
+		const tarball = `${REGISTRY}/${DELIVERABLE.pkg}/-/pkg-1.0.0.tgz`;
+		vi.stubGlobal(
+			"fetch",
+			vi.fn(async (u: unknown) =>
+				String(u).endsWith("/latest")
+					? new Response(JSON.stringify({ version: "1.0.0", dist: { tarball } }))
+					: new Response(Buffer.alloc(11 * 1024 * 1024, 1)),
+			),
+		);
+		await t.action(internal.taskDeliverable.resolveTaskDeliverable, {
+			taskId: id,
+			pkg: DELIVERABLE.pkg,
+			export: DELIVERABLE.export,
+		});
+		const state = (await t.run(async (ctx) => ctx.db.get(id)))?.deliverableState;
+		expect(state?.state).toBe("unresolved");
+		expect(state?.reason).toMatch(/tarball_too_large/);
+	});
+
+	test("correction: a redirect is not followed -> unresolved registry_http_302", async () => {
+		const t = createT();
+		await seedFleetAgents(t, ["eta"]);
+		const id = await seedRow(t, { deliverable: DELIVERABLE });
+		const fetchMock = vi.fn(
+			async () => new Response(null, { status: 302, headers: { location: "http://169.254.169.254/" } }),
+		);
+		vi.stubGlobal("fetch", fetchMock);
+		await t.action(internal.taskDeliverable.resolveTaskDeliverable, {
+			taskId: id,
+			pkg: DELIVERABLE.pkg,
+			export: DELIVERABLE.export,
+		});
+		const state = (await t.run(async (ctx) => ctx.db.get(id)))?.deliverableState;
+		expect(state?.reason).toMatch(/registry_http_302/);
+		expect((fetchMock.mock.calls as unknown as Array<[unknown, RequestInit]>)[0]?.[1]?.redirect).toBe("manual");
+	});
+
+	test("correction: a name only under a subpath export ('./internal') is not delivered", async () => {
+		const state = await resolveWith(
+			{
+				"index.d.ts": "export declare const Other: number;\n",
+				"internal.d.ts": "export declare const WidgetPanel: number;\n",
+			},
+			{ exports: { ".": { types: "./index.d.ts" }, "./internal": { types: "./internal.d.ts" } } },
+		);
+		expect(state?.state).toBe("not_found");
+	});
+
+	test("correction: listOverdue carries the derived divergence like get/list", async () => {
+		const t = createT();
+		await seedFleetAgents(t, ["eta"]);
+		const id = await seedRow(t, {
+			deliverable: DELIVERABLE,
+			deliverableState: FRESH_STATE,
+			dueDate: 1,
+		});
+		const rows = (await t.query(api.tasks.listOverdue, {})) as Array<Record<string, unknown>>;
+		expect(rows.find((r) => r._id === id)?.deliverableDivergence).toBe("delivered-but-open");
 	});
 });
