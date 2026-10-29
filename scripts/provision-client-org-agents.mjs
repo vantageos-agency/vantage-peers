@@ -16,10 +16,12 @@
  * PER AGENT (idempotent on the registry side; a seat bearer is re-minted each run):
  *   1. oauth_clients row (service account, oauth:createClient), secret hash only
  *   2. refresh + access token (service account), access TTL = --ttl-days
- *   3. agents row + agent credential (org-admin JWT of THIS org, by ID)
+ *   3. agents row + agent credential (org-admin JWT minted for THIS org, its org_id claim
+ *      verified equal to --clerk-org-id before any write; mismatch exits 1, nothing registered)
+ *   4. prints the agents:setAgentOwner command (internal mutation: operator step, deploy key)
  *   writes <stage-dir>/<agent>.bearer and <agent>.secret (0600); prints no secret.
  *
- * Env (gitignored .env.local): CONVEX_URL, CLERK_SECRET_KEY,
+ * Env (gitignored .env.local): CONVEX_URL, (optional) CLERK_DOMAIN, CLERK_ORG_ADMIN_JWT_TEMPLATE (default convex), CLERK_SECRET_KEY,
  * CLERK_SERVICE_ACCOUNT_USER_ID_VANTAGE_PEERS, CLERK_ORG_ADMIN_USER_ID_VANTAGE_PEERS.
  */
 import { createHash, randomBytes } from "node:crypto";
@@ -30,6 +32,7 @@ import { fileURLToPath } from "node:url";
 import { ConvexHttpClient } from "convex/browser";
 import { getScopedUserToken } from "../mcp-server/src/serviceAccountAuth.ts";
 import { api } from "../convex/_generated/api.js";
+import { mintOrgAdminToken, ownerStepCommand } from "./lib/org-admin-token.mjs";
 import { agentRowByLabel } from "./lib/station-agents.mjs";
 
 const argv = process.argv.slice(2);
@@ -98,7 +101,26 @@ const writeSecret = (name, value) => {
 const svc = new ConvexHttpClient(process.env.CONVEX_URL);
 svc.setAuth(await getScopedUserToken(process.env.CLERK_SERVICE_ACCOUNT_USER_ID_VANTAGE_PEERS));
 const admin = new ConvexHttpClient(process.env.CONVEX_URL);
-admin.setAuth(await getScopedUserToken(process.env.CLERK_ORG_ADMIN_USER_ID_VANTAGE_PEERS, clerkOrgId));
+const adminUserId = process.env.CLERK_ORG_ADMIN_USER_ID_VANTAGE_PEERS;
+// The agent registry takes its org from the token's org_id. The token is minted FOR the requested
+// org and its org_id claim is checked here, before any write of any kind (seat or registry).
+// A mismatch exits non-zero naming both ids with nothing registered.
+if (!seatOnly) {
+	try {
+		const tok = await mintOrgAdminToken({
+			userId: adminUserId,
+			orgId: clerkOrgId,
+			secretKey: process.env.CLERK_SECRET_KEY,
+			domain: process.env.CLERK_DOMAIN,
+			template: process.env.CLERK_ORG_ADMIN_JWT_TEMPLATE || "convex",
+		});
+		admin.setAuth(tok.jwt);
+		console.log(`org-admin token verified: org_id = ${clerkOrgId}`);
+	} catch (e) {
+		console.error(e instanceof Error ? e.message : String(e));
+		process.exit(1);
+	}
+}
 
 const mapping = await svc.query(api.clientOrgMapping.getByClerkSlug, { orgSlug: org });
 if (!mapping || mapping.isActive !== true) throw new Error(`ORG_NOT_READY: no active client_org_mapping for ${org}`);
@@ -106,6 +128,7 @@ const missing = seatOnly ? [] : agents.filter((a) => !(mapping.allowedOrchestrat
 if (missing.length) throw new Error(`ROSTER_MISSING: ${missing.join(",")} not in ${org}'s allowedOrchestrators`);
 
 const now = Date.now();
+const registeredIds = [];
 for (const agent of agents) {
 	const profileId = `${agent}-${org}`;
 	const ns = [`orchestrator/${agent}`, `project/${org}`];
@@ -156,6 +179,7 @@ for (const agent of agents) {
 		const agentId = await admin.mutation(api.agents.registerAgent, { name: agent, description: `Agent ${agent} of ${org}` });
 		row = await admin.query(api.agents.getAgent, { agentId });
 	}
+	registeredIds.push(row._id);
 	let secretPath = join(stage, `${agent}.secret`);
 	if (!existsSync(secretPath)) {
 		const { secret } = await admin.mutation(api.agentCredentials.mintAgentCredential, { agentId: row._id });
@@ -164,5 +188,12 @@ for (const agent of agents) {
 	console.log(
 		`${agent}: client=${clientId} profile=${profileId} access expires ${new Date(expiresAt).toISOString()} agent=${row?._id} -> ${bearerPath}, ${secretPath}`,
 	);
+}
+if (registeredIds.length) {
+	// agentCredentials resolve an agent only when agents.ownerPersonId is set, and neither
+	// registerAgent nor mintAgentCredential sets it. agents:setAgentOwner is an internalMutation:
+	// the org-admin JWT cannot call it, so this script cannot either. The operator runs it.
+	console.log("OWNER_STEP_REQUIRED: set the owner of the registered agents, or every agent credential is refused (AGENT_CREDENTIAL_INVALID).");
+	console.log(`  ${ownerStepCommand({ agentIds: registeredIds, ownerPersonId: adminUserId, org })}`);
 }
 console.log("DONE. No secret value was printed.");
