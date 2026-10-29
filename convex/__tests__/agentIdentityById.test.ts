@@ -756,3 +756,91 @@ describe("M8 5. the organisation and the authority come from the verified sessio
 		}
 	});
 });
+
+describe("M8 6. slug reuse: a second organisation carrying the same slug never reaches the first's rows", () => {
+	/**
+	 * Org A once held the slug "shared" and was renamed away; org B now holds it.
+	 * A's agents and edge are still stamped orgSlug "shared" but carry A's org id.
+	 */
+	async function reusedSlug() {
+		const t = createT();
+		await t.run(async (ctx) => {
+			await ctx.db.insert("client_org_mapping", {
+				clerkOrgSlug: "org-a-renamed",
+				clerkOrgId: testClerkOrgId("org-a"),
+				allowedOrchestrators: [],
+				scopes: ["view-own-tasks"],
+				displayName: "A",
+				isActive: true,
+				createdAt: 1,
+			});
+		});
+		await seedOrg(t, "shared"); // org B, id testClerkOrgId("shared")
+		const aRows = await t.run(async (ctx) => {
+			const row = (name: string) =>
+				ctx.db.insert("agents", {
+					orgSlug: "shared",
+					clerkOrgId: testClerkOrgId("org-a"),
+					name,
+					normalizedName: name,
+					isActive: true,
+					createdAt: 1,
+				});
+			const p = await row("p");
+			const c = await row("c");
+			await row("zed");
+			const edge = await ctx.db.insert("agent_relations", {
+				orgSlug: "shared",
+				clerkOrgId: testClerkOrgId("org-a"),
+				parentName: "p",
+				childName: "c",
+				createdAt: 1,
+			});
+			return { p, c, edge };
+		});
+		const b = adminOf(t, "shared");
+		const bp = await b.mutation(api.agents.registerAgent, { name: "p" });
+		const bc = await b.mutation(api.agents.registerAgent, { name: "c" });
+		return { t, b, bp, bc, ...aRows };
+	}
+
+	test("agents: B lists only its own agents, and a label held only by A does not block or reveal itself to B", async () => {
+		const { t, b, bp, bc } = await reusedSlug();
+		const listed = await b.query(api.agents.listAgentsByOrg, {});
+		expect(listed.map((r) => r._id).sort()).toEqual([bp, bc].sort());
+		const zed = await b.mutation(api.agents.registerAgent, { name: "zed" });
+		const row = await t.run((ctx) => ctx.db.get(zed));
+		expect(row?.clerkOrgId).toBe(testClerkOrgId("shared"));
+		// B's own clash is still refused, naming B's row
+		const clash = await codeOf(b.mutation(api.agents.registerAgent, { name: "P" }));
+		expect(clash).toMatch(/^AGENT_NAME_TAKEN/);
+		expect(clash).toContain(bp);
+	});
+
+	test("edges: B neither lists, counts, links onto nor deletes A's edge", async () => {
+		const { t, b, bp, bc, edge } = await reusedSlug();
+		expect(await b.query(api.agentRelations.graphByOrg, {})).toEqual({ nodes: [], edges: [] });
+		expect(await b.query(api.agentRelations.childrenOf, { parentAgentId: bp })).toEqual([]);
+		expect(await b.query(api.agentRelations.parentsOf, { childAgentId: bc })).toEqual([]);
+		// B's unlink of its own (absent) edge leaves A's untouched
+		await b.mutation(api.agentRelations.unlinkChild, { parentAgentId: bp, childAgentId: bc });
+		expect(await t.run((ctx) => ctx.db.get(edge))).not.toBeNull();
+		// B's link creates B's own edge, never returns A's
+		const mine = await b.mutation(api.agentRelations.linkChild, { parentAgentId: bp, childAgentId: bc });
+		expect(mine).not.toBe(edge);
+		expect((await t.run((ctx) => ctx.db.get(mine)))?.clerkOrgId).toBe(testClerkOrgId("shared"));
+		expect((await b.query(api.agentRelations.graphByOrg, {})).edges).toHaveLength(1);
+		// B deleting its edge still leaves A's
+		await b.mutation(api.agentRelations.unlinkChild, { parentAgentId: bp, childAgentId: bc });
+		expect(await t.run((ctx) => ctx.db.get(edge))).not.toBeNull();
+		expect(await t.run((ctx) => ctx.db.get(mine))).toBeNull();
+	});
+
+	test("rename: B renaming its agent never rewrites A's edge labels", async () => {
+		const { t, b, bp, edge } = await reusedSlug();
+		await b.mutation(api.agents.renameAgent, { agentId: bp, newName: "p2" });
+		const a = await t.run((ctx) => ctx.db.get(edge));
+		expect(a?.parentName).toBe("p");
+		expect(a?.childName).toBe("c");
+	});
+});
