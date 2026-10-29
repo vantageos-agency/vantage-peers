@@ -519,6 +519,26 @@ describe("a damaged stored body is a refusal, never a partial", () => {
 			asOrg(t, "acme-hr").query(api.briefingNotes.get, { noteId: id }),
 		).rejects.toThrow(/BODY_CHUNKS_CORRUPT/);
 	});
+
+	test("get raises BODY_CHUNKS_CORRUPT when the chunks are out of order (same count, same bytes)", async () => {
+		const t = createT();
+		await seedOrgs(t);
+		const id = await seedNote(t, bodyOf(350_000));
+		await offload(t, id);
+		await t.run(async (ctx) => {
+			const rows = await ctx.db
+				.query("briefingNoteBodyChunks")
+				.withIndex("by_note_idx", (q) => q.eq("noteId", id))
+				.collect();
+			expect(rows.length).toBeGreaterThan(2);
+			// Renumber the first chunk past the last: the count and the byte length are
+			// unchanged, only the order is wrong, so the idx check alone must refuse.
+			await ctx.db.patch(rows[0]._id, { idx: rows.length + 5 });
+		});
+		await expect(
+			asOrg(t, "acme-hr").query(api.briefingNotes.get, { noteId: id }),
+		).rejects.toThrow(/BODY_CHUNKS_CORRUPT/);
+	});
 });
 
 describe("agents:registerAgentInOrgById", () => {
