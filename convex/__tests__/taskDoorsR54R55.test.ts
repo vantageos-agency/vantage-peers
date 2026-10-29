@@ -205,6 +205,61 @@ describe("R-54 -- the claimless service account is refused at five task doors", 
 		expect(served.map((r) => r.title)).toEqual(["fleet-late"]);
 	});
 
+	test("verifiedActor from a CLIENT org, no verifiedOrg -- REFUSED at listPaginated and listOverdue; the operator agent is served", async () => {
+		const t = createT();
+		await twoOrgs(t);
+		const fleet = await seedFleetAgents(t, ["sigma"]);
+		const operator = await t.run(async (ctx) => {
+			const rows = await ctx.db.query("client_org_mapping").collect();
+			return rows.find((m) => m.orgKind === "operator")?.clerkOrgSlug as string;
+		});
+		const clientAgentId = await t.run(async (ctx) => {
+			const rows = await ctx.db.query("agents").collect();
+			return rows.find((a) => a.orgSlug === "org-a" && a.name === "sigma")
+				?._id as Id<"agents">;
+		});
+		await seedRow(t, { title: "a-1", orgId: "org-a", dueDate: PAST });
+		await seedRow(t, { title: "b-1", orgId: "org-b", dueDate: PAST });
+		await seedRow(t, { title: "fleet-1", dueDate: PAST });
+		const clientActor = { agentId: clientAgentId, orgSlug: "org-a" };
+		const operatorActor = { agentId: fleet.sigma, orgSlug: operator };
+		const DENIED = /RBAC_DENIED/;
+
+		let leaked: unknown;
+		await expect(
+			asService(t)
+				.query(api.tasks.listPaginated, {
+					paginationOpts: PAGE(10),
+					verifiedActor: clientActor,
+				})
+				.then((r) => {
+					leaked = r;
+					return r;
+				}),
+		).rejects.toThrow(DENIED);
+		expect(leaked).toBeUndefined();
+		await expect(
+			asService(t)
+				.query(api.tasks.listOverdue, { verifiedActor: clientActor })
+				.then((r) => {
+					leaked = r;
+					return r;
+				}),
+		).rejects.toThrow(DENIED);
+		expect(leaked).toBeUndefined();
+
+		// control: the operator-org agent, same call shape, is served
+		const page = await asService(t).query(api.tasks.listPaginated, {
+			paginationOpts: PAGE(10),
+			verifiedActor: operatorActor,
+		});
+		expect(page.page.map((r) => r.title).sort()).toEqual(["a-1", "b-1", "fleet-1"]);
+		const overdue = await asService(t).query(api.tasks.listOverdue, {
+			verifiedActor: operatorActor,
+		});
+		expect(overdue.map((r) => r.title).sort()).toEqual(["a-1", "b-1", "fleet-1"]);
+	});
+
 	test("attachReviewArtifact -- a verified agent attaches inside its own organisation only", async () => {
 		const t = createT();
 		await twoOrgs(t);
