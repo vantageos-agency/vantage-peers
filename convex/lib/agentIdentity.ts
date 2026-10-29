@@ -99,29 +99,6 @@ export async function resolveSessionCaller(
 }
 
 /**
- * requireOrgEcho — EXPAND step of dropping `orgSlug` from the registry doors. A
- * door still accepts `orgSlug` as an optional ECHO of the verified session's org
- * slug (the live dashboard sends it): it never selects or authorises anything,
- * and when present it must equal the slug of the organisation the package
- * resolved from the session, or the call is refused with reason
- * `org-argument-mismatch` (a refusal, never an absence). Absent is served from
- * the session. The contract step removes the argument.
- */
-export function requireOrgEcho(
-	caller: SessionCaller,
-	echoed: string | undefined,
-	door: string,
-): void {
-	if (echoed === undefined || echoed === caller.org.label) return;
-	throw refusalError({
-		code: "RBAC_DENIED",
-		reason: "org-argument-mismatch" as IdentityRefusal["reason"],
-		door,
-		detail: "The organisation named in the call is not the organisation of the session.",
-	});
-}
-
-/**
  * loadAgentOfPrincipalOrg — the `agents` row an ID names, or null when the ID
  * names no row (an absence). A row that exists in ANOTHER organisation is
  * REFUSED by `assertTargetBelongsTo` comparing stored organisation IDs, never

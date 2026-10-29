@@ -5,7 +5,6 @@ import { type MutationCtx, type QueryCtx, mutation, query } from "./_generated/s
 import {
 	anonymousRefusal,
 	loadAgentOfPrincipalOrg,
-	requireOrgEcho,
 	resolveSessionCaller,
 	type SessionCaller,
 } from "./lib/agentIdentity";
@@ -95,6 +94,7 @@ const graphEdgeValidator = v.object({
  */
 export const linkChild = mutation({
 	args: {
+		// deprecated, ignored: removed at the contract step after the dashboard stops sending it (task k17dcydcvcdzh1gp1zd1ebt23s8fyjde)
 		orgSlug: v.optional(v.string()),
 		parentAgentId: v.id("agents"),
 		childAgentId: v.id("agents"),
@@ -116,7 +116,6 @@ export const linkChild = mutation({
 			if (caller.subject === undefined) throw anonymousRefusal(door);
 			throw refusalError(caller.refusal);
 		}
-		requireOrgEcho(caller, args.orgSlug, door);
 		const admin = assertOrgAdmin(caller.principal, caller.org.id, {
 			adminRoles: ORG_ADMIN_ROLES,
 			door: door,
@@ -160,6 +159,7 @@ export const linkChild = mutation({
  */
 export const unlinkChild = mutation({
 	args: {
+		// deprecated, ignored: removed at the contract step after the dashboard stops sending it (task k17dcydcvcdzh1gp1zd1ebt23s8fyjde)
 		orgSlug: v.optional(v.string()),
 		parentAgentId: v.id("agents"),
 		childAgentId: v.id("agents"),
@@ -169,7 +169,6 @@ export const unlinkChild = mutation({
 		// write-contract: no caller outside convex-test — 0 call sites in mcp-server (grep of "agentRelations:unlinkChild" under mcp-server/src and mcp-server/server-http.ts) and 0 hits in vantage-peers-dashboard {app,components,hooks,lib,contexts,providers} (measured 2026-10-01 at origin/main e2dc58f and 0466fac); callers are convex/__tests__ only. No subscribing pre-org client shell can reach it; the no-org throw is a refusal at an imperative SDK call, never at a render.
 		const door = "agentRelations:unlinkChild";
 		const caller = await resolveSessionCaller(ctx, door);
-		requireOrgEcho(caller, args.orgSlug, door);
 		const admin = assertOrgAdmin(caller.principal, caller.org.id, {
 			adminRoles: ORG_ADMIN_ROLES,
 			door: door,
@@ -204,6 +203,7 @@ export const unlinkChild = mutation({
  * org A's agent by ID is REFUSED (RBAC_DENIED), never silently emptied.
  */
 export const childrenOf = query({
+	// deprecated, ignored: removed at the contract step after the dashboard stops sending it (task k17dcydcvcdzh1gp1zd1ebt23s8fyjde)
 	args: { orgSlug: v.optional(v.string()), parentAgentId: v.id("agents") },
 	returns: v.array(edgeReturnValidator),
 	handler: async (ctx, args) => {
@@ -212,7 +212,6 @@ export const childrenOf = query({
 		// (vantage-peers-dashboard e2dc58f and 0466fac). The refusal stays a RAISE: `resolveSessionCaller` throws RBAC_DENIED for the anonymous, the no-organisation and the wrong-organisation caller alike, and no render exists for a throw to crash.
 		const door = "agentRelations:childrenOf";
 		const caller = await resolveSessionCaller(ctx, door);
-		requireOrgEcho(caller, args.orgSlug, door);
 		const admin = assertOrgAdmin(caller.principal, caller.org.id, {
 			adminRoles: ORG_ADMIN_ROLES,
 			door: door,
@@ -241,6 +240,7 @@ export const childrenOf = query({
  * session (`resolveSessionCaller` + `assertOrgAdmin`).
  */
 export const parentsOf = query({
+	// deprecated, ignored: removed at the contract step after the dashboard stops sending it (task k17dcydcvcdzh1gp1zd1ebt23s8fyjde)
 	args: { orgSlug: v.optional(v.string()), childAgentId: v.id("agents") },
 	returns: v.array(edgeReturnValidator),
 	handler: async (ctx, args) => {
@@ -249,7 +249,6 @@ export const parentsOf = query({
 		// (vantage-peers-dashboard e2dc58f and 0466fac). The refusal stays a RAISE: `resolveSessionCaller` throws RBAC_DENIED for the anonymous, the no-organisation and the wrong-organisation caller alike, and no render exists for a throw to crash.
 		const door = "agentRelations:parentsOf";
 		const caller = await resolveSessionCaller(ctx, door);
-		requireOrgEcho(caller, args.orgSlug, door);
 		const admin = assertOrgAdmin(caller.principal, caller.org.id, {
 			adminRoles: ORG_ADMIN_ROLES,
 			door: door,
@@ -280,6 +279,7 @@ export const parentsOf = query({
  * session (`resolveSessionCaller` + `assertOrgAdmin`).
  */
 export const graphByOrg = query({
+	// deprecated, ignored: removed at the contract step after the dashboard stops sending it (task k17dcydcvcdzh1gp1zd1ebt23s8fyjde)
 	args: { orgSlug: v.optional(v.string()) },
 	returns: v.object({
 		nodes: v.array(graphNodeValidator),
@@ -290,7 +290,6 @@ export const graphByOrg = query({
 		// `git -C /root/coding/vantage-peers-dashboard grep -nE "api\.agentRelations\." {origin/main,0466fac} -- app components hooks lib contexts providers` -> 0 hits at both commits
 		// (vantage-peers-dashboard e2dc58f and 0466fac). The refusal stays a RAISE: `resolveSessionCaller` throws RBAC_DENIED for the anonymous, the no-organisation and the wrong-organisation caller alike, and no render exists for a throw to crash.
 		const caller = await resolveSessionCaller(ctx, "agentRelations:graphByOrg");
-		requireOrgEcho(caller, args.orgSlug, "agentRelations:graphByOrg");
 		const admin = assertOrgAdmin(caller.principal, caller.org.id, {
 			adminRoles: ORG_ADMIN_ROLES,
 			door: "agentRelations:graphByOrg",
