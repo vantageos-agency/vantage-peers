@@ -53,7 +53,7 @@
  * input, uncertified evidence, an underivable or mismatched doctor version, a baseline with
  * no doctorVersion, FALLBACK, a dirty tree, an unresolvable --main-ref, a failing git grep).
  *
- * LAST line: `RATCHET: <sha> CR-2=.. R-5=.. R-53=.. R-54=.. R-55=.. R-56=.. M-allow-local-identity=..
+ * LAST line: `RATCHET: <sha> CR-2=.. R-5=.. R-53=.. R-54=.. R-55=.. R-56=.. [every other ratcheted key, e.g. CR-3=..] M-allow-local-identity=..
  * M-fleet-wide=.. M-oracle-justified=.. rise=<n>`, followed by ` raised=<names>` when a marker rose.
  */
 import { execFileSync } from "node:child_process";
@@ -462,6 +462,10 @@ if (!failed) {
 // + markers whose head count exceeds main's.
 // raised= (only when a marker rose) names every risen rule, then every risen marker.
 const SIX = ["CR-2", "R-5", "R-53", "R-54", "R-55", "R-56"];
+// Every ratcheted key is printed: the historical six first (stable for readers of
+// older lines), then any other key of the baseline or the evidence (e.g. CR-3),
+// sorted. A gate that reads this line must never meet a key spliced in by hand.
+const lineKeys = [...SIX, ...rules.filter((r) => !SIX.includes(r))];
 const risenRules = rules.filter(
 	(r) => (measured[r] ?? 0) > (reference[r] ?? 0),
 );
@@ -472,7 +476,7 @@ const risen = [...risenRules, ...risenMarkers];
 const raisedSuffix =
 	risenMarkers.length > 0 ? ` raised=${risen.join(",")}` : "";
 console.log(
-	`RATCHET: ${evidence.sha ?? "unknown"} ${SIX.map((r) => `${r}=${measured[r] ?? 0}`).join(" ")} ${markerCounts
+	`RATCHET: ${evidence.sha ?? "unknown"} ${lineKeys.map((r) => `${r}=${measured[r] ?? 0}`).join(" ")} ${markerCounts
 		.map((m) => `${m.name}=${m.head}`)
 		.join(" ")} rise=${risen.length}${raisedSuffix}`,
 );
