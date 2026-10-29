@@ -23,13 +23,51 @@ import { internalMutation, internalQuery, mutation } from "./_generated/server";
 import { assertOrgArgs } from "./kbShared";
 import { sha256Hex } from "@vantageos/cloud-identity";
 import {
+	actionOrgScopeValidator,
 	isNamespaceAllowedForScope,
+	type OrgScope,
+	projectActionOrgScope,
 	refuseStorageOwnership,
 	requireResolvedCaller,
 	requireTenantNamespace,
 	withOrgScope,
 } from "./lib/auth";
 import { stampOfNamespace } from "./lib/memoryTenant";
+import {
+	resolveVerifiedOrgScope,
+	verifiedOrgValidator,
+} from "./lib/verifiedOrg";
+
+// ─────────────────────────────────────────────────────────────────────────────
+// resolveKbCallerScope -- the scope bridge of the KB actions when the MCP
+// transport carries the bearer's `verifiedOrg`.
+//
+// A client seat reaches Convex as the fleet service account, so the plain
+// bridge (`resolveOrgScopeForAction`) resolves it master with no organisation
+// and a KB action could not tell which org the seat is. With the transport's
+// `verifiedOrg` the bridge answers with the ORDINARY MEMBER scope of that
+// (active) organisation, exactly as the mutation doors below do through
+// `resolveVerifiedOrgScope`: believed from the service account only, refused
+// (RBAC_DENIED) from anyone else or for an inactive org. It widens nothing.
+// ─────────────────────────────────────────────────────────────────────────────
+
+export const resolveKbCallerScope = internalQuery({
+	args: { verifiedOrg: verifiedOrgValidator, door: v.string() },
+	returns: actionOrgScopeValidator,
+	handler: async (ctx, args) => {
+		const transport = await withOrgScope(ctx, {
+			refuseWithoutThrow: true,
+			operatorAsMember: true,
+		});
+		const scope = await resolveVerifiedOrgScope(
+			ctx,
+			transport,
+			args.verifiedOrg,
+			args.door,
+		);
+		return projectActionOrgScope(scope);
+	},
+});
 
 // ─────────────────────────────────────────────────────────────────────────────
 // bindOrAssertStorageOwnership — TOFU org-binding guard (M1 defense-in-depth)
@@ -211,11 +249,18 @@ export const generateUploadUrl = mutation({
 	args: {
 		orgId: v.string(),
 		namespace: v.string(),
+		// The org the MCP transport verified for a seat bearer (doorScope.ts).
+		verifiedOrg: v.optional(verifiedOrgValidator),
 	},
 	returns: v.string(),
 	handler: async (ctx, args) => {
 		// write-contract: MCP-transport-only — issued via mcp-server client.mutation("kbMutations:generateUploadUrl", …) at mcp-server/src/tools/kbIngest.ts:301 (imperative), 0 hits in vantage-peers-dashboard {app,components,hooks,lib,contexts,providers} (measured 2026-10-01 at origin/main 2498c00); never a subscribing pre-org client shell. The RBAC_DENIED throw is the R-16 coded refusal the MCP layer catches, not an uncaught Server Error.
-		const scope = await withOrgScope(ctx);
+		const scope = await resolveVerifiedOrgScope(
+			ctx,
+			await withOrgScope(ctx),
+			args.verifiedOrg,
+			"kbMutations:generateUploadUrl",
+		);
 		// The repo's one tenant-namespace gate: the fleet master mints for any org,
 		// a member only for the org its verified scope resolves to, a caller with
 		// no organisation for none (RBAC_DENIED, raised).
@@ -266,6 +311,15 @@ export const generateUploadUrl = mutation({
 // vantage-peers-dashboard {app,components,hooks,lib,contexts,providers}.
 // ─────────────────────────────────────────────────────────────────────────────
 
+/**
+ * The org an upload ticket is bound to: the VERIFIED scope's org; only the fleet
+ * master, which resolves none of its own, takes the org it names (and the gate
+ * above has already admitted that name for it).
+ */
+function ticketOrgOf(scope: OrgScope, namedOrgId: string): string {
+	return scope.orgSlug ?? namedOrgId;
+}
+
 export const UPLOAD_TICKET_TTL_MS = 15 * 60 * 1000;
 
 const SHA256_HEX = /^[0-9a-f]{64}$/;
@@ -286,6 +340,7 @@ export const generateUploadUrlWithTicket = mutation({
 		namespace: v.string(),
 		// lowercase hex sha256 of the file the client is about to upload
 		sha256: v.string(),
+		verifiedOrg: v.optional(verifiedOrgValidator),
 	},
 	returns: v.object({
 		uploadUrl: v.string(),
@@ -294,7 +349,12 @@ export const generateUploadUrlWithTicket = mutation({
 	}),
 	handler: async (ctx, args) => {
 		// write-contract: MCP transport and one dashboard consumer — issued via mcp-server client.mutation("kbMutations:generateUploadUrlWithTicket", …) in mcp-server/src/tools/kbIngest.ts (generate_upload_url, imperative), and by vantage-peers-dashboard components/settings/okf/okf-validate-panel.tsx (imperative, on a user action; dashboard PR #71, branch sigma/okf-validate-ticket-flow at 3fffb85; measured 2026-10-08 with `git grep -n "generateUploadUrlWithTicket|claimUpload" 3fffb85 -- app components hooks lib contexts providers`: only okf-validate-panel.tsx and its test); never a subscribing pre-org client shell. The RBAC_DENIED throw is the R-16 coded refusal the MCP layer catches, not an uncaught Server Error.
-		const scope = await withOrgScope(ctx);
+		const scope = await resolveVerifiedOrgScope(
+			ctx,
+			await withOrgScope(ctx),
+			args.verifiedOrg,
+			"kbMutations:generateUploadUrlWithTicket",
+		);
 		requireTenantNamespace(
 			scope,
 			`team/${args.orgId}`,
@@ -318,7 +378,7 @@ export const generateUploadUrlWithTicket = mutation({
 		// and acts on the org it names, as in assertScopeAuthorizesOrg.
 		await ctx.db.insert("uploadTickets", {
 			ticketHash: await sha256Hex(ticket),
-			orgId: scope.orgSlug ?? args.orgId,
+			orgId: ticketOrgOf(scope, args.orgId),
 			contentSha256: args.sha256,
 			createdAt,
 			expiresAt,
@@ -333,11 +393,17 @@ export const claimUpload = mutation({
 	args: {
 		storageId: v.id("_storage"),
 		ticket: v.string(),
+		verifiedOrg: v.optional(verifiedOrgValidator),
 	},
 	returns: v.object({ storageId: v.id("_storage"), orgId: v.string() }),
 	handler: async (ctx, args) => {
 		// write-contract: MCP transport and one dashboard consumer — issued via mcp-server client.mutation("kbMutations:claimUpload", …) in mcp-server/src/tools/kbIngest.ts (claim_upload, imperative), and by components/settings/okf/okf-validate-panel.tsx (same measurement as generateUploadUrlWithTicket above); the RBAC_DENIED / AUTH_UPLOAD_TICKET_* throws are coded refusals the MCP layer surfaces.
-		const scope = await withOrgScope(ctx);
+		const scope = await resolveVerifiedOrgScope(
+			ctx,
+			await withOrgScope(ctx),
+			args.verifiedOrg,
+			"kbMutations:claimUpload",
+		);
 		requireResolvedCaller(scope, "kbMutations:claimUpload", {
 			alsoRefusePreOrg: true,
 		});

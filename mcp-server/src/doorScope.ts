@@ -1,4 +1,4 @@
-import type { SeatOrgResolution } from "./auth.js";
+import type { OAuthContext, SeatOrgResolution } from "./auth.js";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // doorScope — the ONE resolver of the scope arguments an MCP tool hands a Convex
@@ -90,7 +90,31 @@ export const DOOR_SCOPE: Readonly<Record<string, DoorScopeRule>> = {
 	"githubRepoMapping:list": { verifiedOrg: "always" },
 	"githubRepoMapping:add": { verifiedOrg: "always" },
 	"githubRepoMapping:remove": { verifiedOrg: "always" },
+	// knowledge base: a seat reaches these as the service account, so the org it
+	// acts on is the verified one (tools/kbIngest.ts), never a namespace prefix
+	"kb:storeDocumentChunked": { verifiedOrg: "always" },
+	"kb:softDeleteDocument": { verifiedOrg: "always" },
+	"kbMutations:generateUploadUrl": { verifiedOrg: "always" },
+	"kbMutations:generateUploadUrlWithTicket": { verifiedOrg: "always" },
+	"kbMutations:claimUpload": { verifiedOrg: "always" },
 };
+
+/**
+ * The organisation THIS bearer was verified for, for a call that reaches Convex
+ * as the fleet service account (so `ctx.auth` there carries no org). Read from the
+ * verified oauthContext only: the agent credential's org (`actor`, bound to the
+ * principal's own org before it is set) or the org snapshotted on the access-token
+ * row. Never from an argument or a namespace prefix. The master and a Clerk-JWT
+ * caller (whose own org Convex already sees) have none here.
+ */
+export function verifiedOrgSlugOf(
+	oauthCtx: OAuthContext | undefined,
+): string | undefined {
+	if (!oauthCtx || oauthCtx.isMaster || oauthCtx.clerkJwt !== undefined) {
+		return undefined;
+	}
+	return oauthCtx.actor?.orgSlug ?? oauthCtx.clerkOrgSlug;
+}
 
 /** What the verified oauthContext says about the caller. Never a tool argument. */
 export type DoorScopeFacts = {
