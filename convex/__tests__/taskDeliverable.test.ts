@@ -25,6 +25,7 @@ import { convexTest } from "../../tests/fixtures/convexTestWithServiceAccount";
 import { testClerkOrgId } from "../../tests/fixtures/testClerkOrgId";
 import { api, internal } from "../_generated/api";
 import schema from "../schema";
+import { withFleetClaim } from "../../tests/lib/withFleetClaim";
 import {
 	actingWith,
 	insertTaskRow,
@@ -736,6 +737,15 @@ describe("Eta REVISE (PR #1588): a search that cannot finish is never a negative
 		expect(state?.state).toBe("not_found");
 	});
 
+	test("correction: `exports.WidgetPanel === x` (a comparison) is not a declaration; `exports.WidgetPanel = x` is", async () => {
+		const cmp = await resolveWith({
+			"index.js": "if (exports.WidgetPanel === undefined) {}\nexports.Other = 1;\n",
+		}, { main: "index.js" });
+		expect(cmp?.state).toBe("not_found");
+		const asg = await resolveWith({ "index.js": "exports.WidgetPanel = function () {};\n" }, { main: "index.js" });
+		expect(asg?.state).toBe("delivered");
+	});
+
 	test("correction: listOverdue carries the derived divergence like get/list", async () => {
 		const t = createT();
 		await seedFleetAgents(t, ["eta"]);
@@ -744,7 +754,7 @@ describe("Eta REVISE (PR #1588): a search that cannot finish is never a negative
 			deliverableState: FRESH_STATE,
 			dueDate: 1,
 		});
-		const rows = (await t.query(api.tasks.listOverdue, {})) as Array<Record<string, unknown>>;
+		const rows = (await withFleetClaim(t).query(api.tasks.listOverdue, {})) as Array<Record<string, unknown>>;
 		expect(rows.find((r) => r._id === id)?.deliverableDivergence).toBe("delivered-but-open");
 	});
 });
