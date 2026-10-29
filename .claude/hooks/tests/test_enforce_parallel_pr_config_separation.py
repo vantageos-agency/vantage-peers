@@ -59,8 +59,8 @@ def _stub_gh(tmp_path, prs=None, fail=False):
     return bindir
 
 
-def _run(cwd, command, bindir):
-    payload = {"tool_name": "Bash", "tool_input": {"command": command}, "cwd": str(cwd)}
+def _run(cwd, command, bindir, payload_cwd=None):
+    payload = {"tool_name": "Bash", "tool_input": {"command": command}, "cwd": str(payload_cwd or cwd)}
     env = {**os.environ, "PATH": f"{bindir}:{os.environ['PATH']}"}
     return subprocess.run([sys.executable, str(HOOK)], input=json.dumps(payload),
                           capture_output=True, text=True, cwd=cwd, env=env)
@@ -166,8 +166,63 @@ def test_quoted_mention_is_not_an_invocation(repo, tmp_path):
     assert r.returncode == 0, r.stderr
 
 
-def test_gh_failure_is_could_not_judge_not_block(repo, tmp_path):
+def test_gh_failure_refuses_to_judge(repo, tmp_path):
     _commit(repo, "package.json", "src/app.ts")
     r = _run(repo, "gh pr create --fill", _stub_gh(tmp_path, fail=True))
-    assert r.returncode == 0
-    assert "could not judge" in r.stderr.lower()
+    assert r.returncode == 2
+    assert "REFUSING TO JUDGE" in r.stderr and "allow-config-feature-bundle" in r.stderr
+
+
+# --- the station form: the repository is reached by a cd, not by the payload cwd ---
+
+def _elsewhere(tmp_path):
+    other = tmp_path / "workspace"
+    other.mkdir()
+    _git(other, "init", "-q", "-b", "main")
+    return other
+
+
+def test_cd_then_create_judges_the_cd_target(repo, tmp_path):
+    _commit(repo, "package.json", "src/app.ts")
+    r = _run(repo, f"cd {repo} && gh pr create --fill", _stub_gh(tmp_path, OTHER_PR_TOUCHING_PACKAGE),
+             payload_cwd=_elsewhere(tmp_path))
+    assert r.returncode == 2, r.stderr
+    assert "BLOCKED" in r.stderr and "#41" in r.stderr
+
+
+def test_subshell_cd_then_create_judges_the_cd_target(repo, tmp_path):
+    _commit(repo, "package.json", "src/app.ts")
+    r = _run(repo, f"(cd {repo}; gh pr create --fill)", _stub_gh(tmp_path, OTHER_PR_TOUCHING_PACKAGE),
+             payload_cwd=_elsewhere(tmp_path))
+    assert r.returncode == 2, r.stderr
+    assert "BLOCKED" in r.stderr and "#41" in r.stderr
+
+
+def test_unresolvable_cd_refuses_to_judge(repo, tmp_path):
+    _commit(repo, "package.json", "src/app.ts")
+    r = _run(repo, "cd $REPO_DIR && gh pr create --fill", _stub_gh(tmp_path, OTHER_PR_TOUCHING_PACKAGE))
+    assert r.returncode == 2
+    assert "REFUSING TO JUDGE" in r.stderr
+
+
+def test_missing_origin_refuses_to_judge(repo, tmp_path):
+    _commit(repo, "package.json", "src/app.ts")
+    _git(repo, "remote", "remove", "origin")
+    r = _run(repo, "gh pr create --fill", _stub_gh(tmp_path, OTHER_PR_TOUCHING_PACKAGE))
+    assert r.returncode == 2
+    assert "REFUSING TO JUDGE" in r.stderr
+
+
+def test_repo_flag_naming_another_repository_refuses_to_judge(repo, tmp_path):
+    _commit(repo, "package.json", "src/app.ts")
+    r = _run(repo, "gh pr create -R someone/elsewhere --fill", _stub_gh(tmp_path, OTHER_PR_TOUCHING_PACKAGE))
+    assert r.returncode == 2
+    assert "REFUSING TO JUDGE" in r.stderr
+
+
+def test_nested_tsconfig_variant_is_config(repo, tmp_path):
+    _commit(repo, "apps/web/tsconfig.app.json", "src/app.ts")
+    prs = [{"number": 12, "headRefName": "feat/w", "files": [{"path": "apps/web/tsconfig.app.json"}]}]
+    r = _run(repo, "gh pr create --fill", _stub_gh(tmp_path, prs))
+    assert r.returncode == 2, r.stderr
+    assert "#12" in r.stderr

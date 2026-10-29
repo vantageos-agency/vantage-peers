@@ -19,8 +19,11 @@ Decision, three states (never two):
                       file.
   ALLOW (exit 0)      no config file, no feature file, no overlapping open PR,
                       or the override marker is present.
-  COULD NOT JUDGE     the diff or the open-PR list could not be read (no
-  (exit 0 + stderr)   remote, gh failure). Said on stderr, never silent.
+  REFUSING TO JUDGE   the repository, the diff or the open-PR list could not
+  (exit 2)            be read (unresolvable `cd`, no origin, --repo naming
+                      another repository, gh failure). Never a silent pass.
+The repository judged is the one `gh pr create` runs in: the payload cwd, or
+the last literal `cd <path>` before it (`cd X && ...`, `(cd X; ...)`).
 
 Override (one PR, documented): put
     # allow-config-feature-bundle: <reason, 6+ characters>
@@ -59,14 +62,33 @@ def is_feature(path):
 
 
 def find_pr_create(command):
-    """argv of the first real `gh pr create`, or None."""
+    """(argv of the first real `gh pr create`, argument of the last `cd` before
+    it or None), or (None, None) when the command opens no pull request."""
+    cd_arg = None
     for _segment, tokens in iter_real_commands(command):
-        if not tokens or not head_matches(tokens, "gh"):
+        if not tokens:
+            continue
+        if tokens[0] == "cd" and len(tokens) > 1:
+            cd_arg = tokens[1]
+        if not head_matches(tokens, "gh"):
             continue
         for i in range(1, len(tokens) - 1):
             if tokens[i] == "pr" and tokens[i + 1] == "create":
-                return tokens
-    return None
+                return tokens, cd_arg
+    return None, None
+
+
+def effective_dir(base, cd_arg):
+    """The directory `gh pr create` runs in, or None when a `cd` target cannot
+    be resolved statically (variable, substitution, `cd -`)."""
+    if cd_arg is None:
+        return base
+    if cd_arg == "-" or "$" in cd_arg or "`" in cd_arg:
+        return None
+    path = os.path.expanduser(cd_arg)
+    if not os.path.isabs(path):
+        path = os.path.join(base, path)
+    return os.path.normpath(path)
 
 
 def flag_value(tokens, *names):
@@ -101,8 +123,14 @@ def has_override(command, tokens, cwd):
 
 
 def could_not_judge(reason):
-    sys.stderr.write(f"parallel-pr-config-separation: could not judge ({reason}); allowed.\n")
-    sys.exit(0)
+    sys.stderr.write(
+        f"BLOCKED by parallel-pr-config-separation: REFUSING TO JUDGE ({reason}).\n"
+        "The diff or the open pull requests could not be read, so this is not a pass.\n"
+        "Run the command from the repository itself (a literal `cd <path>` is read), or, when\n"
+        "the bundle is known to be safe, add\n"
+        "  # allow-config-feature-bundle: <reason, 6+ characters>\n"
+    )
+    sys.exit(2)
 
 
 def main():
@@ -113,12 +141,22 @@ def main():
     if payload.get("tool_name") != "Bash":
         sys.exit(0)
     command = (payload.get("tool_input") or {}).get("command") or ""
-    tokens = find_pr_create(command)
+    tokens, cd_arg = find_pr_create(command)
     if tokens is None:
         sys.exit(0)
-    cwd = payload.get("cwd") or os.getcwd()
-    if has_override(command, tokens, cwd):
+    base_dir = payload.get("cwd") or os.getcwd()
+    if has_override(command, tokens, base_dir):
         sys.exit(0)
+    cwd = effective_dir(base_dir, cd_arg)
+    if cwd is None:
+        could_not_judge(f"`cd {cd_arg}` cannot be resolved statically")
+
+    origin = run(cwd, "git", "remote", "get-url", "origin")
+    if not origin:
+        could_not_judge(f"no origin remote in {cwd}")
+    repo_flag = flag_value(tokens, "--repo", "-R")
+    if repo_flag and repo_flag.split(":")[-1].removesuffix(".git").lower() not in origin.strip().lower():
+        could_not_judge(f"--repo {repo_flag} is not the origin of {cwd}")
 
     base = flag_value(tokens, "--base", "-B")
     if not base:
