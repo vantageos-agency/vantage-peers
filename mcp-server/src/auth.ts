@@ -102,6 +102,17 @@ export type OAuthContext = {
 	 */
 	clerkOrgSlug?: string;
 	/**
+	 * The permanent Clerk org ID of the organisation the token's `clerkOrgSlug`
+	 * names, read LIVE from its ACTIVE `client_org_mapping` row by
+	 * `oauth:getAccessTokenByHash` (never from the token row, never from an
+	 * argument). It is the key every team namespace is filed under
+	 * (`team/<orgClerkId>/<docId>`), and the only thing that lets
+	 * {@link checkNamespaceRead} admit that org's own team namespace beside the
+	 * prefix lists. Absent: the org has no ID yet, is inactive, or the Convex
+	 * predates the field; absence grants nothing.
+	 */
+	orgClerkId?: string;
+	/**
 	 * True ONLY on the Clerk-team path (2.5) when the caller's own
 	 * `client_org_mapping` row carries the explicit `fleetWide` flag (module M1).
 	 * It replaces the "*" entry the delegation check used to read out of the
@@ -236,6 +247,8 @@ type OAuthLookupResult = {
 	expiresAt: number;
 	/** Org slug snapshotted onto the token row at mint (see OAuthContext). */
 	clerkOrgSlug?: string;
+	/** The org's live permanent Clerk org ID (see OAuthContext.orgClerkId). */
+	orgClerkId?: string;
 	orgRole?: string;
 	principal?: "person";
 	/** Absent from a Convex that predates the stamp; null when none resolved. */
@@ -975,6 +988,19 @@ export function checkNamespaceRead(
 		);
 	}
 	if (checkNamespacePrefix(ctx.namespaceReadPrefixes, namespace)) return null;
+	// The org's OWN team namespace (`team/<orgClerkId>` and the document
+	// namespaces under it, segment-bounded) is readable by a caller whose
+	// verified org resolved to that ID, whatever its prefix list says: a seat's
+	// list names its agent and project, but a document it ingested lives under
+	// its org's team namespace. Derived from the verified org only; another
+	// org's ID, a slug alias and a bare `team` never match.
+	if (
+		ctx.orgClerkId !== undefined &&
+		ctx.orgClerkId !== "" &&
+		checkNamespacePrefix([`team/${ctx.orgClerkId}`], namespace)
+	) {
+		return null;
+	}
 	return `Forbidden: namespace='${namespace}' is not readable by scope_profile=${ctx.scopeProfile}.`;
 }
 

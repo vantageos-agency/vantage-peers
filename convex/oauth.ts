@@ -2548,6 +2548,8 @@ const oauthContextShape = v.object({
 	namespaceWritePrefixes: v.array(v.string()),
 	expiresAt: v.number(),
 	clerkOrgSlug: v.optional(v.string()),
+	// The org's permanent Clerk org ID, read live from its ACTIVE mapping row.
+	orgClerkId: v.optional(v.string()),
 	orgRole: v.optional(v.string()),
 	principal: v.optional(v.literal("person")),
 	// The agent this token acts as, by ROW ID, re-read against the live agent
@@ -2618,6 +2620,18 @@ export const getAccessTokenByHash = query({
 			row,
 			"oauth:getAccessTokenByHash",
 		);
+		// The org's permanent ID, from the ACTIVE mapping row the token's org label
+		// resolves to right now (an inactive or unmapped org yields none): the MCP
+		// admits that org's own `team/<id>` namespace for reads on it (auth.ts
+		// checkNamespaceRead). Not a stamp on the token row, so it follows the org.
+		const orgMapping =
+			row.clerkOrgSlug === undefined
+				? null
+				: await lookupOrgMapping(ctx, row.clerkOrgSlug);
+		const orgClerkId =
+			orgMapping !== null && orgMapping.isActive
+				? orgMapping.clerkOrgId
+				: undefined;
 		return {
 			clientId: row.clientId,
 			userId: row.userId,
@@ -2630,6 +2644,7 @@ export const getAccessTokenByHash = query({
 			...(row.clerkOrgSlug !== undefined
 				? { clerkOrgSlug: row.clerkOrgSlug }
 				: {}),
+			...(orgClerkId !== undefined ? { orgClerkId } : {}),
 			...(row.orgRole !== undefined ? { orgRole: row.orgRole } : {}),
 			...(row.principal !== undefined ? { principal: row.principal } : {}),
 			seatAgent: agent
