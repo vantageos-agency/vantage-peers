@@ -24,6 +24,10 @@
 			"disposition": "CONSERVER",
 			"reason": "live: served by MCP-public tool(s) send_message"
 		},
+		"briefingNoteBodyChunks": {
+			"disposition": "CONSERVER",
+			"reason": "live: the stored body of an offloaded briefing note (briefingNotes.bodyRef); read by briefingNotes get/list/search, written by migrations/offloadNoteBody:offloadOne; served by MCP-public tool(s) get_briefing_note, list_briefing_notes, search_briefing_notes_by_keyword"
+		},
 		"briefingNoteParticipants": {
 			"disposition": "CONSERVER",
 			"reason": "live: served by MCP-public tool(s) create_briefing_note, get_briefing_note, list_briefing_notes, search_briefing_notes_by_keyword …"

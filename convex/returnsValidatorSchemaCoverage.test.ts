@@ -336,6 +336,7 @@ const INTENTIONAL_PROJECTIONS: Record<string, { fields: string[]; reason: string
 			"createdById",
 			"participantIds",
 			"contentHash",
+			"bodyRef",
 		],
 		reason:
 			"`fields: \"lite\"|\"full\"` API — `briefingNoteLiteValidator` is the deliberate lite projection (`projectBriefingNoteLite` maps explicitly, never spreads the raw row); `briefingNoteFullValidator` (in the same union) already COVERS.",
@@ -352,6 +353,7 @@ const INTENTIONAL_PROJECTIONS: Record<string, { fields: string[]; reason: string
 			"createdById",
 			"participantIds",
 			"contentHash",
+			"bodyRef",
 		],
 		reason:
 			"`fields: \"lite\"|\"full\"` API — `briefingNoteSearchLiteValidator` is the deliberate lite projection of a keyword hit (the handler maps `_id`/`title`/`topic`/`createdBy`/`createdAt`/`participants` explicitly, never spreading the raw row); `briefingNoteFullValidator` (in the same union) already COVERS.",
