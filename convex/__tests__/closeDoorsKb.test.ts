@@ -17,6 +17,7 @@
 import { convexTest } from "../../tests/fixtures/convexTestWithServiceAccount";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import { testClerkOrgId } from "../../tests/fixtures/testClerkOrgId";
+import { storeClaimed } from "../../tests/fixtures/storeClaimed";
 import schema from "../schema";
 
 // biome-ignore lint/suspicious/noExplicitAny: action refs by string, codegen-independent
@@ -80,10 +81,15 @@ function asMaster(t: T) {
 	} as Parameters<typeof t.withIdentity>[0]);
 }
 
-async function storeBlob(t: T, text: string) {
-	return await t.run(async (ctx) =>
-		ctx.storage.store(new Blob([text], { type: "text/plain" })),
-	);
+// `ownerKey`: the org that has claimed the blob (a claimed storageId is what
+// store requires); omit for a blob nobody claimed.
+async function storeBlob(t: T, text: string, ownerKey?: string) {
+	return await t.run(async (ctx) => {
+		const blob = new Blob([text], { type: "text/plain" });
+		return ownerKey === undefined
+			? await ctx.storage.store(blob)
+			: await storeClaimed(ctx, ownerKey, blob);
+	});
 }
 
 async function seedChunk(t: T, orgId: string, docId: string) {
@@ -175,7 +181,7 @@ describe("kb:storeDocumentChunked — caller resolution", () => {
 	test("PRESENT: a member of org-a is served in its own namespace", async () => {
 		const t = createT();
 		await seedOrg(t, "org-a");
-		const storageId = await storeBlob(t, "hello\n\nworld");
+		const storageId = await storeBlob(t, "hello\n\nworld", "org-a");
 		const r = await asOrg(t, "org-a").action(
 			STORE,
 			storeArgs(storageId, "org-a", "d1"),
@@ -188,7 +194,7 @@ describe("kb:storeDocumentChunked — caller resolution", () => {
 
 	test("PRESENT: the fleet master may still ingest for any org (unchanged)", async () => {
 		const t = createT();
-		const storageId = await storeBlob(t, "hello");
+		const storageId = await storeBlob(t, "hello", "org-z");
 		const r = await asMaster(t).action(
 			STORE,
 			storeArgs(storageId, "org-z", "d9"),

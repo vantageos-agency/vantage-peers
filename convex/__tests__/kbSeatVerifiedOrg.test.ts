@@ -20,6 +20,7 @@ import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import { convexTest } from "../../tests/fixtures/convexTestWithServiceAccount";
 import { testClerkOrgId } from "../../tests/fixtures/testClerkOrgId";
 import { api } from "../_generated/api";
+import { storeClaimed } from "../../tests/fixtures/storeClaimed";
 import schema from "../schema";
 
 // biome-ignore lint/suspicious/noExplicitAny: kb actions are referenced by path, as in kb-ingest.test.ts
@@ -83,10 +84,15 @@ const A_ID = testClerkOrgId(A);
 const B_ID = testClerkOrgId(B);
 const SHA = "a".repeat(64);
 
-async function blob(t: T): Promise<string> {
-	return await t.run(async (ctx) =>
-		ctx.storage.store(new Blob(["# Title\n\nSome text."], { type: "text/markdown" })),
-	);
+// The blob is claimed by `ownerKey` (a claimed storageId is what store requires):
+// a seat's key is its org slug, the master's is the orgId it names.
+async function blob(t: T, ownerKey?: string): Promise<string> {
+	return await t.run(async (ctx) => {
+		const blob = new Blob(["# Title\n\nSome text."], { type: "text/markdown" });
+		return ownerKey === undefined
+			? await ctx.storage.store(blob)
+			: await storeClaimed(ctx, ownerKey, blob);
+	});
 }
 
 describe("kbMutations upload doors take the verified org", () => {
@@ -170,7 +176,7 @@ describe("kbMutations upload doors take the verified org", () => {
 describe("kb actions take the verified org", () => {
 	test("PRESENT: store files the chunks under the verified org's permanent ID", async () => {
 		const t = await world();
-		const storageId = await blob(t);
+		const storageId = await blob(t, A);
 		const r = await asMaster(t).action(STORE, {
 			storageId,
 			mimeType: "text/markdown",
@@ -204,7 +210,7 @@ describe("kb actions take the verified org", () => {
 
 	test("PRESENT: soft-delete marks the verified org's document", async () => {
 		const t = await world();
-		const storageId = await blob(t);
+		const storageId = await blob(t, A);
 		const stored = await asMaster(t).action(STORE, {
 			storageId,
 			mimeType: "text/markdown",
@@ -227,7 +233,7 @@ describe("kb actions take the verified org", () => {
 
 	test("REFUSED: soft-delete of org B's document under verified org A leaves it live", async () => {
 		const t = await world();
-		const storageId = await blob(t);
+		const storageId = await blob(t, B_ID as string);
 		await asMaster(t).action(STORE, {
 			storageId,
 			mimeType: "text/markdown",
@@ -265,7 +271,7 @@ describe("kb actions take the verified org", () => {
 
 	test("ABSENT: the master with no verifiedOrg keeps acting on any org", async () => {
 		const t = await world();
-		const storageId = await blob(t);
+		const storageId = await blob(t, B);
 		const r = await asMaster(t).action(STORE, {
 			storageId,
 			mimeType: "text/markdown",

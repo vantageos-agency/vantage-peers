@@ -23,6 +23,7 @@ import { convexTest } from "../../tests/fixtures/convexTestWithServiceAccount";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import { testClerkOrgId } from "../../tests/fixtures/testClerkOrgId";
 import { api } from "../_generated/api";
+import { storeClaimed } from "../../tests/fixtures/storeClaimed";
 import schema from "../schema";
 
 // Same filter as gap-t1-episodes.test.ts — ragSync module itself is excluded from
@@ -114,7 +115,7 @@ describe("T1 RED — kb.storeDocumentChunked schedules ragSync.addRagEntry per c
 
 		const bytes = textToArrayBuffer(longText);
 		const storageId = await t.run(async (ctx) => {
-			return await ctx.storage.store(
+			return await storeClaimed(ctx, "team-a", 
 				new Blob([new Uint8Array(bytes)], { type: "text/plain" }),
 			);
 		});
