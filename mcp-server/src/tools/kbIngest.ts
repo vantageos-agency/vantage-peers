@@ -281,7 +281,7 @@ export function registerKbIngestTools(
 	const kbFilteredScope = {
 		kind: "filtered" as const,
 		reason:
-			"tenant namespace derived in-handler from the verified org via resolveOrgContext(); fails closed with AUTH_NO_ORG_ID",
+			"tenant namespace derived in-handler from oauthCtx via resolveOrgContext(); fails closed with AUTH_NO_ORG_ID",
 	};
 
 	// ── store_document_chunked ──────────────────────────────────────────────────

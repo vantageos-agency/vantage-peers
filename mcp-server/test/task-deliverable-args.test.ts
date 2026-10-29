@@ -9,7 +9,7 @@
  *   LITE      list_tasks lite projection carries `deliverableDivergence` only when
  *             the backend set it; a row without it keeps the 6-key lite shape
  *   FULL      get_task passes the stored deliverable fields through untouched
- *   CONTRACT  the new argument bumped the contract: MCP requires 6, Convex serves 6
+ *   CONTRACT  the new argument bumped the contract: MCP requires 7, Convex serves 7
  */
 import { describe, expect, it } from "vitest";
 import { z } from "zod";
@@ -183,8 +183,8 @@ describe("LITE / FULL projections", () => {
 });
 
 describe("CONTRACT", () => {
-	it("MCP requires the contract version Convex serves, and it is 6", () => {
-		expect(REQUIRED_CONTRACT_VERSION).toBe(6);
-		expect(BACKEND_CONTRACT_VERSION).toBe(6);
+	it("MCP requires the contract version Convex serves, and it is 7", () => {
+		expect(REQUIRED_CONTRACT_VERSION).toBe(7);
+		expect(BACKEND_CONTRACT_VERSION).toBe(7);
 	});
 });
