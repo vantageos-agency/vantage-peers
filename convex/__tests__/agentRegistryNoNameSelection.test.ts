@@ -75,3 +75,22 @@ describe("M8 the agent registry selects no agent by name", () => {
 		});
 	});
 });
+
+describe("M8 the registry decides identity through the package only", () => {
+	const owned = ["agents.ts", "agentCredentials.ts", "agentRelations.ts"];
+
+	test("no registry door resolves an organisation by a slug or compares a label to admit", () => {
+		for (const file of owned) {
+			const src = read(join(CONVEX_DIR, file));
+			expect(src, file).not.toMatch(/requireOrgAdminById|withOrgScope|stampOrgRefusal/);
+			expect(src, file).not.toMatch(/clerkOrgIdForSlug/);
+			expect(src, file).not.toMatch(/orgSlug\s*!==|!==\s*[a-z.]*orgSlug/);
+		}
+	});
+
+	test("the adapter builds no refusal of its own and keeps no slug-keyed admin proof", () => {
+		const src = read(join(CONVEX_DIR, "lib", "agentIdentity.ts"));
+		expect(src).not.toMatch(/RBAC_DENIED/);
+		expect(src).not.toMatch(/proveOrgAdmin|requireOrgAdminById|stampOrgRefusal/);
+	});
+});

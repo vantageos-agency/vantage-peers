@@ -619,3 +619,142 @@ describe("M8 4. a rename touches the display name only and keeps every grant", (
 		expect(code).toMatch(/^AGENT_NOT_FOUND/);
 	});
 });
+
+describe("M8 5. the organisation and the authority come from the verified session, never from an argument", () => {
+	/** An admin session of org-a whose slug claim is stale: the mapping was renamed. */
+	async function renamedOrg() {
+		const t = createT();
+		await seedOrg(t, "org-a");
+		await t.run(async (ctx) => {
+			const row = await ctx.db
+				.query("client_org_mapping")
+				.withIndex("by_clerk_slug", (q) => q.eq("clerkOrgSlug", "org-a"))
+				.first();
+			if (row === null) throw new Error("no mapping");
+			await ctx.db.patch(row._id, { clerkOrgSlug: "org-a-renamed" });
+		});
+		return { t, admin: adminOf(t, "org-a") };
+	}
+
+	/** An agent row of org-a that was written before agents carried an org ID. */
+	async function unstampedAgent(t: T): Promise<Id<"agents">> {
+		return await t.run((ctx) =>
+			ctx.db.insert("agents", {
+				orgSlug: "org-a",
+				name: "legacy",
+				normalizedName: "legacy",
+				isActive: true,
+				createdAt: 1,
+			}),
+		);
+	}
+
+	test("PRESENT: registerAgent takes no organisation argument and stamps the verified org's id and current label", async () => {
+		const { t, admin } = await renamedOrg();
+		const ada = await admin.mutation(api.agents.registerAgent, { name: "ada" });
+		const row = await t.run((ctx) => ctx.db.get(ada));
+		expect(row?.clerkOrgId).toBe(testClerkOrgId("org-a"));
+		expect(row?.orgSlug).toBe("org-a-renamed");
+	});
+
+	test("PRESENT: the registry doors serve the admin with no organisation argument, and a stale slug argument does not change the answer", async () => {
+		const { t, admin } = await renamedOrg();
+		const ada = await admin.mutation(api.agents.registerAgent, { name: "ada" });
+		const bare = await admin.query(api.agents.getAgent, { agentId: ada });
+		const stale = await admin.query(api.agents.getAgent, { orgSlug: "org-a", agentId: ada });
+		expect(bare?._id).toBe(ada);
+		expect(stale?._id).toBe(ada);
+		const listed = await admin.query(api.agents.listAgentsByOrg, {});
+		expect(listed.map((r) => r._id)).toEqual([ada]);
+		const status = await admin.query(api.agentCredentials.getAgentCredentialStatus, {
+			agentId: ada,
+		});
+		expect(status.hasActiveCredential).toBe(false);
+		expect(await admin.query(api.agentRelations.graphByOrg, {})).toEqual({
+			nodes: [],
+			edges: [],
+		});
+		expect(t).toBeDefined();
+	});
+
+	test("PRESENT: mint and linkChild need no organisation argument; the rows carry the verified org id", async () => {
+		const { t, admin } = await renamedOrg();
+		const ada = await admin.mutation(api.agents.registerAgent, { name: "ada" });
+		const clio = await admin.mutation(api.agents.registerAgent, { name: "clio" });
+		await admin.mutation(api.agentCredentials.mintAgentCredential, { agentId: ada });
+		const edge = await admin.mutation(api.agentRelations.linkChild, {
+			parentAgentId: ada,
+			childAgentId: clio,
+		});
+		const rows = await t.run(async (ctx) => ({
+			credential: await ctx.db
+				.query("agent_credentials")
+				.withIndex("by_agent", (q) => q.eq("agentId", ada))
+				.first(),
+			edge: await ctx.db.get(edge),
+		}));
+		expect(rows.credential?.clerkOrgId).toBe(testClerkOrgId("org-a"));
+		expect(rows.edge?.clerkOrgId).toBe(testClerkOrgId("org-a"));
+	});
+
+	test("REFUSED: a member of the org, and org B's admin, are refused every registry door with no organisation argument", async () => {
+		const { t, admin } = await renamedOrg();
+		const ada = await admin.mutation(api.agents.registerAgent, { name: "ada" });
+		await seedOrg(t, "org-b");
+		for (const who of [memberOf(t, "org-a"), adminOf(t, "org-b")]) {
+			const attempts = [
+				who.mutation(api.agents.registerAgent, { name: "intruder" }),
+				who.query(api.agents.getAgent, { agentId: ada }),
+				who.mutation(api.agents.renameAgent, { agentId: ada, newName: "taken" }),
+				who.mutation(api.agentCredentials.mintAgentCredential, { agentId: ada }),
+			];
+			for (const attempt of attempts) {
+				expect(await codeOf(attempt)).toMatch(/^RBAC_DENIED/);
+			}
+		}
+		const row = await t.run((ctx) => ctx.db.get(ada));
+		expect(row?.name).toBe("ada");
+	});
+
+	test("REFUSED: an agent row with no stored org id is never served or written on a label match (fail closed)", async () => {
+		const t = createT();
+		await seedOrg(t, "org-a");
+		const legacy = await unstampedAgent(t);
+		const admin = adminOf(t, "org-a");
+		const attempts = [
+			admin.query(api.agents.getAgent, { orgSlug: "org-a", agentId: legacy }),
+			admin.mutation(api.agents.deactivateAgent, { orgSlug: "org-a", agentId: legacy }),
+			admin.mutation(api.agentCredentials.mintAgentCredential, {
+				orgSlug: "org-a",
+				agentId: legacy,
+			}),
+		];
+		for (const attempt of attempts) {
+			const code = await codeOf(attempt);
+			expect(code).toMatch(/^RBAC_DENIED/);
+			expect(code).toContain("target-unstamped");
+		}
+		const row = await t.run((ctx) => ctx.db.get(legacy));
+		expect(row?.isActive).toBe(true);
+	});
+
+	test("REFUSED: a caller with no session is refused by the package's own refusal at every registry door", async () => {
+		const t = createT();
+		await seedOrg(t, "org-a");
+		const ada = await adminOf(t, "org-a").mutation(api.agents.registerAgent, { name: "ada" });
+		const attempts = [
+			t.mutation(api.agents.registerAgent, { name: "x" }),
+			t.query(api.agents.getAgent, { agentId: ada }),
+			t.query(api.agents.listAgentsByOrg, {}),
+			t.mutation(api.agentCredentials.mintAgentCredential, { agentId: ada }),
+			t.query(api.agentCredentials.getAgentCredentialStatus, { agentId: ada }),
+			t.mutation(api.agentRelations.linkChild, { parentAgentId: ada, childAgentId: ada }),
+			t.query(api.agentRelations.graphByOrg, {}),
+		];
+		for (const attempt of attempts) {
+			const code = await codeOf(attempt);
+			expect(code).toMatch(/^RBAC_DENIED/);
+			expect(code).toContain("no-verified-subject");
+		}
+	});
+});
