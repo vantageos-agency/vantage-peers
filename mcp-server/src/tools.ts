@@ -45,7 +45,12 @@ import { FreshStateGuardError, guardFreshState } from "./fresh-state-guard.js";
 import { listTasksGate } from "./list-tasks-gate.js";
 import { memberAuthorLabel } from "./memberAuthor.js";
 import { normalizeOrchestratorId } from "./normalizeOrchestratorId.js";
-import { clampLimit, decodeCursor, encodeCursor } from "./paging.js";
+import {
+	clampLimit,
+	decodeCursor,
+	encodeCursor,
+	scopedPageContinuation,
+} from "./paging.js";
 import { isRefusedEnvelope } from "./refusal.js";
 import {
 	defineTool,
@@ -1340,7 +1345,8 @@ export const listPeersOutputSchema = z.union([
 	),
 	z.object({
 		items: z.array(z.record(z.string(), z.unknown())),
-		nextCursor: z.string().nullable(),
+		nextCursor: z.string().nullable().optional(),
+		scopeFiltered: z.number().optional(),
 	}),
 ]);
 
@@ -1366,6 +1372,7 @@ export const listBroadcastStatusOutputSchema = z.object({
 	createdAt: z.number(),
 	receipts: z.array(z.record(z.string(), z.unknown())),
 	truncated: z.boolean(),
+	scopeFiltered: z.number().optional(),
 });
 
 // create_task
@@ -1470,7 +1477,8 @@ export const listTasksByMissionOutputSchema = z.union([
 	z.array(z.record(z.string(), z.unknown())),
 	z.object({
 		items: z.array(z.record(z.string(), z.unknown())),
-		nextCursor: z.string().nullable(),
+		nextCursor: z.string().nullable().optional(),
+		scopeFiltered: z.number().optional(),
 	}),
 ]);
 
@@ -1572,7 +1580,8 @@ export const listRecurringTasksOutputSchema = z.union([
 	z.array(z.record(z.string(), z.unknown())),
 	z.object({
 		items: z.array(z.record(z.string(), z.unknown())),
-		nextCursor: z.string().nullable(),
+		nextCursor: z.string().nullable().optional(),
+		scopeFiltered: z.number().optional(),
 	}),
 ]);
 
@@ -1636,7 +1645,8 @@ export const listMandatesOutputSchema = z.union([
 	z.array(z.record(z.string(), z.unknown())),
 	z.object({
 		items: z.array(z.record(z.string(), z.unknown())),
-		nextCursor: z.string().nullable(),
+		nextCursor: z.string().nullable().optional(),
+		scopeFiltered: z.number().optional(),
 		_meta: z.record(z.string(), z.unknown()).optional(),
 	}),
 ]);
@@ -4262,18 +4272,22 @@ export function registerTools(
 				}));
 
 				// S3.3 B8 follow-up — emit nextCursor when page is full.
+				// Measured on the RAW page, before the scope filter narrowed it.
 				const requestedLimit = effectiveLimit ?? 20;
-				let nextCursor: string | null = null;
-				if (peers.length >= requestedLimit && peers.length > 0) {
-					const last = peers[peers.length - 1] as {
-						_creationTime?: number;
-					};
-					if (typeof last._creationTime === "number") {
-						nextCursor = encodeCursor({ createdBefore: last._creationTime });
-					}
-				}
+				const { nextCursor, scopeFiltered } = scopedPageContinuation(
+					Array.isArray(profiles) ? profiles : [],
+					requestedLimit,
+					filteredProfiles.length,
+					{ reportRemoved: oauthCtx?.clerkOrgSlug !== undefined },
+				);
 				const peersWithCursor =
-					nextCursor !== null ? { items: peers, nextCursor } : peers;
+					nextCursor !== null || scopeFiltered > 0
+						? {
+								items: peers,
+								...(nextCursor !== null ? { nextCursor } : {}),
+								...(scopeFiltered > 0 ? { scopeFiltered } : {}),
+							}
+						: peers;
 
 				return {
 					content: [
@@ -4570,6 +4584,8 @@ export function registerTools(
 	//      (messageId/from/channel/createdAt/truncated) is always returned
 	//      intact so a scoped caller still knows the broadcast exists.
 
+	const BROADCAST_STATUS_FETCH_CAP = 200;
+
 	defineTool(
 		server,
 		authCtx,
@@ -4619,7 +4635,12 @@ export function registerTools(
 					"messages:listBroadcastStatus" as any,
 					{
 						messageId,
-						limit: limit ?? 20,
+						// The caller's `limit` is applied HERE, after the scope filter
+						// (below). The door is asked for the tool's cap so that the page
+						// it cuts is not narrowed afterwards by the allow-list: a cut made
+						// before the filter would be reported as "N of M" about a
+						// population the caller cannot see.
+						limit: BROADCAST_STATUS_FETCH_CAP,
 						fields: fields ?? "lite",
 						...doorScopeArgs("messages:listBroadcastStatus", undefined),
 					},
@@ -4649,9 +4670,31 @@ export function registerTools(
 					})),
 				).map(({ createdBy: _createdBy, ...rest }) => rest);
 
+				// Every bound is evaluated AFTER the filter that narrows the
+				// population it describes. `scopeFiltered` says how many fetched
+				// receipts the allow-list removed, so a caller whose receipts were
+				// removed never reads bytes identical to a broadcast nobody received.
+				// `truncated` is true when the door cut its own list (receipts beyond
+				// the fetch cap exist, unseen) or when more visible receipts exist
+				// than the caller's `limit`.
+				const callerLimit = limit ?? 20;
+				// The door gated tenant and channel before reading a receipt, so
+				// every fetched receipt is the caller's own organisation's; a token
+				// bound to no organisation gets no count.
+				const scopeFiltered =
+					oauthCtx?.clerkOrgSlug === undefined
+						? 0
+						: Math.max(
+								0,
+								envelope.receipts.length - filteredReceipts.length,
+							);
 				const responsePayload = {
 					...envelope,
-					receipts: filteredReceipts,
+					receipts: filteredReceipts.slice(0, callerLimit),
+					truncated:
+						envelope.truncated === true ||
+						filteredReceipts.length > callerLimit,
+					...(scopeFiltered > 0 ? { scopeFiltered } : {}),
 				};
 
 				// Deliberately NOT routed through capListResponseBytes: that helper
@@ -6140,14 +6183,18 @@ export function registerTools(
 				// k174y9ra7pp8zed3bcczk6xaed8cpynp — mirror get_task: `assignedTo`
 				// is a per-row grant (convex/tasks.ts L88-89 ORs createdBy||assignedTo).
 				// TENANT GATE, collection surface (same predicate as get_task).
+				// `tenantRows` is the page after the tenant gate: only these rows are
+				// attributable to the caller's own organisation, so only their
+				// removals by the allow-list below are counted as `scopeFiltered`.
+				const tenantRows = filterRowsToActorTenant(
+					oauthCtx,
+					Array.isArray(tasks)
+						? (tasks as Array<Record<string, unknown>>)
+						: [],
+				);
 				const scopedRows = scopeFilterList(
 					oauthCtx ?? DENIED_SCOPE_CTX,
-					filterRowsToActorTenant(
-						oauthCtx,
-						Array.isArray(tasks)
-							? (tasks as Array<Record<string, unknown>>)
-							: [],
-					),
+					tenantRows,
 					["assignedTo"],
 				);
 				// The gate needs `orgId`, which the lite projection strips, so a
@@ -6169,22 +6216,24 @@ export function registerTools(
 						: scopedRows;
 
 				// S3.3 B8 follow-up — emit nextCursor when page is full.
+				// Measured on the RAW page, before the scope filter narrowed it.
 				const requestedLimit = effectiveLimit ?? 20;
-				let nextCursor: string | null = null;
-				if (
-					filteredTasks.length >= requestedLimit &&
-					filteredTasks.length > 0
-				) {
-					const last = filteredTasks[filteredTasks.length - 1] as {
-						_creationTime?: number;
-					};
-					if (typeof last._creationTime === "number") {
-						nextCursor = encodeCursor({ createdBefore: last._creationTime });
-					}
-				}
+				const { nextCursor, scopeFiltered } = scopedPageContinuation(
+					Array.isArray(tasks) ? tasks : [],
+					requestedLimit,
+					filteredTasks.length,
+					{
+						inTenantCount: tenantRows.length,
+						reportRemoved: oauthCtx?.clerkOrgSlug !== undefined,
+					},
+				);
 				const tasksWithCursor =
-					nextCursor !== null
-						? { items: filteredTasks, nextCursor }
+					nextCursor !== null || scopeFiltered > 0
+						? {
+								items: filteredTasks,
+								...(nextCursor !== null ? { nextCursor } : {}),
+								...(scopeFiltered > 0 ? { scopeFiltered } : {}),
+							}
 						: filteredTasks;
 
 				return {
@@ -7568,22 +7617,21 @@ export function registerTools(
 				);
 
 				// S3.3 B8 follow-up — emit nextCursor when page is full.
+				// Measured on the RAW page, before the scope filter narrowed it.
 				const requestedLimit = effectiveLimit ?? 20;
-				let nextCursor: string | null = null;
-				if (
-					filteredTasks.length >= requestedLimit &&
-					filteredTasks.length > 0
-				) {
-					const last = filteredTasks[filteredTasks.length - 1] as {
-						_creationTime?: number;
-					};
-					if (typeof last._creationTime === "number") {
-						nextCursor = encodeCursor({ createdBefore: last._creationTime });
-					}
-				}
+				const { nextCursor, scopeFiltered } = scopedPageContinuation(
+					Array.isArray(tasks) ? tasks : [],
+					requestedLimit,
+					filteredTasks.length,
+					{ reportRemoved: oauthCtx?.clerkOrgSlug !== undefined },
+				);
 				const tasksWithCursor =
-					nextCursor !== null
-						? { items: filteredTasks, nextCursor }
+					nextCursor !== null || scopeFiltered > 0
+						? {
+								items: filteredTasks,
+								...(nextCursor !== null ? { nextCursor } : {}),
+								...(scopeFiltered > 0 ? { scopeFiltered } : {}),
+							}
 						: filteredTasks;
 
 				return {
@@ -8331,22 +8379,21 @@ export function registerTools(
 				);
 
 				// S3.3 B8 follow-up — emit nextCursor when page is full.
+				// Measured on the RAW page, before the scope filter narrowed it.
 				const requestedLimit = effectiveLimit ?? 20;
-				let nextCursor: string | null = null;
-				if (
-					filteredMandates.length >= requestedLimit &&
-					filteredMandates.length > 0
-				) {
-					const last = filteredMandates[filteredMandates.length - 1] as {
-						_creationTime?: number;
-					};
-					if (typeof last._creationTime === "number") {
-						nextCursor = encodeCursor({ createdBefore: last._creationTime });
-					}
-				}
+				const { nextCursor, scopeFiltered } = scopedPageContinuation(
+					mandateRows,
+					requestedLimit,
+					filteredMandates.length,
+					{ reportRemoved: oauthCtx?.clerkOrgSlug !== undefined },
+				);
 				const mandatesWithCursor =
-					nextCursor !== null
-						? { items: filteredMandates, nextCursor }
+					nextCursor !== null || scopeFiltered > 0
+						? {
+								items: filteredMandates,
+								...(nextCursor !== null ? { nextCursor } : {}),
+								...(scopeFiltered > 0 ? { scopeFiltered } : {}),
+							}
 						: filteredMandates;
 
 				return {
