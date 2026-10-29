@@ -226,3 +226,41 @@ def test_nested_tsconfig_variant_is_config(repo, tmp_path):
     r = _run(repo, "gh pr create --fill", _stub_gh(tmp_path, prs))
     assert r.returncode == 2, r.stderr
     assert "#12" in r.stderr
+
+
+def test_pushd_then_create_judges_the_pushd_target(repo, tmp_path):
+    _commit(repo, "package.json", "src/app.ts")
+    ws = _elsewhere(tmp_path)
+    r = _run(repo, f"pushd {repo} && gh pr create --fill", _stub_gh(tmp_path, OTHER_PR_TOUCHING_PACKAGE),
+             payload_cwd=ws)
+    assert r.returncode == 2, r.stderr
+    assert "BLOCKED" in r.stderr and "#41" in r.stderr
+
+
+def test_relative_cd_chain_is_followed(repo, tmp_path):
+    _commit(repo, "package.json", "src/app.ts")
+    r = _run(repo, f"cd {repo.parent} && cd {repo.name} && gh pr create --fill",
+             _stub_gh(tmp_path, OTHER_PR_TOUCHING_PACKAGE), payload_cwd=_elsewhere(tmp_path))
+    assert r.returncode == 2, r.stderr
+    assert "#41" in r.stderr
+
+
+def test_popd_refuses_to_judge(repo, tmp_path):
+    _commit(repo, "package.json", "src/app.ts")
+    r = _run(repo, f"pushd {repo} && popd && gh pr create --fill", _stub_gh(tmp_path, OTHER_PR_TOUCHING_PACKAGE))
+    assert r.returncode == 2
+    assert "REFUSING TO JUDGE" in r.stderr
+
+
+def test_cd_dash_refuses_to_judge(repo, tmp_path):
+    _commit(repo, "package.json", "src/app.ts")
+    r = _run(repo, "cd - && gh pr create --fill", _stub_gh(tmp_path, OTHER_PR_TOUCHING_PACKAGE))
+    assert r.returncode == 2
+    assert "REFUSING TO JUDGE" in r.stderr
+
+
+def test_bare_cd_refuses_to_judge(repo, tmp_path):
+    _commit(repo, "package.json", "src/app.ts")
+    r = _run(repo, "cd && gh pr create --fill", _stub_gh(tmp_path, OTHER_PR_TOUCHING_PACKAGE))
+    assert r.returncode == 2
+    assert "REFUSING TO JUDGE" in r.stderr
