@@ -19,7 +19,7 @@ Class of failure addressed: two pull requests are open in parallel, and each bun
 | Doctrine | this file, always loaded | the rule, visible before a branch is cut |
 | Reactive gate | hook `enforce-parallel-pr-config-separation.py`, PreToolUse on Bash `gh pr create` | reads the branch diff against the base and the open pull requests' files; refuses the bundle when a config file overlaps, naming each pull request and file |
 
-The hook has three outcomes and says which one it took: BLOCK (exit 2), ALLOW (exit 0), COULD NOT JUDGE (exit 0 with a stderr line, when the diff or the open-PR list cannot be read). A failure to read is never reported as a clean pass.
+The hook has three outcomes and says which one it took: BLOCK (exit 2), ALLOW (exit 0), REFUSING TO JUDGE (exit 2, when the repository, the diff or the open-PR list cannot be read). A failure to read is never reported as a clean pass. The repository judged is the one the command runs in: the session directory, or the last literal `cd <path>` before `gh pr create`.
 
 ## Override
 
