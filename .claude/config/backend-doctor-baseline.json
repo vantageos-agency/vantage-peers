@@ -54,11 +54,11 @@
 			"modules": {}
 		},
 		"R-53": {
-			"count": 331,
-			"measured_tree_sha": "f37f6756a13bb7c03a234c6ce56a646b5fda43fd",
+			"count": 323,
+			"measured_tree_sha": "63a8199726006ca81e4965eb1a02c50dcae0212f",
 			"cli_commit": "1f79319cce01a9e448b0580fcccf9059662b8146",
-			"command": "npx -y @vantageos/backend-doctor@0.4.9 <vantage-peers clean full checkout @f37f675 (PR #1577, task k176y0q5jcz3m8m673bf61kva98h49js), deps installed> --json-evidence <dir>/",
-			"output_line": "R-53: 331 site(s) VIOLATE (the principal is the package resolver's output, every write admits by comparing stored IDs with the resolved IDs, the unresolved branch refuses, and no local function decides identity). [conform=7 non-conforming=331 could-not-judge=0] Violations: convex/diary.ts:65 (orchestratorListed: (d) local identity layer — compares names to admit (`normalizeOrchestratorId(agent.name) === claimed`, line 74)); convex/lib/agentIdentity.ts:245 (findAgentByName: (d) local identity layer — compares names to admit (`normalizeOrchestratorId(byNormalized.name) === normalized`, line 259); selects a row by name (`withIndex(\"by_org_normalized_name\")` on `normalizedName`, line 254); selects a row by name (`withIndex(\"by_org_name\")` on `name`, line 264)); convex/lib/auth.ts:547 (filterByOrgScope: (d) local identity layer — compares names to admit (`scope.allowedOrchestrators.includes(o; MECHANICAL RULE COUNTS: CR-2 254, R-5 62, R-53 331, R-54 142, R-55 29, R-56 2",
+			"command": "npx -y @vantageos/backend-doctor@0.4.9 <vantage-peers clean full checkout @63a8199 (task k17dcydcvcdzh1gp1zd1ebt23s8fyjde), deps installed> --json-evidence <dir>/",
+			"output_line": "R-53: 323 site(s) VIOLATE (the principal is the package resolver's output, every write admits by comparing stored IDs with the resolved IDs, the unresolved branch refuses, and no local function decides identity). [conform=14 non-conforming=323 could-not-judge=0] Violations: convex/diary.ts:65 (orchestratorListed: (d) local identity layer — compares names to admit (`normalizeOrchestratorId(agent.name) === claimed`, line 74)); convex/lib/agentIdentity.ts:251 (findAgentByName: (d) local identity layer — compares names to admit (`normalizeOrchestratorId(byNormalized.name) === normalized`, line 265); selects a row by name (`withIndex(\"by_org_normalized_name\")` on `normalizedName`, line 260); sele; MECHANICAL RULE COUNTS: CR-2 252, R-5 62, R-53 323, R-54 139, R-55 29, R-56 2",
 			"modules": {}
 		},
 		"R-5": {
@@ -70,19 +70,19 @@
 			"modules": {}
 		},
 		"CR-2": {
-			"count": 254,
-			"measured_tree_sha": "c45c49ebe557ce33cb1a12f24540cbe9e2046ae0",
+			"count": 252,
+			"measured_tree_sha": "63a8199726006ca81e4965eb1a02c50dcae0212f",
 			"cli_commit": "1f79319cce01a9e448b0580fcccf9059662b8146",
-			"command": "npx -y @vantageos/backend-doctor@0.4.9 <vantage-peers clean full checkout @c45c49e (PR #1571, task k17a1q56g4w9yw6s8gzpe6h8hx8h3hmy), deps installed>/convex --json-evidence <dir>/",
-			"output_line": "CR-2 VERDICT: 254 violation(s) — MECHANICAL, the gate refuses; 6 exempt; 1 could-not-judge.; MECHANICAL RULE COUNTS: CR-2 254, R-5 62, R-53 336, R-54 147, R-55 31, R-56 2",
+			"command": "npx -y @vantageos/backend-doctor@0.4.9 <vantage-peers clean full checkout @63a8199 (task k17dcydcvcdzh1gp1zd1ebt23s8fyjde), deps installed> --json-evidence <dir>/",
+			"output_line": "CR-2 VERDICT: 252 violation(s) — MECHANICAL, the gate refuses; 6 exempt; 1 could-not-judge.; MECHANICAL RULE COUNTS: CR-2 252, R-5 62, R-53 323, R-54 139, R-55 29, R-56 2",
 			"modules": {}
 		},
 		"R-54": {
-			"count": 142,
-			"measured_tree_sha": "93256251919d6726ee731a220a6c20e13d10436d",
+			"count": 139,
+			"measured_tree_sha": "63a8199726006ca81e4965eb1a02c50dcae0212f",
 			"cli_commit": "1f79319cce01a9e448b0580fcccf9059662b8146",
-			"command": "npx -y @vantageos/backend-doctor@0.4.9 <vantage-peers clean full checkout @9325625 (M21, task k1700vs1d5v3a82cgph88n5jbs8g6p8p), deps installed>/convex --json-evidence <dir>/",
-			"output_line": "R-54: 142 site(s) VIOLATE (a door resolving its caller through the organisation-scope resolver declares a verified-claim argument and refuses the call that is the service account and carries no claim, or is service-account-only, session-only, or declared fleet-wide). [conform=48 non-conforming=142 could-not-judge=8] Violations: convex/agentCredentials.ts:78 (mintAgentCredential: (A) resolves its caller through the organisation-scope resolver (the service account is master here) and declares no claim argument (verifiedActor / verifiedOrg / verifiedPerson)); convex/agentRelations.ts:95 (linkChild: (A) resolves its caller through the organisation-scope resolver (the service account is master here) and declares no claim argument (verifiedActor / verifiedOrg / verifiedPerson)); convex/agents.ts:120 (registerAgent: (A) resolves its caller through the organisation-scope resolver (the service account is master here) and declares no claim argument (verifiedActor / verifiedOrg / verifiedPerson)). Conform site(s): convex/agentCredentials.ts:160 (revokeAgentCredential: exit (b): callers resolve only through a verified session; the door never reaches the organisation-scope resolver); convex/agentCredentials.ts:239 (resolveAgentCredential: exit (a): service-account-only by purpose (requireServiceAccount / requireResolvedCaller masterOnly+mcpBoundOnly)); convex/agentCredentials.ts:289 (getAgentCredentialStatus: exit (b): callers resolve only through a verified session; the door never reaches the organisation-scope resolver). could-not-judge sites (not decided; each names why): convex/kb.ts:209 (storeDocumentChunked: caller scope arrives through a run call (ctx.runQuery / ctx.runMutation); its resolution is not read here); convex/kb.ts:351 (softDeleteDocument: caller scope arrives through a run call (ctx.runQuery / ctx.runMutation); its resolution is not read here); convex/okfBundleNode.ts:287 (exportOkfBundle: caller scope arrives through a run call (ctx.runQuery / ctx.runMutation); its resolution is not read here).; MECHANICAL RULE COUNTS: CR-2 255, R-5 62, R-53 337, R-54 142, R-55 29, R-56 2",
+			"command": "npx -y @vantageos/backend-doctor@0.4.9 <vantage-peers clean full checkout @63a8199 (task k17dcydcvcdzh1gp1zd1ebt23s8fyjde), deps installed> --json-evidence <dir>/",
+			"output_line": "R-54: 139 site(s) VIOLATE (a door resolving its caller through the organisation-scope resolver declares a verified-claim argument and refuses the call that is the service account and carries no claim, or is service-account-only, session-only, or declared fleet-wide). [conform=60 non-conforming=139 could-not-judge=8] Violations: convex/briefingNotes.ts:276 (create: (B) the claim is optional: accepts verifiedActor, verifiedOrg but no branch refuses the claimless service-account call, so the absence of a claim leaves the call master); convex/briefingNotes.ts:452 (get: (B) the claim is optional: accepts verifiedOrg but no branch refuses the claimless service-account call, so the absence of a cla; MECHANICAL RULE COUNTS: CR-2 252, R-5 62, R-53 323, R-54 139, R-55 29, R-56 2",
 			"modules": {}
 		},
 		"R-55": {

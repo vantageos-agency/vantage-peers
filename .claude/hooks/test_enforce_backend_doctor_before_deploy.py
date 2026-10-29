@@ -567,6 +567,8 @@ def test_ratchet_live_baseline_carries_its_command_and_never_rose():
             "93256251919d6726ee731a220a6c20e13d10436d",
             # R-53 336 -> 331, one door-scope resolver + stamped-or-refused create, PR #1577 (task k176y0q5jcz3m8m673bf61kva98h49js)
             "f37f6756a13bb7c03a234c6ce56a646b5fda43fd",
+            # CR-2 254 -> 252, R-53 331 -> 323, R-54 142 -> 139, agent registry doors by the verified session (task k17dcydcvcdzh1gp1zd1ebt23s8fyjde)
+            "63a8199726006ca81e4965eb1a02c50dcae0212f",
         }
         line = entry["output_line"]
         assert line.startswith((f"{rule}: ", f"{rule} VERDICT: ")), rule
