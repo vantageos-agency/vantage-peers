@@ -18,7 +18,7 @@ afterEach(() => {
 });
 
 // Runs the REAL script under bun with fetch replaced by the preload: no Clerk, no Convex.
-function run(adminOrg) {
+function run(adminOrg, nativeOrg = adminOrg, extraEnv = {}) {
 	const dir = mkdtempSync(join(tmpdir(), "prov-test-"));
 	made.push(dir);
 	const logFile = join(dir, "requests.jsonl");
@@ -49,7 +49,8 @@ function run(adminOrg) {
 				CLERK_ORG_ADMIN_USER_ID_VANTAGE_PEERS: "user_admin1",
 				STUB_LOG: logFile,
 				STUB_ADMIN_ORG: adminOrg,
-				STUB_NATIVE_ORG: adminOrg,
+				STUB_NATIVE_ORG: nativeOrg,
+				...extraEnv,
 			},
 		},
 	);
@@ -71,6 +72,24 @@ describe("provision-client-org-agents: the org-admin token is for the requested 
 		expect(r.stderr).toContain(OTHER);
 		expect(r.convex.map((c) => c.path)).toEqual([]);
 		expect(r.calls.filter((c) => c.kind === "UNSTUBBED")).toEqual([]);
+	});
+
+	it("native token for the requested org but the convex TEMPLATE token for another: exit 1, ORG_MISMATCH, zero registry requests", () => {
+		const r = run(OTHER, REQUESTED);
+		expect(r.status).toBe(1);
+		expect(r.stderr).toContain("ORG_MISMATCH");
+		expect(r.stderr).toContain('"convex" template token');
+		expect(r.stderr).toContain(REQUESTED);
+		expect(r.stderr).toContain(OTHER);
+		expect(r.convex).toEqual([]);
+		expect(r.calls.filter((c) => c.kind === "UNSTUBBED")).toEqual([]);
+	});
+
+	it("CLERK_DOMAIN unset: exit 1 naming it, zero registry requests", () => {
+		const r = run(REQUESTED, REQUESTED, { CLERK_DOMAIN: "" });
+		expect(r.status).toBe(1);
+		expect(r.stderr).toContain("CLERK_DOMAIN");
+		expect(r.convex).toEqual([]);
 	});
 
 	it("matching org: registers with a token carrying that org, then prints the owner step", () => {

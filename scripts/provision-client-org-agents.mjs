@@ -21,7 +21,7 @@
  *   4. prints the agents:setAgentOwner command (internal mutation: operator step, deploy key)
  *   writes <stage-dir>/<agent>.bearer and <agent>.secret (0600); prints no secret.
  *
- * Env (gitignored .env.local): CONVEX_URL, (optional) CLERK_DOMAIN, CLERK_ORG_ADMIN_JWT_TEMPLATE (default convex), CLERK_SECRET_KEY,
+ * Env (gitignored .env.local): CONVEX_URL, CLERK_DOMAIN (the Clerk frontend domain of THIS environment, required for the agent registry, no default), CLERK_ORG_ADMIN_JWT_TEMPLATE (default convex), CLERK_SECRET_KEY,
  * CLERK_SERVICE_ACCOUNT_USER_ID_VANTAGE_PEERS, CLERK_ORG_ADMIN_USER_ID_VANTAGE_PEERS.
  */
 import { createHash, randomBytes } from "node:crypto";

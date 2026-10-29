@@ -13,7 +13,6 @@
  * Convex client and never logs.
  */
 
-const DEFAULT_DOMAIN = "https://sharp-sponge-67.clerk.accounts.dev";
 const FORM = { "Content-Type": "application/x-www-form-urlencoded" };
 
 /** Decoded payload of a JWT (no signature check: the claim is read back, not trusted for auth). */
@@ -48,11 +47,16 @@ export async function mintOrgAdminToken({
 	userId,
 	orgId,
 	secretKey,
-	domain = DEFAULT_DOMAIN,
+	domain,
 	template = "convex",
 	clerk,
 	fetchImpl = globalThis.fetch,
 }) {
+	// The Clerk frontend domain is configuration of the environment (dev and prod differ): no default in code.
+	if (!domain)
+		throw new Error(
+			"CLERK_DOMAIN is not set: the Clerk frontend API domain of this environment is required",
+		);
 	const api =
 		clerk ?? (await import("@clerk/backend")).createClerkClient({ secretKey });
 	const { token: ticket } = await api.signInTokens.createSignInToken({
