@@ -174,7 +174,7 @@ export function readExportsOfFile(rawText: string, name: string): FileReading {
 		).test(text) ||
 		(name === "default" && /\bexport\s+default\b/.test(text)) ||
 		new RegExp(`\\bexport\\s*\\*\\s*as\\s+${n}\\s+from\\b`).test(text) ||
-		new RegExp(`(?:^|[^\\w$.])(?:module\\.)?exports\\.${n}\\s*=`).test(text) ||
+		new RegExp(`(?:^|[^\\w$.])(?:module\\.)?exports\\.${n}\\s*=(?!=)`).test(text) ||
 		new RegExp(`Object\\.defineProperty\\(\\s*exports\\s*,\\s*["']${n}["']`).test(text) ||
 		clauses.some((c) => specifierExportedNames(c.list).includes(name));
 	const relativeStarFrom = [
