@@ -89,7 +89,7 @@ async function walkNotes(t: T, dryRun: boolean, pageSize?: number) {
 }
 
 const orgOf = (t: T, id: Awaited<ReturnType<typeof note>>) =>
-	t.run(async (ctx) => (await ctx.db.get(id))?.orgId);
+	t.run(async (ctx) => (await ctx.db.get(id))?.orgId ?? null);
 
 describe("backfill_org_stamp oversize row", () => {
 	test("backfill_org_stamp oversize row: real run stamps the normal notes, skips and lists the oversize one", async () => {
@@ -101,7 +101,7 @@ describe("backfill_org_stamp oversize row", () => {
 		const pages = await walkNotes(t, false);
 		expect(await orgOf(t, a)).toBe("fleet-org");
 		expect(await orgOf(t, b)).toBe("fleet-org");
-		expect(await orgOf(t, big)).toBeUndefined();
+		expect(await orgOf(t, big)).toBeNull();
 		const ids = pages.flatMap((p) => p.oversizeIds);
 		expect(ids).toEqual([big]);
 		expect(pages.reduce((n, p) => n + p.oversize, 0)).toBe(1);
@@ -117,8 +117,8 @@ describe("backfill_org_stamp oversize row", () => {
 		const pages = await walkNotes(t, true);
 		expect(pages.flatMap((p) => p.oversizeIds)).toEqual([big]);
 		expect(pages.reduce((n, p) => n + p.stamped, 0)).toBe(0);
-		expect(await orgOf(t, a)).toBeUndefined();
-		expect(await orgOf(t, big)).toBeUndefined();
+		expect(await orgOf(t, a)).toBeNull();
+		expect(await orgOf(t, big)).toBeNull();
 	});
 
 	test("backfill_org_stamp oversize row: a page of large notes is bounded by bytes, the cursor skips no row", async () => {

@@ -93,6 +93,22 @@ const DEFAULT_PAGE_SIZE: Record<StampTable, number> = {
 	businessUnits: 100,
 };
 const MAX_PAGE_SIZE = 500;
+// Per-execution limits are 16 MiB read and 16 MiB written, and one document may
+// not exceed 1 MiB. A page stops once it has read PAGE_BYTES_BUDGET (the row that
+// crosses it is still examined; its cursor is the page's cursor, so no row is
+// skipped), leaving the rest of the execution for the resolver, parent reads and
+// the patches (which write whole documents, so written bytes <= read bytes).
+const PAGE_BYTES_BUDGET = 8 * 1024 * 1024;
+// A row whose estimated size after the stamp exceeds DOC_LIMIT - DOC_SAFETY_MARGIN
+// is EXEMPTED and LISTED, never trimmed (Pi ruling: client content is the
+// operator's call). The estimate is the UTF-8 length of JSON.stringify(row) plus
+// the added fields; Convex counts a document differently (field names, ids,
+// numbers), so the 64 KiB margin absorbs that difference. Dry run uses the same
+// estimate, so the inventory lists these rows before any write.
+const DOC_LIMIT_BYTES = 1024 * 1024;
+const DOC_SAFETY_MARGIN_BYTES = 64 * 1024;
+const STAMP_FIELDS_BYTES = 256; // orgId/tenantId + clerk org id + keys, rounded up
+const utf8 = new TextEncoder();
 const MAPPING_READ_CAP = 1000;
 const AGENT_READ_CAP = 5000;
 
@@ -228,6 +244,10 @@ const resultValidator = v.object({
 	undecidableByReason: reasonCountsValidator,
 	// Row ids left unstamped on this page (bounded by pageSize).
 	undecidableIds: v.array(v.string()),
+	// Rows skipped because the stamp would push them past the document size
+	// limit (estimate, see DOC_SAFETY_MARGIN_BYTES). Left unstamped, never trimmed.
+	oversize: v.number(),
+	oversizeIds: v.array(v.string()),
 	stamped: v.number(),
 	isDone: v.boolean(),
 	nextCursor: v.union(v.string(), v.null()),
@@ -243,7 +263,13 @@ type Tally = {
 	stamped: number;
 	undecidableByReason: Record<Reason, number>;
 	undecidableIds: string[];
+	oversizeIds: string[];
 };
+
+function exceedsStampBudget(row: unknown): boolean {
+	const bytes = utf8.encode(JSON.stringify(row)).length + STAMP_FIELDS_BYTES;
+	return bytes > DOC_LIMIT_BYTES - DOC_SAFETY_MARGIN_BYTES;
+}
 
 // The ONE decision point. A row that already carries a tenant yields null and is
 // therefore never written.
@@ -253,6 +279,7 @@ function settle(
 	id: string,
 	current: string | undefined,
 	verdict: Verdict,
+	row: unknown,
 ): string | null {
 	tally.examined++;
 	if (current !== undefined) {
@@ -262,6 +289,10 @@ function settle(
 	if (verdict.kind === "undecidable") {
 		tally.undecidableByReason[verdict.reason]++;
 		tally.undecidableIds.push(id);
+		return null;
+	}
+	if (exceedsStampBudget(row)) {
+		tally.oversizeIds.push(id);
 		return null;
 	}
 	if (verdict.kind === "fleet") tally.toStampFleet++;
@@ -280,7 +311,13 @@ async function walk(
 	resolver: Resolver,
 	tally: Tally,
 ): Promise<PageEnd> {
-	const opts = { cursor, numItems: pageSize };
+	const opts = {
+		cursor,
+		numItems: pageSize,
+		maximumBytesRead: PAGE_BYTES_BUDGET,
+	};
+	// slug -> permanent Clerk org id, read once per execution, not once per row.
+	const clerkIdBySlug = new Map<string, string | undefined>();
 	const commit = async <T extends StampTable>(
 		t: T,
 		id: Id<T>,
@@ -290,7 +327,10 @@ async function walk(
 		if (stamp === null || dryRun) return;
 		// The id column sits next to the slug column (ORG_COLUMNS); it is written
 		// with the slug when the stamped org's mapping carries one.
-		const clerkOrgId = await clerkOrgIdForSlug(ctx, stamp);
+		if (!clerkIdBySlug.has(stamp)) {
+			clerkIdBySlug.set(stamp, await clerkOrgIdForSlug(ctx, stamp));
+		}
+		const clerkOrgId = clerkIdBySlug.get(stamp);
 		await ctx.db.patch(t, id, {
 			[field]: stamp,
 			...(clerkOrgId === undefined
@@ -309,6 +349,7 @@ async function walk(
 				row._id,
 				row.orgId,
 				byAgent(resolver, row.createdBy),
+				row,
 			);
 			await commit("missions", row._id, "orgId", s);
 		}
@@ -323,6 +364,7 @@ async function walk(
 				row._id,
 				row.tenantId,
 				byAgent(resolver, row.from),
+				row,
 			);
 			await commit("messages", row._id, "tenantId", s);
 		}
@@ -341,7 +383,7 @@ async function walk(
 							parent.orgId,
 							byAgent(resolver, parent.createdBy),
 						);
-			const s = settle(resolver, tally, row._id, row.orgId, verdict);
+			const s = settle(resolver, tally, row._id, row.orgId, verdict, row);
 			await commit("tasks", row._id, "orgId", s);
 		}
 		return { isDone: page.isDone, nextCursor: page.continueCursor };
@@ -354,7 +396,7 @@ async function walk(
 				parent === null
 					? { kind: "undecidable", reason: "parentUnstamped" }
 					: byParent(resolver, parent.tenantId, byAgent(resolver, parent.from));
-			const s = settle(resolver, tally, row._id, row.tenantId, verdict);
+			const s = settle(resolver, tally, row._id, row.tenantId, verdict, row);
 			await commit("messageReceipts", row._id, "tenantId", s);
 		}
 		return { isDone: page.isDone, nextCursor: page.continueCursor };
@@ -368,6 +410,7 @@ async function walk(
 				row._id,
 				row.orgId,
 				byAgent(resolver, row.createdBy),
+				row,
 			);
 			await commit("briefingNotes", row._id, "orgId", s);
 		}
@@ -382,6 +425,7 @@ async function walk(
 				row._id,
 				row.orgId,
 				byAgent(resolver, row.orchestrator),
+				row,
 			);
 			await commit("diary", row._id, "orgId", s);
 		}
@@ -396,6 +440,7 @@ async function walk(
 				row._id,
 				row.orgId,
 				byAgent(resolver, row.orchestratorId),
+				row,
 			);
 			await commit("businessUnits", row._id, "orgId", s);
 		}
@@ -409,6 +454,7 @@ async function walk(
 			row._id,
 			row.orgId,
 			byAgent(resolver, row.createdBy),
+			row,
 		);
 		await commit("recurringTasks", row._id, "orgId", s);
 	}
@@ -450,6 +496,7 @@ export const run = internalMutation({
 				noCreator: 0,
 			},
 			undecidableIds: [],
+			oversizeIds: [],
 		};
 		const { isDone, nextCursor } = await walk(
 			ctx,
@@ -471,6 +518,8 @@ export const run = internalMutation({
 			undecidable: tally.undecidableIds.length,
 			undecidableByReason: tally.undecidableByReason,
 			undecidableIds: tally.undecidableIds,
+			oversize: tally.oversizeIds.length,
+			oversizeIds: tally.oversizeIds,
 			stamped: tally.stamped,
 			isDone,
 			nextCursor: isDone ? null : nextCursor,
