@@ -278,3 +278,127 @@ describe("kb actions take the verified org", () => {
 		expect(r.chunkCount).toBeGreaterThan(0);
 	});
 });
+
+// ─────────────────────────────────────────────────────────────────────────────
+// TRUST: `verifiedOrg` is believed from the fleet service account ONLY.
+// An ordinary member of org A naming org B as its verifiedOrg is refused at each
+// of the five KB doors with `verified-org-not-trusted`, and nothing is written.
+// Pins resolveVerifiedOrgMapping's service-account-only check
+// (convex/lib/verifiedOrg.ts): without it the member would act as org B.
+// ─────────────────────────────────────────────────────────────────────────────
+
+async function snapshot(t: T) {
+	return await t.run(async (ctx) => ({
+		memories: (await ctx.db.query("memories").collect()).length,
+		kbUploads: (await ctx.db.query("kbUploads").collect()).length,
+		tickets: (await ctx.db.query("uploadTickets").collect()).map((r) => ({
+			id: r._id,
+			usedAt: r.usedAt ?? null,
+			storageId: r.storageId ?? null,
+		})),
+		storage: (await ctx.db.system.query("_storage").collect()).length,
+	}));
+}
+
+async function sha256HexOf(text: string): Promise<string> {
+	const d = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(text));
+	return Array.from(new Uint8Array(d), (b) => b.toString(16).padStart(2, "0")).join("");
+}
+
+describe("verifiedOrg from a non-service-account caller is refused at all five KB doors", () => {
+	const BODY = "# Title\n\nSome text.";
+	type Member = ReturnType<typeof asMember>;
+	type Door = {
+		door: string;
+		// state the door could touch, created BEFORE the snapshot
+		seed?: (t: T) => Promise<{ ticket: string; storageId: string }>;
+		call: (t: T, member: Member, seeded?: { ticket: string; storageId: string }) => Promise<unknown>;
+	};
+	const doors: Door[] = [
+		{
+			door: "kb:storeDocumentChunked",
+			seed: async (t) => ({ ticket: "", storageId: await blob(t) }),
+			call: (_t, member, s) =>
+				member.action(STORE, {
+					storageId: s?.storageId,
+					mimeType: "text/markdown",
+					filename: "x.md",
+					orgId: B_ID as string,
+					namespace: `team/${B_ID}`,
+					verifiedOrg: { orgSlug: B },
+				}),
+		},
+		{
+			door: "kb:softDeleteDocument",
+			call: (_t, member) =>
+				member.action(SOFT_DELETE, {
+					docId: "doc-b",
+					orgId: B_ID as string,
+					namespace: `team/${B_ID}`,
+					verifiedOrg: { orgSlug: B },
+				}),
+		},
+		{
+			door: "kbMutations:generateUploadUrl",
+			call: (_t, member) =>
+				member.mutation(api.kbMutations.generateUploadUrl, {
+					orgId: B,
+					namespace: `team/${B}/placeholder`,
+					verifiedOrg: { orgSlug: B },
+				}),
+		},
+		{
+			door: "kbMutations:generateUploadUrlWithTicket",
+			call: (_t, member) =>
+				member.mutation(api.kbMutations.generateUploadUrlWithTicket, {
+					orgId: B,
+					namespace: `team/${B}/placeholder`,
+					sha256: SHA,
+					verifiedOrg: { orgSlug: B },
+				}),
+		},
+		{
+			door: "kbMutations:claimUpload",
+			// A genuine, claimable org-B ticket and blob: were the member's claim
+			// believed, it would consume the ticket and bind the blob to B.
+			seed: async (t) => {
+				const issued = await asMaster(t).mutation(
+					api.kbMutations.generateUploadUrlWithTicket,
+					{
+						orgId: B,
+						namespace: `team/${B}/placeholder`,
+						sha256: await sha256HexOf(BODY),
+						verifiedOrg: { orgSlug: B },
+					},
+				);
+				const storageId = await t.run(async (ctx) =>
+					ctx.storage.store(new Blob([BODY], { type: "text/markdown" })),
+				);
+				return { ticket: issued.ticket, storageId };
+			},
+			call: (_t, member, s) =>
+				member.mutation(api.kbMutations.claimUpload, {
+					storageId: s?.storageId as never,
+					ticket: s?.ticket as string,
+					verifiedOrg: { orgSlug: B },
+				}),
+		},
+	];
+
+	for (const { door, seed, call } of doors) {
+		test(`${door}: a member of A naming verifiedOrg B is refused and writes nothing`, async () => {
+			const t = await world();
+			const seeded = seed === undefined ? undefined : await seed(t);
+			const before = await snapshot(t);
+			let thrown: unknown;
+			try {
+				await call(t, asMember(t, A), seeded);
+			} catch (e) {
+				thrown = e;
+			}
+			expect(String(thrown)).toMatch(/RBAC_DENIED/);
+			expect(String(thrown)).toMatch(/verified-org-not-trusted/);
+			expect(await snapshot(t)).toEqual(before);
+		});
+	}
+});
