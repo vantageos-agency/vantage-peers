@@ -674,6 +674,9 @@ describe("briefingNotes:deleteTestNoteById", () => {
 	});
 });
 
+// A high surrogate with no low one after it, or a low one with no high before it.
+const LONE_SURROGATE = /[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/;
+
 describe("splitBody / previewOf", () => {
 	test("chunks join back to the original and none cuts a surrogate pair", () => {
 		// 3 UTF-16 units per repeat: BODY_CHUNK_CHARS is not a multiple of 3, so a
@@ -683,7 +686,7 @@ describe("splitBody / previewOf", () => {
 		expect(parts.length).toBeGreaterThan(2);
 		expect(parts.join("")).toBe(body);
 		for (const p of parts) {
-			expect(p.isWellFormed()).toBe(true);
+			expect(LONE_SURROGATE.test(p)).toBe(false);
 			expect(p.length).toBeLessThanOrEqual(BODY_CHUNK_CHARS);
 		}
 	});
@@ -691,7 +694,7 @@ describe("splitBody / previewOf", () => {
 	test("previewOf is a well-formed prefix", () => {
 		const body = "\u{1F600}".repeat(5_000);
 		const pv = previewOf(body);
-		expect(pv.isWellFormed()).toBe(true);
+		expect(LONE_SURROGATE.test(pv)).toBe(false);
 		expect(body.startsWith(pv)).toBe(true);
 		expect(pv.length).toBeLessThanOrEqual(4_000);
 	});
