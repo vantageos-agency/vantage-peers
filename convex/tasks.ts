@@ -4223,7 +4223,13 @@ export const listByMission = query({
 			statuses.length === 1;
 
 		type TaskRow = Doc<"tasks">;
+		// The overflow guard below counts the population the INDEX RETURNED, never
+		// what survives this in-memory filter: a truncated scan whose window holds
+		// no row of the requested statuses filters down to nothing and would
+		// otherwise pass the guard as a complete (empty) answer.
+		let rawScanCount: number | undefined;
 		const applyStatusFilter = (rows: TaskRow[]) => {
+			rawScanCount = rows.length;
 			if (statuses === undefined) return rows;
 			if (statuses.length === 1)
 				return rows.filter((r) => r.status === statuses[0]);
@@ -4295,7 +4301,11 @@ export const listByMission = query({
 		// fixed-size widened scan and "shrink the updatedSince window" would be
 		// a false remedy (narrowing the window doesn't change what got fetched).
 		// Left out of the message on purpose.
-		if (memberOrg === null && needsWideScan && allRows.length > TASK_LIST_SCAN_CAP) {
+		if (
+			memberOrg === null &&
+			needsWideScan &&
+			(rawScanCount ?? allRows.length) > TASK_LIST_SCAN_CAP
+		) {
 			throw new ConvexError(
 				`tasks.listByMission: SCAN_CAP_EXCEEDED — widened scan for updatedSince/createdBy/createdBefore hit the cap of ${TASK_LIST_SCAN_CAP} candidate rows before the filter ran. The result would be incomplete and indistinguishable from a full match. Narrow with status.`,
 			);
