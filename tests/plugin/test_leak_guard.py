@@ -1076,3 +1076,96 @@ def test_scan_file_actually_FEEDS_the_filename_to_the_scanner(tmp_path, monkeypa
         "the finding fired, but not on the NAME — the assertion must pin WHERE it came "
         "from, or a content match would satisfy this test by accident and prove nothing."
     )
+
+
+# --- REPOSITORY perimeter ---------------------------------------------------
+# The repository is PUBLIC: every TRACKED file is a disclosure surface, not only
+# the 19 packaged ones. The inventory is still derived (derive_inventory walks the
+# tree, never a hand-written glob), then narrowed to what git tracks, because an
+# untracked file on a runner or a workstation is not published. Wired after the
+# text purge (#1092) and the client-name removal (#1584) so that main can be green.
+
+
+def _tracked_files(root: Path) -> set[Path] | None:
+    try:
+        out = subprocess.run(
+            ["git", "-C", str(root), "ls-files", "-z"],
+            check=True, capture_output=True,
+        ).stdout
+    except (OSError, subprocess.CalledProcessError):
+        return None
+    return {(root / p.decode("utf-8", "surrogateescape")).resolve() for p in out.split(b"\0") if p}
+
+
+def _repository_client_findings(root: Path, patterns=None, hash_vocab=None):
+    """(checked_files, findings) over every TRACKED file under `root`."""
+    tracked = _tracked_files(root)
+    assert tracked is not None, f"git ls-files failed under {root}: cannot judge the repository perimeter"
+    targets = [i.path for i in derive_inventory(root) if i.checked and i.path.resolve() in tracked]
+    findings = []
+    for t in targets:
+        findings.extend(client_data(scan_file(t, extra_client_patterns=patterns, hash_vocab=hash_vocab)))
+    return targets, findings
+
+
+def test_no_client_data_in_tracked_repository():
+    """TIER 1 over the whole PUBLIC repository: no tracked file may carry real
+    client-org / contact-person data. Same resolver as the packaged test, so it
+    ERRORs (never passes) without a resolved vocabulary."""
+    mode, vocab = resolve_vocabulary_or_fail()
+    patterns = vocab if mode == "plaintext-patterns" else None
+    hash_vocab = vocab if mode == "hashes" else None
+
+    targets, findings = _repository_client_findings(REPO_ROOT, patterns, hash_vocab)
+    packaged = len(packaged_paths())
+    print(f"Repository perimeter: {len(targets)} tracked file(s) CHECKED (packaged perimeter: {packaged}).")
+    assert len(targets) > packaged, (
+        f"the repository perimeter enumerated {len(targets)} file(s), not more than the "
+        f"{packaged} packaged ones -- a broken inventory, not a clean repository"
+    )
+    if findings:
+        detail = "\n".join(f"  {f.render()}" for f in findings)
+        pytest.fail(f"{len(findings)} CLIENT DATA leak(s) in tracked files of the PUBLIC repository:\n{detail}")
+
+
+def _fictive_repo(tmp_path):
+    repo = tmp_path / "repo"
+    (repo / "scripts").mkdir(parents=True)
+    (repo / "plugin" / "skills" / "s").mkdir(parents=True)
+    (repo / "plugin" / "skills" / "s" / "SKILL.md").write_text("clean skill\n", encoding="utf-8")
+    (repo / "scripts" / "tool.py").write_text("print('clean')\n", encoding="utf-8")
+    subprocess.run(["git", "init", "-q", str(repo)], check=True)
+    subprocess.run(["git", "-C", str(repo), "add", "-A"], check=True)
+    return repo
+
+
+def test_repository_perimeter_catches_identity_outside_plugin(tmp_path):
+    """BLOCK pole: a fictitious identity in a TRACKED file under scripts/ (outside
+    the packaged perimeter) is caught and named with file + line."""
+    patterns = resolve_client_data_patterns(path=_write_config(tmp_path, FICTIVE_CONFIG))
+    repo = _fictive_repo(tmp_path)
+    leak = repo / "scripts" / "tool.py"
+    leak.write_text("print('clean')\n# contact: Zara Quinlin\n", encoding="utf-8")
+    subprocess.run(["git", "-C", str(repo), "add", "-A"], check=True)
+
+    targets, findings = _repository_client_findings(repo, patterns)
+    assert len(targets) == 2
+    assert findings, "MISSED LEAK: identity in a tracked scripts/ file was not flagged"
+    assert findings[0].source == str(leak) and findings[0].line_no == 2
+
+
+def test_repository_perimeter_clean_tree_is_green(tmp_path):
+    """PASS pole: the same tree without the identity yields zero findings."""
+    patterns = resolve_client_data_patterns(path=_write_config(tmp_path, FICTIVE_CONFIG))
+    targets, findings = _repository_client_findings(_fictive_repo(tmp_path), patterns)
+    assert len(targets) == 2 and findings == []
+
+
+def test_repository_perimeter_ignores_untracked_files(tmp_path):
+    """An untracked file is not published, so it is not counted: the perimeter is
+    what git tracks, never whatever happens to sit on the runner's disk."""
+    patterns = resolve_client_data_patterns(path=_write_config(tmp_path, FICTIVE_CONFIG))
+    repo = _fictive_repo(tmp_path)
+    (repo / "scripts" / "scratch.py").write_text("# Zorblatt Holdings\n", encoding="utf-8")
+    targets, findings = _repository_client_findings(repo, patterns)
+    assert len(targets) == 2 and findings == []
