@@ -223,12 +223,11 @@ describe("[P-T3] agent_relations — the parent-child edge graph", () => {
 		expect(graphForB.nodes).toHaveLength(0);
 		expect(graphForB.edges).toHaveLength(0);
 
-		// B cannot name A's organisation at all: no door takes an organisation
-		// argument, so the attempt is REJECTED by the validator, never answered
-		// with B's own graph (which would read as "A has none").
+		// B naming A's organisation is REFUSED (the echo must equal the session's
+		// org slug), never answered with B's own graph ("A has none").
 		await expect(
-			tAdminB.query(api.agentRelations.graphByOrg, { orgSlug: "org-a" } as never),
-		).rejects.toThrow(/orgSlug/);
+			tAdminB.query(api.agentRelations.graphByOrg, { orgSlug: "org-a" }),
+		).rejects.toThrow(/RBAC_DENIED/);
 
 		await expect(
 			tAdminB.query(api.agentRelations.childrenOf, {
