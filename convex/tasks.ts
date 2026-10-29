@@ -90,6 +90,16 @@ import {
 	requireAssigneeId,
 } from "./lib/taskActors";
 import { clerkOrgIdForSlug } from "./lib/orgClerkId";
+import {
+	refuseClaimlessServiceAccount,
+	resolveClaimedReadScope,
+} from "./lib/taskDoorClaim";
+import {
+	taskRowFilter,
+	taskScopeReach,
+	type TaskFilterBuilder,
+	type TaskRowPredicate,
+} from "./lib/taskScopeFilter";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Shared validators
@@ -1373,6 +1383,21 @@ async function runTasksList(ctx: QueryCtx, args: TasksListArgs, scope: OrgScope)
 		const priorityFilter = args.priority;
 		const before = args.createdBefore;
 
+		// R-55: the caller's predicates are INSIDE every read below, before the bound.
+		// The tenant gate and the roster (taskScopeReach) and the priority narrow the
+		// query itself; cutting the window to `limit` first and dropping rows
+		// afterwards returned a short or empty page while more of the caller's rows
+		// existed. The fleet's reach is the whole table, as before.
+		const reach = taskScopeReach(scope);
+		if (reach.reach === "none") return [];
+		const rowFilter: TaskRowPredicate =
+			taskRowFilter(
+				reach,
+				...(priorityFilter === undefined
+					? []
+					: [(q: TaskFilterBuilder) => q.eq(q.field("priority"), priorityFilter)]),
+			) ?? (() => true);
+
 		// Day 163 (Pi, k171rbm2txe42jxzddyqakbg7n8ch7zr) — `createdBefore` was
 		// OMITTED here. On a cursor-only call fetchCap collapsed to `limit`,
 		// so the DB fetched only the `limit` NEWEST rows, then the cursor
@@ -1550,6 +1575,7 @@ async function runTasksList(ctx: QueryCtx, args: TasksListArgs, scope: OrgScope)
 										.lt("_creationTime", upper),
 								)
 								.order("desc")
+								.filter(rowFilter)
 								.take(idFetch);
 						}
 						return await q
@@ -1562,6 +1588,7 @@ async function runTasksList(ctx: QueryCtx, args: TasksListArgs, scope: OrgScope)
 									: i.eq("assignedToId", assigneeId).eq("status", status),
 							)
 							.order("desc")
+							.filter(rowFilter)
 							.take(idFetch);
 					}),
 				);
@@ -1599,6 +1626,7 @@ async function runTasksList(ctx: QueryCtx, args: TasksListArgs, scope: OrgScope)
 									.lt("_creationTime", upper),
 							)
 							.order("desc")
+							.filter(rowFilter)
 							.take(memberFetch);
 					}
 					if (assignedToInstance !== undefined) {
@@ -1611,6 +1639,7 @@ async function runTasksList(ctx: QueryCtx, args: TasksListArgs, scope: OrgScope)
 									.lt("_creationTime", upper),
 							)
 							.order("desc")
+							.filter(rowFilter)
 							.take(memberFetch);
 					}
 					if (project !== undefined) {
@@ -1623,6 +1652,7 @@ async function runTasksList(ctx: QueryCtx, args: TasksListArgs, scope: OrgScope)
 									.lt("_creationTime", upper),
 							)
 							.order("desc")
+							.filter(rowFilter)
 							.take(memberFetch);
 					}
 					return await q
@@ -1633,6 +1663,7 @@ async function runTasksList(ctx: QueryCtx, args: TasksListArgs, scope: OrgScope)
 								.lt("_creationTime", upper),
 						)
 						.order("desc")
+						.filter(rowFilter)
 						.take(memberFetch);
 				}),
 			);
@@ -1659,6 +1690,7 @@ async function runTasksList(ctx: QueryCtx, args: TasksListArgs, scope: OrgScope)
 							: base;
 					})
 					.order("desc")
+					.filter(rowFilter)
 					.take(canPushCursorIntoIndex ? limit : fetchCap);
 			} else {
 				const base = await ctx.db
@@ -1667,6 +1699,7 @@ async function runTasksList(ctx: QueryCtx, args: TasksListArgs, scope: OrgScope)
 						q.eq("assignedToInstance", assignedToInstance).eq("project", project),
 					)
 					.order("desc")
+					.filter(rowFilter)
 					.take(fetchCap);
 				allRows = applyStatusFilter(base);
 			}
@@ -1685,6 +1718,7 @@ async function runTasksList(ctx: QueryCtx, args: TasksListArgs, scope: OrgScope)
 							: base;
 					})
 					.order("desc")
+					.filter(rowFilter)
 					.take(canPushCursorIntoIndex ? limit : fetchCap);
 			} else {
 				const base = await ctx.db
@@ -1693,6 +1727,7 @@ async function runTasksList(ctx: QueryCtx, args: TasksListArgs, scope: OrgScope)
 						q.eq("assignedToInstance", assignedToInstance),
 					)
 					.order("desc")
+					.filter(rowFilter)
 					.take(fetchCap);
 				allRows = applyStatusFilter(base);
 			}
@@ -1709,12 +1744,14 @@ async function runTasksList(ctx: QueryCtx, args: TasksListArgs, scope: OrgScope)
 							: base;
 					})
 					.order("desc")
+					.filter(rowFilter)
 					.take(canPushCursorIntoIndex ? limit : fetchCap);
 			} else {
 				const base = await ctx.db
 					.query("tasks")
 					.withIndex("by_project", (q) => q.eq("project", project))
 					.order("desc")
+					.filter(rowFilter)
 					.take(fetchCap);
 				allRows = applyStatusFilter(base);
 			}
@@ -1732,11 +1769,12 @@ async function runTasksList(ctx: QueryCtx, args: TasksListArgs, scope: OrgScope)
 					.query("tasks")
 					.withIndex("by_status", (q) => q.eq("status", statuses[0]))
 					.order("desc")
+					.filter(rowFilter)
 					.take(fetchCap);
 			} else {
 				// Multi-status without other filter: full table scan bounded by limit.
 				// Acceptable for bounded list sizes; no new index required per brief.
-				const base = await ctx.db.query("tasks").order("desc").take(fetchCap);
+				const base = await ctx.db.query("tasks").order("desc").filter(rowFilter).take(fetchCap);
 				allRows = applyStatusFilter(base);
 			}
 		}
@@ -1748,9 +1786,10 @@ async function runTasksList(ctx: QueryCtx, args: TasksListArgs, scope: OrgScope)
 				.query("tasks")
 				.withIndex("by_orgId", (q) => q.eq("orgId", orgSlug))
 				.order("desc")
+				.filter(rowFilter)
 				.take(fetchCap);
 		} else {
-			allRows = await ctx.db.query("tasks").order("desc").take(fetchCap);
+			allRows = await ctx.db.query("tasks").order("desc").filter(rowFilter).take(fetchCap);
 		}
 
 		// Refuse to return a silently-incomplete page: if the widened scan
@@ -1825,14 +1864,10 @@ async function runTasksList(ctx: QueryCtx, args: TasksListArgs, scope: OrgScope)
 				return !isCronCreator && !isSyntheticTitle;
 			});
 		}
-		// Dashboard B1 — priority filter (in-memory, applied after other filters).
-		if (priorityFilter !== undefined) {
-			filtered = filtered.filter((r) => r.priority === priorityFilter);
-		}
-
-	const scoped = filterByOrgScope(filtered, scope);
-	if (lite) return scoped.map(projectTaskLite);
-	return scoped;
+		// Dashboard B1 — the priority filter and the tenant gate / roster ran inside
+		// the reads above (rowFilter), before each bound.
+	if (lite) return filtered.map(projectTaskLite);
+	return filtered;
 }
 
 export const list = query({
@@ -1921,6 +1956,10 @@ export const listPaginated = query({
 		priority: v.optional(priorityValidator),
 		// orgId is accepted and ignored — multi-tenant scoping via Clerk JWT
 		orgId: v.optional(v.string()),
+		// R-54: the fleet service account is served only inside a transport-verified
+		// organisation (convex/lib/taskDoorClaim.ts). A dashboard session carries neither.
+		verifiedActor: v.optional(verifiedActorValidator),
+		verifiedOrg: v.optional(verifiedOrgValidator),
 	},
 	returns: v.object({
 		page: v.array(taskFullValidator),
@@ -1932,11 +1971,33 @@ export const listPaginated = query({
 		// paginated query (usePaginatedQuery) — refuseWithoutThrow narrows
 		// the signed-in-no-org branch to a typed-empty page instead of a
 		// throw, which would otherwise crash the board's render.
-		const scope = await withOrgScope(ctx, { refuseWithoutThrow: true });
-		if (scope.refused) {
+		const transportScope = await withOrgScope(ctx, { refuseWithoutThrow: true });
+		if (transportScope.refused) {
 			return { page: [], isDone: true, continueCursor: "" };
 		}
+		const scope = await resolveClaimedReadScope(
+			ctx,
+			transportScope,
+			{ verifiedActor: args.verifiedActor, verifiedOrg: args.verifiedOrg },
+			"tasks:listPaginated",
+		);
 		requireScope(scope, "view-own-tasks");
+
+		// R-55: the caller's tenant gate, roster and priority are INSIDE the paginated
+		// scan, so a page holds rows the caller may see and every non-final page is
+		// full. Cutting the window first returned short or empty pages while more of
+		// the caller's rows existed.
+		const reach = taskScopeReach(scope);
+		if (reach.reach === "none") {
+			return { page: [], isDone: true, continueCursor: "" };
+		}
+		const priority = args.priority;
+		const rowFilter = taskRowFilter(
+			reach,
+			...(priority === undefined
+				? []
+				: [(q: TaskFilterBuilder) => q.eq(q.field("priority"), priority)]),
+		);
 
 		type TaskRow = Doc<"tasks">;
 
@@ -2010,28 +2071,14 @@ export const listPaginated = query({
 
 		// By assignee ID the index carries no tenant field, and rows of one agent ID
 		// can sit under another stamp (an unstamped fleet-owned row assigned to an
-		// operator-org agent). The member's tenant predicate therefore runs as a
-		// residual filter INSIDE the paginated scan (the index range is already the
-		// assignee ID), so every non-final page is full instead of short or empty.
-		const paginatedResult =
-			assigneeId !== undefined && memberOrg !== null
-				? await baseQuery
-						.filter((q) => q.eq(q.field("orgId"), memberOrg))
-						.paginate(args.paginationOpts)
-				: await baseQuery.paginate(args.paginationOpts);
-
-		// Apply in-memory priority filter on the page (no index for priority alone).
-		let page: TaskRow[] = paginatedResult.page;
-		if (args.priority !== undefined) {
-			const priority = args.priority;
-			page = page.filter((r) => r.priority === priority);
-		}
-
-		// Apply org scope filtering.
-		const scopedPage = filterByOrgScope(page, scope);
+		// operator-org agent). The tenant gate therefore runs in the filter as well
+		// as in the index range, so every non-final page is full.
+		const scanned =
+			rowFilter === undefined ? baseQuery : baseQuery.filter(rowFilter);
+		const paginatedResult = await scanned.paginate(args.paginationOpts);
 
 		return {
-			page: scopedPage,
+			page: paginatedResult.page as TaskRow[],
 			isDone: paginatedResult.isDone,
 			continueCursor: paginatedResult.continueCursor,
 		};
@@ -2425,6 +2472,10 @@ export const attachReviewArtifact = mutation({
 		// no-op if omitted.
 		agentCredentialSecret: v.optional(v.string()),
 		verifiedActor: v.optional(verifiedActorValidator),
+		// R-54: the organisation the MCP transport VERIFIED for the caller. The fleet
+		// service account is admitted only with it, and the target task must be that
+		// organisation's (convex/lib/verifiedOrg.ts), like `update`.
+		verifiedOrg: v.optional(verifiedOrgValidator),
 	},
 	returns: v.null(),
 	handler: async (ctx, args) => {
@@ -2436,11 +2487,24 @@ export const attachReviewArtifact = mutation({
 		// in convex/__tests__/. This repo has no subscribing pre-org client shell
 		// (no React render path); the RBAC_DENIED/AUTH_REQUIRED throw is reachable
 		// only via an imperative SDK/test call, never an ordinary render.
+		// R-54: the fleet service account acts inside the organisation the transport
+		// verified for it. With no `verifiedOrg` it is refused, never served as master
+		// over every tenant's review tasks.
+		const transportScope = await withOrgScope(ctx, {
+			allowNoIdentityMaster: false,
+		});
+		refuseClaimlessServiceAccount(
+			transportScope,
+			{ verifiedOrg: args.verifiedOrg },
+			"tasks:attachReviewArtifact",
+		);
 		const callerScope = await requireAuthenticatedCaller(
 			ctx,
 			args.callerOrchestrator,
 			args.agentCredentialSecret,
 			args.verifiedActor,
+			undefined,
+			{ proof: args.verifiedOrg, door: "tasks:attachReviewArtifact" },
 		);
 		const actingName = actingNameOf(callerScope, args.callerOrchestrator);
 		if (actingName === undefined) {
@@ -2463,6 +2527,12 @@ export const attachReviewArtifact = mutation({
 		// Tenant gate: "any orchestrator" means any orchestrator OF THE CALLER'S
 		// OWN ORGANISATION — never a member of another tenant.
 		assertTaskVisibleToCaller(task, callerScope, args.taskId);
+		assertRowInVerifiedOrg(
+			task,
+			callerScope.callerVerifiedOrg,
+			args.taskId,
+			"tasks:attachReviewArtifact",
+		);
 
 		// Deliberately NOT assertTaskCallerAuthorized — this is the narrow
 		// permission the mutation exists to grant: ANY orchestrator may attach
@@ -2747,7 +2817,12 @@ export const blockTask = mutation({
 // ─────────────────────────────────────────────────────────────────────────────
 
 export const listUnlinkedBlocked = query({
-	args: {},
+	args: {
+		// R-54: the fleet service account is served only inside a transport-verified
+		// organisation (convex/lib/taskDoorClaim.ts).
+		verifiedActor: v.optional(verifiedActorValidator),
+		verifiedOrg: v.optional(verifiedOrgValidator),
+	},
 	returns: v.array(
 		v.object({
 			taskId: v.id("tasks"),
@@ -2757,7 +2832,7 @@ export const listUnlinkedBlocked = query({
 			updatedAt: v.number(),
 		}),
 	),
-	handler: async (ctx) => {
+	handler: async (ctx, args) => {
 		// SMALLEST POSSIBLE EDIT — convex/tasks.ts is owned by another specialist
 		// on a different branch, so this touches only this handler and nothing
 		// else in this file or convex/missions.ts.
@@ -2793,10 +2868,16 @@ export const listUnlinkedBlocked = query({
 		//   grep -rn "api\.tasks\." --include=*.tsx app components hooks lib → no hit
 		// on this registration. So `alsoRefusePreOrg` is safe: no mounted render
 		// exists for that caller's throw to crash.
-		const scope = await withOrgScope(ctx, { refuseWithoutThrow: true });
-		requireResolvedCaller(scope, "tasks:listUnlinkedBlocked", {
+		const transportScope = await withOrgScope(ctx, { refuseWithoutThrow: true });
+		requireResolvedCaller(transportScope, "tasks:listUnlinkedBlocked", {
 			alsoRefusePreOrg: true,
 		});
+		const scope = await resolveClaimedReadScope(
+			ctx,
+			transportScope,
+			{ verifiedActor: args.verifiedActor, verifiedOrg: args.verifiedOrg },
+			"tasks:listUnlinkedBlocked",
+		);
 		// R-11: the tenant predicate is inside the read. Master reads the fleet's
 		// blocked tasks (`by_status`); an org member reads only the index range of
 		// its OWN org (`by_orgId_status_clerk_id`, keyed on the org's permanent ID
@@ -3362,19 +3443,18 @@ async function assertNoConcurrentInProgress(
 	// with no ID holds no rows to count.
 	const callerId = callerScope.callerActorId;
 	if (callerId === undefined) return;
-	const inProgressTasks = (
-		await ctx.db
-			.query("tasks")
-			.withIndex("by_assigneeId_project_status", (q) =>
-				q
-					.eq("assignedToId", callerId)
-					.eq("project", project)
-					.eq("status", "in_progress"),
-			)
-			.take(TASK_LIST_SCAN_CAP + 1)
-	);
-
-	const others = inProgressTasks.filter((t) => t._id !== taskId);
+	// R-55: the target itself is excluded INSIDE the read, before the bound, so it
+	// never takes a slot of the window.
+	const others = await ctx.db
+		.query("tasks")
+		.withIndex("by_assigneeId_project_status", (q) =>
+			q
+				.eq("assignedToId", callerId)
+				.eq("project", project)
+				.eq("status", "in_progress"),
+		)
+		.filter((q) => q.neq(q.field("_id"), taskId))
+		.take(TASK_LIST_SCAN_CAP + 1);
 	if (others.length >= cap) {
 		const conflict = others[0];
 		const openIds = others.map((t) => t._id);
@@ -4113,23 +4193,51 @@ export const listOverdue = query({
 	args: {
 		assignedTo: v.optional(assigneeValidator),
 		limit: v.optional(v.number()),
+		// R-54: the fleet service account is served only inside a transport-verified
+		// organisation (convex/lib/taskDoorClaim.ts).
+		verifiedActor: v.optional(verifiedActorValidator),
+		verifiedOrg: v.optional(verifiedOrgValidator),
 	},
 	handler: async (ctx, args) => {
 		// Same mechanism as `list`: the verified scope, fail-closed. An
 		// anonymous caller, or one signed in with no organisation, is served a
 		// typed-empty result; an org member is served only its own tenant's
-		// rows (filterByOrgScope: tenant gate, then roster).
-		const scope = await withOrgScope(ctx, { refuseWithoutThrow: true });
-		if (scope.refused) return [];
+		// rows (tenant gate, then roster).
+		const transportScope = await withOrgScope(ctx, { refuseWithoutThrow: true });
+		if (transportScope.refused) return [];
+		const scope = await resolveClaimedReadScope(
+			ctx,
+			transportScope,
+			{ verifiedActor: args.verifiedActor, verifiedOrg: args.verifiedOrg },
+			"tasks:listOverdue",
+		);
 		const callerOrg = scope.orgSlug;
 		if (!scope.isMaster && callerOrg === null) return [];
 		const now = Date.now();
 		const limit = args.limit ?? 50;
 
-		// A non-master caller's tenant is pushed into the `by_orgId` index BEFORE
-		// `.take(limit)`, so another tenant's overdue rows can never crowd the
-		// caller's own out of the page (the under-fill direction). Master scans
-		// the table as before.
+		// R-55: every caller predicate is INSIDE the read, before `.take(limit)`:
+		// the tenant gate and roster (taskScopeReach), and the assignee. Cutting the
+		// window first let another tenant's, or a non-admitted assignee's, overdue
+		// rows fill it and left the caller's own out.
+		const reach = taskScopeReach(scope);
+		if (reach.reach === "none") return [];
+		// M7: the assignee BY ID, in the caller's own org; a label naming no agent
+		// there matches nothing.
+		const assigneeId =
+			args.assignedTo === undefined || args.assignedTo === ""
+				? undefined
+				: await assigneeIdForRead(ctx, scope, args.assignedTo);
+		if (args.assignedTo && assigneeId === undefined) return [];
+		const scopeFilter = taskRowFilter(
+			reach,
+			...(assigneeId === undefined
+				? []
+				: [(q: TaskFilterBuilder) => q.eq(q.field("assignedToId"), assigneeId)]),
+		);
+
+		// A non-master caller's tenant is also the `by_orgId` index range. Master
+		// scans the table as before.
 		const candidates =
 			scope.isMaster || callerOrg === null
 				? ctx.db.query("tasks")
@@ -4137,33 +4245,20 @@ export const listOverdue = query({
 						.query("tasks")
 						.withIndex("by_orgId", (q) => q.eq("orgId", callerOrg));
 
-		let tasks = await candidates
-			.filter((q) =>
-				q.and(
-					q.neq(q.field("status"), "done"),
-					// Day 157 — a cancelled task is a terminal, non-actionable state;
-					// it must never surface as "overdue" (MAJOR #2, convex-reviewer).
-					q.neq(q.field("status"), "cancelled"),
-					q.neq(q.field("dueDate"), undefined),
-					q.lt(q.field("dueDate"), now),
-				),
-			)
-			.take(limit);
-
-		// Roster narrowing on top of the tenant gate — the exact predicate the
-		// six existing readers apply.
-		tasks = filterByOrgScope(tasks, scope);
-
-		if (args.assignedTo) {
-			// M7: the assignee BY ID, in the caller's own org; a label naming no
-			// agent there matches nothing.
-			const assigneeId = await assigneeIdForRead(ctx, scope, args.assignedTo);
-			tasks = tasks.filter(
-				(t) => assigneeId !== undefined && t.assignedToId === assigneeId,
-			);
-		}
-
-		return tasks;
+		const overdue = candidates.filter((q) =>
+			q.and(
+				q.neq(q.field("status"), "done"),
+				// Day 157 — a cancelled task is a terminal, non-actionable state;
+				// it must never surface as "overdue" (MAJOR #2, convex-reviewer).
+				q.neq(q.field("status"), "cancelled"),
+				q.neq(q.field("dueDate"), undefined),
+				q.lt(q.field("dueDate"), now),
+			),
+		);
+		return await (scopeFilter === undefined
+			? overdue
+			: overdue.filter(scopeFilter)
+		).take(limit);
 	},
 });
 
@@ -5343,6 +5438,10 @@ export const billingSummaryByProject = query({
 		// over an unfiltered scan (that would reproduce the same "bound applied
 		// after the fetch" defect this handler was fixed for).
 		project: v.optional(v.string()),
+		// R-54: the fleet service account is served only inside a transport-verified
+		// organisation (convex/lib/taskDoorClaim.ts).
+		verifiedActor: v.optional(verifiedActorValidator),
+		verifiedOrg: v.optional(verifiedOrgValidator),
 	},
 	returns: v.object({
 		byProject: v.array(
@@ -5375,23 +5474,58 @@ export const billingSummaryByProject = query({
 		// R-50: reactively-subscribed public query — refuseWithoutThrow
 		// narrows the signed-in-no-org branch to a typed-empty summary
 		// instead of a throw.
-		const scope = await withOrgScope(ctx, { refuseWithoutThrow: true });
-		if (scope.refused) {
-			return {
-				byProject: [],
-				unattributedTaskCount: 0,
-				invalidDurationTaskCount: 0,
-				truncated: false,
-			};
-		}
+		const transportScope = await withOrgScope(ctx, { refuseWithoutThrow: true });
+		const emptySummary = {
+			byProject: [],
+			unattributedTaskCount: 0,
+			invalidDurationTaskCount: 0,
+			truncated: false,
+		};
+		if (transportScope.refused) return emptySummary;
+		const scope = await resolveClaimedReadScope(
+			ctx,
+			transportScope,
+			{ verifiedActor: args.verifiedActor, verifiedOrg: args.verifiedOrg },
+			"tasks:billingSummaryByProject",
+		);
 		requireScope(scope, "view-own-tasks");
 
 		const project = args.project;
 
+		// R-55: a member's tenant gate and roster are INSIDE the read, before the
+		// scan cap. The date indexes below are fleet-wide: cut first, another
+		// tenant's done tasks of the period filled the window and a member was
+		// summed over nothing. A member reads its OWN done tasks (the tenant-keyed
+		// index) and the period and project narrow in the same query; the fleet
+		// reads the period index, as it always did.
+		const reach = taskScopeReach(scope);
+		if (reach.reach === "none") return emptySummary;
+		const memberOrgId = reach.reach === "tenant" ? scope.orgClerkId : undefined;
+		const memberFilter = taskRowFilter(
+			reach,
+			(q) =>
+				q.and(
+					q.neq(q.field("completedAt"), undefined),
+					q.gte(q.field("completedAt"), args.startDate),
+					q.lte(q.field("completedAt"), args.endDate),
+				),
+			...(project === undefined
+				? []
+				: [(q: TaskFilterBuilder) => q.eq(q.field("project"), project)]),
+		);
+
 		// Index-bounded scan: the period (and project, when supplied) bounds
 		// the QUERY, not an in-memory filter applied after the fetch.
 		const doneTasks =
-			project !== undefined
+			memberOrgId !== undefined && memberFilter !== undefined
+				? await ctx.db
+						.query("tasks")
+						.withIndex("by_orgId_status_clerk_id", (q) =>
+							q.eq("clerkOrgId", memberOrgId).eq("status", "done"),
+						)
+						.filter(memberFilter)
+						.take(BILLING_SUMMARY_SCAN_CAP + 1)
+				: project !== undefined
 				? await ctx.db
 						.query("tasks")
 						.withIndex("by_status_project_completedAt", (q) =>
@@ -5413,8 +5547,7 @@ export const billingSummaryByProject = query({
 						.take(BILLING_SUMMARY_SCAN_CAP + 1);
 
 		const truncated = doneTasks.length > BILLING_SUMMARY_SCAN_CAP;
-		const capped = doneTasks.slice(0, BILLING_SUMMARY_SCAN_CAP);
-		const scoped = filterByOrgScope(capped, scope);
+		const scoped = doneTasks.slice(0, BILLING_SUMMARY_SCAN_CAP);
 
 		const totals = new Map<
 			string,
@@ -5494,6 +5627,10 @@ export const taskDurationDistribution = query({
 		from: v.optional(v.number()), // Unix ms, inclusive
 		to: v.optional(v.number()), // Unix ms, inclusive
 		project: v.optional(v.string()),
+		// R-54: the fleet service account is served only inside a transport-verified
+		// organisation (convex/lib/taskDoorClaim.ts).
+		verifiedActor: v.optional(verifiedActorValidator),
+		verifiedOrg: v.optional(verifiedOrgValidator),
 	},
 	returns: v.object({
 		count: v.number(),
@@ -5520,34 +5657,66 @@ export const taskDurationDistribution = query({
 		// R-50: reactively-subscribed public query — refuseWithoutThrow
 		// narrows the signed-in-no-org branch to a typed "no data" result
 		// instead of a throw.
-		const scope = await withOrgScope(ctx, { refuseWithoutThrow: true });
-		if (scope.refused) {
-			return {
-				count: 0,
-				percentiles: {
-					p50: NO_DATA_SENTINEL,
-					p75: NO_DATA_SENTINEL,
-					p90: NO_DATA_SENTINEL,
-					p95: NO_DATA_SENTINEL,
-					p99: NO_DATA_SENTINEL,
-					max: NO_DATA_SENTINEL,
-				},
-				negativeCount: 0,
-				withProjectCount: 0,
-				withoutProjectCount: 0,
-				truncated: false,
-			};
-		}
+		const transportScope = await withOrgScope(ctx, { refuseWithoutThrow: true });
+		const noData = {
+			count: 0,
+			percentiles: {
+				p50: NO_DATA_SENTINEL,
+				p75: NO_DATA_SENTINEL,
+				p90: NO_DATA_SENTINEL,
+				p95: NO_DATA_SENTINEL,
+				p99: NO_DATA_SENTINEL,
+				max: NO_DATA_SENTINEL,
+			},
+			negativeCount: 0,
+			withProjectCount: 0,
+			withoutProjectCount: 0,
+			truncated: false,
+		};
+		if (transportScope.refused) return noData;
+		const scope = await resolveClaimedReadScope(
+			ctx,
+			transportScope,
+			{ verifiedActor: args.verifiedActor, verifiedOrg: args.verifiedOrg },
+			"tasks:taskDurationDistribution",
+		);
 		requireScope(scope, "view-own-tasks");
 
 		const project = args.project;
 		const from = args.from ?? -Infinity;
 		const to = args.to ?? Infinity;
 
+		// R-55: same as billingSummaryByProject. The fleet-wide period index is the
+		// fleet's read; a member reads its OWN done tasks, with the period, project
+		// and roster in the same query, before the scan cap.
+		const reach = taskScopeReach(scope);
+		if (reach.reach === "none") return noData;
+		const memberOrgId = reach.reach === "tenant" ? scope.orgClerkId : undefined;
+		const memberFilter = taskRowFilter(
+			reach,
+			(q) =>
+				q.and(
+					q.neq(q.field("completedAt"), undefined),
+					q.gte(q.field("completedAt"), from),
+					q.lte(q.field("completedAt"), to),
+				),
+			...(project === undefined
+				? []
+				: [(q: TaskFilterBuilder) => q.eq(q.field("project"), project)]),
+		);
+
 		// Index-bounded scan: the period (and project, when supplied) bounds
 		// the QUERY, not an in-memory filter applied after the fetch.
 		const doneTasks =
-			project !== undefined
+			memberOrgId !== undefined && memberFilter !== undefined
+				? await ctx.db
+						.query("tasks")
+						.withIndex("by_orgId_status_clerk_id", (q) =>
+							q.eq("clerkOrgId", memberOrgId).eq("status", "done"),
+						)
+						.filter(memberFilter)
+						.take(DURATION_DISTRIBUTION_SCAN_CAP + 1)
+				: project !== undefined
 				? await ctx.db
 						.query("tasks")
 						.withIndex("by_status_project_completedAt", (q) =>
@@ -5562,8 +5731,7 @@ export const taskDurationDistribution = query({
 						.take(DURATION_DISTRIBUTION_SCAN_CAP + 1);
 
 		const truncated = doneTasks.length > DURATION_DISTRIBUTION_SCAN_CAP;
-		const capped = doneTasks.slice(0, DURATION_DISTRIBUTION_SCAN_CAP);
-		const scoped = filterByOrgScope(capped, scope);
+		const scoped = doneTasks.slice(0, DURATION_DISTRIBUTION_SCAN_CAP);
 
 		let negativeCount = 0;
 		let withProjectCount = 0;
@@ -5666,7 +5834,12 @@ export const searchTasksByKeyword = query({
 		const limit = Math.min(Math.max(args.limit ?? 20, 1), 200);
 		const lite = args.fields === "lite";
 
-		const results = await ctx.db
+		// R-55: the roster (and the tenant gate) is a filter on the search itself,
+		// applied before `.take(limit)`; the search index carries the tenant slug only.
+		const reach = taskScopeReach(scope);
+		if (reach.reach === "none") return [];
+		const scopeFilter = taskRowFilter(reach);
+		const search = ctx.db
 			.query("tasks")
 			.withSearchIndex("search_title", (q) => {
 				let qb = q.search("title", args.query);
@@ -5686,10 +5859,10 @@ export const searchTasksByKeyword = query({
 					qb = qb.eq("orgId", scope.orgSlug);
 				}
 				return qb;
-			})
-			.take(limit);
-
-		const filtered = filterByOrgScope(results, scope);
+			});
+		const filtered = await (
+			scopeFilter === undefined ? search : search.filter(scopeFilter)
+		).take(limit);
 
 		if (!lite) return filtered;
 		return filtered.map((t) => ({
