@@ -60,7 +60,8 @@ export interface SoftDeleteDocumentResult {
 
 export const STORE_DOCUMENT_CHUNKED_TOOL_DESCRIPTION =
 	"Ingest a document binary (PDF, Markdown, plain text) into the Knowledge Base. " +
-	"Upload the file to Convex storage first, then call this tool with the storageId. " +
+	"Upload the file first and claim it for your org: generate_upload_url with the file's sha256, POST the file, claim_upload with the ticket, then call this tool with the storageId. " +
+	"A storageId your org has not claimed is refused (AUTH_STORAGE_NOT_OWNED). " +
 	"Server-side: text extraction → paragraph-aware chunking (~512 tokens/chunk with 50-char overlap) " +
 	"→ stores chunks as memories at namespace team/<orgId>/<docId>. " +
 	"Requires Clerk JWT with org_id — no-org bearers are rejected. " +
@@ -75,7 +76,7 @@ export const storeDocumentChunkedArgsSchema = z.object({
 		.string()
 		.describe(
 			"Convex storage ID (_storage id) of the already-uploaded binary blob. " +
-				"Upload the file via generateUploadUrl → POST → get storageId first.",
+				"Upload the file via generate_upload_url (with sha256) → POST → claim_upload first.",
 		),
 	mimeType: z
 		.enum(["application/pdf", "text/markdown", "text/plain"])
@@ -122,7 +123,7 @@ export const GENERATE_UPLOAD_URL_TOOL_DESCRIPTION =
 	"lowercase hex SHA-256 of the exact file you will upload and pass it as sha256: the response then " +
 	"also carries a single-use upload ticket bound to your org AND to that content (valid 15 minutes, shown once); " +
 	"after the POST, call claim_upload with the storageId and the ticket. " +
-	"Without sha256 you get the URL only (no ticket): use it for store_document_chunked, which binds on its own. " +
+	"Without sha256 you get the URL only (no ticket): that blob cannot be claimed, so store_document_chunked refuses it. Pass sha256 for any upload you intend to ingest. " +
 	"Requires Clerk JWT with org_id — no-org bearers are rejected. " +
 	"Default limit: 1 URL per call. cap: 1 URL. " +
 	"Returns the upload URL as plain text (first item), then a JSON item { ticket, expiresAt } " +
@@ -141,7 +142,7 @@ export const generateUploadUrlArgsSchema = z.object({
 
 export const CLAIM_UPLOAD_TOOL_DESCRIPTION =
 	"Claim an uploaded blob for your organisation with the single-use ticket generate_upload_url returned. " +
-	"WHEN: after POSTing a file to the upload URL, before validate_okf_bundle reads it by storageId. " +
+	"WHEN: after POSTing a file to the upload URL, before store_document_chunked ingests it or validate_okf_bundle reads it by storageId. " +
 	"Binds the storageId to your org only if the ticket is valid, unused, unexpired, issued to your own org, " +
 	"the blob was uploaded after the ticket was issued, and its content matches the sha256 declared " +
 	"to generate_upload_url; the ticket is consumed. " +
@@ -396,8 +397,8 @@ export function registerKbIngestTools(
 	// neighbour validate_okf_bundle is a masked one-shot validator that READS one
 	// blob, so exposure, authority, isolation locus and boundary key differ by
 	// purpose. Ownership of the uploaded blob is bound only by a write that
-	// proves the uploader: claim_upload with the ticket minted here, or
-	// store_document_chunked (kbMutations:bindOrAssertStorageOwnership).
+	// proves the uploader: claim_upload with the ticket minted here.
+	// store_document_chunked only asserts that claim (kbMutations:assertStorageClaimedBy).
 	defineTool(
 		server,
 		authCtx,
@@ -416,8 +417,8 @@ export function registerKbIngestTools(
 				const { orgId, namespacePrefix } = resolveOrgContext();
 				type MutationRef = Parameters<ConvexHttpClient["mutation"]>[0];
 				if (sha256 === undefined) {
-					// URL only, said so explicitly: no ticket, so this blob can only be
-					// bound by store_document_chunked (never claimed, never validated).
+					// URL only, said so explicitly: no ticket, so this blob can never be
+					// claimed, so it can be neither stored nor validated.
 					const url = (await convex.mutation(
 						"kbMutations:generateUploadUrl" as unknown as MutationRef,
 						{
@@ -433,7 +434,7 @@ export function registerKbIngestTools(
 								type: "text" as const,
 								text: JSON.stringify({
 									ticket: null,
-									note: "no sha256 passed: no upload ticket. This blob cannot be claimed with claim_upload or read by validate_okf_bundle; store_document_chunked binds it on its own.",
+									note: "no sha256 passed: no upload ticket. This blob cannot be claimed with claim_upload, so store_document_chunked and validate_okf_bundle will refuse it.",
 								}),
 							},
 						],

@@ -120,6 +120,40 @@ export const bindOrAssertStorageOwnership = internalMutation({
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
+// assertStorageClaimedBy — ASSERT-ONLY ownership gate for kb:storeDocumentChunked.
+//
+// A storageId may be ingested only if it is already bound to the caller's org
+// in kbUploads: by claimUpload (upload ticket, the proof of the uploader), or by
+// a pre-existing binding (legacy trust-on-first-use rows and the export path are
+// honoured for the SAME org only). It never writes: the first org to present a
+// storageId no longer owns it. An unbound storageId and a storageId bound to
+// another org are refused with the SAME code, so the refusal does not tell a
+// prober which storageIds are claimed by someone else.
+//
+// V8 runtime — no 'use node' directive.
+// ─────────────────────────────────────────────────────────────────────────────
+
+export const assertStorageClaimedBy = internalMutation({
+	args: {
+		storageId: v.id("_storage"),
+		orgId: v.string(),
+	},
+	returns: v.null(),
+	handler: async (ctx, args) => {
+		const existing = await ctx.db
+			.query("kbUploads")
+			.withIndex("by_storageId", (q) => q.eq("storageId", args.storageId))
+			.unique();
+		if (existing !== null && existing.orgId === args.orgId) return null;
+		refuseStorageOwnership(
+			"kbMutations:assertStorageClaimedBy",
+			"storage-not-owned",
+			args.orgId,
+		);
+	},
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
 // getStorageOwner — READ-ONLY lookup of a storageId's ownership binding.
 //
 // For READ paths (okfBundleNode:validateOkfBundle) that must ASSERT ownership

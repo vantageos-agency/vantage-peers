@@ -247,7 +247,7 @@ describe("KB ingest E2E — bearer→oauthCtx→action (no withIdentity)", () =>
 		expect(handler).toBeDefined();
 		if (!handler) throw new Error("store_document_chunked handler not registered");
 
-		// First call — succeeds (TOFU binding created in Convex for org-A).
+		// First call — succeeds (org-A claimed the blob; ingest honours that claim).
 		// The MCP tool wraps the Convex result in { content: [{ type:"text", text: JSON }] }.
 		const firstResult = await handler({
 			storageId: "shared-storage-id",

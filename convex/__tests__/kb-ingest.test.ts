@@ -25,6 +25,7 @@ import { convexTest } from "convex-test";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import { testClerkOrgId } from "../../tests/fixtures/testClerkOrgId";
 import { api } from "../_generated/api";
+import { storeClaimed } from "../../tests/fixtures/storeClaimed";
 import schema from "../schema";
 
 // biome-ignore lint/suspicious/noExplicitAny: codegen-lag workaround — kb.ts is created post-RED
@@ -122,7 +123,7 @@ describe("B5 KB ingest — PDF happy path", () => {
 
 		const pdfBytes = readFixture("sample.pdf");
 		const storageId = await t.run(async (ctx) => {
-			return await ctx.storage.store(
+			return await storeClaimed(ctx, "team-a", 
 				new Blob([new Uint8Array(pdfBytes)], { type: "application/pdf" }),
 			);
 		});
@@ -172,7 +173,7 @@ describe("B5 KB ingest — Markdown happy path", () => {
 		const mdBytes = textToArrayBuffer(mdText);
 
 		const storageId = await t.run(async (ctx) => {
-			return await ctx.storage.store(
+			return await storeClaimed(ctx, "team-a", 
 				new Blob([new Uint8Array(mdBytes)], { type: "text/markdown" }),
 			);
 		});
@@ -226,7 +227,7 @@ describe("B5 KB ingest — TXT happy path", () => {
 		const txtBytes = textToArrayBuffer(txtContent);
 
 		const storageId = await t.run(async (ctx) => {
-			return await ctx.storage.store(
+			return await storeClaimed(ctx, "team-a", 
 				new Blob([new Uint8Array(txtBytes)], { type: "text/plain" }),
 			);
 		});
@@ -270,7 +271,7 @@ describe("B5 KB ingest — cross-tenant isolation — AUTH_NAMESPACE_DENIED", ()
 			"# Secret doc\n\nConfidential content for team A only.\n",
 		);
 		const storageId = await t.run(async (ctx) => {
-			return await ctx.storage.store(
+			return await storeClaimed(ctx, "team-a", 
 				new Blob([new Uint8Array(mdBytes)], { type: "text/markdown" }),
 			);
 		});
@@ -304,7 +305,7 @@ describe("B5 KB ingest — cross-tenant isolation — AUTH_NAMESPACE_DENIED", ()
 
 		const mdBytes = textToArrayBuffer("Team A private doc.\n");
 		const storageId = await t.run(async (ctx) => {
-			return await ctx.storage.store(
+			return await storeClaimed(ctx, "team-a", 
 				new Blob([new Uint8Array(mdBytes)], { type: "text/markdown" }),
 			);
 		});
@@ -325,7 +326,7 @@ describe("B5 KB ingest — cross-tenant isolation — AUTH_NAMESPACE_DENIED", ()
 		// by explicit args from the MCP layer (oauthCtx.namespaceWritePrefixes).
 		const mdB = textToArrayBuffer("Team B doc.\n");
 		const storageIdB = await t.run(async (ctx) => {
-			return await ctx.storage.store(
+			return await storeClaimed(ctx, "team-b", 
 				new Blob([new Uint8Array(mdB)], { type: "text/markdown" }),
 			);
 		});
@@ -367,7 +368,7 @@ describe("B5 KB ingest — soft-delete propagation", () => {
 			"Document to be deleted.\n\nSecond paragraph.\n",
 		);
 		const storageId = await t.run(async (ctx) => {
-			return await ctx.storage.store(
+			return await storeClaimed(ctx, "team-a", 
 				new Blob([new Uint8Array(txtBytes)], { type: "text/plain" }),
 			);
 		});
@@ -469,7 +470,7 @@ describe("B5 KB ingest — chunking determinism", () => {
 		async function ingest(suffix: string) {
 			const bytes = textToArrayBuffer(longText);
 			const storageId = await t.run(async (ctx) => {
-				return await ctx.storage.store(
+				return await storeClaimed(ctx, "team-a", 
 					new Blob([new Uint8Array(bytes)], { type: "text/plain" }),
 				);
 			});
@@ -505,18 +506,18 @@ describe("B5 KB ingest — chunking determinism", () => {
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
-// TEST 9 — TOFU binding: first ingest creates kbUploads row
+// TEST 9 — storageId org-binding: ingest honours the claim, never creates one
 // ─────────────────────────────────────────────────────────────────────────────
 
-describe("B5 KB ingest — TOFU storageId org-binding (M1)", () => {
-	test("TOFU binding created on first ingest — kbUploads row exists after storeDocumentChunked", async () => {
+describe("B5 KB ingest — storageId org-binding (claimed, not trust-on-first-use)", () => {
+	test("a claimed storageId ingests and its kbUploads binding is unchanged", async () => {
 		const t = createT();
 		await seedOrgMapping(t, "org-A");
 		const tA = withTeamIdentity(t, "org-A");
 
-		const mdBytes = textToArrayBuffer("# TOFU test\n\nFirst ingest for org-A.\n");
+		const mdBytes = textToArrayBuffer("# Claimed test\n\nFirst ingest for org-A.\n");
 		const storageId = await t.run(async (ctx) => {
-			return await ctx.storage.store(
+			return await storeClaimed(ctx, "org-A", 
 				new Blob([new Uint8Array(mdBytes)], { type: "text/markdown" }),
 			);
 		});
@@ -533,7 +534,7 @@ describe("B5 KB ingest — TOFU storageId org-binding (M1)", () => {
 
 		expect(result.chunkCount).toBeGreaterThan(0);
 
-		// Verify the kbUploads row was created with the correct binding
+		// The binding is the claim seeded above; ingest neither created nor moved it
 		const bindingRow = await t.run(async (ctx) => {
 			return await ctx.db
 				.query("kbUploads")
@@ -546,21 +547,21 @@ describe("B5 KB ingest — TOFU storageId org-binding (M1)", () => {
 		expect(bindingRow.storageId).toBe(storageId);
 	});
 
-	test("cross-tenant second ingest rejects AUTH_STORAGE_NOT_OWNED", async () => {
+	test("cross-tenant ingest of a claimed storageId rejects AUTH_STORAGE_NOT_OWNED", async () => {
 		const t = createT();
 		await seedOrgMapping(t, "org-A");
 		await seedOrgMapping(t, "org-B");
 		const tA = withTeamIdentity(t, "org-A");
 		const tB = withTeamIdentity(t, "org-B");
 
-		const mdBytes = textToArrayBuffer("# Cross-tenant TOFU test\n\nOrg-A document.\n");
+		const mdBytes = textToArrayBuffer("# Cross-tenant claim test\n\nOrg-A document.\n");
 		const storageId = await t.run(async (ctx) => {
-			return await ctx.storage.store(
+			return await storeClaimed(ctx, "org-A", 
 				new Blob([new Uint8Array(mdBytes)], { type: "text/markdown" }),
 			);
 		});
 
-		// First call: org-A ingests successfully — TOFU binding created
+		// First call: org-A, which claimed the blob, ingests successfully
 		const result = await tA.action(KB_ACTION_REF, {
 			storageId,
 			mimeType: "text/markdown",
@@ -603,7 +604,7 @@ describe("B5 KB ingest — idempotent re-ingest", () => {
 		async function ingestVersion(text: string) {
 			const bytes = textToArrayBuffer(text);
 			const storageId = await t.run(async (ctx) => {
-				return await ctx.storage.store(
+				return await storeClaimed(ctx, "team-a", 
 					new Blob([new Uint8Array(bytes)], { type: "text/plain" }),
 				);
 			});
@@ -675,7 +676,7 @@ describe("B5 KB ingest — multi-chunk re-ingest converges", () => {
 		async function ingest(text: string) {
 			const bytes = textToArrayBuffer(text);
 			const storageId = await t.run(async (ctx) => {
-				return await ctx.storage.store(
+				return await storeClaimed(ctx, "team-a", 
 					new Blob([new Uint8Array(bytes)], { type: "text/plain" }),
 				);
 			});

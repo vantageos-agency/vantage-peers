@@ -269,7 +269,7 @@ export const storeDocumentChunked = action({
 		// atomicity-exception: gate-then-idempotent-reingest — this action issues three
 		// ctx.runMutation calls that are NOT one atomic transaction and must not be: (1) a
 		// leading GATE, bindOrAssertStorageOwnership, which must run before ctx.storage.get
-		// to close the cross-tenant TOFU vector; (2) a conditional supersedePriorChunks that
+		// to refuse a storageId this org has not claimed; (2) a conditional supersedePriorChunks that
 		// dedups the prior isLatest=true chunks; (3) a per-chunk insertChunk inside the
 		// `for` loop below. The dedup/supersede is keyed on the STABLE namespace
 		// team/<orgId>/<docId>, and the writes CONVERGE: a re-ingest of the same docId
@@ -319,11 +319,13 @@ export const storeDocumentChunked = action({
 		const docId = args.docId ?? randomUUID();
 		const namespace = `${target.namespace}/${docId}`;
 
-		// 3. TOFU storageId org-binding (M1 defense-in-depth, PR #992 follow-up).
-		//    Binds this storageId to args.orgId on first ingest; rejects cross-tenant
-		//    attempts on subsequent calls with AUTH_STORAGE_NOT_OWNED.
-		//    Must execute BEFORE ctx.storage.get() to close the attack vector.
-		await ctx.runMutation(internal.kbMutations.bindOrAssertStorageOwnership, {
+		// 3. Ownership gate (assert-only, no trust on first use). The storageId must
+		//    already be claimed by THIS org: claimUpload with an upload ticket
+		//    (generate_upload_url sha256 -> POST -> claim_upload), keyed on the
+		//    VERIFIED org (target.ownerKey), never on a caller-supplied orgId alone.
+		//    An unclaimed storageId is refused; nothing is bound here. Must execute
+		//    BEFORE ctx.storage.get() so a foreign blob is never read.
+		await ctx.runMutation(internal.kbMutations.assertStorageClaimedBy, {
 			storageId: args.storageId,
 			orgId: target.ownerKey,
 		});
