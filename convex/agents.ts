@@ -18,6 +18,7 @@ import {
 	type SessionCaller,
 } from "./lib/agentIdentity";
 import { ORG_ADMIN_ROLES, refusalError } from "./lib/auth";
+import { lookupOrgMapping } from "./lib/authOrgMapping";
 import { orgByIdLookups, orgByIdPrincipalLookups } from "./lib/orgIdLookups";
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -187,8 +188,8 @@ export const registerAgent = mutation({
  * safe ONLY because it is internal: reachable with the deployment admin
  * credential or from another Convex function, never from a client.
  *
- * The slug is derived from `client_org_mapping` by the ID (the `by_clerk_org_id`
- * index), never typed. No mapping, or an inactive one, is REFUSED (ORG_NOT_FOUND /
+ * The slug is derived from `client_org_mapping` by the ID (`lookupOrgMapping`, the
+ * `by_clerk_org_id` index), never typed. No mapping, or an inactive one, is REFUSED (ORG_NOT_FOUND /
  * ORG_INACTIVE); a name already held in that org is REFUSED by
  * `assertAgentNameFree` (AGENT_NAME_TAKEN / AGENT_INACTIVE). It writes ONE agents
  * row and touches no roster (`allowedAgentIds`, `allowedOrchestrators`) and no
@@ -200,27 +201,28 @@ export const registerAgentInOrgById = internalMutation({
 	args: { clerkOrgId: v.string(), name: v.string() },
 	returns: v.id("agents"),
 	handler: async (ctx, args) => {
-		// The organisation by its permanent ID, through the org-ID adapter every
-		// ID-keyed door shares (convex/lib/orgIdLookups.ts, `by_clerk_org_id`).
-		const org = await orgByIdLookups(ctx).orgById(args.clerkOrgId);
-		if (org === null) {
+		// The organisation by its permanent ID, through the one org-mapping read
+		// (convex/lib/authOrgMapping.ts: `by_clerk_org_id`; two rows claiming one id
+		// answer null, never a pick between them).
+		const mapping = await lookupOrgMapping(ctx, { clerkOrgId: args.clerkOrgId });
+		if (mapping === null) {
 			throw new ConvexError(
 				`ORG_NOT_FOUND: no organisation maps the id ${args.clerkOrgId}; nothing written.`,
 			);
 		}
-		if (org.active !== true) {
+		if (!mapping.isActive) {
 			throw new ConvexError(
-				`ORG_INACTIVE: the organisation ${args.clerkOrgId} ("${org.label}") is not active; nothing written.`,
+				`ORG_INACTIVE: the organisation ${args.clerkOrgId} ("${mapping.clerkOrgSlug}") is not active; nothing written.`,
 			);
 		}
 		assertAgentLabelValid(args.name);
 		await assertAgentNameFree(
 			ctx,
-			{ id: args.clerkOrgId, label: org.label },
+			{ id: args.clerkOrgId, label: mapping.clerkOrgSlug },
 			args.name,
 		);
 		return await ctx.db.insert("agents", {
-			orgSlug: org.label,
+			orgSlug: mapping.clerkOrgSlug,
 			clerkOrgId: args.clerkOrgId,
 			name: args.name,
 			normalizedName: normalizeOrchestratorId(args.name),
