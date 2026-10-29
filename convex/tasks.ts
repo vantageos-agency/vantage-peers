@@ -1495,7 +1495,13 @@ async function runTasksList(ctx: QueryCtx, args: TasksListArgs, scope: OrgScope)
 
 		// Helper: apply multi-status in-memory filter on a pre-fetched slice
 		type TaskRow = Doc<"tasks">;
+		// The overflow guard below must count the population the INDEX RETURNED,
+		// never what survives this in-memory filter: a truncated scan whose window
+		// holds no row of the requested statuses filters down to nothing and would
+		// otherwise pass the guard as a complete (empty) answer.
+		let rawScanCount: number | undefined;
 		const applyStatusFilter = (rows: TaskRow[]) => {
+			rawScanCount = rows.length;
 			if (statuses === undefined) return rows;
 			if (statuses.length === 1)
 				return rows.filter((r) => r.status === statuses[0]);
@@ -1821,7 +1827,7 @@ async function runTasksList(ctx: QueryCtx, args: TasksListArgs, scope: OrgScope)
 			memberOrg === null &&
 			assignedTo === undefined &&
 			needsWideScan &&
-			allRows.length > TASK_LIST_SCAN_CAP
+			(rawScanCount ?? allRows.length) > TASK_LIST_SCAN_CAP
 		) {
 			// "shrink the updatedSince window" is only offered when it can
 			// actually change the candidate count: on the assignedTo (+status)
