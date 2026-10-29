@@ -138,21 +138,36 @@ const OVERRIDE_RE = /\/\/\s*allow-stale-state-claim:\s*\S.{5,}/;
 // Claim grammars
 // ─────────────────────────────────────────────────────────────────────────────
 
-const PR_CLAIM_RE =
-	/\bPR\s*#(\d+)\s*(?:\(([\w.-]+\/[\w.-]+)\))?\s*->\s*(OPEN|MERGED|CLOSED)\b/g;
+// Spelling is not a loophole: state words in any case, `->` or the single
+// arrow character, `#` optional. Typed values are normalised before comparing.
+const ARROW = "(?:->|\\u2192)";
+
+const PR_CLAIM_RE = new RegExp(
+	`\\bPR\\s*#?(\\d+)\\s*(?:\\(([\\w.-]+\\/[\\w.-]+)\\))?\\s*${ARROW}\\s*(OPEN|MERGED|CLOSED)\\b`,
+	"gi",
+);
 
 /**
  * The command form of a PR claim: `gh pr view 1092 -R o/r --json state -> MERGED`.
  * Group 1 = number, group 2 = repo (optional), group 3 = the typed state.
  */
-const GH_PR_CMD_CLAIM_RE =
-	/\bgh\s+pr\s+view\s+(\d+)(?:\s+(?:-R|--repo)\s+([\w.-]+\/[\w.-]+))?[^\n]*?->\s*(OPEN|MERGED|CLOSED)\b/g;
+const GH_PR_CMD_CLAIM_RE = new RegExp(
+	`\\bgh\\s+pr\\s+view\\s+(\\d+)(?:\\s+(?:-R|--repo)\\s+([\\w.-]+\\/[\\w.-]+))?[^\\n]*?${ARROW}\\s*(OPEN|MERGED|CLOSED)\\b`,
+	"gi",
+);
 
-const NPM_CLAIM_RE =
-	/(@?[\w.-]+(?:\/[\w.-]+)?)@([\w.-]+)\s*->\s*([0-9][\w.+-]*)/g;
+const NPM_CLAIM_RE = new RegExp(
+	`(@?[\\w.-]+(?:\\/[\\w.-]+)?)@([\\w.-]+)\\s*${ARROW}\\s*([0-9][\\w.+-]*)`,
+	"g",
+);
 
-const TASK_CLAIM_RE =
-	/\btask\s+(k[0-9a-z]{6,32})\s*->\s*(todo|in_progress|review|blocked|done)\b/g;
+// A task id is `k` + alphanumerics with at least one digit (Convex ids carry
+// digits; the lookahead keeps a word like "keyboard" from reading as an id).
+// The word "task" is optional: "<id> -> done" is a claim too.
+const TASK_CLAIM_RE = new RegExp(
+	`(?:\\btask\\s+)?\\b(k(?=[0-9a-z]*\\d)[0-9a-z]{6,32})\\s*${ARROW}\\s*(todo|in_progress|review|blocked|done)\\b`,
+	"gi",
+);
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Bare-literal classification (one evidence LINE at a time)
@@ -337,7 +352,8 @@ async function checkPrClaims(
 		matches.push(...(explicit.length > 0 ? explicit : [...line.matchAll(GH_PR_CMD_CLAIM_RE)]));
 	}
 	for (const m of matches) {
-		const [, number, repoInClaim, typedState] = m;
+		const [, number, repoInClaim, typedStateRaw] = m;
+		const typedState = typedStateRaw.toUpperCase();
 		const repo = repoInClaim ?? deps.defaultRepo;
 		if (!repo) {
 			warn(
@@ -473,7 +489,8 @@ async function checkTaskClaims(
 	TASK_CLAIM_RE.lastIndex = 0;
 	const matches = [...text.matchAll(TASK_CLAIM_RE)];
 	for (const m of matches) {
-		const [, taskId, typedStatus] = m;
+		const [, taskId, typedStatusRaw] = m;
+		const typedStatus = typedStatusRaw.toLowerCase();
 		let task: unknown;
 		try {
 			task = await deps.convexQuery(deps.taskQueryName ?? "tasks:get", {

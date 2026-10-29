@@ -418,3 +418,79 @@ describe("adoption counter", () => {
 		expect(String(log.mock.calls[2][0])).toContain("bareLiteralRefused=1");
 	});
 });
+
+// ─── SPELLING VARIANTS (Eta REVISE, PR #1593) ─────────────────────────────────
+// The bare-literal refusal must not hinge on spelling: state words in any case,
+// `->` or the single-char arrow, an optional `#`, and a task id with its status.
+describe("bare literal spellings", () => {
+	const liveBody = { state: "closed", merged: true }; // live -> MERGED
+	const liveStatus = "done";
+
+	// [label, bare line, same claim prefixed with the command that produced it]
+	const spellings: Array<[string, string, string]> = [
+		[
+			"lowercase state word",
+			"evidence: PR #1092 -> merged",
+			"evidence: gh pr view 1092 -R o/r --json state: PR #1092 -> merged",
+		],
+		[
+			"unicode arrow",
+			"evidence: PR #1092 \u2192 MERGED",
+			"evidence: gh pr view 1092 -R o/r --json state: PR #1092 \u2192 MERGED",
+		],
+		[
+			"no hash",
+			"evidence: PR 1592 -> MERGED",
+			"evidence: gh pr view 1592 -R o/r --json state: PR 1592 -> MERGED",
+		],
+		[
+			"uppercase task status",
+			"evidence: task k1234567890 -> DONE",
+			"evidence: get_task k1234567890: task k1234567890 -> DONE",
+		],
+	];
+
+	const livePass = () =>
+		buildDeps({
+			fetchImpl: vi.fn().mockResolvedValue(jsonResponse(200, liveBody)),
+			convexQuery: vi.fn().mockResolvedValue({ status: liveStatus }),
+			defaultRepo: "o/r",
+			log: vi.fn(),
+		});
+
+	it.each(spellings)("MUST_BLOCK: %s, bare", async (_label, bare) => {
+		await expect(guardFreshState(bare, livePass())).rejects.toThrow(
+			BareStateLiteralError,
+		);
+	});
+
+	it.each(spellings)(
+		"MUST_PASS: %s, with its command (true state)",
+		async (_label, _bare, withCommand) => {
+			await expect(
+				guardFreshState(withCommand, livePass()),
+			).resolves.toBeUndefined();
+		},
+	);
+
+	it("MUST_REFUSE: a command line with a FALSE state in a variant spelling is still refused", async () => {
+		await expect(
+			guardFreshState(
+				"evidence: gh pr view 1092 -R o/r --json state: PR 1092 \u2192 open",
+				livePass(),
+			),
+		).rejects.toThrow(FreshStateGuardError);
+		await expect(
+			guardFreshState(
+				"evidence: get_task k1234567890: task k1234567890 -> TODO",
+				livePass(),
+			),
+		).rejects.toThrow(FreshStateGuardError);
+	});
+
+	it("a prose word that merely looks like an id is not a claim", async () => {
+		await expect(
+			guardFreshState("evidence: keyboard -> done", livePass()),
+		).resolves.toBeUndefined();
+	});
+});
