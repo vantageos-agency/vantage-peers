@@ -84,7 +84,6 @@ async function seedOrg(slug: string, roster: string[]) {
 
 async function register(org: string, name: string): Promise<Id<"agents">> {
 	return await adminOf(t, org).mutation(api.agents.registerAgent, {
-		orgSlug: org,
 		name,
 	});
 }

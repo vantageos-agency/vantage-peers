@@ -97,7 +97,6 @@ async function seedProfile(t: T, orchestratorId: string) {
 
 async function register(t: T, org: string, name: string): Promise<Id<"agents">> {
 	return await adminOf(t, org).mutation(api.agents.registerAgent, {
-		orgSlug: org,
 		name,
 	});
 }
@@ -105,7 +104,7 @@ async function register(t: T, org: string, name: string): Promise<Id<"agents">> 
 async function mint(t: T, org: string, agentName: string): Promise<string> {
 	const minted = await adminOf(t, org).mutation(
 		api.agentCredentials.mintAgentCredential,
-		{ orgSlug: org, agentId: await agentIdOf(t, org, agentName) },
+		{ agentId: await agentIdOf(t, org, agentName) },
 	);
 	// A credential resolves only for an agent bound to a live member owner.
 	await ownAgent(t, org, agentName);

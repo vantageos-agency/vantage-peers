@@ -10,7 +10,7 @@ Before this table, the token identified the ORGANISATION and the agent wrote its
 
 Source: `convex/agentCredentials.ts:63-125`, exported as `export const mintAgentCredential = mutation(...)`.
 
-- Gated to the organisation administrator via `requireOrgAdminById` — the same gate `registerAgent` and `linkChild` use.
+- Gated to the organisation administrator (`resolveSessionCaller` + the package's `assertOrgAdmin`) — the same gate `registerAgent` and `linkChild` use.
 - The agent is named by `agentId`. An ID naming no `agents` row raises `AGENT_NOT_FOUND`; an ID naming another organisation's agent is refused `RBAC_DENIED`. A name never selects the agent. `revokeAgentCredential` and `getAgentCredentialStatus` take `agentId` the same way.
 - The raw secret is 32 random bytes → 64-char hex (`crypto.getRandomValues`, `convex/agentCredentials.ts:104-108`) — the same shape as this codebase's existing OAuth client secrets and bearer tokens.
 
@@ -68,7 +68,7 @@ Deliberately no org-admin gate on `resolveAgentCredential` — the credential it
 
 ## Authorization split — two different identities, deliberately
 
-- **Mint**: gated by `requireOrgAdminById` — only an org:admin of the agent's own org may mint or rotate its credential.
+- **Mint**: gated by `resolveSessionCaller` + `assertOrgAdmin` — only an org:admin of the agent's own org may mint or rotate its credential.
 - **Resolution**: trusts no caller-declared name — the presented secret alone determines the resolved `(orgSlug, agentId)` (plus the agent's current label).
 
 (`convex/agentCredentials.ts:26-35`.)

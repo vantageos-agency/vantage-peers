@@ -95,7 +95,7 @@ describe("agents.renameAgent — bounded relation rewrite (R-31)", () => {
 		await seedOrg(t, "org-a");
 		await seedOrg(t, "org-b");
 		const admin = t.withIdentity(adminOf("org-a"));
-		await admin.mutation(api.agents.registerAgent, { orgSlug: "org-a", name: "ada" });
+		await admin.mutation(api.agents.registerAgent, { name: "ada" });
 		await seedEdges(t, "org-a", "ada", PER_SIDE);
 		// Another org holds edges naming the SAME label: must never move.
 		await seedEdges(t, "org-b", "ada", 5);
@@ -103,7 +103,6 @@ describe("agents.renameAgent — bounded relation rewrite (R-31)", () => {
 		await seedEdges(t, "org-a", "bob", 5);
 
 		await admin.mutation(api.agents.renameAgent, {
-			orgSlug: "org-a",
 			agentId: await agentIdOf(admin, "org-a", "ada"),
 			newName: "ada2",
 		});
@@ -128,14 +127,13 @@ describe("agents.renameAgent — bounded relation rewrite (R-31)", () => {
 		const t = createT();
 		await seedOrg(t, "org-a");
 		const admin = t.withIdentity(adminOf("org-a"));
-		await admin.mutation(api.agents.registerAgent, { orgSlug: "org-a", name: "solo" });
+		await admin.mutation(api.agents.registerAgent, { name: "solo" });
 		await admin.mutation(api.agents.renameAgent, {
-			orgSlug: "org-a",
 			agentId: await agentIdOf(admin, "org-a", "solo"),
 			newName: "solo2",
 		});
 		await t.finishAllScheduledFunctions(vi.runAllTimers);
-		const agents = await admin.query(api.agents.listAgentsByOrg, { orgSlug: "org-a" });
+		const agents = await admin.query(api.agents.listAgentsByOrg, {});
 		expect(agents.map((a) => a.name)).toEqual(["solo2"]);
 		const scheduled = await t.run((ctx) => ctx.db.system.query("_scheduled_functions").collect());
 		expect(scheduled).toHaveLength(0);

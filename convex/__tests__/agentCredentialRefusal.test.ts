@@ -66,7 +66,6 @@ async function register(t: T, org: string, name: string) {
 	// A label is registered once; a second call is refused AGENT_NAME_TAKEN.
 	if ((await findAgentId(t, org, name)) !== null) return;
 	await adminOf(t, org).mutation(api.agents.registerAgent, {
-		orgSlug: org,
 		name,
 	});
 	await ownAgent(t, org, name);
@@ -76,7 +75,7 @@ async function mint(t: T, org: string, name: string): Promise<string> {
 	await register(t, org, name);
 	const minted = await adminOf(t, org).mutation(
 		api.agentCredentials.mintAgentCredential,
-		{ orgSlug: org, agentId: await agentIdOf(t, org, name) },
+		{ agentId: await agentIdOf(t, org, name) },
 	);
 	return minted.secret;
 }
@@ -164,7 +163,7 @@ describe("resolveAgentCredential — the refusal carries its code and names its 
 		await register(t, "org-a", "no-cred");
 		const status = await adminOf(t, "org-a").query(
 			api.agentCredentials.getAgentCredentialStatus,
-			{ orgSlug: "org-a", agentId: await agentIdOf(t, "org-a", "no-cred") },
+			{ agentId: await agentIdOf(t, "org-a", "no-cred") },
 		);
 		expect(status).toEqual({
 			orgSlug: "org-a",
@@ -177,7 +176,7 @@ describe("resolveAgentCredential — the refusal carries its code and names its 
 		await mint(t, "org-a", "no-cred");
 		const after = await adminOf(t, "org-a").query(
 			api.agentCredentials.getAgentCredentialStatus,
-			{ orgSlug: "org-a", agentId: await agentIdOf(t, "org-a", "no-cred") },
+			{ agentId: await agentIdOf(t, "org-a", "no-cred") },
 		);
 		expect(after.hasActiveCredential).toBe(true);
 		expect(after.activeRows).toBe(1);
@@ -190,7 +189,6 @@ describe("resolveAgentCredential — the refusal carries its code and names its 
 		await register(t, "org-a", "b");
 		await expect(
 			adminOf(t, "org-b").query(api.agentCredentials.getAgentCredentialStatus, {
-				orgSlug: "org-a",
 				agentId: await agentIdOf(t, "org-a", "b"),
 			}),
 		).rejects.toThrow(/RBAC_DENIED/);

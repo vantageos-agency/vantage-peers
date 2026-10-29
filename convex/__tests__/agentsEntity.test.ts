@@ -87,21 +87,17 @@ describe("[P-T2] agents — entity carrying its organisation", () => {
 		);
 
 		const agentId = await tAdminA.mutation(api.agents.registerAgent, {
-			orgSlug: "org-a",
 			name: "researcher-1",
 			description: "first agent of org A",
 		});
 		expect(agentId).toBeDefined();
 
-		const rows = await tAdminA.query(api.agents.listAgentsByOrg, {
-			orgSlug: "org-a",
-		});
+		const rows = await tAdminA.query(api.agents.listAgentsByOrg, {});
 		expect(rows).toHaveLength(1);
 		expect(rows[0].orgSlug).toBe("org-a");
 		expect(rows[0].name).toBe("researcher-1");
 
 		const single = await tAdminA.query(api.agents.getAgent, {
-			orgSlug: "org-a",
 			agentId: await agentIdOf(tAdminA, "org-a", "researcher-1"),
 		});
 		expect(single?.orgSlug).toBe("org-a");
@@ -116,7 +112,6 @@ describe("[P-T2] agents — entity carrying its organisation", () => {
 
 		await expect(
 			tMemberA.mutation(api.agents.registerAgent, {
-				orgSlug: "org-a",
 				name: "sneaky-agent",
 			}),
 		).rejects.toThrow(/RBAC_DENIED/);
@@ -140,7 +135,6 @@ describe("[P-T2] agents — entity carrying its organisation", () => {
 			orgAdminIdentity("org-a") as Parameters<typeof t.withIdentity>[0],
 		);
 		await tAdminA.mutation(api.agents.registerAgent, {
-			orgSlug: "org-a",
 			name: "researcher-a",
 		});
 
@@ -151,21 +145,18 @@ describe("[P-T2] agents — entity carrying its organisation", () => {
 		// Positive control first: prove the instrument can tell present from
 		// absent — B legitimately sees ITS OWN (empty) roster, not a swallowed
 		// grant of A's roster.
-		const rowsForB = await tAdminB.query(api.agents.listAgentsByOrg, {
-			orgSlug: "org-b",
-		});
+		const rowsForB = await tAdminB.query(api.agents.listAgentsByOrg, {});
 		expect(rowsForB).toHaveLength(0);
 
-		// B attempting to read A's roster by passing A's slug is refused, not
-		// silently emptied — the scoping wrapper binds orgSlug to the caller's
-		// OWN identity, a caller-supplied arg never substitutes for it.
+		// B cannot name A's organisation at all: no door takes an organisation
+		// argument, so the attempt is REJECTED by the validator, never answered
+		// with B's own roster (which would read as "A has none").
 		await expect(
-			tAdminB.query(api.agents.listAgentsByOrg, { orgSlug: "org-a" }),
-		).rejects.toThrow(/RBAC_DENIED/);
+			tAdminB.query(api.agents.listAgentsByOrg, { orgSlug: "org-a" } as never),
+		).rejects.toThrow(/orgSlug/);
 
 		await expect(
 			tAdminB.query(api.agents.getAgent, {
-				orgSlug: "org-a",
 				agentId: await agentIdOf(tAdminB, "org-a", "researcher-a"),
 			}),
 		).rejects.toThrow(/RBAC_DENIED/);
@@ -176,7 +167,6 @@ describe("[P-T2] agents — entity carrying its organisation", () => {
 		await seedOrgMapping(t, "org-a");
 		await expect(
 			t.mutation(api.agents.registerAgent, {
-				orgSlug: "org-a",
 				name: "anon-agent",
 			}),
 		).rejects.toThrow(/RBAC_DENIED/);
@@ -190,18 +180,15 @@ describe("[P-T2] agents — entity carrying its organisation", () => {
 		);
 
 		await tAdminA.mutation(api.agents.registerAgent, {
-			orgSlug: "org-a",
 			name: "researcher-1",
 		});
 
 		await tAdminA.mutation(api.agents.setAgentAddress, {
-			orgSlug: "org-a",
 			agentId: await agentIdOf(tAdminA, "org-a", "researcher-1"),
 			address: "https://researcher-1.example.internal",
 		});
 
 		const readBack = await tAdminA.query(api.agents.getAgent, {
-			orgSlug: "org-a",
 			agentId: await agentIdOf(tAdminA, "org-a", "researcher-1"),
 		});
 		expect(readBack?.address).toBe("https://researcher-1.example.internal");
@@ -218,7 +205,6 @@ describe("[P-T2] agents — entity carrying its organisation", () => {
 		// DENY: there is no master bypass on this mutation.
 		await expect(
 			t.mutation(api.agents.registerAgent, {
-				orgSlug: "org-master-bypass",
 				name: "master-attempt",
 			}),
 		).rejects.toThrow(/RBAC_DENIED/);

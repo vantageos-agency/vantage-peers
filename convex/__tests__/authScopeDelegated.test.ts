@@ -223,7 +223,7 @@ describe("SLUG REUSE: a new org that takes a freed slug is not admin of the old 
 		await seedOrg(t, "agent-slug");
 		const identity = session("attacker5", "agent-slug", "org_NewOrgTookAgentSlug");
 		await expect(
-			t.withIdentity(identity).query(api.agents.listAgentsByOrg, { orgSlug: "agent-slug" }),
+			t.withIdentity(identity).query(api.agents.listAgentsByOrg, {}),
 		).rejects.toThrow(/RBAC_DENIED/);
 	});
 

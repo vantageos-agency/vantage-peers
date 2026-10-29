@@ -90,14 +90,13 @@ describe("[P-T4] agentCredentials — per-agent secret, hashed at rest", () => {
 		);
 
 		await tAdminO.mutation(api.agents.registerAgent, {
-			orgSlug: "org-o",
 			name: "a1",
 		});
 		await ownAgent(t, "org-o", "a1");
 
 		const minted = await tAdminO.mutation(
 			api.agentCredentials.mintAgentCredential,
-			{ orgSlug: "org-o", agentId: await agentIdOf(tAdminO, "org-o", "a1") },
+			{ agentId: await agentIdOf(tAdminO, "org-o", "a1") },
 		);
 		expect(typeof minted.secret).toBe("string");
 		expect(minted.secret.length).toBe(64); // 32 bytes -> 64 hex chars
@@ -118,13 +117,12 @@ describe("[P-T4] agentCredentials — per-agent secret, hashed at rest", () => {
 			orgAdminIdentity("org-o") as Parameters<typeof t.withIdentity>[0],
 		);
 		await tAdminO.mutation(api.agents.registerAgent, {
-			orgSlug: "org-o",
 			name: "a1",
 		});
 		await ownAgent(t, "org-o", "a1");
 		const minted = await tAdminO.mutation(
 			api.agentCredentials.mintAgentCredential,
-			{ orgSlug: "org-o", agentId: await agentIdOf(tAdminO, "org-o", "a1") },
+			{ agentId: await agentIdOf(tAdminO, "org-o", "a1") },
 		);
 
 		const rows = await t.run(async (ctx) => {
@@ -148,12 +146,10 @@ describe("[P-T4] agentCredentials — per-agent secret, hashed at rest", () => {
 			orgAdminIdentity("org-o") as Parameters<typeof t.withIdentity>[0],
 		);
 		await tAdminO.mutation(api.agents.registerAgent, {
-			orgSlug: "org-o",
 			name: "a1",
 		});
 		await ownAgent(t, "org-o", "a1");
 		await tAdminO.mutation(api.agentCredentials.mintAgentCredential, {
-			orgSlug: "org-o",
 			agentId: await agentIdOf(tAdminO, "org-o", "a1"),
 		});
 
@@ -171,14 +167,13 @@ describe("[P-T4] agentCredentials — per-agent secret, hashed at rest", () => {
 			orgAdminIdentity("org-o") as Parameters<typeof t.withIdentity>[0],
 		);
 		await tAdminO.mutation(api.agents.registerAgent, {
-			orgSlug: "org-o",
 			name: "a1",
 		});
 		await ownAgent(t, "org-o", "a1");
 
 		const first = await tAdminO.mutation(
 			api.agentCredentials.mintAgentCredential,
-			{ orgSlug: "org-o", agentId: await agentIdOf(tAdminO, "org-o", "a1") },
+			{ agentId: await agentIdOf(tAdminO, "org-o", "a1") },
 		);
 
 		// Positive control BEFORE rotation: the first secret authenticates.
@@ -190,7 +185,7 @@ describe("[P-T4] agentCredentials — per-agent secret, hashed at rest", () => {
 
 		const second = await tAdminO.mutation(
 			api.agentCredentials.mintAgentCredential,
-			{ orgSlug: "org-o", agentId: await agentIdOf(tAdminO, "org-o", "a1") },
+			{ agentId: await agentIdOf(tAdminO, "org-o", "a1") },
 		);
 		expect(second.secret).not.toBe(first.secret);
 
@@ -229,23 +224,21 @@ describe("[P-T4] agentCredentials — per-agent secret, hashed at rest", () => {
 			orgAdminIdentity("org-o") as Parameters<typeof t.withIdentity>[0],
 		);
 		await tAdminO.mutation(api.agents.registerAgent, {
-			orgSlug: "org-o",
 			name: "a1",
 		});
 		await ownAgent(t, "org-o", "a1");
 		await tAdminO.mutation(api.agents.registerAgent, {
-			orgSlug: "org-o",
 			name: "a2",
 		});
 		await ownAgent(t, "org-o", "a2");
 
 		const mintedA1 = await tAdminO.mutation(
 			api.agentCredentials.mintAgentCredential,
-			{ orgSlug: "org-o", agentId: await agentIdOf(tAdminO, "org-o", "a1") },
+			{ agentId: await agentIdOf(tAdminO, "org-o", "a1") },
 		);
 		const mintedA2 = await tAdminO.mutation(
 			api.agentCredentials.mintAgentCredential,
-			{ orgSlug: "org-o", agentId: await agentIdOf(tAdminO, "org-o", "a2") },
+			{ agentId: await agentIdOf(tAdminO, "org-o", "a2") },
 		);
 
 		expect(mintedA1.secret).not.toBe(mintedA2.secret);
@@ -268,7 +261,6 @@ describe("[P-T4] agentCredentials — per-agent secret, hashed at rest", () => {
 
 		// Rotating A1 must not disturb A2's still-active credential.
 		await tAdminO.mutation(api.agentCredentials.mintAgentCredential, {
-			orgSlug: "org-o",
 			agentId: await agentIdOf(tAdminO, "org-o", "a1"),
 		});
 		const resolvedA2StillGood = await asServiceAccount(t).query(
@@ -285,7 +277,6 @@ describe("[P-T4] agentCredentials — per-agent secret, hashed at rest", () => {
 			orgAdminIdentity("org-o") as Parameters<typeof t.withIdentity>[0],
 		);
 		await tAdminO.mutation(api.agents.registerAgent, {
-			orgSlug: "org-o",
 			name: "a1",
 		});
 		await ownAgent(t, "org-o", "a1");
@@ -295,7 +286,6 @@ describe("[P-T4] agentCredentials — per-agent secret, hashed at rest", () => {
 		);
 		await expect(
 			tMemberO.mutation(api.agentCredentials.mintAgentCredential, {
-				orgSlug: "org-o",
 				agentId: await agentIdOf(tMemberO, "org-o", "a1"),
 			}),
 		).rejects.toThrow(/RBAC_DENIED/);
@@ -320,7 +310,6 @@ describe("[P-T4] agentCredentials — per-agent secret, hashed at rest", () => {
 
 		await expect(
 			tAdminO.mutation(api.agentCredentials.mintAgentCredential, {
-				orgSlug: "org-o",
 				agentId: await agentIdOf(tAdminO, "org-o", "ghost-agent"),
 			}),
 		).rejects.toThrow(/AGENT_NOT_FOUND/);

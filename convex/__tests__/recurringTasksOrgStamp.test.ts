@@ -67,7 +67,7 @@ beforeEach(async () => {
 		["org-a", "vera"],
 		["org-b", "clio"],
 	] as const) {
-		await adminOf(t, org).mutation(api.agents.registerAgent, { orgSlug: org, name });
+		await adminOf(t, org).mutation(api.agents.registerAgent, { name });
 	}
 });
 

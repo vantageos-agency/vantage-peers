@@ -369,13 +369,12 @@ describe("new writes stamp the IDs", () => {
 		});
 		for (const name of ["clio", "irisonly"]) {
 			await adminOf(t, "iris-rh").mutation(api.agents.registerAgent, {
-				orgSlug: "iris-rh",
 				name,
 			});
 		}
 		const minted = await adminOf(t, "iris-rh").mutation(
 			api.agentCredentials.mintAgentCredential,
-			{ orgSlug: "iris-rh", agentId: await agentIdOf(t, "iris-rh", "clio") },
+			{ agentId: await agentIdOf(t, "iris-rh", "clio") },
 		);
 		// A credential resolves only for an agent bound to a live member owner.
 		await ownAgent(t, "iris-rh", "clio");

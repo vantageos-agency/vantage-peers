@@ -53,10 +53,9 @@ async function seedThreeAgents(t: T) {
 	const admin = t.withIdentity(adminOf("org-a"));
 	const secrets: Record<string, string> = {};
 	for (const name of NAMES) {
-		await admin.mutation(api.agents.registerAgent, { orgSlug: "org-a", name });
+		await admin.mutation(api.agents.registerAgent, { name });
 		await ownAgent(t, "org-a", name);
 		const minted = await admin.mutation(api.agentCredentials.mintAgentCredential, {
-			orgSlug: "org-a",
 			agentId: await agentIdOf(admin, "org-a", name),
 		});
 		secrets[name] = minted.secret;
@@ -68,7 +67,6 @@ async function activeRowsByName(admin: ReturnType<T["withIdentity"]>) {
 	const out: Record<string, number> = {};
 	for (const name of NAMES) {
 		const s = await admin.query(api.agentCredentials.getAgentCredentialStatus, {
-			orgSlug: "org-a",
 			agentId: await agentIdOf(admin, "org-a", name),
 		});
 		out[name] = s.activeRows;
@@ -77,7 +75,7 @@ async function activeRowsByName(admin: ReturnType<T["withIdentity"]>) {
 }
 
 async function agentsActiveByName(admin: ReturnType<T["withIdentity"]>) {
-		const rows = await admin.query(api.agents.listAgentsByOrg, { orgSlug: "org-a" });
+		const rows = await admin.query(api.agents.listAgentsByOrg, {});
 		return Object.fromEntries(rows.map((r) => [r.name, r.isActive]));
 	}
 
@@ -85,7 +83,6 @@ describe("agent retire surface", () => {
 	test("POLE 1 + NEGATIVE: deactivateAgent retires ONLY beta in BOTH tables, in ONE call; alpha and gamma untouched per name", async () => {
 		const { admin } = await seedThreeAgents(createT());
 		const res = await admin.mutation(api.agents.deactivateAgent, {
-			orgSlug: "org-a",
 			agentId: await agentIdOf(admin, "org-a", "beta"),
 		});
 		expect(res).toEqual({ deactivated: true, revoked: 1 });
@@ -106,7 +103,6 @@ describe("agent retire surface", () => {
 
 		// Already retired: not "deactivated", and nothing left to revoke.
 		const again = await admin.mutation(api.agents.deactivateAgent, {
-			orgSlug: "org-a",
 			agentId: await agentIdOf(admin, "org-a", "beta"),
 		});
 		expect(again).toEqual({ deactivated: false, revoked: 0 });
@@ -115,7 +111,7 @@ describe("agent retire surface", () => {
 	test("POLE 1b: deactivateAgent on an unknown name raises AGENT_NOT_FOUND and touches nothing", async () => {
 		const { admin } = await seedThreeAgents(createT());
 		await expect(
-			admin.mutation(api.agents.deactivateAgent, { orgSlug: "org-a", agentId: await agentIdOf(admin, "org-a", "nobody") }),
+			admin.mutation(api.agents.deactivateAgent, { agentId: await agentIdOf(admin, "org-a", "nobody") }),
 		).rejects.toThrow(/AGENT_NOT_FOUND/);
 		expect(await activeRowsByName(admin)).toEqual({ alpha: 1, beta: 1, gamma: 1 });
 	});
@@ -131,7 +127,6 @@ describe("agent retire surface", () => {
 			if (row) await ctx.db.patch(row._id, { isActive: false });
 		});
 		const res = await admin.mutation(api.agents.deactivateAgent, {
-			orgSlug: "org-a",
 			agentId: await agentIdOf(admin, "org-a", "beta"),
 		});
 		expect(res).toEqual({ deactivated: false, revoked: 1 });
@@ -143,7 +138,6 @@ describe("agent retire surface", () => {
 		expect(await activeRowsByName(admin)).toEqual({ alpha: 1, beta: 1, gamma: 1 });
 
 		const res = await admin.mutation(api.agentCredentials.revokeAgentCredential, {
-			orgSlug: "org-a",
 			agentId: await agentIdOf(admin, "org-a", "beta"),
 		});
 		expect(res).toEqual({ revoked: 1 });
@@ -156,14 +150,12 @@ describe("agent retire surface", () => {
 		expect((await agentsActiveByName(admin)).beta).toBe(true);
 
 		const again = await admin.mutation(api.agentCredentials.revokeAgentCredential, {
-			orgSlug: "org-a",
 			agentId: await agentIdOf(admin, "org-a", "beta"),
 		});
 		expect(again).toEqual({ revoked: 0 });
 
 		await expect(
 			admin.mutation(api.agentCredentials.revokeAgentCredential, {
-				orgSlug: "org-a",
 				agentId: await agentIdOf(admin, "org-a", "nobody"),
 			}),
 		).rejects.toThrow(/AGENT_NOT_FOUND/);
@@ -171,7 +163,7 @@ describe("agent retire surface", () => {
 
 	test("POLE 3: a secret of a deactivated agent is refused credential-not-recognised; the others' secrets still resolve", async () => {
 		const { t, admin, secrets } = await seedThreeAgents(createT());
-		await admin.mutation(api.agents.deactivateAgent, { orgSlug: "org-a", agentId: await agentIdOf(admin, "org-a", "beta") });
+		await admin.mutation(api.agents.deactivateAgent, { agentId: await agentIdOf(admin, "org-a", "beta") });
 
 		await expect(
 			asServiceAccount(t).query(api.agentCredentials.resolveAgentCredential, {
@@ -190,7 +182,6 @@ describe("agent retire surface", () => {
 	test("POLE 3b: a secret revoked alone (agent still active) is refused credential-not-recognised", async () => {
 		const { t, admin, secrets } = await seedThreeAgents(createT());
 		await admin.mutation(api.agentCredentials.revokeAgentCredential, {
-			orgSlug: "org-a",
 			agentId: await agentIdOf(admin, "org-a", "beta"),
 		});
 		await expect(
@@ -202,10 +193,9 @@ describe("agent retire surface", () => {
 
 	test("POLE 4: registerAgent on an inactive agent refuses AGENT_INACTIVE and leaves it inactive", async () => {
 		const { admin } = await seedThreeAgents(createT());
-		await admin.mutation(api.agents.deactivateAgent, { orgSlug: "org-a", agentId: await agentIdOf(admin, "org-a", "beta") });
+		await admin.mutation(api.agents.deactivateAgent, { agentId: await agentIdOf(admin, "org-a", "beta") });
 
 		const attempt = admin.mutation(api.agents.registerAgent, {
-			orgSlug: "org-a",
 			name: "beta",
 		});
 		await expect(attempt).rejects.toThrow(/AGENT_INACTIVE/);
@@ -215,10 +205,9 @@ describe("agent retire surface", () => {
 
 	test("POLE 4b: reactivateAgent brings the row back; revoked credentials stay revoked; a freshly minted one resolves", async () => {
 		const { t, admin, secrets } = await seedThreeAgents(createT());
-		await admin.mutation(api.agents.deactivateAgent, { orgSlug: "org-a", agentId: await agentIdOf(admin, "org-a", "beta") });
+		await admin.mutation(api.agents.deactivateAgent, { agentId: await agentIdOf(admin, "org-a", "beta") });
 
 		const res = await admin.mutation(api.agents.reactivateAgent, {
-			orgSlug: "org-a",
 			agentId: await agentIdOf(admin, "org-a", "beta"),
 		});
 		expect(res).toEqual({ reactivated: true, revoked: 0 });
@@ -238,7 +227,6 @@ describe("agent retire surface", () => {
 
 		// A freshly minted one resolves.
 		const fresh = await admin.mutation(api.agentCredentials.mintAgentCredential, {
-			orgSlug: "org-a",
 			agentId: await agentIdOf(admin, "org-a", "beta"),
 		});
 		expect(
@@ -252,7 +240,7 @@ describe("agent retire surface", () => {
 		// survives. At 00bd640a this returned { revoked: 1 } and cut the client
 		// — an outage path dressed as idempotence.
 		expect(
-			await admin.mutation(api.agents.reactivateAgent, { orgSlug: "org-a", agentId: await agentIdOf(admin, "org-a", "beta") }),
+			await admin.mutation(api.agents.reactivateAgent, { agentId: await agentIdOf(admin, "org-a", "beta") }),
 		).toEqual({ reactivated: false, revoked: 0 });
 		expect(
 			await asServiceAccount(t).query(api.agentCredentials.resolveAgentCredential, {
@@ -260,14 +248,14 @@ describe("agent retire surface", () => {
 			}),
 		).toMatchObject({ orgSlug: "org-a", agentName: "beta" });
 		await expect(
-			admin.mutation(api.agents.reactivateAgent, { orgSlug: "org-a", agentId: await agentIdOf(admin, "org-a", "nobody") }),
+			admin.mutation(api.agents.reactivateAgent, { agentId: await agentIdOf(admin, "org-a", "nobody") }),
 		).rejects.toThrow(/AGENT_NOT_FOUND/);
 	});
 
 	test("POLE 6 (the one that matters): mint, deactivate, reactivate — the ORIGINAL secret is refused; a FRESH one resolves and the row is active", async () => {
 		const { t, admin, secrets } = await seedThreeAgents(createT());
-		await admin.mutation(api.agents.deactivateAgent, { orgSlug: "org-a", agentId: await agentIdOf(admin, "org-a", "beta") });
-		await admin.mutation(api.agents.reactivateAgent, { orgSlug: "org-a", agentId: await agentIdOf(admin, "org-a", "beta") });
+		await admin.mutation(api.agents.deactivateAgent, { agentId: await agentIdOf(admin, "org-a", "beta") });
+		await admin.mutation(api.agents.reactivateAgent, { agentId: await agentIdOf(admin, "org-a", "beta") });
 
 		await expect(
 			asServiceAccount(t).query(api.agentCredentials.resolveAgentCredential, {
@@ -278,7 +266,6 @@ describe("agent retire surface", () => {
 		// Negative pole: without this, pole 6 passes by breaking reactivation.
 		expect((await agentsActiveByName(admin)).beta).toBe(true);
 		const fresh = await admin.mutation(api.agentCredentials.mintAgentCredential, {
-			orgSlug: "org-a",
 			agentId: await agentIdOf(admin, "org-a", "beta"),
 		});
 		expect(
@@ -290,7 +277,7 @@ describe("agent retire surface", () => {
 
 	test("POLE 6b: reactivateAgent sweeps a credential that SURVIVED the retirement and reports the count; Y and Z untouched per name in both tables", async () => {
 		const { t, admin, secrets } = await seedThreeAgents(createT());
-		await admin.mutation(api.agents.deactivateAgent, { orgSlug: "org-a", agentId: await agentIdOf(admin, "org-a", "beta") });
+		await admin.mutation(api.agents.deactivateAgent, { agentId: await agentIdOf(admin, "org-a", "beta") });
 		// CONSTRUCTED, not reached: no mutation path leaves an active credential
 		// on an inactive agent (deactivateAgent sweeps), and this sweep exists
 		// for exactly the escape no current path produces. Insert it directly,
@@ -311,7 +298,6 @@ describe("agent retire surface", () => {
 		expect((await activeRowsByName(admin)).beta).toBe(1);
 
 		const res = await admin.mutation(api.agents.reactivateAgent, {
-			orgSlug: "org-a",
 			agentId: await agentIdOf(admin, "org-a", "beta"),
 		});
 		expect(res).toEqual({ reactivated: true, revoked: 1 });
@@ -345,7 +331,6 @@ describe("agent retire surface", () => {
 		// changed.
 		const { t, admin, secrets } = await seedThreeAgents(createT());
 		const res = await admin.mutation(api.agents.reactivateAgent, {
-			orgSlug: "org-a",
 			agentId: await agentIdOf(admin, "org-a", "beta"),
 		});
 		expect(res).toEqual({ reactivated: false, revoked: 0 });
@@ -371,10 +356,9 @@ describe("agent retire surface", () => {
 	async function seedOrgBBeta(t: T) {
 		await seedOrg(t, "org-b");
 		const adminB = t.withIdentity(adminOf("org-b"));
-		await adminB.mutation(api.agents.registerAgent, { orgSlug: "org-b", name: "beta" });
+		await adminB.mutation(api.agents.registerAgent, { name: "beta" });
 		await ownAgent(t, "org-b", "beta");
 		const minted = await adminB.mutation(api.agentCredentials.mintAgentCredential, {
-			orgSlug: "org-b",
 			agentId: await agentIdOf(adminB, "org-b", "beta"),
 		});
 		return { adminB, secretB: minted.secret };
@@ -385,10 +369,9 @@ describe("agent retire surface", () => {
 		adminB: ReturnType<T["withIdentity"]>,
 		secretB: string,
 	) {
-		const row = await adminB.query(api.agents.getAgent, { orgSlug: "org-b", agentId: await agentIdOf(adminB, "org-b", "beta") });
+		const row = await adminB.query(api.agents.getAgent, { agentId: await agentIdOf(adminB, "org-b", "beta") });
 		expect(row?.isActive).toBe(true);
 		const st = await adminB.query(api.agentCredentials.getAgentCredentialStatus, {
-			orgSlug: "org-b",
 			agentId: await agentIdOf(adminB, "org-b", "beta"),
 		});
 		expect(st.activeRows).toBe(1);
@@ -404,7 +387,7 @@ describe("agent retire surface", () => {
 		const { adminB, secretB } = await seedOrgBBeta(t);
 
 		expect(
-			await admin.mutation(api.agents.deactivateAgent, { orgSlug: "org-a", agentId: await agentIdOf(admin, "org-a", "beta") }),
+			await admin.mutation(api.agents.deactivateAgent, { agentId: await agentIdOf(admin, "org-a", "beta") }),
 		).toEqual({ deactivated: true, revoked: 1 });
 
 		// Positive leg: A/beta really was retired.
@@ -425,7 +408,6 @@ describe("agent retire surface", () => {
 
 		expect(
 			await admin.mutation(api.agentCredentials.revokeAgentCredential, {
-				orgSlug: "org-a",
 				agentId: await agentIdOf(admin, "org-a", "beta"),
 			}),
 		).toEqual({ revoked: 1 });
@@ -443,7 +425,7 @@ describe("agent retire surface", () => {
 		const { t, admin } = await seedThreeAgents(createT());
 		const { adminB, secretB } = await seedOrgBBeta(t);
 
-		await admin.mutation(api.agents.deactivateAgent, { orgSlug: "org-a", agentId: await agentIdOf(admin, "org-a", "beta") });
+		await admin.mutation(api.agents.deactivateAgent, { agentId: await agentIdOf(admin, "org-a", "beta") });
 		// Constructed: a surviving credential on inactive A/beta, so the
 		// reactivation sweep has something to revoke and a widened sweep would
 		// have a reason to reach B.
@@ -460,7 +442,7 @@ describe("agent retire surface", () => {
 			});
 		});
 		expect(
-			await admin.mutation(api.agents.reactivateAgent, { orgSlug: "org-a", agentId: await agentIdOf(admin, "org-a", "beta") }),
+			await admin.mutation(api.agents.reactivateAgent, { agentId: await agentIdOf(admin, "org-a", "beta") }),
 		).toEqual({ reactivated: true, revoked: 1 });
 
 		// Positive leg: A/beta is back and its escaped row was swept.
@@ -475,14 +457,13 @@ describe("agent retire surface", () => {
 		const adminB = t.withIdentity(adminOf("org-b"));
 
 		await expect(
-			adminB.mutation(api.agents.deactivateAgent, { orgSlug: "org-a", agentId: await agentIdOf(adminB, "org-a", "alpha") }),
+			adminB.mutation(api.agents.deactivateAgent, { agentId: await agentIdOf(adminB, "org-a", "alpha") }),
 		).rejects.toThrow(/RBAC_DENIED/);
 		await expect(
-			adminB.mutation(api.agents.reactivateAgent, { orgSlug: "org-a", agentId: await agentIdOf(adminB, "org-a", "alpha") }),
+			adminB.mutation(api.agents.reactivateAgent, { agentId: await agentIdOf(adminB, "org-a", "alpha") }),
 		).rejects.toThrow(/RBAC_DENIED/);
 		await expect(
 			adminB.mutation(api.agentCredentials.revokeAgentCredential, {
-				orgSlug: "org-a",
 				agentId: await agentIdOf(adminB, "org-a", "alpha"),
 			}),
 		).rejects.toThrow(/RBAC_DENIED/);

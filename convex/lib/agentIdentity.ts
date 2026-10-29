@@ -1,13 +1,16 @@
 import {
 	type ActingPrincipal,
 	assertTargetBelongsTo,
+	type CallerFromClaimsResult,
 	type IdentityRefusal,
+	IdentityRefusalError,
 	requireAgentScopedIdentity,
+	requireSubjectFromIdentity,
 	resolveActingPrincipal,
 	resolveCallerFromAgentCredential,
+	resolveCallerFromClaims,
 	validatePresentedBearer,
 } from "@vantageos/cloud-identity";
-import type { UserIdentity } from "convex/server";
 import { ConvexError } from "convex/values";
 import type { Doc, Id } from "../_generated/dataModel";
 import type { MutationCtx, QueryCtx } from "../_generated/server";
@@ -16,8 +19,9 @@ import {
 	agentCredentialPrincipalLookups,
 	principalLookups,
 } from "./actingPrincipal";
-import { proveOrgAdmin } from "./auth";
+import { ORG_ADMIN_ROLES, refusalError } from "./auth";
 import { orgMappingLookups } from "./authOrgMapping";
+import { orgByIdLookups, orgByIdPrincipalLookups } from "./orgIdLookups";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // agentIdentity — the ADAPTER between the agent registry (convex/agents.ts,
@@ -25,73 +29,73 @@ import { orgMappingLookups } from "./authOrgMapping";
 // @vantageos/cloud-identity.
 //
 // It decides NOTHING about identity. Who a presented secret is
-// (`validatePresentedBearer`), who the acting person is and whether it
-// administers the organisation (`resolveActingPrincipal` + `assertOrgAdmin`),
-// and whether a target row belongs to that principal's organisation
-// (`assertTargetBelongsTo`) are the package's decisions. This module performs
-// the indexed reads BY ID the package asks for and turns its typed refusal
-// into this backend's `RBAC_DENIED` ConvexError. An agent is its `agents` row
-// id; a name is a display label and never selects or authorises a row.
+// (`validatePresentedBearer`), who the acting person is, which organisation the
+// verified session belongs to and whether it administers it
+// (`resolveCallerFromClaims` + `assertOrgAdmin`), and whether a target row
+// belongs to that principal's organisation (`assertTargetBelongsTo`) are the
+// package's decisions. This module performs the indexed reads BY ID the package
+// asks for and turns its typed refusal into this backend's wire shape. An
+// agent is its `agents` row id; an organisation is its permanent id; a name or
+// a slug is a display label and never selects or authorises anything.
 // ─────────────────────────────────────────────────────────────────────────────
 
 type Ctx = QueryCtx | MutationCtx;
 
-// The package's typed refusal, said in this backend's wire shape: its code as
-// the prefix, {reason, door} as the payload, so a reader branches on content.
-function refuseWith(refusal: IdentityRefusal): never {
-	throw new ConvexError(
-		`${refusal.code}: ${refusal.detail} — ${JSON.stringify({ reason: refusal.reason, door: refusal.door })}`,
-	);
-}
+/** The caller the package resolved from a verified session. */
+export type SessionCaller = Extract<CallerFromClaimsResult, { ok: true }>;
 
 /**
  * anonymousRefusal — the refusal a door throws when `ctx.auth` presents no
- * identity at all: `RBAC_DENIED`, reason `no-credential`, naming the door.
+ * identity at all: the package's own refusal for a session with no subject
+ * (`requireSubjectFromIdentity`: reason `no-verified-subject`, naming the door),
+ * in this backend's wire shape (`refusalError`). This module words no refusal of
+ * its own.
  */
 export function anonymousRefusal(door: string): ConvexError<string> {
-	return new ConvexError(
-		`RBAC_DENIED: no authenticated identity presented — ${JSON.stringify({ reason: "no-credential", door })}`,
+	try {
+		requireSubjectFromIdentity(null, { door });
+	} catch (refused) {
+		if (refused instanceof IdentityRefusalError) {
+			return refusalError(refused.refusal);
+		}
+		throw refused;
+	}
+	throw new ConvexError(
+		`SESSION_REFUSAL_UNREACHABLE: the package accepted a session with no identity at ${door}`,
 	);
 }
 
 /**
- * stampOrgRefusal — thrown when the organisation a write is about to be stamped
- * with (the caller's resolved scope) is not the organisation the admin proof was
- * made for. Both come from the verified session, so this only fires if the two
- * resolvers ever disagree; it refuses rather than stamp either.
- */
-export function stampOrgRefusal(door: string): ConvexError<string> {
-	return new ConvexError(
-		`RBAC_DENIED: the caller's resolved organisation is not the organisation the admin proof was made for — ${JSON.stringify({ reason: "scope-org-differs-from-principal", door })}`,
-	);
-}
-
-/**
- * requireOrgAdminById — the caller is an ADMINISTRATOR of `targetOrgSlug`,
- * proven by ORG ID through @vantageos/cloud-identity (`proveOrgAdmin`,
- * convex/lib/auth.ts), and the acting principal comes back.
+ * resolveSessionCaller — the caller behind the verified session of this call, as
+ * the package resolves it, or the package's refusal thrown.
  *
- * `identity` is the verified session the DOOR read from `ctx.auth` (and refused
- * when absent, `anonymousRefusal`). The organisation is the one its verified
- * `org_id` claim resolves in `client_org_mapping`, never the slug the token
- * carries: a new Clerk org that took a freed slug is refused. Neither the
- * service account nor an agent is ever an administrator, so there is no master
- * carve-out.
- *
- * The returned principal's `orgId` is the org's STORED STAMP (its current
- * `client_org_mapping.clerkOrgSlug`, read BY ID): the `agents` rows this
- * module's doors act on are stamped with that label, and
- * `loadAgentOfPrincipalOrg` compares those stamps. It moves to the permanent ID
- * with the `agents.orgSlug` stamp (expand-contract), in this one place.
+ * The session goes to the package and nowhere else: `resolveCallerFromClaims`
+ * resolves the organisation by the verified `org_id` (a new Clerk org that took
+ * a freed slug is refused), the person stored in it and the role claim. The
+ * organisation a door acts in is the one the returned caller carries
+ * (`caller.org`, its permanent `id` and current `label`); no door takes an
+ * organisation, slug or label as an argument. Whether that caller ADMINISTERS the
+ * organisation is the door's own `assertOrgAdmin` (the package's), called where
+ * the write is. Neither the service account nor an agent is ever an
+ * administrator, so there is no master carve-out.
  */
-export async function requireOrgAdminById(
+export async function resolveSessionCaller(
 	ctx: Ctx,
-	identity: UserIdentity,
-	targetOrgSlug: string,
 	door: string,
-): Promise<ActingPrincipal> {
-	const proof = await proveOrgAdmin(ctx, identity, targetOrgSlug, door);
-	return { ...proof.principal, orgId: proof.org.label };
+): Promise<SessionCaller> {
+	const caller = await resolveCallerFromClaims(
+		await ctx.auth.getUserIdentity(),
+		{
+			orgLookups: orgByIdLookups(ctx),
+			principalLookups: orgByIdPrincipalLookups(ctx),
+		},
+		{ adminRoles: ORG_ADMIN_ROLES, door },
+	);
+	if (!caller.ok) {
+		if (caller.subject === undefined) throw anonymousRefusal(door);
+		throw refusalError(caller.refusal);
+	}
+	return caller;
 }
 
 /**
@@ -108,13 +112,15 @@ export async function loadAgentOfPrincipalOrg(
 ): Promise<Doc<"agents"> | null> {
 	const row = await ctx.db.get(agentId);
 	if (row === null) return null;
+	// The row's STORED organisation id against the principal's: a row stamped
+	// with no id names no organisation and is refused (`target-unstamped`).
 	const verdict = await assertTargetBelongsTo(
 		principal,
-		{ orgId: row.orgSlug },
-		principalLookups(ctx),
+		{ orgId: row.clerkOrgId ?? null },
+		orgByIdPrincipalLookups(ctx),
 		{ door },
 	);
-	if (!verdict.ok) return refuseWith(verdict.refusal);
+	if (!verdict.ok) throw refusalError(verdict.refusal);
 	return row;
 }
 

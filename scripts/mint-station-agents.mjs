@@ -8,7 +8,7 @@
  * getScopedUserToken, then orgSlug DERIVED from that JWT's claim (never typed),
  * then agents:registerAgent and agentCredentials:mintAgentCredential through
  * ConvexHttpClient. Convex re-derives and verifies the same claim server-side
- * in requireOrgAdmin; the local decode only chooses the orgSlug argument.
+ * in resolveAdminSession; the local decode is only for the log line (no door takes an organisation argument).
  *
  * INPUT: a JSON file, array of { "role": "eta", "instanceId": "eta-vps" }
  *   (instanceId optional, default "{role}-vps"; optional "agentName", default
@@ -102,11 +102,11 @@ async function main() {
 	const { api } = await import("../convex/_generated/api.js");
 
 	const plan = [];
-	const orgAgents = await client.query(api.agents.listAgentsByOrg, { orgSlug });
+	const orgAgents = await client.query(api.agents.listAgentsByOrg, {});
 	for (const st of stations) {
 		const agent = agentRowByLabel(orgAgents, st.agentName);
 		const status = agent
-			? await client.query(api.agentCredentials.getAgentCredentialStatus, { orgSlug, agentId: agent._id })
+			? await client.query(api.agentCredentials.getAgentCredentialStatus, { agentId: agent._id })
 			: { hasActiveCredential: false, activeRows: 0 };
 		plan.push({ st, agent, status, decision: decideStation({ agent, status, rotate: args.rotate }) });
 	}
@@ -147,13 +147,11 @@ async function main() {
 		let agentId = agent?._id;
 		if (decision.register) {
 			agentId = await client.mutation(api.agents.registerAgent, {
-				orgSlug,
 				name: st.agentName,
 				description: `Fleet station ${st.agentName} (${st.instanceId}), task k17awnbe5njbfwxed3z4e1md358fhra0`,
 			});
 		}
 		const { secret, mintedAt } = await client.mutation(api.agentCredentials.mintAgentCredential, {
-			orgSlug,
 			agentId,
 		});
 		const path = writeSecretFile(secretsDir, st.agentName, secret);

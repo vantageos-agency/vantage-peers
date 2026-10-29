@@ -1,20 +1,25 @@
-import { sha256Hex } from "@vantageos/cloud-identity";
+import {
+	assertOrgAdmin,
+	resolveCallerFromClaims,
+	sha256Hex,
+} from "@vantageos/cloud-identity";
 import { ConvexError, v } from "convex/values";
 import { mutation, query } from "./_generated/server";
 import {
+	ORG_ADMIN_ROLES,
 	refuseUnresolvedCredential,
+	refusalError,
 	requireResolvedCaller,
 	withOrgScope,
 } from "./lib/auth";
 import {
-	loadAgentOfPrincipalOrg,
 	anonymousRefusal,
-	stampOrgRefusal,
-	requireOrgAdminById,
+	loadAgentOfPrincipalOrg,
+	resolveSessionCaller,
 	resolveOwnedAgentOfPresentedSecret,
 	revokeActiveCredentialRows,
 } from "./lib/agentIdentity";
-import { clerkOrgIdForSlug } from "./lib/orgClerkId";
+import { orgByIdLookups, orgByIdPrincipalLookups } from "./lib/orgIdLookups";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // [P-T4] agentCredentials — the per-agent CREDENTIAL, on top of P-T2's
@@ -36,7 +41,7 @@ import { clerkOrgIdForSlug } from "./lib/orgClerkId";
 //
 // Authorization split (two DIFFERENT identities, deliberately):
 //   - MINT, REVOKE and STATUS are addressed by `agentId` and gated by the org
-//     administrator proof (`requireOrgAdminById`, the SAME gate `agents.ts` and
+//     administrator proof (`resolveSessionCaller`, the SAME gate `agents.ts` and
 //     `agentRelations.ts` use). Only an org:admin of the agent's OWN org may
 //     mint/rotate its credential; an ID naming another organisation's agent is
 //     refused RBAC_DENIED. A name never selects the agent.
@@ -64,7 +69,7 @@ const resolvedIdentityValidator = v.object({
  * plaintext EXACTLY ONCE (in this mutation's result — never re-derivable
  * from the DB afterward).
  *
- * Gated to the organisation ADMINISTRATOR via `requireOrgAdminById`, identical
+ * Gated to the organisation ADMINISTRATOR via `resolveSessionCaller`, identical
  * to `agents.ts`'s `registerAgent`. The agent is named by its `agentId`: an ID
  * naming no `agents` row raises AGENT_NOT_FOUND — a credential is issued to an
  * agent that already EXISTS as an entity — and an ID naming another
@@ -77,7 +82,6 @@ const resolvedIdentityValidator = v.object({
  */
 export const mintAgentCredential = mutation({
 	args: {
-		orgSlug: v.string(),
 		agentId: v.id("agents"),
 	},
 	returns: mintResultValidator,
@@ -85,22 +89,36 @@ export const mintAgentCredential = mutation({
 		// write-contract: operator script only — scripts/mint-station-agents.mjs:153 calls client.mutation(api.agentCredentials.mintAgentCredential) (imperative); 0 call sites in mcp-server/src and mcp-server/server-http.ts and 0 dashboard hits for api.agentCredentials.mintAgentCredential (measured 2026-10-03 with `grep -rn "mintAgentCredential" scripts mcp-server/src mcp-server/server-http.ts` and `git -C <dashboard> grep -n "mintAgentCredential" origin/main -- app components hooks lib contexts providers`, dashboard origin/main 00a43cf); also convex/__tests__. No subscribing pre-org client shell can reach it; the no-org throw is a refusal at an imperative SDK call, never at a render. Operator-run via `convex run` per docs/cloud/protocol/deployment-runbook.md:24 (imperative).
 		const door = "agentCredentials:mintAgentCredential";
 		const identity = await ctx.auth.getUserIdentity();
-		if (!identity) throw anonymousRefusal(door);
-		const principal = await requireOrgAdminById(ctx, identity, args.orgSlug, door);
-		const scope = await withOrgScope(ctx);
-		const orgSlug = scope.orgSlug;
-		if (orgSlug === null || orgSlug !== principal.orgId) {
-			throw stampOrgRefusal(door);
+		const caller = await resolveCallerFromClaims(
+			identity,
+			{
+				orgLookups: orgByIdLookups(ctx),
+				principalLookups: orgByIdPrincipalLookups(ctx),
+			},
+			{ adminRoles: ORG_ADMIN_ROLES, door },
+		);
+		if (!caller.ok) {
+			if (caller.subject === undefined) throw anonymousRefusal(door);
+			throw refusalError(caller.refusal);
 		}
+		const admin = assertOrgAdmin(caller.principal, caller.org.id, {
+			adminRoles: ORG_ADMIN_ROLES,
+			door: door,
+		});
+		if (!admin.ok) throw refusalError(admin.refusal);
 
-		const agent = await loadAgentOfPrincipalOrg(ctx, principal, args.agentId, door);
+		const agent = await loadAgentOfPrincipalOrg(ctx, caller.principal, args.agentId, door);
 		if (!agent) {
 			throw new ConvexError(
-				`AGENT_NOT_FOUND: no agent ${args.agentId} in org "${args.orgSlug}" — ${JSON.stringify(
-					{ orgSlug: args.orgSlug, agentId: args.agentId },
+				`AGENT_NOT_FOUND: no agent ${args.agentId} in org "${caller.org.label}" — ${JSON.stringify(
+					{ orgSlug: caller.org.label, agentId: args.agentId },
 				)}`,
 			);
 		}
+
+		// The organisation the verified session resolves to (the agent belongs to it:
+		// the stored-ID check above): the row is stamped with its id and label.
+		const stamp = { orgSlug: caller.org.label, clerkOrgId: caller.org.id };
 
 		// Rotation: invalidate every PRIOR row for this agent (by ID) before
 		// minting the new one. Rows are patched, never deleted — the audit trail
@@ -119,8 +137,7 @@ export const mintAgentCredential = mutation({
 		const mintedAt = Date.now();
 
 		await ctx.db.insert("agent_credentials", {
-			orgSlug,
-			clerkOrgId: agent.clerkOrgId ?? (await clerkOrgIdForSlug(ctx, orgSlug)),
+			...stamp,
 			agentId: agent._id,
 			agentName: agent.name,
 			secretHash,
@@ -138,7 +155,7 @@ export const mintAgentCredential = mutation({
  * revokeAgentCredential — retires EVERY active credential row of ONE agent in
  * the caller's own org (`isActive: false`; rows are patched, never deleted,
  * same audit-trail rule as rotation in `mintAgentCredential`). Addressed by
- * `agentId` and gated by `requireOrgAdminById`, no master carve-out.
+ * `agentId` and gated by `resolveSessionCaller`, no master carve-out.
  *
  * RETURNS `{ revoked: number }`, the count of rows this call flipped. Load
  * bearing, not style: `.claude/rules/refusal-is-distinguishable-from-absence.md`
@@ -158,20 +175,23 @@ export const mintAgentCredential = mutation({
  * (convex/lib/agentIdentity.ts), keyed on the agent's ID.
  */
 export const revokeAgentCredential = mutation({
-	args: { orgSlug: v.string(), agentId: v.id("agents") },
+	args: { agentId: v.id("agents") },
 	returns: v.object({ revoked: v.number() }),
 	handler: async (ctx, args) => {
-		// write-contract: no mcp-server/src/tools.ts wiring and no dashboard reference exists for "agentCredentials:revokeAgentCredential" (same grep, 0 hits). Its only callers are convex-test direct mutations; a pre-organisation client has no render path to a credential revoke, and requireOrgAdminById refuses it RBAC_DENIED at an imperative call, an R-16 refusal, never an uncaught Server Error.
+		// write-contract: no mcp-server/src/tools.ts wiring and no dashboard reference exists for "agentCredentials:revokeAgentCredential" (same grep, 0 hits). Its only callers are convex-test direct mutations; a pre-organisation client has no render path to a credential revoke, and resolveSessionCaller refuses it RBAC_DENIED at an imperative call, an R-16 refusal, never an uncaught Server Error.
 		const door = "agentCredentials:revokeAgentCredential";
-		const identity = await ctx.auth.getUserIdentity();
-		if (!identity) throw anonymousRefusal(door);
-		const principal = await requireOrgAdminById(ctx, identity, args.orgSlug, door);
+		const caller = await resolveSessionCaller(ctx, door);
+		const admin = assertOrgAdmin(caller.principal, caller.org.id, {
+			adminRoles: ORG_ADMIN_ROLES,
+			door: door,
+		});
+		if (!admin.ok) throw refusalError(admin.refusal);
 
-		const agent = await loadAgentOfPrincipalOrg(ctx, principal, args.agentId, door);
+		const agent = await loadAgentOfPrincipalOrg(ctx, caller.principal, args.agentId, door);
 		if (!agent) {
 			throw new ConvexError(
-				`AGENT_NOT_FOUND: no agent ${args.agentId} in org "${args.orgSlug}" — ${JSON.stringify(
-					{ orgSlug: args.orgSlug, agentId: args.agentId },
+				`AGENT_NOT_FOUND: no agent ${args.agentId} in org "${caller.org.label}" — ${JSON.stringify(
+					{ orgSlug: caller.org.label, agentId: args.agentId },
 				)}`,
 			);
 		}
@@ -287,7 +307,7 @@ export const resolveAgentCredential = query({
  * `agentName: null`).
  */
 export const getAgentCredentialStatus = query({
-	args: { orgSlug: v.string(), agentId: v.id("agents") },
+	args: { agentId: v.id("agents") },
 	returns: v.object({
 		orgSlug: v.string(),
 		agentId: v.id("agents"),
@@ -299,10 +319,13 @@ export const getAgentCredentialStatus = query({
 	handler: async (ctx, args) => {
 		// isolation-contract: no reactive subscriber — enumerated 2026-10-03 with: `git -C <dashboard> grep -nE "api\.(agents|agentCredentials)\." origin/main -- app components hooks lib contexts providers` (dashboard origin/main 00a43cf, measured 2026-10-03) -> the only reader is components/agents/agents-admin.tsx:68, an imperative convex.query (no useQuery/useSubscription); server-side callers: grep -rnE "agentCredentials|resolveAgentCredential" convex mcp-server/src scripts. R-50 declared divergence.
 		const door = "agentCredentials:getAgentCredentialStatus";
-		const identity = await ctx.auth.getUserIdentity();
-		if (!identity) throw anonymousRefusal(door);
-		const principal = await requireOrgAdminById(ctx, identity, args.orgSlug, door);
-		const agent = await loadAgentOfPrincipalOrg(ctx, principal, args.agentId, door);
+		const caller = await resolveSessionCaller(ctx, door);
+		const admin = assertOrgAdmin(caller.principal, caller.org.id, {
+			adminRoles: ORG_ADMIN_ROLES,
+			door: door,
+		});
+		if (!admin.ok) throw refusalError(admin.refusal);
+		const agent = await loadAgentOfPrincipalOrg(ctx, caller.principal, args.agentId, door);
 		const rows = agent
 			? await ctx.db
 					.query("agent_credentials")
@@ -311,7 +334,7 @@ export const getAgentCredentialStatus = query({
 			: [];
 		const activeRows = rows.filter((r) => r.isActive).length;
 		return {
-			orgSlug: args.orgSlug,
+			orgSlug: caller.org.label,
 			agentId: args.agentId,
 			agentName: agent ? agent.name : null,
 			hasActiveCredential: activeRows > 0,

@@ -80,9 +80,9 @@ async function main() {
 	client.setAuth(jwt);
 	const { api } = await import("../convex/_generated/api.js");
 
-	const agent = agentRowByLabel(await client.query(api.agents.listAgentsByOrg, { orgSlug }), station);
+	const agent = agentRowByLabel(await client.query(api.agents.listAgentsByOrg, {}), station);
 	const status = agent
-		? await client.query(api.agentCredentials.getAgentCredentialStatus, { orgSlug, agentId: agent._id })
+		? await client.query(api.agentCredentials.getAgentCredentialStatus, { agentId: agent._id })
 		: { hasActiveCredential: false, activeRows: 0 };
 	const phase = args.phase === "auto" ? (agent ? "green" : "red") : args.phase;
 

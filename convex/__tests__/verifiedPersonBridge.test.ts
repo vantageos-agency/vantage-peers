@@ -493,7 +493,6 @@ describe("RESERVED — no agent is ever named like a person", () => {
 	test("registerAgent and renameAgent refuse a user: name", async () => {
 		await expectCode(
 			admin().mutation(api.agents.registerAgent, {
-				orgSlug: "org-a",
 				name: "User:someone",
 			}),
 			"AGENT_NAME_RESERVED",
@@ -501,7 +500,6 @@ describe("RESERVED — no agent is ever named like a person", () => {
 		// "agent-a" is already org-a's agent (seeded in beforeEach).
 		await expectCode(
 			admin().mutation(api.agents.renameAgent, {
-				orgSlug: "org-a",
 				agentId: await agentIdOf(t, "org-a", "agent-a"),
 				newName: "user:user_editor",
 			}),

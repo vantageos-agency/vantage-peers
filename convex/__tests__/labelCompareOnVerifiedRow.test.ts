@@ -151,12 +151,11 @@ describe("site 2: requireAgentCredentialMatch (secret) compares against the reso
 	async function withSecret() {
 		const w = await world();
 		await adminOf(w.t, ORG_A).mutation(api.agents.registerAgent, {
-			orgSlug: ORG_A,
 			name: "clio",
 		});
 		const minted = await adminOf(w.t, ORG_A).mutation(
 			api.agentCredentials.mintAgentCredential,
-			{ orgSlug: ORG_A, agentId: await agentIdOf(w.t, ORG_A, "clio") },
+			{ agentId: await agentIdOf(w.t, ORG_A, "clio") },
 		);
 		await ownAgent(w.t, ORG_A, "clio");
 		return { ...w, secret: minted.secret };
