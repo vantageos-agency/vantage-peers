@@ -36,6 +36,7 @@ import {
 import { api } from "../_generated/api";
 import type { Id } from "../_generated/dataModel";
 import schema from "../schema";
+import { fleetActorClaim } from "../../tests/lib/withFleetClaim";
 
 const modules = Object.fromEntries(
 	Object.entries(import.meta.glob("../**/*.ts")).filter(
@@ -396,6 +397,54 @@ describe("R-55 -- the caller's predicates are inside the read, before the bound"
 		expect(mine.map((r) => r.title).sort()).toEqual(["sigma-0", "sigma-1", "sigma-2"]);
 	});
 
+	test("tenant gate inside the read -- a row that names the slug but not the org ID, and a row of another stamp under this org's agent ID, are not served", async () => {
+		const t = createT();
+		await seedOrg(t, "org-a", ["sigma"]);
+		const aSigma = await t.run(async (ctx) => {
+			const rows = await ctx.db.query("agents").collect();
+			return rows.find((r) => r.orgSlug === "org-a")?._id as Id<"agents">;
+		});
+		// served: stamped with the slug AND the permanent org ID
+		await seedRow(t, { title: "own", orgId: "org-a", dueDate: PAST });
+		// not served: the slug alone (no org ID), which `sameOrg` never matches
+		await t.run(async (ctx) => {
+			await ctx.db.insert("tasks", {
+				title: "slug-only",
+				assignedTo: "sigma",
+				assignedToId: aSigma,
+				createdBy: "sigma",
+				priority: "medium",
+				status: "todo",
+				dueDate: PAST,
+				orgId: "org-a",
+				createdAt: Date.now(),
+				updatedAt: Date.now(),
+			});
+			// not served: an unstamped (fleet) row assigned to this org's agent ID
+			await ctx.db.insert("tasks", {
+				title: "fleet-under-agent",
+				assignedTo: "sigma",
+				assignedToId: aSigma,
+				createdBy: "sigma",
+				priority: "medium",
+				status: "todo",
+				dueDate: PAST,
+				createdAt: Date.now(),
+				updatedAt: Date.now(),
+			});
+		});
+		const member = asMember(t, "org-a");
+		const overdue = await member.query(api.tasks.listOverdue, {});
+		expect(overdue.map((r) => r.title)).toEqual(["own"]);
+		const paged = await member.query(api.tasks.listPaginated, {
+			paginationOpts: PAGE(10),
+			assignedTo: "sigma",
+		});
+		expect(paged.page.map((r) => r.title)).toEqual(["own"]);
+		const listed = await member.query(api.tasks.list, { assignedTo: "sigma", fields: "lite" });
+		expect(listed.map((r) => r.title)).toEqual(["own"]);
+	});
+
 	test("tasks.billingSummaryByProject -- a tenant's own rows are not crowded out of the scan window", async () => {
 		const t = createT();
 		await seedOrg(t, "org-a", ["sigma"]);
@@ -433,6 +482,41 @@ describe("R-55 -- the caller's predicates are inside the read, before the bound"
 		});
 		expect(summary.byProject.map((p) => [p.project, p.totalMinutes])).toEqual([["p-own", 60]]);
 		expect(summary.truncated).toBe(false);
+	});
+
+	test("billingSummaryByProject and taskDurationDistribution -- a member's read keeps the period, the project and the roster", async () => {
+		const t = createT();
+		await seedOrg(t, "org-a", ["sigma"]);
+		const now = Date.now();
+		const done = { orgId: "org-a", status: "done" as const };
+		await seedRow(t, { ...done, project: "p1", actualMinutes: 60, completedAt: now - 100 });
+		await seedRow(t, { ...done, project: "p2", actualMinutes: 30, completedAt: now - 200 });
+		// outside the period
+		await seedRow(t, { ...done, project: "p1", actualMinutes: 999, completedAt: now - 5_000_000 });
+		// an assignee the org's roster does not admit
+		await seedRow(t, { ...done, assignedTo: "ghost", project: "p1", actualMinutes: 500, completedAt: now - 300 });
+		const member = asMember(t, "org-a");
+		const period = { startDate: now - 10_000, endDate: now };
+		const all = await member.query(api.tasks.billingSummaryByProject, period);
+		expect(all.byProject.map((p) => [p.project, p.totalMinutes])).toEqual([
+			["p1", 60],
+			["p2", 30],
+		]);
+		const one = await member.query(api.tasks.billingSummaryByProject, { ...period, project: "p2" });
+		expect(one.byProject.map((p) => [p.project, p.totalMinutes])).toEqual([["p2", 30]]);
+		const dist = await member.query(api.tasks.taskDurationDistribution, {
+			from: period.startDate,
+			to: period.endDate,
+		});
+		expect(dist.count).toBe(2);
+		expect(dist.percentiles.max).toBe(60);
+		const distOne = await member.query(api.tasks.taskDurationDistribution, {
+			from: period.startDate,
+			to: period.endDate,
+			project: "p2",
+		});
+		expect(distOne.count).toBe(1);
+		expect(distOne.percentiles.max).toBe(30);
 	});
 
 	test("tasks.taskDurationDistribution -- a tenant's own rows are not crowded out of the scan window", async () => {
@@ -488,5 +572,40 @@ describe("R-55 -- the caller's predicates are inside the read, before the bound"
 		});
 		expect(found).toHaveLength(3);
 		expect(found.every((r) => r.assignedTo === "sigma")).toBe(true);
+	});
+
+	test("resume -- the paused task itself does not count against the caller's concurrent in_progress cap", async () => {
+		// assertNoConcurrentInProgress excludes the target INSIDE the read: a paused
+		// task is still in_progress, so without the exclusion it would be its own
+		// blocker and a lone paused task could never be resumed.
+		const t = createT();
+		await seedFleetAgents(t, ["sigma"]);
+		await t.run(async (ctx) => {
+			await ctx.db.insert("taskClosureConfig", {
+				key: "billableProjects",
+				value: [],
+				updatedAt: Date.now(),
+			});
+		});
+		const now = Date.now();
+		const paused = await t.run(async (ctx) =>
+			insertTaskRow(ctx, {
+				title: "paused",
+				assignedTo: "sigma",
+				createdBy: "sigma",
+				priority: "low",
+				status: "in_progress",
+				pausedAt: now - 1000,
+				workSegments: [{ start: now - 600_000, end: now - 1000 }],
+				createdAt: now,
+				updatedAt: now,
+			}),
+		);
+		await asService(t).mutation(api.tasks.resume, {
+			taskId: paused,
+			callerOrchestrator: "sigma",
+			...(await fleetActorClaim(t, "sigma")),
+		});
+		expect((await t.run((ctx) => ctx.db.get(paused)))?.pausedAt).toBeUndefined();
 	});
 });
