@@ -33,6 +33,7 @@ import { describe, expect, test } from "vitest";
 import { api } from "../_generated/api";
 import schema from "../schema";
 import { insertTaskRow, seedFleetAgents } from "../../tests/lib/seedFleetAgents";
+import { withFleetClaim } from "../../tests/lib/withFleetClaim";
 
 const FILE_LABELS = ["eta", "pi", "sigma"];
 
@@ -79,7 +80,7 @@ describe("tasks.listPaginated — Day 116 B1 dashboard fix", () => {
 			await seedTask(ctx, { title: "Task B" });
 		});
 
-		const result = await t.withIdentity({ subject: "test-service-account-user-id" }).query(api.tasks.listPaginated, {
+		const result = await withFleetClaim(t.withIdentity({ subject: "test-service-account-user-id" })).query(api.tasks.listPaginated, {
 			paginationOpts: PAGE_OPTS,
 		});
 
@@ -104,7 +105,7 @@ describe("tasks.listPaginated — Day 116 B1 dashboard fix", () => {
 			await seedTask(ctx, { title: "Done task", status: "done" });
 		});
 
-		const result = await t.withIdentity({ subject: "test-service-account-user-id" }).query(api.tasks.listPaginated, {
+		const result = await withFleetClaim(t.withIdentity({ subject: "test-service-account-user-id" })).query(api.tasks.listPaginated, {
 			paginationOpts: PAGE_OPTS,
 			status: "blocked",
 		});
@@ -125,7 +126,7 @@ describe("tasks.listPaginated — Day 116 B1 dashboard fix", () => {
 			await seedTask(ctx, { title: "Medium task", priority: "medium" });
 		});
 
-		const result = await t.withIdentity({ subject: "test-service-account-user-id" }).query(api.tasks.listPaginated, {
+		const result = await withFleetClaim(t.withIdentity({ subject: "test-service-account-user-id" })).query(api.tasks.listPaginated, {
 			paginationOpts: PAGE_OPTS,
 			priority: "urgent",
 		});
@@ -145,7 +146,7 @@ describe("tasks.listPaginated — Day 116 B1 dashboard fix", () => {
 			await seedTask(ctx, { title: "Pi task", assignedTo: "pi" });
 		});
 
-		const result = await t.withIdentity({ subject: "test-service-account-user-id" }).query(api.tasks.listPaginated, {
+		const result = await withFleetClaim(t.withIdentity({ subject: "test-service-account-user-id" })).query(api.tasks.listPaginated, {
 			paginationOpts: PAGE_OPTS,
 			assignedTo: "sigma",
 		});
@@ -165,7 +166,7 @@ describe("tasks.listPaginated — Day 116 B1 dashboard fix", () => {
 			await seedTask(ctx, { title: "Pi blocked", assignedTo: "pi", status: "blocked" });
 		});
 
-		const result = await t.withIdentity({ subject: "test-service-account-user-id" }).query(api.tasks.listPaginated, {
+		const result = await withFleetClaim(t.withIdentity({ subject: "test-service-account-user-id" })).query(api.tasks.listPaginated, {
 			paginationOpts: PAGE_OPTS,
 			assignedTo: "sigma",
 			status: "blocked",
@@ -185,7 +186,7 @@ describe("tasks.listPaginated — Day 116 B1 dashboard fix", () => {
 		});
 
 		// Must not throw — orgId is accepted as a passthrough arg.
-		const result = await t.withIdentity({ subject: "test-service-account-user-id" }).query(api.tasks.listPaginated, {
+		const result = await withFleetClaim(t.withIdentity({ subject: "test-service-account-user-id" })).query(api.tasks.listPaginated, {
 			paginationOpts: PAGE_OPTS,
 			orgId: "novalayer",
 		});

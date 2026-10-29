@@ -204,6 +204,62 @@ describe("R-54 -- the claimless service account is refused at five task doors", 
 		expect(served.map((r) => r.title)).toEqual(["fleet-late"]);
 	});
 
+	test("attachReviewArtifact -- a verified agent attaches inside its own organisation only", async () => {
+		const t = createT();
+		await twoOrgs(t);
+		const fleetIds = await seedFleetAgents(t, ["sigma"]);
+		const operator = await t.run(async (ctx) => {
+			const rows = await ctx.db.query("client_org_mapping").collect();
+			return rows.find((m) => m.orgKind === "operator")?.clerkOrgSlug as string;
+		});
+		const fleetRow = await seedRow(t, { title: "[REVIEW] fleet" });
+		const aRow = await seedRow(t, { title: "[REVIEW] a", orgId: "org-a" });
+		const args = (taskId: Id<"tasks">) => ({
+			taskId,
+			callerOrchestrator: "sigma",
+			artifactRef: "https://example.test/pr/2",
+		});
+		const operatorActor = { agentId: fleetIds.sigma, orgSlug: operator };
+		// FLEET: the operator-org agent attaches to the fleet's own (unstamped) row ...
+		await asService(t).mutation(api.tasks.attachReviewArtifact, {
+			...args(fleetRow),
+			verifiedActor: operatorActor,
+		});
+		expect((await t.run((ctx) => ctx.db.get(fleetRow)))?.reviewArtifactRef).toBe(
+			"https://example.test/pr/2",
+		);
+		// ... and is REFUSED on a client org's row.
+		await expect(
+			asService(t).mutation(api.tasks.attachReviewArtifact, {
+				...args(aRow),
+				verifiedActor: operatorActor,
+			}),
+		).rejects.toThrow(/RBAC_DENIED[\s\S]*row-outside-actor-org/);
+		expect((await t.run((ctx) => ctx.db.get(aRow)))?.reviewArtifactRef).toBeUndefined();
+		// A client org's agent attaches to its OWN row, and is refused on the fleet's.
+		const aActor = {
+			agentId: (await t.run(async (ctx) => {
+				const rows = await ctx.db.query("agents").collect();
+				return rows.find((r) => r.orgSlug === "org-a")?._id;
+			})) as Id<"agents">,
+			orgSlug: "org-a",
+		};
+		await asService(t).mutation(api.tasks.attachReviewArtifact, {
+			...args(aRow),
+			verifiedActor: aActor,
+		});
+		expect((await t.run((ctx) => ctx.db.get(aRow)))?.reviewArtifactRef).toBe(
+			"https://example.test/pr/2",
+		);
+		const fleetRow2 = await seedRow(t, { title: "[REVIEW] fleet 2" });
+		await expect(
+			asService(t).mutation(api.tasks.attachReviewArtifact, {
+				...args(fleetRow2),
+				verifiedActor: aActor,
+			}),
+		).rejects.toThrow(/RBAC_DENIED[\s\S]*row-outside-actor-org/);
+	});
+
 	test("attachReviewArtifact -- REFUSED / SCOPED (own org) / SCOPED (foreign org refused) / MEMBER", async () => {
 		const t = createT();
 		await twoOrgs(t);

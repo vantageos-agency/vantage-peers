@@ -16,6 +16,11 @@ const CLAIM_DOORS: ReadonlySet<string> = new Set([
 	"stats:fleetStats",
 	"improvisationDigest:scanWindow",
 	"issueStatsQueries:getLatest",
+	// R-54 (task k17er5a6yyccvxdh6gjcm5cand8fztkv): task reads no MCP tool calls.
+	"tasks:listPaginated",
+	"tasks:listUnlinkedBlocked",
+	"tasks:listOverdue",
+	"tasks:taskDurationDistribution",
 ]);
 
 type Runner = {
@@ -79,4 +84,35 @@ export function withFleetClaim<T>(client: T): T {
 			return (value as (...a: unknown[]) => unknown).bind(target);
 		},
 	}) as T;
+}
+
+/**
+ * TEST FIXTURE ONLY. The `verifiedActor` claim of the operator-organisation agent
+ * `label`, for a mutation the suite sends as the fleet service account (R-54: that
+ * account is admitted only with a transport-verified claim). Seeds the fleet agent
+ * when it does not exist and reads the operator org slug from the stored mapping.
+ */
+export async function fleetActorClaim(
+	t: unknown,
+	label: string,
+): Promise<{ verifiedActor: { agentId: never; orgSlug: string } }> {
+	const runner = t as {
+		run: <R>(
+			fn: (ctx: {
+				db: {
+					get: (id: never) => Promise<{ orgSlug: string } | null>;
+				};
+			}) => Promise<R>,
+		) => Promise<R>;
+	};
+	const ids = await seedFleetAgents(
+		runner as unknown as Parameters<typeof seedFleetAgents>[0],
+		[label],
+	);
+	const agentId = ids[label] as never;
+	const orgSlug = await runner.run(async (ctx) => {
+		const row = await ctx.db.get(agentId);
+		return row?.orgSlug as string;
+	});
+	return { verifiedActor: { agentId, orgSlug } };
 }

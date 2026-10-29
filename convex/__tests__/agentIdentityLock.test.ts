@@ -659,6 +659,7 @@ describe("[P-T5] gap closure — tasks.attachReviewArtifact", () => {
 				callerOrchestrator: "b",
 				artifactRef: "https://github.com/vantageos-agency/vantage-peers/pull/9999",
 				agentCredentialSecret: bCred,
+				verifiedOrg: { orgSlug: "org-o" },
 			}),
 		).resolves.toBeNull();
 	});
@@ -677,6 +678,7 @@ describe("[P-T5] gap closure — tasks.attachReviewArtifact", () => {
 				callerOrchestrator: "c",
 				artifactRef: "https://github.com/vantageos-agency/vantage-peers/pull/8888",
 				agentCredentialSecret: bCred,
+				verifiedOrg: { orgSlug: "org-o" },
 			}),
 		).rejects.toThrow(/AGENT_IDENTITY_MISMATCH/);
 	});

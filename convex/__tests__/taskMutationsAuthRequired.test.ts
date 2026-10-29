@@ -42,6 +42,7 @@ import { api } from "../_generated/api";
 import schema from "../schema";
 import { testClerkOrgId } from "../../tests/fixtures/testClerkOrgId";
 import { seedFleetAgents, seedOrgAgents } from "../../tests/lib/seedFleetAgents";
+import { fleetActorClaim } from "../../tests/lib/withFleetClaim";
 
 const FILE_LABELS = ["eta", "pi", "sigma", "victor"];
 
@@ -354,6 +355,8 @@ describe("AUTH_REQUIRED — unauthenticated callers are refused, all ten public 
 				taskId,
 				callerOrchestrator: "sigma",
 				artifactRef: "https://github.com/org/repo/pull/1234",
+				// R-54: the service account is admitted with a transport-verified claim.
+				...(await fleetActorClaim(t, "sigma")),
 			});
 		const after = await t
 			.withIdentity({ subject: SERVICE_ACCOUNT_SUBJECT })

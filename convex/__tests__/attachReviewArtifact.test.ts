@@ -30,6 +30,7 @@ import { describe, expect, test } from "vitest";
 import { api } from "../_generated/api";
 import schema from "../schema";
 import { seedFleetAgents } from "../../tests/lib/seedFleetAgents";
+import { fleetActorClaim } from "../../tests/lib/withFleetClaim";
 
 const FILE_LABELS = ["eta", "omega", "pi", "sigma"];
 
@@ -73,6 +74,7 @@ describe("attachReviewArtifact — narrow non-owner write (k1798y530ytkgsd7259nj
 		await t.mutation(api.tasks.attachReviewArtifact, {
 			taskId,
 			callerOrchestrator: "sigma",
+			...(await fleetActorClaim(t, "sigma")),
 			artifactRef: "https://github.com/org/repo/pull/1234",
 		});
 
@@ -90,6 +92,7 @@ describe("attachReviewArtifact — narrow non-owner write (k1798y530ytkgsd7259nj
 		await t.mutation(api.tasks.attachReviewArtifact, {
 			taskId,
 			callerOrchestrator: "sigma",
+			...(await fleetActorClaim(t, "sigma")),
 			artifactRef: "https://github.com/org/repo/pull/1234",
 		});
 
@@ -122,6 +125,7 @@ describe("attachReviewArtifact — narrow non-owner write (k1798y530ytkgsd7259nj
 		await t.mutation(api.tasks.attachReviewArtifact, {
 			taskId,
 			callerOrchestrator: "sigma",
+			...(await fleetActorClaim(t, "sigma")),
 			artifactRef: "https://github.com/org/repo/pull/1234",
 		});
 
@@ -130,6 +134,7 @@ describe("attachReviewArtifact — narrow non-owner write (k1798y530ytkgsd7259nj
 			await t.mutation(api.tasks.attachReviewArtifact, {
 				taskId,
 				callerOrchestrator: "omega",
+				...(await fleetActorClaim(t, "omega")),
 				artifactRef: "https://github.com/org/repo/pull/9999",
 			});
 		} catch (error) {
@@ -153,11 +158,13 @@ describe("attachReviewArtifact — narrow non-owner write (k1798y530ytkgsd7259nj
 		await t.mutation(api.tasks.attachReviewArtifact, {
 			taskId,
 			callerOrchestrator: "sigma",
+			...(await fleetActorClaim(t, "sigma")),
 			artifactRef: "https://github.com/org/repo/pull/1234",
 		});
 		await t.mutation(api.tasks.attachReviewArtifact, {
 			taskId,
 			callerOrchestrator: "sigma",
+			...(await fleetActorClaim(t, "sigma")),
 			artifactRef: "https://github.com/org/repo/pull/1234-updated",
 		});
 
@@ -178,12 +185,13 @@ describe("attachReviewArtifact — narrow non-owner write (k1798y530ytkgsd7259nj
 			await t.mutation(api.tasks.attachReviewArtifact, {
 				taskId,
 				callerOrchestrator: undefined,
+				...(await fleetActorClaim(t, "sigma")),
 				artifactRef: "https://github.com/org/repo/pull/1234",
 			});
 		} catch (error) {
 			thrown = error;
 		}
-		expect(getConvexErrorMessage(thrown)).toContain("RBAC_DENIED");
+		expect(getConvexErrorMessage(thrown)).toContain("callerOrchestrator is required");
 
 		const task = await t.query(api.tasks.get, { taskId });
 		expect(task?.reviewArtifactRef).toBeUndefined();
@@ -199,6 +207,7 @@ describe("attachReviewArtifact — narrow non-owner write (k1798y530ytkgsd7259nj
 			await t.mutation(api.tasks.attachReviewArtifact, {
 				taskId,
 				callerOrchestrator: "sigma",
+				...(await fleetActorClaim(t, "sigma")),
 				artifactRef: "   ",
 			});
 		} catch (error) {

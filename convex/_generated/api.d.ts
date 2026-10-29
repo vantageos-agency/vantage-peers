@@ -89,6 +89,8 @@ import type * as lib_serviceAccount from "../lib/serviceAccount.js";
 import type * as lib_systemCaller from "../lib/systemCaller.js";
 import type * as lib_taskActors from "../lib/taskActors.js";
 import type * as lib_taskClosureGate from "../lib/taskClosureGate.js";
+import type * as lib_taskDoorClaim from "../lib/taskDoorClaim.js";
+import type * as lib_taskScopeFilter from "../lib/taskScopeFilter.js";
 import type * as lib_teamNamespace from "../lib/teamNamespace.js";
 import type * as lib_tenantSlug from "../lib/tenantSlug.js";
 import type * as lib_verifiedOrg from "../lib/verifiedOrg.js";
@@ -240,6 +242,8 @@ declare const fullApi: ApiFromModules<{
   "lib/systemCaller": typeof lib_systemCaller;
   "lib/taskActors": typeof lib_taskActors;
   "lib/taskClosureGate": typeof lib_taskClosureGate;
+  "lib/taskDoorClaim": typeof lib_taskDoorClaim;
+  "lib/taskScopeFilter": typeof lib_taskScopeFilter;
   "lib/teamNamespace": typeof lib_teamNamespace;
   "lib/tenantSlug": typeof lib_tenantSlug;
   "lib/verifiedOrg": typeof lib_verifiedOrg;
