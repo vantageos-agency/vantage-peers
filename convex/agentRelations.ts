@@ -130,8 +130,8 @@ export const linkChild = mutation({
 
 		const existing = await ctx.db
 			.query("agent_relations")
-			.withIndex("by_parent", (q) =>
-				q.eq("orgSlug", caller.org.label).eq("parentName", parent.name),
+			.withIndex("by_parent_clerk_id", (q) =>
+				q.eq("clerkOrgId", caller.org.id).eq("parentName", parent.name),
 			)
 			.filter((q) => q.eq(q.field("childName"), child.name))
 			.unique();
@@ -174,7 +174,6 @@ export const unlinkChild = mutation({
 			door: door,
 		});
 		if (!admin.ok) throw refusalError(admin.refusal);
-		const orgSlug = caller.org.label;
 		const { parent, child } = await endpointsOf(
 			ctx,
 			caller,
@@ -184,8 +183,8 @@ export const unlinkChild = mutation({
 
 		const existing = await ctx.db
 			.query("agent_relations")
-			.withIndex("by_parent", (q) =>
-				q.eq("orgSlug", orgSlug).eq("parentName", parent.name),
+			.withIndex("by_parent_clerk_id", (q) =>
+				q.eq("clerkOrgId", caller.org.id).eq("parentName", parent.name),
 			)
 			.filter((q) => q.eq(q.field("childName"), child.name))
 			.unique();
@@ -217,7 +216,6 @@ export const childrenOf = query({
 			door: door,
 		});
 		if (!admin.ok) throw refusalError(admin.refusal);
-		const orgSlug = caller.org.label;
 		const { parent } = await endpointsOf(
 			ctx,
 			caller,
@@ -227,8 +225,8 @@ export const childrenOf = query({
 
 		return await ctx.db
 			.query("agent_relations")
-			.withIndex("by_parent", (q) =>
-				q.eq("orgSlug", orgSlug).eq("parentName", parent.name),
+			.withIndex("by_parent_clerk_id", (q) =>
+				q.eq("clerkOrgId", caller.org.id).eq("parentName", parent.name),
 			)
 			.collect();
 	},
@@ -254,7 +252,6 @@ export const parentsOf = query({
 			door: door,
 		});
 		if (!admin.ok) throw refusalError(admin.refusal);
-		const orgSlug = caller.org.label;
 		const { child } = await endpointsOf(
 			ctx,
 			caller,
@@ -264,8 +261,8 @@ export const parentsOf = query({
 
 		return await ctx.db
 			.query("agent_relations")
-			.withIndex("by_child", (q) =>
-				q.eq("orgSlug", orgSlug).eq("childName", child.name),
+			.withIndex("by_child_clerk_id", (q) =>
+				q.eq("clerkOrgId", caller.org.id).eq("childName", child.name),
 			)
 			.collect();
 	},
@@ -298,7 +295,7 @@ export const graphByOrg = query({
 
 		const rows = await ctx.db
 			.query("agent_relations")
-			.withIndex("by_org", (q) => q.eq("orgSlug", caller.org.label))
+			.withIndex("by_org_clerk_id", (q) => q.eq("clerkOrgId", caller.org.id))
 			.collect();
 
 		const names = new Set<string>();

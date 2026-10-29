@@ -288,21 +288,34 @@ export async function findAgentByName(
  */
 export async function assertAgentNameFree(
 	ctx: QueryCtx | MutationCtx,
-	orgSlug: string,
+	org: { id: string | undefined; label: string },
 	name: string,
 	exceptId?: Id<"agents">,
 ): Promise<void> {
 	const normalized = normalizeOrchestratorId(name);
-	const roster = await ctx.db
-		.query("agents")
-		.withIndex("by_org", (q) => q.eq("orgSlug", orgSlug))
-		.collect();
+	// The organisation's agents, keyed on its permanent ID: a slug is a label that
+	// another organisation can take over, and no label selects a row. An
+	// organisation whose mapping carries no ID yet is checked against the rows
+	// stamped with no ID under its label (the only rows it can own).
+	const roster =
+		org.id !== undefined
+			? await ctx.db
+					.query("agents")
+					.withIndex("by_org_clerk_id", (q) => q.eq("clerkOrgId", org.id as string))
+					.collect()
+			: (
+					await ctx.db
+						.query("agents")
+						.withIndex("by_org", (q) => q.eq("orgSlug", org.label))
+						.collect()
+				).filter((row) => row.clerkOrgId === undefined);
 	const clash = roster.find(
 		(row) =>
 			row._id !== exceptId &&
 			normalizeOrchestratorId(row.name) === normalized,
 	);
 	if (!clash) return;
+	const orgSlug = org.label;
 	const detail = JSON.stringify({ orgSlug, name, existingAgentId: clash._id });
 	if (!clash.isActive) {
 		throw new ConvexError(
