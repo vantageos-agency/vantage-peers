@@ -40,7 +40,7 @@ Every write is on prod (`compassionate-goldfinch-737`). Run them from the vantag
    bun run scripts/provision-client-org-agents.mjs --org <slug> --clerk-org-id <org_…> \
      --agents <a>,<b> --stage-dir /home/elpi/.vantage-client-secrets/<slug> --ttl-days 90
    ```
-   The environment comes from `.env.local`: `CLERK_SECRET_KEY=$CLERK_SECRET_KEY_VANTAGE_PEERS`, plus `CONVEX_URL` set to the prod URL.
+   The environment comes from `.env.local`: `CLERK_SECRET_KEY=$CLERK_SECRET_KEY_VANTAGE_PEERS`, plus `CONVEX_URL` set to the prod URL and `CLERK_DOMAIN` set to the prod Clerk frontend domain (there is no default: unset, the script exits 1 before any write).
 
    **The org is checked before anything is written.** A sign-in ticket opens a session on the admin's *active* Clerk org (the last one created), and the registry takes its org from the token. So the script makes `--clerk-org-id` the session's active org, requests the `convex` JWT template token (override with `CLERK_ORG_ADMIN_JWT_TEMPLATE`), and refuses unless the token's `org_id` equals `--clerk-org-id`. On a mismatch it exits 1 with `ORG_MISMATCH: … org_id=<got> but the requested Clerk org is <wanted>`, and nothing is registered, seats included. Read the line `org-admin token verified: org_id = <org_…>` in the output.
 
