@@ -474,6 +474,15 @@ MEASURED_2260673_RULE_COUNTS = {
     "R-2": 0, "R-8": 0, "R-13": 0, "R-28": 0, "R-31": 0, "R-52": 0, "R-53": 369, "R-5": 62,
     "CR-2": 264, "R-54": 148, "R-55": 31, "R-56": 2, "R-11": 0,
 }
+# backend-doctor 0.5.0 (npm shasum fffa57514bb859cdcdc63bd4ab993e2766b60cdc, gitHead
+# f6297a29) adds the doctor-owned mechanical control CR-3 (write/read asymmetry), absent
+# from every earlier version. Measured on a clean full checkout of vantage-peers 73465351
+# with deps installed, `npx -y @vantageos/backend-doctor@0.5.0 <checkout> --json-evidence
+# <dir>/` -> `MECHANICAL RULE COUNTS: CR-2 248, CR-3 16, R-5 62, R-53 323, R-54 137,
+# R-55 29, R-56 2`, 0 FALLBACK (task k1755rzrkbr397hpeftnjcqb2d8h7yhg). The live CR-3
+# ceiling may never exceed it.
+MEASURED_73465351_050_RULE_COUNTS = {"CR-3": 16}
+LIVE_CEILINGS = {**MEASURED_2260673_RULE_COUNTS, **MEASURED_73465351_050_RULE_COUNTS}
 
 
 def _ratchet_repo(tmp, main_baseline=None, head_baseline=None):
@@ -541,14 +550,14 @@ def test_ratchet_baseline_values_carry_their_command():
 
 def test_ratchet_live_baseline_carries_its_command_and_never_rose():
     live = json.loads(REAL_BASELINE.read_text())
-    # the ceilings below were measured with 0.4.9, and the file says so
-    assert live["doctor_version"] == "0.4.9"
-    assert set(live["rules"]) <= set(MEASURED_2260673_RULE_COUNTS)
+    # the ceilings below were measured with 0.5.0, and the file says so
+    assert live["doctor_version"] == "0.5.0"
+    assert set(live["rules"]) <= set(LIVE_CEILINGS)
     for rule, entry in live["rules"].items():
         assert entry["command"].startswith(
             f"npx -y @vantageos/backend-doctor@{live['doctor_version']} ")
-        # 0.4.9 was published from backend-doctor main 1f79319 (#82, task k1770gq4ws86dmzkmx93xy281x8gqg49)
-        assert entry["cli_commit"] == "1f79319cce01a9e448b0580fcccf9059662b8146"
+        # 0.5.0 was published from backend-doctor f6297a29 (npm gitHead; task k1755rzrkbr397hpeftnjcqb2d8h7yhg)
+        assert entry["cli_commit"] == "f6297a29c64a0265124e3e9cf86c9dd85eac47c0"
         # R-53 was lowered by slice 1 of the deletion series, measured at 6058f82
         assert entry["measured_tree_sha"] in {
             "226067389ad98f0f56eccfad38d5f39ea6908542",
@@ -577,15 +586,17 @@ def test_ratchet_live_baseline_carries_its_command_and_never_rose():
             "0df3cbc5970c0cc09d660d6b607d7b724881d059",
             # same ceilings re-measured after the rebase on 466239c2 and the ID-keyed registry reads (task k17dcydcvcdzh1gp1zd1ebt23s8fyjde)
             "b922b075b4f79b15cd2a9b82158750a8786a8437",
+            # re-baselined on 0.5.0: CR-3 16 added, every other count unchanged (task k1755rzrkbr397hpeftnjcqb2d8h7yhg)
+            "734653514cb0c3308194707881a1697e011c809e",
         }
         line = entry["output_line"]
         assert line.startswith((f"{rule}: ", f"{rule} VERDICT: ")), rule
-        # the 0.4.7/0.4.8/0.4.9 doctor prints the count as `N site(s) VIOLATE`, `N violation(s)`
+        # the 0.4.7/0.4.8/0.4.9/0.5.0 doctor prints the count as `N site(s) VIOLATE`, `N violation(s)`
         # or inside its `[... non-conforming=N ...]` bracket, never as a bare prefix
         assert (f"non-conforming={entry['count']} " in line
                 or f"{entry['count']} violation(s)" in line), rule
         assert entry["cli_commit"]
-        assert entry["count"] <= MEASURED_2260673_RULE_COUNTS[rule], rule
+        assert entry["count"] <= LIVE_CEILINGS[rule], rule
 
 
 def test_ratchet_block_one_more_r53_site():
