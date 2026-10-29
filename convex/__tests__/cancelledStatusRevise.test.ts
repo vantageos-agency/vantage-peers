@@ -27,6 +27,7 @@ import { seedFleetAgents } from "../../tests/lib/seedFleetAgents";
 
 const FILE_LABELS = ["eta", "sigma"];
 import { seedOperatorOrg } from "../../tests/lib/seedRosterAgents";
+import { withFleetClaim } from "../../tests/lib/withFleetClaim";
 
 const modules = Object.fromEntries(
 	Object.entries(import.meta.glob("../**/*.ts")).filter(
@@ -117,7 +118,7 @@ describe("tasks.listOverdue — excludes cancelled", () => {
 			cancelReason: "cancelled before it became overdue-relevant",
 		});
 
-		const overdue = await t.query(api.tasks.listOverdue, {});
+		const overdue = await withFleetClaim(t).query(api.tasks.listOverdue, {});
 		const overdueIds = (overdue as any[]).map((r) => r._id);
 		expect(overdueIds).not.toContain(taskId);
 	});

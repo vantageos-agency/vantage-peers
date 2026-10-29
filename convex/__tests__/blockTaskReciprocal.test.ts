@@ -28,6 +28,7 @@ import { describe, expect, test } from "vitest";
 import { api } from "../_generated/api";
 import schema from "../schema";
 import { insertTaskRow, seedFleetAgents } from "../../tests/lib/seedFleetAgents";
+import { withFleetClaim } from "../../tests/lib/withFleetClaim";
 
 const FILE_LABELS = ["eta", "phi", "sigma"];
 
@@ -348,7 +349,7 @@ describe("tasks.listUnlinkedBlocked — migration inventory", () => {
 			blockedOnTaskId: blockerId,
 		});
 
-		const result = await t.query(api.tasks.listUnlinkedBlocked, {});
+		const result = await withFleetClaim(t).query(api.tasks.listUnlinkedBlocked, {});
 		const ids = result.map((r) => r.taskId);
 
 		expect(ids).toContain(legacyId);

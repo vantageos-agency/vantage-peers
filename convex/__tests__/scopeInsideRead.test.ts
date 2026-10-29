@@ -860,7 +860,7 @@ describe("tasks:listUnlinkedBlocked — a member reads its own org's blocked tas
 		});
 		const own = await asMember(t, OWN).query(api.tasks.listUnlinkedBlocked, {});
 		expect(own.map((r) => r.title)).toEqual(["own-blocked"]);
-		const master = await asService(t).query(api.tasks.listUnlinkedBlocked, {});
+		const master = await withFleetClaim(asService(t)).query(api.tasks.listUnlinkedBlocked, {});
 		expect(master.map((r) => r.title).sort()).toEqual([
 			"foreign-blocked",
 			"own-blocked",

@@ -27,6 +27,7 @@ import { api } from "../_generated/api";
 import schema from "../schema";
 import { deriveBlockedWaitingOn } from "../tasks";
 import { seedFleetAgents } from "../../tests/lib/seedFleetAgents";
+import { withFleetClaim } from "../../tests/lib/withFleetClaim";
 
 const FILE_LABELS = ["eta", "sigma"];
 
@@ -157,7 +158,7 @@ describe("blocked waiting-on state — derived from blockedCause, not caller-wri
 			reason: "# blocked-on-nobody: waiting on operator decision",
 		});
 
-		const viaListPaginated = await t
+		const viaListPaginated = await withFleetClaim(t)
 		.query(api.tasks.listPaginated, {
 				paginationOpts: { numItems: 50, cursor: null },
 				assignedTo: "sigma",

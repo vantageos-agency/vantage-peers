@@ -7,10 +7,14 @@ import {
 } from "@vantageos/cloud-identity";
 import { v } from "convex/values";
 import { ConvexError } from "convex/values";
-import { paginationOptsValidator } from "convex/server";
+import {
+	paginationOptsValidator,
+	type NamedTableInfo,
+	type OrderedQuery,
+} from "convex/server";
 import { mutation, internalMutation, internalQuery, query } from "./_generated/server";
 import type { MutationCtx, QueryCtx } from "./_generated/server";
-import type { Doc, Id } from "./_generated/dataModel";
+import type { DataModel, Doc, Id } from "./_generated/dataModel";
 import { internal } from "./_generated/api";
 import { creatorValidator, taskOriginValidator } from "./schema";
 import { normalizeOrchestratorId } from "./_helpers/normalizeOrchestratorId";
@@ -1391,13 +1395,16 @@ async function runTasksList(ctx: QueryCtx, args: TasksListArgs, scope: OrgScope)
 		// existed. The fleet's reach is the whole table, as before.
 		const reach = taskScopeReach(scope);
 		if (reach.reach === "none") return [];
-		const rowFilter: TaskRowPredicate =
-			taskRowFilter(
-				reach,
-				...(priorityFilter === undefined
-					? []
-					: [(q: TaskFilterBuilder) => q.eq(q.field("priority"), priorityFilter)]),
-			) ?? (() => true);
+		const rowFilter: TaskRowPredicate | undefined = taskRowFilter(
+			reach,
+			...(priorityFilter === undefined
+				? []
+				: [(q: TaskFilterBuilder) => q.eq(q.field("priority"), priorityFilter)]),
+		);
+		// The fleet with no priority narrows nothing: the query is left as it was.
+		const narrow = <Q extends OrderedQuery<NamedTableInfo<DataModel, "tasks">>>(
+			query: Q,
+		): Q => (rowFilter === undefined ? query : query.filter(rowFilter));
 
 		// Day 163 (Pi, k171rbm2txe42jxzddyqakbg7n8ch7zr) — `createdBefore` was
 		// OMITTED here. On a cursor-only call fetchCap collapsed to `limit`,
@@ -1567,29 +1574,31 @@ async function runTasksList(ctx: QueryCtx, args: TasksListArgs, scope: OrgScope)
 					statusList.map(async (status) => {
 						const q = ctx.db.query("tasks");
 						if (project !== undefined) {
-							return await q
-								.withIndex("by_assigneeId_project_status", (i) =>
-									i
-										.eq("assignedToId", assigneeId)
-										.eq("project", project)
-										.eq("status", status)
-										.lt("_creationTime", upper),
-								)
-								.order("desc")
-								.filter(rowFilter)
+							return await narrow(
+								q
+									.withIndex("by_assigneeId_project_status", (i) =>
+										i
+											.eq("assignedToId", assigneeId)
+											.eq("project", project)
+											.eq("status", status)
+											.lt("_creationTime", upper),
+									)
+									.order("desc"),
+							)
 								.take(idFetch);
 						}
-						return await q
-							.withIndex("by_assigneeId_status_updatedAt", (i) =>
-								updatedSince !== undefined
-									? i
-											.eq("assignedToId", assigneeId)
-											.eq("status", status)
-											.gte("updatedAt", updatedSince)
-									: i.eq("assignedToId", assigneeId).eq("status", status),
-							)
-							.order("desc")
-							.filter(rowFilter)
+						return await narrow(
+							q
+								.withIndex("by_assigneeId_status_updatedAt", (i) =>
+									updatedSince !== undefined
+										? i
+												.eq("assignedToId", assigneeId)
+												.eq("status", status)
+												.gte("updatedAt", updatedSince)
+										: i.eq("assignedToId", assigneeId).eq("status", status),
+								)
+								.order("desc"),
+						)
 							.take(idFetch);
 					}),
 				);
@@ -1617,54 +1626,58 @@ async function runTasksList(ctx: QueryCtx, args: TasksListArgs, scope: OrgScope)
 				statusList.map(async (status) => {
 					const q = ctx.db.query("tasks");
 					if (assignedToInstance !== undefined && project !== undefined) {
-						return await q
-							.withIndex("by_orgId_instance_project_status", (i) =>
-								i
-									.eq("orgId", memberOrg)
-									.eq("assignedToInstance", assignedToInstance)
-									.eq("project", project)
-									.eq("status", status)
-									.lt("_creationTime", upper),
-							)
-							.order("desc")
-							.filter(rowFilter)
+						return await narrow(
+							q
+								.withIndex("by_orgId_instance_project_status", (i) =>
+									i
+										.eq("orgId", memberOrg)
+										.eq("assignedToInstance", assignedToInstance)
+										.eq("project", project)
+										.eq("status", status)
+										.lt("_creationTime", upper),
+								)
+								.order("desc"),
+						)
 							.take(memberFetch);
 					}
 					if (assignedToInstance !== undefined) {
-						return await q
-							.withIndex("by_orgId_instance_status", (i) =>
-								i
-									.eq("orgId", memberOrg)
-									.eq("assignedToInstance", assignedToInstance)
-									.eq("status", status)
-									.lt("_creationTime", upper),
-							)
-							.order("desc")
-							.filter(rowFilter)
+						return await narrow(
+							q
+								.withIndex("by_orgId_instance_status", (i) =>
+									i
+										.eq("orgId", memberOrg)
+										.eq("assignedToInstance", assignedToInstance)
+										.eq("status", status)
+										.lt("_creationTime", upper),
+								)
+								.order("desc"),
+						)
 							.take(memberFetch);
 					}
 					if (project !== undefined) {
-						return await q
-							.withIndex("by_orgId_project_status", (i) =>
+						return await narrow(
+							q
+								.withIndex("by_orgId_project_status", (i) =>
+									i
+										.eq("orgId", memberOrg)
+										.eq("project", project)
+										.eq("status", status)
+										.lt("_creationTime", upper),
+								)
+								.order("desc"),
+						)
+							.take(memberFetch);
+					}
+					return await narrow(
+						q
+							.withIndex("by_orgId_status", (i) =>
 								i
 									.eq("orgId", memberOrg)
-									.eq("project", project)
 									.eq("status", status)
 									.lt("_creationTime", upper),
 							)
-							.order("desc")
-							.filter(rowFilter)
-							.take(memberFetch);
-					}
-					return await q
-						.withIndex("by_orgId_status", (i) =>
-							i
-								.eq("orgId", memberOrg)
-								.eq("status", status)
-								.lt("_creationTime", upper),
-						)
-						.order("desc")
-						.filter(rowFilter)
+							.order("desc"),
+					)
 						.take(memberFetch);
 				}),
 			);
@@ -1679,28 +1692,30 @@ async function runTasksList(ctx: QueryCtx, args: TasksListArgs, scope: OrgScope)
 		// so BOTH filters are applied, never one silently dropped.
 		else if (assignedToInstance !== undefined && project !== undefined) {
 			if (statuses !== undefined && statuses.length === 1) {
-				allRows = await ctx.db
-					.query("tasks")
-					.withIndex("by_instance_project", (q) => {
-						const base = q
-							.eq("assignedToInstance", assignedToInstance)
-							.eq("project", project)
-							.eq("status", statuses[0]);
-						return canPushCursorIntoIndex
-							? base.lt("_creationTime", before as number)
-							: base;
-					})
-					.order("desc")
-					.filter(rowFilter)
+				allRows = await narrow(
+					ctx.db
+						.query("tasks")
+						.withIndex("by_instance_project", (q) => {
+							const base = q
+								.eq("assignedToInstance", assignedToInstance)
+								.eq("project", project)
+								.eq("status", statuses[0]);
+							return canPushCursorIntoIndex
+								? base.lt("_creationTime", before as number)
+								: base;
+						})
+						.order("desc"),
+				)
 					.take(canPushCursorIntoIndex ? limit : fetchCap);
 			} else {
-				const base = await ctx.db
-					.query("tasks")
-					.withIndex("by_instance_project", (q) =>
-						q.eq("assignedToInstance", assignedToInstance).eq("project", project),
-					)
-					.order("desc")
-					.filter(rowFilter)
+				const base = await narrow(
+					ctx.db
+						.query("tasks")
+						.withIndex("by_instance_project", (q) =>
+							q.eq("assignedToInstance", assignedToInstance).eq("project", project),
+						)
+						.order("desc"),
+				)
 					.take(fetchCap);
 				allRows = applyStatusFilter(base);
 			}
@@ -1708,27 +1723,29 @@ async function runTasksList(ctx: QueryCtx, args: TasksListArgs, scope: OrgScope)
 		// Filter by instance only — use index for primary key, then filter statuses in-memory
 		else if (assignedToInstance !== undefined) {
 			if (statuses !== undefined && statuses.length === 1) {
-				allRows = await ctx.db
-					.query("tasks")
-					.withIndex("by_instance", (q) => {
-						const base = q
-							.eq("assignedToInstance", assignedToInstance)
-							.eq("status", statuses[0]);
-						return canPushCursorIntoIndex
-							? base.lt("_creationTime", before as number)
-							: base;
-					})
-					.order("desc")
-					.filter(rowFilter)
+				allRows = await narrow(
+					ctx.db
+						.query("tasks")
+						.withIndex("by_instance", (q) => {
+							const base = q
+								.eq("assignedToInstance", assignedToInstance)
+								.eq("status", statuses[0]);
+							return canPushCursorIntoIndex
+								? base.lt("_creationTime", before as number)
+								: base;
+						})
+						.order("desc"),
+				)
 					.take(canPushCursorIntoIndex ? limit : fetchCap);
 			} else {
-				const base = await ctx.db
-					.query("tasks")
-					.withIndex("by_instance", (q) =>
-						q.eq("assignedToInstance", assignedToInstance),
-					)
-					.order("desc")
-					.filter(rowFilter)
+				const base = await narrow(
+					ctx.db
+						.query("tasks")
+						.withIndex("by_instance", (q) =>
+							q.eq("assignedToInstance", assignedToInstance),
+						)
+						.order("desc"),
+				)
 					.take(fetchCap);
 				allRows = applyStatusFilter(base);
 			}
@@ -1736,23 +1753,25 @@ async function runTasksList(ctx: QueryCtx, args: TasksListArgs, scope: OrgScope)
 		// Filter by project only
 		else if (project !== undefined) {
 			if (statuses !== undefined && statuses.length === 1) {
-				allRows = await ctx.db
-					.query("tasks")
-					.withIndex("by_project", (q) => {
-						const base = q.eq("project", project).eq("status", statuses[0]);
-						return canPushCursorIntoIndex
-							? base.lt("_creationTime", before as number)
-							: base;
-					})
-					.order("desc")
-					.filter(rowFilter)
+				allRows = await narrow(
+					ctx.db
+						.query("tasks")
+						.withIndex("by_project", (q) => {
+							const base = q.eq("project", project).eq("status", statuses[0]);
+							return canPushCursorIntoIndex
+								? base.lt("_creationTime", before as number)
+								: base;
+						})
+						.order("desc"),
+				)
 					.take(canPushCursorIntoIndex ? limit : fetchCap);
 			} else {
-				const base = await ctx.db
-					.query("tasks")
-					.withIndex("by_project", (q) => q.eq("project", project))
-					.order("desc")
-					.filter(rowFilter)
+				const base = await narrow(
+					ctx.db
+						.query("tasks")
+						.withIndex("by_project", (q) => q.eq("project", project))
+						.order("desc"),
+				)
 					.take(fetchCap);
 				allRows = applyStatusFilter(base);
 			}
@@ -1766,16 +1785,17 @@ async function runTasksList(ctx: QueryCtx, args: TasksListArgs, scope: OrgScope)
 		// just bounded).
 		else if (statuses !== undefined) {
 			if (statuses.length === 1) {
-				allRows = await ctx.db
-					.query("tasks")
-					.withIndex("by_status", (q) => q.eq("status", statuses[0]))
-					.order("desc")
-					.filter(rowFilter)
+				allRows = await narrow(
+					ctx.db
+						.query("tasks")
+						.withIndex("by_status", (q) => q.eq("status", statuses[0]))
+						.order("desc"),
+				)
 					.take(fetchCap);
 			} else {
 				// Multi-status without other filter: full table scan bounded by limit.
 				// Acceptable for bounded list sizes; no new index required per brief.
-				const base = await ctx.db.query("tasks").order("desc").filter(rowFilter).take(fetchCap);
+				const base = await narrow(ctx.db.query("tasks").order("desc")).take(fetchCap);
 				allRows = applyStatusFilter(base);
 			}
 		}
@@ -1783,14 +1803,15 @@ async function runTasksList(ctx: QueryCtx, args: TasksListArgs, scope: OrgScope)
 		// org's rows through `by_orgId` (tenant predicate inside the index range).
 		else if (isUnfilteredRead && !scope.isMaster && scope.orgSlug !== null) {
 			const orgSlug = scope.orgSlug;
-			allRows = await ctx.db
-				.query("tasks")
-				.withIndex("by_orgId", (q) => q.eq("orgId", orgSlug))
-				.order("desc")
-				.filter(rowFilter)
+			allRows = await narrow(
+				ctx.db
+					.query("tasks")
+					.withIndex("by_orgId", (q) => q.eq("orgId", orgSlug))
+					.order("desc"),
+			)
 				.take(fetchCap);
 		} else {
-			allRows = await ctx.db.query("tasks").order("desc").filter(rowFilter).take(fetchCap);
+			allRows = await narrow(ctx.db.query("tasks").order("desc")).take(fetchCap);
 		}
 
 		// Refuse to return a silently-incomplete page: if the widened scan
@@ -2495,14 +2516,15 @@ export const attachReviewArtifact = mutation({
 		// (no React render path); the RBAC_DENIED/AUTH_REQUIRED throw is reachable
 		// only via an imperative SDK/test call, never an ordinary render.
 		// R-54: the fleet service account acts inside the organisation the transport
-		// verified for it. With no `verifiedOrg` it is refused, never served as master
-		// over every tenant's review tasks.
+		// verified for it (`verifiedOrg`, or the org of the agent it verified,
+		// `verifiedActor`). With neither it is refused, never served as master over
+		// every tenant's review tasks.
 		const transportScope = await withOrgScope(ctx, {
 			allowNoIdentityMaster: false,
 		});
 		refuseClaimlessServiceAccount(
 			transportScope,
-			{ verifiedOrg: args.verifiedOrg },
+			{ verifiedActor: args.verifiedActor, verifiedOrg: args.verifiedOrg },
 			"tasks:attachReviewArtifact",
 		);
 		const callerScope = await requireAuthenticatedCaller(
@@ -2540,6 +2562,28 @@ export const attachReviewArtifact = mutation({
 			args.taskId,
 			"tasks:attachReviewArtifact",
 		);
+		// With only a verified agent the organisation is that agent's: the task must be
+		// its tenant's (the fleet's own rows, unstamped or operator-stamped, are one
+		// tenant for an operator-org agent), compared by stored org ID, never by name.
+		if (isServiceAccountScope(transportScope) && callerScope.callerVerifiedOrg === undefined) {
+			const actorOrg = callerScope.callerActorOrg;
+			const actorMapping =
+				actorOrg === undefined ? null : await lookupOrgMapping(ctx, actorOrg);
+			if (
+				actorMapping === null ||
+				!sameTenantStamp(
+					orgRefOfRow(task),
+					{ id: actorMapping.clerkOrgId, label: actorMapping.clerkOrgSlug },
+					await fleetOperatorRef(ctx.db),
+				)
+			) {
+				throw rbacDenied(
+					"tasks:attachReviewArtifact",
+					"row-outside-actor-org",
+					`task ${args.taskId} is outside the organisation of the verified agent (tenant boundary)`,
+				);
+			}
+		}
 
 		// Deliberately NOT assertTaskCallerAuthorized — this is the narrow
 		// permission the mutation exists to grant: ANY orchestrator may attach

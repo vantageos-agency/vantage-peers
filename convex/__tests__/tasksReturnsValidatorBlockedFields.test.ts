@@ -24,6 +24,7 @@ import { describe, expect, test } from "vitest";
 import { api } from "../_generated/api";
 import schema from "../schema";
 import { seedFleetAgents } from "../../tests/lib/seedFleetAgents";
+import { withFleetClaim } from "../../tests/lib/withFleetClaim";
 
 const FILE_LABELS = ["eta", "sigma"];
 
@@ -75,7 +76,7 @@ describe("tasks read-path returns validators — blocked-task fields (class fix)
 		const viaGetById = await t.query(api.tasks.getById, { taskId });
 		expect(viaGetById?.blockedOnTaskId).toBe(blockerId);
 
-		const viaListPaginated = await t
+		const viaListPaginated = await withFleetClaim(t)
 		.query(api.tasks.listPaginated, {
 				paginationOpts: { numItems: 50, cursor: null },
 				assignedTo: "sigma",
@@ -101,7 +102,7 @@ describe("tasks read-path returns validators — blocked-task fields (class fix)
 		const viaGetById = await t.query(api.tasks.getById, { taskId });
 		expect(viaGetById?.blockedOnNobodyReason).toContain("waiting on third-party outage");
 
-		const viaListPaginated = await t
+		const viaListPaginated = await withFleetClaim(t)
 		.query(api.tasks.listPaginated, {
 				paginationOpts: { numItems: 50, cursor: null },
 				assignedTo: "sigma",
