@@ -6,6 +6,7 @@ import {
 	debateTemplateFields,
 	debateTurnFields,
 } from "./lib/debateTemplate";
+import { deliverableStateValidator, deliverableValidator } from "./lib/taskDeliverable";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Shared validators (reused across tables)
@@ -622,6 +623,14 @@ export default defineSchema({
 		// backfillReviewPrLinkFields for the one-time backfill of those rows.
 		reviewPrRepoFullName: v.optional(v.string()),
 		reviewPrNumber: v.optional(v.number()),
+		// The artifact this task claims to deliver (an npm export today; extensible
+		// to { repo, pr }). Optional and additive. Set through create/update, which
+		// also schedule its resolution (convex/taskDeliverable.ts).
+		deliverable: v.optional(deliverableValidator),
+		// The last machine reading of `deliverable`. Written ONLY by the internal
+		// resolver mutation, never by a public argument, and never read as status:
+		// readers derive `deliverableDivergence` from it beside the typed status.
+		deliverableState: v.optional(deliverableStateValidator),
 	})
 		.index("by_assignee", ["assignedTo", "status"])
 		// Assignee BY ID (M7). An agents-row ID belongs to exactly one org, so the ID

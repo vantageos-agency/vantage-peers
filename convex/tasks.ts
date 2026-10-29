@@ -17,6 +17,15 @@ import type { MutationCtx, QueryCtx } from "./_generated/server";
 import type { DataModel, Doc, Id } from "./_generated/dataModel";
 import { internal } from "./_generated/api";
 import { creatorValidator, taskOriginValidator } from "./schema";
+import {
+	deliverableDivergenceOf,
+	deliverableDivergenceValidator,
+	deliverableProblem,
+	deliverableStateValidator,
+	deliverableValidator,
+	sameDeliverable,
+	withDeliverableDivergence,
+} from "./lib/taskDeliverable";
 import { normalizeOrchestratorId } from "./_helpers/normalizeOrchestratorId";
 import {
 	filterByOrgScope,
@@ -612,6 +621,11 @@ const taskFullValidator = v.object({
 	// Issue #1293 -- see convex/schema.ts for the full rationale.
 	reviewPrRepoFullName: v.optional(v.string()),
 	reviewPrNumber: v.optional(v.number()),
+	// Delivery state (see convex/schema.ts deliverable / deliverableState).
+	deliverable: v.optional(deliverableValidator),
+	deliverableState: v.optional(deliverableStateValidator),
+	// DERIVED in the reader from the two stored fields above and `status`.
+	deliverableDivergence: v.optional(deliverableDivergenceValidator),
 });
 
 type TaskLite = {
@@ -622,6 +636,7 @@ type TaskLite = {
 	priority: "urgent" | "high" | "medium" | "low";
 	assignedTo: string;
 	missionId?: string;
+	deliverableDivergence?: "delivered-but-open";
 };
 
 function projectTaskLite(doc: Record<string, unknown>): TaskLite {
@@ -634,6 +649,11 @@ function projectTaskLite(doc: Record<string, unknown>): TaskLite {
 		assignedTo: doc.assignedTo as string,
 		...(doc.missionId !== undefined
 			? { missionId: doc.missionId as string }
+			: {}),
+		// Derived beside the typed status; present only when it is set.
+		...(deliverableDivergenceOf(doc as { status: string; deliverableState?: { state: string } }) !==
+		undefined
+			? { deliverableDivergence: "delivered-but-open" as const }
 			: {}),
 	};
 }
@@ -683,6 +703,10 @@ const createTaskArgsValidatorWithCredential = {
 	// it a seat or org-level token's task was stored with no org and its own reads
 	// filtered it out. Believed from the service account only (lib/verifiedOrg.ts).
 	verifiedOrg: v.optional(verifiedOrgValidator),
+	// The artifact this task claims to deliver. Setting it schedules the machine
+	// reading of that artifact (convex/taskDeliverable.ts). Public door only: the
+	// webhook mirror does not accept it.
+	deliverable: v.optional(deliverableValidator),
 };
 
 interface CreateTaskArgs {
@@ -700,6 +724,7 @@ interface CreateTaskArgs {
 	dueDate?: number;
 	createdBy: string;
 	lastActedBy?: string;
+	deliverable?: { pkg: string; export: string };
 }
 
 // Shared insert body for `create` (public, identity-gated) and
@@ -741,7 +766,15 @@ async function insertTask(
 	// fully closed by the `origin`-based gate, independent of this
 	// value.
 	const now = Date.now();
-	return await ctx.db.insert("tasks", {
+	if (args.deliverable !== undefined) {
+		const problem = deliverableProblem(args.deliverable);
+		if (problem !== null) {
+			throw new ConvexError(
+				`INVALID_DELIVERABLE: ${problem} — ${JSON.stringify({ door: "tasks:create" })}`,
+			);
+		}
+	}
+	const insertedId = await ctx.db.insert("tasks", {
 		...args,
 		// Stamp review-ness ONCE at create from the title/tags, into an immutable field
 		// `update` cannot patch (Eta REVISE #1254) — the reviewer-reclaim authorization
@@ -770,6 +803,14 @@ async function insertTask(
 		createdAt: now,
 		updatedAt: now,
 	});
+	if (args.deliverable !== undefined) {
+		await ctx.scheduler.runAfter(0, internal.taskDeliverable.resolveTaskDeliverable, {
+			taskId: insertedId,
+			pkg: args.deliverable.pkg,
+			export: args.deliverable.export,
+		});
+	}
+	return insertedId;
 }
 
 /**
@@ -1118,6 +1159,11 @@ export const get = query({
 			// Issue #1293 -- see convex/schema.ts for the full rationale.
 			reviewPrRepoFullName: v.optional(v.string()),
 			reviewPrNumber: v.optional(v.number()),
+			// Delivery state (see convex/schema.ts deliverable / deliverableState).
+			deliverable: v.optional(deliverableValidator),
+			deliverableState: v.optional(deliverableStateValidator),
+			// DERIVED in the reader from the stored fields above and `status`.
+			deliverableDivergence: v.optional(deliverableDivergenceValidator),
 		}),
 		v.null(),
 	),
@@ -1134,7 +1180,7 @@ export const get = query({
 		// throw that would crash the subscriber's render (R-50/R-51).
 		const scope = await withOrgScope(ctx, { refuseWithoutThrow: true });
 		if (!isRowVisibleToScope(scope, task)) return null;
-		return task;
+		return withDeliverableDivergence(task);
 	},
 });
 
@@ -1234,6 +1280,11 @@ export const getById = query({
 			// Issue #1293 -- see convex/schema.ts for the full rationale.
 			reviewPrRepoFullName: v.optional(v.string()),
 			reviewPrNumber: v.optional(v.number()),
+			// Delivery state (see convex/schema.ts deliverable / deliverableState).
+			deliverable: v.optional(deliverableValidator),
+			deliverableState: v.optional(deliverableStateValidator),
+			// DERIVED in the reader from the stored fields above and `status`.
+			deliverableDivergence: v.optional(deliverableDivergenceValidator),
 		}),
 		v.null(),
 	),
@@ -1255,7 +1306,7 @@ export const getById = query({
 		// appeared in the count (scripts/check-public-fn-org-arg-identity.py).
 		const scope = await withOrgScope(ctx, { refuseWithoutThrow: true });
 		if (!isRowVisibleToScope(scope, task)) return null;
-		return task;
+		return withDeliverableDivergence(task);
 	},
 });
 
@@ -1895,7 +1946,7 @@ async function runTasksList(ctx: QueryCtx, args: TasksListArgs, scope: OrgScope)
 		// Dashboard B1 — the priority filter and the tenant gate / roster ran inside
 		// the reads above (rowFilter), before each bound.
 	if (lite) return filtered.map(projectTaskLite);
-	return filtered;
+	return filtered.map(withDeliverableDivergence);
 }
 
 export const list = query({
@@ -2112,7 +2163,7 @@ export const listPaginated = query({
 		const paginatedResult = await scanned.paginate(args.paginationOpts);
 
 		return {
-			page: paginatedResult.page as TaskRow[],
+			page: (paginatedResult.page as TaskRow[]).map(withDeliverableDivergence),
 			isDone: paginatedResult.isDone,
 			continueCursor: paginatedResult.continueCursor,
 		};
@@ -2182,6 +2233,10 @@ export const update = mutation({
 		// call is refused with no row changed (convex/lib/verifiedOrg.ts).
 		verifiedOrg: v.optional(verifiedOrgValidator),
 		verifiedPerson: v.optional(verifiedPersonValidator),
+		// The artifact this task claims to deliver. Goes through the same
+		// authorisation as every other field of this update; a change clears the
+		// stale `deliverableState` and schedules a fresh reading.
+		deliverable: v.optional(deliverableValidator),
 	},
 	returns: v.null(),
 	handler: async (ctx, args) => {
@@ -2315,6 +2370,27 @@ export const update = mutation({
 			}
 		}
 		if (memberActor !== undefined) patch.lastActedBy = memberActor;
+
+		// The deliverable: validated AFTER authorisation (a refused caller learns
+		// nothing about the value's shape). A value identical to the stored one is
+		// a no-op: no stale-state reset, no new job.
+		let resolveDeliverable: { pkg: string; export: string } | undefined;
+		if (fields.deliverable !== undefined) {
+			const problem = deliverableProblem(fields.deliverable);
+			if (problem !== null) {
+				throw new ConvexError(
+					`INVALID_DELIVERABLE: ${problem} — ${JSON.stringify({ taskId, door: "tasks:update" })}`,
+				);
+			}
+			if (sameDeliverable(fields.deliverable, task.deliverable)) {
+				delete patch.deliverable;
+			} else {
+				// undefined in a patch removes the field: the previous artifact's
+				// reading must never sit beside the new claim.
+				patch.deliverableState = undefined;
+				resolveDeliverable = fields.deliverable;
+			}
+		}
 
 		// Reviewer-reclaim (k17e1ar4s7pspb0rs74ms25hmd8dhv01) — whenever
 		// assignedTo CHANGES, capture the OLD (pre-change) value into
@@ -2463,6 +2539,14 @@ export const update = mutation({
 		}
 
 		await ctx.db.patch(taskId, patch);
+
+		if (resolveDeliverable !== undefined) {
+			await ctx.scheduler.runAfter(0, internal.taskDeliverable.resolveTaskDeliverable, {
+				taskId,
+				pkg: resolveDeliverable.pkg,
+				export: resolveDeliverable.export,
+			});
+		}
 
 		if (patch.status === "done") {
 			await unblockWaitersOn(ctx, taskId, patch.completedAt ?? Date.now());
