@@ -588,6 +588,8 @@ def test_ratchet_live_baseline_carries_its_command_and_never_rose():
             "b922b075b4f79b15cd2a9b82158750a8786a8437",
             # re-baselined on 0.5.0: CR-3 16 added, every other count unchanged (task k1755rzrkbr397hpeftnjcqb2d8h7yhg)
             "734653514cb0c3308194707881a1697e011c809e",
+            # 0.5.0 re-measured after the rebase on 8aa3a7c1 (#1582): CR-2 246, CR-3 16, R-54 132, R-55 22 (task k1755rzrkbr397hpeftnjcqb2d8h7yhg)
+            "88ae202f2da361d905a1c5044ea1529ce8f53637",
         }
         line = entry["output_line"]
         assert line.startswith((f"{rule}: ", f"{rule} VERDICT: ")), rule
