@@ -198,3 +198,45 @@ export function buildPageResult<T>(input: {
 		...(input.isCapped ? { isCapped: true } : {}),
 	};
 }
+
+/**
+ * Continuation for a page that a scope filter narrowed AFTER the fetch.
+ *
+ * "Is the page full" is a statement about the page the backend returned, so it
+ * is measured on that RAW page and the cursor is anchored on the raw page's
+ * last row. Measuring it on the surviving rows reports a narrowed page as a
+ * short one, which reads as "the end" and drops the continuation while more
+ * pages exist (task k179f1mq0sp896p0jp183b5yks8b12qj).
+ *
+ * The cursor is the opaque base64url of the raw last row's `_creationTime`.
+ * That row may be one the caller cannot see; its creation time is the only
+ * thing the token carries, and the token is opaque to the client.
+ *
+ * `scopeFiltered` is the number of IN-TENANT rows the allow-list removed. It is
+ * never a count of another organisation's rows (a foreign tenant's row count is
+ * itself a disclosure):
+ *  - `inTenantCount` is the raw page after any tenant gate the handler applied
+ *    itself (default: the raw page, because every Convex door these tools call
+ *    applies the tenant INSIDE the read, so a raw row is already the caller's
+ *    organisation's);
+ *  - `reportRemoved` is false for a caller bound to no organisation (nothing it
+ *    is shown can be attributed to a tenant), which then gets no count.
+ */
+export function scopedPageContinuation(
+	rawPage: readonly unknown[],
+	requestedLimit: number,
+	keptCount: number,
+	opts: { inTenantCount?: number; reportRemoved?: boolean } = {},
+): { nextCursor: string | null; scopeFiltered: number } {
+	const inTenant = opts.inTenantCount ?? rawPage.length;
+	const scopeFiltered =
+		opts.reportRemoved === false ? 0 : Math.max(0, inTenant - keptCount);
+	let nextCursor: string | null = null;
+	if (rawPage.length >= requestedLimit && rawPage.length > 0) {
+		const last = rawPage[rawPage.length - 1] as { _creationTime?: number };
+		if (typeof last?._creationTime === "number") {
+			nextCursor = encodeCursor({ createdBefore: last._creationTime });
+		}
+	}
+	return { nextCursor, scopeFiltered };
+}
