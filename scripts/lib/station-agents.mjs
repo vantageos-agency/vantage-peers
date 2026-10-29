@@ -7,11 +7,29 @@
  * are unit-testable without Clerk or Convex.
  */
 
+import { createHash } from "node:crypto";
 import { chmodSync, existsSync, mkdirSync, realpathSync, writeFileSync } from "node:fs";
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 
 /** Roles that must never be minted by this tool (BU excluded by the roster). */
-export const EXCLUDED_ROLES = Object.freeze(["victor", "marie", "iris", "acme-hr"]);
+export const EXCLUDED_ROLES = Object.freeze(["victor", "marie", "iris"]);
+
+/**
+ * The excluded client organisation's own role names, held as sha256 hex digests of
+ * the normalised role so the public tree never carries the name (task
+ * k17a917qnqzhfzy88jb3ghkgyd8aegew; same idea as scripts/emit_client_hashes.py).
+ */
+export const EXCLUDED_ROLE_DIGESTS = Object.freeze([
+	"dfe83633058947555ad9403c58c573b5c8aea6f1006730958bcdc1bc3b235de0",
+	"a5700fd83359577242241090a474c7b28adee15ce25f75ecb3f8503208e5c587",
+]);
+
+/** True when a normalised role is excluded, by name or by digest. */
+export function isExcludedRole(role) {
+	if (EXCLUDED_ROLES.includes(role)) return true;
+	const digest = createHash("sha256").update(role, "utf8").digest("hex");
+	return EXCLUDED_ROLE_DIGESTS.includes(digest);
+}
 
 const ROLE_RE = /^[a-z][a-z0-9-]{0,62}$/;
 
@@ -98,11 +116,11 @@ export function validateStations(json) {
 		if (!ROLE_RE.test(role)) {
 			throw new Error(`Station #${idx}: role "${entry.role}" is not a valid agent name (^[a-z][a-z0-9-]*$).`);
 		}
-		if (EXCLUDED_ROLES.includes(role)) {
+		if (isExcludedRole(role)) {
 			throw new Error(`Station #${idx}: role "${role}" is excluded by the roster (Marie / Acme HR BU). Refusing.`);
 		}
 		const agentName = normalizeRole(entry.agentName ?? role);
-		if (!ROLE_RE.test(agentName) || EXCLUDED_ROLES.includes(agentName)) {
+		if (!ROLE_RE.test(agentName) || isExcludedRole(agentName)) {
 			throw new Error(`Station #${idx}: agentName "${entry.agentName}" is invalid or excluded.`);
 		}
 		if (seen.has(agentName)) {
