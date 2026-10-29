@@ -63,9 +63,10 @@ async function readMappings(
 
 /**
  * The mapping row of an org, keyed by its slug label (a string) or by its
- * permanent Clerk org ID (`{ clerkOrgId }`). Two rows claiming one ID make that
- * org undecidable, so an ID key answers null (fail closed), never a pick between
- * them.
+ * permanent Clerk org ID (`{ clerkOrgId }`). Exactly one row or null, for either
+ * key: two rows claiming one slug, or one ID, make that org undecidable, so the
+ * lookup answers null (fail closed), never a pick between them. Callers must read
+ * null as a refusal.
  */
 export async function lookupOrgMapping(
 	ctx: { db: DatabaseReader },
@@ -75,7 +76,6 @@ export async function lookupOrgMapping(
 		ctx.db,
 		typeof key === "string" ? { slug: key } : key,
 	);
-	if (typeof key === "string") return rows[0] ?? null;
 	return rows.length === 1 ? rows[0] : null;
 }
 
