@@ -114,6 +114,22 @@ describe("second agent on an existing client org", () => {
 		expect(plan.toRegister).toEqual([]);
 	});
 
+	test("a capitalised --agents name matches the lowercase label addRosterMembers stored, so the re-run proceeds", () => {
+		const plan = planRoster({
+			mapping: { allowedOrchestrators: ["neo", "hal"] },
+			agents: ["Neo", " HAL "],
+			rows: [{ name: "neo" }, { name: "hal" }],
+		});
+		expect(plan.missing).toEqual([]);
+		expect(plan.toRegister).toEqual([]);
+	});
+
+	test("a seat-only run never plans a roster step", () => {
+		const plan = planRoster({ mapping: { allowedOrchestrators: [] }, agents: ["relay"], rows: [], seatOnly: true });
+		expect(plan.missing).toEqual([]);
+		expect(plan.toRegister).toEqual([]);
+	});
+
 	test("DENY: an ordinary member cannot register the second agent", async () => {
 		const t = createT();
 		await seedOrgWithFirstAgent(t, ORG, "neo");
