@@ -33,6 +33,7 @@ import { ConvexHttpClient } from "convex/browser";
 import { getScopedUserToken } from "../mcp-server/src/serviceAccountAuth.ts";
 import { api } from "../convex/_generated/api.js";
 import { mintOrgAdminToken, ownerStepCommand } from "./lib/org-admin-token.mjs";
+import { planRoster } from "./lib/roster-plan.mjs";
 import { agentRowByLabel } from "./lib/station-agents.mjs";
 
 const argv = process.argv.slice(2);
@@ -124,7 +125,7 @@ if (!seatOnly) {
 
 const mapping = await svc.query(api.clientOrgMapping.getByClerkSlug, { orgSlug: org });
 if (!mapping || mapping.isActive !== true) throw new Error(`ORG_NOT_READY: no active client_org_mapping for ${org}`);
-const missing = seatOnly ? [] : agents.filter((a) => !(mapping.allowedOrchestrators ?? []).includes(a));
+const { missing } = planRoster({ mapping, agents, seatOnly });
 if (missing.length) throw new Error(`ROSTER_MISSING: ${missing.join(",")} not in ${org}'s allowedOrchestrators`);
 
 const now = Date.now();
