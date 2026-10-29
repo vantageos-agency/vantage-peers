@@ -3,7 +3,7 @@ import type { MutationCtx, QueryCtx } from "../_generated/server";
 import type { OrgScope, VerifiedActor } from "./auth";
 import { requireFleetAgentActor } from "./fleetActors";
 import { rbacDenied } from "./inboxReader";
-import { resolveVerifiedOrgScope, type VerifiedOrg } from "./verifiedOrg";
+import type { VerifiedOrg } from "./verifiedOrg";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // taskDoorClaim -- a task read the fleet service account can reach acts inside a
@@ -11,23 +11,24 @@ import { resolveVerifiedOrgScope, type VerifiedOrg } from "./verifiedOrg";
 //
 // The service account is master over every tenant and carries no organisation of
 // its own. A read door that served it with no claim answered "the whole fleet" to
-// a caller nobody had identified. This is the one place such a door resolves the
-// scope it runs under:
+// a caller nobody had identified. This is the one place such a door admits a
+// caller, before it resolves the scope it runs under:
 //
 //   - the service account with NO claim            REFUSED (RBAC_DENIED
 //                                                  `claimless-service-account`),
 //                                                  never served as master;
 //   - the service account with `verifiedOrg`       that organisation's member
-//                                                  scope: its own rows only;
+//                                                  scope (resolveVerifiedOrgScope,
+//                                                  at the door): its own rows only;
 //   - the service account with `verifiedActor`     the acting agent, judged BY ID
 //                                                  as an agent of the operator
 //                                                  organisation (the fleet's own);
 //   - anyone else (a session)                      their own scope, unchanged.
 //
 // The decisions are the package's: the standing is `isServiceAccountScope`, the
-// agent is resolved through `requireFleetAgentActor`, the organisation through
-// `resolveVerifiedOrgScope`. A claim presented by a caller that is not the
-// service account is refused by those, never ignored.
+// agent is resolved through `requireFleetAgentActor`, and the door narrows to the
+// organisation with `resolveVerifiedOrgScope`. A claim presented by a caller that
+// is not the service account is refused by those, never ignored.
 // ─────────────────────────────────────────────────────────────────────────────
 
 export type TaskDoorClaims = {
@@ -54,16 +55,19 @@ export function refuseClaimlessServiceAccount(
 	}
 }
 
-/** The scope a read door runs under for `transportScope` and its claims. */
-export async function resolveClaimedReadScope(
+/**
+ * The admission of a read door's claims: the claimless service account is refused,
+ * and a `verifiedActor` is judged BY ID as an agent of the operator organisation.
+ * The door then narrows its scope to `verifiedOrg` with `resolveVerifiedOrgScope`.
+ */
+export async function requireClaimedCaller(
 	ctx: QueryCtx | MutationCtx,
 	transportScope: OrgScope,
 	claims: TaskDoorClaims,
 	door: string,
-): Promise<OrgScope> {
+): Promise<void> {
 	refuseClaimlessServiceAccount(transportScope, claims, door);
 	if (claims.verifiedActor !== undefined) {
 		await requireFleetAgentActor(ctx, transportScope, claims.verifiedActor, door);
 	}
-	return await resolveVerifiedOrgScope(ctx, transportScope, claims.verifiedOrg, door);
 }

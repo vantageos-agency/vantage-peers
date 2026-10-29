@@ -1,4 +1,5 @@
 import {
+	hasFleetRead,
 	isFleetStamp,
 	isServiceAccountScope,
 	sameOrg,
@@ -92,7 +93,7 @@ import {
 import { clerkOrgIdForSlug } from "./lib/orgClerkId";
 import {
 	refuseClaimlessServiceAccount,
-	resolveClaimedReadScope,
+	requireClaimedCaller,
 } from "./lib/taskDoorClaim";
 import {
 	taskRowFilter,
@@ -1975,10 +1976,16 @@ export const listPaginated = query({
 		if (transportScope.refused) {
 			return { page: [], isDone: true, continueCursor: "" };
 		}
-		const scope = await resolveClaimedReadScope(
+		await requireClaimedCaller(
 			ctx,
 			transportScope,
 			{ verifiedActor: args.verifiedActor, verifiedOrg: args.verifiedOrg },
+			"tasks:listPaginated",
+		);
+		const scope = await resolveVerifiedOrgScope(
+			ctx,
+			transportScope,
+			args.verifiedOrg,
 			"tasks:listPaginated",
 		);
 		requireScope(scope, "view-own-tasks");
@@ -2008,7 +2015,7 @@ export const listPaginated = query({
 		// `orgId` never match `eq("orgId", slug)`: unstamped rows stay
 		// master-only. filterByOrgScope below still applies the roster narrowing.
 		const memberOrg =
-			!scope.isMaster && scope.orgSlug !== null ? scope.orgSlug : null;
+			!hasFleetRead(scope) && scope.orgSlug !== null ? scope.orgSlug : null;
 
 		// Assignee filter BY ID (M7): the label names an agent of the caller's own
 		// org (the operator org for the fleet master); a label naming no agent
@@ -2872,10 +2879,16 @@ export const listUnlinkedBlocked = query({
 		requireResolvedCaller(transportScope, "tasks:listUnlinkedBlocked", {
 			alsoRefusePreOrg: true,
 		});
-		const scope = await resolveClaimedReadScope(
+		await requireClaimedCaller(
 			ctx,
 			transportScope,
 			{ verifiedActor: args.verifiedActor, verifiedOrg: args.verifiedOrg },
+			"tasks:listUnlinkedBlocked",
+		);
+		const scope = await resolveVerifiedOrgScope(
+			ctx,
+			transportScope,
+			args.verifiedOrg,
 			"tasks:listUnlinkedBlocked",
 		);
 		// R-11: the tenant predicate is inside the read. Master reads the fleet's
@@ -4205,14 +4218,20 @@ export const listOverdue = query({
 		// rows (tenant gate, then roster).
 		const transportScope = await withOrgScope(ctx, { refuseWithoutThrow: true });
 		if (transportScope.refused) return [];
-		const scope = await resolveClaimedReadScope(
+		await requireClaimedCaller(
 			ctx,
 			transportScope,
 			{ verifiedActor: args.verifiedActor, verifiedOrg: args.verifiedOrg },
 			"tasks:listOverdue",
 		);
+		const scope = await resolveVerifiedOrgScope(
+			ctx,
+			transportScope,
+			args.verifiedOrg,
+			"tasks:listOverdue",
+		);
 		const callerOrg = scope.orgSlug;
-		if (!scope.isMaster && callerOrg === null) return [];
+		if (!hasFleetRead(scope) && callerOrg === null) return [];
 		const now = Date.now();
 		const limit = args.limit ?? 50;
 
@@ -4239,7 +4258,7 @@ export const listOverdue = query({
 		// A non-master caller's tenant is also the `by_orgId` index range. Master
 		// scans the table as before.
 		const candidates =
-			scope.isMaster || callerOrg === null
+			hasFleetRead(scope) || callerOrg === null
 				? ctx.db.query("tasks")
 				: ctx.db
 						.query("tasks")
@@ -5395,7 +5414,7 @@ export const getBulkCompleteRun = query({
 			.withIndex("by_bulkRunId", (q) => q.eq("bulkRunId", args.bulkRunId))
 			.first();
 		if (row === null) return null;
-		if (!scope.isMaster && (scope.orgSlug === null || row.orgId !== scope.orgSlug)) {
+		if (!hasFleetRead(scope) && (scope.orgSlug === null || row.orgId !== scope.orgSlug)) {
 			return null;
 		}
 		return {
@@ -5487,7 +5506,7 @@ export const billingSummaryByProject = query({
 		const project = args.project;
 
 		// R-55: a member's tenant gate and roster are INSIDE the read, before the
-		// scan cap. The date indexes below are fleet-wide: cut first, another
+		// scan cap. The date indexes below span every tenant. Cut first, another
 		// tenant's done tasks of the period filled the window and a member was
 		// summed over nothing. A member reads its OWN done tasks (the tenant-keyed
 		// index) and the period and project narrow in the same query; the fleet
@@ -5668,10 +5687,16 @@ export const taskDurationDistribution = query({
 			truncated: false,
 		};
 		if (transportScope.refused) return noData;
-		const scope = await resolveClaimedReadScope(
+		await requireClaimedCaller(
 			ctx,
 			transportScope,
 			{ verifiedActor: args.verifiedActor, verifiedOrg: args.verifiedOrg },
+			"tasks:taskDurationDistribution",
+		);
+		const scope = await resolveVerifiedOrgScope(
+			ctx,
+			transportScope,
+			args.verifiedOrg,
 			"tasks:taskDurationDistribution",
 		);
 		requireScope(scope, "view-own-tasks");
