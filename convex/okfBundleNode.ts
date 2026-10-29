@@ -31,6 +31,7 @@ import { Readable } from "node:stream";
 import { ConvexError, v } from "convex/values";
 import { extract, pack } from "tar-stream";
 import { internal as generatedInternal } from "./_generated/api";
+import type { Id } from "./_generated/dataModel";
 import { type ActionCtx, action } from "./_generated/server";
 import {
 	refuseStorageOwnership,
@@ -372,7 +373,22 @@ export const exportOkfBundle = action({
 				)
 			: { rows: [], truncated: false };
 		const memories = memoriesResult.rows;
-		const briefings = briefingsResult.rows;
+		// An offloaded note arrives from the page query as a MARKED preview
+		// (`contentTruncated`); its whole body is fetched here, one note per query, so
+		// the bundle never carries a preview as the note's content.
+		const briefings: BriefingNoteDoc[] = [];
+		for (const row of briefingsResult.rows) {
+			if ((row as BriefingNoteDoc & { contentTruncated?: boolean }).contentTruncated !== true) {
+				briefings.push(row);
+				continue;
+			}
+			const body = await ctx.runQuery(
+				generatedInternal.briefingNoteBodies.readBody,
+				{ id: row._id as Id<"briefingNotes"> },
+			);
+			if (body === null) continue;
+			briefings.push({ ...row, content: body });
+		}
 		const tasks = tasksResult.rows;
 		const fetchTruncated =
 			memoriesResult.truncated ||

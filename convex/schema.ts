@@ -851,6 +851,22 @@ export default defineSchema({
 		// required field would fail validation on existing rows). The dedup
 		// index below never matches an undefined value against a real hash.
 		contentHash: v.optional(v.string()),
+		// OFFLOADED BODY (tasks k17d10f1j2k2crgx9cw9bvw1vs8h7fda / k173kn4xsqmw3s5zx6522weqk18fttvs).
+		// A note whose body sits at Convex's 1 MiB document limit cannot take the org stamp.
+		// Its body lives in `briefingNoteBodyChunks` rows (a query can read rows; it cannot
+		// read a file-storage blob), `content` keeps only a PREVIEW (the first characters,
+		// which the `search_content` index still covers), and this field names the stored
+		// body: how many chunks, its UTF-8 byte length and the sha256 of the whole body.
+		// Present = `content` is a preview, never the body. Every read door hydrates it
+		// (convex/briefingNoteBodies.ts); a read that cannot says so (`contentTruncated`).
+		// Optional: only an offloaded note carries it (migrations/offloadNoteBody:offloadOne).
+		bodyRef: v.optional(
+			v.object({
+				chunks: v.number(),
+				bytes: v.number(),
+				sha256: v.string(),
+			}),
+		),
 	})
 		.index("by_topic", ["topic"])
 		.index("by_creator", ["createdBy", "createdAt"])
@@ -922,6 +938,19 @@ export default defineSchema({
 			// permanent ID, never the renamable slug in `orgId`.
 			filterFields: ["topic", "createdBy", "orgId", "clerkOrgId"],
 		}),
+
+	// ── briefingNoteBodyChunks ─────────────────────────────────────────────────
+	// The body of an offloaded briefing note (see `briefingNotes.bodyRef`), in order.
+	// Concatenating the `text` of idx 0..chunks-1 yields the original string
+	// byte-for-byte. Internal storage: no public function reads or writes this table;
+	// the only readers are the briefingNotes read doors, AFTER they have decided the
+	// caller may see the note (convex/briefingNoteBodies.ts), so the table carries no
+	// tenant column of its own: its tenant is the note it belongs to.
+	briefingNoteBodyChunks: defineTable({
+		noteId: v.id("briefingNotes"),
+		idx: v.number(),
+		text: v.string(),
+	}).index("by_note_idx", ["noteId", "idx"]),
 
 	// ── briefingNoteParticipants ──────────────────────────────────────────────
 	// Day 165 fix (task k175ga65p654z200ydj7s8qv5s8cnxfc): junction table so
