@@ -569,6 +569,8 @@ def test_ratchet_live_baseline_carries_its_command_and_never_rose():
             "f37f6756a13bb7c03a234c6ce56a646b5fda43fd",
             # CR-2 254 -> 252, R-53 331 -> 323, R-54 142 -> 139, agent registry doors by the verified session (task k17dcydcvcdzh1gp1zd1ebt23s8fyjde)
             "63a8199726006ca81e4965eb1a02c50dcae0212f",
+            # CR-2 252 -> 248, R-54 139 -> 137, OAuth service-account doors by the package standing gates, rebased (task k177pske4qj37sfw7nw2787msd8fzp0e)
+            "0df3cbc5970c0cc09d660d6b607d7b724881d059",
             # same ceilings re-measured after the rebase on 466239c2 and the ID-keyed registry reads (task k17dcydcvcdzh1gp1zd1ebt23s8fyjde)
             "b922b075b4f79b15cd2a9b82158750a8786a8437",
         }
