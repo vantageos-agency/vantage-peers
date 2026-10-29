@@ -916,4 +916,34 @@ describe("doctor-ratchet: the RATCHET line names every ratcheted key", () => {
 			rmSync(dir, { recursive: true, force: true });
 		}
 	});
+
+	it("two keys outside the six, one at zero, are both printed, sorted, after the six", () => {
+		const dir = mkdtempSync(join(tmpdir(), "ratchet-line-"));
+		try {
+			const base = JSON.parse(readFileSync(BASELINE, "utf8"));
+			base.counts["CR-4"] = 0;
+			base.counts["CR-3"] = 16;
+			const ev = JSON.parse(readFileSync(join(FIX, "equal.json"), "utf8"));
+			ev.mechanical_rule_counts["CR-4"] = 0;
+			ev.mechanical_rule_counts["CR-3"] = 16;
+			const basePath = join(dir, "baseline.json");
+			const evPath = join(dir, "evidence.json");
+			writeFileSync(basePath, JSON.stringify(base));
+			writeFileSync(evPath, JSON.stringify(ev));
+			const r = run([
+				"--baseline",
+				basePath,
+				"--evidence",
+				evPath,
+				"--previous-baseline",
+				basePath,
+			]);
+			const last = r.out.trim().split("\n").at(-1);
+			expect(last).toContain(
+				"CR-2=200 R-5=62 R-53=369 R-54=148 R-55=31 R-56=2 CR-3=16 CR-4=0 ",
+			);
+		} finally {
+			rmSync(dir, { recursive: true, force: true });
+		}
+	});
 });
