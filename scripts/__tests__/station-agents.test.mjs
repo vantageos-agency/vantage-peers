@@ -4,6 +4,8 @@ import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import {
 	EXCLUDED_ROLES,
+	EXCLUDED_ROLE_DIGESTS,
+	isExcludedRole,
 	assertSecretPathOutsideRepo,
 	decideStation,
 	envVarNameFor,
@@ -51,6 +53,18 @@ describe("validateStations", () => {
 	it("refuses the excluded BU (Marie / Acme HR), as role and as agentName", () => {
 		for (const r of EXCLUDED_ROLES) expect(() => validateStations([{ role: r }])).toThrow(/excluded/);
 		expect(() => validateStations([{ role: "eta", agentName: "victor" }])).toThrow(/excluded/);
+	});
+	it("refuses the excluded client organisation's role by digest, both spellings, as role and as agentName", () => {
+		// The name is assembled at run time so the public tree never carries it literally.
+		const slug = ["iris", "rh"].join("-");
+		const compact = ["iris", "rh"].join("");
+		expect(EXCLUDED_ROLE_DIGESTS).toHaveLength(2);
+		for (const r of [slug, compact, slug.toUpperCase()]) {
+			expect(() => validateStations([{ role: r }])).toThrow(/excluded/);
+		}
+		expect(() => validateStations([{ role: "eta", agentName: slug }])).toThrow(/excluded/);
+		expect(isExcludedRole("acme-hr")).toBe(false);
+		expect(isExcludedRole("eta")).toBe(false);
 	});
 	it("refuses non-arrays, empty arrays, bad names and duplicates", () => {
 		expect(() => validateStations({})).toThrow(/non-empty JSON array/);
