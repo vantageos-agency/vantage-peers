@@ -9,7 +9,8 @@
  *       --agents neo,hal,mimir --stage-dir <0700 dir outside the repo> [--ttl-days 90]
  *
  * PRECONDITIONS (done by the operator commands in the runbook, read back here):
- *   - client_org_mapping row for <slug>, isActive, allowedOrchestrators ⊇ agents
+ *   - client_org_mapping row for <slug>, isActive. An agent not yet on its roster is registered here by
+ *     ID and the script exits 3 printing the operator's addRosterMembers + setAgentOwner commands.
  *   - oauth_scope_profiles "<agent>-<slug>" bound to <slug> (clerkOrgSlug)
  *   - the Clerk org exists with our org-admin user as org:admin
  *
@@ -33,7 +34,7 @@ import { ConvexHttpClient } from "convex/browser";
 import { getScopedUserToken } from "../mcp-server/src/serviceAccountAuth.ts";
 import { api } from "../convex/_generated/api.js";
 import { mintOrgAdminToken, ownerStepCommand } from "./lib/org-admin-token.mjs";
-import { planRoster } from "./lib/roster-plan.mjs";
+import { planRoster, rosterStepCommand } from "./lib/roster-plan.mjs";
 import { agentRowByLabel } from "./lib/station-agents.mjs";
 
 const argv = process.argv.slice(2);
@@ -125,8 +126,31 @@ if (!seatOnly) {
 
 const mapping = await svc.query(api.clientOrgMapping.getByClerkSlug, { orgSlug: org });
 if (!mapping || mapping.isActive !== true) throw new Error(`ORG_NOT_READY: no active client_org_mapping for ${org}`);
-const { missing } = planRoster({ mapping, agents, seatOnly });
-if (missing.length) throw new Error(`ROSTER_MISSING: ${missing.join(",")} not in ${org}'s allowedOrchestrators`);
+const { missing, toRegister } = planRoster({
+	mapping,
+	agents,
+	rows: seatOnly ? [] : await admin.query(api.agents.listAgentsByOrg, {}),
+	seatOnly,
+});
+if (missing.length) {
+	// A new agent on an existing org. The roster is written by agent ID, and an ID exists only after
+	// registerAgent, so register first (org-admin, in THIS org), then hand the operator the two
+	// internal steps. Nothing is minted for any agent in this run: re-run once the roster step is done.
+	const ids = [];
+	for (const agent of missing) {
+		let row = agentRowByLabel(await admin.query(api.agents.listAgentsByOrg, {}), agent);
+		if (!row) {
+			const agentId = await admin.mutation(api.agents.registerAgent, { name: agent, description: `Agent ${agent} of ${org}` });
+			row = await admin.query(api.agents.getAgent, { agentId });
+		}
+		ids.push(row._id);
+	}
+	console.log(`registered: ${toRegister.join(",") || "(none, already registered)"}`);
+	console.log(`ROSTER_STEP_REQUIRED: ${missing.join(",")} not on ${org}'s roster. Operator, in order, then re-run this script:`);
+	console.log(`  ${rosterStepCommand({ agentIds: ids, org })}`);
+	console.log(`  ${ownerStepCommand({ agentIds: ids, ownerPersonId: adminUserId, org })}`);
+	process.exit(3);
+}
 
 const now = Date.now();
 const registeredIds = [];
