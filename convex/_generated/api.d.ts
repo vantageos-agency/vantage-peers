@@ -65,6 +65,7 @@ import type * as lib_debateTemplate from "../lib/debateTemplate.js";
 import type * as lib_fleetActors from "../lib/fleetActors.js";
 import type * as lib_fleetStanding from "../lib/fleetStanding.js";
 import type * as lib_humanActor from "../lib/humanActor.js";
+import type * as lib_identityRefusalWire from "../lib/identityRefusalWire.js";
 import type * as lib_ids from "../lib/ids.js";
 import type * as lib_inboxReader from "../lib/inboxReader.js";
 import type * as lib_license from "../lib/license.js";
@@ -215,6 +216,7 @@ declare const fullApi: ApiFromModules<{
   "lib/fleetActors": typeof lib_fleetActors;
   "lib/fleetStanding": typeof lib_fleetStanding;
   "lib/humanActor": typeof lib_humanActor;
+  "lib/identityRefusalWire": typeof lib_identityRefusalWire;
   "lib/ids": typeof lib_ids;
   "lib/inboxReader": typeof lib_inboxReader;
   "lib/license": typeof lib_license;
