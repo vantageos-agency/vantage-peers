@@ -18,6 +18,7 @@
 
 import {
 	IdentityRefusalError,
+	requireServiceAccountStanding,
 	resolveActingPrincipal,
 	sha256Hex,
 	validateMasterBearer,
@@ -34,7 +35,6 @@ import {
 } from "./_generated/server";
 import { normalizeOrchestratorId } from "./_helpers/normalizeOrchestratorId";
 import {
-	isMcpBoundMaster,
 	lookupOrgMapping,
 	requireOperatorAdminToCreateOrg,
 	requireResolvedCaller,
@@ -43,6 +43,7 @@ import {
 	withOrgScope,
 } from "./lib/auth";
 import { isHumanActorName } from "./lib/humanActor";
+import { wireIdentityRefusal } from "./lib/identityRefusalWire";
 import { personPrincipalLookups } from "./lib/actingPrincipal";
 import { liveSeatAgent, resolveSeatAgent } from "./lib/seatAgent";
 import { personalAgentOfToken } from "./lib/personalAgent";
@@ -106,49 +107,39 @@ async function requireMasterAuth(callerToken: string): Promise<void> {
 // a fixed label, not a digest of the secret.
 const MASTER_ACTOR_LABEL = "credential:master-bearer";
 
-function refuseNonServiceAccount(
-	registration: string,
-	orgSlug: string | null,
-	reason: string,
-): ConvexError<string> {
-	return new ConvexError(
-		`RBAC_DENIED: "${registration}" admits the fleet service account only — ${JSON.stringify(
-			{ registration, orgSlug, reason },
-		)}`,
-	);
-}
+// A caller that could not be resolved to any scope. The package judges it as
+// "refused" and raises its own refusal naming the door.
+const UNRESOLVED_SCOPE = { refused: true } as const;
 
 async function requireServiceAccount(
 	ctx: QueryCtx | MutationCtx,
 	registration: string,
 ): Promise<string> {
-	let scope: Awaited<ReturnType<typeof withOrgScope>>;
+	let scope: Awaited<ReturnType<typeof withOrgScope>> | typeof UNRESOLVED_SCOPE;
 	try {
 		scope = await withOrgScope(ctx);
 	} catch (err: unknown) {
 		// withOrgScope refuses a signed-in caller with no organisation, or with an
 		// unmapped one, and a subject that names the service account but is not
-		// admitted by the stored rows, by raising. Re-raise it naming THIS door, so
-		// a reader can tell which registration refused it; anything that is not a
+		// admitted by the stored rows, by raising. That caller has no scope: the
+		// package's gate refuses it naming THIS door. Anything that is not a
 		// refusal (an infrastructure failure) is not swallowed.
-		if (err instanceof ConvexError) {
-			throw refuseNonServiceAccount(registration, null, "unresolved-caller");
-		}
-		throw err;
+		if (!(err instanceof ConvexError)) throw err;
+		scope = UNRESOLVED_SCOPE;
 	}
 	// The door is the fleet SERVICE ACCOUNT, not "any master": an operator-org
 	// admin is a human master (masterSource "operator-admin") and must not mint
-	// access tokens or read the client registry. Decided by the grant's SOURCE,
-	// and that grant is made by `withOrgScope` from the stored service-account
-	// rows (convex/lib/serviceAccount.ts), never from an environment variable.
-	if (!scope.isMaster || scope.masterSource !== "service-account") {
-		throw refuseNonServiceAccount(
-			registration,
-			scope.orgSlug,
-			scope.anonymous ? "no-credential" : "not-service-account",
-		);
+	// access tokens or read the client registry. WHO the service account is, is
+	// decided by @vantageos/cloud-identity (`requireServiceAccountStanding`) over
+	// the grant `withOrgScope` made from the stored service-account rows
+	// (convex/lib/serviceAccount.ts), never from an environment variable. Its
+	// refusal (code, reason, door) is relayed to the wire unchanged.
+	try {
+		requireServiceAccountStanding(scope, registration);
+	} catch (err: unknown) {
+		throw wireIdentityRefusal(err);
 	}
-	return await sha256Hex(`identity:${scope.userId}`);
+	return await sha256Hex(`identity:${(scope as { userId: string }).userId}`);
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -492,13 +483,10 @@ export const getScopeProfile = query({
 	returns: v.union(scopeProfileShape, v.null()),
 	handler: async (ctx, args) => {
 		// isolation-contract: no reactive subscriber exists — enumerated at /root/coding/vantage-peers-dashboard@71da625 with `grep -rn 'api\.oauth\.getScopeProfile' --include=*.tsx --include=*.ts app components hooks lib contexts providers` -> 0 matches. Only the dashboard was enumerated; other callers were not individually traced. R-50 declared divergence (a claim, verified against that enumeration).
-		const scope = await withOrgScope(ctx);
-		if (!isMcpBoundMaster(scope)) {
-			throw new ConvexError(
-				"RBAC_DENIED: getScopeProfile requires master scope — " +
-					"anonymous and non-master callers may never read an OAuth scope profile's fromAllowList or namespace prefixes.",
-			);
-		}
+		// Anonymous and non-fleet callers may never read an OAuth scope profile's
+		// fromAllowList or namespace prefixes: the service-account standing gate
+		// refuses them.
+		await requireServiceAccount(ctx, "oauth:getScopeProfile");
 
 		const row = await ctx.db
 			.query("oauth_scope_profiles")
@@ -1281,13 +1269,9 @@ export const getClientByClientId = query({
 	),
 	handler: async (ctx, args) => {
 		// isolation-contract: no reactive subscriber exists — enumerated at /root/coding/vantage-peers-dashboard@71da625 with `grep -rn 'api\.oauth\.getClientByClientId' --include=*.tsx --include=*.ts app components hooks lib contexts providers` -> 0 matches. Only the dashboard was enumerated; other callers were not individually traced. R-50 declared divergence (a claim, verified against that enumeration).
-		const scope = await withOrgScope(ctx);
-		if (!isMcpBoundMaster(scope)) {
-			throw new ConvexError(
-				"RBAC_DENIED: getClientByClientId requires master scope — " +
-					"anonymous and non-master callers may never read an OAuth client's scopeProfile.",
-			);
-		}
+		// Anonymous and non-fleet callers may never read an OAuth client's
+		// scopeProfile: the service-account standing gate refuses them.
+		await requireServiceAccount(ctx, "oauth:getClientByClientId");
 
 		const row = await ctx.db
 			.query("oauth_clients")

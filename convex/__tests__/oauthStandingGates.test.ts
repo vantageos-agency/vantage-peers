@@ -3,9 +3,9 @@
  * the Clerk bearer revocation decide WHO MAY CALL by the @vantageos/cloud-identity
  * standing gates, not by a comparison written in this repository.
  *
- *   oauth:*  (service-account-only doors)  -> requireServiceAccountStanding
- *   oauth:getClientByClientId, getScopeProfile (fleet-only reads) -> requireFleetStanding
- *   credentials:revokeMyBearers            -> requireSubjectFromIdentity
+ *   oauth:* service-account-only doors, including the two secret-bearing reads
+ *     getClientByClientId and getScopeProfile -> requireServiceAccountStanding
+ *   credentials:revokeMyBearers                -> requireSubjectFromIdentity
  *
  * The refusal the package raises is relayed to the wire unchanged: its code
  * (RBAC_DENIED), its reason and its door survive in errorData. Poles run as a
@@ -56,8 +56,13 @@ async function refusalOf(p: Promise<unknown>): Promise<string> {
 	try {
 		await p;
 	} catch (e) {
+		// The refusal must be on the wire as a ConvexError: its payload (`data`)
+		// is what survives to a client, a plain Error is reduced to "Server Error".
 		const data = (e as { data?: unknown }).data;
-		return typeof data === "string" ? data : String((e as Error).message);
+		if (typeof data !== "string") {
+			throw new Error(`refusal is not a ConvexError carrying text: ${String(e)}`);
+		}
+		return data;
 	}
 	throw new Error("expected a refusal, the call was served");
 }
@@ -97,7 +102,7 @@ describe("service-account-only doors are judged by the package standing gate", (
 	});
 });
 
-describe("fleet-only OAuth reads are judged by the package standing gate", () => {
+describe("service-account-only OAuth reads are judged by the package standing gate", () => {
 	test("DENY: a member cannot read a client or a scope profile", async () => {
 		const t = createT();
 		await seedOrg(t, "acme");
