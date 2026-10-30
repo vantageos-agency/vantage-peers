@@ -25,7 +25,7 @@ import { convexTest } from "../../tests/fixtures/convexTestWithServiceAccount";
 import { testClerkOrgId } from "../../tests/fixtures/testClerkOrgId";
 import { api } from "../_generated/api";
 import schema from "../schema";
-import { __setRagSearcherForTests } from "../search";
+import { __setQueryEmbedderForTests, __setRagSearcherForTests } from "../search";
 
 const modules = Object.fromEntries(
 	Object.entries(import.meta.glob("../**/*.ts")).filter(
@@ -68,6 +68,10 @@ async function seedOrg(t: T, slug: string): Promise<void> {
 // RAG fake: exact-namespace index. `indexed` maps a namespace to its entries.
 const indexed = new Map<string, Array<{ key: string; text: string }>>();
 let asked: string[] = [];
+// searches that would embed the query themselves (string query, not a text search)
+let embeddingSearches = 0;
+// calls to the query embedder
+let embedCalls = 0;
 
 /** A KB chunk: a memories row AND the RAG entry filed under that exact namespace. */
 async function seedChunk(
@@ -97,11 +101,20 @@ async function seedChunk(
 beforeEach(() => {
 	indexed.clear();
 	asked = [];
+	embeddingSearches = 0;
+	embedCalls = 0;
+	__setQueryEmbedderForTests(async () => {
+		embedCalls++;
+		return [0.1, 0.2, 0.3];
+	});
 	__setRagSearcherForTests((async (
 		_ctx: unknown,
-		args: { namespace: string },
+		args: { namespace: string; query: string | number[]; searchType?: string },
 	) => {
 		asked.push(args.namespace);
+		if (typeof args.query === "string" && args.searchType !== "text") {
+			embeddingSearches++;
+		}
 		const rows = indexed.get(args.namespace) ?? [];
 		return {
 			results: rows.map((r, i) => ({
@@ -122,6 +135,7 @@ beforeEach(() => {
 });
 afterEach(() => {
 	__setRagSearcherForTests(null);
+	__setQueryEmbedderForTests(null);
 });
 
 const PATHS = [
@@ -222,6 +236,21 @@ for (const { name, ref } of PATHS) {
 				namespace: `team/${X_ID}/d052`,
 			})) as unknown[];
 			expect(rows).toHaveLength(1);
+		});
+
+		test("COST: a root search over 4 documents embeds the query at most once", async () => {
+			const t = createT();
+			await seedOrg(t, X);
+			for (const d of ["a", "b", "c", "d"]) {
+				await seedChunk(t, `team/${X_ID}/doc-${d}`, `text ${d}`);
+			}
+			await asMember(t, X).action(ref, {
+				query: "anything",
+				namespace: `team/${X_ID}`,
+			});
+			expect(asked).toHaveLength(5);
+			expect(embeddingSearches).toBe(0);
+			expect(embedCalls).toBe(name === "textSearch" ? 0 : 1);
 		});
 
 		test("REFUSED: org Y on team/<X> gets [] and X's namespaces are never asked", async () => {

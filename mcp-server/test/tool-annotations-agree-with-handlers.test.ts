@@ -211,7 +211,18 @@ function convexFnWrites(ref: string, seen = new Set<string>()): string | null {
 					chain.unshift(e.name.text);
 					e = e.expression;
 				}
-				if (chain.length === 2) {
+				// `components.rag.search.search` is the RAG component's READ (vector /
+				// text lookup, no write): the same call `RAG.search` makes inside the
+				// library. Exactly this one target is exempt; any other component
+				// target stays unresolved and therefore a write.
+				if (
+					chain.join(".") === "rag.search.search" &&
+					e !== undefined &&
+					ts.isIdentifier(e) &&
+					e.text === "components"
+				) {
+					// read: nothing to record
+				} else if (chain.length === 2) {
 					const inner = convexFnWrites(chain.join(":"), seen);
 					if (inner) found.push(inner);
 				} else found.push(`${ref} runAction target unresolved`);
