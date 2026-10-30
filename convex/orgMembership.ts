@@ -424,9 +424,7 @@ async function writeMembershipTombstone(
 			clerkUserId: args.clerkUserId,
 			...(args.clerkOrgSlug !== undefined
 				? { clerkOrgSlug: args.clerkOrgSlug }
-				: existing !== null && existing.clerkOrgSlug !== ""
-					? { clerkOrgSlug: existing.clerkOrgSlug }
-					: {}),
+				: {}),
 		});
 	}
 	if (existing === null) {
@@ -588,7 +586,11 @@ export const reconcileOrgFromClerk = internalMutation({
 					clerkOrgId: t.orgId,
 					clerkUserId: t.personId,
 				}),
-				{ clerkOrgId: t.orgId, clerkUserId: t.personId },
+				{
+					clerkOrgId: t.orgId,
+					clerkOrgSlug: args.clerkOrgSlug,
+					clerkUserId: t.personId,
+				},
 				{ eventAt: t.eventAt, dryRun: args.dryRun },
 			);
 		}
