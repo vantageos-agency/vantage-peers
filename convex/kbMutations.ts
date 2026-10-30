@@ -1,6 +1,8 @@
 /**
  * convex/kbMutations.ts — B5 Knowledge Base ingest (V8 runtime).
- * M1 addition: bindOrAssertStorageOwnership — TOFU org-binding guard (PR #992 follow-up).
+ * M1 addition: bindOrAssertStorageOwnership — TOFU org-binding guard (PR #992 follow-up),
+ * now called only by the OKF export path (okfBundleNode.ts), not by kb:storeDocumentChunked,
+ * whose gate is assertStorageClaimedBy.
  *
  * Runtime split (matches okfBundle.ts / okfBundleNode.ts pattern — see Eta
  * fix-pattern m9781h39qvcyy4hsphthz7eg5s88yc1f):
@@ -72,8 +74,10 @@ export const resolveKbCallerScope = internalQuery({
 // ─────────────────────────────────────────────────────────────────────────────
 // bindOrAssertStorageOwnership — TOFU org-binding guard (M1 defense-in-depth)
 //
-// Called by kb:storeDocumentChunked BEFORE ctx.storage.get() to ensure a
-// storageId can only be ingested by the org that first used it.
+// Called only by the OKF export path (okfBundleNode.ts), NOT by
+// kb:storeDocumentChunked. The store gate is assertStorageClaimedBy, which
+// refuses a storageId not claimed by the caller's org; a kbUploads binding is
+// written only by claimUpload or by the export path.
 //
 // TOFU logic:
 //   No row exists → insert { storageId, orgId, createdAt } → ownership bound.
@@ -158,7 +162,7 @@ export const assertStorageClaimedBy = internalMutation({
 //
 // For READ paths (okfBundleNode:validateOkfBundle) that must ASSERT ownership
 // and never claim it: the binding is written only by the upload/store paths
-// (bindOrAssertStorageOwnership above, from kb:storeDocumentChunked, and the
+// (claimUpload, and bindOrAssertStorageOwnership above, called by the
 // export path). Returns the bound orgId, or null when the storageId is unbound.
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -256,8 +260,8 @@ export const supersedePriorChunks = internalMutation({
 //
 // Rationale for gating (plan §2, analysis/day123-kb-upload-url-plan.md):
 // ctx.storage.generateUploadUrl() returns a generic URL not bound to any org;
-// the org↔storageId binding (TOFU kbUploads) happens later in
-// bindOrAssertStorageOwnership (this file). Gating URL generation behind
+// the org↔storageId binding (kbUploads) is written later by claimUpload and
+// by the export path (bindOrAssertStorageOwnership, this file). Gating URL generation behind
 // org-auth prevents anonymous upload-URL minting (unauthenticated storage
 // fill attacks).
 //

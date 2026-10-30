@@ -1391,12 +1391,13 @@ export default defineSchema({
 		.index("by_date", ["date"]),
 
 	// ── kbUploads ─────────────────────────────────────────────────────────────
-	// TOFU (trust-on-first-use) storage ownership binding table.
+	// Storage ownership binding table.
 	// Created by B5 M1 storageId org-binding defense-in-depth (mission k5779q).
 	//
-	// On first call to storeDocumentChunked for a given storageId, an entry is
-	// inserted binding that storageId to the calling org. Subsequent calls with
-	// the SAME storageId but a DIFFERENT orgId are rejected with
+	// Rows are written by claimUpload (upload ticket claim) and by the OKF
+	// export path. storeDocumentChunked only ASSERTS the claim (it refuses a
+	// storageId not claimed by the caller's org) and never writes a row. A
+	// storageId bound to one org is rejected for a DIFFERENT orgId with
 	// AUTH_STORAGE_NOT_OWNED to close the cross-tenant attack vector identified
 	// by Eta iter-2 post-merge follow-up (PR #992, commit 16bb32d).
 	//
