@@ -716,8 +716,8 @@ export const validateOkfBundle = action({
 			// (cross-tenant peek, backend standard R-8). The caller is resolved from
 			// its VERIFIED identity (never an argument), then ownership is ASSERTED
 			// against the binding the upload/store path wrote (kbUploads, written by
-			// kbMutations:bindOrAssertStorageOwnership from kb:storeDocumentChunked
-			// and the export path). Validate NEVER binds: a first-claim here would
+			// kbMutations:claimUpload and by the export path via
+			// kbMutations:bindOrAssertStorageOwnership). Validate NEVER binds: a first-claim here would
 			// let the first org to validate a leaked storageId become its owner, and
 			// would make this read-only tool reach a mutation. Unbound ->
 			// AUTH_STORAGE_UNBOUND; bound to another org -> AUTH_STORAGE_NOT_OWNED.

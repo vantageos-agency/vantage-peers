@@ -268,7 +268,7 @@ export const storeDocumentChunked = action({
 	handler: async (ctx, args) => {
 		// atomicity-exception: gate-then-idempotent-reingest — this action issues three
 		// ctx.runMutation calls that are NOT one atomic transaction and must not be: (1) a
-		// leading GATE, bindOrAssertStorageOwnership, which must run before ctx.storage.get
+		// leading GATE, assertStorageClaimedBy, which must run before ctx.storage.get
 		// to refuse a storageId this org has not claimed; (2) a conditional supersedePriorChunks that
 		// dedups the prior isLatest=true chunks; (3) a per-chunk insertChunk inside the
 		// `for` loop below. The dedup/supersede is keyed on the STABLE namespace
