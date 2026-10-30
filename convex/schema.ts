@@ -1571,7 +1571,17 @@ export default defineSchema({
 		.index("by_clientId", ["clientId"])
 		.index("by_scopeProfile", ["scopeProfile"])
 		.index("by_codeHash", ["codeHash"])
-		.index("by_familyId", ["familyId", "revokedAt"]),
+		.index("by_familyId", ["familyId", "revokedAt"])
+		// "this person's LIVE tokens for this organisation" - the removal of a member
+		// revokes through it (orgMembership.revokePersonTokensForRemovedMember). userId
+		// is the Clerk subject, clerkOrgId the permanent org id, revokedAt = undefined
+		// the live rows, expiresAt > now the unexpired ones.
+		.index("by_userId_and_clerkOrgId_and_revokedAt_and_expiresAt", [
+			"userId",
+			"clerkOrgId",
+			"revokedAt",
+			"expiresAt",
+		]),
 
 	// ── oauth_refresh_tokens ─────────────────────────────────────────────────
 	// Refresh tokens for renewing expired access tokens. Same hashing rules.

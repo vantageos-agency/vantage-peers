@@ -18,6 +18,7 @@
 import { createHash } from "node:crypto";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import { api, internal } from "../_generated/api";
+import { MEMBER_REVOKE_BATCH } from "../orgMembership";
 import schema from "../schema";
 import { convexTest } from "../../tests/fixtures/convexTestWithServiceAccount";
 
@@ -154,9 +155,11 @@ describe("REVOKED: the membership delete takes the person's tokens for that orga
 	test("more tokens than one batch: the continuation finishes the revoke", async () => {
 		const t = createT();
 		await seedMember(t, ORG_A, SLUG_A, ALICE);
-		const names = Array.from({ length: 12 }, (_, i) => `alice-bulk-${i}`);
+		const names = Array.from({ length: MEMBER_REVOKE_BATCH + 1 }, (_, i) => `alice-bulk-${i}`);
 		for (const n of names) await seedPersonToken(t, n, { userId: ALICE, orgId: ORG_A, slug: SLUG_A });
 		await webhookDelete(t, ALICE);
+		// One transaction revokes one batch; the last token is still live until the continuation runs.
+		expect(await isLive(t, names[MEMBER_REVOKE_BATCH])).toBe(true);
 		await t.finishAllScheduledFunctions(vi.runAllTimers);
 		for (const n of names) expect(await isLive(t, n)).toBe(false);
 	});
@@ -182,6 +185,14 @@ describe("KEPT: the revoke is scoped to the person and the organisation", () => 
 		await reconcile(t, []);
 		expect(await isLive(t, "alice-a1")).toBe(false);
 		expect(await isLive(t, "alice-b1")).toBe(true);
+	});
+
+	test("a legacy token (no clerkOrgId) of another org's slug is kept", async () => {
+		const t = createT();
+		await seedMember(t, ORG_A, SLUG_A, ALICE);
+		await seedPersonToken(t, "alice-legacy-b", { userId: ALICE, slug: SLUG_B });
+		await webhookDelete(t, ALICE, ORG_A);
+		expect(await isLive(t, "alice-legacy-b")).toBe(true);
 	});
 
 	test("another member of the same org keeps the token", async () => {

@@ -302,6 +302,106 @@ async function writeMembershipUpsert(
 	return "updated";
 }
 
+/** Person access tokens revoked per transaction when a member is removed. */
+export const MEMBER_REVOKE_BATCH = 500;
+
+/**
+ * Revokes up to MEMBER_REVOKE_BATCH of one person's LIVE access tokens for one
+ * organisation, through `by_userId_and_clerkOrgId_and_revokedAt_and_expiresAt`
+ * (user, org id, revokedAt = undefined, expiresAt > now): every row read is a
+ * row still to do, and no other person's or organisation's row is visited.
+ * A token minted before its organisation's mapping carried the permanent id has
+ * no clerkOrgId; those (clerkOrgId = undefined) are matched on the slug the token
+ * snapshotted, which for a person token is the org key (slug, else the id).
+ * Uses the existing `revokedAt` field, as the family revoke does.
+ * Returns whether either read held more than one batch.
+ */
+async function revokePersonTokensBatch(
+	ctx: MutationCtx,
+	who: { clerkOrgId: string; clerkOrgSlug?: string; clerkUserId: string },
+): Promise<boolean> {
+	const now = Date.now();
+	const stamped = await ctx.db
+		.query("oauth_access_tokens")
+		.withIndex("by_userId_and_clerkOrgId_and_revokedAt_and_expiresAt", (q) =>
+			q
+				.eq("userId", who.clerkUserId)
+				.eq("clerkOrgId", who.clerkOrgId)
+				.eq("revokedAt", undefined)
+				.gt("expiresAt", now),
+		)
+		.take(MEMBER_REVOKE_BATCH + 1);
+	for (const row of stamped.slice(0, MEMBER_REVOKE_BATCH)) {
+		await ctx.db.patch(row._id, { revokedAt: now });
+	}
+	const orgKeys = new Set(
+		[who.clerkOrgId, who.clerkOrgSlug].filter(
+			(k): k is string => k !== undefined && k !== "",
+		),
+	);
+	const unstamped = await ctx.db
+		.query("oauth_access_tokens")
+		.withIndex("by_userId_and_clerkOrgId_and_revokedAt_and_expiresAt", (q) =>
+			q
+				.eq("userId", who.clerkUserId)
+				.eq("clerkOrgId", undefined)
+				.eq("revokedAt", undefined)
+				.gt("expiresAt", now),
+		)
+		.take(MEMBER_REVOKE_BATCH + 1);
+	let unstampedRevoked = 0;
+	for (const row of unstamped.slice(0, MEMBER_REVOKE_BATCH)) {
+		if (row.clerkOrgSlug !== undefined && orgKeys.has(row.clerkOrgSlug)) {
+			await ctx.db.patch(row._id, { revokedAt: now });
+			unstampedRevoked++;
+		}
+	}
+	return (
+		stamped.length > MEMBER_REVOKE_BATCH ||
+		(unstamped.length > MEMBER_REVOKE_BATCH &&
+			unstampedRevoked === MEMBER_REVOKE_BATCH)
+	);
+}
+
+/**
+ * Revokes the person-flow access tokens of a member Clerk removed from an
+ * organisation, in the same transaction as the tombstone, and schedules the
+ * rest when one batch was not enough. A removed member's bearer must not outlive
+ * the removal by the access TTL.
+ */
+async function revokePersonTokensForRemovedMember(
+	ctx: MutationCtx,
+	who: { clerkOrgId: string; clerkOrgSlug?: string; clerkUserId: string },
+): Promise<void> {
+	if (await revokePersonTokensBatch(ctx, who)) {
+		await ctx.scheduler.runAfter(
+			0,
+			internal.orgMembership.continuePersonTokenRevoke,
+			who,
+		);
+	}
+}
+
+/** Continuation of a removed member's revoke too large for one transaction. */
+export const continuePersonTokenRevoke = internalMutation({
+	args: {
+		clerkOrgId: v.string(),
+		clerkOrgSlug: v.optional(v.string()),
+		clerkUserId: v.string(),
+	},
+	returns: v.null(),
+	handler: async (ctx, args) => {
+		if (await revokePersonTokensBatch(ctx, args)) {
+			await ctx.scheduler.runAfter(
+				0,
+				internal.orgMembership.continuePersonTokenRevoke,
+				args,
+			);
+		}
+		return null;
+	},
+});
+
 /**
  * WRITE a tombstone the package already decided to apply: the row is kept (role
  * included) with `deletedAt` set. With no row at all a tombstone is inserted, so
@@ -316,6 +416,19 @@ async function writeMembershipTombstone(
 	opts: { eventAt: number; dryRun?: boolean },
 ): Promise<"removed" | "absent"> {
 	const now = Date.now();
+	if (!opts.dryRun) {
+		// The member is gone: so are the bearers the person flow minted for them in
+		// this organisation (webhook delete and reconcile tombstone both land here).
+		await revokePersonTokensForRemovedMember(ctx, {
+			clerkOrgId: args.clerkOrgId,
+			clerkUserId: args.clerkUserId,
+			...(args.clerkOrgSlug !== undefined
+				? { clerkOrgSlug: args.clerkOrgSlug }
+				: existing !== null && existing.clerkOrgSlug !== ""
+					? { clerkOrgSlug: existing.clerkOrgSlug }
+					: {}),
+		});
+	}
 	if (existing === null) {
 		if (!opts.dryRun) {
 			await ctx.db.insert("orgMembership", {
