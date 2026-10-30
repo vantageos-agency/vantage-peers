@@ -202,6 +202,28 @@ for (const { name, ref } of PATHS) {
 			expect(asked).not.toContain(`team/${X_ID}/dead`);
 		});
 
+		test("BOUNDED: a root search fans out to at most 50 documents (+ the root), residue is exact-namespace search", async () => {
+			const t = createT();
+			await seedOrg(t, X);
+			for (let i = 0; i < 53; i++) {
+				await seedChunk(t, `team/${X_ID}/d${String(i).padStart(3, "0")}`, `t${i}`);
+			}
+			await asMember(t, X).action(ref, {
+				query: "anything",
+				namespace: `team/${X_ID}`,
+				limit: 100,
+			});
+			expect(asked).toHaveLength(51);
+			expect(asked[0]).toBe(`team/${X_ID}`);
+			expect(asked).not.toContain(`team/${X_ID}/d052`);
+			asked = [];
+			const rows = (await asMember(t, X).action(ref, {
+				query: "anything",
+				namespace: `team/${X_ID}/d052`,
+			})) as unknown[];
+			expect(rows).toHaveLength(1);
+		});
+
 		test("REFUSED: org Y on team/<X> gets [] and X's namespaces are never asked", async () => {
 			const t = createT();
 			await seedOrg(t, X);

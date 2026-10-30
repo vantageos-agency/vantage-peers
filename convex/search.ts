@@ -200,6 +200,85 @@ async function resolveSearchNamespace(
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// ragSearchTree -- a search on an org KB root reaches the org's documents.
+//
+// THE DEFECT. kb:storeDocumentChunked files every KB document in the RAG
+// namespace `team/<orgId>/<docId>`. RAG searches ONE namespace by exact name
+// (verified in node_modules/@convex-dev/rag: `getCompatibleNamespace` matches
+// the namespace string; filters only select INSIDE a namespace and are OR'd),
+// so a search on `team/<orgId>` found nothing and a seat could only find a
+// document whose docId it already knew.
+//
+// DESIGN CHOSEN: resolve the org's live document namespaces at query time from
+// the `memories` rows the ingest already writes (kbMutations
+// .listDocNamespacesUnderRoot, index-backed, range-bounded to the segment
+// subtree `team/<root>/`), then search each. Rejected:
+//   - a second RAG filter value (`kbRoot`): filters only select inside the
+//     namespace being searched, and the documents live in DIFFERENT namespaces,
+//     so no filter value can make `team/<orgId>` reach them; adding a new
+//     filter name would also make every existing namespace "incompatible" in
+//     getCompatibleNamespace (filterNames must match) and silently empty them.
+//   - dual-writing each chunk into a root namespace: doubles embeddings and
+//     needs a re-embedding backfill for every pre-existing document.
+// This route needs NO backfill: pre-existing documents are covered because the
+// memories rows and their exact-namespace RAG entries already exist.
+//
+// FAIL-CLOSED. The fan-out applies ONLY to a namespace the caller has already
+// been authorised for (resolveSearchNamespace ran first) and that has the KB
+// root shape `team/<one segment>`. The enumeration is bounded by the segment
+// range inside the query, so `team/<X>suffix/...` and another org are never
+// read; any other namespace is searched exactly as before (one call). The root
+// itself is always searched too, so entries filed directly at `team/<orgId>`
+// are still returned.
+//
+// RESIDUE (named): at most KB_ROOT_MAX_DOCS documents are searched per call
+// (embedding cost grows per document). An org with more live documents than
+// that gets the first KB_ROOT_MAX_DOCS by docId order on a ROOT search, with a
+// console.warn; every document stays findable by its exact namespace. Lifting
+// the cap needs a root-namespace dual-write plus a resumable re-embedding
+// backfill, deliberately not done here.
+// ─────────────────────────────────────────────────────────────────────────────
+
+const KB_ROOT_MAX_DOCS = 50;
+const KB_ROOT_BATCH = 10;
+
+/** `team/<one non-empty segment>`: the shape of an org KB root. */
+function isKbRootNamespace(ns: string): boolean {
+	return /^team\/[^/]+$/.test(ns);
+}
+
+async function ragSearchTree(
+	ctx: ActionCtx,
+	ns: string,
+	build: (target: string) => RagSearchArgs,
+): Promise<RagSearchResult> {
+	if (!isKbRootNamespace(ns)) return ragSearch(ctx, build(ns));
+
+	const { namespaces, truncated } = await ctx.runQuery(
+		internal.kbMutations.listDocNamespacesUnderRoot,
+		{ root: ns, max: KB_ROOT_MAX_DOCS },
+	);
+	if (truncated) {
+		console.warn(
+			`KB root search on ${ns} truncated at ${KB_ROOT_MAX_DOCS} documents`,
+		);
+	}
+	const targets = [ns, ...namespaces];
+	const limit = build(ns).limit ?? 10;
+	const parts: RagSearchResult[] = [];
+	for (let i = 0; i < targets.length; i += KB_ROOT_BATCH) {
+		const batch = targets.slice(i, i + KB_ROOT_BATCH);
+		parts.push(...(await Promise.all(batch.map((t) => ragSearch(ctx, build(t))))));
+	}
+	const results = parts
+		.flatMap((p) => p.results)
+		.sort((a, b) => b.score - a.score)
+		.slice(0, limit);
+	const entries = parts.flatMap((p) => p.entries);
+	return { ...parts[0], results, entries } as RagSearchResult;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // recallResult shape — what all search functions return
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -235,14 +314,14 @@ export const recall = action({
 		const limit = args.limit ?? 10;
 		const scoreThreshold = args.scoreThreshold ?? 0.15;
 
-		const { results, entries } = await ragSearch(ctx, {
-			namespace: ns,
+		const { results, entries } = await ragSearchTree(ctx, ns, (target) => ({
+			namespace: target,
 			query: args.query,
 			searchType: "vector",
 			limit,
 			vectorScoreThreshold: scoreThreshold,
-			filters: buildFilters({ namespace: ns, type: args.type }),
-		});
+			filters: buildFilters({ namespace: target, type: args.type }),
+		}));
 
 		// Build an entry map for quick lookup of filterValues by entryId
 		const entryMap = new Map(entries.map((e) => [e.entryId, e]));
@@ -306,13 +385,13 @@ export const textSearch = action({
 
 		const limit = args.limit ?? 10;
 
-		const { results, entries } = await ragSearch(ctx, {
-			namespace: ns,
+		const { results, entries } = await ragSearchTree(ctx, ns, (target) => ({
+			namespace: target,
 			query: args.query,
 			searchType: "text",
 			limit,
-			filters: buildFilters({ namespace: ns, type: args.type }),
-		});
+			filters: buildFilters({ namespace: target, type: args.type }),
+		}));
 
 		const entryMap = new Map(entries.map((e) => [e.entryId, e]));
 
@@ -370,21 +449,29 @@ export const hybridSearch = action({
 
 		const limit = args.limit ?? 10;
 
-		const searchArgs: RagSearchArgs = {
-			namespace: ns,
-			query: args.query,
-			searchType: "hybrid",
-			limit,
-			filters: buildFilters({ namespace: ns, type: args.type }),
+		const buildSearchArgs = (target: string): RagSearchArgs => {
+			const searchArgs: RagSearchArgs = {
+				namespace: target,
+				query: args.query,
+				searchType: "hybrid",
+				limit,
+				filters: buildFilters({ namespace: target, type: args.type }),
+			};
+			if (args.vectorWeight !== undefined) {
+				(searchArgs as Record<string, unknown>).vectorWeight =
+					args.vectorWeight;
+			}
+			if (args.textWeight !== undefined) {
+				(searchArgs as Record<string, unknown>).textWeight = args.textWeight;
+			}
+			return searchArgs;
 		};
-		if (args.vectorWeight !== undefined) {
-			(searchArgs as Record<string, unknown>).vectorWeight = args.vectorWeight;
-		}
-		if (args.textWeight !== undefined) {
-			(searchArgs as Record<string, unknown>).textWeight = args.textWeight;
-		}
 
-		const { results, entries } = await ragSearch(ctx, searchArgs);
+		const { results, entries } = await ragSearchTree(
+			ctx,
+			ns,
+			buildSearchArgs,
+		);
 
 		const entryMap = new Map(entries.map((e) => [e.entryId, e]));
 

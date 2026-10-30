@@ -185,29 +185,9 @@
 			"disposition": "CONSERVER",
 			"reason": "live: MCP-public tool; Convex door tasks:getById(query) (the derivation names no table: the id argument is not a v.id validator)"
 		},
-		"hybrid_search": {
-			"disposition": "CONSERVER",
-			"reason": "live: MCP-public tool; Convex door search:hybridSearch(action) (the derivation names no table: the id argument is not a v.id validator)"
-		},
-		"recall": {
-			"disposition": "CONSERVER",
-			"reason": "live: MCP-public tool; Convex door search:recall(action) (the derivation names no table: the id argument is not a v.id validator)"
-		},
-		"search_episodes_by_keyword": {
-			"disposition": "CONSERVER",
-			"reason": "live: MCP-public tool; Convex door search:textSearch(action) (the derivation names no table: the id argument is not a v.id validator)"
-		},
-		"search_episodes_by_semantic": {
-			"disposition": "CONSERVER",
-			"reason": "live: MCP-public tool; Convex door search:recall(action) (the derivation names no table: the id argument is not a v.id validator)"
-		},
 		"soft_delete_memory": {
 			"disposition": "CONSERVER",
 			"reason": "live: MCP-public tool; Convex door memories:softDeleteMemory(mutation) (the derivation names no table: the id argument is not a v.id validator)"
-		},
-		"text_search": {
-			"disposition": "CONSERVER",
-			"reason": "live: MCP-public tool; Convex door search:textSearch(action) (the derivation names no table: the id argument is not a v.id validator)"
 		},
 		"validate_task_payload": {
 			"disposition": "undecided",

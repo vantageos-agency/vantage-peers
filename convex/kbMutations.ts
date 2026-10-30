@@ -162,6 +162,64 @@ export const listChunkIdsForDoc = internalQuery({
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
+// listDocNamespacesUnderRoot -- the live KB document namespaces under an org root
+//
+// RAG searches ONE namespace by exact name and has no prefix search, so a search
+// on the KB root `team/<orgId>` cannot see documents filed under
+// `team/<orgId>/<docId>`. The search actions fan out over the namespaces this
+// query returns. It is read from the `memories` rows the ingest already writes,
+// so every document stored BEFORE this change is covered with no backfill.
+//
+// TENANT PREDICATE INSIDE THE QUERY, BEFORE ANY BOUND: the index range is
+// [`<root>/`, `<root>0`), the segment-bounded subtree, so `team/<X>suffix/...`
+// and `team/<Y>/...` are outside the range and are never read. The caller
+// (convex/search.ts) has already passed `isNamespaceAllowedForScope` on `root`.
+//
+// BOUNDED: a skip-scan, one index row per step (each step jumps past the
+// namespace just seen), at most MAX_SCAN_STEPS steps, at most `max` namespaces
+// returned. A namespace whose chunks are all isLatest=false (a soft-deleted or
+// fully superseded document) is skipped and does not consume a `max` slot.
+// `truncated` is true when the bound stopped the scan with more subtree left.
+// ─────────────────────────────────────────────────────────────────────────────
+
+const MAX_SCAN_STEPS = 500;
+
+export const listDocNamespacesUnderRoot = internalQuery({
+	args: { root: v.string(), max: v.number() },
+	returns: v.object({
+		namespaces: v.array(v.string()),
+		truncated: v.boolean(),
+	}),
+	handler: async (ctx, args) => {
+		const from = `${args.root}/`;
+		const to = `${args.root}0`;
+		const namespaces: string[] = [];
+		let cursor = from;
+		for (let step = 0; step < MAX_SCAN_STEPS; step++) {
+			const row = await ctx.db
+				.query("memories")
+				.withIndex("by_namespace", (q) =>
+					q.gte("namespace", cursor).lt("namespace", to),
+				)
+				.first();
+			if (row === null) return { namespaces, truncated: false };
+			const ns = row.namespace;
+			cursor = `${ns}\u0000`;
+			const live = await ctx.db
+				.query("memories")
+				.withIndex("by_namespace", (q) =>
+					q.eq("namespace", ns).eq("isLatest", true),
+				)
+				.first();
+			if (live === null) continue;
+			if (namespaces.length >= args.max) return { namespaces, truncated: true };
+			namespaces.push(ns);
+		}
+		return { namespaces, truncated: true };
+	},
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
 // insertChunk — insert one chunk as a memories row (type=reference, isLatest=true)
 // ─────────────────────────────────────────────────────────────────────────────
 
