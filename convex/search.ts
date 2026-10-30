@@ -1,5 +1,6 @@
 "use node";
-import { RAG } from "@convex-dev/rag";
+import { getModelId, RAG } from "@convex-dev/rag";
+import { embed } from "ai";
 import { v } from "convex/values";
 import { api, components, internal } from "./_generated/api";
 import type { ActionCtx } from "./_generated/server";
@@ -69,11 +70,17 @@ import { memoryTypeValidator } from "./schema";
 //      definition here and the test file.
 // ─────────────────────────────────────────────────────────────────────────────
 
-function buildRag() {
+const EMBEDDING_DIMENSION = 1536;
+
+function buildEmbeddingModel() {
 	const gateway = getAITextEmbeddingProvider();
+	return gateway.textEmbeddingModel(getEmbeddingModelName());
+}
+
+function buildRag() {
 	return new RAG(components.rag, {
-		textEmbeddingModel: gateway.textEmbeddingModel(getEmbeddingModelName()),
-		embeddingDimension: 1536,
+		textEmbeddingModel: buildEmbeddingModel(),
+		embeddingDimension: EMBEDDING_DIMENSION,
 		filterNames: ["namespace", "type", "isLatest"],
 	});
 }
@@ -112,6 +119,67 @@ let ragSearcherOverride: RagSearcher | null = null;
  */
 export function __setRagSearcherForTests(searcher: RagSearcher | null): void {
 	ragSearcherOverride = searcher;
+}
+
+type QueryEmbedder = (text: string) => Promise<number[]>;
+let queryEmbedderOverride: QueryEmbedder | null = null;
+
+/**
+ * TEST SEAM -- substitutes the query EMBEDDER only (counts embedding calls in
+ * tests). Same safety argument as `__setRagSearcherForTests`: a module-local
+ * setter, not a Convex registration, called from no non-test code, and it sits
+ * downstream of `resolveSearchNamespace`.
+ */
+export function __setQueryEmbedderForTests(embedder: QueryEmbedder | null): void {
+	queryEmbedderOverride = embedder;
+}
+
+/** Embeds the query with the SAME model and dimension the RAG instance uses. */
+async function embedQuery(text: string): Promise<number[]> {
+	if (queryEmbedderOverride !== null) return queryEmbedderOverride(text);
+	const { embedding } = await embed({
+		model: buildEmbeddingModel(),
+		value: text,
+	});
+	return embedding;
+}
+
+/**
+ * One namespace search with a PRE-COMPUTED query embedding. Mirrors what
+ * `RAG.search` sends to the component (client/index.ts ~lines 427-445): the
+ * embedding AND, for a hybrid search, the text query -- passing an embedding
+ * array as `query` through `RAG.search` would silently drop the BM25 half of a
+ * hybrid search, so the component is called directly. Under the searcher test
+ * seam the embedding is handed over as the `query` instead.
+ */
+function ragSearchEmbedded(
+	ctx: ActionCtx,
+	args: RagSearchArgs,
+	embedding: number[],
+): Promise<RagSearchResult> {
+	if (ragSearcherOverride !== null) {
+		return ragSearcherOverride(ctx, { ...args, query: embedding });
+	}
+	const a = args as RagSearchArgs & {
+		vectorWeight?: number;
+		textWeight?: number;
+	};
+	return ctx.runAction(components.rag.search.search, {
+		embedding,
+		dimension: EMBEDDING_DIMENSION,
+		namespace: a.namespace,
+		modelId: getModelId(buildEmbeddingModel()),
+		filters: a.filters ?? [],
+		limit: a.limit ?? 10,
+		vectorScoreThreshold: a.vectorScoreThreshold,
+		chunkContext: { before: 0, after: 0 },
+		textQuery:
+			a.searchType === "hybrid" && typeof a.query === "string"
+				? a.query
+				: undefined,
+		textWeight: a.textWeight,
+		vectorWeight: a.vectorWeight,
+	}) as unknown as Promise<RagSearchResult>;
 }
 
 /** Every `rag.search` in this module goes through here. */
@@ -265,10 +333,23 @@ async function ragSearchTree(
 	}
 	const targets = [ns, ...namespaces];
 	const limit = build(ns).limit ?? 10;
+	// COST: the query is embedded ONCE and that vector is handed to every
+	// per-namespace search (a text search embeds nothing). With no document the
+	// plain single call is already one embedding.
+	if (targets.length === 1) return ragSearch(ctx, build(ns));
+	const rootArgs = build(ns);
+	const embedding =
+		rootArgs.searchType === "text" || typeof rootArgs.query !== "string"
+			? null
+			: await embedQuery(rootArgs.query);
+	const search = (t: string): Promise<RagSearchResult> =>
+		embedding === null
+			? ragSearch(ctx, build(t))
+			: ragSearchEmbedded(ctx, build(t), embedding);
 	const parts: RagSearchResult[] = [];
 	for (let i = 0; i < targets.length; i += KB_ROOT_BATCH) {
 		const batch = targets.slice(i, i + KB_ROOT_BATCH);
-		parts.push(...(await Promise.all(batch.map((t) => ragSearch(ctx, build(t))))));
+		parts.push(...(await Promise.all(batch.map(search))));
 	}
 	const results = parts
 		.flatMap((p) => p.results)
