@@ -17,7 +17,7 @@
  * and the same user's tokens in ANOTHER org), ABSENT (a seat is untouched).
  */
 import { createHash } from "node:crypto";
-import { describe, expect, test } from "vitest";
+import { afterEach, describe, expect, test, vi } from "vitest";
 import { convexTest } from "../../tests/fixtures/convexTestWithServiceAccount";
 import { testClerkOrgId } from "../../tests/fixtures/testClerkOrgId";
 import { api, internal } from "../_generated/api";
@@ -144,6 +144,10 @@ const deleteEvent = (t: T, org: string, userId = PERSON, eventAt = 1_000) =>
 const accessServed = (t: T, raw: string) =>
 	asService(t).query(api.oauth.getAccessTokenByHash, { tokenHash: sha(raw) });
 
+afterEach(() => {
+	vi.useRealTimers();
+});
+
 describe("A - the delete event revokes the removed member's tokens", () => {
 	test("REVOKED: after the delete event the member's access token is no longer served", async () => {
 		const t = createT();
@@ -254,10 +258,11 @@ describe("A - the delete event revokes the removed member's tokens", () => {
 		const t = createT();
 		await seedOrgs(t);
 		await seedMember(t, ORG);
+		vi.useFakeTimers();
 		const N = 250;
 		for (let i = 0; i < N; i++) await seedPersonAccess(t, `acc-bulk-${i}`, ORG);
 		await deleteEvent(t, ORG);
-		await t.finishAllScheduledFunctions(() => {});
+		await t.finishAllScheduledFunctions(vi.runAllTimers);
 		const live = await t.run(async (ctx) => {
 			const rows = await ctx.db
 				.query("oauth_access_tokens")

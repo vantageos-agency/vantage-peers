@@ -25,7 +25,7 @@ import {
 } from "@vantageos/cloud-identity";
 import { ConvexError, v } from "convex/values";
 import { internal } from "./_generated/api";
-import type { Id } from "./_generated/dataModel";
+import type { Doc, Id } from "./_generated/dataModel";
 import type { MutationCtx, QueryCtx } from "./_generated/server";
 import {
 	internalMutation,
@@ -2813,6 +2813,159 @@ export const continueFamilyRevoke = internalMutation({
 	},
 });
 
+/** Access tokens revoked per index, per transaction, when a removed member's tokens are revoked. */
+export const MEMBER_REVOKE_BATCH = 100;
+
+/**
+ * Revokes the LIVE tokens of one person in one organisation (task
+ * k17fxe8feeq1k2rb1ggj76e97s8h7m7k, half A). A person's token carries
+ * `userId = <Clerk user id>` (mcp-server/server-http.ts, authorization_code
+ * flow), the same key as `orgMembership.clerkUserId`; a seat's carries its NAME.
+ * Reads go through `by_user_org_id` / `by_user_org_slug` (userId, org,
+ * revokedAt = undefined), so a batch only ever sees rows still to do and a token
+ * of the same person in ANOTHER org is never read. Each revoked access token's
+ * refresh family is revoked with it (`revokeFamilyBatch`). Returns whether either
+ * index held more than one batch.
+ */
+async function revokeMemberTokensBatch(
+	ctx: MutationCtx,
+	args: { userId: string; clerkOrgId?: string; orgSlugs: string[] },
+): Promise<boolean> {
+	const now = Date.now();
+	const families = new Set<string>();
+	let more = false;
+	const revoke = async (
+		rows: Array<Doc<"oauth_access_tokens">>,
+	): Promise<void> => {
+		if (rows.length > MEMBER_REVOKE_BATCH) more = true;
+		for (const row of rows.slice(0, MEMBER_REVOKE_BATCH)) {
+			await ctx.db.patch(row._id, { revokedAt: now });
+			const family = row.familyId ?? row.refreshTokenHash;
+			if (family !== undefined) families.add(family);
+		}
+	};
+	if (args.clerkOrgId !== undefined) {
+		const clerkOrgId = args.clerkOrgId;
+		await revoke(
+			await ctx.db
+				.query("oauth_access_tokens")
+				.withIndex("by_user_org_id", (q) =>
+					q
+						.eq("userId", args.userId)
+						.eq("clerkOrgId", clerkOrgId)
+						.eq("revokedAt", undefined),
+				)
+				.take(MEMBER_REVOKE_BATCH + 1),
+		);
+	}
+	for (const slug of new Set(args.orgSlugs)) {
+		await revoke(
+			await ctx.db
+				.query("oauth_access_tokens")
+				.withIndex("by_user_org_slug", (q) =>
+					q
+						.eq("userId", args.userId)
+						.eq("clerkOrgSlug", slug)
+						.eq("revokedAt", undefined),
+				)
+				.take(MEMBER_REVOKE_BATCH + 1),
+		);
+	}
+	for (const familyId of families) {
+		// The FIRST refresh token of a grant carries no familyId (its own digest is
+		// the family), so the family index does not hold it: revoke it by digest.
+		const first = await ctx.db
+			.query("oauth_refresh_tokens")
+			.withIndex("by_tokenHash", (q) => q.eq("tokenHash", familyId))
+			.unique();
+		if (first !== null && first.revokedAt === undefined) {
+			await ctx.db.patch(first._id, { revokedAt: now });
+		}
+		if (await revokeFamilyBatch(ctx, familyId)) {
+			await ctx.scheduler.runAfter(0, internal.oauth.continueFamilyRevoke, {
+				familyId,
+			});
+		}
+	}
+	return more;
+}
+
+/**
+ * Called by `orgMembership` when Clerk removed a member (webhook delete event and
+ * the reconcile tombstone path). Internal only; self-schedules while a batch was
+ * full.
+ */
+export const revokeMemberTokens = internalMutation({
+	args: {
+		userId: v.string(),
+		clerkOrgId: v.optional(v.string()),
+		orgSlugs: v.array(v.string()),
+	},
+	returns: v.null(),
+	handler: async (ctx, args) => {
+		if (await revokeMemberTokensBatch(ctx, args)) {
+			await ctx.scheduler.runAfter(0, internal.oauth.revokeMemberTokens, args);
+		}
+		return null;
+	},
+});
+
+/**
+ * Half B: a refresh token of a PERSON is refused unless that person holds a LIVE
+ * `orgMembership` row (not tombstoned, not absent) for the organisation the
+ * refreshed pair would be minted in. A person is recognised by evidence that does
+ * not depend on the token row (a refresh row carries no principal): the user id
+ * has at least one membership row (`by_user`; a seat name never does), or the
+ * family's access token is a `principal: "person"` token. A seat is neither and
+ * passes untouched. The organisation is the scope profile's (`orgSlug`); a person
+ * whose organisation cannot be named is refused, never defaulted. Raises the same
+ * `RBAC_DENIED` code as the other doors.
+ */
+async function requireLiveMembershipForPerson(
+	ctx: MutationCtx,
+	row: Doc<"oauth_refresh_tokens">,
+	orgSlug: string | undefined,
+): Promise<void> {
+	const known = await ctx.db
+		.query("orgMembership")
+		.withIndex("by_user", (q) => q.eq("clerkUserId", row.userId))
+		.take(1);
+	let isPerson = known.length > 0;
+	if (!isPerson) {
+		const familyId = row.familyId ?? row.tokenHash;
+		const lineage = await ctx.db
+			.query("oauth_access_tokens")
+			.withIndex("by_familyId", (q) => q.eq("familyId", familyId))
+			.take(1);
+		isPerson = lineage[0]?.principal === "person";
+	}
+	if (!isPerson) return;
+	let live = false;
+	if (orgSlug !== undefined) {
+		const clerkOrgId = await clerkOrgIdForSlug(ctx, orgSlug);
+		const membership =
+			clerkOrgId !== undefined
+				? await ctx.db
+						.query("orgMembership")
+						.withIndex("by_org_user_clerk_id", (q) =>
+							q.eq("clerkOrgId", clerkOrgId).eq("clerkUserId", row.userId),
+						)
+						.unique()
+				: await ctx.db
+						.query("orgMembership")
+						.withIndex("by_org_user", (q) =>
+							q.eq("clerkOrgSlug", orgSlug).eq("clerkUserId", row.userId),
+						)
+						.unique();
+		live = membership !== null && membership.deletedAt === undefined;
+	}
+	if (!live) {
+		throw new ConvexError(
+			`RBAC_DENIED: the person behind this refresh token holds no live membership of the organisation — ${JSON.stringify({ door: "oauth:rotateRefreshToken", reason: "membership-not-live" })}`,
+		);
+	}
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // rotateRefreshToken - service account only. The refresh grant's ONE door
 // (module M3): the presented refresh token is looked up, spent, and its
@@ -2877,6 +3030,9 @@ export const rotateRefreshToken = mutation({
 		}
 		if (row.expiresAt < Date.now()) return { status: "invalid" as const };
 		if (row.clientId !== args.clientId) return { status: "invalid" as const };
+		// Half B (task k17fxe8feeq1k2rb1ggj76e97s8h7m7k): a removed member's
+		// refresh token is refused, before anything is spent or minted.
+		await requireLiveMembershipForPerson(ctx, row, args.clerkOrgSlug);
 
 		const refreshToken = randomOpaqueHex(32);
 		const accessToken = randomOpaqueHex(32);

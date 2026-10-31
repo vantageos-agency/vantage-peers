@@ -394,3 +394,34 @@ describe("expired seat access token — bearerAuthMiddleware", () => {
 		expect(typeof body.error).toBe("string");
 	});
 });
+
+// ─────────────────────────────────────────────────────────────────────────────
+// A removed member's refresh is a refusal (task k17fxe8feeq1k2rb1ggj76e97s8h7m7k)
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe("refresh_token grant - the door refuses a person with no live membership", () => {
+	it("an RBAC_DENIED from oauth:rotateRefreshToken is invalid_grant (400), not a 500", async () => {
+		const fake = makeFakeConvex();
+		_setInternalClientForTest(
+			// biome-ignore lint/suspicious/noExplicitAny: test fake
+			{
+				query: fake.query,
+				mutation: async (name: string) => {
+					if (name === "oauth:rotateRefreshToken") {
+						throw Object.assign(new Error("[Request ID: x] Server Error"), {
+							data: 'RBAC_DENIED: the person behind this refresh token holds no live membership of the organisation - {"door":"oauth:rotateRefreshToken","reason":"membership-not-live"}',
+						});
+					}
+					throw new Error(`unmocked mutation: ${name}`);
+				},
+			} as any,
+		);
+		const r = await postRefresh(
+			SEAT_REFRESH_RAW,
+			basicAuth(SEAT_CLIENT_ID, SEAT_SECRET),
+		);
+		expect(r.status).toBe(400);
+		expect(r.body.error).toBe("invalid_grant");
+		expect(r.body.refresh_token).toBeUndefined();
+	});
+});

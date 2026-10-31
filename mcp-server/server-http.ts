@@ -1263,27 +1263,53 @@ app.post("/token", async (c) => {
 		// The replacement pair is generated INSIDE the Convex mutation and returned
 		// once; this server neither chooses nor sends the values.
 		const now = Date.now();
-		const rotated = (await internalClient().mutation(
-			// biome-ignore lint/suspicious/noExplicitAny: Convex string API
-			"oauth:rotateRefreshToken" as any,
-			{
-				presentedHash: refreshTokenHash,
-				clientId: record.clientId,
-				scopeProfile: profile.profileId,
-				// SC: standardized on mcp:full
-				scopes: ["mcp:full"],
-				fromAllowList: profile.fromAllowList,
-				namespaceReadPrefixes: profile.namespaceReadPrefixes,
-				namespaceWritePrefixes: profile.namespaceWritePrefixes,
-				accessExpiresAt: now + ACCESS_TOKEN_TTL_SECONDS * 1000,
-				refreshExpiresAt: now + REFRESH_TOKEN_TTL_SECONDS * 1000,
-				...(profile.clerkOrgSlug !== undefined
-					? { clerkOrgSlug: profile.clerkOrgSlug }
-					: {}),
-			},
-		)) as
+		let rotated:
 			| { status: "ok"; issued: { refresh: string; access: string } }
 			| { status: "reused" | "invalid" };
+		try {
+			rotated = (await internalClient().mutation(
+				// biome-ignore lint/suspicious/noExplicitAny: Convex string API
+				"oauth:rotateRefreshToken" as any,
+				{
+					presentedHash: refreshTokenHash,
+					clientId: record.clientId,
+					scopeProfile: profile.profileId,
+					// SC: standardized on mcp:full
+					scopes: ["mcp:full"],
+					fromAllowList: profile.fromAllowList,
+					namespaceReadPrefixes: profile.namespaceReadPrefixes,
+					namespaceWritePrefixes: profile.namespaceWritePrefixes,
+					accessExpiresAt: now + ACCESS_TOKEN_TTL_SECONDS * 1000,
+					refreshExpiresAt: now + REFRESH_TOKEN_TTL_SECONDS * 1000,
+					...(profile.clerkOrgSlug !== undefined
+						? { clerkOrgSlug: profile.clerkOrgSlug }
+						: {}),
+				},
+			)) as
+				| { status: "ok"; issued: { refresh: string; access: string } }
+				| { status: "reused" | "invalid" };
+		} catch (err: unknown) {
+			// The door RAISES `RBAC_DENIED` when the person behind the token holds no
+			// live membership of the organisation any more (task
+			// k17fxe8feeq1k2rb1ggj76e97s8h7m7k): a REFUSAL, answered as invalid_grant
+			// like every other refused refresh, never as a 500.
+			const data = (err as { data?: unknown } | null)?.data;
+			if (
+				typeof data === "string" &&
+				data.startsWith("RBAC_DENIED") &&
+				data.includes("rotateRefreshToken")
+			) {
+				return c.json(
+					{
+						error: "invalid_grant",
+						error_description:
+							"the member no longer belongs to the organisation",
+					},
+					400,
+				);
+			}
+			throw err;
+		}
 		if (rotated.status !== "ok") {
 			return c.json({ error: "invalid_grant" }, 400);
 		}
