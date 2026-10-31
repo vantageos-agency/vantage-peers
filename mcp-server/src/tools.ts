@@ -71,6 +71,11 @@ import type { VpToolResult } from "./ui-resources/schemas.js";
 import { wrapToolResult } from "./ui-resources/stream-marker.js";
 import { validateTaskPayload } from "./validate-task-payload.js";
 import { verifiedActorOf, withVerifiedActor } from "./verifiedActor.js";
+import {
+	acceptsJsonArrayString,
+	idListSchema,
+	stringListSchema,
+} from "./listArgs.js";
 import { resolveWhoamiIdentity } from "./whoamiIdentity.js";
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -292,7 +297,8 @@ export const severitySchema = z
 	.enum(["critical", "major", "minor"])
 	.describe("Episode severity — critical = cross-orchestrator lesson");
 
-export const flexArray = z.union([z.array(z.string()), z.string()]);
+// A JSON-string list and a bare string are normalised before validation (src/listArgs.ts).
+export const flexArray = stringListSchema;
 const flexArrayOptional = flexArray.optional();
 
 // The artifact a task claims to deliver (an npm export today). Setting it makes
@@ -372,8 +378,9 @@ export const listTasksArgsSchema = z.object({
 		.describe(
 			"Filter by instance — e.g. 'pi-vps'. Returns only tasks assigned to that instance.",
 		),
-	status: z
-		.union([
+	// A list sent as a JSON string is parsed first (src/listArgs.ts).
+	status: acceptsJsonArrayString(
+		z.union([
 			z.enum([
 				"todo",
 				"in_progress",
@@ -397,7 +404,8 @@ export const listTasksArgsSchema = z.object({
 					]),
 				)
 				.min(1),
-		])
+		]),
+	)
 		.optional()
 		.describe("Filter by status (single, alias, or array)"),
 	project: z.string().optional().describe("Filter by project name"),
@@ -753,8 +761,9 @@ export const missionStatusSchema = z
 // AND multi-status arrays to the MCP client. Backend (convex/tasks.ts +
 // convex/missions.ts) handles alias expansion + array validation.
 // Aliases NOT allowed inside arrays (matches backend rejection).
-export const taskStatusFilterSchema = z
-	.union([
+// A list sent as a JSON string is parsed first (src/listArgs.ts).
+export const taskStatusFilterSchema = acceptsJsonArrayString(
+	z.union([
 		z.enum([...taskStatusValues, ...taskStatusAliases]),
 		z.array(z.enum(taskStatusValues)).min(1),
 	])
@@ -762,10 +771,12 @@ export const taskStatusFilterSchema = z
 		'Task status filter. Single status ("todo"|"in_progress"|"review"|"blocked"|"done"|"cancelled"|"failed"), ' +
 			'alias ("open" = todo+in_progress+review+blocked, "active" = todo+in_progress, "all" = no filter), ' +
 			"or array of direct statuses (no aliases inside array).",
-	);
+	),
+);
 
-export const missionStatusFilterSchema = z
-	.union([
+// A list sent as a JSON string is parsed first (src/listArgs.ts).
+export const missionStatusFilterSchema = acceptsJsonArrayString(
+	z.union([
 		z.enum([...missionStatusValues, ...missionStatusAliases]),
 		z.array(z.enum(missionStatusValues)).min(1),
 	])
@@ -773,7 +784,8 @@ export const missionStatusFilterSchema = z
 		'Mission status filter. Single status ("brainstorm"|"plan"|"execute"|"validate"|"complete"), ' +
 			'alias ("open" = brainstorm+plan+execute+validate, "active" = plan+execute, "all" = no filter), ' +
 			"or array of direct statuses (no aliases inside array).",
-	);
+	),
+);
 
 // v2.3.2 — fields projection toggle. "lite" returns compact projection
 // (5-10× smaller payload), "full" (default) returns full doc.
@@ -3980,9 +3992,9 @@ export function registerTools(
 			"WHEN: call immediately after processing each batch of messages returned by check_messages. " +
 			"EXAMPLE: mark_as_read receiptIds=['j57aaaaa...', 'j57bbbbb...'] callerOrchestrator='pi'.",
 		{
-			receiptIds: z
-				.union([z.array(receiptIdSchema).min(1), receiptIdSchema])
-				.describe("Receipt IDs to mark as read — array or single string"),
+			receiptIds: idListSchema(receiptIdSchema).describe(
+				"Receipt IDs to mark as read, as a list (one ID is a list of one)",
+			),
 			// ACTING-NAME: a claim the credential-resolved actor verifies (defineTool -> bindActingNames), never an authority. Omitted => derived from the actor; a different agent name => AGENT_IDENTITY_MISMATCH.
 			callerOrchestrator: creatorSchema
 				.optional()
@@ -4002,21 +4014,8 @@ export function registerTools(
 		},
 		async ({ receiptIds, callerOrchestrator }) => {
 			try {
-				let receiptIdsArray: string[];
-				if (Array.isArray(receiptIds)) {
-					receiptIdsArray = receiptIds;
-				} else if (
-					typeof receiptIds === "string" &&
-					receiptIds.startsWith("[")
-				) {
-					try {
-						receiptIdsArray = JSON.parse(receiptIds);
-					} catch {
-						receiptIdsArray = [receiptIds];
-					}
-				} else {
-					receiptIdsArray = [receiptIds as string];
-				}
+				// Normalised to an array by idListSchema before validation.
+				const receiptIdsArray: string[] = receiptIds;
 				const orgUnresolved = unresolvedOrgDenial("mark_as_read");
 				if (orgUnresolved) return orgUnresolved;
 				const count = await convex.mutation("messages:markAsRead" as any, {
@@ -6965,9 +6964,9 @@ export function registerTools(
 			topic: z
 				.string()
 				.describe("Topic category — e.g. 'architecture', 'revenue', 'product'"),
-			participants: z
-				.union([z.array(z.string()), z.string()])
-				.describe("Who participated — e.g. ['pi', 'sigma'] or 'pi'"),
+			participants: stringListSchema.describe(
+				"Who participated — e.g. ['pi', 'sigma'] or 'pi'",
+			),
 			content: z.string().describe("Full briefing content"),
 			decisions: flexArrayOptional.describe(
 				"Decisions made during the briefing",
