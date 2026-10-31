@@ -84,6 +84,7 @@ import {
 	sessionTokenFrom,
 } from "./src/authorize.js";
 import { bootCheckOrExit } from "./src/backendContract.js";
+import { BRAND_ICON_ROUTES, mcpImplementation } from "./src/brand.js";
 import { registerTools } from "./src/tools.js";
 import { listUiResources, readUiResource } from "./src/ui-resources/index.js";
 
@@ -1370,6 +1371,17 @@ app.post("/token", async (c) => {
 // Health check — unauthenticated, used by Railway health probes
 // ─────────────────────────────────────────────────────────────────────────────
 
+// The VantagePeers icon (src/brand.ts), public like /health: clients fetch the
+// origin's favicon and the serverInfo icons with no credential.
+for (const [path, [contentType, bytes]] of Object.entries(BRAND_ICON_ROUTES)) {
+	app.get(path, (c) =>
+		c.body(bytes, 200, {
+			"content-type": contentType,
+			"cache-control": "public, max-age=86400",
+		}),
+	);
+}
+
 app.get("/health", (c) =>
 	c.json({
 		status: "ok",
@@ -2143,14 +2155,19 @@ app.all("/mcp", bearerAuthMiddleware(), async (c) => {
 	// rationale per auth path.
 	const convex = selectConvexClientForRequest(tenant.convexUrl, oauthCtx);
 
+	// The icons serverInfo declares live on the origin this caller used.
+	let iconOrigin: string | null = null;
+	try {
+		iconOrigin = resolveIssuer(c.req.raw);
+	} catch {
+		iconOrigin = null;
+	}
+
 	// Fresh McpServer per request — stateless, no session leakage. The factory
 	// closes over THIS request's verified caller (oauthCtx) and its Convex
 	// client, so an instance never serves anyone else.
 	const buildServer = (): McpServer => {
-		const server = new McpServer({
-			name: "vantage-peers",
-			version: pkg.version,
-		});
+		const server = new McpServer(mcpImplementation(pkg.version, iconOrigin));
 
 		registerTools(server, convex, oauthCtx);
 
