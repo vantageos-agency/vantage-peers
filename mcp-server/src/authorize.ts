@@ -26,6 +26,7 @@ import type {
 	ConsumeCodeResult,
 	OrgPickerModel,
 } from "@vantageos/cloud-identity";
+import { ConvexError } from "convex/values";
 import type { Context } from "hono";
 import { getCookie } from "hono/cookie";
 import { internalClient } from "./auth.js";
@@ -169,15 +170,92 @@ async function fetchClerkJwks(issuer: string): Promise<ClerkJwks> {
 	return keys;
 }
 
-/** The Convex-backed AuthorizationCodeStore: one atomic consume. */
-export function convexCodeStore(): AuthorizationCodeStore {
+/** What the person chose for the agent, as posted with Approve. */
+export type AgentChoice =
+	| { kind: "existing"; agentId: string }
+	| { kind: "create"; name: string };
+
+/** The form fields the consent screen posts (`agent_<orgId>`, `newAgent_<orgId>`). */
+export type PostedAgentFields = Readonly<Record<string, string | undefined>>;
+
+/** Refusal codes of the agent step that are answered to the person (never an infrastructure failure). */
+const AGENT_REFUSAL_CODES = [
+	"AGENT_CHOICE_REFUSED",
+	"AGENT_NAME_TAKEN",
+	"AGENT_NAME_INVALID",
+	"AGENT_NAME_RESERVED",
+	"AGENT_INACTIVE",
+	"PERSONAL_AGENT_AMBIGUOUS",
+	"AGENT_SCAN_CAP_EXCEEDED",
+] as const;
+
+/** The agent-refusal code a Convex error carries, or null for anything else. */
+export function agentRefusalCodeOf(err: unknown): string | null {
+	const text =
+		err instanceof ConvexError && typeof err.data === "string"
+			? err.data
+			: err instanceof Error
+				? err.message
+				: "";
+	return AGENT_REFUSAL_CODES.find((code) => text.includes(code)) ?? null;
+}
+
+/**
+ * The choice posted for the organisation the code is bound to. Fields keyed to
+ * any OTHER organisation are never read: a choice made while another
+ * organisation was selected cannot carry over. `null` means no agent chosen
+ * (approve as a person); `"conflict"` means both an existing agent and a new
+ * name were posted, which is refused rather than guessed.
+ */
+export function agentChoiceFrom(
+	posted: PostedAgentFields,
+	orgId: string,
+): AgentChoice | null | "conflict" {
+	const agentId = (posted[`agent_${orgId}`] ?? "").trim();
+	const name = (posted[`newAgent_${orgId}`] ?? "").trim();
+	if (agentId !== "" && name !== "") return "conflict";
+	if (agentId !== "") return { kind: "existing", agentId };
+	if (name !== "") return { kind: "create", name };
+	return null;
+}
+
+/**
+ * The Convex-backed AuthorizationCodeStore: one atomic consume. With a chosen
+ * agent, `put` is `oauth:putPersonCodeWithAgent`: the choice is judged and bound
+ * in the same transaction that inserts the code, so a refusal leaves no code and
+ * no write. `onAgentRefusal` receives the refusal code when that is why `put`
+ * failed; the error is rethrown so the package still issues no code.
+ */
+export function convexCodeStore(
+	posted: PostedAgentFields = {},
+	onAgentRefusal: (code: string) => void = () => {},
+): AuthorizationCodeStore {
 	return {
 		async put(record) {
-			await internalClient().mutation(
-				// biome-ignore lint/suspicious/noExplicitAny: Convex string API
-				"oauth:putPersonCode" as any,
-				{ record },
-			);
+			const choice = agentChoiceFrom(posted, record.orgId);
+			if (choice === "conflict") {
+				onAgentRefusal("AGENT_CHOICE_REFUSED");
+				throw new Error("AGENT_CHOICE_REFUSED: two agent choices were posted");
+			}
+			try {
+				if (choice === null) {
+					await internalClient().mutation(
+						// biome-ignore lint/suspicious/noExplicitAny: Convex string API
+						"oauth:putPersonCode" as any,
+						{ record },
+					);
+				} else {
+					await internalClient().mutation(
+						// biome-ignore lint/suspicious/noExplicitAny: Convex string API
+						"oauth:putPersonCodeWithAgent" as any,
+						{ record, choice },
+					);
+				}
+			} catch (err: unknown) {
+				const code = agentRefusalCodeOf(err);
+				if (code !== null) onAgentRefusal(code);
+				throw err;
+			}
 		},
 		async consume(codeHash) {
 			return (await internalClient().mutation(
@@ -293,7 +371,21 @@ export async function getClerkUser(userId: string): Promise<ClerkUserLike> {
 	return (await clerk.users.getUser(userId)) as unknown as ClerkUserLike;
 }
 
-export type AuthorizeRuntime = { cfg: AuthorizeConfig; deps: AuthorizeDeps };
+/** What the consent screen draws for one organisation (null: the list could not be read). */
+export type AgentChoiceView = {
+	agents: { agentId: string; name: string; mine: boolean }[];
+	canCreate: boolean;
+} | null;
+export type AgentChoicesByOrg = Readonly<Record<string, AgentChoiceView>>;
+
+export type AuthorizeRuntime = {
+	cfg: AuthorizeConfig;
+	deps: AuthorizeDeps;
+	/** The agents each organisation of the picker offers this person (display only). */
+	agentChoices(model: OrgPickerModel): Promise<AgentChoicesByOrg>;
+	/** Set when the last code issue failed because the agent choice was refused. */
+	agentRefusal(): string | null;
+};
 
 /**
  * Builds the package configuration. Consent is left at its default (ON): the
@@ -303,6 +395,7 @@ export type AuthorizeRuntime = { cfg: AuthorizeConfig; deps: AuthorizeDeps };
 export function buildAuthorizeRuntime(
 	settings: AuthorizeSettings,
 	expand: RedirectExpander,
+	posted: PostedAgentFields = {},
 ): AuthorizeRuntime {
 	const cfg: AuthorizeConfig = {
 		stateSecret: settings.stateSecret,
@@ -318,12 +411,52 @@ export function buildAuthorizeRuntime(
 			authorizedParties: settings.authorizedParties,
 		},
 	};
+	// The person the package verified, as it asks for their memberships: the only
+	// place the picker's model learns who is looking at it (display only).
+	let verifiedUserId: string | null = null;
+	let agentRefusal: string | null = null;
 	const deps: AuthorizeDeps = {
 		lookupClient: (clientId) => lookupClient(clientId, expand),
-		listMemberships: listUsableMemberships,
-		codeStore: convexCodeStore(),
+		listMemberships: (userId) => {
+			verifiedUserId = userId;
+			return listUsableMemberships(userId);
+		},
+		codeStore: convexCodeStore(posted, (code) => {
+			agentRefusal = code;
+		}),
 	};
-	return { cfg, deps };
+	return {
+		cfg,
+		deps,
+		agentChoices: async (model) => {
+			const userId = verifiedUserId;
+			const out: Record<string, AgentChoiceView> = {};
+			for (const o of model.organizations) {
+				out[o.id] = null;
+				if (userId === null) continue;
+				try {
+					out[o.id] = (await internalClient().query(
+						// biome-ignore lint/suspicious/noExplicitAny: Convex string API
+						"oauth:listPersonalAgentChoices" as any,
+						{
+							clerkUserId: userId,
+							orgId: o.id,
+							orgSlug: o.slug,
+							orgRole: o.role,
+						},
+					)) as AgentChoiceView;
+				} catch (err: unknown) {
+					// The screen degrades to "connect as yourself"; nothing is granted.
+					console.error(
+						`[oauth] agent choices unavailable for org ${o.id}:`,
+						err instanceof Error ? err.message : err,
+					);
+				}
+			}
+			return out;
+		},
+		agentRefusal: () => agentRefusal,
+	};
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -450,6 +583,16 @@ const PICKER_STYLE = [
 	".org:hover{border-color:var(--border-hover);background:var(--card-hover)}",
 	".org:has(input:checked){border-color:var(--primary)}",
 	".org input{accent-color:var(--primary);margin:0}",
+	".org-block{margin-bottom:.5rem}.org-block .org{margin-bottom:0}",
+	".agents{display:none;margin:.5rem 0 .75rem 1rem}",
+	".org-block:has(input[name=orgId]:checked) .agents{display:block}",
+	".agent{display:flex;align-items:center;gap:.75rem;padding:.5rem .75rem;margin-top:.375rem;" +
+		"border:1px solid var(--border);border-radius:.5rem;cursor:pointer}",
+	".agent:has(input:checked){border-color:var(--primary)}",
+	".agent input{accent-color:var(--primary);margin:0}",
+	".agent-new{display:block;margin-top:.5rem}",
+	".agent-new input{display:block;width:100%;margin-top:.25rem;font:inherit;padding:.5rem .75rem;" +
+		"border-radius:.5rem;border:1px solid var(--border);background:transparent;color:var(--foreground)}",
 	".name{flex:1;font-weight:500}",
 	".role{font-size:.75rem;color:var(--muted-foreground);background:var(--secondary);" +
 		"padding:.125rem .5rem;border-radius:999px}",
@@ -476,18 +619,64 @@ export async function pickerContentSecurityPolicy(): Promise<string> {
 }
 
 /**
+ * The agent step of one organisation: the agents the person may take (by ID,
+ * the name is only the label shown), "connect as myself", and, for an admin, a
+ * field to create one. Field names carry the organisation id, so a choice made
+ * while another organisation was selected is never read. Shown only while its
+ * organisation is the selected one (CSS `:has`, no script).
+ */
+function renderAgentChoices(
+	orgId: string,
+	view: AgentChoiceView | undefined,
+): string {
+	if (view === null || view === undefined) {
+		return `<div class="agents"><p class="muted">The agent list is unavailable. You will connect as yourself.</p></div>`;
+	}
+	const field = escapeHtml(`agent_${orgId}`);
+	const holds = view.agents.some((a) => a.mine);
+	const parts: string[] = [];
+	if (view.agents.length > 0) {
+		parts.push('<p class="muted">Agent to act as in this organisation</p>');
+		if (!holds) {
+			parts.push(
+				`<label class="agent"><input type="radio" name="${field}" value="" checked><span class="name">Connect as myself</span></label>`,
+			);
+		}
+		for (const a of view.agents) {
+			parts.push(
+				`<label class="agent"><input type="radio" name="${field}" value="${escapeHtml(a.agentId)}"${a.mine ? " checked" : ""}><span class="name">${escapeHtml(a.name)}</span></label>`,
+			);
+		}
+	}
+	if (view.canCreate) {
+		parts.push(
+			`<label class="agent-new"><span class="muted">Or create an agent for yourself</span><input type="text" name="${escapeHtml(`newAgent_${orgId}`)}" maxlength="64" autocomplete="off" placeholder="Agent name"></label>`,
+		);
+	}
+	if (view.agents.length === 0 && !view.canCreate) {
+		parts.push(
+			'<p class="muted">No agent is available to you in this organisation; ask your admin to make one available. You can still approve as yourself.</p>',
+		);
+	}
+	return `<div class="agents">${parts.join("")}</div>`;
+}
+
+/**
  * Server-rendered org picker and consent page. It posts `state`, `orgId`,
  * `approved` and the hidden `consentToken` to POST /authorize/org. The
  * consentToken IS the CSRF protection of that POST; do not drop it.
  */
-export function renderOrgPicker(model: OrgPickerModel): string {
+export function renderOrgPicker(
+	model: OrgPickerModel,
+	choices: AgentChoicesByOrg = {},
+): string {
 	const clientName = model.client.clientName ?? model.client.clientId;
 	const only = model.organizations.length === 1;
 	const orgs = model.organizations
-		.map(
-			(o, i) =>
-				`<label class="org"><input type="radio" name="orgId" value="${escapeHtml(o.id)}" required${only && i === 0 ? " checked" : ""}><span class="name">${escapeHtml(o.name)}</span><span class="role">${escapeHtml(o.role.replace(/^org:/, ""))}</span></label>`,
-		)
+		.map((o, i) => {
+			const checked = only && i === 0 ? " checked" : "";
+			return `<div class="org-block"><label class="org"><input type="radio" name="orgId" value="${escapeHtml(o.id)}" required${checked}><span class="name">${escapeHtml(o.name)}</span><span class="role">${escapeHtml(o.role.replace(/^org:/, ""))}</span></label>${renderAgentChoices(o.id, choices[o.id])}</div>`;
+		})
 		.join("\n");
 	return `<!doctype html>
 <html lang="en">

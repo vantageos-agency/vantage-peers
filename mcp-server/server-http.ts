@@ -67,6 +67,7 @@ import {
 } from "./src/auth.js";
 import { selectConvexClientForRequest } from "./src/authenticatedConvexClient.js";
 import {
+	type AuthorizeRuntime,
 	buildAuthorizeRuntime,
 	clerkHandshakeConfig,
 	clientIdInState,
@@ -662,6 +663,7 @@ async function respondToOutcome(
 	c: Context,
 	outcome: AuthorizeOutcome,
 	state?: string,
+	runtime?: AuthorizeRuntime,
 ): Promise<Response> {
 	c.header("Cache-Control", "no-store");
 	c.header("Referrer-Policy", "same-origin");
@@ -677,8 +679,26 @@ async function respondToOutcome(
 		}
 		case "org-picker":
 			c.header("Content-Security-Policy", await pickerContentSecurityPolicy());
-			return c.html(renderOrgPicker(outcome.model));
+			return c.html(
+				renderOrgPicker(
+					outcome.model,
+					runtime ? await runtime.agentChoices(outcome.model) : {},
+				),
+			);
 		case "refused": {
+			// The agent the person chose was refused inside the transaction that
+			// issues the code: no code exists and nothing was written. The person is
+			// told which refusal, by its code, not a generic server error.
+			const agentRefusal = runtime?.agentRefusal() ?? null;
+			if (agentRefusal !== null) {
+				console.error(
+					`[oauth] ${c.req.path} refused: agent choice ${agentRefusal} client_id=${clientIdInState(state) ?? "unknown"}`,
+				);
+				return c.json(
+					{ error: "access_denied", error_description: agentRefusal },
+					403,
+				);
+			}
 			// One line per refusal: the code, the route and (when the state names
 			// one) the client. Never a token, a secret or a query value.
 			console.error(
@@ -700,10 +720,11 @@ app.get("/authorize", async (c) => {
 	);
 	if (!settings.ok) return authorizeUnavailable(c, settings.missing);
 	const query = c.req.query();
-	const { cfg, deps } = buildAuthorizeRuntime(
+	const runtime = buildAuthorizeRuntime(
 		settings.settings,
 		expanderFor(query.redirect_uri),
 	);
+	const { cfg, deps } = runtime;
 	// `resource` is optional (RFC 8707 §2) and Claude.ai's connector omits it.
 	// A request naming no target is bound to the single one this server
 	// publishes; a named resource is still checked by the package, unchanged.
@@ -713,6 +734,8 @@ app.get("/authorize", async (c) => {
 	return respondToOutcome(
 		c,
 		await startAuthorize(query, sessionTokenFrom(c), cfg, deps),
+		undefined,
+		runtime,
 	);
 });
 
@@ -725,10 +748,11 @@ app.get("/authorize/callback", async (c) => {
 	);
 	if (!settings.ok) return authorizeUnavailable(c, settings.missing);
 	const state = c.req.query("authorize_state");
-	const { cfg, deps } = buildAuthorizeRuntime(
+	const runtime = buildAuthorizeRuntime(
 		settings.settings,
 		expanderFor(redirectUriInState(state)),
 	);
+	const { cfg, deps } = runtime;
 	let sessionToken = sessionTokenFrom(c);
 	// On return from Clerk's hosted sign-in the session is not on this host yet
 	// (on a development instance, or a production one on another registrable
@@ -799,6 +823,7 @@ app.get("/authorize/callback", async (c) => {
 		c,
 		await resumeAuthorize({ state: state ?? "", sessionToken }, cfg, deps),
 		state,
+		runtime,
 	);
 });
 
@@ -822,10 +847,24 @@ app.post("/authorize/org", async (c) => {
 	const field = (name: string): string | undefined =>
 		typeof form[name] === "string" ? (form[name] as string) : undefined;
 	const state = field("state");
-	const { cfg, deps } = buildAuthorizeRuntime(
+	// The agent step's fields (`agent_<orgId>`, `newAgent_<orgId>`): read only
+	// for the organisation the code ends up bound to, and only as an agent ID or
+	// a name for a new agent; whether they are allowed is judged in Convex.
+	const posted: Record<string, string> = {};
+	for (const [name, value] of Object.entries(form)) {
+		if (
+			typeof value === "string" &&
+			(name.startsWith("agent_") || name.startsWith("newAgent_"))
+		) {
+			posted[name] = value;
+		}
+	}
+	const runtime = buildAuthorizeRuntime(
 		settings.settings,
 		expanderFor(redirectUriInState(state)),
+		posted,
 	);
+	const { cfg, deps } = runtime;
 	// The person's session. Under the same guard as the callback (no Bearer, no
 	// injected collaborators, both Clerk keys set) the identity package decides
 	// it: a production instance names its cookie `__session_<suffix>` and the
@@ -891,6 +930,7 @@ app.post("/authorize/org", async (c) => {
 			deps,
 		),
 		state,
+		runtime,
 	);
 });
 

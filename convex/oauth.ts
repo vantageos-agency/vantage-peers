@@ -51,6 +51,7 @@ import {
 } from "./lib/actingPrincipal";
 import { liveSeatAgent, resolveSeatAgent } from "./lib/seatAgent";
 import { personalAgentOfToken } from "./lib/personalAgent";
+import { agentChoicesFor, applyAgentChoice } from "./lib/personalAgentChoice";
 import { requireId } from "./lib/ids";
 import { DEFAULT_MEMBER_SCOPES } from "./lib/memberScopes";
 import { upsertAdminMembership } from "./orgMembership";
@@ -2345,6 +2346,80 @@ export const putPersonCode = mutation({
 		await requireServiceAccount(ctx, "oauth:putPersonCode");
 		await ctx.db.insert("oauth_person_codes", args.record);
 		return null;
+	},
+});
+
+// The agent the person picked on the consent screen, posted with Approve: an
+// existing agent by ID (never a name) or a name for a NEW agent (admin only,
+// judged in `applyAgentChoice`). No choice at all uses `putPersonCode` above.
+const agentChoiceShape = v.union(
+	v.object({ kind: v.literal("existing"), agentId: v.string() }),
+	v.object({ kind: v.literal("create"), name: v.string() }),
+);
+
+/**
+ * putPersonCodeWithAgent — `putPersonCode` plus the agent choice, in ONE
+ * transaction: the choice is judged against the rows as they are NOW and bound
+ * (or minted and bound) before the code row is inserted. A refusal throws, so no
+ * code exists and no agent was written; an agent that became someone else's since
+ * the screen was drawn is such a refusal. The person, organisation and role are
+ * the code record's own (the package took them from the verified session and the
+ * live membership), never separate arguments.
+ */
+export const putPersonCodeWithAgent = mutation({
+	args: { record: personCodeRecordShape, choice: agentChoiceShape },
+	returns: v.null(),
+	handler: async (ctx, args) => {
+		// write-contract: MCP-transport-only — issued via mcp-server client.mutation("oauth:putPersonCodeWithAgent", …) at mcp-server/src/authorize.ts (imperative, from the POST /authorize/org code store); never a subscribing pre-org client shell. The no-org throw is a refusal at an imperative MCP call, never at a render.
+		await requireServiceAccount(ctx, "oauth:putPersonCodeWithAgent");
+		await applyAgentChoice(
+			ctx,
+			{
+				personId: args.record.clerkUserId,
+				org: {
+					id: args.record.orgId,
+					key: args.record.orgSlug ?? args.record.orgId,
+				},
+				role: args.record.orgRole,
+			},
+			args.choice,
+		);
+		await ctx.db.insert("oauth_person_codes", args.record);
+		return null;
+	},
+});
+
+/**
+ * listPersonalAgentChoices — what the consent screen draws for ONE organisation
+ * of a verified person: the agents they may take and whether they may create
+ * one. Display only; the choice is judged again in `putPersonCodeWithAgent`.
+ */
+export const listPersonalAgentChoices = query({
+	args: {
+		clerkUserId: v.string(),
+		orgId: v.string(),
+		orgSlug: v.union(v.string(), v.null()),
+		orgRole: v.string(),
+	},
+	returns: v.object({
+		agents: v.array(
+			v.object({
+				agentId: v.id("agents"),
+				name: v.string(),
+				mine: v.boolean(),
+			}),
+		),
+		canCreate: v.boolean(),
+	}),
+	handler: async (ctx, args) => {
+		// isolation-contract: NO reactive subscriber — a new function named only by the MCP server's authorize page (mcp-server/src/authorize.ts, an imperative service call per page render); enumerated with `grep -rn "listPersonalAgentChoices" mcp-server/src mcp-server/server-http.ts` -> authorize.ts only. The refusal stays a RAISE: `requireServiceAccount` throws for any caller other than the fleet service account, so no render exists for a throw to crash.
+		await requireServiceAccount(ctx, "oauth:listPersonalAgentChoices");
+		return await agentChoicesFor(
+			ctx,
+			args.clerkUserId,
+			{ id: args.orgId, key: args.orgSlug ?? args.orgId },
+			args.orgRole,
+		);
 	},
 });
 
