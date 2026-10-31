@@ -139,10 +139,7 @@ describe("mark_as_read takes a list on every client", () => {
 // is allowed only where each branch carries its own meaning, and each of those
 // accepts a list sent as a JSON string (acceptsJsonArrayString, src/listArgs.ts).
 const TRACED_UNIONS = new Set([
-	// single status / alias, OR a list of statuses
-	"list_tasks.status",
-	"list_tasks_by_mission.status",
-	"list_missions.status",
+	// (the three status filters left this set: one shape, statusListSchema)
 	// a choice of string constants: every branch is a string a client can send
 	"block_task.blockedCause",
 	// null = every family, OR a list of type tokens

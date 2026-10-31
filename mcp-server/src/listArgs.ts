@@ -52,3 +52,31 @@ export const stringListSchema = z.preprocess(toList, z.array(z.string()));
 export function acceptsJsonArrayString<T extends z.ZodType>(schema: T) {
 	return z.preprocess(parseJsonArrayString, schema);
 }
+
+/**
+ * A status filter in ONE published shape (standard S-43): an array of one or
+ * more tokens, each a status or an alias. A bare string or a JSON-string list
+ * becomes that array before validation. An alias ("open", "active", "all")
+ * stands alone: mixed with other tokens it is refused. What the backend
+ * receives is unchanged: one token as a string, several statuses as an array.
+ */
+export function statusListSchema(
+	statuses: readonly [string, ...string[]],
+	aliases: readonly string[],
+) {
+	const tokens = [...statuses, ...aliases] as [string, ...string[]];
+	return z.preprocess(
+		toList,
+		z
+			.array(z.enum(tokens))
+			.min(1)
+			.refine(
+				(list) => list.length === 1 || !list.some((t) => aliases.includes(t)),
+				{
+					message:
+						"a status alias (open, active, all) stands alone; list direct statuses instead",
+				},
+			)
+			.transform((list) => (list.length === 1 ? list[0] : list)),
+	);
+}
