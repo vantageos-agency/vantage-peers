@@ -248,16 +248,25 @@ type MembershipArgs = {
 
 /**
  * The row for (org id, user id), tombstoned or not. A miss is a miss: there is
- * no lookup by slug. A plain indexed read: no decision is made here.
+ * no lookup by slug. A plain indexed read: no decision is made here. With no org
+ * id it answers ANY one row of the user (`by_user`), which is how
+ * `oauth:rotateRefreshToken` tells a person (has membership rows) from a seat.
  */
-async function findMembershipRow(
+export async function findMembershipRow(
 	ctx: Pick<MutationCtx, "db">,
-	args: { clerkOrgId: string; clerkUserId: string },
+	args: { clerkOrgId?: string; clerkUserId: string },
 ) {
+	const { clerkOrgId, clerkUserId } = args;
+	if (clerkOrgId === undefined) {
+		return await ctx.db
+			.query("orgMembership")
+			.withIndex("by_user", (q) => q.eq("clerkUserId", clerkUserId))
+			.first();
+	}
 	return await ctx.db
 		.query("orgMembership")
 		.withIndex("by_org_user_clerk_id", (q) =>
-			q.eq("clerkOrgId", args.clerkOrgId).eq("clerkUserId", args.clerkUserId),
+			q.eq("clerkOrgId", clerkOrgId).eq("clerkUserId", clerkUserId),
 		)
 		.unique();
 }
