@@ -178,6 +178,26 @@ describe("C. a stamped agent that stops being the person's: the token acts as th
 		await t.run((ctx) => ctx.db.delete(x));
 		expect(await actingAs(t, hash)).toBeNull();
 	});
+	// The two cases only the permanent-ID clause decides (Eta REVISE #1612): the
+	// slug label still matches, so a slug comparison alone would admit them.
+	test("same slug label, another permanent org ID", async () => {
+		const { t, x } = await world();
+		const hash = await mintPersonToken(t, "org-a", { agentId: x });
+		await t.run((ctx) => ctx.db.patch(x, { clerkOrgId: "org_someoneElse0000" }));
+		expect(await actingAs(t, hash)).toBeNull();
+	});
+	test("a token with no permanent org ID never matches", async () => {
+		const { t, x } = await world();
+		const hash = await mintPersonToken(t, "org-a", { agentId: x });
+		await t.run(async (ctx) => {
+			const row = await ctx.db
+				.query("oauth_access_tokens")
+				.withIndex("by_tokenHash", (q) => q.eq("tokenHash", hash))
+				.unique();
+			if (row) await ctx.db.patch(row._id, { clerkOrgId: undefined });
+		});
+		expect(await actingAs(t, hash)).toBeNull();
+	});
 });
 
 describe("E. a legacy token (no stamp, no decision) keeps today's rule", () => {
