@@ -56,6 +56,7 @@ A probe identity is an ordinary client seat. This design adds no flag, no carve-
 - At provisioning, a recurring task assigned to sigma is created to fire 14 days before the seat `expiresAt`. It re-runs runbook step 4 for both orgs, updates the four Infisical keys, re-runs the probe, and closes with the new `expiresAt`.
 - The same provisioning announces the expiry date on `broadcast`, so a station planning a probe knows the date before it bites.
 - On rotation the old bearer stops at its own `expiresAt`. The agent credential is not re-minted, because a re-mint locks out the live holder (header of `scripts/mint-station-agents.mjs`).
+- As provisioned (2026-10-29): the four seats (probe-tenant-a / probe-tenant-b on DEV `efficient-guineapig-356` and PROD `compassionate-goldfinch-737`) expire 2027-01-27. Infisical was not authenticated, so the secrets live in 0600 files under `/home/elpi/.config/vantage-probe-tenants/<tenant>/` (DEV) and `/home/elpi/.config/vantage-probe-tenants/prod/<tenant>/` (PROD), not in Infisical keys. Rotation routine `kh7bj9s47c7bv7xtj0g07x061s8h6v5a` (cron `0 9 13 1 *`, fires 2027-01-13) carries the re-mint steps; the expiry was announced on `broadcast` (message `jn7c7d568czc4jgrfyvgfdb7zs8h6r6g`).
 
 ## 3. How a probe reads a grantee row under it — the three readings
 
