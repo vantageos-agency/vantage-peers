@@ -625,18 +625,16 @@ function renderAgentChoices(
 		return `<div class="agents"><p class="muted">The agent list is unavailable. You will connect as yourself.</p></div>`;
 	}
 	const field = escapeHtml(`agent_${orgId}`);
-	const holds = view.agents.some((a) => a.mine);
 	const parts: string[] = [];
 	if (view.agents.length > 0) {
 		parts.push('<p class="muted">Agent to act as in this organisation</p>');
-		if (!holds) {
-			parts.push(
-				`<label class="agent"><input type="radio" name="${field}" value="" checked><span class="name">Connect as myself</span></label>`,
-			);
-		}
+		// Always offered, and the default: nobody is picked for the person.
+		parts.push(
+			`<label class="agent"><input type="radio" name="${field}" value="" checked><span class="name">Connect as myself</span></label>`,
+		);
 		for (const a of view.agents) {
 			parts.push(
-				`<label class="agent"><input type="radio" name="${field}" value="${escapeHtml(a.agentId)}"${a.mine ? " checked" : ""}><span class="name">${escapeHtml(a.name)}</span></label>`,
+				`<label class="agent"><input type="radio" name="${field}" value="${escapeHtml(a.agentId)}"><span class="name">${escapeHtml(a.name)}</span></label>`,
 			);
 		}
 	}

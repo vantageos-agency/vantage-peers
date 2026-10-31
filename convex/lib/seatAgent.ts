@@ -51,7 +51,7 @@ type OrgStamp = { id: string | undefined; label: string | undefined };
  * mapping holds no ID either names no organisation and never matches. No label
  * is compared here.
  */
-async function sameOrgStamp(
+export async function sameOrgStamp(
 	ctx: QueryCtx | MutationCtx,
 	a: OrgStamp,
 	b: OrgStamp,
