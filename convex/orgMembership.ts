@@ -320,9 +320,10 @@ async function writeMembershipTombstone(
 		// Half A (task k17fxe8feeq1k2rb1ggj76e97s8h7m7k): the removal reaches the
 		// member's tokens in the same transaction. Idempotent, so a replayed or
 		// pre-recorded tombstone revokes again harmlessly.
-		const orgSlugs = [args.clerkOrgSlug, existing?.clerkOrgSlug].filter(
-			(s): s is string => s !== undefined && s !== "",
-		);
+		const orgSlugs =
+			args.clerkOrgSlug !== undefined && args.clerkOrgSlug !== ""
+				? [args.clerkOrgSlug]
+				: [];
 		await ctx.runMutation(internal.oauth.revokeMemberTokens, {
 			userId: args.clerkUserId,
 			clerkOrgId: args.clerkOrgId,
@@ -488,7 +489,11 @@ export const reconcileOrgFromClerk = internalMutation({
 					clerkOrgId: t.orgId,
 					clerkUserId: t.personId,
 				}),
-				{ clerkOrgId: t.orgId, clerkUserId: t.personId },
+				{
+					clerkOrgId: t.orgId,
+					clerkUserId: t.personId,
+					clerkOrgSlug: args.clerkOrgSlug,
+				},
 				{ eventAt: t.eventAt, dryRun: args.dryRun },
 			);
 		}

@@ -3043,12 +3043,7 @@ export const rotateRefreshToken = mutation({
 			// A person's descent stays a person's, so the next rotation still checks
 			// the membership.
 			...(personLineage !== undefined
-				? {
-						principal: "person" as const,
-						...(personLineage.orgRole !== undefined
-							? { orgRole: personLineage.orgRole }
-							: {}),
-					}
+				? { principal: "person" as const, orgRole: personLineage.orgRole }
 				: {}),
 		});
 		return {
