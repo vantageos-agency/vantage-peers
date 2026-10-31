@@ -2910,62 +2910,6 @@ export const revokeMemberTokens = internalMutation({
 	},
 });
 
-/**
- * Half B: a refresh token of a PERSON is refused unless that person holds a LIVE
- * `orgMembership` row (not tombstoned, not absent) for the organisation the
- * refreshed pair would be minted in. A person is recognised by evidence that does
- * not depend on the token row (a refresh row carries no principal): the user id
- * has at least one membership row (`by_user`; a seat name never does), or the
- * family's access token is a `principal: "person"` token. A seat is neither and
- * passes untouched. The organisation is the scope profile's (`orgSlug`); a person
- * whose organisation cannot be named is refused, never defaulted. Raises the same
- * `RBAC_DENIED` code as the other doors.
- */
-async function requireLiveMembershipForPerson(
-	ctx: MutationCtx,
-	row: Doc<"oauth_refresh_tokens">,
-	orgSlug: string | undefined,
-): Promise<void> {
-	const known = await ctx.db
-		.query("orgMembership")
-		.withIndex("by_user", (q) => q.eq("clerkUserId", row.userId))
-		.take(1);
-	let isPerson = known.length > 0;
-	if (!isPerson) {
-		const familyId = row.familyId ?? row.tokenHash;
-		const lineage = await ctx.db
-			.query("oauth_access_tokens")
-			.withIndex("by_familyId", (q) => q.eq("familyId", familyId))
-			.take(1);
-		isPerson = lineage[0]?.principal === "person";
-	}
-	if (!isPerson) return;
-	let live = false;
-	if (orgSlug !== undefined) {
-		const clerkOrgId = await clerkOrgIdForSlug(ctx, orgSlug);
-		const membership =
-			clerkOrgId !== undefined
-				? await ctx.db
-						.query("orgMembership")
-						.withIndex("by_org_user_clerk_id", (q) =>
-							q.eq("clerkOrgId", clerkOrgId).eq("clerkUserId", row.userId),
-						)
-						.unique()
-				: await ctx.db
-						.query("orgMembership")
-						.withIndex("by_org_user", (q) =>
-							q.eq("clerkOrgSlug", orgSlug).eq("clerkUserId", row.userId),
-						)
-						.unique();
-		live = membership !== null && membership.deletedAt === undefined;
-	}
-	if (!live) {
-		throw new ConvexError(
-			`RBAC_DENIED: the person behind this refresh token holds no live membership of the organisation — ${JSON.stringify({ door: "oauth:rotateRefreshToken", reason: "membership-not-live" })}`,
-		);
-	}
-}
-
 // ─────────────────────────────────────────────────────────────────────────────
 // rotateRefreshToken - service account only. The refresh grant's ONE door
 // (module M3): the presented refresh token is looked up, spent, and its
@@ -3032,7 +2976,54 @@ export const rotateRefreshToken = mutation({
 		if (row.clientId !== args.clientId) return { status: "invalid" as const };
 		// Half B (task k17fxe8feeq1k2rb1ggj76e97s8h7m7k): a removed member's
 		// refresh token is refused, before anything is spent or minted.
-		await requireLiveMembershipForPerson(ctx, row, args.clerkOrgSlug);
+		//
+		// A refused person is recognised by evidence that does not depend on the
+		// token row (a refresh row carries no principal): the user id has at least
+		// one membership row (`by_user`; a seat name never does), or the family's
+		// access token is a `principal: "person"` token. A seat is neither and
+		// passes untouched. The organisation is the scope profile's; a person whose
+		// organisation cannot be named is refused, never defaulted.
+		const knownMember = await ctx.db
+			.query("orgMembership")
+			.withIndex("by_user", (q) => q.eq("clerkUserId", row.userId))
+			.take(1);
+		let isPerson = knownMember.length > 0;
+		if (!isPerson) {
+			const lineage = await ctx.db
+				.query("oauth_access_tokens")
+				.withIndex("by_familyId", (q) => q.eq("familyId", familyId))
+				.take(1);
+			isPerson = lineage[0]?.principal === "person";
+		}
+		if (isPerson) {
+			const profileOrg = args.clerkOrgSlug;
+			const profileOrgId = await clerkOrgIdForSlug(ctx, profileOrg);
+			const membership =
+				profileOrg === undefined
+					? null
+					: profileOrgId !== undefined
+						? await ctx.db
+								.query("orgMembership")
+								.withIndex("by_org_user_clerk_id", (q) =>
+									q
+										.eq("clerkOrgId", profileOrgId)
+										.eq("clerkUserId", row.userId),
+								)
+								.unique()
+						: await ctx.db
+								.query("orgMembership")
+								.withIndex("by_org_user", (q) =>
+									q
+										.eq("clerkOrgSlug", profileOrg)
+										.eq("clerkUserId", row.userId),
+								)
+								.unique();
+			if (membership === null || membership.deletedAt !== undefined) {
+				throw new ConvexError(
+					`RBAC_DENIED: the person behind this refresh token holds no live membership of the organisation - ${JSON.stringify({ door: "oauth:rotateRefreshToken", reason: "membership-not-live" })}`,
+				);
+			}
+		}
 
 		const refreshToken = randomOpaqueHex(32);
 		const accessToken = randomOpaqueHex(32);
