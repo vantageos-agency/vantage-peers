@@ -51,7 +51,7 @@ type OrgStamp = { id: string | undefined; label: string | undefined };
  * mapping holds no ID either names no organisation and never matches. No label
  * is compared here.
  */
-export async function sameOrgStamp(
+async function sameOrgStamp(
 	ctx: QueryCtx | MutationCtx,
 	a: OrgStamp,
 	b: OrgStamp,
@@ -131,23 +131,35 @@ export async function liveSeatAgent(
 	row: Doc<"oauth_access_tokens">,
 ): Promise<Doc<"agents"> | null> {
 	if (row.principal !== undefined) return null;
-	if (row.agentId !== undefined) {
-		const agent = await ctx.db.get(row.agentId);
-		// The stamped agent is still live and still in the token's own organisation,
-		// compared by org ID where both sides carry one (a renamed slug does not
-		// break it, a moved agent does).
-		if (
-			agent &&
-			agent.isActive &&
-			(await sameOrgStamp(
-				ctx,
-				{ id: agent.clerkOrgId, label: agent.orgSlug },
-				{ id: row.clerkOrgId, label: row.clerkOrgSlug },
-			))
-		) {
-			return agent;
-		}
-		return null;
-	}
+	if (row.agentId !== undefined) return await liveStampedAgent(ctx, row);
 	return await resolveSeatAgent(ctx, row);
+}
+
+/**
+ * The agent a token row is STAMPED with (`agentId`), only while it is still
+ * live and still in the token's own organisation, compared by org ID where both
+ * sides carry one (a renamed slug does not break it, a moved agent does). Used
+ * by a seat token and by a person token alike; an unstamped row has none.
+ */
+export async function liveStampedAgent(
+	ctx: QueryCtx | MutationCtx,
+	row: Pick<
+		Doc<"oauth_access_tokens">,
+		"agentId" | "clerkOrgId" | "clerkOrgSlug"
+	>,
+): Promise<Doc<"agents"> | null> {
+	if (row.agentId === undefined) return null;
+	const agent = await ctx.db.get(row.agentId);
+	if (
+		agent &&
+		agent.isActive &&
+		(await sameOrgStamp(
+			ctx,
+			{ id: agent.clerkOrgId, label: agent.orgSlug },
+			{ id: row.clerkOrgId, label: row.clerkOrgSlug },
+		))
+	) {
+		return agent;
+	}
+	return null;
 }
