@@ -72,7 +72,7 @@ const agentReturnValidator = v.object({
 
 // A label that is empty (after normalisation) labels nothing. This validates a
 // DISPLAY LABEL; it does not, and cannot, name an identity.
-function assertAgentLabelValid(name: string): void {
+export function assertAgentLabelValid(name: string): void {
 	if (normalizeOrchestratorId(name) === "") {
 		throw new ConvexError(
 			`AGENT_NAME_INVALID: an agent name must not be empty or whitespace-only — ${JSON.stringify({ name })}`,
