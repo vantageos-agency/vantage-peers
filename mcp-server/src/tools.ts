@@ -2181,6 +2181,8 @@ export function registerTools(
 	// The acting agent's unique ID rides every actor-taking Convex door
 	// (verifiedActor.ts). Same client object when no ID was resolved.
 	const convex = withVerifiedActor(rawConvex, oauthCtx);
+	// The agent ID the server forwards as the acting agent; whoami reports it.
+	const verifiedActor = verifiedActorOf(oauthCtx);
 	// Intercept EVERY server.registerTool(...) call made below (directly or
 	// through defineTool()/registerExportOkfBundle()/registerImportOkfBundle()/
 	// registerKbIngestTools()/registerValidateOkfBundle() — they all receive
@@ -2262,7 +2264,7 @@ export function registerTools(
 			? { personAccessTokenHash: oauthCtx.accessTokenHash }
 			: {}),
 		...(verifiedOrgSlug !== undefined ? { verifiedOrgSlug } : {}),
-		hasVerifiedActor: verifiedActorOf(oauthCtx) !== undefined,
+		hasVerifiedActor: verifiedActor !== undefined,
 		seat: resolveSeatOrg(oauthCtx),
 	};
 	const doorScope = (door: string, actingName: string | undefined) =>
@@ -10865,7 +10867,7 @@ export function registerTools(
 			}
 
 			const identity = resolveWhoamiIdentity(oauthCtx, process.env);
-			const acting = resolveActingAgent(oauthCtx);
+			const acting = resolveActingAgent(oauthCtx, verifiedActor);
 			const result = {
 				scope_profile_name: scopeProfileName,
 				fromAllowList,
