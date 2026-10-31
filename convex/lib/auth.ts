@@ -21,6 +21,7 @@ import {
 	type OrgMappingView,
 	orgMappingLookups,
 	orgRefOfRow,
+	orgMappingRowsForLabel,
 	orgRefOfScope,
 } from "./authOrgMapping";
 import { personPrincipalLookups } from "./actingPrincipal";
@@ -923,7 +924,16 @@ export async function requireOperatorAdminToCreateOrg(
 	};
 	const v = await resolveOperatorAdmin(ctx);
 	if (!v.ok) return deny(v.reason, v.detail);
-	const existing = await lookupOrgMapping(ctx, targetOrgSlug);
+	// Rows, not lookupOrgMapping: a slug two rows claim answers null there (fail
+	// closed), and "null" here would read as "free to create" and mint a third row.
+	const rows = await orgMappingRowsForLabel(ctx, targetOrgSlug);
+	const existing = rows.length === 1 ? rows[0] : null;
+	if (rows.length > 1) {
+		return deny(
+			"slug-already-mapped",
+			`org "${targetOrgSlug}" is claimed by more than one mapping row; an operator admin may only create, never re-provision another organisation`,
+		);
+	}
 	if (existing !== null) {
 		// The operator's own org is told apart from any other by org ID, not by name.
 		if (sameOrg({ id: existing.clerkOrgId }, { id: v.operatorOrgId })) {
