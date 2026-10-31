@@ -1179,11 +1179,20 @@ app.post("/token", async (c) => {
 		}
 
 		const accessToken = randomOpaqueToken();
+		// The refresh token is generated here and only its digest is sent. The
+		// access token below carries that digest, which names its refresh family.
+		const personRefreshToken = randomOpaqueToken();
+		const personRefreshHash = await sha256Hex(personRefreshToken);
+		const personAccessHash = await sha256Hex(accessToken);
+		const requestedScopes = claims.scope
+			.split(/\s+/)
+			.filter((s) => s && s !== OFFLINE_ACCESS_SCOPE);
 		await internalClient().mutation(
 			// biome-ignore lint/suspicious/noExplicitAny: Convex string API
 			"oauth:createAccessToken" as any,
 			{
-				tokenHash: await sha256Hex(accessToken),
+				tokenHash: personAccessHash,
+				refreshTokenHash: personRefreshHash,
 				clientId: claims.client_id,
 				userId: claims.sub,
 				scopes: [
@@ -1212,13 +1221,33 @@ app.post("/token", async (c) => {
 			},
 		);
 
-		// No refresh token: the refresh grant re-resolves authority from a scope
-		// profile, which a person token must never be bound to.
+		// The person's refresh token. Its authority is NOT a scope profile: the
+		// refresh grant (oauth:rotatePersonRefreshToken) re-resolves the member,
+		// the agent chosen at consent and the organisation's grant live. If the
+		// refresh row cannot be written the connection still works until the
+		// access token expires; the person then connects again.
+		let refreshIssued = false;
+		try {
+			await internalClient().mutation(
+				// biome-ignore lint/suspicious/noExplicitAny: Convex string API
+				"oauth:createPersonRefreshToken" as any,
+				{
+					tokenHash: personRefreshHash,
+					accessTokenHash: personAccessHash,
+					expiresAt: Date.now() + REFRESH_TOKEN_TTL_SECONDS * 1000,
+					requestedScopes,
+				},
+			);
+			refreshIssued = true;
+		} catch (err: unknown) {
+			console.error("[oauth] person refresh token not issued:", err);
+		}
 		c.header("Cache-Control", "no-store");
 		return c.json({
 			access_token: accessToken,
 			token_type: "Bearer",
 			expires_in: ACCESS_TOKEN_TTL_SECONDS,
+			...(refreshIssued ? { refresh_token: personRefreshToken } : {}),
 			scope: claims.scope,
 		});
 	}
@@ -1240,6 +1269,7 @@ app.post("/token", async (c) => {
 			scopeProfile: string;
 			expiresAt: number;
 			spent: boolean;
+			principal?: "person";
 		} | null;
 
 		if (!record) {
@@ -1295,6 +1325,50 @@ app.post("/token", async (c) => {
 					401,
 				);
 			}
+		}
+
+		// A PERSON refresh token has its own door: its authority is re-resolved
+		// live from the member, the agent chosen at consent and the organisation,
+		// never from a scope profile.
+		if (record.principal === "person") {
+			const nowPerson = Date.now();
+			const personRotated = (await internalClient().mutation(
+				// biome-ignore lint/suspicious/noExplicitAny: Convex string API
+				"oauth:rotatePersonRefreshToken" as any,
+				{
+					presentedHash: refreshTokenHash,
+					clientId: record.clientId,
+					accessExpiresAt: nowPerson + ACCESS_TOKEN_TTL_SECONDS * 1000,
+					refreshExpiresAt: nowPerson + REFRESH_TOKEN_TTL_SECONDS * 1000,
+				},
+			)) as
+				| {
+						status: "ok";
+						issued: { refresh: string; access: string };
+						scope: string;
+				  }
+				| { status: "reused" | "invalid" }
+				| { status: "refused"; reason: string };
+			if (personRotated.status === "refused") {
+				return c.json(
+					{
+						error: "invalid_grant",
+						error_description: `the connection is no longer authorised (${personRotated.reason})`,
+					},
+					400,
+				);
+			}
+			if (personRotated.status !== "ok") {
+				return c.json({ error: "invalid_grant" }, 400);
+			}
+			c.header("Cache-Control", "no-store");
+			return c.json({
+				access_token: personRotated.issued.access,
+				token_type: "Bearer",
+				expires_in: ACCESS_TOKEN_TTL_SECONDS,
+				refresh_token: personRotated.issued.refresh,
+				scope: personRotated.scope,
+			});
 		}
 
 		const profile = await loadScopeProfile(record.scopeProfile);

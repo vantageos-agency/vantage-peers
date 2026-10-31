@@ -147,6 +147,7 @@ describe("WITHHELD — the OAuth token path and every admin route still serve th
 		await t.run(async (ctx) => {
 			await ctx.db.insert("client_org_mapping", {
 				clerkOrgSlug: "org-e2e",
+				clerkOrgId: "org_e2e",
 				allowedOrchestrators: ["e2e-seat"],
 				scopes: ["vantage:read", "vantage:write"],
 				displayName: "e2e",
@@ -194,11 +195,12 @@ describe("WITHHELD — the OAuth token path and every admin route still serve th
 			refresh_token?: string;
 		};
 		expect(tokens.access_token).toBeTruthy();
-		// the person flow issues no refresh token
-		expect(tokens.refresh_token).toBeUndefined();
+		// the person flow issues a refresh token (task k17bgdk3j5r4dns1m132xag8rh8hasmk);
+		// it was pinned ABSENT here before, when a person connection died at expiry
+		expect(tokens.refresh_token).toBeTruthy();
 		const afterExchange = await counts(t);
 		expect(afterExchange.access).toBe(1);
-		expect(afterExchange.refresh).toBe(0);
+		expect(afterExchange.refresh).toBe(1);
 		// the code is consumed (marked used), not left redeemable
 		expect(afterExchange.codes).toBe(1);
 

@@ -132,7 +132,11 @@ async function issue(
 		tokenHash: sha(access),
 		clientId: "dcr-client",
 		userId: PERSON,
-		scopes: ["view-own-tasks", ...(opts.requested ?? ["mcp:full"])],
+		// /token strips offline_access before minting; the refresh door is handed it raw.
+		scopes: [
+			"view-own-tasks",
+			...(opts.requested ?? ["mcp:full"]).filter((s) => s !== "offline_access"),
+		],
 		scopeProfile: "team-member",
 		fromAllowList: ["aria"],
 		namespaceReadPrefixes: [`team/${SLUG}`, `project/${SLUG}`],
