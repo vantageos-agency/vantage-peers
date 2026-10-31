@@ -19,7 +19,7 @@
  */
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { z } from "zod";
+import type { z } from "zod";
 import { _setInternalClientForTest, type OAuthContext } from "../auth.js";
 import { registerTools } from "../tools.js";
 
@@ -93,7 +93,11 @@ function harness(ctx: OAuthContext) {
 	const schemas = new Map<string, z.ZodType>();
 	const server = {
 		tool() {},
-		registerTool: (name: string, config: { inputSchema?: z.ZodType }, h: Tool) => {
+		registerTool: (
+			name: string,
+			config: { inputSchema?: z.ZodType },
+			h: Tool,
+		) => {
 			tools.set(name, h);
 			if (config.inputSchema) schemas.set(name, config.inputSchema);
 		},
