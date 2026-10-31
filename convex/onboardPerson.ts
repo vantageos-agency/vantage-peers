@@ -6,7 +6,9 @@ import { resolveProvisioningMapping } from "./lib/provisioningMapping";
 // onboardPerson:readOrgState — the READ half of scripts/onboard-person.mjs
 // (VantagePeers Cloud, task k178xp66h7p0ds6vg69sqzw2vn8hbfrw). Operator door
 // (`convex run`): the script reads what exists so a re-run changes nothing.
-// internalQuery: unreachable from any client. Writes nothing.
+// internalQuery: unreachable from any client. Writes nothing. It does NOT return the rosters
+// (allowedAgentIds / allowedOrchestrators): the script reads those through the allow-listed
+// `data client_org_mapping` door, so this function reads no scope field of the mapping.
 // ─────────────────────────────────────────────────────────────────────────────
 
 const AGENT_READ_CAP = 500;
@@ -21,8 +23,6 @@ export const readOrgState = internalQuery({
 				orgKind: v.union(v.literal("operator"), v.literal("client")),
 				clerkOrgId: v.union(v.string(), v.null()),
 				isActive: v.boolean(),
-				allowedAgentIds: v.array(v.id("agents")),
-				allowedOrchestrators: v.array(v.string()),
 			}),
 		),
 		agents: v.array(
@@ -39,7 +39,6 @@ export const readOrgState = internalQuery({
 	handler: async (ctx, args) => {
 		const provisioned = await resolveProvisioningMapping(ctx, args.clerkOrgSlug);
 		const row = provisioned.kind === "row" ? provisioned.row : null;
-		const { allowedAgentIds = [], allowedOrchestrators = [] } = row ?? {};
 		const rows = await ctx.db
 			.query("agents")
 			.withIndex("by_org", (q) => q.eq("orgSlug", args.clerkOrgSlug))
@@ -58,8 +57,6 @@ export const readOrgState = internalQuery({
 							orgKind: row.orgKind ?? "client",
 							clerkOrgId: row.clerkOrgId ?? null,
 							isActive: row.isActive,
-							allowedAgentIds,
-							allowedOrchestrators,
 						},
 			agents: rows.map((a) => ({
 				id: a._id,
