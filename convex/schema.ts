@@ -2214,6 +2214,19 @@ export default defineSchema({
 		// stays the person). Written only by the operator door agents:setPersonalAgentOf,
 		// never by a request. Optional: absent means "designates nobody".
 		personalAgentOf: v.optional(v.string()),
+		// A pending, EMAIL-keyed designation: "this agent is for whoever signs up in this org with this
+		// verified email". Written only by the operator door agents:recordPersonalAgentInvite; consumed
+		// (cleared, and personalAgentOf set) by personalAgentBind when the Clerk membership webhook
+		// reports a member of THIS agent's org whose VERIFIED Clerk email matches. Never matched on a
+		// name. `lang` and `aiClient` are informational (the template sender / the human reading the row).
+		personalAgentInvite: v.optional(
+			v.object({
+				email: v.string(),
+				invitedAt: v.number(),
+				lang: v.optional(v.union(v.literal("fr"), v.literal("en"))),
+				aiClient: v.optional(v.string()),
+			}),
+		),
 		isActive: v.boolean(),
 		createdAt: v.number(),
 	})

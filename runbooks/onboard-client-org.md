@@ -82,7 +82,7 @@ Every write is on prod (`compassionate-goldfinch-737`). Run them from the vantag
 
 ## People: Claude.ai and ChatGPT
 
-A person uses the VantagePeers connector at `https://vantage-peers-production.up.railway.app/mcp`. They sign in with Clerk on the authorize page, as a member of the client's Clerk organisation, and land in that org. The org is joined on its slug (`orgKeyOf` = slug, else id).
+A person uses the VantagePeers connector at `https://mcp.vantagepeers.com/mcp`. They sign in with Clerk on the authorize page, as a member of the client's Clerk organisation, and land in that org. The org is joined on its slug (`orgKeyOf` = slug, else id).
 
 - **Needed from the client:** each person's email. Invite each person to the Clerk organisation, with the role the client decides:
   ```
@@ -92,6 +92,26 @@ A person uses the VantagePeers connector at `https://vantage-peers-production.up
   ```
   The dry run is the default. An invitation is an email to a real person, so it goes out only on an explicit `--send`. For CGT Alsachimie, the operator ruled that it is sent on site, with the client.
 - A person's session reads `team/<slug>` and `project/<slug>` (the agents' shared memory), and writes `team/<slug>` only. This was ruled by Pi on 2026-10-06 and is implemented in the MCP server: PR sigma/person-reads-org-project.
+
+## Person onboarding
+
+One path, one command: `scripts/onboard-person.mjs`. Nobody hand-runs prod writes. Run it from the checkout that owns `.claude/scripts/convex-prod.sh` and its `.env.local`.
+
+```
+CLERK_CURL_CONFIG=<0600 curl config>  node scripts/onboard-person.mjs \
+  --org-slug <slug> --org-name "<Org name>" --name "<Person>" --email <person@client.tld> \
+  --agents "Milo:claude,Sacha:chatgpt,Esteban:chatgpt,Alma:grok" --lang fr          # dry run: reads, prints the plan, writes nothing
+… --send                                                                            # executes
+```
+
+- **Agents:** one per AI client and per account, `label:client`. Labels are unique per organisation. The label is written exactly as given: the scope filter compares labels case-sensitively and attributes writes to the stored label.
+- **Order (`--send`):** Clerk org (no `created_by`, so the operator does not join a client org), invitation (`org:admin`, `notify:false`, `redirect_url`), mapping, `orgKind: client`, `clerkOrgId` on the mapping, then the agents (one `seedSeatAgents`, every existing id carried as the keep-list, trap F14), the exact label roster (`tenantOrgSeed:setOrgRoster`), then one email invite recorded per agent.
+- **Returns:** JSON with the invitation URL, the Clerk org id, every agent id (`created` true/false) and `reconnectNeeded`. The command never emails: send the URL to the person yourself, in `--lang` (recorded on the invitation and on each agent for the template).
+- **Idempotent:** re-running for the same email and slug changes nothing and reports the existing ids and the pending invitation URL. Adding an agent later appends (existing ids kept). Person tokens snapshot the label roster at mint, so after an agent is added to an org the person already connected, `reconnectNeeded` is true: they disconnect and reconnect each assistant once.
+- **Binding is automatic.** Each agent carries the invited email (`agents.personalAgentInvite`). When the Clerk membership webhook reports a member of that org, the backend reads the user from the Clerk API and binds the agents whose invited email is one of the user's VERIFIED addresses (`personalAgentBind`). No name is matched. If it fails (no `CLERK_SECRET_KEY` on the Convex deployment, Clerk error), nothing is bound; re-run the command to retry.
+- **What the person does:** opens the invitation URL, signs up, then connects each assistant to `https://mcp.vantagepeers.com/mcp` and picks the agent on the consent page. Per-assistant steps: https://www.vantagepeers.com/docs/cloud/connect. After a VantagePeers update, disconnect and reconnect once (tool definitions are cached at connect time).
+- **Refusal "agents autorisés par la connexion : …"** on a write: the agent label is missing from the organisation's label roster (or the token predates it). Fix: re-run the command (it appends the exact label), then the person reconnects.
+- **Invitation landing page:** the default redirect is `<CLERK_DOMAIN>/sign-up` (Clerk-hosted); override with `--redirect-url`. Clerk's own email is suppressed (`notify:false`), because it linked to the MCP URL, which answers `Missing Authorization header` and consumes no ticket.
 
 ## Renewal
 

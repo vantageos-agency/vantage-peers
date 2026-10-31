@@ -18,6 +18,7 @@ import {
 	type SessionCaller,
 } from "./lib/agentIdentity";
 import { ORG_ADMIN_ROLES, refusalError } from "./lib/auth";
+import { normalizeInviteEmail, scheduleInviteBindForMembers } from "./lib/personalAgentInvite";
 import { orgByIdLookups, orgByIdPrincipalLookups } from "./lib/orgIdLookups";
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -66,6 +67,14 @@ const agentReturnValidator = v.object({
 	authSubject: v.optional(v.string()),
 	ownerPersonId: v.optional(v.string()),
 	personalAgentOf: v.optional(v.string()),
+	personalAgentInvite: v.optional(
+		v.object({
+			email: v.string(),
+			invitedAt: v.number(),
+			lang: v.optional(v.union(v.literal("fr"), v.literal("en"))),
+			aiClient: v.optional(v.string()),
+		}),
+	),
 	isActive: v.boolean(),
 	createdAt: v.number(),
 });
@@ -740,5 +749,85 @@ export const setPersonalAgentOf = internalMutation({
 			await ctx.db.patch(args.agentId, { personalAgentOf: args.personId ?? undefined });
 		}
 		return { agentId: args.agentId, previous, current: args.personId, changed };
+	},
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Personal agent invite — task k178xp66h7p0ds6vg69sqzw2vn8hbfrw.
+// ─────────────────────────────────────────────────────────────────────────────
+//
+// `agents.personalAgentInvite` is a PENDING designation keyed by a VERIFIED EMAIL, written by
+// scripts/onboard-person.mjs before the person has an account. When the Clerk membership webhook
+// reports a member of this agent's own organisation whose verified Clerk email matches,
+// `personalAgentBind` sets `personalAgentOf` and clears the invite. This door only STORES the
+// invite (and re-triggers the bind for members the org already has, so a re-run is the retry).
+//
+// Refusal codes (all before any write):
+//   PERSONAL_AGENT_INVITE_EMAIL_INVALID   the email is not an address
+//   AGENT_NOT_FOUND / AGENT_INACTIVE      the id names no active agent
+//   PERSONAL_AGENT_SERVICE_ACCOUNT        the row is the fleet service account
+//   PERSONAL_AGENT_NO_CLERK_ORG_ID        the row carries no organisation id, so no webhook could match it
+//   PERSONAL_AGENT_ALREADY_BOUND          the agent already designates a person
+//   PERSONAL_AGENT_INVITE_CONFLICT        invited under ANOTHER email and replace is not true
+export const recordPersonalAgentInvite = internalMutation({
+	args: {
+		agentId: v.id("agents"),
+		email: v.string(),
+		lang: v.optional(v.union(v.literal("fr"), v.literal("en"))),
+		aiClient: v.optional(v.string()),
+		replace: v.optional(v.boolean()),
+	},
+	returns: v.object({
+		agentId: v.id("agents"),
+		changed: v.boolean(),
+		previousEmail: v.union(v.string(), v.null()),
+	}),
+	handler: async (ctx, args) => {
+		const email = normalizeInviteEmail(args.email);
+		if (email === null) {
+			throw new ConvexError(
+				"PERSONAL_AGENT_INVITE_EMAIL_INVALID: email must be an address such as name@domain.tld",
+			);
+		}
+		const agent = await ctx.db.get(args.agentId);
+		if (agent === null) throw new ConvexError(`AGENT_NOT_FOUND: no agent ${args.agentId}`);
+		if (!agent.isActive) throw new ConvexError(`AGENT_INACTIVE: agent ${args.agentId} is not active`);
+		if (agent.kind === "service") {
+			throw new ConvexError(
+				`PERSONAL_AGENT_SERVICE_ACCOUNT: agent ${args.agentId} is the fleet service account and cannot be invited as a person's agent`,
+			);
+		}
+		if (agent.clerkOrgId === undefined) {
+			throw new ConvexError(
+				`PERSONAL_AGENT_NO_CLERK_ORG_ID: agent ${args.agentId} carries no organisation id; set the mapping's clerkOrgId first`,
+			);
+		}
+		if (agent.personalAgentOf !== undefined) {
+			throw new ConvexError(
+				`PERSONAL_AGENT_ALREADY_BOUND: agent ${args.agentId} already designates a person`,
+			);
+		}
+		const previousEmail = agent.personalAgentInvite?.email ?? null;
+		if (previousEmail !== null && previousEmail !== email && args.replace !== true) {
+			throw new ConvexError(
+				`PERSONAL_AGENT_INVITE_CONFLICT: agent ${args.agentId} is already invited under another email; pass replace: true to change it`,
+			);
+		}
+		const changed = previousEmail !== email;
+		if (changed) {
+			await ctx.db.patch(args.agentId, {
+				personalAgentInvite: {
+					email,
+					invitedAt: Date.now(),
+					...(args.lang !== undefined ? { lang: args.lang } : {}),
+					...(args.aiClient !== undefined ? { aiClient: args.aiClient } : {}),
+				},
+			});
+		}
+		// A member the org already has (the person signed up before the invite was recorded) will not
+		// produce a new webhook event: re-run the bind for each live member. Idempotent, so a re-run
+		// of the onboarding command is also the retry of a bind that failed.
+		await scheduleInviteBindForMembers(ctx, agent.clerkOrgId);
+		return { agentId: args.agentId, changed, previousEmail };
 	},
 });

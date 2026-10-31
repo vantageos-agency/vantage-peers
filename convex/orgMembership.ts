@@ -20,6 +20,7 @@ import {
 } from "./lib/auth";
 import { orgRefOfScope } from "./lib/authOrgMapping";
 import { clerkOrgIdForSlug } from "./lib/orgClerkId";
+import { orgHasPendingInvites, scheduleInviteBind } from "./lib/personalAgentInvite";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // orgMembership — who belongs to which organisation, kept live from Clerk.
@@ -391,7 +392,7 @@ export const applyClerkMembershipEvent = internalMutation({
 				"CLERK_MEMBERSHIP_SLUG_REQUIRED: an upsert needs the organisation slug from the payload",
 			);
 		}
-		return await writeMembershipUpsert(
+		const outcome = await writeMembershipUpsert(
 			ctx,
 			existing,
 			{
@@ -402,6 +403,12 @@ export const applyClerkMembershipEvent = internalMutation({
 			},
 			{ eventAt: args.eventAt },
 		);
+		// Bind at first sign-up: when the org holds an agent invited by email, ask Clerk (an action)
+		// whether this member's VERIFIED address matches. The payload's identifier is not proof.
+		if (await orgHasPendingInvites(ctx, args.clerkOrgId)) {
+			await scheduleInviteBind(ctx, args.clerkOrgId, args.clerkUserId);
+		}
+		return outcome;
 	},
 });
 
