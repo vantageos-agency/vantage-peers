@@ -41,6 +41,10 @@ import {
 } from "@vantageos/cloud-identity";
 import { z } from "zod";
 import {
+	decideActingNameForResolvedAgent,
+	resolvedAgentOf,
+} from "./actorFromAgentId.js";
+import {
 	actingClaimRefusal,
 	checkNamespaceRead,
 	checkNamespaceWrite,
@@ -284,9 +288,11 @@ export function actingNameKeys(
  * verifies, never an authority (decideActingClaim). Runs BEFORE the tool's
  * scope check and BEFORE the handler, once, for every tool.
  *
- *   - claimed and it disagrees with the actor → refused, nothing dispatched
- *     (AGENT_IDENTITY_MISMATCH, in every mode: a typed name never overrides a
- *     presented credential).
+ *   - claimed, and the caller resolved an agent BY ID (credential, seat stamp,
+ *     a person's personal agent) → the actor IS that ID: the name is refused
+ *     only when it designates a DIFFERENT agent (AGENT_IDENTITY_MISMATCH, every
+ *     mode), else rebound to the agent's stored label (actorFromAgentId.ts).
+ *     Spelling never decides.
  *   - claimed, no credential presented        → per the cutover switch
  *     (actorCredentialMode): permissive serves it AND records it unattributed;
  *     strict refuses it (AGENT_CREDENTIAL_REQUIRED).
@@ -298,16 +304,17 @@ export function actingNameKeys(
  * The argument therefore can only restate what the credential already grants:
  * it may narrow, it can never widen.
  */
-function bindActingNames(
+async function bindActingNames(
 	oauthCtx: OAuthContext | undefined,
 	keys: readonly string[],
 	args: Record<string, unknown>,
-):
+): Promise<
 	| { denied: McpTextResult }
 	| {
 			args: Record<string, unknown>;
 			unattributed: [key: string, name: string][];
-	  } {
+	  }
+> {
 	const unattributed: [string, string][] = [];
 	let bound = args;
 	for (const key of keys) {
@@ -320,6 +327,21 @@ function bindActingNames(
 				const seat = seatAgentOf(oauthCtx);
 				if (seat !== undefined) bound = { ...bound, [key]: seat.agentName };
 			}
+			continue;
+		}
+		// A caller that resolved an agent BY ID acts as that ID: a typed name never
+		// decides by its spelling (actorFromAgentId.ts). It is refused only when it
+		// designates a DIFFERENT agent; otherwise the argument is rebound to the
+		// agent's stored label and the write is attributed to the caller's ID.
+		const resolved = resolvedAgentOf(oauthCtx);
+		if (oauthCtx && resolved !== undefined) {
+			const byId = await decideActingNameForResolvedAgent(
+				oauthCtx,
+				resolved,
+				String(claimed),
+			);
+			if (!byId.ok) return { denied: mcpError(byId.error) };
+			bound = { ...bound, [key]: byId.label };
 			continue;
 		}
 		const err = actingClaimRefusal(oauthCtx, String(claimed));
@@ -471,15 +493,36 @@ export function defineTool(
 	// `memberAuthorDoor` likewise: the tool's Convex door records a Clerk-JWT
 	// member as "user:<verified subject>" itself, so the acting name that member
 	// typed is dropped before the handler (memberAuthor.ts).
-	const { outputSchema, ownStateOnly, personDoor, memberAuthorDoor, ...annotations } =
-		(declaredAnnotations ?? {}) as {
-			outputSchema?: z.ZodRawShape | z.ZodObject<z.ZodRawShape>;
-			ownStateOnly?: boolean;
-			personDoor?: boolean;
-			memberAuthorDoor?: boolean;
-		} & ToolAnnotations;
+	const {
+		outputSchema,
+		ownStateOnly,
+		personDoor,
+		memberAuthorDoor,
+		...annotations
+	} = (declaredAnnotations ?? {}) as {
+		outputSchema?: z.ZodRawShape | z.ZodObject<z.ZodRawShape>;
+		ownStateOnly?: boolean;
+		personDoor?: boolean;
+		memberAuthorDoor?: boolean;
+	} & ToolAnnotations;
 
 	const actingKeys = actingNameKeys(scope, schema);
+	// An acting name is a claim, never the way a caller is identified: a caller
+	// that resolved an agent ID acts as that ID and may leave the name out. So it
+	// is optional in the advertised schema; the keys that WERE required stay
+	// required for every caller that resolved none (checked in guardedHandler).
+	const requiredActingKeys = actingKeys.filter(
+		(key) => !(schema[key] as z.ZodType).isOptional(),
+	);
+	const advertisedSchema: z.ZodRawShape = {
+		...schema,
+		...Object.fromEntries(
+			requiredActingKeys.map((key) => [
+				key,
+				(schema[key] as z.ZodType).optional(),
+			]),
+		),
+	};
 
 	const guardedHandler: ToolHandler = async (args, extra) => {
 		// First, before any argument is read: a person whose role may not write
@@ -527,12 +570,22 @@ export function defineTool(
 			}
 			return handler(person.args, extra);
 		}
-		const bound = bindActingNames(
+		const bound = await bindActingNames(
 			ctx.oauthCtx,
 			actingKeys,
 			(args ?? {}) as Record<string, unknown>,
 		);
 		if ("denied" in bound) return bound.denied;
+		// The acting name is optional in the advertised schema (below), so a
+		// caller that resolved no agent ID and left a formerly required one out is
+		// refused here, as the schema once did.
+		for (const key of requiredActingKeys) {
+			if (bound.args[key] === undefined || bound.args[key] === null) {
+				return mcpError(
+					`ACTING_NAME_REQUIRED: ${name} needs \`${key}\`: this credential resolves no agent ID, so the acting name cannot be derived. Pass \`${key}\`.`,
+				);
+			}
+		}
 		const denied = enforceScope(scope, ctx, bound.args);
 		if (denied) return denied;
 		if (ctx.oauthCtx) {
@@ -545,7 +598,7 @@ export function defineTool(
 
 	// STRICT wrap: reject any arg key not in `schema` instead of silently
 	// stripping it (see buildStrictInputSchema doc comment above).
-	const strictSchema = buildStrictInputSchema(schema);
+	const strictSchema = buildStrictInputSchema(advertisedSchema);
 
 	// Registered via the config-object API (not the deprecated positional
 	// `server.tool(...)` overload) — that overload's raw-shape/annotations
