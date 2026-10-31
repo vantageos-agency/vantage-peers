@@ -2338,61 +2338,10 @@ const personCodeRecordShape = v.object({
 	expiresAt: v.number(),
 });
 
-export const putPersonCode = mutation({
-	args: { record: personCodeRecordShape },
-	returns: v.null(),
-	handler: async (ctx, args) => {
-		// write-contract: MCP-transport-only — issued via mcp-server client.mutation("oauth:putPersonCode", …) at mcp-server/src/authorize.ts:178 (imperative); 0 hits in vantage-peers-dashboard {app,components,hooks,lib,contexts,providers} (measured 2026-10-03 with `grep -rnE "api\.oauth\.(putPersonCode|consumePersonCode|revokeAccessTokensForCode|purgeExpiredPersonCodes|createAuthorizationCode|consumeAuthorizationCode)" app components hooks lib contexts providers` at vantage-peers-dashboard 71da625 -> 0); never a subscribing pre-org client shell. The no-org throw is a refusal at an imperative MCP call, never at a render.
-		await requireServiceAccount(ctx, "oauth:putPersonCode");
-		await ctx.db.insert("oauth_person_codes", args.record);
-		return null;
-	},
-});
-
-// The agent the person picked on the consent screen, posted with Approve: an
-// existing agent by ID (never a name) or a name for a NEW agent (admin only,
-// judged in `applyAgentChoice`). No choice at all uses `putPersonCode` above.
-const agentChoiceShape = v.union(
-	v.object({ kind: v.literal("existing"), agentId: v.string() }),
-	v.object({ kind: v.literal("create"), name: v.string() }),
-);
-
-/**
- * putPersonCodeWithAgent — `putPersonCode` plus the agent choice, in ONE
- * transaction: the choice is judged against the rows as they are NOW and bound
- * (or minted and bound) before the code row is inserted. A refusal throws, so no
- * code exists and no agent was written; an agent that became someone else's since
- * the screen was drawn is such a refusal. The person, organisation and role are
- * the code record's own (the package took them from the verified session and the
- * live membership), never separate arguments.
- */
-export const putPersonCodeWithAgent = mutation({
-	args: { record: personCodeRecordShape, choice: agentChoiceShape },
-	returns: v.null(),
-	handler: async (ctx, args) => {
-		// write-contract: MCP-transport-only — issued via mcp-server client.mutation("oauth:putPersonCodeWithAgent", …) at mcp-server/src/authorize.ts (imperative, from the POST /authorize/org code store); never a subscribing pre-org client shell. The no-org throw is a refusal at an imperative MCP call, never at a render.
-		await requireServiceAccount(ctx, "oauth:putPersonCodeWithAgent");
-		await applyAgentChoice(
-			ctx,
-			{
-				personId: args.record.clerkUserId,
-				org: {
-					id: args.record.orgId,
-					key: args.record.orgSlug ?? args.record.orgId,
-				},
-				role: args.record.orgRole,
-			},
-			args.choice,
-		);
-		await ctx.db.insert("oauth_person_codes", args.record);
-		return null;
-	},
-});
-
 /**
  * listPersonalAgentChoices — what the consent screen draws for ONE organisation
  * of a verified person: the agents they may take and whether they may create
- * one. Display only; the choice is judged again in `putPersonCodeWithAgent`.
+ * one. Display only; the choice is judged again in `putPersonCode`.
  */
 export const listPersonalAgentChoices = query({
 	args: {
@@ -2420,6 +2369,44 @@ export const listPersonalAgentChoices = query({
 			{ id: args.orgId, key: args.orgSlug ?? args.orgId },
 			args.orgRole,
 		);
+	},
+});
+
+// The agent the person picked on the consent screen, posted with Approve: an
+// existing agent by ID (never a name) or a name for a NEW agent (admin only,
+// judged in `applyAgentChoice`). No choice at all is today's behaviour.
+const agentChoiceShape = v.union(
+	v.object({ kind: v.literal("existing"), agentId: v.string() }),
+	v.object({ kind: v.literal("create"), name: v.string() }),
+);
+
+export const putPersonCode = mutation({
+	args: { record: personCodeRecordShape, choice: v.optional(agentChoiceShape) },
+	returns: v.null(),
+	handler: async (ctx, args) => {
+		// write-contract: MCP-transport-only — issued via mcp-server client.mutation("oauth:putPersonCode", …) at mcp-server/src/authorize.ts:178 (imperative); 0 hits in vantage-peers-dashboard {app,components,hooks,lib,contexts,providers} (measured 2026-10-03 with `grep -rnE "api\.oauth\.(putPersonCode|consumePersonCode|revokeAccessTokensForCode|purgeExpiredPersonCodes|createAuthorizationCode|consumeAuthorizationCode)" app components hooks lib contexts providers` at vantage-peers-dashboard 71da625 -> 0); never a subscribing pre-org client shell. The no-org throw is a refusal at an imperative MCP call, never at a render.
+		await requireServiceAccount(ctx, "oauth:putPersonCode");
+		// The agent the person picked on the consent screen, if any, is judged and
+		// bound in THIS transaction, before the code row exists: a refusal throws, so
+		// no code is issued and nothing was written. The person, organisation and
+		// role are the code record's own (the package took them from the verified
+		// session and the live membership), never separate arguments.
+		if (args.choice !== undefined) {
+			await applyAgentChoice(
+				ctx,
+				{
+					personId: args.record.clerkUserId,
+					org: {
+						id: args.record.orgId,
+						key: args.record.orgSlug ?? args.record.orgId,
+					},
+					role: args.record.orgRole,
+				},
+				args.choice,
+			);
+		}
+		await ctx.db.insert("oauth_person_codes", args.record);
+		return null;
 	},
 });
 

@@ -16,7 +16,7 @@ import { ORG_ADMIN_ROLES } from "./auth";
 //
 // The set a person may CHOOSE from is computed here, once, and used twice: to
 // DRAW the screen (`oauth:listPersonalAgentChoices`) and to JUDGE the posted
-// choice (`oauth:putPersonCodeWithAgent`, inside the transaction that issues the
+// choice (`oauth:putPersonCode`, inside the transaction that issues the
 // authorization code). The screen is a convenience; the judgement re-reads the
 // rows, so an agent that became someone else's between the two is refused.
 //
