@@ -42,7 +42,7 @@ import {
 import { z } from "zod";
 import {
 	decideActingNameForResolvedAgent,
-	resolvedAgentOf,
+	type ResolvedAgent,
 } from "./actorFromAgentId.js";
 import {
 	actingClaimRefusal,
@@ -333,7 +333,16 @@ async function bindActingNames(
 		// decides by its spelling (actorFromAgentId.ts). It is refused only when it
 		// designates a DIFFERENT agent; otherwise the argument is rebound to the
 		// agent's stored label and the write is attributed to the caller's ID.
-		const resolved = resolvedAgentOf(oauthCtx);
+		// (A credential-bound actor wins, then a seat stamp: the order of
+		// actingClaimDecision. An actor without an ID resolves no agent.)
+		const actor = oauthCtx?.actor;
+		const resolved: ResolvedAgent | undefined = actor
+			? actor.agentId && actor.agentName
+				? { agentId: actor.agentId, agentName: actor.agentName }
+				: undefined
+			: oauthCtx
+				? seatAgentOf(oauthCtx)
+				: undefined;
 		if (oauthCtx && resolved !== undefined) {
 			const byId = await decideActingNameForResolvedAgent(
 				oauthCtx,
