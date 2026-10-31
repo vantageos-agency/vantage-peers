@@ -306,12 +306,19 @@ app.use(
 // /mcp points at (see bearerAuthMiddleware in src/auth.ts).
 export const MCP_RESOURCE_PATH = "/mcp";
 
+// `offline_access` is advertised because ChatGPT may lose access to a connector
+// whose server does not (OpenAI help article 12584461). It is a request for a
+// refresh token and grants no authority: /token strips it from the minted
+// token's scopes, and whether a refresh token is issued never depends on it.
+export const OFFLINE_ACCESS_SCOPE = "offline_access";
+const OAUTH_SCOPES_SUPPORTED = ["mcp:full", OFFLINE_ACCESS_SCOPE];
+
 function protectedResourceMetadata(req: Request) {
 	const issuer = resolveIssuer(req);
 	return {
 		resource: `${issuer}${MCP_RESOURCE_PATH}`,
 		authorization_servers: [issuer],
-		scopes_supported: ["mcp:full"],
+		scopes_supported: OAUTH_SCOPES_SUPPORTED,
 		bearer_methods_supported: ["header"],
 	};
 }
@@ -341,7 +348,7 @@ app.get("/.well-known/oauth-authorization-server", (c) => {
 			"client_secret_basic",
 			"client_secret_post",
 		],
-		scopes_supported: ["mcp:full"],
+		scopes_supported: OAUTH_SCOPES_SUPPORTED,
 		// RFC 9207 — /authorize appends `iss` to every authorization response.
 		authorization_response_iss_parameter_supported: true,
 		// Client ID Metadata Documents (URL-shaped client_id) are deliberately
@@ -953,7 +960,7 @@ app.get("/.well-known/openid-configuration", (c) => {
 		jwksUri: `${settings.settings.issuer}/.well-known/jwks.json`,
 		userinfoEndpoint: `${issuer}/userinfo`,
 		registrationEndpoint: `${issuer}/register`,
-		scopesSupported: ["mcp:full", "openid", "email"],
+		scopesSupported: [...OAUTH_SCOPES_SUPPORTED, "openid", "email"],
 	});
 	if (!result.ok) {
 		const mapped = oauthErrorFor(result.refusal);
@@ -1182,7 +1189,9 @@ app.post("/token", async (c) => {
 				scopes: [
 					...new Set([
 						...mapping.scopes,
-						...claims.scope.split(/\s+/).filter(Boolean),
+						...claims.scope
+							.split(/\s+/)
+							.filter((s) => s && s !== OFFLINE_ACCESS_SCOPE),
 					]),
 				],
 				scopeProfile: PERSON_TOKEN_SCOPE_PROFILE,
