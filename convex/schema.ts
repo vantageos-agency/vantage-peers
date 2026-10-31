@@ -1513,6 +1513,12 @@ export default defineSchema({
 		scope: v.string(),
 		expiresAt: v.number(),
 		usedAt: v.optional(v.number()),
+		// What the person decided on the consent screen (set by oauth:putPersonCode,
+		// never by the code record the package shapes): the agent chosen, by ID, or
+		// "person" for "connect as myself". Absent on a code issued before this
+		// existed. Stamped on the access token minted from this code.
+		agentId: v.optional(v.id("agents")),
+		connectedAs: v.optional(v.literal("person")),
 	})
 		.index("by_codeHash", ["codeHash"])
 		.index("by_expiresAt", ["expiresAt"]),
@@ -1563,6 +1569,12 @@ export default defineSchema({
 		// live meanwhile).
 		agentId: v.optional(v.id("agents")),
 		agentOrgId: v.optional(v.string()),
+		// PERSON tokens reuse `agentId` for the agent the person CHOSE at consent (one
+		// agent per AI client; resolved live by lib/personalAgent.ts, never by "the one
+		// agent designating this person"). `connectedAs: "person"` records that the
+		// person decided to connect as themselves: no agent is ever picked for them.
+		// Both absent: a token minted before the choice existed (legacy rule applies).
+		connectedAs: v.optional(v.literal("person")),
 		// Refresh-token family (set by oauth:rotateRefreshToken): the digest of the
 		// first refresh token of the grant. A replay of a spent refresh token
 		// revokes every access and refresh token that carries the same family.

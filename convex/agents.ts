@@ -662,13 +662,13 @@ export const listAgentsWithoutOwner = internalQuery({
 // Personal agent — task k17ee3efn6xz4zpapcg68sgvnh8h43gt.
 // ─────────────────────────────────────────────────────────────────────────────
 //
-// `agents.personalAgentOf` is the Clerk user ID of the person whose personal agent an
-// agent is. A person token of that person, in the agent's org, acts as that agent when it
-// is the ONE active agent of the org that designates them (`resolvePersonalAgent`, applied
-// in `oauth:getAccessTokenByHash`). This door only STORES the designation (rule
-// one-identity-layer: no local identity decision besides refusing a write that would make
-// the package's rule ambiguous). It is an internalMutation like `setAgentOwner`: reachable
-// by the operator (`convex run`) and by no client, so it has no public gate to forget.
+// `agents.personalAgentOf` is the Clerk user ID of the person an agent is bound to. A
+// person holds ONE AGENT PER AI CLIENT, so several agents of one org may designate the
+// same person; a person token acts as the agent CHOSEN at consent and stamped on the
+// token by ID (lib/personalAgent.ts), not as "the one agent that designates them". This
+// door only STORES the designation. It is an internalMutation like `setAgentOwner`:
+// reachable by the operator (`convex run`) and by no client, so it has no public gate to
+// forget.
 //
 // Refusal codes (all checked before any write):
 //   PERSONAL_AGENT_PERSON_ID_INVALID  personId is not `user_` + alphanumerics (null clears)
@@ -677,11 +677,9 @@ export const listAgentsWithoutOwner = internalQuery({
 //   AGENT_INACTIVE                    the agent is not active (to designate; clearing is allowed)
 //   PERSONAL_AGENT_SERVICE_ACCOUNT    the row is the fleet service account (kind "service")
 //   PERSONAL_AGENT_CONFLICT           the agent designates another person and replace is not true
-//   PERSONAL_AGENT_AMBIGUOUS          another ACTIVE agent of the same org already designates the person
 
 const PERSONAL_AGENT_REASON_MIN_LENGTH = 10;
 const PERSONAL_AGENT_PERSON_ID_PATTERN = /^user_[A-Za-z0-9]+$/;
-const PERSONAL_AGENT_SCAN_CAP = 50;
 
 export const setPersonalAgentOf = internalMutation({
 	args: {
@@ -734,23 +732,6 @@ export const setPersonalAgentOf = internalMutation({
 			) {
 				throw new ConvexError(
 					`PERSONAL_AGENT_CONFLICT: agent ${args.agentId} already belongs to another person; pass replace: true to move it`,
-				);
-			}
-			const holders = await ctx.db
-				.query("agents")
-				.withIndex("by_personal_agent_of", (q) =>
-					q.eq("personalAgentOf", args.personId as string).eq("orgSlug", agent.orgSlug),
-				)
-				.take(PERSONAL_AGENT_SCAN_CAP + 1);
-			if (holders.length > PERSONAL_AGENT_SCAN_CAP) {
-				throw new ConvexError(
-					`PERSONAL_AGENT_AMBIGUOUS: more than ${PERSONAL_AGENT_SCAN_CAP} agents of this org already designate this person`,
-				);
-			}
-			const other = holders.find((h) => h._id !== args.agentId && h.isActive);
-			if (other !== undefined) {
-				throw new ConvexError(
-					`PERSONAL_AGENT_AMBIGUOUS: active agent ${other._id} of the same org already designates this person; clear it first (a person acts as an agent only when exactly one designates them)`,
 				);
 			}
 		}

@@ -2391,8 +2391,11 @@ export const putPersonCode = mutation({
 		// no code is issued and nothing was written. The person, organisation and
 		// role are the code record's own (the package took them from the verified
 		// session and the live membership), never separate arguments.
+		// The chosen agent's ID travels on the code row (and from it onto the token);
+		// no choice is a decision too: "connect as myself", never an implicit pick.
+		let chosenAgentId: Id<"agents"> | undefined;
 		if (args.choice !== undefined) {
-			await applyAgentChoice(
+			chosenAgentId = await applyAgentChoice(
 				ctx,
 				{
 					personId: args.record.clerkUserId,
@@ -2405,7 +2408,12 @@ export const putPersonCode = mutation({
 				args.choice,
 			);
 		}
-		await ctx.db.insert("oauth_person_codes", args.record);
+		await ctx.db.insert("oauth_person_codes", {
+			...args.record,
+			...(chosenAgentId !== undefined
+				? { agentId: chosenAgentId }
+				: { connectedAs: "person" as const }),
+		});
 		return null;
 	},
 });
@@ -2541,6 +2549,13 @@ async function mintAccessToken(
 			await ctx.db.patch(seatProfile._id, { agentId: seatAgent._id });
 		}
 	}
+	// PERSON flow: the agent chosen at consent rides on the code row; it is stamped
+	// on the token by ID (the field a seat token's agent uses), or the person's
+	// decision to connect as themselves is. Read once here, at the one write door.
+	const chosen =
+		a.principal === "person" && a.codeHash !== undefined
+			? await chosenAtConsent(ctx, a.codeHash)
+			: null;
 	return await ctx.db.insert("oauth_access_tokens", {
 		tokenHash: a.tokenHash,
 		clientId: a.clientId,
@@ -2571,7 +2586,33 @@ async function mintAccessToken(
 		...(seatAgent
 			? { agentId: seatAgent._id, agentOrgId: seatAgent.orgSlug }
 			: {}),
+		...(chosen?.agent
+			? { agentId: chosen.agent._id, agentOrgId: chosen.agent.orgSlug }
+			: {}),
+		...(chosen?.connectedAs !== undefined
+			? { connectedAs: chosen.connectedAs }
+			: {}),
 	});
+}
+
+/** What the person decided on the consent screen, read from the code row the token is minted from. */
+async function chosenAtConsent(
+	ctx: MutationCtx,
+	codeHash: string,
+): Promise<{ agent: Doc<"agents"> | null; connectedAs?: "person" } | null> {
+	const code = await ctx.db
+		.query("oauth_person_codes")
+		.withIndex("by_codeHash", (q) => q.eq("codeHash", codeHash))
+		.unique();
+	if (code === null) return null;
+	const agent =
+		code.agentId === undefined ? null : await ctx.db.get(code.agentId);
+	return {
+		agent,
+		...(code.connectedAs !== undefined
+			? { connectedAs: code.connectedAs }
+			: {}),
+	};
 }
 
 function familyForAccessToken(a: MintAccessTokenArgs): string | undefined {

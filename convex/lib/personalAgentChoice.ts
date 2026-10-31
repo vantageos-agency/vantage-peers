@@ -87,26 +87,6 @@ export async function choosableAgents(
 	);
 }
 
-/** Active agents of `org` that already designate this person (zero, or the one they act as). */
-async function activeHolders(
-	ctx: Ctx,
-	personId: string,
-	org: ChoiceOrg,
-): Promise<Doc<"agents">[]> {
-	const rows = await ctx.db
-		.query("agents")
-		.withIndex("by_personal_agent_of", (q) =>
-			q.eq("personalAgentOf", personId).eq("orgSlug", org.key),
-		)
-		.take(CHOICE_ROSTER_CAP + 1);
-	if (rows.length > CHOICE_ROSTER_CAP) {
-		throw new ConvexError(
-			"PERSONAL_AGENT_AMBIGUOUS: more than the cap of agents of this organisation already designate this person",
-		);
-	}
-	return rows.filter((a) => a.isActive);
-}
-
 /**
  * Refuses unless the role the code is bound to may create an agent in the
  * organisation the code is bound to. The decision is the package's
@@ -153,36 +133,30 @@ export async function agentChoicesFor(
 }> {
 	const admin = mayCreateAgent(role, org.id);
 	const listed = await choosableAgents(ctx, personId, org, admin);
-	const held = await activeHolders(ctx, personId, org);
-	// A person who already acts as an agent here is shown that one only: a second
-	// designation would make the resolution ambiguous (the person would act as
-	// nobody), so offering one would be offering a choice that cannot hold.
-	const shown =
-		held.length > 0
-			? listed.filter((a) => held.some((h) => h._id === a._id))
-			: listed;
+	// A person holds ONE AGENT PER AI CLIENT (Claude, ChatGPT, Grok): every agent
+	// already bound to them is offered, and the screen never narrows to one.
 	return {
-		agents: shown.map((a) => ({
+		agents: listed.map((a) => ({
 			agentId: a._id,
 			name: a.name,
-			mine: held.some((h) => h._id === a._id),
+			mine: a.personalAgentOf === personId,
 		})),
-		canCreate: held.length === 0 && admin,
+		canCreate: admin,
 	};
 }
 
 /**
- * Judges and applies the posted choice, in the caller's transaction. Throws
- * `AGENT_CHOICE_REFUSED` (or `AGENT_NAME_TAKEN` / `AGENT_NAME_INVALID`) before
- * any write; the caller issues the code only after this returns.
+ * Judges and applies the posted choice, in the caller's transaction, and returns
+ * the ID of the agent the token will act as. Throws `AGENT_CHOICE_REFUSED` (or
+ * `AGENT_NAME_TAKEN` / `AGENT_NAME_INVALID`) before any write; the caller issues
+ * the code only after this returns.
  */
 export async function applyAgentChoice(
 	ctx: MutationCtx,
 	bound: { personId: string; org: ChoiceOrg; role: string },
 	choice: AgentChoice,
-): Promise<void> {
+): Promise<Doc<"agents">["_id"]> {
 	const { personId, org } = bound;
-	const held = await activeHolders(ctx, personId, org);
 	if (choice.kind === "existing") {
 		const id = ctx.db.normalizeId("agents", choice.agentId);
 		const listed = await choosableAgents(
@@ -197,21 +171,12 @@ export async function applyAgentChoice(
 				"the agent is not one this person may take in this organisation",
 			);
 		}
-		if (held.some((h) => h._id === picked._id)) return;
-		if (held.length > 0) {
-			throw refuse(
-				"this person already acts as another agent in this organisation",
-			);
+		if (picked.personalAgentOf !== personId) {
+			await ctx.db.patch(picked._id, { personalAgentOf: personId });
 		}
-		await ctx.db.patch(picked._id, { personalAgentOf: personId });
-		return;
+		return picked._id;
 	}
 	assertMayCreateAgent(bound.role, org.id);
-	if (held.length > 0) {
-		throw refuse(
-			"this person already acts as another agent in this organisation",
-		);
-	}
 	const name = choice.name.trim();
 	if (name.length > AGENT_NAME_MAX_LENGTH) {
 		throw new ConvexError(
@@ -220,7 +185,7 @@ export async function applyAgentChoice(
 	}
 	assertAgentLabelValid(name);
 	await assertAgentNameFree(ctx, { id: org.id, label: org.key }, name);
-	await ctx.db.insert("agents", {
+	return await ctx.db.insert("agents", {
 		orgSlug: org.key,
 		clerkOrgId: org.id,
 		name,
