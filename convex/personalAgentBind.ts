@@ -2,6 +2,7 @@ import { ConvexError, v } from "convex/values";
 import { internal } from "./_generated/api";
 import type { Id } from "./_generated/dataModel";
 import { internalAction, internalMutation } from "./_generated/server";
+import { findMembershipRow } from "./orgMembership";
 import { INVITE_SCAN_CAP, normalizeInviteEmail } from "./lib/personalAgentInvite";
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -50,12 +51,7 @@ export const applyVerifiedEmails = internalMutation({
 		if (verified.size === 0) return { bound: [] };
 
 		// The person must be a live member of THIS organisation now.
-		const membership = await ctx.db
-			.query("orgMembership")
-			.withIndex("by_org_user_clerk_id", (q) =>
-				q.eq("clerkOrgId", args.clerkOrgId).eq("clerkUserId", args.clerkUserId),
-			)
-			.unique();
+		const membership = await findMembershipRow(ctx, args);
 		if (membership === null || membership.deletedAt !== undefined) return { bound: [] };
 
 		const agents = await ctx.db
@@ -85,43 +81,103 @@ export const applyVerifiedEmails = internalMutation({
 
 type ClerkEmail = { email_address?: unknown; verification?: { status?: unknown } | null };
 type ClerkUser = { id?: unknown; email_addresses?: unknown };
+type ClerkMembershipPage = {
+	data?: Array<{ public_user_data?: { user_id?: unknown } | null }>;
+	total_count?: unknown;
+};
+
+// A client organisation has a handful of members; beyond this the late-invite path refuses.
+const ORG_MEMBER_PAGE = 100;
+
+function clerkSecret(): string {
+	const secretKey = process.env.CLERK_SECRET_KEY;
+	if (!secretKey) {
+		throw new ConvexError(
+			"CLERK_SECRET_KEY_MISSING: CLERK_SECRET_KEY is not set — refusing to bind a personal agent without a verified email",
+		);
+	}
+	return secretKey;
+}
+
+function assertUserId(clerkUserId: string): void {
+	if (!CLERK_USER_ID_PATTERN.test(clerkUserId)) {
+		throw new ConvexError(
+			"PERSONAL_AGENT_PERSON_ID_INVALID: clerkUserId must be a Clerk user ID (user_ followed by letters and digits)",
+		);
+	}
+}
+
+async function verifiedEmailsOf(clerkUserId: string, secretKey: string): Promise<string[]> {
+	const res = await fetch(`https://api.clerk.com/v1/users/${clerkUserId}`, {
+		headers: { Authorization: `Bearer ${secretKey}` },
+	});
+	// The status is named, the key and the response body never are.
+	if (!res.ok) {
+		throw new ConvexError(`CLERK_USER_READ_FAILED: Clerk answered HTTP ${res.status}`);
+	}
+	const user = (await res.json()) as ClerkUser;
+	if (user.id !== clerkUserId || !Array.isArray(user.email_addresses)) {
+		throw new ConvexError("CLERK_USER_READ_MISMATCH: Clerk's answer is not the user asked for");
+	}
+	return (user.email_addresses as ClerkEmail[]).flatMap((e) =>
+		e.verification?.status === "verified" && typeof e.email_address === "string"
+			? [e.email_address]
+			: [],
+	);
+}
 
 export const bindFromClerk = internalAction({
 	args: { clerkOrgId: v.string(), clerkUserId: v.string() },
 	returns: v.object({ bound: v.number() }),
 	handler: async (ctx, args): Promise<{ bound: number }> => {
-		if (!CLERK_USER_ID_PATTERN.test(args.clerkUserId)) {
-			throw new ConvexError(
-				"PERSONAL_AGENT_PERSON_ID_INVALID: clerkUserId must be a Clerk user ID (user_ followed by letters and digits)",
-			);
-		}
-		const secretKey = process.env.CLERK_SECRET_KEY;
-		if (!secretKey) {
-			throw new ConvexError(
-				"CLERK_SECRET_KEY_MISSING: CLERK_SECRET_KEY is not set — refusing to bind a personal agent without a verified email",
-			);
-		}
-		const res = await fetch(`https://api.clerk.com/v1/users/${args.clerkUserId}`, {
-			headers: { Authorization: `Bearer ${secretKey}` },
-		});
-		// The status is named, the key and the response body never are.
-		if (!res.ok) {
-			throw new ConvexError(`CLERK_USER_READ_FAILED: Clerk answered HTTP ${res.status}`);
-		}
-		const user = (await res.json()) as ClerkUser;
-		if (user.id !== args.clerkUserId || !Array.isArray(user.email_addresses)) {
-			throw new ConvexError("CLERK_USER_READ_MISMATCH: Clerk's answer is not the user asked for");
-		}
-		const verifiedEmails = (user.email_addresses as ClerkEmail[]).flatMap((e) =>
-			e.verification?.status === "verified" && typeof e.email_address === "string"
-				? [e.email_address]
-				: [],
+		assertUserId(args.clerkUserId);
+		const verifiedEmails = await verifiedEmailsOf(args.clerkUserId, clerkSecret());
+		const out: { bound: Id<"agents">[] } = await ctx.runMutation(
+			internal.personalAgentBind.applyVerifiedEmails,
+			{ clerkOrgId: args.clerkOrgId, clerkUserId: args.clerkUserId, verifiedEmails },
 		);
-		const out: { bound: Id<"agents">[] } = await ctx.runMutation(internal.personalAgentBind.applyVerifiedEmails, {
-			clerkOrgId: args.clerkOrgId,
-			clerkUserId: args.clerkUserId,
-			verifiedEmails,
-		});
 		return { bound: out.bound.length };
+	},
+});
+
+/**
+ * The late-invite path: the invite was recorded after the person joined, so no membership event
+ * will come. The org's members are read from Clerk (not from this database) and each goes through
+ * the same verified-email bind. A listing that is not complete refuses rather than binds partially.
+ */
+export const bindOrgFromClerk = internalAction({
+	args: { clerkOrgId: v.string() },
+	returns: v.object({ bound: v.number() }),
+	handler: async (ctx, args): Promise<{ bound: number }> => {
+		const secretKey = clerkSecret();
+		const res = await fetch(
+			`https://api.clerk.com/v1/organizations/${encodeURIComponent(args.clerkOrgId)}/memberships?limit=${ORG_MEMBER_PAGE}`,
+			{ headers: { Authorization: `Bearer ${secretKey}` } },
+		);
+		if (!res.ok) {
+			throw new ConvexError(`CLERK_MEMBERSHIP_READ_FAILED: Clerk answered HTTP ${res.status}`);
+		}
+		const page = (await res.json()) as ClerkMembershipPage;
+		const rows = page.data ?? [];
+		if (typeof page.total_count !== "number" || page.total_count > rows.length) {
+			throw new ConvexError(
+				`CLERK_MEMBERSHIP_READ_INCOMPLETE: organisation ${args.clerkOrgId} lists more than ${ORG_MEMBER_PAGE} members; refusing to bind from a partial read`,
+			);
+		}
+		let bound = 0;
+		for (const row of rows) {
+			const userId = row.public_user_data?.user_id;
+			if (typeof userId !== "string" || !CLERK_USER_ID_PATTERN.test(userId)) continue;
+			const out: { bound: Id<"agents">[] } = await ctx.runMutation(
+				internal.personalAgentBind.applyVerifiedEmails,
+				{
+					clerkOrgId: args.clerkOrgId,
+					clerkUserId: userId,
+					verifiedEmails: await verifiedEmailsOf(userId, secretKey),
+				},
+			);
+			bound += out.bound.length;
+		}
+		return { bound };
 	},
 });

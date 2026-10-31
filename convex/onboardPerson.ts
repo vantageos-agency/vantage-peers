@@ -39,6 +39,7 @@ export const readOrgState = internalQuery({
 	handler: async (ctx, args) => {
 		const provisioned = await resolveProvisioningMapping(ctx, args.clerkOrgSlug);
 		const row = provisioned.kind === "row" ? provisioned.row : null;
+		const { allowedAgentIds = [], allowedOrchestrators = [] } = row ?? {};
 		const rows = await ctx.db
 			.query("agents")
 			.withIndex("by_org", (q) => q.eq("orgSlug", args.clerkOrgSlug))
@@ -57,8 +58,8 @@ export const readOrgState = internalQuery({
 							orgKind: row.orgKind ?? "client",
 							clerkOrgId: row.clerkOrgId ?? null,
 							isActive: row.isActive,
-							allowedAgentIds: row.allowedAgentIds ?? [],
-							allowedOrchestrators: row.allowedOrchestrators,
+							allowedAgentIds,
+							allowedOrchestrators,
 						},
 			agents: rows.map((a) => ({
 				id: a._id,

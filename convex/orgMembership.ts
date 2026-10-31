@@ -251,7 +251,7 @@ type MembershipArgs = {
  * The row for (org id, user id), tombstoned or not. A miss is a miss: there is
  * no lookup by slug. A plain indexed read: no decision is made here.
  */
-async function findMembershipRow(
+export async function findMembershipRow(
 	ctx: Pick<MutationCtx, "db">,
 	args: { clerkOrgId: string; clerkUserId: string },
 ) {
