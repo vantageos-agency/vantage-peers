@@ -2,7 +2,7 @@ import { ConvexError, v } from "convex/values";
 import { internal } from "./_generated/api";
 import type { Id } from "./_generated/dataModel";
 import { internalAction, internalMutation } from "./_generated/server";
-import { findMembershipRow } from "./orgMembership";
+import { isLiveMember } from "./orgMembership";
 import { INVITE_SCAN_CAP, normalizeInviteEmail } from "./lib/personalAgentInvite";
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -51,8 +51,7 @@ export const applyVerifiedEmails = internalMutation({
 		if (verified.size === 0) return { bound: [] };
 
 		// The person must be a live member of THIS organisation now.
-		const membership = await findMembershipRow(ctx, args);
-		if (membership === null || membership.deletedAt !== undefined) return { bound: [] };
+		if (!(await isLiveMember(ctx, args))) return { bound: [] };
 
 		const agents = await ctx.db
 			.query("agents")
