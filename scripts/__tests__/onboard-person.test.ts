@@ -133,7 +133,7 @@ describe("--send on a fresh person", () => {
 		const mapping = calls.find(([n]) => n === "tenantOrgSeed:seedClientOrgMapping")?.[1];
 		expect(mapping).toMatchObject({
 			clerkOrgSlug: "acme-tenant",
-			allowedOrchestrators: ["milo", "sacha", "esteban", "alma"],
+			allowedOrchestrators: ["Milo", "Sacha", "Esteban", "Alma"],
 			scopes: ["view-own-tasks", "view-own-missions"],
 		});
 		expect(calls.find(([n]) => n === "clientOrgMapping:setClerkOrgId")?.[1]).toEqual({
@@ -187,7 +187,7 @@ const DONE_STATE = {
 		clerkOrgId: "org_new123",
 		isActive: true,
 		allowedAgentIds: ["agent_Milo", "agent_Sacha"],
-		allowedOrchestrators: ["milo", "sacha"],
+		allowedOrchestrators: ["Milo", "Sacha"],
 	},
 	agents: [
 		{ id: "agent_Milo", name: "Milo", isActive: true, personalAgentOf: null, invite: { email: "pat.example@client.test" } },
@@ -217,7 +217,7 @@ describe("idempotent re-run", () => {
 		const out = await onboardPerson({ ...BASE, agents: parseAgents("Milo:claude,Sacha:chatgpt,Alma:grok"), send: true }, io);
 		expect(names(calls)).toEqual([
 			"clientOrgMapping:seedSeatAgents",
-			"clientOrgMapping:addRosterMembers",
+			"tenantOrgSeed:setOrgRoster",
 			"agents:recordPersonalAgentInvite",
 		]);
 		expect(calls[0][1]).toEqual({
@@ -225,11 +225,24 @@ describe("idempotent re-run", () => {
 			names: ["Alma"],
 			agentIds: ["agent_Milo", "agent_Sacha"],
 		});
-		expect(calls[1][1]).toEqual({
-			clerkOrgSlug: "acme-tenant",
-			agentIds: ["agent_Alma", "agent_Milo", "agent_Sacha"],
-		});
+		// exact stored label appended, existing entries kept; addRosterMembers (normalised) is never used
+		expect(calls[1][1]).toEqual({ clerkOrgSlug: "acme-tenant", allowedOrchestrators: ["Milo", "Sacha", "Alma"] });
+		expect(out.result.reconnectNeeded).toBe(true);
 		expect(out.result.agents.find((a: { label: string }) => a.label === "Alma").created).toBe(true);
+	});
+
+	it("the label roster equals the agents' stored names exactly, never a normalised copy", async () => {
+		const { io, calls } = fake({});
+		await onboardPerson({ ...BASE, send: true }, io);
+		const seeded = calls.find(([n]) => n === "tenantOrgSeed:seedClientOrgMapping")?.[1] as { allowedOrchestrators: string[] };
+		const created = (calls.find(([n]) => n === "clientOrgMapping:seedSeatAgents")?.[1] as { names: string[] }).names;
+		expect(seeded.allowedOrchestrators).toEqual(created);
+		expect(names(calls)).not.toContain("clientOrgMapping:addRosterMembers");
+	});
+
+	it("a first onboarding needs no reconnect", async () => {
+		const { io } = fake({});
+		expect((await onboardPerson({ ...BASE, send: true }, io)).result.reconnectNeeded).toBe(false);
 	});
 
 	it("an already-bound agent is not given an invite again", async () => {
@@ -244,6 +257,20 @@ describe("idempotent re-run", () => {
 });
 
 describe("refusals", () => {
+	it("a legacy normalised roster entry is kept and the exact stored label is added beside it", async () => {
+		const state = { ...DONE_STATE, mapping: { ...DONE_STATE.mapping, allowedOrchestrators: ["milo", "Sacha"] } };
+		const { io, calls } = fake({ state, ...EXISTING });
+		await onboardPerson({ ...TWO, send: true }, io);
+		expect(calls).toEqual([["tenantOrgSeed:setOrgRoster", { clerkOrgSlug: "acme-tenant", allowedOrchestrators: ["milo", "Sacha", "Milo"] }]]);
+	});
+
+	it("aborts when an existing agent has no clerkOrgId", async () => {
+		const state = { ...DONE_STATE, agents: [{ ...DONE_STATE.agents[0], clerkOrgId: null }, DONE_STATE.agents[1]] };
+		const { io, calls } = fake({ state, ...EXISTING });
+		await expect(onboardPerson({ ...TWO, send: true }, io)).rejects.toThrow(/clerkOrgId/);
+		expect(calls).toEqual([]);
+	});
+
 	it("aborts when the mapping already carries a DIFFERENT Clerk org id", async () => {
 		const state = { ...DONE_STATE, mapping: { ...DONE_STATE.mapping, clerkOrgId: "org_other999" } };
 		const { io, calls } = fake({ state, ...EXISTING });
