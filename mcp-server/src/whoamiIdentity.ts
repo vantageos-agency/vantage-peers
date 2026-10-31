@@ -35,7 +35,7 @@
 
 import { createHmac } from "node:crypto";
 import { isMasterScope, type OAuthContext } from "./auth.js";
-import { verifiedActorOf } from "./verifiedActor.js";
+import type { VerifiedActorArg } from "./verifiedActor.js";
 
 export type WhoamiEnv = {
 	WHOAMI_ID_SECRET?: string | undefined;
@@ -104,19 +104,19 @@ export interface WhoamiActingAgent {
  * The agent acting on this request, by its stored `agents` row ID (identity is
  * the ID, never the name). Source order: the actor already bound at the bearer
  * boundary (agent credential header, or the agent a person token designates),
- * then the agent a one-agent seat token was stamped with, taken from
- * {@link verifiedActorOf} so whoami names exactly the agent the server forwards
- * as the acting ID (a stamp from another org, or an empty one, is not that
+ * then the agent a one-agent seat token was stamped with, taken from the
+ * `verified` actor the caller computed with verifiedActorOf, so whoami names
+ * exactly the agent the server forwards as the acting ID (a stamp from another org, or an empty one, is not that
  * agent). With none, the
  * reason is named so a caller never reads a bare name as an identity.
  */
 export function resolveActingAgent(
 	ctx: OAuthContext | undefined,
+	verified: VerifiedActorArg | undefined,
 ): WhoamiActingAgent {
 	if (!ctx) {
 		return { actor: null, agent_id: null, agent_unresolved_reason: "no-context" };
 	}
-	const verified = verifiedActorOf(ctx);
 	const seat =
 		!ctx.actor && verified !== undefined
 			? {
