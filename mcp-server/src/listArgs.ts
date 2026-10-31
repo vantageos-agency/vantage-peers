@@ -4,7 +4,7 @@
  * Some MCP clients (Claude.ai's connector, measured) serialise an array
  * argument as a JSON string. A schema that validates the raw value then refuses
  * a well-formed list: `mark_as_read` refused `"[\"k…\",\"k…\"]"` against the
- * 32-char ID pattern, so Hélios had to mark receipts one call at a time.
+ * 32-char ID pattern, so a client agent had to mark receipts one call at a time.
  *
  * Every client-filled list argument goes through one of these helpers, so the
  * value is normalised BEFORE validation and each element is still checked.
