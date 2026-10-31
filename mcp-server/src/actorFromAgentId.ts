@@ -1,10 +1,5 @@
 import { decideActingClaim } from "@vantageos/cloud-identity";
-import {
-	actingClaimDecision,
-	internalClient,
-	type OAuthContext,
-	seatAgentOf,
-} from "./auth.js";
+import { internalClient, type OAuthContext } from "./auth.js";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // actorFromAgentId - when the bearer resolves an agent ID, the actor IS that ID.
@@ -55,34 +50,9 @@ const CONVEX_ID_SHAPE = /^[a-z0-9]{32}$/;
 
 export type ResolvedAgent = {
 	agentId: string;
-	agentLabel: string;
-	orgSlug: string;
+	/** The agent's STORED label, as the bearer resolved it. */
+	agentName: string;
 };
-
-/**
- * The agent this request resolved BY ID, or undefined: a credential-bound
- * `actor` that carries an ID, else a seat stamp (the same order as
- * `actingClaimDecision`). A caller with neither keeps today's rules.
- */
-export function resolvedAgentOf(
-	ctx: OAuthContext | undefined,
-): ResolvedAgent | undefined {
-	if (!ctx) return undefined;
-	if (ctx.actor) {
-		const { agentId, agentName, orgSlug } = ctx.actor;
-		if (agentId === undefined || agentId === "" || agentName === "") {
-			return undefined;
-		}
-		return { agentId, agentLabel: agentName, orgSlug };
-	}
-	const seat = seatAgentOf(ctx);
-	if (seat === undefined) return undefined;
-	return {
-		agentId: seat.agentId,
-		agentLabel: seat.agentName,
-		orgSlug: seat.orgId,
-	};
-}
 
 export type ActorFromIdDecision =
 	| { ok: true; label: string }
@@ -99,7 +69,7 @@ function refuse(
 		ok: false,
 		error:
 			`AGENT_IDENTITY_MISMATCH: this call names "${claimed}" but ${why}; ` +
-			`the caller resolves to agent "${resolved.agentLabel}" (${resolved.agentId}, org "${resolved.orgSlug}"), ` +
+			`the caller resolves to agent "${resolved.agentName}" (${resolved.agentId}), ` +
 			"and a caller acts as its resolved agent ID. Omit the name to act as the resolved agent " +
 			"(door mcp:acting-claim).",
 	};
@@ -136,6 +106,11 @@ async function readDirectory(
 	}
 }
 
+/** Agent IDs compare byte for byte: an ID is never normalised. */
+function isSameAgentId(candidateId: string, agentId: string): boolean {
+	return candidateId === agentId;
+}
+
 /** True when `claimed` is `entry`'s label, by the package's own comparator. */
 function sameLabelAsEntry(claimed: string, entry: DirectoryEntry): boolean {
 	return decideActingClaim({
@@ -160,12 +135,16 @@ export async function decideActingNameForResolvedAgent(
 	resolved: ResolvedAgent,
 	claimed: string,
 ): Promise<ActorFromIdDecision> {
-	// The agent itself, by its label (the package's comparator) or by its ID.
+	// The agent itself: by its ID, or by its label through the package's own
+	// comparator (the same probe the directory entries get below).
 	if (
-		claimed === resolved.agentId ||
-		actingClaimDecision(ctx, claimed, "strict").ok
+		isSameAgentId(claimed, resolved.agentId) ||
+		sameLabelAsEntry(claimed, {
+			name: resolved.agentName,
+			agentId: resolved.agentId,
+		})
 	) {
-		return { ok: true, label: resolved.agentLabel };
+		return { ok: true, label: resolved.agentName };
 	}
 	const directory = await readDirectory(ctx);
 	if (directory === null) {
@@ -176,9 +155,14 @@ export async function decideActingNameForResolvedAgent(
 		);
 	}
 	for (const entry of directory) {
-		if (entry.agentId === resolved.agentId) continue;
 		if (
-			(entry.agentId !== null && claimed === entry.agentId) ||
+			entry.agentId !== null &&
+			isSameAgentId(entry.agentId, resolved.agentId)
+		) {
+			continue;
+		}
+		if (
+			(entry.agentId !== null && isSameAgentId(claimed, entry.agentId)) ||
 			sameLabelAsEntry(claimed, entry)
 		) {
 			return refuse(claimed, resolved, "that designates another agent");
@@ -191,5 +175,5 @@ export async function decideActingNameForResolvedAgent(
 			"that is an agent ID this organisation does not list for the caller",
 		);
 	}
-	return { ok: true, label: resolved.agentLabel };
+	return { ok: true, label: resolved.agentName };
 }
