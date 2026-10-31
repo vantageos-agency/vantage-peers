@@ -76,7 +76,7 @@ import {
 	idListSchema,
 	stringListSchema,
 } from "./listArgs.js";
-import { resolveWhoamiIdentity } from "./whoamiIdentity.js";
+import { resolveActingAgent, resolveWhoamiIdentity } from "./whoamiIdentity.js";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // VP_EMIT_UI_MARKERS gate
@@ -1150,11 +1150,37 @@ export const whoamiOutputSchema = z.object({
 				"'master' for master-scope bearers (internal orchestrators only).",
 		),
 	actor: z
-		.object({ agentName: z.string(), orgSlug: z.string() })
+		.object({
+			agentId: z.string().nullable(),
+			orgId: z.string(),
+			agentName: z.string(),
+			orgSlug: z.string(),
+		})
 		.nullable()
 		.describe(
-			"The agent verified from the x-vantage-agent-credential header on THIS request " +
-				"({ agentName, orgSlug }); null when no header was presented. Never contains the secret.",
+			"The agent acting on THIS request: verified from the x-vantage-agent-credential header, " +
+				"designated by the signed-in person, or stamped on a one-agent seat. agentId is the stored " +
+				"agent ID (the identity; agentName is only its current label), null when the backend returned " +
+				"no ID. null when no agent acts. Never contains the secret.",
+		),
+	agent_id: z
+		.string()
+		.nullable()
+		.describe(
+			"The acting agent's stored ID (same as actor.agentId); null when no agent is resolved.",
+		),
+	agent_unresolved_reason: z
+		.enum([
+			"no-context",
+			"actor-without-agent-id",
+			"person-designates-no-agent",
+			"org-level-seat-no-agent",
+			"no-agent-credential-presented",
+			"no-agent-resolved",
+		])
+		.nullable()
+		.describe(
+			"Why agent_id is null (e.g. person-designates-no-agent: the signed-in person has no designated agent); null when an agent ID is returned.",
 		),
 	caller_id: z
 		.string()
@@ -10838,19 +10864,17 @@ export function registerTools(
 			}
 
 			const identity = resolveWhoamiIdentity(oauthCtx, process.env);
+			const acting = resolveActingAgent(oauthCtx);
 			const result = {
 				scope_profile_name: scopeProfileName,
 				fromAllowList,
 				namespaceReadPrefixes,
 				namespaceWritePrefixes,
 				suggested_orchestrator_id: suggestedOrchestratorId,
-				// Verified actor from the credential header; identifiers only.
-				actor: oauthCtx?.actor
-					? {
-							agentName: oauthCtx.actor.agentName,
-							orgSlug: oauthCtx.actor.orgSlug,
-						}
-					: null,
+				// The acting agent by stored ID; identifiers only.
+				actor: acting.actor,
+				agent_id: acting.agent_id,
+				agent_unresolved_reason: acting.agent_unresolved_reason,
 				caller_id: identity.caller_id,
 				org_slug: identity.org_slug,
 				role: identity.role,

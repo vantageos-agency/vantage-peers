@@ -285,9 +285,15 @@ describe("whoami reports the verified actor", () => {
 		return JSON.parse(textOf(json)) as { actor?: unknown };
 	}
 
-	it("master + valid header -> actor { agentName, orgSlug }; secret never printed", async () => {
+	it("master + valid header -> actor { agentId, orgId, agentName, orgSlug }; secret never printed", async () => {
 		const out = await who(MASTER, SECRET_ALICE);
-		expect(out.actor).toEqual({ agentName: "alice", orgSlug: "fleet" });
+		// The credential resolves the agent row: whoami names it by its ID.
+		expect(out.actor).toEqual({
+			agentId: "agent-alice",
+			orgId: "fleet",
+			agentName: "alice",
+			orgSlug: "fleet",
+		});
 		expect(JSON.stringify(out)).not.toContain(SECRET_ALICE);
 	});
 
