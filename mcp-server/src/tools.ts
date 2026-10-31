@@ -2313,7 +2313,9 @@ export function registerTools(
 		if (
 			oauthCtx !== undefined &&
 			actingClaimRefusal(oauthCtx, name) === null &&
-			passesScopeFilter(toPackageOAuthCtx(oauthCtx), { createdBy: name })
+			passesScopeFilter(toPackageOAuthCtx(oauthCtx, { actingName: true }), {
+				createdBy: name,
+			})
 		)
 			return null;
 		return guardDelegation(name, field);
@@ -5054,9 +5056,10 @@ export function registerTools(
 				if (callerOrchestrator) {
 					if (!oauthCtx) return mcpError(NO_CONTEXT_REFUSAL);
 					if (
-						!passesScopeFilter(toPackageOAuthCtx(oauthCtx), {
-							createdBy: callerOrchestrator,
-						})
+						!passesScopeFilter(
+							toPackageOAuthCtx(oauthCtx, { actingName: true }),
+							{ createdBy: callerOrchestrator },
+						)
 					)
 						return mcpError(
 							fromNotOnRosterRefusal(oauthCtx, callerOrchestrator),

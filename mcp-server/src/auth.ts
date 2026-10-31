@@ -174,7 +174,13 @@ export type OAuthContext = {
 	 * folded into {@link OAuthContext.actor} at the bearer boundary. Kept for
 	 * diagnosis only: no decision reads it.
 	 */
-	personalAgent?: { agentId: string; orgId: string; agentName: string } | null;
+	personalAgent?: {
+		agentId: string;
+		orgId: string;
+		agentName: string;
+		/** Live: that agent's ID is on the org's roster by ID (Convex). Absent: unknown. */
+		onRoster?: boolean;
+	} | null;
 };
 
 declare module "hono" {
@@ -259,7 +265,13 @@ type OAuthLookupResult = {
 	 * `@vantageos/cloud-identity` `resolvePersonalAgent`. Absent from a Convex that
 	 * predates the field; null when the person stays the person.
 	 */
-	personalAgent?: { agentId: string; orgId: string; agentName: string } | null;
+	personalAgent?: {
+		agentId: string;
+		orgId: string;
+		agentName: string;
+		/** Live: that agent's ID is on the org's roster by ID (Convex). Absent: unknown. */
+		onRoster?: boolean;
+	} | null;
 } | null;
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -328,6 +340,32 @@ export async function sha256Base64Url(input: string): Promise<string> {
 // ─────────────────────────────────────────────────────────────────────────────
 
 /**
+ * The roster the package judges an ACTING NAME against (the write gate:
+ * `from` / `createdBy` and their siblings, passed as `{ actingName: true }`
+ * to {@link toPackageOAuthCtx}). For a PERSON token acting as the agent Convex
+ * resolved by ID (`personalAgent`, the same agent the request's `actor` carries)
+ * with a live `onRoster` answer, the roster is that agent's own stored name when
+ * its ID is on the organisation's roster by ID right now, and nothing otherwise:
+ * the label snapshot minted onto the token never decides, in either direction,
+ * and the package still makes the membership decision. `undefined` for every
+ * other caller (legacy bearer, seat, master, a provider that predates the
+ * field, a mapping with no roster by ID): the label roster applies, unchanged.
+ */
+function liveActingRoster(ctx: OAuthContext): string[] | undefined {
+	const agent = ctx.personalAgent;
+	if (
+		ctx.principal !== "person" ||
+		agent === undefined ||
+		agent === null ||
+		agent.onRoster === undefined ||
+		ctx.actor?.agentId !== agent.agentId
+	) {
+		return undefined;
+	}
+	return agent.onRoster ? [agent.agentName] : [];
+}
+
+/**
  * Adapts this module's local `OAuthContext` shape onto the package's
  * framework-agnostic `OAuthCtx` (`@vantageos/cloud-identity`). This is a
  * field-renaming adapter only — no master/wildcard DECISION is made here,
@@ -339,10 +377,15 @@ export async function sha256Base64Url(input: string): Promise<string> {
  * field the package checks — the union of conditions is preserved exactly,
  * only the representation changes.
  */
-export function toPackageOAuthCtx(ctx: OAuthContext): PackageOAuthCtx {
+export function toPackageOAuthCtx(
+	ctx: OAuthContext,
+	opts?: { actingName?: true },
+): PackageOAuthCtx {
 	return {
 		scope: ctx.isMaster ? "master" : ctx.scopeProfile,
-		fromAllowList: ctx.fromAllowList,
+		fromAllowList:
+			(opts?.actingName ? liveActingRoster(ctx) : undefined) ??
+			ctx.fromAllowList,
 		namespaceReadPrefixes: ctx.namespaceReadPrefixes,
 		namespaceWritePrefixes: ctx.namespaceWritePrefixes,
 	};
@@ -609,6 +652,7 @@ export function personalActorOf(
 					agentId: string;
 					orgId: string;
 					agentName: string;
+					onRoster?: boolean;
 				} | null;
 		  }
 		| null
