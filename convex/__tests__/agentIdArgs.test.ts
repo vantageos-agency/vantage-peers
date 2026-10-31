@@ -190,7 +190,7 @@ const taskBase = {
 
 // ─────────────────────────────────────────────────────────────────────────────
 describe("contract: the manifest says the new args exist", () => {
-	test("BACKEND_CONTRACT_VERSION is 7", () => {
+	test("BACKEND_CONTRACT_VERSION is at least 7", () => {
 		// 3: memberWriterRoles:assertPersonMayWrite takes the verifiedPerson claim
 		// instead of an organisation and a role argument (task k177jrz8k2dr7naqe7yzmp0px18g77n5).
 		// 4: improvisationDigest:scanWindow takes the verifiedActor claim and
@@ -201,7 +201,9 @@ describe("contract: the manifest says the new args exist", () => {
 		// (task k17cn84f2hm555cgqeegw0bq7n8ahsak).
 		// 7: the five KB doors take the optional verifiedOrg claim
 		// (task k1737wd26rtz10jj8dhcn8cfp58h73sm).
-		expect(BACKEND_CONTRACT_VERSION).toBe(7);
+		// 8: oauth:putPersonCode takes the optional agent choice
+		// (task k176wqmafpq7asbh461g95tk7h8hbsmy).
+		expect(BACKEND_CONTRACT_VERSION).toBeGreaterThanOrEqual(7);
 	});
 });
 

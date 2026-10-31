@@ -183,8 +183,8 @@ describe("LITE / FULL projections", () => {
 });
 
 describe("CONTRACT", () => {
-	it("MCP requires the contract version Convex serves, and it is 7", () => {
-		expect(REQUIRED_CONTRACT_VERSION).toBe(7);
-		expect(BACKEND_CONTRACT_VERSION).toBe(7);
+	it("MCP requires the contract version Convex serves, and it is at least 7", () => {
+		expect(REQUIRED_CONTRACT_VERSION).toBeGreaterThanOrEqual(7);
+		expect(BACKEND_CONTRACT_VERSION).toBe(REQUIRED_CONTRACT_VERSION);
 	});
 });

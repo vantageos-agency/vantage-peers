@@ -240,9 +240,9 @@ describe("DESCRIBE — the ID is the list_peers agentId", () => {
 });
 
 describe("CONTRACT — rollout order, Convex first", () => {
-	it("the MCP requires contract 7 and Convex serves 7", () => {
-		expect(REQUIRED_CONTRACT_VERSION).toBe(7);
-		expect(BACKEND_CONTRACT_VERSION).toBe(7);
+	it("the MCP requires at least contract 7 and requires the one Convex serves", () => {
+		expect(REQUIRED_CONTRACT_VERSION).toBeGreaterThanOrEqual(7);
+		expect(BACKEND_CONTRACT_VERSION).toBe(REQUIRED_CONTRACT_VERSION);
 	});
 	it("the MCP calls no Convex function the manifest of contract 6 lacks", () => {
 		expect(MCP_CALLED_FUNCTIONS).not.toContain("nameOnlyCalls:summary");
