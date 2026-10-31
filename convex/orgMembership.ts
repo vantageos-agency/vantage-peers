@@ -316,6 +316,19 @@ async function writeMembershipTombstone(
 	opts: { eventAt: number; dryRun?: boolean },
 ): Promise<"removed" | "absent"> {
 	const now = Date.now();
+	if (!opts.dryRun) {
+		// Half A (task k17fxe8feeq1k2rb1ggj76e97s8h7m7k): the removal reaches the
+		// member's tokens in the same transaction. Idempotent, so a replayed or
+		// pre-recorded tombstone revokes again harmlessly.
+		const orgSlugs = [args.clerkOrgSlug, existing?.clerkOrgSlug].filter(
+			(s): s is string => s !== undefined && s !== "",
+		);
+		await ctx.runMutation(internal.oauth.revokeMemberTokens, {
+			userId: args.clerkUserId,
+			clerkOrgId: args.clerkOrgId,
+			orgSlugs,
+		});
+	}
 	if (existing === null) {
 		if (!opts.dryRun) {
 			await ctx.db.insert("orgMembership", {
