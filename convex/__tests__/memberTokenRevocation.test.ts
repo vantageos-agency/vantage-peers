@@ -103,6 +103,29 @@ const seedRefresh = (t: T, raw: string, userId: string, profile: string) =>
 		}),
 	);
 
+/** The person access token that sits beside a first refresh token (its family). */
+const seedPersonLineage = (t: T, refreshRaw: string, org: string) =>
+	t.run((ctx) =>
+		ctx.db.insert("oauth_access_tokens", {
+			tokenHash: sha(`lineage-${refreshRaw}`),
+			clientId: "dcr-client",
+			userId: PERSON,
+			scopes: ["mcp:full"],
+			scopeProfile: "person",
+			fromAllowList: ["seat"],
+			namespaceReadPrefixes: [],
+			namespaceWritePrefixes: [],
+			expiresAt: Date.now() + 3_600_000,
+			createdAt: Date.now(),
+			clerkOrgSlug: org,
+			clerkOrgId: testClerkOrgId(org),
+			principal: "person",
+			orgRole: "org:member",
+			familyId: sha(refreshRaw),
+			refreshTokenHash: sha(refreshRaw),
+		}),
+	);
+
 const seedProfile = (t: T, profileId: string, org: string) =>
 	t.run((ctx) =>
 		ctx.db.insert("oauth_scope_profiles", {
@@ -282,6 +305,7 @@ describe("B - rotateRefreshToken refuses a person with no live membership", () =
 		await seedProfile(t, "member-profile", ORG);
 		await seedMember(t, ORG, PERSON, 500);
 		await seedRefresh(t, "ref-tomb", PERSON, "member-profile");
+		await seedPersonLineage(t, "ref-tomb", ORG);
 		await expect(
 			asService(t).mutation(
 				api.oauth.rotateRefreshToken,
@@ -304,6 +328,7 @@ describe("B - rotateRefreshToken refuses a person with no live membership", () =
 		// The person is a member of ANOTHER org only: known as a person, absent here.
 		await seedMember(t, OTHER);
 		await seedRefresh(t, "ref-absent", PERSON, "member-profile");
+		await seedPersonLineage(t, "ref-absent", ORG);
 		await expect(
 			asService(t).mutation(
 				api.oauth.rotateRefreshToken,
@@ -318,11 +343,41 @@ describe("B - rotateRefreshToken refuses a person with no live membership", () =
 		await seedProfile(t, "member-profile", ORG);
 		await seedMember(t, ORG);
 		await seedRefresh(t, "ref-live", PERSON, "member-profile");
+		await seedPersonLineage(t, "ref-live", ORG);
 		const out = await asService(t).mutation(
 			api.oauth.rotateRefreshToken,
 			rotation("ref-live", "member-profile", ORG),
 		);
 		expect(out.status).toBe("ok");
+	});
+
+	test("REFUSED: the person marker survives a rotation, so the SECOND-generation refresh token is refused after the removal", async () => {
+		const t = createT();
+		await seedOrgs(t);
+		await seedProfile(t, "member-profile", ORG);
+		await seedMember(t, ORG);
+		await seedRefresh(t, "ref-gen1", PERSON, "member-profile");
+		await seedPersonLineage(t, "ref-gen1", ORG);
+		const first = await asService(t).mutation(
+			api.oauth.rotateRefreshToken,
+			rotation("ref-gen1", "member-profile", ORG),
+		);
+		if (first.status !== "ok") throw new Error("first rotation must succeed");
+		// The delete event was MISSED: only the tombstone exists (reconcile wrote it
+		// without touching tokens in the world before half A), nothing revoked.
+		await t.run(async (ctx) => {
+			const m = await ctx.db
+				.query("orgMembership")
+				.withIndex("by_user", (q) => q.eq("clerkUserId", PERSON))
+				.unique();
+			if (m) await ctx.db.patch(m._id, { deletedAt: 9_000 });
+		});
+		await expect(
+			asService(t).mutation(
+				api.oauth.rotateRefreshToken,
+				rotation(first.issued.refresh, "member-profile", ORG),
+			),
+		).rejects.toThrow(/RBAC_DENIED/);
 	});
 
 	test("ABSENT: a seat (userId is a seat name, no membership rows) refreshes normally", async () => {

@@ -45,12 +45,15 @@ import {
 } from "./lib/auth";
 import { isHumanActorName } from "./lib/humanActor";
 import { wireIdentityRefusal } from "./lib/identityRefusalWire";
-import { personPrincipalLookups } from "./lib/actingPrincipal";
+import {
+	ownerMembershipLookups,
+	personPrincipalLookups,
+} from "./lib/actingPrincipal";
 import { liveSeatAgent, resolveSeatAgent } from "./lib/seatAgent";
 import { personalAgentOfToken } from "./lib/personalAgent";
 import { requireId } from "./lib/ids";
 import { DEFAULT_MEMBER_SCOPES } from "./lib/memberScopes";
-import { findMembershipRow, upsertAdminMembership } from "./orgMembership";
+import { upsertAdminMembership } from "./orgMembership";
 import { CLERK_ORG_ID_PATTERN, clerkOrgIdForSlug } from "./lib/orgClerkId";
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -2978,41 +2981,36 @@ export const rotateRefreshToken = mutation({
 		// Half B (task k17fxe8feeq1k2rb1ggj76e97s8h7m7k): a removed member's
 		// refresh token is refused, before anything is spent or minted.
 		//
-		// A refused person is recognised by evidence that does not depend on the
-		// token row (a refresh row carries no principal): the user id has at least
-		// one membership row (`by_user`; a seat name never does), or the family's
-		// access token is a `principal: "person"` token. A seat is neither and
-		// passes untouched. The organisation is the scope profile's; a person whose
-		// organisation cannot be named is refused, never defaulted.
-		const knownMember = await findMembershipRow(ctx, {
-			clerkUserId: row.userId,
-		});
-		let isPerson = knownMember !== null;
-		if (!isPerson) {
-			const lineage = await ctx.db
-				.query("oauth_access_tokens")
-				.withIndex("by_familyId", (q) => q.eq("familyId", familyId))
-				.take(1);
-			isPerson = lineage[0]?.principal === "person";
-		}
-		if (isPerson) {
-			const profileOrgId = await clerkOrgIdForSlug(ctx, args.clerkOrgSlug);
-			const membership =
-				profileOrgId === undefined
-					? null
-					: await findMembershipRow(ctx, {
-							clerkOrgId: profileOrgId,
-							clerkUserId: row.userId,
-						});
-			if (membership === null || membership.deletedAt !== undefined) {
-				throw refusalError({
-					code: "RBAC_DENIED",
-					reason: "membership-inactive",
-					door: "oauth:rotateRefreshToken",
-					detail:
-						"the person behind this refresh token holds no live membership of the organisation",
-				});
-			}
+		// A person is recognised by the family's access tokens (`principal:
+		// "person"`, carried forward below on every rotation), never by the refresh
+		// row, which carries none; a seat's family has none and passes untouched.
+		// The package decides the rest: `resolveActingPrincipal` resolves the person
+		// by (user id, the profile's permanent org id) through the live
+		// `orgMembership` row (a tombstoned or absent row is no member) and its
+		// refusal is carried untouched. A person whose organisation cannot be named
+		// is refused by the same call, never defaulted.
+		const lineage = await ctx.db
+			.query("oauth_access_tokens")
+			.withIndex("by_familyId", (q) => q.eq("familyId", familyId))
+			.take(1);
+		const personLineage =
+			lineage[0]?.principal === "person" ? lineage[0] : undefined;
+		if (personLineage !== undefined) {
+			const resolvedMember = await resolveActingPrincipal(
+				{
+					kind: "person",
+					personId: row.userId,
+					// Cast on purpose: an absent ID must reach the package's credential
+					// schema (credential-invalid), not be papered over here.
+					verifiedOrgId: (await clerkOrgIdForSlug(ctx, args.clerkOrgSlug)) as string,
+				},
+				{
+					...personPrincipalLookups(ctx),
+					...ownerMembershipLookups(ctx),
+				},
+				"oauth:rotateRefreshToken",
+			);
+			if (!resolvedMember.ok) throw refusalError(resolvedMember.refusal);
 		}
 
 		const refreshToken = randomOpaqueHex(32);
@@ -3042,6 +3040,16 @@ export const rotateRefreshToken = mutation({
 			refreshTokenHash: nextRefreshHash,
 			...(args.clerkOrgSlug !== undefined ? { clerkOrgSlug: args.clerkOrgSlug } : {}),
 			familyId,
+			// A person's descent stays a person's, so the next rotation still checks
+			// the membership.
+			...(personLineage !== undefined
+				? {
+						principal: "person" as const,
+						...(personLineage.orgRole !== undefined
+							? { orgRole: personLineage.orgRole }
+							: {}),
+					}
+				: {}),
 		});
 		return {
 			status: "ok" as const,
