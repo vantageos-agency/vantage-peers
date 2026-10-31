@@ -37,9 +37,7 @@ Before using VantagePeers Cloud through ChatGPT, the connector must be authorize
 
 **Step 1 — Add the connector**
 
-1. In ChatGPT, navigate to **Settings → Apps → Add connector**.
-2. Search for **vantage-peers** or paste the MCP endpoint URL provided during onboarding. The URL ends in `/mcp` (for example `https://vantage-peers-production.up.railway.app/mcp`); paste it exactly, not the bare host.
-3. Authenticate with the OAuth flow. Use the credentials (client ID / client secret) provided by your operator at onboarding — do not create new ones.
+1. Connect ChatGPT by following [Connect your assistants](./connect-assistants.md#chatgpt). The steps are not repeated here; that page also covers the agent choice at consent.
 
 **Step 2 — Allow batch ECRITURE tools**
 
@@ -75,9 +73,7 @@ Avant d'utiliser VantagePeers Cloud via ChatGPT, le connecteur doit être autori
 
 **Étape 1 — Ajouter le connecteur**
 
-1. Dans ChatGPT, accédez à **Paramètres → Applications → Ajouter un connecteur**.
-2. Recherchez **vantage-peers** ou collez l'URL de l'endpoint MCP fournie lors de l'intégration. L'URL se termine par `/mcp` (par exemple `https://vantage-peers-production.up.railway.app/mcp`) ; collez-la telle quelle, pas l'hôte seul.
-3. Authentifiez-vous via le flux OAuth. Utilisez les identifiants (client ID / client secret) fournis par votre opérateur lors de l'intégration — ne créez pas de nouveaux identifiants.
+1. Connectez ChatGPT en suivant [Connecter vos assistants](./connect-assistants.fr.md#chatgpt). Ne recopiez pas les étapes ici ; la page indique aussi le choix de l'agent au consentement.
 
 **Étape 2 — Autoriser les outils ECRITURE en lot**
 
@@ -115,9 +111,7 @@ VantagePeers Cloud integrates with Claude.ai via a custom skill. The critical de
 
 **Step 1 — Define the custom skill in Claude.ai**
 
-1. In Claude.ai, open **Settings → Integrations → Add MCP connector**.
-2. Enter the VantagePeers MCP endpoint URL provided during onboarding. The URL ends in `/mcp` (for example `https://vantage-peers-production.up.railway.app/mcp`); enter it exactly, not the bare host.
-3. Authenticate with the OAuth flow using your onboarding credentials.
+1. Connect Claude by following [Connect your assistants](./connect-assistants.md#claude-use-the-plugin-not-a-bare-connector). The steps are not repeated here.
 
 **Step 2 — Bake identity into the skill at creation**
 
@@ -172,9 +166,7 @@ VantagePeers Cloud s'intègre à Claude.ai via une skill personnalisée. Le prin
 
 **Étape 1 — Définir la skill personnalisée dans Claude.ai**
 
-1. Dans Claude.ai, ouvrez **Paramètres → Intégrations → Ajouter un connecteur MCP**.
-2. Saisissez l'URL de l'endpoint MCP VantagePeers fournie lors de l'intégration. L'URL se termine par `/mcp` (par exemple `https://vantage-peers-production.up.railway.app/mcp`) ; saisissez-la telle quelle, pas l'hôte seul.
-3. Authentifiez-vous via le flux OAuth avec vos identifiants d'intégration.
+1. Connectez Claude en suivant [Connecter vos assistants](./connect-assistants.fr.md#claude-utiliser-le-plugin-pas-un-connecteur-nu). Ne recopiez pas les étapes ici.
 
 **Étape 2 — Intégrer l'identité dans la skill à la création**
 
@@ -369,7 +361,7 @@ Claude.ai, ChatGPT, Claude Code, Codex and any MCP client connect to VantagePeer
 
 **What the user sees**
 
-1. Add the connector with the MCP endpoint `https://<your-deployment>/mcp`. The client discovers the server and registers itself.
+1. Add the connector by following [Connect your assistants](./connect-assistants.md) (Claude via the plugin, ChatGPT, Grok). The client discovers the server and registers itself.
 2. The browser opens VantagePeers **sign-in** (Clerk). Sign in with your own account. If you are already signed in, this step is skipped.
 3. A **consent page** lists only the organisations you are a member of. Choose the organisation this connection may reach.
 4. Press **Approve**. (**Deny** ends the request and issues nothing.) The page is required even when you belong to one organisation: it is what stops a client from obtaining access for someone who merely followed its link.
@@ -410,7 +402,7 @@ Claude.ai, ChatGPT, Claude Code, Codex et tout client MCP se connectent à Vanta
 
 **Ce que voit l'utilisateur**
 
-1. Ajouter le connecteur avec l'adresse MCP `https://<votre-déploiement>/mcp`. Le client découvre le serveur et s'enregistre.
+1. Ajouter le connecteur en suivant [Connecter vos assistants](./connect-assistants.fr.md) (Claude via le plugin, ChatGPT, Grok). Le client découvre le serveur et s'enregistre.
 2. Le navigateur ouvre la **connexion** VantagePeers (Clerk). Se connecter avec son propre compte ; l'étape est sautée si la session est déjà ouverte.
 3. Une **page de consentement** ne liste que les organisations dont vous êtes membre. Choisir celle que cette connexion peut atteindre.
 4. Cliquer **Approve**. (**Deny** met fin à la demande sans rien émettre.) La page est exigée même avec une seule organisation : c'est elle qui empêche un client d'obtenir l'accès de quelqu'un qui a simplement suivi son lien.

@@ -5,6 +5,8 @@ description: "Instructions pas-à-pas pour déployer votre propre instance Vanta
 
 > This documentation is also available in English: [install-EN.md](./install-EN.md)
 
+> Vous utilisez VantagePeers Cloud (hébergé) plutôt que votre propre déploiement ? Ce guide ne s'applique pas. Suivez [Connecter vos assistants](./cloud/connect-assistants.fr.md) (Claude, ChatGPT, Grok).
+
 VantagePeers est une couche de coordination auto-hébergée pour les équipes d'agents IA. Ce guide vous accompagne de bout en bout — depuis le clonage du dépôt jusqu'au premier appel MCP en production. Comptez environ vingt minutes pour une première installation.
 
 ---
