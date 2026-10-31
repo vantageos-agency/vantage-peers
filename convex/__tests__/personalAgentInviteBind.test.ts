@@ -311,14 +311,60 @@ describe("recordPersonalAgentInvite", () => {
 		await expect(record(t, ok, { email: "not-an-email" })).rejects.toThrow(/PERSONAL_AGENT_INVITE_EMAIL_INVALID/);
 	});
 
-	test("an org that already has a live member schedules the bind (signed up before the invite); a tombstoned one does not", async () => {
+	test("schedules ONE bind for the org (late invite: the members are read from Clerk, not from this table)", async () => {
 		const t = createT();
 		const milo = await seedAgent(t, ORG_A, "Milo");
-		await seedMember(t, ORG_A, PERSON);
-		await seedMember(t, ORG_A, OTHER, 5);
 		await record(t, milo);
-		const jobs = (await scheduled(t)).filter((j) => j.name.includes("personalAgentBind"));
-		expect(jobs.map((j) => (j.args[0] as { clerkUserId: string }).clerkUserId)).toEqual([PERSON]);
+		const jobs = (await scheduled(t)).filter((j) => j.name.includes("bindOrgFromClerk"));
+		expect(jobs.map((j) => j.args)).toEqual([[{ clerkOrgId: testClerkOrgId(ORG_A) }]]);
+	});
+});
+
+describe("bindOrgFromClerk (invite recorded after the person joined)", () => {
+	const page = (ids: string[], total = ids.length) => ({
+		ok: true,
+		status: 200,
+		json: async () => ({ data: ids.map((u) => ({ public_user_data: { user_id: u } })), total_count: total }),
+	});
+	const user = (id: string, email: string, status: string) => ({
+		ok: true,
+		status: 200,
+		json: async () => ({ id, email_addresses: [{ email_address: email, verification: { status } }] }),
+	});
+	const run = (t: T) => t.action(internal.personalAgentBind.bindOrgFromClerk, { clerkOrgId: testClerkOrgId(ORG_A) });
+
+	test("MATCH: a listed member with the verified email binds; a listed member with another email does not", async () => {
+		const t = createT();
+		const milo = await seedAgent(t, ORG_A, "Milo", { personalAgentInvite: invite(EMAIL) });
+		await seedMember(t, ORG_A, PERSON);
+		await seedMember(t, ORG_A, OTHER);
+		vi.stubEnv("CLERK_SECRET_KEY", "sk_test_x");
+		vi.stubGlobal("fetch", vi.fn(async (url: string) =>
+			url.includes("/memberships") ? page([OTHER, PERSON])
+				: url.endsWith(OTHER) ? user(OTHER, "someone@client.test", "verified")
+				: user(PERSON, EMAIL, "verified")));
+		expect(await run(t)).toEqual({ bound: 1 });
+		expect((await row(t, milo))?.personalAgentOf).toBe(PERSON);
+	});
+
+	test("fail-closed: a partial member listing binds nothing", async () => {
+		const t = createT();
+		const milo = await seedAgent(t, ORG_A, "Milo", { personalAgentInvite: invite(EMAIL) });
+		await seedMember(t, ORG_A, PERSON);
+		vi.stubEnv("CLERK_SECRET_KEY", "sk_test_x");
+		vi.stubGlobal("fetch", vi.fn(async () => page([PERSON], 150)));
+		await expect(run(t)).rejects.toThrow(/CLERK_MEMBERSHIP_READ_INCOMPLETE/);
+		expect((await row(t, milo))?.personalAgentOf).toBeUndefined();
+	});
+
+	test("DENY: a Clerk-listed user with no membership row here binds nothing", async () => {
+		const t = createT();
+		const milo = await seedAgent(t, ORG_A, "Milo", { personalAgentInvite: invite(EMAIL) });
+		vi.stubEnv("CLERK_SECRET_KEY", "sk_test_x");
+		vi.stubGlobal("fetch", vi.fn(async (url: string) =>
+			url.includes("/memberships") ? page([PERSON]) : user(PERSON, EMAIL, "verified")));
+		expect(await run(t)).toEqual({ bound: 0 });
+		expect((await row(t, milo))?.personalAgentOf).toBeUndefined();
 	});
 });
 

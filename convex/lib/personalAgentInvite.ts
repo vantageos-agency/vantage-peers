@@ -16,7 +16,6 @@ export function normalizeInviteEmail(email: string): string | null {
 // An organisation's agent and member counts are small; a client org beyond these bounds is refused
 // loudly by the bind rather than partially processed.
 export const INVITE_SCAN_CAP = 500;
-const MEMBER_SCAN_CAP = 100;
 
 /** Whether the org holds at least one active agent with a pending invite and no person yet. */
 export async function orgHasPendingInvites(
@@ -44,16 +43,10 @@ export async function scheduleInviteBind(
 	});
 }
 
-/** Schedule the bind for every live member the org already has (the invite-recorded-late path). */
-export async function scheduleInviteBindForMembers(
-	ctx: Pick<MutationCtx, "db" | "scheduler">,
+/** Schedule the bind for every member Clerk lists for the org (the invite-recorded-late path). */
+export async function scheduleInviteBindForOrg(
+	ctx: Pick<MutationCtx, "scheduler">,
 	clerkOrgId: string,
 ): Promise<void> {
-	const members = await ctx.db
-		.query("orgMembership")
-		.withIndex("by_org_clerk_id", (q) => q.eq("clerkOrgId", clerkOrgId))
-		.take(MEMBER_SCAN_CAP);
-	for (const m of members) {
-		if (m.deletedAt === undefined) await scheduleInviteBind(ctx, clerkOrgId, m.clerkUserId);
-	}
+	await ctx.scheduler.runAfter(0, internal.personalAgentBind.bindOrgFromClerk, { clerkOrgId });
 }

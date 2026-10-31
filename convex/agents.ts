@@ -18,7 +18,7 @@ import {
 	type SessionCaller,
 } from "./lib/agentIdentity";
 import { ORG_ADMIN_ROLES, refusalError } from "./lib/auth";
-import { normalizeInviteEmail, scheduleInviteBindForMembers } from "./lib/personalAgentInvite";
+import { normalizeInviteEmail, scheduleInviteBindForOrg } from "./lib/personalAgentInvite";
 import { orgByIdLookups, orgByIdPrincipalLookups } from "./lib/orgIdLookups";
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -825,9 +825,9 @@ export const recordPersonalAgentInvite = internalMutation({
 			});
 		}
 		// A member the org already has (the person signed up before the invite was recorded) will not
-		// produce a new webhook event: re-run the bind for each live member. Idempotent, so a re-run
-		// of the onboarding command is also the retry of a bind that failed.
-		await scheduleInviteBindForMembers(ctx, agent.clerkOrgId);
+		// produce a new webhook event: the bind reads the org's members from Clerk. Idempotent, so a
+		// re-run of the onboarding command is also the retry of a bind that failed.
+		await scheduleInviteBindForOrg(ctx, agent.clerkOrgId);
 		return { agentId: args.agentId, changed, previousEmail };
 	},
 });
