@@ -12,7 +12,7 @@
 //   LATE    the agent is added to the roster AFTER the token was minted -> true, no reconnect
 //   OFF     the agent's ID is not in allowedAgentIds (label present in the snapshot) -> false
 //   REMOVED the agent is taken off the roster after minting -> false
-//   LEGACY  a mapping with no allowedAgentIds (not backfilled) -> the key is absent
+//   NOROSTER a mapping with no allowedAgentIds -> nobody is listed: false (refused by default)
 //   INACTIVE the organisation is inactive -> no agent resolves at all (unchanged)
 //   NONE    a token resolving no agent -> personalAgent null (unchanged)
 //   ADD     addRosterMembers appends the agent's exact stored name as its label
@@ -143,13 +143,13 @@ describe("personalAgent.onRoster is read live from the mapping's roster by ID", 
 		expect((await lookup(t, hash))?.personalAgent?.onRoster).toBe(false);
 	});
 
-	test("LEGACY: a mapping without allowedAgentIds leaves the flag absent", async () => {
+	test("NOROSTER: a mapping without allowedAgentIds lists nobody", async () => {
 		const t = createT();
 		const a = await seedAgent(t, "Aria");
 		await seedOrg(t, ["aria"], undefined);
 		const row = await lookup(t, await mintPersonToken(t, ["aria"], a));
 		expect(row?.personalAgent?.agentId).toBe(a);
-		expect(row?.personalAgent).not.toHaveProperty("onRoster");
+		expect(row?.personalAgent?.onRoster).toBe(false);
 	});
 
 	test("NONE: a token whose stamped agent is gone resolves no agent (unchanged)", async () => {

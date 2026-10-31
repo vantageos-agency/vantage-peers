@@ -285,9 +285,11 @@ export const addRosterMembers = internalMutation({
 				);
 			}
 			if (!current.includes(id)) current.push(id);
+			// The agent's exact stored name (a label snapshot for the legacy name
+			// readers, never an authority). Dedupe stays spelling-insensitive.
 			const label = normalizeOrchestratorId(agent.name);
 			if (!labels.some((entry) => normalizeOrchestratorId(entry) === label)) {
-				labels.push(label);
+				labels.push(agent.name);
 			}
 		}
 		await ctx.db.patch(row._id, {

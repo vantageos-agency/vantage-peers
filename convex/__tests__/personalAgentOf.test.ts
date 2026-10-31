@@ -123,7 +123,7 @@ describe("a person token acts as the one agent that designates the person", () =
 		const hash = await mintPersonToken(t, STEPHANE, "org-a");
 		const row = await lookup(t, hash);
 		expect(row?.principal).toBe("person");
-		expect(row?.personalAgent).toEqual({ agentId: tele, orgId: "org-a", agentName: "telemaque" });
+		expect(row?.personalAgent).toEqual({ agentId: tele, orgId: "org-a", agentName: "telemaque", onRoster: false });
 		// A person token is still never a seat.
 		expect(row?.seatAgent).toBeNull();
 	});
@@ -198,7 +198,7 @@ describe("another organisation's agent is never selected", () => {
 		await designate(t, foreign, STEPHANE);
 		await designate(t, own, STEPHANE);
 		const row = await lookup(t, await mintPersonToken(t, STEPHANE, "org-a"));
-		expect(row?.personalAgent).toEqual({ agentId: own, orgId: "org-a", agentName: "telemaque" });
+		expect(row?.personalAgent).toEqual({ agentId: own, orgId: "org-a", agentName: "telemaque", onRoster: false });
 	});
 
 	test("DENY: a seat token never resolves a personal agent, whatever its userId is", async () => {

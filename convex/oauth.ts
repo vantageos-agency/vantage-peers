@@ -50,6 +50,7 @@ import {
 	personPrincipalLookups,
 } from "./lib/actingPrincipal";
 import { liveSeatAgent, resolveSeatAgent } from "./lib/seatAgent";
+import { isAgentOnScopeRoster } from "./lib/missionActors";
 import { personalAgentOfToken } from "./lib/personalAgent";
 import { agentChoicesFor, applyAgentChoice } from "./lib/personalAgentChoice";
 import { requireId } from "./lib/ids";
@@ -2677,12 +2678,17 @@ const oauthContextShape = v.object({
 	// by ROW ID with its CURRENT label. null: the person stays the person (not a person
 	// token, or no / several / inactive designations). Optional so a reader built before
 	// this field existed is unaffected; always emitted by this lookup.
+	// `onRoster`: that agent's ID is on the org's roster by ID, read LIVE on this
+	// request (false: not listed, no roster by ID, or the org is unmapped / inactive).
+	// Absent only from a provider that predates it. The MCP's write gate reads it; the
+	// token's minted label snapshot never decides for an agent resolved by ID.
 	personalAgent: v.optional(
 		v.union(
 			v.object({
 				agentId: v.id("agents"),
 				orgId: v.string(),
 				agentName: v.string(),
+				onRoster: v.optional(v.boolean()),
 			}),
 			v.null(),
 		),
@@ -2739,6 +2745,29 @@ export const getAccessTokenByHash = query({
 			orgMapping !== null && orgMapping.isActive
 				? orgMapping.clerkOrgId
 				: undefined;
+		// Is the resolved personal agent's ID on its organisation's roster BY ID right
+		// now? The scope is the org's own member scope built from the mapping row read
+		// above (withOrgScope, actForOrgMapping), the listing is the package's
+		// (isAgentOnScopeRoster -> assertPrincipalListed): no name is read and the
+		// token's label snapshot is not an input. An unmapped / inactive org lists
+		// nobody; so does a mapping with no roster by ID (refused by default).
+		let onRoster: boolean | undefined;
+		if (personal !== null) {
+			if (orgMapping === null || !orgMapping.isActive) {
+				onRoster = false;
+			} else {
+				const orgScope = await withOrgScope(ctx, {
+					refuseWithoutThrow: true,
+					actForOrgMapping: orgMapping,
+				});
+				onRoster = await isAgentOnScopeRoster(
+					ctx,
+					orgScope,
+					personal.agentId,
+					"oauth:getAccessTokenByHash",
+				);
+			}
+		}
 		return {
 			clientId: row.clientId,
 			userId: row.userId,
@@ -2757,7 +2786,14 @@ export const getAccessTokenByHash = query({
 			seatAgent: agent
 				? { agentId: agent._id, orgId: agent.orgSlug, agentName: agent.name }
 				: null,
-			personalAgent: personal,
+			personalAgent:
+				personal === null
+					? null
+					: {
+							...personal,
+							// LIVE, by ID, through the package.
+							...(onRoster === undefined ? {} : { onRoster }),
+						},
 		};
 	},
 });

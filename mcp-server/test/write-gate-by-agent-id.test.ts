@@ -10,7 +10,8 @@
  * (no onRoster: today's label compare, both poles, byte-identical).
  */
 import { describe, expect, it } from "vitest";
-import type { OAuthContext } from "../src/auth.js";
+import { passesScopeFilter } from "@vantageos/cloud-identity";
+import { type OAuthContext, toPackageOAuthCtx } from "../src/auth.js";
 import { fromGate } from "./lib/fromGate.js";
 
 const ORG = "client-org";
@@ -84,6 +85,24 @@ describe("write gate by agent ID (person token)", () => {
 			onRoster: true,
 		});
 		expect(await fromGate(ctx, "Bo")).not.toBeNull();
+	});
+
+	it("REFUSE (predicate): a name that is not the stamped agent's is never admitted by the live flag", () => {
+		const ctx = personCtx({
+			snapshot: ["bo"],
+			agentName: "Aria",
+			onRoster: true,
+		});
+		const judge = (name: string) =>
+			passesScopeFilter(toPackageOAuthCtx(ctx, { actingName: true }), {
+				createdBy: name,
+			});
+		expect(judge("Aria")).toBe(true);
+		expect(judge("Bo")).toBe(false);
+		// The default adapter (reads, listings) is untouched by the live flag.
+		expect(
+			passesScopeFilter(toPackageOAuthCtx(ctx), { createdBy: "bo" }),
+		).toBe(true);
 	});
 
 	it("REFUSE: the flag belongs to the resolved agent only (credential actor is another agent)", async () => {
