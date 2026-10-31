@@ -72,8 +72,8 @@ import { wrapToolResult } from "./ui-resources/stream-marker.js";
 import { validateTaskPayload } from "./validate-task-payload.js";
 import { verifiedActorOf, withVerifiedActor } from "./verifiedActor.js";
 import {
-	acceptsJsonArrayString,
 	idListSchema,
+	statusListSchema,
 	stringListSchema,
 } from "./listArgs.js";
 import { resolveActingAgent, resolveWhoamiIdentity } from "./whoamiIdentity.js";
@@ -378,36 +378,13 @@ export const listTasksArgsSchema = z.object({
 		.describe(
 			"Filter by instance — e.g. 'pi-vps'. Returns only tasks assigned to that instance.",
 		),
-	// A list sent as a JSON string is parsed first (src/listArgs.ts).
-	status: acceptsJsonArrayString(
-		z.union([
-			z.enum([
-				"todo",
-				"in_progress",
-				"review",
-				"blocked",
-				"done",
-				"cancelled",
-				"open",
-				"active",
-				"all",
-			]),
-			z
-				.array(
-					z.enum([
-						"todo",
-						"in_progress",
-						"review",
-						"blocked",
-						"done",
-						"cancelled",
-					]),
-				)
-				.min(1),
-		]),
+	// One published shape (S-43), see statusListSchema (src/listArgs.ts).
+	status: statusListSchema(
+		["todo", "in_progress", "review", "blocked", "done", "cancelled"],
+		["open", "active", "all"],
 	)
 		.optional()
-		.describe("Filter by status (single, alias, or array)"),
+		.describe("Filter by status: a list of statuses, or one alias alone"),
 	project: z.string().optional().describe("Filter by project name"),
 	limit: z
 		.number()
@@ -757,34 +734,26 @@ export const missionStatusSchema = z
 	.enum(missionStatusValues)
 	.describe("Mission lifecycle status");
 
-// v2.3.2 — filter-only schemas: expose status aliases ("open"/"active"/"all")
-// AND multi-status arrays to the MCP client. Backend (convex/tasks.ts +
-// convex/missions.ts) handles alias expansion + array validation.
-// Aliases NOT allowed inside arrays (matches backend rejection).
-// A list sent as a JSON string is parsed first (src/listArgs.ts).
-export const taskStatusFilterSchema = acceptsJsonArrayString(
-	z.union([
-		z.enum([...taskStatusValues, ...taskStatusAliases]),
-		z.array(z.enum(taskStatusValues)).min(1),
-	])
-	.describe(
-		'Task status filter. Single status ("todo"|"in_progress"|"review"|"blocked"|"done"|"cancelled"|"failed"), ' +
-			'alias ("open" = todo+in_progress+review+blocked, "active" = todo+in_progress, "all" = no filter), ' +
-			"or array of direct statuses (no aliases inside array).",
-	),
+// Filter-only schemas, ONE published shape (S-43): an array of status tokens.
+// A bare status or alias, or a JSON-string list, is normalised first; an alias
+// stands alone (the backend expands it, convex/tasks.ts + convex/missions.ts);
+// the backend receives one token as a string, several statuses as an array.
+export const taskStatusFilterSchema = statusListSchema(
+	taskStatusValues,
+	taskStatusAliases,
+).describe(
+	'Task status filter, a list: one status ("todo"|"in_progress"|"review"|"blocked"|"done"|"cancelled"|"failed"), ' +
+		'one alias alone (["open"] = todo+in_progress+review+blocked, ["active"] = todo+in_progress, ["all"] = no filter), ' +
+		"or several direct statuses (no alias among them).",
 );
 
-// A list sent as a JSON string is parsed first (src/listArgs.ts).
-export const missionStatusFilterSchema = acceptsJsonArrayString(
-	z.union([
-		z.enum([...missionStatusValues, ...missionStatusAliases]),
-		z.array(z.enum(missionStatusValues)).min(1),
-	])
-	.describe(
-		'Mission status filter. Single status ("brainstorm"|"plan"|"execute"|"validate"|"complete"), ' +
-			'alias ("open" = brainstorm+plan+execute+validate, "active" = plan+execute, "all" = no filter), ' +
-			"or array of direct statuses (no aliases inside array).",
-	),
+export const missionStatusFilterSchema = statusListSchema(
+	missionStatusValues,
+	missionStatusAliases,
+).describe(
+	'Mission status filter, a list: one status ("brainstorm"|"plan"|"execute"|"validate"|"complete"|"cancelled"), ' +
+		'one alias alone (["open"] = brainstorm+plan+execute+validate, ["active"] = plan+execute, ["all"] = no filter), ' +
+		"or several direct statuses (no alias among them).",
 );
 
 // v2.3.2 — fields projection toggle. "lite" returns compact projection
@@ -10943,6 +10912,7 @@ export function registerTools(
 			payload: z
 				.record(
 					z.string(),
+					// allow-union-input: the record holds another tool's argument values to be linted, each keeping the type that tool takes; the client copies them, it never chooses between a list and a scalar here
 					z.union([
 						z.string(),
 						z.number(),
