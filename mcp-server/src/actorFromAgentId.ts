@@ -10,9 +10,10 @@ import { internalClient, type OAuthContext } from "./auth.js";
 //
 // Before: a caller resolved to an agent BY ID (a per-agent credential, a seat
 // stamp, a person token's personal agent) was still judged on the SPELLING of
-// the acting name it typed: `hélios` passed, `Helios` and `marie` were refused
-// (@vantageos/cloud-identity decideActingClaim compares the typed name with the
-// agent's label). The spelling decided.
+// the acting name it typed: the exact label passed, a re-cased or accent-free
+// spelling or the person's own name was refused (@vantageos/cloud-identity
+// decideActingClaim compares the typed name with the agent's label). The
+// spelling decided.
 //
 // Now, for such a caller, the acting name is optional and is never a selector:
 //   - omitted                                 -> the agent's stored label (bindActingNames);
