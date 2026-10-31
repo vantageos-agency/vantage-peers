@@ -39,8 +39,7 @@ import {
 //   - a value that is an agent ID (Convex ID-shaped) the directory does not list
 //     under the caller's ID: another organisation's agent, or an unknown one;
 //   - any value other than the agent's own, when the directory cannot be read
-//     (no token hash, an org that disagrees with the token's, a throwing or
-//     malformed answer): "designates no agent" cannot be asserted without the
+//     (no token hash, a throwing or malformed answer): "designates no agent" cannot be asserted without the
 //     directory, so it is not assumed;
 //   - the name of an agent of ANOTHER organisation is indistinguishable, from
 //     here, from a name that designates nobody: the caller's own directory does
@@ -108,16 +107,13 @@ function refuse(
 
 async function readDirectory(
 	ctx: OAuthContext,
-	resolved: ResolvedAgent,
 ): Promise<DirectoryEntry[] | null> {
-	// The directory is the token's organisation. It must be the resolved agent's
-	// own, or "no agent listed" says nothing about the agent's organisation.
-	if (
-		ctx.accessTokenHash === undefined ||
-		ctx.clerkOrgSlug !== resolved.orgSlug
-	) {
-		return null;
-	}
+	// The directory is the TOKEN's organisation (derived from its hash by Convex).
+	// That is the resolved agent's own organisation: the bearer boundary refuses a
+	// credential whose organisation differs from the token's, and seatAgentOf
+	// believes a stamp only in the token's own organisation. Without a token hash
+	// there is no door to ask.
+	if (ctx.accessTokenHash === undefined) return null;
 	try {
 		const raw: unknown = await internalClient().query(
 			// biome-ignore lint/suspicious/noExplicitAny: Convex string API
@@ -171,7 +167,7 @@ export async function decideActingNameForResolvedAgent(
 	) {
 		return { ok: true, label: resolved.agentLabel };
 	}
-	const directory = await readDirectory(ctx, resolved);
+	const directory = await readDirectory(ctx);
 	if (directory === null) {
 		return refuse(
 			claimed,
