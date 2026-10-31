@@ -211,13 +211,13 @@ export async function authorizeAsPerson(
 		orgId: string;
 		state?: string;
 		scope?: string;
+		/** Drop `resource`, as Claude.ai's connector does. */
+		omitResource?: boolean;
 	},
 ): Promise<DriveResult> {
-	const first = await getAuthorize(
-		app,
-		authorizeUrl(params),
-		params.sessionToken,
-	);
+	const url = new URL(authorizeUrl(params));
+	if (params.omitResource) url.searchParams.delete("resource");
+	const first = await getAuthorize(app, url.toString(), params.sessionToken);
 	if (!first.picker) return first;
 	return postOrg(
 		app,

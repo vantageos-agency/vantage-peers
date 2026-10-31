@@ -538,6 +538,44 @@ describe("consent and organisation choice", () => {
 		expect(r.json?.error).toBe("invalid_target");
 	});
 
+	// Claude.ai's connector omits `resource` (optional, RFC 8707 §2): the
+	// request names no target, so it is bound to the one this server publishes.
+	it("an omitted resource is bound to the published one, never refused", async () => {
+		const url = new URL(
+			authorizeUrl({ clientId: CLIENT_ID, redirectUri: REDIRECT, challenge }),
+		);
+		url.searchParams.delete("resource");
+		const signedOut = await getAuthorize(app, url.toString());
+		expect(signedOut.status).toBe(302);
+		expect(signedOut.json?.error).toBeUndefined();
+
+		const r = await authorizeAsPerson(app, {
+			clientId: CLIENT_ID,
+			redirectUri: REDIRECT,
+			challenge,
+			sessionToken: await harness.session("user_1"),
+			orgId: "org_A",
+			omitResource: true,
+		});
+		expect(r.code).toBeDefined();
+		const token = await postToken(r.code as string);
+		expect(token.status).toBe(200);
+		const bound = await postToken(
+			(
+				await authorizeAsPerson(app, {
+					clientId: CLIENT_ID,
+					redirectUri: REDIRECT,
+					challenge,
+					sessionToken: await harness.session("user_1"),
+					orgId: "org_A",
+					omitResource: true,
+				})
+			).code as string,
+			{ resource: "https://other.example/mcp" },
+		);
+		expect(bound.status).toBe(400);
+	});
+
 	it("a resource this server does not own is refused", async () => {
 		const r = await getAuthorize(
 			app,

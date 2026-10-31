@@ -704,6 +704,12 @@ app.get("/authorize", async (c) => {
 		settings.settings,
 		expanderFor(query.redirect_uri),
 	);
+	// `resource` is optional (RFC 8707 §2) and Claude.ai's connector omits it.
+	// A request naming no target is bound to the single one this server
+	// publishes; a named resource is still checked by the package, unchanged.
+	if (!query.resource && cfg.allowedResources.length === 1) {
+		query.resource = cfg.allowedResources[0];
+	}
 	return respondToOutcome(
 		c,
 		await startAuthorize(query, sessionTokenFrom(c), cfg, deps),
