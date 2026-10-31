@@ -221,7 +221,7 @@ export function agentChoiceFrom(
 
 /**
  * The Convex-backed AuthorizationCodeStore: one atomic consume. With a chosen
- * agent, `put` is `oauth:putPersonCodeWithAgent`: the choice is judged and bound
+ * agent, `put` passes it to `oauth:putPersonCode`: the choice is judged and bound
  * in the same transaction that inserts the code, so a refusal leaves no code and
  * no write. `onAgentRefusal` receives the refusal code when that is why `put`
  * failed; the error is rethrown so the package still issues no code.
@@ -238,19 +238,11 @@ export function convexCodeStore(
 				throw new Error("AGENT_CHOICE_REFUSED: two agent choices were posted");
 			}
 			try {
-				if (choice === null) {
-					await internalClient().mutation(
-						// biome-ignore lint/suspicious/noExplicitAny: Convex string API
-						"oauth:putPersonCode" as any,
-						{ record },
-					);
-				} else {
-					await internalClient().mutation(
-						// biome-ignore lint/suspicious/noExplicitAny: Convex string API
-						"oauth:putPersonCodeWithAgent" as any,
-						{ record, choice },
-					);
-				}
+				await internalClient().mutation(
+					// biome-ignore lint/suspicious/noExplicitAny: Convex string API
+					"oauth:putPersonCode" as any,
+					choice === null ? { record } : { record, choice },
+				);
 			} catch (err: unknown) {
 				const code = agentRefusalCodeOf(err);
 				if (code !== null) onAgentRefusal(code);
