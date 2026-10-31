@@ -23,6 +23,7 @@ import { ProtocolError, ProtocolErrorCode } from "@modelcontextprotocol/server";
 import type { ConvexHttpClient } from "convex/browser";
 import { z } from "zod";
 import type { OAuthContext } from "../auth.js";
+import { acceptsJsonArrayString } from "../listArgs.js";
 import { defineTool } from "../registerTool.js";
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -59,9 +60,7 @@ export const exportOkfBundleArgsSchema = {
 				"export forbidden). The 'project/elpi-corp' Phase 1 hard lock was " +
 				"removed by B3 (mission k5779qbxh) for multi-tenant Cloud dashboards.",
 		),
-	types: z
-		.array(z.string())
-		.nullable()
+	types: acceptsJsonArrayString(z.array(z.string()).nullable())
 		.optional()
 		.describe(
 			"Optional type filter — null/omitted exports all 3 families. " +
