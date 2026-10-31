@@ -51,13 +51,15 @@ function refuse(reason: string): ConvexError<string> {
 
 /**
  * The agents of `org` this person may take: active, an ordinary agent (not the
- * service account, not owned by a person's seat), and either designating this
- * person already or designating nobody. Never one designated to someone else.
+ * service account, not owned by a person's seat), carrying this org's permanent
+ * ID, and either designating this person already or, for an org admin only,
+ * designating nobody (ruling (a')). Never one designated to someone else.
  */
 export async function choosableAgents(
 	ctx: Ctx,
 	personId: string,
 	org: ChoiceOrg,
+	admin: boolean,
 ): Promise<Doc<"agents">[]> {
 	const roster = await ctx.db
 		.query("agents")
@@ -77,7 +79,11 @@ export async function choosableAgents(
 			// may have been filed under this slug by a former holder of it, and an
 			// unstamped row is good for a refusal, never a grant (agentIdentity.ts).
 			a.clerkOrgId === org.id &&
-			(a.personalAgentOf === undefined || a.personalAgentOf === personId),
+			// Ruling (a'): an agent already bound to this person, or, for an org
+			// admin only, an unbound one. An ordinary member never takes a shared
+			// agent of the organisation.
+			(a.personalAgentOf === personId ||
+				(admin && a.personalAgentOf === undefined)),
 	);
 }
 
@@ -145,7 +151,8 @@ export async function agentChoicesFor(
 	agents: { agentId: Doc<"agents">["_id"]; name: string; mine: boolean }[];
 	canCreate: boolean;
 }> {
-	const listed = await choosableAgents(ctx, personId, org);
+	const admin = mayCreateAgent(role, org.id);
+	const listed = await choosableAgents(ctx, personId, org, admin);
 	const held = await activeHolders(ctx, personId, org);
 	// A person who already acts as an agent here is shown that one only: a second
 	// designation would make the resolution ambiguous (the person would act as
@@ -160,7 +167,7 @@ export async function agentChoicesFor(
 			name: a.name,
 			mine: held.some((h) => h._id === a._id),
 		})),
-		canCreate: held.length === 0 && mayCreateAgent(role, org.id),
+		canCreate: held.length === 0 && admin,
 	};
 }
 
@@ -178,7 +185,12 @@ export async function applyAgentChoice(
 	const held = await activeHolders(ctx, personId, org);
 	if (choice.kind === "existing") {
 		const id = ctx.db.normalizeId("agents", choice.agentId);
-		const listed = await choosableAgents(ctx, personId, org);
+		const listed = await choosableAgents(
+			ctx,
+			personId,
+			org,
+			mayCreateAgent(bound.role, org.id),
+		);
 		const picked = id === null ? undefined : listed.find((a) => a._id === id);
 		if (picked === undefined) {
 			throw refuse(

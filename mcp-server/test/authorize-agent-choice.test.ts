@@ -282,9 +282,9 @@ const boundTo = async (agentId: AgentId) =>
 	(await snapshot()).agents.find((a) => a.id === agentId)?.personalAgentOf ??
 	null;
 
-describe("1. a member picks an unbound agent", () => {
+describe("1. an org admin picks an unbound agent", () => {
 	it("lists it by id with its name, binds it at Approve, and the token acts as it", async () => {
-		const { html } = await showPicker(MEMBER);
+		const { html } = await showPicker(ADMIN);
 		expect(html).toContain(`value="${ids.alpha}"`);
 		expect(html).toContain("Alpha");
 		// never listed: bound elsewhere, seat-owned, retired, service, another org's
@@ -298,12 +298,12 @@ describe("1. a member picks an unbound agent", () => {
 			expect(html).not.toContain(hidden);
 		}
 
-		const r = await approve(MEMBER, ORG_A, {
+		const r = await approve(ADMIN, ORG_A, {
 			[`agent_${ORG_A}`]: ids.alpha,
 		});
 		expect(r.status).toBe(302);
 		expect(r.code).toBeTruthy();
-		expect(await boundTo(ids.alpha)).toBe(MEMBER);
+		expect(await boundTo(ids.alpha)).toBe(ADMIN);
 
 		const acting = await resolvedAgent(await tokenFor(r.code as string));
 		expect(acting?.agentId).toBe(ids.alpha);
@@ -314,9 +314,61 @@ describe("1. a member picks an unbound agent", () => {
 		await t.run(async (ctx) =>
 			ctx.db.patch(ids.alpha as never, { name: "<b>Al</b>&pha" }),
 		);
-		const { html } = await showPicker(MEMBER);
+		const { html } = await showPicker(ADMIN);
 		expect(html).not.toContain("<b>Al</b>");
 		expect(html).toContain("&lt;b&gt;Al&lt;/b&gt;&amp;pha");
+	});
+});
+
+describe("1b. ruling (a'): an ordinary member never takes a shared agent", () => {
+	it("an unbound agent is not offered to a member, and a forged POST with its id is refused server-side: no code, no write", async () => {
+		const { html } = await showPicker(MEMBER);
+		expect(html).not.toContain(ids.alpha);
+		expect(html).toContain("ask your admin");
+		const before = await snapshot();
+		const r = await approve(MEMBER, ORG_A, { [`agent_${ORG_A}`]: ids.alpha });
+		expect(r.status).toBe(403);
+		expect(r.code).toBeUndefined();
+		expect(JSON.stringify(r.json)).toContain("AGENT_CHOICE_REFUSED");
+		expect(await snapshot()).toEqual(before);
+		expect(await boundTo(ids.alpha)).toBeNull();
+	});
+
+	it("an agent already bound to the member is offered, and Approve acts as it", async () => {
+		await t.run(async (ctx) =>
+			ctx.db.patch(ids.alpha as never, { personalAgentOf: MEMBER }),
+		);
+		const { html } = await showPicker(MEMBER);
+		expect(html).toContain(`value="${ids.alpha}"`);
+		const r = await approve(MEMBER, ORG_A, { [`agent_${ORG_A}`]: ids.alpha });
+		expect(r.status).toBe(302);
+		const acting = await resolvedAgent(await tokenFor(r.code as string));
+		expect(acting?.agentId).toBe(ids.alpha);
+	});
+});
+
+describe("1c. one designation per person per organisation", () => {
+	it("a forged POST picking a second, unbound agent is refused: no code, the second stays unbound", async () => {
+		const second = await t.run(async (ctx) =>
+			ctx.db.insert("agents", {
+				orgSlug: "org-a",
+				clerkOrgId: ORG_A,
+				name: "Second",
+				normalizedName: "second",
+				isActive: true,
+				createdAt: Date.now(),
+			}),
+		);
+		await t.run(async (ctx) =>
+			ctx.db.patch(ids.alpha as never, { personalAgentOf: ADMIN }),
+		);
+		const before = await snapshot();
+		const r = await approve(ADMIN, ORG_A, { [`agent_${ORG_A}`]: second });
+		expect(r.status).toBe(403);
+		expect(r.code).toBeUndefined();
+		expect(JSON.stringify(r.json)).toContain("AGENT_CHOICE_REFUSED");
+		expect(await snapshot()).toEqual(before);
+		expect(await boundTo(second as AgentId)).toBeNull();
 	});
 });
 
@@ -359,6 +411,9 @@ describe("3. another organisation's agent, and names", () => {
 	});
 
 	it("the picker of another org's member never offers this org's agents", async () => {
+		await t.run(async (ctx) =>
+			ctx.db.patch(ids.foreign as never, { personalAgentOf: OUTSIDER }),
+		);
 		const { html } = await showPicker(OUTSIDER);
 		expect(html).toContain(ids.foreign);
 		expect(html).not.toContain(ids.alpha);
