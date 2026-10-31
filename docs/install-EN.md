@@ -5,6 +5,8 @@ description: "Step-by-step instructions to deploy your own VantagePeers instance
 
 > Cette documentation est également disponible en francais : [install-FR.md](./install-FR.md)
 
+> Using the hosted VantagePeers Cloud instead of your own deployment? This guide does not apply. Follow [Connect your assistants](./cloud/connect-assistants.md) (Claude, ChatGPT, Grok).
+
 VantagePeers is a self-hosted coordination layer for AI agent teams. This guide walks you through a full production deployment — from cloning the repository to sending your first MCP tool call. Budget roughly 20 minutes for a first-time setup.
 
 ---
