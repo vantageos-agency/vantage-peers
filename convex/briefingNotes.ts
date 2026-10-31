@@ -1,6 +1,11 @@
 import { v } from "convex/values";
 import { ConvexError } from "convex/values";
-import { mutation, query, type MutationCtx, type QueryCtx } from "./_generated/server";
+import { internalMutation, mutation, query, type MutationCtx, type QueryCtx } from "./_generated/server";
+import {
+	deleteBodyChunks,
+	hydrateNote,
+	hydrateWithinBudget,
+} from "./briefingNoteBodies";
 import type { Doc, Id } from "./_generated/dataModel";
 import { creatorValidator } from "./schema";
 import {
@@ -422,6 +427,13 @@ const briefingNoteFullValidator = v.object({
 	// R-18 import idempotency key (sha256 of the OKF dedup key). Optional
 	// because only OKF-imported rows carry it.
 	contentHash: v.optional(v.string()),
+	// An offloaded body (convex/briefingNoteBodies.ts): `bodyRef` names the stored
+	// body. `content` is the whole body unless `contentTruncated` is true, in which
+	// case it is a PREVIEW the read did not hydrate (fetch the note with `get`).
+	bodyRef: v.optional(
+		v.object({ chunks: v.number(), bytes: v.number(), sha256: v.string() }),
+	),
+	contentTruncated: v.optional(v.literal(true)),
 });
 
 // The lite projection of a keyword search hit (participants stay: the MCP layer's
@@ -527,7 +539,8 @@ export const get = query({
 			args.master,
 			args.callerIdentities,
 		);
-		return visible ? note : null;
+		// An offloaded note's body is stored beside the row: this door returns it whole.
+		return visible ? await hydrateNote(ctx.db, note) : null;
 	},
 });
 
@@ -992,7 +1005,11 @@ export const list = query({
 		rows = rows.slice(0, limit);
 
 		if (lite) return rows.map(projectBriefingNoteLite);
-		return rows;
+		// An offloaded note's body is stored beside the row. A page hydrates them
+		// within LIST_BODY_BUDGET_BYTES; one that does not fit keeps its preview and
+		// is marked `contentTruncated: true` (a partial body never passes as the
+		// content). `get` returns any single note whole.
+		return await hydrateWithinBudget(ctx.db, rows);
 	},
 });
 
@@ -1053,6 +1070,7 @@ export const deleteBriefingNote = mutation({
 				adminOnly: true,
 			});
 			await ctx.db.delete(args.noteId);
+			await deleteBodyChunks(ctx.db, args.noteId);
 			await syncParticipantIndex(ctx, args.noteId, []);
 			return { deleted: true };
 		}
@@ -1081,6 +1099,7 @@ export const deleteBriefingNote = mutation({
 		}
 
 		await ctx.db.delete(args.noteId);
+		await deleteBodyChunks(ctx.db, args.noteId);
 		await syncParticipantIndex(ctx, args.noteId, []);
 		return { deleted: true };
 	},
@@ -1196,6 +1215,12 @@ export const update = mutation({
 			if (value !== undefined) {
 				patch[key] = value;
 			}
+		}
+		// New content replaces the whole body: an offloaded note's stored body (and the
+		// reference to it) is stale from here on and must not hydrate over it.
+		if (fields.content !== undefined && note.bodyRef !== undefined) {
+			patch.bodyRef = undefined;
+			await deleteBodyChunks(ctx.db, noteId);
 		}
 		await ctx.db.patch(noteId, patch);
 		if (fields.participants !== undefined) {
@@ -1318,7 +1343,8 @@ export const searchBriefingNotesByKeyword = query({
 					.map((c) => c.row)
 			: tenantFiltered;
 
-		if (!lite) return filtered;
+		// Same rule as `list`: hydrate within a budget, mark what could not be.
+		if (!lite) return await hydrateWithinBudget(ctx.db, filtered);
 		return filtered.map((b) => ({
 			_id: b._id,
 			title: b.title,
@@ -1330,5 +1356,51 @@ export const searchBriefingNotesByKeyword = query({
 			// needs even in lite mode.
 			participants: b.participants,
 		}));
+	},
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// deleteTestNoteById — operator door: hard-delete ONE scratch note by id.
+//
+// Internal (deployment admin credential only). It refuses unless the note's title
+// starts with "[TEST]", so a typo in an id cannot delete a real note. A hard delete
+// is acceptable here because `briefingNotes` has no soft-delete field (the public
+// `deleteBriefingNote` is a hard delete too). It also removes the note's offloaded
+// body chunks and participant rows. The deleted id and title are returned and
+// logged, so the caller can print them before and after.
+//
+//   npx convex run briefingNotes:deleteTestNoteById '{"id":"<id>"}'
+// ─────────────────────────────────────────────────────────────────────────────
+
+const TEST_NOTE_TITLE_PREFIX = "[TEST]";
+
+export const deleteTestNoteById = internalMutation({
+	args: { id: v.string() },
+	returns: v.object({ id: v.id("briefingNotes"), title: v.string() }),
+	handler: async (ctx, args) => {
+		const id = ctx.db.normalizeId("briefingNotes", args.id);
+		if (id === null) {
+			throw new ConvexError(
+				`briefingNotes:deleteTestNoteById: ${args.id} is not a briefingNotes id; refusing.`,
+			);
+		}
+		const note = await ctx.db.get(id);
+		if (note === null) {
+			throw new ConvexError(
+				`NOTE_NOT_FOUND: briefingNotes ${id} not found; nothing deleted.`,
+			);
+		}
+		if (!note.title.startsWith(TEST_NOTE_TITLE_PREFIX)) {
+			throw new ConvexError(
+				`NOT_A_TEST_NOTE: briefingNotes ${id} is titled ${JSON.stringify(note.title)}, not starting with "${TEST_NOTE_TITLE_PREFIX}"; refusing to delete a real note.`,
+			);
+		}
+		console.log(
+			`[briefingNotes:deleteTestNoteById] deleting ${id} titled ${JSON.stringify(note.title)}`,
+		);
+		await ctx.db.delete(id);
+		await deleteBodyChunks(ctx.db, id);
+		await syncParticipantIndex(ctx, id, []);
+		return { id, title: note.title };
 	},
 });

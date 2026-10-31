@@ -139,7 +139,7 @@ type Resolver = {
 	agentOrgsByName: Map<string, string[]>;
 };
 
-async function loadResolver(db: DatabaseReader): Promise<Resolver> {
+export async function loadResolver(db: DatabaseReader): Promise<Resolver> {
 	const mappings = await db
 		.query("client_org_mapping")
 		.take(MAPPING_READ_CAP + 1);
@@ -184,7 +184,7 @@ async function loadResolver(db: DatabaseReader): Promise<Resolver> {
 }
 
 // RULE A.
-function byAgent(r: Resolver, label: string | undefined): Verdict {
+export function byAgent(r: Resolver, label: string | undefined): Verdict {
 	if (label === undefined || label.trim() === "") {
 		return { kind: "undecidable", reason: "noCreator" };
 	}
@@ -224,7 +224,7 @@ function byParent(
 		: parentOwn;
 }
 
-const stampOf = (r: Resolver, verdict: Verdict): string | null =>
+export const stampOf = (r: Resolver, verdict: Verdict): string | null =>
 	verdict.kind === "org"
 		? verdict.orgId
 		: verdict.kind === "fleet"

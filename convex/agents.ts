@@ -18,6 +18,7 @@ import {
 	type SessionCaller,
 } from "./lib/agentIdentity";
 import { ORG_ADMIN_ROLES, refusalError } from "./lib/auth";
+import { lookupOrgMapping } from "./lib/authOrgMapping";
 import { orgByIdLookups, orgByIdPrincipalLookups } from "./lib/orgIdLookups";
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -171,6 +172,60 @@ export const registerAgent = mutation({
 			normalizedName: normalizeOrchestratorId(args.name),
 			description: args.description,
 			outboundAuthRef: args.outboundAuthRef,
+			isActive: true,
+			createdAt: Date.now(),
+		});
+	},
+});
+
+/**
+ * registerAgentInOrgById — OPERATOR DOOR: create an active agent in the organisation
+ * an operator names BY ITS PERMANENT ID.
+ *
+ * Why it exists: `registerAgent` is an org-admin session door and stamps the
+ * caller's own organisation; an operator holding the deployment admin credential
+ * has no such session. This door takes the organisation as an argument, which is
+ * safe ONLY because it is internal: reachable with the deployment admin
+ * credential or from another Convex function, never from a client.
+ *
+ * The slug is derived from `client_org_mapping` by the ID (`lookupOrgMapping`, the
+ * `by_clerk_org_id` index), never typed. No mapping, or an inactive one, is REFUSED (ORG_NOT_FOUND /
+ * ORG_INACTIVE); a name already held in that org is REFUSED by
+ * `assertAgentNameFree` (AGENT_NAME_TAKEN / AGENT_INACTIVE). It writes ONE agents
+ * row and touches no roster (`allowedAgentIds`, `allowedOrchestrators`) and no
+ * credential.
+ *
+ *   npx convex run agents:registerAgentInOrgById '{"clerkOrgId":"org_...","name":"..."}'
+ */
+export const registerAgentInOrgById = internalMutation({
+	args: { clerkOrgId: v.string(), name: v.string() },
+	returns: v.id("agents"),
+	handler: async (ctx, args) => {
+		// The organisation by its permanent ID, through the one org-mapping read
+		// (convex/lib/authOrgMapping.ts: `by_clerk_org_id`; two rows claiming one id
+		// answer null, never a pick between them).
+		const mapping = await lookupOrgMapping(ctx, { clerkOrgId: args.clerkOrgId });
+		if (mapping === null) {
+			throw new ConvexError(
+				`ORG_NOT_FOUND: no organisation maps the id ${args.clerkOrgId}; nothing written.`,
+			);
+		}
+		if (!mapping.isActive) {
+			throw new ConvexError(
+				`ORG_INACTIVE: the organisation ${args.clerkOrgId} ("${mapping.clerkOrgSlug}") is not active; nothing written.`,
+			);
+		}
+		assertAgentLabelValid(args.name);
+		await assertAgentNameFree(
+			ctx,
+			{ id: args.clerkOrgId, label: mapping.clerkOrgSlug },
+			args.name,
+		);
+		return await ctx.db.insert("agents", {
+			orgSlug: mapping.clerkOrgSlug,
+			clerkOrgId: args.clerkOrgId,
+			name: args.name,
+			normalizedName: normalizeOrchestratorId(args.name),
 			isActive: true,
 			createdAt: Date.now(),
 		});

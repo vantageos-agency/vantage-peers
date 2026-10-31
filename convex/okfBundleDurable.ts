@@ -71,6 +71,7 @@ import { hasFleetRead } from "@vantageos/cloud-identity";
 import { createFunctionHandle } from "convex/server";
 import { v } from "convex/values";
 import { components, internal as generatedInternal } from "./_generated/api";
+import type { Id } from "./_generated/dataModel";
 import {
 	internalMutation,
 	type MutationCtx,
@@ -302,14 +303,26 @@ export const _exportOkfBundleStepInternal = internalMutation({
 				},
 			);
 			let seq = progress.stepsCompleted * BUNDLE_PAGE_SIZE;
-			for (const row of page.page as Array<{ content: string; _id: string }>) {
+			for (const row of page.page as Array<{
+				content: string;
+				_id: Id<"briefingNotes">;
+				contentTruncated?: boolean;
+			}>) {
+				// An offloaded note is a MARKED preview here; its whole body is read
+				// back before it is written to the export.
+				const content =
+					row.contentTruncated === true
+						? ((await ctx.runQuery(internal.briefingNoteBodies.readBody, {
+								id: row._id,
+							})) ?? row.content)
+						: row.content;
 				await ctx.db.insert("okfDurableExportEntries", {
 					orgId: args.orgId,
 					jobId: args.jobId,
 					family: "briefing",
 					seq: seq++,
 					path: `briefing-notes/${row._id}.md`,
-					content: row.content,
+					content,
 				});
 			}
 			await ctx.db.patch(progress._id, {
