@@ -93,6 +93,7 @@ let ids: {
 	retired: AgentId;
 	service: AgentId;
 	foreign: AgentId;
+	unstamped: AgentId;
 };
 
 beforeEach(async () => {
@@ -162,6 +163,15 @@ beforeEach(async () => {
 			retired: await agent("org-a", ORG_A, "Retired", { isActive: false }),
 			service: await agent("org-a", ORG_A, "Service", { kind: "service" }),
 			foreign: await agent("org-b", ORG_B, "Foreign"),
+			// Filed under this org's slug with no permanent org ID (a former
+			// holder of the slug could have filed it): never grantable.
+			unstamped: await ctx.db.insert("agents", {
+				orgSlug: "org-a",
+				name: "Legacy",
+				normalizedName: "legacy",
+				isActive: true,
+				createdAt: now,
+			}),
 		};
 	});
 	harness.setMemberships(ADMIN, [membership(ORG_A, "org-a", "org:admin")]);
@@ -319,6 +329,21 @@ describe("2. an agent bound to another person", () => {
 		expect(JSON.stringify(r.json)).toContain("AGENT_CHOICE_REFUSED");
 		expect(await snapshot()).toEqual(before);
 		expect(await boundTo(ids.bravo)).toBe(OTHER_PERSON);
+	});
+});
+
+describe("2b. an agent with no permanent org ID, under this org's slug", () => {
+	it("is not listed, and a forged POST with its id is refused: no code, no write", async () => {
+		const { html } = await showPicker(MEMBER);
+		expect(html).not.toContain(ids.unstamped);
+		const before = await snapshot();
+		const r = await approve(MEMBER, ORG_A, {
+			[`agent_${ORG_A}`]: ids.unstamped,
+		});
+		expect(r.status).toBe(403);
+		expect(r.code).toBeUndefined();
+		expect(await snapshot()).toEqual(before);
+		expect(await boundTo(ids.unstamped)).toBeNull();
 	});
 });
 

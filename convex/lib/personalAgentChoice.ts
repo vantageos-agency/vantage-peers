@@ -73,7 +73,10 @@ export async function choosableAgents(
 			a.isActive &&
 			a.kind !== "service" &&
 			a.ownerPersonId === undefined &&
-			(a.clerkOrgId === undefined || a.clerkOrgId === org.id) &&
+			// The permanent org ID, never the slug label alone: an unstamped row
+			// may have been filed under this slug by a former holder of it, and an
+			// unstamped row is good for a refusal, never a grant (agentIdentity.ts).
+			a.clerkOrgId === org.id &&
 			(a.personalAgentOf === undefined || a.personalAgentOf === personId),
 	);
 }
