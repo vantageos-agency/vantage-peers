@@ -251,7 +251,7 @@ type MembershipArgs = {
  * The row for (org id, user id), tombstoned or not. A miss is a miss: there is
  * no lookup by slug. A plain indexed read: no decision is made here.
  */
-export async function findMembershipRow(
+async function findMembershipRow(
 	ctx: Pick<MutationCtx, "db">,
 	args: { clerkOrgId: string; clerkUserId: string },
 ) {
@@ -261,6 +261,15 @@ export async function findMembershipRow(
 			q.eq("clerkOrgId", args.clerkOrgId).eq("clerkUserId", args.clerkUserId),
 		)
 		.unique();
+}
+
+/** Whether (org id, user id) is a live (not tombstoned) member now. Task k178xp66h7p0ds6vg69sqzw2vn8hbfrw. */
+export async function isLiveMember(
+	ctx: Pick<MutationCtx, "db">,
+	args: { clerkOrgId: string; clerkUserId: string },
+): Promise<boolean> {
+	const row = await findMembershipRow(ctx, args);
+	return row !== null && row.deletedAt === undefined;
 }
 
 type MembershipDoc = NonNullable<Awaited<ReturnType<typeof findMembershipRow>>>;
