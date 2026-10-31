@@ -1574,11 +1574,10 @@ export default defineSchema({
 		.index("by_codeHash", ["codeHash"])
 		.index("by_familyId", ["familyId", "revokedAt"])
 		// Membership revocation (task k17fxe8feeq1k2rb1ggj76e97s8h7m7k): the LIVE
-		// tokens of one person in one organisation, by the org's permanent id and by
-		// the label stamped at mint. `revokedAt` last so a batch only sees rows still
-		// to revoke (equality on undefined).
-		.index("by_user_org_id", ["userId", "clerkOrgId", "revokedAt"])
-		.index("by_user_org_slug", ["userId", "clerkOrgSlug", "revokedAt"]),
+		// tokens of one person in one organisation, by the org's permanent id,
+		// `revokedAt` last so a batch only sees rows still to revoke (equality on
+		// undefined).
+		.index("by_user_org_id", ["userId", "clerkOrgId", "revokedAt"]),
 
 	// ── oauth_refresh_tokens ─────────────────────────────────────────────────
 	// Refresh tokens for renewing expired access tokens. Same hashing rules.
