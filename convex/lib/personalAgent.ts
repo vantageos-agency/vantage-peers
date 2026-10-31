@@ -2,7 +2,7 @@ import { resolvePersonalAgent } from "@vantageos/cloud-identity";
 import type { Doc } from "../_generated/dataModel";
 import type { MutationCtx, QueryCtx } from "../_generated/server";
 import { principalLookups, refuseWith } from "./actingPrincipal";
-import { sameOrgStamp } from "./seatAgent";
+import { liveStampedAgent } from "./seatAgent";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // personalAgent — the vantage-peers ADAPTER onto @vantageos/cloud-identity's
@@ -59,19 +59,11 @@ export async function personalAgentOfToken(
 	if (row.clerkOrgSlug === undefined || row.clerkOrgSlug === "") return null;
 	// (1) the agent stamped at consent, judged live; (2) a decision to connect as
 	// the person is never overridden by a designation.
-	const stamped =
-		row.agentId === undefined ? null : await ctx.db.get(row.agentId);
+	// A stamped agent that is no longer live, or no longer in the token's
+	// organisation, leaves the person acting as themselves: nobody else is put in
+	// its place.
+	const stamped = await liveStampedAgent(ctx, row);
 	if (row.agentId !== undefined && stamped === null) return null;
-	if (
-		stamped !== null &&
-		!(await sameOrgStamp(
-			ctx,
-			{ id: stamped.clerkOrgId, label: stamped.orgSlug },
-			{ id: row.clerkOrgId, label: row.clerkOrgSlug },
-		))
-	) {
-		return null;
-	}
 	if (stamped === null && row.connectedAs === "person") return null;
 	const resolved = await resolvePersonalAgent(
 		{ personId: row.userId, orgId: row.clerkOrgSlug },
