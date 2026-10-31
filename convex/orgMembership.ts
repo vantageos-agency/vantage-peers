@@ -263,15 +263,6 @@ async function findMembershipRow(
 		.unique();
 }
 
-/** Whether (org id, user id) is a live (not tombstoned) member now. Task k178xp66h7p0ds6vg69sqzw2vn8hbfrw. */
-export async function isLiveMember(
-	ctx: Pick<MutationCtx, "db">,
-	args: { clerkOrgId: string; clerkUserId: string },
-): Promise<boolean> {
-	const row = await findMembershipRow(ctx, args);
-	return row !== null && row.deletedAt === undefined;
-}
-
 type MembershipDoc = NonNullable<Awaited<ReturnType<typeof findMembershipRow>>>;
 
 /**
