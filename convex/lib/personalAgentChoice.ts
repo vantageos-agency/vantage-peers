@@ -99,11 +99,12 @@ async function activeHolders(
 }
 
 /**
- * Whether the role the code is bound to may create an agent in the organisation
- * the code is bound to. The decision is the package's (`requireOrgAdmin`), over
- * the verified role and the admin roles this backend names.
+ * Refuses unless the role the code is bound to may create an agent in the
+ * organisation the code is bound to. The decision is the package's
+ * (`requireOrgAdmin`), over the verified role and the admin roles this backend
+ * names; this only turns its refusal into this module's.
  */
-export function mayCreateAgent(role: string, orgId: string): boolean {
+function assertMayCreateAgent(role: string, orgId: string): void {
 	try {
 		requireVerifiedOrgAdmin({
 			verifiedOrgId: orgId,
@@ -112,9 +113,21 @@ export function mayCreateAgent(role: string, orgId: string): boolean {
 			adminRoles: ORG_ADMIN_ROLES,
 			door: "oauth:personalAgentChoice",
 		});
+	} catch (err: unknown) {
+		if (err instanceof IdentityRefusalError) {
+			throw refuse("only an organisation admin may create an agent");
+		}
+		throw err;
+	}
+}
+
+/** Whether the screen offers the create field (the same decision, asked without raising). */
+function mayCreateAgent(role: string, orgId: string): boolean {
+	try {
+		assertMayCreateAgent(role, orgId);
 		return true;
 	} catch (err: unknown) {
-		if (err instanceof IdentityRefusalError) return false;
+		if (err instanceof ConvexError) return false;
 		throw err;
 	}
 }
@@ -178,9 +191,7 @@ export async function applyAgentChoice(
 		await ctx.db.patch(picked._id, { personalAgentOf: personId });
 		return;
 	}
-	if (!mayCreateAgent(bound.role, org.id)) {
-		throw refuse("only an organisation admin may create an agent");
-	}
+	assertMayCreateAgent(bound.role, org.id);
 	if (held.length > 0) {
 		throw refuse(
 			"this person already acts as another agent in this organisation",
