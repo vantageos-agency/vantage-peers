@@ -2825,7 +2825,7 @@ export const MEMBER_REVOKE_BATCH = 100;
  * k17fxe8feeq1k2rb1ggj76e97s8h7m7k, half A). A person's token carries
  * `userId = <Clerk user id>` (mcp-server/server-http.ts, authorization_code
  * flow), the same key as `orgMembership.clerkUserId`; a seat's carries its NAME.
- * Reads go through `by_user_org_id` / `by_user_org_slug` (userId, org,
+ * Reads go through `by_user_org_id` (userId, org id,
  * revokedAt = undefined), so a batch only ever sees rows still to do and a token
  * of the same person in ANOTHER org is never read. Each revoked access token's
  * refresh family is revoked with it (`revokeFamilyBatch`). Returns whether either
@@ -2833,7 +2833,7 @@ export const MEMBER_REVOKE_BATCH = 100;
  */
 async function revokeMemberTokensBatch(
 	ctx: MutationCtx,
-	args: { userId: string; clerkOrgId?: string; orgSlugs: string[] },
+	args: { userId: string; clerkOrgId: string },
 ): Promise<boolean> {
 	const now = Date.now();
 	const families = new Set<string>();
@@ -2848,33 +2848,18 @@ async function revokeMemberTokensBatch(
 			if (family !== undefined) families.add(family);
 		}
 	};
-	if (args.clerkOrgId !== undefined) {
-		const clerkOrgId = args.clerkOrgId;
-		await revoke(
-			await ctx.db
-				.query("oauth_access_tokens")
-				.withIndex("by_user_org_id", (q) =>
-					q
-						.eq("userId", args.userId)
-						.eq("clerkOrgId", clerkOrgId)
-						.eq("revokedAt", undefined),
-				)
-				.take(MEMBER_REVOKE_BATCH + 1),
-		);
-	}
-	for (const slug of new Set(args.orgSlugs)) {
-		await revoke(
-			await ctx.db
-				.query("oauth_access_tokens")
-				.withIndex("by_user_org_slug", (q) =>
-					q
-						.eq("userId", args.userId)
-						.eq("clerkOrgSlug", slug)
-						.eq("revokedAt", undefined),
-				)
-				.take(MEMBER_REVOKE_BATCH + 1),
-		);
-	}
+	const clerkOrgId = args.clerkOrgId;
+	await revoke(
+		await ctx.db
+			.query("oauth_access_tokens")
+			.withIndex("by_user_org_id", (q) =>
+				q
+					.eq("userId", args.userId)
+					.eq("clerkOrgId", clerkOrgId)
+					.eq("revokedAt", undefined),
+			)
+			.take(MEMBER_REVOKE_BATCH + 1),
+	);
 	for (const familyId of families) {
 		// The FIRST refresh token of a grant carries no familyId (its own digest is
 		// the family), so the family index does not hold it: revoke it by digest.
@@ -2902,8 +2887,7 @@ async function revokeMemberTokensBatch(
 export const revokeMemberTokens = internalMutation({
 	args: {
 		userId: v.string(),
-		clerkOrgId: v.optional(v.string()),
-		orgSlugs: v.array(v.string()),
+		clerkOrgId: v.string(),
 	},
 	returns: v.null(),
 	handler: async (ctx, args) => {
