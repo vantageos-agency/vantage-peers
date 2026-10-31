@@ -16,7 +16,7 @@
 //   DENY      an agent of ANOTHER org designating the same person is never selected (and never
 //             counted); a seat token never resolves a personal agent; a revoked token yields nothing.
 //   DOOR      agents:setPersonalAgentOf is internal (operator), validates, is all-or-nothing, clears,
-//             and refuses to make a designation ambiguous.
+//             and allows several agents per person (one per AI client).
 
 import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
@@ -273,15 +273,14 @@ describe("agents:setPersonalAgentOf — the operator door", () => {
 		expect(await t.run(async (ctx) => await ctx.db.query("agents").collect())).toEqual(before);
 	});
 
-	test("REFUSED: it will not make a designation ambiguous (a second active agent of the org for the same person)", async () => {
+	test("ALLOWED: a person may hold several agents of one org (one per AI client); another org's agent is a different organisation's", async () => {
 		const t = await world();
 		const tele = await seedAgent(t, "org-a", "telemaque");
 		const mentor = await seedAgent(t, "org-a", "mentor");
 		await designate(t, tele, STEPHANE);
-		await expect(designate(t, mentor, STEPHANE)).rejects.toThrow("PERSONAL_AGENT_AMBIGUOUS");
-		const row = await t.run((ctx) => ctx.db.get(mentor));
-		expect(row?.personalAgentOf).toBeUndefined();
-		// The same person may be designated in ANOTHER org; that is a different organisation's agent.
+		await designate(t, mentor, STEPHANE);
+		const rows = await t.run(async (ctx) => [await ctx.db.get(tele), await ctx.db.get(mentor)]);
+		expect(rows.map((r) => r?.personalAgentOf)).toEqual([STEPHANE, STEPHANE]);
 		const other = await seedAgent(t, "org-b", "telemaque");
 		await designate(t, other, STEPHANE);
 	});
