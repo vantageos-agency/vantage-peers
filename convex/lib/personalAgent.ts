@@ -77,20 +77,6 @@ export async function personalAgentOfToken(
 		{ personId: row.userId, orgId: row.clerkOrgSlug },
 		{
 			designatedAgents: async (personId, orgId) => {
-				// The stamped agent is the ONLY candidate: nothing else is ever counted
-				// or picked in its place. The package judges active / designation / org.
-				if (stamped !== null) {
-					return stamped.personalAgentOf === undefined
-						? []
-						: [
-								{
-									id: stamped._id,
-									orgId: stamped.orgSlug,
-									active: stamped.isActive,
-									personalAgentOf: stamped.personalAgentOf,
-								},
-							];
-				}
 				const rows = await ctx.db
 					.query("agents")
 					.withIndex("by_personal_agent_of", (q) =>
@@ -100,12 +86,17 @@ export async function personalAgentOfToken(
 				if (rows.length > DESIGNATED_AGENTS_CAP) {
 					throw new Error("designation scan cap exceeded");
 				}
-				return rows.map((a) => ({
-					id: a._id,
-					orgId: a.orgSlug,
-					active: a.isActive,
-					personalAgentOf: personId,
-				}));
+				// The stamped agent is the ONLY candidate when there is one: nothing else
+				// is counted or picked in its place. The package judges active /
+				// designation / organisation over what is returned.
+				return rows
+					.filter((a) => stamped === null || a._id === stamped._id)
+					.map((a) => ({
+						id: a._id,
+						orgId: a.orgSlug,
+						active: a.isActive,
+						personalAgentOf: personId,
+					}));
 			},
 			principalLookups: principalLookups(ctx),
 		},
