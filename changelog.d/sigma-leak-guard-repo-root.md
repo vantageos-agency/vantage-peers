@@ -1,0 +1,4 @@
+---
+section: Added
+---
+- **The client-data leak guard covers every tracked file of the public repository, not only the packaged plugin (task k17b8gm6nh2587cxs7wtta48p18ag9z4).** New tier-1 test `test_no_client_data_in_tracked_repository` in `tests/plugin/test_leak_guard.py`: the inventory is derived (`derive_inventory`) from the repository root and narrowed to `git ls-files`, then scanned with the same resolved vocabulary as the packaged test (salted hashes on CI), so it errors rather than passes without one. It runs in the existing secret-gated step of `plugin-vr-parity.yml`. Three poles on a throwaway git tree: a fictitious identity in a tracked `scripts/` file is caught with file and line; the clean tree is green; an untracked file is not counted. Wired after the text purge (#1092) and the client-name removal (#1584).
