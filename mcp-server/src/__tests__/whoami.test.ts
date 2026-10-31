@@ -101,6 +101,36 @@ describe("whoami returns the acting agent's ID", () => {
 		expect(out.agent_unresolved_reason).toBe("org-level-seat-no-agent");
 	});
 
+	it("a seat stamped with another org's agent: no agent ID, reason named (whoami never names an agent the server does not act as)", async () => {
+		const out = await whoami(
+			ctx({
+				seatAgent: {
+					agentId: "rForeignAgent0000000000000000000",
+					orgId: "other-org",
+					agentName: "clio",
+				},
+			}),
+		);
+		expect(out.actor).toBeNull();
+		expect(out.agent_id).toBeNull();
+		expect(out.agent_unresolved_reason).toBe("seat-agent-not-in-token-org");
+	});
+
+	it("a credential actor and a seat stamp together: the credential actor wins", async () => {
+		const out = await whoami(
+			ctx({
+				actor: { orgSlug: "iris-rh", agentName: "hélios", agentId: HELIOS },
+				seatAgent: {
+					agentId: "rSeatAgent00000000000000000000000",
+					orgId: "iris-rh",
+					agentName: "clio",
+				},
+			}),
+		);
+		expect(out.agent_id).toBe(HELIOS);
+		expect((out.actor as { agentName: string }).agentName).toBe("hélios");
+	});
+
 	it("the master bearer without a credential: reason names the missing credential", async () => {
 		const out = await whoami(
 			ctx({ isMaster: true, clerkOrgSlug: undefined, scopeProfile: "master" }),

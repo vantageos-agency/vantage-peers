@@ -1175,6 +1175,7 @@ export const whoamiOutputSchema = z.object({
 			"actor-without-agent-id",
 			"person-designates-no-agent",
 			"org-level-seat-no-agent",
+			"seat-agent-not-in-token-org",
 			"no-agent-credential-presented",
 			"no-agent-resolved",
 		])
