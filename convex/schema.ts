@@ -1634,11 +1634,33 @@ export default defineSchema({
 		// stamped on every token a rotation mints (the first token has none; its
 		// own digest is the family). See oauth:rotateRefreshToken.
 		familyId: v.optional(v.string()),
+		// PERSON connections only (a seat row carries none of these). Stamped ONCE
+		// by oauth:createPersonRefreshToken from the access token minted beside the
+		// refresh token, copied unchanged by every rotation. They are the CHOICES
+		// made at consent (who, which organisation, which agent, which scopes) and
+		// are never authority: oauth:rotatePersonRefreshToken re-resolves the
+		// membership, the agent, the roster and the organisation's grant LIVE.
+		principal: v.optional(v.literal("person")),
+		clerkOrgId: v.optional(v.string()),
+		clerkOrgSlug: v.optional(v.string()),
+		orgRole: v.optional(v.string()),
+		agentId: v.optional(v.id("agents")),
+		connectedAs: v.optional(v.literal("person")),
+		// The ceiling a refreshed token can never exceed (the scopes minted at
+		// consent) and the scopes the person asked for beyond the organisation's own
+		// (offline_access excluded).
+		scopes: v.optional(v.array(v.string())),
+		requestedScopes: v.optional(v.array(v.string())),
 	})
 		.index("by_tokenHash", ["tokenHash"])
 		.index("by_clientId", ["clientId"])
 		.index("by_scopeProfile", ["scopeProfile"])
-		.index("by_familyId", ["familyId", "revokedAt"]),
+		.index("by_familyId", ["familyId", "revokedAt"])
+		// Revocation of person refresh tokens (agent deactivated, organisation
+		// deactivated, member removed): only rows still to revoke are read.
+		.index("by_agentId", ["agentId", "revokedAt"])
+		.index("by_clerkOrgId", ["clerkOrgId", "revokedAt"])
+		.index("by_user_org_id", ["userId", "clerkOrgId", "revokedAt"]),
 
 	// ── oauth_scope_profiles ─────────────────────────────────────────────────
 	// Reusable scope templates. An OAuth client references a profile by

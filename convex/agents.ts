@@ -315,6 +315,12 @@ export const deactivateAgent = mutation({
 		const deactivated = existing.isActive;
 		if (deactivated) {
 			await ctx.db.patch(existing._id, { isActive: false });
+			// The person connections that chose this agent lose their refresh tokens
+			// in the same transaction (no second revocation mechanism: the one door
+			// oauth:revokePersonRefreshTokens, as the membership removal uses).
+			await ctx.runMutation(internal.oauth.revokePersonRefreshTokens, {
+				agentId: existing._id,
+			});
 		}
 		return { deactivated, revoked };
 	},
