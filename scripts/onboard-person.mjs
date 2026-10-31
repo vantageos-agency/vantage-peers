@@ -80,18 +80,40 @@ function clerkIo(api) {
 
 function convexIo(env) {
 	const door = env.CONVEX_PROD_SH ?? resolve(here, "..", ".claude", "scripts", "convex-prod.sh");
+	const call = (fn, args) => {
+		const r = spawnSync("bash", [door, "run", fn, JSON.stringify(args)], { encoding: "utf8" });
+		if (r.status !== 0) throw new Error(`${fn} failed (exit ${r.status}): ${(r.stderr ?? "").trim().split("\n").slice(-3).join(" | ")}`);
+		const out = r.stdout.trim();
+		try {
+			return JSON.parse(out);
+		} catch {
+			const at = out.search(/^[[{"]/m);
+			return JSON.parse(out.slice(at));
+		}
+	};
+	// readOrgState does not carry the rosters; they come through the allow-listed `data` door.
+	const readState = (slug) => {
+		const state = call("onboardPerson:readOrgState", { clerkOrgSlug: slug });
+		if (!state.mapping) return state;
+		const r = spawnSync("bash", [door, "data", "client_org_mapping", "--limit", "1000", "--format", "jsonl"], { encoding: "utf8" });
+		if (r.status !== 0) throw new Error(`data client_org_mapping failed (exit ${r.status})`);
+		const row = r.stdout
+			.split("\n")
+			.filter((l) => l.startsWith("{"))
+			.map((l) => JSON.parse(l))
+			.find((m) => m.clerkOrgSlug === slug);
+		if (!row) throw new Error(`mapping ${slug} not found in client_org_mapping`);
+		return {
+			...state,
+			mapping: {
+				...state.mapping,
+				allowedAgentIds: row.allowedAgentIds ?? [],
+				allowedOrchestrators: row.allowedOrchestrators ?? [],
+			},
+		};
+	};
 	return {
-		run: async (fn, args) => {
-			const r = spawnSync("bash", [door, "run", fn, JSON.stringify(args)], { encoding: "utf8" });
-			if (r.status !== 0) throw new Error(`${fn} failed (exit ${r.status}): ${(r.stderr ?? "").trim().split("\n").slice(-3).join(" | ")}`);
-			const out = r.stdout.trim();
-			try {
-				return JSON.parse(out);
-			} catch {
-				const at = out.search(/^[[{"]/m);
-				return JSON.parse(out.slice(at));
-			}
-		},
+		run: async (fn, args) => (fn === "onboardPerson:readOrgState" ? readState(args.clerkOrgSlug) : call(fn, args)),
 	};
 }
 
