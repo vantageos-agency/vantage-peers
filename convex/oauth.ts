@@ -36,6 +36,7 @@ import {
 import { normalizeOrchestratorId } from "./_helpers/normalizeOrchestratorId";
 import {
 	lookupOrgMapping,
+	refusalError,
 	requireOperatorAdminToCreateOrg,
 	requireResolvedCaller,
 	resolveOperatorAdmin,
@@ -49,7 +50,7 @@ import { liveSeatAgent, resolveSeatAgent } from "./lib/seatAgent";
 import { personalAgentOfToken } from "./lib/personalAgent";
 import { requireId } from "./lib/ids";
 import { DEFAULT_MEMBER_SCOPES } from "./lib/memberScopes";
-import { upsertAdminMembership } from "./orgMembership";
+import { findMembershipRow, upsertAdminMembership } from "./orgMembership";
 import { CLERK_ORG_ID_PATTERN, clerkOrgIdForSlug } from "./lib/orgClerkId";
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -2983,11 +2984,10 @@ export const rotateRefreshToken = mutation({
 		// access token is a `principal: "person"` token. A seat is neither and
 		// passes untouched. The organisation is the scope profile's; a person whose
 		// organisation cannot be named is refused, never defaulted.
-		const knownMember = await ctx.db
-			.query("orgMembership")
-			.withIndex("by_user", (q) => q.eq("clerkUserId", row.userId))
-			.take(1);
-		let isPerson = knownMember.length > 0;
+		const knownMember = await findMembershipRow(ctx, {
+			clerkUserId: row.userId,
+		});
+		let isPerson = knownMember !== null;
 		if (!isPerson) {
 			const lineage = await ctx.db
 				.query("oauth_access_tokens")
@@ -2996,32 +2996,22 @@ export const rotateRefreshToken = mutation({
 			isPerson = lineage[0]?.principal === "person";
 		}
 		if (isPerson) {
-			const profileOrg = args.clerkOrgSlug;
-			const profileOrgId = await clerkOrgIdForSlug(ctx, profileOrg);
+			const profileOrgId = await clerkOrgIdForSlug(ctx, args.clerkOrgSlug);
 			const membership =
-				profileOrg === undefined
+				profileOrgId === undefined
 					? null
-					: profileOrgId !== undefined
-						? await ctx.db
-								.query("orgMembership")
-								.withIndex("by_org_user_clerk_id", (q) =>
-									q
-										.eq("clerkOrgId", profileOrgId)
-										.eq("clerkUserId", row.userId),
-								)
-								.unique()
-						: await ctx.db
-								.query("orgMembership")
-								.withIndex("by_org_user", (q) =>
-									q
-										.eq("clerkOrgSlug", profileOrg)
-										.eq("clerkUserId", row.userId),
-								)
-								.unique();
+					: await findMembershipRow(ctx, {
+							clerkOrgId: profileOrgId,
+							clerkUserId: row.userId,
+						});
 			if (membership === null || membership.deletedAt !== undefined) {
-				throw new ConvexError(
-					`RBAC_DENIED: the person behind this refresh token holds no live membership of the organisation - ${JSON.stringify({ door: "oauth:rotateRefreshToken", reason: "membership-not-live" })}`,
-				);
+				throw refusalError({
+					code: "RBAC_DENIED",
+					reason: "membership-inactive",
+					door: "oauth:rotateRefreshToken",
+					detail:
+						"the person behind this refresh token holds no live membership of the organisation",
+				});
 			}
 		}
 
