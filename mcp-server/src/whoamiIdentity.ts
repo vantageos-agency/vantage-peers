@@ -78,6 +78,72 @@ export function deriveOpaqueCallerId(
 	return `vpu_${digest.slice(0, 32)}`;
 }
 
+/** Why no agent ID is returned; null when one is. */
+export type AgentUnresolvedReason =
+	| "no-context"
+	| "actor-without-agent-id"
+	| "person-designates-no-agent"
+	| "org-level-seat-no-agent"
+	| "no-agent-credential-presented"
+	| "no-agent-resolved";
+
+export interface WhoamiActingAgent {
+	actor: {
+		agentId: string | null;
+		orgId: string;
+		agentName: string;
+		orgSlug: string;
+	} | null;
+	agent_id: string | null;
+	agent_unresolved_reason: AgentUnresolvedReason | null;
+}
+
+/**
+ * The agent acting on this request, by its stored `agents` row ID (identity is
+ * the ID, never the name). Source order: the actor already bound at the bearer
+ * boundary (agent credential header, or the agent a person token designates),
+ * then the agent a one-agent seat token was stamped with. With none, the
+ * reason is named so a caller never reads a bare name as an identity.
+ */
+export function resolveActingAgent(
+	ctx: OAuthContext | undefined,
+): WhoamiActingAgent {
+	if (!ctx) {
+		return { actor: null, agent_id: null, agent_unresolved_reason: "no-context" };
+	}
+	const bound = ctx.actor
+		? {
+				agentId:
+					typeof ctx.actor.agentId === "string" && ctx.actor.agentId !== ""
+						? ctx.actor.agentId
+						: null,
+				orgId: ctx.actor.orgSlug,
+				agentName: ctx.actor.agentName,
+				orgSlug: ctx.actor.orgSlug,
+			}
+		: ctx.seatAgent
+			? {
+					agentId: ctx.seatAgent.agentId,
+					orgId: ctx.seatAgent.orgId,
+					agentName: ctx.seatAgent.agentName,
+					orgSlug: ctx.seatAgent.orgId,
+				}
+			: null;
+	if (bound) {
+		return {
+			actor: bound,
+			agent_id: bound.agentId,
+			agent_unresolved_reason:
+				bound.agentId === null ? "actor-without-agent-id" : null,
+		};
+	}
+	let reason: AgentUnresolvedReason = "no-agent-resolved";
+	if (ctx.principal === "person") reason = "person-designates-no-agent";
+	else if (ctx.seatAgent === null) reason = "org-level-seat-no-agent";
+	else if (isMasterScope(ctx)) reason = "no-agent-credential-presented";
+	return { actor: null, agent_id: null, agent_unresolved_reason: reason };
+}
+
 export function resolveWhoamiIdentity(
 	ctx: OAuthContext | undefined,
 	env: WhoamiEnv,
