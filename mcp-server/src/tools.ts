@@ -1086,7 +1086,10 @@ export function mcpConvexError(error: unknown): {
 // First tool in the codebase with an exported outputSchema — precedent for C1.
 // ─────────────────────────────────────────────────────────────────────────────
 
-export const whoamiOutputSchema = z.object({
+// Open to added fields (z.looseObject): a client validates against the schema
+// it read at connect time, so a closed object breaks every older connection on
+// any additive change (task k17e9sx6e8wd951b47wvm0p5qn8hampb).
+export const whoamiOutputSchema = z.looseObject({
 	scope_profile_name: z
 		.string()
 		.describe(
@@ -1119,7 +1122,7 @@ export const whoamiOutputSchema = z.object({
 				"'master' for master-scope bearers (internal orchestrators only).",
 		),
 	actor: z
-		.object({
+		.looseObject({
 			agentId: z.string().nullable(),
 			orgId: z.string(),
 			agentName: z.string(),
