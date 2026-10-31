@@ -347,28 +347,92 @@ describe("1b. ruling (a'): an ordinary member never takes a shared agent", () =>
 	});
 });
 
-describe("1c. one designation per person per organisation", () => {
-	it("a forged POST picking a second, unbound agent is refused: no code, the second stays unbound", async () => {
-		const second = await t.run(async (ctx) =>
+describe("1c. one agent per AI client: several agents bound to one person are valid", () => {
+	const addAgent = async (name: string, extra: Record<string, unknown> = {}) =>
+		(await t.run(async (ctx) =>
 			ctx.db.insert("agents", {
 				orgSlug: "org-a",
 				clerkOrgId: ORG_A,
-				name: "Second",
-				normalizedName: "second",
+				name,
+				normalizedName: name.toLowerCase(),
 				isActive: true,
 				createdAt: Date.now(),
+				...extra,
 			}),
+		)) as AgentId;
+
+	it("A. a person with three bound agents is offered all three, and each Approve mints a token acting as THAT agent ID", async () => {
+		const claude = ids.alpha;
+		const chatgpt = await addAgent("ChatGptAgent", { personalAgentOf: MEMBER });
+		const grok = await addAgent("GrokAgent", { personalAgentOf: MEMBER });
+		await t.run(async (ctx) =>
+			ctx.db.patch(claude as never, { personalAgentOf: MEMBER }),
 		);
+		const { html } = await showPicker(MEMBER);
+		for (const id of [claude, chatgpt, grok]) {
+			expect(html).toContain(`value="${id}"`);
+		}
+		const acted: string[] = [];
+		for (const id of [claude, chatgpt, grok]) {
+			const r = await approve(MEMBER, ORG_A, { [`agent_${ORG_A}`]: id });
+			expect(r.status).toBe(302);
+			const acting = await resolvedAgent(await tokenFor(r.code as string));
+			acted.push(acting?.agentId as string);
+		}
+		expect(acted).toEqual([claude, chatgpt, grok]);
+	});
+
+	it("B. a token stamped with agent X keeps acting as X after a second agent Y is bound to the same person", async () => {
+		await t.run(async (ctx) =>
+			ctx.db.patch(ids.alpha as never, { personalAgentOf: MEMBER }),
+		);
+		const token = await tokenFor(
+			(await approve(MEMBER, ORG_A, { [`agent_${ORG_A}`]: ids.alpha }))
+				.code as string,
+		);
+		await addAgent("Later", { personalAgentOf: MEMBER });
+		expect((await resolvedAgent(token))?.agentId).toBe(ids.alpha);
+	});
+
+	it("an admin holding one agent may take a second unbound one: a code, the second bound, the token acts as the second", async () => {
+		const second = await addAgent("Second");
 		await t.run(async (ctx) =>
 			ctx.db.patch(ids.alpha as never, { personalAgentOf: ADMIN }),
 		);
-		const before = await snapshot();
+		const { html } = await showPicker(ADMIN);
+		expect(html).toContain(`value="${second}"`);
+		expect(html).toContain(`newAgent_${ORG_A}`);
 		const r = await approve(ADMIN, ORG_A, { [`agent_${ORG_A}`]: second });
+		expect(r.status).toBe(302);
+		expect(await boundTo(second)).toBe(ADMIN);
+		expect(await boundTo(ids.alpha)).toBe(ADMIN);
+		expect(
+			(await resolvedAgent(await tokenFor(r.code as string)))?.agentId,
+		).toBe(second);
+	});
+
+	it("an ordinary member holding one agent still never takes an unbound one (forged POST refused, no code, no write)", async () => {
+		const second = await addAgent("SecondUnbound");
+		await t.run(async (ctx) =>
+			ctx.db.patch(ids.alpha as never, { personalAgentOf: MEMBER }),
+		);
+		const before = await snapshot();
+		const r = await approve(MEMBER, ORG_A, { [`agent_${ORG_A}`]: second });
 		expect(r.status).toBe(403);
 		expect(r.code).toBeUndefined();
 		expect(JSON.stringify(r.json)).toContain("AGENT_CHOICE_REFUSED");
 		expect(await snapshot()).toEqual(before);
-		expect(await boundTo(second as AgentId)).toBeNull();
+	});
+
+	it("F. 'Connect as myself' with ONE bound agent is a decision: the token acts as nobody, no implicit pick", async () => {
+		await t.run(async (ctx) =>
+			ctx.db.patch(ids.alpha as never, { personalAgentOf: MEMBER }),
+		);
+		const { html } = await showPicker(MEMBER);
+		expect(html).toContain("Connect as myself");
+		const r = await approve(MEMBER, ORG_A, { [`agent_${ORG_A}`]: "" });
+		expect(r.status).toBe(302);
+		expect(await resolvedAgent(await tokenFor(r.code as string))).toBeNull();
 	});
 });
 
