@@ -5,14 +5,14 @@ import { mutation, query } from "./lib/functions";
 import { internal } from "./_generated/api";
 import { memoryTypeValidator, creatorValidator, relationTypeValidator, severityValidator } from "./schema";
 import { requireId } from "./lib/ids";
-import { isMcpBoundMaster, withOrgScope } from "./lib/auth";
+import { isMcpBoundMaster, verifiedActorValidator, withOrgScope } from "./lib/auth";
 import {
   memoryAuthorOf,
   memoryStampForWrite,
   memoryVisibleToScope,
   teamLabelOfNamespace,
 } from "./lib/memoryTenant";
-import { isMemoryNamespaceAllowed } from "./lib/seatNamespace";
+import { isMemoryNamespaceAllowed, seatAgentNameOf } from "./lib/seatNamespace";
 import type { Doc } from "./_generated/dataModel";
 
 // expireMemoriesByTtl scans candidate rows with a ttl set; this is a bounded
@@ -58,6 +58,9 @@ import {
 export const storeMemory = mutation({
   args: {
     namespace: v.string(),
+    // The agent the MCP transport verified, by its agents-row ID (convex/lib/seatNamespace.ts):
+    // the only key to `orchestrator/<its own name>` for a seat acting for its org.
+    verifiedActor: v.optional(verifiedActorValidator),
     type: memoryTypeValidator,
     content: v.string(),
     // Absent for a person (the MCP forwards none): the verified caller is the
@@ -102,7 +105,8 @@ export const storeMemory = mutation({
     // Namespace ownership is the ONE decision of convex/lib/teamNamespace.ts (the
     // episode doors call it too): `team/<its org ID>`, or the legacy label alias of
     // the same verified org.
-    if (!isMemoryNamespaceAllowed(scope, args.namespace)) {
+    const ownAgent = await seatAgentNameOf(ctx, scope, args.verifiedActor);
+    if (!isMemoryNamespaceAllowed(scope, args.namespace, ownAgent)) {
       throw new ConvexError(
         `RBAC_DENIED: caller may not write to namespace "${args.namespace}" — ${JSON.stringify({ orgSlug: scope.orgSlug })}`,
       );
@@ -318,6 +322,9 @@ const listMemoriesResultValidator = v.object({
 
 export const listMemories = query({
   args: {
+    // The agent the MCP transport verified, by its agents-row ID (convex/lib/seatNamespace.ts):
+    // the only key to `orchestrator/<its own name>` for a seat acting for its org.
+    verifiedActor: v.optional(verifiedActorValidator),
 	fields: v.optional(v.union(v.literal("lite"), v.literal("full"))), // v2.4.12 accept (no-op for now) — closes ArgumentValidationError from MCP wrappers passing fields
     namespace: v.string(),
     type: v.optional(memoryTypeValidator),
@@ -348,7 +355,7 @@ export const listMemories = query({
       !hasFleetRead(scope) &&
       (scope.orgClerkId === undefined ||
         (teamLabelOfNamespace(args.namespace) === null &&
-          !isMemoryNamespaceAllowed(scope, args.namespace)))
+          !isMemoryNamespaceAllowed(scope, args.namespace, await seatAgentNameOf(ctx, scope, args.verifiedActor))))
     ) {
       return { value: [], continueCursor: null, isDone: true };
     }
