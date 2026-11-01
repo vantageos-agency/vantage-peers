@@ -1,0 +1,4 @@
+---
+section: Security
+---
+- **VantagePeers Cloud ops: the prod door no longer forwards arbitrary flags.** `.claude/scripts/convex-prod.sh` checked `<verb> <target>` against its allow list and then forwarded every remaining argument to `npx convex run|data`, so `convex-prod.sh run meta:backendContract '{}' --push` reached npx with `--push`: a push of local code to prod outside `convex-prod-deploy.sh`'s token gate. The arguments after the target are now a closed grammar, checked before the prod key is read: `run <function>` takes at most one positional, which must be a JSON object; `data <table>` takes only `--limit <digits>` and `--format <jsonArray|json|jsonLines|jsonl|pretty>`. Anything else prints `REFUSED: <argument>` and exits 2 without reaching npx. Bipolar probe: `scripts/__tests__/test-convex-prod-guard.sh` (15 smuggling cases blocked, 5 allow-list refusals kept, 6 runbook/onboarding calls still served). Task k17cz4tatfw84qtax33e9k15vn8hckwn.
