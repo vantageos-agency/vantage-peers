@@ -596,6 +596,8 @@ def test_ratchet_live_baseline_carries_its_command_and_never_rose():
             "72971002f67f8385c5d7679872a3a0b4629db543",
             # CR-3 16 -> 14, messages family by permanent org ID, slug-class PR 2b (task k1783fk8r6p795x9fxrzyt9evd8hcxm7)
             "f4eabd100ff53300d33a8a9285642c5afa84878a",
+            # CR-2 245 -> 242, CR-3 14 -> 13, R-53 323 -> 322, R-54 112 -> 109: the three unused iframe-embed write doors removed, with the tool-usage doors added (task k17cbr6y6da096t5e1k869kgb18hd0ht)
+            "46cc88b41c50188a7ee8a9d695a6c61673fc7e79",
         }
         line = entry["output_line"]
         assert line.startswith((f"{rule}: ", f"{rule} VERDICT: ")), rule
