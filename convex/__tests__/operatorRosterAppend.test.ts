@@ -10,7 +10,7 @@
 //   ADD        the agent's id and exact stored name are appended; entries already there untouched, in order
 //   AGAIN      a second run changes nothing (added: false)
 //   LABELONLY  id present, label missing -> only the label is appended
-//   SPELLING   a label present under another spelling is not duplicated
+//   EXACT      a label equal to the stored name is not duplicated; the id is the identity, no name comparison
 //   OTHERORG   an agent of a client org is refused, roster untouched
 //   INACTIVE   an inactive agent is refused, roster untouched
 //   MISSING    an id naming no agent is refused
@@ -127,13 +127,13 @@ describe("clientOrgMapping:addOperatorRosterMember", () => {
 		});
 	});
 
-	test("SPELLING: a label present under another spelling is not duplicated", async () => {
+	test("EXACT: a label equal to the stored name is not duplicated, the id is still appended", async () => {
 		const t = createT();
 		const angelia = await seedAgent(t, OPERATOR, "Angelia");
-		await seedOrg(t, OPERATOR, "operator", ["angelia"], []);
+		await seedOrg(t, OPERATOR, "operator", ["Angelia"], []);
 		await add(t, angelia);
 		expect(await rosterOf(t, OPERATOR)).toEqual({
-			labels: ["angelia"],
+			labels: ["Angelia"],
 			ids: [angelia],
 		});
 	});
