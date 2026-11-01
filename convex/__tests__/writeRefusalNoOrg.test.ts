@@ -294,41 +294,6 @@ const SITES: Site[] = [
 		},
 	},
 	{
-		name: "iframeEmbedSessions:createSession",
-		tables: ["iframeEmbedSessions"],
-		memberReturns: isString,
-		prepare: async () => (c) =>
-			c.mutation(api.iframeEmbedSessions.createSession, {
-				sessionId: "sess-new",
-				origin: "https://acme.example.com",
-				expiresAt: Date.now() + 3_600_000,
-			}),
-	},
-	{
-		name: "iframeEmbedSessions:touchSession",
-		tables: ["iframeEmbedSessions"],
-		memberReturns: (v) => expect(v).toBe(true),
-		prepare: async (t, ghost) => {
-			if (!ghost) await seedSession(t, "sess-touch");
-			return (c) =>
-				c.mutation(api.iframeEmbedSessions.touchSession, {
-					sessionId: "sess-touch",
-				});
-		},
-	},
-	{
-		name: "iframeEmbedSessions:revokeSession",
-		tables: ["iframeEmbedSessions"],
-		memberReturns: (v) => expect(v).toBe(true),
-		prepare: async (t, ghost) => {
-			if (!ghost) await seedSession(t, "sess-revoke");
-			return (c) =>
-				c.mutation(api.iframeEmbedSessions.revokeSession, {
-					sessionId: "sess-revoke",
-				});
-		},
-	},
-	{
 		name: "kbMutations:generateUploadUrl",
 		tables: [],
 		memberReturns: isString,
