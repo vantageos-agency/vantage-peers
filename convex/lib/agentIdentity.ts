@@ -337,7 +337,13 @@ export async function resolveAgentRef(
 			ref.door,
 		);
 		if (!resolved.ok) refuseWith(resolved.refusal);
-		const row = await ctx.db.get(id);
+		// A keyed probe through the primary-key index, as `principalLookups` does: the
+		// same read as `db.get`, but a list door that reaches this helper stays a
+		// list in the oracle's tool inventory instead of a list-and-get mix.
+		const row = await ctx.db
+			.query("agents")
+			.withIndex("by_id", (q) => q.eq("_id", id))
+			.unique();
 		if (row === null) {
 			throw assigneeNotInOrgRefusal(ref.agentId, orgId, ref.door);
 		}

@@ -64,7 +64,13 @@ export function orgByIdPrincipalLookups(
 		agentById: async (agentId: string) => {
 			const id = ctx.db.normalizeId("agents", agentId);
 			if (id === null) return null;
-			const row = await ctx.db.get(id);
+			// A keyed probe through the primary-key index (the same read as `db.get`,
+			// as `principalLookups` does), so a list door that reaches this adapter
+			// through `resolveAgentRef` stays a list in the oracle's tool inventory.
+			const row = await ctx.db
+				.query("agents")
+				.withIndex("by_id", (q) => q.eq("_id", id))
+				.unique();
 			if (row === null) return null;
 			return { id: row._id, orgId: row.clerkOrgId ?? null, active: row.isActive };
 		},
