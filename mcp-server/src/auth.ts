@@ -693,7 +693,7 @@ export function personalActorOf(
  */
 export type SeatOrgResolution =
 	| { kind: "none" }
-	| { kind: "org"; orgSlug: string }
+	| { kind: "org"; orgSlug: string; orgClerkId?: string }
 	| { kind: "refused"; error: string };
 
 export function resolveSeatOrg(
@@ -727,7 +727,19 @@ export function resolveSeatOrg(
 				"SEAT_ORG_UNRESOLVED: this seat carries no verified organisation, so its recipients cannot be scoped — refusing rather than granting fleet reach.",
 		};
 	}
-	return { kind: "org", orgSlug };
+	// The permanent ID of the same org, from the token row's live mapping join
+	// (`oauth:getAccessTokenByHash`), never from an argument. Forwarded so the
+	// Convex door keys the seat by ID, not by the reusable label. Only the token
+	// path carries it; an agent-credential-only seat forwards the label alone.
+	const orgClerkId =
+		fromToken !== undefined && ctx.orgClerkId !== undefined && ctx.orgClerkId !== ""
+			? ctx.orgClerkId
+			: undefined;
+	return {
+		kind: "org",
+		orgSlug,
+		...(orgClerkId !== undefined ? { orgClerkId } : {}),
+	};
 }
 
 /**

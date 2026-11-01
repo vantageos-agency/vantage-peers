@@ -885,8 +885,11 @@ async function resolveSeatRecipientScope(
 	transportScope: OrgScope,
 	seatOrgSlug: string | undefined,
 	tenantId: string | undefined,
+	seatOrgClerkId: string | undefined,
 ): Promise<OrgScope | undefined> {
-	if (seatOrgSlug === undefined) return undefined;
+	if (seatOrgSlug === undefined && seatOrgClerkId === undefined) {
+		return undefined;
+	}
 	const door = "messages:sendMessage";
 	const refuse = (reason: string, detail: string): never => {
 		throw new ConvexError(
@@ -904,23 +907,40 @@ async function resolveSeatRecipientScope(
 			"seatOrgSlug is a transport-verified claim and is accepted only from the fleet service account",
 		);
 	}
+	// The permanent ID, when sent, is the ONLY key into client_org_mapping: a
+	// label is reusable (a renamed org's old label can be taken by another org),
+	// so a seat that carries both is judged by the ID and its label is ignored.
+	// The label alone is the legacy path of an MCP that predates the ID.
 	const mapping =
-		seatOrgSlug === "" ? null : await lookupOrgMapping(ctx, seatOrgSlug);
+		seatOrgClerkId !== undefined
+			? seatOrgClerkId === ""
+				? null
+				: await lookupOrgMapping(ctx, { clerkOrgId: seatOrgClerkId })
+			: seatOrgSlug === undefined || seatOrgSlug === ""
+				? null
+				: await lookupOrgMapping(ctx, seatOrgSlug);
 	if (!mapping || !mapping.isActive) {
 		return refuse(
 			"seat-org-not-active",
-			`seatOrgSlug "${seatOrgSlug}" is not a known, active organisation`,
+			seatOrgClerkId !== undefined
+				? `seatOrgClerkId "${seatOrgClerkId}" is not a known, active organisation`
+				: `seatOrgSlug "${seatOrgSlug}" is not a known, active organisation`,
 		);
 	}
-	if (tenantId !== undefined && tenantId !== seatOrgSlug) {
+	// The org's label NOW: a tenantId is a label and is compared to it.
+	const seatLabel =
+		seatOrgClerkId !== undefined
+			? mapping.clerkOrgSlug
+			: (seatOrgSlug as string);
+	if (tenantId !== undefined && tenantId !== seatLabel) {
 		return refuse(
 			"seat-org-tenant-mismatch",
-			`seatOrgSlug "${seatOrgSlug}" and tenantId "${tenantId}" name different organisations`,
+			`seat organisation "${seatLabel}" and tenantId "${tenantId}" name different organisations`,
 		);
 	}
 	return {
 		userId: transportScope.userId,
-		orgSlug: seatOrgSlug,
+		orgSlug: seatLabel,
 		// The org's permanent ID, from the mapping row resolved above, so row
 		// ownership compares IDs (M4: no label fallback on a row compare).
 		...(mapping.clerkOrgId !== undefined ? { orgClerkId: mapping.clerkOrgId } : {}),
@@ -1145,6 +1165,10 @@ export const sendMessage = mutation({
 		// resolveSeatRecipientScope). Service account only; any other caller is
 		// refused. Scopes the RECIPIENTS to that org's roster + coordinators.
 		seatOrgSlug: v.optional(v.string()),
+		// The permanent Clerk org ID of the same seat organisation, forwarded
+		// beside seatOrgSlug (slug-takeover class, ledger row A-6). When present
+		// it is the only key into client_org_mapping; the label is then ignored.
+		seatOrgClerkId: v.optional(v.string()),
 	},
 	returns: v.id("messages"),
 	handler: async (ctx, args) => {
@@ -1154,7 +1178,13 @@ export const sendMessage = mutation({
 		// against the SAME `orgSlug` the rest of this handler already derives
 		// (reused below by sendMessageCore — never re-derived).
 		requireOneRecipientForm(args);
-		const { verifiedPerson, seatOrgSlug, fromAgentId, ...sendArgs } = args;
+		const {
+			verifiedPerson,
+			seatOrgSlug,
+			seatOrgClerkId,
+			fromAgentId,
+			...sendArgs
+		} = args;
 
 		// The transport's own scope is bound first (the service account, or the
 		// dashboard member); resolveVerifiedPerson returns it unchanged unless a
@@ -1180,6 +1210,7 @@ export const sendMessage = mutation({
 			transportScope,
 			seatOrgSlug,
 			args.tenantId,
+			seatOrgClerkId,
 		);
 
 		// R-53: an acting agent forwarded BY ID (`verifiedActor`) is resolved
@@ -1199,7 +1230,15 @@ export const sendMessage = mutation({
 				args.verifiedActor,
 				SEND_DOOR,
 			);
-			if (seatOrgSlug !== undefined) {
+			if (seatOrgClerkId !== undefined) {
+				await requireTargetOrgOfPrincipal(
+					ctx,
+					principal,
+					seatOrgSlug,
+					SEND_DOOR,
+					seatOrgClerkId,
+				);
+			} else if (seatOrgSlug !== undefined) {
 				await requireTargetOrgOfPrincipal(ctx, principal, seatOrgSlug, SEND_DOOR);
 			}
 			if (args.tenantId !== undefined) {
