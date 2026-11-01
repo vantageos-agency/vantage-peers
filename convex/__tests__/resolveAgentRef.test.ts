@@ -225,6 +225,64 @@ describe("resolveAgentRef: label only is the legacy path, measured", () => {
 	});
 });
 
+describe("resolveAgentRef: each refusal is distinguishable from the others and from not-found", () => {
+	test("unknown ID, another org's ID, retired ID, mismatch and no-org carry pairwise different codes, none AGENT_NOT_FOUND", async () => {
+		const w = await world();
+		// An ID of the right table that names no row: create then delete an agent.
+		const ghost = await w.t.run(async (ctx) => {
+			const id = await ctx.db.insert("agents", {
+				orgSlug: SLUG_A,
+				clerkOrgId: ORG_A_ID,
+				name: "ghost",
+				normalizedName: "ghost",
+				isActive: true,
+				createdAt: 1,
+			});
+			await ctx.db.delete(id);
+			return id;
+		});
+		const code = (text: string): string => text.split(":")[0];
+		const unknown = await refusal(resolve(w, { agentId: ghost }));
+		const otherOrg = await refusal(resolve(w, { agentId: w.nadiaB }));
+		const retired = await refusal(resolve(w, { agentId: w.retiredA }));
+		const mismatch = await refusal(
+			resolve(w, { agentId: w.nadiaA, label: "bruno" }),
+		);
+		const noOrg = await refusal(
+			w.t.run(async (ctx) =>
+				resolveAgentRef(ctx, {
+					agentId: w.nadiaA,
+					door: DOOR,
+					arg: "assignedTo",
+				}),
+			),
+		);
+		const codes = {
+			unknown: code(unknown),
+			otherOrg: code(otherOrg),
+			retired: code(retired),
+			mismatch: code(mismatch),
+			noOrg: code(noOrg),
+		};
+		expect(codes).toEqual({
+			unknown: "VERIFIED_ACTOR_UNKNOWN",
+			otherOrg: "ORG_MISMATCH",
+			retired: "VERIFIED_ACTOR_INACTIVE",
+			mismatch: "AGENT_IDENTITY_MISMATCH",
+			noOrg: "RBAC_DENIED",
+		});
+		const values = Object.values(codes);
+		expect(new Set(values).size).toBe(values.length);
+		expect(values).not.toContain("AGENT_NOT_FOUND");
+		// Same-code-family refusals are still told apart by their payload reason.
+		const reason = (text: string) =>
+			JSON.parse(text.slice(text.lastIndexOf("— ") + 2)).reason;
+		expect(reason(noOrg)).toBe("assignee-not-an-agent-of-org");
+		expect(reason(mismatch)).toBe("id-label-mismatch");
+		expect(reason(unknown)).not.toBe(reason(otherOrg));
+	});
+});
+
 describe("resolveAgentRef: neither", () => {
 	test("returns null and logs nothing", async () => {
 		const w = await world();
