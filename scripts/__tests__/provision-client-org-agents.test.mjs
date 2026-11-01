@@ -126,6 +126,30 @@ describe("provision-client-org-agents: the org-admin token is for the requested 
 	});
 });
 
+describe("provision-client-org-agents: the service-account client authenticates with the convex template", () => {
+	const claimsOf = (c) =>
+		JSON.parse(
+			Buffer.from(
+				c.authJwt.replace("Bearer ", "").split(".")[1],
+				"base64url",
+			).toString(),
+		);
+	it("every service-account Convex call carries a token with aud convex (NoAuthProvider otherwise)", () => {
+		const r = run(REQUESTED);
+		expect(r.status).toBe(0);
+		const svcCall = r.convex.find(
+			(c) => c.path === "clientOrgMapping:getByClerkSlug",
+		);
+		expect(svcCall).toBeDefined();
+		expect(claimsOf(svcCall).aud).toBe("convex");
+	});
+	it("no Convex call in the run is made with a native (aud-less) token", () => {
+		const r = run(REQUESTED);
+		expect(r.convex.length).toBeGreaterThan(0);
+		for (const c of r.convex) expect(claimsOf(c).aud).toBe("convex");
+	});
+});
+
 describe("org-admin-token helpers", () => {
 	const jwt = (orgId) =>
 		`h.${Buffer.from(JSON.stringify({ org_id: orgId })).toString("base64url")}.s`;

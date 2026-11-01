@@ -5,8 +5,10 @@ import { appendFileSync } from "node:fs";
 
 const log = (o) =>
 	appendFileSync(process.env.STUB_LOG, `${JSON.stringify(o)}\n`);
-const jwtFor = (orgId) =>
-	`h.${Buffer.from(JSON.stringify({ sub: "user_stub", org_id: orgId })).toString("base64url")}.s`;
+// A "convex"-template token carries aud "convex" (what convex/auth.config.ts requires); a native
+// session token carries no aud. That difference is what the service-account test reads.
+const jwtFor = (orgId, template) =>
+	`h.${Buffer.from(JSON.stringify({ sub: "user_stub", org_id: orgId, ...(template ? { aud: "convex" } : {}) })).toString("base64url")}.s`;
 const json = (body, init = {}) =>
 	new Response(JSON.stringify(body), {
 		status: 200,
@@ -50,6 +52,7 @@ globalThis.fetch = async (input, init = {}) => {
 			object: "token",
 			jwt: jwtFor(
 				isTemplate ? process.env.STUB_ADMIN_ORG : process.env.STUB_NATIVE_ORG,
+				isTemplate,
 			),
 		});
 	}
