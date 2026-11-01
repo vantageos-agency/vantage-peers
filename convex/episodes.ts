@@ -7,7 +7,7 @@ import { internal } from "./_generated/api";
 import { creatorValidator, severityValidator, relationTypeValidator } from "./schema";
 import { requireResolvedCaller, verifiedActorValidator, withOrgScope } from "./lib/auth";
 import { memoryAuthorOf, memoryStampForWrite, memoryVisibleToScope } from "./lib/memoryTenant";
-import { isMemoryNamespaceAllowed, seatAgentNameOf } from "./lib/seatNamespace";
+import { isMemoryNamespaceAllowed, seatAgentIdOf } from "./lib/seatNamespace";
 import { memberNamespaceRoots } from "./lib/teamNamespace";
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -62,7 +62,7 @@ export const storeEpisode = mutation({
     // the namespace gate of convex/lib/teamNamespace.ts: a member owns
     // `team/<its verified org ID>` (and the legacy label alias of that same org).
     const scope = await withOrgScope(ctx);
-    const ownAgent = await seatAgentNameOf(ctx, scope, args.verifiedActor);
+    const ownAgent = await seatAgentIdOf(ctx, scope, args.verifiedActor);
     if (!isMemoryNamespaceAllowed(scope, args.namespace, ownAgent)) {
       throw new ConvexError(
         `RBAC_DENIED: caller may not write to namespace "${args.namespace}" — ${JSON.stringify({ orgSlug: scope.orgSlug })}`,
@@ -217,7 +217,7 @@ export const listEpisodes = query({
     // scope as the empty page. Reuses the EXACT mechanism its sibling
     // memories.ts::listMemories already uses — no second identity layer.
     const scope = await withOrgScope(ctx, { refuseWithoutThrow: true });
-    const ownAgent = await seatAgentNameOf(ctx, scope, args.verifiedActor);
+    const ownAgent = await seatAgentIdOf(ctx, scope, args.verifiedActor);
     if (!isMemoryNamespaceAllowed(scope, args.namespace, ownAgent)) {
       return [];
     }
