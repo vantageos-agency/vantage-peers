@@ -84,6 +84,17 @@ OpenAI's help article 12584461 states that custom MCP connectors have full acces
 
 <!-- source: opencode.ai/docs/mcp-servers and opencode.ai/docs/config, fetched 2026-11-01. not measured: a full OpenCode sign-in against VantagePeers Cloud. -->
 
+## Antigravity and Mistral Le Chat (pre-registered client)
+
+These two hosts do not register themselves with VantagePeers Cloud, so we register a client for you beforehand and send its credentials through a one-time link (eu.onetimesecret.com), with the passphrase on a separate channel. The note holds the MCP URL, a Client ID, a Client secret and the redirect URI.
+
+- **Antigravity:** add a custom MCP server with URL `https://mcp.vantagepeers.com/mcp`, authentication OAuth, and paste the Client ID and Client secret from the note. Redirect URI (already registered on our side): `https://antigravity.google/oauth-callback`.
+- **Mistral Le Chat:** add a custom MCP connector with URL `https://mcp.vantagepeers.com/mcp`, authentication OAuth, and paste the Client ID and Client secret from the note. Redirect URI (already registered on our side): `https://callback.mistral.ai/v1/integrations_auth/oauth2_callback`.
+
+Then sign in and complete the consent page.
+
+<!-- not measured: the exact screen labels of Antigravity and Le Chat, and a full sign-in from either host against VantagePeers Cloud. -->
+
 ## Test it
 
 Paste this right after connecting (English):
