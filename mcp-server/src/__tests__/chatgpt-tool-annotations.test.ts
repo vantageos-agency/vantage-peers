@@ -111,6 +111,8 @@ function buildMockConvex(): ConvexHttpClient {
 
 const READ_ONLY_TOOLS = new Set([
 	"get_memory",
+	"get_tool_usage",
+	"get_owner_tool_usage",
 	"recall",
 	"text_search",
 	"hybrid_search",

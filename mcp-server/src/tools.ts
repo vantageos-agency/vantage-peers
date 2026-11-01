@@ -69,6 +69,7 @@ import { registerKbIngestTools } from "./tools/kbIngest.js";
 import { registerValidateOkfBundle } from "./tools/validateOkfBundle.js";
 import type { VpToolResult } from "./ui-resources/schemas.js";
 import { wrapToolResult } from "./ui-resources/stream-marker.js";
+import { recordToolUsage, toolUsageCallerOf } from "./toolUsage.js";
 import { validateTaskPayload } from "./validate-task-payload.js";
 import { verifiedActorOf, withVerifiedActor } from "./verifiedActor.js";
 import {
@@ -2149,6 +2150,12 @@ export function registerTools(
 	server: McpServer,
 	rawConvex: ConvexHttpClient,
 	oauthCtx?: OAuthContext,
+	// `recordToolUsage`: file one `tool_usage` row per resolved tool call (the
+	// HTTP entry, server-http.ts, passes it; pinned by
+	// test/get-tool-usage-tool.test.ts). Off elsewhere: the stdio entry's caller
+	// is the master, which is never recorded, and a test that counts the Convex
+	// mutations a tool made must not see a second one it did not make.
+	options?: { readonly recordToolUsage?: boolean },
 ): void {
 	// The acting agent's unique ID rides every actor-taking Convex door
 	// (verifiedActor.ts). Same client object when no ID was resolved.
@@ -2360,7 +2367,15 @@ export function registerTools(
 	// the declared scope and applies the shared predicates (checkNamespace*,
 	// isMasterScope, and for the `from` kind the actor binding plus the
 	// package's passesScopeFilter roster). See registerTool.ts.
-	const authCtx: ToolAuthContext = { oauthCtx };
+	const authCtx: ToolAuthContext = {
+		oauthCtx,
+		...(options?.recordToolUsage === true
+			? {
+					recordUsage: (toolName: string) =>
+						recordToolUsage(convex, oauthCtx, toolName),
+				}
+			: {}),
+	};
 
 	// ── store_memory ────────────────────────────────────────────────────────────
 
@@ -10784,6 +10799,149 @@ export function registerTools(
 							type: "text",
 							text: JSON.stringify(filteredError, null, 2),
 						},
+					],
+				};
+			} catch (error: any) {
+				return mcpConvexError(error);
+			}
+		},
+	);
+
+	// The identity facts a tool-usage read hands the Convex door, from the verified
+	// oauthContext only: a person bearer's token proof, else the seat's agent key.
+	// A Clerk session and the master send none (Convex sees them itself). Any other
+	// bearer that resolves no identity is REFUSED here: the Convex door serves an
+	// acting-org call that presents no identity as the org-scoped service caller
+	// (the onboarding engine), so an unidentified seat must never reach it.
+	const toolUsageReaderArgs = (
+		doorName: string,
+	): { args: Record<string, unknown> } | { denied: string } => {
+		const door = doorScopeArgs(doorName, undefined);
+		const self = toolUsageCallerOf(oauthCtx);
+		if (oauthCtx === undefined) {
+			return { denied: "Forbidden: the request carried no authorization context." };
+		}
+		if (isMasterScope(oauthCtx) || oauthCtx.clerkJwt !== undefined) {
+			return { args: { ...door } };
+		}
+		if (door.verifiedPerson !== undefined) return { args: { ...door } };
+		if (self.send && self.callerKey !== undefined) {
+			return { args: { selfKey: self.callerKey, ...door } };
+		}
+		return {
+			denied: `RBAC_DENIED: ${doorName} needs a caller identity and this bearer resolves none (no agent credential, no one-agent seat, no person token) - ${JSON.stringify({ reason: "caller-unidentified", door: doorName })}`,
+		};
+	};
+
+	// ── get_tool_usage ──────────────────────────────────────────────────────────
+	//
+	// Which MCP tools a caller has called in its organisation: {tool, firstAt,
+	// lastAt, count}[] (task k17cbr6y6da096t5e1k869kgb18hd0ht). The Convex door
+	// (toolUsage:getToolUsage) decides who may read whom: the caller's own rows, any
+	// caller of its organisation for an org admin or the fleet, a refusal otherwise.
+	defineTool(
+		server,
+		authCtx,
+		{
+			kind: "public",
+			reason:
+				"the Convex door toolUsage:getToolUsage serves the caller's own rows, or any caller of its own organisation to an org admin / the fleet, and raises RBAC_DENIED for any other organisation",
+		},
+		"get_tool_usage",
+		"List which MCP tools a caller has called, with the first call time, the last call time and the call count of each. " +
+			"WHEN: use to see what a person or an agent seat has already tried, e.g. to tell what an onboarding step still has to introduce. " +
+			"EXAMPLE: get_tool_usage (your own usage) or get_tool_usage caller='agent:<agent id>' (an organisation admin reading a seat).",
+		{
+			caller: z
+				.string()
+				.optional()
+				.describe(
+					"Whose usage to read: 'user:<Clerk subject>' or 'agent:<agent id>'. Omit it to read your own. Reading another caller needs an organisation admin role.",
+				),
+			orgId: z
+				.string()
+				.optional()
+				.describe(
+					"Fleet operators only: the permanent Clerk org ID to read. Everyone else omits it (a different organisation than your own is refused).",
+				),
+		},
+		{
+			readOnlyHint: true,
+			openWorldHint: false,
+			destructiveHint: false,
+			title: "Get tool usage",
+		},
+		async ({ caller, orgId }) => {
+			try {
+				const reader = toolUsageReaderArgs("toolUsage:getToolUsage");
+				if ("denied" in reader) return mcpError(reader.denied);
+				const rows = await convex.query(
+					// biome-ignore lint/suspicious/noExplicitAny: Convex string API
+					"toolUsage:getToolUsage" as any,
+					{
+						...(caller !== undefined ? { caller } : {}),
+						...(orgId !== undefined ? { orgId } : {}),
+						...reader.args,
+					},
+				);
+				return {
+					content: [
+						{ type: "text", text: JSON.stringify(rows ?? [], null, 2) },
+					],
+				};
+			} catch (error: any) {
+				return mcpConvexError(error);
+			}
+		},
+	);
+
+	// ── get_owner_tool_usage ────────────────────────────────────────────────────
+	//
+	// The tools a PERSON has used across everything it owns in its organisation:
+	// every agent whose owner it is (one per AI client) plus its own direct calls,
+	// aggregated per tool (firstAt = min, lastAt = max, count = sum). The Convex door
+	// (toolUsage:usageByOwner) decides who may read whom.
+	defineTool(
+		server,
+		authCtx,
+		{
+			kind: "public",
+			reason:
+				"the Convex door toolUsage:usageByOwner serves the owner itself, or any member of the caller's own organisation to an org admin / the fleet, and raises RBAC_DENIED for an owner outside the organisation or another member without admin standing",
+		},
+		"get_owner_tool_usage",
+		"List which MCP tools a person has used across all the agents it owns (one per AI client) and its own direct calls, summed per tool with the earliest first call and the latest last call. " +
+			"WHEN: use to tell what an onboarding step still has to introduce to a person, whichever AI client they used. " +
+			"EXAMPLE: get_owner_tool_usage ownerUserId='user_2abc' (an organisation admin reading a member).",
+		{
+			ownerUserId: z
+				.string()
+				.describe("The Clerk user id of the person (the owner of the agents)."),
+			orgId: z
+				.string()
+				.optional()
+				.describe(
+					"Fleet operators only: the permanent Clerk org ID to read. Everyone else omits it.",
+				),
+		},
+		{
+			readOnlyHint: true,
+			openWorldHint: false,
+			destructiveHint: false,
+			title: "Get a person's tool usage across their agents",
+		},
+		async ({ ownerUserId, orgId }) => {
+			try {
+				const reader = toolUsageReaderArgs("toolUsage:usageByOwner");
+				if ("denied" in reader) return mcpError(reader.denied);
+				const rows = await convex.query(
+					// biome-ignore lint/suspicious/noExplicitAny: Convex string API
+					"toolUsage:usageByOwner" as any,
+					{ ownerUserId, ...(orgId !== undefined ? { orgId } : {}), ...reader.args },
+				);
+				return {
+					content: [
+						{ type: "text", text: JSON.stringify(rows ?? [], null, 2) },
 					],
 				};
 			} catch (error: any) {

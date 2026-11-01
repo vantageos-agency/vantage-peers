@@ -29,6 +29,7 @@ import * as mandates from "../../convex/mandates";
 import * as messages from "../../convex/messages";
 import * as missions from "../../convex/missions";
 import * as tasks from "../../convex/tasks";
+import * as toolUsage from "../../convex/toolUsage";
 import {
 	type OAuthContext,
 	personActorOf,
@@ -58,6 +59,7 @@ const MODULES: Record<string, Record<string, unknown>> = {
 	messages,
 	missions,
 	tasks,
+	toolUsage,
 };
 const SCOPE_ARGS = [
 	"verifiedPerson",

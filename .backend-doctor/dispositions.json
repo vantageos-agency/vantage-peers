@@ -151,6 +151,10 @@
 			"reason": "live: served by MCP-public tool(s) add_task_dependency, billing_summary_by_project, block_task, bulk_complete_tasks …",
 			"purpose": "The task queue: title, assignee, priority, status lifecycle, project, tags, mission link; org-scoped."
 		},
+		"tool_usage": {
+			"disposition": "CONSERVER",
+			"reason": "live: written by every MCP-public tool call through the defineTool wrapper (toolUsage:record), read by get_tool_usage and get_owner_tool_usage (which MCP tools a caller has called, per organisation)"
+		},
 		"uploadTickets": {
 			"disposition": "CONSERVER",
 			"reason": "live: served by MCP-public tool(s) claim_upload, generate_upload_url (the ticket that binds a client's own upload to its org without first-claim)"

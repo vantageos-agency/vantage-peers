@@ -1029,6 +1029,25 @@ export default defineSchema({
 		.index("by_door_day_shard", ["door", "day", "shard"])
 		.index("by_day", ["day"]),
 
+	// ── tool_usage ────────────────────────────────────────────────────────────
+	// Which MCP tools a caller has called, per organisation (task
+	// k17cbr6y6da096t5e1k869kgb18hd0ht). One row per (organisation, caller, tool),
+	// patched on every call: contention is only between two simultaneous calls of
+	// the SAME caller to the SAME tool, which Convex retries. Stores no argument,
+	// no content and no secret: the tool name, a caller key ("user:<Clerk subject>"
+	// or "agent:<agents row id>", derived from the verified identity), the first and
+	// last call time and the count. `clerkOrgId` is the organisation's permanent ID.
+	tool_usage: defineTable({
+		clerkOrgId: v.string(),
+		callerKey: v.string(),
+		tool: v.string(),
+		firstAt: v.number(),
+		lastAt: v.number(),
+		count: v.number(),
+	})
+		.index("by_org_caller_tool", ["clerkOrgId", "callerKey", "tool"])
+		.index("by_org_caller", ["clerkOrgId", "callerKey"]),
+
 	// ── issues ────────────────────────────────────────────────────────────────
 	// GitHub issues tracked in VantagePeers. Synced via webhook.
 	issues: defineTable({

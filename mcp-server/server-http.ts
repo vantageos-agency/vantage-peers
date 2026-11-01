@@ -2281,7 +2281,7 @@ app.all("/mcp", bearerAuthMiddleware(), async (c) => {
 	const buildServer = (): McpServer => {
 		const server = new McpServer(mcpImplementation(pkg.version, iconOrigin));
 
-		registerTools(server, convex, oauthCtx);
+		registerTools(server, convex, oauthCtx, { recordToolUsage: true });
 
 		// SEP-1865 ui:// resources for Generative UI primitives — see
 		// src/ui-resources/register.ts.

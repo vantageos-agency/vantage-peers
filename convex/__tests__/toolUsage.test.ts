@@ -137,7 +137,7 @@ describe("toolUsage:record + toolUsage:getToolUsage", () => {
 		).toBe("RBAC_DENIED");
 		// An admin of B naming alice's key reads B's rows for that key: none.
 		expect(
-			await bob.query(toolUsage.getToolUsage, { callerKey: "user:alice-sub" }),
+			await bob.query(toolUsage.getToolUsage, { caller: "user:alice-sub" }),
 		).toEqual([]);
 	});
 
@@ -149,13 +149,13 @@ describe("toolUsage:record + toolUsage:getToolUsage", () => {
 		});
 		const admin = member(t, A, "boss-sub", "org:admin");
 		const got = (await admin.query(toolUsage.getToolUsage, {
-			callerKey: "user:alice-sub",
+			caller: "user:alice-sub",
 		})) as Row[];
 		expect(got.map((r) => r.tool)).toEqual(["store_memory"]);
 		const peer = member(t, A, "carol-sub");
 		expect(
 			await code(
-				peer.query(toolUsage.getToolUsage, { callerKey: "user:alice-sub" }),
+				peer.query(toolUsage.getToolUsage, { caller: "user:alice-sub" }),
 			),
 		).toBe("RBAC_DENIED");
 	});
@@ -174,14 +174,14 @@ describe("toolUsage:record + toolUsage:getToolUsage", () => {
 		});
 		const got = (await service(t).query(toolUsage.getToolUsage, {
 			orgId: A_ID,
-			callerKey: "user:alice-sub",
+			caller: "user:alice-sub",
 		})) as Row[];
 		expect(got).toHaveLength(1);
 		// A master naming no organisation is told so, not served a guess.
 		expect(
 			await code(
 				service(t).query(toolUsage.getToolUsage, {
-					callerKey: "user:alice-sub",
+					caller: "user:alice-sub",
 				}),
 			),
 		).not.toBe("SERVED");
@@ -194,7 +194,7 @@ describe("toolUsage:record + toolUsage:getToolUsage", () => {
 		expect(
 			await service(t).mutation(toolUsage.record, {
 				toolName: "list_tasks",
-				callerKey: seat,
+				caller: seat,
 				__actingOrg: A_ID,
 			}),
 		).toEqual({ recorded: true });
@@ -212,7 +212,7 @@ describe("toolUsage:record + toolUsage:getToolUsage", () => {
 				service(t).query(toolUsage.getToolUsage, {
 					__actingOrg: A_ID,
 					selfKey: seat,
-					callerKey: "user:alice-sub",
+					caller: "user:alice-sub",
 				}),
 			),
 		).toBe("RBAC_DENIED");
@@ -234,7 +234,7 @@ describe("toolUsage:record + toolUsage:getToolUsage", () => {
 		expect(
 			await service(t).mutation(toolUsage.record, {
 				toolName: "store_memory",
-				callerKey: "agent:x",
+				caller: "agent:x",
 			}),
 		).toEqual({ recorded: false });
 		expect(await rowsOf(t)).toHaveLength(0);
@@ -244,11 +244,11 @@ describe("toolUsage:record + toolUsage:getToolUsage", () => {
 		const t = createT();
 		await seed(t);
 		for (const bad of [
-			{ toolName: "", callerKey: "agent:x" },
-			{ toolName: "has space", callerKey: "agent:x" },
-			{ toolName: "x".repeat(200), callerKey: "agent:x" },
-			{ toolName: "ok_tool", callerKey: "nokind" },
-			{ toolName: "ok_tool", callerKey: `agent:${"y".repeat(400)}` },
+			{ toolName: "", caller: "agent:x" },
+			{ toolName: "has space", caller: "agent:x" },
+			{ toolName: "x".repeat(200), caller: "agent:x" },
+			{ toolName: "ok_tool", caller: "nokind" },
+			{ toolName: "ok_tool", caller: `agent:${"y".repeat(400)}` },
 		]) {
 			expect(
 				await service(t).mutation(toolUsage.record, {
@@ -265,7 +265,7 @@ describe("toolUsage:record + toolUsage:getToolUsage", () => {
 		await seed(t);
 		await member(t, A, "mallory-sub").mutation(toolUsage.record, {
 			toolName: "store_memory",
-			callerKey: "user:alice-sub",
+			caller: "user:alice-sub",
 		});
 		const stored = await rowsOf(t);
 		expect(stored.map((r) => r.callerKey)).toEqual(["user:mallory-sub"]);
@@ -280,5 +280,172 @@ describe("toolUsage:record + toolUsage:getToolUsage", () => {
 			await m.mutation(toolUsage.record, { toolName: `tool_${i}` });
 		}
 		expect(await rowsOf(t)).toHaveLength(MAX_TOOLS_PER_CALLER);
+	});
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// usageByOwner: a person owns several agents (one per AI client); the onboarding
+// engine reads the person's combined usage. Requirement update from angelia.
+// ─────────────────────────────────────────────────────────────────────────────
+
+async function seedOwner(t: T, org: string, owner: string, names: string[]) {
+	return await t.run(async (ctx) => {
+		const ids: string[] = [];
+		for (const name of names) {
+			ids.push(
+				await ctx.db.insert("agents", {
+					orgSlug: org,
+					clerkOrgId: testClerkOrgId(org),
+					name,
+					normalizedName: name,
+					isActive: true,
+					personalAgentOf: owner,
+					createdAt: 0,
+				}),
+			);
+		}
+		return ids;
+	});
+}
+
+const addMember = (t: T, org: string, user: string) =>
+	t.run(async (ctx) => {
+		await ctx.db.insert("orgMembership", {
+			clerkOrgSlug: org,
+			clerkOrgId: testClerkOrgId(org),
+			clerkUserId: user,
+			role: "member",
+			createdAt: 1,
+			updatedAt: 1,
+		});
+	});
+
+const engine = (t: T, org: string, args: Record<string, unknown>) =>
+	service(t).query(toolUsage.usageByOwner, {
+		...args,
+		__actingOrg: testClerkOrgId(org),
+	});
+
+describe("toolUsage:usageByOwner", () => {
+	test("PRESENT: an owner with 2 agents plus direct calls is aggregated (min/max/sum)", async () => {
+		const t = createT();
+		await seed(t);
+		const [a1, a2] = await seedOwner(t, A, "owner-sub", ["claude", "chatgpt"]);
+		vi.setSystemTime(1_000);
+		await service(t).mutation(toolUsage.record, {
+			toolName: "store_memory",
+			caller: `agent:${a1}`,
+			__actingOrg: A_ID,
+		});
+		vi.setSystemTime(3_000);
+		await service(t).mutation(toolUsage.record, {
+			toolName: "store_memory",
+			caller: `agent:${a2}`,
+			__actingOrg: A_ID,
+		});
+		await service(t).mutation(toolUsage.record, {
+			toolName: "check_messages",
+			caller: `agent:${a2}`,
+			__actingOrg: A_ID,
+		});
+		vi.setSystemTime(2_000);
+		await member(t, A, "owner-sub").mutation(toolUsage.record, {
+			toolName: "store_memory",
+		});
+		const got = (await engine(t, A, { ownerUserId: "owner-sub" })) as Row[];
+		const by = Object.fromEntries(got.map((r) => [r.tool, r]));
+		expect(by.store_memory).toEqual({
+			tool: "store_memory",
+			firstAt: 1_000,
+			lastAt: 3_000,
+			count: 3,
+		});
+		expect(by.check_messages.count).toBe(1);
+	});
+
+	test("ABSENT: a member of the org with no agents and no calls is an empty SUCCESS", async () => {
+		const t = createT();
+		await seed(t);
+		await addMember(t, A, "quiet-sub");
+		expect(await engine(t, A, { ownerUserId: "quiet-sub" })).toEqual([]);
+	});
+
+	test("REFUSED: an owner who is not in the organisation in scope is RBAC_DENIED", async () => {
+		const t = createT();
+		await seed(t);
+		await seedOwner(t, B, "b-owner", ["claude"]);
+		await addMember(t, B, "b-owner");
+		expect(await code(engine(t, A, { ownerUserId: "b-owner" }))).toBe(
+			"RBAC_DENIED",
+		);
+		// The org-scoped caller of B naming org A is refused too.
+		expect(
+			await code(engine(t, B, { ownerUserId: "b-owner", orgId: A_ID })),
+		).toBe("RBAC_DENIED");
+	});
+
+	test("REFUSED: no credential raises RBAC_DENIED", async () => {
+		const t = createT();
+		await seed(t);
+		expect(
+			await code(t.query(toolUsage.usageByOwner, { ownerUserId: "x" })),
+		).toBe("RBAC_DENIED");
+	});
+
+	test("members do not read each other; the owner reads itself; an admin reads a member", async () => {
+		const t = createT();
+		await seed(t);
+		await seedOwner(t, A, "owner-sub", ["claude"]);
+		await addMember(t, A, "owner-sub");
+		expect(
+			await code(
+				member(t, A, "peer-sub").query(toolUsage.usageByOwner, {
+					ownerUserId: "owner-sub",
+				}),
+			),
+		).toBe("RBAC_DENIED");
+		expect(
+			await member(t, A, "owner-sub").query(toolUsage.usageByOwner, {
+				ownerUserId: "owner-sub",
+			}),
+		).toEqual([]);
+		expect(
+			await member(t, A, "boss-sub", "org:admin").query(
+				toolUsage.usageByOwner,
+				{ ownerUserId: "owner-sub" },
+			),
+		).toEqual([]);
+	});
+
+	test("a seat (acting-org service WITH its own key) is not the engine: it cannot read its owner", async () => {
+		const t = createT();
+		await seed(t);
+		const [a1] = await seedOwner(t, A, "owner-sub", ["claude"]);
+		expect(
+			await code(
+				service(t).query(toolUsage.usageByOwner, {
+					ownerUserId: "owner-sub",
+					selfKey: `agent:${a1}`,
+					__actingOrg: A_ID,
+				}),
+			),
+		).toBe("RBAC_DENIED");
+	});
+
+	test("the fleet master names the organisation", async () => {
+		const t = createT();
+		await seed(t);
+		await seedOwner(t, A, "owner-sub", ["claude"]);
+		expect(
+			await service(t).query(toolUsage.usageByOwner, {
+				ownerUserId: "owner-sub",
+				orgId: A_ID,
+			}),
+		).toEqual([]);
+		expect(
+			await code(
+				service(t).query(toolUsage.usageByOwner, { ownerUserId: "owner-sub" }),
+			),
+		).not.toBe("SERVED");
 	});
 });

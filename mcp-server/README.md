@@ -157,7 +157,7 @@ An agent is identified by its **agent ID** (the `agentId` that `list_peers` retu
 _Applies to: Cloud and Self-host._
 
 <!-- tools:start -->
-88 tools are advertised to clients. This reference is generated from the server's own `tools/list` by `scripts/print-tools.mjs`; do not edit it by hand.
+90 tools are advertised to clients. This reference is generated from the server's own `tools/list` by `scripts/print-tools.mjs`; do not edit it by hand.
 
 ### Memory and search (9)
 
@@ -271,7 +271,7 @@ _Applies to: Cloud and Self-host._
 - `export_okf_bundle` (write) — Export a VantagePeers namespace as an OKF v0.1 bundle (tarball).
 - `import_okf_bundle` (write) — Import an OKF v0.1 bundle (memories + briefing-notes + tasks) into a target VantagePeers namespace.
 
-### Other (12)
+### Other (14)
 
 - `add_repo_mapping` (write) — Register or update a GitHub repo to orchestrator mapping for webhook event routing.
 - `claim_upload` (write) — Claim an uploaded blob for your organisation with the single-use ticket generate_upload_url returned.
@@ -280,6 +280,8 @@ _Applies to: Cloud and Self-host._
 - `generate_upload_url` (write) — Mint a Convex storage upload URL for the Knowledge Base ingest flow.
 - `get_bulk_complete_run` (read) — Read the status of one live bulk_complete_tasks run by the `bulkRunId` its first call returned.
 - `get_github_owner_bindings` (read) — List the GitHub owners bound to your organisation (master: all), and for master the org-owned repo mappings that have no proof.
+- `get_owner_tool_usage` (read) — List which MCP tools a person has used across all the agents it owns (one per AI client) and its own direct calls, summed per tool with the earliest first call and the latest last call.
+- `get_tool_usage` (read) — List which MCP tools a caller has called, with the first call time, the last call time and the call count of each.
 - `improvisation_digest` (read) — Scan a rolling time window of VP tasks, messages, and memories for durable artifacts that carry fleet/state tokens (commit SHA, PR#, VP id, or decisive verb such as merged/deployed/approved) but have NO VP-Sources footer.
 - `list_blocked_on_me` (read) — List the tasks that other peers have BLOCKED on one of YOUR live tasks (blockedOnTaskId), oldest wait first, with the age of each wait.
 - `list_repo_mappings` (read) — List all GitHub repo to orchestrator webhook mappings, newest first with cursor paging support.
