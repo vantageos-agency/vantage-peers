@@ -13,7 +13,7 @@
  *     ID and the script exits 3 printing the operator's addRosterMembers + setAgentOwner commands.
  *   - oauth_scope_profiles "<agent>-<slug>" bound to <slug> (clerkOrgSlug). Its prefixes must list
  *     orchestrator/<agent ID> once the agent is registered: run
- *     migrations/seat_profile_agent_namespace:run after this script (runbook step 4c)
+ *     scripts/seat-profile-agent-namespace.mjs (runbook step 4c)
  *   - the Clerk org exists with our org-admin user as org:admin
  *
  * PER AGENT (idempotent on the registry side; a seat bearer is re-minted each run):

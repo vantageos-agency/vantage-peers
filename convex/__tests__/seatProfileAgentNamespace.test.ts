@@ -5,13 +5,10 @@
 // prefix or the MCP ceiling (checkNamespaceRead/Write) refuses the call before it
 // reaches Convex.
 //
-// (1) migrations/seat_profile_agent_namespace:run appends `orchestrator/<agentId>`
-//     to the read + write prefixes of each client-bound seat profile whose single
-//     fromAllowList name resolves to EXACTLY ONE agent of that profile's org; dry run
-//     by default, idempotent, per-org counts + sample profile ids.
-// (2) THROUGH the MCP profile check: a seat whose profile carries orchestrator/<own
-//     id> writes + reads it -> the MCP admits it and Convex serves it; orchestrator/
-//     <other id> -> the MCP refuses it, and Convex refuses it too if it were reached.
+// The operator script (scripts/seat-profile-agent-namespace.mjs) plans the update and writes it
+// with oauth:upsertScopeProfile. THROUGH the MCP profile check: a seat whose profile carries
+// orchestrator/<own id> writes + reads it -> the MCP admits it and Convex serves it;
+// orchestrator/<other id> -> the MCP refuses it, and Convex refuses it too if it were reached.
 // Hermetic: no deployment is touched.
 
 import { convexTest } from "../../tests/fixtures/convexTestWithServiceAccount";
@@ -24,6 +21,7 @@ import {
 } from "../../mcp-server/src/auth.js";
 import { testClerkOrgId } from "../../tests/fixtures/testClerkOrgId";
 import { api, internal } from "../_generated/api";
+import { planSeatProfiles } from "../../scripts/lib/seat-profile-plan.mjs";
 import type { Id } from "../_generated/dataModel";
 import schema from "../schema";
 
@@ -32,7 +30,6 @@ const modules = Object.fromEntries(
 		([path]) => !path.includes("search") && !path.includes("backfill"),
 	),
 );
-const mig = internal.migrations.seat_profile_agent_namespace;
 const NOW = 1_700_000_000_000;
 const createT = () => convexTest(schema, modules);
 type T = ReturnType<typeof createT>;
@@ -109,72 +106,19 @@ const profileRow = (t: T, profileId: string) =>
 			.unique(),
 	);
 
-describe("migrations/seat_profile_agent_namespace:run", () => {
-	test("DRY RUN is the default: it counts and writes nothing", async () => {
-		const t = createT();
-		await seed(t);
-		const r = await t.mutation(mig.run, {});
-		expect(r.dryRun).toBe(true);
-		expect(r.toUpdate).toBe(2);
-		expect(r.updated).toBe(0);
-		expect((await profileRow(t, `alice-${A}`))?.namespaceReadPrefixes).toEqual([
-			"orchestrator/alice",
-			`project/${A}`,
-		]);
-	});
-
-	test("appends orchestrator/<that org's agent id> to read + write; skips the rest and counts them", async () => {
-		const t = createT();
-		const w = await seed(t);
-		const r = await t.mutation(mig.run, { dryRun: false });
-		expect(r.updated).toBe(2);
-		const a = await profileRow(t, `alice-${A}`);
-		const b = await profileRow(t, `alice-${B}`);
-		expect(a?.namespaceReadPrefixes).toContain(`orchestrator/${w.aliceA}`);
-		expect(a?.namespaceWritePrefixes).toContain(`orchestrator/${w.aliceA}`);
-		expect(a?.namespaceReadPrefixes).not.toContain(`orchestrator/${w.aliceB}`);
-		expect(b?.namespaceWritePrefixes).toContain(`orchestrator/${w.aliceB}`);
-		for (const id of [`multi-${A}`, `ghost-${A}`, `wild-${A}`, "sigma-fleet", "unbound"]) {
-			expect((await profileRow(t, id))?.namespaceReadPrefixes.length, id).toBe(2);
-		}
-		expect(r.skipped.notExactlyOneSeat).toBe(2); // multi, wild
-		expect(r.skipped.noAgentInOrg).toBe(1); // ghost
-		expect(r.skipped.operatorOrg).toBe(1);
-		expect(r.skipped.notClientBound).toBe(1);
-		const orgA = r.orgs.find((o) => o.slug === A);
-		expect(orgA?.updated).toBe(1);
-		expect(orgA?.sampleProfileIds).toEqual([`alice-${A}`]);
-	});
-
-	test("idempotent: a second run updates 0", async () => {
-		const t = createT();
-		await seed(t);
-		await t.mutation(mig.run, { dryRun: false });
-		const again = await t.mutation(mig.run, { dryRun: false });
-		expect(again.toUpdate).toBe(0);
-		expect(again.updated).toBe(0);
-		expect(again.alreadyDone).toBe(2);
-	});
-
-	test("a profile with two agents of the same label in its org is skipped (no guess)", async () => {
-		const t = createT();
-		await seed(t);
-		await t.run((ctx) =>
-			ctx.db.insert("agents", {
-				orgSlug: A,
-				clerkOrgId: testClerkOrgId(A),
-				name: "Alice",
-				normalizedName: "alice",
-				isActive: true,
-				createdAt: NOW,
-			}),
-		);
-		const r = await t.mutation(mig.run, { dryRun: false });
-		expect(r.skipped.ambiguousAgent).toBe(1);
-		expect((await profileRow(t, `alice-${A}`))?.namespaceReadPrefixes.length).toBe(2);
-		expect(r.updated).toBe(1);
-	});
-});
+// What the operator does: read the rows, plan, write each through oauth:upsertScopeProfile.
+async function applyScriptPlan(t: T) {
+	const profiles = await t.query(internal.oauth.listScopeProfiles, {});
+	const { agents, mappings } = await t.run(async (ctx) => ({
+		agents: await ctx.db.query("agents").collect(),
+		mappings: await ctx.db.query("client_org_mapping").collect(),
+	}));
+	const plan = planSeatProfiles({ profiles, agents, mappings });
+	for (const u of plan.updates) {
+		await t.mutation(internal.oauth.upsertScopeProfile, { profile: u.profile });
+	}
+	return plan;
+}
 
 async function code(p: Promise<unknown>): Promise<string> {
 	try {
@@ -229,7 +173,7 @@ describe("THROUGH the MCP profile check, then Convex", () => {
 	test("after the update: own ID is admitted by the MCP and served by Convex; another ID is refused by both", async () => {
 		const t = createT();
 		const w = await seed(t);
-		await t.mutation(mig.run, { dryRun: false });
+		await applyScriptPlan(t);
 		const ctx = ctxOf((await profileRow(t, `alice-${A}`))!);
 		const own = `orchestrator/${w.aliceA}`;
 		expect(checkNamespaceWrite(ctx, own)).toBeNull();
@@ -247,7 +191,7 @@ describe("THROUGH the MCP profile check, then Convex", () => {
 	test("the name prefix still passes the MCP, and Convex refuses it", async () => {
 		const t = createT();
 		const w = await seed(t);
-		await t.mutation(mig.run, { dryRun: false });
+		await applyScriptPlan(t);
 		const ctx = ctxOf((await profileRow(t, `alice-${A}`))!);
 		expect(checkNamespaceWrite(ctx, "orchestrator/alice")).toBeNull();
 		expect(await code(seatCall(t, w, "orchestrator/alice").run())).toBe("RBAC_DENIED");

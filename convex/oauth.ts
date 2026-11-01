@@ -4217,6 +4217,9 @@ export const listScopeProfiles = internalQuery({
 			fromAllowList: r.fromAllowList,
 			namespaceReadPrefixes: r.namespaceReadPrefixes,
 			namespaceWritePrefixes: r.namespaceWritePrefixes,
+			// The org a seat profile is bound to: the operator script
+			// scripts/seat-profile-agent-namespace.mjs selects client-org profiles by it.
+			...(r.clerkOrgSlug !== undefined ? { clerkOrgSlug: r.clerkOrgSlug } : {}),
 		}));
 	},
 });
