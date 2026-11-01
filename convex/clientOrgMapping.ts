@@ -4,7 +4,6 @@ import { internalMutation, internalQuery, query } from "./_generated/server";
 import { hasFleetRead } from "@vantageos/cloud-identity";
 import { lookupOrgMapping, withOrgScope } from "./lib/auth";
 import { orgMappingRowsForLabel } from "./lib/authOrgMapping";
-import schema from "./schema";
 import { resolveProvisioningMapping } from "./lib/provisioningMapping";
 import { normalizeOrchestratorId } from "./_helpers/normalizeOrchestratorId";
 import { assertAgentNameFree } from "./lib/agentIdentity";
@@ -163,7 +162,19 @@ export const setOrgKind = internalMutation({
 // row before and after.
 // ─────────────────────────────────────────────────────────────────────────────
 const mappingRowValidator = v.object({
-	...schema.tables.client_org_mapping.validator.fields,
+	clerkOrgSlug: v.string(),
+	clerkOrgId: v.optional(v.string()),
+	allowedOrchestrators: v.array(v.string()),
+	scopes: v.array(v.string()),
+	displayName: v.string(),
+	isActive: v.boolean(),
+	createdAt: v.number(),
+	orgKind: v.optional(v.union(v.literal("operator"), v.literal("client"))),
+	addressableFleetCoordinators: v.optional(v.array(v.string())),
+	allowedAgentIds: v.optional(v.array(v.id("agents"))),
+	addressableFleetCoordinatorIds: v.optional(v.array(v.id("agents"))),
+	fleetWide: v.optional(v.boolean()),
+	serviceAccountAgentId: v.optional(v.id("agents")),
 	_id: v.id("client_org_mapping"),
 	_creationTime: v.number(),
 });
