@@ -9,18 +9,17 @@
 //       writing nothing to them;
 //   (d) a second run fills 0;
 //   (e) an existing clerkOrgId is never overwritten, even when it disagrees with the slug;
-//   (f) a row without clerkOrgId is admitted by the ID-comparing gate only AFTER the
-//       backfill (the gate here is a stub of the predicate PR #1626 puts in
-//       assertRowInVerifiedOrg: sameOrg(orgRefOfRow(row), { id: mapping.clerkOrgId });
-//       #1626 is not on main, so the real function is not reachable from this branch).
+//   (f) a row without clerkOrgId is refused by the real ID-comparing gate
+//       (convex/lib/verifiedOrg.ts assertRowInVerifiedOrg) before the backfill and
+//       admitted only AFTER it.
 // Hermetic. Fictitious identifiers only.
 
-import { sameOrg } from "@vantageos/cloud-identity";
 import { convexTest } from "convex-test";
+import { ConvexError } from "convex/values";
 import { describe, expect, test } from "vitest";
 import { internal } from "../_generated/api";
 import type { Id } from "../_generated/dataModel";
-import { lookupOrgMapping, orgRefOfRow } from "../lib/authOrgMapping";
+import { assertRowInVerifiedOrg } from "../lib/verifiedOrg";
 import schema from "../schema";
 
 const modules = Object.fromEntries(
@@ -340,9 +339,6 @@ describe("clerkOrgIdCoverage:backfill", () => {
 });
 
 describe("(f) the ID-comparing gate admits a row only after the backfill", () => {
-	// Stub of the predicate #1626 puts in assertRowInVerifiedOrg: the row's org is its
-	// permanent ID, compared with the ID of the verified org's mapping; a row with no ID
-	// matches nobody.
 	const admitted = async (
 		t: T,
 		taskId: Id<"tasks">,
@@ -350,9 +346,14 @@ describe("(f) the ID-comparing gate admits a row only after the backfill", () =>
 	): Promise<boolean> =>
 		await t.run(async (ctx) => {
 			const row = await ctx.db.get(taskId);
-			const mapping = await lookupOrgMapping(ctx, verifiedSlug);
-			if (row === null || mapping === null) return false;
-			return sameOrg(orgRefOfRow(row), { id: mapping.clerkOrgId });
+			if (row === null) return false;
+			try {
+				await assertRowInVerifiedOrg(ctx, row, verifiedSlug, taskId, "test:door");
+				return true;
+			} catch (e) {
+				if (e instanceof ConvexError) return false;
+				throw e;
+			}
 		});
 
 	test("refused before the backfill, admitted after; a row of another org is still refused", async () => {
