@@ -87,7 +87,11 @@ export async function agentIdOfLabelInOrg(
 	if (isHumanActorName(label)) return undefined;
 	const slug = await actorOrgFor(ctx.db, org.orgSlug);
 	if (slug === undefined) return undefined;
-	const found = await actorIdResolver(ctx, slug)(label);
+	const found = await actorIdResolver(
+		ctx,
+		slug,
+		org.orgSlug === null || org.orgSlug === undefined ? undefined : org.clerkOrgId,
+	)(label);
 	if (found === undefined) return undefined;
 	const agentId = ctx.db.normalizeId("agents", found);
 	if (agentId === null) return undefined;

@@ -617,6 +617,7 @@ describe("human CRUD — messages:sendMessage", () => {
 				ids.push(
 					await ctx.db.insert("agents", {
 						orgSlug: "org-a",
+						clerkOrgId: testClerkOrgId("org-a"),
 						name,
 						normalizedName: name,
 						isActive: true,

@@ -22,6 +22,7 @@ import { convexTest } from "../../tests/fixtures/convexTestWithServiceAccount";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import { api } from "../_generated/api";
 import schema from "../schema";
+import { testClerkOrgId } from "../../tests/fixtures/testClerkOrgId";
 import { seedAgents } from "../../tests/lib/agentIdOf";
 import { insertTaskRow } from "../../tests/lib/seedFleetAgents";
 
@@ -55,6 +56,7 @@ async function seed(t: T) {
 		for (const slug of ["org-a", "org-b"]) {
 			await ctx.db.insert("client_org_mapping", {
 				clerkOrgSlug: slug,
+				clerkOrgId: testClerkOrgId(slug),
 				allowedOrchestrators: ["eta"],
 				scopes: ["view-own-tasks"],
 				displayName: slug,

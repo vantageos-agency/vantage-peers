@@ -57,6 +57,7 @@ async function setup() {
 		);
 		await ctx.db.insert("agents", {
 			orgSlug: operator?.clerkOrgSlug ?? "fleet-operator",
+			clerkOrgId: operator?.clerkOrgId,
 			name: OWNER_NFC,
 			normalizedName: normalizeOrchestratorId(OWNER_NFC),
 			isActive: true,

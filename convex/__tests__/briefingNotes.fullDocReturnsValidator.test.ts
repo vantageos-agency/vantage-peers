@@ -27,6 +27,7 @@ import { describe, expect, test } from "vitest";
 import { seedFleetAgents } from "../../tests/lib/seedFleetAgents";
 import { api } from "../_generated/api";
 import schema from "../schema";
+import { testClerkOrgId } from "../../tests/fixtures/testClerkOrgId";
 
 const modules = Object.fromEntries(
 	Object.entries(import.meta.glob("../**/*.ts")).filter(
@@ -142,8 +143,18 @@ describe("briefingNotes.update — smoke test with orgId note shapes", () => {
 			noteId = await seedNoteWithOrgId(ctx);
 			// M10c: the author is judged by agent ID, proved by the transport
 			// (verifiedActor) as the agent of the note's own org.
+			await ctx.db.insert("client_org_mapping", {
+				clerkOrgSlug: "acme-hr",
+				clerkOrgId: testClerkOrgId("acme-hr"),
+				allowedOrchestrators: ["sigma"],
+				scopes: [],
+				displayName: "acme-hr",
+				isActive: true,
+				createdAt: 1,
+			});
 			sigmaId = await ctx.db.insert("agents", {
 				orgSlug: "acme-hr",
+				clerkOrgId: testClerkOrgId("acme-hr"),
 				name: "sigma",
 				normalizedName: "sigma",
 				isActive: true,

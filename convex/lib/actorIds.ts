@@ -40,11 +40,15 @@ export async function actorOrgFor(
 
 /**
  * One name -> ID resolver bound to one org. `orgSlug` undefined/null means the
- * operator org. The org is derived once, not per name.
+ * operator org. The org is derived once, not per name. `orgClerkId`, when the
+ * caller holds the organisation's verified permanent ID, selects the agents by
+ * that ID (a slug stamped on a row may since have been renamed or taken over);
+ * without it the ID is the one the slug's mapping row stores now.
  */
 export function actorIdResolver(
 	ctx: QueryCtx | MutationCtx,
 	orgSlug: string | undefined | null,
+	orgClerkId?: string,
 ): ActorIdResolver {
 	let org: Promise<string | undefined> | undefined;
 	return async (name) => {
@@ -54,7 +58,7 @@ export function actorIdResolver(
 		org ??= actorOrgFor(ctx.db, orgSlug);
 		const slug = await org;
 		if (slug === undefined) return undefined;
-		const row = await findAgentByName(ctx, slug, name);
+		const row = await findAgentByName(ctx, slug, name, orgSlug ? orgClerkId : undefined);
 		return row === null ? undefined : row._id;
 	};
 }

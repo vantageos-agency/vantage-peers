@@ -221,6 +221,7 @@ async function seedAssignee(): Promise<void> {
 	await t.run(async (ctx) => {
 		await ctx.db.insert("agents", {
 			orgSlug: "org-a",
+			clerkOrgId: testClerkOrgId("org-a"),
 			name: "agent-a",
 			normalizedName: "agent-a",
 			isActive: true,

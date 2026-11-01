@@ -58,8 +58,15 @@ export async function seedAgents(
 ): Promise<void> {
 	await t.run(async (ctx) => {
 		for (const [orgSlug, name] of pairs) {
+			// An agent is found by its organisation's permanent ID: the row carries the one
+			// its mapping row stores (or the fixture ID of the slug when none is seeded yet).
+			const mapping = await ctx.db
+				.query("client_org_mapping")
+				.withIndex("by_clerk_slug", (q) => q.eq("clerkOrgSlug", orgSlug))
+				.first();
 			await ctx.db.insert("agents", {
 				orgSlug,
+				clerkOrgId: mapping?.clerkOrgId ?? testClerkOrgId(orgSlug),
 				name,
 				normalizedName: normalizeOrchestratorId(name),
 				isActive: true,
