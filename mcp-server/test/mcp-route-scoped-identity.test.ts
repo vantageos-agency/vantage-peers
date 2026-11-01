@@ -309,13 +309,31 @@ describe.each(ERAS)("/mcp under a scoped person token ($era era)", ({
 		})) as ToolResult;
 		await client.close();
 		expect(r.isError).toBeFalsy();
-		expect(sent.calls.filter((c) => c.kind === "mutation")).toEqual([
+		// The tool's own write reaches Convex once. The wrapper's fire-and-forget
+		// usage recording (toolUsage:record, task k17cbr6y6da096t5e1k869kgb18hd0ht)
+		// is a second, separate mutation and is asserted on its own below.
+		expect(
+			sent.calls.filter(
+				(c) => c.kind === "mutation" && c.name !== "toolUsage:record",
+			),
+		).toEqual([
 			{
 				kind: "mutation",
 				name: "memories:storeMemory",
 				auth: SERVICE_ACCOUNT_JWT,
 			},
 		]);
+		await vi.waitFor(() =>
+			expect(
+				sent.calls.filter((c) => c.name === "toolUsage:record"),
+			).toEqual([
+				{
+					kind: "mutation",
+					name: "toolUsage:record",
+					auth: SERVICE_ACCOUNT_JWT,
+				},
+			]),
+		);
 	});
 });
 

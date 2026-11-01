@@ -114,6 +114,10 @@ export const DOOR_SCOPE: Readonly<Record<string, DoorScopeRule>> = {
 	"kbMutations:generateUploadUrl": { verifiedOrg: "always" },
 	"kbMutations:generateUploadUrlWithTicket": { verifiedOrg: "always" },
 	"kbMutations:claimUpload": { verifiedOrg: "always" },
+	// tool usage (task k17cbr6y6da096t5e1k869kgb18hd0ht): a person bearer reads as
+	// itself; the org is the acting org the client wrapper attaches
+	"toolUsage:getToolUsage": { verifiedPerson: true },
+	"toolUsage:usageByOwner": { verifiedPerson: true },
 };
 
 /**

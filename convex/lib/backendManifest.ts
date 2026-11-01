@@ -220,4 +220,7 @@ export const BACKEND_FUNCTIONS: readonly string[] = [
 	"tasks:start",
 	"tasks:taskDurationDistribution",
 	"tasks:update",
+	"toolUsage:getToolUsage",
+	"toolUsage:record",
+	"toolUsage:usageByOwner",
 ];

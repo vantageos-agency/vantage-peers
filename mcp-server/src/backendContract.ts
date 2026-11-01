@@ -185,6 +185,9 @@ export const MCP_CALLED_FUNCTIONS: readonly string[] = [
 	"tasks:searchTasksByKeyword",
 	"tasks:start",
 	"tasks:update",
+	"toolUsage:getToolUsage",
+	"toolUsage:record",
+	"toolUsage:usageByOwner",
 ];
 
 export type BackendCompatFailure =
