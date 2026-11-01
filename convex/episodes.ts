@@ -7,7 +7,8 @@ import { internal } from "./_generated/api";
 import { creatorValidator, severityValidator, relationTypeValidator } from "./schema";
 import { requireResolvedCaller, withOrgScope } from "./lib/auth";
 import { memoryAuthorOf, memoryStampForWrite, memoryVisibleToScope } from "./lib/memoryTenant";
-import { isTeamNamespaceAllowed, memberNamespaceRoots } from "./lib/teamNamespace";
+import { isMemoryNamespaceAllowed } from "./lib/seatNamespace";
+import { memberNamespaceRoots } from "./lib/teamNamespace";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // storeEpisode
@@ -58,7 +59,7 @@ export const storeEpisode = mutation({
     // the namespace gate of convex/lib/teamNamespace.ts: a member owns
     // `team/<its verified org ID>` (and the legacy label alias of that same org).
     const scope = await withOrgScope(ctx);
-    if (!isTeamNamespaceAllowed(scope, args.namespace)) {
+    if (!isMemoryNamespaceAllowed(scope, args.namespace)) {
       throw new ConvexError(
         `RBAC_DENIED: caller may not write to namespace "${args.namespace}" — ${JSON.stringify({ orgSlug: scope.orgSlug })}`,
       );
@@ -209,7 +210,7 @@ export const listEpisodes = query({
     // scope as the empty page. Reuses the EXACT mechanism its sibling
     // memories.ts::listMemories already uses — no second identity layer.
     const scope = await withOrgScope(ctx, { refuseWithoutThrow: true });
-    if (!isTeamNamespaceAllowed(scope, args.namespace)) {
+    if (!isMemoryNamespaceAllowed(scope, args.namespace)) {
       return [];
     }
 
