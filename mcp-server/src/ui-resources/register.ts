@@ -15,6 +15,7 @@ import {
 } from "@modelcontextprotocol/server";
 import type { ConvexHttpClient } from "convex/browser";
 import { isMasterScope, type OAuthContext } from "../auth.js";
+import { actingOrgOfBearer } from "../authenticatedConvexClient.js";
 import {
 	listUiResources,
 	readUiResource,
@@ -45,7 +46,14 @@ export function isUiResourceReadAdmitted(
 ): boolean {
 	if (oauthCtx === undefined) return false;
 	if (oauthCtx.clerkJwt) return true;
-	return isMasterScope(oauthCtx);
+	if (isMasterScope(oauthCtx)) return true;
+	// (c) a non-master bearer whose organisation RESOLVED (task
+	//     k179y0wpsd6fv7055f4p2w6b358hdrxe): its client is the service account
+	//     acting for that org (selectConvexClientForRequest, `__actingOrg` on
+	//     every call), which Convex answers as an ordinary member of it, so the
+	//     primitives' reads are tenant-scoped in Convex. Same predicate as the
+	//     client selection; no resolved org is still a refusal.
+	return actingOrgOfBearer(oauthCtx) !== undefined;
 }
 
 /**
@@ -59,7 +67,7 @@ export function uiResourceReadRefusal(uri: string): ProtocolError {
 	const door = `resources/read ui://vp/v1/${primitive}`;
 	return new ProtocolError(
 		ProtocolErrorCode.InvalidRequest,
-		`RBAC_DENIED: ${door} is served only to a Clerk-JWT or master caller. This is a refusal, NOT an empty resource.`,
+		`RBAC_DENIED: ${door} is served only to a Clerk-JWT caller, a master caller, or a bearer whose organisation resolved. This is a refusal, NOT an empty resource.`,
 		{ code: "RBAC_DENIED", door, reason: "ui-resource-not-tenant-scoped" },
 	);
 }
