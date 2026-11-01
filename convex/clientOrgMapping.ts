@@ -3,6 +3,8 @@ import type { Id } from "./_generated/dataModel";
 import { internalMutation, internalQuery, query } from "./_generated/server";
 import { hasFleetRead } from "@vantageos/cloud-identity";
 import { lookupOrgMapping, withOrgScope } from "./lib/auth";
+import { orgMappingRowsForLabel } from "./lib/authOrgMapping";
+import schema from "./schema";
 import { resolveProvisioningMapping } from "./lib/provisioningMapping";
 import { normalizeOrchestratorId } from "./_helpers/normalizeOrchestratorId";
 import { assertAgentNameFree } from "./lib/agentIdentity";
@@ -136,6 +138,86 @@ export const setOrgKind = internalMutation({
 			previous,
 			current: args.orgKind,
 		};
+	},
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// setActive — the ONE instrument that switches a client_org_mapping row off (or
+// back on) by its label. Run by the operator via `bash .claude/scripts/
+// convex-prod.sh run clientOrgMapping:setActive
+// '{"clerkOrgSlug":"...","isActive":false}'` — internalMutation, never wired to
+// an MCP tool or client surface. Patches ONLY `isActive`.
+//
+// A deactivated mapping is refused by `withOrgScope` for every member of the
+// org (the credential's org ID resolves no active org). Rows keyed by the org
+// (agents, tokens, ...) are NOT touched: they stay, unreachable.
+//
+// The row is read by label with `orgMappingRowsForLabel` (not
+// `resolveProvisioningMapping`): re-activating an inactive org must find the row
+// the provisioning resolver may judge unusable. Two rows -> refuse, both _ids
+// named. Deactivating a row that carries a permanent Clerk org ID is a real
+// organisation's offboarding: refused unless `force: true`. Re-activating needs
+// no force. Same value -> no write (`changed: false`).
+//
+// The destructive step prints its inventory first: the return carries the full
+// row before and after.
+// ─────────────────────────────────────────────────────────────────────────────
+const mappingRowValidator = v.object({
+	...schema.tables.client_org_mapping.validator.fields,
+	_id: v.id("client_org_mapping"),
+	_creationTime: v.number(),
+});
+
+export const setActive = internalMutation({
+	args: {
+		clerkOrgSlug: v.string(),
+		isActive: v.boolean(),
+		force: v.optional(v.boolean()),
+	},
+	returns: v.object({
+		clerkOrgSlug: v.string(),
+		changed: v.boolean(),
+		before: mappingRowValidator,
+		after: mappingRowValidator,
+	}),
+	handler: async (ctx, args) => {
+		const rows = await orgMappingRowsForLabel(ctx, args.clerkOrgSlug);
+		if (rows.length > 1) {
+			throw new ConvexError(
+				`ORG_MAPPING_AMBIGUOUS: more than one client_org_mapping row carries the label "${args.clerkOrgSlug}": ${rows.map((r) => r._id).join(", ")}`,
+			);
+		}
+		const before = rows[0];
+		if (!before) {
+			throw new ConvexError(
+				`ORG_MAPPING_NOT_FOUND: no client_org_mapping row for clerkOrgSlug "${args.clerkOrgSlug}"`,
+			);
+		}
+		if (before.isActive === args.isActive) {
+			return {
+				clerkOrgSlug: args.clerkOrgSlug,
+				changed: false,
+				before,
+				after: before,
+			};
+		}
+		if (
+			args.isActive === false &&
+			before.clerkOrgId !== undefined &&
+			args.force !== true
+		) {
+			throw new ConvexError(
+				`ORG_DEACTIVATE_NEEDS_FORCE: "${args.clerkOrgSlug}" (${before._id}) carries the Clerk org ID ${before.clerkOrgId}; deactivating a real organisation is deliberate, pass force:true.`,
+			);
+		}
+		await ctx.db.patch(before._id, { isActive: args.isActive });
+		const after = await ctx.db.get(before._id);
+		if (!after) {
+			throw new ConvexError(
+				`ORG_MAPPING_UNREADABLE: row ${before._id} vanished during setActive`,
+			);
+		}
+		return { clerkOrgSlug: args.clerkOrgSlug, changed: true, before, after };
 	},
 });
 
