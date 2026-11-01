@@ -240,12 +240,50 @@ async function loadScopeProfile(
 //
 // URIs without a `*` keep the original exact-match semantics — this helper
 // is a strict superset of the prior behavior.
+//
+// Loopback redirects (RFC 8252 section 7.3): a native client (VS Code, CLIs)
+// listens on a port it picks per run, so the authorization server MUST allow
+// any port for a registered `http` loopback URI. The match is still strict on
+// everything else: scheme `http`, the SAME loopback literal (`127.0.0.1`,
+// `localhost` or `[::1]`, RFC 8252 section 8.3), no userinfo, a valid port,
+// and byte-equal path and query. A loopback URI is never matched against a
+// non-loopback registration, nor the other way round.
+const LOOPBACK_HOSTS = new Set(["127.0.0.1", "localhost", "[::1]"]);
+
+function loopbackRedirectMatches(
+	registeredUri: string,
+	presentedUri: string,
+): boolean {
+	let registered: URL;
+	let presented: URL;
+	try {
+		registered = new URL(registeredUri);
+		presented = new URL(presentedUri);
+	} catch {
+		return false;
+	}
+	return (
+		registered.protocol === "http:" &&
+		presented.protocol === "http:" &&
+		LOOPBACK_HOSTS.has(registered.hostname) &&
+		registered.hostname === presented.hostname &&
+		presented.username === "" &&
+		presented.password === "" &&
+		presented.hash === "" &&
+		registered.pathname === presented.pathname &&
+		registered.search === presented.search
+	);
+}
+
 export function redirectUriMatches(
 	registeredUri: string,
 	presentedUri: string,
 ): boolean {
 	if (!registeredUri.includes("*")) {
-		return registeredUri === presentedUri;
+		return (
+			registeredUri === presentedUri ||
+			loopbackRedirectMatches(registeredUri, presentedUri)
+		);
 	}
 	// Escape regex metacharacters EXCEPT `*`, then expand `*`.
 	const escaped = registeredUri.replace(/[.+?^${}()|[\]\\]/g, "\\$&");
@@ -537,8 +575,7 @@ app.post("/register", async (c) => {
 		}
 		const isHttpsScheme = parsed.protocol === "https:";
 		const isLocalhostHttp =
-			parsed.protocol === "http:" &&
-			(parsed.hostname === "localhost" || parsed.hostname === "127.0.0.1");
+			parsed.protocol === "http:" && LOOPBACK_HOSTS.has(parsed.hostname);
 		if (!isHttpsScheme && !isLocalhostHttp) {
 			return c.json(
 				{
