@@ -21,7 +21,6 @@ import {
   visibleProfiles,
 } from "./lib/profileActors";
 import { isNamespaceAllowedForScope } from "./memories";
-import { normalizeOrchestratorId } from "./_helpers/normalizeOrchestratorId";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // WHO MAY WRITE, AND WHICH ROW IS WHOSE (module M10d).
@@ -45,16 +44,8 @@ function requireFleetMaster(
   scope: OrgScope,
   actor: ProfileAgent | undefined,
   action: string,
-  target?: string,
+  namesAnotherAgent = false,
 ): void {
-  // A seat acting for its org (`__actingOrg`, task k179y0wpsd6fv7055f4p2w6b358hdrxe)
-  // writes its OWN profile: a call that names another agent's profile is
-  // refused, never redirected onto the caller's row.
-  const namesAnotherAgent =
-    scope.serviceTransport === true &&
-    actor !== undefined &&
-    target !== undefined &&
-    normalizeOrchestratorId(target) !== normalizeOrchestratorId(actor.agent.name);
   if ((!scope.isMaster && actor === undefined) || namesAnotherAgent) {
     throw new ConvexError(
       `RBAC_DENIED: caller may not ${action} — profiles are fleet-internal, master-only unless the call proves the agent that owns the profile — ${JSON.stringify({ orgSlug: scope.orgSlug, reason: namesAnotherAgent ? "profile-of-another-agent" : "not-profile-owner" })}`,
@@ -72,7 +63,15 @@ async function writerOf(
 ): Promise<{ scope: OrgScope; actor: ProfileAgent | undefined }> {
   const scope = await withOrgScope(ctx);
   const actor = await resolveProfileAgent(ctx, scope, proof, door);
-  requireFleetMaster(scope, actor, action, target);
+  // A seat acting for its org (`__actingOrg`, task k179y0wpsd6fv7055f4p2w6b358hdrxe)
+  // writes its OWN profile: a call whose target names another agent (by ID, in
+  // the proven agent's org) is refused, never redirected onto the caller's row.
+  const namesAnotherAgent =
+    scope.serviceTransport === true &&
+    actor !== undefined &&
+    target !== undefined &&
+    (await agentIdOfLabel(ctx, actor.agent.orgSlug, target)) !== actor.agent._id;
+  requireFleetMaster(scope, actor, action, namesAnotherAgent);
   return { scope, actor };
 }
 
