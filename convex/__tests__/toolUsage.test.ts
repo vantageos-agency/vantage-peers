@@ -190,7 +190,8 @@ describe("toolUsage:record + toolUsage:getToolUsage", () => {
 	test("service account acting for org A: records an agent seat, reads its own rows", async () => {
 		const t = createT();
 		await seed(t);
-		const seat = "agent:k1seatagentid";
+		const [seatId] = await seedOwner(t, A, "seat-owner", ["seat"]);
+		const seat = `agent:${seatId}`;
 		expect(
 			await service(t).mutation(toolUsage.record, {
 				toolName: "list_tasks",
@@ -216,13 +217,15 @@ describe("toolUsage:record + toolUsage:getToolUsage", () => {
 				}),
 			),
 		).toBe("RBAC_DENIED");
-		// Acting for org B it sees nothing of A.
+		// Acting for org B, org A's seat key is refused (not an empty list).
 		expect(
-			await service(t).query(toolUsage.getToolUsage, {
-				__actingOrg: B_ID,
-				selfKey: seat,
-			}),
-		).toEqual([]);
+			await code(
+				service(t).query(toolUsage.getToolUsage, {
+					__actingOrg: B_ID,
+					selfKey: seat,
+				}),
+			),
+		).toBe("RBAC_DENIED");
 	});
 
 	test("IDENTITY: the recorder writes nothing for a missing identity or an unscoped fleet call", async () => {
@@ -252,7 +255,6 @@ describe("toolUsage:record + toolUsage:getToolUsage", () => {
 			{ toolName: "has space", caller: "agent:x" },
 			{ toolName: "x".repeat(200), caller: "agent:x" },
 			{ toolName: "ok_tool", caller: "nokind" },
-			{ toolName: "ok_tool", caller: `agent:${"y".repeat(400)}` },
 		]) {
 			expect(
 				await service(t).mutation(toolUsage.record, {
@@ -571,5 +573,60 @@ describe("a person token (verifiedPerson) records and reads as the person", () =
 				}),
 			),
 		).toBe("RBAC_DENIED");
+	});
+});
+
+describe("a forwarded agent key must belong to the verified organisation", () => {
+	test("seat of org A presenting org B is refused and nothing is recorded", async () => {
+		const t = createT();
+		await seed(t);
+		const [aSeat] = await seedOwner(t, A, "a-owner", ["a-seat"]);
+		// Acting for org B with org A's agent key.
+		expect(
+			await code(
+				service(t).mutation(toolUsage.record, {
+					toolName: "store_memory",
+					caller: `agent:${aSeat}`,
+					verifiedOrg: { orgSlug: B },
+					__actingOrg: B_ID,
+				}),
+			),
+		).toBe("RBAC_DENIED");
+		expect(await rowsOf(t)).toHaveLength(0);
+		// The same key presented for its own org is recorded.
+		expect(
+			await service(t).mutation(toolUsage.record, {
+				toolName: "store_memory",
+				caller: `agent:${aSeat}`,
+				verifiedOrg: { orgSlug: A },
+				__actingOrg: A_ID,
+			}),
+		).toEqual({ recorded: true });
+		// Reading as that seat from org B is refused too.
+		expect(
+			await code(
+				service(t).query(toolUsage.getToolUsage, {
+					selfKey: `agent:${aSeat}`,
+					__actingOrg: B_ID,
+				}),
+			),
+		).toBe("RBAC_DENIED");
+	});
+
+	test("an agent id that is not a row, or is malformed, is refused", async () => {
+		const t = createT();
+		await seed(t);
+		for (const key of ["agent:nosuchrow", `agent:${"y".repeat(400)}`]) {
+			expect(
+				await code(
+					service(t).mutation(toolUsage.record, {
+						toolName: "store_memory",
+						caller: key,
+						__actingOrg: A_ID,
+					}),
+				),
+			).toBe("RBAC_DENIED");
+		}
+		expect(await rowsOf(t)).toHaveLength(0);
 	});
 });
