@@ -15,7 +15,7 @@ import { ConvexError } from "convex/values";
 import type { Doc } from "../_generated/dataModel";
 import type { MutationCtx, QueryCtx } from "../_generated/server";
 import { lookupOrgMapping, type OrgScope, type VerifiedActor } from "./auth";
-import { clerkOrgIdForSlug } from "./orgClerkId";
+import { orgMappingLookups } from "./authOrgMapping";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // actingPrincipal — the vantage-peers ADAPTER onto @vantageos/cloud-identity's
@@ -80,7 +80,11 @@ export async function permanentOrgIdOfSlug(
 	ctx: Ctx,
 	slug: string | null | undefined,
 ): Promise<string | undefined> {
-	return await clerkOrgIdForSlug(ctx, slug);
+	if (slug === null || slug === undefined || slug === "") return undefined;
+	// The package's own org-by-label read over the mapping adapter; a label
+	// two mappings claim, or one that names none, answers null (fail closed).
+	const org = await orgMappingLookups(ctx).orgByLabel(slug);
+	return org?.id ?? undefined;
 }
 
 /**

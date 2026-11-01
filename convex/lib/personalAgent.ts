@@ -80,19 +80,17 @@ export async function personalAgentOfToken(
 		{ personId: row.userId, orgId: tokenOrgId },
 		{
 			designatedAgents: async (personId, orgId) => {
-				// The index is keyed by the person (its second key is the org LABEL, which
-				// another organisation can take over), so the organisation is judged
-				// below by permanent ID over the person's designations, bounded.
-				const designated = await ctx.db
+				// Read by the organisation's PERMANENT ID (the label index is not used:
+				// another organisation can take a released label over).
+				const rows = await ctx.db
 					.query("agents")
-					.withIndex("by_personal_agent_of", (q) =>
-						q.eq("personalAgentOf", personId),
+					.withIndex("by_personal_agent_of_clerk_id", (q) =>
+						q.eq("personalAgentOf", personId).eq("clerkOrgId", orgId),
 					)
 					.take(DESIGNATED_AGENTS_CAP + 1);
-				if (designated.length > DESIGNATED_AGENTS_CAP) {
+				if (rows.length > DESIGNATED_AGENTS_CAP) {
 					throw new Error("designation scan cap exceeded");
 				}
-				const rows = designated.filter((a) => a.clerkOrgId === orgId);
 				// The stamped agent is the ONLY candidate when there is one: nothing else
 				// is counted or picked in its place. The package judges active /
 				// designation / organisation over what is returned.
