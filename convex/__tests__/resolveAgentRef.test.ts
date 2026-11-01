@@ -116,7 +116,7 @@ const refusal = async (p: Promise<unknown>): Promise<string> => {
 	return "NO-REFUSAL";
 };
 
-let logSpy: ReturnType<typeof vi.spyOn>;
+let logSpy: { mock: { calls: unknown[][] }; mockRestore: () => void };
 beforeEach(() => {
 	logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
 });
@@ -125,8 +125,8 @@ afterEach(() => {
 });
 const labelOnlyLines = () =>
 	logSpy.mock.calls
-		.map((c) => String(c[0]))
-		.filter((line) => line.includes("LABEL_ONLY_DOOR"));
+		.map((c: unknown[]) => String(c[0]))
+		.filter((line: string) => line.includes("LABEL_ONLY_DOOR"));
 
 describe("resolveAgentRef: an agent ID is proved against the caller's org", () => {
 	test("ALLOW: the ID of an active agent of the caller's org resolves that row", async () => {
