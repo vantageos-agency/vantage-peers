@@ -2551,43 +2551,6 @@ type MintAccessTokenArgs = {
 const OFFLINE_ACCESS = "offline_access";
 
 /**
- * The organisation a token is minted for, as the pair stored on the row: its
- * permanent ID from an ID-bearing source, and its CURRENT label read by that ID.
- * No organisation named -> undefined (an org-less token). A label with no
- * ID-bearing source is refused (MINT_ORG_ID_REQUIRED): stamping the ID the label's
- * current holder has would put a former holder's token under the new holder.
- */
-async function mintOrgStamp(
-	ctx: MutationCtx,
-	a: MintAccessTokenArgs,
-): Promise<{ clerkOrgSlug: string; clerkOrgId: string } | undefined> {
-	if (a.clerkOrgSlug === undefined) return undefined;
-	let id: string | undefined = a.clerkOrgId ?? a.personRefresh?.orgMapping?.clerkOrgId;
-	if (id === undefined && a.codeHash !== undefined) {
-		const codeHash = a.codeHash;
-		const code = await ctx.db
-			.query("oauth_person_codes")
-			.withIndex("by_codeHash", (q) => q.eq("codeHash", codeHash))
-			.unique();
-		id = code?.orgId;
-	}
-	if (id === undefined) {
-		const profile = await ctx.db
-			.query("oauth_scope_profiles")
-			.withIndex("by_profileId", (q) => q.eq("profileId", a.scopeProfile))
-			.unique();
-		id = profile?.clerkOrgId;
-	}
-	if (id === undefined || id === "") {
-		throw new ConvexError(
-			`MINT_ORG_ID_REQUIRED: a token for organisation "${a.clerkOrgSlug}" needs a verified permanent org ID (consent code, scope profile or refreshed family); an ID derived from the label is refused`,
-		);
-	}
-	const mapping = await lookupOrgMapping(ctx, { clerkOrgId: id });
-	return { clerkOrgSlug: mapping?.clerkOrgSlug ?? a.clerkOrgSlug, clerkOrgId: id };
-}
-
-/**
  * The one place an access token row is written. createAccessToken (mint) and
  * rotateRefreshToken (refresh) both come through here, so the seat agent is
  * resolved BY ID in the profile's own org on every path.
@@ -2626,7 +2589,41 @@ async function mintAccessToken(
 	// (a person rotation), the consent code, or the scope profile. It is NEVER
 	// derived from a label: a profile's stored slug may already name another
 	// organisation (task k1783fk8r6p795x9fxrzyt9evd8hcxm7).
-	const orgStamp = await mintOrgStamp(ctx, a);
+	// The pair stored on the row: the ID from the first source that carries one and
+	// the organisation's CURRENT label read by that ID. No organisation named -> an
+	// org-less token. A label with no ID-bearing source is refused
+	// (MINT_ORG_ID_REQUIRED): the ID the label's current holder has would put a
+	// former holder's token under the new holder.
+	let orgStamp: { clerkOrgSlug: string; clerkOrgId: string } | undefined;
+	if (a.clerkOrgSlug !== undefined) {
+		let id: string | undefined =
+			a.clerkOrgId ?? a.personRefresh?.orgMapping?.clerkOrgId;
+		if (id === undefined && a.codeHash !== undefined) {
+			const codeHash = a.codeHash;
+			const code = await ctx.db
+				.query("oauth_person_codes")
+				.withIndex("by_codeHash", (q) => q.eq("codeHash", codeHash))
+				.unique();
+			id = code?.orgId;
+		}
+		if (id === undefined) {
+			const profile = await ctx.db
+				.query("oauth_scope_profiles")
+				.withIndex("by_profileId", (q) => q.eq("profileId", a.scopeProfile))
+				.unique();
+			id = profile?.clerkOrgId;
+		}
+		if (id === undefined || id === "") {
+			throw new ConvexError(
+				`MINT_ORG_ID_REQUIRED: a token for organisation "${a.clerkOrgSlug}" needs a verified permanent org ID (consent code, scope profile or refreshed family); an ID derived from the label is refused`,
+			);
+		}
+		const stampMapping = await lookupOrgMapping(ctx, { clerkOrgId: id });
+		orgStamp = {
+			clerkOrgSlug: stampMapping?.clerkOrgSlug ?? a.clerkOrgSlug,
+			clerkOrgId: id,
+		};
+	}
 	const tokenClerkOrgId = orgStamp?.clerkOrgId;
 	const seatAgent = await resolveSeatAgent(ctx, {
 		scopeProfile: a.scopeProfile,
