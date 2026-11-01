@@ -31,7 +31,12 @@ globalThis.fetch = async (input, init = {}) => {
 				isActive: true,
 				allowedOrchestrators: ["probe-a"],
 			},
-			"agents:listAgentsByOrg": [],
+			"agents:listAgentsByOrg": process.env.STUB_AGENTS
+				? JSON.parse(process.env.STUB_AGENTS)
+				: [],
+			"agentCredentials:getAgentCredentialStatus": process.env.STUB_AGENTS
+				? { hasActiveCredential: true, activeRows: 1 }
+				: { hasActiveCredential: false, activeRows: 0 },
 			"agents:registerAgent": "agent_stub_1",
 			"agents:getAgent": { _id: "agent_stub_1", name: "probe-a" },
 			"agentCredentials:mintAgentCredential": { secret: "stub-secret-value" },

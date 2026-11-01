@@ -129,6 +129,60 @@ describe("mint-station-agents: prod token rules", () => {
 	});
 });
 
+const mintWrite = (extraEnv) =>
+	exec(
+		MINT,
+		(st) => ["--stations", st, "--secrets-dir", join(dirname(st), "secrets")],
+		extraEnv,
+	);
+const EXISTING = (ownerPersonId) =>
+	JSON.stringify([
+		{
+			_id: "agent_existing_1",
+			name: "angelia",
+			isActive: true,
+			...(ownerPersonId ? { ownerPersonId } : {}),
+		},
+	]);
+
+describe("mint-station-agents: owner step (agents:setAgentOwner is internal, no JWT can call it)", () => {
+	it("a newly registered agent ends with OWNER_STEP_REQUIRED, the exact command, and exit 3", () => {
+		const r = mintWrite();
+		expect(r.status, r.stderr).toBe(3);
+		expect(r.stdout).toContain("OWNER_STEP_REQUIRED");
+		const cmd = r.stdout.split("\n").find((l) => l.includes("agents:setAgentOwner"));
+		expect(cmd).toBeDefined();
+		expect(cmd).toContain("npx convex run agents:setAgentOwner");
+		expect(cmd).toContain("agent_stub_1");
+		expect(cmd).toContain("user_admin1");
+		expect(cmd).toContain("angelia");
+		expect(r.stdout + r.stderr).not.toContain("stub-secret-value");
+		// the owner step is printed, never executed: no Convex call names the internal mutation
+		expect(r.convex.map((c) => c.path)).not.toContain("agents:setAgentOwner");
+	});
+
+	it("an existing agent with a live credential and no owner still gets the step (the fab1 angelia case)", () => {
+		const r = mintWrite({ STUB_AGENTS: EXISTING() });
+		expect(r.status, r.stderr).toBe(3);
+		expect(r.stdout).toContain("OWNER_STEP_REQUIRED");
+		expect(r.stdout).toContain("agent_existing_1");
+		expect(r.convex.map((c) => c.path)).not.toContain("agentCredentials:mintAgentCredential");
+	});
+
+	it("an agent that already has an owner is skipped: no step, exit 0", () => {
+		const r = mintWrite({ STUB_AGENTS: EXISTING("user_admin1") });
+		expect(r.status, r.stderr).toBe(0);
+		expect(r.stdout).not.toContain("OWNER_STEP_REQUIRED");
+		expect(r.stdout).toContain("owner already set");
+	});
+
+	it("a dry run never exits 3 and prints no owner command", () => {
+		const r = mint();
+		expect(r.status, r.stderr).toBe(0);
+		expect(r.stdout).not.toContain("agents:setAgentOwner");
+	});
+});
+
 describe("add-repo-mapping: prod token rules", () => {
 	it("(a) every Convex call carries a convex-template token (aud convex)", () => {
 		const r = addMapping();
