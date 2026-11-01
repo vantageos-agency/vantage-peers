@@ -17,6 +17,7 @@ import type { MutationCtx, QueryCtx } from "../_generated/server";
 import { normalizeOrchestratorId } from "../_helpers/normalizeOrchestratorId";
 import {
 	agentCredentialPrincipalLookups,
+	permanentOrgIdOfSlug,
 	principalLookups,
 } from "./actingPrincipal";
 import { ORG_ADMIN_ROLES, refusalError } from "./auth";
@@ -175,7 +176,7 @@ async function agentOfPresentedSecret(
 				// the row, else the one its label names now (the agent row's stored ID
 				// is what it is judged against, so a taken-over label only refuses).
 				tenantId:
-					row.clerkOrgId ?? (await clerkOrgIdForSlug(ctx, row.orgSlug)) ?? "",
+					row.clerkOrgId ?? (await permanentOrgIdOfSlug(ctx, row.orgSlug)) ?? "",
 				secretHash: row.secretHash,
 				agentId: row.agentId ?? null,
 				revoked: !row.isActive,

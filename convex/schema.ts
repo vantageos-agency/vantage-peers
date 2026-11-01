@@ -2283,6 +2283,7 @@ export default defineSchema({
 	})
 		.index("by_org", ["orgSlug"])
 		.index("by_personal_agent_of", ["personalAgentOf", "orgSlug"])
+		.index("by_personal_agent_of_clerk_id", ["personalAgentOf", "clerkOrgId"])
 		.index("by_auth_subject_kind", ["authSubject", "kind"])
 		.index("by_org_clerk_id", ["clerkOrgId"])
 		.index("by_org_name", ["orgSlug", "name"])
