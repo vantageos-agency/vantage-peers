@@ -34,6 +34,8 @@ import { resolveAgentRef, resolveOwnedAgentOfPresentedSecret } from "./lib/agent
 import type { ActingPrincipal } from "@vantageos/cloud-identity";
 import {
 	addressRecipientById,
+	isActiveOperatorMapping,
+	principalOfAgentRow,
 	recipientScopeOfPrincipal,
 	requireTargetOrgOfPrincipal,
 	requireVerifiedActorPrincipal,
@@ -261,6 +263,28 @@ interface SendMessageArgs {
 const SEND_DOOR = "messages:sendMessage";
 export const MAX_RECIPIENT_AGENT_IDS = 50;
 
+// ─────────────────────────────────────────────────────────────────────────────
+// THE REPLY PATH (task k177h2f3nkgns1f1ncf2v160vh8hd5hy). A client organisation X
+// lists the fleet coordinators it may address: by NAME
+// (`addressableFleetCoordinators`) and by agent ID (`addressableFleetCoordinatorIds`).
+// Inbound (an X agent -> a listed coordinator) was admitted; the reverse was not,
+// because an operator agent's reach is its own organisation's roster. A listed
+// coordinator may now ANSWER X's ROSTER agents, on both paths, and only them:
+//   - never via "*" / "broadcast" (the fan-out stays the sender's own roster);
+//   - never for a coordinator X does not list, nor for a client agent that merely
+//     bears a listed name (the sender must be an agent of an ACTIVE operator org);
+//   - never to an agent of X that is off X's roster, nor to another organisation
+//     that does not list the sender;
+//   - never mixed with the sender's own roster in one send (two tenants).
+// The message is stamped in X's tenant (as the ID path's operator-to-client reply
+// already was), and its receipts carry the recipient's agent ID, so X's own inbox
+// reads (checkNewMessages*, scoped to the receipt's tenant and keyed by ID) see it.
+// ─────────────────────────────────────────────────────────────────────────────
+
+type ReplyScope = Pick<OrgScope, "allowedOrchestrators"> & {
+	orgSlug: string;
+};
+
 function requireOneRecipientForm(args: {
 	channel?: string;
 	recipientAgentIds?: string[];
@@ -302,6 +326,8 @@ async function resolveRecipientAgents(
 	derivedTenantId: string | undefined,
 	rawIds: readonly string[],
 	sender?: ActingPrincipal,
+	// The sender's agent ID read from its stored row when no proof was forwarded.
+	senderAgentId?: string,
 ): Promise<{ rows: Doc<"agents">[]; tenantId: string | undefined }> {
 	const fleetWide = reach.isMaster && reach.orgSlug === null;
 	// The organisation the receipts are stamped with is the one the recipients
@@ -331,6 +357,9 @@ async function resolveRecipientAgents(
 	// recipient stays in the sender's own tenant (the two cannot share a message).
 	let replyOrg: string | undefined;
 	let staysInSenderTenant = false;
+	// The client organisations a no-proof reply addresses (more than one cannot
+	// share a tenant).
+	const replyOrgs = new Set<string>();
 	const refuseSpan = (): never => {
 		throw new ConvexError(
 			`RBAC_DENIED: the recipients belong to more than one organisation, so no single tenant can carry the message — ${JSON.stringify({ reason: "recipients-span-organisations", door: SEND_DOOR })}`,
@@ -350,6 +379,24 @@ async function resolveRecipientAgents(
 		if (row === null || !row.isActive || targetOrg === undefined || targetOrg === null) {
 			return refuse(raw);
 		}
+		// A listed coordinator reaches a client organisation's ROSTER agents, not
+		// every active agent stamped with that organisation: is `row` on the stored
+		// ID roster (allowedAgentIds) of its OWN organisation? No ID, mapping or
+		// roster stored answers false (refused by default); the package judges it.
+		const rowOrgMapping =
+			row.clerkOrgId === undefined
+				? null
+				: await lookupOrgMapping(ctx, { clerkOrgId: row.clerkOrgId });
+		const onClientRoster =
+			rowOrgMapping !== null &&
+			(
+				await agentListedOnRoster(
+					ctx,
+					{ agentId: row._id, agentOrgId: row.clerkOrgId ?? "" },
+					rosterOf(row.clerkOrgId, rowOrgMapping.allowedAgentIds),
+					SEND_DOOR,
+				)
+			).ok;
 		if (fleetWide) {
 			if (
 				row.orgSlug !== targetOrg ||
@@ -374,6 +421,16 @@ async function resolveRecipientAgents(
 					return refuse(raw);
 				}
 				direction = "linked";
+			}
+			// A listed coordinator answers the client's ROSTER agents, not every
+			// active agent stamped with the client's organisation.
+			if (
+				direction === undefined &&
+				verdict.ok &&
+				verdict.direction === "operator-to-client" &&
+				!onClientRoster
+			) {
+				return refuse(raw);
 			}
 			if (
 				direction === "linked" ||
@@ -414,6 +471,7 @@ async function resolveRecipientAgents(
 			own.ok &&
 			(derivedTenantId === undefined || row.orgSlug === derivedTenantId)
 		) {
+			staysInSenderTenant = true;
 			rows.push(row);
 			continue;
 		}
@@ -426,7 +484,33 @@ async function resolveRecipientAgents(
 			coordinatorIds,
 			SEND_DOOR,
 		);
-		if (!coordinator.ok) return refuse(raw);
+		if (coordinator.ok) {
+			staysInSenderTenant = true;
+			rows.push(row);
+			continue;
+		}
+		// The REPLY direction without a forwarded proof (a presented agent
+		// credential): the sender's agent ID comes from its stored row, is resolved
+		// to a principal of its own org by the package, and the package decides
+		// whether the client organisation lists it (`operator-to-client`). Then, as
+		// on the proven path, only the client's ROSTER agents are reachable and the
+		// message is stamped in the client's tenant.
+		const replier =
+			senderAgentId !== undefined && reach.orgClerkId !== undefined
+				? await principalOfAgentRow(ctx, senderAgentId, reach.orgClerkId, SEND_DOOR)
+				: undefined;
+		if (replier === undefined) return refuse(raw);
+		const verdict = await addressRecipientById(ctx, replier, row, SEND_DOOR);
+		if (
+			!verdict.ok ||
+			verdict.direction !== "operator-to-client" ||
+			!onClientRoster
+		) {
+			return refuse(raw);
+		}
+		replyOrgs.add(row.orgSlug);
+		if (replyOrgs.size > 1) return refuseSpan();
+		replyOrg = row.orgSlug;
 		rows.push(row);
 	}
 	if (replyOrg !== undefined && staysInSenderTenant) return refuseSpan();
@@ -561,6 +645,7 @@ async function sendMessageCore(
 				derivedTenantId,
 				args.recipientAgentIds,
 				senderPrincipal,
+				fromId,
 			);
 			// An operator agent replying to a client agent writes in the client's
 			// tenant, never in its own (the client's readers are scoped to it).
@@ -574,6 +659,64 @@ async function sendMessageCore(
 				throw new ConvexError(
 					`recipient error / message not delivered: recipientAgentIds names no recipient other than the sender — ${JSON.stringify({ reason: "only-self", door: SEND_DOOR })}`,
 				);
+			}
+		}
+		// The NAME form of the reply path (see resolveCoordinatorReplyScope): a
+		// listed coordinator addressing a client organisation's roster agents by
+		// name. The message and its receipts are written in that organisation's
+		// tenant, and the recipients resolve to their agent IDs there.
+		let replyScope: ReplyScope | undefined;
+		let resolveRecipientActor = resolveActor;
+		if (
+			agentRecipients === undefined &&
+			args.channel !== undefined &&
+			args.channel !== "broadcast" &&
+			!(reach.isMaster && reach.orgSlug === null)
+		) {
+			// The sender must be an agent row (fromId) of an ACTIVE operator org, by
+			// stored kind, and the send must name only parts its own roster does not
+			// admit (a person, or a mixed list, keeps the pre-existing judgement).
+			const own =
+				reach.orgSlug === null || fromId === undefined
+					? null
+					: reach.orgClerkId !== undefined
+						? await lookupOrgMapping(ctx, { clerkOrgId: reach.orgClerkId })
+						: await lookupOrgMapping(ctx, reach.orgSlug);
+			const parts = args.channel
+				.split(",")
+				.map((s) => s.trim())
+				.filter((s) => s.length > 0);
+			if (
+				isActiveOperatorMapping(own) &&
+				parts.length > 0 &&
+				!parts.some((p) => isHumanActorName(p) || isRecipientOnRoster(reach, p))
+			) {
+				const role = normalizeOrchestratorId(args.from);
+				const listing = (await ctx.db.query("client_org_mapping").collect()).filter(
+					(m) =>
+						m.isActive &&
+						m._id !== own?._id &&
+						m.orgKind !== "operator" &&
+						(m.addressableFleetCoordinators ?? []).some(
+							(n) => n !== "*" && normalizeOrchestratorId(n) === role,
+						) &&
+						parts.every((p) => isRecipientOnRoster(m, p)),
+				);
+				if (listing.length > 1) {
+					throw new ConvexError(
+						`RBAC_DENIED: "${args.channel}" names agents of more than one organisation that lists "${args.from}" — address them by agent ID (recipientAgentIds, list_peers agentId) — ${JSON.stringify({ reason: "coordinator-reply-ambiguous", door: SEND_DOOR })}`,
+					);
+				}
+				if (listing.length === 1) {
+					replyScope = {
+						orgSlug: listing[0].clerkOrgSlug,
+						allowedOrchestrators: listing[0].allowedOrchestrators,
+					};
+				}
+			}
+			if (replyScope !== undefined) {
+				derivedTenantId = replyScope.orgSlug;
+				resolveRecipientActor = actorIdResolver(ctx, derivedTenantId);
 			}
 		}
 		const channel =
@@ -774,7 +917,7 @@ async function sendMessageCore(
 			// assertPrincipalListed against `addressableFleetCoordinatorIds`); the
 			// name path is removed by M1b.
 			let coordinators: string[] = [];
-			if (!fleetWide && reach.orgSlug !== null) {
+			if (!fleetWide && reach.orgSlug !== null && replyScope === undefined) {
 				const orgSlug = reach.orgSlug;
 				const mapping = await ctx.db
 					.query("client_org_mapping")
@@ -787,6 +930,9 @@ async function sendMessageCore(
 			// How a part is admitted: through the sender's own roster (directly, or
 			// through the owner of an instance), only through the org's listed fleet
 			// coordinators, or not at all. The own roster wins.
+			// On the reply path the roster judged is the client organisation's.
+			const rosterReach: Pick<OrgScope, "allowedOrchestrators"> =
+				replyScope ?? reach;
 			const admittedVia = (part: string): "roster" | "coordinator" | "none" => {
 				if (fleetWide) return "roster";
 				let via: "coordinator" | "none" = "none";
@@ -795,7 +941,7 @@ async function sendMessageCore(
 					instanceOwner.get(part),
 				]) {
 					if (role === undefined) continue;
-					if (isOrchestratorOnOrgRoster(reach, role)) return "roster";
+					if (isOrchestratorOnOrgRoster(rosterReach, role)) return "roster";
 					if (coordinators.includes(normalizeOrchestratorId(role))) {
 						via = "coordinator";
 					}
@@ -855,7 +1001,7 @@ async function sendMessageCore(
 			const isInstance = !isHumanActorName(recipient) && recipient.includes("-");
 			const role = isInstance ? recipient.split("-")[0] : recipient;
 
-			const recipientId = await resolveActor(role);
+			const recipientId = await resolveRecipientActor(role);
 			await ctx.db.insert("messageReceipts", {
 				messageId,
 				recipient: role,
@@ -1064,7 +1210,10 @@ async function requireSeatSenderNotForeign(
 // refused, not ignored.
 // ─────────────────────────────────────────────────────────────────────────────
 
-function isRecipientOnRoster(scope: OrgScope, part: string): boolean {
+function isRecipientOnRoster(
+	scope: Pick<OrgScope, "allowedOrchestrators">,
+	part: string,
+): boolean {
 	if (isOrchestratorOnOrgRoster(scope, part)) return true;
 	// An instance id is "<role>" or "<role>-<suffix>": a roster entry owns it.
 	const instance = normalizeOrchestratorId(part);

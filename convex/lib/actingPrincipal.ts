@@ -554,3 +554,31 @@ export async function addressRecipientById(
 			senderKind === "operator" ? "operator-to-client" : "client-to-operator",
 	};
 }
+
+/**
+ * The agent `agentId` as a principal of the organisation `orgId`, resolved by the
+ * package from the agent's own stored row (active, stamped with that org, the org
+ * active). Undefined when it does not resolve: the caller treats that as "no
+ * principal", never as a grant. Used where a door has the sender's agent ID from
+ * the stored row but no forwarded proof (a presented agent credential).
+ */
+export async function principalOfAgentRow(
+	ctx: Ctx,
+	agentId: string,
+	orgId: string,
+	door: string,
+): Promise<ActingPrincipal | undefined> {
+	const resolved = await resolveActingPrincipal(
+		{ kind: "agent", agentId, verifiedOrgId: orgId },
+		principalLookups(ctx),
+		door,
+	);
+	return resolved.ok ? resolved.principal : undefined;
+}
+
+/** Is `mapping` an ACTIVE operator organisation (stored `orgKind`, never a typed slug)? */
+export function isActiveOperatorMapping(
+	mapping: { isActive: boolean; orgKind?: string } | null,
+): boolean {
+	return orgKindOfMapping(mapping) === "operator";
+}
