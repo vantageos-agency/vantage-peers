@@ -51,6 +51,7 @@ async function world(): Promise<T> {
 			// M10h: an assignee is an agents row of the org (resolved by ID).
 			await ctx.db.insert("agents", {
 				orgSlug: slug,
+				clerkOrgId: testClerkOrgId(slug),
 				name: "sigma",
 				normalizedName: "sigma",
 				isActive: true,

@@ -108,7 +108,11 @@ export async function assigneeIdForRead(
 	scope: OrgScope,
 	assignee: string,
 ): Promise<string | undefined> {
-	const id = await actorIdResolver(ctx, hasFleetRead(scope) ? null : scope.orgSlug)(assignee);
+	const id = await actorIdResolver(
+		ctx,
+		hasFleetRead(scope) ? null : scope.orgSlug,
+		hasFleetRead(scope) ? undefined : scope.orgClerkId,
+	)(assignee);
 	if (id === undefined || hasFleetRead(scope) || isHumanActorName(id)) return id;
 	const memberOrg = scope.orgSlug;
 	if (memberOrg === null || memberOrg === undefined) return id;

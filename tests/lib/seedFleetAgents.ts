@@ -41,13 +41,16 @@ export async function seedFleetAgents(
 ): Promise<Record<string, Id<"agents">>> {
 	return await t.run(async (ctx) => {
 		const mappings = await ctx.db.query("client_org_mapping").collect();
-		let slug = mappings.find((m) => m.isActive && m.orgKind === "operator")
-			?.clerkOrgSlug;
+		const operator = mappings.find((m) => m.isActive && m.orgKind === "operator");
+		let slug = operator?.clerkOrgSlug;
+		// An agent is found by its organisation's permanent ID, so a seeded row carries it.
+		let orgId = operator?.clerkOrgId;
 		if (slug === undefined) {
 			slug = "fleet-operator";
+			orgId = testClerkOrgId(slug);
 			await ctx.db.insert("client_org_mapping", {
 				clerkOrgSlug: slug,
-				clerkOrgId: testClerkOrgId(slug),
+				clerkOrgId: orgId,
 				allowedOrchestrators: [],
 				scopes: [],
 				displayName: slug,
@@ -69,6 +72,7 @@ export async function seedFleetAgents(
 				existing?._id ??
 				(await ctx.db.insert("agents", {
 					orgSlug: slug as string,
+					...(orgId !== undefined ? { clerkOrgId: orgId } : {}),
 					name,
 					normalizedName: key,
 					isActive: true,
@@ -244,8 +248,13 @@ export async function seedOrgAgents(
 ): Promise<Map<string, string>> {
 	await t.run(async (ctx) => {
 		for (const [orgSlug, name] of pairs) {
+			const mapping = await ctx.db
+				.query("client_org_mapping")
+				.withIndex("by_clerk_slug", (q) => q.eq("clerkOrgSlug", orgSlug))
+				.first();
 			await ctx.db.insert("agents", {
 				orgSlug,
+				clerkOrgId: mapping?.clerkOrgId ?? testClerkOrgId(orgSlug),
 				name,
 				normalizedName: normalizeOrchestratorId(name),
 				isActive: true,

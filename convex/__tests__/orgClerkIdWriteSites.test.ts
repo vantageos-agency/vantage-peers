@@ -406,7 +406,13 @@ describe("a mapping with no id yet: a member is refused, and no id is ever inven
 			const stamped = rows.filter((r) => r[slugField] === ACME.slug);
 			if (refusal !== "") {
 				expect(refusal).toContain("RBAC_DENIED");
-				expect(refusal).toContain("org-mapping-not-found");
+				// The refusal is the org not being found, or - for a door that names an
+				// assignee first - the assignee not being an agent of an org that has no
+				// permanent ID yet (an agent is selected by that ID, never by the slug).
+				expect(
+					refusal.includes("org-mapping-not-found") ||
+						refusal.includes("assignee-not-an-agent-of-org"),
+				).toBe(true);
 			} else {
 				expect(stamped.length).toBeGreaterThan(0);
 			}

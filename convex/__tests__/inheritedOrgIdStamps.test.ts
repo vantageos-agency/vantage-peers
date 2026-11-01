@@ -69,6 +69,7 @@ async function createSchedule(t: ReturnType<typeof createT>, slug: string) {
 	const agentId = await t.run((ctx) =>
 		ctx.db.insert("agents", {
 			orgSlug: slug,
+			clerkOrgId: testClerkOrgId(slug),
 			name: SHARED,
 			normalizedName: SHARED,
 			isActive: true,

@@ -2186,7 +2186,7 @@ async function assigneeIsRepoOwnerAgent(
 	task: Doc<"tasks">,
 	assignee: string,
 ): Promise<boolean> {
-	const resolveInTaskOrg = actorIdResolver(ctx, task.orgId);
+	const resolveInTaskOrg = actorIdResolver(ctx, task.orgId, task.clerkOrgId);
 	const ownerId = await resolveInTaskOrg(
 		(await repoOwner(ctx, task.reviewPrRepoFullName)) ?? undefined,
 	);
@@ -2780,7 +2780,7 @@ async function unblockWaitersOn(
 		// name resolved within the waiter's own org (never another org's agent).
 		const recipientId =
 			waiter.assignedToId ??
-			(await actorIdResolver(ctx, waiter.orgId)(waiter.assignedTo));
+			(await actorIdResolver(ctx, waiter.orgId, waiter.clerkOrgId)(waiter.assignedTo));
 		await ctx.db.insert("messageReceipts", {
 			messageId,
 			recipient: waiter.assignedTo,

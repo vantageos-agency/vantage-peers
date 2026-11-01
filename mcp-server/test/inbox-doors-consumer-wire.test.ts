@@ -31,6 +31,7 @@ import { UNCLAIMED_SERVICE_ACCOUNT_READS_EVERY_TENANT } from "../../convex/lib/i
 import schema from "../../convex/schema";
 import type { OAuthContext } from "../src/auth.js";
 import { registerTools } from "../src/tools.js";
+import { testClerkOrgId } from "../../tests/fixtures/testClerkOrgId";
 
 const modules = Object.fromEntries(
 	Object.entries(import.meta.glob("../../convex/**/*.ts")).filter(
@@ -86,6 +87,7 @@ async function seed(): Promise<World> {
 		const mapping = (slug: string, names: string[], operator: boolean) =>
 			ctx.db.insert("client_org_mapping", {
 				clerkOrgSlug: slug,
+				clerkOrgId: testClerkOrgId(slug),
 				allowedOrchestrators: names,
 				scopes: ["view-own-tasks"],
 				displayName: slug,
@@ -99,6 +101,7 @@ async function seed(): Promise<World> {
 		const agent = (orgSlug: string, name: string) =>
 			ctx.db.insert("agents", {
 				orgSlug,
+				clerkOrgId: testClerkOrgId(orgSlug),
 				name,
 				normalizedName: normalizeOrchestratorId(name),
 				isActive: true,

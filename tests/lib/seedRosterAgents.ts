@@ -1,6 +1,7 @@
 import type { GenericMutationCtx } from "convex/server";
 import { normalizeOrchestratorId } from "../../convex/_helpers/normalizeOrchestratorId";
 import type { DataModel, Id } from "../../convex/_generated/dataModel";
+import { testClerkOrgId } from "../fixtures/testClerkOrgId";
 
 type Runner = {
 	run: <Output>(
@@ -77,6 +78,7 @@ export async function seedOperatorOrg(
 		if (operator === undefined) {
 			await ctx.db.insert("client_org_mapping", {
 				clerkOrgSlug: slug,
+				clerkOrgId: testClerkOrgId(slug),
 				allowedOrchestrators: [],
 				scopes: [],
 				displayName: slug,
@@ -99,6 +101,7 @@ export async function seedOperatorOrg(
 				row?._id ??
 				(await ctx.db.insert("agents", {
 					orgSlug,
+					clerkOrgId: operator?.clerkOrgId ?? testClerkOrgId(slug),
 					name,
 					normalizedName: key,
 					isActive: true,

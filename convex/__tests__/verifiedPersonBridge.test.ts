@@ -118,6 +118,7 @@ beforeEach(async () => {
 		] as const) {
 			await ctx.db.insert("agents", {
 				orgSlug,
+				clerkOrgId: testClerkOrgId(orgSlug),
 				name,
 				normalizedName: name,
 				isActive: true,
