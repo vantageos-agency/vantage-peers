@@ -17,6 +17,7 @@ import { requireMemberWriterRole } from "./memberWriterRoles";
 import { listedAgentsOfOrg } from "./lib/rosterIds";
 import { normalizeOrchestratorId } from "./_helpers/normalizeOrchestratorId";
 import {
+	resolveVerifiedOrgMapping,
 	resolveVerifiedOrgScope,
 	verifiedOrgValidator,
 } from "./lib/verifiedOrg";
@@ -232,12 +233,22 @@ export const write = mutation({
 		// The org the write is made FOR: the verified org's member scope for a
 		// service-account bearer carrying one, else the caller's own scope.
 		// `scope` stays the transport scope for the author and writer-role checks.
-		const tenantScope = await resolveVerifiedOrgScope(
+		// The member scope is the one `withOrgScope` itself returns for the
+		// verified org's ACTIVE mapping (the briefingNotes:create pattern), never
+		// the claim's own value.
+		const actingMapping = await resolveVerifiedOrgMapping(
 			ctx,
 			scope,
 			args.verifiedOrg,
 			"diary:write",
 		);
+		let tenantScope = scope;
+		if (actingMapping !== undefined) {
+			tenantScope = await withOrgScope(ctx, {
+				refuseWithoutThrow: true,
+				actForOrgMapping: actingMapping,
+			});
+		}
 		if (!(await orchestratorListed(ctx, tenantScope, args.orchestrator, "diary:write"))) {
 			throw new ConvexError(
 				`RBAC_DENIED: caller may not write a diary entry for orchestrator "${args.orchestrator}" — ${JSON.stringify({ orgSlug: tenantScope.orgSlug, reason: "orchestrator-not-listed" })}`,
