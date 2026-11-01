@@ -245,7 +245,9 @@ export default defineSchema({
 		// common audit narrowing axes (from, channel, sessionDay).
 		.searchIndex("search_content", {
 			searchField: "content",
-			filterFields: ["from", "channel", "sessionDay", "tenantId"],
+			// `tenantOrgId` is the org filter the non-master search reads (the
+			// permanent ID); `tenantId` stays for the master's narrowing by label.
+			filterFields: ["from", "channel", "sessionDay", "tenantId", "tenantOrgId"],
 		}),
 
 	// ── messageReceipts ──────────────────────────────────────────────────────

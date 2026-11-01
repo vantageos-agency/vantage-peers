@@ -120,6 +120,7 @@ export const scanWindow = query({
 			await requireFleetAgentActor(ctx, scope, args.verifiedActor, "improvisationDigest:scanWindow");
 		}
 		const callerOrg = scope.orgSlug;
+		const callerOrgId = scope.orgClerkId;
 		if (scope.refused || (!hasFleetRead(scope) && callerOrg === null)) {
 			return {
 				countsByOrch: {},
@@ -228,8 +229,11 @@ export const scanWindow = query({
 							.take(DIGEST_SCAN_PAGE)
 					: ctx.db
 							.query("messages")
-							.withIndex("by_tenant_created", (q) => {
-								const own = q.eq("tenantId", callerOrg as string);
+							// A-19: the caller's messages are selected by its permanent org ID
+							// (`tenantOrgId`), never by the slug label. A caller with no ID
+							// matches the empty sentinel, i.e. nothing.
+							.withIndex("by_tenant_created_clerk_id", (q) => {
+								const own = q.eq("tenantOrgId", callerOrgId ?? "");
 								return before === undefined
 									? own.gte("createdAt", cutoff)
 									: own.gte("createdAt", cutoff).lte("createdAt", before);
