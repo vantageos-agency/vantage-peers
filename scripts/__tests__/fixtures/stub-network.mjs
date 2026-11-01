@@ -16,6 +16,10 @@ const json = (body, init = {}) =>
 		...init,
 	});
 
+// STUB_LAST_ACTIVE_ORG models Clerk: a session opens with the user's last-active org and only a
+// /touch with active_organization_id changes it. Unset, tokens carry STUB_ADMIN_ORG / STUB_NATIVE_ORG.
+let activeOrg = process.env.STUB_LAST_ACTIVE_ORG || null;
+
 globalThis.fetch = async (input, init = {}) => {
 	const url = typeof input === "string" ? input : (input.url ?? String(input));
 	const auth = new Headers(init.headers ?? {}).get("authorization");
@@ -31,11 +35,21 @@ globalThis.fetch = async (input, init = {}) => {
 			"agents:registerAgent": "agent_stub_1",
 			"agents:getAgent": { _id: "agent_stub_1", name: "probe-a" },
 			"agentCredentials:mintAgentCredential": { secret: "stub-secret-value" },
+			"githubRepoMapping:getByRepo": {
+				_id: "map_stub_1",
+				orchestrator: "angelia",
+				project: "proj-x",
+				active: true,
+			},
 		};
 		return json({ status: "success", value: values[body.path] ?? null });
 	}
 	if (url.includes("/touch")) {
 		log({ kind: "clerk-touch", body: String(init.body) });
+		if (activeOrg !== null)
+			activeOrg =
+				new URLSearchParams(String(init.body)).get("active_organization_id") ??
+				activeOrg;
 		return json({ ok: true });
 	}
 	if (url.includes("/v1/client/sign_ins")) {
@@ -51,7 +65,11 @@ globalThis.fetch = async (input, init = {}) => {
 		return json({
 			object: "token",
 			jwt: jwtFor(
-				isTemplate ? process.env.STUB_ADMIN_ORG : process.env.STUB_NATIVE_ORG,
+				activeOrg !== null
+					? activeOrg
+					: isTemplate
+						? process.env.STUB_ADMIN_ORG
+						: process.env.STUB_NATIVE_ORG,
 				isTemplate,
 			),
 		});
