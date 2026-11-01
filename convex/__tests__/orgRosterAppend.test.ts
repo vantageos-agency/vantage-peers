@@ -9,6 +9,7 @@
 
 import { convexTest } from "convex-test";
 import { describe, expect, test } from "vitest";
+import { testClerkOrgId } from "../../tests/fixtures/testClerkOrgId";
 import { internal } from "../_generated/api";
 import type { Id } from "../_generated/dataModel";
 import schema from "../schema";
@@ -33,6 +34,7 @@ async function seedAgent(
 	return await t.run((ctx) =>
 		ctx.db.insert("agents", {
 			orgSlug,
+			clerkOrgId: testClerkOrgId(orgSlug),
 			name,
 			normalizedName: name.toLowerCase(),
 			isActive,
@@ -54,6 +56,7 @@ async function seedOrg(
 	await t.run(async (ctx) => {
 		await ctx.db.insert("client_org_mapping", {
 			clerkOrgSlug,
+			clerkOrgId: testClerkOrgId(clerkOrgSlug),
 			allowedOrchestrators,
 			scopes: ["view-own-tasks"],
 			displayName: clerkOrgSlug,
