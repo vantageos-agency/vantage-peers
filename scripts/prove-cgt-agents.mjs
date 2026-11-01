@@ -12,7 +12,9 @@
  * Per agent, with its OWN bearer (and agent credential, when present) read from
  * <secrets-dir>/<agent>.bearer and <secrets-dir>/<agent>.secret (0600, never printed):
  *   1. whoami → 200, org_slug === "cgt-alsachimie", agent name in the allow-list
- *   2. store_memory in orchestrator/<agent> then recall it → the row comes back
+ *   2. store_memory in orchestrator/<agent ID> (the agent ID whoami reports; a seat is admitted to
+ *      its ID only) then recall it → the row comes back; store_memory in orchestrator/<agent NAME>
+ *      is REFUSED
  *   3. send_message to a sibling CGT agent → accepted
  *   4. cross-org, this agent → perello-consulting: store_memory in orchestrator/sigma
  *      and recall in project/vantage-peers → each REFUSED with an error (an empty
@@ -25,6 +27,7 @@
  */
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
+import { agentIdFromWhoami, seatOrchestratorNamespace } from "./lib/seat-profile-plan.mjs";
 
 const URLS = { prod: "https://vantage-peers-production.up.railway.app/mcp" };
 const ORG = "cgt-alsachimie";
@@ -102,10 +105,18 @@ for (const agent of agents) {
 	check(agent, "whoami in org", who.status === 200 && !who.isError && org === ORG && allow.includes(agent),
 		`HTTP ${who.status} org=${org} fromAllowList=${JSON.stringify(allow)}`);
 
+	// A seat's orchestrator namespace is keyed by its verified agent ID, never its name.
+	const agentId = agentIdFromWhoami(who.text);
+	check(agent, "agent id resolved", agentId !== null, agentId === null ? "whoami reports no agent_id" : `agent_id=${agentId}`);
 	const marker = `prove-cgt-${agent}-${Date.now()}`;
-	const st = await call(h, "store_memory", { namespace: `orchestrator/${agent}`, type: "reference", content: marker, createdBy: agent });
-	const rc = await call(h, "recall", { query: marker, namespace: `orchestrator/${agent}`, limit: 5 });
-	check(agent, "own memory round-trip", !st.isError && rc.text.includes(marker), st.isError ? st.text.slice(0, 120) : "stored + recalled");
+	if (agentId !== null) {
+		const own = seatOrchestratorNamespace(agentId);
+		const st = await call(h, "store_memory", { namespace: own, type: "reference", content: marker, createdBy: agent });
+		const rc = await call(h, "recall", { query: marker, namespace: own, limit: 5 });
+		check(agent, "own memory round-trip", !st.isError && rc.text.includes(marker), st.isError ? st.text.slice(0, 120) : "stored + recalled");
+	}
+	const byName = await call(h, "store_memory", { namespace: `orchestrator/${agent}`, type: "reference", content: `name-keyed write probe ${marker}`, createdBy: agent });
+	check(agent, "name namespace refused", refused(byName), byName.isError ? byName.text.slice(0, 120) : "ACCEPTED (name-keyed namespace)");
 
 	const sibling = agents.find((a) => a !== agent) ?? ["neo", "hal", "mimir"].find((a) => a !== agent);
 	const sm = await call(h, "send_message", { from: agent, channel: sibling, content: `[INFO ONLY] prove-cgt-agents probe from ${agent}\n\nOrchestrator: ${agent} — CGT Alsachimie | probe` });

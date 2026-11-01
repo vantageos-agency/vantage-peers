@@ -51,13 +51,14 @@ Every write is on prod (`compassionate-goldfinch-737`). Run them from the vantag
    ```
    Re-running it with the same owner changes nothing. Do step 5 and the proof (step 7) only after it.
 
-   **4c. Add the agent IDs to the seat profiles.** A seat is admitted to `orchestrator/<its agent ID>` only, and the MCP refuses a namespace its profile does not list. Dry run first, read the per-org counts and the skipped reasons, then write:
+   **4c. Add the agent IDs to the seat profiles (operator).** A seat is admitted to `orchestrator/<its agent ID>` only, and the MCP refuses a namespace its profile does not list. The operator script reads through the prod guard (`oauth:listScopeProfiles`, `data agents`, `data client_org_mapping`) and writes through it (`oauth:upsertScopeProfile`, one JSON object per profile). Dry run first, read the per-org counts, the sample profile ids and the skipped reasons, then write:
    ```
-   CONVEX_DEPLOY_KEY=<prod key> npx convex run migrations/seat_profile_agent_namespace:run
-   CONVEX_DEPLOY_KEY=<prod key> npx convex run migrations/seat_profile_agent_namespace:run '{"dryRun":false}'
+   node scripts/seat-profile-agent-namespace.mjs
+   node scripts/seat-profile-agent-namespace.mjs --apply
    ```
-   It appends `orchestrator/<agent ID>` to the read and write prefixes of each profile bound to a client org whose single `fromAllowList` agent resolves to exactly one active agent of that org; anything else is skipped and counted. Idempotent. A seat picks the new prefix up at its next token mint or refresh (re-run step 4 for a fresh bearer).
+   It appends `orchestrator/<agent ID>` to the read and write prefixes of each profile bound to an active client org whose single `fromAllowList` entry is not `*` and names exactly one active agent of that org; anything else is skipped and counted (`ambiguousAgent`, `noAgentInOrg`, `operatorOrg`, ...). Idempotent. The guard's allow list must name `run oauth:listScopeProfiles` besides `run oauth:upsertScopeProfile`, `data agents` and `data client_org_mapping`.
 
+   **When does a seat see the new prefix?** A token carries the prefixes it was minted with. Measured (`mcp-server/test/seat-refresh-picks-up-profile-prefix.test.ts`): a refresh (`/token`, `refresh_token` grant) mints the new access token from the LIVE profile, so a seat that renews through OAuth refresh picks the prefix up at its next refresh with nothing to do. A seat that uses the static bearer file written by `provision-client-org-agents.mjs` (a 90-day access token) never refreshes: it keeps the old list until it is re-minted. For those seats the OPERATOR re-runs `scripts/provision-client-org-agents.mjs --org <slug> --clerk-org-id <org_…> --agents <a>,<b> --stage-dir <dir>` after step 4c (it now registers or finds each agent first and mints `orchestrator/<agent ID>` into the token), and the CLIENT's user replaces the `<agent>.bearer` file in their store with the new one. Until then that seat's `orchestrator/*` calls are refused at the MCP.
 
    **4a. Adding an agent to an org that already exists.** Name the new agent in `--agents` (the existing ones may stay in the list). If a name is not yet on the org's roster, the script registers it by ID (`agents:registerAgent`, org-admin of this org), mints nothing for any agent, prints `ROSTER_STEP_REQUIRED`, and exits 3. Run the two printed operator commands in order, then re-run the script. The roster is written by agent ID, never by writing a label:
    ```
