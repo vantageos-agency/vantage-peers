@@ -6,6 +6,7 @@ import { hasFleetRead } from "@vantageos/cloud-identity";
 import { lookupOrgMapping, withOrgScope } from "./lib/auth";
 import { orgMappingRowsForLabel } from "./lib/authOrgMapping";
 import { findOperatorOrg } from "./lib/operatorOrg";
+import { appendRosterLabel } from "./lib/rosterLabelAppend";
 import { resolveProvisioningMapping } from "./lib/provisioningMapping";
 import { normalizeOrchestratorId } from "./_helpers/normalizeOrchestratorId";
 import { assertAgentNameFree } from "./lib/agentIdentity";
@@ -382,10 +383,7 @@ export const addRosterMembers = internalMutation({
 			if (!current.includes(id)) current.push(id);
 			// The agent's exact stored name (a label snapshot for the legacy name
 			// readers, never an authority). Dedupe stays spelling-insensitive.
-			const label = normalizeOrchestratorId(agent.name);
-			if (!labels.some((entry) => normalizeOrchestratorId(entry) === label)) {
-				labels.push(agent.name);
-			}
+			appendRosterLabel(labels, agent.name);
 		}
 		await ctx.db.patch(row._id, {
 			allowedAgentIds: current,
@@ -445,10 +443,7 @@ export const addOperatorRosterMember = internalMutation({
 		const current: Id<"agents">[] = [...previous];
 		if (!current.includes(args.agentId)) current.push(args.agentId);
 		const labels = [...row.allowedOrchestrators];
-		const label = normalizeOrchestratorId(agent.name);
-		if (!labels.some((entry) => normalizeOrchestratorId(entry) === label)) {
-			labels.push(agent.name);
-		}
+		appendRosterLabel(labels, agent.name);
 		const added =
 			current.length !== previous.length ||
 			labels.length !== row.allowedOrchestrators.length;
