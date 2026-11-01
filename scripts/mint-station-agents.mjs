@@ -42,6 +42,7 @@ import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { ConvexHttpClient } from "convex/browser";
+import { mintOrgAdminToken, requireClerkDomain } from "./lib/org-admin-token.mjs";
 import {
 	agentRowByLabel,
 	assertSecretPathOutsideRepo,
@@ -54,7 +55,6 @@ import {
 	validateStations,
 	writeSecretFile,
 } from "./lib/station-agents.mjs";
-import { mintOrgAdminToken, requireClerkDomain } from "./lib/org-admin-token.mjs";
 
 const repoRoot = join(dirname(fileURLToPath(import.meta.url)), "..");
 const TAG = "[mint-stations]";
