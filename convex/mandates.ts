@@ -3,7 +3,7 @@ import type { Doc } from "./_generated/dataModel";
 import { mutation, query } from "./_generated/server";
 import { requireId } from "./lib/ids";
 import { creatorValidator } from "./schema";
-import { verifiedActorValidator, withOrgScope } from "./lib/auth";
+import { requireResolvedCaller, verifiedActorValidator, withOrgScope } from "./lib/auth";
 import type { OrgScope } from "./lib/auth";
 import { fleetPartyId, requireFleetAgentActor } from "./lib/fleetActors";
 import { requireFleetDoor, scopeWithFleetStanding } from "./lib/fleetStanding";
@@ -575,8 +575,19 @@ export const validateSpending = query({
 			);
 			const operator = await fleetOperatorRef(ctx.db);
 			if (!sameOrg({ id: mapping?.clerkOrgId }, operator)) {
-				throw new ConvexError(
-					`RBAC_DENIED: mandates belong to the operator organisation; "${args.verifiedOrg.orgSlug}" may not read them — ${JSON.stringify({ reason: "mandate-outside-verified-org", door: "mandates:validateSpending" })}`,
+				// The verified client org is a resolved, ordinary member here: the ONE
+				// shared refusal (requireResolvedCaller, masterOnly) says so.
+				requireResolvedCaller(
+					{
+						isMaster: false,
+						fleetWide: false,
+						orgSlug: args.verifiedOrg.orgSlug,
+						anonymous: false,
+						refused: false,
+						masterSource: undefined,
+					},
+					"mandates:validateSpending",
+					{ masterOnly: true },
 				);
 			}
 		}
