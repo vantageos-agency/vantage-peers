@@ -42,7 +42,11 @@ import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { ConvexHttpClient } from "convex/browser";
-import { mintOrgAdminToken, requireClerkDomain } from "./lib/org-admin-token.mjs";
+import {
+	mintOrgAdminToken,
+	ownerStepCommand,
+	requireClerkDomain,
+} from "./lib/org-admin-token.mjs";
 import {
 	agentRowByLabel,
 	assertSecretPathOutsideRepo,
@@ -61,34 +65,51 @@ const TAG = "[mint-stations]";
 
 function requireEnv(name) {
 	const value = process.env[name];
-	if (!value) throw new Error(`Missing required env var: ${name}. Cannot proceed.`);
+	if (!value)
+		throw new Error(`Missing required env var: ${name}. Cannot proceed.`);
 	return value;
 }
 
 async function main() {
 	const args = parseArgs(process.argv.slice(2));
-	if (!args.stations) throw new Error("Missing required parameter: --stations <file.json>. Cannot proceed.");
+	if (!args.stations)
+		throw new Error(
+			"Missing required parameter: --stations <file.json>. Cannot proceed.",
+		);
 	if (!args.dryRun && !args.secretsDir) {
-		throw new Error("Missing required parameter: --secrets-dir <path> (not needed with --dry-run). Cannot proceed.");
+		throw new Error(
+			"Missing required parameter: --secrets-dir <path> (not needed with --dry-run). Cannot proceed.",
+		);
 	}
 
 	let raw;
 	try {
 		raw = readFileSync(args.stations, "utf-8");
 	} catch (err) {
-		if (err?.code === "ENOENT") throw new Error(`File ${args.stations} not found. Aborting.`);
+		if (err?.code === "ENOENT")
+			throw new Error(`File ${args.stations} not found. Aborting.`);
 		throw err;
 	}
 	const stations = validateStations(JSON.parse(raw));
-	const secretsDir = args.secretsDir ? assertSecretPathOutsideRepo(args.secretsDir, repoRoot) : null;
+	const secretsDir = args.secretsDir
+		? assertSecretPathOutsideRepo(args.secretsDir, repoRoot)
+		: null;
 
 	const convexUrl = requireEnv("CONVEX_URL");
 	const secretKey = requireEnv("CLERK_SECRET_KEY");
 	const orgAdminUserId = requireEnv("CLERK_ORG_ADMIN_USER_ID");
 	// OUR org (perello-consulting) by its permanent Clerk id, never whatever the shared org-admin user
 	// last had active. No default: a wrong org here registers agents into somebody else's tenant.
+	if (!/^user_[A-Za-z0-9]+$/.test(orgAdminUserId)) {
+		throw new Error(
+			"CLERK_ORG_ADMIN_USER_ID must be a Clerk user id (user_...): it is the owner the operator step names. Cannot proceed.",
+		);
+	}
 	const orgId = requireEnv("CLERK_ORG_ID");
-	if (!/^org_[A-Za-z0-9]+$/.test(orgId)) throw new Error("CLERK_ORG_ID must be a permanent Clerk org id (org_...). Cannot proceed.");
+	if (!/^org_[A-Za-z0-9]+$/.test(orgId))
+		throw new Error(
+			"CLERK_ORG_ID must be a permanent Clerk org id (org_...). Cannot proceed.",
+		);
 	const domain = requireClerkDomain();
 
 	console.log(
@@ -118,14 +139,27 @@ async function main() {
 	for (const st of stations) {
 		const agent = agentRowByLabel(orgAgents, st.agentName);
 		const status = agent
-			? await client.query(api.agentCredentials.getAgentCredentialStatus, { agentId: agent._id })
+			? await client.query(api.agentCredentials.getAgentCredentialStatus, {
+					agentId: agent._id,
+				})
 			: { hasActiveCredential: false, activeRows: 0 };
-		plan.push({ st, agent, status, decision: decideStation({ agent, status, rotate: args.rotate }) });
+		plan.push({
+			st,
+			agent,
+			status,
+			decision: decideStation({ agent, status, rotate: args.rotate }),
+		});
 	}
 
 	console.log(`\n${TAG} PLAN`);
 	for (const { st, agent, status, decision } of plan) {
-		const action = decision.blocked ? "BLOCKED" : decision.mint ? (decision.register ? "REGISTER+MINT" : "MINT") : "SKIP";
+		const action = decision.blocked
+			? "BLOCKED"
+			: decision.mint
+				? decision.register
+					? "REGISTER+MINT"
+					: "MINT"
+				: "SKIP";
 		console.log(
 			`${TAG}   ${action.padEnd(13)} agent="${st.agentName}" instanceId="${st.instanceId}" row=${agent ? agent._id : "none"} activeCredentialRows=${status.activeRows} var=${envVarNameFor(st.agentName)} - ${decision.reason}`,
 		);
@@ -144,7 +178,9 @@ async function main() {
 		return;
 	}
 	if (counts.blocked > 0) {
-		throw new Error("At least one station is BLOCKED (inactive agent). Resolve it explicitly, then re-run. Nothing was written.");
+		throw new Error(
+			"At least one station is BLOCKED (inactive agent). Resolve it explicitly, then re-run. Nothing was written.",
+		);
 	}
 	for (const { st, decision } of plan) {
 		if (decision.mint && secretFileExists(secretsDir, st.agentName)) {
@@ -154,8 +190,19 @@ async function main() {
 		}
 	}
 
+	// Every non-blocked station, with the id of its row: a registered one is new (no owner); an existing
+	// one carries ownerPersonId on the listAgentsByOrg row. Skipped stations (live credential) count too:
+	// the credential is not the owner.
+	const ownerPending = [];
 	for (const { st, agent, decision } of plan) {
-		if (!decision.mint) continue;
+		if (!decision.mint) {
+			if (agent?.ownerPersonId)
+				console.log(
+					`${TAG} ${st.agentName}: owner already set (${agent.ownerPersonId}); owner step skipped`,
+				);
+			else ownerPending.push({ st, agentId: agent._id });
+			continue;
+		}
 		let agentId = agent?._id;
 		if (decision.register) {
 			agentId = await client.mutation(api.agents.registerAgent, {
@@ -163,18 +210,49 @@ async function main() {
 				description: `Fleet station ${st.agentName} (${st.instanceId}), task k17awnbe5njbfwxed3z4e1md358fhra0`,
 			});
 		}
-		const { secret, mintedAt } = await client.mutation(api.agentCredentials.mintAgentCredential, {
-			agentId,
-		});
+		const { secret, mintedAt } = await client.mutation(
+			api.agentCredentials.mintAgentCredential,
+			{
+				agentId,
+			},
+		);
+		if (agent?.ownerPersonId)
+			console.log(
+				`${TAG} ${st.agentName}: owner already set (${agent.ownerPersonId}); owner step skipped`,
+			);
+		else ownerPending.push({ st, agentId });
 		const path = writeSecretFile(secretsDir, st.agentName, secret);
 		console.log(
 			`${TAG} ${st.agentName}: agents._id=${agentId} minted ${new Date(mintedAt).toISOString()} -> ${path} (0600) var=${envVarNameFor(st.agentName)}`,
 		);
 	}
+	if (ownerPending.length > 0) {
+		// agentCredentials resolve an agent only when agents.ownerPersonId is set, and neither registerAgent
+		// nor mintAgentCredential sets it (whoami answers 401 "agent with no live member owner"). The mutation
+		// is internal: no JWT can call it, so this script prints the operator command and exits 3.
+		console.log(
+			`OWNER_STEP_REQUIRED: ${ownerPending.map((p) => p.st.agentName).join(",")} has no owner, so every call with its credential is refused (AGENT_CREDENTIAL_INVALID). Operator, run this against the deployment you name, then re-run the onboarding:`,
+		);
+		console.log(
+			`  ${ownerStepCommand({
+				agentIds: ownerPending.map((p) => p.agentId),
+				ownerPersonId: orgAdminUserId,
+				org: orgSlug,
+				reason: `station ${ownerPending.map((p) => p.st.agentName).join(",")}: onboarding, owner is the org admin that registered the agent`,
+			})}`,
+		);
+		console.log(
+			`${TAG} DONE with the owner step PENDING (exit 3). No secret value was printed.`,
+		);
+		process.exitCode = 3;
+		return;
+	}
 	console.log(`${TAG} DONE. No secret value was printed.`);
 }
 
 main().catch((err) => {
-	console.error(`${TAG} FAILED: ${err instanceof Error ? err.message : String(err)}`);
+	console.error(
+		`${TAG} FAILED: ${err instanceof Error ? err.message : String(err)}`,
+	);
 	process.exitCode = 1;
 });

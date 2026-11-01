@@ -5,6 +5,8 @@
 #   scripts/onboard-orchestrator.sh <role> <workspace-dir> [--dry-run] [--repo <owner/repo> --project <slug>]
 #
 # Always run from the vantage-memory repo root. Prints no secret value.
+# Exit 3 = OWNER_STEP_REQUIRED: the agent has no owner (agents:setAgentOwner is internal), the operator
+# runs the printed command and re-runs this script. Only "OK: <role> onboarded" (exit 0) means finished.
 # The minted credential goes to the Infisical vault (/agent-secrets/<host-slug>/<ROLE>_SECRET) and
 # never to disk: it transits a memory-backed directory (/dev/shm) removed on exit. The workspace
 # gets a 3-line relay to the shared vault helper, never a copy of it.
@@ -78,10 +80,20 @@ if [ "$DRY" = "--dry-run" ]; then
   [ -n "$GH_REPO" ] && echo "plan: repo mapping $GH_REPO -> $ROLE (project $PROJECT)"
   echo "dry run: nothing written"; exit 0
 fi
-bun run "$REPO/scripts/mint-station-agents.mjs" --stations "$STATIONS" --secrets-dir "$TMPD/minted"
-[ -s "$TMPD/minted/$ROLE.secret" ] || { echo "no credential minted for $ROLE (a live one already exists; rotate it with --rotate on the mint script)" >&2; exit 1; }
-python3 "$REPO/scripts/vault-put-agent-secret.py" --role "$ROLE" --secret-file "$TMPD/minted/$ROLE.secret" \
-  --config "$VAULT_CONFIG" --host "$ONBOARD_HOST" || { echo "vault write FAILED for $FOLDER/$KEY" >&2; exit 1; }
+# Exit 3 from the mint script = credential done but OWNER_STEP_REQUIRED (agents:setAgentOwner is an
+# internal mutation; the operator runs it). Any other non-zero is a failure.
+MINT_RC=0
+bun run "$REPO/scripts/mint-station-agents.mjs" --stations "$STATIONS" --secrets-dir "$TMPD/minted" > "$TMPD/mint.out" 2>&1 || MINT_RC=$?
+cat "$TMPD/mint.out"
+{ [ "$MINT_RC" = 0 ] || [ "$MINT_RC" = 3 ]; } || { echo "mint FAILED (exit $MINT_RC)" >&2; exit "$MINT_RC"; }
+if [ -s "$TMPD/minted/$ROLE.secret" ]; then
+  python3 "$REPO/scripts/vault-put-agent-secret.py" --role "$ROLE" --secret-file "$TMPD/minted/$ROLE.secret" \
+    --config "$VAULT_CONFIG" --host "$ONBOARD_HOST" || { echo "vault write FAILED for $FOLDER/$KEY" >&2; exit 1; }
+elif grep -q "SKIP .*agent=\"$ROLE\"" "$TMPD/mint.out"; then
+  echo "credential for $ROLE already live: nothing minted, vault left as is (the proof step checks it)"
+else
+  echo "no credential minted for $ROLE (rotate a live one with --rotate on the mint script)" >&2; exit 1
+fi
 
 # 3. Vault relay in the workspace, role substituted.
 mkdir -p "$WS/.claude/scripts"
@@ -144,6 +156,13 @@ if os.path.exists(p):
     with open(p, "w") as f:
         json.dump(d, f)
 PY
+
+# 7b. Owner step pending: the profile write and the proof below would be refused (whoami 401 "agent with
+#     no live member owner"). Stop here, loudly and with a distinct code, so the run cannot be read as finished.
+if [ "$MINT_RC" = 3 ]; then
+  echo "OWNER_STEP_PENDING: $ROLE is credentialed and wired but NOT usable until its owner is set. Run the operator command printed above (OWNER_STEP_REQUIRED), then re-run this same command to finish the profile and the proof."
+  exit 3
+fi
 
 # 8. Profile row: without it the role is not a message recipient. Secrets never reach argv:
 #    the helper output goes to python on stdin, and curl reads its headers from 0600 files.

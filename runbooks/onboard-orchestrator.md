@@ -17,7 +17,7 @@ scripts/onboard-orchestrator.sh <role> /root/coding/<role>-workspace \
 
 Pass `--repo` and `--project` whenever the station has a GitHub repository. They always go together.
 
-It ends with `OK: <role> onboarded`. Anything else is a failure, and the script names the step that failed.
+It ends with `OK: <role> onboarded`. Exit code 3 with `OWNER_STEP_PENDING` means the owner step (section 1b) is waiting for the operator: re-run after it. Anything else is a failure, and the script names the step that failed.
 
 ## First-launch check (the operator, before opening the station)
 
@@ -36,6 +36,14 @@ Vitruve took four launches on 2026-10-05 (friction memory j571rgt58mdzv734b42fcx
 - **Fails:** `set_summary` returns `AGENT_IDENTITY_MISMATCH`, and every write is refused.
 - **Check:** the mint plan says `REGISTER+MINT`, `SKIP` (already live) or `BLOCKED` (deactivated row).
 - **Fix applied:** `scripts/mint-station-agents.mjs` runs under our org-admin identity (`CLERK_SECRET_KEY_VANTAGE_PEERS` and `CLERK_ORG_ADMIN_USER_ID_VANTAGE_PEERS` from the gitignored `.env.local`), against prod `compassionate-goldfinch-737`. The token is the `convex`-template one (aud `convex`, else prod Convex answers `NoAuthProvider`), minted for our org by its Clerk id (`CLERK_ORG_ID_VANTAGE_PEERS`, `org_...`, in `.env.local`) and refused with `ORG_MISMATCH` if its `org_id` claim is any other org (the shared admin user's last-active org is not ours). `CLERK_DOMAIN` (prod: `https://clerk.vantagepeers.com`) is required in `.env.local`; there is no dev fallback. The org is always `perello-consulting-1782214787064836324`. The secret transits a memory-backed directory (`/dev/shm`, removed on exit) and is written to the Infisical vault at `/agent-secrets/<host-slug>/<ROLE>_SECRET`, then verified by hash readback; it never reaches a disk file. The run is idempotent; rotating a credential is `--rotate` on the mint script.
+
+### 1b. Owner: the credential is refused until the agent has an owner
+
+- **Fails:** every call with the new credential answers `AGENT_CREDENTIAL_INVALID`, and `whoami` answers 401 `agent with no live member owner`. Neither `registerAgent` nor `mintAgentCredential` sets `agents.ownerPersonId`. Measured 2026-10-30 on fab1 for `angelia`, agent `r57f5vkqpnpzmm6xvwvn68ahgs8hcxz2`.
+- **Why a script cannot fix it:** `agents:setAgentOwner` is an `internalMutation`; no JWT can call it.
+- **Fix applied:** `mint-station-agents.mjs` ends with `OWNER_STEP_REQUIRED` and the exact command (agent ids, owner = `CLERK_ORG_ADMIN_USER_ID_VANTAGE_PEERS`, a reason naming the station), exits 3, and the wrapper finishes the local wiring, prints `OWNER_STEP_PENDING` and exits 3. The step is skipped for an agent whose `listAgentsByOrg` row already carries `ownerPersonId`.
+- **Operator:** run the printed command against the deployment you name (`CONVEX_DEPLOY_KEY=<deploy key> npx convex run agents:setAgentOwner '<json>'`), then re-run the same onboarding command: it skips the live credential, sets the profile and runs the proof. Where `.claude/scripts/convex-prod.sh` exists on the host, `.claude/scripts/convex-prod.sh run agents:setAgentOwner '<json>'` is the guarded way to run it. The script never runs either form for you.
+- **Check:** exit code 3 means not finished. Only `OK: <role> onboarded` (exit 0) is.
 
 ### 2. Wiring: no VantagePeers server in the workspace
 

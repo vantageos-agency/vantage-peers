@@ -150,7 +150,9 @@ describe("mint-station-agents: owner step (agents:setAgentOwner is internal, no 
 		const r = mintWrite();
 		expect(r.status, r.stderr).toBe(3);
 		expect(r.stdout).toContain("OWNER_STEP_REQUIRED");
-		const cmd = r.stdout.split("\n").find((l) => l.includes("agents:setAgentOwner"));
+		const cmd = r.stdout
+			.split("\n")
+			.find((l) => l.includes("agents:setAgentOwner"));
 		expect(cmd).toBeDefined();
 		expect(cmd).toContain("npx convex run agents:setAgentOwner");
 		expect(cmd).toContain("agent_stub_1");
@@ -166,7 +168,9 @@ describe("mint-station-agents: owner step (agents:setAgentOwner is internal, no 
 		expect(r.status, r.stderr).toBe(3);
 		expect(r.stdout).toContain("OWNER_STEP_REQUIRED");
 		expect(r.stdout).toContain("agent_existing_1");
-		expect(r.convex.map((c) => c.path)).not.toContain("agentCredentials:mintAgentCredential");
+		expect(r.convex.map((c) => c.path)).not.toContain(
+			"agentCredentials:mintAgentCredential",
+		);
 	});
 
 	it("an agent that already has an owner is skipped: no step, exit 0", () => {
