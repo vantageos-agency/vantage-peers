@@ -221,6 +221,19 @@ describe("recordToolUsage", () => {
 			verifiedOrg: { orgSlug: "acme" },
 		});
 	});
+	it("a person token sends its token proof, not a typed key", async () => {
+		const mutation = vi.fn(async () => ({ recorded: true }));
+		await recordToolUsage(
+			{ mutation } as never,
+			org({ principal: "person", accessTokenHash: "h1", userId: "user_p" }),
+			"store_memory",
+		);
+		expect(mutation).toHaveBeenCalledWith("toolUsage:record", {
+			toolName: "store_memory",
+			verifiedPerson: { accessTokenHash: "h1" },
+			verifiedOrg: { orgSlug: "acme" },
+		});
+	});
 	it("a bearer whose organisation cannot be resolved records nothing", async () => {
 		const mutation = vi.fn();
 		const { clerkOrgSlug: _drop, ...noOrg } = org({
