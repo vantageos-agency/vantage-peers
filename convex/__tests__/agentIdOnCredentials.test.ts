@@ -97,7 +97,9 @@ async function seedProfile(
 			namespaceWritePrefixes: [],
 			createdAt: Date.now(),
 			updatedAt: Date.now(),
-			...(clerkOrgSlug !== undefined ? { clerkOrgSlug } : {}),
+			...(clerkOrgSlug !== undefined
+				? { clerkOrgSlug, clerkOrgId: testClerkOrgId(clerkOrgSlug) }
+				: {}),
 		});
 	});
 }

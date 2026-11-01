@@ -294,8 +294,28 @@ const DRIVERS = {
 			orgSlug: ACME.slug,
 			roles: ["org:admin"],
 		}),
-	oauth_access_tokens: (t) =>
-		serviceAccount(t).mutation(api.oauth.createAccessToken, {
+	oauth_access_tokens: async (t) => {
+		// The token is minted from a profile that carries the org's ID, as a
+		// provisioned seat profile does; with no ID on the mapping there is none.
+		await t.run(async (ctx) => {
+			const mapping = await ctx.db
+				.query("client_org_mapping")
+				.withIndex("by_clerk_slug", (q) => q.eq("clerkOrgSlug", ACME.slug))
+				.first();
+			if (mapping?.clerkOrgId === undefined) return;
+			await ctx.db.insert("oauth_scope_profiles", {
+				profileId: "p",
+				description: "p",
+				fromAllowList: [SEAT],
+				namespaceReadPrefixes: [],
+				namespaceWritePrefixes: [],
+				createdAt: 1,
+				updatedAt: 1,
+				clerkOrgSlug: ACME.slug,
+				clerkOrgId: mapping.clerkOrgId,
+			});
+		});
+		return await serviceAccount(t).mutation(api.oauth.createAccessToken, {
 			tokenHash: "hash-1",
 			clientId: "client-1",
 			userId: SEAT,
@@ -306,7 +326,8 @@ const DRIVERS = {
 			namespaceWritePrefixes: [],
 			expiresAt: NOW + 1000,
 			clerkOrgSlug: ACME.slug,
-		}),
+		});
+	},
 	oauth_scope_profiles: (t) =>
 		t.mutation(internal.oauth.upsertScopeProfile, {
 			profile: {
@@ -405,12 +426,16 @@ describe("a mapping with no id yet: a member is refused, and no id is ever inven
 			const rows = await rowsOf(t, table);
 			const stamped = rows.filter((r) => r[slugField] === ACME.slug);
 			if (refusal !== "") {
-				expect(refusal).toContain("RBAC_DENIED");
+				expect(
+					refusal.includes("RBAC_DENIED") ||
+						refusal.includes("MINT_ORG_ID_REQUIRED"),
+				).toBe(true);
 				// The refusal is the org not being found, or - for a door that names an
 				// assignee first - the assignee not being an agent of an org that has no
 				// permanent ID yet (an agent is selected by that ID, never by the slug).
 				expect(
-					refusal.includes("org-mapping-not-found") ||
+					refusal.includes("MINT_ORG_ID_REQUIRED") ||
+						refusal.includes("org-mapping-not-found") ||
 						refusal.includes("assignee-not-an-agent-of-org"),
 				).toBe(true);
 			} else {

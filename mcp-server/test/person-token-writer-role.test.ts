@@ -113,7 +113,7 @@ beforeEach(async () => {
 		["user_editor", "org:editor"],
 		["user_admin", "org:admin"],
 	] as const) {
-		harness.setMemberships(user, [membership("org_A", "org-a", role)]);
+		harness.setMemberships(user, [membership((testClerkOrgId("org-a") as string), "org-a", role)]);
 	}
 });
 
@@ -155,7 +155,7 @@ async function personToken(userId: string): Promise<string> {
 		redirectUri: REDIRECT,
 		challenge,
 		sessionToken: await harness.session(userId),
-		orgId: "org_A",
+		orgId: (testClerkOrgId("org-a") as string),
 	});
 	expect(r.code).toBeTruthy();
 	const res = await app.request("http://localhost:3000/token", {

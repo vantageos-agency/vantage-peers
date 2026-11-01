@@ -13,6 +13,7 @@ import { convexTest } from "../../tests/fixtures/convexTestWithServiceAccount";
 import { describe, expect, test } from "vitest";
 import { api, internal } from "../_generated/api";
 import schema from "../schema";
+import { testClerkOrgId } from "../../tests/fixtures/testClerkOrgId";
 
 const modules = Object.fromEntries(
 	Object.entries(import.meta.glob("../**/*.ts")).filter(
@@ -30,6 +31,7 @@ async function seedOrg(t: T, slug: string, roster: string[], isActive = true) {
 	await t.run(async (ctx) => {
 		await ctx.db.insert("client_org_mapping", {
 			clerkOrgSlug: slug,
+			clerkOrgId: testClerkOrgId(slug),
 			displayName: slug,
 			allowedOrchestrators: roster,
 			scopes: ["view-own-tasks"],
@@ -81,6 +83,7 @@ async function mintTokenFromProfile(t: T, profileId: string, tokenHash: string) 
 			expiresAt: Date.now() + 3_600_000,
 			createdAt: Date.now(),
 			...(p?.clerkOrgSlug ? { clerkOrgSlug: p.clerkOrgSlug } : {}),
+			...(p?.clerkOrgId ? { clerkOrgId: p.clerkOrgId } : {}),
 		});
 	});
 }

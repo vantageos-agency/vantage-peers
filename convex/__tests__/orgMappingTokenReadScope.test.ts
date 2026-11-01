@@ -60,6 +60,7 @@ import { convexTest } from "../../tests/fixtures/convexTestWithServiceAccount";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import { api } from "../_generated/api";
 import schema from "../schema";
+import { testClerkOrgId } from "../../tests/fixtures/testClerkOrgId";
 
 const MASTER_TOKEN = "test-master-token-org-mapping-token-read-deadbeef";
 
@@ -104,6 +105,7 @@ async function seedOrgAMapping(t: ReturnType<typeof createT>) {
 	await t.run(async (ctx) => {
 		await ctx.db.insert("client_org_mapping", {
 			clerkOrgSlug: "org-a",
+			clerkOrgId: testClerkOrgId("org-a"),
 			allowedOrchestrators: ["seat-a"],
 			scopes: ["view-own-tasks"],
 			displayName: "org-a",
@@ -117,6 +119,7 @@ async function seedOrgBMapping(t: ReturnType<typeof createT>) {
 	await t.run(async (ctx) => {
 		await ctx.db.insert("client_org_mapping", {
 			clerkOrgSlug: "org-b",
+			clerkOrgId: testClerkOrgId("org-b"),
 			allowedOrchestrators: ["seat-b", "seat-b2"],
 			scopes: ["view-own-tasks", "view-own-missions"],
 			displayName: "org-b",
@@ -209,6 +212,7 @@ describe("orgRoster.getForAccessToken requires master or service-account scope",
 				expiresAt: now + 3600 * 1000,
 				createdAt: now,
 				clerkOrgSlug: opts.clerkOrgSlug,
+				clerkOrgId: testClerkOrgId(opts.clerkOrgSlug),
 			});
 		});
 	}

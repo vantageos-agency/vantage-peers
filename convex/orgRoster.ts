@@ -8,7 +8,6 @@ import {
 	requireResolvedCaller,
 	withOrgScope,
 } from "./lib/auth";
-import { resolveProvisioningMapping } from "./lib/provisioningMapping";
 import {
 	agentListedAsCoordinator,
 	agentListedOnRoster,
@@ -319,18 +318,21 @@ export const getForAccessToken = query({
 			);
 		}
 
-		const slug = token.clerkOrgSlug;
-		if (!slug) {
+		// The organisation is the permanent ID stamped at mint, never the slug (a
+		// renamable label another organisation can take over; task
+		// k1783fk8r6p795x9fxrzyt9evd8hcxm7, same class as mappingOfAccessToken
+		// above). A token row with no ID is refused.
+		const orgId = token.clerkOrgId;
+		if (!orgId) {
 			throw new ConvexError(
 				"RBAC_DENIED: access token carries no organisation claim",
 			);
 		}
 
-		const provisioned = await resolveProvisioningMapping(ctx, slug);
-		const mapping = provisioned.kind === "row" ? provisioned.row : null;
+		const mapping = await lookupOrgMapping(ctx, { clerkOrgId: orgId });
 		if (!mapping || !mapping.isActive) {
 			throw new ConvexError(
-				`RBAC_DENIED: Org "${slug}" not in client_org_mapping or inactive`,
+				`RBAC_DENIED: Org "${orgId}" not in client_org_mapping or inactive`,
 			);
 		}
 		return mapping.allowedOrchestrators;

@@ -21,6 +21,7 @@ import { api } from "../_generated/api";
 import type { Id } from "../_generated/dataModel";
 import schema from "../schema";
 import { insertTaskRow } from "../../tests/lib/seedFleetAgents";
+import { testClerkOrgId } from "../../tests/fixtures/testClerkOrgId";
 
 
 const modules = Object.fromEntries(
@@ -48,6 +49,7 @@ async function setup() {
 		for (const slug of ["org-a", "org-b"]) {
 			await ctx.db.insert("client_org_mapping", {
 				clerkOrgSlug: slug,
+				clerkOrgId: testClerkOrgId(slug),
 				allowedOrchestrators: ["eta"],
 				scopes: ["view-own-tasks"],
 				displayName: slug,
@@ -146,6 +148,7 @@ describe("org-a 'eta' WITH verifiedActor vs an org-b 'eta' task", () => {
 			await t.run((ctx) =>
 				ctx.db.patch(taskId, {
 					orgId: "org-a",
+					clerkOrgId: testClerkOrgId("org-a"),
 					assignedToId: agentId,
 					createdById: agentId,
 				}),

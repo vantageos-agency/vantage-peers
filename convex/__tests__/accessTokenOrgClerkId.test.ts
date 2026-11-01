@@ -13,6 +13,7 @@ import { convexTest } from "../../tests/fixtures/convexTestWithServiceAccount";
 import { testClerkOrgId } from "../../tests/fixtures/testClerkOrgId";
 import { api } from "../_generated/api";
 import schema from "../schema";
+import { seedMintProfile } from "../../tests/lib/seedMintProfile";
 
 const modules = Object.fromEntries(
 	Object.entries(import.meta.glob("../**/*.ts")).filter(
@@ -50,6 +51,7 @@ let n = 0;
 async function token(t: T, clerkOrgSlug?: string): Promise<string> {
 	n += 1;
 	const tokenHash = `ocid-${n}`;
+	if (clerkOrgSlug !== undefined) await seedMintProfile(t, "p", clerkOrgSlug);
 	await asService(t).mutation(api.oauth.createAccessToken, {
 		tokenHash,
 		clientId: `c-${n}`,

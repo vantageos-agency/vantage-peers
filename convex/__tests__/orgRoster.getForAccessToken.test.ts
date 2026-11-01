@@ -27,6 +27,7 @@ import { convexTest } from "../../tests/fixtures/convexTestWithServiceAccount";
 import { describe, expect, test } from "vitest";
 import { api } from "../_generated/api";
 import schema from "../schema";
+import { testClerkOrgId } from "../../tests/fixtures/testClerkOrgId";
 
 const modules = Object.fromEntries(
 	Object.entries(import.meta.glob("../**/*.ts")).filter(
@@ -58,6 +59,7 @@ async function seedTokenAndOrg(
 		if (opts.clerkOrgSlug) {
 			await ctx.db.insert("client_org_mapping", {
 				clerkOrgSlug: opts.clerkOrgSlug,
+				clerkOrgId: testClerkOrgId(opts.clerkOrgSlug),
 				allowedOrchestrators: opts.allowedOrchestrators,
 				scopes: ["view-own-tasks"],
 				displayName: opts.clerkOrgSlug,
@@ -78,7 +80,10 @@ async function seedTokenAndOrg(
 			createdAt: Date.now(),
 			...(opts.revoked ? { revokedAt: Date.now() } : {}),
 			...(opts.clerkOrgSlug !== undefined
-				? { clerkOrgSlug: opts.clerkOrgSlug }
+				? {
+						clerkOrgSlug: opts.clerkOrgSlug,
+						clerkOrgId: testClerkOrgId(opts.clerkOrgSlug),
+					}
 				: {}),
 		});
 	});

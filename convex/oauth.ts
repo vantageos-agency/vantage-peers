@@ -2514,6 +2514,11 @@ type MintAccessTokenArgs = {
 	expiresAt: number;
 	refreshTokenHash?: string;
 	clerkOrgSlug?: string;
+	/**
+	 * The permanent org ID the caller already holds from a verified source (the
+	 * family of a refreshed token). Internal: no door accepts it as an argument.
+	 */
+	clerkOrgId?: string;
 	codeHash?: string;
 	orgRole?: string;
 	principal?: "person";
@@ -2544,6 +2549,43 @@ type MintAccessTokenArgs = {
 
 /** Scope the person asks for to get a refresh token. It confers nothing and is never minted onto a token. */
 const OFFLINE_ACCESS = "offline_access";
+
+/**
+ * The organisation a token is minted for, as the pair stored on the row: its
+ * permanent ID from an ID-bearing source, and its CURRENT label read by that ID.
+ * No organisation named -> undefined (an org-less token). A label with no
+ * ID-bearing source is refused (MINT_ORG_ID_REQUIRED): stamping the ID the label's
+ * current holder has would put a former holder's token under the new holder.
+ */
+async function mintOrgStamp(
+	ctx: MutationCtx,
+	a: MintAccessTokenArgs,
+): Promise<{ clerkOrgSlug: string; clerkOrgId: string } | undefined> {
+	if (a.clerkOrgSlug === undefined) return undefined;
+	let id: string | undefined = a.clerkOrgId ?? a.personRefresh?.orgMapping?.clerkOrgId;
+	if (id === undefined && a.codeHash !== undefined) {
+		const codeHash = a.codeHash;
+		const code = await ctx.db
+			.query("oauth_person_codes")
+			.withIndex("by_codeHash", (q) => q.eq("codeHash", codeHash))
+			.unique();
+		id = code?.orgId;
+	}
+	if (id === undefined) {
+		const profile = await ctx.db
+			.query("oauth_scope_profiles")
+			.withIndex("by_profileId", (q) => q.eq("profileId", a.scopeProfile))
+			.unique();
+		id = profile?.clerkOrgId;
+	}
+	if (id === undefined || id === "") {
+		throw new ConvexError(
+			`MINT_ORG_ID_REQUIRED: a token for organisation "${a.clerkOrgSlug}" needs a verified permanent org ID (consent code, scope profile or refreshed family); an ID derived from the label is refused`,
+		);
+	}
+	const mapping = await lookupOrgMapping(ctx, { clerkOrgId: id });
+	return { clerkOrgSlug: mapping?.clerkOrgSlug ?? a.clerkOrgSlug, clerkOrgId: id };
+}
 
 /**
  * The one place an access token row is written. createAccessToken (mint) and
@@ -2579,7 +2621,13 @@ async function mintAccessToken(
 			: input;
 	// Seat identity by ID, resolved HERE (mint and refresh both come through
 	// this door) from the profile in its own org; never from an argument.
-	const tokenClerkOrgId = await clerkOrgIdForSlug(ctx, a.clerkOrgSlug);
+	// The organisation's permanent ID comes from a source that carries it: the
+	// caller's verified ID (a refreshed family), the organisation's live mapping
+	// (a person rotation), the consent code, or the scope profile. It is NEVER
+	// derived from a label: a profile's stored slug may already name another
+	// organisation (task k1783fk8r6p795x9fxrzyt9evd8hcxm7).
+	const orgStamp = await mintOrgStamp(ctx, a);
+	const tokenClerkOrgId = orgStamp?.clerkOrgId;
 	const seatAgent = await resolveSeatAgent(ctx, {
 		scopeProfile: a.scopeProfile,
 		fromAllowList: a.fromAllowList,
@@ -2620,10 +2668,10 @@ async function mintAccessToken(
 		expiresAt: a.expiresAt,
 		refreshTokenHash: a.refreshTokenHash,
 		createdAt: Date.now(),
-		...(a.clerkOrgSlug !== undefined
-			? { clerkOrgSlug: a.clerkOrgSlug }
+		...(orgStamp !== undefined
+			? { clerkOrgSlug: orgStamp.clerkOrgSlug }
 			: {}),
-		// Permanent Clerk org id of the same org (Pi ruling (d)), from its mapping.
+		// Permanent Clerk org id of the same org (Pi ruling (d)), from its verified source.
 		...(tokenClerkOrgId !== undefined ? { clerkOrgId: tokenClerkOrgId } : {}),
 		...(a.codeHash !== undefined ? { codeHash: a.codeHash } : {}),
 		...(a.orgRole !== undefined ? { orgRole: a.orgRole } : {}),
@@ -2666,9 +2714,7 @@ async function mintAccessToken(
 			...(a.familyId !== undefined ? { familyId: a.familyId } : {}),
 			principal: "person",
 			clerkOrgId: tokenClerkOrgId,
-			...(a.clerkOrgSlug !== undefined
-				? { clerkOrgSlug: a.clerkOrgSlug }
-				: {}),
+			...(orgStamp !== undefined ? { clerkOrgSlug: orgStamp.clerkOrgSlug } : {}),
 			orgRole: a.orgRole,
 			...(chosen?.agent ? { agentId: chosen.agent._id } : {}),
 			...(chosen?.connectedAs !== undefined
@@ -2830,18 +2876,31 @@ export const getAccessTokenByHash = query({
 			row,
 			"oauth:getAccessTokenByHash",
 		);
-		// The org's permanent ID, from the ACTIVE mapping row the token's org label
-		// resolves to right now (an inactive or unmapped org yields none): the MCP
-		// admits that org's own `team/<id>` namespace for reads on it (auth.ts
-		// checkNamespaceRead). Not a stamp on the token row, so it follows the org.
+		// The organisation is the permanent ID stamped on the token at mint, never the
+		// slug: a slug is a renamable label another organisation can take over, so a
+		// slug read hands the new holder the previous holder's token (task
+		// k1783fk8r6p795x9fxrzyt9evd8hcxm7, the same class as orgRoster's
+		// mappingOfAccessToken, #1624). A row that names an organisation only by its
+		// label is refused: re-deriving the ID from the label's CURRENT holder would
+		// be the same takeover read under another name. The mapping row read BY ID
+		// supplies the permanent ID (the MCP admits that org's own `team/<id>`
+		// namespace for reads on it, auth.ts checkNamespaceRead) and the org's
+		// CURRENT label, which is what the MCP hands to every label-keyed door.
+		if (row.clerkOrgId === undefined && row.clerkOrgSlug !== undefined) {
+			return null;
+		}
 		const orgMapping =
-			row.clerkOrgSlug === undefined
+			row.clerkOrgId === undefined
 				? null
-				: await lookupOrgMapping(ctx, row.clerkOrgSlug);
+				: await lookupOrgMapping(ctx, { clerkOrgId: row.clerkOrgId });
 		const orgClerkId =
 			orgMapping !== null && orgMapping.isActive
 				? orgMapping.clerkOrgId
 				: undefined;
+		// An organisation the ID no longer resolves to an ACTIVE mapping has no
+		// current label: the stored one may name another organisation by now, so it
+		// is not handed on.
+		const orgLabel = orgClerkId === undefined ? undefined : orgMapping?.clerkOrgSlug;
 		// Is the resolved personal agent's ID on its organisation's roster BY ID right
 		// now? The scope is the org's own member scope built from the mapping row read
 		// above (withOrgScope, actForOrgMapping), the listing is the package's
@@ -2874,9 +2933,7 @@ export const getAccessTokenByHash = query({
 			namespaceReadPrefixes: row.namespaceReadPrefixes,
 			namespaceWritePrefixes: row.namespaceWritePrefixes,
 			expiresAt: row.expiresAt,
-			...(row.clerkOrgSlug !== undefined
-				? { clerkOrgSlug: row.clerkOrgSlug }
-				: {}),
+			...(orgLabel !== undefined ? { clerkOrgSlug: orgLabel } : {}),
 			...(orgClerkId !== undefined ? { orgClerkId } : {}),
 			...(row.orgRole !== undefined ? { orgRole: row.orgRole } : {}),
 			...(row.principal !== undefined ? { principal: row.principal } : {}),
@@ -3411,9 +3468,13 @@ export const rotateRefreshToken = mutation({
 			const resolvedMember = await resolveLiveMember(
 				ctx,
 				row.userId,
-				// Cast on purpose: an absent ID must reach the package's credential
-				// schema (credential-invalid), not be papered over here.
-				(await clerkOrgIdForSlug(ctx, args.clerkOrgSlug)) as string,
+				// The family's own permanent ID, stamped on its person access token at
+				// mint. `args.clerkOrgSlug` is a label the transport sends and is never
+				// the key: its current holder may be another organisation (task
+				// k1783fk8r6p795x9fxrzyt9evd8hcxm7). Cast on purpose: an absent ID must
+				// reach the package's credential schema (credential-invalid), not be
+				// papered over here.
+				personLineage.clerkOrgId as string,
 				"oauth:rotateRefreshToken",
 			);
 			if (!resolvedMember.ok) throw refusalError(resolvedMember.refusal);
@@ -3445,6 +3506,10 @@ export const rotateRefreshToken = mutation({
 			expiresAt: args.accessExpiresAt,
 			refreshTokenHash: nextRefreshHash,
 			...(args.clerkOrgSlug !== undefined ? { clerkOrgSlug: args.clerkOrgSlug } : {}),
+			// A person's family carries its own permanent ID; the mint stamps that one.
+			...(personLineage?.clerkOrgId !== undefined
+				? { clerkOrgId: personLineage.clerkOrgId }
+				: {}),
 			familyId,
 			// A person's descent stays a person's, so the next rotation still checks
 			// the membership.

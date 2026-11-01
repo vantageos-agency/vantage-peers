@@ -27,6 +27,7 @@ import type { Id } from "../_generated/dataModel";
 import schema from "../schema";
 import { convexTest } from "../../tests/fixtures/convexTestWithServiceAccount";
 import { testClerkOrgId } from "../../tests/fixtures/testClerkOrgId";
+import { seedMintProfile } from "../../tests/lib/seedMintProfile";
 
 const modules = Object.fromEntries(
 	Object.entries(import.meta.glob("../**/*.ts")).filter(
@@ -87,6 +88,7 @@ let counter = 0;
 async function mintPersonToken(t: T, personId: string, orgSlug: string): Promise<string> {
 	counter += 1;
 	const tokenHash = createHash("sha256").update(`pa-${counter}`).digest("hex");
+	await seedMintProfile(t, "team-member", orgSlug);
 	await asService(t).mutation(api.oauth.createAccessToken, {
 		tokenHash,
 		clientId: `client-${counter}`,
@@ -207,6 +209,7 @@ describe("another organisation's agent is never selected", () => {
 		await designate(t, tele, "user_2seat");
 		counter += 1;
 		const tokenHash = createHash("sha256").update(`pa-seat-${counter}`).digest("hex");
+		await seedMintProfile(t, "telemaque-org-a", "org-a");
 		await asService(t).mutation(api.oauth.createAccessToken, {
 			tokenHash,
 			clientId: "seat-client",

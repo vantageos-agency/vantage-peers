@@ -24,6 +24,7 @@ import { testClerkOrgId } from "../../tests/fixtures/testClerkOrgId";
 import { api, internal } from "../_generated/api";
 import type { Id } from "../_generated/dataModel";
 import schema from "../schema";
+import { seedMintProfile } from "../../tests/lib/seedMintProfile";
 
 const modules = Object.fromEntries(
 	Object.entries(import.meta.glob("../**/*.ts")).filter(
@@ -83,6 +84,7 @@ async function mintPersonToken(
 ): Promise<string> {
 	counter += 1;
 	const tokenHash = createHash("sha256").update(`onr-${counter}`).digest("hex");
+	await seedMintProfile(t, "team-member", SLUG);
 	const id = await asService(t).mutation(api.oauth.createAccessToken, {
 		tokenHash,
 		clientId: `client-${counter}`,

@@ -112,6 +112,7 @@ beforeEach(async () => {
 		] as const) {
 			await ctx.db.insert("client_org_mapping", {
 				clerkOrgSlug: slug,
+				clerkOrgId: slug === "org-a" ? "org_A" : "org_B",
 				allowedOrchestrators: [...roster],
 				scopes: ["vantage:read", "vantage:write"],
 				displayName: slug,
@@ -308,7 +309,9 @@ describe("consent and organisation choice", () => {
 		const token = await postToken(code);
 		expect(token.status).toBe(200);
 		expect(token.body.token_type).toBe("Bearer");
-		expect(token.body.refresh_token).toBeUndefined();
+		// the mapping now carries the org's permanent ID (the code's orgId), so the
+		// person's refresh row is written beside the access token
+		expect(typeof token.body.refresh_token).toBe("string");
 
 		const rows = await t.run(async (ctx) =>
 			ctx.db.query("oauth_access_tokens").collect(),

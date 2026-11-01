@@ -22,6 +22,7 @@ import type { Id } from "../_generated/dataModel";
 import schema from "../schema";
 import { convexTest } from "../../tests/fixtures/convexTestWithServiceAccount";
 import { testClerkOrgId } from "../../tests/fixtures/testClerkOrgId";
+import { seedMintProfile } from "../../tests/lib/seedMintProfile";
 
 const modules = Object.fromEntries(
 	Object.entries(import.meta.glob("../**/*.ts")).filter(
@@ -85,6 +86,7 @@ async function mintPersonToken(
 ): Promise<string> {
 	counter += 1;
 	const tokenHash = createHash("sha256").update(`pc-${counter}`).digest("hex");
+	await seedMintProfile(t, "team-member", orgSlug);
 	const id = await asService(t).mutation(api.oauth.createAccessToken, {
 		tokenHash,
 		clientId: `client-${counter}`,
