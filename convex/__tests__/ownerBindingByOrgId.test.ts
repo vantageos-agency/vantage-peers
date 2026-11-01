@@ -132,4 +132,26 @@ describe("githubOwnerBinding:listUnprovenMappings compares the binding and the m
 		});
 		expect(out.items.map((m) => m.repo)).toEqual(["acme-gh/site"]);
 	});
+
+	test("a verified org whose mapping has NO permanent ID owns no mapping: the scan is empty, never the whole table", async () => {
+		const t = createT();
+		await seed(t); // another org (X) already has an unproven mapping
+		await t.run(async (ctx) => {
+			await ctx.db.insert("client_org_mapping", {
+				clerkOrgSlug: "no-id-org",
+				allowedOrchestrators: ["sigma"],
+				scopes: ["view-own-tasks"],
+				displayName: "no-id-org",
+				isActive: true,
+				createdAt: 1,
+			});
+		});
+		const full = await service(t).query(api.githubOwnerBinding.listUnprovenMappings, {});
+		expect(full.items.length).toBeGreaterThan(0);
+		const out = await service(t).query(api.githubOwnerBinding.listUnprovenMappings, {
+			verifiedOrg: { orgSlug: "no-id-org" },
+		});
+		expect(out.items).toEqual([]);
+		expect(out.nextCursor).toBeNull();
+	});
 });
