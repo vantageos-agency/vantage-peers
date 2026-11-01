@@ -53,7 +53,12 @@ const MODULES: Record<string, Record<string, unknown>> = {
 	missions,
 	tasks,
 };
-const SCOPE_ARGS = ["verifiedPerson", "verifiedOrg", "seatOrgSlug"] as const;
+const SCOPE_ARGS = [
+	"verifiedPerson",
+	"verifiedOrg",
+	"seatOrgSlug",
+	"seatOrgClerkId",
+] as const;
 
 function acceptedScopeArgs(door: string): string[] {
 	const [mod, fn] = door.split(":");
@@ -125,6 +130,7 @@ describe("pin 2 — every scope-taking door call goes through the resolver", () 
 			"verifiedOrg: { orgSlug",
 			"verifiedPerson: { accessTokenHash",
 			"seatOrgSlug:",
+			"seatOrgClerkId:",
 		]) {
 			expect(TOOLS_SRC.includes(retired), retired).toBe(false);
 		}

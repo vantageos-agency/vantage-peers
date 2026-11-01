@@ -25,8 +25,10 @@ import type { OAuthContext, SeatOrgResolution } from "./auth.js";
 //                         already carries its org);
 //       "unless-proof"  - the inbox doors: not beside verifiedPerson, nor beside
 //                         a verified agent ID (the reader is then that ID).
-//   - seatOrgSlug: the door takes it, no person acts in its own name, and the
-//     seat's org resolves (a refusal is returned as `denied`, never a widening).
+//   - seatOrgSlug (and seatOrgClerkId beside it): the door takes it, no person
+//     acts in its own name, and the seat's org resolves (a refusal is returned as
+//     `denied`, never a widening). The ID is the verified token row's live org
+//     ID; Convex keys the seat by it when present.
 // The agent ID (`verifiedActor`) is added by withVerifiedActor (verifiedActor.ts)
 // for the doors in VERIFIED_ACTOR_DOORS; it is a fact here, never an output.
 // ─────────────────────────────────────────────────────────────────────────────
@@ -37,6 +39,7 @@ export type DoorScopeRule = {
 	readonly verifiedPerson?: true;
 	readonly verifiedOrg?: OrgBesideProof;
 	readonly seatOrgSlug?: true;
+	readonly seatOrgClerkId?: true;
 };
 
 /**
@@ -49,7 +52,11 @@ export const DOOR_SCOPE: Readonly<Record<string, DoorScopeRule>> = {
 	// memories / episodes
 	"memories:getMemory": { verifiedOrg: "always" },
 	// messages
-	"messages:sendMessage": { verifiedPerson: true, seatOrgSlug: true },
+	"messages:sendMessage": {
+		verifiedPerson: true,
+		seatOrgSlug: true,
+		seatOrgClerkId: true,
+	},
 	"messages:checkNewMessagesEnvelope": { verifiedOrg: "unless-proof" },
 	"messages:markAsRead": { verifiedPerson: true, verifiedOrg: "unless-proof" },
 	"messages:deleteMessage": { verifiedOrg: "unless-proof" },
@@ -132,6 +139,7 @@ export type DoorScopeArgs = {
 	verifiedPerson?: { accessTokenHash: string };
 	verifiedOrg?: { orgSlug: string };
 	seatOrgSlug?: string;
+	seatOrgClerkId?: string;
 };
 
 export type DoorScopeResolution =
@@ -174,7 +182,12 @@ export function resolveDoorScope(
 	}
 	if (rule.seatOrgSlug === true && !personActsAsItself) {
 		if (facts.seat.kind === "refused") return { denied: facts.seat.error };
-		if (facts.seat.kind === "org") args.seatOrgSlug = facts.seat.orgSlug;
+		if (facts.seat.kind === "org") {
+			args.seatOrgSlug = facts.seat.orgSlug;
+			if (facts.seat.orgClerkId !== undefined) {
+				args.seatOrgClerkId = facts.seat.orgClerkId;
+			}
+		}
 	}
 	return { args };
 }
