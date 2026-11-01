@@ -2194,6 +2194,74 @@ async function assigneeIsRepoOwnerAgent(
 	return ownerId !== undefined && ownerId === (await resolveInTaskOrg(assignee));
 }
 
+/** Most ids one `addDependsOn` may carry. */
+export const ADD_DEPENDENCIES_MAX_IDS = 100;
+/** Most tasks the cycle walk may visit before the call is refused. */
+export const DEPENDENCY_WALK_CAP = 500;
+
+/**
+ * The task's dependsOn with `incoming` appended: existing entries first, then
+ * the new ids in the order given, deduplicated. Every NEW id must be a task of
+ * the SAME organisation (another tenant's task is reported exactly as a missing
+ * one), not the task itself, and must not (transitively) depend on the task.
+ * All-or-nothing: the first bad id throws before anything is written.
+ */
+async function appendDependencies(
+	ctx: MutationCtx,
+	task: Doc<"tasks">,
+	incoming: Array<Id<"tasks">>,
+): Promise<Array<Id<"tasks">>> {
+	if (incoming.length > ADD_DEPENDENCIES_MAX_IDS) {
+		throw new ConvexError(
+			`DEPENDENCY_LIST_TOO_LONG: ${incoming.length} ids given, at most ${ADD_DEPENDENCIES_MAX_IDS} per call — ${JSON.stringify({ taskId: task._id, max: ADD_DEPENDENCIES_MAX_IDS })}`,
+		);
+	}
+	const existing = task.dependsOn ?? [];
+	const seen = new Set<string>(existing);
+	const added: Array<Id<"tasks">> = [];
+	for (const depId of incoming) {
+		if (seen.has(depId)) continue; // already present, or repeated in this call
+		if (depId === task._id) {
+			throw new ConvexError(
+				`DEPENDENCY_SELF: task ${task._id} cannot depend on itself — ${JSON.stringify({ taskId: task._id })}`,
+			);
+		}
+		const dep = await ctx.db.get(depId);
+		if (dep === null || dep.orgId !== task.orgId) {
+			throw new ConvexError(
+				`DEPENDENCY_NOT_FOUND: task ${depId} does not exist in this task's organisation — ${JSON.stringify({ taskId: task._id, dependency: depId })}`,
+			);
+		}
+		seen.add(depId);
+		added.push(depId);
+	}
+	if (added.length === 0) return existing;
+
+	// No new dependency may (transitively) depend on this task.
+	const visited = new Set<string>();
+	const stack = [...added];
+	while (stack.length > 0) {
+		const current = stack.pop() as Id<"tasks">;
+		if (visited.has(current)) continue;
+		if (visited.size >= DEPENDENCY_WALK_CAP) {
+			throw new ConvexError(
+				`DEPENDENCY_GRAPH_TOO_LARGE: more than ${DEPENDENCY_WALK_CAP} tasks to walk for the cycle check — ${JSON.stringify({ taskId: task._id })}`,
+			);
+		}
+		visited.add(current);
+		const row = await ctx.db.get(current);
+		for (const next of row?.dependsOn ?? []) {
+			if (next === task._id) {
+				throw new ConvexError(
+					`DEPENDENCY_CYCLE: adding ${current} would make task ${task._id} wait on itself — ${JSON.stringify({ taskId: task._id, via: current })}`,
+				);
+			}
+			stack.push(next);
+		}
+	}
+	return [...existing, ...added];
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // update — partial update of any mutable task field
 // ─────────────────────────────────────────────────────────────────────────────
@@ -2218,7 +2286,12 @@ export const update = mutation({
 		startedAt: v.optional(v.number()),
 		completedAt: v.optional(v.number()),
 		dueDate: v.optional(v.number()),
+		// REPLACES the whole dependency list (an empty array clears it).
 		dependsOn: v.optional(v.array(v.id("tasks"))),
+		// APPENDS to the existing list: new ids land after the existing ones,
+		// deduplicated, each validated (exists, same organisation, not the task
+		// itself, no cycle). Mutually exclusive with `dependsOn`.
+		addDependsOn: v.optional(v.array(v.id("tasks"))),
 		completionNote: v.optional(v.string()),
 		assignedToInstance: v.optional(v.string()),
 		// Mandatory reason when status is being set to "cancelled" (Day 157).
@@ -2375,6 +2448,18 @@ export const update = mutation({
 			}
 		}
 		if (memberActor !== undefined) patch.lastActedBy = memberActor;
+
+		// addDependsOn APPENDS; it is validated AFTER authorisation (a refused
+		// caller learns nothing about other rows). The raw arg is never stored.
+		delete patch.addDependsOn;
+		if (fields.addDependsOn !== undefined) {
+			if (fields.dependsOn !== undefined) {
+				throw new ConvexError(
+					`DEPENDENCY_MODE_AMBIGUOUS: dependsOn REPLACES the list and addDependsOn APPENDS to it; send one of them — ${JSON.stringify({ taskId })}`,
+				);
+			}
+			patch.dependsOn = await appendDependencies(ctx, task, fields.addDependsOn);
+		}
 
 		// The deliverable: validated AFTER authorisation (a refused caller learns
 		// nothing about the value's shape). A value identical to the stored one is
