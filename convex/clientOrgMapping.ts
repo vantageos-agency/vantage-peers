@@ -6,7 +6,7 @@ import { hasFleetRead } from "@vantageos/cloud-identity";
 import { lookupOrgMapping, withOrgScope } from "./lib/auth";
 import { orgMappingRowsForLabel } from "./lib/authOrgMapping";
 import { findOperatorOrg } from "./lib/operatorOrg";
-import { appendRosterLabel } from "./lib/rosterLabelAppend";
+import { appendAgentsToRoster } from "./lib/rosterAppend";
 import { resolveProvisioningMapping } from "./lib/provisioningMapping";
 import { normalizeOrchestratorId } from "./_helpers/normalizeOrchestratorId";
 import { assertAgentNameFree } from "./lib/agentIdentity";
@@ -366,29 +366,7 @@ export const addRosterMembers = internalMutation({
 			);
 		}
 
-		const previous = row.allowedAgentIds ?? [];
-		const current: Id<"agents">[] = [...previous];
-		const labels = [...row.allowedOrchestrators];
-		for (const id of args.agentIds) {
-			const agent = await ctx.db.get(id);
-			if (
-				agent === null ||
-				!agent.isActive ||
-				agent.orgSlug !== row.clerkOrgSlug
-			) {
-				throw new ConvexError(
-					`AGENT_NOT_IN_ORG: "${id}" is not an active agent of org "${args.clerkOrgSlug}"; a roster lists the agents of its own organisation only`,
-				);
-			}
-			if (!current.includes(id)) current.push(id);
-			// The agent's exact stored name (a label snapshot for the legacy name
-			// readers, never an authority). Dedupe stays spelling-insensitive.
-			appendRosterLabel(labels, agent.name);
-		}
-		await ctx.db.patch(row._id, {
-			allowedAgentIds: current,
-			allowedOrchestrators: labels,
-		});
+		const { previous, current } = await appendAgentsToRoster(ctx, row, args.agentIds);
 		return { clerkOrgSlug: args.clerkOrgSlug, previous, current };
 	},
 });
@@ -432,27 +410,9 @@ export const addOperatorRosterMember = internalMutation({
 				`OPERATOR_ORG_NOT_FOUND: no active operator mapping row for "${operator.slug}"`,
 			);
 		}
-		const agent = await ctx.db.get(args.agentId);
-		if (agent === null || !agent.isActive || agent.orgSlug !== row.clerkOrgSlug) {
-			throw new ConvexError(
-				`AGENT_NOT_IN_ORG: "${args.agentId}" is not an active agent of the operator org "${row.clerkOrgSlug}"; this door lists the operator's own agents only`,
-			);
-		}
-
-		const previous = row.allowedAgentIds ?? [];
-		const current: Id<"agents">[] = [...previous];
-		if (!current.includes(args.agentId)) current.push(args.agentId);
-		const labels = [...row.allowedOrchestrators];
-		appendRosterLabel(labels, agent.name);
-		const added =
-			current.length !== previous.length ||
-			labels.length !== row.allowedOrchestrators.length;
-		if (added) {
-			await ctx.db.patch(row._id, {
-				allowedAgentIds: current,
-				allowedOrchestrators: labels,
-			});
-		}
+		const { previous, current, added } = await appendAgentsToRoster(ctx, row, [
+			args.agentId,
+		]);
 		return { clerkOrgSlug: row.clerkOrgSlug, added, previous, current };
 	},
 });
