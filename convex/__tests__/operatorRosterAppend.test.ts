@@ -138,6 +138,18 @@ describe("clientOrgMapping:addOperatorRosterMember", () => {
 		});
 	});
 
+	test("CASE: roster label Kairos + agent kairos (id listed) -> added false, labels unchanged", async () => {
+		const t = createT();
+		const kairos = await seedAgent(t, OPERATOR, "kairos");
+		await seedOrg(t, OPERATOR, "operator", ["Kairos"], [kairos]);
+		const r = await add(t, kairos);
+		expect(r.added).toBe(false);
+		expect(await rosterOf(t, OPERATOR)).toEqual({
+			labels: ["Kairos"],
+			ids: [kairos],
+		});
+	});
+
 	test("OTHERORG: an agent of a client org is refused and nothing is written", async () => {
 		const t = createT();
 		await seedOrg(t, OPERATOR, "operator", ["pi"], []);
