@@ -11,7 +11,8 @@
  * argument (an unknown field fails validation, so the MCP call breaks) or, worse,
  * a later door would be written without it. Two poles:
  *   1. source: no module imports `query`, `mutation` or `action` from
- *      `_generated/server` except convex/lib/functions.ts;
+ *      `_generated/server` except convex/lib/publicBuilders.ts (the wrappers'
+ *      definitions, re-exported by convex/lib/functions.ts);
  *   2. runtime: every exported public function's argument validator declares
  *      `__actingOrg` (optional).
  */
@@ -44,7 +45,7 @@ describe("public builders carry the acting-org transport", () => {
 		const offenders: string[] = [];
 		for (const file of sourceFiles(CONVEX_DIR)) {
 			const rel = relative(CONVEX_DIR, file);
-			if (rel === join("lib", "functions.ts")) continue;
+			if (rel === join("lib", "publicBuilders.ts")) continue;
 			const src = readFileSync(file, "utf8");
 			for (const m of src.matchAll(BARE_IMPORT)) {
 				const names = m[1]
