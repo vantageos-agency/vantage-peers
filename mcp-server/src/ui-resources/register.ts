@@ -15,7 +15,11 @@ import {
 } from "@modelcontextprotocol/server";
 import type { ConvexHttpClient } from "convex/browser";
 import { isMasterScope, type OAuthContext } from "../auth.js";
-import { listUiResources, readUiResource } from "./index.js";
+import {
+	listUiResources,
+	readUiResource,
+	type UiResourceCallerIdentity,
+} from "./index.js";
 
 /** The slice of a ConvexHttpClient the primitives read through. */
 export type UiResourceConvexClient = Pick<ConvexHttpClient, "query">;
@@ -63,6 +67,7 @@ export function registerUiResources(
 	server: McpServer,
 	convex: UiResourceConvexClient,
 	oauthCtx: OAuthContext | undefined,
+	identity: UiResourceCallerIdentity,
 ): void {
 	// Registered with a ResourceTemplate so that resources/list (via
 	// listCallback) and resources/read both work.
@@ -89,19 +94,9 @@ export function registerUiResources(
 				// biome-ignore lint/suspicious/noExplicitAny: Convex string API
 				return convex.query(functionName as any, args as any);
 			};
-			// Day-165-parity — thread the caller identity into the ui-resource
-			// primitives the same way tools.ts does (mirrors the
-			// master/callerIdentities computation at tools.ts:5712/5808/5934), so
-			// briefingNotes:get/list resolve visibility inside Convex instead of
-			// falling into the `callerIdentities === undefined` legacy-open branch.
-			// The gate above already refused an undefined context, so absence can
-			// no longer reach this line as "master".
-			const master = isMasterScope(oauthCtx);
-			const callerIdentities = master ? undefined : oauthCtx?.fromAllowList;
-			return await readUiResource(uri.toString(), fetchConvex, {
-				master,
-				callerIdentities,
-			});
+			// `identity` (master + callerIdentities) is computed by the caller
+			// (server-http.ts) from the verified oauthCtx, as before the extraction.
+			return await readUiResource(uri.toString(), fetchConvex, identity);
 		},
 	);
 }

@@ -54,6 +54,7 @@ import { cors } from "hono/cors";
 import {
 	bearerAuthMiddleware,
 	internalClient,
+	isMasterScope,
 	masterOnlyMiddleware,
 	resolveActorCredentialMode,
 	sha256Hex,
@@ -2247,7 +2248,19 @@ app.all("/mcp", bearerAuthMiddleware(), async (c) => {
 
 		// SEP-1865 ui:// resources for Generative UI primitives — see
 		// src/ui-resources/register.ts.
-		registerUiResources(server, convex, oauthCtx);
+		// Day-165-parity — thread the caller identity into the ui-resource
+		// primitives the same way tools.ts does (mirrors the
+		// master/callerIdentities computation at tools.ts:5712/5808/5934), so
+		// briefingNotes:get/list resolve visibility inside Convex instead of
+		// falling into the `callerIdentities === undefined` legacy-open branch.
+		// (An undefined oauthCtx never reaches a read: the registration's gate
+		// refuses it before any Convex query.)
+		const master = oauthCtx === undefined || isMasterScope(oauthCtx);
+		const callerIdentities = master ? undefined : oauthCtx.fromAllowList;
+		registerUiResources(server, convex, oauthCtx, {
+			master,
+			callerIdentities,
+		});
 		return server;
 	};
 
