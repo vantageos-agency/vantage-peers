@@ -54,7 +54,7 @@
 			"modules": {}
 		},
 		"R-53": {
-			"count": 323,
+			"count": 322,
 			"measured_tree_sha": "734653514cb0c3308194707881a1697e011c809e",
 			"cli_commit": "f6297a29c64a0265124e3e9cf86c9dd85eac47c0",
 			"command": "npx -y @vantageos/backend-doctor@0.5.0 <vantage-peers clean full checkout @73465351 (task k1755rzrkbr397hpeftnjcqb2d8h7yhg), deps installed> --json-evidence <dir>/",
@@ -70,7 +70,7 @@
 			"modules": {}
 		},
 		"CR-2": {
-			"count": 245,
+			"count": 242,
 			"measured_tree_sha": "72971002f67f8385c5d7679872a3a0b4629db543",
 			"cli_commit": "f6297a29c64a0265124e3e9cf86c9dd85eac47c0",
 			"command": "npx -y @vantageos/backend-doctor@0.5.0 <vantage-peers clean full checkout @72971002 (slug-class PR 1, task k1783fk8r6p795x9fxrzyt9evd8hcxm7), deps installed> --json-evidence <dir>/",
@@ -78,7 +78,7 @@
 			"modules": {}
 		},
 		"R-54": {
-			"count": 112,
+			"count": 109,
 			"measured_tree_sha": "ba56e0951bc134fd2898043f9b8f60ef3f972e14",
 			"cli_commit": "f6297a29c64a0265124e3e9cf86c9dd85eac47c0",
 			"command": "npx -y @vantageos/backend-doctor@0.5.0 <vantage-peers clean full checkout @ba56e0951bc134fd2898043f9b8f60ef3f972e14 (task k178kcdj17bd0vmxce295aw19s8hdsq4), deps installed> --json-evidence <dir>/",
@@ -110,7 +110,7 @@
 			"modules": {}
 		},
 		"CR-3": {
-			"count": 14,
+			"count": 13,
 			"measured_tree_sha": "f4eabd100ff53300d33a8a9285642c5afa84878a",
 			"cli_commit": "f6297a29c64a0265124e3e9cf86c9dd85eac47c0",
 			"command": "npx -y @vantageos/backend-doctor@0.5.0 <vantage-peers clean full checkout @73465351 (task k1755rzrkbr397hpeftnjcqb2d8h7yhg), deps installed> --json-evidence <dir>/",
