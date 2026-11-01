@@ -964,7 +964,7 @@ async function requireSeatSenderNotForeign(
 		candidates.push(segments.slice(0, i).join("-"));
 	}
 	for (const candidate of candidates) {
-		if (seat.orgSlug !== null && (await findAgentByName(ctx, seat.orgSlug, candidate))) {
+		if (seat.orgSlug !== null && (await findAgentByName(ctx, seat.orgSlug, candidate, seat.orgClerkId))) {
 			return;
 		}
 	}
@@ -990,7 +990,7 @@ async function requireSeatSenderNotForeign(
 	for (const m of mappings) {
 		if (m.clerkOrgSlug === seat.orgSlug) continue;
 		for (const candidate of candidates) {
-			if (await findAgentByName(ctx, m.clerkOrgSlug, candidate)) {
+			if (await findAgentByName(ctx, m.clerkOrgSlug, candidate, m.clerkOrgId)) {
 				return refuse("seat-sender-foreign-identity");
 			}
 		}
