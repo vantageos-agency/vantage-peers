@@ -1,4 +1,0 @@
----
-section: Added
----
-- **Migration `restamp_clerk_ids` for the Clerk dev -> production instance switch.** `convex/migrations/restamp_clerk_ids.ts` rewrites every stored Clerk org ID (`client_org_mapping` and the 19 tables `backfill_org_clerk_id` stamps) and `orgMembership.clerkUserId` from an operator-supplied `{orgs, users}` map passed as arguments. Dry run by default, idempotent, a value outside the map is never rewritten and is listed. A map with a duplicate, chained, malformed, empty or live-conflicting entry is refused. `restampServiceAccount` corrects `agents.authSubject` of the linked fleet service row only when it equals the map's `from`. `revokeList` reports (never rewrites, never revokes) the OAuth tokens, codes and bearer tokens bound to a dev user; `readBack` proves 0 rows left on a `from` value. Evidence: `convex/__tests__/restampClerkIds.test.ts`.

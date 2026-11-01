@@ -1,4 +1,0 @@
----
-section: Fixed
----
-- **Cloud: the MCP origin carries the VantagePeers icon, so Claude.ai shows the brand instead of a generic icon (task k17455xv7tzgdqr6ys861pd38h8habp5).** Measured on prod dbcfc2fc: `curl https://mcp.vantagepeers.com/favicon.ico` -> 404, and two clients saw a generic connector icon. `GET /favicon.ico`, `/icon.png` (256x256) and `/apple-touch-icon.png` (180x180) are now served publicly beside `/health`, with the bytes vantagepeers.com serves (no new artwork, embedded in `mcp-server/src/brand.ts`). Both transports declare the server identity through `mcpImplementation`: `serverInfo.icons` names the icons on the origin the caller used (HTTP) or carries the 256 px PNG as a data URI (stdio). No Convex change, contract unchanged. Tests: `mcp-server/src/__tests__/favicon.test.ts` 5/5; mcp-server suite 3682 passed / 19 skipped. The plugin repository's own icon is a separate change.
