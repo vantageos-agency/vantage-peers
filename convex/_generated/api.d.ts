@@ -135,6 +135,7 @@ import type * as migrations_reindexMemoriesByPeriod from "../migrations/reindexM
 import type * as migrations_restamp_clerk_ids from "../migrations/restamp_clerk_ids.js";
 import type * as migrations_seed_client_scope_profiles from "../migrations/seed_client_scope_profiles.js";
 import type * as migrations_seed_task_closure_config from "../migrations/seed_task_closure_config.js";
+import type * as migrations_tenantOrgIdCoverage from "../migrations/tenantOrgIdCoverage.js";
 import type * as missionTemplates from "../missionTemplates.js";
 import type * as missions from "../missions.js";
 import type * as nameOnlyCalls from "../nameOnlyCalls.js";
@@ -300,6 +301,7 @@ declare const fullApi: ApiFromModules<{
   "migrations/restamp_clerk_ids": typeof migrations_restamp_clerk_ids;
   "migrations/seed_client_scope_profiles": typeof migrations_seed_client_scope_profiles;
   "migrations/seed_task_closure_config": typeof migrations_seed_task_closure_config;
+  "migrations/tenantOrgIdCoverage": typeof migrations_tenantOrgIdCoverage;
   missionTemplates: typeof missionTemplates;
   missions: typeof missions;
   nameOnlyCalls: typeof nameOnlyCalls;
