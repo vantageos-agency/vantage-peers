@@ -1638,7 +1638,7 @@ export default defineSchema({
 		// by oauth:createPersonRefreshToken from the access token minted beside the
 		// refresh token, copied unchanged by every rotation. They are the CHOICES
 		// made at consent (who, which organisation, which agent, which scopes) and
-		// are never authority: oauth:rotatePersonRefreshToken re-resolves the
+		// are never authority: oauth:rotateRefreshToken re-resolves the
 		// membership, the agent, the roster and the organisation's grant LIVE.
 		principal: v.optional(v.literal("person")),
 		clerkOrgId: v.optional(v.string()),

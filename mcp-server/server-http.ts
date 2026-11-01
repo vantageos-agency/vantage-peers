@@ -1181,7 +1181,7 @@ app.post("/token", async (c) => {
 		const accessToken = randomOpaqueToken();
 		// The person's refresh token is generated here and only its digest is sent.
 		// Its authority is NOT a scope profile: the refresh grant
-		// (oauth:rotatePersonRefreshToken) re-resolves the member, the agent chosen
+		// (oauth:rotateRefreshToken) re-resolves the member, the agent chosen
 		// at consent and the organisation's grant live.
 		const personRefreshToken = randomOpaqueToken();
 		const personRefreshHash = await sha256Hex(personRefreshToken);
@@ -1320,14 +1320,14 @@ app.post("/token", async (c) => {
 			}
 		}
 
-		// A PERSON refresh token has its own door: its authority is re-resolved
+		// A PERSON refresh token takes its own branch of the rotation door: its authority is re-resolved
 		// live from the member, the agent chosen at consent and the organisation,
 		// never from a scope profile.
 		if (record.principal === "person") {
 			const nowPerson = Date.now();
 			const personRotated = (await internalClient().mutation(
 				// biome-ignore lint/suspicious/noExplicitAny: Convex string API
-				"oauth:rotatePersonRefreshToken" as any,
+				"oauth:rotateRefreshToken" as any,
 				{
 					presentedHash: refreshTokenHash,
 					clientId: record.clientId,

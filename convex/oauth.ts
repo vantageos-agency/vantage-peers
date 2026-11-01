@@ -2807,25 +2807,6 @@ const oauthContextShape = v.object({
 // The lookup answers the same `null` for an unknown, revoked or expired hash,
 // and never returns a stored hash or secret.
 // ─────────────────────────────────────────────────────────────────────────────
-/**
- * Is this agent's ID on the roster (allowedAgentIds) of the organisation the
- * mapping row names, right now? An unmapped or inactive org lists nobody. The
- * ONE roster read of the person doors (access-token lookup and refresh).
- */
-async function agentOnLiveRoster(
-	ctx: QueryCtx | MutationCtx,
-	orgMapping: Awaited<ReturnType<typeof lookupOrgMapping>>,
-	agentId: Id<"agents">,
-	door: string,
-): Promise<boolean> {
-	if (orgMapping === null || !orgMapping.isActive) return false;
-	const orgScope = await withOrgScope(ctx, {
-		refuseWithoutThrow: true,
-		actForOrgMapping: orgMapping,
-	});
-	return await isAgentOnScopeRoster(ctx, orgScope, agentId, door);
-}
-
 export const getAccessTokenByHash = query({
 	args: { tokenHash: v.string() },
 	returns: v.union(oauthContextShape, v.null()),
@@ -2867,15 +2848,23 @@ export const getAccessTokenByHash = query({
 		// (isAgentOnScopeRoster -> assertPrincipalListed): no name is read and the
 		// token's label snapshot is not an input. An unmapped / inactive org lists
 		// nobody; so does a mapping with no roster by ID (refused by default).
-		const onRoster =
-			personal === null
-				? undefined
-				: await agentOnLiveRoster(
-						ctx,
-						orgMapping,
-						personal.agentId,
-						"oauth:getAccessTokenByHash",
-					);
+		let onRoster: boolean | undefined;
+		if (personal !== null) {
+			if (orgMapping === null || !orgMapping.isActive) {
+				onRoster = false;
+			} else {
+				const orgScope = await withOrgScope(ctx, {
+					refuseWithoutThrow: true,
+					actForOrgMapping: orgMapping,
+				});
+				onRoster = await isAgentOnScopeRoster(
+					ctx,
+					orgScope,
+					personal.agentId,
+					"oauth:getAccessTokenByHash",
+				);
+			}
+		}
 		return {
 			clientId: row.clientId,
 			userId: row.userId,
@@ -2992,7 +2981,7 @@ export const getRefreshTokenForGrant = query({
 			expiresAt: v.number(),
 			spent: v.boolean(),
 			// Present ONLY on a person row: the /token grant sends it to
-			// oauth:rotatePersonRefreshToken. A seat row carries no such key.
+			// oauth:rotateRefreshToken. A seat row carries no such key.
 			principal: v.optional(v.literal("person")),
 		}),
 		v.null(),
@@ -3215,13 +3204,15 @@ export const rotateRefreshToken = mutation({
 		presentedHash: v.string(),
 		// The client that authenticated at /token; must be the token's own.
 		clientId: v.string(),
-		// The scope profile snapshot the pair is minted from (the grant re-resolves
-		// authority from the CURRENT profile row, never from the old token).
-		scopeProfile: v.string(),
-		scopes: v.array(v.string()),
-		fromAllowList: v.array(v.string()),
-		namespaceReadPrefixes: v.array(v.string()),
-		namespaceWritePrefixes: v.array(v.string()),
+		// SEAT rows: the scope profile snapshot the pair is minted from (the grant
+		// re-resolves authority from the CURRENT profile row, never from the old
+		// token). Required for a seat row, ignored for a PERSON row, whose grant is
+		// re-resolved here from the member, the agent and the organisation.
+		scopeProfile: v.optional(v.string()),
+		scopes: v.optional(v.array(v.string())),
+		fromAllowList: v.optional(v.array(v.string())),
+		namespaceReadPrefixes: v.optional(v.array(v.string())),
+		namespaceWritePrefixes: v.optional(v.array(v.string())),
 		clerkOrgSlug: v.optional(v.string()),
 		accessExpiresAt: v.number(),
 		refreshExpiresAt: v.number(),
@@ -3232,9 +3223,16 @@ export const rotateRefreshToken = mutation({
 			// The replacement pair, generated HERE and returned once: no caller
 			// chooses (or sends) the values it will be handed.
 			issued: v.object({ refresh: v.string(), access: v.string() }),
+			// PERSON rows only: the scopes of the NEW access token, space separated
+			// (OAuth `scope`). A seat answer carries no such key.
+			scope: v.optional(v.string()),
 		}),
 		v.object({ status: v.literal("reused") }),
 		v.object({ status: v.literal("invalid") }),
+		// PERSON rows only: a live token whose person, agent or organisation no
+		// longer qualifies, or whose family is past its absolute lifetime. The
+		// whole family is revoked and nothing is minted.
+		v.object({ status: v.literal("refused"), reason: v.string() }),
 	),
 	handler: async (ctx, args) => {
 		// write-contract: MCP-transport-only — issued via mcp-server client.mutation("oauth:rotateRefreshToken", …) at mcp-server/server-http.ts (the /token refresh_token grant, imperative); never from a subscribing pre-org client shell. The no-org throw is a refusal at an imperative MCP call, never at a render.
@@ -3256,6 +3254,142 @@ export const rotateRefreshToken = mutation({
 		}
 		if (row.expiresAt < Date.now()) return { status: "invalid" as const };
 		if (row.clientId !== args.clientId) return { status: "invalid" as const };
+		if (row.principal === "person") {
+			const door = "oauth:rotateRefreshToken";
+			const now = Date.now();
+			// Past this point a failure is a REFUSAL: the family is revoked (a thrown
+			// error would roll the revocation back) and nothing is minted.
+			const refuse = async (reason: string) => {
+				await revokeFamilyWithRoot(ctx, familyId);
+				return { status: "refused" as const, reason };
+			};
+
+			// C4 - absolute family expiry, measured from the first token of the family.
+			const root =
+				row.familyId === undefined
+					? row
+					: await ctx.db
+							.query("oauth_refresh_tokens")
+							.withIndex("by_tokenHash", (q) => q.eq("tokenHash", familyId))
+							.unique();
+			if (root === null) return await refuse("family-root-missing");
+			const familyDeadline = root.createdAt + personRefreshFamilyMaxMs();
+			if (now >= familyDeadline) return await refuse("family-expired");
+
+			// C1 - the choices must be on the row; nothing is defaulted.
+			if (
+				row.clerkOrgId === undefined ||
+				row.grantedScopes === undefined ||
+				row.askedScopes === undefined ||
+				(row.agentId === undefined && row.connectedAs !== "person")
+			) {
+				return await refuse("consent-record-incomplete");
+			}
+			const orgMapping = await lookupOrgMapping(ctx, { clerkOrgId: row.clerkOrgId });
+			if (orgMapping === null || !orgMapping.isActive) {
+				return await refuse("organisation-inactive");
+			}
+			const member = await resolveLiveMember(
+				ctx,
+				row.userId,
+				row.clerkOrgId,
+				door,
+			);
+			if (!member.ok) return await refuse("not-a-member");
+
+			let choice: { agent: Doc<"agents"> | null; connectedAs?: "person" };
+			if (row.agentId !== undefined) {
+				let personal: Awaited<ReturnType<typeof personalAgentOfToken>>;
+				try {
+					personal = await personalAgentOfToken(
+						ctx,
+						{
+							principal: "person",
+							userId: row.userId,
+							clerkOrgSlug: orgMapping.clerkOrgSlug,
+							clerkOrgId: row.clerkOrgId,
+							agentId: row.agentId,
+							...(row.connectedAs !== undefined
+								? { connectedAs: row.connectedAs }
+								: {}),
+						},
+						door,
+					);
+				} catch (err: unknown) {
+					if (err instanceof ConvexError && typeof err.data === "string") {
+						return await refuse("agent-unavailable");
+					}
+					throw err;
+				}
+				if (personal === null || personal.agentId !== row.agentId) {
+					return await refuse("agent-unavailable");
+				}
+				const orgScope = await withOrgScope(ctx, {
+					refuseWithoutThrow: true,
+					actForOrgMapping: orgMapping,
+				});
+				if (!(await isAgentOnScopeRoster(ctx, orgScope, personal.agentId, door))) {
+					return await refuse("agent-off-roster");
+				}
+				const agent = await ctx.db.get(personal.agentId);
+				if (agent === null) return await refuse("agent-unavailable");
+				choice = { agent };
+			} else {
+				choice = { agent: null, connectedAs: "person" };
+			}
+
+			const refreshToken = randomOpaqueHex(32);
+			const accessToken = randomOpaqueHex(32);
+			const nextRefreshHash = await sha256Hex(refreshToken);
+			const nextAccessHash = await sha256Hex(accessToken);
+			await ctx.db.patch(row._id, { revokedAt: now });
+			// The ONE write door mints the pair. The grant (scopes, allowed
+			// orchestrators, namespaces) is derived there from the organisation's
+			// CURRENT mapping, capped by the scopes consented to; the empty grant
+			// fields below are ignored by it for a rotation (see personRefresh).
+			const minted = await mintAccessToken(ctx, {
+				tokenHash: nextAccessHash,
+				clientId: row.clientId,
+				userId: row.userId,
+				scopes: [],
+				scopeProfile: row.scopeProfile,
+				fromAllowList: [],
+				namespaceReadPrefixes: [],
+				namespaceWritePrefixes: [],
+				expiresAt: args.accessExpiresAt,
+				refreshTokenHash: nextRefreshHash,
+				familyId,
+				principal: "person",
+				orgRole: row.orgRole,
+				personChoice: choice,
+				personRefresh: {
+					// Sliding window, never past the family's absolute deadline.
+					expiresAt: Math.min(args.refreshExpiresAt, familyDeadline),
+					requestedScopes: [],
+					previous: row,
+					orgMapping,
+				},
+			});
+			return {
+				status: "ok" as const,
+				issued: { refresh: refreshToken, access: accessToken },
+				scope: minted.scope,
+			};
+		}
+		// SEAT row: its grant is the scope profile snapshot the caller sends.
+		if (
+			args.scopeProfile === undefined ||
+			args.scopes === undefined ||
+			args.fromAllowList === undefined ||
+			args.namespaceReadPrefixes === undefined ||
+			args.namespaceWritePrefixes === undefined
+		) {
+			throw new ConvexError(
+				"SEAT_ROTATION_ARGS_REQUIRED: a seat refresh token is rotated from its scope profile snapshot (scopeProfile, scopes, fromAllowList, namespaceReadPrefixes, namespaceWritePrefixes)",
+			);
+		}
+		const { scopeProfile, scopes, fromAllowList } = args;
+		const { namespaceReadPrefixes, namespaceWritePrefixes } = args;
 		// Half B (task k17fxe8feeq1k2rb1ggj76e97s8h7m7k): a removed member's
 		// refresh token is refused, before anything is spent or minted.
 		//
@@ -3294,7 +3428,7 @@ export const rotateRefreshToken = mutation({
 			tokenHash: nextRefreshHash,
 			clientId: row.clientId,
 			userId: row.userId,
-			scopeProfile: args.scopeProfile,
+			scopeProfile,
 			expiresAt: args.refreshExpiresAt,
 			createdAt: Date.now(),
 			familyId,
@@ -3303,11 +3437,11 @@ export const rotateRefreshToken = mutation({
 			tokenHash: nextAccessHash,
 			clientId: row.clientId,
 			userId: row.userId,
-			scopes: args.scopes,
-			scopeProfile: args.scopeProfile,
-			fromAllowList: args.fromAllowList,
-			namespaceReadPrefixes: args.namespaceReadPrefixes,
-			namespaceWritePrefixes: args.namespaceWritePrefixes,
+			scopes,
+			scopeProfile,
+			fromAllowList,
+			namespaceReadPrefixes,
+			namespaceWritePrefixes,
 			expiresAt: args.accessExpiresAt,
 			refreshTokenHash: nextRefreshHash,
 			...(args.clerkOrgSlug !== undefined ? { clerkOrgSlug: args.clerkOrgSlug } : {}),
@@ -3336,188 +3470,11 @@ export const rotateRefreshToken = mutation({
 //
 //   createAccessToken          (personRefresh) writes the first refresh row beside
 //                              the access token of the person exchange
-//   rotatePersonRefreshToken   the refresh grant's door for a person row
+//   rotateRefreshToken         the refresh grant's door; a person row takes its own branch
 //   revokePersonRefreshTokens  internal: agent deactivated / organisation off
 //
 // The membership removal path (revokeMemberTokens) reaches these rows too.
 // ─────────────────────────────────────────────────────────────────────────────
-
-/**
- * rotatePersonRefreshToken - service account only. The refresh grant's door for
- * a PERSON row. ONE transaction spends the presented token and mints its
- * replacement pair, after the client has authenticated at /token.
- *
- *   ok       a live token of this client; spent; a new refresh token and a new
- *            access token exist in its FAMILY, stamped with the same agent
- *   reused   the token was already spent or revoked: the whole family (every
- *            refresh and access token descending from the grant) is revoked
- *   refused  a live token whose person, agent or organisation no longer
- *            qualifies, or whose family is past its absolute lifetime: the
- *            whole family is revoked and nothing is minted
- *   invalid  unknown, expired, another client's, or not a person row; nothing
- *            is spent
- *
- * Authority is re-resolved here, from live rows, on every call: the membership
- * (by permanent organisation ID), the organisation's mapping, the stamped agent
- * (active, in the organisation, designating this person) and its place on
- * allowedAgentIds. Nothing the caller sends and nothing copied from the previous
- * token is authority; the previous token supplies only the CHOICES (agent,
- * scopes) and the ceiling the new scopes may not exceed.
- */
-export const rotatePersonRefreshToken = mutation({
-	args: {
-		presentedHash: v.string(),
-		// The client that authenticated at /token; must be the token's own.
-		clientId: v.string(),
-		accessExpiresAt: v.number(),
-		refreshExpiresAt: v.number(),
-	},
-	returns: v.union(
-		v.object({
-			status: v.literal("ok"),
-			issued: v.object({ refresh: v.string(), access: v.string() }),
-			// The scopes of the NEW access token, space separated (OAuth `scope`).
-			scope: v.string(),
-		}),
-		v.object({ status: v.literal("reused") }),
-		v.object({ status: v.literal("invalid") }),
-		v.object({ status: v.literal("refused"), reason: v.string() }),
-	),
-	handler: async (ctx, args) => {
-		// write-contract: MCP-transport-only — issued via mcp-server client.mutation("oauth:rotatePersonRefreshToken", …) at mcp-server/server-http.ts (the /token refresh_token grant for a person row, imperative); never from a subscribing pre-org client shell. The no-org throw is a refusal at an imperative MCP call, never at a render.
-		await requireServiceAccount(ctx, "oauth:rotatePersonRefreshToken");
-		const door = "oauth:rotatePersonRefreshToken";
-		const row = await ctx.db
-			.query("oauth_refresh_tokens")
-			.withIndex("by_tokenHash", (q) => q.eq("tokenHash", args.presentedHash))
-			.unique();
-		if (!row || row.principal !== "person") return { status: "invalid" as const };
-		const familyId = row.familyId ?? row.tokenHash;
-		if (row.revokedAt !== undefined) {
-			// REPLAY of a spent token: revoke what its descent was given.
-			await revokeFamilyWithRoot(ctx, familyId);
-			return { status: "reused" as const };
-		}
-		const now = Date.now();
-		if (row.expiresAt < now) return { status: "invalid" as const };
-		if (row.clientId !== args.clientId) return { status: "invalid" as const };
-
-		// Past this point a failure is a REFUSAL: the family is revoked (a thrown
-		// error would roll the revocation back) and nothing is minted.
-		const refuse = async (reason: string) => {
-			await revokeFamilyWithRoot(ctx, familyId);
-			return { status: "refused" as const, reason };
-		};
-
-		// C4 - absolute family expiry, measured from the first token of the family.
-		const root =
-			row.familyId === undefined
-				? row
-				: await ctx.db
-						.query("oauth_refresh_tokens")
-						.withIndex("by_tokenHash", (q) => q.eq("tokenHash", familyId))
-						.unique();
-		if (root === null) return await refuse("family-root-missing");
-		const familyDeadline = root.createdAt + personRefreshFamilyMaxMs();
-		if (now >= familyDeadline) return await refuse("family-expired");
-
-		// C1 - the choices must be on the row; nothing is defaulted.
-		if (
-			row.clerkOrgId === undefined ||
-			row.grantedScopes === undefined ||
-			row.askedScopes === undefined ||
-			(row.agentId === undefined && row.connectedAs !== "person")
-		) {
-			return await refuse("consent-record-incomplete");
-		}
-		const orgMapping = await lookupOrgMapping(ctx, { clerkOrgId: row.clerkOrgId });
-		if (orgMapping === null || !orgMapping.isActive) {
-			return await refuse("organisation-inactive");
-		}
-		const member = await resolveLiveMember(
-			ctx,
-			row.userId,
-			row.clerkOrgId,
-			door,
-		);
-		if (!member.ok) return await refuse("not-a-member");
-
-		let choice: { agent: Doc<"agents"> | null; connectedAs?: "person" };
-		if (row.agentId !== undefined) {
-			let personal: Awaited<ReturnType<typeof personalAgentOfToken>>;
-			try {
-				personal = await personalAgentOfToken(
-					ctx,
-					{
-						principal: "person",
-						userId: row.userId,
-						clerkOrgSlug: orgMapping.clerkOrgSlug,
-						clerkOrgId: row.clerkOrgId,
-						agentId: row.agentId,
-						...(row.connectedAs !== undefined
-							? { connectedAs: row.connectedAs }
-							: {}),
-					},
-					door,
-				);
-			} catch (err: unknown) {
-				if (err instanceof ConvexError && typeof err.data === "string") {
-					return await refuse("agent-unavailable");
-				}
-				throw err;
-			}
-			if (personal === null || personal.agentId !== row.agentId) {
-				return await refuse("agent-unavailable");
-			}
-			if (!(await agentOnLiveRoster(ctx, orgMapping, personal.agentId, door))) {
-				return await refuse("agent-off-roster");
-			}
-			const agent = await ctx.db.get(personal.agentId);
-			if (agent === null) return await refuse("agent-unavailable");
-			choice = { agent };
-		} else {
-			choice = { agent: null, connectedAs: "person" };
-		}
-
-		const refreshToken = randomOpaqueHex(32);
-		const accessToken = randomOpaqueHex(32);
-		const nextRefreshHash = await sha256Hex(refreshToken);
-		const nextAccessHash = await sha256Hex(accessToken);
-		await ctx.db.patch(row._id, { revokedAt: now });
-		// The ONE write door mints the pair. The grant (scopes, allowed
-		// orchestrators, namespaces) is derived there from the organisation's
-		// CURRENT mapping, capped by the scopes consented to; the empty grant
-		// fields below are ignored by it for a rotation (see personRefresh).
-		const minted = await mintAccessToken(ctx, {
-			tokenHash: nextAccessHash,
-			clientId: row.clientId,
-			userId: row.userId,
-			scopes: [],
-			scopeProfile: row.scopeProfile,
-			fromAllowList: [],
-			namespaceReadPrefixes: [],
-			namespaceWritePrefixes: [],
-			expiresAt: args.accessExpiresAt,
-			refreshTokenHash: nextRefreshHash,
-			familyId,
-			principal: "person",
-			orgRole: row.orgRole,
-			personChoice: choice,
-			personRefresh: {
-				// Sliding window, never past the family's absolute deadline.
-				expiresAt: Math.min(args.refreshExpiresAt, familyDeadline),
-				requestedScopes: [],
-				previous: row,
-				orgMapping,
-			},
-		});
-		return {
-			status: "ok" as const,
-			issued: { refresh: refreshToken, access: accessToken },
-			scope: minted.scope,
-		};
-	},
-});
 
 /** Refresh rows revoked per transaction by revokePersonRefreshTokens. */
 export const PERSON_REFRESH_REVOKE_BATCH = 100;
