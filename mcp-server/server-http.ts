@@ -34,11 +34,7 @@
  */
 
 import { readFileSync } from "node:fs";
-import {
-	createMcpHandler,
-	McpServer,
-	ResourceTemplate,
-} from "@modelcontextprotocol/server";
+import { createMcpHandler, McpServer } from "@modelcontextprotocol/server";
 import {
 	type AuthorizeOutcome,
 	buildDiscoveryDocument,
@@ -58,7 +54,6 @@ import { cors } from "hono/cors";
 import {
 	bearerAuthMiddleware,
 	internalClient,
-	isMasterScope,
 	masterOnlyMiddleware,
 	resolveActorCredentialMode,
 	sha256Hex,
@@ -86,7 +81,7 @@ import {
 import { bootCheckOrExit } from "./src/backendContract.js";
 import { BRAND_ICON_ROUTES, mcpImplementation } from "./src/brand.js";
 import { registerTools } from "./src/tools.js";
-import { listUiResources, readUiResource } from "./src/ui-resources/index.js";
+import { registerUiResources } from "./src/ui-resources/register.js";
 
 let pkg: { version: string };
 try {
@@ -2250,41 +2245,9 @@ app.all("/mcp", bearerAuthMiddleware(), async (c) => {
 
 		registerTools(server, convex, oauthCtx);
 
-		// SEP-1865 ui:// resources for Generative UI primitives
-		// Registered with a ResourceTemplate so that resources/list (via
-		// listCallback) and resources/read both work.
-		// URI pattern: ui://vp/v1/{primitive}  — query params read from the URL object.
-		const uiResourceTemplate = new ResourceTemplate("ui://vp/v1/{primitive}", {
-			list: async () => ({ resources: listUiResources() }),
-		});
-		server.registerResource(
-			"vp-ui",
-			uiResourceTemplate,
-			{
-				description:
-					"SEP-1865 VantagePeers Generative UI primitives (HTML inline, Shadow DOM scoped)",
-			},
-			async (uri) => {
-				const fetchConvex = async (
-					functionName: string,
-					args: Record<string, unknown>,
-				) => {
-					// biome-ignore lint/suspicious/noExplicitAny: Convex string API
-					return convex.query(functionName as any, args as any);
-				};
-				// Day-165-parity — thread the caller identity into the ui-resource
-				// primitives the same way tools.ts does (mirrors the
-				// master/callerIdentities computation at tools.ts:5712/5808/5934), so
-				// briefingNotes:get/list resolve visibility inside Convex instead of
-				// falling into the `callerIdentities === undefined` legacy-open branch.
-				const master = oauthCtx === undefined || isMasterScope(oauthCtx);
-				const callerIdentities = master ? undefined : oauthCtx.fromAllowList;
-				return await readUiResource(uri.toString(), fetchConvex, {
-					master,
-					callerIdentities,
-				});
-			},
-		);
+		// SEP-1865 ui:// resources for Generative UI primitives — see
+		// src/ui-resources/register.ts.
+		registerUiResources(server, convex, oauthCtx);
 		return server;
 	};
 
