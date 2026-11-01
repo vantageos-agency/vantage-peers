@@ -14,6 +14,7 @@
 import { convexTest } from "convex-test";
 import { describe, expect, test } from "vitest";
 import { api, internal } from "../_generated/api";
+import type { Id } from "../_generated/dataModel";
 import schema from "../schema";
 import { testClerkOrgId } from "../../tests/fixtures/testClerkOrgId";
 
@@ -42,11 +43,8 @@ async function seedRow(
 	});
 }
 
-const read = (t: T, id: string) =>
-	t.run(async (ctx) =>
-		// biome-ignore lint/suspicious/noExplicitAny: id is an Id<"client_org_mapping"> from seedRow
-		ctx.db.get(id as any),
-	);
+const read = (t: T, id: Id<"client_org_mapping">) =>
+	t.run(async (ctx) => ctx.db.get(id));
 
 describe("setActive", () => {
 	test("WRITTEN: deactivates an id-less row; read back isActive false; before/after printed", async () => {
