@@ -86,7 +86,7 @@ export const VERIFIED_ACTOR_DOORS: ReadonlySet<string> = new Set([
 	// claimless call (RBAC_DENIED verified-actor-required).
 	"improvisationDigest:scanWindow",
 	// The memory doors the MCP calls (task k1701vj2gxbacdjqr1avpxx7en8hdw2q; listEpisodes declares it too and has no tool): a seat acting for its
-	// org owns `orchestrator/<its own name>`, the name read from this verified ID.
+	// org owns `orchestrator/<its own agent ID>`, the ID taken from this verified proof.
 	"memories:storeMemory",
 	"memories:listMemories",
 	"episodes:storeEpisode",
