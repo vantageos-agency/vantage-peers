@@ -68,6 +68,7 @@ async function seed(t: T, opts: { bind?: boolean } = { bind: true }) {
 				await ctx.db.insert("githubOwnerBindings", {
 					owner: slug,
 					orgId: slug,
+					clerkOrgId: testClerkOrgId(slug),
 					installationId: slug === "org-a" ? 11 : 22,
 					accountType: "Organization",
 					githubUserLogin: `gh-${slug}`,
@@ -257,6 +258,7 @@ describe("existing mappings without proof are REPORTED", () => {
 				await ctx.db.insert("githubOwnerBindings", {
 					owner: `own${i}`,
 					orgId: "org-a",
+					clerkOrgId: testClerkOrgId("org-a"),
 					installationId: i,
 					accountType: "Organization",
 					githubUserLogin: `gh${i}`,
@@ -368,6 +370,7 @@ describe("a revoked binding stops routing (it stays REPORTED)", () => {
 			await ctx.db.insert("githubOwnerBindings", {
 				owner: "org-a",
 				orgId: "org-a",
+				clerkOrgId: testClerkOrgId("org-a"),
 				installationId,
 				accountType: "Organization",
 				githubUserLogin: "octocat",
