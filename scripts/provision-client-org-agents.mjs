@@ -31,7 +31,7 @@ import { chmodSync, existsSync, mkdirSync, realpathSync, writeFileSync } from "n
 import { basename, dirname, join, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import { ConvexHttpClient } from "convex/browser";
-import { getScopedUserToken } from "../mcp-server/src/serviceAccountAuth.ts";
+import { getServiceAccountToken } from "../mcp-server/src/serviceAccountAuth.ts";
 import { api } from "../convex/_generated/api.js";
 import { mintOrgAdminToken, ownerStepCommand } from "./lib/org-admin-token.mjs";
 import { planRoster, rosterStepCommand } from "./lib/roster-plan.mjs";
@@ -101,7 +101,15 @@ const writeSecret = (name, value) => {
 };
 
 const svc = new ConvexHttpClient(process.env.CONVEX_URL);
-svc.setAuth(await getScopedUserToken(process.env.CLERK_SERVICE_ACCOUNT_USER_ID_VANTAGE_PEERS));
+// The service account authenticates with the "convex"-TEMPLATE token (aud convex), the same minting the
+// MCP's service client uses (getServiceAccountToken). A Clerk NATIVE session token has no aud and prod
+// Convex rejects it (NoAuthProvider, convex/auth.config.ts requires applicationID "convex"). Every svc
+// call below is master/service-account scoped by identity (getByClerkSlug, oauth.create*); none reads
+// native org claims, so no native token is needed in this script.
+process.env.CLERK_SERVICE_ACCOUNT_USER_ID = process.env.CLERK_SERVICE_ACCOUNT_USER_ID_VANTAGE_PEERS;
+const svcToken = await getServiceAccountToken();
+if (!svcToken) throw new Error("service-account \"convex\" template token not minted (CLERK_SECRET_KEY / CLERK_SERVICE_ACCOUNT_USER_ID_VANTAGE_PEERS)");
+svc.setAuth(svcToken);
 const admin = new ConvexHttpClient(process.env.CONVEX_URL);
 const adminUserId = process.env.CLERK_ORG_ADMIN_USER_ID_VANTAGE_PEERS;
 // The agent registry takes its org from the token's org_id. The token is minted FOR the requested
