@@ -21,6 +21,7 @@
 
 import type { ConvexHttpClient } from "convex/browser";
 import { ConvexHttpClient as ConvexHttpClientCtor } from "convex/browser";
+import { isMasterScope, type OAuthContext } from "./auth.js";
 import { getServiceAccountToken } from "./serviceAccountAuth.js";
 import { withSingleRetryOnSocketClose } from "./socketRetry.js";
 
@@ -71,7 +72,7 @@ const RETRIED_METHODS = new Set(["query"]);
  */
 export function selectConvexClientForRequest(
 	convexUrl: string,
-	oauthCtx: { clerkJwt?: string } | undefined,
+	oauthCtx: OAuthContext | undefined,
 	deps?: {
 		createServiceAccountClient?: (url: string) => ConvexHttpClient;
 		createPlainClient?: (url: string) => ConvexHttpClient;
@@ -88,7 +89,78 @@ export function selectConvexClientForRequest(
 		client.setAuth(clerkJwt);
 		return withQueryRetry(client);
 	}
-	return createServiceAccountClient(convexUrl);
+	// Absence is never master: no verified context, no client.
+	if (oauthCtx === undefined) {
+		return refusingClient("no authorization context on this request");
+	}
+	// The fleet (master bearer, local stdio trust): the plain service account.
+	if (isMasterScope(oauthCtx)) {
+		return createServiceAccountClient(convexUrl);
+	}
+	// Every other bearer reaches Convex as the service account ACTING FOR its own
+	// organisation (task k179y0wpsd6fv7055f4p2w6b358hdrxe). The org is the
+	// permanent ID `oauth:getAccessTokenByHash` read LIVE from the token row's
+	// ACTIVE mapping: a verified claim of the principal, never a tool argument.
+	// A bearer whose org resolves to no ID gets no client at all.
+	const actingOrg = oauthCtx.orgClerkId;
+	if (actingOrg === undefined || actingOrg === "") {
+		return refusingClient(
+			"this bearer's organisation resolves to no active organisation ID",
+		);
+	}
+	return withActingOrg(createServiceAccountClient(convexUrl), actingOrg);
+}
+
+/** The reserved argument Convex reads on the service-account branch only. */
+export const ACTING_ORG_ARG = "__actingOrg";
+
+/**
+ * Every query/mutation/action of `client` carries `__actingOrg = org`, set last
+ * so a caller-supplied value never survives. A new args object each call; the
+ * caller's is not mutated. Other members pass through.
+ */
+export function withActingOrg(
+	client: ConvexHttpClient,
+	org: string,
+): ConvexHttpClient {
+	return new Proxy(client, {
+		get(target, prop, receiver) {
+			const original = Reflect.get(target, prop, receiver);
+			if (
+				typeof prop === "string" &&
+				INTERCEPTED_METHODS.has(prop) &&
+				typeof original === "function"
+			) {
+				return (fn: unknown, args?: Record<string, unknown>, ...rest: unknown[]) =>
+					(original as (...a: unknown[]) => unknown).call(
+						target,
+						fn,
+						{ ...(args ?? {}), [ACTING_ORG_ARG]: org },
+						...rest,
+					);
+			}
+			return original;
+		},
+	});
+}
+
+/**
+ * A client none of whose calls reach the wire: each rejects RBAC_DENIED. What a
+ * caller with no resolvable organisation gets instead of the fleet identity.
+ */
+function refusingClient(reason: string): ConvexHttpClient {
+	const refuse = async (): Promise<never> => {
+		throw new Error(
+			`RBAC_DENIED: refusing to call Convex — ${reason} (absence is never the fleet)`,
+		);
+	};
+	return {
+		query: refuse,
+		mutation: refuse,
+		action: refuse,
+		setAuth: () => undefined,
+		clearAuth: () => undefined,
+	} as unknown as ConvexHttpClient;
 }
 
 /**
