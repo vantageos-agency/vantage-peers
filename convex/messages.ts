@@ -2205,7 +2205,7 @@ export const listMessages = query({
 					.take(fetchCap);
 
 				// Belt-and-suspenders: ensure no cross-tenant row leaks through.
-				rows = rows.filter((r) => rowInOrg(r, orgId));
+				rows = rows.filter((r) => r.tenantOrgId === orgId);
 			}
 		} else {
 			// ── Master path — existing index logic, unchanged ──────────────────────
