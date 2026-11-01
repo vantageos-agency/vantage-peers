@@ -18,6 +18,12 @@ still compare slugs.
 4. Backfill, one table at a time, dry run first:
    `npx convex run migrations/backfill_org_clerk_id:run '{"table":"missions"}'`, repeat with
    `cursor` until `isDone`, continue with `nextTable`; then the same with `"dryRun":false`.
+   `run` is age-guarded: a row whose slug mapping was created AFTER the row (the slug changed
+   hands) or is inactive is never written and is listed in `undecidableRows` as
+   `mappingNewerThanRow` / `inactiveMapping`; resolve those by hand, never by a retry.
+   `messages` and `messageReceipts` (tenantOrgId), `tasks` and `oauth_scope_profiles` also have
+   dedicated counters: `migrations/tenantOrgIdCoverage` and `migrations/clerkOrgIdCoverage`
+   (`count`, then `backfill`), which apply the same guard.
 5. Re-run step 4 as a dry run: `toFill` must be 0; `undecidableRows` lists what needs a decision.
 
 The backfill covers 19 tables, `githubRepoMapping` and `issues` included. Its slug-to-ID
