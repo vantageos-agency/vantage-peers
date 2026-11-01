@@ -102,13 +102,26 @@ export function selectConvexClientForRequest(
 	// permanent ID `oauth:getAccessTokenByHash` read LIVE from the token row's
 	// ACTIVE mapping: a verified claim of the principal, never a tool argument.
 	// A bearer whose org resolves to no ID gets no client at all.
-	const actingOrg = oauthCtx.orgClerkId;
-	if (actingOrg === undefined || actingOrg === "") {
+	const actingOrg = actingOrgOfBearer(oauthCtx);
+	if (actingOrg === undefined) {
 		return refusingClient(
 			"this bearer's organisation resolves to no active organisation ID",
 		);
 	}
 	return withActingOrg(createServiceAccountClient(convexUrl), actingOrg);
+}
+
+/**
+ * The organisation a NON-master, non-Clerk bearer's calls act for: the
+ * permanent org ID on its verified oauthContext, or undefined (no client is
+ * then given). The ONE predicate the client selection and the ui:// read gate
+ * share.
+ */
+export function actingOrgOfBearer(
+	oauthCtx: Pick<OAuthContext, "orgClerkId">,
+): string | undefined {
+	const org = oauthCtx.orgClerkId;
+	return org === undefined || org === "" ? undefined : org;
 }
 
 /** The reserved argument Convex reads on the service-account branch only. */
