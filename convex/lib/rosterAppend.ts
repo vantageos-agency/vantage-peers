@@ -13,14 +13,13 @@
 //
 // EXPAND-PHASE DUAL WRITE. The legacy NAME roster (`allowedOrchestrators`) still
 // feeds the readers that compare a stored name, so the agent's exact stored name
-// is appended there too (deduped spelling-insensitively). That copy is a label
+// is appended there too (deduped on the exact stored name). That copy is a label
 // snapshot, never an authority: nothing that decides on an agent reads it.
 
-import { ConvexError } from "convex/values";
-import { normalizeOrchestratorId } from "../_helpers/normalizeOrchestratorId";
 import type { Id } from "../_generated/dataModel";
 import type { MutationCtx } from "../_generated/server";
 import type { OrgMappingView } from "./authOrgMapping";
+import { requireAgentsOfOrg } from "./rosterIds";
 
 export type RosterAppend = {
 	previous: Id<"agents">[];
@@ -34,20 +33,20 @@ export async function appendAgentsToRoster(
 	agentIds: readonly Id<"agents">[],
 ): Promise<RosterAppend> {
 	const previous = row.allowedAgentIds ?? [];
+	// The package judges each agent (active, stamped with this org's permanent ID);
+	// nothing is compared here. Throws AGENT_NOT_IN_ORG before any write.
+	const listed = await requireAgentsOfOrg(
+		ctx,
+		row.clerkOrgSlug,
+		agentIds,
+		row.clerkOrgId,
+	);
 	const current: Id<"agents">[] = [...previous];
 	const labels = [...row.allowedOrchestrators];
-	for (const id of agentIds) {
-		const agent = await ctx.db.get(id);
-		if (agent === null || !agent.isActive || agent.orgSlug !== row.clerkOrgSlug) {
-			throw new ConvexError(
-				`AGENT_NOT_IN_ORG: "${id}" is not an active agent of org "${row.clerkOrgSlug}"; a roster lists the agents of its own organisation only`,
-			);
-		}
+	for (const id of listed) {
 		if (!current.includes(id)) current.push(id);
-		const label = normalizeOrchestratorId(agent.name);
-		if (!labels.some((entry) => normalizeOrchestratorId(entry) === label)) {
-			labels.push(agent.name);
-		}
+		const agent = await ctx.db.get(id);
+		if (agent !== null && !labels.includes(agent.name)) labels.push(agent.name);
 	}
 	const added =
 		current.length !== previous.length ||
