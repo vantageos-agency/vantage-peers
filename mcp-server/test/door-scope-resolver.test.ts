@@ -19,6 +19,7 @@ import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 import * as briefingNotes from "../../convex/briefingNotes";
 import * as businessUnits from "../../convex/businessUnits";
+import * as diary from "../../convex/diary";
 import * as githubRepoMapping from "../../convex/githubRepoMapping";
 import * as kb from "../../convex/kb";
 import * as kbMutations from "../../convex/kbMutations";
@@ -45,6 +46,7 @@ const TOOLS_SRC = readFileSync(resolve(HERE, "../src/tools.ts"), "utf8");
 const MODULES: Record<string, Record<string, unknown>> = {
 	briefingNotes,
 	businessUnits,
+	diary,
 	githubRepoMapping,
 	kb,
 	kbMutations,
@@ -276,6 +278,10 @@ const SITES: [string, string, Legacy, boolean][] = [
 	["create_briefing_note", "briefingNotes:create", org, false],
 	["get_briefing_note", "briefingNotes:get", org, false],
 	["list_briefing_notes", "briefingNotes:list", org, false],
+	// task k176723g3m5cczsq44ak9fbgm58hd0tx: the diary doors take verifiedOrg
+	["write_diary", "diary:write", org, false],
+	["get_diary", "diary:get", org, false],
+	["list_diaries", "diary:list", org, false],
 	[
 		"search_briefing_notes_by_keyword",
 		"briefingNotes:searchBriefingNotesByKeyword",

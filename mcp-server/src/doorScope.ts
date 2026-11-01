@@ -87,6 +87,11 @@ export const DOOR_SCOPE: Readonly<Record<string, DoorScopeRule>> = {
 	"briefingNotes:get": { verifiedOrg: "always" },
 	"briefingNotes:list": { verifiedOrg: "always" },
 	"briefingNotes:searchBriefingNotesByKeyword": { verifiedOrg: "always" },
+	// diary (task k176723g3m5cczsq44ak9fbgm58hd0tx): a seat reaches these as the
+	// service account, so the door runs under the verified org's member scope
+	"diary:write": { verifiedOrg: "always" },
+	"diary:get": { verifiedOrg: "always" },
+	"diary:list": { verifiedOrg: "always" },
 	// business units
 	"businessUnits:create": { verifiedOrg: "always" },
 	"businessUnits:update": { verifiedOrg: "always" },
