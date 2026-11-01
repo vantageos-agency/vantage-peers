@@ -42,7 +42,7 @@ import { internalMutation, internalQuery } from "../_generated/server";
 import {
 	indexBySlug,
 	loadMappingRows,
-	resolveSlug,
+	resolveSlugForRow,
 } from "./backfill_org_clerk_id";
 
 const tableValidator = v.union(
@@ -137,6 +137,8 @@ const REASON_NAME = {
 	ambiguousMapping: "ambiguousSlug",
 	mappingHasNoClerkId: "mappingHasNoClerkId",
 	mappingRecordInvalid: "mappingRecordInvalid",
+	inactiveMapping: "inactiveMapping",
+	mappingNewerThanRow: "mappingNewerThanRow",
 } as const satisfies Record<string, Unresolved>;
 type Resolution =
 	| { kind: "id"; clerkOrgId: string }
@@ -189,25 +191,14 @@ export const backfill = internalMutation({
 
 		// The mapping rows are read once per call; the slug -> ID derivation is the
 		// package's backfill-only resolver, reached through backfill_org_clerk_id's
-		// `resolveSlug` (the one place that wraps it). This module adds only the
-		// "active" requirement and the reason names.
+		// `resolveSlugForRow` (the guarded resolve: active requirement + AGE CHECK,
+		// shared with backfill_org_clerk_id:run). This module adds only reason names.
 		const mappings = indexBySlug(await loadMappingRows(ctx.db));
 		const resolve = async (
 			slug: string,
 			rowCreationTime: number,
 		): Promise<Resolution> => {
-			const rows = mappings.get(slug) ?? [];
-			if (rows.length === 1 && !rows[0].isActive) {
-				return { kind: "unresolved", reason: "inactiveMapping" };
-			}
-			// AGE CHECK. A slug is a label that can change hands: the CURRENT mapping
-			// of a slug may belong to an organisation that took it after this row was
-			// written under the former holder. A mapping created after the row cannot
-			// be the org that stamped it, so the row is never resolved from it.
-			if (rows.length === 1 && rows[0]._creationTime > rowCreationTime) {
-				return { kind: "unresolved", reason: "mappingNewerThanRow" };
-			}
-			const resolved = await resolveSlug(mappings, slug);
+			const resolved = await resolveSlugForRow(mappings, slug, rowCreationTime);
 			if (resolved.kind === "id") return resolved;
 			return { kind: "unresolved", reason: REASON_NAME[resolved.reason] };
 		};

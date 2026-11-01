@@ -20,7 +20,11 @@
 //   ambiguousMapping     the slug names more than one mapping row;
 //   mappingHasNoClerkId  the mapping exists but its clerkOrgId is not filled yet (run
 //                        the mapping fill first);
-//   mappingRecordInvalid the mapping row is not well formed for the package.
+//   mappingRecordInvalid the mapping row is not well formed for the package;
+//   inactiveMapping      the slug's single mapping is not active;
+//   mappingNewerThanRow  AGE CHECK: the mapping was created after the row, so a slug
+//                        that changed hands never writes the new holder's ID onto the
+//                        former holder's row (resolveSlugForRow).
 // A row with NO slug (fleet-owned, unstamped) is counted `noSlug` and left alone:
 // backfill_org_stamp decides its slug first; this migration never invents one.
 //
@@ -109,7 +113,9 @@ type Reason =
 	| "orgUnmapped"
 	| "ambiguousMapping"
 	| "mappingHasNoClerkId"
-	| "mappingRecordInvalid";
+	| "mappingRecordInvalid"
+	| "inactiveMapping"
+	| "mappingNewerThanRow";
 
 export type Resolution =
 	| { kind: "id"; clerkOrgId: string }
@@ -186,6 +192,34 @@ export async function resolveSlug(
 	};
 }
 
+/**
+ * THE GUARDED RESOLVE every writer uses. Resolves `slug` for a row created at
+ * `rowCreationTime`, and refuses where the slug cannot be trusted to name the org that
+ * stamped the row:
+ *   inactiveMapping      the single mapping for the slug is not active;
+ *   mappingNewerThanRow  AGE CHECK. A slug is a label that can change hands: the CURRENT
+ *                        mapping of a slug may belong to an organisation that took it
+ *                        AFTER this row was written under the former holder. A mapping
+ *                        created after the row cannot be the org that stamped it, so the
+ *                        row is never resolved from it (and never written).
+ * Everything else is `resolveSlug`. No writer calls `resolveSlug` directly; a sweep in
+ * convex/__tests__/backfillRunAgeGuard.test.ts fails on one that does.
+ */
+export async function resolveSlugForRow(
+	bySlug: Map<string, MappingRow[]>,
+	slug: string,
+	rowCreationTime: number,
+): Promise<Resolution> {
+	const rows = bySlug.get(slug) ?? [];
+	if (rows.length === 1 && !rows[0].isActive) {
+		return { kind: "undecidable", reason: "inactiveMapping" };
+	}
+	if (rows.length === 1 && rows[0]._creationTime > rowCreationTime) {
+		return { kind: "undecidable", reason: "mappingNewerThanRow" };
+	}
+	return await resolveSlug(bySlug, slug);
+}
+
 const mappingInventoryValidator = v.object({
 	clerkOrgSlug: v.string(),
 	clerkOrgId: v.union(v.string(), v.null()),
@@ -246,6 +280,8 @@ const reasonCountsValidator = v.object({
 	ambiguousMapping: v.number(),
 	mappingHasNoClerkId: v.number(),
 	mappingRecordInvalid: v.number(),
+	inactiveMapping: v.number(),
+	mappingNewerThanRow: v.number(),
 });
 
 const resultValidator = v.object({
@@ -269,7 +305,10 @@ const resultValidator = v.object({
 	nextTable: v.union(tableValidator, v.null()),
 });
 
-type PageRow = { _id: string } & Record<string, unknown>;
+type PageRow = { _id: string; _creationTime: number } & Record<
+	string,
+	unknown
+>;
 
 export const run = internalMutation({
 	args: {
@@ -309,6 +348,8 @@ export const run = internalMutation({
 			ambiguousMapping: 0,
 			mappingHasNoClerkId: 0,
 			mappingRecordInvalid: 0,
+			inactiveMapping: 0,
+			mappingNewerThanRow: 0,
 		};
 		const undecidableRows: { id: string; slug: string; reason: string }[] = [];
 
@@ -323,7 +364,11 @@ export const run = internalMutation({
 				noSlug++;
 				continue;
 			}
-			const resolution = await resolveSlug(mappings, slug);
+			const resolution = await resolveSlugForRow(
+				mappings,
+				slug,
+				row._creationTime,
+			);
 			if (resolution.kind === "undecidable") {
 				byReason[resolution.reason]++;
 				undecidableRows.push({ id: row._id, slug, reason: resolution.reason });

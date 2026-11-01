@@ -89,6 +89,8 @@ carry `tenantOrgId` (schema), and 0 reads filter on it (`grep -n tenantOrgId con
 
 Traced, not fixed (owner sigma, priority low): Fleet-orchestrator tasks created before 2026-10-29 (~T00:20 UTC, commit c377f33, task k176y0q5jcz3m8m673bf61kva98h49js) still carry the operator org stamp; later ones are unstamped fleet rows by ruling (Pi receipt k9726nnhw9c2fqpg3g5p4wjthx8hcv5d). Operator-org doors read the older ones and not the newer: harmless for clients, inconsistent for the operator. Traced, not fixed.
 
+Traced, not fixed (owner sigma, priority low): 14 rows carry a tenantId no client_org_mapping holds (absentSlug): messages jn7cj269kzqs8czqe0kdp04nth882x4v, jn7528tvya37t7zdhmbvm9yq99882any, jn7djdzkea88c09xe3p9yan9vh8829rf, jn76m229td2mtkm6y51f3g0dsx882t20, jn7eweb34ge3hc1f9yve806gad8dbxem, jn711ebhw2bq8d9ye89gd73thh8dhm56, jn7dnw98ydqk4yhx1hmyw22kn18dhbz8; messageReceipts k9711rp9gk5pxte5gnrrrwfxp1882zrr, k978cfqx0yazxez5h9jk1vdxbn883pkp, k976ncw01vzxa8v24pxjfhjb1s883rt4, k97cgemkgta6w6g1n85jav8ewh882agr, k977t9ygqs1ce0pd0yxmxfhnq98dbn35, k97apct6zj64b1f9x57wadn58s8dh39m, k970m5dp548bh2n5jjgp9r7k598dh6t0. They stay refused to every org door; no hand resolution, no deletion (Pi receipt k97f7qaqn3wm311zbws1v5wnbs8hcmv2). Traced, not fixed.
+
 ## After PR (1): the sweep re-run on the fixed tree
 
 The three commands re-run at the PR (1) head. Compared by (file, line text) so that shifted line numbers do not count:
