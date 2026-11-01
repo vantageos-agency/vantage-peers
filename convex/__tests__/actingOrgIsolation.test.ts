@@ -256,6 +256,7 @@ async function seed(t: T): Promise<Seeded> {
 			await ctx.db.insert("githubOwnerBindings", {
 				owner: `${org}-owner`,
 				orgId: org,
+				clerkOrgId: testClerkOrgId(org),
 				installationId: org === A ? 1 : 2,
 				accountType: "Organization",
 				githubUserLogin: `${MARK[org]}-login`,

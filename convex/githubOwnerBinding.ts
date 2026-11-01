@@ -1,4 +1,4 @@
-import { hasFleetRead } from "@vantageos/cloud-identity";
+import { hasFleetRead, sameOrg } from "@vantageos/cloud-identity";
 import { v } from "convex/values";
 import type { Doc } from "./_generated/dataModel";
 import {
@@ -174,11 +174,20 @@ export const listBindings = query({
 			"githubOwnerBinding:listBindings",
 		);
 		const opts = { numItems: pageSize(args.limit), cursor: args.cursor ?? null };
+		// A member's bindings are those stamped with its organisation's PERMANENT
+		// ID. The slug is a label another organisation can take over: the new
+		// holder of a former holder's slug must never be handed the former
+		// holder's bindings. A member whose org has no ID, or a binding with none,
+		// matches nothing.
+		const orgClerkId = scope.orgClerkId;
+		if (!hasFleetRead(scope) && orgClerkId === undefined) {
+			return { items: [], nextCursor: null };
+		}
 		const page = hasFleetRead(scope)
 			? await ctx.db.query("githubOwnerBindings").paginate(opts)
 			: await ctx.db
 					.query("githubOwnerBindings")
-					.withIndex("by_org", (q) => q.eq("orgId", scope.orgSlug as string))
+					.withIndex("by_clerk_org_id", (q) => q.eq("clerkOrgId", orgClerkId))
 					.paginate(opts);
 		return {
 			items: page.page.map(toView),
@@ -217,7 +226,12 @@ export async function collectUnprovenMappings(
 		const binding = owner === null ? null : await activeBindingForOwner(ctx, owner);
 		if (binding === null) {
 			out.push({ repo: m.repo, orgId: m.orgId, project: m.project, reason: "owner-not-bound" });
-		} else if (binding.orgId !== m.orgId) {
+		} else if (
+			// The binding and the mapping belong to the same org only by permanent
+			// ID (the package's `sameOrg`); equal slugs prove nothing after a takeover,
+			// and a side with no ID matches nobody.
+			!sameOrg({ id: binding.clerkOrgId }, { id: m.clerkOrgId })
+		) {
 			out.push({
 				repo: m.repo,
 				orgId: m.orgId,

@@ -1151,7 +1151,11 @@ export default defineSchema({
 	// installation is deleted/suspended (HMAC-verified `installation` webhook).
 	githubOwnerBindings: defineTable({
 		owner: v.string(), // lowercase GitHub login (user or organisation)
-		orgId: v.string(), // client_org_mapping.clerkOrgSlug
+		orgId: v.string(), // client_org_mapping.clerkOrgSlug (a renamable LABEL)
+		// The owning org's permanent Clerk org id: the identity a member read and
+		// the unproven-mapping report compare (task k179y0wpsd6fv7055f4p2w6b358hdrxe).
+		// Optional during the expand phase; a binding without it matches no member.
+		clerkOrgId: v.optional(v.string()),
 		installationId: v.number(),
 		accountType: v.string(), // "User" | "Organization" as reported by GitHub
 		githubUserLogin: v.string(), // the GitHub user who authorised the install
@@ -1162,6 +1166,7 @@ export default defineSchema({
 	})
 		.index("by_owner", ["owner"])
 		.index("by_org", ["orgId"])
+		.index("by_clerk_org_id", ["clerkOrgId"])
 		.index("by_installation", ["installationId"]),
 
 	// ── businessUnits ─────────────────────────────────────────────────────────
