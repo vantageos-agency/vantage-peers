@@ -5377,7 +5377,9 @@ export function registerTools(
 			dependsOn: z
 				.array(taskIdSchema)
 				.optional()
-				.describe("Task IDs that must be completed before this task can start"),
+				.describe(
+					"Task IDs that must be completed before this task can start. REPLACES the whole existing list (an empty array clears it); to add without losing existing entries use add_task_dependency.",
+				),
 			missionId: missionIdSchema
 				.optional()
 				.describe("Link to a mission (Convex document ID)"),
@@ -6053,6 +6055,9 @@ export function registerTools(
 		{ kind: "from", fromArg: "callerOrchestrator" },
 		"add_task_dependency",
 		"Add dependency task IDs to a task so it cannot start until all listed tasks complete. " +
+			"APPENDS: the new IDs are merged into the task's existing dependsOn (deduplicated, existing first) and the full resulting list is returned; nothing already there is removed. " +
+			"Each ID must be an existing task of the same organisation; a self-dependency or a cycle is refused. " +
+			"To REPLACE the whole list use update_task dependsOn. " +
 			"WHEN: use when creating a task that depends on prior work not yet captured in dependsOn. " +
 			"EXAMPLE: add_task_dependency taskId='k178d3ns...' dependsOn=['k17bbbbb...'] callerOrchestrator='alpha'.",
 		{
@@ -6077,22 +6082,29 @@ export function registerTools(
 			try {
 				const orgDenied = unresolvedOrgDenial("add_task_dependency");
 				if (orgDenied) return orgDenied;
+				// addDependsOn APPENDS inside the mutation's transaction (dependsOn would
+				// replace the list); the door validates every id.
 				const updateArgs: Record<string, any> = {
 					taskId: taskId as any,
-					dependsOn: dependsOn.map((id: string) => id as any),
+					addDependsOn: dependsOn.map((id: string) => id as any),
 				};
 				if (callerOrchestrator)
 					updateArgs.callerOrchestrator = callerOrchestrator;
 
 				Object.assign(updateArgs, doorScopeArgs("tasks:update", callerOrchestrator));
 				await convex.mutation("tasks:update" as any, updateArgs);
+				// The door returns null; report the list it left on the row.
+				const row = (await convex.query("tasks:getById" as any, { taskId })) as {
+					dependsOn?: string[];
+				} | null;
+				const resulting = row?.dependsOn ?? [];
 
 				return {
 					content: [
 						{
 							type: "text",
 							text: JSON.stringify(
-								{ taskId, dependsOn, updated: true },
+								{ taskId, dependsOn: resulting, updated: true },
 								null,
 								2,
 							),
