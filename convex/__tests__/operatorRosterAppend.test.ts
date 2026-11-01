@@ -10,7 +10,8 @@
 //   ADD        the agent's id and exact stored name are appended; entries already there untouched, in order
 //   AGAIN      a second run changes nothing (added: false)
 //   LABELONLY  id present, label missing -> only the label is appended
-//   EXACT      a label equal to the stored name is not duplicated; the id is the identity, no name comparison
+//   EXACT      a label equal to the stored name is not duplicated
+//   CASE       a label differing only in case is not duplicated
 //   OTHERORG   an agent of a client org is refused, roster untouched
 //   INACTIVE   an inactive agent is refused, roster untouched
 //   MISSING    an id naming no agent is refused

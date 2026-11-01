@@ -13,9 +13,10 @@
 //
 // EXPAND-PHASE DUAL WRITE. The legacy NAME roster (`allowedOrchestrators`) still
 // feeds the readers that compare a stored name, so the agent's exact stored name
-// is appended there too (deduped on the exact stored name). That copy is a label
+// is appended there too (deduped under normalizeOrchestratorId). That copy is a label
 // snapshot, never an authority: nothing that decides on an agent reads it.
 
+import { normalizeOrchestratorId } from "../_helpers/normalizeOrchestratorId";
 import type { Id } from "../_generated/dataModel";
 import type { MutationCtx } from "../_generated/server";
 import type { OrgMappingView } from "./authOrgMapping";
@@ -43,10 +44,17 @@ export async function appendAgentsToRoster(
 	);
 	const current: Id<"agents">[] = [...previous];
 	const labels = [...row.allowedOrchestrators];
+	// Normalised once into a set (spelling-insensitive dedupe, as before the
+	// shared helper); the stored name is what gets appended.
+	const normalisedLabels = new Set(labels.map(normalizeOrchestratorId));
 	for (const id of listed) {
 		if (!current.includes(id)) current.push(id);
 		const agent = await ctx.db.get(id);
-		if (agent !== null && !labels.includes(agent.name)) labels.push(agent.name);
+		if (agent === null) continue;
+		const key = normalizeOrchestratorId(agent.name);
+		if (normalisedLabels.has(key)) continue;
+		normalisedLabels.add(key);
+		labels.push(agent.name);
 	}
 	const added =
 		current.length !== previous.length ||
