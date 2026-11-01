@@ -121,6 +121,17 @@ CLERK_CURL_CONFIG=<0600 curl config>  node scripts/onboard-person.mjs \
 - **Joining an existing organisation:** pass the existing `--org-slug` and the same command adds the person to it. The dry run must print `clerk org <slug>: exists` and `mapping <slug>: exists`; if it prints `create` for either, the slug is wrong — stop, never create a second organisation for the same client. Existing agents are kept and the new labels are appended to the roster. Name the labels per person and client (e.g. `Patricia-Claude:claude,Patricia-ChatGPT:chatgpt`) so they stay unique in the organisation. One invited address per person: invite the address she signs in with on her AI clients, not every address she has.
 - **Invitation landing page:** the default redirect is `<CLERK_DOMAIN>/sign-up` (Clerk-hosted); override with `--redirect-url`. Clerk's own email is suppressed (`notify:false`), because it linked to the MCP URL, which answers `Missing Authorization header` and consumes no ticket.
 
+## Handing a credential to a person
+
+Every password, client secret or other credential given to a person (for example the OAuth client ID and secret a pre-registered client such as Google Antigravity needs) goes through **https://eu.onetimesecret.com/**, never in an email body, a chat message, a task or a document.
+
+1. Create the secret on https://eu.onetimesecret.com/ with a passphrase and the shortest expiry that fits the handover (the link can be opened once).
+2. Send the link on one channel (for example the welcome email) and the passphrase on a **different** channel (for example SMS or a call). Never both in the same message.
+3. Record in the task that the secret was handed over, by which two channels, and its expiry — never the secret, the link or the passphrase.
+4. If the person reports the link as already opened or expired, treat the credential as exposed: rotate it, then send the new one the same way.
+
+The invitation URL of the Person onboarding flow is not a credential in this sense (single use, bound to the invited address) and travels in the welcome email.
+
 ## Renewal
 
 The seat bearer expires after `--ttl-days`, 90 days by default. Re-run step 4, then step 5. The agent credentials do not expire. Step 4 mints them only once: if the `.secret` file already exists in the stage dir, it is kept.
