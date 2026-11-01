@@ -22,3 +22,4 @@ run migrations/backfill_seat_memory_org_stamp:inventory
 run migrations/backfill_seat_memory_org_stamp:run
 run clientOrgMapping:addOperatorRosterMember
 run oauth:listScopeProfiles
+run migrations/backfill_seat_memory_org_stamp:revert
