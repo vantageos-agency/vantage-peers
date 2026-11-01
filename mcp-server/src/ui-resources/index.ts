@@ -7,6 +7,10 @@
  *  - Capability key declared at server initialize: io.modelcontextprotocol/ui
  *  - Fallback markdown content item in resources/read response (Critical Rule #1)
  *
+ * These resources render a server-side snapshot from their query parameters.
+ * The documents that TOOLS link through `_meta.ui.resourceUri` are the static
+ * MCP Apps in ./apps.ts (ui://vp/apps/v1/<primitive>), fed by the host bridge.
+ *
  * Uses @mcp-ui/server createUIResource() helper (reference impl by SEP-1865 co-author).
  *
  * URI pattern : ui://vp/v1/<primitive>?<query>
