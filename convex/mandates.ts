@@ -563,6 +563,9 @@ export const validateSpending = query({
 		// own caller from a client org's seat that reached Convex through the MCP
 		// service account. The verified org can. Refused BEFORE the read, so a
 		// foreign org learns neither a figure nor whether the id exists.
+		// isolation-contract: no reactive subscriber; the refusal raises. Enumerated
+		// by command in the vantage-peers-dashboard repo (as recorded by the gate
+		// comment above): grep -rn "api\.mandates\.validateSpending" app components hooks lib -> 0 hits.
 		if (args.verifiedOrg !== undefined) {
 			const mapping = await resolveVerifiedOrgMapping(
 				ctx,
