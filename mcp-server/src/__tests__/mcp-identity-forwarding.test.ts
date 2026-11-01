@@ -33,7 +33,14 @@
 
 import type { ConvexHttpClient } from "convex/browser";
 import { describe, expect, it, vi } from "vitest";
+import { LOCAL_STDIO_TRUST_CTX, type OAuthContext } from "../auth.js";
 import { selectConvexClientForRequest } from "../authenticatedConvexClient.js";
+
+// The fleet (master) caller. Since task k179y0wpsd6fv7055f4p2w6b358hdrxe the
+// service-account client is selected for a MASTER context only; a non-master
+// bearer gets it wrapped with its acting org (acting-org-client.test.ts) and an
+// absent context gets no client.
+const MASTER: OAuthContext = { ...LOCAL_STDIO_TRUST_CTX, clientId: "master", viaMasterBearer: true };
 
 function fakeClient(label: string): ConvexHttpClient {
 	return {
@@ -47,7 +54,7 @@ function fakeClient(label: string): ConvexHttpClient {
 }
 
 describe("selectConvexClientForRequest — PÔLE 2 (flotte / master, legitimate access)", () => {
-	it("no clerkJwt on oauthCtx → service-account client is selected, never a plain no-identity client", () => {
+	it("master caller, no clerkJwt → service-account client is selected, never a plain no-identity client", () => {
 		const serviceAccountClient = fakeClient("service-account");
 		const plainClient = fakeClient("plain");
 		const createServiceAccountClient = vi
@@ -57,7 +64,7 @@ describe("selectConvexClientForRequest — PÔLE 2 (flotte / master, legitimate 
 
 		const result = selectConvexClientForRequest(
 			"https://tenant.convex.cloud",
-			{ clerkJwt: undefined },
+			MASTER,
 			{ createServiceAccountClient, createPlainClient },
 		);
 
@@ -68,7 +75,7 @@ describe("selectConvexClientForRequest — PÔLE 2 (flotte / master, legitimate 
 		expect(createPlainClient).not.toHaveBeenCalled();
 	});
 
-	it("undefined oauthCtx (defensive) → still resolves to the service-account client, never throws", () => {
+	it("undefined oauthCtx (defensive) → NO service-account client: every call is refused (absence is never master)", async () => {
 		const serviceAccountClient = fakeClient("service-account");
 		const createServiceAccountClient = vi
 			.fn()
@@ -80,7 +87,8 @@ describe("selectConvexClientForRequest — PÔLE 2 (flotte / master, legitimate 
 			{ createServiceAccountClient },
 		);
 
-		expect(result).toBe(serviceAccountClient);
+		expect(createServiceAccountClient).not.toHaveBeenCalled();
+		await expect(result.query("x:y" as never, {} as never)).rejects.toThrow(/RBAC_DENIED/);
 	});
 });
 
@@ -96,7 +104,7 @@ describe("selectConvexClientForRequest — PÔLE 3 (Clerk-team client, org-scope
 		const callerJwt = "eyJhbGciOiJSUzI1NiJ9.caller-org-a-jwt.sig";
 		const result = selectConvexClientForRequest(
 			"https://tenant.convex.cloud",
-			{ clerkJwt: callerJwt },
+			{ ...MASTER, isMaster: false, clerkJwt: callerJwt },
 			{ createServiceAccountClient, createPlainClient },
 		);
 
@@ -120,12 +128,12 @@ describe("selectConvexClientForRequest — PÔLE 3 (Clerk-team client, org-scope
 
 		const resultA = selectConvexClientForRequest(
 			"https://tenant.convex.cloud",
-			{ clerkJwt: "jwt-org-a" },
+			{ ...MASTER, isMaster: false, clerkJwt: "jwt-org-a" },
 			{ createPlainClient },
 		);
 		const resultB = selectConvexClientForRequest(
 			"https://tenant.convex.cloud",
-			{ clerkJwt: "jwt-org-b" },
+			{ ...MASTER, isMaster: false, clerkJwt: "jwt-org-b" },
 			{ createPlainClient },
 		);
 
@@ -163,7 +171,7 @@ describe("selectConvexClientForRequest — PÔLE 1 (refus) + regression guard", 
 		const plainClient = fakeClient("plain");
 		selectConvexClientForRequest(
 			"https://tenant.convex.cloud",
-			{ clerkJwt: undefined },
+			MASTER,
 			{
 				createServiceAccountClient: vi
 					.fn()
@@ -172,7 +180,7 @@ describe("selectConvexClientForRequest — PÔLE 1 (refus) + regression guard", 
 		);
 		selectConvexClientForRequest(
 			"https://tenant.convex.cloud",
-			{ clerkJwt: "some-jwt" },
+			{ ...MASTER, clerkJwt: "some-jwt" },
 			{ createPlainClient: vi.fn().mockReturnValue(plainClient) },
 		);
 		expect(plainClient.setAuth).toHaveBeenCalledWith("some-jwt");
@@ -192,7 +200,7 @@ describe("selectConvexClientForRequest — PÔLE 1 (refus) + regression guard", 
 
 		selectConvexClientForRequest(
 			"https://tenant.convex.cloud",
-			{},
+			MASTER,
 			{ createServiceAccountClient, createPlainClient },
 		);
 
