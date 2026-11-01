@@ -105,7 +105,16 @@ export const TOOL_SCOPE_KINDS = [
 	"filtered",
 ] as const;
 
-export type ToolAuthContext = { readonly oauthCtx?: OAuthContext };
+export type ToolAuthContext = {
+	readonly oauthCtx?: OAuthContext;
+	/**
+	 * Records that `toolName` was called by this request's caller (tool usage,
+	 * task k17cbr6y6da096t5e1k869kgb18hd0ht). Called by the wrapper AFTER the
+	 * handler resolved or threw, never after a scope refusal; fire-and-forget:
+	 * a throw or a rejection is swallowed and never fails the tool.
+	 */
+	readonly recordUsage?: (toolName: string) => void | Promise<unknown>;
+};
 
 type McpTextResult = {
 	content: { type: "text"; text: string }[];
@@ -535,6 +544,25 @@ export function defineTool(
 		),
 	};
 
+	// Runs the handler, then records the call. The recording is fire-and-forget and
+	// can never change the outcome: a synchronous throw and a rejected promise are
+	// both swallowed. It is reached only once a handler is invoked, so a refusal
+	// returned before it (scope, role, acting name) records nothing.
+	const run: ToolHandler = async (a, extra) => {
+		try {
+			return await handler(a, extra);
+		} finally {
+			try {
+				const recorded = ctx.recordUsage?.(name);
+				if (recorded !== undefined && typeof recorded.then === "function") {
+					recorded.then(undefined, () => undefined);
+				}
+			} catch {
+				// a recording failure never fails the tool
+			}
+		}
+	};
+
 	const guardedHandler: ToolHandler = async (args, extra) => {
 		// First, before any argument is read: a person whose role may not write
 		// is refused on every non-read-only tool.
@@ -553,7 +581,7 @@ export function defineTool(
 		) {
 			const dropped = { ...((args ?? {}) as Record<string, unknown>) };
 			for (const key of actingKeys) dropped[key] = undefined;
-			return handler(dropped, extra);
+			return run(dropped, extra);
 		}
 		const roleDenied = await enforcePersonWriterRole(
 			ctx.oauthCtx,
@@ -579,7 +607,7 @@ export function defineTool(
 				const denied = enforceScope(scope, ctx, person.args);
 				if (denied) return denied;
 			}
-			return handler(person.args, extra);
+			return run(person.args, extra);
 		}
 		const bound = await bindActingNames(
 			ctx.oauthCtx,
@@ -604,7 +632,7 @@ export function defineTool(
 				recordUnattributedClaim(ctx.oauthCtx, name, key, claimed);
 			}
 		}
-		return handler(bound.args, extra);
+		return run(bound.args, extra);
 	};
 
 	// STRICT wrap: reject any arg key not in `schema` instead of silently

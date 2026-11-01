@@ -217,7 +217,7 @@ describe("recordToolUsage", () => {
 		);
 		expect(mutation).toHaveBeenCalledWith("toolUsage:record", {
 			toolName: "store_memory",
-			callerKey: "agent:agent7",
+			caller: "agent:agent7",
 		});
 	});
 	it("sends nothing for a master caller", async () => {
