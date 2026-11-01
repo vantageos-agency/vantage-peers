@@ -9,7 +9,7 @@ First use: CGT Alsachimie, 2026-10-06, task k17bnmfdan9xgxgyy3ny61ebps8fr0gw. Th
 - A Clerk organisation, where its people sign in.
 - A `client_org_mapping` row (`orgKind: client`). Its roster is the agent names.
 - Per agent:
-  - a scope profile `<agent>-<org>` bound to the org, which reads and writes `orchestrator/<agent>` and `project/<org>`;
+  - a scope profile `<agent>-<org>` bound to the org, which reads and writes `project/<org>` and, once the agent is registered, `orchestrator/<agent ID>` (the agents-row ID, never the name: agent names are unique per org, not fleet-wide);
   - its own seat bearer;
   - an `agents` row registered by ID in the org, with its own agent credential;
   - a `profiles` row, which makes it a message recipient.
@@ -32,7 +32,7 @@ Every write is on prod (`compassionate-goldfinch-737`). Run them from the vantag
 3. **Create one scope profile per agent, bound to the org.**
    ```
    CONVEX_DEPLOY_KEY=<prod key> npx convex run oauth:upsertScopeProfile \
-     '{"profile":{"profileId":"<agent>-<slug>","description":"Seat <agent> in org <slug>","fromAllowList":["<agent>"],"namespaceReadPrefixes":["orchestrator/<agent>","project/<slug>"],"namespaceWritePrefixes":["orchestrator/<agent>","project/<slug>"],"clerkOrgSlug":"<slug>"}}'
+     '{"profile":{"profileId":"<agent>-<slug>","description":"Seat <agent> in org <slug>","fromAllowList":["<agent>"],"namespaceReadPrefixes":["project/<slug>"],"namespaceWritePrefixes":["project/<slug>"],"clerkOrgSlug":"<slug>"}}'
    ```
 
 4. **Mint the seat bearers and the agent credentials.** This uses the service account for the seats, and an org-admin JWT minted **for this org** for the agent registry.
@@ -50,6 +50,14 @@ Every write is on prod (`compassionate-goldfinch-737`). Run them from the vantag
      '{"agentIds":["<agents id>"],"ownerPersonId":"<org admin user_…>","reason":"client org <slug>: onboarding, owner is the org admin that registered the agent"}'
    ```
    Re-running it with the same owner changes nothing. Do step 5 and the proof (step 7) only after it.
+
+   **4c. Add the agent IDs to the seat profiles.** A seat is admitted to `orchestrator/<its agent ID>` only, and the MCP refuses a namespace its profile does not list. Dry run first, read the per-org counts and the skipped reasons, then write:
+   ```
+   CONVEX_DEPLOY_KEY=<prod key> npx convex run migrations/seat_profile_agent_namespace:run
+   CONVEX_DEPLOY_KEY=<prod key> npx convex run migrations/seat_profile_agent_namespace:run '{"dryRun":false}'
+   ```
+   It appends `orchestrator/<agent ID>` to the read and write prefixes of each profile bound to a client org whose single `fromAllowList` agent resolves to exactly one active agent of that org; anything else is skipped and counted. Idempotent. A seat picks the new prefix up at its next token mint or refresh (re-run step 4 for a fresh bearer).
+
 
    **4a. Adding an agent to an org that already exists.** Name the new agent in `--agents` (the existing ones may stay in the list). If a name is not yet on the org's roster, the script registers it by ID (`agents:registerAgent`, org-admin of this org), mints nothing for any agent, prints `ROSTER_STEP_REQUIRED`, and exits 3. Run the two printed operator commands in order, then re-run the script. The roster is written by agent ID, never by writing a label:
    ```

@@ -139,6 +139,7 @@ import type * as migrations_linkServiceAccountAgent from "../migrations/linkServ
 import type * as migrations_offloadNoteBody from "../migrations/offloadNoteBody.js";
 import type * as migrations_reindexMemoriesByPeriod from "../migrations/reindexMemoriesByPeriod.js";
 import type * as migrations_restamp_clerk_ids from "../migrations/restamp_clerk_ids.js";
+import type * as migrations_seat_profile_agent_namespace from "../migrations/seat_profile_agent_namespace.js";
 import type * as migrations_seed_client_scope_profiles from "../migrations/seed_client_scope_profiles.js";
 import type * as migrations_seed_task_closure_config from "../migrations/seed_task_closure_config.js";
 import type * as migrations_tenantOrgIdCoverage from "../migrations/tenantOrgIdCoverage.js";
@@ -311,6 +312,7 @@ declare const fullApi: ApiFromModules<{
   "migrations/offloadNoteBody": typeof migrations_offloadNoteBody;
   "migrations/reindexMemoriesByPeriod": typeof migrations_reindexMemoriesByPeriod;
   "migrations/restamp_clerk_ids": typeof migrations_restamp_clerk_ids;
+  "migrations/seat_profile_agent_namespace": typeof migrations_seat_profile_agent_namespace;
   "migrations/seed_client_scope_profiles": typeof migrations_seed_client_scope_profiles;
   "migrations/seed_task_closure_config": typeof migrations_seed_task_closure_config;
   "migrations/tenantOrgIdCoverage": typeof migrations_tenantOrgIdCoverage;

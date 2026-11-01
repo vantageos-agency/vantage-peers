@@ -14,7 +14,7 @@
 //     <other id> -> the MCP refuses it, and Convex refuses it too if it were reached.
 // Hermetic: no deployment is touched.
 
-import { convexTest } from "convex-test";
+import { convexTest } from "../../tests/fixtures/convexTestWithServiceAccount";
 import { ConvexError } from "convex/values";
 import { describe, expect, test } from "vitest";
 import {
@@ -34,7 +34,7 @@ const modules = Object.fromEntries(
 );
 const mig = internal.migrations.seat_profile_agent_namespace;
 const NOW = 1_700_000_000_000;
-const createT = () => convexTest({ schema, modules });
+const createT = () => convexTest(schema, modules);
 type T = ReturnType<typeof createT>;
 const service = (t: T) =>
 	t.withIdentity({ subject: "test-service-account-user-id" });
