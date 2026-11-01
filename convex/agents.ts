@@ -6,7 +6,8 @@ import {
 import { ConvexError, v } from "convex/values";
 import { internal } from "./_generated/api";
 import type { Doc, Id } from "./_generated/dataModel";
-import { internalMutation, internalQuery, mutation, query } from "./_generated/server";
+import { internalMutation, internalQuery } from "./_generated/server";
+import { mutation, query } from "./lib/functions";
 import type { MutationCtx } from "./_generated/server";
 import { normalizeOrchestratorId } from "./_helpers/normalizeOrchestratorId";
 import {

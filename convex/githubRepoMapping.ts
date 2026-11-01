@@ -4,9 +4,8 @@ import {
 	type QueryCtx,
 	internalMutation,
 	internalQuery,
-	mutation,
-	query,
 } from "./_generated/server";
+import { mutation, query } from "./lib/functions";
 import { sameOrg } from "@vantageos/cloud-identity";
 import { ownerOfRepo, repoOwnerBoundToOrg } from "./githubOwnerBinding";
 import { orgRefOfRow, orgRefOfScope } from "./lib/authOrgMapping";

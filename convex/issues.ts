@@ -2,10 +2,9 @@ import { ConvexError, v } from "convex/values";
 import {
 	internalMutation,
 	internalQuery,
-	mutation,
-	query,
 	type QueryCtx,
 } from "./_generated/server";
+import { mutation, query } from "./lib/functions";
 import { internal } from "./_generated/api";
 // convex-strict-mode-doc-type-import-needed-when-refactoring-list-query-from-early-return-to-accumulator-post-filter
 import type { Doc } from "./_generated/dataModel";

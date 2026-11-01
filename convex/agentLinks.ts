@@ -6,7 +6,7 @@ import {
 import { ConvexError, v } from "convex/values";
 import type { Id } from "./_generated/dataModel";
 import type { MutationCtx } from "./_generated/server";
-import { mutation } from "./_generated/server";
+import { mutation } from "./lib/functions";
 import { refuseWith } from "./lib/actingPrincipal";
 import { anonymousRefusal } from "./lib/agentIdentity";
 import { agentLinkLookups, linkRowForPair } from "./lib/agentLinks";

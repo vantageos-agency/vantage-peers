@@ -1,7 +1,8 @@
 import { v } from "convex/values";
 import { ConvexError } from "convex/values";
 import { isServiceAccountScope, sameOrg } from "@vantageos/cloud-identity";
-import { mutation, query, internalQuery, internalMutation } from "./_generated/server";
+import { internalQuery, internalMutation } from "./_generated/server";
+import { mutation, query } from "./lib/functions";
 import { api } from "./_generated/api";
 import {
 	afterDeliveryWork,

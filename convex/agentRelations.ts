@@ -1,7 +1,8 @@
 import { assertOrgAdmin, resolveCallerFromClaims } from "@vantageos/cloud-identity";
 import { ConvexError, v } from "convex/values";
 import type { Doc, Id } from "./_generated/dataModel";
-import { type MutationCtx, type QueryCtx, mutation, query } from "./_generated/server";
+import { type MutationCtx, type QueryCtx } from "./_generated/server";
+import { mutation, query } from "./lib/functions";
 import {
 	anonymousRefusal,
 	loadAgentOfPrincipalOrg,

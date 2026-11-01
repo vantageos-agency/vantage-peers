@@ -1,5 +1,5 @@
 import { v, ConvexError } from "convex/values";
-import { mutation, query } from "./_generated/server";
+import { mutation, query } from "./lib/functions";
 import { internal } from "./_generated/api";
 import { requireId } from "./lib/ids";
 import { creatorValidator, severityValidator } from "./schema";

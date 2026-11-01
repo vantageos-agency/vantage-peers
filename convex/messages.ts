@@ -3,7 +3,8 @@ import { ConvexError, v } from "convex/values";
 // convex-strict-mode-doc-type-import-needed-when-refactoring-list-query-from-early-return-to-accumulator-post-filter
 import type { Doc, Id } from "./_generated/dataModel";
 import { internal } from "./_generated/api";
-import { internalMutation, mutation, query } from "./_generated/server";
+import { internalMutation } from "./_generated/server";
+import { mutation, query } from "./lib/functions";
 import type { MutationCtx } from "./_generated/server";
 import {
 	lookupOrgMapping,

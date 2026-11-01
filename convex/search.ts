@@ -3,7 +3,7 @@ import { RAG } from "@convex-dev/rag";
 import { v } from "convex/values";
 import { api, components, internal } from "./_generated/api";
 import type { ActionCtx } from "./_generated/server";
-import { action } from "./_generated/server";
+import { action } from "./lib/functions";
 import {
 	getAITextEmbeddingProvider,
 	getEmbeddingModelName,

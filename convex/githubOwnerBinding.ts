@@ -6,8 +6,8 @@ import {
 	type QueryCtx,
 	internalMutation,
 	internalQuery,
-	query,
 } from "./_generated/server";
+import { query } from "./lib/functions";
 import { requireResolvedCaller, withOrgScope } from "./lib/auth";
 import {
 	resolveVerifiedOrg,

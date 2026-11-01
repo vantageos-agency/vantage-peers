@@ -1,7 +1,8 @@
 import { hasFleetRead, scopeStanding } from "@vantageos/cloud-identity";
 import { ConvexError, v } from "convex/values";
 import type { Doc, Id } from "./_generated/dataModel";
-import { type QueryCtx, query } from "./_generated/server";
+import type { QueryCtx } from "./_generated/server";
+import { query } from "./lib/functions";
 import {
 	isMcpBoundMaster,
 	lookupOrgMapping,

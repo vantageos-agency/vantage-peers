@@ -32,7 +32,8 @@ import { ConvexError, v } from "convex/values";
 import { extract, pack } from "tar-stream";
 import { internal as generatedInternal } from "./_generated/api";
 import type { Id } from "./_generated/dataModel";
-import { type ActionCtx, action } from "./_generated/server";
+import type { ActionCtx } from "./_generated/server";
+import { action } from "./lib/functions";
 import {
 	refuseStorageOwnership,
 	requireResolvedCaller,

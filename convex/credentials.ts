@@ -30,11 +30,8 @@ import { makeFunctionReference } from "convex/server";
 import { v } from "convex/values";
 import type { ActionCtx, MutationCtx } from "./_generated/server";
 import { relayIdentityRefusal } from "./lib/identityRefusalWire";
-import {
-	internalMutation,
-	internalQuery,
-	mutation,
-} from "./_generated/server";
+import { internalMutation, internalQuery } from "./_generated/server";
+import { mutation } from "./lib/functions";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Function references (avoids circular _generated/api dependency)

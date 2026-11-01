@@ -12,7 +12,8 @@ import {
 	type NamedTableInfo,
 	type OrderedQuery,
 } from "convex/server";
-import { mutation, internalMutation, internalQuery, query } from "./_generated/server";
+import { internalMutation, internalQuery } from "./_generated/server";
+import { mutation, query } from "./lib/functions";
 import type { MutationCtx, QueryCtx } from "./_generated/server";
 import type { DataModel, Doc, Id } from "./_generated/dataModel";
 import { internal } from "./_generated/api";

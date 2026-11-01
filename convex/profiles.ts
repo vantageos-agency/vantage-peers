@@ -1,5 +1,6 @@
 import { v, ConvexError } from "convex/values";
-import { mutation, type QueryCtx, query } from "./_generated/server";
+import type { QueryCtx } from "./_generated/server";
+import { mutation, query } from "./lib/functions";
 import type { Doc } from "./_generated/dataModel";
 // convex-strict-mode-doc-type-import-needed-when-refactoring-list-query-from-early-return-to-accumulator-post-filter
 import { memoryTypeValidator, creatorValidator } from "./schema";

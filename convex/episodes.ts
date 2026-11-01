@@ -1,7 +1,8 @@
 import { hasFleetRead } from "@vantageos/cloud-identity";
 import { v, ConvexError } from "convex/values";
 import type { Doc } from "./_generated/dataModel";
-import { mutation, query, type QueryCtx } from "./_generated/server";
+import type { QueryCtx } from "./_generated/server";
+import { mutation, query } from "./lib/functions";
 import { internal } from "./_generated/api";
 import { creatorValidator, severityValidator, relationTypeValidator } from "./schema";
 import { requireResolvedCaller, withOrgScope } from "./lib/auth";

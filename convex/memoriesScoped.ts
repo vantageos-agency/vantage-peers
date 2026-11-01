@@ -34,7 +34,7 @@ import { hasFleetRead } from "@vantageos/cloud-identity";
 import { v } from "convex/values";
 import type { Doc } from "./_generated/dataModel";
 import type { MutationCtx, QueryCtx } from "./_generated/server";
-import { mutation, query } from "./_generated/server";
+import { mutation, query } from "./lib/functions";
 import { isMcpBoundMaster, type OrgScope, withOrgScope } from "./lib/auth";
 import {
 	memoryAuthorOf,

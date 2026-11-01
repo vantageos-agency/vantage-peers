@@ -11,8 +11,8 @@ import {
 	internalAction,
 	internalMutation,
 	type MutationCtx,
-	query,
 } from "./_generated/server";
+import { query } from "./lib/functions";
 import {
 	lookupOrgMapping,
 	requireResolvedCaller,
