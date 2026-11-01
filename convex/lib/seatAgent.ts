@@ -2,7 +2,7 @@ import { sameOrg } from "@vantageos/cloud-identity";
 import type { Doc } from "../_generated/dataModel";
 import type { MutationCtx, QueryCtx } from "../_generated/server";
 import { normalizeOrchestratorId } from "../_helpers/normalizeOrchestratorId";
-import { findAgentByName } from "./agentIdentity";
+import { resolveAgentRef } from "./agentIdentity";
 import { clerkOrgIdForSlug } from "./orgClerkId";
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -114,7 +114,13 @@ export async function resolveSeatAgent(
 		return null;
 	}
 
-	const agent = await findAgentByName(ctx, org, label);
+	const agent = await resolveAgentRef(ctx, {
+		label,
+		orgSlug: org,
+		door: "seatAgent:resolveSeatAgent",
+		arg: "label",
+		measure: false,
+	});
 	if (!agent || !agent.isActive || agent.orgSlug !== org) return null;
 	return agent;
 }

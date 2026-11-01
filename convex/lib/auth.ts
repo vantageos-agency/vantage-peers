@@ -13,7 +13,7 @@ import {
 	scopeStanding,
 } from "@vantageos/cloud-identity";
 import type { UserIdentity } from "convex/server";
-import { findAgentByName, resolveOwnedAgentOfPresentedSecret } from "./agentIdentity";
+import { resolveAgentRef, resolveOwnedAgentOfPresentedSecret } from "./agentIdentity";
 import { resolveServiceAccount } from "./serviceAccount";
 import { normalizeOrchestratorId } from "../_helpers/normalizeOrchestratorId";
 import {
@@ -1152,7 +1152,13 @@ export async function requireAgentCredentialMatch(
 		// RESOLVES to an existing `agents` row for the target org must present
 		// a credential; a sender that does not resolve keeps the legacy no-op.
 		if (targetOrgSlug === null) return undefined;
-		const declaredAgent = await findAgentByName(ctx, targetOrgSlug, assertedName);
+		const declaredAgent = await resolveAgentRef(ctx, {
+			label: assertedName,
+			orgSlug: targetOrgSlug,
+			door: "auth:requireAgentCredentialMatch",
+			arg: "assertedName",
+			measure: false,
+		});
 		if (declaredAgent) {
 			throw new ConvexError(
 				`AGENT_CREDENTIAL_REQUIRED: sender "${assertedName}" resolves to a registered agent in org "${targetOrgSlug}" — this surface requires a per-agent credential (agentCredentialSecret) once the sender is a known agent identity, no fallback — ${JSON.stringify({ assertedName, targetOrgSlug })}`,

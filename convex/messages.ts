@@ -27,7 +27,7 @@ import {
 	resolveVerifiedPerson,
 	verifiedPersonValidator,
 } from "./lib/personPrincipal";
-import { findAgentByName, resolveOwnedAgentOfPresentedSecret } from "./lib/agentIdentity";
+import { resolveAgentRef, resolveOwnedAgentOfPresentedSecret } from "./lib/agentIdentity";
 import type { ActingPrincipal } from "@vantageos/cloud-identity";
 import {
 	addressRecipientById,
@@ -964,7 +964,14 @@ async function requireSeatSenderNotForeign(
 		candidates.push(segments.slice(0, i).join("-"));
 	}
 	for (const candidate of candidates) {
-		if (seat.orgSlug !== null && (await findAgentByName(ctx, seat.orgSlug, candidate, seat.orgClerkId))) {
+		if (seat.orgSlug !== null && (await resolveAgentRef(ctx, {
+				label: candidate,
+				orgSlug: seat.orgSlug,
+				orgClerkId: seat.orgClerkId,
+				door: "messages:requireSeatSenderNotForeign",
+				arg: "from",
+				measure: false,
+			}))) {
 			return;
 		}
 	}
@@ -986,11 +993,18 @@ async function requireSeatSenderNotForeign(
 	// instance spelling ("nadia-vps-1") resolves to its agent ("nadia"). The
 	// seat org's own rows are accepted; a row of any other org (client,
 	// operator or fleet, every org of `client_org_mapping`) is refused. Lookup
-	// is `findAgentByName` per org (index by_org_normalized_name).
+	// is `resolveAgentRef` per org (index by_org_normalized_name).
 	for (const m of mappings) {
 		if (m.clerkOrgSlug === seat.orgSlug) continue;
 		for (const candidate of candidates) {
-			if (await findAgentByName(ctx, m.clerkOrgSlug, candidate, m.clerkOrgId)) {
+			if (await resolveAgentRef(ctx, {
+				label: candidate,
+				orgSlug: m.clerkOrgSlug,
+				orgClerkId: m.clerkOrgId,
+				door: "messages:requireSeatSenderNotForeign",
+				arg: "from",
+				measure: false,
+			})) {
 				return refuse("seat-sender-foreign-identity");
 			}
 		}

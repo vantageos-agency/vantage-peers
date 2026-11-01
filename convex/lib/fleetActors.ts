@@ -1,7 +1,7 @@
 import { ConvexError } from "convex/values";
 import type { Id } from "../_generated/dataModel";
 import type { MutationCtx, QueryCtx } from "../_generated/server";
-import { findAgentByName } from "./agentIdentity";
+import { resolveAgentRef } from "./agentIdentity";
 import {
 	requireTargetOrgOfPrincipal,
 	requireVerifiedActorPrincipal,
@@ -65,6 +65,12 @@ export async function fleetPartyId(
 	if (stampedId !== undefined) return stampedId;
 	const operatorSlug = await fleetOperatorSlug(ctx.db);
 	if (operatorSlug === undefined) return null;
-	const row = await findAgentByName(ctx, operatorSlug, label);
+	const row = await resolveAgentRef(ctx, {
+		label,
+		orgSlug: operatorSlug,
+		door: "fleetActors:fleetPartyId",
+		arg: "label",
+		measure: false,
+	});
 	return row === null || !row.isActive ? null : row._id;
 }
