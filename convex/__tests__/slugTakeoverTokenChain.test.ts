@@ -24,6 +24,7 @@ import { seedAgents } from "../../tests/lib/agentIdOf";
 import { insertTaskRow } from "../../tests/lib/seedFleetAgents";
 import { api } from "../_generated/api";
 import type { Id } from "../_generated/dataModel";
+import { assertRowInVerifiedOrg } from "../lib/verifiedOrg";
 import schema from "../schema";
 
 const modules = Object.fromEntries(
@@ -411,5 +412,123 @@ describe("A-5 orgRoster:getForAccessToken is keyed on token.clerkOrgId", () => {
 		const { t } = await takeover();
 		await insertToken(t, "hash-legacy", { clerkOrgSlug: SLUG });
 		expect(String(await roster(t, "hash-legacy"))).toMatch(/RBAC_DENIED/);
+	});
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Pi rulings (receipt k9726nnhw9c2fqpg3g5p4wjthx8hcv5d): catalog profiles and
+// fleet rows. A catalog profile names no organisation and is never refused for
+// that; the org comes from the consent code when there is one; an unstamped
+// fleet task is allowed to the fleet caller and refused to an org-verified one.
+// ─────────────────────────────────────────────────────────────────────────────
+describe("Pi rulings: catalog profile and fleet rows", () => {
+	const CODE_HASH = "code-hash-catalog";
+	async function catalogWorld() {
+		const { t } = await takeover();
+		await t.run(async (ctx) => {
+			await ctx.db.insert("oauth_scope_profiles", {
+				profileId: "catalog-profile",
+				description: "catalog",
+				fromAllowList: [],
+				namespaceReadPrefixes: [],
+				namespaceWritePrefixes: [],
+				createdAt: 1,
+				updatedAt: 1,
+				// no clerkOrgSlug, no clerkOrgId: a catalog profile
+			});
+		});
+		return t;
+	}
+	const mint = (t: T, over: Record<string, unknown> = {}) =>
+		asService(t).mutation(api.oauth.createAccessToken, {
+			tokenHash: "catalog-minted",
+			clientId: "c1",
+			userId: "u1",
+			scopes: ["mcp:full"],
+			scopeProfile: "catalog-profile",
+			fromAllowList: [],
+			namespaceReadPrefixes: [],
+			namespaceWritePrefixes: [],
+			expiresAt: Date.now() + 3_600_000,
+			...over,
+		});
+	const stored = (t: T) =>
+		t.run((ctx) =>
+			ctx.db
+				.query("oauth_access_tokens")
+				.withIndex("by_tokenHash", (q) => q.eq("tokenHash", "catalog-minted"))
+				.unique(),
+		);
+
+	test("catalog profile + org-bound code with clerkOrgId -> minted, token carries the code's clerkOrgId", async () => {
+		const t = await catalogWorld();
+		await t.run(async (ctx) => {
+			await ctx.db.insert("oauth_person_codes", {
+				codeHash: CODE_HASH,
+				clerkUserId: "user_1",
+				orgId: ORG_A,
+				orgSlug: RENAMED,
+				orgRole: "org:member",
+				clientId: "c1",
+				redirectUri: "https://example.test/cb",
+				codeChallenge: "ch",
+				resource: "https://example.test/mcp",
+				scope: "mcp:full",
+				expiresAt: Date.now() + 60_000,
+			});
+		});
+		await mint(t, { codeHash: CODE_HASH, clerkOrgSlug: RENAMED });
+		const row = await stored(t);
+		expect(row).not.toBeNull();
+		expect(row?.clerkOrgId).toBe(ORG_A);
+	});
+
+	test("catalog profile + no org source -> minted with no org scope, not refused", async () => {
+		const t = await catalogWorld();
+		const out = await outcome(mint(t));
+		expect(String(out)).not.toMatch(/MINT_ORG_ID_REQUIRED/);
+		const row = await stored(t);
+		expect(row).not.toBeNull();
+		expect(row?.clerkOrgId).toBeUndefined();
+		expect(row?.clerkOrgSlug).toBeUndefined();
+	});
+
+	describe("a task with neither orgId nor clerkOrgId", () => {
+		async function orglessTask() {
+			const { t } = await takeover();
+			const id = await t.run((ctx) =>
+				ctx.db.insert("tasks", {
+					title: "fleet row",
+					status: "todo",
+					priority: "low",
+					assignedTo: "sigma",
+					createdBy: "sigma",
+					createdAt: 1,
+					updatedAt: 1,
+				}),
+			);
+			return { t, id };
+		}
+		const gate = (t: T, id: Id<"tasks">, slug: string | undefined) =>
+			outcome(
+				t.run(async (ctx) => {
+					const row = await ctx.db.get(id);
+					if (row === null) throw new Error("seed row missing");
+					await assertRowInVerifiedOrg(ctx, row, slug, id, "test:door");
+					return "allowed";
+				}),
+			);
+
+		test("fleet caller (no verifiedOrg) -> allowed", async () => {
+			const { t, id } = await orglessTask();
+			expect(await gate(t, id, undefined)).toBe("allowed");
+		});
+
+		test("org-verified caller -> refused (row-outside-verified-org)", async () => {
+			const { t, id } = await orglessTask();
+			expect(String(await gate(t, id, RENAMED))).toMatch(
+				/row-outside-verified-org/,
+			);
+		});
 	});
 });

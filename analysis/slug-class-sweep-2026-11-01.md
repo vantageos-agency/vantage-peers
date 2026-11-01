@@ -87,6 +87,8 @@ Notes that change the plan: the messages family (A-6 to A-19, 27 A lines in `mes
 carry `tenantOrgId` (schema), and 0 reads filter on it (`grep -n tenantOrgId convex/messages.ts` -> stamps at 591, 612, 717, 855 and validators at 2113, 2457; no `withIndex`/filter). The `*_clerk_id` tenant indexes exist
 (`by_tenant_created_clerk_id`, `by_tenant_recipient_unread_clerk_id`, `by_tenant_clerk_id`, schema.ts:227-302) and are unused by any read (`grep -rn '_clerk_id"' convex --include=*.ts` outside schema/tests, filtered by `tenant` -> 0 hits).
 
+Traced, not fixed (owner sigma, priority low): Fleet-orchestrator tasks created before 2026-10-29 (~T00:20 UTC, commit c377f33, task k176y0q5jcz3m8m673bf61kva98h49js) still carry the operator org stamp; later ones are unstamped fleet rows by ruling (Pi receipt k9726nnhw9c2fqpg3g5p4wjthx8hcv5d). Operator-org doors read the older ones and not the newer: harmless for clients, inconsistent for the operator. Traced, not fixed.
+
 ## After PR (1): the sweep re-run on the fixed tree
 
 The three commands re-run at the PR (1) head. Compared by (file, line text) so that shifted line numbers do not count:
