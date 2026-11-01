@@ -18,11 +18,14 @@ import { normalizeOrchestratorId } from "../_helpers/normalizeOrchestratorId";
 import {
 	agentCredentialPrincipalLookups,
 	permanentOrgIdOfSlug,
+	assigneeNotInOrgRefusal,
 	principalLookups,
+	refuseWith,
 } from "./actingPrincipal";
 import { ORG_ADMIN_ROLES, refusalError } from "./auth";
 import { orgMappingLookups } from "./authOrgMapping";
 import { clerkOrgIdForSlug } from "./orgClerkId";
+import { requireId } from "./ids";
 import { orgByIdLookups, orgByIdPrincipalLookups } from "./orgIdLookups";
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -277,6 +280,8 @@ export async function resolveOwnedAgentOfPresentedSecret(
  *   - convex/lib/inboxReader.ts (recipient named by a verified org) -> M6 inbox
  *   - convex/lib/actorIds.ts (task createdBy / assignedTo labels)   -> tasks doors (names in, IDs stamped)
  *   - convex/lib/seatAgent.ts (oauth profile fromAllowList label)   -> M1 rosters / seat profiles by agent ID
+ * `resolveAgentRef` (below, same file) is the doors' future entry: its label-only
+ * branch calls this lookup, so it adds no caller outside this file.
  * No door of convex/agents.ts, convex/agentCredentials.ts or
  * convex/agentRelations.ts calls it: those resolve by agent ID. Delete it with
  * its last caller.
@@ -311,6 +316,87 @@ export async function findAgentByName(
 		.query("agents")
 		.withIndex("by_org_name_clerk_id", (q) => q.eq("clerkOrgId", orgId).eq("name", name))
 		.first();
+}
+
+/**
+ * resolveAgentRef — the ONE way a door turns an agent reference (an `agents` ID,
+ * a label, or both) into an `agents` row. Migration step E1 (plan
+ * analysis/labels-to-agent-ids-migration-plan-2026-11-01.md, 2.1): no door calls
+ * it yet.
+ *
+ *   - `agentId` given: the row is read BY ID and judged by the package through
+ *     `resolveActingPrincipal` over ID-keyed lookups (exists, ACTIVE, stamped with the caller's
+ *     verified organisation ID, organisation active). The organisation is the
+ *     permanent ID the caller passes as `orgClerkId` (or the ID the mapping of
+ *     `orgSlug` stores NOW); an agent of another organisation, an unknown ID and
+ *     a retired agent are refused with the package's coded refusal, never
+ *     returned and never reported as an absence. A retired agent's ID is refused
+ *     for reads too (Pi ruling 4).
+ *   - `agentId` and `label` given: the label must be the row's CURRENT label under
+ *     `normalizeOrchestratorId`; otherwise `AGENT_IDENTITY_MISMATCH` with
+ *     `reason: "id-label-mismatch"` and the door (the existing code, the same
+ *     wording shape as `requireVerifiedActorMatch`; no second refusal mechanism).
+ *   - `label` only: `findAgentByName`, unchanged, plus ONE `LABEL_ONLY_DOOR` log
+ *     line `{ event, door, arg }` (no label value) so the contract decision rests
+ *     on a count of label-only calls per door.
+ *   - neither: null, the caller keeps its current behaviour.
+ *
+ * The organisation is read from the VERIFIED caller by the caller of this
+ * helper; it is never an argument the end user chose.
+ */
+export async function resolveAgentRef(
+	ctx: Ctx,
+	ref: {
+		agentId?: string;
+		label?: string;
+		orgClerkId?: string;
+		orgSlug?: string;
+		door: string;
+		arg: string;
+	},
+): Promise<Doc<"agents"> | null> {
+	if (ref.agentId !== undefined) {
+		const id = requireId(
+			ctx,
+			"agents",
+			ref.agentId,
+			ref.arg,
+			`${ref.door} takes an agent ID as returned by list_peers agentId; a name is never matched here.`,
+		);
+		const orgId = ref.orgClerkId ?? (await clerkOrgIdForSlug(ctx, ref.orgSlug));
+		if (orgId === undefined) {
+			throw assigneeNotInOrgRefusal(ref.agentId, undefined, ref.door);
+		}
+		// ID-keyed lookups: the agent is answered with the org ID its ROW is stamped
+		// with (null when unstamped, which the package refuses). The slug-keyed
+		// `principalLookups` would compare a label and is not used here.
+		const resolved = await resolveActingPrincipal(
+			{ kind: "agent", agentId: id, verifiedOrgId: orgId },
+			orgByIdPrincipalLookups(ctx),
+			ref.door,
+		);
+		if (!resolved.ok) refuseWith(resolved.refusal);
+		const row = await ctx.db.get(id);
+		if (row === null) {
+			throw assigneeNotInOrgRefusal(ref.agentId, orgId, ref.door);
+		}
+		if (
+			ref.label !== undefined &&
+			normalizeOrchestratorId(ref.label) !== normalizeOrchestratorId(row.name)
+		) {
+			throw new ConvexError(
+				`AGENT_IDENTITY_MISMATCH: ${ref.arg} names agent ${row._id} by ID but also carries a label that is not that agent's label — an ID and a label must designate the same agent — ${JSON.stringify({ reason: "id-label-mismatch", door: ref.door, agentId: row._id })}`,
+			);
+		}
+		return row;
+	}
+	if (ref.label !== undefined) {
+		console.log(
+			JSON.stringify({ event: "LABEL_ONLY_DOOR", door: ref.door, arg: ref.arg }),
+		);
+		return await findAgentByName(ctx, ref.orgSlug ?? "", ref.label, ref.orgClerkId);
+	}
+	return null;
 }
 
 /**
