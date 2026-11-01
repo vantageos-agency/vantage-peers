@@ -12,7 +12,7 @@ import {
   memoryVisibleToScope,
   teamLabelOfNamespace,
 } from "./lib/memoryTenant";
-import { isTeamNamespaceAllowed } from "./lib/teamNamespace";
+import { isMemoryNamespaceAllowed } from "./lib/seatNamespace";
 import type { Doc } from "./_generated/dataModel";
 
 // expireMemoriesByTtl scans candidate rows with a ttl set; this is a bounded
@@ -102,7 +102,7 @@ export const storeMemory = mutation({
     // Namespace ownership is the ONE decision of convex/lib/teamNamespace.ts (the
     // episode doors call it too): `team/<its org ID>`, or the legacy label alias of
     // the same verified org.
-    if (!isTeamNamespaceAllowed(scope, args.namespace)) {
+    if (!isMemoryNamespaceAllowed(scope, args.namespace)) {
       throw new ConvexError(
         `RBAC_DENIED: caller may not write to namespace "${args.namespace}" — ${JSON.stringify({ orgSlug: scope.orgSlug })}`,
       );
@@ -346,7 +346,9 @@ export const listMemories = query({
     // namespace is the typed-empty page without reading it.
     if (
       !hasFleetRead(scope) &&
-      (scope.orgClerkId === undefined || teamLabelOfNamespace(args.namespace) === null)
+      (scope.orgClerkId === undefined ||
+        (teamLabelOfNamespace(args.namespace) === null &&
+          !isMemoryNamespaceAllowed(scope, args.namespace)))
     ) {
       return { value: [], continueCursor: null, isDone: true };
     }

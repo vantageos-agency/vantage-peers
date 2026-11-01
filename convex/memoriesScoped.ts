@@ -41,7 +41,8 @@ import {
 	memoryStampForWrite,
 	memoryVisibleToScope,
 } from "./lib/memoryTenant";
-import { isTeamNamespaceAllowed, teamNamespaceOf } from "./lib/teamNamespace";
+import { isMemoryNamespaceAllowed } from "./lib/seatNamespace";
+import { teamNamespaceOf } from "./lib/teamNamespace";
 import {
 	creatorValidator,
 	memoryTypeValidator,
@@ -126,7 +127,7 @@ async function resolveCallerOrgId(
  * AUTH_NAMESPACE_DENIED.
  */
 function assertNamespaceAllowed(scope: OrgScope, namespace: string): void {
-	if (isTeamNamespaceAllowed(scope, namespace)) return;
+	if (isMemoryNamespaceAllowed(scope, namespace)) return;
 	const allowed =
 		scope.orgClerkId === undefined
 			? "none (the organisation has no permanent org ID)"

@@ -94,6 +94,7 @@ import type * as lib_reviewRouting from "../lib/reviewRouting.js";
 import type * as lib_rosterIds from "../lib/rosterIds.js";
 import type * as lib_rosterLabels from "../lib/rosterLabels.js";
 import type * as lib_seatAgent from "../lib/seatAgent.js";
+import type * as lib_seatNamespace from "../lib/seatNamespace.js";
 import type * as lib_serviceAccount from "../lib/serviceAccount.js";
 import type * as lib_systemCaller from "../lib/systemCaller.js";
 import type * as lib_taskActors from "../lib/taskActors.js";
@@ -264,6 +265,7 @@ declare const fullApi: ApiFromModules<{
   "lib/rosterIds": typeof lib_rosterIds;
   "lib/rosterLabels": typeof lib_rosterLabels;
   "lib/seatAgent": typeof lib_seatAgent;
+  "lib/seatNamespace": typeof lib_seatNamespace;
   "lib/serviceAccount": typeof lib_serviceAccount;
   "lib/systemCaller": typeof lib_systemCaller;
   "lib/taskActors": typeof lib_taskActors;
