@@ -100,8 +100,18 @@ const refusal = async (p: Promise<unknown>): Promise<string> => {
 	try {
 		await p;
 	} catch (e) {
+		// convex-test re-serialises a ConvexError thrown inside t.run, possibly more
+		// than once: unwrap JSON string layers until the plain text remains.
 		const err = e as { data?: unknown; message?: string };
-		return typeof err.data === "string" ? err.data : String(err.message);
+		let text: unknown = typeof err.data === "string" ? err.data : err.message;
+		while (typeof text === "string" && text.startsWith('"')) {
+			try {
+				text = JSON.parse(text);
+			} catch {
+				break;
+			}
+		}
+		return String(text);
 	}
 	return "NO-REFUSAL";
 };
