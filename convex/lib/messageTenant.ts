@@ -64,7 +64,8 @@ export function rowInTenantOrgs(
 	row: TenantStamp,
 	orgIds: ReadonlyArray<string | undefined>,
 ): boolean {
-	return orgIds.some((id) =>
-		id === undefined ? isNoSlugRow(row) : rowInOrg(row, id),
-	);
+	for (const id of orgIds) {
+		if (id === undefined ? isNoSlugRow(row) : rowInOrg(row, id)) return true;
+	}
+	return false;
 }

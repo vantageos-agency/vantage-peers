@@ -342,21 +342,6 @@ export async function resolveInboxReader(
 	};
 }
 
-/**
- * Is this row (a message or a receipt) in the reader's tenants? By permanent ID.
- * A master reading "all" may narrow by a tenant LABEL it names itself: a narrowing
- * of what it can already read, never an admission.
- */
-function receiptInReaderTenants(
-	reader: InboxReader,
-	row: { tenantId?: string; tenantOrgId?: string },
-): boolean {
-	if (reader.tenantOrgs !== "all") {
-		return rowInTenantOrgs(row, reader.tenantOrgs);
-	}
-	return reader.tenants === "all" || reader.tenants.includes(row.tenantId);
-}
-
 /** Is this receipt the reader's? The one predicate every inbox door applies. */
 export function ownsReceipt(
 	reader: InboxReader,
@@ -383,7 +368,16 @@ export function ownsReceipt(
 		);
 	}
 	// Readers without an agents row stay inside their own tenants, by exact name.
-	if (!receiptInReaderTenants(reader, receipt)) return false;
+	// By permanent ID. A master reading "all" may narrow by a tenant LABEL it names
+	// itself: a narrowing of what it can already read, never an admission.
+	if (reader.tenantOrgs !== "all") {
+		if (!rowInTenantOrgs(receipt, reader.tenantOrgs)) return false;
+	} else if (
+		reader.tenants !== "all" &&
+		!reader.tenants.includes(receipt.tenantId)
+	) {
+		return false;
+	}
 	return reader.names.includes(receipt.recipient);
 }
 
@@ -392,7 +386,14 @@ export function ownsSentMessage(
 	reader: InboxReader,
 	message: Doc<"messages">,
 ): boolean {
-	if (!receiptInReaderTenants(reader, message)) return false;
+	if (reader.tenantOrgs !== "all") {
+		if (!rowInTenantOrgs(message, reader.tenantOrgs)) return false;
+	} else if (
+		reader.tenants !== "all" &&
+		!reader.tenants.includes(message.tenantId)
+	) {
+		return false;
+	}
 	if (reader.agentId !== undefined) {
 		if (message.fromId !== undefined) return message.fromId === reader.agentId;
 		return (
