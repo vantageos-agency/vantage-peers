@@ -1,0 +1,4 @@
+---
+section: Security
+---
+- **VantagePeers Cloud: reading a `ui://vp/v1/*` resource is refused unless Convex itself scopes the read.** On the HTTP `/mcp` entry, `resources/read` of the six Generative UI primitives (`tasks-table`, `messages-feed`, `memory-quote`, `mission-timeline`, `diary-entry`, `briefing-note`) is served only to a Clerk-JWT caller (its own token reaches Convex) or a master caller. A non-master OAuth bearer, which reached Convex through the fleet service account and could read every tenant's rows, now receives an MCP error whose message and `data` carry `RBAC_DENIED` and the door (`resources/read ui://vp/v1/<primitive>`), before any Convex query. `resources/list` is unchanged. Self-host stdio does not serve these resources. No Convex change, no contract bump. Task k17d6s1fsfy9fg7p339gq3rqnx8hc4qh.
