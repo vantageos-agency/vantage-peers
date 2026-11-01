@@ -37,6 +37,10 @@ globalThis.fetch = async (input, init = {}) => {
 			"agentCredentials:getAgentCredentialStatus": process.env.STUB_AGENTS
 				? { hasActiveCredential: true, activeRows: 1 }
 				: { hasActiveCredential: false, activeRows: 0 },
+			// the caller's org agent directory (orgRoster:getMyAgentDirectory): [{name, agentId}]
+			"orgRoster:getMyAgentDirectory": process.env.STUB_DIRECTORY
+				? JSON.parse(process.env.STUB_DIRECTORY)
+				: [],
 			"agents:registerAgent": "agent_stub_1",
 			"agents:getAgent": { _id: "agent_stub_1", name: "probe-a" },
 			"agentCredentials:mintAgentCredential": {

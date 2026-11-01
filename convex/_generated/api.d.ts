@@ -91,6 +91,7 @@ import type * as lib_provisioningMapping from "../lib/provisioningMapping.js";
 import type * as lib_publicBuilders from "../lib/publicBuilders.js";
 import type * as lib_repoMappingTenant from "../lib/repoMappingTenant.js";
 import type * as lib_reviewRouting from "../lib/reviewRouting.js";
+import type * as lib_rosterAppend from "../lib/rosterAppend.js";
 import type * as lib_rosterIds from "../lib/rosterIds.js";
 import type * as lib_rosterLabels from "../lib/rosterLabels.js";
 import type * as lib_seatAgent from "../lib/seatAgent.js";
@@ -263,6 +264,7 @@ declare const fullApi: ApiFromModules<{
   "lib/publicBuilders": typeof lib_publicBuilders;
   "lib/repoMappingTenant": typeof lib_repoMappingTenant;
   "lib/reviewRouting": typeof lib_reviewRouting;
+  "lib/rosterAppend": typeof lib_rosterAppend;
   "lib/rosterIds": typeof lib_rosterIds;
   "lib/rosterLabels": typeof lib_rosterLabels;
   "lib/seatAgent": typeof lib_seatAgent;

@@ -114,6 +114,12 @@ export async function mintOrgAdminToken({
 	return { jwt, orgId };
 }
 
+export function rosterStepCommand({ agentId }) {
+	// clientOrgMapping:addOperatorRosterMember is an internalMutation (append-only, idempotent), so
+	// like the owner step it is an operator command, one agent per call.
+	return `CONVEX_DEPLOY_KEY=<deploy key> npx convex run clientOrgMapping:addOperatorRosterMember '${JSON.stringify({ agentId })}'`;
+}
+
 /**
  * agents:setAgentOwner is an INTERNAL mutation: no JWT (org admin or otherwise) can call it.
  * The step is therefore an operator command with the deployment's deploy key. Returns that

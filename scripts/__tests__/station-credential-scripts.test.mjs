@@ -174,7 +174,10 @@ describe("mint-station-agents: owner step (agents:setAgentOwner is internal, no 
 	});
 
 	it("an agent that already has an owner is skipped: no step, exit 0", () => {
-		const r = mintWrite({ STUB_AGENTS: EXISTING("user_admin1") });
+		const r = mintWrite({
+			STUB_AGENTS: EXISTING("user_admin1"),
+			STUB_DIRECTORY: ON_ROSTER("agent_existing_1"),
+		});
 		expect(r.status, r.stderr).toBe(0);
 		expect(r.stdout).not.toContain("OWNER_STEP_REQUIRED");
 		expect(r.stdout).toContain("owner already set");
@@ -184,6 +187,69 @@ describe("mint-station-agents: owner step (agents:setAgentOwner is internal, no 
 		const r = mint();
 		expect(r.status, r.stderr).toBe(0);
 		expect(r.stdout).not.toContain("agents:setAgentOwner");
+	});
+});
+
+const ON_ROSTER = (agentId) => JSON.stringify([{ name: "angelia", agentId }]);
+
+describe("mint-station-agents: operator roster step (clientOrgMapping:addOperatorRosterMember is internal)", () => {
+	const rosterLine = (r) =>
+		r.stdout.split("\n").find((l) => l.includes("addOperatorRosterMember"));
+
+	it("an owned agent that is not on the roster ends with ROSTER_STEP_REQUIRED, the exact command, and exit 3", () => {
+		const r = mintWrite({ STUB_AGENTS: EXISTING("user_admin1") });
+		expect(r.status, r.stderr).toBe(3);
+		expect(r.stdout).toContain("ROSTER_STEP_REQUIRED");
+		expect(r.stdout).not.toContain("OWNER_STEP_REQUIRED");
+		const cmd = rosterLine(r);
+		expect(cmd).toBeDefined();
+		expect(cmd).toContain(
+			"npx convex run clientOrgMapping:addOperatorRosterMember",
+		);
+		expect(cmd).toContain('{"agentId":"agent_existing_1"}');
+		// printed, never executed
+		expect(r.convex.map((c) => c.path)).not.toContain(
+			"clientOrgMapping:addOperatorRosterMember",
+		);
+		expect(r.convex.map((c) => c.path)).toContain(
+			"orgRoster:getMyAgentDirectory",
+		);
+	});
+
+	it("a newly registered agent gets both steps, one command each, exit 3", () => {
+		const r = mintWrite();
+		expect(r.status, r.stderr).toBe(3);
+		expect(r.stdout).toContain("OWNER_STEP_REQUIRED");
+		expect(r.stdout).toContain("ROSTER_STEP_REQUIRED");
+		expect(rosterLine(r)).toContain('{"agentId":"agent_stub_1"}');
+	});
+
+	it("an agent already on the roster is skipped: no step, exit 0", () => {
+		const r = mintWrite({
+			STUB_AGENTS: EXISTING("user_admin1"),
+			STUB_DIRECTORY: ON_ROSTER("agent_existing_1"),
+		});
+		expect(r.status, r.stderr).toBe(0);
+		expect(r.stdout).not.toContain("ROSTER_STEP_REQUIRED");
+		expect(r.stdout).toContain("already on the operator roster");
+	});
+
+	it("a directory entry for ANOTHER agent id does not count (a label is not an identity)", () => {
+		const r = mintWrite({
+			STUB_AGENTS: EXISTING("user_admin1"),
+			STUB_DIRECTORY: ON_ROSTER("agent_someone_else"),
+		});
+		expect(r.status, r.stderr).toBe(3);
+		expect(r.stdout).toContain("ROSTER_STEP_REQUIRED");
+	});
+
+	it("a dry run reads nothing of the roster and prints no roster command", () => {
+		const r = mint();
+		expect(r.status, r.stderr).toBe(0);
+		expect(r.stdout).not.toContain("addOperatorRosterMember");
+		expect(r.convex.map((c) => c.path)).not.toContain(
+			"orgRoster:getMyAgentDirectory",
+		);
 	});
 });
 

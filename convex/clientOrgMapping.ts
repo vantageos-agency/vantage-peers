@@ -5,6 +5,8 @@ import { query } from "./lib/functions";
 import { hasFleetRead } from "@vantageos/cloud-identity";
 import { lookupOrgMapping, withOrgScope } from "./lib/auth";
 import { orgMappingRowsForLabel } from "./lib/authOrgMapping";
+import { findOperatorOrg } from "./lib/operatorOrg";
+import { appendAgentsToRoster } from "./lib/rosterAppend";
 import { resolveProvisioningMapping } from "./lib/provisioningMapping";
 import { normalizeOrchestratorId } from "./_helpers/normalizeOrchestratorId";
 import { assertAgentNameFree } from "./lib/agentIdentity";
@@ -364,33 +366,54 @@ export const addRosterMembers = internalMutation({
 			);
 		}
 
-		const previous = row.allowedAgentIds ?? [];
-		const current: Id<"agents">[] = [...previous];
-		const labels = [...row.allowedOrchestrators];
-		for (const id of args.agentIds) {
-			const agent = await ctx.db.get(id);
-			if (
-				agent === null ||
-				!agent.isActive ||
-				agent.orgSlug !== row.clerkOrgSlug
-			) {
-				throw new ConvexError(
-					`AGENT_NOT_IN_ORG: "${id}" is not an active agent of org "${args.clerkOrgSlug}"; a roster lists the agents of its own organisation only`,
-				);
-			}
-			if (!current.includes(id)) current.push(id);
-			// The agent's exact stored name (a label snapshot for the legacy name
-			// readers, never an authority). Dedupe stays spelling-insensitive.
-			const label = normalizeOrchestratorId(agent.name);
-			if (!labels.some((entry) => normalizeOrchestratorId(entry) === label)) {
-				labels.push(agent.name);
-			}
-		}
-		await ctx.db.patch(row._id, {
-			allowedAgentIds: current,
-			allowedOrchestrators: labels,
-		});
+		const { previous, current } = await appendAgentsToRoster(ctx, row, args.agentIds);
 		return { clerkOrgSlug: args.clerkOrgSlug, previous, current };
+	},
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// addOperatorRosterMember — the append-only door for the OPERATOR org's roster
+// (task k172caqyjb46az1fhbd4vcn9sx8hdr4f). addRosterMembers refuses the operator
+// org and setOrgRoster replaces whole lists; station onboarding needs neither
+// "any org" nor "replace": one agent of the operator org, appended once.
+// Run by the operator: `clientOrgMapping:addOperatorRosterMember '{"agentId":"…"}'`.
+// internalMutation, never wired to an MCP tool or client surface, so the backend
+// manifest (public functions only) and the MCP contract are untouched.
+//
+// The organisation is DERIVED (findOperatorOrg: the one active operator-kind
+// mapping), never typed. The agent must be an ACTIVE agent stamped with that
+// org's slug, so a client org's agent cannot be listed here. APPEND ONLY and
+// idempotent: the id is added if absent, the agent's exact stored name is added
+// if no entry matches it under normalizeOrchestratorId; nothing is removed or
+// reordered, and `added: false` means nothing was written. Every check precedes
+// the single patch.
+// ─────────────────────────────────────────────────────────────────────────────
+export const addOperatorRosterMember = internalMutation({
+	args: { agentId: v.id("agents") },
+	returns: v.object({
+		clerkOrgSlug: v.string(),
+		added: v.boolean(),
+		previous: v.array(v.id("agents")),
+		current: v.array(v.id("agents")),
+	}),
+	handler: async (ctx, args) => {
+		const operator = await findOperatorOrg(ctx.db);
+		if (operator.kind !== "one") {
+			throw new ConvexError(
+				`OPERATOR_ORG_NOT_FOUND: the operator org is not settled to exactly one active mapping (${operator.kind})`,
+			);
+		}
+		const provisioned = await resolveProvisioningMapping(ctx, operator.slug);
+		const row = provisioned.kind === "row" ? provisioned.row : null;
+		if (!row || row.orgKind !== "operator" || !row.isActive) {
+			throw new ConvexError(
+				`OPERATOR_ORG_NOT_FOUND: no active operator mapping row for "${operator.slug}"`,
+			);
+		}
+		const { previous, current, added } = await appendAgentsToRoster(ctx, row, [
+			args.agentId,
+		]);
+		return { clerkOrgSlug: row.clerkOrgSlug, added, previous, current };
 	},
 });
 

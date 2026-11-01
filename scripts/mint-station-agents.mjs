@@ -25,6 +25,11 @@
  *   inactive row: BLOCKED (never revived by this tool).
  * registerAgent is never called on an existing row (it patches description away).
  *
+ * AFTER the mint, two operator steps may remain (both doors are internal, no JWT can call them): the
+ * agent's owner (OWNER_STEP_REQUIRED) and its place on the operator org's roster by agent ID, read from
+ * orgRoster:getMyAgentDirectory (ROSTER_STEP_REQUIRED, clientOrgMapping:addOperatorRosterMember).
+ * Either one prints its exact command and the script exits 3.
+ *
  * SECRETS: plaintext is written ONLY to <secrets-dir>/<agentName>.secret
  * (mode 0600, dir 0700), a path the operator names and that must be OUTSIDE the
  * repository. stdout carries only the agents row id, the file path and the env
@@ -45,6 +50,7 @@ import { ConvexHttpClient } from "convex/browser";
 import {
 	mintOrgAdminToken,
 	ownerStepCommand,
+	rosterStepCommand,
 	requireClerkDomain,
 } from "./lib/org-admin-token.mjs";
 import {
@@ -194,8 +200,10 @@ async function main() {
 	// one carries ownerPersonId on the listAgentsByOrg row. Skipped stations (live credential) count too:
 	// the credential is not the owner.
 	const ownerPending = [];
+	const stationAgents = [];
 	for (const { st, agent, decision } of plan) {
 		if (!decision.mint) {
+			stationAgents.push({ st, agentId: agent._id });
 			if (agent?.ownerPersonId)
 				console.log(
 					`${TAG} ${st.agentName}: owner already set (${agent.ownerPersonId}); owner step skipped`,
@@ -221,10 +229,25 @@ async function main() {
 				`${TAG} ${st.agentName}: owner already set (${agent.ownerPersonId}); owner step skipped`,
 			);
 		else ownerPending.push({ st, agentId });
+		stationAgents.push({ st, agentId });
 		const path = writeSecretFile(secretsDir, st.agentName, secret);
 		console.log(
 			`${TAG} ${st.agentName}: agents._id=${agentId} minted ${new Date(mintedAt).toISOString()} -> ${path} (0600) var=${envVarNameFor(st.agentName)}`,
 		);
+	}
+	// A station is a message recipient only when its agent id is on the operator org's roster
+	// (allowedAgentIds + the label snapshot). registerAgent does not add it, and the append door
+	// (clientOrgMapping:addOperatorRosterMember) is internal, so a missing entry is an operator command.
+	// Read the caller's own org directory (orgRoster:getMyAgentDirectory) and compare by agent ID.
+	const directory = await client.query(api.orgRoster.getMyAgentDirectory, {});
+	const listed = new Set((directory ?? []).map((e) => e.agentId));
+	const rosterPending = [];
+	for (const { st, agentId } of stationAgents) {
+		if (listed.has(agentId))
+			console.log(
+				`${TAG} ${st.agentName}: already on the operator roster; roster step skipped`,
+			);
+		else rosterPending.push({ st, agentId });
 	}
 	if (ownerPending.length > 0) {
 		// agentCredentials resolve an agent only when agents.ownerPersonId is set, and neither registerAgent
@@ -241,8 +264,21 @@ async function main() {
 				reason: `station ${ownerPending.map((p) => p.st.agentName).join(",")}: onboarding, owner is the org admin that registered the agent`,
 			})}`,
 		);
+	}
+	if (rosterPending.length > 0) {
 		console.log(
-			`${TAG} DONE with the owner step PENDING (exit 3). No secret value was printed.`,
+			`ROSTER_STEP_REQUIRED: ${rosterPending.map((p) => p.st.agentName).join(",")} is not on the operator org roster, so send_message refuses it as a recipient. Operator, run each command against the deployment you name (append-only, idempotent), then re-run the onboarding:`,
+		);
+		for (const p of rosterPending)
+			console.log(`  ${rosterStepCommand({ agentId: p.agentId })}`);
+	}
+	if (ownerPending.length > 0 || rosterPending.length > 0) {
+		const pending = [
+			...(ownerPending.length > 0 ? ["owner"] : []),
+			...(rosterPending.length > 0 ? ["roster"] : []),
+		].join("+");
+		console.log(
+			`${TAG} DONE with the ${pending} step PENDING (exit 3). No secret value was printed.`,
 		);
 		process.exitCode = 3;
 		return;
