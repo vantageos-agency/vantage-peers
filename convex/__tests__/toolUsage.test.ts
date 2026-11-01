@@ -133,7 +133,7 @@ describe("toolUsage:record + toolUsage:getToolUsage", () => {
 		});
 		const bob = member(t, B, "bob-sub", "org:admin");
 		expect(
-			await code(bob.query(toolUsage.getToolUsage, { orgId: A_ID })),
+			await code(bob.query(toolUsage.getToolUsage, { verifiedOrg: { orgSlug: A } })),
 		).toBe("RBAC_DENIED");
 		// An admin of B naming alice's key reads B's rows for that key: none.
 		expect(
@@ -173,7 +173,7 @@ describe("toolUsage:record + toolUsage:getToolUsage", () => {
 			toolName: "store_memory",
 		});
 		const got = (await service(t).query(toolUsage.getToolUsage, {
-			orgId: A_ID,
+			verifiedOrg: { orgSlug: A },
 			caller: "user:alice-sub",
 		})) as Row[];
 		expect(got).toHaveLength(1);
@@ -231,12 +231,16 @@ describe("toolUsage:record + toolUsage:getToolUsage", () => {
 		expect(
 			await t.mutation(toolUsage.record, { toolName: "store_memory" }),
 		).toEqual({ recorded: false });
+		// R-54: the service account that names no organisation is REFUSED, never
+		// recorded under a guess and never served as master.
 		expect(
-			await service(t).mutation(toolUsage.record, {
-				toolName: "store_memory",
-				caller: "agent:x",
-			}),
-		).toEqual({ recorded: false });
+			await code(
+				service(t).mutation(toolUsage.record, {
+					toolName: "store_memory",
+					caller: "agent:x",
+				}),
+			),
+		).toBe("RBAC_DENIED");
 		expect(await rowsOf(t)).toHaveLength(0);
 	});
 
@@ -380,7 +384,7 @@ describe("toolUsage:usageByOwner", () => {
 		);
 		// The org-scoped caller of B naming org A is refused too.
 		expect(
-			await code(engine(t, B, { ownerUserId: "b-owner", orgId: A_ID })),
+			await code(engine(t, B, { ownerUserId: "b-owner", verifiedOrg: { orgSlug: A } })),
 		).toBe("RBAC_DENIED");
 	});
 
@@ -417,6 +421,36 @@ describe("toolUsage:usageByOwner", () => {
 		).toEqual([]);
 	});
 
+	test("the engine may name its organisation by claim instead of the acting org; the claim of another organisation is refused", async () => {
+		const t = createT();
+		await seed(t);
+		await seedOwner(t, A, "owner-sub", ["claude"]);
+		expect(
+			await service(t).query(toolUsage.usageByOwner, {
+				ownerUserId: "owner-sub",
+				verifiedOrg: { orgSlug: A },
+			}),
+		).toEqual([]);
+		expect(
+			await code(
+				service(t).query(toolUsage.usageByOwner, {
+					ownerUserId: "owner-sub",
+					verifiedOrg: { orgSlug: B },
+					__actingOrg: A_ID,
+				}),
+			),
+		).toBe("RBAC_DENIED");
+		// A Clerk session cannot name an organisation by claim.
+		expect(
+			await code(
+				member(t, A, "boss-sub", "org:admin").query(toolUsage.usageByOwner, {
+					ownerUserId: "owner-sub",
+					verifiedOrg: { orgSlug: B },
+				}),
+			),
+		).toBe("RBAC_DENIED");
+	});
+
 	test("a seat (acting-org service WITH its own key) is not the engine: it cannot read its owner", async () => {
 		const t = createT();
 		await seed(t);
@@ -439,7 +473,7 @@ describe("toolUsage:usageByOwner", () => {
 		expect(
 			await service(t).query(toolUsage.usageByOwner, {
 				ownerUserId: "owner-sub",
-				orgId: A_ID,
+				verifiedOrg: { orgSlug: A },
 			}),
 		).toEqual([]);
 		expect(
