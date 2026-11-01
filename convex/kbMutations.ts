@@ -55,12 +55,20 @@ import {
 // ─────────────────────────────────────────────────────────────────────────────
 
 export const resolveKbCallerScope = internalQuery({
-	args: { verifiedOrg: verifiedOrgValidator, door: v.string() },
+	args: {
+		verifiedOrg: verifiedOrgValidator,
+		door: v.string(),
+		// The calling action's acting org (convex/lib/actingOrg.ts).
+		actingOrg: v.optional(v.string()),
+	},
 	returns: actionOrgScopeValidator,
 	handler: async (ctx, args) => {
 		const transport = await withOrgScope(ctx, {
 			refuseWithoutThrow: true,
 			operatorAsMember: true,
+			...(args.actingOrg !== undefined
+				? { actingOrgClerkId: args.actingOrg }
+				: {}),
 		});
 		const scope = await resolveVerifiedOrgScope(
 			ctx,

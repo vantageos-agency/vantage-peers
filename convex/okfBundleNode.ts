@@ -25,6 +25,7 @@
  * Orchestrator: Sigma — VantagePeers | 2026-06-19
  */
 
+import { actionScopeArgs } from "./lib/actingOrg";
 import { hasFleetRead } from "@vantageos/cloud-identity";
 import { createHash } from "node:crypto";
 import { Readable } from "node:stream";
@@ -277,7 +278,7 @@ export async function assertCanExportNamespace(
 	// namespace `project/elpi-corp`, is refused `RBAC_DENIED` naming the door.
 	const scope = await ctx.runQuery(
 		internal.lib.auth.resolveOrgScopeForAction,
-		{},
+		actionScopeArgs(ctx),
 	);
 	requireTenantNamespace(scope, namespace, door);
 }
@@ -457,7 +458,7 @@ export const exportOkfBundle = action({
 		// read any blob).
 		const exporterScope = await ctx.runQuery(
 			internal.lib.auth.resolveOrgScopeForAction,
-			{},
+			actionScopeArgs(ctx),
 		);
 		if (!hasFleetRead(exporterScope) && exporterScope.orgSlug !== null) {
 			await ctx.runMutation(internal.kbMutations.bindOrAssertStorageOwnership, {
@@ -747,7 +748,7 @@ export const validateOkfBundle = action({
 			// The bundleUrl branch reads no VP data and keeps its SSRF gate only.
 			const scope = await ctx.runQuery(
 				internal.lib.auth.resolveOrgScopeForAction,
-				{},
+				actionScopeArgs(ctx),
 			);
 			requireResolvedCaller(scope, "okfBundleNode:validateOkfBundle", {
 				alsoRefusePreOrg: true,
@@ -1003,7 +1004,7 @@ export const importOkfBundle = action({
 			// excluding node_modules and .next -> 0 hits).
 			const scope = await ctx.runQuery(
 				internal.lib.auth.resolveOrgScopeForAction,
-				{},
+				actionScopeArgs(ctx),
 			);
 			requireResolvedCaller(scope, "okfBundleNode:importOkfBundle", {
 				alsoRefusePreOrg: true,

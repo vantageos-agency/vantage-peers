@@ -14,7 +14,12 @@ import {
 import { ConvexError } from "convex/values";
 import type { Doc } from "../_generated/dataModel";
 import type { MutationCtx, QueryCtx } from "../_generated/server";
-import { lookupOrgMapping, type OrgScope, type VerifiedActor } from "./auth";
+import {
+	lookupOrgMapping,
+	type OrgScope,
+	requireActingOrgMatch,
+	type VerifiedActor,
+} from "./auth";
 import { orgMappingLookups } from "./authOrgMapping";
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -291,6 +296,10 @@ export function requireServiceAccountForClaim(
 	claim: keyof typeof CLAIM_NOT_TRUSTED_REASON,
 	door: string,
 ): void {
+	// The service account acting for an organisation (`__actingOrg`) is still the
+	// transport that verified the claim; each caller binds the claim's org to the
+	// acting org (`requireActingOrgMatch`).
+	if (transportScope.serviceTransport === true) return;
 	try {
 		requireServiceAccountStanding(transportScope, door);
 	} catch (err) {
@@ -325,6 +334,7 @@ export async function requireVerifiedActorPrincipal(
 	if (verifiedOrgId === undefined) {
 		throw orgHasNoPermanentIdRefusal(verifiedActor.orgSlug, door);
 	}
+	requireActingOrgMatch(transportScope, verifiedOrgId, "verifiedActor", door);
 	const resolved = await resolveActingPrincipal(
 		{
 			kind: "agent",

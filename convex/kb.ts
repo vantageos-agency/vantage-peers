@@ -38,6 +38,7 @@
  * Orchestrator: Sigma — VantagePeers | 2026-06-27
  */
 
+import { actionScopeArgs } from "./lib/actingOrg";
 import { randomUUID } from "node:crypto";
 import { v } from "convex/values";
 import { internal } from "./_generated/api";
@@ -208,8 +209,9 @@ async function resolveKbCaller(
 ) {
 	const scope =
 		verifiedOrg === undefined
-			? await ctx.runQuery(internal.lib.auth.resolveOrgScopeForAction, {})
+			? await ctx.runQuery(internal.lib.auth.resolveOrgScopeForAction, actionScopeArgs(ctx))
 			: await ctx.runQuery(internal.kbMutations.resolveKbCallerScope, {
+					...actionScopeArgs(ctx),
 					verifiedOrg,
 					door: registration,
 				});

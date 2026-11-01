@@ -116,7 +116,7 @@ export const storeMemory = mutation({
       scope,
       args.createdBy,
       "memories:storeMemory",
-      isMcpBoundMaster(scope),
+      isMcpBoundMaster(scope) || scope.serviceTransport === true,
     );
     const clerkOrgId = await memoryStampForWrite(
       ctx,
