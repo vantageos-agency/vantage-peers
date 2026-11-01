@@ -11,13 +11,15 @@
  * PRECONDITIONS (done by the operator commands in the runbook, read back here):
  *   - client_org_mapping row for <slug>, isActive. An agent not yet on its roster is registered here by
  *     ID and the script exits 3 printing the operator's addRosterMembers + setAgentOwner commands.
- *   - oauth_scope_profiles "<agent>-<slug>" bound to <slug> (clerkOrgSlug)
+ *   - oauth_scope_profiles "<agent>-<slug>" bound to <slug> (clerkOrgSlug). Its prefixes must list
+ *     orchestrator/<agent ID> once the agent is registered: run
+ *     migrations/seat_profile_agent_namespace:run after this script (runbook step 4c)
  *   - the Clerk org exists with our org-admin user as org:admin
  *
  * PER AGENT (idempotent on the registry side; a seat bearer is re-minted each run):
  *   1. oauth_clients row (service account, oauth:createClient), secret hash only
  *   2. refresh + access token (service account), access TTL = --ttl-days
- *   3. agents row + agent credential (org-admin JWT minted for THIS org, its org_id claim
+ *   3. agents row (registered BEFORE the tokens: the seat's namespace is orchestrator/<agent ID>) + agent credential (org-admin JWT minted for THIS org, its org_id claim
  *      verified equal to --clerk-org-id before any write; mismatch exits 1, nothing registered)
  *   4. prints the agents:setAgentOwner command (internal mutation: operator step, deploy key)
  *   writes <stage-dir>/<agent>.bearer and <agent>.secret (0600); prints no secret.
@@ -164,7 +166,19 @@ const now = Date.now();
 const registeredIds = [];
 for (const agent of agents) {
 	const profileId = `${agent}-${org}`;
-	const ns = [`orchestrator/${agent}`, `project/${org}`];
+	// The agent row first: a seat's orchestrator namespace is keyed by the agent's
+	// verified ID (Convex admits `orchestrator/<agentId>` only, never the name), and an
+	// ID exists only once the agent is registered. A seat-only bearer has no agent and
+	// no orchestrator namespace.
+	let row;
+	if (!seatOnly) {
+		row = agentRowByLabel(await admin.query(api.agents.listAgentsByOrg, {}), agent);
+		if (!row) {
+			const agentId = await admin.mutation(api.agents.registerAgent, { name: agent, description: `Agent ${agent} of ${org}` });
+			row = await admin.query(api.agents.getAgent, { agentId });
+		}
+	}
+	const ns = seatOnly ? [`project/${org}`] : [`orchestrator/${row._id}`, `project/${org}`];
 
 	// 1. seat client
 	const clientId = hex(16);
@@ -206,12 +220,7 @@ for (const agent of agents) {
 		console.log(`${agent}: seat-only client=${clientId} profile=${profileId} access expires ${new Date(expiresAt).toISOString()} -> ${bearerPath}`);
 		continue;
 	}
-	// 3. agent registry, by ID, in THIS org
-	let row = agentRowByLabel(await admin.query(api.agents.listAgentsByOrg, {}), agent);
-	if (!row) {
-		const agentId = await admin.mutation(api.agents.registerAgent, { name: agent, description: `Agent ${agent} of ${org}` });
-		row = await admin.query(api.agents.getAgent, { agentId });
-	}
+	// 3. agent credential (the agent row was registered above, by ID, in THIS org)
 	registeredIds.push(row._id);
 	let secretPath = join(stage, `${agent}.secret`);
 	if (!existsSync(secretPath)) {
