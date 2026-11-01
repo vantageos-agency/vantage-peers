@@ -370,3 +370,106 @@ describe("(f) the ID-comparing gate admits a row only after the backfill", () =>
 		expect(await admitted(t, ids.ghostTask, "acme-hr")).toBe(false);
 	});
 });
+
+// A slug is a label that can change hands. The backfill reads the CURRENT mapping, so a
+// row stamped with a slug by its former holder must not take the new holder's ID.
+describe("age check: a mapping newer than the row never resolves it", () => {
+	const mappingRow = (slug: string, clerkOrgId: string) => ({
+		clerkOrgSlug: slug,
+		clerkOrgId,
+		allowedOrchestrators: [],
+		scopes: [],
+		displayName: slug,
+		isActive: true,
+		createdAt: NOW,
+	});
+
+	test("(1) slug changed hands: row created BEFORE its slug's mapping is unwritten and listed", async () => {
+		const t = createT();
+		const ids = await t.run(async (ctx) => {
+			// the former holder's rows, stamped with the slug first ...
+			const profileId = await ctx.db.insert(
+				"oauth_scope_profiles",
+				profile("p-old", "reused-slug"),
+			);
+			const taskId = await ctx.db.insert("tasks", task("old", "reused-slug"));
+			// ... then the slug is taken by another organisation.
+			await ctx.db.insert(
+				"client_org_mapping",
+				mappingRow("reused-slug", "org_NEWHOLDER1"),
+			);
+			return { profileId, taskId };
+		});
+		const profiles = await walk((cursor) =>
+			t.mutation(backfill, {
+				table: "oauth_scope_profiles",
+				dryRun: false,
+				cursor,
+			}),
+		);
+		const tasks = await walk((cursor) =>
+			t.mutation(backfill, { table: "tasks", dryRun: false, cursor }),
+		);
+		for (const pages of [profiles, tasks]) {
+			expect(sum(pages, (p) => p.filled)).toBe(0);
+			expect(sum(pages, (p) => p.unresolved)).toBe(1);
+			expect(
+				sum(pages, (p) => p.unresolvedByReason.mappingNewerThanRow),
+			).toBe(1);
+		}
+		expect(profiles.flatMap((p) => p.unresolvedIds)).toEqual([ids.profileId]);
+		expect(tasks.flatMap((p) => p.unresolvedIds)).toEqual([ids.taskId]);
+		await t.run(async (ctx) => {
+			expect((await ctx.db.get(ids.profileId))?.clerkOrgId).toBeUndefined();
+			expect((await ctx.db.get(ids.taskId))?.clerkOrgId).toBeUndefined();
+		});
+	});
+
+	test("(2) slug unchanged: row created AFTER its slug's mapping is written", async () => {
+		const t = createT();
+		const ids = await t.run(async (ctx) => {
+			await ctx.db.insert(
+				"client_org_mapping",
+				mappingRow("steady-slug", "org_STEADY1"),
+			);
+			const profileId = await ctx.db.insert(
+				"oauth_scope_profiles",
+				profile("p-new", "steady-slug"),
+			);
+			const taskId = await ctx.db.insert("tasks", task("new", "steady-slug"));
+			return { profileId, taskId };
+		});
+		const profiles = await walk((cursor) =>
+			t.mutation(backfill, {
+				table: "oauth_scope_profiles",
+				dryRun: false,
+				cursor,
+			}),
+		);
+		const tasks = await walk((cursor) =>
+			t.mutation(backfill, { table: "tasks", dryRun: false, cursor }),
+		);
+		expect(sum(profiles, (p) => p.filled)).toBe(1);
+		expect(sum(tasks, (p) => p.filled)).toBe(1);
+		await t.run(async (ctx) => {
+			expect((await ctx.db.get(ids.profileId))?.clerkOrgId).toBe("org_STEADY1");
+			expect((await ctx.db.get(ids.taskId))?.clerkOrgId).toBe("org_STEADY1");
+		});
+	});
+
+	test("a dry run counts the changed-hands row as unresolved, not toFill", async () => {
+		const t = createT();
+		await t.run(async (ctx) => {
+			await ctx.db.insert("tasks", task("old", "reused-slug"));
+			await ctx.db.insert(
+				"client_org_mapping",
+				mappingRow("reused-slug", "org_NEWHOLDER1"),
+			);
+		});
+		const [page] = await walk((cursor) =>
+			t.mutation(backfill, { table: "tasks", cursor }),
+		);
+		expect(page.toFill).toBe(0);
+		expect(page.unresolved).toBe(1);
+	});
+});
