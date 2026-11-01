@@ -2744,6 +2744,7 @@ async function unblockWaitersOn(
 		.query("tasks")
 		.withIndex("by_blockedOnTaskId", (q) => q.eq("blockedOnTaskId", closedTaskId))
 		.collect();
+	const operatorRef = await fleetOperatorRef(ctx.db);
 
 	for (const waiter of waiters) {
 		if (waiter.status !== "blocked") continue;
@@ -2775,11 +2776,28 @@ async function unblockWaitersOn(
 				)}`;
 		}
 
+		// The notice belongs to the waiter's organisation (Pi receipt
+		// k9768tz43k6dvy6bgvgz9p4x2x8hcw85). A waiter of a CLIENT org (an organisation
+		// with a permanent ID that is not the operator's) stamps the notice and its
+		// receipt with that org, so the org's own readers receive it. A FLEET waiter
+		// (unstamped, or stamped with the operator org, as every task created before
+		// 2026-10-29 was) keeps the notice unstamped: the fleet shape, read by the fleet
+		// reader. That is a fleet decision, not an oversight; a client waiter with no
+		// permanent ID yet is also left unstamped rather than given an ID derived from
+		// its slug.
+		const waiterOrg = { id: waiter.clerkOrgId, label: waiter.orgId };
+		const clientStamp =
+			waiter.clerkOrgId !== undefined &&
+			waiter.orgId !== undefined &&
+			!isFleetStamp(waiterOrg, operatorRef)
+				? { tenantId: waiter.orgId, tenantOrgId: waiter.clerkOrgId }
+				: {};
 		const messageId = await ctx.db.insert("messages", {
 			from: "system",
 			channel: waiter.assignedTo,
 			content,
 			createdAt: now,
+			...clientStamp,
 		});
 		// R-53: the target BY ID — the waiter's own stored assignee ID, else the
 		// name resolved within the waiter's own org (never another org's agent).
@@ -2791,6 +2809,7 @@ async function unblockWaitersOn(
 			recipient: waiter.assignedTo,
 			...(recipientId !== undefined ? { recipientId } : {}),
 			readAt: undefined,
+			...clientStamp,
 		});
 	}
 }

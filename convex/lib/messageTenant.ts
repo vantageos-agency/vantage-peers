@@ -50,7 +50,10 @@ export async function fleetTenantOrgIds(
 	db: DatabaseReader,
 ): Promise<ReadonlyArray<string | undefined>> {
 	const operator = await fleetOperatorRef(db);
-	return operator?.id !== undefined ? [undefined, operator.id] : [undefined];
+	const operatorId = operator?.id;
+	return typeof operatorId === "string" && operatorId !== ""
+		? [undefined, operatorId]
+		: [undefined];
 }
 
 /**
