@@ -2,7 +2,7 @@ import { type OrgRef, sameOrg } from "@vantageos/cloud-identity";
 import { v, ConvexError } from "convex/values";
 import type { Doc } from "./_generated/dataModel";
 import type { QueryCtx } from "./_generated/server";
-import { mutation, query } from "./_generated/server";
+import { mutation, query } from "./lib/functions";
 import {
 	lookupOrgMapping,
 	requireResolvedCaller,

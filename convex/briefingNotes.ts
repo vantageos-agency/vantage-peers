@@ -1,6 +1,11 @@
 import { v } from "convex/values";
 import { ConvexError } from "convex/values";
-import { internalMutation, mutation, query, type MutationCtx, type QueryCtx } from "./_generated/server";
+import {
+	internalMutation,
+	type MutationCtx,
+	type QueryCtx,
+} from "./_generated/server";
+import { mutation, query } from "./lib/functions";
 import {
 	deleteBodyChunks,
 	hydrateNote,

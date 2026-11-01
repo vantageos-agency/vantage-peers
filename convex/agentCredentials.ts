@@ -4,7 +4,7 @@ import {
 	sha256Hex,
 } from "@vantageos/cloud-identity";
 import { ConvexError, v } from "convex/values";
-import { mutation, query } from "./_generated/server";
+import { mutation, query } from "./lib/functions";
 import {
 	ORG_ADMIN_ROLES,
 	refuseUnresolvedCredential,

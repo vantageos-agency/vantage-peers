@@ -1,7 +1,7 @@
 import { v, ConvexError } from "convex/values";
 import type { Doc } from "./_generated/dataModel";
 import type { MutationCtx, QueryCtx } from "./_generated/server";
-import { mutation, query } from "./_generated/server";
+import { mutation, query } from "./lib/functions";
 import {
 	isFleetStamp,
 	sameOrg,

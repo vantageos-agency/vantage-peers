@@ -34,11 +34,8 @@
 // ─────────────────────────────────────────────────────────────────────────────
 
 import { v } from "convex/values";
-import {
-	internalMutation,
-	internalQuery,
-	query,
-} from "./_generated/server";
+import { internalMutation, internalQuery } from "./_generated/server";
+import { query } from "./lib/functions";
 import { requireResolvedCaller, withOrgScope } from "./lib/auth";
 
 // Admin-config table (filter rules), not tenant data — 500 active rows is a

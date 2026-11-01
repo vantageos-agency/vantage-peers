@@ -1,7 +1,8 @@
 import { resolveWriterRole } from "@vantageos/cloud-identity";
 import { ConvexError, v } from "convex/values";
 import type { MutationCtx, QueryCtx } from "./_generated/server";
-import { internalMutation, query } from "./_generated/server";
+import { internalMutation } from "./_generated/server";
+import { query } from "./lib/functions";
 import { type OrgScope, requireResolvedCaller, withOrgScope } from "./lib/auth";
 import { clerkOrgIdForSlug } from "./lib/orgClerkId";
 import {

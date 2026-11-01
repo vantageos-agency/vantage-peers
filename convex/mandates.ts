@@ -1,6 +1,6 @@
 import { v, ConvexError } from "convex/values";
 import type { Doc } from "./_generated/dataModel";
-import { mutation, query } from "./_generated/server";
+import { mutation, query } from "./lib/functions";
 import { requireId } from "./lib/ids";
 import { creatorValidator } from "./schema";
 import { requireResolvedCaller, verifiedActorValidator, withOrgScope } from "./lib/auth";

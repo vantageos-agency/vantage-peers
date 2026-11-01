@@ -75,10 +75,9 @@ import type { Id } from "./_generated/dataModel";
 import {
 	internalMutation,
 	type MutationCtx,
-	mutation,
 	type QueryCtx,
-	query,
 } from "./_generated/server";
+import { mutation, query } from "./lib/functions";
 import { BUNDLE_PAGE_SIZE } from "./okfBundle";
 import {
 	requireResolvedCaller,

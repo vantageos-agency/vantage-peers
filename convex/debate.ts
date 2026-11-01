@@ -15,10 +15,9 @@ import type { Doc, Id } from "./_generated/dataModel";
 import {
 	internalMutation,
 	type MutationCtx,
-	mutation,
 	type QueryCtx,
-	query,
 } from "./_generated/server";
+import { mutation, query } from "./lib/functions";
 import { anonymousRefusal } from "./lib/agentIdentity";
 import {
 	isMcpBoundMaster,

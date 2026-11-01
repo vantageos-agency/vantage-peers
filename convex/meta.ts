@@ -1,5 +1,5 @@
 import { v } from "convex/values";
-import { query } from "./_generated/server";
+import { query } from "./lib/functions";
 import { requireResolvedCaller, withOrgScope } from "./lib/auth";
 import {
 	BACKEND_CONTRACT_VERSION,

@@ -7,12 +7,8 @@ import { requireId } from "./lib/ids";
 import { closeTrailingSegmentOnExit } from "./lib/taskClosureGate";
 import { withOrgScope } from "./lib/auth";
 import { requireFleetDoor, scopeWithFleetStanding } from "./lib/fleetStanding";
-import {
-	internalMutation,
-	internalQuery,
-	mutation,
-	query,
-} from "./_generated/server";
+import { internalMutation, internalQuery } from "./_generated/server";
+import { mutation, query } from "./lib/functions";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Auth — fleet-internal surface, no per-org owner field

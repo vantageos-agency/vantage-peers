@@ -12,7 +12,8 @@
  */
 
 import { v } from "convex/values";
-import { internalMutation, mutation, query } from "./_generated/server";
+import { internalMutation } from "./_generated/server";
+import { mutation, query } from "./lib/functions";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Crypto helpers (Convex V8 runtime — SubtleCrypto + getRandomValues available)

@@ -5,9 +5,8 @@ import {
 	type QueryCtx,
 	internalMutation,
 	internalQuery,
-	mutation,
-	query,
 } from "./_generated/server";
+import { mutation, query } from "./lib/functions";
 import { creatorValidator } from "./schema";
 import { requireResolvedCaller, withOrgScope } from "./lib/auth";
 import { orgRefOfRow, orgRefOfScope } from "./lib/authOrgMapping";
