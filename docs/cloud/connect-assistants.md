@@ -88,12 +88,25 @@ OpenAI's help article 12584461 states that custom MCP connectors have full acces
 
 These two hosts do not register themselves with VantagePeers Cloud, so we register a client for you beforehand and send its credentials through a one-time link (eu.onetimesecret.com), with the passphrase on a separate channel. The note holds the MCP URL, a Client ID, a Client secret and the redirect URI.
 
-- **Antigravity:** add a custom MCP server with URL `https://mcp.vantagepeers.com/mcp`, authentication OAuth, and paste the Client ID and Client secret from the note. Redirect URI (already registered on our side): `https://antigravity.google/oauth-callback`.
+- **Antigravity:** put this in `~/.gemini/config/mcp_config.json` (merge the `mcpServers` key into the file you already have), with the Client ID and Client secret from the note:
+
+  ```json
+  {
+    "mcpServers": {
+      "vantage-peers-googler": {
+        "serverUrl": "https://mcp.vantagepeers.com/mcp",
+        "oauth": { "clientId": "<Client ID>", "clientSecret": "<Client secret>" }
+      }
+    }
+  }
+  ```
+
+  Then open Agent settings (Ctrl+,) > Customizations > Authenticate, sign in, paste the code Antigravity shows and Submit. Redirect URI (already registered on our side): `https://antigravity.google/oauth-callback`. Antigravity's documentation says it also registers itself automatically when the server supports it; that path has not been tried against VantagePeers Cloud yet.
 - **Mistral Le Chat:** add a custom MCP connector with URL `https://mcp.vantagepeers.com/mcp`, authentication OAuth, and paste the Client ID and Client secret from the note. Redirect URI (already registered on our side): `https://callback.mistral.ai/v1/integrations_auth/oauth2_callback`.
 
 Then sign in and complete the consent page.
 
-<!-- not measured: the exact screen labels of Antigravity and Le Chat, and a full sign-in from either host against VantagePeers Cloud. -->
+<!-- source: antigravity.google/docs/mcp, fetched 2026-11-01. not measured: the Le Chat screen labels, and a full sign-in from Antigravity or Le Chat against VantagePeers Cloud. -->
 
 ## Test it
 
