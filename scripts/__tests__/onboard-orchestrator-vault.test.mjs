@@ -104,6 +104,60 @@ describe("onboard-orchestrator.sh --dry-run", () => {
 	});
 });
 
+describe("onboard-orchestrator.sh owner step (task k177034bdx6cqb82grpc862pw58hckgk)", () => {
+	const OWNER_CMD =
+		"npx convex run agents:setAgentOwner '{\"agentIds\":[\"agent_x\"],\"ownerPersonId\":\"user_y\",\"reason\":\"station testrole: onboarding\"}'";
+	// bun stub: the dry run passes; the write run reports a live credential (SKIP) and the owner step
+	// pending, exactly as mint-station-agents.mjs does (exit 3).
+	const runWithMint = (mintExit, mintOut) => {
+		const home = join(tmp, `home-${mintExit}`);
+		const wsDir = join(tmp, `ws-${mintExit}`);
+		mkdirSync(home, { recursive: true });
+		mkdirSync(wsDir, { recursive: true });
+		writeFileSync(join(home, ".claude.json"), "{}");
+		const b = join(tmp, `bin-${mintExit}`);
+		mkdirSync(b, { recursive: true });
+		writeFileSync(
+			join(b, "bun"),
+			`#!/usr/bin/env bash\nfor a in "$@"; do [ "$a" = "--dry-run" ] && exit 0; done\ncat <<'EOF'\n${mintOut}\nEOF\nexit ${mintExit}\n`,
+		);
+		chmodSync(join(b, "bun"), 0o755);
+		return spawnSync("bash", [ONBOARD, "testrole", wsDir], {
+			cwd: REPO,
+			encoding: "utf8",
+			env: {
+				...process.env,
+				HOME: home,
+				PATH: `${b}:${process.env.PATH}`,
+				VP_ONBOARD_ENV_FILE: envFile,
+				VP_INFISICAL_CONFIG: config,
+				VP_ONBOARD_HOST: "testhost",
+				VP_ONBOARD_SHM: tmp,
+			},
+		});
+	};
+	const planSkip =
+		'[mint-stations]   SKIP          agent="testrole" instanceId="testrole-vps" row=agent_x activeCredentialRows=1';
+
+	it("exits 3 and repeats that the owner step is pending, with the command, when the mint reports it", () => {
+		const r = runWithMint(
+			3,
+			`${planSkip}\nOWNER_STEP_REQUIRED: testrole has no owner\n  ${OWNER_CMD}`,
+		);
+		expect(r.status, r.stdout + r.stderr).toBe(3);
+		expect(r.stdout).toContain("OWNER_STEP_REQUIRED");
+		expect(r.stdout).toContain(OWNER_CMD);
+		expect(r.stdout).toContain("OWNER_STEP_PENDING");
+		expect(r.stdout).not.toContain("OK: testrole onboarded");
+	});
+
+	it("a mint failure (any other non-zero) is a failure, not a pending step", () => {
+		const r = runWithMint(1, "boom");
+		expect(r.status).toBe(1);
+		expect(r.stdout).not.toContain("OWNER_STEP_PENDING");
+	});
+});
+
 describe("onboard-orchestrator.sh source", () => {
 	it("no longer references the plaintext secrets directory", () => {
 		expect(readFileSync(ONBOARD, "utf8")).not.toContain(".vantage-agent-secrets");
