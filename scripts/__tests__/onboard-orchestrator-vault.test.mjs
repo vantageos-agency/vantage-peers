@@ -152,6 +152,21 @@ describe("onboard-orchestrator.sh owner step (task k177034bdx6cqb82grpc862pw58hc
 		expect(r.stdout).not.toContain("OK: testrole onboarded");
 	});
 
+	it("roster step only: exits 3 with ROSTER_STEP_PENDING and the command, not the owner message", () => {
+		const ROSTER_CMD =
+			'npx convex run clientOrgMapping:addOperatorRosterMember \'{"agentId":"agent_x"}\'';
+		const r = runWithMint(
+			3,
+			`${planSkip}\nROSTER_STEP_REQUIRED: testrole is not on the operator roster\n  ${ROSTER_CMD}`,
+		);
+		expect(r.status, r.stdout + r.stderr).toBe(3);
+		expect(r.stdout).toContain("ROSTER_STEP_REQUIRED");
+		expect(r.stdout).toContain(ROSTER_CMD);
+		expect(r.stdout).toContain("ROSTER_STEP_PENDING");
+		expect(r.stdout).not.toContain("OWNER_STEP_PENDING");
+		expect(r.stdout).not.toContain("OK: testrole onboarded");
+	});
+
 	it("a mint failure (any other non-zero) is a failure, not a pending step", () => {
 		const r = runWithMint(1, "boom");
 		expect(r.status).toBe(1);
