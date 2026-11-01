@@ -9,7 +9,7 @@ Rules this plan is bound by (read first): `.claude/rules/railway-mcp-redeploy.md
 
 ## 0. Summary and the one finding that changes the shape of the work
 
-- 70 public Convex doors carry at least one agent-label argument (64 declare it in their own `args:` block, 6 take it from a shared validator). 58 of the 70 are called by a tool in `mcp-server/src/tools.ts`.
+- 70 public Convex doors carry at least one agent-label argument (64 declare it in their own `args:` block, 6 take it from a shared validator). 60 of the 70 are called by the MCP (listed in `MCP_CALLED_FUNCTIONS`, `mcp-server/src/backendContract.ts:46`; corrected from 58, see 1.3).
 - **The expand phase is already about half built (35 of 70 doors forward an ID today).** 42 of the 70 doors already declare `verifiedActor` (the agent ID plus org, forwarded by the MCP from `ctx.actor.agentId` or the seat stamp, believed from the service account only). 35 of those are in `VERIFIED_ACTOR_DOORS` (`mcp-server/src/verifiedActor.ts:25`); the other 7 declare it but the MCP does not forward it yet (listed in section 1.3). `messages:sendMessage` (`fromAgentId`, convex/messages.ts:1089), `tasks:create/update` (`assignedToAgentId`, convex/tasks.ts:693, :2211), `tasks:bulkComplete` / `briefingNotes:update` / `tasks:create` (`callerActorId`) and `mandates:create` (`fulfilledByAgentId`, convex/mandates.ts:105) already take IDs. The remaining work is therefore: (a) the 28 doors with no ID path at all, (b) the 7 declared-but-unforwarded doors, (c) the 7 `findAgentByName` call sites that still turn a label into a row, (d) legacy rows that store only a label.
 - The label stays accepted for the whole expand phase. The contract phase (section 4) is an operator decision and is not scheduled here.
 - Expand is 8 PR-sized steps (section 3). Order: Convex first, read-back, MCP last under the rollout token.
@@ -112,10 +112,10 @@ mandates:update	args=callerOrchestrator	VA=VA	tools=update_mandate@tools.ts:8063
 memories:listMemories	args=createdBy	VA=--	tools=list_episodes@tools.ts:2974; list_memories@tools.ts:3385
 memories:storeMemory	args=createdBy	VA=--	tools=store_memory@tools.ts:2429
 memoriesScoped:storeMemoryScoped	args=createdBy	VA=--	tools=NONE
-messages:checkNewMessages	args=recipient	VA=VA	tools=NONE
+messages:checkNewMessages	args=recipient	VA=VA	tools=NONE-in-tools.ts-scan; IN MCP_CALLED_FUNCTIONS (backendContract.ts:108)
 messages:checkNewMessagesEnvelope	args=recipient	VA=VA	tools=check_messages@tools.ts:3795
 messages:deleteMessage	args=callerOrchestrator	VA=VA	tools=delete_message@tools.ts:4077
-messages:getUnreadCount	args=orchestratorId	VA=VA	tools=NONE
+messages:getUnreadCount	args=orchestratorId	VA=VA	tools=NONE-in-tools.ts-scan; IN MCP_CALLED_FUNCTIONS (backendContract.ts:112)
 messages:listByChannelPaginated	args=from	VA=--	tools=NONE
 messages:listMessages	args=from	VA=--	tools=list_messages@tools.ts:4396
 messages:markAsRead	args=callerOrchestrator	VA=VA	tools=mark_as_read@tools.ts:4024
@@ -157,10 +157,10 @@ tasks:searchTasksByKeyword	args=assignedTo	VA=--	tools=search_tasks_by_keyword@t
 tasks:start	args=callerOrchestrator	VA=VA	tools=start_task@tools.ts:5632
 tasks:taskDurationDistribution	args=from	VA=VA	tools=NONE
 tasks:update	args=callerOrchestrator,assignedTo	VA=VA	tools=update_task@tools.ts:5455; block_task@tools.ts:6016; add_task_dependency@tools.ts:6088
-doors reached by tools.ts: 58 of 70
+doors reached by tools.ts: 58 of 70 (superseded: 60 of 70 are in MCP_CALLED_FUNCTIONS)
 ```
 
-Counts from the same output: 70 doors; 58 reached by a tool in `mcp-server/src/tools.ts`; 12 not reached by a tool (`deleteBriefingNote`, `deleteDiary`, `diary:listByDateRange`, `memoriesScoped:storeMemoryScoped`, `checkNewMessages` (the tool calls the envelope variant), `getUnreadCount`, `listByChannelPaginated`, `getProfileWithMemories`, `attachReviewArtifact`, `listOverdue`, `listPaginated`, `taskDurationDistribution`); 42 declare `verifiedActor`; 28 do not.
+Counts from the same output: 70 doors; 58 matched to a tool name by the `tools.ts` scan; **correction (Eta review): 60 of the 70 are called by the MCP, because `messages:checkNewMessages` and `messages:getUnreadCount` are in `MCP_CALLED_FUNCTIONS` (mcp-server/src/backendContract.ts:108, :112) though the scan marked them NONE**. Check: the 70 door names of the table above, intersected with the quoted `module:function` strings of `backendContract.ts` (`grep -o '"[a-zA-Z]*:[a-zA-Z]*"' mcp-server/src/backendContract.ts`, `LC_ALL=C comm -12`) -> 60; the 10 not called are `deleteBriefingNote`, `deleteDiary`, `diary:listByDateRange`, `memoriesScoped:storeMemoryScoped`, `listByChannelPaginated`, `getProfileWithMemories`, `attachReviewArtifact`, `listOverdue`, `listPaginated`, `taskDurationDistribution` (checked at origin/main 1902c1d9); 42 declare `verifiedActor`; 28 do not.
 
 The 28 with no ID path at all (the main expand work):
 `briefingNotes:searchBriefingNotesByKeyword, businessUnits:create/list/update, diary:deleteDiary/get/list/listByDateRange/write, episodes:storeEpisode, errorMonitor:addDeployment, fixPatterns:create, githubRepoMapping:add, mandates:create/list, memories:listMemories/storeMemory, memoriesScoped:storeMemoryScoped, messages:listByChannelPaginated/listMessages/searchMessagesByKeyword, missionTemplates:instantiateTemplateIntoMission/upsert, missions:list, recurringTasks:list, tasks:list/listByMission/searchTasksByKeyword`.
@@ -290,13 +290,18 @@ grep -rnE "api\.(messages|tasks|briefingNotes|diary|missions|mandates|recurringT
 
 and lists for each changed door: subscribed `useQuery` (must not start throwing; keep the envelope), `useMutation`, or server action; the label arguments passed today; whether it reads returned label fields. The result goes in the PR body as a table (door, file:line, subscribed or not, argument passed). Subscribed readers named in the refusal rule: `mandates:list` (mandate-board.tsx:39), `profiles:listProfiles` (orchestrators-grid.tsx:53), `messages:checkNewMessages` (message-timeline.tsx:69, reads the raw array, so it stays a bare array), `messages:getUnreadCount` (`readUnreadCount`). Expand needs no dashboard change (all new arguments optional, no return shape changes); the audit proves that door by door and produces the work list for contract.
 
-## 6. Open decisions for the operator
+## 6. Decisions
+
+Pi rulings (receipt k97ec3g7d75am5j9r1sbq94w1h8hdfry), applied 2026-11-01:
+
+3. The two test-org mappings without `clerkOrgId` (`plan-org-t8-1787337143`, `plan-org-t8-1787337143-out`): fill `clerkOrgId` if the org ID is readable, otherwise deactivate them. Never delete.
+4. A retired agent's ID stays refused for reads too (this plan's default kept).
+5. `AGENT_IDENTITY_MISMATCH` is reused for the ID/label mismatch: one code, one helper.
+
+Parked (Pi brings them to the operator as ONE decision once `LABEL_ONLY_DOOR` has a window of data):
 
 1. Contract phase: go or no-go and the window, decided on the `LABEL_ONLY_DOOR` measurement, not on a date.
 2. What ID-less callers (service account, stdio master, org-level seat with no agent) use after contract.
-3. The two test-org mapping rows without `clerkOrgId`: fill or deactivate.
-4. Whether a retired agent's ID may still READ its own history (this plan's default: refused as inactive).
-5. Reuse `AGENT_IDENTITY_MISMATCH` for the ID/label mismatch (recommended: one code, one helper) or add a new named code (cost: a second refusal mechanism).
 
 not_measured:
 - Prod state: "0 of 82 active agents without clerkOrgId" and "2 of 16 active mappings without it, both test orgs" are cited as given by the brief; no prod query was run.
