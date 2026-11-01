@@ -10,7 +10,7 @@
  *   ID + label      the label must be the row's CURRENT label under
  *                   normalizeOrchestratorId, else AGENT_IDENTITY_MISMATCH with
  *                   reason "id-label-mismatch" and the door name.
- *   label only      exactly findAgentByName, plus ONE LABEL_ONLY_DOOR log line.
+ *   label only      the by-name lookup unchanged, plus ONE LABEL_ONLY_DOOR log line.
  *   neither         null.
  */
 
@@ -18,7 +18,7 @@ import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import { convexTest } from "../../tests/fixtures/convexTestWithServiceAccount";
 import { testClerkOrgId } from "../../tests/fixtures/testClerkOrgId";
 import type { Id } from "../_generated/dataModel";
-import { findAgentByName, resolveAgentRef } from "../lib/agentIdentity";
+import { resolveAgentRef } from "../lib/agentIdentity";
 import schema from "../schema";
 
 const modules = Object.fromEntries(
@@ -182,11 +182,20 @@ describe("resolveAgentRef: ID and label together", () => {
 });
 
 describe("resolveAgentRef: label only is the legacy path, measured", () => {
-	test("ALLOW: resolves exactly the row findAgentByName resolves", async () => {
+	test("ALLOW: resolves the row the unmeasured label lookup resolves", async () => {
 		const w = await world();
 		const direct = await w.t.run(
 			async (ctx) =>
-				(await findAgentByName(ctx, SLUG_A, "bruno", ORG_A_ID))?._id ?? null,
+				(
+					await resolveAgentRef(ctx, {
+						label: "bruno",
+						orgSlug: SLUG_A,
+						orgClerkId: ORG_A_ID,
+						door: DOOR,
+						arg: "assignedTo",
+						measure: false,
+					})
+				)?._id ?? null,
 		);
 		expect(direct).toBe(w.brunoA);
 		expect(await resolve(w, { label: "bruno" })).toBe(direct);

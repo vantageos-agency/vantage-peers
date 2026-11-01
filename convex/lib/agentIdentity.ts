@@ -269,41 +269,6 @@ export async function resolveOwnedAgentOfPresentedSecret(
 }
 
 /**
- * findAgentByName — DEPRECATED, kept ONLY for the doors that still carry a NAME
- * and cannot take an agent ID without another module changing first. Each
- * caller is pinned in convex/__tests__/agentRegistryNoNameSelection.test.ts with
- * its owner; do not add one. It is `resolveAgentRef` asked for a label alone and
- * not measured: the lookup itself lives there, in one place, so the migration
- * adds no second name-resolving function. It selects by the organisation's
- * permanent ID (the `*_clerk_id` indexes), never by `orgSlug`: a released slug
- * can be taken by another organisation, and a row with no `clerkOrgId` is
- * refused, not matched:
- *   - convex/lib/auth.ts (declared sender with NO proof: known-agent credential check) -> M5 messaging (sender by ID)
- *   - convex/messages.ts (seat sender screening)                   -> M5 messaging
- *   - convex/lib/inboxReader.ts (recipient named by a verified org) -> M6 inbox
- *   - convex/lib/actorIds.ts (task createdBy / assignedTo labels)   -> tasks doors (names in, IDs stamped)
- *   - convex/lib/seatAgent.ts (oauth profile fromAllowList label)   -> M1 rosters / seat profiles by agent ID
- * No door of convex/agents.ts, convex/agentCredentials.ts or
- * convex/agentRelations.ts calls it: those resolve by agent ID. Delete it with
- * its last caller.
- */
-export async function findAgentByName(
-	ctx: QueryCtx | MutationCtx,
-	orgSlug: string,
-	name: string,
-	orgClerkId?: string,
-): Promise<Doc<"agents"> | null> {
-	return await resolveAgentRef(ctx, {
-		label: name,
-		orgSlug,
-		orgClerkId,
-		door: "findAgentByName",
-		arg: "name",
-		measure: false,
-	});
-}
-
-/**
  * resolveAgentRef — the ONE way a door turns an agent reference (an `agents` ID,
  * a label, or both) into an `agents` row. Migration step E1 (plan
  * analysis/labels-to-agent-ids-migration-plan-2026-11-01.md, 2.1): no door calls
@@ -325,7 +290,8 @@ export async function findAgentByName(
  *   - `label` only: the by-name lookup, unchanged, plus ONE `LABEL_ONLY_DOOR` log
  *     line `{ event, door, arg }` (no label value) so the contract decision rests
  *     on a count of label-only calls per door. `measure: false` (set only by
- *     `findAgentByName`, the pinned legacy callers) silences the line.
+ *     the pinned legacy callers, listed in agentRegistryNoNameSelection.test.ts)
+ *     silences the line.
  *   - neither: null, the caller keeps its current behaviour.
  *
  * The organisation is read from the VERIFIED caller by the caller of this

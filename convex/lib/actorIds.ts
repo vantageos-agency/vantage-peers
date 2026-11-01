@@ -17,7 +17,7 @@ import type {
 	MutationCtx,
 	QueryCtx,
 } from "../_generated/server";
-import { findAgentByName } from "./agentIdentity";
+import { resolveAgentRef } from "./agentIdentity";
 import { isHumanActorName } from "./humanActor";
 import { fleetOperatorSlug } from "./operatorOrg";
 
@@ -58,7 +58,14 @@ export function actorIdResolver(
 		org ??= actorOrgFor(ctx.db, orgSlug);
 		const slug = await org;
 		if (slug === undefined) return undefined;
-		const row = await findAgentByName(ctx, slug, name, orgSlug ? orgClerkId : undefined);
+		const row = await resolveAgentRef(ctx, {
+			label: name,
+			orgSlug: slug,
+			orgClerkId: orgSlug ? orgClerkId : undefined,
+			door: "actorIds:actorIdResolver",
+			arg: "label",
+			measure: false,
+		});
 		return row === null ? undefined : row._id;
 	};
 }

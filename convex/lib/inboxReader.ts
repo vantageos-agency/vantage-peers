@@ -6,7 +6,7 @@ import {
 	permanentOrgIdOfSlug,
 	requireVerifiedActorPrincipal,
 } from "./actingPrincipal";
-import { findAgentByName } from "./agentIdentity";
+import { resolveAgentRef } from "./agentIdentity";
 import type { OrgScope, VerifiedActor } from "./auth";
 import { fleetOperatorSlug } from "./operatorOrg";
 import { resolveVerifiedOrg, type VerifiedOrg } from "./verifiedOrg";
@@ -227,7 +227,13 @@ export async function resolveInboxReader(
 				`tenantId "${claims.tenantId}" is not the verified organisation`,
 			);
 		}
-		const agent = await findAgentByName(ctx, orgSlug, claims.recipient);
+		const agent = await resolveAgentRef(ctx, {
+			label: claims.recipient,
+			orgSlug,
+			door: "inboxReader:resolveInboxReader",
+			arg: "recipient",
+			measure: false,
+		});
 		if (agent !== null) {
 			if (!agent.isActive) {
 				return refuse(

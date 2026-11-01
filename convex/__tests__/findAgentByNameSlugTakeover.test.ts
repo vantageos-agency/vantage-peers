@@ -2,7 +2,7 @@
 // allow-missing-refs: new test file created by the specialist
 /**
  * An organisation slug is a renamable label: an organisation can release it and
- * another can take it. `findAgentByName` once selected agents by `orgSlug`, so
+ * another can take it. The label lookup (`resolveAgentRef`, once `findAgentByName`) once selected agents by `orgSlug`, so
  * the organisation holding a released slug resolved the PREVIOUS holder's agent
  * row by name (task k1768vtsgr0cg8jb6z5bkgnzts8hchbe).
  *
@@ -28,7 +28,7 @@ import { convexTest } from "../../tests/fixtures/convexTestWithServiceAccount";
 import { testClerkOrgId } from "../../tests/fixtures/testClerkOrgId";
 import { api } from "../_generated/api";
 import type { Id } from "../_generated/dataModel";
-import { findAgentByName } from "../lib/agentIdentity";
+import { resolveAgentRef } from "../lib/agentIdentity";
 import { seedFleetAgents } from "../../tests/lib/seedFleetAgents";
 import schema from "../schema";
 
@@ -98,9 +98,17 @@ async function takeover(): Promise<World> {
 }
 
 const lookup = (t: T, slug: string, name: string) =>
-	t.run(async (ctx) => (await findAgentByName(ctx, slug, name))?._id ?? null);
+	t.run(async (ctx) => (
+			await resolveAgentRef(ctx, {
+				label: name,
+				orgSlug: slug,
+				door: "test:lookup",
+				arg: "name",
+				measure: false,
+			})
+		)?._id ?? null);
 
-describe("findAgentByName: a slug is a label, the permanent org ID is the key", () => {
+describe("resolveAgentRef (label only): a slug is a label, the permanent org ID is the key", () => {
 	test("REFUSE: org B (holds the released slug) asking for A's agent by name gets nothing", async () => {
 		const w = await takeover();
 		expect(await lookup(w.t, SLUG, "nadia")).toBeNull();
