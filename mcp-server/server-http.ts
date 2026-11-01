@@ -1179,68 +1179,61 @@ app.post("/token", async (c) => {
 		}
 
 		const accessToken = randomOpaqueToken();
-		// The refresh token is generated here and only its digest is sent. The
-		// access token below carries that digest, which names its refresh family.
+		// The person's refresh token is generated here and only its digest is sent.
+		// Its authority is NOT a scope profile: the refresh grant
+		// (oauth:rotatePersonRefreshToken) re-resolves the member, the agent chosen
+		// at consent and the organisation's grant live.
 		const personRefreshToken = randomOpaqueToken();
 		const personRefreshHash = await sha256Hex(personRefreshToken);
-		const personAccessHash = await sha256Hex(accessToken);
 		const requestedScopes = claims.scope
 			.split(/\s+/)
 			.filter((s) => s && s !== OFFLINE_ACCESS_SCOPE);
-		await internalClient().mutation(
-			// biome-ignore lint/suspicious/noExplicitAny: Convex string API
-			"oauth:createAccessToken" as any,
-			{
-				tokenHash: personAccessHash,
-				refreshTokenHash: personRefreshHash,
-				clientId: claims.client_id,
-				userId: claims.sub,
-				scopes: [
-					...new Set([
-						...mapping.scopes,
-						...claims.scope
-							.split(/\s+/)
-							.filter((s) => s && s !== OFFLINE_ACCESS_SCOPE),
-					]),
-				],
-				scopeProfile: PERSON_TOKEN_SCOPE_PROFILE,
-				fromAllowList: mapping.allowedOrchestrators,
-				// A person READS the organisation's shared agent memory
-				// (project/<orgKey>, Pi ruling k175syk4m5a54ra8k36rxdcha58frsnw) but
-				// WRITES only team/<orgKey>: the agents' namespace is not a person's
-				// to write unless separately ruled. orgKey is the verified org key.
-				namespaceReadPrefixes: [`team/${orgKey}`, `project/${orgKey}`],
-				namespaceWritePrefixes: [`team/${orgKey}`],
-				expiresAt: Date.now() + ACCESS_TOKEN_TTL_SECONDS * 1000,
-				clerkOrgSlug: orgKey,
-				codeHash,
-				// The verified role the code was bound to, and the person marker the
-				// MCP write gate keys on (src/registerTool.ts).
-				orgRole: claims.org_role,
-				principal: "person",
-			},
-		);
-
-		// The person's refresh token. Its authority is NOT a scope profile: the
-		// refresh grant (oauth:rotatePersonRefreshToken) re-resolves the member,
-		// the agent chosen at consent and the organisation's grant live. If the
-		// refresh row cannot be written the connection still works until the
-		// access token expires; the person then connects again.
+		const personTokenArgs = {
+			tokenHash: await sha256Hex(accessToken),
+			clientId: claims.client_id,
+			userId: claims.sub,
+			scopes: [...new Set([...mapping.scopes, ...requestedScopes])],
+			scopeProfile: PERSON_TOKEN_SCOPE_PROFILE,
+			fromAllowList: mapping.allowedOrchestrators,
+			// A person READS the organisation's shared agent memory
+			// (project/<orgKey>, Pi ruling k175syk4m5a54ra8k36rxdcha58frsnw) but
+			// WRITES only team/<orgKey>: the agents' namespace is not a person's
+			// to write unless separately ruled. orgKey is the verified org key.
+			namespaceReadPrefixes: [`team/${orgKey}`, `project/${orgKey}`],
+			namespaceWritePrefixes: [`team/${orgKey}`],
+			expiresAt: Date.now() + ACCESS_TOKEN_TTL_SECONDS * 1000,
+			clerkOrgSlug: orgKey,
+			codeHash,
+			// The verified role the code was bound to, and the person marker the
+			// MCP write gate keys on (src/registerTool.ts).
+			orgRole: claims.org_role,
+			principal: "person",
+		};
+		// The access token and the person's refresh row are written in ONE Convex
+		// transaction. If the refresh row cannot be written the connection still
+		// works until the access token expires, and the person then connects again.
 		let refreshIssued = false;
 		try {
 			await internalClient().mutation(
 				// biome-ignore lint/suspicious/noExplicitAny: Convex string API
-				"oauth:createPersonRefreshToken" as any,
+				"oauth:createAccessToken" as any,
 				{
-					tokenHash: personRefreshHash,
-					accessTokenHash: personAccessHash,
-					expiresAt: Date.now() + REFRESH_TOKEN_TTL_SECONDS * 1000,
-					requestedScopes,
+					...personTokenArgs,
+					refreshTokenHash: personRefreshHash,
+					personRefresh: {
+						expiresAt: Date.now() + REFRESH_TOKEN_TTL_SECONDS * 1000,
+						requestedScopes,
+					},
 				},
 			);
 			refreshIssued = true;
 		} catch (err: unknown) {
 			console.error("[oauth] person refresh token not issued:", err);
+			await internalClient().mutation(
+				// biome-ignore lint/suspicious/noExplicitAny: Convex string API
+				"oauth:createAccessToken" as any,
+				personTokenArgs,
+			);
 		}
 		c.header("Cache-Control", "no-store");
 		return c.json({

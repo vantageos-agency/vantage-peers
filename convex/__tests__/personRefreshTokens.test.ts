@@ -116,9 +116,10 @@ async function world(t: T, opts: Parameters<typeof seedOrg>[1] = {}) {
 
 let n = 0;
 /**
- * What /token does for a person exchange: the access token first (carrying the
- * refresh digest), then the refresh token beside it. The agent stamp mirrors
- * the consent choice.
+ * What /token does for a person exchange: the consent code row carries the
+ * choice (agent, or "connect as myself"); createAccessToken mints the access
+ * token and, with `personRefresh`, the refresh row beside it in the same
+ * transaction.
  */
 async function issue(
 	t: T,
@@ -128,15 +129,30 @@ async function issue(
 	n += 1;
 	const refresh = `refresh-${n}`;
 	const access = `access-${n}`;
-	const accessId = await asService(t).mutation(api.oauth.createAccessToken, {
+	const requested = opts.requested ?? ["mcp:full"];
+	await t.run((ctx) =>
+		ctx.db.insert("oauth_person_codes", {
+			codeHash: sha(`code-${n}`),
+			clerkUserId: PERSON,
+			orgId: testClerkOrgId(SLUG) as string,
+			orgSlug: SLUG,
+			orgRole: "org:member",
+			clientId: "dcr-client",
+			redirectUri: "https://client.example/cb",
+			codeChallenge: "c",
+			resource: "r",
+			scope: requested.join(" "),
+			expiresAt: Date.now() + 60_000,
+			...(agentId === null ? {} : { agentId }),
+			...(opts.connectedAs ? { connectedAs: "person" as const } : {}),
+		}),
+	);
+	await asService(t).mutation(api.oauth.createAccessToken, {
 		tokenHash: sha(access),
 		clientId: "dcr-client",
 		userId: PERSON,
 		// /token strips offline_access before minting; the refresh door is handed it raw.
-		scopes: [
-			"view-own-tasks",
-			...(opts.requested ?? ["mcp:full"]).filter((s) => s !== "offline_access"),
-		],
+		scopes: ["view-own-tasks", ...requested.filter((s) => s !== "offline_access")],
 		scopeProfile: "team-member",
 		fromAllowList: ["aria"],
 		namespaceReadPrefixes: [`team/${SLUG}`, `project/${SLUG}`],
@@ -145,19 +161,9 @@ async function issue(
 		clerkOrgSlug: SLUG,
 		orgRole: "org:member",
 		principal: "person",
+		codeHash: sha(`code-${n}`),
 		refreshTokenHash: sha(refresh),
-	});
-	await t.run((ctx) =>
-		ctx.db.patch(accessId, {
-			...(agentId === null ? {} : { agentId }),
-			...(opts.connectedAs ? { connectedAs: "person" as const } : {}),
-		}),
-	);
-	await asService(t).mutation(api.oauth.createPersonRefreshToken, {
-		tokenHash: sha(refresh),
-		accessTokenHash: sha(access),
-		expiresAt: Date.now() + 30 * DAY,
-		requestedScopes: opts.requested ?? ["mcp:full"],
+		personRefresh: { expiresAt: Date.now() + 30 * DAY, requestedScopes: requested },
 	});
 	return { refresh, access };
 }
@@ -558,6 +564,30 @@ describe("C6 hashed only", () => {
 				refreshExpiresAt: Date.now() + 1000,
 			}),
 		).rejects.toThrow();
+	});
+});
+
+describe("a person refresh row is written for a person only", () => {
+	test("REFUSE: personRefresh on a token that is not a person's is refused and nothing is written", async () => {
+		const t = createT();
+		await world(t);
+		await expect(
+			asService(t).mutation(api.oauth.createAccessToken, {
+				tokenHash: sha("seat-access"),
+				clientId: "dcr-client",
+				userId: "seat",
+				scopes: ["mcp:full"],
+				scopeProfile: "p",
+				fromAllowList: ["aria"],
+				namespaceReadPrefixes: [],
+				namespaceWritePrefixes: [],
+				expiresAt: Date.now() + 1000,
+				clerkOrgSlug: SLUG,
+				refreshTokenHash: sha("seat-refresh"),
+				personRefresh: { expiresAt: Date.now() + DAY, requestedScopes: [] },
+			}),
+		).rejects.toThrow(/PERSON_REFRESH_REFUSED/);
+		expect(await refreshRow(t, "seat-refresh")).toBeNull();
 	});
 });
 

@@ -1649,8 +1649,8 @@ export default defineSchema({
 		// The ceiling a refreshed token can never exceed (the scopes minted at
 		// consent) and the scopes the person asked for beyond the organisation's own
 		// (offline_access excluded).
-		scopes: v.optional(v.array(v.string())),
-		requestedScopes: v.optional(v.array(v.string())),
+		grantedScopes: v.optional(v.array(v.string())),
+		askedScopes: v.optional(v.array(v.string())),
 	})
 		.index("by_tokenHash", ["tokenHash"])
 		.index("by_clientId", ["clientId"])
