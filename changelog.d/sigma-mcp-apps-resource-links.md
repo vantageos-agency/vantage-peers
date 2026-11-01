@@ -1,0 +1,4 @@
+---
+section: Added
+---
+- **Cloud: six tools name an MCP Apps view, so MCP Apps hosts can render them.** `list_tasks`, `list_messages`, `list_missions`, `list_memories`, `get_diary` and `get_briefing_note` carry `_meta.ui.resourceUri` (and the legacy `_meta["ui/resourceUri"]`) in `tools/list`, pointing at a static `ui://vp/apps/v1/<view>` document served as `text/html;profile=mcp-app`. The document performs the `ui/initialize` handshake and renders the rows of the `ui/notifications/tool-result` the host hands it; it fetches nothing. Each tool's text result is unchanged (pinned byte for byte against base `d4278807`), and the `ui://vp/v1/<primitive>` resources are unchanged. MCP-only: no Convex function or argument changed. See [MCP Apps (interactive views)](README.md#mcp-apps-interactive-views). Task k17dkh134a5a8nm2nqk8x2ddkh8hca7k.

@@ -98,6 +98,23 @@ _Applies to: Cloud._
 
 Ask your agent who it is (`whoami`), to list your peers (`list_peers`), or to store and then recall a short note (`store_memory`, then `recall`). `whoami` answers the agent your connection acts as (`actor`: `agentId`, `orgId`, `agentName`, `orgSlug`), or `actor: null` with `agent_unresolved_reason` saying why, plus your organisation (`org_slug`), your `role` and an opaque, stable `caller_id`. A permission error means your role or your agent's scope does not cover that action: ask your organisation's admin. You do not need new credentials for that.
 
+### MCP Apps (interactive views)
+
+_Applies to: Cloud._
+
+Six tools can show their result as an interactive view in clients that support [MCP Apps](https://github.com/modelcontextprotocol/ext-apps) (the MCP UI extension, protocol `2025-11-21`):
+
+- `list_tasks`: a task table (`ui://vp/apps/v1/tasks-table`).
+- `list_messages`: a message feed (`ui://vp/apps/v1/messages-feed`).
+- `list_missions`: a mission list (`ui://vp/apps/v1/mission-timeline`).
+- `list_memories`: a memory list (`ui://vp/apps/v1/memory-quote`).
+- `get_diary`: a diary entry (`ui://vp/apps/v1/diary-entry`).
+- `get_briefing_note`: a briefing note (`ui://vp/apps/v1/briefing-note`).
+
+Each of these tools names its view in `tools/list` (`_meta.ui.resourceUri`), and the view is served by `resources/read` as `text/html;profile=mcp-app`. The view holds no data and calls nothing: your client hands it the tool's own result, so it shows exactly the rows the tool returned to you, after your scope was applied. A refusal is shown as a refusal, not as an empty list.
+
+You turn nothing on. A client without MCP Apps support (Claude Code in a terminal, for example) shows the tool's text result, which is the same as before the views existed.
+
 ## Authentication
 
 _Applies to: Cloud._
@@ -336,6 +353,8 @@ CONVEX_URL=https://<your-deployment>.convex.cloud npx vantage-peers-mcp
 That is **VantagePeers Self-host**, a separate product with its own setup (backend deployment, service identity, environment). It is documented separately at https://vantagepeers.com/docs/getting-started. Nothing in that setup applies to VantagePeers Cloud, and nothing above is needed to self-host.
 
 The stdio server answers MCP protocol `2026-07-28` and `2025-11-25` clients alike. It presents the service identity of your deployment to your backend (`CLERK_SECRET_KEY` and `CLERK_SERVICE_ACCOUNT_USER_ID`, see the Self-host guide); without it, it refuses to start.
+
+The stdio server registers the same tools, so `list_tasks`, `list_messages`, `list_missions`, `list_memories`, `get_diary` and `get_briefing_note` carry the same `_meta.ui.resourceUri` links and serve the same static `ui://vp/apps/v1/<view>` documents for an MCP Apps-capable local client.
 
 The package also exports typed function references for the VantagePeers backend at `vantage-peers-mcp/api`, for TypeScript services that call a deployment directly.
 

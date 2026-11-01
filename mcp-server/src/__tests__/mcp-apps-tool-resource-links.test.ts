@@ -403,6 +403,54 @@ describe("pole 4, BRIDGE: the document renders the tool result the host hands it
 		expect(textOf(host.root)).toContain("REFUSED (RBAC_DENIED)");
 	});
 
+	async function tasksTableHost() {
+		const client = await harness();
+		const read = await client.readResource({
+			uri: "ui://vp/apps/v1/tasks-table",
+		});
+		await client.close();
+		const host = simulateHost((read.contents[0] as { text: string }).text);
+		host.deliver({ jsonrpc: "2.0", id: host.sent[0]?.id, result: {} });
+		return host;
+	}
+
+	it("a refused envelope ({refused:true, items:[]}) is shown as a refusal, never as 'No results'", async () => {
+		const host = await tasksTableHost();
+		host.deliver({
+			jsonrpc: "2.0",
+			method: "ui/notifications/tool-result",
+			params: {
+				content: [
+					{ type: "text", text: JSON.stringify({ refused: true, items: [] }) },
+				],
+			},
+		});
+		expect(textOf(host.root)).toContain("REFUSED (RBAC_DENIED)");
+		expect(textOf(host.root)).not.toContain("No results");
+	});
+
+	it("a genuinely empty result is shown as 'No results'", async () => {
+		const host = await tasksTableHost();
+		host.deliver({
+			jsonrpc: "2.0",
+			method: "ui/notifications/tool-result",
+			params: { content: [{ type: "text", text: "[]" }] },
+		});
+		expect(textOf(host.root)).toContain("No results");
+	});
+
+	it("rows come from the JSON before a __VP_TOOL_RESULT__ marker, never from the marker", async () => {
+		const host = await tasksTableHost();
+		const text = `${JSON.stringify([{ title: "FROM-JSON", status: "todo" }], null, 2)}\n__VP_TOOL_RESULT__{"kind":"tasks-table","items":[{"_id":"k","title":"FROM-MARKER","status":"todo"}]}__END__`;
+		host.deliver({
+			jsonrpc: "2.0",
+			method: "ui/notifications/tool-result",
+			params: { content: [{ type: "text", text }] },
+		});
+		expect(textOf(host.root)).toContain("FROM-JSON");
+		expect(textOf(host.root)).not.toContain("FROM-MARKER");
+	});
+
 	it("the host's teardown request is answered", async () => {
 		const client = await harness();
 		const read = await client.readResource({
