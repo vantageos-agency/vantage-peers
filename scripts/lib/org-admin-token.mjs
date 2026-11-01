@@ -15,6 +15,19 @@
 
 const FORM = { "Content-Type": "application/x-www-form-urlencoded" };
 
+/**
+ * The Clerk frontend domain of THIS environment, from the environment or refused. No default:
+ * the library default is the DEV instance, whose tickets prod Clerk rejects.
+ */
+export function requireClerkDomain(env = process.env) {
+	const domain = env.CLERK_DOMAIN;
+	if (!domain)
+		throw new Error(
+			"CLERK_DOMAIN is not set: the Clerk frontend API domain of this environment (prod: https://clerk.vantagepeers.com) is required, there is no dev fallback",
+		);
+	return domain;
+}
+
 /** Decoded payload of a JWT (no signature check: the claim is read back, not trusted for auth). */
 export function claimsOf(jwt) {
 	const part = typeof jwt === "string" ? jwt.split(".")[1] : undefined;

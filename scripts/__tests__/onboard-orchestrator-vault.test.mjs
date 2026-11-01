@@ -42,7 +42,7 @@ beforeAll(() => {
 	envFile = join(tmp, "env");
 	writeFileSync(
 		envFile,
-		"CLERK_SECRET_KEY_VANTAGE_PEERS=x\nCLERK_ORG_ADMIN_USER_ID_VANTAGE_PEERS=y\n" +
+		"CLERK_SECRET_KEY_VANTAGE_PEERS=x\nCLERK_ORG_ADMIN_USER_ID_VANTAGE_PEERS=y\nCLERK_ORG_ID_VANTAGE_PEERS=org_stub1\nCLERK_DOMAIN=https://clerk.stub.test\n" +
 			"INFISICAL_UNIVERSAL_AUTH_CLIENT_ID_TEST_SLUG=cid\nINFISICAL_UNIVERSAL_AUTH_CLIENT_SECRET_TEST_SLUG=csecret\n",
 	);
 	config = join(tmp, "hosts.json");

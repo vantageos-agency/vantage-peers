@@ -35,7 +35,7 @@ Vitruve took four launches on 2026-10-05 (friction memory j571rgt58mdzv734b42fcx
 
 - **Fails:** `set_summary` returns `AGENT_IDENTITY_MISMATCH`, and every write is refused.
 - **Check:** the mint plan says `REGISTER+MINT`, `SKIP` (already live) or `BLOCKED` (deactivated row).
-- **Fix applied:** `scripts/mint-station-agents.mjs` runs under our org-admin identity (`CLERK_SECRET_KEY_VANTAGE_PEERS` and `CLERK_ORG_ADMIN_USER_ID_VANTAGE_PEERS` from the gitignored `.env.local`), against prod `compassionate-goldfinch-737`. The org comes from the admin JWT and is always `perello-consulting-1782214787064836324`. The secret transits a memory-backed directory (`/dev/shm`, removed on exit) and is written to the Infisical vault at `/agent-secrets/<host-slug>/<ROLE>_SECRET`, then verified by hash readback; it never reaches a disk file. The run is idempotent; rotating a credential is `--rotate` on the mint script.
+- **Fix applied:** `scripts/mint-station-agents.mjs` runs under our org-admin identity (`CLERK_SECRET_KEY_VANTAGE_PEERS` and `CLERK_ORG_ADMIN_USER_ID_VANTAGE_PEERS` from the gitignored `.env.local`), against prod `compassionate-goldfinch-737`. The token is the `convex`-template one (aud `convex`, else prod Convex answers `NoAuthProvider`), minted for our org by its Clerk id (`CLERK_ORG_ID_VANTAGE_PEERS`, `org_...`, in `.env.local`) and refused with `ORG_MISMATCH` if its `org_id` claim is any other org (the shared admin user's last-active org is not ours). `CLERK_DOMAIN` (prod: `https://clerk.vantagepeers.com`) is required in `.env.local`; there is no dev fallback. The org is always `perello-consulting-1782214787064836324`. The secret transits a memory-backed directory (`/dev/shm`, removed on exit) and is written to the Infisical vault at `/agent-secrets/<host-slug>/<ROLE>_SECRET`, then verified by hash readback; it never reaches a disk file. The run is idempotent; rotating a credential is `--rotate` on the mint script.
 
 ### 2. Wiring: no VantagePeers server in the workspace
 
@@ -68,7 +68,7 @@ Vitruve took four launches on 2026-10-05 (friction memory j571rgt58mdzv734b42fcx
 
 - **Fails:** webhook events and review routing for the station's repo go nowhere, because no `githubRepoMapping` row names the role.
 - **Check:** `githubRepoMapping:getByRepo` returns the row with the role and the project.
-- **Fix applied** (with `--repo` and `--project`): `scripts/add-repo-mapping.mjs` upserts the row and reads it back. The mutation needs master or service-account scope, and the org-admin JWT is refused with `RBAC_DENIED`. The MCP tools `add_repo_mapping` and `list_repo_mappings` are disabled on the production server. So the script calls Convex directly as the service account (`CLERK_SERVICE_ACCOUNT_USER_ID_VANTAGE_PEERS` in `.env.local`).
+- **Fix applied** (with `--repo` and `--project`): `scripts/add-repo-mapping.mjs` upserts the row and reads it back. The mutation needs master or service-account scope, and the org-admin JWT is refused with `RBAC_DENIED`. The MCP tools `add_repo_mapping` and `list_repo_mappings` are disabled on the production server. So the script calls Convex directly as the service account with its `convex`-template token (`CLERK_SERVICE_ACCOUNT_USER_ID_VANTAGE_PEERS` and `CLERK_DOMAIN` in `.env.local`).
 
 ### 8. Proof
 

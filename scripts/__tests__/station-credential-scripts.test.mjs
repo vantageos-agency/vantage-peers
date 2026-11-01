@@ -39,25 +39,29 @@ function exec(script, args, extraEnv = {}) {
 		stations,
 		JSON.stringify([{ role: "angelia", instanceId: "angelia-vps" }]),
 	);
-	const r = spawnSync("bun", ["--preload", PRELOAD, script, ...args(stations)], {
-		encoding: "utf8",
-		env: {
-			PATH: process.env.PATH,
-			HOME: dir,
-			CONVEX_URL: "https://stub.convex.cloud",
-			CLERK_SECRET_KEY: "sk_test_stub",
-			CLERK_DOMAIN: "https://clerk.stub.test",
-			CLERK_ORG_ADMIN_USER_ID: "user_admin1",
-			CLERK_ORG_ID_VANTAGE_PEERS: OUR_ORG,
-			CLERK_SERVICE_ACCOUNT_USER_ID_VANTAGE_PEERS: "user_svc",
-			STUB_LOG: logFile,
-			STUB_ADMIN_ORG: OUR_ORG,
-			STUB_NATIVE_ORG: OUR_ORG,
-			// the shared org-admin user last had ANOTHER org active (what Clerk hands a fresh ticket session)
-			STUB_LAST_ACTIVE_ORG: OTHER_ORG,
-			...extraEnv,
+	const r = spawnSync(
+		"bun",
+		["--preload", PRELOAD, script, ...args(stations)],
+		{
+			encoding: "utf8",
+			env: {
+				PATH: process.env.PATH,
+				HOME: dir,
+				CONVEX_URL: "https://stub.convex.cloud",
+				CLERK_SECRET_KEY: "sk_test_stub",
+				CLERK_DOMAIN: "https://clerk.stub.test",
+				CLERK_ORG_ADMIN_USER_ID: "user_admin1",
+				CLERK_ORG_ID: OUR_ORG,
+				CLERK_SERVICE_ACCOUNT_USER_ID_VANTAGE_PEERS: "user_svc",
+				STUB_LOG: logFile,
+				STUB_ADMIN_ORG: OUR_ORG,
+				STUB_NATIVE_ORG: OUR_ORG,
+				// the shared org-admin user last had ANOTHER org active (what Clerk hands a fresh ticket session)
+				STUB_LAST_ACTIVE_ORG: OTHER_ORG,
+				...extraEnv,
+			},
 		},
-	});
+	);
 	const calls = existsSync(logFile)
 		? readFileSync(logFile, "utf8")
 				.trim()
@@ -111,9 +115,9 @@ describe("mint-station-agents: prod token rules", () => {
 	});
 
 	it("(b) our org id missing from the environment refuses", () => {
-		const r = mint({ CLERK_ORG_ID_VANTAGE_PEERS: "" });
+		const r = mint({ CLERK_ORG_ID: "" });
 		expect(r.status).not.toBe(0);
-		expect(r.stderr).toContain("CLERK_ORG_ID_VANTAGE_PEERS");
+		expect(r.stderr).toContain("CLERK_ORG_ID");
 		expect(r.convex).toEqual([]);
 	});
 
