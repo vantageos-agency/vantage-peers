@@ -81,6 +81,11 @@ const usageRow = v.object({
 	count: v.number(),
 });
 
+/** Unreachable for a read (only the recorder resolves softly): said as a refusal, never as an empty list. */
+function unresolved(door: string) {
+	return rbacDenied(door, "unresolved", `"${door}" could not resolve its caller`);
+}
+
 /** R-54: the fleet service account that names no organisation is refused, never served as master. */
 function refuseClaimlessServiceAccount(
 	transport: OrgScope,
@@ -109,13 +114,10 @@ export const record = mutation({
 	handler: async (ctx, args) => {
 		const none = { recorded: false };
 		if (!TOOL_NAME.test(args.toolName)) return none;
-		const resolved = await resolveToolUsageScope(ctx, args, RECORD_DOOR, true);
-		if (resolved === null) return none;
-		const { scope } = resolved;
-		const orgId = scope.orgClerkId;
-		const orgSlug = scope.orgSlug;
-		if (orgId === undefined || orgId === "" || orgSlug === null) return none;
-		const callerKey = resolved.trusted ? args.caller : `user:${scope.userId}`;
+		const reader = await resolveReader(ctx, args, RECORD_DOOR, true);
+		if (reader === null) return none;
+		const { orgId, orgSlug } = reader;
+		const callerKey = reader.trusted ? args.caller : reader.userKey;
 		if (callerKey === undefined || !CALLER_KEY.test(callerKey)) return none;
 
 		const now = Date.now();
@@ -169,6 +171,12 @@ const readerArgs = {
 
 type Reader = {
 	orgId: string;
+	/** The organisation's label, a tenant stamp only. */
+	orgSlug: string;
+	/** "user:<subject>" of the scope the call runs under. */
+	userKey: string;
+	/** The call is the service transport with no person proof: its forwarded keys are believed. */
+	trusted: boolean;
 	/** The reader's own key, when it has one. */
 	self: string | undefined;
 	/** May read any caller of `orgId`: an org admin, or the org-scoped service caller. */
@@ -182,23 +190,30 @@ type ClaimArgs = {
 };
 
 /**
- * THE one place a tool-usage door resolves its caller (the three doors share it).
- * `soft`: the recorder, which answers an anonymous or organisation-less caller
- * with `null` (nothing to record) instead of raising; a read raises.
+ * THE one place a tool-usage door resolves its caller and its organisation
+ * (the three doors share it). `soft` (the recorder) answers a caller that has no
+ * organisation with `null`; a read raises instead.
  *
  *   - the fleet service account that names no organisation is REFUSED (R-54);
  *   - a `verifiedPerson` is the person's own scope, re-read from its token row;
  *   - otherwise `verifiedOrg` narrows the service account to that organisation's
  *     member scope (a Clerk session cannot name one: refused).
- * `trusted`: the call is the service transport presenting no person proof, so a
- * key it forwards (`caller` / `selfKey`) is believed, for that organisation only.
+ *
+ * Standing to read ANY caller of the organisation in scope:
+ *   - a verified organisation admin role (Clerk session or person token);
+ *   - the ORG-SCOPED SERVICE CALLER: the fleet service account acting for an
+ *     organisation (`verifiedOrg` / `__actingOrg`) that presents NO identity of
+ *     its own (neither `selfKey` nor `verifiedPerson`) - a server process (the
+ *     onboarding engine) serving that tenant. The MCP never reaches this branch:
+ *     its tool refuses a bearer that resolves no identity before any call.
+ * A seat or a plain member reads its own rows only.
  */
-async function resolveToolUsageScope(
+async function resolveReader(
 	ctx: Parameters<typeof withOrgScope>[0],
 	args: ClaimArgs,
 	door: string,
 	soft: boolean,
-): Promise<{ scope: OrgScope; trusted: boolean } | null> {
+): Promise<Reader | null> {
 	const transport = await withOrgScope(ctx, { refuseWithoutThrow: true });
 	if (soft) {
 		if (transport.anonymous === true || transport.refused === true) return null;
@@ -231,37 +246,13 @@ async function resolveToolUsageScope(
 			`"${door}" refuses a claim naming another organisation than the caller's`,
 		);
 	}
-	return { scope, trusted: isServiceTransport(transport) && !personal };
-}
-
-/**
- * Who is reading and in which organisation. Shared by both read doors.
- *
- * Standing to read ANY caller of the organisation in scope:
- *   - a verified organisation admin role (Clerk session or person token);
- *   - the ORG-SCOPED SERVICE CALLER: the fleet service account acting for an
- *     organisation (`verifiedOrg` / `__actingOrg`) that presents NO identity of
- *     its own (neither `selfKey` nor `verifiedPerson`) - a server process (the
- *     onboarding engine) serving that tenant. The MCP never reaches this branch:
- *     its tool refuses a bearer that resolves no identity before any call.
- * A seat or a plain member reads its own rows only.
- */
-async function resolveReader(
-	ctx: Parameters<typeof withOrgScope>[0],
-	args: ClaimArgs,
-	door: string,
-): Promise<Reader> {
-	const resolved = await resolveToolUsageScope(ctx, args, door, false);
-	if (resolved === null) {
-		throw rbacDenied(
-			door,
-			"unresolved",
-			`"${door}" could not resolve its caller`,
-		);
-	}
-	const { scope, trusted } = resolved;
+	// The call is the service transport with no person proof: the key it forwards
+	// (`caller` / `selfKey`) is believed, for that organisation only.
+	const trusted = isServiceTransport(transport) && !personal;
 	const orgId = scope.orgClerkId;
-	if (orgId === undefined || orgId === "") {
+	const orgSlug = scope.orgSlug;
+	if (orgId === undefined || orgId === "" || orgSlug === null) {
+		if (soft) return null;
 		throw rbacDenied(
 			door,
 			"no-organisation-id",
@@ -270,9 +261,13 @@ async function resolveReader(
 	}
 	const adminRole =
 		scope.orgRole !== undefined && ORG_ADMIN_ROLES.includes(scope.orgRole);
+	const userKey = `user:${scope.userId}`;
 	return {
 		orgId,
-		self: trusted ? args.selfKey : `user:${scope.userId}`,
+		orgSlug,
+		userKey,
+		trusted,
+		self: trusted ? args.selfKey : userKey,
 		admin: adminRole || (trusted && args.selfKey === undefined),
 	};
 }
@@ -304,7 +299,8 @@ export const getToolUsage = query({
 		// isolation-contract: no reactive subscriber exists - this door is new in
 		// task k17cbr6y6da096t5e1k869kgb18hd0ht and its only caller is the MCP
 		// tool get_tool_usage (imperative); a throw cannot crash a render.
-		const reader = await resolveReader(ctx, args, READ_DOOR);
+		const reader = await resolveReader(ctx, args, READ_DOOR, false);
+		if (reader === null) throw unresolved(READ_DOOR);
 		const target = args.caller ?? reader.self;
 		if (target === undefined || !CALLER_KEY.test(target)) {
 			throw rbacDenied(
@@ -354,7 +350,8 @@ export const usageByOwner = query({
 		// isolation-contract: no reactive subscriber exists - this door is new in
 		// task k17cbr6y6da096t5e1k869kgb18hd0ht; its callers are the MCP tool
 		// get_owner_tool_usage (imperative) and the onboarding engine (a server).
-		const reader = await resolveReader(ctx, args, OWNER_DOOR);
+		const reader = await resolveReader(ctx, args, OWNER_DOOR, false);
+		if (reader === null) throw unresolved(OWNER_DOOR);
 		if (args.ownerUserId === "" || /\s/.test(args.ownerUserId)) {
 			throw rbacDenied(
 				OWNER_DOOR,
