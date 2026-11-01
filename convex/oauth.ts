@@ -2561,21 +2561,25 @@ async function mintAccessToken(
 	const spent = input.personRefresh?.previous;
 	const a: MintAccessTokenArgs =
 		live !== undefined && spent !== undefined
-			? {
-					...input,
-					scopes: (spent.grantedScopes ?? []).filter(
-						(s) => spent.askedScopes?.includes(s) || live.scopes.includes(s),
-					),
-					fromAllowList: live.allowedOrchestrators,
-					// A person READS the organisation's shared memory but WRITES only
-					// team/<orgKey> (the same grant the person exchange mints).
-					namespaceReadPrefixes: [
-						`team/${live.clerkOrgSlug}`,
-						`project/${live.clerkOrgSlug}`,
-					],
-					namespaceWritePrefixes: [`team/${live.clerkOrgSlug}`],
-					clerkOrgSlug: live.clerkOrgSlug,
-				}
+			? (() => {
+					const {
+						scopes: orgScopes,
+						allowedOrchestrators: orgOrchestrators,
+						clerkOrgSlug: orgKey,
+					} = live;
+					return {
+						...input,
+						scopes: (spent.grantedScopes ?? []).filter(
+							(s) => spent.askedScopes?.includes(s) || orgScopes.includes(s),
+						),
+						fromAllowList: orgOrchestrators,
+						// A person READS the organisation's shared memory but WRITES only
+						// team/<orgKey> (the same grant the person exchange mints).
+						namespaceReadPrefixes: [`team/${orgKey}`, `project/${orgKey}`],
+						namespaceWritePrefixes: [`team/${orgKey}`],
+						clerkOrgSlug: orgKey,
+					};
+				})()
 			: input;
 	// Seat identity by ID, resolved HERE (mint and refresh both come through
 	// this door) from the profile in its own org; never from an argument.
