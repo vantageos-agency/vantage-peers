@@ -20,6 +20,7 @@ import {
 } from "./lib/auth";
 import {
 	resolveVerifiedOrg,
+	resolveVerifiedOrgScope,
 	serviceAccountWriteOrg,
 	verifiedOrgValidator,
 } from "./lib/verifiedOrg";
@@ -768,7 +769,17 @@ const missionsListArgsValidator = {
 };
 
 export const list = query({
-	args: missionsListArgsValidator,
+	args: {
+		...missionsListArgsValidator,
+		// The organisation the MCP transport VERIFIED for a bearer that reaches
+		// Convex as the fleet service account (list_missions, and the ui://vp/v1
+		// mission-timeline resource; task k17apssqnw2xcf72r27c83338s8hc180).
+		// Believed from the service account only; the read then runs under that
+		// org's member scope, so the org-keyed index ranges of `runMissionsList`
+		// ARE the read and the pilot label is resolved in THAT org, never in the
+		// operator org (convex/lib/verifiedOrg.ts).
+		verifiedOrg: v.optional(verifiedOrgValidator),
+	},
 	// Returns validator omitted because union of full+lite produces overly strict types vs Doc<"missions"> optionality
 	handler: async (ctx, args) => {
 		// ── Beta multi-tenant scope gate — fail-closed default (SEC-AUDIT Day
@@ -779,9 +790,16 @@ export const list = query({
 		// narrows the signed-in-no-org branch to a typed-empty result (the
 		// pre-existing requireScope inside runMissionsList would otherwise
 		// throw for that same caller).
-		const scope = await withOrgScope(ctx, { refuseWithoutThrow: true });
-		if (scope.refused) return [];
-		return await runMissionsList(ctx, args, scope);
+		const transportScope = await withOrgScope(ctx, { refuseWithoutThrow: true });
+		if (transportScope.refused) return [];
+		const { verifiedOrg, ...listArgs } = args;
+		const scope = await resolveVerifiedOrgScope(
+			ctx,
+			transportScope,
+			verifiedOrg,
+			"missions:list",
+		);
+		return await runMissionsList(ctx, listArgs, scope);
 	},
 });
 

@@ -7,6 +7,25 @@
 
 import { describe, expect, it } from "vitest";
 import { PRIMITIVES, readUiResource } from "../ui-resources/index.js";
+import { uiReadScopeOf } from "../ui-resources/scope.js";
+
+// readUiResource requires the caller's scope (task
+// k17apssqnw2xcf72r27c83338s8hc180). These rendering tests read as the fleet
+// master, whose scope adds no door argument and no row gate, so the arguments
+// and HTML they pin are the unscoped ones.
+const MASTER_SCOPE = uiReadScopeOf({
+	clientId: "master",
+	userId: "master",
+	scopes: ["vantage:read", "vantage:write"],
+	scopeProfile: "master",
+	fromAllowList: ["*"],
+	namespaceReadPrefixes: ["*"],
+	namespaceWritePrefixes: ["*"],
+	expiresAt: Number.MAX_SAFE_INTEGER,
+	isMaster: true,
+	viaMasterBearer: true,
+});
+
 import {
 	VpBriefingNotePayloadSchema,
 	VpDiaryEntryPayloadSchema,
@@ -50,6 +69,7 @@ describe("messages-feed primitive (M2)", () => {
 		const r = await readUiResource(
 			"ui://vp/v1/messages-feed?limit=5",
 			fetchConvex,
+			MASTER_SCOPE,
 		);
 		expect(r.contents[0].mimeType).toContain("text/html");
 		expect(htmlText(r)).toContain("vp-messages-feed");
@@ -73,7 +93,11 @@ describe("messages-feed primitive (M2)", () => {
 				createdAt: 2000,
 			},
 		];
-		const r = await readUiResource("ui://vp/v1/messages-feed", fetchConvex);
+		const r = await readUiResource(
+			"ui://vp/v1/messages-feed",
+			fetchConvex,
+			MASTER_SCOPE,
+		);
 		expect(htmlText(r)).toContain("sigma");
 		expect(htmlText(r)).toContain("Hello world");
 		expect(htmlText(r)).toContain("ops");
@@ -87,6 +111,7 @@ describe("messages-feed primitive (M2)", () => {
 		const r = await readUiResource(
 			"ui://vp/v1/messages-feed?lang=fr",
 			fetchConvex,
+			MASTER_SCOPE,
 		);
 		expect(htmlText(r)).toContain("Flux de messages");
 		expect(htmlText(r)).toContain("1 message");
@@ -101,7 +126,11 @@ describe("messages-feed primitive (M2)", () => {
 				createdAt: 1000,
 			},
 		];
-		const r = await readUiResource("ui://vp/v1/messages-feed", fetchConvex);
+		const r = await readUiResource(
+			"ui://vp/v1/messages-feed",
+			fetchConvex,
+			MASTER_SCOPE,
+		);
 		expect(htmlText(r)).not.toContain("<script>");
 		expect(htmlText(r)).toContain("&lt;script&gt;");
 		expect(htmlText(r)).not.toContain("<img onerror");
@@ -111,7 +140,11 @@ describe("messages-feed primitive (M2)", () => {
 		const fetchConvex = async () => {
 			throw new Error("messages backend down");
 		};
-		const r = await readUiResource("ui://vp/v1/messages-feed", fetchConvex);
+		const r = await readUiResource(
+			"ui://vp/v1/messages-feed",
+			fetchConvex,
+			MASTER_SCOPE,
+		);
 		expect(htmlText(r)).toContain("vp-messages-feed-error");
 		expect(htmlText(r)).toContain("messages backend down");
 	});
@@ -127,6 +160,7 @@ describe("diary-entry primitive (M2)", () => {
 		const r = await readUiResource(
 			"ui://vp/v1/diary-entry?date=2026-05-28&orchestrator=sigma",
 			fetchConvex,
+			MASTER_SCOPE,
 		);
 		expect(htmlText(r)).toContain("vp-diary-entry");
 		expect(htmlText(r)).toContain("No diary entry found");
@@ -144,6 +178,7 @@ describe("diary-entry primitive (M2)", () => {
 		const r = await readUiResource(
 			"ui://vp/v1/diary-entry?date=2026-05-28&orchestrator=sigma",
 			fetchConvex,
+			MASTER_SCOPE,
 		);
 		expect(htmlText(r)).toContain("sigma");
 		expect(htmlText(r)).toContain("2026-05-28");
@@ -164,6 +199,7 @@ describe("diary-entry primitive (M2)", () => {
 		const r = await readUiResource(
 			"ui://vp/v1/diary-entry?lang=fr",
 			fetchConvex,
+			MASTER_SCOPE,
 		);
 		expect(htmlText(r)).toContain("Journal VantagePeers");
 		expect(htmlText(r)).toContain("1 entr");
@@ -178,7 +214,11 @@ describe("diary-entry primitive (M2)", () => {
 				content: "<script>xss()</script>",
 			},
 		];
-		const r = await readUiResource("ui://vp/v1/diary-entry", fetchConvex);
+		const r = await readUiResource(
+			"ui://vp/v1/diary-entry",
+			fetchConvex,
+			MASTER_SCOPE,
+		);
 		expect(htmlText(r)).not.toContain("<script>xss");
 		expect(htmlText(r)).toContain("&lt;script&gt;");
 	});
@@ -187,7 +227,11 @@ describe("diary-entry primitive (M2)", () => {
 		const fetchConvex = async () => {
 			throw new Error("diary unavailable");
 		};
-		const r = await readUiResource("ui://vp/v1/diary-entry", fetchConvex);
+		const r = await readUiResource(
+			"ui://vp/v1/diary-entry",
+			fetchConvex,
+			MASTER_SCOPE,
+		);
 		expect(htmlText(r)).toContain("vp-diary-entry-error");
 		expect(htmlText(r)).toContain("diary unavailable");
 	});
@@ -200,7 +244,11 @@ describe("diary-entry primitive (M2)", () => {
 describe("mission-timeline primitive (M2)", () => {
 	it("renders empty state when no missions found", async () => {
 		const fetchConvex = async () => [];
-		const r = await readUiResource("ui://vp/v1/mission-timeline", fetchConvex);
+		const r = await readUiResource(
+			"ui://vp/v1/mission-timeline",
+			fetchConvex,
+			MASTER_SCOPE,
+		);
 		expect(htmlText(r)).toContain("vp-mission-timeline");
 		expect(htmlText(r)).toContain("No missions found");
 	});
@@ -226,7 +274,11 @@ describe("mission-timeline primitive (M2)", () => {
 				progress: 100,
 			},
 		];
-		const r = await readUiResource("ui://vp/v1/mission-timeline", fetchConvex);
+		const r = await readUiResource(
+			"ui://vp/v1/mission-timeline",
+			fetchConvex,
+			MASTER_SCOPE,
+		);
 		expect(htmlText(r)).toContain("Alpha mission");
 		expect(htmlText(r)).toContain("vp-mission-status-active");
 		expect(htmlText(r)).toContain("progressbar");
@@ -240,6 +292,7 @@ describe("mission-timeline primitive (M2)", () => {
 		const r = await readUiResource(
 			"ui://vp/v1/mission-timeline?lang=fr",
 			fetchConvex,
+			MASTER_SCOPE,
 		);
 		expect(htmlText(r)).toContain("Missions VantagePeers");
 		expect(htmlText(r)).toContain("Statut");
@@ -249,7 +302,11 @@ describe("mission-timeline primitive (M2)", () => {
 		const fetchConvex = async () => [
 			{ _id: "ms1", name: "<script>evil()</script>", status: "active" },
 		];
-		const r = await readUiResource("ui://vp/v1/mission-timeline", fetchConvex);
+		const r = await readUiResource(
+			"ui://vp/v1/mission-timeline",
+			fetchConvex,
+			MASTER_SCOPE,
+		);
 		expect(htmlText(r)).not.toContain("<script>evil");
 		expect(htmlText(r)).toContain("&lt;script&gt;");
 	});
@@ -258,7 +315,11 @@ describe("mission-timeline primitive (M2)", () => {
 		const fetchConvex = async () => {
 			throw new Error("missions unavailable");
 		};
-		const r = await readUiResource("ui://vp/v1/mission-timeline", fetchConvex);
+		const r = await readUiResource(
+			"ui://vp/v1/mission-timeline",
+			fetchConvex,
+			MASTER_SCOPE,
+		);
 		expect(htmlText(r)).toContain("vp-mission-timeline-error");
 		expect(htmlText(r)).toContain("missions unavailable");
 	});
@@ -271,7 +332,11 @@ describe("mission-timeline primitive (M2)", () => {
 describe("briefing-note primitive (M2)", () => {
 	it("renders empty state when no notes found", async () => {
 		const fetchConvex = async () => [];
-		const r = await readUiResource("ui://vp/v1/briefing-note", fetchConvex);
+		const r = await readUiResource(
+			"ui://vp/v1/briefing-note",
+			fetchConvex,
+			MASTER_SCOPE,
+		);
 		expect(htmlText(r)).toContain("vp-briefing-note");
 		expect(htmlText(r)).toContain("No briefing notes found");
 	});
@@ -287,7 +352,11 @@ describe("briefing-note primitive (M2)", () => {
 				createdBy: "sigma",
 			},
 		];
-		const r = await readUiResource("ui://vp/v1/briefing-note", fetchConvex);
+		const r = await readUiResource(
+			"ui://vp/v1/briefing-note",
+			fetchConvex,
+			MASTER_SCOPE,
+		);
 		expect(htmlText(r)).toContain("M2 design review");
 		expect(htmlText(r)).toContain("architecture");
 		expect(htmlText(r)).toContain("sigma");
@@ -301,6 +370,7 @@ describe("briefing-note primitive (M2)", () => {
 		const r = await readUiResource(
 			"ui://vp/v1/briefing-note?lang=fr",
 			fetchConvex,
+			MASTER_SCOPE,
 		);
 		expect(htmlText(r)).toContain("Notes de briefing");
 		expect(htmlText(r)).toContain("Participants");
@@ -315,7 +385,11 @@ describe("briefing-note primitive (M2)", () => {
 				participants: [],
 			},
 		];
-		const r = await readUiResource("ui://vp/v1/briefing-note", fetchConvex);
+		const r = await readUiResource(
+			"ui://vp/v1/briefing-note",
+			fetchConvex,
+			MASTER_SCOPE,
+		);
 		expect(htmlText(r)).not.toContain('<img src=x onerror="alert(1)">');
 		expect(htmlText(r)).toContain("&lt;img");
 	});
@@ -324,7 +398,11 @@ describe("briefing-note primitive (M2)", () => {
 		const fetchConvex = async () => {
 			throw new Error("briefingNotes backend down");
 		};
-		const r = await readUiResource("ui://vp/v1/briefing-note", fetchConvex);
+		const r = await readUiResource(
+			"ui://vp/v1/briefing-note",
+			fetchConvex,
+			MASTER_SCOPE,
+		);
 		expect(htmlText(r)).toContain("vp-briefing-note-error");
 		expect(htmlText(r)).toContain("briefingNotes backend down");
 	});
@@ -337,7 +415,11 @@ describe("briefing-note primitive (M2)", () => {
 describe("memory-quote primitive (M2)", () => {
 	it("returns error when namespace param is missing", async () => {
 		const fetchConvex = async () => [];
-		const r = await readUiResource("ui://vp/v1/memory-quote", fetchConvex);
+		const r = await readUiResource(
+			"ui://vp/v1/memory-quote",
+			fetchConvex,
+			MASTER_SCOPE,
+		);
 		expect(htmlText(r)).toContain("vp-memory-quote-error");
 		expect(htmlText(r)).toContain("namespace");
 	});
@@ -347,6 +429,7 @@ describe("memory-quote primitive (M2)", () => {
 		const r = await readUiResource(
 			"ui://vp/v1/memory-quote?namespace=sigma",
 			fetchConvex,
+			MASTER_SCOPE,
 		);
 		expect(htmlText(r)).toContain("vp-memory-quote");
 		expect(htmlText(r)).toContain("No memories found");
@@ -370,6 +453,7 @@ describe("memory-quote primitive (M2)", () => {
 		const r = await readUiResource(
 			"ui://vp/v1/memory-quote?namespace=sigma",
 			fetchConvex,
+			MASTER_SCOPE,
 		);
 		expect(htmlText(r)).toContain("Always verify evidence");
 		expect(htmlText(r)).toContain("feedback");
@@ -388,6 +472,7 @@ describe("memory-quote primitive (M2)", () => {
 		const r = await readUiResource(
 			"ui://vp/v1/memory-quote?namespace=sigma&lang=fr",
 			fetchConvex,
+			MASTER_SCOPE,
 		);
 		expect(htmlText(r)).toContain("Mémoires VantagePeers");
 		expect(htmlText(r)).toContain("1 mémoire");
@@ -405,6 +490,7 @@ describe("memory-quote primitive (M2)", () => {
 		const r = await readUiResource(
 			"ui://vp/v1/memory-quote?namespace=sigma",
 			fetchConvex,
+			MASTER_SCOPE,
 		);
 		expect(htmlText(r)).not.toContain("<script>pwned");
 		expect(htmlText(r)).toContain("&lt;script&gt;");
@@ -417,6 +503,7 @@ describe("memory-quote primitive (M2)", () => {
 		const r = await readUiResource(
 			"ui://vp/v1/memory-quote?namespace=sigma",
 			fetchConvex,
+			MASTER_SCOPE,
 		);
 		expect(htmlText(r)).toContain("vp-memory-quote-error");
 		expect(htmlText(r)).toContain("memories unavailable");

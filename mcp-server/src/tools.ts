@@ -32,13 +32,14 @@ import {
 	type OAuthContext,
 	PERSON_ACTOR_PREFIX,
 	personActorOf,
-	resolveSeatOrg,
 	rowVisibleToActorTenant,
 	toPackageOAuthCtx,
 } from "./auth.js";
+import { passesBriefingNoteParticipantScope } from "./briefingNoteScope.js";
 import {
 	type DoorScopeArgs,
 	type DoorScopeFacts,
+	doorScopeFactsOf,
 	resolveDoorScope,
 	verifiedOrgSlugOf,
 } from "./doorScope.js";
@@ -1940,46 +1941,6 @@ function rosterClaimArgs(ctx: OAuthContext | undefined): {
 	return { callerIdentities: ctx?.fromAllowList ?? [] };
 }
 
-/**
- * Day 165 fix (task k175ga65p654z200ydj7s8qv5s8cnxfc) — briefingNotes
- * defense-in-depth participant check.
- *
- * The authoritative fix lives in the Convex query itself
- * (convex/briefingNotes.ts get/list/searchBriefingNotesByKeyword): visibility
- * is resolved server-side via the `by_participant_note` index when
- * `master`/`callerIdentities` are threaded in from this handler.
- *
- * scopeFilterGet/scopeFilterList (the generic package-level post-query
- * filter used across many resources) only ever discriminate on
- * `createdBy`/`namespace` — they have no notion of `participants`, and they
- * are the ONLY tenant-isolation enforcement some of these tools have when
- * routed through the MCP server's fixed service-account Convex identity
- * (Day 141 fix note: `ctx.auth` resolves the MCP service account, not the
- * real caller, so Convex's own org-scope check does not apply here — the
- * real caller identity only exists as `oauthCtx` at this layer).
- *
- * This helper does NOT trust that Convex already authorized the row (that
- * would defeat the defense-in-depth these tools rely on) — it independently
- * re-checks `row.participants` (data already present on the row) against the
- * real caller's `fromAllowList`, exactly mirroring what the Convex-side
- * index lookup does, without a remap/blind-trust shortcut.
- */
-function passesBriefingNoteParticipantScope(
-	oauthCtx: OAuthContext | undefined,
-	row: { createdBy?: string; participants?: string[] } | null | undefined,
-): boolean {
-	if (row == null) return false;
-	// Absence REFUSES — a missing oauthCtx is NOT equivalent to master. Split
-	// from the old `undefined || isMasterScope` which treated no-context as a
-	// full pass (one-identity-layer.md clause 3).
-	if (oauthCtx === undefined) return false;
-	if (isMasterScope(oauthCtx)) return true;
-	if (Array.isArray(row.participants)) {
-		return row.participants.some((p) => oauthCtx.fromAllowList.includes(p));
-	}
-	return false;
-}
-
 // Upper bound on the roster entries one list_peers call resolves (one by-orchestrator read each).
 const ROSTER_LISTING_CAP = 200;
 
@@ -2229,16 +2190,9 @@ export function registerTools(
 	// per registration: the context is this connection's verified principal and
 	// nothing in the server mutates it after authentication, so every door call
 	// reads the same facts and identity is derived at this one point.
-	const verifiedOrgSlug = verifiedOrgOf();
-	const doorFacts: DoorScopeFacts = {
-		...(personActorOf(oauthCtx) !== undefined &&
-		oauthCtx?.accessTokenHash !== undefined
-			? { personAccessTokenHash: oauthCtx.accessTokenHash }
-			: {}),
-		...(verifiedOrgSlug !== undefined ? { verifiedOrgSlug } : {}),
-		hasVerifiedActor: verifiedActor !== undefined,
-		seat: resolveSeatOrg(oauthCtx),
-	};
+	// Built by doorScopeFactsOf (doorScope.ts), the same builder the ui://vp/v1
+	// resources use (ui-resources/scope.ts).
+	const doorFacts: DoorScopeFacts = doorScopeFactsOf(oauthCtx);
 	const doorScope = (door: string, actingName: string | undefined) =>
 		resolveDoorScope(door, actingName, doorFacts);
 	// The args fragment for a door that cannot refuse on scope (no seatOrgSlug).
@@ -6430,6 +6384,13 @@ export function registerTools(
 				const effectiveLimit =
 					limit === undefined ? undefined : clampLimit(limit);
 
+				// Tenant applied INSIDE the Convex read (`verifiedOrg`, task
+				// k17apssqnw2xcf72r27c83338s8hc180): the door reads the caller's
+				// org-keyed index ranges and resolves `pilot` in THAT org, never in
+				// the operator org the service account would otherwise resolve it in.
+				// A bearer whose org cannot be resolved is refused here, before any read.
+				const orgDenied = unresolvedOrgDenial("list_missions");
+				if (orgDenied !== null) return orgDenied;
 				const missions = await convex.query("missions:list" as any, {
 					project,
 					pilot,
@@ -6438,6 +6399,7 @@ export function registerTools(
 					fields: fields ?? "lite",
 					updatedSince,
 					createdBefore,
+					...doorScopeArgs("missions:list", undefined),
 				});
 
 				// S3.3 B8 follow-up — emit nextCursor when page is full.

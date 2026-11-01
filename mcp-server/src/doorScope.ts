@@ -1,4 +1,10 @@
-import type { OAuthContext, SeatOrgResolution } from "./auth.js";
+import {
+	type OAuthContext,
+	personActorOf,
+	resolveSeatOrg,
+	type SeatOrgResolution,
+} from "./auth.js";
+import { verifiedActorOf } from "./verifiedActor.js";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // doorScope — the ONE resolver of the scope arguments an MCP tool hands a Convex
@@ -82,6 +88,7 @@ export const DOOR_SCOPE: Readonly<Record<string, DoorScopeRule>> = {
 	// missions
 	"missions:create": { verifiedPerson: true, verifiedOrg: "unless-person" },
 	"missions:update": { verifiedPerson: true },
+	"missions:list": { verifiedOrg: "always" },
 	// briefing notes
 	"briefingNotes:create": { verifiedOrg: "always" },
 	"briefingNotes:get": { verifiedOrg: "always" },
@@ -134,6 +141,27 @@ export type DoorScopeFacts = {
 	/** The seat's org for a recipient-scoped door (resolveSeatOrg). */
 	readonly seat: SeatOrgResolution;
 };
+
+/**
+ * The facts of THIS verified oauthContext, read once. The one builder: the
+ * tools (tools.ts registerTools) and the ui://vp/v1 resources
+ * (ui-resources/scope.ts) both call it, so a resource read can never carry
+ * less scope than the tool reading the same door.
+ */
+export function doorScopeFactsOf(
+	oauthCtx: OAuthContext | undefined,
+): DoorScopeFacts {
+	const verifiedOrgSlug = verifiedOrgSlugOf(oauthCtx);
+	return {
+		...(personActorOf(oauthCtx) !== undefined &&
+		oauthCtx?.accessTokenHash !== undefined
+			? { personAccessTokenHash: oauthCtx.accessTokenHash }
+			: {}),
+		...(verifiedOrgSlug !== undefined ? { verifiedOrgSlug } : {}),
+		hasVerifiedActor: verifiedActorOf(oauthCtx) !== undefined,
+		seat: resolveSeatOrg(oauthCtx),
+	};
+}
 
 export type DoorScopeArgs = {
 	verifiedPerson?: { accessTokenHash: string };

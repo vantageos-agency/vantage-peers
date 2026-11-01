@@ -12,11 +12,21 @@
  *   briefingNotes:get  — when noteId provided
  *   briefingNotes:list — when topic or no params
  *
+ * Scope (task k17apssqnw2xcf72r27c83338s8hc180), exactly get/list_briefing_note:
+ * both doors are handed the tools' door arguments (verifiedOrg — the bearer's
+ * VERIFIED org, which Convex resolves to an active mapping row and so to its
+ * org ID; the caller's seat labels are resolved in that org, never matched by
+ * name across orgs) plus master/callerIdentities; then a row is kept only if
+ * the roster filter or the participant re-check admits it.
+ *
  * Output : HTML card(s) wrapped in <div class="vp-briefing-note"> with embedded CSS.
  * WCAG AA + bilingual FR+EN labels.
  */
 
+import { scopeFilterList } from "@vantageos/cloud-identity";
+import { passesBriefingNoteParticipantScope } from "../../briefingNoteScope.js";
 import { isRefusedEnvelope } from "../../refusal.js";
+import type { UiReadScope } from "../scope.js";
 
 // Minimal escape — avoid XSS in injected content
 function esc(s: string): string {
@@ -84,11 +94,7 @@ export async function renderBriefingNote(
 		functionName: string,
 		args: Record<string, unknown>,
 	) => Promise<unknown>,
-	// Day-165-parity — caller identity threaded from server-http.ts's oauthCtx
-	// (mirrors tools.ts's master/callerIdentities computation). Omitted only
-	// by callers that intentionally want the legacy unscoped read (internal
-	// tooling/tests) — production traffic from server-http.ts always passes it.
-	identity?: { master: boolean; callerIdentities: string[] | undefined },
+	scope: UiReadScope,
 ): Promise<string> {
 	const noteId = query.get("noteId") ?? undefined;
 	const topic = query.get("topic") ?? undefined;
@@ -113,32 +119,42 @@ export async function renderBriefingNote(
 
 	try {
 		if (noteId) {
-			const getArgs: Record<string, unknown> = { noteId };
-			if (identity !== undefined) {
-				getArgs.master = identity.master;
-				getArgs.callerIdentities = identity.callerIdentities;
-			}
+			const getArgs: Record<string, unknown> = {
+				noteId,
+				master: scope.master,
+				callerIdentities: scope.callerIdentities,
+				...scope.doorArgs("briefingNotes:get"),
+			};
 			const result = (await fetchConvex(
 				"briefingNotes:get",
 				getArgs,
 			)) as BriefingNoteRow | null;
 			notes = result ? [result] : [];
 		} else {
-			const args: Record<string, unknown> = { limit };
+			const args: Record<string, unknown> = {
+				limit,
+				master: scope.master,
+				callerIdentities: scope.callerIdentities,
+				...scope.doorArgs("briefingNotes:list"),
+			};
 			if (topic) args.topic = topic;
-			if (identity !== undefined) {
-				args.master = identity.master;
-				args.callerIdentities = identity.callerIdentities;
-			}
-			const result = (await fetchConvex(
-				"briefingNotes:list",
-				args,
-			)) as BriefingNoteRow[] | { refused: true; items: unknown[] };
+			const result = (await fetchConvex("briefingNotes:list", args)) as
+				| BriefingNoteRow[]
+				| { refused: true; items: unknown[] };
 			// A refusal is not an absence: never render it as "No briefing notes found."
 			if (isRefusedEnvelope(result)) {
 				return `<div class="vp-briefing-note-error" role="alert">REFUSED (RBAC_DENIED): the backend read "briefingNotes:list" refused this identity. This is NOT an empty result: notes may exist that you cannot see.</div>`;
 			}
 			notes = Array.isArray(result) ? result : [];
+		}
+		// The tools' row gate: the roster filter OR the participant re-check.
+		if (scope.gated) {
+			const rosterKept = new Set(scopeFilterList(scope.oauthCtx, notes));
+			notes = notes.filter(
+				(n) =>
+					rosterKept.has(n) ||
+					passesBriefingNoteParticipantScope(scope.oauthCtx, n),
+			);
 		}
 	} catch (err: unknown) {
 		const msg = err instanceof Error ? err.message : String(err);

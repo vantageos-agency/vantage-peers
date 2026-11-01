@@ -5,6 +5,7 @@
  * Query params :
  *   date         : YYYY-MM-DD (required for single-entry lookup)
  *   orchestrator : orchestrator name (required for single-entry lookup)
+ *   createdBy    : auth-derived author filter (list mode, optional)
  *   limit        : 1-100 (default 5) — used when date/orchestrator not provided
  *   lang         : "en" (default) | "fr"
  *
@@ -12,11 +13,23 @@
  *   diary:get   — when date + orchestrator provided
  *   diary:list  — when only orchestrator provided or no params (recent entries)
  *
+ * Scope (task k17apssqnw2xcf72r27c83338s8hc180): the SAME arguments and gates
+ * as get_diary / list_diaries. diary:get / diary:list take no scope argument
+ * today (they are not in DOOR_SCOPE), so the MCP-side gates are the whole
+ * control here: get mode keeps the row only if scopeFilterGet admits it; list
+ * mode refuses a non-master caller unless orchestrator or createdBy names
+ * itself. DEPENDENCY: the diary door's tenant fix ships separately (branch
+ * sigma/diary-tenant-scope); when it adds diary:* to DOOR_SCOPE, the pin in
+ * test/ui-resource-read-org-scoped.test.ts fails until this primitive spreads
+ * `scope.doorArgs(...)` into both calls.
+ *
  * Output : HTML card wrapped in <div class="vp-diary-entry"> with embedded CSS.
  * WCAG AA + bilingual FR+EN labels.
  */
 
+import { scopeFilterGet } from "@vantageos/cloud-identity";
 import { isRefusedEnvelope } from "../../refusal.js";
+import { type UiReadScope, uiReadRefusal } from "../scope.js";
 
 // Minimal escape — avoid XSS in injected content
 function esc(s: string): string {
@@ -42,6 +55,7 @@ type DiaryRow = {
 	_id: string;
 	date: string;
 	orchestrator: string;
+	createdBy?: string;
 	content: string;
 	highlights?: string[];
 	blockers?: string[];
@@ -84,9 +98,25 @@ export async function renderDiaryEntry(
 		functionName: string,
 		args: Record<string, unknown>,
 	) => Promise<unknown>,
+	scope: UiReadScope,
 ): Promise<string> {
 	const date = query.get("date") ?? undefined;
 	const orchestrator = query.get("orchestrator") ?? undefined;
+	const createdBy = query.get("createdBy") ?? undefined;
+	const singleEntry = date !== undefined && orchestrator !== undefined;
+	// list_diaries' gate: a non-master caller lists only its own entries.
+	if (
+		!singleEntry &&
+		scope.gated &&
+		orchestrator !== scope.oauthCtx.userId &&
+		createdBy !== scope.oauthCtx.userId
+	) {
+		throw uiReadRefusal(
+			"resources/read ui://vp/v1/diary-entry",
+			"diary-not-self",
+			`requires orchestrator='${scope.oauthCtx.userId}' or createdBy='${scope.oauthCtx.userId}' for a non-master caller`,
+		);
+	}
 	const limitRaw = query.get("limit");
 	const limitParsed =
 		limitRaw !== null ? Number.parseInt(limitRaw, 10) : Number.NaN;
@@ -104,17 +134,21 @@ export async function renderDiaryEntry(
 	let entries: DiaryRow[] = [];
 
 	try {
-		if (date && orchestrator) {
-			// Single-entry lookup
+		if (singleEntry) {
+			// Single-entry lookup; get_diary's row filter decides visibility.
 			const result = (await fetchConvex("diary:get", {
 				date,
 				orchestrator,
 			})) as DiaryRow | null;
-			entries = result ? [result] : [];
+			const visible = scope.gated
+				? scopeFilterGet(scope.oauthCtx, result)
+				: result;
+			entries = visible ? [visible] : [];
 		} else {
 			// List mode
 			const args: Record<string, unknown> = { limit };
 			if (orchestrator) args.orchestrator = orchestrator;
+			if (createdBy) args.createdBy = createdBy;
 			const result = (await fetchConvex("diary:list", args)) as
 				| DiaryRow[]
 				| { refused: true; items: unknown[] };

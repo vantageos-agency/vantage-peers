@@ -3,17 +3,22 @@
  * Renders a missions timeline for VantagePeers.
  *
  * Query params :
- *   pilot    : pilot name filter (optional)
+ *   pilot    : pilot name filter (optional for the master; a non-master
+ *              caller must name itself, as list_missions requires)
  *   project  : project filter (optional)
  *   status   : status filter, comma-separated (optional)
  *   limit    : 1-200 (default 20)
  *   lang     : "en" (default) | "fr"
  *
- * Backend : missions:list
+ * Backend : missions:list, with the tools' door arguments (verifiedOrg), so
+ * the read and the pilot label are resolved in the caller's own org (task
+ * k17apssqnw2xcf72r27c83338s8hc180).
  *
  * Output : HTML list wrapped in <div class="vp-mission-timeline"> with embedded CSS.
  * WCAG AA + bilingual FR+EN labels.
  */
+
+import { type UiReadScope, uiReadRefusal } from "../scope.js";
 
 // Minimal escape — avoid XSS in injected content
 function esc(s: string): string {
@@ -51,8 +56,17 @@ export async function renderMissionTimeline(
 		functionName: string,
 		args: Record<string, unknown>,
 	) => Promise<unknown>,
+	scope: UiReadScope,
 ): Promise<string> {
 	const pilot = query.get("pilot") ?? undefined;
+	// list_missions' gate: a non-master caller reads only missions it pilots.
+	if (scope.gated && pilot !== scope.oauthCtx.userId) {
+		throw uiReadRefusal(
+			"resources/read ui://vp/v1/mission-timeline",
+			"pilot-not-self",
+			`requires pilot='${scope.oauthCtx.userId}' for a non-master caller`,
+		);
+	}
 	const project = query.get("project") ?? undefined;
 	const statusRaw = query.get("status") ?? undefined;
 	const limitRaw = query.get("limit");
@@ -75,7 +89,11 @@ export async function renderMissionTimeline(
 		status = statusRaw;
 	}
 
-	const args: Record<string, unknown> = { limit, fields: "lite" };
+	const args: Record<string, unknown> = {
+		limit,
+		fields: "lite",
+		...scope.doorArgs("missions:list"),
+	};
 	if (pilot) args.pilot = pilot;
 	if (project) args.project = project;
 	if (status !== undefined) args.status = status;

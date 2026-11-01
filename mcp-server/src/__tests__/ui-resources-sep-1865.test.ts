@@ -12,6 +12,24 @@ import {
 	parseUiUri,
 	readUiResource,
 } from "../ui-resources/index.js";
+import { uiReadScopeOf } from "../ui-resources/scope.js";
+
+// readUiResource requires the caller's scope (task
+// k17apssqnw2xcf72r27c83338s8hc180). These rendering tests read as the fleet
+// master, whose scope adds no door argument and no row gate, so the arguments
+// and HTML they pin are the unscoped ones.
+const MASTER_SCOPE = uiReadScopeOf({
+	clientId: "master",
+	userId: "master",
+	scopes: ["vantage:read", "vantage:write"],
+	scopeProfile: "master",
+	fromAllowList: ["*"],
+	namespaceReadPrefixes: ["*"],
+	namespaceWritePrefixes: ["*"],
+	expiresAt: Number.MAX_SAFE_INTEGER,
+	isMaster: true,
+	viaMasterBearer: true,
+});
 
 describe("parseUiUri (M1 SEP-1865)", () => {
 	it("parses ui://vp/v1/tasks-table without query", () => {
@@ -80,6 +98,7 @@ describe("readUiResource (M1 tasks-table)", () => {
 		const r = await readUiResource(
 			"ui://vp/v1/tasks-table?limit=10",
 			fetchConvex,
+			MASTER_SCOPE,
 		);
 		const html = htmlOf(r);
 		expect(html).toBeDefined();
@@ -91,7 +110,11 @@ describe("readUiResource (M1 tasks-table)", () => {
 
 	it("includes markdown fallback as second content (Critical Rule #1)", async () => {
 		const fetchConvex = async () => [];
-		const r = await readUiResource("ui://vp/v1/tasks-table", fetchConvex);
+		const r = await readUiResource(
+			"ui://vp/v1/tasks-table",
+			fetchConvex,
+			MASTER_SCOPE,
+		);
 		expect(r.contents).toHaveLength(2);
 		const fb = fallbackOf(r);
 		expect(fb).toBeDefined();
@@ -102,7 +125,11 @@ describe("readUiResource (M1 tasks-table)", () => {
 
 	it("attaches _meta.ui envelope on the HTML content (SEP-1865 §UIResource)", async () => {
 		const fetchConvex = async () => [];
-		const r = await readUiResource("ui://vp/v1/tasks-table", fetchConvex);
+		const r = await readUiResource(
+			"ui://vp/v1/tasks-table",
+			fetchConvex,
+			MASTER_SCOPE,
+		);
 		const html = htmlOf(r);
 		expect(html).toBeDefined();
 		expect("_meta" in (html ?? {})).toBe(true);
@@ -118,6 +145,7 @@ describe("readUiResource (M1 tasks-table)", () => {
 		const r = await readUiResource(
 			"ui://vp/v1/tasks-table?limit=5",
 			fetchConvex,
+			MASTER_SCOPE,
 		);
 		const html = htmlOf(r);
 		expect(html?.text).toContain("Test task 1");
@@ -134,6 +162,7 @@ describe("readUiResource (M1 tasks-table)", () => {
 		const r = await readUiResource(
 			"ui://vp/v1/tasks-table?lang=fr",
 			fetchConvex,
+			MASTER_SCOPE,
 		);
 		const html = htmlOf(r);
 		expect(html?.text).toContain("Titre");
@@ -150,6 +179,7 @@ describe("readUiResource (M1 tasks-table)", () => {
 		await readUiResource(
 			"ui://vp/v1/tasks-table?status=todo,in_progress",
 			fetchConvex,
+			MASTER_SCOPE,
 		);
 		expect(receivedArgs.status).toEqual(["todo", "in_progress"]);
 	});
@@ -163,6 +193,7 @@ describe("readUiResource (M1 tasks-table)", () => {
 		await readUiResource(
 			"ui://vp/v1/tasks-table?createdBy=pi&assignedTo=sigma",
 			fetchConvex,
+			MASTER_SCOPE,
 		);
 		expect(receivedArgs.createdBy).toBe("pi");
 		expect(receivedArgs.assignedTo).toBe("sigma");
@@ -176,7 +207,11 @@ describe("readUiResource (M1 tasks-table)", () => {
 				status: "todo",
 			},
 		];
-		const r = await readUiResource("ui://vp/v1/tasks-table", fetchConvex);
+		const r = await readUiResource(
+			"ui://vp/v1/tasks-table",
+			fetchConvex,
+			MASTER_SCOPE,
+		);
 		const html = htmlOf(r);
 		expect(html?.text).not.toContain("<script>alert");
 		expect(html?.text).toContain("&lt;script&gt;");
@@ -186,7 +221,11 @@ describe("readUiResource (M1 tasks-table)", () => {
 		const fetchConvex = async () => {
 			throw new Error("Backend unavailable");
 		};
-		const r = await readUiResource("ui://vp/v1/tasks-table", fetchConvex);
+		const r = await readUiResource(
+			"ui://vp/v1/tasks-table",
+			fetchConvex,
+			MASTER_SCOPE,
+		);
 		const html = htmlOf(r);
 		expect(html?.text).toContain("vp-tasks-table-error");
 		expect(html?.text).toContain("Backend unavailable");
@@ -195,7 +234,7 @@ describe("readUiResource (M1 tasks-table)", () => {
 	it("rejects unknown primitive with throw", async () => {
 		const fetchConvex = async () => [];
 		await expect(
-			readUiResource("ui://vp/v1/unknown-primitive", fetchConvex),
+			readUiResource("ui://vp/v1/unknown-primitive", fetchConvex, MASTER_SCOPE),
 		).rejects.toThrow("Unknown primitive");
 	});
 
@@ -205,9 +244,17 @@ describe("readUiResource (M1 tasks-table)", () => {
 			receivedArgs = args;
 			return [];
 		};
-		await readUiResource("ui://vp/v1/tasks-table?limit=500", fetchConvex);
+		await readUiResource(
+			"ui://vp/v1/tasks-table?limit=500",
+			fetchConvex,
+			MASTER_SCOPE,
+		);
 		expect(receivedArgs.limit).toBe(200);
-		await readUiResource("ui://vp/v1/tasks-table?limit=0", fetchConvex);
+		await readUiResource(
+			"ui://vp/v1/tasks-table?limit=0",
+			fetchConvex,
+			MASTER_SCOPE,
+		);
 		expect(receivedArgs.limit).toBe(1);
 	});
 });

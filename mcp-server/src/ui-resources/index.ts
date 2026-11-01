@@ -27,6 +27,7 @@ import { renderMemoryQuote } from "./primitives/memory-quote.js";
 import { renderMessagesFeed } from "./primitives/messages-feed.js";
 import { renderMissionTimeline } from "./primitives/mission-timeline.js";
 import { renderTasksTable } from "./primitives/tasks-table.js";
+import type { UiReadScope } from "./scope.js";
 
 // MCP Apps capability negotiation key (declared at server initialize handshake).
 // Tools opting into UI resources reference it from their _meta.ui field.
@@ -140,15 +141,10 @@ function renderMarkdownFallback(uri: string, primitive: Primitive): string {
 	].join("\n");
 }
 
-// Caller identity, threaded from server-http.ts's oauthCtx the same way
-// tools.ts computes it (master + fromAllowList). Optional: readUiResource is
-// also called from tests/tools with no identity, which preserves the
-// pre-existing `callerIdentities === undefined` legacy-open Convex branch —
-// scope-aware callers (server-http.ts) MUST pass this.
-export type UiResourceCallerIdentity = {
-	master: boolean;
-	callerIdentities: string[] | undefined;
-};
+// The caller's scope (scope.ts): REQUIRED. Every primitive hands its door the
+// tools' door arguments and applies its tool's MCP-side gate from it, so there
+// is no unscoped read path (task k17apssqnw2xcf72r27c83338s8hc180).
+export type { UiReadScope } from "./scope.js";
 
 // Resource read — dispatched by primitive name. Returns canonical
 // resources/read contents array: [HTML profile=mcp-app, markdown fallback].
@@ -158,7 +154,7 @@ export async function readUiResource(
 		functionName: string,
 		args: Record<string, unknown>,
 	) => Promise<unknown>,
-	identity?: UiResourceCallerIdentity,
+	scope: UiReadScope,
 ): Promise<UiResourceReadResult> {
 	const parsed = parseUiUri(uri);
 	if (!parsed) {
@@ -173,22 +169,22 @@ export async function readUiResource(
 	let html: string;
 	switch (primitive) {
 		case "tasks-table":
-			html = await renderTasksTable(parsed.query, fetchConvex);
+			html = await renderTasksTable(parsed.query, fetchConvex, scope);
 			break;
 		case "messages-feed":
-			html = await renderMessagesFeed(parsed.query, fetchConvex);
+			html = await renderMessagesFeed(parsed.query, fetchConvex, scope);
 			break;
 		case "diary-entry":
-			html = await renderDiaryEntry(parsed.query, fetchConvex);
+			html = await renderDiaryEntry(parsed.query, fetchConvex, scope);
 			break;
 		case "mission-timeline":
-			html = await renderMissionTimeline(parsed.query, fetchConvex);
+			html = await renderMissionTimeline(parsed.query, fetchConvex, scope);
 			break;
 		case "briefing-note":
-			html = await renderBriefingNote(parsed.query, fetchConvex, identity);
+			html = await renderBriefingNote(parsed.query, fetchConvex, scope);
 			break;
 		case "memory-quote":
-			html = await renderMemoryQuote(parsed.query, fetchConvex);
+			html = await renderMemoryQuote(parsed.query, fetchConvex, scope);
 			break;
 		default:
 			throw new Error(

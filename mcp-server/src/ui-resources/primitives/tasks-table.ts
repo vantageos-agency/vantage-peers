@@ -5,15 +5,24 @@
  * Query params :
  *   assignedTo : creator name (optional filter)
  *   status     : single status, alias (open|active|all), or comma-separated array (e.g. "todo,in_progress")
- *   fields     : "lite" (default) | "full"
+ *   fields     : "lite" (default) | "full" (a gated caller's read is always
+ *                "full", see below; the table renders the lite columns)
  *   limit      : 1-200 (default 20)
  *   createdBy  : creator filter (optional)
+ *
+ * Scope (task k17apssqnw2xcf72r27c83338s8hc180): the read carries the tools'
+ * door arguments for tasks:list (verifiedOrg) and, for a gated caller, applies
+ * list_tasks' gate.
  *
  * Output : HTML <table> wrapped in <div class="vp-tasks-table"> with embedded CSS.
  * Scoped via :host selector for Shadow DOM root rendering by Claude Desktop / vantage-bridge sidepanel.
  *
  * WCAG AA + bilingual FR+EN labels (parametrized via lang query param).
  */
+
+import { scopeFilterList } from "@vantageos/cloud-identity";
+import { filterRowsToActorTenant } from "../../auth.js";
+import type { UiReadScope } from "../scope.js";
 
 // Minimal escape — avoid XSS in injected content
 function esc(s: string): string {
@@ -41,6 +50,8 @@ type TaskRow = {
 	status: string;
 	priority?: string;
 	assignedTo?: string;
+	createdBy?: string;
+	orgId?: string;
 	_creationTime?: number;
 };
 
@@ -50,10 +61,10 @@ export async function renderTasksTable(
 		functionName: string,
 		args: Record<string, unknown>,
 	) => Promise<unknown>,
+	scope: UiReadScope,
 ): Promise<string> {
 	const assignedTo = query.get("assignedTo") ?? undefined;
 	const statusRaw = query.get("status") ?? undefined;
-	const fields = (query.get("fields") ?? "lite") as "lite" | "full";
 	const limitRaw = query.get("limit");
 	const limitParsed =
 		limitRaw !== null ? Number.parseInt(limitRaw, 10) : Number.NaN;
@@ -76,15 +87,34 @@ export async function renderTasksTable(
 		status = statusRaw;
 	}
 
-	const args: Record<string, unknown> = { limit, fields };
+	// As list_tasks (tools.ts): a gated read asks the door for fields="full" so
+	// the roster filter below sees the real `createdBy` (a lite row carries none,
+	// and every non-master row would be dropped); the table renders lite columns
+	// either way. The tenant rides INSIDE the read: the tools' door arguments
+	// (verifiedOrg).
+	const requested = (query.get("fields") ?? "lite") as "lite" | "full";
+	const args: Record<string, unknown> = {
+		limit,
+		fields: scope.gated ? "full" : requested,
+		...scope.doorArgs("tasks:list"),
+	};
 	if (assignedTo) args.assignedTo = assignedTo;
 	if (status !== undefined) args.status = status;
 	if (createdBy) args.createdBy = createdBy;
 
 	let tasks: TaskRow[] = [];
 	try {
-		const result = (await fetchConvex("tasks:list", args)) as TaskRow[];
-		tasks = Array.isArray(result) ? result : [];
+		const result = await fetchConvex("tasks:list", args);
+		const rows = Array.isArray(result) ? (result as TaskRow[]) : [];
+		// list_tasks' MCP-side gate, same predicates: the actor-tenant row gate,
+		// then the roster filter with the `assignedTo` grant.
+		tasks = scope.gated
+			? scopeFilterList(
+					scope.oauthCtx,
+					filterRowsToActorTenant(scope.oauthCtx, rows),
+					["assignedTo"],
+				)
+			: rows;
 	} catch (err: unknown) {
 		const msg = err instanceof Error ? err.message : String(err);
 		return `<div class="vp-tasks-table-error">${esc(msg)}</div>`;

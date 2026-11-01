@@ -93,7 +93,10 @@ function near(anchor: string, index: number): boolean {
 }
 
 describe("pin 2b — the KB tools (tools/kbIngest.ts) call their doors through the resolver", () => {
-	const KB_SRC = readFileSync(resolve(HERE, "../src/tools/kbIngest.ts"), "utf8");
+	const KB_SRC = readFileSync(
+		resolve(HERE, "../src/tools/kbIngest.ts"),
+		"utf8",
+	);
 	const calls = [
 		...KB_SRC.matchAll(
 			/convex\.(?:mutation|action)\(\s*"([A-Za-z0-9_]+):([A-Za-z0-9_]+)"/g,
@@ -107,7 +110,10 @@ describe("pin 2b — the KB tools (tools/kbIngest.ts) call their doors through t
 		for (const m of calls) {
 			const door = `${m[1]}:${m[2]}`;
 			const window = KB_SRC.slice(m.index, m.index + 600);
-			if (DOOR_SCOPE[door] === undefined || !window.includes(`scopeArgs("${door}")`))
+			if (
+				DOOR_SCOPE[door] === undefined ||
+				!window.includes(`scopeArgs("${door}")`)
+			)
 				missing.push(door);
 		}
 		expect(missing).toEqual([]);
@@ -273,6 +279,9 @@ const SITES: [string, string, Legacy, boolean][] = [
 	["add_task_dependency", "tasks:update", org, false],
 	["create_mission", "missions:create", personOnly, true],
 	["update_mission", "missions:update", personOnly, true],
+	// missions:list takes verifiedOrg since task k17apssqnw2xcf72r27c83338s8hc180;
+	// "org" is the shape every other org-scoped read door already had.
+	["list_missions", "missions:list", org, false],
 	["create_briefing_note", "briefingNotes:create", org, false],
 	["get_briefing_note", "briefingNotes:get", org, false],
 	["list_briefing_notes", "briefingNotes:list", org, false],

@@ -10,9 +10,18 @@
  *
  * Backend : memories:listMemories (args: namespace, type?, limit?)
  *
+ * Scope (task k17apssqnw2xcf72r27c83338s8hc180), exactly list_memories': the
+ * door takes no scope argument (it is not in DOOR_SCOPE), so the namespace read
+ * gate (checkNamespaceRead) refuses a namespace the caller cannot read BEFORE
+ * any Convex query, and the roster filter (scopeFilterList) runs on the rows.
+ *
  * Output : HTML quote cards wrapped in <div class="vp-memory-quote"> with embedded CSS.
  * WCAG AA + bilingual FR+EN labels.
  */
+
+import { scopeFilterList } from "@vantageos/cloud-identity";
+import { checkNamespaceRead } from "../../auth.js";
+import { type UiReadScope, uiReadRefusal } from "../scope.js";
 
 // Minimal escape — avoid XSS in injected content
 function esc(s: string): string {
@@ -39,6 +48,7 @@ type MemoryRow = {
 	namespace: string;
 	type: string;
 	content: string;
+	createdBy?: string;
 	score?: number;
 };
 
@@ -56,6 +66,7 @@ export async function renderMemoryQuote(
 		functionName: string,
 		args: Record<string, unknown>,
 	) => Promise<unknown>,
+	scope: UiReadScope,
 ): Promise<string> {
 	const namespace = query.get("namespace") ?? undefined;
 	const type = query.get("type") ?? undefined;
@@ -80,6 +91,18 @@ export async function renderMemoryQuote(
 		return `<div class="vp-memory-quote-error" role="alert">${esc(noNamespaceLabel)}</div>`;
 	}
 
+	// list_memories' namespace read gate, before any Convex query.
+	const nsDenied = scope.gated
+		? checkNamespaceRead(scope.oauthCtx, namespace)
+		: null;
+	if (nsDenied !== null) {
+		throw uiReadRefusal(
+			"resources/read ui://vp/v1/memory-quote",
+			"namespace-not-readable",
+			nsDenied,
+		);
+	}
+
 	let memories: MemoryRow[] = [];
 	try {
 		const args: Record<string, unknown> = { namespace, limit };
@@ -102,6 +125,8 @@ export async function renderMemoryQuote(
 		} else {
 			memories = [];
 		}
+		// list_memories' roster filter on the rows read.
+		if (scope.gated) memories = scopeFilterList(scope.oauthCtx, memories);
 	} catch (err: unknown) {
 		const msg = err instanceof Error ? err.message : String(err);
 		return `<div class="vp-memory-quote-error" role="alert">${esc(msg)}</div>`;

@@ -25,10 +25,14 @@
  * primitive that forgets its scope shows org-b's rows, and these tests fail.
  */
 
+import { readdirSync, readFileSync } from "node:fs";
+import { dirname, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 import { Client } from "@modelcontextprotocol/client";
 import { InMemoryTransport, McpServer } from "@modelcontextprotocol/server";
 import { describe, expect, it } from "vitest";
 import type { OAuthContext } from "../src/auth.js";
+import { DOOR_SCOPE } from "../src/doorScope.js";
 import {
 	registerUiResources,
 	type UiResourceConvexClient,
@@ -292,8 +296,13 @@ type Case = {
 	/** The door the read reaches, and whether verifiedOrg rides it. */
 	door: string;
 	carriesVerifiedOrg: boolean;
-	/** A read naming another org's data, refused by the tool's MCP-side gate. */
+	/** A read naming another org's data, stopped by the tool's MCP-side gate. */
 	gatedUri?: string;
+	/**
+	 * How that gate stops it: refused before any Convex query (default), or the
+	 * row withheld after the read (get_diary's scopeFilterGet, no pre-gate).
+	 */
+	gatedBy?: "refusal" | "row-filter";
 };
 
 const CASES: Case[] = [
@@ -348,6 +357,7 @@ const CASES: Case[] = [
 		door: "diary:get",
 		carriesVerifiedOrg: false,
 		gatedUri: "ui://vp/v1/diary-entry?date=2026-11-01&orchestrator=mallory",
+		gatedBy: "row-filter",
 	},
 	{
 		primitive: "briefing-note (list)",
@@ -391,7 +401,14 @@ describe("ui://vp/v1/* resources/read is partitioned by organisation", () => {
 				}
 			});
 
-			if (c.gatedUri !== undefined) {
+			if (c.gatedUri !== undefined && c.gatedBy === "row-filter") {
+				const gatedUri = c.gatedUri;
+				it("org-a member naming org-b's data has the row WITHHELD by the tool's row filter", async () => {
+					const { err, html } = await readAs(MEMBER_A, gatedUri);
+					expect(err).toBeUndefined();
+					for (const foreign of c.foreign) expect(html).not.toContain(foreign);
+				});
+			} else if (c.gatedUri !== undefined) {
 				const gatedUri = c.gatedUri;
 				it("org-a member naming org-b's data is REFUSED by the tool's gate, before any Convex query", async () => {
 					const { err, calls } = await readAs(MEMBER_A, gatedUri);
@@ -444,5 +461,53 @@ describe("ui://vp/v1/* resources/read is partitioned by organisation", () => {
 		const { err, calls } = await readAs(MEMBER_A, "ui://vp/v1/diary-entry");
 		expectRefused(err);
 		expect(calls).toEqual([]);
+	});
+});
+
+// Static pin: a primitive cannot call a scope-taking door without the tools'
+// resolver. A door in DOOR_SCOPE must be handed `scope.doorArgs("<door>")` in
+// the primitive that calls it; a door outside DOOR_SCOPE must be one of the
+// doors whose tool scopes on the MCP side only, listed here on purpose. When a
+// door of that list enters DOOR_SCOPE (the diary tenant fix,
+// sigma/diary-tenant-scope), the first assertion fails until the primitive
+// spreads its door arguments.
+const MCP_SIDE_GATED_DOORS = new Set([
+	"memories:listMemories",
+	"diary:get",
+	"diary:list",
+]);
+
+describe("every primitive door call goes through the tools' resolver", () => {
+	const dir = resolve(
+		dirname(fileURLToPath(import.meta.url)),
+		"../src/ui-resources/primitives",
+	);
+	const sites = readdirSync(dir)
+		.filter((f) => f.endsWith(".ts"))
+		.flatMap((file) => {
+			const src = readFileSync(resolve(dir, file), "utf8");
+			return [...src.matchAll(/fetchConvex\(\s*"([A-Za-z]+:[A-Za-z]+)"/g)].map(
+				(m) => ({ file, door: m[1], src }),
+			);
+		});
+
+	it("finds the eight door calls of the six primitives", () => {
+		expect(sites.length).toBe(8);
+	});
+
+	it("a DOOR_SCOPE door is handed scope.doorArgs of that door", () => {
+		const missing = sites
+			.filter((s) => DOOR_SCOPE[s.door] !== undefined)
+			.filter((s) => !s.src.includes(`scope.doorArgs("${s.door}")`))
+			.map((s) => `${s.file}:${s.door}`);
+		expect(missing).toEqual([]);
+	});
+
+	it("any other door is a declared MCP-side-gated door", () => {
+		const undeclared = sites
+			.filter((s) => DOOR_SCOPE[s.door] === undefined)
+			.filter((s) => !MCP_SIDE_GATED_DOORS.has(s.door))
+			.map((s) => `${s.file}:${s.door}`);
+		expect(undeclared).toEqual([]);
 	});
 });

@@ -8,11 +8,16 @@
  *   limit      : 1-200 (default 20)
  *   lang       : "en" (default) | "fr"
  *
- * Backend : messages:listMessages (args: from?, limit?)
+ * Backend : messages:listMessages (args: from?, limit?, + the tools' door
+ *           arguments: verifiedOrg), then list_messages' roster filter on
+ *           `from` (task k17apssqnw2xcf72r27c83338s8hc180).
  *
  * Output : HTML feed wrapped in <div class="vp-messages-feed"> with embedded CSS.
  * WCAG AA + bilingual FR+EN labels.
  */
+
+import { scopeFilterList } from "@vantageos/cloud-identity";
+import type { UiReadScope } from "../scope.js";
 
 // Minimal escape — avoid XSS in injected content
 function esc(s: string): string {
@@ -49,6 +54,7 @@ export async function renderMessagesFeed(
 		functionName: string,
 		args: Record<string, unknown>,
 	) => Promise<unknown>,
+	scope: UiReadScope,
 ): Promise<string> {
 	const from = query.get("from") ?? undefined;
 	const channel = query.get("channel") ?? undefined;
@@ -60,16 +66,24 @@ export async function renderMessagesFeed(
 		: Math.min(200, Math.max(1, limitParsed));
 	const lang = (query.get("lang") ?? "en").toLowerCase();
 
-	const args: Record<string, unknown> = { limit };
+	const args: Record<string, unknown> = {
+		limit,
+		...scope.doorArgs("messages:listMessages"),
+	};
 	if (from) args.from = from;
 
 	let messages: MessageRow[] = [];
 	try {
-		const result = (await fetchConvex(
-			"messages:listMessages",
-			args,
-		)) as MessageRow[];
-		const allMessages = Array.isArray(result) ? result : [];
+		const result = await fetchConvex("messages:listMessages", args);
+		const rows = Array.isArray(result) ? (result as MessageRow[]) : [];
+		// list_messages' roster filter: a message row carries `from`, not
+		// `createdBy`, so it is remapped for the predicate and stripped after.
+		const allMessages = scope.gated
+			? scopeFilterList(
+					scope.oauthCtx,
+					rows.map((m) => ({ ...m, createdBy: m.from })),
+				).map(({ createdBy: _createdBy, ...rest }) => rest)
+			: rows;
 		// Apply channel filter client-side — backend does not support it natively
 		messages = channel
 			? allMessages.filter((m) => m.channel === channel)

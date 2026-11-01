@@ -13,6 +13,11 @@
  * BEFORE any Convex query (refusal-is-distinguishable-from-absence.md: a
  * refusal, never an empty resource).
  *
+ * Widened by task k17apssqnw2xcf72r27c83338s8hc180: a bearer whose verified
+ * organisation RESOLVED is now served, scoped as its tool
+ * (test/ui-resource-read-org-scoped.test.ts). The bearer below resolves no
+ * organisation, so every refusal here still holds.
+ *
  * Runs the REAL McpServer through an in-memory transport so the refusal is
  * measured on the wire shape a client actually receives.
  */

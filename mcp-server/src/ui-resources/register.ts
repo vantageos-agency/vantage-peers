@@ -9,53 +9,53 @@
 
 import {
 	type McpServer,
-	ProtocolError,
-	ProtocolErrorCode,
+	type ProtocolError,
 	ResourceTemplate,
 } from "@modelcontextprotocol/server";
 import type { ConvexHttpClient } from "convex/browser";
-import { isMasterScope, type OAuthContext } from "../auth.js";
+import type { OAuthContext } from "../auth.js";
 import { listUiResources, readUiResource } from "./index.js";
+import { callerOrgResolves, uiReadRefusal, uiReadScopeOf } from "./scope.js";
 
 /** The slice of a ConvexHttpClient the primitives read through. */
 export type UiResourceConvexClient = Pick<ConvexHttpClient, "query">;
 
 /**
- * Fail-closed admission for resources/read of ui://vp/v1/* (task
- * k17d6s1fsfy9fg7p339gq3rqnx8hc4qh). The primitives apply no tenant gate of
- * their own, so the read is admitted only when Convex itself scopes it:
+ * Admission for resources/read of ui://vp/v1/* (task
+ * k17d6s1fsfy9fg7p339gq3rqnx8hc4qh, widened by k17apssqnw2xcf72r27c83338s8hc180).
+ * A read is admitted only when Convex can be told WHOSE organisation it is for
+ * (scope.ts callerOrgResolves):
  *
  *   (a) a Clerk-JWT caller (`clerkJwt` set, auth.ts case 2.5): its OWN verified
  *       token reaches Convex (selectConvexClientForRequest), which resolves
- *       its own org — never cross-tenant;
- *   (b) a master caller (`isMasterScope`): fleet-wide by right.
+ *       its own org;
+ *   (b) a master caller (`isMasterScope`): fleet-wide by right;
+ *   (c) a non-master bearer whose verified org resolved (verifiedOrgSlugOf):
+ *       it reaches Convex as the fleet service account, and every primitive
+ *       hands its door that org through the tools' resolver (scope.ts), then
+ *       applies its tool's MCP-side gate.
  *
- * Every other caller (a non-master OAuth bearer) would be served through the
- * fleet SERVICE-ACCOUNT client, which Convex resolves as master/fleet-wide, so
- * it is refused. An undefined context is refused too: absence is never master.
- * The proper per-tenant scoping of these primitives is a follow-up; this gate
- * only closes the leak.
+ * Every other caller (an undefined context, or a bearer whose organisation
+ * resolves to nothing) is refused before any Convex query: absence is never
+ * master, and a lookup miss is a DENY.
  */
 export function isUiResourceReadAdmitted(
 	oauthCtx: OAuthContext | undefined,
 ): boolean {
-	if (oauthCtx === undefined) return false;
-	if (oauthCtx.clerkJwt) return true;
-	return isMasterScope(oauthCtx);
+	return callerOrgResolves(oauthCtx);
 }
 
 /**
- * The refusal, as an MCP error (never an empty resource:
+ * The admission refusal, as an MCP error (never an empty resource:
  * refusal-is-distinguishable-from-absence.md). Carries the RBAC_DENIED code
  * and the door in both the message and the structured `data`.
  */
 export function uiResourceReadRefusal(uri: string): ProtocolError {
 	const primitive = new URL(uri).pathname.replace(/^\/v1\//, "");
-	const door = `resources/read ui://vp/v1/${primitive}`;
-	return new ProtocolError(
-		ProtocolErrorCode.InvalidRequest,
-		`RBAC_DENIED: ${door} is served only to a Clerk-JWT or master caller. This is a refusal, NOT an empty resource.`,
-		{ code: "RBAC_DENIED", door, reason: "ui-resource-not-tenant-scoped" },
+	return uiReadRefusal(
+		`resources/read ui://vp/v1/${primitive}`,
+		"verified-org-unresolved",
+		"needs the caller's verified organisation and this caller resolves none (served to a Clerk-JWT caller, the master, or a bearer whose organisation resolved)",
 	);
 }
 
@@ -89,19 +89,15 @@ export function registerUiResources(
 				// biome-ignore lint/suspicious/noExplicitAny: Convex string API
 				return convex.query(functionName as any, args as any);
 			};
-			// Day-165-parity — thread the caller identity into the ui-resource
-			// primitives the same way tools.ts does (mirrors the
-			// master/callerIdentities computation at tools.ts:5712/5808/5934), so
-			// briefingNotes:get/list resolve visibility inside Convex instead of
-			// falling into the `callerIdentities === undefined` legacy-open branch.
-			// The gate above already refused an undefined context, so absence can
-			// no longer reach this line as "master".
-			const master = isMasterScope(oauthCtx);
-			const callerIdentities = master ? undefined : oauthCtx?.fromAllowList;
-			return await readUiResource(uri.toString(), fetchConvex, {
-				master,
-				callerIdentities,
-			});
+			// The caller's scope, built by the tools' own resolver (scope.ts). The
+			// gate above already refused an undefined context, so `oauthCtx` is
+			// the verified caller here, never absence read as master.
+			if (oauthCtx === undefined) throw uiResourceReadRefusal(uri.toString());
+			return await readUiResource(
+				uri.toString(),
+				fetchConvex,
+				uiReadScopeOf(oauthCtx),
+			);
 		},
 	);
 }
