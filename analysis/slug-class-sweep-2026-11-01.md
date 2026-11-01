@@ -49,41 +49,54 @@ A lines are 74 grep lines; they collapse to the 27 sites in the register below (
 
 ## A register (one task, RED test per site; model the takeover as in `findAgentByNameSlugTakeover.test.ts`, `principalLookupsSlugTakeover.test.ts`, `tokenMappingSlugTakeover.test.ts`)
 
+Status is as of PR (1) (branch `sigma/slug-class-pr1`). The split into PR (2)/(3)/(4) is the specialist's proposal, to be confirmed by Pi. Line numbers in the register and in the line table are at `3a137c06` (the sweep revision), not after PR (1).
+
 Order: A-1 and A-2 first (they feed the stale label to everything else), then the rest.
 
-| id | file:line | door(s) | takeover scenario |
-|---|---|---|---|
-| A-1 ROOT | convex/oauth.ts:2838-2844 | `oauth:getAccessTokenByHash` (MCP bearer auth, every OAuth-token request, mcp-server/src/auth.ts:1444) | A's token after takeover: `orgClerkId` returned = B's (slug lookup of the mint-time label); `clerkOrgSlug` returned = stale label that all slug-keyed doors then receive. Fix: derive by `row.clerkOrgId` (as #1624), return the current label |
-| A-2 | convex/oauth.ts:2582 | `oauth:createAccessToken`/refresh via mintAccessToken | profile of A mints a token stamped with B's `clerkOrgId` (`clerkOrgIdForSlug(profile.clerkOrgSlug)`); profile has its own `clerkOrgId` |
-| A-3 | convex/oauth.ts:3416 | `oauth:rotateRefreshToken` (person path) | person membership judged against the slug's current holder |
-| A-4 | convex/lib/verifiedOrg.ts:74, :185 | all `verifiedOrg` doors (doorScope.ts:50-80) | stale label resolves to B's mapping/scope; bulk-run slug compare |
-| A-5 | convex/orgRoster.ts:329 | `orgRoster:getForAccessToken` | A's token returns B's `allowedOrchestrators` (known, pinned by orgRoster.getForAccessToken.test.ts) |
-| A-6 | convex/messages.ts:901,908,967,998,1000 | `messages:sendMessage`, `checkNewMessages*` with `seatOrgSlug` | stale seat label scopes the seat as B; foreign-identity check skips B |
-| A-7 | convex/messages.ts:104, :181 | `messages:sendMessage`, `listByChannel` | B uses channel `team/acme` of A; B proves A's person as its own |
-| A-8 | convex/messages.ts:1711-1713 | `messages:listMyInbox` | receipts of the same person from A's tenant read in B |
-| A-9 | convex/messages.ts:1903, :2046 | `messages:markAsRead`, `messages:deleteMessage` | B marks/deletes A's receipts/messages (tenant gate is slug only) |
-| A-10 | convex/messages.ts:2152-2173 | `messages:listMessages` | B lists A's messages |
-| A-11 | convex/messages.ts:2310-2312 | `messages:getUnreadCount` | B's count includes A's receipts |
-| A-12 | convex/messages.ts:2394 | `messages:listBroadcastStatus` | B reads A's broadcast status |
-| A-13 | convex/messages.ts:2565-2574 | `messages:listByChannel` | B lists A's channel history |
-| A-14 | convex/messages.ts:2718-2731 | `messages:listByChannelPaginated` | B pages A's channel history |
-| A-15 | convex/messages.ts:2803 | `messages:getById` | B reads A's message by ID |
-| A-16 | convex/messages.ts:2891,2904 | `messages:searchMessagesByKeyword` | B searches A's messages |
-| A-17 | convex/lib/inboxReader.ts:155,223,230,457-459,488-490 | `messages:checkNewMessages*`, `listMyInbox` readers | tenant list = agent row label / claim; receipt index probes by slug |
-| A-18 | convex/dashboard.ts:147, :167 | `dashboard:getDashboardSummary` | unread count and recent messages include A's rows |
-| A-19 | convex/improvisationDigest.ts:231-232 | `improvisationDigest:scanWindow` | B reads A's flagged message snippets |
-| A-20 | convex/lib/teamNamespace.ts:79 | every memory/KB/OKF door (isTeamNamespaceAllowed) | `team/acme` alias namespace admits B to A's memories |
-| A-21 | convex/okfBundle.ts:275,319,604,649,745-746,801-802 | OKF export/import/dedup helpers | notes/tasks selected by slug taken from the namespace alias |
-| A-22 | convex/okfBundleNode.ts:461,765,1021; convex/kbMutations.ts:498 | `okfBundleNode:export/validate/importOkfBundle`, `kbMutations:claimUpload` | blob ownership (kbUploads.orgId slug, no ID column): B imports/claims A's blob |
-| A-23 | convex/githubOwnerBinding.ts:163, :195; convex/githubRepoMapping.ts:294 | `githubOwnerBinding:listBindings`, listUnproven, `githubRepoMapping:list` | B lists A's bindings/mappings |
-| A-24 | convex/memberWriterRoles.ts:32 | member write doors (requireMemberWriterRole) | B inherits A's per-org writer-role override |
-| A-25 | convex/tasks.ts:5566; mcp-server/src/tools.ts:5126 | `tasks:getBulkCompleteRun`, MCP `get_bulk_complete_run` | B polls A's bulk-complete run |
-| A-26 | convex/lib/auth.ts:1038,1044,1200; convex/lib/seatAgent.ts:60; mcp-server/src/auth.ts:858 (+710-722 as the claim origin) | verifiedActor / agent-credential doors; seat resolution | label equality of agent-row label vs claim vs call org with no ID compare; legacy unstamped fallback derives an ID from a label |
-| A-27 low | convex/tasks.ts:2284-2286; convex/recurringTasks.ts:854-863; convex/clientOrgMapping.ts:78; mcp-server/src/authorize.ts:311 | `tasks:update`; recurring tick (internal); `clientOrgMapping:getByClerkSlug`; OAuth org picker | see per-line notes |
+| id | status | file:line | door(s) | takeover scenario |
+|---|---|---|---|---|
+| A-1 ROOT | **fixed in PR (1)** | convex/oauth.ts:2838-2844 | `oauth:getAccessTokenByHash` (MCP bearer auth, every OAuth-token request, mcp-server/src/auth.ts:1444) | A's token after takeover: `orgClerkId` returned = B's (slug lookup of the mint-time label); `clerkOrgSlug` returned = stale label that all slug-keyed doors then receive. Fix: derive by `row.clerkOrgId` (as #1624), return the current label |
+| A-2 | **fixed in PR (1)** | convex/oauth.ts:2582 | `oauth:createAccessToken`/refresh via mintAccessToken | profile of A mints a token stamped with B's `clerkOrgId` (`clerkOrgIdForSlug(profile.clerkOrgSlug)`); profile has its own `clerkOrgId` |
+| A-3 | **fixed in PR (1)** | convex/oauth.ts:3416 | `oauth:rotateRefreshToken` (person path) | person membership judged against the slug's current holder |
+| A-4 | **fixed in PR (1)** | convex/lib/verifiedOrg.ts:74, :185 | all `verifiedOrg` doors (doorScope.ts:50-80) | stale label resolves to B's mapping/scope; bulk-run slug compare |
+| A-5 | **fixed in PR (1)** | convex/orgRoster.ts:329 | `orgRoster:getForAccessToken` | A's token returns B's `allowedOrchestrators` (known, pinned by orgRoster.getForAccessToken.test.ts) |
+| A-6 | **remaining, PR (2) (messages family)** | convex/messages.ts:901,908,967,998,1000 | `messages:sendMessage`, `checkNewMessages*` with `seatOrgSlug` | stale seat label scopes the seat as B; foreign-identity check skips B |
+| A-7 | **remaining, PR (2) (messages family)** | convex/messages.ts:104, :181 | `messages:sendMessage`, `listByChannel` | B uses channel `team/acme` of A; B proves A's person as its own |
+| A-8 | **remaining, PR (2) (messages family)** | convex/messages.ts:1711-1713 | `messages:listMyInbox` | receipts of the same person from A's tenant read in B |
+| A-9 | **remaining, PR (2) (messages family)** | convex/messages.ts:1903, :2046 | `messages:markAsRead`, `messages:deleteMessage` | B marks/deletes A's receipts/messages (tenant gate is slug only) |
+| A-10 | **remaining, PR (2) (messages family)** | convex/messages.ts:2152-2173 | `messages:listMessages` | B lists A's messages |
+| A-11 | **remaining, PR (2) (messages family)** | convex/messages.ts:2310-2312 | `messages:getUnreadCount` | B's count includes A's receipts |
+| A-12 | **remaining, PR (2) (messages family)** | convex/messages.ts:2394 | `messages:listBroadcastStatus` | B reads A's broadcast status |
+| A-13 | **remaining, PR (2) (messages family)** | convex/messages.ts:2565-2574 | `messages:listByChannel` | B lists A's channel history |
+| A-14 | **remaining, PR (2) (messages family)** | convex/messages.ts:2718-2731 | `messages:listByChannelPaginated` | B pages A's channel history |
+| A-15 | **remaining, PR (2) (messages family)** | convex/messages.ts:2803 | `messages:getById` | B reads A's message by ID |
+| A-16 | **remaining, PR (2) (messages family)** | convex/messages.ts:2891,2904 | `messages:searchMessagesByKeyword` | B searches A's messages |
+| A-17 | **remaining, PR (2) (messages family)** | convex/lib/inboxReader.ts:155,223,230,457-459,488-490 | `messages:checkNewMessages*`, `listMyInbox` readers | tenant list = agent row label / claim; receipt index probes by slug |
+| A-18 | **remaining, PR (2) (messages family)** | convex/dashboard.ts:147, :167 | `dashboard:getDashboardSummary` | unread count and recent messages include A's rows |
+| A-19 | **remaining, PR (2) (messages family)** | convex/improvisationDigest.ts:231-232 | `improvisationDigest:scanWindow` | B reads A's flagged message snippets |
+| A-20 | **remaining, PR (3) (namespaces, KB/OKF, GitHub, writer roles)** | convex/lib/teamNamespace.ts:79 | every memory/KB/OKF door (isTeamNamespaceAllowed) | `team/acme` alias namespace admits B to A's memories |
+| A-21 | **remaining, PR (3) (namespaces, KB/OKF, GitHub, writer roles)** | convex/okfBundle.ts:275,319,604,649,745-746,801-802 | OKF export/import/dedup helpers | notes/tasks selected by slug taken from the namespace alias |
+| A-22 | **remaining, PR (3) (namespaces, KB/OKF, GitHub, writer roles)** | convex/okfBundleNode.ts:461,765,1021; convex/kbMutations.ts:498 | `okfBundleNode:export/validate/importOkfBundle`, `kbMutations:claimUpload` | blob ownership (kbUploads.orgId slug, no ID column): B imports/claims A's blob |
+| A-23 | **remaining, PR (3) (namespaces, KB/OKF, GitHub, writer roles)** | convex/githubOwnerBinding.ts:163, :195; convex/githubRepoMapping.ts:294 | `githubOwnerBinding:listBindings`, listUnproven, `githubRepoMapping:list` | B lists A's bindings/mappings |
+| A-24 | **remaining, PR (3) (namespaces, KB/OKF, GitHub, writer roles)** | convex/memberWriterRoles.ts:32 | member write doors (requireMemberWriterRole) | B inherits A's per-org writer-role override |
+| A-25 | **remaining, PR (4) (bulk run, identity compares, low sites)** | convex/tasks.ts:5566; mcp-server/src/tools.ts:5126 | `tasks:getBulkCompleteRun`, MCP `get_bulk_complete_run` | B polls A's bulk-complete run |
+| A-26 | **remaining, PR (4) (bulk run, identity compares, low sites)** | convex/lib/auth.ts:1038,1044,1200; convex/lib/seatAgent.ts:60; mcp-server/src/auth.ts:858 (+710-722 as the claim origin) | verifiedActor / agent-credential doors; seat resolution | label equality of agent-row label vs claim vs call org with no ID compare; legacy unstamped fallback derives an ID from a label |
+| A-27 low | **remaining, PR (4) (bulk run, identity compares, low sites)** | convex/tasks.ts:2284-2286; convex/recurringTasks.ts:854-863; convex/clientOrgMapping.ts:78; mcp-server/src/authorize.ts:311 | `tasks:update`; recurring tick (internal); `clientOrgMapping:getByClerkSlug`; OAuth org picker | see per-line notes |
 
 Notes that change the plan: the messages family (A-6 to A-19, 27 A lines in `messages.ts` plus `inboxReader.ts`, `dashboard.ts`, `improvisationDigest.ts`) is the largest: `messages`/`messageReceipts`
 carry `tenantOrgId` (schema), and 0 reads filter on it (`grep -n tenantOrgId convex/messages.ts` -> stamps at 591, 612, 717, 855 and validators at 2113, 2457; no `withIndex`/filter). The `*_clerk_id` tenant indexes exist
 (`by_tenant_created_clerk_id`, `by_tenant_recipient_unread_clerk_id`, `by_tenant_clerk_id`, schema.ts:227-302) and are unused by any read (`grep -rn '_clerk_id"' convex --include=*.ts` outside schema/tests, filtered by `tenant` -> 0 hits).
+
+## After PR (1): the sweep re-run on the fixed tree
+
+The three commands re-run at the PR (1) head. Compared by (file, line text) so that shifted line numbers do not count:
+331 distinct pre-fix lines, 327 post-fix. Removed (6, all fixed sites): `verifiedOrg.ts` `row.orgId !== verifiedOrgSlug` (A-4, now an ID compare), `oauth.ts`
+`lookupOrgMapping(ctx, row.clerkOrgSlug)` and its guard (A-1), `clerkOrgIdForSlug(ctx, a.clerkOrgSlug)` (A-2), `clerkOrgIdForSlug(ctx, args.clerkOrgSlug)` (A-3),
+`orgRoster.ts` `resolveProvisioningMapping(ctx, slug)` (A-5). Added (2): `assertRowInVerifiedOrg`'s `lookupOrgMapping(ctx, verifiedOrgSlug)` (S: the label `resolveVerifiedOrg`
+just resolved, then compared by ID with `sameOrg`) and `if (a.clerkOrgSlug === undefined) return undefined;` (D: null guard).
+Every S-dep line of the register (messages.ts:315/771, missions.ts:289/297, tasks.ts:932/937, orgRoster.ts:260, inboxReader.ts:144/185, ...) is textually unchanged: it appears in neither list.
+What changed under them is the label they receive: `getAccessTokenByHash` now returns the mapping's CURRENT slug read by the token's `clerkOrgId`
+(`convex/__tests__/slugTakeoverTokenChain.test.ts`, `CHAIN` test: the label handed to the MCP resolves, through a `verifiedOrg` door, to A and not to B).
 
 ## Per-file counts
 
