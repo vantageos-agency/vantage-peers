@@ -1228,7 +1228,10 @@ app.post("/token", async (c) => {
 			);
 			refreshIssued = true;
 		} catch (err: unknown) {
-			console.error("[oauth] person refresh token not issued:", err);
+			console.error(
+				"[oauth] person refresh token not issued:",
+				err instanceof Error ? err.name : "unknown error",
+			);
 			await internalClient().mutation(
 				// biome-ignore lint/suspicious/noExplicitAny: Convex string API
 				"oauth:createAccessToken" as any,
