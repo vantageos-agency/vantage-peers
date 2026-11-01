@@ -113,4 +113,23 @@ describe("githubOwnerBinding:listUnprovenMappings compares the binding and the m
 			{ repo: "acme-gh/site", orgId: "acme", project: "site", reason: "owner-bound-to-another-org" },
 		]);
 	});
+
+	test("narrowed to a verified org, the scan is keyed by its ID: the former holder's mapping under the same slug is not in it", async () => {
+		const t = createT();
+		await seed(t);
+		await t.run(async (ctx) => {
+			await ctx.db.insert("githubRepoMapping", {
+				repo: "y-gh/old",
+				orchestrator: "sigma",
+				project: "old",
+				active: true,
+				orgId: "acme",
+				clerkOrgId: Y_ID,
+			});
+		});
+		const out = await service(t).query(api.githubOwnerBinding.listUnprovenMappings, {
+			verifiedOrg: { orgSlug: "acme" },
+		});
+		expect(out.items.map((m) => m.repo)).toEqual(["acme-gh/site"]);
+	});
 });

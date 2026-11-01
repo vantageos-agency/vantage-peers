@@ -63,6 +63,7 @@ async function seed(t: T) {
 			await ctx.db.insert("githubOwnerBindings", {
 				owner: slug,
 				orgId: slug,
+				clerkOrgId: testClerkOrgId(slug),
 				installationId: inst,
 				accountType: "Organization",
 				githubUserLogin: `gh-${slug}`,
@@ -77,6 +78,7 @@ async function seed(t: T) {
 				project: `p-${slug}`,
 				active: true,
 				orgId: slug,
+				clerkOrgId: testClerkOrgId(slug),
 			});
 		}
 	});
@@ -209,6 +211,51 @@ describe("githubOwnerBinding doors narrow a fleet identity to the verified org",
 			asMemberA(t).query(api.githubOwnerBinding.listUnprovenMappings, {
 				verifiedOrg: { orgSlug: "org-a" },
 			}),
+		);
+		expect(msg).toContain("RBAC_DENIED");
+	});
+});
+
+// Task k179y0wpsd6fv7055f4p2w6b358hdrxe: the MCP now also attaches the bearer's
+// org as `__actingOrg`. The central acting scope and this door's verifiedOrg
+// narrowing must agree: the operator org's own seat is still served, a client
+// seat is still refused, and the two proofs must name the same org.
+describe("mandates:validateSpending under the acting org", () => {
+	const acting = (slug: string) => ({ __actingOrg: testClerkOrgId(slug) });
+	test("the OPERATOR org's seat (acting + verifiedOrg org-op) is served", async () => {
+		const t = createT();
+		const id = await seed(t);
+		const r = await asService(t).query(api.mandates.validateSpending, {
+			mandateId: id,
+			proposedAmount: 5,
+			verifiedOrg: { orgSlug: "org-op" },
+			...acting("org-op"),
+		} as never);
+		expect((r as { currentSpend: number }).currentSpend).toBe(100);
+	});
+	test("a CLIENT org's seat (acting + verifiedOrg org-a) is refused RBAC_DENIED", async () => {
+		const t = createT();
+		const id = await seed(t);
+		const msg = await failure(
+			asService(t).query(api.mandates.validateSpending, {
+				mandateId: id,
+				proposedAmount: 5,
+				verifiedOrg: { orgSlug: "org-a" },
+				...acting("org-a"),
+			} as never),
+		);
+		expect(msg).toContain("RBAC_DENIED");
+	});
+	test("acting for org-a while naming the operator org by verifiedOrg is refused", async () => {
+		const t = createT();
+		const id = await seed(t);
+		const msg = await failure(
+			asService(t).query(api.mandates.validateSpending, {
+				mandateId: id,
+				proposedAmount: 5,
+				verifiedOrg: { orgSlug: "org-op" },
+				...acting("org-a"),
+			} as never),
 		);
 		expect(msg).toContain("RBAC_DENIED");
 	});
