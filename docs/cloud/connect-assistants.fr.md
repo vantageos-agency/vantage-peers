@@ -80,6 +80,17 @@ L'article d'aide OpenAI 12584461 indique que les connecteurs MCP personnalisés 
 
 <!-- source : opencode.ai/docs/mcp-servers et opencode.ai/docs/config, consultés le 2026-11-01. non mesuré : une connexion OpenCode complète à VantagePeers Cloud. -->
 
+## Antigravity et Mistral Le Chat (client pré-enregistré)
+
+Ces deux outils ne s'enregistrent pas seuls auprès de VantagePeers Cloud : nous enregistrons un client pour vous à l'avance et vous envoyons ses identifiants par un lien à usage unique (eu.onetimesecret.com), la phrase secrète arrivant par un autre canal. La note contient l'URL MCP, un Client ID, un Client secret et l'URI de redirection.
+
+- **Antigravity :** ajoutez un serveur MCP personnalisé, URL `https://mcp.vantagepeers.com/mcp`, authentification OAuth, et collez le Client ID et le Client secret de la note. URI de redirection (déjà enregistrée de notre côté) : `https://antigravity.google/oauth-callback`.
+- **Mistral Le Chat :** ajoutez un connecteur MCP personnalisé, URL `https://mcp.vantagepeers.com/mcp`, authentification OAuth, et collez le Client ID et le Client secret de la note. URI de redirection (déjà enregistrée de notre côté) : `https://callback.mistral.ai/v1/integrations_auth/oauth2_callback`.
+
+Connectez-vous ensuite et validez la page de consentement.
+
+<!-- non mesuré : les libellés exacts des écrans d'Antigravity et de Le Chat, et une connexion complète depuis l'un ou l'autre à VantagePeers Cloud. -->
+
 ## Tester
 
 Collez ceci juste après la connexion :
