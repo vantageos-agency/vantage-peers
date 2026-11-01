@@ -68,11 +68,20 @@ const MASTER = baseCtx({
 	viaMasterBearer: true,
 });
 
+/** The identity server-http.ts computes from the verified context. */
+function identityOf(oauthCtx: OAuthContext | undefined) {
+	const master = oauthCtx === undefined || oauthCtx.isMaster;
+	return {
+		master,
+		callerIdentities: master ? undefined : oauthCtx.fromAllowList,
+	};
+}
+
 async function readAs(oauthCtx: OAuthContext | undefined, uri: string) {
 	const query = vi.fn(async () => []);
 	const convex = { query } as unknown as UiResourceConvexClient;
 	const server = new McpServer({ name: "t", version: "0.0.0" });
-	registerUiResources(server, convex, oauthCtx);
+	registerUiResources(server, convex, oauthCtx, identityOf(oauthCtx));
 	const [ct, st] = InMemoryTransport.createLinkedPair();
 	const client = new Client({ name: "c", version: "0.0.0" });
 	await Promise.all([server.connect(st), client.connect(ct)]);
@@ -132,6 +141,7 @@ describe("ui://vp/v1/* resources/read is fail-closed", () => {
 			server,
 			{ query } as unknown as UiResourceConvexClient,
 			OAUTH_NON_MASTER,
+			identityOf(OAUTH_NON_MASTER),
 		);
 		const [ct, st] = InMemoryTransport.createLinkedPair();
 		const client = new Client({ name: "c", version: "0.0.0" });
