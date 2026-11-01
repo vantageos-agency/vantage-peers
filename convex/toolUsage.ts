@@ -114,7 +114,7 @@ export const record = mutation({
 	handler: async (ctx, args) => {
 		const none = { recorded: false };
 		if (!TOOL_NAME.test(args.toolName)) return none;
-		const reader = await resolveReader(ctx, args, RECORD_DOOR, true);
+		const reader = await resolveReader(ctx, args, RECORD_DOOR, true, args.caller);
 		if (reader === null) return none;
 		const { orgId, orgSlug } = reader;
 		const callerKey = reader.trusted ? args.caller : reader.userKey;
@@ -213,6 +213,7 @@ async function resolveReader(
 	args: ClaimArgs,
 	door: string,
 	soft: boolean,
+	forwardedKey: string | undefined,
 ): Promise<Reader | null> {
 	const transport = await withOrgScope(ctx, { refuseWithoutThrow: true });
 	if (soft) {
@@ -249,6 +250,24 @@ async function resolveReader(
 	// The call is the service transport with no person proof: the key it forwards
 	// (`caller` / `selfKey`) is believed, for that organisation only.
 	const trusted = isServiceTransport(transport) && !personal;
+	// A forwarded agent key must belong to the verified organisation it is filed
+	// under: the agent row is read by that ID and its stamped org ID compared by
+	// the package's `sameOrg`. An unreadable ID, a missing row or another org's
+	// agent is refused, and nothing is recorded or read.
+	if (trusted && forwardedKey?.startsWith("agent:") === true) {
+		const agentId = ctx.db.normalizeId("agents", forwardedKey.slice(6));
+		const agent = agentId === null ? null : await ctx.db.get(agentId);
+		if (
+			agent === null ||
+			!sameOrg({ id: agent.clerkOrgId }, { id: scope.orgClerkId })
+		) {
+			throw rbacDenied(
+				door,
+				"agent-not-in-organisation",
+				`"${door}" refuses an agent key that does not belong to the verified organisation`,
+			);
+		}
+	}
 	const orgId = scope.orgClerkId;
 	const orgSlug = scope.orgSlug;
 	if (orgId === undefined || orgId === "" || orgSlug === null) {
@@ -299,7 +318,7 @@ export const getToolUsage = query({
 		// isolation-contract: no reactive subscriber exists - this door is new in
 		// task k17cbr6y6da096t5e1k869kgb18hd0ht and its only caller is the MCP
 		// tool get_tool_usage (imperative); a throw cannot crash a render.
-		const reader = await resolveReader(ctx, args, READ_DOOR, false);
+		const reader = await resolveReader(ctx, args, READ_DOOR, false, args.selfKey);
 		if (reader === null) throw unresolved(READ_DOOR);
 		const target = args.caller ?? reader.self;
 		if (target === undefined || !CALLER_KEY.test(target)) {
@@ -350,7 +369,7 @@ export const usageByOwner = query({
 		// isolation-contract: no reactive subscriber exists - this door is new in
 		// task k17cbr6y6da096t5e1k869kgb18hd0ht; its callers are the MCP tool
 		// get_owner_tool_usage (imperative) and the onboarding engine (a server).
-		const reader = await resolveReader(ctx, args, OWNER_DOOR, false);
+		const reader = await resolveReader(ctx, args, OWNER_DOOR, false, args.selfKey);
 		if (reader === null) throw unresolved(OWNER_DOOR);
 		if (args.ownerUserId === "" || /\s/.test(args.ownerUserId)) {
 			throw rbacDenied(
