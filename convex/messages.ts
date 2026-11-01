@@ -52,7 +52,11 @@ import {
 import { actorIdResolver, actorOrgFor } from "./lib/actorIds";
 import { resolveAgentIdArg } from "./lib/agentIdArgs";
 import { recordNameOnlyCall } from "./lib/nameOnlyCalls";
-import { rowInOrg } from "./lib/messageTenant";
+import {
+	fleetTenantOrgIds,
+	rowInOrg,
+	rowInTenantOrgs,
+} from "./lib/messageTenant";
 import { clerkOrgIdForSlug } from "./lib/orgClerkId";
 import { fleetOperatorSlug } from "./lib/operatorOrg";
 import {
@@ -173,13 +177,15 @@ async function requirePersonRecipientInOrg(
 		);
 	};
 	if (reach.orgSlug === null) return refuse("person-recipient-needs-org-agent");
-	const orgSlug = reach.orgSlug;
+	// A-7: the proof is a row stamped with the SENDER'S org ID. A row that names a
+	// slug (the label a takeover reassigns) or no org proves nothing.
+	const orgId = reach.orgClerkId;
 	const written = await ctx.db
 		.query("messages")
 		.withIndex("by_from", (q) => q.eq("from", person))
 		.order("desc")
 		.take(PERSON_PROOF_SCAN);
-	if (!written.some((m) => m.tenantId === orgSlug)) {
+	if (!written.some((m) => rowInOrg(m, orgId))) {
 		return refuse("person-recipient-not-in-org");
 	}
 }
@@ -996,7 +1002,16 @@ async function requireSeatSenderNotForeign(
 	// operator or fleet, every org of `client_org_mapping`) is refused. Lookup
 	// is `resolveAgentRef` per org (index by_org_normalized_name).
 	for (const m of mappings) {
-		if (m.clerkOrgSlug === seat.orgSlug) continue;
+		// The seat's own org is skipped by permanent ID. A seat whose mapping has no
+		// ID yet falls back to the label, which `lookupOrgMapping` proved unique (a
+		// label held by two rows resolves to no seat at all).
+		if (
+			seat.orgClerkId !== undefined
+				? m.clerkOrgId === seat.orgClerkId
+				: m.clerkOrgSlug === seat.orgSlug
+		) {
+			continue;
+		}
 		for (const candidate of candidates) {
 			if (await resolveAgentRef(ctx, {
 				label: candidate,
@@ -1703,22 +1718,29 @@ export const listMyInbox = query({
 				`RBAC_DENIED: "${door}" reads a person's inbox and the caller is not a person — ${JSON.stringify({ reason: "not-a-person", door, orgSlug: scope.orgSlug })}`,
 			);
 		}
-		const tenantId = scope.orgSlug;
+		// A-8: the person's receipts are located by the org's permanent ID
+		// (`tenantOrgId`), never by the slug label: a person's subject is the same in
+		// every org, so a label key hands the new holder of a slug the receipts the
+		// same person received in the former holder's tenant. No ID, no receipts.
+		const orgId = scope.orgClerkId;
 		const recipient = memberActorOf(scope);
 		const limit = Math.min(Math.max(args.limit ?? 20, 1), 50);
 		const since = args.since;
-		const receipts = await ctx.db
-			.query("messageReceipts")
-			.withIndex("by_tenant_recipient_unread", (q) =>
-				q
-					.eq("tenantId", tenantId)
-					.eq("recipient", recipient)
-					.eq("readAt", undefined),
-			)
-			.filter((q) =>
-				since !== undefined ? q.gt(q.field("_creationTime"), since) : true,
-			)
-			.take(limit);
+		const receipts =
+			orgId === undefined
+				? []
+				: await ctx.db
+						.query("messageReceipts")
+						.withIndex("by_tenant_recipient_unread_clerk_id", (q) =>
+							q
+								.eq("tenantOrgId", orgId)
+								.eq("recipient", recipient)
+								.eq("readAt", undefined),
+						)
+						.filter((q) =>
+							since !== undefined ? q.gt(q.field("_creationTime"), since) : true,
+						)
+						.take(limit);
 		const items = [];
 		for (const receipt of receipts) {
 			const message = await ctx.db.get(receipt.messageId);
@@ -1828,12 +1850,11 @@ export const markAsRead = mutation({
 			!claimed && scope.isMaster && args.callerOrchestrator === undefined;
 		const unclaimedMasterNamesNoOwner =
 			masterNamesNoOwner && UNCLAIMED_SERVICE_ACCOUNT_READS_EVERY_TENANT;
-		// CONTRACT: the tenants a claimless, ownerless service account may mark.
+		// CONTRACT: the tenants a claimless, ownerless service account may mark, by
+		// permanent org ID (the unstamped fleet shape, and the operator org's ID).
 		let fleetTenants: ReadonlyArray<string | undefined> | undefined;
 		if (masterNamesNoOwner && !UNCLAIMED_SERVICE_ACCOUNT_READS_EVERY_TENANT) {
-			const operatorSlug = await fleetOperatorSlug(ctx.db);
-			fleetTenants =
-				operatorSlug !== undefined ? [undefined, operatorSlug] : [undefined];
+			fleetTenants = await fleetTenantOrgIds(ctx.db);
 		}
 		// A claimed caller never takes the claimless master path: the ONLY way past
 		// the inbox reader is a claimless master naming no owner, which `!claimed`
@@ -1863,7 +1884,7 @@ export const markAsRead = mutation({
 			if (receipt === null) continue;
 			if (
 				fleetTenants !== undefined &&
-				!fleetTenants.includes(receipt.tenantId)
+				!rowInTenantOrgs(receipt, fleetTenants)
 			) {
 				throw new ConvexError(
 					`RBAC_DENIED: receipt ${receiptId} belongs to a client organisation; it is marked through that organisation's verified reader, never by the fleet service account — ${JSON.stringify({ reason: "tenant-receipt-needs-verified-reader", door: "messages:markAsRead" })}`,
@@ -1901,7 +1922,8 @@ export const markAsRead = mutation({
 			// boundary: two orgs may both name "seat-x". A non-master caller may
 			// only touch a receipt STAMPED with its own org; an absent tenantId
 			// asserts nothing and grants nothing (same stance as filterByOrgScope).
-			if (!scope.isMaster && receipt.tenantId !== scope.orgSlug) {
+			// A-9: the receipt's org is its permanent ID, never its slug label.
+			if (!scope.isMaster && !rowInOrg(receipt, scope.orgClerkId)) {
 				throw new ConvexError(
 					`RBAC_DENIED: caller may not mark receipt ${receiptId} as read — it does not belong to the caller's organisation — ${JSON.stringify({ registration: "messages:markAsRead", orgSlug: scope.orgSlug, reason: "receipt-tenant-mismatch" })}`,
 				);
@@ -2025,12 +2047,15 @@ export const deleteMessage = mutation({
 			// whatever its sender — an agent's or a human's. Destructive: admin only.
 			await resolveHumanActor(ctx, scope, {
 				door: "messages:deleteMessage",
-				row: { orgId: message.tenantId },
-				rowKind: "message",
-				rowId: args.messageId,
-				tenantOnly: true,
 				adminOnly: true,
 			});
+			// A-9: the message's org is its permanent ID, never its slug label (the
+			// tenant compare resolveHumanActor offers is a slug compare).
+			if (!rowInOrg(message, scope.orgClerkId)) {
+				throw new ConvexError(
+					`RBAC_DENIED: message ${args.messageId} is outside the caller's organisation (tenant boundary) — ${JSON.stringify({ rowId: args.messageId, kind: "message", callerOrg: scope.orgSlug })}`,
+				);
+			}
 			return { deleted: true, receiptsDeleted: await cascadeDeleteMessage(ctx, args.messageId) };
 		}
 
@@ -2044,7 +2069,7 @@ export const deleteMessage = mutation({
 		// match, not a tenant boundary, and this mutation cascade-deletes the
 		// message's receipts. A non-master caller may only delete a message
 		// stamped with its own org.
-		if (!scope.isMaster && message.tenantId !== scope.orgSlug) {
+		if (!scope.isMaster && !rowInOrg(message, scope.orgClerkId)) {
 			throw new ConvexError(
 				`RBAC_DENIED: caller may not delete message ${args.messageId} — it does not belong to the caller's organisation — ${JSON.stringify({ registration: "messages:deleteMessage", orgSlug: scope.orgSlug, reason: "message-tenant-mismatch" })}`,
 			);
@@ -2307,7 +2332,6 @@ export const getUnreadCount = query({
 		// normalised name can denote: the normalised form, the argument as sent,
 		// and each roster spelling that normalises to it (distinct keys, so no
 		// receipt is counted twice).
-		const orgSlug = scope.orgSlug;
 		const wanted = normalizeOrchestratorId(orchestratorId);
 		const storedForms = new Set<string>([wanted, orchestratorId.trim()]);
 		for (const entry of scope.allowedOrchestrators) {
@@ -2315,13 +2339,17 @@ export const getUnreadCount = query({
 				storedForms.add(entry);
 			}
 		}
+		// A-11: a member's receipts are counted by its org's permanent ID, never by
+		// the slug label; a member whose mapping carries no ID counts none.
+		const orgId = scope.orgClerkId;
 		let unread = 0;
 		for (const recipient of storedForms) {
+			if (orgId === undefined) break;
 			const receipts = await ctx.db
 				.query("messageReceipts")
-				.withIndex("by_tenant_recipient_unread", (q) =>
+				.withIndex("by_tenant_recipient_unread_clerk_id", (q) =>
 					q
-						.eq("tenantId", orgSlug)
+						.eq("tenantOrgId", orgId)
 						.eq("recipient", recipient)
 						.eq("readAt", undefined),
 				)

@@ -13,10 +13,12 @@ const CONVEX_DIR = join(__dirname, "..");
 
 // file -> count of insert sites that legitimately carry no organisation.
 const FLEET_BY_DESIGN: Record<string, number> = {
-	// notifyBlockerResolved: a system message and its receipt to a waiting task's
-	// assignee. Stamps NEITHER tenantId nor tenantOrgId today (a fleet-shaped message);
-	// stamping would change who can read it, which is a behaviour decision, not a
-	// backfill one. Declared, not silently passed.
+	// unblockWaitersOn: a system message and its receipt to a waiting task's assignee.
+	// A waiter of a CLIENT org stamps both with the waiter's org (`...clientStamp`,
+	// pinned by blockerNoticeTenantStamp.test.ts); a FLEET waiter (unstamped or
+	// operator-stamped) leaves them unstamped by the fleet decision (Pi receipt
+	// k9768tz43k6dvy6bgvgz9p4x2x8hcw85). The literal has no tenantOrgId key, so the
+	// two sites stay declared here.
 	"tasks.ts": 2,
 };
 

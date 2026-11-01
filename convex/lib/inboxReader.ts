@@ -6,10 +6,12 @@ import {
 	permanentOrgIdOfSlug,
 	requireVerifiedActorPrincipal,
 } from "./actingPrincipal";
+import { sameOrg } from "@vantageos/cloud-identity";
 import { resolveAgentRef } from "./agentIdentity";
 import type { OrgScope, VerifiedActor } from "./auth";
-import { fleetOperatorSlug } from "./operatorOrg";
-import { resolveVerifiedOrg, type VerifiedOrg } from "./verifiedOrg";
+import { fleetTenantOrgIds, rowInTenantOrgs } from "./messageTenant";
+import { fleetOperatorRef, fleetOperatorSlug } from "./operatorOrg";
+import { resolveVerifiedOrgMapping, type VerifiedOrg } from "./verifiedOrg";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // inboxReader — WHO is reading an inbox, decided once, for every inbox door
@@ -95,8 +97,16 @@ export type InboxReader = {
 		| "fleet"
 		| "operator-admin"
 		| "legacy-service-account";
-	// The tenant stamps this reader may see. `undefined` is the unstamped fleet.
+	// The tenant LABELS this reader may see. `undefined` is the unstamped fleet. A
+	// label is a reusable name, so it decides nothing about a message or a receipt
+	// (those are judged by `tenantOrgs`); it is read only for task rows (`orgId`)
+	// and as the narrowing a master may add to "all".
 	tenants: ReadonlyArray<string | undefined> | "all";
+	// The permanent org IDs this reader may see on a message or a receipt (sweep
+	// site A-17). `undefined` is the unstamped fleet shape (no slug, no ID); a row
+	// that names a slug but carries no ID belongs to nobody. An empty list reads
+	// nothing (a caller whose organisation has no ID yet).
+	tenantOrgs: ReadonlyArray<string | undefined> | "all";
 	// The reader's own label (the agent's name, or the name the caller gave).
 	label: string;
 	// Exact stored spellings to probe the name indexes with.
@@ -149,12 +159,21 @@ async function agentReader(
 		);
 	}
 	const operator = await fleetOperatorSlug(ctx.db);
+	const operatorRef = await fleetOperatorRef(ctx.db);
+	const isOperatorAgent = sameOrg(
+		{ id: agent.clerkOrgId },
+		operatorRef === undefined ? undefined : { id: operatorRef.id },
+	);
 	return {
 		kind: "agent",
 		tenants:
 			operator !== undefined && operator === agent.orgSlug
 				? [agent.orgSlug, undefined]
 				: [agent.orgSlug],
+		tenantOrgs: [
+			...(agent.clerkOrgId !== undefined ? [agent.clerkOrgId] : []),
+			...(isOperatorAgent ? [undefined] : []),
+		],
 		label: agent.name,
 		names: [],
 		agentId: agent._id,
@@ -204,15 +223,17 @@ export async function resolveInboxReader(
 	}
 
 	if (claims.verifiedOrg !== undefined) {
-		const orgSlug = await resolveVerifiedOrg(
+		const orgMapping = await resolveVerifiedOrgMapping(
 			ctx,
 			scope,
 			claims.verifiedOrg,
 			door,
 		);
-		if (orgSlug === undefined) {
+		if (orgMapping === undefined) {
 			return refuse(door, "reader-unidentified", "no verified reader");
 		}
+		const orgSlug = claims.verifiedOrg.orgSlug;
+		const orgClerkId = orgMapping.clerkOrgId;
 		if (claims.recipient === undefined) {
 			return refuse(
 				door,
@@ -230,6 +251,7 @@ export async function resolveInboxReader(
 		const agent = await resolveAgentRef(ctx, {
 			label: claims.recipient,
 			orgSlug,
+			...(orgClerkId !== undefined ? { orgClerkId } : {}),
 			door: "inboxReader:resolveInboxReader",
 			arg: "recipient",
 			measure: false,
@@ -249,6 +271,7 @@ export async function resolveInboxReader(
 		return {
 			kind: "org-name",
 			tenants: [orgSlug],
+			tenantOrgs: orgClerkId !== undefined ? [orgClerkId] : [],
 			label: claims.recipient,
 			names: [claims.recipient],
 		};
@@ -267,6 +290,7 @@ export async function resolveInboxReader(
 			return {
 				kind: "operator-admin",
 				tenants: claims.tenantId !== undefined ? [claims.tenantId] : "all",
+				tenantOrgs: "all",
 				label: claims.recipient,
 				names: [claims.recipient],
 			};
@@ -277,6 +301,7 @@ export async function resolveInboxReader(
 			return {
 				kind: "legacy-service-account",
 				tenants: claims.tenantId !== undefined ? [claims.tenantId] : "all",
+				tenantOrgs: "all",
 				label: claims.recipient,
 				names: [claims.recipient],
 			};
@@ -295,6 +320,7 @@ export async function resolveInboxReader(
 		return {
 			kind: "fleet",
 			tenants: fleet,
+			tenantOrgs: await fleetTenantOrgIds(ctx.db),
 			label: claims.recipient,
 			names: [claims.recipient],
 		};
@@ -310,9 +336,25 @@ export async function resolveInboxReader(
 	return {
 		kind: "member",
 		tenants: [scope.orgSlug],
+		tenantOrgs: scope.orgClerkId !== undefined ? [scope.orgClerkId] : [],
 		label: claims.recipient,
 		names: [claims.recipient],
 	};
+}
+
+/**
+ * Is this row (a message or a receipt) in the reader's tenants? By permanent ID.
+ * A master reading "all" may narrow by a tenant LABEL it names itself: a narrowing
+ * of what it can already read, never an admission.
+ */
+function receiptInReaderTenants(
+	reader: InboxReader,
+	row: { tenantId?: string; tenantOrgId?: string },
+): boolean {
+	if (reader.tenantOrgs !== "all") {
+		return rowInTenantOrgs(row, reader.tenantOrgs);
+	}
+	return reader.tenants === "all" || reader.tenants.includes(row.tenantId);
 }
 
 /** Is this receipt the reader's? The one predicate every inbox door applies. */
@@ -341,9 +383,7 @@ export function ownsReceipt(
 		);
 	}
 	// Readers without an agents row stay inside their own tenants, by exact name.
-	if (reader.tenants !== "all" && !reader.tenants.includes(receipt.tenantId)) {
-		return false;
-	}
+	if (!receiptInReaderTenants(reader, receipt)) return false;
 	return reader.names.includes(receipt.recipient);
 }
 
@@ -352,9 +392,7 @@ export function ownsSentMessage(
 	reader: InboxReader,
 	message: Doc<"messages">,
 ): boolean {
-	if (reader.tenants !== "all" && !reader.tenants.includes(message.tenantId)) {
-		return false;
-	}
+	if (!receiptInReaderTenants(reader, message)) return false;
 	if (reader.agentId !== undefined) {
 		if (message.fromId !== undefined) return message.fromId === reader.agentId;
 		return (
@@ -440,26 +478,46 @@ export async function fetchUnreadReceipts(
 			.slice(0, take);
 	}
 
-	const tenants: ReadonlyArray<string | undefined | "all"> =
-		reader.tenants === "all" ? ["all"] : reader.tenants;
+	// Candidates are located by the reader's permanent org IDs (the `*_clerk_id`
+	// indexes). A master reading every org that names a tenant LABEL narrows with
+	// the label indexes: a narrowing of what it already reads, never an admission.
+	type Leg =
+		| { kind: "all" }
+		| { kind: "label"; tenant: string | undefined }
+		| { kind: "org"; orgId: string | undefined };
+	const legs: Leg[] =
+		reader.tenantOrgs !== "all"
+			? reader.tenantOrgs.map((orgId) => ({ kind: "org" as const, orgId }))
+			: reader.tenants === "all"
+				? [{ kind: "all" as const }]
+				: reader.tenants.map((tenant) => ({ kind: "label" as const, tenant }));
 
-	for (const tenant of tenants) {
+	for (const leg of legs) {
 		for (const name of reader.names) {
 			const base =
-				tenant === "all"
+				leg.kind === "all"
 					? ctx.db
 							.query("messageReceipts")
 							.withIndex("by_recipient_unread", (q) =>
 								q.eq("recipient", name).eq("readAt", undefined),
 							)
-					: ctx.db
-							.query("messageReceipts")
-							.withIndex("by_tenant_recipient_unread", (q) =>
-								q
-									.eq("tenantId", tenant)
-									.eq("recipient", name)
-									.eq("readAt", undefined),
-							);
+					: leg.kind === "label"
+						? ctx.db
+								.query("messageReceipts")
+								.withIndex("by_tenant_recipient_unread", (q) =>
+									q
+										.eq("tenantId", leg.tenant)
+										.eq("recipient", name)
+										.eq("readAt", undefined),
+								)
+						: ctx.db
+								.query("messageReceipts")
+								.withIndex("by_tenant_recipient_unread_clerk_id", (q) =>
+									q
+										.eq("tenantOrgId", leg.orgId)
+										.eq("recipient", name)
+										.eq("readAt", undefined),
+								);
 			keep(
 				await base
 					.filter((f) => {
@@ -477,20 +535,29 @@ export async function fetchUnreadReceipts(
 		}
 		if (instance !== undefined) {
 			const base =
-				tenant === "all"
+				leg.kind === "all"
 					? ctx.db
 							.query("messageReceipts")
 							.withIndex("by_instance_unread", (q) =>
 								q.eq("recipientInstanceId", instance).eq("readAt", undefined),
 							)
-					: ctx.db
-							.query("messageReceipts")
-							.withIndex("by_tenant_instance_unread", (q) =>
-								q
-									.eq("tenantId", tenant)
-									.eq("recipientInstanceId", instance)
-									.eq("readAt", undefined),
-							);
+					: leg.kind === "label"
+						? ctx.db
+								.query("messageReceipts")
+								.withIndex("by_tenant_instance_unread", (q) =>
+									q
+										.eq("tenantId", leg.tenant)
+										.eq("recipientInstanceId", instance)
+										.eq("readAt", undefined),
+								)
+						: ctx.db
+								.query("messageReceipts")
+								.withIndex("by_tenant_instance_unread_clerk_id", (q) =>
+									q
+										.eq("tenantOrgId", leg.orgId)
+										.eq("recipientInstanceId", instance)
+										.eq("readAt", undefined),
+								);
 			keep(
 				await base
 					.filter((f) =>

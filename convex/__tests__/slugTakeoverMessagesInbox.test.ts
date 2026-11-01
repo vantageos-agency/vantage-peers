@@ -47,6 +47,12 @@ async function world(
 	const t = createT();
 	const ids = await t.run(async (ctx) => {
 		await seedTakeoverOrgs(ctx.db);
+		// The dashboard member path writes only with a writer role: without this row
+		// every human refusal below would be the role gate, not the tenant gate.
+		await ctx.db.insert("memberWriterRoles", {
+			roles: ["org:admin", "org:editor"],
+			updatedAt: Date.now(),
+		});
 		return await seedShapes(ctx.db, opts);
 	});
 	return { t, ids };
