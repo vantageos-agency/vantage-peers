@@ -272,16 +272,17 @@ export async function resolveOwnedAgentOfPresentedSecret(
  * findAgentByName — DEPRECATED, kept ONLY for the doors that still carry a NAME
  * and cannot take an agent ID without another module changing first. Each
  * caller is pinned in convex/__tests__/agentRegistryNoNameSelection.test.ts with
- * its owner; do not add one. It selects by the organisation's permanent ID (the
- * `*_clerk_id` indexes), never by `orgSlug`: a released slug can be taken by
- * another organisation, and a row with no `clerkOrgId` is refused, not matched:
+ * its owner; do not add one. It is `resolveAgentRef` asked for a label alone and
+ * not measured: the lookup itself lives there, in one place, so the migration
+ * adds no second name-resolving function. It selects by the organisation's
+ * permanent ID (the `*_clerk_id` indexes), never by `orgSlug`: a released slug
+ * can be taken by another organisation, and a row with no `clerkOrgId` is
+ * refused, not matched:
  *   - convex/lib/auth.ts (declared sender with NO proof: known-agent credential check) -> M5 messaging (sender by ID)
  *   - convex/messages.ts (seat sender screening)                   -> M5 messaging
  *   - convex/lib/inboxReader.ts (recipient named by a verified org) -> M6 inbox
  *   - convex/lib/actorIds.ts (task createdBy / assignedTo labels)   -> tasks doors (names in, IDs stamped)
  *   - convex/lib/seatAgent.ts (oauth profile fromAllowList label)   -> M1 rosters / seat profiles by agent ID
- * `resolveAgentRef` (below, same file) is the doors' future entry: its label-only
- * branch calls this lookup, so it adds no caller outside this file.
  * No door of convex/agents.ts, convex/agentCredentials.ts or
  * convex/agentRelations.ts calls it: those resolve by agent ID. Delete it with
  * its last caller.
@@ -292,30 +293,14 @@ export async function findAgentByName(
 	name: string,
 	orgClerkId?: string,
 ): Promise<Doc<"agents"> | null> {
-	// The organisation is its permanent ID. `orgSlug` is a label another
-	// organisation can take over after its holder renames, so it never selects a
-	// row: a caller that holds the verified ID passes it, any other resolves the
-	// ID the mapping row of the slug stores NOW (one row or none, ambiguity fails
-	// closed). An organisation with no ID resolves nobody, and an agent row with
-	// no `clerkOrgId` is never matched (the index range cannot reach it).
-	const orgId = orgClerkId ?? (await clerkOrgIdForSlug(ctx, orgSlug));
-	if (orgId === undefined) return null;
-	const normalized = normalizeOrchestratorId(name);
-	const byNormalized = await ctx.db
-		.query("agents")
-		.withIndex("by_org_normalized_name_clerk_id", (q) =>
-			q.eq("clerkOrgId", orgId).eq("normalizedName", normalized),
-		)
-		.first();
-	// The index is a shortcut, `name` is the truth: a stale `normalizedName` (a
-	// row whose label was patched without it) must not name the wrong agent.
-	if (byNormalized && normalizeOrchestratorId(byNormalized.name) === normalized) {
-		return byNormalized;
-	}
-	return await ctx.db
-		.query("agents")
-		.withIndex("by_org_name_clerk_id", (q) => q.eq("clerkOrgId", orgId).eq("name", name))
-		.first();
+	return await resolveAgentRef(ctx, {
+		label: name,
+		orgSlug,
+		orgClerkId,
+		door: "findAgentByName",
+		arg: "name",
+		measure: false,
+	});
 }
 
 /**
@@ -325,20 +310,21 @@ export async function findAgentByName(
  * it yet.
  *
  *   - `agentId` given: the row is read BY ID and judged by the package through
- *     `resolveActingPrincipal` over ID-keyed lookups (exists, ACTIVE, stamped with the caller's
- *     verified organisation ID, organisation active). The organisation is the
- *     permanent ID the caller passes as `orgClerkId` (or the ID the mapping of
- *     `orgSlug` stores NOW); an agent of another organisation, an unknown ID and
- *     a retired agent are refused with the package's coded refusal, never
- *     returned and never reported as an absence. A retired agent's ID is refused
- *     for reads too (Pi ruling 4).
+ *     `resolveActingPrincipal` over ID-keyed lookups (exists, ACTIVE, stamped
+ *     with the caller's verified organisation ID, organisation active). The
+ *     organisation is the permanent ID the caller passes as `orgClerkId` (or the
+ *     ID the mapping of `orgSlug` stores NOW); an agent of another organisation,
+ *     an unknown ID and a retired agent are refused with the package's coded
+ *     refusal, never returned and never reported as an absence. A retired
+ *     agent's ID is refused for reads too (Pi ruling 4).
  *   - `agentId` and `label` given: the label must be the row's CURRENT label under
  *     `normalizeOrchestratorId`; otherwise `AGENT_IDENTITY_MISMATCH` with
  *     `reason: "id-label-mismatch"` and the door (the existing code, the same
  *     wording shape as `requireVerifiedActorMatch`; no second refusal mechanism).
- *   - `label` only: `findAgentByName`, unchanged, plus ONE `LABEL_ONLY_DOOR` log
+ *   - `label` only: the by-name lookup, unchanged, plus ONE `LABEL_ONLY_DOOR` log
  *     line `{ event, door, arg }` (no label value) so the contract decision rests
- *     on a count of label-only calls per door.
+ *     on a count of label-only calls per door. `measure: false` (set only by
+ *     `findAgentByName`, the pinned legacy callers) silences the line.
  *   - neither: null, the caller keeps its current behaviour.
  *
  * The organisation is read from the VERIFIED caller by the caller of this
@@ -353,8 +339,17 @@ export async function resolveAgentRef(
 		orgSlug?: string;
 		door: string;
 		arg: string;
+		measure?: false;
 	},
 ): Promise<Doc<"agents"> | null> {
+	if (ref.agentId === undefined && ref.label === undefined) return null;
+	// The organisation is its permanent ID. `orgSlug` is a label another
+	// organisation can take over after its holder renames, so it never selects a
+	// row: a caller that holds the verified ID passes it, any other resolves the
+	// ID the mapping row of the slug stores NOW (one row or none, ambiguity fails
+	// closed). An organisation with no ID resolves nobody, and an agent row with
+	// no `clerkOrgId` is never matched (the index range cannot reach it).
+	const orgId = ref.orgClerkId ?? (await clerkOrgIdForSlug(ctx, ref.orgSlug));
 	if (ref.agentId !== undefined) {
 		const id = requireId(
 			ctx,
@@ -363,7 +358,6 @@ export async function resolveAgentRef(
 			ref.arg,
 			`${ref.door} takes an agent ID as returned by list_peers agentId; a name is never matched here.`,
 		);
-		const orgId = ref.orgClerkId ?? (await clerkOrgIdForSlug(ctx, ref.orgSlug));
 		if (orgId === undefined) {
 			throw assigneeNotInOrgRefusal(ref.agentId, undefined, ref.door);
 		}
@@ -390,13 +384,29 @@ export async function resolveAgentRef(
 		}
 		return row;
 	}
-	if (ref.label !== undefined) {
+	const name = ref.label as string;
+	if (ref.measure !== false) {
 		console.log(
 			JSON.stringify({ event: "LABEL_ONLY_DOOR", door: ref.door, arg: ref.arg }),
 		);
-		return await findAgentByName(ctx, ref.orgSlug ?? "", ref.label, ref.orgClerkId);
 	}
-	return null;
+	if (orgId === undefined) return null;
+	const normalized = normalizeOrchestratorId(name);
+	const byNormalized = await ctx.db
+		.query("agents")
+		.withIndex("by_org_normalized_name_clerk_id", (q) =>
+			q.eq("clerkOrgId", orgId).eq("normalizedName", normalized),
+		)
+		.first();
+	// The index is a shortcut, `name` is the truth: a stale `normalizedName` (a
+	// row whose label was patched without it) must not name the wrong agent.
+	if (byNormalized && normalizeOrchestratorId(byNormalized.name) === normalized) {
+		return byNormalized;
+	}
+	return await ctx.db
+		.query("agents")
+		.withIndex("by_org_name_clerk_id", (q) => q.eq("clerkOrgId", orgId).eq("name", name))
+		.first();
 }
 
 /**
