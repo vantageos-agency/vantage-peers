@@ -328,12 +328,12 @@ export async function resolveAgentRef(
 		if (orgId === undefined) {
 			throw assigneeNotInOrgRefusal(ref.agentId, undefined, ref.door);
 		}
-		// ID-keyed lookups: the agent is answered with the org ID its ROW is stamped
-		// with (null when unstamped, which the package refuses). The slug-keyed
-		// `principalLookups` would compare a label and is not used here.
+		// The shared principal lookups: the agent is answered with the org ID its ROW
+		// is stamped with (null when unstamped, which the package refuses), the
+		// organisation is read by that permanent ID. One authority, no slug path.
 		const resolved = await resolveActingPrincipal(
 			{ kind: "agent", agentId: id, verifiedOrgId: orgId },
-			orgByIdPrincipalLookups(ctx),
+			principalLookups(ctx),
 			ref.door,
 		);
 		if (!resolved.ok) refuseWith(resolved.refusal);
