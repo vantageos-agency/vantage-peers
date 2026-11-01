@@ -17,7 +17,7 @@ scripts/onboard-orchestrator.sh <role> /root/coding/<role>-workspace \
 
 Pass `--repo` and `--project` whenever the station has a GitHub repository. They always go together.
 
-It ends with `OK: <role> onboarded`. Exit code 3 with `OWNER_STEP_PENDING` means the owner step (section 1b) is waiting for the operator: re-run after it. Anything else is a failure, and the script names the step that failed.
+It ends with `OK: <role> onboarded`. Exit code 3 with `OWNER_STEP_PENDING` or `ROSTER_STEP_PENDING` means the owner step (section 1b) or the roster step (section 1c) is waiting for the operator: re-run after it. Anything else is a failure, and the script names the step that failed.
 
 ## First-launch check (the operator, before opening the station)
 
@@ -44,6 +44,14 @@ Vitruve took four launches on 2026-10-05 (friction memory j571rgt58mdzv734b42fcx
 - **Fix applied:** `mint-station-agents.mjs` ends with `OWNER_STEP_REQUIRED` and the exact command (agent ids, owner = `CLERK_ORG_ADMIN_USER_ID_VANTAGE_PEERS`, a reason naming the station), exits 3, and the wrapper finishes the local wiring, prints `OWNER_STEP_PENDING` and exits 3. The step is skipped for an agent whose `listAgentsByOrg` row already carries `ownerPersonId`.
 - **Operator:** run the printed command against the deployment you name (`CONVEX_DEPLOY_KEY=<deploy key> npx convex run agents:setAgentOwner '<json>'`), then re-run the same onboarding command: it skips the live credential, sets the profile and runs the proof. Where `.claude/scripts/convex-prod.sh` exists on the host, `.claude/scripts/convex-prod.sh run agents:setAgentOwner '<json>'` is the guarded way to run it. The script never runs either form for you.
 - **Check:** exit code 3 means not finished. Only `OK: <role> onboarded` (exit 0) is.
+
+### 1c. Roster: the agent is unreachable until it is on the operator org's roster
+
+- **Fails:** `send_message` to the new agent answers "ne correspond a aucun destinataire de l'organisation". Measured 2026-10-31 on prod for `angelia`, agent `r57f5vkqpnpzmm6xvwvn68ahgs8hcxz2`, fixed by hand with `tenantOrgSeed:setOrgRoster`. `registerAgent` stamps the agent with the operator org but never lists it on `client_org_mapping` (`allowedAgentIds` and the `allowedOrchestrators` label).
+- **Why a script cannot fix it:** the append doors are internal. `clientOrgMapping:addRosterMembers` refuses the operator org, and `tenantOrgSeed:setOrgRoster` replaces whole lists.
+- **Fix applied:** `clientOrgMapping:addOperatorRosterMember {agentId}` (internalMutation) derives the operator org, refuses an agent that is inactive or not of that org (`AGENT_NOT_IN_ORG`), appends the id and the agent's stored name, never removes or reorders, and is a no-op (`added: false`) when both are present. `mint-station-agents.mjs` reads `orgRoster:getMyAgentDirectory` after the mint and compares by agent ID (a label is not an identity). For each agent not listed it prints `ROSTER_STEP_REQUIRED` and the exact command, and exits 3; the wrapper prints `ROSTER_STEP_PENDING` and exits 3.
+- **Operator:** run each printed command against the deployment you name. On prod the guarded form is `.claude/scripts/convex-prod.sh run clientOrgMapping:addOperatorRosterMember '{"agentId":"<agents id>"}'` (the function must be on the root-installed allow-list). Then re-run the same onboarding command: the agent now reads as listed and the step is skipped. The script never runs either form for you.
+- **Check:** `orgRoster:getMyAgentDirectory` as the operator org admin lists the agent's id.
 
 ### 2. Wiring: no VantagePeers server in the workspace
 
