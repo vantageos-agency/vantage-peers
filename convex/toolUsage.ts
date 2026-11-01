@@ -1,18 +1,26 @@
-import { hasFleetRead, sameOrg } from "@vantageos/cloud-identity";
-import { ConvexError, v } from "convex/values";
+import { sameOrg } from "@vantageos/cloud-identity";
+import { v } from "convex/values";
 import type { Doc } from "./_generated/dataModel";
 import type { QueryCtx } from "./_generated/server";
-import { mutation, query } from "./lib/functions";
+import { ownerMembershipLookups } from "./lib/actingPrincipal";
 import {
+	isMcpBoundMaster,
+	isServiceTransport,
 	ORG_ADMIN_ROLES,
 	type OrgScope,
 	requireResolvedCaller,
 	withOrgScope,
 } from "./lib/auth";
+import { mutation, query } from "./lib/functions";
+import { rbacDenied } from "./lib/inboxReader";
 import {
 	resolveVerifiedPerson,
 	verifiedPersonValidator,
 } from "./lib/personPrincipal";
+import {
+	resolveVerifiedOrgScope,
+	verifiedOrgValidator,
+} from "./lib/verifiedOrg";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // toolUsage — which MCP tools a caller has called, per organisation (task
@@ -23,25 +31,28 @@ import {
 //
 // WHO WRITES. The MCP tool wrapper (mcp-server/src/registerTool.ts) fires
 // `toolUsage:record` after a tool call resolved, fire-and-forget. The ORGANISATION
-// is never an argument: it is the organisation the call acts in (the Clerk JWT's
-// `org_id`, or the service account's `__actingOrg`). The CALLER KEY is
+// is never a free argument: it is the organisation the call acts in (the Clerk
+// JWT's `org_id`, or the service account's transport-verified `verifiedOrg` /
+// `__actingOrg`). The CALLER KEY is
 //   - a Clerk session (the member's own JWT): "user:<verified subject>", always
 //     derived here; the `caller` argument is ignored for it;
 //   - the fleet service account acting for an organisation (a seat or person
 //     bearer): the key the MCP derived from the bearer's verified oauthContext,
-//     believed from the service transport only, filed under the acting org only;
-//   - the fleet service account with NO acting org (the master bearer): nothing
-//     is recorded. Fleet operators are not an organisation's callers.
-// A missing identity, an unresolved organisation and a malformed key record
-// nothing and return `{ recorded: false }`: a recorder never refuses a tool.
+//     believed from the service transport only, filed under that org only;
+//   - the fleet service account with NO claim (R-54): REFUSED, never served as
+//     master. The MCP never sends it: the master bearer is not recorded, fleet
+//     operators are not an organisation's callers.
+// An anonymous caller, an unresolved organisation and a malformed key record
+// nothing and return `{ recorded: false }`: a recorder never fails a tool.
 //
 // WHO READS. `toolUsage:getToolUsage` (one caller) and `toolUsage:usageByOwner`
-// (a person across every agent it owns, aggregated): a caller reads its OWN rows; an
-// organisation admin (verified `org:admin` / `admin` role claim) or the fleet
-// reads any caller of the organisation in scope. Another organisation, another
-// caller without admin standing, and a caller with no credential are RAISED
-// (RBAC_DENIED), never answered with an empty list: an empty result means a
-// scoped caller with no rows.
+// (a person across every agent it owns, aggregated): a caller reads its OWN rows;
+// an organisation admin (verified `org:admin` / `admin` role claim) or the
+// ORG-SCOPED SERVICE CALLER reads any caller of its organisation. Another
+// organisation, another caller without that standing, and a caller with no
+// credential are RAISED (RBAC_DENIED), never answered with an empty list: an
+// empty result means a scoped caller with no rows. Members do not read each
+// other.
 //
 // CONTENTION. One row per (organisation, caller, tool), patched in place. Two
 // writers touch the same document only when the SAME caller calls the SAME tool
@@ -53,10 +64,13 @@ import {
 
 /** Distinct tools filed per (organisation, caller): a bound on rows a caller can make. */
 export const MAX_TOOLS_PER_CALLER = 128;
+/** Agents of one owner read per call: a person owns a handful, one per AI client. */
+export const MAX_AGENTS_PER_OWNER = 50;
 
 const TOOL_NAME = /^[A-Za-z0-9_.:-]{1,64}$/;
 const CALLER_KEY = /^(user|agent):[^\s]{1,190}$/;
 
+const RECORD_DOOR = "toolUsage:record";
 const READ_DOOR = "toolUsage:getToolUsage";
 const OWNER_DOOR = "toolUsage:usageByOwner";
 
@@ -67,45 +81,62 @@ const usageRow = v.object({
 	count: v.number(),
 });
 
-function denied(door: string, reason: string, orgId: string | null): never {
-	throw new ConvexError(
-		`RBAC_DENIED: "${door}" refuses this caller — ${JSON.stringify({
-			registration: door,
-			orgId,
-			reason,
-		})}`,
-	);
+/** R-54: the fleet service account that names no organisation is refused, never served as master. */
+function refuseClaimlessServiceAccount(
+	transport: OrgScope,
+	claimed: boolean,
+	door: string,
+): void {
+	if (isMcpBoundMaster(transport) && !claimed) {
+		throw rbacDenied(
+			door,
+			"claimless-service-account",
+			"the fleet service account acts inside a transport-verified organisation: this call carries no verified claim naming one",
+		);
+	}
 }
 
 export const record = mutation({
 	args: {
 		toolName: v.string(),
-		// Believed from the fleet service transport acting for an organisation
-		// ONLY; for a Clerk session the key is the verified subject.
+		// Believed from the fleet service transport ONLY; for a Clerk session the
+		// key is the verified subject and this is ignored.
 		caller: v.optional(v.string()),
+		verifiedOrg: v.optional(verifiedOrgValidator),
 	},
 	returns: v.object({ recorded: v.boolean() }),
 	handler: async (ctx, args) => {
 		const none = { recorded: false };
 		if (!TOOL_NAME.test(args.toolName)) return none;
-		const scope = await withOrgScope(ctx, { refuseWithoutThrow: true });
-		if (scope.anonymous === true || scope.refused === true) return none;
-		// The master bearer (fleet service account, no acting org) is not an
-		// organisation's caller.
-		if (scope.isMaster) return none;
+		const transport = await withOrgScope(ctx, { refuseWithoutThrow: true });
+		if (transport.anonymous === true || transport.refused === true) return none;
+		refuseClaimlessServiceAccount(
+			transport,
+			args.verifiedOrg !== undefined,
+			RECORD_DOOR,
+		);
+		const scope = await resolveVerifiedOrgScope(
+			ctx,
+			transport,
+			args.verifiedOrg,
+			RECORD_DOOR,
+		);
 		const orgId = scope.orgClerkId;
-		if (orgId === undefined || orgId === "") return none;
-		const callerKey =
-			scope.serviceTransport === true
-				? args.caller
-				: `user:${scope.userId}`;
+		const orgSlug = scope.orgSlug;
+		if (orgId === undefined || orgId === "" || orgSlug === null) return none;
+		const callerKey = isServiceTransport(transport)
+			? args.caller
+			: `user:${scope.userId}`;
 		if (callerKey === undefined || !CALLER_KEY.test(callerKey)) return none;
 
 		const now = Date.now();
 		const existing = await ctx.db
 			.query("tool_usage")
 			.withIndex("by_org_caller_tool", (q) =>
-				q.eq("clerkOrgId", orgId).eq("callerKey", callerKey).eq("tool", args.toolName),
+				q
+					.eq("clerkOrgId", orgId)
+					.eq("callerKey", callerKey)
+					.eq("tool", args.toolName),
 			)
 			.unique();
 		if (existing !== null) {
@@ -123,6 +154,7 @@ export const record = mutation({
 			.take(MAX_TOOLS_PER_CALLER);
 		if (filed.length >= MAX_TOOLS_PER_CALLER) return none;
 		await ctx.db.insert("tool_usage", {
+			orgSlug,
 			clerkOrgId: orgId,
 			callerKey,
 			tool: args.toolName,
@@ -135,23 +167,22 @@ export const record = mutation({
 });
 
 const readerArgs = {
-	// Fleet standing only: names the organisation (a permanent Clerk org ID).
-	// Any other caller may pass its own organisation's ID or nothing.
-	orgId: v.optional(v.string()),
 	// The reader's own key, forwarded by the MCP from the bearer's verified
-	// oauthContext; believed from the service transport acting for an
-	// organisation only (a Clerk session is keyed by its subject).
+	// oauthContext; believed from the service transport only (a Clerk session is
+	// keyed by its subject).
 	selfKey: v.optional(v.string()),
 	// A person bearer: the organisation, the subject and the admin role are
 	// re-read from the token row (convex/lib/personPrincipal.ts).
 	verifiedPerson: v.optional(verifiedPersonValidator),
+	// The organisation the service account reads for (R-54).
+	verifiedOrg: v.optional(verifiedOrgValidator),
 };
 
 type Reader = {
 	orgId: string;
 	/** The reader's own key, when it has one. */
 	self: string | undefined;
-	/** May read any caller of `orgId`: fleet, org admin, or the org-scoped service caller. */
+	/** May read any caller of `orgId`: an org admin, or the org-scoped service caller. */
 	admin: boolean;
 };
 
@@ -159,72 +190,68 @@ type Reader = {
  * Who is reading and in which organisation. Shared by both read doors.
  *
  * Standing to read ANY caller of the organisation in scope:
- *   - fleet standing (the master), which names the organisation;
  *   - a verified organisation admin role (Clerk session or person token);
  *   - the ORG-SCOPED SERVICE CALLER: the fleet service account acting for an
- *     organisation (`__actingOrg`) that presents NO identity of its own (neither
- *     `selfKey` nor `verifiedPerson`) - a server process (the onboarding engine)
- *     serving that tenant. The MCP never reaches this branch: its get_tool_usage
- *     tool refuses a bearer that resolves no identity before any call.
+ *     organisation (`verifiedOrg` / `__actingOrg`) that presents NO identity of
+ *     its own (neither `selfKey` nor `verifiedPerson`) - a server process (the
+ *     onboarding engine) serving that tenant. The MCP never reaches this branch:
+ *     its tool refuses a bearer that resolves no identity before any call.
  * A seat or a plain member reads its own rows only.
  */
 async function resolveReader(
 	ctx: Parameters<typeof withOrgScope>[0],
 	args: {
-		orgId?: string;
 		selfKey?: string;
 		verifiedPerson?: { accessTokenHash: string };
+		verifiedOrg?: { orgSlug: string };
 	},
 	door: string,
 ): Promise<Reader> {
 	const transport = await withOrgScope(ctx, { refuseWithoutThrow: true });
 	requireResolvedCaller(transport, door, { alsoRefusePreOrg: true });
-	const scope = await resolveVerifiedPerson(
-		ctx,
+	const personal = args.verifiedPerson !== undefined;
+	refuseClaimlessServiceAccount(
 		transport,
-		args.verifiedPerson,
-		{ door },
+		args.verifiedOrg !== undefined || personal,
+		door,
 	);
-	const fleet = hasFleetRead(scope);
-
-	let orgId: string;
-	if (fleet) {
-		if (args.orgId === undefined || args.orgId === "") {
-			throw new ConvexError(
-				`ORG_REQUIRED: "${door}" read with fleet standing needs \`orgId\`, the organisation to read`,
+	const scope = personal
+		? await resolveVerifiedPerson(ctx, transport, args.verifiedPerson, { door })
+		: await resolveVerifiedOrgScope(ctx, transport, args.verifiedOrg, door);
+	const orgId = scope.orgClerkId;
+	// A person bearer's organisation is its token's; a `verifiedOrg` carried beside
+	// it must name that same organisation (and is believed from the service
+	// transport only), never a second source of the organisation.
+	if (personal && args.verifiedOrg !== undefined) {
+		const claimed = await resolveVerifiedOrgScope(
+			ctx,
+			transport,
+			args.verifiedOrg,
+			door,
+		);
+		if (!sameOrg({ id: claimed.orgClerkId }, { id: orgId })) {
+			throw rbacDenied(
+				door,
+				"cross-organisation",
+				`"${door}" refuses a claim naming another organisation than the caller's`,
 			);
 		}
-		orgId = args.orgId;
-	} else {
-		const own = scope.orgClerkId;
-		if (own === undefined || own === "") {
-			denied(door, "no-organisation-id", null);
-		}
-		if (args.orgId !== undefined && !sameOrg({ id: args.orgId }, { id: own })) {
-			denied(door, "cross-organisation", args.orgId);
-		}
-		orgId = own;
 	}
-
-	const personal = args.verifiedPerson !== undefined;
-	const orgScopedService =
-		transport.serviceTransport === true &&
-		!personal &&
-		args.selfKey === undefined;
-	const self = selfKeyOf(scope, personal, args.selfKey);
+	if (orgId === undefined || orgId === "") {
+		throw rbacDenied(
+			door,
+			"no-organisation-id",
+			`"${door}" refuses this caller: it acts in no organisation with a permanent ID`,
+		);
+	}
+	const trusted = isServiceTransport(transport) && !personal;
 	const adminRole =
 		scope.orgRole !== undefined && ORG_ADMIN_ROLES.includes(scope.orgRole);
-	return { orgId, self, admin: fleet || adminRole || orgScopedService };
-}
-
-function selfKeyOf(
-	scope: OrgScope,
-	personal: boolean,
-	selfKey: string | undefined,
-): string | undefined {
-	if (hasFleetRead(scope)) return undefined;
-	if (scope.serviceTransport === true && !personal) return selfKey;
-	return `user:${scope.userId}`;
+	return {
+		orgId,
+		self: trusted ? args.selfKey : `user:${scope.userId}`,
+		admin: adminRole || (trusted && args.selfKey === undefined),
+	};
 }
 
 async function rowsOfCaller(
@@ -256,18 +283,19 @@ export const getToolUsage = query({
 		// tool get_tool_usage (imperative); a throw cannot crash a render.
 		const reader = await resolveReader(ctx, args, READ_DOOR);
 		const target = args.caller ?? reader.self;
-		if (target === undefined) {
-			throw new ConvexError(
-				`CALLER_REQUIRED: "${READ_DOOR}" cannot tell whose rows to read - pass \`caller\``,
-			);
-		}
-		if (!CALLER_KEY.test(target)) {
-			throw new ConvexError(
-				`INVALID_CALLER_KEY: "${target}" is not "user:<subject>" or "agent:<agent id>"`,
+		if (target === undefined || !CALLER_KEY.test(target)) {
+			throw rbacDenied(
+				READ_DOOR,
+				"caller-unidentified",
+				`"${READ_DOOR}" needs the caller to read as "user:<subject>" or "agent:<agent id>"`,
 			);
 		}
 		if (target !== reader.self && !reader.admin) {
-			denied(READ_DOOR, "not-org-admin", reader.orgId);
+			throw rbacDenied(
+				READ_DOOR,
+				"not-org-admin",
+				`"${READ_DOOR}" lets a caller read its own rows; another caller needs an organisation admin`,
+			);
 		}
 		const rows = await rowsOfCaller(ctx, reader.orgId, target);
 		return rows
@@ -281,9 +309,6 @@ export const getToolUsage = query({
 	},
 });
 
-/** Agents of one owner read per call: a person owns a handful, one per AI client. */
-export const MAX_AGENTS_PER_OWNER = 50;
-
 /**
  * usageByOwner - the tools a PERSON has used across everything it owns, in one
  * organisation: every agent of the organisation whose `personalAgentOf` is the
@@ -291,13 +316,13 @@ export const MAX_AGENTS_PER_OWNER = 50;
  * or person token files under "user:<owner>"). Per tool: firstAt = min,
  * lastAt = max, count = sum. Per-caller rows stay the storage; this is a read.
  *
- * Standing: the owner reads itself; an organisation admin, the fleet and the
- * org-scoped service caller read any member of THEIR organisation. A plain
- * member asking for ANOTHER member is refused (members do not read each other).
- * The owner must belong to the organisation in scope (a live `orgMembership`
- * row, or an agent of that organisation designating it): an owner of another
- * organisation is RBAC_DENIED, never an empty list. A member with no agents and
- * no direct calls is an empty SUCCESS.
+ * Standing: the owner reads itself; an organisation admin and the org-scoped
+ * service caller read any member of THEIR organisation. A plain member asking
+ * for ANOTHER member is refused (members do not read each other). The owner must
+ * belong to the organisation in scope (a live membership, or an agent of that
+ * organisation designating it): an owner of another organisation is
+ * RBAC_DENIED, never an empty list. A member with no agents and no direct calls
+ * is an empty SUCCESS.
  */
 export const usageByOwner = query({
 	args: { ownerUserId: v.string(), ...readerArgs },
@@ -306,16 +331,21 @@ export const usageByOwner = query({
 		// isolation-contract: no reactive subscriber exists - this door is new in
 		// task k17cbr6y6da096t5e1k869kgb18hd0ht; its callers are the MCP tool
 		// get_owner_tool_usage (imperative) and the onboarding engine (a server).
-		const door = OWNER_DOOR;
-		const reader = await resolveReader(ctx, args, door);
+		const reader = await resolveReader(ctx, args, OWNER_DOOR);
 		if (args.ownerUserId === "" || /\s/.test(args.ownerUserId)) {
-			throw new ConvexError(
-				`INVALID_OWNER: "${door}" needs the owner's Clerk user id`,
+			throw rbacDenied(
+				OWNER_DOOR,
+				"owner-unidentified",
+				`"${OWNER_DOOR}" needs the owner's Clerk user id`,
 			);
 		}
 		const ownKey = `user:${args.ownerUserId}`;
 		if (ownKey !== reader.self && !reader.admin) {
-			denied(door, "not-org-admin", reader.orgId);
+			throw rbacDenied(
+				OWNER_DOOR,
+				"not-org-admin",
+				`"${OWNER_DOOR}" lets a person read its own usage; another member needs an organisation admin`,
+			);
 		}
 
 		const agents = await ctx.db
@@ -324,15 +354,17 @@ export const usageByOwner = query({
 				q.eq("personalAgentOf", args.ownerUserId).eq("clerkOrgId", reader.orgId),
 			)
 			.take(MAX_AGENTS_PER_OWNER);
-		const membership = await ctx.db
-			.query("orgMembership")
-			.withIndex("by_org_user_clerk_id", (q) =>
-				q.eq("clerkOrgId", reader.orgId).eq("clerkUserId", args.ownerUserId),
-			)
-			.unique();
-		const isMember = membership !== null && membership.deletedAt === undefined;
-		if (!isMember && agents.length === 0) {
-			denied(door, "owner-not-in-organisation", reader.orgId);
+		const member =
+			(await ownerMembershipLookups(ctx).personById?.(
+				args.ownerUserId,
+				reader.orgId,
+			)) ?? null;
+		if (member === null && agents.length === 0) {
+			throw rbacDenied(
+				OWNER_DOOR,
+				"owner-not-in-organisation",
+				`"${OWNER_DOOR}" refuses an owner that is not a member of the organisation in scope`,
+			);
 		}
 
 		const merged = new Map<

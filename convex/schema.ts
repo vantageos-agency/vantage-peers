@@ -1038,6 +1038,7 @@ export default defineSchema({
 	// or "agent:<agents row id>", derived from the verified identity), the first and
 	// last call time and the count. `clerkOrgId` is the organisation's permanent ID.
 	tool_usage: defineTable({
+		orgSlug: v.string(), // the organisation's label at write time (tenant stamp, display only)
 		clerkOrgId: v.string(),
 		callerKey: v.string(),
 		tool: v.string(),

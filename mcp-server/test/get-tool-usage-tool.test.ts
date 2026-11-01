@@ -4,7 +4,7 @@
  *
  *   READ   the tool hands the Convex door the identity facts of the verified
  *          context (the seat's key, or the person's bearer proof), never a
- *          claim of its own; `caller` / `orgId` are passed through as asked.
+ *          claim of its own; `caller` / `orgSlug` are passed through as asked.
  *   REFUSE a backend RBAC_DENIED surfaces as a tool error, not an empty list.
  *   RECORD a call of any tool files one usage row for the verified caller, and
  *          a backend that rejects the recording does not fail the tool.
@@ -90,6 +90,7 @@ describe("get_tool_usage", () => {
 		expect(JSON.parse(text(r))).toEqual(ROWS);
 		expect(query).toHaveBeenCalledWith("toolUsage:getToolUsage", {
 			selfKey: "agent:agent-1",
+			verifiedOrg: { orgSlug: ORG },
 		});
 	});
 
@@ -99,6 +100,7 @@ describe("get_tool_usage", () => {
 		expect(query).toHaveBeenCalledWith("toolUsage:getToolUsage", {
 			caller: "agent:agent-1",
 			verifiedPerson: { accessTokenHash: "hash-1" },
+			verifiedOrg: { orgSlug: ORG },
 		});
 	});
 
@@ -106,11 +108,11 @@ describe("get_tool_usage", () => {
 		const { query, handlers } = setup(LOCAL_STDIO_TRUST_CTX);
 		await handlers.get("get_tool_usage")?.({
 			caller: "user:u1",
-			orgId: "org_a",
+			orgSlug: "org-b",
 		});
 		expect(query).toHaveBeenCalledWith("toolUsage:getToolUsage", {
 			caller: "user:u1",
-			orgId: "org_a",
+			verifiedOrg: { orgSlug: "org-b" },
 		});
 	});
 
@@ -138,6 +140,7 @@ describe("get_owner_tool_usage and the unidentified bearer", () => {
 		expect(query).toHaveBeenCalledWith("toolUsage:usageByOwner", {
 			ownerUserId: "user_owner",
 			verifiedPerson: { accessTokenHash: "hash-1" },
+			verifiedOrg: { orgSlug: ORG },
 		});
 	});
 
@@ -147,6 +150,7 @@ describe("get_owner_tool_usage and the unidentified bearer", () => {
 		expect(query).toHaveBeenCalledWith("toolUsage:usageByOwner", {
 			ownerUserId: "user_owner",
 			selfKey: "agent:agent-1",
+			verifiedOrg: { orgSlug: ORG },
 		});
 	});
 
@@ -158,7 +162,7 @@ describe("get_owner_tool_usage and the unidentified bearer", () => {
 		] as const) {
 			const r = await handlers.get(tool)?.(args);
 			expect(isError(r)).toBe(true);
-			expect(text(r)).toContain("RBAC_DENIED");
+			expect(text(r)).toContain("needs a caller identity");
 		}
 		expect(query).not.toHaveBeenCalled();
 	});
@@ -172,7 +176,11 @@ describe("the wrapper records through registerTools", () => {
 		expect(toolUsageCalls(mutation)).toEqual([
 			[
 				"toolUsage:record",
-				{ toolName: "get_tool_usage", caller: "agent:agent-1" },
+				{
+					toolName: "get_tool_usage",
+					caller: "agent:agent-1",
+					verifiedOrg: { orgSlug: ORG },
+				},
 			],
 		]);
 	});
@@ -208,7 +216,7 @@ describe("the wrapper records through registerTools", () => {
 
 	it("the master bearer files nothing", async () => {
 		const { mutation, handlers } = setup(LOCAL_STDIO_TRUST_CTX);
-		await handlers.get("get_tool_usage")?.({ caller: "user:u1", orgId: "org_a" });
+		await handlers.get("get_tool_usage")?.({ caller: "user:u1", orgSlug: "org-b" });
 		await new Promise((res) => setTimeout(res, 5));
 		expect(toolUsageCalls(mutation)).toHaveLength(0);
 	});

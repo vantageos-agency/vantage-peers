@@ -208,7 +208,7 @@ describe("toolUsageCallerOf: the caller key is the verified identity", () => {
 });
 
 describe("recordToolUsage", () => {
-	it("calls toolUsage:record with the tool and key, never an org or an argument", async () => {
+	it("calls toolUsage:record with the tool, the verified key and the verified organisation, never a tool argument", async () => {
 		const mutation = vi.fn(async () => ({ recorded: true }));
 		await recordToolUsage(
 			{ mutation } as never,
@@ -218,6 +218,26 @@ describe("recordToolUsage", () => {
 		expect(mutation).toHaveBeenCalledWith("toolUsage:record", {
 			toolName: "store_memory",
 			caller: "agent:agent7",
+			verifiedOrg: { orgSlug: "acme" },
+		});
+	});
+	it("a bearer whose organisation cannot be resolved records nothing", async () => {
+		const mutation = vi.fn();
+		const { clerkOrgSlug: _drop, ...noOrg } = org({
+			actor: { orgSlug: "", agentName: "n", agentId: "agent7" },
+		});
+		await recordToolUsage({ mutation } as never, noOrg, "x");
+		expect(mutation).not.toHaveBeenCalled();
+	});
+	it("a Clerk session sends neither a key nor an organisation claim", async () => {
+		const mutation = vi.fn(async () => ({ recorded: true }));
+		await recordToolUsage(
+			{ mutation } as never,
+			org({ clerkJwt: "j" }),
+			"store_memory",
+		);
+		expect(mutation).toHaveBeenCalledWith("toolUsage:record", {
+			toolName: "store_memory",
 		});
 	});
 	it("sends nothing for a master caller", async () => {
