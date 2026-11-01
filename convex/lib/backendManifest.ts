@@ -163,7 +163,6 @@ export const BACKEND_FUNCTIONS: readonly string[] = [
 	"oauth:registerPublicClient",
 	"oauth:revokeAccessTokensForCode",
 	"oauth:revokeAccessTokensOnly",
-	"oauth:rotatePersonRefreshToken",
 	"oauth:rotateRefreshToken",
 	"oauth:seedDefaultProfiles",
 	"okfBundleDurable:cancelOkfBundleExportDurable",

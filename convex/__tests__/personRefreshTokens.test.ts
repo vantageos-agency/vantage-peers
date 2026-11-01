@@ -169,7 +169,7 @@ async function issue(
 }
 
 const rotate = (t: T, raw: string, clientId = "dcr-client") =>
-	asService(t).mutation(api.oauth.rotatePersonRefreshToken, {
+	asService(t).mutation(api.oauth.rotateRefreshToken, {
 		presentedHash: sha(raw),
 		clientId,
 		accessExpiresAt: Date.now() + 3_600_000,
@@ -557,7 +557,7 @@ describe("C6 hashed only", () => {
 		const { agent } = await world(t);
 		const { refresh } = await issue(t, agent);
 		await expect(
-			t.mutation(api.oauth.rotatePersonRefreshToken, {
+			t.mutation(api.oauth.rotateRefreshToken, {
 				presentedHash: sha(refresh),
 				clientId: "dcr-client",
 				accessExpiresAt: Date.now() + 1000,
@@ -592,7 +592,7 @@ describe("a person refresh row is written for a person only", () => {
 });
 
 describe("seat regression: the seat door is untouched", () => {
-	test("SEAT TOKEN REFUSED AT THE PERSON DOOR: nothing is spent", async () => {
+	test("SEAT ROW WITHOUT ITS PROFILE SNAPSHOT IS REFUSED: the person arguments never rotate a seat, nothing is spent", async () => {
 		const t = createT();
 		await world(t);
 		await t.run((ctx) =>
@@ -605,7 +605,9 @@ describe("seat regression: the seat door is untouched", () => {
 				createdAt: Date.now(),
 			}),
 		);
-		expect((await rotate(t, "seat-token")).status).toBe("invalid");
+		await expect(rotate(t, "seat-token")).rejects.toThrow(
+			/SEAT_ROTATION_ARGS_REQUIRED/,
+		);
 		expect((await refreshRow(t, "seat-token"))?.revokedAt).toBeUndefined();
 	});
 

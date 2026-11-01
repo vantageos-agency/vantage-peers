@@ -141,7 +141,6 @@ export const MCP_CALLED_FUNCTIONS: readonly string[] = [
 	"oauth:registerPublicClient",
 	"oauth:revokeAccessTokensForCode",
 	"oauth:revokeAccessTokensOnly",
-	"oauth:rotatePersonRefreshToken",
 	"oauth:rotateRefreshToken",
 	"oauth:seedDefaultProfiles",
 	"okfBundleNode:exportOkfBundle",
