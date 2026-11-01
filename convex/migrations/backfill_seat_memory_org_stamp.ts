@@ -7,6 +7,10 @@
 //
 // WHAT IS STAMPED. A row is stamped ONLY when ALL hold:
 //   - it has no `clerkOrgId` and lives in `project/<slug>` (a sub-namespace too);
+//   - the creator label names an agent in exactly ONE org of the deployment (the
+//     operator org included): a label shared with the fleet or another org is
+//     counted `creatorAmbiguous` and never stamped, since the row cannot be told
+//     apart from a fleet row of the same label;
 //   - the creator (`createdBy`, the seat label the MCP recorded for a master-path
 //     write) is an agents row of the organisation `<slug>` names, resolved by the
 //     repo's one name resolver (`resolveName`, backfill_actor_ids), and that agent is
@@ -80,6 +84,14 @@ async function verdictOf(
 ): Promise<Verdict> {
 	const slug = slugOf(row.namespace);
 	if (isHumanActorName(row.createdBy)) return { skip: "notSeat", slug };
+	// A label is not an identity: when it names an agent in more than one org (the
+	// operator org included) the row cannot be told apart from a fleet row of the
+	// same label, so it is never stamped.
+	const orgsNamingIt = [...resolver.agentIds.keys()].filter((org) => {
+		const found = resolveName(resolver, org, row.createdBy);
+		return !("reason" in found) || found.reason !== "unknownAgent";
+	});
+	if (orgsNamingIt.length > 1) return { skip: "creatorAmbiguous", slug };
 	const creator = resolveName(resolver, slug, row.createdBy);
 	if ("reason" in creator) {
 		return {
@@ -131,6 +143,10 @@ export const inventory = internalQuery({
 				unstamped: v.number(),
 				wouldStamp: v.number(),
 				sampleIds: v.array(v.id("memories")),
+				// Distinct creator labels of the unstamped rows with their counts
+				// (labels only, no content), so a dry run reveals a label shared with
+				// the fleet or another org.
+				creators: v.array(v.object({ name: v.string(), count: v.number() })),
 			}),
 		),
 		isDone: v.boolean(),
@@ -149,7 +165,13 @@ export const inventory = internalQuery({
 		let alreadyStamped = 0;
 		const bySlug = new Map<
 			string,
-			{ slug: string; unstamped: number; wouldStamp: number; sampleIds: Doc<"memories">["_id"][] }
+			{
+				slug: string;
+				unstamped: number;
+				wouldStamp: number;
+				sampleIds: Doc<"memories">["_id"][];
+				creators: Map<string, number>;
+			}
 		>();
 		for (const row of page.page) {
 			if (row.clerkOrgId !== undefined) {
@@ -162,8 +184,10 @@ export const inventory = internalQuery({
 				unstamped: 0,
 				wouldStamp: 0,
 				sampleIds: [],
+				creators: new Map<string, number>(),
 			};
 			entry.unstamped++;
+			entry.creators.set(row.createdBy, (entry.creators.get(row.createdBy) ?? 0) + 1);
 			if ("stamp" in verdict) entry.wouldStamp++;
 			if (entry.sampleIds.length < SAMPLE_IDS) entry.sampleIds.push(row._id);
 			bySlug.set(verdict.slug, entry);
@@ -171,7 +195,10 @@ export const inventory = internalQuery({
 		return {
 			examined: page.page.length,
 			alreadyStamped,
-			orgs: [...bySlug.values()],
+			orgs: [...bySlug.values()].map(({ creators, ...rest }) => ({
+				...rest,
+				creators: [...creators].map(([name, count]) => ({ name, count })),
+			})),
 			isDone: page.isDone,
 			nextCursor: page.isDone ? null : page.continueCursor,
 		};
