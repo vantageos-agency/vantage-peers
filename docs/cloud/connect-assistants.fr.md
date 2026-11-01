@@ -58,6 +58,28 @@ L'article d'aide OpenAI 12584461 indique que les connecteurs MCP personnalisés 
 2. Nom : `VantagePeers`. URL : `https://mcp.vantagepeers.com/mcp`.
 3. Ajoutez-le, puis connectez-vous, et terminez la page de consentement.
 
+## OpenCode
+
+1. Mettez ceci dans `~/.config/opencode/opencode.json` (ou ajoutez la clé `mcp` au fichier que vous avez déjà) :
+
+   ```json
+   {
+     "$schema": "https://opencode.ai/config.json",
+     "mcp": {
+       "vantagepeers": {
+         "type": "remote",
+         "url": "https://mcp.vantagepeers.com/mcp",
+         "enabled": true
+       }
+     }
+   }
+   ```
+
+2. Lancez `opencode mcp auth vantagepeers`, connectez-vous et validez la page de consentement.
+3. Vérifiez : `opencode mcp list` affiche `vantagepeers` ; s'il ne se connecte pas, `opencode mcp debug vantagepeers` en donne la raison.
+
+<!-- source : opencode.ai/docs/mcp-servers et opencode.ai/docs/config, consultés le 2026-11-01. non mesuré : une connexion OpenCode complète à VantagePeers Cloud. -->
+
 ## Tester
 
 Collez ceci juste après la connexion :
