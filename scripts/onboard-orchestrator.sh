@@ -60,6 +60,10 @@ echo "$RELAY"
 set -a; . "$ENV_FILE"; set +a
 export CLERK_SECRET_KEY="${CLERK_SECRET_KEY_VANTAGE_PEERS:?missing in .env.local}"
 export CLERK_ORG_ADMIN_USER_ID="${CLERK_ORG_ADMIN_USER_ID_VANTAGE_PEERS:?missing in .env.local}"
+# Our org by its permanent Clerk id (never the admin user's last-active org) and the prod Clerk frontend
+# domain: both required, no default (the library default is the DEV instance, whose tickets prod rejects).
+export CLERK_ORG_ID="${CLERK_ORG_ID_VANTAGE_PEERS:?missing in .env.local (the org_... id of perello-consulting)}"
+export CLERK_DOMAIN="${CLERK_DOMAIN:?missing in .env.local (prod frontend API domain, https://clerk.vantagepeers.com)}"
 export CONVEX_URL="$PROD_CONVEX"
 unset CONVEX_DEPLOYMENT
 

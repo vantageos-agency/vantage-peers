@@ -8,12 +8,15 @@
  * The mutation requires master or service-account scope; an org-admin JWT is refused
  * (RBAC_DENIED). The MCP tools add_repo_mapping / list_repo_mappings are disabled on the
  * production server, so this goes to Convex directly as the service account.
+ * Authenticates with the service account's "convex"-template token (aud convex; a native session token
+ * is refused by prod Convex with NoAuthProvider), the same minting as the MCP service client.
  * Env (from the gitignored .env.local): CLERK_SECRET_KEY, CLERK_SERVICE_ACCOUNT_USER_ID_VANTAGE_PEERS,
- * CONVEX_URL. Prints no secret.
+ * CONVEX_URL, CLERK_DOMAIN (required, no default: the library default is the DEV instance). Prints no secret.
  */
 import { ConvexHttpClient } from "convex/browser";
-import { getScopedUserToken } from "../mcp-server/src/serviceAccountAuth.ts";
+import { getServiceAccountToken } from "../mcp-server/src/serviceAccountAuth.ts";
 import { api } from "../convex/_generated/api.js";
+import { requireClerkDomain } from "./lib/org-admin-token.mjs";
 
 const [repo, orchestrator, project] = process.argv.slice(2);
 if (!/^[\w.-]+\/[\w.-]+$/.test(repo ?? "") || !orchestrator || !project) {
@@ -27,10 +30,17 @@ for (const name of ["CONVEX_URL", "CLERK_SECRET_KEY", "CLERK_SERVICE_ACCOUNT_USE
 	}
 }
 
+try {
+	requireClerkDomain();
+} catch (e) {
+	console.error(e instanceof Error ? e.message : String(e));
+	process.exit(2);
+}
+process.env.CLERK_SERVICE_ACCOUNT_USER_ID = process.env.CLERK_SERVICE_ACCOUNT_USER_ID_VANTAGE_PEERS;
 const client = new ConvexHttpClient(process.env.CONVEX_URL);
-const token = await getScopedUserToken(process.env.CLERK_SERVICE_ACCOUNT_USER_ID_VANTAGE_PEERS);
+const token = await getServiceAccountToken();
 if (!token) {
-	console.error("getScopedUserToken returned null: the Clerk sign-in-ticket exchange failed.");
+	console.error("getServiceAccountToken returned null: CLERK_SECRET_KEY or the service-account user id is missing.");
 	process.exit(1);
 }
 client.setAuth(token);

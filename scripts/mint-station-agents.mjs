@@ -4,8 +4,9 @@
  * agent (task k17awnbe5njbfwxed3z4e1md358fhra0). Generalisation of
  * mint-grok-agents.mjs (Model B, task k17dpqs9d1sd8z4a395gz6s3v98d2amm).
  *
- * MECHANISM (identical, nothing new in convex/): org-admin Clerk-native JWT via
- * getScopedUserToken, then orgSlug DERIVED from that JWT's claim (never typed),
+ * MECHANISM (nothing new in convex/): org-admin "convex"-template JWT (aud convex, else prod Convex
+ * answers NoAuthProvider) minted by mintOrgAdminToken for OUR org (CLERK_ORG_ID) with its org_id claim
+ * verified, then orgSlug DERIVED from that JWT's claim (never typed),
  * then agents:registerAgent and agentCredentials:mintAgentCredential through
  * ConvexHttpClient. Convex re-derives and verifies the same claim server-side
  * in resolveAdminSession; the local decode is only for the log line (no door takes an organisation argument).
@@ -30,7 +31,8 @@
  * var NAME. --dry-run performs every read, prints the plan, writes nothing.
  *
  * USAGE
- *   CONVEX_URL, CLERK_SECRET_KEY and CLERK_ORG_ADMIN_USER_ID in the environment, then:
+ *   CONVEX_URL, CLERK_SECRET_KEY, CLERK_ORG_ADMIN_USER_ID, CLERK_ORG_ID (org_..., our org) and
+ *   CLERK_DOMAIN (frontend API domain of the environment, required, no default) in the environment, then:
  *   bun run scripts/mint-station-agents.mjs --stations stations.json \
  *       --secrets-dir /secure/path [--dry-run] [--rotate]
  * (--secrets-dir is not needed with --dry-run.)
@@ -40,7 +42,6 @@ import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { ConvexHttpClient } from "convex/browser";
-import { getScopedUserToken } from "../mcp-server/src/serviceAccountAuth.ts";
 import {
 	agentRowByLabel,
 	assertSecretPathOutsideRepo,
@@ -53,6 +54,7 @@ import {
 	validateStations,
 	writeSecretFile,
 } from "./lib/station-agents.mjs";
+import { mintOrgAdminToken, requireClerkDomain } from "./lib/org-admin-token.mjs";
 
 const repoRoot = join(dirname(fileURLToPath(import.meta.url)), "..");
 const TAG = "[mint-stations]";
@@ -81,16 +83,26 @@ async function main() {
 	const secretsDir = args.secretsDir ? assertSecretPathOutsideRepo(args.secretsDir, repoRoot) : null;
 
 	const convexUrl = requireEnv("CONVEX_URL");
-	requireEnv("CLERK_SECRET_KEY"); // read internally by getScopedUserToken
+	const secretKey = requireEnv("CLERK_SECRET_KEY");
 	const orgAdminUserId = requireEnv("CLERK_ORG_ADMIN_USER_ID");
+	// OUR org (perello-consulting) by its permanent Clerk id, never whatever the shared org-admin user
+	// last had active. No default: a wrong org here registers agents into somebody else's tenant.
+	const orgId = requireEnv("CLERK_ORG_ID");
+	if (!/^org_[A-Za-z0-9]+$/.test(orgId)) throw new Error("CLERK_ORG_ID must be a permanent Clerk org id (org_...). Cannot proceed.");
+	const domain = requireClerkDomain();
 
 	console.log(
 		`${TAG} mode=${args.dryRun ? "DRY-RUN (reads only, no write)" : "WRITE"} stations=${stations.length} deployment=${new URL(convexUrl).hostname}`,
 	);
-	const jwt = await getScopedUserToken(orgAdminUserId);
-	if (!jwt) {
-		throw new Error("getScopedUserToken returned null: CLERK_SECRET_KEY missing or the Clerk sign-in-ticket exchange failed.");
-	}
+	// The "convex"-template token (aud convex) of a session whose active org was set to OUR org; the
+	// org_id claim is checked against it before any Convex call (ORG_MISMATCH otherwise).
+	const { jwt } = await mintOrgAdminToken({
+		userId: orgAdminUserId,
+		orgId,
+		secretKey,
+		domain,
+		template: process.env.CLERK_ORG_ADMIN_JWT_TEMPLATE || "convex",
+	});
 	const claims = decodeJwtClaims(jwt);
 	const orgSlug = orgSlugFromClaims(claims);
 	console.log(
