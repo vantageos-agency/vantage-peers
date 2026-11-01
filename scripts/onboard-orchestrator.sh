@@ -5,8 +5,9 @@
 #   scripts/onboard-orchestrator.sh <role> <workspace-dir> [--dry-run] [--repo <owner/repo> --project <slug>]
 #
 # Always run from the vantage-memory repo root. Prints no secret value.
-# Exit 3 = OWNER_STEP_REQUIRED: the agent has no owner (agents:setAgentOwner is internal), the operator
-# runs the printed command and re-runs this script. Only "OK: <role> onboarded" (exit 0) means finished.
+# Exit 3 = OWNER_STEP_REQUIRED and/or ROSTER_STEP_REQUIRED: the agent has no owner (agents:setAgentOwner is
+# internal) and/or is not on the operator roster (clientOrgMapping:addOperatorRosterMember is internal);
+# the operator runs the printed command(s) and re-runs this script. Only "OK: <role> onboarded" (exit 0) means finished.
 # The minted credential goes to the Infisical vault (/agent-secrets/<host-slug>/<ROLE>_SECRET) and
 # never to disk: it transits a memory-backed directory (/dev/shm) removed on exit. The workspace
 # gets a 3-line relay to the shared vault helper, never a copy of it.
@@ -160,7 +161,12 @@ PY
 # 7b. Owner step pending: the profile write and the proof below would be refused (whoami 401 "agent with
 #     no live member owner"). Stop here, loudly and with a distinct code, so the run cannot be read as finished.
 if [ "$MINT_RC" = 3 ]; then
-  echo "OWNER_STEP_PENDING: $ROLE is credentialed and wired but NOT usable until its owner is set. Run the operator command printed above (OWNER_STEP_REQUIRED), then re-run this same command to finish the profile and the proof."
+  if grep -q "^OWNER_STEP_REQUIRED" "$TMPD/mint.out"; then
+    echo "OWNER_STEP_PENDING: $ROLE is credentialed and wired but NOT usable until its owner is set. Run the operator command printed above (OWNER_STEP_REQUIRED), then re-run this same command to finish the profile and the proof."
+  fi
+  if grep -q "^ROSTER_STEP_REQUIRED" "$TMPD/mint.out"; then
+    echo "ROSTER_STEP_PENDING: $ROLE is credentialed and wired but NOT a message recipient until it is on the operator roster. Run the operator command printed above (ROSTER_STEP_REQUIRED), then re-run this same command to finish the profile and the proof."
+  fi
   exit 3
 fi
 
