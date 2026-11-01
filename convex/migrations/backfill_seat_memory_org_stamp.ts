@@ -29,6 +29,7 @@
 //
 //   migrations/backfill_seat_memory_org_stamp:inventory   (read-only, per org)
 //   migrations/backfill_seat_memory_org_stamp:run         (dry run, then dryRun:false)
+//   migrations/backfill_seat_memory_org_stamp:revert      (rollback by the ids `run` returned in `stamped`)
 //   -> pass {"cursor": <nextCursor>} until isDone.
 //
 // Internal: reachable only with the deployment admin credential, so no per-caller
@@ -218,6 +219,9 @@ export const run = internalMutation({
 		toFill: v.number(),
 		filled: v.number(),
 		skipped: skipCountsValidator,
+		// The ROLLBACK LIST: per org slug, the ids this page stamps (dry run) or
+		// stamped (write). Same shape in both modes, so a dry run previews it.
+		stamped: v.array(v.object({ slug: v.string(), ids: v.array(v.id("memories")) })),
 		isDone: v.boolean(),
 		nextCursor: v.union(v.string(), v.null()),
 	}),
@@ -237,6 +241,7 @@ export const run = internalMutation({
 		let toFill = 0;
 		let filled = 0;
 		const skipped = emptySkips();
+		const stampedBySlug = new Map<string, Doc<"memories">["_id"][]>();
 		for (const row of page.page) {
 			if (row.clerkOrgId !== undefined) {
 				alreadyFilled++;
@@ -248,6 +253,7 @@ export const run = internalMutation({
 				continue;
 			}
 			toFill++;
+			stampedBySlug.set(verdict.slug, [...(stampedBySlug.get(verdict.slug) ?? []), row._id]);
 			if (!dryRun) {
 				await ctx.db.patch(row._id, { clerkOrgId: verdict.stamp });
 				filled++;
@@ -263,8 +269,77 @@ export const run = internalMutation({
 			toFill,
 			filled,
 			skipped,
+			stamped: [...stampedBySlug].map(([slug, ids]) => ({ slug, ids })),
 			isDone: page.isDone,
 			nextCursor: page.isDone ? null : page.continueCursor,
 		};
+	},
+});
+
+const MAX_REVERT_IDS = 200;
+
+// ROLLBACK of `run`. Unsets `clerkOrgId` ONLY on a row that is in `project/<slug>`
+// and whose current `clerkOrgId` equals the stamp `run` would write for it today
+// (the same verdict, `verdictOf`); any other row is skipped and counted, never
+// touched. DRY RUN BY DEFAULT (`dryRun: false` writes). Feed it the `stamped` ids
+// of a `run` page, at most 200 per call.
+export const revert = internalMutation({
+	args: {
+		ids: v.array(v.id("memories")),
+		dryRun: v.optional(v.boolean()),
+	},
+	returns: v.object({
+		dryRun: v.boolean(),
+		examined: v.number(),
+		toRevert: v.number(),
+		reverted: v.number(),
+		skipped: v.object({
+			missing: v.number(),
+			notProjectNamespace: v.number(),
+			unstamped: v.number(),
+			stampDiffers: v.number(),
+		}),
+	}),
+	handler: async (ctx, args) => {
+		const dryRun = args.dryRun !== false;
+		if (args.ids.length > MAX_REVERT_IDS) {
+			throw new ConvexError(
+				`backfill_seat_memory_org_stamp:revert: ids = ${args.ids.length} is out of expected range 0-${MAX_REVERT_IDS}.`,
+			);
+		}
+		const resolver = await loadResolver(ctx.db);
+		const operator = await fleetOperatorRef(ctx.db);
+		const skipped = { missing: 0, notProjectNamespace: 0, unstamped: 0, stampDiffers: 0 };
+		let toRevert = 0;
+		let reverted = 0;
+		for (const id of new Set(args.ids)) {
+			const row = await ctx.db.get(id);
+			if (row === null) {
+				skipped.missing++;
+				continue;
+			}
+			if (row.namespace < PROJECT_FROM || row.namespace >= PROJECT_TO) {
+				skipped.notProjectNamespace++;
+				continue;
+			}
+			if (row.clerkOrgId === undefined) {
+				skipped.unstamped++;
+				continue;
+			}
+			const verdict = await verdictOf(ctx, row, resolver, operator);
+			if (!("stamp" in verdict) || verdict.stamp !== row.clerkOrgId) {
+				skipped.stampDiffers++;
+				continue;
+			}
+			toRevert++;
+			if (!dryRun) {
+				await ctx.db.patch(row._id, { clerkOrgId: undefined });
+				reverted++;
+			}
+		}
+		console.log(
+			`backfill_seat_memory_org_stamp:revert ${dryRun ? "DRY RUN" : "WRITE"}: examined=${args.ids.length} toRevert=${toRevert} reverted=${reverted}`,
+		);
+		return { dryRun, examined: args.ids.length, toRevert, reverted, skipped };
 	},
 });

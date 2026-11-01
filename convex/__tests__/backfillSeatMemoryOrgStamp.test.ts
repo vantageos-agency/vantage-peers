@@ -225,3 +225,108 @@ describe("backfill_seat_memory_org_stamp:inventory", () => {
 		expect(await stampOf(t, w.own)).toBeNull();
 	});
 });
+
+// Task k174d9hcb0h9vdsny1qcveqzjs8hdrmt: the stamped ids are the rollback list.
+describe("backfill_seat_memory_org_stamp:run returns the stamped ids", () => {
+	const idsOf = (r: { stamped: { slug: string; ids: Id<"memories">[] }[] }, slug: string) =>
+		[...(r.stamped.find((s) => s.slug === slug)?.ids ?? [])].sort();
+
+	test("a write returns, per org, exactly the ids it changed", async () => {
+		const t = createT();
+		const w = await seed(t);
+		const r = await t.mutation(mig.run, { dryRun: false });
+		expect(idsOf(r, A)).toEqual([w.own, w.sub].sort());
+		expect(idsOf(r, B)).toEqual([w.ownB]);
+		expect(r.stamped.length).toBe(2);
+		expect(r.stamped.reduce((n, s) => n + s.ids.length, 0)).toBe(r.filled);
+	});
+
+	test("a dry run returns the same shape and the same ids, and writes nothing", async () => {
+		const t = createT();
+		const w = await seed(t);
+		const dry = await t.mutation(mig.run, {});
+		expect(idsOf(dry, A)).toEqual([w.own, w.sub].sort());
+		expect(idsOf(dry, B)).toEqual([w.ownB]);
+		expect(await stampOf(t, w.own)).toBeNull();
+		const wr = await t.mutation(mig.run, { dryRun: false });
+		expect(wr.stamped).toEqual(dry.stamped);
+	});
+
+	test("a second run returns no stamped ids", async () => {
+		const t = createT();
+		await seed(t);
+		await t.mutation(mig.run, { dryRun: false });
+		const again = await t.mutation(mig.run, { dryRun: false });
+		expect(again.stamped).toEqual([]);
+	});
+});
+
+describe("backfill_seat_memory_org_stamp:revert", () => {
+	test("dry run by default changes nothing and counts what it would unset", async () => {
+		const t = createT();
+		const w = await seed(t);
+		await t.mutation(mig.run, { dryRun: false });
+		const r = await t.mutation(mig.revert, { ids: [w.own, w.sub, w.ownB] });
+		expect(r.dryRun).toBe(true);
+		expect(r.toRevert).toBe(3);
+		expect(r.reverted).toBe(0);
+		expect(await stampOf(t, w.own)).toBe(testClerkOrgId(A));
+	});
+
+	test("a write unsets clerkOrgId on the stamped rows, restoring the pre-run state", async () => {
+		const t = createT();
+		const w = await seed(t);
+		const run = await t.mutation(mig.run, { dryRun: false });
+		const ids = run.stamped.flatMap((s) => s.ids);
+		const r = await t.mutation(mig.revert, { ids, dryRun: false });
+		expect(r.reverted).toBe(3);
+		for (const id of [w.own, w.sub, w.ownB]) expect(await stampOf(t, id)).toBeNull();
+		expect(await stampOf(t, w.stamped)).toBe(testClerkOrgId(A));
+		const again = await t.mutation(mig.run, {});
+		expect(again.toFill).toBe(3);
+	});
+
+	test("skips a row whose stamp differs, a row outside project/, an unstamped row and a missing row", async () => {
+		const t = createT();
+		const w = await seed(t);
+		await t.mutation(mig.run, { dryRun: false });
+		await t.run((ctx) => ctx.db.patch(w.own, { clerkOrgId: testClerkOrgId(B) }));
+		await t.run((ctx) => ctx.db.patch(w.teamNs, { clerkOrgId: testClerkOrgId(A) }));
+		const gone = await t.run(async (ctx) => {
+			const id = await ctx.db.insert("memories", {
+				namespace: `project/${A}`,
+				type: "project",
+				content: "x",
+				createdBy: "alice",
+				relations: [],
+				isLatest: true,
+				createdAt: NOW,
+				updatedAt: NOW,
+			});
+			await ctx.db.delete(id);
+			return id;
+		});
+		const r = await t.mutation(mig.revert, {
+			ids: [w.own, w.teamNs, w.person, gone, w.sub],
+			dryRun: false,
+		});
+		expect(r.reverted).toBe(1);
+		expect(r.skipped).toEqual({
+			missing: 1,
+			notProjectNamespace: 1,
+			unstamped: 1,
+			stampDiffers: 1,
+		});
+		expect(await stampOf(t, w.own)).toBe(testClerkOrgId(B));
+		expect(await stampOf(t, w.teamNs)).toBe(testClerkOrgId(A));
+		expect(await stampOf(t, w.sub)).toBeNull();
+	});
+
+	test("refuses more than 200 ids per call", async () => {
+		const t = createT();
+		const w = await seed(t);
+		await expect(
+			t.mutation(mig.revert, { ids: Array.from({ length: 201 }, () => w.own) }),
+		).rejects.toThrow(/out of expected range/);
+	});
+});
