@@ -3,20 +3,20 @@
  * IFRAME EMBED SESSIONS BELONG TO AN ORGANISATION BY ITS PERMANENT ORG ID (module M10i).
  *
  * A session stores the tenant's org ID beside its slug label (`tenantOrgId`).
- * The doors compare that ID with the caller's verified org ID (the package's
- * `sameOrg`); a slug never admits. A session id is never re-used, a member's
- * session carries the verified subject, and the fleet is the package's `fleet`
- * standing. Every pole runs under an ORDINARY org member or the service account.
+ * `getSession` compares that ID with the caller's verified org ID (the package's
+ * `sameOrg`); a slug never admits. The fleet is the package's `fleet` standing.
+ * The three write doors (createSession / touchSession / revokeSession) were
+ * removed (task k17cbr6y6da096t5e1k869kgb18hd0ht: no caller in any repo of the
+ * organisation), so rows are seeded straight into the table. Every pole runs
+ * under an ORDINARY org member, the service account, or no credential.
  *
  * POLES
- *   PERMISSION  - a member creates, reads, touches and revokes its own session,
- *                 also after its org's slug was renamed; the fleet uses any.
- *   DENIED      - another org that now HOLDS the old slug reaches nothing; a
- *                 claimed foreign tenant or foreign user is refused; a duplicate
- *                 id is refused; an unstamped session is the fleet's alone;
- *                 an anonymous write is refused by raising.
- *   ABSENT      - a revoked or unknown session reads null; touching an unknown
- *                 session answers false.
+ *   PERMISSION  - a member reads its own session, also after its org's slug was
+ *                 renamed; the fleet reads any.
+ *   DENIED      - another org that now HOLDS the old slug reads nothing; an
+ *                 unstamped session is the fleet's alone; an anonymous read is
+ *                 the typed null.
+ *   ABSENT      - a revoked or unknown session reads null.
  */
 import { describe, expect, test } from "vitest";
 import { convexTest } from "../../tests/fixtures/convexTestWithServiceAccount";
@@ -63,92 +63,88 @@ async function seedOrgs(t: T) {
 }
 
 const future = () => Date.now() + 3_600_000;
-const create = (c: ReturnType<typeof asMember>, sessionId: string, extra = {}) =>
-	c.mutation(api.iframeEmbedSessions.createSession, {
-		sessionId,
-		origin: "https://x.example",
-		expiresAt: future(),
-		...extra,
-	});
 
-const refusal = async (p: Promise<unknown>): Promise<string> => {
-	try {
-		await p;
-	} catch (e) {
-		const x = e as { data?: unknown; message?: string };
-		return typeof x.data === "string" ? x.data : String(x.message);
-	}
-	return "SERVED";
-};
+async function seedSession(
+	t: T,
+	sessionId: string,
+	org: string | null,
+	revoked = false,
+) {
+	await t.run(async (ctx) => {
+		await ctx.db.insert("iframeEmbedSessions", {
+			sessionId,
+			...(org !== null
+				? { tenantId: org, tenantOrgId: testClerkOrgId(org) }
+				: {}),
+			origin: "https://x.example",
+			createdAt: NOW,
+			lastSeenAt: NOW,
+			expiresAt: future(),
+			revoked,
+		});
+	});
+}
 
 describe("PERMISSION", () => {
-	test("a member's session is stamped with the verified org's slug AND ID and the verified subject", async () => {
+	test("the member reads its own session", async () => {
 		const t = createT();
 		await seedOrgs(t);
-		await create(asMember(t, A), "S1");
-		const [row] = await t.run((ctx) => ctx.db.query("iframeEmbedSessions").collect());
-		expect(row.tenantId).toBe(A);
-		expect(row.tenantOrgId).toBe(testClerkOrgId(A));
-		expect(row.userId).toBe(`user-of-${testClerkOrgId(A)}`);
-	});
-
-	test("the member reads, touches and revokes its own session; a claim equal to its own org and subject is accepted", async () => {
-		const t = createT();
-		await seedOrgs(t);
-		const a = asMember(t, A);
-		await create(a, "S1", { tenantId: A, userId: `user-of-${testClerkOrgId(A)}` });
-		expect((await a.query(api.iframeEmbedSessions.getSession, { sessionId: "S1" }))?.tenantId).toBe(A);
-		expect(await a.mutation(api.iframeEmbedSessions.touchSession, { sessionId: "S1" })).toBe(true);
-		expect(await a.mutation(api.iframeEmbedSessions.revokeSession, { sessionId: "S1" })).toBe(true);
+		await seedSession(t, "S1", A);
+		const got = await asMember(t, A).query(
+			api.iframeEmbedSessions.getSession,
+			{ sessionId: "S1" },
+		);
+		expect(got?.tenantId).toBe(A);
 	});
 
 	test("RENAME: after the org's slug changed the member (new slug, same org ID) still reaches its own session", async () => {
 		const t = createT();
 		await seedOrgs(t);
-		await create(asMember(t, A), "S1");
+		await seedSession(t, "S1", A);
 		await t.run(async (ctx) => {
 			const m = await ctx.db
 				.query("client_org_mapping")
 				.withIndex("by_clerk_slug", (q) => q.eq("clerkOrgSlug", A))
 				.unique();
-			if (m !== null) await ctx.db.patch(m._id, { clerkOrgSlug: "org-a-renamed" });
+			if (m !== null)
+				await ctx.db.patch(m._id, { clerkOrgSlug: "org-a-renamed" });
 		});
 		const renamed = asMember(t, "org-a-renamed", testClerkOrgId(A));
-		expect(await renamed.query(api.iframeEmbedSessions.getSession, { sessionId: "S1" })).not.toBeNull();
-		expect(await renamed.mutation(api.iframeEmbedSessions.touchSession, { sessionId: "S1" })).toBe(true);
+		expect(
+			await renamed.query(api.iframeEmbedSessions.getSession, {
+				sessionId: "S1",
+			}),
+		).not.toBeNull();
 	});
 
-	test("the fleet creates for any tenant, keeps a claimed user, and reads, touches and revokes any session", async () => {
+	test("the fleet reads any session, stamped or not", async () => {
 		const t = createT();
 		await seedOrgs(t);
+		await seedSession(t, "S1", B);
+		await seedSession(t, "F1", null);
 		const f = asService(t);
-		await f.mutation(api.iframeEmbedSessions.createSession, {
-			sessionId: "F1",
-			tenantId: B,
-			userId: "claimed-user",
-			origin: "https://f.example",
-			expiresAt: future(),
-		});
-		const [row] = await t.run((ctx) => ctx.db.query("iframeEmbedSessions").collect());
-		expect(row.tenantOrgId).toBe(testClerkOrgId(B));
-		expect(row.userId).toBe("claimed-user");
-		expect((await f.query(api.iframeEmbedSessions.getSession, { sessionId: "F1" }))?.tenantId).toBe(B);
-		expect(await f.mutation(api.iframeEmbedSessions.touchSession, { sessionId: "F1" })).toBe(true);
-		expect(await f.mutation(api.iframeEmbedSessions.revokeSession, { sessionId: "F1" })).toBe(true);
+		expect(
+			(await f.query(api.iframeEmbedSessions.getSession, { sessionId: "S1" }))
+				?.tenantId,
+		).toBe(B);
+		expect(
+			await f.query(api.iframeEmbedSessions.getSession, { sessionId: "F1" }),
+		).not.toBeNull();
 	});
 });
 
 describe("DENIED", () => {
-	test("REUSED slug: another org that now holds the old slug reaches nothing of the first org's session", async () => {
+	test("REUSED slug: another org that now holds the old slug reads nothing of the first org's session", async () => {
 		const t = createT();
 		await seedOrgs(t);
-		await create(asMember(t, A), "S1");
+		await seedSession(t, "S1", A);
 		await t.run(async (ctx) => {
 			const m = await ctx.db
 				.query("client_org_mapping")
 				.withIndex("by_clerk_slug", (q) => q.eq("clerkOrgSlug", A))
 				.unique();
-			if (m !== null) await ctx.db.patch(m._id, { clerkOrgSlug: "org-a-renamed" });
+			if (m !== null)
+				await ctx.db.patch(m._id, { clerkOrgSlug: "org-a-renamed" });
 			await ctx.db.insert("client_org_mapping", {
 				clerkOrgSlug: A,
 				clerkOrgId: "org_NEWCOMER1",
@@ -160,77 +156,45 @@ describe("DENIED", () => {
 			});
 		});
 		const newcomer = asMember(t, A, "org_NEWCOMER1");
-		expect(await newcomer.query(api.iframeEmbedSessions.getSession, { sessionId: "S1" })).toBeNull();
 		expect(
-			await refusal(newcomer.mutation(api.iframeEmbedSessions.touchSession, { sessionId: "S1" })),
-		).toContain("session-not-in-caller-org");
-		expect(
-			await refusal(newcomer.mutation(api.iframeEmbedSessions.revokeSession, { sessionId: "S1" })),
-		).toContain("session-not-in-caller-org");
-	});
-
-	test("a claimed foreign tenant and a claimed foreign user are refused, not corrected", async () => {
-		const t = createT();
-		await seedOrgs(t);
-		expect(await refusal(create(asMember(t, A), "S1", { tenantId: B }))).toContain("tenant-not-callers-org");
-		expect(await refusal(create(asMember(t, A), "S2", { userId: "someone-else" }))).toContain(
-			"user-not-verified-caller",
-		);
-		expect(await t.run((ctx) => ctx.db.query("iframeEmbedSessions").collect())).toHaveLength(0);
-	});
-
-	test("a session id is never re-used: the second insert is refused, the first stays usable", async () => {
-		const t = createT();
-		await seedOrgs(t);
-		await create(asMember(t, A), "S1");
-		expect(await refusal(create(asMember(t, A), "S1"))).toContain("SESSION_ID_TAKEN");
-		expect(await refusal(create(asMember(t, B), "S1"))).toContain("SESSION_ID_TAKEN");
-		expect(await asMember(t, A).query(api.iframeEmbedSessions.getSession, { sessionId: "S1" })).not.toBeNull();
+			await newcomer.query(api.iframeEmbedSessions.getSession, {
+				sessionId: "S1",
+			}),
+		).toBeNull();
 	});
 
 	test("an unstamped session is the fleet's alone", async () => {
 		const t = createT();
 		await seedOrgs(t);
-		await asService(t).mutation(api.iframeEmbedSessions.createSession, {
-			sessionId: "F1",
-			origin: "https://f.example",
-			expiresAt: future(),
-		});
-		expect(await asMember(t, A).query(api.iframeEmbedSessions.getSession, { sessionId: "F1" })).toBeNull();
+		await seedSession(t, "F1", null);
 		expect(
-			await refusal(asMember(t, A).mutation(api.iframeEmbedSessions.touchSession, { sessionId: "F1" })),
-		).toContain("RBAC_DENIED");
+			await asMember(t, A).query(api.iframeEmbedSessions.getSession, {
+				sessionId: "F1",
+			}),
+		).toBeNull();
 	});
 
-	test("an anonymous write is refused by raising; an anonymous read is the typed null", async () => {
+	test("an anonymous read is the typed null", async () => {
 		const t = createT();
 		await seedOrgs(t);
-		await create(asMember(t, A), "S1");
+		await seedSession(t, "S1", A);
 		expect(
-			await refusal(
-				t.mutation(api.iframeEmbedSessions.createSession, {
-					sessionId: "S2",
-					origin: "https://x.example",
-					expiresAt: future(),
-				}),
-			),
-		).toContain("RBAC_DENIED");
-		expect(await refusal(t.mutation(api.iframeEmbedSessions.touchSession, { sessionId: "S1" }))).toContain(
-			"RBAC_DENIED",
-		);
-		expect(await t.query(api.iframeEmbedSessions.getSession, { sessionId: "S1" })).toBeNull();
+			await t.query(api.iframeEmbedSessions.getSession, { sessionId: "S1" }),
+		).toBeNull();
 	});
 });
 
 describe("ABSENT", () => {
-	test("a revoked or unknown session reads null; touching an unknown session answers false", async () => {
+	test("a revoked or unknown session reads null", async () => {
 		const t = createT();
 		await seedOrgs(t);
+		await seedSession(t, "S1", A, true);
 		const a = asMember(t, A);
-		await create(a, "S1");
-		await a.mutation(api.iframeEmbedSessions.revokeSession, { sessionId: "S1" });
-		expect(await a.query(api.iframeEmbedSessions.getSession, { sessionId: "S1" })).toBeNull();
-		expect(await a.query(api.iframeEmbedSessions.getSession, { sessionId: "nope" })).toBeNull();
-		expect(await a.mutation(api.iframeEmbedSessions.touchSession, { sessionId: "nope" })).toBe(false);
+		expect(
+			await a.query(api.iframeEmbedSessions.getSession, { sessionId: "S1" }),
+		).toBeNull();
+		expect(
+			await a.query(api.iframeEmbedSessions.getSession, { sessionId: "nope" }),
+		).toBeNull();
 	});
 });

@@ -140,6 +140,16 @@ async function mapAcmeRepo(t: T) {
 }
 
 // One REAL write path per table of ORG_COLUMNS, acting as a member of ACME.
+// Tables that still carry the org columns (the backfill migrations keep them) but
+// have NO write path any more: iframeEmbedSessions lost createSession /
+// touchSession / revokeSession (task k17cbr6y6da096t5e1k869kgb18hd0ht, no caller
+// in any repo of the organisation). A table leaves this set the day a door that
+// writes it returns, and then needs a driver.
+const NO_WRITE_PATH: ReadonlySet<string> = new Set(["iframeEmbedSessions"]);
+const WRITTEN_TABLES = TABLE_ORDER.filter(
+	(table) => !NO_WRITE_PATH.has(table),
+) as Exclude<OrgIdTable, "iframeEmbedSessions">[];
+
 const DRIVERS = {
 	missions: async (t) => {
 		// A mission names its pilot, participants and creator by agents-row ID
@@ -339,12 +349,6 @@ const DRIVERS = {
 				clerkOrgSlug: ACME.slug,
 			},
 		}),
-	iframeEmbedSessions: (t) =>
-		asOrg(t, ACME.slug).mutation(api.iframeEmbedSessions.createSession, {
-			sessionId: "s-1",
-			origin: "https://example.test",
-			expiresAt: NOW + 1000,
-		}),
 	githubRepoMapping: (t) => mapAcmeRepo(t),
 	issues: async (t) => {
 		await mapAcmeRepo(t);
@@ -360,7 +364,7 @@ const DRIVERS = {
 			githubUpdatedAt: NOW,
 		});
 	},
-} satisfies Record<OrgIdTable, Driver>;
+} satisfies Record<Exclude<OrgIdTable, "iframeEmbedSessions">, Driver>;
 
 const rowsOf = (t: T, table: OrgIdTable) =>
 	t.run(
@@ -380,10 +384,10 @@ afterEach(() => {
 
 describe("every table in ORG_COLUMNS has a real write path that stamps slug AND id", () => {
 	test("COVERAGE: a driver exists for exactly the tables of ORG_COLUMNS", () => {
-		expect(Object.keys(DRIVERS).sort()).toEqual([...TABLE_ORDER].sort());
+		expect(Object.keys(DRIVERS).sort()).toEqual([...WRITTEN_TABLES].sort());
 	});
 
-	for (const table of TABLE_ORDER) {
+	for (const table of WRITTEN_TABLES) {
 		test(`${table}: a real write stamps ${ORG_COLUMNS[table].slugField} and ${ORG_COLUMNS[table].idField}`, async () => {
 			const { slugField, idField } = ORG_COLUMNS[table];
 			const t = createT();
@@ -412,7 +416,7 @@ describe("a mapping with no id yet: a member is refused, and no id is ever inven
 	// mapping whose clerkOrgId is not filled serves no member (no label fallback).
 	// A write path that does not resolve a member (service account, internal)
 	// still writes the slug only. Either way no row carries an invented id.
-	for (const table of TABLE_ORDER) {
+	for (const table of WRITTEN_TABLES) {
 		test(`${table}: refused as a member, or slug only, while the mapping has no clerkOrgId`, async () => {
 			const { slugField, idField } = ORG_COLUMNS[table];
 			const t = createT();
