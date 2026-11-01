@@ -70,7 +70,7 @@
 			"modules": {}
 		},
 		"CR-2": {
-			"count": 246,
+			"count": 245,
 			"measured_tree_sha": "88ae202f2da361d905a1c5044ea1529ce8f53637",
 			"cli_commit": "f6297a29c64a0265124e3e9cf86c9dd85eac47c0",
 			"command": "npx -y @vantageos/backend-doctor@0.5.0 <vantage-peers clean full checkout @88ae202f (#1579 rebased on 8aa3a7c1, task k1755rzrkbr397hpeftnjcqb2d8h7yhg), deps installed> --json-evidence <dir>/",
