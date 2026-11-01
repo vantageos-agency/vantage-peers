@@ -151,21 +151,34 @@ async function call(
 	return { result, ...b };
 }
 
-const TOOLS: Array<{ tool: string; fn: string; args: Record<string, unknown> }> =
-	[
-		{ tool: "list_diaries", fn: "diary:list", args: { orchestrator: SEAT } },
-		{ tool: "list_diaries", fn: "diary:list", args: { createdBy: SEAT } },
-		{ tool: "get_diary", fn: "diary:get", args: { date: DATE, orchestrator: SEAT } },
-		{
-			tool: "write_diary",
-			fn: "diary:write",
-			args: { date: DATE, orchestrator: SEAT, content: "today" },
-		},
-	];
+const TOOLS: Array<{
+	tool: string;
+	fn: string;
+	args: Record<string, unknown>;
+}> = [
+	{ tool: "list_diaries", fn: "diary:list", args: { orchestrator: SEAT } },
+	{ tool: "list_diaries", fn: "diary:list", args: { createdBy: SEAT } },
+	{
+		tool: "get_diary",
+		fn: "diary:get",
+		args: { date: DATE, orchestrator: SEAT },
+	},
+	{
+		tool: "write_diary",
+		fn: "diary:write",
+		args: { date: DATE, orchestrator: SEAT, content: "today" },
+	},
+];
 
-describe.each(TOOLS)("$tool $args — the diary door runs under the bearer's verified org", (t) => {
+describe.each(
+	TOOLS,
+)("$tool $args — the diary door runs under the bearer's verified org", (t) => {
 	it("CLAIM: the call carries verifiedOrg = the bearer's org", async () => {
-		const { calls, result } = await call(t.tool, bearerFor(t.tool, OWN_ORG), t.args);
+		const { calls, result } = await call(
+			t.tool,
+			bearerFor(t.tool, OWN_ORG),
+			t.args,
+		);
 		expect(isError(result), text(result)).toBe(false);
 		expect(calls).toHaveLength(1);
 		expect(calls[0].fn).toBe(t.fn);
@@ -180,7 +193,9 @@ describe.each(TOOLS)("$tool $args — the diary door runs under the bearer's ver
 		// org-level bearer without an agent credential); an agent credential
 		// always carries its org, so on the write the org denial is defence in depth.
 		expect(text(result)).toContain(
-			t.tool === "write_diary" ? "agent-credential-required" : "verified-org-unresolved",
+			t.tool === "write_diary"
+				? "agent-credential-required"
+				: "verified-org-unresolved",
 		);
 	});
 
@@ -193,11 +208,14 @@ describe.each(TOOLS)("$tool $args — the diary door runs under the bearer's ver
 	// write_diary under a Clerk session without a per-agent credential is refused
 	// earlier by the acting-claim gate (AGENT_CREDENTIAL_REQUIRED), before any
 	// door call; that refusal predates this change and is not what is pinned here.
-	it.skipIf(t.tool === "write_diary")("CLERK: a Clerk-JWT member forwards no claim (Convex sees its own org)", async () => {
-		const { calls } = await call(t.tool, clerkMember(), t.args);
-		expect(calls).toHaveLength(1);
-		expect(calls[0].args.verifiedOrg).toBeUndefined();
-	});
+	it.skipIf(t.tool === "write_diary")(
+		"CLERK: a Clerk-JWT member forwards no claim (Convex sees its own org)",
+		async () => {
+			const { calls } = await call(t.tool, clerkMember(), t.args);
+			expect(calls).toHaveLength(1);
+			expect(calls[0].args.verifiedOrg).toBeUndefined();
+		},
+	);
 });
 
 describe("LEAK: a colliding userId never reaches another org's diary", () => {

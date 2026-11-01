@@ -102,11 +102,17 @@ async function world() {
 				createdAt: NOW,
 				...extra,
 			});
-		await mapping(OP_SLUG, OP_ID, ids.op, { orgKind: "operator", fleetWide: true });
+		await mapping(OP_SLUG, OP_ID, ids.op, {
+			orgKind: "operator",
+			fleetWide: true,
+		});
 		await mapping(A_SLUG, A_ID, ids.a);
 		await mapping(B_SLUG, B_ID, ids.b);
 		await mapping(OFF_SLUG, OFF_ID, ids.off, { isActive: false });
-		const entry = (content: string, stamp: { orgId?: string; clerkOrgId?: string }) =>
+		const entry = (
+			content: string,
+			stamp: { orgId?: string; clerkOrgId?: string },
+		) =>
 			ctx.db.insert("diary", {
 				date: DATE,
 				orchestrator: SEAT,
@@ -129,8 +135,11 @@ afterEach(() => {
 	vi.useRealTimers();
 });
 
-function items(result: Doc<"diary">[] | { refused: true; items: Doc<"diary">[] }) {
-	if (!Array.isArray(result)) throw new Error("expected a served array, got the refusal envelope");
+function items(
+	result: Doc<"diary">[] | { refused: true; items: Doc<"diary">[] },
+) {
+	if (!Array.isArray(result))
+		throw new Error("expected a served array, got the refusal envelope");
 	return result.map((r) => r.content).sort();
 }
 
@@ -240,7 +249,10 @@ describe("diary doors narrow a service-account call to its verifiedOrg", () => {
 		const member = asMember(t, A_SLUG, A_ID);
 		expect(
 			await errorOf(
-				member.query(api.diary.list, { orchestrator: SEAT, verifiedOrg: { orgSlug: B_SLUG } }),
+				member.query(api.diary.list, {
+					orchestrator: SEAT,
+					verifiedOrg: { orgSlug: B_SLUG },
+				}),
 			),
 		).toMatch(/RBAC_DENIED.*verified-org-not-trusted/s);
 		expect(
@@ -279,22 +291,26 @@ describe("diary doors narrow a service-account call to its verifiedOrg", () => {
 	test("MASTER: with no verifiedOrg the service account reads as before", async () => {
 		const { t } = await world();
 		const m = asMaster(t);
-		expect(items(await m.query(api.diary.list, { orchestrator: SEAT }))).toEqual([
-			"A-PRIVATE",
-			"B-PRIVATE",
-			"FLEET-PRIVATE",
-		]);
-		const fleet = await m.query(api.diary.get, { date: DATE, orchestrator: SEAT });
+		expect(
+			items(await m.query(api.diary.list, { orchestrator: SEAT })),
+		).toEqual(["A-PRIVATE", "B-PRIVATE", "FLEET-PRIVATE"]);
+		const fleet = await m.query(api.diary.get, {
+			date: DATE,
+			orchestrator: SEAT,
+		});
 		expect(fleet?.content).toBe("FLEET-PRIVATE");
 	});
 
 	test("CLERK: a Clerk-JWT member of A is served its own entry, unchanged", async () => {
 		const { t } = await world();
 		const member = asMember(t, A_SLUG, A_ID);
-		expect(items(await member.query(api.diary.list, { orchestrator: SEAT }))).toEqual([
-			"A-PRIVATE",
-		]);
-		const got = await member.query(api.diary.get, { date: DATE, orchestrator: SEAT });
+		expect(
+			items(await member.query(api.diary.list, { orchestrator: SEAT })),
+		).toEqual(["A-PRIVATE"]);
+		const got = await member.query(api.diary.get, {
+			date: DATE,
+			orchestrator: SEAT,
+		});
 		expect(got?.content).toBe("A-PRIVATE");
 	});
 });
