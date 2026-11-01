@@ -29,6 +29,7 @@ import { testClerkOrgId } from "../../tests/fixtures/testClerkOrgId";
 import { api } from "../_generated/api";
 import type { Id } from "../_generated/dataModel";
 import { findAgentByName } from "../lib/agentIdentity";
+import { seedFleetAgents } from "../../tests/lib/seedFleetAgents";
 import schema from "../schema";
 
 const modules = Object.fromEntries(
@@ -232,5 +233,61 @@ describe("through a public door: tasks:create by org B stamps no foreign agent I
 		const rows = await tasks(w);
 		expect(rows).toHaveLength(1);
 		expect(rows[0]?.assignedToId).toBe(w.agentB);
+	});
+});
+
+describe("a waiter task stamped before the takeover is notified by ITS org's ID", () => {
+	test("UNBLOCK: A's blocked task (old slug, clerkOrgId A, no assignedToId) names A's nadia, never B's", async () => {
+		const w = await takeover();
+		await seedFleetAgents(w.t, ["eta"]);
+		// B has its OWN agent labelled "nadia" under the slug B now holds.
+		const agentBNadia = await w.t.run(async (ctx) =>
+			ctx.db.insert("agents", {
+				orgSlug: SLUG,
+				clerkOrgId: ORG_B_ID,
+				name: "nadia",
+				normalizedName: "nadia",
+				isActive: true,
+				createdAt: 3,
+			}),
+		);
+		const svc = w.t.withIdentity({ subject: "test-service-account-user-id" });
+		const blocker = (await svc.mutation(api.tasks.create, {
+			title: "blocker",
+			assignedTo: "eta",
+			priority: "low",
+			status: "todo",
+			createdBy: "eta",
+		} as never)) as Id<"tasks">;
+		const waiter = await w.t.run(async (ctx) =>
+			ctx.db.insert("tasks", {
+				title: "A waits",
+				// The stamp A wrote while it still held the slug: old slug, A's ID.
+				orgId: SLUG,
+				clerkOrgId: ORG_A_ID,
+				assignedTo: "nadia",
+				createdBy: "nadia",
+				priority: "low",
+				status: "blocked",
+				blockedOnTaskId: blocker,
+				isReviewTask: false,
+				createdAt: 1,
+				updatedAt: 1,
+			} as never),
+		);
+		await svc.mutation(api.tasks.complete, {
+			taskId: blocker,
+			callerOrchestrator: "eta",
+			completionNote: "Shipped fix in PR #999, all tests pass 12/12",
+		} as never);
+		const receipts = await w.t.run(async (ctx) => {
+			const msgs = await ctx.db.query("messages").collect();
+			const mine = msgs.filter((m) => m.content.includes(String(waiter)));
+			const all = await ctx.db.query("messageReceipts").collect();
+			return all.filter((r) => mine.some((m) => m._id === r.messageId));
+		});
+		expect(receipts).toHaveLength(1);
+		expect(receipts[0]?.recipientId).toBe(w.agentA);
+		expect(receipts[0]?.recipientId).not.toBe(agentBNadia);
 	});
 });
