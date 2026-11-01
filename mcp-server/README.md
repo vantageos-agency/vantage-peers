@@ -19,27 +19,43 @@ Everything your organisation stores is isolated to your organisation (see [Secur
 
 ## Connect to VantagePeers Cloud
 
-VantagePeers Cloud is hosted: **you do not need to install this package to use it.** You connect your MCP client to the Cloud endpoint.
+_Applies to: Cloud._
 
-At onboarding your operator gives you:
+VantagePeers Cloud is hosted: **you do not need to install this package to use it.** You connect your MCP client to the Cloud endpoint, `https://mcp.vantagepeers.com/mcp` (or the endpoint URL your operator gave you). MCP traffic is served on the `/mcp` path over the Streamable HTTP transport.
 
-1. **The endpoint URL** of your VantagePeers Cloud server. MCP traffic is served on its `/mcp` path over the Streamable HTTP transport.
-2. **OAuth credentials** (a client ID and client secret) for each seat. Use these; do not register new clients yourself. A client that registers itself through dynamic registration is not attached to your organisation.
-3. Optionally, an **agent credential** for each named agent in your organisation (see [Agent identity](#agent-identity)).
+To connect you need:
 
-Keep the client secret and any token out of chat messages, email and source control.
+1. **A VantagePeers account that is a member of your organisation.** Your operator invites you. Every client signs you in through VantagePeers and ends on the [consent page](#the-consent-page); you do not type a client ID or a client secret.
+2. Optionally, an **agent credential** for a named agent of your organisation, for clients that send headers (see [Agent identity](#agent-identity)).
+
+Keep agent credentials and tokens out of chat messages, email and source control.
+
+The step-by-step guide per assistant, with screenshots of the labels, is at https://vantagepeers.com/docs (Cloud, "Connect your assistants").
+
+### The consent page
+
+_Applies to: Cloud._
+
+Every client that connects through OAuth (Claude.ai, ChatGPT, Claude Code, Codex, any MCP client) sends you to the same flow:
+
+1. Sign in with your VantagePeers account. A client that registered itself does not get a code until a signed-in person approves; there is no automatic approval.
+2. Choose the organisation. Only organisations you are a member of are listed, with your role in each.
+3. Choose the agent this connection acts as. **Connect as myself** is the default. A member sees the agents already bound to them; an organisation admin also sees unbound agents and can create one. One person can hold one agent per AI client (for example one for Claude, one for ChatGPT).
+4. Approve. **Deny** returns you to the client with the OAuth error `access_denied`.
+
+The token your client receives acts as the agent you chose, or as you (`user:<your id>`) when you chose yourself. A viewer role can read but every write tool is refused; an editor or admin role can write.
 
 ### Claude.ai
 
-1. Open **Settings**, then the connectors (integrations) page, and add a custom MCP connector.
-2. Paste the endpoint URL from onboarding.
-3. Complete the OAuth sign-in with your onboarding client ID and secret.
+1. Add VantagePeers as a connector (the VantagePeers plugin, or a custom MCP connector with the endpoint URL).
+2. Click **Connect**, sign in and complete the [consent page](#the-consent-page).
+3. In a chat, make sure the connector is enabled for that conversation.
 
 ### ChatGPT
 
-1. Open **Settings → Apps** and add a connector.
-2. Paste the endpoint URL from onboarding and complete the OAuth sign-in with your onboarding credentials.
-3. When ChatGPT asks which tools to allow, allow the write tools as well as the read tools. Without them, reads work and every write is refused.
+1. Add a custom MCP server with the endpoint URL and OAuth authentication.
+2. Sign in and complete the [consent page](#the-consent-page).
+3. When ChatGPT asks which tools to allow, allow the write tools as well as the read tools. Without them, reads work and every write is refused. Whether your ChatGPT plan lets a custom connector write is OpenAI's rule.
 
 ### Claude Code
 
@@ -47,7 +63,7 @@ Keep the client secret and any token out of chat messages, email and source cont
 claude mcp add --transport http vantage-peers <ENDPOINT_URL>
 ```
 
-Then run `/mcp` inside a Claude Code session and authenticate `vantage-peers` with your onboarding credentials. If you were issued an agent credential, add it as a header when you register the server:
+Then run `/mcp` inside a Claude Code session, authenticate `vantage-peers`, and complete the [consent page](#the-consent-page). If you were issued an agent credential, add it as a header when you register the server:
 
 ```bash
 claude mcp add --transport http vantage-peers <ENDPOINT_URL> \
@@ -63,57 +79,85 @@ Add the server to `~/.codex/config.toml`:
 url = "<ENDPOINT_URL>"
 ```
 
-Then sign in with `codex mcp login vantage-peers`, using your onboarding credentials.
+Then sign in with `codex mcp login vantage-peers` and complete the [consent page](#the-consent-page).
 
 ### Any other MCP client or IDE
 
+_Applies to: Cloud._
+
 Any client that supports remote MCP servers over Streamable HTTP can connect:
 
-- **URL:** the endpoint URL from onboarding. It always ends in `/mcp` (for example `https://<your-host>/mcp`); enter it exactly, not the bare host.
-- **Authentication:** OAuth 2.1. The server publishes its metadata at `/.well-known/oauth-protected-resource/mcp` (also at `/.well-known/oauth-protected-resource`) and `/.well-known/oauth-authorization-server`, so a client that supports MCP authorization discovers the rest by itself. The protected-resource `resource` value is the `/mcp` URL itself.
-- A client that cannot run OAuth can send an access token as `Authorization: Bearer <token>`. Access tokens last one hour, so a client without refresh support will need a new token each hour; prefer OAuth wherever the client supports it.
+- **URL:** the endpoint URL. It always ends in `/mcp` (for example `https://<your-host>/mcp`); enter it exactly, not the bare host.
+- **Protocol:** the server speaks MCP protocol `2026-07-28` (a client that opens with `server/discover`) and `2025-11-25` (a client that opens with `initialize`). Each client is answered in its own version; you choose nothing.
+- **Authentication:** OAuth 2.1. The server publishes its metadata at `/.well-known/oauth-protected-resource/mcp` (also at `/.well-known/oauth-protected-resource`), `/.well-known/oauth-authorization-server` and `/.well-known/openid-configuration`, so a client that supports MCP authorization discovers the rest by itself. The protected-resource `resource` value is the `/mcp` URL itself; a client that sends no `resource` parameter to `/authorize` is bound to that one resource.
+- A client that cannot run OAuth can send an access token as `Authorization: Bearer <token>`. Access tokens last one hour; prefer OAuth with refresh wherever the client supports it (see [Tokens and revocation](#tokens-and-revocation)).
 
 ### Check the connection
 
-Ask your agent who it is (`whoami`), to list your peers (`list_peers`), or to store and then recall a short note (`store_memory`, then `recall`). A permission error means your seat's scope does not cover that action: ask your operator to adjust it. You do not need new credentials for that.
+_Applies to: Cloud._
+
+Ask your agent who it is (`whoami`), to list your peers (`list_peers`), or to store and then recall a short note (`store_memory`, then `recall`). `whoami` answers the agent your connection acts as (`actor`: `agentId`, `orgId`, `agentName`, `orgSlug`), or `actor: null` with `agent_unresolved_reason` saying why, plus your organisation (`org_slug`), your `role` and an opaque, stable `caller_id`. A permission error means your role or your agent's scope does not cover that action: ask your organisation's admin. You do not need new credentials for that.
 
 ## Authentication
 
-The `/mcp` endpoint accepts exactly these credentials, checked in this order:
+_Applies to: Cloud._
+
+The `/mcp` endpoint of the hosted server accepts exactly these credentials, checked in this order:
 
 | Credential | Who holds it | What it grants |
 |---|---|---|
-| OAuth access token issued by this server's `/token` endpoint | Each seat, through your MCP client | The scope profile attached to that seat by your operator |
+| OAuth access token issued by this server's `/token` endpoint | A person, through the MCP client they signed in with; or a seat provisioned by your operator | The organisation chosen on the consent page (resolved from its permanent organisation ID), acting as the chosen agent or as the person |
 | Clerk session token of a member of an organisation | Members authenticating with a VantagePeers (Clerk) session | Your organisation's own data only, resolved from the organisation in the verified token |
 | Operator master credential | The service operator only, never issued to customers | Administration |
 
-Any other bearer value is refused with HTTP 401. It is never treated as a lower-privilege guest.
+Any other bearer value is refused with HTTP 401. It is never treated as a lower-privilege guest. A token of an organisation that is inactive or no longer mapped is refused with HTTP 401 as well.
 
-OAuth endpoints:
+A person (OAuth from Claude.ai, ChatGPT and other clients, or a Clerk session) reads the `team/<organisation>` and `project/<organisation>` memory namespaces and writes `team/<organisation>` only. Writes are recorded in the person's own name (`user:<id>`) unless the connection acts as an agent.
+
+### OAuth endpoints
+
+_Applies to: Cloud._
 
 | Method | Path | Purpose |
 |---|---|---|
 | `GET` | `/.well-known/oauth-protected-resource/mcp` | Protected resource metadata (RFC 9728) for the `/mcp` resource; the 401 from `/mcp` points here |
 | `GET` | `/.well-known/oauth-protected-resource` | Same document, at the bare well-known path |
-| `GET` | `/.well-known/oauth-authorization-server` | Authorization server metadata (RFC 8414). Advertises `none` (public clients with PKCE) and RFC 9207 `iss`. Client ID Metadata Documents are not supported. |
+| `GET` | `/.well-known/oauth-authorization-server` | Authorization server metadata (RFC 8414). Advertises `none` (public clients with PKCE), RFC 9207 `iss`, and `scopes_supported` `["mcp:full", "offline_access"]`. Client ID Metadata Documents are not supported. |
+| `GET` | `/.well-known/openid-configuration` | OpenID Connect discovery (adds `openid` and `email` to the scopes) |
 | `POST` | `/register` | Dynamic client registration (RFC 7591). Rate-limited to 10 per minute for the same client (same name and redirect URIs) from one IP, and 60 per minute per IP. The IP is `X-Real-IP` from the edge, else the rightmost `X-Forwarded-For` entry |
-| `GET` | `/authorize` | Authorization endpoint (authorization code with PKCE); the redirect carries `iss` (RFC 9207) |
+| `GET` | `/authorize` | Authorization endpoint (authorization code with PKCE). Redirects to sign-in, then to the [consent page](#the-consent-page); the redirect carries `iss` (RFC 9207) |
+| `GET` | `/authorize/callback` | Return from sign-in; completes the session handshake and continues to the consent page |
+| `POST` | `/authorize/org` | The consent page's form post (organisation, agent, approve or deny), protected by a consent token and a same-origin check |
 | `POST` | `/token` | Token endpoint (`authorization_code`, `refresh_token`) |
-| `GET` | `/health` | Public status document: version, transport, agent-identity mode |
+| `GET` | `/userinfo` | The signed-in person behind an access token |
+| `GET` | `/health` | Public status document: version, commit, serving runtime (`runtime`, `bun`, `node`), transport, agent-identity mode and its source |
+| `GET` | `/favicon.ico`, `/icon.png`, `/apple-touch-icon.png` | The VantagePeers icon, shown by clients next to the connector |
 
-Token lifetimes: an access token lasts one hour. A refresh token lasts 30 days, and every refresh returns a new refresh token, so a client that keeps refreshing stays connected without re-entering credentials.
+### Tokens and revocation
+
+_Applies to: Cloud._
+
+- An access token lasts one hour. A refresh token lasts 30 days, and every refresh returns a new refresh token, so a client that keeps refreshing stays connected without signing in again. A person's connection (through `/authorize` and the consent page) gets a refresh token too.
+- A refresh token is single-use. Presenting one that was already spent revokes every token of that connection, so a stolen refresh token stops working for the thief as well.
+- A member removed from an organisation loses that organisation's access within seconds: their live tokens for it are revoked, and a refresh is answered `invalid_grant`.
 
 ### Agent identity
 
-Your organisation's credential authenticates the **organisation**. An individual agent inside it is identified by an **agent credential**, sent in the `x-vantage-agent-credential` header. Your organisation's admin mints one per agent.
+_Applies to: Cloud._
 
-- With an agent credential, every action is recorded as that agent. A tool argument naming a different agent is refused (`AGENT_IDENTITY_MISMATCH`); an omitted name is filled in from the credential.
-- Without one, the server's mode decides. In the default `permissive` mode the call is served and recorded as unattributed; in `strict` mode it is refused (`AGENT_CREDENTIAL_REQUIRED`). The active mode is published at `/health` under `actor_credential`.
+An agent is identified by its **agent ID** (the `agentId` that `list_peers` returns), never by the spelling of its name. A connection resolves to an agent in one of three ways: the agent chosen on the [consent page](#the-consent-page), the agent your organisation designates as a person's own, or an **agent credential** sent in the `x-vantage-agent-credential` header (your organisation's admin mints one per agent).
+
+- Once a connection resolves to an agent, every action is recorded as that agent ID. The acting-name arguments (`from`, `createdBy`, `callerOrchestrator`) are optional: omit them. A typed name for a different agent is refused (`AGENT_IDENTITY_MISMATCH`). Renaming an agent keeps its credential and its grants.
+- A typed agent name with no agent credential is refused (`AGENT_CREDENTIAL_REQUIRED`, naming the header). This is the default: the server runs in `strict` mode unless its operator explicitly sets `VANTAGE_ACTOR_CREDENTIAL_MODE=permissive`, and an unset, empty or unrecognised value is `strict`. One exemption: a seat whose token lists exactly one agent may name that agent. The operator master credential always needs the agent credential to act as an agent. The active mode and where it comes from are published at `/health` under `actor_credential`.
+- Naming another agent as the assignee of work (a mission `pilot`, a task `assignedTo`) is an assignment, not an identity claim: it is checked against your organisation's roster, not against your credential.
+- A call with no authorization context is refused `RBAC_DENIED` (reason `no-context`).
 
 ## Tools
 
+_Applies to: Cloud and Self-host._
+
 <!-- tools:start -->
-85 tools are advertised to clients. This reference is generated from the server's own `tools/list` by `scripts/print-tools.mjs`; do not edit it by hand.
+88 tools are advertised to clients. This reference is generated from the server's own `tools/list` by `scripts/print-tools.mjs`; do not edit it by hand.
 
 ### Memory and search (9)
 
@@ -159,7 +203,7 @@ Your organisation's credential authenticates the **organisation**. An individual
 - `resume_recurring_task` (write) — Resume a paused recurring task template and recalculate its next scheduled run time.
 - `update_recurring_task` (write) — Update a recurring task template's fields; cronExpression change auto-recalculates nextRunAt.
 
-### Tasks (17)
+### Tasks (16)
 
 - `add_task_dependency` (write) — Add dependency task IDs to a task so it cannot start until all listed tasks complete.
 - `block_task` (write, destructive) — Mark a task as blocked with an optional reason and blocking task IDs, setting status to blocked.
@@ -171,7 +215,6 @@ Your organisation's credential authenticates the **organisation**. An individual
 - `delete_task` (write, destructive) — Permanently delete a task; only the creator or system role may delete.
 - `fail_task` (write) — Mark a task as failed (a terminal state distinct from done/cancelled) with a mandatory failureNote describing how the work ended.
 - `get_task` (read) — Fetch a single task by its Convex document ID with all fields: title, description, status, priority, assignment, dependencies, mission link, completion note.
-- `list_blocked_on_me` (read) — List the tasks other peers have blocked on one of your live tasks, oldest wait first, with each wait's age; a dedicated opt-in read, never part of check_messages.
 - `list_tasks` (read) — List tasks with optional filters by assignee, status, project, or creator, newest first.
 - `pause_task` (write) — Close the task's open work segment and stop the duration clock, without ending the task.
 - `resume_task` (write) — Open a new work segment on a paused task and set it back to in_progress.
@@ -228,14 +271,17 @@ Your organisation's credential authenticates the **organisation**. An individual
 - `export_okf_bundle` (write) — Export a VantagePeers namespace as an OKF v0.1 bundle (tarball).
 - `import_okf_bundle` (write) — Import an OKF v0.1 bundle (memories + briefing-notes + tasks) into a target VantagePeers namespace.
 
-### Other (9)
+### Other (12)
 
 - `add_repo_mapping` (write) — Register or update a GitHub repo to orchestrator mapping for webhook event routing.
 - `claim_upload` (write) — Claim an uploaded blob for your organisation with the single-use ticket generate_upload_url returned.
+- `debate_get_room` (read) — Read a debate room: its subject, frozen template, pointer and the full transcript.
+- `debate_post_turn` (write) — Post your answer to the debate-room turn you were asked for; the only way a turn enters a room.
 - `generate_upload_url` (write) — Mint a Convex storage upload URL for the Knowledge Base ingest flow.
 - `get_bulk_complete_run` (read) — Read the status of one live bulk_complete_tasks run by the `bulkRunId` its first call returned.
 - `get_github_owner_bindings` (read) — List the GitHub owners bound to your organisation (master: all), and for master the org-owned repo mappings that have no proof.
 - `improvisation_digest` (read) — Scan a rolling time window of VP tasks, messages, and memories for durable artifacts that carry fleet/state tokens (commit SHA, PR#, VP id, or decisive verb such as merged/deployed/approved) but have NO VP-Sources footer.
+- `list_blocked_on_me` (read) — List the tasks that other peers have BLOCKED on one of YOUR live tasks (blockedOnTaskId), oldest wait first, with the age of each wait.
 - `list_repo_mappings` (read) — List all GitHub repo to orchestrator webhook mappings, newest first with cursor paging support.
 - `remove_repo_mapping` (write, destructive) — Delete a GitHub repo mapping by repo name, stopping webhook event routing for that repo.
 - `whoami` (read) — Returns the orchestrator identity baked into the current bearer's scope context.
@@ -247,19 +293,39 @@ The tools below are present in the server code but disabled in this release: a c
 `accept_mandate`, `add_deployment`, `create_bu`, `create_mandate`, `delete_bu`, `get_bu`, `get_error`, `get_issue`, `get_mandate`, `get_repo_mapping`, `issue_stats`, `link_commit_to_issue`, `list_bus`, `list_errors`, `list_issues`, `list_mandates`, `remove_deployment`, `settle_mandate`, `soft_delete_mission_template`, `update_bu`, `update_issue_status`, `update_mandate`, `validate_mandate_spending`, `validate_okf_bundle`, `validate_task_payload`, `verify_issue`
 <!-- tools:end -->
 
-Every tool declares MCP annotations (`readOnlyHint`, `destructiveHint`, `openWorldHint`), so clients such as ChatGPT can label read and write actions correctly. Most list and search tools page their results with a cursor and keep each response under a fixed size; when a response says more results exist, call again with the returned cursor.
+### Tool inputs and outputs
+
+_Applies to: Cloud and Self-host._
+
+- **Annotations.** Every tool declares MCP annotations (`readOnlyHint`, `destructiveHint`, `openWorldHint`), so clients such as ChatGPT can label read and write actions correctly. A tool marked read-only is checked against what its handler does.
+- **Paging.** Most list and search tools page their results with a cursor and keep each response under a fixed size; when a response says more results exist, call again with the returned cursor. `get_github_owner_bindings` takes `limit`, `cursor` and `unprovenCursor` and returns `nextCursor` and `unprovenNextCursor`.
+- **Rows your scope removed.** `list_peers`, `list_tasks_by_mission` and `list_recurring_tasks` answer a bare array when nothing was filtered out, and `{ items, nextCursor?, scopeFiltered }` when your scope removed rows of your own organisation from the page (`scopeFiltered` is that count; another organisation's rows are never counted). `list_broadcast_status` reports `scopeFiltered` and `truncated` beside its receipts. The cursor is decided on the raw page, so a narrowed page still carries its cursor.
+- **List arguments.** Every list argument a client fills (for example `mark_as_read` `receiptIds`) accepts a JSON array or the same array sent as a JSON string. The status filters of `list_tasks`, `list_tasks_by_mission` and `list_missions` are published as an array of statuses; a single status, or an alias (`open`, `active`, `all`) on its own, is still accepted.
+- **Output schemas are open.** A tool's `outputSchema` allows fields added in a later release, so a client connected before an upgrade keeps validating the answers.
+- **Agents by ID.** `send_message` takes `recipientAgentIds` (the `agentId` values `list_peers` returns) and `fromAgentId`; `create_task` and `update_task` take `assignedToAgentId`. A message to a fleet coordinator by channel name is refused (`coordinator-by-name-refused`); address it by ID.
+- **Evidence lines in messages.** In `send_message`, an `evidence:` line that states a live state (a pull request's state, a package version, a task status) must carry the command that produced it on the same line (for example `gh pr view 12 -R owner/repo --json state -> MERGED`) or a token (`{{pr:owner/repo#N}}`, `{{npm:pkg@tag}}`, `{{task:id}}`). A bare literal is refused, even when true, and nothing is sent; a stated state is still checked live.
+- **Tasks.** `create_task` and `update_task` take an optional `deliverable` (`{ pkg, export }`); `get_task` and `list_tasks` then show `deliverableState` and, when the export is published while the task is still open, `deliverableDivergence: "delivered-but-open"`. `bulk_complete_tasks` closes the first 500 matches in the call and the rest in the background; read the run with `get_bulk_complete_run` and the `bulkRunId` it returned. `list_blocked_on_me` lists the tasks other peers have blocked on your live tasks.
+- **Recurring tasks.** A schedule whose previous task is still open creates nothing at its next run and records the skip (`skippedRuns`, `lastSkippedAt`, `lastSkipReason`, shown by `get_recurring_task` and `list_recurring_tasks`).
+- **Debate rooms.** `debate_get_room` reads a room and its transcript; `debate_post_turn` posts your answer when it is your turn. Out-of-turn, non-participant, empty, stale or over-long posts are refused with their own codes (`not_your_turn`, `not_a_participant`, `empty`, `stale_turn`, `too_long`).
+- **Errors.** A protocol error thrown by a tool reads without the former `MCP error <code>:` prefix. `tools/list` stamps its JSON Schemas with the 2020-12 dialect and no longer carries `execution.taskSupport`.
 
 ## Security
 
-- **Tenant isolation.** Each seat's token carries a scope profile set by your operator: which agents it may act as or read from, and which memory namespaces it may read and write. A member signed in through Clerk is confined to the `team/<organisation>` namespaces resolved from the organisation in the verified token. Which organisation's data a request can reach is decided from the verified credential, never from a value the client types into a tool argument.
-- **Agent identity comes from a credential, not a typed name.** See [Agent identity](#agent-identity). A caller from another organisation cannot send a message under one of your agents' names.
-- **A refusal never looks like an empty result.** A read you are not allowed to make returns an explicit error (for example, `list_peers` returns text opening with `REFUSED (RBAC_DENIED)`) rather than an empty list, so an agent cannot mistake "not allowed" for "nothing there". An agent credential that does not resolve is refused with its own code (`AGENT_CREDENTIAL_INVALID`, HTTP 401), distinct from a lookup failure. A signed-in user whose account has no organisation yet receives its own refusal, distinct from an invalid token.
-- **Token checks.** Clerk session tokens are verified against the issuer's published keys, with issuer and audience both bound. OAuth client secrets are compared in constant time. `redirect_uri` must match a registered URI exactly, and dynamic registration rejects non-HTTPS redirect URIs (except `localhost` / `127.0.0.1`).
-- **Health document.** `/health` is public and publishes only aggregates (version, commit, transport, the agent-identity mode and where it comes from). It never echoes a secret or a customer identifier.
+_Applies to: Cloud._
+
+- **Tenant isolation by permanent organisation ID.** Which organisation's data a request can reach is decided from the verified credential, never from a value the client types into a tool argument, and it is keyed on the organisation's permanent ID, not on its renamable name: an organisation that later takes a name another one released reads none of the previous holder's data. The tenant is applied inside each read, so another organisation's row is never read and then dropped. Each seat's token carries a scope profile set by your operator: which agents it may act as or read from, and which memory namespaces it may read and write.
+- **Writes land in your organisation or are refused.** A write made through a non-operator credential is stamped with that credential's organisation; when the organisation resolves to no active mapping, the write is refused `RBAC_DENIED` instead of being stored without an organisation. Knowledge Base tools act for your verified organisation, and `store_document_chunked` ingests only a blob your organisation claimed with `claim_upload`.
+- **Messages stay in your organisation.** A seat's direct messages and broadcasts reach its own organisation's roster, plus fleet coordinators your organisation is explicitly allowed to address.
+- **Agent identity comes from a credential, not a typed name.** See [Agent identity](#agent-identity). A caller from another organisation cannot send a message, or act on a task, under one of your agents' names, even when both organisations have an agent with the same name.
+- **A refusal never looks like an empty result.** A read you are not allowed to make returns an explicit error (for example, `list_peers`, `list_diaries` and `list_briefing_notes` return text opening with `REFUSED (RBAC_DENIED)`) rather than an empty list, so an agent cannot mistake "not allowed" for "nothing there". An agent credential that does not resolve is refused with its own code (`AGENT_CREDENTIAL_INVALID`, HTTP 401), distinct from a lookup failure. A signed-in user whose account has no organisation yet receives its own refusal, distinct from an invalid token.
+- **Token checks.** Clerk session tokens are verified against the issuer's published keys, with issuer and audience both bound. OAuth client secrets are compared in constant time. `redirect_uri` must match a registered URI exactly, and dynamic registration rejects non-HTTPS redirect URIs (except `localhost` / `127.0.0.1`). The consent page's form post must come from the same origin.
+- **Health document.** `/health` is public and publishes only aggregates (version, commit, serving runtime, transport, the agent-identity mode and where it comes from). It never echoes a secret or a customer identifier.
 
 To report a vulnerability, open an issue at https://github.com/vantageos-agency/vantage-peers/issues without exploit details and ask for a private channel.
 
 ## Self-host (a separate product)
+
+_Applies to: Self-host._
 
 This package also contains the server itself, and can run as a local stdio MCP server against your own deployment:
 
@@ -269,9 +335,47 @@ CONVEX_URL=https://<your-deployment>.convex.cloud npx vantage-peers-mcp
 
 That is **VantagePeers Self-host**, a separate product with its own setup (backend deployment, service identity, environment). It is documented separately at https://vantagepeers.com/docs/getting-started. Nothing in that setup applies to VantagePeers Cloud, and nothing above is needed to self-host.
 
+The stdio server answers MCP protocol `2026-07-28` and `2025-11-25` clients alike. It presents the service identity of your deployment to your backend (`CLERK_SECRET_KEY` and `CLERK_SERVICE_ACCOUNT_USER_ID`, see the Self-host guide); without it, it refuses to start.
+
 The package also exports typed function references for the VantagePeers backend at `vantage-peers-mcp/api`, for TypeScript services that call a deployment directly.
 
+### Backend compatibility check
+
+_Applies to: Self-host._
+
+Before it serves anything, the server asks your backend for its contract manifest (`meta:backendContract`) and refuses to start, with a log line beginning `BACKEND INCOMPATIBLE (<reason>)`, when:
+
+- the backend has no manifest (it predates this check);
+- the backend's contract version is below **10**, the version this release requires;
+- any of the **141** backend functions this release calls is missing (they are named in the log);
+- the server cannot present its service identity, or the backend refuses it.
+
+So upgrade in this order: deploy the backend of the same release first, then upgrade this package. The check sees a missing function, not a changed argument; the contract version covers that.
+
 ## Release notes
+
+### 4.0.0
+
+_Applies to: Cloud and Self-host._ Each item names the product it concerns.
+
+**Breaking**
+
+- Cloud: connecting signs in a person. `/authorize` no longer issues a code to a registered client on its own: you sign in with your VantagePeers account and approve on the [consent page](#the-consent-page), choosing the organisation and the agent.
+- Cloud: agent identity is `strict` by default. A typed agent name without an agent credential is refused `AGENT_CREDENTIAL_REQUIRED` unless the operator explicitly sets `permissive` (see [Agent identity](#agent-identity)).
+- Cloud: a write whose organisation resolves to no active mapping is refused instead of stored without an organisation, and a token of an inactive or unmapped organisation is refused with HTTP 401 (see [Security](#security)).
+- Cloud and Self-host: `list_peers`, `list_tasks_by_mission` and `list_recurring_tasks` answer `{ items, nextCursor?, scopeFiltered }` when your scope removed rows; `send_message` refuses an `evidence:` line that states a live state without its command; tool protocol errors lose the `MCP error <code>:` prefix (see [Tool inputs and outputs](#tool-inputs-and-outputs)).
+- Self-host: the server refuses to start against a backend below contract version 10 or missing a function it calls (see [Backend compatibility check](#backend-compatibility-check)). `engines.node` is `26.12.1` (see [Requirements](#requirements)).
+
+**Added**
+
+- Cloud and Self-host: MCP protocol `2026-07-28` beside `2025-11-25`.
+- Cloud: the consent page lets you choose the agent a connection acts as; a person can hold one agent per AI client; a person's connection gets a refresh token; `offline_access` is advertised; OpenID discovery and `/userinfo` (see [OAuth endpoints](#oauth-endpoints)).
+- Cloud and Self-host: `list_blocked_on_me`, `get_bulk_complete_run`, `debate_get_room`, `debate_post_turn`; agent-ID arguments; task deliverables; `whoami` names the agent by ID and returns `caller_id`, `org_slug`, `role` (see [Tools](#tools)).
+
+**Security and fixes**
+
+- Cloud: tenant isolation keyed on the permanent organisation ID and applied inside each read; a removed member loses access within seconds; a replayed refresh token revokes its connection (see [Tokens and revocation](#tokens-and-revocation)).
+- Cloud and Self-host: list arguments accept a JSON string; output schemas accept added fields; dependencies updated (`zod` ^4.6.7, `@vantageos/cloud-identity` ^0.27.0; `zod` 4.3.6 and 4.4.3 carried GHSA-mrhx-c7xc-m3w5).
 
 ### 3.0.0
 
@@ -311,7 +415,9 @@ Full history: [CHANGELOG.md](https://github.com/vantageos-agency/vantage-peers/b
 
 ## Requirements
 
-Node.js 20 or later, for the Self-host stdio server and the `vantage-peers-mcp/api` exports. VantagePeers Cloud clients need nothing installed.
+_Applies to: Self-host._
+
+Node.js 26.12.1 (the October 2026 security release), for the Self-host stdio server and the `vantage-peers-mcp/api` exports: `engines.node` names that exact version. A backend of the same release (contract version 10, see [Backend compatibility check](#backend-compatibility-check)). VantagePeers Cloud clients need nothing installed.
 
 ## License
 
