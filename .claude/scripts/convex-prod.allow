@@ -16,3 +16,5 @@ run migrations/tenantOrgIdCoverage:count
 run migrations/tenantOrgIdCoverage:backfill
 run meta:backendContract
 run clientOrgMapping:setActive
+run oauth:upsertScopeProfile
+run agents:setAgentOwner
