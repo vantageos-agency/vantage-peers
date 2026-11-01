@@ -1,5 +1,6 @@
 import type { ConvexHttpClient } from "convex/browser";
 import { isMasterScope, type OAuthContext, seatAgentOf } from "./auth.js";
+import { type DoorScopeArgs, verifiedOrgSlugOf } from "./doorScope.js";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // toolUsage — the MCP side of "which tools has this caller called" (task
@@ -59,6 +60,12 @@ export async function recordToolUsage(
 	try {
 		const caller = toolUsageCallerOf(oauthCtx);
 		if (!caller.send) return;
+		// The organisation the bearer was verified for rides as the transport claim
+		// (R-54). A Clerk session sends none: Convex sees its own org. Any other
+		// bearer whose organisation cannot be resolved records nothing.
+		const claimed = verifiedOrgSlugOf(oauthCtx);
+		const orgSlug = claimed === "" ? undefined : claimed;
+		if (caller.callerKey !== undefined && orgSlug === undefined) return;
 		await convex.mutation(
 			// biome-ignore lint/suspicious/noExplicitAny: Convex string API
 			"toolUsage:record" as any,
@@ -67,9 +74,47 @@ export async function recordToolUsage(
 				...(caller.callerKey !== undefined
 					? { caller: caller.callerKey }
 					: {}),
+				...(orgSlug !== undefined ? { verifiedOrg: { orgSlug } } : {}),
 			},
 		);
 	} catch {
 		// a recording failure is not the tool's failure
 	}
+}
+
+/**
+ * The identity facts a tool-usage READ hands the Convex door, from the verified
+ * oauthContext only: the door's scope arguments (a person bearer's token proof,
+ * the bearer's verified organisation), else the seat's agent key. A named
+ * organisation (`orgSlug`) rides as the transport claim: Convex believes it from
+ * the service account only and refuses another organisation than the one the
+ * call acts for, so a non-master naming a foreign organisation is refused there.
+ * A Clerk session and the master send no key (Convex sees them itself). Any other
+ * bearer that resolves no identity is REFUSED here: the Convex door serves an
+ * acting-org call that presents no identity as the org-scoped service caller (the
+ * onboarding engine), so an unidentified seat must never reach it.
+ */
+export function toolUsageReadArgs(
+	oauthCtx: OAuthContext | undefined,
+	scopeArgs: DoorScopeArgs,
+	orgSlug: string | undefined,
+): { args: Record<string, unknown> } | { denied: string } {
+	if (oauthCtx === undefined) {
+		return { denied: "Forbidden: the request carried no authorization context." };
+	}
+	const named = orgSlug !== undefined ? { verifiedOrg: { orgSlug } } : {};
+	if (isMasterScope(oauthCtx) || oauthCtx.clerkJwt !== undefined) {
+		return { args: { ...scopeArgs, ...named } };
+	}
+	if (scopeArgs.verifiedPerson !== undefined) {
+		return { args: { ...scopeArgs, ...named } };
+	}
+	const self = toolUsageCallerOf(oauthCtx);
+	if (self.send && self.callerKey !== undefined) {
+		return { args: { selfKey: self.callerKey, ...scopeArgs, ...named } };
+	}
+	return {
+		denied:
+			"Forbidden: this tool needs a caller identity and this bearer resolves none (no agent credential, no one-agent seat, no person token).",
+	};
 }
