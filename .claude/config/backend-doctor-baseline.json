@@ -71,10 +71,10 @@
 		},
 		"CR-2": {
 			"count": 245,
-			"measured_tree_sha": "88ae202f2da361d905a1c5044ea1529ce8f53637",
+			"measured_tree_sha": "72971002f67f8385c5d7679872a3a0b4629db543",
 			"cli_commit": "f6297a29c64a0265124e3e9cf86c9dd85eac47c0",
-			"command": "npx -y @vantageos/backend-doctor@0.5.0 <vantage-peers clean full checkout @88ae202f (#1579 rebased on 8aa3a7c1, task k1755rzrkbr397hpeftnjcqb2d8h7yhg), deps installed> --json-evidence <dir>/",
-			"output_line": "CR-2 VERDICT: 246 violation(s) — MECHANICAL, the gate refuses; 6 exempt; 1 could-not-judge.; MECHANICAL RULE COUNTS: CR-2 246, CR-3 16, R-5 62, R-53 323, R-54 132, R-55 22, R-56 2",
+			"command": "npx -y @vantageos/backend-doctor@0.5.0 <vantage-peers clean full checkout @72971002 (slug-class PR 1, task k1783fk8r6p795x9fxrzyt9evd8hcxm7), deps installed> --json-evidence <dir>/",
+			"output_line": "CR-2 VERDICT: 245 violation(s) — MECHANICAL, the gate refuses; 6 exempt; 1 could-not-judge.; MECHANICAL RULE COUNTS: CR-2 245, CR-3 16, R-5 62, R-53 323, R-54 112, R-55 22, R-56 2",
 			"modules": {}
 		},
 		"R-54": {
