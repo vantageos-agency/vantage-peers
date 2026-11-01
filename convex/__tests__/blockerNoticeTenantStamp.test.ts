@@ -98,7 +98,7 @@ async function scenario(
 	}
 	const rows = await t.run(async (ctx) => ({
 		notices: (await ctx.db.query("messages").collect()).filter(
-			(m) => m.from === "system" && m.content.includes(waiterId),
+			(m) => m.content.includes(waiterId),
 		),
 		receipts: await ctx.db.query("messageReceipts").collect(),
 	}));

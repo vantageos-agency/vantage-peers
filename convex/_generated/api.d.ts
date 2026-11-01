@@ -72,6 +72,7 @@ import type * as lib_inboxReader from "../lib/inboxReader.js";
 import type * as lib_license from "../lib/license.js";
 import type * as lib_memberScopes from "../lib/memberScopes.js";
 import type * as lib_memoryTenant from "../lib/memoryTenant.js";
+import type * as lib_messageTenant from "../lib/messageTenant.js";
 import type * as lib_missionActors from "../lib/missionActors.js";
 import type * as lib_nameOnlyCalls from "../lib/nameOnlyCalls.js";
 import type * as lib_npmExportCheck from "../lib/npmExportCheck.js";
@@ -238,6 +239,7 @@ declare const fullApi: ApiFromModules<{
   "lib/license": typeof lib_license;
   "lib/memberScopes": typeof lib_memberScopes;
   "lib/memoryTenant": typeof lib_memoryTenant;
+  "lib/messageTenant": typeof lib_messageTenant;
   "lib/missionActors": typeof lib_missionActors;
   "lib/nameOnlyCalls": typeof lib_nameOnlyCalls;
   "lib/npmExportCheck": typeof lib_npmExportCheck;
