@@ -9,7 +9,9 @@ import { fleetPartyId, requireFleetAgentActor } from "./lib/fleetActors";
 import { requireFleetDoor, scopeWithFleetStanding } from "./lib/fleetStanding";
 import { resolveAgentIdArg } from "./lib/agentIdArgs";
 import { recordNameOnlyCall } from "./lib/nameOnlyCalls";
-import { fleetOperatorSlug } from "./lib/operatorOrg";
+import { fleetOperatorRef, fleetOperatorSlug } from "./lib/operatorOrg";
+import { resolveVerifiedOrgMapping, verifiedOrgValidator } from "./lib/verifiedOrg";
+import { sameOrg } from "@vantageos/cloud-identity";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // requireFleetMaster — mandates.ts's own single authority gate.
@@ -533,6 +535,11 @@ export const validateSpending = query({
 	args: {
 		mandateId: v.id("mandates"),
 		proposedAmount: v.number(),
+		// The organisation the MCP transport VERIFIED for a bearer that reaches
+		// Convex as the fleet service account (convex/lib/verifiedOrg.ts). A
+		// mandate has no org column: it is the OPERATOR organisation's (both
+		// parties are operator-org agents), so only the operator org is served.
+		verifiedOrg: v.optional(verifiedOrgValidator),
 	},
 	returns: v.object({
 		withinLimits: v.boolean(),
@@ -552,6 +559,24 @@ export const validateSpending = query({
 			masterOnly: true,
 			operatorHumanMayRead: true,
 		});
+		// A fleet-wide identity is master: the gate above cannot tell the fleet's
+		// own caller from a client org's seat that reached Convex through the MCP
+		// service account. The verified org can. Refused BEFORE the read, so a
+		// foreign org learns neither a figure nor whether the id exists.
+		if (args.verifiedOrg !== undefined) {
+			const mapping = await resolveVerifiedOrgMapping(
+				ctx,
+				scope,
+				args.verifiedOrg,
+				"mandates:validateSpending",
+			);
+			const operator = await fleetOperatorRef(ctx.db);
+			if (!sameOrg({ id: mapping?.clerkOrgId }, operator)) {
+				throw new ConvexError(
+					`RBAC_DENIED: mandates belong to the operator organisation; "${args.verifiedOrg.orgSlug}" may not read them — ${JSON.stringify({ reason: "mandate-outside-verified-org", door: "mandates:validateSpending" })}`,
+				);
+			}
+		}
 		const mandate = await ctx.db.get(args.mandateId);
 		if (!mandate) {
 			return { withinLimits: false, reason: "Mandate not found", currentSpend: 0, remainingBudget: 0 };
