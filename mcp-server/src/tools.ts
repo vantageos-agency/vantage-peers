@@ -6722,6 +6722,12 @@ export function registerTools(
 				// createdBy gracefully degrades to undefined (transition period).
 				const createdBy: string | undefined = oauthCtx?.userId;
 
+				// The write is made for the bearer's verified org (`verifiedOrg`):
+				// a seat reaches Convex as the service account, which would
+				// otherwise store the entry fleet-owned. A bearer whose org cannot
+				// be resolved is refused here, before any write.
+				const orgDenied = unresolvedOrgDenial("write_diary");
+				if (orgDenied !== null) return orgDenied;
 				const diaryId = await convex.mutation("diary:write" as any, {
 					date,
 					orchestrator,
@@ -6729,6 +6735,7 @@ export function registerTools(
 					highlights: toArray(highlights),
 					blockers: toArray(blockers),
 					createdBy,
+					...doorScopeArgs("diary:write", undefined),
 				});
 
 				return {
@@ -6781,9 +6788,15 @@ export function registerTools(
 		async ({ date, orchestrator }) => {
 			try {
 				// S3.1.C1 — scope-aware filter replaces guardMasterOnly.
+				// Tenant applied INSIDE the Convex read (`verifiedOrg`): the door
+				// reads the caller's org range only. scopeFilterGet below compares
+				// names, which collide across organisations, so it cannot do this.
+				const orgDenied = unresolvedOrgDenial("get_diary");
+				if (orgDenied !== null) return orgDenied;
 				const entry = await convex.query("diary:get" as any, {
 					date,
 					orchestrator,
+					...doorScopeArgs("diary:get", undefined),
 				});
 				const filteredEntry = scopeFilterGet(
 					oauthCtx ?? DENIED_SCOPE_CTX,
@@ -6906,12 +6919,18 @@ export function registerTools(
 				const effectiveLimit =
 					limit === undefined ? undefined : clampLimit(limit);
 
+				// Tenant applied INSIDE the Convex read (`verifiedOrg`): the gate
+				// above compares the userId to a NAME, and names collide across
+				// organisations. A bearer whose org cannot be resolved is refused.
+				const orgDenied = unresolvedOrgDenial("list_diaries");
+				if (orgDenied !== null) return orgDenied;
 				const entries = await convex.query("diary:list" as any, {
 					orchestrator,
 					createdBy,
 					limit: effectiveLimit ?? 20,
 					fields: fields ?? "lite",
 					createdBefore,
+					...doorScopeArgs("diary:list", undefined),
 				});
 
 				// A refusal is not an absence: say so BEFORE the `Array.isArray`

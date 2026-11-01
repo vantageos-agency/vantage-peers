@@ -68,8 +68,23 @@ function bearerOf(org: string): OAuthContext {
 	};
 }
 
+/**
+ * A write names an orchestrator, so an org-level bearer must present the
+ * per-agent credential of that agent (the acting-claim gate); its org is the
+ * agent's own.
+ */
+function seatOf(org: string): OAuthContext {
+	return {
+		...bearerOf(org),
+		actor: { agentId: `agent-${org}`, orgSlug: org, agentName: SEAT },
+	};
+}
+
+const bearerFor = (tool: string, org: string): OAuthContext =>
+	tool === "write_diary" ? seatOf(org) : bearerOf(org);
+
 function orglessBearer(): OAuthContext {
-	const { clerkOrgSlug: _drop, ...rest } = bearerOf(OWN_ORG);
+	const { clerkOrgSlug: _drop, actor: _actor, ...rest } = seatOf(OWN_ORG);
 	return rest;
 }
 
@@ -150,7 +165,7 @@ const TOOLS: Array<{ tool: string; fn: string; args: Record<string, unknown> }> 
 
 describe.each(TOOLS)("$tool $args — the diary door runs under the bearer's verified org", (t) => {
 	it("CLAIM: the call carries verifiedOrg = the bearer's org", async () => {
-		const { calls, result } = await call(t.tool, bearerOf(OWN_ORG), t.args);
+		const { calls, result } = await call(t.tool, bearerFor(t.tool, OWN_ORG), t.args);
 		expect(isError(result), text(result)).toBe(false);
 		expect(calls).toHaveLength(1);
 		expect(calls[0].fn).toBe(t.fn);
@@ -161,7 +176,12 @@ describe.each(TOOLS)("$tool $args — the diary door runs under the bearer's ver
 		const { calls, result } = await call(t.tool, orglessBearer(), t.args);
 		expect(calls).toHaveLength(0);
 		expect(isError(result)).toBe(true);
-		expect(text(result)).toContain("verified-org-unresolved");
+		// The write is refused earlier still, by the acting-claim gate (an
+		// org-level bearer without an agent credential); an agent credential
+		// always carries its org, so on the write the org denial is defence in depth.
+		expect(text(result)).toContain(
+			t.tool === "write_diary" ? "agent-credential-required" : "verified-org-unresolved",
+		);
 	});
 
 	it("MASTER: forwards no claim", async () => {

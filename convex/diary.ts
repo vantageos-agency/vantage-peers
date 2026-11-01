@@ -16,6 +16,10 @@ import { memberActorOf, resolveHumanActor } from "./lib/humanActor";
 import { requireMemberWriterRole } from "./memberWriterRoles";
 import { listedAgentsOfOrg } from "./lib/rosterIds";
 import { normalizeOrchestratorId } from "./_helpers/normalizeOrchestratorId";
+import {
+	resolveVerifiedOrgScope,
+	verifiedOrgValidator,
+} from "./lib/verifiedOrg";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // The diary is read and written by ID scope (module M10b; see
@@ -45,6 +49,15 @@ import { normalizeOrchestratorId } from "./_helpers/normalizeOrchestratorId";
 // AUTHOR. A member's `createdBy` is the verified caller ("user:<subject>"). A
 // claimed author that is anyone else is refused. Only the transport-verified
 // master (the MCP server) supplies `createdBy` for the seat it authenticated.
+//
+// VERIFIED ORG (task k176723g3m5cczsq44ak9fbgm58hd0tx). A non-master MCP bearer
+// reaches Convex as the fleet service account, so `withOrgScope` alone resolves
+// MASTER: `list` read every tenant's rows of a name, `get` the fleet range, and
+// `write` stored the row fleet-owned. The transport's `verifiedOrg` (believed
+// from the service account only, convex/lib/verifiedOrg.ts) makes `write`, `get`
+// and `list` run under that organisation's MEMBER scope, as `briefingNotes`
+// does, so the tenant and the ID roster above apply to a seat exactly as they
+// apply to a signed-in member. With no claim, each door is byte-unchanged.
 // ─────────────────────────────────────────────────────────────────────────────
 
 /**
@@ -197,6 +210,9 @@ export const write = mutation({
 		// v2.4.8: auth-derived author. MCP layer passes oauthCtx.userId here.
 		// Optional for backwards compat (pre-v2.4.8 callers omit it).
 		createdBy: v.optional(creatorValidator),
+		// Transport-verified org of a service-account bearer: the write is made
+		// for that org (ID roster, tenant row, stamp). See the header.
+		verifiedOrg: v.optional(verifiedOrgValidator),
 	},
 	returns: v.id("diary"),
 	handler: async (ctx, args) => {
@@ -213,9 +229,18 @@ export const write = mutation({
 		// mcp-server/src/authenticatedConvexClient.ts), so the
 		// fail-closed default here never breaks that live path.
 		const scope = await withOrgScope(ctx);
-		if (!(await orchestratorListed(ctx, scope, args.orchestrator, "diary:write"))) {
+		// The org the write is made FOR: the verified org's member scope for a
+		// service-account bearer carrying one, else the caller's own scope.
+		// `scope` stays the transport scope for the author and writer-role checks.
+		const tenantScope = await resolveVerifiedOrgScope(
+			ctx,
+			scope,
+			args.verifiedOrg,
+			"diary:write",
+		);
+		if (!(await orchestratorListed(ctx, tenantScope, args.orchestrator, "diary:write"))) {
 			throw new ConvexError(
-				`RBAC_DENIED: caller may not write a diary entry for orchestrator "${args.orchestrator}" — ${JSON.stringify({ orgSlug: scope.orgSlug, reason: "orchestrator-not-listed" })}`,
+				`RBAC_DENIED: caller may not write a diary entry for orchestrator "${args.orchestrator}" — ${JSON.stringify({ orgSlug: tenantScope.orgSlug, reason: "orchestrator-not-listed" })}`,
 			);
 		}
 		// A person writes only with a writer role (data: convex/memberWriterRoles.ts);
@@ -233,31 +258,31 @@ export const write = mutation({
 			);
 		}
 		const createdBy = ownAuthor ?? args.createdBy;
-		if (!scope.isMaster && scope.orgClerkId === undefined) {
+		if (!tenantScope.isMaster && tenantScope.orgClerkId === undefined) {
 			throw new ConvexError(
-				`RBAC_DENIED: caller's organisation has no permanent org ID to stamp a diary entry with — ${JSON.stringify({ reason: "org-id-missing", door: "diary:write", orgSlug: scope.orgSlug })}`,
+				`RBAC_DENIED: caller's organisation has no permanent org ID to stamp a diary entry with — ${JSON.stringify({ reason: "org-id-missing", door: "diary:write", orgSlug: tenantScope.orgSlug })}`,
 			);
 		}
 
 		const now = Date.now();
 
 		// Check for existing entry
-		const existing = await ownDiaryRow(ctx, scope, args.orchestrator, args.date);
+		const existing = await ownDiaryRow(ctx, tenantScope, args.orchestrator, args.date);
 
 		if (existing !== null) {
 			// R-52 — the row was selected as the caller's OWN (ownDiaryRow), so this
 			// can only fire if that selection is ever loosened; it keeps the patch
 			// bound to the row's server-stamped tenant. Master is unchanged.
 			if (
-				!scope.isMaster &&
+				!tenantScope.isMaster &&
 				!sameTenantStamp(
 					orgRefOfRow(existing),
-					orgRefOfScope(scope),
+					orgRefOfScope(tenantScope),
 					await fleetOperatorRef(ctx.db),
 				)
 			) {
 				throw new ConvexError(
-					`RBAC_DENIED: caller may not write diary entry ${existing._id} (orchestrator "${args.orchestrator}") — ${JSON.stringify({ orgSlug: scope.orgSlug, reason: "row-not-in-caller-org" })}`,
+					`RBAC_DENIED: caller may not write diary entry ${existing._id} (orchestrator "${args.orchestrator}") — ${JSON.stringify({ orgSlug: tenantScope.orgSlug, reason: "row-not-in-caller-org" })}`,
 				);
 			}
 			// Update content fields only — do NOT overwrite createdBy (preserve
@@ -280,11 +305,11 @@ export const write = mutation({
 			createdAt: now,
 			// R-52 tenant stamp, derived from the verified scope. A master write is
 			// fleet-owned (unstamped), as `tasks` does.
-			...(scope.isMaster || scope.orgSlug === null
+			...(tenantScope.isMaster || tenantScope.orgSlug === null
 				? {}
 				: {
-						orgId: scope.orgSlug,
-						clerkOrgId: scope.orgClerkId,
+						orgId: tenantScope.orgSlug,
+						clerkOrgId: tenantScope.orgClerkId,
 					}),
 		});
 	},
@@ -298,6 +323,8 @@ export const get = query({
 	args: {
 		date: v.string(),
 		orchestrator: creatorValidator,
+		// Transport-verified org of a service-account bearer (see the header).
+		verifiedOrg: v.optional(verifiedOrgValidator),
 	},
 	returns: v.union(
 		v.object({
@@ -327,8 +354,16 @@ export const get = query({
 		//   grep -rn "api\.diary\." --include=*.tsx --include=*.ts \
 		//     app components hooks lib contexts providers  -> 0 hits
 		// The MCP `diary_read` tool reads it one-shot.
-		const scope = await withOrgScope(ctx, { refuseWithoutThrow: true });
-		requireResolvedCaller(scope, "diary:get", { alsoRefusePreOrg: true });
+		const transportScope = await withOrgScope(ctx, { refuseWithoutThrow: true });
+		requireResolvedCaller(transportScope, "diary:get", { alsoRefusePreOrg: true });
+		// A service-account bearer's verified org: the read runs under that org's
+		// member scope (its tenant range, its ID roster), never the fleet range.
+		const scope = await resolveVerifiedOrgScope(
+			ctx,
+			transportScope,
+			args.verifiedOrg,
+			"diary:get",
+		);
 		if (!(await orchestratorListed(ctx, scope, args.orchestrator, "diary:get"))) {
 			return null;
 		}
@@ -372,6 +407,8 @@ export const list = query({
 		limit: v.optional(v.number()),
 		// S3.3 B8 follow-up batch 1 — cursor paging anchor (forward, newest-first).
 		createdBefore: v.optional(v.number()),
+		// Transport-verified org of a service-account bearer (see the header).
+		verifiedOrg: v.optional(verifiedOrgValidator),
 	},
 	// The envelope arm is the refusal contract for the signed-in-no-organisation
 	// caller (a mounted, subscribed render: never a throw, never the bytes of an
@@ -396,7 +433,7 @@ export const list = query({
 		// the signed-in-no-org branch to a typed refused scope (no org, no
 		// roster), answered below with the refusal envelope, never a
 		// throw.
-		const scope = await withOrgScope(ctx, { refuseWithoutThrow: true });
+		const transportScope = await withOrgScope(ctx, { refuseWithoutThrow: true });
 
 		// REFUSAL SHAPE (task k17066vn8kh5v1a8xkgsx0bnxs8fjre5; four callers, see
 		// .claude/rules/refusal-is-distinguishable-from-absence.md):
@@ -410,7 +447,16 @@ export const list = query({
 		//     renders empty AND says it was refused. A throw would crash that render.
 		//   org member         -> served its own roster's rows (below).
 		//   fleet master       -> the bare array, unchanged.
-		requireResolvedCaller(scope, "diary:list");
+		requireResolvedCaller(transportScope, "diary:list");
+		// A service-account bearer's verified org: the read runs under that org's
+		// member scope, so the member branch below (tenant-keyed index ranges of
+		// the org's ID roster) IS the read and the master branch is not reached.
+		const scope = await resolveVerifiedOrgScope(
+			ctx,
+			transportScope,
+			args.verifiedOrg,
+			"diary:list",
+		);
 		if (!scope.isMaster && scope.orgSlug === null) {
 			return { refused: true as const, items: [] };
 		}
