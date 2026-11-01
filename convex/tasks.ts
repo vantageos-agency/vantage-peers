@@ -2299,6 +2299,10 @@ export const update = mutation({
 						agentId: assignedToAgentId,
 						field: "assignedToAgentId",
 						door: "tasks:update",
+						// The row's own stamp: its slug label may since have been taken over.
+						...(task.orgId !== undefined && task.clerkOrgId !== undefined
+							? { orgClerkId: task.clerkOrgId }
+							: {}),
 					});
 		if (assigneeById !== undefined) fields.assignedTo = assigneeById.name;
 		// System-review reassignment grant (k17b5btg6cr9t9824tndte3w2s8fmzx1): an

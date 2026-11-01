@@ -81,6 +81,7 @@ async function seedWorld(t: T): Promise<World> {
 		const agent = (orgSlug: string, name: string, isActive = true) =>
 			ctx.db.insert("agents", {
 				orgSlug,
+				clerkOrgId: testClerkOrgId(orgSlug),
 				name,
 				normalizedName: name,
 				isActive,

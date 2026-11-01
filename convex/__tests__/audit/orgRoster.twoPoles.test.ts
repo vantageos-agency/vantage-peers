@@ -57,6 +57,7 @@ async function seed() {
 		const agent = (orgSlug: string, name: string) =>
 			ctx.db.insert("agents", {
 				orgSlug,
+				clerkOrgId: testClerkOrgId(orgSlug),
 				name,
 				normalizedName: normalizeOrchestratorId(name),
 				isActive: true,

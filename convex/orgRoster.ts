@@ -78,6 +78,7 @@ async function mappingOfAccessToken(
 	tokenHash: string,
 ): Promise<{
 	orgSlug: string;
+	orgClerkId: string | undefined;
 	allowedAgentIds: Id<"agents">[] | undefined;
 	addressableFleetCoordinatorIds: Id<"agents">[] | undefined;
 }> {
@@ -110,6 +111,7 @@ async function mappingOfAccessToken(
 	}
 	return {
 		orgSlug: slug,
+		orgClerkId: mapping.clerkOrgId,
 		allowedAgentIds: mapping.allowedAgentIds,
 		addressableFleetCoordinatorIds: mapping.addressableFleetCoordinatorIds,
 	};
@@ -143,7 +145,7 @@ const agentDirectoryEntry = v.object({
 
 async function agentDirectoryOf(
 	ctx: QueryCtx,
-	orgSlug: string,
+	orgClerkId: string | undefined,
 	stored: {
 		rosterIds: readonly string[] | undefined;
 		coordinatorIds: readonly string[] | undefined;
@@ -173,8 +175,8 @@ async function agentDirectoryOf(
 		await add(id, (row) =>
 			agentListedOnRoster(
 				ctx,
-				{ agentId: row._id, agentOrgId: row.orgSlug },
-				rosterOf(orgSlug, stored.rosterIds),
+				{ agentId: row._id, agentOrgId: row.clerkOrgId ?? "" },
+				rosterOf(orgClerkId, stored.rosterIds),
 				door,
 			),
 		);
@@ -209,7 +211,7 @@ export const getAgentDirectoryForAccessToken = query({
 		const mapping = await mappingOfAccessToken(ctx, args.tokenHash);
 		return await agentDirectoryOf(
 			ctx,
-			mapping.orgSlug,
+			mapping.orgClerkId,
 			{
 				rosterIds: mapping.allowedAgentIds,
 				coordinatorIds: mapping.addressableFleetCoordinatorIds,
@@ -250,7 +252,7 @@ export const getMyAgentDirectory = query({
 		const mapping = await lookupOrgMapping(ctx, scope.orgSlug);
 		return await agentDirectoryOf(
 			ctx,
-			scope.orgSlug,
+			scope.orgClerkId,
 			{
 				rosterIds: scope.allowedAgentIds,
 				coordinatorIds: mapping?.addressableFleetCoordinatorIds,

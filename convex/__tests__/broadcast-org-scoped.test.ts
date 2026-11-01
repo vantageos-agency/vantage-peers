@@ -65,6 +65,7 @@ async function seedOrgMapping(
 			allowedAgentIds.push(
 				await ctx.db.insert("agents", {
 					orgSlug: clerkOrgSlug,
+					clerkOrgId: testClerkOrgId(clerkOrgSlug),
 					name,
 					normalizedName: name,
 					isActive: true,

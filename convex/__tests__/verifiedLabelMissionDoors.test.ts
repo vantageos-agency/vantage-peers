@@ -59,6 +59,7 @@ async function world(): Promise<World> {
 		const put = (name: string) =>
 			ctx.db.insert("agents", {
 				orgSlug: op.clerkOrgSlug,
+				...(op.clerkOrgId !== undefined ? { clerkOrgId: op.clerkOrgId } : {}),
 				name,
 				normalizedName: name.toLowerCase(),
 				isActive: true,

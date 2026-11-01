@@ -8,7 +8,11 @@ import {
 import { ConvexError } from "convex/values";
 import type { Doc, Id } from "../_generated/dataModel";
 import type { MutationCtx, QueryCtx } from "../_generated/server";
-import { principalLookups, principalLookupsOverAgents } from "./actingPrincipal";
+import {
+	permanentOrgIdOfSlug,
+	principalLookups,
+	principalLookupsOverAgents,
+} from "./actingPrincipal";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // rosterIds — the vantage-peers ADAPTER onto @vantageos/cloud-identity's
@@ -68,10 +72,12 @@ export const ROSTER_AGENT_SCAN_CAP = 500;
  */
 export async function listedAgentsOfOrg(
 	ctx: Ctx,
-	orgSlug: string,
+	orgClerkId: string | undefined,
 	rosterIds: readonly string[],
 	door: string,
 ): Promise<Doc<"agents">[]> {
+	// An organisation with no permanent ID lists nobody (never matched by slug).
+	if (orgClerkId === undefined) return [];
 	if (rosterIds.length === 0) return [];
 	const agents: Doc<"agents">[] = [];
 	for (const entry of new Set(rosterIds)) {
@@ -85,11 +91,11 @@ export async function listedAgentsOfOrg(
 		if (agent !== null) agents.push(agent);
 	}
 	const lookups = principalLookupsOverAgents(ctx, agents);
-	const list = rosterOf(orgSlug, rosterIds);
+	const list = rosterOf(orgClerkId, rosterIds);
 	const out: Doc<"agents">[] = [];
 	for (const agent of agents) {
 		const resolved = await resolveActingPrincipal(
-			{ kind: "agent", agentId: agent._id, verifiedOrgId: orgSlug },
+			{ kind: "agent", agentId: agent._id, verifiedOrgId: orgClerkId },
 			lookups,
 			door,
 		);
@@ -102,10 +108,10 @@ export async function listedAgentsOfOrg(
 
 /** A roster stored under `orgId`; `ids` undefined means none is stored. */
 export function rosterOf(
-	orgId: string | null,
+	orgId: string | null | undefined,
 	ids: readonly Id<"agents">[] | readonly string[] | undefined,
 ): PrincipalIdList | undefined {
-	if (orgId === null || ids === undefined) return undefined;
+	if (orgId === null || orgId === undefined || ids === undefined) return undefined;
 	return { orgId, principalIds: ids };
 }
 
@@ -137,11 +143,18 @@ export async function agentListedAsCoordinator(
 			door,
 		);
 	}
-	const kind = await principalLookups(ctx).orgKindOf?.(row.orgSlug);
+	// The agent's org is its stored permanent ID; a row with none is no coordinator.
+	const rowOrgId = row.clerkOrgId;
+	const kind =
+		rowOrgId === undefined
+			? undefined
+			: await principalLookups(ctx).orgKindOf?.(rowOrgId);
 	return agentListedOnRoster(
 		ctx,
-		{ agentId: row._id, agentOrgId: row.orgSlug },
-		kind === "operator" ? rosterOf(row.orgSlug, coordinatorIds) : undefined,
+		{ agentId: row._id, agentOrgId: rowOrgId ?? "" },
+		kind === "operator" && rowOrgId !== undefined
+			? rosterOf(rowOrgId, coordinatorIds)
+			: undefined,
 		door,
 	);
 }
@@ -156,13 +169,22 @@ export async function requireAgentsOfOrg(
 	ctx: Ctx,
 	orgSlug: string,
 	ids: readonly Id<"agents">[],
+	orgClerkId?: string,
 ): Promise<Id<"agents">[]> {
 	const out: Id<"agents">[] = [];
+	// The roster's organisation is its permanent ID: the one the caller holds,
+	// else the one the label names now. With none, no agent can be listed.
+	const orgId = orgClerkId ?? (await permanentOrgIdOfSlug(ctx, orgSlug));
+	if (orgId === undefined && ids.length > 0) {
+		throw new ConvexError(
+			`AGENT_NOT_IN_ORG: org "${orgSlug}" has no permanent organisation ID, so no agent can be listed on its roster`,
+		);
+	}
 	for (const id of ids) {
 		// The package decides: the agent is read by ID and must be active and
 		// stamped with `orgSlug`, in an active organisation. Nothing is compared here.
 		const resolved = await resolveActingPrincipal(
-			{ kind: "agent", agentId: id, verifiedOrgId: orgSlug },
+			{ kind: "agent", agentId: id, verifiedOrgId: orgId ?? "" },
 			principalLookups(ctx),
 			"rosterIds:requireAgentsOfOrg",
 		);

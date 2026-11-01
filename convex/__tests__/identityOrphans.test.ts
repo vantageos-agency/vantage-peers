@@ -479,7 +479,7 @@ describe("rosterIds:listedAgentsOfOrg — the roster lists IDs of its own org, j
 		const got = await t.run(async (ctx) =>
 			listedAgentsOfOrg(
 				ctx,
-				"org-a",
+				testClerkOrgId("org-a"),
 				[etaA, etaB, inactiveA, "not-an-id"],
 				"identityOrphans",
 			),
@@ -493,14 +493,14 @@ describe("rosterIds:listedAgentsOfOrg — the roster lists IDs of its own org, j
 		const a1 = await seedAgent("org-a", "one");
 		const a2 = await seedAgent("org-a", "two");
 		const got = await t.run(async (ctx) =>
-			listedAgentsOfOrg(ctx, "org-a", [a1, a2], "identityOrphans"),
+			listedAgentsOfOrg(ctx, testClerkOrgId("org-a"), [a1, a2], "identityOrphans"),
 		);
 		expect(got.map((a) => a._id).sort()).toEqual([a1, a2].sort());
 	});
 
 	test("ABSENT — an empty roster is an empty success", async () => {
 		const got = await t.run(async (ctx) =>
-			listedAgentsOfOrg(ctx, "org-a", [], "identityOrphans"),
+			listedAgentsOfOrg(ctx, testClerkOrgId("org-a"), [], "identityOrphans"),
 		);
 		expect(got).toEqual([]);
 	});

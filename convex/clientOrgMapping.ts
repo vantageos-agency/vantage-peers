@@ -352,6 +352,7 @@ export const seedSeatAgents = internalMutation({
 			ctx,
 			mapping.clerkOrgSlug,
 			args.agentIds ?? [],
+			clerkOrgId,
 		);
 		for (const id of existing) {
 			if (!ids.includes(id)) ids.push(id);

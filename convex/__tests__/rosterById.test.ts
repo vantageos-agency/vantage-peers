@@ -240,6 +240,7 @@ describe("BACKFILL — names become IDs inside one org, nothing is guessed", () 
 			const agent = (orgSlug: string, name: string, normalized?: string) =>
 				ctx.db.insert("agents", {
 					orgSlug,
+					clerkOrgId: testClerkOrgId(orgSlug),
 					name,
 					normalizedName: normalized ?? normalizeOrchestratorId(name),
 					isActive: true,
@@ -409,6 +410,7 @@ describe("WRITERS — a new org's roster is written as agent IDs", () => {
 		t.run((ctx) =>
 			ctx.db.insert("agents", {
 				orgSlug,
+				clerkOrgId: testClerkOrgId(orgSlug),
 				name,
 				normalizedName: normalizeOrchestratorId(name),
 				isActive: true,

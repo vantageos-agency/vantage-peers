@@ -2,7 +2,10 @@ import { ConvexError } from "convex/values";
 import type { Doc } from "../_generated/dataModel";
 import type { MutationCtx, QueryCtx } from "../_generated/server";
 import { normalizeOrchestratorId } from "../_helpers/normalizeOrchestratorId";
-import { requireVerifiedActorPrincipal } from "./actingPrincipal";
+import {
+	permanentOrgIdOfSlug,
+	requireVerifiedActorPrincipal,
+} from "./actingPrincipal";
 import { findAgentByName } from "./agentIdentity";
 import type { OrgScope, VerifiedActor } from "./auth";
 import { fleetOperatorSlug } from "./operatorOrg";
@@ -175,9 +178,12 @@ export async function resolveInboxReader(
 			claims.verifiedActor,
 			door,
 		);
+		// The principal's org is its permanent ID; the claim names the org by label,
+		// so the label is converted (an org with no ID matches nobody).
 		if (
 			claims.verifiedOrg !== undefined &&
-			claims.verifiedOrg.orgSlug !== principal.orgId
+			(await permanentOrgIdOfSlug(ctx, claims.verifiedOrg.orgSlug)) !==
+				principal.orgId
 		) {
 			return refuse(
 				door,

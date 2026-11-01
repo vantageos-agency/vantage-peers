@@ -56,6 +56,10 @@ export async function personalAgentOfToken(
 ): Promise<PersonalAgent | null> {
 	if (row.principal !== "person") return null;
 	if (row.clerkOrgSlug === undefined || row.clerkOrgSlug === "") return null;
+	// The organisation is judged by PERMANENT ID: a token row with none acts as
+	// the person (a designation is never read by slug).
+	const tokenOrgId = row.clerkOrgId;
+	if (tokenOrgId === undefined || tokenOrgId === "") return null;
 	// (1) the agent stamped at consent, judged live; (2) a decision to connect as
 	// the person is never overridden by a designation.
 	// A stamped agent that is gone, or no longer in the token's organisation, leaves
@@ -73,18 +77,22 @@ export async function personalAgentOfToken(
 	}
 	if (stamped === null && row.connectedAs === "person") return null;
 	const resolved = await resolvePersonalAgent(
-		{ personId: row.userId, orgId: row.clerkOrgSlug },
+		{ personId: row.userId, orgId: tokenOrgId },
 		{
 			designatedAgents: async (personId, orgId) => {
-				const rows = await ctx.db
+				// The index is keyed by the person (its second key is the org LABEL, which
+				// another organisation can take over), so the organisation is judged
+				// below by permanent ID over the person's designations, bounded.
+				const designated = await ctx.db
 					.query("agents")
 					.withIndex("by_personal_agent_of", (q) =>
-						q.eq("personalAgentOf", personId).eq("orgSlug", orgId),
+						q.eq("personalAgentOf", personId),
 					)
 					.take(DESIGNATED_AGENTS_CAP + 1);
-				if (rows.length > DESIGNATED_AGENTS_CAP) {
+				if (designated.length > DESIGNATED_AGENTS_CAP) {
 					throw new Error("designation scan cap exceeded");
 				}
+				const rows = designated.filter((a) => a.clerkOrgId === orgId);
 				// The stamped agent is the ONLY candidate when there is one: nothing else
 				// is counted or picked in its place. The package judges active /
 				// designation / organisation over what is returned.
@@ -92,7 +100,7 @@ export async function personalAgentOfToken(
 					.filter((a) => stamped === null || a._id === stamped._id)
 					.map((a) => ({
 						id: a._id,
-						orgId: a.orgSlug,
+						orgId: a.clerkOrgId ?? null,
 						active: a.isActive,
 						personalAgentOf: personId,
 					}));

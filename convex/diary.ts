@@ -58,7 +58,7 @@ async function listedAgents(
 	door: string,
 ): Promise<Doc<"agents">[]> {
 	if (scope.orgSlug === null) return [];
-	return await listedAgentsOfOrg(ctx, scope.orgSlug, scope.allowedAgentIds, door);
+	return await listedAgentsOfOrg(ctx, scope.orgClerkId, scope.allowedAgentIds, door);
 }
 
 /** Is `name` the label of an agent on the caller's ID roster? The master reaches every orchestrator. */

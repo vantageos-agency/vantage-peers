@@ -379,8 +379,8 @@ async function resolveRecipientAgents(
 			if (verdict.ok && verdict.direction === "same-organisation") {
 				const listed = await agentListedOnRoster(
 					ctx,
-					{ agentId: row._id, agentOrgId: row.orgSlug },
-					rosterOf(reach.orgSlug, reach.allowedAgentIds),
+					{ agentId: row._id, agentOrgId: row.clerkOrgId ?? "" },
+					rosterOf(reach.orgClerkId, reach.allowedAgentIds),
 					SEND_DOOR,
 				);
 				if (
@@ -396,8 +396,8 @@ async function resolveRecipientAgents(
 		}
 		const own = await agentListedOnRoster(
 			ctx,
-			{ agentId: row._id, agentOrgId: row.orgSlug },
-			rosterOf(reach.orgSlug, reach.allowedAgentIds),
+			{ agentId: row._id, agentOrgId: row.clerkOrgId ?? "" },
+			rosterOf(reach.orgClerkId, reach.allowedAgentIds),
 			SEND_DOOR,
 		);
 		if (
@@ -697,8 +697,8 @@ async function sendMessageCore(
 					if (row === null || !row.isActive || row._id === fromId) continue;
 					const listed = await agentListedOnRoster(
 						ctx,
-						{ agentId: row._id, agentOrgId: row.orgSlug },
-						rosterOf(reach.orgSlug, reach.allowedAgentIds),
+						{ agentId: row._id, agentOrgId: row.clerkOrgId ?? "" },
+						rosterOf(reach.orgClerkId, reach.allowedAgentIds),
 						SEND_DOOR,
 					);
 					if (listed.ok) broadcastRows.push(row);
@@ -1194,9 +1194,14 @@ export const sendMessage = mutation({
 			let provenAgentId: string | undefined;
 			let senderOrg: string | null | undefined =
 				recipientScope?.orgSlug ?? scope.orgSlug ?? args.tenantId;
+			// The permanent ID of the org the sender is judged in, when a proof
+			// carries it; else the ID `senderOrg` names now.
+			let senderOrgClerkId: string | undefined;
 			if (senderPrincipal !== undefined) {
 				provenAgentId = senderPrincipal.principalId;
-				senderOrg = senderPrincipal.orgId;
+				// `senderOrg` is already the principal's org label (recipientScope was
+				// built from the principal); the principal's org is its permanent ID.
+				senderOrgClerkId = senderPrincipal.orgId;
 			} else if (args.agentCredentialSecret !== undefined) {
 				const owned = await resolveOwnedAgentOfPresentedSecret(
 					ctx,
@@ -1206,6 +1211,7 @@ export const sendMessage = mutation({
 				if (owned.ok) {
 					provenAgentId = owned.agent._id;
 					senderOrg = owned.agent.orgSlug;
+					senderOrgClerkId = owned.agent.clerkOrgId;
 				}
 			}
 			const sender = await resolveAgentIdArg(ctx, {
@@ -1213,6 +1219,7 @@ export const sendMessage = mutation({
 				agentId: fromAgentId,
 				field: "fromAgentId",
 				door: SEND_DOOR,
+				...(senderOrgClerkId !== undefined ? { orgClerkId: senderOrgClerkId } : {}),
 			});
 			if (provenAgentId !== undefined && provenAgentId !== sender._id) {
 				throw new ConvexError(
