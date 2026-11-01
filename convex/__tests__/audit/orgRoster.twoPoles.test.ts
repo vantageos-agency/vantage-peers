@@ -84,6 +84,7 @@ async function seed() {
 			expiresAt: Date.now() + 3_600_000,
 			createdAt: NOW,
 			clerkOrgSlug: C,
+			clerkOrgId: testClerkOrgId(C),
 		});
 		return { opPi, cAda };
 	});

@@ -69,7 +69,7 @@ export const getMyOrgRoster = query({
 // The active client_org_mapping row of the organisation an OAuth access token
 // was minted for, derived from the token row keyed by its hash (never from an
 // organisation argument). Refuses a missing / revoked / expired token, a token
-// with no organisation claim, and a missing or inactive mapping. Same refusals as
+// with no permanent organisation ID, and a missing or inactive mapping. Same refusals as
 // getForAccessToken below, which keeps its own inline copy because its source
 // shape is pinned by orgRoster.getForAccessToken.test.ts. The org join is the
 // canonical lookupOrgMapping (convex/lib/auth.ts), never a second one.
@@ -96,19 +96,27 @@ async function mappingOfAccessToken(
 		);
 	}
 
-	const slug = token.clerkOrgSlug;
-	if (!slug) {
+	// The organisation is the permanent ID stamped at mint, never the slug: a
+	// slug is a renamable label another organisation can take over, so a slug
+	// read would hand the new holder the previous holder's token (task
+	// k17ds2yhhcp9cy6xjav9r104c18hcwv5). A token row with no ID (minted before
+	// the backfill) is refused, as the person-refresh path in oauth.ts does for
+	// a row with no clerkOrgId: re-deriving the ID from the slug's CURRENT
+	// mapping would be the same takeover read under another name.
+	const orgId = token.clerkOrgId;
+	if (!orgId) {
 		throw new ConvexError(
 			"RBAC_DENIED: access token carries no organisation claim",
 		);
 	}
 
-	const mapping = await lookupOrgMapping(ctx, slug);
+	const mapping = await lookupOrgMapping(ctx, { clerkOrgId: orgId });
 	if (mapping === null || !mapping.isActive) {
 		throw new ConvexError(
-			`RBAC_DENIED: Org "${slug}" not in client_org_mapping or inactive`,
+			`RBAC_DENIED: Org "${orgId}" not in client_org_mapping or inactive`,
 		);
 	}
+	const slug = mapping.clerkOrgSlug;
 	return {
 		orgSlug: slug,
 		orgClerkId: mapping.clerkOrgId,
