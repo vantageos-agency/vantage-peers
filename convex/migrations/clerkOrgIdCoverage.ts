@@ -21,7 +21,10 @@
 //               ambiguousSlug        more than one mapping row carries it;
 //               inactiveMapping      the one mapping row is inactive;
 //               mappingHasNoClerkId  the one mapping row has no clerkOrgId yet;
-//               mappingRecordInvalid the one mapping row is not well formed.
+//               mappingRecordInvalid the one mapping row is not well formed;
+//               mappingNewerThanRow  the one mapping row was created AFTER the row (by
+//                                    `_creationTime`): the slug changed hands, and the
+//                                    current holder is not the org that stamped the row.
 //             A row with NO slug is counted `noSlug` and left alone (nothing to resolve
 //             from; an org is never invented). A row that already has a clerkOrgId is
 //             counted `alreadyFilled` and is never written, even when its ID disagrees
@@ -67,6 +70,7 @@ type PageRow = {
 	clerkOrgId?: string;
 	clerkOrgSlug?: string;
 	orgId?: string;
+	_creationTime: number;
 };
 
 function assertPageSize(fn: string, pageSize: number): void {
@@ -126,7 +130,8 @@ type Unresolved =
 	| "ambiguousSlug"
 	| "inactiveMapping"
 	| "mappingHasNoClerkId"
-	| "mappingRecordInvalid";
+	| "mappingRecordInvalid"
+	| "mappingNewerThanRow";
 const REASON_NAME = {
 	orgUnmapped: "absentSlug",
 	ambiguousMapping: "ambiguousSlug",
@@ -160,6 +165,7 @@ export const backfill = internalMutation({
 			inactiveMapping: v.number(),
 			mappingHasNoClerkId: v.number(),
 			mappingRecordInvalid: v.number(),
+			mappingNewerThanRow: v.number(),
 		}),
 		unresolvedIds: v.array(v.string()),
 		done: v.boolean(),
@@ -186,10 +192,20 @@ export const backfill = internalMutation({
 		// `resolveSlug` (the one place that wraps it). This module adds only the
 		// "active" requirement and the reason names.
 		const mappings = indexBySlug(await loadMappingRows(ctx.db));
-		const resolve = async (slug: string): Promise<Resolution> => {
+		const resolve = async (
+			slug: string,
+			rowCreationTime: number,
+		): Promise<Resolution> => {
 			const rows = mappings.get(slug) ?? [];
 			if (rows.length === 1 && !rows[0].isActive) {
 				return { kind: "unresolved", reason: "inactiveMapping" };
+			}
+			// AGE CHECK. A slug is a label that can change hands: the CURRENT mapping
+			// of a slug may belong to an organisation that took it after this row was
+			// written under the former holder. A mapping created after the row cannot
+			// be the org that stamped it, so the row is never resolved from it.
+			if (rows.length === 1 && rows[0]._creationTime > rowCreationTime) {
+				return { kind: "unresolved", reason: "mappingNewerThanRow" };
 			}
 			const resolved = await resolveSlug(mappings, slug);
 			if (resolved.kind === "id") return resolved;
@@ -208,6 +224,7 @@ export const backfill = internalMutation({
 			inactiveMapping: 0,
 			mappingHasNoClerkId: 0,
 			mappingRecordInvalid: 0,
+			mappingNewerThanRow: 0,
 		};
 		const unresolvedIds: string[] = [];
 
@@ -222,7 +239,7 @@ export const backfill = internalMutation({
 				noSlug++;
 				continue;
 			}
-			const resolution = await resolve(slug);
+			const resolution = await resolve(slug, row._creationTime);
 			if (resolution.kind === "unresolved") {
 				unresolved++;
 				byReason[resolution.reason]++;
