@@ -317,8 +317,9 @@ export async function findAgentByName(
  *     an unknown ID and a retired agent are refused with the package's coded
  *     refusal, never returned and never reported as an absence. A retired
  *     agent's ID is refused for reads too (Pi ruling 4).
- *   - `agentId` and `label` given: the label must be the row's CURRENT label under
- *     `normalizeOrchestratorId`; otherwise `AGENT_IDENTITY_MISMATCH` with
+ *   - `agentId` and `label` given: the label must resolve, in the same org, to the
+ *     SAME row (two IDs compared, by the same normaliser as the lookup);
+ *     otherwise `AGENT_IDENTITY_MISMATCH` with
  *     `reason: "id-label-mismatch"` and the door (the existing code, the same
  *     wording shape as `requireVerifiedActorMatch`; no second refusal mechanism).
  *   - `label` only: the by-name lookup, unchanged, plus ONE `LABEL_ONLY_DOOR` log
@@ -374,10 +375,20 @@ export async function resolveAgentRef(
 		if (row === null) {
 			throw assigneeNotInOrgRefusal(ref.agentId, orgId, ref.door);
 		}
-		if (
-			ref.label !== undefined &&
-			normalizeOrchestratorId(ref.label) !== normalizeOrchestratorId(row.name)
-		) {
+		// The label must resolve, in this organisation, to THIS SAME row: two stored
+		// IDs are compared, no name is (the same rule `requireVerifiedActorMatch`
+		// states). Unmeasured: an ID is present, so this is not a label-only call.
+		const byLabel =
+			ref.label === undefined
+				? row
+				: await resolveAgentRef(ctx, {
+						label: ref.label,
+						orgClerkId: orgId,
+						door: ref.door,
+						arg: ref.arg,
+						measure: false,
+					});
+		if (byLabel === null || byLabel._id !== row._id) {
 			throw new ConvexError(
 				`AGENT_IDENTITY_MISMATCH: ${ref.arg} names agent ${row._id} by ID but also carries a label that is not that agent's label — an ID and a label must designate the same agent — ${JSON.stringify({ reason: "id-label-mismatch", door: ref.door, agentId: row._id })}`,
 			);
