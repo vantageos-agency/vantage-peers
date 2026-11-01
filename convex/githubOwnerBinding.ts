@@ -201,9 +201,16 @@ export async function collectUnprovenMappings(
 	ctx: QueryCtx,
 	numItems: number,
 	cursor: string | null,
+	// When given, the scan runs over this org's rows only (the by_org range IS the
+	// read), so a foreign org's mapping is never read or counted into the page.
+	onlyOrg?: string,
 ): Promise<{ items: UnprovenMapping[]; nextCursor: string | null }> {
 	const out: UnprovenMapping[] = [];
-	const page = await ctx.db.query("githubRepoMapping").paginate({ numItems, cursor });
+	const rows =
+		onlyOrg === undefined
+			? ctx.db.query("githubRepoMapping")
+			: ctx.db.query("githubRepoMapping").withIndex("by_org", (q) => q.eq("orgId", onlyOrg));
+	const page = await rows.paginate({ numItems, cursor });
 	for (const m of page.page) {
 		if (m.orgId === undefined) continue;
 		const owner = ownerOfRepo(m.repo);
@@ -255,8 +262,6 @@ export const listUnprovenMappings = query({
 			args.verifiedOrg,
 			"githubOwnerBinding:listUnprovenMappings",
 		);
-		const page = await collectUnprovenMappings(ctx, pageSize(args.limit), args.cursor ?? null);
-		if (verified === undefined) return page;
-		return { ...page, items: page.items.filter((m) => m.orgId === verified) };
+		return await collectUnprovenMappings(ctx, pageSize(args.limit), args.cursor ?? null, verified);
 	},
 });
