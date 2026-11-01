@@ -79,9 +79,15 @@ export function assertMemberMayWrite(
  */
 export async function requireMemberWriterRole(
 	ctx: QueryCtx | MutationCtx,
-	scope: Pick<OrgScope, "orgRole" | "orgSlug">,
+	scope: Pick<OrgScope, "orgRole" | "orgSlug" | "serviceTransport">,
 	door: string,
 ): Promise<void> {
+	// The fleet service account acting for an org (`__actingOrg`, task
+	// k179y0wpsd6fv7055f4p2w6b358hdrxe) carries no human role to judge: a person
+	// token's writer role is judged at the MCP bearer (registerTool,
+	// memberWriterRoles:assertPersonMayWrite) and a seat token has none, exactly
+	// as when this account was resolved fleet master and skipped this gate.
+	if (scope.serviceTransport === true) return;
 	if (scope.orgSlug === null) {
 		throw new ConvexError(
 			`RBAC_DENIED: caller has no organisation to write in — ${JSON.stringify({ reason: "no-organisation", door })}`,

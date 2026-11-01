@@ -263,7 +263,10 @@ export const write = mutation({
 		// The master is the transport-verified MCP server and passes the author of
 		// the seat it authenticated; any other caller is a person, recorded as its
 		// verified subject, and a claimed author that is anyone else is refused.
-		const ownAuthor = scope.isMaster ? undefined : memberActorOf(scope);
+		const ownAuthor =
+			scope.isMaster || scope.serviceTransport === true
+				? undefined
+				: memberActorOf(scope);
 		if (ownAuthor !== undefined && args.createdBy !== undefined && args.createdBy !== ownAuthor) {
 			throw new ConvexError(
 				`RBAC_DENIED: the author of a diary entry is the verified caller — ${JSON.stringify({ reason: "author-not-caller", door: "diary:write", orgSlug: scope.orgSlug })}`,
