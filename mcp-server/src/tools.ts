@@ -67,6 +67,7 @@ import { registerExportOkfBundle } from "./tools/exportOkfBundle.js";
 import { registerImportOkfBundle } from "./tools/importOkfBundle.js";
 import { registerKbIngestTools } from "./tools/kbIngest.js";
 import { registerValidateOkfBundle } from "./tools/validateOkfBundle.js";
+import { registerUiAppResources, withUiAppLink } from "./ui-resources/apps.js";
 import type { VpToolResult } from "./ui-resources/schemas.js";
 import { wrapToolResult } from "./ui-resources/stream-marker.js";
 import { validateTaskPayload } from "./validate-task-payload.js";
@@ -2190,9 +2191,18 @@ export function registerTools(
 	};
 	const realRegisterTool = server.registerTool.bind(server);
 	// biome-ignore lint/suspicious/noExplicitAny: narrowing the overloaded McpServer#registerTool signature for interception.
-	(server as any).registerTool = (name: string, ...rest: unknown[]) => {
-		// @ts-expect-error — forwarding to the real overloaded signature.
-		const registered = realRegisterTool(name, ...rest);
+	(server as any).registerTool = (
+		name: string,
+		config: unknown,
+		...rest: unknown[]
+	) => {
+		// MCP Apps: a tool with a UI names its document in `_meta.ui.resourceUri`
+		// (ui-resources/apps.ts). The handler and its text result are untouched.
+		// Forwarding to the real overloaded signature, arguments as received.
+		const forward = realRegisterTool as unknown as (
+			...args: unknown[]
+		) => unknown;
+		const registered = forward(name, withUiAppLink(name, config), ...rest);
 		return maskIfNotCore(name, registered);
 	};
 
@@ -11387,4 +11397,8 @@ export function registerTools(
 			`tool-exposure: core name(s) not found among registered tools: ${missingCoreNames.join(", ")}`,
 		);
 	}
+
+	// The documents the linked tools name, on this same server, so every
+	// `_meta.ui.resourceUri` advertised above resolves (HTTP and stdio alike).
+	registerUiAppResources(server);
 }
