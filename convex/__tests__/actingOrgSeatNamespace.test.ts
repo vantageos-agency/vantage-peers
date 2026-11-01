@@ -9,10 +9,8 @@
  * under an acting org a namespace is the seat's when it is `team/<own orgId>` or
  * `project/<own slug>` (segment-bounded). Never another org's slug.
  *
- * PENDING, pinned as REFUSED: `orchestrator/<agent>` is not admitted yet. Judging a
- * namespace's agent NAME against the roster is a by-name identity decision that
- * raises backend-doctor R-53 by 2 (measured), and the ratchet admits no rise. When
- * that is decided, the REFUSED pole below flips to SERVED for the own roster agent.
+ * `orchestrator/<agent>` is keyed by the verified agent ID, not here: see
+ * actingOrgSeatOrchestratorNs.test.ts. Without that proof it is refused.
  *
  * Poles per door (memories:storeMemory / listMemories, episodes:storeEpisode /
  * listEpisodes):
@@ -132,7 +130,7 @@ describe("memories:storeMemory / listMemories under an acting org", () => {
 		expect(await code(store(t, `orchestrator/${BOB}`))).toBe("RBAC_DENIED");
 		expect(await code(store(t, `project/${A}x`))).toBe("RBAC_DENIED");
 		expect(await code(store(t, `orchestrator/${ALICE}x`))).toBe("RBAC_DENIED");
-		// PENDING (see header): the own roster agent's namespace is still refused.
+		// Without a verifiedActor proof the seat owns no orchestrator namespace (actingOrgSeatOrchestratorNs.test.ts).
 		expect(await code(store(t, `orchestrator/${ALICE}`))).toBe("RBAC_DENIED");
 		expect(await code(store(t, "orchestrator/*"))).toBe("RBAC_DENIED");
 		expect(await code(store(t, "global"))).toBe("RBAC_DENIED");

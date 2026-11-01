@@ -85,6 +85,11 @@ export const VERIFIED_ACTOR_DOORS: ReadonlySet<string> = new Set([
 	// so Convex serves it only with the acting agent's verified ID and refuses the
 	// claimless call (RBAC_DENIED verified-actor-required).
 	"improvisationDigest:scanWindow",
+	// The memory doors the MCP calls (task k1701vj2gxbacdjqr1avpxx7en8hdw2q; listEpisodes declares it too and has no tool): a seat acting for its
+	// org owns `orchestrator/<its own name>`, the name read from this verified ID.
+	"memories:storeMemory",
+	"memories:listMemories",
+	"episodes:storeEpisode",
 	// The debate-room doors: the participant is the agent the transport verified,
 	// matched against the room's own participant list, never a name in an argument.
 	"debate:postTurn",
