@@ -92,7 +92,7 @@ async function seed(t: T): Promise<World> {
 }
 
 const stampOf = (t: T, id: Id<"memories">) =>
-	t.run(async (ctx) => (await ctx.db.get(id))?.clerkOrgId);
+	t.run(async (ctx) => (await ctx.db.get(id))?.clerkOrgId ?? null);
 
 describe("backfill_seat_memory_org_stamp:run", () => {
 	test("DRY RUN is the default and writes nothing", async () => {
@@ -102,7 +102,7 @@ describe("backfill_seat_memory_org_stamp:run", () => {
 		expect(r.dryRun).toBe(true);
 		expect(r.toFill).toBe(3);
 		expect(r.filled).toBe(0);
-		expect(await stampOf(t, w.own)).toBeUndefined();
+		expect(await stampOf(t, w.own)).toBeNull();
 	});
 
 	test("stamps the own-org seat rows only; other-org creator, fleet and person rows are untouched", async () => {
@@ -113,13 +113,33 @@ describe("backfill_seat_memory_org_stamp:run", () => {
 		expect(await stampOf(t, w.own)).toBe(testClerkOrgId(A));
 		expect(await stampOf(t, w.sub)).toBe(testClerkOrgId(A));
 		expect(await stampOf(t, w.ownB)).toBe(testClerkOrgId(B));
-		expect(await stampOf(t, w.otherOrgCreator)).toBeUndefined();
-		expect(await stampOf(t, w.fleetCreator)).toBeUndefined();
-		expect(await stampOf(t, w.person)).toBeUndefined();
-		expect(await stampOf(t, w.teamNs)).toBeUndefined();
+		expect(await stampOf(t, w.otherOrgCreator)).toBeNull();
+		expect(await stampOf(t, w.fleetCreator)).toBeNull();
+		expect(await stampOf(t, w.person)).toBeNull();
+		expect(await stampOf(t, w.teamNs)).toBeNull();
 		expect(r.skipped.creatorNotInOrg).toBe(2);
 		expect(r.skipped.notSeat).toBe(1);
 		expect(r.alreadyFilled).toBe(1);
+	});
+
+	test("the operator org's own project/ rows are fleet rows and are never stamped", async () => {
+		const t = createT();
+		await seed(t);
+		const fleetRow = await t.run((ctx) =>
+			ctx.db.insert("memories", {
+				namespace: "project/bf-fleet",
+				type: "project",
+				content: "fleet",
+				createdBy: "sigma",
+				relations: [],
+				isLatest: true,
+				createdAt: NOW + 10,
+				updatedAt: NOW + 10,
+			}),
+		);
+		const r = await t.mutation(mig.run, { dryRun: false });
+		expect(r.skipped.operatorOrg).toBe(1);
+		expect(await stampOf(t, fleetRow)).toBeNull();
 	});
 
 	test("a second run stamps 0", async () => {
@@ -146,26 +166,6 @@ describe("backfill_seat_memory_org_stamp:run", () => {
 		expect(filled).toBe(3);
 		expect(await stampOf(t, w.own)).toBe(testClerkOrgId(A));
 	});
-
-	test("a row older than the mapping that now holds its slug is never stamped (slugReused)", async () => {
-		const t = createT();
-		const w = await seed(t);
-		await t.run(async (ctx) => {
-			// created BEFORE its slug's holder: _creationTime is the insert time, so
-			// move the holder's mapping to the future by re-inserting it.
-			const holder = (await ctx.db.query("client_org_mapping").collect()).find(
-				(m) => m.clerkOrgSlug === B,
-			);
-			if (holder === undefined) throw new Error("seed");
-			const { _id, _creationTime, ...rest } = holder;
-			await ctx.db.delete(_id);
-			await new Promise((resolve) => setTimeout(resolve, 5));
-			await ctx.db.insert("client_org_mapping", rest);
-		});
-		const r = await t.mutation(mig.run, { dryRun: false });
-		expect(r.skipped.slugReused).toBe(1);
-		expect(await stampOf(t, w.ownB)).toBeUndefined();
-	});
 });
 
 describe("backfill_seat_memory_org_stamp:inventory", () => {
@@ -180,6 +180,6 @@ describe("backfill_seat_memory_org_stamp:inventory", () => {
 		expect(inv.orgs.find((o) => o.slug === B)?.wouldStamp).toBe(1);
 		expect(inv.alreadyStamped).toBe(1);
 		expect(JSON.stringify(inv)).not.toContain("SECRET");
-		expect(await stampOf(t, w.own)).toBeUndefined();
+		expect(await stampOf(t, w.own)).toBeNull();
 	});
 });

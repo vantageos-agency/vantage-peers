@@ -1,0 +1,4 @@
+---
+section: Fixed
+---
+- **VantagePeers Cloud ops: a read-only inventory and a dry-run-first backfill for the rows a client seat filed in its own `project/<slug>` before #1640.** Those rows carry no `clerkOrgId`, so the seat cannot read them back. `migrations/backfill_seat_memory_org_stamp:inventory` prints per organisation the unstamped count, how many the backfill would stamp, and 3 sample ids (no content). `migrations/backfill_seat_memory_org_stamp:run` (dry run by default, idempotent, cursor-paginated) stamps `clerkOrgId` only where the creator is an active agent of the organisation the slug names (the stamp is the creator's own org ID); a fleet agent's, another org's agent's or a person's row is left untouched and counted by reason. Internal, deployment-admin only, no contract bump. Task k1703qfycdce9dj7hc1dn28nsh8hd5qj.
