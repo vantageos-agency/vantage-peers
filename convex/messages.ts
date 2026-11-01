@@ -2190,24 +2190,23 @@ export const listMessages = query({
 			// A-10). A caller whose mapping carries no ID reads nothing; a row with no
 			// ID (noSlug, absentSlug) belongs to no org.
 			const orgId = scope.orgClerkId;
-			rows =
-				orgId === undefined
-					? []
-					: await ctx.db
-							.query("messages")
-							.withIndex("by_tenant_created_clerk_id", (q) =>
-								q.eq("tenantOrgId", orgId),
-							)
-							.order("desc")
-							.filter((q) =>
-								args.from !== undefined
-									? q.eq(q.field("from"), args.from)
-									: true,
-							)
-							.take(fetchCap);
+			if (orgId === undefined) {
+				rows = [];
+			} else {
+				rows = await ctx.db
+					.query("messages")
+					.withIndex("by_tenant_created_clerk_id", (q) =>
+						q.eq("tenantOrgId", orgId),
+					)
+					.order("desc")
+					.filter((q) =>
+						args.from !== undefined ? q.eq(q.field("from"), args.from) : true,
+					)
+					.take(fetchCap);
 
-			// Belt-and-suspenders: ensure no cross-tenant row leaks through.
-			rows = rows.filter((r) => rowInOrg(r, orgId));
+				// Belt-and-suspenders: ensure no cross-tenant row leaks through.
+				rows = rows.filter((r) => rowInOrg(r, orgId));
+			}
 		} else {
 			// ── Master path — existing index logic, unchanged ──────────────────────
 			if (args.sessionDay !== undefined) {
