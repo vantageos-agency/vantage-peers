@@ -483,3 +483,93 @@ describe("toolUsage:usageByOwner", () => {
 		).not.toBe("SERVED");
 	});
 });
+
+describe("a person token (verifiedPerson) records and reads as the person", () => {
+	const HASH = "p".repeat(64);
+	async function seedPersonToken(t: T, org: string, role: string) {
+		await t.run(async (ctx) => {
+			await ctx.db.insert("oauth_access_tokens", {
+				tokenHash: HASH,
+				clientId: "c",
+				userId: "user_person",
+				scopes: ["vantage:read", "vantage:write"],
+				scopeProfile: "person",
+				fromAllowList: [],
+				namespaceReadPrefixes: [],
+				namespaceWritePrefixes: [],
+				expiresAt: 4_000_000_000_000,
+				createdAt: 1,
+				clerkOrgSlug: org,
+				clerkOrgId: testClerkOrgId(org),
+				orgRole: role,
+				principal: "person",
+			});
+		});
+	}
+
+	test("the recorder files under user:<token subject>, ignoring a typed key", async () => {
+		const t = createT();
+		await seed(t);
+		await seedPersonToken(t, A, "org:member");
+		expect(
+			await service(t).mutation(toolUsage.record, {
+				toolName: "store_memory",
+				caller: "agent:spoofed",
+				verifiedPerson: { accessTokenHash: HASH },
+				verifiedOrg: { orgSlug: A },
+				__actingOrg: A_ID,
+			}),
+		).toEqual({ recorded: true });
+		expect((await rowsOf(t)).map((r) => r.callerKey)).toEqual([
+			"user:user_person",
+		]);
+		// The person reads itself back with the same proof.
+		const got = (await service(t).query(toolUsage.getToolUsage, {
+			verifiedPerson: { accessTokenHash: HASH },
+			verifiedOrg: { orgSlug: A },
+			__actingOrg: A_ID,
+		})) as Row[];
+		expect(got.map((r) => r.tool)).toEqual(["store_memory"]);
+	});
+
+	test("a verifiedOrg naming another organisation than the token's is RBAC_DENIED", async () => {
+		const t = createT();
+		await seed(t);
+		await seedPersonToken(t, A, "org:member");
+		expect(
+			await code(
+				service(t).query(toolUsage.getToolUsage, {
+					verifiedPerson: { accessTokenHash: HASH },
+					verifiedOrg: { orgSlug: B },
+				}),
+			),
+		).toBe("RBAC_DENIED");
+	});
+
+	test("an admin person token reads another member; a member person token does not", async () => {
+		const t = createT();
+		await seed(t);
+		await member(t, A, "alice-sub").mutation(toolUsage.record, {
+			toolName: "store_memory",
+		});
+		await seedPersonToken(t, A, "org:admin");
+		const asAdmin = (await service(t).query(toolUsage.getToolUsage, {
+			verifiedPerson: { accessTokenHash: HASH },
+			verifiedOrg: { orgSlug: A },
+			caller: "user:alice-sub",
+		})) as Row[];
+		expect(asAdmin).toHaveLength(1);
+		const t2 = createT();
+		await seed(t2);
+		await seedPersonToken(t2, A, "org:member");
+		expect(
+			await code(
+				service(t2).query(toolUsage.getToolUsage, {
+					verifiedPerson: { accessTokenHash: HASH },
+					verifiedOrg: { orgSlug: A },
+					caller: "user:alice-sub",
+				}),
+			),
+		).toBe("RBAC_DENIED");
+	});
+});

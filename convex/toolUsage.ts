@@ -99,34 +99,23 @@ function refuseClaimlessServiceAccount(
 export const record = mutation({
 	args: {
 		toolName: v.string(),
-		// Believed from the fleet service transport ONLY; for a Clerk session the
-		// key is the verified subject and this is ignored.
+		// Believed from the fleet service transport ONLY; for a Clerk session or a
+		// verified person the key is the verified subject and this is ignored.
 		caller: v.optional(v.string()),
+		verifiedPerson: v.optional(verifiedPersonValidator),
 		verifiedOrg: v.optional(verifiedOrgValidator),
 	},
 	returns: v.object({ recorded: v.boolean() }),
 	handler: async (ctx, args) => {
 		const none = { recorded: false };
 		if (!TOOL_NAME.test(args.toolName)) return none;
-		const transport = await withOrgScope(ctx, { refuseWithoutThrow: true });
-		if (transport.anonymous === true || transport.refused === true) return none;
-		refuseClaimlessServiceAccount(
-			transport,
-			args.verifiedOrg !== undefined,
-			RECORD_DOOR,
-		);
-		const scope = await resolveVerifiedOrgScope(
-			ctx,
-			transport,
-			args.verifiedOrg,
-			RECORD_DOOR,
-		);
+		const resolved = await resolveToolUsageScope(ctx, args, RECORD_DOOR, true);
+		if (resolved === null) return none;
+		const { scope } = resolved;
 		const orgId = scope.orgClerkId;
 		const orgSlug = scope.orgSlug;
 		if (orgId === undefined || orgId === "" || orgSlug === null) return none;
-		const callerKey = isServiceTransport(transport)
-			? args.caller
-			: `user:${scope.userId}`;
+		const callerKey = resolved.trusted ? args.caller : `user:${scope.userId}`;
 		if (callerKey === undefined || !CALLER_KEY.test(callerKey)) return none;
 
 		const now = Date.now();
@@ -186,6 +175,65 @@ type Reader = {
 	admin: boolean;
 };
 
+type ClaimArgs = {
+	selfKey?: string;
+	verifiedPerson?: { accessTokenHash: string };
+	verifiedOrg?: { orgSlug: string };
+};
+
+/**
+ * THE one place a tool-usage door resolves its caller (the three doors share it).
+ * `soft`: the recorder, which answers an anonymous or organisation-less caller
+ * with `null` (nothing to record) instead of raising; a read raises.
+ *
+ *   - the fleet service account that names no organisation is REFUSED (R-54);
+ *   - a `verifiedPerson` is the person's own scope, re-read from its token row;
+ *   - otherwise `verifiedOrg` narrows the service account to that organisation's
+ *     member scope (a Clerk session cannot name one: refused).
+ * `trusted`: the call is the service transport presenting no person proof, so a
+ * key it forwards (`caller` / `selfKey`) is believed, for that organisation only.
+ */
+async function resolveToolUsageScope(
+	ctx: Parameters<typeof withOrgScope>[0],
+	args: ClaimArgs,
+	door: string,
+	soft: boolean,
+): Promise<{ scope: OrgScope; trusted: boolean } | null> {
+	const transport = await withOrgScope(ctx, { refuseWithoutThrow: true });
+	if (soft) {
+		if (transport.anonymous === true || transport.refused === true) return null;
+	} else {
+		requireResolvedCaller(transport, door, { alsoRefusePreOrg: true });
+	}
+	const personal = args.verifiedPerson !== undefined;
+	refuseClaimlessServiceAccount(
+		transport,
+		args.verifiedOrg !== undefined || personal,
+		door,
+	);
+	const claimed =
+		args.verifiedOrg === undefined
+			? undefined
+			: await resolveVerifiedOrgScope(ctx, transport, args.verifiedOrg, door);
+	const scope = personal
+		? await resolveVerifiedPerson(ctx, transport, args.verifiedPerson, { door })
+		: (claimed ?? transport);
+	// A person bearer's organisation is its token's; a `verifiedOrg` carried beside
+	// it must name that same organisation, never a second source of the organisation.
+	if (
+		personal &&
+		claimed !== undefined &&
+		!sameOrg({ id: claimed.orgClerkId }, { id: scope.orgClerkId })
+	) {
+		throw rbacDenied(
+			door,
+			"cross-organisation",
+			`"${door}" refuses a claim naming another organisation than the caller's`,
+		);
+	}
+	return { scope, trusted: isServiceTransport(transport) && !personal };
+}
+
 /**
  * Who is reading and in which organisation. Shared by both read doors.
  *
@@ -200,43 +248,19 @@ type Reader = {
  */
 async function resolveReader(
 	ctx: Parameters<typeof withOrgScope>[0],
-	args: {
-		selfKey?: string;
-		verifiedPerson?: { accessTokenHash: string };
-		verifiedOrg?: { orgSlug: string };
-	},
+	args: ClaimArgs,
 	door: string,
 ): Promise<Reader> {
-	const transport = await withOrgScope(ctx, { refuseWithoutThrow: true });
-	requireResolvedCaller(transport, door, { alsoRefusePreOrg: true });
-	const personal = args.verifiedPerson !== undefined;
-	refuseClaimlessServiceAccount(
-		transport,
-		args.verifiedOrg !== undefined || personal,
-		door,
-	);
-	const scope = personal
-		? await resolveVerifiedPerson(ctx, transport, args.verifiedPerson, { door })
-		: await resolveVerifiedOrgScope(ctx, transport, args.verifiedOrg, door);
-	const orgId = scope.orgClerkId;
-	// A person bearer's organisation is its token's; a `verifiedOrg` carried beside
-	// it must name that same organisation (and is believed from the service
-	// transport only), never a second source of the organisation.
-	if (personal && args.verifiedOrg !== undefined) {
-		const claimed = await resolveVerifiedOrgScope(
-			ctx,
-			transport,
-			args.verifiedOrg,
+	const resolved = await resolveToolUsageScope(ctx, args, door, false);
+	if (resolved === null) {
+		throw rbacDenied(
 			door,
+			"unresolved",
+			`"${door}" could not resolve its caller`,
 		);
-		if (!sameOrg({ id: claimed.orgClerkId }, { id: orgId })) {
-			throw rbacDenied(
-				door,
-				"cross-organisation",
-				`"${door}" refuses a claim naming another organisation than the caller's`,
-			);
-		}
 	}
+	const { scope, trusted } = resolved;
+	const orgId = scope.orgClerkId;
 	if (orgId === undefined || orgId === "") {
 		throw rbacDenied(
 			door,
@@ -244,7 +268,6 @@ async function resolveReader(
 			`"${door}" refuses this caller: it acts in no organisation with a permanent ID`,
 		);
 	}
-	const trusted = isServiceTransport(transport) && !personal;
 	const adminRole =
 		scope.orgRole !== undefined && ORG_ADMIN_ROLES.includes(scope.orgRole);
 	return {
