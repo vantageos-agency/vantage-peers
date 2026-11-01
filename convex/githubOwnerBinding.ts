@@ -10,7 +10,7 @@ import {
 import { query } from "./lib/functions";
 import { requireResolvedCaller, withOrgScope } from "./lib/auth";
 import {
-	resolveVerifiedOrg,
+	resolveVerifiedOrgMapping,
 	resolveVerifiedOrgScope,
 	verifiedOrgValidator,
 } from "./lib/verifiedOrg";
@@ -210,15 +210,19 @@ export async function collectUnprovenMappings(
 	ctx: QueryCtx,
 	numItems: number,
 	cursor: string | null,
-	// When given, the scan runs over this org's rows only (the by_org range IS the
-	// read), so a foreign org's mapping is never read or counted into the page.
-	onlyOrg?: string,
+	// When given, the scan runs over this org's rows only, keyed by the org's
+	// PERMANENT ID (the by_clerk_org_id range IS the read): a foreign org's
+	// mapping, or one filed under a slug that has since changed hands, is never
+	// read or counted into the page.
+	onlyOrgClerkId?: string,
 ): Promise<{ items: UnprovenMapping[]; nextCursor: string | null }> {
 	const out: UnprovenMapping[] = [];
 	const rows =
-		onlyOrg === undefined
+		onlyOrgClerkId === undefined
 			? ctx.db.query("githubRepoMapping")
-			: ctx.db.query("githubRepoMapping").withIndex("by_org", (q) => q.eq("orgId", onlyOrg));
+			: ctx.db
+					.query("githubRepoMapping")
+					.withIndex("by_clerk_org_id", (q) => q.eq("clerkOrgId", onlyOrgClerkId));
 	const page = await rows.paginate({ numItems, cursor });
 	for (const m of page.page) {
 		if (m.orgId === undefined) continue;
@@ -270,12 +274,21 @@ export const listUnprovenMappings = query({
 			alsoRefusePreOrg: true,
 			masterOnly: true,
 		});
-		const verified = await resolveVerifiedOrg(
+		const verified = await resolveVerifiedOrgMapping(
 			ctx,
 			scope,
 			args.verifiedOrg,
 			"githubOwnerBinding:listUnprovenMappings",
 		);
-		return await collectUnprovenMappings(ctx, pageSize(args.limit), args.cursor ?? null, verified);
+		if (verified !== undefined && verified.clerkOrgId === undefined) {
+			// An organisation with no permanent ID owns no mapping by ID: nothing.
+			return { items: [], nextCursor: null };
+		}
+		return await collectUnprovenMappings(
+			ctx,
+			pageSize(args.limit),
+			args.cursor ?? null,
+			verified?.clerkOrgId,
+		);
 	},
 });
