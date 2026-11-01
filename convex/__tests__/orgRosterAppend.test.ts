@@ -103,6 +103,16 @@ const add = (t: T, clerkOrgSlug: string, agentIds: Id<"agents">[]) =>
 	});
 
 describe("addRosterMembers: append", () => {
+	test("(CASE) a label equal to the stored name except for case is not duplicated (Eta REVISE #1654)", async () => {
+		const t = createT();
+		const kairos = await seedAgent(t, CLIENT, "kairos");
+		await seedOrg(t, CLIENT, ["Kairos"], { orgKind: "client" });
+		await add(t, CLIENT, [kairos]);
+		const row = await rowOf(t, CLIENT);
+		expect(row?.allowedOrchestrators).toEqual(["Kairos"]);
+		expect(row?.allowedAgentIds).toEqual([kairos]);
+	});
+
 	test("(a) appending bob gives [neo,hal,mimir,bob] by ID, previous [neo,hal,mimir]; the label is copied beside it", async () => {
 		const t = createT();
 		const w = await seedWorld(t);
