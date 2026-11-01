@@ -39,7 +39,10 @@ globalThis.fetch = async (input, init = {}) => {
 				: { hasActiveCredential: false, activeRows: 0 },
 			"agents:registerAgent": "agent_stub_1",
 			"agents:getAgent": { _id: "agent_stub_1", name: "probe-a" },
-			"agentCredentials:mintAgentCredential": { secret: "stub-secret-value" },
+			"agentCredentials:mintAgentCredential": {
+				secret: "stub-secret-value",
+				mintedAt: 1760000000000,
+			},
 			"githubRepoMapping:getByRepo": {
 				_id: "map_stub_1",
 				orchestrator: "angelia",

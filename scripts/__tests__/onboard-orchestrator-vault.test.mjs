@@ -23,7 +23,8 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 const REPO = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
 const ONBOARD = join(REPO, "scripts", "onboard-orchestrator.sh");
 const PUT = join(REPO, "scripts", "vault-put-agent-secret.py");
-const HELPER = process.env.VP_VAULT_HELPER ?? "/opt/vantage-secrets/mcp_headers_vault.py";
+const HELPER =
+	process.env.VP_VAULT_HELPER ?? "/opt/vantage-secrets/mcp_headers_vault.py";
 
 let tmp;
 let ws;
@@ -106,7 +107,7 @@ describe("onboard-orchestrator.sh --dry-run", () => {
 
 describe("onboard-orchestrator.sh owner step (task k177034bdx6cqb82grpc862pw58hckgk)", () => {
 	const OWNER_CMD =
-		"npx convex run agents:setAgentOwner '{\"agentIds\":[\"agent_x\"],\"ownerPersonId\":\"user_y\",\"reason\":\"station testrole: onboarding\"}'";
+		'npx convex run agents:setAgentOwner \'{"agentIds":["agent_x"],"ownerPersonId":"user_y","reason":"station testrole: onboarding"}\'';
 	// bun stub: the dry run passes; the write run reports a live credential (SKIP) and the owner step
 	// pending, exactly as mint-station-agents.mjs does (exit 3).
 	const runWithMint = (mintExit, mintOut) => {
@@ -160,7 +161,9 @@ describe("onboard-orchestrator.sh owner step (task k177034bdx6cqb82grpc862pw58hc
 
 describe("onboard-orchestrator.sh source", () => {
 	it("no longer references the plaintext secrets directory", () => {
-		expect(readFileSync(ONBOARD, "utf8")).not.toContain(".vantage-agent-secrets");
+		expect(readFileSync(ONBOARD, "utf8")).not.toContain(
+			".vantage-agent-secrets",
+		);
 	});
 });
 
@@ -169,62 +172,77 @@ describe("vault-put-agent-secret.py against a local vault double", () => {
 	// The shared helper lives on the hosts at /opt/vantage-secrets, outside this repository
 	// (improve-the-shared-part: it is imported, never copied). Where it is absent the write path
 	// cannot load it, so this case is skipped by name; the three cases above never need it.
-	it.skipIf(!hasHelper)("creates then updates the key and verifies by readback, printing no value", async () => {
-		const store = new Map();
-		const seen = [];
-		const server = createServer((req, res) => {
-			let body = "";
-			req.on("data", (c) => {
-				body += c;
-			});
-			req.on("end", () => {
-				const url = new URL(req.url, "http://x");
-				seen.push(`${req.method} ${url.pathname}`);
-				res.setHeader("content-type", "application/json");
-				if (url.pathname === "/v1/auth/universal-auth/login") {
-					return res.end(JSON.stringify({ accessToken: "tok" }));
-				}
-				const key = url.pathname.split("/").pop();
-				if (req.method === "GET") {
-					if (!store.has(key)) {
-						res.statusCode = 404;
-						return res.end("{}");
+	it.skipIf(!hasHelper)(
+		"creates then updates the key and verifies by readback, printing no value",
+		async () => {
+			const store = new Map();
+			const seen = [];
+			const server = createServer((req, res) => {
+				let body = "";
+				req.on("data", (c) => {
+					body += c;
+				});
+				req.on("end", () => {
+					const url = new URL(req.url, "http://x");
+					seen.push(`${req.method} ${url.pathname}`);
+					res.setHeader("content-type", "application/json");
+					if (url.pathname === "/v1/auth/universal-auth/login") {
+						return res.end(JSON.stringify({ accessToken: "tok" }));
 					}
-					return res.end(JSON.stringify({ secret: { secretValue: store.get(key) } }));
-				}
-				store.set(key, JSON.parse(body).secretValue);
-				return res.end("{}");
-			});
-		});
-		await new Promise((ok) => server.listen(0, "127.0.0.1", ok));
-		const base = `http://127.0.0.1:${server.address().port}`;
-		const secretFile = join(tmp, "s.secret");
-		const go = () =>
-			new Promise((done) => {
-				const p = spawn(
-					"python3",
-					[PUT, "--role", "testrole", "--secret-file", secretFile, "--config", config, "--host", "testhost"],
-					{ env: { ...process.env, INFISICAL_API_BASE: base } },
-				);
-				let out = "";
-				p.stdout.on("data", (c) => {
-					out += c;
+					const key = url.pathname.split("/").pop();
+					if (req.method === "GET") {
+						if (!store.has(key)) {
+							res.statusCode = 404;
+							return res.end("{}");
+						}
+						return res.end(
+							JSON.stringify({ secret: { secretValue: store.get(key) } }),
+						);
+					}
+					store.set(key, JSON.parse(body).secretValue);
+					return res.end("{}");
 				});
-				p.stderr.on("data", (c) => {
-					out += c;
-				});
-				p.on("close", (code) => done({ code, out }));
 			});
-		writeFileSync(secretFile, "vpagent_first\n");
-		const first = await go();
-		writeFileSync(secretFile, "vpagent_second\n");
-		const second = await go();
-		server.close();
-		expect(first.code, first.out).toBe(0);
-		expect(second.code, second.out).toBe(0);
-		expect(store.get("TESTROLE_SECRET")).toBe("vpagent_second");
-		expect(seen).toContain("POST /v3/secrets/raw/TESTROLE_SECRET");
-		expect(seen).toContain("PATCH /v3/secrets/raw/TESTROLE_SECRET");
-		expect(first.out + second.out).not.toContain("vpagent_");
-	});
+			await new Promise((ok) => server.listen(0, "127.0.0.1", ok));
+			const base = `http://127.0.0.1:${server.address().port}`;
+			const secretFile = join(tmp, "s.secret");
+			const go = () =>
+				new Promise((done) => {
+					const p = spawn(
+						"python3",
+						[
+							PUT,
+							"--role",
+							"testrole",
+							"--secret-file",
+							secretFile,
+							"--config",
+							config,
+							"--host",
+							"testhost",
+						],
+						{ env: { ...process.env, INFISICAL_API_BASE: base } },
+					);
+					let out = "";
+					p.stdout.on("data", (c) => {
+						out += c;
+					});
+					p.stderr.on("data", (c) => {
+						out += c;
+					});
+					p.on("close", (code) => done({ code, out }));
+				});
+			writeFileSync(secretFile, "vpagent_first\n");
+			const first = await go();
+			writeFileSync(secretFile, "vpagent_second\n");
+			const second = await go();
+			server.close();
+			expect(first.code, first.out).toBe(0);
+			expect(second.code, second.out).toBe(0);
+			expect(store.get("TESTROLE_SECRET")).toBe("vpagent_second");
+			expect(seen).toContain("POST /v3/secrets/raw/TESTROLE_SECRET");
+			expect(seen).toContain("PATCH /v3/secrets/raw/TESTROLE_SECRET");
+			expect(first.out + second.out).not.toContain("vpagent_");
+		},
+	);
 });

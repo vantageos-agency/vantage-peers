@@ -119,11 +119,13 @@ export async function mintOrgAdminToken({
  * The step is therefore an operator command with the deployment's deploy key. Returns that
  * command text (agent ids and a Clerk user id are identifiers, not secrets).
  */
-export function ownerStepCommand({ agentIds, ownerPersonId, org }) {
+export function ownerStepCommand({ agentIds, ownerPersonId, org, reason }) {
 	const payload = JSON.stringify({
 		agentIds,
 		ownerPersonId,
-		reason: `client org ${org}: onboarding, owner is the org admin that registered the agent`,
+		reason:
+			reason ??
+			`client org ${org}: onboarding, owner is the org admin that registered the agent`,
 	});
 	return `CONVEX_DEPLOY_KEY=<deploy key> npx convex run agents:setAgentOwner '${payload}'`;
 }
