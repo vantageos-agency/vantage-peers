@@ -1126,6 +1126,9 @@ export default defineSchema({
 	})
 		.index("by_repo", ["repo"])
 		.index("by_org", ["orgId"])
+		// Tenant reads by the permanent org id (task k179y0wpsd6fv7055f4p2w6b358hdrxe):
+		// githubOwnerBinding:listUnprovenMappings narrows a verified org's scan here.
+		.index("by_clerk_org_id", ["clerkOrgId"])
 		// Issue #1276 fix — `resolveStaleDeployTasks` (convex/tasks.ts) used to
 		// open with an unbounded `ctx.db.query("githubRepoMapping").collect()`
 		// of the WHOLE table every single cron tick (every 6 hours), the one

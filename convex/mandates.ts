@@ -555,10 +555,21 @@ export const validateSpending = query({
 		// master-only writes, no ordinary reader: masterOnly. No reactive subscriber
 		// (MCP `validate_mandate_spending` one-shot; dashboard grep -> 0).
 		const scope = await withOrgScope(ctx, { refuseWithoutThrow: true });
-		await requireFleetDoor(ctx, scope, "mandates:validateSpending", {
-			masterOnly: true,
-			operatorHumanMayRead: true,
-		});
+		const operator = await fleetOperatorRef(ctx.db);
+		// The service account acting for the OPERATOR organisation (`__actingOrg`,
+		// task k179y0wpsd6fv7055f4p2w6b358hdrxe) is the fleet's own seat: a mandate
+		// is that organisation's (both parties are operator-org agents), so it is
+		// served exactly as a verified operator org is below. Acting for any other
+		// organisation, the call has no fleet standing and the door refuses it.
+		const actsForOperator =
+			scope.serviceTransport === true &&
+			sameOrg({ id: scope.orgClerkId }, operator);
+		if (!actsForOperator) {
+			await requireFleetDoor(ctx, scope, "mandates:validateSpending", {
+				masterOnly: true,
+				operatorHumanMayRead: true,
+			});
+		}
 		// A fleet-wide identity is master: the gate above cannot tell the fleet's
 		// own caller from a client org's seat that reached Convex through the MCP
 		// service account. The verified org can. Refused BEFORE the read, so a
@@ -573,7 +584,6 @@ export const validateSpending = query({
 				args.verifiedOrg,
 				"mandates:validateSpending",
 			);
-			const operator = await fleetOperatorRef(ctx.db);
 			if (!sameOrg({ id: mapping?.clerkOrgId }, operator)) {
 				// The verified client org is a resolved, ordinary member here: the ONE
 				// shared refusal (requireResolvedCaller, masterOnly) says so.
