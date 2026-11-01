@@ -62,6 +62,28 @@ OpenAI's help article 12584461 states that custom MCP connectors have full acces
 
 <!-- not measured: English labels of the Grok screens. -->
 
+## OpenCode
+
+1. Put this in `~/.config/opencode/opencode.json` (or merge the `mcp` key into the file you already have):
+
+   ```json
+   {
+     "$schema": "https://opencode.ai/config.json",
+     "mcp": {
+       "vantagepeers": {
+         "type": "remote",
+         "url": "https://mcp.vantagepeers.com/mcp",
+         "enabled": true
+       }
+     }
+   }
+   ```
+
+2. Run `opencode mcp auth vantagepeers`, sign in and complete the consent page.
+3. Check it: `opencode mcp list` shows `vantagepeers`; if it does not connect, `opencode mcp debug vantagepeers` prints why.
+
+<!-- source: opencode.ai/docs/mcp-servers and opencode.ai/docs/config, fetched 2026-11-01. not measured: a full OpenCode sign-in against VantagePeers Cloud. -->
+
 ## Test it
 
 Paste this right after connecting (English):
