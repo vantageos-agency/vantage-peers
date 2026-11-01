@@ -6,11 +6,11 @@ import {
 import { ConvexError, v } from "convex/values";
 import type { MutationCtx, QueryCtx } from "../_generated/server";
 import {
+	actingOrgAdmits,
 	isServiceTransport,
 	lookupOrgMapping,
 	type OrgMappingView,
 	type OrgScope,
-	requireActingOrgMatch,
 	withOrgScope,
 } from "./auth";
 import { orgRefOfRow } from "./authOrgMapping";
@@ -81,7 +81,13 @@ export async function resolveVerifiedOrgMapping(
 			`verifiedOrg names no active organisation "${proof.orgSlug}"`,
 		);
 	}
-	requireActingOrgMatch(transportScope, mapping.clerkOrgId, "verifiedOrg", door);
+	if (!actingOrgAdmits(transportScope, mapping.clerkOrgId)) {
+		refuse(
+			"claim-outside-acting-org",
+			door,
+			`verifiedOrg names "${proof.orgSlug}", another organisation than the one this call acts for`,
+		);
+	}
 	return mapping;
 }
 

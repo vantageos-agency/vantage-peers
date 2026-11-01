@@ -12,7 +12,7 @@ import {
 	refuseWith as refuseIdentity,
 	requireServiceAccountForClaim,
 } from "./actingPrincipal";
-import { lookupOrgMapping, type OrgScope, requireActingOrgMatch } from "./auth";
+import { lookupOrgMapping, type OrgScope } from "./auth";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // verifiedPerson — the bridge that lets a PERSON signed in through the MCP
@@ -115,7 +115,30 @@ export async function resolveVerifiedPerson(
 	);
 	if (!resolved.ok) refuseWith(resolved.refusal);
 	const { principal, organisation: mapping } = resolved;
-	requireActingOrgMatch(transportScope, mapping.clerkOrgId, "verifiedPerson", door);
+	// Under an acting org the person must be a member of THAT organisation, judged
+	// by the package by its permanent ID (the same resolver as the ID path below).
+	if (transportScope.serviceTransport === true) {
+		const inActingOrg = await resolveActingPrincipal(
+			{
+				kind: "person",
+				personId: principal.subject,
+				verifiedOrgId: transportScope.orgClerkId ?? "",
+				...(principal.orgRole !== undefined
+					? { verifiedOrgRole: principal.orgRole }
+					: {}),
+			},
+			personPrincipalLookups(ctx, principal.subject),
+			door,
+		);
+		if (!inActingOrg.ok) refuseIdentity(inActingOrg.refusal);
+		const sameAsToken = await assertTargetBelongsTo(
+			inActingOrg.principal,
+			{ orgId: mapping.clerkOrgId },
+			personPrincipalLookups(ctx, principal.subject),
+			{ door },
+		);
+		if (!sameAsToken.ok) refuseIdentity(sameAsToken.refusal);
+	}
 	// `resolvePersonPrincipal` selects the organisation by the LABEL the token
 	// was minted under, and a label is renamable: after a rename another
 	// organisation can hold it, and the lookup above then answers THAT

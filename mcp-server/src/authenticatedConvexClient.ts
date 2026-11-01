@@ -157,15 +157,17 @@ export function withActingOrg(
 	});
 }
 
+/** The refusal every call of a no-organisation client rejects with. */
+export const NO_ORG_CLIENT_REFUSAL =
+	"RBAC_DENIED: refusing to call Convex — this caller has no verified organisation and absence is never the fleet";
+
 /**
  * A client none of whose calls reach the wire: each rejects RBAC_DENIED. What a
  * caller with no resolvable organisation gets instead of the fleet identity.
  */
 function refusingClient(reason: string): ConvexHttpClient {
 	const refuse = async (): Promise<never> => {
-		throw new Error(
-			`RBAC_DENIED: refusing to call Convex — ${reason} (absence is never the fleet)`,
-		);
+		throw new Error(`${NO_ORG_CLIENT_REFUSAL} — ${reason}`);
 	};
 	return {
 		query: refuse,
