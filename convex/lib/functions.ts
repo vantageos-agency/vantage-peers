@@ -1,9 +1,5 @@
 import { customAction, customMutation, customQuery } from "convex-helpers/server/customFunctions";
-import {
-	action as baseAction,
-	mutation as baseMutation,
-	query as baseQuery,
-} from "../_generated/server";
+import { action, mutation, query } from "../_generated/server";
 import { actingOrgValidator, authCarryingActingOrg } from "./actingOrg";
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -24,26 +20,31 @@ import { actingOrgValidator, authCarryingActingOrg } from "./actingOrg";
 
 const actingOrgArgs = { __actingOrg: actingOrgValidator };
 
-export const query = customQuery(baseQuery, {
+const publicQuery = customQuery(query, {
 	args: actingOrgArgs,
 	input: async (ctx, args) => ({
 		ctx: { auth: authCarryingActingOrg(ctx.auth, args.__actingOrg) },
 		args: {},
 	}),
-}) as unknown as typeof baseQuery;
+}) as unknown as typeof query;
 
-export const mutation = customMutation(baseMutation, {
+const publicMutation = customMutation(mutation, {
 	args: actingOrgArgs,
 	input: async (ctx, args) => ({
 		ctx: { auth: authCarryingActingOrg(ctx.auth, args.__actingOrg) },
 		args: {},
 	}),
-}) as unknown as typeof baseMutation;
+}) as unknown as typeof mutation;
 
-export const action = customAction(baseAction, {
+const publicAction = customAction(action, {
 	args: actingOrgArgs,
 	input: async (ctx, args) => ({
 		ctx: { auth: authCarryingActingOrg(ctx.auth, args.__actingOrg) },
 		args: {},
 	}),
-}) as unknown as typeof baseAction;
+}) as unknown as typeof action;
+
+// Exported under the bare builder names, so a module's `query({...})` reads as
+// a public registration to every reader (and to backend-doctor's builder map:
+// each wrapper's base is the literal public builder).
+export { publicAction as action, publicMutation as mutation, publicQuery as query };

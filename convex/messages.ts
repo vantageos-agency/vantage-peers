@@ -18,7 +18,7 @@ import {
 	type OrgScope,
 	withOrgScope,
 	isServiceTransport,
-	requireActingOrgMatch,
+	actingOrgAdmits,
 } from "./lib/auth";
 import { isFleetSystemCaller } from "./lib/systemCaller";
 import {
@@ -925,7 +925,12 @@ async function resolveSeatRecipientScope(
 				: `seatOrgSlug "${seatOrgSlug}" is not a known, active organisation`,
 		);
 	}
-	requireActingOrgMatch(transportScope, mapping.clerkOrgId, "seatOrgSlug", door);
+	if (!actingOrgAdmits(transportScope, mapping.clerkOrgId)) {
+		return refuse(
+			"claim-outside-acting-org",
+			"seatOrgSlug names another organisation than the one this call acts for",
+		);
+	}
 	// The org's label NOW: a tenantId is a label and is compared to it.
 	const seatLabel =
 		seatOrgClerkId !== undefined

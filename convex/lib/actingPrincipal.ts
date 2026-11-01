@@ -17,7 +17,6 @@ import type { MutationCtx, QueryCtx } from "../_generated/server";
 import {
 	lookupOrgMapping,
 	type OrgScope,
-	requireActingOrgMatch,
 	type VerifiedActor,
 } from "./auth";
 import { orgMappingLookups } from "./authOrgMapping";
@@ -298,7 +297,7 @@ export function requireServiceAccountForClaim(
 ): void {
 	// The service account acting for an organisation (`__actingOrg`) is still the
 	// transport that verified the claim; each caller binds the claim's org to the
-	// acting org (`requireActingOrgMatch`).
+	// acting org (the package's target check, below).
 	if (transportScope.serviceTransport === true) return;
 	try {
 		requireServiceAccountStanding(transportScope, door);
@@ -334,7 +333,6 @@ export async function requireVerifiedActorPrincipal(
 	if (verifiedOrgId === undefined) {
 		throw orgHasNoPermanentIdRefusal(verifiedActor.orgSlug, door);
 	}
-	requireActingOrgMatch(transportScope, verifiedOrgId, "verifiedActor", door);
 	const resolved = await resolveActingPrincipal(
 		{
 			kind: "agent",
@@ -345,6 +343,17 @@ export async function requireVerifiedActorPrincipal(
 		door,
 	);
 	if (!resolved.ok) return refuseWith(resolved.refusal);
+	// Under an acting org the agent must belong to THAT organisation, judged by
+	// the package against its permanent ID (assertTargetBelongsTo).
+	if (transportScope.serviceTransport === true) {
+		await requireTargetOrgOfPrincipal(
+			ctx,
+			resolved.principal,
+			transportScope.orgSlug,
+			door,
+			transportScope.orgClerkId,
+		);
+	}
 	return resolved.principal;
 }
 

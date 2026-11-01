@@ -168,7 +168,7 @@ export interface OrgScope {
 	 * `verifiedPerson`, `verifiedOrg`, `seatOrgSlug`) are still believed — but
 	 * only for THIS organisation: each trust check that admits the service
 	 * account admits this scope only when the claim's org is the acting org
-	 * (`isServiceTransport` / `requireActingOrgMatch`). It grants no read, no
+	 * (`isServiceTransport` / `actingOrgAdmits`). It grants no read, no
 	 * write and no fleet standing by itself; every door's member path decides.
 	 */
 	serviceTransport?: true;
@@ -191,52 +191,18 @@ export function isServiceTransport(
 
 /**
  * Under an acting org, a transport-verified claim must name THAT organisation:
- * the service account acting for org A cannot carry a proof of org B. No-op for
+ * the service account acting for org A cannot carry a proof of org B. True for
  * the fleet-master transport (whose proofs name their own org, as before).
- * `claimOrgId` is the permanent org ID the claim resolves to (undefined when
- * it resolves to none, which is refused under an acting org).
+ * `claimOrgId` is the permanent org ID the claim resolves to; under an acting
+ * org a claim that resolves to none is never admitted. The org compare is the
+ * package's `sameOrg`. Each caller refuses through its own refusal.
  */
-export function requireActingOrgMatch(
-	scope: Pick<OrgScope, "serviceTransport" | "orgClerkId" | "orgSlug">,
+export function actingOrgAdmits(
+	scope: Pick<OrgScope, "serviceTransport" | "orgClerkId">,
 	claimOrgId: string | undefined,
-	claim: string,
-	door: string,
-): void {
-	if (scope.serviceTransport !== true) return;
-	if (
-		claimOrgId === undefined ||
-		scope.orgClerkId === undefined ||
-		claimOrgId !== scope.orgClerkId
-	) {
-		throw new ConvexError(
-			`RBAC_DENIED: ${claim} names another organisation than the one this call acts for — ${JSON.stringify({ reason: "claim-outside-acting-org", claim, door, actingOrgSlug: scope.orgSlug })}`,
-		);
-	}
-}
-
-/**
- * The member scope of an organisation the service account acts for, shaped
- * exactly like the member scope `withOrgScope` returns for a dashboard member.
- */
-function serviceActingScope(
-	subject: string,
-	mapping: OrgMappingView,
-	serviceTransport: boolean,
-): OrgScope {
-	return {
-		userId: subject,
-		orgSlug: mapping.clerkOrgSlug,
-		// The org's permanent ID, from the row, so row ownership compares IDs.
-		...(mapping.clerkOrgId !== undefined
-			? { orgClerkId: mapping.clerkOrgId }
-			: {}),
-		allowedOrchestrators: mapping.allowedOrchestrators,
-		allowedAgentIds: mapping.allowedAgentIds ?? [],
-		fleetWide: false,
-		scopes: mapping.scopes,
-		isMaster: false,
-		...(serviceTransport ? { serviceTransport: true as const } : {}),
-	};
+): boolean {
+	if (scope.serviceTransport !== true) return true;
+	return sameOrg({ id: claimOrgId }, { id: scope.orgClerkId });
 }
 
 /**
@@ -413,6 +379,7 @@ export async function withOrgScope(
 		// scope of that org, keyed by its permanent ID; an org no ACTIVE mapping
 		// holds is REFUSED, never served as the fleet.
 		const actingOrg = opts?.actingOrgClerkId ?? actingOrgOf(ctx);
+		let actFor = opts?.actForOrgMapping;
 		if (actingOrg !== undefined) {
 			const acting =
 				actingOrg === ""
@@ -423,17 +390,28 @@ export async function withOrgScope(
 					`RBAC_DENIED: the service account acts for an organisation no active mapping holds — ${JSON.stringify({ door: "withOrgScope", reason: "acting-org-not-active" })}`,
 				);
 			}
-			const actFor = opts?.actForOrgMapping;
 			if (actFor !== undefined && actFor._id !== acting._id) {
 				throw new ConvexError(
 					`RBAC_DENIED: verifiedOrg names another organisation than the one this call acts for — ${JSON.stringify({ door: "withOrgScope", reason: "claim-outside-acting-org" })}`,
 				);
 			}
-			return serviceActingScope(subject, acting, true);
+			actFor = acting;
 		}
-		const actFor = opts?.actForOrgMapping;
 		if (actFor !== undefined) {
-			return serviceActingScope(subject, actFor, false);
+			return {
+				userId: subject,
+				orgSlug: actFor.clerkOrgSlug,
+				// The org's permanent ID, from the row, so row ownership compares IDs.
+				...(actFor.clerkOrgId !== undefined
+					? { orgClerkId: actFor.clerkOrgId }
+					: {}),
+				allowedOrchestrators: actFor.allowedOrchestrators,
+				allowedAgentIds: actFor.allowedAgentIds ?? [],
+				fleetWide: false,
+				scopes: actFor.scopes,
+				isMaster: false,
+				...(actingOrg !== undefined ? { serviceTransport: true as const } : {}),
+			};
 		}
 		return {
 			userId: subject,
@@ -1148,20 +1126,23 @@ async function requireVerifiedActorMatch(
 		);
 	}
 	// Under an acting org the agent must be that org's, by permanent ID.
-	requireActingOrgMatch(
-		{
-			...(verified.scope.serviceTransport === true
-				? { serviceTransport: true as const }
-				: {}),
-			...(verified.scope.orgClerkId !== undefined
-				? { orgClerkId: verified.scope.orgClerkId }
-				: {}),
-			orgSlug: verified.scope.orgSlug ?? null,
-		},
-		row.clerkOrgId,
-		"verifiedActor",
-		"requireAgentCredentialMatch",
-	);
+	if (
+		!actingOrgAdmits(
+			{
+				...(verified.scope.serviceTransport === true
+					? { serviceTransport: true as const }
+					: {}),
+				...(verified.scope.orgClerkId !== undefined
+					? { orgClerkId: verified.scope.orgClerkId }
+					: {}),
+			},
+			row.clerkOrgId,
+		)
+	) {
+		throw new ConvexError(
+			`ORG_MISMATCH: verifiedActor names an agent of another organisation than the one this call acts for — ${JSON.stringify({ agentId: row._id, reason: "claim-outside-acting-org" })}`,
+		);
+	}
 	const callOrg = targetOrgSlug ?? verified.declaredOrgSlug ?? null;
 	if (callOrg !== null && callOrg !== actor.orgSlug) {
 		throw new ConvexError(

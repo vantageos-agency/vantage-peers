@@ -6,7 +6,7 @@ import { query } from "./lib/functions";
 import {
 	isMcpBoundMaster,
 	lookupOrgMapping,
-	requireActingOrgMatch,
+	actingOrgAdmits,
 	requireResolvedCaller,
 	withOrgScope,
 } from "./lib/auth";
@@ -220,12 +220,11 @@ export const getAgentDirectoryForAccessToken = query({
 			);
 		}
 		const mapping = await mappingOfAccessToken(ctx, args.tokenHash);
-		requireActingOrgMatch(
-			scope,
-			mapping.orgClerkId,
-			"tokenHash",
-			"orgRoster:getAgentDirectoryForAccessToken",
-		);
+		if (!actingOrgAdmits(scope, mapping.orgClerkId)) {
+			throw new ConvexError(
+				`RBAC_DENIED: orgRoster:getAgentDirectoryForAccessToken — the token's organisation is not the one this call acts for`,
+			);
+		}
 		return await agentDirectoryOf(
 			ctx,
 			mapping.orgClerkId,
@@ -347,12 +346,11 @@ export const getForAccessToken = query({
 				`RBAC_DENIED: Org "${orgId}" not in client_org_mapping or inactive`,
 			);
 		}
-		requireActingOrgMatch(
-			scope,
-			mapping.clerkOrgId,
-			"tokenHash",
-			"orgRoster:getForAccessToken",
-		);
+		if (!actingOrgAdmits(scope, mapping.clerkOrgId)) {
+			throw new ConvexError(
+				`RBAC_DENIED: orgRoster:getForAccessToken — the token's organisation is not the one this call acts for`,
+			);
+		}
 		return mapping.allowedOrchestrators;
 	},
 });
