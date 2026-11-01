@@ -2189,14 +2189,14 @@ export const listMessages = query({
 			// the slug: a slug is a label a takeover hands to another org (sweep site
 			// A-10). A caller whose mapping carries no ID reads nothing; a row with no
 			// ID (noSlug, absentSlug) belongs to no org.
-			const orgId = scope.orgClerkId;
-			if (orgId === undefined) {
+			const callerOrgClerkId = scope.orgClerkId;
+			if (callerOrgClerkId === undefined) {
 				rows = [];
 			} else {
 				rows = await ctx.db
 					.query("messages")
 					.withIndex("by_tenant_created_clerk_id", (q) =>
-						q.eq("tenantOrgId", orgId),
+						q.eq("tenantOrgId", callerOrgClerkId),
 					)
 					.order("desc")
 					.filter((q) =>
@@ -2205,7 +2205,7 @@ export const listMessages = query({
 					.take(fetchCap);
 
 				// Belt-and-suspenders: ensure no cross-tenant row leaks through.
-				rows = rows.filter((r) => r.tenantOrgId === orgId);
+				rows = rows.filter((r) => r.tenantOrgId === callerOrgClerkId);
 			}
 		} else {
 			// ── Master path — existing index logic, unchanged ──────────────────────
