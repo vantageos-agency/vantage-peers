@@ -146,6 +146,23 @@ export async function resolveAgentOfPresentedSecret(
 	presentedSecret: string,
 	door: string,
 ): Promise<Doc<"agents"> | null> {
+	return await agentOfPresentedSecret(ctx, presentedSecret, door, false);
+}
+
+/**
+ * The shared body of `resolveAgentOfPresentedSecret`. `surfaceUnstamped` is for
+ * the ONE caller that turns an agent row with no `clerkOrgId` into its own
+ * stable refusal (`org-id-missing`, resolveOwnedAgentOfPresentedSecret): the row
+ * is then returned although the package, which judges organisations by permanent
+ * ID, refuses it. That caller refuses on exactly that field, so the row is never
+ * accepted as a caller.
+ */
+async function agentOfPresentedSecret(
+	ctx: Ctx,
+	presentedSecret: string,
+	door: string,
+	surfaceUnstamped: boolean,
+): Promise<Doc<"agents"> | null> {
 	const bearer = await validatePresentedBearer(`Bearer ${presentedSecret}`, {
 		lookupBySecretHash: async (digest) => {
 			const row = await ctx.db
@@ -154,7 +171,11 @@ export async function resolveAgentOfPresentedSecret(
 				.unique();
 			if (row === null) return null;
 			return {
-				tenantId: row.orgSlug,
+				// The credential's organisation is its permanent ID: the one stamped on
+				// the row, else the one its label names now (the agent row's stored ID
+				// is what it is judged against, so a taken-over label only refuses).
+				tenantId:
+					row.clerkOrgId ?? (await clerkOrgIdForSlug(ctx, row.orgSlug)) ?? "",
 				secretHash: row.secretHash,
 				agentId: row.agentId ?? null,
 				revoked: !row.isActive,
@@ -173,7 +194,15 @@ export async function resolveAgentOfPresentedSecret(
 		principalLookups(ctx),
 		door,
 	);
-	if (!resolved.ok) return null;
+	if (!resolved.ok) {
+		if (!surfaceUnstamped) return null;
+		const unstamped = await ctx.db.get(scoped.identity.agentId as Id<"agents">);
+		return unstamped !== null &&
+			unstamped.isActive &&
+			unstamped.clerkOrgId === undefined
+			? unstamped
+			: null;
+	}
 	return await ctx.db.get(resolved.principal.principalId as Id<"agents">);
 }
 
@@ -211,7 +240,7 @@ export async function resolveOwnedAgentOfPresentedSecret(
 	presentedSecret: string,
 	door: string,
 ): Promise<OwnedAgentOfSecret> {
-	const agent = await resolveAgentOfPresentedSecret(ctx, presentedSecret, door);
+	const agent = await agentOfPresentedSecret(ctx, presentedSecret, door, true);
 	if (agent === null) return { ok: false, reason: "credential-not-recognised" };
 	if (agent.ownerPersonId === undefined) {
 		return { ok: false, reason: "owner-missing" };

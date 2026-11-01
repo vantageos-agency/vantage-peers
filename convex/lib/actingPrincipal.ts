@@ -15,6 +15,7 @@ import { ConvexError } from "convex/values";
 import type { Doc } from "../_generated/dataModel";
 import type { MutationCtx, QueryCtx } from "../_generated/server";
 import { lookupOrgMapping, type OrgScope, type VerifiedActor } from "./auth";
+import { clerkOrgIdForSlug } from "./orgClerkId";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // actingPrincipal — the vantage-peers ADAPTER onto @vantageos/cloud-identity's
@@ -23,13 +24,18 @@ import { lookupOrgMapping, type OrgScope, type VerifiedActor } from "./auth";
 // package a credential built only from what the transport verified, and turns
 // the package's typed refusal into this backend's RBAC_DENIED ConvexError.
 //
-// THE ORGANISATION ID. Every row of this backend is stamped with the org's
-// `client_org_mapping.clerkOrgSlug` (`agents.orgSlug`, `messages.tenantId`,
-// `messageReceipts.tenantId`, `tasks.orgId`); no other org key is stored
-// anywhere. This adapter is the ONE place that says so: the package's `orgId`
-// is that stored value. Moving the stamps to `client_org_mapping._id` is an
-// expand-contract migration of every stamped table; when it lands, only
-// `organisationById` / `orgKindOf` / `agentById` below change.
+// THE ORGANISATION ID. The package's `orgId` is the organisation's PERMANENT ID
+// (`client_org_mapping.clerkOrgId`, stamped on a row as `agents.clerkOrgId`),
+// never its slug. A slug is a renamable label another organisation can take
+// over after its holder releases it; an `orgId` that is a slug lets the new
+// holder pass the previous holder's agent ID and be judged "stamped with the org
+// the credential names" (task k178kcdj17bd0vmxce295aw19s8hdsq4, same class as
+// findAgentByName, task k1768vtsgr0cg8jb6z5bkgnzts8hchbe). So `agentById`
+// answers the row's `clerkOrgId` (null when the row has none, which the package
+// refuses: a row is never matched by slug), `organisationById` / `orgKindOf` /
+// `recipientLookups` read the mapping by that ID, and a door that holds only a
+// slug converts it ONCE at its edge (`permanentOrgIdOfSlug`, the ID the slug's
+// mapping row stores now, ambiguity or absence fails closed).
 //
 // ORG KIND. `orgKindOf` answers "operator" only for an ACTIVE mapping marked
 // `orgKind: "operator"`; any other ACTIVE mapping (including the rows whose
@@ -52,16 +58,29 @@ export function principalLookups(ctx: Ctx): PrincipalLookups {
 				.withIndex("by_id", (q) => q.eq("_id", id))
 				.unique();
 			if (row === null) return null;
-			return { id: row._id, orgId: row.orgSlug, active: row.isActive };
+			return { id: row._id, orgId: row.clerkOrgId ?? null, active: row.isActive };
 		},
 		organisationById: async (orgId) => {
-			const mapping = await lookupOrgMapping(ctx, orgId);
+			const mapping = await lookupOrgMapping(ctx, { clerkOrgId: orgId });
 			if (mapping === null) return null;
 			return { id: orgId, active: mapping.isActive };
 		},
 		orgKindOf: async (orgId): Promise<OrgKind | null> =>
-			orgKindOfMapping(await lookupOrgMapping(ctx, orgId)),
+			orgKindOfMapping(await lookupOrgMapping(ctx, { clerkOrgId: orgId })),
 	};
+}
+
+/**
+ * The permanent ID of the organisation a SLUG names NOW, or undefined (no
+ * mapping, two mappings claiming the slug, or a mapping with no ID). The one
+ * conversion for a door whose caller hands it a label; the result is what the
+ * package compares against the agent row's stored `clerkOrgId`.
+ */
+export async function permanentOrgIdOfSlug(
+	ctx: Ctx,
+	slug: string | null | undefined,
+): Promise<string | undefined> {
+	return await clerkOrgIdForSlug(ctx, slug);
 }
 
 /**
@@ -80,15 +99,15 @@ export function principalLookupsOverAgents(
 		agentById: async (agentId) => {
 			const row = byId.get(agentId);
 			if (row === undefined) return null;
-			return { id: row._id, orgId: row.orgSlug, active: row.isActive };
+			return { id: row._id, orgId: row.clerkOrgId ?? null, active: row.isActive };
 		},
 		organisationById: async (orgId) => {
-			const mapping = await lookupOrgMapping(ctx, orgId);
+			const mapping = await lookupOrgMapping(ctx, { clerkOrgId: orgId });
 			if (mapping === null) return null;
 			return { id: orgId, active: mapping.isActive };
 		},
 		orgKindOf: async (orgId): Promise<OrgKind | null> =>
-			orgKindOfMapping(await lookupOrgMapping(ctx, orgId)),
+			orgKindOfMapping(await lookupOrgMapping(ctx, { clerkOrgId: orgId })),
 	};
 }
 
@@ -296,11 +315,17 @@ export async function requireVerifiedActorPrincipal(
 	door: string,
 ): Promise<ActingPrincipal> {
 	requireServiceAccountForClaim(transportScope, "verifiedActor", door);
+	// The transport names the org by label; the package judges by permanent ID.
+	// A label naming no organisation with an ID is a refusal, never a pass.
+	const verifiedOrgId = await permanentOrgIdOfSlug(ctx, verifiedActor.orgSlug);
+	if (verifiedOrgId === undefined) {
+		throw orgHasNoPermanentIdRefusal(verifiedActor.orgSlug, door);
+	}
 	const resolved = await resolveActingPrincipal(
 		{
 			kind: "agent",
 			agentId: verifiedActor.agentId,
-			verifiedOrgId: verifiedActor.orgSlug,
+			verifiedOrgId,
 		},
 		principalLookups(ctx),
 		door,
@@ -317,9 +342,15 @@ export async function requireVerifiedActorPrincipal(
 export async function requireTargetOrgOfPrincipal(
 	ctx: Ctx,
 	principal: ActingPrincipal,
-	targetOrgId: string | null | undefined,
+	targetOrgSlug: string | null | undefined,
 	door: string,
+	targetOrgClerkId?: string,
 ): Promise<void> {
+	// The target is compared by permanent ID: the ID the caller holds, else the
+	// one the target's label names now. A target with no ID is an absent org,
+	// which the package refuses.
+	const targetOrgId =
+		targetOrgClerkId ?? (await permanentOrgIdOfSlug(ctx, targetOrgSlug));
 	const verdict = await assertTargetBelongsTo(
 		principal,
 		{ orgId: targetOrgId },
@@ -342,7 +373,7 @@ export async function recipientScopeOfPrincipal(
 	principal: ActingPrincipal,
 	door: string,
 ): Promise<OrgScope> {
-	const mapping = await lookupOrgMapping(ctx, principal.orgId);
+	const mapping = await lookupOrgMapping(ctx, { clerkOrgId: principal.orgId });
 	if (mapping === null || !mapping.isActive) {
 		throw new ConvexError(
 			`RBAC_DENIED: the acting agent's organisation is not an active organisation — ${JSON.stringify({ reason: "organisation-not-active", door })}`,
@@ -350,12 +381,10 @@ export async function recipientScopeOfPrincipal(
 	}
 	return {
 		userId: transportScope.userId,
-		orgSlug: principal.orgId,
-		// The org's permanent ID, from the mapping row resolved above, so row
-		// ownership compares IDs (M4: no label fallback on a row compare).
-		...(mapping.clerkOrgId !== undefined
-			? { orgClerkId: mapping.clerkOrgId }
-			: {}),
+		// The org's label NOW (display), read from the mapping the principal's
+		// permanent ID names; ownership compares the ID beside it.
+		orgSlug: mapping.clerkOrgSlug,
+		orgClerkId: principal.orgId,
 		allowedOrchestrators: mapping.allowedOrchestrators,
 		allowedAgentIds: mapping.allowedAgentIds ?? [],
 		fleetWide: false,
@@ -381,6 +410,21 @@ export function assigneeNotInOrgRefusal(
 }
 
 /**
+ * The refusal for an organisation named by a label that resolves to no permanent
+ * ID (no mapping, two mappings claiming the label, or a mapping not yet stamped
+ * with its ID). Same RBAC_DENIED code and `{reason, door}` payload shape as every
+ * other identity refusal of this module.
+ */
+export function orgHasNoPermanentIdRefusal(
+	orgSlug: string,
+	door: string,
+): ConvexError<string> {
+	return new ConvexError(
+		`ORG_MISMATCH: the organisation "${orgSlug}" resolves to no permanent organisation ID, so no agent is judged to belong to it — ${JSON.stringify({ reason: "organisation-has-no-permanent-id", door })}`,
+	);
+}
+
+/**
  * An assignee agent row already resolved by ID, checked through the package
  * (active, stamped with the org, in an active organisation). The package's
  * refusal is surfaced under this backend's stable codes.
@@ -388,11 +432,17 @@ export function assigneeNotInOrgRefusal(
 export async function requireAssigneeAgentActive(
 	ctx: Ctx,
 	agentId: string,
-	orgId: string,
+	orgSlug: string,
 	door: string,
+	orgClerkId?: string,
 ): Promise<void> {
+	// The organisation is its permanent ID: the one the caller verified, else the
+	// one the label names now. A label that names no organisation with an ID is a
+	// refusal in the door's own code, and the agent row is judged against the ID.
+	const verifiedOrgId = orgClerkId ?? (await permanentOrgIdOfSlug(ctx, orgSlug));
+	if (verifiedOrgId === undefined) throw orgHasNoPermanentIdRefusal(orgSlug, door);
 	const resolved = await resolveActingPrincipal(
-		{ kind: "agent", agentId, verifiedOrgId: orgId },
+		{ kind: "agent", agentId, verifiedOrgId },
 		principalLookups(ctx),
 		door,
 	);
@@ -409,9 +459,9 @@ export async function requireAssigneeAgentActive(
 export function recipientLookups(ctx: Ctx): RecipientLookups {
 	return {
 		orgKindOf: async (orgId): Promise<OrgKind | null> =>
-			orgKindOfMapping(await lookupOrgMapping(ctx, orgId)),
+			orgKindOfMapping(await lookupOrgMapping(ctx, { clerkOrgId: orgId })),
 		rosterOf: async (orgId) => {
-			const mapping = await lookupOrgMapping(ctx, orgId);
+			const mapping = await lookupOrgMapping(ctx, { clerkOrgId: orgId });
 			if (
 				mapping === null ||
 				mapping.addressableFleetCoordinatorIds === undefined
@@ -449,12 +499,14 @@ export type RecipientAddress =
 export async function addressRecipientById(
 	ctx: Ctx,
 	sender: ActingPrincipal,
-	recipient: { _id: string; orgSlug: string },
+	recipient: { _id: string; clerkOrgId?: string },
 	door: string,
 ): Promise<RecipientAddress> {
 	const lookups = principalLookups(ctx);
+	// The recipient's own stored org ID; a row with none judges against "", which
+	// no organisation has, so it is refused (never matched by slug).
 	const resolved = await resolveActingPrincipal(
-		{ kind: "agent", agentId: recipient._id, verifiedOrgId: recipient.orgSlug },
+		{ kind: "agent", agentId: recipient._id, verifiedOrgId: recipient.clerkOrgId ?? "" },
 		lookups,
 		door,
 	);

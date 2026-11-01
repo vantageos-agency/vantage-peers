@@ -611,7 +611,7 @@ async function authorizeScheduleActor(
 	if (forwarded !== undefined) {
 		const principal = await requireVerifiedActorPrincipal(ctx, scope, forwarded, door);
 		if (row.orgId !== undefined) {
-			await requireTargetOrgOfPrincipal(ctx, principal, row.orgId, door);
+			await requireTargetOrgOfPrincipal(ctx, principal, row.orgId, door, row.clerkOrgId);
 		}
 		callerId = principal.principalId;
 	} else {

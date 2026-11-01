@@ -37,6 +37,11 @@ export async function resolveAgentIdArg(
 		agentId: string;
 		field: string;
 		door: string;
+		/**
+		 * The organisation's permanent ID when the caller holds it verified (a
+		 * member's scope, a row's own stamp); else the ID `orgSlug` names now.
+		 */
+		orgClerkId?: string;
 	},
 ): Promise<Doc<"agents">> {
 	const id = requireId(
@@ -49,7 +54,7 @@ export async function resolveAgentIdArg(
 	if (args.orgSlug === undefined || args.orgSlug === null) {
 		throw assigneeNotInOrgRefusal(args.agentId, undefined, args.door);
 	}
-	await requireAssigneeAgentActive(ctx, id, args.orgSlug, args.door);
+	await requireAssigneeAgentActive(ctx, id, args.orgSlug, args.door, args.orgClerkId);
 	const row = await ctx.db.get(id);
 	if (row === null) {
 		// The package just resolved this row; absent here means it vanished mid-call.

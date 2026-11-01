@@ -9,7 +9,11 @@
 import { resolveActingPrincipal, sameOrg } from "@vantageos/cloud-identity";
 import { ConvexError } from "convex/values";
 import type { MutationCtx, QueryCtx } from "../_generated/server";
-import { principalLookups, requireVerifiedActorPrincipal } from "./actingPrincipal";
+import {
+	permanentOrgIdOfSlug,
+	principalLookups,
+	requireVerifiedActorPrincipal,
+} from "./actingPrincipal";
 import { actorIdResolver, actorOrgFor } from "./actorIds";
 import {
 	type OrgScope,
@@ -68,8 +72,12 @@ export async function agentIdOfLabelInOrg(
 	if (org === undefined) return undefined;
 	const id = await actorIdResolver(ctx, org)(label);
 	if (id === undefined) return undefined;
+	// Judged against the permanent ID the org's label names now (an org with none
+	// resolves nobody).
+	const orgId = await permanentOrgIdOfSlug(ctx, org);
+	if (orgId === undefined) return undefined;
 	const resolved = await resolveActingPrincipal(
-		{ kind: "agent", agentId: id, verifiedOrgId: org },
+		{ kind: "agent", agentId: id, verifiedOrgId: orgId },
 		principalLookups(ctx),
 		door,
 	);
@@ -103,11 +111,11 @@ export async function isAgentOnScopeRoster(
 	agentId: string,
 	door: string,
 ): Promise<boolean> {
-	if (scope.orgSlug === null) return false;
+	if (scope.orgSlug === null || scope.orgClerkId === undefined) return false;
 	const verdict = await agentListedOnRoster(
 		ctx,
-		{ agentId, agentOrgId: scope.orgSlug },
-		rosterOf(scope.orgSlug, scope.allowedAgentIds),
+		{ agentId, agentOrgId: scope.orgClerkId },
+		rosterOf(scope.orgClerkId, scope.allowedAgentIds),
 		door,
 	);
 	return verdict.ok;

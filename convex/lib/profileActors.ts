@@ -218,7 +218,7 @@ async function targetsOf(ctx: Ctx, rows: Doc<"profiles">[]): Promise<Target[]> {
 		out.push({
 			row,
 			agent,
-			orgId: agent?.orgSlug,
+			orgId: agent?.clerkOrgId,
 			ownerId: agent?._id,
 		});
 	}
@@ -270,14 +270,15 @@ export async function visibleProfiles(
 				}),
 				orgRefOfScope(scope),
 			) ||
-			scope.orgSlug === null
+			scope.orgSlug === null ||
+			scope.orgClerkId === undefined
 		) {
 			continue;
 		}
 		const listed = await agentListedOnRoster(
 			ctx,
-			{ agentId: t.agent._id, agentOrgId: scope.orgSlug },
-			rosterOf(scope.orgSlug, scope.allowedAgentIds),
+			{ agentId: t.agent._id, agentOrgId: scope.orgClerkId },
+			rosterOf(scope.orgClerkId, scope.allowedAgentIds),
 			door,
 		);
 		if (listed.ok) served.push(t.row);
