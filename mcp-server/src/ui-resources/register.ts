@@ -54,6 +54,7 @@ export function isUiResourceReadAdmitted(
  * and the door in both the message and the structured `data`.
  */
 export function uiResourceReadRefusal(uri: string): ProtocolError {
+	// allow-local-identity: cloud-identity exports no producer that judges an MCP caller context (master or Clerk-JWT only); security fail-closed gate, producer tracked in task k1705dcbg3eysk3ymwv8xg2wxd8hd528
 	const primitive = new URL(uri).pathname.replace(/^\/v1\//, "");
 	const door = `resources/read ui://vp/v1/${primitive}`;
 	return new ProtocolError(
