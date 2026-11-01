@@ -20,10 +20,12 @@ import { describe, expect, it } from "vitest";
 import * as briefingNotes from "../../convex/briefingNotes";
 import * as businessUnits from "../../convex/businessUnits";
 import * as diary from "../../convex/diary";
+import * as githubOwnerBinding from "../../convex/githubOwnerBinding";
 import * as githubRepoMapping from "../../convex/githubRepoMapping";
 import * as kb from "../../convex/kb";
 import * as kbMutations from "../../convex/kbMutations";
 import * as memories from "../../convex/memories";
+import * as mandates from "../../convex/mandates";
 import * as messages from "../../convex/messages";
 import * as missions from "../../convex/missions";
 import * as tasks from "../../convex/tasks";
@@ -47,9 +49,11 @@ const MODULES: Record<string, Record<string, unknown>> = {
 	briefingNotes,
 	businessUnits,
 	diary,
+	githubOwnerBinding,
 	githubRepoMapping,
 	kb,
 	kbMutations,
+	mandates,
 	memories,
 	messages,
 	missions,
@@ -294,6 +298,14 @@ const SITES: [string, string, Legacy, boolean][] = [
 	["list_bus", "businessUnits:list", org, false],
 	["delete_bu", "businessUnits:remove", org, false],
 	["list_repo_mappings", "githubRepoMapping:list", org, false],
+	["validate_mandate_spending", "mandates:validateSpending", org, false],
+	["get_github_owner_bindings", "githubOwnerBinding:listBindings", org, false],
+	[
+		"get_github_owner_bindings",
+		"githubOwnerBinding:listUnprovenMappings",
+		org,
+		false,
+	],
 	// Composed NO scope at 010edc9a: a seat's mapping was written as a fleet row.
 	["add_repo_mapping", "githubRepoMapping:add", () => ({ args: {} }), false],
 	[

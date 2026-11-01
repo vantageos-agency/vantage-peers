@@ -9,6 +9,11 @@ import {
 	query,
 } from "./_generated/server";
 import { requireResolvedCaller, withOrgScope } from "./lib/auth";
+import {
+	resolveVerifiedOrg,
+	resolveVerifiedOrgScope,
+	verifiedOrgValidator,
+} from "./lib/verifiedOrg";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // GitHub owner binding — the proof behind "this repo belongs to this org".
@@ -144,17 +149,30 @@ export function pageSize(limit: number | undefined): number {
 
 // Own org's bindings (a member), or all (master), one page at a time.
 export const listBindings = query({
-	args: { limit: v.optional(v.number()), cursor: v.optional(v.string()) },
+	args: {
+		limit: v.optional(v.number()),
+		cursor: v.optional(v.string()),
+		// The org the MCP transport VERIFIED for a bearer that reaches Convex as the
+		// fleet service account (convex/lib/verifiedOrg.ts): the read then runs under
+		// that org's member scope, so the by_org range IS the read.
+		verifiedOrg: v.optional(verifiedOrgValidator),
+	},
 	returns: v.object({ items: v.array(bindingView), nextCursor: v.union(v.string(), v.null()) }),
 	handler: async (ctx, args) => {
-		const scope = await withOrgScope(ctx, { refuseWithoutThrow: true });
+		const transportScope = await withOrgScope(ctx, { refuseWithoutThrow: true });
 		// isolation-contract: no reactive subscriber. Enumerated by command:
 		//   grep -rn "api\.githubOwnerBinding\." --include=*.tsx --include=*.ts app components hooks lib
 		// in vantage-peers-dashboard -> 0 hits (new door). So the pre-org caller
 		// may be refused by raising.
-		requireResolvedCaller(scope, "githubOwnerBinding:listBindings", {
+		requireResolvedCaller(transportScope, "githubOwnerBinding:listBindings", {
 			alsoRefusePreOrg: true,
 		});
+		const scope = await resolveVerifiedOrgScope(
+			ctx,
+			transportScope,
+			args.verifiedOrg,
+			"githubOwnerBinding:listBindings",
+		);
 		const opts = { numItems: pageSize(args.limit), cursor: args.cursor ?? null };
 		const page = hasFleetRead(scope)
 			? await ctx.db.query("githubOwnerBindings").paginate(opts)
@@ -207,7 +225,12 @@ export async function collectUnprovenMappings(
 // Existing mappings that carry an org but NO proof: reported, never silently
 // kept. Master only (the repo-mapping corpus is fleet configuration).
 export const listUnprovenMappings = query({
-	args: { limit: v.optional(v.number()), cursor: v.optional(v.string()) },
+	args: {
+		limit: v.optional(v.number()),
+		cursor: v.optional(v.string()),
+		// Believed from the service account only; the page is narrowed to that org.
+		verifiedOrg: v.optional(verifiedOrgValidator),
+	},
 	returns: v.object({
 		items: v.array(
 			v.object({
@@ -226,6 +249,14 @@ export const listUnprovenMappings = query({
 			alsoRefusePreOrg: true,
 			masterOnly: true,
 		});
-		return await collectUnprovenMappings(ctx, pageSize(args.limit), args.cursor ?? null);
+		const verified = await resolveVerifiedOrg(
+			ctx,
+			scope,
+			args.verifiedOrg,
+			"githubOwnerBinding:listUnprovenMappings",
+		);
+		const page = await collectUnprovenMappings(ctx, pageSize(args.limit), args.cursor ?? null);
+		if (verified === undefined) return page;
+		return { ...page, items: page.items.filter((m) => m.orgId === verified) };
 	},
 });

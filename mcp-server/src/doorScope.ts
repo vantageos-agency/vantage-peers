@@ -82,6 +82,11 @@ export const DOOR_SCOPE: Readonly<Record<string, DoorScopeRule>> = {
 	// missions
 	"missions:create": { verifiedPerson: true, verifiedOrg: "unless-person" },
 	"missions:update": { verifiedPerson: true },
+	// mandates / GitHub owner bindings: a seat reaches these as the fleet service
+	// account (master + fleetWide), so the verified org narrows what they serve
+	"mandates:validateSpending": { verifiedOrg: "always" },
+	"githubOwnerBinding:listBindings": { verifiedOrg: "always" },
+	"githubOwnerBinding:listUnprovenMappings": { verifiedOrg: "always" },
 	// briefing notes
 	"briefingNotes:create": { verifiedOrg: "always" },
 	"briefingNotes:get": { verifiedOrg: "always" },

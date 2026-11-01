@@ -8180,10 +8180,13 @@ export function registerTools(
 			title: "Validate mandate spending",
 		},
 		async ({ mandateId, proposedAmount }) => {
+			const orgDenied = unresolvedOrgDenial("validate_mandate_spending");
+			if (orgDenied !== null) return orgDenied;
 			try {
 				const result = await convex.query("mandates:validateSpending" as any, {
 					mandateId: mandateId as any,
 					proposedAmount,
+					...doorScopeArgs("mandates:validateSpending", undefined),
 				});
 				return {
 					content: [{ type: "text", text: JSON.stringify(result, null, 2) }],
@@ -9246,16 +9249,22 @@ export function registerTools(
 		async ({ limit, cursor, unprovenCursor }) => {
 			const unresolved = guardResolvedCaller("get_github_owner_bindings");
 			if (unresolved) return unresolved;
+			// A bearer whose org cannot be resolved is refused before Convex: the
+			// door narrows to the verified org, it never serves the whole table.
+			const orgDenied = unresolvedOrgDenial("get_github_owner_bindings");
+			if (orgDenied !== null) return orgDenied;
 			try {
 				// Both reads are cursor-paginated server-side and return { items,
 				// nextCursor }: the cursors are passed on so a page never reads as the whole list.
 				const bindingsPage = await convex.query("githubOwnerBinding:listBindings" as any, {
 					limit,
+					...doorScopeArgs("githubOwnerBinding:listBindings", undefined),
 					...(cursor !== undefined ? { cursor } : {}),
 				});
 				const unprovenPage = isMasterScope(oauthCtx)
 					? await convex.query("githubOwnerBinding:listUnprovenMappings" as any, {
 							limit,
+							...doorScopeArgs("githubOwnerBinding:listUnprovenMappings", undefined),
 							...(unprovenCursor !== undefined ? { cursor: unprovenCursor } : {}),
 						})
 					: undefined;
