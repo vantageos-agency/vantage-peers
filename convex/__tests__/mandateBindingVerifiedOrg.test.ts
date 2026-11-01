@@ -116,7 +116,8 @@ describe("mandates:validateSpending narrows a fleet identity to the verified org
 			}),
 		);
 		expect(msg).toContain("RBAC_DENIED");
-		expect(msg).toContain("mandate-outside-verified-org");
+		expect(msg).toContain("not-fleet-master");
+		expect(msg).toContain("mandates:validateSpending");
 		expect(msg).not.toContain("remainingBudget");
 	});
 	test("LEAK: the refusal does not depend on the mandate existing (no oracle)", async () => {
