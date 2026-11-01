@@ -139,13 +139,19 @@ export const getDashboardSummary = query({
 		// Unread messages — full scan bounded (receipts table is small)
 		// Index is composite [recipient, readAt] so we cannot filter by readAt alone.
 		// Member: the tenant index is bound BEFORE the cap, never a post-read filter.
+		// A-18: a member's receipts are selected by its org's permanent ID
+		// (`tenantOrgId`), never by the slug label; a member whose mapping carries no
+		// ID is served none.
+		const orgId = scope.orgClerkId;
 		const allReceipts =
 			fleet || orgSlug === null
 				? await ctx.db.query("messageReceipts").take(DASHBOARD_WIDE_SCAN_CAP)
-				: await ctx.db
-						.query("messageReceipts")
-						.withIndex("by_tenant", (q) => q.eq("tenantId", orgSlug))
-						.take(DASHBOARD_WIDE_SCAN_CAP);
+				: orgId === undefined
+					? []
+					: await ctx.db
+							.query("messageReceipts")
+							.withIndex("by_tenant_clerk_id", (q) => q.eq("tenantOrgId", orgId))
+							.take(DASHBOARD_WIDE_SCAN_CAP);
 		const unreadMessages = allReceipts.filter((r) => r.readAt === undefined).length;
 
 		// Recent activity — fetch bounded slices of each entity
@@ -162,11 +168,15 @@ export const getDashboardSummary = query({
 		const recentMessages =
 			fleet || orgSlug === null
 				? await ctx.db.query("messages").order("desc").take(20)
-				: await ctx.db
-						.query("messages")
-						.withIndex("by_tenant_created", (q) => q.eq("tenantId", orgSlug))
-						.order("desc")
-						.take(20);
+				: orgId === undefined
+					? []
+					: await ctx.db
+							.query("messages")
+							.withIndex("by_tenant_created_clerk_id", (q) =>
+								q.eq("tenantOrgId", orgId),
+							)
+							.order("desc")
+							.take(20);
 		const recentMandates = fleet
 			? await ctx.db.query("mandates").order("desc").take(20)
 			: [];

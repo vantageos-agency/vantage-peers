@@ -52,6 +52,7 @@ import {
 import { actorIdResolver, actorOrgFor } from "./lib/actorIds";
 import { resolveAgentIdArg } from "./lib/agentIdArgs";
 import { recordNameOnlyCall } from "./lib/nameOnlyCalls";
+import { rowInOrg } from "./lib/messageTenant";
 import { clerkOrgIdForSlug } from "./lib/orgClerkId";
 import { fleetOperatorSlug } from "./lib/operatorOrg";
 import {
@@ -2159,18 +2160,29 @@ export const listMessages = query({
 			// .filter() (acceptable: within a single tenant, volume is low compared to
 			// the full cross-tenant table). (task k176wgsrhha0fr0dxxahctvhw588q5a1,
 			// Eta completeness edge from PR #775 verdict jn7563v34)
-			const orgSlug = scope.orgSlug;
-			rows = await ctx.db
-				.query("messages")
-				.withIndex("by_tenant_created", (q) => q.eq("tenantId", orgSlug))
-				.order("desc")
-				.filter((q) =>
-					args.from !== undefined ? q.eq(q.field("from"), args.from) : true,
-				)
-				.take(fetchCap);
+			// The org's rows are selected by its permanent ID (`tenantOrgId`), never by
+			// the slug: a slug is a label a takeover hands to another org (sweep site
+			// A-10). A caller whose mapping carries no ID reads nothing; a row with no
+			// ID (noSlug, absentSlug) belongs to no org.
+			const orgId = scope.orgClerkId;
+			rows =
+				orgId === undefined
+					? []
+					: await ctx.db
+							.query("messages")
+							.withIndex("by_tenant_created_clerk_id", (q) =>
+								q.eq("tenantOrgId", orgId),
+							)
+							.order("desc")
+							.filter((q) =>
+								args.from !== undefined
+									? q.eq(q.field("from"), args.from)
+									: true,
+							)
+							.take(fetchCap);
 
 			// Belt-and-suspenders: ensure no cross-tenant row leaks through.
-			rows = rows.filter((r) => r.tenantId === orgSlug);
+			rows = rows.filter((r) => rowInOrg(r, orgId));
 		} else {
 			// ── Master path — existing index logic, unchanged ──────────────────────
 			if (args.sessionDay !== undefined) {
@@ -2391,7 +2403,8 @@ export const listBroadcastStatus = query({
 		if (!message) throw new Error("Message not found");
 
 		if (!scope.isMaster) {
-			if (message.tenantId !== scope.orgSlug) {
+			// A-12: the sending org is the row's permanent ID, never its slug label.
+			if (!rowInOrg(message, scope.orgClerkId)) {
 				throw new ConvexError(
 					`RBAC_DENIED: "messages:listBroadcastStatus" refuses a caller outside the organisation that sent message ${messageId} — ${JSON.stringify(
 						{
@@ -2555,15 +2568,20 @@ export const listByChannel = query({
 			return await ctx.db.query("messages").order("desc").take(take);
 		}
 
-		const orgSlug = scope.orgSlug;
-		if (orgSlug === null) return { refused: true as const, items: [] };
+		if (scope.orgSlug === null) return { refused: true as const, items: [] };
+		// A-13: rows are selected by the org's permanent ID (`tenantOrgId`), never by
+		// the slug label. A caller whose mapping carries no ID is served an absence.
+		// The `team/<slug>` prefix inside `isChannelOnScope` only NARROWS the channel
+		// names within the org's own rows; it selects no row.
+		const orgId = scope.orgClerkId;
+		if (orgId === undefined) return [];
 
 		if (channel !== undefined) {
 			if (!isChannelOnScope(scope, channel)) return [];
 			return await ctx.db
 				.query("messages")
-				.withIndex("by_tenant_channel", (q) =>
-					q.eq("tenantId", orgSlug).eq("channel", channel),
+				.withIndex("by_tenant_channel_clerk_id", (q) =>
+					q.eq("tenantOrgId", orgId).eq("channel", channel),
 				)
 				.order("desc")
 				.take(take);
@@ -2571,7 +2589,7 @@ export const listByChannel = query({
 
 		const rows = await ctx.db
 			.query("messages")
-			.withIndex("by_tenant_created", (q) => q.eq("tenantId", orgSlug))
+			.withIndex("by_tenant_created_clerk_id", (q) => q.eq("tenantOrgId", orgId))
 			.order("desc")
 			.take(take);
 		return rows.filter((r) => isChannelOnScope(scope, r.channel));
@@ -2696,14 +2714,19 @@ export const listByChannelPaginated = query({
 			);
 		}
 
-		const orgSlug = scope.orgSlug;
-		if (orgSlug === null) {
+		if (scope.orgSlug === null) {
 			return {
 				page: [],
 				isDone: true,
 				continueCursor: "",
 				refused: true as const,
 			};
+		}
+		// A-14: rows are selected by the org's permanent ID, never by the slug label;
+		// a caller whose mapping carries no ID is served an empty page (an absence).
+		const orgId = scope.orgClerkId;
+		if (orgId === undefined) {
+			return { page: [], isDone: true, continueCursor: "" };
 		}
 		if (channel !== undefined && !isChannelOnScope(scope, channel)) {
 			// A channel this caller may not read is an absence of ROWS for it, as in
@@ -2715,8 +2738,8 @@ export const listByChannelPaginated = query({
 			channel !== undefined
 				? await ctx.db
 						.query("messages")
-						.withIndex("by_tenant_channel", (q) => {
-							const base = q.eq("tenantId", orgSlug).eq("channel", channel);
+						.withIndex("by_tenant_channel_clerk_id", (q) => {
+							const base = q.eq("tenantOrgId", orgId).eq("channel", channel);
 							if (since !== undefined && until !== undefined)
 								return base.gte("createdAt", since).lt("createdAt", until);
 							if (since !== undefined) return base.gte("createdAt", since);
@@ -2727,8 +2750,8 @@ export const listByChannelPaginated = query({
 						.paginate(paginationOpts)
 				: await ctx.db
 						.query("messages")
-						.withIndex("by_tenant_created", (q) => {
-							const base = q.eq("tenantId", orgSlug);
+						.withIndex("by_tenant_created_clerk_id", (q) => {
+							const base = q.eq("tenantOrgId", orgId);
 							if (since !== undefined && until !== undefined)
 								return base.gte("createdAt", since).lt("createdAt", until);
 							if (since !== undefined) return base.gte("createdAt", since);
@@ -2800,7 +2823,8 @@ export const getById = query({
 		const row = await ctx.db.get(messageId);
 		if (row === null || scope.isMaster) return row;
 
-		if (row.tenantId !== scope.orgSlug) {
+		// A-15: the sending org is the row's permanent ID, never its slug label.
+		if (!rowInOrg(row, scope.orgClerkId)) {
 			throw new ConvexError(
 				`RBAC_DENIED: "messages:getById" refuses a caller outside the organisation that sent message ${messageId} — ${JSON.stringify(
 					{
@@ -2888,7 +2912,9 @@ export const searchMessagesByKeyword = query({
 				// (primary isolation). For master callers: use caller-supplied tenantId
 				// if provided (backward-compatible narrow by tenant for admin queries).
 				if (!scope.isMaster && scope.orgSlug !== null) {
-					qb = qb.eq("tenantId", scope.orgSlug);
+					// A-16: the org's permanent ID, never its slug label. A caller whose
+					// mapping carries no ID searches the sentinel "" and matches nothing.
+					qb = qb.eq("tenantOrgId", scope.orgClerkId ?? "");
 				} else if (args.tenantId !== undefined) {
 					qb = qb.eq("tenantId", args.tenantId);
 				}
@@ -2901,7 +2927,7 @@ export const searchMessagesByKeyword = query({
 		// index .eq("tenantId", scope.orgSlug) above is the primary isolation; this
 		// is the belt-and-suspenders pass (mirrors briefingNotes pattern).
 		const filtered = !scope.isMaster
-			? results.filter((r) => r.tenantId === scope.orgSlug)
+			? results.filter((r) => rowInOrg(r, scope.orgClerkId))
 			: results;
 
 		if (!lite) return filtered;

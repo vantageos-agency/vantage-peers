@@ -21,6 +21,8 @@ import { convexTest } from "../../tests/fixtures/convexTestWithServiceAccount";
 import {
 	memberA,
 	memberB,
+	ORG_A,
+	ORG_B,
 	type Seeded,
 	seedShapes,
 	seedTakeoverOrgs,
@@ -259,5 +261,49 @@ describe("A-18 dashboard:getDashboardSummary", () => {
 				.filter((e) => e.type === "message")
 				.map((m) => m.excerpt),
 		).toEqual([TEXT.a]);
+	});
+});
+
+describe("A-19 improvisationDigest:scanWindow", () => {
+	async function digestWorld(): Promise<T> {
+		const t = createT();
+		await t.run(async (ctx) => {
+			await seedTakeoverOrgs(ctx.db);
+			const now = Date.now();
+			const shapes: Array<[string, string | undefined, string | undefined]> = [
+				["merged A-secret", SLUG, ORG_A],
+				["merged B-own", SLUG, ORG_B],
+				["merged absent-slug", SLUG, undefined],
+				["merged fleet", undefined, undefined],
+			];
+			let i = 0;
+			for (const [content, tenantId, tenantOrgId] of shapes) {
+				await ctx.db.insert("messages", {
+					from: "sigma",
+					channel: "sigma",
+					content,
+					createdAt: now + i++,
+					...(tenantId !== undefined ? { tenantId } : {}),
+					...(tenantOrgId !== undefined ? { tenantOrgId } : {}),
+				});
+			}
+		});
+		return t;
+	}
+	const snippets = (r: { samples: Array<{ snippet: string }> }): string[] =>
+		r.samples.map((s) => s.snippet).sort();
+
+	test("TAKEOVER + SHAPES: B's digest holds B's message only; A, renamed, holds A's", async () => {
+		const t = await digestWorld();
+		expect(
+			snippets(
+				await asB(t).query(api.improvisationDigest.scanWindow, { windowDays: 1 }),
+			),
+		).toEqual(["merged B-own"]);
+		expect(
+			snippets(
+				await asA(t).query(api.improvisationDigest.scanWindow, { windowDays: 1 }),
+			),
+		).toEqual(["merged A-secret"]);
 	});
 });
