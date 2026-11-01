@@ -276,6 +276,42 @@ async function seedRepoMappings(t: T): Promise<void> {
 	});
 }
 
+// missions:list (task k17apssqnw2xcf72r27c83338s8hc180): the ui://vp/v1
+// mission-timeline primitive and list_missions reach it as the service account.
+// A member's mission is served by its pilot's agents-row ID, so the roster
+// agents are seeded and each row names its org's own roster agent.
+async function seedMissions(t: T): Promise<void> {
+	const agents = await seedRosterAgents(t);
+	await t.run(async (ctx) => {
+		// Oldest first: the FOREIGN rows are the newest.
+		const rows: Array<[string, string]> = [
+			[OWN, "own-launch-3"],
+			[OWN, "own-launch-2"],
+			[OWN, "own-launch-1"],
+			[FOREIGN, "foreign-launch-2"],
+			[FOREIGN, "foreign-launch-1"],
+		];
+		for (const [org, name] of rows) {
+			const pilotId = agents[`${org}/${rosterOf(org)}`];
+			await ctx.db.insert("missions", {
+				name,
+				description: "d",
+				status: "execute",
+				priority: "medium",
+				pilot: rosterOf(org),
+				pilotId,
+				project: "p",
+				agents: [],
+				createdBy: rosterOf(org),
+				createdById: pilotId,
+				createdAt: 1,
+				updatedAt: 1,
+				...orgOf(org),
+			} as never);
+		}
+	});
+}
+
 /** TEST FIXTURE: a `team/<label>` row carries its org's permanent ID (M10a). */
 const stampOf = (namespace: string): { clerkOrgId?: string } => {
 	const label = namespace.startsWith("team/") ? namespace.split("/")[1] : undefined;
@@ -407,6 +443,19 @@ const CLAIM_DOORS: ClaimDoor[] = [
 		foreign: ["foreign-decision"],
 	},
 	{
+		name: "missions:list",
+		seed: seedMissions,
+		call: (t, verifiedOrg) =>
+			asService(t).query(api.missions.list, {
+				limit: 2,
+				fields: "lite",
+				verifiedOrg,
+			}),
+		own: ["own-launch"],
+		foreign: ["foreign-launch"],
+		pageOf: 2,
+	},
+	{
 		name: "businessUnits:list",
 		seed: seedBusinessUnits,
 		call: (t, verifiedOrg) =>
@@ -522,6 +571,8 @@ function callAsMember(
 				query: "decision",
 				...extra,
 			});
+		case "missions:list":
+			return m.query(api.missions.list, { limit: 2, ...extra });
 		case "businessUnits:list":
 			return m.query(api.businessUnits.list, { limit: 2, ...extra });
 		case "githubRepoMapping:list":
