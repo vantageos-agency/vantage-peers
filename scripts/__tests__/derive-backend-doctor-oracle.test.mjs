@@ -1196,7 +1196,9 @@ describe("derive-backend-doctor-oracle R-8 scope enforcement read at the Convex 
 			mutate(
 				root,
 				"convex/mandates.ts",
-				'await requireFleetDoor(ctx, scope, "mandates:validateSpending", {\n\t\t\tmasterOnly: true,\n\t\t\toperatorHumanMayRead: true,\n\t\t});',
+				// Indented inside `if (!actsForOperator)` since task
+				// k179y0wpsd6fv7055f4p2w6b358hdrxe (the operator org's acting seat).
+				'await requireFleetDoor(ctx, scope, "mandates:validateSpending", {\n\t\t\t\tmasterOnly: true,\n\t\t\t\toperatorHumanMayRead: true,\n\t\t\t});',
 				"",
 			);
 			// The door also refuses a verified client org through the shared
