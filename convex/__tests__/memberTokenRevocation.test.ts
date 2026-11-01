@@ -277,6 +277,51 @@ describe("A - the delete event revokes the removed member's tokens", () => {
 		expect(await accessServed(t, "acc-recon")).toBeNull();
 	});
 
+	test("DRY-RUN: a reconcile with dryRun=true plans the removal but revokes NO access and NO refresh token; the same run with dryRun=false revokes both", async () => {
+		const t = createT();
+		await seedOrgs(t);
+		await seedMember(t, ORG);
+		await seedMember(t, ORG, "user_stays");
+		await seedPersonLineage(t, "ref-dry", ORG);
+		await seedPersonAccess(t, "acc-dry", ORG);
+		await seedRefresh(t, "ref-dry", PERSON, "person");
+		const refreshRevoked = () =>
+			t.run(async (ctx) => {
+				const row = await ctx.db
+					.query("oauth_refresh_tokens")
+					.withIndex("by_tokenHash", (q) => q.eq("tokenHash", sha("ref-dry")))
+					.unique();
+				return row?.revokedAt !== undefined;
+			});
+		const reconcile = (dryRun: boolean, eventAt: number) =>
+			t.mutation(internal.orgMembership.reconcileOrgFromClerk, {
+				clerkOrgId: testClerkOrgId(ORG),
+				clerkOrgSlug: ORG,
+				// Clerk's full member list no longer names PERSON.
+				members: [{ userId: "user_stays", role: "member" }],
+				dryRun,
+				eventAt,
+			});
+
+		// Pole 1 (planned only): nothing is revoked, nothing is tombstoned.
+		await reconcile(true, 5_000);
+		expect(await accessServed(t, "acc-dry")).not.toBeNull();
+		expect(await accessServed(t, "lineage-ref-dry")).not.toBeNull();
+		expect(await refreshRevoked()).toBe(false);
+		const row = await t.run((ctx) =>
+			ctx.db
+				.query("orgMembership")
+				.withIndex("by_user", (q) => q.eq("clerkUserId", PERSON))
+				.unique(),
+		);
+		expect(row?.deletedAt).toBeUndefined();
+
+		// Pole 2 (written): the same input without dryRun revokes both token kinds.
+		await reconcile(false, 5_000);
+		expect(await accessServed(t, "acc-dry")).toBeNull();
+		expect(await refreshRevoked()).toBe(true);
+	});
+
 	test("REVOKED: a member holding more tokens than one batch is fully revoked via the continuation", async () => {
 		const t = createT();
 		await seedOrgs(t);
@@ -376,6 +421,51 @@ describe("B - rotateRefreshToken refuses a person with no live membership", () =
 			asService(t).mutation(
 				api.oauth.rotateRefreshToken,
 				rotation(first.issued.refresh, "member-profile", ORG),
+			),
+		).rejects.toThrow(/RBAC_DENIED/);
+	});
+
+	test("REFUSED: a family rotated TWICE (first access token gone) is still a person's lineage; after the removal the third rotation is refused", async () => {
+		const t = createT();
+		await seedOrgs(t);
+		await seedProfile(t, "member-profile", ORG);
+		await seedMember(t, ORG);
+		await seedRefresh(t, "ref-g1", PERSON, "member-profile");
+		const seedRow = await seedPersonLineage(t, "ref-g1", ORG);
+		const g2 = await asService(t).mutation(
+			api.oauth.rotateRefreshToken,
+			rotation("ref-g1", "member-profile", ORG),
+		);
+		if (g2.status !== "ok") throw new Error("first rotation must succeed");
+		// The hand-seeded first access token stands in for the one the
+		// authorization_code flow minted; once it is purged (expiry cleanup) the
+		// family's person marker lives ONLY on what the rotation itself minted,
+		// which is what the carry-forward has to have written.
+		await t.run((ctx) => ctx.db.delete(seedRow));
+		const g3 = await asService(t).mutation(
+			api.oauth.rotateRefreshToken,
+			rotation(g2.issued.refresh, "member-profile", ORG),
+		);
+		if (g3.status !== "ok") throw new Error("second rotation must succeed");
+		const minted = await t.run((ctx) =>
+			ctx.db
+				.query("oauth_access_tokens")
+				.withIndex("by_tokenHash", (q) => q.eq("tokenHash", sha(g2.issued.access)))
+				.unique(),
+		);
+		expect(minted?.principal).toBe("person");
+		expect(minted?.orgRole).toBe("org:member");
+		await t.run(async (ctx) => {
+			const m = await ctx.db
+				.query("orgMembership")
+				.withIndex("by_user", (q) => q.eq("clerkUserId", PERSON))
+				.unique();
+			if (m) await ctx.db.patch(m._id, { deletedAt: 9_000 });
+		});
+		await expect(
+			asService(t).mutation(
+				api.oauth.rotateRefreshToken,
+				rotation(g3.issued.refresh, "member-profile", ORG),
 			),
 		).rejects.toThrow(/RBAC_DENIED/);
 	});
