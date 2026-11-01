@@ -1226,6 +1226,29 @@ describe("a human seat other than the creator", () => {
 		expect(await asStranger(w.t).query(api.debate.getRoom, { roomId: other })).toBeNull();
 	});
 
+	test("cloud-identity 0.31 standing: a member scope WITH orgClerkId is served at the seat; the same org's mapping row stripped of its Clerk ID (slug-only scope) reads nothing and posts nothing", async () => {
+		const w = await world();
+		const roomId = await makeRoom(w, seatFor(STRANGER));
+		// member WITH the permanent ID: served
+		expect((await asStranger(w.t).query(api.debate.getRoom, { roomId }))?.room._id).toBe(roomId);
+		// strip the ID from the mapping row: the scope can now carry the slug alone
+		await w.t.run(async (ctx) => {
+			const row = (await ctx.db.query("client_org_mapping").collect()).find((x) => x.clerkOrgSlug === ORG);
+			if (row === undefined) throw new Error("test-integrity: acme mapping row missing");
+			const { _id, _creationTime, clerkOrgId: _dropped, ...rest } = row;
+			await ctx.db.replace(_id, rest);
+		});
+		const stranger = asStranger(w.t);
+		let read: unknown;
+		try {
+			read = (await stranger.query(api.debate.getRoom, { roomId }))?.room._id ?? null;
+		} catch (e) {
+			read = String(e);
+		}
+		expect(read === null || String(read).includes("RBAC_DENIED")).toBe(true);
+		expect(read).not.toBe(roomId);
+	});
+
 	test("WRITER ROLE: a seat whose person has no writer role is refused at postTurn exactly as createRoom refuses it; a writer role posts", async () => {
 		const w = await world();
 		const VIEWER = "user_viewer_acme";
