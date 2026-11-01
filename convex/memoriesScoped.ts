@@ -195,7 +195,7 @@ export const storeMemoryScoped = mutation({
 			caller.scope,
 			args.createdBy,
 			"memoriesScoped:storeMemoryScoped",
-			isMcpBoundMaster(caller.scope),
+			isMcpBoundMaster(caller.scope) || caller.scope.serviceTransport === true,
 		);
 		const clerkOrgId = await memoryStampForWrite(
 			ctx,

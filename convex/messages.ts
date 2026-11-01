@@ -17,6 +17,8 @@ import {
 	isOrchestratorOnOrgRoster,
 	type OrgScope,
 	withOrgScope,
+	isServiceTransport,
+	requireActingOrgMatch,
 } from "./lib/auth";
 import { isFleetSystemCaller } from "./lib/systemCaller";
 import {
@@ -897,12 +899,7 @@ async function resolveSeatRecipientScope(
 			`RBAC_DENIED: ${detail} — ${JSON.stringify({ reason, door })}`,
 		);
 	};
-	if (
-		!(
-			transportScope.isMaster &&
-			transportScope.masterSource === "service-account"
-		)
-	) {
+	if (!isServiceTransport(transportScope)) {
 		return refuse(
 			"seat-org-not-trusted",
 			"seatOrgSlug is a transport-verified claim and is accepted only from the fleet service account",
@@ -928,6 +925,7 @@ async function resolveSeatRecipientScope(
 				: `seatOrgSlug "${seatOrgSlug}" is not a known, active organisation`,
 		);
 	}
+	requireActingOrgMatch(transportScope, mapping.clerkOrgId, "seatOrgSlug", door);
 	// The org's label NOW: a tenantId is a label and is compared to it.
 	const seatLabel =
 		seatOrgClerkId !== undefined

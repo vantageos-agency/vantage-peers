@@ -228,7 +228,10 @@ function importsMutationFromGeneratedServer(sf: ts.SourceFile): boolean {
 		if (
 			ts.isImportDeclaration(n) &&
 			ts.isStringLiteral(n.moduleSpecifier) &&
-			n.moduleSpecifier.text === "./_generated/server" &&
+			// The public builders live in ./lib/functions since task
+			// k179y0wpsd6fv7055f4p2w6b358hdrxe; the bare import is the legacy form.
+			(n.moduleSpecifier.text === "./_generated/server" ||
+				n.moduleSpecifier.text === "./lib/functions") &&
 			n.importClause?.namedBindings &&
 			ts.isNamedImports(n.importClause.namedBindings)
 		) {

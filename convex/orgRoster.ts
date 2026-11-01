@@ -6,6 +6,7 @@ import { query } from "./lib/functions";
 import {
 	isMcpBoundMaster,
 	lookupOrgMapping,
+	requireActingOrgMatch,
 	requireResolvedCaller,
 	withOrgScope,
 } from "./lib/auth";
@@ -206,7 +207,9 @@ export const getAgentDirectoryForAccessToken = query({
 	handler: async (ctx, args) => {
 		// isolation-contract: server-side only — invoked by the MCP transport (mcp-server/src/tools.ts list_peers) via imperative client.query, never a reactive useQuery: `grep -rn "getAgentDirectory" app components hooks lib contexts providers` in vantage-peers-dashboard -> 0 hits (2026-10-08). R-50 declared divergence.
 		const scope = await withOrgScope(ctx);
-		if (!isMcpBoundMaster(scope)) {
+		// The service account acting for a bearer's organisation (`__actingOrg`)
+		// still reaches this credential locator; the token's org must be that org.
+		if (!isMcpBoundMaster(scope) && scope.serviceTransport !== true) {
 			throw new ConvexError(
 				`RBAC_DENIED: orgRoster.getAgentDirectoryForAccessToken requires the MCP service account — ${JSON.stringify(
 					{
@@ -217,6 +220,12 @@ export const getAgentDirectoryForAccessToken = query({
 			);
 		}
 		const mapping = await mappingOfAccessToken(ctx, args.tokenHash);
+		requireActingOrgMatch(
+			scope,
+			mapping.orgClerkId,
+			"tokenHash",
+			"orgRoster:getAgentDirectoryForAccessToken",
+		);
 		return await agentDirectoryOf(
 			ctx,
 			mapping.orgClerkId,
@@ -297,7 +306,9 @@ export const getForAccessToken = query({
 	handler: async (ctx, args) => {
 		// isolation-contract: server-side only — invoked by the MCP transport via imperative client.query (mcp-server/src/auth.ts getOrgRoster + tools.ts:1897), never a reactive client useQuery. The fail-closed AUTH_REQUIRED/RBAC_DENIED throws are caught by the MCP auth layer's try/catch and returned as refusals, so no subscribing client ever receives an uncaught Server Error. R-50 declared divergence (a claim, verified here against the call sites).
 		const scope = await withOrgScope(ctx);
-		if (!isMcpBoundMaster(scope)) {
+		// The service account acting for a bearer's organisation (`__actingOrg`)
+		// still reaches this credential locator; the token's org must be that org.
+		if (!isMcpBoundMaster(scope) && scope.serviceTransport !== true) {
 			throw new ConvexError(
 				"RBAC_DENIED: orgRoster.getForAccessToken requires master or " +
 					"service-account scope — anonymous and org-scoped callers may " +
@@ -336,6 +347,12 @@ export const getForAccessToken = query({
 				`RBAC_DENIED: Org "${orgId}" not in client_org_mapping or inactive`,
 			);
 		}
+		requireActingOrgMatch(
+			scope,
+			mapping.clerkOrgId,
+			"tokenHash",
+			"orgRoster:getForAccessToken",
+		);
 		return mapping.allowedOrchestrators;
 	},
 });

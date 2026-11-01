@@ -6,9 +6,11 @@ import {
 import { ConvexError, v } from "convex/values";
 import type { MutationCtx, QueryCtx } from "../_generated/server";
 import {
+	isServiceTransport,
 	lookupOrgMapping,
 	type OrgMappingView,
 	type OrgScope,
+	requireActingOrgMatch,
 	withOrgScope,
 } from "./auth";
 import { orgRefOfRow } from "./authOrgMapping";
@@ -64,12 +66,7 @@ export async function resolveVerifiedOrgMapping(
 	door: string,
 ): Promise<OrgMappingView | undefined> {
 	if (proof === undefined) return undefined;
-	if (
-		!(
-			transportScope.isMaster &&
-			transportScope.masterSource === "service-account"
-		)
-	) {
+	if (!isServiceTransport(transportScope)) {
 		refuse(
 			"verified-org-not-trusted",
 			door,
@@ -84,6 +81,7 @@ export async function resolveVerifiedOrgMapping(
 			`verifiedOrg names no active organisation "${proof.orgSlug}"`,
 		);
 	}
+	requireActingOrgMatch(transportScope, mapping.clerkOrgId, "verifiedOrg", door);
 	return mapping;
 }
 
@@ -145,6 +143,7 @@ export async function resolveVerifiedOrgScope(
 		door,
 	);
 	if (mapping === undefined) return transportScope;
+	if (transportScope.serviceTransport === true) return transportScope;
 	return await withOrgScope(ctx, {
 		refuseWithoutThrow: true,
 		actForOrgMapping: mapping,

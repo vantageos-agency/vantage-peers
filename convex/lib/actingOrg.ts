@@ -74,3 +74,13 @@ export function actingOrgArgs(ctx: HasAuth): { __actingOrg?: string } {
 	const org = actingOrgOf(ctx);
 	return org === undefined ? {} : { __actingOrg: org };
 }
+
+/**
+ * The argument an ACTION hands the internal scope bridges
+ * (`resolveOrgScopeForAction`, `resolveKbCallerScope`): the same acting org,
+ * under the bridges' own argument name.
+ */
+export function actionScopeArgs(ctx: HasAuth): { actingOrg?: string } {
+	const org = actingOrgOf(ctx);
+	return org === undefined ? {} : { actingOrg: org };
+}

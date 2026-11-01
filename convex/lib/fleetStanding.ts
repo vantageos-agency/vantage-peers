@@ -4,6 +4,7 @@ import {
 	requireResolvedCaller,
 	resolveOperatorAdmin,
 } from "./auth";
+import { actingOrgOf } from "./actingOrg";
 import { resolveServiceAccount } from "./serviceAccount";
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -43,6 +44,9 @@ export async function fleetStandingOf(
 	if (identity === null) return null;
 	const service = await resolveServiceAccount(ctx, identity.subject, door);
 	if (service.ok) {
+		// Acting for an organisation (`__actingOrg`, convex/lib/actingOrg.ts), the
+		// service account is an ordinary member of it: no fleet standing.
+		if (actingOrgOf(ctx) !== undefined) return null;
 		return service.principal.kind === "fleet" ? "fleet" : null;
 	}
 	if (service.claimsServiceAccount) return null;

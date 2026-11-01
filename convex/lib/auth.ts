@@ -25,6 +25,7 @@ import {
 	orgRefOfScope,
 } from "./authOrgMapping";
 import { personPrincipalLookups } from "./actingPrincipal";
+import { actingOrgOf } from "./actingOrg";
 import { isTeamNamespaceAllowed } from "./teamNamespace";
 
 // The join onto `client_org_mapping` lives in ./authOrgMapping (storage only); it is
@@ -155,6 +156,87 @@ export interface OrgScope {
 	 * Never set on the master, service-account, or active-org branches.
 	 */
 	anonymous?: boolean;
+	/**
+	 * Set ONLY on the scope `withOrgScope` builds when the fleet SERVICE ACCOUNT
+	 * acts for an organisation named by the reserved `__actingOrg` argument
+	 * (convex/lib/actingOrg.ts, task k179y0wpsd6fv7055f4p2w6b358hdrxe). The scope
+	 * is otherwise the ORDINARY MEMBER scope of that org (non-master, not
+	 * fleet-wide, its own roster and scopes).
+	 *
+	 * WHY IT EXISTS. The transport behind such a call is still the service
+	 * account, so the claims it verified for its bearer (`verifiedActor`,
+	 * `verifiedPerson`, `verifiedOrg`, `seatOrgSlug`) are still believed — but
+	 * only for THIS organisation: each trust check that admits the service
+	 * account admits this scope only when the claim's org is the acting org
+	 * (`isServiceTransport` / `requireActingOrgMatch`). It grants no read, no
+	 * write and no fleet standing by itself; every door's member path decides.
+	 */
+	serviceTransport?: true;
+}
+
+/**
+ * True when the call's transport is the fleet service account: the
+ * fleet-master scope itself, or the member scope it acts in for an acting org.
+ * The ONE predicate a transport-verified claim's trust check reads; never a
+ * grant (an acting scope is still an ordinary member).
+ */
+export function isServiceTransport(
+	scope: Pick<OrgScope, "isMaster" | "masterSource" | "serviceTransport">,
+): boolean {
+	return (
+		(scope.isMaster && scope.masterSource === "service-account") ||
+		scope.serviceTransport === true
+	);
+}
+
+/**
+ * Under an acting org, a transport-verified claim must name THAT organisation:
+ * the service account acting for org A cannot carry a proof of org B. No-op for
+ * the fleet-master transport (whose proofs name their own org, as before).
+ * `claimOrgId` is the permanent org ID the claim resolves to (undefined when
+ * it resolves to none, which is refused under an acting org).
+ */
+export function requireActingOrgMatch(
+	scope: Pick<OrgScope, "serviceTransport" | "orgClerkId" | "orgSlug">,
+	claimOrgId: string | undefined,
+	claim: string,
+	door: string,
+): void {
+	if (scope.serviceTransport !== true) return;
+	if (
+		claimOrgId === undefined ||
+		scope.orgClerkId === undefined ||
+		claimOrgId !== scope.orgClerkId
+	) {
+		throw new ConvexError(
+			`RBAC_DENIED: ${claim} names another organisation than the one this call acts for — ${JSON.stringify({ reason: "claim-outside-acting-org", claim, door, actingOrgSlug: scope.orgSlug })}`,
+		);
+	}
+}
+
+/**
+ * The member scope of an organisation the service account acts for, shaped
+ * exactly like the member scope `withOrgScope` returns for a dashboard member.
+ */
+function serviceActingScope(
+	subject: string,
+	mapping: OrgMappingView,
+	serviceTransport: boolean,
+): OrgScope {
+	return {
+		userId: subject,
+		orgSlug: mapping.clerkOrgSlug,
+		// The org's permanent ID, from the row, so row ownership compares IDs.
+		...(mapping.clerkOrgId !== undefined
+			? { orgClerkId: mapping.clerkOrgId }
+			: {}),
+		allowedOrchestrators: mapping.allowedOrchestrators,
+		allowedAgentIds: mapping.allowedAgentIds ?? [],
+		fleetWide: false,
+		scopes: mapping.scopes,
+		isMaster: false,
+		...(serviceTransport ? { serviceTransport: true as const } : {}),
+	};
 }
 
 /**
@@ -202,6 +284,13 @@ export interface WithOrgScopeOptions {
 	 * write, and an action has no read/write split of its own.
 	 */
 	operatorAsMember?: boolean;
+	/**
+	 * The acting org (permanent Clerk org ID) handed in EXPLICITLY by an action's
+	 * scope bridge, whose internal-query ctx does not carry the action's
+	 * `__actingOrg` (convex/lib/actingOrg.ts). Every other call site reads it from
+	 * the ctx. Same rule either way: honoured on the service-account branch only.
+	 */
+	actingOrgClerkId?: string;
 }
 
 /**
@@ -316,21 +405,35 @@ export async function withOrgScope(
 		"withOrgScope",
 	);
 	if (serviceAccount.ok) {
+		// ACTING ORG (task k179y0wpsd6fv7055f4p2w6b358hdrxe). The MCP attaches the
+		// verified organisation of a NON-MASTER bearer to every call it makes as
+		// this account (`__actingOrg`, convex/lib/actingOrg.ts). Read HERE, on the
+		// by-id service-account branch and nowhere else, so the same argument from
+		// any other identity changes nothing. It only narrows: the ordinary member
+		// scope of that org, keyed by its permanent ID; an org no ACTIVE mapping
+		// holds is REFUSED, never served as the fleet.
+		const actingOrg = opts?.actingOrgClerkId ?? actingOrgOf(ctx);
+		if (actingOrg !== undefined) {
+			const acting =
+				actingOrg === ""
+					? null
+					: await lookupOrgMapping(ctx, { clerkOrgId: actingOrg });
+			if (acting === null || !acting.isActive) {
+				throw new ConvexError(
+					`RBAC_DENIED: the service account acts for an organisation no active mapping holds — ${JSON.stringify({ door: "withOrgScope", reason: "acting-org-not-active" })}`,
+				);
+			}
+			const actFor = opts?.actForOrgMapping;
+			if (actFor !== undefined && actFor._id !== acting._id) {
+				throw new ConvexError(
+					`RBAC_DENIED: verifiedOrg names another organisation than the one this call acts for — ${JSON.stringify({ door: "withOrgScope", reason: "claim-outside-acting-org" })}`,
+				);
+			}
+			return serviceActingScope(subject, acting, true);
+		}
 		const actFor = opts?.actForOrgMapping;
 		if (actFor !== undefined) {
-			return {
-				userId: subject,
-				orgSlug: actFor.clerkOrgSlug,
-				// The org's permanent ID, from the row, so row ownership compares IDs.
-				...(actFor.clerkOrgId !== undefined
-					? { orgClerkId: actFor.clerkOrgId }
-					: {}),
-				allowedOrchestrators: actFor.allowedOrchestrators,
-				allowedAgentIds: actFor.allowedAgentIds ?? [],
-				fleetWide: false,
-				scopes: actFor.scopes,
-				isMaster: false,
-			};
+			return serviceActingScope(subject, actFor, false);
 		}
 		return {
 			userId: subject,
@@ -973,7 +1076,13 @@ export type VerifiedActor = { agentId: Id<"agents">; orgSlug: string };
  * the service account's scope carries no org of its own.
  */
 export interface VerifiedActorProof {
-	scope: { isMaster: boolean; masterSource?: MasterSource };
+	scope: {
+		isMaster: boolean;
+		masterSource?: MasterSource;
+		serviceTransport?: true;
+		orgClerkId?: string;
+		orgSlug?: string | null;
+	};
 	verifiedActor: VerifiedActor | undefined;
 	declaredOrgSlug?: string;
 }
@@ -1005,9 +1114,7 @@ async function requireVerifiedActorMatch(
 	const actor = verified.verifiedActor;
 	if (actor === undefined) return undefined;
 
-	if (
-		!(verified.scope.isMaster && verified.scope.masterSource === "service-account")
-	) {
+	if (!isServiceTransport(verified.scope)) {
 		throw new ConvexError(
 			`RBAC_DENIED: verifiedActor is a transport-verified claim and is accepted only from the fleet service account — ${JSON.stringify(
 				{
@@ -1040,6 +1147,21 @@ async function requireVerifiedActorMatch(
 			`ORG_MISMATCH: verifiedActor claims org "${actor.orgSlug}" but agent ${row._id} belongs to org "${row.orgSlug}" — ${JSON.stringify({ agentId: row._id, claimedOrgSlug: actor.orgSlug, rowOrgSlug: row.orgSlug })}`,
 		);
 	}
+	// Under an acting org the agent must be that org's, by permanent ID.
+	requireActingOrgMatch(
+		{
+			...(verified.scope.serviceTransport === true
+				? { serviceTransport: true as const }
+				: {}),
+			...(verified.scope.orgClerkId !== undefined
+				? { orgClerkId: verified.scope.orgClerkId }
+				: {}),
+			orgSlug: verified.scope.orgSlug ?? null,
+		},
+		row.clerkOrgId,
+		"verifiedActor",
+		"requireAgentCredentialMatch",
+	);
 	const callOrg = targetOrgSlug ?? verified.declaredOrgSlug ?? null;
 	if (callOrg !== null && callOrg !== actor.orgSlug) {
 		throw new ConvexError(
@@ -1766,15 +1888,21 @@ export function projectActionOrgScope(scope: OrgScope): ActionOrgScope {
 }
 
 export const resolveOrgScopeForAction = internalQuery({
-	args: {},
+	// `actingOrg`: the acting org the calling ACTION carries (its ctx is not this
+	// query's ctx, so it is handed in; `actionScopeArgs`). Honoured on the
+	// service-account branch only, exactly like `__actingOrg` on a public door.
+	args: { actingOrg: v.optional(v.string()) },
 	returns: actionOrgScopeValidator,
-	handler: async (ctx): Promise<ActionOrgScope> => {
+	handler: async (ctx, args): Promise<ActionOrgScope> => {
 		// operatorAsMember: this bridge is a QUERY ctx, but the action it serves
 		// may write. The operator human is master for READS only, so here it
 		// resolves as a member of the operator org (its orgSlug), like in a mutation.
 		const scope = await withOrgScope(ctx, {
 			refuseWithoutThrow: true,
 			operatorAsMember: true,
+			...(args.actingOrg !== undefined
+				? { actingOrgClerkId: args.actingOrg }
+				: {}),
 		});
 
 		return projectActionOrgScope(scope);

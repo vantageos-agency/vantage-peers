@@ -1,4 +1,5 @@
 "use node";
+import { actingOrgArgs, actionScopeArgs } from "./lib/actingOrg";
 import { RAG } from "@convex-dev/rag";
 import { v } from "convex/values";
 import { api, components, internal } from "./_generated/api";
@@ -186,7 +187,7 @@ async function resolveSearchNamespace(
 ): Promise<string | null> {
 	const scope = await ctx.runQuery(
 		internal.lib.auth.resolveOrgScopeForAction,
-		{},
+		actionScopeArgs(ctx),
 	);
 
 	const requested = requestedNamespace ?? "global";
@@ -514,6 +515,7 @@ export const searchFixPatterns = action({
 		for (const { patternId, score } of patternResults) {
 			const pattern: Awaited<ReturnType<typeof ctx.runQuery>> =
 				await ctx.runQuery(api.fixPatterns.get, {
+					...actingOrgArgs(ctx),
 					patternId: patternId as never,
 				});
 			if (pattern !== null) {

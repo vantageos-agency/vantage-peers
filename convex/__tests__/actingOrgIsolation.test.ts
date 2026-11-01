@@ -62,7 +62,7 @@ const MARK = { [A]: "MARK_ORG_A", [B]: "MARK_ORG_B" } as const;
 
 type Org = typeof A | typeof B;
 type Client = ReturnType<T["withIdentity"]>;
-type Ref = Parameters<Client["query"]>[0];
+type Ref = unknown;
 
 const asService = (t: T) => t.withIdentity({ subject: SERVICE_ACCOUNT });
 const asMember = (t: T, org: Org) =>

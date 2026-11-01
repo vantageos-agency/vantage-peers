@@ -73,7 +73,7 @@ export const storeEpisode = mutation({
       scope,
       args.createdBy,
       "episodes:storeEpisode",
-      hasFleetRead(scope),
+      hasFleetRead(scope) || scope.serviceTransport === true,
     );
     const clerkOrgId = await memoryStampForWrite(
       ctx,
