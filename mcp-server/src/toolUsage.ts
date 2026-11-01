@@ -1,5 +1,5 @@
 import type { ConvexHttpClient } from "convex/browser";
-import { isMasterScope, type OAuthContext, seatAgentOf } from "./auth.js";
+import { isMasterScope, type OAuthContext } from "./auth.js";
 import { type DoorScopeArgs, verifiedOrgSlugOf } from "./doorScope.js";
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -11,14 +11,15 @@ import { type DoorScopeArgs, verifiedOrgSlugOf } from "./doorScope.js";
 //   - a Clerk session sends NO key: the Convex door derives "user:<subject>" from
 //     the JWT it already receives;
 //   - a person token: "user:<verified Clerk subject>" (also when the person acts
-//     through its personal agent: the person is the caller);
+//     through its personal agent: the person is the caller). The RECORDER sends
+//     the token proof instead and Convex re-reads the subject from the token row;
 //   - a per-agent credential, then a one-agent seat: "agent:<agents row id>";
 //   - the master bearer / local stdio trust, no context, and an org-level seat
 //     that resolves no agent: nothing is sent. Fleet operators are not an
 //     organisation's callers, and a key invented from a client registration is
 //     not an identity.
-// The organisation is never sent: it travels as the acting org the client
-// wrapper attaches to every call (authenticatedConvexClient.ts).
+// The organisation travels as the transport claim (`verifiedOrg`, R-54) beside
+// the acting org the client wrapper attaches to every call.
 // ─────────────────────────────────────────────────────────────────────────────
 
 export type ToolUsageCaller =
@@ -40,7 +41,7 @@ export function toolUsageCallerOf(
 	) {
 		return { send: true, callerKey: `user:${oauthCtx.userId}` };
 	}
-	const agentId = oauthCtx.actor?.agentId ?? seatAgentOf(oauthCtx)?.agentId;
+	const agentId = oauthCtx.actor?.agentId ?? oauthCtx.seatAgent?.agentId;
 	if (agentId !== undefined && agentId !== "") {
 		return { send: true, callerKey: `agent:${agentId}` };
 	}
@@ -60,20 +61,25 @@ export async function recordToolUsage(
 	try {
 		const caller = toolUsageCallerOf(oauthCtx);
 		if (!caller.send) return;
-		// The organisation the bearer was verified for rides as the transport claim
-		// (R-54). A Clerk session sends none: Convex sees its own org. Any other
-		// bearer whose organisation cannot be resolved records nothing.
 		const claimed = verifiedOrgSlugOf(oauthCtx);
 		const orgSlug = claimed === "" ? undefined : claimed;
+		// A bearer whose organisation cannot be resolved records nothing; a Clerk
+		// session sends no claim (Convex sees its own org).
 		if (caller.callerKey !== undefined && orgSlug === undefined) return;
+		const person =
+			oauthCtx?.principal === "person" &&
+			oauthCtx.accessTokenHash !== undefined &&
+			caller.callerKey !== undefined;
 		await convex.mutation(
 			// biome-ignore lint/suspicious/noExplicitAny: Convex string API
 			"toolUsage:record" as any,
 			{
 				toolName: tool,
-				...(caller.callerKey !== undefined
-					? { caller: caller.callerKey }
-					: {}),
+				...(person
+					? { verifiedPerson: { accessTokenHash: oauthCtx.accessTokenHash } }
+					: caller.callerKey !== undefined
+						? { caller: caller.callerKey }
+						: {}),
 				...(orgSlug !== undefined ? { verifiedOrg: { orgSlug } } : {}),
 			},
 		);
@@ -100,7 +106,9 @@ export function toolUsageReadArgs(
 	orgSlug: string | undefined,
 ): { args: Record<string, unknown> } | { denied: string } {
 	if (oauthCtx === undefined) {
-		return { denied: "Forbidden: the request carried no authorization context." };
+		return {
+			denied: "Forbidden: the request carried no authorization context.",
+		};
 	}
 	const named = orgSlug !== undefined ? { verifiedOrg: { orgSlug } } : {};
 	if (isMasterScope(oauthCtx) || oauthCtx.clerkJwt !== undefined) {
