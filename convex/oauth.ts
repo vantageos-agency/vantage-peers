@@ -2890,13 +2890,19 @@ export const getAccessTokenByHash = query({
 			row.clerkOrgId === undefined
 				? null
 				: await lookupOrgMapping(ctx, { clerkOrgId: row.clerkOrgId });
+		// A token that carries an organisation is only as good as that organisation's
+		// mapping: a missing row or `isActive === false` is a DENY, answered like an
+		// unknown / revoked / expired token, never a populated context with the org
+		// fields dropped (.claude/rules/http-boundary-derives-from-principal.md,
+		// rule 2; task k17fhnxz9sbqptg0tesxktv7es8hd360). A token that never
+		// carried an organisation (fleet / catalog) skips this and is served as before.
+		if (row.clerkOrgId !== undefined && (orgMapping === null || !orgMapping.isActive)) {
+			return null;
+		}
 		const orgClerkId =
 			orgMapping !== null && orgMapping.isActive
 				? orgMapping.clerkOrgId
 				: undefined;
-		// An organisation the ID no longer resolves to an ACTIVE mapping has no
-		// current label: the stored one may name another organisation by now, so it
-		// is not handed on.
 		const orgLabel = orgClerkId === undefined ? undefined : orgMapping?.clerkOrgSlug;
 		// Is the resolved personal agent's ID on its organisation's roster BY ID right
 		// now? The scope is the org's own member scope built from the mapping row read
@@ -3461,6 +3467,18 @@ export const rotateRefreshToken = mutation({
 			.take(1);
 		const personLineage =
 			lineage[0]?.principal === "person" ? lineage[0] : undefined;
+		// An organisation-bound family whose mapping is missing or inactive is
+		// refused the way a person row is (`organisation-inactive`): the family is
+		// revoked and nothing is minted (task k17fhnxz9sbqptg0tesxktv7es8hd360). The
+		// key is the permanent ID stamped on the family's access token, never a label.
+		const lineageOrgId = lineage[0]?.clerkOrgId;
+		if (lineageOrgId !== undefined) {
+			const lineageMapping = await lookupOrgMapping(ctx, { clerkOrgId: lineageOrgId });
+			if (lineageMapping === null || !lineageMapping.isActive) {
+				await revokeFamilyWithRoot(ctx, familyId);
+				return { status: "refused" as const, reason: "organisation-inactive" };
+			}
+		}
 		if (personLineage !== undefined) {
 			const resolvedMember = await resolveLiveMember(
 				ctx,
