@@ -161,7 +161,7 @@ const REASON_OF_ABSENCE: Record<
  * answers from the rows already read; a slug carried by two rows throws, which the
  * package reports as `lookup-failed` and this migration lists as ambiguousMapping.
  */
-export async function resolveSlug(
+async function resolveSlug(
 	bySlug: Map<string, MappingRow[]>,
 	slug: string,
 ): Promise<Resolution> {
