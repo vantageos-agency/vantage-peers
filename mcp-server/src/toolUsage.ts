@@ -61,27 +61,30 @@ export async function recordToolUsage(
 	try {
 		const caller = toolUsageCallerOf(oauthCtx);
 		if (!caller.send) return;
-		const claimed = verifiedOrgSlugOf(oauthCtx);
-		const orgSlug = claimed === "" ? undefined : claimed;
-		// A bearer whose organisation cannot be resolved records nothing; a Clerk
-		// session sends no claim (Convex sees its own org).
-		if (caller.callerKey !== undefined && orgSlug === undefined) return;
-		const person =
-			oauthCtx?.principal === "person" &&
-			oauthCtx.accessTokenHash !== undefined &&
-			caller.callerKey !== undefined;
+		// A Clerk session names no key and no organisation: Convex derives both
+		// from the JWT it already receives.
+		if (caller.callerKey === undefined) {
+			await convex.mutation(
+				// biome-ignore lint/suspicious/noExplicitAny: Convex string API
+				"toolUsage:record" as any,
+				{ toolName: tool },
+			);
+			return;
+		}
+		// Any other bearer is recorded under its verified organisation (the
+		// transport claim, R-54); one whose organisation cannot be resolved records
+		// nothing. A person sends its token proof, not a typed key.
+		const orgSlug = verifiedOrgSlugOf(oauthCtx);
+		if (orgSlug === undefined || orgSlug === "") return;
+		const proof = oauthCtx?.accessTokenHash;
+		const identity =
+			oauthCtx?.principal === "person" && proof !== undefined
+				? { verifiedPerson: { accessTokenHash: proof } }
+				: { caller: caller.callerKey };
 		await convex.mutation(
 			// biome-ignore lint/suspicious/noExplicitAny: Convex string API
 			"toolUsage:record" as any,
-			{
-				toolName: tool,
-				...(person
-					? { verifiedPerson: { accessTokenHash: oauthCtx.accessTokenHash } }
-					: caller.callerKey !== undefined
-						? { caller: caller.callerKey }
-						: {}),
-				...(orgSlug !== undefined ? { verifiedOrg: { orgSlug } } : {}),
-			},
+			{ toolName: tool, ...identity, verifiedOrg: { orgSlug } },
 		);
 	} catch {
 		// a recording failure is not the tool's failure
