@@ -59,7 +59,7 @@ export const storeMemory = mutation({
   args: {
     namespace: v.string(),
     // The agent the MCP transport verified, by its agents-row ID (convex/lib/seatNamespace.ts):
-    // the only key to `orchestrator/<its own name>` for a seat acting for its org.
+    // the only key to `orchestrator/<its own agent ID>` for a seat acting for its org.
     verifiedActor: v.optional(verifiedActorValidator),
     type: memoryTypeValidator,
     content: v.string(),
@@ -323,7 +323,7 @@ const listMemoriesResultValidator = v.object({
 export const listMemories = query({
   args: {
     // The agent the MCP transport verified, by its agents-row ID (convex/lib/seatNamespace.ts):
-    // the only key to `orchestrator/<its own name>` for a seat acting for its org.
+    // the only key to `orchestrator/<its own agent ID>` for a seat acting for its org.
     verifiedActor: v.optional(verifiedActorValidator),
 	fields: v.optional(v.union(v.literal("lite"), v.literal("full"))), // v2.4.12 accept (no-op for now) — closes ArgumentValidationError from MCP wrappers passing fields
     namespace: v.string(),

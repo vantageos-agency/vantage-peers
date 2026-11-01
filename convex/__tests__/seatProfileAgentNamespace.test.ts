@@ -13,7 +13,7 @@
 
 import { convexTest } from "../../tests/fixtures/convexTestWithServiceAccount";
 import { ConvexError } from "convex/values";
-import { describe, expect, test } from "vitest";
+import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import {
 	checkNamespaceRead,
 	checkNamespaceWrite,
@@ -30,9 +30,17 @@ const modules = Object.fromEntries(
 		([path]) => !path.includes("search") && !path.includes("backfill"),
 	),
 );
+beforeEach(() => {
+	vi.useFakeTimers();
+});
+afterEach(() => {
+	vi.useRealTimers();
+});
 const NOW = 1_700_000_000_000;
 const createT = () => convexTest(schema, modules);
 type T = ReturnType<typeof createT>;
+// storeMemory schedules the RAG follow-up: run it to completion inside the test.
+const drain = (t: T) => t.finishAllScheduledFunctions(vi.runAllTimers);
 const service = (t: T) =>
 	t.withIdentity({ subject: "test-service-account-user-id" });
 
@@ -186,6 +194,7 @@ describe("THROUGH the MCP profile check, then Convex", () => {
 			expect(checkNamespaceRead(ctx, ns), ns).toMatch(/^Forbidden/);
 			expect(await code(seatCall(t, w, ns).run()), ns).toBe("RBAC_DENIED");
 		}
+		await drain(t);
 	});
 
 	test("the name prefix still passes the MCP, and Convex refuses it", async () => {
@@ -195,5 +204,6 @@ describe("THROUGH the MCP profile check, then Convex", () => {
 		const ctx = ctxOf((await profileRow(t, `alice-${A}`))!);
 		expect(checkNamespaceWrite(ctx, "orchestrator/alice")).toBeNull();
 		expect(await code(seatCall(t, w, "orchestrator/alice").run())).toBe("RBAC_DENIED");
+		await drain(t);
 	});
 });

@@ -22,7 +22,7 @@ export const storeEpisode = mutation({
   args: {
     namespace: v.string(),
     // The agent the MCP transport verified, by its agents-row ID (convex/lib/seatNamespace.ts):
-    // the only key to `orchestrator/<its own name>` for a seat acting for its org.
+    // the only key to `orchestrator/<its own agent ID>` for a seat acting for its org.
     verifiedActor: v.optional(verifiedActorValidator),
     // Absent for a person (the MCP forwards none): the verified caller is the
     // author. The service account names the seat it authenticated.
@@ -176,7 +176,7 @@ export const listEpisodes = query({
   args: {
     namespace: v.string(),
     // The agent the MCP transport verified, by its agents-row ID (convex/lib/seatNamespace.ts):
-    // the only key to `orchestrator/<its own name>` for a seat acting for its org.
+    // the only key to `orchestrator/<its own agent ID>` for a seat acting for its org.
     verifiedActor: v.optional(verifiedActorValidator),
     severity: v.optional(severityValidator),
     limit: v.optional(v.number()),
