@@ -172,6 +172,7 @@ import type * as taskDeliverable from "../taskDeliverable.js";
 import type * as taskDeliverableDb from "../taskDeliverableDb.js";
 import type * as tasks from "../tasks.js";
 import type * as tenantOrgSeed from "../tenantOrgSeed.js";
+import type * as toolUsage from "../toolUsage.js";
 
 import type {
   ApiFromModules,
@@ -344,6 +345,7 @@ declare const fullApi: ApiFromModules<{
   taskDeliverableDb: typeof taskDeliverableDb;
   tasks: typeof tasks;
   tenantOrgSeed: typeof tenantOrgSeed;
+  toolUsage: typeof toolUsage;
 }>;
 
 /**

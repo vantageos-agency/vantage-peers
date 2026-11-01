@@ -7,7 +7,7 @@
 // REQUIRED_CONTRACT_VERSION in mcp-server/src/backendContract.ts, when the MCP
 // starts passing a new argument to a function that already exists.
 
-export const BACKEND_CONTRACT_VERSION = 13;
+export const BACKEND_CONTRACT_VERSION = 14;
 
 export const BACKEND_FUNCTIONS: readonly string[] = [
 	"agentCredentials:getAgentCredentialStatus",
@@ -80,10 +80,7 @@ export const BACKEND_FUNCTIONS: readonly string[] = [
 	"githubRepoMapping:getByRepo",
 	"githubRepoMapping:list",
 	"githubRepoMapping:remove",
-	"iframeEmbedSessions:createSession",
 	"iframeEmbedSessions:getSession",
-	"iframeEmbedSessions:revokeSession",
-	"iframeEmbedSessions:touchSession",
 	"improvisationDigest:scanWindow",
 	"issueStatsQueries:getLatest",
 	"issues:getByRepoNumber",
@@ -220,4 +217,7 @@ export const BACKEND_FUNCTIONS: readonly string[] = [
 	"tasks:start",
 	"tasks:taskDurationDistribution",
 	"tasks:update",
+	"toolUsage:getToolUsage",
+	"toolUsage:record",
+	"toolUsage:usageByOwner",
 ];

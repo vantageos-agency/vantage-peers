@@ -569,7 +569,7 @@ describe("iframeEmbedSessions:getSession — authorisation derived from the TARG
 		).toBeNull();
 	});
 
-	test("DENY — a tenantId-less session is master-only, matching touchSession/revokeSession on the same row", async () => {
+	test("DENY — a tenantId-less session is master-only", async () => {
 		const t = createT();
 		await seedOrgMapping(t, "org-a");
 		await seedSession(t, { sessionId: "sess-none" });
@@ -580,14 +580,6 @@ describe("iframeEmbedSessions:getSession — authorisation derived from the TARG
 		);
 		expect(read).toBeNull();
 
-		// The WRITE on the identical row already refuses. The read must not be
-		// more permissive than the write it sits beside.
-		await expect(
-			asOrgMember(t, ORDINARY_A, "org-a").mutation(
-				api.iframeEmbedSessions.touchSession,
-				{ sessionId: "sess-none" },
-			),
-		).rejects.toThrow(/RBAC_DENIED/);
 	});
 
 	test("ALLOW — org A DOES read its own session (the withheld-grant direction)", async () => {

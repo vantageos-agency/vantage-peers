@@ -29,6 +29,7 @@ import * as mandates from "../../convex/mandates";
 import * as messages from "../../convex/messages";
 import * as missions from "../../convex/missions";
 import * as tasks from "../../convex/tasks";
+import * as toolUsage from "../../convex/toolUsage";
 import {
 	type OAuthContext,
 	personActorOf,
@@ -58,6 +59,7 @@ const MODULES: Record<string, Record<string, unknown>> = {
 	messages,
 	missions,
 	tasks,
+	toolUsage,
 };
 const SCOPE_ARGS = [
 	"verifiedPerson",
@@ -279,6 +281,8 @@ const SITES: [string, string, Legacy, boolean][] = [
 	["add_task_dependency", "tasks:update", org, false],
 	["create_mission", "missions:create", personOnly, true],
 	["update_mission", "missions:update", personOnly, true],
+	["get_tool_usage", "toolUsage:getToolUsage", personAndOrg, true],
+	["get_owner_tool_usage", "toolUsage:usageByOwner", personAndOrg, true],
 	["create_briefing_note", "briefingNotes:create", org, false],
 	["get_briefing_note", "briefingNotes:get", org, false],
 	["list_briefing_notes", "briefingNotes:list", org, false],
