@@ -10,6 +10,7 @@
 
 import { convexTest } from "../../tests/fixtures/convexTestWithServiceAccount";
 import { describe, expect, test } from "vitest";
+import { testClerkOrgId } from "../../tests/fixtures/testClerkOrgId";
 import { api } from "../_generated/api";
 import schema from "../schema";
 
@@ -26,6 +27,7 @@ async function seedOrgs(t: ReturnType<typeof createT>) {
 		for (const clerkOrgSlug of ["tenant-a", "tenant-b"]) {
 			await ctx.db.insert("client_org_mapping", {
 				clerkOrgSlug,
+				clerkOrgId: testClerkOrgId(clerkOrgSlug),
 				allowedOrchestrators: ["pi"],
 				scopes: ["view-own-tasks"],
 				displayName: clerkOrgSlug,
@@ -51,6 +53,7 @@ async function seedReceipt(
 			channel: opts.recipientInstanceId,
 			content: opts.content,
 			tenantId: opts.tenantId,
+			tenantOrgId: testClerkOrgId(opts.tenantId),
 			createdAt: Date.now(),
 		});
 		await ctx.db.insert("messageReceipts", {
@@ -58,6 +61,7 @@ async function seedReceipt(
 			recipient: opts.recipient,
 			recipientInstanceId: opts.recipientInstanceId,
 			tenantId: opts.tenantId,
+			tenantOrgId: testClerkOrgId(opts.tenantId),
 			readAt: undefined,
 		});
 	});

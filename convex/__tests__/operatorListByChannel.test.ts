@@ -132,7 +132,7 @@ async function seedHistory(t: T) {
 				channel,
 				content: `${from}->${channel}@${createdAt}`,
 				createdAt,
-				...(tenantId ? { tenantId } : {}),
+				...(tenantId ? { tenantId, tenantOrgId: testClerkOrgId(tenantId) } : {}),
 			});
 		await row("sigma", "pi", undefined, 100);
 		await row("sigma", "broadcast", ORG, 200);

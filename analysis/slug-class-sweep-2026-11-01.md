@@ -60,20 +60,20 @@ Order: A-1 and A-2 first (they feed the stale label to everything else), then th
 | A-3 | **fixed in PR (1)** | convex/oauth.ts:3416 | `oauth:rotateRefreshToken` (person path) | person membership judged against the slug's current holder |
 | A-4 | **fixed in PR (1)** | convex/lib/verifiedOrg.ts:74, :185 | all `verifiedOrg` doors (doorScope.ts:50-80) | stale label resolves to B's mapping/scope; bulk-run slug compare |
 | A-5 | **fixed in PR (1)** | convex/orgRoster.ts:329 | `orgRoster:getForAccessToken` | A's token returns B's `allowedOrchestrators` (known, pinned by orgRoster.getForAccessToken.test.ts) |
-| A-6 | **remaining, PR (2) (messages family)** | convex/messages.ts:901,908,967,998,1000 | `messages:sendMessage`, `checkNewMessages*` with `seatOrgSlug` | stale seat label scopes the seat as B; foreign-identity check skips B |
-| A-7 | **remaining, PR (2) (messages family)** | convex/messages.ts:104, :181 | `messages:sendMessage`, `listByChannel` | B uses channel `team/acme` of A; B proves A's person as its own |
-| A-8 | **remaining, PR (2) (messages family)** | convex/messages.ts:1711-1713 | `messages:listMyInbox` | receipts of the same person from A's tenant read in B |
-| A-9 | **remaining, PR (2) (messages family)** | convex/messages.ts:1903, :2046 | `messages:markAsRead`, `messages:deleteMessage` | B marks/deletes A's receipts/messages (tenant gate is slug only) |
-| A-10 | **remaining, PR (2) (messages family)** | convex/messages.ts:2152-2173 | `messages:listMessages` | B lists A's messages |
-| A-11 | **remaining, PR (2) (messages family)** | convex/messages.ts:2310-2312 | `messages:getUnreadCount` | B's count includes A's receipts |
-| A-12 | **remaining, PR (2) (messages family)** | convex/messages.ts:2394 | `messages:listBroadcastStatus` | B reads A's broadcast status |
-| A-13 | **remaining, PR (2) (messages family)** | convex/messages.ts:2565-2574 | `messages:listByChannel` | B lists A's channel history |
-| A-14 | **remaining, PR (2) (messages family)** | convex/messages.ts:2718-2731 | `messages:listByChannelPaginated` | B pages A's channel history |
-| A-15 | **remaining, PR (2) (messages family)** | convex/messages.ts:2803 | `messages:getById` | B reads A's message by ID |
-| A-16 | **remaining, PR (2) (messages family)** | convex/messages.ts:2891,2904 | `messages:searchMessagesByKeyword` | B searches A's messages |
-| A-17 | **remaining, PR (2) (messages family)** | convex/lib/inboxReader.ts:155,223,230,457-459,488-490 | `messages:checkNewMessages*`, `listMyInbox` readers | tenant list = agent row label / claim; receipt index probes by slug |
-| A-18 | **remaining, PR (2) (messages family)** | convex/dashboard.ts:147, :167 | `dashboard:getDashboardSummary` | unread count and recent messages include A's rows |
-| A-19 | **remaining, PR (2) (messages family)** | convex/improvisationDigest.ts:231-232 | `improvisationDigest:scanWindow` | B reads A's flagged message snippets |
+| A-6 | **fixed in PR (2b)** | convex/messages.ts:901,908,967,998,1000 | `messages:sendMessage`, `checkNewMessages*` with `seatOrgSlug` | stale seat label scopes the seat as B; foreign-identity check skips B |
+| A-7 | **fixed in PR (2b)** | convex/messages.ts:104, :181 | `messages:sendMessage`, `listByChannel` | B uses channel `team/acme` of A; B proves A's person as its own |
+| A-8 | **fixed in PR (2b)** | convex/messages.ts:1711-1713 | `messages:listMyInbox` | receipts of the same person from A's tenant read in B |
+| A-9 | **fixed in PR (2b)** | convex/messages.ts:1903, :2046 | `messages:markAsRead`, `messages:deleteMessage` | B marks/deletes A's receipts/messages (tenant gate is slug only) |
+| A-10 | **fixed in PR (2b)** | convex/messages.ts:2152-2173 | `messages:listMessages` | B lists A's messages |
+| A-11 | **fixed in PR (2b)** | convex/messages.ts:2310-2312 | `messages:getUnreadCount` | B's count includes A's receipts |
+| A-12 | **fixed in PR (2b)** | convex/messages.ts:2394 | `messages:listBroadcastStatus` | B reads A's broadcast status |
+| A-13 | **fixed in PR (2b)** | convex/messages.ts:2565-2574 | `messages:listByChannel` | B lists A's channel history |
+| A-14 | **fixed in PR (2b)** | convex/messages.ts:2718-2731 | `messages:listByChannelPaginated` | B pages A's channel history |
+| A-15 | **fixed in PR (2b)** | convex/messages.ts:2803 | `messages:getById` | B reads A's message by ID |
+| A-16 | **fixed in PR (2b)** | convex/messages.ts:2891,2904 | `messages:searchMessagesByKeyword` | B searches A's messages |
+| A-17 | **fixed in PR (2b)** | convex/lib/inboxReader.ts:155,223,230,457-459,488-490 | `messages:checkNewMessages*`, `listMyInbox` readers | tenant list = agent row label / claim; receipt index probes by slug |
+| A-18 | **fixed in PR (2b)** | convex/dashboard.ts:147, :167 | `dashboard:getDashboardSummary` | unread count and recent messages include A's rows |
+| A-19 | **fixed in PR (2b)** | convex/improvisationDigest.ts:231-232 | `improvisationDigest:scanWindow` | B reads A's flagged message snippets |
 | A-20 | **remaining, PR (3) (namespaces, KB/OKF, GitHub, writer roles)** | convex/lib/teamNamespace.ts:79 | every memory/KB/OKF door (isTeamNamespaceAllowed) | `team/acme` alias namespace admits B to A's memories |
 | A-21 | **remaining, PR (3) (namespaces, KB/OKF, GitHub, writer roles)** | convex/okfBundle.ts:275,319,604,649,745-746,801-802 | OKF export/import/dedup helpers | notes/tasks selected by slug taken from the namespace alias |
 | A-22 | **remaining, PR (3) (namespaces, KB/OKF, GitHub, writer roles)** | convex/okfBundleNode.ts:461,765,1021; convex/kbMutations.ts:498 | `okfBundleNode:export/validate/importOkfBundle`, `kbMutations:claimUpload` | blob ownership (kbUploads.orgId slug, no ID column): B imports/claims A's blob |
@@ -570,3 +570,9 @@ What changed under them is the label they receive: `getAccessTokenByHash` now re
 - The dashboard repo (`vantage-peers-dashboard`) was not read; door reachability from the dashboard UI was not enumerated.
 - `S` classification of lines with a cited post-filter assumes the cited filter runs on every path of that function; I read the cited lines, not every branch.
 - Lines outside `convex/` and `mcp-server/src/` (scripts/, dashboard, other repos) were not swept.
+
+## After PR (2b): the messages family (A-6..A-19)
+
+The three commands re-run, compared by (file, line text), at base bcaab4fa (PR 1 + #1629) and at the PR (2b) head: 326 distinct lines before, 318 after. Rows A-6..A-19 are marked fixed in PR (2b).
+A-6 note: the seat label `lookupOrgMapping(seatOrgSlug)` stays a label read (the transport hands only a label; moving it to an ID needs a new `seatOrgClerkId` argument, a public-arg change reported to Pi, not made). With `verifiedActor` the seat is already checked by ID (`requireTargetOrgOfPrincipal`). The foreign-identity skip now compares IDs.
+A-7 note: the `team/<slug>` channel prefix in `isChannelOnScope` only narrows channel names inside the org's own rows (rows are selected by ID); it is not an admission.

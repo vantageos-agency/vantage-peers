@@ -127,7 +127,7 @@ const seedMessage = (t: T, channel: string, tenantId?: string) =>
 			channel,
 			content: "hello world",
 			createdAt: Date.now(),
-			...(tenantId !== undefined ? { tenantId } : {}),
+			...(tenantId !== undefined ? { tenantId, tenantOrgId: testClerkOrgId(tenantId) } : {}),
 		});
 	});
 

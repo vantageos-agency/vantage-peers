@@ -86,7 +86,7 @@ const seedMsg = (t: T, channel: string, tenantId: string | undefined) =>
 			channel,
 			content: `row on ${channel} / ${tenantId ?? "fleet"}`,
 			createdAt: Date.now(),
-			...(tenantId !== undefined ? { tenantId } : {}),
+			...(tenantId !== undefined ? { tenantId, tenantOrgId: testClerkOrgId(tenantId) } : {}),
 		}),
 	);
 
