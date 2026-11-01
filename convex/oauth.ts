@@ -2524,7 +2524,26 @@ type MintAccessTokenArgs = {
 	 * the agent live; this door stamps it and decides nothing.
 	 */
 	personChoice?: { agent: Doc<"agents"> | null; connectedAs?: "person" };
+	/**
+	 * PERSON only: write the person's refresh row beside the access token, under
+	 * `refreshTokenHash`, stamped with the choices made at consent. First issuance
+	 * gives `expiresAt` and `requestedScopes`. A ROTATION also gives `previous`
+	 * (the spent row, the source of the consent record) and `orgMapping` (the
+	 * organisation's CURRENT mapping row): the new token's scopes, allowed
+	 * orchestrators and namespaces are then derived HERE from that live row, capped
+	 * by what was consented, and the `scopes` / `fromAllowList` / prefix fields
+	 * the caller passes are ignored.
+	 */
+	personRefresh?: {
+		expiresAt: number;
+		requestedScopes: string[];
+		previous?: Doc<"oauth_refresh_tokens">;
+		orgMapping?: NonNullable<Awaited<ReturnType<typeof lookupOrgMapping>>>;
+	};
 };
+
+/** Scope the person asks for to get a refresh token. It confers nothing and is never minted onto a token. */
+const OFFLINE_ACCESS = "offline_access";
 
 /**
  * The one place an access token row is written. createAccessToken (mint) and
@@ -2533,8 +2552,31 @@ type MintAccessTokenArgs = {
  */
 async function mintAccessToken(
 	ctx: MutationCtx,
-	a: MintAccessTokenArgs,
-): Promise<Id<"oauth_access_tokens">> {
+	input: MintAccessTokenArgs,
+): Promise<{ id: Id<"oauth_access_tokens">; scope: string }> {
+	// A person refresh ROTATION is minted from the organisation's CURRENT mapping
+	// row, capped by the scopes consented to; nothing the caller passed (and
+	// nothing on the previous token) is the grant.
+	const live = input.personRefresh?.orgMapping;
+	const spent = input.personRefresh?.previous;
+	const a: MintAccessTokenArgs =
+		live !== undefined && spent !== undefined
+			? {
+					...input,
+					scopes: (spent.grantedScopes ?? []).filter(
+						(s) => spent.askedScopes?.includes(s) || live.scopes.includes(s),
+					),
+					fromAllowList: live.allowedOrchestrators,
+					// A person READS the organisation's shared memory but WRITES only
+					// team/<orgKey> (the same grant the person exchange mints).
+					namespaceReadPrefixes: [
+						`team/${live.clerkOrgSlug}`,
+						`project/${live.clerkOrgSlug}`,
+					],
+					namespaceWritePrefixes: [`team/${live.clerkOrgSlug}`],
+					clerkOrgSlug: live.clerkOrgSlug,
+				}
+			: input;
 	// Seat identity by ID, resolved HERE (mint and refresh both come through
 	// this door) from the profile in its own org; never from an argument.
 	const tokenClerkOrgId = await clerkOrgIdForSlug(ctx, a.clerkOrgSlug);
@@ -2566,7 +2608,7 @@ async function mintAccessToken(
 			: a.principal === "person" && a.codeHash !== undefined
 				? await chosenAtConsent(ctx, a.codeHash)
 				: null;
-	return await ctx.db.insert("oauth_access_tokens", {
+	const id = await ctx.db.insert("oauth_access_tokens", {
 		tokenHash: a.tokenHash,
 		clientId: a.clientId,
 		userId: a.userId,
@@ -2603,6 +2645,46 @@ async function mintAccessToken(
 			? { connectedAs: chosen.connectedAs }
 			: {}),
 	});
+	if (a.personRefresh !== undefined) {
+		if (
+			a.principal !== "person" ||
+			a.refreshTokenHash === undefined ||
+			tokenClerkOrgId === undefined
+		) {
+			throw new ConvexError(
+				"PERSON_REFRESH_REFUSED: a person refresh token needs a person token, its digest and an organisation with a permanent ID",
+			);
+		}
+		const consented = a.personRefresh.previous;
+		await ctx.db.insert("oauth_refresh_tokens", {
+			tokenHash: a.refreshTokenHash,
+			clientId: a.clientId,
+			userId: a.userId,
+			scopeProfile: a.scopeProfile,
+			expiresAt: a.personRefresh.expiresAt,
+			createdAt: Date.now(),
+			...(a.familyId !== undefined ? { familyId: a.familyId } : {}),
+			principal: "person",
+			clerkOrgId: tokenClerkOrgId,
+			...(a.clerkOrgSlug !== undefined
+				? { clerkOrgSlug: a.clerkOrgSlug }
+				: {}),
+			orgRole: a.orgRole,
+			...(chosen?.agent ? { agentId: chosen.agent._id } : {}),
+			...(chosen?.connectedAs !== undefined
+				? { connectedAs: chosen.connectedAs }
+				: {}),
+			// The consent record: what was minted at consent is the ceiling, what the
+			// person asked for beyond the organisation's own is kept apart. A rotation
+			// carries both forward unchanged.
+			grantedScopes:
+				consented?.grantedScopes ?? a.scopes.filter((s) => s !== OFFLINE_ACCESS),
+			askedScopes:
+				consented?.askedScopes ??
+				a.personRefresh.requestedScopes.filter((s) => s !== OFFLINE_ACCESS),
+		});
+	}
+	return { id, scope: a.scopes.join(" ") };
 }
 
 /** What the person decided on the consent screen, read from the code row the token is minted from. */
@@ -2645,12 +2727,18 @@ export const createAccessToken = mutation({
 		codeHash: v.optional(v.string()),
 		orgRole: v.optional(v.string()),
 		principal: v.optional(v.literal("person")),
+		// Person exchange only: also write the person's refresh row (under
+		// `refreshTokenHash`) in the same transaction. Raw token values never
+		// reach Convex; only the digest does.
+		personRefresh: v.optional(
+			v.object({ expiresAt: v.number(), requestedScopes: v.array(v.string()) }),
+		),
 	},
 	returns: v.id("oauth_access_tokens"),
 	handler: async (ctx, args) => {
 		// write-contract: MCP-transport-only — issued via mcp-server client.mutation("oauth:createAccessToken", …) at mcp-server/server-http.ts:889, mcp-server/server-http.ts:1032, mcp-server/server-http.ts:1520 (imperative), 0 hits in vantage-peers-dashboard {app,components,hooks,lib,contexts,providers} (measured 2026-10-01 at origin/main e2dc58f and 0466fac); never a subscribing pre-org client shell. The no-org throw is a refusal at an imperative MCP call, never at a render.
 		await requireServiceAccount(ctx, "oauth:createAccessToken");
-		return await mintAccessToken(ctx, args);
+		return (await mintAccessToken(ctx, args)).id;
 	},
 });
 
@@ -3246,69 +3334,13 @@ export const rotateRefreshToken = mutation({
 // bound to. The refresh row records only the CHOICES made at consent (person,
 // organisation, agent, scopes); every refresh re-resolves the AUTHORITY live.
 //
-//   createPersonRefreshToken   stamps the first refresh token from the access
-//                              token minted beside it
+//   createAccessToken          (personRefresh) writes the first refresh row beside
+//                              the access token of the person exchange
 //   rotatePersonRefreshToken   the refresh grant's door for a person row
 //   revokePersonRefreshTokens  internal: agent deactivated / organisation off
 //
 // The membership removal path (revokeMemberTokens) reaches these rows too.
 // ─────────────────────────────────────────────────────────────────────────────
-
-/** Scope the person asks for to get a refresh token. It confers nothing and is never minted onto a token. */
-const OFFLINE_ACCESS = "offline_access";
-
-export const createPersonRefreshToken = mutation({
-	args: {
-		// SHA-256 hex of the refresh token; the raw value never reaches Convex.
-		tokenHash: v.string(),
-		// SHA-256 hex of the access token minted beside it (its refreshTokenHash
-		// must be this very digest).
-		accessTokenHash: v.string(),
-		expiresAt: v.number(),
-		// What the person asked for at consent (offline_access is dropped here).
-		requestedScopes: v.array(v.string()),
-	},
-	returns: v.id("oauth_refresh_tokens"),
-	handler: async (ctx, args) => {
-		// write-contract: MCP-transport-only — issued via mcp-server client.mutation("oauth:createPersonRefreshToken", …) at mcp-server/server-http.ts (the /token authorization_code person exchange, imperative); never from a subscribing pre-org client shell. The no-org throw is a refusal at an imperative MCP call, never at a render.
-		await requireServiceAccount(ctx, "oauth:createPersonRefreshToken");
-		const access = await ctx.db
-			.query("oauth_access_tokens")
-			.withIndex("by_tokenHash", (q) => q.eq("tokenHash", args.accessTokenHash))
-			.unique();
-		if (
-			access === null ||
-			access.principal !== "person" ||
-			access.revokedAt !== undefined ||
-			access.refreshTokenHash !== args.tokenHash ||
-			access.clerkOrgId === undefined
-		) {
-			throw new ConvexError(
-				"PERSON_REFRESH_REFUSED: no live person access token names this refresh token and an organisation",
-			);
-		}
-		return await ctx.db.insert("oauth_refresh_tokens", {
-			tokenHash: args.tokenHash,
-			clientId: access.clientId,
-			userId: access.userId,
-			scopeProfile: access.scopeProfile,
-			expiresAt: args.expiresAt,
-			createdAt: Date.now(),
-			principal: "person",
-			clerkOrgId: access.clerkOrgId,
-			...(access.clerkOrgSlug !== undefined
-				? { clerkOrgSlug: access.clerkOrgSlug }
-				: {}),
-			...(access.orgRole !== undefined ? { orgRole: access.orgRole } : {}),
-			...(access.agentId !== undefined ? { agentId: access.agentId } : {}),
-			...(access.connectedAs !== undefined
-				? { connectedAs: access.connectedAs }
-				: {}),
-			scopes: access.scopes.filter((s) => s !== OFFLINE_ACCESS),
-			requestedScopes: args.requestedScopes.filter((s) => s !== OFFLINE_ACCESS),
-		});
-	},
-});
 
 /**
  * rotatePersonRefreshToken - service account only. The refresh grant's door for
@@ -3392,8 +3424,8 @@ export const rotatePersonRefreshToken = mutation({
 		// C1 - the choices must be on the row; nothing is defaulted.
 		if (
 			row.clerkOrgId === undefined ||
-			row.scopes === undefined ||
-			row.requestedScopes === undefined ||
+			row.grantedScopes === undefined ||
+			row.askedScopes === undefined ||
 			(row.agentId === undefined && row.connectedAs !== "person")
 		) {
 			return await refuse("consent-record-incomplete");
@@ -3447,59 +3479,42 @@ export const rotatePersonRefreshToken = mutation({
 			choice = { agent: null, connectedAs: "person" };
 		}
 
-		// C5 - scopes: the organisation's CURRENT grant plus what the person asked
-		// for, never beyond what was minted at consent.
-		const orgKey = orgMapping.clerkOrgSlug;
-		const scopes = row.scopes.filter(
-			(s) => row.requestedScopes?.includes(s) || orgMapping.scopes.includes(s),
-		);
-
 		const refreshToken = randomOpaqueHex(32);
 		const accessToken = randomOpaqueHex(32);
 		const nextRefreshHash = await sha256Hex(refreshToken);
 		const nextAccessHash = await sha256Hex(accessToken);
 		await ctx.db.patch(row._id, { revokedAt: now });
-		await ctx.db.insert("oauth_refresh_tokens", {
-			tokenHash: nextRefreshHash,
-			clientId: row.clientId,
-			userId: row.userId,
-			scopeProfile: row.scopeProfile,
-			// Sliding window, never past the family's absolute deadline.
-			expiresAt: Math.min(args.refreshExpiresAt, familyDeadline),
-			createdAt: now,
-			familyId,
-			principal: "person",
-			clerkOrgId: row.clerkOrgId,
-			clerkOrgSlug: orgKey,
-			...(row.orgRole !== undefined ? { orgRole: row.orgRole } : {}),
-			...(row.agentId !== undefined ? { agentId: row.agentId } : {}),
-			...(row.connectedAs !== undefined ? { connectedAs: row.connectedAs } : {}),
-			scopes: row.scopes,
-			requestedScopes: row.requestedScopes,
-		});
-		await mintAccessToken(ctx, {
+		// The ONE write door mints the pair. The grant (scopes, allowed
+		// orchestrators, namespaces) is derived there from the organisation's
+		// CURRENT mapping, capped by the scopes consented to; the empty grant
+		// fields below are ignored by it for a rotation (see personRefresh).
+		const minted = await mintAccessToken(ctx, {
 			tokenHash: nextAccessHash,
 			clientId: row.clientId,
 			userId: row.userId,
-			scopes,
+			scopes: [],
 			scopeProfile: row.scopeProfile,
-			fromAllowList: orgMapping.allowedOrchestrators,
-			// A person READS the organisation's shared memory but WRITES only
-			// team/<orgKey> (the same grant the person exchange mints).
-			namespaceReadPrefixes: [`team/${orgKey}`, `project/${orgKey}`],
-			namespaceWritePrefixes: [`team/${orgKey}`],
+			fromAllowList: [],
+			namespaceReadPrefixes: [],
+			namespaceWritePrefixes: [],
 			expiresAt: args.accessExpiresAt,
 			refreshTokenHash: nextRefreshHash,
-			clerkOrgSlug: orgKey,
 			familyId,
 			principal: "person",
-			...(row.orgRole !== undefined ? { orgRole: row.orgRole } : {}),
+			orgRole: row.orgRole,
 			personChoice: choice,
+			personRefresh: {
+				// Sliding window, never past the family's absolute deadline.
+				expiresAt: Math.min(args.refreshExpiresAt, familyDeadline),
+				requestedScopes: [],
+				previous: row,
+				orgMapping,
+			},
 		});
 		return {
 			status: "ok" as const,
 			issued: { refresh: refreshToken, access: accessToken },
-			scope: scopes.join(" "),
+			scope: minted.scope,
 		};
 	},
 });

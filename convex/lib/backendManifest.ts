@@ -7,7 +7,7 @@
 // REQUIRED_CONTRACT_VERSION in mcp-server/src/backendContract.ts, when the MCP
 // starts passing a new argument to a function that already exists.
 
-export const BACKEND_CONTRACT_VERSION = 8;
+export const BACKEND_CONTRACT_VERSION = 9;
 
 export const BACKEND_FUNCTIONS: readonly string[] = [
 	"agentCredentials:getAgentCredentialStatus",
@@ -147,7 +147,6 @@ export const BACKEND_FUNCTIONS: readonly string[] = [
 	"oauth:createAccessToken",
 	"oauth:createAuthorizationCode",
 	"oauth:createClient",
-	"oauth:createPersonRefreshToken",
 	"oauth:createRefreshToken",
 	"oauth:deleteClient",
 	"oauth:getAccessTokenByHash",
