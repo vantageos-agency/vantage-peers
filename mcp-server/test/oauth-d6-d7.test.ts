@@ -635,7 +635,7 @@ describe("D6 — /token confidential client_secret validation", () => {
 		expect(typeof r.body.access_token).toBe("string");
 	});
 
-	it("T6f — the authorization_code grant issues no refresh token", async () => {
+	it("T6f — the person authorization_code grant issues a refresh token (task k17bgdk3j5r4dns1m132xag8rh8hasmk; it was pinned absent)", async () => {
 		const { code, verifier } = await mintCode(
 			"client-confidential",
 			"https://app.alpha.example/cb",
@@ -651,7 +651,7 @@ describe("D6 — /token confidential client_secret validation", () => {
 			basicAuth("client-confidential", ALPHA_SECRET),
 		);
 		expect(r.status).toBe(200);
-		expect(r.body.refresh_token).toBeUndefined();
+		expect(typeof r.body.refresh_token).toBe("string");
 	});
 });
 

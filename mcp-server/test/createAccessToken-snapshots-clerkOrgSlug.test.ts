@@ -17,11 +17,16 @@ describe("createAccessToken mint copies clerkOrgSlug from profile", () => {
 			.split('"oauth:createAccessToken"')
 			.slice(1)
 			.filter((p) => p.includes("tokenHash"));
+		// The person exchange (its payload is the `personTokenArgs` literal, sent
+		// with the refresh row and, as a fallback, without it) and the admin mint.
 		expect(parts.length).toBe(2);
 		for (const part of parts) {
-			const obj = part.slice(0, 1500);
-			expect(obj).toMatch(/fromAllowList/);
-			expect(obj).toMatch(/clerkOrgSlug/);
+			const obj = part.includes("personTokenArgs")
+				? src.slice(src.indexOf("const personTokenArgs = {"))
+				: part;
+			const window = obj.slice(0, 1500);
+			expect(window).toMatch(/fromAllowList/);
+			expect(window).toMatch(/clerkOrgSlug/);
 		}
 	});
 
@@ -29,9 +34,14 @@ describe("createAccessToken mint copies clerkOrgSlug from profile", () => {
 		const here = dirname(fileURLToPath(import.meta.url));
 		const src = readFileSync(join(here, "../server-http.ts"), "utf8");
 		const parts = src.split('"oauth:rotateRefreshToken"').slice(1);
-		expect(parts.length).toBe(1);
-		const obj = parts[0].slice(0, 1500);
-		expect(obj).toMatch(/fromAllowList: profile\.fromAllowList/);
-		expect(obj).toMatch(/clerkOrgSlug: profile\.clerkOrgSlug/);
+		// the person branch first, then the seat call
+		expect(parts.length).toBe(2);
+		const person = parts[0].slice(0, 600);
+		const seat = parts[1].slice(0, 1500);
+		expect(seat).toMatch(/fromAllowList: profile\.fromAllowList/);
+		expect(seat).toMatch(/clerkOrgSlug: profile\.clerkOrgSlug/);
+		// a PERSON rotation sends no authority at all: not a profile, not a snapshot
+		expect(person).not.toMatch(/fromAllowList|scopeProfile|scopes|namespace/);
+		expect(person).toMatch(/presentedHash/);
 	});
 });
