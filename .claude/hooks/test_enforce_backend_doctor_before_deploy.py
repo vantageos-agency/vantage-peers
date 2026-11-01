@@ -594,6 +594,8 @@ def test_ratchet_live_baseline_carries_its_command_and_never_rose():
             "ba56e0951bc134fd2898043f9b8f60ef3f972e14",
             # CR-2 246 -> 245, token chain by permanent org ID, slug-class PR 1 (task k1783fk8r6p795x9fxrzyt9evd8hcxm7)
             "72971002f67f8385c5d7679872a3a0b4629db543",
+            # CR-3 16 -> 14, messages family by permanent org ID, slug-class PR 2b (task k1783fk8r6p795x9fxrzyt9evd8hcxm7)
+            "f4eabd100ff53300d33a8a9285642c5afa84878a",
         }
         line = entry["output_line"]
         assert line.startswith((f"{rule}: ", f"{rule} VERDICT: ")), rule
