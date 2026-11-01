@@ -117,7 +117,8 @@ describe("provision-client-org-agents: the org-admin token is for the requested 
 		const r = run(REQUESTED);
 		const kinds = r.calls.map((c) => c.kind + (c.template ? ":template" : ""));
 		expect(kinds.indexOf("clerk-touch")).toBeGreaterThan(-1);
-		expect(kinds.indexOf("clerk-session-token:template")).toBeGreaterThan(
+		// the service account mints its own template token first (no org); the org-admin one is the last
+		expect(kinds.lastIndexOf("clerk-session-token:template")).toBeGreaterThan(
 			kinds.indexOf("clerk-touch"),
 		);
 		expect(r.calls.find((c) => c.kind === "clerk-touch").body).toContain(
