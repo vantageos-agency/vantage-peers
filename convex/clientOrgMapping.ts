@@ -384,7 +384,7 @@ export const addRosterMembers = internalMutation({
 // mapping), never typed. The agent must be an ACTIVE agent stamped with that
 // org's slug, so a client org's agent cannot be listed here. APPEND ONLY and
 // idempotent: the id is added if absent, the agent's exact stored name is added
-// if no entry equals it exactly; nothing is removed or
+// if no entry matches it under normalizeOrchestratorId; nothing is removed or
 // reordered, and `added: false` means nothing was written. Every check precedes
 // the single patch.
 // ─────────────────────────────────────────────────────────────────────────────
