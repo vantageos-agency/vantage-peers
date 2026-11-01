@@ -1169,7 +1169,7 @@ describe("derive-backend-doctor-oracle R-8 scope enforcement read at the Convex 
 		"PRESENT — the two public-scope data ops whose doors refuse by requireResolvedCaller (validate_mandate_spending: its fleet-only variant requireFleetDoor) carry that gate, not AUCUN",
 		() => {
 			for (const [tool, gate] of [
-				["validate_mandate_spending", "requireFleetDoor"],
+				["validate_mandate_spending", "requireResolvedCaller/requireFleetDoor"],
 				["validate_okf_bundle", "requireResolvedCaller"],
 			]) {
 				const cell = committed(tool).scope_enforcement;
@@ -1197,6 +1197,14 @@ describe("derive-backend-doctor-oracle R-8 scope enforcement read at the Convex 
 				root,
 				"convex/mandates.ts",
 				'await requireFleetDoor(ctx, scope, "mandates:validateSpending", {\n\t\t\tmasterOnly: true,\n\t\t\toperatorHumanMayRead: true,\n\t\t});',
+				"",
+			);
+			// The door also refuses a verified client org through the shared
+			// requireResolvedCaller; that call is a gate too, so it goes with it.
+			mutate(
+				root,
+				"convex/mandates.ts",
+				'requireResolvedCaller(\n\t\t\t\t\t{\n\t\t\t\t\t\tisMaster: false,\n\t\t\t\t\t\tfleetWide: false,\n\t\t\t\t\t\torgSlug: args.verifiedOrg.orgSlug,\n\t\t\t\t\t\tanonymous: false,\n\t\t\t\t\t\trefused: false,\n\t\t\t\t\t\tmasterSource: undefined,\n\t\t\t\t\t},\n\t\t\t\t\t"mandates:validateSpending",\n\t\t\t\t\t{ masterOnly: true },\n\t\t\t\t);',
 				"",
 			);
 			const r = derive(root);
