@@ -1,4 +1,8 @@
-import { isFleetStamp, isServiceAccountScope } from "@vantageos/cloud-identity";
+import {
+	isFleetStamp,
+	isServiceAccountScope,
+	sameOrg,
+} from "@vantageos/cloud-identity";
 import { ConvexError, v } from "convex/values";
 import type { MutationCtx, QueryCtx } from "../_generated/server";
 import {
@@ -7,6 +11,7 @@ import {
 	type OrgScope,
 	withOrgScope,
 } from "./auth";
+import { orgRefOfRow } from "./authOrgMapping";
 import { fleetOperatorRef } from "./operatorOrg";
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -175,14 +180,26 @@ export async function resolveDoorVerifiedOrg(
  * `verifiedOrgSlug` is undefined. Refuses with the same RBAC_DENIED shape as
  * `resolveVerifiedOrg`, before anything is written.
  */
-export function assertRowInVerifiedOrg(
-	row: { orgId?: string },
+export async function assertRowInVerifiedOrg(
+	ctx: QueryCtx | MutationCtx,
+	row: { orgId?: string; clerkOrgId?: string },
 	verifiedOrgSlug: string | undefined,
 	rowId: string,
 	door: string,
-): void {
+): Promise<void> {
 	if (verifiedOrgSlug === undefined) return;
-	if (row.orgId !== verifiedOrgSlug) {
+	// The row's organisation is its permanent ID, compared with the ID of the
+	// verified organisation's mapping (the same label `resolveVerifiedOrg` just
+	// resolved, in this same transaction). The row's slug stamp is a label a
+	// takeover can hand to another organisation, so it decides nothing: the new
+	// holder of a former holder's slug must not reach the former holder's rows, and
+	// the former holder, renamed, must still reach its own (task
+	// k1783fk8r6p795x9fxrzyt9evd8hcxm7). A row with no ID matches nobody.
+	const mapping = await lookupOrgMapping(ctx, verifiedOrgSlug);
+	if (
+		mapping === null ||
+		!sameOrg(orgRefOfRow(row), { id: mapping.clerkOrgId })
+	) {
 		refuse(
 			"row-outside-verified-org",
 			door,

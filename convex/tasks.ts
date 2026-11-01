@@ -2268,7 +2268,7 @@ export const update = mutation({
 				`TASK_NOT_FOUND: Task ${taskId} not found — ${JSON.stringify({ taskId })}`,
 			);
 		}
-		assertRowInVerifiedOrg(task, verifiedOrgSlug, taskId, "tasks:update");
+		await assertRowInVerifiedOrg(ctx, task, verifiedOrgSlug, taskId, "tasks:update");
 		// The assignee BY ID, resolved in the task's own org; it becomes the row's
 		// label so every decision below reads the same string a name would carry.
 		// A cross-organisation REASSIGN is refused, link or not (task
@@ -2650,7 +2650,8 @@ export const attachReviewArtifact = mutation({
 		// Tenant gate: "any orchestrator" means any orchestrator OF THE CALLER'S
 		// OWN ORGANISATION — never a member of another tenant.
 		assertTaskVisibleToCaller(task, callerScope, args.taskId);
-		assertRowInVerifiedOrg(
+		await assertRowInVerifiedOrg(
+			ctx,
 			task,
 			callerScope.callerVerifiedOrg,
 			args.taskId,
@@ -2877,7 +2878,7 @@ export const blockTask = mutation({
 				`TASK_NOT_FOUND: Task ${args.taskId} not found — ${JSON.stringify({ taskId: args.taskId })}`,
 			);
 		}
-		assertRowInVerifiedOrg(task, verifiedOrgSlug, args.taskId, "tasks:blockTask");
+		await assertRowInVerifiedOrg(ctx, task, verifiedOrgSlug, args.taskId, "tasks:blockTask");
 		const memberActor = await authorizeTaskActor(ctx, task, actingNameOf(callerScope, args.callerOrchestrator), args.taskId, callerScope, "tasks:blockTask");
 
 		// Eta rider on PR #1208 @ def85c45 — cheap, one-directional consistency
@@ -3177,7 +3178,7 @@ export const complete = mutation({
 				`TASK_NOT_FOUND: Task ${args.taskId} not found — ${JSON.stringify({ taskId: args.taskId })}`,
 			);
 		}
-		assertRowInVerifiedOrg(task, verifiedOrgSlug, args.taskId, "tasks:complete");
+		await assertRowInVerifiedOrg(ctx, task, verifiedOrgSlug, args.taskId, "tasks:complete");
 		const memberActor = await authorizeTaskActor(ctx, task, actingNameOf(callerScope, args.callerOrchestrator), args.taskId, callerScope, "tasks:complete");
 
 		if (!args.completionNote || args.completionNote.trim() === "") {
@@ -3501,7 +3502,7 @@ export const failTask = mutation({
 				`TASK_NOT_FOUND: Task ${args.taskId} not found — ${JSON.stringify({ taskId: args.taskId })}`,
 			);
 		}
-		assertRowInVerifiedOrg(task, verifiedOrgSlug, args.taskId, "tasks:failTask");
+		await assertRowInVerifiedOrg(ctx, task, verifiedOrgSlug, args.taskId, "tasks:failTask");
 		const memberActor = await authorizeTaskActor(ctx, task, actingNameOf(callerScope, args.callerOrchestrator), args.taskId, callerScope, "tasks:failTask");
 
 		if (!args.failureNote || args.failureNote.trim() === "") {
@@ -3653,7 +3654,7 @@ export const start = mutation({
 				`TASK_NOT_FOUND: Task ${args.taskId} not found — ${JSON.stringify({ taskId: args.taskId })}`,
 			);
 		}
-		assertRowInVerifiedOrg(task, verifiedOrgSlug, args.taskId, "tasks:start");
+		await assertRowInVerifiedOrg(ctx, task, verifiedOrgSlug, args.taskId, "tasks:start");
 		const memberActor = await authorizeTaskActor(ctx, task, actingNameOf(callerScope, args.callerOrchestrator), args.taskId, callerScope, "tasks:start");
 
 		// Block if any dependsOn tasks are not yet done.
@@ -3748,7 +3749,7 @@ export const pause = mutation({
 				`TASK_NOT_FOUND: Task ${args.taskId} not found — ${JSON.stringify({ taskId: args.taskId })}`,
 			);
 		}
-		assertRowInVerifiedOrg(task, verifiedOrgSlug, args.taskId, "tasks:pause");
+		await assertRowInVerifiedOrg(ctx, task, verifiedOrgSlug, args.taskId, "tasks:pause");
 		const memberActor = await authorizeTaskActor(ctx, task, actingNameOf(callerScope, args.callerOrchestrator), args.taskId, callerScope, "tasks:pause");
 
 		const segments = task.workSegments ?? [];
@@ -3817,7 +3818,7 @@ export const resume = mutation({
 				`TASK_NOT_FOUND: Task ${args.taskId} not found — ${JSON.stringify({ taskId: args.taskId })}`,
 			);
 		}
-		assertRowInVerifiedOrg(task, verifiedOrgSlug, args.taskId, "tasks:resume");
+		await assertRowInVerifiedOrg(ctx, task, verifiedOrgSlug, args.taskId, "tasks:resume");
 		const memberActor = await authorizeTaskActor(ctx, task, actingNameOf(callerScope, args.callerOrchestrator), args.taskId, callerScope, "tasks:resume");
 
 		if (task.pausedAt === undefined) {
@@ -3896,7 +3897,7 @@ export const correctSegment = mutation({
 				`TASK_NOT_FOUND: Task ${args.taskId} not found — ${JSON.stringify({ taskId: args.taskId })}`,
 			);
 		}
-		assertRowInVerifiedOrg(task, verifiedOrgSlug, args.taskId, "tasks:correctSegment");
+		await assertRowInVerifiedOrg(ctx, task, verifiedOrgSlug, args.taskId, "tasks:correctSegment");
 		assertTaskCallerAuthorized(task, args.callerOrchestrator, args.taskId, callerScope);
 		// assertTaskCallerAuthorized above already refuses an undefined
 		// callerOrchestrator (RBAC_DENIED) — this narrows the type for the
@@ -4036,7 +4037,7 @@ export const checkout = mutation({
 		if (!task) {
 			return { claimed: false, reason: "Task not found" };
 		}
-		assertRowInVerifiedOrg(task, verifiedOrgSlug, args.taskId, "tasks:checkout");
+		await assertRowInVerifiedOrg(ctx, task, verifiedOrgSlug, args.taskId, "tasks:checkout");
 		// Tenant gate — claiming a row is a write on it.
 		assertTaskVisibleToCaller(task, callerScope, args.taskId);
 		if (task.status !== "todo") {
@@ -4116,7 +4117,7 @@ export const deleteTask = mutation({
 			throw new ConvexError(
 				`TASK_NOT_FOUND: Task ${args.taskId} not found — ${JSON.stringify({ taskId: args.taskId })}`,
 			);
-		assertRowInVerifiedOrg(task, verifiedOrgSlug, args.taskId, "tasks:deleteTask");
+		await assertRowInVerifiedOrg(ctx, task, verifiedOrgSlug, args.taskId, "tasks:deleteTask");
 		// Tenant gate — a hard delete of another organisation's row is the
 		// worst case of the write surface.
 		assertTaskVisibleToCaller(task, callerScope, args.taskId);

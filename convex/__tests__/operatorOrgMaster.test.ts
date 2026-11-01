@@ -31,6 +31,7 @@ import { api } from "../_generated/api";
 import schema from "../schema";
 import { seedAgents } from "../../tests/lib/agentIdOf";
 import { mintAgentSecret } from "../../tests/lib/seedFleetAgents";
+import { seedMintProfile } from "../../tests/lib/seedMintProfile";
 
 const modules = Object.fromEntries(
 	Object.entries(import.meta.glob("../**/*.ts")).filter(
@@ -252,6 +253,7 @@ describe("service-account-only doors are not opened by an operator human", () =>
 		await seed(t);
 		const sa = as(t, { subject: SA });
 		expect(await sa.query(api.oauth.listClients, {})).toEqual([]);
+		await seedMintProfile(t, "master", CLIENT_ORG);
 		await sa.mutation(api.oauth.createAccessToken, mintArgs);
 		expect(
 			await sa.query(api.oauth.getAccessTokenByHash, { tokenHash: "h".repeat(64) }),

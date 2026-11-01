@@ -197,10 +197,10 @@ beforeEach(async () => {
 		});
 	});
 	harness.setMemberships("user_viewer", [
-		membership("org_A", "org-a", "org:viewer"),
+		membership((testClerkOrgId("org-a") as string), "org-a", "org:viewer"),
 	]);
 	harness.setMemberships("user_editor", [
-		membership("org_A", "org-a", "org:editor"),
+		membership((testClerkOrgId("org-a") as string), "org-a", "org:editor"),
 	]);
 });
 
@@ -218,7 +218,7 @@ async function personToken(userId: string): Promise<string> {
 		redirectUri: REDIRECT,
 		challenge,
 		sessionToken: await harness.session(userId),
-		orgId: "org_A",
+		orgId: (testClerkOrgId("org-a") as string),
 	});
 	expect(r.code).toBeTruthy();
 	const res = await app.request("http://localhost:3000/token", {

@@ -28,6 +28,7 @@ import { testClerkOrgId } from "../../tests/fixtures/testClerkOrgId";
 import { api, internal } from "../_generated/api";
 import type { Id } from "../_generated/dataModel";
 import schema from "../schema";
+import { seedMintProfile } from "../../tests/lib/seedMintProfile";
 
 const modules = Object.fromEntries(
 	Object.entries(import.meta.glob("../**/*.ts")).filter(
@@ -571,6 +572,7 @@ describe("a person refresh row is written for a person only", () => {
 	test("REFUSE: personRefresh on a token that is not a person's is refused and nothing is written", async () => {
 		const t = createT();
 		await world(t);
+		await seedMintProfile(t, "p", SLUG);
 		await expect(
 			asService(t).mutation(api.oauth.createAccessToken, {
 				tokenHash: sha("seat-access"),

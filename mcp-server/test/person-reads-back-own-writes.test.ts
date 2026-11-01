@@ -27,6 +27,7 @@ import {
 	sha256Hex,
 } from "../src/auth.js";
 import { registerTools } from "../src/tools.js";
+import { seedMintProfile } from "../../tests/lib/seedMintProfile";
 
 const modules = Object.fromEntries(
 	Object.entries(import.meta.glob("../../convex/**/*.ts")).filter(
@@ -84,6 +85,7 @@ async function mint(
 	raw: string,
 	principal: "person" | null = "person",
 ): Promise<string> {
+	await seedMintProfile(t, "team-member", org);
 	await t.withIdentity({ subject: SERVICE_ACCOUNT_ID }).mutation(
 		makeFunctionReference<"mutation">("oauth:createAccessToken") as never,
 		{

@@ -19,6 +19,7 @@ import {
 	sha256Hex,
 } from "../src/auth.js";
 import { verifiedActorOf } from "../src/verifiedActor.js";
+import { seedMintProfile } from "../../tests/lib/seedMintProfile";
 
 const modules = Object.fromEntries(
 	Object.entries(import.meta.glob("../../convex/**/*.ts")).filter(
@@ -62,6 +63,7 @@ async function seedAgent(org: string, name: string, personalAgentOf?: string) {
 }
 
 async function mint(userId: string, org: string, raw: string): Promise<string> {
+	await seedMintProfile(t, "team-member", org);
 	await t.withIdentity({ subject: SERVICE_ACCOUNT_ID }).mutation(
 		makeFunctionReference<"mutation">("oauth:createAccessToken") as never,
 		{

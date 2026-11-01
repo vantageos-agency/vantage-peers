@@ -33,6 +33,8 @@ import { convexTest } from "../../tests/fixtures/convexTestWithServiceAccount";
 import { describe, expect, test } from "vitest";
 import { api } from "../_generated/api";
 import schema from "../schema";
+import { seedMintProfile } from "../../tests/lib/seedMintProfile";
+import { testClerkOrgId } from "../../tests/fixtures/testClerkOrgId";
 
 const modules = Object.fromEntries(
 	Object.entries(import.meta.glob("../**/*.ts")).filter(
@@ -130,6 +132,7 @@ async function seed(t: T): Promise<void> {
 		});
 		await ctx.db.insert("client_org_mapping", {
 			clerkOrgSlug: "acme",
+			clerkOrgId: testClerkOrgId("acme"),
 			allowedOrchestrators: ["seat"],
 			scopes: ["view-own-tasks"],
 			displayName: "Acme",
@@ -370,6 +373,7 @@ describe("PRESENT — the service account runs the whole OAuth flow", () => {
 			}),
 		).toBeNull();
 
+		await seedMintProfile(s, "open-profile", "acme");
 		await call(s, "createAccessToken", "mutation", {
 			tokenHash: "access-flow",
 			clientId: "dcr-flow",

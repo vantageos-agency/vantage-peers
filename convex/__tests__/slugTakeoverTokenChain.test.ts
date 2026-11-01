@@ -36,9 +36,8 @@ const modules = Object.fromEntries(
 	),
 );
 
-type T = ReturnType<typeof convexTest>;
-const createT = (): T =>
-	convexTest(schema, modules) as unknown as ReturnType<typeof convexTest>;
+const createT = () => convexTest(schema, modules);
+type T = ReturnType<typeof createT>;
 const sha = (s: string) => createHash("sha256").update(s).digest("hex");
 const asService = (t: T) =>
 	t.withIdentity({ subject: "test-service-account-user-id" });
