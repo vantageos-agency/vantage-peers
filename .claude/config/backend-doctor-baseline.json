@@ -111,10 +111,10 @@
 		},
 		"CR-3": {
 			"count": 14,
-			"measured_tree_sha": "734653514cb0c3308194707881a1697e011c809e",
+			"measured_tree_sha": "f4eabd100ff53300d33a8a9285642c5afa84878a",
 			"cli_commit": "f6297a29c64a0265124e3e9cf86c9dd85eac47c0",
 			"command": "npx -y @vantageos/backend-doctor@0.5.0 <vantage-peers clean full checkout @73465351 (task k1755rzrkbr397hpeftnjcqb2d8h7yhg), deps installed> --json-evidence <dir>/",
-			"output_line": "CR-3 VERDICT: 16 violation(s) — MECHANICAL, the gate refuses; 0 exempt; 13 could-not-judge.; MECHANICAL RULE COUNTS: CR-2 248, CR-3 16, R-5 62, R-53 323, R-54 137, R-55 29, R-56 2",
+			"output_line": "CR-3 VERDICT: 14 violation(s) — MECHANICAL, the gate refuses; 0 exempt; 16 could-not-judge.; MECHANICAL RULE COUNTS: CR-2 245, CR-3 14, R-5 62, R-53 323, R-54 137, R-55 29, R-56 2",
 			"modules": {}
 		}
 	}
