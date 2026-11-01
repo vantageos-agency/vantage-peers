@@ -142,6 +142,48 @@ describe("backfill_seat_memory_org_stamp:run", () => {
 		expect(await stampOf(t, fleetRow)).toBeNull();
 	});
 
+	test("a label that also names an agent of the operator org or another org is ambiguous and never stamped", async () => {
+		const t = createT();
+		await seed(t);
+		const rows = await t.run(async (ctx) => {
+			const agent = (name: string, orgSlug: string) =>
+				ctx.db.insert("agents", {
+					orgSlug,
+					clerkOrgId: testClerkOrgId(orgSlug),
+					name,
+					normalizedName: name.toLowerCase(),
+					isActive: true,
+					createdAt: NOW,
+				});
+			await agent("neo", "bf-fleet");
+			await agent("neo", A);
+			await agent("zed", A);
+			await agent("zed", B);
+			const row = (createdBy: string) =>
+				ctx.db.insert("memories", {
+					namespace: `project/${A}`,
+					type: "project",
+					content: "x",
+					createdBy,
+					relations: [],
+					isLatest: true,
+					createdAt: NOW + 10,
+					updatedAt: NOW + 10,
+				});
+			return { fleetNeo: await row("neo"), zedRow: await row("zed") };
+		});
+		const dry = await t.mutation(mig.run, {});
+		expect(dry.skipped.creatorAmbiguous).toBe(2);
+		const r = await t.mutation(mig.run, { dryRun: false });
+		expect(r.skipped.creatorAmbiguous).toBe(2);
+		expect(await stampOf(t, rows.fleetNeo)).toBeNull();
+		expect(await stampOf(t, rows.zedRow)).toBeNull();
+		const inv = await t.query(mig.inventory, {});
+		const names = inv.orgs.find((o) => o.slug === A)?.creators ?? [];
+		expect(names.find((c) => c.name === "neo")?.count).toBe(1);
+		expect(JSON.stringify(inv)).not.toContain("SECRET");
+	});
+
 	test("a second run stamps 0", async () => {
 		const t = createT();
 		await seed(t);
