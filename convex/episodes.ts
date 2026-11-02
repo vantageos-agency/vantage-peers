@@ -9,7 +9,7 @@ import { requireResolvedCaller, verifiedActorValidator, withOrgScope } from "./l
 import { memoryAuthorOf, memoryStampForWrite, memoryVisibleToScope } from "./lib/memoryTenant";
 import {
   isMemoryNamespaceAllowed,
-  memoryNamespaceRefusal,
+  memoryWritableRootsText,
   seatAgentIdOf,
 } from "./lib/seatNamespace";
 import { memberNamespaceRoots } from "./lib/teamNamespace";
@@ -69,7 +69,7 @@ export const storeEpisode = mutation({
     const ownAgent = await seatAgentIdOf(ctx, scope, args.verifiedActor);
     if (!isMemoryNamespaceAllowed(scope, args.namespace, ownAgent)) {
       throw new ConvexError(
-        memoryNamespaceRefusal(scope, args.namespace, ownAgent),
+        `RBAC_DENIED: caller may not write to namespace "${args.namespace}" — ${JSON.stringify({ orgSlug: scope.orgSlug })}. ${memoryWritableRootsText(scope, ownAgent)}`,
       );
     }
     // AUTHOR + TENANT STAMP. An episode is a row of the memories table, so it is
