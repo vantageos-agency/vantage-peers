@@ -26,6 +26,7 @@ import type { Doc, Id } from "../_generated/dataModel";
 import { internalMutation, internalQuery } from "../_generated/server";
 import { lookupOrgMapping } from "../lib/auth";
 import {
+	GRANT_KEYS,
 	grantDelta,
 	grantOf,
 	isRightsPinned,
@@ -34,6 +35,7 @@ import {
 	type TokenRights,
 } from "../lib/tokenRights";
 
+const [FROM, READ, WRITE] = GRANT_KEYS;
 const DEFAULT_PAGE_SIZE = 100;
 const MAX_PAGE_SIZE = 500;
 const MAX_REVERT_IDS = 200;
@@ -116,18 +118,18 @@ export const inventory = internalQuery({
 					scopeProfile: row.scopeProfile,
 					kind: "denied",
 					readGained: [],
-					readLost: copy.namespaceReadPrefixes,
+					readLost: copy[READ],
 					writeGained: [],
-					writeLost: copy.namespaceWritePrefixes,
+					writeLost: copy[WRITE],
 					fromGained: [],
-					fromLost: copy.fromAllowList,
+					fromLost: copy[FROM],
 				});
 				continue;
 			}
 			const d = grantDelta(grantOf(row), rights);
-			const r = d.namespaceReadPrefixes;
-			const w = d.namespaceWritePrefixes;
-			const f = d.fromAllowList;
+			const r = d[READ];
+			const w = d[WRITE];
+			const f = d[FROM];
 			if (
 				r.gained.length + r.lost.length + w.gained.length + w.lost.length + f.gained.length + f.lost.length ===
 				0

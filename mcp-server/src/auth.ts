@@ -1055,11 +1055,12 @@ function checkOwnNamespaces(ctx: OAuthContext, namespace: string): boolean {
  * owns no agent namespace and no extra project namespace.
  */
 export function ownNamespacesOf(
-	base: Pick<OAuthContext, "isMaster" | "seatAgent" | "clerkOrgSlug">,
+	base: Pick<OAuthContext, "seatAgent" | "clerkOrgSlug">,
 	actor: OAuthContext["actor"],
 	principalOrgSlug: string | null,
 ): Pick<OAuthContext, "ownAgentNamespace" | "ownProjectNamespace"> {
-	if (base.isMaster) return {};
+	// The master bearer arrives with no principal org (null) and owns everything by
+	// its "*" prefixes: it derives nothing here.
 	if (principalOrgSlug === null || principalOrgSlug === "") return {};
 	// The actor's org was already judged against the principal's: a credential of
 	// another org is a 403 in resolveActorFromRequest, and a personal agent is
