@@ -171,7 +171,7 @@ export type OAuthContext = {
 	seatAgent?: { agentId: string; orgId: string; agentName: string } | null;
 	/**
 	 * `orchestrator/<verified agent ID>`: the seat's own agent namespace, set at the
-	 * bearer boundary from the verified seat stamp only ({@link ownAgentNamespaceOfSeat}).
+	 * bearer boundary from the verified seat stamp only ((bearerAuthMiddleware)).
 	 * The namespace ceiling admits it besides the mint-time prefix snapshot, which
 	 * predates `orchestrator/<agentId>` for older seat tokens. Absent: no verified agent.
 	 */
@@ -615,20 +615,6 @@ export function seatAgentOf(
 		return undefined;
 	}
 	return seat;
-}
-
-/**
- * The seat's own agent namespace field for a token context: `orchestrator/<agent
- * ID>` from the verified seat stamp (`seatAgentOf`, believed only for the token's
- * own org), or no field. Never from a name or a call argument.
- */
-export function ownAgentNamespaceOfSeat(
-	ctx: Pick<OAuthContext, "seatAgent" | "clerkOrgSlug">,
-): { ownAgentNamespace: string } | Record<string, never> {
-	const seat = seatAgentOf(ctx);
-	return seat === undefined
-		? {}
-		: { ownAgentNamespace: `orchestrator/${seat.agentId}` };
 }
 
 /**
@@ -1530,7 +1516,11 @@ export function bearerAuthMiddleware(): MiddlewareHandler {
 			return await attachContextAndProceed(
 				{
 					...oauth,
-					...ownAgentNamespaceOfSeat(oauth),
+					// The seat's own agent namespace, from the verified seat stamp only
+					// (believed for the token's own org; never a name or an argument).
+					...(seatAgentOf(oauth) !== undefined
+						? { ownAgentNamespace: `orchestrator/${oauth.seatAgent?.agentId}` }
+						: {}),
 					isMaster: false,
 					accessTokenHash: tokenHash,
 					...(personalActor !== undefined ? { actor: personalActor } : {}),
