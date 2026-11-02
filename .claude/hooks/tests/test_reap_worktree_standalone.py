@@ -254,6 +254,73 @@ def test_plain_directory_is_refused(world):
     assert plain.exists()
 
 
+# ---- (e) tags: a local-only tag can be the only ref holding a commit -------
+
+def _clone_with_tag_only_commit(world, name, annotated):
+    path = world["clone"](name)
+    env = world["env"]
+    (path / "README").write_text("tag only\n")
+    _git("commit", "-qam", "reachable only from the tag", cwd=path, env=env)
+    if annotated:
+        _git("tag", "-a", "-m", "local", "v-local", cwd=path, env=env)
+    else:
+        _git("tag", "v-local", cwd=path, env=env)
+    _git("reset", "-q", "--hard", "origin/main", cwd=path, env=env)
+    assert _git("status", "--porcelain", cwd=path, env=env) == ""
+    return path
+
+
+@pytest.mark.parametrize("annotated", [False, True], ids=["lightweight", "annotated"])
+def test_tag_only_commit_is_refused(world, annotated):
+    path = _clone_with_tag_only_commit(world, f"tagonly-{annotated}", annotated)
+    proc = world["reap"](path)
+    _refused(proc, "standalone: tag v-local (")
+    assert "points at commits on no origin branch — content would be lost" in proc.stderr
+    assert path.exists()
+
+
+def test_tag_on_a_pushed_commit_is_still_reaped(world):
+    path = world["clone"]("tag-pushed")
+    _git("tag", "-a", "-m", "on main", "v-ok", cwd=path, env=world["env"])
+    proc = world["reap"](path)
+    assert proc.returncode == 0, proc.stderr
+    assert not path.exists()
+
+
+# ---- Ignored entries: not a refusal, but a record --------------------------
+
+def test_non_rebuildable_ignored_entries_are_listed_before_removal(world):
+    path = world["clone"]("ignored")
+    (path / ".git" / "info" / "exclude").write_text(
+        ".env\nnotes/\nnode_modules/\ndist/\n.venv/\n__pycache__/\n")
+    (path / ".env").write_text("SECRET=x\n")
+    (path / "notes").mkdir()
+    (path / "notes" / "a.txt").write_text("a\n")
+    for d in ("node_modules/deep", "pkg/dist", ".venv", "src/__pycache__",
+              "mixed/node_modules"):
+        (path / d).mkdir(parents=True)
+        (path / d / "f").write_text("f\n")
+    (path / "mixed" / ".env").write_text("SECRET=y\n")
+    proc = world["reap"](path)
+    assert proc.returncode == 0, proc.stderr
+    assert not path.exists()
+    listed = sorted(l for l in proc.stdout.splitlines()
+                    if l.startswith("ignored (not rebuildable): "))
+    assert listed == [
+        f"ignored (not rebuildable): {path}/.env",
+        f"ignored (not rebuildable): {path}/mixed/.env",
+        f"ignored (not rebuildable): {path}/notes/",
+    ], proc.stdout
+    assert proc.stdout.splitlines()[-1].startswith(f"REAPED {path} (was ")
+
+
+def test_clean_clone_lists_no_ignored_entry(world):
+    path = world["clone"]("noignored")
+    proc = world["reap"](path)
+    assert proc.returncode == 0, proc.stderr
+    assert "ignored (not rebuildable)" not in proc.stdout
+
+
 # ---- REFUSE pole: the path itself ------------------------------------------
 
 def test_path_outside_the_root_is_refused(world):
