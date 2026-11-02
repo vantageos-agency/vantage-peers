@@ -6,6 +6,7 @@ run agents:setPersonalAgentOf
 data agents
 data client_org_mapping
 data oauth_access_tokens
+data oauth_refresh_tokens
 run clientOrgMapping:addRosterMembers
 run tenantOrgSeed:setOrgRoster
 run onboardPerson:readOrgState
