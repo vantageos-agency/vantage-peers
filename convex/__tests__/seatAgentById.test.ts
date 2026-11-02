@@ -132,6 +132,25 @@ describe("resolveSeatAgent follows the profile's agent ID, never a label", () =>
 		expect(agent?._id).toBe(clio);
 	});
 
+	test("REFUSED: a bound agent that carries no stored org ID names no organisation, its slug is not looked up to give it one", async () => {
+		const t = createT();
+		const { clio } = await seed(t);
+		await t.run((ctx) => ctx.db.patch(clio, { clerkOrgId: undefined }));
+		const agent = await t.run((ctx) =>
+			resolveSeatAgent(ctx, tokenOf("bound-acme-a")),
+		);
+		expect(agent).toBeNull();
+	});
+
+	test("REFUSED: a token that carries no org ID is not matched to the profile's organisation by its slug", async () => {
+		const t = createT();
+		await seed(t);
+		const agent = await t.run((ctx) =>
+			resolveSeatAgent(ctx, tokenOf("bound-acme-a", { clerkOrgId: undefined })),
+		);
+		expect(agent).toBeNull();
+	});
+
 	test("ABSENT: a person token, an unknown profile and a token of another org resolve no agent", async () => {
 		const t = createT();
 		await seed(t);
