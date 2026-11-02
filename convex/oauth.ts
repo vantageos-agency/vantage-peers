@@ -3285,9 +3285,11 @@ export const rotateRefreshToken = mutation({
 		}),
 		v.object({ status: v.literal("reused") }),
 		v.object({ status: v.literal("invalid") }),
-		// PERSON rows only: a live token whose person, agent or organisation no
-		// longer qualifies, or whose family is past its absolute lifetime. The
-		// whole family is revoked and nothing is minted.
+		// A live token whose person, agent or organisation no longer qualifies, or
+		// whose family is past its absolute lifetime; a SEAT family also lands here
+		// with `organisation-inactive`, `organisation-id-missing` (a label but no
+		// permanent ID in the lineage) or `organisation-mismatch` (the profile now
+		// names another ID). The whole family is revoked and nothing is minted.
 		v.object({ status: v.literal("refused"), reason: v.string() }),
 	),
 	handler: async (ctx, args) => {
@@ -3468,11 +3470,44 @@ export const rotateRefreshToken = mutation({
 		// revoked and nothing is minted (task k17fhnxz9sbqptg0tesxktv7es8hd360). The
 		// key is the permanent ID stamped on the family's access token, never a label.
 		const lineageOrgId = lineage[0]?.clerkOrgId;
+		// The family's current label, read BY that ID (never the other way round);
+		// it is what the rotated token is stamped with when the transport sent none.
+		let lineageOrgLabel: string | undefined;
 		if (lineageOrgId !== undefined) {
 			const lineageMapping = await lookupOrgMapping(ctx, { clerkOrgId: lineageOrgId });
 			if (lineageMapping === null || !lineageMapping.isActive) {
 				await revokeFamilyWithRoot(ctx, familyId);
 				return { status: "refused" as const, reason: "organisation-inactive" };
+			}
+			lineageOrgLabel = lineageMapping.clerkOrgSlug;
+		}
+		// Task k175gb5yzb6p7y46n63t9x987d8hes7f: a SEAT family's rotated token
+		// carries the family's own permanent ID, exactly as a person's does. The ID
+		// is never taken from the profile (it may have been re-pointed since mint)
+		// and never derived from the label (the #1624 slug-takeover rule).
+		//   lineage ID, profile names another ID -> refused, organisation-mismatch
+		//   no lineage ID, a label is named        -> refused, organisation-id-missing
+		//   no lineage ID, no label                -> profile-only token, as before
+		if (personLineage === undefined) {
+			const refuseSeat = async (reason: string) => {
+				await revokeFamilyWithRoot(ctx, familyId);
+				return { status: "refused" as const, reason };
+			};
+			if (lineageOrgId === undefined) {
+				if (args.clerkOrgSlug !== undefined) {
+					return await refuseSeat("organisation-id-missing");
+				}
+			} else {
+				const seatProfile = await ctx.db
+					.query("oauth_scope_profiles")
+					.withIndex("by_profileId", (q) => q.eq("profileId", scopeProfile))
+					.unique();
+				if (
+					seatProfile?.clerkOrgId !== undefined &&
+					seatProfile.clerkOrgId !== lineageOrgId
+				) {
+					return await refuseSeat("organisation-mismatch");
+				}
 			}
 		}
 		if (personLineage !== undefined) {
@@ -3516,11 +3551,13 @@ export const rotateRefreshToken = mutation({
 			namespaceWritePrefixes,
 			expiresAt: args.accessExpiresAt,
 			refreshTokenHash: nextRefreshHash,
-			...(args.clerkOrgSlug !== undefined ? { clerkOrgSlug: args.clerkOrgSlug } : {}),
-			// A person's family carries its own permanent ID; the mint stamps that one.
-			...(personLineage?.clerkOrgId !== undefined
-				? { clerkOrgId: personLineage.clerkOrgId }
+			// The label only opens the mint's org branch; the stamped pair is the
+			// family's ID with its current label read by that ID.
+			...(args.clerkOrgSlug !== undefined || lineageOrgLabel !== undefined
+				? { clerkOrgSlug: args.clerkOrgSlug ?? lineageOrgLabel }
 				: {}),
+			// The family's own permanent ID (seat and person alike); the mint stamps it.
+			...(lineageOrgId !== undefined ? { clerkOrgId: lineageOrgId } : {}),
 			familyId,
 			// A person's descent stays a person's, so the next rotation still checks
 			// the membership.
