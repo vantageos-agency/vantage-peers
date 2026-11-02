@@ -87,12 +87,14 @@ async function seedProfile(
 	profileId: string,
 	fromAllowList: string[],
 	clerkOrgSlug: string | undefined,
+	agentId?: Id<"agents">,
 ): Promise<void> {
 	await t.run(async (ctx) => {
 		await ctx.db.insert("oauth_scope_profiles", {
 			profileId,
 			description: profileId,
 			fromAllowList,
+			...(agentId !== undefined ? { agentId } : {}),
 			namespaceReadPrefixes: [],
 			namespaceWritePrefixes: [],
 			createdAt: Date.now(),
@@ -184,7 +186,7 @@ describe("seat token stamp at mint and at refresh", () => {
 		const t = createT();
 		await seedOrg(t, "acme-hr");
 		const id = await seedAgent(t, "acme-hr", "clio");
-		await seedProfile(t, "clio-acme-hr", ["clio"], "acme-hr");
+		await seedProfile(t, "clio-acme-hr", ["clio"], "acme-hr", id);
 		const hash = await mintSeatToken(t, "clio-acme-hr", ["clio"], "acme-hr");
 		const row = await tokenRow(t, hash);
 		expect(row?.agentId).toBe(id);
@@ -256,7 +258,7 @@ describe("seat token stamp at mint and at refresh", () => {
 		const t = createT();
 		await seedOrg(t, "acme-hr");
 		const id = await seedAgent(t, "acme-hr", "clio");
-		await seedProfile(t, "clio-acme-hr", ["clio"], "acme-hr");
+		await seedProfile(t, "clio-acme-hr", ["clio"], "acme-hr", id);
 		const hash = await mintSeatToken(t, "clio-acme-hr", ["clio"], "acme-hr");
 		await t.run(async (ctx) => {
 			await ctx.db.patch(id, { name: "clio-2", normalizedName: "clio-2" });
@@ -272,7 +274,7 @@ describe("seat token stamp at mint and at refresh", () => {
 		const t = createT();
 		await seedOrg(t, "acme-hr");
 		const id = await seedAgent(t, "acme-hr", "clio");
-		await seedProfile(t, "clio-acme-hr", ["clio"], "acme-hr");
+		await seedProfile(t, "clio-acme-hr", ["clio"], "acme-hr", id);
 		await t.run(async (ctx) => {
 			await ctx.db.insert("oauth_access_tokens", {
 				tokenHash: "legacy-hash",
@@ -300,7 +302,7 @@ describe("seat token stamp at mint and at refresh", () => {
 		const t = createT();
 		await seedOrg(t, "acme-hr");
 		const id = await seedAgent(t, "acme-hr", "clio");
-		await seedProfile(t, "clio-acme-hr", ["clio"], "acme-hr");
+		await seedProfile(t, "clio-acme-hr", ["clio"], "acme-hr", id);
 		await seedProfile(t, "ghost-acme-hr", ["ghost"], "acme-hr");
 		const insert = async (hash: string, profile: string, name: string) =>
 			await t.run(async (ctx) =>

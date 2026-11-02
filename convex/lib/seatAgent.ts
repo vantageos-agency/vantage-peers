@@ -1,8 +1,6 @@
 import { sameOrg } from "@vantageos/cloud-identity";
 import type { Doc } from "../_generated/dataModel";
 import type { MutationCtx, QueryCtx } from "../_generated/server";
-import { normalizeOrchestratorId } from "../_helpers/normalizeOrchestratorId";
-import { resolveAgentRef } from "./agentIdentity";
 import { clerkOrgIdForSlug } from "./orgClerkId";
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -14,12 +12,11 @@ import { clerkOrgIdForSlug } from "./orgClerkId";
 // the MCP matched the typed name against it. The ID is resolved HERE, once, at
 // mint and at refresh, and stamped on the token row.
 //
-// The ONLY inputs are the token's own snapshot and the scope PROFILE row it was
-// minted from (profileId `<agent>-<org>`, `clerkOrgSlug`): the agent is looked up
-// in the PROFILE'S OWN ORG, never in another. No caller-typed value
-// participates. Anything that does not resolve to exactly one active agent of
-// that org returns null: the token stays an org-level seat that cannot act as
-// an agent. A person token is never a seat (it acts as the person).
+// The ONLY inputs are the token's own org snapshot and the scope PROFILE row it was
+// minted from: the agent is read by the profile's ID, in the PROFILE'S OWN ORG, never
+// in another. No caller-typed value participates. Anything that does not resolve
+// to one active agent of that org returns null: the token stays an org-level seat
+// that cannot act as an agent. A person token is never a seat (it acts as the person).
 //
 // MODULE M3 - BY ID. The profile carries the `agents` row ID of its agent
 // (`oauth_scope_profiles.agentId`) and that ID is what the token is minted for. The
@@ -27,14 +24,13 @@ import { clerkOrgIdForSlug } from "./orgClerkId";
 // judged by @vantageos/cloud-identity `sameOrg` on the stored org IDs (a slug is only
 // the fallback when a side carries no ID yet). An ID that names an agent of another
 // org resolves NO agent: a same-named agent of the profile's org is never put in its
-// place. Only a legacy profile with no `agentId` (expand phase) is resolved by its
-// single allowlisted label inside its own org, and the caller that mints (a mutation)
-// writes the ID back onto the profile so that fallback runs once per profile.
+// place. A profile with no `agentId` resolves no agent at all: no label is looked up
+// and none is compared, so a colliding label cannot be admitted. An operator binds
+// such a profile to its agent by ID (`oauth:bindScopeProfileAgent`).
 // ─────────────────────────────────────────────────────────────────────────────
 
 export interface SeatAgentInput {
 	scopeProfile: string;
-	fromAllowList: readonly string[];
 	clerkOrgSlug?: string;
 	/** Permanent Clerk org ID of the same organisation, when the token carries it. */
 	clerkOrgId?: string;
@@ -66,63 +62,43 @@ export async function resolveSeatAgent(
 	token: SeatAgentInput,
 ): Promise<Doc<"agents"> | null> {
 	if (token.principal !== undefined) return null;
-	const org = token.clerkOrgSlug;
-	if (org === undefined || org === "") return null;
-	if (token.fromAllowList.length !== 1) return null;
-	const label = token.fromAllowList[0];
-	if (label.trim() === "" || label === "*") return null;
 
 	const profile = await ctx.db
 		.query("oauth_scope_profiles")
 		.withIndex("by_profileId", (q) => q.eq("profileId", token.scopeProfile))
 		.unique();
 	// The profile is the authority for "which agent, in which org"; the token's
-	// own snapshot must agree with it.
+	// own snapshot must name the same organisation.
 	if (!profile) return null;
 	const profileOrg: OrgStamp = {
 		id: profile.clerkOrgId,
 		label: profile.clerkOrgSlug,
 	};
-	if (!(await sameOrgStamp(ctx, profileOrg, { id: token.clerkOrgId, label: org }))) {
-		return null;
-	}
-	if (profile.fromAllowList.length !== 1) return null;
-
-	// BY ID: the agent the profile names. Never replaced by a same-named agent.
-	if (profile.agentId !== undefined) {
-		const byId = await ctx.db.get(profile.agentId);
-		if (!byId || !byId.isActive) return null;
-		if (!(await sameOrgStamp(ctx, { id: byId.clerkOrgId, label: byId.orgSlug }, profileOrg))) {
-			return null;
-		}
-		return byId;
-	}
-
-	// Legacy profile (no agentId yet): the single allowlisted label, inside the
-	// profile's own org only.
 	if (
-		normalizeOrchestratorId(profile.fromAllowList[0]) !==
-		normalizeOrchestratorId(label)
-	) {
-		return null;
-	}
-	// profileId convention: `<agent>-<org>`.
-	if (
-		normalizeOrchestratorId(profile.profileId) !==
-		normalizeOrchestratorId(`${label}-${org}`)
+		!(await sameOrgStamp(ctx, profileOrg, {
+			id: token.clerkOrgId,
+			label: token.clerkOrgSlug,
+		}))
 	) {
 		return null;
 	}
 
-	const agent = await resolveAgentRef(ctx, {
-		label,
-		orgSlug: org,
-		door: "seatAgent:resolveSeatAgent",
-		arg: "label",
-		measure: false,
-	});
-	if (!agent || !agent.isActive || agent.orgSlug !== org) return null;
-	return agent;
+	// BY ID: the agent the profile names. A profile with no agent ID resolves no
+	// agent (it stays an org-level seat until an operator binds it); a label is
+	// never looked up, and a same-named agent never takes the named one's place.
+	if (profile.agentId === undefined) return null;
+	const byId = await ctx.db.get(profile.agentId);
+	if (!byId || !byId.isActive) return null;
+	if (
+		!(await sameOrgStamp(
+			ctx,
+			{ id: byId.clerkOrgId, label: byId.orgSlug },
+			profileOrg,
+		))
+	) {
+		return null;
+	}
+	return byId;
 }
 
 /**
