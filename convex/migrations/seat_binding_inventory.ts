@@ -12,7 +12,8 @@
 // MAX_LIMIT); when a table holds more rows than the bound, its `truncated` flag is set
 // and the counts over that table are a LOWER BOUND, never a total.
 
-import { v } from "convex/values";
+import { sameOrg } from "@vantageos/cloud-identity";
+import { ConvexError, v } from "convex/values";
 import type { Doc } from "../_generated/dataModel";
 import { internalQuery } from "../_generated/server";
 
@@ -480,5 +481,219 @@ export const tasksWithoutClerkOrgId = internalQuery({
 				.map(([org, counts]) => ({ org, counts }))
 				.sort((x, y) => x.org.localeCompare(y.org)),
 		};
+	},
+});
+
+// ---------------------------------------------------------------------------------
+// BINDING EVIDENCE (task k177pske4qj37sfw7nw2787msd8fzp0e). READ-ONLY. For up to 20 seat
+// profiles that have no `agentId`, report which agent the DATA says each one stands for,
+// so oauth:bindScopeProfileAgent (convex/oauth.ts) can be run on the ones that are not in
+// doubt. The only evidence is a STAMPED `agentId` on a seat token row minted from the
+// profile (`oauth_access_tokens.agentId`, written at mint/refresh from the profile's own
+// resolution). No label is read to decide anything; an agent's name is returned for the
+// operator to read and is never compared. Person tokens (`principal: "person"`) reuse
+// `agentId` for the person's own choice, so they are excluded: they say nothing about a seat.
+//
+// Evidence sets per profile (read through `by_scopeProfile`, newest first, bounded):
+//   live      access tokens not revoked and not expired
+//   lineage   access tokens not revoked (expired included) and refresh tokens not revoked
+//             and not expired; a seat refresh row carries no agentId, so it adds to the
+//             count only. Its agentIds are collected all the same if one is ever stamped.
+// The verdict is decided on the DISTINCT stamped agentIds of live U lineage:
+//   noEvidence   none stamped                       profileNotFound   no such profile
+//   ambiguous    more than one distinct             dangling          the one agentId names no row
+//   inactive     the one agent has isActive false   orgUnknown        profile or agent has no stored org id
+//   crossOrg     the one agent's org id differs from the profile's (`sameOrg` false, both ids set)
+//   bindable     exactly one, active, `sameOrg` the profile's
+// A profile that already carries an agentId is reported with `alreadyBound: true`; its
+// verdict is still computed from the tokens.
+// ---------------------------------------------------------------------------------
+type Verdict =
+	| "bindable"
+	| "ambiguous"
+	| "noEvidence"
+	| "crossOrg"
+	| "inactive"
+	| "dangling"
+	| "orgUnknown"
+	| "profileNotFound";
+const EVIDENCE_MAX_PROFILES = 20;
+const EVIDENCE_DEFAULT_LIMIT = 500;
+const EVIDENCE_MAX_LIMIT = 2000;
+
+const verdictV = v.union(
+	v.literal("bindable"),
+	v.literal("ambiguous"),
+	v.literal("noEvidence"),
+	v.literal("crossOrg"),
+	v.literal("inactive"),
+	v.literal("dangling"),
+	v.literal("orgUnknown"),
+	v.literal("profileNotFound"),
+);
+
+export const bindingEvidence = internalQuery({
+	args: {
+		profileIds: v.array(v.string()),
+		limit: v.optional(v.number()),
+	},
+	returns: v.object({
+		cap: v.number(),
+		truncated: v.boolean(),
+		profiles: v.array(
+			v.object({
+				profileId: v.string(),
+				verdict: verdictV,
+				alreadyBound: v.boolean(),
+				clerkOrgId: v.union(v.string(), v.null()),
+				liveSeatTokens: v.number(),
+				liveSeatTokensWithStampedAgentId: v.number(),
+				lineageAccessTokens: v.number(),
+				lineageRefreshTokens: v.number(),
+				personTokensIgnored: v.number(),
+				truncated: v.boolean(),
+				stampedAgents: v.array(
+					v.object({
+						agentId: v.string(),
+						onLiveTokens: v.number(),
+						exists: v.boolean(),
+						clerkOrgId: v.union(v.string(), v.null()),
+						isActive: v.union(v.boolean(), v.null()),
+						sameOrgAsProfile: v.boolean(),
+						// For the operator to read; never compared or used to decide.
+						displayName: v.union(v.string(), v.null()),
+					}),
+				),
+			}),
+		),
+	}),
+	handler: async (ctx, args) => {
+		const ids = [...new Set(args.profileIds)];
+		if (ids.length === 0 || ids.length > EVIDENCE_MAX_PROFILES) {
+			throw new ConvexError(
+				`BAD_ARGS: seat_binding_inventory:bindingEvidence takes 1 to ${EVIDENCE_MAX_PROFILES} distinct profileIds, got ${ids.length}`,
+			);
+		}
+		const cap = Math.min(
+			Math.max(Math.floor(args.limit ?? EVIDENCE_DEFAULT_LIMIT) || 1, 1),
+			EVIDENCE_MAX_LIMIT,
+		);
+		const now = Date.now();
+		let anyTruncated = false;
+		const out = [];
+
+		for (const profileId of ids) {
+			const profile = await ctx.db
+				.query("oauth_scope_profiles")
+				.withIndex("by_profileId", (q) => q.eq("profileId", profileId))
+				.first();
+			if (profile === null) {
+				out.push({
+					profileId,
+					verdict: "profileNotFound" as Verdict,
+					alreadyBound: false,
+					clerkOrgId: null,
+					liveSeatTokens: 0,
+					liveSeatTokensWithStampedAgentId: 0,
+					lineageAccessTokens: 0,
+					lineageRefreshTokens: 0,
+					personTokensIgnored: 0,
+					truncated: false,
+					stampedAgents: [],
+				});
+				continue;
+			}
+
+			const accessRows = await ctx.db
+				.query("oauth_access_tokens")
+				.withIndex("by_scopeProfile", (q) => q.eq("scopeProfile", profileId))
+				.order("desc")
+				.take(cap + 1);
+			const refreshRows = await ctx.db
+				.query("oauth_refresh_tokens")
+				.withIndex("by_scopeProfile", (q) => q.eq("scopeProfile", profileId))
+				.order("desc")
+				.take(cap + 1);
+			const truncated = accessRows.length > cap || refreshRows.length > cap;
+			if (truncated) anyTruncated = true;
+
+			let live = 0;
+			let liveStamped = 0;
+			let lineageAccess = 0;
+			let lineageRefresh = 0;
+			let personIgnored = 0;
+			const stamped = new Map<string, number>(); // agentId -> live tokens carrying it
+			const note = (agentId: string | undefined, isLive: boolean) => {
+				if (agentId === undefined) return;
+				stamped.set(agentId, (stamped.get(agentId) ?? 0) + (isLive ? 1 : 0));
+			};
+			for (const t of accessRows.slice(0, cap)) {
+				if (t.principal !== undefined) {
+					personIgnored++;
+					continue;
+				}
+				if (t.revokedAt !== undefined) continue;
+				const isLive = t.expiresAt > now;
+				lineageAccess++;
+				if (isLive) {
+					live++;
+					if (t.agentId !== undefined) liveStamped++;
+				}
+				note(t.agentId, isLive);
+			}
+			for (const r of refreshRows.slice(0, cap)) {
+				if (r.principal !== undefined) {
+					personIgnored++;
+					continue;
+				}
+				if (r.revokedAt !== undefined || r.expiresAt <= now) continue;
+				lineageRefresh++;
+				note(r.agentId, false);
+			}
+
+			const stampedAgents = [];
+			for (const [agentId, onLive] of stamped) {
+				const norm = ctx.db.normalizeId("agents", agentId);
+				const agent = norm === null ? null : await ctx.db.get(norm);
+				stampedAgents.push({
+					agentId,
+					onLiveTokens: onLive,
+					exists: agent !== null,
+					clerkOrgId: agent?.clerkOrgId ?? null,
+					isActive: agent === null ? null : agent.isActive,
+					sameOrgAsProfile:
+						agent !== null &&
+						sameOrg({ id: agent.clerkOrgId }, { id: profile.clerkOrgId }),
+					displayName: agent?.name ?? null,
+				});
+			}
+			stampedAgents.sort((x, y) => x.agentId.localeCompare(y.agentId));
+
+			let verdict: Verdict;
+			const one = stampedAgents[0];
+			if (stampedAgents.length === 0) verdict = "noEvidence";
+			else if (stampedAgents.length > 1) verdict = "ambiguous";
+			else if (!one.exists) verdict = "dangling";
+			else if (one.isActive === false) verdict = "inactive";
+			else if (one.sameOrgAsProfile) verdict = "bindable";
+			else if (!one.clerkOrgId || !profile.clerkOrgId) verdict = "orgUnknown";
+			else verdict = "crossOrg";
+
+			out.push({
+				profileId,
+				verdict,
+				alreadyBound: profile.agentId !== undefined,
+				clerkOrgId: profile.clerkOrgId ? profile.clerkOrgId : null,
+				liveSeatTokens: live,
+				liveSeatTokensWithStampedAgentId: liveStamped,
+				lineageAccessTokens: lineageAccess,
+				lineageRefreshTokens: lineageRefresh,
+				personTokensIgnored: personIgnored,
+				truncated,
+				stampedAgents,
+			});
+		}
+
+		return { cap, truncated: anyTruncated, profiles: out };
 	},
 });
