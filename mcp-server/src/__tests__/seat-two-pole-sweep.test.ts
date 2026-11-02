@@ -1633,3 +1633,79 @@ describe("guard: no MCP write door without a seat two-pole (or seat-refusal) tes
 		expect(missing).toEqual(["a_brand_new_write_door"]);
 	});
 });
+
+// ── foreign missionId (task k175x770r9f6h01xt0wg0hdd798hf8m4) ───────────────
+// A task may reference only a mission of its OWN tenant. The seat of org A
+// attaching a task to org B's mission is refused with a typed RBAC_DENIED on
+// BOTH doors (create_task, update_task) and nothing is written.
+describe("foreign missionId: a task references only a mission of its own tenant", () => {
+	const MISSION_REFUSAL = /RBAC_DENIED[\s\S]*MISSION_FOREIGN_TENANT/;
+	const taskArgs = (title: string, missionId: unknown) => ({
+		title,
+		status: "todo",
+		assignedTo: "ivo",
+		priority: "low",
+		createdBy: "mimir",
+		missionId,
+	});
+
+	it("create_task with a foreign missionId is refused, no task row is written", async () => {
+		const foreign = await seed(seatB, "create_mission", missionArgs("B only"));
+		const res = await as(
+			seatA,
+			"create_task",
+			taskArgs("foreign mission create", foreign.missionId),
+		);
+		expect(res.isError, textOf(res)).toBe(true);
+		expect(textOf(res)).toMatch(MISSION_REFUSAL);
+		expect(
+			await rows("tasks", (r) => r.title === "foreign mission create"),
+		).toEqual([]);
+	});
+
+	it("update_task with a foreign missionId is refused, the task is unchanged", async () => {
+		const foreign = await seed(seatB, "create_mission", missionArgs("B only 2"));
+		const own = await seedTask(A, "todo");
+		const before = JSON.stringify(await rows("tasks", (r) => r._id === own));
+		const res = await as(seatA, "update_task", {
+			taskId: own,
+			missionId: foreign.missionId,
+			callerOrchestrator: "mimir",
+		});
+		expect(res.isError, textOf(res)).toBe(true);
+		expect(textOf(res)).toMatch(MISSION_REFUSAL);
+		expect(JSON.stringify(await rows("tasks", (r) => r._id === own))).toBe(
+			before,
+		);
+	});
+
+	it("create_task and update_task with an own-tenant missionId are served", async () => {
+		const mine = await seed(seatA, "create_mission", missionArgs("A mission"));
+		served(
+			await as(
+				seatA,
+				"create_task",
+				taskArgs("own mission create", mine.missionId),
+			),
+		);
+		const made = await rows<{ missionId?: string }>(
+			"tasks",
+			(r) => r.title === "own mission create",
+		);
+		expect(made).toHaveLength(1);
+		expect(made[0].missionId).toBe(mine.missionId);
+		const own = await seedTask(A, "todo");
+		served(
+			await as(seatA, "update_task", {
+				taskId: own,
+				missionId: mine.missionId,
+				callerOrchestrator: "mimir",
+			}),
+		);
+		const row = (await rows<{ missionId?: string }>(
+			"tasks",
+			(r) => r._id === own,
+		))[0];
+		expect(row.missionId).toBe(mine.missionId);
+	});
+});
