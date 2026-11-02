@@ -26,6 +26,8 @@ import type { Doc, Id } from "../_generated/dataModel";
 import { internalMutation, internalQuery } from "../_generated/server";
 import { lookupOrgMapping } from "../lib/auth";
 import {
+	grantDelta,
+	grantOf,
 	isRightsPinned,
 	personTokenRights,
 	profileTokenRights,
@@ -44,13 +46,6 @@ function pageSizeOf(raw: number | undefined, door: string): number {
 		);
 	}
 	return pageSize;
-}
-
-function delta(copy: string[], derived: string[]): { gained: string[]; lost: string[] } {
-	return {
-		gained: derived.filter((x) => !copy.includes(x)),
-		lost: copy.filter((x) => !derived.includes(x)),
-	};
 }
 
 const changeValidator = v.object({
@@ -115,22 +110,24 @@ export const inventory = internalQuery({
 			}
 			if (rights === null) {
 				denied++;
+				const copy = grantOf(row);
 				changed.push({
 					id: row._id,
 					scopeProfile: row.scopeProfile,
 					kind: "denied",
 					readGained: [],
-					readLost: row.namespaceReadPrefixes,
+					readLost: copy.namespaceReadPrefixes,
 					writeGained: [],
-					writeLost: row.namespaceWritePrefixes,
+					writeLost: copy.namespaceWritePrefixes,
 					fromGained: [],
-					fromLost: row.fromAllowList,
+					fromLost: copy.fromAllowList,
 				});
 				continue;
 			}
-			const r = delta(row.namespaceReadPrefixes, rights.namespaceReadPrefixes);
-			const w = delta(row.namespaceWritePrefixes, rights.namespaceWritePrefixes);
-			const f = delta(row.fromAllowList, rights.fromAllowList);
+			const d = grantDelta(grantOf(row), rights);
+			const r = d.namespaceReadPrefixes;
+			const w = d.namespaceWritePrefixes;
+			const f = d.fromAllowList;
 			if (
 				r.gained.length + r.lost.length + w.gained.length + w.lost.length + f.gained.length + f.lost.length ===
 				0
