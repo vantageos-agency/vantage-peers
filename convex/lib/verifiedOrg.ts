@@ -14,7 +14,7 @@ import {
 	type OrgScope,
 	withOrgScope,
 } from "./auth";
-import { orgByIdLookupsKeepingRow, orgRefOfRow } from "./authOrgMapping";
+import { orgMappingLookups, orgRefOfRow } from "./authOrgMapping";
 import { fleetOperatorRef } from "./operatorOrg";
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -63,60 +63,10 @@ export const verifiedOrgValidator = v.object({
 
 export type VerifiedOrg = { orgSlug: string; orgId?: string };
 
-/** The organisation a verified claim resolved to: its permanent ID and CURRENT label. */
-export type VerifiedOrgRef = { orgId: string; orgSlug: string };
-
 function refuse(reason: string, door: string, detail: string): never {
 	throw new ConvexError(
 		`RBAC_DENIED: ${detail} — ${JSON.stringify({ reason, door })}`,
 	);
-}
-
-/**
- * The ID-keyed read: the package resolves the claim's permanent org ID against the
- * mapping store (active, well formed, ID held by exactly one row) and the row it
- * answered from is returned. Anything else is a refusal.
- */
-async function mappingOfIdClaim(
-	ctx: QueryCtx | MutationCtx,
-	orgId: string,
-	door: string,
-): Promise<OrgMappingView> {
-	const { lookups, row } = orgByIdLookupsKeepingRow(ctx);
-	const resolved = await resolveOrgFromClaim({ org_id: orgId }, lookups, {
-		door,
-	});
-	const mapping = row();
-	if (!resolved.ok || mapping === null || !mapping.isActive) {
-		refuse(
-			"org-not-active",
-			door,
-			`verifiedOrg names no active organisation with ID "${orgId}"`,
-		);
-	}
-	return mapping;
-}
-
-/**
- * EXPAND ONLY. A claim without an `orgId` (the MCP that predates it) names the
- * organisation by the slug it holds NOW; the mapping row it resolves to carries
- * the permanent ID every later decision reads. Removed when the slug-only form is
- * refused (the contract step that follows the MCP rollout).
- */
-async function mappingOfLegacySlugClaim(
-	ctx: QueryCtx | MutationCtx,
-	orgSlug: string,
-	door: string,
-): Promise<OrgMappingView> {
-	const mapping = await lookupOrgMapping(ctx, orgSlug);
-	if (mapping === null || !mapping.isActive) {
-		refuse(
-			"org-not-active",
-			door,
-			`verifiedOrg names no active organisation "${orgSlug}"`,
-		);
-	}
-	return mapping;
 }
 
 /**
@@ -126,6 +76,18 @@ async function mappingOfLegacySlugClaim(
  *   1. trusted from the service account only   (verified-org-not-trusted)
  *   2. the org is mapped and active, by ID     (org-not-active)
  *   3. the org is the one this call acts for   (claim-outside-acting-org)
+ *
+ * A claim carrying `orgId` is resolved by that ID alone: the package's
+ * `resolveOrgFromClaim` reads the mapping store through the ID adapter and
+ * decides (well formed, ID held by exactly one row, active); the row is then
+ * read again by the ID the package returned, for the whole row the acting-org
+ * scope is built from. The slug in such a claim is never read.
+ *
+ * EXPAND ONLY: a claim with no `orgId` (the MCP that predates it) names the
+ * organisation by the slug it holds NOW (the one slug read below); the mapping
+ * row it resolves to carries the permanent ID every later decision reads. That
+ * branch is removed when the slug-only form is refused (the contract step that
+ * follows the MCP rollout).
  */
 export async function resolveVerifiedOrgMapping(
 	ctx: QueryCtx | MutationCtx,
@@ -141,10 +103,28 @@ export async function resolveVerifiedOrgMapping(
 			"verifiedOrg is a transport-verified claim and is accepted only from the fleet service account",
 		);
 	}
-	const mapping =
-		proof.orgId !== undefined
-			? await mappingOfIdClaim(ctx, proof.orgId, door)
-			: await mappingOfLegacySlugClaim(ctx, proof.orgSlug, door);
+	let mapping: OrgMappingView | null;
+	if (proof.orgId !== undefined) {
+		const resolved = await resolveOrgFromClaim(
+			{ org_id: proof.orgId },
+			orgMappingLookups(ctx),
+			{ door },
+		);
+		mapping = resolved.ok
+			? await lookupOrgMapping(ctx, { clerkOrgId: resolved.org.id })
+			: null;
+	} else {
+		mapping = await lookupOrgMapping(ctx, proof.orgSlug);
+	}
+	if (mapping === null || !mapping.isActive) {
+		refuse(
+			"org-not-active",
+			door,
+			proof.orgId !== undefined
+				? `verifiedOrg names no active organisation with ID "${proof.orgId}"`
+				: `verifiedOrg names no active organisation "${proof.orgSlug}"`,
+		);
+	}
 	if (!actingOrgAdmits(transportScope, mapping.clerkOrgId)) {
 		refuse(
 			"claim-outside-acting-org",
@@ -153,33 +133,6 @@ export async function resolveVerifiedOrgMapping(
 		);
 	}
 	return mapping;
-}
-
-/**
- * The organisation a claim resolved to, as its permanent ID and CURRENT label, or
- * undefined when no claim is carried. A door that must compare ROWS reads the ID.
- */
-export async function resolveVerifiedOrgRef(
-	ctx: QueryCtx | MutationCtx,
-	transportScope: OrgScope,
-	proof: VerifiedOrg | undefined,
-	door: string,
-): Promise<VerifiedOrgRef | undefined> {
-	const mapping = await resolveVerifiedOrgMapping(
-		ctx,
-		transportScope,
-		proof,
-		door,
-	);
-	if (mapping === undefined) return undefined;
-	if (mapping.clerkOrgId === undefined) {
-		refuse(
-			"org-not-active",
-			door,
-			`organisation "${mapping.clerkOrgSlug}" has no permanent ID yet`,
-		);
-	}
-	return { orgId: mapping.clerkOrgId, orgSlug: mapping.clerkOrgSlug };
 }
 
 /**

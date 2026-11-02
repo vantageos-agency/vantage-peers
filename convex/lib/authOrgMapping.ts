@@ -98,30 +98,6 @@ function packageRow(row: Doc<"client_org_mapping"> | null) {
 	};
 }
 
-/**
- * The ID-only `orgById` adapter, which also keeps the stored row it answered from,
- * for a caller that needs the whole row (an acting-org scope is built from it) and
- * must take it from the SAME read the package decided on, in the same transaction.
- * The package decides: the kept row is used only after `resolveOrgFromClaim`
- * returned `ok` for the id the row was read by. Two rows claiming one id answer
- * null (fail closed), as `lookupOrgMapping` does.
- */
-export function orgByIdLookupsKeepingRow(ctx: { db: DatabaseReader }): {
-	lookups: Required<Pick<OrgMappingLookups, "orgById">>;
-	row: () => OrgMappingView | null;
-} {
-	let kept: OrgMappingView | null = null;
-	return {
-		lookups: {
-			orgById: async (orgId) => {
-				kept = await lookupOrgMapping(ctx, { clerkOrgId: orgId });
-				return packageRow(kept);
-			},
-		},
-		row: () => kept,
-	};
-}
-
 /** The adapters the package's org resolvers read the mapping table through. */
 export function orgMappingLookups(ctx: {
 	db: DatabaseReader;

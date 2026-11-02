@@ -68,7 +68,7 @@ import {
 import {
 	assertRowInVerifiedOrg,
 	resolveDoorVerifiedOrg,
-	resolveVerifiedOrgRef,
+	resolveVerifiedOrgMapping,
 	resolveVerifiedOrgScope,
 	serviceAccountWriteOrg,
 	verifiedOrgValidator,
@@ -312,16 +312,16 @@ export async function requireAuthenticatedCaller(
 	});
 	// The organisation the transport verified for the bearer (service account
 	// only; anyone else presenting it is refused, before any proof is weighed).
-	const verifiedOrgRef =
+	const verifiedOrgMapping =
 		verifiedOrg?.proof !== undefined
-			? await resolveVerifiedOrgRef(
+			? await resolveVerifiedOrgMapping(
 					ctx,
 					transportScope,
 					verifiedOrg.proof,
 					verifiedOrg.door,
 				)
 			: undefined;
-	const verifiedOrgSlug = verifiedOrgRef?.orgSlug;
+	const verifiedOrgSlug = verifiedOrgMapping?.clerkOrgSlug;
 	// verifiedPerson (k176ch9tamzab3dnhye94kga1d8fkbhm): a PERSON reached through
 	// the MCP service account. Believed from the service account only; the
 	// person's scope is rebuilt from its token row (convex/lib/personPrincipal.ts)
@@ -392,7 +392,7 @@ export async function requireAuthenticatedCaller(
 		agentCredentialSecret,
 		verifiedActor,
 		verifiedOrgSlug,
-		verifiedOrgId: verifiedOrgRef?.orgId,
+		verifiedOrgId: verifiedOrgMapping?.clerkOrgId,
 	});
 	if (actor !== undefined) {
 		scope.callerActorId = actor.id;
@@ -5356,13 +5356,13 @@ export const bulkComplete = mutation({
 		);
 		// Refuses a non-service-account caller that names an org, on a preview as
 		// on a live call, before anything is read.
-		const verifiedOrgRef = await resolveVerifiedOrgRef(
+		const verifiedOrgMapping = await resolveVerifiedOrgMapping(
 			ctx,
 			callerScope,
 			args.verifiedOrg,
 			"tasks:bulkComplete",
 		);
-		const verifiedOrgSlug = verifiedOrgRef?.orgSlug;
+		const verifiedOrgSlug = verifiedOrgMapping?.clerkOrgSlug;
 
 		// Default dryRun to true (safety).
 		const dryRun = args.dryRun !== false;
@@ -5392,7 +5392,7 @@ export const bulkComplete = mutation({
 			args.filter,
 			callerScope,
 			verifiedOrgSlug,
-			verifiedOrgRef?.orgId,
+			verifiedOrgMapping?.clerkOrgId,
 		);
 
 		const exceeded = matched.length > BULK_COMPLETE_HARD_CAP;
@@ -5462,7 +5462,7 @@ export const bulkComplete = mutation({
 		// with the bulkRunId this call returns. Written on the live path only.
 		const runOrgSlug = verifiedOrgSlug ?? callerScope.orgSlug ?? undefined;
 		const runClerkOrgId =
-			verifiedOrgRef?.orgId ?? (await clerkOrgIdForSlug(ctx, runOrgSlug));
+			verifiedOrgMapping?.clerkOrgId ?? (await clerkOrgIdForSlug(ctx, runOrgSlug));
 		await ctx.db.insert("bulk_complete_runs", {
 			bulkRunId,
 			// The run's org: the verified one the transport carried, else the
@@ -5504,8 +5504,8 @@ export const bulkComplete = mutation({
 				note,
 				bulkRunId,
 				...(verifiedOrgSlug !== undefined ? { onlyOrgId: verifiedOrgSlug } : {}),
-				...(verifiedOrgRef !== undefined
-					? { onlyClerkOrgId: verifiedOrgRef.orgId }
+				...(verifiedOrgMapping?.clerkOrgId !== undefined
+					? { onlyClerkOrgId: verifiedOrgMapping.clerkOrgId }
 					: {}),
 			});
 		}

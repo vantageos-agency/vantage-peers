@@ -49,22 +49,22 @@ describe("verifiedOrgIdOf", () => {
 		).toBeUndefined();
 	});
 
-	it("is undefined when an agent credential names another org than the token (the ID is the token's)", () => {
+	it("rides beside an agent credential too: the boundary binds the actor to the token's org", () => {
 		const ctx = tokenCtx({
 			clerkOrgSlug: "acme",
 			orgClerkId: "org_AAA",
-			actor: { orgSlug: "other", agentName: "eta", agentId: "a1" },
+			actor: { orgSlug: "acme", agentName: "eta", agentId: "a1" },
 		});
-		expect(verifiedOrgSlugOf(ctx)).toBe("other");
-		expect(verifiedOrgIdOf(ctx)).toBeUndefined();
+		expect(verifiedOrgIdOf(ctx)).toBe("org_AAA");
 	});
 
-	it("is undefined for the master and for a Clerk session", () => {
-		expect(
-			verifiedOrgIdOf(
-				tokenCtx({ isMaster: true, clerkOrgSlug: "acme", orgClerkId: "org_A" }),
-			),
-		).toBeUndefined();
+	it("no door forwards an org claim to the master or a Clerk session, so no ID rides either", () => {
+		const master = tokenCtx({
+			isMaster: true,
+			clerkOrgSlug: "acme",
+			orgClerkId: "org_A",
+		});
+		expect(verifiedOrgSlugOf(master)).toBeUndefined();
 		expect(verifiedOrgIdOf(undefined)).toBeUndefined();
 	});
 });
