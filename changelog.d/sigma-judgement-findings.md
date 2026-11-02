@@ -1,0 +1,4 @@
+---
+section: Fixed
+---
+- **Backend-doctor judgement findings that no module owns: component seams declared, `countByPeriod` refuses instead of truncating.** `convex/convex.config.ts` now states the authority tier and boundary key at each `app.use` seam (rag: the resolved namespace; agentEngine: the resolved `orgId`). `migrations/reindexMemoriesByPeriod:countByPeriod` read the whole `memories` table with `.collect()`; it now reads at most `COUNT_SCAN_CAP` (5000) matching rows plus one and raises `COUNT_SCAN_CAP_EXCEEDED`, naming `startMs` / `endMs`, when the window holds more. The participants backfill keeps its single writer (`syncParticipantIndex`) with the reason recorded in `convex/migrations.ts`, and the schema points the two briefing derived tables at their bracketing tests in `convex/__tests__/judgement.twoPoles.test.ts`. No public argument changed, so the backend contract stays 17. Task k174abvtvm5mh7y5ye2v39rcvd8g6wwx.

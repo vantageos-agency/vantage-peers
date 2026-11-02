@@ -68,6 +68,19 @@ import { REVIEW_OPEN_STATUSES, parseReviewTitle } from "./tasks";
 //     Convex cannot skip loading `content` — the field that caused the
 //     original incident — so the only lever available is page size.
 //
+// JUSTIFIED: this backfill writes briefingNoteParticipants through
+// syncParticipantIndex and never with a direct ctx.db.insert of its own. A
+// junction row is not a copy of a label: its `participantId` is resolved in the
+// NOTE'S OWN organisation by labelResolverOfNote (briefingNotes.ts), and the same
+// call patches `briefingNotes.participantIds`, which the by-ID read doors compare.
+// A second writer here would have to repeat that org-relative resolution and the
+// note patch, and would drift from create/update the first time either changes;
+// the rows a pre-fix note gets would then differ from the rows a new note gets.
+// Idempotence is the helper's own delete-then-reinsert by the `by_note` index, and
+// the proof is the bracketing test convex/__tests__/judgement.twoPoles.test.ts
+// (direct-insert note, zero rows before, rows after, same rows after a second run)
+// together with convex/__tests__/backfillBriefingNoteParticipants.test.ts.
+//
 // Run (kicks off the drain; it self-schedules until the corpus is fully
 // processed):
 //   npx convex run migrations:backfillBriefingNoteParticipants
