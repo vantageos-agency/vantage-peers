@@ -247,7 +247,10 @@ describe("seat refresh: the rotated access token carries the family's permanent 
 		const rows = await accessRows(t);
 		const rotated = rows.find((r) => r.tokenHash === sha(res.issued.access));
 		expect(rotated?.clerkOrgId).toBe(testClerkOrgId("org-a"));
-		expect(await lookup(t, res.issued.access)).not.toBeNull();
+		// The row keeps the family's ID, but a token's rights are its scope profile's,
+		// read live (task k17dhntq3m2w5x3x1jtdmkkba18hek7m): a deleted profile grants
+		// the token NOTHING at the lookup.
+		expect(await lookup(t, res.issued.access)).toBeNull();
 	});
 
 	test("DENY: the profile now names ANOTHER org by ID -> refused, family revoked, never re-pointed", async () => {

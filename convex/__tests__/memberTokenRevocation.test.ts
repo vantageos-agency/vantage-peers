@@ -241,6 +241,19 @@ describe("A - the delete event revokes the removed member's tokens", () => {
 		await seedOrgs(t);
 		await seedMember(t, ORG);
 		await t.run((ctx) =>
+			ctx.db.insert("oauth_scope_profiles", {
+				profileId: "clio-acme-team",
+				description: "seat profile read live by the token",
+				fromAllowList: ["clio"],
+				namespaceReadPrefixes: [],
+				namespaceWritePrefixes: [],
+				createdAt: Date.now(),
+				updatedAt: Date.now(),
+				clerkOrgSlug: ORG,
+				clerkOrgId: testClerkOrgId(ORG),
+			}),
+		);
+		await t.run((ctx) =>
 			ctx.db.insert("oauth_access_tokens", {
 				tokenHash: sha("acc-seat"),
 				clientId: "seat-client",

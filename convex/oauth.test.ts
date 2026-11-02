@@ -274,6 +274,18 @@ describe("oauth.createAccessToken + getAccessTokenByHash", () => {
 	test("token round-trips with scope context", async () => {
 		const t = createTestConvex();
 		const tokenHash = "deadbeef".repeat(8); // 64 hex chars
+		// A token's rights are its scope profile's, read live: the profile must exist.
+		await t.run(async (ctx) => {
+			await ctx.db.insert("oauth_scope_profiles", {
+				profileId: "marie-acme-hr",
+				description: "marie",
+				fromAllowList: ["marie"],
+				namespaceReadPrefixes: ["orchestrator/victor", "global"],
+				namespaceWritePrefixes: ["global"],
+				createdAt: Date.now(),
+				updatedAt: Date.now(),
+			});
+		});
 		await asServiceAccount(t).mutation(api.oauth.createAccessToken, {
 			tokenHash,
 			clientId: "marie-client",

@@ -175,8 +175,12 @@ describe("a token's rights follow its scope profile as it is now", () => {
 	test("IDENTICAL: two tokens of one profile with different snapshots resolve identically", async () => {
 		const t = createT();
 		await seedOrg(t);
-		await seedProfile(t, "p-a", NEW_READ, NEW_WRITE);
+		await seedProfile(t, "p-a", OLD_READ, ["team/org-a"]);
 		await mint(t, "stale", "p-a", OLD);
+		await patchProfile(t, "p-a", {
+			namespaceReadPrefixes: NEW_READ,
+			namespaceWritePrefixes: NEW_WRITE,
+		});
 		await mint(t, "fresh", "p-a", { from: ["clio"], read: NEW_READ, write: NEW_WRITE });
 		const a = await lookup(t, "stale");
 		const b = await lookup(t, "fresh");

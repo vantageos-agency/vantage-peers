@@ -1602,10 +1602,19 @@ export default defineSchema({
 		clientId: v.string(),
 		userId: v.string(),
 		scopes: v.array(v.string()), // OAuth scopes (vantage:read, vantage:write)
-		scopeProfile: v.string(), // snapshot at issue time
+		scopeProfile: v.string(), // FK to oauth_scope_profiles.profileId; its row is read LIVE
+		// COPIES made at mint. NOT the grant: oauth:getAccessTokenByHash derives the
+		// rights from the live scope profile (person token: the live org mapping) on
+		// every request (convex/lib/tokenRights.ts). They matter only as the NARROWING
+		// of a token flagged `rightsPinned`, intersected with the live profile.
 		fromAllowList: v.array(v.string()),
 		namespaceReadPrefixes: v.array(v.string()),
 		namespaceWritePrefixes: v.array(v.string()),
+		// true: this mint asked for LESS (or other) than its profile, so the copy above
+		// narrows the live profile (intersect, never widen). Set on Convex at mint by
+		// comparing the request to the profile row, never taken from the caller.
+		// Absent: follows the profile; a legacy `admin-mint:` client reads as pinned.
+		rightsPinned: v.optional(v.boolean()),
 		expiresAt: v.number(),
 		refreshTokenHash: v.optional(v.string()),
 		createdAt: v.number(),

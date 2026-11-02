@@ -106,6 +106,7 @@ import type * as lib_taskDoorClaim from "../lib/taskDoorClaim.js";
 import type * as lib_taskScopeFilter from "../lib/taskScopeFilter.js";
 import type * as lib_teamNamespace from "../lib/teamNamespace.js";
 import type * as lib_tenantSlug from "../lib/tenantSlug.js";
+import type * as lib_tokenRights from "../lib/tokenRights.js";
 import type * as lib_verifiedOrg from "../lib/verifiedOrg.js";
 import type * as licenses from "../licenses.js";
 import type * as mandates from "../mandates.js";
@@ -282,6 +283,7 @@ declare const fullApi: ApiFromModules<{
   "lib/taskScopeFilter": typeof lib_taskScopeFilter;
   "lib/teamNamespace": typeof lib_teamNamespace;
   "lib/tenantSlug": typeof lib_tenantSlug;
+  "lib/tokenRights": typeof lib_tokenRights;
   "lib/verifiedOrg": typeof lib_verifiedOrg;
   licenses: typeof licenses;
   mandates: typeof mandates;
