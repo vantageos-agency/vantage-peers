@@ -218,7 +218,7 @@ describe("recordToolUsage", () => {
 		expect(mutation).toHaveBeenCalledWith("toolUsage:record", {
 			toolName: "store_memory",
 			caller: "agent:agent7",
-			verifiedOrg: { orgSlug: "acme" },
+			verifiedOrg: { orgSlug: "acme", orgId: "org_acme" },
 		});
 	});
 	it("a person token sends its token proof, not a typed key", async () => {
@@ -231,7 +231,7 @@ describe("recordToolUsage", () => {
 		expect(mutation).toHaveBeenCalledWith("toolUsage:record", {
 			toolName: "store_memory",
 			verifiedPerson: { accessTokenHash: "h1" },
-			verifiedOrg: { orgSlug: "acme" },
+			verifiedOrg: { orgSlug: "acme", orgId: "org_acme" },
 		});
 	});
 	it("a bearer whose organisation cannot be resolved records nothing", async () => {

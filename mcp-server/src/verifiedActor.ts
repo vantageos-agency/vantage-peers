@@ -64,6 +64,10 @@ export const VERIFIED_ACTOR_DOORS: ReadonlySet<string> = new Set([
 	"mandates:update",
 	"mandates:settle",
 	"fixPatterns:addAttempt",
+	// The roster check of a read (M18): the pattern is returned only when its creator
+	// IS the verified agent, judged by agents-row ID. A client org's agent bearing
+	// the operator's label is another agent and is answered "not found".
+	"fixPatterns:get",
 	// Recurring schedules (M10h): the creator and the assignee are recorded BY ID
 	// and the assignee is resolved in the acting agent's own organisation, which a
 	// service-account call can only learn from the verified actor.

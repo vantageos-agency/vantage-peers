@@ -36,7 +36,11 @@ import { ProtocolError, ProtocolErrorCode } from "@modelcontextprotocol/server";
 import type { ConvexHttpClient } from "convex/browser";
 import { z } from "zod";
 import type { OAuthContext } from "../auth.js";
-import { resolveDoorScope, verifiedOrgSlugOf } from "../doorScope.js";
+import {
+	resolveDoorScope,
+	verifiedOrgIdOf,
+	verifiedOrgSlugOf,
+} from "../doorScope.js";
 import { defineTool } from "../registerTool.js";
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -230,7 +234,7 @@ export function registerKbIngestTools(
 	const resolveOrgContext = (): {
 		orgId: string;
 		namespacePrefix: string;
-		verifiedOrg?: { orgSlug: string };
+		verifiedOrg?: { orgSlug: string; orgId?: string };
 	} => {
 		if (!oauthCtx || oauthCtx.isMaster) {
 			// Master-scope or legacy bearer: no team namespace — KB ingest forbidden.
@@ -244,7 +248,12 @@ export function registerKbIngestTools(
 			return {
 				orgId: verified,
 				namespacePrefix: `team/${verified}`,
-				verifiedOrg: { orgSlug: verified },
+				verifiedOrg: {
+					orgSlug: verified,
+					...(verifiedOrgIdOf(oauthCtx) !== undefined
+						? { orgId: verifiedOrgIdOf(oauthCtx) as string }
+						: {}),
+				},
 			};
 		}
 		const prefix = oauthCtx.namespaceWritePrefixes.find((p) =>
@@ -261,10 +270,15 @@ export function registerKbIngestTools(
 
 	// The scope arguments a KB door is handed (doorScope.ts DOOR_SCOPE): the
 	// verified org, exactly when the door takes it and the bearer has one.
-	const scopeArgs = (door: string): { verifiedOrg?: { orgSlug: string } } => {
+	const scopeArgs = (
+		door: string,
+	): { verifiedOrg?: { orgSlug: string; orgId?: string } } => {
 		const resolved = resolveDoorScope(door, undefined, {
 			...(verifiedOrgSlugOf(oauthCtx) !== undefined
 				? { verifiedOrgSlug: verifiedOrgSlugOf(oauthCtx) as string }
+				: {}),
+			...(verifiedOrgIdOf(oauthCtx) !== undefined
+				? { verifiedOrgId: verifiedOrgIdOf(oauthCtx) as string }
 				: {}),
 			hasVerifiedActor: false,
 			seat: { kind: "none" },

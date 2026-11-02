@@ -42,6 +42,10 @@ export async function callerActorOf(
 		agentCredentialSecret?: string;
 		verifiedActor?: VerifiedActor;
 		verifiedOrgSlug?: string;
+		// The permanent ID of the organisation `verifiedOrgSlug` was resolved to
+		// (convex/lib/verifiedOrg.ts resolveVerifiedOrgRef). When present it, not
+		// the slug, selects the agents the asserted label is looked up among.
+		verifiedOrgId?: string;
 	},
 ): Promise<CallerActor | undefined> {
 	if (assertedName === undefined) return undefined;
@@ -64,8 +68,14 @@ export async function callerActorOf(
 			? { id: owned.agent._id, orgSlug: owned.agent.orgSlug }
 			: undefined;
 	}
+	// The org the label is looked up in is chosen by its permanent ID: the
+	// verified org's (carried beside its slug), else the caller's own scope's. A
+	// slug alone would name whoever holds it NOW (a rename frees it for another
+	// org); the ID cannot be taken over.
+	const fromVerified = proof.verifiedOrgSlug !== undefined;
 	const org = proof.verifiedOrgSlug ?? scope.orgSlug;
-	const id = await actorIdResolver(ctx, org)(assertedName);
+	const orgId = fromVerified ? proof.verifiedOrgId : scope.orgClerkId;
+	const id = await actorIdResolver(ctx, org, orgId)(assertedName);
 	if (id === undefined) return undefined;
 	return org === null || org === undefined ? { id } : { id, orgSlug: org };
 }

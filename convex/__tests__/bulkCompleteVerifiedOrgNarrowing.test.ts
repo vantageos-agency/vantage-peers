@@ -85,6 +85,7 @@ async function seedRows(t: T, orgId: string, n: number, by: "assigned" | "create
 				priority: "low",
 				status: "todo",
 				orgId,
+				clerkOrgId: testClerkOrgId(orgId),
 				createdAt: now,
 				updatedAt: now,
 			});
