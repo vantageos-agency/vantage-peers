@@ -55,7 +55,89 @@ if [ "$in_perimeter" = no ]; then
 $(git -C "$own_top" worktree list --porcelain 2>/dev/null | sed -n 's/^worktree //p')
 EOF
 fi
-[ "$in_perimeter" != no ] || die "outside this station's perimeter: $real is neither inside $own_top nor a registered worktree of this repository"
+
+# THE ONE OTHER ACCEPTED CASE: a standalone clone directly under the temp root.
+#
+# A clone made with `git clone <url> /tmp/<name>` has its own .git and appears in no
+# worktree list, so the perimeter above can never admit it, and before this branch it
+# had no permitted deletion form at all (31 such leftovers measured on one station).
+# It is admitted here only when the script itself proves there is nothing to lose:
+# a clean tree, nothing stashed, and every local commit already on origin after a
+# fresh fetch. Every proof is a REFUSAL on failure, never a pass.
+#
+# The root is /tmp. REAP_STANDALONE_ROOT exists for the tests only, and it can only
+# NARROW: it is refused unless its realpath is /tmp itself or a directory under /tmp,
+# so no setting of it can admit a path outside /tmp.
+reap_standalone() {
+  local root root_real tmp_real cand name git_dir common_dir top wt_count dirty head \
+    stashes tip ref before size after
+  tmp_real=$(realpath -e -- /tmp) || die "cannot resolve /tmp"
+  root=${REAP_STANDALONE_ROOT:-/tmp}
+  case $root in *..*) die "traversing standalone root: $root" ;; esac
+  root_real=$(realpath -e -- "$root") || die "unresolvable standalone root: $root"
+  case $root_real in
+    "$tmp_real" | "$tmp_real"/?*) ;;
+    *) die "standalone root $root_real is not /tmp or under it — the root can only narrow" ;;
+  esac
+
+  # The path itself: literally <root>/<name>, one component, not the root, not a symlink.
+  cand=$target
+  while [ "${cand%/}" != "$cand" ] && [ "$cand" != / ]; do cand=${cand%/}; done
+  while [ "${root%/}" != "$root" ] && [ "$root" != / ]; do root=${root%/}; done
+  [ "$cand" != "$root" ] || die "refusing the standalone root itself: $root"
+  name=${cand#"$root"/}
+  [ "$name" != "$cand" ] || die "outside this station's perimeter: $real is neither inside $own_top, nor a registered worktree of this repository, nor a standalone clone directly under $root"
+  [ -n "$name" ] || die "refusing the standalone root itself: $root"
+  case $name in */*) die "not directly under $root (nested path): $cand" ;; esac
+  [ ! -L "$cand" ] || die "refusing a symlink: $cand"
+  [ "$real" != "$root_real" ] || die "refusing the standalone root itself: $root_real"
+  [ "$real" = "$root_real/$name" ] || die "realpath $real is not $root_real/$name"
+
+  # (a) a standalone checkout: its own top level, its own .git directory as common dir.
+  [ -d "$real/.git" ] && [ ! -L "$real/.git" ] || die "standalone: $real has no .git directory of its own — not a standalone clone"
+  top=$(git -C "$real" rev-parse --show-toplevel 2>/dev/null) || die "standalone: $real is not a git checkout"
+  [ "$(realpath -m -- "$top")" = "$real" ] || die "standalone: $real is not the top level of its checkout ($top)"
+  git_dir=$(git -C "$real" rev-parse --path-format=absolute --git-dir 2>/dev/null) || die "standalone: cannot read the git dir of $real"
+  common_dir=$(git -C "$real" rev-parse --path-format=absolute --git-common-dir 2>/dev/null) || die "standalone: cannot read the common git dir of $real"
+  [ "$(realpath -m -- "$git_dir")" = "$real/.git" ] && [ "$(realpath -m -- "$common_dir")" = "$real/.git" ] \
+    || die "standalone: $real is a worktree of another repository (common dir $common_dir) — reap it through that repository"
+  wt_count=$(git -C "$real" worktree list --porcelain 2>/dev/null | grep -c '^worktree ')
+  [ "$wt_count" -eq 1 ] || die "standalone: $real has $((wt_count - 1)) linked worktree(s) of its own — removing it would orphan them"
+
+  # (b) nothing tracked or untracked is changed.
+  dirty=$(git -C "$real" status --porcelain --untracked-files=all 2>/dev/null) || die "standalone: cannot read the status of $real"
+  [ -z "$dirty" ] || die "standalone: $(printf '%s\n' "$dirty" | wc -l) changed or untracked file(s) in $real — decide them first"
+
+  # (c) a fresh fetch, then HEAD must be on an origin branch. A failed fetch is a refusal.
+  git -C "$real" remote get-url origin >/dev/null 2>&1 || die "standalone: $real has no origin remote"
+  GIT_TERMINAL_PROMPT=0 timeout 120 git -C "$real" fetch --prune --quiet origin >/dev/null 2>&1 \
+    || die "standalone: git fetch --prune origin failed in $real — cannot prove its content is on origin"
+  head=$(git -C "$real" rev-parse --verify --quiet HEAD) || die "standalone: $real has no HEAD commit"
+  [ -n "$(git -C "$real" for-each-ref --contains "$head" --format='%(refname)' refs/remotes/origin)" ] \
+    || die "standalone: HEAD $head of $real is on no origin branch — content would be lost"
+
+  # (d) nothing stashed, and every local branch tip is on an origin branch.
+  stashes=$(git -C "$real" stash list 2>/dev/null) || die "standalone: cannot read the stash of $real"
+  [ -z "$stashes" ] || die "standalone: $(printf '%s\n' "$stashes" | wc -l) stash entr(y/ies) in $real — content would be lost"
+  while IFS=' ' read -r tip ref; do
+    [ -n "$tip" ] || continue
+    [ -n "$(git -C "$real" for-each-ref --contains "$tip" --format='%(refname)' refs/remotes/origin)" ] \
+      || die "standalone: local branch ${ref#refs/heads/} ($tip) of $real has commits on no origin branch — content would be lost"
+  done <<EOF
+$(git -C "$real" for-each-ref --format='%(objectname) %(refname)' refs/heads || echo "unreadable refs/heads")
+EOF
+
+  echo "perimeter: a clean standalone clone under $root whose content is on origin" >&2
+  before=$(df -k --output=avail / | tail -1)
+  size=$(du -sh -- "$real" 2>/dev/null | cut -f1)
+  command rm -rf -- "$real"
+  [ -e "$real" ] && die "still present after removal: $real"
+  after=$(df -k --output=avail / | tail -1)
+  echo "REAPED $real (was $size) — avail KiB ${before} -> ${after} (freed $((after-before)))"
+  exit 0
+}
+
+[ "$in_perimeter" != no ] || reap_standalone
 echo "perimeter: $in_perimeter" >&2
 
 repo=$(git -C "$real" remote get-url origin 2>/dev/null | sed -E 's#^git@[^:]+:##; s#^https?://[^/]+/##; s#\.git$##')
