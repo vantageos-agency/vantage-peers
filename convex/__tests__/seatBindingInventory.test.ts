@@ -34,14 +34,15 @@ async function seedAgent(
 	orgSlug: string,
 	name: string,
 	clerkOrgId?: string,
+	active = true,
 ): Promise<Id<"agents">> {
 	return await t.run(async (ctx) =>
 		ctx.db.insert("agents", {
 			orgSlug,
 			name,
-			isActive: true,
+			isActive: active,
 			createdAt: 1,
-			...(clerkOrgId ? { clerkOrgId } : {}),
+			...(clerkOrgId !== undefined ? { clerkOrgId } : {}),
 		}),
 	);
 }
@@ -65,7 +66,7 @@ async function seedProfile(
 			createdAt: 1,
 			updatedAt: 1,
 			...(p.slug ? { clerkOrgSlug: p.slug } : {}),
-			...(p.clerkOrgId ? { clerkOrgId: p.clerkOrgId } : {}),
+			...(p.clerkOrgId !== undefined ? { clerkOrgId: p.clerkOrgId } : {}),
 			...(p.agentId ? { agentId: p.agentId } : {}),
 		});
 	});
@@ -80,6 +81,7 @@ async function seedToken(
 		clerkOrgId?: string;
 		expiresAt: number;
 		revokedAt?: number;
+		principal?: "person";
 	},
 ): Promise<void> {
 	await t.run(async (ctx) => {
@@ -95,9 +97,10 @@ async function seedToken(
 			namespaceWritePrefixes: [],
 			expiresAt: k.expiresAt,
 			createdAt: 1,
+			...(k.principal ? { principal: k.principal } : {}),
 			...(k.revokedAt !== undefined ? { revokedAt: k.revokedAt } : {}),
 			...(k.slug ? { clerkOrgSlug: k.slug } : {}),
-			...(k.clerkOrgId ? { clerkOrgId: k.clerkOrgId } : {}),
+			...(k.clerkOrgId !== undefined ? { clerkOrgId: k.clerkOrgId } : {}),
 		});
 	});
 }
@@ -182,7 +185,7 @@ describe("migrations/seat_binding_inventory:inventory", () => {
 			tokens: false,
 			agents: false,
 		});
-		expect(out.totals).toEqual({
+		expect(out.totals).toMatchObject({
 			profilesScanned: 4,
 			profilesWithoutAgentId: 3,
 			profilesWithoutClerkOrgId: 1,
@@ -197,7 +200,7 @@ describe("migrations/seat_binding_inventory:inventory", () => {
 
 		const acme = out.perOrg.find((o) => o.org === ACME.id);
 		const beta = out.perOrg.find((o) => o.org === BETA.slug);
-		expect(acme).toEqual({
+		expect(acme).toMatchObject({
 			org: ACME.id,
 			orgKeyKind: "clerkOrgId",
 			profilesWithoutAgentId: 2,
@@ -207,7 +210,7 @@ describe("migrations/seat_binding_inventory:inventory", () => {
 			// the ACME agent without an id is keyed by its slug, below
 			agentsWithoutClerkOrgId: 0,
 		});
-		expect(beta).toEqual({
+		expect(beta).toMatchObject({
 			org: BETA.slug,
 			orgKeyKind: "slug",
 			profilesWithoutAgentId: 1,
@@ -263,5 +266,179 @@ describe("migrations/seat_binding_inventory:inventory", () => {
 		expect(cut.anyTruncated).toBe(true);
 		expect(cut.totals.profilesScanned).toBe(3);
 		expect(cut.totals.tokensScanned).toBe(3);
+	});
+});
+
+// ---- After #1660: each reason counted under exactly that reason ----------------------
+// One seeded profile + one live token per case, in a fresh deployment. The reason names
+// are the ones documented in seat_binding_inventory.ts (mirror of resolveSeatAgent).
+type Res = Out["totals"]["afterPr1660"]["profiles"];
+const REASONS = [
+	"noAgentId",
+	"danglingAgentId",
+	"agentInactive",
+	"orgMismatch",
+	"profileMissing",
+] as const;
+
+function reasonsOf(r: Res): string[] {
+	const out: string[] = REASONS.filter((k) => r[k] > 0);
+	if (r.emptyOrMissingClerkOrgId.profile > 0) out.push("org.profile");
+	if (r.emptyOrMissingClerkOrgId.agent > 0) out.push("org.agent");
+	if (r.emptyOrMissingClerkOrgId.token > 0) out.push("org.token");
+	return out.sort();
+}
+
+async function oneCase(opts: {
+	agent?: { clerkOrgId?: string; active?: boolean } | "dangling" | "none";
+	profileOrg?: string;
+	tokenOrg?: string;
+	tokenProfile?: string;
+}): Promise<Out> {
+	const t = createT();
+	let agentId: Id<"agents"> | undefined;
+	const a = opts.agent ?? { clerkOrgId: ACME.id };
+	if (a === "dangling") {
+		agentId = await seedAgent(t, ACME.slug, "gone", ACME.id);
+		await t.run(async (ctx) => ctx.db.delete(agentId as Id<"agents">));
+	} else if (a !== "none") {
+		agentId = await seedAgent(
+			t,
+			ACME.slug,
+			"scribe",
+			a.clerkOrgId,
+			a.active ?? true,
+		);
+	}
+	await seedProfile(t, {
+		profileId: "p1",
+		slug: ACME.slug,
+		clerkOrgId: "profileOrg" in opts ? opts.profileOrg : ACME.id,
+		...(agentId ? { agentId } : {}),
+	});
+	await seedToken(t, {
+		n: "1",
+		profile: opts.tokenProfile ?? "p1",
+		slug: ACME.slug,
+		clerkOrgId: "tokenOrg" in opts ? opts.tokenOrg : ACME.id,
+		expiresAt: Date.now() + HOUR,
+	});
+	return await t.query(inventory, {});
+}
+
+describe("seat_binding_inventory: rows that resolve no agent after #1660", () => {
+	const cases: Array<
+		[string, Parameters<typeof oneCase>[0], string[], string[]]
+	> = [
+		// name, setup, reasons on the profile, reasons on its live token
+		["noAgentId", { agent: "none" }, ["noAgentId"], ["noAgentId"]],
+		[
+			"danglingAgentId",
+			{ agent: "dangling" },
+			["danglingAgentId"],
+			["danglingAgentId"],
+		],
+		[
+			"agentInactive",
+			{ agent: { clerkOrgId: ACME.id, active: false } },
+			["agentInactive"],
+			["agentInactive"],
+		],
+		["agent clerkOrgId missing", { agent: {} }, ["org.agent"], ["org.agent"]],
+		[
+			"agent clerkOrgId empty string",
+			{ agent: { clerkOrgId: "" } },
+			["org.agent"],
+			["org.agent"],
+		],
+		[
+			"profile clerkOrgId empty string",
+			{ profileOrg: "" },
+			["org.profile"],
+			["org.profile"],
+		],
+		[
+			"profile clerkOrgId missing",
+			{ profileOrg: undefined },
+			["org.profile"],
+			["org.profile"],
+		],
+		["token clerkOrgId empty string", { tokenOrg: "" }, [], ["org.token"]],
+		["token clerkOrgId missing", { tokenOrg: undefined }, [], ["org.token"]],
+		[
+			"orgMismatch agent vs profile",
+			{ agent: { clerkOrgId: BETA.id } },
+			["orgMismatch"],
+			["orgMismatch"],
+		],
+		[
+			"orgMismatch token vs profile",
+			{ tokenOrg: BETA.id },
+			[],
+			["orgMismatch"],
+		],
+		["profileMissing", { tokenProfile: "nope" }, [], ["profileMissing"]],
+	];
+
+	for (const [name, setup, onProfile, onToken] of cases) {
+		test(`${name}: counted under exactly that reason`, async () => {
+			const out = await oneCase(setup);
+			const p = out.totals.afterPr1660.profiles;
+			const k = out.totals.afterPr1660.liveSeatTokens;
+			expect(reasonsOf(p)).toEqual([...onProfile].sort());
+			expect(p.wouldNotResolve).toBe(onProfile.length ? 1 : 0);
+			expect(p.wouldResolveAfter1660).toBe(onProfile.length ? 0 : 1);
+			expect(reasonsOf(k)).toEqual([...onToken].sort());
+			expect(k.wouldNotResolve).toBe(1);
+			expect(k.wouldResolveAfter1660).toBe(0);
+			// Per org agrees with the totals for the (single) org the rows are keyed under.
+			const sum = out.perOrg.reduce(
+				(n, o) => n + o.afterPr1660.liveSeatTokens.wouldNotResolve,
+				0,
+			);
+			expect(sum).toBe(1);
+		});
+	}
+
+	test("a fully bound row (profile and live token) wouldResolveAfter1660", async () => {
+		const out = await oneCase({});
+		expect(out.totals.afterPr1660.profiles).toMatchObject({
+			checked: 1,
+			wouldResolveAfter1660: 1,
+			wouldNotResolve: 0,
+		});
+		expect(out.totals.afterPr1660.liveSeatTokens).toMatchObject({
+			checked: 1,
+			wouldResolveAfter1660: 1,
+			wouldNotResolve: 0,
+		});
+		expect(JSON.stringify(out)).not.toMatch(/fromAllowList|tokenHash/);
+	});
+
+	test("a person token is not a seat: counted apart, never as a failure", async () => {
+		const t = createT();
+		await seedProfile(t, {
+			profileId: "p1",
+			slug: ACME.slug,
+			clerkOrgId: ACME.id,
+		});
+		await seedToken(t, {
+			n: "1",
+			profile: "p1",
+			slug: ACME.slug,
+			clerkOrgId: ACME.id,
+			expiresAt: Date.now() + HOUR,
+			principal: "person",
+		});
+		const out = await t.query(inventory, {});
+		expect(out.totals.livePersonTokens).toBe(1);
+		expect(out.totals.afterPr1660.liveSeatTokens.checked).toBe(0);
+	});
+
+	test("an empty-string clerkOrgId keys by slug and counts as without clerkOrgId", async () => {
+		const out = await oneCase({ profileOrg: "", tokenOrg: "" });
+		expect(out.totals.profilesWithoutClerkOrgId).toBe(1);
+		expect(out.totals.liveTokensWithoutClerkOrgId).toBe(1);
+		expect(out.perOrg.map((o) => o.org)).toEqual([ACME.slug]);
 	});
 });
