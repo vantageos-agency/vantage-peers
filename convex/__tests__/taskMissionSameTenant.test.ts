@@ -23,6 +23,7 @@ import {
 import { api } from "../_generated/api";
 import type { Id } from "../_generated/dataModel";
 import schema from "../schema";
+import { MISSION_OPEN_SCAN_CAP } from "../tasks";
 
 const modules = Object.fromEntries(
 	Object.entries(import.meta.glob("../**/*.ts")).filter(
@@ -267,6 +268,36 @@ describe("tasks:complete all-done count — same-tenant tasks only", () => {
 		);
 		const mine = await createIn(t, "org-a", missionId);
 		await foreignOpenTasks(t, missionId, 3);
+		await complete(t, mine);
+		expect((await t.run((ctx) => ctx.db.get(missionId)))?.status).toBe(
+			"complete",
+		);
+	});
+
+	test("fail closed: a mission with more rows than the scan cap is left open, never completed", async () => {
+		const t = makeT();
+		await seedOrgs(t);
+		const missionId = await t.run((ctx) =>
+			ctx.db.insert("missions", missionRow("org-a")),
+		);
+		const mine = await createIn(t, "org-a", missionId);
+		// Every extra row is another tenant's, so none of them blocks by tenant:
+		// only the cap can keep the mission open.
+		await foreignOpenTasks(t, missionId, MISSION_OPEN_SCAN_CAP + 1);
+		await complete(t, mine);
+		expect((await t.run((ctx) => ctx.db.get(missionId)))?.status).toBe(
+			"execute",
+		);
+	});
+
+	test("just under the cap, the same foreign rows do not hold the mission open", async () => {
+		const t = makeT();
+		await seedOrgs(t);
+		const missionId = await t.run((ctx) =>
+			ctx.db.insert("missions", missionRow("org-a")),
+		);
+		const mine = await createIn(t, "org-a", missionId);
+		await foreignOpenTasks(t, missionId, MISSION_OPEN_SCAN_CAP - 2);
 		await complete(t, mine);
 		expect((await t.run((ctx) => ctx.db.get(missionId)))?.status).toBe(
 			"complete",

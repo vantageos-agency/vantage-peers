@@ -146,6 +146,7 @@ import type * as migrations_restamp_clerk_ids from "../migrations/restamp_clerk_
 import type * as migrations_seat_binding_inventory from "../migrations/seat_binding_inventory.js";
 import type * as migrations_seed_client_scope_profiles from "../migrations/seed_client_scope_profiles.js";
 import type * as migrations_seed_task_closure_config from "../migrations/seed_task_closure_config.js";
+import type * as migrations_taskMissionTenantLinks from "../migrations/taskMissionTenantLinks.js";
 import type * as migrations_tenantOrgIdCoverage from "../migrations/tenantOrgIdCoverage.js";
 import type * as migrations_tokenRightsDrift from "../migrations/tokenRightsDrift.js";
 import type * as missionTemplates from "../missionTemplates.js";
@@ -325,6 +326,7 @@ declare const fullApi: ApiFromModules<{
   "migrations/seat_binding_inventory": typeof migrations_seat_binding_inventory;
   "migrations/seed_client_scope_profiles": typeof migrations_seed_client_scope_profiles;
   "migrations/seed_task_closure_config": typeof migrations_seed_task_closure_config;
+  "migrations/taskMissionTenantLinks": typeof migrations_taskMissionTenantLinks;
   "migrations/tenantOrgIdCoverage": typeof migrations_tenantOrgIdCoverage;
   "migrations/tokenRightsDrift": typeof migrations_tokenRightsDrift;
   missionTemplates: typeof missionTemplates;
