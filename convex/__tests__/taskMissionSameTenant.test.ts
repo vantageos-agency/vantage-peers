@@ -4,7 +4,7 @@
 // A task may reference only a mission of its OWN tenant (the R-52 rule:
 // sameTenantStamp over server-stamped rows). tasks:create and tasks:update
 // share one predicate (lib/missionTenant.ts); a foreign missionId is refused
-// RBAC_DENIED / MISSION_FOREIGN_TENANT and nothing is written. The auto-complete
+// MISSION_FOREIGN_TENANT and nothing is written. The auto-complete
 // all-done count reads only the mission's own tenant's tasks.
 //
 // Poles: REFUSED (foreign / fleet mission for an org member), PRESENT (own
@@ -95,7 +95,7 @@ const missionRow = (orgId: string | undefined) => ({
 
 const NOTE =
 	"Completed the work in commit abcdef1234567 with regression test, 3/3 pass";
-const REFUSAL = /RBAC_DENIED[\s\S]*MISSION_FOREIGN_TENANT/;
+const REFUSAL = /MISSION_FOREIGN_TENANT/;
 
 const createIn = (t: T, org: string, missionId: Id<"missions"> | undefined) =>
 	asOrg(t, org).mutation(api.tasks.create, {

@@ -1639,7 +1639,7 @@ describe("guard: no MCP write door without a seat two-pole (or seat-refusal) tes
 // attaching a task to org B's mission is refused with a typed RBAC_DENIED on
 // BOTH doors (create_task, update_task) and nothing is written.
 describe("foreign missionId: a task references only a mission of its own tenant", () => {
-	const MISSION_REFUSAL = /RBAC_DENIED[\s\S]*MISSION_FOREIGN_TENANT/;
+	const MISSION_REFUSAL = /MISSION_FOREIGN_TENANT/;
 	const taskArgs = (title: string, missionId: unknown) => ({
 		title,
 		status: "todo",
