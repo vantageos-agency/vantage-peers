@@ -151,6 +151,20 @@ describe("resolveSeatAgent follows the profile's agent ID, never a label", () =>
 		expect(agent).toBeNull();
 	});
 
+	test("REFUSED: a profile bound to a deactivated agent resolves nothing, a deactivated agent's seat resolves no one", async () => {
+		const t = createT();
+		const { clio } = await seed(t);
+		const before = await t.run((ctx) =>
+			resolveSeatAgent(ctx, tokenOf("bound-acme-a")),
+		);
+		expect(before?._id).toBe(clio);
+		await t.run((ctx) => ctx.db.patch(clio, { isActive: false }));
+		const after = await t.run((ctx) =>
+			resolveSeatAgent(ctx, tokenOf("bound-acme-a")),
+		);
+		expect(after).toBeNull();
+	});
+
 	test("ABSENT: a person token, an unknown profile and a token of another org resolve no agent", async () => {
 		const t = createT();
 		await seed(t);
@@ -173,6 +187,39 @@ describe("resolveSeatAgent follows the profile's agent ID, never a label", () =>
 				),
 			),
 		).toBeNull();
+	});
+});
+
+describe("liveSeatAgent for a stamped row", () => {
+	test("REFUSED: a row stamped with an agent that has since been deactivated resolves nothing", async () => {
+		const t = createT();
+		const { clio } = await seed(t);
+		const read = () =>
+			t.run(async (ctx) => {
+				const id = await ctx.db.insert("oauth_access_tokens", {
+					tokenHash: `h-stamped-${Math.random()}`,
+					clientId: "c",
+					userId: "clio-2",
+					scopes: ["mcp:full"],
+					scopeProfile: "bound-acme-a",
+					fromAllowList: ["clio-2"],
+					agentId: clio,
+					namespaceReadPrefixes: [],
+					namespaceWritePrefixes: [],
+					expiresAt: NOW + 1000,
+					createdAt: NOW,
+					clerkOrgSlug: "acme-a",
+					clerkOrgId: ORG_A,
+				});
+				const row = await ctx.db.get(id);
+				return row ? await liveSeatAgent(ctx, row) : "no-row";
+			});
+		const before = await read();
+		expect(before === null || before === "no-row" ? before : before._id).toBe(
+			clio,
+		);
+		await t.run((ctx) => ctx.db.patch(clio, { isActive: false }));
+		expect(await read()).toBeNull();
 	});
 });
 
