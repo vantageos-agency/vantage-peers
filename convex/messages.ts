@@ -73,6 +73,7 @@ import {
 	fetchUnreadReceipts,
 	ownsReceipt,
 	ownsSentMessage,
+	rbacDenied,
 	resolveInboxReader,
 	taskVisibleTo,
 	UNCLAIMED_SERVICE_ACCOUNT_READS_EVERY_TENANT,
@@ -959,17 +960,18 @@ async function sendMessageCore(
 			// but outside the sender's reach, is a refusal of the caller's rights
 			// (RBAC_DENIED) - deliberately the same bytes for "unknown" and
 			// "not yours", so a refusal does not disclose which roles exist.
-			const bounce = (
-				code: "INVALID_RECIPIENTS" | "RBAC_DENIED" = "RBAC_DENIED",
-				reason = "recipient-not-addressable",
-			) => {
-				throw new ConvexError(
-					`${code}: recipient error / message non livré : "${channel}" ne correspond à aucun destinataire de l'organisation. Formes valides : <role existant> | <instance> | broadcast | liste "eta,pi". — ${JSON.stringify({ reason, door: SEND_DOOR })}`,
-				);
+			const bounceText = `recipient error / message non livré : "${channel}" ne correspond à aucun destinataire de l'organisation. Formes valides : <role existant> | <instance> | broadcast | liste "eta,pi".`;
+			const bounce = (invalidForm?: "no-recipient" | "only-self"): never => {
+				if (invalidForm !== undefined) {
+					throw new ConvexError(
+						`INVALID_RECIPIENTS: ${bounceText} — ${JSON.stringify({ reason: invalidForm, door: SEND_DOOR })}`,
+					);
+				}
+				throw rbacDenied(SEND_DOOR, "recipient-not-addressable", bounceText);
 			};
 
 			if (rawParts.length === 0) {
-				bounce("INVALID_RECIPIENTS", "no-recipient");
+				bounce("no-recipient");
 			}
 			for (const part of rawParts) {
 				if (part === args.from) continue; // sender excluding itself never needs to resolve
@@ -999,7 +1001,7 @@ async function sendMessageCore(
 
 			recipients = rawParts.filter((s) => s !== args.from);
 			if (recipients.length === 0) {
-				bounce("INVALID_RECIPIENTS", "only-self");
+				bounce("only-self");
 			}
 		}
 
