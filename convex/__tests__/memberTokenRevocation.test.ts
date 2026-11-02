@@ -475,6 +475,26 @@ describe("B - rotateRefreshToken refuses a person with no live membership", () =
 		await seedOrgs(t);
 		await seedProfile(t, "clio-acme-team", ORG);
 		await seedRefresh(t, "ref-seat", "clio", "clio-acme-team");
+		// A seat's first access token sits beside its first refresh token and
+		// carries the family's permanent org ID (task k175gb5yzb6p7y46n63t9x987d8hes7f).
+		await t.run((ctx) =>
+			ctx.db.insert("oauth_access_tokens", {
+				tokenHash: sha("lineage-ref-seat"),
+				clientId: "dcr-client",
+				userId: "clio",
+				scopes: ["mcp:full"],
+				scopeProfile: "clio-acme-team",
+				fromAllowList: ["seat"],
+				namespaceReadPrefixes: [],
+				namespaceWritePrefixes: [],
+				expiresAt: FAR,
+				createdAt: Date.now(),
+				refreshTokenHash: sha("ref-seat"),
+				familyId: sha("ref-seat"),
+				clerkOrgSlug: ORG,
+				clerkOrgId: testClerkOrgId(ORG),
+			}),
+		);
 		const out = await asService(t).mutation(
 			api.oauth.rotateRefreshToken,
 			rotation("ref-seat", "clio-acme-team", ORG),
