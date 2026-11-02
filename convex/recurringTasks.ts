@@ -660,13 +660,9 @@ export const pause = mutation({
 		// (task k170ahhzv5dsczsgsh20mr4fah8hfbk4). authorizeScheduleActor below
 		// serves the master, the creator or assignee agent BY ID, or a writer member.
 		const scope = await proveScheduleCaller(ctx, args);
-		// A non-master caller with no organisation is refused BEFORE the row is
+		// An unresolvable or pre-organisation caller is refused BEFORE the row is
 		// read, so a stranger cannot tell a real schedule id from an absent one.
-		if (!scope.isMaster && scope.orgSlug === null) {
-			throw new ConvexError(
-				"RBAC_DENIED: recurringTasks:pause requires an organisation — a non-master caller with none is refused",
-			);
-		}
+		requireResolvedCaller(scope, "recurringTasks:pause", { alsoRefusePreOrg: true });
 		const taskId = requireId(
 			ctx,
 			"recurringTasks",
@@ -700,13 +696,9 @@ export const resume = mutation({
 		// write-contract: MCP-transport-only — issued via mcp-server client.mutation("recurringTasks:resume", …) at mcp-server/src/tools.ts:6836 (imperative), 0 hits in vantage-peers-dashboard {app,components,hooks,lib,contexts,providers} (measured 2026-10-01 at origin/main e2dc58f and 0466fac); never a subscribing pre-org client shell. The no-org throw is a refusal at an imperative MCP call, never at a render.
 		// The only gate is authorizeScheduleActor below — see pause above.
 		const scope = await proveScheduleCaller(ctx, args);
-		// A non-master caller with no organisation is refused BEFORE the row is
+		// An unresolvable or pre-organisation caller is refused BEFORE the row is
 		// read, so a stranger cannot tell a real schedule id from an absent one.
-		if (!scope.isMaster && scope.orgSlug === null) {
-			throw new ConvexError(
-				"RBAC_DENIED: recurringTasks:resume requires an organisation — a non-master caller with none is refused",
-			);
-		}
+		requireResolvedCaller(scope, "recurringTasks:resume", { alsoRefusePreOrg: true });
 		const taskId = requireId(
 			ctx,
 			"recurringTasks",
@@ -742,13 +734,9 @@ export const remove = mutation({
 		// write-contract: MCP-transport-only — issued via mcp-server client.mutation("recurringTasks:remove", …) at mcp-server/src/tools.ts:6873 (imperative), 0 hits in vantage-peers-dashboard {app,components,hooks,lib,contexts,providers} (measured 2026-10-01 at origin/main e2dc58f and 0466fac); never a subscribing pre-org client shell. The no-org throw is a refusal at an imperative MCP call, never at a render.
 		// The only gate is authorizeScheduleActor below — see pause above.
 		const scope = await proveScheduleCaller(ctx, args);
-		// A non-master caller with no organisation is refused BEFORE the row is
+		// An unresolvable or pre-organisation caller is refused BEFORE the row is
 		// read, so a stranger cannot tell a real schedule id from an absent one.
-		if (!scope.isMaster && scope.orgSlug === null) {
-			throw new ConvexError(
-				"RBAC_DENIED: recurringTasks:remove requires an organisation — a non-master caller with none is refused",
-			);
-		}
+		requireResolvedCaller(scope, "recurringTasks:remove", { alsoRefusePreOrg: true });
 		const taskId = requireId(
 			ctx,
 			"recurringTasks",
