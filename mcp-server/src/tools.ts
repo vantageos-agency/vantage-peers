@@ -7739,7 +7739,11 @@ export function registerTools(
 	defineTool(
 		server,
 		authCtx,
-		{ kind: "master" },
+		{
+			kind: "public",
+			reason:
+				"decided by its Convex door recurringTasks:pause (authorizeScheduleActor) on the acting agent resolved BY ID from the credential (verifiedActor, forwarded by the wrapped client): the schedule's creator or assignee, in the schedule's own organisation; the tool takes no acting name and relays the door's refusal unchanged (task k170ahhzv5dsczsgsh20mr4fah8hfbk4)",
+		},
 		"pause_recurring_task",
 		"Pause a recurring task template to stop auto-creating tasks until explicitly resumed. " +
 			"WHEN: use during holidays, freezes, or when the assignee is unavailable for a period. " +
@@ -7754,9 +7758,10 @@ export function registerTools(
 			title: "Pause recurring task",
 		},
 		async ({ taskId }) => {
-			// C0.6: cron infrastructure — master scope only
-			const masterDenied = guardMasterOnly("pause_recurring_task");
-			if (masterDenied) return masterDenied;
+			// Who may act is the Convex door's decision, on the forwarded agent ID;
+			// no MCP-side re-decision. Absence is never served.
+			const unresolved = guardResolvedCaller("pause_recurring_task");
+			if (unresolved) return unresolved;
 			try {
 				const result = await convex.mutation("recurringTasks:pause" as any, {
 					taskId: taskId as any,
@@ -7776,7 +7781,11 @@ export function registerTools(
 	defineTool(
 		server,
 		authCtx,
-		{ kind: "master" },
+		{
+			kind: "public",
+			reason:
+				"decided by its Convex door recurringTasks:resume (authorizeScheduleActor) on the acting agent resolved BY ID from the credential (verifiedActor, forwarded by the wrapped client): the schedule's creator or assignee, in the schedule's own organisation; the tool takes no acting name and relays the door's refusal unchanged (task k170ahhzv5dsczsgsh20mr4fah8hfbk4)",
+		},
 		"resume_recurring_task",
 		"Resume a paused recurring task template and recalculate its next scheduled run time. " +
 			"WHEN: use after a pause period ends to re-enable automatic task generation. " +
@@ -7791,9 +7800,10 @@ export function registerTools(
 			title: "Resume recurring task",
 		},
 		async ({ taskId }) => {
-			// C0.6: cron infrastructure — master scope only
-			const masterDenied = guardMasterOnly("resume_recurring_task");
-			if (masterDenied) return masterDenied;
+			// Who may act is the Convex door's decision, on the forwarded agent ID;
+			// no MCP-side re-decision. Absence is never served.
+			const unresolved = guardResolvedCaller("resume_recurring_task");
+			if (unresolved) return unresolved;
 			try {
 				const result = await convex.mutation("recurringTasks:resume" as any, {
 					taskId: taskId as any,
@@ -7812,12 +7822,16 @@ export function registerTools(
 
 	// oracle-justified: a hard DELETE where pause_recurring_task is an active=false TRANSITION on the same row;
 	//   both doors read memberWriterRoles through resolveHumanActor (convex/lib/humanActor.ts), but
-	//   recurringTasks:remove also requires org:admin for a human (adminOnly) and stays master-only for the
-	//   MCP caller, because a deleted schedule cannot be restored and stops all future task generation.
+	//   recurringTasks:remove also requires org:admin for a human and, for an agent, the CREATOR by ID
+	//   (adminOnly, authorizeScheduleActor), because a deleted schedule cannot be restored.
 	defineTool(
 		server,
 		authCtx,
-		{ kind: "master" },
+		{
+			kind: "public",
+			reason:
+				"decided by its Convex door recurringTasks:remove (authorizeScheduleActor, adminOnly) on the acting agent resolved BY ID from the credential (verifiedActor, forwarded by the wrapped client): the schedule's creator only, in the schedule's own organisation; the tool takes no acting name and relays the door's refusal unchanged (task k170ahhzv5dsczsgsh20mr4fah8hfbk4)",
+		},
 		"delete_recurring_task",
 		"Permanently delete a recurring task template, stopping all future scheduled task generation. " +
 			"WHEN: use when a recurring process is retired and should never generate tasks again. " +
@@ -7832,9 +7846,10 @@ export function registerTools(
 			title: "Delete recurring task",
 		},
 		async ({ taskId }) => {
-			// C0.6: cron infrastructure — master scope only
-			const masterDenied = guardMasterOnly("delete_recurring_task");
-			if (masterDenied) return masterDenied;
+			// Who may act is the Convex door's decision, on the forwarded agent ID;
+			// no MCP-side re-decision. Absence is never served.
+			const unresolved = guardResolvedCaller("delete_recurring_task");
+			if (unresolved) return unresolved;
 			try {
 				const result = await convex.mutation("recurringTasks:remove" as any, {
 					taskId: taskId as any,

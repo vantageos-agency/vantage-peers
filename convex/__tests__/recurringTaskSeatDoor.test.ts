@@ -150,13 +150,25 @@ describe("a seat acting for its own organisation reaches its own schedules", () 
 			const id = await createdByMimir();
 			expect(await outcome(call(door, id, {}))).toBe("SERVED");
 		});
+
+		test(`${door}: a bearer acting for the org with NO agent proof is refused (never the fleet), row unchanged`, async () => {
+			const id = await createdByMimir();
+			expect(
+				await outcome(call(door, id, { __actingOrg: testClerkOrgId(A) })),
+			).toBe("RBAC_DENIED");
+			const row = await rowOf(id);
+			expect(row?.title).toBe("relance");
+			expect(row?.active).toBe(true);
+		});
 	}
 
 	test("pause / resume: the ASSIGNEE seat is served; remove: the assignee is refused (creator only)", async () => {
 		const id = await createdByMimir();
 		expect(await outcome(call("pause", id, seat(A, vera)))).toBe("SERVED");
 		expect(await outcome(call("resume", id, seat(A, vera)))).toBe("SERVED");
-		expect(await outcome(call("remove", id, seat(A, vera)))).toBe("RBAC_DENIED");
+		expect(await outcome(call("remove", id, seat(A, vera)))).toBe(
+			"RBAC_DENIED",
+		);
 		expect(await rowOf(id)).not.toBeNull();
 	});
 });

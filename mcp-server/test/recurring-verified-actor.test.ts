@@ -233,7 +233,11 @@ afterEach(() => {
 
 describe("create_recurring_task forwards the seat's agent", () => {
 	it("a seat for clio-acme-hr: the door receives clio's ID and org, creator derived from the seat", async () => {
-		const r = await postAsSeat("create_recurring_task", TOKENS.clioSeat, CREATE);
+		const r = await postAsSeat(
+			"create_recurring_task",
+			TOKENS.clioSeat,
+			CREATE,
+		);
 		expect(r.text).not.toContain("Forbidden");
 		expect(r.refused, r.text).toBe(false);
 		const create = r.calls.find((c) => c.name === "recurringTasks:create");
@@ -258,10 +262,14 @@ describe("create_recurring_task forwards the seat's agent", () => {
 	});
 
 	it("an agent of another org cannot assign into acme-hr: vera is not on its roster, nothing dispatched", async () => {
-		const r = await postAsSeat("create_recurring_task", TOKENS.otherOrgStamped, {
-			...CREATE,
-			assignedTo: "vera",
-		});
+		const r = await postAsSeat(
+			"create_recurring_task",
+			TOKENS.otherOrgStamped,
+			{
+				...CREATE,
+				assignedTo: "vera",
+			},
+		);
 		expect(r.refused).toBe(true);
 		expect(r.text).toContain("not a member of the caller's organisation");
 		expect(r.calls.filter((c) => c.name === "recurringTasks:create")).toEqual(
@@ -270,10 +278,14 @@ describe("create_recurring_task forwards the seat's agent", () => {
 	});
 
 	it("the same name from another org that has its own clio forwards ITS ID, never acme-hr's", async () => {
-		const r = await postAsSeat("create_recurring_task", TOKENS.otherOrgStamped, {
-			...CREATE,
-			assignedTo: "clio",
-		});
+		const r = await postAsSeat(
+			"create_recurring_task",
+			TOKENS.otherOrgStamped,
+			{
+				...CREATE,
+				assignedTo: "clio",
+			},
+		);
 		const create = r.calls.find((c) => c.name === "recurringTasks:create");
 		expect(create?.args.verifiedActor).toEqual({
 			agentId: CLIO_OTHER_ORG_ID,
@@ -315,8 +327,16 @@ describe("the schedule doors forward the acting agent of a credential-bearing be
 
 	for (const [tool, door, args] of [
 		["pause_recurring_task", "recurringTasks:pause", { taskId: RECURRING_ID }],
-		["resume_recurring_task", "recurringTasks:resume", { taskId: RECURRING_ID }],
-		["delete_recurring_task", "recurringTasks:remove", { taskId: RECURRING_ID }],
+		[
+			"resume_recurring_task",
+			"recurringTasks:resume",
+			{ taskId: RECURRING_ID },
+		],
+		[
+			"delete_recurring_task",
+			"recurringTasks:remove",
+			{ taskId: RECURRING_ID },
+		],
 		[
 			"update_recurring_task",
 			"recurringTasks:update",
@@ -342,15 +362,15 @@ describe("the schedule doors forward the acting agent of a credential-bearing be
 		expect(call?.args).not.toHaveProperty("verifiedActor");
 	});
 
-	it("the master-only gate on pause stays: a seat is still refused, nothing dispatched", async () => {
+	// Task k170ahhzv5dsczsgsh20mr4fah8hfbk4: the MCP master gate is gone; a seat
+	// reaches the door with its own agent ID and the door decides by ID.
+	it("a seat reaches recurringTasks:pause with its own agent ID (no MCP master gate)", async () => {
 		const r = await postAsSeat("pause_recurring_task", TOKENS.clioSeat, {
 			taskId: RECURRING_ID,
 		});
-		expect(r.refused).toBe(true);
-		expect(r.text).toContain("Forbidden");
-		expect(r.calls.filter((c) => c.name.startsWith("recurringTasks:"))).toEqual(
-			[],
-		);
+		expect(r.text).not.toMatch(/requires master scope/);
+		const call = r.calls.find((c) => c.name === "recurringTasks:pause");
+		expect(call?.args.verifiedActor).toEqual(expected);
 	});
 });
 
