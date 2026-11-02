@@ -64,6 +64,37 @@ function harness(stored: string[]) {
 	return { handlers, calls };
 }
 
+describe("block_task blockedBy (task k17adacqev89cc8pzkgaz5fn9s8hdee0)", () => {
+	it("APPEND + REPORT: blockedBy goes as addDependsOn (no dependsOn) and the stored list is reported", async () => {
+		const h = harness([A, B]);
+		const res = await h.handlers.get("block_task")?.({
+			taskId: TASK,
+			reason: "waiting",
+			blockedBy: [B],
+			blockedOnTaskId: B,
+			blockedCause: "peer_task",
+			callerOrchestrator: "sigma",
+		});
+		expect(res?.isError, res?.content[0]?.text).not.toBe(true);
+		const upd = h.calls.filter((c) => c.name === "tasks:update");
+		expect(upd).toHaveLength(1);
+		expect(upd[0]?.args.addDependsOn).toEqual([B]);
+		expect("dependsOn" in (upd[0]?.args ?? {})).toBe(false);
+		expect(JSON.parse(res?.content[0]?.text ?? "{}").dependsOn).toEqual([A, B]);
+	});
+
+	it("NO blockedBy: no tasks:update call and no dependsOn key in the answer", async () => {
+		const h = harness([A]);
+		const res = await h.handlers.get("block_task")?.({
+			taskId: TASK,
+			reason: "# blocked-on-nobody: waiting on the operator",
+			callerOrchestrator: "sigma",
+		});
+		expect(h.calls.some((c) => c.name === "tasks:update")).toBe(false);
+		expect("dependsOn" in JSON.parse(res?.content[0]?.text ?? "{}")).toBe(false);
+	});
+});
+
 describe("add_task_dependency", () => {
 	it("APPEND + REPORT: sends addDependsOn (no dependsOn) and reports the stored list", async () => {
 		const h = harness([A, B, C]);
