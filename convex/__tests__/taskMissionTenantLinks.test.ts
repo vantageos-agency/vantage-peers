@@ -22,6 +22,12 @@ const modules = Object.fromEntries(
 );
 const makeT = () => convexTest(schema, modules);
 type T = ReturnType<typeof makeT>;
+type PageResult = {
+	examined: number;
+	foreign: number;
+	truncated: boolean;
+	nextCursor: string | null;
+};
 
 const stamp = (org: string | undefined) =>
 	org === undefined ? {} : { orgId: org, clerkOrgId: testClerkOrgId(org) };
@@ -123,12 +129,13 @@ describe("migrations/taskMissionTenantLinks:count", () => {
 		let pages = 0;
 		let firstTruncated: boolean | undefined;
 		do {
-			const out: Awaited<
-				ReturnType<typeof t.query<typeof internal.migrations.taskMissionTenantLinks.count>>
-			> = await t.query(internal.migrations.taskMissionTenantLinks.count, {
-				limit: 4,
-				...(cursor !== null ? { cursor } : {}),
-			});
+			const out: PageResult = await t.query(
+				internal.migrations.taskMissionTenantLinks.count,
+				{
+					limit: 4,
+					...(cursor !== null ? { cursor } : {}),
+				},
+			);
 			if (firstTruncated === undefined) firstTruncated = out.truncated;
 			foreign += out.foreign;
 			examined += out.examined;
