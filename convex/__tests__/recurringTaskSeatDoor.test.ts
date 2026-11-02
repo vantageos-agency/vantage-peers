@@ -172,3 +172,41 @@ describe("a seat acting for its own organisation reaches its own schedules", () 
 		expect(await rowOf(id)).not.toBeNull();
 	});
 });
+
+// The pre-row refusal is requireResolvedCaller (task k170ahhzv5dsczsgsh20mr4fah8hfbk4),
+// replacing an open-coded `!isMaster && orgSlug === null` throw. Edge case: that
+// old predicate also caught a non-master scope with no org that is neither
+// anonymous nor refused; withOrgScope builds no such scope on these doors, and
+// authorizeScheduleActor would still refuse one (human path, no org). These poles
+// pin what IS reachable: no existence oracle, same refusal for a live and an
+// absent id, and the row untouched.
+describe("a caller with no organisation, or no identity, learns nothing about a schedule id", () => {
+	const absentId = async () => {
+		const id = await createdByMimir();
+		await t.run((ctx) => ctx.db.delete(id));
+		return id;
+	};
+	for (const door of ["pause", "resume", "remove"] as const) {
+		test(`${door}: signed in with no organisation -> the same refusal for a live and an absent id`, async () => {
+			const noOrg = t.withIdentity({ subject: "user-without-org" });
+			const live = await createdByMimir();
+			const gone = await absentId();
+			const run = (id: Id<"recurringTasks">) =>
+				outcome(noOrg.mutation(api.recurringTasks[door], { taskId: id }));
+			expect(await run(live)).toBe("RBAC_DENIED");
+			expect(await run(gone)).toBe("RBAC_DENIED");
+			const row = await rowOf(live);
+			expect(row?.active).toBe(true);
+		});
+
+		test(`${door}: no identity -> the same refusal for a live and an absent id`, async () => {
+			const live = await createdByMimir();
+			const gone = await absentId();
+			const run = (id: Id<"recurringTasks">) =>
+				outcome(t.mutation(api.recurringTasks[door], { taskId: id }));
+			expect(await run(live)).toBe(await run(gone));
+			expect(await run(live)).not.toBe("SERVED");
+			expect((await rowOf(live))?.active).toBe(true);
+		});
+	}
+});
