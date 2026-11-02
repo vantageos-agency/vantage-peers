@@ -1055,21 +1055,13 @@ function checkOwnNamespaces(ctx: OAuthContext, namespace: string): boolean {
  * owns no agent namespace and no extra project namespace.
  */
 export function ownNamespacesOf(
-	base: Pick<OAuthContext, "seatAgent" | "clerkOrgSlug">,
-	actor: OAuthContext["actor"],
+	agentId: string | undefined,
 	principalOrgSlug: string | null,
 ): Pick<OAuthContext, "ownAgentNamespace" | "ownProjectNamespace"> {
 	// The master bearer arrives with no principal org (null) and owns everything by
 	// its "*" prefixes: it derives nothing here.
 	if (principalOrgSlug === null || principalOrgSlug === "") return {};
-	// The actor's org was already judged against the principal's: a credential of
-	// another org is a 403 in resolveActorFromRequest, and a personal agent is
-	// resolved by Convex inside the token's own organisation. No local comparison.
-	const agentId =
-		actor?.agentId !== undefined && actor.agentId !== ""
-			? actor.agentId
-			: seatAgentOf(base)?.agentId;
-	if (agentId === undefined) return {};
+	if (agentId === undefined || agentId === "") return {};
 	return {
 		ownAgentNamespace: `orchestrator/${agentId}`,
 		ownProjectNamespace: `project/${principalOrgSlug}`,
@@ -1436,7 +1428,14 @@ export function bearerAuthMiddleware(): MiddlewareHandler {
 				: base;
 			c.set("oauthContext", {
 				...withActor,
-				...ownNamespacesOf(withActor, withActor.actor, principalOrgSlug),
+				// The agent ID this path verified: the credential Convex resolved (also a
+				// person's resolved personal agent), else the seat stamp. The actor's org
+				// was judged where it was resolved (a credential of another org is a 403
+				// in resolveActorFromRequest); no local comparison here.
+				...ownNamespacesOf(
+					withActor.actor?.agentId ?? seatAgentOf(withActor)?.agentId,
+					principalOrgSlug,
+				),
 			});
 			await next();
 			return undefined;
