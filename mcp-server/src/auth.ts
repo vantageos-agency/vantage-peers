@@ -170,6 +170,13 @@ export type OAuthContext = {
 	 */
 	seatAgent?: { agentId: string; orgId: string; agentName: string } | null;
 	/**
+	 * `orchestrator/<verified agent ID>`: the seat's own agent namespace, set at the
+	 * bearer boundary from the verified seat stamp only ({@link ownAgentNamespaceOfSeat}).
+	 * The namespace ceiling admits it besides the mint-time prefix snapshot, which
+	 * predates `orchestrator/<agentId>` for older seat tokens. Absent: no verified agent.
+	 */
+	ownAgentNamespace?: string;
+	/**
 	 * The agent a PERSON token designates (see {@link personalActorOf}); already
 	 * folded into {@link OAuthContext.actor} at the bearer boundary. Kept for
 	 * diagnosis only: no decision reads it.
@@ -599,7 +606,7 @@ export function actingClaimRefusal(
  * another org's agent is never an identity for this token.
  */
 export function seatAgentOf(
-	ctx: OAuthContext,
+	ctx: Pick<OAuthContext, "seatAgent" | "clerkOrgSlug">,
 ): { agentId: string; orgId: string; agentName: string } | undefined {
 	const seat = ctx.seatAgent;
 	if (seat === undefined || seat === null) return undefined;
@@ -608,6 +615,20 @@ export function seatAgentOf(
 		return undefined;
 	}
 	return seat;
+}
+
+/**
+ * The seat's own agent namespace field for a token context: `orchestrator/<agent
+ * ID>` from the verified seat stamp (`seatAgentOf`, believed only for the token's
+ * own org), or no field. Never from a name or a call argument.
+ */
+export function ownAgentNamespaceOfSeat(
+	ctx: Pick<OAuthContext, "seatAgent" | "clerkOrgSlug">,
+): { ownAgentNamespace: string } | Record<string, never> {
+	const seat = seatAgentOf(ctx);
+	return seat === undefined
+		? {}
+		: { ownAgentNamespace: `orchestrator/${seat.agentId}` };
 }
 
 /**
@@ -1020,18 +1041,6 @@ export function checkNamespacePrefix(
 	return false;
 }
 
-/**
- * The seat's OWN agent namespace, `orchestrator/<verified agent ID>`, or undefined
- * when the token resolved no agent. Derived only from the verified seat stamp on
- * the token row (`seatAgentOf`, believed only for the token's own org), never from
- * a name or a call argument. The ceiling admits it besides the mint-time snapshot,
- * which predates `orchestrator/<agentId>` for older seat tokens.
- */
-function ownAgentNamespaceOf(ctx: OAuthContext): string | undefined {
-	const seat = seatAgentOf(ctx);
-	return seat === undefined ? undefined : `orchestrator/${seat.agentId}`;
-}
-
 export function checkNamespaceRead(
 	ctx: OAuthContext | undefined,
 	namespace: string | undefined,
@@ -1069,7 +1078,7 @@ export function checkNamespaceRead(
 	) {
 		return null;
 	}
-	const ownAgentNs = ownAgentNamespaceOf(ctx);
+	const ownAgentNs = ctx.ownAgentNamespace;
 	if (ownAgentNs !== undefined && checkNamespacePrefix([ownAgentNs], namespace)) {
 		return null;
 	}
@@ -1084,7 +1093,7 @@ export function checkNamespaceWrite(
 	if (isMasterScope(ctx)) return null;
 	if (checkNamespacePrefix(ctx.namespaceWritePrefixes, namespace)) return null;
 	// The seat's own agent namespace by its verified agent ID (see ownAgentNamespaceOf).
-	const ownAgentNs = ownAgentNamespaceOf(ctx);
+	const ownAgentNs = ctx.ownAgentNamespace;
 	if (ownAgentNs !== undefined && checkNamespacePrefix([ownAgentNs], namespace)) {
 		return null;
 	}
@@ -1521,6 +1530,7 @@ export function bearerAuthMiddleware(): MiddlewareHandler {
 			return await attachContextAndProceed(
 				{
 					...oauth,
+					...ownAgentNamespaceOfSeat(oauth),
 					isMaster: false,
 					accessTokenHash: tokenHash,
 					...(personalActor !== undefined ? { actor: personalActor } : {}),
