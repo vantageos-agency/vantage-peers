@@ -146,6 +146,7 @@ import type * as migrations_seat_binding_inventory from "../migrations/seat_bind
 import type * as migrations_seed_client_scope_profiles from "../migrations/seed_client_scope_profiles.js";
 import type * as migrations_seed_task_closure_config from "../migrations/seed_task_closure_config.js";
 import type * as migrations_tenantOrgIdCoverage from "../migrations/tenantOrgIdCoverage.js";
+import type * as migrations_tokenRightsDrift from "../migrations/tokenRightsDrift.js";
 import type * as missionTemplates from "../missionTemplates.js";
 import type * as missions from "../missions.js";
 import type * as nameOnlyCalls from "../nameOnlyCalls.js";
@@ -323,6 +324,7 @@ declare const fullApi: ApiFromModules<{
   "migrations/seed_client_scope_profiles": typeof migrations_seed_client_scope_profiles;
   "migrations/seed_task_closure_config": typeof migrations_seed_task_closure_config;
   "migrations/tenantOrgIdCoverage": typeof migrations_tenantOrgIdCoverage;
+  "migrations/tokenRightsDrift": typeof migrations_tokenRightsDrift;
   missionTemplates: typeof missionTemplates;
   missions: typeof missions;
   nameOnlyCalls: typeof nameOnlyCalls;
