@@ -314,6 +314,23 @@ async function ownPole(org, stamp) {
 //  - Without one: single-agent fallback, said so in the output. A self-send is refused
 //    INVALID_RECIPIENTS, which is only reachable once the seat is resolved, so it proves the
 //    door resolves the seat but NOT that delivery works. RBAC_DENIED or any other error fails.
+// The recipient's inbox, as the real check_messages returns it (measured on a local backend
+// 2026-11-02): an array of { receiptId, from, fromId, channel, content, createdAt }. There is
+// NO message id in an entry, so the read-back matches the exact body (it carries a unique
+// timestamp) AND the sender's verified agent id (`fromId`). Body alone would pass for a
+// message from anyone; an id alone does not exist.
+function inboxHolds(text, marker, senderAgentId) {
+	try {
+		const parsed = JSON.parse(text);
+		const entries = Array.isArray(parsed) ? parsed : (parsed.messages ?? []);
+		return entries.some(
+			(m) => m.content === marker && m.fromId === senderAgentId,
+		);
+	} catch {
+		return false;
+	}
+}
+
 async function sendPole(org, stamp) {
 	const marker = `post-deploy-probe ${stamp} send ${org.label} (task ${TASK})`;
 	const second = org.second;
@@ -363,10 +380,8 @@ async function sendPole(org, stamp) {
 	record(
 		second.label,
 		`check_messages (recipient read-back of ${messageId})`,
-		!inbox.isError &&
-			inbox.text.includes(messageId) &&
-			inbox.text.includes(marker),
-		"the exact message id and body in the recipient's own inbox",
+		!inbox.isError && inboxHolds(inbox.text, marker, org.agentId),
+		"an inbox entry with the exact body, sent by the sender's agent id",
 		inbox.text,
 	);
 	const d = await call(org, "delete_message", { messageId });
