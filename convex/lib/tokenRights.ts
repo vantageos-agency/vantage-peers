@@ -44,6 +44,9 @@ export function grantOf(src: Record<GrantKey, string[]>): TokenRights {
 	};
 }
 
+/** The mapping field a person token's allowed senders come from. */
+const PERSON_FROM_FIELD = "allowedOrchestrators" as const;
+
 /** A legacy operator mint (no marker on the row) is read as pinned by its client id. */
 export const ADMIN_MINT_CLIENT_PREFIX = "admin-mint:";
 
@@ -118,17 +121,9 @@ export function profileTokenRights(
 	if (!isRightsPinned(row)) return grantOf(profile);
 	const live = grantOf(profile);
 	const copy = grantOf(row);
-	return {
-		fromAllowList: intersectEntries(copy.fromAllowList, live.fromAllowList),
-		namespaceReadPrefixes: intersectEntries(
-			copy.namespaceReadPrefixes,
-			live.namespaceReadPrefixes,
-		),
-		namespaceWritePrefixes: intersectEntries(
-			copy.namespaceWritePrefixes,
-			live.namespaceWritePrefixes,
-		),
-	};
+	const out = { ...live };
+	for (const k of GRANT_KEYS) out[k] = intersectEntries(copy[k], live[k]);
+	return out;
 }
 
 /**
@@ -143,7 +138,7 @@ export function personTokenRights(
 ): TokenRights {
 	const key = mapping.clerkOrgSlug;
 	return {
-		fromAllowList: mapping.allowedOrchestrators,
+		fromAllowList: mapping[PERSON_FROM_FIELD],
 		namespaceReadPrefixes: [`team/${key}`, `project/${key}`],
 		namespaceWritePrefixes: [`team/${key}`],
 	};
