@@ -174,6 +174,27 @@ describe("verifiedOrg keyed by the permanent org ID (bulkComplete preview)", () 
 		).rejects.toThrow(/RBAC_DENIED/);
 	});
 
+	test("INACTIVE org by orgId is REFUSED on a scoped read (member-scope door), the active one is served", async () => {
+		const t = createT();
+		await seedRenamedAndReused(t);
+		const read = (orgId: string, orgSlug: string) =>
+			asService(t).query(api.businessUnits.list, {
+				verifiedOrg: { orgSlug, orgId },
+			});
+		const served = await read(ORG_A_ID, "acme-new");
+		expect(Array.isArray(served.items)).toBe(true);
+		await t.run(async (ctx) => {
+			const a = await ctx.db
+				.query("client_org_mapping")
+				.withIndex("by_clerk_org_id", (q) => q.eq("clerkOrgId", ORG_A_ID))
+				.unique();
+			if (a !== null) await ctx.db.patch(a._id, { isActive: false });
+		});
+		await expect(read(ORG_A_ID, "acme-new")).rejects.toThrow(/RBAC_DENIED/);
+		// its stale slug now held by nobody active does not rescue it
+		await expect(read(ORG_A_ID, "acme")).rejects.toThrow(/RBAC_DENIED/);
+	});
+
 	test("an ordinary member naming an org by ID is still refused (the claim is the service account's only)", async () => {
 		const t = createT();
 		await seedRenamedAndReused(t);
