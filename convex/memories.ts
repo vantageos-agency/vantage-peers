@@ -14,7 +14,7 @@ import {
 } from "./lib/memoryTenant";
 import {
   isMemoryNamespaceAllowed,
-  memoryNamespaceRefusal,
+  memoryWritableRootsText,
   seatAgentIdOf,
 } from "./lib/seatNamespace";
 import type { Doc } from "./_generated/dataModel";
@@ -112,7 +112,7 @@ export const storeMemory = mutation({
     const ownAgent = await seatAgentIdOf(ctx, scope, args.verifiedActor);
     if (!isMemoryNamespaceAllowed(scope, args.namespace, ownAgent)) {
       throw new ConvexError(
-        memoryNamespaceRefusal(scope, args.namespace, ownAgent),
+        `RBAC_DENIED: caller may not write to namespace "${args.namespace}" — ${JSON.stringify({ orgSlug: scope.orgSlug })}. ${memoryWritableRootsText(scope, ownAgent)}`,
       );
     }
     // AUTHOR + TENANT STAMP (convex/lib/memoryTenant.ts, shared with the episode
