@@ -1050,8 +1050,8 @@ function checkOwnNamespaces(ctx: OAuthContext, namespace: string): boolean {
  * bearer branch (attachContextAndProceed), so no path carries its own carve-out.
  * The agent ID is the one the path VERIFIED: the credential Convex resolved
  * (`actor`, which also covers a person's resolved personal agent), else the seat
- * stamp. Never a name, never an argument. A non-master caller whose acting agent's
- * org is not the token's own org owns nothing. A caller with no verified agent
+ * stamp. Never a name, never an argument. The acting agent's org is judged where the
+ * actor is resolved (resolveActorFromRequest, the personal-agent resolver), not here. A caller with no verified agent
  * owns no agent namespace and no extra project namespace.
  */
 export function ownNamespacesOf(
@@ -1061,16 +1061,13 @@ export function ownNamespacesOf(
 ): Pick<OAuthContext, "ownAgentNamespace" | "ownProjectNamespace"> {
 	if (base.isMaster) return {};
 	if (principalOrgSlug === null || principalOrgSlug === "") return {};
-	let agentId: string | undefined;
-	if (
-		actor?.agentId !== undefined &&
-		actor.agentId !== "" &&
-		actor.orgSlug === principalOrgSlug
-	) {
-		agentId = actor.agentId;
-	} else {
-		agentId = seatAgentOf(base)?.agentId;
-	}
+	// The actor's org was already judged against the principal's: a credential of
+	// another org is a 403 in resolveActorFromRequest, and a personal agent is
+	// resolved by Convex inside the token's own organisation. No local comparison.
+	const agentId =
+		actor?.agentId !== undefined && actor.agentId !== ""
+			? actor.agentId
+			: seatAgentOf(base)?.agentId;
 	if (agentId === undefined) return {};
 	return {
 		ownAgentNamespace: `orchestrator/${agentId}`,

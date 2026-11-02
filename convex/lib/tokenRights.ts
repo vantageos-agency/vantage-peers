@@ -26,11 +26,23 @@ import type { Doc } from "../_generated/dataModel";
 // profile change because no profile change is copied onto a token any more.
 // ─────────────────────────────────────────────────────────────────────────────
 
-export type TokenRights = {
-	fromAllowList: string[];
-	namespaceReadPrefixes: string[];
-	namespaceWritePrefixes: string[];
-};
+/** The three grant fields a token row copies at mint and the MCP ceiling enforces. */
+export const GRANT_KEYS = [
+	"fromAllowList",
+	"namespaceReadPrefixes",
+	"namespaceWritePrefixes",
+] as const;
+export type GrantKey = (typeof GRANT_KEYS)[number];
+export type TokenRights = Record<GrantKey, string[]>;
+
+/** The grant fields of any row or request that carries them, by key. */
+export function grantOf(src: Record<GrantKey, string[]>): TokenRights {
+	return {
+		fromAllowList: src[GRANT_KEYS[0]],
+		namespaceReadPrefixes: src[GRANT_KEYS[1]],
+		namespaceWritePrefixes: src[GRANT_KEYS[2]],
+	};
+}
 
 /** A legacy operator mint (no marker on the row) is read as pinned by its client id. */
 export const ADMIN_MINT_CLIENT_PREFIX = "admin-mint:";
@@ -57,17 +69,26 @@ function sameSet(a: string[], b: string[]): boolean {
 
 /** Did a mint ask for something other than the profile's own rights? Decided on Convex, from the profile row. */
 export function mintNarrowsProfile(
-	requested: TokenRights,
-	profile: Pick<
-		Doc<"oauth_scope_profiles">,
-		"fromAllowList" | "namespaceReadPrefixes" | "namespaceWritePrefixes"
-	>,
+	requested: Record<GrantKey, string[]>,
+	profile: Record<GrantKey, string[]>,
 ): boolean {
-	return !(
-		sameSet(requested.fromAllowList, profile.fromAllowList) &&
-		sameSet(requested.namespaceReadPrefixes, profile.namespaceReadPrefixes) &&
-		sameSet(requested.namespaceWritePrefixes, profile.namespaceWritePrefixes)
-	);
+	return GRANT_KEYS.some((k) => !sameSet(requested[k], profile[k]));
+}
+
+/** What a rights change did to a row's copy: per key, entries gained and lost. */
+export function grantDelta(
+	copy: Record<GrantKey, string[]>,
+	derived: TokenRights,
+): Record<GrantKey, { gained: string[]; lost: string[] }> {
+	const one = (k: GrantKey) => ({
+		gained: derived[k].filter((x) => !copy[k].includes(x)),
+		lost: copy[k].filter((x) => !derived[k].includes(x)),
+	});
+	return {
+		fromAllowList: one("fromAllowList"),
+		namespaceReadPrefixes: one("namespaceReadPrefixes"),
+		namespaceWritePrefixes: one("namespaceWritePrefixes"),
+	};
 }
 
 export function isRightsPinned(
@@ -82,15 +103,8 @@ export function isRightsPinned(
  * (row gone, or re-pointed to another organisation than the token's).
  */
 export function profileTokenRights(
-	row: Pick<
-		Doc<"oauth_access_tokens">,
-		| "rightsPinned"
-		| "clientId"
-		| "clerkOrgId"
-		| "fromAllowList"
-		| "namespaceReadPrefixes"
-		| "namespaceWritePrefixes"
-	>,
+	row: Pick<Doc<"oauth_access_tokens">, "rightsPinned" | "clientId" | "clerkOrgId"> &
+		Record<GrantKey, string[]>,
 	profile: Doc<"oauth_scope_profiles"> | null,
 ): TokenRights | null {
 	if (profile === null) return null;
@@ -101,22 +115,18 @@ export function profileTokenRights(
 	) {
 		return null;
 	}
-	if (!isRightsPinned(row)) {
-		return {
-			fromAllowList: profile.fromAllowList,
-			namespaceReadPrefixes: profile.namespaceReadPrefixes,
-			namespaceWritePrefixes: profile.namespaceWritePrefixes,
-		};
-	}
+	if (!isRightsPinned(row)) return grantOf(profile);
+	const live = grantOf(profile);
+	const copy = grantOf(row);
 	return {
-		fromAllowList: intersectEntries(row.fromAllowList, profile.fromAllowList),
+		fromAllowList: intersectEntries(copy.fromAllowList, live.fromAllowList),
 		namespaceReadPrefixes: intersectEntries(
-			row.namespaceReadPrefixes,
-			profile.namespaceReadPrefixes,
+			copy.namespaceReadPrefixes,
+			live.namespaceReadPrefixes,
 		),
 		namespaceWritePrefixes: intersectEntries(
-			row.namespaceWritePrefixes,
-			profile.namespaceWritePrefixes,
+			copy.namespaceWritePrefixes,
+			live.namespaceWritePrefixes,
 		),
 	};
 }
@@ -127,17 +137,14 @@ export function profileTokenRights(
  * organisation's shared memory, WRITES only `team/<org key>`).
  */
 export function personTokenRights(
-	mapping: Pick<
-		Doc<"client_org_mapping">,
-		"clerkOrgSlug" | "allowedOrchestrators"
-	>,
+	mapping: Pick<Doc<"client_org_mapping">, "clerkOrgSlug"> & {
+		allowedOrchestrators: string[];
+	},
 ): TokenRights {
+	const key = mapping.clerkOrgSlug;
 	return {
 		fromAllowList: mapping.allowedOrchestrators,
-		namespaceReadPrefixes: [
-			`team/${mapping.clerkOrgSlug}`,
-			`project/${mapping.clerkOrgSlug}`,
-		],
-		namespaceWritePrefixes: [`team/${mapping.clerkOrgSlug}`],
+		namespaceReadPrefixes: [`team/${key}`, `project/${key}`],
+		namespaceWritePrefixes: [`team/${key}`],
 	};
 }
