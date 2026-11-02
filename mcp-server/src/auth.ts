@@ -1116,7 +1116,7 @@ export function checkNamespaceWrite(
 	if (!ctx) return NO_CONTEXT_REFUSAL;
 	if (isMasterScope(ctx)) return null;
 	if (checkNamespacePrefix(ctx.namespaceWritePrefixes, namespace)) return null;
-	// The seat's own agent namespace by its verified agent ID (see ownAgentNamespaceOf).
+	// The seat's own agent namespace by its verified agent ID (see ownNamespacesOf).
 	if (checkOwnNamespaces(ctx, namespace)) return null;
 	return `Forbidden: namespace='${namespace}' is not writable by scope_profile=${ctx.scopeProfile}.`;
 }
