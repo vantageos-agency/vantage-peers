@@ -159,7 +159,75 @@ def test_extra_local_branch_with_unpushed_commits_is_refused(world):
 def test_fetch_failure_is_refused_never_a_pass(world):
     path = world["clone"]("nofetch")
     world["origin"].rename(world["root"] / "origin-gone.git")
-    _refused(world["reap"](path), "git fetch --prune origin failed")
+    _refused(world["reap"](path), "git fetch of every origin head failed")
+    assert path.exists()
+
+
+# ---- (c)/(d) do not depend on the clone's configured refspec ---------------
+
+def _single_branch_clone_on_topic(world, name):
+    """A `--single-branch` clone of main whose HEAD is the pushed `topic` branch.
+
+    Its refspec is main-only, so `git fetch origin` never brings back topic and
+    refs/remotes/origin/* never contains HEAD.
+    """
+    env, root, origin = world["env"], world["root"], world["origin"]
+    seed = root / "seed"
+    if not _git("ls-remote", str(origin), "refs/heads/topic", cwd=root, env=env):
+        _git("checkout", "-q", "-b", "topic", cwd=seed, env=env)
+        (seed / "topic.txt").write_text("topic\n")
+        _git("add", "topic.txt", cwd=seed, env=env)
+        _git("commit", "-qm", "topic work", cwd=seed, env=env)
+        _git("push", "-q", "origin", "topic", cwd=seed, env=env)
+        _git("checkout", "-q", "main", cwd=seed, env=env)
+    path = root / name
+    _git("clone", "-q", "--single-branch", "-b", "main", str(origin), str(path),
+         cwd=root, env=env)
+    _git("fetch", "-q", "origin", "topic", cwd=path, env=env)
+    _git("checkout", "-q", "-b", "topic", "FETCH_HEAD", cwd=path, env=env)
+    refspec = _git("config", "--get-all", "remote.origin.fetch", cwd=path, env=env)
+    assert refspec == "+refs/heads/main:refs/remotes/origin/main"
+    remotes = _git("for-each-ref", "--contains", "HEAD", "refs/remotes/origin",
+                   cwd=path, env=env)
+    assert remotes == "", "fixture invalid: refs/remotes/origin already contains HEAD"
+    return path
+
+
+def test_single_branch_clone_on_a_pushed_non_main_branch_is_reaped(world):
+    path = _single_branch_clone_on_topic(world, "single")
+    proc = world["reap"](path)
+    assert proc.returncode == 0, proc.stderr
+    assert not path.exists()
+    assert proc.stdout.startswith(f"REAPED {path} (was ")
+
+
+def test_single_branch_clone_with_an_unpushed_commit_is_refused(world):
+    path = _single_branch_clone_on_topic(world, "single-unpushed")
+    env = world["env"]
+    (path / "topic.txt").write_text("local only\n")
+    _git("commit", "-qam", "unpushed", cwd=path, env=env)
+    _refused(world["reap"](path), "is on no origin branch")
+    assert path.exists()
+
+
+def test_a_leftover_check_namespace_cannot_vouch_and_is_cleared_on_refusal(world):
+    path = world["clone"]("planted")
+    env = world["env"]
+    (path / "README").write_text("local\n")
+    _git("commit", "-qam", "local only", cwd=path, env=env)
+    _git("update-ref", "refs/reap-check/planted", "HEAD", cwd=path, env=env)
+    _refused(world["reap"](path), "is on no origin branch")
+    assert path.exists()
+    assert _git("for-each-ref", "refs/reap-check/", cwd=path, env=env) == ""
+
+
+def test_a_stale_remote_tracking_ref_cannot_vouch(world):
+    path = world["clone"]("stale")
+    env = world["env"]
+    (path / "README").write_text("local\n")
+    _git("commit", "-qam", "local only", cwd=path, env=env)
+    _git("update-ref", "refs/remotes/origin/ghost", "HEAD", cwd=path, env=env)
+    _refused(world["reap"](path), "is on no origin branch")
     assert path.exists()
 
 

@@ -108,12 +108,29 @@ reap_standalone() {
   dirty=$(git -C "$real" status --porcelain --untracked-files=all 2>/dev/null) || die "standalone: cannot read the status of $real"
   [ -z "$dirty" ] || die "standalone: $(printf '%s\n' "$dirty" | wc -l) changed or untracked file(s) in $real — decide them first"
 
-  # (c) a fresh fetch, then HEAD must be on an origin branch. A failed fetch is a refusal.
+  # (c) a fresh fetch of EVERY origin head, then HEAD must be on one of them.
+  #
+  # Not `git fetch --prune origin`: a single-branch clone's configured refspec is
+  # `+refs/heads/main:refs/remotes/origin/main` only, so that fetch never brings back
+  # the branch its HEAD was pushed to and a pushed HEAD would read as lost (measured on
+  # real leftovers). Every head is fetched explicitly into a throwaway namespace,
+  # whatever the clone's refspec, and only that fresh namespace is trusted: a stale
+  # refs/remotes/origin/* entry can no longer vouch for content. The namespace is
+  # emptied BEFORE the fetch (a leftover from an earlier run must not pass) and on
+  # every exit, refusal included. A failed fetch is a refusal, never a pass.
   git -C "$real" remote get-url origin >/dev/null 2>&1 || die "standalone: $real has no origin remote"
-  GIT_TERMINAL_PROMPT=0 timeout 120 git -C "$real" fetch --prune --quiet origin >/dev/null 2>&1 \
-    || die "standalone: git fetch --prune origin failed in $real — cannot prove its content is on origin"
+  check_ns=refs/reap-check
+  clear_check_ns() {
+    git -C "$real" for-each-ref --format='delete %(refname)' "$check_ns/" 2>/dev/null \
+      | git -C "$real" update-ref --stdin 2>/dev/null
+  }
+  clear_check_ns
+  [ -z "$(git -C "$real" for-each-ref "$check_ns/" 2>/dev/null)" ] || die "standalone: cannot clear $check_ns/ in $real"
+  trap 'clear_check_ns' EXIT
+  GIT_TERMINAL_PROMPT=0 timeout 120 git -C "$real" fetch --no-tags --quiet origin "+refs/heads/*:$check_ns/*" >/dev/null 2>&1 \
+    || die "standalone: git fetch of every origin head failed in $real — cannot prove its content is on origin"
   head=$(git -C "$real" rev-parse --verify --quiet HEAD) || die "standalone: $real has no HEAD commit"
-  [ -n "$(git -C "$real" for-each-ref --contains "$head" --format='%(refname)' refs/remotes/origin)" ] \
+  [ -n "$(git -C "$real" for-each-ref --contains "$head" --format='%(refname)' "$check_ns/")" ] \
     || die "standalone: HEAD $head of $real is on no origin branch — content would be lost"
 
   # (d) nothing stashed, and every local branch tip is on an origin branch.
@@ -121,7 +138,7 @@ reap_standalone() {
   [ -z "$stashes" ] || die "standalone: $(printf '%s\n' "$stashes" | wc -l) stash entr(y/ies) in $real — content would be lost"
   while IFS=' ' read -r tip ref; do
     [ -n "$tip" ] || continue
-    [ -n "$(git -C "$real" for-each-ref --contains "$tip" --format='%(refname)' refs/remotes/origin)" ] \
+    [ -n "$(git -C "$real" for-each-ref --contains "$tip" --format='%(refname)' "$check_ns/")" ] \
       || die "standalone: local branch ${ref#refs/heads/} ($tip) of $real has commits on no origin branch — content would be lost"
   done <<EOF
 $(git -C "$real" for-each-ref --format='%(objectname) %(refname)' refs/heads || echo "unreadable refs/heads")
@@ -130,6 +147,7 @@ EOF
   echo "perimeter: a clean standalone clone under $root whose content is on origin" >&2
   before=$(df -k --output=avail / | tail -1)
   size=$(du -sh -- "$real" 2>/dev/null | cut -f1)
+  trap - EXIT
   command rm -rf -- "$real"
   [ -e "$real" ] && die "still present after removal: $real"
   after=$(df -k --output=avail / | tail -1)
