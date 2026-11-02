@@ -55,11 +55,18 @@
 // - Throughput is bounded by OpenAI rate limits. Use limit=100–200 per batch
 //   and pace if you hit 429s.
 
-import { v } from "convex/values";
+import { ConvexError, v } from "convex/values";
 import { internalQuery, internalMutation } from "../_generated/server";
 import { internal } from "../_generated/api";
 
 const REINDEX_PAGE_SIZE = 200;
+
+// The most rows `countByPeriod` will read for one window. `memories` has no
+// createdAt index, so the read is a scan; rather than collect without a bound
+// (and let the platform read cap cut it short with no word about what would
+// narrow it), the query reads at most this many matching rows plus one and
+// REFUSES when the window holds more. The operator narrows startMs / endMs.
+export const COUNT_SCAN_CAP = 5000;
 
 // ─── countByPeriod ──────────────────────────────────────────────────────────
 // Read-only count of memories in [startMs, endMs]. Returns total + an average
@@ -78,7 +85,9 @@ export const countByPeriod = internalQuery({
 	}),
 	handler: async (ctx, args) => {
 		// `memories` has no createdAt index; scan + filter is acceptable here
-		// because this is a one-shot operator action.
+		// because this is a one-shot operator action, but the read is bounded:
+		// COUNT_SCAN_CAP + 1 matching rows at most, and an overflow is a refusal,
+		// never a smaller count passed off as the whole window.
 		const rows = await ctx.db
 			.query("memories")
 			.filter((q) =>
@@ -87,7 +96,13 @@ export const countByPeriod = internalQuery({
 					q.lte(q.field("createdAt"), args.endMs),
 				),
 			)
-			.collect();
+			.take(COUNT_SCAN_CAP + 1);
+
+		if (rows.length > COUNT_SCAN_CAP) {
+			throw new ConvexError(
+				`COUNT_SCAN_CAP_EXCEEDED: more than ${COUNT_SCAN_CAP} memories fall in [${args.startMs}, ${args.endMs}], so the count would be incomplete; refusing. Narrow startMs / endMs and count the window in several runs.`,
+			);
+		}
 
 		const count = rows.length;
 		const totalChars = rows.reduce((sum, r) => sum + r.content.length, 0);

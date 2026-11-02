@@ -948,6 +948,11 @@ export default defineSchema({
 	// the only readers are the briefingNotes read doors, AFTER they have decided the
 	// caller may see the note (convex/briefingNoteBodies.ts), so the table carries no
 	// tenant column of its own: its tenant is the note it belongs to.
+	// JUSTIFIED: the backend-doctor loader skips every __tests__ directory, so R-45
+	// cannot see the bracketing test. It is convex/__tests__/judgement.twoPoles.test.ts
+	// ("chunks"): a briefingNotes row built by direct ctx.db.insert has no chunk
+	// rows, migrations/offloadNoteBody:offloadOne writes them, and a second run
+	// rewrites nothing.
 	briefingNoteBodyChunks: defineTable({
 		noteId: v.id("briefingNotes"),
 		idx: v.number(),
@@ -961,6 +966,11 @@ export default defineSchema({
 	// (R-11) and never an in-memory scan of `briefingNotes.participants`
 	// (Convex indexes can't range-query inside an array field's elements).
 	// One row per (noteId, participant) pair; kept in sync by create/update.
+	// JUSTIFIED: the backend-doctor loader skips every __tests__ directory, so R-45
+	// cannot see the bracketing test. It is convex/__tests__/judgement.twoPoles.test.ts
+	// ("participants"): a briefingNotes row built by direct ctx.db.insert has no
+	// junction rows, migrations:backfillBriefingNoteParticipants writes them, and a
+	// second run leaves the same rows.
 	briefingNoteParticipants: defineTable({
 		noteId: v.id("briefingNotes"),
 		participant: v.string(),
