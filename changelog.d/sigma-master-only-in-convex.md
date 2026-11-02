@@ -1,0 +1,4 @@
+---
+section: Changed
+---
+- **Seven master-only MCP tools: the Convex doors behind them measured, five pinned master-only, two kept scoped.** `issues:updateStatus`, `issues:linkCommit`, `issues:verify`, `errorMonitor:addDeployment` and `errorMonitor:removeDeployment` already refuse a non-fleet caller with `RBAC_DENIED` (file-local `requireMasterScope` over `scopeWithFleetStanding`); a new suite calls each directly as an org member, as a seat (service account acting for an org) and anonymously, and as the fleet master. `missions:updateStatus` (dashboard member with a writer role, own organisation) and `memories:softDeleteMemory` (own organisation's memory) stay scoped by design and are pinned against foreign-org access. No argument or return changes, no contract bump. Task k17ec64enc1wpghww9mrahvm4s8hf0gh.
