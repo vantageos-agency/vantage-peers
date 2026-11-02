@@ -1073,13 +1073,14 @@ export const provisionOrganization = mutation({
 
 			const accessToken = randomOpaqueHex(32);
 			const tokenHash = await sha256Hex(accessToken);
-			// Seat identity by ID: stamped when the seat's agent already exists in
-			// this org; otherwise the seat starts org-level and is stamped at its
-			// first refresh, once the agent is registered.
-			const seatAgent = await resolveSeatAgent(ctx, {
-				scopeProfile: profileId,
-				clerkOrgId: seatClerkOrgId,
-			});
+			// Seat identity by ID: the agent row seedSeatAgents just created for this
+			// seat in this transaction (the profile above carries the same ID); a seat
+			// with no agent row yet starts org-level and is stamped at its first
+			// refresh, once the agent is registered.
+			const seatAgentRow =
+				seatAgentId !== undefined ? await ctx.db.get(seatAgentId) : null;
+			const seatAgent =
+				seatAgentRow !== null && seatAgentRow.isActive ? seatAgentRow : null;
 			await ctx.db.insert("oauth_access_tokens", {
 				tokenHash,
 				clientId,
