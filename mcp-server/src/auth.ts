@@ -177,6 +177,12 @@ export type OAuthContext = {
 	 */
 	ownAgentNamespace?: string;
 	/**
+	 * `project/<the caller's own org slug>`: set together with
+	 * {@link OAuthContext.ownAgentNamespace} at the same place, for a caller that has
+	 * a verified agent. Absent: no verified agent.
+	 */
+	ownProjectNamespace?: string;
+	/**
 	 * The agent a PERSON token designates (see {@link personalActorOf}); already
 	 * folded into {@link OAuthContext.actor} at the bearer boundary. Kept for
 	 * diagnosis only: no decision reads it.
@@ -1027,6 +1033,51 @@ export function checkNamespacePrefix(
 	return false;
 }
 
+/**
+ * The caller's own namespaces, set by {@link ownNamespacesOf} at the bearer
+ * boundary from a verified identity: `orchestrator/<agent ID>` and
+ * `project/<org slug>`. Admitted in read and write besides the prefix list.
+ */
+function checkOwnNamespaces(ctx: OAuthContext, namespace: string): boolean {
+	const own = [ctx.ownAgentNamespace, ctx.ownProjectNamespace].filter(
+		(p): p is string => p !== undefined,
+	);
+	return own.length > 0 && checkNamespacePrefix(own, namespace);
+}
+
+/**
+ * THE one derivation of a client agent's own namespaces, applied after EVERY
+ * bearer branch (attachContextAndProceed), so no path carries its own carve-out.
+ * The agent ID is the one the path VERIFIED: the credential Convex resolved
+ * (`actor`, which also covers a person's resolved personal agent), else the seat
+ * stamp. Never a name, never an argument. A non-master caller whose acting agent's
+ * org is not the token's own org owns nothing. A caller with no verified agent
+ * owns no agent namespace and no extra project namespace.
+ */
+export function ownNamespacesOf(
+	base: Pick<OAuthContext, "isMaster" | "seatAgent" | "clerkOrgSlug">,
+	actor: OAuthContext["actor"],
+	principalOrgSlug: string | null,
+): Pick<OAuthContext, "ownAgentNamespace" | "ownProjectNamespace"> {
+	if (base.isMaster) return {};
+	if (principalOrgSlug === null || principalOrgSlug === "") return {};
+	let agentId: string | undefined;
+	if (
+		actor?.agentId !== undefined &&
+		actor.agentId !== "" &&
+		actor.orgSlug === principalOrgSlug
+	) {
+		agentId = actor.agentId;
+	} else {
+		agentId = seatAgentOf(base)?.agentId;
+	}
+	if (agentId === undefined) return {};
+	return {
+		ownAgentNamespace: `orchestrator/${agentId}`,
+		ownProjectNamespace: `project/${principalOrgSlug}`,
+	};
+}
+
 export function checkNamespaceRead(
 	ctx: OAuthContext | undefined,
 	namespace: string | undefined,
@@ -1064,10 +1115,7 @@ export function checkNamespaceRead(
 	) {
 		return null;
 	}
-	const ownAgentNs = ctx.ownAgentNamespace;
-	if (ownAgentNs !== undefined && checkNamespacePrefix([ownAgentNs], namespace)) {
-		return null;
-	}
+	if (checkOwnNamespaces(ctx, namespace)) return null;
 	return `Forbidden: namespace='${namespace}' is not readable by scope_profile=${ctx.scopeProfile}.`;
 }
 
@@ -1079,10 +1127,7 @@ export function checkNamespaceWrite(
 	if (isMasterScope(ctx)) return null;
 	if (checkNamespacePrefix(ctx.namespaceWritePrefixes, namespace)) return null;
 	// The seat's own agent namespace by its verified agent ID (see ownAgentNamespaceOf).
-	const ownAgentNs = ctx.ownAgentNamespace;
-	if (ownAgentNs !== undefined && checkNamespacePrefix([ownAgentNs], namespace)) {
-		return null;
-	}
+	if (checkOwnNamespaces(ctx, namespace)) return null;
 	return `Forbidden: namespace='${namespace}' is not writable by scope_profile=${ctx.scopeProfile}.`;
 }
 
@@ -1388,10 +1433,13 @@ export function bearerAuthMiddleware(): MiddlewareHandler {
 				c.header("WWW-Authenticate", wwwAuthHeader);
 				return c.json({ error: resolution.error }, resolution.status);
 			}
-			c.set(
-				"oauthContext",
-				resolution.actor ? { ...base, actor: resolution.actor } : base,
-			);
+			const withActor = resolution.actor
+				? { ...base, actor: resolution.actor }
+				: base;
+			c.set("oauthContext", {
+				...withActor,
+				...ownNamespacesOf(withActor, withActor.actor, principalOrgSlug),
+			});
 			await next();
 			return undefined;
 		};
@@ -1516,11 +1564,6 @@ export function bearerAuthMiddleware(): MiddlewareHandler {
 			return await attachContextAndProceed(
 				{
 					...oauth,
-					// The seat's own agent namespace, from the verified seat stamp only
-					// (believed for the token's own org; never a name or an argument).
-					...(seatAgentOf(oauth) !== undefined
-						? { ownAgentNamespace: `orchestrator/${oauth.seatAgent?.agentId}` }
-						: {}),
 					isMaster: false,
 					accessTokenHash: tokenHash,
 					...(personalActor !== undefined ? { actor: personalActor } : {}),
