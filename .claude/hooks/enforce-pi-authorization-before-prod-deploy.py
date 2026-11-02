@@ -179,8 +179,16 @@ try:
     from _lib.command_predicate import (  # noqa: E402
         INTERPRETER_RE,
         carries_prod_action,
+        has_convex_context,
+        has_unreadable_command_string,
         head_prod_action,
+        is_safe_head,
         iter_real_commands,
+        prod_action_in_heredoc_to_shell,
+        prod_action_in_process_substitution,
+        prod_action_piped_into_shell,
+        quoted_string_payloads,
+        segment_has_unreadable_command_string,
     )
 except Exception as _import_error:  # pragma: no cover - exercised by the probe
     def _refuse_unjudgeable() -> None:
@@ -458,7 +466,16 @@ AUTHORIZED_TASK_RE = re.compile(r"\bk[a-z0-9]{15,40}\b")
 # authorized production deploy of the fleet was refused (HTTP 401, caller null).
 # The domain is configuration, carried next to the secret it must match; when
 # it is missing the guard says so and refuses to judge.
+#
+#   CLERK_JWT_TEMPLATE     -- the Clerk JWT template the session token is minted
+#                             from. Read like the names above (project-suffixed
+#                             first, env then dotenv). Its default is NOT
+#                             per-deployment configuration: it is the audience
+#                             Convex accepts, `applicationID: "convex"` in
+#                             `convex/auth.config.ts`, identical in every
+#                             deployment. It is named below, never implied.
 CLERK_API = "https://api.clerk.com/v1"
+CLERK_JWT_TEMPLATE_DEFAULT = "convex"
 
 
 class ReadOutcome:
@@ -607,7 +624,7 @@ def guard_identity() -> tuple[str | None, str]:
             "CLERK_DOMAIN_VANTAGE_PEERS then CLERK_DOMAIN, in the environment and in "
             "the dotenv named by VP_GUARD_ENV_FILE (default: the repo-root .env.local)."
         )
-    template = os.environ.get("CLERK_JWT_TEMPLATE") or "convex"
+    template = _credential("CLERK_JWT_TEMPLATE") or CLERK_JWT_TEMPLATE_DEFAULT
     try:
         ticket = _post_json(
             f"{CLERK_API}/sign_in_tokens",
@@ -827,7 +844,10 @@ def read_task(task_id: str) -> tuple[str, dict | None, str]:
 # Command analysis
 # ---------------------------------------------------------------------------
 
-HEREDOC_RE = re.compile(r"<<-?\s*['\"]?(\w+)['\"]?\n.*?\n\1\b", re.DOTALL)
+# The rest of the opening line (`<<EOF | tee f`, `<<EOF ; cmd`) is COMMAND text,
+# not body: it is captured and kept, so only the body between the opening line
+# and the closing delimiter is removed.
+HEREDOC_RE = re.compile(r"<<-?\s*['\"]?(\w+)['\"]?([^\n]*)\n.*?\n\1\b", re.DOTALL)
 
 
 # ---------------------------------------------------------------------------
@@ -868,6 +888,12 @@ def strip_quoted_strings(command: str) -> str:
         quote = match.group(0)[0]
         if body and not re.search(r"\s", body):
             return body
+        # A command substitution inside DOUBLE quotes is executed by the shell
+        # (`echo "$(cmd)"`, `declare -r V="$(cmd)"`): that run is not prose and
+        # is never emptied. Single quotes are literal; an escaped `\$(` or
+        # backtick is literal too.
+        if quote == '"' and re.search(r"(?<!\\)(?:\$\(|`)", body):
+            return match.group(0)
         return quote * 2
 
     command = re.sub(r'"([^"]*)"', _resolve, command)
@@ -887,7 +913,32 @@ def strip_heredocs(command: str) -> str:
     ever sees a command line), and `block-deploy-without-qa.py` does not use
     heredocs at all in its own callers -- keeping it local avoids forcing an
     unrelated concern onto every module consumer."""
-    return HEREDOC_RE.sub("<<HEREDOC_STRIPPED", command)
+    return HEREDOC_RE.sub(lambda m: "<<HEREDOC_STRIPPED" + m.group(2), command)
+
+
+def _hands_command_string_to_unknown_head(command: str) -> bool:
+    """True when a segment's head is not a known READER and one of its
+    arguments is a quoted STRING (a command string handed to a flag, a
+    positional runner's command, an inline program). Quote stripping must not
+    erase that argument: the shared predicate judges it
+    (`carries_prod_action`), and only a payload carrying a production action
+    blocks. A reader head (`grep -c 'convex deploy' f`) stays out."""
+    for _segment, tokens in iter_real_commands(command):
+        if tokens and not is_safe_head(tokens):
+            if any(True for _ in quoted_string_payloads(tokens)):
+                return True
+    return False
+
+
+def _announce_unreadable(segment: str) -> None:
+    print(
+        "enforce-pi-authorization: command-string payload could not be read "
+        f"({segment!r}). A shell is handed a variable or a substitution on a "
+        "line that also carries a Convex-capable context, so the action it "
+        "will run cannot be judged. Write the command inline, or obtain Pi "
+        "authorization.",
+        file=sys.stderr,
+    )
 
 
 def is_prod_deploy(command: str) -> bool:
@@ -902,7 +953,29 @@ def is_prod_deploy(command: str) -> bool:
     recursion (`bash -c`, `eval`, `env -S`, `script -c`, `watch`, `ssh host
     "..."`) are all handled by `iter_real_commands()`.
     """
+    # A heredoc fed to a shell is a PROGRAM, not data: judged BEFORE the
+    # heredoc bodies are stripped.
+    heredoc_action = prod_action_in_heredoc_to_shell(command)
     command = strip_heredocs(command)
+    raw_command = command
+    # A pipeline is judged as a whole: a reader that feeds a shell's stdin
+    # (`echo '<cmd>' | sh`) or a process substitution handed to a shell is a
+    # carrier, and neither half is a production action on its own.
+    piped = (
+        heredoc_action
+        or prod_action_piped_into_shell(raw_command)
+        or prod_action_in_process_substitution(raw_command)
+    )
+    if piped:
+        print(
+            f"enforce-pi-authorization: `{piped.label}` (PROD target) is fed to a "
+            "shell through a pipe, a heredoc or a process substitution. The producer is a "
+            "reader and the consumer is a bare shell, so the action is judged on "
+            "the pipeline. Obtain Pi authorization.",
+            file=sys.stderr,
+        )
+        return True
+    convex_context = has_convex_context(raw_command)
     # v1.4.0 (defect C): a prod-deploy command CITED inside a QUOTED STRING
     # (a review comment, a commit message) must not be read as a real deploy.
     # Quote-stripping only runs when the RAW command carries NO interpreter
@@ -913,7 +986,10 @@ def is_prod_deploy(command: str) -> bool:
     # genuine deploy the same way SURVIVOR C blinded the old bare-deploy
     # lookahead. This mirrors the ordering discipline in the npm-publish
     # guard's is_fleet_publish() (interpreter unwrap wins over quote-strip).
-    if not INTERPRETER_RE.search(command):
+    # The same ordering discipline covers a command string handed to a head the
+    # interpreter list does not name: judged on the payload (see
+    # `_hands_command_string_to_unknown_head`), never on a list of names.
+    if not INTERPRETER_RE.search(command) and not _hands_command_string_to_unknown_head(command):
         command = strip_quoted_strings(command)
     for segment, tokens in iter_real_commands(command):
         if URL_MUTATION_RE.search(segment) or URL_ACTION_RE.search(segment):
@@ -926,7 +1002,18 @@ def is_prod_deploy(command: str) -> bool:
             # NAME CONVEX_DEPLOY_KEY).
             if UNTOKENIZABLE_DEPLOY_RE.search(segment) or UNTOKENIZABLE_PROD_RE.search(segment):
                 return True
+            # `su -c "$(cat f)"` is cut at the substitution and leaves an
+            # opened command-string flag: same unreadable-payload decision.
+            if convex_context and segment_has_unreadable_command_string(segment):
+                _announce_unreadable(segment)
+                return True
             continue
+        # UNREADABLE PAYLOAD (`su -c "$CMD"`): refused only inside a
+        # Convex-capable context -- the decision and its reason live in
+        # `_lib/command_predicate.py` (UNREADABLE PAYLOADS).
+        if convex_context and has_unreadable_command_string(tokens):
+            _announce_unreadable(segment)
+            return True
         if head_prod_action(tokens):
             return True
         # FAIL-CLOSED on the UNKNOWN (Day 131, 8th round -- now applied to the

@@ -195,6 +195,24 @@ INTERPRETER_RE = re.compile(
     # never seen. Lazily skips any tokens between `npx` and `-c`/`--call` so
     # it still matches with `--package <pkg>` or other flags in between.
     r"|\bnpx\b(?:\s+\S+)*?\s+(?:-c|--call)\s+(\"[^\"]*\"|'[^']*')"
+    # Command-string wrappers that are not a shell: `su -c`, `su - u -c`,
+    # `su --command=`, `runuser -l u -c`, `sg grp -c`, `flock f -c`. Each hands
+    # its quoted argument to a shell, exactly like `bash -c`. Before this branch
+    # none of them matched, so the caller's quote-stripping (which only spares
+    # a command carrying an interpreter payload) erased the payload and a real
+    # production action passed unseen. The flag may sit after any number of
+    # unquoted tokens (user, group, lock file, `-l`), and the payload may be
+    # glued to the flag (`-c'...'`). The lookbehind keeps `pseudo-su` and
+    # `x.su` out; a leading path (`/usr/bin/su`) still matches. Prefixes
+    # (`env`, `nohup`, `timeout N`, `nice -n 5`) need no handling here: the
+    # pattern is unanchored on the left, as the `bash -c` branch is.
+    r"|(?<![\w.-])(?:su|runuser|sg|flock)\b(?:\s+[^\s'\"]+)*?"
+    # Long options are matched by FAMILY, not by name: getopt resolves any
+    # unambiguous prefix, so `--co`, `--comm`, `--session-command` and
+    # `--se` all select a command string on util-linux `su` / `runuser`.
+    # No other long option of these heads starts with `c` or `se`.
+    r"\s+(?:-[a-zA-Z]*c[a-zA-Z]*\s*|--(?:c[a-z]*|se[a-z-]*)(?:=|\s+))"
+    r"(\"[^\"]*\"|'[^']*')"
 )
 
 
@@ -239,6 +257,15 @@ SAFE_HEADS = {
     "ls", "tree", "find", "fd", "stat", "file", "du", "df", "pwd", "cd",
     "realpath", "dirname", "basename", "which", "type", "test", "true",
     "false", "date", "sleep", "mkdir", "touch", "cp", "mv", "rm",
+    # shell builtins that STORE a string (a variable value) without running
+    # it. The later use of the stored string is judged where it runs
+    # (`su -c "$CMD"`, `eval "$CMD"`, a bare `$CMD` head -> unreadable payload).
+    # Absent on purpose: `alias` (its body RUNS when the alias is used: a
+    # deferred execution, not a read) and `trap` (executes its string). Both
+    # fall to the fail-closed branch. A command substitution inside an
+    # assignment (`declare -r V="$(<cmd>)"`) executes immediately and is judged
+    # by the quote-aware splitter, never by this list.
+    "unalias", "export", "declare", "typeset", "local", "readonly",
     # VCS + network read surfaces (the caller still tests the URL itself:
     # prod-auth blocks /api/mutation + /api/action on the segment TEXT, so
     # `curl` being a READER here never weakens the HTTP-write gate)
@@ -259,6 +286,158 @@ EVAL_FLAGS = {"-c", "-e", "--eval", "--eval-string", "--exec", "-E"}
 # is what keeps `cmd = 'npx convex deploy'` (a Python assignment in a heredoc)
 # and `alias cvx='npx convex deploy'` OUT of the block decision.
 CMD_STRING_ANCHORS = {"-c", "--command", "<<<"}
+
+
+# A command-string flag, recognised by FAMILY rather than by wrapper name:
+# `-c`, a short cluster ending in `c` (`-lc`), `--command`, any getopt prefix
+# of it (`--co`, `--comm`), and any long option ending in `command`
+# (`--session-command`, `--exec-command`). The value may be attached with `=`.
+COMMAND_STRING_FLAG_RE = re.compile(
+    r"^(?:-[a-zA-Z]*c|--c[a-z]*|--[a-z][a-z-]*command)(?:=(.*))?$", re.DOTALL
+)
+
+
+def _command_string_values(tokens):
+    """Yield the RAW value handed to each command-string flag in `tokens`
+    (`-c VALUE`, `--command=VALUE`, `<<< VALUE`), whatever its content."""
+    for i, tok in enumerate(tokens):
+        value = None
+        if tok in CMD_STRING_ANCHORS:
+            value = tokens[i + 1] if i + 1 < len(tokens) else None
+        else:
+            m = COMMAND_STRING_FLAG_RE.match(tok)
+            if m:
+                value = m.group(1) if m.group(1) is not None else (
+                    tokens[i + 1] if i + 1 < len(tokens) else None
+                )
+        if value:
+            yield value
+
+
+def command_string_payloads(tokens):
+    """Yield each tokenized command STRING handed to a command-string flag in
+    `tokens` (`-c 'npx convex deploy'`, `--command='...'`, `<<< '...'`).
+
+    Only a value that holds whitespace is a string worth judging: a one-word
+    value cannot carry a `convex <verb>` pair. The caller decides what a
+    payload means and under which heads; this function never judges."""
+    for value in _command_string_values(tokens):
+        if " " not in value:
+            continue
+        try:
+            yield shlex.split(value)
+        except ValueError:
+            continue
+
+
+# ---------------------------------------------------------------------------
+# OUT-OF-GRAMMAR PAYLOADS -- the command-string flag is ONE way a quoted string
+# reaches a shell; it is not the only one. The class is defined by the
+# mechanism, not by a flag or a head:
+#
+#   a quoted string that holds a prod action, handed to a head that is not a
+#   known READER, is judged -- whatever the head, whatever (or no) flag.
+#
+# It covers `tmux new -d '<cmd>'`, `watch -n 60 '<cmd>'` (the interval value
+# leaves the string as the head), `launcher -c'<cmd>'` (payload glued to the
+# flag), and inline programs that embed the string (`perl -e 'system("<cmd>")'`,
+# `node -e '...execSync("<cmd>")'`, `python3 -c 'os.system("<cmd>")'`). The
+# string is cut into WORDS on whitespace, quotes and the punctuation of the
+# embedding language, so `system("npx convex deploy")` yields `npx convex
+# deploy` as adjacent words exactly as the shell form would.
+#
+# The READER list stays the only list: a quoted phrase handed to a reader
+# (`grep -c 'convex deploy' f`, `git commit -m "..."`) is data and never reaches
+# this code (`carries_prod_action` returns first).
+# ---------------------------------------------------------------------------
+
+_WORD_SPLIT_RE = re.compile(r"[\s'\"`()\[\]{};,<>|&]+")
+
+
+def quoted_string_payloads(tokens):
+    """Yield, for every token of `tokens` that holds whitespace (a quoted
+    string, an inline program), the list of WORDS it contains. Index 0 is
+    included: `watch -n 60 '<cmd>'` leaves the string as the head."""
+    for tok in tokens:
+        if not re.search(r"\s", tok):
+            continue
+        words = [w for w in _WORD_SPLIT_RE.split(tok) if w]
+        if words:
+            yield words
+
+
+# ---------------------------------------------------------------------------
+# UNREADABLE PAYLOADS -- `su -c "$CMD"`, `bash -c "$(cat f)"`. The string the
+# shell will run does not exist on the command line, so it cannot be judged.
+# DECISION (fail-closed, scoped): the payload is refused ONLY when the same
+# line also carries a Convex-capable context -- a `convex` binary token, a
+# `CONVEX_*` variable or a `convex.cloud` / `convex.site` host. Reason: with
+# such a context the variable may hold the very action this guard governs, and
+# a refusal costs one authorization; without it the variable is almost surely
+# an unrelated command (`bash -c "$X"` is daily shell work) and a refusal would
+# gate every shell in the fleet until the guard is torn out. The residual -- a
+# variable set in ANOTHER invocation -- is declared, not hidden: no line-level
+# guard can read it.
+# ---------------------------------------------------------------------------
+
+_UNREADABLE_VALUE_RE = re.compile(r"(?:^|[;&|(])\s*[\"']?\$|`|\$\(")
+_BARE_VARIABLE_RE = re.compile(r"^\$(?:\w+|\{\w+\})$")
+_OPEN_EVAL_RE = re.compile(r"^eval\s*[\"']?\$?\s*$")
+_CONVEX_HOST_RE = re.compile(r"\bconvex\.(?:cloud|site)\b", re.IGNORECASE)
+_OPEN_COMMAND_STRING_RE = re.compile(
+    r"\s(?:-[a-zA-Z]*c|--c[a-z]*|--[a-z][a-z-]*command)(?:=|\s+)?[\"']?$"
+)
+
+
+def has_convex_context(command: str, binary: str = "convex") -> bool:
+    """True when `command` names the Convex CLI (a `convex` word, version- and
+    path-normalised), a `CONVEX_*` variable, or a convex.cloud / convex.site
+    host. Decided on WORDS, never on a substring: `ls convex/schema.ts` names a
+    path inside the tree, not the binary, and carries no context."""
+    if _CONVEX_HOST_RE.search(command):
+        return True
+    for word in re.split(r"[\s'\"`()\[\]{};,<>|&=:$]+", command):
+        if not word:
+            continue
+        if word.startswith("CONVEX_"):
+            return True
+        if _strip_version_suffix(os.path.basename(word)) == binary:
+            return True
+    return False
+
+
+def has_unreadable_command_string(tokens) -> bool:
+    """True when a non-reader head is handed a command string whose content is
+    a variable or a substitution (`su -c "$CMD"`): the string cannot be read.
+    The CALLER decides whether that refuses (see the DECISION above)."""
+    if not tokens or is_safe_head(tokens):
+        return False
+    head = _strip_version_suffix(os.path.basename(tokens[0]))
+    if head == "eval":
+        # `eval` re-parses and runs the words it is given: every argument is a
+        # command string.
+        return any(_UNREADABLE_VALUE_RE.search(t) for t in tokens[1:])
+    if _BARE_VARIABLE_RE.match(tokens[0]):
+        return True  # `$CMD` as the command itself
+    return any(_UNREADABLE_VALUE_RE.search(v) for v in _command_string_values(tokens))
+
+
+def segment_has_unreadable_command_string(segment: str) -> bool:
+    """Text fallback for a segment that did not tokenize: `su -c "$(cat f)"`
+    is cut at the substitution, leaving `su -c "` -- a command-string flag
+    followed by an opened quote and nothing. Same decision, same reader gate."""
+    if _OPEN_EVAL_RE.match(segment.strip()):
+        return True  # `eval "$(cat f)"` cut at the substitution
+    if not _OPEN_COMMAND_STRING_RE.search(segment):
+        return False
+    for word in segment.split():
+        if "=" in word and not word.startswith("-"):
+            continue
+        base = _strip_version_suffix(os.path.basename(word))
+        if base in TRANSPARENT:
+            continue
+        return base not in SAFE_HEADS
+    return False
 
 
 def is_safe_head(tokens) -> bool:
@@ -421,14 +600,13 @@ def carries_prod_action(tokens, binary: str = "convex"):
     action = _scan_prod_action(tokens[1:], binary)
     if action:
         return action
-    for prev, tok in zip(tokens, tokens[1:]):
-        if " " not in tok or prev not in CMD_STRING_ANCHORS:
-            continue
-        try:
-            inner = shlex.split(tok)
-        except ValueError:
-            continue
-        action = _scan_prod_action(inner, binary)
+    for inner in command_string_payloads(tokens):
+        action = _scan_prod_action(inner, binary) or carries_prod_action(inner, binary)
+        if action:
+            return action
+    # Out-of-grammar payloads: ANY quoted string under a non-reader head.
+    for words in quoted_string_payloads(tokens):
+        action = _scan_prod_action(words, binary)
         if action:
             return action
     return None
@@ -748,3 +926,189 @@ def has_safe_flag(segment_or_tokens) -> bool:
         pattern = r"(?:^|\s)(?:" + "|".join(re.escape(f) for f in SAFE_FLAGS) + r")(?:\s|$)"
         return bool(re.search(pattern, segment_or_tokens))
     return any(t in SAFE_FLAGS for t in segment_or_tokens)
+
+
+# ---------------------------------------------------------------------------
+# STDIN INTO A SHELL -- `echo '<cmd>' | sh`, `printf '%s' '<cmd>' | bash -s`.
+# The producer is a READER (`echo`, `printf`) and the consumer is a bare shell
+# whose argv holds no string at all, so judged one segment at a time NEITHER
+# half carries the action. The unit of judgement is the PIPELINE: when a stage
+# is a shell that reads its program from stdin, every earlier stage of the same
+# pipeline is judged for a prod action regardless of its reader status -- a
+# reader that feeds a shell is a carrier, not data.
+#
+# A shell given a script file (`... | bash install.sh`) reads the pipe as DATA
+# and is not a consumer. `xargs` with no command (or a shell as its command)
+# executes the words it reads and is one.
+# ---------------------------------------------------------------------------
+
+SHELLS = {"sh", "bash", "zsh", "dash", "ksh", "ash", "mksh", "csh", "tcsh"}
+# Binaries that carry a shell as an applet: the shell is their first argument.
+MULTIPLEXERS = {"busybox", "toybox"}
+# Shell options that take the NEXT token as a value, never a script path.
+SHELL_VALUE_FLAGS = {"-o", "+o", "-O", "+O", "--rcfile", "--init-file"}
+STDIN_PATHS = {"/dev/stdin", "/dev/fd/0"}
+_SHELL_CMD_FLAG_RE = re.compile(r"^-[a-zA-Z]*c[a-zA-Z]*$")
+_DOT_SOURCE_RE = re.compile(r"(?:^|[;&|(\n])\s*\.\s+[</]")
+_SHELL_WORDS = SHELLS | MULTIPLEXERS | {"source"}
+
+
+def _pipelines(cmd: str):
+    """Split `cmd` into pipelines, each a list of stage texts. Quote-aware.
+    `|` and `|&` separate stages; `;`, `&&`, `||`, `&` and newline separate
+    pipelines. The `&` of a redirection (`2>&1`, `&>f`) is not a separator."""
+    pipelines = [[]]
+    cur = []
+    quote = None
+    i, n = 0, len(cmd)
+
+    def end_stage():
+        pipelines[-1].append("".join(cur))
+        cur.clear()
+
+    while i < n:
+        ch = cmd[i]
+        if quote:
+            cur.append(ch)
+            if ch == "\\" and quote == '"' and i + 1 < n:
+                cur.append(cmd[i + 1])
+                i += 2
+                continue
+            if ch == quote:
+                quote = None
+            i += 1
+            continue
+        if ch == "\\" and i + 1 < n:
+            cur.append(ch)
+            cur.append(cmd[i + 1])
+            i += 2
+            continue
+        if ch in "\"'":
+            quote = ch
+            cur.append(ch)
+        elif ch == "|":
+            end_stage()
+            if i + 1 < n and cmd[i + 1] == "|":
+                pipelines.append([])
+                i += 1
+            elif i + 1 < n and cmd[i + 1] == "&":
+                i += 1
+        elif ch == "&" and ((i > 0 and cmd[i - 1] in "<>") or (i + 1 < n and cmd[i + 1] == ">")):
+            cur.append(ch)
+        elif ch in ";&\n":
+            end_stage()
+            pipelines.append([])
+        else:
+            cur.append(ch)
+        i += 1
+    end_stage()
+    return [p for p in pipelines if len(p) > 1]
+
+
+def _stage_tokens(stage: str):
+    stage = stage.strip().lstrip("({ ").rstrip(")} ;")
+    try:
+        return shlex.split(stage)
+    except ValueError:
+        return stage.split()
+
+
+def _reads_program_from_stdin(tokens) -> bool:
+    """True when the stage (transparent prefixes already stripped) is a shell
+    that takes its program from stdin, or `xargs` executing what it reads."""
+    if not tokens:
+        return False
+    head = _strip_version_suffix(os.path.basename(tokens[0]))
+    args = tokens[1:]
+    if head in MULTIPLEXERS:
+        # `busybox sh`, `toybox sh`, `/bin/busybox ash`: the applet is the shell.
+        return _reads_program_from_stdin(args)
+    if head in {"source", "."}:
+        return any(a in STDIN_PATHS for a in args)
+    if head not in SHELLS:
+        return False
+    if any(_SHELL_CMD_FLAG_RE.match(a) for a in args):
+        return False  # a command string, judged by the command-string path
+    positional, skip = [], False
+    for a in args:
+        if skip:
+            skip = False
+        elif a in SHELL_VALUE_FLAGS:
+            skip = True
+        elif not a.startswith(("-", "+")):
+            positional.append(a)
+    if "-s" in args or "-" in args:
+        return True
+    return not positional or all(a in STDIN_PATHS for a in positional)
+
+
+def prod_action_piped_into_shell(cmd: str, binary: str = "convex"):
+    """The prod action carried by a pipeline whose last consumer is a shell
+    reading stdin (or `xargs` running its input), else None. `cmd` is the raw
+    command line -- quote characters intact, heredoc bodies already removed."""
+    cmd = strip_comments(normalize_line_continuations(cmd))
+    for stages in _pipelines(cmd):
+        for idx, stage in enumerate(stages):
+            if idx == 0:
+                continue
+            raw = _stage_tokens(stage)
+            stripped = strip_transparent(list(raw))
+            is_xargs = bool(raw) and os.path.basename(raw[0]) == "xargs" and (
+                not stripped or _reads_program_from_stdin(stripped)
+                or _strip_version_suffix(os.path.basename(stripped[0])) in SHELLS
+            )
+            if not (_reads_program_from_stdin(stripped) or is_xargs):
+                continue
+            for prior in stages[:idx]:
+                toks = _stage_tokens(prior)
+                candidates = [toks, *quoted_string_payloads(toks)]
+                for words in candidates:
+                    action = _scan_prod_action(words, binary)
+                    if action:
+                        return action
+    return None
+
+
+def prod_action_in_process_substitution(cmd: str, binary: str = "convex"):
+    """A process substitution `<(...)` whose output a shell can run: `bash <(...)`,
+    `bash < <(...)`, `exec 3< <(...); bash <&3`. The redirect or descriptor that
+    carries the output to the shell can sit anywhere on the line, so the unit is
+    the LINE: when it holds a `<(` and any shell word (`sh`, `bash`, `source`,
+    `busybox`, ...), the text after each `<(` is judged word by word. A line with
+    no shell (`diff <(a) <(b)`) is data and passes."""
+    cmd = strip_comments(normalize_line_continuations(cmd))
+    if "<(" not in cmd:
+        return None
+    line_words = [w for w in _WORD_SPLIT_RE.split(cmd) if w]
+    if not (
+        any(_strip_version_suffix(os.path.basename(w)) in _SHELL_WORDS for w in line_words)
+        or _DOT_SOURCE_RE.search(cmd)
+    ):
+        return None
+    for m in re.finditer(r"<\(", cmd):
+        words = [w for w in _WORD_SPLIT_RE.split(cmd[m.end():]) if w]
+        action = _scan_prod_action(words, binary)
+        if action:
+            return action
+    return None
+
+
+_HEREDOC_BODY_RE = re.compile(r"<<-?\s*(['\"]?)(\w+)\1([^\n]*)\n(.*?)\n[ \t]*\2\b", re.DOTALL)
+
+
+def prod_action_in_heredoc_to_shell(cmd: str, binary: str = "convex"):
+    """`sh <<EOF ... EOF`, `cat <<EOF | bash ... EOF`: the heredoc body is the
+    PROGRAM a stdin-reading shell runs, not data. A heredoc consumed by anything
+    else (`cat`, `python3`, `tee`) stays data. `cmd` is the raw line, heredoc
+    bodies still in place -- the caller strips them AFTER this probe."""
+    for m in _HEREDOC_BODY_RE.finditer(cmd):
+        owner = re.split(r"[;&\n]", cmd[: m.start()])[-1]
+        line = owner + " " + m.group(3)
+        for stage in re.split(r"(?<!\|)\|(?!\|)", line):
+            toks = strip_transparent(_stage_tokens(stage))
+            if _reads_program_from_stdin(toks):
+                words = [w for w in _WORD_SPLIT_RE.split(m.group(4)) if w]
+                action = _scan_prod_action(words, binary)
+                if action:
+                    return action
+    return None
