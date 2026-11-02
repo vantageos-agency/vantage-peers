@@ -143,20 +143,19 @@ export function verifiedOrgSlugOf(
  * when the verified token carries it (`orgClerkId`, read LIVE from the org's
  * ACTIVE mapping by `oauth:getAccessTokenByHash`). Convex keys the `verifiedOrg`
  * claim by this ID: a slug is a renamable label another organisation can take
- * over. The ID is the TOKEN's organisation's, so it is forwarded only when the
- * verified slug is that same organisation's (an agent credential's org is
- * judged on its own slug and sends the slug alone). Undefined when the Convex
- * predates the field or the org has no ID yet; the claim then goes slug-only,
- * which Convex still accepts.
+ * over. It is the ID of the TOKEN's organisation; an agent credential presented
+ * with a non-master bearer is already bound to that same organisation at the
+ * boundary (auth.ts resolveActorFromRequest refuses ORG_MISMATCH otherwise), so
+ * the ID names the verified org whichever of the two the slug was read from.
+ * Used only beside a verified slug, which the master and a Clerk session never
+ * have. Undefined when the Convex predates the field or the org has no ID yet;
+ * the claim then goes slug-only, which Convex still accepts.
  */
 export function verifiedOrgIdOf(
 	oauthCtx: OAuthContext | undefined,
 ): string | undefined {
-	const slug = verifiedOrgSlugOf(oauthCtx);
-	if (slug === undefined || oauthCtx === undefined) return undefined;
-	const id = oauthCtx.orgClerkId;
-	if (id === undefined || id === "") return undefined;
-	return oauthCtx.clerkOrgSlug === slug ? id : undefined;
+	const id = oauthCtx?.orgClerkId;
+	return id === undefined || id === "" ? undefined : id;
 }
 
 /** What the verified oauthContext says about the caller. Never a tool argument. */
