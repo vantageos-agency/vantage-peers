@@ -13,6 +13,7 @@
 // and the counts over that table are a LOWER BOUND, never a total.
 
 import { v } from "convex/values";
+import type { Doc } from "../_generated/dataModel";
 import { internalQuery } from "../_generated/server";
 
 const DEFAULT_LIMIT = 5000;
@@ -20,6 +21,107 @@ const MAX_LIMIT = 10000;
 const NO_ORG = "(none)";
 
 type OrgKeyKind = "clerkOrgId" | "slug" | "none";
+
+// ---------------------------------------------------------------------------------
+// AFTER #1660: which rows resolve NO agent. This section COUNTS and DECIDES NOTHING; it
+// mirrors every null branch of `resolveSeatAgent` (convex/lib/seatAgent.ts, branch
+// sigma/m3-seatagent-listgate @ 81c8fc771d806f299c2e95cd5ce14cfa01451fd3) as a counter, and
+// MUST CHANGE WITH THAT PREDICATE. Reasons are independent: a row failing two branches is
+// counted under both, and `wouldNotResolve` counts the row once.
+//
+//   noAgentId                         :66     profile.agentId === undefined
+//   danglingAgentId                   :67-68  agentId set, ctx.db.get(agentId) is null
+//   agentInactive                     :68     the agent row exists, isActive is false
+//   emptyOrMissingClerkOrgId.profile  :61,:69 profile clerkOrgId missing or "" (sameOrg
+//                                     needs a non-empty id on BOTH sides)
+//   emptyOrMissingClerkOrgId.agent    :69     agent clerkOrgId missing or ""
+//   emptyOrMissingClerkOrgId.token    :61     token clerkOrgId missing or "" (tokens only)
+//   orgMismatch                       :61 token vs profile, :69 agent vs profile: both ids
+//                                     non-empty and different
+//   profileMissing                    :60     no profile row named by the token's scopeProfile
+//   (a person token, :52, is never a seat: counted apart in `livePersonTokens`)
+//
+// A token is judged THROUGH ITS PROFILE (resolveSeatAgent). A token carrying a stamped
+// `agentId` is resolved by `liveSeatAgent` (:84-98) instead; that branch is NOT mirrored,
+// so `liveSeatTokensWithStampedAgentId` is reported to size the overlap.
+// ---------------------------------------------------------------------------------
+const resolution = v.object({
+	checked: v.number(),
+	wouldResolveAfter1660: v.number(),
+	wouldNotResolve: v.number(),
+	noAgentId: v.number(),
+	danglingAgentId: v.number(),
+	agentInactive: v.number(),
+	emptyOrMissingClerkOrgId: v.object({
+		profile: v.number(),
+		agent: v.number(),
+		token: v.number(),
+	}),
+	orgMismatch: v.number(),
+	profileMissing: v.number(),
+});
+type Resolution = {
+	checked: number;
+	wouldResolveAfter1660: number;
+	wouldNotResolve: number;
+	noAgentId: number;
+	danglingAgentId: number;
+	agentInactive: number;
+	emptyOrMissingClerkOrgId: { profile: number; agent: number; token: number };
+	orgMismatch: number;
+	profileMissing: number;
+};
+const newResolution = (): Resolution => ({
+	checked: 0,
+	wouldResolveAfter1660: 0,
+	wouldNotResolve: 0,
+	noAgentId: 0,
+	danglingAgentId: 0,
+	agentInactive: 0,
+	emptyOrMissingClerkOrgId: { profile: 0, agent: 0, token: 0 },
+	orgMismatch: 0,
+	profileMissing: 0,
+});
+const afterV = v.object({
+	profiles: resolution,
+	liveSeatTokens: resolution,
+});
+type After = { profiles: Resolution; liveSeatTokens: Resolution };
+const newAfter = (): After => ({
+	profiles: newResolution(),
+	liveSeatTokens: newResolution(),
+});
+
+type Flags = {
+	noAgentId: boolean;
+	danglingAgentId: boolean;
+	agentInactive: boolean;
+	profileOrgMissing: boolean;
+	agentOrgMissing: boolean;
+	profileAgentMismatch: boolean;
+};
+type TokenFlags = Partial<Flags> & {
+	tokenOrgMissing?: boolean;
+	tokenProfileMismatch?: boolean;
+	profileMissing?: boolean;
+};
+
+function tally(r: Resolution, f: TokenFlags): void {
+	r.checked++;
+	if (!Object.values(f).some(Boolean)) {
+		r.wouldResolveAfter1660++;
+		return;
+	}
+	r.wouldNotResolve++;
+	if (f.noAgentId) r.noAgentId++;
+	if (f.danglingAgentId) r.danglingAgentId++;
+	if (f.agentInactive) r.agentInactive++;
+	if (f.profileOrgMissing) r.emptyOrMissingClerkOrgId.profile++;
+	if (f.agentOrgMissing) r.emptyOrMissingClerkOrgId.agent++;
+	if (f.tokenOrgMissing) r.emptyOrMissingClerkOrgId.token++;
+	if (f.profileAgentMismatch || f.tokenProfileMismatch) r.orgMismatch++;
+	if (f.profileMissing) r.profileMissing++;
+}
 
 const orgCounts = v.object({
 	org: v.string(),
@@ -34,6 +136,7 @@ const orgCounts = v.object({
 	liveTokensWithoutProfileAgentId: v.number(),
 	liveTokensWithoutClerkOrgId: v.number(),
 	agentsWithoutClerkOrgId: v.number(),
+	afterPr1660: afterV,
 });
 
 const totalsV = v.object({
@@ -48,6 +151,10 @@ const totalsV = v.object({
 	liveTokensProfileMissing: v.number(),
 	agentsScanned: v.number(),
 	agentsWithoutClerkOrgId: v.number(),
+	// Person tokens are not seats (:52); live seat tokens that carry a stamped agentId.
+	livePersonTokens: v.number(),
+	liveSeatTokensWithStampedAgentId: v.number(),
+	afterPr1660: afterV,
 });
 
 type Row = {
@@ -57,6 +164,7 @@ type Row = {
 	liveTokensWithoutProfileAgentId: number;
 	liveTokensWithoutClerkOrgId: number;
 	agentsWithoutClerkOrgId: number;
+	afterPr1660: After;
 };
 
 export const inventory = internalQuery({
@@ -103,7 +211,7 @@ export const inventory = internalQuery({
 
 		const byOrg = new Map<string, Row>();
 		const orgRow = (id: string | undefined, slug: string | undefined): Row => {
-			const key = id ?? slug ?? NO_ORG;
+			const key = id || slug || NO_ORG;
 			let row = byOrg.get(key);
 			if (row === undefined) {
 				row = {
@@ -113,6 +221,7 @@ export const inventory = internalQuery({
 					liveTokensWithoutProfileAgentId: 0,
 					liveTokensWithoutClerkOrgId: 0,
 					agentsWithoutClerkOrgId: 0,
+					afterPr1660: newAfter(),
 				};
 				byOrg.set(key, row);
 			}
@@ -130,7 +239,22 @@ export const inventory = internalQuery({
 			liveTokensProfileMissing: 0,
 			agentsScanned: agents.length,
 			agentsWithoutClerkOrgId: 0,
+			livePersonTokens: 0,
+			liveSeatTokensWithStampedAgentId: 0,
+			afterPr1660: newAfter(),
 		};
+
+		// Agents are read by ID (as resolveSeatAgent does), never from the bounded scan, so a
+		// truncated agents scan cannot make a real agent look dangling.
+		const agentCache = new Map<string, Doc<"agents"> | null>();
+		const agentOf = async (
+			id: Doc<"oauth_scope_profiles">["agentId"],
+		): Promise<Doc<"agents"> | null> => {
+			if (id === undefined) return null;
+			if (!agentCache.has(id)) agentCache.set(id, await ctx.db.get(id));
+			return agentCache.get(id) ?? null;
+		};
+		const flagsOf = new Map<string, Flags>();
 
 		const profileById = new Map<string, (typeof profiles)[number]>();
 		const missingAgentIdProfiles: {
@@ -140,7 +264,23 @@ export const inventory = internalQuery({
 		for (const p of profiles) {
 			if (!profileById.has(p.profileId)) profileById.set(p.profileId, p);
 			const row = orgRow(p.clerkOrgId, p.clerkOrgSlug);
-			if (p.clerkOrgId === undefined) {
+			const agent = await agentOf(p.agentId);
+			const flags: Flags = {
+				noAgentId: p.agentId === undefined,
+				danglingAgentId: p.agentId !== undefined && agent === null,
+				agentInactive: agent !== null && !agent.isActive,
+				profileOrgMissing: !p.clerkOrgId,
+				agentOrgMissing: agent !== null && !agent.clerkOrgId,
+				profileAgentMismatch:
+					agent !== null &&
+					!!agent.clerkOrgId &&
+					!!p.clerkOrgId &&
+					agent.clerkOrgId !== p.clerkOrgId,
+			};
+			if (!flagsOf.has(p.profileId)) flagsOf.set(p.profileId, flags);
+			tally(row.afterPr1660.profiles, flags);
+			tally(totals.afterPr1660.profiles, flags);
+			if (!p.clerkOrgId) {
 				row.profilesWithoutClerkOrgId++;
 				totals.profilesWithoutClerkOrgId++;
 			}
@@ -159,11 +299,27 @@ export const inventory = internalQuery({
 			if (t.revokedAt !== undefined || t.expiresAt <= now) continue;
 			totals.liveTokens++;
 			const row = orgRow(t.clerkOrgId, t.clerkOrgSlug);
-			if (t.clerkOrgId === undefined) {
+			if (!t.clerkOrgId) {
 				row.liveTokensWithoutClerkOrgId++;
 				totals.liveTokensWithoutClerkOrgId++;
 			}
 			const profile = profileById.get(t.scopeProfile);
+			if (t.principal !== undefined) {
+				totals.livePersonTokens++;
+			} else {
+				if (t.agentId !== undefined) totals.liveSeatTokensWithStampedAgentId++;
+				const tokenFlags: TokenFlags = {
+					...(profile ? flagsOf.get(profile.profileId) : {}),
+					profileMissing: profile === undefined,
+					tokenOrgMissing: !t.clerkOrgId,
+					tokenProfileMismatch:
+						!!t.clerkOrgId &&
+						!!profile?.clerkOrgId &&
+						t.clerkOrgId !== profile.clerkOrgId,
+				};
+				tally(row.afterPr1660.liveSeatTokens, tokenFlags);
+				tally(totals.afterPr1660.liveSeatTokens, tokenFlags);
+			}
 			if (profile === undefined) {
 				totals.liveTokensProfileMissing++;
 			} else if (profile.agentId === undefined) {
@@ -173,7 +329,7 @@ export const inventory = internalQuery({
 		}
 
 		for (const a of agents) {
-			if (a.clerkOrgId !== undefined) continue;
+			if (a.clerkOrgId) continue;
 			orgRow(a.clerkOrgId, a.orgSlug).agentsWithoutClerkOrgId++;
 			totals.agentsWithoutClerkOrgId++;
 		}
