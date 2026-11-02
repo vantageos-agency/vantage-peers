@@ -351,3 +351,134 @@ export const inventory = internalQuery({
 		};
 	},
 });
+
+// ---------------------------------------------------------------------------------
+// TASKS WITHOUT A NON-EMPTY clerkOrgId (before #1663, branch sigma/m18-verifiedorg-by-id @
+// cc899e2390611547edac4c4036f3dbd0acc6c8ea, convex/tasks.ts scanBulkCompleteMatches:5142).
+// With a verifiedOrg, that scan matches a task only by its STORED clerkOrgId, so a row
+// without one drops out of a narrowed bulk completion. Only OPEN rows can be bulk
+// completed; closed ones are counted so the figure is whole.
+//
+// ORG KEY: the row's own slug column `tasks.orgId` (the Clerk org slug); a row with no
+// `orgId` is keyed "(none)" (a fleet/master row). `tasks.clerkOrgId` is the field tested.
+//
+// READ STRATEGY: the index `by_orgId_status_clerk_id` = [clerkOrgId, status]. Rows with NO
+// clerkOrgId sort first in that index, so `eq(clerkOrgId, undefined).eq(status, s)` reads
+// ONLY the offenders, never the whole table; an empty-string clerkOrgId is a second exact
+// read (`eq(clerkOrgId, "")`). That is 7 statuses x 2 kinds = 14 reads, each bounded by the
+// cap (`limit`, default TASKS_DEFAULT_LIMIT, max TASKS_MAX_LIMIT) with take(cap + 1). A read
+// that hits its bound sets `truncated` and names itself in `truncatedReads`; counts are
+// then a LOWER BOUND. This is a separate query because a task row is large and Convex
+// bounds one query's reads (documents and bytes): lower `limit` if a call errors on that.
+// Counts only: no task id, title, note or assignee is returned.
+// ---------------------------------------------------------------------------------
+const TASKS_DEFAULT_LIMIT = 1000;
+const TASKS_MAX_LIMIT = 4000;
+const OPEN_STATUSES = ["todo", "in_progress", "blocked", "review"] as const;
+// "failed" is terminal like done/cancelled: it cannot be bulk-completed, so it is "closed".
+const CLOSED_STATUSES = ["done", "cancelled", "failed"] as const;
+const ALL_STATUSES = [...OPEN_STATUSES, ...CLOSED_STATUSES] as const;
+type TaskStatus = (typeof ALL_STATUSES)[number];
+type TaskCounts = {
+	total: number;
+	missing: number;
+	emptyString: number;
+	open: number;
+	closed: number;
+	byStatus: Record<TaskStatus, number>;
+};
+const byStatusV = v.object({
+	todo: v.number(),
+	in_progress: v.number(),
+	blocked: v.number(),
+	review: v.number(),
+	done: v.number(),
+	cancelled: v.number(),
+	failed: v.number(),
+});
+const taskCountsV = v.object({
+	total: v.number(),
+	missing: v.number(),
+	emptyString: v.number(),
+	open: v.number(),
+	closed: v.number(),
+	byStatus: byStatusV,
+});
+const newTaskCounts = (): TaskCounts => ({
+	total: 0,
+	missing: 0,
+	emptyString: 0,
+	open: 0,
+	closed: 0,
+	byStatus: {
+		todo: 0,
+		in_progress: 0,
+		blocked: 0,
+		review: 0,
+		done: 0,
+		cancelled: 0,
+		failed: 0,
+	},
+});
+
+export const tasksWithoutClerkOrgId = internalQuery({
+	args: { limit: v.optional(v.number()) },
+	returns: v.object({
+		cap: v.number(),
+		truncated: v.boolean(),
+		truncatedReads: v.array(v.string()),
+		totals: taskCountsV,
+		// Keyed by the row's own `orgId` slug; "(none)" = the row carries no slug.
+		perOrg: v.array(v.object({ org: v.string(), counts: taskCountsV })),
+	}),
+	handler: async (ctx, args) => {
+		const requested = args.limit ?? TASKS_DEFAULT_LIMIT;
+		const cap = Math.min(
+			Math.max(Math.floor(requested) || 1, 1),
+			TASKS_MAX_LIMIT,
+		);
+		const totals = newTaskCounts();
+		const byOrg = new Map<string, TaskCounts>();
+		const truncatedReads: string[] = [];
+
+		for (const status of ALL_STATUSES) {
+			for (const kind of ["missing", "emptyString"] as const) {
+				const rows = await ctx.db
+					.query("tasks")
+					.withIndex("by_orgId_status_clerk_id", (q) =>
+						q
+							.eq("clerkOrgId", kind === "missing" ? undefined : "")
+							.eq("status", status),
+					)
+					.take(cap + 1);
+				if (rows.length > cap) truncatedReads.push(`${status}/${kind}`);
+				const isOpen = (OPEN_STATUSES as readonly string[]).includes(status);
+				for (const row of rows.slice(0, cap)) {
+					const key = row.orgId || NO_ORG;
+					let c = byOrg.get(key);
+					if (c === undefined) {
+						c = newTaskCounts();
+						byOrg.set(key, c);
+					}
+					for (const target of [totals, c]) {
+						target.total++;
+						target[kind]++;
+						target.byStatus[status]++;
+						if (isOpen) target.open++;
+						else target.closed++;
+					}
+				}
+			}
+		}
+
+		return {
+			cap,
+			truncated: truncatedReads.length > 0,
+			truncatedReads,
+			totals,
+			perOrg: [...byOrg.entries()]
+				.map(([org, counts]) => ({ org, counts }))
+				.sort((x, y) => x.org.localeCompare(y.org)),
+		};
+	},
+});
