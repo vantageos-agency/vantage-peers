@@ -604,6 +604,8 @@ def test_ratchet_live_baseline_carries_its_command_and_never_rose():
             "18bbd84af0f13323db1a307fbf667410fed7a0b7",
             # fixPatterns:get roster by agent ID, R-54 109 -> 108 (task k170dkz2nye4es0fpszqcjvhe18g3jw5)
             "f67012c1cde0370246b4a0fe62a2359f2fac2b2e",
+            # CR-2 242 -> 241, R-53 322 -> 318, identity-by-id M3: a seat resolves by its profile's agent ID (task k177pske4qj37sfw7nw2787msd8fzp0e)
+            "5bce1027ec9d3b3f5371a9155865655bb8faf2ec",
         }
         line = entry["output_line"]
         assert line.startswith((f"{rule}: ", f"{rule} VERDICT: ")), rule
