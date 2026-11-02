@@ -603,7 +603,7 @@ def test_ratchet_live_baseline_carries_its_command_and_never_rose():
             # same counts re-measured on the add_task_dependency rebase onto 69ae7055, contract 16 (task k171180dv49sn33fw83dpkzs158hd7vr)
             "18bbd84af0f13323db1a307fbf667410fed7a0b7",
             # fixPatterns:get roster by agent ID, R-54 109 -> 108 (task k170dkz2nye4es0fpszqcjvhe18g3jw5)
-            "e3152fc17a772b7c9fb9222ee8f6ae9c2fd96cab",
+            "f67012c1cde0370246b4a0fe62a2359f2fac2b2e",
         }
         line = entry["output_line"]
         assert line.startswith((f"{rule}: ", f"{rule} VERDICT: ")), rule

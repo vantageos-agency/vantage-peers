@@ -55,9 +55,9 @@
 		},
 		"R-53": {
 			"count": 322,
-			"measured_tree_sha": "e3152fc17a772b7c9fb9222ee8f6ae9c2fd96cab",
+			"measured_tree_sha": "f67012c1cde0370246b4a0fe62a2359f2fac2b2e",
 			"cli_commit": "f6297a29c64a0265124e3e9cf86c9dd85eac47c0",
-			"command": "npx -y @vantageos/backend-doctor@0.5.0 <vantage-peers clean full checkout @e3152fc17a772b7c9fb9222ee8f6ae9c2fd96cab (task k17cbr6y6da096t5e1k869kgb18hd0ht), deps installed> --json-evidence <dir>/",
+			"command": "npx -y @vantageos/backend-doctor@0.5.0 <vantage-peers clean full checkout @f67012c1cde0370246b4a0fe62a2359f2fac2b2e (task k17cbr6y6da096t5e1k869kgb18hd0ht), deps installed> --json-evidence <dir>/",
 			"output_line": "R-53: 322 site(s) VIOLATE (the principal is the package resolver's output, every write admits by comparing stored IDs with the resolved IDs, the unresolved branch refuses, and no local function decides identity). [conform=14 non-conforming=322 could-not-judge=0] Violations: convex/diary.ts:80 (orchestratorListed: (d) local identity layer — compares names to admit (`normalizeOrchestratorId(agent.name) === claimed`, line 89)); convex/lib/agentIdentity.ts:300 (resolveAgentRef: (d) local identity layer — compares names to admit (`normalizeOrchestratorId(byNormalized.name) === normalized`, line 386); selects a row by name (`withIndex(\"by_org_normalized_name_clerk_id\")` on `normalizedName`, line 381); selects a row by name (`withIndex(\"by_org_name_clerk_id\")` on `name`, line 391); decides identity through name resolver `clerkOrgIdForSlug` (line 319)); convex/lib/auth.ts:629 (filterByOrgScope: (d) local identity layer — compares names to admit (`scope.allowedOrchestrators.includes(orchestrator)`, line 645)). Conform site(s): convex/agentCredentials.ts:83 (mintAgentCredential: principal from @vantageos/cloud-identity, target admitted by stored-ID comparison, unresolved refused); convex/agentLinks.ts:79 (grant: principal from @vantageos/cloud-identity, target admitted by stored-ID comparison, unresolved refused); convex/agentLinks.ts:154 (revoke: principal from @vantageos/cloud-identity, target admitted by stored-ID comparison, unresolved refused).; MECHANICAL RULE COUNTS: CR-2 242, CR-3 13, R-5 62, R-53 322, R-54 108, R-55 22, R-56 2",
 			"modules": {}
 		},
@@ -71,17 +71,17 @@
 		},
 		"CR-2": {
 			"count": 242,
-			"measured_tree_sha": "e3152fc17a772b7c9fb9222ee8f6ae9c2fd96cab",
+			"measured_tree_sha": "f67012c1cde0370246b4a0fe62a2359f2fac2b2e",
 			"cli_commit": "f6297a29c64a0265124e3e9cf86c9dd85eac47c0",
-			"command": "npx -y @vantageos/backend-doctor@0.5.0 <vantage-peers clean full checkout @e3152fc17a772b7c9fb9222ee8f6ae9c2fd96cab (task k17cbr6y6da096t5e1k869kgb18hd0ht), deps installed> --json-evidence <dir>/",
+			"command": "npx -y @vantageos/backend-doctor@0.5.0 <vantage-peers clean full checkout @f67012c1cde0370246b4a0fe62a2359f2fac2b2e (task k17cbr6y6da096t5e1k869kgb18hd0ht), deps installed> --json-evidence <dir>/",
 			"output_line": "CR-2 VERDICT: 242 violation(s) — MECHANICAL, the gate refuses; 7 exempt; 1 could-not-judge.; MECHANICAL RULE COUNTS: CR-2 242, CR-3 13, R-5 62, R-53 322, R-54 108, R-55 22, R-56 2",
 			"modules": {}
 		},
 		"R-54": {
 			"count": 108,
-			"measured_tree_sha": "e3152fc17a772b7c9fb9222ee8f6ae9c2fd96cab",
+			"measured_tree_sha": "f67012c1cde0370246b4a0fe62a2359f2fac2b2e",
 			"cli_commit": "f6297a29c64a0265124e3e9cf86c9dd85eac47c0",
-			"command": "npx -y @vantageos/backend-doctor@0.5.0 <vantage-peers clean full checkout @e3152fc17a772b7c9fb9222ee8f6ae9c2fd96cab (task k17cbr6y6da096t5e1k869kgb18hd0ht), deps installed> --json-evidence <dir>/",
+			"command": "npx -y @vantageos/backend-doctor@0.5.0 <vantage-peers clean full checkout @f67012c1cde0370246b4a0fe62a2359f2fac2b2e (task k17cbr6y6da096t5e1k869kgb18hd0ht), deps installed> --json-evidence <dir>/",
 			"output_line": "R-54: 108 site(s) VIOLATE (a door resolving its caller through the organisation-scope resolver declares a verified-claim argument and refuses the call that is the service account and carries no claim, or is service-account-only, session-only, or declared fleet-wide). [conform=92 non-conforming=108 could-not-judge=8] Violations: convex/briefingNotes.ts:286 (create: (B) the claim is optional: accepts verifiedActor, verifiedOrg but no branch refuses the claimless service-account call, so the absence of a claim leaves the call master); convex/briefingNotes.ts:469 (get: (B) the claim is optional: accepts verifiedOrg but no branch refuses the claimless service-account call, so the absence of a claim leaves the call master); convex/briefingNotes.ts:649 (list: (B) the claim is optional: accepts verifiedOrg but no branch refuses the claimless service-account call, so the absence of a claim leaves the call master). Conform site(s): convex/agentCredentials.ts:83 (mintAgentCredential: exit (b): callers resolve only through a verified session; the door never reaches the organisation-scope resolver); convex/agentCredentials.ts:179 (revokeAgentCredential: exit (b): callers resolve only through a verified session; the door never reaches the organisation-scope resolver); convex/agentCredentials.ts:262 (resolveAgentCredential: exit (a): service-account-only by purpose (requireServiceAccount / requireResolvedCaller masterOnly+mcpBoundOnly)). could-not-judge sites (not decided; each names why): convex/kb.ts:256 (storeDocumentChunked: caller scope arrives through a run call (ctx.runQuery / ctx.runMutation); its resolution is not read here); convex/kb.ts:406 (softDeleteDocument: caller scope arrives through a run call (ctx.runQuery / ctx.runMutation); its resolution is not read here); convex/okfBundleNode.ts:290 (exportOkfBundle: caller scope arrives through a run call (ctx.runQuery / ctx.runMutation); its resolution is not read here).; MECHANICAL RULE COUNTS: CR-2 242, CR-3 13, R-5 62, R-53 322, R-54 108, R-55 22, R-56 2",
 			"modules": {}
 		},
@@ -111,9 +111,9 @@
 		},
 		"CR-3": {
 			"count": 13,
-			"measured_tree_sha": "e3152fc17a772b7c9fb9222ee8f6ae9c2fd96cab",
+			"measured_tree_sha": "f67012c1cde0370246b4a0fe62a2359f2fac2b2e",
 			"cli_commit": "f6297a29c64a0265124e3e9cf86c9dd85eac47c0",
-			"command": "npx -y @vantageos/backend-doctor@0.5.0 <vantage-peers clean full checkout @e3152fc17a772b7c9fb9222ee8f6ae9c2fd96cab (task k17cbr6y6da096t5e1k869kgb18hd0ht), deps installed> --json-evidence <dir>/",
+			"command": "npx -y @vantageos/backend-doctor@0.5.0 <vantage-peers clean full checkout @f67012c1cde0370246b4a0fe62a2359f2fac2b2e (task k17cbr6y6da096t5e1k869kgb18hd0ht), deps installed> --json-evidence <dir>/",
 			"output_line": "CR-3 VERDICT: 13 violation(s) — MECHANICAL, the gate refuses; 0 exempt; 16 could-not-judge.; MECHANICAL RULE COUNTS: CR-2 242, CR-3 13, R-5 62, R-53 322, R-54 108, R-55 22, R-56 2",
 			"modules": {}
 		}
