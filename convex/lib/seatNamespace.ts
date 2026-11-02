@@ -47,7 +47,7 @@ function isActingSeat(scope: OrgScope): boolean {
  * THE RULE AS DATA: the namespace roots (each also admits its `/sub-namespaces`)
  * this non-fleet scope may read and write in the memories table. Decided here once;
  * `isMemoryNamespaceAllowed` tests against it and the refusal text
- * (`memoryNamespaceRefusal`) prints it, so the message cannot drift from the rule.
+ * (`memoryWritableRootsText`) prints it, so the message cannot drift from the rule.
  *   - `team/<org ID>` (+ the legacy `team/<slug>` alias): every member and seat.
  *   - `project/<org slug>`: a seat acting for its org.
  *   - `orchestrator/<own agent ID>`: a seat with a verified agent proof only.
@@ -83,23 +83,19 @@ export function isMemoryNamespaceAllowed(
 }
 
 /**
- * The text of a refused memory write: the code, the refused namespace, and the
- * roots THIS caller may write, from `memoryWritableRootsOf`. A seat without an
- * agent proof is told its own `orchestrator/<agent ID>` needs one.
+ * The sentence a refused memory write appends to its `RBAC_DENIED` text: the roots
+ * THIS caller may write, from `memoryWritableRootsOf` (the rule that decides). A
+ * seat without an agent proof is told its own `orchestrator/<agent ID>` needs one.
  */
-export function memoryNamespaceRefusal(
+export function memoryWritableRootsText(
 	scope: OrgScope,
-	namespace: string,
 	ownAgentId?: string,
 ): string {
 	const roots = memoryWritableRootsOf(scope, ownAgentId);
 	if (isActingSeat(scope) && ownAgentId === undefined) {
 		roots.push("orchestrator/<your agent ID> (needs a verified agent proof)");
 	}
-	return (
-		`RBAC_DENIED: caller may not write to namespace "${namespace}" — ${JSON.stringify({ orgSlug: scope.orgSlug })}. ` +
-		`This caller may write: ${roots.length > 0 ? roots.join(", ") : "none"} (each also with its /sub-namespaces).`
-	);
+	return `This caller may write: ${roots.length > 0 ? roots.join(", ") : "none"} (each also with its /sub-namespaces).`;
 }
 
 /**
