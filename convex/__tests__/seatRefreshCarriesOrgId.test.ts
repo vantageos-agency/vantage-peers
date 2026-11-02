@@ -226,6 +226,30 @@ describe("seat refresh: the rotated access token carries the family's permanent 
 		expect(rotated?.clerkOrgId).toBe(testClerkOrgId("org-a"));
 	});
 
+	test("PRESENT: the scope profile row was DELETED -> the family's own ID still stamps the rotated token", async () => {
+		// Pinned on purpose: nothing contradicts the family's ID (the "profile ID
+		// equal or absent" row of the case table), and the door's grant comes from
+		// the snapshot args, not from the row. The /token transport itself answers
+		// a missing profile 500 before it ever calls this door (server-http.ts
+		// loadScopeProfile), so the door is not the layer that refuses it.
+		const t = createT();
+		await seedOrg(t, "org-a");
+		await seedProfile(t, "p-a", "org-a");
+		await seedRefresh(t, "p-a");
+		await mint(t, "p-a", "org-a");
+		await t.run(async (ctx) => {
+			const p = await ctx.db.query("oauth_scope_profiles").first();
+			if (p) await ctx.db.delete(p._id);
+		});
+		const res = await rotate(t, "p-a", "org-a");
+		expect(res.status).toBe("ok");
+		if (res.status !== "ok") return;
+		const rows = await accessRows(t);
+		const rotated = rows.find((r) => r.tokenHash === sha(res.issued.access));
+		expect(rotated?.clerkOrgId).toBe(testClerkOrgId("org-a"));
+		expect(await lookup(t, res.issued.access)).not.toBeNull();
+	});
+
 	test("DENY: the profile now names ANOTHER org by ID -> refused, family revoked, never re-pointed", async () => {
 		const t = createT();
 		await seedOrg(t, "org-a");
