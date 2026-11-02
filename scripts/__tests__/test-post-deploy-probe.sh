@@ -115,6 +115,7 @@ two_agents
 run_case "two agents, healthy -> PASS, delivered and read back by recipient" ok 0 PASS "$tmp/a.bearer" 'delivered and read back by the recipient'
 run_case "two agents: send accepted but never reaches the inbox -> FAIL" no-delivery 1 FAIL
 run_case "two agents: inbox shows a different message -> FAIL" wrong-inbox 1 FAIL
+run_case "two agents: right body but wrong sender id in the inbox -> FAIL" wrong-sender 1 FAIL
 run_case "two agents: send to own second agent refused -> FAIL" send-second-refused 1 FAIL
 run_case "two agents: second credential resolves to the primary's agent -> COULD-NOT-JUDGE" second-is-primary 2 COULD-NOT-JUDGE
 run_case "two agents: admits cross-org -> FAIL" admit-other 1 FAIL

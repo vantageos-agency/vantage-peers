@@ -20,6 +20,7 @@
 // no-delivery       send to the second agent is accepted but never reaches its inbox
 // send-second-refused  send to the second agent is refused RBAC_DENIED
 // wrong-inbox       the recipient's inbox shows a DIFFERENT message than the one sent
+// wrong-sender      the right body arrives, attributed to a different sender id
 // second-is-primary whoami for the second credential returns the primary's agent
 // delete-refused    delete_message is refused (the message id must be listed for cleanup)
 
@@ -159,20 +160,33 @@ function callTool(bearer, name, args) {
 		);
 	}
 	if (name === "check_messages") {
+		// The real shape (measured on a local backend): an array of
+		// { receiptId, from, fromId, channel, content, createdAt }, no message id.
+		const entry = ([id, m]) => ({
+			receiptId: `rcpt-${id}`,
+			from: byAgent(m.from)?.label,
+			fromId: MODE === "wrong-sender" ? "agentSomeoneElse" : m.from,
+			channel: me.label,
+			content: m.content,
+			createdAt: 1,
+		});
 		const mine = [...msgs.entries()].filter(([, m]) => m.to === me.agent);
-		const shown = MODE === "no-delivery" ? [] : mine;
+		if (MODE === "no-delivery") return text("[]");
 		if (MODE === "wrong-inbox" && mine.length) {
 			return text(
-				JSON.stringify({
-					messages: [{ _id: "msgOTHER", content: "unrelated" }],
-				}),
+				JSON.stringify([
+					{
+						receiptId: "r",
+						from: "x",
+						fromId: "x",
+						channel: me.label,
+						content: "unrelated",
+						createdAt: 1,
+					},
+				]),
 			);
 		}
-		return text(
-			JSON.stringify({
-				messages: shown.map(([id, m]) => ({ _id: id, content: m.content })),
-			}),
-		);
+		return text(JSON.stringify(mine.map(entry)));
 	}
 	if (name === "delete_message") {
 		if (MODE === "delete-refused")
