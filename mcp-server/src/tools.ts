@@ -40,6 +40,7 @@ import {
 	type DoorScopeArgs,
 	type DoorScopeFacts,
 	resolveDoorScope,
+	verifiedOrgIdOf,
 	verifiedOrgSlugOf,
 } from "./doorScope.js";
 import {
@@ -2255,6 +2256,9 @@ export function registerTools(
 			? { personAccessTokenHash: oauthCtx.accessTokenHash }
 			: {}),
 		...(verifiedOrgSlug !== undefined ? { verifiedOrgSlug } : {}),
+		...(verifiedOrgIdOf(oauthCtx) !== undefined
+			? { verifiedOrgId: verifiedOrgIdOf(oauthCtx) as string }
+			: {}),
 		hasVerifiedActor: verifiedActor !== undefined,
 		seat: resolveSeatOrg(oauthCtx),
 	};

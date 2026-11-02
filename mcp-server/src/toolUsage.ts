@@ -1,6 +1,10 @@
 import type { ConvexHttpClient } from "convex/browser";
 import { isMasterScope, type OAuthContext } from "./auth.js";
-import { type DoorScopeArgs, verifiedOrgSlugOf } from "./doorScope.js";
+import {
+	type DoorScopeArgs,
+	verifiedOrgIdOf,
+	verifiedOrgSlugOf,
+} from "./doorScope.js";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // toolUsage — the MCP side of "which tools has this caller called" (task
@@ -84,7 +88,16 @@ export async function recordToolUsage(
 		await convex.mutation(
 			// biome-ignore lint/suspicious/noExplicitAny: Convex string API
 			"toolUsage:record" as any,
-			{ toolName: tool, ...identity, verifiedOrg: { orgSlug } },
+			{
+				toolName: tool,
+				...identity,
+				verifiedOrg: {
+					orgSlug,
+					...(verifiedOrgIdOf(oauthCtx) !== undefined
+						? { orgId: verifiedOrgIdOf(oauthCtx) as string }
+						: {}),
+				},
+			},
 		);
 	} catch {
 		// a recording failure is not the tool's failure

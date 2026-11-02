@@ -138,12 +138,35 @@ export function verifiedOrgSlugOf(
 	return oauthCtx.actor?.orgSlug ?? oauthCtx.clerkOrgSlug;
 }
 
+/**
+ * The permanent Clerk org ID of the organisation {@link verifiedOrgSlugOf} names,
+ * when the verified token carries it (`orgClerkId`, read LIVE from the org's
+ * ACTIVE mapping by `oauth:getAccessTokenByHash`). Convex keys the `verifiedOrg`
+ * claim by this ID: a slug is a renamable label another organisation can take
+ * over. The ID is the TOKEN's organisation's, so it is forwarded only when the
+ * verified slug is that same organisation's (an agent credential's org is
+ * judged on its own slug and sends the slug alone). Undefined when the Convex
+ * predates the field or the org has no ID yet; the claim then goes slug-only,
+ * which Convex still accepts.
+ */
+export function verifiedOrgIdOf(
+	oauthCtx: OAuthContext | undefined,
+): string | undefined {
+	const slug = verifiedOrgSlugOf(oauthCtx);
+	if (slug === undefined || oauthCtx === undefined) return undefined;
+	const id = oauthCtx.orgClerkId;
+	if (id === undefined || id === "") return undefined;
+	return oauthCtx.clerkOrgSlug === slug ? id : undefined;
+}
+
 /** What the verified oauthContext says about the caller. Never a tool argument. */
 export type DoorScopeFacts = {
 	/** The bearer hash of a PERSON token, when the caller is a person acting as itself. */
 	readonly personAccessTokenHash?: string;
 	/** The bearer's verified org (agent credential's, or the token row's); none for master / Clerk. */
 	readonly verifiedOrgSlug?: string;
+	/** The permanent ID of that org (see {@link verifiedOrgIdOf}); absent forwards the slug alone. */
+	readonly verifiedOrgId?: string;
 	/** True when the bearer resolved ONE agent ID (withVerifiedActor forwards it). */
 	readonly hasVerifiedActor: boolean;
 	/** The seat's org for a recipient-scoped door (resolveSeatOrg). */
@@ -152,7 +175,7 @@ export type DoorScopeFacts = {
 
 export type DoorScopeArgs = {
 	verifiedPerson?: { accessTokenHash: string };
-	verifiedOrg?: { orgSlug: string };
+	verifiedOrg?: { orgSlug: string; orgId?: string };
 	seatOrgSlug?: string;
 	seatOrgClerkId?: string;
 };
@@ -193,7 +216,14 @@ export function resolveDoorScope(
 			(rule.verifiedOrg === "unless-proof" &&
 				!personActsAsItself &&
 				!facts.hasVerifiedActor);
-		if (besideProof) args.verifiedOrg = { orgSlug: facts.verifiedOrgSlug };
+		if (besideProof) {
+			args.verifiedOrg = {
+				orgSlug: facts.verifiedOrgSlug,
+				...(facts.verifiedOrgId !== undefined
+					? { orgId: facts.verifiedOrgId }
+					: {}),
+			};
+		}
 	}
 	if (rule.seatOrgSlug === true && !personActsAsItself) {
 		if (facts.seat.kind === "refused") return { denied: facts.seat.error };

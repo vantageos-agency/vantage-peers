@@ -90,7 +90,7 @@ describe("get_tool_usage", () => {
 		expect(JSON.parse(text(r))).toEqual(ROWS);
 		expect(query).toHaveBeenCalledWith("toolUsage:getToolUsage", {
 			selfKey: "agent:agent-1",
-			verifiedOrg: { orgSlug: ORG },
+			verifiedOrg: { orgSlug: ORG, orgId: "org_a" },
 		});
 	});
 
@@ -100,7 +100,7 @@ describe("get_tool_usage", () => {
 		expect(query).toHaveBeenCalledWith("toolUsage:getToolUsage", {
 			caller: "agent:agent-1",
 			verifiedPerson: { accessTokenHash: "hash-1" },
-			verifiedOrg: { orgSlug: ORG },
+			verifiedOrg: { orgSlug: ORG, orgId: "org_a" },
 		});
 	});
 
@@ -140,7 +140,7 @@ describe("get_owner_tool_usage and the unidentified bearer", () => {
 		expect(query).toHaveBeenCalledWith("toolUsage:usageByOwner", {
 			ownerUserId: "user_owner",
 			verifiedPerson: { accessTokenHash: "hash-1" },
-			verifiedOrg: { orgSlug: ORG },
+			verifiedOrg: { orgSlug: ORG, orgId: "org_a" },
 		});
 	});
 
@@ -150,7 +150,7 @@ describe("get_owner_tool_usage and the unidentified bearer", () => {
 		expect(query).toHaveBeenCalledWith("toolUsage:usageByOwner", {
 			ownerUserId: "user_owner",
 			selfKey: "agent:agent-1",
-			verifiedOrg: { orgSlug: ORG },
+			verifiedOrg: { orgSlug: ORG, orgId: "org_a" },
 		});
 	});
 
@@ -179,7 +179,7 @@ describe("the wrapper records through registerTools", () => {
 				{
 					toolName: "get_tool_usage",
 					caller: "agent:agent-1",
-					verifiedOrg: { orgSlug: ORG },
+					verifiedOrg: { orgSlug: ORG, orgId: "org_a" },
 				},
 			],
 		]);

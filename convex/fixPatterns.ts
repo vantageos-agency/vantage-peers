@@ -5,7 +5,8 @@ import { requireId } from "./lib/ids";
 import { creatorValidator, severityValidator } from "./schema";
 import { verifiedActorValidator, withOrgScope } from "./lib/auth";
 import type { OrgScope } from "./lib/auth";
-import { requireFleetAgentActor } from "./lib/fleetActors";
+import { fleetPartyId, requireFleetAgentActor } from "./lib/fleetActors";
+import { requireVerifiedActorPrincipal } from "./lib/actingPrincipal";
 import { requireFleetDoor, scopeWithFleetStanding } from "./lib/fleetStanding";
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -242,6 +243,12 @@ export const get = query({
 		// the row unchanged, and a claim never widens what this master-only door
 		// admits (a non-master caller is refused above, before any row is read).
 		callerIdentities: v.optional(v.array(v.string())),
+		// The agent the MCP transport VERIFIED for the bearer (its ID, never a
+		// name). When present the pattern is read only if the pattern's creator IS
+		// that agent, judged by agents-row ID; `callerIdentities` (names) is then
+		// not consulted. Absent, the legacy roster of names narrows as before (the
+		// MCP that predates the claim, or an org-level bearer with no single agent).
+		verifiedActor: v.optional(verifiedActorValidator),
 	},
 	returns: v.union(
 		v.object({
@@ -290,6 +297,17 @@ export const get = query({
 			masterOnly: true,
 			operatorHumanMayRead: true,
 		});
+		// The verified acting agent is judged BY ID before any row is read: the
+		// service account only, the agents row active and in the org the transport
+		// verified it in.
+		if (args.verifiedActor !== undefined) {
+			await requireVerifiedActorPrincipal(
+				ctx,
+				scope,
+				args.verifiedActor,
+				"fixPatterns:get",
+			);
+		}
 		const patternId = requireId(
 			ctx,
 			"fixPatterns",
@@ -299,7 +317,13 @@ export const get = query({
 		);
 		const pattern = await ctx.db.get(patternId);
 		if (pattern === null) return null;
-		if (
+		if (args.verifiedActor !== undefined) {
+			// The roster check by ID: the pattern's creator is an agent of the
+			// operator organisation (a stamped ID, else its label resolved once there);
+			// a client organisation's agent bearing the same label is another agent.
+			const creatorId = await fleetPartyId(ctx, undefined, pattern.createdBy);
+			if (creatorId !== args.verifiedActor.agentId) return null;
+		} else if (
 			args.callerIdentities !== undefined &&
 			!args.callerIdentities.includes(pattern.createdBy)
 		) {
