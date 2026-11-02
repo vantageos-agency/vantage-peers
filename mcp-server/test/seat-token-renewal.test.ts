@@ -72,12 +72,15 @@ const state: {
 	refreshTokensByRaw: Map<string, RefreshRow>;
 	accessTokenInserts: Array<{ tokenHash: string; refreshTokenHash?: string }>;
 	newRefreshHashesSeen: string[];
+	// When set, the fake answers a seat rotation with the door's REFUSAL shape.
+	refuseWith: string | undefined;
 } = {
 	clients: new Map(),
 	profiles: new Map(),
 	refreshTokensByRaw: new Map(),
 	accessTokenInserts: [],
 	newRefreshHashesSeen: [],
+	refuseWith: undefined,
 };
 
 function makeFakeConvex() {
@@ -119,6 +122,11 @@ function makeFakeConvex() {
 					if (row.revokedAt !== undefined) return { status: "reused" };
 					if (row.expiresAt < Date.now()) return { status: "invalid" };
 					if (row.clientId !== args.clientId) return { status: "invalid" };
+					if (state.refuseWith !== undefined) {
+						// convex/oauth.ts rotateRefreshToken: a refusal revokes the family.
+						row.revokedAt = Date.now();
+						return { status: "refused", reason: state.refuseWith };
+					}
 					row.revokedAt = Date.now();
 					const refresh = randomBytes(32).toString("hex");
 					const access = randomBytes(32).toString("hex");
@@ -152,6 +160,7 @@ beforeEach(async () => {
 	state.refreshTokensByRaw.clear();
 	state.accessTokenInserts.length = 0;
 	state.newRefreshHashesSeen.length = 0;
+	state.refuseWith = undefined;
 
 	_setInternalClientForTest(
 		// biome-ignore lint/suspicious/noExplicitAny: test fake
@@ -424,4 +433,26 @@ describe("refresh_token grant - the door refuses a person with no live membershi
 		expect(r.body.error).toBe("invalid_grant");
 		expect(r.body.refresh_token).toBeUndefined();
 	});
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// A REFUSED rotation (task k17eer2yreed4mcraq85we28z18he21p). convex/oauth.ts
+// rotateRefreshToken answers a seat family that cannot prove its organisation
+// with `{ status: "refused", reason }`; the /token seat branch maps every
+// non-"ok" status to invalid_grant 400 and issues nothing.
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe("seat token renewal — a refused rotation answers invalid_grant", () => {
+	for (const reason of ["organisation-id-missing", "organisation-mismatch"]) {
+		it(`refused (${reason}) -> 400 invalid_grant, no tokens issued`, async () => {
+			state.refuseWith = reason;
+			const r = await postRefresh(
+				SEAT_REFRESH_RAW,
+				basicAuth(SEAT_CLIENT_ID, SEAT_SECRET),
+			);
+			expect(r.status).toBe(400);
+			expect(r.body).toEqual({ error: "invalid_grant" });
+			expect(state.accessTokenInserts).toHaveLength(0);
+		});
+	}
 });
