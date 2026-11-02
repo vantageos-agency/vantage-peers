@@ -85,6 +85,22 @@ async function insertToken(
 	extra: Record<string, unknown> = {},
 ): Promise<void> {
 	await t.run(async (ctx) => {
+		// A token's rights are its scope profile's, read live: the profile row exists.
+		const profile = await ctx.db
+			.query("oauth_scope_profiles")
+			.withIndex("by_profileId", (q) => q.eq("profileId", "team-member"))
+			.unique();
+		if (profile === null) {
+			await ctx.db.insert("oauth_scope_profiles", {
+				profileId: "team-member",
+				description: "team-member",
+				fromAllowList: [],
+				namespaceReadPrefixes: [],
+				namespaceWritePrefixes: [],
+				createdAt: 1,
+				updatedAt: 1,
+			});
+		}
 		await ctx.db.insert("oauth_access_tokens", {
 			tokenHash,
 			clientId: "client-a",

@@ -292,6 +292,15 @@ describe("oauth token-hash reads (service account only)", () => {
 		const t = createT();
 		const now = Date.now();
 		await t.run(async (ctx) => {
+			await ctx.db.insert("oauth_scope_profiles", {
+				profileId: "seat-a",
+				description: "seat-a",
+				fromAllowList: ["seat-a"],
+				namespaceReadPrefixes: ["orchestrator/seat-a"],
+				namespaceWritePrefixes: ["orchestrator/seat-a"],
+				createdAt: now,
+				updatedAt: now,
+			});
 			await ctx.db.insert("oauth_access_tokens", {
 				tokenHash: "correct-hash-abc",
 				clientId: "client-x",

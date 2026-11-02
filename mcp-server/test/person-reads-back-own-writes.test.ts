@@ -86,6 +86,17 @@ async function mint(
 	principal: "person" | null = "person",
 ): Promise<string> {
 	await seedMintProfile(t, "team-member", org);
+	if (principal === null) {
+		// An org-level token's allowed senders are its scope profile's (read live), so
+		// the profile names the roster the token is minted with.
+		await t.run(async (ctx) => {
+			const profile = await ctx.db
+				.query("oauth_scope_profiles")
+				.withIndex("by_profileId", (q) => q.eq("profileId", "team-member"))
+				.unique();
+			if (profile) await ctx.db.patch(profile._id, { fromAllowList: roster });
+		});
+	}
 	await t.withIdentity({ subject: SERVICE_ACCOUNT_ID }).mutation(
 		makeFunctionReference<"mutation">("oauth:createAccessToken") as never,
 		{

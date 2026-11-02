@@ -46,6 +46,11 @@ import {
 	personPrincipalLookups,
 } from "./lib/actingPrincipal";
 import { liveSeatAgent, resolveSeatAgent } from "./lib/seatAgent";
+import {
+	mintNarrowsProfile,
+	personTokenRights,
+	profileTokenRights,
+} from "./lib/tokenRights";
 import { isAgentOnScopeRoster } from "./lib/missionActors";
 import { personalAgentOfToken } from "./lib/personalAgent";
 import { personRefreshFamilyMaxMs } from "./lib/personRefreshConfig";
@@ -2646,6 +2651,19 @@ async function mintAccessToken(
 			: a.principal === "person" && a.codeHash !== undefined
 				? await chosenAtConsent(ctx, a.codeHash)
 				: null;
+	// A profile token whose request is not exactly its profile's rights was NARROWED
+	// by whoever minted it (an operator mint below the profile). The copy is then kept
+	// as a narrowing of the live profile (tokenRights.ts), decided here from the row,
+	// never from a flag the caller sends. A person token is derived from the live
+	// organisation mapping and is never pinned.
+	const mintProfile =
+		a.principal === "person"
+			? null
+			: await ctx.db
+					.query("oauth_scope_profiles")
+					.withIndex("by_profileId", (q) => q.eq("profileId", a.scopeProfile))
+					.unique();
+	const pinned = mintProfile !== null && mintNarrowsProfile(a, mintProfile);
 	const id = await ctx.db.insert("oauth_access_tokens", {
 		tokenHash: a.tokenHash,
 		clientId: a.clientId,
@@ -2655,6 +2673,7 @@ async function mintAccessToken(
 		fromAllowList: a.fromAllowList,
 		namespaceReadPrefixes: a.namespaceReadPrefixes,
 		namespaceWritePrefixes: a.namespaceWritePrefixes,
+		...(pinned ? { rightsPinned: true } : {}),
 		expiresAt: a.expiresAt,
 		refreshTokenHash: a.refreshTokenHash,
 		createdAt: Date.now(),
@@ -2920,14 +2939,34 @@ export const getAccessTokenByHash = query({
 				);
 			}
 		}
+		// The rights are derived NOW, never read from the copy made at mint
+		// (convex/lib/tokenRights.ts; task k17dhntq3m2w5x3x1jtdmkkba18hek7m). A person
+		// token follows the organisation's live mapping, any other token its live
+		// scope profile row. No grant source (profile gone or re-pointed to another
+		// organisation, person with no active mapping) is a DENY, answered like an
+		// unknown token.
+		let rights: ReturnType<typeof profileTokenRights>;
+		if (row.principal === "person") {
+			rights =
+				orgMapping !== null && orgMapping.isActive
+					? personTokenRights(orgMapping)
+					: null;
+		} else {
+			const liveProfile = await ctx.db
+				.query("oauth_scope_profiles")
+				.withIndex("by_profileId", (q) => q.eq("profileId", row.scopeProfile))
+				.unique();
+			rights = profileTokenRights(row, liveProfile);
+		}
+		if (rights === null) return null;
 		return {
 			clientId: row.clientId,
 			userId: row.userId,
 			scopes: row.scopes,
 			scopeProfile: row.scopeProfile,
-			fromAllowList: row.fromAllowList,
-			namespaceReadPrefixes: row.namespaceReadPrefixes,
-			namespaceWritePrefixes: row.namespaceWritePrefixes,
+			fromAllowList: rights.fromAllowList,
+			namespaceReadPrefixes: rights.namespaceReadPrefixes,
+			namespaceWritePrefixes: rights.namespaceWritePrefixes,
 			expiresAt: row.expiresAt,
 			...(orgLabel !== undefined ? { clerkOrgSlug: orgLabel } : {}),
 			...(orgClerkId !== undefined ? { orgClerkId } : {}),

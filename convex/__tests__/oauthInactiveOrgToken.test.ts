@@ -139,6 +139,18 @@ describe("getAccessTokenByHash: an org token needs an ACTIVE mapping read by ID"
 		const t = createT();
 		await seedOrg(t, "org-a");
 		await setActive(t, "org-a", false);
+		// An org-less (fleet) profile: the token's rights are its live profile row.
+		await t.run(async (ctx) => {
+			await ctx.db.insert("oauth_scope_profiles", {
+				profileId: "fleet-profile",
+				description: "fleet",
+				fromAllowList: ["clio"],
+				namespaceReadPrefixes: [],
+				namespaceWritePrefixes: [],
+				createdAt: Date.now(),
+				updatedAt: Date.now(),
+			});
+		});
 		await mint(t, "tok-fleet", "fleet-profile");
 		const got = await lookup(t, "tok-fleet");
 		expect(got).toMatchObject({ clientId: "client-1", scopeProfile: "fleet-profile" });

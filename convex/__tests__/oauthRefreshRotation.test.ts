@@ -44,16 +44,32 @@ const asMemberOf = (t: T, org: string) =>
 	} as Parameters<T["withIdentity"]>[0]);
 
 const seedRefresh = (t: T, raw: string, expiresAt: number, clientId = "c1") =>
-	t.run((ctx) =>
-		ctx.db.insert("oauth_refresh_tokens", {
+	t.run(async (ctx) => {
+		// A token's rights are its scope profile's, read live: the profile row exists.
+		const existing = await ctx.db
+			.query("oauth_scope_profiles")
+			.withIndex("by_profileId", (q) => q.eq("profileId", "clio-org-a"))
+			.unique();
+		if (existing === null) {
+			await ctx.db.insert("oauth_scope_profiles", {
+				profileId: "clio-org-a",
+				description: "clio seat",
+				fromAllowList: ["clio"],
+				namespaceReadPrefixes: ["orchestrator/clio"],
+				namespaceWritePrefixes: ["orchestrator/clio"],
+				createdAt: Date.now(),
+				updatedAt: Date.now(),
+			});
+		}
+		return await ctx.db.insert("oauth_refresh_tokens", {
 			tokenHash: sha(raw),
 			clientId,
 			userId: "seat",
 			scopeProfile: "clio-org-a",
 			expiresAt,
 			createdAt: Date.now(),
-		}),
-	);
+		});
+	});
 
 /** What server-http.ts hands the door: the presented hash, the client and the profile snapshot. */
 const rotation = (presented: string, clientId = "c1") => ({
