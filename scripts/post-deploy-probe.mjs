@@ -27,6 +27,9 @@
 //   VP_PROBE_MCP_URL   default https://mcp.vantagepeers.com/mcp
 //   VP_PROBE_DIR       default ~/.config/vantage-probe-tenants/prod
 //   VP_PROBE_BEARER_A / VP_PROBE_BEARER_B   explicit bearer file paths
+//   VP_PROBE_BEARER_A2 / VP_PROBE_BEARER_B2 optional SECOND agent per org (default
+//                      <tenant>/probe-a2.bearer, probe-b2.bearer). Absent file: single-agent
+//                      fallback, announced in the output and the summary.
 //
 // Credentials are read from 0600 files and are never printed.
 //
@@ -50,19 +53,25 @@ const ORGS = [
 		file:
 			process.env.VP_PROBE_BEARER_A ??
 			join(DIR, "probe-tenant-a/probe-a.bearer"),
+		secondFile:
+			process.env.VP_PROBE_BEARER_A2 ??
+			join(DIR, "probe-tenant-a/probe-a2.bearer"),
 	},
 	{
 		label: "probe-tenant-b",
 		file:
 			process.env.VP_PROBE_BEARER_B ??
 			join(DIR, "probe-tenant-b/probe-b.bearer"),
+		secondFile:
+			process.env.VP_PROBE_BEARER_B2 ??
+			join(DIR, "probe-tenant-b/probe-b2.bearer"),
 	},
 ];
 
 class CouldNotJudge extends Error {}
 
 const failures = [];
-const created = []; // { org, ns, id } rows the run caused to exist
+const created = []; // { org, ns, id } rows or messages the run caused to exist and could not remove
 const lines = [];
 const say = (s) => {
 	lines.push(s);
@@ -78,6 +87,26 @@ function record(org, call, ok, expectation, response) {
 		failures.push(f);
 		say(`  FAIL  ${f}`);
 	}
+}
+
+// The SECOND probe agent of an org is optional. A file that does not exist (ENOENT) means
+// "not provisioned": the probe falls back to the single-agent check and says so. A file that
+// exists but cannot be read, or is empty, is a broken credential, never a silent fallback.
+function readSecondBearer(org) {
+	let raw;
+	try {
+		raw = readFileSync(org.secondFile, "utf8").trim();
+	} catch (e) {
+		if (e.code === "ENOENT") return null;
+		throw new CouldNotJudge(
+			`second-agent credential for ${org.label} unreadable (${org.secondFile}): ${e.code ?? e.message}`,
+		);
+	}
+	if (!raw)
+		throw new CouldNotJudge(
+			`second-agent credential for ${org.label} is empty (${org.secondFile})`,
+		);
+	return raw;
 }
 
 async function readBearer(org) {
@@ -232,6 +261,8 @@ async function whoami(org) {
 	}
 	org.agentId = agentId;
 	org.slug = slug;
+	// The label this seat reads its inbox under (check_messages recipient).
+	org.inboxLabel = w.suggested_orchestrator_id ?? w.fromAllowList?.[0] ?? null;
 }
 
 function memoryIdOf(text) {
@@ -271,23 +302,80 @@ async function ownPole(org, stamp) {
 			g.text,
 		);
 	}
-	// send_message: the probe roster is a single agent, so no deliverable recipient exists.
-	// Self-send is refused INVALID_RECIPIENTS; that refusal is only reachable once the seat
-	// is resolved, so it proves the door resolves the seat. A delivery is also accepted
-	// (the roster may grow). RBAC_DENIED or any other error means the seat is not served.
+	await sendPole(org, stamp);
+}
+
+// send_message inside the org.
+//  - With a SECOND agent credential: the seat sends to the second agent, the send must be
+//    accepted with a messageId, and the RECIPIENT (the second agent's own seat) must find that
+//    exact message in its inbox (check_messages). Delivered AND read back by the recipient.
+//    The sender then deletes the message (delete_message, sender-only); if that is refused the
+//    id is listed for the operator.
+//  - Without one: single-agent fallback, said so in the output. A self-send is refused
+//    INVALID_RECIPIENTS, which is only reachable once the seat is resolved, so it proves the
+//    door resolves the seat but NOT that delivery works. RBAC_DENIED or any other error fails.
+async function sendPole(org, stamp) {
+	const marker = `post-deploy-probe ${stamp} send ${org.label} (task ${TASK})`;
+	const second = org.second;
+	if (!second) {
+		say(
+			`  NOTE  ${org.label}: SINGLE-AGENT FALLBACK, no second-agent credential (${org.secondFile}); in-org send_message delivery is NOT tested for this org`,
+		);
+		const s = await call(org, "send_message", {
+			fromAgentId: org.agentId,
+			recipientAgentIds: [org.agentId],
+			content: marker,
+		});
+		record(
+			org.label,
+			"send_message to own roster (single-agent fallback)",
+			!s.isError || /INVALID_RECIPIENTS/.test(s.text),
+			"delivered, or INVALID_RECIPIENTS (single-agent roster)",
+			s.text,
+		);
+		return;
+	}
+	const before = Date.now() - 60000;
 	const s = await call(org, "send_message", {
 		fromAgentId: org.agentId,
-		recipientAgentIds: [org.agentId],
-		content: `post-deploy-probe ${stamp} send ${org.label} (task ${TASK})`,
+		recipientAgentIds: [second.agentId],
+		content: marker,
 	});
-	const sendOk = !s.isError || /INVALID_RECIPIENTS/.test(s.text);
+	let messageId = null;
+	try {
+		messageId = JSON.parse(s.text).messageId ?? null;
+	} catch {
+		messageId = null;
+	}
 	record(
 		org.label,
-		"send_message to own roster",
-		sendOk,
-		"delivered, or INVALID_RECIPIENTS (single-agent roster)",
+		`send_message to own second agent ${second.agentId}`,
+		!s.isError && !!messageId,
+		"delivered with a messageId",
 		s.text,
 	);
+	if (!messageId) return;
+	const inbox = await call(second, "check_messages", {
+		recipient: second.inboxLabel ?? second.label,
+		since: before,
+		limit: 50,
+	});
+	record(
+		second.label,
+		`check_messages (recipient read-back of ${messageId})`,
+		!inbox.isError &&
+			inbox.text.includes(messageId) &&
+			inbox.text.includes(marker),
+		"the exact message id and body in the recipient's own inbox",
+		inbox.text,
+	);
+	const d = await call(org, "delete_message", { messageId });
+	if (d.isError) {
+		created.push({ org: org.label, ns: "message", id: messageId });
+		say(
+			`  note  ${org.label} delete_message ${messageId} refused: ${clip(d.text, 120)}`,
+		);
+	}
 }
 
 async function crossPole(org, other, stamp) {
@@ -309,18 +397,20 @@ async function crossPole(org, other, stamp) {
 			r.text,
 		);
 	}
-	const s = await call(org, "send_message", {
-		fromAgentId: org.agentId,
-		recipientAgentIds: [other.agentId],
-		content: `post-deploy-probe ${stamp} cross send ${org.label}->${other.label} (task ${TASK})`,
-	});
-	record(
-		org.label,
-		"send_message to other org's agent",
-		s.isError && WRITE_REFUSAL.test(s.text),
-		"refused with a typed code (RBAC_DENIED|Forbidden|INVALID_RECIPIENTS|AUTH_NAMESPACE_DENIED)",
-		s.text,
-	);
+	for (const target of [other, other.second].filter(Boolean)) {
+		const s = await call(org, "send_message", {
+			fromAgentId: org.agentId,
+			recipientAgentIds: [target.agentId],
+			content: `post-deploy-probe ${stamp} cross send ${org.label}->${other.label} (task ${TASK})`,
+		});
+		record(
+			org.label,
+			`send_message to other org's agent ${target.agentId}`,
+			s.isError && WRITE_REFUSAL.test(s.text),
+			"refused with a typed code (RBAC_DENIED|Forbidden|INVALID_RECIPIENTS|AUTH_NAMESPACE_DENIED)",
+			s.text,
+		);
+	}
 	for (const row of other.rows ?? []) {
 		const g = await call(org, "get_memory", { memoryId: row.id });
 		record(
@@ -336,7 +426,7 @@ async function crossPole(org, other, stamp) {
 function summary(verdict, detail, code) {
 	if (created.length) {
 		say(
-			`CLEANUP: ${created.length} row(s) created, no seat delete door (soft_delete_memory is master-only). Ids for the operator:`,
+			`CLEANUP: ${created.length} item(s) left, no seat delete door for memories (soft_delete_memory is master-only). Ids for the operator:`,
 		);
 		for (const c of created) say(`  CLEANUP ${c.org} ${c.ns} ${c.id}`);
 	}
@@ -353,6 +443,22 @@ async function main() {
 		await whoami(org);
 		say(`  whoami ${org.label}: agent ${org.agentId}, org ${org.slug}`);
 	}
+	for (const org of ORGS) {
+		const bearer = readSecondBearer(org);
+		if (bearer === null) continue;
+		const second = { label: `${org.label}/second`, bearer };
+		await openSession(second);
+		await whoami(second);
+		if (second.slug !== org.slug || second.agentId === org.agentId) {
+			throw new CouldNotJudge(
+				`second-agent credential for ${org.label} resolves to agent ${second.agentId} of org ${second.slug}; expected a DIFFERENT agent of ${org.slug}`,
+			);
+		}
+		say(
+			`  whoami ${second.label}: agent ${second.agentId}, org ${second.slug}`,
+		);
+		org.second = second;
+	}
 	const [a, b] = ORGS;
 	await ownPole(a, stamp);
 	await ownPole(b, stamp);
@@ -365,9 +471,13 @@ async function main() {
 			1,
 		);
 	}
+	const single = ORGS.filter((o) => !o.second).map((o) => o.label);
 	summary(
 		"PASS",
-		`${a.label} and ${b.label}: own namespaces admitted and read back, cross-org refused`,
+		`${a.label} and ${b.label}: own namespaces admitted and read back, cross-org refused` +
+			(single.length
+				? `; SINGLE-AGENT FALLBACK for ${single.join(", ")}: in-org send delivery NOT tested`
+				: "; in-org send delivered and read back by the recipient"),
 		0,
 	);
 }

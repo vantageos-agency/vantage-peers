@@ -27,7 +27,16 @@ trap cleanup EXIT
 
 printf 'bearer-a\n' >"$tmp/a.bearer"
 printf 'bearer-b\n' >"$tmp/b.bearer"
-chmod 600 "$tmp/a.bearer" "$tmp/b.bearer"
+printf 'bearer-a2\n' >"$tmp/a2.bearer"
+printf 'bearer-b2\n' >"$tmp/b2.bearer"
+: >"$tmp/empty.bearer"
+chmod 600 "$tmp"/*.bearer
+# The second-agent credential files. Absent unless a case switches them on, and always set
+# explicitly so a developer's real ~/.config files can never leak into a run.
+A2="$tmp/absent-a2.bearer"
+B2="$tmp/absent-b2.bearer"
+two_agents() { A2="$tmp/a2.bearer"; B2="$tmp/b2.bearer"; }
+one_agent() { A2="$tmp/absent-a2.bearer"; B2="$tmp/absent-b2.bearer"; }
 
 start_stub() { # <mode>
   rm -f "$tmp/port"
@@ -47,9 +56,9 @@ stop_stub() {
   stub_pid=""
 }
 
-# run_case <name> <stub-mode|none> <expected-exit> <expected-summary-word> [bearer-a-path]
+# run_case <name> <stub-mode|none> <expected-exit> <expected-summary-word> [bearer-a-path] [must-match-regex]
 run_case() {
-  local name="$1" mode="$2" want_exit="$3" want_word="$4" bearer_a="${5:-$tmp/a.bearer}"
+  local name="$1" mode="$2" want_exit="$3" want_word="$4" bearer_a="${5:-$tmp/a.bearer}" must="${6:-}"
   local url out rc last
   total=$((total + 1))
   if [[ "$mode" == "none" ]]; then
@@ -59,10 +68,16 @@ run_case() {
     url="http://127.0.0.1:$(cat "$tmp/port")/mcp"
   fi
   out="$(VP_PROBE_MCP_URL="$url" VP_PROBE_BEARER_A="$bearer_a" VP_PROBE_BEARER_B="$tmp/b.bearer" \
+    VP_PROBE_BEARER_A2="$A2" VP_PROBE_BEARER_B2="$B2" \
     node "$PROBE" 2>&1)"
   rc=$?
   last="$(printf '%s\n' "$out" | grep -E '^POST-DEPLOY-PROBE:' | tail -1)"
   [[ "$mode" != "none" ]] && stop_stub
+  if [[ -n "$must" ]] && ! printf '%s\n' "$out" | grep -Eq "$must"; then
+    echo "FAIL  $name: output does not match /$must/"
+    printf '%s\n' "$out" | sed 's/^/      | /' | head -20
+    return
+  fi
   if [[ "$rc" == "$want_exit" && "$last" == "POST-DEPLOY-PROBE: $want_word"* ]]; then
     echo "ok    $name (exit $rc)"
     pass=$((pass + 1))
@@ -71,12 +86,15 @@ run_case() {
     printf '%s\n' "$out" | sed 's/^/      | /' | head -20
   fi
   # a bearer value must never reach the output
-  if printf '%s' "$out" | grep -q 'bearer-[ab]'; then
+  if printf '%s' "$out" | grep -q 'bearer-[ab]2\?'; then
     total=$((total + 1))
     echo "FAIL  $name: a credential value appeared in the output"
   fi
 }
 
+# --- single-agent fallback (no second credential): announced, never silent ---
+run_case "no second credential -> PASS, per-org NOTE line announces the fallback" ok 0 PASS "$tmp/a.bearer" 'NOTE +probe-tenant-a: SINGLE-AGENT FALLBACK, no second-agent credential'
+run_case "no second credential -> PASS, summary line announces the fallback" ok 0 PASS "$tmp/a.bearer" '^POST-DEPLOY-PROBE: PASS .*SINGLE-AGENT FALLBACK for probe-tenant-a, probe-tenant-b: in-org send delivery NOT tested'
 run_case "stub admits own, refuses other -> PASS" ok 0 PASS
 run_case "stateless server (no session id), healthy -> PASS" stateless 0 PASS
 run_case "stub admits other -> FAIL" admit-other 1 FAIL
@@ -91,6 +109,19 @@ run_case "own send refused with RBAC_DENIED -> FAIL" send-refused-own 1 FAIL
 run_case "unreadable credential -> COULD-NOT-JUDGE" ok 2 COULD-NOT-JUDGE "$tmp/does-not-exist.bearer"
 run_case "whoami fails -> COULD-NOT-JUDGE" whoami-fails 2 COULD-NOT-JUDGE
 run_case "MCP unreachable -> COULD-NOT-JUDGE" none 2 COULD-NOT-JUDGE
+
+# --- two agents per org: in-org send DELIVERED and read back by the recipient ---
+two_agents
+run_case "two agents, healthy -> PASS, delivered and read back by recipient" ok 0 PASS "$tmp/a.bearer" 'delivered and read back by the recipient'
+run_case "two agents: send accepted but never reaches the inbox -> FAIL" no-delivery 1 FAIL
+run_case "two agents: inbox shows a different message -> FAIL" wrong-inbox 1 FAIL
+run_case "two agents: send to own second agent refused -> FAIL" send-second-refused 1 FAIL
+run_case "two agents: second credential resolves to the primary's agent -> COULD-NOT-JUDGE" second-is-primary 2 COULD-NOT-JUDGE
+run_case "two agents: admits cross-org -> FAIL" admit-other 1 FAIL
+run_case "two agents: delete refused -> still PASS, message id listed for cleanup" delete-refused 0 PASS "$tmp/a.bearer" 'CLEANUP .*message msg'
+A2="$tmp/empty.bearer"
+run_case "second credential present but empty -> COULD-NOT-JUDGE (not a silent fallback)" ok 2 COULD-NOT-JUDGE
+one_agent
 
 echo "$pass/$total passed"
 [[ "$pass" == "$total" ]]
