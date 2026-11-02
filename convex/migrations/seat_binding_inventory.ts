@@ -551,6 +551,11 @@ export const bindingEvidence = internalQuery({
 				lineageAccessTokens: v.number(),
 				lineageRefreshTokens: v.number(),
 				personTokensIgnored: v.number(),
+				// DISTINCT clients holding a LIVE seat token on this profile (non-secret ids), so a
+				// revocation can target them with oauth:revokeAccessTokensOnly. Person tokens excluded.
+				liveClientIds: v.array(
+					v.object({ clientId: v.string(), liveTokens: v.number() }),
+				),
 				truncated: v.boolean(),
 				stampedAgents: v.array(
 					v.object({
@@ -598,6 +603,7 @@ export const bindingEvidence = internalQuery({
 					lineageAccessTokens: 0,
 					lineageRefreshTokens: 0,
 					personTokensIgnored: 0,
+					liveClientIds: [],
 					truncated: false,
 					stampedAgents: [],
 				});
@@ -622,6 +628,7 @@ export const bindingEvidence = internalQuery({
 			let lineageAccess = 0;
 			let lineageRefresh = 0;
 			let personIgnored = 0;
+			const liveClients = new Map<string, number>();
 			const stamped = new Map<string, number>(); // agentId -> live tokens carrying it
 			const note = (agentId: string | undefined, isLive: boolean) => {
 				if (agentId === undefined) return;
@@ -637,6 +644,7 @@ export const bindingEvidence = internalQuery({
 				lineageAccess++;
 				if (isLive) {
 					live++;
+					liveClients.set(t.clientId, (liveClients.get(t.clientId) ?? 0) + 1);
 					if (t.agentId !== undefined) liveStamped++;
 				}
 				note(t.agentId, isLive);
@@ -689,6 +697,9 @@ export const bindingEvidence = internalQuery({
 				lineageAccessTokens: lineageAccess,
 				lineageRefreshTokens: lineageRefresh,
 				personTokensIgnored: personIgnored,
+				liveClientIds: [...liveClients.entries()]
+					.map(([clientId, liveTokens]) => ({ clientId, liveTokens }))
+					.sort((x, y) => x.clientId.localeCompare(y.clientId)),
 				truncated,
 				stampedAgents,
 			});

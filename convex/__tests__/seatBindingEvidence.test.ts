@@ -74,6 +74,7 @@ async function token(
 		expired?: boolean;
 		revoked?: boolean;
 		person?: boolean;
+		client?: string;
 	} = {},
 ): Promise<void> {
 	n++;
@@ -81,7 +82,7 @@ async function token(
 		await ctx.db.insert("oauth_access_tokens", {
 			tokenHash: `${HASH}${n}`,
 			refreshTokenHash: `${HASH}r${n}`,
-			clientId: `client-${n}`,
+			clientId: o.client ?? `client-${n}`,
 			userId: "user-fixture",
 			scopes: [],
 			scopeProfile: profileId,
@@ -259,5 +260,33 @@ describe("seat_binding_inventory:bindingEvidence", () => {
 		await expect(t.query(evidence, { profileIds: many })).rejects.toThrow(
 			/BAD_ARGS/,
 		);
+	});
+
+	test("liveClientIds: both clients holding live tokens are listed with counts; revoked, expired and person clients are not", async () => {
+		const t = createT();
+		const a = await agent(t, { name: "a", org: ACME.id });
+		await profile(t, "p1");
+		await token(t, "p1", { agentId: a, client: "client-b" });
+		await token(t, "p1", { agentId: a, client: "client-a" });
+		await token(t, "p1", { agentId: a, client: "client-a" });
+		await token(t, "p1", { client: "client-revoked", revoked: true });
+		await token(t, "p1", { client: "client-expired", expired: true });
+		await token(t, "p1", { client: "client-person", person: true });
+		const out: Out = await t.query(evidence, { profileIds: ["p1"] });
+		expect(out.profiles[0].liveClientIds).toEqual([
+			{ clientId: "client-a", liveTokens: 2 },
+			{ clientId: "client-b", liveTokens: 1 },
+		]);
+		expect(out.profiles[0].liveSeatTokens).toBe(3);
+		const text = JSON.stringify(out);
+		expect(text).not.toContain(HASH);
+		expect(text).not.toMatch(/tokenHash|refreshTokenHash|codeHash/);
+	});
+
+	test("a profile with no live token lists no client", async () => {
+		const t = createT();
+		await profile(t, "p1");
+		const out: Out = await t.query(evidence, { profileIds: ["p1", "nope"] });
+		expect(out.profiles.map((p) => p.liveClientIds)).toEqual([[], []]);
 	});
 });
