@@ -31,7 +31,7 @@ import { fleetOperatorSlug } from "../lib/operatorOrg";
 import schema from "../schema";
 import { seedRosterAgent } from "../../tests/fixtures/rosterAgent";
 import { testClerkOrgId } from "../../tests/fixtures/testClerkOrgId";
-import { mintAgentSecret, seedFleetAgents } from "../../tests/lib/seedFleetAgents";
+import { insertTaskRow, mintAgentSecret, seedFleetAgents } from "../../tests/lib/seedFleetAgents";
 
 const modules = Object.fromEntries(
 	Object.entries(import.meta.glob("../**/*.ts")).filter(
@@ -332,15 +332,34 @@ async function completeTaskNaming(
 	secret?: string,
 ) {
 	const proof = secret === undefined ? {} : { agentCredentialSecret: secret };
-	const taskId = await caller.mutation(api.tasks.create, {
-		...proof,
-		title: "Close the loop",
-		assignedTo: by,
-		priority: "high",
-		status: "todo",
-		createdBy: by,
-		missionId,
-	});
+	// An org member can no longer CREATE a task naming a foreign mission
+	// (taskMissionSameTenant.test.ts), so the stored shape R-52's completion
+	// guard still defends against (a row written before that refusal) is seeded
+	// directly. The master path keeps creating through the door.
+	const taskId =
+		secret === undefined
+			? await caller.mutation(api.tasks.create, {
+					title: "Close the loop",
+					assignedTo: by,
+					priority: "high",
+					status: "todo",
+					createdBy: by,
+					missionId,
+				})
+			: await t.run((ctx) =>
+					insertTaskRow(ctx, {
+						title: "Close the loop",
+						assignedTo: by,
+						createdBy: by,
+						priority: "high",
+						status: "todo",
+						orgId: "org-a",
+						clerkOrgId: testClerkOrgId("org-a"),
+						missionId,
+						createdAt: 1,
+						updatedAt: 1,
+					}),
+				);
 	await caller.mutation(api.tasks.complete, {
 		...proof,
 		taskId,
