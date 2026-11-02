@@ -74,7 +74,8 @@ fi
 # so no setting of it can admit a path outside /tmp.
 reap_standalone() {
   local root root_real tmp_real cand name git_dir common_dir top wt_count dirty head \
-    stashes tip ref commit ignored entry rebuildable part keep before size after
+    stashes tip ref commit ignored entry rebuildable part keep before size after \
+    repo_slug proof proof_err head_branch tag_name
   local -a parts
   tmp_real=$(realpath -e -- /tmp) || die "cannot resolve /tmp"
   root=${REAP_STANDALONE_ROOT:-/tmp}
@@ -134,30 +135,87 @@ reap_standalone() {
   trap 'clear_check_ns' EXIT
   GIT_TERMINAL_PROMPT=0 timeout 120 git -C "$real" fetch --no-tags --quiet origin "+refs/heads/*:$check_ns/*" >/dev/null 2>&1 \
     || die "standalone: git fetch of every origin head failed in $real — cannot prove its content is on origin"
+  # Two further proofs are accepted for a ref that no origin head contains, because
+  # content can land without any origin head containing the SHA: a squash-merged pull
+  # request mints a new SHA, and a tag can exist on origin while no branch holds its
+  # commit. Both are exact, never approximate:
+  #   - a MERGED pull request whose head branch is this branch AND whose headRefOid is
+  #     exactly this tip. A merged PR for the same branch name with a different head
+  #     proves nothing about later local commits and is not accepted.
+  #   - a tag whose object id on origin (git ls-remote) equals the local tag's.
+  # Any gh or ls-remote failure is a refusal, never a pass. Every acceptance by one of
+  # these proofs prints the proof used on stderr.
+  repo_slug=$(git -C "$real" remote get-url origin 2>/dev/null | sed -E 's#^git@[^:]+:##; s#^https?://[^/]+/##; s#\.git$##')
+  proof=""
+  proof_err=""
+  commit_on_origin() {
+    [ -n "$(git -C "$real" for-each-ref --contains "$1" --format='%(refname)' "$check_ns/")" ]
+  }
+  # merged_pr_proof <branch> <tip-sha>: sets $proof on success, $proof_err on a lookup failure.
+  merged_pr_proof() {
+    local b=$1 t=$2 out num sha
+    [ -n "$b" ] || return 1
+    [ -n "$repo_slug" ] || { proof_err="no repository derivable from the origin URL"; return 1; }
+    out=$(gh pr list --state merged --head "$b" -R "$repo_slug" --limit 200 --json number,headRefOid \
+      --jq '.[] | "\(.number) \(.headRefOid)"' </dev/null 2>/dev/null) \
+      || { proof_err="gh pr list failed for branch $b — a failed lookup is a refusal"; return 1; }
+    while IFS=' ' read -r num sha; do
+      if [ -n "$num" ] && [ "$sha" = "$t" ]; then
+        proof="merged PR #$num at $sha"
+        return 0
+      fi
+    done <<PRS
+$out
+PRS
+    return 1
+  }
+  # commit_proven <tip-sha> <branch-or-empty>: on origin, or exactly a merged PR's head.
+  commit_proven() {
+    proof_err=""
+    commit_on_origin "$1" && return 0
+    merged_pr_proof "$2" "$1" || return 1
+    echo "proof: $proof" >&2
+  }
+  # tag_proven <name> <local-object-id>: origin holds the same object id under that name.
+  tag_proven() {
+    local remote
+    remote=$(GIT_TERMINAL_PROMPT=0 timeout 60 git -C "$real" ls-remote --tags origin "refs/tags/$1" </dev/null 2>/dev/null) \
+      || { proof_err="git ls-remote of tag $1 failed — a failed lookup is a refusal"; return 1; }
+    remote=$(printf '%s\n' "$remote" | awk -v r="refs/tags/$1" '$2 == r { print $1 }')
+    [ -n "$remote" ] && [ "$remote" = "$2" ] || return 1
+    proof="tag $1 on origin"
+    echo "proof: $proof" >&2
+  }
+
   head=$(git -C "$real" rev-parse --verify --quiet HEAD) || die "standalone: $real has no HEAD commit"
-  [ -n "$(git -C "$real" for-each-ref --contains "$head" --format='%(refname)' "$check_ns/")" ] \
-    || die "standalone: HEAD $head of $real is on no origin branch — content would be lost"
+  head_branch=$(git -C "$real" symbolic-ref --short -q HEAD 2>/dev/null || true)
+  commit_proven "$head" "$head_branch" \
+    || die "standalone: HEAD $head of $real is on no origin branch — content would be lost${proof_err:+ ($proof_err)}"
 
   # (d) nothing stashed, and every local branch tip is on an origin branch.
   stashes=$(git -C "$real" stash list 2>/dev/null) || die "standalone: cannot read the stash of $real"
   [ -z "$stashes" ] || die "standalone: $(printf '%s\n' "$stashes" | wc -l) stash entr(y/ies) in $real — content would be lost"
   while IFS=' ' read -r tip ref; do
     [ -n "$tip" ] || continue
-    [ -n "$(git -C "$real" for-each-ref --contains "$tip" --format='%(refname)' "$check_ns/")" ] \
-      || die "standalone: local branch ${ref#refs/heads/} ($tip) of $real has commits on no origin branch — content would be lost"
+    commit_proven "$tip" "${ref#refs/heads/}" \
+      || die "standalone: local branch ${ref#refs/heads/} ($tip) of $real has commits on no origin branch — content would be lost${proof_err:+ ($proof_err)}"
   done <<EOF
 $(git -C "$real" for-each-ref --format='%(objectname) %(refname)' refs/heads || echo "unreadable refs/heads")
 EOF
 
-  # (e) every tag points at a commit some origin head contains. A local-only tag can be
+  # (e) every tag points at a commit some origin head contains, or is the same tag object on origin. A local-only tag can be
   # the ONLY ref holding a commit (an Eta probe reaped exactly that). The tag is peeled
   # to its commit first; a tag that cannot be peeled to a commit is refused too.
   while IFS=' ' read -r tip ref; do
     [ -n "$tip" ] || continue
-    commit=$(git -C "$real" rev-parse --verify --quiet "$tip^{commit}") \
-      || die "standalone: tag ${ref#refs/tags/} ($tip) of $real points at commits on no origin branch — content would be lost"
-    [ -n "$(git -C "$real" for-each-ref --contains "$commit" --format='%(refname)' "$check_ns/")" ] \
-      || die "standalone: tag ${ref#refs/tags/} ($commit) of $real points at commits on no origin branch — content would be lost"
+    tag_name=${ref#refs/tags/}
+    proof_err=""
+    commit=$(git -C "$real" rev-parse --verify --quiet "$tip^{commit}" || true)
+    if [ -n "$commit" ] && commit_on_origin "$commit"; then
+      continue
+    fi
+    tag_proven "$tag_name" "$tip" \
+      || die "standalone: tag $tag_name (${commit:-$tip}) of $real points at commits on no origin branch — content would be lost${proof_err:+ ($proof_err)}"
   done <<EOF
 $(git -C "$real" for-each-ref --format='%(objectname) %(refname)' refs/tags || echo "unreadable refs/tags")
 EOF

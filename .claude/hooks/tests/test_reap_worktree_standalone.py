@@ -40,7 +40,24 @@ def world():
         stub = root / "stub-bin"
         stub.mkdir()
         gh = stub / "gh"
-        gh.write_text("#!/bin/sh\necho 'gh stubbed out by test' >&2\nexit 1\n")
+        # Fails unless a test configures $GH_STUB_DIR (see _gh_merged / _gh_fail). When
+        # configured it answers `gh pr list --jq` with "<number> <headRefOid>" lines read
+        # from <dir>/<repo basename>__<head branch>; an unknown repo or branch is an empty,
+        # successful answer (no merged PR), a FAIL file makes every call exit 1.
+        gh.write_text(
+            "#!/bin/sh\n"
+            'd=${GH_STUB_DIR:-}\n'
+            "[ -d \"$d\" ] || { echo 'gh stubbed out by test' >&2; exit 1; }\n"
+            "[ ! -e \"$d/FAIL\" ] || { echo 'gh failing by test' >&2; exit 1; }\n"
+            "head=; repo=\n"
+            "while [ $# -gt 0 ]; do\n"
+            "  case $1 in --head) head=$2; shift ;; -R) repo=$2; shift ;; esac\n"
+            "  shift\n"
+            "done\n"
+            "f=\"$d/$(basename \"$repo\")__$(echo \"$head\" | tr / _)\"\n"
+            "[ -f \"$f\" ] && cat \"$f\"\n"
+            "exit 0\n"
+        )
         gh.chmod(0o755)
         env = dict(
             os.environ,
@@ -51,6 +68,7 @@ def world():
             GIT_COMMITTER_NAME="t", GIT_COMMITTER_EMAIL="t@example.invalid",
             GIT_TERMINAL_PROMPT="0",
             REAP_STANDALONE_ROOT=str(root),
+            GH_STUB_DIR=str(root / "gh-data"),
         )
         env.pop("GIT_DIR", None)
         env.pop("GIT_WORK_TREE", None)
@@ -401,3 +419,146 @@ def test_registered_worktree_is_still_reaped_through_the_existing_branch(world):
 def test_callers_own_checkout_is_still_refused(world):
     _refused(world["reap"](world["caller"]), "refusing this station's own checkout")
     assert world["caller"].exists()
+
+
+# ---- Landed without an origin head containing it: merged PR, tag on origin --
+
+def _gh_merged(world, branch, number, sha, repo="origin"):
+    """Make the gh stub answer 'PR #number, head <sha>, merged' for repo/branch."""
+    data = world["root"] / "gh-data"
+    data.mkdir(exist_ok=True)
+    (data / f"{repo}__{branch.replace('/', '_')}").write_text(f"{number} {sha}\n")
+
+
+def _gh_fail(world):
+    data = world["root"] / "gh-data"
+    data.mkdir(exist_ok=True)
+    (data / "FAIL").write_text("")
+
+
+def _squash_landed_branch(world, name, head_on_feature):
+    """A clone with local branch `feat` (never pushed) whose content origin/main got as a
+    squash commit (new SHA). Returns (path, feat_tip)."""
+    env, root = world["env"], world["root"]
+    path = world["clone"](name)
+    _git("checkout", "-q", "-b", "feat", cwd=path, env=env)
+    (path / "f.txt").write_text("feature\n")
+    _git("add", "f.txt", cwd=path, env=env)
+    _git("commit", "-qm", "feature work", cwd=path, env=env)
+    tip = _git("rev-parse", "HEAD", cwd=path, env=env)
+    seed = root / "seed"
+    _git("checkout", "-q", "main", cwd=seed, env=env)
+    (seed / "f.txt").write_text("feature\n")
+    _git("add", "f.txt", cwd=seed, env=env)
+    _git("commit", "-qm", "squash of feat", cwd=seed, env=env)
+    _git("push", "-q", "origin", "main", cwd=seed, env=env)
+    if not head_on_feature:
+        _git("checkout", "-q", "main", cwd=path, env=env)
+    return path, tip
+
+
+@pytest.mark.parametrize("head_on_feature", [True, False], ids=["HEAD", "side-branch"])
+def test_squash_merged_branch_whose_tip_is_the_merged_head_is_reaped(world, head_on_feature):
+    path, tip = _squash_landed_branch(world, f"sq-{head_on_feature}", head_on_feature)
+    _gh_merged(world, "feat", 7, tip)
+    proc = world["reap"](path)
+    assert proc.returncode == 0, proc.stderr
+    assert not path.exists()
+    assert f"proof: merged PR #7 at {tip}" in proc.stderr
+
+
+@pytest.mark.parametrize("head_on_feature", [True, False], ids=["HEAD", "side-branch"])
+def test_local_commit_ahead_of_the_merged_head_is_refused(world, head_on_feature):
+    path, tip = _squash_landed_branch(world, f"ahead-{head_on_feature}", head_on_feature)
+    _gh_merged(world, "feat", 7, tip)
+    env = world["env"]
+    _git("checkout", "-q", "feat", cwd=path, env=env)
+    (path / "f.txt").write_text("later local work\n")
+    _git("commit", "-qam", "after the PR merged", cwd=path, env=env)
+    if not head_on_feature:
+        _git("checkout", "-q", "main", cwd=path, env=env)
+    proc = world["reap"](path)
+    _refused(proc, "on no origin branch" if head_on_feature else "local branch feat")
+    assert "proof: merged PR" not in proc.stderr
+    assert path.exists()
+
+
+def test_merged_pr_of_a_different_branch_is_refused(world):
+    path, tip = _squash_landed_branch(world, "otherbranch", True)
+    _gh_merged(world, "some-other-branch", 7, tip)
+    _refused(world["reap"](path), "is on no origin branch")
+    assert path.exists()
+
+
+def test_merged_pr_of_a_different_repo_is_refused(world):
+    path, tip = _squash_landed_branch(world, "otherrepo", True)
+    _gh_merged(world, "feat", 7, tip, repo="not-this-repo")
+    _refused(world["reap"](path), "is on no origin branch")
+    assert path.exists()
+
+
+def test_gh_failure_is_a_refusal_never_a_pass(world):
+    path, tip = _squash_landed_branch(world, "ghfail", True)
+    _gh_merged(world, "feat", 7, tip)
+    _gh_fail(world)
+    proc = world["reap"](path)
+    _refused(proc, "is on no origin branch")
+    assert "gh pr list failed" in proc.stderr
+    assert path.exists()
+
+
+def test_unconfigured_gh_is_a_refusal(world):
+    path, _tip = _squash_landed_branch(world, "ghdown", True)
+    _refused(world["reap"](path), "gh pr list failed")
+    assert path.exists()
+
+
+def _tag_only_commit_clone(world, name, annotated, push_tag):
+    path = _clone_with_tag_only_commit(world, name, annotated)
+    if push_tag:
+        _git("push", "-q", "origin", "refs/tags/v-local", cwd=path, env=world["env"])
+    return path
+
+
+@pytest.mark.parametrize("annotated", [False, True], ids=["lightweight", "annotated"])
+def test_local_tag_with_the_same_object_on_origin_is_reaped(world, annotated):
+    path = _tag_only_commit_clone(world, f"tagon-{annotated}", annotated, True)
+    proc = world["reap"](path)
+    assert proc.returncode == 0, proc.stderr
+    assert not path.exists()
+    assert "proof: tag v-local on origin" in proc.stderr
+
+
+@pytest.mark.parametrize("annotated", [False, True], ids=["lightweight", "annotated"])
+def test_local_tag_with_a_different_object_on_origin_is_refused(world, annotated):
+    env, root = world["env"], world["root"]
+    path = world["clone"](f"tagdiff-{annotated}")
+    seed = root / "seed"
+    (seed / "other.txt").write_text("other\n")
+    _git("add", "other.txt", cwd=seed, env=env)
+    _git("commit", "-qm", "other commit", cwd=seed, env=env)
+    if annotated:
+        _git("tag", "-a", "-m", "origin", "v-local", cwd=seed, env=env)
+    else:
+        _git("tag", "v-local", cwd=seed, env=env)
+    _git("push", "-q", "origin", "refs/tags/v-local", cwd=seed, env=env)
+    _git("reset", "-q", "--hard", "origin/main", cwd=seed, env=env)
+    (path / "README").write_text("tag only\n")
+    _git("commit", "-qam", "reachable only from the tag", cwd=path, env=env)
+    if annotated:
+        _git("tag", "-a", "-m", "local", "v-local", cwd=path, env=env)
+    else:
+        _git("tag", "v-local", cwd=path, env=env)
+    _git("reset", "-q", "--hard", "origin/main", cwd=path, env=env)
+    proc = world["reap"](path)
+    _refused(proc, "standalone: tag v-local (")
+    assert "proof: tag" not in proc.stderr
+    assert path.exists()
+
+
+def test_local_tag_absent_on_origin_is_refused(world):
+    path = _tag_only_commit_clone(world, "tagabsent", True, False)
+    proc = world["reap"](path)
+    _refused(proc, "standalone: tag v-local (")
+    assert "proof: tag" not in proc.stderr
+    assert path.exists()
