@@ -4,15 +4,19 @@
 # Usage:
 #   convex-prod.sh run <function> [<json-object>]
 #   convex-prod.sh data <table> [--limit <digits>] [--format <format>]
+#   convex-prod.sh logs failures [--history <digits>]
 #
-# Verbs: run and data only. There is no deploy verb on purpose: a deploy goes
+# Verbs: run, data and logs only. `logs failures` is read-only: it prints the
+# deployment's recent function log as JSONL (failed executions and console
+# lines; never --success), for a bounded time, and has no mutation path. There is no deploy verb on purpose: a deploy goes
 # through `npx convex deploy` and its own authorization guards.
 # The allowed entries live in convex-prod.allow beside this script, one
 # "run <function>" or "data <table>" per line. Anything unlisted is refused.
 # The arguments after the target are a closed grammar, checked before the key
 # is read: `run` takes at most one positional, which must be a JSON object;
 # `data` takes only --limit <digits> and
-# --format <jsonArray|json|jsonLines|jsonl|pretty>. Any other argument
+# --format <jsonArray|json|jsonLines|jsonl|pretty>; `logs` takes only
+# --history <digits>. Any other argument
 # (--push, --prod, --identity, --component, a second positional...) is refused,
 # so no flag can turn an allowed call into a push of local code to prod.
 # The prod key is read from the checkout's .env.local, must start with "prod:",
@@ -26,8 +30,8 @@ root="$(cd "$here/../.." && pwd)"
 allow="$here/convex-prod.allow"
 
 verb="${1:-}"; target="${2:-}"
-if [[ "$verb" != "run" && "$verb" != "data" ]] || [[ -z "$target" ]]; then
-  echo "REFUSED: usage: convex-prod.sh run <function> [json] | data <table>" >&2
+if [[ "$verb" != "run" && "$verb" != "data" && "$verb" != "logs" ]] || [[ -z "$target" ]]; then
+  echo "REFUSED: usage: convex-prod.sh run <function> [json] | data <table> | logs failures" >&2
   exit 2
 fi
 shift 2
@@ -53,6 +57,14 @@ if [[ "$verb" == "run" ]]; then
     ' "$1" >/dev/null 2>&1; then
       refuse_arg "$1"
     fi
+  fi
+elif [[ "$verb" == "logs" ]]; then
+  history=1000
+  if (( $# > 0 )); then
+    [[ "$1" == "--history" ]] || refuse_arg "$1"
+    [[ "${2:-}" =~ ^[0-9]+$ ]] || refuse_arg "--history ${2:-<missing>}"
+    (( $# == 2 )) || refuse_arg "$3"
+    history="$2"
   fi
 else
   rest=("$@")
@@ -89,6 +101,10 @@ echo "deployment: $deployment" >&2
 cd "$root"
 if [[ "$verb" == "run" ]]; then
   CONVEX_DEPLOY_KEY="$key" npx convex run "$target" "$@"
+elif [[ "$verb" == "logs" ]]; then
+  # `convex logs` streams; the history is printed first, then it would tail.
+  # A bounded window ends it; exit 124 from timeout is the normal end.
+  CONVEX_DEPLOY_KEY="$key" timeout 60 npx convex logs --history "$history" --jsonl || [[ $? -eq 124 ]]
 else
   CONVEX_DEPLOY_KEY="$key" npx convex data "$target" "$@"
 fi

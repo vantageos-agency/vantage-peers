@@ -29,7 +29,7 @@ make_sandbox() {
   mkdir -p "$sb/.claude/scripts" "$sb/bin"
   cp "$DOOR" "$sb/.claude/scripts/convex-prod.sh"
   if [[ "$1" == "yes" ]]; then
-    printf 'run meta:backendContract\ndata agents\n' >"$sb/.claude/scripts/convex-prod.allow"
+    printf 'run meta:backendContract\ndata agents\nlogs failures\n' >"$sb/.claude/scripts/convex-prod.allow"
   fi
   printf 'CONVEX_DEPLOY_KEY_PROD_VP=%s\n' "$FAKE_KEY" >"$sb/.env.local"
   cat >"$sb/bin/npx" <<'STUB'
@@ -83,12 +83,21 @@ check "block data --format unknown" block yes "" -- data agents --format csv
 check "block data --component x"    block yes "" -- data agents --component x
 check "block data positional"       block yes "" -- data agents extra
 
+check "block logs --success"        block yes "" -- logs failures --success
+check "block logs --prod"           block yes "" -- logs failures --prod
+check "block logs --history x"      block yes "" -- logs failures --history 1x
+check "block logs --history missing" block yes "" -- logs failures --history
+check "block logs extra positional" block yes "" -- logs failures --history 5 extra
+check "block logs --deployment"     block yes "" -- logs failures --deployment other
+
 # MUST_REFUSE — allow list and target checks kept
 check "refuse allow file absent"    block no  "" -- run meta:backendContract
 check "refuse target not allowed"   block yes "" -- run meta:deployEverything
 check "refuse case variant"         block yes "" -- run Meta:backendContract
 check "refuse suffix variant"       block yes "" -- run meta:backendContractX
 check "refuse unknown verb"         block yes "" -- deploy meta:backendContract
+check "refuse logs other target"    block yes "" -- logs everything
+check "refuse logs no target"       block yes "" -- logs
 
 # MUST_PASS — the calls the runbook and scripts/onboard-person.mjs make
 check "pass run with {}"            pass yes "run meta:backendContract {}" -- run meta:backendContract '{}'
@@ -97,6 +106,9 @@ check "pass run no arg"             pass yes "run meta:backendContract" -- run m
 check "pass data no flag"           pass yes "data agents" -- data agents
 check "pass data limit+jsonArray"   pass yes "data agents --limit 1 --format jsonArray" -- data agents --limit 1 --format jsonArray
 check "pass data limit+jsonl"       pass yes "data agents --limit 1000 --format jsonl" -- data agents --limit 1000 --format jsonl
+
+check "pass logs default history"   pass yes "logs --history 1000 --jsonl" -- logs failures
+check "pass logs history 200"       pass yes "logs --history 200 --jsonl" -- logs failures --history 200
 
 echo "RESULT: $pass/$total"
 [[ $pass -eq $total ]]
