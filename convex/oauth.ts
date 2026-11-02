@@ -1078,7 +1078,6 @@ export const provisionOrganization = mutation({
 			// first refresh, once the agent is registered.
 			const seatAgent = await resolveSeatAgent(ctx, {
 				scopeProfile: profileId,
-				clerkOrgSlug: slug,
 				clerkOrgId: seatClerkOrgId,
 			});
 			await ctx.db.insert("oauth_access_tokens", {
@@ -2622,7 +2621,6 @@ async function mintAccessToken(
 	const tokenClerkOrgId = orgStamp?.clerkOrgId;
 	const seatAgent = await resolveSeatAgent(ctx, {
 		scopeProfile: a.scopeProfile,
-		clerkOrgSlug: a.clerkOrgSlug,
 		...(tokenClerkOrgId !== undefined ? { clerkOrgId: tokenClerkOrgId } : {}),
 		principal: a.principal,
 	});

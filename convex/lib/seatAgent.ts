@@ -1,7 +1,6 @@
 import { sameOrg } from "@vantageos/cloud-identity";
 import type { Doc } from "../_generated/dataModel";
 import type { MutationCtx, QueryCtx } from "../_generated/server";
-import { clerkOrgIdForSlug } from "./orgClerkId";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // seatAgent — which `agents` ROW a one-agent seat token acts as.
@@ -21,8 +20,8 @@ import { clerkOrgIdForSlug } from "./orgClerkId";
 // MODULE M3 - BY ID. The profile carries the `agents` row ID of its agent
 // (`oauth_scope_profiles.agentId`) and that ID is what the token is minted for. The
 // agent row is read BY ID and must be active and in the profile's own organisation,
-// judged by @vantageos/cloud-identity `sameOrg` on the stored org IDs (a slug is only
-// the fallback when a side carries no ID yet). An ID that names an agent of another
+// judged by @vantageos/cloud-identity `sameOrg` on the stored org IDs alone (a side with
+// no stored ID names no organisation; no slug is looked up). An ID that names an agent of another
 // org resolves NO agent: a same-named agent of the profile's org is never put in its
 // place. A profile with no `agentId` resolves no agent at all: no label is looked up
 // and none is compared, so a colliding label cannot be admitted. An operator binds
@@ -31,30 +30,19 @@ import { clerkOrgIdForSlug } from "./orgClerkId";
 
 export interface SeatAgentInput {
 	scopeProfile: string;
-	clerkOrgSlug?: string;
 	/** Permanent Clerk org ID of the same organisation, when the token carries it. */
 	clerkOrgId?: string;
 	principal?: "person";
 }
 
-type OrgStamp = { id: string | undefined; label: string | undefined };
-
 /**
- * Do two stamps name the same organisation? Always decided by org ID through
- * @vantageos/cloud-identity `sameOrg`. A side that carries no ID yet (a row not
- * yet reached by migrations/backfill_org_clerk_id, expand phase) is given the ID
- * its mapping row stores for its label, read by the repo adapter; a side whose
- * mapping holds no ID either names no organisation and never matches. No label
- * is compared here.
+ * Do two stored organisation IDs name the same organisation? Decided by
+ * @vantageos/cloud-identity `sameOrg` on the IDs alone. A side that carries no
+ * stored ID names no organisation and never matches: no slug is looked up to give
+ * it one, and no label is compared.
  */
-async function sameOrgStamp(
-	ctx: QueryCtx | MutationCtx,
-	a: OrgStamp,
-	b: OrgStamp,
-): Promise<boolean> {
-	const idOf = async (s: OrgStamp): Promise<string | undefined> =>
-		s.id ?? (await clerkOrgIdForSlug(ctx, s.label));
-	return sameOrg({ id: await idOf(a) }, { id: await idOf(b) });
+function sameOrgId(a: string | undefined, b: string | undefined): boolean {
+	return sameOrg({ id: a }, { id: b });
 }
 
 export async function resolveSeatAgent(
@@ -70,18 +58,7 @@ export async function resolveSeatAgent(
 	// The profile is the authority for "which agent, in which org"; the token's
 	// own snapshot must name the same organisation.
 	if (!profile) return null;
-	const profileOrg: OrgStamp = {
-		id: profile.clerkOrgId,
-		label: profile.clerkOrgSlug,
-	};
-	if (
-		!(await sameOrgStamp(ctx, profileOrg, {
-			id: token.clerkOrgId,
-			label: token.clerkOrgSlug,
-		}))
-	) {
-		return null;
-	}
+	if (!sameOrgId(profile.clerkOrgId, token.clerkOrgId)) return null;
 
 	// BY ID: the agent the profile names. A profile with no agent ID resolves no
 	// agent (it stays an org-level seat until an operator binds it); a label is
@@ -89,15 +66,7 @@ export async function resolveSeatAgent(
 	if (profile.agentId === undefined) return null;
 	const byId = await ctx.db.get(profile.agentId);
 	if (!byId || !byId.isActive) return null;
-	if (
-		!(await sameOrgStamp(
-			ctx,
-			{ id: byId.clerkOrgId, label: byId.orgSlug },
-			profileOrg,
-		))
-	) {
-		return null;
-	}
+	if (!sameOrgId(byId.clerkOrgId, profile.clerkOrgId)) return null;
 	return byId;
 }
 
@@ -116,16 +85,12 @@ export async function liveSeatAgent(
 	if (row.agentId !== undefined) {
 		const agent = await ctx.db.get(row.agentId);
 		// The stamped agent is still live and still in the token's own organisation,
-		// compared by org ID where both sides carry one (a renamed slug does not
-		// break it, a moved agent does).
+		// compared by stored org ID (a renamed slug does not break it, a moved
+		// agent does).
 		if (
 			agent &&
 			agent.isActive &&
-			(await sameOrgStamp(
-				ctx,
-				{ id: agent.clerkOrgId, label: agent.orgSlug },
-				{ id: row.clerkOrgId, label: row.clerkOrgSlug },
-			))
+			sameOrgId(agent.clerkOrgId, row.clerkOrgId)
 		) {
 			return agent;
 		}
