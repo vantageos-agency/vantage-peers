@@ -600,6 +600,8 @@ def test_ratchet_live_baseline_carries_its_command_and_never_rose():
             "46cc88b41c50188a7ee8a9d695a6c61673fc7e79",
             # same counts re-measured after the rebase on 4b51c638 (#1652), contract 15 (task k17cbr6y6da096t5e1k869kgb18hd0ht)
             "d50ebb247b22abae491b2c6458774991a46748a6",
+            # same counts re-measured on the add_task_dependency rebase onto 69ae7055, contract 16 (task k171180dv49sn33fw83dpkzs158hd7vr)
+            "18bbd84af0f13323db1a307fbf667410fed7a0b7",
         }
         line = entry["output_line"]
         assert line.startswith((f"{rule}: ", f"{rule} VERDICT: ")), rule
