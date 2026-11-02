@@ -18,12 +18,19 @@ import {
 	checkNamespaceRead,
 	checkNamespaceWrite,
 	type OAuthContext,
+	ownAgentNamespaceOfSeat,
 } from "../src/auth.js";
 
 const OWN = "r57b8p6jp2na6p6pdz7z0g0sk58fczj9";
 const OTHER = "r57zzzzzzzzzzzzzzzzzzzzzzzzzzzzzz";
 
-const seat = (extra: Partial<OAuthContext> = {}): OAuthContext =>
+// The context as the bearer boundary builds it: the token row, plus the own-agent
+// namespace derived from its verified seat stamp (ownAgentNamespaceOfSeat).
+const seat = (extra: Partial<OAuthContext> = {}): OAuthContext => {
+	const row = rawSeat(extra);
+	return { ...row, ...ownAgentNamespaceOfSeat(row) } as OAuthContext;
+};
+const rawSeat = (extra: Partial<OAuthContext> = {}): OAuthContext =>
 	({
 		clientId: "seat-victor",
 		userId: "u",
