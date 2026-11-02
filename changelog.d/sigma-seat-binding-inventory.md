@@ -1,0 +1,4 @@
+---
+section: Added
+---
+- **`migrations/seat_binding_inventory:inventory`, a read-only internal query that counts the seats relying on the label and slug fallbacks.** Before seatAgent resolves the agent by `profile.agentId` only and the org by the stored `clerkOrgId` only, it reports per organisation (and in totals) the scope profiles without `agentId`, the profiles, live access tokens and agents without `clerkOrgId`, and the live tokens whose profile has no `agentId`, plus the `profileId` and organisation of each profile to backfill. Each table is read with a bound (default 5000, `limit` up to 10000) and a `truncated` flag; a truncated scan is a lower bound. Ids, slugs and counts only, no token value or hash. The prod runner allow-list gains the line. No Convex argument of an existing function changed, backend contract stays 16. Task k177pske4qj37sfw7nw2787msd8fzp0e.
