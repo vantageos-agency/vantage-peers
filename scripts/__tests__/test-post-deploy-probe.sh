@@ -82,6 +82,11 @@ run_case "stateless server (no session id), healthy -> PASS" stateless 0 PASS
 run_case "stub admits other -> FAIL" admit-other 1 FAIL
 run_case "stub refuses own -> FAIL" refuse-own 1 FAIL
 run_case "stub leaks the other org's row on read -> FAIL" leak-read 1 FAIL
+run_case "read-back returns the right id with WRONG content -> FAIL" wrong-readback 1 FAIL
+run_case "read-back returns the right content under a WRONG id -> FAIL" wrong-id 1 FAIL
+run_case "cross-org write refused with an untyped error -> FAIL" untyped-write 1 FAIL
+run_case "cross-org send refused with an untyped error -> FAIL" untyped-send 1 FAIL
+run_case "cross-org read refused with an untyped error -> FAIL" untyped-read 1 FAIL
 run_case "own send refused with RBAC_DENIED -> FAIL" send-refused-own 1 FAIL
 run_case "unreadable credential -> COULD-NOT-JUDGE" ok 2 COULD-NOT-JUDGE "$tmp/does-not-exist.bearer"
 run_case "whoami fails -> COULD-NOT-JUDGE" whoami-fails 2 COULD-NOT-JUDGE

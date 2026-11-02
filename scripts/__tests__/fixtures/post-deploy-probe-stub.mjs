@@ -2,9 +2,19 @@
 // No network beyond 127.0.0.1, no real credentials. Two fake orgs, one agent each.
 //
 //   node post-deploy-probe-stub.mjs <portFile>
-//   STUB_MODE = ok | stateless | admit-other | refuse-own | leak-read | whoami-fails | send-refused-own
+//   STUB_MODE = ok | stateless | wrong-readback | wrong-id | untyped-write | untyped-send | untyped-read | admit-other | refuse-own | leak-read | whoami-fails | send-refused-own
 //
 // stateless        as ok, but issues no mcp-session-id (what prod does)
+// wrong-readback   get_memory returns the right id with WRONG content (own read-back)
+// wrong-id         get_memory returns the right content under a WRONG id
+// untyped-write    a refused cross-org store_memory answers an opaque "Server Error"
+// untyped-send     a refused cross-org send_message answers an opaque "Server Error"
+// untyped-read     a refused cross-org get_memory answers an opaque "Server Error"
+// wrong-readback   get_memory returns the right id with WRONG content (own read-back)
+// wrong-id         get_memory returns the right content under a WRONG id
+// untyped-write    a refused cross-org store_memory answers an opaque "Server Error"
+// untyped-send     a refused cross-org send_message answers an opaque "Server Error"
+// untyped-read     a refused cross-org get_memory answers an opaque "Server Error"
 // ok               own is admitted, other is refused (the healthy backend)
 // admit-other      writes and sends across orgs are admitted (a leak)
 // refuse-own       the seat's own orchestrator/<agent id> is refused (2026-11-02 incident)
@@ -64,6 +74,7 @@ function callTool(bearer, name, args) {
 			rows.set(id, { bearer, content: args.content });
 			return text(JSON.stringify({ memoryId: id, namespace: ns }));
 		}
+		if (MODE === "untyped-write") return text("Server Error", true);
 		return text(
 			`Forbidden: namespace ${ns} not writable by scope_profile=stub-${me.slug}`,
 			true,
@@ -77,11 +88,18 @@ function callTool(bearer, name, args) {
 			MODE !== "leak-read" &&
 			MODE !== "admit-other"
 		) {
+			if (MODE === "untyped-read") return text("Server Error", true);
 			return text(
 				"Error: RBAC_DENIED memory belongs to another organisation",
 				true,
 			);
 		}
+		if (MODE === "wrong-readback")
+			return text(
+				JSON.stringify({ _id: args.memoryId, content: "some other body" }),
+			);
+		if (MODE === "wrong-id")
+			return text(JSON.stringify({ _id: "memWRONG", content: row.content }));
 		return text(JSON.stringify({ _id: args.memoryId, content: row.content }));
 	}
 	if (name === "send_message") {
@@ -89,6 +107,7 @@ function callTool(bearer, name, args) {
 		if (to === other.agent) {
 			if (MODE === "admit-other")
 				return text(JSON.stringify({ messageId: "msgX" }));
+			if (MODE === "untyped-send") return text("Server Error", true);
 			return text(
 				`RBAC_DENIED: recipient agent "${to}" is not an addressable agent of the sender's organisation`,
 				true,
