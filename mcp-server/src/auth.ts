@@ -1022,23 +1022,14 @@ export function checkNamespacePrefix(
 
 /**
  * The seat's OWN agent namespace, `orchestrator/<verified agent ID>`, or undefined
- * when the token resolved no agent. Derived only from the verified token row: the
- * seat stamp (`seatAgentOf`, believed only for the token's own org) or the verified
- * agent credential (`ctx.actor`, believed only for the token's own org slug). Never
- * from a name or a call argument. The ceiling admits it besides the mint-time
- * snapshot, which predates `orchestrator/<agentId>` for older seat tokens.
+ * when the token resolved no agent. Derived only from the verified seat stamp on
+ * the token row (`seatAgentOf`, believed only for the token's own org), never from
+ * a name or a call argument. The ceiling admits it besides the mint-time snapshot,
+ * which predates `orchestrator/<agentId>` for older seat tokens.
  */
 function ownAgentNamespaceOf(ctx: OAuthContext): string | undefined {
 	const seat = seatAgentOf(ctx);
-	const actorId =
-		ctx.actor?.agentId !== undefined &&
-		ctx.actor.agentId !== "" &&
-		ctx.clerkOrgSlug !== undefined &&
-		ctx.actor.orgSlug === ctx.clerkOrgSlug
-			? ctx.actor.agentId
-			: undefined;
-	const id = seat?.agentId ?? actorId;
-	return id === undefined ? undefined : `orchestrator/${id}`;
+	return seat === undefined ? undefined : `orchestrator/${seat.agentId}`;
 }
 
 export function checkNamespaceRead(
