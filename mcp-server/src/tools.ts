@@ -6813,6 +6813,8 @@ export function registerTools(
 					date,
 					orchestrator,
 					errorMessage: error?.message ?? String(error),
+					// A ConvexError message is redacted to "[Request ID] Server Error"; its code is on .data.
+					errorData: error?.data ?? null,
 				});
 				return mcpConvexError(error);
 			}
@@ -7122,6 +7124,8 @@ export function registerTools(
 					topic,
 					title,
 					errorMessage: error?.message ?? String(error),
+					// A ConvexError message is redacted to "[Request ID] Server Error"; its code is on .data.
+					errorData: error?.data ?? null,
 				});
 				return mcpConvexError(error);
 			}
@@ -7188,6 +7192,8 @@ export function registerTools(
 					callerOrchestrator,
 					noteId,
 					errorMessage: error?.message ?? String(error),
+					// A ConvexError message is redacted to "[Request ID] Server Error"; its code is on .data.
+					errorData: error?.data ?? null,
 				});
 				return mcpConvexError(error);
 			}
