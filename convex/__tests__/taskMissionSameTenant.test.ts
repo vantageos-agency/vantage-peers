@@ -288,3 +288,56 @@ describe("tasks:complete all-done count — same-tenant tasks only", () => {
 		);
 	});
 });
+
+// A NONEXISTENT missionId is refused too (fail closed), typed MISSION_NOT_FOUND.
+describe("nonexistent missionId — MISSION_NOT_FOUND", () => {
+	const NOT_FOUND = /MISSION_NOT_FOUND/;
+	const deletedMission = (t: T, org: string | undefined) =>
+		t.run(async (ctx) => {
+			const id = await ctx.db.insert("missions", missionRow(org));
+			await ctx.db.delete(id);
+			return id;
+		});
+
+	test("REFUSED: tasks:create with a deleted mission, nothing written", async () => {
+		const t = makeT();
+		await seedOrgs(t);
+		const missionId = await deletedMission(t, "org-a");
+		await expect(createIn(t, "org-a", missionId)).rejects.toThrow(NOT_FOUND);
+		expect(await t.run((ctx) => ctx.db.query("tasks").collect())).toEqual([]);
+	});
+
+	test("REFUSED: tasks:update with a deleted mission, row byte-identical", async () => {
+		const t = makeT();
+		await seedOrgs(t);
+		const taskId = await ownTask(t, "org-a");
+		const missionId = await deletedMission(t, "org-a");
+		const before = await t.run((ctx) => ctx.db.get(taskId));
+		await expect(
+			asOrg(t, "org-a").mutation(api.tasks.update, {
+				agentCredentialSecret: seatSecrets.get("org-a"),
+				taskId,
+				callerOrchestrator: SEAT,
+				missionId,
+			}),
+		).rejects.toThrow(NOT_FOUND);
+		expect(await t.run((ctx) => ctx.db.get(taskId))).toEqual(before);
+	});
+
+	test("REFUSED: the master too (fail closed on a dangling reference)", async () => {
+		const t = makeT();
+		await seedOrgs(t);
+		await seedFleetAgents(t, ["sigma"]);
+		const missionId = await deletedMission(t, "org-b");
+		await expect(
+			asMaster(t).mutation(api.tasks.create, {
+				title: "master task",
+				assignedTo: "sigma",
+				priority: "high",
+				status: "todo",
+				createdBy: "sigma",
+				missionId,
+			}),
+		).rejects.toThrow(NOT_FOUND);
+	});
+});

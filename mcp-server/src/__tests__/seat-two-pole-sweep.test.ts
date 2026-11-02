@@ -1709,3 +1709,40 @@ describe("foreign missionId: a task references only a mission of its own tenant"
 		expect(row.missionId).toBe(mine.missionId);
 	});
 });
+
+describe("nonexistent missionId: refused with MISSION_NOT_FOUND on both doors", () => {
+	const deleted = async () => {
+		const made = await seed(seatA, "create_mission", missionArgs("gone"));
+		await t.run(async (ctx) => {
+			await ctx.db.delete(made.missionId as never);
+		});
+		return made.missionId;
+	};
+
+	it("create_task with a nonexistent missionId is refused, no row", async () => {
+		const missionId = await deleted();
+		const res = await as(seatA, "create_task", {
+			title: "dangling create",
+			status: "todo",
+			assignedTo: "ivo",
+			priority: "low",
+			createdBy: "mimir",
+			missionId,
+		});
+		expect(res.isError, textOf(res)).toBe(true);
+		expect(textOf(res)).toMatch(/MISSION_NOT_FOUND/);
+		expect(await rows("tasks", (r) => r.title === "dangling create")).toEqual([]);
+	});
+
+	it("update_task with a nonexistent missionId is refused", async () => {
+		const missionId = await deleted();
+		const own = await seedTask(A, "todo");
+		const res = await as(seatA, "update_task", {
+			taskId: own,
+			missionId,
+			callerOrchestrator: "mimir",
+		});
+		expect(res.isError, textOf(res)).toBe(true);
+		expect(textOf(res)).toMatch(/MISSION_NOT_FOUND/);
+	});
+});
