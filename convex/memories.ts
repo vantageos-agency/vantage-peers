@@ -12,7 +12,11 @@ import {
   memoryVisibleToScope,
   teamLabelOfNamespace,
 } from "./lib/memoryTenant";
-import { isMemoryNamespaceAllowed, seatAgentIdOf } from "./lib/seatNamespace";
+import {
+  isMemoryNamespaceAllowed,
+  memoryNamespaceRefusal,
+  seatAgentIdOf,
+} from "./lib/seatNamespace";
 import type { Doc } from "./_generated/dataModel";
 
 // expireMemoriesByTtl scans candidate rows with a ttl set; this is a bounded
@@ -108,7 +112,7 @@ export const storeMemory = mutation({
     const ownAgent = await seatAgentIdOf(ctx, scope, args.verifiedActor);
     if (!isMemoryNamespaceAllowed(scope, args.namespace, ownAgent)) {
       throw new ConvexError(
-        `RBAC_DENIED: caller may not write to namespace "${args.namespace}" — ${JSON.stringify({ orgSlug: scope.orgSlug })}`,
+        memoryNamespaceRefusal(scope, args.namespace, ownAgent),
       );
     }
     // AUTHOR + TENANT STAMP (convex/lib/memoryTenant.ts, shared with the episode
