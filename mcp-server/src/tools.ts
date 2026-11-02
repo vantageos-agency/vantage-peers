@@ -1480,6 +1480,8 @@ export const blockTaskOutputSchema = z.object({
 			z.literal("other"),
 		])
 		.optional(),
+	// Present only when blockedBy was given: the list the row holds afterwards.
+	dependsOn: z.array(z.string()).optional(),
 });
 
 // add_task_dependency
@@ -5983,7 +5985,9 @@ export function registerTools(
 			blockedBy: z
 				.array(taskIdSchema)
 				.optional()
-				.describe("Task IDs that are blocking this task"),
+				.describe(
+					"Task IDs that are blocking this task. APPENDED to the task's existing dependsOn (deduplicated, nothing removed); the resulting list is returned as dependsOn.",
+				),
 			blockedOnTaskId: taskIdSchema
 				.optional()
 				.describe(
@@ -6029,13 +6033,21 @@ export function registerTools(
 				Object.assign(blockArgs, doorScopeArgs("tasks:blockTask", callerOrchestrator));
 				await convex.mutation("tasks:blockTask" as any, blockArgs);
 
+				let resultingDependsOn: string[] | undefined;
 				if (blockedBy && blockedBy.length > 0) {
+					// addDependsOn APPENDS (dedup, same-org, no self, no cycle) inside the
+					// mutation's transaction; dependsOn would wipe earlier dependencies.
 					await convex.mutation("tasks:update" as any, {
 						taskId: taskId as any,
-						dependsOn: blockedBy.map((id: string) => id as any),
+						addDependsOn: blockedBy.map((id: string) => id as any),
 						...(callerOrchestrator ? { callerOrchestrator } : {}),
 						...doorScopeArgs("tasks:update", callerOrchestrator),
 					});
+					// The door returns null; report the list it left on the row.
+					const row = (await convex.query("tasks:getById" as any, {
+						taskId,
+					})) as { dependsOn?: string[] } | null;
+					resultingDependsOn = row?.dependsOn ?? [];
 				}
 
 				return {
@@ -6049,6 +6061,7 @@ export function registerTools(
 									reason,
 									blockedOnTaskId,
 									blockedCause: blockedCause ?? "other",
+									...(resultingDependsOn ? { dependsOn: resultingDependsOn } : {}),
 								},
 								null,
 								2,

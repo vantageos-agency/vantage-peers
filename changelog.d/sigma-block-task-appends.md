@@ -1,0 +1,4 @@
+---
+section: Fixed
+---
+- **`block_task blockedBy` appends instead of replacing; `link_commit_to_issue` stops duplicating a SHA.** `block_task` sent `blockedBy` as `dependsOn` to `tasks:update`, which overwrites the list, so blocking a task silently dropped its earlier dependencies. It now sends `addDependsOn` (the append path with dedup, same-organisation, no-self and no-cycle checks) and reports the resulting list read back from the row. `issues:linkCommit` appended every call: linking the same SHA twice stored it twice. A SHA already present is now skipped; two SHAs are the same commit when, trimmed and lowercased, one is a prefix of the other (a short SHA matches a stored full SHA and vice versa), and `fixedBy` / `fixedAt` are still refreshed. No Convex argument changed, so the backend contract stays 16. Task k17adacqev89cc8pzkgaz5fn9s8hdee0.

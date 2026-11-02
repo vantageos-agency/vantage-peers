@@ -223,7 +223,16 @@ export const linkCommit = mutation({
 			)
 			.unique();
 		if (!existing) throw new Error(`Issue ${args.repo}#${args.issueNumber} not found`);
-		const fixCommits = [...(existing.fixCommits ?? []), args.commitSha];
+		// Same commit = trimmed, lowercased, one is a prefix of the other (a short SHA
+		// matches a stored full SHA and vice versa). A repeat is skipped, not appended;
+		// fixedBy / fixedAt are still refreshed.
+		const incoming = args.commitSha.trim().toLowerCase();
+		const stored = existing.fixCommits ?? [];
+		const isSame = (s: string): boolean => {
+			const n = s.trim().toLowerCase();
+			return n.length > 0 && incoming.length > 0 && (n.startsWith(incoming) || incoming.startsWith(n));
+		};
+		const fixCommits = stored.some(isSame) ? stored : [...stored, args.commitSha.trim()];
 		await ctx.db.patch(existing._id, {
 			fixCommits,
 			fixedBy: args.fixedBy,
