@@ -187,8 +187,27 @@ async function call(org, name, args) {
 	};
 }
 
-const TYPED_REFUSAL =
-	/RBAC_DENIED|Forbidden|INVALID_RECIPIENTS|NOT_FOUND|not found|not permitted|not writable|AUTH_/i;
+// The ACCEPTED SET of typed refusals. A cross-org call counts as refused only if the
+// response carries one of these, case-sensitive, as a whole word. An untyped or unknown
+// error (for example the opaque "Server Error", or a validation error) is a FAIL: it
+// cannot tell a refusal from a crash, so it is never a PASS.
+//   writes and sends: a refusal code the backend raises on purpose
+//   reads: the same codes, or the existence-hiding "Memory not found" prod answers
+//          (measured 2026-11-02) so that another org's ids are not confirmed
+const WRITE_REFUSAL =
+	/\b(RBAC_DENIED|Forbidden|INVALID_RECIPIENTS|AUTH_NAMESPACE_DENIED)\b/;
+const READ_REFUSAL = /\b(RBAC_DENIED|Forbidden|NOT_FOUND)\b|Memory not found/;
+
+// The read-back must return the SAME row (id) with EXACTLY the content that was written.
+// Substring or "no error" is not enough: a wrong row or a stale body would pass.
+function readBackMatches(text, id, content) {
+	try {
+		const row = JSON.parse(text);
+		return row._id === id && row.content === content;
+	} catch {
+		return false;
+	}
+}
 
 async function whoami(org) {
 	const r = await call(org, "whoami", {});
@@ -247,8 +266,8 @@ async function ownPole(org, stamp) {
 		record(
 			org.label,
 			`get_memory ${id} (read-back)`,
-			!g.isError && g.text.includes(content),
-			"own row read back with its content",
+			!g.isError && readBackMatches(g.text, id, content),
+			"own row read back: same id, exact content written",
 			g.text,
 		);
 	}
@@ -285,8 +304,8 @@ async function crossPole(org, other, stamp) {
 		record(
 			org.label,
 			`store_memory ${ns} (other org)`,
-			r.isError && TYPED_REFUSAL.test(r.text),
-			"refused with a typed code/text",
+			r.isError && WRITE_REFUSAL.test(r.text),
+			"refused with a typed code (RBAC_DENIED|Forbidden|INVALID_RECIPIENTS|AUTH_NAMESPACE_DENIED)",
 			r.text,
 		);
 	}
@@ -298,8 +317,8 @@ async function crossPole(org, other, stamp) {
 	record(
 		org.label,
 		"send_message to other org's agent",
-		s.isError && TYPED_REFUSAL.test(s.text),
-		"refused with a typed code/text",
+		s.isError && WRITE_REFUSAL.test(s.text),
+		"refused with a typed code (RBAC_DENIED|Forbidden|INVALID_RECIPIENTS|AUTH_NAMESPACE_DENIED)",
 		s.text,
 	);
 	for (const row of other.rows ?? []) {
@@ -307,8 +326,8 @@ async function crossPole(org, other, stamp) {
 		record(
 			org.label,
 			`get_memory ${row.id} (other org's row)`,
-			g.isError && !g.text.includes(row.content),
-			"refused, content not returned",
+			g.isError && READ_REFUSAL.test(g.text) && !g.text.includes(row.content),
+			"typed refusal or not-found, content not returned",
 			g.text,
 		);
 	}
