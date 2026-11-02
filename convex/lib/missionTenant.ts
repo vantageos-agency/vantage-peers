@@ -1,18 +1,18 @@
-// A task may reference only a mission of its OWN tenant (task
-// k175x770r9f6h01xt0wg0hdd798hf8m4, Pi ruling; the R-52 rule applied to the
-// reference itself, not only to the completion side effect).
+// A task may reference only a mission of its OWN tenant, and only one that
+// exists (task k175x770r9f6h01xt0wg0hdd798hf8m4, Pi ruling; the R-52 rule applied
+// to the reference itself, not only to the completion side effect).
 //
 // ONE predicate, reused by tasks:create and tasks:update. It compares the
 // mission's server-stamped tenant with the tenant of the row that will carry
 // the reference, through the package's `sameTenantStamp` (equal, or both the
-// fleet's: unstamped and operator-stamped are one tenant). A foreign mission is
-// REFUSED with the typed code MISSION_FOREIGN_TENANT;
-// nothing is dropped silently and nothing is written.
-//
-// A mission that does not exist is left to the caller exactly as before (a
-// dangling reference is harmless and is not this defect). The fleet master
-// acting for no organisation (the callers decide: `actsAsMaster`) keeps its
-// cross-tenant reach, as it has for every R-52 site.
+// fleet's: unstamped and operator-stamped are one tenant). Two typed refusals,
+// nothing dropped silently and nothing written:
+//   MISSION_FOREIGN_TENANT  the mission belongs to another tenant;
+//   MISSION_NOT_FOUND       the mission does not exist (fail closed, also for
+//                           the master: a dangling reference is never stored).
+// The fleet master acting for no organisation (the callers decide:
+// `actsAsMaster`) keeps its cross-tenant reach for an EXISTING mission, as it
+// has for every R-52 site.
 
 import { sameTenantStamp } from "@vantageos/cloud-identity";
 import { ConvexError } from "convex/values";
@@ -32,9 +32,13 @@ export async function requireMissionInTenant(
 		door: string;
 	},
 ): Promise<void> {
-	if (input.actsAsMaster) return;
 	const mission = await ctx.db.get(input.missionId);
-	if (mission === null) return;
+	if (mission === null) {
+		throw new ConvexError(
+			`MISSION_NOT_FOUND: the mission this task references does not exist — ${JSON.stringify({ code: "MISSION_NOT_FOUND", door: input.door, missionId: input.missionId })}`,
+		);
+	}
+	if (input.actsAsMaster) return;
 	if (
 		sameTenantStamp(
 			orgRefOfRow(mission),
