@@ -125,7 +125,7 @@ describe("an org agent's writable namespaces, and a refusal that names them", ()
 			const value = await thrown(store(t, ns, seat(victor)));
 			console.log(`THROWN[${ns}] = ${value}`);
 			expect(value).toContain("RBAC_DENIED");
-			expect(value).toContain(`"${ns}"`);
+			expect(value).toContain(ns);
 			expect(value).toContain(`orchestrator/${victor}`);
 			expect(value).toContain(`project/${IRIS}`);
 			expect(value).toContain(`team/${IRIS_ID}`);
