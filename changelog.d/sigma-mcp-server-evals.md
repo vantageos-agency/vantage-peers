@@ -1,0 +1,4 @@
+---
+section: Added
+---
+- **VantagePeers Cloud MCP server: eval suite `mcp-server/evals/evals.json` (mcp-doctor D8 / rule C-5).** 371 cases covering all 117 registered tools (>= 3 each, at least one degraded case per tool), written from each handler and citing it in `source`. 230 cases are decided before any backend call (input validation, the `tool-exposure.json` mask, pre-backend refusals such as `AGENT_CREDENTIAL_REQUIRED`, `INVALID_RECIPIENTS`, `AUTH_NO_ORG_ID`, invalid cursors, `whoami`, and the `from` gate harness) and are replayed against the real `/mcp` route by `mcp-server/test/evals-suite.test.ts`; the other 141 need a Convex deployment or a non-master principal and are shape-checked only. The test also fails when a tool is registered with fewer than 3 cases. mcp-doctor at 9e851810 moves D8 from non-conforming to present. Task k17fzk50ybqjq0fmfga0sdwbb58hewde.
