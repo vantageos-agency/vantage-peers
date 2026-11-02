@@ -98,6 +98,7 @@ import {
 import type { WorkSegment } from "./lib/taskClosureGate";
 import { actorIdResolver, actorOrgFor, taskActorIdFields } from "./lib/actorIds";
 import { resolveAgentIdArg } from "./lib/agentIdArgs";
+import { appendCommit } from "./lib/commitSha";
 import { recordNameOnlyCall } from "./lib/nameOnlyCalls";
 import {
 	assigneeIdForRead,
@@ -3389,7 +3390,7 @@ export const complete = mutation({
 								fixedAt: Date.now(),
 								...(shaMatch
 									? {
-											fixCommits: [...(issue.fixCommits || []), shaMatch[1]],
+											fixCommits: appendCommit(issue.fixCommits ?? [], shaMatch[1]),
 										}
 									: {}),
 							});

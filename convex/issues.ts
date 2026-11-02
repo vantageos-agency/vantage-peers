@@ -10,6 +10,7 @@ import { internal } from "./_generated/api";
 import type { Doc } from "./_generated/dataModel";
 import { mappingIsProven } from "./githubOwnerBinding";
 import { withOrgScope } from "./lib/auth";
+import { appendCommit, normaliseCommitSha } from "./lib/commitSha";
 import { requireFleetDoor, scopeWithFleetStanding } from "./lib/fleetStanding";
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -216,6 +217,15 @@ export const linkCommit = mutation({
 	handler: async (ctx, args) => {
 		// write-contract: MCP-transport-only — issued via mcp-server client.mutation("issues:linkCommit", …) at mcp-server/src/tools.ts:8406 (imperative), 0 hits in vantage-peers-dashboard {app,components,hooks,lib,contexts,providers} (measured 2026-10-01 at origin/main e2dc58f and 0466fac); never a subscribing pre-org client shell. The no-org throw is a refusal at an imperative MCP call, never at a render.
 		await requireMasterScope(ctx);
+		const incoming = normaliseCommitSha(args.commitSha);
+		if (incoming === null) {
+			throw new ConvexError(
+				`INVALID_COMMIT_SHA: a commit SHA is 7-40 hex characters — ${JSON.stringify({
+					door: "issues:linkCommit",
+					reason: "not-7-to-40-hex",
+				})}`,
+			);
+		}
 		const existing = await ctx.db
 			.query("issues")
 			.withIndex("by_repo_number", (q) =>
@@ -223,16 +233,10 @@ export const linkCommit = mutation({
 			)
 			.unique();
 		if (!existing) throw new Error(`Issue ${args.repo}#${args.issueNumber} not found`);
-		// Same commit = trimmed, lowercased, one is a prefix of the other (a short SHA
-		// matches a stored full SHA and vice versa). A repeat is skipped, not appended;
-		// fixedBy / fixedAt are still refreshed.
-		const incoming = args.commitSha.trim().toLowerCase();
-		const stored = existing.fixCommits ?? [];
-		const isSame = (s: string): boolean => {
-			const n = s.trim().toLowerCase();
-			return n.length > 0 && incoming.length > 0 && (n.startsWith(incoming) || incoming.startsWith(n));
-		};
-		const fixCommits = stored.some(isSame) ? stored : [...stored, args.commitSha.trim()];
+		// Same commit = convex/lib/commitSha.ts (trimmed, lowercased, prefix only between
+		// values of >= 7 chars). A repeat is skipped, not appended; fixedBy / fixedAt are
+		// still refreshed. A value that is not 7-40 hex is refused, never matched loosely.
+		const fixCommits = appendCommit(existing.fixCommits ?? [], incoming);
 		await ctx.db.patch(existing._id, {
 			fixCommits,
 			fixedBy: args.fixedBy,

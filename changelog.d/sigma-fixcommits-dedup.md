@@ -1,0 +1,4 @@
+---
+section: Fixed
+---
+- **`issues.fixCommits` has one commit-identity rule, shared by both writers.** `issues:linkCommit` matched any stored SHA that was a prefix of the incoming one with no length floor, so `ab` was silently skipped against a stored `abcdef1234567`; it now refuses a `commitSha` that is not 7-40 hex after trim and lowercase (`INVALID_COMMIT_SHA`, naming `issues:linkCommit`), and the prefix rule applies only between values of 7 or more characters. The auto-link on task close appended the SHA cited in the completion note with no dedup, so closing a task that cited an already-linked commit stored it twice; it now goes through the same helper (`convex/lib/commitSha.ts`). No Convex argument changed, so the backend contract stays 16. Tasks k1786wcr1w5qndnpw92dwsz6ps8hfrct, k178dnwj26rdwxvqgsfyxqm0ns8hfae5.

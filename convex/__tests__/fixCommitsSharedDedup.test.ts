@@ -12,6 +12,7 @@
 import { describe, expect, test } from "vitest";
 import { convexTest } from "../../tests/fixtures/convexTestWithServiceAccount";
 import { api } from "../_generated/api";
+import { appendCommit, normaliseCommitSha, sameCommit } from "../lib/commitSha";
 import schema from "../schema";
 import { seedFleetAgents } from "../../tests/lib/seedFleetAgents";
 
@@ -127,5 +128,24 @@ describe("tasks:complete appends the cited SHA once", () => {
 		const id = await seed();
 		await closeCiting(svc, "Fixed in commit 1234567abcdef, 3/3 tests pass");
 		expect((await t.run((c) => c.db.get(id)))?.fixCommits).toEqual(["abcdef1234567", "1234567abcdef"]);
+	});
+});
+
+describe("commitSha helper", () => {
+	test("normaliseCommitSha: 7-40 hex only, trimmed and lowercased", () => {
+		expect(normaliseCommitSha("  ABCDEF1\n")).toBe("abcdef1");
+		expect(normaliseCommitSha("abcdef")).toBeNull();
+		expect(normaliseCommitSha("a".repeat(41))).toBeNull();
+		expect(normaliseCommitSha("xyz1234")).toBeNull();
+	});
+	test("sameCommit: prefix only at >= 7 chars", () => {
+		expect(sameCommit("abcdef1", FULL)).toBe(true);
+		expect(sameCommit("ab", "abcdef1234567")).toBe(false);
+		expect(sameCommit("abcdef1", "abcdef2")).toBe(false);
+	});
+	test("appendCommit returns the same array when the commit is present", () => {
+		const stored = ["abcdef1234567"];
+		expect(appendCommit(stored, "abcdef1")).toBe(stored);
+		expect(appendCommit(stored, "1234567")).toEqual(["abcdef1234567", "1234567"]);
 	});
 });
