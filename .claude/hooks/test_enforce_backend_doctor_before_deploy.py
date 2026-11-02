@@ -606,6 +606,8 @@ def test_ratchet_live_baseline_carries_its_command_and_never_rose():
             "f67012c1cde0370246b4a0fe62a2359f2fac2b2e",
             # CR-2 242 -> 241, R-53 322 -> 318, identity-by-id M3: a seat resolves by its profile's agent ID (task k177pske4qj37sfw7nw2787msd8fzp0e)
             "5bce1027ec9d3b3f5371a9155865655bb8faf2ec",
+            # CR-2 241 -> 238, recurring schedule doors refuse through requireResolvedCaller (task k170ahhzv5dsczsgsh20mr4fah8hfbk4)
+            "7391751fa3406efb034f6792bb80a3c625e982e4",
         }
         line = entry["output_line"]
         assert line.startswith((f"{rule}: ", f"{rule} VERDICT: ")), rule
