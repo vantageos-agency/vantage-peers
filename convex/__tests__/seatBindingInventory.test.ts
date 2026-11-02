@@ -442,3 +442,129 @@ describe("seat_binding_inventory: rows that resolve no agent after #1660", () =>
 		expect(out.perOrg.map((o) => o.org)).toEqual([ACME.slug]);
 	});
 });
+
+// ---- tasks without a non-empty clerkOrgId (before #1663) -------------------------------
+const tasksInventory =
+	internal.migrations.seat_binding_inventory.tasksWithoutClerkOrgId;
+type TasksOut = FunctionReturnType<typeof tasksInventory>;
+type TaskStatusLit =
+	| "todo"
+	| "in_progress"
+	| "blocked"
+	| "review"
+	| "done"
+	| "cancelled"
+	| "failed";
+
+async function seedTask(
+	t: T,
+	k: { status: TaskStatusLit; orgId?: string; clerkOrgId?: string },
+): Promise<void> {
+	await t.run(async (ctx) => {
+		await ctx.db.insert("tasks", {
+			title: "fixture",
+			assignedTo: "scribe",
+			priority: "low",
+			status: k.status,
+			createdBy: "fixture",
+			createdAt: 1,
+			updatedAt: 1,
+			...(k.orgId !== undefined ? { orgId: k.orgId } : {}),
+			...(k.clerkOrgId !== undefined ? { clerkOrgId: k.clerkOrgId } : {}),
+		});
+	});
+}
+
+describe("seat_binding_inventory:tasksWithoutClerkOrgId", () => {
+	test("exact counts: missing and empty-string, open vs closed, per org slug; stamped rows excluded", async () => {
+		const t = createT();
+		// ACME: 2 open missing (todo, review), 1 open empty-string (in_progress),
+		//       1 closed missing (done), 1 closed empty-string (cancelled), 2 stamped (excluded).
+		await seedTask(t, { status: "todo", orgId: ACME.slug });
+		await seedTask(t, { status: "review", orgId: ACME.slug });
+		await seedTask(t, {
+			status: "in_progress",
+			orgId: ACME.slug,
+			clerkOrgId: "",
+		});
+		await seedTask(t, { status: "done", orgId: ACME.slug });
+		await seedTask(t, {
+			status: "cancelled",
+			orgId: ACME.slug,
+			clerkOrgId: "",
+		});
+		await seedTask(t, {
+			status: "todo",
+			orgId: ACME.slug,
+			clerkOrgId: ACME.id,
+		});
+		await seedTask(t, {
+			status: "done",
+			orgId: ACME.slug,
+			clerkOrgId: ACME.id,
+		});
+		// BETA: 1 open blocked missing. Fleet row with no slug: 1 failed missing.
+		await seedTask(t, { status: "blocked", orgId: BETA.slug });
+		await seedTask(t, { status: "failed" });
+
+		const out: TasksOut = await t.query(tasksInventory, {});
+		expect(out.cap).toBe(1000);
+		expect(out.truncated).toBe(false);
+		expect(out.truncatedReads).toEqual([]);
+		expect(out.totals).toEqual({
+			total: 7,
+			missing: 5,
+			emptyString: 2,
+			open: 4,
+			closed: 3,
+			byStatus: {
+				todo: 1,
+				in_progress: 1,
+				blocked: 1,
+				review: 1,
+				done: 1,
+				cancelled: 1,
+				failed: 1,
+			},
+		});
+		const by = Object.fromEntries(out.perOrg.map((o) => [o.org, o.counts]));
+		expect(Object.keys(by).sort()).toEqual(["(none)", ACME.slug, BETA.slug]);
+		expect(by[ACME.slug]).toMatchObject({
+			total: 5,
+			missing: 3,
+			emptyString: 2,
+			open: 3,
+			closed: 2,
+		});
+		expect(by[BETA.slug]).toMatchObject({ total: 1, open: 1, closed: 0 });
+		expect(by["(none)"]).toMatchObject({ total: 1, open: 0, closed: 1 });
+		expect(JSON.stringify(out)).not.toMatch(/fixture|scribe|_id/);
+	});
+
+	test("an empty table is an empty, untruncated report", async () => {
+		const t = createT();
+		const out: TasksOut = await t.query(tasksInventory, {});
+		expect(out.totals.total).toBe(0);
+		expect(out.perOrg).toEqual([]);
+		expect(out.truncated).toBe(false);
+	});
+
+	test("truncation: a read that hits the bound is named and flagged; met exactly is not", async () => {
+		const t = createT();
+		for (let i = 0; i < 3; i++)
+			await seedTask(t, { status: "todo", orgId: ACME.slug });
+		await seedTask(t, { status: "done", orgId: ACME.slug, clerkOrgId: "" });
+
+		const exact: TasksOut = await t.query(tasksInventory, { limit: 3 });
+		expect(exact.truncated).toBe(false);
+		expect(exact.totals.total).toBe(4);
+
+		const cut: TasksOut = await t.query(tasksInventory, { limit: 2 });
+		expect(cut.cap).toBe(2);
+		expect(cut.truncated).toBe(true);
+		expect(cut.truncatedReads).toEqual(["todo/missing"]);
+		// A truncated read contributes at most `cap` rows: a lower bound, never the total.
+		expect(cut.totals.byStatus.todo).toBe(2);
+		expect(cut.totals.emptyString).toBe(1);
+	});
+});

@@ -24,3 +24,4 @@ run clientOrgMapping:addOperatorRosterMember
 run oauth:listScopeProfiles
 run migrations/backfill_seat_memory_org_stamp:revert
 run migrations/seat_binding_inventory:inventory
+run migrations/seat_binding_inventory:tasksWithoutClerkOrgId
