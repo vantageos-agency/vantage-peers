@@ -657,7 +657,7 @@ async function sendMessageCore(
 			);
 			if (agentRecipients.length === 0) {
 				throw new ConvexError(
-					`recipient error / message not delivered: recipientAgentIds names no recipient other than the sender — ${JSON.stringify({ reason: "only-self", door: SEND_DOOR })}`,
+					`INVALID_RECIPIENTS: recipient error / message not delivered: recipientAgentIds names no recipient other than the sender — ${JSON.stringify({ reason: "only-self", door: SEND_DOOR })}`,
 				);
 			}
 		}
@@ -858,7 +858,7 @@ async function sendMessageCore(
 				}
 				if (broadcastRows.length === 0) {
 					throw new ConvexError(
-						`recipient error / message non livré : "broadcast" ne correspond à aucun destinataire de l'organisation pour cet émetteur.`,
+						`INVALID_RECIPIENTS: recipient error / message non livré : "broadcast" ne correspond à aucun destinataire de l'organisation pour cet émetteur. — ${JSON.stringify({ reason: "broadcast-reaches-nobody", door: SEND_DOOR })}`,
 					);
 				}
 				for (const row of broadcastRows) {
@@ -882,7 +882,7 @@ async function sendMessageCore(
 			// fall-through to the internal fleet.
 			if (recipients.length === 0) {
 				throw new ConvexError(
-					`recipient error / message non livré : "broadcast" ne correspond à aucun destinataire de l'organisation pour cet émetteur.`,
+					`INVALID_RECIPIENTS: recipient error / message non livré : "broadcast" ne correspond à aucun destinataire de l'organisation pour cet émetteur. — ${JSON.stringify({ reason: "broadcast-reaches-nobody", door: SEND_DOOR })}`,
 				);
 			}
 		} else {
@@ -954,14 +954,22 @@ async function sendMessageCore(
 				.map((s) => s.trim())
 				.filter((s) => s.length > 0);
 
-			const bounce = () => {
+			// Two refusals, one text: a channel that names NO recipient at all is an
+			// invalid form (INVALID_RECIPIENTS); a name that is unknown, or known
+			// but outside the sender's reach, is a refusal of the caller's rights
+			// (RBAC_DENIED) - deliberately the same bytes for "unknown" and
+			// "not yours", so a refusal does not disclose which roles exist.
+			const bounce = (
+				code: "INVALID_RECIPIENTS" | "RBAC_DENIED" = "RBAC_DENIED",
+				reason = "recipient-not-addressable",
+			) => {
 				throw new ConvexError(
-					`recipient error / message non livré : "${channel}" ne correspond à aucun destinataire de l'organisation. Formes valides : <role existant> | <instance> | broadcast | liste "eta,pi".`,
+					`${code}: recipient error / message non livré : "${channel}" ne correspond à aucun destinataire de l'organisation. Formes valides : <role existant> | <instance> | broadcast | liste "eta,pi". — ${JSON.stringify({ reason, door: SEND_DOOR })}`,
 				);
 			};
 
 			if (rawParts.length === 0) {
-				bounce();
+				bounce("INVALID_RECIPIENTS", "no-recipient");
 			}
 			for (const part of rawParts) {
 				if (part === args.from) continue; // sender excluding itself never needs to resolve
@@ -991,7 +999,7 @@ async function sendMessageCore(
 
 			recipients = rawParts.filter((s) => s !== args.from);
 			if (recipients.length === 0) {
-				bounce();
+				bounce("INVALID_RECIPIENTS", "only-self");
 			}
 		}
 
@@ -2201,7 +2209,11 @@ export const deleteMessage = mutation({
 		}
 
 		const message = await ctx.db.get(args.messageId);
-		if (!message) throw new Error("Message not found");
+		if (!message) {
+			throw new ConvexError(
+				`MESSAGE_NOT_FOUND: Message not found — ${JSON.stringify({ door: "messages" })}`,
+			);
+		}
 
 		// A verified agent (or org), or the service account naming a sender: the
 		// sender is decided by the inbox reader, BY ID, in the reader's tenant. A
@@ -2619,7 +2631,11 @@ export const listBroadcastStatus = query({
 		requireScope(scope, "view-own-tasks");
 
 		const message = await ctx.db.get(messageId);
-		if (!message) throw new Error("Message not found");
+		if (!message) {
+			throw new ConvexError(
+				`MESSAGE_NOT_FOUND: Message not found — ${JSON.stringify({ door: "messages" })}`,
+			);
+		}
 
 		if (!scope.isMaster) {
 			// A-12: the sending org is the row's permanent ID, never its slug label.

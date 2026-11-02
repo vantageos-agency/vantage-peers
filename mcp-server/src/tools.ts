@@ -2486,6 +2486,9 @@ export function registerTools(
 					type,
 					createdBy: createdBy ?? null,
 					errorMessage: error?.message ?? String(error),
+					// A ConvexError's message is redacted to "[Request ID] Server Error"; its
+					// code lives on .data. Log it so a typed refusal reads as one.
+					errorData: error?.data ?? null,
 				});
 				return mcpConvexError(error);
 			}
@@ -3734,6 +3737,9 @@ export function registerTools(
 					channel,
 					recipientAgentIds,
 					errorMessage: error?.message ?? String(error),
+					// A ConvexError's message is redacted to "[Request ID] Server Error"; its
+					// code lives on .data. Log it so a typed refusal reads as one.
+					errorData: error?.data ?? null,
 				});
 				return mcpConvexError(error);
 			}

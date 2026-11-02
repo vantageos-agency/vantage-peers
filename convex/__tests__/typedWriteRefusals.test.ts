@@ -13,7 +13,7 @@
 // nobody newly refused.
 import { readFileSync } from "node:fs";
 import { ConvexError } from "convex/values";
-import { describe, expect, test } from "vitest";
+import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import { convexTest } from "../../tests/fixtures/convexTestWithServiceAccount";
 import { testClerkOrgId } from "../../tests/fixtures/testClerkOrgId";
 import { api } from "../_generated/api";
@@ -26,6 +26,17 @@ const modules = Object.fromEntries(
 	),
 );
 const createT = () => convexTest(schema, modules);
+// Scheduled work (message fan-out, RAG sync) is drained before a test ends, so
+// it cannot write after the transaction is gone.
+let current: ReturnType<typeof createT> | undefined;
+beforeEach(() => {
+	vi.useFakeTimers();
+});
+afterEach(async () => {
+	if (current) await current.finishAllScheduledFunctions(vi.runAllTimers);
+	current = undefined;
+	vi.useRealTimers();
+});
 type T = ReturnType<typeof createT>;
 type Identity = Parameters<T["withIdentity"]>[0];
 const asService = (t: T) =>
@@ -35,6 +46,7 @@ type Agent = { id: Id<"agents">; org: string; name: string };
 
 async function world() {
 	const t = createT();
+	current = t;
 	const made: Record<string, Agent> = {};
 	await t.run(async (ctx) => {
 		const now = Date.now();
@@ -198,7 +210,7 @@ describe("send_message refusals carry their code (cases 3, 4, 5)", () => {
 	});
 });
 
-describe("a missing row is a typed code, never a bare Error", () => {
+describe("a missing message is a typed code, never a bare Error", () => {
 	test("deleteMessage on a deleted message -> MESSAGE_NOT_FOUND", async () => {
 		const w = await world();
 		const probe = w.a["cgt-alsachimie/vpprobe-a"];
@@ -208,23 +220,15 @@ describe("a missing row is a typed code, never a bare Error", () => {
 			codeOf(await outcome(asService(w.t).mutation(api.messages.deleteMessage, { messageId: id as Id<"messages"> } as never))),
 		).toBe("MESSAGE_NOT_FOUND");
 	});
-	test("softDeleteMemory of a deleted memory as the fleet account -> MEMORY_NOT_FOUND", async () => {
-		const w = await world();
-		const id = await asService(w.t).mutation(api.memories.storeMemory, {
-			namespace: "global", type: "project", content: "c", createdBy: "pi", relations: [],
-		} as never);
-		await w.t.run((ctx) => ctx.db.delete(id as Id<"memories">));
-		expect(
-			codeOf(await outcome(asService(w.t).mutation(api.memories.softDeleteMemory, { memoryId: id as string }))),
-		).toBe("MEMORY_NOT_FOUND");
-	});
 });
 
 describe("class pin: no bare Error on the write paths", () => {
-	for (const file of ["../messages.ts", "../memories.ts"]) {
-		test(`${file} has no 'throw new Error(' (a refusal or a missing row is a ConvexError with a code)`, () => {
-			const src = readFileSync(new URL(file, import.meta.url), "utf8");
-			expect(src.match(/throw new Error\(/g) ?? []).toEqual([]);
-		});
-	}
+	test("convex/messages.ts has no 'throw new Error(' (a refusal or a missing row is a ConvexError with a code)", () => {
+		const src = readFileSync(new URL("../messages.ts", import.meta.url), "utf8");
+		expect(src.match(/throw new Error\(/g) ?? []).toEqual([]);
+	});
+	test("convex/memories.ts keeps exactly ONE bare Error: softDeleteMemory's absent-row answer to the fleet account, a contract pinned by memories.softDeleteMemory.wrongTable.test.ts", () => {
+		const src = readFileSync(new URL("../memories.ts", import.meta.url), "utf8");
+		expect(src.match(/throw new Error\(/g) ?? []).toHaveLength(1);
+	});
 });
