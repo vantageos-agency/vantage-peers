@@ -158,9 +158,10 @@ for (const [tool, door] of DOORS) {
 			expect(r.refused).toBe(true);
 			expect(r.text).toContain("ORG_MISMATCH");
 			expect(r.text).not.toMatch(/requires master scope/);
-			expect(r.calls.find((c) => c.name === door)?.args.verifiedActor).toEqual(
-				{ agentId: OTHER_MIMIR, orgSlug: OTHER_ORG },
-			);
+			expect(r.calls.find((c) => c.name === door)?.args.verifiedActor).toEqual({
+				agentId: OTHER_MIMIR,
+				orgSlug: OTHER_ORG,
+			});
 		});
 
 		it("a same-org agent that is neither creator nor assignee is refused by the door", async () => {
@@ -190,9 +191,9 @@ describe("the assignee pauses and resumes; removal stays the creator's", () => {
 		expect((await call("pause_recurring_task", seat(VERA, ORG))).refused).toBe(
 			false,
 		);
-		expect(
-			(await call("resume_recurring_task", seat(VERA, ORG))).refused,
-		).toBe(false);
+		expect((await call("resume_recurring_task", seat(VERA, ORG))).refused).toBe(
+			false,
+		);
 		const del = await call("delete_recurring_task", seat(VERA, ORG));
 		expect(del.refused).toBe(true);
 		expect(del.text).toContain("not-creator-by-id");

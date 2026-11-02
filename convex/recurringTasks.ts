@@ -11,6 +11,7 @@ import { requireId } from "./lib/ids";
 import {
 	filterByOrgScope,
 	isRowVisibleToScope,
+	isServiceTransport,
 	type VerifiedActor,
 	requireResolvedCaller,
 	verifiedActorValidator,
@@ -45,18 +46,13 @@ import { fleetOperatorRef } from "./lib/operatorOrg";
 // verified OrgScope (isMaster / allowedOrchestrators), without asserting
 // that the caller itself IS any particular named orchestrator.
 //
-// pause/resume/remove are cron-infrastructure operations the MCP server
-// already restricts to its master-only tool guard (`guardMasterOnly` —
-// mcp-server/src/tools.ts's pause_recurring_task/resume_recurring_task/
-// delete_recurring_task all use `{ kind: "master" }`). Per
-// .claude/rules/http-boundary-derives-from-principal.md's sibling doctrine
-// ("a guard in the MCP server is NOT a defence"), Convex re-derives and
-// re-enforces the SAME master-only rule independently here — the sole
-// legitimate caller (the MCP server's dedicated service-account identity)
-// always resolves to `scope.isMaster === true` via withOrgScope's
-// stored-service-account resolution (lib/serviceAccount.ts), so this is byte-behavior-
-// unchanged for that live path and closes the door for anyone else holding
-// the deployment URL directly.
+// pause/resume/remove are decided HERE, by authorizeScheduleActor, and the MCP
+// tools that reach them carry no gate of their own (task
+// k170ahhzv5dsczsgsh20mr4fah8hfbk4 removed their master-only guard): the fleet
+// master is served; an agent forwarded by the service account (verifiedActor,
+// also under an acting org) is served as the schedule's creator or assignee BY
+// ID, remove as its creator only; a human member is judged by memberWriterRoles
+// (remove: org:admin). Anyone else is refused.
 //
 // create/update are reachable by ordinary (non-master) org clients too
 // (MCP's `guardDelegation`/`scopeFilterGet` gates are "filtered", not
@@ -588,7 +584,13 @@ async function authorizeScheduleActor(
 	// passed through as master; the service account with no forwarded agent keeps
 	// the fleet's access. A member naming an agent acts as the ID its proof
 	// derived (requireAuthenticatedCaller).
-	const forwarded = scope.isMaster ? opts?.verifiedActor : undefined;
+	// The transport is read with isServiceTransport, never isMaster: a client seat
+	// reaches this door as the service account ACTING FOR its org (`__actingOrg`),
+	// whose scope is an ordinary member scope (isMaster false). Reading isMaster
+	// dropped that seat's verified agent and sent it down the HUMAN path, which
+	// refuses an agent as role-not-writer (task k170ahhzv5dsczsgsh20mr4fah8hfbk4).
+	// requireVerifiedActorPrincipal below binds the agent to the acting org.
+	const forwarded = isServiceTransport(scope) ? opts?.verifiedActor : undefined;
 	const isMemberAgent = !scope.isMaster && opts?.callerOrchestrator !== undefined;
 	if (forwarded === undefined && !isMemberAgent) {
 		if (scope.isMaster) return;
@@ -654,11 +656,9 @@ export const pause = mutation({
 	returns: v.object({ taskId: v.id("recurringTasks"), active: v.boolean() }),
 	handler: async (ctx, args) => {
 		// write-contract: MCP-transport-only — issued via mcp-server client.mutation("recurringTasks:pause", …) at mcp-server/src/tools.ts:6799 (imperative), 0 hits in vantage-peers-dashboard {app,components,hooks,lib,contexts,providers} (measured 2026-10-01 at origin/main e2dc58f and 0466fac); never a subscribing pre-org client shell. The no-org throw is a refusal at an imperative MCP call, never at a render.
-		// Master-only, mirroring the MCP server's own `guardMasterOnly` gate
-		// on pause_recurring_task (mcp-server/src/tools.ts, `{ kind: "master" }`)
-		// — re-enforced independently here, never trusting that MCP gate alone
-		// (.claude/rules/http-boundary-derives-from-principal.md: "a guard in
-		// the MCP server is NOT a defence").
+		// The ONLY gate on pause_recurring_task: the MCP tool decides nothing
+		// (task k170ahhzv5dsczsgsh20mr4fah8hfbk4). authorizeScheduleActor below
+		// serves the master, the creator or assignee agent BY ID, or a writer member.
 		const scope = await proveScheduleCaller(ctx, args);
 		// A non-master caller with no organisation is refused BEFORE the row is
 		// read, so a stranger cannot tell a real schedule id from an absent one.
@@ -698,7 +698,7 @@ export const resume = mutation({
 	}),
 	handler: async (ctx, args) => {
 		// write-contract: MCP-transport-only — issued via mcp-server client.mutation("recurringTasks:resume", …) at mcp-server/src/tools.ts:6836 (imperative), 0 hits in vantage-peers-dashboard {app,components,hooks,lib,contexts,providers} (measured 2026-10-01 at origin/main e2dc58f and 0466fac); never a subscribing pre-org client shell. The no-org throw is a refusal at an imperative MCP call, never at a render.
-		// Master-only — see pause's identical rationale above.
+		// The only gate is authorizeScheduleActor below — see pause above.
 		const scope = await proveScheduleCaller(ctx, args);
 		// A non-master caller with no organisation is refused BEFORE the row is
 		// read, so a stranger cannot tell a real schedule id from an absent one.
@@ -740,7 +740,7 @@ export const remove = mutation({
 	returns: v.object({ deleted: v.boolean() }),
 	handler: async (ctx, args) => {
 		// write-contract: MCP-transport-only — issued via mcp-server client.mutation("recurringTasks:remove", …) at mcp-server/src/tools.ts:6873 (imperative), 0 hits in vantage-peers-dashboard {app,components,hooks,lib,contexts,providers} (measured 2026-10-01 at origin/main e2dc58f and 0466fac); never a subscribing pre-org client shell. The no-org throw is a refusal at an imperative MCP call, never at a render.
-		// Master-only — see pause's identical rationale above.
+		// The only gate is authorizeScheduleActor below — see pause above.
 		const scope = await proveScheduleCaller(ctx, args);
 		// A non-master caller with no organisation is refused BEFORE the row is
 		// read, so a stranger cannot tell a real schedule id from an absent one.

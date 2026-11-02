@@ -1,9 +1,11 @@
 /**
  * Day 92 C0.6 — pause_recurring_task + resume_recurring_task + delete_recurring_task master-only gate.
  *
- * TDD RED phase: asserts non-master bearer is rejected with a Forbidden error.
- * Recurring task management is cron infrastructure — no per-task identity arg
- * suitable for fromAllowList delegation → masterOnlyMiddleware for all three.
+ * Revised by task k170ahhzv5dsczsgsh20mr4fah8hfbk4: the MCP no longer gates the
+ * three tools on master scope. The Convex door (authorizeScheduleActor) decides
+ * on the forwarded agent ID; a non-master bearer with NO agent ID is the human
+ * path there and is refused by the door (role-not-writer), and the MCP relays
+ * that refusal unchanged. The agent poles live in recurring-task-agent-door.test.ts.
  *
  * Mission: k57a36y8w5t085bqr23dsmvb2d882506
  * Eta C0 endorsement DM: jn7fhtjdw2yakwwm1p1v6scb9x882ccv
@@ -37,21 +39,27 @@ function captureTools(oauthCtx?: OAuthContext): Map<string, CapturedTool> {
 		},
 		registerTool: (
 			name: string,
-			config: { description?: string },
+			_config: { description?: string },
 			handler: (args: Record<string, unknown>) => Promise<unknown>,
 		) => {
 			tools.set(name, { name, handler });
 		},
 	} as Parameters<typeof registerTools>[0];
 
+	// Answers like convex/recurringTasks.ts authorizeScheduleActor: a non-master
+	// caller with no forwarded agent ID is the HUMAN path, and a bearer with no
+	// writer role is refused there (role-not-writer). The master is served.
+	const nonMaster = oauthCtx !== undefined && oauthCtx.isMaster !== true;
 	const mockConvex = {
 		query: async () => null,
-		mutation: async () => ({
-			taskId: "mock-id",
-			paused: true,
-			resumed: true,
-			removed: true,
-		}),
+		mutation: async (_name: string, args: Record<string, unknown>) => {
+			if (nonMaster && args.verifiedActor === undefined) {
+				throw Object.assign(new Error("[Request ID: x] Server Error"), {
+					data: 'RBAC_DENIED: member role is not a writer role — {"reason":"role-not-writer"}',
+				});
+			}
+			return { taskId: "mock-id", paused: true, resumed: true, removed: true };
+		},
 		action: async () => null,
 	} as Parameters<typeof registerTools>[1];
 
@@ -114,16 +122,16 @@ const recurringArgs = { taskId: "mock-recurring-task-id" };
 // C0.6 — pause_recurring_task
 // ─────────────────────────────────────────────────────────────────────────────
 
-describe("C0.6 — pause_recurring_task master-only gate", () => {
-	it("RED: non-master scoped bearer → Forbidden error", async () => {
+describe("C0.6 — pause_recurring_task door-decided gate", () => {
+	it("non-master bearer with no agent ID → the door's refusal, relayed (no MCP master gate)", async () => {
 		const result = await callTool(
 			"pause_recurring_task",
 			recurringArgs,
 			buildScopedCtx(),
 		);
 		expect(result.isError).toBe(true);
-		expect(getText(result)).toMatch(/Forbidden/i);
-		expect(getText(result)).toMatch(/master/i);
+		expect(getText(result)).toContain("role-not-writer");
+		expect(getText(result)).not.toMatch(/requires master scope/);
 	});
 
 	it("happy path: master bearer → passes through", async () => {
@@ -151,16 +159,16 @@ describe("C0.6 — pause_recurring_task master-only gate", () => {
 // C0.6 — resume_recurring_task
 // ─────────────────────────────────────────────────────────────────────────────
 
-describe("C0.6 — resume_recurring_task master-only gate", () => {
-	it("RED: non-master scoped bearer → Forbidden error", async () => {
+describe("C0.6 — resume_recurring_task door-decided gate", () => {
+	it("non-master bearer with no agent ID → the door's refusal, relayed (no MCP master gate)", async () => {
 		const result = await callTool(
 			"resume_recurring_task",
 			recurringArgs,
 			buildScopedCtx(),
 		);
 		expect(result.isError).toBe(true);
-		expect(getText(result)).toMatch(/Forbidden/i);
-		expect(getText(result)).toMatch(/master/i);
+		expect(getText(result)).toContain("role-not-writer");
+		expect(getText(result)).not.toMatch(/requires master scope/);
 	});
 
 	it("happy path: master bearer → passes through", async () => {
@@ -188,16 +196,16 @@ describe("C0.6 — resume_recurring_task master-only gate", () => {
 // C0.6 — delete_recurring_task
 // ─────────────────────────────────────────────────────────────────────────────
 
-describe("C0.6 — delete_recurring_task master-only gate", () => {
-	it("RED: non-master scoped bearer → Forbidden error", async () => {
+describe("C0.6 — delete_recurring_task door-decided gate", () => {
+	it("non-master bearer with no agent ID → the door's refusal, relayed (no MCP master gate)", async () => {
 		const result = await callTool(
 			"delete_recurring_task",
 			recurringArgs,
 			buildScopedCtx(),
 		);
 		expect(result.isError).toBe(true);
-		expect(getText(result)).toMatch(/Forbidden/i);
-		expect(getText(result)).toMatch(/master/i);
+		expect(getText(result)).toContain("role-not-writer");
+		expect(getText(result)).not.toMatch(/requires master scope/);
 	});
 
 	it("happy path: master bearer → passes through", async () => {
