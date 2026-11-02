@@ -23,6 +23,10 @@
    - Post-restore baseline: **Tests N passed (N)**, `git status --short` → clean.
    <!-- Non-guard PRs (pure docs/config/data): write "n/a — no guard/matcher in this PR" here. -->
 
+6. **RIGHTS-CHANGE (REQUIRED when this PR touches who may read or write what: `convex/lib/seatNamespace.ts`, a scope-profile shape or seed, the organisation mapping's grant, or `mcp-server/src/auth.ts` `checkNamespace*`):**
+   `node scripts/check-rights-change-note.mjs --base origin/main` → **PASS**, with the live connections it affects (count by command), and a `rights-derivation:` (grant derived at request time) or `rights-migration:` (dry-run migration shipped here) note. Rule: `.claude/rules/rights-change-migrates-live-connections.md`.
+   <!-- Other PRs: write "n/a — no rights file touched". -->
+
 ---
 
 ## Summary
