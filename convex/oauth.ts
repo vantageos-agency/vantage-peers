@@ -4240,9 +4240,17 @@ export const createTestTenantTrioClients = internalMutation({
 // listScopeProfiles — internal query to enumerate all profiles
 // ─────────────────────────────────────────────────────────────────────────────
 
+// Own output shape: scopeProfileShape is also the ARGS of upsertScopeProfile and the
+// return of getScopeProfile, so the two read-only identity fields are added here only.
+const listedScopeProfileShape = v.object({
+	...scopeProfileShape.fields,
+	agentId: v.optional(v.id("agents")),
+	clerkOrgId: v.optional(v.string()),
+});
+
 export const listScopeProfiles = internalQuery({
 	args: {},
-	returns: v.array(scopeProfileShape),
+	returns: v.array(listedScopeProfileShape),
 	handler: async (ctx) => {
 		const rows = await ctx.db
 			.query("oauth_scope_profiles")
@@ -4257,6 +4265,10 @@ export const listScopeProfiles = internalQuery({
 			// The org a seat profile is bound to: the operator script
 			// scripts/seat-profile-agent-namespace.mjs selects client-org profiles by it.
 			...(r.clerkOrgSlug !== undefined ? { clerkOrgSlug: r.clerkOrgSlug } : {}),
+			// The permanent identities: the agent a seat profile stands for and its org id.
+			// Absent (not null) when the row has none yet (expand phase).
+			...(r.agentId !== undefined ? { agentId: r.agentId } : {}),
+			...(r.clerkOrgId !== undefined ? { clerkOrgId: r.clerkOrgId } : {}),
 		}));
 	},
 });
