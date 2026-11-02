@@ -2407,7 +2407,9 @@ export function registerTools(
 			namespace: z
 				.string()
 				.describe(
-					"Memory namespace — e.g. 'global', 'orchestrator/pi', 'project/vantage-starter'",
+					"Memory namespace — e.g. 'global', 'orchestrator/pi', 'project/vantage-starter'. " +
+						"A client seat (an agent of an organisation) may write only: 'team/<org ID>', 'project/<org slug>', and 'orchestrator/<its own agent ID>' (the agent's permanent ID, never its agent name). " +
+						"A refused write names the namespaces your seat may write.",
 				),
 			type: memoryTypeSchema,
 			content: z
