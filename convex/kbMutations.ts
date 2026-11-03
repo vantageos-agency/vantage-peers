@@ -239,6 +239,31 @@ async function scheduleRagRetire(
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// latestMemoryIds -- which of these RAG entry keys still name a live memory row.
+//
+// A RAG entry's key is its memory's ID. convex/search.ts drops every search hit
+// whose row is gone or isLatest=false: the RAG filters are OR'd and cannot do it
+// (see "RETIRED ENTRIES" there). Reads only the rows named, by ID; it is internal
+// and is handed keys of entries already found inside a namespace the caller was
+// authorised for. A key that is not a memories ID is not live.
+// ─────────────────────────────────────────────────────────────────────────────
+
+export const latestMemoryIds = internalQuery({
+	args: { ids: v.array(v.string()) },
+	returns: v.array(v.string()),
+	handler: async (ctx, args) => {
+		const live: string[] = [];
+		for (const raw of args.ids) {
+			const id = ctx.db.normalizeId("memories", raw);
+			if (id === null) continue;
+			const row = await ctx.db.get(id);
+			if (row !== null && row.isLatest) live.push(raw);
+		}
+		return live;
+	},
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
 // listDocNamespacesUnderRoot -- the live KB document namespaces under an org root
 //
 // RAG searches ONE namespace by exact name and has no prefix search, so a search

@@ -87,6 +87,7 @@ function install(key: string): void {
 					filterValues: [
 						{ name: "namespace", value: args.namespace },
 						{ name: "type", value: "project" },
+						{ name: "isLatest", value: "true" },
 					],
 				},
 			],

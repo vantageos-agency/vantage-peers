@@ -128,6 +128,7 @@ beforeEach(() => {
 				filterValues: [
 					{ name: "namespace", value: args.namespace },
 					{ name: "type", value: "reference" },
+					{ name: "isLatest", value: "true" },
 				],
 			})),
 		};
