@@ -388,6 +388,8 @@ export async function performErase(
 // Declared limit: a newer version written into a DIFFERENT namespace than every version of
 // the chain it supersedes is not reachable by this read (storeMemory permits it when the
 // caller may write both namespaces).
+// The namespace is read ONLY from a version with isLatest=false: a latest row has no newer
+// version, so an unedited latest memory triggers no scan and is erasable in any namespace.
 export const CHAIN_SCAN_CAP = 2000;
 
 /** Every row of the "updates" chain `root` belongs to (both directions), root first. */
@@ -427,9 +429,13 @@ export async function collectMemoryChain(
 			const older = await ctx.db.get(relation.targetId);
 			if (older !== null) neighbours.push(older);
 		}
-		for (const candidate of await rowsOfNamespace(row.namespace)) {
-			if (candidate.relations.some((r) => r.type === "updates" && r.targetId === row._id)) {
-				neighbours.push(candidate);
+		// A LATEST row has no newer version (storeMemory flips a target to isLatest=false when
+		// it is superseded), so only a non-latest row reads its namespace for newer versions.
+		if (!row.isLatest) {
+			for (const candidate of await rowsOfNamespace(row.namespace)) {
+				if (candidate.relations.some((r) => r.type === "updates" && r.targetId === row._id)) {
+					neighbours.push(candidate);
+				}
 			}
 		}
 		for (const next of neighbours) {
