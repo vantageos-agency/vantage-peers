@@ -99,11 +99,11 @@ const SCOPE_CLASSIFICATION: Readonly<Record<string, ScopeClassification>> = {
 			"keyed by the access-token hash; org from the token row (tools.ts:2290)",
 	},
 	"store_memory|memories:storeMemory": {
-		class: "leak",
-		severity: "Medium",
-		basis: "args+gate",
+		class: "traced",
+		severity: null,
+		basis: "measured",
 		reason:
-			"write with no verifiedOrg; withOrgScope under the service account stamps no org; gates = namespace-write prefix + from roster name (tools.ts:2429)",
+			"MCP site tools.ts:2462: the client carries __actingOrg on every call (authenticatedConvexClient.ts:111,144-151; server-http.ts:2268), so Convex answers as an ordinary member of the caller's org (convex/lib/auth.ts:376-413). Convex convex/memories.ts:62: acting for A cannot write into B's namespace, a write into A's stamps A; pinned by convex/__tests__/actingOrgIsolation.test.ts:409-421",
 	},
 	"soft_delete_memory|memories:softDeleteMemory": {
 		class: "safe",
@@ -112,37 +112,39 @@ const SCOPE_CLASSIFICATION: Readonly<Record<string, ScopeClassification>> = {
 		reason: "MCP kind master: non-master refused before Convex (tools.ts:2490)",
 	},
 	"get_memory|memories:getMemory": {
-		class: "leak",
-		severity: "Medium",
+		class: "traced",
+		severity: null,
 		basis: "measured",
 		reason:
-			"DOOR_SCOPE says verifiedOrg 'always' but the call (tools.ts:2536) forwards none; Convex fleet read; only gate is scopeFilterGet on the row name",
+			"MCP site tools.ts:2572: the client carries __actingOrg on every call (authenticatedConvexClient.ts:111,144-151; server-http.ts:2268), so Convex answers as an ordinary member of the caller's org (convex/lib/auth.ts:376-413). Convex convex/memories.ts:212 narrows by withOrgScope under the acting org; pinned: acting call never returns an org-B row and equals the org-A member answer (convex/__tests__/actingOrgIsolation.test.ts:352-386)",
 	},
 	"recall|search:recall": {
-		class: "leak",
-		severity: "Medium",
+		class: "traced",
+		severity: null,
 		basis: "measured",
 		reason:
-			"namespace-prefix read; convex/search.ts resolveSearchNamespace returns the requested namespace for master; only team/<orgClerkId> is org-keyed",
+			"MCP site tools.ts:2635: the client carries __actingOrg on every call (authenticatedConvexClient.ts:111,144-151; server-http.ts:2268), so Convex answers as an ordinary member of the caller's org (convex/lib/auth.ts:376-413). Convex convex/search.ts:219: convex/search.ts:184-200 resolveSearchNamespace refuses a namespace outside the caller's own team subtree; pinned by convex/__tests__/actingOrgSearch.test.ts:113-139",
 	},
 	"text_search|search:textSearch": {
-		class: "leak",
-		severity: "Medium",
+		class: "traced",
+		severity: null,
 		basis: "measured",
-		reason: "same as recall: namespace-keyed, not tenant-keyed",
+		reason:
+			"MCP site tools.ts:2700: the client carries __actingOrg on every call (authenticatedConvexClient.ts:111,144-151; server-http.ts:2268), so Convex answers as an ordinary member of the caller's org (convex/lib/auth.ts:376-413). Convex convex/search.ts:285: convex/search.ts:184-200 resolveSearchNamespace refuses a namespace outside the caller's own team subtree; pinned by convex/__tests__/actingOrgSearch.test.ts:113-139",
 	},
 	"hybrid_search|search:hybridSearch": {
-		class: "leak",
-		severity: "Medium",
+		class: "traced",
+		severity: null,
 		basis: "measured",
-		reason: "same as recall: namespace-keyed, not tenant-keyed",
+		reason:
+			"MCP site tools.ts:2773: the client carries __actingOrg on every call (authenticatedConvexClient.ts:111,144-151; server-http.ts:2268), so Convex answers as an ordinary member of the caller's org (convex/lib/auth.ts:376-413). Convex convex/search.ts:346: convex/search.ts:184-200 resolveSearchNamespace refuses a namespace outside the caller's own team subtree; pinned by convex/__tests__/actingOrgSearch.test.ts:113-139",
 	},
 	"store_episode|episodes:storeEpisode": {
-		class: "leak",
-		severity: "Medium",
-		basis: "args+gate",
+		class: "traced",
+		severity: null,
+		basis: "measured",
 		reason:
-			"write with no verifiedOrg; unstamped under the service account; from roster name gate",
+			"MCP site tools.ts:2845: the client carries __actingOrg on every call (authenticatedConvexClient.ts:111,144-151; server-http.ts:2268), so Convex answers as an ordinary member of the caller's org (convex/lib/auth.ts:376-413). Convex convex/episodes.ts:25: acting for A cannot write into B's namespace; pinned by convex/__tests__/actingOrgIsolation.test.ts:423-430",
 	},
 	"get_episode|memories:getMemory": {
 		class: "safe",
@@ -152,42 +154,46 @@ const SCOPE_CLASSIFICATION: Readonly<Record<string, ScopeClassification>> = {
 			"doorScopeArgs verifiedOrg 'always' + unresolvedOrgDenial (tools.ts:2870-2872)",
 	},
 	"list_episodes|memories:listMemories": {
-		class: "leak",
-		severity: "Medium",
-		basis: "args+gate",
-		reason: "namespace read, no verifiedOrg forwarded (tools.ts:2973)",
+		class: "traced",
+		severity: null,
+		basis: "measured",
+		reason:
+			"MCP site tools.ts:3009: the client carries __actingOrg on every call (authenticatedConvexClient.ts:111,144-151; server-http.ts:2268), so Convex answers as an ordinary member of the caller's org (convex/lib/auth.ts:376-413). Convex convex/memories.ts:327 narrows by withOrgScope under the acting org; pinned: acting call never returns an org-B row and equals the org-A member answer (convex/__tests__/actingOrgIsolation.test.ts:352-386)",
 	},
 	"search_episodes_by_keyword|search:textSearch": {
-		class: "leak",
-		severity: "Medium",
+		class: "traced",
+		severity: null,
 		basis: "measured",
-		reason: "namespace-keyed search, no org (tools.ts:3060)",
+		reason:
+			"MCP site tools.ts:3096: the client carries __actingOrg on every call (authenticatedConvexClient.ts:111,144-151; server-http.ts:2268), so Convex answers as an ordinary member of the caller's org (convex/lib/auth.ts:376-413). Convex convex/search.ts:285: convex/search.ts:184-200 resolveSearchNamespace refuses a namespace outside the caller's own team subtree; pinned by convex/__tests__/actingOrgSearch.test.ts:113-139",
 	},
 	"search_episodes_by_semantic|search:recall": {
-		class: "leak",
-		severity: "Medium",
+		class: "traced",
+		severity: null,
 		basis: "measured",
-		reason: "namespace-keyed search, no org (tools.ts:3121)",
+		reason:
+			"MCP site tools.ts:3157: the client carries __actingOrg on every call (authenticatedConvexClient.ts:111,144-151; server-http.ts:2268), so Convex answers as an ordinary member of the caller's org (convex/lib/auth.ts:376-413). Convex convex/search.ts:219: convex/search.ts:184-200 resolveSearchNamespace refuses a namespace outside the caller's own team subtree; pinned by convex/__tests__/actingOrgSearch.test.ts:113-139",
 	},
 	"get_profile|profiles:getProfile": {
-		class: "leak",
-		severity: "Medium",
-		basis: "args+gate",
+		class: "traced",
+		severity: null,
+		basis: "measured",
 		reason:
-			"name-keyed read; verifiedActor only; handler not read (tools.ts:3176)",
+			"MCP site tools.ts:3212: the client carries __actingOrg on every call (authenticatedConvexClient.ts:111,144-151; server-http.ts:2268), so Convex answers as an ordinary member of the caller's org (convex/lib/auth.ts:376-413). Convex convex/profiles.ts:179 requires the orchestrator on the caller's org roster (convex/profiles.ts:200-225) and reads the row by agent ID in the caller's own org (convex/profiles.ts:111-117); measured with a throwaway probe test: acting for A asking for B's orchestrator returns RBAC_DENIED; convex/__tests__/profilesById.test.ts passes",
 	},
 	"update_profile|profiles:upsertProfile": {
-		class: "leak",
-		severity: "Medium",
-		basis: "args+gate",
+		class: "traced",
+		severity: null,
+		basis: "measured",
 		reason:
-			"name-keyed write (orchestratorId from roster); verifiedActor only; handler not read (tools.ts:3270)",
+			"MCP site tools.ts:3306: the client carries __actingOrg on every call (authenticatedConvexClient.ts:111,144-151; server-http.ts:2268), so Convex answers as an ordinary member of the caller's org (convex/lib/auth.ts:376-413). Convex convex/profiles.ts:256 writes via writerOf (convex/profiles.ts:57-76), which refuses a call naming another agent; measured with a throwaway probe test: acting for A on B's orchestrator returns RBAC_DENIED, B's profile unchanged",
 	},
 	"list_memories|memories:listMemories": {
-		class: "leak",
-		severity: "Medium",
-		basis: "args+gate",
-		reason: "namespace read, no verifiedOrg forwarded (tools.ts:3384)",
+		class: "traced",
+		severity: null,
+		basis: "measured",
+		reason:
+			"MCP site tools.ts:3420: the client carries __actingOrg on every call (authenticatedConvexClient.ts:111,144-151; server-http.ts:2268), so Convex answers as an ordinary member of the caller's org (convex/lib/auth.ts:376-413). Convex convex/memories.ts:327 narrows by withOrgScope under the acting org; pinned: acting call never returns an org-B row and equals the org-A member answer (convex/__tests__/actingOrgIsolation.test.ts:352-386)",
 	},
 	"send_message|messages:sendMessage": {
 		class: "safe",
@@ -225,18 +231,18 @@ const SCOPE_CLASSIFICATION: Readonly<Record<string, ScopeClassification>> = {
 			"doorScopeArgs verifiedOrg unless-proof, unresolvedOrgDenial (tools.ts:4075-4077)",
 	},
 	"set_summary|profiles:updateDynamic": {
-		class: "leak",
-		severity: "Medium",
-		basis: "args+gate",
+		class: "traced",
+		severity: null,
+		basis: "measured",
 		reason:
-			"name-keyed write; verifiedActor only; handler not read (tools.ts:4133)",
+			"MCP site tools.ts:4172: the client carries __actingOrg on every call (authenticatedConvexClient.ts:111,144-151; server-http.ts:2268), so Convex answers as an ordinary member of the caller's org (convex/lib/auth.ts:376-413). Convex convex/profiles.ts:319 writes via writerOf (convex/profiles.ts:57-76); measured with a throwaway probe test: acting for A on B's orchestrator returns RBAC_DENIED, B's profile unchanged",
 	},
 	"list_peers|profiles:listProfiles": {
-		class: "leak",
-		severity: "Medium",
-		basis: "args+gate",
+		class: "traced",
+		severity: null,
+		basis: "measured",
 		reason:
-			"FALLBACK when no clerkOrgSlug: fleet listProfiles then name filter (tools.ts:4239); the directory path (tools.ts:2035) is the traced one",
+			"MCP site tools.ts:4278: the client carries __actingOrg on every call (authenticatedConvexClient.ts:111,144-151; server-http.ts:2268), so Convex answers as an ordinary member of the caller's org (convex/lib/auth.ts:376-413). Convex convex/profiles.ts:499 narrows by withOrgScope under the acting org; pinned: acting call never returns an org-B row and equals the org-A member answer (convex/__tests__/actingOrgIsolation.test.ts:352-386)",
 	},
 	"list_messages|messages:listMessages": {
 		class: "safe",
@@ -281,11 +287,11 @@ const SCOPE_CLASSIFICATION: Readonly<Record<string, ScopeClassification>> = {
 			"doorScopeArgs verifiedOrg always + unresolvedOrgDenial (tools.ts:5043-5069)",
 	},
 	"get_bulk_complete_run|tasks:getBulkCompleteRun": {
-		class: "leak",
-		severity: "Medium",
+		class: "traced",
+		severity: null,
 		basis: "measured",
 		reason:
-			"convex/tasks.ts:5586 skips the org check for hasFleetRead (the service account), so any org's run is returned; MCP filter is scopeFilterGet on the creator name (tools.ts:5113)",
+			"MCP site tools.ts:5152: the client carries __actingOrg on every call (authenticatedConvexClient.ts:111,144-151; server-http.ts:2268), so Convex answers as an ordinary member of the caller's org (convex/lib/auth.ts:376-413). Convex convex/tasks.ts:5701: the acting scope is not fleet-read, so the org check applies; pinned by convex/__tests__/actingOrgIsolation.test.ts:479-503 (org-B run not served)",
 	},
 	"search_tasks_by_keyword|tasks:searchTasksByKeyword": {
 		class: "safe",
@@ -385,11 +391,11 @@ const SCOPE_CLASSIFICATION: Readonly<Record<string, ScopeClassification>> = {
 			"doorScopeArgs verifiedOrg always (+ verifiedPerson where listed) + unresolvedOrgDenial",
 	},
 	"list_tasks_by_mission|tasks:listByMission": {
-		class: "leak",
-		severity: "Medium",
-		basis: "args+gate",
+		class: "traced",
+		severity: null,
+		basis: "measured",
 		reason:
-			"withOrgScope under the service account; no verifiedOrg; scopeFilter name gate (tools.ts:6182)",
+			"MCP site tools.ts:6244: the client carries __actingOrg on every call (authenticatedConvexClient.ts:111,144-151; server-http.ts:2268), so Convex answers as an ordinary member of the caller's org (convex/lib/auth.ts:376-413). Convex convex/tasks.ts:4311 narrows by withOrgScope under the acting org; pinned: acting call never returns an org-B row and equals the org-A member answer (convex/__tests__/actingOrgIsolation.test.ts:352-386)",
 	},
 	"create_mission|missions:create": {
 		class: "safe",
@@ -399,25 +405,25 @@ const SCOPE_CLASSIFICATION: Readonly<Record<string, ScopeClassification>> = {
 			"doorScopeArgs verifiedPerson / verifiedOrg unless-person (tools.ts:6325)",
 	},
 	"list_missions|missions:list": {
-		class: "leak",
-		severity: "Medium",
-		basis: "args+gate",
+		class: "traced",
+		severity: null,
+		basis: "measured",
 		reason:
-			"fleet listing; non-master gated only by pilot === own userId (tools.ts:6408-6413); no org",
+			"MCP site tools.ts:6495: the client carries __actingOrg on every call (authenticatedConvexClient.ts:111,144-151; server-http.ts:2268), so Convex answers as an ordinary member of the caller's org (convex/lib/auth.ts:376-413). Convex convex/missions.ts:771 narrows by withOrgScope under the acting org; pinned: acting call never returns an org-B row and equals the org-A member answer (convex/__tests__/actingOrgIsolation.test.ts:352-386)",
 	},
 	"get_mission|missions:get": {
-		class: "leak",
-		severity: "Medium",
-		basis: "args+gate",
+		class: "traced",
+		severity: null,
+		basis: "measured",
 		reason:
-			"withOrgScope fleet read; scopeFilter name gate on pilot/agents (tools.ts:6518)",
+			"MCP site tools.ts:6580: the client carries __actingOrg on every call (authenticatedConvexClient.ts:111,144-151; server-http.ts:2268), so Convex answers as an ordinary member of the caller's org (convex/lib/auth.ts:376-413). Convex convex/missions.ts:409 narrows by withOrgScope under the acting org; pinned: acting call never returns an org-B row and equals the org-A member answer (convex/__tests__/actingOrgIsolation.test.ts:352-386)",
 	},
 	"update_mission|missions:update": {
-		class: "leak",
-		severity: "Medium",
-		basis: "args+gate",
+		class: "traced",
+		severity: null,
+		basis: "measured",
 		reason:
-			"ID-addressed; verifiedPerson only (person path); service-account OAuth caller gets no org; name roster gates (tools.ts:6610)",
+			"MCP site tools.ts:6672: the client carries __actingOrg on every call (authenticatedConvexClient.ts:111,144-151; server-http.ts:2268), so Convex answers as an ordinary member of the caller's org (convex/lib/auth.ts:376-413). Convex convex/missions.ts:822 checks the mission's org against the scope (convex/missions.ts:875-899); measured with a throwaway probe test: acting for A on B's mission returns RBAC_DENIED, name unchanged",
 	},
 	"update_mission_status|missions:updateStatus": {
 		class: "safe",
@@ -426,25 +432,25 @@ const SCOPE_CLASSIFICATION: Readonly<Record<string, ScopeClassification>> = {
 		reason: "MCP kind master (tools.ts:6668)",
 	},
 	"write_diary|diary:write": {
-		class: "leak",
-		severity: "Medium",
-		basis: "args+gate",
+		class: "traced",
+		severity: null,
+		basis: "measured",
 		reason:
-			"from-roster name gate; Convex master-only passes the service account; unstamped write (tools.ts:6725)",
+			"MCP site tools.ts:6793: the client carries __actingOrg on every call (authenticatedConvexClient.ts:111,144-151; server-http.ts:2268), so Convex answers as an ordinary member of the caller's org (convex/lib/auth.ts:376-413). Convex convex/diary.ts:205 resolves the tenant scope and refuses another org's orchestrator (convex/diary.ts:233-300); measured with a throwaway probe test: acting for A naming B's orchestrator returns RBAC_DENIED, B's entry unchanged",
 	},
 	"get_diary|diary:get": {
-		class: "leak",
-		severity: "Medium",
-		basis: "args+gate",
+		class: "traced",
+		severity: null,
+		basis: "measured",
 		reason:
-			"KNOWN: fix on branch sigma/diary-tenant-scope, do not touch; row scopeFilter by name only (tools.ts:6784)",
+			"MCP site tools.ts:6860: the client carries __actingOrg on every call (authenticatedConvexClient.ts:111,144-151; server-http.ts:2268), so Convex answers as an ordinary member of the caller's org (convex/lib/auth.ts:376-413). Convex convex/diary.ts:337 narrows by withOrgScope under the acting org; pinned: acting call never returns an org-B row and equals the org-A member answer (convex/__tests__/actingOrgIsolation.test.ts:352-386)",
 	},
 	"list_diaries|diary:list": {
-		class: "leak",
-		severity: "High",
-		basis: "args+gate",
+		class: "traced",
+		severity: null,
+		basis: "measured",
 		reason:
-			"KNOWN: fix on branch sigma/diary-tenant-scope, do not touch; no MCP gate at all; Convex fleet listing (tools.ts:6909)",
+			"MCP site tools.ts:6991: the client carries __actingOrg on every call (authenticatedConvexClient.ts:111,144-151; server-http.ts:2268), so Convex answers as an ordinary member of the caller's org (convex/lib/auth.ts:376-413). Convex convex/diary.ts:415 narrows by withOrgScope under the acting org; pinned: acting call never returns an org-B row and equals the org-A member answer (convex/__tests__/actingOrgIsolation.test.ts:352-386)",
 	},
 	"create_briefing_note|briefingNotes:create": {
 		class: "safe",
@@ -454,11 +460,11 @@ const SCOPE_CLASSIFICATION: Readonly<Record<string, ScopeClassification>> = {
 			"doorScopeArgs verifiedOrg always + unresolvedOrgDenial (tools.ts:7012-7015)",
 	},
 	"update_briefing_note|briefingNotes:update": {
-		class: "leak",
-		severity: "Medium",
-		basis: "args+gate",
+		class: "traced",
+		severity: null,
+		basis: "measured",
 		reason:
-			"ID-addressed; verifiedActor only; handler not read (tools.ts:7086)",
+			"MCP site tools.ts:7171: the client carries __actingOrg on every call (authenticatedConvexClient.ts:111,144-151; server-http.ts:2268), so Convex answers as an ordinary member of the caller's org (convex/lib/auth.ts:376-413). Convex convex/briefingNotes.ts:1118: acting for A cannot change B's note; pinned by convex/__tests__/actingOrgIsolation.test.ts:455-463",
 	},
 	"get_briefing_note|briefingNotes:get": {
 		class: "safe",
@@ -483,17 +489,18 @@ const SCOPE_CLASSIFICATION: Readonly<Record<string, ScopeClassification>> = {
 				"doorScopeArgs verifiedOrg always + unresolvedOrgDenial (tools.ts:7422-7424)",
 		},
 	"create_recurring_task|recurringTasks:create": {
-		class: "leak",
-		severity: "Medium",
-		basis: "args+gate",
+		class: "traced",
+		severity: null,
+		basis: "measured",
 		reason:
-			"verifiedActor/verifiedPerson only; no verifiedOrg; unstamped write (tools.ts:7527)",
+			"MCP site tools.ts:7614: the client carries __actingOrg on every call (authenticatedConvexClient.ts:111,144-151; server-http.ts:2268), so Convex answers as an ordinary member of the caller's org (convex/lib/auth.ts:376-413). Convex convex/recurringTasks.ts:211 stamps the row with the scope's own org for a non-master (convex/recurringTasks.ts:263-272); measured with a throwaway probe test: acting call without the agent credential returns AGENT_CREDENTIAL_REQUIRED, nothing written",
 	},
 	"list_recurring_tasks|recurringTasks:list": {
-		class: "leak",
-		severity: "Medium",
-		basis: "args+gate",
-		reason: "fleet listing; scopeFilter name gate (tools.ts:7616)",
+		class: "traced",
+		severity: null,
+		basis: "measured",
+		reason:
+			"MCP site tools.ts:7703: the client carries __actingOrg on every call (authenticatedConvexClient.ts:111,144-151; server-http.ts:2268), so Convex answers as an ordinary member of the caller's org (convex/lib/auth.ts:376-413). Convex convex/recurringTasks.ts:337 narrows by withOrgScope under the acting org; pinned: acting call never returns an org-B row and equals the org-A member answer (convex/__tests__/actingOrgIsolation.test.ts:352-386)",
 	},
 	"pause_recurring_task|recurringTasks:pause": {
 		class: "safe",
@@ -514,24 +521,25 @@ const SCOPE_CLASSIFICATION: Readonly<Record<string, ScopeClassification>> = {
 		reason: "MCP kind master (tools.ts:7766)",
 	},
 	"update_recurring_task|recurringTasks:getById": {
-		class: "leak",
-		severity: "Medium",
-		basis: "args+gate",
-		reason: "ID read, scopeFilter name gate (tools.ts:7838)",
+		class: "traced",
+		severity: null,
+		basis: "measured",
+		reason:
+			"MCP site tools.ts:7940: the client carries __actingOrg on every call (authenticatedConvexClient.ts:111,144-151; server-http.ts:2268), so Convex answers as an ordinary member of the caller's org (convex/lib/auth.ts:376-413). Convex convex/recurringTasks.ts:1075 narrows by withOrgScope under the acting org; pinned: acting call never returns an org-B row and equals the org-A member answer (convex/__tests__/actingOrgIsolation.test.ts:352-386)",
 	},
 	"update_recurring_task|recurringTasks:update": {
-		class: "leak",
-		severity: "Medium",
-		basis: "args+gate",
+		class: "traced",
+		severity: null,
+		basis: "measured",
 		reason:
-			"ID-addressed mutation after the name check; no org argument (tools.ts:7861)",
+			"MCP site tools.ts:7963: the client carries __actingOrg on every call (authenticatedConvexClient.ts:111,144-151; server-http.ts:2268), so Convex answers as an ordinary member of the caller's org (convex/lib/auth.ts:376-413). Convex convex/recurringTasks.ts:471: acting for A cannot change B's row; pinned by convex/__tests__/actingOrgIsolation.test.ts:432-441",
 	},
 	"create_mandate|mandates:create": {
-		class: "leak",
-		severity: "Medium",
-		basis: "unread",
+		class: "safe",
+		severity: null,
+		basis: "measured",
 		reason:
-			"requireFleetMaster passes the service account; no org; from requestedBy roster; handler not read (tools.ts:7945)",
+			"MCP site tools.ts:8047: the client carries __actingOrg on every call (authenticatedConvexClient.ts:111,144-151; server-http.ts:2268), so Convex answers as an ordinary member of the caller's org (convex/lib/auth.ts:376-413). Convex convex/mandates.ts:99 fleet-only (convex/mandates.ts:33-45); pinned: acting call refused RBAC_DENIED (convex/__tests__/actingOrgIsolation.test.ts:443-453)",
 	},
 	"accept_mandate|mandates:accept": {
 		class: "safe",
@@ -541,25 +549,25 @@ const SCOPE_CLASSIFICATION: Readonly<Record<string, ScopeClassification>> = {
 			"convex/mandates.ts:190-201: only the fulfilling agent (verifiedActor) may accept",
 	},
 	"update_mandate|mandates:update": {
-		class: "leak",
-		severity: "Medium",
-		basis: "unread",
-		reason:
-			"verifiedActor only; ID-addressed; handler not read (tools.ts:8063)",
-	},
-	"settle_mandate|mandates:settle": {
-		class: "leak",
-		severity: "Medium",
-		basis: "unread",
-		reason:
-			"verifiedActor only; ID-addressed; handler not read (tools.ts:8113)",
-	},
-	"validate_mandate_spending|mandates:validateSpending": {
-		class: "leak",
-		severity: "High",
+		class: "safe",
+		severity: null,
 		basis: "measured",
 		reason:
-			"MCP kind public with no gate (tools.ts:8165); convex/mandates.ts:545-553 masterOnly passes the service account; returns budget and spend of any mandate ID",
+			"MCP site tools.ts:8165: the client carries __actingOrg on every call (authenticatedConvexClient.ts:111,144-151; server-http.ts:2268), so Convex answers as an ordinary member of the caller's org (convex/lib/auth.ts:376-413). Convex convex/mandates.ts:221 calls requireFleetMaster (convex/mandates.ts:33-45, :235); measured with a throwaway probe test: acting for A on B's mandate returns RBAC_DENIED, row unchanged",
+	},
+	"settle_mandate|mandates:settle": {
+		class: "safe",
+		severity: null,
+		basis: "measured",
+		reason:
+			"MCP site tools.ts:8215: the client carries __actingOrg on every call (authenticatedConvexClient.ts:111,144-151; server-http.ts:2268), so Convex answers as an ordinary member of the caller's org (convex/lib/auth.ts:376-413). Convex convex/mandates.ts:285 calls requireFleetMaster (convex/mandates.ts:33-45, :296); measured with a throwaway probe test: acting for A on B's mandate returns RBAC_DENIED, row unchanged",
+	},
+	"validate_mandate_spending|mandates:validateSpending": {
+		class: "safe",
+		severity: null,
+		basis: "measured",
+		reason:
+			"MCP site tools.ts:8269: the client carries __actingOrg on every call (authenticatedConvexClient.ts:111,144-151; server-http.ts:2268), so Convex answers as an ordinary member of the caller's org (convex/lib/auth.ts:376-413). Convex convex/mandates.ts:534 fleet-only (convex/mandates.ts:545-553); pinned: acting call on B's mandate refused RBAC_DENIED (convex/__tests__/actingOrgIsolation.test.ts:443-453)",
 	},
 	"debate_post_turn|debate:postTurn": {
 		class: "unmeasured",
@@ -576,11 +584,11 @@ const SCOPE_CLASSIFICATION: Readonly<Record<string, ScopeClassification>> = {
 			"MCP kind public (tools.ts:8269); Convex requireResolvedCaller + verifiedActor; room membership not read",
 	},
 	"list_mandates|mandates:list": {
-		class: "leak",
-		severity: "Medium",
+		class: "traced",
+		severity: null,
 		basis: "measured",
 		reason:
-			"fleet fetch (convex/mandates.ts:339 handler begins with the org-less fleet path); scopeFilterList on requestedBy/fulfilledBy after the fetch (tools.ts:8384-8388); mandates have no org column",
+			"MCP site tools.ts:8469: the client carries __actingOrg on every call (authenticatedConvexClient.ts:111,144-151; server-http.ts:2268), so Convex answers as an ordinary member of the caller's org (convex/lib/auth.ts:376-413). Convex convex/mandates.ts:341 narrows by withOrgScope under the acting org; pinned: acting call never returns an org-B row and equals the org-A member answer (convex/__tests__/actingOrgIsolation.test.ts:352-386)",
 	},
 	"create_bu|businessUnits:create": {
 		class: "safe",
@@ -631,11 +639,11 @@ const SCOPE_CLASSIFICATION: Readonly<Record<string, ScopeClassification>> = {
 		reason: "doorScopeArgs verifiedOrg always + unresolvedOrgDenial",
 	},
 	"get_github_owner_bindings|githubOwnerBinding:listBindings": {
-		class: "leak",
-		severity: "High",
+		class: "traced",
+		severity: null,
 		basis: "measured",
 		reason:
-			"convex/githubOwnerBinding.ts:159-160 hasFleetRead returns every org's bindings to the service account; MCP gate is guardResolvedCaller only (tools.ts:9228)",
+			"MCP site tools.ts:9342: the client carries __actingOrg on every call (authenticatedConvexClient.ts:111,144-151; server-http.ts:2268), so Convex answers as an ordinary member of the caller's org (convex/lib/auth.ts:376-413). Convex convex/githubOwnerBinding.ts:151 narrows by withOrgScope under the acting org; pinned: acting call never returns an org-B row and equals the org-A member answer (convex/__tests__/actingOrgIsolation.test.ts:352-386)",
 	},
 	"get_github_owner_bindings|githubOwnerBinding:listUnprovenMappings": {
 		class: "safe",
@@ -692,17 +700,18 @@ const SCOPE_CLASSIFICATION: Readonly<Record<string, ScopeClassification>> = {
 		reason: "MCP kind master (tools.ts registration)",
 	},
 	"create_fix_pattern|fixPatterns:create": {
-		class: "leak",
-		severity: "Medium",
+		class: "safe",
+		severity: null,
 		basis: "args+gate",
 		reason:
-			"from createdBy roster; unstamped write; handler not read (tools.ts:9758)",
+			"MCP site tools.ts:9869: the client carries __actingOrg on every call (authenticatedConvexClient.ts:111,144-151; server-http.ts:2268), so Convex answers as an ordinary member of the caller's org (convex/lib/auth.ts:376-413). Convex convex/fixPatterns.ts:44 calls requireFleetMaster (convex/fixPatterns.ts:24-37), which refuses a non-master acting scope; outcome equals the org-A member's (convex/__tests__/actingOrgIsolation.test.ts:466-477)",
 	},
 	"add_fix_attempt|fixPatterns:addAttempt": {
-		class: "leak",
-		severity: "Medium",
-		basis: "args+gate",
-		reason: "verifiedActor only; handler not read (tools.ts:9811)",
+		class: "safe",
+		severity: null,
+		basis: "measured",
+		reason:
+			"MCP site tools.ts:9922: the client carries __actingOrg on every call (authenticatedConvexClient.ts:111,144-151; server-http.ts:2268), so Convex answers as an ordinary member of the caller's org (convex/lib/auth.ts:376-413). Convex convex/fixPatterns.ts:94 calls requireFleetMaster (convex/fixPatterns.ts:24-37); measured with a throwaway probe test: acting for A on B's pattern returns RBAC_DENIED, no fixAttempts row written",
 	},
 	"validate_fix|fixPatterns:validate": {
 		class: "safe",
@@ -711,23 +720,25 @@ const SCOPE_CLASSIFICATION: Readonly<Record<string, ScopeClassification>> = {
 		reason: "MCP kind master (tools.ts registration)",
 	},
 	"search_fix_patterns|search:searchFixPatterns": {
-		class: "leak",
-		severity: "Medium",
-		basis: "args+gate",
+		class: "safe",
+		severity: null,
+		basis: "measured",
 		reason:
-			"withOrgScope action, no org argument; the scopeFilter name gate is on the second call (tools.ts:9902, 9937)",
+			'MCP site tools.ts:10013, tools.ts:10048: the client carries __actingOrg on every call (authenticatedConvexClient.ts:111,144-151; server-http.ts:2268), so Convex answers as an ordinary member of the caller\'s org (convex/lib/auth.ts:376-413). Convex convex/search.ts:421 resolves the constant namespace "fixpatterns" through resolveSearchNamespace (convex/search.ts:441-479), refused for any org member; pinned by convex/__tests__/searchNamespaceAuthorityEndToEnd.test.ts:364-',
 	},
 	"list_fix_patterns|fixPatterns:listByProject": {
-		class: "leak",
-		severity: "Medium",
-		basis: "args+gate",
-		reason: "withOrgScope fleet; scopeFilter name gate (tools.ts:10041)",
+		class: "traced",
+		severity: null,
+		basis: "measured",
+		reason:
+			"MCP site tools.ts:10152: the client carries __actingOrg on every call (authenticatedConvexClient.ts:111,144-151; server-http.ts:2268), so Convex answers as an ordinary member of the caller's org (convex/lib/auth.ts:376-413). Convex convex/fixPatterns.ts:365 narrows by withOrgScope under the acting org; pinned: acting call never returns an org-B row and equals the org-A member answer (convex/__tests__/actingOrgIsolation.test.ts:352-386)",
 	},
 	"list_fix_patterns|fixPatterns:listAll": {
-		class: "leak",
-		severity: "Medium",
-		basis: "args+gate",
-		reason: "withOrgScope fleet; scopeFilter name gate (tools.ts:10069)",
+		class: "traced",
+		severity: null,
+		basis: "measured",
+		reason:
+			"MCP site tools.ts:10180: the client carries __actingOrg on every call (authenticatedConvexClient.ts:111,144-151; server-http.ts:2268), so Convex answers as an ordinary member of the caller's org (convex/lib/auth.ts:376-413). Convex convex/fixPatterns.ts:432 narrows by withOrgScope under the acting org; pinned: acting call never returns an org-B row and equals the org-A member answer (convex/__tests__/actingOrgIsolation.test.ts:352-386)",
 	},
 	"link_issue_to_pattern|fixPatterns:linkIssue": {
 		class: "safe",
@@ -736,29 +747,33 @@ const SCOPE_CLASSIFICATION: Readonly<Record<string, ScopeClassification>> = {
 		reason: "MCP kind master (tools.ts registration)",
 	},
 	"get_mission_template|missionTemplates:getByName": {
-		class: "leak",
-		severity: "Medium",
-		basis: "args+gate",
-		reason: "scopeFilter name gate; no org (tools.ts:10175)",
+		class: "safe",
+		severity: null,
+		basis: "measured",
+		reason:
+			"MCP site tools.ts:10286: the client carries __actingOrg on every call (authenticatedConvexClient.ts:111,144-151; server-http.ts:2268), so Convex answers as an ordinary member of the caller's org (convex/lib/auth.ts:376-413). Convex convex/missionTemplates.ts:120 masterOnly (convex/missionTemplates.ts:124-127); measured with a throwaway probe test: acting call returns RBAC_DENIED",
 	},
 	"update_mission_template|missionTemplates:upsert": {
-		class: "leak",
-		severity: "Medium",
-		basis: "args+gate",
-		reason: "from createdBy roster; unstamped write (tools.ts:10270)",
+		class: "safe",
+		severity: null,
+		basis: "measured",
+		reason:
+			"MCP site tools.ts:10381: the client carries __actingOrg on every call (authenticatedConvexClient.ts:111,144-151; server-http.ts:2268), so Convex answers as an ordinary member of the caller's org (convex/lib/auth.ts:376-413). Convex convex/missionTemplates.ts:213 refuses non-master (convex/missionTemplates.ts:227-231); measured with a throwaway probe test: acting call returns RBAC_DENIED",
 	},
 	"instantiate_template_into_mission|missions:get": {
-		class: "leak",
-		severity: "Medium",
-		basis: "args+gate",
-		reason: "scopeFilter name gate on the fleet mission read (tools.ts:10361)",
+		class: "traced",
+		severity: null,
+		basis: "measured",
+		reason:
+			"MCP site tools.ts:10472: the client carries __actingOrg on every call (authenticatedConvexClient.ts:111,144-151; server-http.ts:2268), so Convex answers as an ordinary member of the caller's org (convex/lib/auth.ts:376-413). Convex convex/missions.ts:409 narrows by withOrgScope under the acting org; pinned: acting call never returns an org-B row and equals the org-A member answer (convex/__tests__/actingOrgIsolation.test.ts:352-386)",
 	},
 	"instantiate_template_into_mission|missionTemplates:instantiateTemplateIntoMission":
 		{
-			class: "leak",
-			severity: "Medium",
-			basis: "unread",
-			reason: "write with no org argument; handler not read (tools.ts:10374)",
+			class: "traced",
+			severity: null,
+			basis: "args+gate",
+			reason:
+				"MCP site tools.ts:10486: the client carries __actingOrg on every call (authenticatedConvexClient.ts:111,144-151; server-http.ts:2268), so Convex answers as an ordinary member of the caller's org (convex/lib/auth.ts:376-413). Convex convex/missionTemplates.ts:424 refuses a mission outside the caller's org by ID (convex/missionTemplates.ts:445-474, reason mission-not-in-caller-org) and writes the tasks under the caller's own org; pinned for a Clerk member of org B by convex/__tests__/missionTemplatesById.test.ts:217-229. The acting-org call itself was not run against this door (inferred from the identity layer giving the same member scope)",
 		},
 	"soft_delete_mission_template|missionTemplates:softDelete": {
 		class: "safe",
@@ -791,30 +806,32 @@ const SCOPE_CLASSIFICATION: Readonly<Record<string, ScopeClassification>> = {
 		reason: "MCP kind master (tools.ts registration)",
 	},
 	"get_task|tasks:getById": {
-		class: "leak",
-		severity: "Medium",
-		basis: "args+gate",
-		reason: "withOrgScope fleet read; scopeFilter name gate (tools.ts:10982)",
-	},
-	"get_fix_pattern|fixPatterns:get": {
-		class: "leak",
-		severity: "Medium",
-		basis: "args+gate",
-		reason: "withOrgScope fleet read; scopeFilter name gate (tools.ts:11043)",
-	},
-	"get_mandate|mandates:get": {
-		class: "leak",
-		severity: "Medium",
+		class: "traced",
+		severity: null,
 		basis: "measured",
 		reason:
-			"convex/mandates.ts:502-516 masterOnly passes the service account; scopeFilterGet on requestedBy/fulfilledBy after the fetch (tools.ts:11090)",
+			"MCP site tools.ts:11217: the client carries __actingOrg on every call (authenticatedConvexClient.ts:111,144-151; server-http.ts:2268), so Convex answers as an ordinary member of the caller's org (convex/lib/auth.ts:376-413). Convex convex/tasks.ts:1212 narrows by withOrgScope under the acting org; pinned: acting call never returns an org-B row and equals the org-A member answer (convex/__tests__/actingOrgIsolation.test.ts:352-386)",
+	},
+	"get_fix_pattern|fixPatterns:get": {
+		class: "traced",
+		severity: null,
+		basis: "measured",
+		reason:
+			"MCP site tools.ts:11278: the client carries __actingOrg on every call (authenticatedConvexClient.ts:111,144-151; server-http.ts:2268), so Convex answers as an ordinary member of the caller's org (convex/lib/auth.ts:376-413). Convex convex/fixPatterns.ts:233 narrows by withOrgScope under the acting org; pinned: acting call never returns an org-B row and equals the org-A member answer (convex/__tests__/actingOrgIsolation.test.ts:352-386)",
+	},
+	"get_mandate|mandates:get": {
+		class: "traced",
+		severity: null,
+		basis: "measured",
+		reason:
+			"MCP site tools.ts:11325: the client carries __actingOrg on every call (authenticatedConvexClient.ts:111,144-151; server-http.ts:2268), so Convex answers as an ordinary member of the caller's org (convex/lib/auth.ts:376-413). Convex convex/mandates.ts:504 narrows by withOrgScope under the acting org; pinned: acting call never returns an org-B row and equals the org-A member answer (convex/__tests__/actingOrgIsolation.test.ts:352-386)",
 	},
 	"get_repo_mapping|githubRepoMapping:getByRepo": {
-		class: "leak",
-		severity: "Medium",
-		basis: "args+gate",
+		class: "traced",
+		severity: null,
+		basis: "measured",
 		reason:
-			"withOrgScope fleet read; scopeFilter name gate; no verifiedOrg (tools.ts:11153)",
+			"MCP site tools.ts:11388: the client carries __actingOrg on every call (authenticatedConvexClient.ts:111,144-151; server-http.ts:2268), so Convex answers as an ordinary member of the caller's org (convex/lib/auth.ts:376-413). Convex convex/githubRepoMapping.ts:108 narrows by withOrgScope under the acting org; pinned: acting call never returns an org-B row and equals the org-A member answer (convex/__tests__/actingOrgIsolation.test.ts:352-386)",
 	},
 	"get_message|messages:getById": {
 		class: "safe",
@@ -824,10 +841,11 @@ const SCOPE_CLASSIFICATION: Readonly<Record<string, ScopeClassification>> = {
 			"doorScopeArgs verifiedOrg always + unresolvedOrgDenial (tools.ts:11227-11229)",
 	},
 	"get_recurring_task|recurringTasks:getById": {
-		class: "leak",
-		severity: "Medium",
-		basis: "args+gate",
-		reason: "ID read, scopeFilter name gate (tools.ts:11306)",
+		class: "traced",
+		severity: null,
+		basis: "measured",
+		reason:
+			"MCP site tools.ts:11541: the client carries __actingOrg on every call (authenticatedConvexClient.ts:111,144-151; server-http.ts:2268), so Convex answers as an ordinary member of the caller's org (convex/lib/auth.ts:376-413). Convex convex/recurringTasks.ts:1075 narrows by withOrgScope under the acting org; pinned: acting call never returns an org-B row and equals the org-A member answer (convex/__tests__/actingOrgIsolation.test.ts:352-386)",
 	},
 	"improvisation_digest|improvisationDigest:scanWindow": {
 		class: "safe",
@@ -871,18 +889,18 @@ const SCOPE_CLASSIFICATION: Readonly<Record<string, ScopeClassification>> = {
 			"kbIngest scopeArgs forwards verifiedOrg (tools/kbIngest.ts:264-266)",
 	},
 	"export_okf_bundle|okfBundleNode:exportOkfBundle": {
-		class: "leak",
-		severity: "Medium",
-		basis: "args+gate",
+		class: "traced",
+		severity: null,
+		basis: "measured",
 		reason:
-			"namespace-read kind (tools/exportOkfBundle.ts:118); no verifiedOrg forwarded",
+			"MCP site exportOkfBundle.ts:145: the client carries __actingOrg on every call (authenticatedConvexClient.ts:111,144-151; server-http.ts:2268), so Convex answers as an ordinary member of the caller's org (convex/lib/auth.ts:376-413). Convex convex/okfBundleNode.ts:290: assertCanExportNamespace admits only team/<own org> to a member (convex/okfBundleNode.ts:248-282); pinned by convex/__tests__/actingOrgOkf.test.ts (B's namespace refused RBAC_DENIED)",
 	},
 	"import_okf_bundle|okfBundleNode:importOkfBundle": {
-		class: "leak",
-		severity: "Medium",
-		basis: "args+gate",
+		class: "traced",
+		severity: null,
+		basis: "measured",
 		reason:
-			"namespace-write kind (tools/importOkfBundle.ts:88); no verifiedOrg forwarded",
+			"MCP site importOkfBundle.ts:103: the client carries __actingOrg on every call (authenticatedConvexClient.ts:111,144-151; server-http.ts:2268), so Convex answers as an ordinary member of the caller's org (convex/lib/auth.ts:376-413). Convex convex/okfBundleNode.ts:959: namespace gate as export plus storage ownership by the resolved org (convex/okfBundleNode.ts:750-771, 1006-1027); pinned by convex/__tests__/actingOrgOkf.test.ts",
 	},
 	"validate_okf_bundle|okfBundleNode:validateOkfBundle": {
 		class: "unmeasured",
