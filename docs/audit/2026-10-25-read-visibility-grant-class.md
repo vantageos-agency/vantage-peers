@@ -1,7 +1,7 @@
 # Read-visibility grant class: audit (task k1791fcdxk3ha55vgsbmjtpbm18cpv89, deliverable A)
 
-Measured at origin/main `0e0c23e` with `convex/__tests__/readVisibilityGrantClass.test.ts` (commit `11fcdbe`).
-`npx vitest run convex/__tests__/readVisibilityGrantClass.test.ts` -> 6 passed | 9 expected fail | 1 todo (16).
+First measured 2026-10-25 at origin/main `0e0c23e`. Re-measured 2026-11-03 at origin/main `72a97e11` (test commit `0d362df3`, fixtures unchanged: they already used agent IDs, org IDs and a roster).
+`npx vitest run convex/__tests__/readVisibilityGrantClass.test.ts` -> 6 passed | 9 expected fail | 1 todo (16), identical to 2026-10-25. No class has closed since: all 9 expected-fail tests still fail.
 
 ## The class
 
@@ -40,9 +40,25 @@ Every test runs as an ordinary member of org `org-grants`, never as master or th
 
 remaining: 4 NOT-CONSULTED classes (person assignee on tasks; person pilot and `agents[]` on missions; person assignee on recurringTasks; a person's direct message via `messages:getById`).
 
+## Why each expected-fail test still fails (2026-11-03)
+
+Measured by running the same file with `test.fails(` rewritten to `test(` (`sed 's/test\.fails(/test(/'`, scratch copy, deleted) and reading the 9 failures. Each fails at the read, on a grant that is in the data and not consulted; none fails at a fixture step (the six passing controls use the same world and the same grantee).
+
+| test | failing line (test file) | what refuses |
+|---|---|---|
+| tasks:get, person assignee | 138 `expect(row?._id).toBe(taskId)`, got undefined | `isRowVisibleToScope` roster leg: `allowedOrchestrators.includes(assignedTo)` |
+| tasks:list {assignedTo} | 147 `.toEqual([taskId])`, got [] | `filterByOrgScope` roster leg |
+| tasks:list {} | 154 `.toEqual([taskId])`, got [] | `filterByOrgScope` roster leg |
+| missions:get, person pilot | 208 `expect(row?._id).toBe(missionId)`, got undefined | roster leg |
+| missions:list, person pilot | 218 `.toEqual([missionId])`, got [] | `keepMissionsOnScopeRoster` |
+| missions:get, off-roster pilot, agents[] names grantee | 235 `expect(row?._id).toBe(missionId)`, got undefined | `agents[]` read by no door |
+| recurringTasks:getById, person assignee | 276 the query call throws `RBAC_DENIED ... does not belong to the caller's organisation` | `isRowVisibleToScope` roster leg |
+| recurringTasks:list, person assignee | 286 `.toEqual([id])`, got [] | roster leg |
+| messages:getById, channel `user:user_grantee` | 396 the query call throws `RBAC_DENIED ... not-on-channel` | `isChannelOnScope`: only broadcast, `team/<slug>*` and `allowedOrchestrators.includes(channel)` |
+
 ## Open decisions (they gate the GREEN)
 
 1. The fix sits on the scope/roster predicate. Under one-identity-layer it belongs in `@vantageos/cloud-identity`, not in a local VP helper.
 2. Is `missions.agents[]` meant to grant read access? A roster narrows and never widens, so this needs a product ruling.
 
-not_measured: the MCP-layer filters (`scopeFilterGet`, `scopeFilterList`); agent-token read paths (`verifiedActor`); `messages.listByChannel` / `listMessages` / `checkNewMessages` for a person recipient; `tasks.listPaginated`, `listByMission` and `listOverdue` (read in the source only); `businessUnits.list`; `briefingNotes.list` and `search`; whether a person assignee occurs in production data.
+not_measured: whether the expected-fail tests turn green under any specific fix (no fix was written); the MCP-layer filters (`scopeFilterGet`, `scopeFilterList`); agent-token read paths (`verifiedActor`); `messages.listByChannel` / `listMessages` / `checkNewMessages` for a person recipient; `tasks.listPaginated`, `listByMission` and `listOverdue` (read in the source only); `businessUnits.list`; `briefingNotes.list` and `search`; whether a person assignee occurs in production data.
