@@ -1110,20 +1110,34 @@ export function checkNamespaceRead(
 }
 
 /**
- * The namespaces this session may write, as {@link checkNamespaceWrite} admits
- * them: the live write prefixes, then the caller's own agent and project
- * namespaces, deduplicated, in that order. Each entry also admits its
- * sub-namespaces. Text for the caller only — the decision stays in
- * checkNamespaceWrite. Master (wildcard) returns [], as whoami suppresses the
- * wildcard elsewhere.
+ * What a session may write, as values: the live write prefixes of the request
+ * context and the caller's own namespaces ({@link ownNamespacesOf}). Built from
+ * the context only where the context is already read ({@link checkNamespaceWrite}
+ * and registerTools); every function below is a pure function of it, so the
+ * write ceiling keeps one reader. Undefined for master (wildcard) and for a
+ * request with no context: neither has a writable list to name.
  */
-export function writableNamespacesOf(ctx: OAuthContext | undefined): string[] {
-	if (!ctx || isMasterScope(ctx)) return [];
+export type WriteSpace = {
+	readonly writePrefixes: readonly string[];
+	readonly ownAgentNamespace?: string;
+	readonly ownProjectNamespace?: string;
+	/** "person" for a signed-in person's token; absent on a seat. */
+	readonly principal?: "person";
+};
+
+/**
+ * The namespaces a session may write, as {@link checkNamespaceWrite} admits
+ * them: the write prefixes, then the own agent and project namespaces,
+ * deduplicated, in that order. Each entry also admits its sub-namespaces.
+ * Text for the caller only: the decision stays in checkNamespaceWrite.
+ */
+export function writableNamespacesOf(space: WriteSpace | undefined): string[] {
+	if (space === undefined) return [];
 	const out: string[] = [];
 	for (const ns of [
-		...ctx.namespaceWritePrefixes,
-		ctx.ownAgentNamespace,
-		ctx.ownProjectNamespace,
+		...space.writePrefixes,
+		space.ownAgentNamespace,
+		space.ownProjectNamespace,
 	]) {
 		if (ns === undefined || ns === "" || ns === "*") continue;
 		if (!out.includes(ns)) out.push(ns);
@@ -1136,34 +1150,31 @@ export function writableNamespacesOf(ctx: OAuthContext | undefined): string[] {
  * the session has no single natural one (the caller must then name it):
  *   - a person: its single write prefix (`team/<org key>`, personTokenRights);
  *   - a seat: its own `orchestrator/<agent ID>` (ownNamespacesOf);
- *   - master, or anything else: undefined, never guessed.
+ *   - master, no context, or anything else: undefined, never guessed.
  * Chosen only among namespaces {@link checkNamespaceWrite} already admits, so it
  * grants nothing; the caller still runs the write check on the result.
  */
 export function defaultWriteNamespace(
-	ctx: OAuthContext | undefined,
+	space: WriteSpace | undefined,
 ): string | undefined {
-	if (!ctx || isMasterScope(ctx)) return undefined;
-	if (ctx.principal === "person") {
-		const prefixes = ctx.namespaceWritePrefixes.filter(
-			(p) => p !== "" && p !== "*",
-		);
-		if (prefixes.length === 1) return prefixes[0];
-		return undefined;
+	if (space === undefined) return undefined;
+	if (space.principal === "person") {
+		const prefixes = space.writePrefixes.filter((p) => p !== "" && p !== "*");
+		return prefixes.length === 1 ? prefixes[0] : undefined;
 	}
-	if (ctx.ownAgentNamespace !== undefined && ctx.ownAgentNamespace !== "") {
-		return ctx.ownAgentNamespace;
+	if (space.ownAgentNamespace !== undefined && space.ownAgentNamespace !== "") {
+		return space.ownAgentNamespace;
 	}
 	return undefined;
 }
 
 /** The sentence a write refusal ends with: what the caller may write instead. */
-function writableNamespacesHint(ctx: OAuthContext): string {
-	const writable = writableNamespacesOf(ctx);
+function writableNamespacesHint(space: WriteSpace): string {
+	const writable = writableNamespacesOf(space);
 	if (writable.length === 0) {
 		return " This session has no writable namespace.";
 	}
-	const fallback = defaultWriteNamespace(ctx);
+	const fallback = defaultWriteNamespace(space);
 	return (
 		` Writable namespaces (and their sub-namespaces): ${writable.join(", ")}.` +
 		(fallback !== undefined
@@ -1174,16 +1185,19 @@ function writableNamespacesHint(ctx: OAuthContext): string {
 
 /**
  * Refusal for a write tool called with no namespace by a session that has no
- * natural default ({@link defaultWriteNamespace} undefined).
+ * natural default ({@link defaultWriteNamespace} undefined). `space` undefined
+ * means master or no context: the caller must name the namespace.
  */
 export function namespaceRequiredRefusal(
-	ctx: OAuthContext | undefined,
 	toolName: string,
+	scopeProfile: string | undefined,
+	space: WriteSpace | undefined,
 ): string {
 	const base = `Forbidden: ${toolName} needs a namespace for this session`;
-	if (!ctx) return NO_CONTEXT_REFUSAL;
-	if (isMasterScope(ctx)) return `${base} (master has no default namespace).`;
-	return `${base} (scope_profile=${ctx.scopeProfile}).${writableNamespacesHint(ctx)}`;
+	if (space === undefined) {
+		return `${base} (scope_profile=${scopeProfile ?? "none"}; no default namespace). Pass namespace= explicitly.`;
+	}
+	return `${base} (scope_profile=${scopeProfile ?? "none"}).${writableNamespacesHint(space)}`;
 }
 
 export function checkNamespaceWrite(
@@ -1195,7 +1209,13 @@ export function checkNamespaceWrite(
 	if (checkNamespacePrefix(ctx.namespaceWritePrefixes, namespace)) return null;
 	// The seat's own agent namespace by its verified agent ID (see ownNamespacesOf).
 	if (checkOwnNamespaces(ctx, namespace)) return null;
-	return `Forbidden: namespace='${namespace}' is not writable by scope_profile=${ctx.scopeProfile}.${writableNamespacesHint(ctx)}`;
+	const space: WriteSpace = {
+		writePrefixes: ctx.namespaceWritePrefixes,
+		ownAgentNamespace: ctx.ownAgentNamespace,
+		ownProjectNamespace: ctx.ownProjectNamespace,
+		principal: ctx.principal,
+	};
+	return `Forbidden: namespace='${namespace}' is not writable by scope_profile=${ctx.scopeProfile}.${writableNamespacesHint(space)}`;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -1788,7 +1808,9 @@ export function bearerAuthMiddleware(): MiddlewareHandler {
 					// per-request Convex client for this path.
 					clerkJwt: token,
 					clerkOrgSlug: orgId,
-					...(mapping.fleetWide === true ? { orgFleetWide: true as const } : {}),
+					...(mapping.fleetWide === true
+						? { orgFleetWide: true as const }
+						: {}),
 				},
 				// The verified org_id claim — the key an agent credential's org is
 				// bound to.
