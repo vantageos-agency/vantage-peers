@@ -2715,6 +2715,9 @@ export function registerTools(
 
 	// ── hybrid_search ───────────────────────────────────────────────────────────
 
+	// oracle-justified: verb: a ranked semantic/BM25 search is a different effect from an indexed list on the same
+	//   table (SEARCH vs READ-LIST, Pi ruling (a), 2026-11-03); retrieval: RAG namespace retrieval by design
+	//   (hybrid RRF), where list_episodes reads an index range (memories:listMemories).
 	defineTool(
 		server,
 		authCtx,
