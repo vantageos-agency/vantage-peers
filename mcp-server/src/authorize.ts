@@ -662,13 +662,18 @@ function renderAgentChoices(
 	const parts: string[] = [];
 	if (view.agents.length > 0) {
 		parts.push('<p class="muted">Agent to act as in this organisation</p>');
-		// Always offered, and the default: nobody is picked for the person.
+		// "Connect as myself" is always offered. It is the default only when no
+		// agent is bound to the person; otherwise the first agent bound to them
+		// (`mine`, computed from personalAgentOf === the verified person) is, so an
+		// untouched Approve never drops them back to themselves. An unbound agent
+		// offered to an admin is never a default.
+		const defaultId = view.agents.find((a) => a.mine)?.agentId;
 		parts.push(
-			`<label class="agent"><input type="radio" name="${field}" value="" checked><span class="name">Connect as myself</span></label>`,
+			`<label class="agent"><input type="radio" name="${field}" value=""${defaultId === undefined ? " checked" : ""}><span class="name">Connect as myself</span></label>`,
 		);
 		for (const a of view.agents) {
 			parts.push(
-				`<label class="agent"><input type="radio" name="${field}" value="${escapeHtml(a.agentId)}"><span class="name">${escapeHtml(a.name)}</span></label>`,
+				`<label class="agent"><input type="radio" name="${field}" value="${escapeHtml(a.agentId)}"${a.agentId === defaultId ? " checked" : ""}><span class="name">${escapeHtml(a.name)}</span></label>`,
 			);
 		}
 	}
