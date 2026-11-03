@@ -378,13 +378,13 @@ So upgrade in this order: deploy the backend of the same release first, then upg
 
 ## Release notes
 
-### 4.1.0
+### 5.0.0
 
 _Applies to: Cloud and Self-host._ Each item names the product it concerns.
 
-**Action required (Self-host)**
+**Breaking**
 
-- Self-host: the server now requires backend contract version 17 and 144 backend functions (was 10 and 141). Deploy the backend of this release first, then upgrade the package; an older backend is refused at start (see [Backend compatibility check](#backend-compatibility-check)).
+- Self-host: deploy the backend first (required backend contract version 17 and 144 called functions, was 10 and 141), then upgrade the MCP. Against an older backend the server refuses to start with `BACKEND INCOMPATIBLE` and the previous deployment keeps serving (see [Backend compatibility check](#backend-compatibility-check)).
 
 **Added**
 

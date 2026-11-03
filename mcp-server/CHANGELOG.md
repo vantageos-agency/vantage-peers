@@ -2,13 +2,13 @@
 
 ## [Unreleased]
 
-## [4.1.0] — 2026-11-03
+## [5.0.0] — 2026-11-03
 
 Customer-facing summary of every `mcp-server/` change since 4.0.0. Each entry says which product it concerns (VantagePeers Cloud, the hosted service; VantagePeers Self-host, the separate product) and links the README section that documents it.
 
-### Action required
+### Breaking
 
-- Self-host: the server requires backend contract version 17 and 144 backend functions (4.0.0: 10 and 141) and refuses to start against an older backend. Deploy the backend of this release first, then upgrade this package. ([Backend compatibility check](README.md#backend-compatibility-check))
+- Self-host: deploy the backend first (required backend contract version 17 and 144 called functions; 4.0.0 required 10 and 141), then upgrade the MCP. Against an older backend the server refuses to start with `BACKEND INCOMPATIBLE`, and the previous deployment keeps serving. ([Backend compatibility check](README.md#backend-compatibility-check))
 
 ### Added
 
