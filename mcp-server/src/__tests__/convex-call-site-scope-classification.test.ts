@@ -137,6 +137,20 @@ const SCOPE_CLASSIFICATION: Readonly<Record<string, ScopeClassification>> = {
 		basis: "args+gate",
 		reason: "MCP kind master: non-master refused before Convex (tools.ts:2490)",
 	},
+	"erase_memory|memories:redactMemoryContent": {
+		class: "safe",
+		severity: null,
+		basis: "args+gate",
+		reason:
+			"Clerk-JWT bearer only (tools.ts erase_memory, clerkJwt branch): the client forwards the caller's OWN session JWT, so Convex resolves the caller's org and role from the claims (convex/memories.ts redactMemoryContent, resolveSessionCaller); an org admin erases any row of its org, a member only the rows it authored, the row's stored org ID must equal the caller's; pinned by convex/__tests__/redactMemoryContent.test.ts",
+	},
+	"erase_memory|memories:redactMemoryContentAsPerson": {
+		class: "safe",
+		severity: null,
+		basis: "args+gate",
+		reason:
+			"person bearer (tools.ts erase_memory): verifiedPerson = the bearer hash from the verified context via doorScope (DOOR_SCOPE memories:redactMemoryContentAsPerson); Convex re-reads subject, org and role from the token row, proves the person in its org by ID, admits an org admin or the row's author only, and compares the row's stored org ID; pinned by convex/__tests__/redactMemoryContentAsPerson.test.ts",
+	},
 	"get_memory|memories:getMemory": {
 		class: "traced",
 		severity: null,

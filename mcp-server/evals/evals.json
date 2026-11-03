@@ -7784,6 +7784,122 @@
 				"permissive actor mode lets the claim past the actor gate; the roster (passesScopeFilter) still refuses"
 			],
 			"source": "test/lib/fromGate.ts:45"
+		},
+		{
+			"id": "erase_memory.author-erases-own",
+			"tool": "erase_memory",
+			"op": "callTool",
+			"caller": "member",
+			"runner": "live",
+			"prompt": "(a person signed in as a plain member) I pasted a key into the memory I wrote; erase it.",
+			"args": {
+				"memoryId": "k1711111111111111111111111111111",
+				"redactions": [
+					{
+						"find": "sk-live-abc123",
+						"replaceWith": "[REDACTED]"
+					}
+				]
+			},
+			"expect": {
+				"isError": false,
+				"jsonKeys": [
+					"memoryId",
+					"replacements",
+					"contentHashChanged"
+				]
+			},
+			"expectations": [
+				"memories:redactMemoryContentAsPerson is called with verifiedPerson = the bearer hash from the verified context",
+				"the stored createdBy equals the verified actor name, so the member is admitted",
+				"result is {memoryId, replacements, contentHashChanged}"
+			],
+			"source": "src/tools.ts:2561"
+		},
+		{
+			"id": "erase_memory.non-author-refused",
+			"tool": "erase_memory",
+			"op": "callTool",
+			"caller": "member",
+			"runner": "live",
+			"prompt": "(a person signed in as a plain member) Erase the key from a memory somebody else wrote.",
+			"args": {
+				"memoryId": "k1711111111111111111111111111111",
+				"redactions": [
+					{
+						"find": "sk-live-abc123",
+						"replaceWith": "[REDACTED]"
+					}
+				]
+			},
+			"expect": {
+				"isError": true,
+				"textIncludes": [
+					"RBAC_DENIED"
+				]
+			},
+			"expectations": [
+				"the Convex door refuses a member who is neither admin nor the author",
+				"the typed refusal text reaches the client unchanged and the memory is not modified"
+			],
+			"source": "src/tools.ts:2561"
+		},
+		{
+			"id": "erase_memory.not-a-person-refused",
+			"tool": "erase_memory",
+			"op": "callTool",
+			"caller": "master",
+			"runner": "offline",
+			"prompt": "(the master bearer, not a person sign-in) Erase a key from a memory.",
+			"args": {
+				"memoryId": "k1711111111111111111111111111111",
+				"redactions": [
+					{
+						"find": "sk-live-abc123",
+						"replaceWith": "[REDACTED]"
+					}
+				]
+			},
+			"expect": {
+				"isError": true,
+				"textIncludes": [
+					"erase_memory is for a signed-in person"
+				]
+			},
+			"expectations": [
+				"no person bearer hash exists on a master credential, so the tool refuses before any backend call",
+				"the fleet erases through the internal door memories:redactMemoryContentFleet, not this tool"
+			],
+			"source": "src/tools.ts:2606"
+		},
+		{
+			"id": "erase_memory.bad-id",
+			"tool": "erase_memory",
+			"op": "callTool",
+			"caller": "master",
+			"runner": "offline",
+			"prompt": "Erase a key from memory 'abc'.",
+			"args": {
+				"memoryId": "not-a-convex-id",
+				"redactions": [
+					{
+						"find": "sk-live-abc123",
+						"replaceWith": "[REDACTED]"
+					}
+				]
+			},
+			"expect": {
+				"isError": true,
+				"textIncludes": [
+					"Input validation error: Invalid arguments for tool erase_memory",
+					"memoryId"
+				]
+			},
+			"expectations": [
+				"memoryId must match the 32-char Convex ID pattern",
+				"the SDK refuses before the handler runs (validateToolInput), so no backend call is made"
+			],
+			"source": "src/registerTool.ts:464"
 		}
 	]
 }

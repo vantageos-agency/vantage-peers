@@ -184,6 +184,7 @@ _Applies to: Cloud and Self-host._
 - `recall` (read) — Semantic vector search over VantagePeers memories, ranked by cosine similarity.
 - `soft_delete_document` (write) — Soft-delete all Knowledge Base chunks for a document.
 - `soft_delete_memory` (write, destructive) — Soft-delete a memory so it stops appearing in recall results while remaining in the audit log.
+- `erase_memory` (write, destructive) — Permanently erase a secret from a memory: the matching text is replaced in the stored body and the search index entry is re-indexed and purged (unlike `soft_delete_memory`, which leaves the body readable). Allowed for a signed-in person who is an organisation admin (any memory of the org) or the member who authored the memory; anyone else gets the door's typed `RBAC_DENIED`. Other typed refusals are relayed unchanged (`REDACT_NO_MATCH`, `MEMORY_NOT_FOUND`).
 - `store_document_chunked` (write) — Ingest a document binary (PDF, Markdown, plain text) into the Knowledge Base.
 - `store_memory` (write) — Store a typed memory entry (user/feedback/project/reference) in VantagePeers with optional graph relations.
 - `text_search` (read) — BM25 full-text keyword search over VantagePeers memories for exact term matching.

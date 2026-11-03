@@ -7,7 +7,7 @@
 // REQUIRED_CONTRACT_VERSION in mcp-server/src/backendContract.ts, when the MCP
 // starts passing a new argument to a function that already exists.
 
-export const BACKEND_CONTRACT_VERSION = 17;
+export const BACKEND_CONTRACT_VERSION = 18;
 
 export const BACKEND_FUNCTIONS: readonly string[] = [
 	"agentCredentials:getAgentCredentialStatus",
@@ -109,6 +109,8 @@ export const BACKEND_FUNCTIONS: readonly string[] = [
 	"memberWriterRoles:assertPersonMayWrite",
 	"memories:getMemory",
 	"memories:listMemories",
+	"memories:redactMemoryContent",
+	"memories:redactMemoryContentAsPerson",
 	"memories:softDeleteMemory",
 	"memories:storeMemory",
 	"memoriesScoped:listMemoriesScoped",

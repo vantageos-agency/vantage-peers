@@ -21,6 +21,7 @@
 		"delete_message",
 		"delete_recurring_task",
 		"delete_task",
+		"erase_memory",
 		"export_okf_bundle",
 		"fail_task",
 		"generate_upload_url",

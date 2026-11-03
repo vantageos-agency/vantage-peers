@@ -281,6 +281,7 @@ const SITES: [string, string, Legacy, boolean][] = [
 	["add_task_dependency", "tasks:update", org, false],
 	["create_mission", "missions:create", personOnly, true],
 	["update_mission", "missions:update", personOnly, true],
+	["erase_memory", "memories:redactMemoryContentAsPerson", personOnly, true],
 	["get_tool_usage", "toolUsage:getToolUsage", personAndOrg, true],
 	["get_owner_tool_usage", "toolUsage:usageByOwner", personAndOrg, true],
 	["create_briefing_note", "briefingNotes:create", org, false],
