@@ -51,7 +51,7 @@ function refuse(reason: string): ConvexError<string> {
 
 /**
  * The agents of `org` this person may take: active, an ordinary agent (not the
- * service account, not owned by a person's seat), carrying this org's permanent
+ * service account, not owned by ANOTHER person's seat), carrying this org's permanent
  * ID, and either designating this person already or, for an org admin only,
  * designating nobody (ruling (a')). Never one designated to someone else.
  */
@@ -74,7 +74,12 @@ export async function choosableAgents(
 		(a) =>
 			a.isActive &&
 			a.kind !== "service" &&
-			a.ownerPersonId === undefined &&
+			// An agent owned by a person (a seat with a credential) is another
+			// person's: excluded. The one exception is the agent that names THIS
+			// person as both its owner and its designated person (a roster-registered
+			// personal agent, set by the operator door): it is hers, so it is offered.
+			(a.ownerPersonId === undefined ||
+				(a.ownerPersonId === personId && a.personalAgentOf === personId)) &&
 			// The permanent org ID, never the slug label alone: an unstamped row
 			// may have been filed under this slug by a former holder of it, and an
 			// unstamped row is good for a refusal, never a grant (agentIdentity.ts).
