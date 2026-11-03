@@ -21,6 +21,7 @@
  * gets one plain sentence naming the fixing step.
  */
 
+import { appendFileSync } from "node:fs";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
 	closeWorld,
@@ -237,7 +238,11 @@ describe("whoami names the agent and the workspace on every seat", () => {
 				unknown
 			>;
 			if (process.env.CLIENT_SEAT_WHOAMI_OUT) {
-				console.log(`[whoami ${seat}] ${JSON.stringify(who)}`);
+				// The whoami each seat sees, kept for the report (scripts read the file).
+				appendFileSync(
+					process.env.CLIENT_SEAT_WHOAMI_OUT,
+					`${JSON.stringify({ seat, whoami: who })}\n`,
+				);
 			}
 			const want = expected[seat];
 			expect(who.agent_name).toBe(want.agentName);
