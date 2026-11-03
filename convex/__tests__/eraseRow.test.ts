@@ -494,6 +494,14 @@ describe.each(FAMILIES)("erase:eraseRow — $table", (family) => {
 		if (family.children) expect(await family.children(id)).toBe(0);
 	});
 
+	test("LEGACY PERSON ROW: a row written before the author ID existed, labelled with the person's reserved actor name, is erasable by that person and by no other member", async () => {
+		const id = await family.seed(A, { label: MEMBER_ACTOR });
+		expect(await code(erase(OTHER_A, table, id))).toBe("RBAC_DENIED");
+		expect(await present(table, id)).toBe(true);
+		expect(await code(erase(MEMBER_A, table, id))).toBe("SERVED");
+		expect(await present(table, id)).toBe(false);
+	});
+
 	test("MEMBER NON-AUTHOR: a same-org member is refused on another member's row; no agent of the org may either", async () => {
 		const id = await family.seed(A, memberAuthor);
 		expect(await code(erase(OTHER_A, table, id))).toBe("RBAC_DENIED");
@@ -661,6 +669,20 @@ describe("erase:eraseRow — transport poles", () => {
 		expect(await code(t.mutation(api.erase.eraseRow, args))).not.toBe("SERVED");
 		const orgless = t.withIdentity({ subject: "user_orgless" });
 		expect(await code(orgless.mutation(api.erase.eraseRow, args))).not.toBe("SERVED");
+		expect(await present("tasks", id)).toBe(true);
+	});
+
+	test("a seat acting for an org WITHOUT an agent proof is refused: a label is not an author", async () => {
+		const id = await FAMILIES[3].seed(A, agentAuthor(ALICE, A));
+		expect(
+			await code(
+				service().mutation(api.erase.eraseRow, {
+					table: "tasks",
+					rowId: id,
+					__actingOrg: testClerkOrgId(A),
+				} as never),
+			),
+		).not.toBe("SERVED");
 		expect(await present("tasks", id)).toBe(true);
 	});
 

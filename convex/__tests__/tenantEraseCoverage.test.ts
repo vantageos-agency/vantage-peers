@@ -70,6 +70,9 @@ describe("tenant table erase coverage", () => {
 			expect(row, name).toBeDefined();
 			expect(policy.orgField, name).toBe(row?.idField);
 			const fields = SCHEMA_TABLES[name]?.validator.fields ?? {};
+			if (policy.labelField !== null) {
+				expect(fields[policy.labelField], `${name}.${policy.labelField}`).toBeDefined();
+			}
 			if (policy.authorField === null) {
 				expect(policy.authorlessReason?.length ?? 0, name).toBeGreaterThanOrEqual(
 					40,
@@ -95,7 +98,7 @@ function sourceFiles(dir: string, out: string[] = []): string[] {
 }
 
 const AUTHOR_STAMPING_HELPERS =
-	/taskActorIdFields\(|\.\.\.actorIds\b|authorIdFieldsOf\(|\.\.\.authorId\b/;
+	/taskActorIdFields\(|\.\.\.actorIds\b/;
 const EXEMPT = /erase-author-exempt:\s*(\S.{9,})/;
 
 describe("write paths store the author's ID", () => {

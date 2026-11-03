@@ -97,17 +97,3 @@ export async function taskActorIdFields(
 	if (lastAssignedToId !== undefined) out.lastAssignedToId = lastAssignedToId;
 	return out;
 }
-
-/**
- * The `createdById` column of a row an internal importer writes on behalf of a label
- * (OKF import): the ID the label names in `orgSlug` (undefined = operator org), or no
- * column when it names nobody there. Same name -> ID lane as `taskActorIdFields`.
- */
-export async function authorIdFieldsOf(
-	ctx: QueryCtx | MutationCtx,
-	orgSlug: string | undefined | null,
-	createdBy: string | undefined,
-): Promise<{ createdById?: string }> {
-	const id = await actorIdResolver(ctx, orgSlug)(createdBy);
-	return id === undefined ? {} : { createdById: id };
-}
