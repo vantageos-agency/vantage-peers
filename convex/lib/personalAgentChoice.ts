@@ -3,7 +3,6 @@ import {
 	requireOrgAdmin as requireVerifiedOrgAdmin,
 } from "@vantageos/cloud-identity";
 import { ConvexError } from "convex/values";
-import { internal } from "../_generated/api";
 import type { Doc } from "../_generated/dataModel";
 import type { MutationCtx, QueryCtx } from "../_generated/server";
 import { normalizeOrchestratorId } from "../_helpers/normalizeOrchestratorId";
@@ -210,17 +209,7 @@ export async function applyAgentChoice(
 		isActive: true,
 		createdAt: Date.now(),
 	});
-	// Same transaction: the agent joins the roster (id and exact stored name),
-	// appended, idempotent. The operator org's roster has its own door
-	// (clientOrgMapping:addOperatorRosterMember) and is not edited here.
-	if (mapping.orgKind !== "operator") {
-		// The one roster writer (append only, idempotent, validates the agent is
-		// active and stamped with this org's permanent ID). A nested internal
-		// mutation runs in this transaction, so a refusal rolls the insert back.
-		await ctx.runMutation(internal.clientOrgMapping.addRosterMembers, {
-			clerkOrgSlug: mapping.clerkOrgSlug,
-			agentIds: [agentId],
-		});
-	}
+	// The roster join is the caller's (oauth:putPersonCode), in this same
+	// transaction, through the one roster writer.
 	return agentId;
 }

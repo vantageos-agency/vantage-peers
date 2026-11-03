@@ -2410,6 +2410,22 @@ export const putPersonCode = mutation({
 				},
 				args.choice,
 			);
+			if (args.choice.kind === "create") {
+				// A created agent that no roster lists cannot write: it joins the org's
+				// roster in this same transaction, through the one roster writer
+				// (append only, idempotent). applyAgentChoice already refused an org
+				// with no active mapping. The operator org has its own door
+				// (clientOrgMapping:addOperatorRosterMember) and is not edited here.
+				const mapping = await lookupOrgMapping(ctx, {
+					clerkOrgId: args.record.orgId,
+				});
+				if (mapping !== null && mapping.orgKind !== "operator") {
+					await ctx.runMutation(internal.clientOrgMapping.addRosterMembers, {
+						clerkOrgSlug: mapping.clerkOrgSlug,
+						agentIds: [chosenAgentId],
+					});
+				}
+			}
 		}
 		await ctx.db.insert("oauth_person_codes", {
 			...args.record,
