@@ -81,6 +81,7 @@ import type * as lib_nameOnlyCalls from "../lib/nameOnlyCalls.js";
 import type * as lib_npmExportCheck from "../lib/npmExportCheck.js";
 import type * as lib_operatorOrg from "../lib/operatorOrg.js";
 import type * as lib_orgClerkId from "../lib/orgClerkId.js";
+import type * as lib_retired from "../lib/retired.js";
 import type * as lib_orgIdLookups from "../lib/orgIdLookups.js";
 import type * as lib_personPrincipal from "../lib/personPrincipal.js";
 import type * as lib_personRefreshConfig from "../lib/personRefreshConfig.js";
@@ -262,6 +263,7 @@ declare const fullApi: ApiFromModules<{
   "lib/npmExportCheck": typeof lib_npmExportCheck;
   "lib/operatorOrg": typeof lib_operatorOrg;
   "lib/orgClerkId": typeof lib_orgClerkId;
+  "lib/retired": typeof lib_retired;
   "lib/orgIdLookups": typeof lib_orgIdLookups;
   "lib/personPrincipal": typeof lib_personPrincipal;
   "lib/personRefreshConfig": typeof lib_personRefreshConfig;

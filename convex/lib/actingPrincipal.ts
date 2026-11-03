@@ -173,6 +173,7 @@ export function ownerMembershipLookups(
 	ctx: Pick<Ctx, "db">,
 ): Pick<PrincipalLookups, "personById"> {
 	return membershipPersonLookups((orgId, personId) =>
+		// retirement-read: membershipPersonLookups (@vantageos/cloud-identity) answers "a tombstone is not active"
 		ctx.db
 			.query("orgMembership")
 			.withIndex("by_org_user_clerk_id", (q) =>

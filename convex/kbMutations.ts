@@ -298,6 +298,7 @@ export const listDocNamespacesUnderRoot = internalQuery({
 		const namespaces: string[] = [];
 		let cursor = from;
 		for (let step = 0; step < MAX_SCAN_STEPS; step++) {
+			// retirement-read: namespace skip-scan; liveness is decided by the isLatest=true read right below
 			const row = await ctx.db
 				.query("memories")
 				.withIndex("by_namespace", (q) =>

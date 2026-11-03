@@ -16,6 +16,7 @@ import { memberActorOf } from "./lib/humanActor";
 import { clerkOrgIdForSlug } from "./lib/orgClerkId";
 import { requireLabelOnScopeRoster } from "./lib/rosterLabels";
 import { requireMemberWriterRole } from "./memberWriterRoles";
+import { liveOnly, liveOrNull } from "./lib/retired";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Fail-closed multi-tenant fix (defect class: authority attached to an
@@ -100,10 +101,7 @@ async function lookupTemplateByName(ctx: QueryCtx, name: string) {
 		.withIndex("by_name", (q) => q.eq("name", name))
 		.unique();
 	// Soft-deleted templates are invisible to reads, like a superseded memory.
-	if (template !== null && template.deletedAt !== undefined) {
-		return null;
-	}
-	return template;
+	return liveOrNull("missionTemplates", template);
 }
 
 // Public door. Fleet-master only: the catalog is shared fleet-wide with no
@@ -200,9 +198,7 @@ export const listNames = query({
 		const templates = await ctx.db
 			.query("missionTemplates")
 			.take(MISSION_TEMPLATES_SCAN_CAP);
-		return templates
-			.filter((t) => t.deletedAt === undefined)
-			.map((t) => t.name);
+		return liveOnly("missionTemplates", templates).map((t) => t.name);
 	},
 });
 
@@ -232,6 +228,7 @@ export const upsert = mutation({
 		}
 
 		const now = Date.now();
+		// retirement-read: write path (upsert addresses the row by name, retired or not)
 		const existing = await ctx.db
 			.query("missionTemplates")
 			.withIndex("by_name", (q) => q.eq("name", args.name))
@@ -293,7 +290,8 @@ export const softDelete = mutation({
 
 		const template = args.templateId
 			? await ctx.db.get(args.templateId)
-			: await ctx.db
+			: // retirement-read: write path (softDelete is idempotent on a retired row)
+				await ctx.db
 					.query("missionTemplates")
 					.withIndex("by_name", (q) => q.eq("name", args.name as string))
 					.unique();
@@ -381,6 +379,7 @@ export const seed = internalMutation({
 			},
 		];
 
+		// retirement-read: write path (seed patches or inserts by name)
 		const existing = await ctx.db
 			.query("missionTemplates")
 			.withIndex("by_name", (q) => q.eq("name", name))
@@ -447,12 +446,15 @@ export const instantiateTemplateIntoMission = mutation({
 		const fleet = await hasFleetStanding(ctx, door);
 
 		// 1. Fetch template
-		const template = await ctx.db
-			.query("missionTemplates")
-			.withIndex("by_name", (q) => q.eq("name", args.templateName))
-			.unique();
+		const template = liveOrNull(
+			"missionTemplates",
+			await ctx.db
+				.query("missionTemplates")
+				.withIndex("by_name", (q) => q.eq("name", args.templateName))
+				.unique(),
+		);
 		// A soft-deleted template is invisible to reads, like a superseded memory.
-		if (!template || template.deletedAt !== undefined) {
+		if (template === null) {
 			throw new Error(`Template not found: "${args.templateName}"`);
 		}
 

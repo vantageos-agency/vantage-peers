@@ -321,6 +321,7 @@ async function readTenantCritical(
           `${door}: SCAN_CAP_EXCEEDED — your organisation holds more than ${TENANT_NAMESPACE_WALK_CAP} distinct namespaces, so the list cannot be assembled completely. The result would be incomplete and indistinguishable from a full match.`,
         );
       }
+      // retirement-read: namespace skip-scan; rows are read by takeEpisodes with isLatest=true
       const next = await ctx.db
         .query("memories")
         .withIndex("by_namespace", (q) =>
