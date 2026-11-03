@@ -1,0 +1,33 @@
+     × store_memory: served, authored by user:<subject>, stamped with its own org 714ms
+     × store_episode: served, authored by user:<subject>, stamped with its own org 120ms
+     × create_briefing_note: served, authored by user:<subject>, stamped with its own org 122ms
+     × person-bound: agent_id, agent_name, default_write_namespace, writableNamespaces at top level 147ms
+     × person-agentless: agent_id, agent_name, default_write_namespace, writableNamespaces at top level 72ms
+     × agent-seat: agent_id, agent_name, default_write_namespace, writableNamespaces at top level 119ms
+     × person-agentless: the advertised text matches what the server does for this seat 1608ms
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 7 ⎯⎯⎯⎯⎯⎯⎯
+ FAIL  test/client-seat-matrix.test.ts > client seat matrix: every listed tool, three seats, plain arguments > person-agentless: the advertised text matches what the server does for this seat
+AssertionError: expected [ …(2) ] to deeply equal []
+ FAIL  test/person-seat-writes.test.ts > an agent-less person writes in its own name, with no author and no namespace > store_memory: served, authored by user:<subject>, stamped with its own org
+AssertionError: PERSON_NO_HUMAN_DOOR: store_memory has no door through which a person acts in its own name — it needs an agent name and that agent's credential (createdBy).: expected true to be falsy
+ FAIL  test/person-seat-writes.test.ts > an agent-less person writes in its own name, with no author and no namespace > store_episode: served, authored by user:<subject>, stamped with its own org
+AssertionError: PERSON_NO_HUMAN_DOOR: store_episode has no door through which a person acts in its own name — it needs an agent name and that agent's credential (createdBy).: expected true to be falsy
+ FAIL  test/person-seat-writes.test.ts > an agent-less person writes in its own name, with no author and no namespace > create_briefing_note: served, authored by user:<subject>, stamped with its own org
+AssertionError: PERSON_NO_HUMAN_DOOR: create_briefing_note has no door through which a person acts in its own name — it needs an agent name and that agent's credential (createdBy).: expected true to be falsy
+ FAIL  test/person-seat-writes.test.ts > whoami names the agent and the workspace on every seat > person-bound: agent_id, agent_name, default_write_namespace, writableNamespaces at top level
+AssertionError: expected undefined to be 'ulysse' // Object.is equality
+ FAIL  test/person-seat-writes.test.ts > whoami names the agent and the workspace on every seat > person-agentless: agent_id, agent_name, default_write_namespace, writableNamespaces at top level
+AssertionError: expected undefined to be null // Object.is equality
+ FAIL  test/person-seat-writes.test.ts > whoami names the agent and the workspace on every seat > agent-seat: agent_id, agent_name, default_write_namespace, writableNamespaces at top level
+AssertionError: expected undefined to be 'seatbot' // Object.is equality
+ Test Files  2 failed (2)
+      Tests  7 failed | 11 passed (18)
+     × REFUSE: legacy agent-less family, the person now has its own agent 609ms
+     × REFUSE: legacy agent-less family, the person is an organisation admin (may create one) 21ms
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 2 ⎯⎯⎯⎯⎯⎯⎯
+ FAIL  convex/__tests__/personRefreshAgentChoice.test.ts > an agent-less person family meets the consent page again when it has a choice > REFUSE: legacy agent-less family, the person now has its own agent
+AssertionError: expected { issued: { …(2) }, …(2) } to deeply equal { status: 'refused', …(1) }
+ FAIL  convex/__tests__/personRefreshAgentChoice.test.ts > an agent-less person family meets the consent page again when it has a choice > REFUSE: legacy agent-less family, the person is an organisation admin (may create one)
+AssertionError: expected { issued: { …(2) }, …(2) } to deeply equal { status: 'refused', …(1) }
+ Test Files  1 failed (1)
+      Tests  2 failed | 3 passed (5)
