@@ -1,35 +1,35 @@
 /// <reference types="vite/client" />
 // allow-missing-refs: new file
 //
-// VantagePeers Cloud KB: a chunk the memories table has RETIRED (soft-deleted
-// document, or superseded by a re-ingest) must also leave the RAG search index.
+// A RETIRED entry (soft-deleted or superseded KB chunk or memory) is returned by
+// NO RAG-backed search path: recall, textSearch, hybridSearch, on the exact
+// namespace and on the org KB root.
 //
-// Measured on prod (2026-11-03, probe-tenant-a seat): hybrid_search on the exact
-// document namespace `team/<org ID>/324c1715-...` returns the document, while
-// hybrid_search AND text_search on the root `team/<org ID>` return []. The root
-// fan-out (convex/kbMutations.ts listDocNamespacesUnderRoot) enumerates the
-// namespaces from the memories rows with isLatest=true; the exact search asks
-// the RAG index, whose entry still carries the filter isLatest="true" because
-// kbMutations.markDocSoftDeleted / supersedePriorChunks flip only the memories
-// row and never re-index the RAG entry (the memories path, convex/memories.ts,
-// does: ragSync.markRagEntrySuperseded). Two stores, two answers.
+// WHY IT LEAKED. @convex-dev/rag ORs its filters:
+//   node_modules/@convex-dev/rag/dist/component/embeddings/index.js:49
+//       q.or(...orFilters.flatMap(... q.eq(filterField, filter)))
+//   node_modules/@convex-dev/rag/dist/component/search.js:129
+//       "OR across filter conditions: run one text search per filter and dedupe"
+//   node_modules/@convex-dev/rag/dist/client/index.d.ts:421
+//       "Filters to apply to the search. These are OR'd together."
+// convex/search.ts buildFilters passes [isLatest=true, namespace=ns]; every entry
+// of the namespace has namespace=ns, so every entry matched whatever its isLatest.
+// The fake below ORs exactly like that (an entry matches when ANY filter pair
+// equals one of its stored filter values) and applies the component's `limit`
+// BEFORE the caller sees the rows, as the component does.
 //
-// The RAG backend is a fake that behaves like the real one on the property that
-// matters: it answers from the entries indexed under the EXACT namespace and
-// honours the isLatest filter value stored on the entry. The scheduled
-// ragSync.markRagEntrySuperseded job (a "use node" action, not loadable in
-// convex-test) is applied to the fake by reading the _scheduled_functions table,
-// exactly as the real action re-adds the entry under the same key with
-// isLatest="false".
+// The ragSync.markRagEntrySuperseded action ("use node", not loadable in
+// convex-test) is applied by reading the _scheduled_functions table and setting
+// the entry's isLatest="false", which is what the real action re-adds under the
+// same key.
 //
 // POLES
-//   PRESENT   a live document ingested as insertChunk writes it (stamped row) is
-//             found by the root and by the exact namespace.
-//   RETIRED   after a soft-delete, neither the root nor the exact namespace
-//             returns the document (RED before the fix: the exact namespace did).
-//   SUPERSEDED after a re-ingest of the same docId, the exact namespace returns
-//             only the new chunk (RED before the fix: old and new).
-//   NEGATIVE  another document of the same org is untouched by the retirement.
+//   PRESENT    a live KB chunk / memory is found by every path.
+//   RETIRED    retired three ways: soft-deleted KB doc (re-indexed), superseded
+//              memory (re-indexed), and LEGACY (row retired, RAG entry still
+//              "true": retired before the re-index existed) -> no path returns it.
+//   NEGATIVE   a live neighbour is still returned; another type is not widened in.
+//   LIMIT      retired entries ranked first do not shorten the page.
 
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import { convexTest } from "../../tests/fixtures/convexTestWithServiceAccount";
@@ -73,9 +73,19 @@ async function seedOrg(t: T, slug: string): Promise<void> {
 	});
 }
 
-// RAG fake: entries per exact namespace, each with its isLatest filter value.
-type Entry = { key: string; text: string; isLatest: "true" | "false" };
+type Entry = {
+	key: string;
+	text: string;
+	type: string;
+	isLatest: "true" | "false";
+};
 const indexed = new Map<string, Entry[]>();
+
+function indexEntry(namespace: string, e: Entry): void {
+	const list = indexed.get(namespace) ?? [];
+	list.push(e);
+	indexed.set(namespace, list);
+}
 
 /** What kb:storeDocumentChunked does for one chunk: insertChunk, then addRagEntry. */
 async function ingestChunk(
@@ -92,9 +102,40 @@ async function ingestChunk(
 		storageId: "kg-storage",
 		docId: namespace.split("/").pop() ?? "",
 	});
-	const list = indexed.get(namespace) ?? [];
-	list.push({ key: id as string, text, isLatest: "true" });
-	indexed.set(namespace, list);
+	indexEntry(namespace, {
+		key: id as string,
+		text,
+		type: "reference",
+		isLatest: "true",
+	});
+	return id;
+}
+
+/** A plain memory (type project) filed in a team namespace, with its RAG entry. */
+async function ingestMemory(
+	t: T,
+	namespace: string,
+	text: string,
+): Promise<Id<"memories">> {
+	const id = await t.run(async (ctx) =>
+		ctx.db.insert("memories", {
+			namespace,
+			type: "project",
+			content: text,
+			createdBy: "kb",
+			relations: [],
+			isLatest: true,
+			clerkOrgId: X_ID,
+			createdAt: Date.now(),
+			updatedAt: Date.now(),
+		}),
+	);
+	indexEntry(namespace, {
+		key: id as string,
+		text,
+		type: "project",
+		isLatest: "true",
+	});
 	return id;
 }
 
@@ -115,6 +156,13 @@ async function applyScheduledRagSupersedes(t: T): Promise<number> {
 	return applied;
 }
 
+/** Retired BEFORE the re-index existed: the row is retired, the RAG entry still says "true". */
+async function retireRowOnly(t: T, id: Id<"memories">): Promise<void> {
+	await t.run(async (ctx) => {
+		await ctx.db.patch(id, { isLatest: false });
+	});
+}
+
 beforeEach(() => {
 	// Scheduled jobs are only ever READ here (the ragSync action is not loadable);
 	// fake timers keep them from firing against a missing module.
@@ -125,25 +173,36 @@ beforeEach(() => {
 		_ctx: unknown,
 		args: {
 			namespace: string;
+			limit?: number;
 			filters?: Array<{ name: string; value: string }>;
 		},
 	) => {
-		const wantLatest = args.filters?.find((f) => f.name === "isLatest")?.value;
-		const rows = (indexed.get(args.namespace) ?? []).filter(
-			(e) => wantLatest === undefined || e.isLatest === wantLatest,
-		);
+		const filters = args.filters ?? [];
+		// OR across filters, as the component does (see header). No filter: all.
+		const matched = (indexed.get(args.namespace) ?? [])
+			.filter((e) => {
+				if (filters.length === 0) return true;
+				const fields: Record<string, string> = {
+					namespace: args.namespace,
+					type: e.type,
+					isLatest: e.isLatest,
+				};
+				return filters.some((f) => fields[f.name] === f.value);
+			})
+			.slice(0, args.limit ?? 10);
 		return {
-			results: rows.map((r, i) => ({
+			results: matched.map((r, i) => ({
 				entryId: `${args.namespace}#${r.key}`,
 				score: 0.9 - i * 0.01,
 				content: [{ text: r.text }],
 			})),
-			entries: rows.map((r) => ({
+			entries: matched.map((r) => ({
 				entryId: `${args.namespace}#${r.key}`,
 				key: r.key,
 				filterValues: [
 					{ name: "namespace", value: args.namespace },
-					{ name: "type", value: "reference" },
+					{ name: "type", value: r.type },
+					{ name: "isLatest", value: r.isLatest },
 				],
 			})),
 		};
@@ -155,61 +214,119 @@ afterEach(() => {
 	__setQueryEmbedderForTests(null);
 });
 
-const search = async (t: T, namespace: string) =>
-	(await asMember(t, X).action(api.search.textSearch, {
-		query: "anything",
-		namespace,
-	})) as Array<{ memoryId: string }>;
+const PATHS = [
+	{ name: "recall", ref: api.search.recall },
+	{ name: "textSearch", ref: api.search.textSearch },
+	{ name: "hybridSearch", ref: api.search.hybridSearch },
+] as const;
 
-describe("a retired KB chunk leaves the RAG index, so the root and the exact namespace agree", () => {
-	test("PRESENT: a live document is found by the root and by its exact namespace", async () => {
-		const t = createT();
-		await seedOrg(t, X);
-		const id = await ingestChunk(t, `team/${X_ID}/doc-a`, "alpha");
-		expect((await search(t, `team/${X_ID}`)).map((r) => r.memoryId)).toEqual([
-			id,
-		]);
-		expect(
-			(await search(t, `team/${X_ID}/doc-a`)).map((r) => r.memoryId),
-		).toEqual([id]);
-	});
+for (const { name, ref } of PATHS) {
+	const search = async (
+		t: T,
+		namespace: string,
+		extra: { type?: "reference" | "project"; limit?: number } = {},
+	) =>
+		(
+			(await asMember(t, X).action(ref, {
+				query: "anything",
+				namespace,
+				...extra,
+			})) as Array<{ memoryId: string }>
+		).map((r) => r.memoryId);
 
-	test("RETIRED: a soft-deleted document is returned by neither the root nor the exact namespace", async () => {
-		const t = createT();
-		await seedOrg(t, X);
-		await ingestChunk(t, `team/${X_ID}/doc-a`, "alpha");
-		const keep = await ingestChunk(t, `team/${X_ID}/doc-b`, "bravo");
-
-		await t.mutation(internal.kbMutations.markDocSoftDeleted, {
-			namespace: `team/${X_ID}/doc-a`,
+	describe(`search:${name}: a retired entry is never returned`, () => {
+		test("PRESENT: a live KB chunk is found on the root and on its exact namespace", async () => {
+			const t = createT();
+			await seedOrg(t, X);
+			const id = await ingestChunk(t, `team/${X_ID}/doc-a`, "alpha");
+			expect(await search(t, `team/${X_ID}`)).toEqual([id]);
+			expect(await search(t, `team/${X_ID}/doc-a`)).toEqual([id]);
 		});
-		expect(await applyScheduledRagSupersedes(t)).toBe(1);
 
-		expect(await search(t, `team/${X_ID}/doc-a`)).toEqual([]);
-		expect((await search(t, `team/${X_ID}`)).map((r) => r.memoryId)).toEqual([
-			keep,
-		]);
-		// NEGATIVE: the other document of the org is untouched.
-		expect(
-			(await search(t, `team/${X_ID}/doc-b`)).map((r) => r.memoryId),
-		).toEqual([keep]);
-	});
-
-	test("SUPERSEDED: a re-ingest of the same docId leaves only the new chunk searchable", async () => {
-		const t = createT();
-		await seedOrg(t, X);
-		const old = await ingestChunk(t, `team/${X_ID}/doc-a`, "old text");
-		await t.mutation(internal.kbMutations.supersedePriorChunks, {
-			chunkIds: [old],
+		test("RETIRED: a soft-deleted KB document (re-indexed) is on neither path; its neighbour stays", async () => {
+			const t = createT();
+			await seedOrg(t, X);
+			await ingestChunk(t, `team/${X_ID}/doc-a`, "alpha");
+			const keep = await ingestChunk(t, `team/${X_ID}/doc-b`, "bravo");
+			await t.mutation(internal.kbMutations.markDocSoftDeleted, {
+				namespace: `team/${X_ID}/doc-a`,
+			});
+			expect(await applyScheduledRagSupersedes(t)).toBe(1);
+			expect(await search(t, `team/${X_ID}/doc-a`)).toEqual([]);
+			expect(await search(t, `team/${X_ID}`)).toEqual([keep]);
+			expect(await search(t, `team/${X_ID}/doc-b`)).toEqual([keep]);
 		});
-		const fresh = await ingestChunk(t, `team/${X_ID}/doc-a`, "new text");
-		expect(await applyScheduledRagSupersedes(t)).toBe(1);
 
-		expect(
-			(await search(t, `team/${X_ID}/doc-a`)).map((r) => r.memoryId),
-		).toEqual([fresh]);
-		expect((await search(t, `team/${X_ID}`)).map((r) => r.memoryId)).toEqual([
-			fresh,
-		]);
+		test("RETIRED: a KB chunk superseded by a re-ingest leaves only the new chunk", async () => {
+			const t = createT();
+			await seedOrg(t, X);
+			const old = await ingestChunk(t, `team/${X_ID}/doc-a`, "old text");
+			await t.mutation(internal.kbMutations.supersedePriorChunks, {
+				chunkIds: [old],
+			});
+			const fresh = await ingestChunk(t, `team/${X_ID}/doc-a`, "new text");
+			expect(await applyScheduledRagSupersedes(t)).toBe(1);
+			expect(await search(t, `team/${X_ID}/doc-a`)).toEqual([fresh]);
+			expect(await search(t, `team/${X_ID}`)).toEqual([fresh]);
+		});
+
+		test("RETIRED (legacy): a document retired before the re-index existed -- row isLatest=false, RAG entry still 'true' -- is on neither path", async () => {
+			const t = createT();
+			await seedOrg(t, X);
+			const dead = await ingestChunk(t, `team/${X_ID}/doc-a`, "alpha");
+			const keep = await ingestChunk(t, `team/${X_ID}/doc-b`, "bravo");
+			await retireRowOnly(t, dead);
+			expect(await search(t, `team/${X_ID}/doc-a`)).toEqual([]);
+			expect(await search(t, `team/${X_ID}`)).toEqual([keep]);
+		});
+
+		test("RETIRED: a soft-deleted memory (memories:softDeleteMemory) is not returned", async () => {
+			const t = createT();
+			await seedOrg(t, X);
+			const gone = await ingestMemory(t, `team/${X_ID}/notes`, "gone");
+			const keep = await ingestMemory(t, `team/${X_ID}/notes`, "kept");
+			await asMember(t, X).mutation(api.memories.softDeleteMemory, {
+				memoryId: gone,
+			});
+			expect(await applyScheduledRagSupersedes(t)).toBe(1);
+			expect(await search(t, `team/${X_ID}/notes`)).toEqual([keep]);
+			expect(await search(t, `team/${X_ID}`)).toEqual([keep]);
+		});
+
+		test("RETIRED (legacy): a memory retired with its RAG entry still 'true' is not returned", async () => {
+			const t = createT();
+			await seedOrg(t, X);
+			const gone = await ingestMemory(t, `team/${X_ID}/notes`, "gone");
+			const keep = await ingestMemory(t, `team/${X_ID}/notes`, "kept");
+			await retireRowOnly(t, gone);
+			expect(await search(t, `team/${X_ID}/notes`)).toEqual([keep]);
+		});
+
+		test("NEGATIVE: a type filter is not widened by the OR -- a project memory is not returned for type=reference", async () => {
+			const t = createT();
+			await seedOrg(t, X);
+			const ref = await ingestChunk(t, `team/${X_ID}/notes`, "chunk");
+			await ingestMemory(t, `team/${X_ID}/notes`, "memory");
+			expect(await search(t, `team/${X_ID}/notes`, { type: "reference" })).toEqual(
+				[ref],
+			);
+		});
+
+		test("LIMIT: retired entries ranked first do not shorten the page (over-fetch)", async () => {
+			const t = createT();
+			await seedOrg(t, X);
+			const dead: Id<"memories">[] = [];
+			for (let i = 0; i < 4; i++) {
+				dead.push(await ingestMemory(t, `team/${X_ID}/notes`, `dead ${i}`));
+			}
+			const live1 = await ingestMemory(t, `team/${X_ID}/notes`, "live 1");
+			const live2 = await ingestMemory(t, `team/${X_ID}/notes`, "live 2");
+			for (const d of dead) await retireRowOnly(t, d);
+			// limit 2: the component's top 2 are retired; over-fetch (3x) reaches the live ones.
+			expect(await search(t, `team/${X_ID}/notes`, { limit: 2 })).toEqual([
+				live1,
+				live2,
+			]);
+		});
 	});
-});
+}
