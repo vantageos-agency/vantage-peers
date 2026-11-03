@@ -474,3 +474,134 @@ describe("age check: a mapping newer than the row never resolves it", () => {
 		expect(page.unresolved).toBe(1);
 	});
 });
+
+// missions (task k1778zdhntzk53dyac8hxg71zx8hhzfx): the same rules as tasks, reached by
+// the `table` argument. A slug-only mission matches no task under sameTenantStamp.
+describe("missions table", () => {
+	const mission = (
+		name: string,
+		orgId: string | undefined,
+		clerkOrgId?: string,
+	) => ({
+		name,
+		project: "p",
+		status: "execute" as const,
+		priority: "medium" as const,
+		pilot: "seat-x",
+		agents: ["seat-x"],
+		createdBy: "seat-x",
+		createdAt: NOW,
+		updatedAt: NOW,
+		...(orgId !== undefined ? { orgId } : {}),
+		...(clerkOrgId !== undefined ? { clerkOrgId } : {}),
+	});
+
+	// 1 resolvable, 1 already filled (ID disagrees with slug), 1 absent slug,
+	// 1 inactive mapping, 1 ambiguous slug, 1 mapping without ID, 1 no slug.
+	async function seedMissions(t: T) {
+		return await t.run(async (ctx) => ({
+			ok: await ctx.db.insert("missions", mission("ok", "acme-hr")),
+			kept: await ctx.db.insert(
+				"missions",
+				mission("kept", "acme-hr", "org_OTHER9"),
+			),
+			ghost: await ctx.db.insert("missions", mission("ghost", "ghost-org")),
+			inactive: await ctx.db.insert("missions", mission("inactive", "dormant")),
+			ambiguous: await ctx.db.insert("missions", mission("twice", "twice")),
+			noId: await ctx.db.insert("missions", mission("noid", "no-id-yet")),
+			fleet: await ctx.db.insert("missions", mission("fleet", undefined)),
+		}));
+	}
+
+	test("count reports with / without clerkOrgId over several pages, counts only", async () => {
+		const t = createT();
+		await seedMappings(t);
+		await seedMissions(t);
+		const pages = await walk((cursor) =>
+			t.query(count, { table: "missions", cursor, pageSize: 3 }),
+		);
+		expect(pages.length).toBeGreaterThan(1);
+		expect(sum(pages, (p) => p.withId)).toBe(1);
+		expect(sum(pages, (p) => p.withoutId)).toBe(6);
+		expect(Object.keys(pages[0]).sort()).toEqual(
+			["cursor", "done", "examined", "table", "withId", "withoutId"].sort(),
+		);
+	});
+
+	test("dry run (the default) writes nothing and reports the would-fill count", async () => {
+		const t = createT();
+		await seedMappings(t);
+		const ids = await seedMissions(t);
+		const pages = await walk((cursor) =>
+			t.mutation(backfill, { table: "missions", cursor, pageSize: 2 }),
+		);
+		expect(pages.every((p) => p.dryRun)).toBe(true);
+		expect(sum(pages, (p) => p.toFill)).toBe(1);
+		expect(sum(pages, (p) => p.filled)).toBe(0);
+		expect(
+			(await t.run((ctx) => ctx.db.get(ids.ok)))?.clerkOrgId,
+		).toBeUndefined();
+	});
+
+	test("apply fills the resolvable mission; ambiguous / inactive / id-less / absent are listed unwritten; a kept ID is never overwritten", async () => {
+		const t = createT();
+		await seedMappings(t);
+		const ids = await seedMissions(t);
+		const pages = await walk((cursor) =>
+			t.mutation(backfill, {
+				table: "missions",
+				dryRun: false,
+				cursor,
+				pageSize: 2,
+			}),
+		);
+		expect(sum(pages, (p) => p.filled)).toBe(1);
+		expect(sum(pages, (p) => p.alreadyFilled)).toBe(1);
+		expect(sum(pages, (p) => p.noSlug)).toBe(1);
+		expect(sum(pages, (p) => p.unresolved)).toBe(4);
+		const listed = pages.flatMap((p) => p.unresolvedIds);
+		expect([...listed].sort()).toEqual(
+			[ids.ghost, ids.inactive, ids.ambiguous, ids.noId].sort(),
+		);
+		await t.run(async (ctx) => {
+			expect((await ctx.db.get(ids.ok))?.clerkOrgId).toBe("org_ACME1");
+			expect((await ctx.db.get(ids.kept))?.clerkOrgId).toBe("org_OTHER9");
+			expect((await ctx.db.get(ids.fleet))?.clerkOrgId).toBeUndefined();
+			for (const id of listed) {
+				const row = await ctx.db.get(id as Id<"missions">);
+				expect(row?.clerkOrgId).toBeUndefined();
+			}
+		});
+		// idempotent: a second run fills 0
+		const again = await walk((cursor) =>
+			t.mutation(backfill, { table: "missions", dryRun: false, cursor }),
+		);
+		expect(sum(again, (p) => p.filled)).toBe(0);
+	});
+
+	test("age check: a mission created BEFORE its slug's mapping is unwritten and listed mappingNewerThanRow", async () => {
+		const t = createT();
+		const oldId = await t.run(async (ctx) => {
+			const id = await ctx.db.insert("missions", mission("old", "reused-slug"));
+			await ctx.db.insert("client_org_mapping", {
+				clerkOrgSlug: "reused-slug",
+				clerkOrgId: "org_NEWHOLDER1",
+				allowedOrchestrators: [],
+				scopes: [],
+				displayName: "reused-slug",
+				isActive: true,
+				createdAt: NOW,
+			});
+			return id;
+		});
+		const pages = await walk((cursor) =>
+			t.mutation(backfill, { table: "missions", dryRun: false, cursor }),
+		);
+		expect(sum(pages, (p) => p.filled)).toBe(0);
+		expect(sum(pages, (p) => p.unresolvedByReason.mappingNewerThanRow)).toBe(1);
+		expect(pages.flatMap((p) => p.unresolvedIds)).toEqual([oldId]);
+		expect(
+			(await t.run((ctx) => ctx.db.get(oldId)))?.clerkOrgId,
+		).toBeUndefined();
+	});
+});

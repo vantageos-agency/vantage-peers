@@ -1,7 +1,10 @@
 // clerkOrgIdCoverage — COUNT and BACKFILL of the permanent org ID (`clerkOrgId`) on the
-// two tables the slug-class refusal makes load-bearing: oauth_scope_profiles (a mint from
-// a profile without an ID is refused) and tasks (a task without an ID is refused at the
-// verified-org gate). Task k1783fk8r6p795x9fxrzyt9evd8hcxm7. Run, deployed and read back
+// three tables the slug-class refusal makes load-bearing: oauth_scope_profiles (a mint
+// from a profile without an ID is refused), tasks (a task without an ID is refused at the
+// verified-org gate) and missions (a slug-only mission matches no task under
+// sameTenantStamp, so tasks:create / tasks:update refuse to link it with
+// MISSION_FOREIGN_TENANT; task k1778zdhntzk53dyac8hxg71zx8hhzfx).
+// Task k1783fk8r6p795x9fxrzyt9evd8hcxm7. Run, deployed and read back
 // BEFORE the refusal ships, so the refusal does not lock out rows that only lack a
 // backfill.
 //
@@ -48,18 +51,21 @@ import {
 const tableValidator = v.union(
 	v.literal("oauth_scope_profiles"),
 	v.literal("tasks"),
+	v.literal("missions"),
 );
-type CoverageTable = "oauth_scope_profiles" | "tasks";
+type CoverageTable = "oauth_scope_profiles" | "tasks" | "missions";
 
 // table -> the slug column it stores (the id column is `clerkOrgId` on both).
 const SLUG_FIELD: Record<CoverageTable, "clerkOrgSlug" | "orgId"> = {
 	oauth_scope_profiles: "clerkOrgSlug",
 	tasks: "orgId",
+	missions: "orgId",
 };
 
 const DEFAULT_PAGE_SIZE: Record<CoverageTable, number> = {
 	oauth_scope_profiles: 100,
 	tasks: 50,
+	missions: 50,
 };
 const MAX_PAGE_SIZE = 200;
 const DEFAULT_UNRESOLVED_ID_CAP = 50;
