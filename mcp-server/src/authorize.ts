@@ -238,6 +238,40 @@ export function convexCodeStore(
 				throw new Error("AGENT_CHOICE_REFUSED: two agent choices were posted");
 			}
 			try {
+				// "Connect as myself" is a decision the screen POSTS (the radio sends
+				// `agent_<orgId>=""`). A post with no such field at all is not that
+				// decision: a person who has an agent bound to them is never approved
+				// as themselves by omission (a stale page, a forged post, a screen that
+				// could not list). Judged live; an unreadable list does not refuse.
+				if (choice === null && posted[`agent_${record.orgId}`] === undefined) {
+					let bound = false;
+					try {
+						const view = (await internalClient().query(
+							// biome-ignore lint/suspicious/noExplicitAny: Convex string API
+							"oauth:listPersonalAgentChoices" as any,
+							{
+								clerkUserId: record.clerkUserId,
+								orgId: record.orgId,
+								orgSlug: record.orgSlug,
+								orgRole: record.orgRole,
+							},
+						)) as { agents?: { mine: boolean }[] };
+						bound = (view.agents ?? []).some((a) => a.mine);
+					} catch (listErr: unknown) {
+						// The screen itself degrades to "connect as yourself" when the list
+						// cannot be read; only a list that WAS read and names a bound agent
+						// refuses.
+						console.error(
+							"[oauth] agent list unavailable at Approve:",
+							listErr instanceof Error ? listErr.message : listErr,
+						);
+					}
+					if (bound) {
+						throw new Error(
+							"AGENT_CHOICE_REFUSED: this person has an agent bound to them; choose it or connect as yourself explicitly",
+						);
+					}
+				}
 				await internalClient().mutation(
 					// biome-ignore lint/suspicious/noExplicitAny: Convex string API
 					"oauth:putPersonCode" as any,

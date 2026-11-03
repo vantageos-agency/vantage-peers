@@ -213,6 +213,8 @@ export async function authorizeAsPerson(
 		scope?: string;
 		/** Drop `resource`, as Claude.ai's connector does. */
 		omitResource?: boolean;
+		/** Extra form fields posted with Approve (the agent step: `agent_<orgId>`, `newAgent_<orgId>`). */
+		extraFields?: Record<string, string>;
 	},
 ): Promise<DriveResult> {
 	const url = new URL(authorizeUrl(params));
@@ -226,6 +228,7 @@ export async function authorizeAsPerson(
 			orgId: params.orgId,
 			approved: "true",
 			consentToken: first.picker.consentToken,
+			...params.extraFields,
 		},
 		params.sessionToken,
 	);
