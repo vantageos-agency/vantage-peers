@@ -31,7 +31,7 @@
 //             only the new chunk (RED before the fix: old and new).
 //   NEGATIVE  another document of the same org is untouched by the retirement.
 
-import { afterEach, beforeEach, describe, expect, test } from "vitest";
+import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import { convexTest } from "../../tests/fixtures/convexTestWithServiceAccount";
 import { testClerkOrgId } from "../../tests/fixtures/testClerkOrgId";
 import { api, internal } from "../_generated/api";
@@ -116,6 +116,9 @@ async function applyScheduledRagSupersedes(t: T): Promise<number> {
 }
 
 beforeEach(() => {
+	// Scheduled jobs are only ever READ here (the ragSync action is not loadable);
+	// fake timers keep them from firing against a missing module.
+	vi.useFakeTimers();
 	indexed.clear();
 	__setQueryEmbedderForTests(async () => [0.1, 0.2, 0.3]);
 	__setRagSearcherForTests((async (
@@ -147,6 +150,7 @@ beforeEach(() => {
 	}) as unknown as Parameters<typeof __setRagSearcherForTests>[0]);
 });
 afterEach(() => {
+	vi.useRealTimers();
 	__setRagSearcherForTests(null);
 	__setQueryEmbedderForTests(null);
 });

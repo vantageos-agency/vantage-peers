@@ -21,7 +21,12 @@
 
 import { ConvexError, v } from "convex/values";
 import { internal } from "./_generated/api";
-import { internalMutation, internalQuery } from "./_generated/server";
+import type { Doc } from "./_generated/dataModel";
+import {
+	internalMutation,
+	internalQuery,
+	type MutationCtx,
+} from "./_generated/server";
 import { mutation } from "./lib/functions";
 import { assertOrgArgs } from "./kbShared";
 import { sha256Hex } from "@vantageos/cloud-identity";
@@ -209,6 +214,31 @@ export const listChunkIdsForDoc = internalQuery({
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
+// scheduleRagRetire -- a chunk the memories table retires leaves the RAG index too.
+//
+// A KB chunk lives in TWO stores: the memories row (isLatest) and the RAG entry
+// (filter isLatest="true", written by ragSync.addRagEntry). The root fan-out
+// (listDocNamespacesUnderRoot) reads the first, an exact-namespace search reads
+// the second. Retiring a chunk (soft-delete, or supersede on re-ingest) flipped
+// only the first, so a deleted document stayed searchable by its exact namespace
+// while the root no longer reached it. The memories path already pairs the two
+// (convex/memories.ts); this does the same: re-index the entry with
+// isLatest="false", which the search filter (`isLatest=true`) then excludes.
+// ─────────────────────────────────────────────────────────────────────────────
+
+async function scheduleRagRetire(
+	ctx: MutationCtx,
+	row: Doc<"memories">,
+): Promise<void> {
+	await ctx.scheduler.runAfter(0, internal.ragSync.markRagEntrySuperseded, {
+		memoryId: row._id,
+		content: row.content,
+		namespace: row.namespace,
+		type: row.type,
+	});
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // listDocNamespacesUnderRoot -- the live KB document namespaces under an org root
 //
 // RAG searches ONE namespace by exact name and has no prefix search, so a search
@@ -311,7 +341,10 @@ export const supersedePriorChunks = internalMutation({
 	handler: async (ctx, args) => {
 		const now = Date.now();
 		for (const id of args.chunkIds) {
+			const row = await ctx.db.get(id);
+			if (row === null) continue;
 			await ctx.db.patch(id, { isLatest: false, updatedAt: now });
+			await scheduleRagRetire(ctx, row);
 		}
 		return null;
 	},
@@ -606,6 +639,7 @@ export const markDocSoftDeleted = internalMutation({
 			.take(MARK_DOC_BATCH_SIZE);
 		for (const row of rows) {
 			await ctx.db.patch(row._id, { isLatest: false, updatedAt: now });
+			await scheduleRagRetire(ctx, row);
 		}
 		// A full batch means more may remain: continue in the background rather
 		// than reading the document's whole chunk set in one transaction. The
