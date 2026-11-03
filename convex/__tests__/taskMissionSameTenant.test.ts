@@ -215,6 +215,46 @@ describe("tasks:update — foreign missionId", () => {
 		);
 	});
 
+	test("LEGACY LINK: update without a missionId leaves an existing foreign link untouched; explicit foreign missionId still refused", async () => {
+		const t = makeT();
+		await seedOrgs(t);
+		const foreignMission = await t.run((ctx) =>
+			ctx.db.insert("missions", missionRow("org-b")),
+		);
+		// A row stored before the tenant check existed: org-a task -> org-b mission.
+		const taskId = await t.run((ctx) =>
+			insertTaskRow(ctx, {
+				title: "legacy",
+				assignedTo: SEAT,
+				createdBy: SEAT,
+				priority: "low",
+				status: "todo",
+				orgId: "org-a",
+				clerkOrgId: testClerkOrgId("org-a"),
+				missionId: foreignMission,
+				createdAt: 1,
+				updatedAt: 1,
+			}),
+		);
+		// Pole 1: a non-mission edit by its own org member is served.
+		await asOrg(t, "org-a").mutation(api.tasks.update, {
+			agentCredentialSecret: seatSecrets.get("org-a"),
+			taskId,
+			callerOrchestrator: SEAT,
+			title: "legacy renamed",
+		});
+		const after = await t.run((ctx) => ctx.db.get(taskId));
+		expect(after?.title).toBe("legacy renamed");
+		expect(after?.missionId).toBe(foreignMission);
+		// Pole 2: passing that same foreign missionId explicitly is refused.
+		await expect(updateIn(t, "org-a", taskId, foreignMission)).rejects.toThrow(
+			REFUSAL,
+		);
+		expect((await t.run((ctx) => ctx.db.get(taskId)))?.title).toBe(
+			"legacy renamed",
+		);
+	});
+
 	test("PRESENT: master keeps today's behaviour on update", async () => {
 		const t = makeT();
 		await seedOrgs(t);
