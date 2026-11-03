@@ -1280,6 +1280,23 @@ MASTER_ONLY.push(
 		tables: ["memories"],
 	},
 	{
+		tool: "erase_memory",
+		why: "person-only tool (tools.ts erase_memory): a scoped seat carries no person bearer hash, so it is refused before any Convex call; the person poles run through the real /mcp route in test/erase-memory-route.test.ts",
+		args: async () => {
+			const m = await seed(seatA, "store_memory", {
+				namespace: `team/${A_ID}`,
+				type: "project",
+				content: "secret-seat-marker",
+				createdBy: "mimir",
+			});
+			return {
+				memoryId: m.memoryId,
+				redactions: [{ find: "secret-seat-marker", replaceWith: "x" }],
+			};
+		},
+		tables: ["memories"],
+	},
+	{
 		tool: "create_fix_pattern",
 		why: "convex/fixPatterns.ts requireFleetMaster: fix patterns are fleet-internal",
 		args: async () => ({

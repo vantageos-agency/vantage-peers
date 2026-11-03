@@ -29,6 +29,7 @@ import * as tools from "../src/tools.js";
 const TOOL_SCHEMA_MAP: Record<string, keyof typeof tools> = {
 	store_memory: "storeMemoryOutputSchema",
 	soft_delete_memory: "softDeleteMemoryOutputSchema",
+	erase_memory: "eraseMemoryOutputSchema",
 	get_memory: "getMemoryOutputSchema",
 	recall: "recallOutputSchema",
 	text_search: "textSearchOutputSchema",
@@ -117,6 +118,7 @@ const TOOL_SCHEMA_MAP: Record<string, keyof typeof tools> = {
 const REPRESENTATIVE_RESPONSES: Record<string, unknown> = {
 	store_memory: { memoryId: "abc123def456abc123def456abc12345", namespace: "global", type: "user", content: "test" },
 	soft_delete_memory: { deleted: true, memoryId: "abc123def456abc123def456abc12345" },
+	erase_memory: { memoryId: "abc123def456abc123def456abc12345", replacements: 1, contentHashChanged: true },
 	get_memory: { _id: "abc123def456abc123def456abc12345", namespace: "global", type: "user", content: "test" },
 	recall: [{ _id: "abc123def456abc123def456abc12345", content: "test", score: 0.9 }],
 	text_search: [{ _id: "abc123def456abc123def456abc12345", content: "test" }],
@@ -205,8 +207,8 @@ const REPRESENTATIVE_RESPONSES: Record<string, unknown> = {
 describe("C1 — outputSchema coverage (B2 §3)", () => {
 	const toolNames = Object.keys(TOOL_SCHEMA_MAP);
 
-	it(`covers all 81 tools (found ${toolNames.length})`, () => {
-		expect(toolNames.length).toBe(81);
+	it(`covers all 82 tools (found ${toolNames.length})`, () => {
+		expect(toolNames.length).toBe(82);
 	});
 
 	it.each(toolNames)("%s — outputSchema is exported", (toolName) => {

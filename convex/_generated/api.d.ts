@@ -90,6 +90,7 @@ import type * as lib_personalAgentInvite from "../lib/personalAgentInvite.js";
 import type * as lib_profileActors from "../lib/profileActors.js";
 import type * as lib_provisioningMapping from "../lib/provisioningMapping.js";
 import type * as lib_publicBuilders from "../lib/publicBuilders.js";
+import type * as lib_ragEntryReplacement from "../lib/ragEntryReplacement.js";
 import type * as lib_repoMappingTenant from "../lib/repoMappingTenant.js";
 import type * as lib_reviewRouting from "../lib/reviewRouting.js";
 import type * as lib_rosterAppend from "../lib/rosterAppend.js";
@@ -270,7 +271,8 @@ declare const fullApi: ApiFromModules<{
   "lib/profileActors": typeof lib_profileActors;
   "lib/provisioningMapping": typeof lib_provisioningMapping;
   "lib/publicBuilders": typeof lib_publicBuilders;
-  "lib/repoMappingTenant": typeof lib_repoMappingTenant;
+  "lib/ragEntryReplacement": typeof lib_ragEntryReplacement;
+  "lib/repoMappingTenant":typeof lib_repoMappingTenant;
   "lib/reviewRouting": typeof lib_reviewRouting;
   "lib/rosterAppend": typeof lib_rosterAppend;
   "lib/rosterIds": typeof lib_rosterIds;

@@ -1208,6 +1208,13 @@ export const softDeleteMemoryOutputSchema = z.object({
 	memoryId: z.string(),
 });
 
+// erase_memory
+export const eraseMemoryOutputSchema = z.object({
+	memoryId: z.string(),
+	replacements: z.number(),
+	contentHashChanged: z.boolean(),
+});
+
 // get_memory
 export const getMemoryOutputSchema = z
 	.record(z.string(), z.unknown())
@@ -2534,6 +2541,77 @@ export function registerTools(
 							text: JSON.stringify({ deleted: true, memoryId }, null, 2),
 						},
 					],
+				};
+			} catch (error: any) {
+				return mcpConvexError(error);
+			}
+		},
+	);
+
+	// ── erase_memory ────────────────────────────────────────────────────────────
+
+	defineTool(
+		server,
+		authCtx,
+		{
+			kind: "public",
+			reason:
+				"decided by its Convex doors memories:redactMemoryContent (a Clerk-JWT bearer's own session) and memories:redactMemoryContentAsPerson (a person bearer, forwarded as verifiedPerson = the bearer hash, resolved by the door): an org admin erases any memory of its org, a member only the memories it authored (stored createdBy = the verified actor name), in the row's own organisation; the tool takes no acting name and relays the door's typed refusal unchanged",
+		},
+		"erase_memory",
+		"Permanently erase a secret (a credential, token or key) from a memory: the matching text is replaced in the stored body, the content hash is recomputed and the search index entry is re-indexed and purged, so the original text is gone (unlike soft_delete_memory, which leaves the body readable). " +
+			"WHEN: a credential was pasted into a memory and must not stay retrievable. Allowed for an organisation admin (any memory of the org) or for the member who authored the memory; anyone else is refused with RBAC_DENIED. " +
+			"EXAMPLE: erase_memory memoryId='j57dy3049btafda9m2f5d2ggk987ph3f' redactions=[{find:'sk-live-abc', replaceWith:'[REDACTED]'}].",
+		{
+			memoryId: memoryIdSchema.describe(
+				"Convex document ID of the memory to erase text from",
+			),
+			redactions: z
+				.array(
+					z.object({
+						find: z.string().min(1).describe("Exact text to erase"),
+						replaceWith: z
+							.string()
+							.describe("Replacement text, e.g. '[REDACTED]'"),
+					}),
+				)
+				.min(1)
+				.max(50)
+				.describe("Find/replace pairs applied to the memory body"),
+		},
+		{
+			readOnlyHint: false,
+			openWorldHint: false,
+			destructiveHint: true,
+			title: "Erase text from a memory",
+		},
+		async ({ memoryId, redactions }) => {
+			try {
+				// A Clerk-JWT bearer reaches Convex as itself (its own session JWT is
+				// forwarded by the client): the session door judges role and org.
+				if (authCtx.oauthCtx?.clerkJwt !== undefined) {
+					const result = await convex.mutation(
+						"memories:redactMemoryContent" as any,
+						{ memoryId, redactions },
+					);
+					return {
+						content: [{ type: "text", text: JSON.stringify(result, null, 2) }],
+					};
+				}
+				// A person bearer: the bearer hash (verifiedPerson) comes from the
+				// verified context via the door-scope resolver, never from an argument.
+				const scoped = doorScopeArgs("memories:redactMemoryContentAsPerson", undefined);
+				if (scoped.verifiedPerson === undefined) {
+					return mcpError(
+						"Forbidden: erase_memory is for a signed-in person (an organisation admin, or the member who authored the memory). This credential is not a person sign-in.",
+					);
+				}
+				const result = await convex.mutation(
+					"memories:redactMemoryContentAsPerson" as any,
+					{ memoryId, redactions, ...scoped },
+				);
+				return {
+					content: [{ type: "text", text: JSON.stringify(result, null, 2) }],
 				};
 			} catch (error: any) {
 				return mcpConvexError(error);

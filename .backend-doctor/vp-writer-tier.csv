@@ -12,6 +12,7 @@ create_briefing_note,agents+briefingNoteParticipants+briefingNotes+memberWriterR
 create_bu,agents+businessUnits,CREATE,org-member,orgResolver,businessUnits:create=orgResolver
 update_bu,agents+businessUnits+oauth_access_tokens,TRANSITION,org-member,orgResolver,businessUnits:update=orgResolver
 debate_post_turn,agents+client_org_mapping+debateRooms+debateTurns+memberWriterRoles,UPSERT,org-member,orgResolver,debate:postTurn=orgResolver
+erase_memory,agents+client_org_mapping+memories+oauth_access_tokens,UPDATE,org-member,orgResolver,memories:redactMemoryContent=orgResolver; memories:redactMemoryContentAsPerson=orgResolver
 write_diary,agents+diary,UPSERT,org-member,orgResolver,diary:write=orgResolver
 complete_task,agents+fixPatterns+githubOwnerBindings+githubRepoMapping+issues+memberWriterRoles+messageReceipts+messages+taskClosureConfig+tasks,UPSERT,org-member,orgResolver,tasks:complete=orgResolver
 update_task,agents+githubRepoMapping+memberWriterRoles+messageReceipts+messages+missions+nameOnlyCalls+oauth_access_tokens+taskClosureConfig+tasks,UPSERT,org-member,orgResolver,tasks:update=orgResolver

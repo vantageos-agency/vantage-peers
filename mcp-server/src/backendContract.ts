@@ -40,7 +40,7 @@
  */
 
 /** Contract version this MCP build requires from the backend. */
-export const REQUIRED_CONTRACT_VERSION = 17;
+export const REQUIRED_CONTRACT_VERSION = 18;
 
 /** Every public Convex function this MCP build calls (`module:function`). */
 export const MCP_CALLED_FUNCTIONS: readonly string[] = [
@@ -103,6 +103,8 @@ export const MCP_CALLED_FUNCTIONS: readonly string[] = [
 	"memberWriterRoles:assertPersonMayWrite",
 	"memories:getMemory",
 	"memories:listMemories",
+	"memories:redactMemoryContent",
+	"memories:redactMemoryContentAsPerson",
 	"memories:softDeleteMemory",
 	"memories:storeMemory",
 	"messages:checkNewMessages",

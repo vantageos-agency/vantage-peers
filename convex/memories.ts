@@ -1,11 +1,16 @@
-import { hasFleetRead } from "@vantageos/cloud-identity";
+import { type ActingPrincipal, assertOrgAdmin, assertTargetBelongsTo, hasFleetRead, personActorName, resolveActingPrincipal, resolveCallerFromClaims, requireServiceAccountStanding } from "@vantageos/cloud-identity";
 import { v, ConvexError } from "convex/values";
-import { internalMutation } from "./_generated/server";
+import { internalMutation, type MutationCtx } from "./_generated/server";
 import { mutation, query } from "./lib/functions";
 import { internal } from "./_generated/api";
 import { memoryTypeValidator, creatorValidator, relationTypeValidator, severityValidator } from "./schema";
 import { requireId } from "./lib/ids";
-import { isMcpBoundMaster, verifiedActorValidator, withOrgScope } from "./lib/auth";
+import { ORG_ADMIN_ROLES, isMcpBoundMaster, refusalError, verifiedActorValidator, withOrgScope, type OrgScope } from "./lib/auth";
+import { anonymousRefusal } from "./lib/agentIdentity";
+import { wireIdentityRefusal } from "./lib/identityRefusalWire";
+import { personPrincipalLookups } from "./lib/actingPrincipal";
+import { resolveVerifiedPerson, verifiedPersonValidator } from "./lib/personPrincipal";
+import { orgByIdLookups, orgByIdPrincipalLookups } from "./lib/orgIdLookups";
 import {
   memoryAuthorOf,
   memoryStampForWrite,
@@ -17,7 +22,21 @@ import {
   memoryWritableRootsText,
   seatAgentIdOf,
 } from "./lib/seatNamespace";
-import type { Doc } from "./_generated/dataModel";
+import type { Doc, Id } from "./_generated/dataModel";
+
+// sha256 hex digest of a UTF-8 string — mirrors okfContentHash in
+// okfBundleNode.ts (node:crypto is only available in "use node" actions;
+// this file's functions run in the default V8 runtime, so SubtleCrypto is
+// used instead). Same local-copy convention as convex/lib/agentIdentity.ts
+// and convex/lib/license.ts — each call site keeps its own copy rather than
+// importing across unrelated modules.
+async function sha256Hex(input: string): Promise<string> {
+  const encoded = new TextEncoder().encode(input);
+  const hashBuffer = await crypto.subtle.digest("SHA-256", encoded);
+  return Array.from(new Uint8Array(hashBuffer))
+    .map((b) => b.toString(16).padStart(2, "0"))
+    .join("");
+}
 
 // expireMemoriesByTtl scans candidate rows with a ttl set; this is a bounded
 // cron batch size, not an expected total-row count, so 500 is a safe ceiling
@@ -559,5 +578,237 @@ export const expireMemoriesByTtl = internalMutation({
     }
 
     return expired;
+  },
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// redactMemoryContent (internal) — a real erase path for a credential value
+// (or any other secret-shaped substring) that slipped into a memory's body.
+// softDeleteMemory only flips isLatest to false — the body stays readable by
+// id and the RAG entry keeps the original text. This mutation replaces the
+// body in place, recomputes contentHash the same way the OKF import path
+// does (okfContentHash in okfBundleNode.ts — sha256 hex of the content, no
+// salt), and schedules an action that re-indexes the RAG entry AND purges
+// the superseded chunks so the secret text is not retrievable through
+// search either (convex/ragSync.ts's replaceRagEntryContent).
+//
+// The find/replace pairs are never logged and never returned — the return
+// shape only carries counts and a boolean, never the strings themselves.
+// A zero-occurrence call throws so a silent no-op (e.g. a typo'd find
+// string) cannot be mistaken for a successful redaction.
+// ─────────────────────────────────────────────────────────────────────────────
+
+const redactionsValidator = v.array(
+  v.object({ find: v.string(), replaceWith: v.string() }),
+);
+
+const redactResultValidator = v.object({
+  memoryId: v.id("memories"),
+  replacements: v.number(),
+  contentHashChanged: v.boolean(),
+});
+
+// The erase itself, shared by the two doors below. It decides nothing about WHO
+// may call: each door admits its caller and its row before reaching it.
+async function eraseMemoryBody(
+  ctx: MutationCtx,
+  memory: Doc<"memories">,
+  redactions: { find: string; replaceWith: string }[],
+): Promise<{
+  memoryId: Id<"memories">;
+  replacements: number;
+  contentHashChanged: boolean;
+}> {
+  let content = memory.content;
+  let replacements = 0;
+  for (const { find, replaceWith } of redactions) {
+    if (find.length === 0) continue;
+    const occurrences = content.split(find).length - 1;
+    if (occurrences > 0) {
+      content = content.split(find).join(replaceWith);
+      replacements += occurrences;
+    }
+  }
+
+  if (replacements === 0) {
+    // Refuse rather than silently no-op — a caller relying on this to
+    // erase a credential must know the erase did NOT happen.
+    throw new ConvexError(
+      "REDACT_NO_MATCH: redactMemoryContent found zero occurrences of the given find strings — refusing a silent no-op.",
+    );
+  }
+
+  const newContentHash = await sha256Hex(content);
+  const contentHashChanged = memory.contentHash !== newContentHash;
+
+  await ctx.db.patch(memory._id, {
+    content,
+    contentHash: newContentHash,
+    updatedAt: Date.now(),
+  });
+
+  await ctx.scheduler.runAfter(0, internal.ragSync.replaceRagEntryContent, {
+    memoryId: memory._id,
+    content,
+    namespace: memory.namespace,
+    type: memory.type,
+    isLatest: memory.isLatest,
+  });
+
+  return { memoryId: memory._id, replacements, contentHashChanged };
+}
+
+// Client door, SESSION form: the caller's own verified Clerk session (the
+// dashboard, or the MCP forwarding a Clerk-JWT bearer's own JWT). The role and
+// org come from the session claims, resolved by the identity package. A caller
+// that is not a person with an org session (anonymous, the fleet service
+// account) is refused RBAC_DENIED. Same session -> package -> stored-ID shape as
+// agentCredentials:mintAgentCredential.
+export const redactMemoryContent = mutation({
+  args: {
+    memoryId: v.id("memories"),
+    redactions: redactionsValidator,
+  },
+  returns: redactResultValidator,
+  handler: async (ctx, args) => {
+    // write-contract: MCP-transport (mcp-server/src/tools.ts erase_memory, imperative, Clerk-JWT bearers) and client-SDK; 0 dashboard hits for api.memories.redactMemoryContent (measured with grep -rn "redactMemoryContent" in vantage-peers-dashboard {app,components,hooks,lib,contexts,providers}); never a subscribing render.
+    const door = "memories:redactMemoryContent";
+    const caller = await resolveCallerFromClaims(
+      await ctx.auth.getUserIdentity(),
+      {
+        orgLookups: orgByIdLookups(ctx),
+        principalLookups: orgByIdPrincipalLookups(ctx),
+      },
+      { adminRoles: ORG_ADMIN_ROLES, door },
+    );
+    if (!caller.ok) {
+      if (caller.subject === undefined) throw anonymousRefusal(door);
+      throw refusalError(caller.refusal);
+    }
+    const admin = assertOrgAdmin(caller.principal, caller.principal.orgId, {
+      adminRoles: ORG_ADMIN_ROLES,
+      door,
+    });
+    const memory = await ctx.db.get(args.memoryId);
+    // The row's STORED org ID against the caller's, for admin and author alike.
+    const verdict = await assertTargetBelongsTo(
+      caller.principal,
+      { orgId: memory?.clerkOrgId ?? null },
+      orgByIdPrincipalLookups(ctx),
+      { door },
+    );
+    if (!verdict.ok) throw refusalError(verdict.refusal);
+    if (memory === null) {
+      throw new ConvexError(`MEMORY_NOT_FOUND: memory ${args.memoryId} not found`);
+    }
+    // Not an admin: the member may erase only what it AUTHORED. The stored
+    // `createdBy` of a person-written row is `user:<verified subject>`, forced
+    // equal to the verified caller at write time (memoryAuthorOf,
+    // convex/lib/memoryTenant.ts) and a RESERVED spelling no agent can register,
+    // so it is compared with the actor name of THIS verified subject, never with
+    // a name the caller typed.
+    if (!admin.ok && memory.createdBy !== caller.actorName) {
+      throw refusalError(admin.refusal);
+    }
+    return await eraseMemoryBody(ctx, memory, args.redactions);
+  },
+});
+
+// The fleet SERVICE ACCOUNT as transport: the plain service account, or the same
+// account acting for an organisation (`serviceTransport`, set by __actingOrg).
+// WHO the service account is, is decided by @vantageos/cloud-identity
+// (`requireServiceAccountStanding`); its refusal is relayed to the wire unchanged.
+function requireServiceAccount(transport: OrgScope, door: string): void {
+  if (transport.serviceTransport === true) return;
+  try {
+    requireServiceAccountStanding(transport, door);
+  } catch (err: unknown) {
+    throw wireIdentityRefusal(err);
+  }
+}
+
+// Client door, PERSON-BEARER form: a person signed in through the MCP OAuth flow
+// (Claude.ai, ChatGPT). The MCP reaches Convex as the fleet service account, so
+// this door is MCP-bound only and REQUIRES the bearer hash (`verifiedPerson`);
+// subject, org and role are re-read from the token row, never carried
+// (lib/personPrincipal.ts), and the person is proven in its org by ID.
+export const redactMemoryContentAsPerson = mutation({
+  args: {
+    memoryId: v.id("memories"),
+    redactions: redactionsValidator,
+    verifiedPerson: verifiedPersonValidator,
+  },
+  returns: redactResultValidator,
+  handler: async (ctx, args) => {
+    // write-contract: MCP-transport-only — issued via mcp-server client.mutation("memories:redactMemoryContentAsPerson", …) in tools.ts erase_memory (imperative); 0 dashboard hits (measured with grep -rn "redactMemoryContentAsPerson" in vantage-peers-dashboard {app,components,hooks,lib,contexts,providers}); never a subscribing render.
+    const door = "memories:redactMemoryContentAsPerson";
+    // The transport must be the fleet service account (acting for the person's
+    // org on the MCP path): resolveVerifiedPerson refuses anyone else with
+    // verified-person-not-trusted, and binds the person to the acting org.
+    const transport = await withOrgScope(ctx, { refuseWithoutThrow: true });
+    // The door is the fleet SERVICE ACCOUNT (acting for the person's org on the
+    // MCP path): anyone else is refused, naming this door.
+    requireServiceAccount(transport, door);
+    const person = await resolveVerifiedPerson(
+      ctx,
+      transport,
+      args.verifiedPerson,
+      { door },
+    );
+    const acting = await resolveActingPrincipal(
+      {
+        kind: "person",
+        personId: person.userId ?? "",
+        verifiedOrgId: person.orgClerkId ?? "",
+        verifiedOrgRole: person.orgRole,
+      },
+      personPrincipalLookups(ctx, person.userId),
+      door,
+    );
+    if (!acting.ok) throw refusalError(acting.refusal);
+    const person_caller = { principal: acting.principal, actorName: personActorName(person.userId ?? "") };
+    const admin = assertOrgAdmin(person_caller.principal, person_caller.principal.orgId, {
+      adminRoles: ORG_ADMIN_ROLES,
+      door,
+    });
+    const memory = await ctx.db.get(args.memoryId);
+    // The row's STORED org ID against the caller's, for admin and author alike.
+    const verdict = await assertTargetBelongsTo(
+      person_caller.principal,
+      { orgId: memory?.clerkOrgId ?? null },
+      orgByIdPrincipalLookups(ctx),
+      { door },
+    );
+    if (!verdict.ok) throw refusalError(verdict.refusal);
+    if (memory === null) {
+      throw new ConvexError(`MEMORY_NOT_FOUND: memory ${args.memoryId} not found`);
+    }
+    // Not an admin: the member may erase only what it AUTHORED. The stored
+    // `createdBy` of a person-written row is `user:<verified subject>`, forced
+    // equal to the verified caller at write time (memoryAuthorOf,
+    // convex/lib/memoryTenant.ts) and a RESERVED spelling no agent can register,
+    // so it is compared with the actor name of THIS verified subject, never with
+    // a name the caller typed.
+    if (!admin.ok && memory.createdBy !== person_caller.actorName) {
+      throw refusalError(admin.refusal);
+    }
+    return await eraseMemoryBody(ctx, memory, args.redactions);
+  },
+});
+
+// Fleet door (operator, `npx convex run`): internal, so no client can reach it.
+// This is how the fleet keeps its reach over every org's rows.
+export const redactMemoryContentFleet = internalMutation({
+  args: {
+    memoryId: v.id("memories"),
+    redactions: redactionsValidator,
+  },
+  returns: redactResultValidator,
+  handler: async (ctx, args) => {
+    const memory = await ctx.db.get(args.memoryId);
+    if (memory === null) {
+      throw new ConvexError(`MEMORY_NOT_FOUND: memory ${args.memoryId} not found`);
+    }
+    return await eraseMemoryBody(ctx, memory, args.redactions);
   },
 });
