@@ -1,0 +1,4 @@
+---
+section: Added
+---
+- **Cloud: legacy rows can be tied to their author agent, so the author can erase them.** `migrations/authorBackfill:count` (read-only, one table per call, counts only) reports, for each table the erase mechanism covers with an author (memories, messages, missions, tasks, recurringTasks, briefingNotes, diary, debateRooms), how many rows lack the author ID and how many an agent label ties to exactly one active agent of the row's own organisation (candidates from the fleet table of `backfill_actor_ids`, each re-read by agent ID and org ID). `migrations/authorBackfill:stamp` (dry run by default, idempotent) writes the agent ID on those rows only; ambiguous, unresolvable and other-organisation labels are never stamped. `.claude/scripts/convex-prod.allow` gains both doors. Task k175zndttv4brzgwj529qgsr1h8hha22.

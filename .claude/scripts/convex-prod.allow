@@ -32,3 +32,4 @@ run oauth:bindScopeProfileAgent
 run migrations/tenantOrgIdInvariant:count
 run migrations/backfill_org_clerk_id:run
 run migrations/authorBackfill:count
+run migrations/authorBackfill:stamp

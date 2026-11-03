@@ -5,8 +5,8 @@
 // Why. erase:eraseRow lets an author erase the rows it wrote, judged on the STORED author ID
 // (`createdById`, `fromId`). A row written before that column existed has no ID, so it is an
 // organisation admin's alone. This instrument says, per table, how many such rows an
-// agent label could be tied to exactly one agent of the row's own organisation (what a
-// stamp may write) and how many cannot be.
+// agent label could be tied to exactly one agent of the row's own organisation (what the
+// `stamp` door of this module writes) and how many cannot be.
 //
 // TABLES. Derived from `ERASE_COVERED` (convex/lib/eraseRow.ts): every covered table whose
 // policy names BOTH an `authorField` and a `labelField`. Nothing is typed here, so a table
@@ -24,7 +24,19 @@
 // The label is only ever looked up inside the row's OWN organisation (permanent ID, never
 // the slug): a label that names an agent of another organisation matches nothing here.
 //
-// COUNTS ONLY: no row id, no label, no agent id leaves `count`.
+// COUNTS ONLY: no row id, no label, no agent id leaves `count` or `stamp`.
+//
+// STAMP (`stamp`, internal mutation). Writes the agent's agents-row ID into the author column
+// of the `resolvable` rows ONLY, the same value a verified seat would have stored at write
+// time (the erase rule compares it with the agents-row ID of the verified agent). DRY RUN BY
+// DEFAULT (`dryRun: false` writes). Ambiguous, unresolvable, other-organisation and
+// person-labelled rows are never written; a row that already has an author ID is never
+// rewritten, so a second run stamps 0. One page of one table per call, like `count`.
+//
+// What the stamp changes: the agent it names, and only that agent, may now erase such a row
+// (erase:eraseRow). It grants nothing else and never widens an organisation's reach: the
+// agent is resolved inside the row's own organisation. Reversal: unset the author column of
+// a stamped row; nothing but the erase decision reads the value.
 //
 // SHAPE. Internal (deployment-admin only), one page of one table per call (`table` required,
 // as a prod deployment refuses several paginates in one query), cursor pagination.
@@ -37,6 +49,7 @@ import { ConvexError, v } from "convex/values";
 import { normalizeOrchestratorId } from "../_helpers/normalizeOrchestratorId";
 import type { Id } from "../_generated/dataModel";
 import {
+	internalMutation,
 	type DatabaseReader,
 	internalQuery,
 	type QueryCtx,
@@ -213,6 +226,53 @@ export function requirePageSize(limit: number | undefined, door: string): number
 	}
 	return n;
 }
+
+export const stamp = internalMutation({
+	args: {
+		table: v.string(),
+		dryRun: v.optional(v.boolean()),
+		cursor: v.optional(v.union(v.string(), v.null())),
+		limit: v.optional(v.number()),
+	},
+	returns: v.object({
+		table: v.string(),
+		dryRun: v.boolean(),
+		...tallyValidator,
+		stamped: v.number(),
+		isDone: v.boolean(),
+		continueCursor: v.union(v.string(), v.null()),
+	}),
+	handler: async (ctx, args) => {
+		const door = "authorBackfill:stamp";
+		const dryRun = args.dryRun ?? true;
+		const t = requireAuthoredTable(args.table, door);
+		const limit = requirePageSize(args.limit, door);
+		const page = await ctx.db
+			.query(t.table as never)
+			.paginate({ cursor: args.cursor ?? null, numItems: limit });
+		const tally = emptyTally();
+		const res = await loadResolution(ctx.db);
+		let stamped = 0;
+		for (const row of page.page as unknown as (Row & { _id: string })[]) {
+			const verdict = await judgeRow(ctx, t, row, res);
+			tallyVerdict(tally, verdict);
+			if (verdict.kind === "resolvable" && !dryRun) {
+				await ctx.db.patch(row._id as never, {
+					[t.authorField]: verdict.agentId,
+				} as never);
+				stamped++;
+			}
+		}
+		return {
+			table: t.table,
+			dryRun,
+			...tally,
+			stamped,
+			isDone: page.isDone,
+			continueCursor: page.isDone ? null : page.continueCursor,
+		};
+	},
+});
 
 export const count = internalQuery({
 	args: {
