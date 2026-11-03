@@ -2413,13 +2413,18 @@ export const putPersonCode = mutation({
 			if (args.choice.kind === "create") {
 				// A created agent that no roster lists cannot write: it joins the org's
 				// roster in this same transaction, through the one roster writer
-				// (append only, idempotent). applyAgentChoice already refused an org
-				// with no active mapping. The operator org has its own door
-				// (clientOrgMapping:addOperatorRosterMember) and is not edited here.
+				// (append only, idempotent). An org with no active mapping refuses, and
+				// the throw rolls the agent insert back. The operator org has its own
+				// door (clientOrgMapping:addOperatorRosterMember) and is not edited here.
 				const mapping = await lookupOrgMapping(ctx, {
 					clerkOrgId: args.record.orgId,
 				});
-				if (mapping !== null && mapping.orgKind !== "operator") {
+				if (mapping === null || !mapping.isActive) {
+					throw new ConvexError(
+						"ORG_MAPPING_NOT_FOUND: no active organisation mapping for this organisation; refusing to create an agent that could not write",
+					);
+				}
+				if (mapping.orgKind !== "operator") {
 					await ctx.runMutation(internal.clientOrgMapping.addRosterMembers, {
 						clerkOrgSlug: mapping.clerkOrgSlug,
 						agentIds: [chosenAgentId],
