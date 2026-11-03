@@ -110,6 +110,15 @@ run_case "unreadable credential -> COULD-NOT-JUDGE" ok 2 COULD-NOT-JUDGE "$tmp/d
 run_case "whoami fails -> COULD-NOT-JUDGE" whoami-fails 2 COULD-NOT-JUDGE
 run_case "MCP unreachable -> COULD-NOT-JUDGE" none 2 COULD-NOT-JUDGE
 
+# --- recurring tasks (fix #1673): own create/pause/resume/delete read back, foreign refused ---
+run_case "recurring: healthy -> PASS, summary names the recurring poles" ok 0 PASS "$tmp/a.bearer" 'recurring tasks: own create/pause/resume/delete read back'
+run_case "recurring: own pole prints ok lines for pause, resume, delete" ok 0 PASS "$tmp/a.bearer" 'ok +probe-tenant-a delete_recurring_task'
+run_case "recurring: foreign pause/delete ACCEPTED -> FAIL" recurring-admit-foreign 1 FAIL "$tmp/a.bearer" 'FAIL +probe-tenant-b pause_recurring_task'
+run_case "recurring: delete refused -> FAIL and a CLEANUP line with the id" recurring-delete-refused 1 FAIL "$tmp/a.bearer" 'CLEANUP probe-tenant-a recurring-task rec'
+run_case "recurring: delete answers ok but the row stays -> FAIL, CLEANUP line" recurring-delete-noop 1 FAIL "$tmp/a.bearer" 'CLEANUP probe-tenant-a recurring-task rec'
+run_case "recurring: row without an org stamp -> FAIL" recurring-no-org-stamp 1 FAIL
+run_case "recurring: MCP unreachable -> COULD-NOT-JUDGE, never PASS" none 2 COULD-NOT-JUDGE
+
 # --- two agents per org: in-org send DELIVERED and read back by the recipient ---
 two_agents
 run_case "two agents, healthy -> PASS, delivered and read back by recipient" ok 0 PASS "$tmp/a.bearer" 'delivered and read back by the recipient'
