@@ -39,23 +39,20 @@ import {
 	personActorName,
 	requireServiceAccountStanding,
 	resolveActingPrincipal,
-	resolveCallerFromClaims,
 } from "@vantageos/cloud-identity";
 import { ConvexError } from "convex/values";
 import type { Id } from "../_generated/dataModel";
 import type { MutationCtx } from "../_generated/server";
 import { deleteBodyChunks } from "../briefingNoteBodies";
 import { internal } from "../_generated/api";
-import { anonymousRefusal } from "./agentIdentity";
 import {
 	ORG_ADMIN_ROLES,
 	type OrgScope,
 	type VerifiedActor,
 	refusalError,
-	withOrgScope,
 } from "./auth";
 import { wireIdentityRefusal } from "./identityRefusalWire";
-import { orgByIdLookups, orgByIdPrincipalLookups } from "./orgIdLookups";
+import { orgByIdPrincipalLookups } from "./orgIdLookups";
 import { personPrincipalLookups, requireVerifiedActorPrincipal } from "./actingPrincipal";
 import { resolveVerifiedPerson, type VerifiedPerson } from "./personPrincipal";
 
@@ -80,34 +77,44 @@ export type ErasePolicy = {
 	orgField: "clerkOrgId" | "tenantOrgId";
 	/** the column holding the author BY ID, or null when no author exists by design */
 	authorField: string | null;
+	/**
+	 * the display-label column of the author. It is read for ONE purpose: a row written before
+	 * `authorField` existed whose label is a PERSON actor name ("user:<subject>") names its
+	 * author, because that spelling is reserved (no agent can be registered under it) and the
+	 * write path forces it equal to the verified subject. An agent label is never an author.
+	 */
+	labelField: string | null;
 	/** why the table has no author (written; required when authorField is null) */
 	authorlessReason?: string;
 };
 
 export const ERASE_COVERED: Record<EraseTable, ErasePolicy> = {
-	memories: { orgField: "clerkOrgId", authorField: "createdById" },
-	messages: { orgField: "tenantOrgId", authorField: "fromId" },
-	missions: { orgField: "clerkOrgId", authorField: "createdById" },
-	tasks: { orgField: "clerkOrgId", authorField: "createdById" },
-	recurringTasks: { orgField: "clerkOrgId", authorField: "createdById" },
-	briefingNotes: { orgField: "clerkOrgId", authorField: "createdById" },
-	diary: { orgField: "clerkOrgId", authorField: "createdById" },
-	debateRooms: { orgField: "tenantOrgId", authorField: "createdById" },
+	memories: { orgField: "clerkOrgId", authorField: "createdById", labelField: "createdBy" },
+	messages: { orgField: "tenantOrgId", authorField: "fromId", labelField: "from" },
+	missions: { orgField: "clerkOrgId", authorField: "createdById", labelField: "createdBy" },
+	tasks: { orgField: "clerkOrgId", authorField: "createdById", labelField: "createdBy" },
+	recurringTasks: { orgField: "clerkOrgId", authorField: "createdById", labelField: "createdBy" },
+	briefingNotes: { orgField: "clerkOrgId", authorField: "createdById", labelField: "createdBy" },
+	diary: { orgField: "clerkOrgId", authorField: "createdById", labelField: "createdBy" },
+	debateRooms: { orgField: "tenantOrgId", authorField: "createdById", labelField: "createdBy" },
 	issues: {
 		orgField: "clerkOrgId",
 		authorField: null,
+		labelField: null,
 		authorlessReason:
 			"an issue row mirrors a GitHub issue written by the webhook, so no person or agent of the organisation authored it; only an organisation admin may erase it",
 	},
 	businessUnits: {
 		orgField: "clerkOrgId",
 		authorField: null,
+		labelField: null,
 		authorlessReason:
 			"a business unit is organisation structure kept by its admins (ownerId names the unit's owner, not an author of the row); only an organisation admin may erase it",
 	},
 	debateTemplates: {
 		orgField: "tenantOrgId",
 		authorField: null,
+		labelField: null,
 		authorlessReason:
 			"a debate template is organisation configuration upserted by its admins (updatedBy is the last editor, not the creator); only an organisation admin may erase it",
 	},
@@ -195,6 +202,8 @@ export function requireServiceAccount(transport: OrgScope, door: string): void {
 
 export async function resolveEraseCaller(
 	ctx: MutationCtx,
+	/** the scope the door already resolved (and refused on) with `withOrgScope` */
+	scope: OrgScope,
 	args: {
 		door: string;
 		verifiedPerson?: VerifiedPerson;
@@ -206,9 +215,8 @@ export async function resolveEraseCaller(
 	// PERSON bearer: the service account carries the bearer hash; the person is rebuilt from
 	// its token row and proven in its org by ID.
 	if (args.verifiedPerson !== undefined) {
-		const transport = await withOrgScope(ctx, { refuseWithoutThrow: true });
-		requireServiceAccount(transport, door);
-		const person = await resolveVerifiedPerson(ctx, transport, args.verifiedPerson, {
+		requireServiceAccount(scope, door);
+		const person = await resolveVerifiedPerson(ctx, scope, args.verifiedPerson, {
 			door,
 		});
 		const acting = await resolveActingPrincipal(
@@ -229,43 +237,51 @@ export async function resolveEraseCaller(
 	// (active agent row of the acting org, believed from the service account only). An agent is
 	// never an organisation admin.
 	if (args.verifiedActor !== undefined) {
-		const transport = await withOrgScope(ctx);
 		const principal = await requireVerifiedActorPrincipal(
 			ctx,
-			transport,
+			scope,
 			args.verifiedActor,
 			door,
 		);
 		return { kind: "principal", principal, via: "agent" };
 	}
 
-	// SESSION: the caller's own verified Clerk claims.
-	const caller = await resolveCallerFromClaims(
-		await ctx.auth.getUserIdentity(),
+	// SESSION: the caller's own verified Clerk claims, as `withOrgScope` resolved them (org
+	// by permanent ID, subject, role claim). The service account carries no member role and
+	// no person row, so with no proof it resolves to no principal and is refused by the
+	// package; a seat acting for an org without an agent proof is refused the same way.
+	const acting = await resolveActingPrincipal(
 		{
-			orgLookups: orgByIdLookups(ctx),
-			principalLookups: orgByIdPrincipalLookups(ctx),
+			kind: "person",
+			personId: scope.userId,
+			verifiedOrgId: scope.orgClerkId ?? "",
+			verifiedOrgRole: scope.orgRole,
 		},
-		{ adminRoles: ORG_ADMIN_ROLES, door },
+		personPrincipalLookups(ctx, scope.userId),
+		door,
 	);
-	if (!caller.ok) {
-		if (caller.subject === undefined) throw anonymousRefusal(door);
-		throw refusalError(caller.refusal);
-	}
-	return { kind: "principal", principal: caller.principal, via: "session" };
+	if (!acting.ok) throw refusalError(acting.refusal);
+	return { kind: "principal", principal: acting.principal, via: "session" };
 }
 
 /**
- * The stored author of a row, in the principal's ID space: an agent's stored ID is its
- * agents-row `_id` (the principal's `principalId`); a person's stored author is the reserved
- * actor name "user:<subject>" while the person principal's ID is the bare verified subject.
- * No other spelling is rewritten.
+ * The stored author of a row, in the principal's ID space: the stored author ID, else (a
+ * legacy row) a PERSON-spelled label; then an agent's stored ID is its agents-row `_id` (the
+ * principal's `principalId`) while a person's stored author is the reserved actor name
+ * "user:<subject>" and the person principal's ID is the bare verified subject.
  */
-function authorInPrincipalSpace(author: unknown): string | null {
-	if (typeof author !== "string" || author === "") return null;
-	return isPersonActorName(author)
-		? author.slice(personActorName("").length)
-		: author;
+function authorInPrincipalSpace(
+	row: Record<string, unknown>,
+	policy: Pick<ErasePolicy, "authorField" | "labelField">,
+): string | null {
+	const byId = policy.authorField === null ? undefined : row[policy.authorField];
+	if (typeof byId === "string" && byId !== "") {
+		return isPersonActorName(byId) ? byId.slice(personActorName("").length) : byId;
+	}
+	const label = policy.labelField === null ? undefined : row[policy.labelField];
+	return typeof label === "string" && isPersonActorName(label)
+		? label.slice(personActorName("").length)
+		: null;
 }
 
 /**
@@ -279,7 +295,7 @@ export async function assertMayErase(
 	ctx: MutationCtx,
 	caller: EraseCaller,
 	row: Record<string, unknown> | null,
-	policy: Pick<ErasePolicy, "orgField" | "authorField">,
+	policy: Pick<ErasePolicy, "orgField" | "authorField" | "labelField">,
 	door: string,
 ): Promise<void> {
 	if (caller.kind === "fleet") return;
@@ -299,10 +315,7 @@ export async function assertMayErase(
 		caller.principal,
 		{
 			orgId,
-			ownerId:
-				row === null || policy.authorField === null
-					? null
-					: authorInPrincipalSpace(row[policy.authorField]),
+			ownerId: row === null ? null : authorInPrincipalSpace(row, policy),
 		},
 		lookups,
 		{ door, ownerOnly: true },

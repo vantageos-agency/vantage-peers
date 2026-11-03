@@ -60,8 +60,9 @@ export const eraseRow = mutation({
 		const door = "erase:eraseRow";
 		// A caller that cannot be resolved at all (no credential, signed in without an
 		// organisation) is refused by RAISING before any proof is read.
-		requireResolvedCaller(await withOrgScope(ctx, { refuseWithoutThrow: true }), door);
-		const caller = await resolveEraseCaller(ctx, {
+		const scope = await withOrgScope(ctx, { refuseWithoutThrow: true });
+		requireResolvedCaller(scope, door);
+		const caller = await resolveEraseCaller(ctx, scope, {
 			door,
 			verifiedPerson: args.verifiedPerson,
 			verifiedActor: args.verifiedActor,

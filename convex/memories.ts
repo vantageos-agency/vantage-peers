@@ -1,16 +1,13 @@
-import { type ActingPrincipal, assertOrgAdmin, assertTargetBelongsTo, hasFleetRead, personActorName, resolveActingPrincipal, resolveCallerFromClaims } from "@vantageos/cloud-identity";
+import { hasFleetRead } from "@vantageos/cloud-identity";
 import { v, ConvexError } from "convex/values";
 import { internalMutation, type MutationCtx } from "./_generated/server";
 import { mutation, query } from "./lib/functions";
 import { internal } from "./_generated/api";
 import { memoryTypeValidator, creatorValidator, relationTypeValidator, severityValidator } from "./schema";
 import { requireId } from "./lib/ids";
-import { ORG_ADMIN_ROLES, isMcpBoundMaster, refusalError, requireResolvedCaller, verifiedActorValidator, withOrgScope } from "./lib/auth";
-import { anonymousRefusal } from "./lib/agentIdentity";
-import { ERASE_COVERED, assertMayErase, requireServiceAccount, resolveEraseCaller } from "./lib/eraseRow";
-import { personPrincipalLookups } from "./lib/actingPrincipal";
-import { resolveVerifiedPerson, verifiedPersonValidator } from "./lib/personPrincipal";
-import { orgByIdLookups, orgByIdPrincipalLookups } from "./lib/orgIdLookups";
+import { isMcpBoundMaster, requireResolvedCaller, verifiedActorValidator, withOrgScope, type OrgScope } from "./lib/auth";
+import { ERASE_COVERED, assertMayErase, resolveEraseCaller } from "./lib/eraseRow";
+import { verifiedPersonValidator } from "./lib/personPrincipal";
 import { liveOnly, liveOrNull } from "./lib/retired";
 import {
   memoryAuthorIdOf,
@@ -675,12 +672,43 @@ async function eraseMemoryBody(
   return { memoryId: memory._id, replacements, contentHashChanged };
 }
 
-// Client door, SESSION form: the caller's own verified Clerk session (the
-// dashboard, or the MCP forwarding a Clerk-JWT bearer's own JWT). The role and
-// org come from the session claims, resolved by the identity package. A caller
-// that is not a person with an org session (anonymous, the fleet service
-// account) is refused RBAC_DENIED. Same session -> package -> stored-ID shape as
-// agentCredentials:mintAgentCredential.
+// The three client doors below differ only in WHICH PROOF identifies the caller; who the
+// caller is and whether it may erase this memory is decided once, by the shared erase rule
+// (lib/eraseRow.ts: resolveEraseCaller + assertMayErase, the same one `erase:eraseRow`
+// applies): an organisation admin erases any memory of its org, an author the memories its
+// stored author ID names (a person's subject, an agent's verified ID), never a label.
+async function redactAsCaller(
+  ctx: MutationCtx,
+  scope: OrgScope,
+  args: {
+    memoryId: Id<"memories">;
+    redactions: { find: string; replaceWith: string }[];
+    verifiedPerson?: { accessTokenHash: string };
+    verifiedActor?: { agentId: Id<"agents">; orgSlug: string };
+  },
+  door: string,
+): Promise<{
+  memoryId: Id<"memories">;
+  replacements: number;
+  contentHashChanged: boolean;
+}> {
+  requireResolvedCaller(scope, door);
+  const caller = await resolveEraseCaller(ctx, scope, {
+    door,
+    verifiedPerson: args.verifiedPerson,
+    verifiedActor: args.verifiedActor,
+  });
+  const memory = await ctx.db.get(args.memoryId);
+  await assertMayErase(ctx, caller, memory, ERASE_COVERED.memories, door);
+  if (memory === null) {
+    throw new ConvexError(`MEMORY_NOT_FOUND: memory ${args.memoryId} not found`);
+  }
+  return await eraseMemoryBody(ctx, memory, args.redactions);
+}
+
+// Client door, SESSION form: the caller's own verified Clerk session (the dashboard, or the
+// MCP forwarding a Clerk-JWT bearer's own JWT). A caller that is not a person with an org
+// session (anonymous, the fleet service account) is refused RBAC_DENIED.
 export const redactMemoryContent = mutation({
   args: {
     memoryId: v.id("memories"),
@@ -689,53 +717,15 @@ export const redactMemoryContent = mutation({
   returns: redactResultValidator,
   handler: async (ctx, args) => {
     // write-contract: MCP-transport (mcp-server/src/tools.ts erase_memory, imperative, Clerk-JWT bearers) and client-SDK; 0 dashboard hits for api.memories.redactMemoryContent (measured with grep -rn "redactMemoryContent" in vantage-peers-dashboard {app,components,hooks,lib,contexts,providers}); never a subscribing render.
-    const door = "memories:redactMemoryContent";
-    const caller = await resolveCallerFromClaims(
-      await ctx.auth.getUserIdentity(),
-      {
-        orgLookups: orgByIdLookups(ctx),
-        principalLookups: orgByIdPrincipalLookups(ctx),
-      },
-      { adminRoles: ORG_ADMIN_ROLES, door },
-    );
-    if (!caller.ok) {
-      if (caller.subject === undefined) throw anonymousRefusal(door);
-      throw refusalError(caller.refusal);
-    }
-    const admin = assertOrgAdmin(caller.principal, caller.principal.orgId, {
-      adminRoles: ORG_ADMIN_ROLES,
-      door,
-    });
-    const memory = await ctx.db.get(args.memoryId);
-    // The row's STORED org ID against the caller's, for admin and author alike.
-    const verdict = await assertTargetBelongsTo(
-      caller.principal,
-      { orgId: memory?.clerkOrgId ?? null },
-      orgByIdPrincipalLookups(ctx),
-      { door },
-    );
-    if (!verdict.ok) throw refusalError(verdict.refusal);
-    if (memory === null) {
-      throw new ConvexError(`MEMORY_NOT_FOUND: memory ${args.memoryId} not found`);
-    }
-    // Not an admin: the member may erase only what it AUTHORED. The stored
-    // `createdBy` of a person-written row is `user:<verified subject>`, forced
-    // equal to the verified caller at write time (memoryAuthorOf,
-    // convex/lib/memoryTenant.ts) and a RESERVED spelling no agent can register,
-    // so it is compared with the actor name of THIS verified subject, never with
-    // a name the caller typed.
-    if (!admin.ok && memory.createdBy !== caller.actorName) {
-      throw refusalError(admin.refusal);
-    }
-    return await eraseMemoryBody(ctx, memory, args.redactions);
+    const scope = await withOrgScope(ctx, { refuseWithoutThrow: true });
+    return await redactAsCaller(ctx, scope, args, "memories:redactMemoryContent");
   },
 });
 
-// Client door, PERSON-BEARER form: a person signed in through the MCP OAuth flow
-// (Claude.ai, ChatGPT). The MCP reaches Convex as the fleet service account, so
-// this door is MCP-bound only and REQUIRES the bearer hash (`verifiedPerson`);
-// subject, org and role are re-read from the token row, never carried
-// (lib/personPrincipal.ts), and the person is proven in its org by ID.
+// Client door, PERSON-BEARER form: a person signed in through the MCP OAuth flow (Claude.ai,
+// ChatGPT). The MCP reaches Convex as the fleet service account, so this door is MCP-bound
+// only and REQUIRES the bearer hash (`verifiedPerson`); subject, org and role are re-read
+// from the token row, never carried (lib/personPrincipal.ts).
 export const redactMemoryContentAsPerson = mutation({
   args: {
     memoryId: v.id("memories"),
@@ -744,67 +734,16 @@ export const redactMemoryContentAsPerson = mutation({
   },
   returns: redactResultValidator,
   handler: async (ctx, args) => {
-    // write-contract: MCP-transport-only — issued via mcp-server client.mutation("memories:redactMemoryContentAsPerson", …) in tools.ts erase_memory (imperative); 0 dashboard hits (measured with grep -rn "redactMemoryContentAsPerson" in vantage-peers-dashboard {app,components,hooks,lib,contexts,providers}); never a subscribing render.
-    const door = "memories:redactMemoryContentAsPerson";
-    // The transport must be the fleet service account (acting for the person's
-    // org on the MCP path): resolveVerifiedPerson refuses anyone else with
-    // verified-person-not-trusted, and binds the person to the acting org.
-    const transport = await withOrgScope(ctx, { refuseWithoutThrow: true });
-    // The door is the fleet SERVICE ACCOUNT (acting for the person's org on the
-    // MCP path): anyone else is refused, naming this door.
-    requireServiceAccount(transport, door);
-    const person = await resolveVerifiedPerson(
-      ctx,
-      transport,
-      args.verifiedPerson,
-      { door },
-    );
-    const acting = await resolveActingPrincipal(
-      {
-        kind: "person",
-        personId: person.userId ?? "",
-        verifiedOrgId: person.orgClerkId ?? "",
-        verifiedOrgRole: person.orgRole,
-      },
-      personPrincipalLookups(ctx, person.userId),
-      door,
-    );
-    if (!acting.ok) throw refusalError(acting.refusal);
-    const person_caller = { principal: acting.principal, actorName: personActorName(person.userId ?? "") };
-    const admin = assertOrgAdmin(person_caller.principal, person_caller.principal.orgId, {
-      adminRoles: ORG_ADMIN_ROLES,
-      door,
-    });
-    const memory = await ctx.db.get(args.memoryId);
-    // The row's STORED org ID against the caller's, for admin and author alike.
-    const verdict = await assertTargetBelongsTo(
-      person_caller.principal,
-      { orgId: memory?.clerkOrgId ?? null },
-      orgByIdPrincipalLookups(ctx),
-      { door },
-    );
-    if (!verdict.ok) throw refusalError(verdict.refusal);
-    if (memory === null) {
-      throw new ConvexError(`MEMORY_NOT_FOUND: memory ${args.memoryId} not found`);
-    }
-    // Not an admin: the member may erase only what it AUTHORED. The stored
-    // `createdBy` of a person-written row is `user:<verified subject>`, forced
-    // equal to the verified caller at write time (memoryAuthorOf,
-    // convex/lib/memoryTenant.ts) and a RESERVED spelling no agent can register,
-    // so it is compared with the actor name of THIS verified subject, never with
-    // a name the caller typed.
-    if (!admin.ok && memory.createdBy !== person_caller.actorName) {
-      throw refusalError(admin.refusal);
-    }
-    return await eraseMemoryBody(ctx, memory, args.redactions);
+    // write-contract: MCP-transport-only - issued via mcp-server client.mutation("memories:redactMemoryContentAsPerson", ...) in tools.ts erase_memory (imperative); never a subscribing pre-org client shell.
+    const scope = await withOrgScope(ctx, { refuseWithoutThrow: true });
+    return await redactAsCaller(ctx, scope, args, "memories:redactMemoryContentAsPerson");
   },
 });
 
 // Client door, SEAT form: the fleet service account acting for the seat's organisation,
-// carrying the agent the transport verified (`verifiedActor`, judged by the one agent-proof
-// check). A seat is never an organisation admin: it erases only the memories its verified
-// agent AUTHORED, by the stored author ID (`createdById`), never by a label. The decision is
-// the shared erase rule (lib/eraseRow.ts), the same one `erase:eraseRow` applies.
+// carrying the agent the transport verified (`verifiedActor`, judged by the identity package).
+// A seat is never an organisation admin: it erases only the memories its verified agent
+// AUTHORED, by the stored author ID (`createdById`), never by a label.
 export const redactMemoryContentAsAgent = mutation({
   args: {
     memoryId: v.id("memories"),
@@ -814,18 +753,8 @@ export const redactMemoryContentAsAgent = mutation({
   returns: redactResultValidator,
   handler: async (ctx, args) => {
     // write-contract: MCP-transport-only - issued via mcp-server client.mutation("memories:redactMemoryContentAsAgent", ...) in tools.ts erase_memory (imperative); never a subscribing pre-org client shell.
-    const door = "memories:redactMemoryContentAsAgent";
-    requireResolvedCaller(await withOrgScope(ctx, { refuseWithoutThrow: true }), door);
-    const caller = await resolveEraseCaller(ctx, {
-      door,
-      verifiedActor: args.verifiedActor,
-    });
-    const memory = await ctx.db.get(args.memoryId);
-    await assertMayErase(ctx, caller, memory, ERASE_COVERED.memories, door);
-    if (memory === null) {
-      throw new ConvexError(`MEMORY_NOT_FOUND: memory ${args.memoryId} not found`);
-    }
-    return await eraseMemoryBody(ctx, memory, args.redactions);
+    const scope = await withOrgScope(ctx, { refuseWithoutThrow: true });
+    return await redactAsCaller(ctx, scope, args, "memories:redactMemoryContentAsAgent");
   },
 });
 
