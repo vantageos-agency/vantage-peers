@@ -444,7 +444,7 @@ export async function collectMemoryChain(
 /**
  * The chain of `row` once the SAME decision (`assertMayErase`) has been taken on every
  * version. `row` itself was judged by the caller of this function. One version the caller may
- * not erase refuses the whole chain, typed (`RBAC_DENIED`), naming only the COUNT of such
+ * not erase refuses the whole chain, typed (`ERASE_CHAIN_REFUSED`, the per-version refusals being the package's `RBAC_DENIED`), naming only the COUNT of such
  * versions, never their ids, authors or content.
  */
 export async function memoryChainMayErase(
@@ -472,7 +472,7 @@ export async function memoryChainMayErase(
 	}
 	if (unerasable > 0) {
 		throw new ConvexError(
-			`RBAC_DENIED: this memory has older or newer versions the caller may not erase, so nothing was erased — ${JSON.stringify({ door, reason: "memory-chain-has-unerasable-versions", unerasableVersions: unerasable })}`,
+			`ERASE_CHAIN_REFUSED: this memory has older or newer versions the caller may not erase, so nothing was erased — ${JSON.stringify({ door, reason: "memory-chain-has-unerasable-versions", unerasableVersions: unerasable })}`,
 		);
 	}
 	return chain;
