@@ -87,7 +87,6 @@ import {
 	resolveReviewer,
 } from "./lib/reviewRouting";
 import { isFleetSystemCaller } from "./lib/systemCaller";
-import { requireMissionInTenant } from "./lib/missionTenant";
 import { fleetOperatorRef } from "./lib/operatorOrg";
 import { orgRefOfRow } from "./lib/authOrgMapping";
 import {
@@ -1017,22 +1016,6 @@ export const create = mutation({
 			throw new ConvexError(
 				`INVALID_ASSIGNEE: tasks:create needs the assignee, as \`assignedTo\` (a name) or \`assignedToAgentId\` (an agent ID from list_peers \`agentId\`) — ${JSON.stringify({ door: "tasks:create" })}`,
 			);
-		}
-		// A task references only a mission of the tenant it will be stamped into
-		// (the same predicate tasks:update uses). The fleet master acting for no
-		// organisation keeps its reach; a seat reaching Convex as the service
-		// account was turned into a member scope above and is judged here.
-		if (taskArgs.missionId !== undefined) {
-			const rowTenantSlug = linkedAssignee?.orgSlug ?? rowOrgId;
-			await requireMissionInTenant(ctx, {
-				missionId: taskArgs.missionId,
-				rowTenant: {
-					orgId: rowTenantSlug,
-					clerkOrgId: await clerkOrgIdForSlug(ctx, rowTenantSlug),
-				},
-				actsAsMaster: scope.isMaster,
-				door: "tasks:create",
-			});
 		}
 		if (taskArgs.createdBy === undefined) {
 			// HUMAN path: createdBy is the actor "user:<subject>" (schema keeps it a
@@ -2214,8 +2197,6 @@ async function assigneeIsRepoOwnerAgent(
 	return ownerId !== undefined && ownerId === (await resolveInTaskOrg(assignee));
 }
 
-/** Most task rows the mission all-done scan reads before it leaves the mission open. */
-export const MISSION_OPEN_SCAN_CAP = 500;
 /** Most ids one `addDependsOn` may carry. */
 export const ADD_DEPENDENCIES_MAX_IDS = 100;
 /** Most tasks the cycle walk may visit before the call is refused. */
@@ -2460,19 +2441,6 @@ export const update = mutation({
 			if (assigneeById === undefined) {
 				await recordNameOnlyCall(ctx, "tasks:update:assignedTo");
 			}
-		}
-
-		// The mission a task points at must be of the TASK's own tenant (the same
-		// predicate tasks:create uses), judged after authorisation so a refused
-		// caller learns nothing about the mission. The fleet master acting for no
-		// organisation keeps its reach.
-		if (fields.missionId !== undefined) {
-			await requireMissionInTenant(ctx, {
-				missionId: fields.missionId,
-				rowTenant: task,
-				actsAsMaster: callerScope.isMaster && verifiedOrgSlug === undefined,
-				door: "tasks:update",
-			});
 		}
 
 		// Build patch object with only provided fields
@@ -3541,53 +3509,47 @@ export const complete = mutation({
 
 		// Auto-complete mission: if this task belongs to a mission, check if all tasks are done
 		if (task.missionId) {
+			// "Every task of the mission is done" is an EXISTENCE question — is there
+			// any OTHER task whose status is not "done"? — so it is answered with two
+			// index ranges either side of "done" (`by_mission` is [missionId, status]),
+			// each read to at most 2 rows (enough to see one that is not this task),
+			// never the mission's whole task set.
 			const missionId = task.missionId;
-			const mission = await ctx.db.get(missionId);
-			const operatorRef = await fleetOperatorRef(ctx.db);
-			// R-52 — `task.missionId` is set by the caller (create/update accept
-			// it as an argument), so the mission is a caller-chosen target. It is
-			// closed only when ITS server-stamped tenant is the task's own (equal,
-			// or both the fleet's: unstamped and operator-stamped are one tenant)
-			// (itself stamped from the caller's scope at create). A foreign or
-			// fleet mission is left untouched; the task completion is not refused.
-			if (
-				mission &&
-				mission.status !== "complete" &&
-				sameTenantStamp(orgRefOfRow(mission), orgRefOfRow(task), operatorRef)
-			) {
-				// "Every task of the mission is done" is an EXISTENCE question: is there
-				// any OTHER task of THIS TENANT whose status is not "done"? Two index
-				// ranges either side of "done" (`by_mission` is [missionId, status]).
-				// A task of another tenant that names this mission (a row stored before
-				// the reference was refused at create/update) is not this mission's
-				// work and never holds it open, so it is skipped; the scan is bounded
-				// and a mission with more rows than the cap is left open (fail closed).
-				let scanned = 0;
-				let blocked = false;
-				for (const side of ["lt", "gt"] as const) {
-					for await (const t of ctx.db
-						.query("tasks")
-						.withIndex("by_mission", (q) =>
-							side === "lt"
-								? q.eq("missionId", missionId).lt("status", "done")
-								: q.eq("missionId", missionId).gt("status", "done"),
-						)) {
-						if (++scanned > MISSION_OPEN_SCAN_CAP) {
-							blocked = true;
-							break;
-						}
-						if (t._id.toString() === args.taskId.toString()) continue;
-						if (
-							sameTenantStamp(orgRefOfRow(t), orgRefOfRow(mission), operatorRef)
-						) {
-							blocked = true;
-							break;
-						}
-					}
-					if (blocked) break;
-				}
-				if (!blocked) {
-					await ctx.db.patch(missionId, {
+			const notDone = [
+				...(await ctx.db
+					.query("tasks")
+					.withIndex("by_mission", (q) =>
+						q.eq("missionId", missionId).lt("status", "done"),
+					)
+					.take(2)),
+				...(await ctx.db
+					.query("tasks")
+					.withIndex("by_mission", (q) =>
+						q.eq("missionId", missionId).gt("status", "done"),
+					)
+					.take(2)),
+			];
+			const allDone = notDone.every(
+				(t) => t._id.toString() === args.taskId.toString(),
+			);
+			if (allDone) {
+				const mission = await ctx.db.get(task.missionId);
+				// R-52 — `task.missionId` is set by the caller (create/update accept
+				// it as an argument), so the mission is a caller-chosen target. It is
+				// closed only when ITS server-stamped tenant is the task's own (equal,
+				// or both the fleet's: unstamped and operator-stamped are one tenant)
+				// (itself stamped from the caller's scope at create). A foreign or
+				// fleet mission is left untouched; the task completion is not refused.
+				if (
+					mission &&
+					sameTenantStamp(
+						orgRefOfRow(mission),
+						orgRefOfRow(task),
+						await fleetOperatorRef(ctx.db),
+					) &&
+					mission.status !== "complete"
+				) {
+					await ctx.db.patch(task.missionId, {
 						status: "complete",
 						updatedAt: Date.now(),
 					});
