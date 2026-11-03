@@ -122,6 +122,7 @@ describe("2. read sites of an erasure table filter on the marker or say why not"
 					const after = lines.slice(Math.max(0, i - 3), i + WINDOW).join("\n");
 					const filtered =
 						after.includes(`.eq("${field}"`) ||
+						after.includes(`RETIREMENT.${table}.field`) ||
 						/\b(liveOnly|liveOrNull|isRetired)\(/.test(after);
 					if (!filtered) bad.push(`${relative(CONVEX, file)}:${i + 1} ${table}`);
 				}

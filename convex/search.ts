@@ -11,7 +11,7 @@ import {
 	getEmbeddingModelName,
 } from "./lib/aiClient";
 import { isNamespaceAllowedForScope } from "./lib/auth";
-import { isLiveRagEntry } from "./lib/retired";
+import { filterValueMap, isLiveRagEntry } from "./lib/retired";
 import { memoryTypeValidator } from "./schema";
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -196,7 +196,7 @@ function liveEntriesOnly(
 	res: RagSearchResult,
 	args: RagSearchArgs,
 ): RagSearchResult {
-	const wantedType = args.filters?.find((f) => f.name === "type")?.value;
+	const wantedType = filterValueMap(args.filters ?? []).get("type");
 	const kept = new Set(
 		res.entries
 			.filter((e) =>

@@ -20,7 +20,7 @@ import {
 } from "./lib/auth";
 import { orgRefOfScope } from "./lib/authOrgMapping";
 import { clerkOrgIdForSlug } from "./lib/orgClerkId";
-import { liveOnly } from "./lib/retired";
+import { RETIREMENT } from "./lib/retired";
 import { orgHasPendingInvites, scheduleInviteBind } from "./lib/personalAgentInvite";
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -213,17 +213,20 @@ export const getMembership = query({
 			const rows = await ctx.db
 				.query("orgMembership")
 				.withIndex("by_org_clerk_id", (q) => q.eq("clerkOrgId", targetOrgId))
+				// Retired (tombstoned) members are narrowed out BEFORE the bound.
+				.filter((q) => q.eq(q.field(RETIREMENT.orgMembership.field), undefined))
 				.take(MEMBERSHIP_QUERY_LIMIT);
 			assertNotTruncated(rows.length, `org "${args.clerkOrgSlug}"`);
-			return liveOnly("orgMembership", rows).map(toShape);
+			return rows.map(toShape);
 		}
 
 		const rows = await ctx.db
 			.query("orgMembership")
 			.withIndex("by_user", (q) => q.eq("clerkUserId", scope.userId))
+			.filter((q) => q.eq(q.field(RETIREMENT.orgMembership.field), undefined))
 			.take(MEMBERSHIP_QUERY_LIMIT);
 		assertNotTruncated(rows.length, `subject "${scope.userId}"`);
-		return liveOnly("orgMembership", rows).map(toShape);
+		return rows.map(toShape);
 	},
 });
 

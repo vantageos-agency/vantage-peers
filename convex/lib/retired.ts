@@ -73,11 +73,16 @@ export function isLiveRagEntry(
 	filterValues: ReadonlyArray<{ name: string; value: unknown }>,
 	wantedType?: string,
 ): boolean {
-	if (filterValues.find((f) => f.name === "isLatest")?.value !== "true") {
-		return false;
-	}
-	return (
-		wantedType === undefined ||
-		filterValues.find((f) => f.name === "type")?.value === wantedType
-	);
+	// The component returns an entry's filters as [{ name, value }, ...]
+	// (node_modules/@convex-dev/rag/dist/shared.d.ts vEntry.filterValues).
+	const byKey = filterValueMap(filterValues);
+	if (byKey.get("isLatest") !== "true") return false;
+	return wantedType === undefined || byKey.get("type") === wantedType;
+}
+
+/** A RAG entry's (or a search's) filter list as a key -> value map. */
+export function filterValueMap(
+	filterValues: ReadonlyArray<{ name: string; value: unknown }>,
+): Map<string, unknown> {
+	return new Map(filterValues.map((f) => [f.name, f.value] as const));
 }
