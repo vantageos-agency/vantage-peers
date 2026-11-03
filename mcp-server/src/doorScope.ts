@@ -51,6 +51,8 @@ export type DoorScopeRule = {
 export const DOOR_SCOPE: Readonly<Record<string, DoorScopeRule>> = {
 	// memories / episodes
 	"memories:getMemory": { verifiedOrg: "always" },
+	"memories:storeMemory": { verifiedPerson: true },
+	"episodes:storeEpisode": { verifiedPerson: true },
 	"memories:redactMemoryContentAsPerson": { verifiedPerson: true },
 	"erase:eraseRow": { verifiedPerson: true },
 	// messages
@@ -90,7 +92,10 @@ export const DOOR_SCOPE: Readonly<Record<string, DoorScopeRule>> = {
 	"githubOwnerBinding:listBindings": { verifiedOrg: "always" },
 	"githubOwnerBinding:listUnprovenMappings": { verifiedOrg: "always" },
 	// briefing notes
-	"briefingNotes:create": { verifiedOrg: "always" },
+	"briefingNotes:create": {
+		verifiedPerson: true,
+		verifiedOrg: "unless-person",
+	},
 	"briefingNotes:get": { verifiedOrg: "always" },
 	"briefingNotes:list": { verifiedOrg: "always" },
 	"briefingNotes:searchBriefingNotesByKeyword": { verifiedOrg: "always" },

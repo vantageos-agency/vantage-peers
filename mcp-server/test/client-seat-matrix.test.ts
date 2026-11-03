@@ -13,20 +13,25 @@
  *                    immobiliere-pujol, whoami person-designates-no-agent);
  *   agent-seat       an AGENT seat token (a scope profile bound to one agent).
  *
- * Each cell is PASS / REFUSED(code) / ERROR (test/lib/seatMatrix.ts). Two
+ * Each cell is PASS / REFUSED(code) / ERROR (test/lib/seatMatrix.ts). Three
  * invariants tie the advertised text to what the server does:
  *   1. a person seat is never refused for want of an agent (PERSON_NO_HUMAN_DOOR,
  *      AGENT_CREDENTIAL_REQUIRED, ACTING_NAME_REQUIRED, CREATED_BY_REQUIRED) on a
  *      tool whose OWN text says a signed-in person may omit the author;
  *   2. a tool that refuses an agent-less person PERSON_NO_HUMAN_DOOR says so in
- *      its description (NO_PERSON_DOOR_NOTE, derived from its declaration).
+ *      its description (NO_PERSON_DOOR_NOTE, derived from its declaration);
+ *   3. a read refused for an omitted namespace says so on that parameter
+ *      (READ_NAMESPACE_NOTE).
  * With CLIENT_SEAT_MATRIX_OUT set, the matrix is written there as Markdown
  * (scripts/client-seat-matrix.mjs).
  */
 
 import fs from "node:fs";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
-import { NO_PERSON_DOOR_NOTE } from "../src/registerTool.js";
+import {
+	NO_PERSON_DOOR_NOTE,
+	READ_NAMESPACE_NOTE,
+} from "../src/registerTool.js";
 import {
 	type Cell,
 	classify,
@@ -157,6 +162,21 @@ describe("client seat matrix: every listed tool, three seats, plain arguments", 
 				})
 				.map((tool) => tool.name);
 			expect(unannounced).toEqual([]);
+			// A read refused for an omitted namespace says, on that parameter, that
+			// only the fleet master may omit it.
+			const namespaceUnannounced = run.tools
+				.filter((tool) => {
+					const cell = run.cells.get(tool.name);
+					return (
+						cell?.kind === "REFUSED" &&
+						/requires an explicit namespace argument/.test(cell.text) &&
+						!(
+							tool.inputSchema.properties?.namespace?.description ?? ""
+						).includes(READ_NAMESPACE_NOTE)
+					);
+				})
+				.map((tool) => tool.name);
+			expect(namespaceUnannounced).toEqual([]);
 		}, 300_000);
 	}
 });

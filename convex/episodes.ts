@@ -13,6 +13,7 @@ import {
   seatAgentIdOf,
 } from "./lib/seatNamespace";
 import { memberNamespaceRoots } from "./lib/teamNamespace";
+import { resolveVerifiedPerson, verifiedPersonValidator } from "./lib/personPrincipal";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // storeEpisode
@@ -28,6 +29,9 @@ export const storeEpisode = mutation({
     // The agent the MCP transport verified, by its agents-row ID (convex/lib/seatNamespace.ts):
     // the only key to `orchestrator/<its own agent ID>` for a seat acting for its org.
     verifiedActor: v.optional(verifiedActorValidator),
+    // A PERSON acting in its own name through the MCP (no agent): the bearer hash,
+    // as memories:storeMemory takes it (convex/lib/personPrincipal.ts).
+    verifiedPerson: v.optional(verifiedPersonValidator),
     // Absent for a person (the MCP forwards none): the verified caller is the
     // author. The service account names the seat it authenticated.
     createdBy: v.optional(creatorValidator),
@@ -65,7 +69,17 @@ export const storeEpisode = mutation({
     // default here never breaks that live path. Reuses
     // the namespace gate of convex/lib/teamNamespace.ts: a member owns
     // `team/<its verified org ID>` (and the legacy label alias of that same org).
-    const scope = await withOrgScope(ctx);
+    // A person carried as verifiedPerson acts on its own scope (see storeMemory).
+    const scope = await resolveVerifiedPerson(
+      ctx,
+      await withOrgScope(ctx),
+      args.verifiedPerson,
+      {
+        door: "episodes:storeEpisode",
+        ...(args.createdBy !== undefined ? { assertedName: args.createdBy } : {}),
+        agentProof: args.verifiedActor !== undefined,
+      },
+    );
     const ownAgent = await seatAgentIdOf(ctx, scope, args.verifiedActor);
     if (!isMemoryNamespaceAllowed(scope, args.namespace, ownAgent)) {
       throw new ConvexError(

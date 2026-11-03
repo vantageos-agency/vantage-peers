@@ -65,6 +65,7 @@ import { isRefusedEnvelope } from "./refusal.js";
 import {
 	defineTool,
 	fromNotOnRosterRefusal,
+	PERSON_NO_AGENT_STEP,
 	type ToolAuthContext,
 } from "./registerTool.js";
 import { resolveStateTokens, StateTokenError } from "./state-tokens.js";
@@ -292,7 +293,7 @@ const memoryTypeSchema = z
 	.describe("Memory classification type");
 
 const CREATED_BY_REQUIRED =
-	"createdBy is required: name the orchestrator role this call acts as. Only a signed-in person (Clerk session) may omit it, and is then recorded under its own verified account.";
+	"createdBy is required: name the orchestrator role this call acts as. Only a signed-in person (a dashboard session, or a person connected through the consent page) may omit it, and is then recorded under its own verified account.";
 
 export const creatorSchema = z
 	.string()
@@ -1162,6 +1163,20 @@ export const whoamiOutputSchema = z.looseObject({
 		.describe(
 			"The acting agent's stored ID (same as actor.agentId); null when no agent is resolved.",
 		),
+	agent_name: z
+		.string()
+		.nullable()
+		.optional()
+		.describe(
+			"The acting agent's current name (same as actor.agentName); null when no agent acts.",
+		),
+	agent_status: z
+		.string()
+		.nullable()
+		.optional()
+		.describe(
+			"One plain sentence when no agent is bound to this connection, naming the step that binds one; null when an agent acts (and for the fleet master).",
+		),
 	agent_unresolved_reason: z
 		.enum([
 			"no-context",
@@ -1202,6 +1217,24 @@ export const whoamiOutputSchema = z.looseObject({
 			"The acting agent name verified from the agent credential on THIS request; null when none was presented.",
 		),
 });
+
+/**
+ * whoami's `agent_status`: null when an agent acts (or for the fleet master, which
+ * acts as no agent by design); otherwise one plain sentence saying no agent is bound
+ * and naming the step that binds one. A person binds one on the consent page of a
+ * new connection; a seat token is bound by its organisation's admin.
+ */
+export function agentStatusSentence(
+	oauthCtx: OAuthContext | undefined,
+	agentId: string | null,
+): string | null {
+	if (agentId !== null) return null;
+	if (oauthCtx !== undefined && isMasterScope(oauthCtx)) return null;
+	if (oauthCtx?.principal === "person") {
+		return `No agent is bound to this connection, so your writes are recorded under your own account. ${PERSON_NO_AGENT_STEP}`;
+	}
+	return "No agent is bound to this connection. A seat token acts through an agent only once your organisation admin binds the seat to one; a signed-in person reconnects this client and chooses (or, as an organisation admin, creates) an agent on the consent page.";
+}
 
 // ─────────────────────────────────────────────────────────────────────────────
 // C1 — Per-tool outputSchema exports (B2 §3 standard)
@@ -2508,6 +2541,7 @@ export function registerTools(
 			destructiveHint: false,
 			title: "Store memory",
 			memberAuthorDoor: true,
+			personDoor: true,
 		},
 		async ({
 			namespace: requestedNamespace,
@@ -2521,9 +2555,14 @@ export function registerTools(
 			try {
 				contentBytes = assertContentSize(content, "store_memory");
 
-				// A Clerk-JWT member is recorded as its own verified subject by Convex;
-				// every other caller names the seat it acts as.
-				const author = memberAuthorLabel(oauthCtx) ?? createdBy;
+				// A Clerk-JWT member, and a PERSON acting in its own name (an OAuth
+				// person token with no agent: defineTool already dropped any acting
+				// name), are recorded as their own verified subject by Convex; every
+				// other caller names the seat it acts as.
+				const selfAuthor =
+					memberAuthorLabel(oauthCtx) ??
+					(createdBy === undefined ? personActorOf(oauthCtx) : undefined);
+				const author = selfAuthor ?? createdBy;
 				if (author === undefined) return mcpError(CREATED_BY_REQUIRED);
 				const target = resolveWriteNamespace(requestedNamespace, "store_memory");
 				if ("denied" in target) return target.denied;
@@ -2535,11 +2574,14 @@ export function registerTools(
 					? [{ targetId: relatesTo.targetId as any, type: relatesTo.type }]
 					: [];
 
+				const forwardedAuthor = selfAuthor === undefined ? author : undefined;
 				const memoryId = await convex.mutation("memories:storeMemory" as any, {
 					namespace,
 					type,
 					content,
-					...(memberAuthorLabel(oauthCtx) === undefined ? { createdBy: author } : {}),
+					...(forwardedAuthor !== undefined ? { createdBy: forwardedAuthor } : {}),
+					// verifiedPerson for a person acting in its own name (doorScope).
+					...doorScopeArgs("memories:storeMemory", forwardedAuthor),
 					relations,
 					ttl,
 				});
@@ -2812,7 +2854,7 @@ export function registerTools(
 			namespace: z
 				.string()
 				.optional()
-				.describe("Filter to a specific namespace — omit to search all"),
+				.describe("Filter to a specific namespace (the fleet master may omit it to search all)"),
 			type: memoryTypeSchema
 				.optional()
 				.describe("Filter to a specific memory type — omit to search all"),
@@ -3040,6 +3082,7 @@ export function registerTools(
 			destructiveHint: false,
 			title: "Store episode",
 			memberAuthorDoor: true,
+			personDoor: true,
 		},
 		async ({
 			namespace: requestedNamespace,
@@ -3052,8 +3095,12 @@ export function registerTools(
 			severity,
 		}) => {
 			try {
-				// Same author rule as store_memory (see memberAuthor.ts).
-				const author = memberAuthorLabel(oauthCtx) ?? createdBy;
+				// Same author rule as store_memory (see memberAuthor.ts): a member and
+				// a person acting in its own name are recorded by Convex as themselves.
+				const selfAuthor =
+					memberAuthorLabel(oauthCtx) ??
+					(createdBy === undefined ? personActorOf(oauthCtx) : undefined);
+				const author = selfAuthor ?? createdBy;
 				if (author === undefined) return mcpError(CREATED_BY_REQUIRED);
 				const target = resolveWriteNamespace(requestedNamespace, "store_episode");
 				if ("denied" in target) return target.denied;
@@ -3061,9 +3108,11 @@ export function registerTools(
 				const nsDenied = guardWrite(namespace);
 				if (nsDenied) return nsDenied;
 
+				const forwardedAuthor = selfAuthor === undefined ? author : undefined;
 				const memoryId = await convex.mutation("episodes:storeEpisode" as any, {
 					namespace,
-					...(memberAuthorLabel(oauthCtx) === undefined ? { createdBy: author } : {}),
+					...(forwardedAuthor !== undefined ? { createdBy: forwardedAuthor } : {}),
+					...doorScopeArgs("episodes:storeEpisode", forwardedAuthor),
 					context,
 					goal,
 					action,
@@ -3161,7 +3210,7 @@ export function registerTools(
 			namespace: z
 				.string()
 				.optional()
-				.describe("Filter to a specific namespace — omit to list across all"),
+				.describe("Filter to a specific namespace (the fleet master may omit it to list across all)"),
 			createdBy: z
 				.string()
 				.optional()
@@ -3347,7 +3396,7 @@ export function registerTools(
 			namespace: z
 				.string()
 				.optional()
-				.describe("Filter to a specific namespace — omit to search all"),
+				.describe("Filter to a specific namespace (the fleet master may omit it to search all)"),
 			limit: z
 				.number()
 				.int()
@@ -7286,13 +7335,16 @@ export function registerTools(
 						"Passing a briefingNotes ID will fail with ArgumentValidationError at path .linkedMemoryIds[N]. " +
 						"If cross-linking briefings is needed, request the linkedBriefingIds feature instead.",
 				),
-			createdBy: creatorSchema,
+			createdBy: creatorSchema.describe(
+				`${creatorSchema.description}${PERSON_DOOR_NOTE}`,
+			),
 		},
 		{
 			readOnlyHint: false,
 			openWorldHint: false,
 			destructiveHint: false,
 			title: "Create briefing note",
+			personDoor: true,
 		},
 		async ({
 			title,
@@ -7322,7 +7374,8 @@ export function registerTools(
 					decisions: toArray(decisions),
 					linkedMemoryIds: toArray(linkedMemoryIds) as string[],
 					createdBy,
-					...doorScopeArgs("briefingNotes:create", undefined),
+					// No createdBy: a person acting in its own name (verifiedPerson).
+					...doorScopeArgs("briefingNotes:create", createdBy),
 				});
 
 				return {
@@ -7330,7 +7383,12 @@ export function registerTools(
 						{
 							type: "text",
 							text: JSON.stringify(
-								{ noteId, title, topic, createdBy },
+								{
+									noteId,
+									title,
+									topic,
+									createdBy: createdBy ?? personActorOf(oauthCtx),
+								},
 								null,
 								2,
 							),
@@ -11308,6 +11366,10 @@ export function registerTools(
 				// The acting agent by stored ID; identifiers only.
 				actor: acting.actor,
 				agent_id: acting.agent_id,
+				// At top level, beside the workspace above: who acts, and when no
+				// agent does, the one step that binds one.
+				agent_name: acting.actor?.agentName ?? null,
+				agent_status: agentStatusSentence(oauthCtx, acting.agent_id),
 				agent_unresolved_reason: acting.agent_unresolved_reason,
 				caller_id: identity.caller_id,
 				org_slug: identity.org_slug,

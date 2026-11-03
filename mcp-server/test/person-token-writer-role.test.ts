@@ -612,8 +612,12 @@ describe("strict default composes with the writer-role gate (person token)", () 
 		const { tools, called } = toolsFor(
 			await contextFor(await personToken("user_editor")),
 		);
-		const { createdBy: _omitted, ...noName } = WRITE;
-		const r = (await tools.get("store_memory")?.(noName)) as ToolResult;
+		// store_memory has a person door since task k177e8dyrnykk3c56yf2b0pgfs8hhz06;
+		// write_diary still has none.
+		const r = (await tools.get("write_diary")?.({
+			date: "2026-11-03",
+			content: "a diary line",
+		})) as ToolResult;
 		expect(r.isError).toBe(true);
 		expect(textOf(r)).toContain("PERSON_NO_HUMAN_DOOR");
 		expect(called.mutations).toEqual([]);
