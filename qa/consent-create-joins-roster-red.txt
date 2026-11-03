@@ -1,0 +1,94 @@
+(!) Your Vite config uses features that are unsupported by `configLoader: 'native'`, which is planned to become the default in a future major version of Vite:
+  - ESM syntax in a file loaded as CommonJS (vitest.config.ts:1:1). Use a `.mjs` extension or set `"type": "module"` in the closest package.json
+Set `VITE_CONFIG_NATIVE_IGNORE_WARNING=true` to suppress this warning.
+
+[1m[46m RUN [49m[22m [36mv4.1.1 [39m[90m/root/coding/vantage-memory/.claude/worktrees/agent-a434b4c445b553217[39m
+
+ [31m❯[39m convex/__tests__/consentCreateJoinsRoster.test.ts [2m([22m[2m7 tests[22m[2m | [22m[31m4 failed[39m[2m)[22m[33m 372[2mms[22m[39m
+[31m     [31m×[31m empty rosters -> id and exact stored name appended, token may send as it[39m[33m 334[2mms[22m[39m
+[31m     [31m×[31m APPEND: existing roster entries are kept and not reordered[39m[32m 10[2mms[22m[39m
+[31m     [31m×[31m a second identical create is AGENT_NAME_TAKEN and adds nothing[39m[32m 7[2mms[22m[39m
+[31m     [31m×[31m an org with no mapping row refuses the create, nothing is inserted[39m[32m 4[2mms[22m[39m
+
+[31m⎯⎯⎯⎯⎯⎯⎯[39m[1m[41m Failed Tests 4 [49m[22m[31m⎯⎯⎯⎯⎯⎯⎯[39m
+
+[41m[1m FAIL [22m[49m convex/__tests__/consentCreateJoinsRoster.test.ts[2m > [22mAFTER: a created agent joins the roster in the same transaction[2m > [22mempty rosters -> id and exact stored name appended, token may send as it
+[31m[1mAssertionError[22m: expected [] to include '10003;agents'[39m
+[36m [2m❯[22m convex/__tests__/consentCreateJoinsRoster.test.ts:[2m109:38[22m[39m
+    [90m107|[39m   [34mexpect[39m(agent)[33m.[39mnot[33m.[39m[34mtoBeNull[39m()[33m;[39m
+    [90m108|[39m   [35mconst[39m row [33m=[39m [35mawait[39m [34mmapping[39m(t)[33m;[39m
+    [90m109|[39m   [34mexpect[39m(row[33m?.[39mallowedAgentIds [33m??[39m [])[33m.[39m[34mtoContain[39m(agent[33m?.[39m_id)[33m;[39m
+    [90m   |[39m                                      [31m^[39m
+    [90m110|[39m   [34mexpect[39m(row[33m?.[39mallowedOrchestrators)[33m.[39m[34mtoContain[39m([32m"Éclair"[39m)[33m;[39m
+    [90m111|[39m
+
+[31m[2m⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/4]⎯[22m[39m
+
+[41m[1m FAIL [22m[49m convex/__tests__/consentCreateJoinsRoster.test.ts[2m > [22mAFTER: a created agent joins the roster in the same transaction[2m > [22mAPPEND: existing roster entries are kept and not reordered
+[31m[1mAssertionError[22m: expected [ 'Hélios', 'Zed' ] to deeply equal [ 'Hélios', 'Zed', 'Éclair' ][39m
+
+[32m- Expected[39m
+[31m+ Received[39m
+
+[2m  [[22m
+[2m    "Hélios",[22m
+[2m    "Zed",[22m
+[32m-   "Éclair",[39m
+[2m  ][22m
+
+[36m [2m❯[22m convex/__tests__/consentCreateJoinsRoster.test.ts:[2m141:37[22m[39m
+    [90m139|[39m   [35mawait[39m [34mcreate[39m(t[33m,[39m [32m"Éclair"[39m[33m,[39m [32m"h-append"[39m)[33m;[39m
+    [90m140|[39m   [35mconst[39m row [33m=[39m [35mawait[39m [34mmapping[39m(t)[33m;[39m
+    [90m141|[39m   expect(row?.allowedOrchestrators).toEqual(["Hélios", "Zed", "Éclair"…
+    [90m   |[39m                                     [31m^[39m
+    [90m142|[39m  })[33m;[39m
+    [90m143|[39m })[33m;[39m
+
+[31m[2m⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[2/4]⎯[22m[39m
+
+[41m[1m FAIL [22m[49m convex/__tests__/consentCreateJoinsRoster.test.ts[2m > [22mDENY[2m > [22ma second identical create is AGENT_NAME_TAKEN and adds nothing
+[31m[1mAssertionError[22m: expected [] to have a length of 1 but got +0[39m
+
+[32m- Expected[39m
+[31m+ Received[39m
+
+[32m- 1[39m
+[31m+ 0[39m
+
+[36m [2m❯[22m convex/__tests__/consentCreateJoinsRoster.test.ts:[2m157:5[22m[39m
+    [90m155|[39m   [34mexpect[39m(
+    [90m156|[39m    after[33m?.[39mallowedOrchestrators[33m.[39m[34mfilter[39m((n) [33m=>[39m n [33m===[39m [32m"Éclair"[39m)[33m,[39m
+    [90m157|[39m   )[33m.[39m[34mtoHaveLength[39m([34m1[39m)[33m;[39m
+    [90m   |[39m     [31m^[39m
+    [90m158|[39m  })[33m;[39m
+    [90m159|[39m
+
+[31m[2m⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[3/4]⎯[22m[39m
+
+[41m[1m FAIL [22m[49m convex/__tests__/consentCreateJoinsRoster.test.ts[2m > [22mDENY[2m > [22man org with no mapping row refuses the create, nothing is inserted
+[31m[1mAssertionError[22m: promise resolved "null" instead of rejecting[39m
+
+[32m- Expected:[39m
+Error {
+  "message": "rejected promise",
+}
+
+[31m+ Received:[39m
+null
+
+[36m [2m❯[22m convex/__tests__/consentCreateJoinsRoster.test.ts:[2m183:43[22m[39m
+    [90m181|[39m  test("an org with no mapping row refuses the create, nothing is inser…
+    [90m182|[39m   [35mconst[39m t [33m=[39m [34mcreateT[39m()[33m;[39m
+    [90m183|[39m   [35mawait[39m [34mexpect[39m([34mcreate[39m(t[33m,[39m [32m"Éclair"[39m[33m,[39m [32m"h-5"[39m))[33m.[39mrejects[33m.[39m[34mtoThrow[39m(
+    [90m   |[39m                                           [31m^[39m
+    [90m184|[39m    [36m/ORG_MAPPING_NOT_FOUND/[39m[33m,[39m
+    [90m185|[39m   )[33m;[39m
+
+[31m[2m⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[4/4]⎯[22m[39m
+
+
+[2m Test Files [22m [1m[31m1 failed[39m[22m[90m (1)[39m
+[2m      Tests [22m [1m[31m4 failed[39m[22m[2m | [22m[1m[32m3 passed[39m[22m[90m (7)[39m
+[2m   Start at [22m 16:15:38
+[2m   Duration [22m 730ms[2m (transform 363ms, setup 0ms, import 236ms, tests 372ms, environment 0ms)[22m
+
