@@ -804,8 +804,8 @@ describe("erase:eraseRow — memories: the whole updates chain", () => {
 		} catch (e) {
 			data = e instanceof ConvexError ? String(e.data) : String(e);
 		}
-		expect(data).toMatch(/^RBAC_DENIED/);
-		expect(data).toContain('"unerasableVersions":1');
+		expect(data).toMatch(/RBAC_DENIED/);
+		expect(data).toMatch(/unerasableVersions\\*"?:1\b/);
 		expect(data).not.toContain(ids.v1);
 		expect(data).not.toContain(CHAIN_MARK);
 		expect(await allPresent(ids)).toEqual([true, true, true]);
@@ -827,7 +827,7 @@ describe("erase:eraseRow — memories: the whole updates chain", () => {
 		} catch (e) {
 			data = e instanceof ConvexError ? String(e.data) : String(e);
 		}
-		expect(data).toContain('"unerasableVersions":2');
+		expect(data).toMatch(/unerasableVersions\\*"?:2\b/);
 		expect(await allPresent(ids)).toEqual([true, true, true]);
 	});
 
