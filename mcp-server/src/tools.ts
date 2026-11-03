@@ -26,15 +26,18 @@ import {
 	checkInstanceOfSender,
 	checkNamespaceRead,
 	checkNamespaceWrite,
+	defaultWriteNamespace,
 	filterRowsToActorTenant,
 	isMasterScope,
 	NO_CONTEXT_REFUSAL,
+	namespaceRequiredRefusal,
 	type OAuthContext,
 	PERSON_ACTOR_PREFIX,
 	personActorOf,
 	resolveSeatOrg,
 	rowVisibleToActorTenant,
 	toPackageOAuthCtx,
+	writableNamespacesOf,
 } from "./auth.js";
 import {
 	type DoorScopeArgs,
@@ -1115,6 +1118,19 @@ export const whoamiOutputSchema = z.looseObject({
 		.array(z.string())
 		.describe(
 			"Namespace prefixes this bearer may write to. Empty for master scope (wildcard suppressed) and legacy bearers.",
+		),
+	writableNamespaces: z
+		.array(z.string())
+		.optional()
+		.describe(
+			"Every namespace this session may write (each also admits its sub-namespaces): the write prefixes plus the caller's own agent and project namespaces. Empty for master scope (wildcard suppressed) and legacy bearers.",
+		),
+	default_write_namespace: z
+		.string()
+		.nullable()
+		.optional()
+		.describe(
+			"Where store_memory / store_episode write when namespace is omitted (a person: 'team/<org>'; a seat: 'orchestrator/<its own agent ID>'). Null when the session has no single natural namespace (master, legacy): name one explicitly.",
 		),
 	suggested_orchestrator_id: z
 		.string()
@@ -2367,6 +2383,19 @@ export function registerTools(
 		const err = checkNamespaceWrite(oauthCtx, namespace);
 		return err ? mcpError(err) : null;
 	};
+	// The namespace a write lands in: the one the caller named, else the
+	// session's own (defaultWriteNamespace: a person's team/<org key>, a seat's
+	// orchestrator/<agent ID>). No natural default refuses, naming what is
+	// writable. The result still goes through guardWrite.
+	const resolveWriteNamespace = (
+		namespace: string | undefined,
+		toolName: string,
+	): { namespace: string } | { denied: ReturnType<typeof mcpError> } => {
+		if (namespace !== undefined && namespace !== "") return { namespace };
+		const fallback = defaultWriteNamespace(oauthCtx);
+		if (fallback !== undefined) return { namespace: fallback };
+		return { denied: mcpError(namespaceRequiredRefusal(oauthCtx, toolName)) };
+	};
 	// Some tools take no identity/namespace arg (e.g. soft_delete_memory only
 	// takes an ID). When the underlying mutation cannot enforce per-resource
 	// RBAC, we restrict the whole tool to master scope. Absence REFUSES: a
@@ -2417,15 +2446,18 @@ export function registerTools(
 		{ kind: "from", fromArg: "createdBy" },
 		"store_memory",
 		"Store a typed memory entry (user/feedback/project/reference) in VantagePeers with optional graph relations. " +
+			"Omit namespace to write in your own space. " +
 			"WHEN: use after any decision, rule, or lesson that must persist across sessions. " +
-			"EXAMPLE: store_memory namespace='global' type='feedback' content='Alpha prefers concise replies' createdBy='beta'.",
+			"EXAMPLE: store_memory type='feedback' content='Alpha prefers concise replies' (no namespace: written in your own space).",
 		{
 			namespace: z
 				.string()
+				.optional()
 				.describe(
-					"Memory namespace — e.g. 'global', 'orchestrator/pi', 'project/vantage-starter'. " +
+					"Omit namespace to write in your own space (a signed-in person: 'team/<org>'; a seat: 'orchestrator/<its own agent ID>'; whoami returns it as default_write_namespace). " +
+						"Otherwise e.g. 'global', 'orchestrator/pi', 'project/vantage-starter'. " +
 						"A client seat (an agent of an organisation) may write only: 'team/<org ID>', 'project/<org slug>', and 'orchestrator/<its own agent ID>' (the agent's permanent ID, never its agent name). " +
-						"A refused write names the namespaces your seat may write.",
+						"A refused write names the namespaces your session may write.",
 				),
 			type: memoryTypeSchema,
 			content: z
@@ -2459,7 +2491,14 @@ export function registerTools(
 			title: "Store memory",
 			memberAuthorDoor: true,
 		},
-		async ({ namespace, type, content, createdBy, relatesTo, ttl }) => {
+		async ({
+			namespace: requestedNamespace,
+			type,
+			content,
+			createdBy,
+			relatesTo,
+			ttl,
+		}) => {
 			let contentBytes = 0;
 			try {
 				contentBytes = assertContentSize(content, "store_memory");
@@ -2468,6 +2507,9 @@ export function registerTools(
 				// every other caller names the seat it acts as.
 				const author = memberAuthorLabel(oauthCtx) ?? createdBy;
 				if (author === undefined) return mcpError(CREATED_BY_REQUIRED);
+				const target = resolveWriteNamespace(requestedNamespace, "store_memory");
+				if ("denied" in target) return target.denied;
+				const namespace = target.namespace;
 				const nsDenied = guardWrite(namespace);
 				if (nsDenied) return nsDenied;
 
@@ -2500,7 +2542,7 @@ export function registerTools(
 				if (error instanceof ProtocolError) throw error;
 				console.error("[store_memory] mutation failed", {
 					contentBytes,
-					namespace,
+					namespace: requestedNamespace ?? null,
 					type,
 					createdBy: createdBy ?? null,
 					errorMessage: error?.message ?? String(error),
@@ -2948,12 +2990,16 @@ export function registerTools(
 		{ kind: "from", fromArg: "createdBy" },
 		"store_episode",
 		"Store a structured episodic memory capturing context, goal, action, outcome, and insight from a past event. " +
+			"Omit namespace to write in your own space. " +
 			"WHEN: use after completing a non-trivial task or encountering an unexpected failure or success. " +
 			"EXAMPLE: store_episode namespace='orchestrator/alpha' createdBy='alpha' severity='major' context='...' goal='...' action='...' outcome='...' insight='...'.",
 		{
 			namespace: z
 				.string()
-				.describe("Memory namespace — e.g. 'orchestrator/pi'"),
+				.optional()
+				.describe(
+					"Omit namespace to write in your own space (a signed-in person: 'team/<org>'; a seat: 'orchestrator/<its own agent ID>'). Otherwise e.g. 'orchestrator/pi'. A refused write names the namespaces your session may write.",
+				),
 			createdBy: creatorSchema.optional().describe(
 				"Orchestrator role name acting as the author. Omit it when you are a signed-in person: the episode is recorded under your own verified account.",
 			),
@@ -2978,7 +3024,7 @@ export function registerTools(
 			memberAuthorDoor: true,
 		},
 		async ({
-			namespace,
+			namespace: requestedNamespace,
 			createdBy,
 			context,
 			goal,
@@ -2991,6 +3037,9 @@ export function registerTools(
 				// Same author rule as store_memory (see memberAuthor.ts).
 				const author = memberAuthorLabel(oauthCtx) ?? createdBy;
 				if (author === undefined) return mcpError(CREATED_BY_REQUIRED);
+				const target = resolveWriteNamespace(requestedNamespace, "store_episode");
+				if ("denied" in target) return target.denied;
+				const namespace = target.namespace;
 				const nsDenied = guardWrite(namespace);
 				if (nsDenied) return nsDenied;
 
@@ -11235,6 +11284,8 @@ export function registerTools(
 				fromAllowList,
 				namespaceReadPrefixes,
 				namespaceWritePrefixes,
+				writableNamespaces: writableNamespacesOf(oauthCtx),
+				default_write_namespace: defaultWriteNamespace(oauthCtx) ?? null,
 				suggested_orchestrator_id: suggestedOrchestratorId,
 				// The acting agent by stored ID; identifiers only.
 				actor: acting.actor,

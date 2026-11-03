@@ -1109,6 +1109,83 @@ export function checkNamespaceRead(
 	return `Forbidden: namespace='${namespace}' is not readable by scope_profile=${ctx.scopeProfile}.`;
 }
 
+/**
+ * The namespaces this session may write, as {@link checkNamespaceWrite} admits
+ * them: the live write prefixes, then the caller's own agent and project
+ * namespaces, deduplicated, in that order. Each entry also admits its
+ * sub-namespaces. Text for the caller only — the decision stays in
+ * checkNamespaceWrite. Master (wildcard) returns [], as whoami suppresses the
+ * wildcard elsewhere.
+ */
+export function writableNamespacesOf(ctx: OAuthContext | undefined): string[] {
+	if (!ctx || isMasterScope(ctx)) return [];
+	const out: string[] = [];
+	for (const ns of [
+		...ctx.namespaceWritePrefixes,
+		ctx.ownAgentNamespace,
+		ctx.ownProjectNamespace,
+	]) {
+		if (ns === undefined || ns === "" || ns === "*") continue;
+		if (!out.includes(ns)) out.push(ns);
+	}
+	return out;
+}
+
+/**
+ * The namespace a write lands in when the caller names none, or undefined when
+ * the session has no single natural one (the caller must then name it):
+ *   - a person: its single write prefix (`team/<org key>`, personTokenRights);
+ *   - a seat: its own `orchestrator/<agent ID>` (ownNamespacesOf);
+ *   - master, or anything else: undefined, never guessed.
+ * Chosen only among namespaces {@link checkNamespaceWrite} already admits, so it
+ * grants nothing; the caller still runs the write check on the result.
+ */
+export function defaultWriteNamespace(
+	ctx: OAuthContext | undefined,
+): string | undefined {
+	if (!ctx || isMasterScope(ctx)) return undefined;
+	if (ctx.principal === "person") {
+		const prefixes = ctx.namespaceWritePrefixes.filter(
+			(p) => p !== "" && p !== "*",
+		);
+		if (prefixes.length === 1) return prefixes[0];
+		return undefined;
+	}
+	if (ctx.ownAgentNamespace !== undefined && ctx.ownAgentNamespace !== "") {
+		return ctx.ownAgentNamespace;
+	}
+	return undefined;
+}
+
+/** The sentence a write refusal ends with: what the caller may write instead. */
+function writableNamespacesHint(ctx: OAuthContext): string {
+	const writable = writableNamespacesOf(ctx);
+	if (writable.length === 0) {
+		return " This session has no writable namespace.";
+	}
+	const fallback = defaultWriteNamespace(ctx);
+	return (
+		` Writable namespaces (and their sub-namespaces): ${writable.join(", ")}.` +
+		(fallback !== undefined
+			? ` Omit namespace to write in your own space (${fallback}).`
+			: "")
+	);
+}
+
+/**
+ * Refusal for a write tool called with no namespace by a session that has no
+ * natural default ({@link defaultWriteNamespace} undefined).
+ */
+export function namespaceRequiredRefusal(
+	ctx: OAuthContext | undefined,
+	toolName: string,
+): string {
+	const base = `Forbidden: ${toolName} needs a namespace for this session`;
+	if (!ctx) return NO_CONTEXT_REFUSAL;
+	if (isMasterScope(ctx)) return `${base} (master has no default namespace).`;
+	return `${base} (scope_profile=${ctx.scopeProfile}).${writableNamespacesHint(ctx)}`;
+}
+
 export function checkNamespaceWrite(
 	ctx: OAuthContext | undefined,
 	namespace: string,
@@ -1118,7 +1195,7 @@ export function checkNamespaceWrite(
 	if (checkNamespacePrefix(ctx.namespaceWritePrefixes, namespace)) return null;
 	// The seat's own agent namespace by its verified agent ID (see ownNamespacesOf).
 	if (checkOwnNamespaces(ctx, namespace)) return null;
-	return `Forbidden: namespace='${namespace}' is not writable by scope_profile=${ctx.scopeProfile}.`;
+	return `Forbidden: namespace='${namespace}' is not writable by scope_profile=${ctx.scopeProfile}.${writableNamespacesHint(ctx)}`;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
