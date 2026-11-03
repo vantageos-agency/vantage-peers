@@ -2383,6 +2383,28 @@ const agentChoiceShape = v.union(
 	v.object({ kind: v.literal("create"), name: v.string() }),
 );
 
+/**
+ * Would the consent screen offer this person a choice in this organisation: an
+ * agent of its own (designated to it, active, in the org) or, for an org admin, the
+ * create field? The same model the screen draws (agentChoicesFor). A roster read
+ * that fails (over its cap) offers nothing here: it never refuses a consent or a
+ * refresh on its own.
+ */
+async function agentChoiceOffered(
+	ctx: MutationCtx,
+	personId: string,
+	org: { id: string; key: string },
+	role: string,
+): Promise<boolean> {
+	try {
+		const view = await agentChoicesFor(ctx, personId, org, role);
+		return view.canCreate || view.agents.some((a) => a.mine);
+	} catch (err: unknown) {
+		if (err instanceof ConvexError) return false;
+		throw err;
+	}
+}
+
 export const putPersonCode = mutation({
 	args: { record: personCodeRecordShape, choice: v.optional(agentChoiceShape) },
 	returns: v.null(),
@@ -2432,11 +2454,24 @@ export const putPersonCode = mutation({
 				}
 			}
 		}
+		// "Connect as myself" with something on offer is an explicit decline: it
+		// is recorded so a refresh of this family never re-asks it. With nothing on
+		// offer, nothing is recorded, and a refresh refuses once there is a choice
+		// (oauth:rotateRefreshToken, agent-choice-pending).
+		const declined =
+			chosenAgentId === undefined &&
+			(await agentChoiceOffered(
+				ctx,
+				args.record.clerkUserId,
+				{ id: args.record.orgId, key: args.record.orgSlug ?? args.record.orgId },
+				args.record.orgRole,
+			));
 		await ctx.db.insert("oauth_person_codes", {
 			...args.record,
 			...(chosenAgentId !== undefined
 				? { agentId: chosenAgentId }
 				: { connectedAs: "person" as const }),
+			...(declined ? { agentChoiceDeclined: true as const } : {}),
 		});
 		return null;
 	},
@@ -2550,7 +2585,11 @@ type MintAccessTokenArgs = {
 	 * refresh row (there is no code row any more). The caller has already judged
 	 * the agent live; this door stamps it and decides nothing.
 	 */
-	personChoice?: { agent: Doc<"agents"> | null; connectedAs?: "person" };
+	personChoice?: {
+		agent: Doc<"agents"> | null;
+		connectedAs?: "person";
+		agentChoiceDeclined?: true;
+	};
 	/**
 	 * PERSON only: write the person's refresh row beside the access token, under
 	 * `refreshTokenHash`, stamped with the choices made at consent. First issuance
@@ -2751,6 +2790,9 @@ async function mintAccessToken(
 			...(chosen?.connectedAs !== undefined
 				? { connectedAs: chosen.connectedAs }
 				: {}),
+			...(chosen?.agentChoiceDeclined === true
+				? { agentChoiceDeclined: true as const }
+				: {}),
 			// The consent record: what was minted at consent is the ceiling, what the
 			// person asked for beyond the organisation's own is kept apart. A rotation
 			// carries both forward unchanged.
@@ -2768,7 +2810,11 @@ async function mintAccessToken(
 async function chosenAtConsent(
 	ctx: MutationCtx,
 	codeHash: string,
-): Promise<{ agent: Doc<"agents"> | null; connectedAs?: "person" } | null> {
+): Promise<{
+	agent: Doc<"agents"> | null;
+	connectedAs?: "person";
+	agentChoiceDeclined?: true;
+} | null> {
 	const code = await ctx.db
 		.query("oauth_person_codes")
 		.withIndex("by_codeHash", (q) => q.eq("codeHash", codeHash))
@@ -2780,6 +2826,9 @@ async function chosenAtConsent(
 		agent,
 		...(code.connectedAs !== undefined
 			? { connectedAs: code.connectedAs }
+			: {}),
+		...(code.agentChoiceDeclined === true
+			? { agentChoiceDeclined: true as const }
 			: {}),
 	};
 }
@@ -3413,7 +3462,11 @@ export const rotateRefreshToken = mutation({
 			);
 			if (!member.ok) return await refuse("not-a-member");
 
-			let choice: { agent: Doc<"agents"> | null; connectedAs?: "person" };
+			let choice: {
+				agent: Doc<"agents"> | null;
+				connectedAs?: "person";
+				agentChoiceDeclined?: true;
+			};
 			if (row.agentId !== undefined) {
 				let personal: Awaited<ReturnType<typeof personalAgentOfToken>>;
 				try {
@@ -3451,7 +3504,30 @@ export const rotateRefreshToken = mutation({
 				if (agent === null) return await refuse("agent-unavailable");
 				choice = { agent };
 			} else {
-				choice = { agent: null, connectedAs: "person" };
+				// An agent-less family whose consent never declined an offer (minted
+				// before the screen listed the person's own agent, or when nothing was
+				// on offer) is refused once the person HAS a choice: the client re-runs
+				// authorization and the person meets the consent page. A refresh never
+				// shows it, so without this the family would stay agent-less for its
+				// whole life (task k177e8dyrnykk3c56yf2b0pgfs8hhz06).
+				if (
+					row.agentChoiceDeclined !== true &&
+					(await agentChoiceOffered(
+						ctx,
+						row.userId,
+						{ id: row.clerkOrgId, key: orgMapping.clerkOrgSlug },
+						row.orgRole ?? "",
+					))
+				) {
+					return await refuse("agent-choice-pending");
+				}
+				choice = {
+					agent: null,
+					connectedAs: "person",
+					...(row.agentChoiceDeclined === true
+						? { agentChoiceDeclined: true as const }
+						: {}),
+				};
 			}
 
 			const refreshToken = randomOpaqueHex(32);

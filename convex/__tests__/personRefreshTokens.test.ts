@@ -125,7 +125,7 @@ let n = 0;
 async function issue(
 	t: T,
 	agentId: Id<"agents"> | null,
-	opts: { requested?: string[]; connectedAs?: boolean } = {},
+	opts: { requested?: string[]; connectedAs?: boolean; declined?: boolean } = {},
 ) {
 	n += 1;
 	const refresh = `refresh-${n}`;
@@ -146,6 +146,7 @@ async function issue(
 			expiresAt: Date.now() + 60_000,
 			...(agentId === null ? {} : { agentId }),
 			...(opts.connectedAs ? { connectedAs: "person" as const } : {}),
+			...(opts.declined ? { agentChoiceDeclined: true as const } : {}),
 		}),
 	);
 	await asService(t).mutation(api.oauth.createAccessToken, {
@@ -297,7 +298,14 @@ describe("C1 authority is re-resolved LIVE at every refresh", () => {
 	test("ADMIT: a person who connected as themselves refreshes with no agent", async () => {
 		const t = createT();
 		await world(t);
-		const { refresh } = await issue(t, null, { connectedAs: true });
+		// The world's Aria is the person's own agent, so "myself" was chosen over an
+		// offered agent: the consent records the decline (putPersonCode), and a
+		// refresh never re-asks it. A family without the decline is refused
+		// (personRefreshAgentChoice.test.ts, agent-choice-pending).
+		const { refresh } = await issue(t, null, {
+			connectedAs: true,
+			declined: true,
+		});
 		const pair = await mustRotate(t, refresh);
 		const served = await servedAccess(t, pair.access);
 		expect(served?.personalAgent).toBeNull();

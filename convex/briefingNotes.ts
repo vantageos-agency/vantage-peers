@@ -26,6 +26,7 @@ import { orgRefOfRow, orgRefOfScope } from "./lib/authOrgMapping";
 import { isFleetSystemCaller } from "./lib/systemCaller";
 import { requireId } from "./lib/ids";
 import { resolveHumanActor } from "./lib/humanActor";
+import { resolveVerifiedPerson, verifiedPersonValidator } from "./lib/personPrincipal";
 import { actorIdResolver, type ActorIdResolver } from "./lib/actorIds";
 import { actingNameOf, requireAuthenticatedCaller } from "./tasks";
 import {
@@ -303,6 +304,11 @@ export const create = mutation({
 		// Believed from the service account only; resolved against an ACTIVE mapping
 		// (convex/lib/verifiedOrg.ts). No secret is an argument.
 		verifiedOrg: v.optional(verifiedOrgValidator),
+		// A PERSON signed in through the MCP OAuth flow with no agent, acting in its
+		// own name: the bearer hash only, believed from the service account only
+		// (convex/lib/personPrincipal.ts). The note is then authored and stamped
+		// exactly as for a dashboard member. Task k177e8dyrnykk3c56yf2b0pgfs8hhz06.
+		verifiedPerson: v.optional(verifiedPersonValidator),
 	},
 	returns: v.id("briefingNotes"),
 	handler: async (ctx, args) => {
@@ -323,7 +329,20 @@ export const create = mutation({
 		// for an owner (org) inside its own scope, by construction: the value
 		// written can never be anything other than the caller's own
 		// `scope.orgSlug`.
-		const scope = await withOrgScope(ctx);
+		// A person carried as verifiedPerson replaces the transport scope with its
+		// own; absent, the scope is the transport's, byte-unchanged.
+		const scope = await resolveVerifiedPerson(
+			ctx,
+			await withOrgScope(ctx),
+			args.verifiedPerson,
+			{
+				door: "briefingNotes:create",
+				...(args.createdBy !== undefined
+					? { assertedName: args.createdBy }
+					: {}),
+				agentProof: args.verifiedActor !== undefined,
+			},
+		);
 		if (!scope.isMaster && scope.orgSlug === null) {
 			throw new ConvexError(
 				`RBAC_DENIED: caller may not create a briefing note — ${JSON.stringify({ orgSlug: null })}`,
@@ -341,6 +360,7 @@ export const create = mutation({
 			createdBy: claimedCreator,
 			verifiedActor,
 			verifiedOrg,
+			verifiedPerson: _verifiedPerson,
 			...rest
 		} = args;
 		// The org a service-account write is made FOR: the verified org's ACTIVE

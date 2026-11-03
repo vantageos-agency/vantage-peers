@@ -238,6 +238,33 @@ describe("the person refresh_token grant", () => {
 		expect(dead.status).toBe(400);
 	});
 
+	it("REFUSE: a legacy agent-less family whose person now has its own agent answers invalid_grant (agent-choice-pending), so the client re-runs consent", async () => {
+		const { t, token, first } = await connect();
+		// The rows of a family minted before the consent screen listed the person's
+		// own agent: connected as myself, no recorded decline (task
+		// k177e8dyrnykk3c56yf2b0pgfs8hhz06).
+		await t.run(async (ctx) => {
+			for (const r of await ctx.db.query("oauth_refresh_tokens").collect()) {
+				await ctx.db.patch(r._id, {
+					agentId: undefined,
+					agentChoiceDeclined: undefined,
+					connectedAs: "person",
+				});
+			}
+		});
+		const refused = await token({
+			grant_type: "refresh_token",
+			refresh_token: first.refresh_token as string,
+		});
+		expect(refused.status).toBe(400);
+		const body = (await refused.json()) as {
+			error: string;
+			error_description?: string;
+		};
+		expect(body.error).toBe("invalid_grant");
+		expect(body.error_description).toContain("agent-choice-pending");
+	});
+
 	it("REFUSE: a removed member's refresh token answers invalid_grant", async () => {
 		const { t, token, first } = await connect();
 		expect(first.refresh_token).toBeTruthy();
