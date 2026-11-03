@@ -891,60 +891,60 @@ const SCOPE_CLASSIFICATION: Readonly<Record<string, ScopeClassification>> = {
 		reason: "MCP kind public (tools/validateOkfBundle.ts:83); handler not read",
 	},
 	"briefing-note.ts|briefingNotes:get": {
-		class: "leak",
-		severity: "High",
+		class: "traced",
+		severity: null,
 		basis: "args+gate",
 		reason:
-			"ui://vp/v1 resource: fetch bridge forwards no org (ui-resources has no verifiedOrg; server-http.ts:2273); KNOWN, fail-closed fix in PR #1636 not merged",
+			"ui://vp/v1 resource read: register.ts:96 refuses a non-master bearer whose org did not resolve before any Convex query; a resolved bearer's client carries __actingOrg on every call (test/ui-resource-read-org-scoped.test.ts, per primitive, two-org fake)",
 	},
 	"briefing-note.ts|briefingNotes:list": {
-		class: "leak",
-		severity: "High",
+		class: "traced",
+		severity: null,
 		basis: "args+gate",
 		reason:
-			"ui://vp/v1 resource: fetch bridge forwards no org (ui-resources has no verifiedOrg; server-http.ts:2273); KNOWN, fail-closed fix in PR #1636 not merged",
+			"ui://vp/v1 resource read: register.ts:96 refuses a non-master bearer whose org did not resolve before any Convex query; a resolved bearer's client carries __actingOrg on every call (test/ui-resource-read-org-scoped.test.ts, per primitive, two-org fake)",
 	},
 	"diary-entry.ts|diary:get": {
-		class: "leak",
-		severity: "High",
+		class: "traced",
+		severity: null,
 		basis: "args+gate",
 		reason:
-			"ui://vp/v1 resource: fetch bridge forwards no org (ui-resources has no verifiedOrg; server-http.ts:2273); KNOWN, fail-closed fix in PR #1636 not merged",
+			"ui://vp/v1 resource read: register.ts:96 refuses a non-master bearer whose org did not resolve before any Convex query; a resolved bearer's client carries __actingOrg on every call (test/ui-resource-read-org-scoped.test.ts, per primitive, two-org fake)",
 	},
 	"diary-entry.ts|diary:list": {
-		class: "leak",
-		severity: "High",
+		class: "traced",
+		severity: null,
 		basis: "args+gate",
 		reason:
-			"ui://vp/v1 resource: fetch bridge forwards no org (ui-resources has no verifiedOrg; server-http.ts:2273); KNOWN, fail-closed fix in PR #1636 not merged",
+			"ui://vp/v1 resource read: register.ts:96 refuses a non-master bearer whose org did not resolve before any Convex query; a resolved bearer's client carries __actingOrg on every call (test/ui-resource-read-org-scoped.test.ts, per primitive, two-org fake)",
 	},
 	"memory-quote.ts|memories:listMemories": {
-		class: "leak",
-		severity: "High",
+		class: "traced",
+		severity: null,
 		basis: "args+gate",
 		reason:
-			"ui://vp/v1 resource: fetch bridge forwards no org (ui-resources has no verifiedOrg; server-http.ts:2273); KNOWN, fail-closed fix in PR #1636 not merged",
+			"ui://vp/v1 resource read: register.ts:96 refuses a non-master bearer whose org did not resolve before any Convex query; a resolved bearer's client carries __actingOrg on every call (test/ui-resource-read-org-scoped.test.ts, per primitive, two-org fake)",
 	},
 	"messages-feed.ts|messages:listMessages": {
-		class: "leak",
-		severity: "High",
+		class: "traced",
+		severity: null,
 		basis: "args+gate",
 		reason:
-			"ui://vp/v1 resource: fetch bridge forwards no org (ui-resources has no verifiedOrg; server-http.ts:2273); KNOWN, fail-closed fix in PR #1636 not merged",
+			"ui://vp/v1 resource read: register.ts:96 refuses a non-master bearer whose org did not resolve before any Convex query; a resolved bearer's client carries __actingOrg on every call (test/ui-resource-read-org-scoped.test.ts, per primitive, two-org fake)",
 	},
 	"mission-timeline.ts|missions:list": {
-		class: "leak",
-		severity: "High",
+		class: "traced",
+		severity: null,
 		basis: "args+gate",
 		reason:
-			"ui://vp/v1 resource: fetch bridge forwards no org (ui-resources has no verifiedOrg; server-http.ts:2273); KNOWN, fail-closed fix in PR #1636 not merged",
+			"ui://vp/v1 resource read: register.ts:96 refuses a non-master bearer whose org did not resolve before any Convex query; a resolved bearer's client carries __actingOrg on every call (test/ui-resource-read-org-scoped.test.ts, per primitive, two-org fake)",
 	},
 	"tasks-table.ts|tasks:list": {
-		class: "leak",
-		severity: "High",
+		class: "traced",
+		severity: null,
 		basis: "args+gate",
 		reason:
-			"ui://vp/v1 resource: fetch bridge forwards no org (ui-resources has no verifiedOrg; server-http.ts:2273); KNOWN, fail-closed fix in PR #1636 not merged",
+			"ui://vp/v1 resource read: register.ts:96 refuses a non-master bearer whose org did not resolve before any Convex query; a resolved bearer's client carries __actingOrg on every call (test/ui-resource-read-org-scoped.test.ts, per primitive, two-org fake)",
 	},
 	"auth.ts|agentCredentials:resolveAgentCredential": {
 		class: "safe",
@@ -1119,12 +1119,40 @@ const SCOPE_CLASSIFICATION: Readonly<Record<string, ScopeClassification>> = {
 		reason:
 			"client/org administration over HTTP; the route gate (admin credential) was not read in this sweep",
 	},
-	"server-http.ts|<dynamic>": {
-		class: "leak",
-		severity: "High",
+	"register.ts|<dynamic>": {
+		class: "traced",
+		severity: null,
 		basis: "args+gate",
 		reason:
-			"ui://vp/v1 resource: fetch bridge forwards no org (ui-resources has no verifiedOrg; server-http.ts:2273); KNOWN, fail-closed fix in PR #1636 not merged",
+			"ui://vp/v1 fetch bridge (register.ts:104), the successor of the server-http.ts bridge: isUiResourceReadAdmitted gate at register.ts:96 runs before any Convex query; a resolved bearer's client carries __actingOrg (test/ui-resource-read-org-scoped.test.ts)",
+	},
+	"block_task|tasks:getById": {
+		class: "traced",
+		severity: null,
+		basis: "args+gate",
+		reason:
+			"read-back after tasks:update on the same taskId with doorScopeArgs (tools.ts:6062): a foreign-tenant row never reaches it; the door itself narrows by withOrgScope + isRowVisibleToScope (convex/tasks.ts:1329); only dependsOn ids are returned (tools.ts:6069)",
+	},
+	"add_task_dependency|tasks:getById": {
+		class: "traced",
+		severity: null,
+		basis: "args+gate",
+		reason:
+			"read-back after tasks:update on the same taskId with doorScopeArgs (tools.ts:6145); the door narrows by isRowVisibleToScope (convex/tasks.ts:1329); only dependsOn ids are returned (tools.ts:6147)",
+	},
+	"get_tool_usage|toolUsage:getToolUsage": {
+		class: "safe",
+		severity: null,
+		basis: "args+gate",
+		reason:
+			"toolUsageReadArgs (toolUsage.ts:119) forwards doorScopeArgs verifiedOrg and refuses a bearer that resolves no identity; the Convex door raises RBAC_DENIED for a foreign caller or non-admin (convex/toolUsage.ts:321-338); call at tools.ts:10924",
+	},
+	"get_owner_tool_usage|toolUsage:usageByOwner": {
+		class: "safe",
+		severity: null,
+		basis: "args+gate",
+		reason:
+			"toolUsageReadArgs (toolUsage.ts:119) forwards doorScopeArgs verifiedOrg and refuses an unidentified bearer; the Convex door refuses an owner outside the organisation with RBAC_DENIED (convex/toolUsage.ts:385-405); call at tools.ts:10986",
 	},
 	"backendContract.ts|<dynamic>": {
 		class: "safe",
@@ -1141,6 +1169,7 @@ const SOURCE_FILES = [
 	"../tools/importOkfBundle.ts",
 	"../tools/validateOkfBundle.ts",
 	"../ui-resources/index.ts",
+	"../ui-resources/register.ts",
 	"../ui-resources/primitives/briefing-note.ts",
 	"../ui-resources/primitives/diary-entry.ts",
 	"../ui-resources/primitives/memory-quote.ts",
