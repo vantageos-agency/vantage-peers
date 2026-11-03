@@ -119,6 +119,9 @@ async function call(
 }
 
 beforeEach(async () => {
+	// storeMemory schedules its embedding sync; fake setTimeout keeps the
+	// scheduled function from firing after the test's transaction closed.
+	vi.useFakeTimers({ toFake: ["setTimeout"], shouldAdvanceTime: true });
 	t = convexTest(schema, modules);
 	_setInternalClientForTest(
 		// biome-ignore lint/suspicious/noExplicitAny: test bridge
@@ -190,6 +193,7 @@ beforeEach(async () => {
 });
 
 afterEach(() => {
+	vi.useRealTimers();
 	_setInternalClientForTest(null);
 	vi.unstubAllEnvs();
 });
@@ -206,9 +210,7 @@ describe("store_memory: a person's write lands in its own space", () => {
 			namespace: string;
 		};
 		expect(out.namespace).toBe(`team/${ORG}`);
-		const row = await t.run((ctx) =>
-			ctx.db.get(out.memoryId as never),
-		);
+		const row = await t.run((ctx) => ctx.db.get(out.memoryId as never));
 		expect((row as { namespace?: string } | null)?.namespace).toBe(
 			`team/${ORG}`,
 		);

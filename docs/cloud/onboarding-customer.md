@@ -62,6 +62,7 @@ The `whoami` tool (shipped in PR #661, commit `5231811`) will return:
 - `suggested_orchestrator_id` — your identity anchor for all future operations.
 - `scope_profile_name` — the permission set your token carries.
 - `namespaceReadPrefixes` — the namespaces you can read from.
+- `writableNamespaces` / `default_write_namespace` — where you can write; `store_memory` and `store_episode` with no `namespace` write in `default_write_namespace` (a signed-in person: `team/<org>`).
 
 Save the `suggested_orchestrator_id` value. You will not need to re-enter it manually — the connector uses it automatically from this point forward.
 
@@ -98,6 +99,7 @@ L'outil `whoami` (livré dans PR #661, commit `5231811`) retournera :
 - `suggested_orchestrator_id` — votre ancre d'identité pour toutes les opérations futures.
 - `scope_profile_name` — l'ensemble de permissions que porte votre token.
 - `namespaceReadPrefixes` — les namespaces que vous pouvez lire.
+- `writableNamespaces` / `default_write_namespace` — où vous pouvez écrire ; `store_memory` et `store_episode` sans `namespace` écrivent dans `default_write_namespace` (une personne connectée : `team/<org>`).
 
 Sauvegardez la valeur `suggested_orchestrator_id`. Vous n'aurez pas besoin de la ressaisir manuellement — le connecteur l'utilise automatiquement à partir de ce moment.
 
