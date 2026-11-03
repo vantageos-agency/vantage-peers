@@ -9,7 +9,6 @@ import { normalizeOrchestratorId } from "../_helpers/normalizeOrchestratorId";
 import { assertAgentLabelValid } from "../agents";
 import { assertAgentNameFree } from "./agentIdentity";
 import { ORG_ADMIN_ROLES } from "./auth";
-import { lookupOrgMapping } from "./authOrgMapping";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // personalAgentChoice — the consent screen's "which agent do you act as" step
@@ -191,16 +190,7 @@ export async function applyAgentChoice(
 	}
 	assertAgentLabelValid(name);
 	await assertAgentNameFree(ctx, { id: org.id, label: org.key }, name);
-	// The org's live mapping, read by the permanent org ID the code is bound to. A
-	// created agent that no roster lists cannot write, so an org with no active
-	// mapping refuses the create before any row exists.
-	const mapping = await lookupOrgMapping(ctx, { clerkOrgId: org.id });
-	if (mapping === null || !mapping.isActive) {
-		throw new ConvexError(
-			"ORG_MAPPING_NOT_FOUND: no active organisation mapping for this organisation; refusing to create an agent that could not write",
-		);
-	}
-	const agentId = await ctx.db.insert("agents", {
+	return await ctx.db.insert("agents", {
 		orgSlug: org.key,
 		clerkOrgId: org.id,
 		name,
@@ -209,7 +199,4 @@ export async function applyAgentChoice(
 		isActive: true,
 		createdAt: Date.now(),
 	});
-	// The roster join is the caller's (oauth:putPersonCode), in this same
-	// transaction, through the one roster writer.
-	return agentId;
 }
