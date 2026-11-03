@@ -3,6 +3,7 @@ import {
 	requireOrgAdmin as requireVerifiedOrgAdmin,
 } from "@vantageos/cloud-identity";
 import { ConvexError } from "convex/values";
+import { internal } from "../_generated/api";
 import type { Doc } from "../_generated/dataModel";
 import type { MutationCtx, QueryCtx } from "../_generated/server";
 import { normalizeOrchestratorId } from "../_helpers/normalizeOrchestratorId";
@@ -10,7 +11,6 @@ import { assertAgentLabelValid } from "../agents";
 import { assertAgentNameFree } from "./agentIdentity";
 import { ORG_ADMIN_ROLES } from "./auth";
 import { lookupOrgMapping } from "./authOrgMapping";
-import { appendAgentsToRoster } from "./rosterAppend";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // personalAgentChoice — the consent screen's "which agent do you act as" step
@@ -214,7 +214,13 @@ export async function applyAgentChoice(
 	// appended, idempotent. The operator org's roster has its own door
 	// (clientOrgMapping:addOperatorRosterMember) and is not edited here.
 	if (mapping.orgKind !== "operator") {
-		await appendAgentsToRoster(ctx, mapping, [agentId]);
+		// The one roster writer (append only, idempotent, validates the agent is
+		// active and stamped with this org's permanent ID). A nested internal
+		// mutation runs in this transaction, so a refusal rolls the insert back.
+		await ctx.runMutation(internal.clientOrgMapping.addRosterMembers, {
+			clerkOrgSlug: mapping.clerkOrgSlug,
+			agentIds: [agentId],
+		});
 	}
 	return agentId;
 }
