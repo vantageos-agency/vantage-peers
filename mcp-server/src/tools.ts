@@ -37,6 +37,7 @@ import {
 	resolveSeatOrg,
 	rowVisibleToActorTenant,
 	toPackageOAuthCtx,
+	type WriteSpace,
 	writableNamespacesOf,
 } from "./auth.js";
 import {
@@ -2383,6 +2384,18 @@ export function registerTools(
 		const err = checkNamespaceWrite(oauthCtx, namespace);
 		return err ? mcpError(err) : null;
 	};
+	// What this session may write, as values (WriteSpace): undefined for master
+	// and for a request with no context. Read once here; whoami and the write
+	// tools' default derive from it.
+	const writeSpace: WriteSpace | undefined =
+		oauthCtx !== undefined && !isMasterScope(oauthCtx)
+			? {
+					writePrefixes: oauthCtx.namespaceWritePrefixes,
+					ownAgentNamespace: oauthCtx.ownAgentNamespace,
+					ownProjectNamespace: oauthCtx.ownProjectNamespace,
+					principal: oauthCtx.principal,
+				}
+			: undefined;
 	// The namespace a write lands in: the one the caller named, else the
 	// session's own (defaultWriteNamespace: a person's team/<org key>, a seat's
 	// orchestrator/<agent ID>). No natural default refuses, naming what is
@@ -2392,9 +2405,14 @@ export function registerTools(
 		toolName: string,
 	): { namespace: string } | { denied: ReturnType<typeof mcpError> } => {
 		if (namespace !== undefined && namespace !== "") return { namespace };
-		const fallback = defaultWriteNamespace(oauthCtx);
+		if (!oauthCtx) return { denied: mcpError(NO_CONTEXT_REFUSAL) };
+		const fallback = defaultWriteNamespace(writeSpace);
 		if (fallback !== undefined) return { namespace: fallback };
-		return { denied: mcpError(namespaceRequiredRefusal(oauthCtx, toolName)) };
+		return {
+			denied: mcpError(
+				namespaceRequiredRefusal(toolName, oauthCtx.scopeProfile, writeSpace),
+			),
+		};
 	};
 	// Some tools take no identity/namespace arg (e.g. soft_delete_memory only
 	// takes an ID). When the underlying mutation cannot enforce per-resource
@@ -11284,8 +11302,8 @@ export function registerTools(
 				fromAllowList,
 				namespaceReadPrefixes,
 				namespaceWritePrefixes,
-				writableNamespaces: writableNamespacesOf(oauthCtx),
-				default_write_namespace: defaultWriteNamespace(oauthCtx) ?? null,
+				writableNamespaces: writableNamespacesOf(writeSpace),
+				default_write_namespace: defaultWriteNamespace(writeSpace) ?? null,
 				suggested_orchestrator_id: suggestedOrchestratorId,
 				// The acting agent by stored ID; identifiers only.
 				actor: acting.actor,

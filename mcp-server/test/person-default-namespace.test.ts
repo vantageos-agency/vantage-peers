@@ -296,12 +296,20 @@ describe("defaultWriteNamespace / writableNamespacesOf: seat and master", () => 
 		ownProjectNamespace: undefined,
 	};
 
-	it("a seat defaults to its own orchestrator/<agent ID>", () => {
-		expect(defaultWriteNamespace(seat)).toBe("orchestrator/agent123");
+	const whoamiOf = async (ctx: OAuthContext) =>
+		(await call(realTools(ctx), "whoami", {})).structuredContent as {
+			writableNamespaces: string[];
+			default_write_namespace: string | null;
+		};
+
+	it("a seat defaults to its own orchestrator/<agent ID>", async () => {
+		expect((await whoamiOf(seat)).default_write_namespace).toBe(
+			"orchestrator/agent123",
+		);
 	});
 
-	it("a seat's writable list is its prefixes plus its own namespaces, deduped", () => {
-		expect(writableNamespacesOf(seat)).toEqual([
+	it("a seat's writable list is its prefixes plus its own namespaces, deduped", async () => {
+		expect((await whoamiOf(seat)).writableNamespaces).toEqual([
 			"team/org_acme",
 			"project/acme",
 			"orchestrator/agent123",
@@ -316,13 +324,17 @@ describe("defaultWriteNamespace / writableNamespacesOf: seat and master", () => 
 
 	it("a seat with no verified agent and several prefixes has no default", () => {
 		expect(
-			defaultWriteNamespace({ ...seat, ownAgentNamespace: undefined }),
+			defaultWriteNamespace({
+				writePrefixes: ["team/org_acme", "project/acme"],
+			}),
 		).toBeUndefined();
+		expect(writableNamespacesOf(undefined)).toEqual([]);
 	});
 
-	it("master has no default (never guessed)", () => {
-		expect(defaultWriteNamespace(master)).toBeUndefined();
-		expect(writableNamespacesOf(master)).toEqual([]);
+	it("master has no default (never guessed)", async () => {
+		const w = await whoamiOf(master);
+		expect(w.default_write_namespace).toBeNull();
+		expect(w.writableNamespaces).toEqual([]);
 	});
 
 	it("master omitting namespace on store_memory is refused, nothing written", async () => {
