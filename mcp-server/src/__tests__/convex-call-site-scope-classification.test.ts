@@ -16,10 +16,28 @@
  * A key with no declaration fails. A declared key with no live call site fails,
  * so the allowlist cannot rot.
  *
- * Enumeration rules (mirrored by the sweep script that generated the table):
- *   - a call site is `convex.query|mutation|action(`, `internalClient().query|
- *     mutation|action(`, `client.query(` (boot manifest), or `fetchConvex(`
- *     in call form (a type declaration `fetchConvex: (` is not a site);
+ * Scanned files are DERIVED, never listed: the test walks mcp-server/src
+ * recursively (tests, `__tests__`, `*.test.ts` and `*.d.ts` excluded) plus
+ * mcp-server/server-http.ts and server.ts, and FAILS if the walk finds no
+ * file. A new file, or an existing file nobody listed, is scanned by default.
+ *
+ * Call forms used in the tree (enumerated by grep over those files, 2026-11-03):
+ *   1. `convex.query|mutation|action(`          the per-request client
+ *   2. `internalClient().query|mutation|action(` server-http.ts, own identity
+ *   3. `client.query(`                          boot manifest, backendContract.ts
+ *   4. `deps.convexQuery(`                      injected caller (state-tokens.ts,
+ *                                               fresh-state-guard.ts); the
+ *                                               injection point in tools.ts is
+ *                                               form 1 and is classified itself
+ *   5. `fetchConvex(`                           ui-resources bridge; the bridge
+ *                                               body in register.ts is form 1
+ *   The matcher is `.query|mutation|action(` on ANY receiver (so a renamed
+ *   client variable is still a site), plus `convexQuery|convexMutation|
+ *   convexAction(` and `fetchConvex(` in call form. Not sites: `c.req.query(`
+ *   (the HTTP framework's query string) and type members such as
+ *   `fetchConvex: (`.
+ *
+ * Enumeration rules:
  *   - its owner is the registered tool name of the nearest PRECEDING
  *     `defineTool(` in the same file (the first standalone name line, a string
  *     or a constant resolved from `const NAME = "value"`), else the file's
@@ -35,8 +53,16 @@
  * enumerator must report it unclassified.
  */
 
-import { readFileSync } from "node:fs";
-import { resolve } from "node:path";
+import {
+	mkdirSync,
+	mkdtempSync,
+	readdirSync,
+	readFileSync,
+	rmSync,
+	writeFileSync,
+} from "node:fs";
+import { tmpdir } from "node:os";
+import { join, relative, resolve } from "node:path";
 import { describe, expect, it } from "vitest";
 
 type ScopeClass = "safe" | "traced" | "leak" | "unmeasured";
@@ -1172,6 +1198,34 @@ const SCOPE_CLASSIFICATION: Readonly<Record<string, ScopeClassification>> = {
 		reason:
 			"toolUsageReadArgs (toolUsage.ts:119) forwards doorScopeArgs verifiedOrg and refuses an unidentified bearer; the Convex door refuses an owner outside the organisation with RBAC_DENIED (convex/toolUsage.ts:385-405); call at tools.ts:10986",
 	},
+	"toolUsage.ts|toolUsage:record": {
+		class: "safe",
+		severity: null,
+		basis: "measured",
+		reason:
+			"toolUsage.ts:71 (Clerk session: no key, Convex derives subject and org from the JWT) and :88 (other bearer: verifiedOrg or the person's token proof, no row returned); convex/toolUsage.ts:104 resolves the caller through resolveReader (convex/toolUsage.ts:90-100 refuses a claimless service account) and writes a counter under the resolved org only (convex/toolUsage.ts:117-138); fire-and-forget, returns {recorded}; convex/__tests__/toolUsage.test.ts passes (25 tests with the probe)",
+	},
+	"state-tokens.ts|tasks:get": {
+		class: "traced",
+		severity: null,
+		basis: "measured",
+		reason:
+			"state-tokens.ts:287 deps.convexQuery('tasks:get'); the injected caller is tools.ts:3606 (send_message), the client is the request's convex (tools.ts), which carries __actingOrg on every call (authenticatedConvexClient.ts:111,144-151; server-http.ts:2268), so Convex answers as an ordinary member of the caller's org (convex/lib/auth.ts:376-413). Convex convex/tasks.ts:1096 returns null unless isRowVisibleToScope (convex/tasks.ts:1203); measured with a throwaway probe test: acting for A on org B's task returns null, on A's own returns the row",
+	},
+	"fresh-state-guard.ts|tasks:get": {
+		class: "traced",
+		severity: null,
+		basis: "measured",
+		reason:
+			"fresh-state-guard.ts:496 deps.convexQuery(taskQueryName ?? 'tasks:get'); taskQueryName is set by no production caller (grep over mcp-server/src and server-http.ts), the injected caller is tools.ts:3642 (send_message), the client is the request's convex (tools.ts), which carries __actingOrg on every call (authenticatedConvexClient.ts:111,144-151; server-http.ts:2268), so Convex answers as an ordinary member of the caller's org (convex/lib/auth.ts:376-413). Convex convex/tasks.ts:1096 returns null for a foreign row (convex/tasks.ts:1203); same probe as state-tokens.ts",
+	},
+	"send_message|<dynamic>": {
+		class: "traced",
+		severity: null,
+		basis: "args+gate",
+		reason:
+			"tools.ts:3606 and :3642: the injection points of deps.convexQuery for resolveStateTokens and guardFreshState, the client is the request's convex, which carries __actingOrg on every call (authenticatedConvexClient.ts:111,144-151; server-http.ts:2268); the only function the two consumers query is tasks:get (state-tokens.ts:287, fresh-state-guard.ts:496), classified above",
+	},
 	"backendContract.ts|<dynamic>": {
 		class: "safe",
 		severity: null,
@@ -1180,30 +1234,38 @@ const SCOPE_CLASSIFICATION: Readonly<Record<string, ScopeClassification>> = {
 	},
 };
 
-const SOURCE_FILES = [
-	"../tools.ts",
-	"../tools/kbIngest.ts",
-	"../tools/exportOkfBundle.ts",
-	"../tools/importOkfBundle.ts",
-	"../tools/validateOkfBundle.ts",
-	"../ui-resources/index.ts",
-	"../ui-resources/register.ts",
-	"../ui-resources/primitives/briefing-note.ts",
-	"../ui-resources/primitives/diary-entry.ts",
-	"../ui-resources/primitives/memory-quote.ts",
-	"../ui-resources/primitives/messages-feed.ts",
-	"../ui-resources/primitives/mission-timeline.ts",
-	"../ui-resources/primitives/tasks-table.ts",
-	"../auth.ts",
-	"../authorize.ts",
-	"../actorFromAgentId.ts",
-	"../registerTool.ts",
-	"../../server-http.ts",
-	"../backendContract.ts",
-];
+const SRC_DIR = resolve(__dirname, "..");
+const ROOT_FILES = ["server-http.ts", "server.ts"];
+
+/** Production TypeScript under `dir`: tests, __tests__ and declaration files out. */
+function walkProductionSources(dir: string, out: string[] = []): string[] {
+	for (const entry of readdirSync(dir, { withFileTypes: true })) {
+		const abs = join(dir, entry.name);
+		if (entry.isDirectory()) {
+			if (entry.name === "__tests__" || entry.name === "node_modules") continue;
+			walkProductionSources(abs, out);
+		} else if (
+			entry.name.endsWith(".ts") &&
+			!entry.name.endsWith(".test.ts") &&
+			!entry.name.endsWith(".d.ts")
+		) {
+			out.push(abs);
+		}
+	}
+	return out;
+}
+
+/** The scanned set: the walk of `srcDir` plus the entry points one level above it. */
+function scannedFiles(srcDir: string): string[] {
+	const files = [
+		...walkProductionSources(srcDir),
+		...ROOT_FILES.map((f) => join(srcDir, "..", f)),
+	];
+	return files.sort();
+}
 
 const CALL_SITE =
-	/(convex\.(?:query|mutation|action)\(|internalClient\(\)\.(?:query|mutation|action)\(|\bclient\.query\(|\bfetchConvex\()/;
+	/(?<!\breq)\.(?:query|mutation|action)\(|\bconvex(?:Query|Mutation|Action)\(|\bfetchConvex\(/;
 const DEFINE_TOOL = /^\s*defineTool\(/;
 const NAME_LINE = /^\s*("[a-z_0-9]+"|[A-Z_]+),\s*$/;
 const CONST_VALUE = /const ([A-Z_]+)\s*=\s*"([a-z_0-9]+)"/g;
@@ -1240,12 +1302,15 @@ function enumerateConvexCallSites(source: string, file: string): CallSite[] {
 			}
 			continue;
 		}
-		if (!CALL_SITE.test(line)) continue;
+		const trimmed = line.trimStart();
 		if (
-			/fetchConvex\s*:\s*\(/.test(line) ||
-			line.includes("convexQuery: (name")
+			trimmed.startsWith("//") ||
+			trimmed.startsWith("*") ||
+			trimmed.startsWith("/*")
 		)
 			continue;
+		if (!CALL_SITE.test(line)) continue;
+		if (/fetchConvex\s*:\s*\(/.test(line)) continue;
 		const block = lines.slice(i, i + FN_WINDOW).join("\n");
 		const fnMatch = CONVEX_FN.exec(block);
 		const fn = fnMatch ? fnMatch[1] : "<dynamic>";
@@ -1254,12 +1319,40 @@ function enumerateConvexCallSites(source: string, file: string): CallSite[] {
 	return sites;
 }
 
-function liveSites(): CallSite[] {
-	return SOURCE_FILES.flatMap((rel) => {
-		const abs = resolve(__dirname, rel);
+function liveSitesIn(srcDir: string): CallSite[] {
+	return scannedFiles(srcDir).flatMap((abs) => {
+		const rel = relative(__dirname, abs).split("\\").join("/");
 		return enumerateConvexCallSites(readFileSync(abs, "utf-8"), rel);
 	});
 }
+
+function liveSites(): CallSite[] {
+	return liveSitesIn(SRC_DIR);
+}
+
+/** A throwaway tree shaped like mcp-server/src, for the walker poles. */
+function withScratchTree<T>(
+	files: Record<string, string>,
+	run: (srcDir: string) => T,
+): T {
+	const root = mkdtempSync(join(tmpdir(), "vp-callsite-"));
+	try {
+		const srcDir = join(root, "src");
+		mkdirSync(srcDir, { recursive: true });
+		for (const [name, text] of Object.entries(files)) {
+			const abs = join(srcDir, name);
+			mkdirSync(join(abs, ".."), { recursive: true });
+			writeFileSync(abs, text);
+		}
+		for (const f of ROOT_FILES) writeFileSync(join(root, f), "export {};\n");
+		return run(srcDir);
+	} finally {
+		rmSync(root, { recursive: true, force: true });
+	}
+}
+
+const unclassifiedKeys = (sites: CallSite[]) =>
+	sites.map((x) => x.key).filter((k) => SCOPE_CLASSIFICATION[k] === undefined);
 
 describe("Convex call-site scope classification (task k1730pg1m870s58x99jq5x2ycd8hc72b)", () => {
 	it("pole: a planted unscoped call under a new tool is reported unclassified", () => {
@@ -1281,6 +1374,47 @@ describe("Convex call-site scope classification (task k1730pg1m870s58x99jq5x2ycd
 			.map((s) => s.key)
 			.filter((k) => SCOPE_CLASSIFICATION[k] === undefined);
 		expect(unclassified).toEqual(["planted_unscoped_door|tasks:list"]);
+	});
+
+	it("the walk finds files; an empty walk fails instead of passing", () => {
+		expect(scannedFiles(SRC_DIR).length).toBeGreaterThan(20);
+		expect(() =>
+			withScratchTree({}, (dir) => {
+				const found = walkProductionSources(dir);
+				if (found.length === 0) throw new Error("walk found zero source files");
+			}),
+		).toThrow("zero source files");
+	});
+
+	it("pole: a planted call in an existing file nobody listed is unclassified", () => {
+		const text = `export async function f(convex: any) {\n\tawait convex.query("tasks:list" as any, {});\n}\n`;
+		const keys = withScratchTree({ "toolUsageLike.ts": text }, (d) =>
+			unclassifiedKeys(liveSitesIn(d)),
+		);
+		expect(keys).toEqual(["toolUsageLike.ts|tasks:list"]);
+	});
+
+	it("pole: a planted call in a NEW file under a new directory is unclassified", () => {
+		const text = `export const g = (client: any) => client.mutation("tasks:update" as any, {});\n`;
+		const keys = withScratchTree({ "newdir/brand-new.ts": text }, (d) =>
+			unclassifiedKeys(liveSitesIn(d)),
+		);
+		expect(keys).toEqual(["brand-new.ts|tasks:update"]);
+	});
+
+	it("pole: a planted call in the injected-caller form deps.convexQuery is unclassified", () => {
+		const text = `export async function h(deps: any) {\n\treturn await deps.convexQuery("tasks:get", {});\n}\n`;
+		const keys = withScratchTree({ "injected.ts": text }, (d) =>
+			unclassifiedKeys(liveSitesIn(d)),
+		);
+		expect(keys).toEqual(["injected.ts|tasks:get"]);
+	});
+
+	it("c.req.query( (HTTP framework) is not a Convex call site", () => {
+		const text = `export const q = (c: any) => c.req.query("x");\n`;
+		expect(withScratchTree({ "http.ts": text }, (d) => liveSitesIn(d))).toEqual(
+			[],
+		);
 	});
 
 	it("every production Convex call site has a declared scope classification", () => {
