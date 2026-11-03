@@ -20,6 +20,7 @@ import { describe, expect, it } from "vitest";
 import * as briefingNotes from "../../convex/briefingNotes";
 import * as businessUnits from "../../convex/businessUnits";
 import * as diary from "../../convex/diary";
+import * as erase from "../../convex/erase";
 import * as githubOwnerBinding from "../../convex/githubOwnerBinding";
 import * as githubRepoMapping from "../../convex/githubRepoMapping";
 import * as kb from "../../convex/kb";
@@ -50,6 +51,7 @@ const MODULES: Record<string, Record<string, unknown>> = {
 	briefingNotes,
 	businessUnits,
 	diary,
+	erase,
 	githubOwnerBinding,
 	githubRepoMapping,
 	kb,
@@ -282,6 +284,7 @@ const SITES: [string, string, Legacy, boolean][] = [
 	["create_mission", "missions:create", personOnly, true],
 	["update_mission", "missions:update", personOnly, true],
 	["erase_memory", "memories:redactMemoryContentAsPerson", personOnly, true],
+	["erase_row", "erase:eraseRow", personOnly, true],
 	["get_tool_usage", "toolUsage:getToolUsage", personAndOrg, true],
 	["get_owner_tool_usage", "toolUsage:usageByOwner", personAndOrg, true],
 	["create_briefing_note", "briefingNotes:create", org, false],

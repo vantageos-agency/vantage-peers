@@ -151,6 +151,20 @@ const SCOPE_CLASSIFICATION: Readonly<Record<string, ScopeClassification>> = {
 		reason:
 			"person bearer (tools.ts erase_memory): verifiedPerson = the bearer hash from the verified context via doorScope (DOOR_SCOPE memories:redactMemoryContentAsPerson); Convex re-reads subject, org and role from the token row, proves the person in its org by ID, admits an org admin or the row's author only, and compares the row's stored org ID; pinned by convex/__tests__/redactMemoryContentAsPerson.test.ts",
 	},
+	"erase_memory|memories:redactMemoryContentAsAgent": {
+		class: "safe",
+		severity: null,
+		basis: "args+gate",
+		reason:
+			"seat (tools.ts erase_memory, no person bearer): verifiedActor = the agent ID the transport verified, passed from the verified context (verifiedActorOf), never an argument; Convex (resolveEraseCaller) accepts it from the service account acting for an org only, judges it by the one agent-proof check and erases only the memories whose stored createdById is that agent, in the row's own organisation; pinned by convex/__tests__/eraseRow.test.ts and the seat two-pole sweep",
+	},
+	"erase_row|erase:eraseRow": {
+		class: "safe",
+		severity: null,
+		basis: "args+gate",
+		reason:
+			"decided by the door (convex/erase.ts, lib/eraseRow.ts): the caller is derived from the proof the call carries (verifiedPerson = the bearer hash from the verified context via doorScope, verifiedActor = the agent ID added by the wrapped client, or a Clerk-JWT bearer's own session), the row's stored org ID must equal the caller's, and only an org admin or the row's stored author is served; pinned by convex/__tests__/eraseRow.test.ts (every covered table) and the seat two-pole sweep",
+	},
 	"get_memory|memories:getMemory": {
 		class: "traced",
 		severity: null,

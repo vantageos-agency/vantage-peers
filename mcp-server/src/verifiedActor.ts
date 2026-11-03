@@ -94,6 +94,11 @@ export const VERIFIED_ACTOR_DOORS: ReadonlySet<string> = new Set([
 	"memories:storeMemory",
 	"memories:listMemories",
 	"episodes:storeEpisode",
+	// The erase doors (task k170t9bg650dyw6hxjj627p9fx8hhpeq): a seat erases the rows its
+	// verified agent ID authored, and a diary entry stores that ID as its author.
+	"erase:eraseRow",
+	"memories:redactMemoryContentAsAgent",
+	"diary:write",
 	// The debate-room doors: the participant is the agent the transport verified,
 	// matched against the room's own participant list, never a name in an argument.
 	"debate:postTurn",

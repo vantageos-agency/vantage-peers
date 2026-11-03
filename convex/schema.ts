@@ -80,6 +80,11 @@ export default defineSchema({
 
 		// Which orchestrator (or system) created this memory
 		createdBy: creatorValidator,
+		// The author BY ID (task k170t9bg650dyw6hxjj627p9fx8hhpeq): the agents-row `_id` of the
+		// agent the transport verified, or the person principal "user:<verified subject>".
+		// `createdBy` stays the display LABEL. Optional: a row written before this column, or by
+		// a seat that presented no agent proof, has none and is erasable by an org admin only.
+		createdById: v.optional(v.string()),
 		instanceId: v.optional(v.string()), // which instance wrote this
 
 		// Graph relations to other memories (Supermemory pattern)
@@ -789,6 +794,9 @@ export default defineSchema({
 		// Pre-v2.4.8 entries are backfilled with orchestrator as best-guess via
 		// migrations/diary_backfill_createdBy — NOT auth-verified.
 		createdBy: v.optional(creatorValidator),
+		// The author BY ID (task k170t9bg650dyw6hxjj627p9fx8hhpeq): the verified agent's agents-row
+		// `_id`, or "user:<verified subject>". Absent on a legacy row or an unproven seat's write.
+		createdById: v.optional(v.string()),
 		createdAt: v.number(),
 		// R-52 tenant stamp: the org slug of the org-scoped caller that created the
 		// row (server-derived from withOrgScope, never an argument). Absent =

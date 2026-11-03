@@ -174,17 +174,17 @@ An agent is identified by its **agent ID** (the `agentId` that `list_peers` retu
 _Applies to: Cloud and Self-host._
 
 <!-- tools:start -->
-90 tools are advertised to clients. This reference is generated from the server's own `tools/list` by `scripts/print-tools.mjs`; do not edit it by hand.
+92 tools are advertised to clients. This reference is generated from the server's own `tools/list` by `scripts/print-tools.mjs`; do not edit it by hand.
 
-### Memory and search (9)
+### Memory and search (10)
 
+- `erase_memory` (write, destructive) — Permanently erase a secret (a credential, token or key) from a memory: the matching text is replaced in the stored body, the content hash is recomputed and the search index entry is re-indexed and purged, so the original text is gone (unlike soft_delete_memory, which leaves the body readable).
 - `get_memory` (read) — Fetch a single memory by its Convex document ID, including relations and episode metadata.
 - `hybrid_search` (read) — Combined vector + BM25 search via Reciprocal Rank Fusion for best semantic and keyword coverage.
 - `list_memories` (read) — List active (isLatest=true) memories for a namespace, ordered newest first.
 - `recall` (read) — Semantic vector search over VantagePeers memories, ranked by cosine similarity.
 - `soft_delete_document` (write) — Soft-delete all Knowledge Base chunks for a document.
 - `soft_delete_memory` (write, destructive) — Soft-delete a memory so it stops appearing in recall results while remaining in the audit log.
-- `erase_memory` (write, destructive) — Permanently erase a secret from a memory: the matching text is replaced in the stored body and the search index entry is re-indexed and purged (unlike `soft_delete_memory`, which leaves the body readable). Allowed for a signed-in person who is an organisation admin (any memory of the org) or the member who authored the memory; anyone else gets the door's typed `RBAC_DENIED`. Other typed refusals are relayed unchanged (`REDACT_NO_MATCH`, `MEMORY_NOT_FOUND`).
 - `store_document_chunked` (write) — Ingest a document binary (PDF, Markdown, plain text) into the Knowledge Base.
 - `store_memory` (write) — Store a typed memory entry (user/feedback/project/reference) in VantagePeers with optional graph relations.
 - `text_search` (read) — BM25 full-text keyword search over VantagePeers memories for exact term matching.
@@ -289,12 +289,13 @@ _Applies to: Cloud and Self-host._
 - `export_okf_bundle` (write) — Export a VantagePeers namespace as an OKF v0.1 bundle (tarball).
 - `import_okf_bundle` (write) — Import an OKF v0.1 bundle (memories + briefing-notes + tasks) into a target VantagePeers namespace.
 
-### Other (14)
+### Other (15)
 
 - `add_repo_mapping` (write) — Register or update a GitHub repo to orchestrator mapping for webhook event routing.
 - `claim_upload` (write) — Claim an uploaded blob for your organisation with the single-use ticket generate_upload_url returned.
 - `debate_get_room` (read) — Read a debate room: its subject, frozen template, pointer and the full transcript.
 - `debate_post_turn` (write) — Post your answer to the debate-room turn you were asked for; the only way a turn enters a room.
+- `erase_row` (write, destructive) — Permanently erase one row you or your organisation own: the row is DELETED (and, for a memory, its search entry is purged), unlike the soft deletes that leave the body readable.
 - `generate_upload_url` (write) — Mint a Convex storage upload URL for the Knowledge Base ingest flow.
 - `get_bulk_complete_run` (read) — Read the status of one live bulk_complete_tasks run by the `bulkRunId` its first call returned.
 - `get_github_owner_bindings` (read) — List the GitHub owners bound to your organisation (master: all), and for master the org-owned repo mappings that have no proof.

@@ -345,6 +345,7 @@ export const insertChunk = internalMutation({
 			namespace: args.namespace,
 			type: "reference",
 			content: args.content,
+			// erase-author-exempt: a knowledge-base chunk is written by the ingest pipeline, it has no author; only an org admin may erase it
 			createdBy: "system",
 			relations: [],
 			isLatest: true,

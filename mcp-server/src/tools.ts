@@ -71,6 +71,7 @@ import { registerValidateOkfBundle } from "./tools/validateOkfBundle.js";
 import { registerUiAppResources, withUiAppLink } from "./ui-resources/apps.js";
 import type { VpToolResult } from "./ui-resources/schemas.js";
 import { wrapToolResult } from "./ui-resources/stream-marker.js";
+import { ERASE_ROW_TABLES } from "./eraseTables.js";
 import { recordToolUsage, toolUsageReadArgs } from "./toolUsage.js";
 import { validateTaskPayload } from "./validate-task-payload.js";
 import { verifiedActorOf, withVerifiedActor } from "./verifiedActor.js";
@@ -1213,6 +1214,14 @@ export const eraseMemoryOutputSchema = z.object({
 	memoryId: z.string(),
 	replacements: z.number(),
 	contentHashChanged: z.boolean(),
+});
+
+// erase_row
+export const eraseRowOutputSchema = z.object({
+	table: z.string(),
+	rowId: z.string(),
+	erased: z.boolean(),
+	cascaded: z.record(z.string(), z.number()),
 });
 
 // get_memory
@@ -2556,11 +2565,11 @@ export function registerTools(
 		{
 			kind: "public",
 			reason:
-				"decided by its Convex doors memories:redactMemoryContent (a Clerk-JWT bearer's own session) and memories:redactMemoryContentAsPerson (a person bearer, forwarded as verifiedPerson = the bearer hash, resolved by the door): an org admin erases any memory of its org, a member only the memories it authored (stored createdBy = the verified actor name), in the row's own organisation; the tool takes no acting name and relays the door's typed refusal unchanged",
+				"decided by its Convex doors memories:redactMemoryContent (a Clerk-JWT bearer's own session), memories:redactMemoryContentAsPerson (a person bearer, forwarded as verifiedPerson = the bearer hash, resolved by the door) and memories:redactMemoryContentAsAgent (a seat, forwarded as verifiedActor = the agent ID the transport verified): an org admin erases any memory of its org, a member only the memories it authored (stored createdBy = the verified actor name), an agent only the memories its verified agent ID authored (stored createdById), in the row's own organisation; the tool takes no acting name and relays the door's typed refusal unchanged",
 		},
 		"erase_memory",
 		"Permanently erase a secret (a credential, token or key) from a memory: the matching text is replaced in the stored body, the content hash is recomputed and the search index entry is re-indexed and purged, so the original text is gone (unlike soft_delete_memory, which leaves the body readable). " +
-			"WHEN: a credential was pasted into a memory and must not stay retrievable. Allowed for an organisation admin (any memory of the org) or for the member who authored the memory; anyone else is refused with RBAC_DENIED. " +
+			"WHEN: a credential was pasted into a memory and must not stay retrievable. Allowed for an organisation admin (any memory of the org), for the person who authored the memory, or for the agent (seat) whose verified ID authored it; anyone else is refused with RBAC_DENIED. " +
 			"EXAMPLE: erase_memory memoryId='j57dy3049btafda9m2f5d2ggk987ph3f' redactions=[{find:'sk-live-abc', replaceWith:'[REDACTED]'}].",
 		{
 			memoryId: memoryIdSchema.describe(
@@ -2602,14 +2611,76 @@ export function registerTools(
 				// verified context via the door-scope resolver, never from an argument.
 				const scoped = doorScopeArgs("memories:redactMemoryContentAsPerson", undefined);
 				if (scoped.verifiedPerson === undefined) {
+					// A seat: the agent the transport verified (never a typed name). The
+					// door erases only the memories that agent's stored ID authored.
+					if (verifiedActor !== undefined) {
+						const result = await convex.mutation(
+							"memories:redactMemoryContentAsAgent" as any,
+							{ memoryId, redactions, verifiedActor },
+						);
+						return {
+							content: [{ type: "text", text: JSON.stringify(result, null, 2) }],
+						};
+					}
 					return mcpError(
-						"Forbidden: erase_memory is for a signed-in person (an organisation admin, or the member who authored the memory). This credential is not a person sign-in.",
+						"Forbidden: erase_memory is for a signed-in person (an organisation admin, or the member who authored the memory) or for a seat with a verified agent identity (it erases the memories that agent authored). This credential is neither.",
 					);
 				}
 				const result = await convex.mutation(
 					"memories:redactMemoryContentAsPerson" as any,
 					{ memoryId, redactions, ...scoped },
 				);
+				return {
+					content: [{ type: "text", text: JSON.stringify(result, null, 2) }],
+				};
+			} catch (error: any) {
+				return mcpConvexError(error);
+			}
+		},
+	);
+
+	// ── erase_row ───────────────────────────────────────────────────────────────
+
+	defineTool(
+		server,
+		authCtx,
+		{
+			kind: "public",
+			reason:
+				"decided by its Convex door erase:eraseRow (convex/lib/eraseRow.ts, one mechanism for every covered table): a Clerk-JWT bearer's own session, a person bearer (verifiedPerson = the bearer hash, resolved by the door) or a seat (verifiedActor = the agent ID the transport verified, added by the wrapped client): an org admin erases any row of its org, an author the rows whose stored author ID it is (a person's subject, an agent's ID), in the row's own organisation; the tool takes no acting name and relays the door's typed refusal unchanged",
+		},
+		"erase_row",
+		"Permanently erase one row you or your organisation own: the row is DELETED (and, for a memory, its search entry is purged), unlike the soft deletes that leave the body readable. " +
+			"Covered tables: " +
+			ERASE_ROW_TABLES.join(", ") +
+			". WHEN: authored content must be gone for good. Allowed for an organisation admin (any row of the org), for the person who wrote the row, or for the agent (seat) whose verified ID wrote it; a row without a stored author ID (legacy, or written by an unverified seat) is erasable by an admin only; anyone else, and any other organisation, is refused with RBAC_DENIED and the row is unchanged. For a secret inside a memory that must otherwise stay, use erase_memory. " +
+			"EXAMPLE: erase_row table='tasks' rowId='j57dy3049btafda9m2f5d2ggk987ph3f'.",
+		{
+			table: z
+				.enum(ERASE_ROW_TABLES)
+				.describe("The table of the row to erase (one of the covered tables)"),
+			rowId: z
+				.string()
+				.min(1)
+				.max(64)
+				.describe("Convex document ID of the row to erase, as listed by the tool that returned it"),
+		},
+		{
+			readOnlyHint: false,
+			openWorldHint: false,
+			destructiveHint: true,
+			title: "Erase a row",
+		},
+		async ({ table, rowId }) => {
+			try {
+				// The scope facts come from the verified context (a person's bearer hash);
+				// a seat's verifiedActor is added by the wrapped client. A Clerk-JWT bearer
+				// carries its own session. Convex refuses everything else, typed.
+				const result = await convex.mutation("erase:eraseRow" as any, {
+					table,
+					rowId,
+					...doorScopeArgs("erase:eraseRow", undefined),
+				});
 				return {
 					content: [{ type: "text", text: JSON.stringify(result, null, 2) }],
 				};

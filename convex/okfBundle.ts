@@ -54,7 +54,7 @@ import {
 } from "./okfSerializer";
 import type { BundleEntry } from "./okfValidator";
 import { creatorValidator, memoryTypeValidator } from "./schema";
-import { taskActorIdFields } from "./lib/actorIds";
+import { authorIdFieldsOf, taskActorIdFields } from "./lib/actorIds";
 import { clerkOrgIdForSlug } from "./lib/orgClerkId";
 import { stampOfNamespace } from "./lib/memoryTenant";
 import { sha256Hex } from "./briefingNoteBodies";
@@ -703,6 +703,11 @@ export const _insertImportedMemory = internalMutation({
 			type: args.type,
 			content: args.content,
 			createdBy: args.createdBy,
+			...(await authorIdFieldsOf(
+				ctx,
+				expectedOrgIdForNamespace(args.namespace),
+				args.createdBy,
+			)),
 			relations: [],
 			isLatest: true,
 			contentHash: args.contentHash,
@@ -754,6 +759,7 @@ export const _insertImportedBriefing = internalMutation({
 			participants: args.participants,
 			content: args.content,
 			createdBy: args.createdBy,
+			...(await authorIdFieldsOf(ctx, orgId, args.createdBy)),
 			contentHash: args.contentHash,
 			createdAt: args.now,
 			orgId,

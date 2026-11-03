@@ -1,18 +1,19 @@
-import { type ActingPrincipal, assertOrgAdmin, assertTargetBelongsTo, hasFleetRead, personActorName, resolveActingPrincipal, resolveCallerFromClaims, requireServiceAccountStanding } from "@vantageos/cloud-identity";
+import { type ActingPrincipal, assertOrgAdmin, assertTargetBelongsTo, hasFleetRead, personActorName, resolveActingPrincipal, resolveCallerFromClaims } from "@vantageos/cloud-identity";
 import { v, ConvexError } from "convex/values";
 import { internalMutation, type MutationCtx } from "./_generated/server";
 import { mutation, query } from "./lib/functions";
 import { internal } from "./_generated/api";
 import { memoryTypeValidator, creatorValidator, relationTypeValidator, severityValidator } from "./schema";
 import { requireId } from "./lib/ids";
-import { ORG_ADMIN_ROLES, isMcpBoundMaster, refusalError, verifiedActorValidator, withOrgScope, type OrgScope } from "./lib/auth";
+import { ORG_ADMIN_ROLES, isMcpBoundMaster, refusalError, requireResolvedCaller, verifiedActorValidator, withOrgScope } from "./lib/auth";
 import { anonymousRefusal } from "./lib/agentIdentity";
-import { wireIdentityRefusal } from "./lib/identityRefusalWire";
+import { ERASE_COVERED, assertMayErase, requireServiceAccount, resolveEraseCaller } from "./lib/eraseRow";
 import { personPrincipalLookups } from "./lib/actingPrincipal";
 import { resolveVerifiedPerson, verifiedPersonValidator } from "./lib/personPrincipal";
 import { orgByIdLookups, orgByIdPrincipalLookups } from "./lib/orgIdLookups";
 import { liveOnly, liveOrNull } from "./lib/retired";
 import {
+  memoryAuthorIdOf,
   memoryAuthorOf,
   memoryStampForWrite,
   memoryVisibleToScope,
@@ -140,12 +141,15 @@ export const storeMemory = mutation({
     // any other caller is a person, recorded as its verified subject, and a claimed
     // author that is anyone else is refused before anything is written. A member's
     // row carries its permanent org ID; the master's the ID the namespace names.
+    const masterSupplies = isMcpBoundMaster(scope) || scope.serviceTransport === true;
     const createdBy = memoryAuthorOf(
       scope,
       args.createdBy,
       "memories:storeMemory",
-      isMcpBoundMaster(scope) || scope.serviceTransport === true,
+      masterSupplies,
     );
+    // The author BY ID (the erase rule reads it): the verified agent, or the verified person.
+    const createdById = memoryAuthorIdOf(createdBy, ownAgent, masterSupplies);
     const clerkOrgId = await memoryStampForWrite(
       ctx,
       scope,
@@ -181,6 +185,7 @@ export const storeMemory = mutation({
       type: args.type,
       content: args.content,
       createdBy,
+      ...(createdById === undefined ? {} : { createdById }),
       relations,
       isLatest: true,
       ttl: args.ttl,
@@ -247,6 +252,7 @@ export const getMemory = query({
       type: memoryTypeValidator,
       content: v.string(),
       createdBy: creatorValidator,
+      createdById: v.optional(v.string()),
       instanceId: v.optional(v.string()),
       relations: v.array(
         v.object({
@@ -313,6 +319,7 @@ const memoryDocValidator = v.object({
   type: memoryTypeValidator,
   content: v.string(),
   createdBy: creatorValidator,
+  createdById: v.optional(v.string()),
   instanceId: v.optional(v.string()),
   relations: v.array(
     v.object({
@@ -724,19 +731,6 @@ export const redactMemoryContent = mutation({
   },
 });
 
-// The fleet SERVICE ACCOUNT as transport: the plain service account, or the same
-// account acting for an organisation (`serviceTransport`, set by __actingOrg).
-// WHO the service account is, is decided by @vantageos/cloud-identity
-// (`requireServiceAccountStanding`); its refusal is relayed to the wire unchanged.
-function requireServiceAccount(transport: OrgScope, door: string): void {
-  if (transport.serviceTransport === true) return;
-  try {
-    requireServiceAccountStanding(transport, door);
-  } catch (err: unknown) {
-    throw wireIdentityRefusal(err);
-  }
-}
-
 // Client door, PERSON-BEARER form: a person signed in through the MCP OAuth flow
 // (Claude.ai, ChatGPT). The MCP reaches Convex as the fleet service account, so
 // this door is MCP-bound only and REQUIRES the bearer hash (`verifiedPerson`);
@@ -801,6 +795,35 @@ export const redactMemoryContentAsPerson = mutation({
     // a name the caller typed.
     if (!admin.ok && memory.createdBy !== person_caller.actorName) {
       throw refusalError(admin.refusal);
+    }
+    return await eraseMemoryBody(ctx, memory, args.redactions);
+  },
+});
+
+// Client door, SEAT form: the fleet service account acting for the seat's organisation,
+// carrying the agent the transport verified (`verifiedActor`, judged by the one agent-proof
+// check). A seat is never an organisation admin: it erases only the memories its verified
+// agent AUTHORED, by the stored author ID (`createdById`), never by a label. The decision is
+// the shared erase rule (lib/eraseRow.ts), the same one `erase:eraseRow` applies.
+export const redactMemoryContentAsAgent = mutation({
+  args: {
+    memoryId: v.id("memories"),
+    redactions: redactionsValidator,
+    verifiedActor: verifiedActorValidator,
+  },
+  returns: redactResultValidator,
+  handler: async (ctx, args) => {
+    // write-contract: MCP-transport-only - issued via mcp-server client.mutation("memories:redactMemoryContentAsAgent", ...) in tools.ts erase_memory (imperative); never a subscribing pre-org client shell.
+    const door = "memories:redactMemoryContentAsAgent";
+    requireResolvedCaller(await withOrgScope(ctx, { refuseWithoutThrow: true }), door);
+    const caller = await resolveEraseCaller(ctx, {
+      door,
+      verifiedActor: args.verifiedActor,
+    });
+    const memory = await ctx.db.get(args.memoryId);
+    assertMayErase(caller, memory, ERASE_COVERED.memories, door);
+    if (memory === null) {
+      throw new ConvexError(`MEMORY_NOT_FOUND: memory ${args.memoryId} not found`);
     }
     return await eraseMemoryBody(ctx, memory, args.redactions);
   },

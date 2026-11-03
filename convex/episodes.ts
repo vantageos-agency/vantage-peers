@@ -6,7 +6,7 @@ import { mutation, query } from "./lib/functions";
 import { internal } from "./_generated/api";
 import { creatorValidator, severityValidator, relationTypeValidator } from "./schema";
 import { requireResolvedCaller, verifiedActorValidator, withOrgScope } from "./lib/auth";
-import { memoryAuthorOf, memoryStampForWrite, memoryVisibleToScope } from "./lib/memoryTenant";
+import { memoryAuthorIdOf, memoryAuthorOf, memoryStampForWrite, memoryVisibleToScope } from "./lib/memoryTenant";
 import {
   isMemoryNamespaceAllowed,
   memoryWritableRootsText,
@@ -78,12 +78,15 @@ export const storeEpisode = mutation({
     // other author is refused; the service account (the MCP server) supplies the
     // author of the seat it authenticated. The row carries the org's permanent ID,
     // so the memory doors and the episode doors judge it identically.
+    const masterSupplies = hasFleetRead(scope) || scope.serviceTransport === true;
     const createdBy = memoryAuthorOf(
       scope,
       args.createdBy,
       "episodes:storeEpisode",
-      hasFleetRead(scope) || scope.serviceTransport === true,
+      masterSupplies,
     );
+    // The author BY ID, as storeMemory stores it (the erase rule reads it).
+    const createdById = memoryAuthorIdOf(createdBy, ownAgent, masterSupplies);
     const clerkOrgId = await memoryStampForWrite(
       ctx,
       scope,
@@ -107,6 +110,7 @@ export const storeEpisode = mutation({
       type: "episode",
       content,
       createdBy,
+      ...(createdById === undefined ? {} : { createdById }),
       relations: args.relations ?? [],
       isLatest: true,
       ttl: args.ttl,
@@ -191,6 +195,7 @@ export const listEpisodes = query({
       _creationTime: v.number(),
       namespace: v.string(),
       createdBy: creatorValidator,
+      createdById: v.optional(v.string()),
       content: v.string(),
       isLatest: v.boolean(),
       createdAt: v.number(),

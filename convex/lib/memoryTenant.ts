@@ -117,3 +117,23 @@ export function memoryAuthorOf(
 	}
 	return own;
 }
+
+/**
+ * The author BY ID a memory-table door stores beside the `createdBy` label (task
+ * k170t9bg650dyw6hxjj627p9fx8hhpeq). Two sources, both verified, never a typed name:
+ *   - the agent the transport proved for a seat (`verifiedAgentId`, already judged by
+ *     `seatAgentIdOf`), and
+ *   - a person: `createdBy` IS the verified subject ("user:<subject>", forced equal to
+ *     the verified caller by `memoryAuthorOf`) when the caller is not the label-supplying
+ *     service account.
+ * A label the service account supplied without a proof is NOT an identity: no ID is stored,
+ * and the row is erasable by an organisation admin only.
+ */
+export function memoryAuthorIdOf(
+	createdBy: string,
+	verifiedAgentId: string | undefined,
+	masterSupplies: boolean,
+): string | undefined {
+	if (verifiedAgentId !== undefined) return verifiedAgentId;
+	return masterSupplies ? undefined : createdBy;
+}
