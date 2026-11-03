@@ -229,6 +229,78 @@ describe("3. never silently 'connect as myself' for a person who has a bound age
 	});
 });
 
+const radios = (html: string) =>
+	[
+		...html.matchAll(
+			/<input type="radio" name="agent_[^"]*" value="([^"]*)"( checked)?>/g,
+		),
+	].map((m) => ({ value: m[1], checked: m[2] !== undefined }));
+
+describe("5. the bound agent is the default radio; 'myself' stays explicit", () => {
+	it("(a) bound agent checked, 'myself' present and unchecked", async () => {
+		const { html } = await approve({ [`agent_${ORG}`]: helios });
+		const r = radios(html);
+		expect(r.find((x) => x.value === helios)?.checked).toBe(true);
+		expect(r.find((x) => x.value === "")?.checked).toBe(false);
+		expect(r.filter((x) => x.checked)).toHaveLength(1);
+	});
+	it("(c) a person with no bound agent: 'myself' stays checked, approve with no field works", async () => {
+		await t.run(async (ctx) => {
+			await ctx.db.patch(helios as never, { isActive: false });
+			await ctx.db.insert("agents", {
+				orgSlug: "iris-rh",
+				clerkOrgId: ORG,
+				name: "shared",
+				normalizedName: "shared",
+				isActive: true,
+				createdAt: Date.now(),
+			});
+		});
+		const { html, result } = await approve({});
+		const r = radios(html);
+		expect(r.filter((x) => x.checked).map((x) => x.value)).toEqual([""]);
+		expect(result.status).toBe(302);
+		expect(await actingAs(result.code as string)).toBeNull();
+	});
+	it("(d) an unbound, another person's or another org's agent is never default-checked", async () => {
+		await t.run(async (ctx) => {
+			const base = { isActive: true, createdAt: Date.now() };
+			await ctx.db.patch(helios as never, { isActive: false });
+			await ctx.db.insert("agents", {
+				orgSlug: "iris-rh",
+				clerkOrgId: ORG,
+				name: "shared",
+				normalizedName: "shared",
+				...base,
+			});
+			await ctx.db.insert("agents", {
+				orgSlug: "iris-rh",
+				clerkOrgId: ORG,
+				name: "theirs",
+				normalizedName: "theirs",
+				personalAgentOf: "user_other",
+				...base,
+			});
+			await ctx.db.insert("agents", {
+				orgSlug: "other",
+				clerkOrgId: "org_Other",
+				name: "foreign",
+				normalizedName: "foreign",
+				personalAgentOf: MARIE,
+				...base,
+			});
+		});
+		const { html } = await approve({ [`agent_${ORG}`]: "" });
+		expect(
+			radios(html)
+				.filter((x) => x.checked)
+				.map((x) => x.value),
+		).toEqual([""]);
+		expect(html).not.toContain("theirs");
+		expect(html).not.toContain("foreign");
+	});
+});
+
 describe("4. an explicit 'Connect as myself' still works", () => {
 	it("field posted empty -> a code, the token acts as nobody but the person", async () => {
 		const { result } = await approve({ [`agent_${ORG}`]: "" });
