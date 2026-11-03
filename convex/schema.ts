@@ -1582,6 +1582,12 @@ export default defineSchema({
 		// existed. Stamped on the access token minted from this code.
 		agentId: v.optional(v.id("agents")),
 		connectedAs: v.optional(v.literal("person")),
+		// "Connect as myself" posted while the consent screen OFFERED an agent (one
+		// of the person's own, or the create field): an explicit decline, carried to
+		// the refresh family so a refresh never re-asks it. Absent on a "myself" with
+		// nothing offered, and on every code issued before it existed (task
+		// k177e8dyrnykk3c56yf2b0pgfs8hhz06; read by oauth:rotateRefreshToken).
+		agentChoiceDeclined: v.optional(v.literal(true)),
 	})
 		.index("by_codeHash", ["codeHash"])
 		.index("by_expiresAt", ["expiresAt"]),
@@ -1689,6 +1695,11 @@ export default defineSchema({
 		orgRole: v.optional(v.string()),
 		agentId: v.optional(v.id("agents")),
 		connectedAs: v.optional(v.literal("person")),
+		// Copied from the consent code (oauth_person_codes.agentChoiceDeclined) and
+		// by every rotation: the person declined an offered agent. An agent-less
+		// family WITHOUT it is refused at refresh once the person has a choice, so
+		// the client re-runs authorization and meets the consent page.
+		agentChoiceDeclined: v.optional(v.literal(true)),
 		// The ceiling a refreshed token can never exceed (the scopes minted at
 		// consent) and the scopes the person asked for beyond the organisation's own
 		// (offline_access excluded).

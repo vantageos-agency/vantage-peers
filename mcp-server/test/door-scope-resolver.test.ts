@@ -20,6 +20,7 @@ import { describe, expect, it } from "vitest";
 import * as briefingNotes from "../../convex/briefingNotes";
 import * as businessUnits from "../../convex/businessUnits";
 import * as diary from "../../convex/diary";
+import * as episodes from "../../convex/episodes";
 import * as erase from "../../convex/erase";
 import * as githubOwnerBinding from "../../convex/githubOwnerBinding";
 import * as githubRepoMapping from "../../convex/githubRepoMapping";
@@ -51,6 +52,7 @@ const MODULES: Record<string, Record<string, unknown>> = {
 	briefingNotes,
 	businessUnits,
 	diary,
+	episodes,
 	erase,
 	githubOwnerBinding,
 	githubRepoMapping,
@@ -223,6 +225,11 @@ const personOnly: Legacy = (ctx, a) => ({ args: legacyPerson(ctx, a) });
 const personAndOrg: Legacy = (ctx, a) => ({
 	args: { ...legacyPerson(ctx, a), ...legacyOrg(ctx) },
 });
+// A person door whose org rides only when no person proof does ("unless-person").
+const personElseOrg: Legacy = (ctx, a) => {
+	const person = legacyPerson(ctx, a);
+	return { args: Object.keys(person).length > 0 ? person : legacyOrg(ctx) };
+};
 
 /** [tool, door, legacy composition, tool is a person door (personDoor: true)] */
 const SITES: [string, string, Legacy, boolean][] = [
@@ -287,7 +294,11 @@ const SITES: [string, string, Legacy, boolean][] = [
 	["erase_row", "erase:eraseRow", personOnly, true],
 	["get_tool_usage", "toolUsage:getToolUsage", personAndOrg, true],
 	["get_owner_tool_usage", "toolUsage:usageByOwner", personAndOrg, true],
-	["create_briefing_note", "briefingNotes:create", org, false],
+	// Person doors since task k177e8dyrnykk3c56yf2b0pgfs8hhz06: a person with no
+	// agent writes a memory, an episode and a briefing note in its own name.
+	["store_memory", "memories:storeMemory", personOnly, true],
+	["store_episode", "episodes:storeEpisode", personOnly, true],
+	["create_briefing_note", "briefingNotes:create", personElseOrg, true],
 	["get_briefing_note", "briefingNotes:get", org, false],
 	["list_briefing_notes", "briefingNotes:list", org, false],
 	// task k176723g3m5cczsq44ak9fbgm58hd0tx: the diary doors take verifiedOrg

@@ -272,8 +272,21 @@ describe("create_briefing_note: the author is the resolved agent ID", () => {
 		expect(noted(h.mutations)).toHaveLength(0);
 	});
 
-	it("POLE: a caller with NO agent ID that omits createdBy is still refused (the name is required without an ID)", async () => {
+	it("POLE: a PERSON with NO agent ID that omits createdBy writes in its own name: no author forwarded, the person proof instead (task k177e8dyrnykk3c56yf2b0pgfs8hhz06)", async () => {
 		const h = harness(noAgentToken());
+		const r = await h.tools.get("create_briefing_note")?.(noteArgs({}));
+		expect(r?.isError).toBeFalsy();
+		const [note] = noted(h.mutations);
+		expect(note?.args.createdBy).toBeUndefined();
+		expect(note?.args.verifiedPerson).toEqual({
+			accessTokenHash: "hash-marie",
+		});
+		expect(note?.args.verifiedOrg).toBeUndefined();
+	});
+
+	it("POLE: a SEAT with NO agent ID that omits createdBy is still refused (the name is required without an ID)", async () => {
+		const { principal: _p, ...seat } = noAgentToken();
+		const h = harness(seat as OAuthContext);
 		const r = await h.tools.get("create_briefing_note")?.(noteArgs({}));
 		expect(r?.isError).toBe(true);
 		expect(noted(h.mutations)).toHaveLength(0);

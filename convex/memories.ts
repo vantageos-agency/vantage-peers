@@ -7,7 +7,7 @@ import { memoryTypeValidator, creatorValidator, relationTypeValidator, severityV
 import { requireId } from "./lib/ids";
 import { isMcpBoundMaster, requireResolvedCaller, verifiedActorValidator, withOrgScope, type OrgScope } from "./lib/auth";
 import { ERASE_COVERED, assertMayErase, collectMemoryChain, memoryChainMayErase, resolveEraseCaller } from "./lib/eraseRow";
-import { verifiedPersonValidator } from "./lib/personPrincipal";
+import { resolveVerifiedPerson, verifiedPersonValidator } from "./lib/personPrincipal";
 import { liveOnly, liveOrNull } from "./lib/retired";
 import {
   memoryAuthorIdOf,
@@ -83,6 +83,11 @@ export const storeMemory = mutation({
     // The agent the MCP transport verified, by its agents-row ID (convex/lib/seatNamespace.ts):
     // the only key to `orchestrator/<its own agent ID>` for a seat acting for its org.
     verifiedActor: v.optional(verifiedActorValidator),
+    // A PERSON signed in through the MCP OAuth flow with no agent (claude.ai,
+    // ChatGPT), acting in its own name: the bearer hash only, believed from the
+    // service account only; the person's scope is rebuilt from its token row
+    // (convex/lib/personPrincipal.ts). Task k177e8dyrnykk3c56yf2b0pgfs8hhz06.
+    verifiedPerson: v.optional(verifiedPersonValidator),
     type: memoryTypeValidator,
     content: v.string(),
     // Absent for a person (the MCP forwards none): the verified caller is the
@@ -123,7 +128,20 @@ export const storeMemory = mutation({
     // Clerk identity (the caller's own org JWT or its service-account
     // token; see mcp-server/src/authenticatedConvexClient.ts), so the
     // fail-closed default here never breaks that live path.
-    const scope = await withOrgScope(ctx);
+    // A person carried as verifiedPerson replaces the transport scope with its
+    // own (non-master, no service transport), so the author below is the
+    // verified "user:<subject>" and the stamp is the person's own org ID; absent,
+    // the scope is the transport's, byte-unchanged.
+    const scope = await resolveVerifiedPerson(
+      ctx,
+      await withOrgScope(ctx),
+      args.verifiedPerson,
+      {
+        door: "memories:storeMemory",
+        ...(args.createdBy !== undefined ? { assertedName: args.createdBy } : {}),
+        agentProof: args.verifiedActor !== undefined,
+      },
+    );
     // Namespace ownership is the ONE decision of convex/lib/teamNamespace.ts (the
     // episode doors call it too): `team/<its org ID>`, or the legacy label alias of
     // the same verified org.

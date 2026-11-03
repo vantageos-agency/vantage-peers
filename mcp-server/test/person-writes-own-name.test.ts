@@ -526,9 +526,9 @@ describe("pole 5 — seat tokens and agent credentials are unchanged", () => {
 });
 
 describe("the declared set: a write tool with an acting name and no human door refuses a person", () => {
-	it("fail_task / delete_task / create_briefing_note refuse PERSON_NO_HUMAN_DOOR", async () => {
+	it("fail_task / delete_task / write_diary refuse PERSON_NO_HUMAN_DOOR", async () => {
 		const tools = realTools(await contextFor(await personToken("user_editor")));
-		for (const name of ["fail_task", "delete_task", "create_briefing_note"]) {
+		for (const name of ["fail_task", "delete_task", "write_diary"]) {
 			const r = await call(tools, name, {});
 			expect(r.isError, name).toBe(true);
 			expect(r.content[0].text, name).toContain("PERSON_NO_HUMAN_DOOR");

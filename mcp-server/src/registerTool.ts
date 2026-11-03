@@ -378,6 +378,27 @@ async function bindActingNames(
 }
 
 /**
+ * The one step that gives an agent-less person an agent: the consent page is
+ * shown again only on a new authorization, never on a refresh.
+ */
+export const PERSON_NO_AGENT_STEP =
+	"To act through an agent, reconnect this client to VantagePeers and choose (or, as an organisation admin, create) an agent on the consent page.";
+
+/**
+ * The sentence a tool's description carries when a person connected without an
+ * agent cannot call it: derived in defineTool from the tool's own declaration (it
+ * names acting-name arguments, is not read-only or own-state, and declares no
+ * `personDoor`), so the description says exactly what bindPersonActingNames does.
+ * Pinned against the server's behaviour by test/client-seat-matrix.test.ts.
+ */
+export const NO_PERSON_DOOR_NOTE =
+	" A person connected without an agent is refused here (PERSON_NO_HUMAN_DOOR): reconnect and choose an agent on the consent page.";
+
+/** Appended by defineTool to the namespace parameter of every `read` tool. */
+export const READ_NAMESPACE_NOTE =
+	" Required for every session except the fleet master: a call without it is refused, and the refusal names the namespaces this session may read.";
+
+/**
  * bindPersonActingNames — a PERSON (OAuth person token, #1444) acts in its OWN
  * name, "user:<subject>" read from the token row (personActorOf), never from an
  * argument. Task k176ch9tamzab3dnhye94kga1d8fkbhm. Runs only for a person with
@@ -430,7 +451,7 @@ function bindPersonActingNames(
 	if (!personDoor) {
 		return {
 			denied: mcpError(
-				`PERSON_NO_HUMAN_DOOR: ${toolName} has no door through which a person acts in its own name — it needs an agent name and that agent's credential (${keys.join(", ")}).`,
+				`PERSON_NO_HUMAN_DOOR: ${toolName} has no door through which a person acts in its own name — it needs an agent name and that agent's credential (${keys.join(", ")}). ${PERSON_NO_AGENT_STEP}`,
 			),
 		};
 	}
@@ -527,6 +548,9 @@ export function defineTool(
 	} & ToolAnnotations;
 
 	const actingKeys = actingNameKeys(scope, schema);
+	// The same exemption guardedHandler applies: no person acting-name gate.
+	const exemptByDeclaration =
+		annotations.readOnlyHint === true || ownStateOnly === true;
 	// An acting name is a claim, never the way a caller is identified: a caller
 	// that resolved an agent ID acts as that ID and may leave the name out. So it
 	// is optional in the advertised schema; the keys that WERE required stay
@@ -542,6 +566,16 @@ export function defineTool(
 				(schema[key] as z.ZodType).optional(),
 			]),
 		),
+		// A `read` tool's namespace is optional in the schema (the fleet master may
+		// omit it), but every other session is refused without one
+		// (checkNamespaceRead): the parameter says so, derived from the declaration.
+		...(scope.kind === "read" && schema[scope.namespaceArg] !== undefined
+			? {
+					[scope.namespaceArg]: (schema[scope.namespaceArg] as z.ZodType).describe(
+						`${(schema[scope.namespaceArg] as z.ZodType).description ?? ""}${READ_NAMESPACE_NOTE}`,
+					),
+				}
+			: {}),
 	};
 
 	// Runs the handler, then records the call. The recording is fire-and-forget and
@@ -645,10 +679,15 @@ export function defineTool(
 	// throwing at boot. See defineTool doc comment above.
 	// biome-ignore lint/suspicious/noExplicitAny: SDK overload set is wider than our spec type.
 	const registerTool = server.registerTool.bind(server) as any;
+	// A tool a person without an agent cannot call says so (NO_PERSON_DOOR_NOTE).
+	const advertisedDescription =
+		actingKeys.length > 0 && !exemptByDeclaration && personDoor !== true
+			? `${description}${NO_PERSON_DOOR_NOTE}`
+			: description;
 	registerTool(
 		name,
 		{
-			description,
+			description: advertisedDescription,
 			inputSchema: strictSchema,
 			annotations: declaredAnnotations === undefined ? undefined : annotations,
 			// @modelcontextprotocol/server 2.x takes a Standard Schema object for
