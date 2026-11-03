@@ -1,0 +1,125 @@
+(!) Your Vite config uses features that are unsupported by `configLoader: 'native'`, which is planned to become the default in a future major version of Vite:
+  - ESM syntax in a file loaded as CommonJS (vitest.config.ts:1:1). Use a `.mjs` extension or set `"type": "module"` in the closest package.json
+Set `VITE_CONFIG_NATIVE_IGNORE_WARNING=true` to suppress this warning.
+
+[1m[46m RUN [49m[22m [36mv4.1.1 [39m[90m/root/coding/vantage-memory/.claude/worktrees/agent-a7d8787a920a01ac1[39m
+
+ [31m❯[39m convex/__tests__/authorBackfill.test.ts [2m([22m[2m15 tests[22m[2m | [22m[31m7 failed[39m[2m)[22m[32m 82[2mms[22m[39m
+[31m     [31m×[31m BEFORE / AFTER / OTHER: refused before the stamp, served to the author after, still refused to a colleague[39m[32m 21[2mms[22m[39m
+[31m     [31m×[31m OTHER ORG: a label that names an agent of another organisation is never stamped[39m[32m 4[2mms[22m[39m
+[31m     [31m×[31m AMBIGUOUS: a label carried by two active agents of the organisation is never stamped[39m[32m 3[2mms[22m[39m
+[31m     [31m×[31m DRY RUN is the default and writes nothing; the real run is idempotent[39m[32m 3[2mms[22m[39m
+[31m     [31m×[31m a person-labelled row and a row that already has an author ID are never rewritten[39m[32m 4[2mms[22m[39m
+[31m     [31m×[31m messages are stamped on fromId[39m[32m 2[2mms[22m[39m
+[31m     [31m×[31m refuses a table that is not authored[39m[32m 3[2mms[22m[39m
+
+[31m⎯⎯⎯⎯⎯⎯⎯[39m[1m[41m Failed Tests 7 [49m[22m[31m⎯⎯⎯⎯⎯⎯⎯[39m
+
+[41m[1m FAIL [22m[49m convex/__tests__/authorBackfill.test.ts[2m > [22mauthorBackfill:stamp and erase:eraseRow[2m > [22mBEFORE / AFTER / OTHER: refused before the stamp, served to the author after, still refused to a colleague
+[31m[1mError[22m: Expected a Convex function exported from module "migrations/authorBackfill" as `stamp`, but there is no such export.[39m
+[90m [2m❯[22m getFunctionFromPath ../../../node_modules/convex-test/dist/index.js:[2m1771:15[22m[39m
+[90m [2m❯[22m Object.mutationFromPath ../../../node_modules/convex-test/dist/index.js:[2m1549:26[22m[39m
+[90m [2m❯[22m Object.mutation ../../../node_modules/convex-test/dist/index.js:[2m1592:20[22m[39m
+[36m [2m❯[22m convex/__tests__/authorBackfill.test.ts:[2m276:15[22m[39m
+    [90m274|[39m   [35mconst[39m colleagueRow [33m=[39m [35mawait[39m [34mmemoryRow[39m([33mA_ID[39m[33m,[39m [32m"alice"[39m)[33m;[39m
+    [90m275|[39m   [34mexpect[39m([35mawait[39m [34meraseAs[39m([33mA[39m[33m,[39m [33mA_ID[39m[33m,[39m [32m"alice"[39m[33m,[39m row))[33m.[39m[34mtoBe[39m([32m"RBAC_DENIED"[39m)[33m;[39m
+    [90m276|[39m   [35mconst[39m run [33m=[39m [35mawait[39m [34mstamp[39m({ table[33m:[39m [32m"memories"[39m[33m,[39m dryRun[33m:[39m [35mfalse[39m })[33m;[39m
+    [90m   |[39m               [31m^[39m
+    [90m277|[39m   expect(run).toMatchObject({ stamped: 2, resolvable: 2, dryRun: false…
+    [90m278|[39m   [34mexpect[39m(([35mawait[39m [34mstored[39m(row))[33m?.[39mcreatedById)[33m.[39m[34mtoBe[39m(agents[[32m`[39m[36m${[39m[33mA[39m[36m}[39m[32m/alice`[39m])[33m;[39m
+
+[31m[2m⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/7]⎯[22m[39m
+
+[41m[1m FAIL [22m[49m convex/__tests__/authorBackfill.test.ts[2m > [22mauthorBackfill:stamp and erase:eraseRow[2m > [22mOTHER ORG: a label that names an agent of another organisation is never stamped
+[31m[1mError[22m: Expected a Convex function exported from module "migrations/authorBackfill" as `stamp`, but there is no such export.[39m
+[90m [2m❯[22m getFunctionFromPath ../../../node_modules/convex-test/dist/index.js:[2m1771:15[22m[39m
+[90m [2m❯[22m Object.mutationFromPath ../../../node_modules/convex-test/dist/index.js:[2m1549:26[22m[39m
+[90m [2m❯[22m Object.mutation ../../../node_modules/convex-test/dist/index.js:[2m1592:20[22m[39m
+[36m [2m❯[22m convex/__tests__/authorBackfill.test.ts:[2m287:13[22m[39m
+    [90m285|[39m  test("OTHER ORG: a label that names an agent of another organisation …
+    [90m286|[39m   [35mconst[39m row [33m=[39m [35mawait[39m [34mmemoryRow[39m([33mA_ID[39m[33m,[39m [32m"bob"[39m)[33m;[39m
+    [90m287|[39m   [35mconst[39m r [33m=[39m [35mawait[39m [34mstamp[39m({ table[33m:[39m [32m"memories"[39m[33m,[39m dryRun[33m:[39m [35mfalse[39m })[33m;[39m
+    [90m   |[39m             [31m^[39m
+    [90m288|[39m   [34mexpect[39m(r)[33m.[39m[34mtoMatchObject[39m({ stamped[33m:[39m [34m0[39m[33m,[39m unresolvable[33m:[39m [34m1[39m })[33m;[39m
+    [90m289|[39m   [34mexpect[39m(([35mawait[39m [34mstored[39m(row))[33m?.[39mcreatedById)[33m.[39m[34mtoBeUndefined[39m()[33m;[39m
+
+[31m[2m⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[2/7]⎯[22m[39m
+
+[41m[1m FAIL [22m[49m convex/__tests__/authorBackfill.test.ts[2m > [22mauthorBackfill:stamp and erase:eraseRow[2m > [22mAMBIGUOUS: a label carried by two active agents of the organisation is never stamped
+[31m[1mError[22m: Expected a Convex function exported from module "migrations/authorBackfill" as `stamp`, but there is no such export.[39m
+[90m [2m❯[22m getFunctionFromPath ../../../node_modules/convex-test/dist/index.js:[2m1771:15[22m[39m
+[90m [2m❯[22m Object.mutationFromPath ../../../node_modules/convex-test/dist/index.js:[2m1549:26[22m[39m
+[90m [2m❯[22m Object.mutation ../../../node_modules/convex-test/dist/index.js:[2m1592:20[22m[39m
+[36m [2m❯[22m convex/__tests__/authorBackfill.test.ts:[2m305:13[22m[39m
+    [90m303|[39m   )[33m;[39m
+    [90m304|[39m   [35mconst[39m row [33m=[39m [35mawait[39m [34mmemoryRow[39m([33mA_ID[39m[33m,[39m [32m"alice"[39m)[33m;[39m
+    [90m305|[39m   [35mconst[39m r [33m=[39m [35mawait[39m [34mstamp[39m({ table[33m:[39m [32m"memories"[39m[33m,[39m dryRun[33m:[39m [35mfalse[39m })[33m;[39m
+    [90m   |[39m             [31m^[39m
+    [90m306|[39m   [34mexpect[39m(r)[33m.[39m[34mtoMatchObject[39m({ stamped[33m:[39m [34m0[39m[33m,[39m ambiguous[33m:[39m [34m1[39m })[33m;[39m
+    [90m307|[39m   [34mexpect[39m(([35mawait[39m [34mstored[39m(row))[33m?.[39mcreatedById)[33m.[39m[34mtoBeUndefined[39m()[33m;[39m
+
+[31m[2m⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[3/7]⎯[22m[39m
+
+[41m[1m FAIL [22m[49m convex/__tests__/authorBackfill.test.ts[2m > [22mauthorBackfill:stamp and erase:eraseRow[2m > [22mDRY RUN is the default and writes nothing; the real run is idempotent
+[31m[1mError[22m: Expected a Convex function exported from module "migrations/authorBackfill" as `stamp`, but there is no such export.[39m
+[90m [2m❯[22m getFunctionFromPath ../../../node_modules/convex-test/dist/index.js:[2m1771:15[22m[39m
+[90m [2m❯[22m Object.mutationFromPath ../../../node_modules/convex-test/dist/index.js:[2m1549:26[22m[39m
+[90m [2m❯[22m Object.mutation ../../../node_modules/convex-test/dist/index.js:[2m1592:20[22m[39m
+[36m [2m❯[22m convex/__tests__/authorBackfill.test.ts:[2m313:15[22m[39m
+    [90m311|[39m  test("DRY RUN is the default and writes nothing; the real run is idem…
+    [90m312|[39m   [35mconst[39m row [33m=[39m [35mawait[39m [34mmemoryRow[39m([33mA_ID[39m[33m,[39m [32m"alice"[39m)[33m;[39m
+    [90m313|[39m   [35mconst[39m dry [33m=[39m [35mawait[39m [34mstamp[39m({ table[33m:[39m [32m"memories"[39m })[33m;[39m
+    [90m   |[39m               [31m^[39m
+    [90m314|[39m   expect(dry).toMatchObject({ dryRun: true, resolvable: 1, stamped: 0 …
+    [90m315|[39m   [34mexpect[39m(([35mawait[39m [34mstored[39m(row))[33m?.[39mcreatedById)[33m.[39m[34mtoBeUndefined[39m()[33m;[39m
+
+[31m[2m⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[4/7]⎯[22m[39m
+
+[41m[1m FAIL [22m[49m convex/__tests__/authorBackfill.test.ts[2m > [22mauthorBackfill:stamp and erase:eraseRow[2m > [22ma person-labelled row and a row that already has an author ID are never rewritten
+[31m[1mError[22m: Expected a Convex function exported from module "migrations/authorBackfill" as `stamp`, but there is no such export.[39m
+[90m [2m❯[22m getFunctionFromPath ../../../node_modules/convex-test/dist/index.js:[2m1771:15[22m[39m
+[90m [2m❯[22m Object.mutationFromPath ../../../node_modules/convex-test/dist/index.js:[2m1549:26[22m[39m
+[90m [2m❯[22m Object.mutation ../../../node_modules/convex-test/dist/index.js:[2m1592:20[22m[39m
+[36m [2m❯[22m convex/__tests__/authorBackfill.test.ts:[2m326:13[22m[39m
+    [90m324|[39m   [35mconst[39m person [33m=[39m [35mawait[39m [34mmemoryRow[39m([33mA_ID[39m[33m,[39m [32m"user:user_p1"[39m)[33m;[39m
+    [90m325|[39m   [35mconst[39m owned [33m=[39m [35mawait[39m [34mmemoryRow[39m([33mA_ID[39m[33m,[39m [32m"alice"[39m[33m,[39m agents[[32m`[39m[36m${[39m[33mA[39m[36m}[39m[32m/carol`[39m])[33m;[39m
+    [90m326|[39m   [35mconst[39m r [33m=[39m [35mawait[39m [34mstamp[39m({ table[33m:[39m [32m"memories"[39m[33m,[39m dryRun[33m:[39m [35mfalse[39m })[33m;[39m
+    [90m   |[39m             [31m^[39m
+    [90m327|[39m   expect(r).toMatchObject({ stamped: 0, personLabelled: 1, withAuthorI…
+    [90m328|[39m   [34mexpect[39m(([35mawait[39m [34mstored[39m(person))[33m?.[39mcreatedById)[33m.[39m[34mtoBeUndefined[39m()[33m;[39m
+
+[31m[2m⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[5/7]⎯[22m[39m
+
+[41m[1m FAIL [22m[49m convex/__tests__/authorBackfill.test.ts[2m > [22mauthorBackfill:stamp and erase:eraseRow[2m > [22mmessages are stamped on fromId
+[31m[1mError[22m: Expected a Convex function exported from module "migrations/authorBackfill" as `stamp`, but there is no such export.[39m
+[90m [2m❯[22m getFunctionFromPath ../../../node_modules/convex-test/dist/index.js:[2m1771:15[22m[39m
+[90m [2m❯[22m Object.mutationFromPath ../../../node_modules/convex-test/dist/index.js:[2m1549:26[22m[39m
+[90m [2m❯[22m Object.mutation ../../../node_modules/convex-test/dist/index.js:[2m1592:20[22m[39m
+[36m [2m❯[22m convex/__tests__/authorBackfill.test.ts:[2m334:13[22m[39m
+    [90m332|[39m  [34mtest[39m([32m"messages are stamped on fromId"[39m[33m,[39m [35masync[39m () [33m=>[39m {
+    [90m333|[39m   [35mconst[39m id [33m=[39m [35mawait[39m [34mmessageRow[39m([33mB_ID[39m[33m,[39m [32m"bob"[39m)[33m;[39m
+    [90m334|[39m   [35mconst[39m r [33m=[39m [35mawait[39m [34mstamp[39m({ table[33m:[39m [32m"messages"[39m[33m,[39m dryRun[33m:[39m [35mfalse[39m })[33m;[39m
+    [90m   |[39m             [31m^[39m
+    [90m335|[39m   [34mexpect[39m(r)[33m.[39m[34mtoMatchObject[39m({ table[33m:[39m [32m"messages"[39m[33m,[39m stamped[33m:[39m [34m1[39m })[33m;[39m
+    [90m336|[39m   [35mconst[39m row [33m=[39m [35mawait[39m t[33m.[39m[34mrun[39m((ctx) [33m=>[39m ctx[33m.[39mdb[33m.[39m[35mget[39m(id))[33m;[39m
+
+[31m[2m⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[6/7]⎯[22m[39m
+
+[41m[1m FAIL [22m[49m convex/__tests__/authorBackfill.test.ts[2m > [22mauthorBackfill:stamp and erase:eraseRow[2m > [22mrefuses a table that is not authored
+[31m[1mAssertionError[22m: expected Error: Expected a Convex function exporte… to be an instance of ConvexError[39m
+[36m [2m❯[22m convex/__tests__/authorBackfill.test.ts:[2m341:58[22m[39m
+    [90m339|[39m
+    [90m340|[39m  [34mtest[39m([32m"refuses a table that is not authored"[39m[33m,[39m [35masync[39m () [33m=>[39m {
+    [90m341|[39m   await expect(stamp({ table: "issues", dryRun: false })).rejects.toBe…
+    [90m   |[39m                                                          [31m^[39m
+    [90m342|[39m  })[33m;[39m
+    [90m343|[39m })[33m;[39m
+
+[31m[2m⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[7/7]⎯[22m[39m
+
+
+[2m Test Files [22m [1m[31m1 failed[39m[22m[90m (1)[39m
+[2m      Tests [22m [1m[31m7 failed[39m[22m[2m | [22m[1m[32m8 passed[39m[22m[90m (15)[39m
+[2m   Start at [22m 15:40:51
+[2m   Duration [22m 864ms[2m (transform 477ms, setup 0ms, import 648ms, tests 82ms, environment 0ms)[22m
+

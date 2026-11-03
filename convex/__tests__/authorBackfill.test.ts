@@ -9,11 +9,11 @@
 // organisation or to a retired agent (unresolvable), or to a person (personLabelled).
 
 import { ConvexError } from "convex/values";
-import { beforeEach, describe, expect, test } from "vitest";
+import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import { convexTest } from "../../tests/fixtures/convexTestWithServiceAccount";
 import { testClerkOrgId } from "../../tests/fixtures/testClerkOrgId";
 import { seedRosterAgents } from "../../tests/lib/seedRosterAgents";
-import { internal } from "../_generated/api";
+import { api, internal } from "../_generated/api";
 import type { Id } from "../_generated/dataModel";
 import { ERASE_COVERED } from "../lib/eraseRow";
 import { authoredTables } from "../migrations/authorBackfill";
@@ -226,5 +226,118 @@ describe("authorBackfill:count", () => {
 		await count("memories");
 		const row = await t.run((ctx) => ctx.db.get(id));
 		expect(row?.createdById).toBeUndefined();
+	});
+});
+
+// ── stamp: the legacy row becomes erasable by its author, and by nobody else ───────────────
+//
+// POLES (erase:eraseRow under a seat's verified agent, the fleet service account only being
+// the transport):
+//   BEFORE   a legacy row (no createdById) is refused to the agent that wrote it
+//   AFTER    the same row, once stamped, is served to that agent
+//   OTHER    another agent of the same organisation is still refused
+//   OTHER ORG a label that names an agent of ANOTHER organisation is never stamped
+//   AMBIGUOUS a label that names two active agents of the organisation is never stamped
+//   DRY RUN  writes nothing (the default); a second real run stamps 0 (idempotent)
+
+describe("authorBackfill:stamp and erase:eraseRow", () => {
+	const SERVICE = process.env.CLERK_SERVICE_ACCOUNT_USER_ID as string;
+
+	beforeEach(() => {
+		vi.useFakeTimers();
+	});
+	afterEach(() => {
+		vi.useRealTimers();
+	});
+
+	const service = () => t.withIdentity({ subject: SERVICE });
+	const eraseAs = async (org: string, orgId: string, agent: string, rowId: string) => {
+		try {
+			await service().mutation(api.erase.eraseRow, {
+				table: "memories",
+				rowId,
+				__actingOrg: orgId,
+				verifiedActor: { agentId: agents[`${org}/${agent}`], orgSlug: org },
+			} as never);
+			return "SERVED";
+		} catch (e) {
+			const text = e instanceof ConvexError ? String(e.data) : String(e);
+			return /([A-Z][A-Z_]{3,}):/.exec(text)?.[1] ?? `OTHER(${text.slice(0, 120)})`;
+		}
+	};
+	const stamp = (args: Record<string, unknown>) =>
+		t.mutation(internal.migrations.authorBackfill.stamp, args as never);
+	const stored = (id: string) => t.run((ctx) => ctx.db.get(id as Id<"memories">));
+
+	test("BEFORE / AFTER / OTHER: refused before the stamp, served to the author after, still refused to a colleague", async () => {
+		const row = await memoryRow(A_ID, "alice");
+		const colleagueRow = await memoryRow(A_ID, "alice");
+		expect(await eraseAs(A, A_ID, "alice", row)).toBe("RBAC_DENIED");
+		const run = await stamp({ table: "memories", dryRun: false });
+		expect(run).toMatchObject({ stamped: 2, resolvable: 2, dryRun: false });
+		expect((await stored(row))?.createdById).toBe(agents[`${A}/alice`]);
+		expect(await eraseAs(A, A_ID, "carol", colleagueRow)).toBe("RBAC_DENIED");
+		expect(await stored(colleagueRow)).not.toBeNull();
+		expect(await eraseAs(A, A_ID, "alice", row)).toBe("SERVED");
+		expect(await stored(row)).toBeNull();
+	});
+
+	test("OTHER ORG: a label that names an agent of another organisation is never stamped", async () => {
+		const row = await memoryRow(A_ID, "bob");
+		const r = await stamp({ table: "memories", dryRun: false });
+		expect(r).toMatchObject({ stamped: 0, unresolvable: 1 });
+		expect((await stored(row))?.createdById).toBeUndefined();
+		expect(await eraseAs(B, B_ID, "bob", row)).toBe("RBAC_DENIED");
+	});
+
+	test("AMBIGUOUS: a label carried by two active agents of the organisation is never stamped", async () => {
+		await t.run((ctx) =>
+			ctx.db.insert("agents", {
+				orgSlug: A,
+				clerkOrgId: A_ID,
+				name: "ALICE",
+				normalizedName: "alice",
+				isActive: true,
+				createdAt: 1,
+			}),
+		);
+		const row = await memoryRow(A_ID, "alice");
+		const r = await stamp({ table: "memories", dryRun: false });
+		expect(r).toMatchObject({ stamped: 0, ambiguous: 1 });
+		expect((await stored(row))?.createdById).toBeUndefined();
+		expect(await eraseAs(A, A_ID, "alice", row)).toBe("RBAC_DENIED");
+	});
+
+	test("DRY RUN is the default and writes nothing; the real run is idempotent", async () => {
+		const row = await memoryRow(A_ID, "alice");
+		const dry = await stamp({ table: "memories" });
+		expect(dry).toMatchObject({ dryRun: true, resolvable: 1, stamped: 0 });
+		expect((await stored(row))?.createdById).toBeUndefined();
+		const first = await stamp({ table: "memories", dryRun: false });
+		expect(first.stamped).toBe(1);
+		const second = await stamp({ table: "memories", dryRun: false });
+		expect(second).toMatchObject({ stamped: 0, withAuthorId: 1, resolvable: 0 });
+		expect((await stored(row))?.createdById).toBe(agents[`${A}/alice`]);
+	});
+
+	test("a person-labelled row and a row that already has an author ID are never rewritten", async () => {
+		const person = await memoryRow(A_ID, "user:user_p1");
+		const owned = await memoryRow(A_ID, "alice", agents[`${A}/carol`]);
+		const r = await stamp({ table: "memories", dryRun: false });
+		expect(r).toMatchObject({ stamped: 0, personLabelled: 1, withAuthorId: 1 });
+		expect((await stored(person))?.createdById).toBeUndefined();
+		expect((await stored(owned))?.createdById).toBe(agents[`${A}/carol`]);
+	});
+
+	test("messages are stamped on fromId", async () => {
+		const id = await messageRow(B_ID, "bob");
+		const r = await stamp({ table: "messages", dryRun: false });
+		expect(r).toMatchObject({ table: "messages", stamped: 1 });
+		const row = await t.run((ctx) => ctx.db.get(id));
+		expect(row?.fromId).toBe(agents[`${B}/bob`]);
+	});
+
+	test("refuses a table that is not authored", async () => {
+		await expect(stamp({ table: "issues", dryRun: false })).rejects.toBeInstanceOf(ConvexError);
 	});
 });
