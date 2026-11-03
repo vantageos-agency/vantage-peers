@@ -3053,6 +3053,10 @@ export function registerTools(
 
 	// ── store_episode ───────────────────────────────────────────────────────────
 
+	// oracle-justified: verb: an episode is only ever CREATED (the tool forwards no relations), where
+	//   store_memory UPSERTS (an "updates" relation patches the superseded memory); the two share a table
+	//   group only because both doors now read the person's token row (verifiedPerson, task
+	//   k177e8dyrnykk3c56yf2b0pgfs8hhz06).
 	defineTool(
 		server,
 		authCtx,
