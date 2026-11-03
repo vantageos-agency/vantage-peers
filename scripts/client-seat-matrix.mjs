@@ -332,6 +332,7 @@ if (live) {
 			"",
 			`MCP: ${mcpUrl}. Seat: probe-a (org ${r.who.org_slug}), agent ${r.who.agent_name ?? r.who.actor?.agentName ?? "none"}. Revision of this harness: ${rev}.`,
 			"Read-only tools called as a client would; of the write tools only the five client write paths, each row erased afterwards. SKIPPED = not run on production.",
+			"This column measures the MCP and Convex AS DEPLOYED on production at run time, not the working tree: a change not yet rolled out does not appear here (the in-process columns above measure the tree).",
 			"",
 			...credentialNotes,
 			"",
