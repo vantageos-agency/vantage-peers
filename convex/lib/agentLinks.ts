@@ -51,6 +51,7 @@ export function agentLinkLookups(ctx: Ctx): AgentLinkLookups {
 		// lookupMembership from the stored row ((orgId, personId) -> the row, a
 		// tombstone is not active). The row is passed as stored.
 		...membershipPersonLookups((clerkOrgId, clerkUserId) =>
+			// retirement-read: membershipPersonLookups (@vantageos/cloud-identity) answers "a tombstone is not active"
 			ctx.db
 				.query("orgMembership")
 				.withIndex("by_org_user_clerk_id", (q) =>

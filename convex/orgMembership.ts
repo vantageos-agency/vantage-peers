@@ -20,6 +20,7 @@ import {
 } from "./lib/auth";
 import { orgRefOfScope } from "./lib/authOrgMapping";
 import { clerkOrgIdForSlug } from "./lib/orgClerkId";
+import { liveOnly } from "./lib/retired";
 import { orgHasPendingInvites, scheduleInviteBind } from "./lib/personalAgentInvite";
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -49,10 +50,6 @@ const membershipShape = v.object({
 	updatedAt: v.number(),
 });
 
-/** A tombstoned row (deletedAt set) is a removed member, not a member. */
-function isLive(row: { deletedAt?: number }): boolean {
-	return row.deletedAt === undefined;
-}
 
 function toShape(row: {
 	clerkOrgSlug: string;
@@ -86,6 +83,7 @@ export async function upsertAdminMembership(
 	clerkUserId: string,
 ): Promise<void> {
 	const now = Date.now();
+	// retirement-read: write path (upsert addresses the row by key, tombstone included, to revive it)
 	const existing = await ctx.db
 		.query("orgMembership")
 		.withIndex("by_org_user", (q) =>
@@ -217,7 +215,7 @@ export const getMembership = query({
 				.withIndex("by_org_clerk_id", (q) => q.eq("clerkOrgId", targetOrgId))
 				.take(MEMBERSHIP_QUERY_LIMIT);
 			assertNotTruncated(rows.length, `org "${args.clerkOrgSlug}"`);
-			return rows.filter(isLive).map(toShape);
+			return liveOnly("orgMembership", rows).map(toShape);
 		}
 
 		const rows = await ctx.db
@@ -225,7 +223,7 @@ export const getMembership = query({
 			.withIndex("by_user", (q) => q.eq("clerkUserId", scope.userId))
 			.take(MEMBERSHIP_QUERY_LIMIT);
 		assertNotTruncated(rows.length, `subject "${scope.userId}"`);
-		return rows.filter(isLive).map(toShape);
+		return liveOnly("orgMembership", rows).map(toShape);
 	},
 });
 
@@ -255,6 +253,7 @@ async function findMembershipRow(
 	ctx: Pick<MutationCtx, "db">,
 	args: { clerkOrgId: string; clerkUserId: string },
 ) {
+	// retirement-read: write path (the row is addressed by key, tombstone included, to revive or tombstone it)
 	return await ctx.db
 		.query("orgMembership")
 		.withIndex("by_org_user_clerk_id", (q) =>
@@ -441,6 +440,7 @@ export const reconcileOrgFromClerk = internalMutation({
 	},
 	returns: v.object({ upserted: v.number(), removed: v.number() }),
 	handler: async (ctx, args) => {
+		// retirement-read: write path (reconcile plans against tombstones too, planMembershipReconcile)
 		const stored = await ctx.db
 			.query("orgMembership")
 			.withIndex("by_org_clerk_id", (q) => q.eq("clerkOrgId", args.clerkOrgId))

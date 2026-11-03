@@ -11,6 +11,7 @@ import { wireIdentityRefusal } from "./lib/identityRefusalWire";
 import { personPrincipalLookups } from "./lib/actingPrincipal";
 import { resolveVerifiedPerson, verifiedPersonValidator } from "./lib/personPrincipal";
 import { orgByIdLookups, orgByIdPrincipalLookups } from "./lib/orgIdLookups";
+import { liveOnly, liveOrNull } from "./lib/retired";
 import {
   memoryAuthorOf,
   memoryStampForWrite,
@@ -294,7 +295,10 @@ export const getMemory = query({
       "memories:getMemory",
     );
     if (!memoryVisibleToScope(scope, doc)) return null;
-    return doc;
+    // A superseded or soft-deleted memory is not served by ID either
+    // (convex/lib/retired.ts): to an org member the ID of a retired row answers
+    // like a missing one. The fleet (hasFleetRead) keeps the audit read.
+    return hasFleetRead(scope) ? doc : liveOrNull("memories", doc);
   },
 });
 
@@ -382,7 +386,10 @@ export const listMemories = query({
     ) {
       return { value: [], continueCursor: null, isDone: true };
     }
-    const isLatest = args.includeSuperseded === true ? undefined : true;
+    // Retired rows are history. Only the fleet (hasFleetRead) may ask for them; a
+    // member's `includeSuperseded` is ignored (convex/lib/retired.ts).
+    const includeRetired = args.includeSuperseded === true && hasFleetRead(scope);
+    const isLatest = includeRetired ? undefined : true;
     const numItems = args.paginationOpts?.numItems ?? args.limit ?? 50;
     const cursor = args.paginationOpts?.cursor ?? null;
     const createdByFilter = args.createdBy;
@@ -391,10 +398,11 @@ export const listMemories = query({
     // (Day 88 cross-tool consistency). Post-filter (not index-pushdown) is
     // acceptable because the namespace index bounds the working set and
     // createdBy is a rare diagnostic filter.
-    const filterCreatedBy = <T extends { createdBy?: string; clerkOrgId?: string }>(
+    const filterCreatedBy = <T extends { createdBy?: string; clerkOrgId?: string; isLatest: boolean }>(
       rows: T[],
     ): T[] => {
-      const owned = rows.filter((r) => memoryVisibleToScope(scope, r));
+      const visible = rows.filter((r) => memoryVisibleToScope(scope, r));
+      const owned = includeRetired ? visible : liveOnly("memories", visible);
       return createdByFilter === undefined
         ? owned
         : owned.filter((r) => r.createdBy === createdByFilter);
@@ -484,6 +492,7 @@ export const listMemories = query({
       return { value: filterCreatedBy(page), continueCursor: null, isDone: true };
     }
 
+    // retirement-read: only reachable with includeRetired (fleet), otherwise isLatest is true and the branch above returns; filterCreatedBy applies liveOnly
     const page = await ctx.db
       .query("memories")
       .withIndex("by_namespace", (q) => q.eq("namespace", args.namespace))
@@ -556,6 +565,7 @@ export const expireMemoriesByTtl = internalMutation({
     const now = new Date().toISOString();
     let expired = 0;
 
+    // retirement-read: write path (TTL expiry retires rows; the loop below skips already-retired ones)
     const candidates = await ctx.db
       .query("memories")
       .filter((q) => q.neq(q.field("ttl"), undefined))

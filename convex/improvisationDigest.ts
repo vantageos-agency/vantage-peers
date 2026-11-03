@@ -9,6 +9,7 @@ import {
 	withOrgScope,
 } from "./lib/auth";
 import { requireFleetAgentActor } from "./lib/fleetActors";
+import { isRetired } from "./lib/retired";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // improvisationDigest — PR-I T-GREEN
@@ -281,6 +282,7 @@ export const scanWindow = query({
 						.take(DIGEST_SCAN_PAGE),
 				(row) => row._creationTime,
 			)) {
+				if (isRetired("memories", mem)) continue;
 				if (orchFilter && !orchFilter.includes(mem.createdBy)) continue;
 				recentMemories.push(mem);
 				if (recentMemories.length >= DIGEST_MEMORIES_SCAN_CAP) break;

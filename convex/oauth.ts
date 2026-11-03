@@ -695,6 +695,7 @@ export async function findSeatNameCollision(
 	// (B2 §6+§7), so a legacy `orchestrator/Sigma` namespace does not exist
 	// — only `orchestrator/sigma` does, regardless of what case the caller
 	// who provisioned that seat originally typed.
+	// retirement-read: existence probe of a namespace (returns a boolean, never a row)
 	const existingMemory = await ctx.db
 		.query("memories")
 		.withIndex("by_namespace", (q) =>

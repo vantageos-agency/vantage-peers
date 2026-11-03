@@ -11,6 +11,7 @@ import {
 	getEmbeddingModelName,
 } from "./lib/aiClient";
 import { isNamespaceAllowedForScope } from "./lib/auth";
+import { isLiveRagEntry } from "./lib/retired";
 import { memoryTypeValidator } from "./schema";
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -153,7 +154,7 @@ async function embedQuery(text: string): Promise<number[]> {
  * hybrid search, so the component is called directly. Under the searcher test
  * seam the embedding is handed over as the `query` instead.
  */
-function ragSearchEmbedded(
+function ragSearchEmbeddedRaw(
 	ctx: ActionCtx,
 	args: RagSearchArgs,
 	embedding: number[],
@@ -183,15 +184,54 @@ function ragSearchEmbedded(
 	}) as unknown as Promise<RagSearchResult>;
 }
 
+
+/**
+ * Drops the hits whose own filterValues say they are retired (convex/lib/retired.ts
+ * isLiveRagEntry). Applied by BOTH search wrappers below, so no RAG read in this
+ * repo can return a retired entry: `getRag().search(` and
+ * `components.rag.search.search` appear nowhere else (pinned by
+ * convex/__tests__/retiredRowsConformance.test.ts).
+ */
+function liveEntriesOnly(
+	res: RagSearchResult,
+	args: RagSearchArgs,
+): RagSearchResult {
+	const wantedType = args.filters?.find((f) => f.name === "type")?.value;
+	const kept = new Set(
+		res.entries
+			.filter((e) =>
+				isLiveRagEntry(
+					e.filterValues,
+					typeof wantedType === "string" ? wantedType : undefined,
+				),
+			)
+			.map((e) => e.entryId),
+	);
+	return {
+		...res,
+		results: res.results.filter((r) => kept.has(r.entryId)),
+		entries: res.entries.filter((e) => kept.has(e.entryId)),
+	} as RagSearchResult;
+}
+
+async function ragSearchEmbedded(
+	ctx: ActionCtx,
+	args: RagSearchArgs,
+	embedding: number[],
+): Promise<RagSearchResult> {
+	return liveEntriesOnly(await ragSearchEmbeddedRaw(ctx, args, embedding), args);
+}
+
 /** Every `rag.search` in this module goes through here. */
-function ragSearch(
+async function ragSearch(
 	ctx: ActionCtx,
 	args: RagSearchArgs,
 ): Promise<RagSearchResult> {
-	if (ragSearcherOverride !== null) {
-		return ragSearcherOverride(ctx, args);
-	}
-	return getRag().search(ctx, args);
+	const raw =
+		ragSearcherOverride !== null
+			? await ragSearcherOverride(ctx, args)
+			: await getRag().search(ctx, args);
+	return liveEntriesOnly(raw, args);
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -345,24 +385,19 @@ const RETIRED_FETCH_CAP = 200;
 async function dropRetired(
 	ctx: ActionCtx,
 	res: RagSearchResult,
-	wantedType: string | undefined,
 ): Promise<RagSearchResult> {
-	const entries = res.entries.filter((e) => {
-		const fv = e.filterValues;
-		if (fv.find((f) => f.name === "isLatest")?.value !== "true") return false;
-		return (
-			wantedType === undefined ||
-			fv.find((f) => f.name === "type")?.value === wantedType
-		);
-	});
-	const keys = entries.map((e) => e.key ?? "").filter((k) => k !== "");
+	// Entry level is already applied by ragSearch / ragSearchEmbedded
+	// (liveEntriesOnly). Row level: the memories row the entry's key names must
+	// still be isLatest=true (kbMutations.latestMemoryIds), which also covers an
+	// entry retired before the re-index existed.
+	const keys = res.entries.map((e) => e.key ?? "").filter((k) => k !== "");
 	const live = new Set(
 		keys.length === 0
 			? []
 			: await ctx.runQuery(internal.kbMutations.latestMemoryIds, { ids: keys }),
 	);
 	const kept = new Set(
-		entries.filter((e) => live.has(e.key ?? "")).map((e) => e.entryId),
+		res.entries.filter((e) => live.has(e.key ?? "")).map((e) => e.entryId),
 	);
 	return {
 		...res,
@@ -375,7 +410,6 @@ async function ragSearchTree(
 	ctx: ActionCtx,
 	ns: string,
 	build: (target: string) => RagSearchArgs,
-	wantedType?: string,
 ): Promise<RagSearchResult> {
 	const limit = build(ns).limit ?? 10;
 	const wide = (target: string): RagSearchArgs => ({
@@ -386,7 +420,7 @@ async function ragSearchTree(
 		),
 	});
 	const finish = async (r: RagSearchResult): Promise<RagSearchResult> => {
-		const live = await dropRetired(ctx, r, wantedType);
+		const live = await dropRetired(ctx, r);
 		return { ...live, results: live.results.slice(0, limit) } as RagSearchResult;
 	};
 	if (!isKbRootNamespace(ns)) return finish(await ragSearch(ctx, wide(ns)));
@@ -469,7 +503,7 @@ export const recall = action({
 			limit,
 			vectorScoreThreshold: scoreThreshold,
 			filters: buildFilters({ namespace: target, type: args.type }),
-		}), args.type);
+		}));
 
 		// Build an entry map for quick lookup of filterValues by entryId
 		const entryMap = new Map(entries.map((e) => [e.entryId, e]));
@@ -539,7 +573,7 @@ export const textSearch = action({
 			searchType: "text",
 			limit,
 			filters: buildFilters({ namespace: target, type: args.type }),
-		}), args.type);
+		}));
 
 		const entryMap = new Map(entries.map((e) => [e.entryId, e]));
 
@@ -619,7 +653,6 @@ export const hybridSearch = action({
 			ctx,
 			ns,
 			buildSearchArgs,
-			args.type,
 		);
 
 		const entryMap = new Map(entries.map((e) => [e.entryId, e]));
