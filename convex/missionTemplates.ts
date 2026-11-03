@@ -16,7 +16,7 @@ import { memberActorOf } from "./lib/humanActor";
 import { clerkOrgIdForSlug } from "./lib/orgClerkId";
 import { requireLabelOnScopeRoster } from "./lib/rosterLabels";
 import { requireMemberWriterRole } from "./memberWriterRoles";
-import { liveOnly, liveOrNull } from "./lib/retired";
+import { RETIREMENT, liveOrNull } from "./lib/retired";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Fail-closed multi-tenant fix (defect class: authority attached to an
@@ -195,10 +195,12 @@ export const listNames = query({
 		);
 		if (!fleet) return [];
 
+		// Retired (soft-deleted) templates are narrowed out BEFORE the bound.
 		const templates = await ctx.db
 			.query("missionTemplates")
+			.filter((q) => q.eq(q.field(RETIREMENT.missionTemplates.field), undefined))
 			.take(MISSION_TEMPLATES_SCAN_CAP);
-		return liveOnly("missionTemplates", templates).map((t) => t.name);
+		return templates.map((t) => t.name);
 	},
 });
 
