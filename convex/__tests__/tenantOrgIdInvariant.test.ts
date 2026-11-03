@@ -211,8 +211,8 @@ async function walk(t: T, table: string, limit?: number) {
 
 // ── the author world ─────────────────────────────────────────────────────────
 // An operator org (one active `orgKind: "operator"` mapping), one agent in it ("Pi"), one
-// agent in the client org ("nadia"), a label carried by BOTH ("twin"), and one label that
-// is on the operator roster only ("rostered"). Fictitious names.
+// agent in the client org ("nadia"), a label carried by BOTH ("twin"), and an agent row
+// with no permanent org id ("legacy"). Fictitious names.
 const OP = { slug: "fleet-op", id: "org_OP1" };
 type World = {
 	fleetAgent: string;
@@ -236,7 +236,7 @@ async function seedWorld(t: T): Promise<World> {
 				clerkOrgId: OP.id,
 				displayName: OP.slug,
 				orgKind: "operator",
-				allowedOrchestrators: ["*", "rostered"],
+				allowedOrchestrators: ["*"],
 			}),
 		);
 		await db.insert(
@@ -248,6 +248,13 @@ async function seedWorld(t: T): Promise<World> {
 				allowedOrchestrators: ["seat-x"],
 			}),
 		);
+		// an agent with no permanent org id names no org by ID
+		await db.insert("agents", {
+			orgSlug: OP.slug,
+			name: "legacy",
+			isActive: true,
+			createdAt: 1,
+		});
 		const agent = (
 			name: string,
 			org: { slug: string; id: string },
@@ -276,7 +283,12 @@ const insertInto = (t: T, table: string, rows: Record<string, unknown>[]) =>
 	});
 
 // Columns whose value is a Clerk subject (a person), not an agent ID or a label.
-const PERSON_COLUMNS = new Set(["boundBy", "clerkUserId", "userId", "grantedBy"]);
+const PERSON_COLUMNS = new Set([
+	"boundBy",
+	"clerkUserId",
+	"userId",
+	"grantedBy",
+]);
 const PLAIN_AUTHOR_TABLES = Object.entries(AUTHOR_FIELDS).filter(
 	([, spec]) => spec.via === undefined && spec.fields.length > 0,
 );
@@ -424,8 +436,7 @@ describe("tenantOrgIdInvariant:count", () => {
 			);
 			// every slug-only row is either resolvable or refused for a counted reason
 			expect(
-				sum.resolvable +
-					Object.values(sum.refusals).reduce((a, b) => a + b, 0),
+				sum.resolvable + Object.values(sum.refusals).reduce((a, b) => a + b, 0),
 			).toBe(sum.slugOnly);
 		});
 	}
@@ -518,7 +529,7 @@ describe("tenantOrgIdInvariant:count", () => {
 		});
 	}
 
-	test("ID beats a disagreeing label; an ambiguous label and the wildcard are unknown; a roster label is read", async () => {
+	test("ID beats a disagreeing label; an ambiguous label, the wildcard, a roster name and an agent with no org id are unknown", async () => {
 		const t = createT();
 		const w = await seedWorld(t);
 		await insertInto(t, "tasks", [
@@ -526,13 +537,13 @@ describe("tenantOrgIdInvariant:count", () => {
 			{ createdById: "not-an-agent", createdBy: "pi" }, // id resolves nothing: label decides
 			{ createdBy: "twin" }, // carried by both orgs
 			{ createdBy: "*" }, // the wildcard names nobody
-			{ createdBy: "rostered" }, // on the operator roster only
-			{ createdBy: "seat-x" }, // on the client roster only
+			{ createdBy: "seat-x" }, // on a client roster, but no agent row: rosters are not read
+			{ createdBy: "legacy" }, // an agent row with no permanent org id
 			{ createdBy: "user:abc" }, // a stable person principal in a label slot: not an agent
 		]);
 		const { sum } = await walk(t, "tasks");
-		// rows: client, fleet, unknown, unknown, fleet, client, unknown
-		expect(sum.unstamped).toEqual({ fleet: 2, client: 2, unknown: 3 });
+		// rows: client, fleet, then five unknown
+		expect(sum.unstamped).toEqual({ fleet: 1, client: 1, unknown: 5 });
 	});
 
 	test("messageReceipts: the author is the PARENT message's sender", async () => {
@@ -564,66 +575,66 @@ describe("tenantOrgIdInvariant:count", () => {
 		expect(sum.unstamped).toEqual({ fleet: 1, client: 2, unknown: 3 });
 	});
 
-	test("oauth_access_tokens: agent, person, scope profile, own allow-list, subject", async () => {
+	test("oauth_access_tokens: agent, person, scope profile, subject", async () => {
 		const t = createT();
 		const w = await seedWorld(t);
 		await insertInto(t, "oauth_scope_profiles", [
 			{ profileId: "pf-fleet", agentId: w.fleetAgent },
-			{ profileId: "pf-label", fromAllowList: ["pi"] },
-			{ profileId: "pf-stamp", clerkOrgSlug: ACME.slug },
+			{ profileId: "pf-allow", fromAllowList: ["pi"] },
+			{ profileId: "pf-stamp", clerkOrgId: ACME.id },
+			{ profileId: "pf-slug", clerkOrgSlug: ACME.slug },
 		]);
 		await insertInto(t, "oauth_access_tokens", [
 			{ agentId: w.fleetAgent }, // fleet
 			{ agentId: w.seatAgent }, // client
 			{ principal: "person", userId: "user_p" }, // client
 			{ scopeProfile: "pf-fleet" }, // fleet, via the profile's agent
-			{ scopeProfile: "pf-label" }, // fleet, via the profile's allow-list
-			{ scopeProfile: "pf-stamp" }, // client, via the profile's org stamp
-			{ fromAllowList: ["nadia"] }, // client, via the token's own allow-list
+			{ scopeProfile: "pf-allow" }, // unknown: a fromAllowList is a name list, not read
+			{ scopeProfile: "pf-stamp" }, // client, via the profile's permanent org id
+			{ scopeProfile: "pf-slug" }, // unknown: a slug stamp never matches
+			{ fromAllowList: ["nadia"] }, // unknown: the token's own allow-list is not read
 			{ userId: "user_q" }, // client, a Clerk subject
 			{ scopeProfile: "no-such-profile" }, // unknown
-			{ fromAllowList: ["*"] }, // unknown
-			{ fromAllowList: ["pi", "nadia"] }, // unknown: two kinds
 			{ agentId: w.seatAgent, scopeProfile: "pf-fleet" }, // client: the agent wins
 		]);
 		const { sum } = await walk(t, "oauth_access_tokens");
-		expect(sum.unstamped).toEqual({ fleet: 3, client: 6, unknown: 3 });
-		expect(sum.examined).toBe(12);
+		expect(sum.unstamped).toEqual({ fleet: 2, client: 5, unknown: 4 });
+		expect(sum.examined).toBe(11);
 	});
 
-	test("oauth_refresh_tokens: the same chain, without an own allow-list", async () => {
+	test("oauth_refresh_tokens: the same chain", async () => {
 		const t = createT();
 		const w = await seedWorld(t);
 		await insertInto(t, "oauth_scope_profiles", [
 			{ profileId: "pf-fleet", agentId: w.fleetAgent },
-			{ profileId: "pf-label", fromAllowList: ["nadia"] },
+			{ profileId: "pf-stamp", clerkOrgId: OP.id },
 		]);
 		await insertInto(t, "oauth_refresh_tokens", [
 			{ agentId: w.fleetAgent }, // fleet
 			{ principal: "person" }, // client
 			{ scopeProfile: "pf-fleet" }, // fleet
-			{ scopeProfile: "pf-label" }, // client
+			{ scopeProfile: "pf-stamp" }, // fleet: the profile's permanent org id is the operator's
 			{ fromAllowList: ["nadia"] }, // not a refresh-token column: unknown
 			{}, // unknown
 		]);
 		const { sum } = await walk(t, "oauth_refresh_tokens");
-		expect(sum.unstamped).toEqual({ fleet: 2, client: 2, unknown: 2 });
+		expect(sum.unstamped).toEqual({ fleet: 3, client: 1, unknown: 2 });
 	});
 
-	test("oauth_scope_profiles: agent, allow-list; a stamped profile is not unstamped", async () => {
+	test("oauth_scope_profiles: by agent; a stamped profile is not unstamped; an allow-list is not read", async () => {
 		const t = createT();
 		const w = await seedWorld(t);
 		await insertInto(t, "oauth_scope_profiles", [
 			{ profileId: "a", agentId: w.fleetAgent }, // fleet
 			{ profileId: "b", agentId: w.seatAgent }, // client
-			{ profileId: "c", fromAllowList: ["pi"] }, // fleet
-			{ profileId: "d", fromAllowList: ["nadia"] }, // client
-			{ profileId: "e", fromAllowList: ["*"] }, // unknown
+			{ profileId: "c", fromAllowList: ["pi"] }, // unknown: no agentId
+			{ profileId: "d", fromAllowList: ["nadia"] }, // unknown
+			{ profileId: "e", agentId: "not-an-agent" }, // unknown: names nobody
 			{ profileId: "f", clerkOrgId: OP.id }, // stamped
 			{ profileId: "g", clerkOrgSlug: OP.slug }, // slug-only
 		]);
 		const { sum } = await walk(t, "oauth_scope_profiles");
-		expect(sum.unstamped).toEqual({ fleet: 2, client: 2, unknown: 1 });
+		expect(sum.unstamped).toEqual({ fleet: 1, client: 1, unknown: 3 });
 		expect(sum.stamped).toBe(1);
 		expect(sum.slugOnly).toBe(1);
 	});
@@ -640,6 +651,23 @@ describe("tenantOrgIdInvariant:count", () => {
 		await insertInto(t2, "tasks", [{}, { createdBy: "" }]);
 		const { sum } = await walk(t2, "tasks");
 		expect(sum.unstamped).toEqual({ fleet: 0, client: 0, unknown: 2 });
+		// an operator mapping with no permanent id
+		const t4 = createT();
+		await insertInto(t4, "client_org_mapping", [
+			{
+				clerkOrgSlug: "op-noid",
+				orgKind: "operator",
+				allowedOrchestrators: [],
+				scopes: ["view-own-tasks"],
+				displayName: "op-noid",
+				isActive: true,
+				createdAt: 1,
+			},
+		]);
+		await insertInto(t4, "tasks", [{ createdBy: "pi" }]);
+		await expect(t4.query(count, { table: "tasks" })).rejects.toThrow(
+			/no permanent id/,
+		);
 		// two operator orgs
 		const t3 = createT();
 		await insertInto(t3, "client_org_mapping", [
@@ -718,7 +746,9 @@ describe("tenantOrgIdInvariant:count", () => {
 			{ createdById: w.fleetAgent },
 			{ createdBy: "nadia" },
 		]);
-		await insertInto(t, "oauth_scope_profiles", [{ profileId: "p9", agentId: w.seatAgent }]);
+		await insertInto(t, "oauth_scope_profiles", [
+			{ profileId: "p9", agentId: w.seatAgent },
+		]);
 		await insertInto(t, "oauth_access_tokens", [{ scopeProfile: "p9" }]);
 		const before = await snapshot(t);
 		expect(before.length).toBeGreaterThan(1000);

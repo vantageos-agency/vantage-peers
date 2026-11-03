@@ -37,20 +37,21 @@
 // UNSTAMPED, SPLIT BY AUTHOR KIND. An unstamped row (no slug, no id) is the fleet's by the
 // historical rule ("absent = fleet"), but the prod count showed client-looking tables full of
 // them, so each is attributed to WHO WROTE IT, as `unstamped: {fleet, client, unknown}`:
-//   fleet    the author is an agent of the OPERATOR org (`findOperatorOrg`: exactly one
-//            active operator mapping), or a label on the operator's roster;
-//   client   the author is an agent of any other org, a label on a client roster, or a
-//            person (`user:<sub>` / `user_<sub>`, a Clerk subject);
-//   unknown  no author field, an empty one, one that names no agent, or a label that both
-//            sides carry (ambiguous). Unknown is never rounded to fleet or to client.
+//   fleet    the author is an agent of the OPERATOR org (the package's `findOperatorOrg`:
+//            exactly one active operator mapping);
+//   client   the author is an agent of any other org, or a person (`user:<sub>` /
+//            `user_<sub>`, a Clerk subject);
+//   unknown  no author field, an empty one, one that names no agent, an agent row with no
+//            permanent org id, or a label that agents of both sides carry (ambiguous).
+//            Unknown is never rounded to fleet or to client.
 // How an author value is read: an ID (an `agents._id` string) is looked up in `agents` and
-// its org compared to the operator org (by clerkOrgId when both carry one, else by slug); a
-// LABEL is normalised (`normalizeOrchestratorId`) and looked up among the agent names and
-// the `allowedOrchestrators` rosters of the operator and of the other orgs. No name list is
-// written here: the operator, the agents and the rosters are read from the tables. ID fields
-// are tried before label fields, and an ID that resolves wins over a label that disagrees.
-// The lookups are lazy: a table with no unstamped row reads no agent. An operator org that is
-// not exactly one active mapping REFUSES (ConvexError) rather than guessing "fleet".
+// its permanent org id compared to the operator's (`sameOrg`: by ID only, a slug never
+// matches); a LABEL is normalised (`normalizeOrchestratorId`) and looked up among the names of
+// the agents that carry an org id. No name list is written here and no roster is read: the
+// operator and the agents come from the tables. ID fields are tried before label fields, and
+// an ID that resolves wins over a label that disagrees. The lookups are lazy: a row with no
+// author column reads no agent. An operator org that is not exactly one active mapping with
+// a permanent id REFUSES (ConvexError) rather than guessing "fleet".
 //
 // AUTHOR FIELD PER TABLE (also returned as `authorFields`, so the reader sees what was read;
 // AUTHOR_FIELDS below is the single source, and a test pins that every derived table has an
@@ -75,11 +76,10 @@
 //   debateSettings        updatedBy (label)
 //   debateRooms           createdById (id), createdBy (label)
 //   oauth_access_tokens   agentId (id); principal "person"; then the scope profile named by
-//                         scopeProfile (its agentId, its org stamp, its fromAllowList
-//                         labels); then the token's own fromAllowList; then userId when it
-//                         is a Clerk subject
-//   oauth_refresh_tokens  the same chain without the own fromAllowList (the row has none)
-//   oauth_scope_profiles  agentId (id), org stamp, fromAllowList (labels)
+//                         scopeProfile (its agentId, then its clerkOrgId stamp); then userId
+//                         when it is a Clerk subject
+//   oauth_refresh_tokens  the same chain
+//   oauth_scope_profiles  agentId (id), then the clerkOrgId stamp
 //   NO AUTHOR FIELD (every unstamped row is `unknown`): issues (written by the GitHub
 //   webhook; fixedBy/verifiedBy are later actors), githubRepoMapping (`orchestrator` is the
 //   repo's routing target, not the writer), tool_usage, kbUploads, uploadTickets,
@@ -106,7 +106,7 @@
 //   bash .claude/scripts/convex-prod.sh run migrations/tenantOrgIdInvariant:count '{"table":"missions"}'
 //   -> repeat with {"table":..., "cursor": <cursor>} until done is true; sum the pages.
 
-import { findOperatorOrg } from "@vantageos/cloud-identity";
+import { findOperatorOrg, sameOrg } from "@vantageos/cloud-identity";
 import { ConvexError, v } from "convex/values";
 import type { Id } from "../_generated/dataModel";
 import type { DatabaseReader } from "../_generated/server";
@@ -183,7 +183,7 @@ type AuthorField = { name: string; as: "id" | "label" };
 type AuthorSpec = {
 	fields: readonly AuthorField[];
 	/** Where the author is not on the row itself. */
-	via?: "message" | "token" | "refreshToken" | "profile";
+	via?: "message" | "token" | "profile";
 };
 
 const id = (name: string): AuthorField => ({ name, as: "id" });
@@ -209,14 +209,8 @@ export const AUTHOR_FIELDS: Record<string, AuthorSpec> = {
 	debateTemplates: { fields: [label("updatedBy")] },
 	debateSettings: { fields: [label("updatedBy")] },
 	debateRooms: { fields: [id("createdById"), label("createdBy")] },
-	oauth_access_tokens: {
-		fields: [id("agentId"), id("userId")],
-		via: "token",
-	},
-	oauth_refresh_tokens: {
-		fields: [id("agentId"), id("userId")],
-		via: "refreshToken",
-	},
+	oauth_access_tokens: { fields: [id("agentId"), id("userId")], via: "token" },
+	oauth_refresh_tokens: { fields: [id("agentId"), id("userId")], via: "token" },
 	oauth_scope_profiles: { fields: [id("agentId")], via: "profile" },
 	// No author field: every unstamped row is `unknown`.
 	issues: { fields: [] },
@@ -242,11 +236,14 @@ export function authorFieldNames(table: string): string[] {
 		case "message":
 			return ["messageId>from", "messageId>fromId"];
 		case "token":
-			return [...own, "principal", "scopeProfile>profile", "fromAllowList"];
-		case "refreshToken":
-			return [...own, "principal", "scopeProfile>profile"];
+			return [
+				...own,
+				"principal",
+				"scopeProfile>agentId",
+				"scopeProfile>clerkOrgId",
+			];
 		case "profile":
-			return [...own, "stamp", "fromAllowList"];
+			return [...own, "clerkOrgId"];
 		default:
 			return own;
 	}
@@ -263,32 +260,17 @@ const isPersonSubject = (s: string): boolean =>
 	s.startsWith("user:") || s.startsWith("user_");
 
 type Classifier = {
-	operator: { slug: string; clerkOrgId?: string };
+	/** The operator org's permanent id (the package's `findOperatorOrg`). */
+	operatorId: string;
 	/** agents._id -> true when the agent belongs to the operator org. */
 	agentIsOperator: Map<string, boolean>;
-	fleetLabels: Set<string>;
-	clientLabels: Set<string>;
+	/** Normalised agent names -> the kinds of the agents (with an org id) that carry them. */
+	labelKinds: Map<string, Set<"fleet" | "client">>;
 	/** profileId -> its row; null when two rows carry the id (undecidable). */
 	profiles: Map<string, Row | null>;
 };
 
-function isOperatorStamp(
-	op: Classifier["operator"],
-	clerkOrgId: unknown,
-	slug: unknown,
-): boolean | null {
-	if (
-		typeof clerkOrgId === "string" &&
-		clerkOrgId !== "" &&
-		op.clerkOrgId !== undefined
-	) {
-		return clerkOrgId === op.clerkOrgId;
-	}
-	if (typeof slug === "string" && slug !== "") return slug === op.slug;
-	return null;
-}
-
-/** Reads the operator, the agents and the rosters once. Refuses on an unclear operator. */
+/** Reads the operator, the agents and the profiles once. Refuses on an unclear operator. */
 async function buildClassifier(
 	db: DatabaseReader,
 	mappings: MappingRow[],
@@ -316,7 +298,12 @@ async function buildClassifier(
 			`tenantOrgIdInvariant: cannot split unstamped rows by author: the operator org is "${op.kind}", not exactly one active mapping; refusing to guess fleet vs client.`,
 		);
 	}
-	const operator = { slug: op.org.label, clerkOrgId: op.org.id };
+	const operatorId = op.org.id;
+	if (operatorId === undefined || operatorId === "") {
+		throw new ConvexError(
+			"tenantOrgIdInvariant: cannot split unstamped rows by author: the operator org has no permanent id; refusing to compare by slug.",
+		);
+	}
 	const agents = await db.query("agents").take(AGENT_READ_CAP + 1);
 	if (agents.length > AGENT_READ_CAP) {
 		throw new ConvexError(
@@ -324,19 +311,16 @@ async function buildClassifier(
 		);
 	}
 	const agentIsOperator = new Map<string, boolean>();
-	const fleetLabels = new Set<string>();
-	const clientLabels = new Set<string>();
+	const labelKinds = new Map<string, Set<"fleet" | "client">>();
 	for (const a of agents) {
-		const isOp = isOperatorStamp(operator, a.clerkOrgId, a.orgSlug) === true;
+		// An agent row with no permanent org id names no org by ID: it resolves nobody.
+		if (a.clerkOrgId === undefined || a.clerkOrgId === "") continue;
+		const isOp = sameOrg({ id: a.clerkOrgId }, { id: operatorId });
 		agentIsOperator.set(a._id, isOp);
-		(isOp ? fleetLabels : clientLabels).add(normalizeOrchestratorId(a.name));
-	}
-	for (const m of mappings) {
-		const isOp = isOperatorStamp(operator, m.clerkOrgId, m.clerkOrgSlug) === true;
-		for (const name of m.allowedOrchestrators) {
-			if (name === "*" || name.trim() === "") continue;
-			(isOp ? fleetLabels : clientLabels).add(normalizeOrchestratorId(name));
-		}
+		const n = normalizeOrchestratorId(a.name);
+		const kinds = labelKinds.get(n) ?? new Set<"fleet" | "client">();
+		kinds.add(isOp ? "fleet" : "client");
+		labelKinds.set(n, kinds);
 	}
 	const profileRows = await db
 		.query("oauth_scope_profiles")
@@ -350,7 +334,7 @@ async function buildClassifier(
 	for (const p of profileRows) {
 		profiles.set(p.profileId, profiles.has(p.profileId) ? null : (p as Row));
 	}
-	return { operator, agentIsOperator, fleetLabels, clientLabels, profiles };
+	return { operatorId, agentIsOperator, labelKinds, profiles };
 }
 
 function kindOfId(c: Classifier, value: string): AuthorKind | null {
@@ -361,13 +345,9 @@ function kindOfId(c: Classifier, value: string): AuthorKind | null {
 }
 
 function kindOfLabel(c: Classifier, value: string): AuthorKind | null {
-	const n = normalizeOrchestratorId(value);
-	if (n === "") return null;
-	const f = c.fleetLabels.has(n);
-	const cl = c.clientLabels.has(n);
-	if (f && !cl) return "fleet";
-	if (cl && !f) return "client";
-	return null; // unknown to both, or carried by both: ambiguous
+	const kinds = c.labelKinds.get(normalizeOrchestratorId(value));
+	if (kinds === undefined || kinds.size !== 1) return null; // unknown, or carried by both
+	return kinds.has("fleet") ? "fleet" : "client";
 }
 
 /** First field that resolves decides; ID fields come first in every spec. */
@@ -385,26 +365,14 @@ function kindOfFields(
 	return null;
 }
 
-/** A fromAllowList names the identities a seat speaks as: one kind or none. */
-function kindOfAllowList(c: Classifier, list: unknown): AuthorKind | null {
-	if (!Array.isArray(list)) return null;
-	const names = list.filter(
-		(x): x is string => typeof x === "string" && x !== "*" && x !== "",
-	);
-	if (names.length === 0) return null;
-	const kinds = new Set(names.map((n) => kindOfLabel(c, n)));
-	if (kinds.size !== 1) return null;
-	const only = [...kinds][0];
-	return only === "fleet" || only === "client" ? only : null;
-}
-
-/** A scope profile row: its agent, then its own org stamp, then its fromAllowList. */
+/** A scope profile row: its agent, then its own permanent org stamp. */
 function kindOfProfile(c: Classifier, p: Row): AuthorKind | null {
 	const byAgent = kindOfFields(c, p, [id("agentId")]);
 	if (byAgent !== null) return byAgent;
-	const stamp = isOperatorStamp(c.operator, p.clerkOrgId, p.clerkOrgSlug);
-	if (stamp !== null) return stamp ? "fleet" : "client";
-	return kindOfAllowList(c, p.fromAllowList);
+	if (typeof p.clerkOrgId !== "string" || p.clerkOrgId === "") return null;
+	return sameOrg({ id: p.clerkOrgId }, { id: c.operatorId })
+		? "fleet"
+		: "client";
 }
 
 function profileOf(c: Classifier, profileId: unknown): Row | null {
@@ -413,12 +381,11 @@ function profileOf(c: Classifier, profileId: unknown): Row | null {
 }
 
 // The columns whose presence makes an author lookup worth its reads. A row with none of
-// them is `unknown` without reading agents or rosters (and without the operator check).
+// them is `unknown` without reading agents or profiles (and without the operator check).
 const CANDIDATE_KEYS: Record<string, readonly string[]> = {
 	message: ["messageId"],
-	token: ["agentId", "principal", "scopeProfile", "fromAllowList", "userId"],
-	refreshToken: ["agentId", "principal", "scopeProfile", "userId"],
-	profile: ["agentId", "clerkOrgId", "clerkOrgSlug", "fromAllowList"],
+	token: ["agentId", "principal", "scopeProfile", "userId"],
+	profile: ["agentId"],
 };
 
 function hasAuthorCandidate(table: string, row: Row): boolean {
@@ -430,10 +397,7 @@ function hasAuthorCandidate(table: string, row: Row): boolean {
 			: CANDIDATE_KEYS[spec.via];
 	return keys.some((k) => {
 		const value = row[k];
-		return (
-			(typeof value === "string" && value !== "") ||
-			(Array.isArray(value) && value.length > 0)
-		);
+		return typeof value === "string" && value !== "";
 	});
 }
 
@@ -449,23 +413,20 @@ export async function authorKindOf(
 	switch (spec.via) {
 		case "message": {
 			if (typeof row.messageId !== "string") return "unknown";
-			const parent = (await db.get(row.messageId as Id<"messages">)) as Row | null;
+			const parent = (await db.get(
+				row.messageId as Id<"messages">,
+			)) as Row | null;
 			return parent === null
 				? "unknown"
 				: (kindOfFields(c, parent, spec.fields) ?? "unknown");
 		}
-		case "token":
-		case "refreshToken": {
+		case "token": {
 			const direct = kindOfFields(c, row, [spec.fields[0]]);
 			if (direct !== null) return direct;
 			if (row.principal === "person") return "client";
 			const profile = profileOf(c, row.scopeProfile);
 			const byProfile = profile === null ? null : kindOfProfile(c, profile);
 			if (byProfile !== null) return byProfile;
-			if (spec.via === "token") {
-				const own = kindOfAllowList(c, row.fromAllowList);
-				if (own !== null) return own;
-			}
 			return kindOfFields(c, row, [spec.fields[1]]) ?? "unknown";
 		}
 		case "profile":
