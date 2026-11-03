@@ -6,7 +6,7 @@ import { internal } from "./_generated/api";
 import { memoryTypeValidator, creatorValidator, relationTypeValidator, severityValidator } from "./schema";
 import { requireId } from "./lib/ids";
 import { isMcpBoundMaster, requireResolvedCaller, verifiedActorValidator, withOrgScope, type OrgScope } from "./lib/auth";
-import { ERASE_COVERED, assertMayErase, resolveEraseCaller } from "./lib/eraseRow";
+import { ERASE_COVERED, assertMayErase, collectMemoryChain, memoryChainMayErase, resolveEraseCaller } from "./lib/eraseRow";
 import { verifiedPersonValidator } from "./lib/personPrincipal";
 import { liveOnly, liveOrNull } from "./lib/retired";
 import {
@@ -622,29 +622,41 @@ const redactResultValidator = v.object({
   contentHashChanged: v.boolean(),
 });
 
-// The erase itself, shared by the two doors below. It decides nothing about WHO
-// may call: each door admits its caller and its row before reaching it.
+// The erase itself, shared by the doors below. It decides nothing about WHO may call: each
+// door admits its caller and EVERY version of the memory's "updates" chain before reaching
+// it. The redaction applies to each version; a version that does not hold the string is left
+// as it is, and only a chain in which NO version held it is the REDACT_NO_MATCH refusal.
 async function eraseMemoryBody(
   ctx: MutationCtx,
-  memory: Doc<"memories">,
+  versions: Doc<"memories">[],
   redactions: { find: string; replaceWith: string }[],
 ): Promise<{
   memoryId: Id<"memories">;
   replacements: number;
   contentHashChanged: boolean;
 }> {
-  let content = memory.content;
-  let replacements = 0;
-  for (const { find, replaceWith } of redactions) {
-    if (find.length === 0) continue;
-    const occurrences = content.split(find).length - 1;
-    if (occurrences > 0) {
-      content = content.split(find).join(replaceWith);
-      replacements += occurrences;
+  let total = 0;
+  let anyHashChanged = false;
+  const patches: { memory: Doc<"memories">; content: string; hash: string }[] = [];
+  for (const memory of versions) {
+    let content = memory.content;
+    let replacements = 0;
+    for (const { find, replaceWith } of redactions) {
+      if (find.length === 0) continue;
+      const occurrences = content.split(find).length - 1;
+      if (occurrences > 0) {
+        content = content.split(find).join(replaceWith);
+        replacements += occurrences;
+      }
     }
+    if (replacements === 0) continue;
+    const hash = await sha256Hex(content);
+    if (memory.contentHash !== hash) anyHashChanged = true;
+    total += replacements;
+    patches.push({ memory, content, hash });
   }
 
-  if (replacements === 0) {
+  if (total === 0) {
     // Refuse rather than silently no-op — a caller relying on this to
     // erase a credential must know the erase did NOT happen.
     throw new ConvexError(
@@ -652,24 +664,22 @@ async function eraseMemoryBody(
     );
   }
 
-  const newContentHash = await sha256Hex(content);
-  const contentHashChanged = memory.contentHash !== newContentHash;
+  for (const { memory, content, hash } of patches) {
+    await ctx.db.patch(memory._id, {
+      content,
+      contentHash: hash,
+      updatedAt: Date.now(),
+    });
+    await ctx.scheduler.runAfter(0, internal.ragSync.replaceRagEntryContent, {
+      memoryId: memory._id,
+      content,
+      namespace: memory.namespace,
+      type: memory.type,
+      isLatest: memory.isLatest,
+    });
+  }
 
-  await ctx.db.patch(memory._id, {
-    content,
-    contentHash: newContentHash,
-    updatedAt: Date.now(),
-  });
-
-  await ctx.scheduler.runAfter(0, internal.ragSync.replaceRagEntryContent, {
-    memoryId: memory._id,
-    content,
-    namespace: memory.namespace,
-    type: memory.type,
-    isLatest: memory.isLatest,
-  });
-
-  return { memoryId: memory._id, replacements, contentHashChanged };
+  return { memoryId: versions[0]._id, replacements: total, contentHashChanged: anyHashChanged };
 }
 
 // The three client doors below differ only in WHICH PROOF identifies the caller; who the
@@ -703,7 +713,8 @@ async function redactAsCaller(
   if (memory === null) {
     throw new ConvexError(`MEMORY_NOT_FOUND: memory ${args.memoryId} not found`);
   }
-  return await eraseMemoryBody(ctx, memory, args.redactions);
+  const versions = await memoryChainMayErase(ctx, caller, memory, door);
+  return await eraseMemoryBody(ctx, versions, args.redactions);
 }
 
 // Client door, SESSION form: the caller's own verified Clerk session (the dashboard, or the
@@ -771,6 +782,7 @@ export const redactMemoryContentFleet = internalMutation({
     if (memory === null) {
       throw new ConvexError(`MEMORY_NOT_FOUND: memory ${args.memoryId} not found`);
     }
-    return await eraseMemoryBody(ctx, memory, args.redactions);
+    const versions = await collectMemoryChain(ctx, memory);
+    return await eraseMemoryBody(ctx, versions, args.redactions);
   },
 });

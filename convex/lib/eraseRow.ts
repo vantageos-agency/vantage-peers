@@ -41,7 +41,7 @@ import {
 	resolveActingPrincipal,
 } from "@vantageos/cloud-identity";
 import { ConvexError } from "convex/values";
-import type { Id } from "../_generated/dataModel";
+import type { Doc, Id } from "../_generated/dataModel";
 import type { MutationCtx } from "../_generated/server";
 import { deleteBodyChunks } from "../briefingNoteBodies";
 import { internal } from "../_generated/api";
@@ -352,8 +352,130 @@ export async function performErase(
 			`ERASE_ROW_NOT_FOUND: ${table} row ${args.rowId} does not exist — ${JSON.stringify({ table, door })}`,
 		);
 	}
+	if (table === "memories") {
+		// A memory is erased with EVERY version of its "updates" chain, or not at all.
+		const chain = await memoryChainMayErase(ctx, caller, row as Doc<"memories">, door);
+		let searchEntries = 0;
+		for (const version of chain) {
+			const c = await eraseTableRow(
+				ctx,
+				table,
+				version._id,
+				version as unknown as Record<string, unknown>,
+			);
+			searchEntries += c.searchEntry ?? 0;
+		}
+		return {
+			table,
+			rowId: id,
+			erased: true,
+			cascaded: { searchEntry: searchEntries, memoryVersions: chain.length },
+		};
+	}
 	const cascaded = await eraseTableRow(ctx, table, id, row);
 	return { table, rowId: id, erased: true, cascaded };
+}
+
+// ── the "updates" chain of a memory ──────────────────────────────────────────────────
+// storeMemory with an "updates" relation writes a NEW row holding `relations: [{ type:
+// "updates", targetId: <older> }]` and flips the older to isLatest=false; the older row keeps
+// its content and holds NO pointer to the newer one. So the older versions are read by
+// following `relations`, and the newer ones can only be found by reading the rows that name
+// the version as a target. No index holds that edge (an array of objects is not indexable);
+// the newer rows are therefore read from the namespace of each version of the chain through
+// `by_namespace` (both isLatest values), bounded by CHAIN_SCAN_CAP per read and REFUSED, never
+// truncated, when a namespace is larger than the bound.
+// Declared limit: a newer version written into a DIFFERENT namespace than every version of
+// the chain it supersedes is not reachable by this read (storeMemory permits it when the
+// caller may write both namespaces).
+export const CHAIN_SCAN_CAP = 2000;
+
+/** Every row of the "updates" chain `root` belongs to (both directions), root first. */
+export async function collectMemoryChain(
+	ctx: MutationCtx,
+	root: Doc<"memories">,
+): Promise<Doc<"memories">[]> {
+	const found = new Map<string, Doc<"memories">>([[root._id, root]]);
+	const queue: Doc<"memories">[] = [root];
+	const namespaceRows = new Map<string, Doc<"memories">[]>();
+	const rowsOfNamespace = async (namespace: string): Promise<Doc<"memories">[]> => {
+		const cached = namespaceRows.get(namespace);
+		if (cached !== undefined) return cached;
+		const rows: Doc<"memories">[] = [];
+		for (const isLatest of [true, false]) {
+			const page = await ctx.db
+				.query("memories")
+				.withIndex("by_namespace", (q) =>
+					q.eq("namespace", namespace).eq("isLatest", isLatest),
+				)
+				.take(CHAIN_SCAN_CAP + 1);
+			if (page.length > CHAIN_SCAN_CAP) {
+				throw new ConvexError(
+					`ERASE_CHAIN_SCAN_TOO_LARGE: the namespace holds more than ${CHAIN_SCAN_CAP} memories of one state, so the versions of this memory cannot all be found; nothing was erased — ${JSON.stringify({ cap: CHAIN_SCAN_CAP })}`,
+				);
+			}
+			rows.push(...page);
+		}
+		namespaceRows.set(namespace, rows);
+		return rows;
+	};
+	while (queue.length > 0) {
+		const row = queue.shift() as Doc<"memories">;
+		const neighbours: Doc<"memories">[] = [];
+		for (const relation of row.relations) {
+			if (relation.type !== "updates") continue;
+			const older = await ctx.db.get(relation.targetId);
+			if (older !== null) neighbours.push(older);
+		}
+		for (const candidate of await rowsOfNamespace(row.namespace)) {
+			if (candidate.relations.some((r) => r.type === "updates" && r.targetId === row._id)) {
+				neighbours.push(candidate);
+			}
+		}
+		for (const next of neighbours) {
+			if (found.has(next._id)) continue;
+			found.set(next._id, next);
+			queue.push(next);
+		}
+	}
+	return [...found.values()];
+}
+
+/**
+ * The chain of `row` once the SAME decision (`assertMayErase`) has been taken on every
+ * version. `row` itself was judged by the caller of this function. One version the caller may
+ * not erase refuses the whole chain, typed (`RBAC_DENIED`), naming only the COUNT of such
+ * versions, never their ids, authors or content.
+ */
+export async function memoryChainMayErase(
+	ctx: MutationCtx,
+	caller: EraseCaller,
+	row: Doc<"memories">,
+	door: string,
+): Promise<Doc<"memories">[]> {
+	const chain = await collectMemoryChain(ctx, row);
+	let unerasable = 0;
+	for (const version of chain) {
+		if (version._id === row._id) continue;
+		try {
+			await assertMayErase(
+				ctx,
+				caller,
+				version as unknown as Record<string, unknown>,
+				ERASE_COVERED.memories,
+				door,
+			);
+		} catch (err: unknown) {
+			if (!(err instanceof ConvexError)) throw err;
+			unerasable += 1;
+		}
+	}
+	if (unerasable > 0) {
+		throw new ConvexError(
+			`RBAC_DENIED: this memory has older or newer versions the caller may not erase, so nothing was erased — ${JSON.stringify({ door, reason: "memory-chain-has-unerasable-versions", unerasableVersions: unerasable })}`,
+		);
+	}
+	return chain;
 }
 
 async function eraseTableRow(
