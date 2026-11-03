@@ -9,7 +9,8 @@
 // are DELETED (and a memory's search entry is purged); nothing is flagged.
 //
 // ORDER of the decision (performErase): the row's STORED org ID against the caller's org ID
-// (by ID, never by slug label) -> admin, or author by stored ID -> the per-table erase.
+// (by ID, never by slug label) -> admin, or author by stored ID -> the per-table erase. Every
+// comparison is made by @vantageos/cloud-identity (assertTargetBelongsTo, assertOrgAdmin) on IDs.
 // A row with no stored author ID (written before the column, or by a seat that presented no
 // agent proof) is erasable by an organisation admin only.
 //
@@ -31,12 +32,14 @@
 // through the internal fleet door only.
 
 import {
+	type ActingPrincipal,
 	assertOrgAdmin,
+	assertTargetBelongsTo,
+	isPersonActorName,
 	personActorName,
+	requireServiceAccountStanding,
 	resolveActingPrincipal,
 	resolveCallerFromClaims,
-	requireServiceAccountStanding,
-	sameOrg,
 } from "@vantageos/cloud-identity";
 import { ConvexError } from "convex/values";
 import type { Id } from "../_generated/dataModel";
@@ -53,9 +56,8 @@ import {
 } from "./auth";
 import { wireIdentityRefusal } from "./identityRefusalWire";
 import { orgByIdLookups, orgByIdPrincipalLookups } from "./orgIdLookups";
-import { personPrincipalLookups } from "./actingPrincipal";
+import { personPrincipalLookups, requireVerifiedActorPrincipal } from "./actingPrincipal";
 import { resolveVerifiedPerson, type VerifiedPerson } from "./personPrincipal";
-import { seatAgentIdOf } from "./seatNamespace";
 
 // ── the policy table ─────────────────────────────────────────────────────────────────
 export const ERASE_TABLES = [
@@ -175,20 +177,11 @@ export function eraseInventory(derived: { table: string }[]): EraseInventory {
 export type EraseCaller =
 	| { kind: "fleet" }
 	| {
-			kind: "org";
-			/** the caller's permanent Clerk org ID */
-			orgId: string;
-			isAdmin: boolean;
-			/** the stored author IDs this caller IS: an agent ID, or "user:<subject>" */
-			authorIds: readonly string[];
+			kind: "principal";
+			/** the acting principal the identity package resolved BY ID (person or agent) */
+			principal: ActingPrincipal;
 			via: "session" | "person" | "agent";
 	  };
-
-function denied(door: string, reason: string, detail?: Record<string, unknown>) {
-	return new ConvexError(
-		`RBAC_DENIED: ${door} refused — ${JSON.stringify({ reason, door, ...detail })}`,
-	);
-}
 
 /** The fleet SERVICE ACCOUNT as transport (plain, or acting for an organisation). */
 export function requireServiceAccount(transport: OrgScope, door: string): void {
@@ -209,9 +202,6 @@ export async function resolveEraseCaller(
 	},
 ): Promise<EraseCaller> {
 	const { door } = args;
-	if (args.verifiedPerson !== undefined && args.verifiedActor !== undefined) {
-		throw denied(door, "two-proofs", {});
-	}
 
 	// PERSON bearer: the service account carries the bearer hash; the person is rebuilt from
 	// its token row and proven in its org by ID.
@@ -232,36 +222,21 @@ export async function resolveEraseCaller(
 			door,
 		);
 		if (!acting.ok) throw refusalError(acting.refusal);
-		const admin = assertOrgAdmin(acting.principal, acting.principal.orgId, {
-			adminRoles: ORG_ADMIN_ROLES,
-			door,
-		});
-		return {
-			kind: "org",
-			orgId: acting.principal.orgId,
-			isAdmin: admin.ok,
-			authorIds: [personActorName(person.userId ?? "")],
-			via: "person",
-		};
+		return { kind: "principal", principal: acting.principal, via: "person" };
 	}
 
-	// AGENT (a seat): the service account acting for its organisation, plus the agent the
-	// transport verified. The proof is judged by the one agent-proof check; the org is the
-	// acting org's permanent ID. An agent is never an organisation admin.
+	// AGENT (a seat): the agent the transport verified, resolved BY ID through the package
+	// (active agent row of the acting org, believed from the service account only). An agent is
+	// never an organisation admin.
 	if (args.verifiedActor !== undefined) {
-		const scope = await withOrgScope(ctx);
-		if (scope.serviceTransport !== true || scope.orgClerkId === undefined) {
-			throw denied(door, "agent-proof-needs-acting-org", {});
-		}
-		const agentId = await seatAgentIdOf(ctx, scope, args.verifiedActor);
-		if (agentId === undefined) throw denied(door, "agent-proof-not-accepted", {});
-		return {
-			kind: "org",
-			orgId: scope.orgClerkId,
-			isAdmin: false,
-			authorIds: [agentId],
-			via: "agent",
-		};
+		const transport = await withOrgScope(ctx);
+		const principal = await requireVerifiedActorPrincipal(
+			ctx,
+			transport,
+			args.verifiedActor,
+			door,
+		);
+		return { kind: "principal", principal, via: "agent" };
 	}
 
 	// SESSION: the caller's own verified Clerk claims.
@@ -277,45 +252,62 @@ export async function resolveEraseCaller(
 		if (caller.subject === undefined) throw anonymousRefusal(door);
 		throw refusalError(caller.refusal);
 	}
-	const admin = assertOrgAdmin(caller.principal, caller.principal.orgId, {
-		adminRoles: ORG_ADMIN_ROLES,
-		door,
-	});
-	return {
-		kind: "org",
-		orgId: caller.principal.orgId,
-		isAdmin: admin.ok,
-		authorIds: [caller.actorName],
-		via: "session",
-	};
+	return { kind: "principal", principal: caller.principal, via: "session" };
 }
 
 /**
- * The decision, shared by every table and by the memory redact door: the row's STORED org
- * ID against the caller's, then admin, or author by stored ID. Throws `RBAC_DENIED`.
- * A missing row and a row of another org answer alike (no existence oracle).
+ * The stored author of a row, in the principal's ID space: an agent's stored ID is its
+ * agents-row `_id` (the principal's `principalId`); a person's stored author is the reserved
+ * actor name "user:<subject>" while the person principal's ID is the bare verified subject.
+ * No other spelling is rewritten.
  */
-export function assertMayErase(
+function authorInPrincipalSpace(author: unknown): string | null {
+	if (typeof author !== "string" || author === "") return null;
+	return isPersonActorName(author)
+		? author.slice(personActorName("").length)
+		: author;
+}
+
+/**
+ * The decision, shared by every table and by the memory redact door, taken by the identity
+ * package on STORED IDs only: the row's org ID against the principal's (a missing row has no
+ * org and is refused like another org's, so there is no existence oracle), then an
+ * organisation admin of that org, else the row's stored author (`ownerOnly`). A row with no
+ * stored author is therefore an admin's alone. Throws the package's typed `RBAC_DENIED`.
+ */
+export async function assertMayErase(
+	ctx: MutationCtx,
 	caller: EraseCaller,
 	row: Record<string, unknown> | null,
 	policy: Pick<ErasePolicy, "orgField" | "authorField">,
 	door: string,
-): void {
+): Promise<void> {
 	if (caller.kind === "fleet") return;
+	const lookups = orgByIdPrincipalLookups(ctx);
 	const rowOrg = row === null ? undefined : row[policy.orgField];
-	if (
-		row === null ||
-		typeof rowOrg !== "string" ||
-		!sameOrg({ id: rowOrg }, { id: caller.orgId })
-	) {
-		throw denied(door, "row-not-found-or-not-in-caller-org");
-	}
-	if (caller.isAdmin) return;
-	const author = policy.authorField === null ? undefined : row[policy.authorField];
-	if (typeof author === "string" && author !== "" && caller.authorIds.includes(author)) {
-		return;
-	}
-	throw denied(door, "not-author-or-admin", { via: caller.via });
+	const orgId = typeof rowOrg === "string" ? rowOrg : null;
+	const inOrg = await assertTargetBelongsTo(caller.principal, { orgId }, lookups, {
+		door,
+	});
+	if (!inOrg.ok) throw refusalError(inOrg.refusal);
+	const admin = assertOrgAdmin(caller.principal, orgId, {
+		adminRoles: ORG_ADMIN_ROLES,
+		door,
+	});
+	if (admin.ok) return;
+	const authored = await assertTargetBelongsTo(
+		caller.principal,
+		{
+			orgId,
+			ownerId:
+				row === null || policy.authorField === null
+					? null
+					: authorInPrincipalSpace(row[policy.authorField]),
+		},
+		lookups,
+		{ door, ownerOnly: true },
+	);
+	if (!authored.ok) throw refusalError(authored.refusal);
 }
 
 // ── the erase itself ─────────────────────────────────────────────────────────────────
@@ -341,7 +333,7 @@ export async function performErase(
 		id === null
 			? null
 			: ((await ctx.db.get(id as never)) as Record<string, unknown> | null);
-	assertMayErase(caller, row, policy, door);
+	await assertMayErase(ctx, caller, row, policy, door);
 	if (id === null || row === null) {
 		throw new ConvexError(
 			`ERASE_ROW_NOT_FOUND: ${table} row ${args.rowId} does not exist — ${JSON.stringify({ table, door })}`,

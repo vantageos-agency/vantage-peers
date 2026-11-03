@@ -821,7 +821,7 @@ export const redactMemoryContentAsAgent = mutation({
       verifiedActor: args.verifiedActor,
     });
     const memory = await ctx.db.get(args.memoryId);
-    assertMayErase(caller, memory, ERASE_COVERED.memories, door);
+    await assertMayErase(ctx, caller, memory, ERASE_COVERED.memories, door);
     if (memory === null) {
       throw new ConvexError(`MEMORY_NOT_FOUND: memory ${args.memoryId} not found`);
     }
