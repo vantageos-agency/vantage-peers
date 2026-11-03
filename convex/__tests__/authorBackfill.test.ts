@@ -111,6 +111,10 @@ describe("authorBackfill:count", () => {
 		expect(derived).not.toContain("issues");
 	});
 
+	test("an empty derived set throws instead of reporting a clean one", () => {
+		expect(() => authoredTables({})).toThrow(/yields no authored table/);
+	});
+
 	test("classifies every row of a table into disjoint classes that sum", async () => {
 		const alice = agents[`${A}/alice`];
 		await memoryRow(A_ID, "alice", alice); // has an author ID
