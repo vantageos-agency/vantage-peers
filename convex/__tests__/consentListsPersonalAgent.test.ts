@@ -17,11 +17,11 @@
 
 import { createHash } from "node:crypto";
 import { describe, expect, test } from "vitest";
-import { api } from "../_generated/api";
-import schema from "../schema";
 import { convexTest } from "../../tests/fixtures/convexTestWithServiceAccount";
 import { testClerkOrgId } from "../../tests/fixtures/testClerkOrgId";
 import { seedMintProfile } from "../../tests/lib/seedMintProfile";
+import { api } from "../_generated/api";
+import schema from "../schema";
 
 const modules = Object.fromEntries(
 	Object.entries(import.meta.glob("../**/*.ts")).filter(

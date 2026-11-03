@@ -136,6 +136,8 @@ async function connect() {
 		sessionToken: await harness.session(PERSON),
 		orgId: ORG_ID,
 		scope: "mcp:full offline_access",
+		// The person has a bound agent: "connect as myself" is posted explicitly.
+		extraFields: { [`agent_${ORG_ID}`]: "" },
 	});
 	const code = new URL(authorize.location as string).searchParams.get(
 		"code",
