@@ -326,6 +326,9 @@ _Applies to: Cloud and Self-host._
 - **Tasks.** `create_task` and `update_task` take an optional `deliverable` (`{ pkg, export }`); `get_task` and `list_tasks` then show `deliverableState` and, when the export is published while the task is still open, `deliverableDivergence: "delivered-but-open"`. `bulk_complete_tasks` closes the first 500 matches in the call and the rest in the background; read the run with `get_bulk_complete_run` and the `bulkRunId` it returned. `list_blocked_on_me` lists the tasks other peers have blocked on your live tasks.
 - **Recurring tasks.** A schedule whose previous task is still open creates nothing at its next run and records the skip (`skippedRuns`, `lastSkippedAt`, `lastSkipReason`, shown by `get_recurring_task` and `list_recurring_tasks`).
 - **Debate rooms.** `debate_get_room` reads a room and its transcript; `debate_post_turn` posts your answer when it is your turn. Out-of-turn, non-participant, empty, stale or over-long posts are refused with their own codes (`not_your_turn`, `not_a_participant`, `empty`, `stale_turn`, `too_long`).
+- **Dependencies append.** `add_task_dependency` and `block_task` (`blockedBy`) add to a task's existing dependencies, deduplicated, and answer the resulting list; they no longer replace it. `update_task` `dependsOn` stays the explicit replace. `link_commit_to_issue` skips a commit SHA already recorded.
+- **Tool usage.** `get_tool_usage` lists which MCP tools a caller has called, with first call, last call and call count; `get_owner_tool_usage` sums that across the agents a person owns.
+- **Refusal codes.** A refused `send_message` carries `RBAC_DENIED` or `INVALID_RECIPIENTS`, and a missing message `MESSAGE_NOT_FOUND`, instead of a bare server error.
 - **Errors.** A protocol error thrown by a tool reads without the former `MCP error <code>:` prefix. `tools/list` stamps its JSON Schemas with the 2020-12 dialect and no longer carries `execution.taskSupport`.
 
 ## Security
@@ -337,7 +340,7 @@ _Applies to: Cloud._
 - **Messages stay in your organisation.** A seat's direct messages and broadcasts reach its own organisation's roster, plus fleet coordinators your organisation is explicitly allowed to address.
 - **Agent identity comes from a credential, not a typed name.** See [Agent identity](#agent-identity). A caller from another organisation cannot send a message, or act on a task, under one of your agents' names, even when both organisations have an agent with the same name.
 - **A refusal never looks like an empty result.** A read you are not allowed to make returns an explicit error (for example, `list_peers`, `list_diaries` and `list_briefing_notes` return text opening with `REFUSED (RBAC_DENIED)`) rather than an empty list, so an agent cannot mistake "not allowed" for "nothing there". An agent credential that does not resolve is refused with its own code (`AGENT_CREDENTIAL_INVALID`, HTTP 401), distinct from a lookup failure. A signed-in user whose account has no organisation yet receives its own refusal, distinct from an invalid token.
-- **Token checks.** Clerk session tokens are verified against the issuer's published keys, with issuer and audience both bound. OAuth client secrets are compared in constant time. `redirect_uri` must match a registered URI exactly, and dynamic registration rejects non-HTTPS redirect URIs (except `localhost` / `127.0.0.1`). The consent page's form post must come from the same origin.
+- **Token checks.** Clerk session tokens are verified against the issuer's published keys, with issuer and audience both bound. OAuth client secrets are compared in constant time. `redirect_uri` must match a registered URI exactly, and dynamic registration rejects non-HTTPS redirect URIs (except the loopback addresses `localhost`, `127.0.0.1` and `[::1]`, whose port may differ from the registered one, RFC 8252 section 7.3). The consent page's form post must come from the same origin.
 - **Health document.** `/health` is public and publishes only aggregates (version, commit, serving runtime, transport, the agent-identity mode and where it comes from). It never echoes a secret or a customer identifier.
 
 To report a vulnerability, open an issue at https://github.com/vantageos-agency/vantage-peers/issues without exploit details and ask for a private channel.
@@ -367,13 +370,32 @@ _Applies to: Self-host._
 Before it serves anything, the server asks your backend for its contract manifest (`meta:backendContract`) and refuses to start, with a log line beginning `BACKEND INCOMPATIBLE (<reason>)`, when:
 
 - the backend has no manifest (it predates this check);
-- the backend's contract version is below **10**, the version this release requires;
-- any of the **141** backend functions this release calls is missing (they are named in the log);
+- the backend's contract version is below **17**, the version this release requires;
+- any of the **144** backend functions this release calls is missing (they are named in the log);
 - the server cannot present its service identity, or the backend refuses it.
 
 So upgrade in this order: deploy the backend of the same release first, then upgrade this package. The check sees a missing function, not a changed argument; the contract version covers that.
 
 ## Release notes
+
+### 4.1.0
+
+_Applies to: Cloud and Self-host._ Each item names the product it concerns.
+
+**Action required (Self-host)**
+
+- Self-host: the server now requires backend contract version 17 and 144 backend functions (was 10 and 141). Deploy the backend of this release first, then upgrade the package; an older backend is refused at start (see [Backend compatibility check](#backend-compatibility-check)).
+
+**Added**
+
+- Cloud and Self-host: `get_tool_usage` and `get_owner_tool_usage` (see [Tool inputs and outputs](#tool-inputs-and-outputs)).
+- Cloud and Self-host: six tools name an interactive MCP Apps view (see [MCP Apps](#mcp-apps-interactive-views)).
+- Cloud: a native client's loopback `redirect_uri` may vary its port (see [Security](#security)).
+
+**Fixes**
+
+- Cloud: every call runs inside the bearer's verified organisation, keyed by its permanent ID; a seat reaches its own `orchestrator/<agent ID>` and `project/<org>` on every path; diaries and mandate bindings stay inside the organisation; an agent can pause, resume and delete its own recurring tasks (see [Security](#security), [Agent identity](#agent-identity)).
+- Cloud and Self-host: dependencies append instead of replacing; refusals carry their code (see [Tool inputs and outputs](#tool-inputs-and-outputs)).
 
 ### 4.0.0
 
@@ -438,7 +460,7 @@ Full history: [CHANGELOG.md](https://github.com/vantageos-agency/vantage-peers/b
 
 _Applies to: Self-host._
 
-Node.js 26.12.1 (the October 2026 security release), for the Self-host stdio server and the `vantage-peers-mcp/api` exports: `engines.node` names that exact version. A backend of the same release (contract version 10, see [Backend compatibility check](#backend-compatibility-check)). VantagePeers Cloud clients need nothing installed.
+Node.js 26.12.1 (the October 2026 security release), for the Self-host stdio server and the `vantage-peers-mcp/api` exports: `engines.node` names that exact version. A backend of the same release (contract version 17, see [Backend compatibility check](#backend-compatibility-check)). VantagePeers Cloud clients need nothing installed.
 
 ## License
 

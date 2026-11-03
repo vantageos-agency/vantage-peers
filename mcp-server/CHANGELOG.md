@@ -2,6 +2,31 @@
 
 ## [Unreleased]
 
+## [4.1.0] — 2026-11-03
+
+Customer-facing summary of every `mcp-server/` change since 4.0.0. Each entry says which product it concerns (VantagePeers Cloud, the hosted service; VantagePeers Self-host, the separate product) and links the README section that documents it.
+
+### Action required
+
+- Self-host: the server requires backend contract version 17 and 144 backend functions (4.0.0: 10 and 141) and refuses to start against an older backend. Deploy the backend of this release first, then upgrade this package. ([Backend compatibility check](README.md#backend-compatibility-check))
+
+### Added
+
+- Cloud and Self-host: new tools `get_tool_usage` and `get_owner_tool_usage`: which MCP tools a caller, or all the agents a person owns, has called, with first call, last call and call count. ([Tool inputs and outputs](README.md#tool-inputs-and-outputs))
+- Cloud and Self-host: `list_tasks`, `list_messages`, `list_missions`, `list_memories`, `get_diary` and `get_briefing_note` name an interactive MCP Apps view; a client without MCP Apps support shows the unchanged text result. ([MCP Apps](README.md#mcp-apps-interactive-views))
+- Cloud: a native client's loopback `redirect_uri` (`http://127.0.0.1`, `http://localhost`, `http://[::1]`) may vary its port, so VS Code can connect (RFC 8252 section 7.3). ([Security](README.md#security))
+
+### Changed
+
+- Cloud: `pause_recurring_task`, `resume_recurring_task` and `delete_recurring_task` are no longer refused to every non-operator caller; an agent manages the schedules it created. ([Tool inputs and outputs](README.md#tool-inputs-and-outputs))
+- Cloud and Self-host: a refused `send_message` carries `RBAC_DENIED` or `INVALID_RECIPIENTS`, a missing message `MESSAGE_NOT_FOUND`, and a refused `store_memory` / `store_episode` write names the namespaces the caller may write. ([Tool inputs and outputs](README.md#tool-inputs-and-outputs))
+
+### Security and fixes
+
+- Cloud: every call an OAuth bearer makes runs inside its own verified organisation, keyed by the permanent organisation ID, so a bearer no longer reads another organisation's diaries, mandate bindings, tasks or UI resources (cross-tenant leak, #1639). ([Security](README.md#security))
+- Cloud: a seat reads and writes its own `orchestrator/<agent ID>` and `project/<org>` on every path into the server, whatever its token was minted with; a token's rights follow its scope profile as it is now; a one-agent seat resolves its agent by ID only. ([Agent identity](README.md#agent-identity))
+- Cloud and Self-host: `add_task_dependency` and `block_task` append to a task's dependencies instead of replacing them, and `link_commit_to_issue` no longer records a SHA twice. ([Tool inputs and outputs](README.md#tool-inputs-and-outputs))
+
 ## [4.0.0] — 2026-11-01
 
 Customer-facing summary of every `mcp-server/` change since 3.0.0. Each entry says which product it concerns (VantagePeers Cloud, the hosted service; VantagePeers Self-host, the separate product) and links the README section that documents it. The repository changelog carries the full engineering record of the same release.
