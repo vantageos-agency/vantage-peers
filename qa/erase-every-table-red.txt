@@ -1,0 +1,15 @@
+ FAIL  convex/__tests__/eraseRow.test.ts [ convex/__tests__/eraseRow.test.ts ]
+Error: Cannot find module '../lib/eraseRow' imported from /root/coding/vantage-memory/.claude/worktrees/agent-a033d414ec5d6a904/convex/__tests__/eraseRow.test.ts
+ FAIL  convex/__tests__/tenantEraseCoverage.test.ts [ convex/__tests__/tenantEraseCoverage.test.ts ]
+Error: Cannot find module '../lib/eraseRow' imported from /root/coding/vantage-memory/.claude/worktrees/agent-a033d414ec5d6a904/convex/__tests__/tenantEraseCoverage.test.ts
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 4 ⎯⎯⎯⎯⎯⎯⎯
+ FAIL  convex/__tests__/eraseAuthorStamp.test.ts > the author ID is stored from the verified caller > memories:storeMemory — a seat stores its verified agent ID
+AssertionError: expected undefined to be '10002;agents' // Object.is equality
+ FAIL  convex/__tests__/eraseAuthorStamp.test.ts > the author ID is stored from the verified caller > memories:storeMemory — a Clerk member stores user:<subject> as its ID
+AssertionError: expected undefined to be 'user:user_member_a' // Object.is equality
+ FAIL  convex/__tests__/eraseAuthorStamp.test.ts > the author ID is stored from the verified caller > episodes:storeEpisode — a seat stores its verified agent ID on the memories row
+AssertionError: expected undefined to be '10002;agents' // Object.is equality
+ FAIL  convex/__tests__/eraseAuthorStamp.test.ts > the author ID is stored from the verified caller > diary:write — a seat stores its verified agent ID; no proof stores none
+Error: Validator error: Unexpected field `verifiedActor` in object
+ Test Files  3 failed (3)
+      Tests  4 failed | 2 passed (6)
