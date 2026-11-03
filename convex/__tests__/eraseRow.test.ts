@@ -804,7 +804,7 @@ describe("erase:eraseRow — memories: the whole updates chain", () => {
 		} catch (e) {
 			data = e instanceof ConvexError ? String(e.data) : String(e);
 		}
-		expect(data).toMatch(/RBAC_DENIED/);
+		expect(data).toMatch(/ERASE_CHAIN_REFUSED/);
 		expect(data).toMatch(/unerasableVersions\\*"?:1\b/);
 		expect(data).not.toContain(ids.v1);
 		expect(data).not.toContain(CHAIN_MARK);
@@ -814,7 +814,7 @@ describe("erase:eraseRow — memories: the whole updates chain", () => {
 
 	test("a NEWER version by another author: REFUSED the same way, nothing deleted", async () => {
 		const ids = await seedChain([alice(), alice(), carol()]);
-		expect(await code(erase(ALICE_SEAT, "memories", ids.v1))).toBe("RBAC_DENIED");
+		expect(await code(erase(ALICE_SEAT, "memories", ids.v1))).toBe("ERASE_CHAIN_REFUSED");
 		expect(await allPresent(ids)).toEqual([true, true, true]);
 		expect(await purged()).toEqual([]);
 	});
@@ -840,7 +840,7 @@ describe("erase:eraseRow — memories: the whole updates chain", () => {
 
 	test("a legacy version (no stored author) in the chain refuses its author, an admin serves", async () => {
 		const ids = await seedChain([{ label: "legacy" }, alice(), alice()]);
-		expect(await code(erase(ALICE_SEAT, "memories", ids.v3))).toBe("RBAC_DENIED");
+		expect(await code(erase(ALICE_SEAT, "memories", ids.v3))).toBe("ERASE_CHAIN_REFUSED");
 		expect(await allPresent(ids)).toEqual([true, true, true]);
 		expect(await code(erase(ADMIN_A, "memories", ids.v3))).toBe("SERVED");
 		expect(await allPresent(ids)).toEqual([false, false, false]);
@@ -884,7 +884,7 @@ describe("erase:eraseRow — memories: the whole updates chain", () => {
 
 	test("redact: a version by another author refuses the whole redaction, no version touched", async () => {
 		const ids = await seedChain([alice(), memberAuthor, memberAuthor]);
-		expect(await code(redactAs(H_MEMBER_A, A, ids.v3))).toBe("RBAC_DENIED");
+		expect(await code(redactAs(H_MEMBER_A, A, ids.v3))).toBe("ERASE_CHAIN_REFUSED");
 		for (const c of await contents(ids)) expect(c).toContain(CHAIN_MARK);
 	});
 
