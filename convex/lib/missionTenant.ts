@@ -6,7 +6,7 @@
 // mission's server-stamped tenant with the tenant of the row that will carry
 // the reference, through the package's `sameTenantStamp` (equal, or both the
 // fleet's: unstamped and operator-stamped are one tenant). A foreign mission is
-// REFUSED with the typed code MISSION_FOREIGN_TENANT;
+// REFUSED with a typed RBAC_DENIED carrying the code MISSION_FOREIGN_TENANT;
 // nothing is dropped silently and nothing is written.
 //
 // A mission that does not exist is left to the caller exactly as before (a
@@ -45,6 +45,6 @@ export async function requireMissionInTenant(
 		return;
 	}
 	throw new ConvexError(
-		`MISSION_FOREIGN_TENANT: a task may reference only a mission of its own organisation — ${JSON.stringify({ code: "MISSION_FOREIGN_TENANT", door: input.door, missionId: input.missionId })}`,
+		`RBAC_DENIED: a task may reference only a mission of its own organisation — ${JSON.stringify({ code: "MISSION_FOREIGN_TENANT", door: input.door, missionId: input.missionId })}`,
 	);
 }
