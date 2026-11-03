@@ -272,7 +272,7 @@ declare const fullApi: ApiFromModules<{
   "lib/provisioningMapping": typeof lib_provisioningMapping;
   "lib/publicBuilders": typeof lib_publicBuilders;
   "lib/ragEntryReplacement": typeof lib_ragEntryReplacement;
-  "lib/repoMappingTenant":typeof lib_repoMappingTenant;
+  "lib/repoMappingTenant": typeof lib_repoMappingTenant;
   "lib/reviewRouting": typeof lib_reviewRouting;
   "lib/rosterAppend": typeof lib_rosterAppend;
   "lib/rosterIds": typeof lib_rosterIds;
