@@ -726,3 +726,171 @@ describe("erase:eraseRow — transport poles", () => {
 		void B_ID;
 	});
 });
+
+// ── the "updates" chain: erasing a memory erases every version of it ──────────────────
+// storeMemory with an "updates" relation writes a NEW row (relations: [{updates -> older}])
+// and flips the older to isLatest=false. Erasing one version must not leave the others'
+// content behind: every row of the chain goes, or (one version the caller may not erase)
+// nothing does. Task k17bf0twh1kaq2bhazqgevese98hgzaz.
+describe("erase:eraseRow — memories: the whole updates chain", () => {
+	type Ids = { v1: string; v2: string; v3: string };
+
+	// v1 <- v2 <- v3 (v3 is the latest). `authors` names who wrote each version.
+	async function seedChain(authors: [Author, Author, Author], org = A): Promise<Ids> {
+		const insert = (
+			a: Author,
+			relations: { targetId: Id<"memories">; type: "updates" }[],
+			isLatest: boolean,
+			content: string,
+		) =>
+			t.run((ctx) =>
+				ctx.db.insert("memories", {
+					namespace: `team/${orgId(org)}`,
+					clerkOrgId: orgId(org),
+					type: "reference",
+					content,
+					createdBy: a.label,
+					...(a.id === undefined ? {} : { createdById: a.id }),
+					relations,
+					isLatest,
+					createdAt: now(),
+					updatedAt: now(),
+				}),
+			);
+		const v1 = await insert(authors[0], [], false, `chain secret v1 ${CHAIN_MARK}`);
+		const v2 = await insert(authors[1], [{ targetId: v1, type: "updates" }], false, `chain secret v2 ${CHAIN_MARK}`);
+		const v3 = await insert(authors[2], [{ targetId: v2, type: "updates" }], true, `chain secret v3 ${CHAIN_MARK}`);
+		return { v1, v2, v3 };
+	}
+	const CHAIN_MARK = "chain-marker-xyz";
+	const purged = async (): Promise<string[]> =>
+		(await t.run((ctx) => ctx.db.system.query("_scheduled_functions").collect()))
+			.filter((j) => j.name.includes("removeRagEntry"))
+			.map((j) => (j.args[0] as { memoryId: string }).memoryId)
+			.sort();
+	const allPresent = async (ids: Ids) => [
+		await present("memories", ids.v1),
+		await present("memories", ids.v2),
+		await present("memories", ids.v3),
+	];
+	const alice = () => agentAuthor(ALICE, A);
+	const carol = () => agentAuthor(CAROL, A);
+
+	test("the author erases the MIDDLE version: the older and the newer go too, each search entry purged", async () => {
+		const ids = await seedChain([alice(), alice(), alice()]);
+		expect(await code(erase(ALICE_SEAT, "memories", ids.v2))).toBe("SERVED");
+		expect(await allPresent(ids)).toEqual([false, false, false]);
+		expect(await purged()).toEqual([ids.v1, ids.v2, ids.v3].sort());
+	});
+
+	test("the author erases the OLDEST version: the whole chain goes", async () => {
+		const ids = await seedChain([alice(), alice(), alice()]);
+		expect(await code(erase(ALICE_SEAT, "memories", ids.v1))).toBe("SERVED");
+		expect(await allPresent(ids)).toEqual([false, false, false]);
+		expect(await purged()).toEqual([ids.v1, ids.v2, ids.v3].sort());
+	});
+
+	test("the author erases the LATEST version: the whole chain goes", async () => {
+		const ids = await seedChain([alice(), alice(), alice()]);
+		expect(await code(erase(ALICE_SEAT, "memories", ids.v3))).toBe("SERVED");
+		expect(await allPresent(ids)).toEqual([false, false, false]);
+	});
+
+	test("an older version by another author: REFUSED, typed, the count named, nothing deleted, nothing purged", async () => {
+		const ids = await seedChain([carol(), alice(), alice()]);
+		let data = "";
+		try {
+			await erase(ALICE_SEAT, "memories", ids.v3);
+		} catch (e) {
+			data = e instanceof ConvexError ? String(e.data) : String(e);
+		}
+		expect(data).toMatch(/^RBAC_DENIED/);
+		expect(data).toContain('"unerasableVersions":1');
+		expect(data).not.toContain(ids.v1);
+		expect(data).not.toContain(CHAIN_MARK);
+		expect(await allPresent(ids)).toEqual([true, true, true]);
+		expect(await purged()).toEqual([]);
+	});
+
+	test("a NEWER version by another author: REFUSED the same way, nothing deleted", async () => {
+		const ids = await seedChain([alice(), alice(), carol()]);
+		expect(await code(erase(ALICE_SEAT, "memories", ids.v1))).toBe("RBAC_DENIED");
+		expect(await allPresent(ids)).toEqual([true, true, true]);
+		expect(await purged()).toEqual([]);
+	});
+
+	test("two versions by other authors: the refusal counts two", async () => {
+		const ids = await seedChain([carol(), carol(), alice()]);
+		let data = "";
+		try {
+			await erase(ALICE_SEAT, "memories", ids.v3);
+		} catch (e) {
+			data = e instanceof ConvexError ? String(e.data) : String(e);
+		}
+		expect(data).toContain('"unerasableVersions":2');
+		expect(await allPresent(ids)).toEqual([true, true, true]);
+	});
+
+	test("an org ADMIN erases a mixed-author chain", async () => {
+		const ids = await seedChain([carol(), alice(), memberAuthor]);
+		expect(await code(erase(ADMIN_A, "memories", ids.v2))).toBe("SERVED");
+		expect(await allPresent(ids)).toEqual([false, false, false]);
+		expect(await purged()).toEqual([ids.v1, ids.v2, ids.v3].sort());
+	});
+
+	test("a legacy version (no stored author) in the chain refuses its author, an admin serves", async () => {
+		const ids = await seedChain([{ label: "legacy" }, alice(), alice()]);
+		expect(await code(erase(ALICE_SEAT, "memories", ids.v3))).toBe("RBAC_DENIED");
+		expect(await allPresent(ids)).toEqual([true, true, true]);
+		expect(await code(erase(ADMIN_A, "memories", ids.v3))).toBe("SERVED");
+		expect(await allPresent(ids)).toEqual([false, false, false]);
+	});
+
+	test("another org's admin is refused as before, the chain untouched", async () => {
+		const ids = await seedChain([alice(), alice(), alice()]);
+		expect(await code(erase(ADMIN_B, "memories", ids.v2))).toBe("RBAC_DENIED");
+		expect(await allPresent(ids)).toEqual([true, true, true]);
+		expect(await purged()).toEqual([]);
+	});
+
+	test("a memory with no updates relation still erases alone, and a sibling chain is left alone", async () => {
+		const ids = await seedChain([alice(), alice(), alice()]);
+		const lone = await FAMILIES[0].seed(A, alice());
+		expect(await code(erase(ALICE_SEAT, "memories", lone))).toBe("SERVED");
+		expect(await present("memories", lone)).toBe(false);
+		expect(await allPresent(ids)).toEqual([true, true, true]);
+	});
+
+	// ── the redact door is per-version too: the same chain rule ──
+	const redactAs = (hash: string, org: string, memoryId: string) =>
+		service().mutation(api.memories.redactMemoryContentAsPerson, {
+			memoryId: memoryId as Id<"memories">,
+			redactions: [{ find: CHAIN_MARK, replaceWith: "[REDACTED]" }],
+			__actingOrg: testClerkOrgId(org),
+			verifiedPerson: { accessTokenHash: hash },
+		} as never);
+	const contents = (ids: Ids) =>
+		t.run(async (ctx) => [
+			(await ctx.db.get(ids.v1 as Id<"memories">))?.content,
+			(await ctx.db.get(ids.v2 as Id<"memories">))?.content,
+			(await ctx.db.get(ids.v3 as Id<"memories">))?.content,
+		]);
+
+	test("redact: the member author redacts the marker in EVERY version of its chain", async () => {
+		const ids = await seedChain([memberAuthor, memberAuthor, memberAuthor]);
+		await redactAs(H_MEMBER_A, A, ids.v3);
+		for (const c of await contents(ids)) expect(c).not.toContain(CHAIN_MARK);
+	});
+
+	test("redact: a version by another author refuses the whole redaction, no version touched", async () => {
+		const ids = await seedChain([alice(), memberAuthor, memberAuthor]);
+		expect(await code(redactAs(H_MEMBER_A, A, ids.v3))).toBe("RBAC_DENIED");
+		for (const c of await contents(ids)) expect(c).toContain(CHAIN_MARK);
+	});
+
+	test("redact: an admin redacts a mixed-author chain", async () => {
+		const ids = await seedChain([alice(), memberAuthor, carol()]);
+		await redactAs(H_ADMIN_A, A, ids.v2);
+		for (const c of await contents(ids)) expect(c).not.toContain(CHAIN_MARK);
+	});
+});

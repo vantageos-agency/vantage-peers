@@ -1,0 +1,240 @@
+(!) Your Vite config uses features that are unsupported by `configLoader: 'native'`, which is planned to become the default in a future major version of Vite:
+  - ESM syntax in a file loaded as CommonJS (vitest.config.ts:1:1). Use a `.mjs` extension or set `"type": "module"` in the closest package.json
+Set `VITE_CONFIG_NATIVE_IGNORE_WARNING=true` to suppress this warning.
+
+[1m[46m RUN [49m[22m [36mv4.1.1 [39m[90m/root/coding/vantage-memory/.claude/worktrees/agent-aa3a55f676140df38[39m
+
+ [31m❯[39m convex/__tests__/eraseRow.test.ts [2m([22m[2m122 tests[22m[2m | [22m[31m11 failed[39m[2m)[22m[33m 926[2mms[22m[39m
+[31m     [31m×[31m the author erases the MIDDLE version: the older and the newer go too, each search entry purged[39m[32m 19[2mms[22m[39m
+[31m     [31m×[31m the author erases the OLDEST version: the whole chain goes[39m[32m 5[2mms[22m[39m
+[31m     [31m×[31m the author erases the LATEST version: the whole chain goes[39m[32m 11[2mms[22m[39m
+[31m     [31m×[31m an older version by another author: REFUSED, typed, the count named, nothing deleted, nothing purged[39m[32m 5[2mms[22m[39m
+[31m     [31m×[31m a NEWER version by another author: REFUSED the same way, nothing deleted[39m[32m 6[2mms[22m[39m
+[31m     [31m×[31m two versions by other authors: the refusal counts two[39m[32m 5[2mms[22m[39m
+[31m     [31m×[31m an org ADMIN erases a mixed-author chain[39m[32m 3[2mms[22m[39m
+[31m     [31m×[31m a legacy version (no stored author) in the chain refuses its author, an admin serves[39m[32m 3[2mms[22m[39m
+[31m     [31m×[31m redact: the member author redacts the marker in EVERY version of its chain[39m[32m 238[2mms[22m[39m
+[31m     [31m×[31m redact: a version by another author refuses the whole redaction, no version touched[39m[32m 5[2mms[22m[39m
+[31m     [31m×[31m redact: an admin redacts a mixed-author chain[39m[32m 5[2mms[22m[39m
+
+[31m⎯⎯⎯⎯⎯⎯[39m[1m[41m Failed Tests 11 [49m[22m[31m⎯⎯⎯⎯⎯⎯⎯[39m
+
+[41m[1m FAIL [22m[49m convex/__tests__/eraseRow.test.ts[2m > [22merase:eraseRow — memories: the whole updates chain[2m > [22mthe author erases the MIDDLE version: the older and the newer go too, each search entry purged
+[31m[1mAssertionError[22m: expected [ true, false, true ] to deeply equal [ false, false, false ][39m
+
+[32m- Expected[39m
+[31m+ Received[39m
+
+[2m  [[22m
+[32m-   false,[39m
+[32m-   false,[39m
+[31m+   true,[39m
+[2m    false,[22m
+[31m+   true,[39m
+[2m  ][22m
+
+[36m [2m❯[22m convex/__tests__/eraseRow.test.ts:[2m782:33[22m[39m
+    [90m780|[39m   [35mconst[39m ids [33m=[39m [35mawait[39m [34mseedChain[39m([[34malice[39m()[33m,[39m [34malice[39m()[33m,[39m [34malice[39m()])[33m;[39m
+    [90m781|[39m   expect(await code(erase(ALICE_SEAT, "memories", ids.v2))).toBe("SERV…
+    [90m782|[39m   [34mexpect[39m([35mawait[39m [34mallPresent[39m(ids))[33m.[39m[34mtoEqual[39m([[35mfalse[39m[33m,[39m [35mfalse[39m[33m,[39m [35mfalse[39m])[33m;[39m
+    [90m   |[39m                                 [31m^[39m
+    [90m783|[39m   [34mexpect[39m([35mawait[39m [34mpurged[39m())[33m.[39m[34mtoEqual[39m([ids[33m.[39mv1[33m,[39m ids[33m.[39mv2[33m,[39m ids[33m.[39mv3][33m.[39m[34msort[39m())[33m;[39m
+    [90m784|[39m  })[33m;[39m
+
+[31m[2m⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/11]⎯[22m[39m
+
+[41m[1m FAIL [22m[49m convex/__tests__/eraseRow.test.ts[2m > [22merase:eraseRow — memories: the whole updates chain[2m > [22mthe author erases the OLDEST version: the whole chain goes
+[31m[1mAssertionError[22m: expected [ false, true, true ] to deeply equal [ false, false, false ][39m
+
+[32m- Expected[39m
+[31m+ Received[39m
+
+[2m  [[22m
+[2m    false,[22m
+[32m-   false,[39m
+[32m-   false,[39m
+[31m+   true,[39m
+[31m+   true,[39m
+[2m  ][22m
+
+[36m [2m❯[22m convex/__tests__/eraseRow.test.ts:[2m789:33[22m[39m
+    [90m787|[39m   [35mconst[39m ids [33m=[39m [35mawait[39m [34mseedChain[39m([[34malice[39m()[33m,[39m [34malice[39m()[33m,[39m [34malice[39m()])[33m;[39m
+    [90m788|[39m   expect(await code(erase(ALICE_SEAT, "memories", ids.v1))).toBe("SERV…
+    [90m789|[39m   [34mexpect[39m([35mawait[39m [34mallPresent[39m(ids))[33m.[39m[34mtoEqual[39m([[35mfalse[39m[33m,[39m [35mfalse[39m[33m,[39m [35mfalse[39m])[33m;[39m
+    [90m   |[39m                                 [31m^[39m
+    [90m790|[39m   [34mexpect[39m([35mawait[39m [34mpurged[39m())[33m.[39m[34mtoEqual[39m([ids[33m.[39mv1[33m,[39m ids[33m.[39mv2[33m,[39m ids[33m.[39mv3][33m.[39m[34msort[39m())[33m;[39m
+    [90m791|[39m  })[33m;[39m
+
+[31m[2m⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[2/11]⎯[22m[39m
+
+[41m[1m FAIL [22m[49m convex/__tests__/eraseRow.test.ts[2m > [22merase:eraseRow — memories: the whole updates chain[2m > [22mthe author erases the LATEST version: the whole chain goes
+[31m[1mAssertionError[22m: expected [ true, true, false ] to deeply equal [ false, false, false ][39m
+
+[32m- Expected[39m
+[31m+ Received[39m
+
+[2m  [[22m
+[32m-   false,[39m
+[32m-   false,[39m
+[31m+   true,[39m
+[31m+   true,[39m
+[2m    false,[22m
+[2m  ][22m
+
+[36m [2m❯[22m convex/__tests__/eraseRow.test.ts:[2m796:33[22m[39m
+    [90m794|[39m   [35mconst[39m ids [33m=[39m [35mawait[39m [34mseedChain[39m([[34malice[39m()[33m,[39m [34malice[39m()[33m,[39m [34malice[39m()])[33m;[39m
+    [90m795|[39m   expect(await code(erase(ALICE_SEAT, "memories", ids.v3))).toBe("SERV…
+    [90m796|[39m   [34mexpect[39m([35mawait[39m [34mallPresent[39m(ids))[33m.[39m[34mtoEqual[39m([[35mfalse[39m[33m,[39m [35mfalse[39m[33m,[39m [35mfalse[39m])[33m;[39m
+    [90m   |[39m                                 [31m^[39m
+    [90m797|[39m  })[33m;[39m
+    [90m798|[39m
+
+[31m[2m⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[3/11]⎯[22m[39m
+
+[41m[1m FAIL [22m[49m convex/__tests__/eraseRow.test.ts[2m > [22merase:eraseRow — memories: the whole updates chain[2m > [22man older version by another author: REFUSED, typed, the count named, nothing deleted, nothing purged
+[31m[1mAssertionError[22m: expected '' to match /^RBAC_DENIED/[39m
+
+[32m- Expected:[39m
+/^RBAC_DENIED/
+
+[31m+ Received:[39m
+""
+
+[36m [2m❯[22m convex/__tests__/eraseRow.test.ts:[2m807:16[22m[39m
+    [90m805|[39m    data [33m=[39m e [35minstanceof[39m [33mConvexError[39m [33m?[39m [33mString[39m(e[33m.[39mdata) [33m:[39m [33mString[39m(e)[33m;[39m
+    [90m806|[39m   }
+    [90m807|[39m   [34mexpect[39m(data)[33m.[39m[34mtoMatch[39m([36m/^RBAC_DENIED/[39m)[33m;[39m
+    [90m   |[39m                [31m^[39m
+    [90m808|[39m   [34mexpect[39m(data)[33m.[39m[34mtoContain[39m([32m'"unerasableVersions":1'[39m)[33m;[39m
+    [90m809|[39m   [34mexpect[39m(data)[33m.[39mnot[33m.[39m[34mtoContain[39m(ids[33m.[39mv1)[33m;[39m
+
+[31m[2m⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[4/11]⎯[22m[39m
+
+[41m[1m FAIL [22m[49m convex/__tests__/eraseRow.test.ts[2m > [22merase:eraseRow — memories: the whole updates chain[2m > [22ma NEWER version by another author: REFUSED the same way, nothing deleted
+[31m[1mAssertionError[22m: expected 'SERVED' to be 'RBAC_DENIED' // Object.is equality[39m
+
+Expected: [32m"[7mRBAC_DENI[27mED"[39m
+Received: [31m"[7mSERV[27mED"[39m
+
+[36m [2m❯[22m convex/__tests__/eraseRow.test.ts:[2m817:61[22m[39m
+    [90m815|[39m  test("a NEWER version by another author: REFUSED the same way, nothin…
+    [90m816|[39m   [35mconst[39m ids [33m=[39m [35mawait[39m [34mseedChain[39m([[34malice[39m()[33m,[39m [34malice[39m()[33m,[39m [34mcarol[39m()])[33m;[39m
+    [90m817|[39m   expect(await code(erase(ALICE_SEAT, "memories", ids.v1))).toBe("RBAC…
+    [90m   |[39m                                                             [31m^[39m
+    [90m818|[39m   [34mexpect[39m([35mawait[39m [34mallPresent[39m(ids))[33m.[39m[34mtoEqual[39m([[35mtrue[39m[33m,[39m [35mtrue[39m[33m,[39m [35mtrue[39m])[33m;[39m
+    [90m819|[39m   [34mexpect[39m([35mawait[39m [34mpurged[39m())[33m.[39m[34mtoEqual[39m([])[33m;[39m
+
+[31m[2m⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[5/11]⎯[22m[39m
+
+[41m[1m FAIL [22m[49m convex/__tests__/eraseRow.test.ts[2m > [22merase:eraseRow — memories: the whole updates chain[2m > [22mtwo versions by other authors: the refusal counts two
+[31m[1mAssertionError[22m: expected '' to contain '"unerasableVersions":2'[39m
+
+[32m- Expected[39m
+[31m+ Received[39m
+
+[32m- "unerasableVersions":2[39m
+
+[36m [2m❯[22m convex/__tests__/eraseRow.test.ts:[2m830:16[22m[39m
+    [90m828|[39m    data [33m=[39m e [35minstanceof[39m [33mConvexError[39m [33m?[39m [33mString[39m(e[33m.[39mdata) [33m:[39m [33mString[39m(e)[33m;[39m
+    [90m829|[39m   }
+    [90m830|[39m   [34mexpect[39m(data)[33m.[39m[34mtoContain[39m([32m'"unerasableVersions":2'[39m)[33m;[39m
+    [90m   |[39m                [31m^[39m
+    [90m831|[39m   [34mexpect[39m([35mawait[39m [34mallPresent[39m(ids))[33m.[39m[34mtoEqual[39m([[35mtrue[39m[33m,[39m [35mtrue[39m[33m,[39m [35mtrue[39m])[33m;[39m
+    [90m832|[39m  })[33m;[39m
+
+[31m[2m⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[6/11]⎯[22m[39m
+
+[41m[1m FAIL [22m[49m convex/__tests__/eraseRow.test.ts[2m > [22merase:eraseRow — memories: the whole updates chain[2m > [22man org ADMIN erases a mixed-author chain
+[31m[1mAssertionError[22m: expected [ true, false, true ] to deeply equal [ false, false, false ][39m
+
+[32m- Expected[39m
+[31m+ Received[39m
+
+[2m  [[22m
+[32m-   false,[39m
+[32m-   false,[39m
+[31m+   true,[39m
+[2m    false,[22m
+[31m+   true,[39m
+[2m  ][22m
+
+[36m [2m❯[22m convex/__tests__/eraseRow.test.ts:[2m837:33[22m[39m
+    [90m835|[39m   [35mconst[39m ids [33m=[39m [35mawait[39m [34mseedChain[39m([[34mcarol[39m()[33m,[39m [34malice[39m()[33m,[39m memberAuthor])[33m;[39m
+    [90m836|[39m   expect(await code(erase(ADMIN_A, "memories", ids.v2))).toBe("SERVED"…
+    [90m837|[39m   [34mexpect[39m([35mawait[39m [34mallPresent[39m(ids))[33m.[39m[34mtoEqual[39m([[35mfalse[39m[33m,[39m [35mfalse[39m[33m,[39m [35mfalse[39m])[33m;[39m
+    [90m   |[39m                                 [31m^[39m
+    [90m838|[39m   [34mexpect[39m([35mawait[39m [34mpurged[39m())[33m.[39m[34mtoEqual[39m([ids[33m.[39mv1[33m,[39m ids[33m.[39mv2[33m,[39m ids[33m.[39mv3][33m.[39m[34msort[39m())[33m;[39m
+    [90m839|[39m  })[33m;[39m
+
+[31m[2m⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[7/11]⎯[22m[39m
+
+[41m[1m FAIL [22m[49m convex/__tests__/eraseRow.test.ts[2m > [22merase:eraseRow — memories: the whole updates chain[2m > [22ma legacy version (no stored author) in the chain refuses its author, an admin serves
+[31m[1mAssertionError[22m: expected 'SERVED' to be 'RBAC_DENIED' // Object.is equality[39m
+
+Expected: [32m"[7mRBAC_DENI[27mED"[39m
+Received: [31m"[7mSERV[27mED"[39m
+
+[36m [2m❯[22m convex/__tests__/eraseRow.test.ts:[2m843:61[22m[39m
+    [90m841|[39m  test("a legacy version (no stored author) in the chain refuses its au…
+    [90m842|[39m   [35mconst[39m ids [33m=[39m [35mawait[39m [34mseedChain[39m([{ label[33m:[39m [32m"legacy"[39m }[33m,[39m [34malice[39m()[33m,[39m [34malice[39m()])[33m;[39m
+    [90m843|[39m   expect(await code(erase(ALICE_SEAT, "memories", ids.v3))).toBe("RBAC…
+    [90m   |[39m                                                             [31m^[39m
+    [90m844|[39m   [34mexpect[39m([35mawait[39m [34mallPresent[39m(ids))[33m.[39m[34mtoEqual[39m([[35mtrue[39m[33m,[39m [35mtrue[39m[33m,[39m [35mtrue[39m])[33m;[39m
+    [90m845|[39m   expect(await code(erase(ADMIN_A, "memories", ids.v3))).toBe("SERVED"…
+
+[31m[2m⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[8/11]⎯[22m[39m
+
+[41m[1m FAIL [22m[49m convex/__tests__/eraseRow.test.ts[2m > [22merase:eraseRow — memories: the whole updates chain[2m > [22mredact: the member author redacts the marker in EVERY version of its chain
+[31m[1mAssertionError[22m: expected 'chain secret v1 chain-marker-xyz' not to contain 'chain-marker-xyz'[39m
+
+Expected: [32m"chain-marker-xyz"[39m
+Received: [31m"[7mchain secret v1 [27mchain-marker-xyz"[39m
+
+[36m [2m❯[22m convex/__tests__/eraseRow.test.ts:[2m882:54[22m[39m
+    [90m880|[39m   const ids = await seedChain([memberAuthor, memberAuthor, memberAutho…
+    [90m881|[39m   [35mawait[39m [34mredactAs[39m([33mH_MEMBER_A[39m[33m,[39m [33mA[39m[33m,[39m ids[33m.[39mv3)[33m;[39m
+    [90m882|[39m   for (const c of await contents(ids)) expect(c).not.toContain(CHAIN_M…
+    [90m   |[39m                                                      [31m^[39m
+    [90m883|[39m  })[33m;[39m
+    [90m884|[39m
+
+[31m[2m⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[9/11]⎯[22m[39m
+
+[41m[1m FAIL [22m[49m convex/__tests__/eraseRow.test.ts[2m > [22merase:eraseRow — memories: the whole updates chain[2m > [22mredact: a version by another author refuses the whole redaction, no version touched
+[31m[1mAssertionError[22m: expected 'SERVED' to be 'RBAC_DENIED' // Object.is equality[39m
+
+Expected: [32m"[7mRBAC_DENI[27mED"[39m
+Received: [31m"[7mSERV[27mED"[39m
+
+[36m [2m❯[22m convex/__tests__/eraseRow.test.ts:[2m887:55[22m[39m
+    [90m885|[39m  test("redact: a version by another author refuses the whole redaction…
+    [90m886|[39m   [35mconst[39m ids [33m=[39m [35mawait[39m [34mseedChain[39m([[34malice[39m()[33m,[39m memberAuthor[33m,[39m memberAuthor])[33m;[39m
+    [90m887|[39m   expect(await code(redactAs(H_MEMBER_A, A, ids.v3))).toBe("RBAC_DENIE…
+    [90m   |[39m                                                       [31m^[39m
+    [90m888|[39m   [35mfor[39m ([35mconst[39m c [35mof[39m [35mawait[39m [34mcontents[39m(ids)) [34mexpect[39m(c)[33m.[39m[34mtoContain[39m([33mCHAIN_MARK[39m)[33m;[39m
+    [90m889|[39m  })[33m;[39m
+
+[31m[2m⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[10/11]⎯[22m[39m
+
+[41m[1m FAIL [22m[49m convex/__tests__/eraseRow.test.ts[2m > [22merase:eraseRow — memories: the whole updates chain[2m > [22mredact: an admin redacts a mixed-author chain
+[31m[1mAssertionError[22m: expected 'chain secret v1 chain-marker-xyz' not to contain 'chain-marker-xyz'[39m
+
+Expected: [32m"chain-marker-xyz"[39m
+Received: [31m"[7mchain secret v1 [27mchain-marker-xyz"[39m
+
+[36m [2m❯[22m convex/__tests__/eraseRow.test.ts:[2m894:54[22m[39m
+    [90m892|[39m   [35mconst[39m ids [33m=[39m [35mawait[39m [34mseedChain[39m([[34malice[39m()[33m,[39m memberAuthor[33m,[39m [34mcarol[39m()])[33m;[39m
+    [90m893|[39m   [35mawait[39m [34mredactAs[39m([33mH_ADMIN_A[39m[33m,[39m [33mA[39m[33m,[39m ids[33m.[39mv2)[33m;[39m
+    [90m894|[39m   for (const c of await contents(ids)) expect(c).not.toContain(CHAIN_M…
+    [90m   |[39m                                                      [31m^[39m
+    [90m895|[39m  })[33m;[39m
+    [90m896|[39m })[33m;[39m
+
+[31m[2m⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[11/11]⎯[22m[39m
+
+
+[2m Test Files [22m [1m[31m1 failed[39m[22m[90m (1)[39m
+[2m      Tests [22m [1m[31m11 failed[39m[22m[2m | [22m[1m[32m111 passed[39m[22m[90m (122)[39m
+[2m   Start at [22m 16:39:46
+[2m   Duration [22m 2.16s[2m (transform 1.09s, setup 0ms, import 1.10s, tests 926ms, environment 0ms)[22m
+
