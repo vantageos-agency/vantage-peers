@@ -109,7 +109,7 @@ const SMALL_PAGE_SIZE: Partial<Record<OrgIdTable, number>> = {
 const MAX_PAGE_SIZE = 500;
 const MAPPING_READ_CAP = 1000;
 
-type Reason =
+export type Reason =
 	| "orgUnmapped"
 	| "ambiguousMapping"
 	| "mappingHasNoClerkId"

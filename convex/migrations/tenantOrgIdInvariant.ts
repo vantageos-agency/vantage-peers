@@ -25,29 +25,99 @@
 //
 // COUNTS PER TABLE. Rows examined; `stamped` (idField present, the same test
 // backfill_org_clerk_id:run calls alreadyFilled); `slugOnly` (slug present, no id: the
-// rows `sameOrg` cannot match); `unstamped` (neither); `resolvable` (slugOnly rows whose
-// slug the GUARDED resolver of backfill_org_clerk_id, resolveSlugForRow, maps to exactly
-// one active mapping with a clerkOrgId not newer than the row: what a backfill would fill).
+// rows `sameOrg` cannot match); `unstamped` (neither), split by author kind (below);
+// `resolvable` (slugOnly rows whose slug the GUARDED resolver of backfill_org_clerk_id,
+// resolveSlugForRow, maps to exactly one active mapping with a clerkOrgId not newer than
+// the row: what a backfill would fill); `refusals` (why the others are not, below).
 // A table with no idField reports stamped 0 and every slug-bearing row as slugOnly: it has
 // nowhere to hold the id, and its idField is reported null so the reader sees that.
 // COUNTS ONLY: no row id, no slug, no mapping content leaves it; column names are schema
 // facts, not data.
 //
-// SHAPE. Internal, deployment-admin only (no per-caller check by design), cursor-paginated
-// and bounded: one page of one table per call with `table`, or one page of every derived
-// table without it (a cursor is then refused). It writes nothing.
+// UNSTAMPED, SPLIT BY AUTHOR KIND. An unstamped row (no slug, no id) is the fleet's by the
+// historical rule ("absent = fleet"), but the prod count showed client-looking tables full of
+// them, so each is attributed to WHO WROTE IT, as `unstamped: {fleet, client, unknown}`:
+//   fleet    the author is an agent of the OPERATOR org (`findOperatorOrg`: exactly one
+//            active operator mapping), or a label on the operator's roster;
+//   client   the author is an agent of any other org, a label on a client roster, or a
+//            person (`user:<sub>` / `user_<sub>`, a Clerk subject);
+//   unknown  no author field, an empty one, one that names no agent, or a label that both
+//            sides carry (ambiguous). Unknown is never rounded to fleet or to client.
+// How an author value is read: an ID (an `agents._id` string) is looked up in `agents` and
+// its org compared to the operator org (by clerkOrgId when both carry one, else by slug); a
+// LABEL is normalised (`normalizeOrchestratorId`) and looked up among the agent names and
+// the `allowedOrchestrators` rosters of the operator and of the other orgs. No name list is
+// written here: the operator, the agents and the rosters are read from the tables. ID fields
+// are tried before label fields, and an ID that resolves wins over a label that disagrees.
+// The lookups are lazy: a table with no unstamped row reads no agent. An operator org that is
+// not exactly one active mapping REFUSES (ConvexError) rather than guessing "fleet".
 //
+// AUTHOR FIELD PER TABLE (also returned as `authorFields`, so the reader sees what was read;
+// AUTHOR_FIELDS below is the single source, and a test pins that every derived table has an
+// entry, so a new tenant table cannot arrive without an author decision):
+//   memories              createdBy (label)
+//   messages              fromId (id), from (label)
+//   messageReceipts       the PARENT message's fromId / from (via messageId): the receipt is
+//                         written by the sender; `recipient` is the addressee, not the author
+//   missions              createdById (id), createdBy (label)
+//   bulk_complete_runs    createdBy (label)
+//   tasks                 createdById (id), createdBy (label)
+//   diary                 createdBy (label)
+//   briefingNotes         createdById (id), createdBy (label)
+//   recurringTasks        createdById (id), createdBy (label)
+//   businessUnits         ownerId (id), orchestratorId (label)
+//   githubOwnerBindings   boundBy (Clerk subject: a person)
+//   oauth_person_codes    clerkUserId (Clerk subject: a person)
+//   iframeEmbedSessions   userId (Clerk subject: a person)
+//   agentLinks            grantedBy (Clerk subject: a person)
+//   agent_credentials     agentId (id of the agent the credential belongs to)
+//   debateTemplates       updatedBy (label: the caller's actorName)
+//   debateSettings        updatedBy (label)
+//   debateRooms           createdById (id), createdBy (label)
+//   oauth_access_tokens   agentId (id); principal "person"; then the scope profile named by
+//                         scopeProfile (its agentId, its org stamp, its fromAllowList
+//                         labels); then the token's own fromAllowList; then userId when it
+//                         is a Clerk subject
+//   oauth_refresh_tokens  the same chain without the own fromAllowList (the row has none)
+//   oauth_scope_profiles  agentId (id), org stamp, fromAllowList (labels)
+//   NO AUTHOR FIELD (every unstamped row is `unknown`): issues (written by the GitHub
+//   webhook; fixedBy/verifiedBy are later actors), githubRepoMapping (`orchestrator` is the
+//   repo's routing target, not the writer), tool_usage, kbUploads, uploadTickets,
+//   memberWriterRoles, client_org_mapping, orgMembership, okfDurableExportProgress,
+//   okfDurableExportEntries, agents, agent_relations.
+//
+// REFUSAL REASONS. For each slug-only row the guarded resolver refuses, `refusals` counts the
+// reason `resolveSlugForRow` returns (the same function; nothing is re-derived):
+//   orgUnmapped          the slug has no client_org_mapping row;
+//   ambiguousMapping     the slug names more than one mapping row;
+//   mappingHasNoClerkId  the mapping exists but its clerkOrgId is not filled;
+//   mappingRecordInvalid the mapping row is not well formed for the package;
+//   inactiveMapping      the slug's single mapping is not active;
+//   mappingNewerThanRow  the mapping was created after the row (age check).
+// `resolvable + sum(refusals) = slugOnly`.
+//
+// SHAPE. Internal, deployment-admin only (no per-caller check by design), cursor-paginated
+// and bounded: one page of ONE table per call. `table` is REQUIRED: Convex allows one
+// `paginate` per query, so a call over every table cannot run (it failed on prod); a call
+// without `table` is refused with a typed error that names the rule. `tables` lists the
+// derived tables. It writes nothing.
+//
+//   bash .claude/scripts/convex-prod.sh run migrations/tenantOrgIdInvariant:tables '{}'
 //   bash .claude/scripts/convex-prod.sh run migrations/tenantOrgIdInvariant:count '{"table":"missions"}'
 //   -> repeat with {"table":..., "cursor": <cursor>} until done is true; sum the pages.
-//   bash .claude/scripts/convex-prod.sh run migrations/tenantOrgIdInvariant:count '{}'
-//   -> the derived table list and one page of each (read `tables[].table`).
 
+import { findOperatorOrg } from "@vantageos/cloud-identity";
 import { ConvexError, v } from "convex/values";
+import type { Id } from "../_generated/dataModel";
+import type { DatabaseReader } from "../_generated/server";
 import { internalQuery } from "../_generated/server";
+import { normalizeOrchestratorId } from "../_helpers/normalizeOrchestratorId";
 import schema from "../schema";
 import {
 	indexBySlug,
 	loadMappingRows,
+	type MappingRow,
+	type Reason,
 	resolveSlugForRow,
 } from "./backfill_org_clerk_id";
 
@@ -104,6 +174,309 @@ export function deriveTenantTables(
 
 const SCHEMA_TABLES = schema.tables as unknown as Record<string, TableLike>;
 
+// ── author kinds ─────────────────────────────────────────────────────────────
+
+export type AuthorKind = "fleet" | "client" | "unknown";
+
+/** `id`: an agents._id string or a person subject; `label`: an orchestrator name. */
+type AuthorField = { name: string; as: "id" | "label" };
+type AuthorSpec = {
+	fields: readonly AuthorField[];
+	/** Where the author is not on the row itself. */
+	via?: "message" | "token" | "refreshToken" | "profile";
+};
+
+const id = (name: string): AuthorField => ({ name, as: "id" });
+const label = (name: string): AuthorField => ({ name, as: "label" });
+
+/** Single source of the author field(s) per tenant table (module header). */
+export const AUTHOR_FIELDS: Record<string, AuthorSpec> = {
+	memories: { fields: [label("createdBy")] },
+	messages: { fields: [id("fromId"), label("from")] },
+	messageReceipts: { fields: [id("fromId"), label("from")], via: "message" },
+	missions: { fields: [id("createdById"), label("createdBy")] },
+	bulk_complete_runs: { fields: [label("createdBy")] },
+	tasks: { fields: [id("createdById"), label("createdBy")] },
+	diary: { fields: [label("createdBy")] },
+	briefingNotes: { fields: [id("createdById"), label("createdBy")] },
+	recurringTasks: { fields: [id("createdById"), label("createdBy")] },
+	businessUnits: { fields: [id("ownerId"), label("orchestratorId")] },
+	githubOwnerBindings: { fields: [id("boundBy")] },
+	oauth_person_codes: { fields: [id("clerkUserId")] },
+	iframeEmbedSessions: { fields: [id("userId")] },
+	agentLinks: { fields: [id("grantedBy")] },
+	agent_credentials: { fields: [id("agentId")] },
+	debateTemplates: { fields: [label("updatedBy")] },
+	debateSettings: { fields: [label("updatedBy")] },
+	debateRooms: { fields: [id("createdById"), label("createdBy")] },
+	oauth_access_tokens: {
+		fields: [id("agentId"), id("userId")],
+		via: "token",
+	},
+	oauth_refresh_tokens: {
+		fields: [id("agentId"), id("userId")],
+		via: "refreshToken",
+	},
+	oauth_scope_profiles: { fields: [id("agentId")], via: "profile" },
+	// No author field: every unstamped row is `unknown`.
+	issues: { fields: [] },
+	githubRepoMapping: { fields: [] },
+	tool_usage: { fields: [] },
+	kbUploads: { fields: [] },
+	uploadTickets: { fields: [] },
+	memberWriterRoles: { fields: [] },
+	client_org_mapping: { fields: [] },
+	orgMembership: { fields: [] },
+	okfDurableExportProgress: { fields: [] },
+	okfDurableExportEntries: { fields: [] },
+	agents: { fields: [] },
+	agent_relations: { fields: [] },
+};
+
+/** The author field names read for a table, as the output reports them. */
+export function authorFieldNames(table: string): string[] {
+	const spec = AUTHOR_FIELDS[table];
+	if (spec === undefined) return [];
+	const own = spec.fields.map((f) => f.name);
+	switch (spec.via) {
+		case "message":
+			return ["messageId>from", "messageId>fromId"];
+		case "token":
+			return [...own, "principal", "scopeProfile>profile", "fromAllowList"];
+		case "refreshToken":
+			return [...own, "principal", "scopeProfile>profile"];
+		case "profile":
+			return [...own, "stamp", "fromAllowList"];
+		default:
+			return own;
+	}
+}
+
+const AGENT_READ_CAP = 2000;
+const PROFILE_READ_CAP = 1000;
+const MAPPING_ROWS_CAP = 1000;
+
+type Row = Record<string, unknown>;
+
+/** Clerk subjects: `user_...` as Clerk issues them, `user:<sub>` as the stable principal. */
+const isPersonSubject = (s: string): boolean =>
+	s.startsWith("user:") || s.startsWith("user_");
+
+type Classifier = {
+	operator: { slug: string; clerkOrgId?: string };
+	/** agents._id -> true when the agent belongs to the operator org. */
+	agentIsOperator: Map<string, boolean>;
+	fleetLabels: Set<string>;
+	clientLabels: Set<string>;
+	/** profileId -> its row; null when two rows carry the id (undecidable). */
+	profiles: Map<string, Row | null>;
+};
+
+function isOperatorStamp(
+	op: Classifier["operator"],
+	clerkOrgId: unknown,
+	slug: unknown,
+): boolean | null {
+	if (
+		typeof clerkOrgId === "string" &&
+		clerkOrgId !== "" &&
+		op.clerkOrgId !== undefined
+	) {
+		return clerkOrgId === op.clerkOrgId;
+	}
+	if (typeof slug === "string" && slug !== "") return slug === op.slug;
+	return null;
+}
+
+/** Reads the operator, the agents and the rosters once. Refuses on an unclear operator. */
+async function buildClassifier(
+	db: DatabaseReader,
+	mappings: MappingRow[],
+): Promise<Classifier> {
+	// The package decides which org is the operator (exactly one ACTIVE mapping of kind
+	// "operator"; none, several, over the cap or a malformed row is a non-answer), over the
+	// mapping rows this call already read.
+	const op = await findOperatorOrg(
+		{
+			activeOrganisations: (limit: number) =>
+				mappings
+					.filter((m) => m.isActive)
+					.slice(0, limit)
+					.map((m) => ({
+						...m,
+						id: m.clerkOrgId,
+						label: m.clerkOrgSlug,
+						active: m.isActive,
+					})),
+		},
+		{ cap: MAPPING_ROWS_CAP },
+	);
+	if (op.kind !== "one") {
+		throw new ConvexError(
+			`tenantOrgIdInvariant: cannot split unstamped rows by author: the operator org is "${op.kind}", not exactly one active mapping; refusing to guess fleet vs client.`,
+		);
+	}
+	const operator = { slug: op.org.label, clerkOrgId: op.org.id };
+	const agents = await db.query("agents").take(AGENT_READ_CAP + 1);
+	if (agents.length > AGENT_READ_CAP) {
+		throw new ConvexError(
+			`tenantOrgIdInvariant: agents holds more than ${AGENT_READ_CAP} rows; refusing to decide from a truncated read.`,
+		);
+	}
+	const agentIsOperator = new Map<string, boolean>();
+	const fleetLabels = new Set<string>();
+	const clientLabels = new Set<string>();
+	for (const a of agents) {
+		const isOp = isOperatorStamp(operator, a.clerkOrgId, a.orgSlug) === true;
+		agentIsOperator.set(a._id, isOp);
+		(isOp ? fleetLabels : clientLabels).add(normalizeOrchestratorId(a.name));
+	}
+	for (const m of mappings) {
+		const isOp = isOperatorStamp(operator, m.clerkOrgId, m.clerkOrgSlug) === true;
+		for (const name of m.allowedOrchestrators) {
+			if (name === "*" || name.trim() === "") continue;
+			(isOp ? fleetLabels : clientLabels).add(normalizeOrchestratorId(name));
+		}
+	}
+	const profileRows = await db
+		.query("oauth_scope_profiles")
+		.take(PROFILE_READ_CAP + 1);
+	if (profileRows.length > PROFILE_READ_CAP) {
+		throw new ConvexError(
+			`tenantOrgIdInvariant: oauth_scope_profiles holds more than ${PROFILE_READ_CAP} rows; refusing to decide from a truncated read.`,
+		);
+	}
+	const profiles = new Map<string, Row | null>();
+	for (const p of profileRows) {
+		profiles.set(p.profileId, profiles.has(p.profileId) ? null : (p as Row));
+	}
+	return { operator, agentIsOperator, fleetLabels, clientLabels, profiles };
+}
+
+function kindOfId(c: Classifier, value: string): AuthorKind | null {
+	if (isPersonSubject(value)) return "client";
+	const isOp = c.agentIsOperator.get(value);
+	if (isOp === undefined) return null;
+	return isOp ? "fleet" : "client";
+}
+
+function kindOfLabel(c: Classifier, value: string): AuthorKind | null {
+	const n = normalizeOrchestratorId(value);
+	if (n === "") return null;
+	const f = c.fleetLabels.has(n);
+	const cl = c.clientLabels.has(n);
+	if (f && !cl) return "fleet";
+	if (cl && !f) return "client";
+	return null; // unknown to both, or carried by both: ambiguous
+}
+
+/** First field that resolves decides; ID fields come first in every spec. */
+function kindOfFields(
+	c: Classifier,
+	row: Row,
+	fields: readonly AuthorField[],
+): AuthorKind | null {
+	for (const f of fields) {
+		const value = row[f.name];
+		if (typeof value !== "string" || value === "") continue;
+		const k = f.as === "id" ? kindOfId(c, value) : kindOfLabel(c, value);
+		if (k !== null) return k;
+	}
+	return null;
+}
+
+/** A fromAllowList names the identities a seat speaks as: one kind or none. */
+function kindOfAllowList(c: Classifier, list: unknown): AuthorKind | null {
+	if (!Array.isArray(list)) return null;
+	const names = list.filter(
+		(x): x is string => typeof x === "string" && x !== "*" && x !== "",
+	);
+	if (names.length === 0) return null;
+	const kinds = new Set(names.map((n) => kindOfLabel(c, n)));
+	if (kinds.size !== 1) return null;
+	const only = [...kinds][0];
+	return only === "fleet" || only === "client" ? only : null;
+}
+
+/** A scope profile row: its agent, then its own org stamp, then its fromAllowList. */
+function kindOfProfile(c: Classifier, p: Row): AuthorKind | null {
+	const byAgent = kindOfFields(c, p, [id("agentId")]);
+	if (byAgent !== null) return byAgent;
+	const stamp = isOperatorStamp(c.operator, p.clerkOrgId, p.clerkOrgSlug);
+	if (stamp !== null) return stamp ? "fleet" : "client";
+	return kindOfAllowList(c, p.fromAllowList);
+}
+
+function profileOf(c: Classifier, profileId: unknown): Row | null {
+	if (typeof profileId !== "string" || profileId === "") return null;
+	return c.profiles.get(profileId) ?? null;
+}
+
+// The columns whose presence makes an author lookup worth its reads. A row with none of
+// them is `unknown` without reading agents or rosters (and without the operator check).
+const CANDIDATE_KEYS: Record<string, readonly string[]> = {
+	message: ["messageId"],
+	token: ["agentId", "principal", "scopeProfile", "fromAllowList", "userId"],
+	refreshToken: ["agentId", "principal", "scopeProfile", "userId"],
+	profile: ["agentId", "clerkOrgId", "clerkOrgSlug", "fromAllowList"],
+};
+
+function hasAuthorCandidate(table: string, row: Row): boolean {
+	const spec = AUTHOR_FIELDS[table];
+	if (spec === undefined) return false;
+	const keys =
+		spec.via === undefined
+			? spec.fields.map((f) => f.name)
+			: CANDIDATE_KEYS[spec.via];
+	return keys.some((k) => {
+		const value = row[k];
+		return (
+			(typeof value === "string" && value !== "") ||
+			(Array.isArray(value) && value.length > 0)
+		);
+	});
+}
+
+/** Who wrote an UNSTAMPED row of `table`. Pure reads; `unknown` when nothing resolves. */
+export async function authorKindOf(
+	db: DatabaseReader,
+	c: Classifier,
+	table: string,
+	row: Row,
+): Promise<AuthorKind> {
+	const spec = AUTHOR_FIELDS[table];
+	if (spec === undefined) return "unknown";
+	switch (spec.via) {
+		case "message": {
+			if (typeof row.messageId !== "string") return "unknown";
+			const parent = (await db.get(row.messageId as Id<"messages">)) as Row | null;
+			return parent === null
+				? "unknown"
+				: (kindOfFields(c, parent, spec.fields) ?? "unknown");
+		}
+		case "token":
+		case "refreshToken": {
+			const direct = kindOfFields(c, row, [spec.fields[0]]);
+			if (direct !== null) return direct;
+			if (row.principal === "person") return "client";
+			const profile = profileOf(c, row.scopeProfile);
+			const byProfile = profile === null ? null : kindOfProfile(c, profile);
+			if (byProfile !== null) return byProfile;
+			if (spec.via === "token") {
+				const own = kindOfAllowList(c, row.fromAllowList);
+				if (own !== null) return own;
+			}
+			return kindOfFields(c, row, [spec.fields[1]]) ?? "unknown";
+		}
+		case "profile":
+			return kindOfProfile(c, row) ?? "unknown";
+		default:
+			return kindOfFields(c, row, spec.fields) ?? "unknown";
+	}
+}
+
+// ── the count ────────────────────────────────────────────────────────────────
+
 const DEFAULT_PAGE_SIZE = 100;
 const SMALL_PAGE_SIZE: Record<string, number> = {
 	missions: 50,
@@ -118,13 +491,43 @@ const entryValidator = v.object({
 	table: v.string(),
 	slugField: v.union(v.string(), v.null()),
 	idField: v.union(v.string(), v.null()),
+	authorFields: v.array(v.string()),
 	examined: v.number(),
 	stamped: v.number(),
 	slugOnly: v.number(),
-	unstamped: v.number(),
+	unstamped: v.object({
+		fleet: v.number(),
+		client: v.number(),
+		unknown: v.number(),
+	}),
 	resolvable: v.number(),
+	refusals: v.object({
+		orgUnmapped: v.number(),
+		ambiguousMapping: v.number(),
+		mappingHasNoClerkId: v.number(),
+		mappingRecordInvalid: v.number(),
+		inactiveMapping: v.number(),
+		mappingNewerThanRow: v.number(),
+	}),
 	done: v.boolean(),
 	cursor: v.union(v.string(), v.null()),
+});
+
+export const tables = internalQuery({
+	args: {},
+	returns: v.array(
+		v.object({
+			table: v.string(),
+			slugField: v.union(v.string(), v.null()),
+			idField: v.union(v.string(), v.null()),
+			authorFields: v.array(v.string()),
+		}),
+	),
+	handler: async () =>
+		deriveTenantTables(SCHEMA_TABLES).map((d) => ({
+			...d,
+			authorFields: authorFieldNames(d.table),
+		})),
 });
 
 export const count = internalQuery({
@@ -136,9 +539,9 @@ export const count = internalQuery({
 	returns: v.object({ tables: v.array(entryValidator) }),
 	handler: async (ctx, args) => {
 		const derived = deriveTenantTables(SCHEMA_TABLES);
-		if (args.table === undefined && args.cursor != null) {
+		if (args.table === undefined) {
 			throw new ConvexError(
-				"tenantOrgIdInvariant:count: a cursor belongs to one table; pass `table` with it.",
+				`tenantOrgIdInvariant:count: \`table\` is required: Convex allows one paginate per query, so one call reads one page of ONE table (${derived.length} derived; list them with tenantOrgIdInvariant:tables).`,
 			);
 		}
 		if (
@@ -151,59 +554,78 @@ export const count = internalQuery({
 				`tenantOrgIdInvariant:count: limit = ${args.limit} is out of expected range 1-${MAX_PAGE_SIZE}.`,
 			);
 		}
-		const targets =
-			args.table === undefined
-				? derived
-				: derived.filter((d) => d.table === args.table);
-		if (args.table !== undefined && targets.length === 0) {
+		const target = derived.find((d) => d.table === args.table);
+		if (target === undefined) {
 			throw new ConvexError(
-				`tenantOrgIdInvariant:count: table = ${args.table} is not a tenant-scoped table of the schema (${derived.length} derived; call without \`table\` to list them).`,
+				`tenantOrgIdInvariant:count: table = ${args.table} is not a tenant-scoped table of the schema (${derived.length} derived; list them with tenantOrgIdInvariant:tables).`,
 			);
 		}
-		const mappings = indexBySlug(await loadMappingRows(ctx.db));
-		const tables = [];
-		for (const { table, slugField, idField } of targets) {
-			const limit = args.limit ?? SMALL_PAGE_SIZE[table] ?? DEFAULT_PAGE_SIZE;
-			const page = await ctx.db
-				.query(table as never)
-				.paginate({ cursor: args.cursor ?? null, numItems: limit });
-			let stamped = 0;
-			let slugOnly = 0;
-			let unstamped = 0;
-			let resolvable = 0;
-			for (const row of page.page as unknown as ({
-				_creationTime: number;
-			} & Record<string, unknown>)[]) {
-				if (idField !== null && row[idField] !== undefined) {
-					stamped++;
-					continue;
-				}
-				const slug = slugField === null ? undefined : row[slugField];
-				if (typeof slug !== "string" || slug === "") {
-					unstamped++;
-					continue;
-				}
-				slugOnly++;
-				const resolution = await resolveSlugForRow(
-					mappings,
-					slug,
-					row._creationTime,
-				);
-				if (resolution.kind === "id") resolvable++;
+		const { table, slugField, idField } = target;
+		const mappingRows = await loadMappingRows(ctx.db);
+		const mappings = indexBySlug(mappingRows);
+		const limit = args.limit ?? SMALL_PAGE_SIZE[table] ?? DEFAULT_PAGE_SIZE;
+		const page = await ctx.db
+			.query(table as never)
+			.paginate({ cursor: args.cursor ?? null, numItems: limit });
+		let classifier: Classifier | undefined;
+		let stamped = 0;
+		let slugOnly = 0;
+		let resolvable = 0;
+		const unstamped = { fleet: 0, client: 0, unknown: 0 };
+		// Record<Reason, number>: a new resolver reason is a compile error until counted here.
+		const refusals: Record<Reason, number> = {
+			orgUnmapped: 0,
+			ambiguousMapping: 0,
+			mappingHasNoClerkId: 0,
+			mappingRecordInvalid: 0,
+			inactiveMapping: 0,
+			mappingNewerThanRow: 0,
+		};
+		for (const row of page.page as unknown as ({
+			_creationTime: number;
+		} & Row)[]) {
+			if (idField !== null && row[idField] !== undefined) {
+				stamped++;
+				continue;
 			}
-			tables.push({
-				table,
-				slugField,
-				idField,
-				examined: stamped + slugOnly + unstamped,
-				stamped,
-				slugOnly,
-				unstamped,
-				resolvable,
-				done: page.isDone,
-				cursor: page.isDone ? null : page.continueCursor,
-			});
+			const slug = slugField === null ? undefined : row[slugField];
+			if (typeof slug !== "string" || slug === "") {
+				if (!hasAuthorCandidate(table, row)) {
+					unstamped.unknown++;
+					continue;
+				}
+				classifier ??= await buildClassifier(ctx.db, mappingRows);
+				unstamped[await authorKindOf(ctx.db, classifier, table, row)]++;
+				continue;
+			}
+			slugOnly++;
+			const resolution = await resolveSlugForRow(
+				mappings,
+				slug,
+				row._creationTime,
+			);
+			if (resolution.kind === "id") resolvable++;
+			else refusals[resolution.reason]++;
 		}
-		return { tables };
+		const unstampedTotal =
+			unstamped.fleet + unstamped.client + unstamped.unknown;
+		return {
+			tables: [
+				{
+					table,
+					slugField,
+					idField,
+					authorFields: authorFieldNames(table),
+					examined: stamped + slugOnly + unstampedTotal,
+					stamped,
+					slugOnly,
+					unstamped,
+					resolvable,
+					refusals,
+					done: page.isDone,
+					cursor: page.isDone ? null : page.continueCursor,
+				},
+			],
+		};
 	},
 });
