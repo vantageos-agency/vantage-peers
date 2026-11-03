@@ -316,12 +316,80 @@ function isKbRootNamespace(ns: string): boolean {
 	return /^team\/[^/]+$/.test(ns);
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// RETIRED ENTRIES NEVER REACH A CALLER.
+//
+// @convex-dev/rag ORs its filters (component/embeddings/index.js:49 `q.or(...)`,
+// component/search.js:129 "OR across filter conditions", client/index.d.ts:421
+// "These are OR'd together"). buildFilters passes [isLatest=true, namespace=ns],
+// so EVERY entry of the namespace matches on `namespace=ns` whatever its
+// isLatest: the filter selects nothing. A superseded or soft-deleted entry was
+// therefore returned by recall / text_search / hybrid_search. Two layers, both
+// applied to every result of every RAG-backed search path (exact namespace and
+// root fan-out):
+//   1. the entry's own filterValues: isLatest must be exactly "true" (an entry
+//      re-indexed by ragSync.markRagEntrySuperseded carries "false"), and the
+//      `type` filter, when asked for, must equal the entry's type (OR'd too);
+//   2. the memories row the entry's key names must still be isLatest=true
+//      (kbMutations.latestMemoryIds): this covers entries retired BEFORE the
+//      re-index existed, whose RAG entry still says "true".
+// Each component call asks for RETIRED_OVERFETCH x the wanted limit (cap
+// RETIRED_FETCH_CAP) so dropping retired entries does not shorten a page in the
+// ordinary case. RESIDUE: a namespace whose top-ranked entries are mostly
+// retired can still return fewer than `limit`; never more, and never a retired one.
+// ─────────────────────────────────────────────────────────────────────────────
+
+const RETIRED_OVERFETCH = 3;
+const RETIRED_FETCH_CAP = 200;
+
+async function dropRetired(
+	ctx: ActionCtx,
+	res: RagSearchResult,
+	wantedType: string | undefined,
+): Promise<RagSearchResult> {
+	const entries = res.entries.filter((e) => {
+		const fv = e.filterValues;
+		if (fv.find((f) => f.name === "isLatest")?.value !== "true") return false;
+		return (
+			wantedType === undefined ||
+			fv.find((f) => f.name === "type")?.value === wantedType
+		);
+	});
+	const keys = entries.map((e) => e.key ?? "").filter((k) => k !== "");
+	const live = new Set(
+		keys.length === 0
+			? []
+			: await ctx.runQuery(internal.kbMutations.latestMemoryIds, { ids: keys }),
+	);
+	const kept = new Set(
+		entries.filter((e) => live.has(e.key ?? "")).map((e) => e.entryId),
+	);
+	return {
+		...res,
+		results: res.results.filter((r) => kept.has(r.entryId)),
+		entries: res.entries.filter((e) => kept.has(e.entryId)),
+	} as RagSearchResult;
+}
+
 async function ragSearchTree(
 	ctx: ActionCtx,
 	ns: string,
 	build: (target: string) => RagSearchArgs,
+	wantedType?: string,
 ): Promise<RagSearchResult> {
-	if (!isKbRootNamespace(ns)) return ragSearch(ctx, build(ns));
+	const limit = build(ns).limit ?? 10;
+	const wide = (target: string): RagSearchArgs => ({
+		...build(target),
+		limit: Math.min(
+			Math.max(limit, limit * RETIRED_OVERFETCH),
+			Math.max(limit, RETIRED_FETCH_CAP),
+		),
+	});
+	const finish = async (r: RagSearchResult): Promise<RagSearchResult> => {
+		const live = await dropRetired(ctx, r, wantedType);
+		return { ...live, results: live.results.slice(0, limit) } as RagSearchResult;
+	};
+	if (!isKbRootNamespace(ns)) return finish(await ragSearch(ctx, wide(ns)));
 
 	const { namespaces, truncated } = await ctx.runQuery(
 		internal.kbMutations.listDocNamespacesUnderRoot,
@@ -333,20 +401,19 @@ async function ragSearchTree(
 		);
 	}
 	const targets = [ns, ...namespaces];
-	const limit = build(ns).limit ?? 10;
 	// COST: the query is embedded ONCE and that vector is handed to every
 	// per-namespace search (a text search embeds nothing). With no document the
 	// plain single call is already one embedding.
-	if (targets.length === 1) return ragSearch(ctx, build(ns));
-	const rootArgs = build(ns);
+	if (targets.length === 1) return finish(await ragSearch(ctx, wide(ns)));
+	const rootArgs = wide(ns);
 	const embedding =
 		rootArgs.searchType === "text" || typeof rootArgs.query !== "string"
 			? null
 			: await embedQuery(rootArgs.query);
 	const search = (t: string): Promise<RagSearchResult> =>
 		embedding === null
-			? ragSearch(ctx, build(t))
-			: ragSearchEmbedded(ctx, build(t), embedding);
+			? ragSearch(ctx, wide(t))
+			: ragSearchEmbedded(ctx, wide(t), embedding);
 	const parts: RagSearchResult[] = [];
 	for (let i = 0; i < targets.length; i += KB_ROOT_BATCH) {
 		const batch = targets.slice(i, i + KB_ROOT_BATCH);
@@ -354,10 +421,9 @@ async function ragSearchTree(
 	}
 	const results = parts
 		.flatMap((p) => p.results)
-		.sort((a, b) => b.score - a.score)
-		.slice(0, limit);
+		.sort((a, b) => b.score - a.score);
 	const entries = parts.flatMap((p) => p.entries);
-	return { ...parts[0], results, entries } as RagSearchResult;
+	return finish({ ...parts[0], results, entries } as RagSearchResult);
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -403,7 +469,7 @@ export const recall = action({
 			limit,
 			vectorScoreThreshold: scoreThreshold,
 			filters: buildFilters({ namespace: target, type: args.type }),
-		}));
+		}), args.type);
 
 		// Build an entry map for quick lookup of filterValues by entryId
 		const entryMap = new Map(entries.map((e) => [e.entryId, e]));
@@ -473,7 +539,7 @@ export const textSearch = action({
 			searchType: "text",
 			limit,
 			filters: buildFilters({ namespace: target, type: args.type }),
-		}));
+		}), args.type);
 
 		const entryMap = new Map(entries.map((e) => [e.entryId, e]));
 
@@ -553,6 +619,7 @@ export const hybridSearch = action({
 			ctx,
 			ns,
 			buildSearchArgs,
+			args.type,
 		);
 
 		const entryMap = new Map(entries.map((e) => [e.entryId, e]));
