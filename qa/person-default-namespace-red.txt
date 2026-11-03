@@ -1,0 +1,162 @@
+
+ RUN  v4.1.9 /root/coding/vantage-memory/.claude/worktrees/agent-a5d622919ede65957/mcp-server
+
+stderr | test/person-default-namespace.test.ts > store_memory: a person's write lands in its own space > no namespace -> stored in team/<org slug>, read back from the row
+[store_memory] mutation failed {
+  contentBytes: 24,
+  namespace: undefined,
+  type: 'user',
+  createdBy: 'SP',
+  errorMessage: "Cannot read properties of undefined (reading 'startsWith')",
+  errorData: null
+}
+
+ ❯ test/person-default-namespace.test.ts (11 tests | 9 failed) 480ms
+     × no namespace -> stored in team/<org slug>, read back from the row 294ms
+     × namespace 'global' -> refused, and the refusal names team/<org slug> 22ms
+     × no namespace -> stored in team/<org slug> 19ms
+     × returns writableNamespaces and default_write_namespace 18ms
+     × a seat defaults to its own orchestrator/<agent ID> 10ms
+     × a seat's writable list is its prefixes plus its own namespaces, deduped 8ms
+     × a seat's refusal names its writable namespaces 10ms
+     × a seat with no verified agent and several prefixes has no default 15ms
+     × master has no default (never guessed) 11ms
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 9 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  test/person-default-namespace.test.ts > store_memory: a person's write lands in its own space > no namespace -> stored in team/<org slug>, read back from the row
+AssertionError: Error: Cannot read properties of undefined (reading 'startsWith'): expected true to be falsy
+
+- Expected
++ Received
+
+- false
++ true
+
+ ❯ test/person-default-namespace.test.ts:203:41
+    201|    content: "SP prefers short answers",
+    202|   });
+    203|   expect(r.isError, r.content[0]?.text).toBeFalsy();
+       |                                         ^
+    204|   const out = JSON.parse(r.content[0].text) as {
+    205|    memoryId: string;
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/9]⎯
+
+ FAIL  test/person-default-namespace.test.ts > store_memory: a person's write lands in its own space > namespace 'global' -> refused, and the refusal names team/<org slug>
+AssertionError: expected 'Error: Forbidden: namespace=\'global\…' to contain 'team/sp-prive'
+
+Expected: "team/sp-prive"
+Received: "Error: Forbidden: namespace='global' is not writable by scope_profile=team-member."
+
+ ❯ test/person-default-namespace.test.ts:224:29
+    222|   });
+    223|   expect(r.isError).toBe(true);
+    224|   expect(r.content[0].text).toContain(`team/${ORG}`);
+       |                             ^
+    225|   expect(r.content[0].text).toContain("namespace='global'");
+    226|  });
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[2/9]⎯
+
+ FAIL  test/person-default-namespace.test.ts > store_episode: a person's episode lands in its own space > no namespace -> stored in team/<org slug>
+AssertionError: Error: Cannot read properties of undefined (reading 'startsWith'): expected true to be falsy
+
+- Expected
++ Received
+
+- false
++ true
+
+ ❯ test/person-default-namespace.test.ts:253:41
+    251|    severity: "minor",
+    252|   });
+    253|   expect(r.isError, r.content[0]?.text).toBeFalsy();
+       |                                         ^
+    254|   const out = JSON.parse(r.content[0].text) as { namespace: string };
+    255|   expect(out.namespace).toBe(`team/${ORG}`);
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[3/9]⎯
+
+ FAIL  test/person-default-namespace.test.ts > whoami: the session's writable namespaces > returns writableNamespaces and default_write_namespace
+AssertionError: the given combination of arguments (undefined and string) is invalid for this assertion. You can use an array, a map, an object, a set, a string, or a weakset instead of a string
+ ❯ test/person-default-namespace.test.ts:266:33
+    264|    default_write_namespace?: string | null;
+    265|   };
+    266|   expect(sc.writableNamespaces).toContain(`team/${ORG}`);
+       |                                 ^
+    267|   expect(sc.writableNamespaces).toContain(`orchestrator/${spAgentId}`);
+    268|   expect(sc.default_write_namespace).toBe(`team/${ORG}`);
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[4/9]⎯
+
+ FAIL  test/person-default-namespace.test.ts > defaultWriteNamespace / writableNamespacesOf: seat and master > a seat defaults to its own orchestrator/<agent ID>
+TypeError: defaultWriteNamespace is not a function
+ ❯ test/person-default-namespace.test.ts:298:10
+    296|
+    297|  it("a seat defaults to its own orchestrator/<agent ID>", () => {
+    298|   expect(defaultWriteNamespace(seat)).toBe("orchestrator/agent123");
+       |          ^
+    299|  });
+    300|
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[5/9]⎯
+
+ FAIL  test/person-default-namespace.test.ts > defaultWriteNamespace / writableNamespacesOf: seat and master > a seat's writable list is its prefixes plus its own namespaces, deduped
+TypeError: writableNamespacesOf is not a function
+ ❯ test/person-default-namespace.test.ts:302:10
+    300|
+    301|  it("a seat's writable list is its prefixes plus its own namespaces, d…
+    302|   expect(writableNamespacesOf(seat)).toEqual([
+       |          ^
+    303|    "team/org_acme",
+    304|    "project/acme",
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[6/9]⎯
+
+ FAIL  test/person-default-namespace.test.ts > defaultWriteNamespace / writableNamespacesOf: seat and master > a seat's refusal names its writable namespaces
+AssertionError: expected 'Forbidden: namespace=\'global\' is no…' to contain 'orchestrator/agent123'
+
+Expected: "orchestrator/agent123"
+Received: "Forbidden: namespace='global' is not writable by scope_profile=acme-seat."
+
+ ❯ test/person-default-namespace.test.ts:311:15
+    309|  it("a seat's refusal names its writable namespaces", () => {
+    310|   const err = checkNamespaceWrite(seat, "global");
+    311|   expect(err).toContain("orchestrator/agent123");
+       |               ^
+    312|   expect(err).toContain("team/org_acme");
+    313|  });
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[7/9]⎯
+
+ FAIL  test/person-default-namespace.test.ts > defaultWriteNamespace / writableNamespacesOf: seat and master > a seat with no verified agent and several prefixes has no default
+TypeError: defaultWriteNamespace is not a function
+ ❯ test/person-default-namespace.test.ts:317:4
+    315|  it("a seat with no verified agent and several prefixes has no default…
+    316|   expect(
+    317|    defaultWriteNamespace({ ...seat, ownAgentNamespace: undefined }),
+       |    ^
+    318|   ).toBeUndefined();
+    319|  });
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[8/9]⎯
+
+ FAIL  test/person-default-namespace.test.ts > defaultWriteNamespace / writableNamespacesOf: seat and master > master has no default (never guessed)
+TypeError: defaultWriteNamespace is not a function
+ ❯ test/person-default-namespace.test.ts:322:10
+    320|
+    321|  it("master has no default (never guessed)", () => {
+    322|   expect(defaultWriteNamespace(master)).toBeUndefined();
+       |          ^
+    323|   expect(writableNamespacesOf(master)).toEqual([]);
+    324|  });
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[9/9]⎯
+
+
+ Test Files  1 failed (1)
+      Tests  9 failed | 2 passed (11)
+   Start at  19:00:47
+   Duration  1.32s (transform 657ms, setup 0ms, import 735ms, tests 480ms, environment 0ms)
+
