@@ -20,7 +20,7 @@ import {
 	mintAgentSecret,
 	seedFleetAgents,
 } from "../../tests/lib/seedFleetAgents";
-import { api } from "../_generated/api";
+import { api, internal } from "../_generated/api";
 import type { Id } from "../_generated/dataModel";
 import schema from "../schema";
 import { MISSION_OPEN_SCAN_CAP } from "../tasks";
@@ -357,5 +357,66 @@ describe("tasks:complete all-done count — same-tenant tasks only", () => {
 		expect((await t.run((ctx) => ctx.db.get(missionId)))?.status).toBe(
 			"execute",
 		);
+	});
+});
+
+// SLUG-ONLY MISSION (task k1778zdhntzk53dyac8hxg71zx8hhzfx). A mission stamped with
+// `orgId` but no `clerkOrgId` matches no task under sameTenantStamp (sameOrg needs both
+// IDs). The predicate is NOT changed (a label is not an identity): the data is fixed by
+// migrations/clerkOrgIdCoverage on the `missions` table. Pole 1 documents the dependency
+// the rollout order handles (refused BEFORE the backfill); pole 2 shows the link accepted
+// AFTER it; pole 3 shows a foreign org's slug-only mission stays refused AFTER it.
+describe("slug-only mission: linkable only after the clerkOrgId backfill", () => {
+	const slugOnlyMission = (orgId: string) => {
+		const { clerkOrgId: _omit, ...rest } = missionRow(orgId);
+		return rest;
+	};
+	const backfillMissions = (t: T) =>
+		t.mutation(internal.migrations.clerkOrgIdCoverage.backfill, {
+			table: "missions",
+			dryRun: false,
+		});
+
+	test("BEFORE the backfill: create and update on a slug-only own mission are refused; AFTER: both accepted", async () => {
+		const t = makeT();
+		await seedOrgs(t);
+		const missionId = await t.run((ctx) =>
+			ctx.db.insert("missions", slugOnlyMission("org-a")),
+		);
+		const taskId = await ownTask(t, "org-a");
+		await expect(createIn(t, "org-a", missionId)).rejects.toThrow(REFUSAL);
+		await expect(
+			asOrg(t, "org-a").mutation(api.tasks.update, {
+				agentCredentialSecret: seatSecrets.get("org-a"),
+				taskId,
+				callerOrchestrator: SEAT,
+				missionId,
+			}),
+		).rejects.toThrow(REFUSAL);
+
+		const result = await backfillMissions(t);
+		expect(result).toMatchObject({ table: "missions", filled: 1 });
+
+		const id = await createIn(t, "org-a", missionId);
+		expect((await t.run((ctx) => ctx.db.get(id)))?.missionId).toBe(missionId);
+		await asOrg(t, "org-a").mutation(api.tasks.update, {
+			agentCredentialSecret: seatSecrets.get("org-a"),
+			taskId,
+			callerOrchestrator: SEAT,
+			missionId,
+		});
+		expect((await t.run((ctx) => ctx.db.get(taskId)))?.missionId).toBe(
+			missionId,
+		);
+	});
+
+	test("AFTER the backfill a slug-only mission of ANOTHER org is still refused", async () => {
+		const t = makeT();
+		await seedOrgs(t);
+		const missionId = await t.run((ctx) =>
+			ctx.db.insert("missions", slugOnlyMission("org-b")),
+		);
+		await backfillMissions(t);
+		await expect(createIn(t, "org-a", missionId)).rejects.toThrow(REFUSAL);
 	});
 });
