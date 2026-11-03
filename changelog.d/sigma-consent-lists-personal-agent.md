@@ -1,0 +1,4 @@
+---
+section: Fixed
+---
+- **VantagePeers Cloud: the OAuth consent screen lists the agent already bound to the person.** `choosableAgents` (`convex/lib/personalAgentChoice.ts`) dropped every agent carrying an `ownerPersonId`, including one whose owner and designated person (`personalAgentOf`) are the person choosing, so an org admin with a roster-registered personal agent (Iris RH, `Hélios`: `kind` and `authSubject` absent) saw only the create field and risked a duplicate. An agent owned by AND designating the verified person is now offered by ID; an agent owned by someone else, designated to someone else, in another org, inactive, or a service agent stays unlisted and a posted choice of it is refused. The choice still stamps the agent ID on the code and the token, which acts as it. No data change needed: `kind` and `authSubject` are not read. Test `convex/__tests__/consentListsPersonalAgent.test.ts`. Task k170jd1dsdzy7pnnsjbjk0y5r98he2qe.
