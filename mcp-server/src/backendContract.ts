@@ -40,7 +40,7 @@
  */
 
 /** Contract version this MCP build requires from the backend. */
-export const REQUIRED_CONTRACT_VERSION = 18;
+export const REQUIRED_CONTRACT_VERSION = 19;
 
 /** Every public Convex function this MCP build calls (`module:function`). */
 export const MCP_CALLED_FUNCTIONS: readonly string[] = [
@@ -62,6 +62,7 @@ export const MCP_CALLED_FUNCTIONS: readonly string[] = [
 	"diary:list",
 	"diary:write",
 	"episodes:storeEpisode",
+	"erase:eraseRow",
 	"errorMonitor:addDeployment",
 	"errorMonitor:getError",
 	"errorMonitor:listErrors",
@@ -104,6 +105,7 @@ export const MCP_CALLED_FUNCTIONS: readonly string[] = [
 	"memories:getMemory",
 	"memories:listMemories",
 	"memories:redactMemoryContent",
+	"memories:redactMemoryContentAsAgent",
 	"memories:redactMemoryContentAsPerson",
 	"memories:softDeleteMemory",
 	"memories:storeMemory",

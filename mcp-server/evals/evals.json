@@ -7900,6 +7900,137 @@
 				"the SDK refuses before the handler runs (validateToolInput), so no backend call is made"
 			],
 			"source": "src/registerTool.ts:464"
+		},
+		{
+			"id": "erase_memory.seat-author-erases",
+			"tool": "erase_memory",
+			"op": "callTool",
+			"caller": "seat",
+			"runner": "live",
+			"prompt": "I pasted a key into a memory I stored earlier; erase it.",
+			"args": {
+				"memoryId": "k1711111111111111111111111111111",
+				"redactions": [
+					{
+						"find": "sk-live-abc123",
+						"replaceWith": "[REDACTED]"
+					}
+				]
+			},
+			"expect": {
+				"isError": false,
+				"jsonKeys": [
+					"memoryId",
+					"replacements",
+					"contentHashChanged"
+				]
+			},
+			"expectations": [
+				"memories:redactMemoryContentAsAgent is called with verifiedActor = the agent ID the transport verified, never a typed name",
+				"the stored createdById equals that agent ID, so the seat is admitted; another agent of the org is refused RBAC_DENIED"
+			],
+			"source": "src/tools.ts:2618"
+		},
+		{
+			"id": "erase_row.seat-author-erases",
+			"tool": "erase_row",
+			"op": "callTool",
+			"caller": "seat",
+			"runner": "live",
+			"prompt": "Erase the task I created; it must be gone for good.",
+			"args": {
+				"table": "tasks",
+				"rowId": "k1711111111111111111111111111111"
+			},
+			"expect": {
+				"isError": false,
+				"jsonKeys": [
+					"table",
+					"rowId",
+					"erased",
+					"cascaded"
+				]
+			},
+			"expectations": [
+				"erase:eraseRow is called with verifiedActor = the agent ID the transport verified",
+				"the row's stored createdById equals that agent ID, so the seat is admitted",
+				"the row is deleted (not flagged) and the result is {table,rowId,erased:true,cascaded}"
+			],
+			"source": "src/tools.ts:2679"
+		},
+		{
+			"id": "erase_row.org-admin-erases-any",
+			"tool": "erase_row",
+			"op": "callTool",
+			"caller": "org-admin",
+			"runner": "live",
+			"prompt": "(an organisation admin) Erase this memory that an agent of my organisation wrote.",
+			"args": {
+				"table": "memories",
+				"rowId": "k1711111111111111111111111111111"
+			},
+			"expect": {
+				"isError": false,
+				"jsonKeys": [
+					"table",
+					"rowId",
+					"erased",
+					"cascaded"
+				]
+			},
+			"expectations": [
+				"erase:eraseRow is called with verifiedPerson = the bearer hash from the verified context",
+				"an organisation admin erases any row of its own organisation whoever wrote it",
+				"the memory's search entry is purged by a scheduled job"
+			],
+			"source": "src/tools.ts:2679"
+		},
+		{
+			"id": "erase_row.non-author-refused",
+			"tool": "erase_row",
+			"op": "callTool",
+			"caller": "seat",
+			"runner": "live",
+			"prompt": "Erase a task another agent of my organisation created.",
+			"args": {
+				"table": "tasks",
+				"rowId": "k1711111111111111111111111111111"
+			},
+			"expect": {
+				"isError": true,
+				"textIncludes": [
+					"RBAC_DENIED"
+				]
+			},
+			"expectations": [
+				"the Convex door refuses a caller that is neither an organisation admin nor the row's stored author",
+				"a row of another organisation is refused the same way and stays unchanged"
+			],
+			"source": "src/tools.ts:2679"
+		},
+		{
+			"id": "erase_row.bad-table",
+			"tool": "erase_row",
+			"op": "callTool",
+			"caller": "master",
+			"runner": "offline",
+			"prompt": "Erase a row of the oauth_access_tokens table.",
+			"args": {
+				"table": "oauth_access_tokens",
+				"rowId": "k1711111111111111111111111111111"
+			},
+			"expect": {
+				"isError": true,
+				"textIncludes": [
+					"Input validation error: Invalid arguments for tool erase_row",
+					"table"
+				]
+			},
+			"expectations": [
+				"only the covered tables are in the enum; a credential table is not erasable through this tool",
+				"the SDK refuses before the handler runs, so no backend call is made"
+			],
+			"source": "src/registerTool.ts:464"
 		}
 	]
 }

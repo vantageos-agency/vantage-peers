@@ -37,6 +37,7 @@ import type { MutationCtx, QueryCtx } from "./_generated/server";
 import { mutation, query } from "./lib/functions";
 import { isMcpBoundMaster, type OrgScope, withOrgScope } from "./lib/auth";
 import {
+	memoryAuthorIdOf,
 	memoryAuthorOf,
 	memoryStampForWrite,
 	memoryVisibleToScope,
@@ -192,12 +193,16 @@ export const storeMemoryScoped = mutation({
 		// (convex/lib/memoryTenant.ts). The MCP-bound master names the author of the
 		// seat it authenticated; a member is the verified caller and a claimed other
 		// author is refused.
+		const masterSupplies =
+			isMcpBoundMaster(caller.scope) || caller.scope.serviceTransport === true;
 		const createdBy = memoryAuthorOf(
 			caller.scope,
 			args.createdBy,
 			"memoriesScoped:storeMemoryScoped",
-			isMcpBoundMaster(caller.scope) || caller.scope.serviceTransport === true,
+			masterSupplies,
 		);
+		// The author BY ID (no seat proof on this door: only a person has one).
+		const createdById = memoryAuthorIdOf(createdBy, undefined, masterSupplies);
 		const clerkOrgId = await memoryStampForWrite(
 			ctx,
 			caller.scope,
@@ -219,6 +224,7 @@ export const storeMemoryScoped = mutation({
 			type: args.type,
 			content: args.content,
 			createdBy,
+			...(createdById === undefined ? {} : { createdById }),
 			relations,
 			isLatest: true,
 			ttl: args.ttl,
@@ -243,6 +249,7 @@ const memoryRowValidator = v.object({
 	type: memoryTypeValidator,
 	content: v.string(),
 	createdBy: creatorValidator,
+	createdById: v.optional(v.string()),
 	instanceId: v.optional(v.string()),
 	relations: v.array(
 		v.object({

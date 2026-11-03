@@ -52,6 +52,7 @@ export const DOOR_SCOPE: Readonly<Record<string, DoorScopeRule>> = {
 	// memories / episodes
 	"memories:getMemory": { verifiedOrg: "always" },
 	"memories:redactMemoryContentAsPerson": { verifiedPerson: true },
+	"erase:eraseRow": { verifiedPerson: true },
 	// messages
 	"messages:sendMessage": {
 		verifiedPerson: true,

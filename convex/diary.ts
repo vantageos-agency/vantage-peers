@@ -9,7 +9,9 @@ import type { Doc } from "./_generated/dataModel";
 import type { QueryCtx } from "./_generated/server";
 import { mutation, query } from "./lib/functions";
 import { creatorValidator } from "./schema";
-import { requireResolvedCaller, withOrgScope, type OrgScope } from "./lib/auth";
+import { requireResolvedCaller, verifiedActorValidator, withOrgScope, type OrgScope } from "./lib/auth";
+import { seatAgentIdOf } from "./lib/seatNamespace";
+import { memoryAuthorIdOf } from "./lib/memoryTenant";
 import { isFleetSystemCaller } from "./lib/systemCaller";
 import { fleetOperatorRef } from "./lib/operatorOrg";
 import { orgRefOfRow, orgRefOfScope } from "./lib/authOrgMapping";
@@ -215,6 +217,9 @@ export const write = mutation({
 		// Transport-verified org of a service-account bearer: the write is made
 		// for that org (ID roster, tenant row, stamp). See the header.
 		verifiedOrg: v.optional(verifiedOrgValidator),
+		// The agent the transport verified, by its agents-row ID: stored as the entry's
+		// author BY ID (`createdById`), the key the erase rule reads.
+		verifiedActor: v.optional(verifiedActorValidator),
 	},
 	returns: v.id("diary"),
 	handler: async (ctx, args) => {
@@ -273,6 +278,16 @@ export const write = mutation({
 			);
 		}
 		const createdBy = ownAuthor ?? args.createdBy;
+		// The author BY ID: the verified agent (judged by the one agent-proof check), or the
+		// verified person; a label alone is not an identity.
+		const createdById =
+			createdBy === undefined
+				? undefined
+				: memoryAuthorIdOf(
+						createdBy,
+						await seatAgentIdOf(ctx, scope, args.verifiedActor),
+						ownAuthor === undefined,
+					);
 		if (!tenantScope.isMaster && tenantScope.orgClerkId === undefined) {
 			throw new ConvexError(
 				`RBAC_DENIED: caller's organisation has no permanent org ID to stamp a diary entry with — ${JSON.stringify({ reason: "org-id-missing", door: "diary:write", orgSlug: tenantScope.orgSlug })}`,
@@ -317,6 +332,7 @@ export const write = mutation({
 			highlights: args.highlights,
 			blockers: args.blockers,
 			createdBy,
+			...(createdById === undefined ? {} : { createdById }),
 			createdAt: now,
 			// R-52 tenant stamp, derived from the verified scope. A master write is
 			// fleet-owned (unstamped), as `tasks` does.
@@ -352,6 +368,7 @@ export const get = query({
 			highlights: v.optional(v.array(v.string())),
 			blockers: v.optional(v.array(v.string())),
 			createdBy: v.optional(creatorValidator),
+			createdById: v.optional(v.string()),
 			createdAt: v.number(),
 			orgId: v.optional(v.string()),
 			clerkOrgId: v.optional(v.string()),
@@ -407,6 +424,7 @@ const DIARY_LIST_ROW = v.object({
 	highlights: v.optional(v.array(v.string())),
 	blockers: v.optional(v.array(v.string())),
 	createdBy: v.optional(creatorValidator),
+	createdById: v.optional(v.string()),
 	createdAt: v.number(),
 	orgId: v.optional(v.string()),
 	clerkOrgId: v.optional(v.string()),
@@ -667,6 +685,7 @@ export const listByDateRange = query({
 			highlights: v.optional(v.array(v.string())),
 			blockers: v.optional(v.array(v.string())),
 			createdBy: v.optional(creatorValidator),
+			createdById: v.optional(v.string()),
 			createdAt: v.number(),
 			orgId: v.optional(v.string()),
 			clerkOrgId: v.optional(v.string()),

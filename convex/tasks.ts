@@ -2882,6 +2882,7 @@ async function unblockWaitersOn(
 				? { tenantId: waiter.orgId, tenantOrgId: waiter.clerkOrgId }
 				: {};
 		const messageId = await ctx.db.insert("messages", {
+			// erase-author-exempt: a system notification has no author; only an org admin may erase it
 			from: "system",
 			channel: waiter.assignedTo,
 			content,

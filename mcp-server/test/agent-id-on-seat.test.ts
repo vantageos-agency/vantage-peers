@@ -489,6 +489,8 @@ describe("withVerifiedActor", () => {
 			"debate",
 			"memories",
 			"episodes",
+			"diary",
+			"erase",
 		]) {
 			const src = readFileSync(
 				resolve(__dirname, `../../convex/${file}.ts`),
@@ -502,7 +504,7 @@ describe("withVerifiedActor", () => {
 				if (/^const createTaskArgsValidatorWithCredential\b/.test(line)) {
 					current = "create";
 				}
-				if (/verifiedActor: v\.optional\(verifiedActorValidator\)/.test(line)) {
+				if (/verifiedActor: (?:v\.optional\()?verifiedActorValidator/.test(line)) {
 					declared.add(`${file}:${current}`);
 				}
 				// recurringTasks shares the proof args through one spread object.

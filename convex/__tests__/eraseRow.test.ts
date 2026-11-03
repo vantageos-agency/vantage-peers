@@ -414,7 +414,7 @@ const FAMILIES: Family[] = [
 					round: 1,
 					position: 0,
 					kind: "system",
-					writer: "createRoom",
+					writer: "deliverTurn",
 					postedAt: now(),
 				} as never);
 				return roomId;
@@ -559,35 +559,97 @@ describe("erase:eraseRow — memories also leave the search index", () => {
 	});
 });
 
-describe("erase:eraseRow — issues (written by the GitHub mirror, no author): admin only", () => {
-	const seedIssue = (org: string) =>
-		t.run((ctx) =>
-			ctx.db.insert("issues", {
-				repo: "o/r",
-				issueNumber: 1,
-				title: "erase-me issue",
-				body: "b",
-				htmlUrl: "https://example.test/1",
-				labels: [],
-				status: "open",
-				priority: "medium",
-				assignedOrchestrator: ALICE,
-				project: "p",
-				githubCreatedAt: now(),
-				githubUpdatedAt: now(),
-				orgId: org,
-				clerkOrgId: orgId(org),
-			}),
-		);
+const ADMIN_ONLY: { table: Table; seed: (org: string) => Promise<string> }[] = [
+	{
+		// written by the GitHub mirror: no author exists
+		table: "issues",
+		seed: (org) =>
+			t.run((ctx) =>
+				ctx.db.insert("issues", {
+					repo: "o/r",
+					issueNumber: 1,
+					title: "erase-me issue",
+					body: "b",
+					htmlUrl: "https://example.test/1",
+					labels: [],
+					status: "open",
+					priority: "medium",
+					assignedOrchestrator: ALICE,
+					project: "p",
+					githubCreatedAt: now(),
+					githubUpdatedAt: now(),
+					orgId: org,
+					clerkOrgId: orgId(org),
+				}),
+			),
+	},
+	{
+		// organisation structure kept by its admins
+		table: "businessUnits",
+		seed: (org) =>
+			t.run((ctx) =>
+				ctx.db.insert("businessUnits", {
+					name: "erase-me unit",
+					description: "d",
+					purpose: "p",
+					orchestratorId: ALICE,
+					status: "idea",
+					businessModel: "m",
+					targetCustomers: "c",
+					services: [],
+					pricing: "p",
+					revenueProjections: { y1: 0, y2: 0, y3: 0 },
+					coreTeam: { agents: [], skills: [], hooks: [], plugins: [] },
+					coreProcesses: [],
+					dependencies: [],
+					kpis: [],
+					managementFee: 10,
+					createdAt: now(),
+					updatedAt: now(),
+					orgId: org,
+					clerkOrgId: orgId(org),
+				}),
+			),
+	},
+	{
+		// organisation configuration upserted by its admins
+		table: "debateTemplates",
+		seed: (org) =>
+			t.run((ctx) =>
+				ctx.db.insert("debateTemplates", {
+					tenantId: org,
+					tenantOrgId: orgId(org),
+					templateKey: "review",
+					template: {
+						id: "review",
+						name: "Review",
+						language: "en",
+						turnInstruction: "Answer.",
+						participants: [
+							{ id: "p1", label: "operator", kind: "human", transport: "human", deadlineSeconds: null },
+						],
+						roundLimit: 2,
+						maxAnswerChars: 100,
+						turnDeadlineSeconds: 3600,
+						maxConsecutiveSkips: 2,
+						voiceEnabled: false,
+					},
+					updatedBy: "user:user_admin_a",
+					updatedAt: now(),
+				}),
+			),
+	},
+];
 
-	test("ADMIN erases; a member, a seat and another org's admin are refused", async () => {
-		const id = await seedIssue(A);
-		expect(await code(erase(MEMBER_A, "issues", id))).toBe("RBAC_DENIED");
-		expect(await code(erase(ALICE_SEAT, "issues", id))).toBe("RBAC_DENIED");
-		expect(await code(erase(ADMIN_B, "issues", id))).toBe("RBAC_DENIED");
-		expect(await present("issues", id)).toBe(true);
-		expect(await code(erase(ADMIN_A, "issues", id))).toBe("SERVED");
-		expect(await present("issues", id)).toBe(false);
+describe.each(ADMIN_ONLY)("erase:eraseRow — $table (no author by design): admin only", ({ table, seed }) => {
+	test("ADMIN erases; a member, a seat and another org's admin are refused; the row is unchanged until the admin", async () => {
+		const id = await seed(A);
+		expect(await code(erase(MEMBER_A, table, id))).toBe("RBAC_DENIED");
+		expect(await code(erase(ALICE_SEAT, table, id))).toBe("RBAC_DENIED");
+		expect(await code(erase(ADMIN_B, table, id))).toBe("RBAC_DENIED");
+		expect(await present(table, id)).toBe(true);
+		expect(await code(erase(ADMIN_A, table, id))).toBe("SERVED");
+		expect(await present(table, id)).toBe(false);
 	});
 });
 

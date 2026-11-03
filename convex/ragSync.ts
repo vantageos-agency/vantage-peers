@@ -164,3 +164,32 @@ export const replaceRagEntryContent = internalAction({
     return null;
   },
 });
+
+// ─────────────────────────────────────────────────────────────────────────────
+// removeRagEntry — purge EVERY version of a memory's search entry after the memory
+// row was erased (convex/lib/eraseRow.ts, table "memories").
+//
+// The entry key is the memory id (addRagEntry / replaceRagEntryContent). A superseded
+// version stays in the RAG component as a "replaced" entry with its chunks until it is
+// deleted; deleteByKey walks every entry under the key, chunks first. It runs in an
+// action, so the purge completes synchronously with the scheduled job rather than racing
+// a background workpool. A namespace the component never created holds nothing to purge.
+// ─────────────────────────────────────────────────────────────────────────────
+
+export const removeRagEntry = internalAction({
+  args: {
+    memoryId: v.id("memories"),
+    namespace: v.string(),
+  },
+  returns: v.null(),
+  handler: async (ctx, args) => {
+    const rag = getRag();
+    const namespace = await rag.getNamespace(ctx, { namespace: args.namespace });
+    if (namespace === null) return null;
+    await rag.deleteByKey(ctx, {
+      namespaceId: namespace.namespaceId,
+      key: args.memoryId,
+    });
+    return null;
+  },
+});

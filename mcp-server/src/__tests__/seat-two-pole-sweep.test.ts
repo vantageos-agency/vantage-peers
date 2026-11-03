@@ -1216,6 +1216,81 @@ DOORS.push({
 });
 void (undefined as unknown as Room);
 
+// ── erase doors (task k170t9bg650dyw6hxjj627p9fx8hhpeq) ─────────────────────
+// A seat erases the rows its VERIFIED agent ID authored (stored createdById) and nothing
+// else: another agent of the same org, and another org's seat, are refused and the row is
+// byte-identical afterwards. The Convex-level poles per table are in
+// convex/__tests__/eraseRow.test.ts; here the REAL tool handlers drive them.
+const SECRET = "secret-seat-marker";
+const memoryText = (id: string) =>
+	t.run(async (ctx) => {
+		const row = (await ctx.db.get(id as never)) as { content?: string } | null;
+		return row === null ? null : (row.content ?? "");
+	});
+async function seedMemoryBy(
+	seat: OAuthContext,
+	org: string,
+	createdBy: string,
+): Promise<string> {
+	const m = await seed(seat, "store_memory", {
+		namespace: `team/${testClerkOrgId(org)}`,
+		type: "project",
+		content: `${SECRET} in ${org}`,
+		createdBy,
+	});
+	return String(m.memoryId);
+}
+DOORS.push({
+	tool: "erase_memory",
+	allow: async () => {
+		const id = await seedMemoryBy(seatA, A, "mimir");
+		served(
+			await as(seatA, "erase_memory", {
+				memoryId: id,
+				redactions: [{ find: SECRET, replaceWith: "[REDACTED]" }],
+			}),
+		);
+		expect(await memoryText(id)).not.toContain(SECRET);
+	},
+	cross: async () => {
+		const redactions = [{ find: SECRET, replaceWith: "[REDACTED]" }];
+		const other = await seedMemoryBy(seatB, B, "mimir");
+		refused(await as(seatA, "erase_memory", { memoryId: other, redactions }));
+		expect(await memoryText(other)).toContain(SECRET);
+		// a same-org agent that is not the author is refused too
+		const own = await seedMemoryBy(seatA, A, "mimir");
+		refused(await as(ivoA, "erase_memory", { memoryId: own, redactions }));
+		expect(await memoryText(own)).toContain(SECRET);
+	},
+});
+DOORS.push({
+	tool: "erase_row",
+	allow: async () => {
+		const id = await seedMemoryBy(seatA, A, "mimir");
+		const diary = await seed(seatA, "write_diary", {
+			orchestrator: "mimir",
+			date: "2026-11-03",
+			content: "erase me",
+		});
+		served(await as(seatA, "erase_row", { table: "memories", rowId: id }));
+		expect(await memoryText(id)).toBeNull();
+		served(
+			await as(seatA, "erase_row", {
+				table: "diary",
+				rowId: String(diary.diaryId),
+			}),
+		);
+	},
+	cross: async () => {
+		const other = await seedMemoryBy(seatB, B, "mimir");
+		refused(await as(seatA, "erase_row", { table: "memories", rowId: other }));
+		expect(await memoryText(other)).toContain(SECRET);
+		const own = await seedMemoryBy(seatA, A, "mimir");
+		refused(await as(ivoA, "erase_row", { table: "memories", rowId: own }));
+		expect(await memoryText(own)).toContain(SECRET);
+	},
+});
+
 // ── doors a seat must NOT pass: master-only by design ────────────────────────
 interface MasterOnly {
 	tool: string;
@@ -1276,23 +1351,6 @@ MASTER_ONLY.push(
 				createdBy: "mimir",
 			});
 			return { memoryId: m.memoryId };
-		},
-		tables: ["memories"],
-	},
-	{
-		tool: "erase_memory",
-		why: "person-only tool (tools.ts erase_memory): a scoped seat carries no person bearer hash, so it is refused before any Convex call; the person poles run through the real /mcp route in test/erase-memory-route.test.ts",
-		args: async () => {
-			const m = await seed(seatA, "store_memory", {
-				namespace: `team/${A_ID}`,
-				type: "project",
-				content: "secret-seat-marker",
-				createdBy: "mimir",
-			});
-			return {
-				memoryId: m.memoryId,
-				redactions: [{ find: "secret-seat-marker", replaceWith: "x" }],
-			};
 		},
 		tables: ["memories"],
 	},
