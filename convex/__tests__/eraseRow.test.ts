@@ -27,7 +27,7 @@ import { testClerkOrgId } from "../../tests/fixtures/testClerkOrgId";
 import { seedRosterAgents } from "../../tests/lib/seedRosterAgents";
 import { api } from "../_generated/api";
 import type { Id } from "../_generated/dataModel";
-import { ERASE_COVERED } from "../lib/eraseRow";
+import { CHAIN_SCAN_CAP, ERASE_COVERED } from "../lib/eraseRow";
 import schema from "../schema";
 
 const modules = Object.fromEntries(
@@ -849,6 +849,42 @@ describe("erase:eraseRow — memories: the whole updates chain", () => {
 	test("another org's admin is refused as before, the chain untouched", async () => {
 		const ids = await seedChain([alice(), alice(), alice()]);
 		expect(await code(erase(ADMIN_B, "memories", ids.v2))).toBe("RBAC_DENIED");
+		expect(await allPresent(ids)).toEqual([true, true, true]);
+		expect(await purged()).toEqual([]);
+	});
+
+	// ── an oversized namespace: only a SUPERSEDED version needs the namespace read ──
+	// A latest row has no newer version, so erasing an unedited latest memory reads no
+	// namespace; a superseded one must find its newer versions and refuses (never truncates)
+	// when the namespace is larger than the bound.
+	const fillNamespace = (org: string) =>
+		t.run(async (ctx) => {
+			for (let i = 0; i < CHAIN_SCAN_CAP + 1; i++) {
+				await ctx.db.insert("memories", {
+					namespace: `team/${orgId(org)}`,
+					clerkOrgId: orgId(org),
+					type: "reference",
+					content: `filler ${i}`,
+					createdBy: "filler",
+					relations: [],
+					isLatest: true,
+					createdAt: now(),
+					updatedAt: now(),
+				});
+			}
+		});
+
+	test("past the scan cap, an unedited LATEST memory still erases (no namespace read)", async () => {
+		await fillNamespace(A);
+		const lone = await FAMILIES[0].seed(A, alice());
+		expect(await code(erase(ALICE_SEAT, "memories", lone))).toBe("SERVED");
+		expect(await present("memories", lone)).toBe(false);
+	});
+
+	test("past the scan cap, a SUPERSEDED version is refused ERASE_CHAIN_SCAN_TOO_LARGE, nothing deleted", async () => {
+		await fillNamespace(A);
+		const ids = await seedChain([alice(), alice(), alice()]);
+		expect(await code(erase(ALICE_SEAT, "memories", ids.v1))).toBe("ERASE_CHAIN_SCAN_TOO_LARGE");
 		expect(await allPresent(ids)).toEqual([true, true, true]);
 		expect(await purged()).toEqual([]);
 	});

@@ -1,0 +1,33 @@
+(!) Your Vite config uses features that are unsupported by `configLoader: 'native'`, which is planned to become the default in a future major version of Vite:
+  - ESM syntax in a file loaded as CommonJS (vitest.config.ts:1:1). Use a `.mjs` extension or set `"type": "module"` in the closest package.json
+Set `VITE_CONFIG_NATIVE_IGNORE_WARNING=true` to suppress this warning.
+
+[1m[46m RUN [49m[22m [36mv4.1.1 [39m[90m/root/coding/vantage-memory/.claude/worktrees/agent-aa3a55f676140df38[39m
+
+ [31m❯[39m convex/__tests__/eraseRow.test.ts [2m([22m[2m124 tests[22m[2m | [22m[31m1 failed[39m[2m)[22m[33m 1156[2mms[22m[39m
+[31m     [31m×[31m past the scan cap, an unedited LATEST memory still erases (no namespace read)[39m[32m 115[2mms[22m[39m
+
+[31m⎯⎯⎯⎯⎯⎯⎯[39m[1m[41m Failed Tests 1 [49m[22m[31m⎯⎯⎯⎯⎯⎯⎯[39m
+
+[41m[1m FAIL [22m[49m convex/__tests__/eraseRow.test.ts[2m > [22merase:eraseRow — memories: the whole updates chain[2m > [22mpast the scan cap, an unedited LATEST memory still erases (no namespace read)
+[31m[1mAssertionError[22m: expected 'ERASE_CHAIN_SCAN_TOO_LARGE' to be 'SERVED' // Object.is equality[39m
+
+Expected: [32m"SERVED"[39m
+Received: [31m"ERASE_CHAIN_SCAN_TOO_LARGE"[39m
+
+[36m [2m❯[22m convex/__tests__/eraseRow.test.ts:[2m880:59[22m[39m
+    [90m878|[39m   [35mawait[39m [34mfillNamespace[39m([33mA[39m)[33m;[39m
+    [90m879|[39m   [35mconst[39m lone [33m=[39m [35mawait[39m [33mFAMILIES[39m[[34m0[39m][33m.[39m[34mseed[39m([33mA[39m[33m,[39m [34malice[39m())[33m;[39m
+    [90m880|[39m   expect(await code(erase(ALICE_SEAT, "memories", lone))).toBe("SERVED…
+    [90m   |[39m                                                           [31m^[39m
+    [90m881|[39m   [34mexpect[39m([35mawait[39m [34mpresent[39m([32m"memories"[39m[33m,[39m lone))[33m.[39m[34mtoBe[39m([35mfalse[39m)[33m;[39m
+    [90m882|[39m  })[33m;[39m
+
+[31m[2m⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/1]⎯[22m[39m
+
+
+[2m Test Files [22m [1m[31m1 failed[39m[22m[90m (1)[39m
+[2m      Tests [22m [1m[31m1 failed[39m[22m[2m | [22m[1m[32m123 passed[39m[22m[90m (124)[39m
+[2m   Start at [22m 17:28:07
+[2m   Duration [22m 2.44s[2m (transform 1.10s, setup 0ms, import 1.13s, tests 1.16s, environment 0ms)[22m
+
