@@ -77,7 +77,6 @@ import type * as lib_memberScopes from "../lib/memberScopes.js";
 import type * as lib_memoryTenant from "../lib/memoryTenant.js";
 import type * as lib_messageTenant from "../lib/messageTenant.js";
 import type * as lib_missionActors from "../lib/missionActors.js";
-import type * as lib_missionTenant from "../lib/missionTenant.js";
 import type * as lib_nameOnlyCalls from "../lib/nameOnlyCalls.js";
 import type * as lib_npmExportCheck from "../lib/npmExportCheck.js";
 import type * as lib_operatorOrg from "../lib/operatorOrg.js";
@@ -257,7 +256,6 @@ declare const fullApi: ApiFromModules<{
   "lib/memoryTenant": typeof lib_memoryTenant;
   "lib/messageTenant": typeof lib_messageTenant;
   "lib/missionActors": typeof lib_missionActors;
-  "lib/missionTenant": typeof lib_missionTenant;
   "lib/nameOnlyCalls": typeof lib_nameOnlyCalls;
   "lib/npmExportCheck": typeof lib_npmExportCheck;
   "lib/operatorOrg": typeof lib_operatorOrg;
