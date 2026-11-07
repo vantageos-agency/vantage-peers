@@ -1,10 +1,13 @@
 import { ConvexError, v } from "convex/values";
 import type { Doc, Id } from "./_generated/dataModel";
-import { internalMutation, internalQuery } from "./_generated/server";
+import {
+	internalMutation,
+	internalQuery,
+	type QueryCtx,
+} from "./_generated/server";
 import { query } from "./lib/functions";
 import { hasFleetRead } from "@vantageos/cloud-identity";
 import { lookupOrgMapping, withOrgScope } from "./lib/auth";
-import { requireServiceAccount } from "./lib/eraseRow";
 import { orgMappingRowsForLabel } from "./lib/authOrgMapping";
 import { findOperatorOrg } from "./lib/operatorOrg";
 import { appendAgentsToRoster } from "./lib/rosterAppend";
@@ -57,52 +60,70 @@ import { CLERK_ORG_ID_PATTERN, clerkOrgIdForSlug } from "./lib/orgClerkId";
 // the row exists but the org has been disabled. The caller (auth.ts) MUST
 // treat BOTH as a refusal — a populated default is never synthesized here.
 // ─────────────────────────────────────────────────────────────────────────────
+/** What the two service doors (getByClerkSlug, getByClerkOrgId) answer: one shape, once. */
+const mappingServiceView = v.object({
+	// The row's own identity: the permanent id, the label namespaces are filed
+	// under (not necessarily the Clerk slug) and the kind the picker orders by.
+	clerkOrgId: v.optional(v.string()),
+	clerkOrgSlug: v.string(),
+	orgKind: v.optional(v.union(v.literal("operator"), v.literal("client"))),
+	allowedOrchestrators: v.array(v.string()),
+	allowedAgentIds: v.optional(v.array(v.id("agents"))),
+	fleetWide: v.optional(v.boolean()),
+	scopes: v.array(v.string()),
+	isActive: v.boolean(),
+});
+
 /**
- * The grant fields of a mapping row as the two service doors answer them
- * (getByClerkSlug, getByClerkOrgId): the ONE projection. `allowedAgentIds` /
- * `fleetWide` are the ID roster and the explicit fleet flag (module M1); both
- * are additive optional fields, so a reader that ignores them is unchanged.
+ * The ONE guard and projection of the two service doors: master or
+ * service-account scope reads a mapping row by the key the door hands over
+ * (a verified slug or a verified Clerk org id) and gets the explicit
+ * projection; every other caller is refused. `allowedAgentIds` / `fleetWide`
+ * are the ID roster and the explicit fleet flag (module M1), additive optional.
  */
-function mappingGrantView(row: Doc<"client_org_mapping">) {
-	const { allowedOrchestrators, allowedAgentIds, fleetWide, scopes, isActive } =
-		row;
+async function readMappingForService(
+	ctx: QueryCtx,
+	door: string,
+	key: string | { clerkOrgId: string },
+) {
+	const scope = await withOrgScope(ctx);
+	if (!hasFleetRead(scope)) {
+		throw new ConvexError(
+			`RBAC_DENIED: ${door} requires master or service-account scope — ` +
+				"anonymous and org-scoped callers may never read another " +
+				"organisation's allowedOrchestrators/scopes by slug or id.",
+		);
+	}
+	const mapping = await lookupOrgMapping(ctx, key);
+	if (!mapping) return null;
 	return {
-		allowedOrchestrators,
-		...(allowedAgentIds !== undefined ? { allowedAgentIds } : {}),
-		...(fleetWide !== undefined ? { fleetWide } : {}),
-		scopes,
-		isActive,
+		clerkOrgSlug: mapping.clerkOrgSlug,
+		...(mapping.clerkOrgId !== undefined
+			? { clerkOrgId: mapping.clerkOrgId }
+			: {}),
+		...(mapping.orgKind !== undefined ? { orgKind: mapping.orgKind } : {}),
+		allowedOrchestrators: mapping.allowedOrchestrators,
+		...(mapping.allowedAgentIds !== undefined
+			? { allowedAgentIds: mapping.allowedAgentIds }
+			: {}),
+		...(mapping.fleetWide !== undefined
+			? { fleetWide: mapping.fleetWide }
+			: {}),
+		scopes: mapping.scopes,
+		isActive: mapping.isActive,
 	};
 }
 
 export const getByClerkSlug = query({
 	args: { orgSlug: v.string() },
-	returns: v.union(
-		v.object({
-			allowedOrchestrators: v.array(v.string()),
-			allowedAgentIds: v.optional(v.array(v.id("agents"))),
-			fleetWide: v.optional(v.boolean()),
-			scopes: v.array(v.string()),
-			isActive: v.boolean(),
-		}),
-		v.null(),
-	),
+	returns: v.union(mappingServiceView, v.null()),
 	handler: async (ctx, args) => {
 		// isolation-contract: no reactive subscriber exists — enumerated at /root/coding/vantage-peers-dashboard@71da625 with `grep -rn 'api\.clientOrgMapping\.getByClerkSlug' --include=*.tsx --include=*.ts app components hooks lib contexts providers` -> 0 matches. Its caller is the MCP transport via imperative convex query (mcp-server/src/auth.ts:1194), not a subscription. R-50 declared divergence (a claim, verified against that enumeration).
-		const scope = await withOrgScope(ctx);
-		if (!hasFleetRead(scope)) {
-			throw new ConvexError(
-				"RBAC_DENIED: clientOrgMapping.getByClerkSlug requires master or " +
-					"service-account scope — anonymous and org-scoped callers may " +
-					"never read another organisation's allowedOrchestrators/scopes " +
-					"by slug.",
-			);
-		}
-		const mapping = await lookupOrgMapping(ctx, args.orgSlug);
-		if (!mapping) return null;
-		// Explicit projection (orgKind is an internal input of withOrgScope, not
-		// part of this read), shared with getByClerkOrgId: one projection, once.
-		return mappingGrantView(mapping);
+		return await readMappingForService(
+			ctx,
+			"clientOrgMapping.getByClerkSlug",
+			args.orgSlug,
+		);
 	},
 });
 
@@ -116,7 +137,7 @@ export const getByClerkSlug = query({
 // fallback to a label. Two rows claiming one id, or none, answer null (fail
 // closed, `lookupOrgMapping`).
 //
-// Gated to the fleet service account only (shared refusal), because the
+// Gated like getByClerkSlug (master or service account, one shared guard), because the
 // id argument is read from Clerk's verified membership by the MCP server, whose
 // own identity is what Convex sees. Beyond the grant fields it answers the
 // row's own key (`clerkOrgSlug`, the label namespaces are filed under) and
@@ -124,32 +145,16 @@ export const getByClerkSlug = query({
 // ─────────────────────────────────────────────────────────────────────────────
 export const getByClerkOrgId = query({
 	args: { clerkOrgId: v.string() },
-	returns: v.union(
-		v.object({
-			clerkOrgId: v.string(),
-			clerkOrgSlug: v.string(),
-			orgKind: v.optional(v.union(v.literal("operator"), v.literal("client"))),
-			allowedOrchestrators: v.array(v.string()),
-			allowedAgentIds: v.optional(v.array(v.id("agents"))),
-			fleetWide: v.optional(v.boolean()),
-			scopes: v.array(v.string()),
-			isActive: v.boolean(),
-		}),
-		v.null(),
-	),
+	returns: v.union(mappingServiceView, v.null()),
 	handler: async (ctx, args) => {
 		// isolation-contract: no reactive subscriber exists — enumerated at /root/coding/vantage-peers-dashboard with `grep -rn 'api\.clientOrgMapping\.getByClerkOrgId' --include=*.tsx --include=*.ts app components hooks lib contexts providers` -> 0 matches (a new function, named only by mcp-server/src/authorize.ts and mcp-server/server-http.ts, imperative service calls). R-50 declared divergence: the refusal stays a RAISE, no render exists for it to crash.
-		// The fleet service account only, through the one shared refusal
-		// (convex/lib/eraseRow.ts requireServiceAccount -> wireIdentityRefusal).
-		requireServiceAccount(await withOrgScope(ctx), "clientOrgMapping:getByClerkOrgId");
-		const mapping = await lookupOrgMapping(ctx, { clerkOrgId: args.clerkOrgId });
-		if (!mapping || mapping.clerkOrgId === undefined) return null;
-		return {
-			clerkOrgId: mapping.clerkOrgId,
-			clerkOrgSlug: mapping.clerkOrgSlug,
-			...(mapping.orgKind !== undefined ? { orgKind: mapping.orgKind } : {}),
-			...mappingGrantView(mapping),
-		};
+		return await readMappingForService(
+			ctx,
+			"clientOrgMapping.getByClerkOrgId",
+			{
+				clerkOrgId: args.clerkOrgId,
+			},
+		);
 	},
 });
 
