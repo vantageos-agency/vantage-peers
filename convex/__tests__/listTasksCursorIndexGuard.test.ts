@@ -221,39 +221,41 @@ describe("MUT-3 — multi-status + cursor: no hole, no duplicate (behavioural co
 	});
 });
 
-describe("MUT-3 — structural pin: the cursor flag is only consumed inside a single-status branch", () => {
+describe("MUT-3 — structural pin: the cursor bound is a range clause only after every explicit index field is pinned", () => {
 	// The runtime rule (equality on every explicit index field, then one range)
-	// is not enforced by convex-test. `canPushCursorIntoIndex` is safe today
-	// because every consumer sits inside `if (statuses !== undefined &&
-	// statuses.length === 1)`, which is what pins the `status` equality. If a
-	// consumer is moved out of such a branch, the `statuses.length === 1`
-	// clause in the flag becomes the ONLY thing protecting the index range, and
-	// relaxing it throws in production while every behavioural test stays green.
-	const src = readFileSync(resolve(__dirname, "../tasks.ts"), "utf8");
+	// is not enforced by convex-test. The old `canPushCursorIntoIndex` flag guarded
+	// it by hand; tasks.list now reads one index range PER STATUS BUCKET, so every
+	// `.lt("_creationTime", ...)` must directly follow an `.eq("status", status)`
+	// (the last explicit field of the index it ranges on), or sit on the
+	// `by_creation_time` index, which has no explicit field. If a range clause is
+	// moved after a field that is not pinned, production throws while every
+	// behavioural test stays green.
+	const full = readFileSync(resolve(__dirname, "../tasks.ts"), "utf8");
+	const start = full.indexOf("async function runTasksList(");
+	const end = full.indexOf("export const list = query(", start);
+	const src = full.slice(start, end);
 
-	test("every `canPushCursorIntoIndex ?` consumer is preceded by a single-status or status-pinned guard", () => {
-		const lines = src.split("\n");
-		const consumers: number[] = [];
-		lines.forEach((l, i) => {
-			if (/canPushCursorIntoIndex\s*$|canPushCursorIntoIndex \?/.test(l)) consumers.push(i);
-		});
-		expect(consumers.length).toBeGreaterThan(0);
-		for (const idx of consumers) {
-			const window = lines.slice(Math.max(0, idx - 14), idx).join("\n");
-			expect(
-				window,
-				`canPushCursorIntoIndex consumer at tasks.ts:${idx + 1} is not inside a single-status branch`,
-			).toMatch(/statuses\.length === 1|statuses\[0\]/);
-		}
+	test("the retired flag is gone", () => {
+		expect(src).not.toMatch(/canPushCursorIntoIndex/);
 	});
 
-	test("the flag definitions keep both range-slot clauses (updatedSince absent, exactly one status)", () => {
-		const defs = [...src.matchAll(/const canPushCursorIntoIndex =([\s\S]*?);/g)].map((m) => m[1]);
-		expect(defs.length).toBe(2);
-		for (const d of defs) {
-			expect(d).toMatch(/updatedSince === undefined/);
-			expect(d).toMatch(/statuses\.length === 1/);
-			expect(d).toMatch(/before !== undefined/);
+	test("every `.lt(\"_creationTime\", upper)` follows .eq(\"status\", status) or is the creation-time index", () => {
+		const lines = src.split("\n");
+		const sites: number[] = [];
+		lines.forEach((l, i) => {
+			if (/\.lt\("_creationTime", upper\)/.test(l)) sites.push(i);
+		});
+		expect(sites.length).toBeGreaterThan(8);
+		for (const idx of sites) {
+			const window = lines.slice(Math.max(0, idx - 8), idx + 1).join("\n");
+			const pinned = /\.eq\("status", status\)\s*\.lt\("_creationTime", upper\)/.test(
+				window.replace(/\s+/g, " ").replace(/\) \./g, ").").replace(/\)\./g, ")."),
+			);
+			const creationIndex = /withIndex\("by_creation_time"/.test(window);
+			expect(
+				pinned || creationIndex,
+				`tasks.ts runTasksList range at +${idx + 1} is not preceded by a pinned status`,
+			).toBe(true);
 		}
 	});
 });
