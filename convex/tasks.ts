@@ -2032,6 +2032,22 @@ async function runTasksList(ctx: QueryCtx, args: TasksListArgs, scope: OrgScope)
 			filtered = filtered.filter(keepCreator);
 		}
 		if (updatedSince !== undefined) {
+			// JUSTIFIED (R-4, Pi ruling, task k171t66wdznjztdpb8dby6f86h8hsx61): this
+			// in-memory updatedSince pass is bounded by a declared limit, not by an
+			// index range. Only the branches reading a project / assignedToInstance
+			// index reach it unbounded on updatedAt (no index carries a project or an
+			// instance key together with updatedAt); every other branch has already
+			// pushed updatedSince into its index range, where this pass is a no-op.
+			// On the unbounded branches a bucket above TASK_LIST_SCAN_CAP (2000) rows
+			// is refused with SCAN_CAP_EXCEEDED ("Declared limit: no index carries
+			// project/assignedToInstance together with a date key. Drop
+			// project/assignedToInstance, or narrow with status.") by the
+			// `throw scanCapRefusal("key")` guards above (the member reach and the
+			// fleet reach), before this line runs, so it never filters a truncated
+			// read. Pinned by the SCAN_CAP_EXCEEDED "key" poles in
+			// convex/__tests__/tasks-list-date-index.test.ts:301 and :312 (project +
+			// createdBy over a 2000+ row bucket). Not pinned there: project or
+			// assignedToInstance combined with updatedSince alone.
 			filtered = filtered.filter((r) => (r.updatedAt ?? 0) >= updatedSince);
 		}
 		// Day 163 fix — the cursor (createdBefore) filter MUST run BEFORE the
@@ -2042,6 +2058,18 @@ async function runTasksList(ctx: QueryCtx, args: TasksListArgs, scope: OrgScope)
 		// slicing to `limit` was silently discarding the very rows the
 		// cursor was supposed to select, independent of the fetchCap defect.
 		if (before !== undefined && !windowPaged) {
+			// JUSTIFIED (R-4, Pi ruling, task k171t66wdznjztdpb8dby6f86h8hsx61): the
+			// `before` (createdBefore) filter runs only on the NON-paged branch, that
+			// is, a createdBefore-only cursor, where the status/date indexes
+			// (by_assigneeId_status_updatedAt, by_orgId_status_updatedAt,
+			// by_status_updatedAt) order by updatedAt and cannot bound _creationTime.
+			// It is bounded by the same refusal: an updatedSince window above
+			// TASK_LIST_SCAN_CAP (2000) rows resumed with a createdBefore-only cursor
+			// throws SCAN_CAP_EXCEEDED ("Repeat the query without the cursor ...") via
+			// `throw scanCapRefusal("window-cursor")` above, before this line runs.
+			// Within the cap the read is complete, so the filter is exact. Pinned by
+			// convex/__tests__/tasks-list-date-index.test.ts:355 (refused over an
+			// oversized window) and :366 (within the cap, creation-time order kept).
 			filtered = filtered.filter((r) => r._creationTime < before);
 		}
 		// Eta REVISE on PR #1194 @147d260 — widening the fetch (above) was
