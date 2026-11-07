@@ -1358,6 +1358,16 @@ type ActorResolution =
 	| { ok: false; status: 401 | 403; error: string };
 
 /**
+ * The reason code a Convex RBAC_DENIED refusal carries in its trailing JSON
+ * (`{"registration":...,"reason":"owner-missing"}`), or null. Accepts only a plain
+ * kebab-case token, so nothing but a code can reach a client body.
+ */
+function refusalReasonCode(data: string): string | null {
+	const match = /"reason"\s*:\s*"([a-z][a-z0-9-]{0,63})"\s*\}\s*$/.exec(data);
+	return match === null ? null : match[1];
+}
+
+/**
  * resolveActorFromRequest — turns the per-agent credential presented in
  * {@link AGENT_CREDENTIAL_HEADER} into the acting agent, or REFUSES.
  *
@@ -1411,11 +1421,15 @@ async function resolveActorFromRequest(
 			data.startsWith("RBAC_DENIED") &&
 			data.includes("agentCredentials:resolveAgentCredential")
 		) {
+			// Name the Convex reason code when the data carries one, and ONLY the code:
+			// a plain kebab-case token, never the registration, an id or free text.
+			const reason = refusalReasonCode(data);
 			return {
 				ok: false,
 				status: 401,
 				error:
-					"AGENT_CREDENTIAL_INVALID: the presented agent credential is not " +
+					`AGENT_CREDENTIAL_INVALID${reason === null ? "" : ` (${reason})`}: ` +
+					"the presented agent credential is not " +
 					"accepted (unknown, rotated out, inactive agent, or an agent with no " +
 					"live member owner)",
 			};

@@ -121,6 +121,7 @@ import type * as messages from "../messages.js";
 import type * as meta from "../meta.js";
 import type * as migrations from "../migrations.js";
 import type * as migrations_agentIdentityRows from "../migrations/agentIdentityRows.js";
+import type * as migrations_agentOwnerBinding from "../migrations/agentOwnerBinding.js";
 import type * as migrations_authorBackfill from "../migrations/authorBackfill.js";
 import type * as migrations_backfillOrgIds from "../migrations/backfillOrgIds.js";
 import type * as migrations_backfillRosterAgentIds from "../migrations/backfillRosterAgentIds.js";
@@ -306,6 +307,7 @@ declare const fullApi: ApiFromModules<{
   meta: typeof meta;
   migrations: typeof migrations;
   "migrations/agentIdentityRows": typeof migrations_agentIdentityRows;
+  "migrations/agentOwnerBinding": typeof migrations_agentOwnerBinding;
   "migrations/authorBackfill": typeof migrations_authorBackfill;
   "migrations/backfillOrgIds": typeof migrations_backfillOrgIds;
   "migrations/backfillRosterAgentIds": typeof migrations_backfillRosterAgentIds;

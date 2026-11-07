@@ -222,6 +222,42 @@ export type OwnedAgentOfSecret =
 	| { ok: false; reason: OwnedAgentRefusalReason };
 
 /**
+ * ownerBindingOfAgent -- the OWNER half of `resolveOwnedAgentOfPresentedSecret`, taken
+ * off the credential so it can be asked of an `agents` row alone: the row names an owner
+ * and an organisation id, and the owner is a live member of that organisation
+ * (@vantageos/cloud-identity `resolveCallerFromAgentCredential`). The one place this
+ * decision is composed: the credential door and the read-only count
+ * (`migrations/agentOwnerBinding:count`) both call it, so the count can never apply a
+ * different rule from the door it explains. Never throws.
+ */
+export async function ownerBindingOfAgent(
+	ctx: Ctx,
+	agent: Doc<"agents">,
+	door: string,
+): Promise<{ ok: true } | { ok: false; reason: OwnedAgentRefusalReason }> {
+	if (agent.ownerPersonId === undefined) {
+		return { ok: false, reason: "owner-missing" };
+	}
+	if (agent.clerkOrgId === undefined) {
+		return { ok: false, reason: "org-id-missing" };
+	}
+	const caller = await resolveCallerFromAgentCredential(
+		{
+			agentId: agent._id,
+			verifiedOrgId: agent.clerkOrgId,
+			ownerPersonId: agent.ownerPersonId,
+		},
+		{
+			orgLookups: orgMappingLookups(ctx),
+			principalLookups: agentCredentialPrincipalLookups(ctx),
+		},
+		{ door },
+	);
+	if (!caller.ok) return { ok: false, reason: caller.refusal.reason };
+	return { ok: true };
+}
+
+/**
  * resolveOwnedAgentOfPresentedSecret — `resolveAgentOfPresentedSecret` plus the
  * OWNER binding (task k1778c2hvae8e8vz9f5bbbbbb98g62hw, item 4b): the one
  * composition every door that accepts an agent secret goes through
@@ -246,25 +282,8 @@ export async function resolveOwnedAgentOfPresentedSecret(
 ): Promise<OwnedAgentOfSecret> {
 	const agent = await agentOfPresentedSecret(ctx, presentedSecret, door, true);
 	if (agent === null) return { ok: false, reason: "credential-not-recognised" };
-	if (agent.ownerPersonId === undefined) {
-		return { ok: false, reason: "owner-missing" };
-	}
-	if (agent.clerkOrgId === undefined) {
-		return { ok: false, reason: "org-id-missing" };
-	}
-	const caller = await resolveCallerFromAgentCredential(
-		{
-			agentId: agent._id,
-			verifiedOrgId: agent.clerkOrgId,
-			ownerPersonId: agent.ownerPersonId,
-		},
-		{
-			orgLookups: orgMappingLookups(ctx),
-			principalLookups: agentCredentialPrincipalLookups(ctx),
-		},
-		{ door },
-	);
-	if (!caller.ok) return { ok: false, reason: caller.refusal.reason };
+	const bound = await ownerBindingOfAgent(ctx, agent, door);
+	if (!bound.ok) return bound;
 	return { ok: true, agent };
 }
 

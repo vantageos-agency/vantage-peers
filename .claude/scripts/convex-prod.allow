@@ -31,5 +31,6 @@ run migrations/seat_binding_inventory:bindingEvidence
 run oauth:bindScopeProfileAgent
 run migrations/tenantOrgIdInvariant:count
 run migrations/backfill_org_clerk_id:run
+run migrations/agentOwnerBinding:count
 run migrations/authorBackfill:count
 run migrations/authorBackfill:stamp
