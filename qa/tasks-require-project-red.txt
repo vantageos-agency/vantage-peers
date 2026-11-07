@@ -1,0 +1,215 @@
+(!) Your Vite config uses features that are unsupported by `configLoader: 'native'`, which is planned to become the default in a future major version of Vite:
+  - ESM syntax in a file loaded as CommonJS (vitest.config.ts:1:1). Use a `.mjs` extension or set `"type": "module"` in the closest package.json
+Set `VITE_CONFIG_NATIVE_IGNORE_WARNING=true` to suppress this warning.
+
+ RUN  v4.1.1 /root/coding/vantage-memory/.claude/worktrees/sigma-require-project
+
+ ❯ convex/__tests__/billing-split.test.ts (6 tests | 5 failed) 503ms
+     × one no-project task and one no-duration task are counted apart 476ms
+     × a task with neither project nor duration counts in noProjectCount only 4ms
+     × listNoDuration lists the no-duration task with assignee, project, completedAt 3ms
+     × the list is bounded and says so when it is cut 13ms
+     × tenant isolation: org A never lists org B's no-duration task 3ms
+ ❯ convex/__tests__/tasks-require-project.test.ts (8 tests | 5 failed) 502ms
+     × REFUSED: project omitted 477ms
+     × REFUSED: project empty string 3ms
+     × REFUSED: project whitespace only 4ms
+     × REFUSED: the refusal names the field and writes no row 4ms
+     × REFUSED: an update that sets project to empty 3ms
+
+⎯⎯⎯⎯⎯⎯ Failed Tests 10 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  convex/__tests__/billing-split.test.ts > billingSummaryByProject: noProjectCount / noDurationCount > one no-project task and one no-duration task are counted apart
+AssertionError: expected undefined to be 1 // Object.is equality
+
+- Expected:
+1
+
++ Received:
+undefined
+
+ ❯ convex/__tests__/billing-split.test.ts:95:28
+     93|    endDate: now,
+     94|   });
+     95|   expect(r.noProjectCount).toBe(1);
+       |                            ^
+     96|   expect(r.noDurationCount).toBe(1);
+     97|   expect(r.unattributedTaskCount).toBe(2);
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/10]⎯
+
+ FAIL  convex/__tests__/billing-split.test.ts > billingSummaryByProject: noProjectCount / noDurationCount > a task with neither project nor duration counts in noProjectCount only
+AssertionError: expected undefined to be 1 // Object.is equality
+
+- Expected:
+1
+
++ Received:
+undefined
+
+ ❯ convex/__tests__/billing-split.test.ts:108:28
+    106|    endDate: now,
+    107|   });
+    108|   expect(r.noProjectCount).toBe(1);
+       |                            ^
+    109|   expect(r.noDurationCount).toBe(0);
+    110|   expect(r.unattributedTaskCount).toBe(1);
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[2/10]⎯
+
+ FAIL  convex/__tests__/billing-split.test.ts > billingSummaryByProject: noProjectCount / noDurationCount > listNoDuration lists the no-duration task with assignee, project, completedAt
+Error: Validator error: Unexpected field `listNoDuration` in object
+ ❯ validateValidator ../../../node_modules/convex-test/dist/index.js:840:27
+ ❯ Object.queryFromPath ../../../node_modules/convex-test/dist/index.js:1543:13
+ ❯ Object.query ../../../node_modules/convex-test/dist/index.js:1582:20
+ ❯ convex/__tests__/billing-split.test.ts:135:13
+    133|   await seedDone(t, { title: "no project", actualMinutes: 5, completed…
+    134|   await seedDone(t, { title: "measured", project: "p", actualMinutes: …
+    135|   const r = await asService(t).query(api.tasks.billingSummaryByProject…
+       |             ^
+    136|    startDate: now - 10_000,
+    137|    endDate: now,
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[3/10]⎯
+
+ FAIL  convex/__tests__/billing-split.test.ts > billingSummaryByProject: noProjectCount / noDurationCount > the list is bounded and says so when it is cut
+Error: Validator error: Unexpected field `listNoDuration` in object
+ ❯ validateValidator ../../../node_modules/convex-test/dist/index.js:840:27
+ ❯ Object.queryFromPath ../../../node_modules/convex-test/dist/index.js:1543:13
+ ❯ Object.query ../../../node_modules/convex-test/dist/index.js:1582:20
+ ❯ convex/__tests__/billing-split.test.ts:164:13
+    162|    }
+    163|   });
+    164|   const r = await asService(t).query(api.tasks.billingSummaryByProject…
+       |             ^
+    165|    startDate: now - 10_000,
+    166|    endDate: now,
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[4/10]⎯
+
+ FAIL  convex/__tests__/billing-split.test.ts > billingSummaryByProject: noProjectCount / noDurationCount > tenant isolation: org A never lists org B's no-duration task
+Error: Validator error: Unexpected field `listNoDuration` in object
+ ❯ validateValidator ../../../node_modules/convex-test/dist/index.js:840:27
+ ❯ Object.queryFromPath ../../../node_modules/convex-test/dist/index.js:1543:13
+ ❯ Object.query ../../../node_modules/convex-test/dist/index.js:1582:20
+ ❯ convex/__tests__/billing-split.test.ts:181:13
+    179|   const own = await seedDone(t, { title: "a", project: "pa", completed…
+    180|   await seedDone(t, { title: "b", project: "pb", completedAt: now - 20…
+    181|   const r = await asMember(t, "org-a").query(api.tasks.billingSummaryB…
+       |             ^
+    182|    startDate: now - 10_000,
+    183|    endDate: now,
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[5/10]⎯
+
+ FAIL  convex/__tests__/tasks-require-project.test.ts > tasks:create requires a project > REFUSED: project omitted
+AssertionError: promise resolved "'10005;tasks'" instead of rejecting
+
+- Expected:
+Error {
+  "message": "rejected promise",
+}
+
++ Received:
+"10005;tasks"
+
+ ❯ convex/__tests__/tasks-require-project.test.ts:45:51
+     43|  test("REFUSED: project omitted", async () => {
+     44|   const t = await world();
+     45|   await expect(t.mutation(api.tasks.create, base)).rejects.toThrow(
+       |                                                   ^
+     46|    /TASK_PROJECT_REQUIRED/,
+     47|   );
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[6/10]⎯
+
+ FAIL  convex/__tests__/tasks-require-project.test.ts > tasks:create requires a project > REFUSED: project empty string
+AssertionError: promise resolved "'10005;tasks'" instead of rejecting
+
+- Expected:
+Error {
+  "message": "rejected promise",
+}
+
++ Received:
+"10005;tasks"
+
+ ❯ convex/__tests__/tasks-require-project.test.ts:54:4
+     52|   await expect(
+     53|    t.mutation(api.tasks.create, { ...base, project: "" }),
+     54|   ).rejects.toThrow(/TASK_PROJECT_REQUIRED/);
+       |    ^
+     55|  });
+     56|
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[7/10]⎯
+
+ FAIL  convex/__tests__/tasks-require-project.test.ts > tasks:create requires a project > REFUSED: project whitespace only
+AssertionError: promise resolved "'10005;tasks'" instead of rejecting
+
+- Expected:
+Error {
+  "message": "rejected promise",
+}
+
++ Received:
+"10005;tasks"
+
+ ❯ convex/__tests__/tasks-require-project.test.ts:61:4
+     59|   await expect(
+     60|    t.mutation(api.tasks.create, { ...base, project: "   \t " }),
+     61|   ).rejects.toThrow(/TASK_PROJECT_REQUIRED/);
+       |    ^
+     62|  });
+     63|
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[8/10]⎯
+
+ FAIL  convex/__tests__/tasks-require-project.test.ts > tasks:create requires a project > REFUSED: the refusal names the field and writes no row
+AssertionError: promise resolved "'10005;tasks'" instead of rejecting
+
+- Expected:
+Error {
+  "message": "rejected promise",
+}
+
++ Received:
+"10005;tasks"
+
+ ❯ convex/__tests__/tasks-require-project.test.ts:66:51
+     64|  test("REFUSED: the refusal names the field and writes no row", async …
+     65|   const t = await world();
+     66|   await expect(t.mutation(api.tasks.create, base)).rejects.toThrow(/pr…
+       |                                                   ^
+     67|   const rows = await t.run(async (ctx) => ctx.db.query("tasks").collec…
+     68|   expect(rows).toHaveLength(0);
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[9/10]⎯
+
+ FAIL  convex/__tests__/tasks-require-project.test.ts > tasks:update and a project > REFUSED: an update that sets project to empty
+AssertionError: promise resolved "null" instead of rejecting
+
+- Expected:
+Error {
+  "message": "rejected promise",
+}
+
++ Received:
+null
+
+ ❯ convex/__tests__/tasks-require-project.test.ts:112:4
+    110|   await expect(
+    111|    t.mutation(api.tasks.update, { taskId, callerOrchestrator: "sigma",…
+    112|   ).rejects.toThrow(/TASK_PROJECT_REQUIRED/);
+       |    ^
+    113|   await expect(
+    114|    t.mutation(api.tasks.update, { taskId, callerOrchestrator: "sigma",…
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[10/10]⎯
+
+
+ Test Files  2 failed (2)
+      Tests  10 failed | 4 passed (14)
+   Start at  18:23:44
+   Duration  890ms (transform 994ms, setup 0ms, import 554ms, tests 1.01s, environment 0ms)
+
