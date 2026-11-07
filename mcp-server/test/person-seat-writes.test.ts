@@ -119,6 +119,7 @@ const WRITES: {
 		table: "tasks",
 		args: () => ({
 			title: "a person's task",
+			project: "seat-matrix",
 			assignedTo: "ulysse",
 			priority: "medium",
 		}),

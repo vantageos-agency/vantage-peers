@@ -3056,7 +3056,9 @@ export function registerTools(
 	// oracle-justified: verb: an episode is only ever CREATED (the tool forwards no relations), where
 	//   store_memory UPSERTS (an "updates" relation patches the superseded memory); the two share a table
 	//   group only because both doors now read the person's token row (verifiedPerson, task
-	//   k177e8dyrnykk3c56yf2b0pgfs8hhz06).
+	//   k177e8dyrnykk3c56yf2b0pgfs8hhz06). Pinned on both poles by
+	//   convex/__tests__/storeEpisodeNeverSupersedes.test.ts:35 (storeMemory flips the target's isLatest)
+	//   and :54 (storeEpisode with the same relation leaves it latest).
 	defineTool(
 		server,
 		authCtx,
