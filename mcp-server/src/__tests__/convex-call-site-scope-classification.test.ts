@@ -1054,11 +1054,12 @@ const SCOPE_CLASSIFICATION: Readonly<Record<string, ScopeClassification>> = {
 		basis: "unread",
 		reason: "keyed by the registered client id (authorize.ts:274)",
 	},
-	"authorize.ts|clientOrgMapping:getByClerkSlug": {
+	"authorize.ts|clientOrgMapping:getByClerkOrgId": {
 		class: "safe",
 		severity: null,
 		basis: "args+gate",
-		reason: "keyed by the verified org slug",
+		reason:
+			"keyed by the verified Clerk org id of a membership (service-account gated, convex/clientOrgMapping.ts getByClerkOrgId)",
 	},
 	"authorize.ts|oauth:listPersonalAgentChoices": {
 		class: "traced",

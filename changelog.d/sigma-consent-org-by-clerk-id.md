@@ -1,0 +1,4 @@
+---
+section: Fixed
+---
+- **The consent picker offers the operator's own organisation.** It kept a Clerk membership only when a mapping existed under the organisation's Clerk slug; the operator's row is keyed under a different label, so the person saw only their client organisations. The picker, the `/token` exchange and the agent step now find the mapping by the verified Clerk org id (new `clientOrgMapping:getByClerkOrgId`, service account only) and never by a slug; a Clerk organisation that merely holds the slug of another organisation's key is not offered. The operator organisation is listed first, a client organisation only when the person is a member, and nothing is preselected. Backend contract 21 -> 22 (PR #1704 also targets 22; the later merge renumbers). Task k1788jk9k6fprrvrmvhqagwsyx8hspmy.

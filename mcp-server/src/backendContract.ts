@@ -55,6 +55,7 @@ export const MCP_CALLED_FUNCTIONS: readonly string[] = [
 	"businessUnits:list",
 	"businessUnits:remove",
 	"businessUnits:update",
+	"clientOrgMapping:getByClerkOrgId",
 	"clientOrgMapping:getByClerkSlug",
 	"debate:getRoom",
 	"debate:postTurn",

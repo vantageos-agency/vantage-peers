@@ -39,6 +39,7 @@ export const BACKEND_FUNCTIONS: readonly string[] = [
 	"businessUnits:list",
 	"businessUnits:remove",
 	"businessUnits:update",
+	"clientOrgMapping:getByClerkOrgId",
 	"clientOrgMapping:getByClerkSlug",
 	"credentials:revokeMyBearers",
 	"dashboard:getDashboardSummary",

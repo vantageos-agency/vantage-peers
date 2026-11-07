@@ -116,6 +116,13 @@ function makeFakeConvex() {
 			if (name === "clientOrgMapping:getByClerkSlug") {
 				return state.mappings.get(args.orgSlug as string) ?? null;
 			}
+			if (name === "clientOrgMapping:getByClerkOrgId") {
+				return (
+					[...state.mappings.values()].find(
+						(m) => m.clerkOrgId === (args.clerkOrgId as string),
+					) ?? null
+				);
+			}
 			if (name === "oauth:getRefreshTokenForGrant") {
 				const r = state.refreshTokens.get(args.presentedHash as string);
 				return r ? { ...r, spent: false } : null;
@@ -260,11 +267,15 @@ beforeEach(async () => {
 	harness.setMemberships("user_alpha", [membership("org_alpha", "org-alpha")]);
 	harness.setMemberships("user_beta", [membership("org_beta", "org-beta")]);
 	state.mappings.set("org-alpha", {
+		clerkOrgId: "org_alpha",
+		clerkOrgSlug: "org-alpha",
 		allowedOrchestrators: ["mapped-alpha"],
 		scopes: ["vantage:read", "vantage:write"],
 		isActive: true,
 	});
 	state.mappings.set("org-beta", {
+		clerkOrgId: "org_beta",
+		clerkOrgSlug: "org-beta",
 		allowedOrchestrators: ["mapped-beta"],
 		scopes: ["vantage:read", "vantage:write"],
 		isActive: true,

@@ -2366,10 +2366,17 @@ export const listPersonalAgentChoices = query({
 	handler: async (ctx, args) => {
 		// isolation-contract: NO reactive subscriber — a new function named only by the MCP server's authorize page (mcp-server/src/authorize.ts, an imperative service call per page render); enumerated with `grep -rn "listPersonalAgentChoices" mcp-server/src mcp-server/server-http.ts` -> authorize.ts only. The refusal stays a RAISE: `requireServiceAccount` throws for any caller other than the fleet service account, so no render exists for a throw to crash.
 		await requireServiceAccount(ctx, "oauth:listPersonalAgentChoices");
+		// The key agents are filed under is the mapping row's own, found by the
+		// verified org id; the Clerk slug the caller sends is a label that can
+		// differ from it (the operator's own organisation). No active mapping, no list.
+		const mapping = await lookupOrgMapping(ctx, { clerkOrgId: args.orgId });
+		if (mapping === null || !mapping.isActive) {
+			return { agents: [], canCreate: false };
+		}
 		return await agentChoicesFor(
 			ctx,
 			args.clerkUserId,
-			{ id: args.orgId, key: args.orgSlug ?? args.orgId },
+			{ id: args.orgId, key: mapping.clerkOrgSlug },
 			args.orgRole,
 		);
 	},
@@ -2420,14 +2427,22 @@ export const putPersonCode = mutation({
 		// no choice is a decision too: "connect as myself", never an implicit pick.
 		let chosenAgentId: Id<"agents"> | undefined;
 		if (args.choice !== undefined) {
+			// The organisation's mapping row, by the code's verified org id: its own
+			// key is what agents are filed under (never the Clerk slug label on the
+			// record). No active mapping refuses before anything is written.
+			const mapping = await lookupOrgMapping(ctx, {
+				clerkOrgId: args.record.orgId,
+			});
+			if (mapping === null || !mapping.isActive) {
+				throw new ConvexError(
+					"ORG_MAPPING_NOT_FOUND: no active organisation mapping for this organisation; refusing to choose or create an agent that could not write",
+				);
+			}
 			chosenAgentId = await applyAgentChoice(
 				ctx,
 				{
 					personId: args.record.clerkUserId,
-					org: {
-						id: args.record.orgId,
-						key: args.record.orgSlug ?? args.record.orgId,
-					},
+					org: { id: args.record.orgId, key: mapping.clerkOrgSlug },
 					role: args.record.orgRole,
 				},
 				args.choice,
@@ -2435,17 +2450,9 @@ export const putPersonCode = mutation({
 			if (args.choice.kind === "create") {
 				// A created agent that no roster lists cannot write: it joins the org's
 				// roster in this same transaction, through the one roster writer
-				// (append only, idempotent). An org with no active mapping refuses, and
-				// the throw rolls the agent insert back. The operator org has its own
+				// (append only, idempotent). The throw above rolls back an org with no
+				// active mapping. The operator org has its own
 				// door (clientOrgMapping:addOperatorRosterMember) and is not edited here.
-				const mapping = await lookupOrgMapping(ctx, {
-					clerkOrgId: args.record.orgId,
-				});
-				if (mapping === null || !mapping.isActive) {
-					throw new ConvexError(
-						"ORG_MAPPING_NOT_FOUND: no active organisation mapping for this organisation; refusing to create an agent that could not write",
-					);
-				}
 				if (mapping.orgKind !== "operator") {
 					await ctx.runMutation(internal.clientOrgMapping.addRosterMembers, {
 						clerkOrgSlug: mapping.clerkOrgSlug,
