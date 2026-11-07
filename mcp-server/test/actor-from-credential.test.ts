@@ -68,6 +68,18 @@ const SECRET_BOB_A = "secret-bob-org-a";
 const SECRET_ALICE_B = "secret-alice-org-b";
 const SECRET_ALICE_C = "secret-alice-org-c";
 const SECRET_INACTIVE = "secret-inactive-agent";
+// Credentials the door refuses WITH a reason code in its error data (task k176v7x1xr5shra8j3d8v4rp718hs4n2).
+const SECRET_NO_OWNER = "secret-agent-without-owner";
+const SECRET_NOT_MEMBER = "secret-agent-owner-not-member";
+const SECRET_REASON_HOSTILE = "secret-reason-is-not-a-code";
+// A refusal whose data carries no reason at all.
+const SECRET_REFUSED_NO_REASON = "secret-refused-without-reason";
+const REFUSAL_REASONS: Record<string, string | null> = {
+	[SECRET_NO_OWNER]: "owner-missing",
+	[SECRET_NOT_MEMBER]: "agent-owner-not-member",
+	[SECRET_REASON_HOSTILE]: "owner-missing user_abc123 secret hunter2",
+	[SECRET_REFUSED_NO_REASON]: null,
+};
 const SECRET_LOOKUP_THROWS = "secret-lookup-throws";
 // An org whose orchestrator is registered under an accented identifier, exactly
 // as the server returns it (list_peers id: "hélios"): the trap the verification
@@ -206,6 +218,16 @@ function installInternalClient(): void {
 				lookupCalls.push(presentedSecret);
 				if (presentedSecret === SECRET_LOOKUP_THROWS) {
 					throw new Error("convex unavailable");
+				}
+				if (presentedSecret in REFUSAL_REASONS) {
+					const reason = REFUSAL_REASONS[presentedSecret];
+					const tail =
+						reason === null
+							? ""
+							: ` — ${JSON.stringify({ registration: "agentCredentials:resolveAgentCredential", orgSlug: null, reason })}`;
+					throw Object.assign(new Error("[Request ID: x] Server Error"), {
+						data: `RBAC_DENIED: the presented agent credential is refused for "agentCredentials:resolveAgentCredential"${tail}`,
+					});
 				}
 				const found = CREDENTIALS[presentedSecret] ?? null;
 				if (found === null) {
@@ -490,8 +512,49 @@ describe("S1 boundary — the actor is resolved once, from the presented credent
 		});
 		expect(refused.status).toBe(401);
 		expect(failed.status).toBe(401);
-		expect(refused.json.error).toMatch(/^AGENT_CREDENTIAL_INVALID:/);
+		expect(refused.json.error).toMatch(/^AGENT_CREDENTIAL_INVALID\b/);
 		expect(failed.json.error).toMatch(/^AGENT_CREDENTIAL_LOOKUP_FAILED:/);
+	});
+
+	it("DENY, NAMED: a refusal carrying a reason code answers 401 AGENT_CREDENTIAL_INVALID (<reason>) -- and nothing else of the registration", async () => {
+		const app = buildApp(() => buildToolConvex({}).convex);
+		for (const [credential, reason] of [
+			[SECRET_NO_OWNER, "owner-missing"],
+			[SECRET_NOT_MEMBER, "agent-owner-not-member"],
+			["not-a-real-secret", "credential-not-recognised"],
+		] as const) {
+			const { status, json } = await send(app, "/echo", {
+				orgId: "org-a",
+				credential,
+			});
+			expect(status, credential).toBe(401);
+			expect(json.error, credential).toMatch(
+				new RegExp(`^AGENT_CREDENTIAL_INVALID \\(${reason}\\): `),
+			);
+			expect(JSON.stringify(json), credential).not.toContain("registration");
+			expect(JSON.stringify(json), credential).not.toContain("agentCredentials:");
+		}
+	});
+
+	it("DENY: a reason that is not a plain code is never echoed; a refusal with no reason keeps today's sentence", async () => {
+		const app = buildApp(() => buildToolConvex({}).convex);
+		const hostile = await send(app, "/echo", {
+			orgId: "org-a",
+			credential: SECRET_REASON_HOSTILE,
+		});
+		const bare = await send(app, "/echo", {
+			orgId: "org-a",
+			credential: SECRET_REFUSED_NO_REASON,
+		});
+		const today =
+			"AGENT_CREDENTIAL_INVALID: the presented agent credential is not " +
+			"accepted (unknown, rotated out, inactive agent, or an agent with no " +
+			"live member owner)";
+		expect(hostile.status).toBe(401);
+		expect(hostile.json.error).toBe(today);
+		expect(JSON.stringify(hostile.json)).not.toContain("hunter2");
+		expect(bare.status).toBe(401);
+		expect(bare.json.error).toBe(today);
 	});
 
 	it("DENY: an agent of org B presented with org A's session is refused (ORG_MISMATCH) — same name, different tenant", async () => {
