@@ -1,5 +1,5 @@
 import { ConvexError, v } from "convex/values";
-import type { Id } from "./_generated/dataModel";
+import type { Doc, Id } from "./_generated/dataModel";
 import { internalMutation, internalQuery } from "./_generated/server";
 import { query } from "./lib/functions";
 import { hasFleetRead } from "@vantageos/cloud-identity";
@@ -57,6 +57,26 @@ import { CLERK_ORG_ID_PATTERN, clerkOrgIdForSlug } from "./lib/orgClerkId";
 // the row exists but the org has been disabled. The caller (auth.ts) MUST
 // treat BOTH as a refusal — a populated default is never synthesized here.
 // ─────────────────────────────────────────────────────────────────────────────
+/**
+ * The grant fields of a mapping row as the two service doors answer them
+ * (getByClerkSlug, getByClerkOrgId): the ONE projection. `allowedAgentIds` /
+ * `fleetWide` are the ID roster and the explicit fleet flag (module M1); both
+ * are additive optional fields, so a reader that ignores them is unchanged.
+ */
+function mappingGrantView(mapping: Doc<"client_org_mapping">) {
+	return {
+		allowedOrchestrators: mapping.allowedOrchestrators,
+		...(mapping.allowedAgentIds !== undefined
+			? { allowedAgentIds: mapping.allowedAgentIds }
+			: {}),
+		...(mapping.fleetWide !== undefined
+			? { fleetWide: mapping.fleetWide }
+			: {}),
+		scopes: mapping.scopes,
+		isActive: mapping.isActive,
+	};
+}
+
 export const getByClerkSlug = query({
 	args: { orgSlug: v.string() },
 	returns: v.union(
@@ -83,20 +103,8 @@ export const getByClerkSlug = query({
 		const mapping = await lookupOrgMapping(ctx, args.orgSlug);
 		if (!mapping) return null;
 		// Explicit projection (orgKind is an internal input of withOrgScope, not
-		// part of this read). `allowedAgentIds` / `fleetWide` are the ID roster and
-		// the explicit fleet flag (module M1); both are additive optional fields,
-		// so a reader that ignores them is unchanged.
-		return {
-			allowedOrchestrators: mapping.allowedOrchestrators,
-			...(mapping.allowedAgentIds !== undefined
-				? { allowedAgentIds: mapping.allowedAgentIds }
-				: {}),
-			...(mapping.fleetWide !== undefined
-				? { fleetWide: mapping.fleetWide }
-				: {}),
-			scopes: mapping.scopes,
-			isActive: mapping.isActive,
-		};
+		// part of this read), shared with getByClerkOrgId: one projection, once.
+		return mappingGrantView(mapping);
 	},
 });
 
@@ -142,15 +150,7 @@ export const getByClerkOrgId = query({
 			clerkOrgId: mapping.clerkOrgId,
 			clerkOrgSlug: mapping.clerkOrgSlug,
 			...(mapping.orgKind !== undefined ? { orgKind: mapping.orgKind } : {}),
-			allowedOrchestrators: mapping.allowedOrchestrators,
-			...(mapping.allowedAgentIds !== undefined
-				? { allowedAgentIds: mapping.allowedAgentIds }
-				: {}),
-			...(mapping.fleetWide !== undefined
-				? { fleetWide: mapping.fleetWide }
-				: {}),
-			scopes: mapping.scopes,
-			isActive: mapping.isActive,
+			...mappingGrantView(mapping),
 		};
 	},
 });
