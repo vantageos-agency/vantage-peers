@@ -1,5 +1,5 @@
 import { ConvexError, v } from "convex/values";
-import type { Id } from "./_generated/dataModel";
+import type { Doc, Id } from "./_generated/dataModel";
 import {
 	internalMutation,
 	internalQuery,
@@ -85,7 +85,7 @@ const mappingServiceView = v.object({
 async function readMappingForService(
 	ctx: QueryCtx,
 	door: string,
-	key: string | { clerkOrgId: string },
+	find: () => Promise<Doc<"client_org_mapping"> | null>,
 ) {
 	const scope = await withOrgScope(ctx);
 	if (!hasFleetRead(scope)) {
@@ -95,7 +95,7 @@ async function readMappingForService(
 				"organisation's allowedOrchestrators/scopes by slug or id.",
 		);
 	}
-	const mapping = await lookupOrgMapping(ctx, key);
+	const mapping = await find();
 	if (!mapping) return null;
 	return {
 		clerkOrgSlug: mapping.clerkOrgSlug,
@@ -123,7 +123,7 @@ export const getByClerkSlug = query({
 		return await readMappingForService(
 			ctx,
 			"clientOrgMapping.getByClerkSlug",
-			args.orgSlug,
+			() => lookupOrgMapping(ctx, args.orgSlug),
 		);
 	},
 });
@@ -158,7 +158,7 @@ export const getByClerkOrgId = query({
 		return await readMappingForService(
 			ctx,
 			"clientOrgMapping.getByClerkOrgId",
-			{ clerkOrgId: args.clerkOrgId },
+			() => lookupOrgMapping(ctx, { clerkOrgId: args.clerkOrgId }),
 		);
 	},
 });
