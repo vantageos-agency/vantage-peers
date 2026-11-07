@@ -366,7 +366,7 @@ describe("new writes stamp the slug AND the Clerk org id", () => {
 	test("tasks:create by an org member", async () => {
 		const t = createT();
 		await seedWorld(t);
-		const id = await asOrg(t, ACME.slug).mutation(api.tasks.create, {
+		const id = await asOrg(t, ACME.slug).mutation(api.tasks.create, { project: "test-project",
 			title: "Stamp me",
 			assignedTo: SEAT,
 			priority: "high",
@@ -385,7 +385,7 @@ describe("new writes stamp the slug AND the Clerk org id", () => {
 		const t = createT();
 		await seedWorld(t);
 		await expect(
-			asOrg(t, "not-filled-yet").mutation(api.tasks.create, {
+			asOrg(t, "not-filled-yet").mutation(api.tasks.create, { project: "test-project",
 				title: "Slug only",
 				assignedTo: SEAT,
 				priority: "high",
@@ -480,7 +480,7 @@ describe("a stamped row is still READABLE through its returns validator", () => 
 			});
 		});
 		const member = asOrg(t, ACME.slug);
-		const taskId = await member.mutation(api.tasks.create, {
+		const taskId = await member.mutation(api.tasks.create, { project: "test-project",
 			title: "Readable",
 			assignedTo: SEAT,
 			priority: "high",

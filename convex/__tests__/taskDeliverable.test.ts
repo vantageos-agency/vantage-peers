@@ -437,7 +437,7 @@ describe("writes: scheduling and tenant boundary", () => {
 		vi.useFakeTimers();
 		const t = createT();
 		await seedFleetAgents(t, ["eta"]);
-		const id = await t.mutation(api.tasks.create, {
+		const id = await t.mutation(api.tasks.create, { project: "test-project",
 			title: "ship the widget",
 			assignedTo: "eta",
 			createdBy: "eta",
@@ -455,7 +455,7 @@ describe("writes: scheduling and tenant boundary", () => {
 		vi.useFakeTimers();
 		const t = createT();
 		await seedFleetAgents(t, ["eta"]);
-		await t.mutation(api.tasks.create, {
+		await t.mutation(api.tasks.create, { project: "test-project",
 			title: "plain",
 			assignedTo: "eta",
 			createdBy: "eta",
@@ -540,7 +540,7 @@ describe("writes: scheduling and tenant boundary", () => {
 				(name) => secrets.get(`${slug}/${name}`),
 			);
 
-		const taskId = await asOrg("org-a").mutation(api.tasks.create, {
+		const taskId = await asOrg("org-a").mutation(api.tasks.create, { project: "test-project",
 			title: "org-a private task",
 			assignedTo: "eta",
 			priority: "high",

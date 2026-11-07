@@ -234,7 +234,7 @@ describe("update — assignee must stay on the org roster", () => {
 });
 
 describe("create — human, no createdBy", () => {
-	const args = { title: "Created from the dashboard", assignedTo: "sigma", priority: "medium" as const, status: "todo" as const };
+	const args = { title: "Created from the dashboard", project: "test-project", assignedTo: "sigma", priority: "medium" as const, status: "todo" as const };
 
 	test("org:editor -> own org stamped from scope, human recorded as user:<subject>", async () => {
 		const t = await setup();

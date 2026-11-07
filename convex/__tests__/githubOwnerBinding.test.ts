@@ -477,7 +477,7 @@ describe("a revoked binding stops routing (it stays REPORTED)", () => {
 			if (m) await ctx.db.patch(m._id, { lastDeployedAt: Date.now() + 60_000, lastDeployedSHA: "a-sha" });
 		});
 		await t.mutation(internal.githubOwnerBinding.deactivateInstallation, { installationId: 11 });
-		const id = await member(t, "org-a").mutation(api.tasks.create, {
+		const id = await member(t, "org-a").mutation(api.tasks.create, { project: "test-project",
 			title: "[Deploy] PR #3 merged — deploy pa to prod",
 			assignedTo: ORCH,
 			priority: "low",

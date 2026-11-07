@@ -23,7 +23,7 @@ import { convexTest } from "../../tests/fixtures/convexTestWithServiceAccount";
 import { describe, expect, test, vi } from "vitest";
 import { api } from "../_generated/api";
 import schema from "../schema";
-import { seedFleetAgents } from "../../tests/lib/seedFleetAgents";
+import { insertTaskRow, seedFleetAgents } from "../../tests/lib/seedFleetAgents";
 
 const FILE_LABELS = ["eta", "sigma"];
 
@@ -66,13 +66,28 @@ async function seedTask(
 		status?: "todo" | "in_progress" | "review" | "blocked" | "done";
 	} = {},
 ) {
+	// tasks:create refuses a task without a project, so a legacy null-project row
+	// (the case BOUND (c) pins) is seeded straight into the table.
+	if (overrides.project === undefined) {
+		return await t.run(async (ctx) =>
+			insertTaskRow(ctx, {
+				title: overrides.title ?? "Test task",
+				assignedTo: overrides.assignedTo ?? "sigma",
+				priority: "medium" as const,
+				status: overrides.status ?? "todo",
+				createdBy: "system",
+				createdAt: Date.now(),
+				updatedAt: Date.now(),
+			}),
+		);
+	}
 	return await t.mutation(api.tasks.create, {
 		title: overrides.title ?? "Test task",
 		assignedTo: overrides.assignedTo ?? "sigma",
 		priority: "medium" as const,
 		status: overrides.status ?? "todo",
 		createdBy: "system",
-		...(overrides.project !== undefined ? { project: overrides.project } : {}),
+		project: overrides.project,
 	});
 }
 

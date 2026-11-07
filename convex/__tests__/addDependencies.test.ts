@@ -37,7 +37,7 @@ function createT(): ReturnType<typeof convexTest> {
 type T = ReturnType<typeof createT>;
 
 async function makeTask(t: T, title: string, dependsOn?: Id<"tasks">[]): Promise<Id<"tasks">> {
-	return await t.mutation(api.tasks.create, {
+	return await t.mutation(api.tasks.create, { project: "test-project",
 		title,
 		assignedTo: "sigma",
 		priority: "medium",

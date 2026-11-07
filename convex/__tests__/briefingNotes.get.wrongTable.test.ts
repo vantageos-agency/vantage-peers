@@ -63,7 +63,7 @@ const newNote = (t: ReturnType<typeof createT>) =>
 	});
 
 const newTask = (t: ReturnType<typeof createT>) =>
-	t.mutation(api.tasks.create, {
+	t.mutation(api.tasks.create, { project: "test-project",
 		title: "Probe task",
 		assignedTo: "sigma",
 		priority: "low",

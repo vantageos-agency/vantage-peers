@@ -55,7 +55,7 @@ async function makeReviewTask(
 	t: ReturnType<typeof createT>,
 	overrides: Partial<{ createdBy: string; assignedTo: string }> = {},
 ) {
-	return await t.mutation(api.tasks.create, {
+	return await t.mutation(api.tasks.create, { project: "test-project",
 		title: "Review: mission PR",
 		assignedTo: overrides.assignedTo ?? "eta",
 		priority: "medium",

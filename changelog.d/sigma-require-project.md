@@ -1,0 +1,4 @@
+---
+section: Changed
+---
+- **`create_task` requires a `project` (Cloud; task k17c7mz2n765wacn6qxcgy00vn8hsa58).** A missing, empty or whitespace-only `project` is refused: at the MCP tool schema, and at `tasks:create` with `TASK_PROJECT_REQUIRED` (field named, no row written; the check runs after the identity, roster and assignee checks). `tasks:update` refuses setting `project` to empty; an update that omits it leaves legacy rows without a project working. The value is stored trimmed. Backend contract 20: the MCP now passes a new argument (`listNoDuration`) to an existing function, so `BACKEND_CONTRACT_VERSION` and `REQUIRED_CONTRACT_VERSION` move to 20 together; Convex first, MCP last. Tests: `convex/__tests__/tasks-require-project.test.ts`, `mcp-server/test/create-task-requires-project.test.ts`. Docs: `docs/cloud/task-project-and-billing.md`.

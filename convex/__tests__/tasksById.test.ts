@@ -128,6 +128,7 @@ const taskCount = () =>
 
 const createArgs = (over: Record<string, unknown>) => ({
 	title: "work",
+	project: "test-project",
 	assignedTo: "vera",
 	priority: "medium" as const,
 	status: "todo" as const,

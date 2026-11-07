@@ -29,6 +29,7 @@
  *   3. (consumer, outside convex/) mcp-server/src/__tests__/fail_task.tool.test.ts
  */
 
+import { seedBillableProjects } from "../../tests/lib/seedBillableProjects";
 import { ConvexError } from "convex/values";
 import { convexTest } from "../../tests/fixtures/convexTestWithServiceAccount";
 import { describe, expect, test } from "vitest";
@@ -59,7 +60,8 @@ async function makeTask(
 	t: ReturnType<typeof createT>,
 	overrides: Partial<{ assignedTo: string; createdBy: string; project: string }> = {},
 ) {
-	return await t.mutation(api.tasks.create, {
+	await seedBillableProjects(t);
+	return await t.mutation(api.tasks.create, { project: "test-project",
 		title: "Some task",
 		assignedTo: overrides.assignedTo ?? "sigma",
 		priority: "medium",

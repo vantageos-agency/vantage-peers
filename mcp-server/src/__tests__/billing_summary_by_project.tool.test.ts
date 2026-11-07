@@ -201,3 +201,53 @@ describe("billing_summary_by_project — registration + wiring", () => {
 		expect(parsed.invalidDurationTaskCount).toBe(0);
 	});
 });
+
+describe("billing_summary_by_project — split counts and listNoDuration (task k17c7mz2n765wacn6qxcgy00vn8hsa58)", () => {
+	it("forwards listNoDuration and returns the split counts and the list", async () => {
+		const { server, handlers } = buildFakeServer();
+		const convex = buildMockConvex();
+		registerTools(server, convex, LOCAL_STDIO_TRUST_CTX);
+		const handler = handlers.get(BILLING_SUMMARY_BY_PROJECT_TOOL_NAME)!;
+
+		(convex.query as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
+			byProject: [],
+			unattributedTaskCount: 2,
+			noProjectCount: 1,
+			noDurationCount: 1,
+			noDurationTasks: [
+				{ taskId: "t1", assignedTo: "pi", project: "p", completedAt: 5 },
+			],
+			noDurationTasksTruncated: false,
+			invalidDurationTaskCount: 0,
+			truncated: false,
+		});
+
+		const result = await handler({ from: 1, to: 9, listNoDuration: true });
+
+		expect(convex.query).toHaveBeenCalledWith("tasks:billingSummaryByProject", {
+			startDate: 1,
+			endDate: 9,
+			listNoDuration: true,
+		});
+		const parsed = JSON.parse(result.content[0].text);
+		expect(parsed.noProjectCount).toBe(1);
+		expect(parsed.noDurationCount).toBe(1);
+		expect(parsed.unattributedTaskCount).toBe(2);
+		expect(parsed.noDurationTasks).toEqual([
+			{ taskId: "t1", assignedTo: "pi", project: "p", completedAt: 5 },
+		]);
+		expect(parsed.noDurationTasksTruncated).toBe(false);
+	});
+
+	it("sends no listNoDuration and returns no list when it was not asked", async () => {
+		const { server, handlers } = buildFakeServer();
+		const convex = buildMockConvex();
+		registerTools(server, convex, LOCAL_STDIO_TRUST_CTX);
+		const handler = handlers.get(BILLING_SUMMARY_BY_PROJECT_TOOL_NAME)!;
+		await handler({ from: 1, to: 9 });
+		expect(convex.query).toHaveBeenCalledWith("tasks:billingSummaryByProject", {
+			startDate: 1,
+			endDate: 9,
+		});
+	});
+});

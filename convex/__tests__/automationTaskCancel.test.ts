@@ -102,7 +102,7 @@ describe("automation task cancel grant", () => {
 		const t = makeT();
 		await seedFleetAgents(t, FILE_LABELS);
 		await seedCancellers(t, ["pi"]);
-		const id = (await svc(t).mutation(api.tasks.create, {
+		const id = (await svc(t).mutation(api.tasks.create, { project: "test-project",
 			title: "plain chore",
 			assignedTo: "sigma",
 			priority: "low",

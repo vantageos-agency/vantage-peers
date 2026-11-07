@@ -205,7 +205,7 @@ const inbox = (w: World, recipient: string, orgSlug: string) =>
 	});
 
 const piCreatesTask = (w: World, extra: Record<string, unknown> = {}) =>
-	asService(w.t).mutation(api.tasks.create, {
+	asService(w.t).mutation(api.tasks.create, { project: "test-project",
 		title: "cross-org task",
 		priority: "low",
 		status: "todo",
@@ -644,7 +644,7 @@ describe("TASKS — assignedToAgentId across two organisations", () => {
 		const w = await world();
 		await marieGrantsPiToVictor(w);
 		await errorOf(
-			asService(w.t).mutation(api.tasks.create, {
+			asService(w.t).mutation(api.tasks.create, { project: "test-project",
 				title: "reverse",
 				priority: "low",
 				status: "todo",
@@ -693,7 +693,7 @@ describe("TASKS — assignedToAgentId across two organisations", () => {
 		const w = await world();
 		await marieGrantsPiToVictor(w);
 		await errorOf(
-			asService(w.t).mutation(api.tasks.create, {
+			asService(w.t).mutation(api.tasks.create, { project: "test-project",
 				title: "cross-org task",
 				priority: "low",
 				status: "todo",
@@ -708,7 +708,7 @@ describe("TASKS — assignedToAgentId across two organisations", () => {
 		const w = await world();
 		await marieGrantsPiToVictor(w);
 		await errorOf(
-			person(w.t, PERELLO, LAURENT, "org:admin").mutation(api.tasks.create, {
+			person(w.t, PERELLO, LAURENT, "org:admin").mutation(api.tasks.create, { project: "test-project",
 				title: "cross-org task",
 				priority: "low",
 				status: "todo",
@@ -753,7 +753,7 @@ describe("TASKS — assignedToAgentId across two organisations", () => {
 
 		// The same call WITH the agent proof is the linked create: the refusal
 		// above is the missing proof, not a broken link.
-		const taskId = await asService(w.t).mutation(api.tasks.create, {
+		const taskId = await asService(w.t).mutation(api.tasks.create, { project: "test-project",
 			...unproven,
 			verifiedActor: { agentId: op, orgSlug: "fleet-op" },
 		} as never);

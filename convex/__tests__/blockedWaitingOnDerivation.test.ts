@@ -50,7 +50,7 @@ async function makeTask(
 	t: ReturnType<typeof createT>,
 	overrides: Partial<{ assignedTo: string; createdBy: string }> = {},
 ) {
-	return await t.mutation(api.tasks.create, {
+	return await t.mutation(api.tasks.create, { project: "test-project",
 		title: "Some task",
 		assignedTo: overrides.assignedTo ?? "sigma",
 		priority: "medium",

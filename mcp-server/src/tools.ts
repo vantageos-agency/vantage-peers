@@ -526,7 +526,8 @@ export const BILLING_SUMMARY_BY_PROJECT_TOOL_DESCRIPTION =
 	"from/to are optional Unix ms bounds — omit both for an effectively unbounded window (defaults to epoch..now). " +
 	"NEVER hides truncation: if the underlying scan hit its cap, `truncated: true` is returned — treat that as a signal to narrow the period and re-query, not as a complete total. " +
 	"EXAMPLE: billing_summary_by_project project='vantage-immo' from=1783000000000 to=1783949200149. " +
-	"Returns {byProject: [{project, totalMinutes, taskCount}], unattributedTaskCount, truncated}.";
+	"unattributedTaskCount is split into noProjectCount (done task with no project, whatever its duration) and noDurationCount (a project but no measured duration); a task with neither counts in noProjectCount only. Pass listNoDuration=true to also get noDurationTasks [{taskId, assignedTo, project, completedAt}] (at most 200; noDurationTasksTruncated says when it is cut). A duration is never estimated. " +
+	"Returns {byProject: [{project, totalMinutes, taskCount}], unattributedTaskCount, noProjectCount, noDurationCount, truncated}.";
 
 export const billingSummaryByProjectArgsSchema = z.object({
 	project: z
@@ -545,6 +546,12 @@ export const billingSummaryByProjectArgsSchema = z.object({
 		.int()
 		.optional()
 		.describe("Unix ms, inclusive period end. Omit for now (Date.now())."),
+	listNoDuration: z
+		.boolean()
+		.optional()
+		.describe(
+			"When true, also return noDurationTasks: the done tasks that have a project but no measured duration (taskId, assignedTo, project, completedAt), capped at 200 with noDurationTasksTruncated.",
+		),
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -4993,14 +5000,18 @@ export function registerTools(
 		"create_task",
 		"Create a task assigned to an orchestrator with priority, status tracking, and optional mission link. " +
 			"WHEN: use to delegate work, track a deliverable, or instantiate a step from a mission plan. " +
-			"EXAMPLE: create_task title='Standardize tool descriptions' assignedTo='beta' priority='high' createdBy='alpha'.",
+			"`project` is required: a task with no project is refused, because billing groups done tasks by project. " +
+			"EXAMPLE: create_task title='Standardize tool descriptions' project='vantage-peers' assignedTo='beta' priority='high' createdBy='alpha'.",
 		{
 			title: z.string().describe("Task title"),
 			description: z.string().optional().describe("Detailed task description"),
 			project: z
 				.string()
-				.optional()
-				.describe("Project name — e.g. 'vantage-starter', 'perfect-ai-agent'"),
+				.trim()
+				.min(1)
+				.describe(
+					"REQUIRED. Project name — the billing line this task belongs to, e.g. 'vantage-starter', 'perfect-ai-agent'. A task without a project is refused (TASK_PROJECT_REQUIRED).",
+				),
 			tags: flexArrayOptional.describe("Optional tags for categorization"),
 			assignedTo: assigneeSchema,
 			assignedToAgentId: z
@@ -5562,7 +5573,7 @@ export function registerTools(
 			destructiveHint: false,
 			title: "Billing summary by project",
 		},
-		async ({ project, from, to }) => {
+		async ({ project, from, to, listNoDuration }) => {
 			try {
 				const result: any = await convex.query(
 					"tasks:billingSummaryByProject" as any,
@@ -5570,6 +5581,7 @@ export function registerTools(
 						startDate: from ?? 0,
 						endDate: to ?? Date.now(),
 						...(project !== undefined ? { project } : {}),
+						...(listNoDuration !== undefined ? { listNoDuration } : {}),
 					},
 				);
 				return {
@@ -5580,6 +5592,14 @@ export function registerTools(
 								{
 									byProject: result.byProject,
 									unattributedTaskCount: result.unattributedTaskCount,
+									noProjectCount: result.noProjectCount,
+									noDurationCount: result.noDurationCount,
+									...(result.noDurationTasks !== undefined
+										? {
+												noDurationTasks: result.noDurationTasks,
+												noDurationTasksTruncated: result.noDurationTasksTruncated,
+											}
+										: {}),
 									invalidDurationTaskCount: result.invalidDurationTaskCount,
 									truncated: result.truncated,
 								},

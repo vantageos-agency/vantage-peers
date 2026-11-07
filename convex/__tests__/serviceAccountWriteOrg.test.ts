@@ -75,6 +75,7 @@ async function seed(t: T): Promise<Record<string, Id<"agents">>> {
 
 const TASK = {
 	title: "t",
+	project: "test-project",
 	assignedTo: "telemaque",
 	priority: "high" as const,
 	status: "todo" as const,

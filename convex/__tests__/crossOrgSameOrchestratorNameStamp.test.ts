@@ -96,7 +96,7 @@ describe("cross-org isolation when two rosters share an orchestrator name", () =
 			const t = createT();
 			await seedBothOrgsSharingOrchestrator(t);
 
-			const taskId = await asOrg(t, "org-a").mutation(api.tasks.create, {
+			const taskId = await asOrg(t, "org-a").mutation(api.tasks.create, { project: "test-project",
 				title: "org-a private task",
 				assignedTo: SHARED_ORCHESTRATOR,
 				priority: "high",
@@ -112,7 +112,7 @@ describe("cross-org isolation when two rosters share an orchestrator name", () =
 			const t = createT();
 			await seedBothOrgsSharingOrchestrator(t);
 
-			const taskId = await asOrg(t, "org-a").mutation(api.tasks.create, {
+			const taskId = await asOrg(t, "org-a").mutation(api.tasks.create, { project: "test-project",
 				title: "org-a private task",
 				assignedTo: SHARED_ORCHESTRATOR,
 				priority: "high",
@@ -129,7 +129,7 @@ describe("cross-org isolation when two rosters share an orchestrator name", () =
 			const t = createT();
 			await seedBothOrgsSharingOrchestrator(t);
 
-			const taskId = await asOrg(t, "org-a").mutation(api.tasks.create, {
+			const taskId = await asOrg(t, "org-a").mutation(api.tasks.create, { project: "test-project",
 				title: "org-a private task",
 				assignedTo: SHARED_ORCHESTRATOR,
 				priority: "high",
@@ -147,7 +147,7 @@ describe("cross-org isolation when two rosters share an orchestrator name", () =
 			const t = createT();
 			await seedBothOrgsSharingOrchestrator(t);
 
-			const taskId = await asOrg(t, "org-a").mutation(api.tasks.create, {
+			const taskId = await asOrg(t, "org-a").mutation(api.tasks.create, { project: "test-project",
 				title: "org-a private task",
 				assignedTo: SHARED_ORCHESTRATOR,
 				priority: "high",
@@ -165,7 +165,7 @@ describe("cross-org isolation when two rosters share an orchestrator name", () =
 			const t = createT();
 			await seedBothOrgsSharingOrchestrator(t);
 
-			const taskId = await asOrg(t, "org-a").mutation(api.tasks.create, {
+			const taskId = await asOrg(t, "org-a").mutation(api.tasks.create, { project: "test-project",
 				title: "org-a private task",
 				assignedTo: SHARED_ORCHESTRATOR,
 				priority: "high",
@@ -262,7 +262,7 @@ describe("cross-org isolation when two rosters share an orchestrator name", () =
 
 describe("collection reads carry the SAME tenant boundary as by-id reads", () => {
 	const makeTask = (t: ReturnType<typeof createT>, slug: string) =>
-		asOrg(t, slug).mutation(api.tasks.create, {
+		asOrg(t, slug).mutation(api.tasks.create, { project: "test-project",
 			title: "org-a private task",
 			assignedTo: SHARED_ORCHESTRATOR,
 			priority: "high" as const,

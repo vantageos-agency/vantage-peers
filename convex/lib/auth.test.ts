@@ -92,14 +92,14 @@ describe("withOrgScope — no identity → fail-closed (RBAC_DENIED)", () => {
 		const t = createTestConvex();
 		await seedFleetAgents(t, FILE_LABELS);
 		// Seed two tasks assigned to different orchestrators
-		await t.withIdentity({ subject: "test-service-account-user-id" }).mutation(api.tasks.create, {
+		await t.withIdentity({ subject: "test-service-account-user-id" }).mutation(api.tasks.create, { project: "test-project",
 			title: "kappa task",
 			assignedTo: "kappa",
 			status: "todo",
 			priority: "medium",
 			createdBy: "kappa",
 		});
-		await t.withIdentity({ subject: "test-service-account-user-id" }).mutation(api.tasks.create, {
+		await t.withIdentity({ subject: "test-service-account-user-id" }).mutation(api.tasks.create, { project: "test-project",
 			title: "sigma task",
 			assignedTo: "sigma",
 			status: "todo",
@@ -114,14 +114,14 @@ describe("withOrgScope — no identity → fail-closed (RBAC_DENIED)", () => {
 	test("tasks.listForWebhook (internal) still returns all tasks for the HMAC-verified GitHub webhook path", async () => {
 		const t = createTestConvex();
 		await seedFleetAgents(t, FILE_LABELS);
-		await t.withIdentity({ subject: "test-service-account-user-id" }).mutation(api.tasks.create, {
+		await t.withIdentity({ subject: "test-service-account-user-id" }).mutation(api.tasks.create, { project: "test-project",
 			title: "kappa task",
 			assignedTo: "kappa",
 			status: "todo",
 			priority: "medium",
 			createdBy: "kappa",
 		});
-		await t.withIdentity({ subject: "test-service-account-user-id" }).mutation(api.tasks.create, {
+		await t.withIdentity({ subject: "test-service-account-user-id" }).mutation(api.tasks.create, { project: "test-project",
 			title: "sigma task",
 			assignedTo: "sigma",
 			status: "todo",
@@ -142,14 +142,14 @@ describe("withOrgScope — no org, recognized service account → master scope",
 	test("tasks.list returns all tasks when authenticated as the recognized service account (no org)", async () => {
 		const t = createTestConvex();
 		await seedFleetAgents(t, FILE_LABELS);
-		await t.withIdentity({ subject: "test-service-account-user-id" }).mutation(api.tasks.create, {
+		await t.withIdentity({ subject: "test-service-account-user-id" }).mutation(api.tasks.create, { project: "test-project",
 			title: "kappa task",
 			assignedTo: "kappa",
 			status: "todo",
 			priority: "medium",
 			createdBy: "kappa",
 		});
-		await t.withIdentity({ subject: "test-service-account-user-id" }).mutation(api.tasks.create, {
+		await t.withIdentity({ subject: "test-service-account-user-id" }).mutation(api.tasks.create, { project: "test-project",
 			title: "sigma task",
 			assignedTo: "sigma",
 			status: "todo",
@@ -177,14 +177,14 @@ describe("withOrgScope — no org, ARBITRARY identity (not service account) → 
 	test("tasks.list REFUSES an arbitrary no-org identity (not master, no data)", async () => {
 		const t = createTestConvex();
 		await seedFleetAgents(t, FILE_LABELS);
-		await t.withIdentity({ subject: "test-service-account-user-id" }).mutation(api.tasks.create, {
+		await t.withIdentity({ subject: "test-service-account-user-id" }).mutation(api.tasks.create, { project: "test-project",
 			title: "kappa task",
 			assignedTo: "kappa",
 			status: "todo",
 			priority: "medium",
 			createdBy: "kappa",
 		});
-		await t.withIdentity({ subject: "test-service-account-user-id" }).mutation(api.tasks.create, {
+		await t.withIdentity({ subject: "test-service-account-user-id" }).mutation(api.tasks.create, { project: "test-project",
 			title: "sigma task",
 			assignedTo: "sigma",
 			status: "todo",
@@ -234,7 +234,7 @@ describe("withOrgScope — normal org-scoped identity unaffected", () => {
 			organizationSlug: "acme-hr",
 			org_id: testClerkOrgId("acme-hr"),
 		} as Parameters<typeof t.withIdentity>[0]);
-		await tSeed.mutation(api.tasks.create, {
+		await tSeed.mutation(api.tasks.create, { project: "test-project",
 			title: "victor task",
 			assignedTo: "victor",
 			status: "todo",
@@ -318,7 +318,7 @@ describe("withOrgScope — active org mapping", () => {
 			organizationSlug: "acme-hr",
 			org_id: testClerkOrgId("acme-hr"),
 		} as Parameters<typeof t.withIdentity>[0]);
-		await tWithAuth.mutation(api.tasks.create, {
+		await tWithAuth.mutation(api.tasks.create, { project: "test-project",
 			title: "victor task",
 			assignedTo: "victor",
 			status: "todo",

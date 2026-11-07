@@ -876,6 +876,21 @@ async function linkedAssigneeOf(
 		: undefined;
 }
 
+// A task carries a project, or it is not created (task
+// k17c7mz2n765wacn6qxcgy00vn8hsa58): billing groups done tasks by project, and a
+// task without one lands in noProjectCount, outside every invoice line. Refused
+// with a stable code naming the field. Returns the trimmed value, so "p" and
+// "p " never split one project into two billing lines.
+function requireProject(project: string | undefined, door: string): string {
+	const trimmed = project?.trim() ?? "";
+	if (trimmed === "") {
+		throw new ConvexError(
+			`TASK_PROJECT_REQUIRED: ${door} needs a non-empty \`project\` (the billing line this task belongs to) — ${JSON.stringify({ field: "project", door })}`,
+		);
+	}
+	return trimmed;
+}
+
 export const create = mutation({
 	args: createTaskArgsValidatorWithCredential,
 	returns: v.id("tasks"),
@@ -1022,6 +1037,9 @@ export const create = mutation({
 			// string; the prefix means it can never equal a roster slug, so it grants
 			// no creator authority to any agent) and lastActedBy records the same.
 			const actor = await resolveHumanActor(ctx, scope, { door: "tasks:create" });
+			// Last check before the write: a caller refused for who they are
+			// learns nothing about the project rule.
+			taskArgs.project = requireProject(taskArgs.project, "tasks:create");
 			return await insertTask(
 				ctx,
 				{ ...taskArgs, assignedTo, createdBy: actor, lastActedBy: actor },
@@ -1036,6 +1054,8 @@ export const create = mutation({
 		// "system", an automation label) records no ID: nothing is guessed, and a
 		// row with no creator ID gives no actor creator authority.
 		const createdById = scope.callerActorId;
+		// Last check before the write (see the human path above).
+		taskArgs.project = requireProject(taskArgs.project, "tasks:create");
 		return await insertTask(
 			ctx,
 			{ ...taskArgs, assignedTo, createdBy: scope.callerLabel ?? taskArgs.createdBy },
@@ -2441,6 +2461,13 @@ export const update = mutation({
 			if (assigneeById === undefined) {
 				await recordNameOnlyCall(ctx, "tasks:update:assignedTo");
 			}
+		}
+
+		// An update that omits `project` leaves it untouched (legacy rows without
+		// one keep working); one that SETS it must set a real value. Checked after
+		// authorisation, so a refused caller learns nothing about the rule.
+		if (fields.project !== undefined) {
+			fields.project = requireProject(fields.project, "tasks:update");
 		}
 
 		// Build patch object with only provided fields
@@ -5723,6 +5750,9 @@ export const getBulkCompleteRun = query({
 // ─────────────────────────────────────────────────────────────────────────────
 
 const BILLING_SUMMARY_SCAN_CAP = 5000;
+// listNoDuration returns at most this many rows; the rest is reported as
+// noDurationTasksTruncated: true, never silently dropped.
+const BILLING_NO_DURATION_LIST_CAP = 200;
 
 export const billingSummaryByProject = query({
 	args: {
@@ -5733,6 +5763,9 @@ export const billingSummaryByProject = query({
 		// over an unfiltered scan (that would reproduce the same "bound applied
 		// after the fetch" defect this handler was fixed for).
 		project: v.optional(v.string()),
+		// When true, also return `noDurationTasks` (the done tasks that have a
+		// project but no measured duration), capped at BILLING_NO_DURATION_LIST_CAP.
+		listNoDuration: v.optional(v.boolean()),
 	},
 	returns: v.object({
 		byProject: v.array(
@@ -5747,7 +5780,25 @@ export const billingSummaryByProject = query({
 				legacyMinutes: v.number(),
 			}),
 		),
-		unattributedTaskCount: v.number(), // done tasks in range with no project or no actualMinutes
+		unattributedTaskCount: v.number(), // done tasks in range with no project or no actualMinutes (= noProjectCount + noDurationCount; kept for compatibility)
+		// The two causes of unattributedTaskCount, apart. A task with NEITHER a
+		// project nor a duration counts in noProjectCount only, so the two never
+		// double-count and always sum to unattributedTaskCount.
+		noProjectCount: v.number(),
+		noDurationCount: v.number(),
+		// Present only when `listNoDuration` was asked. A duration is never
+		// estimated or filled in: these rows are listed so a human can fix them.
+		noDurationTasks: v.optional(
+			v.array(
+				v.object({
+					taskId: v.id("tasks"),
+					assignedTo: v.string(),
+					project: v.string(),
+					completedAt: v.number(),
+				}),
+			),
+		),
+		noDurationTasksTruncated: v.optional(v.boolean()),
 		// Rows excluded because actualMinutes < 0 — an impossible value (e.g.
 		// completedAt earlier than startedAt, or a bad write). Never silently
 		// summed and never clamped to zero — surfaced here so the caller sees
@@ -5773,8 +5824,13 @@ export const billingSummaryByProject = query({
 		const emptySummary = {
 			byProject: [],
 			unattributedTaskCount: 0,
+			noProjectCount: 0,
+			noDurationCount: 0,
 			invalidDurationTaskCount: 0,
 			truncated: false,
+			...(args.listNoDuration === true
+				? { noDurationTasks: [], noDurationTasksTruncated: false }
+				: {}),
 		};
 		if (scope.refused) return emptySummary;
 		requireScope(scope, "view-own-tasks");
@@ -5842,12 +5898,37 @@ export const billingSummaryByProject = query({
 			string,
 			{ totalMinutes: number; taskCount: number; legacyTaskCount: number; legacyMinutes: number }
 		>();
-		let unattributedTaskCount = 0;
+		let noProjectCount = 0;
+		let noDurationCount = 0;
 		let invalidDurationTaskCount = 0;
+		const noDurationTasks: Array<{
+			taskId: Id<"tasks">;
+			assignedTo: string;
+			project: string;
+			completedAt: number;
+		}> = [];
 
 		for (const task of scoped) {
-			if (task.project === undefined || task.actualMinutes === undefined) {
-				unattributedTaskCount++;
+			// Split rule: no project -> noProjectCount (whatever its duration);
+			// a project but no actualMinutes -> noDurationCount. Exclusive.
+			if (task.project === undefined) {
+				noProjectCount++;
+				continue;
+			}
+			if (task.actualMinutes === undefined) {
+				noDurationCount++;
+				if (
+					args.listNoDuration === true &&
+					noDurationTasks.length < BILLING_NO_DURATION_LIST_CAP &&
+					task.completedAt !== undefined
+				) {
+					noDurationTasks.push({
+						taskId: task._id,
+						assignedTo: task.assignedTo,
+						project: task.project,
+						completedAt: task.completedAt,
+					});
+				}
 				continue;
 			}
 			if (task.actualMinutes < 0) {
@@ -5873,7 +5954,20 @@ export const billingSummaryByProject = query({
 			.map(([proj, agg]) => ({ project: proj, ...agg }))
 			.sort((a, b) => b.totalMinutes - a.totalMinutes);
 
-		return { byProject, unattributedTaskCount, invalidDurationTaskCount, truncated };
+		return {
+			byProject,
+			unattributedTaskCount: noProjectCount + noDurationCount,
+			noProjectCount,
+			noDurationCount,
+			invalidDurationTaskCount,
+			truncated,
+			...(args.listNoDuration === true
+				? {
+						noDurationTasks,
+						noDurationTasksTruncated: noDurationCount > noDurationTasks.length,
+					}
+				: {}),
+		};
 	},
 });
 

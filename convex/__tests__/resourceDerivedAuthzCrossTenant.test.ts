@@ -56,7 +56,7 @@ const TENANT_A = "tenant-a";
 const TENANT_B = "tenant-b";
 
 async function seedTaskOwnedByA(t: ReturnType<typeof createT>) {
-	return await t.mutation(api.tasks.create, {
+	return await t.mutation(api.tasks.create, { project: "test-project",
 		title: "A-owned task",
 		assignedTo: TENANT_A,
 		createdBy: TENANT_A,

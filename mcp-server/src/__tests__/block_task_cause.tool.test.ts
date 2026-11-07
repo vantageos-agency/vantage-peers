@@ -90,7 +90,7 @@ describe("block_task MCP tool — blockedCause round-trips, human vs authorisati
 	});
 
 	it("blockedCause='human' and blockedCause='authorisation' produce distinguishable tool output", async () => {
-		const humanTaskRes = await callText(tools.get("create_task")!, {
+		const humanTaskRes = await callText(tools.get("create_task")!, { project: "test-project",
 			title: "waiting-on-human",
 			assignedTo: "sigma",
 			createdBy: "sigma",
@@ -99,7 +99,7 @@ describe("block_task MCP tool — blockedCause round-trips, human vs authorisati
 		});
 		const humanTaskId = JSON.parse(humanTaskRes).taskId;
 
-		const authTaskRes = await callText(tools.get("create_task")!, {
+		const authTaskRes = await callText(tools.get("create_task")!, { project: "test-project",
 			title: "waiting-on-authorisation",
 			assignedTo: "sigma",
 			createdBy: "sigma",
@@ -138,7 +138,7 @@ describe("block_task MCP tool — blockedCause round-trips, human vs authorisati
 	});
 
 	it("omitting blockedCause at the MCP boundary still succeeds and defaults to 'other' server-side", async () => {
-		const createRes = await callText(tools.get("create_task")!, {
+		const createRes = await callText(tools.get("create_task")!, { project: "test-project",
 			title: "old-caller-no-blockedCause",
 			assignedTo: "sigma",
 			createdBy: "sigma",

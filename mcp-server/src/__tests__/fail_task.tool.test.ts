@@ -19,6 +19,7 @@ import schema from "../../../convex/schema.js";
 import { LOCAL_STDIO_TRUST_CTX } from "../auth.js";
 import { registerTools } from "../tools.js";
 import { seedFleetAgents } from "../../../tests/lib/seedFleetAgents.js";
+import { seedBillableProjects } from "../../../tests/lib/seedBillableProjects.js";
 
 const modules = Object.fromEntries(
 	Object.entries(
@@ -86,11 +87,12 @@ describe("fail_task MCP tool — the third terminal state, distinguishable from 
 		});
 		// The task doors decide on agent IDs: "sigma" is an agent of the fleet.
 		await seedFleetAgents(t, ["sigma"]);
+		await seedBillableProjects(t);
 		tools = captureTools(makeFakeConvexClient(t));
 	});
 
 	it("fail_task returns status='failed', distinct from complete_task's 'done'", async () => {
-		const failCreate = await callText(tools.get("create_task")!, {
+		const failCreate = await callText(tools.get("create_task")!, { project: "test-project",
 			title: "will-fail",
 			assignedTo: "sigma",
 			createdBy: "sigma",
@@ -99,7 +101,7 @@ describe("fail_task MCP tool — the third terminal state, distinguishable from 
 		});
 		const failTaskId = JSON.parse(failCreate).taskId;
 
-		const doneCreate = await callText(tools.get("create_task")!, {
+		const doneCreate = await callText(tools.get("create_task")!, { project: "test-project",
 			title: "will-succeed",
 			assignedTo: "sigma",
 			createdBy: "sigma",
@@ -130,7 +132,7 @@ describe("fail_task MCP tool — the third terminal state, distinguishable from 
 	});
 
 	it("update_task refuses status='failed' at the MCP boundary the same way it refuses 'blocked'", async () => {
-		const createRes = await callText(tools.get("create_task")!, {
+		const createRes = await callText(tools.get("create_task")!, { project: "test-project",
 			title: "no-backdoor-to-failed",
 			assignedTo: "sigma",
 			createdBy: "sigma",

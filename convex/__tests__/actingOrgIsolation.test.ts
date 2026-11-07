@@ -541,6 +541,7 @@ describe("the acting org is resolved by the identity layer", () => {
 describe("transport proofs under the acting org", () => {
 	const taskArgs = (s: Seeded, org: Org) => ({
 		title: "acting task",
+		project: "test-project",
 		assignedTo: ROSTER[A],
 		priority: "medium",
 		status: "todo",

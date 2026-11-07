@@ -317,6 +317,7 @@ describe("missionTemplates:instantiateTemplateIntoMission — acting identity", 
 describe("tasks:create — createdBy already guarded; assignedTo now bound", () => {
 	const args = (createdBy: string, assignedTo: string) => ({
 		title: "t",
+		project: "test-project",
 		assignedTo,
 		priority: "medium" as const,
 		status: "todo" as const,

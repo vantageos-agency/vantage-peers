@@ -96,7 +96,7 @@ describe("update_task MCP tool — callerOrchestrator optional at the schema, st
 	});
 
 	it("omitting callerOrchestrator does not mutate the task — Convex refuses it", async () => {
-		const createRes = await callText(tools.get("create_task")!, {
+		const createRes = await callText(tools.get("create_task")!, { project: "test-project",
 			title: "owner-task",
 			assignedTo: "alpha",
 			createdBy: "alpha",
@@ -120,7 +120,7 @@ describe("update_task MCP tool — callerOrchestrator optional at the schema, st
 	});
 
 	it("second assertion — supplying the owning caller still succeeds", async () => {
-		const createRes = await callText(tools.get("create_task")!, {
+		const createRes = await callText(tools.get("create_task")!, { project: "test-project",
 			title: "owner-task-2",
 			assignedTo: "alpha",
 			createdBy: "alpha",

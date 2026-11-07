@@ -87,7 +87,7 @@ async function seedTask(
 	task: SeedTask,
 ) {
 	// We use the mutation directly and then patch optional timing fields.
-	const taskId = await t.mutation(api.tasks.create, {
+	const taskId = await t.mutation(api.tasks.create, { project: "test-project",
 		title: task.title ?? "Seed task",
 		assignedTo: task.assignedTo,
 		status: task.status,

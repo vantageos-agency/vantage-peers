@@ -253,6 +253,7 @@ async function agentCredential(): Promise<string> {
 // directly, so the defaulted fields are spelled out.
 const TASK = {
 	title: "from a person",
+	project: "test-project",
 	assignedTo: "agent-a",
 	priority: "high",
 	status: "todo",
@@ -342,7 +343,7 @@ describe("pole 1 — an editor writes as itself: served, actor user:<sub>, own o
 	it("naming ITSELF (user:<own sub>) restates the token and is served as itself", async () => {
 		await seedAssignee();
 		const tools = realTools(await contextFor(await personToken("user_editor")));
-		const r = await call(tools, "create_task", {
+		const r = await call(tools, "create_task", { project: "test-project",
 			...TASK,
 			createdBy: "user:user_editor",
 		});
@@ -374,7 +375,7 @@ describe("pole 3 — a person naming an agent without its credential is refused"
 	it("createdBy / from / callerOrchestrator = agent-a", async () => {
 		const tools = realTools(await contextFor(await personToken("user_editor")));
 		for (const [name, args] of [
-			["create_task", { ...TASK, createdBy: "agent-a" }],
+			["create_task", { project: "test-project", ...TASK, createdBy: "agent-a" }],
 			["send_message", { from: "agent-a", channel: "agent-a", content: "x" }],
 			["create_mission", { ...MISSION, createdBy: "agent-a" }],
 		] as const) {
@@ -392,7 +393,7 @@ describe("pole 4 — a person naming ANOTHER user is refused", () => {
 	it("createdBy / from = user:other writes nothing", async () => {
 		const tools = realTools(await contextFor(await personToken("user_editor")));
 		for (const [name, args] of [
-			["create_task", { ...TASK, createdBy: "user:other" }],
+			["create_task", { project: "test-project", ...TASK, createdBy: "user:other" }],
 			[
 				"send_message",
 				{ from: "user:other", channel: "agent-a", content: "x" },
@@ -417,7 +418,7 @@ describe("pole 5 — seat tokens and agent credentials are unchanged", () => {
 				await agentCredential(),
 			),
 		);
-		const r = await call(tools, "create_task", {
+		const r = await call(tools, "create_task", { project: "test-project",
 			...TASK,
 			createdBy: "agent-a",
 		});
@@ -467,7 +468,7 @@ describe("pole 5 — seat tokens and agent credentials are unchanged", () => {
 			});
 		});
 		const tools = realTools(await contextFor(token));
-		const r = await call(tools, "create_task", {
+		const r = await call(tools, "create_task", { project: "test-project",
 			...TASK,
 			createdBy: "agent-a",
 		});
@@ -514,7 +515,7 @@ describe("pole 5 — seat tokens and agent credentials are unchanged", () => {
 			});
 		});
 		const tools = realTools(await contextFor(token));
-		const r = await call(tools, "create_task", {
+		const r = await call(tools, "create_task", { project: "test-project",
 			...TASK,
 			createdBy: "agent-a",
 		});

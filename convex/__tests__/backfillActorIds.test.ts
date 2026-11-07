@@ -398,7 +398,7 @@ describe("new writes stamp the IDs", () => {
 	test("tasks.create stamps createdById / assignedToId from the caller's own org (not the same-named agent of another org)", async () => {
 		const t = createT();
 		const ids = await seedIris(t);
-		const taskId = await asOrg(t, "acme-hr").mutation(api.tasks.create, {
+		const taskId = await asOrg(t, "acme-hr").mutation(api.tasks.create, { project: "test-project",
 			title: "t",
 			assignedTo: "irisonly",
 			priority: "high",
@@ -415,7 +415,7 @@ describe("new writes stamp the IDs", () => {
 	test("tasks.update stamps the reassignment: assignedToId follows, lastAssignedToId is the prior assignee", async () => {
 		const t = createT();
 		const ids = await seedIris(t);
-		const taskId = await asOrg(t, "acme-hr").mutation(api.tasks.create, {
+		const taskId = await asOrg(t, "acme-hr").mutation(api.tasks.create, { project: "test-project",
 			title: "t",
 			assignedTo: "irisonly",
 			priority: "high",
