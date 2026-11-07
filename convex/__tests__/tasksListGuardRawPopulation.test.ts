@@ -116,9 +116,32 @@ describe("tasks.list — overflow guard reads the raw index population", () => {
 		});
 	});
 
-	test("assignedTo + no status + updatedSince: complete or SCAN_CAP_EXCEEDED", async () => {
+	test("assignedTo + no status + updatedSince: the window (cap+55 rows) pages complete, the wanted rows behind the newer unrequested ones included", async () => {
 		const { t, since } = await seed({}, ["blocked", "cancelled"], "todo");
-		await expectCompleteOrLoud(t, { assignedTo: ASSIGNEE, updatedSince: since });
+		const caller = t.withIdentity({ subject: "test-service-account-user-id" });
+		const all: Row[] = [];
+		let pos: { createdBefore: number; updatedCursor: number } | undefined;
+		for (let page = 0; page < 100; page++) {
+			const rows = extractItems(
+				await caller.query(api.tasks.list, {
+					assignedTo: ASSIGNEE,
+					updatedSince: since,
+					limit: 200,
+					fields: "full",
+					...(pos ?? {}),
+				} as never),
+			);
+			all.push(...rows);
+			if (rows.length < 200) break;
+			const last = rows[rows.length - 1];
+			pos = {
+				createdBefore: last._creationTime as number,
+				updatedCursor: last.updatedAt as number,
+			};
+		}
+		expect(all).toHaveLength(MATCHING + NEWER_UNREQUESTED);
+		expect(new Set(all.map((r) => r._id)).size).toBe(all.length);
+		expect(all.filter((r) => String(r.title).startsWith("wanted-"))).toHaveLength(MATCHING);
 	});
 
 	test("project + 2 statuses (no assignee): complete or SCAN_CAP_EXCEEDED", async () => {

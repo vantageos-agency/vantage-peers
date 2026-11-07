@@ -62,6 +62,10 @@ export function applyPagingDefaults(
  *         For convex queries without paginate() (tasks, briefingNotes…) — the
  *         MCP layer forwards createdBefore as a where-filter and computes the
  *         next cursor from the last row's _creationTime.
+ *       * { v: 2; createdBefore: number; updatedAt: number }
+ *         Same, for a read in updatedAt order (list_tasks with updatedSince): the
+ *         resume position is the last row's pair (updatedAt, _creationTime).
+ *         A token without `v`/`updatedAt` still decodes as a plain createdBefore.
  *       * { backendCursor: string | null }
  *         For convex queries that support paginationOpts (memories, …) — the
  *         MCP layer forwards backendCursor as paginationOpts.cursor and the
@@ -89,7 +93,7 @@ export function clampLimit(limit: number | null | undefined): number {
 }
 
 export type CursorPayload =
-	| { createdBefore: number; lastId?: string }
+	| { createdBefore: number; lastId?: string; v?: 2; updatedAt?: number }
 	| { backendCursor: string | null };
 
 /**
@@ -124,10 +128,23 @@ export function decodeCursor(
 			typeof p.createdBefore === "number" &&
 			Number.isFinite(p.createdBefore)
 		) {
-			const out: { createdBefore: number; lastId?: string } = {
+			const out: {
+				createdBefore: number;
+				lastId?: string;
+				v?: 2;
+				updatedAt?: number;
+			} = {
 				createdBefore: p.createdBefore,
 			};
 			if (typeof p.lastId === "string") out.lastId = p.lastId;
+			if (
+				p.v === 2 &&
+				typeof p.updatedAt === "number" &&
+				Number.isFinite(p.updatedAt)
+			) {
+				out.v = 2;
+				out.updatedAt = p.updatedAt;
+			}
 			return out;
 		}
 		if (
