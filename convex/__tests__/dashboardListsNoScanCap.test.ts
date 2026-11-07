@@ -15,7 +15,8 @@
  * Poles:
  *   tasks.list {}        master (operator-org admin) over > cap rows -> served   [RED before]
  *   tasks.list {}        member of a small org, table > cap elsewhere -> own rows [RED before]
- *   tasks.list {createdBy} over > cap rows -> STILL refused SCAN_CAP_EXCEEDED (loud, unchanged)
+ *   tasks.list {createdBy} over > cap rows -> SERVED from the creator index (task k171t66wdznjztdpb8dby6f86h8hsx61)
+ *   tasks.list {createdBy, project} over > cap rows -> STILL refused SCAN_CAP_EXCEEDED (no index carries both keys)
  *   briefingNotes.list {limit} member, own org byte-heavy -> served             [RED before]
  *   briefingNotes.list {limit:50} operator-org admin over > cap rows -> served
  *   briefingNotes.list {updatedSince} over cap -> STILL refused (unchanged)
@@ -88,7 +89,7 @@ const member = (t: T) =>
 		org_role: "org:member",
 	} as Identity);
 
-async function seedTasks(t: T, orgId: string, count: number) {
+async function seedTasks(t: T, orgId: string, count: number, project?: string) {
 	const CHUNK = 500;
 	for (let from = 0; from < count; from += CHUNK) {
 		await t.run(async (ctx) => {
@@ -103,6 +104,7 @@ async function seedTasks(t: T, orgId: string, count: number) {
 					updatedAt: Date.now(),
 					orgId,
 					clerkOrgId: testClerkOrgId(orgId),
+					...(project !== undefined ? { project } : {}),
 				} as never);
 			}
 		});
@@ -141,12 +143,20 @@ describe("tasks.list {} — the dashboard's shape", () => {
 		expect(rows.every((r) => r.orgId === SMALL_ORG)).toBe(true);
 	});
 
-	test("createdBy over more than the cap is STILL refused loudly", async () => {
+	test("createdBy over more than the cap is served from the creator index", async () => {
 		const t = convexTest(schema, modules);
 		await seedOrgs(t);
 		await seedTasks(t, BIG_ORG, ROWS);
+		const rows = await operator(t).query(api.tasks.list, { createdBy: "sigma" });
+		expect(rows).toHaveLength(30);
+	});
+
+	test("createdBy + project over more than the cap is STILL refused loudly", async () => {
+		const t = convexTest(schema, modules);
+		await seedOrgs(t);
+		await seedTasks(t, BIG_ORG, ROWS, "big-project");
 		const text = await refusalText(
-			operator(t).query(api.tasks.list, { createdBy: "sigma" }),
+			operator(t).query(api.tasks.list, { createdBy: "sigma", project: "big-project" }),
 		);
 		expect(text).toContain("SCAN_CAP_EXCEEDED");
 	});

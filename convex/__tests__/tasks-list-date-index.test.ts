@@ -262,4 +262,24 @@ describe("tasks.list — what a range cannot serve still refuses loudly", () => 
 			} as never),
 		).rejects.toThrow(/SCAN_CAP_EXCEEDED/);
 	});
+
+	test("an updatedSince window that itself holds more rows than the cap -> SCAN_CAP_EXCEEDED naming the window, never a partial page", async () => {
+		await expect(
+			asMember(t, FLEET).query(api.tasks.list, {
+				status: "done",
+				updatedSince: 0,
+				limit: 10,
+			} as never),
+		).rejects.toThrow(/SCAN_CAP_EXCEEDED.*shrink the updatedSince window/s);
+	});
+
+	test("the master's oversized window is refused the same way", async () => {
+		await expect(
+			asMaster(t).query(api.tasks.list, {
+				status: "done",
+				updatedSince: 0,
+				limit: 10,
+			} as never),
+		).rejects.toThrow(/SCAN_CAP_EXCEEDED.*shrink the updatedSince window/s);
+	});
 });

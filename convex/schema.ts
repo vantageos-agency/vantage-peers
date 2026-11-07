@@ -642,9 +642,12 @@ export default defineSchema({
 		.index("by_assignee", ["assignedTo", "status"])
 		// Assignee BY ID (M7). An agents-row ID belongs to exactly one org, so the ID
 		// itself narrows the read to one tenant inside the query: no org-prefixed twin
-		// is needed, and none is added (tasks sits at the 32-index ceiling, pinned by
-		// convex/__tests__/schemaIndexBudget.test.ts). by_assigneeId_status_updatedAt
-		// also serves (assignedToId, status) by its prefix, replacing by_assigneeId_status.
+		// is needed, and none is added (tasks is limited to 32 indexes, pinned by
+		// convex/__tests__/schemaIndexBudget.test.ts). by_assigneeId_status is
+		// creation-ordered (the cursor is in its range); by_assigneeId_status_updatedAt
+		// is updatedAt-ordered (the updatedSince window), so the two are not
+		// interchangeable.
+		.index("by_assigneeId_status", ["assignedToId", "status"])
 		.index("by_assigneeId_project_status", [
 			"assignedToId",
 			"project",
@@ -669,27 +672,9 @@ export default defineSchema({
 		// or field changes.
 		.index("by_orgId_status", ["orgId", "status"])
 		.index("by_orgId_status_clerk_id", ["clerkOrgId", "status"])
-		.index("by_orgId_assignee_status", ["orgId", "assignedTo", "status"])
-		.index("by_orgId_assignee_status_clerk_id", [
-			"clerkOrgId",
-			"assignedTo",
-			"status",
-		])
 		.index("by_orgId_project_status", ["orgId", "project", "status"])
 		.index("by_orgId_project_status_clerk_id", [
 			"clerkOrgId",
-			"project",
-			"status",
-		])
-		.index("by_orgId_assignee_project_status", [
-			"orgId",
-			"assignedTo",
-			"project",
-			"status",
-		])
-		.index("by_orgId_assignee_project_status_clerk_id", [
-			"clerkOrgId",
-			"assignedTo",
 			"project",
 			"status",
 		])
@@ -724,11 +709,8 @@ export default defineSchema({
 			"missionId",
 			"status",
 		])
-		// Compound indexes added to close the silent-filter-drop defect in
-		// convex/tasks.ts `list`: when a caller supplies assignedTo/assignedToInstance
-		// TOGETHER with project, the query must apply BOTH filters via a matching
-		// index, never pick one and silently discard the other.
-		.index("by_assignee_project", ["assignedTo", "project", "status"])
+		// A caller giving assignedTo TOGETHER with project is served by
+		// by_assigneeId_project_status (above), never one filter with the other dropped.
 		.index("by_instance_project", ["assignedToInstance", "project", "status"])
 		// billingSummaryByProject (convex/tasks.ts) — the period MUST bound the
 		// query itself, not a post-hoc in-memory filter over a fixed-size scan
@@ -745,20 +727,24 @@ export default defineSchema({
 			"project",
 			"completedAt",
 		])
-		// Day-132 live-defect fix: `updatedSince` on `tasks.list` was filtered
-		// IN-MEMORY after a fixed-size widened scan, so narrowing the window
-		// never reduced the number of candidates fetched and the scan cap bit
-		// into normal usage on exactly two branches (measured in production):
-		// `assignedTo` alone, and `assignedTo` + `status`. These two compound
-		// indexes end in `updatedAt` so the bound lives in the query itself —
-		// no index added for missions/briefingNotes, whose branches were not
-		// measured to exceed the cap.
-		.index("by_assignee_updatedAt", ["assignedTo", "updatedAt"])
-		.index("by_assignee_status_updatedAt", [
-			"assignedTo",
-			"status",
-			"updatedAt",
-		])
+		// Date bounds served by an index RANGE (task k171t66wdznjztdpb8dby6f86h8hsx61):
+		// `updatedSince` on tasks.list is `.gte("updatedAt", since)` after the tenant
+		// (or status) equality, and a creator's rows are read through an index that
+		// ends in `_creationTime` so the createdBefore cursor stays in the range.
+		// Prod measured 2026-11-07: a bucket above the 2000-row scan cap made
+		// list_tasks {status:[done], updatedSince} unanswerable. The superseded
+		// label-keyed indexes (by_assignee_updatedAt, by_assignee_status_updatedAt,
+		// by_assignee_project, by_orgId_assignee_status[_clerk_id],
+		// by_orgId_assignee_project_status[_clerk_id]) had no reader since the
+		// assignee moved to its agents-row ID (M7) and were dropped to make room.
+		.index("by_orgId_status_updatedAt", ["orgId", "status", "updatedAt"])
+		.index("by_orgId_createdBy_status", ["orgId", "createdBy", "status"])
+		.index("by_status_updatedAt", ["status", "updatedAt"])
+		.index("by_createdBy_status", ["createdBy", "status"])
+		// by_status ends in createdAt, not the implicit _creationTime the list cursor
+		// pages on; this one is pinned by status alone so `.lt("_creationTime", …)` is
+		// a valid range clause.
+		.index("by_status_creation", ["status"])
 		// Day 159 — reciprocal unblock: find every task waiting on a given
 		// task so it can be swept back to "todo" the moment that task closes.
 		.index("by_blockedOnTaskId", ["blockedOnTaskId"])

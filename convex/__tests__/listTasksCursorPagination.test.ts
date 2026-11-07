@@ -132,7 +132,8 @@ describe("tasks.list — cursor pagination walks a queue larger than one page (D
 		expect(exhausted).toEqual([]);
 
 		// A call that CANNOT be measured (widened scan overflow, forced via
-		// updatedSince + createdBy on a global, unindexed candidate set) must
+		// createdBy + project: no index carries both keys, so the project bucket is
+		// scanned wide and capped; createdBy alone is served by a creator index) must
 		// THROW ConvexError SCAN_CAP_EXCEEDED — never render as the same empty
 		// array as the genuinely-exhausted case above. Seed past the cap.
 		// eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -145,6 +146,7 @@ describe("tasks.list — cursor pagination walks a queue larger than one page (D
 					priority: "medium",
 					status: "todo",
 					createdBy: "distinguish-overflow-creator",
+					project: "distinguish-overflow-project",
 					createdAt: now,
 					updatedAt: now,
 				});
@@ -155,6 +157,7 @@ describe("tasks.list — cursor pagination walks a queue larger than one page (D
 			.withIdentity({ subject: "test-service-account-user-id" })
 			.query(api.tasks.list, {
 				createdBy: "distinguish-overflow-creator",
+				project: "distinguish-overflow-project",
 				createdBefore: Date.now() + 1_000_000,
 				limit: 50,
 				fields: "lite",
@@ -174,8 +177,10 @@ describe("tasks.list — cursor pagination walks a queue larger than one page (D
 		await seedFleetAgents(t, [assignedTo]);
 		// updatedSince forces a bound that, combined on this branch's fallback
 		// path, cannot push into the index alongside createdBefore — but the
-		// simplest reliable overflow trigger is createdBy (always unindexed,
-		// always wide-scanned) combined with createdBefore over > SCAN_CAP rows.
+		// simplest reliable overflow trigger is createdBy combined with a project
+		// (no index carries both keys, so the project bucket is wide-scanned)
+		// over > SCAN_CAP rows. createdBy alone has its own index since
+		// task k171t66wdznjztdpb8dby6f86h8hsx61 and is no longer refused.
 		await seedQueue(t, 5, { assignedTo, status: "todo" });
 		// Seed 2001 rows matching createdBy filter distinct from assignedTo so
 		// the createdBy branch (global, no assignedTo) wide-scans everything.
@@ -189,6 +194,7 @@ describe("tasks.list — cursor pagination walks a queue larger than one page (D
 					priority: "medium",
 					status: "todo",
 					createdBy: "overflow-creator",
+					project: "overflow-project",
 					createdAt: now,
 					updatedAt: now,
 				});
@@ -199,6 +205,7 @@ describe("tasks.list — cursor pagination walks a queue larger than one page (D
 			.withIdentity({ subject: "test-service-account-user-id" })
 			.query(api.tasks.list, {
 				createdBy: "overflow-creator",
+				project: "overflow-project",
 				limit: 50,
 				fields: "lite",
 			})

@@ -1481,37 +1481,12 @@ async function runTasksList(ctx: QueryCtx, args: TasksListArgs, scope: OrgScope)
 			query: Q,
 		): Q => (rowFilter === undefined ? query : query.filter(rowFilter));
 
-		// Day 163 (Pi, k171rbm2txe42jxzddyqakbg7n8ch7zr) — `createdBefore` was
-		// OMITTED here. On a cursor-only call fetchCap collapsed to `limit`,
-		// so the DB fetched only the `limit` NEWEST rows, then the cursor
-		// filter below dropped every one of them (they are all >= the
-		// cursor anchor by construction) → an empty page while older rows
-		// that should have been page 2 were never fetched. Empty read as
-		// end-of-list; callers silently truncated. `createdBefore` is now
-		// included so pagination widens the same as createdBy/updatedSince,
-		// and is loud (SCAN_CAP_EXCEEDED) rather than silent when it can't
-		// see far enough. See per-branch index-push below for the unbounded
-		// fix on the common single-status paths.
-		//
-		// Eta REVISE on PR #1194 @147d260 — a second, independent defect on
-		// this same line: `needsWideScan` also has to widen whenever a
-		// multi-status (or no-status) filter will be applied POST-fetch on a
-		// branch that queries through a compound index ending in `status`
-		// (by_assignee, by_project, by_instance, by_assignee_project,
-		// by_instance_project…). With only the equality prefix (e.g.
-		// assignedTo) pinned, Convex orders the remaining rows by the
-		// index's NEXT field first — `status` — then `_creationTime`, NOT by
-		// `_creationTime` alone. A narrow `.take(limit)` on that ordering
-		// grabs `limit` rows skewed toward one status bucket, never the
-		// `limit` most-recent of the STATUS-FILTERED UNION — reproduced by
-		// Eta firsthand: 12 alternating todo/in_progress tasks, cursor walk
-		// status=["todo","in_progress"] limit=5 saw 7/12 (page 1 was all
-		// "todo"; the 5 true union-newest — mixed todo/in_progress — were
-		// never fetched). This is independent of cursor presence — the same
-		// wrong 5 rows come back on a plain first call, no cursor involved.
-		// Multi-status/no-status branches now always widen; single-status
-		// branches are untouched (Eta confirmed `canPushCursorIntoIndex`
-		// correct as-is).
+		// History (Day 163, Eta on PR #1194): the cursor (`createdBefore`) and a
+		// multi-status request used to widen a fixed-size scan whose rows came back in
+		// the index's field order (status first), then filtered in memory. Every read
+		// below is now one index range PER STATUS BUCKET, newest-created first, so the
+		// merged page is the true newest `limit` of the status union and the cursor is
+		// part of the range. See the block above the chain for what is still refused.
 		//
 		// UNFILTERED READ (`tasks.list {}` — what the dashboard's activity feed and
 		// blockers widget send, measured at vantage-peers-dashboard origin/main
@@ -1535,15 +1510,6 @@ async function runTasksList(ctx: QueryCtx, args: TasksListArgs, scope: OrgScope)
 		// the member's own org (by_orgId, newest-first) yields the same page as
 		// fetching the cap and slicing. Widening there only manufactured a throw
 		// for any org holding more than the cap.
-		const unfilteredNeedsNoWidening = isUnfilteredRead;
-		const needsWideScan =
-			createdBy !== undefined ||
-			updatedSince !== undefined ||
-			before !== undefined ||
-			(statuses === undefined
-				? !unfilteredNeedsNoWidening
-				: statuses.length > 1);
-		const fetchCap = needsWideScan ? TASK_LIST_SCAN_CAP + 1 : limit;
 		// Non-master caller with a resolved org and a filtered read: served from
 		// the org-keyed indexes (see the member branch below). The unfiltered
 		// member read keeps its own by_orgId branch at the end of the chain.
@@ -1552,43 +1518,9 @@ async function runTasksList(ctx: QueryCtx, args: TasksListArgs, scope: OrgScope)
 				? scope.orgSlug
 				: null;
 
-		// Preferred fix (Pi): push the cursor bound into the index RANGE
-		// instead of filtering in-memory. Every Convex index implicitly ends
-		// with `_creationTime`, so once all explicit index fields are pinned
-		// by equality (single-status branches), `.lt("_creationTime", before)`
-		// is a valid additional range clause — unbounded, no SCAN_CAP
-		// dependency. Only usable when `updatedSince` is absent (that filter
-		// already occupies the one allowed range slot on the assignedTo
-		// branch) and exactly one status is pinned (multi-status / no-status
-		// branches don't fully consume the index's equality prefix, so the
-		// next index field isn't `_creationTime`).
-		const canPushCursorIntoIndex =
-			before !== undefined &&
-			updatedSince === undefined &&
-			statuses !== undefined &&
-			statuses.length === 1;
-
-		// Helper: apply multi-status in-memory filter on a pre-fetched slice
 		type TaskRow = Doc<"tasks">;
-		// The overflow guard below must count the population the INDEX RETURNED,
-		// never what survives this in-memory filter: a truncated scan whose window
-		// holds no row of the requested statuses filters down to nothing and would
-		// otherwise pass the guard as a complete (empty) answer.
-		let rawScanCount: number | undefined;
-		const applyStatusFilter = (rows: TaskRow[]) => {
-			rawScanCount = rows.length;
-			if (statuses === undefined) return rows;
-			if (statuses.length === 1)
-				return rows.filter((r) => r.status === statuses[0]);
-			return rows.filter((r) => statuses.includes(r.status));
-		};
 
 		let allRows: TaskRow[];
-		// Set true only when the assignedTo/assignedTo+status branch below pushed
-		// the `updatedSince` bound into the query via a compound index. Drives
-		// the SCAN_CAP_EXCEEDED message: "shrink the window" is only offered
-		// when it can actually change the candidate count.
-		let usedIndexedUpdatedSinceBound = false;
 
 		// ── Guard: mutually-exclusive index-backed filters ────────────────────────
 		// assignedToInstance and assignedTo are both index-backed but there is no
@@ -1628,81 +1560,113 @@ async function runTasksList(ctx: QueryCtx, args: TasksListArgs, scope: OrgScope)
 		// filterByOrgScope below still drops any row whose orgId is not the caller's,
 		// so a row stamped for another org that names this agent is never served.
 		// A label naming no agent there is an absence (empty success).
+		// Every read below is an index RANGE: the caller's tenant (or the assignee's
+		// agent ID, which belongs to one org) leads the index, the status is pinned
+		// per bucket, and the date bound is a range clause on the index's own field.
+		// The scan cap therefore bounds the ANSWER (the rows a window or a creator
+		// really holds), not the population of the status bucket the answer sits in.
+		//
+		//  - no date bound: `_creationTime` ends the index, so `createdBefore` is
+		//    `.lt("_creationTime", …)` in the range and `limit` rows per bucket suffice;
+		//  - `updatedSince`: the index ends in `updatedAt` and the bound is
+		//    `.gte("updatedAt", since)`; the window is read whole (cap + 1) and
+		//    re-ordered by creation time, because that is the cursor's order;
+		//  - `createdBy`: a creator-keyed index ends in `_creationTime`, so a creator's
+		//    rows page exactly like an unfiltered bucket.
+		//
+		// Refused, loudly, never a partial page (each is named in the message the
+		// caller reads and in docs/cloud): an `updatedSince` window holding more than
+		// TASK_LIST_SCAN_CAP rows; `createdBy` combined with an assignee, a project or
+		// an instance (no index carries both keys); `updatedSince` combined with a
+		// project or an instance (same); and `createdBy`/`updatedSince` on a project or
+		// instance bucket that itself exceeds the cap.
+		const statusList: TaskStatus[] =
+			statuses !== undefined ? statuses : [...TASK_STATUSES];
+		const upper = before ?? Number.MAX_VALUE;
+		const capRows = TASK_LIST_SCAN_CAP + 1;
+		const scanCapRefusal = (opts: { ownOrg: boolean; windowAdvice: boolean }) =>
+			new ConvexError(
+				`tasks.list: SCAN_CAP_EXCEEDED — widened scan for updatedSince/createdBy${opts.ownOrg ? "" : "/createdBefore"} hit the cap of ${TASK_LIST_SCAN_CAP} candidate rows${opts.ownOrg ? " of your organisation" : ""} before the filter ran. The result would be incomplete and indistinguishable from a full match. Narrow with assignedTo/assignedToInstance/project/status${opts.windowAdvice ? " or shrink the updatedSince window" : ""}.`,
+			);
+
 		if (assignedTo !== undefined) {
 			const assigneeId = await assigneeIdForRead(ctx, scope, assignedTo);
 			if (assigneeId === undefined) {
 				allRows = [];
-			} else {
-				const statusList: TaskStatus[] =
-					statuses !== undefined ? statuses : [...TASK_STATUSES];
-				// One query per status bucket, merged by creation time below, so the
-				// page is the true newest `limit` of the status union.
-				//  - `project` given: by_assigneeId_project_status, creation-ordered, so
-				//    the cursor is pushed into the index and `limit` rows are enough.
-				//  - otherwise: by_assigneeId_status_updatedAt (ordered by updatedAt, not
-				//    creation time), so the whole bucket is read (bounded by the scan
-				//    cap, refused loudly beyond it) and the newest `limit` is chosen
-				//    after the merge. `updatedSince` is pushed into that index range.
-				const idWide =
-					project === undefined ||
-					(memberOrg !== null ? createdBy !== undefined || updatedSince !== undefined : needsWideScan);
-				const idFetch = idWide ? TASK_LIST_SCAN_CAP + 1 : limit;
-				const upper = before ?? Number.MAX_VALUE;
-				if (updatedSince !== undefined && project === undefined) {
-					usedIndexedUpdatedSinceBound = true;
-				}
+			} else if (project !== undefined) {
+				// by_assigneeId_project_status: creation-ordered, the cursor is in the range.
+				const wide = createdBy !== undefined || updatedSince !== undefined;
 				const buckets = await Promise.all(
-					statusList.map(async (status) => {
-						const q = ctx.db.query("tasks");
-						if (project !== undefined) {
-							return await narrow(
-								q
-									.withIndex("by_assigneeId_project_status", (i) =>
-										i
-											.eq("assignedToId", assigneeId)
-											.eq("project", project)
-											.eq("status", status)
-											.lt("_creationTime", upper),
-									)
-									.order("desc"),
-							)
-								.take(idFetch);
-						}
-						return await narrow(
-							q
-								.withIndex("by_assigneeId_status_updatedAt", (i) =>
-									updatedSince !== undefined
-										? i
-												.eq("assignedToId", assigneeId)
-												.eq("status", status)
-												.gte("updatedAt", updatedSince)
-										: i.eq("assignedToId", assigneeId).eq("status", status),
+					statusList.map(async (status) =>
+						narrow(
+							ctx.db
+								.query("tasks")
+								.withIndex("by_assigneeId_project_status", (i) =>
+									i
+										.eq("assignedToId", assigneeId)
+										.eq("project", project)
+										.eq("status", status)
+										.lt("_creationTime", upper),
 								)
 								.order("desc"),
-						)
-							.take(idFetch);
-					}),
+						).take(wide ? capRows : limit),
+					),
 				);
-				// With a master updatedSince window the candidates are the WHOLE window
-				// across statuses (one bound, one population); otherwise one status
-				// bucket is the unit the cap bounds.
-				const overCap =
-					updatedSince !== undefined && project === undefined
-						? buckets.reduce((n, b) => n + b.length, 0) > TASK_LIST_SCAN_CAP
-						: buckets.some((b) => b.length > TASK_LIST_SCAN_CAP);
-				if (idWide && overCap) {
-					throw new ConvexError(
-						`tasks.list: SCAN_CAP_EXCEEDED — widened scan for updatedSince/createdBy/createdBefore hit the cap of ${TASK_LIST_SCAN_CAP} candidate rows before the filter ran. The result would be incomplete and indistinguishable from a full match. Narrow with assignedTo/assignedToInstance/project/status${usedIndexedUpdatedSinceBound ? " or shrink the updatedSince window" : ""}.`,
-					);
+				if (wide && buckets.some((b) => b.length > TASK_LIST_SCAN_CAP)) {
+					throw scanCapRefusal({ ownOrg: false, windowAdvice: false });
+				}
+				allRows = buckets.flat();
+			} else if (updatedSince !== undefined) {
+				// by_assigneeId_status_updatedAt: the window is the range; the whole window
+				// (across statuses: one bound, one population) is what the cap bounds.
+				const buckets = await Promise.all(
+					statusList.map(async (status) =>
+						narrow(
+							ctx.db
+								.query("tasks")
+								.withIndex("by_assigneeId_status_updatedAt", (i) =>
+									i
+										.eq("assignedToId", assigneeId)
+										.eq("status", status)
+										.gte("updatedAt", updatedSince),
+								)
+								.order("desc"),
+						).take(capRows),
+					),
+				);
+				if (buckets.reduce((n, b) => n + b.length, 0) > TASK_LIST_SCAN_CAP) {
+					throw scanCapRefusal({ ownOrg: false, windowAdvice: true });
+				}
+				allRows = buckets.flat();
+			} else {
+				// by_assigneeId_status: creation-ordered. `createdBy` has no index beside the
+				// assignee, so it is applied after the read and the bucket is capped.
+				const wide = createdBy !== undefined;
+				const buckets = await Promise.all(
+					statusList.map(async (status) =>
+						narrow(
+							ctx.db
+								.query("tasks")
+								.withIndex("by_assigneeId_status", (i) =>
+									i
+										.eq("assignedToId", assigneeId)
+										.eq("status", status)
+										.lt("_creationTime", upper),
+								)
+								.order("desc"),
+						).take(wide ? capRows : limit),
+					),
+				);
+				if (wide && buckets.some((b) => b.length > TASK_LIST_SCAN_CAP)) {
+					throw scanCapRefusal({ ownOrg: false, windowAdvice: false });
 				}
 				allRows = buckets.flat();
 			}
 		} else if (memberOrg !== null) {
-			const statusList: TaskStatus[] =
-				statuses !== undefined ? statuses : [...TASK_STATUSES];
-			const memberWide = createdBy !== undefined || updatedSince !== undefined;
-			const memberFetch = memberWide ? TASK_LIST_SCAN_CAP + 1 : limit;
-			const upper = before ?? Number.MAX_VALUE;
+			const keyedOnProjectOrInstance =
+				assignedToInstance !== undefined || project !== undefined;
+			const wide = createdBy !== undefined || updatedSince !== undefined;
+			let windowRead = false;
 			const buckets = await Promise.all(
 				statusList.map(async (status) => {
 					const q = ctx.db.query("tasks");
@@ -1718,8 +1682,7 @@ async function runTasksList(ctx: QueryCtx, args: TasksListArgs, scope: OrgScope)
 										.lt("_creationTime", upper),
 								)
 								.order("desc"),
-						)
-							.take(memberFetch);
+						).take(wide ? capRows : limit);
 					}
 					if (assignedToInstance !== undefined) {
 						return await narrow(
@@ -1732,8 +1695,7 @@ async function runTasksList(ctx: QueryCtx, args: TasksListArgs, scope: OrgScope)
 										.lt("_creationTime", upper),
 								)
 								.order("desc"),
-						)
-							.take(memberFetch);
+						).take(wide ? capRows : limit);
 					}
 					if (project !== undefined) {
 						return await narrow(
@@ -1746,8 +1708,33 @@ async function runTasksList(ctx: QueryCtx, args: TasksListArgs, scope: OrgScope)
 										.lt("_creationTime", upper),
 								)
 								.order("desc"),
-						)
-							.take(memberFetch);
+						).take(wide ? capRows : limit);
+					}
+					if (updatedSince !== undefined) {
+						windowRead = true;
+						return await narrow(
+							q
+								.withIndex("by_orgId_status_updatedAt", (i) =>
+									i
+										.eq("orgId", memberOrg)
+										.eq("status", status)
+										.gte("updatedAt", updatedSince),
+								)
+								.order("desc"),
+						).take(capRows);
+					}
+					if (createdBy !== undefined) {
+						return await narrow(
+							q
+								.withIndex("by_orgId_createdBy_status", (i) =>
+									i
+										.eq("orgId", memberOrg)
+										.eq("createdBy", createdBy)
+										.eq("status", status)
+										.lt("_creationTime", upper),
+								)
+								.order("desc"),
+						).take(limit);
 					}
 					return await narrow(
 						q
@@ -1758,167 +1745,136 @@ async function runTasksList(ctx: QueryCtx, args: TasksListArgs, scope: OrgScope)
 									.lt("_creationTime", upper),
 							)
 							.order("desc"),
-					)
-						.take(memberFetch);
+					).take(limit);
 				}),
 			);
-			if (memberWide && buckets.some((b) => b.length > TASK_LIST_SCAN_CAP)) {
-				throw new ConvexError(
-					`tasks.list: SCAN_CAP_EXCEEDED — widened scan for updatedSince/createdBy hit the cap of ${TASK_LIST_SCAN_CAP} candidate rows of your organisation before the filter ran. The result would be incomplete and indistinguishable from a full match. Narrow with assignedTo/assignedToInstance/project/status.`,
-				);
+			if (windowRead) {
+				if (buckets.reduce((n, b) => n + b.length, 0) > TASK_LIST_SCAN_CAP) {
+					throw scanCapRefusal({ ownOrg: true, windowAdvice: true });
+				}
+			} else if (
+				keyedOnProjectOrInstance &&
+				wide &&
+				buckets.some((b) => b.length > TASK_LIST_SCAN_CAP)
+			) {
+				throw scanCapRefusal({ ownOrg: true, windowAdvice: false });
 			}
 			allRows = buckets.flat();
-		}
-		// Filter by instance + project together — matching compound index,
-		// so BOTH filters are applied, never one silently dropped.
-		else if (assignedToInstance !== undefined && project !== undefined) {
-			if (statuses !== undefined && statuses.length === 1) {
-				allRows = await narrow(
-					ctx.db
-						.query("tasks")
-						.withIndex("by_instance_project", (q) => {
-							const base = q
-								.eq("assignedToInstance", assignedToInstance)
-								.eq("project", project)
-								.eq("status", statuses[0]);
-							return canPushCursorIntoIndex
-								? base.lt("_creationTime", before as number)
-								: base;
-						})
-						.order("desc"),
-				)
-					.take(canPushCursorIntoIndex ? limit : fetchCap);
-			} else {
-				const base = await narrow(
-					ctx.db
-						.query("tasks")
-						.withIndex("by_instance_project", (q) =>
-							q.eq("assignedToInstance", assignedToInstance).eq("project", project),
-						)
-						.order("desc"),
-				)
-					.take(fetchCap);
-				allRows = applyStatusFilter(base);
-			}
-		}
-		// Filter by instance only — use index for primary key, then filter statuses in-memory
-		else if (assignedToInstance !== undefined) {
-			if (statuses !== undefined && statuses.length === 1) {
-				allRows = await narrow(
-					ctx.db
-						.query("tasks")
-						.withIndex("by_instance", (q) => {
-							const base = q
-								.eq("assignedToInstance", assignedToInstance)
-								.eq("status", statuses[0]);
-							return canPushCursorIntoIndex
-								? base.lt("_creationTime", before as number)
-								: base;
-						})
-						.order("desc"),
-				)
-					.take(canPushCursorIntoIndex ? limit : fetchCap);
-			} else {
-				const base = await narrow(
-					ctx.db
-						.query("tasks")
-						.withIndex("by_instance", (q) =>
-							q.eq("assignedToInstance", assignedToInstance),
-						)
-						.order("desc"),
-				)
-					.take(fetchCap);
-				allRows = applyStatusFilter(base);
-			}
-		}
-		// Filter by project only
-		else if (project !== undefined) {
-			if (statuses !== undefined && statuses.length === 1) {
-				allRows = await narrow(
-					ctx.db
-						.query("tasks")
-						.withIndex("by_project", (q) => {
-							const base = q.eq("project", project).eq("status", statuses[0]);
-							return canPushCursorIntoIndex
-								? base.lt("_creationTime", before as number)
-								: base;
-						})
-						.order("desc"),
-				)
-					.take(canPushCursorIntoIndex ? limit : fetchCap);
-			} else {
-				const base = await narrow(
-					ctx.db
-						.query("tasks")
-						.withIndex("by_project", (q) => q.eq("project", project))
-						.order("desc"),
-				)
-					.take(fetchCap);
-				allRows = applyStatusFilter(base);
-			}
-		}
-		// Filter by status only. Not eligible for the index-push above: `by_status`
-		// is ["status", "createdAt"], so after pinning `status` by equality the
-		// next index field is `createdAt`, not `_creationTime` — Convex only
-		// allows a range clause on the field immediately following the pinned
-		// equality prefix, so `_creationTime` can't be reached here. Falls back
-		// to the widened-scan + loud SCAN_CAP_EXCEEDED path (still correct,
-		// just bounded).
-		else if (statuses !== undefined) {
-			if (statuses.length === 1) {
-				allRows = await narrow(
-					ctx.db
-						.query("tasks")
-						.withIndex("by_status", (q) => q.eq("status", statuses[0]))
-						.order("desc"),
-				)
-					.take(fetchCap);
-			} else {
-				// Multi-status without other filter: full table scan bounded by limit.
-				// Acceptable for bounded list sizes; no new index required per brief.
-				const base = await narrow(ctx.db.query("tasks").order("desc")).take(fetchCap);
-				allRows = applyStatusFilter(base);
-			}
-		}
-		// No filters — return all, newest first. A non-master caller reads its own
-		// org's rows through `by_orgId` (tenant predicate inside the index range).
-		else if (isUnfilteredRead && !scope.isMaster && scope.orgSlug !== null) {
+		} else if (isUnfilteredRead && !scope.isMaster && scope.orgSlug !== null) {
+			// No filters — a non-master caller with an org reads its own rows through
+			// `by_orgId` (tenant predicate inside the index range).
 			const orgSlug = scope.orgSlug;
 			allRows = await narrow(
 				ctx.db
 					.query("tasks")
 					.withIndex("by_orgId", (q) => q.eq("orgId", orgSlug))
 					.order("desc"),
-			)
-				.take(fetchCap);
-		} else {
-			allRows = await narrow(ctx.db.query("tasks").order("desc")).take(fetchCap);
-		}
-
-		// Refuse to return a silently-incomplete page: if the widened scan
-		// itself hit its cap, there may be matching rows we never looked at.
-		// "I couldn't measure" must never render identically to "complete".
-		if (
-			memberOrg === null &&
-			assignedTo === undefined &&
-			needsWideScan &&
-			(rawScanCount ?? allRows.length) > TASK_LIST_SCAN_CAP
+			).take(limit);
+		} else if (
+			statuses === undefined &&
+			assignedToInstance === undefined &&
+			project === undefined &&
+			createdBy === undefined &&
+			updatedSince === undefined
 		) {
-			// "shrink the updatedSince window" is only offered when it can
-			// actually change the candidate count: on the assignedTo (+status)
-			// branch the bound is now pushed into the index, so narrowing the
-			// window is a real remedy. On every other branch — and whenever
-			// createdBy (unindexed) is the trigger — the fetch is still a
-			// fixed-size widened scan, so that advice would send the caller
-			// chasing a lever that does nothing; it is left out there.
-			const windowAdvice = usedIndexedUpdatedSinceBound
-				? " or shrink the updatedSince window"
-				: "";
-			throw new ConvexError(
-				`tasks.list: SCAN_CAP_EXCEEDED — widened scan for updatedSince/createdBy/createdBefore hit the cap of ${TASK_LIST_SCAN_CAP} candidate rows before the filter ran. The result would be incomplete and indistinguishable from a full match. Narrow with assignedTo/assignedToInstance/project/status${windowAdvice}.`,
+			// Whole table, newest first: the creation-time index IS the range.
+			allRows = await narrow(
+				ctx.db
+					.query("tasks")
+					.withIndex("by_creation_time", (q) => q.lt("_creationTime", upper))
+					.order("desc"),
+			).take(limit);
+		} else {
+			// Fleet reach (master), fleet-wide indexes. A project/instance key keeps its
+			// own index; otherwise the status leads, then the date bound.
+			const keyedOnProjectOrInstance =
+				assignedToInstance !== undefined || project !== undefined;
+			const wide = createdBy !== undefined || updatedSince !== undefined;
+			let windowRead = false;
+			const buckets = await Promise.all(
+				statusList.map(async (status) => {
+					const q = ctx.db.query("tasks");
+					if (assignedToInstance !== undefined && project !== undefined) {
+						return await narrow(
+							q
+								.withIndex("by_instance_project", (i) =>
+									i
+										.eq("assignedToInstance", assignedToInstance)
+										.eq("project", project)
+										.eq("status", status)
+										.lt("_creationTime", upper),
+								)
+								.order("desc"),
+						).take(wide ? capRows : limit);
+					}
+					if (assignedToInstance !== undefined) {
+						return await narrow(
+							q
+								.withIndex("by_instance", (i) =>
+									i
+										.eq("assignedToInstance", assignedToInstance)
+										.eq("status", status)
+										.lt("_creationTime", upper),
+								)
+								.order("desc"),
+						).take(wide ? capRows : limit);
+					}
+					if (project !== undefined) {
+						return await narrow(
+							q
+								.withIndex("by_project", (i) =>
+									i
+										.eq("project", project)
+										.eq("status", status)
+										.lt("_creationTime", upper),
+								)
+								.order("desc"),
+						).take(wide ? capRows : limit);
+					}
+					if (updatedSince !== undefined) {
+						windowRead = true;
+						return await narrow(
+							q
+								.withIndex("by_status_updatedAt", (i) =>
+									i.eq("status", status).gte("updatedAt", updatedSince),
+								)
+								.order("desc"),
+						).take(capRows);
+					}
+					if (createdBy !== undefined) {
+						return await narrow(
+							q
+								.withIndex("by_createdBy_status", (i) =>
+									i
+										.eq("createdBy", createdBy)
+										.eq("status", status)
+										.lt("_creationTime", upper),
+								)
+								.order("desc"),
+						).take(limit);
+					}
+					return await narrow(
+						q
+							.withIndex("by_status_creation", (i) =>
+								i.eq("status", status).lt("_creationTime", upper),
+							)
+							.order("desc"),
+					).take(limit);
+				}),
 			);
+			if (windowRead) {
+				if (buckets.reduce((n, b) => n + b.length, 0) > TASK_LIST_SCAN_CAP) {
+					throw scanCapRefusal({ ownOrg: false, windowAdvice: true });
+				}
+			} else if (
+				keyedOnProjectOrInstance &&
+				wide &&
+				buckets.some((b) => b.length > TASK_LIST_SCAN_CAP)
+			) {
+				throw scanCapRefusal({ ownOrg: false, windowAdvice: false });
+			}
+			allRows = buckets.flat();
 		}
-
 		// v2.3.3 — apply createdBy + updatedSince filters in-memory
 		let filtered = allRows;
 		if (createdBy !== undefined) {
