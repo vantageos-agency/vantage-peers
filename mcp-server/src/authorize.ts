@@ -324,27 +324,33 @@ async function lookupClient(
 	};
 }
 
-/** The key `client_org_mapping` is joined on: slug first, id as fallback (withOrgScope's order). */
-export function orgKeyOf(org: { id: string; slug: string | null }): string {
-	return org.slug ?? org.id;
-}
-
-export type OrgMappingRow = {
+/** A mapping row read by the organisation's permanent Clerk id: its own key and kind ride along. */
+export type OrgMappingById = {
+	clerkOrgId: string;
+	/** The label the row is filed under, which namespaces and agents are keyed by. Not the Clerk slug. */
+	clerkOrgSlug: string;
+	orgKind?: "operator" | "client";
 	allowedOrchestrators: string[];
-	/** The roster by agent ID (module M1); optional until the backfill has run. */
 	allowedAgentIds?: string[];
-	/** The explicit fleet flag that replaces the "*" sentinel. */
 	fleetWide?: boolean;
 	scopes: string[];
 	isActive: boolean;
 } | null;
 
-export async function lookupOrgMapping(orgKey: string): Promise<OrgMappingRow> {
+/**
+ * The mapping row of an organisation, by its VERIFIED permanent Clerk id
+ * (`organization.id` from Clerk's membership list, `org_id` of a code). The id
+ * is the only key: a Clerk slug is a label that can differ from the row's key
+ * (the operator's own organisation) or be held by another organisation.
+ */
+export async function lookupOrgMappingByOrgId(
+	clerkOrgId: string,
+): Promise<OrgMappingById> {
 	return (await internalClient().query(
 		// biome-ignore lint/suspicious/noExplicitAny: Convex string API
-		"clientOrgMapping:getByClerkSlug" as any,
-		{ orgSlug: orgKey },
-	)) as OrgMappingRow;
+		"clientOrgMapping:getByClerkOrgId" as any,
+		{ clerkOrgId },
+	)) as OrgMappingById;
 }
 
 async function listMembershipsFromClerk(
@@ -372,7 +378,7 @@ async function listMembershipsFromClerk(
 
 /**
  * Memberships the picker may offer: only organisations that have an ACTIVE
- * `client_org_mapping` row. An organisation with no mapping resolves to nothing
+ * `client_org_mapping` row, found by the verified Clerk org id (never a slug). An organisation with no mapping resolves to nothing
  * at the bearer boundary (RBAC_DENIED), so offering it would mint a token that
  * cannot be used. A lookup that throws propagates (the package turns it into a
  * 503 refusal, never a grant).
@@ -381,12 +387,19 @@ async function listUsableMemberships(
 	userId: string,
 ): Promise<readonly ClerkOrgMembership[]> {
 	const all = await listMembershipsFromClerk(userId);
-	const usable: ClerkOrgMembership[] = [];
+	const usable: { m: ClerkOrgMembership; operator: boolean }[] = [];
 	for (const m of all) {
-		const mapping = await lookupOrgMapping(orgKeyOf(m.organization));
-		if (mapping?.isActive) usable.push(m);
+		const mapping = await lookupOrgMappingByOrgId(m.organization.id);
+		if (mapping?.isActive) {
+			usable.push({ m, operator: mapping.orgKind === "operator" });
+		}
 	}
-	return usable;
+	// The person's own operator organisation first; a client organisation is
+	// listed only because the person is a member of it. Clerk's order otherwise.
+	return [
+		...usable.filter((u) => u.operator),
+		...usable.filter((u) => !u.operator),
+	].map((u) => u.m);
 }
 
 export async function getClerkUser(userId: string): Promise<ClerkUserLike> {
@@ -700,11 +713,10 @@ export function renderOrgPicker(
 	choices: AgentChoicesByOrg = {},
 ): string {
 	const clientName = model.client.clientName ?? model.client.clientId;
-	const only = model.organizations.length === 1;
 	const orgs = model.organizations
-		.map((o, i) => {
-			const checked = only && i === 0 ? " checked" : "";
-			return `<div class="org-block"><label class="org"><input type="radio" name="orgId" value="${escapeHtml(o.id)}" required${checked}><span class="name">${escapeHtml(o.name)}</span><span class="role">${escapeHtml(o.role.replace(/^org:/, ""))}</span></label>${renderAgentChoices(o.id, choices[o.id])}</div>`;
+		.map((o) => {
+			// Nothing is preselected: the person chooses the organisation a client may reach.
+			return `<div class="org-block"><label class="org"><input type="radio" name="orgId" value="${escapeHtml(o.id)}" required><span class="name">${escapeHtml(o.name)}</span><span class="role">${escapeHtml(o.role.replace(/^org:/, ""))}</span></label>${renderAgentChoices(o.id, choices[o.id])}</div>`;
 		})
 		.join("\n");
 	return `<!doctype html>

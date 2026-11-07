@@ -71,8 +71,7 @@ import {
 	currentAuthorizeOverrides,
 	getClerkUser,
 	handshakeHealth,
-	lookupOrgMapping,
-	orgKeyOf,
+	lookupOrgMappingByOrgId,
 	pickerContentSecurityPolicy,
 	readAuthorizeSettings,
 	redirectUriInState,
@@ -1193,10 +1192,10 @@ app.post("/token", async (c) => {
 
 		// Authority comes from client_org_mapping, joined on the org the person
 		// chose; a missing or inactive row refuses (never a populated default).
-		const orgKey = orgKeyOf({ id: claims.org_id, slug: claims.org_slug });
-		let mapping: Awaited<ReturnType<typeof lookupOrgMapping>>;
+		let mapping: Awaited<ReturnType<typeof lookupOrgMappingByOrgId>>;
 		try {
-			mapping = await lookupOrgMapping(orgKey);
+			// Keyed on the verified org id the code is bound to, never the Clerk slug.
+			mapping = await lookupOrgMappingByOrgId(claims.org_id);
 		} catch (err: unknown) {
 			console.error("[oauth] client_org_mapping lookup failed at /token:", err);
 			return c.json({ error: "temporarily_unavailable" }, 503);
@@ -1210,6 +1209,9 @@ app.post("/token", async (c) => {
 				403,
 			);
 		}
+		// The key namespaces are filed under is the ROW's own, the one the live
+		// derivation (convex/lib/tokenRights.ts personTokenRights) reads back.
+		const orgKey = mapping.clerkOrgSlug;
 
 		const accessToken = randomOpaqueToken();
 		// The person's refresh token is generated here and only its digest is sent.

@@ -57,6 +57,15 @@ function makeFakeConvex() {
 			if (name === "clientOrgMapping:getByClerkSlug") {
 				return { allowedOrchestrators: [], scopes: [], isActive: true };
 			}
+			if (name === "clientOrgMapping:getByClerkOrgId") {
+				return {
+					clerkOrgId: args.clerkOrgId as string,
+					clerkOrgSlug: "org-key",
+					allowedOrchestrators: [],
+					scopes: [],
+					isActive: true,
+				};
+			}
 			// bearerAuthMiddleware lookups on an absent/unknown token resolve to null
 			return null;
 		},

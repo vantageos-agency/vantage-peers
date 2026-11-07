@@ -100,6 +100,66 @@ export const getByClerkSlug = query({
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
+// getByClerkOrgId — the mapping row of an organisation, read by its VERIFIED
+// permanent Clerk org id (task k1788jk9k6fprrvrmvhqagwsyx8hspmy). The consent
+// picker and the /token exchange hold the id of an organisation the person is a
+// member of (Clerk's own membership list); the row is keyed under a label that
+// need not be the organisation's Clerk slug (the operator's own organisation is
+// not), so a lookup by slug dropped it. The id is the only key: no slug, no
+// fallback to a label. Two rows claiming one id, or none, answer null (fail
+// closed, `lookupOrgMapping`).
+//
+// Gated exactly like getByClerkSlug: master or service-account only, because the
+// id argument is read from Clerk's verified membership by the MCP server, whose
+// own identity is what Convex sees. Beyond the grant fields it answers the
+// row's own key (`clerkOrgSlug`, the label namespaces are filed under) and
+// `orgKind`, which the picker orders by.
+// ─────────────────────────────────────────────────────────────────────────────
+export const getByClerkOrgId = query({
+	args: { clerkOrgId: v.string() },
+	returns: v.union(
+		v.object({
+			clerkOrgId: v.string(),
+			clerkOrgSlug: v.string(),
+			orgKind: v.optional(v.union(v.literal("operator"), v.literal("client"))),
+			allowedOrchestrators: v.array(v.string()),
+			allowedAgentIds: v.optional(v.array(v.id("agents"))),
+			fleetWide: v.optional(v.boolean()),
+			scopes: v.array(v.string()),
+			isActive: v.boolean(),
+		}),
+		v.null(),
+	),
+	handler: async (ctx, args) => {
+		// isolation-contract: no reactive subscriber exists — enumerated at /root/coding/vantage-peers-dashboard with `grep -rn 'api\.clientOrgMapping\.getByClerkOrgId' --include=*.tsx --include=*.ts app components hooks lib contexts providers` -> 0 matches (a new function, named only by mcp-server/src/authorize.ts and mcp-server/server-http.ts, imperative service calls). R-50 declared divergence: the refusal stays a RAISE, no render exists for it to crash.
+		const scope = await withOrgScope(ctx);
+		if (!hasFleetRead(scope)) {
+			throw new ConvexError(
+				"RBAC_DENIED: clientOrgMapping.getByClerkOrgId requires master or " +
+					"service-account scope — anonymous and org-scoped callers may " +
+					"never read another organisation's mapping by id.",
+			);
+		}
+		const mapping = await lookupOrgMapping(ctx, { clerkOrgId: args.clerkOrgId });
+		if (!mapping || mapping.clerkOrgId === undefined) return null;
+		return {
+			clerkOrgId: mapping.clerkOrgId,
+			clerkOrgSlug: mapping.clerkOrgSlug,
+			...(mapping.orgKind !== undefined ? { orgKind: mapping.orgKind } : {}),
+			allowedOrchestrators: mapping.allowedOrchestrators,
+			...(mapping.allowedAgentIds !== undefined
+				? { allowedAgentIds: mapping.allowedAgentIds }
+				: {}),
+			...(mapping.fleetWide !== undefined
+				? { fleetWide: mapping.fleetWide }
+				: {}),
+			scopes: mapping.scopes,
+			isActive: mapping.isActive,
+		};
+	},
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
 // setOrgKind — the ONE instrument for marking a client_org_mapping row as the
 // operator's own organisation ("operator") vs a customer ("client"). Run
 // once per row in production via `npx convex run clientOrgMapping:setOrgKind
