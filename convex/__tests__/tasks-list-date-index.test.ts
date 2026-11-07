@@ -106,6 +106,7 @@ type Seed = {
 	status: "done" | "todo";
 	updatedAt: number;
 	by: "sigma" | "eta";
+	project?: string;
 };
 
 async function seed(t: T, s: Seed) {
@@ -123,6 +124,7 @@ async function seed(t: T, s: Seed) {
 					updatedAt: s.updatedAt,
 					orgId: s.org,
 					clerkOrgId: testClerkOrgId(s.org),
+					...(s.project !== undefined ? { project: s.project } : {}),
 				} as never);
 			}
 		});
@@ -219,7 +221,7 @@ let t: T;
 beforeAll(async () => {
 	t = createT();
 	await seedOrgs(t);
-	await seed(t, { tag: "old", count: DONE_OLD, org: FLEET, status: "done", updatedAt: LONG_AGO, by: "sigma" });
+	await seed(t, { tag: "old", count: DONE_OLD, org: FLEET, status: "done", updatedAt: LONG_AGO, by: "sigma", project: "big" });
 	await seed(t, { tag: "rs", count: DONE_RECENT_SIGMA, org: FLEET, status: "done", updatedAt: RECENT, by: "sigma" });
 	await seed(t, { tag: "re", count: DONE_RECENT_ETA, org: FLEET, status: "done", updatedAt: RECENT, by: "eta" });
 	await seed(t, { tag: "te", count: TODO_RECENT_ETA, org: FLEET, status: "todo", updatedAt: RECENT, by: "eta" });
@@ -311,12 +313,12 @@ describe("tasks.list — what a range cannot serve still refuses loudly", () => 
 		await expect(
 			asMember(t, FLEET).query(api.tasks.list, {
 				assignedTo: "sigma",
-				project: "p",
+				project: "big",
 				status: "done",
 				createdBy: "sigma",
 				limit: 10,
 			} as never),
-		).rejects.toThrow(/SCAN_CAP_EXCEEDED.*drop/s);
+		).rejects.toThrow(/SCAN_CAP_EXCEEDED.*Drop/s);
 	});
 });
 
@@ -364,6 +366,50 @@ describe("tasks.list — an updatedSince window above the scan cap is served COM
 	test("an OLD cursor (createdBefore only) over a window within the cap keeps its creation-time order", { timeout: 120_000 }, async () => {
 		const rows = await walk(asMember(t, FLEET), { status: "done", updatedSince: SINCE }, 40);
 		expectExactly(rows, FLEET_DONE_RECENT, [FLEET]);
+	});
+
+	test("createdBy + oversized window: every page that can be proven is served (the creator's rows sit at the top); the page that cannot is refused, never returned short", { timeout: 300_000 }, async () => {
+		const caller = asMember(t, FLEET);
+		const got: Row[] = [];
+		let pos: { createdBefore: number; updatedCursor: number } | undefined;
+		let refusal: unknown;
+		for (let page = 0; page < 20 && refusal === undefined; page++) {
+			try {
+				const rows = (await caller.query(api.tasks.list, {
+					status: "done",
+					createdBy: "eta",
+					updatedSince: 0,
+					limit: 7,
+					fields: "full",
+					...(pos ?? {}),
+				} as never)) as Row[];
+				got.push(...rows);
+				const last = rows[rows.length - 1];
+				pos = { createdBefore: last._creationTime, updatedCursor: last.updatedAt as number };
+			} catch (e) {
+				refusal = e;
+			}
+		}
+		// 4 full pages of 7 are provable; the 30 eta rows are the first 30 of the window, and the
+		// rest of the window (2470 rows) cannot be scanned within the cap to prove there are no more.
+		expect(got).toHaveLength(28);
+		expectUpdatedOrder(got);
+		expect(String((refusal as { data?: unknown }).data ?? refusal)).toMatch(/SCAN_CAP_EXCEEDED.*Raise updatedSince/s);
+	});
+
+	test("createdBy whose only row sits behind more than the cap of other rows in the window -> SCAN_CAP_EXCEEDED naming the remedy, never a short page", { timeout: 120_000 }, async () => {
+		const t2 = createT();
+		await seedOrgs(t2);
+		await seed(t2, { tag: "bulk", count: TASK_LIST_SCAN_CAP + 100, org: FLEET, status: "done", updatedAt: RECENT, by: "sigma" });
+		await seed(t2, { tag: "rare", count: 1, org: FLEET, status: "done", updatedAt: LONG_AGO, by: "eta" });
+		await expect(
+			asMember(t2, FLEET).query(api.tasks.list, {
+				status: "done",
+				createdBy: "eta",
+				updatedSince: 0,
+				limit: 10,
+			} as never),
+		).rejects.toThrow(/SCAN_CAP_EXCEEDED.*Raise updatedSince/s);
 	});
 
 	test("updatedCursor without createdBefore is refused (a position has two halves)", async () => {

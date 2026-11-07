@@ -131,7 +131,7 @@ describe("tasks.list — updatedSince bound pushed into the index (assignedTo br
 	// assignedTo branch throws...") asserted. That old test is now
 	// impossible to keep green alongside a correct fix: see this PR's
 	// report for the full explanation. It is not modified here.
-	test("identical population: a wide window still overflows the cap, a narrow window does not — proof the window participates in the query", async () => {
+	test("identical population: a wide window is served a full page (paged, no cap refusal), a narrow window is empty — proof the window participates in the query", async () => {
 		const t = convexTest(schema, modules);
 		await seedFleetAgents(t, FILE_LABELS);
 		const ASSIGNEE = "test-orch-indexed-bound-window-matters";
@@ -161,7 +161,7 @@ describe("tasks.list — updatedSince bound pushed into the index (assignedTo br
 				limit: 10,
 				fields: "full",
 			}),
-		).rejects.toThrow(/SCAN_CAP_EXCEEDED/);
+		).resolves.toHaveLength(10);
 
 		// NARROW window: threshold after every row's updatedAt -> zero rows
 		// are candidates -> no overflow, empty (correct) result.
@@ -186,7 +186,7 @@ describe("tasks.list — updatedSince bound pushed into the index (assignedTo br
 	// updatedSince)`), both windows would fetch the identical
 	// TASK_LIST_SCAN_CAP + 1 rows and both would throw identically,
 	// regardless of the window.
-	test("assignedTo-alone branch (no status arg): identical population, a wide window still overflows the cap, a narrow window does not", async () => {
+	test("assignedTo-alone branch (no status arg): identical population, a wide window is served a full page (paged, no cap refusal), a narrow window is empty", async () => {
 		const t = convexTest(schema, modules);
 		await seedFleetAgents(t, FILE_LABELS);
 		const ASSIGNEE = "test-orch-indexed-bound-window-matters-alone";
@@ -218,7 +218,7 @@ describe("tasks.list — updatedSince bound pushed into the index (assignedTo br
 				limit: 10,
 				fields: "full",
 			}),
-		).rejects.toThrow(/SCAN_CAP_EXCEEDED/);
+		).resolves.toHaveLength(10);
 
 		// NARROW window: threshold after every row's updatedAt -> zero rows
 		// are candidates -> no overflow, empty (correct) result.
@@ -235,7 +235,7 @@ describe("tasks.list — updatedSince bound pushed into the index (assignedTo br
 	// big-enough branch still overflows, and the message only promises a
 	// remedy that now actually works (shrinking the window IS a real lever
 	// on this branch, since the bound is index-backed).
-	test("wide-enough window on a big-enough assignedTo-alone branch still overflows the cap, message names a working remedy", async () => {
+	test("wide-enough window resumed with a createdBefore-only cursor still overflows the cap, message names the fix", async () => {
 		const t = convexTest(schema, modules);
 		await seedFleetAgents(t, FILE_LABELS);
 		const ASSIGNEE = "test-orch-indexed-bound-still-throws";
@@ -259,14 +259,12 @@ describe("tasks.list — updatedSince bound pushed into the index (assignedTo br
 			t.withIdentity({ subject: "test-service-account-user-id" }).query(api.tasks.list, {
 				assignedTo: ASSIGNEE,
 				updatedSince: RECENT_UPDATED_AT - 1_000,
+				createdBefore: Date.now() + 1_000_000,
 				limit: 10,
 				fields: "full",
 			}),
 		).rejects.toThrow(
-			new RegExp(
-				`SCAN_CAP_EXCEEDED.*cap of ${TASK_LIST_SCAN_CAP}.*Narrow with assignedTo.*shrink the updatedSince window`,
-				"s",
-			),
+			new RegExp(`SCAN_CAP_EXCEEDED.*${TASK_LIST_SCAN_CAP} candidate rows.*without the cursor`, "s"),
 		);
 	});
 });

@@ -406,7 +406,7 @@ describe("updatedSince page-filter defect — RED before fix, GREEN after", () =
 	//     silently.
 
 	describe("tasks.list — SCAN_CAP_EXCEEDED", () => {
-		test("cap + 1 candidate rows on the assignedTo branch throws, naming the cap and how to narrow", async () => {
+		test("cap + 1 candidate rows on the assignedTo branch, resumed with a createdBefore-only cursor, throws naming the fix", async () => {
 			const t = convexTest(schema, modules);
 			await seedFleetAgents(t, FILE_LABELS);
 			// IMPORTANT — seed rows that ACTUALLY MATCH updatedSince, not stale ones.
@@ -443,12 +443,17 @@ describe("updatedSince page-filter defect — RED before fix, GREEN after", () =
 				t.withIdentity({ subject: "test-service-account-user-id" }).query(api.tasks.list, {
 					assignedTo: "test-orch-scan-cap-over",
 					updatedSince: SINCE_THRESHOLD,
+					// A createdBefore-only cursor (minted before the updatedAt position
+					// existed) cannot resume a window the index orders by updatedAt: over
+					// the cap it is refused, naming the fix. A window with NO such cursor
+					// is paged complete instead (tasks-list-date-index.test.ts).
+					createdBefore: OLD_UPDATED_AT + TASK_LIST_SCAN_CAP + 10,
 					limit: PAGE_LIMIT,
 					fields: "full",
 				}),
 			).rejects.toThrow(
 				new RegExp(
-					`SCAN_CAP_EXCEEDED.*cap of ${TASK_LIST_SCAN_CAP}.*Narrow with assignedTo`,
+					`SCAN_CAP_EXCEEDED.*${TASK_LIST_SCAN_CAP} candidate rows.*without the cursor`,
 					"s",
 				),
 			);
