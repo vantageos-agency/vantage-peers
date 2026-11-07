@@ -226,7 +226,7 @@ describe("[P-T5] THE LOCK — tasks.create (createdBy) / tasks.update (callerOrc
 		await seedOrgMapping(t, "org-o");
 		const bCred = await mintAgent(t, "org-o", "b");
 
-		const taskId = await asServiceAccount(t).mutation(api.tasks.create, {
+		const taskId = await asServiceAccount(t).mutation(api.tasks.create, { project: "test-project",
 			title: "created by b",
 			assignedTo: "b",
 			priority: "medium",
@@ -245,7 +245,7 @@ describe("[P-T5] THE LOCK — tasks.create (createdBy) / tasks.update (callerOrc
 		await mintAgent(t, "org-o", "c");
 
 		await expect(
-			asServiceAccount(t).mutation(api.tasks.create, {
+			asServiceAccount(t).mutation(api.tasks.create, { project: "test-project",
 				title: "forged as c",
 				assignedTo: "c",
 				priority: "medium",
@@ -264,7 +264,7 @@ describe("[P-T5] THE LOCK — tasks.create (createdBy) / tasks.update (callerOrc
 		const cCred = await mintAgent(t, "org-o", "c");
 
 		// c creates and owns its own task legitimately.
-		const taskId = await asServiceAccount(t).mutation(api.tasks.create, {
+		const taskId = await asServiceAccount(t).mutation(api.tasks.create, { project: "test-project",
 			title: "c's own task",
 			assignedTo: "c",
 			priority: "medium",
@@ -295,7 +295,7 @@ describe("[P-T5] THE LOCK — tasks.create (createdBy) / tasks.update (callerOrc
 		// CONDITIONAL-SECRET rule (Pi ruling k1746tn3jy22) keeps this the
 		// true, lasting no-op contract, not a temporary hole.
 
-		const taskId = await asServiceAccount(t).mutation(api.tasks.create, {
+		const taskId = await asServiceAccount(t).mutation(api.tasks.create, { project: "test-project",
 			title: "legacy call, no credential",
 			assignedTo: "b",
 			priority: "medium",
@@ -317,7 +317,7 @@ describe("[P-T5] THE LOCK — tasks.create (createdBy) / tasks.update (callerOrc
 		await mintAgent(t, "org-o", "b");
 
 		await expect(
-			asOrgCaller(t, "org-o", "user-org-o").mutation(api.tasks.create, {
+			asOrgCaller(t, "org-o", "user-org-o").mutation(api.tasks.create, { project: "test-project",
 				title: "registered agent omitting its credential",
 				assignedTo: "b",
 				priority: "medium",
@@ -353,7 +353,7 @@ async function seedOwnedTask(
 	bCred: string,
 	opts?: { status?: "todo" },
 ): Promise<Id<"tasks">> {
-	const taskId = await asServiceAccount(t).mutation(api.tasks.create, {
+	const taskId = await asServiceAccount(t).mutation(api.tasks.create, { project: "test-project",
 		title: opts?.status === "todo" ? "b's unclaimed task" : "b's task",
 		assignedTo: "b",
 		priority: "medium",
@@ -764,7 +764,7 @@ describe("[Pi ORG BIND] tasks.create (createdBy) \u2014 same name, foreign org",
 		const foreignBCred = await mintAgent(t, "org-p", "b");
 
 		await expect(
-			asOrgCaller(t, "org-o", "user-org-o").mutation(api.tasks.create, {
+			asOrgCaller(t, "org-o", "user-org-o").mutation(api.tasks.create, { project: "test-project",
 				title: "forged from a foreign org",
 				assignedTo: "b",
 				priority: "medium",
@@ -781,7 +781,7 @@ describe("[Pi ORG BIND] tasks.create (createdBy) \u2014 same name, foreign org",
 		await seedOrgMapping(t, "org-o");
 		const legitBCred = await mintAgent(t, "org-o", "b");
 
-		const taskId = await asOrgCaller(t, "org-o", "user-org-o").mutation(api.tasks.create, {
+		const taskId = await asOrgCaller(t, "org-o", "user-org-o").mutation(api.tasks.create, { project: "test-project",
 			title: "legitimate same-org create",
 			assignedTo: "b",
 			priority: "medium",

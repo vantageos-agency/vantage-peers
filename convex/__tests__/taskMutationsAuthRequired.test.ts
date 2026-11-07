@@ -104,7 +104,7 @@ async function seedTask(
 			} as Parameters<typeof t.withIdentity>[0])
 		: t.withIdentity({ subject: SERVICE_ACCOUNT_SUBJECT });
 	return await seeder
-		.mutation(api.tasks.create, {
+		.mutation(api.tasks.create, { project: "test-project",
 			title: "Seed task",
 			assignedTo: overrides.assignedTo ?? "sigma",
 			priority: "medium",
@@ -126,7 +126,7 @@ describe("AUTH_REQUIRED — unauthenticated callers are refused, all ten public 
 		await seedFleetAgents(t, FILE_LABELS);
 
 		await expect(
-			t.mutation(api.tasks.create, {
+			t.mutation(api.tasks.create, { project: "test-project",
 				title: "anon-created",
 				assignedTo: "sigma",
 				priority: "medium",
@@ -137,7 +137,7 @@ describe("AUTH_REQUIRED — unauthenticated callers are refused, all ten public 
 
 		const taskId = await t
 			.withIdentity({ subject: SERVICE_ACCOUNT_SUBJECT })
-			.mutation(api.tasks.create, {
+			.mutation(api.tasks.create, { project: "test-project",
 				title: "auth-created",
 				assignedTo: "sigma",
 				priority: "medium",

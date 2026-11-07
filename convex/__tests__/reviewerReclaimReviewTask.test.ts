@@ -56,7 +56,7 @@ describe("reviewer-reclaim on [REVIEW] tasks (k17e1ar4s7pspb0rs74ms25hmd8dhv01)"
 	test("ALLOWED: eta reassigns [REVIEW] task to sigma, then eta reclaims it", async () => {
 		const t = createT();
 		await seedFleetAgents(t, FILE_LABELS);
-		const taskId = await t.mutation(api.tasks.create, {
+		const taskId = await t.mutation(api.tasks.create, { project: "test-project",
 			title: "[REVIEW] PR #1234 — reviewer-reclaim fix",
 			assignedTo: "eta",
 			priority: "medium",
@@ -94,7 +94,7 @@ describe("reviewer-reclaim on [REVIEW] tasks (k17e1ar4s7pspb0rs74ms25hmd8dhv01)"
 	test("DENY: a third orchestrator (never creator/assignee/prior-assignee) cannot reclaim", async () => {
 		const t = createT();
 		await seedFleetAgents(t, FILE_LABELS);
-		const taskId = await t.mutation(api.tasks.create, {
+		const taskId = await t.mutation(api.tasks.create, { project: "test-project",
 			title: "[REVIEW] PR #5678 — unrelated review",
 			assignedTo: "eta",
 			priority: "medium",
@@ -130,7 +130,7 @@ describe("reviewer-reclaim on [REVIEW] tasks (k17e1ar4s7pspb0rs74ms25hmd8dhv01)"
 	test("DENY (scope guard): the prior-assignee reclaim path does not apply to a non-review task", async () => {
 		const t = createT();
 		await seedFleetAgents(t, FILE_LABELS);
-		const taskId = await t.mutation(api.tasks.create, {
+		const taskId = await t.mutation(api.tasks.create, { project: "test-project",
 			title: "Ship the feature flag rollout",
 			assignedTo: "eta",
 			priority: "medium",
@@ -175,7 +175,7 @@ describe("reviewer-reclaim on [REVIEW] tasks (k17e1ar4s7pspb0rs74ms25hmd8dhv01)"
 	test("PROBE 1 (title forgery) — tau stamps [Review] into a plain task's title, hands off, reclaims → REFUSED", async () => {
 		const t = createT();
 		await seedFleetAgents(t, FILE_LABELS);
-		const taskId = await t.mutation(api.tasks.create, {
+		const taskId = await t.mutation(api.tasks.create, { project: "test-project",
 			title: "Ship the widget", // plain: isReviewTask stamped FALSE at create
 			assignedTo: "tau",
 			priority: "medium",
@@ -214,7 +214,7 @@ describe("reviewer-reclaim on [REVIEW] tasks (k17e1ar4s7pspb0rs74ms25hmd8dhv01)"
 	test("PROBE 2 (tags forgery) — tau stamps tags:['review'] onto a plain task, hands off, reclaims → REFUSED", async () => {
 		const t = createT();
 		await seedFleetAgents(t, FILE_LABELS);
-		const taskId = await t.mutation(api.tasks.create, {
+		const taskId = await t.mutation(api.tasks.create, { project: "test-project",
 			title: "Rotate the API keys", // plain
 			assignedTo: "tau",
 			priority: "medium",

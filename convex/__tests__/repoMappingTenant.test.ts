@@ -272,7 +272,7 @@ describe("resolveStaleDeployTasks / createDeployTaskWithDedup read only the task
 			if (m) await ctx.db.patch(m._id, { lastDeployedAt: Date.now() + 60_000, lastDeployedSHA: sha });
 		});
 	const deployTask = (t: T) =>
-		asOrg(t, "org-a").mutation(api.tasks.create, {
+		asOrg(t, "org-a").mutation(api.tasks.create, { project: "test-project",
 			title: DEPLOY_TITLE,
 			assignedTo: ORCH,
 			priority: "low",

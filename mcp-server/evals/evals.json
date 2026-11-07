@@ -1931,6 +1931,7 @@
 			"prompt": "Create a high-priority task for beta: standardize tool descriptions.",
 			"args": {
 				"title": "Standardize tool descriptions",
+				"project": "vantage-peers",
 				"assignedTo": "beta",
 				"priority": "high"
 			},
@@ -1953,6 +1954,7 @@
 			"prompt": "Do this as 'pi' (the client types the acting name in `createdBy`).",
 			"args": {
 				"title": "t",
+				"project": "vantage-peers",
 				"assignedTo": "beta",
 				"priority": "low",
 				"createdBy": "pi"
@@ -1977,6 +1979,7 @@
 			"prompt": "Create a task with priority 'p0'.",
 			"args": {
 				"title": "t",
+				"project": "vantage-peers",
 				"assignedTo": "beta",
 				"priority": "p0"
 			},

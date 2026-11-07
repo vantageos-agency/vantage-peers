@@ -301,7 +301,7 @@ describe("human path — the boundary derives from the verified identity, not an
 			...missionBase,
 			pilot: "seat-a",
 		});
-		const taskId = await asOrgA(t).mutation(api.tasks.create, {
+		const taskId = await asOrgA(t).mutation(api.tasks.create, { project: "test-project",
 			...taskBase,
 			assignedTo: "seat-a",
 		});
@@ -325,7 +325,7 @@ describe("human path — the boundary derives from the verified identity, not an
 	test("P2 REFUSED: a human cannot create a task with an org-b assignee", async () => {
 		const t = await seedHuman();
 		await expect(
-			asOrgA(t).mutation(api.tasks.create, { ...taskBase, assignedTo: "seat-b" }),
+			asOrgA(t).mutation(api.tasks.create, { project: "test-project", ...taskBase, assignedTo: "seat-b" }),
 		).rejects.toThrow(/RBAC_DENIED/);
 		expect(await countOf(t, "tasks")).toBe(0);
 	});

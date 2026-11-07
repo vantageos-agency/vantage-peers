@@ -112,7 +112,7 @@ describe("briefingNotes:update", () => {
 		await seedFleetAgents(t, FILE_LABELS);
 		const noteId = await seedNote(t);
 		// Insert a tasks row to get a tasks-table id (wrong table for linkedMemoryIds)
-		const taskId = await t.mutation(api.tasks.create, {
+		const taskId = await t.mutation(api.tasks.create, { project: "test-project",
 			title: "dummy task",
 			assignedTo: "sigma",
 			priority: "low",
@@ -188,7 +188,7 @@ describe("briefingNotes:create — linkedMemoryIds validator", () => {
 	test("create rejects a tasks-table ID in linkedMemoryIds with validator error", async () => {
 		const t = createTestConvex();
 		await seedFleetAgents(t, FILE_LABELS);
-		const taskId = await t.mutation(api.tasks.create, {
+		const taskId = await t.mutation(api.tasks.create, { project: "test-project",
 			title: "dummy",
 			assignedTo: "sigma",
 			priority: "low",

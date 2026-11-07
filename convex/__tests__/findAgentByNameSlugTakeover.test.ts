@@ -23,6 +23,7 @@
  *   LEGACY   an agent row with no clerkOrgId is refused, never matched by slug.
  */
 
+import { seedBillableProjects } from "../../tests/lib/seedBillableProjects";
 import { describe, expect, test } from "vitest";
 import { convexTest } from "../../tests/fixtures/convexTestWithServiceAccount";
 import { testClerkOrgId } from "../../tests/fixtures/testClerkOrgId";
@@ -217,7 +218,7 @@ describe("through a public door: tasks:create by org B stamps no foreign agent I
 		await seedWriters(w);
 		let refused = false;
 		try {
-			await adminOf(w, SLUG, ORG_B_ID).mutation(api.tasks.create, {
+			await adminOf(w, SLUG, ORG_B_ID).mutation(api.tasks.create, { project: "test-project",
 				...base,
 				assignedTo: "nadia",
 			} as never);
@@ -234,7 +235,7 @@ describe("through a public door: tasks:create by org B stamps no foreign agent I
 	test("ALLOW: B assigns its own agent \"bruno\" -> B's agent ID is stamped", async () => {
 		const w = await takeover();
 		await seedWriters(w);
-		await adminOf(w, SLUG, ORG_B_ID).mutation(api.tasks.create, {
+		await adminOf(w, SLUG, ORG_B_ID).mutation(api.tasks.create, { project: "test-project",
 			...base,
 			assignedTo: "bruno",
 		} as never);
@@ -260,7 +261,8 @@ describe("a waiter task stamped before the takeover is notified by ITS org's ID"
 			}),
 		);
 		const svc = w.t.withIdentity({ subject: "test-service-account-user-id" });
-		const blocker = (await svc.mutation(api.tasks.create, {
+		await seedBillableProjects(w.t);
+		const blocker = (await svc.mutation(api.tasks.create, { project: "test-project",
 			title: "blocker",
 			assignedTo: "eta",
 			priority: "low",

@@ -70,6 +70,7 @@ const person = (accessTokenHash: string) => ({
 
 const TASK = {
 	title: "t",
+	project: "test-project",
 	assignedTo: "agent-a",
 	priority: "high" as const,
 	status: "todo" as const,

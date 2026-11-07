@@ -70,7 +70,7 @@ const as = (t: T, identity: Record<string, unknown>) =>
 
 async function canCreate(t: T, identity: Record<string, unknown>, assignedTo: string) {
 	try {
-		await as(t, identity).mutation(api.tasks.create, {
+		await as(t, identity).mutation(api.tasks.create, { project: "test-project",
 			title: "t",
 			assignedTo,
 			priority: "medium",

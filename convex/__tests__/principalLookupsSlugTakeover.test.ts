@@ -123,7 +123,7 @@ describe("(i) tasks:create assignedToAgentId -> requireAssigneeAgentActive", () 
 	test("REFUSE: the new holder of the slug passes the previous holder's agent ID", async () => {
 		const w = await takeover();
 		const out = await refusal(
-			member(w, SLUG, ORG_B_ID).mutation(api.tasks.create, {
+			member(w, SLUG, ORG_B_ID).mutation(api.tasks.create, { project: "test-project",
 				...base,
 				assignedToAgentId: w.agentA,
 			} as never),
@@ -135,7 +135,7 @@ describe("(i) tasks:create assignedToAgentId -> requireAssigneeAgentActive", () 
 	test("REFUSE: same, as an ordinary org member (not an admin)", async () => {
 		const w = await takeover();
 		const out = await refusal(
-			member(w, SLUG, ORG_B_ID, "org:member").mutation(api.tasks.create, {
+			member(w, SLUG, ORG_B_ID, "org:member").mutation(api.tasks.create, { project: "test-project",
 				...base,
 				assignedToAgentId: w.agentA,
 			} as never),
@@ -146,7 +146,7 @@ describe("(i) tasks:create assignedToAgentId -> requireAssigneeAgentActive", () 
 
 	test("ALLOW: the new holder assigns its own agent by ID", async () => {
 		const w = await takeover();
-		await member(w, SLUG, ORG_B_ID).mutation(api.tasks.create, {
+		await member(w, SLUG, ORG_B_ID).mutation(api.tasks.create, { project: "test-project",
 			...base,
 			assignedToAgentId: w.agentB,
 		} as never);
@@ -157,7 +157,7 @@ describe("(i) tasks:create assignedToAgentId -> requireAssigneeAgentActive", () 
 
 	test("ALLOW: the previous holder, under its NEW slug, assigns its own agent by ID", async () => {
 		const w = await takeover();
-		await member(w, RENAMED, ORG_A_ID).mutation(api.tasks.create, {
+		await member(w, RENAMED, ORG_A_ID).mutation(api.tasks.create, { project: "test-project",
 			...base,
 			assignedToAgentId: w.agentA,
 		} as never);
@@ -178,7 +178,7 @@ describe("(i) tasks:create assignedToAgentId -> requireAssigneeAgentActive", () 
 			}),
 		);
 		const out = await refusal(
-			member(w, SLUG, ORG_B_ID).mutation(api.tasks.create, {
+			member(w, SLUG, ORG_B_ID).mutation(api.tasks.create, { project: "test-project",
 				...base,
 				assignedToAgentId: legacy,
 			} as never),

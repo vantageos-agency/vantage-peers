@@ -107,7 +107,7 @@ function expectLockRefused(text: string, reason: string) {
 }
 
 const createAsB = (t: T, secret: string) =>
-	asServiceAccount(t).mutation(api.tasks.create, {
+	asServiceAccount(t).mutation(api.tasks.create, { project: "test-project",
 		title: "created by b",
 		assignedTo: "b",
 		priority: "medium",

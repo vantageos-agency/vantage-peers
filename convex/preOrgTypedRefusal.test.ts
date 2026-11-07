@@ -292,6 +292,8 @@ describe("R-50 — reactively-subscribed public queries never throw for a signed
 			).resolves.toEqual({
 				byProject: [],
 				unattributedTaskCount: 0,
+				noProjectCount: 0,
+				noDurationCount: 0,
 				invalidDurationTaskCount: 0,
 				truncated: false,
 			});

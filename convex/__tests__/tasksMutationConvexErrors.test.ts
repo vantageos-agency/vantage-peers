@@ -58,7 +58,7 @@ async function seedTask(
 		dependsOn?: string[];
 	} = {},
 ) {
-	return await t.mutation(api.tasks.create, {
+	return await t.mutation(api.tasks.create, { project: "test-project",
 		title: overrides.title ?? "Test task",
 		assignedTo: overrides.assignedTo ?? "sigma",
 		priority: "medium",

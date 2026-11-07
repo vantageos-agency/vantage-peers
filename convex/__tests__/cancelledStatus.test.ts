@@ -60,7 +60,7 @@ describe("tasks.update — cancelled status", () => {
 	test("T1: creator can cancel with a reason — status/cancelledBy/cancelReason stored", async () => {
 		const t = createT();
 		await seedFleetAgents(t, FILE_LABELS);
-		const taskId = await t.mutation(api.tasks.create, {
+		const taskId = await t.mutation(api.tasks.create, { project: "test-project",
 			title: "Erroneous task",
 			assignedTo: "eta",
 			priority: "medium",
@@ -84,7 +84,7 @@ describe("tasks.update — cancelled status", () => {
 	test("T2: non-creator (assignee) is REFUSED", async () => {
 		const t = createT();
 		await seedFleetAgents(t, FILE_LABELS);
-		const taskId = await t.mutation(api.tasks.create, {
+		const taskId = await t.mutation(api.tasks.create, { project: "test-project",
 			title: "Task owned by sigma",
 			assignedTo: "eta",
 			priority: "medium",
@@ -120,7 +120,7 @@ describe("tasks.update — cancelled status", () => {
 	test("T3: empty/whitespace reason is REFUSED", async () => {
 		const t = createT();
 		await seedFleetAgents(t, FILE_LABELS);
-		const taskId = await t.mutation(api.tasks.create, {
+		const taskId = await t.mutation(api.tasks.create, { project: "test-project",
 			title: "Task",
 			assignedTo: "eta",
 			priority: "medium",
@@ -147,7 +147,7 @@ describe("tasks.update — cancelled status", () => {
 	test("T4: cancelled task excluded from status=open/active, included in status=all", async () => {
 		const t = createT();
 		await seedFleetAgents(t, FILE_LABELS);
-		const taskId = await t.mutation(api.tasks.create, {
+		const taskId = await t.mutation(api.tasks.create, { project: "test-project",
 			title: "To be cancelled",
 			assignedTo: "eta",
 			priority: "medium",

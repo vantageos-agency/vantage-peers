@@ -108,7 +108,7 @@ describe("messages:getById — wrong-table ID (issue #1064, reads)", () => {
 	test("negative control: an ID from a THIRD table is also named, with its own value", async () => {
 		const t = createT().withIdentity({ subject: "test-service-account-user-id" });
 		await seedFleetAgents(t, FILE_LABELS);
-		const taskId = await t.mutation(api.tasks.create, {
+		const taskId = await t.mutation(api.tasks.create, { project: "test-project",
 			title: "Unrelated task — wrong-table probe",
 			assignedTo: "pi",
 			priority: "low",

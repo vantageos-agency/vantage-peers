@@ -173,7 +173,7 @@ const DRIVERS = {
 			tenantId: ACME.slug,
 		}),
 	tasks: async (t) =>
-		asOrg(t, ACME.slug).mutation(api.tasks.create, {
+		asOrg(t, ACME.slug).mutation(api.tasks.create, { project: "test-project",
 			title: "t",
 			assignedTo: SEAT,
 			priority: "high",

@@ -18,6 +18,7 @@
  *                refused rather than silently dropped.
  */
 
+import { seedBillableProjects } from "../../tests/lib/seedBillableProjects";
 import { ConvexError } from "convex/values";
 import { convexTest } from "../../tests/fixtures/convexTestWithServiceAccount";
 import { describe, expect, test } from "vitest";
@@ -50,7 +51,8 @@ function getConvexErrorMessage(error: unknown): string {
 }
 
 async function seedAndCancel(t: ReturnType<typeof createT>) {
-	const taskId = await t.mutation(api.tasks.create, {
+	await seedBillableProjects(t);
+	const taskId = await t.mutation(api.tasks.create, { project: "test-project",
 		title: "To be cancelled",
 		assignedTo: "eta",
 		priority: "medium",
@@ -103,7 +105,7 @@ describe("tasks.listOverdue — excludes cancelled", () => {
 		const t = createT();
 		await seedFleetAgents(t, FILE_LABELS);
 		const pastDue = Date.now() - 1000 * 60 * 60 * 24;
-		const taskId = await t.mutation(api.tasks.create, {
+		const taskId = await t.mutation(api.tasks.create, { project: "test-project",
 			title: "Overdue but cancelled",
 			assignedTo: "eta",
 			priority: "medium",
@@ -132,7 +134,8 @@ describe("tasks.update — cannot cancel a done task", () => {
 	test("cancelling a done task is refused (CANNOT_CANCEL_DONE)", async () => {
 		const t = createT();
 		await seedFleetAgents(t, FILE_LABELS);
-		const taskId = await t.mutation(api.tasks.create, {
+		await seedBillableProjects(t);
+		const taskId = await t.mutation(api.tasks.create, { project: "test-project",
 			title: "Already done",
 			assignedTo: "eta",
 			priority: "medium",
@@ -168,7 +171,7 @@ describe("tasks.update — cannot cancel a done task", () => {
 		async (status) => {
 			const t = createT();
 			await seedFleetAgents(t, FILE_LABELS);
-			const taskId = await t.mutation(api.tasks.create, {
+			const taskId = await t.mutation(api.tasks.create, { project: "test-project",
 				title: `Task in ${status}`,
 				assignedTo: "eta",
 				priority: "medium",
@@ -259,7 +262,7 @@ describe("tasks.update — cancelReason silent-drop guard", () => {
 	test("providing cancelReason without status='cancelled' on a non-cancelled task is refused", async () => {
 		const t = createT();
 		await seedFleetAgents(t, FILE_LABELS);
-		const taskId = await t.mutation(api.tasks.create, {
+		const taskId = await t.mutation(api.tasks.create, { project: "test-project",
 			title: "Not cancelled",
 			assignedTo: "eta",
 			priority: "medium",

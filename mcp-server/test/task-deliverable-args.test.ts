@@ -86,7 +86,7 @@ const DELIVERABLE = { pkg: "@vantageos/widget", export: "WidgetPanel" };
 describe("FORWARD / ABSENT", () => {
 	it("create_task forwards deliverable verbatim", async () => {
 		const h = harness();
-		const res = await h.call("create_task", {
+		const res = await h.call("create_task", { project: "test-project",
 			title: "t", assignedTo: "clio", priority: "low", status: "todo",
 			createdBy: "clio", deliverable: DELIVERABLE,
 		});
@@ -96,7 +96,7 @@ describe("FORWARD / ABSENT", () => {
 
 	it("create_task without deliverable sends no deliverable key", async () => {
 		const h = harness();
-		await h.call("create_task", {
+		await h.call("create_task", { project: "test-project",
 			title: "t", assignedTo: "clio", priority: "low", status: "todo", createdBy: "clio",
 		});
 		expect(h.to("tasks:create")[0]?.args).not.toHaveProperty("deliverable");
@@ -118,7 +118,7 @@ describe("FORWARD / ABSENT", () => {
 
 describe("REFUSE — malformed deliverable never reaches the tool body", () => {
 	const minimal: Record<string, Record<string, unknown>> = {
-		create_task: { title: "t", assignedTo: "clio", priority: "low", status: "todo" },
+		create_task: { title: "t", project: "test-project", assignedTo: "clio", priority: "low", status: "todo" },
 		update_task: { taskId: "k17aaaaaaaaaaaaaaaaaaaaaaaaaaaaa" },
 	};
 	it.each(["create_task", "update_task"])("%s schema accepts a well-formed deliverable and rejects malformed ones", (tool) => {

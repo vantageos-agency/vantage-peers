@@ -334,7 +334,7 @@ describe("an operator human's asserted sender is bound to the operator roster", 
 		await expect(
 			as(t, OP_ADMIN).mutation(api.tasks.create, args as never),
 		).rejects.toThrow();
-		await as(t, OP_ADMIN).mutation(api.tasks.create, { ...args, createdBy: "sigma" } as never);
+		await as(t, OP_ADMIN).mutation(api.tasks.create, { project: "test-project", ...args, createdBy: "sigma" } as never);
 	});
 });
 
@@ -624,16 +624,16 @@ describe("operator human: master for READS, member for WRITES", () => {
 			agentCredentialSecret: await sigmaCredential(t),
 		};
 		const op = as(t, OP_ADMIN);
-		await op.mutation(api.tasks.create, { ...args, createdBy: "sigma" } as never);
-		await op.mutation(api.tasks.create, { ...args, createdBy: "Sigma" } as never).catch(() => {
+		await op.mutation(api.tasks.create, { project: "test-project", ...args, createdBy: "sigma" } as never);
+		await op.mutation(api.tasks.create, { project: "test-project", ...args, createdBy: "Sigma" } as never).catch(() => {
 			// Normalisation is asserted on the roster side; a creator validator may
 			// reject the capitalised literal before the roster check — both refuse.
 		});
 		await expect(
-			op.mutation(api.tasks.create, { ...args, createdBy: "eta" } as never),
+			op.mutation(api.tasks.create, { project: "test-project", ...args, createdBy: "eta" } as never),
 		).rejects.toThrow();
 		await expect(
-			op.mutation(api.tasks.create, { ...args, createdBy: "*" } as never),
+			op.mutation(api.tasks.create, { project: "test-project", ...args, createdBy: "*" } as never),
 		).rejects.toThrow();
 	});
 });

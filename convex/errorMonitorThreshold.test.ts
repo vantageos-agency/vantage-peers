@@ -239,7 +239,7 @@ describe("resolveStaleIrpMission — cascade close", () => {
 			createdBy: "system",
 		});
 
-		await t.mutation(api.tasks.create, {
+		await t.mutation(api.tasks.create, { project: "test-project",
 			title: "[#999] T0 — Triage",
 			assignedTo: "sigma",
 			priority: "medium",
@@ -247,7 +247,7 @@ describe("resolveStaleIrpMission — cascade close", () => {
 			createdBy: "system",
 			missionId,
 		});
-		await t.mutation(api.tasks.create, {
+		await t.mutation(api.tasks.create, { project: "test-project",
 			title: "[#999] T1 — Investigate",
 			assignedTo: "sigma",
 			priority: "medium",
@@ -331,7 +331,7 @@ describe("resolveStaleIrpMission — cascade close", () => {
 		});
 
 		// One open task, one already-done task
-		await t.mutation(api.tasks.create, {
+		await t.mutation(api.tasks.create, { project: "test-project",
 			title: "[#888] T0 — Open",
 			assignedTo: "sigma",
 			priority: "medium",
@@ -339,7 +339,7 @@ describe("resolveStaleIrpMission — cascade close", () => {
 			createdBy: "system",
 			missionId,
 		});
-		await t.mutation(api.tasks.create, {
+		await t.mutation(api.tasks.create, { project: "test-project",
 			title: "[#888] T1 — Already done",
 			assignedTo: "sigma",
 			priority: "medium",

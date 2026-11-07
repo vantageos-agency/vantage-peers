@@ -22,6 +22,7 @@
 // rosters on purpose: the roster check alone cannot tell the two tenants
 // apart, which is exactly the gap the row stamp closes.
 
+import { seedBillableProjects } from "../../tests/lib/seedBillableProjects";
 import { isFleetStamp, sameTenantStamp } from "@vantageos/cloud-identity";
 import { convexTest } from "../../tests/fixtures/convexTestWithServiceAccount";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
@@ -332,7 +333,8 @@ async function completeTaskNaming(
 	secret?: string,
 ) {
 	const proof = secret === undefined ? {} : { agentCredentialSecret: secret };
-	const taskId = await caller.mutation(api.tasks.create, {
+	await seedBillableProjects(t);
+	const taskId = await caller.mutation(api.tasks.create, { project: "test-project",
 		...proof,
 		title: "Close the loop",
 		assignedTo: by,

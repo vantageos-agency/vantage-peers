@@ -293,7 +293,7 @@ describe("review task reassignment RBAC", () => {
 
 	test("NEGATIVE: pi cannot reassign a NON-review task it neither created nor holds", async () => {
 		const { t } = await setup();
-		const id = await svc(t).mutation(api.tasks.create, {
+		const id = await svc(t).mutation(api.tasks.create, { project: "test-project",
 			title: "plain chore",
 			assignedTo: "sigma",
 			priority: "low",
@@ -309,7 +309,7 @@ describe("review task reassignment RBAC", () => {
 
 	test("NEGATIVE: pi cannot reassign a review task a human/orchestrator created (not system)", async () => {
 		const { t } = await setup();
-		const id = await svc(t).mutation(api.tasks.create, {
+		const id = await svc(t).mutation(api.tasks.create, { project: "test-project",
 			title: "[Review] other/repo PR #9: x",
 			assignedTo: "sigma",
 			priority: "low",

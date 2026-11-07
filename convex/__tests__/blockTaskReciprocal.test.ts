@@ -22,6 +22,7 @@
  *      assignee notified
  */
 
+import { seedBillableProjects } from "../../tests/lib/seedBillableProjects";
 import { ConvexError } from "convex/values";
 import { convexTest } from "../../tests/fixtures/convexTestWithServiceAccount";
 import { describe, expect, test } from "vitest";
@@ -61,7 +62,8 @@ async function makeTask(
 		status: "todo" | "in_progress" | "review" | "blocked" | "done" | "cancelled";
 	}> = {},
 ) {
-	return await t.mutation(api.tasks.create, {
+	await seedBillableProjects(t);
+	return await t.mutation(api.tasks.create, { project: "test-project",
 		title: overrides.title ?? "Some task",
 		assignedTo: overrides.assignedTo ?? "sigma",
 		priority: "medium",

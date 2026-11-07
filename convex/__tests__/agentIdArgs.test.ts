@@ -210,7 +210,7 @@ describe("contract: the manifest says the new args exist", () => {
 // ─────────────────────────────────────────────────────────────────────────────
 describe("tasks:create assignedToAgentId", () => {
 	const create = (w: World, extra: Record<string, unknown>) =>
-		code(svc(w.t).mutation(api.tasks.create, { ...taskBase, ...extra } as never));
+		code(svc(w.t).mutation(api.tasks.create, { project: "test-project", ...taskBase, ...extra } as never));
 
 	test("ID ALLOW: ID alone writes that agent; assignedTo is the row's label, assignedToId its ID; not counted", async () => {
 		const w = await world();
@@ -232,7 +232,7 @@ describe("tasks:create assignedToAgentId", () => {
 	test("ID REFUSE: an agent of another organisation -> ORG_MISMATCH naming the door, zero writes", async () => {
 		const w = await world();
 		const msg = await text(
-			svc(w.t).mutation(api.tasks.create, {
+			svc(w.t).mutation(api.tasks.create, { project: "test-project",
 				...taskBase,
 				assignedToAgentId: w.foreignSigma,
 			} as never),
@@ -281,7 +281,7 @@ describe("tasks:create assignedToAgentId", () => {
 // ─────────────────────────────────────────────────────────────────────────────
 describe("tasks:update assignedToAgentId (reassign)", () => {
 	const seedTask = async (w: World) =>
-		(await svc(w.t).mutation(api.tasks.create, {
+		(await svc(w.t).mutation(api.tasks.create, { project: "test-project",
 			...taskBase,
 			assignedTo: "sigma",
 		} as never)) as Id<"tasks">;
@@ -370,11 +370,11 @@ describe("assignee by ID is held to the caller's roster (scoped caller)", () => 
 		);
 	const { createdBy: _by, ...humanBase } = taskBase;
 	const createAs = (w: World, extra: Record<string, unknown>) =>
-		text(admin(w).mutation(api.tasks.create, { ...humanBase, ...extra } as never));
+		text(admin(w).mutation(api.tasks.create, { project: "test-project", ...humanBase, ...extra } as never));
 	const updateAs = (w: World, id: Id<"tasks">, extra: Record<string, unknown>) =>
 		text(admin(w).mutation(api.tasks.update, { taskId: id, ...extra } as never));
 	const ownTask = async (w: World) =>
-		(await admin(w).mutation(api.tasks.create, {
+		(await admin(w).mutation(api.tasks.create, { project: "test-project",
 			...humanBase,
 			assignedTo: "quill",
 		} as never)) as Id<"tasks">;
