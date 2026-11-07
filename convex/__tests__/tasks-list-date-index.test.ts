@@ -43,7 +43,7 @@ const FLEET = "fleet-org";
 const OTHER = "other-org";
 
 // The seeded population of org FLEET. DONE_OLD alone exceeds the scan cap.
-const DONE_OLD = TASK_LIST_SCAN_CAP + 100; // done, updated long ago, createdBy sigma, assigned sigma
+const DONE_OLD = TASK_LIST_SCAN_CAP + 400; // done, updated long ago, createdBy sigma, assigned sigma
 const DONE_RECENT_SIGMA = 70; // done, updated recently, createdBy sigma, assigned sigma
 const DONE_RECENT_ETA = 30; // done, updated recently, createdBy eta, assigned eta
 const TODO_RECENT_ETA = 10; // todo, updated recently, createdBy eta, assigned eta
@@ -61,6 +61,7 @@ type Row = {
 	_creationTime: number;
 	title: string;
 	status: string;
+	updatedAt?: number;
 	orgId?: string;
 	createdBy?: string;
 };
@@ -160,10 +161,53 @@ async function walk(caller: Caller, args: ListArgs, limit: number): Promise<Row[
 	throw new Error("cursor walk did not terminate in 200 pages");
 }
 
-function expectExactly(rows: Row[], expected: number, orgs: string[]) {
+/**
+ * Walk the cursor the MCP layer emits for an updatedSince read: the LAST ROW's
+ * position, both halves of it (createdBefore = its _creationTime, updatedCursor =
+ * its updatedAt). This is the exact pair list_tasks encodes into its opaque token.
+ */
+async function walkPos(caller: Caller, args: ListArgs, limit: number): Promise<Row[]> {
+	const out: Row[] = [];
+	let pos: { createdBefore: number; updatedCursor: number } | undefined;
+	for (let page = 0; page < 400; page++) {
+		const rows = (await caller.query(api.tasks.list, {
+			...args,
+			limit,
+			fields: "full",
+			...(pos ?? {}),
+		} as never)) as Row[];
+		out.push(...rows);
+		if (rows.length < limit) return out;
+		const last = rows[rows.length - 1];
+		pos = { createdBefore: last._creationTime, updatedCursor: last.updatedAt as number };
+	}
+	throw new Error("position walk did not terminate in 400 pages");
+}
+
+/** updatedAt desc, then _creationTime desc: the order of the (status, updatedAt) index read backwards. */
+function expectUpdatedOrder(rows: Row[]) {
+	for (let i = 1; i < rows.length; i++) {
+		const a = rows[i - 1];
+		const b = rows[i];
+		const au = a.updatedAt as number;
+		const bu = b.updatedAt as number;
+		expect(bu < au || (bu === au && b._creationTime < a._creationTime)).toBe(true);
+	}
+}
+
+function expectExactly(
+	rows: Row[],
+	expected: number,
+	orgs: string[],
+	order: "created" | "updated" = "created",
+) {
 	expect(rows).toHaveLength(expected);
 	expect(new Set(rows.map((r) => r._id)).size).toBe(rows.length);
 	for (const r of rows) expect(orgs).toContain(r.orgId);
+	if (order === "updated") {
+		expectUpdatedOrder(rows);
+		return;
+	}
 	// newest-created first across pages
 	for (let i = 1; i < rows.length; i++) {
 		expect(rows[i]._creationTime).toBeLessThan(rows[i - 1]._creationTime);
@@ -184,18 +228,18 @@ beforeAll(async () => {
 
 describe("tasks.list — a member is served date filters from an index range (org larger than the scan cap)", () => {
 	test("status done + updatedSince: every matching row across pages, no scan-cap refusal", { timeout: 120_000 }, async () => {
-		const rows = await walk(asMember(t, FLEET), { status: "done", updatedSince: SINCE }, 40);
-		expectExactly(rows, FLEET_DONE_RECENT, [FLEET]);
+		const rows = await walkPos(asMember(t, FLEET), { status: "done", updatedSince: SINCE }, 40);
+		expectExactly(rows, FLEET_DONE_RECENT, [FLEET], "updated");
 	});
 
 	test("status [done] (array form) + updatedSince, the prod call shape", { timeout: 120_000 }, async () => {
-		const rows = await walk(asMember(t, FLEET), { status: ["done"], updatedSince: SINCE }, 200);
-		expectExactly(rows, FLEET_DONE_RECENT, [FLEET]);
+		const rows = await walkPos(asMember(t, FLEET), { status: ["done"], updatedSince: SINCE }, 200);
+		expectExactly(rows, FLEET_DONE_RECENT, [FLEET], "updated");
 	});
 
-	test("no status + updatedSince: every status bucket's window, merged newest-created first", { timeout: 120_000 }, async () => {
-		const rows = await walk(asMember(t, FLEET), { updatedSince: SINCE }, 25);
-		expectExactly(rows, FLEET_DONE_RECENT + TODO_RECENT_ETA, [FLEET]);
+	test("no status + updatedSince: every status bucket's window, merged by updatedAt", { timeout: 120_000 }, async () => {
+		const rows = await walkPos(asMember(t, FLEET), { updatedSince: SINCE }, 25);
+		expectExactly(rows, FLEET_DONE_RECENT + TODO_RECENT_ETA, [FLEET], "updated");
 	});
 
 	test("status done + createdBy: every row the creator made, across pages", { timeout: 120_000 }, async () => {
@@ -209,8 +253,8 @@ describe("tasks.list — a member is served date filters from an index range (or
 	});
 
 	test("createdBy + updatedSince + status", { timeout: 120_000 }, async () => {
-		const rows = await walk(asMember(t, FLEET), { status: "done", createdBy: "sigma", updatedSince: SINCE }, 20);
-		expectExactly(rows, DONE_RECENT_SIGMA, [FLEET]);
+		const rows = await walkPos(asMember(t, FLEET), { status: "done", createdBy: "sigma", updatedSince: SINCE }, 20);
+		expectExactly(rows, DONE_RECENT_SIGMA, [FLEET], "updated");
 	});
 
 	test("createdBefore walk of the whole done bucket (> cap rows): every row once", { timeout: 200_000 }, async () => {
@@ -224,20 +268,20 @@ describe("tasks.list — a member is served date filters from an index range (or
 	});
 
 	test("assignedTo + status + updatedSince", { timeout: 120_000 }, async () => {
-		const rows = await walk(asMember(t, FLEET), { assignedTo: "sigma", status: "done", updatedSince: SINCE }, 30);
-		expectExactly(rows, DONE_RECENT_SIGMA, [FLEET]);
+		const rows = await walkPos(asMember(t, FLEET), { assignedTo: "sigma", status: "done", updatedSince: SINCE }, 30);
+		expectExactly(rows, DONE_RECENT_SIGMA, [FLEET], "updated");
 	});
 
 	test("the other org's member sees only its own rows for the same filter", { timeout: 120_000 }, async () => {
-		const rows = await walk(asMember(t, OTHER), { status: "done", updatedSince: SINCE }, 50);
-		expectExactly(rows, FOREIGN_DONE_RECENT, [OTHER]);
+		const rows = await walkPos(asMember(t, OTHER), { status: "done", updatedSince: SINCE }, 50);
+		expectExactly(rows, FOREIGN_DONE_RECENT, [OTHER], "updated");
 	});
 });
 
 describe("tasks.list — the fleet master is served date filters from an index range", () => {
 	test("status done + updatedSince: every org's matching rows", { timeout: 120_000 }, async () => {
-		const rows = await walk(asMaster(t), { status: "done", updatedSince: SINCE }, 60);
-		expectExactly(rows, FLEET_DONE_RECENT + FOREIGN_DONE_RECENT, [FLEET, OTHER]);
+		const rows = await walkPos(asMaster(t), { status: "done", updatedSince: SINCE }, 60);
+		expectExactly(rows, FLEET_DONE_RECENT + FOREIGN_DONE_RECENT, [FLEET, OTHER], "updated");
 	});
 
 	test("status done + createdBy", { timeout: 120_000 }, async () => {
@@ -263,23 +307,73 @@ describe("tasks.list — what a range cannot serve still refuses loudly", () => 
 		).rejects.toThrow(/SCAN_CAP_EXCEEDED/);
 	});
 
-	test("an updatedSince window that itself holds more rows than the cap -> SCAN_CAP_EXCEEDED naming the window, never a partial page", async () => {
+	test("assignedTo + project over a bucket larger than the cap with createdBy -> SCAN_CAP_EXCEEDED naming what to drop", async () => {
+		await expect(
+			asMember(t, FLEET).query(api.tasks.list, {
+				assignedTo: "sigma",
+				project: "p",
+				status: "done",
+				createdBy: "sigma",
+				limit: 10,
+			} as never),
+		).rejects.toThrow(/SCAN_CAP_EXCEEDED.*drop/s);
+	});
+});
+
+describe("tasks.list — an updatedSince window above the scan cap is served COMPLETE across pages", () => {
+	const WINDOW_DONE = DONE_OLD + FLEET_DONE_RECENT; // updatedSince 0: every done row of the org
+	const WINDOW_ALL = WINDOW_DONE + TODO_RECENT_ETA;
+
+	test("member, status done, window of 2500 rows (> cap), 2400 of them tied on updatedAt: complete, no duplicate, no gap", { timeout: 300_000 }, async () => {
+		expect(WINDOW_DONE).toBeGreaterThan(TASK_LIST_SCAN_CAP);
+		const rows = await walkPos(asMember(t, FLEET), { status: "done", updatedSince: 0 }, 200);
+		expectExactly(rows, WINDOW_DONE, [FLEET], "updated");
+	});
+
+	test("member, every status (multi-status merge), small pages", { timeout: 300_000 }, async () => {
+		const rows = await walkPos(asMember(t, FLEET), { updatedSince: 0 }, 137);
+		expectExactly(rows, WINDOW_ALL, [FLEET], "updated");
+	});
+
+	test("the master's oversized window, same", { timeout: 300_000 }, async () => {
+		const rows = await walkPos(asMaster(t), { status: "done", updatedSince: 0 }, 250);
+		expectExactly(rows, WINDOW_DONE + FOREIGN_DONE_RECENT, [FLEET, OTHER], "updated");
+	});
+
+	test("assignedTo + status over the oversized window", { timeout: 300_000 }, async () => {
+		const rows = await walkPos(asMember(t, FLEET), { assignedTo: "sigma", status: "done", updatedSince: 0 }, 200);
+		expectExactly(rows, DONE_OLD + DONE_RECENT_SIGMA, [FLEET], "updated");
+	});
+
+	test("the other org never appears in a member's oversized window", { timeout: 300_000 }, async () => {
+		const rows = await walkPos(asMember(t, OTHER), { updatedSince: 0 }, 100);
+		expectExactly(rows, FOREIGN_DONE_RECENT, [OTHER], "updated");
+	});
+
+	test("an OLD cursor (createdBefore only) over an oversized window is refused naming the fix, never a partial page", async () => {
 		await expect(
 			asMember(t, FLEET).query(api.tasks.list, {
 				status: "done",
 				updatedSince: 0,
+				createdBefore: RECENT,
 				limit: 10,
 			} as never),
-		).rejects.toThrow(/SCAN_CAP_EXCEEDED.*shrink the updatedSince window/s);
+		).rejects.toThrow(/SCAN_CAP_EXCEEDED.*without the cursor/s);
 	});
 
-	test("the master's oversized window is refused the same way", async () => {
+	test("an OLD cursor (createdBefore only) over a window within the cap keeps its creation-time order", { timeout: 120_000 }, async () => {
+		const rows = await walk(asMember(t, FLEET), { status: "done", updatedSince: SINCE }, 40);
+		expectExactly(rows, FLEET_DONE_RECENT, [FLEET]);
+	});
+
+	test("updatedCursor without createdBefore is refused (a position has two halves)", async () => {
 		await expect(
-			asMaster(t).query(api.tasks.list, {
+			asMember(t, FLEET).query(api.tasks.list, {
 				status: "done",
 				updatedSince: 0,
+				updatedCursor: RECENT,
 				limit: 10,
 			} as never),
-		).rejects.toThrow(/SCAN_CAP_EXCEEDED.*shrink the updatedSince window/s);
+		).rejects.toThrow(/updatedCursor/);
 	});
 });
