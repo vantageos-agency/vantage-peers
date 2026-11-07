@@ -63,17 +63,15 @@ import { CLERK_ORG_ID_PATTERN, clerkOrgIdForSlug } from "./lib/orgClerkId";
  * `fleetWide` are the ID roster and the explicit fleet flag (module M1); both
  * are additive optional fields, so a reader that ignores them is unchanged.
  */
-function mappingGrantView(mapping: Doc<"client_org_mapping">) {
+function mappingGrantView(row: Doc<"client_org_mapping">) {
+	const { allowedOrchestrators, allowedAgentIds, fleetWide, scopes, isActive } =
+		row;
 	return {
-		allowedOrchestrators: mapping.allowedOrchestrators,
-		...(mapping.allowedAgentIds !== undefined
-			? { allowedAgentIds: mapping.allowedAgentIds }
-			: {}),
-		...(mapping.fleetWide !== undefined
-			? { fleetWide: mapping.fleetWide }
-			: {}),
-		scopes: mapping.scopes,
-		isActive: mapping.isActive,
+		allowedOrchestrators,
+		...(allowedAgentIds !== undefined ? { allowedAgentIds } : {}),
+		...(fleetWide !== undefined ? { fleetWide } : {}),
+		scopes,
+		isActive,
 	};
 }
 
