@@ -1,0 +1,4 @@
+---
+section: Added
+---
+- **Cloud: an operator can tell why an agent credential is refused, and the MCP says it.** `migrations/agentOwnerBinding:count` (internal, read-only, one org per call, numbers only) reports for an organisation how many agents exist, how many are active, carry an owner, carry a permanent org ID, have an owner who is a live member (decided by the same `ownerBindingOfAgent` composition the credential door runs, extracted from `resolveOwnedAgentOfPresentedSecret`, never a second rule) and how many credential rows are active. `.claude/scripts/convex-prod.allow` gains the door. The MCP 401 for a refused agent credential now reads `AGENT_CREDENTIAL_INVALID (<reason>): ...` (for example `owner-missing`, `agent-owner-not-member`) when Convex names a plain reason code; with no code the sentence is unchanged. Task k176v7x1xr5shra8j3d8v4rp718hs4n2.
