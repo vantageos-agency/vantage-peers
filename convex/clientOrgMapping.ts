@@ -1,5 +1,5 @@
 import { ConvexError, v } from "convex/values";
-import type { Doc, Id } from "./_generated/dataModel";
+import type { Id } from "./_generated/dataModel";
 import {
 	internalMutation,
 	internalQuery,
@@ -8,6 +8,7 @@ import {
 import { query } from "./lib/functions";
 import { hasFleetRead } from "@vantageos/cloud-identity";
 import { lookupOrgMapping, withOrgScope } from "./lib/auth";
+import { requireServiceAccount } from "./lib/eraseRow";
 import { orgMappingRowsForLabel } from "./lib/authOrgMapping";
 import { findOperatorOrg } from "./lib/operatorOrg";
 import { appendAgentsToRoster } from "./lib/rosterAppend";
@@ -137,7 +138,7 @@ export const getByClerkSlug = query({
 // fallback to a label. Two rows claiming one id, or none, answer null (fail
 // closed, `lookupOrgMapping`).
 //
-// Gated like getByClerkSlug (master or service account, one shared guard), because the
+// Gated to the fleet service account (and, behind it, the shared guard), because the
 // id argument is read from Clerk's verified membership by the MCP server, whose
 // own identity is what Convex sees. Beyond the grant fields it answers the
 // row's own key (`clerkOrgSlug`, the label namespaces are filed under) and
@@ -148,12 +149,16 @@ export const getByClerkOrgId = query({
 	returns: v.union(mappingServiceView, v.null()),
 	handler: async (ctx, args) => {
 		// isolation-contract: no reactive subscriber exists — enumerated at /root/coding/vantage-peers-dashboard with `grep -rn 'api\.clientOrgMapping\.getByClerkOrgId' --include=*.tsx --include=*.ts app components hooks lib contexts providers` -> 0 matches (a new function, named only by mcp-server/src/authorize.ts and mcp-server/server-http.ts, imperative service calls). R-50 declared divergence: the refusal stays a RAISE, no render exists for it to crash.
+		// The id door is the fleet SERVICE ACCOUNT's alone (the one shared refusal,
+		// convex/lib/eraseRow.ts), narrower than the slug door's master-or-service.
+		requireServiceAccount(
+			await withOrgScope(ctx),
+			"clientOrgMapping:getByClerkOrgId",
+		);
 		return await readMappingForService(
 			ctx,
 			"clientOrgMapping.getByClerkOrgId",
-			{
-				clerkOrgId: args.clerkOrgId,
-			},
+			{ clerkOrgId: args.clerkOrgId },
 		);
 	},
 });
