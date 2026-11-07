@@ -4,6 +4,7 @@ import { internalMutation, internalQuery } from "./_generated/server";
 import { query } from "./lib/functions";
 import { hasFleetRead } from "@vantageos/cloud-identity";
 import { lookupOrgMapping, withOrgScope } from "./lib/auth";
+import { requireServiceAccount } from "./lib/eraseRow";
 import { orgMappingRowsForLabel } from "./lib/authOrgMapping";
 import { findOperatorOrg } from "./lib/operatorOrg";
 import { appendAgentsToRoster } from "./lib/rosterAppend";
@@ -109,7 +110,7 @@ export const getByClerkSlug = query({
 // fallback to a label. Two rows claiming one id, or none, answer null (fail
 // closed, `lookupOrgMapping`).
 //
-// Gated exactly like getByClerkSlug: master or service-account only, because the
+// Gated to the fleet service account only (shared refusal), because the
 // id argument is read from Clerk's verified membership by the MCP server, whose
 // own identity is what Convex sees. Beyond the grant fields it answers the
 // row's own key (`clerkOrgSlug`, the label namespaces are filed under) and
@@ -132,14 +133,9 @@ export const getByClerkOrgId = query({
 	),
 	handler: async (ctx, args) => {
 		// isolation-contract: no reactive subscriber exists — enumerated at /root/coding/vantage-peers-dashboard with `grep -rn 'api\.clientOrgMapping\.getByClerkOrgId' --include=*.tsx --include=*.ts app components hooks lib contexts providers` -> 0 matches (a new function, named only by mcp-server/src/authorize.ts and mcp-server/server-http.ts, imperative service calls). R-50 declared divergence: the refusal stays a RAISE, no render exists for it to crash.
-		const scope = await withOrgScope(ctx);
-		if (!hasFleetRead(scope)) {
-			throw new ConvexError(
-				"RBAC_DENIED: clientOrgMapping.getByClerkOrgId requires master or " +
-					"service-account scope — anonymous and org-scoped callers may " +
-					"never read another organisation's mapping by id.",
-			);
-		}
+		// The fleet service account only, through the one shared refusal
+		// (convex/lib/eraseRow.ts requireServiceAccount -> wireIdentityRefusal).
+		requireServiceAccount(await withOrgScope(ctx), "clientOrgMapping:getByClerkOrgId");
 		const mapping = await lookupOrgMapping(ctx, { clerkOrgId: args.clerkOrgId });
 		if (!mapping || mapping.clerkOrgId === undefined) return null;
 		return {
