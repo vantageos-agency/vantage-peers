@@ -2279,8 +2279,8 @@ app.route("/admin", admin);
 
 // A browser opening /mcp gets the public setup page (src/landingPage.ts)
 // instead of a bare 401. Only a request that cannot be an MCP request lands
-// here: no Authorization, no text/event-stream in Accept, Accept text/html or
-// `*/*`. Everything else falls through to bearerAuthMiddleware unchanged. The
+// here: no Authorization, no text/event-stream in Accept, Accept text/html,
+// `*/*` or absent. Everything else falls through to bearerAuthMiddleware unchanged. The
 // page attaches no context and reaches no backend.
 app.get("/mcp", async (c, next) => {
 	if (isBrowserLandingRequest(c.req.raw)) {
