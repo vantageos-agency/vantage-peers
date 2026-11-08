@@ -309,6 +309,7 @@ export function registerKbIngestTools(
 		storeDocumentChunkedArgsSchema.shape,
 		{
 			readOnlyHint: false,
+			idempotentHint: false,
 			openWorldHint: false,
 			destructiveHint: false,
 			title: "Ingest document into Knowledge Base",
@@ -366,6 +367,7 @@ export function registerKbIngestTools(
 		softDeleteDocumentArgsSchema.shape,
 		{
 			readOnlyHint: false,
+			idempotentHint: true,
 			openWorldHint: false,
 			destructiveHint: false,
 			title: "Soft-delete Knowledge Base document",
@@ -422,6 +424,7 @@ export function registerKbIngestTools(
 		generateUploadUrlArgsSchema.shape,
 		{
 			readOnlyHint: false,
+			idempotentHint: false,
 			openWorldHint: false,
 			destructiveHint: false,
 			title: "Generate Knowledge Base upload URL",
@@ -510,6 +513,7 @@ export function registerKbIngestTools(
 		claimUploadArgsSchema.shape,
 		{
 			readOnlyHint: false,
+			idempotentHint: true,
 			openWorldHint: false,
 			destructiveHint: false,
 			title: "Claim an uploaded blob for your organisation",

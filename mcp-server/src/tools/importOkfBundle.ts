@@ -93,6 +93,7 @@ export function registerImportOkfBundle(
 		importOkfBundleArgsSchema,
 		{
 			readOnlyHint: false,
+			idempotentHint: true,
 			openWorldHint: false,
 			destructiveHint: false,
 			title: "Import OKF bundle",

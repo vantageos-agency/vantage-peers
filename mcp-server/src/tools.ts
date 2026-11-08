@@ -2496,6 +2496,7 @@ export function registerTools(
 		},
 		{
 			readOnlyHint: false,
+			idempotentHint: false,
 			openWorldHint: false,
 			destructiveHint: false,
 			title: "Store memory",
@@ -2591,6 +2592,7 @@ export function registerTools(
 		},
 		{
 			readOnlyHint: false,
+			idempotentHint: true,
 			openWorldHint: false,
 			destructiveHint: true,
 			title: "Delete memory (soft)",
@@ -2651,6 +2653,7 @@ export function registerTools(
 		},
 		{
 			readOnlyHint: false,
+			idempotentHint: false,
 			openWorldHint: false,
 			destructiveHint: true,
 			title: "Erase text from a memory",
@@ -2728,6 +2731,7 @@ export function registerTools(
 		},
 		{
 			readOnlyHint: false,
+			idempotentHint: true,
 			openWorldHint: false,
 			destructiveHint: true,
 			title: "Erase a row",
@@ -2770,6 +2774,7 @@ export function registerTools(
 		},
 		{
 			readOnlyHint: true,
+			idempotentHint: true,
 			openWorldHint: false,
 			destructiveHint: false,
 			title: "Get memory",
@@ -2833,6 +2838,7 @@ export function registerTools(
 		},
 		{
 			readOnlyHint: true,
+			idempotentHint: true,
 			openWorldHint: false,
 			destructiveHint: false,
 			title: "Recall memories",
@@ -2898,6 +2904,7 @@ export function registerTools(
 		},
 		{
 			readOnlyHint: true,
+			idempotentHint: true,
 			openWorldHint: false,
 			destructiveHint: false,
 			title: "Search memories (text)",
@@ -2966,6 +2973,7 @@ export function registerTools(
 		},
 		{
 			readOnlyHint: true,
+			idempotentHint: true,
 			openWorldHint: false,
 			destructiveHint: false,
 			title: "Search memories (hybrid)",
@@ -3043,6 +3051,7 @@ export function registerTools(
 		},
 		{
 			readOnlyHint: false,
+			idempotentHint: false,
 			openWorldHint: false,
 			destructiveHint: false,
 			title: "Store episode",
@@ -3127,6 +3136,7 @@ export function registerTools(
 		},
 		{
 			readOnlyHint: true,
+			idempotentHint: true,
 			openWorldHint: false,
 			destructiveHint: false,
 			title: "Get episode",
@@ -3202,6 +3212,7 @@ export function registerTools(
 		},
 		{
 			readOnlyHint: true,
+			idempotentHint: true,
 			openWorldHint: false,
 			destructiveHint: false,
 			title: "List episodes",
@@ -3317,6 +3328,7 @@ export function registerTools(
 		},
 		{
 			readOnlyHint: true,
+			idempotentHint: true,
 			openWorldHint: false,
 			destructiveHint: false,
 			title: "Search episodes by keyword (BM25)",
@@ -3378,6 +3390,7 @@ export function registerTools(
 		},
 		{
 			readOnlyHint: true,
+			idempotentHint: true,
 			openWorldHint: false,
 			destructiveHint: false,
 			title: "Search episodes by semantic (vector cosine)",
@@ -3432,6 +3445,7 @@ export function registerTools(
 		},
 		{
 			readOnlyHint: true,
+			idempotentHint: true,
 			openWorldHint: false,
 			destructiveHint: false,
 			title: "Get orchestrator profile",
@@ -3530,6 +3544,7 @@ export function registerTools(
 		},
 		{
 			readOnlyHint: false,
+			idempotentHint: true,
 			openWorldHint: false,
 			destructiveHint: false,
 			title: "Update orchestrator profile",
@@ -3612,6 +3627,7 @@ export function registerTools(
 		},
 		{
 			readOnlyHint: true,
+			idempotentHint: true,
 			openWorldHint: false,
 			destructiveHint: false,
 			title: "List memories",
@@ -3767,6 +3783,7 @@ export function registerTools(
 		},
 		{
 			readOnlyHint: false,
+			idempotentHint: false,
 			openWorldHint: false,
 			destructiveHint: false,
 			title: "Send message",
@@ -4028,6 +4045,7 @@ export function registerTools(
 		},
 		{
 			readOnlyHint: true,
+			idempotentHint: true,
 			openWorldHint: false,
 			destructiveHint: false,
 			title: "Check messages",
@@ -4208,6 +4226,7 @@ export function registerTools(
 		},
 		{
 			readOnlyHint: true,
+			idempotentHint: true,
 			openWorldHint: false,
 			destructiveHint: false,
 			title: "List tasks blocked on me",
@@ -4279,6 +4298,7 @@ export function registerTools(
 		},
 		{
 			readOnlyHint: false,
+			idempotentHint: true,
 			openWorldHint: false,
 			destructiveHint: false,
 			// Own-state write: the receipt-owner check (callerOrchestrator must be
@@ -4338,6 +4358,7 @@ export function registerTools(
 		},
 		{
 			readOnlyHint: false,
+			idempotentHint: true,
 			openWorldHint: false,
 			destructiveHint: true,
 			title: "Delete message",
@@ -4396,6 +4417,7 @@ export function registerTools(
 		},
 		{
 			readOnlyHint: false,
+			idempotentHint: true,
 			openWorldHint: false,
 			destructiveHint: false,
 			title: "Set instance summary",
@@ -4473,6 +4495,7 @@ export function registerTools(
 		},
 		{
 			readOnlyHint: true,
+			idempotentHint: true,
 			openWorldHint: false,
 			destructiveHint: false,
 			title: "List peers",
@@ -4627,6 +4650,7 @@ export function registerTools(
 		},
 		{
 			readOnlyHint: true,
+			idempotentHint: true,
 			openWorldHint: false,
 			destructiveHint: false,
 			title: "List messages",
@@ -4784,6 +4808,7 @@ export function registerTools(
 		},
 		{
 			readOnlyHint: true,
+			idempotentHint: true,
 			openWorldHint: false,
 			destructiveHint: false,
 			title: "Search messages by keyword (BM25)",
@@ -4895,6 +4920,7 @@ export function registerTools(
 		},
 		{
 			readOnlyHint: true,
+			idempotentHint: true,
 			openWorldHint: false,
 			destructiveHint: false,
 			title: "List broadcast status",
@@ -5054,6 +5080,7 @@ export function registerTools(
 		},
 		{
 			readOnlyHint: false,
+			idempotentHint: false,
 			openWorldHint: false,
 			destructiveHint: false,
 			title: "Create task",
@@ -5136,6 +5163,7 @@ export function registerTools(
 		listTasksArgsSchema.shape,
 		{
 			readOnlyHint: true,
+			idempotentHint: true,
 			openWorldHint: false,
 			destructiveHint: false,
 			title: "List tasks",
@@ -5319,6 +5347,7 @@ export function registerTools(
 		bulkCompleteTasksArgsSchema.shape,
 		{
 			readOnlyHint: false,
+			idempotentHint: false,
 			openWorldHint: false,
 			destructiveHint: false,
 			title: "Bulk complete tasks",
@@ -5389,6 +5418,7 @@ export function registerTools(
 		getBulkCompleteRunArgsSchema.shape,
 		{
 			readOnlyHint: true,
+			idempotentHint: true,
 			openWorldHint: false,
 			destructiveHint: false,
 			title: "Get bulk complete run status",
@@ -5473,6 +5503,7 @@ export function registerTools(
 		},
 		{
 			readOnlyHint: true,
+			idempotentHint: true,
 			openWorldHint: false,
 			destructiveHint: false,
 			title: "Search tasks by keyword (BM25)",
@@ -5585,6 +5616,7 @@ export function registerTools(
 		billingSummaryByProjectArgsSchema.shape,
 		{
 			readOnlyHint: true,
+			idempotentHint: true,
 			openWorldHint: false,
 			destructiveHint: false,
 			title: "Billing summary by project",
@@ -5707,6 +5739,7 @@ export function registerTools(
 		},
 		{
 			readOnlyHint: false,
+			idempotentHint: false,
 			openWorldHint: false,
 			destructiveHint: false,
 			title: "Update task",
@@ -5809,6 +5842,7 @@ export function registerTools(
 		},
 		{
 			readOnlyHint: false,
+			idempotentHint: false,
 			openWorldHint: false,
 			destructiveHint: false,
 			title: "Complete task",
@@ -5868,6 +5902,7 @@ export function registerTools(
 		},
 		{
 			readOnlyHint: false,
+			idempotentHint: true,
 			openWorldHint: false,
 			destructiveHint: false,
 			title: "Fail task",
@@ -5916,6 +5951,7 @@ export function registerTools(
 		},
 		{
 			readOnlyHint: false,
+			idempotentHint: true,
 			openWorldHint: false,
 			destructiveHint: false,
 			title: "Start task",
@@ -5966,6 +6002,7 @@ export function registerTools(
 		},
 		{
 			readOnlyHint: false,
+			idempotentHint: true,
 			openWorldHint: false,
 			destructiveHint: false,
 			title: "Pause task",
@@ -6013,6 +6050,7 @@ export function registerTools(
 		},
 		{
 			readOnlyHint: false,
+			idempotentHint: true,
 			openWorldHint: false,
 			destructiveHint: false,
 			title: "Resume task",
@@ -6094,6 +6132,7 @@ export function registerTools(
 		},
 		{
 			readOnlyHint: false,
+			idempotentHint: true,
 			openWorldHint: false,
 			destructiveHint: false,
 			title: "Correct task segment",
@@ -6160,6 +6199,7 @@ export function registerTools(
 		},
 		{
 			readOnlyHint: false,
+			idempotentHint: true,
 			openWorldHint: false,
 			destructiveHint: false,
 			title: "Checkout task",
@@ -6212,6 +6252,7 @@ export function registerTools(
 		},
 		{
 			readOnlyHint: false,
+			idempotentHint: true,
 			openWorldHint: false,
 			destructiveHint: true,
 			title: "Delete task",
@@ -6283,6 +6324,7 @@ export function registerTools(
 		},
 		{
 			readOnlyHint: false,
+			idempotentHint: true,
 			openWorldHint: false,
 			destructiveHint: true,
 			title: "Block task",
@@ -6379,6 +6421,7 @@ export function registerTools(
 		},
 		{
 			readOnlyHint: false,
+			idempotentHint: true,
 			openWorldHint: false,
 			destructiveHint: false,
 			title: "Add task dependency",
@@ -6464,6 +6507,7 @@ export function registerTools(
 		},
 		{
 			readOnlyHint: true,
+			idempotentHint: true,
 			openWorldHint: false,
 			destructiveHint: false,
 			title: "List tasks by mission",
@@ -6616,6 +6660,7 @@ export function registerTools(
 		},
 		{
 			readOnlyHint: false,
+			idempotentHint: false,
 			openWorldHint: false,
 			destructiveHint: false,
 			title: "Create mission",
@@ -6716,6 +6761,7 @@ export function registerTools(
 		},
 		{
 			readOnlyHint: true,
+			idempotentHint: true,
 			openWorldHint: false,
 			destructiveHint: false,
 			title: "List missions",
@@ -6820,6 +6866,7 @@ export function registerTools(
 		},
 		{
 			readOnlyHint: true,
+			idempotentHint: true,
 			openWorldHint: false,
 			destructiveHint: false,
 			title: "Get mission",
@@ -6898,6 +6945,7 @@ export function registerTools(
 		},
 		{
 			readOnlyHint: false,
+			idempotentHint: true,
 			openWorldHint: false,
 			destructiveHint: false,
 			title: "Update mission",
@@ -6972,6 +7020,7 @@ export function registerTools(
 		},
 		{
 			readOnlyHint: false,
+			idempotentHint: true,
 			openWorldHint: false,
 			destructiveHint: false,
 			title: "Update mission status",
@@ -7023,6 +7072,7 @@ export function registerTools(
 		},
 		{
 			readOnlyHint: false,
+			idempotentHint: true,
 			openWorldHint: false,
 			destructiveHint: false,
 			title: "Write diary entry",
@@ -7100,6 +7150,7 @@ export function registerTools(
 		},
 		{
 			readOnlyHint: true,
+			idempotentHint: true,
 			openWorldHint: false,
 			destructiveHint: false,
 			title: "Get diary entry",
@@ -7201,6 +7252,7 @@ export function registerTools(
 		},
 		{
 			readOnlyHint: true,
+			idempotentHint: true,
 			openWorldHint: false,
 			destructiveHint: false,
 			title: "List diary entries",
@@ -7328,6 +7380,7 @@ export function registerTools(
 		},
 		{
 			readOnlyHint: false,
+			idempotentHint: false,
 			openWorldHint: false,
 			destructiveHint: false,
 			title: "Create briefing note",
@@ -7412,6 +7465,7 @@ export function registerTools(
 		updateBriefingNoteSchema.shape,
 		{
 			readOnlyHint: false,
+			idempotentHint: true,
 			openWorldHint: false,
 			destructiveHint: false,
 			title: "Update briefing note",
@@ -7487,6 +7541,7 @@ export function registerTools(
 		},
 		{
 			readOnlyHint: true,
+			idempotentHint: true,
 			openWorldHint: false,
 			destructiveHint: false,
 			title: "Get briefing note",
@@ -7580,6 +7635,7 @@ export function registerTools(
 		},
 		{
 			readOnlyHint: true,
+			idempotentHint: true,
 			openWorldHint: false,
 			destructiveHint: false,
 			title: "List briefing notes",
@@ -7750,6 +7806,7 @@ export function registerTools(
 		},
 		{
 			readOnlyHint: true,
+			idempotentHint: true,
 			openWorldHint: false,
 			destructiveHint: false,
 			title: "Search briefing notes by keyword (BM25)",
@@ -7852,6 +7909,7 @@ export function registerTools(
 		},
 		{
 			readOnlyHint: false,
+			idempotentHint: false,
 			openWorldHint: false,
 			destructiveHint: false,
 			title: "Create recurring task",
@@ -7942,6 +8000,7 @@ export function registerTools(
 		},
 		{
 			readOnlyHint: true,
+			idempotentHint: true,
 			openWorldHint: false,
 			destructiveHint: false,
 			title: "List recurring tasks",
@@ -8031,6 +8090,7 @@ export function registerTools(
 		},
 		{
 			readOnlyHint: false,
+			idempotentHint: true,
 			openWorldHint: false,
 			destructiveHint: false,
 			title: "Pause recurring task",
@@ -8073,6 +8133,7 @@ export function registerTools(
 		},
 		{
 			readOnlyHint: false,
+			idempotentHint: true,
 			openWorldHint: false,
 			destructiveHint: false,
 			title: "Resume recurring task",
@@ -8119,6 +8180,7 @@ export function registerTools(
 		},
 		{
 			readOnlyHint: false,
+			idempotentHint: true,
 			openWorldHint: false,
 			destructiveHint: true,
 			title: "Delete recurring task",
@@ -8173,6 +8235,7 @@ export function registerTools(
 		},
 		{
 			readOnlyHint: false,
+			idempotentHint: true,
 			openWorldHint: false,
 			destructiveHint: false,
 			title: "Update recurring task",
@@ -8574,6 +8637,7 @@ export function registerTools(
 		},
 		{
 			readOnlyHint: false,
+			idempotentHint: false,
 			openWorldHint: false,
 			destructiveHint: false,
 			title: "Post a debate-room turn",
@@ -8629,6 +8693,7 @@ export function registerTools(
 		},
 		{
 			readOnlyHint: true,
+			idempotentHint: true,
 			openWorldHint: false,
 			destructiveHint: false,
 			title: "Get a debate room",
@@ -9309,6 +9374,7 @@ export function registerTools(
 		},
 		{
 			readOnlyHint: false,
+			idempotentHint: true,
 			openWorldHint: false,
 			destructiveHint: false,
 			title: "Add repo mapping",
@@ -9394,6 +9460,7 @@ export function registerTools(
 		},
 		{
 			readOnlyHint: true,
+			idempotentHint: true,
 			openWorldHint: false,
 			destructiveHint: false,
 			title: "List repo mappings",
@@ -9516,6 +9583,7 @@ export function registerTools(
 		},
 		{
 			readOnlyHint: false,
+			idempotentHint: true,
 			openWorldHint: false,
 			destructiveHint: true,
 			title: "Remove repo mapping",
@@ -9589,6 +9657,7 @@ export function registerTools(
 		},
 		{
 			readOnlyHint: true,
+			idempotentHint: true,
 			openWorldHint: false,
 			destructiveHint: false,
 			title: "List GitHub owner bindings",
@@ -10113,6 +10182,7 @@ export function registerTools(
 		},
 		{
 			readOnlyHint: false,
+			idempotentHint: false,
 			openWorldHint: false,
 			destructiveHint: false,
 			title: "Create fix pattern",
@@ -10177,6 +10247,7 @@ export function registerTools(
 		},
 		{
 			readOnlyHint: false,
+			idempotentHint: false,
 			openWorldHint: false,
 			destructiveHint: false,
 			title: "Add fix attempt",
@@ -10225,6 +10296,7 @@ export function registerTools(
 		},
 		{
 			readOnlyHint: false,
+			idempotentHint: true,
 			openWorldHint: false,
 			destructiveHint: false,
 			title: "Validate fix",
@@ -10302,6 +10374,7 @@ export function registerTools(
 		},
 		{
 			readOnlyHint: true,
+			idempotentHint: true,
 			openWorldHint: false,
 			destructiveHint: false,
 			title: "Search fix patterns",
@@ -10376,6 +10449,7 @@ export function registerTools(
 		},
 		{
 			readOnlyHint: true,
+			idempotentHint: true,
 			openWorldHint: false,
 			destructiveHint: false,
 			title: "List fix patterns",
@@ -10489,6 +10563,7 @@ export function registerTools(
 		},
 		{
 			readOnlyHint: false,
+			idempotentHint: true,
 			openWorldHint: false,
 			destructiveHint: false,
 			title: "Link issue to fix pattern",
@@ -10540,6 +10615,7 @@ export function registerTools(
 		},
 		{
 			readOnlyHint: true,
+			idempotentHint: true,
 			openWorldHint: false,
 			destructiveHint: false,
 			title: "Get mission template",
@@ -10636,6 +10712,7 @@ export function registerTools(
 		},
 		{
 			readOnlyHint: false,
+			idempotentHint: true,
 			openWorldHint: false,
 			destructiveHint: false,
 			title: "Update mission template",
@@ -10716,6 +10793,7 @@ export function registerTools(
 		},
 		{
 			readOnlyHint: false,
+			idempotentHint: false,
 			openWorldHint: false,
 			destructiveHint: false,
 			title: "Instantiate mission template",
@@ -11173,6 +11251,7 @@ export function registerTools(
 		},
 		{
 			readOnlyHint: true,
+			idempotentHint: true,
 			openWorldHint: false,
 			destructiveHint: false,
 			title: "Get tool usage",
@@ -11235,6 +11314,7 @@ export function registerTools(
 		},
 		{
 			readOnlyHint: true,
+			idempotentHint: true,
 			openWorldHint: false,
 			destructiveHint: false,
 			title: "Get a person's tool usage across their agents",
@@ -11297,6 +11377,7 @@ export function registerTools(
 		{},
 		{
 			readOnlyHint: true,
+			idempotentHint: true,
 			openWorldHint: false,
 			destructiveHint: false,
 			title: "Who am I (identity introspection)",
@@ -11478,6 +11559,7 @@ export function registerTools(
 		},
 		{
 			readOnlyHint: true,
+			idempotentHint: true,
 			openWorldHint: false,
 			destructiveHint: false,
 			title: "Get task",
@@ -11535,6 +11617,7 @@ export function registerTools(
 		},
 		{
 			readOnlyHint: true,
+			idempotentHint: true,
 			openWorldHint: false,
 			destructiveHint: false,
 			title: "Get fix pattern",
@@ -11721,6 +11804,7 @@ export function registerTools(
 		},
 		{
 			readOnlyHint: true,
+			idempotentHint: true,
 			openWorldHint: false,
 			destructiveHint: false,
 			title: "Get message",
@@ -11802,6 +11886,7 @@ export function registerTools(
 		},
 		{
 			readOnlyHint: true,
+			idempotentHint: true,
 			openWorldHint: false,
 			destructiveHint: false,
 			title: "Get recurring task",
@@ -11865,6 +11950,7 @@ export function registerTools(
 			// READ_ONLY_TOOLS allowlist in chatgpt-tool-annotations.test.ts updated
 			// in the same PR-I commit to include "improvisation_digest".
 			readOnlyHint: true,
+			idempotentHint: true,
 			openWorldHint: false,
 			destructiveHint: false,
 			title: "Improvisation digest",

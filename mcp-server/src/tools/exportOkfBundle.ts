@@ -125,6 +125,7 @@ export function registerExportOkfBundle(
 			// Not read-only: the export stores a blob and binds its storageId to the
 			// exporter's org (kbUploads), so import/validate can assert ownership.
 			readOnlyHint: false,
+			idempotentHint: false,
 			openWorldHint: false,
 			destructiveHint: false,
 			title: "Export OKF bundle",
