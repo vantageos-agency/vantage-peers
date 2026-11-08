@@ -79,7 +79,16 @@ import {
 	sessionTokenFrom,
 } from "./src/authorize.js";
 import { bootCheckOrExit } from "./src/backendContract.js";
-import { BRAND_ICON_ROUTES, mcpImplementation } from "./src/brand.js";
+import {
+	BRAND_ICON_ROUTES,
+	mcpImplementation,
+	mcpServerOptions,
+} from "./src/brand.js";
+import {
+	isBrowserLandingRequest,
+	landingPageResponse,
+} from "./src/landingPage.js";
+import { SERVER_CARD_PATHS, serverCardResponse } from "./src/serverCard.js";
 import { registerTools } from "./src/tools.js";
 import { registerUiResources } from "./src/ui-resources/register.js";
 
@@ -1496,6 +1505,20 @@ for (const [path, [contentType, bytes]] of Object.entries(BRAND_ICON_ROUTES)) {
 	);
 }
 
+// Public MCP Server Card (src/serverCard.ts): static metadata, read before any
+// connection, grants nothing. Served on the origin this request used.
+for (const path of SERVER_CARD_PATHS) {
+	app.get(path, (c) => {
+		let origin: string;
+		try {
+			origin = resolveIssuer(c.req.raw);
+		} catch (err: unknown) {
+			return c.json({ error: (err as Error).message }, 500);
+		}
+		return serverCardResponse(c.req.raw, pkg.version, origin);
+	});
+}
+
 app.get("/health", (c) =>
 	c.json({
 		status: "ok",
@@ -2254,6 +2277,25 @@ app.route("/admin", admin);
 // MCP endpoint — authenticated, stateless per-request server
 // ─────────────────────────────────────────────────────────────────────────────
 
+// A browser opening /mcp gets the public setup page (src/landingPage.ts)
+// instead of a bare 401. Only a request that cannot be an MCP request lands
+// here: no Authorization, no text/event-stream in Accept, Accept text/html or
+// `*/*`. Everything else falls through to bearerAuthMiddleware unchanged. The
+// page attaches no context and reaches no backend.
+app.get("/mcp", async (c, next) => {
+	if (isBrowserLandingRequest(c.req.raw)) {
+		let origin: string | null = null;
+		try {
+			origin = resolveIssuer(c.req.raw);
+		} catch {
+			origin = null;
+		}
+		// No resolvable origin: the request goes on to the bearer gate as before.
+		if (origin !== null) return landingPageResponse(origin);
+	}
+	await next();
+});
+
 app.all("/mcp", bearerAuthMiddleware(), async (c) => {
 	const tenant = c.get("tenant");
 	const oauthCtx = c.get("oauthContext");
@@ -2281,9 +2323,15 @@ app.all("/mcp", bearerAuthMiddleware(), async (c) => {
 	// closes over THIS request's verified caller (oauthCtx) and its Convex
 	// client, so an instance never serves anyone else.
 	const buildServer = (): McpServer => {
-		const server = new McpServer(mcpImplementation(pkg.version, iconOrigin));
+		const server = new McpServer(
+			mcpImplementation(pkg.version, iconOrigin),
+			mcpServerOptions(),
+		);
 
-		registerTools(server, convex, oauthCtx, { recordToolUsage: true });
+		registerTools(server, convex, oauthCtx, {
+			recordToolUsage: true,
+			publicBaseUrl: iconOrigin,
+		});
 
 		// SEP-1865 ui:// resources for Generative UI primitives — see
 		// src/ui-resources/register.ts.
@@ -2296,10 +2344,13 @@ app.all("/mcp", bearerAuthMiddleware(), async (c) => {
 		// refuses it before any Convex query.)
 		const master = oauthCtx === undefined || isMasterScope(oauthCtx);
 		const callerIdentities = master ? undefined : oauthCtx.fromAllowList;
-		registerUiResources(server, convex, oauthCtx, {
-			master,
-			callerIdentities,
-		});
+		registerUiResources(
+			server,
+			convex,
+			oauthCtx,
+			{ master, callerIdentities },
+			iconOrigin,
+		);
 		return server;
 	};
 

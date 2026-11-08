@@ -203,7 +203,9 @@ describe("the wrapper records through registerTools", () => {
 			"utf8",
 		);
 		expect(src).toMatch(
-			/registerTools\(server, convex, oauthCtx, \{ recordToolUsage: true \}\)/,
+			// Other options may sit beside it (publicBaseUrl, task
+			// k1793xkjhzh1xm23gmmwjgwfyx8htbv0); the pin is recordToolUsage: true.
+			/registerTools\(\s*server,\s*convex,\s*oauthCtx,\s*\{[^}]*recordToolUsage: true[^}]*\}\s*\)/,
 		);
 	});
 

@@ -77,12 +77,15 @@ export function registerUiResources(
 	convex: UiResourceConvexClient,
 	oauthCtx: OAuthContext | undefined,
 	identity: UiResourceCallerIdentity,
+	// The origin this request was served on (resolveIssuer), for the views'
+	// `_meta.ui.domain`. Null when unknown: no domain is declared.
+	publicBaseUrl: string | null = null,
 ): void {
 	// Registered with a ResourceTemplate so that resources/list (via
 	// listCallback) and resources/read both work.
 	// URI pattern: ui://vp/v1/{primitive}  — query params read from the URL object.
 	const uiResourceTemplate = new ResourceTemplate("ui://vp/v1/{primitive}", {
-		list: async () => ({ resources: listUiResources() }),
+		list: async () => ({ resources: listUiResources(publicBaseUrl) }),
 	});
 	server.registerResource(
 		"vp-ui",
@@ -105,7 +108,12 @@ export function registerUiResources(
 			};
 			// `identity` (master + callerIdentities) is computed by the caller
 			// (server-http.ts) from the verified oauthCtx, as before the extraction.
-			return await readUiResource(uri.toString(), fetchConvex, identity);
+			return await readUiResource(
+				uri.toString(),
+				fetchConvex,
+				identity,
+				publicBaseUrl,
+			);
 		},
 	);
 }
