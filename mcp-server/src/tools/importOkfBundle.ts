@@ -50,30 +50,32 @@ export const importOkfBundleArgsSchema = {
 		.nullable()
 		.optional()
 		.describe(
-			"Signed HTTPS URL to a tarball OKF v0.1 bundle. Mutually exclusive with storageId.",
+			"A signed HTTPS URL to an OKF tarball, e.g. the bundleUrl export_okf_bundle returned. " +
+				"Omit it when storageId is given.",
 		),
 	storageId: z
 		.string()
 		.nullable()
 		.optional()
 		.describe(
-			"Convex `_storage` document ID of a previously-uploaded tarball. Mutually exclusive with bundleUrl.",
+			"An uploaded tarball, by the storageId claim_upload returned. Omit it when bundleUrl is given.",
 		),
 	targetNamespace: z
 		.string()
 		.describe(
-			"Destination namespace, e.g. 'team/<orgId>' or 'project/<slug>'. Cross-tenant writes are denied.",
+			"Where the entries are written, e.g. 'team/<orgId>' or 'project/<slug>'; a namespace of another tenant is refused.",
 		),
 	mode: z
 		.enum(["dry-run", "merge", "replace"])
 		.describe(
-			"dry-run = preview counts, no writes. merge = insert new + dedup by content. replace = reserved.",
+			"What the import does: dry-run previews the counts without writing, merge inserts what is new, replace is reserved.",
 		),
 	idempotencyKey: z
 		.string()
 		.optional()
 		.describe(
-			"Caller-supplied replay token. Same key + same content = no duplicate inserts.",
+			"A token of your choice that marks this delivery as one import. " +
+				"Omit it: content de-duplication already makes a replay a no-op.",
 		),
 };
 
@@ -88,6 +90,8 @@ export function registerImportOkfBundle(
 		{ kind: "write", namespaceArg: "targetNamespace" },
 		"import_okf_bundle",
 		"Import an OKF v0.1 bundle (memories + briefing-notes + tasks) into a target VantagePeers namespace. " +
+			"Returns { imported: { memories, briefings, tasks }, skipped, conflicts: [{ path, reason }] }; in dry-run the counts are what a merge would import, and nothing is written. " +
+			"Entries already present (same content) are skipped, so a replay imports nothing. " +
 			"WHEN: use to restore a snapshot, migrate workspace data between tenants, or replay an export. " +
 			"EXAMPLE: import_okf_bundle storageId='abc...' targetNamespace='team/acme-corp' mode='merge'.",
 		importOkfBundleArgsSchema,

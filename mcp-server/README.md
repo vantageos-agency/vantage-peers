@@ -212,7 +212,7 @@ _Applies to: Cloud and Self-host._
 - `instantiate_template_into_mission` (write) — Create one task per template step inside a mission, pre-assigned to each step's declared orchestrator.
 - `list_missions` (read) — List missions filtered by project, pilot, or status, newest first with cursor paging support.
 - `list_tasks_by_mission` (read) — List all tasks linked to a mission, optionally filtered by status, newest first.
-- `update_mission` (write) — Update any mutable field on a mission; only provided fields are patched, updatedAt auto-set.
+- `update_mission` (write) — Update any mutable field on a mission.
 - `update_mission_status` (write) — Change a mission's lifecycle status in a single call without touching other fields.
 - `update_mission_template` (write) — Create or upsert a mission template by name; existing templates are overwritten.
 
@@ -230,7 +230,7 @@ _Applies to: Cloud and Self-host._
 
 - `add_task_dependency` (write) — Add dependency task IDs to a task so it cannot start until all listed tasks complete.
 - `block_task` (write, destructive) — Mark a task as blocked with an optional reason and blocking task IDs, setting status to blocked.
-- `bulk_complete_tasks` (write) — Bulk-close tasks that match a filter in one atomic mutation.
+- `bulk_complete_tasks` (write) — Bulk-close the open tasks matching a filter, in one atomic mutation.
 - `checkout_task` (write) — Atomically claim a todo task, preventing race conditions when multiple orchestrators compete.
 - `complete_task` (write) — Mark a task as done with a mandatory completionNote; always notify the creator via send_message after.
 - `correct_task_segment` (write) — Restate the real boundaries of ONE recorded work segment, when it grew across an unrecorded break (e.g. a station's session ended without pause_task and the segment stayed open for days).
