@@ -27,7 +27,7 @@ import { serveStdio } from "@modelcontextprotocol/server/stdio";
 import { LOCAL_STDIO_TRUST_CTX } from "./src/auth.js";
 import { createServiceAccountConvexClient } from "./src/authenticatedConvexClient.js";
 import { bootCheckOrExit } from "./src/backendContract.js";
-import { mcpImplementation } from "./src/brand.js";
+import { mcpImplementation, mcpServerOptions } from "./src/brand.js";
 import { registerTools } from "./src/tools.js";
 
 // Advertised version is derived from the manifest, same pattern as
@@ -93,7 +93,10 @@ const convex = createServiceAccountConvexClient(convexUrl);
 // the missing-argument path is no longer a max-authority backdoor
 // (.claude/rules/one-identity-layer.md clause 3).
 function buildServer(): McpServer {
-	const server = new McpServer(mcpImplementation(pkg.version, null));
+	const server = new McpServer(
+		mcpImplementation(pkg.version, null),
+		mcpServerOptions(),
+	);
 	registerTools(server, convex, LOCAL_STDIO_TRUST_CTX);
 	return server;
 }

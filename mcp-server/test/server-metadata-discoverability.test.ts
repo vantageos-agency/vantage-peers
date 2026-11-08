@@ -348,10 +348,7 @@ describe("5. tools with a UI carry openai/toolInvocation", () => {
 			const { tools } = await client.listTools();
 			const byName = new Map(tools.map((t) => [t.name, t]));
 			for (const name of UI_TOOLS) {
-				const meta = (byName.get(name)?._meta ?? {}) as Record<
-					string,
-					unknown
-				>;
+				const meta = (byName.get(name)?._meta ?? {}) as Record<string, unknown>;
 				const inv = meta["openai/toolInvocation"] as
 					| { invoking?: unknown; invoked?: unknown }
 					| undefined;

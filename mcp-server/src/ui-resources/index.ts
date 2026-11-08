@@ -39,10 +39,36 @@ export const MCP_UI_CAPABILITY_KEY = "io.modelcontextprotocol/ui" as const;
 // PR #1865 MIME — re-export from @mcp-ui/server for downstream visibility.
 export const MCP_UI_MIME_TYPE = RESOURCE_MIME_TYPE;
 
-// UIResourceMeta envelope (SEP-1865 §UI Resource Declaration). Empty object reserved
-// for future csp/permissions/domain/prefersBorder overrides per primitive.
-type UIResourceMeta = Record<string, never>;
-const DEFAULT_UI_META: UIResourceMeta = {};
+// UIResourceMeta envelope (SEP-1865 §UI Resource Declaration;
+// @modelcontextprotocol/ext-apps 0.3.1 McpUiResourceMeta: csp, domain,
+// prefersBorder). `domain` is the "dedicated origin for widget sandbox".
+export type UIResourceMeta = { domain?: string; prefersBorder?: boolean };
+
+/** OpenAI Apps SDK key: the one-sentence description of a view for the model. */
+export const OPENAI_WIDGET_DESCRIPTION_META_KEY = "openai/widgetDescription";
+
+/** The `_meta` of a view resource (list entry and read contents alike). */
+export type UiViewMeta = {
+	ui: UIResourceMeta;
+	[OPENAI_WIDGET_DESCRIPTION_META_KEY]: string;
+};
+
+/**
+ * The view sandbox domain: the exact HTTPS origin this server was served on,
+ * shared by every view (MCP Apps `_meta.ui.domain`). Derived from the served
+ * URL (resolveIssuer in server-http.ts), never a per-deployment literal. No
+ * known origin (stdio) or a non-HTTPS one (local development) declares none.
+ */
+export function viewDomainOf(publicBaseUrl: string | null): string | undefined {
+	if (publicBaseUrl === null) return undefined;
+	let url: URL;
+	try {
+		url = new URL(publicBaseUrl);
+	} catch {
+		return undefined;
+	}
+	return url.protocol === "https:" ? url.origin : undefined;
+}
 
 // URI parser : ui://vp/v1/<primitive>?<query>
 const UI_URI_RE = /^ui:\/\/vp\/v1\/([a-z][a-z0-9-]*)(?:\?(.*))?$/;
@@ -89,23 +115,54 @@ export const PRIMITIVE_DESCRIPTIONS: Record<Primitive, string> = {
 		"Render memory quotes from a namespace. Query params: namespace, type, limit, lang.",
 };
 
+/** One sentence per view, shown to the model as `openai/widgetDescription`. */
+export const WIDGET_DESCRIPTIONS: Record<Primitive, string> = {
+	"tasks-table":
+		"A table of VantagePeers tasks with their title, status, priority and assignee.",
+	"messages-feed":
+		"A feed of VantagePeers messages with their sender, recipient, content and time.",
+	"diary-entry":
+		"VantagePeers diary entries with their date, orchestrator and content.",
+	"mission-timeline":
+		"A list of VantagePeers missions with their status, pilot and project.",
+	"briefing-note":
+		"A VantagePeers briefing note with its title, topic and content.",
+	"memory-quote":
+		"Stored VantagePeers memories with their namespace, type and content.",
+};
+
+/** The `_meta` every view resource of `primitive` carries. */
+export function uiViewMeta(
+	primitive: Primitive,
+	publicBaseUrl: string | null,
+	ui: UIResourceMeta = {},
+): UiViewMeta {
+	const domain = viewDomainOf(publicBaseUrl);
+	return {
+		ui: domain === undefined ? { ...ui } : { ...ui, domain },
+		[OPENAI_WIDGET_DESCRIPTION_META_KEY]: WIDGET_DESCRIPTIONS[primitive],
+	};
+}
+
 export type UiResourceListEntry = {
 	uri: string;
 	name: string;
 	description: string;
 	mimeType: string;
-	_meta: { ui: UIResourceMeta };
+	_meta: UiViewMeta;
 };
 
 // Resource list — returned by resources/list MCP handler.
 // PR #1865 canonical: mimeType=text/html;profile=mcp-app + _meta.ui envelope.
-export function listUiResources(): UiResourceListEntry[] {
+export function listUiResources(
+	publicBaseUrl: string | null = null,
+): UiResourceListEntry[] {
 	return PRIMITIVES.map((p) => ({
 		uri: `ui://vp/v1/${p}`,
 		name: p,
 		description: PRIMITIVE_DESCRIPTIONS[p],
 		mimeType: MCP_UI_MIME_TYPE,
-		_meta: { ui: DEFAULT_UI_META },
+		_meta: uiViewMeta(p, publicBaseUrl),
 	}));
 }
 
@@ -114,7 +171,7 @@ export type UiResourceContent =
 			uri: string;
 			mimeType: string;
 			text: string;
-			_meta?: { ui: UIResourceMeta };
+			_meta?: UiViewMeta;
 	  }
 	| {
 			uri: string;
@@ -163,6 +220,7 @@ export async function readUiResource(
 		args: Record<string, unknown>,
 	) => Promise<unknown>,
 	identity?: UiResourceCallerIdentity,
+	publicBaseUrl: string | null = null,
 ): Promise<UiResourceReadResult> {
 	const parsed = parseUiUri(uri);
 	if (!parsed) {
@@ -205,7 +263,7 @@ export async function readUiResource(
 				uri,
 				mimeType: MCP_UI_MIME_TYPE,
 				text: html,
-				_meta: { ui: DEFAULT_UI_META },
+				_meta: uiViewMeta(primitive, publicBaseUrl),
 			},
 			{
 				uri,

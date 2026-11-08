@@ -90,6 +90,7 @@ Any client that supports remote MCP servers over Streamable HTTP can connect:
 - **URL:** the endpoint URL. It always ends in `/mcp` (for example `https://<your-host>/mcp`); enter it exactly, not the bare host.
 - **Protocol:** the server speaks MCP protocol `2026-07-28` (a client that opens with `server/discover`) and `2025-11-25` (a client that opens with `initialize`). Each client is answered in its own version; you choose nothing.
 - **Authentication:** OAuth 2.1. The server publishes its metadata at `/.well-known/oauth-protected-resource/mcp` (also at `/.well-known/oauth-protected-resource`), `/.well-known/oauth-authorization-server` and `/.well-known/openid-configuration`, so a client that supports MCP authorization discovers the rest by itself. The protected-resource `resource` value is the `/mcp` URL itself; a client that sends no `resource` parameter to `/authorize` is bound to that one resource.
+- **Discovery:** the server publishes a public [MCP Server Card](https://github.com/modelcontextprotocol/experimental-ext-server-card) (name, title, description, version, icons, the `/mcp` endpoint over `streamable-http`, and an OAuth sign-in hint under `_meta["com.vantagepeers/auth"]`) at `/mcp/server-card`, `/.well-known/mcp/server-card.json`, `/.well-known/mcp-server-card`, `/mcp.json` and `/.well-known/mcp.json`. The `initialize` / `server/discover` answer carries the same `title`, `description` and `websiteUrl`, plus server `instructions` (what to call first). Opening the `/mcp` URL in a browser shows a short setup page; an MCP request on that URL is unchanged.
 - A client that cannot run OAuth can send an access token as `Authorization: Bearer <token>`. Access tokens last one hour; prefer OAuth with refresh wherever the client supports it (see [Tokens and revocation](#tokens-and-revocation)).
 
 ### Check the connection
@@ -112,6 +113,8 @@ Six tools can show their result as an interactive view in clients that support [
 - `get_briefing_note`: a briefing note (`ui://vp/apps/v1/briefing-note`).
 
 Each of these tools names its view in `tools/list` (`_meta.ui.resourceUri`), and the view is served by `resources/read` as `text/html;profile=mcp-app`. The view holds no data and calls nothing: your client hands it the tool's own result, so it shows exactly the rows the tool returned to you, after your scope was applied. A refusal is shown as a refusal, not as an empty list.
+
+Every view declares one sandbox origin, `_meta.ui.domain`: the HTTPS origin the server was reached on (for the hosted service, `https://mcp.vantagepeers.com`), and a one-sentence `openai/widgetDescription`. The six tools also carry `openai/toolInvocation` status labels (for example "Listing tasks…" / "Listed tasks") for ChatGPT.
 
 You turn nothing on. A client without MCP Apps support (Claude Code in a terminal, for example) shows the tool's text result, which is the same as before the views existed.
 
@@ -149,6 +152,8 @@ _Applies to: Cloud._
 | `GET` | `/userinfo` | The signed-in person behind an access token |
 | `GET` | `/health` | Public status document: version, commit, serving runtime (`runtime`, `bun`, `node`), transport, agent-identity mode and its source |
 | `GET` | `/favicon.ico`, `/icon.png`, `/apple-touch-icon.png` | The VantagePeers icon, shown by clients next to the connector |
+| `GET` | `/mcp/server-card`, `/.well-known/mcp/server-card.json`, `/.well-known/mcp-server-card`, `/mcp.json`, `/.well-known/mcp.json` | Public MCP Server Card (`application/mcp-server-card+json` when asked for, else `application/json`; `ETag`, `Cache-Control: public, max-age=3600`) |
+| `GET` | `/mcp` from a browser | Public setup page (`text/html`), only for a request with no `Authorization` header whose `Accept` names `text/html` or is `*/*` and does not name `text/event-stream`. Every other request on `/mcp` is an MCP request: without a credential it gets `401` and the `WWW-Authenticate` above |
 
 ### Tokens and revocation
 

@@ -23,7 +23,7 @@
  */
 
 import type { McpServer } from "@modelcontextprotocol/server";
-import { MCP_UI_MIME_TYPE, type Primitive } from "./index.js";
+import { MCP_UI_MIME_TYPE, type Primitive, uiViewMeta } from "./index.js";
 
 /** Each tool that has a UI, and the primitive it renders as. */
 export const UI_APP_TOOL_LINKS: Readonly<Record<string, Primitive>> = {
@@ -33,6 +33,27 @@ export const UI_APP_TOOL_LINKS: Readonly<Record<string, Primitive>> = {
 	list_memories: "memory-quote",
 	get_diary: "diary-entry",
 	get_briefing_note: "briefing-note",
+};
+
+/**
+ * OpenAI Apps SDK key: the status labels a host shows while a tool with a UI
+ * runs (`invoking`) and after it returns (`invoked`).
+ */
+export const OPENAI_TOOL_INVOCATION_META_KEY = "openai/toolInvocation";
+
+/** Invocation labels of each tool that has a UI. */
+export const UI_APP_TOOL_INVOCATION: Readonly<
+	Record<string, { invoking: string; invoked: string }>
+> = {
+	list_tasks: { invoking: "Listing tasks…", invoked: "Listed tasks" },
+	list_messages: { invoking: "Listing messages…", invoked: "Listed messages" },
+	list_missions: { invoking: "Listing missions…", invoked: "Listed missions" },
+	list_memories: { invoking: "Listing memories…", invoked: "Listed memories" },
+	get_diary: { invoking: "Reading the diary…", invoked: "Read the diary" },
+	get_briefing_note: {
+		invoking: "Reading the briefing note…",
+		invoked: "Read the briefing note",
+	},
 };
 
 /** ext-apps' deprecated flat key; `registerAppTool` still emits it beside `_meta.ui`. */
@@ -108,6 +129,13 @@ export function withUiAppLink(name: string, config: unknown): unknown {
 			...existing,
 			ui: { ...existingUi, resourceUri },
 			[LEGACY_RESOURCE_URI_META_KEY]: resourceUri,
+			...(UI_APP_TOOL_INVOCATION[name] === undefined
+				? {}
+				: {
+						[OPENAI_TOOL_INVOCATION_META_KEY]: {
+							...UI_APP_TOOL_INVOCATION[name],
+						},
+					}),
 		},
 	};
 }
@@ -269,7 +297,11 @@ export function renderUiAppHtml(primitive: Primitive): string {
  * registerTools, so wherever a linked tool is registered (HTTP and stdio), the
  * URI it names resolves on the same server.
  */
-export function registerUiAppResources(server: McpServer): void {
+export function registerUiAppResources(
+	server: McpServer,
+	// The origin this request was served on, for `_meta.ui.domain` (null: none).
+	publicBaseUrl: string | null = null,
+): void {
 	// A real McpServer always has registerResource. Unit-test doubles that
 	// capture tool registrations only (`{ registerTool }`) have no resource
 	// surface to serve, so there is nothing to register on them.
@@ -279,7 +311,7 @@ export function registerUiAppResources(server: McpServer): void {
 	const primitives = [...new Set(Object.values(UI_APP_TOOL_LINKS))];
 	for (const primitive of primitives) {
 		const uri = uiAppUri(primitive);
-		const meta = { ui: { prefersBorder: true } };
+		const meta = uiViewMeta(primitive, publicBaseUrl, { prefersBorder: true });
 		server.registerResource(
 			`vp-app-${primitive}`,
 			uri,
