@@ -1,0 +1,4 @@
+---
+section: Fixed
+---
+- **`list_peers` lists a client organisation's agents to its own seats.** Every client seat (a person with or without a bound agent, and an agent seat) was refused with `RBAC_DENIED`: the org directory was read correctly, but each name was then looked up in `profiles:listProfiles`, a fleet-master read that refuses an ordinary member since the bearer client sends the acting organisation, and that one refusal turned the whole listing into a refusal. A client seat is now listed from its organisation's directory alone (name and `agentId`, the address `send_message` takes); status fields such as `lastSeen` are `null` for it, as they were already unreadable. The organisation still comes from the verified credential, never an argument; another organisation's agents are never listed. Task k177e8dyrnykk3c56yf2b0pgfs8hhz06.
