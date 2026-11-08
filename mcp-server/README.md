@@ -153,7 +153,7 @@ _Applies to: Cloud._
 | `GET` | `/health` | Public status document: version, commit, serving runtime (`runtime`, `bun`, `node`), transport, agent-identity mode and its source |
 | `GET` | `/favicon.ico`, `/icon.png`, `/apple-touch-icon.png` | The VantagePeers icon, shown by clients next to the connector |
 | `GET` | `/mcp/server-card`, `/.well-known/mcp/server-card.json`, `/.well-known/mcp-server-card`, `/mcp.json`, `/.well-known/mcp.json` | Public MCP Server Card (`application/mcp-server-card+json` when asked for, else `application/json`; `ETag`, `Cache-Control: public, max-age=3600`) |
-| `GET` | `/mcp` from a browser | Public setup page (`text/html`), only for a request with no `Authorization` header whose `Accept` names `text/html` or is `*/*` and does not name `text/event-stream`. Every other request on `/mcp` is an MCP request: without a credential it gets `401` and the `WWW-Authenticate` above |
+| `GET` | `/mcp` from a browser | Public setup page (`text/html`), only for a request with no `Authorization` header whose `Accept` is absent, is `*/*` or names `text/html`, and does not name `text/event-stream`. Every other request on `/mcp` is an MCP request: without a credential it gets `401` and the `WWW-Authenticate` above |
 
 ### Tokens and revocation
 

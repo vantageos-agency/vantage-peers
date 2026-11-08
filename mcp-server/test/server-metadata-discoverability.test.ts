@@ -174,6 +174,18 @@ describe("2. MCP Server Card, public", () => {
 		}
 	});
 
+	it("/mcp.json and /.well-known/mcp.json: same card JSON, application/json, no credential", async () => {
+		const a = await app.fetch(req("/mcp.json"));
+		const b = await app.fetch(req("/.well-known/mcp.json"));
+		for (const res of [a, b]) {
+			expect(res.status).toBe(200);
+			expect(res.headers.get("content-type")).toBe("application/json");
+		}
+		const textA = await a.text();
+		expect(await b.text()).toBe(textA);
+		expect(JSON.parse(textA).name).toBe("com.vantagepeers/vantage-peers");
+	});
+
 	it("negotiates the card media type and honours If-None-Match", async () => {
 		const res = await app.fetch(
 			req("/mcp/server-card", {
@@ -267,8 +279,22 @@ describe("3. GET /mcp landing page vs MCP requests", () => {
 		expect(res.headers.get("content-type") ?? "").not.toMatch(/^text\/html/);
 	});
 
-	it("GET /mcp with no Accept header -> the MCP path (401)", async () => {
+	it("GET /mcp with no Accept header and no credential -> 200 text/html (RFC 9110: absent Accept = any type)", async () => {
 		const res = await app.fetch(req("/mcp"));
+		expect(res.status).toBe(200);
+		expect(res.headers.get("content-type") ?? "").toMatch(/^text\/html/);
+		expect(res.headers.get("www-authenticate")).toBeNull();
+		expect(await res.text()).toContain(`${ORIGIN}/mcp`);
+	});
+
+	it("POST /mcp with no Accept header and no credential -> still 401 + WWW-Authenticate", async () => {
+		const res = await app.fetch(
+			req("/mcp", {
+				method: "POST",
+				headers: { "content-type": "application/json" },
+				body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "ping" }),
+			}),
+		);
 		expect(res.status).toBe(401);
 		expect(res.headers.get("www-authenticate")).toBe(WWW_AUTH);
 	});

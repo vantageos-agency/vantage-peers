@@ -32,13 +32,15 @@ function mediaRanges(accept: string): string[] {
 /**
  * True only for a browser-style GET: no Authorization header, an Accept that
  * does not include text/event-stream, and an Accept that includes text/html or
- * is exactly `*` `/` `*`. A missing Accept is NOT a browser request.
+ * is exactly `*` `/` `*`, or no Accept at all. RFC 9110 §12.5.1: an absent
+ * Accept means any media type; an MCP client opening the SSE stream always
+ * sends `Accept: text/event-stream`, so an absent Accept cannot be one.
  */
 export function isBrowserLandingRequest(req: Request): boolean {
 	if (req.method !== "GET") return false;
 	if (req.headers.has("authorization")) return false;
 	const accept = req.headers.get("accept");
-	if (accept === null) return false;
+	if (accept === null) return true;
 	const ranges = mediaRanges(accept);
 	if (ranges.includes("text/event-stream")) return false;
 	if (ranges.includes("text/html")) return true;
