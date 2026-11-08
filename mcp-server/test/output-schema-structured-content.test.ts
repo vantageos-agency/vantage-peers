@@ -42,12 +42,24 @@ type Seeded = World["fixtures"]["ids"] & {
 	patternId: string;
 	bulkRunId: string;
 	recurringTaskId?: string;
+	/** Tasks seeded in the person's org for the task lifecycle writes. */
+	tasks: Record<
+		"done" | "fail" | "block" | "dep" | "seg" | "checkout" | "seatbot",
+		string
+	>;
+	receiptId: string;
 };
+
+/** Reads one tool's JSON answer as the person (a test-side lookup, not a decided call). */
+type Read = (tool: string, args: Record<string, unknown>) => Promise<unknown>;
 
 type Call = {
 	tool: (typeof STRUCTURED_TOOLS)[number];
 	as: "person" | "master";
-	args: (s: Seeded) => Record<string, unknown>;
+	args: (
+		s: Seeded,
+		read: Read,
+	) => Record<string, unknown> | Promise<Record<string, unknown>>;
 	/** A call that must run before this one, whose result this one reads. */
 	after?: (r: CallResult, s: Seeded) => void;
 };
@@ -149,6 +161,176 @@ const CALLS: Call[] = [
 		args: (s) => ({ missionId: s.missionId, status: "plan" }),
 	},
 	{
+		tool: "create_task",
+		as: "person",
+		args: () => ({
+			title: "a new task",
+			assignedTo: "ulysse",
+			priority: "low",
+			project: "p",
+		}),
+	},
+	{
+		tool: "complete_task",
+		as: "person",
+		args: (s) => ({
+			taskId: s.tasks.done,
+			completionNote:
+				"Shipped in PR #1234 at commit abc1234, 18/18 tests pass.",
+		}),
+	},
+	{
+		tool: "fail_task",
+		as: "person",
+		args: (s) => ({
+			taskId: s.tasks.fail,
+			failureNote:
+				"Failed: the build broke at commit abc1234 (PR #12), 3/18 tests red.",
+		}),
+	},
+	{
+		tool: "correct_task_segment",
+		as: "person",
+		args: async (s, read) => {
+			const task = (await read("get_task", { taskId: s.tasks.seg })) as {
+				workSegments: Array<{ start: number; end: number }>;
+			};
+			const seg = task.workSegments[0];
+			return {
+				taskId: s.tasks.seg,
+				segmentIndex: 0,
+				start: seg.start,
+				end: seg.end,
+				reason: "unrecorded break, the real work was shorter",
+			};
+		},
+	},
+	{
+		tool: "checkout_task",
+		as: "person",
+		args: (s) => ({ taskId: s.tasks.checkout }),
+	},
+	{
+		tool: "block_task",
+		as: "person",
+		args: (s) => ({
+			taskId: s.tasks.block,
+			reason: "waiting on the seatbot task to land first",
+			blockedOnTaskId: s.tasks.seatbot,
+		}),
+	},
+	{
+		tool: "add_task_dependency",
+		as: "person",
+		args: (s) => ({ taskId: s.tasks.dep, dependsOn: [s.tasks.block] }),
+	},
+	{ tool: "delete_task", as: "person", args: (s) => ({ taskId: s.tasks.dep }) },
+	{
+		tool: "create_mission",
+		as: "person",
+		args: () => ({
+			name: "a mission",
+			project: "p",
+			priority: "low",
+			pilot: "ulysse",
+			agents: ["ulysse"],
+		}),
+	},
+	{
+		tool: "create_briefing_note",
+		as: "person",
+		args: () => ({
+			title: "a note",
+			topic: "t",
+			participants: ["ulysse"],
+			content: "what was decided",
+		}),
+	},
+	{
+		tool: "store_episode",
+		as: "person",
+		args: () => ({
+			namespace: `team/${SLUG}`,
+			context: "c",
+			goal: "g",
+			action: "a",
+			outcome: "o",
+			insight: "i",
+			severity: "minor",
+		}),
+	},
+	{
+		tool: "update_profile",
+		as: "person",
+		args: () => ({ orchestratorId: "ulysse", name: "Ulysse" }),
+	},
+	{
+		tool: "set_summary",
+		as: "person",
+		args: () => ({ orchestratorId: "ulysse", summary: "working" }),
+	},
+	{
+		tool: "send_message",
+		as: "person",
+		args: () => ({
+			recipientAgentIds: [world.fixtures.strings.seatAgentId],
+			content: "hello",
+		}),
+	},
+	{
+		tool: "mark_as_read",
+		as: "person",
+		args: (s) => ({ receiptIds: [s.receiptId] }),
+	},
+	{
+		tool: "delete_message",
+		as: "person",
+		args: (s) => ({ messageId: s.messageId }),
+	},
+	{
+		tool: "update_recurring_task",
+		as: "person",
+		args: (s) => ({ recurringTaskId: s.recurringTaskId, title: "renamed" }),
+	},
+	{
+		tool: "pause_recurring_task",
+		as: "person",
+		args: (s) => ({ taskId: s.recurringTaskId }),
+	},
+	{
+		tool: "resume_recurring_task",
+		as: "person",
+		args: (s) => ({ taskId: s.recurringTaskId }),
+	},
+	{
+		tool: "delete_recurring_task",
+		as: "person",
+		args: (s) => ({ taskId: s.recurringTaskId }),
+	},
+	{
+		tool: "add_repo_mapping",
+		as: "master",
+		args: () => ({ repo: "owner/repo", orchestrator: "ulysse", project: "p" }),
+	},
+	{
+		tool: "remove_repo_mapping",
+		as: "master",
+		args: () => ({ repo: "owner/repo" }),
+	},
+	{
+		tool: "validate_fix",
+		as: "master",
+		args: (s) => ({
+			patternId: s.patternId,
+			validatedFix: "the fix that worked",
+		}),
+	},
+	{
+		tool: "link_issue_to_pattern",
+		as: "master",
+		args: (s) => ({ patternId: s.patternId, issueId: "issue-1" }),
+	},
+	{
 		tool: "soft_delete_memory",
 		as: "master",
 		args: (s) => ({ memoryId: s.memoryId }),
@@ -214,13 +396,63 @@ beforeAll(async () => {
 			startedAt: now,
 			updatedAt: now,
 		});
-		return { episodeId: String(episodeId), patternId: String(patternId) };
+		// complete_task reads the billable-project list; empty: no project is billable.
+		await ctx.db.insert("taskClosureConfig", {
+			key: "billableProjects",
+			value: [],
+			updatedAt: now,
+		});
+		const agents = await ctx.db.query("agents").collect();
+		const agentId = (name: string) =>
+			String(agents.find((x) => x.name === name)?._id);
+		const task = (title: string, assignee: string, project = "p") =>
+			ctx.db.insert("tasks", {
+				title,
+				assignedTo: assignee,
+				assignedToId: agentId(assignee),
+				priority: "low",
+				status: "todo",
+				project,
+				createdBy: "ulysse",
+				createdById: agentId("ulysse"),
+				createdAt: now,
+				updatedAt: now,
+				orgId: SLUG,
+				clerkOrgId: ORG_ID,
+			});
+		const tasks = {
+			done: String(await task("to complete", "ulysse")),
+			fail: String(await task("to fail", "ulysse", "q")),
+			block: String(await task("to block", "ulysse")),
+			dep: String(await task("to depend", "ulysse")),
+			seg: String(await task("to correct", "ulysse")),
+			checkout: String(await task("to check out", "ulysse")),
+			seatbot: String(await task("seatbot's", "seatbot")),
+		};
+		const messages = await ctx.db.query("messages").collect();
+		const receiptId = await ctx.db.insert("messageReceipts", {
+			messageId: messages[0]._id,
+			recipient: "ulysse",
+			recipientId: agentId("ulysse"),
+			tenantId: SLUG,
+			tenantOrgId: ORG_ID,
+		});
+		return {
+			episodeId: String(episodeId),
+			patternId: String(patternId),
+			tasks,
+			receiptId: String(receiptId),
+		};
 	});
 	seeded = {
 		...world.fixtures.ids,
 		episodeId: world.ids.alias(extra.episodeId),
 		patternId: world.ids.alias(extra.patternId),
 		bulkRunId: "bulk-run-structured-1",
+		tasks: Object.fromEntries(
+			Object.entries(extra.tasks).map(([k, v]) => [k, world.ids.alias(v)]),
+		) as Seeded["tasks"],
+		receiptId: world.ids.alias(extra.receiptId),
 	};
 	const person = await connectAs(await tokenFor("person-bound", world));
 	const master = await connectAs("test-master-token");
@@ -230,11 +462,26 @@ beforeAll(async () => {
 	for (const t of (await master.listTools()).tools) {
 		if (t.outputSchema) schemas.set(t.name, t.outputSchema);
 	}
+	const read: Read = async (tool, args) => {
+		const r = (await person.callTool({
+			name: tool,
+			arguments: args,
+		})) as CallResult;
+		if (r.isError) throw new Error(`${tool}: ${r.content[0]?.text}`);
+		return JSON.parse(r.content[0].text);
+	};
+	// Lifecycle preconditions (not decided calls): a task fails from in_progress
+	// (hence its own project "q": one in_progress task per project), and a
+	// segment exists only once work started and paused.
+	await read("start_task", { taskId: seeded.tasks.fail });
+	await read("start_task", { taskId: seeded.tasks.seg });
+	await new Promise((r) => setTimeout(r, 20));
+	await read("pause_task", { taskId: seeded.tasks.seg });
 	for (const call of CALLS) {
 		const client = call.as === "master" ? master : person;
 		const r = (await client.callTool({
 			name: call.tool,
-			arguments: call.args(seeded),
+			arguments: await call.args(seeded, read),
 		})) as CallResult;
 		results.set(call.tool, r);
 		call.after?.(r, seeded);

@@ -122,7 +122,7 @@ export function registerExportOkfBundle(
 			idempotentHint: false,
 			openWorldHint: false,
 			destructiveHint: false,
-			title: "Export OKF bundle",
+			title: "Export memories as a bundle",
 		},
 		async ({ namespace, types, format, since, urlTtl }) => {
 			try {

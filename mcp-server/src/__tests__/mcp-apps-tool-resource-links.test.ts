@@ -80,10 +80,13 @@ const ROWS: Record<string, unknown> = {
 	},
 	"briefingNotes:get": {
 		_id: ID,
+		_creationTime: 1,
 		title: "t",
 		topic: "x",
+		participants: ["sigma"],
 		content: "b",
 		createdBy: "sigma",
+		createdAt: 1,
 	},
 };
 
@@ -157,9 +160,25 @@ const LINKED: ReadonlyArray<
 		"get_briefing_note",
 		{ noteId: ID },
 		"briefing-note",
-		{ _id: ID, title: "t", topic: "x", content: "b", createdBy: "sigma" },
+		// The shape briefingNotes:get returns (briefingNoteFullValidator): the
+		// tool now declares an outputSchema that requires these fields.
+		{
+			_id: ID,
+			_creationTime: 1,
+			title: "t",
+			topic: "x",
+			participants: ["sigma"],
+			content: "b",
+			createdBy: "sigma",
+			createdAt: 1,
+		},
 	],
 ];
+
+// Linked tools that also return structuredContent (the same object as their
+// text, task k1793xkjhzh1xm23gmmwjgwfyx8htbv0): the app document prefers it,
+// and it renders the same rows (payloadOf in src/ui-resources/apps.ts).
+const STRUCTURED_LINKED = new Set(["get_briefing_note"]);
 
 function masterCtx(): OAuthContext {
 	return {
@@ -238,7 +257,11 @@ describe("pole 3, FALLBACK: the text result is unchanged by the link", () => {
 			expect(res.content).toEqual([
 				{ type: "text", text: JSON.stringify(before, null, 2) },
 			]);
-			expect(res.structuredContent).toBeUndefined();
+			if (STRUCTURED_LINKED.has(tool)) {
+				expect(res.structuredContent).toEqual(before);
+			} else {
+				expect(res.structuredContent).toBeUndefined();
+			}
 		});
 	}
 });
