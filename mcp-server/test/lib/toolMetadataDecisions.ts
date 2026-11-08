@@ -35,6 +35,30 @@ export const STRUCTURED_TOOLS = [
 	"write_diary",
 	"update_briefing_note",
 	"create_recurring_task",
+	"create_task",
+	"complete_task",
+	"fail_task",
+	"block_task",
+	"add_task_dependency",
+	"checkout_task",
+	"delete_task",
+	"correct_task_segment",
+	"create_mission",
+	"create_briefing_note",
+	"store_episode",
+	"update_profile",
+	"set_summary",
+	"send_message",
+	"mark_as_read",
+	"delete_message",
+	"update_recurring_task",
+	"pause_recurring_task",
+	"resume_recurring_task",
+	"delete_recurring_task",
+	"add_repo_mapping",
+	"remove_repo_mapping",
+	"validate_fix",
+	"link_issue_to_pattern",
 ] as const;
 
 const ARRAY =
@@ -43,8 +67,10 @@ const CAPPED =
 	"answers an array OR { items, nextCursor } through capListResponseBytes, which rewrites the text under byte pressure: a structuredContent would bypass the cap or diverge from the text";
 const NULLABLE =
 	"a missing or unreadable row is a SUCCESS whose text is JSON null, which no object schema admits";
-const UNMEASURED =
-	"result shape is fixed, but no success through /mcp was exercised in this delivery, so no schema is declared on an unvalidated shape";
+const MASTER_AGENT =
+	"a fleet-master door that refuses a typed acting name without a per-agent credential (and a client org is refused outright); no /mcp harness here presents that credential, so no success could be validated";
+const STORAGE =
+	"Knowledge Base / OKF path through Convex actions and file storage (upload, chunk, bundle) that this convex-test harness does not run; unvalidated, so undeclared";
 
 export const UNSTRUCTURED_TOOLS: Record<string, string> = {
 	recall: ARRAY,
@@ -78,45 +104,27 @@ export const UNSTRUCTURED_TOOLS: Record<string, string> = {
 		"answers free text ('No new messages.', stuck blocks) or a JSON array followed by prose; no single object shape",
 	improvisation_digest:
 		"fixed shape (countsByOrch, countsByCategory, samples), but its door serves the fleet master only with a fleet agent's verified credential, which no /mcp harness here presents: unvalidated, so undeclared",
-	debate_get_room: UNMEASURED,
-	debate_post_turn: UNMEASURED,
-	erase_memory: UNMEASURED,
-	erase_row: UNMEASURED,
-	store_episode: UNMEASURED,
-	update_profile: UNMEASURED,
-	send_message: UNMEASURED,
-	mark_as_read: UNMEASURED,
-	delete_message: UNMEASURED,
-	set_summary: UNMEASURED,
-	create_task: UNMEASURED,
-	bulk_complete_tasks: UNMEASURED,
-	complete_task: UNMEASURED,
-	fail_task: UNMEASURED,
-	correct_task_segment: UNMEASURED,
-	checkout_task: UNMEASURED,
-	delete_task: UNMEASURED,
-	block_task: UNMEASURED,
-	add_task_dependency: UNMEASURED,
-	create_mission: UNMEASURED,
-	create_briefing_note: UNMEASURED,
-	pause_recurring_task: UNMEASURED,
-	resume_recurring_task: UNMEASURED,
-	delete_recurring_task: UNMEASURED,
-	update_recurring_task: UNMEASURED,
-	add_repo_mapping: UNMEASURED,
-	remove_repo_mapping: UNMEASURED,
-	create_fix_pattern: UNMEASURED,
-	add_fix_attempt: UNMEASURED,
-	validate_fix: UNMEASURED,
-	link_issue_to_pattern: UNMEASURED,
-	update_mission_template: UNMEASURED,
-	instantiate_template_into_mission: UNMEASURED,
-	export_okf_bundle: UNMEASURED,
-	import_okf_bundle: UNMEASURED,
-	store_document_chunked: UNMEASURED,
-	soft_delete_document: UNMEASURED,
-	generate_upload_url: UNMEASURED,
-	claim_upload: UNMEASURED,
+	debate_get_room:
+		"fixed { room, turns } from debate:getRoom, but no debate room is opened through /mcp in this harness: unvalidated, so undeclared",
+	debate_post_turn:
+		"accepted turns are a fixed shape, but posting needs an open room and a turn owner, which this harness does not set up: unvalidated, so undeclared",
+	erase_memory:
+		"three success paths (person, seat, fleet master) over three Convex doors, each passing its result through; not all exercised here, so undeclared",
+	erase_row:
+		"passes erase:eraseRow's result through; the fleet-master erase path is not exercised through /mcp here: unvalidated, so undeclared",
+	bulk_complete_tasks:
+		"answers a dry-run preview or a live run from one Convex door, two different shapes; not exercised through /mcp here, so undeclared",
+	create_fix_pattern: MASTER_AGENT,
+	add_fix_attempt: MASTER_AGENT,
+	update_mission_template: MASTER_AGENT,
+	instantiate_template_into_mission:
+		"passes missionTemplates instantiation through, and needs a stored template, which this harness cannot store (update_mission_template is MASTER_AGENT): unvalidated, so undeclared",
+	export_okf_bundle: STORAGE,
+	import_okf_bundle: STORAGE,
+	store_document_chunked: STORAGE,
+	soft_delete_document: STORAGE,
+	generate_upload_url: STORAGE,
+	claim_upload: STORAGE,
 };
 
 /**

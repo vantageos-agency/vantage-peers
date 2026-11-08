@@ -100,7 +100,7 @@ export function registerImportOkfBundle(
 			idempotentHint: true,
 			openWorldHint: false,
 			destructiveHint: false,
-			title: "Import OKF bundle",
+			title: "Import a memory bundle",
 		},
 		async ({ bundleUrl, storageId, targetNamespace, mode, idempotencyKey }) => {
 			try {

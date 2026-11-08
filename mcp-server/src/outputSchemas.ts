@@ -244,3 +244,163 @@ export const createRecurringTaskServedOutputSchema = z.looseObject({
 	taskId: z.string(),
 	cronExpression: z.string(),
 });
+
+// ── more writes (same rule: the handler's own construction, or the Convex
+//    `returns:` validator it passes through) ──────────────────────────────────
+
+/** create_task: the task as created (tasks:create returns its ID). */
+export const createTaskServedOutputSchema = z.looseObject({
+	taskId: z.string(),
+	title: z.string(),
+	assignedTo: z.string(),
+	priority: z.string(),
+	status: z.string(),
+});
+
+/** complete_task, fail_task: the status the task closed with. */
+export const taskClosedServedOutputSchema = taskStatusServedOutputSchema;
+
+/** block_task: the block as recorded. */
+export const blockTaskServedOutputSchema = z.looseObject({
+	taskId: z.string(),
+	status: z.string(),
+	reason: z.string(),
+	blockedOnTaskId: z.string().optional(),
+	blockedCause: z.string(),
+	dependsOn: z.array(z.string()).optional(),
+});
+
+/** add_task_dependency: the resulting dependency list. */
+export const addTaskDependencyServedOutputSchema = z.looseObject({
+	taskId: z.string(),
+	dependsOn: z.array(z.string()),
+	updated: z.boolean(),
+});
+
+/** checkout_task: tasks:checkout `returns:` (claimed false says why). */
+export const checkoutTaskServedOutputSchema = z.looseObject({
+	claimed: z.boolean(),
+	reason: z.string().optional(),
+});
+
+/** delete_task, delete_recurring_task: { deleted } from the Convex door. */
+export const deletedServedOutputSchema = z.looseObject({
+	deleted: z.boolean(),
+});
+
+/** correct_task_segment. */
+export const correctTaskSegmentServedOutputSchema = z.looseObject({
+	taskId: z.string(),
+	segmentIndex: z.number(),
+	corrected: z.boolean(),
+});
+
+/** create_mission. */
+export const createMissionServedOutputSchema = z.looseObject({
+	missionId: z.string(),
+	name: z.string(),
+	project: z.string(),
+	pilot: z.string(),
+	status: z.string(),
+});
+
+/** create_briefing_note. */
+export const createBriefingNoteServedOutputSchema = z.looseObject({
+	noteId: z.string(),
+	title: z.string(),
+	topic: z.string(),
+	createdBy: z.string().nullable().optional(),
+});
+
+/** store_episode. */
+export const storeEpisodeServedOutputSchema = z.looseObject({
+	memoryId: z.string(),
+	type: z.string(),
+	severity: z.string(),
+	namespace: z.string(),
+	createdBy: z.string().nullable().optional(),
+});
+
+/** update_profile. */
+export const updateProfileServedOutputSchema = z.looseObject({
+	profileId: z.string(),
+	orchestratorId: z.string(),
+	name: z.string().optional(),
+});
+
+/** set_summary. */
+export const setSummaryServedOutputSchema = z.looseObject({
+	orchestratorId: z.string(),
+	instanceId: z.string().optional(),
+	summary: z.string(),
+});
+
+/** send_message: recipients by ID, or the channel; stateUnverified when a stated state could not be checked. */
+export const sendMessageServedOutputSchema = z.looseObject({
+	messageId: z.string(),
+	from: z.string(),
+	recipientAgentIds: z.array(z.string()).optional(),
+	channel: z.string().optional(),
+	stateUnverified: z.array(z.unknown()).optional(),
+});
+
+/** mark_as_read: how many receipts were newly marked. */
+export const markAsReadServedOutputSchema = z.looseObject({
+	markedAsRead: z.number(),
+});
+
+/** delete_message: messages:deleteMessage `returns:`. */
+export const deleteMessageServedOutputSchema = z.looseObject({
+	deleted: z.boolean(),
+	receiptsDeleted: z.number(),
+});
+
+/** update_recurring_task. */
+export const updateRecurringTaskServedOutputSchema = z.looseObject({
+	recurringTaskId: z.string(),
+	updated: z.boolean(),
+});
+
+/** pause_recurring_task: recurringTasks:pause `returns:`. */
+export const pauseRecurringTaskServedOutputSchema = z.looseObject({
+	taskId: z.string(),
+	active: z.boolean(),
+});
+
+/** resume_recurring_task: recurringTasks:resume `returns:`. */
+export const resumeRecurringTaskServedOutputSchema = z.looseObject({
+	taskId: z.string(),
+	active: z.boolean(),
+	nextRunAt: z.number(),
+});
+
+/** add_repo_mapping: the mapping as stored. */
+export const addRepoMappingServedOutputSchema = z.looseObject({
+	id: z.string(),
+	repo: z.string(),
+	orchestrator: z.string(),
+	project: z.string(),
+	active: z.boolean(),
+	reviewer: z.string().nullable().optional(),
+	fallbackReviewer: z.string().nullable().optional(),
+});
+
+/** remove_repo_mapping: the repo and whether a mapping was removed. */
+export const removeRepoMappingServedOutputSchema = z.looseObject({
+	repo: z.string(),
+	deleted: z.boolean(),
+});
+
+/** validate_fix. */
+export const validateFixServedOutputSchema = z.looseObject({
+	patternId: z.string(),
+	validatedFix: z.string(),
+	validated: z.boolean(),
+});
+
+/** link_issue_to_pattern. */
+export const linkIssueToPatternServedOutputSchema = z.looseObject({
+	patternId: z.string(),
+	issueId: z.string(),
+	linked: z.boolean(),
+});
