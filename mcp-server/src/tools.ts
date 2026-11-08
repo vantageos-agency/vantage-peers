@@ -54,6 +54,29 @@ import {
 } from "./fresh-state-guard.js";
 import { listTasksGate } from "./list-tasks-gate.js";
 import { memberAuthorLabel } from "./memberAuthor.js";
+import {
+	billingSummaryByProjectServedOutputSchema,
+	briefingNoteUpdatedServedOutputSchema,
+	createRecurringTaskServedOutputSchema,
+	getBriefingNoteServedOutputSchema,
+	getBulkCompleteRunServedOutputSchema,
+	getEpisodeServedOutputSchema,
+	getFixPatternServedOutputSchema,
+	getGithubOwnerBindingsServedOutputSchema,
+	getMemoryServedOutputSchema,
+	getMessageServedOutputSchema,
+	getRecurringTaskServedOutputSchema,
+	getTaskServedOutputSchema,
+	listBlockedOnMeServedOutputSchema,
+	listBroadcastStatusServedOutputSchema,
+	missionStatusServedOutputSchema,
+	missionUpdatedServedOutputSchema,
+	softDeleteMemoryServedOutputSchema,
+	storeMemoryServedOutputSchema,
+	taskStatusServedOutputSchema,
+	taskUpdatedServedOutputSchema,
+	writeDiaryServedOutputSchema,
+} from "./outputSchemas.js";
 import { normalizeOrchestratorId } from "./normalizeOrchestratorId.js";
 import {
 	clampLimit,
@@ -2486,6 +2509,7 @@ export function registerTools(
 					"Omit it and the memory never expires."),
 		},
 		{
+			outputSchema: storeMemoryServedOutputSchema,
 			readOnlyHint: false,
 			idempotentHint: false,
 			openWorldHint: false,
@@ -2537,17 +2561,14 @@ export function registerTools(
 					ttl,
 				});
 
+				// The same object is the text (unchanged) and the structuredContent the
+				// outputSchema validates (task k1793xkjhzh1xm23gmmwjgwfyx8htbv0).
+				const structured: Record<string, unknown> = { memoryId, namespace, type, content, createdBy: author };
 				return {
 					content: [
-						{
-							type: "text",
-							text: JSON.stringify(
-								{ memoryId, namespace, type, content, createdBy: author },
-								null,
-								2,
-							),
-						},
+						{ type: "text" as const, text: JSON.stringify(structured, null, 2) },
 					],
+					structuredContent: structured,
 				};
 			} catch (error: any) {
 				if (error instanceof ProtocolError) throw error;
@@ -2582,6 +2603,7 @@ export function registerTools(
 			),
 		},
 		{
+			outputSchema: softDeleteMemoryServedOutputSchema,
 			readOnlyHint: false,
 			idempotentHint: true,
 			openWorldHint: false,
@@ -2597,13 +2619,14 @@ export function registerTools(
 					memoryId,
 				});
 
+				// The same object is the text (unchanged) and the structuredContent the
+				// outputSchema validates (task k1793xkjhzh1xm23gmmwjgwfyx8htbv0).
+				const structured: Record<string, unknown> = { deleted: true, memoryId };
 				return {
 					content: [
-						{
-							type: "text",
-							text: JSON.stringify({ deleted: true, memoryId }, null, 2),
-						},
+						{ type: "text" as const, text: JSON.stringify(structured, null, 2) },
 					],
+					structuredContent: structured,
 				};
 			} catch (error: any) {
 				return mcpConvexError(error);
@@ -2770,6 +2793,7 @@ export function registerTools(
 			memoryId: memoryIdSchema.describe("The memory to fetch: its memoryId as returned by recall, text_search, list_memories or store_memory."),
 		},
 		{
+			outputSchema: getMemoryServedOutputSchema,
 			readOnlyHint: true,
 			idempotentHint: true,
 			openWorldHint: false,
@@ -2788,8 +2812,14 @@ export function registerTools(
 				if (filtered === null) {
 					return mcpError(`Memory not found: ${memoryId}`);
 				}
+				// The same object is the text (unchanged) and the structuredContent the
+				// outputSchema validates (task k1793xkjhzh1xm23gmmwjgwfyx8htbv0).
+				const structured: Record<string, unknown> = filtered;
 				return {
-					content: [{ type: "text", text: JSON.stringify(filtered, null, 2) }],
+					content: [
+						{ type: "text" as const, text: JSON.stringify(structured, null, 2) },
+					],
+					structuredContent: structured,
 				};
 			} catch (error: any) {
 				return mcpConvexError(error);
@@ -3147,6 +3177,7 @@ export function registerTools(
 			episodeId: episodeIdSchema.describe("The episode to fetch: the memoryId returned by store_episode, list_episodes or search_episodes_by_semantic."),
 		},
 		{
+			outputSchema: getEpisodeServedOutputSchema,
 			readOnlyHint: true,
 			idempotentHint: true,
 			openWorldHint: false,
@@ -3171,8 +3202,14 @@ export function registerTools(
 				if ((filtered as any)?.type !== "episode") {
 					return mcpError(`Episode not found: ${episodeId}`);
 				}
+				// The same object is the text (unchanged) and the structuredContent the
+				// outputSchema validates (task k1793xkjhzh1xm23gmmwjgwfyx8htbv0).
+				const structured: Record<string, unknown> = filtered;
 				return {
-					content: [{ type: "text", text: JSON.stringify(filtered, null, 2) }],
+					content: [
+						{ type: "text" as const, text: JSON.stringify(structured, null, 2) },
+					],
+					structuredContent: structured,
 				};
 			} catch (error: any) {
 				return mcpConvexError(error);
@@ -4267,6 +4304,7 @@ export function registerTools(
 				),
 		},
 		{
+			outputSchema: listBlockedOnMeServedOutputSchema,
 			readOnlyHint: true,
 			idempotentHint: true,
 			openWorldHint: false,
@@ -4294,22 +4332,19 @@ export function registerTools(
 				};
 				const entries = waiters.entries ?? [];
 				const shown = entries.slice(0, limit ?? 50);
+				// The same object is the text (unchanged) and the structuredContent the
+				// outputSchema validates (task k1793xkjhzh1xm23gmmwjgwfyx8htbv0).
+				const structured: Record<string, unknown> = {
+						entries: shown,
+						total: waiters.total ?? entries.length,
+						truncated: waiters.truncated ?? false,
+						oldestAge: waiters.oldestAge ?? 0,
+					};
 				return {
 					content: [
-						{
-							type: "text",
-							text: JSON.stringify(
-								{
-									entries: shown,
-									total: waiters.total ?? entries.length,
-									truncated: waiters.truncated ?? false,
-									oldestAge: waiters.oldestAge ?? 0,
-								},
-								null,
-								2,
-							),
-						},
+						{ type: "text" as const, text: JSON.stringify(structured, null, 2) },
 					],
+					structuredContent: structured,
 				};
 			} catch (error: any) {
 				return mcpConvexError(error);
@@ -4976,6 +5011,7 @@ export function registerTools(
 				),
 		},
 		{
+			outputSchema: listBroadcastStatusServedOutputSchema,
 			readOnlyHint: true,
 			idempotentHint: true,
 			openWorldHint: false,
@@ -5063,13 +5099,14 @@ export function registerTools(
 				// class this fix closes. `limit` (capped at 200 by the arg schema)
 				// plus `truncated` already give the caller an explicit, honest
 				// truncation signal without changing the response shape.
+				// The same object is the text (unchanged) and the structuredContent the
+				// outputSchema validates (task k1793xkjhzh1xm23gmmwjgwfyx8htbv0).
+				const structured: Record<string, unknown> = responsePayload;
 				return {
 					content: [
-						{
-							type: "text",
-							text: JSON.stringify(responsePayload, null, 2),
-						},
+						{ type: "text" as const, text: JSON.stringify(structured, null, 2) },
 					],
+					structuredContent: structured,
 				};
 			} catch (error: any) {
 				return mcpConvexError(error);
@@ -5483,6 +5520,7 @@ export function registerTools(
 		GET_BULK_COMPLETE_RUN_TOOL_DESCRIPTION,
 		getBulkCompleteRunArgsSchema.shape,
 		{
+			outputSchema: getBulkCompleteRunServedOutputSchema,
 			readOnlyHint: true,
 			idempotentHint: true,
 			openWorldHint: false,
@@ -5515,8 +5553,14 @@ export function registerTools(
 				if (filtered === null) {
 					return mcpError(`Bulk run not found: ${bulkRunId}`);
 				}
+				// The same object is the text (unchanged) and the structuredContent the
+				// outputSchema validates (task k1793xkjhzh1xm23gmmwjgwfyx8htbv0).
+				const structured: Record<string, unknown> = filtered;
 				return {
-					content: [{ type: "text", text: JSON.stringify(filtered, null, 2) }],
+					content: [
+						{ type: "text" as const, text: JSON.stringify(structured, null, 2) },
+					],
+					structuredContent: structured,
 				};
 			} catch (error: any) {
 				return mcpConvexError(error);
@@ -5684,6 +5728,7 @@ export function registerTools(
 		BILLING_SUMMARY_BY_PROJECT_TOOL_DESCRIPTION,
 		billingSummaryByProjectArgsSchema.shape,
 		{
+			outputSchema: billingSummaryByProjectServedOutputSchema,
 			readOnlyHint: true,
 			idempotentHint: true,
 			openWorldHint: false,
@@ -5701,30 +5746,27 @@ export function registerTools(
 						...(listNoDuration !== undefined ? { listNoDuration } : {}),
 					},
 				);
+				// The same object is the text (unchanged) and the structuredContent the
+				// outputSchema validates (task k1793xkjhzh1xm23gmmwjgwfyx8htbv0).
+				const structured: Record<string, unknown> = {
+						byProject: result.byProject,
+						unattributedTaskCount: result.unattributedTaskCount,
+						noProjectCount: result.noProjectCount,
+						noDurationCount: result.noDurationCount,
+						...(result.noDurationTasks !== undefined
+							? {
+									noDurationTasks: result.noDurationTasks,
+									noDurationTasksTruncated: result.noDurationTasksTruncated,
+								}
+							: {}),
+						invalidDurationTaskCount: result.invalidDurationTaskCount,
+						truncated: result.truncated,
+					};
 				return {
 					content: [
-						{
-							type: "text" as const,
-							text: JSON.stringify(
-								{
-									byProject: result.byProject,
-									unattributedTaskCount: result.unattributedTaskCount,
-									noProjectCount: result.noProjectCount,
-									noDurationCount: result.noDurationCount,
-									...(result.noDurationTasks !== undefined
-										? {
-												noDurationTasks: result.noDurationTasks,
-												noDurationTasksTruncated: result.noDurationTasksTruncated,
-											}
-										: {}),
-									invalidDurationTaskCount: result.invalidDurationTaskCount,
-									truncated: result.truncated,
-								},
-								null,
-								2,
-							),
-						},
+						{ type: "text" as const, text: JSON.stringify(structured, null, 2) },
 					],
+					structuredContent: structured,
 				};
 			} catch (error: any) {
 				return mcpConvexError(error);
@@ -5812,6 +5854,7 @@ export function registerTools(
 				"Omit to keep the current one."),
 		},
 		{
+			outputSchema: taskUpdatedServedOutputSchema,
 			readOnlyHint: false,
 			idempotentHint: false,
 			openWorldHint: false,
@@ -5878,13 +5921,14 @@ export function registerTools(
 					...doorScopeArgs("tasks:update", callerOrchestrator),
 				});
 
+				// The same object is the text (unchanged) and the structuredContent the
+				// outputSchema validates (task k1793xkjhzh1xm23gmmwjgwfyx8htbv0).
+				const structured: Record<string, unknown> = { taskId, updated: true };
 				return {
 					content: [
-						{
-							type: "text",
-							text: JSON.stringify({ taskId, updated: true }, null, 2),
-						},
+						{ type: "text" as const, text: JSON.stringify(structured, null, 2) },
 					],
+					structuredContent: structured,
 				};
 			} catch (error: any) {
 				return mcpConvexError(error);
@@ -6030,6 +6074,7 @@ export function registerTools(
 					"Without a resolved agent, omitting it is refused. A signed-in person may omit it and acts in its own name."),
 		},
 		{
+			outputSchema: taskStatusServedOutputSchema,
 			readOnlyHint: false,
 			idempotentHint: true,
 			openWorldHint: false,
@@ -6047,13 +6092,14 @@ export function registerTools(
 					...doorScopeArgs("tasks:start", callerOrchestrator),
 				});
 
+				// The same object is the text (unchanged) and the structuredContent the
+				// outputSchema validates (task k1793xkjhzh1xm23gmmwjgwfyx8htbv0).
+				const structured: Record<string, unknown> = { taskId, status: "in_progress" };
 				return {
 					content: [
-						{
-							type: "text",
-							text: JSON.stringify({ taskId, status: "in_progress" }, null, 2),
-						},
+						{ type: "text" as const, text: JSON.stringify(structured, null, 2) },
 					],
+					structuredContent: structured,
 				};
 			} catch (error: any) {
 				return mcpConvexError(error);
@@ -6082,6 +6128,7 @@ export function registerTools(
 					"Without a resolved agent, omitting it is refused."),
 		},
 		{
+			outputSchema: taskStatusServedOutputSchema,
 			readOnlyHint: false,
 			idempotentHint: true,
 			openWorldHint: false,
@@ -6098,13 +6145,14 @@ export function registerTools(
 					...doorScopeArgs("tasks:pause", undefined),
 				});
 
+				// The same object is the text (unchanged) and the structuredContent the
+				// outputSchema validates (task k1793xkjhzh1xm23gmmwjgwfyx8htbv0).
+				const structured: Record<string, unknown> = { taskId, status: "todo" };
 				return {
 					content: [
-						{
-							type: "text",
-							text: JSON.stringify({ taskId, status: "todo" }, null, 2),
-						},
+						{ type: "text" as const, text: JSON.stringify(structured, null, 2) },
 					],
+					structuredContent: structured,
 				};
 			} catch (error: any) {
 				return mcpConvexError(error);
@@ -6132,6 +6180,7 @@ export function registerTools(
 					"Without a resolved agent, omitting it is refused."),
 		},
 		{
+			outputSchema: taskStatusServedOutputSchema,
 			readOnlyHint: false,
 			idempotentHint: true,
 			openWorldHint: false,
@@ -6148,13 +6197,14 @@ export function registerTools(
 					...doorScopeArgs("tasks:resume", undefined),
 				});
 
+				// The same object is the text (unchanged) and the structuredContent the
+				// outputSchema validates (task k1793xkjhzh1xm23gmmwjgwfyx8htbv0).
+				const structured: Record<string, unknown> = { taskId, status: "in_progress" };
 				return {
 					content: [
-						{
-							type: "text",
-							text: JSON.stringify({ taskId, status: "in_progress" }, null, 2),
-						},
+						{ type: "text" as const, text: JSON.stringify(structured, null, 2) },
 					],
+					structuredContent: structured,
 				};
 			} catch (error: any) {
 				return mcpConvexError(error);
@@ -7040,6 +7090,7 @@ export function registerTools(
 				),
 		},
 		{
+			outputSchema: missionUpdatedServedOutputSchema,
 			readOnlyHint: false,
 			idempotentHint: true,
 			openWorldHint: false,
@@ -7086,13 +7137,14 @@ export function registerTools(
 					...doorScopeArgs("missions:update", callerOrchestrator),
 				});
 
+				// The same object is the text (unchanged) and the structuredContent the
+				// outputSchema validates (task k1793xkjhzh1xm23gmmwjgwfyx8htbv0).
+				const structured: Record<string, unknown> = { missionId, updated: true };
 				return {
 					content: [
-						{
-							type: "text",
-							text: JSON.stringify({ missionId, updated: true }, null, 2),
-						},
+						{ type: "text" as const, text: JSON.stringify(structured, null, 2) },
 					],
+					structuredContent: structured,
 				};
 			} catch (error: any) {
 				return mcpConvexError(error);
@@ -7115,6 +7167,7 @@ export function registerTools(
 			status: missionStatusSchema.describe("The stage the mission moves to, read by list_missions' status filter. Every stage is accepted here, cancelled included, and no cancel reason is recorded; a reopened (no longer cancelled) mission is accepted too."),
 		},
 		{
+			outputSchema: missionStatusServedOutputSchema,
 			readOnlyHint: false,
 			idempotentHint: true,
 			openWorldHint: false,
@@ -7132,13 +7185,14 @@ export function registerTools(
 					status,
 				});
 
+				// The same object is the text (unchanged) and the structuredContent the
+				// outputSchema validates (task k1793xkjhzh1xm23gmmwjgwfyx8htbv0).
+				const structured: Record<string, unknown> = { missionId, status };
 				return {
 					content: [
-						{
-							type: "text",
-							text: JSON.stringify({ missionId, status }, null, 2),
-						},
+						{ type: "text" as const, text: JSON.stringify(structured, null, 2) },
 					],
+					structuredContent: structured,
 				};
 			} catch (error: any) {
 				return mcpConvexError(error);
@@ -7169,6 +7223,7 @@ export function registerTools(
 			blockers: flexArrayOptional.describe("What blocked progress, one per item. Omit for none (an existing entry's list is cleared)."),
 		},
 		{
+			outputSchema: writeDiaryServedOutputSchema,
 			readOnlyHint: false,
 			idempotentHint: true,
 			openWorldHint: false,
@@ -7203,13 +7258,14 @@ export function registerTools(
 					...doorScopeArgs("diary:write", undefined),
 				});
 
+				// The same object is the text (unchanged) and the structuredContent the
+				// outputSchema validates (task k1793xkjhzh1xm23gmmwjgwfyx8htbv0).
+				const structured: Record<string, unknown> = { diaryId, date, orchestrator };
 				return {
 					content: [
-						{
-							type: "text",
-							text: JSON.stringify({ diaryId, date, orchestrator }, null, 2),
-						},
+						{ type: "text" as const, text: JSON.stringify(structured, null, 2) },
 					],
+					structuredContent: structured,
 				};
 			} catch (error: any) {
 				if (error instanceof ProtocolError) throw error;
@@ -7565,6 +7621,7 @@ export function registerTools(
 		updateBriefingNoteDescription,
 		updateBriefingNoteSchema.shape,
 		{
+			outputSchema: briefingNoteUpdatedServedOutputSchema,
 			readOnlyHint: false,
 			idempotentHint: true,
 			openWorldHint: false,
@@ -7598,13 +7655,14 @@ export function registerTools(
 					linkedMemoryIds: linkedMemoryIds as any,
 				});
 
+				// The same object is the text (unchanged) and the structuredContent the
+				// outputSchema validates (task k1793xkjhzh1xm23gmmwjgwfyx8htbv0).
+				const structured: Record<string, unknown> = { noteId, updated: true };
 				return {
 					content: [
-						{
-							type: "text",
-							text: JSON.stringify({ noteId, updated: true }, null, 2),
-						},
+						{ type: "text" as const, text: JSON.stringify(structured, null, 2) },
 					],
+					structuredContent: structured,
 				};
 			} catch (error: any) {
 				if (error instanceof ProtocolError) throw error;
@@ -7642,6 +7700,7 @@ export function registerTools(
 			noteId: noteIdSchema.describe("The note to fetch: its noteId as returned by create_briefing_note or list_briefing_notes."),
 		},
 		{
+			outputSchema: getBriefingNoteServedOutputSchema,
 			readOnlyHint: true,
 			idempotentHint: true,
 			openWorldHint: false,
@@ -7688,8 +7747,14 @@ export function registerTools(
 				if (!visible) {
 					return mcpError(`Briefing note not found: ${noteId}`);
 				}
+				// The same object is the text (unchanged) and the structuredContent the
+				// outputSchema validates (task k1793xkjhzh1xm23gmmwjgwfyx8htbv0).
+				const structured: Record<string, unknown> = note;
 				return {
-					content: [{ type: "text", text: JSON.stringify(note, null, 2) }],
+					content: [
+						{ type: "text" as const, text: JSON.stringify(structured, null, 2) },
+					],
+					structuredContent: structured,
 				};
 			} catch (error: any) {
 				return mcpConvexError(error);
@@ -8015,6 +8080,7 @@ export function registerTools(
 				"Omit it when your credential resolves one agent: it is then that agent. Otherwise omitting it is refused."),
 		},
 		{
+			outputSchema: createRecurringTaskServedOutputSchema,
 			readOnlyHint: false,
 			idempotentHint: false,
 			openWorldHint: false,
@@ -8051,13 +8117,14 @@ export function registerTools(
 					createdBy,
 				});
 
+				// The same object is the text (unchanged) and the structuredContent the
+				// outputSchema validates (task k1793xkjhzh1xm23gmmwjgwfyx8htbv0).
+				const structured: Record<string, unknown> = { taskId, cronExpression };
 				return {
 					content: [
-						{
-							type: "text",
-							text: JSON.stringify({ taskId, cronExpression }, null, 2),
-						},
+						{ type: "text" as const, text: JSON.stringify(structured, null, 2) },
 					],
+					structuredContent: structured,
 				};
 			} catch (error: any) {
 				return mcpConvexError(error);
@@ -9773,6 +9840,7 @@ export function registerTools(
 				),
 		},
 		{
+			outputSchema: getGithubOwnerBindingsServedOutputSchema,
 			readOnlyHint: true,
 			idempotentHint: true,
 			openWorldHint: false,
@@ -9801,22 +9869,19 @@ export function registerTools(
 							...(unprovenCursor !== undefined ? { cursor: unprovenCursor } : {}),
 						})
 					: undefined;
+				// The same object is the text (unchanged) and the structuredContent the
+				// outputSchema validates (task k1793xkjhzh1xm23gmmwjgwfyx8htbv0).
+				const structured: Record<string, unknown> = {
+						bindings: bindingsPage.items,
+						nextCursor: bindingsPage.nextCursor,
+						unprovenMappings: unprovenPage?.items,
+						unprovenNextCursor: unprovenPage?.nextCursor,
+					};
 				return {
 					content: [
-						{
-							type: "text",
-							text: JSON.stringify(
-								{
-									bindings: bindingsPage.items,
-									nextCursor: bindingsPage.nextCursor,
-									unprovenMappings: unprovenPage?.items,
-									unprovenNextCursor: unprovenPage?.nextCursor,
-								},
-								null,
-								2,
-							),
-						},
+						{ type: "text" as const, text: JSON.stringify(structured, null, 2) },
 					],
+					structuredContent: structured,
 				};
 			} catch (error: any) {
 				return mcpConvexError(error);
@@ -11700,6 +11765,7 @@ export function registerTools(
 			taskId: taskIdSchema.describe("The task to fetch: its taskId as returned by create_task, list_tasks or get_task."),
 		},
 		{
+			outputSchema: getTaskServedOutputSchema,
 			readOnlyHint: true,
 			idempotentHint: true,
 			openWorldHint: false,
@@ -11728,8 +11794,14 @@ export function registerTools(
 				if (filtered === null) {
 					return mcpError(`Task not found: ${taskId}`);
 				}
+				// The same object is the text (unchanged) and the structuredContent the
+				// outputSchema validates (task k1793xkjhzh1xm23gmmwjgwfyx8htbv0).
+				const structured: Record<string, unknown> = filtered;
 				return {
-					content: [{ type: "text", text: JSON.stringify(filtered, null, 2) }],
+					content: [
+						{ type: "text" as const, text: JSON.stringify(structured, null, 2) },
+					],
+					structuredContent: structured,
 				};
 			} catch (error: any) {
 				return mcpConvexError(error);
@@ -11759,6 +11831,7 @@ export function registerTools(
 			patternId: patternIdSchema.describe("The fix pattern: its patternId as returned by create_fix_pattern, search_fix_patterns or list_fix_patterns."),
 		},
 		{
+			outputSchema: getFixPatternServedOutputSchema,
 			readOnlyHint: true,
 			idempotentHint: true,
 			openWorldHint: false,
@@ -11779,8 +11852,14 @@ export function registerTools(
 				if (filtered === null) {
 					return mcpError(`Fix pattern not found: ${patternId}`);
 				}
+				// The same object is the text (unchanged) and the structuredContent the
+				// outputSchema validates (task k1793xkjhzh1xm23gmmwjgwfyx8htbv0).
+				const structured: Record<string, unknown> = filtered;
 				return {
-					content: [{ type: "text", text: JSON.stringify(filtered, null, 2) }],
+					content: [
+						{ type: "text" as const, text: JSON.stringify(structured, null, 2) },
+					],
+					structuredContent: structured,
 				};
 			} catch (error: any) {
 				return mcpConvexError(error);
@@ -11948,6 +12027,7 @@ export function registerTools(
 			messageId: messageIdSchema.describe("The message: its messageId as returned by send_message, list_messages or search_messages_by_keyword."),
 		},
 		{
+			outputSchema: getMessageServedOutputSchema,
 			readOnlyHint: true,
 			idempotentHint: true,
 			openWorldHint: false,
@@ -11999,8 +12079,14 @@ export function registerTools(
 				if (filtered === null) {
 					return mcpError(`Message not found: ${messageId}`);
 				}
+				// The same object is the text (unchanged) and the structuredContent the
+				// outputSchema validates (task k1793xkjhzh1xm23gmmwjgwfyx8htbv0).
+				const structured: Record<string, unknown> = filtered;
 				return {
-					content: [{ type: "text", text: JSON.stringify(filtered, null, 2) }],
+					content: [
+						{ type: "text" as const, text: JSON.stringify(structured, null, 2) },
+					],
+					structuredContent: structured,
 				};
 			} catch (error: any) {
 				return mcpConvexError(error);
@@ -12031,6 +12117,7 @@ export function registerTools(
 			),
 		},
 		{
+			outputSchema: getRecurringTaskServedOutputSchema,
 			readOnlyHint: true,
 			idempotentHint: true,
 			openWorldHint: false,
@@ -12046,8 +12133,14 @@ export function registerTools(
 				if (filtered === null) {
 					return mcpError(`Recurring task not found: ${recurringTaskId}`);
 				}
+				// The same object is the text (unchanged) and the structuredContent the
+				// outputSchema validates (task k1793xkjhzh1xm23gmmwjgwfyx8htbv0).
+				const structured: Record<string, unknown> = filtered;
 				return {
-					content: [{ type: "text", text: JSON.stringify(filtered, null, 2) }],
+					content: [
+						{ type: "text" as const, text: JSON.stringify(structured, null, 2) },
+					],
+					structuredContent: structured,
 				};
 			} catch (error: any) {
 				return mcpConvexError(error);

@@ -190,7 +190,7 @@ _Applies to: Cloud and Self-host._
 - `recall` (read) — Semantic vector search over VantagePeers memories, ranked by cosine similarity.
 - `soft_delete_document` (write) — Soft-delete all Knowledge Base chunks for a document.
 - `soft_delete_memory` (write, destructive) — Soft-delete a memory so it stops appearing in recall results while remaining in the audit log.
-- `store_document_chunked` (write) — Ingest a document binary (PDF, Markdown, plain text) into the Knowledge Base.
+- `store_document_chunked` (write) — Ingest a document binary (PDF, Markdown, plain text) into the Knowledge Base. storageId names a file already uploaded and claimed for your org: generate_upload_url (given the file's sha256) returns the upload URL and ticket, the file is POSTed there, and claim_upload (given the ticket) returns the storageId this tool takes.
 - `store_memory` (write) — Store a typed memory entry (user/feedback/project/reference) in VantagePeers with optional graph relations.
 - `text_search` (read) — BM25 full-text keyword search over VantagePeers memories for exact term matching.
 
@@ -306,7 +306,7 @@ _Applies to: Cloud and Self-host._
 - `get_github_owner_bindings` (read) — List the GitHub owners bound to your organisation (master: all), and for master the org-owned repo mappings that have no proof.
 - `get_owner_tool_usage` (read) — List which MCP tools a person has used across all the agents it owns (one per AI client) and its own direct calls, summed per tool with the earliest first call and the latest last call.
 - `get_tool_usage` (read) — List which MCP tools a caller has called, with the first call time, the last call time and the call count of each.
-- `improvisation_digest` (read) — Scan a rolling time window of VP tasks, messages, and memories for durable artifacts that carry fleet/state tokens (commit SHA, PR#, VP id, or decisive verb such as merged/deployed/approved) but have NO VP-Sources footer.
+- `improvisation_digest` (read) — Audit a rolling window of recent closed-task notes, messages and memories for claims about fleet state (a commit SHA, a PR number, a VantagePeers ID, or a decisive verb such as merged, deployed or approved) that carry no source citation line (a 'recall("<query>")→[ids]' or 'none-needed: <reason>' marker).
 - `list_blocked_on_me` (read) — List the tasks that other peers have BLOCKED on one of YOUR live tasks (blockedOnTaskId), oldest wait first, with the age of each wait.
 - `list_repo_mappings` (read) — List all GitHub repo to orchestrator webhook mappings, newest first with cursor paging support.
 - `remove_repo_mapping` (write, destructive) — Delete a GitHub repo mapping by repo name, stopping webhook event routing for that repo.
