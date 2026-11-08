@@ -103,13 +103,6 @@ const SCOPE_CLASSIFICATION: Readonly<Record<string, ScopeClassification>> = {
 		reason:
 			"directory roster door keyed by the verified Clerk JWT or the token hash; org derived server-side (tools.ts:2029-2035)",
 	},
-	"tools.ts|profiles:listProfiles": {
-		class: "traced",
-		severity: null,
-		basis: "args+gate",
-		reason:
-			"roster rows kept only when instanceId === <name>-<orgSlug> (tools.ts:2084-2089)",
-	},
 	"tools.ts|orgRoster:getMyOrgRoster": {
 		class: "safe",
 		severity: null,

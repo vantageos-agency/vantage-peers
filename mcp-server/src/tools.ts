@@ -2053,7 +2053,7 @@ function passesBriefingNoteParticipantScope(
 	return false;
 }
 
-// Upper bound on the roster entries one list_peers call resolves (one by-orchestrator read each).
+// Upper bound on the roster entries one list_peers call lists.
 const ROSTER_LISTING_CAP = 200;
 
 const LIST_PEERS = "list_peers";
@@ -2071,7 +2071,6 @@ const LIST_PEERS = "list_peers";
 async function listPeersFromOrgRoster(
 	convex: Pick<ConvexHttpClient, "query">,
 	oauthCtx: OAuthContext | undefined,
-	fields: "lite" | "full" | undefined,
 ): Promise<{
 	content: Array<{ type: "text"; text: string }>;
 	isError?: true;
@@ -2102,7 +2101,6 @@ async function listPeersFromOrgRoster(
 	if (directoryDoors === null || oauthCtx?.clerkOrgSlug === undefined) {
 		return null;
 	}
-	const orgSlug = oauthCtx.clerkOrgSlug;
 	// A provider that cannot answer the directory door is an error, raised as
 	// such: it is never silently replaced by a name-only roster.
 	const roster: unknown = await convex.query(
@@ -2138,72 +2136,26 @@ async function listPeersFromOrgRoster(
 		if (!seen.has(key)) seen.set(key, { name, agentId });
 	}
 	const directory = [...seen.values()].slice(0, ROSTER_LISTING_CAP);
-	const names = [
-		...new Map(
-			directory.map(
-				(d) => [normalizeOrchestratorId(d.name), d.name] as const,
-			),
-		).values(),
-	];
-	const profileRows = await Promise.all(
-		names.map(async (name) => {
-			// Existing by-orchestratorId read (index by_orchestrator).
-			const rows = await convex.query("profiles:listProfiles" as any, {
-				orchestratorId: name,
-				limit: 50,
-				fields: fields ?? "lite",
-			});
-			if (isRefusedEnvelope(rows)) return "refused" as const;
-			// `profiles` has NO org column. A row is taken only when it is
-			// attributable to THIS org: its instanceId is exactly
-			// `<orchestratorId>-<orgSlug>`. A same-named row of another org
-			// (or an unlabelled legacy row) is never read for its dynamic
-			// fields; the roster entry stands alone.
-			const attributable = (Array.isArray(rows) ? rows : []).find(
-				(r: Record<string, unknown>) =>
-					typeof r.instanceId === "string" &&
-					normalizeOrchestratorId(r.instanceId) ===
-						normalizeOrchestratorId(`${name}-${orgSlug}`),
-			);
-			return { name, row: attributable as any };
-		}),
-	);
-	const entries = profileRows;
-	if (entries.includes("refused")) {
-		return mcpRefused(LIST_PEERS, "profiles:listProfiles");
-	}
-	const rowOf = new Map<string, any>();
-	for (const e of entries as Array<{ name: string; row: any | undefined }>) {
-		rowOf.set(normalizeOrchestratorId(e.name), e.row);
-	}
-	const orgPeers = directory.map(({ name, agentId }) => {
-		const row = rowOf.get(normalizeOrchestratorId(name));
-		return row === undefined
-			? {
-					id: name,
-					agentId,
-					instanceId: name,
-					name,
-					role: null,
-					workspace: null,
-					currentTask: null,
-					lastSeen: null,
-					sessionCount: null,
-				}
-			: {
-					_id: row._id,
-					_creationTime: row._creationTime,
-					id: name,
-					agentId,
-					instanceId: row.instanceId ?? name,
-					name: row.name,
-					role: row.static.role,
-					workspace: row.static.workspace,
-					currentTask: row.dynamic.currentTask ?? "idle",
-					lastSeen: new Date(row.dynamic.lastSeen).toISOString(),
-					sessionCount: row.dynamic.sessionCount,
-				};
-	});
+	// The listing is the directory itself: name and agentId. It is NOT enriched
+	// from `profiles:listProfiles`: that door is fleet-master-only, and this
+	// path serves only non-master bearers whose Convex client acts for their
+	// org (`__actingOrg`, authenticatedConvexClient.ts) or carries their own
+	// Clerk session, so Convex resolves an ordinary member and the door answers
+	// `{ refused: true, items: [] }` every time. Reading it turned the whole
+	// listing into a refusal for every client seat (task
+	// k177e8dyrnykk3c56yf2b0pgfs8hhz06). The status fields are null because they
+	// were not read, never because a profile row is known to be absent.
+	const orgPeers = directory.map(({ name, agentId }) => ({
+		id: name,
+		agentId,
+		instanceId: name,
+		name,
+		role: null,
+		workspace: null,
+		currentTask: null,
+		lastSeen: null,
+		sessionCount: null,
+	}));
 	return {
 		content: [
 			{
@@ -4545,11 +4497,7 @@ export function registerTools(
 				// Org-scoped non-master token: served from its own org roster (the org
 				// is derived server-side from the verified credential, never from an
 				// argument). Master and no-org tokens fall through to scopeFilterList.
-				const rosterListing = await listPeersFromOrgRoster(
-					convex,
-					oauthCtx,
-					fields,
-				);
+				const rosterListing = await listPeersFromOrgRoster(convex, oauthCtx);
 				if (rosterListing !== null) return rosterListing;
 
 				// S3.1.B Wave B — scope-aware filter replaces guardMasterOnly.

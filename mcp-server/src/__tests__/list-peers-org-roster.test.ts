@@ -165,7 +165,17 @@ describe("list_peers - org roster listing for a non-master token with an org", (
 		const peers = await peersOf(seat({}), IRIS_ROSTER);
 		const helios = peers.find((p) => p.id === HELIOS);
 		expect(helios).toBeDefined();
-		expect(helios?.sessionCount).toBe(1);
+		// Listed from the directory, not enriched from a profile row.
+		expect(helios?.sessionCount).toBeNull();
+	});
+
+	it("never reads the fleet-master-only profiles:listProfiles door (it refuses every org member)", async () => {
+		const { raw, query } = await listPeers(seat({}), IRIS_ROSTER);
+		expect(raw.isError).not.toBe(true);
+		expect(query).not.toHaveBeenCalledWith(
+			"profiles:listProfiles",
+			expect.anything(),
+		);
 	});
 
 	it("lists a roster agent that has NO profile row, as a minimal entry", async () => {
@@ -190,7 +200,8 @@ describe("list_peers - org roster listing for a non-master token with an org", (
 		expect(marie).toHaveLength(1);
 		expect(JSON.stringify(peers)).not.toContain("SECRET-ACME-TASK");
 		expect(JSON.stringify(peers)).not.toContain("marie-acme");
-		expect(marie[0].instanceId).toBe("marie-northwind-hr");
+		expect(marie[0].instanceId).toBe("marie");
+		expect(marie[0].currentTask).toBeNull();
 	});
 
 	it("a roster name with only another org's row is listed WITHOUT that row's data", async () => {

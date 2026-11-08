@@ -1369,12 +1369,11 @@ describe("verify-actor-credentials — two proofs per actor, derived from the se
 		return {
 			query: vi.fn(async (name: string, args: Record<string, unknown>) => {
 				// An org-scoped caller (the Clerk JWT of org-iris here) is listed FROM
-				// THE ORG DIRECTORY, not from a page of profiles: list_peers reads
+				// THE ORG DIRECTORY alone: list_peers reads
 				// orgRoster:getMyAgentDirectory (convex/orgRoster.ts, returns
-				// Array<{ name, agentId }>) and then, per name,
-				// profiles:listProfiles by orchestratorId (mcp-server/src/tools.ts,
-				// list_peers org branch), taking only the row whose instanceId is
-				// `<name>-<orgSlug>`.
+				// Array<{ name, agentId }>) and serves name + agentId with null
+				// status fields (mcp-server/src/tools.ts listPeersFromOrgRoster).
+				// profiles:listProfiles below is reached only by the MASTER bearer.
 				if (name === "orgRoster:getMyAgentDirectory") {
 					if (opts.peers === "error") throw new Error("directory unavailable");
 					return opts.peers.map((p) => ({
@@ -1594,16 +1593,33 @@ describe("verify-actor-credentials — two proofs per actor, derived from the se
 		expect(r.exit).toBe(2);
 	});
 
+	/** A list_peers that serves rows WITH lastSeen (the master listing's shape). */
+	function datedClient(peers: Peer[]): ToolClient {
+		return {
+			async callTool() {
+				return {
+					isError: false,
+					text: JSON.stringify(
+						peers.map((p) => ({
+							id: p.id,
+							lastSeen: new Date(p.lastSeen).toISOString(),
+						})),
+					),
+				};
+			},
+			close: async () => {},
+		};
+	}
+
 	it("COULD-NOT-JUDGE: every actor is outside the window — the instrument does not let a short window define the population", async () => {
 		const stale = IRIS_PEERS.map((p) => ({ ...p, lastSeen: NOW - 400 * DAY }));
-		const r = await run(buildIrisConvex({ peers: stale }), GOOD_CREDS, {
-			windowDays: 45,
-		});
-		expect(r.exit).toBe(2);
-		const all = await run(buildIrisConvex({ peers: stale }), GOOD_CREDS, {
+		await expect(
+			deriveActors(datedClient(stale), { windowDays: 45, now: NOW }),
+		).rejects.toThrow(/none is inside the 45-day window/);
+		const all = await deriveActors(datedClient(stale), {
 			windowDays: "all",
+			now: NOW,
 		});
-		expect(all.exit).toBe(0);
 		expect(all.actors).toHaveLength(3);
 	});
 
@@ -1612,11 +1628,22 @@ describe("verify-actor-credentials — two proofs per actor, derived from the se
 			...IRIS_PEERS,
 			{ id: "old-bot", lastSeen: NOW - 400 * DAY },
 		];
+		const d = await deriveActors(datedClient(peers), {
+			windowDays: 45,
+			now: NOW,
+		});
+		expect(d.actors.map((a) => a.id)).toContain(HELIOS);
+		expect(d.excluded.map((e) => e.id)).toEqual(["old-bot"]);
+	});
+
+	it("WINDOW, org bearer: the org directory carries no lastSeen, so nobody is dated out and each actor is NOTED as undated", async () => {
+		const peers: Peer[] = [
+			...IRIS_PEERS,
+			{ id: "old-bot", lastSeen: NOW - 400 * DAY },
+		];
 		const r = await run(buildIrisConvex({ peers }), GOOD_CREDS);
-		expect(r.exit).toBe(0);
-		expect(r.actors.map((a) => a.id)).toContain(HELIOS);
-		expect(r.excluded.map((e) => e.id)).toEqual(["old-bot"]);
-		expect(renderReport(r)).toContain("old-bot");
+		expect(r.actors.map((a) => a.id)).toContain("old-bot");
+		expect(r.excluded).toEqual([]);
 	});
 
 	it("COULD-NOT-JUDGE: the presented bearer is MASTER — a proof under the maintenance identity exercises the bypass, so nothing is certified", async () => {
