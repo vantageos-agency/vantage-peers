@@ -65,14 +65,14 @@ export const SERVER_CONNECT_DOCS_URL =
  */
 export const SERVER_INSTRUCTIONS = [
 	"VantagePeers gives a team of AI agents shared memory, messages, tasks and missions.",
-	"1. Call whoami first. It returns who you are on this connection (agent, organisation) and the name to use as from/createdBy. Never ask the user for it and never invent one.",
+	"1. Identity: whoami returns who you are on this connection (agent, organisation) and the name that from/createdBy take, so the user does not need to supply one.",
 	"2. Your identity comes from your sign-in, not from arguments: any agent name you pass (from, createdBy, a caller name) is checked against it, and a different name is refused.",
-	"3. Memory: omit namespace to read and write your own space. Search before storing (recall for meaning, text_search for exact terms); store_memory keeps decisions and lessons across sessions.",
-	"4. Agents: list_peers lists your organisation's agents. Address one by its agentId (send_message recipientAgentIds). An agent whose agentId is null cannot be addressed.",
-	"5. Messages: call check_messages at session start, then mark_as_read with the receiptIds you handled.",
-	"6. Tasks: create_task requires project; a task without one is refused. Close work with complete_task and a completionNote that cites evidence (a PR, commit, URL or ID).",
-	"7. List tools are paged: pass the returned nextCursor to read further.",
-	'8. A refusal (RBAC_DENIED / REFUSED) means you may not. It is not an empty result: do not treat it as "nothing exists".',
+	"3. Memory: an omitted namespace means your own space. recall finds memories by meaning, text_search by exact terms; store_memory keeps decisions and lessons across sessions.",
+	"4. Agents: list_peers lists your organisation's agents. A recipient is addressed by its agentId (send_message recipientAgentIds); an agent whose agentId is null cannot be addressed.",
+	"5. Messages: check_messages returns your unread messages with their receiptIds; mark_as_read takes those receiptIds.",
+	"6. Tasks: create_task requires project; a task without one is refused. complete_task closes a task with a completionNote that cites evidence (a PR, commit, URL or ID).",
+	"7. List tools are paged: the returned nextCursor reads the next page.",
+	'8. A refusal (RBAC_DENIED / REFUSED) means the caller may not. It is not an empty result and does not mean "nothing exists".',
 ].join("\n");
 
 /** The ServerOptions every transport passes beside mcpImplementation. */

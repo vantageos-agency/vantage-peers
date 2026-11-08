@@ -64,7 +64,7 @@ export interface SoftDeleteDocumentResult {
 
 export const STORE_DOCUMENT_CHUNKED_TOOL_DESCRIPTION =
 	"Ingest a document binary (PDF, Markdown, plain text) into the Knowledge Base. " +
-		"Upload the file first and claim it for your org: generate_upload_url with the file's sha256, POST the file, claim_upload with the ticket, then call this tool with the storageId. " +
+		"storageId names a file already uploaded and claimed for your org: generate_upload_url (given the file's sha256) returns the upload URL and ticket, the file is POSTed there, and claim_upload (given the ticket) returns the storageId this tool takes. " +
 		"A storageId your org has not claimed is refused (AUTH_STORAGE_NOT_OWNED). " +
 		"Server-side: text extraction → paragraph-aware chunking (~512 tokens/chunk with 50-char overlap) → stores chunks as memories at namespace team/<orgId>/<docId>. " +
 		"Requires Clerk JWT with org_id — no-org bearers are rejected. " +
