@@ -54,32 +54,25 @@ export const exportOkfBundleArgsSchema = {
 	namespace: z
 		.string()
 		.describe(
-			"OKF export namespace prefix. Any prefix the caller has write scope on " +
-				"is accepted (e.g. 'project/elpi-corp', 'team/<orgId>', 'org/<slug>'). " +
-				"Identity-attached callers must match the namespace tail (cross-tenant " +
-				"export forbidden). The 'project/elpi-corp' Phase 1 hard lock was " +
-				"removed by B3 (mission k5779qbxh) for multi-tenant Cloud dashboards.",
+			"The namespace prefix to export, e.g. 'project/elpi-corp', 'team/<orgId>', 'org/<slug>'; any prefix you may write is accepted, and a caller bound to an identity must match the namespace's owner (no cross-tenant export).",
 		),
 	types: acceptsJsonArrayString(z.array(z.string()).nullable())
 		.optional()
 		.describe(
-			"Optional type filter — null/omitted exports all 3 families. " +
-				"Tokens: 'memory-*' (all subtypes), 'memory-<sub>' (literal), " +
-				"'briefing-note', 'task'.",
+			"Which record families to include: 'memory-*' (every memory kind), 'memory-<kind>' (one kind), 'briefing-note', 'task'. " +
+				"Omit (or null) to export all three families.",
 		),
 	format: z
 		.enum(["tarball", "tree"])
 		.describe(
-			"Bundle format. Phase 1 supports 'tarball' only; 'tree' is reserved " +
-				"for Phase 2.",
+			"How the bundle is packaged; tarball is the one served today, tree is reserved.",
 		),
 	since: z
 		.string()
 		.nullable()
 		.optional()
 		.describe(
-			"Optional ISO 8601 timestamp — only entries updated on/after are " +
-				"included. Anticipation Phase 2.",
+			"An ISO 8601 timestamp: include only entries updated at or after it. Omit (or null) to export everything.",
 		),
 	urlTtl: z
 		.number()
@@ -87,8 +80,8 @@ export const exportOkfBundleArgsSchema = {
 		.positive()
 		.optional()
 		.describe(
-			"Optional signed URL TTL in seconds (default 3600 = 1 hour). The " +
-				"storage object is purged at TTL expiry.",
+			"How long the signed download URL stays valid, in seconds; the bundle is purged when it expires. " +
+				"Omit for 3600 (one hour).",
 		),
 };
 
@@ -118,6 +111,7 @@ export function registerExportOkfBundle(
 		{ kind: "read", namespaceArg: "namespace" },
 		"export_okf_bundle",
 		"Export a VantagePeers namespace as an OKF v0.1 bundle (tarball). " +
+			"Returns { bundleUrl, storageId, size, fileCount, manifest: { types: { memoryCount, briefingCount, taskCount }, truncated, urlExpiresAt } }; the signed bundleUrl stops working at urlExpiresAt, when the stored bundle is purged. " +
 			"WHEN: use to ship a snapshot to Knowledge Catalog / RAG bridge / audit. " +
 			"EXAMPLE: export_okf_bundle namespace='project/elpi-corp' format='tarball'.",
 		exportOkfBundleArgsSchema,
