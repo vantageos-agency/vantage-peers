@@ -11,10 +11,8 @@
 // Section C — no placeholder strings (TODO / FIXME / XXX / TBD / placeholder / coming soon)
 // Section D — category contracts:
 //   list_* tools MUST mention "limit" AND ("cap" OR "default 20" OR "default 100")
-//   recall-class tools (5) MUST contain VP-Sources doctrine verbatim substrings
-//
-// VP-Sources doctrine verbatim substrings extracted from RECALL_TOOL_DESCRIPTION
-// (the canonical source — do NOT paraphrase).
+//   recall-class tools (5) must NOT carry the former VP-Sources doctrine
+//   (forbidden in tool metadata since task k1793xkjhzh1xm23gmmwjgwfyx8htbv0)
 //
 // Mission: k571gcctka8mq5jbkgpj0a0b2n892ctg (Bloc A, audit section 27)
 // ─────────────────────────────────────────────────────────────────────────────
@@ -22,7 +20,7 @@
 import type { McpServer } from "@modelcontextprotocol/server";
 import type { ConvexHttpClient } from "convex/browser";
 import { describe, expect, it, vi } from "vitest";
-import { RECALL_TOOL_DESCRIPTION, registerTools } from "../tools.js";
+import { registerTools } from "../tools.js";
 
 // ─── Harness ─────────────────────────────────────────────────────────────────
 // Reuses the same fake-server pattern from chatgpt-tool-annotations.test.ts.
@@ -67,28 +65,16 @@ function buildMockConvex(): ConvexHttpClient {
 	} as unknown as ConvexHttpClient;
 }
 
-// ─── VP-Sources doctrine verbatim substrings ─────────────────────────────────
-// Extracted verbatim from RECALL_TOOL_DESCRIPTION (the canonical export).
-// T-GREEN MUST embed these exact strings — do NOT paraphrase.
+// ─── Former VP-Sources doctrine substrings ───────────────────────────────────
+// Tool metadata must NOT carry them any more (Anthropic Software Directory
+// Policy D, Manufact policy-review-d26bfdfb4c66; task k1793xkjhzh1xm23gmmwjgwfyx8htbv0):
+// the citation workflow is user documentation (mcp-server/README.md).
 
-const SUBSTR_MUST_BE_CALLED =
-	"MUST be called before any factual claim about fleet state, audits, dette tooling, mission/task/client status, incident history, doctrine references";
+const SUBSTR_MUST_BE_CALLED = "MUST be called before any factual claim";
 
-const SUBSTR_CITE_FOOTER =
-	"Cite returned ids in the answer footer as 'VP-Sources: recall(\"<q>\")→[ids] | none-needed:<reason>'";
+const SUBSTR_CITE_FOOTER = "Cite returned ids in the answer footer";
 
-// Sanity-check: assert these substrings ARE present in RECALL_TOOL_DESCRIPTION
-// so the contract itself is valid. If this blows up the canonical source drifted.
-const _SANITY_MUST = RECALL_TOOL_DESCRIPTION.includes(SUBSTR_MUST_BE_CALLED);
-const _SANITY_CITE = RECALL_TOOL_DESCRIPTION.includes(SUBSTR_CITE_FOOTER);
-if (!_SANITY_MUST || !_SANITY_CITE) {
-	throw new Error(
-		"RECALL_TOOL_DESCRIPTION no longer contains VP-Sources doctrine substrings. " +
-			"Update SUBSTR_MUST_BE_CALLED / SUBSTR_CITE_FOOTER to match the new canonical text.",
-	);
-}
-
-// 5 recall-class tools that MUST embed VP-Sources doctrine (PR-H contract)
+// 5 recall-class tools that once embedded the VP-Sources doctrine (PR-H) and must no longer
 const VP_SOURCES_TOOLS = new Set([
 	"recall",
 	"hybrid_search",
@@ -190,14 +176,14 @@ describe("Tool descriptions canonical quality contract (PR-J RED)", () => {
 				vpSourcesMismatches.push(`${name}: tool not registered`);
 				continue;
 			}
-			if (!t.description.includes(SUBSTR_MUST_BE_CALLED)) {
+			if (t.description.includes(SUBSTR_MUST_BE_CALLED)) {
 				vpSourcesMismatches.push(
-					`${name}: missing VP-Sources MUST-BE-CALLED substring`,
+					`${name}: still carries the VP-Sources MUST-BE-CALLED substring`,
 				);
 			}
-			if (!t.description.includes(SUBSTR_CITE_FOOTER)) {
+			if (t.description.includes(SUBSTR_CITE_FOOTER)) {
 				vpSourcesMismatches.push(
-					`${name}: missing VP-Sources CITE-FOOTER substring`,
+					`${name}: still carries the VP-Sources CITE-FOOTER substring`,
 				);
 			}
 		}
