@@ -32,6 +32,11 @@ import ts from "typescript";
 import { beforeAll, describe, expect, it } from "vitest";
 import type { OAuthContext } from "../src/auth.js";
 import { registerTools } from "../src/tools.js";
+import {
+	COERCIVE_PATTERNS,
+	STRUCTURED_TOOLS,
+	UNSTRUCTURED_TOOLS,
+} from "./lib/toolMetadataDecisions.js";
 
 type JsonSchema = {
 	type?: string | string[];
@@ -569,5 +574,347 @@ describe("description/schema mismatches named by the report", () => {
 		const s = field("correct_task_segment", "callerOrchestrator");
 		expect(s.description).not.toMatch(/if provided/i);
 		expect(s.description).toMatch(/refused/i);
+	});
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// PR C (task k1793xkjhzh1xm23gmmwjgwfyx8htbv0) — the Manufact "Improve" report
+// re-run on the live server after PR B. Each block below is one finding class.
+// ─────────────────────────────────────────────────────────────────────────────
+
+const toolByName = (n: string) => {
+	const t = tools.find((x) => x.name === n);
+	if (!t) throw new Error(`tool not served: ${n}`);
+	return t;
+};
+
+/** The schema at a dotted path, e.g. "deliverable.pkg" or "filter.status". */
+function fieldAt(tool: string, path: string): JsonSchema {
+	let node: JsonSchema | undefined = toolByName(tool).inputSchema;
+	for (const key of path.split(".")) {
+		const props: Record<string, JsonSchema> | undefined =
+			node?.properties ?? node?.anyOf?.find((b) => b.properties)?.properties;
+		node = props?.[key];
+	}
+	if (!node) throw new Error(`no field ${tool}.${path}`);
+	return node;
+}
+
+const descOf = (tool: string, path: string) =>
+	fieldAt(tool, path).description ?? "";
+
+describe("finding 1 — a field says what its value MEANS, never only how it validates", () => {
+	it("every page-size `limit` says what happens to the rows beyond it", () => {
+		const silent = tools.flatMap((t) => {
+			const limit = t.inputSchema.properties?.limit;
+			if (!limit) return [];
+			const d = limit.description ?? "";
+			const paged = "cursor" in (t.inputSchema.properties ?? {});
+			const ok = paged
+				? /nextCursor/.test(d)
+				: /\b(rest|beyond|not returned|truncated|total|since)\b/.test(d);
+			return ok && !/^How many rows to return/.test(d)
+				? []
+				: [`${t.name}.limit: ${d}`];
+		});
+		expect(silent).toEqual([]);
+	});
+
+	it("no field states a time as bare 'Unix milliseconds': it names the moment and how to make one", () => {
+		const offenders = tools.flatMap((t) =>
+			fieldsOf(t)
+				.filter((f) => /Unix (ms|milli)/i.test(f.schema.description ?? ""))
+				.map((f) => `${f.tool}.${f.path}`),
+		);
+		expect(offenders).toEqual([]);
+		for (const [tool, path] of [
+			["billing_summary_by_project", "from"],
+			["billing_summary_by_project", "to"],
+			["list_briefing_notes", "updatedSince"],
+		] as const) {
+			const d = descOf(tool, path);
+			expect(d, `${tool}.${path}`).toMatch(/\bmoment\b/);
+			expect(d, `${tool}.${path}`).toMatch(/Date\.now\(\)/);
+		}
+		expect(descOf("billing_summary_by_project", "from")).toMatch(/completed/);
+		expect(descOf("billing_summary_by_project", "to")).toMatch(/completed/);
+	});
+
+	it("a lite/full `fields` switch says what each projection is for, not the enum in prose", () => {
+		const offenders = tools.flatMap((t) => {
+			const f = t.inputSchema.properties?.fields;
+			if (!f || !enumValues(f).includes("lite")) return [];
+			const d = f.description ?? "";
+			return /'lite' returns|^Accepted for compatibility/.test(d)
+				? [`${t.name}.fields: ${d}`]
+				: [];
+		});
+		expect(offenders).toEqual([]);
+	});
+
+	// Field → what the rewritten description must carry (its meaning) and the
+	// flagged phrasing it must no longer use.
+	const MEANING: Array<[string, string, RegExp[], RegExp[]]> = [
+		["store_memory", "type", [/recall|list_memories/], []],
+		[
+			"send_message",
+			"fromAgentId",
+			[/whoami/, /recipients/],
+			[/^The sender by agent ID/],
+		],
+		["list_peers", "fields", [/every stored field/], []],
+		["create_task", "project", [/billing/, /spell|exact/i], []],
+		["create_task", "assignedToAgentId", [/who does the work/], []],
+		[
+			"create_task",
+			"deliverable.pkg",
+			[/npm/, /publish/],
+			[/^npm package name/],
+		],
+		[
+			"create_task",
+			"deliverable.export",
+			[/publish/, /delivered-but-open|done/],
+			[/^Exported identifier/],
+		],
+		["list_tasks", "status", [/any of/], [/as a list of statuses/]],
+		[
+			"bulk_complete_tasks",
+			"filter.status",
+			[/not started|under way|review|blocked/],
+			[/in this open state/],
+		],
+		["update_task", "assignedToAgentId", [/who does the work/], []],
+		["correct_task_segment", "segmentIndex", [/position/], [/counting from 0/]],
+		[
+			"correct_task_segment",
+			"reason",
+			[/stored|kept/],
+			[/^Why the correction is honest/],
+		],
+		["update_mission", "status", [/list_missions/], [/^A new lifecycle stage/]],
+		[
+			"create_recurring_task",
+			"priority",
+			[/queue/],
+			[/^The priority every generated task gets\.$/],
+		],
+		[
+			"create_recurring_task",
+			"tags",
+			[/copied/],
+			[/^Tags every generated task gets/],
+		],
+		[
+			"improvisation_digest",
+			"windowDays",
+			[/ending now/],
+			[/^How many days back to scan/],
+		],
+		[
+			"improvisation_digest",
+			"orchestrators",
+			[/count|sample/],
+			[/^Scan only these orchestrators/],
+		],
+	];
+
+	for (const [tool, path, must, mustNot] of MEANING) {
+		it(`${tool}.${path} says what the value means`, () => {
+			const d = descOf(tool, path);
+			for (const re of must) expect(d, `${tool}.${path}`).toMatch(re);
+			for (const re of mustNot) expect(d, `${tool}.${path}`).not.toMatch(re);
+		});
+	}
+
+	it("an enum field named by the report names at most three of its values in its prose", () => {
+		const named: Array<[string, string]> = [
+			["store_memory", "type"],
+			["list_tasks", "status"],
+			["bulk_complete_tasks", "filter.status"],
+			["update_mission", "status"],
+			["create_recurring_task", "priority"],
+			["list_peers", "fields"],
+			["list_briefing_notes", "fields"],
+			["search_briefing_notes_by_keyword", "fields"],
+			["list_repo_mappings", "fields"],
+		];
+		const offenders = named.flatMap(([tool, path]) => {
+			const s = fieldAt(tool, path);
+			const d = s.description ?? "";
+			const hit = enumValues(s).filter((v) =>
+				new RegExp(`(^|[^a-z_])${escapeRe(v)}([^a-z_]|$)`).test(d),
+			);
+			return hit.length > 3 ? [`${tool}.${path}: ${hit.join(", ")}`] : [];
+		});
+		expect(offenders).toEqual([]);
+	});
+});
+
+describe("finding 2 — where a value comes from and its convention", () => {
+	it("a project on an update names the billing line it is and where it was first set", () => {
+		for (const [tool, origin] of [
+			["update_task", "create_task"],
+			["update_mission", "create_mission"],
+			["update_recurring_task", "create_recurring_task"],
+		] as const) {
+			const d = descOf(tool, "project");
+			expect(d, tool).toMatch(/billing/);
+			expect(d, tool).toContain(origin);
+		}
+	});
+
+	it("update_recurring_task.assignedTo says it is an agent name, not an agent ID", () => {
+		const d = descOf("update_recurring_task", "assignedTo");
+		expect(d).toMatch(/agent name/);
+		expect(d).toMatch(/not (an )?agent ID/);
+		expect(d).toMatch(/list_peers/);
+	});
+});
+
+describe("finding 3 — what a changed value does", () => {
+	it("update_mission.name says the mission keeps its identity", () => {
+		expect(descOf("update_mission", "name")).toMatch(/missionId/);
+	});
+	it("update_mission.priority says what reads it and what it does not drive", () => {
+		const d = descOf("update_mission", "priority");
+		expect(d).toMatch(/list_missions|get_mission/);
+		expect(d).toMatch(/nothing|not inherited|label/);
+	});
+	it("update_briefing_note.topic says which filters see the note under it", () => {
+		const d = descOf("update_briefing_note", "topic");
+		expect(d).toMatch(/list_briefing_notes/);
+		expect(d).toMatch(/search_briefing_notes_by_keyword/);
+	});
+});
+
+describe("finding 4 — update_mission_status says what its schema and handler do", () => {
+	it("status admits 'cancelled' here, and says no reason is recorded", () => {
+		const s = fieldAt("update_mission_status", "status");
+		expect(enumValues(s)).toContain("cancelled");
+		expect(s.description).not.toMatch(/goes through update_mission/);
+		expect(s.description).toMatch(/cancelled/);
+		expect(s.description).toMatch(/no (cancel )?reason/);
+	});
+	it("the tool says it is the fleet master's", () => {
+		expect(toolByName("update_mission_status").description).toMatch(
+			/fleet master/,
+		);
+	});
+});
+
+describe("finding 5 — improvisation_digest says what it returns", () => {
+	it("names every key of its answer and what a sample carries", () => {
+		const d = toolByName("improvisation_digest").description ?? "";
+		for (const key of [
+			"countsByOrch",
+			"countsByCategory",
+			"samples",
+			"snippet",
+			"artifactId",
+		]) {
+			expect(d, key).toContain(key);
+		}
+		expect(d).toMatch(/complete_task.*send_message.*store_memory/);
+		expect(d).toMatch(/fleet master/);
+	});
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// finding 6 — outputSchema. Decided per tool from the handler and its Convex
+// door. A tool declares one ONLY when every success path returns
+// structuredContent equal to the JSON of its text; the real calls that prove it
+// are in test/output-schema-structured-content.test.ts.
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe("finding 6 — outputSchema decided per tool", () => {
+	it("every served tool is decided exactly once", () => {
+		const served = tools.map((t) => t.name).sort();
+		const decided = [
+			...STRUCTURED_TOOLS,
+			...Object.keys(UNSTRUCTURED_TOOLS),
+		].sort();
+		expect(decided).toEqual(served);
+	});
+
+	it("exactly the decided tools declare an outputSchema", () => {
+		const declared = tools
+			.filter((t) => t.outputSchema)
+			.map((t) => t.name)
+			.sort();
+		expect(declared).toEqual([...STRUCTURED_TOOLS].sort());
+	});
+
+	it("every declared outputSchema is an object schema open to added fields", () => {
+		const bad = tools
+			.filter((t) => t.outputSchema)
+			.filter((t) => {
+				const s = t.outputSchema as {
+					type?: string;
+					additionalProperties?: unknown;
+				};
+				return s.type !== "object" || s.additionalProperties === false;
+			})
+			.map((t) => t.name);
+		expect(bad).toEqual([]);
+	});
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Policy finding (Manufact policy-review-d26bfdfb4c66, Anthropic Software
+// Directory Policy D): tool metadata describes the tool's OWN behaviour, inputs
+// and outputs; it never tells the model to call another tool before or after it,
+// nor prescribes how the model words its answer. The optional citation workflow
+// is user documentation (README), not tool metadata.
+// ─────────────────────────────────────────────────────────────────────────────
+
+/** Every metadata string a client model reads, per served tool. */
+function metadataTexts(
+	t: ServedTool & { _meta?: unknown },
+): Array<[string, string]> {
+	const out: Array<[string, string]> = [
+		[`${t.name} description`, t.description ?? ""],
+		[`${t.name} title`, String(t.title ?? "")],
+		[`${t.name} annotations`, JSON.stringify(t.annotations ?? {})],
+		[`${t.name} _meta`, JSON.stringify(t._meta ?? {})],
+	];
+	for (const f of fieldsOf(t))
+		out.push([`${t.name}.${f.path}`, f.schema.description ?? ""]);
+	return out;
+}
+
+describe("policy — no tool metadata coerces the model into calling other tools", () => {
+	it("the denylist is bipolar", () => {
+		const hit = (s: string) => COERCIVE_PATTERNS.some((re) => re.test(s));
+		expect(
+			hit("VP-Sources doctrine: MUST be called before any factual claim"),
+		).toBe(true);
+		expect(hit("Cite returned ids in the answer footer")).toBe(true);
+		expect(hit("1. Call whoami first.")).toBe(true);
+		expect(hit("Messages: call check_messages at session start")).toBe(true);
+		expect(hit("Returns a JSON array of memories, best match first.")).toBe(
+			false,
+		);
+		expect(hit("check_messages returns your unread messages.")).toBe(false);
+	});
+
+	it("no description, title, annotation, _meta or input description carries a denylisted pattern", () => {
+		const offenders = tools.flatMap((t) =>
+			metadataTexts(t).flatMap(([where, text]) =>
+				COERCIVE_PATTERNS.filter((re) => re.test(text)).map(
+					(re) => `${where}: ${re.source}`,
+				),
+			),
+		);
+		expect(offenders).toEqual([]);
+	});
+
+	it("the server instructions carry no denylisted pattern", async () => {
+		const { SERVER_INSTRUCTIONS } = await import("../src/brand.js");
+		expect(
+			COERCIVE_PATTERNS.filter((re) => re.test(SERVER_INSTRUCTIONS)).map(
+				(re) => re.source,
+			),
+		).toEqual([]);
 	});
 });
