@@ -1,0 +1,4 @@
+---
+section: Changed
+---
+- **48 tools return structured content with a published output schema, and no tool tells the model to call another.** Every tool whose success result has a shape fixed by its Convex return validator or its handler now returns `structuredContent` alongside the unchanged text, with an additive-tolerant `outputSchema` (the 44 others, and why, are listed in `mcp-server/test/lib/toolMetadataDecisions.ts`). The "VP-Sources" doctrine and its prescribed answer footer are removed from all tool metadata and the server instructions are phrased neutrally (Anthropic Software Directory Policy D); the optional citation workflow moves to the README. Input descriptions state meaning, source and what omission does; `update_mission_status` now says what its enum accepts. Task k1793xkjhzh1xm23gmmwjgwfyx8htbv0 (Manufact quality score, PR C).
