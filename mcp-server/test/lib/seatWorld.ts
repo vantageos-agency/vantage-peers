@@ -36,16 +36,26 @@ import {
 import { backend } from "./forwardingConvex.js";
 import { type Fixtures, makeIdAliaser } from "./seatMatrix.js";
 
+const allModules = import.meta.glob("../../../convex/**/*.ts");
+const loadable = ([path]: [string, unknown]) =>
+	!path.includes("ragSync") &&
+	!path.includes("backfill") &&
+	!path.includes("Backfill") &&
+	!path.includes("__tests__") &&
+	!path.endsWith(".test.ts");
 const modules = Object.fromEntries(
-	Object.entries(import.meta.glob("../../../convex/**/*.ts")).filter(
-		([path]) =>
-			!path.includes("ragSync") &&
-			!path.includes("search") &&
-			!path.includes("backfill") &&
-			!path.includes("Backfill") &&
-			!path.includes("__tests__") &&
-			!path.endsWith(".test.ts"),
+	Object.entries(allModules).filter(
+		(e) => loadable(e) && !e[0].includes("search"),
 	),
+);
+/**
+ * The same set plus convex/search.ts, for a world whose test answers the RAG
+ * component through `__setRagSearcherForTests` (search tools through /mcp,
+ * task k17592gg5t2tencwxks3kysghx8htqg8). Opt-in: every other world keeps the
+ * module set it was measured with.
+ */
+const modulesWithSearch = Object.fromEntries(
+	Object.entries(allModules).filter(loadable),
 );
 
 export const SERVICE_ACCOUNT_ID = process.env
@@ -73,7 +83,10 @@ export const SEATS = [
 export type Seat = (typeof SEATS)[number];
 
 /** One fresh backend per seat: a destructive call of one seat never changes another's cells. */
-export async function freshBackend(seat: Seat): Promise<{
+export async function freshBackend(
+	seat: Seat,
+	opts: { search?: boolean } = {},
+): Promise<{
 	t: T;
 	harness: Harness;
 	fixtures: Fixtures;
@@ -82,7 +95,7 @@ export async function freshBackend(seat: Seat): Promise<{
 	ids: ReturnType<typeof makeIdAliaser>;
 }> {
 	const harness = await installAuthorizeHarness();
-	const t = convexTest(schema, modules);
+	const t = convexTest(schema, opts.search ? modulesWithSearch : modules);
 	const asService = t.withIdentity({ subject: SERVICE_ACCOUNT_ID });
 	const ids = makeIdAliaser();
 	const call = async (kind: string, name: string, rawArgs: unknown) => {

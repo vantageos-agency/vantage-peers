@@ -17,11 +17,23 @@
  * property, at every depth, says what it means, and the fields a tool
  * description lists after "Returns" are the fields its schema declares. The
  * form both follow is written down in src/outputSchemas.ts.
+ *
+ * The lists and searches (task k17592gg5t2tencwxks3kysghx8htqg8, outputs 1/3)
+ * keep their text byte for byte; their structuredContent is the object form of
+ * the same answer (LIST_FORMS): { items } for a bare array, { items,
+ * nextCursor, truncated } for a page that capListResponseBytes may cut. Each is
+ * called on seeded rows so that its item schema is validated on a real row, and
+ * the cut itself is driven once through /mcp (list_memories over 60 KB).
  */
 
 import Ajv2020 from "ajv/dist/2020.js";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import {
+	__setQueryEmbedderForTests,
+	__setRagSearcherForTests,
+} from "../../convex/search";
+import {
+	BOUND,
 	closeWorld,
 	connectAs,
 	freshBackend,
@@ -29,7 +41,7 @@ import {
 	SLUG,
 	tokenFor,
 } from "./lib/seatWorld.js";
-import { STRUCTURED_TOOLS } from "./lib/toolMetadataDecisions.js";
+import { LIST_FORMS, STRUCTURED_TOOLS } from "./lib/toolMetadataDecisions.js";
 
 vi.mock("convex/browser", async () => ({
 	ConvexHttpClient: (await import("./lib/forwardingConvex.js"))
@@ -62,6 +74,9 @@ type Seeded = World["fixtures"]["ids"] & {
 	>;
 	receiptId: string;
 };
+
+/** A RAG entry the stubbed searcher serves: the memory (or pattern) it indexes. */
+type RagEntry = { key: string; text: string; type: string };
 
 /** Reads one tool's JSON answer as the person (a test-side lookup, not a decided call). */
 type Read = (tool: string, args: Record<string, unknown>) => Promise<unknown>;
@@ -148,6 +163,86 @@ const CALLS: Call[] = [
 		tool: "get_recurring_task",
 		as: "person",
 		args: (s) => ({ recurringTaskId: s.recurringTaskId }),
+	},
+	// lists and searches, on the rows seeded above (before any delete below).
+	// list_missions and list_diaries serve a non-master caller only its own
+	// user ID as pilot / orchestrator, which no seeded row carries: the fleet
+	// master is their client here.
+	{
+		tool: "recall",
+		as: "person",
+		args: () => ({ query: "seeded", namespace: `team/${SLUG}` }),
+	},
+	{
+		tool: "text_search",
+		as: "person",
+		args: () => ({ query: "seeded", namespace: `team/${SLUG}` }),
+	},
+	{
+		tool: "hybrid_search",
+		as: "person",
+		args: () => ({ query: "seeded", namespace: `team/${SLUG}` }),
+	},
+	{
+		tool: "search_episodes_by_keyword",
+		as: "person",
+		args: () => ({ query: "episode", namespace: `team/${SLUG}` }),
+	},
+	{
+		tool: "search_episodes_by_semantic",
+		as: "person",
+		args: () => ({ query: "episode", namespace: `team/${SLUG}` }),
+	},
+	{
+		tool: "search_messages_by_keyword",
+		as: "person",
+		args: () => ({ query: "seeded" }),
+	},
+	{
+		tool: "search_tasks_by_keyword",
+		as: "person",
+		args: () => ({ query: "seeded" }),
+	},
+	{
+		tool: "search_briefing_notes_by_keyword",
+		as: "person",
+		args: () => ({ query: "seeded" }),
+	},
+	{
+		tool: "search_fix_patterns",
+		as: "master",
+		args: () => ({ query: "a symptom" }),
+	},
+	{
+		tool: "list_episodes",
+		as: "person",
+		args: () => ({ namespace: `team/${SLUG}` }),
+	},
+	{
+		tool: "list_memories",
+		as: "person",
+		args: () => ({ namespace: `team/${SLUG}` }),
+	},
+	{ tool: "list_peers", as: "person", args: () => ({}) },
+	{ tool: "list_messages", as: "person", args: () => ({}) },
+	{ tool: "list_tasks", as: "person", args: () => ({}) },
+	{
+		tool: "list_tasks_by_mission",
+		as: "person",
+		args: (s) => ({ missionId: s.missionId }),
+	},
+	{ tool: "list_missions", as: "master", args: () => ({}) },
+	{ tool: "list_diaries", as: "master", args: () => ({}) },
+	{ tool: "list_briefing_notes", as: "person", args: () => ({}) },
+	{ tool: "list_recurring_tasks", as: "person", args: () => ({}) },
+	{ tool: "list_repo_mappings", as: "master", args: () => ({}) },
+	{ tool: "list_fix_patterns", as: "master", args: () => ({}) },
+	// after every call above, so that the person has a recorded usage to read
+	{ tool: "get_tool_usage", as: "person", args: () => ({}) },
+	{
+		tool: "get_owner_tool_usage",
+		as: "person",
+		args: () => ({ ownerUserId: BOUND }),
 	},
 	{
 		tool: "write_diary",
@@ -359,10 +454,45 @@ let seeded: Seeded;
 const results = new Map<string, CallResult>();
 const schemas = new Map<string, unknown>();
 const descriptions = new Map<string, string>();
+/** The extra poles: a page the byte cap cut, and a refused read. */
+const poles = new Map<string, CallResult>();
+/** What the stubbed RAG searcher serves, by namespace. */
+const ragIndex = new Map<string, RagEntry[]>();
+/** The big memories the cut pole lists: over 60 KB together. */
+const BIG_NAMESPACE = `team/${SLUG}/big`;
 
 beforeAll(async () => {
 	vi.stubGlobal("fetch", async () => new Response("offline", { status: 503 }));
-	world = await freshBackend("person-bound");
+	world = await freshBackend("person-bound", { search: true });
+	// The RAG component is answered from `ragIndex` (filled below from real
+	// rows); the namespace gate, the type filter and the live-row check in
+	// convex/search.ts all still run on what it serves.
+	__setQueryEmbedderForTests(async () => [0.1, 0.2, 0.3]);
+	__setRagSearcherForTests((async (
+		_ctx: unknown,
+		args: { namespace: string; limit?: number },
+	) => {
+		const hits = (ragIndex.get(args.namespace) ?? []).slice(
+			0,
+			args.limit ?? 10,
+		);
+		return {
+			results: hits.map((e, i) => ({
+				entryId: `${args.namespace}#${e.key}`,
+				score: 0.9 - i * 0.01,
+				content: [{ text: e.text }],
+			})),
+			entries: hits.map((e) => ({
+				entryId: `${args.namespace}#${e.key}`,
+				key: e.key,
+				filterValues: [
+					{ name: "namespace", value: args.namespace },
+					{ name: "type", value: e.type },
+					{ name: "isLatest", value: "true" },
+				],
+			})),
+		};
+	}) as unknown as Parameters<typeof __setRagSearcherForTests>[0]);
 	const extra = await world.t.run(async (ctx) => {
 		const now = Date.now();
 		const episodeId = await ctx.db.insert("memories", {
@@ -483,6 +613,72 @@ beforeAll(async () => {
 			orgId: SLUG,
 			clerkOrgId: ORG_ID,
 		});
+		// A task of the seeded mission (list_tasks_by_mission), a diary entry
+		// (list_diaries), a repo mapping (list_repo_mappings).
+		const mission = await ctx.db.query("missions").first();
+		await ctx.db.insert("tasks", {
+			title: "a mission task",
+			assignedTo: "ulysse",
+			assignedToId: agentId("ulysse"),
+			priority: "low",
+			status: "todo",
+			project: "m",
+			missionId: mission?._id,
+			createdBy: "ulysse",
+			createdById: agentId("ulysse"),
+			createdAt: now,
+			updatedAt: now,
+			orgId: SLUG,
+			clerkOrgId: ORG_ID,
+		});
+		await ctx.db.insert("diary", {
+			date: "2026-11-07",
+			orchestrator: "ulysse",
+			content: "a seeded day",
+			createdBy: "ulysse",
+			createdById: agentId("ulysse"),
+			createdAt: now,
+			orgId: SLUG,
+			clerkOrgId: ORG_ID,
+		});
+		await ctx.db.insert("githubRepoMapping", {
+			repo: "owner/seeded-repo",
+			orchestrator: "ulysse",
+			project: "p",
+			active: true,
+		});
+		// Three memories of 30 KB each: list_memories over them exceeds the 60 KB
+		// cap, so capListResponseBytes cuts the page (the truncated pole).
+		for (const n of [1, 2, 3]) {
+			await ctx.db.insert("memories", {
+				namespace: BIG_NAMESPACE,
+				clerkOrgId: ORG_ID,
+				type: "reference",
+				content: `big ${n} ${"x".repeat(30_000)}`,
+				createdBy: "ulysse",
+				relations: [],
+				isLatest: true,
+				createdAt: now + n,
+				updatedAt: now + n,
+			});
+		}
+		// What the RAG index holds: the org's live memories (by their real IDs,
+		// which the live-row check reads) and the seeded fix pattern.
+		const indexed = await ctx.db
+			.query("memories")
+			.filter((q) => q.eq(q.field("namespace"), `team/${SLUG}`))
+			.collect();
+		ragIndex.set(
+			`team/${SLUG}`,
+			indexed.map((m) => ({
+				key: String(m._id),
+				text: m.content,
+				type: m.type,
+			})),
+		);
+		ragIndex.set("fixpatterns", [
+			{ key: String(patternId), text: "a symptom", type: "reference" },
+		]);
 		const messages = await ctx.db.query("messages").collect();
 		const receiptId = await ctx.db.insert("messageReceipts", {
 			messageId: messages[0]._id,
@@ -543,11 +739,27 @@ beforeAll(async () => {
 		results.set(call.tool, r);
 		call.after?.(r, seeded);
 	}
+	poles.set(
+		"truncated",
+		(await person.callTool({
+			name: "list_memories",
+			arguments: { namespace: BIG_NAMESPACE },
+		})) as CallResult,
+	);
+	poles.set(
+		"refused",
+		(await person.callTool({
+			name: "recall",
+			arguments: { query: "seeded", namespace: "orchestrator/somebody-else" },
+		})) as CallResult,
+	);
 	await person.close();
 	await master.close();
 }, 120_000);
 
 afterAll(() => {
+	__setRagSearcherForTests(null);
+	__setQueryEmbedderForTests(null);
 	closeWorld(world.harness);
 	vi.unstubAllGlobals();
 });
@@ -574,15 +786,118 @@ describe("outputSchema: a real success carries structuredContent that validates"
 				validate(r.structuredContent),
 				JSON.stringify(validate.errors),
 			).toBe(true);
-			// The text a client without structuredContent support reads is the
-			// same two-space JSON of the same object: one answer, two encodings.
 			expect(r.content).toHaveLength(1);
 			expect(r.content[0].type).toBe("text");
-			expect(r.content[0].text).toBe(
-				JSON.stringify(r.structuredContent, null, 2),
+			const form = (LIST_FORMS as Record<string, "array" | "page">)[call.tool];
+			if (form === undefined) {
+				// The text a client without structuredContent support reads is the
+				// same two-space JSON of the same object: one answer, two encodings.
+				expect(r.content[0].text).toBe(
+					JSON.stringify(r.structuredContent, null, 2),
+				);
+				return;
+			}
+			const sc = r.structuredContent as ListStructured;
+			// A real row reached the item schema, not only an empty list.
+			expect(sc.items.length, "a list call validated on rows").toBeGreaterThan(
+				0,
 			);
+			expectTextAgrees(form, r.content[0].text, sc);
 		});
 	}
+});
+
+type ListStructured = {
+	items: unknown[];
+	nextCursor?: string | null;
+	truncated?: boolean;
+	scopeFiltered?: number;
+};
+
+/**
+ * The text is unchanged and says the same thing as the structuredContent:
+ * an "array" text is the two-space JSON of `items`; a "page" text is a bare
+ * array (no further page), a { items, nextCursor?, scopeFiltered? } page, or
+ * the cap's { _meta, items } envelope (truncated, no continuation).
+ */
+function expectTextAgrees(
+	form: "array" | "page",
+	text: string,
+	sc: ListStructured,
+): void {
+	if (form === "array") {
+		expect(Object.keys(sc)).toEqual(["items"]);
+		expect(text).toBe(JSON.stringify(sc.items, null, 2));
+		return;
+	}
+	const parsed = JSON.parse(text) as unknown;
+	if (Array.isArray(parsed)) {
+		expect(sc).toEqual({ items: parsed, nextCursor: null, truncated: false });
+		expect(text).toBe(JSON.stringify(sc.items, null, 2));
+		return;
+	}
+	const page = parsed as {
+		items: unknown[];
+		nextCursor?: string;
+		scopeFiltered?: number;
+		_meta?: { _truncated?: boolean };
+	};
+	if (page._meta?._truncated === true) {
+		expect(sc).toEqual({
+			items: page.items,
+			nextCursor: null,
+			truncated: true,
+		});
+		return;
+	}
+	expect(sc).toEqual({
+		items: page.items,
+		nextCursor: page.nextCursor ?? null,
+		truncated: false,
+		...(page.scopeFiltered !== undefined
+			? { scopeFiltered: page.scopeFiltered }
+			: {}),
+	});
+	expect(text).toBe(JSON.stringify(page, null, 2));
+}
+
+describe("lists: the cut page and the refusal", () => {
+	const ajv = new Ajv2020({ strict: false, allErrors: true });
+
+	it("a page the byte cap cut says truncated: true, carries the rows the text shows, and validates", () => {
+		const r = poles.get("truncated") as CallResult;
+		expect(r.isError, r.content?.[0]?.text).not.toBe(true);
+		const text = r.content[0].text;
+		const envelope = JSON.parse(text) as {
+			_meta: { _truncated: boolean; _total: number; _showing: number };
+			items: unknown[];
+		};
+		expect(envelope._meta._truncated).toBe(true);
+		expect(envelope._meta._total).toBe(3);
+		const sc = r.structuredContent as ListStructured;
+		expect(sc.truncated).toBe(true);
+		expect(sc.nextCursor).toBeNull();
+		expect(sc.items).toEqual(envelope.items);
+		expect(sc.items.length).toBe(envelope._meta._showing);
+		expect(sc.items.length).toBeLessThan(3);
+		const { $schema: _ignored, ...body } = schemas.get(
+			"list_memories",
+		) as Record<string, unknown>;
+		const validate = ajv.compile(body);
+		expect(validate(sc), JSON.stringify(validate.errors)).toBe(true);
+	});
+
+	it("an uncut page says truncated: false (the same tool, under the cap)", () => {
+		const sc = results.get("list_memories")
+			?.structuredContent as ListStructured;
+		expect(sc.truncated).toBe(false);
+	});
+
+	it("a refused read is an error and carries no structuredContent", () => {
+		const r = poles.get("refused") as CallResult;
+		expect(r.isError).toBe(true);
+		expect(r.structuredContent).toBeUndefined();
+	});
 });
 
 // ── the schema as documentation ──────────────────────────────────────────────
