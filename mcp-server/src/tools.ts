@@ -290,6 +290,10 @@ export function assertContentSize(content: string, toolName: string): number {
 
 export const MAX_LIST_RESPONSE_BYTES = 60_000;
 
+/** messages:checkNewMessagesEnvelope's page bound when none is passed, and its floor. */
+const CHECK_MESSAGES_DOOR_DEFAULT_BYTES = 40_000;
+const CHECK_MESSAGES_DOOR_MIN_BYTES = 1_000;
+
 export function capListResponseBytes(
 	items: unknown,
 	rawText: string,
@@ -4381,111 +4385,139 @@ export function registerTools(
 
 				const orgUnresolved = unresolvedOrgDenial("check_messages");
 				if (orgUnresolved) return orgUnresolved;
-				const result = await convex.query(
-					"messages:checkNewMessagesEnvelope" as any,
-					{
-						recipient,
-						recipientInstanceId,
-						tenantId,
-						since,
-						limit,
-						...doorScopeArgs("messages:checkNewMessagesEnvelope", recipient),
-					},
-				);
-				// Day-156 reader-first: extra envelope fields are ignored;
-				// missing keys MUST default so old Convex prod cannot throw
-				// `.length` on undefined. Do not revive pendingOnYou.
-				const envelope = (result ?? {}) as {
-					messages?: Array<{
-						receiptId: string;
-						from: string;
-						fromInstanceId?: string;
-						fromId?: string;
-						channel?: string;
-						content: string;
-						createdAt: number;
-					}>;
-					truncated?: boolean;
-					nextSince?: number | null;
-					staleInProgress?: Array<{
-						taskId: string;
-						title: string;
-						age: number;
-					}>;
-					stuckInProgress?: unknown;
-					peersStuckOnYou?: unknown;
-				};
-				const messages = envelope.messages ?? [];
-				const truncated = envelope.truncated ?? false;
-				const nextSince = envelope.nextSince ?? null;
-				const stuckInProgress = asCappedStuckList(envelope.stuckInProgress);
-				const peersStuckOnYou = asCappedStuckList(envelope.peersStuckOnYou);
-
-				const stuckBlocks: string[] = [];
-				// Stuck SIGNAL = entries present OR truncated (a cap with an
-				// empty page is still a signal — never Vide).
-				if (stuckInProgress.entries.length > 0 || stuckInProgress.truncated) {
-					stuckBlocks.push(
-						`stuckInProgress:\n${JSON.stringify(stuckInProgress, null, 2)}`,
+				// The text repeats the page's messages and structuredContent repeats
+				// them again, so the door's page bound (maxBytes, 40 000 by default,
+				// on the projected messages) is not a bound on the answer. The WHOLE
+				// serialized answer must fit in MAX_LIST_RESPONSE_BYTES (Eta REVISE
+				// on #1714): when it does not, the page is read again with half the
+				// door's bound. The door, not this handler, cuts the page, so
+				// truncated and nextSince stay the door's and resuming skips nothing.
+				// One message is the floor: a single message larger than the budget
+				// is still answered whole.
+				const read = async (maxBytes: number | undefined) => {
+					const result = await convex.query(
+						"messages:checkNewMessagesEnvelope" as any,
+						{
+							recipient,
+							recipientInstanceId,
+							tenantId,
+							since,
+							limit,
+							// The door's page bound; left out on the first read, so an inbox
+							// whose whole answer fits is read exactly as before.
+							...(maxBytes !== undefined ? { maxBytes } : {}),
+							...doorScopeArgs("messages:checkNewMessagesEnvelope", recipient),
+						},
 					);
-				}
-				if (peersStuckOnYou.entries.length > 0 || peersStuckOnYou.truncated) {
-					stuckBlocks.push(
-						`peersStuckOnYou:\n${JSON.stringify(peersStuckOnYou, null, 2)}`,
-					);
-				}
-				const stuckText = stuckBlocks.join("\n\n");
-				// The values the text is written from, as one object.
-				const structured = (rows: unknown[]) => ({
-					messages: rows,
-					truncated,
-					nextSince,
-					stuckInProgress,
-					peersStuckOnYou,
-				});
+					// Day-156 reader-first: extra envelope fields are ignored;
+					// missing keys MUST default so old Convex prod cannot throw
+					// `.length` on undefined. Do not revive pendingOnYou.
+					const envelope = (result ?? {}) as {
+						messages?: Array<{
+							receiptId: string;
+							from: string;
+							fromInstanceId?: string;
+							fromId?: string;
+							channel?: string;
+							content: string;
+							createdAt: number;
+						}>;
+						truncated?: boolean;
+						nextSince?: number | null;
+						staleInProgress?: Array<{
+							taskId: string;
+							title: string;
+							age: number;
+						}>;
+						stuckInProgress?: unknown;
+						peersStuckOnYou?: unknown;
+					};
+					const messages = envelope.messages ?? [];
+					const truncated = envelope.truncated ?? false;
+					const nextSince = envelope.nextSince ?? null;
+					const stuckInProgress = asCappedStuckList(envelope.stuckInProgress);
+					const peersStuckOnYou = asCappedStuckList(envelope.peersStuckOnYou);
 
-				if (messages.length === 0) {
+					const stuckBlocks: string[] = [];
+					// Stuck SIGNAL = entries present OR truncated (a cap with an
+					// empty page is still a signal — never Vide).
+					if (stuckInProgress.entries.length > 0 || stuckInProgress.truncated) {
+						stuckBlocks.push(
+							`stuckInProgress:\n${JSON.stringify(stuckInProgress, null, 2)}`,
+						);
+					}
+					if (peersStuckOnYou.entries.length > 0 || peersStuckOnYou.truncated) {
+						stuckBlocks.push(
+							`peersStuckOnYou:\n${JSON.stringify(peersStuckOnYou, null, 2)}`,
+						);
+					}
+					const stuckText = stuckBlocks.join("\n\n");
+					// The values the text is written from, as one object.
+					const structured = (rows: unknown[]) => ({
+						messages: rows,
+						truncated,
+						nextSince,
+						stuckInProgress,
+						peersStuckOnYou,
+					});
+
+					if (messages.length === 0) {
+						return {
+							content: [
+								{
+									type: "text",
+									// Empty unread + non-empty stuck must still surface
+									// the stuck block — never "No new messages." / Vide.
+									text: stuckText.length > 0 ? stuckText : "No new messages.",
+								},
+							],
+							structuredContent: structured([]),
+						};
+					}
+
+					const payload = messages.map((m) => ({
+						receiptId: m.receiptId,
+						from: m.from,
+						fromInstanceId: m.fromInstanceId,
+						...(m.fromId !== undefined ? { fromId: m.fromId } : {}),
+						channel: m.channel,
+						content: m.content,
+						createdAt: m.createdAt,
+					}));
+
+					const body = JSON.stringify(payload, null, 2);
+					const truncatedNote = truncated
+						? `\n— truncated. Resume with check_messages since=${nextSince}`
+						: "";
+					const text =
+						stuckText.length > 0
+							? `${body}${truncatedNote}\n\n${stuckText}`
+							: `${body}${truncatedNote}`;
+
 					return {
 						content: [
 							{
 								type: "text",
-								// Empty unread + non-empty stuck must still surface
-								// the stuck block — never "No new messages." / Vide.
-								text: stuckText.length > 0 ? stuckText : "No new messages.",
+								text,
 							},
 						],
-						structuredContent: structured([]),
+						structuredContent: structured(payload),
 					};
-				}
-
-				const payload = messages.map((m) => ({
-					receiptId: m.receiptId,
-					from: m.from,
-					fromInstanceId: m.fromInstanceId,
-					...(m.fromId !== undefined ? { fromId: m.fromId } : {}),
-					channel: m.channel,
-					content: m.content,
-					createdAt: m.createdAt,
-				}));
-
-				const body = JSON.stringify(payload, null, 2);
-				const truncatedNote = truncated
-					? `\n— truncated. Resume with check_messages since=${nextSince}`
-					: "";
-				const text =
-					stuckText.length > 0
-						? `${body}${truncatedNote}\n\n${stuckText}`
-						: `${body}${truncatedNote}`;
-
-				return {
-					content: [
-						{
-							type: "text",
-							text,
-						},
-					],
-					structuredContent: structured(payload),
 				};
+				let maxBytes: number | undefined;
+				let answer = await read(undefined);
+				while (
+					Buffer.byteLength(JSON.stringify(answer), "utf8") >
+						MAX_LIST_RESPONSE_BYTES &&
+					answer.structuredContent.messages.length > 1
+				) {
+					maxBytes = Math.floor(
+						(maxBytes ?? CHECK_MESSAGES_DOOR_DEFAULT_BYTES) / 2,
+					);
+					if (maxBytes < CHECK_MESSAGES_DOOR_MIN_BYTES) break;
+					answer = await read(maxBytes);
+				}
+				return answer;
 			} catch (error: any) {
 				return mcpConvexError(error);
 			}
