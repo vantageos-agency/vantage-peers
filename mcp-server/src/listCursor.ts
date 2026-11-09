@@ -71,7 +71,10 @@ export function refuseUnissuedListCursors(server: McpServer): void {
 		schemasOrHandler,
 		maybeHandler,
 	) => {
-		if (WHOLE_LIST_METHODS.has(method) && typeof schemasOrHandler === "function") {
+		if (
+			WHOLE_LIST_METHODS.has(method) &&
+			typeof schemasOrHandler === "function"
+		) {
 			const handler = schemasOrHandler as ListHandler;
 			const checked: ListHandler = (request, ctx) => {
 				if (request.params?.cursor !== undefined) {
@@ -87,7 +90,8 @@ export function refuseUnissuedListCursors(server: McpServer): void {
 		}
 		original(method, schemasOrHandler, maybeHandler);
 	};
-	(inner as unknown as { setRequestHandler: LooseSetRequestHandler }).setRequestHandler =
-		patched;
+	(
+		inner as unknown as { setRequestHandler: LooseSetRequestHandler }
+	).setRequestHandler = patched;
 	guarded.add(inner);
 }
