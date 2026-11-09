@@ -17,6 +17,11 @@ import { InMemoryTransport, McpServer } from "@modelcontextprotocol/server";
 import { beforeAll, describe, expect, it } from "vitest";
 import type { OAuthContext } from "../src/auth.js";
 import { registerTools } from "../src/tools.js";
+import {
+	CONTRADICTIONS,
+	FLAGGED_FIELDS,
+	OUTPUTS_ALIGN,
+} from "./lib/manufactReview2141.js";
 
 type JsonSchema = {
 	type?: string | string[];
@@ -25,17 +30,30 @@ type JsonSchema = {
 	items?: JsonSchema;
 	anyOf?: JsonSchema[];
 };
+/** An input schema node, as served. */
+type InputNode = {
+	type?: string | string[];
+	description?: string;
+	pattern?: string;
+	default?: unknown;
+	enum?: unknown[];
+	minimum?: number;
+	maximum?: number;
+	exclusiveMinimum?: number;
+	minLength?: number;
+	maxLength?: number;
+	minItems?: number;
+	maxItems?: number;
+	items?: InputNode;
+	properties?: Record<string, InputNode>;
+};
+
 type ServedTool = {
 	name: string;
 	title?: string;
 	description?: string;
 	outputSchema?: JsonSchema;
-	inputSchema?: {
-		properties?: Record<
-			string,
-			{ description?: string; pattern?: string; default?: unknown }
-		>;
-	};
+	inputSchema?: InputNode;
 	annotations?: { title?: string };
 };
 
@@ -275,5 +293,180 @@ describe("Manufact re-review of a56cb06a: the remaining actionable items", () =>
 			tool("list_peers").annotations?.title ?? tool("list_peers").title ?? "";
 		expect(title).not.toBe("List my organisation's agents");
 		expect(title).toMatch(/peer/i);
+	});
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Manufact re-review of live 406c3994 (2026-11-09T21:41), task
+// k1708xy6dwrb8xx36ztkxfd9d58hwf0t. Pi's ruling: a field description keeps
+// meaning and usage only; what its own schema carries (enum values, bounds,
+// default, type) and validation cross-references ("omit", "filter on it",
+// "must be") are not repeated in it.
+// ─────────────────────────────────────────────────────────────────────────────
+
+const SAFE = 9007199254740991;
+const TYPE_WORDS = ["integer", "string", "boolean", "array", "number"];
+
+function nodeAt(t: ServedTool, pointer: string): InputNode | undefined {
+	let node: unknown = t.inputSchema;
+	for (const seg of pointer.replace(/^#\//, "").split("/")) {
+		node = (node as Record<string, unknown> | undefined)?.[seg];
+	}
+	return node as InputNode | undefined;
+}
+
+/** The tokens a description may not carry, derived from the field's own schema. */
+function forbiddenTokens(n: InputNode): RegExp[] {
+	const out: RegExp[] = [];
+	const esc = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+	const values = [...(n.enum ?? []), ...(n.items?.enum ?? [])];
+	if (n.default !== undefined) values.push(n.default);
+	for (const v of values) {
+		if (typeof v === "string")
+			out.push(new RegExp(`(?<![\\w-])${esc(v)}(?![\\w-])`));
+		if (typeof v === "number" || typeof v === "boolean")
+			out.push(new RegExp(`(?<![\\w.])${esc(String(v))}(?![\\w]|\\.\\d)`));
+	}
+	for (const b of [
+		n.minimum,
+		n.maximum,
+		n.exclusiveMinimum,
+		n.minLength,
+		n.maxLength,
+		n.minItems,
+		n.maxItems,
+		n.items?.minimum,
+		n.items?.maximum,
+	]) {
+		if (b === undefined || Math.abs(b) === SAFE) continue;
+		out.push(new RegExp(`(?<![\\d.])${b}(?![\\d]|\\.\\d)`));
+	}
+	for (const w of TYPE_WORDS) out.push(new RegExp(`\\b${w}\\b`, "i"));
+	out.push(/\bomit/i, /\bfilter on it\b/i, /\bmust be\b/i);
+	return out;
+}
+
+describe("Manufact 2141: the 35 flagged field descriptions keep meaning and usage only", () => {
+	it("the fixture holds the 35 flagged fields", () => {
+		expect(FLAGGED_FIELDS).toHaveLength(35);
+	});
+
+	for (const [tool, pointer, flagged] of FLAGGED_FIELDS) {
+		it(`${tool} ${pointer}: rewritten, and carries nothing its schema already says`, () => {
+			const t = tools.find((x) => x.name === tool);
+			if (!t) throw new Error(`not served: ${tool}`);
+			const n = nodeAt(t, pointer);
+			const d = n?.description ?? "";
+			expect(d.trim()).not.toBe("");
+			expect(d).not.toBe(flagged);
+			const hits = forbiddenTokens(n as InputNode)
+				.filter((re) => re.test(d))
+				.map(String);
+			expect(hits).toEqual([]);
+		});
+	}
+});
+
+/** Every field name an output schema declares, at the top level and in its rows. */
+function outputFieldNames(s: JsonSchema | undefined): Set<string> {
+	const out = new Set<string>();
+	const visit = (n: JsonSchema | undefined, depth: number) => {
+		if (n === undefined || depth > 3) return;
+		for (const alt of n.anyOf ?? []) visit(alt, depth);
+		if (n.items) visit(n.items, depth);
+		for (const [k, p] of Object.entries(n.properties ?? {})) {
+			out.add(k);
+			visit(p, depth + 1);
+		}
+	};
+	visit(s, 0);
+	return out;
+}
+
+/**
+ * The field-like names a description lists in parentheses to describe the
+ * returned row, e.g. "item is the profile (orchestratorId, name, static
+ * identity)": a parenthesised list of at least three short comma-separated
+ * parts right after "item is the …", outside the EXAMPLE.
+ */
+function parenthesisedNames(description: string): string[] {
+	const text = description.split("EXAMPLE:")[0];
+	const out: string[] = [];
+	for (const m of text.matchAll(/\(([^()]*)\)/g)) {
+		// only a list that describes the result itself: "item is the <thing> (…)"
+		const before = text.slice(Math.max(0, (m.index ?? 0) - 40), m.index);
+		if (!/\bitem is the\b/.test(before)) continue;
+		const parts = m[1]
+			.split(/,\s*|\s+and\s+/)
+			.map((p) => p.trim().replace(/^and\s+/, ""))
+			.filter(Boolean);
+		if (parts.length < 3) continue;
+		if (parts.some((p) => p.split(/\s+/).length > 3)) continue;
+		out.push(...parts);
+	}
+	return out;
+}
+
+describe("Manufact 2141: every result field a description names exists in its output schema", () => {
+	it("the 16 'align' tools are served", () => {
+		for (const name of OUTPUTS_ALIGN)
+			expect(
+				tools.some((t) => t.name === name),
+				name,
+			).toBe(true);
+	});
+
+	it("no description lists, as part of its result, a name its output schema lacks", () => {
+		const wrong = tools.flatMap((t) => {
+			const fields = outputFieldNames(t.outputSchema);
+			const bad = parenthesisedNames(t.description ?? "").filter(
+				(n) => !fields.has(n),
+			);
+			return bad.length ? [`${t.name}: ${bad.join(", ")}`] : [];
+		});
+		expect(wrong).toEqual([]);
+	});
+
+	it("a null-able read is not described as answering null where it answers found: false", () => {
+		const wrong = tools
+			.filter((t) => t.outputSchema?.properties?.found !== undefined)
+			.filter((t) =>
+				/\b(returning null|or null if not found)\b/.test(t.description ?? ""),
+			)
+			.map((t) => t.name);
+		expect(wrong).toEqual([]);
+	});
+});
+
+describe("Manufact 2141: description, input schema and annotations agree on list_tasks and list_missions", () => {
+	it("the two contradiction items are served", () => {
+		for (const name of CONTRADICTIONS)
+			expect(
+				tools.some((t) => t.name === name),
+				name,
+			).toBe(true);
+	});
+
+	it("no EXAMPLE passes a single quoted value to an input whose schema is an array", () => {
+		const wrong = tools.flatMap((t) => {
+			const example = (t.description ?? "").split("EXAMPLE:")[1] ?? "";
+			return Object.entries(t.inputSchema?.properties ?? {})
+				.filter(([, n]) => n.type === "array")
+				.filter(([k]) => new RegExp(`\\b${k}='`).test(example))
+				.map(([k]) => `${t.name}.${k}`);
+		});
+		expect(wrong).toEqual([]);
+	});
+
+	it("list_missions says that a caller other than the fleet master must name its own pilot", () => {
+		const t = tools.find((x) => x.name === "list_missions");
+		expect(t?.description ?? "").toMatch(/fleet master/);
+		expect(t?.description ?? "").toMatch(/\bpilot\b[^.]*\b(own|yours?)\b/);
+	});
+
+	it("list_tasks says which assignedTo / createdBy a caller other than the fleet master may name", () => {
+		const t = tools.find((x) => x.name === "list_tasks");
+		expect(t?.description ?? "").toMatch(/fleet master/);
+		expect(t?.description ?? "").toMatch(/fromAllowList/);
 	});
 });
