@@ -417,12 +417,11 @@ describe("improvisationDigest.scanWindow query (PR-I RED)", () => {
 
 describe("improvisationDigest.scanWindow non-ASCII orchestrator names", () => {
 	const seedTask = async (
-		t: ReturnType<typeof convexTest>,
+		t: { run: (fn: (ctx: any) => Promise<void>) => Promise<void> },
 		assignedTo: string,
 		n: number,
 	) => {
-		// eslint-disable-next-line @typescript-eslint/no-explicit-any
-		await t.run(async (ctx: any) => {
+		await t.run(async (ctx) => {
 			for (let i = 0; i < n; i += 1) {
 				await ctx.db.insert("tasks", {
 					title: `t-${assignedTo}-${i}`,

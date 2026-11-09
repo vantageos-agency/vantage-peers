@@ -899,6 +899,31 @@ export const IMPROVISATION_DIGEST_TOOL_DESCRIPTION =
 		"WHEN: auditing a sprint window or one orchestrator's citation rate. " +
 		"EXAMPLE: improvisation_digest windowDays=7 orchestrators=['sigma','pi'].";
 
+/**
+ * scanWindow keys `countsByOrch` by the percent-encoded orchestrator name (a
+ * Convex return value cannot carry a non-ASCII field name) and lists the real
+ * names in `byOrchestrator`. The tool answers `countsByOrch` under the real
+ * names: from the array, else (a backend that predates it) by decoding the keys.
+ */
+export function withRealOrchestratorNames<
+	T extends {
+		countsByOrch: Record<string, number>;
+		byOrchestrator?: Array<{ orchestrator: string; count: number }>;
+	},
+>(result: T): Omit<T, "byOrchestrator"> {
+	const { byOrchestrator, ...rest } = result;
+	const named: Array<[string, number]> = Array.isArray(byOrchestrator)
+		? byOrchestrator.map((e) => [e.orchestrator, e.count])
+		: Object.entries(result.countsByOrch ?? {}).map(([key, count]) => {
+				try {
+					return [decodeURIComponent(key), count];
+				} catch {
+					return [key, count];
+				}
+			});
+	return { ...rest, countsByOrch: Object.fromEntries(named) };
+}
+
 export const improvisationDigestArgsSchema = z.object({
 	windowDays: z
 		.number()
@@ -12620,9 +12645,10 @@ export function registerTools(
 					"improvisationDigest:scanWindow" as any,
 					{ windowDays, orchestrators },
 				);
+				const served = withRealOrchestratorNames(result);
 				return {
-					content: [{ type: "text", text: JSON.stringify(result, null, 2) }],
-					structuredContent: result,
+					content: [{ type: "text", text: JSON.stringify(served, null, 2) }],
+					structuredContent: served,
 				};
 			} catch (error: any) {
 				return mcpConvexError(error);

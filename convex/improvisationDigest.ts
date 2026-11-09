@@ -96,9 +96,33 @@ export const scanWindow = query({
 		verifiedActor: v.optional(verifiedActorValidator),
 	},
 	returns: v.object({
-		countsByOrch: v.any(),
-		countsByCategory: v.any(),
-		samples: v.array(v.any()),
+		// A Convex return value cannot carry a field NAME that is not ASCII, so this
+		// record is keyed by the percent-encoded orchestrator name
+		// (`encodeURIComponent`; identity for an ASCII-only name that has no reserved
+		// character). `byOrchestrator` carries the same counts under the REAL names.
+		// Expand step of an expand/contract: the running MCP reads only this record.
+		countsByOrch: v.record(v.string(), v.number()),
+		byOrchestrator: v.array(
+			v.object({ orchestrator: v.string(), count: v.number() }),
+		),
+		countsByCategory: v.object({
+			complete_task: v.number(),
+			send_message: v.number(),
+			store_memory: v.number(),
+		}),
+		samples: v.array(
+			v.object({
+				orchestrator: v.string(),
+				day: v.string(),
+				category: v.union(
+					v.literal("complete_task"),
+					v.literal("send_message"),
+					v.literal("store_memory"),
+				),
+				snippet: v.string(),
+				artifactId: v.string(),
+			}),
+		),
 	}),
 	handler: async (ctx, args) => {
 		// THE TENANT BOUNDARY, through the same mechanism as every other scoped
@@ -125,6 +149,7 @@ export const scanWindow = query({
 		if (scope.refused || (!hasFleetRead(scope) && callerOrg === null)) {
 			return {
 				countsByOrch: {},
+				byOrchestrator: [],
 				countsByCategory: {
 					complete_task: 0,
 					send_message: 0,
@@ -306,7 +331,7 @@ export const scanWindow = query({
 		}
 
 		// ── Aggregation ───────────────────────────────────────────────────────
-		const countsByOrch: Record<string, number> = {};
+		const orchCounts = new Map<string, number>();
 		const countsByCategory = {
 			complete_task: 0,
 			send_message: 0,
@@ -314,10 +339,22 @@ export const scanWindow = query({
 		};
 
 		for (const entry of flagged) {
-			countsByOrch[entry.orchestrator] =
-				(countsByOrch[entry.orchestrator] ?? 0) + 1;
+			orchCounts.set(
+				entry.orchestrator,
+				(orchCounts.get(entry.orchestrator) ?? 0) + 1,
+			);
 			countsByCategory[entry.category] += 1;
 		}
+
+		// Object.fromEntries defines an own property for every key (a name such as
+		// "__proto__" included); the keys are ASCII by construction.
+		const countsByOrch: Record<string, number> = Object.fromEntries(
+			[...orchCounts].map(([name, count]) => [encodeURIComponent(name), count]),
+		);
+		const byOrchestrator = [...orchCounts].map(([orchestrator, count]) => ({
+			orchestrator,
+			count,
+		}));
 
 		// Sort newest first, cap samples at 50
 		flagged.sort((a, b) => b.creationTime - a.creationTime);
@@ -335,6 +372,6 @@ export const scanWindow = query({
 			`[improvisationDigest] scanWindow(${args.windowDays}d): scanned tasks<=${DIGEST_TASKS_SCAN_CAP} messages<=${DIGEST_MESSAGES_SCAN_CAP} memories<=${DIGEST_MEMORIES_SCAN_CAP}, flagged ${flagged.length}.`,
 		);
 
-		return { countsByOrch, countsByCategory, samples };
+		return { countsByOrch, byOrchestrator, countsByCategory, samples };
 	},
 });
