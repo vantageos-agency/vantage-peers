@@ -13,11 +13,13 @@
  */
 
 import { createHash } from "node:crypto";
+import { makeFunctionReference } from "convex/server";
 import { vi } from "vitest";
 import {
 	__setQueryEmbedderForTests,
 	__setRagSearcherForTests,
 } from "../../../convex/search";
+import { testClerkOrgId } from "../../../tests/fixtures/testClerkOrgId";
 import {
 	BOUND,
 	closeWorld,
@@ -53,6 +55,9 @@ export type Seeded = World["fixtures"]["ids"] & {
 		string
 	>;
 	receiptId: string;
+	/** The rows the erase tools remove, and the debate room. */
+	erase: { memoryId: string; taskId: string };
+	roomId: string;
 	/** IDs no row carries any more (a deleted mission), for the not-found poles. */
 	goneMissionId: string;
 	/** The Knowledge Base / OKF chain, filled call by call. */
@@ -77,7 +82,8 @@ type Read = (tool: string, args: Record<string, unknown>) => Promise<unknown>;
 export type Call = {
 	/** Any served tool: the structured ones are checked against their schema too. */
 	tool: string;
-	as: "person" | "master";
+	/** person: a person with a bound agent; master: the fleet master bearer; fleet-agent: that bearer with a fleet agent's credential. */
+	as: "person" | "master" | "fleet-agent";
 	args: (
 		s: Seeded,
 		read: Read,
@@ -315,6 +321,77 @@ export const CALLS: Call[] = [
 			storageId: s.kb.bundleStorageId,
 			targetNamespace: `team/${SLUG}`,
 			mode: "dry-run",
+		}),
+	},
+	// the debate room: ulysse's turn, then the room with it
+	{
+		tool: "debate_post_turn",
+		as: "person",
+		args: (s) => ({ roomId: s.roomId, turnSeq: 1, text: "ship it" }),
+	},
+	{
+		tool: "debate_get_room",
+		as: "person",
+		args: (s) => ({ roomId: s.roomId }),
+	},
+	// a dry-run preview of the open tasks of the person's agent
+	{
+		tool: "bulk_complete_tasks",
+		as: "person",
+		args: () => ({ filter: { assignedTo: "ulysse", status: "todo" } }),
+	},
+	// the erase tools, on rows written for them
+	{
+		tool: "erase_memory",
+		as: "person",
+		args: (s) => ({
+			memoryId: s.erase.memoryId,
+			redactions: [{ find: "sk-live-LEAKED", replaceWith: "[REDACTED]" }],
+		}),
+	},
+	{
+		tool: "erase_row",
+		as: "person",
+		args: (s) => ({ table: "tasks", rowId: s.erase.taskId }),
+	},
+	// the fleet doors: the master acting as a fleet agent (its credential)
+	{ tool: "improvisation_digest", as: "fleet-agent", args: () => ({}) },
+	{
+		tool: "create_fix_pattern",
+		as: "fleet-agent",
+		args: () => ({
+			symptom: "a symptom seen by the fleet",
+			rootCause: "its cause",
+			tags: [],
+			stack: [],
+			sourceProject: "p",
+			severity: "minor",
+		}),
+	},
+	{
+		tool: "add_fix_attempt",
+		as: "fleet-agent",
+		args: (s) => ({
+			patternId: s.patternId,
+			description: "tried a fix",
+			worked: true,
+			why: "it removed the cause",
+		}),
+	},
+	{
+		tool: "update_mission_template",
+		as: "fleet-agent",
+		args: () => ({
+			name: "fleet-template",
+			steps: [{ title: "triage", description: "look at it" }],
+		}),
+	},
+	{
+		tool: "instantiate_template_into_mission",
+		as: "master",
+		args: (s) => ({
+			templateName: "seeded-template",
+			missionId: s.missionId,
 		}),
 	},
 	// after every call above, so that the person has a recorded usage to read
@@ -583,6 +660,135 @@ const ragIndex = new Map<string, RagEntry[]>();
 /** The big memories the cut pole lists: over 60 KB together. */
 export const BIG_NAMESPACE = `team/${SLUG}/big`;
 
+/** The operator organisation of the world, whose agents are the fleet's. */
+export const FLEET_SLUG = "vantage-fleet";
+const FLEET_ORG_ID = testClerkOrgId(FLEET_SLUG) as string;
+
+/**
+ * An agent of the operator organisation (orgKind "operator"), owned by a live
+ * member, and the credential an admin of that organisation mints for it: what
+ * a fleet station presents beside the master bearer.
+ */
+async function fleetAgentCredential(): Promise<string> {
+	const owner = "user_fleet_owner";
+	const agentId = await world.t.run(async (ctx) => {
+		const now = Date.now();
+		const id = await ctx.db.insert("agents", {
+			orgSlug: FLEET_SLUG,
+			clerkOrgId: FLEET_ORG_ID,
+			name: "sigma",
+			normalizedName: "sigma",
+			ownerPersonId: owner,
+			isActive: true,
+			createdAt: now,
+		});
+		await ctx.db.insert("client_org_mapping", {
+			clerkOrgSlug: FLEET_SLUG,
+			clerkOrgId: FLEET_ORG_ID,
+			orgKind: "operator",
+			allowedOrchestrators: ["sigma"],
+			allowedAgentIds: [id],
+			scopes: ["vantage:read", "vantage:write"],
+			displayName: FLEET_SLUG,
+			isActive: true,
+			createdAt: now,
+		});
+		await ctx.db.insert("orgMembership", {
+			clerkOrgSlug: FLEET_SLUG,
+			clerkOrgId: FLEET_ORG_ID,
+			clerkUserId: owner,
+			role: "member",
+			createdAt: now,
+			updatedAt: now,
+		});
+		return id;
+	});
+	const minted = (await world.t
+		.withIdentity({
+			subject: "user_fleet_admin",
+			org_slug: FLEET_SLUG,
+			org_id: FLEET_ORG_ID,
+			org_role: "org:admin",
+		} as never)
+		.mutation(
+			makeFunctionReference<"mutation">(
+				"agentCredentials:mintAgentCredential",
+			) as never,
+			{ agentId } as never,
+		)) as { secret: string };
+	return minted.secret;
+}
+
+/**
+ * A debate room of the person's organisation between its two agents, ulysse
+ * and seatbot, opened by an organisation admin, with the first turn (ulysse's)
+ * delivered: debate_post_turn posts it, debate_get_room reads the room.
+ */
+async function openDebateRoom(): Promise<string> {
+	const admin = world.t.withIdentity({
+		subject: "user_debate_admin",
+		org_slug: SLUG,
+		org_id: ORG_ID,
+		org_role: "org:admin",
+	} as never);
+	const ref = (name: string) =>
+		makeFunctionReference<"mutation">(name) as never;
+	const agents = await world.t.run(async (ctx) => {
+		const rows = await ctx.db.query("agents").collect();
+		const of = (n: string) => String(rows.find((r) => r.name === n)?._id);
+		return { ulysse: of("ulysse"), seatbot: of("seatbot") };
+	});
+	await admin.mutation(ref("debate:upsertSettings"), {
+		maxRoundLimit: 5,
+		maxParticipants: 6,
+		maxRefusalRows: 2,
+		maxTurnMessageChars: 4000,
+		pollSeconds: 5,
+		maxAnswerCharsCeiling: 500,
+		maxLabelChars: 40,
+		maxTurnInstructionChars: 400,
+		maxActiveRooms: 10,
+	} as never);
+	const templateId = await admin.mutation(ref("debate:upsertTemplate"), {
+		template: {
+			id: "review",
+			name: "Review",
+			language: "en",
+			turnInstruction: "Answer in one paragraph.",
+			participants: [
+				{
+					id: "p1",
+					label: "ulysse",
+					kind: "agent",
+					agentId: agents.ulysse,
+					transport: "waker",
+				},
+				{
+					id: "p2",
+					label: "seatbot",
+					kind: "agent",
+					agentId: agents.seatbot,
+					transport: "waker",
+				},
+			],
+			roundLimit: 2,
+			maxAnswerChars: 100,
+			turnDeadlineSeconds: 3600,
+			maxConsecutiveSkips: 2,
+			voiceEnabled: false,
+		},
+	} as never);
+	const roomId = (await admin.mutation(ref("debate:createRoom"), {
+		templateId,
+		subject: "Ship it?",
+	} as never)) as string;
+	await world.t.mutation(ref("debate:deliverTurn"), {
+		roomId,
+		turnSeq: 1,
+	} as never);
+	return roomId;
+}
+
 /** Seeds the world and makes every call of CALLS, then the poles. */
 export async function runE2E(): Promise<void> {
 	vi.stubGlobal("fetch", async () => new Response("offline", { status: 503 }));
@@ -835,6 +1041,21 @@ export async function runE2E(): Promise<void> {
 		ragIndex.set("fixpatterns", [
 			{ key: String(patternId), text: "a symptom", type: "reference" },
 		]);
+		// A memory holding a leaked token (erase_memory) and a task (erase_row),
+		// both written by the person's own agent.
+		const eraseMemoryId = await ctx.db.insert("memories", {
+			namespace: `team/${SLUG}`,
+			clerkOrgId: ORG_ID,
+			type: "reference",
+			content: "the key is sk-live-LEAKED, rotate it",
+			createdBy: "ulysse",
+			createdById: agentId("ulysse"),
+			relations: [],
+			isLatest: true,
+			createdAt: now,
+			updatedAt: now,
+		});
+		const eraseTaskId = await task("to erase", "ulysse", "e");
 		const messages = await ctx.db.query("messages").collect();
 		const receiptId = await ctx.db.insert("messageReceipts", {
 			messageId: messages[0]._id,
@@ -849,6 +1070,7 @@ export async function runE2E(): Promise<void> {
 			tasks,
 			receiptId: String(receiptId),
 			goneMissionId: String(gone),
+			erase: { memoryId: String(eraseMemoryId), taskId: String(eraseTaskId) },
 		};
 	});
 	seeded = {
@@ -861,13 +1083,25 @@ export async function runE2E(): Promise<void> {
 		) as Seeded["tasks"],
 		receiptId: world.ids.alias(extra.receiptId),
 		goneMissionId: world.ids.alias(extra.goneMissionId),
+		erase: {
+			memoryId: world.ids.alias(extra.erase.memoryId),
+			taskId: world.ids.alias(extra.erase.taskId),
+		},
+		roomId: world.ids.alias(await openDebateRoom()),
 		kb: {},
 	};
 	const person = await connectAs(await tokenFor("person-bound", world));
 	const master = await connectAs("test-master-token");
+	// The fleet master acting as a fleet agent: the master bearer plus the
+	// agent credential of an agent of the operator organisation.
+	const fleetAgent = await connectAs(
+		"test-master-token",
+		await fleetAgentCredential(),
+	);
 	for (const t of [
 		...(await person.listTools()).tools,
 		...(await master.listTools()).tools,
+		...(await fleetAgent.listTools()).tools,
 	]) {
 		served.add(t.name);
 		if (t.outputSchema) {
@@ -891,7 +1125,12 @@ export async function runE2E(): Promise<void> {
 	await new Promise((r) => setTimeout(r, 20));
 	await read("pause_task", { taskId: seeded.tasks.seg });
 	for (const call of CALLS) {
-		const client = call.as === "master" ? master : person;
+		const client =
+			call.as === "master"
+				? master
+				: call.as === "fleet-agent"
+					? fleetAgent
+					: person;
 		const r = (await client.callTool({
 			name: call.tool,
 			arguments: await call.args(seeded, read),
@@ -916,7 +1155,20 @@ export async function runE2E(): Promise<void> {
 			})) as CallResult,
 		);
 	}
-	// The inbox once drained (mark_as_read and delete_message ran above).
+	// The inbox once drained (mark_as_read and delete_message ran above; the
+	// debate room's turn message, delivered to ulysse, is read here too).
+	const pending = (await person.callTool({
+		name: "check_messages",
+		arguments: { recipient: "ulysse" },
+	})) as CallResult;
+	const receiptIds = (
+		(pending.structuredContent?.messages as
+			| Array<{ receiptId: string }>
+			| undefined) ?? []
+	).map((m) => m.receiptId);
+	if (receiptIds.length > 0) {
+		await person.callTool({ name: "mark_as_read", arguments: { receiptIds } });
+	}
 	poles.set(
 		"inbox-empty",
 		(await person.callTool({
@@ -941,6 +1193,7 @@ export async function runE2E(): Promise<void> {
 	);
 	await person.close();
 	await master.close();
+	await fleetAgent.close();
 }
 
 /** Undo what runE2E installed. */

@@ -356,13 +356,23 @@ export async function seatToken(t: T): Promise<string> {
 	return raw;
 }
 
-export async function connectAs(token: string): Promise<Client> {
+/**
+ * A client of /mcp presenting `token` as its bearer, and, when given, an agent
+ * credential (x-vantage-agent-credential) beside it.
+ */
+export async function connectAs(
+	token: string,
+	agentCredential?: string,
+): Promise<Client> {
 	const client = new Client({ name: "seat-matrix", version: "0.0.0" });
 	await client.connect(
 		new StreamableHTTPClientTransport(new URL("http://localhost/mcp"), {
 			fetch: async (url: string | URL, init?: RequestInit) => {
 				const headers = new Headers(init?.headers);
 				headers.set("Authorization", `Bearer ${token}`);
+				if (agentCredential !== undefined) {
+					headers.set("x-vantage-agent-credential", agentCredential);
+				}
 				return app.fetch(new Request(url, { ...init, headers }));
 			},
 		}),
