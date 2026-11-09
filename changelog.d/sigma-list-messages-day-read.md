@@ -1,0 +1,4 @@
+---
+section: Fixed
+---
+- **Cloud: `list_messages` with a day no longer fails on the busiest sender or a large page.** `from` + `sessionDay` read the sender's whole `by_from` range and filtered the day inside it (and an organisation caller did the same over its tenant range), so `from='pi' sessionDay=60 limit=20` and `sessionDay=249 limit=200` answered "Server Error" on production after #1724. A day now opens the `by_day` range (the `createdBefore` cursor inside it) and the sender or the organisation narrows it by a filter before the take, newest first, so the read is bounded by the day's volume. No new index. Pinned by `convex/__tests__/listMessagesDayReadBound.test.ts` (range size of the index each read opens, on the master and the organisation path). Task k17cv03wd3g60gz3p498879f2d8hx4pv.

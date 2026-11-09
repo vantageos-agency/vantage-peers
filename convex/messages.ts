@@ -2385,11 +2385,10 @@ export const listMessages = query({
 			// ── Clerk (non-master) path — tenant-scoped index ─────────────────────
 			// Push tenantId equality BEFORE .take(limit) using by_tenant_created so
 			// fleet (null-tenant) traffic cannot crowd out tenant rows in the window.
-			// sessionDay and full-scan branches are merged here: the tenant-scoped
-			// index is always used, and `from` and `sessionDay` are applied as
-			// .filter() on that range before the take (acceptable: within a single
-			// tenant, volume is low compared to the full cross-tenant table). (task k176wgsrhha0fr0dxxahctvhw588q5a1,
-			// Eta completeness edge from PR #775 verdict jn7563v34)
+			// With a day, the read opens `by_day` (below); without one, the tenant-scoped
+			// index is used and `from` is a .filter() on that range before the take.
+			// (task k176wgsrhha0fr0dxxahctvhw588q5a1, Eta completeness edge from PR #775
+			// verdict jn7563v34)
 			// The org's rows are selected by its permanent ID (`tenantOrgId`), never by
 			// the slug: a slug is a label a takeover hands to another org (sweep site
 			// A-10). A caller whose mapping carries no ID reads nothing; a row with no
@@ -2397,54 +2396,14 @@ export const listMessages = query({
 			const callerOrgClerkId = scope.orgClerkId;
 			if (callerOrgClerkId === undefined) {
 				rows = [];
-			} else {
-				rows = await ctx.db
-					.query("messages")
-					.withIndex("by_tenant_created_clerk_id", (q) =>
-						q.eq("tenantOrgId", callerOrgClerkId),
-					)
-					.order("desc")
-					// Both caller filters narrow the organisation's range BEFORE the
-					// take: `sessionDay` was read and never applied here, so an
-					// organisation caller asking for one day got every day.
-					.filter((q) =>
-						q.and(
-							args.from !== undefined ? q.eq(q.field("from"), args.from) : true,
-							args.sessionDay !== undefined
-								? q.eq(q.field("sessionDay"), args.sessionDay)
-								: true,
-						),
-					)
-					.take(fetchCap);
-
-				// Belt-and-suspenders: ensure no cross-tenant row leaks through.
-				rows = rows.filter((r) => r.tenantOrgId === callerOrgClerkId);
-			}
-		} else {
-			// ── Master path — existing index logic, unchanged ──────────────────────
-			// Every caller filter is applied by the READ, newest first (the cursor
-			// contract runs downward), never after the take. A day alone is an index
-			// range, with the `createdBefore` anchor inside it (`_creationTime` is the
-			// index's implicit last field). A sender, with or without a day, is the
-			// sender's index range, and a day is narrowed by a query filter BEFORE
-			// the take: the sender's rows are walked newest first until `limit` of
-			// that day are found, so older matches are not lost to newer non-matches.
-			// There is no (sender, day) index on purpose: a second index keyed by the
-			// sender's NAME is one more R-53 site, and this branch needs only one.
-			if (args.from !== undefined) {
-				const from = args.from;
-				const sessionDay = args.sessionDay;
-				const bySender = ctx.db
-					.query("messages")
-					.withIndex("by_from", (q) => q.eq("from", from))
-					.order("desc");
-				rows = await (
-					sessionDay !== undefined
-						? bySender.filter((q) => q.eq(q.field("sessionDay"), sessionDay))
-						: bySender
-				).take(fetchCap);
 			} else if (args.sessionDay !== undefined) {
+				// A day is an index range of its own (`by_day`), with the
+				// `createdBefore` anchor inside it. The organisation and the sender
+				// are narrowed by a filter on that range BEFORE the take: the range
+				// is one day's volume, never the organisation's whole history (a
+				// busy organisation's old day read past the per-function read limit).
 				const sessionDay = args.sessionDay;
+				const from = args.from;
 				rows = await ctx.db
 					.query("messages")
 					.withIndex("by_day", (q) => {
@@ -2452,7 +2411,67 @@ export const listMessages = query({
 						return before !== undefined ? base.lt("_creationTime", before) : base;
 					})
 					.order("desc")
+					.filter((q) =>
+						q.and(
+							q.eq(q.field("tenantOrgId"), callerOrgClerkId),
+							from !== undefined ? q.eq(q.field("from"), from) : true,
+						),
+					)
 					.take(limit);
+
+				// Belt-and-suspenders: ensure no cross-tenant row leaks through.
+				rows = rows.filter((r) => r.tenantOrgId === callerOrgClerkId);
+			} else {
+				rows = await ctx.db
+					.query("messages")
+					.withIndex("by_tenant_created_clerk_id", (q) =>
+						q.eq("tenantOrgId", callerOrgClerkId),
+					)
+					.order("desc")
+					// The sender narrows the organisation's range BEFORE the take.
+					.filter((q) =>
+						args.from !== undefined ? q.eq(q.field("from"), args.from) : true,
+					)
+					.take(fetchCap);
+
+				// Belt-and-suspenders: ensure no cross-tenant row leaks through.
+				rows = rows.filter((r) => r.tenantOrgId === callerOrgClerkId);
+			}
+		} else {
+			// ── Master path ────────────────────────────────────────────────────────
+			// Every caller filter is applied by the READ, newest first (the cursor
+			// contract runs downward), never after the take. A day is an index range
+			// (`by_day`), with the `createdBefore` anchor inside it (`_creationTime`
+			// is the index's implicit last field); a sender, when one is also given,
+			// narrows THAT range by a filter before the take. The day's volume is
+			// bounded, the busiest sender's history is not: reading the sender's
+			// range and filtering the day inside it walked every message the sender
+			// ever wrote for an old day or a large page (prod "Server Error" at
+			// 44b78b46). A sender alone is the sender's index range. There is no
+			// (sender, day) index on purpose: a second index keyed by the sender's
+			// NAME is one more R-53 site, and the day's range is already small.
+			if (args.sessionDay !== undefined) {
+				const sessionDay = args.sessionDay;
+				const from = args.from;
+				const byDay = ctx.db
+					.query("messages")
+					.withIndex("by_day", (q) => {
+						const base = q.eq("sessionDay", sessionDay);
+						return before !== undefined ? base.lt("_creationTime", before) : base;
+					})
+					.order("desc");
+				rows = await (
+					from !== undefined
+						? byDay.filter((q) => q.eq(q.field("from"), from))
+						: byDay
+				).take(limit);
+			} else if (args.from !== undefined) {
+				const from = args.from;
+				rows = await ctx.db
+					.query("messages")
+					.withIndex("by_from", (q) => q.eq("from", from))
+					.order("desc")
+					.take(fetchCap);
 			} else {
 				rows = await ctx.db.query("messages").order("desc").take(fetchCap);
 			}
