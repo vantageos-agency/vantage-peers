@@ -398,8 +398,14 @@ describe("6. Claude Code 2 KB metadata field", () => {
 			const tool = tools.find((t) => t.name === "bulk_complete_tasks");
 			expect(tool).toBeDefined();
 			expect(bytes(tool?.description ?? "")).toBeLessThanOrEqual(BUDGET);
-			// The critical guidance still leads the description.
-			expect(tool?.description ?? "").toMatch(/dryRun defaults to true/);
+			// The critical guidance still leads the description. The default itself
+			// lives in the schema and is not repeated in the prose (task
+			// k172z2f2q3bgr9wwc3agj08xx98hv4h2).
+			expect(tool?.description ?? "").toMatch(/without dryRun only previews/);
+			expect(
+				(tool?.inputSchema.properties?.dryRun as { default?: unknown })
+					?.default,
+			).toBe(true);
 			expect(tool?.description ?? "").toMatch(/BULK_FILTER_TOO_BROAD/);
 			expect(tool?.description ?? "").toMatch(/BULK_CALLER_REQUIRED/);
 		} finally {

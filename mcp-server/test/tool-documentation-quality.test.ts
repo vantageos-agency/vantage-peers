@@ -420,6 +420,9 @@ describe("input field descriptions", () => {
 		expect(offenders).toEqual([]);
 	});
 
+	// What omitting a field does is said once: by the schema's `default` when the
+	// omission is a value (task k172z2f2q3bgr9wwc3agj08xx98hv4h2: the prose then
+	// never repeats it), otherwise in the description.
 	it("every optional top-level field says what omitting it does", () => {
 		const OMISSION =
 			/\b(omit|omitted|omitting|omission|without it|absent|not given|left out|leave it out|unset|by default|defaults? to)\b/i;
@@ -429,6 +432,7 @@ describe("input field descriptions", () => {
 					(f) =>
 						f.topLevel &&
 						f.optional &&
+						(f.schema as { default?: unknown }).default === undefined &&
 						!OMISSION.test(f.schema.description ?? ""),
 				)
 				.map((f) => `${f.tool}.${f.path}`),

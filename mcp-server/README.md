@@ -184,21 +184,21 @@ _Applies to: Cloud and Self-host._
 ### Memory and search (10)
 
 - `erase_memory` (write, destructive) — Permanently erase a secret (a credential, token or key) from a memory: the matching text is replaced in the stored body, the content hash is recomputed and the search index entry is re-indexed and purged, so the original text is gone (unlike soft_delete_memory, which leaves the body readable).
-- `get_memory` (read) — Fetch a single memory by its Convex document ID, including relations and episode metadata.
+- `get_memory` (read) — Fetch a single memory by its memoryId, including relations and episode metadata.
 - `hybrid_search` (read) — Combined vector + BM25 search via Reciprocal Rank Fusion for best semantic and keyword coverage.
 - `list_memories` (read) — List active (isLatest=true) memories for a namespace, ordered newest first.
 - `recall` (read) — Semantic vector search over VantagePeers memories, ranked by cosine similarity.
 - `soft_delete_document` (write) — Soft-delete all Knowledge Base chunks for a document.
 - `soft_delete_memory` (write, destructive) — Soft-delete a memory so it stops appearing in recall results while remaining in the audit log.
 - `store_document_chunked` (write) — Ingest a document binary (PDF, Markdown, plain text) into the Knowledge Base. storageId names a file already uploaded and claimed for your org: generate_upload_url (given the file's sha256) returns the upload URL and ticket, the file is POSTed there, and claim_upload (given the ticket) returns the storageId this tool takes.
-- `store_memory` (write) — Store a typed memory entry (user/feedback/project/reference) in VantagePeers with optional graph relations.
+- `store_memory` (write) — Store a typed memory entry in VantagePeers, optionally linked to an earlier memory.
 - `text_search` (read) — BM25 full-text keyword search over VantagePeers memories for exact term matching.
 
 ### Fix patterns (7)
 
-- `add_fix_attempt` (write) — Add a fix attempt record to a pattern with description, outcome, and optional commit reference.
+- `add_fix_attempt` (write) — Record one attempt at fixing a known fix pattern: what was tried, whether it worked, why, and optionally its commit.
 - `create_fix_pattern` (write) — Create a fix pattern in the knowledge base documenting symptom, root cause, and optional validated fix.
-- `get_fix_pattern` (read) — Fetch a single fix pattern by its Convex document ID, including all linked fix attempts.
+- `get_fix_pattern` (read) — Fetch a single fix pattern by its patternId, including all linked fix attempts.
 - `link_issue_to_pattern` (write) — Link a VantagePeers issue to a fix pattern creating a bidirectional reference.
 - `list_fix_patterns` (read) — List fix patterns filtered by source project, newest first with cursor paging support.
 - `search_fix_patterns` (read) — Semantic search over fix patterns by symptom description, ranked by relevance.
@@ -220,7 +220,7 @@ _Applies to: Cloud and Self-host._
 
 - `create_recurring_task` (write) — Create a recurring task template that auto-generates tasks on a cron schedule.
 - `delete_recurring_task` (write, destructive) — Permanently delete a recurring task template, stopping all future scheduled task generation.
-- `get_recurring_task` (read) — Fetch a single recurring task definition by its Convex document ID with cron schedule, prompt, assignee, and last-fire metadata.
+- `get_recurring_task` (read) — Fetch one recurring task template by its ID.
 - `list_recurring_tasks` (read) — List recurring task templates filtered by assignee or active status, newest first.
 - `pause_recurring_task` (write) — Pause a recurring task template to stop auto-creating tasks until explicitly resumed.
 - `resume_recurring_task` (write) — Resume a paused recurring task template and recalculate its next scheduled run time.
@@ -237,7 +237,7 @@ _Applies to: Cloud and Self-host._
 - `create_task` (write) — Create a task assigned to an orchestrator with priority, status tracking, and optional mission link.
 - `delete_task` (write, destructive) — Permanently delete a task; only the creator or system role may delete.
 - `fail_task` (write) — Mark a task as failed (a terminal state distinct from done/cancelled) with a mandatory failureNote describing how the work ended.
-- `get_task` (read) — Fetch a single task by its Convex document ID with all fields: title, description, status, priority, assignment, dependencies, mission link, completion note.
+- `get_task` (read) — Fetch one task by its taskId.
 - `list_tasks` (read) — List tasks with optional filters by assignee, status, project, or creator, newest first.
 - `pause_task` (write) — Close the task's open work segment and stop the duration clock, without ending the task.
 - `resume_task` (write) — Open a new work segment on a paused task and set it back to in_progress.
@@ -249,7 +249,7 @@ _Applies to: Cloud and Self-host._
 
 - `check_messages` (read) — Check for unread messages addressed to a recipient role, returning receiptIds for acknowledgment.
 - `delete_message` (write, destructive) — Delete a message and all its receipts; only the original sender or system may delete.
-- `get_message` (read) — Fetch a single peer message by its Convex document ID with full body, channel, sender, sessionDay, and tenant scope.
+- `get_message` (read) — Fetch a single peer message by its messageId with full body, channel, sender, sessionDay, and tenant scope.
 - `list_broadcast_status` (read) — Show read/unread receipt status for a broadcast message by messageId.
 - `list_messages` (read) — List historical messages filtered by session day or sender, newest first; use check_messages for unread.
 - `mark_as_read` (write) — Mark one or more message receipts as read using receiptIds from check_messages.
@@ -258,8 +258,8 @@ _Applies to: Cloud and Self-host._
 
 ### Briefing notes (5)
 
-- `create_briefing_note` (write) — Create a structured briefing note capturing a topic discussion with participants, decisions, and memory links.
-- `get_briefing_note` (read) — Fetch a single briefing note by ID with all fields: title, topic, participants, content, decisions, and links.
+- `create_briefing_note` (write) — Create a briefing note that records one discussion: its title, topic, participants, full content, the decisions reached and the memories it builds on.
+- `get_briefing_note` (read) — Fetch one briefing note by its noteId.
 - `list_briefing_notes` (read) — List briefing notes filtered by topic, newest first, with cursor paging support.
 - `search_briefing_notes_by_keyword` (read) — BM25 full-text keyword search over briefing note content, ranked by relevance.
 - `update_briefing_note` (write) — Update an existing briefing note; only provided fields are patched (arrays are FULL REPLACE).
@@ -286,7 +286,7 @@ _Applies to: Cloud and Self-host._
 
 - `get_profile` (read) — Fetch an orchestrator profile with static identity and dynamic session state fields.
 - `list_peers` (read) — List all orchestrator profiles with current status, summary, and session info, newest first.
-- `set_summary` (write) — Update the current-work summary for an orchestrator instance, visible via list_peers.
+- `set_summary` (write) — Set the status summary of an orchestrator instance: one or two sentences on what it is working on now, replacing the previous summary, which peers read in list_peers.
 - `update_profile` (write) — Create or update an orchestrator profile with static identity facts and dynamic session state.
 
 ### Knowledge bundles (OKF) (2)
@@ -310,7 +310,7 @@ _Applies to: Cloud and Self-host._
 - `list_blocked_on_me` (read) — List the tasks that other peers have BLOCKED on one of YOUR live tasks (blockedOnTaskId), oldest wait first, with the age of each wait.
 - `list_repo_mappings` (read) — List all GitHub repo to orchestrator webhook mappings, newest first with cursor paging support.
 - `remove_repo_mapping` (write, destructive) — Delete a GitHub repo mapping by repo name, stopping webhook event routing for that repo.
-- `whoami` (read) — Returns the orchestrator identity baked into the current bearer's scope context.
+- `whoami` (read) — Report who this connection acts as and what it may read and write, read from its own credential only.
 
 The tools below are present in the server code but disabled in this release: a client can neither list nor call them. They are named so this reference matches the code exactly.
 

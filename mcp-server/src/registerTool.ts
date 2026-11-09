@@ -569,7 +569,11 @@ export function defineTool(
 		// A `read` tool's namespace is optional in the schema (the fleet master may
 		// omit it), but every other session is refused without one
 		// (checkNamespaceRead): the parameter says so, derived from the declaration.
-		...(scope.kind === "read" && schema[scope.namespaceArg] !== undefined
+		// A namespace the schema already requires carries no such note: the schema
+		// says it, and "the fleet master may omit it" would contradict it.
+		...(scope.kind === "read" &&
+		schema[scope.namespaceArg] !== undefined &&
+		(schema[scope.namespaceArg] as z.ZodType).safeParse(undefined).success
 			? {
 					[scope.namespaceArg]: (schema[scope.namespaceArg] as z.ZodType).describe(
 						`${(schema[scope.namespaceArg] as z.ZodType).description ?? ""}${READ_NAMESPACE_NOTE}`,

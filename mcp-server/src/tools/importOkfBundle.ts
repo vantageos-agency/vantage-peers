@@ -68,14 +68,15 @@ export const importOkfBundleArgsSchema = {
 	mode: z
 		.enum(["dry-run", "merge", "replace"])
 		.describe(
-			"What the import does: dry-run previews the counts without writing, merge inserts what is new, replace is reserved.",
+			"What the import does: dry-run previews the counts without writing, merge inserts what is new and skips what is already there. replace is accepted and today behaves exactly as merge: nothing already stored is deleted.",
 		),
 	idempotencyKey: z
 		.string()
 		.optional()
+		.meta({ deprecated: true })
 		.describe(
-			"A token of your choice that marks this delivery as one import. " +
-				"Omit it: content de-duplication already makes a replay a no-op.",
+			"Has no effect: no key is stored or compared, and content de-duplication already makes a replay import nothing. " +
+				"Accepted only so that a client which sends it is not refused; leave it out.",
 		),
 };
 
@@ -100,7 +101,7 @@ export function registerImportOkfBundle(
 			idempotentHint: true,
 			openWorldHint: false,
 			destructiveHint: false,
-			title: "Import a memory bundle",
+			title: "Import an OKF bundle into a namespace",
 		},
 		async ({ bundleUrl, storageId, targetNamespace, mode, idempotencyKey }) => {
 			try {
