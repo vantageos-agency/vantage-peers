@@ -40,6 +40,7 @@ import {
 	type CallResult,
 	closeE2E,
 	descriptions,
+	inputSchemas,
 	NOT_FOUND,
 	poles,
 	results,
@@ -49,6 +50,7 @@ import {
 } from "./lib/e2eWorld.js";
 import {
 	LIST_FORMS,
+	MIRRORED_TEXT,
 	STRUCTURED_TOOLS,
 	TEXT_FORMS,
 } from "./lib/toolMetadataDecisions.js";
@@ -561,5 +563,82 @@ describe("the last ten: their item schemas met real rows", () => {
 		expect(sc("instantiate_template_into_mission").taskIds.length).toBe(1);
 		// task k177d10zrqvw6gj9jef5hypayd8hxe34: the typed binding row met a real row
 		expect(sc("get_github_owner_bindings").bindings.length).toBeGreaterThan(0);
+	});
+});
+
+// ── Manufact 2250: the text is the structuredContent, as JSON ────────────────
+//
+// Task k17e90s1n85hjappy26vs2kww18hxjp1. Manufact flagged "Align the output
+// schema with the tool's documented result" on 11 tools, all among those whose
+// text is a different shape from their structuredContent. Three of them now
+// write exactly JSON.stringify(structuredContent) as text (MIRRORED_TEXT).
+
+describe("Manufact 2250: the text of the three experiment tools is their structuredContent as JSON", () => {
+	const mirrors = (r: CallResult) => {
+		expect(r.isError, r.content?.[0]?.text).not.toBe(true);
+		expect(r.content).toHaveLength(1);
+		expect(r.content[0].type).toBe("text");
+		expect(JSON.parse(r.content[0].text)).toEqual(r.structuredContent);
+		expect(r.content[0].text).toBe(JSON.stringify(r.structuredContent));
+	};
+
+	for (const tool of MIRRORED_TEXT) {
+		it(`${tool}: a served call's text parses to its structuredContent, envelope included`, () => {
+			const r = results.get(tool) as CallResult;
+			mirrors(r);
+			const sc = r.structuredContent as Record<string, unknown>;
+			if (tool === "get_profile") {
+				expect(sc.found).toBe(true);
+			} else {
+				// a real row, not only an empty list
+				expect((sc.items as unknown[]).length).toBeGreaterThan(0);
+			}
+		});
+
+		it(`${tool}: its description says the text is the same object as JSON, and no other shape`, () => {
+			const d = descriptions.get(tool) ?? "";
+			expect(d).toContain("The text is the same object as JSON");
+			expect(d).not.toMatch(/bare JSON array|the text is the profile|or null when|else \{ items, nextCursor \}/);
+		});
+	}
+
+	it("get_profile not found: the text parses to { found: false, id }, never null", () => {
+		const r = poles.get("not-found:get_profile") as CallResult;
+		mirrors(r);
+		expect(JSON.parse(r.content[0].text)).toEqual({
+			found: false,
+			id: "seatbot",
+		});
+	});
+});
+
+describe("Manufact 2250: the four text residues", () => {
+	type Props = { properties?: Record<string, { description?: string }> };
+	const field = (tool: string, name: string): string =>
+		(inputSchemas.get(tool) as Props | undefined)?.properties?.[name]
+			?.description ?? "";
+
+	it("list_episodes.limit says what a page fetched with a cursor and no limit holds, without the misleading form", () => {
+		const d = field("list_episodes", "limit");
+		expect(d).not.toContain("With a cursor and no limit, a page holds 50 rows");
+		expect(d).toContain("Pass the same limit with each cursor");
+	});
+
+	for (const tool of ["list_tasks", "list_tasks_by_mission", "list_missions"]) {
+		it(`${tool}: the status field keeps meaning and usage; the stand-alone rule lives in the tool description`, () => {
+			const d = field(tool, "status");
+			expect(d).not.toBe("");
+			expect(d).not.toMatch(/only entry of its list/);
+			expect(descriptions.get(tool) ?? "").toContain(
+				"A shorthand stands alone in the status list",
+			);
+		});
+	}
+
+	it("store_memory.type says what type 'episode' stores through store_memory", () => {
+		const d = field("store_memory", "type");
+		expect(d).not.toContain("use store_episode instead");
+		expect(d).toContain("'episode' stores a memory of that type holding only this content");
+		expect(d).toContain("store_episode");
 	});
 });
