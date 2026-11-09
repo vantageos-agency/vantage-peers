@@ -40,7 +40,7 @@
  */
 
 /** Contract version this MCP build requires from the backend. */
-export const REQUIRED_CONTRACT_VERSION = 23;
+export const REQUIRED_CONTRACT_VERSION = 24;
 
 /** Every public Convex function this MCP build calls (`module:function`). */
 export const MCP_CALLED_FUNCTIONS: readonly string[] = [

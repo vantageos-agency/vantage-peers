@@ -1,4 +1,4 @@
-import { type OAuthContext, seatAgentOf } from "./auth.js";
+import { isMasterScope, type OAuthContext, seatAgentOf } from "./auth.js";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // verifiedActor - the agent's unique ID, forwarded to the Convex doors that take
@@ -105,6 +105,18 @@ export const VERIFIED_ACTOR_DOORS: ReadonlySet<string> = new Set([
 	"debate:getRoom",
 ]);
 
+/**
+ * Doors that narrow a read to the verified agent's own rows, and that a
+ * FLEET-MASTER bearer must not be narrowed at: the master lists every row of the
+ * table (fixPatterns:listAll), so it reads every row. The wrapper forwards no
+ * actor to these doors for a master bearer, exactly as `rosterClaimArgs` forwards
+ * no roster. A non-master bearer is narrowed, and refused (RBAC_DENIED) outside
+ * its own rows (task k17a388w6d0cxmyw8gfk5tryp18hvw2k).
+ */
+export const MASTER_UNNARROWED_DOORS: ReadonlySet<string> = new Set([
+	"fixPatterns:get",
+]);
+
 export type VerifiedActorArg = { agentId: string; orgSlug: string };
 
 /**
@@ -150,9 +162,11 @@ export function withVerifiedActor<T extends MutatingClient>(
 ): T {
 	const actor = verifiedActorOf(ctx);
 	if (actor === undefined) return convex;
+	const master = isMasterScope(ctx);
 	const forward = (name: string, args: unknown): unknown => {
 		if (
 			!VERIFIED_ACTOR_DOORS.has(name) ||
+			(master && MASTER_UNNARROWED_DOORS.has(name)) ||
 			typeof args !== "object" ||
 			args === null
 		) {

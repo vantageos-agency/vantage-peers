@@ -11861,7 +11861,7 @@ export function registerTools(
 		},
 		"get_fix_pattern",
 		"Fetch a single fix pattern by its patternId, including all linked fix attempts. " +
-			"Returns the fix pattern with its attempts as JSON; an ID you may not read returns 'Fix pattern not found'. " +
+			"Returns the fix pattern with its attempts as JSON; an ID you may not read is refused with RBAC_DENIED, and an ID that does not exist returns 'Fix pattern not found'. " +
 			"WHEN: use when you have a patternId from list_fix_patterns/search_fix_patterns and need the full record with attempts history. " +
 			"EXAMPLE: get_fix_pattern patternId='m9748paffd0emrbwyskj868e1x88kvhj'.",
 		{
@@ -11881,13 +11881,24 @@ export function registerTools(
 				// bearer forwards its verified roster (`callerIdentities`) and the door
 				// answers null for a pattern that roster does not name, before its
 				// attempts are read. Master forwards none.
+				// The wrapped client forwards the acting agent's verifiedActor for a
+				// non-master bearer only (verifiedActor.ts MASTER_UNNARROWED_DOORS): a
+				// fleet-master seat lists every pattern, so it reads every pattern
+				// (task k17a388w6d0cxmyw8gfk5tryp18hvw2k).
 				const row = await convex.query("fixPatterns:get" as any, {
 					patternId,
 					...rosterClaimArgs(oauthCtx),
 				});
+				if (row === null || row === undefined) {
+					return mcpError(`Fix pattern not found: ${patternId}`);
+				}
 				const filtered = scopeFilterGet(oauthCtx ?? DENIED_SCOPE_CTX, row);
 				if (filtered === null) {
-					return mcpError(`Fix pattern not found: ${patternId}`);
+					// The row exists and this caller's roster does not name its creator:
+					// a refusal, not an absence (refusal-is-distinguishable-from-absence.md).
+					return mcpError(
+						`REFUSED (RBAC_DENIED): fixPatterns:get refused fix pattern ${patternId} for this caller: it was created by an agent outside your roster. This is a refusal, NOT an absence.`,
+					);
 				}
 				// The same object is the text (unchanged) and the structuredContent the
 				// outputSchema validates (task k1793xkjhzh1xm23gmmwjgwfyx8htbv0).

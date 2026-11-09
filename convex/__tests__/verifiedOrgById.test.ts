@@ -329,15 +329,16 @@ describe("fixPatterns:get roster check by agent ID", () => {
 		return { ...ids, patternId };
 	}
 
-	test("REFUSED: a client org's eta (same label as the operator's) is answered null, as an absent id", async () => {
+	test("REFUSED: a client org's eta (same label as the operator's) is refused RBAC_DENIED, not answered as an absent id", async () => {
 		const t = createT();
 		const s = await seed(t);
-		const got = await asService(t).query(api.fixPatterns.get, {
-			patternId: s.patternId,
-			callerIdentities: ["eta"],
-			verifiedActor: { agentId: s.clientEta, orgSlug: "client-co" },
-		});
-		expect(got).toBeNull();
+		await expect(
+			asService(t).query(api.fixPatterns.get, {
+				patternId: s.patternId,
+				callerIdentities: ["eta"],
+				verifiedActor: { agentId: s.clientEta, orgSlug: "client-co" },
+			}),
+		).rejects.toMatchObject({ data: expect.stringContaining("RBAC_DENIED") });
 	});
 
 	test("PRESENT: the operator's own eta reads the pattern it created", async () => {
@@ -376,7 +377,7 @@ describe("fixPatterns:get roster check by agent ID", () => {
 		expect(got).toBeNull();
 	});
 
-	test("legacy wire (names only, no verified actor) still narrows by the roster: expand keeps the old MCP working", async () => {
+	test("legacy wire (names only, no verified actor) still narrows by the roster and refuses: expand keeps the old MCP working", async () => {
 		const t = createT();
 		const s = await seed(t);
 		const named = await asService(t).query(api.fixPatterns.get, {
@@ -384,10 +385,11 @@ describe("fixPatterns:get roster check by agent ID", () => {
 			callerIdentities: ["eta"],
 		});
 		expect(named?._id).toBe(s.patternId);
-		const other = await asService(t).query(api.fixPatterns.get, {
-			patternId: s.patternId,
-			callerIdentities: ["somebody-else"],
-		});
-		expect(other).toBeNull();
+		await expect(
+			asService(t).query(api.fixPatterns.get, {
+				patternId: s.patternId,
+				callerIdentities: ["somebody-else"],
+			}),
+		).rejects.toMatchObject({ data: expect.stringContaining("RBAC_DENIED") });
 	});
 });
