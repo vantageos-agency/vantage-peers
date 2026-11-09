@@ -193,3 +193,26 @@ export const removeRagEntry = internalAction({
     return null;
   },
 });
+
+// ─────────────────────────────────────────────────────────────────────────────
+// removeFixPatternRagEntry — purge a fix pattern's search entry after the pattern row
+// was erased (convex/fixPatterns.ts `erase`). The entry key is the pattern id
+// (addFixPatternRagEntry); a namespace the component never created holds nothing.
+// ─────────────────────────────────────────────────────────────────────────────
+
+export const removeFixPatternRagEntry = internalAction({
+  args: { patternId: v.id("fixPatterns") },
+  returns: v.null(),
+  handler: async (ctx, args) => {
+    const rag = getRag();
+    const namespace = await rag.getNamespace(ctx, {
+      namespace: FIX_PATTERNS_NAMESPACE,
+    });
+    if (namespace === null) return null;
+    await rag.deleteByKey(ctx, {
+      namespaceId: namespace.namespaceId,
+      key: args.patternId,
+    });
+    return null;
+  },
+});
