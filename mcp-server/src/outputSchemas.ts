@@ -1128,7 +1128,15 @@ const pageOf = (row: z.ZodType, rows: string, extra: z.ZodRawShape = {}) =>
 
 /** A search's matches: the same rows its text gives as a bare array. */
 const matchesOf = (row: z.ZodType, rows: string) =>
-	z.looseObject({ items: z.array(row).describe(rows) });
+	z.looseObject({
+		items: z.array(row).describe(rows),
+		truncated: z
+			.boolean()
+			.optional()
+			.describe(
+				"True when the answer exceeded the 60 KB response cap and items holds only its first rows (the text then says so in _meta); absent when items is the whole answer.",
+			),
+	});
 
 const memoryTypeField = z
 	.string()

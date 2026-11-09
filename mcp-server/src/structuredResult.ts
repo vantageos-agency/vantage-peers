@@ -24,8 +24,11 @@ export type CappedList = {
 	truncated: boolean;
 };
 
+/** The structured form of a bare-array answer; `truncated` only when capPage cut it. */
+export type ArrayStructured = { items: unknown[]; truncated?: true };
+
 /** The structured form of a bare-array answer. */
-export function arrayStructured(rows: unknown): { items: unknown[] } {
+export function arrayStructured(rows: unknown): ArrayStructured {
 	return { items: Array.isArray(rows) ? rows : [] };
 }
 
