@@ -841,6 +841,10 @@ describe("finding 6 — outputSchema decided per tool", () => {
 		expect(decided).toEqual(served);
 	});
 
+	it("no served tool is exempt: the exemption list is empty", () => {
+		expect(Object.keys(UNSTRUCTURED_TOOLS)).toEqual([]);
+	});
+
 	it("exactly the decided tools declare an outputSchema", () => {
 		const declared = tools
 			.filter((t) => t.outputSchema)

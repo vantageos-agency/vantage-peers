@@ -161,30 +161,29 @@ export const STRUCTURED_TOOLS = [
 	"soft_delete_document",
 	"generate_upload_url",
 	"claim_upload",
+	// the last ten: fleet doors (an agent credential beside the master bearer),
+	// the debate room, the erase tools, the bulk close and the template
+	// instantiation (task k17d1q04zkfqnwxnjf6rjdbtqh8htnd0, coverage 3/3)
+	"improvisation_digest",
+	"debate_get_room",
+	"debate_post_turn",
+	"erase_memory",
+	"erase_row",
+	"bulk_complete_tasks",
+	"create_fix_pattern",
+	"add_fix_attempt",
+	"update_mission_template",
+	"instantiate_template_into_mission",
 ] as const;
 
-const MASTER_AGENT =
-	"a fleet-master door that refuses a typed acting name without a per-agent credential (and a client org is refused outright); no /mcp harness here presents that credential, so no success could be validated";
-
-export const UNSTRUCTURED_TOOLS: Record<string, string> = {
-	improvisation_digest:
-		"fixed shape (countsByOrch, countsByCategory, samples), but its door serves the fleet master only with a fleet agent's verified credential, which no /mcp harness here presents: unvalidated, so undeclared",
-	debate_get_room:
-		"fixed { room, turns } from debate:getRoom, but no debate room is opened through /mcp in this harness: unvalidated, so undeclared",
-	debate_post_turn:
-		"accepted turns are a fixed shape, but posting needs an open room and a turn owner, which this harness does not set up: unvalidated, so undeclared",
-	erase_memory:
-		"three success paths (person, seat, fleet master) over three Convex doors, each passing its result through; not all exercised here, so undeclared",
-	erase_row:
-		"passes erase:eraseRow's result through; the fleet-master erase path is not exercised through /mcp here: unvalidated, so undeclared",
-	bulk_complete_tasks:
-		"answers a dry-run preview or a live run from one Convex door, two different shapes; not exercised through /mcp here, so undeclared",
-	create_fix_pattern: MASTER_AGENT,
-	add_fix_attempt: MASTER_AGENT,
-	update_mission_template: MASTER_AGENT,
-	instantiate_template_into_mission:
-		"passes missionTemplates instantiation through, and needs a stored template, which this harness cannot store (update_mission_template is MASTER_AGENT): unvalidated, so undeclared",
-};
+/**
+ * The tools that declare no outputSchema: none (task
+ * k17d1q04zkfqnwxnjf6rjdbtqh8htnd0, coverage 3/3). Every served tool answers
+ * structuredContent and is validated on a real /mcp call. The type admits no
+ * entry, and test/tool-documentation-quality.test.ts asserts the emptiness, so
+ * a tool can only join this list by changing both.
+ */
+export const UNSTRUCTURED_TOOLS: Record<string, never> = {};
 
 /**
  * Policy finding (Manufact policy-review-d26bfdfb4c66): wording that tells the
