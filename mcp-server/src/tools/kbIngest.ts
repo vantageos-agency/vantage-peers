@@ -69,8 +69,7 @@ export const STORE_DOCUMENT_CHUNKED_TOOL_DESCRIPTION =
 		"Server-side: text extraction → paragraph-aware chunking (~512 tokens/chunk with 50-char overlap) → stores chunks as memories at namespace team/<orgId>/<docId>. " +
 		"Requires Clerk JWT with org_id — no-org bearers are rejected. " +
 		"Re-ingest with same docId supersedes prior version (isLatest flip, idempotent). " +
-		"mimeType support: application/pdf (pdf-parse), text/markdown, text/plain. Default limit: 1 doc per call. " +
-		"cap: 1 doc. Returns { docId, chunkCount, storageId }. " +
+		"One document per call. Returns { docId, chunkCount, storageId }. " +
 		"EXAMPLE: store_document_chunked storageId='kg2anjqa…' mimeType='text/markdown' filename='spec.md'.";
 
 export const storeDocumentChunkedArgsSchema = z.object({
@@ -100,8 +99,8 @@ export const storeDocumentChunkedArgsSchema = z.object({
 export const SOFT_DELETE_DOCUMENT_TOOL_DESCRIPTION =
 	"Soft-delete all Knowledge Base chunks for a document. " +
 		"Marks every isLatest=true chunk for docId as isLatest=false — chunks remain in the DB for audit but are excluded from recall and search. " +
-		"Requires Clerk JWT with org_id (same org that ingested the document). Default limit: 1 doc per call. " +
-		"cap: 1 doc. Returns { docId, markedCount }. EXAMPLE: soft_delete_document docId='abc-123-uuid'.";
+		"Requires Clerk JWT with org_id (same org that ingested the document). One document per call. " +
+		"Returns { docId, markedCount }. EXAMPLE: soft_delete_document docId='abc-123-uuid'.";
 
 export const softDeleteDocumentArgsSchema = z.object({
 	docId: z
@@ -114,10 +113,10 @@ export const softDeleteDocumentArgsSchema = z.object({
 export const GENERATE_UPLOAD_URL_TOOL_DESCRIPTION =
 	"Mint a Convex storage upload URL for the Knowledge Base ingest flow. " +
 		"The caller's org (from the Clerk JWT) is bound implicitly. " +
-		"To CLAIM the upload later (required before validate_okf_bundle reads it), first compute the lowercase hex SHA-256 of the exact file you will upload and pass it as sha256: the response then also carries a single-use upload ticket bound to your org AND to that content (valid 15 minutes, shown once); after the POST, call claim_upload with the storageId and the ticket. " +
+		"To CLAIM the upload later (required before validate_okf_bundle reads it), first compute the SHA-256 of the exact file you will upload and pass it as sha256: the response then also carries a single-use upload ticket bound to your org AND to that content (valid 15 minutes, shown once); after the POST, call claim_upload with the storageId and the ticket. " +
 		"Without sha256 you get the URL only (no ticket): that blob cannot be claimed, so store_document_chunked refuses it. " +
 		"Pass sha256 for any upload you intend to ingest. Requires Clerk JWT with org_id — no-org bearers are rejected. " +
-		"Default limit: 1 URL per call. cap: 1 URL. " +
+		"One URL per call. " +
 		"Returns the upload URL as plain text (first item), then a JSON item { ticket, expiresAt } (ticket null when no sha256 was passed). " +
 		"EXAMPLE: generate_upload_url sha256='2cf24dba…' → 'https://…convex.cloud/api/storage/upload?...' + {\"ticket\":\"9f…\",\"expiresAt\":…}.";
 

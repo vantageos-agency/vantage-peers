@@ -20,6 +20,7 @@
 import type { McpServer } from "@modelcontextprotocol/server";
 import type { ConvexHttpClient } from "convex/browser";
 import { describe, expect, it, vi } from "vitest";
+import { z } from "zod";
 import { registerTools } from "../tools.js";
 
 // ─── Harness ─────────────────────────────────────────────────────────────────
@@ -28,6 +29,7 @@ import { registerTools } from "../tools.js";
 interface CapturedTool {
 	name: string;
 	description: string;
+	inputSchema?: unknown;
 }
 
 function buildCapturingServer(): {
@@ -48,8 +50,12 @@ function buildCapturingServer(): {
 			// entry point defineTool() uses since the Day-159 boot fix (see
 			// registerTool.ts).
 			const name = args[0] as string;
-			const config = args[1] as { description?: string };
-			tools.set(name, { name, description: config.description ?? "" });
+			const config = args[1] as { description?: string; inputSchema?: unknown };
+			tools.set(name, {
+				name,
+				description: config.description ?? "",
+				inputSchema: config.inputSchema,
+			});
 			return {};
 		},
 	} as unknown as McpServer;
@@ -82,6 +88,16 @@ const VP_SOURCES_TOOLS = new Set([
 	"list_briefing_notes",
 	"search_briefing_notes_by_keyword",
 ]);
+
+/** The `limit` field of a tool's input schema declares both its cap and its default. */
+function limitSchemaCarriesContract(inputSchema: unknown): boolean {
+	if (!(inputSchema instanceof z.ZodType)) return false;
+	const json = z.toJSONSchema(inputSchema, { io: "input" }) as {
+		properties?: Record<string, { maximum?: number; default?: unknown }>;
+	};
+	const limit = json.properties?.limit;
+	return limit?.maximum !== undefined && limit.default !== undefined;
+}
 
 // ─── Tests ───────────────────────────────────────────────────────────────────
 
@@ -149,9 +165,14 @@ describe("Tool descriptions canonical quality contract (PR-J RED)", () => {
 
 		// D1 — list_* paging contract
 		// Description MUST mention "limit" AND one of: "cap", "default 20", "default 100"
+		// — OR the `limit` input schema itself carries both its cap (maximum) and
+		// its default, in which case the prose must not repeat them (task
+		// k172z2f2q3bgr9wwc3agj08xx98hv4h2: a field description never restates
+		// its schema).
 		const pagingMismatches: string[] = [];
 		for (const [name, t] of tools) {
 			if (!name.startsWith("list_")) continue;
+			if (limitSchemaCarriesContract(t.inputSchema)) continue;
 			const desc = t.description;
 			const hasLimit = desc.includes("limit");
 			const hasCap =

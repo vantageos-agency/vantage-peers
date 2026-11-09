@@ -65,7 +65,7 @@ export const exportOkfBundleArgsSchema = {
 	format: z
 		.enum(["tarball", "tree"])
 		.describe(
-			"How the bundle is packaged; tarball is the one served today, tree is reserved.",
+			"How the bundle is packaged: tarball is the one produced today; tree is refused (OKF_FORMAT_UNSUPPORTED) until it is built.",
 		),
 	since: z
 		.string()
@@ -79,9 +79,9 @@ export const exportOkfBundleArgsSchema = {
 		.int()
 		.positive()
 		.optional()
+		.meta({ default: 3600 })
 		.describe(
-			"How long the signed download URL stays valid, in seconds; the bundle is purged when it expires. " +
-				"Omit for 3600 (one hour).",
+			"How long the signed download URL stays valid, in seconds; the bundle is purged when it expires.",
 		),
 };
 
@@ -122,7 +122,7 @@ export function registerExportOkfBundle(
 			idempotentHint: false,
 			openWorldHint: false,
 			destructiveHint: false,
-			title: "Export memories as a bundle",
+			title: "Export a namespace as an OKF bundle",
 		},
 		async ({ namespace, types, format, since, urlTtl }) => {
 			try {
