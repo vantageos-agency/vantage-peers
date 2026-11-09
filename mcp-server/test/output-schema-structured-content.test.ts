@@ -553,5 +553,7 @@ describe("the last ten: their item schemas met real rows", () => {
 		expect(sc("debate_get_room").turns.length).toBeGreaterThan(0);
 		expect(sc("bulk_complete_tasks").sampleIds.length).toBeGreaterThan(0);
 		expect(sc("instantiate_template_into_mission").taskIds.length).toBe(1);
+		// task k177d10zrqvw6gj9jef5hypayd8hxe34: the typed binding row met a real row
+		expect(sc("get_github_owner_bindings").bindings.length).toBeGreaterThan(0);
 	});
 });

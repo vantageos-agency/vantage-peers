@@ -105,6 +105,7 @@ const DOORS: Record<string, unknown> = {
 		title: BIG,
 		assignedTo: "sigma",
 		priority: "low",
+		cronExpression: "0 9 * * 1",
 		nextRunAt: 1,
 		active: true,
 		createdBy: "sigma",
