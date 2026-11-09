@@ -279,7 +279,9 @@ describe("Manufact re-review of a56cb06a: the remaining actionable items", () =>
 		const d =
 			tool("export_okf_bundle").inputSchema?.properties?.urlTtl?.description ??
 			"";
-		expect(d).toMatch(/\bOmit/);
+		// Pi ruling (task k1708xy6dwrb8xx36ztkxfd9d58hwf0t): says what omission
+		// does without restating the schema's default or the word "omit"
+		expect(d).toMatch(/\bWithout it\b/);
 	});
 
 	it("soft_delete_document says what each returned field means", () => {

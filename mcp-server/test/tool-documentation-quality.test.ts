@@ -660,14 +660,15 @@ describe("finding 1 — a field says what its value MEANS, never only how it val
 	// Field → what the rewritten description must carry (its meaning) and the
 	// flagged phrasing it must no longer use.
 	const MEANING: Array<[string, string, RegExp[], RegExp[]]> = [
-		["store_memory", "type", [/recall|list_memories/], []],
+		// Pi ruling (task k1708xy6dwrb8xx36ztkxfd9d58hwf0t): no "filter on it" cross-reference
+		["store_memory", "type", [/store_episode/], [/filter on it/]],
 		[
 			"send_message",
 			"fromAgentId",
 			[/whoami/, /recipients/],
 			[/^The sender by agent ID/],
 		],
-		["list_peers", "fields", [/every stored field/], []],
+		["list_peers", "fields", [/whole/], []],
 		["create_task", "project", [/billing/, /spell|exact/i], []],
 		["create_task", "assignedToAgentId", [/who does the work/], []],
 		[

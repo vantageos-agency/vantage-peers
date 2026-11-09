@@ -82,7 +82,7 @@ export const exportOkfBundleArgsSchema = {
 		.optional()
 		.meta({ default: 3600 })
 		.describe(
-			"How long the signed download URL stays valid, in seconds; the bundle is purged when it expires. Omit it and the URL stays valid for one hour.",
+			"How long the signed download URL stays valid, in seconds; the stored bundle is purged when it expires. Without it, the URL lasts the default duration.",
 		),
 };
 
