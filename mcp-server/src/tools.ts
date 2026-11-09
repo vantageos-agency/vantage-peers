@@ -341,18 +341,21 @@ export function capPage(
 	toolName: string,
 	form?: "page",
 	maxBytes?: number,
+	continueFrom?: (shown: unknown[]) => string | null,
 ): { text: string; structured: PageStructured; truncated: boolean };
 export function capPage(
 	payload: unknown,
 	toolName: string,
 	form: "array",
 	maxBytes?: number,
+	continueFrom?: (shown: unknown[]) => string | null,
 ): { text: string; structured: ArrayStructured; truncated: boolean };
 export function capPage(
 	payload: unknown,
 	toolName: string,
 	form: "page" | "array" = "page",
 	maxBytes: number = MAX_LIST_RESPONSE_BYTES,
+	continueFrom?: (shown: unknown[]) => string | null,
 ): {
 	text: string;
 	structured: PageStructured | ArrayStructured;
@@ -402,6 +405,10 @@ export function capPage(
 	while (n > 1) {
 		n = Math.max(1, Math.floor(n / 2));
 		const shown = rows.slice(0, n);
+		// A cut page is a partial page: when the caller can name where the shown
+		// rows end (`continueFrom`), the cut carries that cursor, so the rows the
+		// cap withheld are reachable instead of lost.
+		const resumeCursor = continueFrom ? continueFrom(shown) : null;
 		const envelope = {
 			_meta: {
 				_truncated: true,
@@ -412,16 +419,19 @@ export function capPage(
 				_tool: toolName,
 				_advice:
 					`Response exceeded ${maxBytes} bytes. Showing first ${shown.length}/${rows.length}. ` +
-					`Pass fields="lite", a smaller limit, stricter filters (status, assignedTo, project, namespace, updatedSince), or paginate.`,
+					(resumeCursor !== null
+						? `Pass nextCursor as cursor to fetch the rest.`
+						: `Pass fields="lite", a smaller limit, stricter filters (status, assignedTo, project, namespace, updatedSince), or paginate.`),
 			},
 			items: shown,
+			...(resumeCursor !== null ? { nextCursor: resumeCursor } : {}),
 		};
 		cut = {
 			text: JSON.stringify(envelope, null, 2),
 			structured:
 				form === "array"
 					? { items: shown, truncated: true }
-					: { items: shown, nextCursor: null, truncated: true },
+					: { items: shown, nextCursor: resumeCursor, truncated: true },
 			truncated: true,
 		};
 		if (resultBytes(cut.text, cut.structured) <= maxBytes) break;
@@ -3667,12 +3677,15 @@ export function registerTools(
 					limit: effectiveLimit ?? 20,
 					fields: fields ?? "lite",
 				};
-				if (backendCursor !== undefined) {
-					queryArgs.paginationOpts = {
-						numItems: effectiveLimit ?? 50,
-						cursor: backendCursor,
-					};
-				}
+				// Always ask for a paginated page, the FIRST one included: the bounded
+				// no-paginationOpts path answers isDone:true with no continuation, so a
+				// full first page carried no cursor and the rows behind it were
+				// unreachable. The page size is the one the caller asked for (default
+				// 20), the same on every page.
+				queryArgs.paginationOpts = {
+					numItems: effectiveLimit ?? 20,
+					cursor: backendCursor ?? null,
+				};
 
 				const memories = await convex.query(
 					"memories:listMemories" as any,
@@ -4100,12 +4113,15 @@ export function registerTools(
 					limit: effectiveLimit ?? 20,
 					fields: fields ?? "lite",
 				};
-				if (backendCursor !== undefined) {
-					queryArgs.paginationOpts = {
-						numItems: effectiveLimit ?? 50,
-						cursor: backendCursor,
-					};
-				}
+				// Always ask for a paginated page, the FIRST one included: the bounded
+				// no-paginationOpts path answers isDone:true with no continuation, so a
+				// full first page carried no cursor and the rows behind it were
+				// unreachable. The page size is the one the caller asked for (default
+				// 20), the same on every page.
+				queryArgs.paginationOpts = {
+					numItems: effectiveLimit ?? 20,
+					cursor: backendCursor ?? null,
+				};
 
 				const memories = await convex.query(
 					"memories:listMemories" as any,
@@ -5114,7 +5130,7 @@ export function registerTools(
 		},
 		"list_messages",
 		"List historical messages filtered by session day or sender, newest first; use check_messages for unread. " +
-			"Returns { items[{ _id, from, content, createdAt, _creationTime }], nextCursor, truncated }: items are messages, newest first; nextCursor is the next page's cursor, null on the last page; truncated is true when the 60 KB response cap cut the page (nextCursor is then null). The text is the bare JSON array of the messages on the last page, else { items, nextCursor }. " +
+			"Returns { items[{ _id, from, content, createdAt, _creationTime }], nextCursor, truncated }: items are messages, newest first; nextCursor is the next page's cursor, null on the last page; truncated is true when the 60 KB response cap cut the page (nextCursor is then the cursor that continues after the last row shown). The text is the bare JSON array of the messages on the last page, else { items, nextCursor }. " +
 			"WHEN: use for audit, recap, or debugging a specific day's message traffic. " +
 			"EXAMPLE: list_messages sessionDay=92 from='alpha' limit=20.",
 		{
@@ -5231,7 +5247,24 @@ export function registerTools(
 						? { items: filteredMessages, nextCursor }
 						: filteredMessages;
 
-				const capped = capPage(messagesWithCursor, "list_messages");
+				// A page the 60 KB cap cut is a partial page: its cursor continues from
+				// the last row actually SHOWN (rows are newest first, so the anchor is
+				// that row's _creationTime), so the withheld rows are reachable with
+				// no gap and no repeat.
+				const capped = capPage(
+					messagesWithCursor,
+					"list_messages",
+					"page",
+					undefined,
+					(shown) => {
+						const last = shown[shown.length - 1] as
+							| { _creationTime?: number }
+							| undefined;
+						return last !== undefined && typeof last._creationTime === "number"
+							? encodeCursor({ createdBefore: last._creationTime })
+							: null;
+					},
+				);
 				const text = appendMarkerIfEnabled(capped.text, () => ({
 					kind: "messages-feed",
 					items: filteredMessages.map((m: any) => ({
@@ -10401,6 +10434,16 @@ export function registerTools(
 				const effectiveLimit =
 					limit === undefined ? undefined : clampLimit(limit);
 				const requestedLimit = effectiveLimit ?? 20;
+
+				// assignedTo reads issues:listByOrchestrator and project reads
+				// issues:listByProject: no read takes both, and taking the first and
+				// discarding the other answers a question nobody asked. Refuse.
+				if (assignedTo && project) {
+					return mcpError(
+						`list_issues: assignedTo and project cannot be combined (received assignedTo="${assignedTo}" project="${project}"). ` +
+							`Call list_issues once per filter, or drop one of the two.`,
+					);
+				}
 
 				// S3.1.C2 — scope-aware filter replaces guardMasterOnly.
 				let results: any;

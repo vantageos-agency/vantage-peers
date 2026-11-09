@@ -2385,11 +2385,10 @@ export const listMessages = query({
 			// ── Clerk (non-master) path — tenant-scoped index ─────────────────────
 			// Push tenantId equality BEFORE .take(limit) using by_tenant_created so
 			// fleet (null-tenant) traffic cannot crowd out tenant rows in the window.
-			// sessionDay and full-scan branches are intentionally merged here: Clerk
-			// callers have no business querying a specific sessionDay of fleet traffic,
-			// so we always use the tenant-scoped index and apply `from` as a post-index
-			// .filter() (acceptable: within a single tenant, volume is low compared to
-			// the full cross-tenant table). (task k176wgsrhha0fr0dxxahctvhw588q5a1,
+			// sessionDay and full-scan branches are merged here: the tenant-scoped
+			// index is always used, and `from` and `sessionDay` are applied as
+			// .filter() on that range before the take (acceptable: within a single
+			// tenant, volume is low compared to the full cross-tenant table). (task k176wgsrhha0fr0dxxahctvhw588q5a1,
 			// Eta completeness edge from PR #775 verdict jn7563v34)
 			// The org's rows are selected by its permanent ID (`tenantOrgId`), never by
 			// the slug: a slug is a label a takeover hands to another org (sweep site
@@ -2405,8 +2404,16 @@ export const listMessages = query({
 						q.eq("tenantOrgId", callerOrgClerkId),
 					)
 					.order("desc")
+					// Both caller filters narrow the organisation's range BEFORE the
+					// take: `sessionDay` was read and never applied here, so an
+					// organisation caller asking for one day got every day.
 					.filter((q) =>
-						args.from !== undefined ? q.eq(q.field("from"), args.from) : true,
+						q.and(
+							args.from !== undefined ? q.eq(q.field("from"), args.from) : true,
+							args.sessionDay !== undefined
+								? q.eq(q.field("sessionDay"), args.sessionDay)
+								: true,
+						),
 					)
 					.take(fetchCap);
 
@@ -2415,13 +2422,32 @@ export const listMessages = query({
 			}
 		} else {
 			// ── Master path — existing index logic, unchanged ──────────────────────
-			if (args.sessionDay !== undefined) {
+			// Every caller filter is applied INSIDE the index range, newest first
+			// (the cursor contract runs downward). The `createdBefore` anchor is
+			// pushed into the range too (`_creationTime` is the index's implicit
+			// last field), so a deep page is never cut by the scan cap and a
+			// partial page always has the rows after it reachable.
+			if (args.sessionDay !== undefined && args.from !== undefined) {
+				const sessionDay = args.sessionDay;
+				const from = args.from;
+				rows = await ctx.db
+					.query("messages")
+					.withIndex("by_from_day", (q) => {
+						const base = q.eq("from", from).eq("sessionDay", sessionDay);
+						return before !== undefined ? base.lt("_creationTime", before) : base;
+					})
+					.order("desc")
+					.take(limit);
+			} else if (args.sessionDay !== undefined) {
 				const sessionDay = args.sessionDay;
 				rows = await ctx.db
 					.query("messages")
-					.withIndex("by_day", (q) => q.eq("sessionDay", sessionDay))
-					.order("asc")
-					.take(fetchCap);
+					.withIndex("by_day", (q) => {
+						const base = q.eq("sessionDay", sessionDay);
+						return before !== undefined ? base.lt("_creationTime", before) : base;
+					})
+					.order("desc")
+					.take(limit);
 			} else if (args.from !== undefined) {
 				const from = args.from;
 				rows = await ctx.db
