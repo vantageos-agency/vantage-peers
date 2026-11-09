@@ -625,6 +625,8 @@ export let seeded: Seeded;
 export const results = new Map<string, CallResult>();
 export const schemas = new Map<string, unknown>();
 export const descriptions = new Map<string, string>();
+/** Each served tool's inputSchema, as tools/list declares it. */
+export const inputSchemas = new Map<string, unknown>();
 /** Every tool name tools/list serves to any client of the world. */
 export const served = new Set<string>();
 /**
@@ -1208,6 +1210,7 @@ export async function runE2E(): Promise<void> {
 		...(await fleetAgent.listTools()).tools,
 	]) {
 		served.add(t.name);
+		inputSchemas.set(t.name, t.inputSchema);
 		if (t.outputSchema) {
 			schemas.set(t.name, t.outputSchema);
 			descriptions.set(t.name, t.description ?? "");

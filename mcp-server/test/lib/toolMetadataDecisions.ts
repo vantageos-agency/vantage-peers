@@ -71,6 +71,21 @@ export const TEXT_FORMS = {
 	"found" | "inbox" | "upload-url" | "compact"
 >;
 
+/**
+ * The Manufact 2250 experiment (task k17e90s1n85hjappy26vs2kww18hxjp1): three
+ * tools whose text WAS a different shape from their structuredContent (a bare
+ * array, a page without its envelope fields, or JSON null for
+ * { found: false, id }) now write as text exactly
+ * JSON.stringify(structuredContent): the same object, envelope included, cut
+ * or not, found or not. The other tools of that class are left as they are
+ * until the review of these three is read.
+ */
+export const MIRRORED_TEXT = [
+	"get_owner_tool_usage",
+	"list_diaries",
+	"get_profile",
+] as const;
+
 export const STRUCTURED_TOOLS = [
 	// reads: one row or one fixed envelope, shape fixed by the Convex `returns:`
 	"whoami",
