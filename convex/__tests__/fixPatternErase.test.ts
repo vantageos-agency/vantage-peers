@@ -16,7 +16,7 @@
 //   ABSENT       an id that names no pattern is refused, never "not found" to a stranger
 
 import { ConvexError } from "convex/values";
-import { describe, expect, test } from "vitest";
+import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import { convexTest } from "../../tests/fixtures/convexTestWithServiceAccount";
 import { testClerkOrgId } from "../../tests/fixtures/testClerkOrgId";
 import { seedRosterAgents } from "../../tests/lib/seedRosterAgents";
@@ -38,6 +38,15 @@ type T = ReturnType<typeof createT>;
 const SERVICE = process.env.CLERK_SERVICE_ACCOUNT_USER_ID as string;
 const OP = "pattern-operator-org";
 const CLIENT = "pattern-client-org";
+
+// The erase schedules the removal of the search entry; the timer is faked so the job
+// never runs after the test (it would write outside the test transaction).
+beforeEach(() => {
+	vi.useFakeTimers();
+});
+afterEach(() => {
+	vi.useRealTimers();
+});
 
 async function setup(): Promise<{
 	t: T;
