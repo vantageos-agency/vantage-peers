@@ -550,6 +550,12 @@ describe("the last ten: their item schemas met real rows", () => {
 		const sc = (tool: string) =>
 			results.get(tool)?.structuredContent as Record<string, unknown[]>;
 		expect(sc("improvisation_digest").samples.length).toBeGreaterThan(0);
+		// task k178ty5ndzkyy8y4vd7c3jh0p58hxg2z: an orchestrator named with a
+		// non-ASCII letter is counted under its real name.
+		const byOrch = results.get("improvisation_digest")?.structuredContent as {
+			countsByOrch: Record<string, number>;
+		};
+		expect(byOrch.countsByOrch["h\u00e9lios"]).toBe(1);
 		expect(sc("debate_get_room").turns.length).toBeGreaterThan(0);
 		expect(sc("bulk_complete_tasks").sampleIds.length).toBeGreaterThan(0);
 		expect(sc("instantiate_template_into_mission").taskIds.length).toBe(1);

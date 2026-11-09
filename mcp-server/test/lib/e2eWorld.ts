@@ -734,6 +734,24 @@ async function fleetAgentCredential(): Promise<string> {
 			orgId: FLEET_SLUG,
 			clerkOrgId: FLEET_ORG_ID,
 		});
+		// The same kind of row for an orchestrator whose name is not ASCII: the
+		// digest must serve it (task k178ty5ndzkyy8y4vd7c3jh0p58hxg2z).
+		await ctx.db.insert("tasks", {
+			title: "a task of an accented orchestrator",
+			assignedTo: "h\u00e9lios",
+			assignedToId: String(id),
+			priority: "low",
+			status: "done",
+			project: "fleet",
+			completionNote: "Merged PR #4243 at commit abc1234def, deployed.",
+			createdBy: "sigma",
+			createdById: String(id),
+			createdAt: now,
+			updatedAt: now,
+			completedAt: now,
+			orgId: FLEET_SLUG,
+			clerkOrgId: FLEET_ORG_ID,
+		});
 		return id;
 	});
 	const minted = (await world.t

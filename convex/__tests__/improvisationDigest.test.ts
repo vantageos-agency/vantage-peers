@@ -407,3 +407,78 @@ describe("improvisationDigest.scanWindow query (PR-I RED)", () => {
 		expect(result.countsByOrch["sigma"]).toBe(60);
 	});
 });
+
+// ─── non-ASCII orchestrator names (task k178ty5ndzkyy8y4vd7c3jh0p58hxg2z) ─────
+// A Convex return value cannot carry a field NAME that is not ASCII. scanWindow
+// returned `countsByOrch` keyed by orchestrator name, so one flagged row of
+// "h\u00e9lios" made every call fail ("Field name h\u00e9lios has invalid character").
+// The record keeps ASCII-only keys (the running MCP reads it) and a new array
+// carries the real names.
+
+describe("improvisationDigest.scanWindow non-ASCII orchestrator names", () => {
+	const seedTask = async (
+		t: ReturnType<typeof convexTest>,
+		assignedTo: string,
+		n: number,
+	) => {
+		// eslint-disable-next-line @typescript-eslint/no-explicit-any
+		await t.run(async (ctx: any) => {
+			for (let i = 0; i < n; i += 1) {
+				await ctx.db.insert("tasks", {
+					title: `t-${assignedTo}-${i}`,
+					assignedTo,
+					priority: "medium",
+					status: "done",
+					createdBy: assignedTo,
+					completionNote: FLEET_SNIPPET,
+					completedAt: BASE_DAY_MS,
+					createdAt: BASE_DAY_MS,
+					updatedAt: Date.now(),
+				} as never);
+			}
+		});
+	};
+
+	test("a flagged row of an accented orchestrator is served, under its real name in the array", async () => {
+		const t = convexTest(schema, modules);
+		await seedTask(t, "h\u00e9lios", 2);
+		await seedTask(t, "sigma", 1);
+		const result = await asFleet(t).query(api.improvisationDigest.scanWindow, {
+			windowDays: 7,
+		});
+		expect(result.countsByCategory.complete_task).toBe(3);
+		const byName = Object.fromEntries(
+			result.byOrchestrator.map((e: { orchestrator: string; count: number }) => [
+				e.orchestrator,
+				e.count,
+			]),
+		);
+		expect(byName).toEqual({ "h\u00e9lios": 2, sigma: 1 });
+		// the record the running MCP reads: ASCII keys only, same totals
+		for (const key of Object.keys(result.countsByOrch)) {
+			expect(/^[\x20-\x7e]*$/.test(key)).toBe(true);
+		}
+		expect(
+			Object.values(result.countsByOrch as Record<string, number>).reduce(
+				(a, b) => a + b,
+				0,
+			),
+		).toBe(3);
+		expect(result.countsByOrch[encodeURIComponent("h\u00e9lios")]).toBe(2);
+		expect(result.countsByOrch.sigma).toBe(1);
+		// the sample keeps the real name (a value, not a field name)
+		expect(
+			result.samples.some((s: { orchestrator: string }) => s.orchestrator === "h\u00e9lios"),
+		).toBe(true);
+	});
+
+	test("ABSENT: an empty window still answers an empty array, not a refusal", async () => {
+		const t = convexTest(schema, modules);
+		const result = await asFleet(t).query(api.improvisationDigest.scanWindow, {
+			windowDays: 7,
+		});
+		expect(result.byOrchestrator).toEqual([]);
+		expect(result.countsByOrch).toEqual({});
+	});
+});
+
