@@ -11,6 +11,12 @@
  *
  * The decided set is STRUCTURED_TOOLS (test/tool-documentation-quality.test.ts):
  * a tool added there without a call here fails the coverage assertion.
+ *
+ * The schema is also documentation an agent reads (task
+ * k1766s9rdv2e98retx86ftpdjx8hvxrk, Manufact documentation 2/2): every
+ * property, at every depth, says what it means, and the fields a tool
+ * description lists after "Returns" are the fields its schema declares. The
+ * form both follow is written down in src/outputSchemas.ts.
  */
 
 import Ajv2020 from "ajv/dist/2020.js";
@@ -44,7 +50,14 @@ type Seeded = World["fixtures"]["ids"] & {
 	recurringTaskId?: string;
 	/** Tasks seeded in the person's org for the task lifecycle writes. */
 	tasks: Record<
-		"done" | "fail" | "block" | "dep" | "seg" | "checkout" | "seatbot",
+		| "done"
+		| "fail"
+		| "block"
+		| "dep"
+		| "seg"
+		| "checkout"
+		| "seatbot"
+		| "blocker",
 		string
 	>;
 	receiptId: string;
@@ -101,7 +114,11 @@ const CALLS: Call[] = [
 		args: (s) => ({ messageId: s.messageId }),
 	},
 	{ tool: "get_github_owner_bindings", as: "person", args: () => ({}) },
-	{ tool: "billing_summary_by_project", as: "master", args: () => ({}) },
+	{
+		tool: "billing_summary_by_project",
+		as: "master",
+		args: () => ({ listNoDuration: true }),
+	},
 	{
 		tool: "store_memory",
 		as: "person",
@@ -341,6 +358,7 @@ let world: World;
 let seeded: Seeded;
 const results = new Map<string, CallResult>();
 const schemas = new Map<string, unknown>();
+const descriptions = new Map<string, string>();
 
 beforeAll(async () => {
 	vi.stubGlobal("fetch", async () => new Response("offline", { status: 503 }));
@@ -428,7 +446,43 @@ beforeAll(async () => {
 			seg: String(await task("to correct", "ulysse")),
 			checkout: String(await task("to check out", "ulysse")),
 			seatbot: String(await task("seatbot's", "seatbot")),
+			// A live task of the person's agent that a peer waits on, so that
+			// list_blocked_on_me answers a real entry and its item schema is exercised.
+			blocker: String(await task("waited on", "ulysse", "w")),
 		};
+		await ctx.db.insert("tasks", {
+			title: "waiting",
+			assignedTo: "seatbot",
+			assignedToId: agentId("seatbot"),
+			priority: "low",
+			status: "blocked",
+			blockedOnTaskId: tasks.blocker as never,
+			blockedCause: "peer_task",
+			project: "w",
+			createdBy: "seatbot",
+			createdById: agentId("seatbot"),
+			createdAt: now,
+			updatedAt: now - 1000,
+			orgId: SLUG,
+			clerkOrgId: ORG_ID,
+		});
+		// A done task with a project and no measured duration, so that
+		// billing_summary_by_project lists one in noDurationTasks.
+		await ctx.db.insert("tasks", {
+			title: "done without a duration",
+			assignedTo: "ulysse",
+			assignedToId: agentId("ulysse"),
+			priority: "low",
+			status: "done",
+			project: "billed",
+			createdBy: "ulysse",
+			createdById: agentId("ulysse"),
+			createdAt: now - 5000,
+			updatedAt: now - 1000,
+			completedAt: now - 1000,
+			orgId: SLUG,
+			clerkOrgId: ORG_ID,
+		});
 		const messages = await ctx.db.query("messages").collect();
 		const receiptId = await ctx.db.insert("messageReceipts", {
 			messageId: messages[0]._id,
@@ -456,11 +510,14 @@ beforeAll(async () => {
 	};
 	const person = await connectAs(await tokenFor("person-bound", world));
 	const master = await connectAs("test-master-token");
-	for (const t of (await person.listTools()).tools) {
-		if (t.outputSchema) schemas.set(t.name, t.outputSchema);
-	}
-	for (const t of (await master.listTools()).tools) {
-		if (t.outputSchema) schemas.set(t.name, t.outputSchema);
+	for (const t of [
+		...(await person.listTools()).tools,
+		...(await master.listTools()).tools,
+	]) {
+		if (t.outputSchema) {
+			schemas.set(t.name, t.outputSchema);
+			descriptions.set(t.name, t.description ?? "");
+		}
 	}
 	const read: Read = async (tool, args) => {
 		const r = (await person.callTool({
@@ -526,4 +583,231 @@ describe("outputSchema: a real success carries structuredContent that validates"
 			);
 		});
 	}
+});
+
+// ── the schema as documentation ──────────────────────────────────────────────
+
+type JsonSchema = {
+	type?: string | string[];
+	description?: string;
+	properties?: Record<string, JsonSchema>;
+	required?: string[];
+	items?: JsonSchema;
+	anyOf?: JsonSchema[];
+	oneOf?: JsonSchema[];
+};
+
+/** The object schema a property holds: itself, its array items, or a nullable branch. */
+function objectOf(s: JsonSchema | undefined): JsonSchema | undefined {
+	if (s === undefined) return undefined;
+	if (s.properties !== undefined) return s;
+	if (s.items !== undefined) return objectOf(s.items);
+	for (const alt of [...(s.anyOf ?? []), ...(s.oneOf ?? [])]) {
+		const o = objectOf(alt);
+		if (o !== undefined) return o;
+	}
+	return undefined;
+}
+
+/** Every property at every depth (objects inside arrays and nullable branches included). */
+function everyProperty(schema: JsonSchema): Array<[string, JsonSchema]> {
+	const out: Array<[string, JsonSchema]> = [];
+	const visit = (s: JsonSchema | undefined, at: string) => {
+		if (s === undefined) return;
+		for (const alt of [...(s.anyOf ?? []), ...(s.oneOf ?? [])]) visit(alt, at);
+		if (s.items !== undefined) visit(s.items, `${at}[]`);
+		for (const [k, p] of Object.entries(s.properties ?? {})) {
+			const path = at === "" ? k : `${at}.${k}`;
+			out.push([path, p]);
+			visit(p, path);
+		}
+	};
+	visit(schema, "");
+	return out;
+}
+
+function descriptionOf(p: JsonSchema): string {
+	if (typeof p.description === "string") return p.description;
+	for (const alt of [...(p.anyOf ?? []), ...(p.oneOf ?? [])]) {
+		if (typeof alt.description === "string") return alt.description;
+	}
+	return "";
+}
+
+type Listed = { name: string; children?: Listed[] };
+
+/** Splits on `sep` outside any (), [], {} pair. */
+function splitTopLevel(body: string, sep: string): string[] {
+	const parts: string[] = [];
+	let depth = 0;
+	let cur = "";
+	for (const ch of body) {
+		if ("([{".includes(ch)) depth++;
+		if (")]}".includes(ch)) depth--;
+		if (ch === sep && depth === 0) {
+			parts.push(cur);
+			cur = "";
+		} else cur += ch;
+	}
+	if (cur.trim() !== "") parts.push(cur);
+	return parts;
+}
+
+function parseListed(body: string): Listed[] {
+	return splitTopLevel(body, ",").flatMap((item) => parseItem(item.trim()));
+}
+
+/**
+ * One listed item: `name`, `name?`, `name: <literal>`, `a or b`, or a nested
+ * `name[{ ... }]` / `name: [{ ... }]` / `name { ... }`. Anything else (prose
+ * such as "episode fields", or a label that is not a field such as "author")
+ * is refused: a listed field is a field name the schema can be checked against.
+ */
+function parseItem(raw: string): Listed[] {
+	const item = raw.replace(/^plus\s+/, "");
+	if (/\sor\s/.test(item) && !/[[{(]/.test(item)) {
+		return item.split(/\s+or\s+/).flatMap((x) => parseItem(x.trim()));
+	}
+	const m = /^([A-Za-z_][A-Za-z0-9_]*)\??\s*(:?)\s*([\s\S]*)$/.exec(item);
+	if (m === null) throw new Error(`not a field name: "${raw}"`);
+	const [, name, colon, tail] = m;
+	if (tail === "") return [{ name }];
+	const nested = /^\[?\s*\{([\s\S]*)\}\s*\]?$/.exec(tail);
+	if (nested !== null) return [{ name, children: parseListed(nested[1]) }];
+	if (colon === ":") return [{ name }];
+	throw new Error(`not a field name: "${raw}"`);
+}
+
+/**
+ * The fields a tool description lists in its "Returns" clause, and whether
+ * the list is the whole envelope (`{ ... }`) or a selection of a stored row
+ * (`( ... )`). null when the description lists no fields.
+ */
+function listedReturnFields(
+	description: string,
+): { exact: boolean; fields: Listed[] } | null {
+	const at = description.search(/\bReturns\b/);
+	if (at < 0) return null;
+	const rest = description.slice(at);
+	const open = rest.search(/[{(]/);
+	if (open < 0 || open > 80) return null;
+	const close = rest[open] === "{" ? "}" : ")";
+	let depth = 0;
+	for (let i = open; i < rest.length; i++) {
+		if ("([{".includes(rest[i])) depth++;
+		if (")]}".includes(rest[i])) depth--;
+		if (depth === 0) {
+			if (rest[i] !== close) return null;
+			return {
+				exact: close === "}",
+				fields: parseListed(rest.slice(open + 1, i)),
+			};
+		}
+	}
+	return null;
+}
+
+/** Where the listed fields and the schema disagree, as readable paths. */
+function disagreements(
+	listed: Listed[],
+	schema: JsonSchema | undefined,
+	exact: boolean,
+	at = "",
+): string[] {
+	const out: string[] = [];
+	const obj = objectOf(schema);
+	const props = obj?.properties ?? {};
+	for (const f of listed) {
+		const path = at === "" ? f.name : `${at}.${f.name}`;
+		if (!(f.name in props)) {
+			out.push(`listed but not in the schema: ${path}`);
+			continue;
+		}
+		if (f.children !== undefined) {
+			out.push(...disagreements(f.children, props[f.name], exact, path));
+		}
+	}
+	if (exact) {
+		const names = new Set(listed.map((f) => f.name));
+		for (const r of obj?.required ?? []) {
+			if (!names.has(r)) {
+				out.push(
+					`always returned but not listed: ${at === "" ? r : `${at}.${r}`}`,
+				);
+			}
+		}
+	}
+	return out;
+}
+
+describe("outputSchema: the schema documents the result (Manufact documentation 2/2)", () => {
+	it("every property of every served outputSchema, at every depth, says what it means", () => {
+		const undescribed: string[] = [];
+		let total = 0;
+		for (const [tool, schema] of schemas) {
+			for (const [path, p] of everyProperty(schema as JsonSchema)) {
+				total++;
+				if (descriptionOf(p).trim() === "") undescribed.push(`${tool}:${path}`);
+			}
+		}
+		expect(schemas.size).toBe(STRUCTURED_TOOLS.length);
+		expect(total).toBeGreaterThan(0);
+		expect(undescribed).toEqual([]);
+	});
+
+	it("the fields a description lists after 'Returns' are the fields its schema declares", () => {
+		const wrong: Record<string, string[]> = {};
+		for (const [tool, schema] of schemas) {
+			let listed: ReturnType<typeof listedReturnFields>;
+			try {
+				listed = listedReturnFields(descriptions.get(tool) ?? "");
+			} catch (e) {
+				wrong[tool] = [(e as Error).message];
+				continue;
+			}
+			if (listed === null) continue;
+			const d = disagreements(
+				listed.fields,
+				schema as JsonSchema,
+				listed.exact,
+			);
+			if (d.length > 0) wrong[tool] = d;
+		}
+		expect(wrong).toEqual({});
+	});
+
+	it("list_blocked_on_me declares each waiter's fields and their types, and a real waiter validates", () => {
+		const schema = schemas.get("list_blocked_on_me") as JsonSchema;
+		const entry = objectOf(schema.properties?.entries);
+		const types = Object.fromEntries(
+			Object.entries(entry?.properties ?? {}).map(([k, p]) => [k, p.type]),
+		);
+		expect(types).toEqual({
+			blockedTaskId: "string",
+			blockedTitle: "string",
+			blockedAssignee: "string",
+			onTaskId: "string",
+			onTaskTitle: "string",
+			age: "number",
+		});
+		const sc = results.get("list_blocked_on_me")?.structuredContent as {
+			entries: unknown[];
+		};
+		expect(sc.entries.length).toBeGreaterThan(0);
+	});
+
+	it("billing_summary_by_project types its noDurationTasks rows, and a real row validates", () => {
+		const schema = schemas.get("billing_summary_by_project") as JsonSchema;
+		const row = objectOf(schema.properties?.noDurationTasks);
+		expect(Object.keys(row?.properties ?? {}).sort()).toEqual([
+			"assignedTo",
+			"completedAt",
+			"project",
+			"taskId",
+		]);
+		const sc = results.get("billing_summary_by_project")?.structuredContent as {
+			noDurationTasks?: unknown[];
+		};
+		expect(sc.noDurationTasks?.length ?? 0).toBeGreaterThan(0);
+	});
 });
