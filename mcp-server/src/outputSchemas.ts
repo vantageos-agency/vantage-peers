@@ -2565,6 +2565,21 @@ export const eraseRowServedOutputSchema = z.looseObject({
 		),
 });
 
+/** erase_fix_pattern: fixPatterns:erase `returns:`. */
+export const eraseFixPatternServedOutputSchema = z.looseObject({
+	patternId: rowId("The fix pattern that was erased: the patternId you sent."),
+	erased: z
+		.boolean()
+		.describe(
+			"True: the pattern is deleted. A refusal is an error result, never this shape.",
+		),
+	cascaded: z
+		.record(z.string(), z.number())
+		.describe(
+			"For each dependent item, how many were deleted with the pattern: fixAttempts (its attempts) and searchEntry (its search entry).",
+		),
+});
+
 /** bulk_complete_tasks: tasks:bulkComplete `returns:` (dry run and live run). */
 export const bulkCompleteTasksServedOutputSchema = z.looseObject({
 	count: z

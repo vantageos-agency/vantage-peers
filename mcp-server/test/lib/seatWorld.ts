@@ -306,14 +306,15 @@ export async function personToken(
 	harness: Harness,
 	userId: string,
 	agentField: string,
+	orgId: string = ORG_ID,
 ): Promise<string> {
 	const r = await authorizeAsPerson(app, {
 		clientId: CLIENT_ID,
 		redirectUri: REDIRECT,
 		challenge: await sha256Base64Url(VERIFIER),
 		sessionToken: await harness.session(userId),
-		orgId: ORG_ID,
-		extraFields: { [`agent_${ORG_ID}`]: agentField },
+		orgId,
+		extraFields: { [`agent_${orgId}`]: agentField },
 	});
 	if (r.code === undefined) {
 		throw new Error(`authorize failed: ${r.status} ${JSON.stringify(r.json)}`);

@@ -169,6 +169,7 @@ export const STRUCTURED_TOOLS = [
 	"debate_post_turn",
 	"erase_memory",
 	"erase_row",
+	"erase_fix_pattern",
 	"bulk_complete_tasks",
 	"create_fix_pattern",
 	"add_fix_attempt",

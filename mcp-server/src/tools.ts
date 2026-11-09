@@ -75,6 +75,7 @@ import {
 	deleteMessageServedOutputSchema,
 	deletedServedOutputSchema,
 	eraseMemoryServedOutputSchema,
+	eraseFixPatternServedOutputSchema,
 	eraseRowServedOutputSchema,
 	getBriefingNoteServedOutputSchema,
 	getBulkCompleteRunServedOutputSchema,
@@ -3091,6 +3092,7 @@ export function registerTools(
 			openWorldHint: false,
 			destructiveHint: true,
 			title: "Erase a fix pattern",
+			outputSchema: eraseFixPatternServedOutputSchema,
 		},
 		async ({ patternId }) => {
 			try {
@@ -3100,6 +3102,7 @@ export function registerTools(
 				});
 				return {
 					content: [{ type: "text", text: JSON.stringify(result, null, 2) }],
+					structuredContent: result,
 				};
 			} catch (error: any) {
 				return mcpConvexError(error);
