@@ -55,20 +55,27 @@ import {
 import { listTasksGate } from "./list-tasks-gate.js";
 import { memberAuthorLabel } from "./memberAuthor.js";
 import {
+	addFixAttemptServedOutputSchema,
 	addRepoMappingServedOutputSchema,
 	addTaskDependencyServedOutputSchema,
 	billingSummaryByProjectServedOutputSchema,
 	blockTaskServedOutputSchema,
 	briefingNoteUpdatedServedOutputSchema,
+	bulkCompleteTasksServedOutputSchema,
 	checkMessagesServedOutputSchema,
 	checkoutTaskServedOutputSchema,
 	correctTaskSegmentServedOutputSchema,
 	createBriefingNoteServedOutputSchema,
+	createFixPatternServedOutputSchema,
 	createMissionServedOutputSchema,
 	createRecurringTaskServedOutputSchema,
 	createTaskServedOutputSchema,
+	debateGetRoomServedOutputSchema,
+	debatePostTurnServedOutputSchema,
 	deleteMessageServedOutputSchema,
 	deletedServedOutputSchema,
+	eraseMemoryServedOutputSchema,
+	eraseRowServedOutputSchema,
 	getBriefingNoteServedOutputSchema,
 	getBulkCompleteRunServedOutputSchema,
 	getDiaryServedOutputSchema,
@@ -85,6 +92,8 @@ import {
 	getTaskServedOutputSchema,
 	getToolUsageServedOutputSchema,
 	hybridSearchServedOutputSchema,
+	improvisationDigestServedOutputSchema,
+	instantiateTemplateIntoMissionServedOutputSchema,
 	linkIssueToPatternServedOutputSchema,
 	listBlockedOnMeServedOutputSchema,
 	listBriefingNotesServedOutputSchema,
@@ -122,6 +131,7 @@ import {
 	taskStatusServedOutputSchema,
 	taskUpdatedServedOutputSchema,
 	textSearchServedOutputSchema,
+	updateMissionTemplateServedOutputSchema,
 	updateProfileServedOutputSchema,
 	updateRecurringTaskServedOutputSchema,
 	validateFixServedOutputSchema,
@@ -411,6 +421,63 @@ export function capPage(
 				form === "array"
 					? { items: shown, truncated: true }
 					: { items: shown, nextCursor: null, truncated: true },
+			truncated: true,
+		};
+		if (resultBytes(cut.text, cut.structured) <= maxBytes) break;
+	}
+	return cut;
+}
+
+/**
+ * capPage's measurement for an answer that is an OBJECT holding one list in a
+ * field (debate_get_room: { room, turns }), task
+ * k17d1q04zkfqnwxnjf6rjdbtqh8htnd0. The whole serialized result (text +
+ * structuredContent, the same object) is bounded by `maxBytes`. Under it the
+ * text is the object's JSON, unchanged, and structuredContent the object.
+ * Over it the list is halved until the whole result fits (one entry at
+ * least), every other field kept whole; the cut is declared in both channels:
+ * the text gains the same `_meta` capPage writes, structuredContent
+ * `truncated: true`.
+ */
+export function capPageField(
+	payload: Record<string, unknown>,
+	listKey: string,
+	toolName: string,
+	maxBytes: number = MAX_LIST_RESPONSE_BYTES,
+): { text: string; structured: Record<string, unknown>; truncated: boolean } {
+	const rawText = JSON.stringify(payload, null, 2);
+	const resultBytes = (text: string, structured: Record<string, unknown>) =>
+		Buffer.byteLength(
+			JSON.stringify({
+				content: [{ type: "text", text }],
+				structuredContent: structured,
+			}),
+			"utf8",
+		);
+	const uncut = { text: rawText, structured: payload, truncated: false };
+	const rows = payload[listKey];
+	const wholeBytes = resultBytes(rawText, payload);
+	if (wholeBytes <= maxBytes || !Array.isArray(rows) || rows.length === 0) {
+		return uncut;
+	}
+	let n = rows.length;
+	let cut: { text: string; structured: Record<string, unknown>; truncated: boolean } =
+		uncut;
+	while (n > 1) {
+		n = Math.max(1, Math.floor(n / 2));
+		const shown = rows.slice(0, n);
+		const meta = {
+			_truncated: true,
+			_showing: shown.length,
+			_total: rows.length,
+			_bytesOriginal: wholeBytes,
+			_bytesCap: maxBytes,
+			_tool: toolName,
+			_advice: `Response exceeded ${maxBytes} bytes. Showing the first ${shown.length}/${rows.length} of ${listKey}.`,
+		};
+		cut = {
+			text: JSON.stringify({ _meta: meta, ...payload, [listKey]: shown }, null, 2),
+			structured: { ...payload, [listKey]: shown, truncated: true },
 			truncated: true,
 		};
 		if (resultBytes(cut.text, cut.structured) <= maxBytes) break;
@@ -2878,6 +2945,7 @@ export function registerTools(
 				.describe("The find/replace pairs to apply to the memory body (and to every earlier version of it)."),
 		},
 		{
+			outputSchema: eraseMemoryServedOutputSchema,
 			readOnlyHint: false,
 			idempotentHint: false,
 			openWorldHint: false,
@@ -2895,6 +2963,7 @@ export function registerTools(
 					);
 					return {
 						content: [{ type: "text", text: JSON.stringify(result, null, 2) }],
+						structuredContent: result,
 					};
 				}
 				// A person bearer: the bearer hash (verifiedPerson) comes from the
@@ -2910,6 +2979,7 @@ export function registerTools(
 						);
 						return {
 							content: [{ type: "text", text: JSON.stringify(result, null, 2) }],
+							structuredContent: result,
 						};
 					}
 					return mcpError(
@@ -2922,6 +2992,7 @@ export function registerTools(
 				);
 				return {
 					content: [{ type: "text", text: JSON.stringify(result, null, 2) }],
+					structuredContent: result,
 				};
 			} catch (error: any) {
 				return mcpConvexError(error);
@@ -2959,6 +3030,7 @@ export function registerTools(
 					"list_tasks, list_memories, list_messages)."),
 		},
 		{
+			outputSchema: eraseRowServedOutputSchema,
 			readOnlyHint: false,
 			idempotentHint: true,
 			openWorldHint: false,
@@ -2977,6 +3049,7 @@ export function registerTools(
 				});
 				return {
 					content: [{ type: "text", text: JSON.stringify(result, null, 2) }],
+					structuredContent: result,
 				};
 			} catch (error: any) {
 				return mcpConvexError(error);
@@ -5709,6 +5782,7 @@ export function registerTools(
 		BULK_COMPLETE_TASKS_TOOL_DESCRIPTION,
 		bulkCompleteTasksArgsSchema.shape,
 		{
+			outputSchema: bulkCompleteTasksServedOutputSchema,
 			readOnlyHint: false,
 			idempotentHint: false,
 			openWorldHint: false,
@@ -5756,6 +5830,7 @@ export function registerTools(
 					content: [
 						{ type: "text" as const, text: JSON.stringify(result, null, 2) },
 					],
+					structuredContent: result,
 				};
 			} catch (error: any) {
 				return mcpConvexError(error);
@@ -9061,7 +9136,7 @@ export function registerTools(
 		},
 		"debate_post_turn",
 		"Post your answer to the debate-room turn you were asked for; the only way a turn enters a room. " +
-			"Returns { accepted: true, turnSeq, closed, closeReason? } when the turn is recorded. " +
+			"Returns { accepted: true, turnSeq, closed, closeReason?, workDuringTurn } when the turn is recorded. " +
 			"WHEN: the [DEBATE-TURN] message in your inbox asks for it, exactly once per turnSeq, then mark that message read. " +
 			"EXAMPLE: debate_post_turn roomId='<roomId from the message>' turnSeq=3 text='...' done=false. " +
 			"A refusal (not_your_turn, stale_turn, too_long, room_closed, ...) is returned as an error result, never as a success.",
@@ -9080,6 +9155,7 @@ export function registerTools(
 					"Omit it (false) to keep the debate going."),
 		},
 		{
+			outputSchema: debatePostTurnServedOutputSchema,
 			readOnlyHint: false,
 			idempotentHint: false,
 			openWorldHint: false,
@@ -9111,6 +9187,7 @@ export function registerTools(
 				}
 				return {
 					content: [{ type: "text", text: JSON.stringify(result, null, 2) }],
+					structuredContent: result,
 				};
 			} catch (error: any) {
 				return mcpConvexError(error);
@@ -9131,12 +9208,14 @@ export function registerTools(
 		"debate_get_room",
 		"Read a debate room: its subject, frozen template, pointer and the full transcript. Read-only. " +
 			"Returns { room, turns }: the room (subject, frozen template, status, whose turn it is) and every turn in order; a room you are not part of returns a ROOM NOT AVAILABLE error, never an empty room. " +
+			"Over the 60 KB response cap the transcript is cut to its first turns and says so (truncated: true, and _meta in the text). " +
 			"WHEN: the [DEBATE-TURN] message says earlier turns were omitted, or you need the whole transcript. " +
 			"EXAMPLE: debate_get_room roomId='<roomId from the message>'.",
 		{
 			roomId: debateRoomIdSchema.describe("The room: the roomId carried by the [DEBATE-TURN] message in your inbox."),
 		},
 		{
+			outputSchema: debateGetRoomServedOutputSchema,
 			readOnlyHint: true,
 			idempotentHint: true,
 			openWorldHint: false,
@@ -9161,8 +9240,16 @@ export function registerTools(
 						isError: true,
 					};
 				}
+				// The transcript grows with use: the whole answer is bounded, the
+				// room kept whole and the turns cut and declared (capPageField).
+				const capped = capPageField(
+					result as Record<string, unknown>,
+					"turns",
+					"debate_get_room",
+				);
 				return {
-					content: [{ type: "text", text: JSON.stringify(result, null, 2) }],
+					content: [{ type: "text", text: capped.text }],
+					structuredContent: capped.structured,
 				};
 			} catch (error: any) {
 				return mcpConvexError(error);
@@ -10624,6 +10711,7 @@ export function registerTools(
 			),
 		},
 		{
+			outputSchema: createFixPatternServedOutputSchema,
 			readOnlyHint: false,
 			idempotentHint: false,
 			openWorldHint: false,
@@ -10656,13 +10744,16 @@ export function registerTools(
 					linkedIssueIds: toArray(linkedIssueIds),
 				});
 
+				// The same object is the text (unchanged) and the structuredContent.
+				const structured = { patternId, created: true };
 				return {
 					content: [
 						{
 							type: "text",
-							text: JSON.stringify({ patternId, created: true }, null, 2),
+							text: JSON.stringify(structured, null, 2),
 						},
 					],
+					structuredContent: structured,
 				};
 			} catch (error: any) {
 				return mcpConvexError(error);
@@ -10691,6 +10782,7 @@ export function registerTools(
 			commit: z.string().optional().describe("The git commit of this attempt, as a SHA. Omit when it was not committed."),
 		},
 		{
+			outputSchema: addFixAttemptServedOutputSchema,
 			readOnlyHint: false,
 			idempotentHint: false,
 			openWorldHint: false,
@@ -10711,13 +10803,16 @@ export function registerTools(
 					},
 				);
 
+				// The same object is the text (unchanged) and the structuredContent.
+				const structured = { attemptId, patternId, worked };
 				return {
 					content: [
 						{
 							type: "text",
-							text: JSON.stringify({ attemptId, patternId, worked }, null, 2),
+							text: JSON.stringify(structured, null, 2),
 						},
 					],
+					structuredContent: structured,
 				};
 			} catch (error: any) {
 				return mcpConvexError(error);
@@ -11158,6 +11253,7 @@ export function registerTools(
 					"Omit it and a new template is not the default, while an existing one keeps its current setting."),
 		},
 		{
+			outputSchema: updateMissionTemplateServedOutputSchema,
 			readOnlyHint: false,
 			idempotentHint: true,
 			openWorldHint: false,
@@ -11178,17 +11274,16 @@ export function registerTools(
 					},
 				);
 
+				// The same object is the text (unchanged) and the structuredContent.
+				const structured = { templateId, name, stepCount: steps.length };
 				return {
 					content: [
 						{
 							type: "text",
-							text: JSON.stringify(
-								{ templateId, name, stepCount: steps.length },
-								null,
-								2,
-							),
+							text: JSON.stringify(structured, null, 2),
 						},
 					],
+					structuredContent: structured,
 				};
 			} catch (error: any) {
 				return mcpConvexError(error);
@@ -11242,6 +11337,7 @@ export function registerTools(
 				),
 		},
 		{
+			outputSchema: instantiateTemplateIntoMissionServedOutputSchema,
 			readOnlyHint: false,
 			idempotentHint: false,
 			openWorldHint: false,
@@ -11292,6 +11388,7 @@ export function registerTools(
 							text: JSON.stringify(result, null, 2),
 						},
 					],
+					structuredContent: result,
 				};
 			} catch (error: any) {
 				return mcpConvexError(error);
@@ -12453,6 +12550,7 @@ export function registerTools(
 		IMPROVISATION_DIGEST_TOOL_DESCRIPTION,
 		improvisationDigestArgsSchema.shape,
 		{
+			outputSchema: improvisationDigestServedOutputSchema,
 			// readOnlyHint: true — improvisation_digest is a pure read query
 			// (improvisationDigest:scanWindow — no mutations). ADVISORY-only.
 			// READ_ONLY_TOOLS allowlist in chatgpt-tool-annotations.test.ts updated
@@ -12471,6 +12569,7 @@ export function registerTools(
 				);
 				return {
 					content: [{ type: "text", text: JSON.stringify(result, null, 2) }],
+					structuredContent: result,
 				};
 			} catch (error: any) {
 				return mcpConvexError(error);

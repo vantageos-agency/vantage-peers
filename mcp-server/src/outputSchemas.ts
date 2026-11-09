@@ -2129,3 +2129,448 @@ export const claimUploadServedOutputSchema = z.looseObject({
 	),
 	orgId: z.string().describe("The organisation the file is bound to, by slug."),
 });
+
+// ── the last ten (task k17d1q04zkfqnwxnjf6rjdbtqh8htnd0, coverage 3/3) ─────
+// Each answers the same object as its JSON text; debate_get_room's transcript
+// goes through capPage (the room whole, the turns cut and declared when the
+// whole answer exceeds the cap).
+
+/** improvisation_digest: improvisationDigest:scanWindow `returns:`. */
+export const improvisationDigestServedOutputSchema = z.looseObject({
+	countsByOrch: z
+		.record(z.string(), z.number())
+		.describe(
+			"For each orchestrator (by name), how many of its artifacts in the window state fleet facts without a source citation; an orchestrator with none is absent.",
+		),
+	countsByCategory: z
+		.record(z.string(), z.number())
+		.describe(
+			"How many flagged artifacts each writing tool produced: complete_task (closing notes), send_message (messages), store_memory (memories).",
+		),
+	samples: z
+		.array(
+			z.looseObject({
+				orchestrator: z
+					.string()
+					.describe("The orchestrator the artifact belongs to, by name."),
+				day: z
+					.string()
+					.describe("The day the artifact was written, as YYYY-MM-DD."),
+				category: z
+					.string()
+					.describe(
+						"The tool that wrote it: complete_task, send_message or store_memory.",
+					),
+				snippet: z
+					.string()
+					.describe("The first 200 characters of the artifact's text."),
+				artifactId: rowId(
+					"The flagged task, message or memory, by its ID (get_task, get_message or get_memory reads it).",
+				),
+			}),
+		)
+		.describe(
+			"Up to 50 flagged artifacts, newest first; empty when none was flagged.",
+		),
+});
+
+/** debate_post_turn: the accepted branch of debate:postTurn (a refusal is an error result). */
+export const debatePostTurnServedOutputSchema = z.looseObject({
+	accepted: z
+		.boolean()
+		.describe("True: the turn was recorded in the room's transcript."),
+	turnSeq: z.number().describe("The turn number that was recorded."),
+	closed: z
+		.boolean()
+		.describe("True when this turn closed the room (see closeReason)."),
+	closeReason: z
+		.string()
+		.optional()
+		.describe(
+			"Why the room closed: round_limit, operator_stop, all_done or all_silent; absent while the room stays open.",
+		),
+	workDuringTurn: z
+		.string()
+		.describe(
+			"Whether work was done while the turn was open: always 'could_not_judge' for an agent today (the backend does not judge it), 'not_applicable' for a person.",
+		),
+});
+
+const debateParticipant = z.looseObject({
+	id: z.string().describe("The seat's ID in the template, e.g. 'p1'."),
+	label: z.string().describe("The seat's display name."),
+	kind: z.string().describe("Who sits there: agent or human."),
+	channel: z
+		.string()
+		.optional()
+		.describe(
+			"The person a human seat is ('user:<subject>'); absent on an agent seat, and on the room creator's own seat.",
+		),
+	agentId: z
+		.string()
+		.optional()
+		.describe(
+			"The agent that sits at an agent seat, by its permanent ID; absent on a human seat.",
+		),
+	instanceId: z
+		.string()
+		.optional()
+		.describe("The instance the turn is delivered to; absent when any."),
+	transport: z
+		.string()
+		.describe("How a turn reaches the seat: waker, live-session or human."),
+	deadlineSeconds: z
+		.number()
+		.nullable()
+		.optional()
+		.describe(
+			"How long the seat has per turn, in seconds; null to wait without limit, absent for the template default.",
+		),
+	expectedLatencySeconds: z
+		.number()
+		.optional()
+		.describe(
+			"How long the seat usually takes to answer; absent when unknown.",
+		),
+	latencySource: z
+		.string()
+		.optional()
+		.describe("Where expectedLatencySeconds comes from; absent when unknown."),
+	latencyDeclaredAt: z
+		.number()
+		.optional()
+		.describe(
+			"When that latency was declared (milliseconds since the Unix epoch); absent when unknown.",
+		),
+	voiceKey: z
+		.string()
+		.nullable()
+		.optional()
+		.describe("The voice the seat speaks with; null or absent for none."),
+});
+
+const debateRoomRow = z.looseObject({
+	_id: rowId("The room's ID: the roomId the debate tools take."),
+	_creationTime: creationTime,
+	tenantId: z.string().describe("The slug of the organisation the room is in."),
+	tenantOrgId: z.string().describe("The permanent ID of that organisation."),
+	templateId: rowId("The template the room was created from."),
+	template: z
+		.looseObject({
+			id: z.string().describe("The template's key within its organisation."),
+			name: z.string().describe("The template's display name."),
+			language: z
+				.string()
+				.describe("The language turns are asked in, e.g. 'en'."),
+			turnInstruction: z
+				.string()
+				.describe("The instruction every turn message carries."),
+			participants: z
+				.array(debateParticipant)
+				.describe("The seats, in speaking order."),
+			roundLimit: z.number().describe("How many rounds the room runs at most."),
+			maxAnswerChars: z
+				.number()
+				.describe("The longest answer a turn accepts, in characters."),
+			turnDeadlineSeconds: z
+				.number()
+				.describe("The default time a seat has per turn, in seconds."),
+			maxConsecutiveSkips: z
+				.number()
+				.describe(
+					"How many turns in a row a seat may miss before it is dropped.",
+				),
+			voiceEnabled: z.boolean().describe("Whether turns are also voiced."),
+		})
+		.describe(
+			"The template, frozen when the room was created: later edits of the template do not reach a running room.",
+		),
+	settings: z
+		.looseObject({
+			maxRoundLimit: z.number().describe("The highest round limit allowed."),
+			maxParticipants: z.number().describe("The most seats a room may have."),
+			maxRefusalRows: z
+				.number()
+				.describe("How many refused turns are written to the transcript."),
+			maxTurnMessageChars: z
+				.number()
+				.describe("The longest turn message, in characters."),
+			pollSeconds: z
+				.number()
+				.describe("How often a waiting seat is polled, in seconds."),
+			maxAnswerCharsCeiling: z
+				.number()
+				.describe("The highest maxAnswerChars a template may set."),
+			maxLabelChars: z
+				.number()
+				.describe("The longest name or seat label, in characters."),
+			maxTurnInstructionChars: z
+				.number()
+				.describe("The longest turn instruction, in characters."),
+			maxActiveRooms: z
+				.number()
+				.describe("How many rooms of one organisation may be open at once."),
+		})
+		.describe(
+			"The organisation's debate settings, frozen when the room was created.",
+		),
+	subject: z.string().describe("What the room debates."),
+	status: z.string().describe("Where the room is: active, stalled or closed."),
+	closeReason: z
+		.string()
+		.optional()
+		.describe(
+			"Why it closed: round_limit, operator_stop, all_done or all_silent; absent while it is open.",
+		),
+	round: z.number().describe("The current round, counting from 1."),
+	position: z
+		.number()
+		.describe(
+			"The seat whose turn it is, as an index into template.participants (from 0).",
+		),
+	turnSeq: z.number().describe("The number of the current turn."),
+	awaiting: z
+		.looseObject({
+			participantId: z.string().describe("The seat the room waits on."),
+			messageId: z
+				.string()
+				.optional()
+				.describe(
+					"The turn message sent to that seat; absent before it was delivered.",
+				),
+			deliveredAt: z
+				.number()
+				.optional()
+				.describe(
+					"When it was delivered (milliseconds since the Unix epoch); absent before.",
+				),
+			deadlineAt: z
+				.number()
+				.optional()
+				.describe(
+					"When the turn expires (milliseconds since the Unix epoch); absent when it does not.",
+				),
+		})
+		.optional()
+		.describe(
+			"Whose answer the room waits for; absent when it waits on nobody.",
+		),
+	participantState: z
+		.array(
+			z.looseObject({
+				participantId: z.string().describe("The seat."),
+				consecutiveSkips: z
+					.number()
+					.describe("How many turns in a row it has missed."),
+				dropped: z
+					.boolean()
+					.describe("True once it missed too many turns and left the room."),
+				roundKind: z
+					.string()
+					.optional()
+					.describe(
+						"What it did this round: answer or skipped; absent before it spoke.",
+					),
+				roundDone: z
+					.boolean()
+					.optional()
+					.describe(
+						"True when it said it has nothing more to add this round; absent otherwise.",
+					),
+			}),
+		)
+		.describe("Each seat's state in the current round."),
+	createdBy: z
+		.string()
+		.describe("Who created the room, the sender of every turn message."),
+	createdById: z
+		.string()
+		.describe(
+			"The permanent ID of the room's creator ('user:<subject>' for a person).",
+		),
+	createdAt: ms("When the room was created"),
+	closedAt: z
+		.number()
+		.optional()
+		.describe(
+			"When the room closed (milliseconds since the Unix epoch); absent while it is open.",
+		),
+	refusalRows: z
+		.number()
+		.describe("How many refused turns were written to the transcript."),
+	refusalsOverflow: z
+		.number()
+		.describe(
+			"How many refused turns beyond settings.maxRefusalRows were only counted.",
+		),
+});
+
+const debateTurnRow = z.looseObject({
+	_id: rowId("The turn row's ID."),
+	_creationTime: creationTime,
+	roomId: rowId("The room the turn belongs to."),
+	turnSeq: z.number().describe("The turn's number."),
+	round: z.number().describe("The round it was in."),
+	position: z
+		.number()
+		.describe("The seat's index in template.participants (from 0)."),
+	participantId: z
+		.string()
+		.optional()
+		.describe("The seat that spoke; absent on a system row."),
+	kind: z
+		.string()
+		.describe(
+			"What the row is: answer, operator, skipped, dropped, refused or system.",
+		),
+	writer: z
+		.string()
+		.describe(
+			"The backend function that wrote it: postTurn, expireTurn, closeRoom or deliverTurn.",
+		),
+	text: z
+		.string()
+		.optional()
+		.describe("What was said; absent on a row that carries no text."),
+	reason: z
+		.string()
+		.optional()
+		.describe(
+			"The refusal reason, or the close reason of a final system row; absent otherwise.",
+		),
+	done: z
+		.boolean()
+		.optional()
+		.describe(
+			"True when the seat said it has nothing more to add; absent otherwise.",
+		),
+	workDuringTurn: z
+		.string()
+		.optional()
+		.describe(
+			"Whether work was done while the turn was open: 'could_not_judge' on an agent's answer today; absent on rows that do not record it.",
+		),
+	deadlineAt: z
+		.number()
+		.optional()
+		.describe(
+			"The deadline a skipped turn expired at (milliseconds since the Unix epoch); absent otherwise.",
+		),
+	audioStorageId: z
+		.string()
+		.optional()
+		.describe("The stored voice recording of the turn; absent without voice."),
+	voiceMark: z
+		.string()
+		.optional()
+		.describe("The voice worker's mark on the turn; absent without voice."),
+	postedAt: ms("When the turn was posted"),
+});
+
+/** debate_get_room: debate:getRoom `returns:` (null is an error result). */
+export const debateGetRoomServedOutputSchema = z.looseObject({
+	room: debateRoomRow.describe("The room, whole."),
+	turns: z
+		.array(debateTurnRow)
+		.describe(
+			"The transcript, in order; only its first turns when truncated is true.",
+		),
+	truncated: z
+		.boolean()
+		.optional()
+		.describe(
+			"True when the answer exceeded the 60 KB response cap and turns holds only the first turns (the text then says so in _meta); absent when turns is the whole transcript.",
+		),
+});
+
+/** erase_memory: redactResultValidator, the same for its three doors. */
+export const eraseMemoryServedOutputSchema = z.looseObject({
+	memoryId: rowId("The memory that was erased from."),
+	replacements: z
+		.number()
+		.describe(
+			"How many occurrences were replaced, across the memory's versions.",
+		),
+	contentHashChanged: z
+		.boolean()
+		.describe("True when the stored content hash was recomputed."),
+});
+
+/** erase_row: erase:eraseRow `returns:`. */
+export const eraseRowServedOutputSchema = z.looseObject({
+	table: z.string().describe("The table the row was erased from."),
+	rowId: rowId("The row that was erased."),
+	erased: z.boolean().describe("True: the row is deleted."),
+	cascaded: z
+		.record(z.string(), z.number())
+		.describe(
+			"For each dependent table, how many rows were deleted with it (receipts, turns, participants); empty when none.",
+		),
+});
+
+/** bulk_complete_tasks: tasks:bulkComplete `returns:` (dry run and live run). */
+export const bulkCompleteTasksServedOutputSchema = z.looseObject({
+	count: z
+		.number()
+		.describe(
+			"How many tasks match (dry run) or were closed (live run); a lower bound when remaining is true.",
+		),
+	sampleIds: z
+		.array(z.string())
+		.describe("Up to 10 of those tasks, by ID; empty when none matched."),
+	bulkRunId: z
+		.string()
+		.describe(
+			"The run's ID, the evidence of the call; get_bulk_complete_run reads a live run.",
+		),
+	executedAt: z
+		.number()
+		.optional()
+		.describe(
+			"When the live run closed the tasks (milliseconds since the Unix epoch); absent on a dry run.",
+		),
+	cappedAt: z
+		.number()
+		.optional()
+		.describe(
+			"The per-call cap (500) when more tasks matched than one call closes; absent otherwise.",
+		),
+	remaining: z
+		.boolean()
+		.optional()
+		.describe(
+			"True when matching tasks are left beyond the cap (a live run drains them in the background); absent otherwise.",
+		),
+});
+
+/** create_fix_pattern. */
+export const createFixPatternServedOutputSchema = z.looseObject({
+	patternId: rowId("The new fix pattern."),
+	created: z.boolean().describe("True: the pattern was written."),
+});
+
+/** add_fix_attempt. */
+export const addFixAttemptServedOutputSchema = z.looseObject({
+	attemptId: rowId("The attempt that was recorded."),
+	patternId: rowId("The fix pattern it was recorded on."),
+	worked: z
+		.boolean()
+		.describe("Whether the attempt fixed the problem, as given."),
+});
+
+/** update_mission_template. */
+export const updateMissionTemplateServedOutputSchema = z.looseObject({
+	templateId: rowId("The template that was written."),
+	name: z.string().describe("Its unique name."),
+	stepCount: z.number().describe("How many steps it now has."),
+});
+
+/** instantiate_template_into_mission: missionTemplates:instantiateTemplateIntoMission `returns:`. */
+export const instantiateTemplateIntoMissionServedOutputSchema = z.looseObject({
+	taskIds: z
+		.array(z.string())
+		.describe(
+			"The tasks created in the mission, one per template step, in order.",
+		),
+	count: z.number().describe("How many tasks were created."),
+});

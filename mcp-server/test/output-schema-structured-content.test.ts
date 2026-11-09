@@ -544,3 +544,14 @@ describe("outputSchema: the schema documents the result (Manufact documentation 
 		expect(sc.noDurationTasks?.length ?? 0).toBeGreaterThan(0);
 	});
 });
+
+describe("the last ten: their item schemas met real rows", () => {
+	it("improvisation_digest flagged a real artifact, the room has a turn, the bulk preview and the instantiation name tasks", () => {
+		const sc = (tool: string) =>
+			results.get(tool)?.structuredContent as Record<string, unknown[]>;
+		expect(sc("improvisation_digest").samples.length).toBeGreaterThan(0);
+		expect(sc("debate_get_room").turns.length).toBeGreaterThan(0);
+		expect(sc("bulk_complete_tasks").sampleIds.length).toBeGreaterThan(0);
+		expect(sc("instantiate_template_into_mission").taskIds.length).toBe(1);
+	});
+});
