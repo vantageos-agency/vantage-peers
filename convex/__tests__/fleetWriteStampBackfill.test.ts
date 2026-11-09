@@ -100,8 +100,9 @@ async function seed(t: T): Promise<Seeded> {
 	});
 }
 
-const stampOf = (t: T, id: Id<"memories">) =>
-	t.run(async (ctx) => (await ctx.db.get(id))?.clerkOrgId);
+// t.run serialises an absent value to null; the test speaks in "absent".
+const stampOf = async (t: T, id: Id<"memories">) =>
+	(await t.run(async (ctx) => (await ctx.db.get(id))?.clerkOrgId)) ?? undefined;
 
 describe("count door: numbers only", () => {
 	test("unstamped rows per table, and how many are the fleet's", async () => {
