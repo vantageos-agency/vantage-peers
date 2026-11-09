@@ -170,7 +170,13 @@ const APP_SCRIPT = String.raw`(function () {
     return "";
   }
   function payloadOf(result) {
-    if (result && result.structuredContent !== undefined) return result.structuredContent;
+    if (result && result.structuredContent !== undefined) {
+      var sc = result.structuredContent;
+      // A null-able read says { found, item } or { found: false, id }; its row
+      // is item, and "not found" is the null its text says.
+      if (sc && typeof sc.found === "boolean") return sc.found ? sc.item : null;
+      return sc;
+    }
     var text = firstText(result);
     var cut = text.indexOf(MARKER);
     try { return JSON.parse((cut === -1 ? text : text.slice(0, cut)).trim()); }

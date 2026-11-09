@@ -36,6 +36,7 @@ import { ProtocolError, ProtocolErrorCode } from "@modelcontextprotocol/server";
 import type { ConvexHttpClient } from "convex/browser";
 import { z } from "zod";
 import type { OAuthContext } from "../auth.js";
+import { importOkfBundleServedOutputSchema } from "../outputSchemas.js";
 import { defineTool } from "../registerTool.js";
 
 export interface ImportOkfBundleResult {
@@ -97,6 +98,7 @@ export function registerImportOkfBundle(
 			"EXAMPLE: import_okf_bundle storageId='abc...' targetNamespace='team/acme-corp' mode='merge'.",
 		importOkfBundleArgsSchema,
 		{
+			outputSchema: importOkfBundleServedOutputSchema,
 			readOnlyHint: false,
 			idempotentHint: true,
 			openWorldHint: false,
@@ -124,6 +126,7 @@ export function registerImportOkfBundle(
 							text: JSON.stringify(result, null, 2),
 						},
 					],
+					structuredContent: result,
 				};
 			} catch (error: unknown) {
 				if (error instanceof ProtocolError) throw error;

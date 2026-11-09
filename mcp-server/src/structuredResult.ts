@@ -72,3 +72,19 @@ export function pageStructured(
 			: {}),
 	};
 }
+
+/**
+ * The structured form of a read that may find nothing (task
+ * k170byeq1nzzv2q1z6qpag5fp18hvj8a): its text stays the row as JSON, or JSON
+ * null; an outputSchema must be an object, so the absence is said as
+ * { found: false, id } (id: what was asked for) and a row as
+ * { found: true, item }.
+ */
+export function foundStructured(
+	item: unknown,
+	id: string,
+): { found: true; item: unknown } | { found: false; id: string } {
+	return item === null || item === undefined
+		? { found: false, id }
+		: { found: true, item };
+}

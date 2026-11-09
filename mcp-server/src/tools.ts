@@ -60,6 +60,7 @@ import {
 	billingSummaryByProjectServedOutputSchema,
 	blockTaskServedOutputSchema,
 	briefingNoteUpdatedServedOutputSchema,
+	checkMessagesServedOutputSchema,
 	checkoutTaskServedOutputSchema,
 	correctTaskSegmentServedOutputSchema,
 	createBriefingNoteServedOutputSchema,
@@ -70,12 +71,16 @@ import {
 	deletedServedOutputSchema,
 	getBriefingNoteServedOutputSchema,
 	getBulkCompleteRunServedOutputSchema,
+	getDiaryServedOutputSchema,
 	getEpisodeServedOutputSchema,
 	getFixPatternServedOutputSchema,
 	getGithubOwnerBindingsServedOutputSchema,
 	getMemoryServedOutputSchema,
 	getMessageServedOutputSchema,
+	getMissionServedOutputSchema,
+	getMissionTemplateServedOutputSchema,
 	getOwnerToolUsageServedOutputSchema,
+	getProfileServedOutputSchema,
 	getRecurringTaskServedOutputSchema,
 	getTaskServedOutputSchema,
 	getToolUsageServedOutputSchema,
@@ -134,6 +139,7 @@ import {
 	arrayStructured,
 	type ArrayStructured,
 	type CappedList,
+	foundStructured,
 	type PageStructured,
 	pageStructured,
 } from "./structuredResult.js";
@@ -3714,13 +3720,14 @@ export function registerTools(
 		},
 		"get_profile",
 		"Fetch an orchestrator profile with static identity and dynamic session state fields. " +
-			"Returns the profile as JSON (orchestratorId, name, static identity, dynamic session state), or null when no profile by that ID is visible to you. " +
+			"Returns { found, item?, id? }: item is the profile (orchestratorId, name, static identity, dynamic session state) when found is true, id the orchestratorId asked for when found is false; the text is the profile as JSON, or null when no profile by that ID is visible to you. " +
 			"WHEN: use to check peer status, capabilities, or current task before assigning work. " +
 			"EXAMPLE: get_profile orchestratorId='gamma'.",
 		{
 			orchestratorId: z.string().describe("The orchestrator whose profile to read, e.g. 'gamma', as list_peers shows it."),
 		},
 		{
+			outputSchema: getProfileServedOutputSchema,
 			readOnlyHint: true,
 			idempotentHint: true,
 			openWorldHint: false,
@@ -3773,6 +3780,8 @@ export function registerTools(
 							text: JSON.stringify(filteredProfile, null, 2),
 						},
 					],
+					// The text stays the row or null; null is said as found: false.
+					structuredContent: foundStructured(filteredProfile, orchestratorId),
 				};
 			} catch (error: any) {
 				return mcpConvexError(error);
@@ -4295,7 +4304,7 @@ export function registerTools(
 		},
 		"check_messages",
 		"Check for unread messages addressed to a recipient role, returning receiptIds for acknowledgment. " +
-			"Returns a JSON array of { receiptId, from, fromInstanceId, fromId?, channel, content, createdAt } (pass the receiptIds to mark_as_read), or 'No new messages.'; a truncated page ends with the since= value to resume, and stuckInProgress / peersStuckOnYou blocks follow when present. " +
+			"Returns { messages[{ receiptId, from, fromInstanceId?, fromId?, channel?, content, createdAt }], truncated, nextSince, stuckInProgress, peersStuckOnYou }; the text is the messages as a JSON array (pass the receiptIds to mark_as_read), or 'No new messages.'; a truncated page ends with the since= value to resume, and the stuckInProgress / peersStuckOnYou blocks follow when present. " +
 			"WHEN: call at session start and after long pauses to drain the inbox before starting work. " +
 			"EXAMPLE: check_messages recipient='gamma' recipientInstanceId='gamma-vps'.",
 		{
@@ -4334,6 +4343,7 @@ export function registerTools(
 				),
 		},
 		{
+			outputSchema: checkMessagesServedOutputSchema,
 			readOnlyHint: true,
 			idempotentHint: true,
 			openWorldHint: false,
@@ -4425,6 +4435,14 @@ export function registerTools(
 					);
 				}
 				const stuckText = stuckBlocks.join("\n\n");
+				// The values the text is written from, as one object.
+				const structured = (rows: unknown[]) => ({
+					messages: rows,
+					truncated,
+					nextSince,
+					stuckInProgress,
+					peersStuckOnYou,
+				});
 
 				if (messages.length === 0) {
 					return {
@@ -4436,6 +4454,7 @@ export function registerTools(
 								text: stuckText.length > 0 ? stuckText : "No new messages.",
 							},
 						],
+						structuredContent: structured([]),
 					};
 				}
 
@@ -4465,6 +4484,7 @@ export function registerTools(
 							text,
 						},
 					],
+					structuredContent: structured(payload),
 				};
 			} catch (error: any) {
 				return mcpConvexError(error);
@@ -7203,13 +7223,14 @@ export function registerTools(
 		},
 		"get_mission",
 		"Fetch a single mission by Convex ID with full details: status, pilot, agents, progress, and dates. " +
-			"Returns the mission document as JSON (status, pilot, agents, progress, dates, brief), or null when it does not exist or is not visible to you. " +
+			"Returns { found, item?, id? }: item is the mission document (status, pilot, agents, progress, dates, brief) when found is true, id the missionId asked for when found is false; the text is the mission as JSON, or null when it does not exist or is not visible to you. " +
 			"WHEN: use before assigning tasks or reporting to get the canonical mission state. " +
 			"EXAMPLE: get_mission missionId='k57a36y8w5t085bqr23dsmvb2d882506'.",
 		{
 			missionId: missionIdSchema.describe("The mission to fetch: its missionId as returned by create_mission or list_missions."),
 		},
 		{
+			outputSchema: getMissionServedOutputSchema,
 			readOnlyHint: true,
 			idempotentHint: true,
 			openWorldHint: false,
@@ -7240,6 +7261,8 @@ export function registerTools(
 							text: JSON.stringify(filteredMission, null, 2),
 						},
 					],
+					// The text stays the row or null; null is said as found: false.
+					structuredContent: foundStructured(filteredMission, missionId),
 				};
 			} catch (error: any) {
 				return mcpConvexError(error);
@@ -7494,7 +7517,7 @@ export function registerTools(
 		},
 		"get_diary",
 		"Fetch a diary entry for a specific date and orchestrator, returning null if none exists. " +
-			"Returns the diary entry as JSON (content, highlights, blockers, author), or null when none exists for that date and orchestrator. " +
+			"Returns { found, item?, id? }: item is the diary entry (content, highlights, blockers, author) when found is true, id the '<orchestrator>/<date>' asked for when found is false; the text is the entry as JSON, or null when none exists for that date and orchestrator. " +
 			"WHEN: use to review what an orchestrator did on a given day for recap or handoff briefing. " +
 			"EXAMPLE: get_diary date='2026-06-06' orchestrator='alpha'.",
 		{
@@ -7504,6 +7527,7 @@ export function registerTools(
 			),
 		},
 		{
+			outputSchema: getDiaryServedOutputSchema,
 			readOnlyHint: true,
 			idempotentHint: true,
 			openWorldHint: false,
@@ -7546,6 +7570,11 @@ export function registerTools(
 
 				return {
 					content: [{ type: "text", text }],
+					// The text stays the row or null; null is said as found: false.
+					structuredContent: foundStructured(
+						filteredEntry,
+						`${orchestrator}/${date}`,
+					),
 				};
 			} catch (error: any) {
 				return mcpConvexError(error);
@@ -10983,13 +11012,14 @@ export function registerTools(
 		},
 		"get_mission_template",
 		"Fetch a mission template by name with all steps, or null if not found. " +
-			"Returns the template as JSON (name, description, brief, steps, isDefault), or null when no visible template has that name. " +
+			"Returns { found, item?, id? }: item is the template (name, description, brief, steps, isDefault) when found is true, id the name asked for when found is false; the text is the template as JSON, or null when no visible template has that name. " +
 			"WHEN: use before instantiate_template_into_mission to inspect steps and verify the template exists. " +
 			"EXAMPLE: get_mission_template name='issue-resolution-v2'.",
 		{
 			name: z.string().describe("The template to fetch, by the unique name update_mission_template saved it under, e.g. 'issue-resolution-v2'."),
 		},
 		{
+			outputSchema: getMissionTemplateServedOutputSchema,
 			readOnlyHint: true,
 			idempotentHint: true,
 			openWorldHint: false,
@@ -11015,6 +11045,8 @@ export function registerTools(
 							text: JSON.stringify(filteredTemplate, null, 2),
 						},
 					],
+					// The text stays the row or null; null is said as found: false.
+					structuredContent: foundStructured(filteredTemplate, name),
 				};
 			} catch (error: any) {
 				return mcpConvexError(error);

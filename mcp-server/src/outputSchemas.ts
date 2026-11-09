@@ -1426,39 +1426,42 @@ export const listMissionsServedOutputSchema = pageOf(
 	"The missions, newest first; lite rows carry _id, _creationTime, name, status, pilot, priority and project, full rows every stored field.",
 );
 
+/** A diary entry: diary:list and diary:get `returns:` (DIARY_LIST_ROW). */
+const diaryRow = z.looseObject({
+	_id: rowId("The diary entry's ID."),
+	_creationTime: creationTime,
+	date: z.string().describe("The day the entry is for, as YYYY-MM-DD."),
+	orchestrator: z
+		.string()
+		.describe("The orchestrator the entry is about, by name."),
+	instanceId: z
+		.string()
+		.optional()
+		.describe("The instance that wrote it; absent when none was recorded."),
+	content: z.string().describe("The diary entry itself."),
+	highlights: z
+		.array(z.string())
+		.optional()
+		.describe("The day's highlights; absent when none were given."),
+	blockers: z
+		.array(z.string())
+		.optional()
+		.describe("What blocked the day; absent when none were given."),
+	createdBy: z
+		.string()
+		.optional()
+		.describe(
+			"Who wrote the entry, as authenticated; absent on entries written before it was recorded.",
+		),
+	createdById: actorId("the author"),
+	createdAt: ms("When the entry was written"),
+	orgId: orgSlug("entry"),
+	clerkOrgId: clerkOrgId("entry"),
+});
+
 /** list_diaries: rows of diary:list `returns:` (DIARY_LIST_ROW). */
 export const listDiariesServedOutputSchema = pageOf(
-	z.looseObject({
-		_id: rowId("The diary entry's ID."),
-		_creationTime: creationTime,
-		date: z.string().describe("The day the entry is for, as YYYY-MM-DD."),
-		orchestrator: z
-			.string()
-			.describe("The orchestrator the entry is about, by name."),
-		instanceId: z
-			.string()
-			.optional()
-			.describe("The instance that wrote it; absent when none was recorded."),
-		content: z.string().describe("The diary entry itself."),
-		highlights: z
-			.array(z.string())
-			.optional()
-			.describe("The day's highlights; absent when none were given."),
-		blockers: z
-			.array(z.string())
-			.optional()
-			.describe("What blocked the day; absent when none were given."),
-		createdBy: z
-			.string()
-			.optional()
-			.describe(
-				"Who wrote the entry, as authenticated; absent on entries written before it was recorded.",
-			),
-		createdById: actorId("the author"),
-		createdAt: ms("When the entry was written"),
-		orgId: orgSlug("entry"),
-		clerkOrgId: clerkOrgId("entry"),
-	}),
+	diaryRow,
 	"The diary entries, newest first; empty when none matches.",
 );
 
@@ -1670,3 +1673,459 @@ export const getOwnerToolUsageServedOutputSchema = matchesOf(
 	toolUsageRow,
 	"One row per tool, summed across the person's agents and its own calls; empty when none was called.",
 );
+
+// ── null-able reads, the inbox, Knowledge Base / OKF (task
+// k170byeq1nzzv2q1z6qpag5fp18hvj8a, outputs 2/3) ────────────────────────────
+// The text of these tools is unchanged (src/structuredResult.ts says how the
+// structured form is derived from the same values).
+
+/**
+ * A read that may find nothing: { found: true, item } or { found: false, id }.
+ * One object (an outputSchema is an object at the top), `found` decides which
+ * of the two other fields is present.
+ */
+const foundOf = (item: z.ZodType, what: string, id: string) =>
+	z.looseObject({
+		found: z
+			.boolean()
+			.describe(
+				`True when the ${what} exists and is visible to you (then item holds it); false when it does not or is not visible (then id says what was asked for). The text is the ${what} as JSON, or null.`,
+			),
+		item: item
+			.optional()
+			.describe(`The ${what}; present when found is true, absent otherwise.`),
+		id: z
+			.string()
+			.optional()
+			.describe(`${id}; present when found is false, absent otherwise.`),
+	});
+
+const profileRow = z.looseObject({
+	_id: rowId("The profile row's ID."),
+	_creationTime: creationTime,
+	orchestratorId: z
+		.string()
+		.describe("The orchestrator's name, as the tools take it."),
+	instanceId: z
+		.string()
+		.optional()
+		.describe(
+			"The instance the orchestrator runs as, e.g. 'sigma-vps'; absent when none was recorded.",
+		),
+	agentId: z
+		.string()
+		.optional()
+		.describe(
+			"The agent the profile belongs to, by its permanent ID; absent on profiles written before it was recorded.",
+		),
+	name: z.string().describe("The orchestrator's display name."),
+	static: z
+		.looseObject({
+			role: z.string().describe("What the orchestrator is for."),
+			workspace: z
+				.string()
+				.describe("The orchestrator's primary working directory."),
+			capabilities: z
+				.array(z.string())
+				.describe(
+					"Keywords for what the orchestrator can do; empty when none.",
+				),
+		})
+		.describe("Identity facts that rarely change."),
+	dynamic: z
+		.looseObject({
+			currentTask: z
+				.string()
+				.optional()
+				.describe(
+					"What the orchestrator is working on; absent when it set none.",
+				),
+			endOfDayIndex: z
+				.string()
+				.optional()
+				.describe(
+					"The index written at the end of its last working day; absent when none was written.",
+				),
+			lastSeen: ms("When the orchestrator was last active"),
+			sessionCount: z
+				.number()
+				.describe("How many sessions the orchestrator has run."),
+		})
+		.describe("Session state, updated each session."),
+});
+
+/** get_profile: profiles:getProfile `returns:` (profileDocValidator) or null. */
+export const getProfileServedOutputSchema = foundOf(
+	profileRow,
+	"profile",
+	"The orchestratorId that was asked for",
+);
+
+const missionRow = z.looseObject({
+	_id: rowId("The mission's ID: the missionId the mission tools take."),
+	_creationTime: creationTime,
+	name: z.string().describe("The mission's name."),
+	description: z
+		.string()
+		.optional()
+		.describe("What the mission is for; absent when none was given."),
+	project: z.string().describe("The project the mission belongs to."),
+	status: z
+		.string()
+		.describe(
+			"Which stage the mission is at: brainstorm, plan, execute, validate, complete or cancelled.",
+		),
+	priority: z
+		.string()
+		.describe("How urgent the mission is: urgent, high, medium or low."),
+	pilot: z.string().describe("The orchestrator leading the mission, by name."),
+	agents: z
+		.array(z.string())
+		.describe("The orchestrators working on the mission, by name."),
+	brief: z
+		.string()
+		.optional()
+		.describe("The mission brief; absent when none was given."),
+	startDate: z
+		.number()
+		.optional()
+		.describe(
+			"When work is planned to start (milliseconds since the Unix epoch); absent when not set.",
+		),
+	targetDate: z
+		.number()
+		.optional()
+		.describe(
+			"When the mission should be done (milliseconds since the Unix epoch); absent when not set.",
+		),
+	progress: z
+		.number()
+		.optional()
+		.describe(
+			"How far the mission has got, as a percentage; absent when never set.",
+		),
+	createdBy: z.string().describe("Who created the mission."),
+	createdAt: ms("When the mission was created"),
+	updatedAt: ms("When the mission last changed"),
+	orgId: orgSlug("mission"),
+	clerkOrgId: clerkOrgId("mission"),
+	cancelledBy: z
+		.string()
+		.optional()
+		.describe("Who cancelled the mission; absent unless it is cancelled."),
+	cancelReason: z
+		.string()
+		.optional()
+		.describe("Why the mission was cancelled; absent unless it is cancelled."),
+	lastActedBy: z
+		.string()
+		.optional()
+		.describe(
+			"The person ('user:<subject>') who last created, edited or cancelled the mission from the dashboard; absent when only agents did.",
+		),
+	pilotId: actorId("the pilot"),
+	agentIds: z
+		.array(z.string())
+		.optional()
+		.describe(
+			"The permanent IDs of the orchestrators in agents; absent on missions written before they were recorded.",
+		),
+	createdById: actorId("the creator"),
+	cancelledById: actorId("whoever cancelled it"),
+});
+
+/** get_mission: missions:get `returns:` or null. */
+export const getMissionServedOutputSchema = foundOf(
+	missionRow,
+	"mission",
+	"The missionId that was asked for",
+);
+
+const templateRow = z.looseObject({
+	_id: rowId("The template's ID."),
+	_creationTime: creationTime,
+	name: z
+		.string()
+		.describe(
+			"The template's unique name, as instantiate_template_into_mission takes it.",
+		),
+	description: z
+		.string()
+		.optional()
+		.describe("What the template is for; absent when none was given."),
+	brief: z
+		.string()
+		.optional()
+		.describe(
+			"The brief a mission made from it gets when none is supplied; absent when none.",
+		),
+	steps: z
+		.array(
+			z.looseObject({
+				title: z.string().describe("The title of the task the step creates."),
+				description: z
+					.string()
+					.describe("The brief of the task the step creates."),
+				tags: z
+					.array(z.string())
+					.optional()
+					.describe("Labels the task gets; absent when none."),
+				assignedTo: z
+					.string()
+					.optional()
+					.describe(
+						"The orchestrator role the task is assigned to; absent when the instantiation decides.",
+					),
+				assignedToInstance: z
+					.string()
+					.optional()
+					.describe(
+						"The instance the task is assigned to; absent when none is fixed.",
+					),
+				dependsOn: z
+					.array(z.number())
+					.optional()
+					.describe(
+						"The 0-based indexes of the steps this one waits on; absent when it waits on none.",
+					),
+			}),
+		)
+		.describe("The steps, in order; each becomes one task."),
+	isDefault: z
+		.boolean()
+		.describe("True when the template is a default of the catalogue."),
+	createdBy: z.string().describe("Who saved the template."),
+	createdAt: ms("When the template was first saved"),
+	updatedAt: ms("When the template last changed"),
+	deletedAt: z
+		.number()
+		.optional()
+		.describe(
+			"When the template was soft-deleted (milliseconds since the Unix epoch); absent on a live template, the only kind a read returns.",
+		),
+});
+
+/** get_mission_template: missionTemplates:getByName `returns:` or null. */
+export const getMissionTemplateServedOutputSchema = foundOf(
+	templateRow,
+	"template",
+	"The template name that was asked for",
+);
+
+/** get_diary: diary:get `returns:` or null. */
+export const getDiaryServedOutputSchema = foundOf(
+	diaryRow,
+	"diary entry",
+	"What was asked for, as '<orchestrator>/<date>'",
+);
+
+const stuckList = (what: string) =>
+	z
+		.looseObject({
+			entries: z
+				.array(
+					z.looseObject({
+						taskId: rowId("The task's ID."),
+						title: z.string().describe("The task's title."),
+						age: z
+							.number()
+							.describe(
+								"How long the task has been in progress, in milliseconds (since its open work segment started, else since it started).",
+							),
+					}),
+				)
+				.describe(`${what}; empty when there are none.`),
+			total: z
+				.number()
+				.describe(
+					"How many such tasks were found, including any beyond entries.",
+				),
+			truncated: z
+				.boolean()
+				.describe(
+					"True when the bounded scan stopped early, so more such tasks may exist.",
+				),
+			actionableStuckCount: z
+				.number()
+				.describe(
+					"How many entries have no open work segment and are past the stuck threshold: the ones that call for action.",
+				),
+		})
+		.describe(
+			`${what}. The text shows this block only when entries is non-empty or truncated is true.`,
+		);
+
+/** check_messages: built from messages:checkNewMessagesEnvelope `returns:`. */
+export const checkMessagesServedOutputSchema = z.looseObject({
+	messages: z
+		.array(
+			z.looseObject({
+				receiptId: rowId(
+					"The receipt to pass to mark_as_read once the message is handled.",
+				),
+				from: z
+					.string()
+					.describe("The sender: the agent or person who wrote it."),
+				fromInstanceId: z
+					.string()
+					.optional()
+					.describe(
+						"The sender's instance, e.g. 'pi-vps'; absent when none was recorded.",
+					),
+				fromId: actorId("the sender"),
+				channel: z
+					.string()
+					.optional()
+					.describe(
+						"Where it was sent: an agent's name, a comma-separated list of names, or 'broadcast'; absent when the backend did not return it.",
+					),
+				content: z.string().describe("The full message body."),
+				createdAt: ms("When the message was sent"),
+			}),
+		)
+		.describe(
+			"The unread messages, oldest first; empty when there are none (the text then says 'No new messages.' or shows only the stuck blocks).",
+		),
+	truncated: z
+		.boolean()
+		.describe(
+			"True when more unread messages exist than this page holds; pass nextSince as since to read on.",
+		),
+	nextSince: z
+		.number()
+		.nullable()
+		.describe(
+			"The since value that resumes after this page; null when truncated is false.",
+		),
+	stuckInProgress: stuckList("Your own tasks in progress, of any age"),
+	peersStuckOnYou: stuckList(
+		"Tasks you created that are in progress with someone else",
+	),
+});
+
+/** export_okf_bundle: okfBundleNode:exportOkfBundle (ExportOkfBundleResult). */
+export const exportOkfBundleServedOutputSchema = z.looseObject({
+	bundleUrl: z
+		.string()
+		.describe(
+			"The signed URL the tarball downloads from, until manifest.urlExpiresAt.",
+		),
+	storageId: rowId(
+		"The stored tarball, which import_okf_bundle takes as storageId.",
+	),
+	size: z.number().describe("The tarball's size, in bytes."),
+	fileCount: z.number().describe("How many files the tarball holds."),
+	manifest: z
+		.looseObject({
+			types: z
+				.looseObject({
+					memoryCount: z.number().describe("How many memories were exported."),
+					briefingCount: z
+						.number()
+						.describe("How many briefing notes were exported."),
+					taskCount: z.number().describe("How many tasks were exported."),
+				})
+				.describe("What the bundle holds, by record family."),
+			truncated: z
+				.boolean()
+				.describe(
+					"True when a size bound stopped the export early, so the bundle is incomplete.",
+				),
+			urlExpiresAt: z
+				.string()
+				.describe(
+					"When bundleUrl stops working and the stored bundle is purged, as an ISO 8601 timestamp.",
+				),
+		})
+		.describe("What the bundle contains and how long it is kept."),
+});
+
+/** import_okf_bundle: okfBundleNode:importOkfBundle (ImportOkfBundleResult). */
+export const importOkfBundleServedOutputSchema = z.looseObject({
+	imported: z
+		.looseObject({
+			memories: z
+				.number()
+				.describe("Memories written (in dry-run: that a merge would write)."),
+			briefings: z
+				.number()
+				.describe(
+					"Briefing notes written (in dry-run: that a merge would write).",
+				),
+			tasks: z
+				.number()
+				.describe("Tasks written (in dry-run: that a merge would write)."),
+		})
+		.describe("What the import wrote, by record family."),
+	skipped: z
+		.number()
+		.describe("Entries left out because the same content is already stored."),
+	conflicts: z
+		.array(
+			z.looseObject({
+				path: z
+					.string()
+					.describe("The bundle file that could not be imported."),
+				reason: z.string().describe("Why it could not be imported."),
+			}),
+		)
+		.describe("The bundle files that could not be imported; empty when none."),
+});
+
+/** store_document_chunked: kb:storeDocumentChunked `returns:`. */
+export const storeDocumentChunkedServedOutputSchema = z.looseObject({
+	docId: z
+		.string()
+		.describe(
+			"The document's ID: pass it again to replace the document, or to soft_delete_document.",
+		),
+	chunkCount: z
+		.number()
+		.describe("How many searchable chunks the document was split into."),
+	storageId: rowId("The uploaded file the document was read from."),
+});
+
+/** soft_delete_document: kb:softDeleteDocument `returns:`. */
+export const softDeleteDocumentServedOutputSchema = z.looseObject({
+	docId: z.string().describe("The document that was soft-deleted."),
+	markedCount: z
+		.number()
+		.describe(
+			"How many of its chunks were marked deleted; 0 when none were live.",
+		),
+});
+
+/** generate_upload_url: its two text items as one object. */
+export const generateUploadUrlServedOutputSchema = z.looseObject({
+	uploadUrl: z
+		.string()
+		.describe(
+			"The one-time URL to POST the file to; the response gives its storageId. The text's first item is this URL alone.",
+		),
+	ticket: z
+		.string()
+		.nullable()
+		.describe(
+			"The upload ticket claim_upload takes with that storageId; null when no sha256 was passed, so the file can never be claimed.",
+		),
+	expiresAt: z
+		.number()
+		.optional()
+		.describe(
+			"When the ticket expires (milliseconds since the Unix epoch); absent when there is no ticket.",
+		),
+	note: z
+		.string()
+		.optional()
+		.describe(
+			"Why there is no ticket; present only when no sha256 was passed.",
+		),
+});
+
+/** claim_upload: kbMutations:claimUpload `returns:`. */
+export const claimUploadServedOutputSchema = z.looseObject({
+	storageId: rowId(
+		"The uploaded file, now bound to your organisation: store_document_chunked and import_okf_bundle accept it.",
+	),
+	orgId: z.string().describe("The organisation the file is bound to, by slug."),
+});
