@@ -144,6 +144,7 @@ import type * as migrations_dedup_stale_deploy_tasks from "../migrations/dedup_s
 import type * as migrations_diary_backfill_createdBy from "../migrations/diary_backfill_createdBy.js";
 import type * as migrations_drop_orphan_tables from "../migrations/drop_orphan_tables.js";
 import type * as migrations_fleetOrgStamp from "../migrations/fleetOrgStamp.js";
+import type * as migrations_fleetWriteStamp from "../migrations/fleetWriteStamp.js";
 import type * as migrations_linkServiceAccountAgent from "../migrations/linkServiceAccountAgent.js";
 import type * as migrations_offloadNoteBody from "../migrations/offloadNoteBody.js";
 import type * as migrations_reindexMemoriesByPeriod from "../migrations/reindexMemoriesByPeriod.js";
@@ -330,6 +331,7 @@ declare const fullApi: ApiFromModules<{
   "migrations/diary_backfill_createdBy": typeof migrations_diary_backfill_createdBy;
   "migrations/drop_orphan_tables": typeof migrations_drop_orphan_tables;
   "migrations/fleetOrgStamp": typeof migrations_fleetOrgStamp;
+  "migrations/fleetWriteStamp": typeof migrations_fleetWriteStamp;
   "migrations/linkServiceAccountAgent": typeof migrations_linkServiceAccountAgent;
   "migrations/offloadNoteBody": typeof migrations_offloadNoteBody;
   "migrations/reindexMemoriesByPeriod": typeof migrations_reindexMemoriesByPeriod;
