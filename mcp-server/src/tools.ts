@@ -690,7 +690,7 @@ export const listTasksArgsSchema = z.object({
 		["open", "active", "all"],
 	)
 		.optional()
-		.describe("Narrows the result to tasks in any of the given states. A shorthand stands alone in the list: open keeps everything not finished, active only work not started or under way, all applies no filter. " +
+		.describe("Narrows the result to tasks in any of the given states. The three shorthands each stand alone in the list and stand for a set of states: open for every state not finished, active for work not started or under way, all for no filter. " +
 			"Omit for every status."),
 	project: z.string().optional().describe("Keep only tasks of this project, e.g. 'vantage-peers'. Omit for every project."),
 	limit: z
@@ -700,7 +700,7 @@ export const listTasksArgsSchema = z.object({
 		.max(200)
 		.optional()
 		.meta({ default: 20 })
-		.describe("At most this many rows come back; when more exist, the reply carries a nextCursor to pass as cursor for the next page."),
+		.describe("The page size: how many rows this page holds; when more exist, the reply carries a nextCursor to pass as cursor for the next page."),
 	fields: z
 		.enum(["lite", "full"])
 		.optional()
@@ -764,7 +764,7 @@ export const bulkCompleteTasksArgsSchema = z.object({
 		// (not itself `.strict()` — only the TOP-LEVEL args object is, via
 		// registerTool's buildStrictInputSchema) SILENTLY STRIPS an unknown
 		// `status` key before the Convex mutation ever sees it.
-		status: z.enum(["todo", "in_progress", "review", "blocked"]).optional().describe("Close only open tasks currently in this state, e.g. review for the ones waiting on a reviewer. Omit to close open tasks whatever their state."),
+		status: z.enum(["todo", "in_progress", "review", "blocked"]).optional().describe("Close only the open tasks currently in this state, for example the ones waiting on a reviewer. Omit to close open tasks whatever their state."),
 	}).describe("Which open tasks to close. Set at least one key; several keys narrow together."),
 	dryRun: z.boolean().default(true).describe("Whether this call only previews: true lists what would close and writes nothing; false closes the matched tasks for real."),
 	completionNoteTemplate: z.string().optional().describe("The completion note written on every closed task; {{day}}, {{bulkRunId}} and {{executedAt}} are filled in. " +
@@ -825,12 +825,12 @@ export const billingSummaryByProjectArgsSchema = z.object({
 		.number()
 		.int()
 		.optional()
-		.describe("The moment the billed period starts: tasks completed at or after it count (a millisecond timestamp, as Date.now() gives). Omit to count from the first completed task."),
+		.describe("The moment the billed period starts, as a millisecond timestamp like the one Date.now() gives: tasks completed at or after it count. Omit to count from the first completed task."),
 	to: z
 		.number()
 		.int()
 		.optional()
-		.describe("The moment the billed period ends: tasks completed at or before it count (a millisecond timestamp, as Date.now() gives). Omit to count up to now."),
+		.describe("The moment the billed period ends, as a millisecond timestamp like the one Date.now() gives: tasks completed at or before it count. Omit to count until now."),
 	listNoDuration: z
 		.boolean()
 		.optional()
@@ -2756,7 +2756,7 @@ export function registerTools(
 						"Omit it to write in your own space (a signed-in person: 'team/<org>'; a seat: 'orchestrator/<its own agent ID>'; whoami returns it as default_write_namespace). " +
 						"A client seat may write only 'team/<org ID>', 'project/<org slug>' and 'orchestrator/<its own agent ID>' (the permanent ID, never the agent name); a refused write names the namespaces your session may write.",
 				),
-			type: memoryTypeSchema.describe("What kind of knowledge this is; recall and list_memories filter on it. episode is accepted but stores the text alone; store_episode records an episode with its context, goal, action, outcome and insight."),
+			type: memoryTypeSchema.describe("What kind of knowledge this is; recall and list_memories filter on it. This tool stores the text alone: store_episode records an episode with its context, goal, action, outcome and insight."),
 			content: z
 				.string()
 				.describe("The memory itself, written so it reads on its own in a later session."),
@@ -3133,7 +3133,7 @@ export function registerTools(
 					"The fleet master may omit it to read every namespace."),
 			type: memoryTypeSchema
 				.optional()
-				.describe("Keep only memories of this kind: user (about a person), feedback (a rule or correction), project (a fact about work), reference (a pointer to an external source), episode (a structured past event). " +
+				.describe("Keep only memories of this kind, the kind store_memory or store_episode recorded them under. " +
 					"Omit to include every kind."),
 			limit: z
 				.number()
@@ -3142,7 +3142,7 @@ export function registerTools(
 				.max(200)
 				.optional()
 				.meta({ default: 20 })
-				.describe("At most this many of the best matches come back; weaker matches beyond it are not returned."),
+				.describe("How many of the best matches to return; the weaker matches beyond them are not returned."),
 			fields: z
 				.enum(["lite", "full"])
 				.optional()
@@ -3206,7 +3206,7 @@ export function registerTools(
 				.describe("The namespace to read memories from, e.g. " +
 					"'project/vantage-peers' or 'orchestrator/sigma'; whoami lists the namespaces your session may read. " +
 					"The fleet master may omit it to read every namespace."),
-			type: memoryTypeSchema.optional().describe("Keep only memories of this kind: user (about a person), feedback (a rule or correction), project (a fact about work), reference (a pointer to an external source), episode (a structured past event). " +
+			type: memoryTypeSchema.optional().describe("Keep only memories of this kind, the kind store_memory or store_episode recorded them under. " +
 				"Omit to include every kind."),
 			limit: z
 				.number()
@@ -3215,7 +3215,7 @@ export function registerTools(
 				.max(200)
 				.optional()
 				.meta({ default: 20 })
-				.describe("At most this many of the best matches come back; weaker matches beyond it are not returned."),
+				.describe("How many of the best matches to return; the weaker matches beyond them are not returned."),
 			fields: z
 				.enum(["lite", "full"])
 				.optional()
@@ -3270,7 +3270,7 @@ export function registerTools(
 			namespace: z.string().optional().describe("The namespace to read memories from, e.g. " +
 				"'project/vantage-peers' or 'orchestrator/sigma'; whoami lists the namespaces your session may read. " +
 				"The fleet master may omit it to read every namespace."),
-			type: memoryTypeSchema.optional().describe("Keep only memories of this kind: user (about a person), feedback (a rule or correction), project (a fact about work), reference (a pointer to an external source), episode (a structured past event). " +
+			type: memoryTypeSchema.optional().describe("Keep only memories of this kind, the kind store_memory or store_episode recorded them under. " +
 				"Omit to include every kind."),
 			limit: z
 				.number()
@@ -3279,7 +3279,7 @@ export function registerTools(
 				.max(200)
 				.optional()
 				.meta({ default: 20 })
-				.describe("At most this many of the best matches come back; weaker matches beyond it are not returned."),
+				.describe("How many of the best matches to return; the weaker matches beyond them are not returned."),
 			fields: z
 				.enum(["lite", "full"])
 				.optional()
@@ -3543,7 +3543,7 @@ export function registerTools(
 				.max(200)
 				.optional()
 				.meta({ default: 20 })
-				.describe("At most this many rows come back; when more exist, the reply carries a nextCursor to pass as cursor for the next page. Left out on a call that passes cursor, that page holds 50 rows."),
+				.describe("The page size: how many rows this page holds; when more exist, the reply carries a nextCursor to pass as cursor for the next page. Left out on a call that passes cursor, that page holds 50 rows."),
 			fields: z
 				.enum(["lite", "full"])
 				.optional()
@@ -3667,7 +3667,7 @@ export function registerTools(
 				.max(200)
 				.optional()
 				.meta({ default: 20 })
-				.describe("At most this many of the best matches come back; weaker matches beyond it are not returned."),
+				.describe("How many of the best matches to return; the weaker matches beyond them are not returned."),
 			fields: z
 				.enum(["lite", "full"])
 				.optional()
@@ -3736,7 +3736,7 @@ export function registerTools(
 				.max(200)
 				.optional()
 				.meta({ default: 20 })
-				.describe("At most this many of the best matches come back; weaker matches beyond it are not returned."),
+				.describe("How many of the best matches to return; the weaker matches beyond them are not returned."),
 			fields: z
 				.enum(["lite", "full"])
 				.optional()
@@ -3962,7 +3962,7 @@ export function registerTools(
 				),
 			type: memoryTypeSchema
 				.optional()
-				.describe("Keep only memories of this kind: user (about a person), feedback (a rule or correction), project (a fact about work), reference (a pointer to an external source), episode (a structured past event). " +
+				.describe("Keep only memories of this kind, the kind store_memory or store_episode recorded them under. " +
 					"Omit to include every kind."),
 			createdBy: assigneeSchema
 				.optional()
@@ -3976,7 +3976,7 @@ export function registerTools(
 				.max(200)
 				.optional()
 				.meta({ default: 20 })
-				.describe("At most this many rows come back; when more exist, the reply carries a nextCursor to pass as cursor for the next page. Left out on a call that passes cursor, that page holds 50 rows."),
+				.describe("The page size: how many rows this page holds; when more exist, the reply carries a nextCursor to pass as cursor for the next page. Left out on a call that passes cursor, that page holds 50 rows."),
 			fields: z
 				.enum(["lite", "full"])
 				.optional()
@@ -4640,7 +4640,7 @@ export function registerTools(
 				.optional()
 				.meta({ default: 50 })
 				.describe(
-					"How many waiters to list; total still counts every waiter found.",
+					"The page size: how many waiters entries holds; total still counts every waiter found.",
 				),
 		},
 		{
@@ -4906,7 +4906,7 @@ export function registerTools(
 				.max(200)
 				.optional()
 				.meta({ default: 20 })
-				.describe("At most this many rows come back; when more exist, the reply carries a nextCursor to pass as cursor for the next page."),
+				.describe("The page size: how many rows this page holds; when more exist, the reply carries a nextCursor to pass as cursor for the next page."),
 			fields: z
 				.enum(["lite", "full"])
 				.optional()
@@ -5057,7 +5057,7 @@ export function registerTools(
 				.max(200)
 				.optional()
 				.meta({ default: 20 })
-				.describe("At most this many rows come back; when more exist, the reply carries a nextCursor to pass as cursor for the next page."),
+				.describe("The page size: how many rows this page holds; when more exist, the reply carries a nextCursor to pass as cursor for the next page."),
 			fields: z
 				.enum(["lite", "full"])
 				.optional()
@@ -5224,7 +5224,7 @@ export function registerTools(
 				.max(200)
 				.optional()
 				.meta({ default: 20 })
-				.describe("At most this many of the best matches come back; weaker matches beyond it are not returned."),
+				.describe("How many of the best matches to return; the weaker matches beyond them are not returned."),
 			fields: z
 				.enum(["lite", "full"])
 				.optional()
@@ -5340,7 +5340,7 @@ export function registerTools(
 				.max(200)
 				.optional()
 				.meta({ default: 20 })
-				.describe("At most this many receipts come back; truncated is true when more exist."),
+				.describe("How many receipts this answer holds; truncated is true when more exist."),
 			fields: z
 				.enum(["lite", "full"])
 				.optional()
@@ -5941,7 +5941,7 @@ export function registerTools(
 				.max(200)
 				.optional()
 				.meta({ default: 20 })
-				.describe("At most this many of the best matches come back; weaker matches beyond it are not returned."),
+				.describe("How many of the best matches to return; the weaker matches beyond them are not returned."),
 			fields: z
 				.enum(["lite", "full"])
 				.optional()
@@ -6563,7 +6563,7 @@ export function registerTools(
 		"correct_task_segment",
 		"Restate the real boundaries of ONE recorded work segment, when it grew across an unrecorded break (e.g. " +
 			"a station's session ended without pause_task and the segment stayed open for days). " +
-			"The original machine-recorded span is kept, never overwritten — the corrected segment carries the original bounds, the reason, and who corrected it. " +
+			"The original machine-recorded span is kept, never overwritten: the corrected segment stores the original bounds, the reason and who corrected it, and get_task shows them in workSegments. " +
 			"A correction can only SHRINK a span to lie inside what the machine recorded; it can never extend it or move it outside that span, and the configured segment-duration cap still applies. " +
 			"One correction per segment. Returns { taskId, segmentIndex, corrected: true }. " +
 			"WHEN: call when complete_task/pause_task refuse a task because its trailing segment spans an implausible duration and the over-cap attestation marker doesn't fit (span exceeds 2x the cap, or the segment is still open) — correct the segment first, then complete_task or pause_task normally. " +
@@ -6958,7 +6958,7 @@ export function registerTools(
 			missionId: missionIdSchema.describe("The mission to list: its missionId as returned by create_mission or list_missions."),
 			status: taskStatusFilterSchema
 				.optional()
-				.describe("Narrows the result to tasks in any of the given states. A shorthand stands alone in the list: open keeps everything not finished, active only work not started or under way, all applies no filter. " +
+				.describe("Narrows the result to tasks in any of the given states. The three shorthands each stand alone in the list and stand for a set of states: open for every state not finished, active for work not started or under way, all for no filter. " +
 					"Omit for every status."),
 			limit: z
 				.number()
@@ -6967,7 +6967,7 @@ export function registerTools(
 				.max(200)
 				.optional()
 				.meta({ default: 20 })
-				.describe("At most this many rows come back; when more exist, the reply carries a nextCursor to pass as cursor for the next page."),
+				.describe("The page size: how many rows this page holds; when more exist, the reply carries a nextCursor to pass as cursor for the next page."),
 			fields: fieldsSchema
 				.optional()
 				.meta({ default: "lite" })
@@ -7218,7 +7218,7 @@ export function registerTools(
 				.max(200)
 				.optional()
 				.meta({ default: 20 })
-				.describe("At most this many rows come back; when more exist, the reply carries a nextCursor to pass as cursor for the next page."),
+				.describe("The page size: how many rows this page holds; when more exist, the reply carries a nextCursor to pass as cursor for the next page."),
 			fields: fieldsSchema
 				.optional()
 				.meta({ default: "lite" })
@@ -7728,7 +7728,7 @@ export function registerTools(
 				.max(200)
 				.optional()
 				.meta({ default: 20 })
-				.describe("At most this many rows come back; when more exist, the reply carries a nextCursor to pass as cursor for the next page."),
+				.describe("The page size: how many rows this page holds; when more exist, the reply carries a nextCursor to pass as cursor for the next page."),
 			fields: z
 				.enum(["lite", "full"])
 				.optional()
@@ -8114,11 +8114,11 @@ export function registerTools(
 				.max(200)
 				.optional()
 				.meta({ default: 20 })
-				.describe("At most this many rows come back; when more exist, the reply carries a nextCursor to pass as cursor for the next page."),
+				.describe("The page size: how many rows this page holds; when more exist, the reply carries a nextCursor to pass as cursor for the next page."),
 			fields: fieldsSchema
 				.optional()
 				.meta({ default: "lite" })
-				.describe("How much of each row comes back: lite is each note's ID, creation time, topic, title, participants and author, without its content; full is every stored field."),
+				.describe("How much of each row comes back: lite gives each note's ID, creation time, topic, title, participants and author, without its content (get_briefing_note reads it); full gives every stored field."),
 			updatedSince: updatedSinceSchema.optional().describe("The moment from which changes count: keep only notes last updated at or after it (a millisecond timestamp, as Date.now() gives; Date.now() minus 86400000 for the last day). Omit for no time window."),
 			cursor: z
 				.string()
@@ -8282,7 +8282,7 @@ export function registerTools(
 				.string()
 				.describe("The words to match against note content; exact terms work best."),
 			topic: z.string().optional().describe("Keep only notes filed under this topic. Omit for every topic."),
-			createdBy: z.string().optional().describe("Keep only notes written by this agent. Omit for every author."),
+			createdBy: z.string().optional().describe("Keep only notes written by this author, as a note records it in createdBy: an agent's name, as list_peers lists it (your own is whoami's agent_name), or 'user:<subject>' for a note a person wrote. Omit for every author."),
 			limit: z
 				.number()
 				.int()
@@ -8290,7 +8290,7 @@ export function registerTools(
 				.max(200)
 				.optional()
 				.meta({ default: 20 })
-				.describe("At most this many of the best matches come back; weaker matches beyond it are not returned."),
+				.describe("How many of the best matches to return; the weaker matches beyond them are not returned."),
 			fields: z
 				.enum(["lite", "full"])
 				.optional()
@@ -8486,7 +8486,7 @@ export function registerTools(
 				.max(200)
 				.optional()
 				.meta({ default: 20 })
-				.describe("At most this many rows come back; when more exist, the reply carries a nextCursor to pass as cursor for the next page."),
+				.describe("The page size: how many rows this page holds; when more exist, the reply carries a nextCursor to pass as cursor for the next page."),
 			fields: z
 				.enum(["lite", "full"])
 				.optional()
@@ -8744,7 +8744,7 @@ export function registerTools(
 			title: z.string().optional().describe("A new title for future tasks. Omit to keep it."),
 			description: z.string().optional().describe("A new brief for future tasks. Omit to keep it."),
 			assignedTo: creatorSchema.optional().describe("Who receives the tasks generated from now on, by agent name as list_peers shows it under name (not an agent ID); tasks already generated keep their assignee. Omit to keep it."),
-			priority: prioritySchema.optional().describe("A new priority for future tasks. Omit to keep it."),
+			priority: prioritySchema.optional().describe("How urgent the tasks this schedule creates from now on will be; the tasks it already created keep their own priority. Omit to keep the current one."),
 			project: z.string().optional().describe("The billing line each task generated from now on carries: the project name create_recurring_task took, the same value create_task's project takes. Tasks already generated keep theirs. Omit to keep it."),
 			tags: z.array(z.string()).optional().describe("The complete new tag list for future tasks, replacing the current one. Omit to keep it."),
 			cronExpression: z
@@ -9975,7 +9975,7 @@ export function registerTools(
 				.max(200)
 				.optional()
 				.meta({ default: 20 })
-				.describe("At most this many rows come back; when more exist, the reply carries a nextCursor to pass as cursor for the next page."),
+				.describe("The page size: how many rows this page holds; when more exist, the reply carries a nextCursor to pass as cursor for the next page."),
 			fields: z
 				.enum(["lite", "full"])
 				.optional()
@@ -10161,7 +10161,7 @@ export function registerTools(
 		},
 		"get_github_owner_bindings",
 		"List the GitHub owners bound to your organisation (master: all), and for master the org-owned repo mappings that have no proof. " +
-			"Returns { bindings, nextCursor, unprovenMappings, unprovenNextCursor }; the unproven fields are present for the fleet master only, and a null cursor means that list is exhausted. " +
+			"Returns { bindings[{ owner, orgId, installationId, accountType, githubUserLogin, boundAt, active }], nextCursor, unprovenMappings?[{ repo, orgId, project, reason }], unprovenNextCursor? }; the unproven fields are present for the fleet master only, and a null cursor means that list is exhausted. " +
 			"WHEN: use to see which repos you may map, or to audit mappings created without GitHub proof. " +
 			"EXAMPLE: get_github_owner_bindings limit=100. " +
 			"Pages by cursor: pass `nextCursor` back as `cursor` (and `unprovenNextCursor` as `unprovenCursor`); null means exhausted.",
@@ -10172,7 +10172,7 @@ export function registerTools(
 				.min(1)
 				.max(500)
 				.default(100)
-				.describe("At most this many rows come back in each of the two lists; when more exist, nextCursor (bindings) or unprovenNextCursor (unproven mappings) is the cursor for the next page."),
+				.describe("The page size of each of the two lists; when more exist, nextCursor (bindings) or unprovenNextCursor (unproven mappings) is the cursor for the next page."),
 			cursor: z
 				.string()
 				.optional()
@@ -10181,8 +10181,8 @@ export function registerTools(
 				.string()
 				.optional()
 				.describe(
-					"The unprovenNextCursor a previous get_github_owner_bindings call returned (fleet master only). " +
-						"Omit for the first page of unproven mappings.",
+					"Where to resume the unproven mappings: the unprovenNextCursor a previous call returned. Only the fleet master is served that list. " +
+						"Omit for its first page.",
 				),
 		},
 		{
@@ -10906,7 +10906,7 @@ export function registerTools(
 				.max(200)
 				.optional()
 				.meta({ default: 20 })
-				.describe("At most this many of the best matches come back; weaker matches beyond it are not returned."),
+				.describe("How many of the best matches to return; the weaker matches beyond them are not returned."),
 			fields: z
 				.enum(["lite", "full"])
 				.optional()
@@ -10978,7 +10978,7 @@ export function registerTools(
 				.max(200)
 				.optional()
 				.meta({ default: 20 })
-				.describe("At most this many rows come back; when more exist, the reply carries a nextCursor to pass as cursor for the next page."),
+				.describe("The page size: how many rows this page holds; when more exist, the reply carries a nextCursor to pass as cursor for the next page."),
 			fields: z
 				.enum(["lite", "full"])
 				.optional()
@@ -12179,7 +12179,7 @@ export function registerTools(
 		},
 		"get_fix_pattern",
 		"Fetch a single fix pattern by its patternId, including all linked fix attempts. " +
-			"Returns the fix pattern with its attempts as JSON; an ID you may not read is refused with RBAC_DENIED, and an ID that does not exist returns 'Fix pattern not found'. " +
+			"Returns { _id, _creationTime, symptom, rootCause, validatedFix?, files?, tags, stack, sourceProject, linkedIssueIds?, createdBy, severity, createdAt, updatedAt, attempts[{ _id, description, commit?, worked, why, createdBy, createdAt }] }. A pattern you may not read is refused with RBAC_DENIED, and one that does not exist is an error result ('Fix pattern not found'). " +
 			"WHEN: use when you have a patternId from list_fix_patterns/search_fix_patterns and need the full record with attempts history. " +
 			"EXAMPLE: get_fix_pattern patternId='m9748paffd0emrbwyskj868e1x88kvhj'.",
 		{
@@ -12384,8 +12384,8 @@ export function registerTools(
 				"result set scoped in-handler via scopeFilterList(oauthCtx,...)/scopeFilterGet(oauthCtx,...)",
 		},
 		"get_message",
-		"Fetch a single peer message by its messageId: its full body, sender, channel, session day and organisation. " +
-			"Returns the message row as JSON (content, from, fromInstanceId, channel, sessionDay, tenantId, createdAt): from is the sender, tenantId the organisation it was sent in; an ID you may not read returns 'Message not found'. " +
+		"Fetch a single peer message: its full body, sender, channel, session day and organisation. " +
+			"Returns { _id, _creationTime, from, fromId?, fromInstanceId?, channel, content, sessionDay?, tenantId?, tenantOrgId?, createdAt }: from is the sender, tenantId the organisation it was sent in. A message you may not read, or that does not exist, is an error result ('Message not found'). " +
 			"WHEN: use when you have a messageId from list_messages/check_messages and need the raw row (e.g. " +
 			"for read-receipt audit, delete confirmation, or referencing in a fix pattern). " +
 			"EXAMPLE: get_message messageId='jn7eg21wdaxzdcpdxwkvhaxqnh88jqg2'.",
@@ -12473,7 +12473,7 @@ export function registerTools(
 		},
 		"get_recurring_task",
 		"Fetch one recurring task template by its ID. " +
-			"Returns the stored template as JSON with every field it holds (title, description, assignedTo, priority, project, tags, cronExpression, active, nextRunAt, lastTaskId, skippedRuns, lastSkippedAt, lastSkipReason); an ID you may not read returns 'Recurring task not found'. " +
+			"Returns { _id, _creationTime, title, description?, assignedTo, assignedToId?, priority, project?, tags?, cronExpression, nextRunAt, lastCreatedAt?, lastTaskId?, skippedRuns?, lastSkippedAt?, lastSkipReason?, active, createdBy, orgId? }, the stored template; a template you may not read, or that does not exist, is an error result ('Recurring task not found'). " +
 			"lastTaskId is the last task the schedule created; skippedRuns counts the consecutive runs that created nothing because that task was still open, and resets when a task is created. " +
 			"WHEN: use when you hold a recurringTaskId and need its schedule, assignee and last run. " +
 			"EXAMPLE: get_recurring_task recurringTaskId='k57dy3049btafda9m2f5d2ggk987ph3f'.",

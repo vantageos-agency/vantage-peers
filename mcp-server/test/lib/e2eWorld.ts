@@ -989,6 +989,19 @@ export async function runE2E(): Promise<void> {
 			orgId: SLUG,
 			clerkOrgId: ORG_ID,
 		});
+		// A GitHub owner bound to the person's organisation, so that
+		// get_github_owner_bindings answers a real binding row.
+		await ctx.db.insert("githubOwnerBindings", {
+			owner: "immobiliere-pujol-gh",
+			orgId: SLUG,
+			clerkOrgId: ORG_ID,
+			installationId: 4242,
+			accountType: "Organization",
+			githubUserLogin: "pujol-admin",
+			boundBy: "user_admin",
+			boundAt: now,
+			active: true,
+		});
 		await ctx.db.insert("githubRepoMapping", {
 			repo: "owner/seeded-repo",
 			orchestrator: "ulysse",

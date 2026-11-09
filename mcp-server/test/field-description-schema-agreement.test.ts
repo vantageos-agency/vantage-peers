@@ -589,11 +589,15 @@ describe("the three get_* tools: description, schema and annotations say the sam
 			expect(d, "a second, different field list").not.toMatch(
 				/with all fields:/,
 			);
+			// Returns { a, b? } (the whole result) or Returns ... (a, b) (a selection)
+			const whole = returnsList(d).get("");
 			const m = d.match(/Returns[^(]*\(([^)]*)\)/);
-			expect(m, "Returns (<fields>)").not.toBeNull();
+			expect(
+				whole ?? m,
+				"Returns { <fields> } or Returns (<fields>)",
+			).toBeTruthy();
 			const stored = tableFields(table);
-			const named = (m?.[1] ?? "")
-				.split(/,\s*|\s+and\s+/)
+			const named = (whole ?? (m?.[1] ?? "").split(/,\s*|\s+and\s+/))
 				.map((s) => s.trim())
 				.filter(Boolean);
 			expect(named.length).toBeGreaterThan(2);

@@ -345,6 +345,10 @@ const fixAttempt = z.looseObject({
 	description: z.string().describe("What was tried."),
 	worked: z.boolean().describe("Whether the attempt fixed the symptom."),
 	why: z.string().describe("Why it worked, or why it did not."),
+	commit: z
+		.string()
+		.optional()
+		.describe("The git commit of the attempt; absent when none was given."),
 	createdBy: z.string().describe("Who recorded the attempt."),
 	createdAt: ms("When the attempt was recorded"),
 });
@@ -355,6 +359,16 @@ export const getFixPatternServedOutputSchema = z.looseObject({
 	_creationTime: creationTime,
 	symptom: z.string().describe("What was observed going wrong."),
 	rootCause: z.string().describe("What actually caused it."),
+	validatedFix: z
+		.string()
+		.optional()
+		.describe(
+			"The fix confirmed to work (validate_fix); absent until one is validated.",
+		),
+	files: z
+		.array(z.string())
+		.optional()
+		.describe("The files the fix touched; absent when none were recorded."),
 	tags: z
 		.array(z.string())
 		.describe("Free labels for finding the pattern; empty when none."),
@@ -364,6 +378,12 @@ export const getFixPatternServedOutputSchema = z.looseObject({
 			"The technologies the pattern applies to, e.g. 'convex', 'nextjs'; empty when none.",
 		),
 	sourceProject: z.string().describe("The project where it was first seen."),
+	linkedIssueIds: z
+		.array(z.string())
+		.optional()
+		.describe(
+			"The issues linked to the pattern (link_issue_to_pattern); absent when none.",
+		),
 	createdBy: z.string().describe("Who recorded the pattern."),
 	severity: z
 		.string()
@@ -413,10 +433,7 @@ export const getMessageServedOutputSchema = z.looseObject({
 		.describe(
 			"The permanent ID of that organisation; absent on a fleet message and on messages written before it was recorded.",
 		),
-	createdAt: z
-		.number()
-		.optional()
-		.describe("When the message was sent (milliseconds since the Unix epoch)."),
+	createdAt: ms("When the message was sent"),
 });
 
 /** get_recurring_task: the recurring template row (recurringTasks:getById). */
@@ -451,7 +468,6 @@ export const getRecurringTaskServedOutputSchema = z.looseObject({
 		.describe("The labels every created task gets; absent when none."),
 	cronExpression: z
 		.string()
-		.optional()
 		.describe(
 			"The schedule, as a cron expression, e.g. '0 9 * * 1' (Mondays at 09:00).",
 		),
@@ -669,7 +685,35 @@ export const listBroadcastStatusServedOutputSchema = z.looseObject({
 /** get_github_owner_bindings: two cursor-paged lists; the second is the fleet master's only. */
 export const getGithubOwnerBindingsServedOutputSchema = z.looseObject({
 	bindings: z
-		.array(z.looseObject({}))
+		.array(
+			z.looseObject({
+				owner: z
+					.string()
+					.describe(
+						"The GitHub owner (user or organisation login, lowercase) whose repositories the organisation may map.",
+					),
+				orgId: z
+					.string()
+					.describe("The slug of the organisation the owner is bound to."),
+				installationId: z
+					.number()
+					.describe("The GitHub App installation that proved the binding."),
+				accountType: z
+					.string()
+					.describe(
+						"What the owner is on GitHub, as GitHub reports it: User or Organization.",
+					),
+				githubUserLogin: z
+					.string()
+					.describe("The GitHub user who authorised the installation."),
+				boundAt: ms("When the owner was bound"),
+				active: z
+					.boolean()
+					.describe(
+						"False once the installation was deleted or suspended and the binding withdrawn; true otherwise.",
+					),
+			}),
+		)
 		.describe(
 			"The GitHub owners bound to your organisation (master: every organisation), one row per binding; empty when none.",
 		),
@@ -680,7 +724,20 @@ export const getGithubOwnerBindingsServedOutputSchema = z.looseObject({
 			"Pass it back as `cursor` for the next page of bindings; null when the list is exhausted.",
 		),
 	unprovenMappings: z
-		.array(z.looseObject({}))
+		.array(
+			z.looseObject({
+				repo: z.string().describe("The mapped repository, as owner/name."),
+				orgId: z
+					.string()
+					.describe("The slug of the organisation the mapping belongs to."),
+				project: z.string().describe("The project the mapping files it under."),
+				reason: z
+					.string()
+					.describe(
+						"Why it has no proof: owner-not-bound (no binding for the repository's owner) or owner-bound-to-another-org.",
+					),
+			}),
+		)
 		.optional()
 		.describe(
 			"Organisation-owned repo mappings created without GitHub proof; present for the fleet master only.",
