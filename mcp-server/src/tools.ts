@@ -275,6 +275,10 @@ export function assertContentSize(content: string, toolName: string): number {
 // before any MCP client hits its own ceiling. The cap is byte-counted on the
 // raw JSON string, not on item count, because content-heavy rows
 // (memories / diaries / briefing notes) blow past 30 items easily.
+//
+// A list that also answers structuredContent carries its rows twice, so its
+// cap is capPage, measured on the WHOLE serialized result (text +
+// structuredContent), never on the text alone (Eta REVISE on #1714).
 // ─────────────────────────────────────────────────────────────────────────────
 
 export const MAX_LIST_RESPONSE_BYTES = 60_000;
@@ -286,6 +290,85 @@ export function capListResponseBytes(
 	maxBytes: number = MAX_LIST_RESPONSE_BYTES,
 ): string {
 	return capListResponse(items, rawText, toolName, maxBytes).text;
+}
+
+/**
+ * The byte cap of a paged list that also answers structuredContent (task
+ * k17592gg5t2tencwxks3kysghx8htqg8, Eta REVISE on #1714): the rows travel
+ * twice, in the text and in structuredContent, so the cap is measured on the
+ * WHOLE serialized result ({ content: [text], structuredContent }), never on
+ * the text alone.
+ *
+ * `payload` is what the text is the JSON of: a bare array, or a
+ * { items, nextCursor?, scopeFiltered? } page. When the whole result fits in
+ * `maxBytes`, the text is that JSON, unchanged, and structuredContent is
+ * pageStructured of it. Otherwise the rows are halved until the whole result
+ * fits (one row at least), and the text is the same { _meta, items } envelope
+ * capListResponseBytes writes, structuredContent { items, nextCursor: null,
+ * truncated: true } with the same rows. An envelope page is cut too: before,
+ * only a bare array could be.
+ */
+export function capPage(
+	payload: unknown,
+	toolName: string,
+	maxBytes: number = MAX_LIST_RESPONSE_BYTES,
+): { text: string; structured: PageStructured; truncated: boolean } {
+	const rawText = JSON.stringify(payload, null, 2);
+	const rows: unknown[] | null = Array.isArray(payload)
+		? payload
+		: payload !== null &&
+				typeof payload === "object" &&
+				Array.isArray((payload as { items?: unknown }).items)
+			? ((payload as { items: unknown[] }).items as unknown[])
+			: null;
+	const resultBytes = (text: string, structured: PageStructured) =>
+		Buffer.byteLength(
+			JSON.stringify({
+				content: [{ type: "text", text }],
+				structuredContent: structured,
+			}),
+			"utf8",
+		);
+	const uncut = {
+		text: rawText,
+		structured: pageStructured(payload, {
+			text: rawText,
+			shown: rows ?? [],
+			truncated: false,
+		}),
+		truncated: false,
+	};
+	const wholeBytes = resultBytes(uncut.text, uncut.structured);
+	if (wholeBytes <= maxBytes || rows === null || rows.length === 0) {
+		return uncut;
+	}
+	let n = rows.length;
+	let cut = uncut;
+	while (n > 1) {
+		n = Math.max(1, Math.floor(n / 2));
+		const shown = rows.slice(0, n);
+		const envelope = {
+			_meta: {
+				_truncated: true,
+				_showing: shown.length,
+				_total: rows.length,
+				_bytesOriginal: wholeBytes,
+				_bytesCap: maxBytes,
+				_tool: toolName,
+				_advice:
+					`Response exceeded ${maxBytes} bytes. Showing first ${shown.length}/${rows.length}. ` +
+					`Pass fields="lite", a smaller limit, stricter filters (status, assignedTo, project, namespace, updatedSince), or paginate.`,
+			},
+			items: shown,
+		};
+		cut = {
+			text: JSON.stringify(envelope, null, 2),
+			structured: { items: shown, nextCursor: null, truncated: true },
+			truncated: true,
+		};
+		if (resultBytes(cut.text, cut.structured) <= maxBytes) break;
+	}
+	return cut;
 }
 
 /**
@@ -2255,14 +2338,10 @@ async function listPeersFromOrgRoster(
 		lastSeen: null,
 		sessionCount: null,
 	}));
-	const capped = capListResponse(
-		orgPeers,
-		JSON.stringify(orgPeers, null, 2),
-		LIST_PEERS,
-	);
+	const capped = capPage(orgPeers, LIST_PEERS);
 	return {
 		content: [{ type: "text", text: capped.text }],
-		structuredContent: pageStructured(orgPeers, capped),
+		structuredContent: capped.structured,
 	};
 }
 
@@ -3425,15 +3504,11 @@ export function registerTools(
 					...(nextCursor !== undefined ? { nextCursor } : {}),
 				};
 
-				const capped = capListResponse(
-					filteredList,
-					JSON.stringify(envelope, null, 2),
-					"list_episodes",
-				);
+				const capped = capPage(envelope, "list_episodes");
 
 				return {
 					content: [{ type: "text", text: capped.text }],
-					structuredContent: pageStructured(envelope, capped),
+					structuredContent: capped.structured,
 				};
 			} catch (error: any) {
 				return mcpConvexError(error);
@@ -3862,11 +3937,7 @@ export function registerTools(
 					...(nextCursor !== undefined ? { nextCursor } : {}),
 				};
 
-				const capped = capListResponse(
-					filteredList,
-					JSON.stringify(filteredEnvelope, null, 2),
-					"list_memories",
-				);
+				const capped = capPage(filteredEnvelope, "list_memories");
 				const text = appendMarkerIfEnabled(capped.text, () => ({
 					kind: "memory-quote",
 					items: filteredList.map((m: any) => ({
@@ -3880,7 +3951,7 @@ export function registerTools(
 
 				return {
 					content: [{ type: "text", text }],
-					structuredContent: pageStructured(filteredEnvelope, capped),
+					structuredContent: capped.structured,
 				};
 			} catch (error: any) {
 				return mcpConvexError(error);
@@ -4778,14 +4849,10 @@ export function registerTools(
 							}
 						: peers;
 
-				const capped = capListResponse(
-					peersWithCursor,
-					JSON.stringify(peersWithCursor, null, 2),
-					"list_peers",
-				);
+				const capped = capPage(peersWithCursor, "list_peers");
 				return {
 					content: [{ type: "text", text: capped.text }],
-					structuredContent: pageStructured(peersWithCursor, capped),
+					structuredContent: capped.structured,
 				};
 			} catch (error: any) {
 				return mcpConvexError(error);
@@ -4922,11 +4989,7 @@ export function registerTools(
 						? { items: filteredMessages, nextCursor }
 						: filteredMessages;
 
-				const capped = capListResponse(
-					messagesWithCursor,
-					JSON.stringify(messagesWithCursor, null, 2),
-					"list_messages",
-				);
+				const capped = capPage(messagesWithCursor, "list_messages");
 				const text = appendMarkerIfEnabled(capped.text, () => ({
 					kind: "messages-feed",
 					items: filteredMessages.map((m: any) => ({
@@ -4940,7 +5003,7 @@ export function registerTools(
 
 				return {
 					content: [{ type: "text", text }],
-					structuredContent: pageStructured(messagesWithCursor, capped),
+					structuredContent: capped.structured,
 				};
 			} catch (error: any) {
 				return mcpConvexError(error);
@@ -5508,11 +5571,7 @@ export function registerTools(
 				const tasksWithCursor =
 					nextCursor !== null ? { items: tasksArr, nextCursor } : tasks;
 
-				const capped = capListResponse(
-					tasksWithCursor,
-					JSON.stringify(tasksWithCursor, null, 2),
-					"list_tasks",
-				);
+				const capped = capPage(tasksWithCursor, "list_tasks");
 				const text = appendMarkerIfEnabled(capped.text, () => ({
 					kind: "tasks-table",
 					items: Array.isArray(tasks)
@@ -5529,7 +5588,7 @@ export function registerTools(
 
 				return {
 					content: [{ type: "text", text }],
-					structuredContent: pageStructured(tasksWithCursor, capped),
+					structuredContent: capped.structured,
 				};
 			} catch (error: any) {
 				return mcpConvexError(error);
@@ -6854,14 +6913,10 @@ export function registerTools(
 							}
 						: filteredTasks;
 
-				const capped = capListResponse(
-					tasksWithCursor,
-					JSON.stringify(tasksWithCursor, null, 2),
-					"list_tasks_by_mission",
-				);
+				const capped = capPage(tasksWithCursor, "list_tasks_by_mission");
 				return {
 					content: [{ type: "text", text: capped.text }],
-					structuredContent: pageStructured(tasksWithCursor, capped),
+					structuredContent: capped.structured,
 				};
 			} catch (error: any) {
 				return mcpConvexError(error);
@@ -7066,11 +7121,7 @@ export function registerTools(
 				const missionsWithCursor =
 					nextCursor !== null ? { items: missionsArr, nextCursor } : missions;
 
-				const capped = capListResponse(
-					missionsWithCursor,
-					JSON.stringify(missionsWithCursor, null, 2),
-					"list_missions",
-				);
+				const capped = capPage(missionsWithCursor, "list_missions");
 				const text = appendMarkerIfEnabled(capped.text, () => ({
 					kind: "mission-timeline",
 					items: Array.isArray(missions)
@@ -7088,7 +7139,7 @@ export function registerTools(
 
 				return {
 					content: [{ type: "text", text }],
-					structuredContent: pageStructured(missionsWithCursor, capped),
+					structuredContent: capped.structured,
 				};
 			} catch (error: any) {
 				return mcpConvexError(error);
@@ -7587,14 +7638,10 @@ export function registerTools(
 				const entriesWithCursor =
 					nextCursor !== null ? { items: entriesArr, nextCursor } : entries;
 
-				const capped = capListResponse(
-					entriesWithCursor,
-					JSON.stringify(entriesWithCursor, null, 2),
-					"list_diaries",
-				);
+				const capped = capPage(entriesWithCursor, "list_diaries");
 				return {
 					content: [{ type: "text", text: capped.text }],
-					structuredContent: pageStructured(entriesWithCursor, capped),
+					structuredContent: capped.structured,
 				};
 			} catch (error: any) {
 				return mcpConvexError(error);
@@ -8000,11 +8047,7 @@ export function registerTools(
 						? { items: filteredNotes, nextCursor }
 						: filteredNotes;
 
-				const capped = capListResponse(
-					notesWithCursor,
-					JSON.stringify(notesWithCursor, null, 2),
-					"list_briefing_notes",
-				);
+				const capped = capPage(notesWithCursor, "list_briefing_notes");
 				const text = appendMarkerIfEnabled(capped.text, () => {
 					const items = filteredNotes;
 					if (items.length === 0) return null;
@@ -8025,7 +8068,7 @@ export function registerTools(
 
 				return {
 					content: [{ type: "text", text }],
-					structuredContent: pageStructured(notesWithCursor, capped),
+					structuredContent: capped.structured,
 				};
 			} catch (error: any) {
 				return mcpConvexError(error);
@@ -8332,14 +8375,10 @@ export function registerTools(
 							}
 						: filteredTasks;
 
-				const capped = capListResponse(
-					tasksWithCursor,
-					JSON.stringify(tasksWithCursor, null, 2),
-					"list_recurring_tasks",
-				);
+				const capped = capPage(tasksWithCursor, "list_recurring_tasks");
 				return {
 					content: [{ type: "text", text: capped.text }],
-					structuredContent: pageStructured(tasksWithCursor, capped),
+					structuredContent: capped.structured,
 				};
 			} catch (error: any) {
 				return mcpConvexError(error);
@@ -9838,14 +9877,10 @@ export function registerTools(
 
 				const mappingsWithCursor = { items: filteredMappings, nextCursor };
 
-				const capped = capListResponse(
-					filteredMappings,
-					JSON.stringify(mappingsWithCursor, null, 2),
-					"list_repo_mappings",
-				);
+				const capped = capPage(mappingsWithCursor, "list_repo_mappings");
 				return {
 					content: [{ type: "text", text: capped.text }],
-					structuredContent: pageStructured(mappingsWithCursor, capped),
+					structuredContent: capped.structured,
 				};
 			} catch (error: any) {
 				return mcpConvexError(error);
@@ -10810,14 +10845,10 @@ export function registerTools(
 						Array.isArray(results) ? results : [],
 					);
 					const payload = buildPayload(filteredResults);
-					const capped = capListResponse(
-						payload,
-						JSON.stringify(payload, null, 2),
-						"list_fix_patterns",
-					);
+					const capped = capPage(payload, "list_fix_patterns");
 					return {
 						content: [{ type: "text", text: capped.text }],
-						structuredContent: pageStructured(payload, capped),
+						structuredContent: capped.structured,
 					};
 				}
 
@@ -10831,14 +10862,10 @@ export function registerTools(
 					Array.isArray(allResults) ? allResults : [],
 				);
 				const payload = buildPayload(filteredAll);
-				const capped = capListResponse(
-					payload,
-					JSON.stringify(payload, null, 2),
-					"list_fix_patterns",
-				);
+				const capped = capPage(payload, "list_fix_patterns");
 				return {
 					content: [{ type: "text", text: capped.text }],
-					structuredContent: pageStructured(payload, capped),
+					structuredContent: capped.structured,
 				};
 			} catch (error: any) {
 				return mcpConvexError(error);
