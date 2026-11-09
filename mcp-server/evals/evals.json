@@ -2842,7 +2842,7 @@
 				"segmentIndex": 0,
 				"start": 1,
 				"end": 2,
-				"reason": "r",
+				"reason": "unrecorded break, real work was 5 hours",
 				"callerOrchestrator": "pi"
 			},
 			"expect": {
@@ -2868,7 +2868,7 @@
 				"segmentIndex": -1,
 				"start": 1,
 				"end": 2,
-				"reason": "x"
+				"reason": "unrecorded break, real work was 5 hours"
 			},
 			"expect": {
 				"isError": true,

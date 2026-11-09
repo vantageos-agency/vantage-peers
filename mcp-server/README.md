@@ -179,7 +179,7 @@ An agent is identified by its **agent ID** (the `agentId` that `list_peers` retu
 _Applies to: Cloud and Self-host._
 
 <!-- tools:start -->
-92 tools are advertised to clients. This reference is generated from the server's own `tools/list` by `scripts/print-tools.mjs`; do not edit it by hand.
+93 tools are advertised to clients. This reference is generated from the server's own `tools/list` by `scripts/print-tools.mjs`; do not edit it by hand.
 
 ### Memory and search (10)
 
@@ -194,10 +194,11 @@ _Applies to: Cloud and Self-host._
 - `store_memory` (write) — Store a typed memory entry in VantagePeers, optionally linked to an earlier memory.
 - `text_search` (read) — BM25 full-text keyword search over VantagePeers memories for exact term matching.
 
-### Fix patterns (7)
+### Fix patterns (8)
 
 - `add_fix_attempt` (write) — Record one attempt at fixing a known fix pattern: what was tried, whether it worked, why, and optionally its commit.
 - `create_fix_pattern` (write) — Create a fix pattern in the knowledge base documenting symptom, root cause, and optional validated fix.
+- `erase_fix_pattern` (write, destructive) — Permanently erase one fix pattern: the pattern, its fix attempts and its search entry are DELETED.
 - `get_fix_pattern` (read) — Fetch a single fix pattern by its patternId, including all linked fix attempts.
 - `link_issue_to_pattern` (write) — Link a VantagePeers issue to a fix pattern creating a bidirectional reference.
 - `list_fix_patterns` (read) — List fix patterns filtered by source project, newest first with cursor paging support.
@@ -300,7 +301,6 @@ _Applies to: Cloud and Self-host._
 - `claim_upload` (write) — Claim an uploaded blob for your organisation with the single-use ticket generate_upload_url returned.
 - `debate_get_room` (read) — Read a debate room: its subject, frozen template, pointer and the full transcript.
 - `debate_post_turn` (write) — Post your answer to the debate-room turn you were asked for; the only way a turn enters a room.
-- `erase_fix_pattern` (write, destructive) — Permanently erase one fix pattern: the pattern, its fix attempts and its search entry are DELETED. Allowed for an admin of the operator organisation only; anyone else is refused with RBAC_DENIED.
 - `erase_row` (write, destructive) — Permanently erase one row you or your organisation own: the row is DELETED (and, for a memory, its search entry is purged), unlike the soft deletes that leave the body readable.
 - `generate_upload_url` (write) — Mint a Convex storage upload URL for the Knowledge Base ingest flow.
 - `get_bulk_complete_run` (read) — Read the status of one live bulk_complete_tasks run by the `bulkRunId` its first call returned.
