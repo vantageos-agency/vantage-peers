@@ -370,55 +370,6 @@ const listMemoriesResultValidator = v.object({
   isDone: v.boolean(),
 });
 
-// listMemories without a namespace: the fleet master reads across every namespace
-// through the `by_type` index (newest first). `type` is required because the
-// index is the bound; without it the read would be a table scan.
-async function listAcrossNamespaces(
-  ctx: QueryCtx,
-  scope: OrgScope,
-  args: {
-    type?: Doc<"memories">["type"];
-    createdBy?: Doc<"memories">["createdBy"];
-    includeSuperseded?: boolean;
-    limit?: number;
-    paginationOpts?: { numItems: number; cursor: string | null };
-  },
-) {
-  const type = args.type;
-  if (type === undefined) {
-    throw new ConvexError(
-      `INVALID_ARGUMENT: memories:listMemories without a namespace reads every namespace and needs a type — ${JSON.stringify({ registration: "memories:listMemories", missing: "type" })}`,
-    );
-  }
-  const includeRetired = args.includeSuperseded === true && hasFleetRead(scope);
-  const keep = <T extends { createdBy?: string; clerkOrgId?: string; isLatest: boolean }>(
-    rows: T[],
-  ): T[] => {
-    const visible = rows.filter((r) => memoryVisibleToScope(scope, r));
-    const owned = includeRetired ? visible : liveOnly("memories", visible);
-    return args.createdBy === undefined
-      ? owned
-      : owned.filter((r) => r.createdBy === args.createdBy);
-  };
-  const base = ctx.db
-    .query("memories")
-    .withIndex("by_type", (q) =>
-      includeRetired ? q.eq("type", type) : q.eq("type", type).eq("isLatest", true),
-    )
-    .order("desc");
-  if (args.paginationOpts !== undefined) {
-    const r = await base.paginate(args.paginationOpts);
-    return {
-      value: keep(r.page),
-      continueCursor: r.isDone ? null : r.continueCursor,
-      isDone: r.isDone,
-    };
-  }
-  const page = await base.take(args.limit ?? 50);
-  return { value: keep(page), continueCursor: null, isDone: true };
-}
-
-
 export const listMemories = query({
   args: {
     // The agent the MCP transport verified, by its agents-row ID (convex/lib/seatNamespace.ts):
@@ -449,31 +400,16 @@ export const listMemories = query({
     // isNamespaceAllowedForScope guard below already renders that as the
     // typed-empty page, never a throw.
     const scope = await withOrgScope(ctx, { refuseWithoutThrow: true });
-    if (args.namespace === undefined) {
-      // isolation-contract: no reactive subscriber. Enumerated by command against
-      // vantage-peers-dashboard:
-      //   grep -rn "api\.memories\.listMemories" --include=*.tsx --include=*.ts \
-      //     app components hooks lib contexts providers  -> 0 hits
-      // The omitted-namespace path did not exist (the argument was required), so no
-      // caller depends on its shape. A refusal is RAISED: an empty page would be
-      // the bytes of "no episodes exist". See refusal-is-distinguishable-from-absence.md.
-      await requireFleetDoor(ctx, scope, "memories:listMemories", {
-        masterOnly: true,
-        alsoRefusePreOrg: true,
-        operatorHumanMayRead: true,
-      });
-      return await listAcrossNamespaces(ctx, scope, args);
-    }
-    const namespace: string = args.namespace;
     // M10a: a row is served by its org ID (memoryVisibleToScope), never by the
     // namespace label. A caller with no org ID owns no row, and a member's rows
     // are only ever filed under a `team/<label>` namespace, so any other
     // namespace is the typed-empty page without reading it.
     if (
+      args.namespace !== undefined &&
       !hasFleetRead(scope) &&
       (scope.orgClerkId === undefined ||
-        (teamLabelOfNamespace(namespace) === null &&
-          !isMemoryNamespaceAllowed(scope, namespace, await seatAgentIdOf(ctx, scope, args.verifiedActor))))
+        (teamLabelOfNamespace(args.namespace) === null &&
+          !isMemoryNamespaceAllowed(scope, args.namespace, await seatAgentIdOf(ctx, scope, args.verifiedActor))))
     ) {
       return { value: [], continueCursor: null, isDone: true };
     }
@@ -498,6 +434,45 @@ export const listMemories = query({
         ? owned
         : owned.filter((r) => r.createdBy === createdByFilter);
     };
+
+    // Namespace omitted (list_episodes documents it): the fleet master reads that
+    // `type` across every namespace through `by_type`, newest first. Any other
+    // caller is REFUSED by the shared fleet-door guard, never served another
+    // tenant's rows and never handed an empty page (an empty page is the bytes of
+    // "no episodes exist"). `type` is the index bound, so it is required here.
+    // isolation-contract: no reactive subscriber. Enumerated by command against
+    // vantage-peers-dashboard:
+    //   grep -rn "api\.memories\.listMemories" --include=*.tsx --include=*.ts \
+    //     app components hooks lib contexts providers  -> 0 hits
+    // The omitted-namespace path did not exist (the argument was required).
+    if (args.namespace === undefined) {
+      await requireFleetDoor(ctx, scope, "memories:listMemories", {
+        masterOnly: true,
+        alsoRefusePreOrg: true,
+        operatorHumanMayRead: true,
+      });
+      const crossType = args.type;
+      if (crossType === undefined) {
+        throw new ConvexError(
+          `INVALID_ARGUMENT: memories:listMemories without a namespace reads every namespace and needs a type — ${JSON.stringify({ registration: "memories:listMemories", missing: "type" })}`,
+        );
+      }
+      const crossBase = ctx.db
+        .query("memories")
+        .withIndex("by_type", (q) =>
+          isLatest === undefined
+            ? q.eq("type", crossType)
+            : q.eq("type", crossType).eq("isLatest", true),
+        )
+        .order("desc");
+      if (args.paginationOpts !== undefined) {
+        const r = await crossBase.paginate({ numItems, cursor });
+        return { value: filterCreatedBy(r.page), continueCursor: r.isDone ? null : r.continueCursor, isDone: r.isDone };
+      }
+      const crossPage = await crossBase.take(numItems);
+      return { value: filterCreatedBy(crossPage), continueCursor: null, isDone: true };
+    }
+    const namespace: string = args.namespace;
 
     // ── Paginated path (paginationOpts provided) ──────────────────────────────
     if (args.paginationOpts !== undefined) {
