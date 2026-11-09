@@ -1,0 +1,4 @@
+---
+section: Fixed
+---
+- **`improvisation_digest` no longer fails on an orchestrator whose name is not ASCII.** `improvisationDigest:scanWindow` returned `countsByOrch` as an object keyed by orchestrator name, and a Convex return value cannot carry a field name with a non-ASCII character: one flagged row of "hélios" made every call fail with an opaque Server Error (`Field name hélios has invalid character 'é'`, measured in the prod failure log). The record is now keyed by the percent-encoded name, and a new `byOrchestrator` array carries `{ orchestrator, count }` under the real names; the tool answers `countsByOrch` under the real names (from the array, else by decoding the keys). Additive for the running MCP, which reads only the record: no contract bump (the same function, an extra field its looseObject schema accepts). The `v.any()` returns of the function are now typed. Task k178ty5ndzkyy8y4vd7c3jh0p58hxg2z.

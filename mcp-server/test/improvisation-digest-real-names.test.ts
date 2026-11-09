@@ -73,3 +73,21 @@ describe("improvisation_digest real orchestrator names", () => {
 		expect(r.structuredContent.countsByOrch).toEqual({ "hélios": 2, sigma: 1 });
 	});
 });
+
+describe("the running MCP survives the expanded shape", () => {
+	it("the previous output schema (looseObject) accepts the backend's raw answer, extra array included", async () => {
+		const { improvisationDigestServedOutputSchema } = await import(
+			"../src/outputSchemas.js"
+		);
+		const raw = {
+			countsByOrch: { "h%C3%A9lios": 2, sigma: 1 },
+			byOrchestrator: [
+				{ orchestrator: "hélios", count: 2 },
+				{ orchestrator: "sigma", count: 1 },
+			],
+			countsByCategory: cats,
+			samples: [],
+		};
+		expect(improvisationDigestServedOutputSchema.safeParse(raw).success).toBe(true);
+	});
+});
