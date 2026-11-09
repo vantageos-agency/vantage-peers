@@ -28,6 +28,7 @@ import { InMemoryTransport, McpServer } from "@modelcontextprotocol/server";
 import { beforeAll, describe, expect, it } from "vitest";
 import type { OAuthContext } from "../src/auth.js";
 import { registerTools } from "../src/tools.js";
+import { REPORTED } from "./lib/manufactFixReport.js";
 
 type JsonSchema = {
 	type?: string | string[];
@@ -54,6 +55,7 @@ type ServedTool = {
 	name: string;
 	description?: string;
 	inputSchema: JsonSchema;
+	outputSchema?: JsonSchema;
 	annotations?: Record<string, unknown>;
 };
 
@@ -205,6 +207,21 @@ function restatements(s: JsonSchema, required: boolean): string[] {
 		)
 	)
 		found.push("bound phrase");
+	// a bound said in words, with or without its number (task
+	// k177d10zrqvw6gj9jef5hypayd8hxe34: "At most this many rows come back" on
+	// a field whose schema carries `maximum` restates that maximum)
+	const real = (n: number | undefined) =>
+		n !== undefined && Math.abs(n) !== SAFE_INT;
+	const hasBound =
+		real(s.maximum) ||
+		real(s.minimum) ||
+		real(s.maxItems) ||
+		real(s.maxLength) ||
+		real(s.items?.maximum);
+	const boundWords = d.match(
+		/\b(at most|at least|up to|no more than|not more than|no fewer than)\b/i,
+	);
+	if (hasBound && boundWords) found.push(`bound in words "${boundWords[0]}"`);
 	const minOne =
 		s.minItems === 1 ||
 		s.minLength === 1 ||
@@ -299,9 +316,16 @@ describe("the detectors are bipolar", () => {
 		);
 		// bounds
 		expect(r({ maximum: 200, description: "Rows. Cap 200." })).not.toEqual([]);
-		expect(r({ maximum: 200, description: "At most this many rows." })).toEqual(
-			[],
-		);
+		expect(
+			r({ maximum: 200, description: "At most this many rows." }),
+		).not.toEqual([]);
+		expect(
+			r({
+				maximum: 200,
+				description: "The page size: how many rows this page holds.",
+			}),
+		).toEqual([]);
+		expect(r({ description: "Keep at most one row per owner." })).toEqual([]);
 		expect(
 			r({ minLength: 1, description: "The project; an empty one is refused." }),
 		).not.toEqual([]);
@@ -602,5 +626,153 @@ describe("titles name the capability performed", () => {
 			expect(title(n), n).toMatch(/namespace|OKF/i);
 			expect(title(n), n).not.toMatch(/memor/i);
 		}
+	});
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Manufact's documentation fix report, item by item (task
+// k177d10zrqvw6gj9jef5hypayd8hxe34). Its judge is not reproducible from text
+// alone (identical descriptions on two tools, one flagged and one not), so each
+// named item is pinned as well as caught by a class rule where one exists.
+// ─────────────────────────────────────────────────────────────────────────────
+
+function at(t: ServedTool, pointer: string): JsonSchema | undefined {
+	let node: unknown = t.inputSchema;
+	for (const seg of pointer.replace(/^#\/?/, "").split("/").filter(Boolean)) {
+		node = (node as Record<string, unknown> | undefined)?.[seg];
+	}
+	return node as JsonSchema | undefined;
+}
+
+describe("Manufact fix report: every named input item is rewritten", () => {
+	it("the fixture holds the 27 restated fields, the source field and get_message", () => {
+		expect(
+			REPORTED.filter((r) => r[2] === "restates" && r[1] !== "#"),
+		).toHaveLength(27);
+		expect(REPORTED.filter((r) => r[2] === "source")).toHaveLength(1);
+		expect(REPORTED.filter((r) => r[1] === "#").map((r) => r[0])).toEqual([
+			"get_message",
+		]);
+	});
+
+	for (const [tool, pointer, kind, flagged] of REPORTED) {
+		it(`${tool} ${pointer} (${kind}): no longer the flagged text, and restates nothing`, () => {
+			const t = tools.find((x) => x.name === tool);
+			if (!t) throw new Error(`not served: ${tool}`);
+			const now =
+				pointer === "#"
+					? (t.description ?? "")
+					: (at(t, pointer)?.description ?? "");
+			expect(now.trim()).not.toBe("");
+			expect(now).not.toBe(flagged);
+			if (pointer !== "#") {
+				const s = at(t, pointer) as JsonSchema;
+				expect(restatements(s, false)).toEqual([]);
+			}
+		});
+	}
+
+	it("search_briefing_notes_by_keyword.createdBy says where the value comes from", () => {
+		const t = tools.find((x) => x.name === "search_briefing_notes_by_keyword");
+		const d = t?.inputSchema.properties?.createdBy?.description ?? "";
+		expect(d).toMatch(/\blist_peers\b/);
+		expect(d).toMatch(/user:<subject>/);
+	});
+});
+
+/** The fields a Returns { ... } clause lists at its top level, and per listed child. */
+function returnsList(description: string): Map<string, string[]> {
+	const at0 = description.search(/\bReturns \{/);
+	if (at0 < 0) return new Map();
+	const rest = description.slice(at0 + "Returns ".length);
+	let depth = 0;
+	let end = 0;
+	for (let i = 0; i < rest.length; i++) {
+		if ("{[(".includes(rest[i])) depth++;
+		if ("}])".includes(rest[i])) depth--;
+		if (depth === 0) {
+			end = i;
+			break;
+		}
+	}
+	const out = new Map<string, string[]>();
+	const parse = (body: string, key: string) => {
+		const names: string[] = [];
+		let d = 0;
+		let cur = "";
+		const items: string[] = [];
+		for (const ch of body) {
+			if ("{[(".includes(ch)) d++;
+			if ("}])".includes(ch)) d--;
+			if (ch === "," && d === 0) {
+				items.push(cur);
+				cur = "";
+			} else cur += ch;
+		}
+		items.push(cur);
+		for (const raw of items) {
+			const m =
+				/^\s*([A-Za-z_][A-Za-z0-9_]*)\??\s*(?::\s*true)?\s*(\[?\{([\s\S]*)\}\]?)?\s*$/.exec(
+					raw,
+				);
+			if (!m) throw new Error(`not a field: "${raw}"`);
+			names.push(m[1]);
+			if (m[3] !== undefined) parse(m[3], key === "" ? m[1] : `${key}.${m[1]}`);
+		}
+		out.set(key, names.sort());
+	};
+	parse(rest.slice(1, end), "");
+	return out;
+}
+
+describe("Manufact fix report: the output schema and the documented result agree", () => {
+	// "Align the output schema with the tool's documented result", and
+	// get_github_owner_bindings "Describe the returned fields".
+	const ALIGNED = [
+		"correct_task_segment",
+		"get_fix_pattern",
+		"get_message",
+		"get_recurring_task",
+		"get_github_owner_bindings",
+	];
+
+	for (const tool of ALIGNED) {
+		it(`${tool}: Returns { ... } names exactly the schema's properties, nested lists included`, () => {
+			const t = tools.find((x) => x.name === tool);
+			if (!t?.outputSchema) throw new Error(`no outputSchema: ${tool}`);
+			const listed = returnsList(t.description ?? "");
+			expect(listed.get(""), "a Returns { ... } clause").toBeDefined();
+			const props = (s: JsonSchema | undefined) =>
+				Object.keys(s?.properties ?? s?.items?.properties ?? {}).sort();
+			expect(listed.get("")).toEqual(props(t.outputSchema));
+			for (const [key, names] of listed) {
+				if (key === "") continue;
+				let s: JsonSchema | undefined = t.outputSchema;
+				for (const seg of key.split(".")) s = s?.properties?.[seg];
+				expect(names, key).toEqual(props(s));
+			}
+		});
+	}
+
+	it("get_github_owner_bindings types each binding and each unproven mapping", () => {
+		const t = tools.find((x) => x.name === "get_github_owner_bindings");
+		const item = (k: string) =>
+			Object.keys(
+				t?.outputSchema?.properties?.[k]?.items?.properties ?? {},
+			).sort();
+		expect(item("bindings")).toEqual(
+			[
+				"accountType",
+				"active",
+				"boundAt",
+				"githubUserLogin",
+				"installationId",
+				"orgId",
+				"owner",
+			].sort(),
+		);
+		expect(item("unprovenMappings")).toEqual(
+			["orgId", "project", "reason", "repo"].sort(),
+		);
 	});
 });
