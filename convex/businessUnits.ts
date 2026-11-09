@@ -15,7 +15,7 @@ import {
 } from "./lib/auth";
 import { hasFleetStanding, requireFleetDoor } from "./lib/fleetStanding";
 import { isFleetSystemCaller } from "./lib/systemCaller";
-import { fleetOperatorRef, fleetWriteClerkOrgId } from "./lib/operatorOrg";
+import { fleetOperatorRef, operatorClerkOrgId } from "./lib/operatorOrg";
 import { orgRefOfRow, orgRefOfScope } from "./lib/authOrgMapping";
 import {
 	agentIdOfLabelInOrg,
@@ -233,9 +233,8 @@ export const create = mutation({
 		}
 
 		const now = Date.now();
-		const fleetClerkOrgId = fleet
-			? await fleetWriteClerkOrgId(ctx.db, { isMaster: true })
-			: undefined;
+		// `fleet` is this door's own standing check (hasFleetStanding), decided above.
+		const fleetClerkOrgId = fleet ? await operatorClerkOrgId(ctx.db) : undefined;
 		return await ctx.db.insert("businessUnits", {
 			name: args.name,
 			description: args.description,

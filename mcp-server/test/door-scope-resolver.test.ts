@@ -22,6 +22,7 @@ import * as businessUnits from "../../convex/businessUnits";
 import * as diary from "../../convex/diary";
 import * as episodes from "../../convex/episodes";
 import * as erase from "../../convex/erase";
+import * as fixPatterns from "../../convex/fixPatterns";
 import * as githubOwnerBinding from "../../convex/githubOwnerBinding";
 import * as githubRepoMapping from "../../convex/githubRepoMapping";
 import * as kb from "../../convex/kb";
@@ -54,6 +55,7 @@ const MODULES: Record<string, Record<string, unknown>> = {
 	diary,
 	episodes,
 	erase,
+	fixPatterns,
 	githubOwnerBinding,
 	githubRepoMapping,
 	kb,
@@ -292,6 +294,7 @@ const SITES: [string, string, Legacy, boolean][] = [
 	["update_mission", "missions:update", personOnly, true],
 	["erase_memory", "memories:redactMemoryContentAsPerson", personOnly, true],
 	["erase_row", "erase:eraseRow", personOnly, true],
+	["erase_fix_pattern", "fixPatterns:erase", personOnly, true],
 	["get_tool_usage", "toolUsage:getToolUsage", personAndOrg, true],
 	["get_owner_tool_usage", "toolUsage:usageByOwner", personAndOrg, true],
 	// Person doors since task k177e8dyrnykk3c56yf2b0pgfs8hhz06: a person with no

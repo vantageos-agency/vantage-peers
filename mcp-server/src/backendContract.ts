@@ -40,7 +40,7 @@
  */
 
 /** Contract version this MCP build requires from the backend. */
-export const REQUIRED_CONTRACT_VERSION = 24;
+export const REQUIRED_CONTRACT_VERSION = 25;
 
 /** Every public Convex function this MCP build calls (`module:function`). */
 export const MCP_CALLED_FUNCTIONS: readonly string[] = [
@@ -70,6 +70,7 @@ export const MCP_CALLED_FUNCTIONS: readonly string[] = [
 	"errorMonitor:removeDeployment",
 	"fixPatterns:addAttempt",
 	"fixPatterns:create",
+	"fixPatterns:erase",
 	"fixPatterns:get",
 	"fixPatterns:linkIssue",
 	"fixPatterns:listAll",

@@ -77,6 +77,18 @@ export async function fleetWriteClerkOrgId(
 	scope: { isMaster: boolean },
 ): Promise<string | undefined> {
 	if (!scope.isMaster) return undefined;
+	return await operatorClerkOrgId(db);
+}
+
+/**
+ * The permanent ID of the ONE active operator organisation, or undefined when there
+ * is not exactly one or it holds no ID. For a door that has already decided the
+ * caller is the fleet by its own standing check (`fleetWriteClerkOrgId` decides it
+ * from a master scope).
+ */
+export async function operatorClerkOrgId(
+	db: DatabaseReader,
+): Promise<string | undefined> {
 	const op = await findOperatorOrg(db);
 	return op.kind === "one" ? op.clerkOrgId : undefined;
 }

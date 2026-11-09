@@ -300,6 +300,7 @@ _Applies to: Cloud and Self-host._
 - `claim_upload` (write) — Claim an uploaded blob for your organisation with the single-use ticket generate_upload_url returned.
 - `debate_get_room` (read) — Read a debate room: its subject, frozen template, pointer and the full transcript.
 - `debate_post_turn` (write) — Post your answer to the debate-room turn you were asked for; the only way a turn enters a room.
+- `erase_fix_pattern` (write, destructive) — Permanently erase one fix pattern: the pattern, its fix attempts and its search entry are DELETED. Allowed for an admin of the operator organisation and for the agent that wrote the pattern; anyone else is refused with RBAC_DENIED.
 - `erase_row` (write, destructive) — Permanently erase one row you or your organisation own: the row is DELETED (and, for a memory, its search entry is purged), unlike the soft deletes that leave the body readable.
 - `generate_upload_url` (write) — Mint a Convex storage upload URL for the Knowledge Base ingest flow.
 - `get_bulk_complete_run` (read) — Read the status of one live bulk_complete_tasks run by the `bulkRunId` its first call returned.

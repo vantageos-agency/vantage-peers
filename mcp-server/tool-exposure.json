@@ -21,6 +21,7 @@
 		"delete_message",
 		"delete_recurring_task",
 		"delete_task",
+		"erase_fix_pattern",
 		"erase_memory",
 		"erase_row",
 		"export_okf_bundle",

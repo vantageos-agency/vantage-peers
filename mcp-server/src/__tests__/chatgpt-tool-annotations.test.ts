@@ -188,6 +188,7 @@ const DESTRUCTIVE_TOOLS = new Set([
 	"soft_delete_memory",
 	"erase_memory",
 	"erase_row",
+	"erase_fix_pattern",
 	"soft_delete_mission_template",
 	"delete_message",
 	"delete_task",

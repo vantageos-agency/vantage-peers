@@ -127,6 +127,7 @@ const WRITE_IDEMPOTENCY: Record<string, boolean> = {
 	// true: a repeat with the same arguments leaves the same state.
 	soft_delete_memory: true, // isLatest=false again
 	erase_row: true, // the row is gone; a repeat is refused, nothing written
+	erase_fix_pattern: true, // the pattern is gone; a repeat is refused, nothing written
 	update_profile: true, // upsert of the given fields
 	mark_as_read: true, // readAt is set only when still unset
 	delete_message: true, // the message is gone; a repeat is refused
