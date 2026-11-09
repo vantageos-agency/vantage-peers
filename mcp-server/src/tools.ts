@@ -1571,6 +1571,15 @@ export const eraseRowOutputSchema = z.object({
 	cascaded: z.record(z.string(), z.number()),
 });
 
+// erase_fix_pattern
+export const eraseFixPatternOutputSchema = z.object({
+	patternId: z.string().describe("The fix pattern that was erased: the patternId you sent."),
+	erased: z.boolean().describe("Always true: the pattern is gone; a refusal is an error result, not this shape."),
+	cascaded: z
+		.record(z.string(), z.number())
+		.describe("How many dependent rows went with it: fixAttempts (its attempts) and searchEntry (its search entry)."),
+});
+
 // get_memory
 export const getMemoryOutputSchema = z
 	.record(z.string(), z.unknown())
@@ -3050,6 +3059,47 @@ export function registerTools(
 				return {
 					content: [{ type: "text", text: JSON.stringify(result, null, 2) }],
 					structuredContent: result,
+				};
+			} catch (error: any) {
+				return mcpConvexError(error);
+			}
+		},
+	);
+
+	// ── erase_fix_pattern ───────────────────────────────────────────────────────
+
+	defineTool(
+		server,
+		authCtx,
+		{
+			kind: "public",
+			reason:
+				"decided by its Convex door fixPatterns:erase (the same rule as erase:eraseRow, convex/lib/eraseRow.ts assertMayErase): a fix pattern is owned by the operator organisation; an admin of that org erases any pattern, the agent that wrote it (the seat's verified agent ID) the patterns it wrote; a person bearer is judged by its verified person; a client organisation's caller and the fleet master without a verified agent are refused RBAC_DENIED; the tool takes no acting name and relays the door's typed refusal unchanged",
+		},
+		"erase_fix_pattern",
+		"Permanently erase one fix pattern: the pattern, its fix attempts and its search entry are DELETED. " +
+			"Returns { patternId, erased: true, cascaded }, where cascaded counts the dependent rows deleted with it (fixAttempts, searchEntry). " +
+			"WHEN: a fix pattern was recorded in error, or carries content that must be gone for good. " +
+			"Allowed for an admin of the operator organisation (any pattern) and for the agent that wrote the pattern; anyone else, any client organisation, and a fleet-master call without a verified agent are refused with RBAC_DENIED and the pattern is unchanged. " +
+			"EXAMPLE: erase_fix_pattern patternId='m9748paffd0emrbwyskj868e1x88kvhj'.",
+		{
+			patternId: patternIdSchema.describe("The fix pattern to erase: its patternId as create_fix_pattern, search_fix_patterns or list_fix_patterns returned it."),
+		},
+		{
+			readOnlyHint: false,
+			idempotentHint: true,
+			openWorldHint: false,
+			destructiveHint: true,
+			title: "Erase a fix pattern",
+		},
+		async ({ patternId }) => {
+			try {
+				const result = await convex.mutation("fixPatterns:erase" as any, {
+					patternId,
+					...doorScopeArgs("fixPatterns:erase", undefined),
+				});
+				return {
+					content: [{ type: "text", text: JSON.stringify(result, null, 2) }],
 				};
 			} catch (error: any) {
 				return mcpConvexError(error);

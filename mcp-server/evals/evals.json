@@ -8034,6 +8034,73 @@
 				"the SDK refuses before the handler runs, so no backend call is made"
 			],
 			"source": "src/registerTool.ts:464"
+		},
+		{
+			"id": "erase_fix_pattern.author-erases",
+			"tool": "erase_fix_pattern",
+			"op": "callTool",
+			"caller": "seat",
+			"runner": "live",
+			"prompt": "Erase the fix pattern I recorded by mistake; it must be gone for good.",
+			"args": {
+				"patternId": "k1711111111111111111111111111111"
+			},
+			"expect": {
+				"isError": false,
+				"jsonKeys": [
+					"patternId",
+					"erased",
+					"cascaded"
+				]
+			},
+			"expectations": [
+				"fixPatterns:erase is called with verifiedActor = the agent ID the transport verified, never a typed name",
+				"the pattern's author (an agent of the operator organisation) is admitted; the pattern, its attempts and its search entry are deleted",
+				"the result is {patternId,erased:true,cascaded}"
+			],
+			"source": "src/tools.ts:2679"
+		},
+		{
+			"id": "erase_fix_pattern.non-author-refused",
+			"tool": "erase_fix_pattern",
+			"op": "callTool",
+			"caller": "seat",
+			"runner": "live",
+			"prompt": "Erase a fix pattern another agent recorded.",
+			"args": {
+				"patternId": "k1711111111111111111111111111111"
+			},
+			"expect": {
+				"isError": true,
+				"textIncludes": [
+					"RBAC_DENIED"
+				]
+			},
+			"expectations": [
+				"the Convex door refuses a caller that is neither an admin of the operator organisation nor the pattern's author",
+				"a caller of a client organisation is refused the same way and the pattern stays unchanged"
+			],
+			"source": "src/tools.ts:2679"
+		},
+		{
+			"id": "erase_fix_pattern.missing-id",
+			"tool": "erase_fix_pattern",
+			"op": "callTool",
+			"caller": "master",
+			"runner": "offline",
+			"prompt": "Erase a fix pattern without saying which one.",
+			"args": {},
+			"expect": {
+				"isError": true,
+				"textIncludes": [
+					"Input validation error: Invalid arguments for tool erase_fix_pattern",
+					"patternId"
+				]
+			},
+			"expectations": [
+				"patternId is required; the SDK refuses before the handler runs, so no backend call is made"
+			],
+			"source": "src/registerTool.ts:464"
 		}
 	]
 }

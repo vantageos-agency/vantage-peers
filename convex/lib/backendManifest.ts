@@ -7,7 +7,7 @@
 // REQUIRED_CONTRACT_VERSION in mcp-server/src/backendContract.ts, when the MCP
 // starts passing a new argument to a function that already exists.
 
-export const BACKEND_CONTRACT_VERSION = 24;
+export const BACKEND_CONTRACT_VERSION = 25;
 
 export const BACKEND_FUNCTIONS: readonly string[] = [
 	"agentCredentials:getAgentCredentialStatus",
@@ -70,6 +70,7 @@ export const BACKEND_FUNCTIONS: readonly string[] = [
 	"errorMonitorFilters:listFilterRules",
 	"fixPatterns:addAttempt",
 	"fixPatterns:create",
+	"fixPatterns:erase",
 	"fixPatterns:get",
 	"fixPatterns:linkIssue",
 	"fixPatterns:listAll",

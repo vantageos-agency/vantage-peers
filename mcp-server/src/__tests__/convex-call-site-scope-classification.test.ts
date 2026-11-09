@@ -158,6 +158,13 @@ const SCOPE_CLASSIFICATION: Readonly<Record<string, ScopeClassification>> = {
 		reason:
 			"decided by the door (convex/erase.ts, lib/eraseRow.ts): the caller is derived from the proof the call carries (verifiedPerson = the bearer hash from the verified context via doorScope, verifiedActor = the agent ID added by the wrapped client, or a Clerk-JWT bearer's own session), the row's stored org ID must equal the caller's, and only an org admin or the row's stored author is served; pinned by convex/__tests__/eraseRow.test.ts (every covered table) and the seat two-pole sweep",
 	},
+	"erase_fix_pattern|fixPatterns:erase": {
+		class: "safe",
+		severity: null,
+		basis: "args+gate",
+		reason:
+			"decided by the door (convex/fixPatterns.ts erase, lib/eraseRow.ts assertMayErase): the caller is derived from the proof the call carries (verifiedPerson = the bearer hash from the verified context via doorScope, verifiedActor = the agent ID added by the wrapped client, or a Clerk-JWT bearer's own session); the pattern's owning organisation is the operator org, so a client organisation's caller is refused by ID, and only an operator-org admin or the pattern's author agent is served; pinned by convex/__tests__/fixPatternErase.test.ts and the seat two-pole sweep",
+	},
 	"get_memory|memories:getMemory": {
 		class: "traced",
 		severity: null,
