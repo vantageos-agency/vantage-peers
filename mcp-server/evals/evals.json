@@ -8036,12 +8036,12 @@
 			"source": "src/registerTool.ts:464"
 		},
 		{
-			"id": "erase_fix_pattern.author-erases",
+			"id": "erase_fix_pattern.admin-erases",
 			"tool": "erase_fix_pattern",
 			"op": "callTool",
-			"caller": "seat",
+			"caller": "org-admin",
 			"runner": "live",
-			"prompt": "Erase the fix pattern I recorded by mistake; it must be gone for good.",
+			"prompt": "(an admin of the operator organisation) Erase the fix pattern that was recorded by mistake; it must be gone for good.",
 			"args": {
 				"patternId": "k1711111111111111111111111111111"
 			},
@@ -8054,8 +8054,8 @@
 				]
 			},
 			"expectations": [
-				"fixPatterns:erase is called with verifiedActor = the agent ID the transport verified, never a typed name",
-				"the pattern's author (an agent of the operator organisation) is admitted; the pattern, its attempts and its search entry are deleted",
+				"fixPatterns:erase is called with verifiedPerson = the bearer hash from the verified context, never a typed name",
+				"an admin of the operator organisation is admitted; the pattern, its attempts and its search entry are deleted",
 				"the result is {patternId,erased:true,cascaded}"
 			],
 			"source": "src/tools.ts:2679"
@@ -8066,7 +8066,7 @@
 			"op": "callTool",
 			"caller": "seat",
 			"runner": "live",
-			"prompt": "Erase a fix pattern another agent recorded.",
+			"prompt": "Erase a fix pattern as a plain agent seat.",
 			"args": {
 				"patternId": "k1711111111111111111111111111111"
 			},
@@ -8077,7 +8077,7 @@
 				]
 			},
 			"expectations": [
-				"the Convex door refuses a caller that is neither an admin of the operator organisation nor the pattern's author",
+				"the Convex door refuses a caller that is not an admin of the operator organisation, an agent included",
 				"a caller of a client organisation is refused the same way and the pattern stays unchanged"
 			],
 			"source": "src/tools.ts:2679"

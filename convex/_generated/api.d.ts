@@ -66,6 +66,7 @@ import type * as lib_backendManifest from "../lib/backendManifest.js";
 import type * as lib_blockedOnMe from "../lib/blockedOnMe.js";
 import type * as lib_commitSha from "../lib/commitSha.js";
 import type * as lib_debateTemplate from "../lib/debateTemplate.js";
+import type * as lib_eraseFixPattern from "../lib/eraseFixPattern.js";
 import type * as lib_eraseRow from "../lib/eraseRow.js";
 import type * as lib_fleetActors from "../lib/fleetActors.js";
 import type * as lib_fleetStanding from "../lib/fleetStanding.js";
@@ -253,6 +254,7 @@ declare const fullApi: ApiFromModules<{
   "lib/blockedOnMe": typeof lib_blockedOnMe;
   "lib/commitSha": typeof lib_commitSha;
   "lib/debateTemplate": typeof lib_debateTemplate;
+  "lib/eraseFixPattern": typeof lib_eraseFixPattern;
   "lib/eraseRow": typeof lib_eraseRow;
   "lib/fleetActors": typeof lib_fleetActors;
   "lib/fleetStanding": typeof lib_fleetStanding;
