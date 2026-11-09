@@ -41,6 +41,12 @@ import {
 	verifiedOrgIdOf,
 	verifiedOrgSlugOf,
 } from "../doorScope.js";
+import {
+	claimUploadServedOutputSchema,
+	generateUploadUrlServedOutputSchema,
+	softDeleteDocumentServedOutputSchema,
+	storeDocumentChunkedServedOutputSchema,
+} from "../outputSchemas.js";
 import { defineTool } from "../registerTool.js";
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -64,13 +70,13 @@ export interface SoftDeleteDocumentResult {
 
 export const STORE_DOCUMENT_CHUNKED_TOOL_DESCRIPTION =
 	"Ingest a document binary (PDF, Markdown, plain text) into the Knowledge Base. " +
-		"storageId names a file already uploaded and claimed for your org: generate_upload_url (given the file's sha256) returns the upload URL and ticket, the file is POSTed there, and claim_upload (given the ticket) returns the storageId this tool takes. " +
-		"A storageId your org has not claimed is refused (AUTH_STORAGE_NOT_OWNED). " +
-		"Server-side: text extraction → paragraph-aware chunking (~512 tokens/chunk with 50-char overlap) → stores chunks as memories at namespace team/<orgId>/<docId>. " +
-		"Requires Clerk JWT with org_id — no-org bearers are rejected. " +
-		"Re-ingest with same docId supersedes prior version (isLatest flip, idempotent). " +
-		"One document per call. Returns { docId, chunkCount, storageId }. " +
-		"EXAMPLE: store_document_chunked storageId='kg2anjqa…' mimeType='text/markdown' filename='spec.md'.";
+	"storageId names a file already uploaded and claimed for your org: generate_upload_url (given the file's sha256) returns the upload URL and ticket, the file is POSTed there, and claim_upload (given the ticket) returns the storageId this tool takes. " +
+	"A storageId your org has not claimed is refused (AUTH_STORAGE_NOT_OWNED). " +
+	"Server-side: text extraction → paragraph-aware chunking (~512 tokens/chunk with 50-char overlap) → stores chunks as memories at namespace team/<orgId>/<docId>. " +
+	"Requires Clerk JWT with org_id — no-org bearers are rejected. " +
+	"Re-ingest with same docId supersedes prior version (isLatest flip, idempotent). " +
+	"One document per call. Returns { docId, chunkCount, storageId }. " +
+	"EXAMPLE: store_document_chunked storageId='kg2anjqa…' mimeType='text/markdown' filename='spec.md'.";
 
 export const storeDocumentChunkedArgsSchema = z.object({
 	storageId: z
@@ -98,9 +104,9 @@ export const storeDocumentChunkedArgsSchema = z.object({
 
 export const SOFT_DELETE_DOCUMENT_TOOL_DESCRIPTION =
 	"Soft-delete all Knowledge Base chunks for a document. " +
-		"Marks every isLatest=true chunk for docId as isLatest=false — chunks remain in the DB for audit but are excluded from recall and search. " +
-		"Requires Clerk JWT with org_id (same org that ingested the document). One document per call. " +
-		"Returns { docId, markedCount }. EXAMPLE: soft_delete_document docId='abc-123-uuid'.";
+	"Marks every isLatest=true chunk for docId as isLatest=false — chunks remain in the DB for audit but are excluded from recall and search. " +
+	"Requires Clerk JWT with org_id (same org that ingested the document). One document per call. " +
+	"Returns { docId, markedCount }. EXAMPLE: soft_delete_document docId='abc-123-uuid'.";
 
 export const softDeleteDocumentArgsSchema = z.object({
 	docId: z
@@ -112,13 +118,13 @@ export const softDeleteDocumentArgsSchema = z.object({
 
 export const GENERATE_UPLOAD_URL_TOOL_DESCRIPTION =
 	"Mint a Convex storage upload URL for the Knowledge Base ingest flow. " +
-		"The caller's org (from the Clerk JWT) is bound implicitly. " +
-		"To CLAIM the upload later (required before validate_okf_bundle reads it), first compute the SHA-256 of the exact file you will upload and pass it as sha256: the response then also carries a single-use upload ticket bound to your org AND to that content (valid 15 minutes, shown once); after the POST, call claim_upload with the storageId and the ticket. " +
-		"Without sha256 you get the URL only (no ticket): that blob cannot be claimed, so store_document_chunked refuses it. " +
-		"Pass sha256 for any upload you intend to ingest. Requires Clerk JWT with org_id — no-org bearers are rejected. " +
-		"One URL per call. " +
-		"Returns the upload URL as plain text (first item), then a JSON item { ticket, expiresAt } (ticket null when no sha256 was passed). " +
-		"EXAMPLE: generate_upload_url sha256='2cf24dba…' → 'https://…convex.cloud/api/storage/upload?...' + {\"ticket\":\"9f…\",\"expiresAt\":…}.";
+	"The caller's org (from the Clerk JWT) is bound implicitly. " +
+	"To CLAIM the upload later (required before validate_okf_bundle reads it), first compute the SHA-256 of the exact file you will upload and pass it as sha256: the response then also carries a single-use upload ticket bound to your org AND to that content (valid 15 minutes, shown once); after the POST, call claim_upload with the storageId and the ticket. " +
+	"Without sha256 you get the URL only (no ticket): that blob cannot be claimed, so store_document_chunked refuses it. " +
+	"Pass sha256 for any upload you intend to ingest. Requires Clerk JWT with org_id — no-org bearers are rejected. " +
+	"One URL per call. " +
+	"Returns { uploadUrl, ticket, expiresAt?, note? }; the text is the upload URL alone (first item), then a JSON item { ticket, expiresAt } (ticket null, with a note, when no sha256 was passed). " +
+	'EXAMPLE: generate_upload_url sha256=\'2cf24dba…\' → \'https://…convex.cloud/api/storage/upload?...\' + {"ticket":"9f…","expiresAt":…}.';
 
 export const generateUploadUrlArgsSchema = z.object({
 	sha256: z
@@ -133,16 +139,18 @@ export const generateUploadUrlArgsSchema = z.object({
 
 export const CLAIM_UPLOAD_TOOL_DESCRIPTION =
 	"Claim an uploaded blob for your organisation with the single-use ticket generate_upload_url returned. " +
-		"WHEN: after POSTing a file to the upload URL, before store_document_chunked ingests it or validate_okf_bundle reads it by storageId. " +
-		"Binds the storageId to your org only if the ticket is valid, unused, unexpired, issued to your own org, the blob was uploaded after the ticket was issued, and its content matches the sha256 declared to generate_upload_url; the ticket is consumed. " +
-		"A storageId without its ticket cannot be claimed. Returns { storageId, orgId }. " +
-		"EXAMPLE: claim_upload storageId='kg2anjqa…' ticket='9f3c…'.";
+	"WHEN: after POSTing a file to the upload URL, before store_document_chunked ingests it or validate_okf_bundle reads it by storageId. " +
+	"Binds the storageId to your org only if the ticket is valid, unused, unexpired, issued to your own org, the blob was uploaded after the ticket was issued, and its content matches the sha256 declared to generate_upload_url; the ticket is consumed. " +
+	"A storageId without its ticket cannot be claimed. Returns { storageId, orgId }. " +
+	"EXAMPLE: claim_upload storageId='kg2anjqa…' ticket='9f3c…'.";
 
 export const claimUploadArgsSchema = z.object({
 	storageId: z
 		.string()
 		.min(1)
-		.describe("The storageId the upload URL from generate_upload_url answered after your POST."),
+		.describe(
+			"The storageId the upload URL from generate_upload_url answered after your POST.",
+		),
 	ticket: z
 		.string()
 		.regex(/^[0-9a-f]{64}$/)
@@ -292,6 +300,7 @@ export function registerKbIngestTools(
 		STORE_DOCUMENT_CHUNKED_TOOL_DESCRIPTION,
 		storeDocumentChunkedArgsSchema.shape,
 		{
+			outputSchema: storeDocumentChunkedServedOutputSchema,
 			readOnlyHint: false,
 			idempotentHint: false,
 			openWorldHint: false,
@@ -322,6 +331,7 @@ export function registerKbIngestTools(
 							text: JSON.stringify(result, null, 2),
 						},
 					],
+					structuredContent: result,
 				};
 			} catch (error: unknown) {
 				if (error instanceof ProtocolError) throw error;
@@ -350,6 +360,7 @@ export function registerKbIngestTools(
 		SOFT_DELETE_DOCUMENT_TOOL_DESCRIPTION,
 		softDeleteDocumentArgsSchema.shape,
 		{
+			outputSchema: softDeleteDocumentServedOutputSchema,
 			readOnlyHint: false,
 			idempotentHint: true,
 			openWorldHint: false,
@@ -377,6 +388,7 @@ export function registerKbIngestTools(
 							text: JSON.stringify(result, null, 2),
 						},
 					],
+					structuredContent: result,
 				};
 			} catch (error: unknown) {
 				if (error instanceof ProtocolError) throw error;
@@ -407,6 +419,7 @@ export function registerKbIngestTools(
 		GENERATE_UPLOAD_URL_TOOL_DESCRIPTION,
 		generateUploadUrlArgsSchema.shape,
 		{
+			outputSchema: generateUploadUrlServedOutputSchema,
 			readOnlyHint: false,
 			idempotentHint: false,
 			openWorldHint: false,
@@ -428,17 +441,17 @@ export function registerKbIngestTools(
 							...scopeArgs("kbMutations:generateUploadUrl"),
 						},
 					)) as string;
+					const noTicket = {
+						ticket: null,
+						note: "no sha256 passed: no upload ticket. This blob cannot be claimed with claim_upload, so store_document_chunked and validate_okf_bundle will refuse it.",
+					};
 					return {
 						content: [
 							{ type: "text" as const, text: url },
-							{
-								type: "text" as const,
-								text: JSON.stringify({
-									ticket: null,
-									note: "no sha256 passed: no upload ticket. This blob cannot be claimed with claim_upload, so store_document_chunked and validate_okf_bundle will refuse it.",
-								}),
-							},
+							{ type: "text" as const, text: JSON.stringify(noTicket) },
 						],
+						// The two text items as one object.
+						structuredContent: { uploadUrl: url, ...noTicket },
 					};
 				}
 				const { uploadUrl, ticket, expiresAt } = (await convex.mutation(
@@ -461,6 +474,8 @@ export function registerKbIngestTools(
 							text: JSON.stringify({ ticket, expiresAt }),
 						},
 					],
+					// The two text items as one object.
+					structuredContent: { uploadUrl, ticket, expiresAt },
 				};
 			} catch (error: unknown) {
 				if (error instanceof ProtocolError) throw error;
@@ -496,6 +511,7 @@ export function registerKbIngestTools(
 		CLAIM_UPLOAD_TOOL_DESCRIPTION,
 		claimUploadArgsSchema.shape,
 		{
+			outputSchema: claimUploadServedOutputSchema,
 			readOnlyHint: false,
 			idempotentHint: true,
 			openWorldHint: false,
@@ -511,6 +527,7 @@ export function registerKbIngestTools(
 				)) as { storageId: string; orgId: string };
 				return {
 					content: [{ type: "text" as const, text: JSON.stringify(result) }],
+					structuredContent: result,
 				};
 			} catch (error: unknown) {
 				if (error instanceof ProtocolError) throw error;

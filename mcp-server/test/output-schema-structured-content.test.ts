@@ -999,13 +999,13 @@ describe("outputSchema: a real success carries structuredContent that validates"
 				validate(r.structuredContent),
 				JSON.stringify(validate.errors),
 			).toBe(true);
-			expect(r.content).toHaveLength(1);
-			expect(r.content[0].type).toBe("text");
 			const other = (TEXT_FORMS as Record<string, OtherForm>)[call.tool];
 			if (other !== undefined) {
 				expectOtherTextAgrees(other, r, true);
 				return;
 			}
+			expect(r.content).toHaveLength(1);
+			expect(r.content[0].type).toBe("text");
 			const form = (LIST_FORMS as Record<string, "array" | "page">)[call.tool];
 			if (form === undefined) {
 				// The text a client without structuredContent support reads is the

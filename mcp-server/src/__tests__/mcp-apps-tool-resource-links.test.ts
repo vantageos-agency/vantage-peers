@@ -89,10 +89,12 @@ const ROWS: Record<string, unknown> = {
 	},
 	"diary:get": {
 		_id: ID,
+		_creationTime: 1,
 		date: "2026-10-01",
 		orchestrator: "sigma",
 		content: "d",
 		createdBy: "sigma",
+		createdAt: 1,
 	},
 	"briefingNotes:get": {
 		_id: ID,
@@ -184,10 +186,12 @@ const LINKED: ReadonlyArray<
 		"diary-entry",
 		{
 			_id: ID,
+			_creationTime: 1,
 			date: "2026-10-01",
 			orchestrator: "sigma",
 			content: "d",
 			createdBy: "sigma",
+			createdAt: 1,
 		},
 	],
 	[
@@ -213,6 +217,9 @@ const LINKED: ReadonlyArray<
 // text, task k1793xkjhzh1xm23gmmwjgwfyx8htbv0): the app document prefers it,
 // and it renders the same rows (payloadOf in src/ui-resources/apps.ts).
 const STRUCTURED_LINKED = new Set(["get_briefing_note"]);
+// Linked null-able reads: structuredContent is { found: true, item } with the
+// row of their unchanged text (task k170byeq1nzzv2q1z6qpag5fp18hvj8a).
+const FOUND_LINKED = new Set(["get_diary"]);
 // Linked lists whose structuredContent is the page form of their unchanged
 // text (task k17592gg5t2tencwxks3kysghx8htqg8): { items, nextCursor,
 // truncated }; the app document reads `items` from it (rowsOf).
@@ -302,6 +309,8 @@ describe("pole 3, FALLBACK: the text result is unchanged by the link", () => {
 			]);
 			if (STRUCTURED_LINKED.has(tool)) {
 				expect(res.structuredContent).toEqual(before);
+			} else if (FOUND_LINKED.has(tool)) {
+				expect(res.structuredContent).toEqual({ found: true, item: before });
 			} else if (PAGED_LINKED.has(tool)) {
 				expect(res.structuredContent).toEqual({
 					items: Array.isArray(before)
@@ -501,6 +510,41 @@ describe("pole 4, BRIDGE: the document renders the tool result the host hands it
 		});
 		expect(textOf(host.root)).toContain("REFUSED (RBAC_DENIED)");
 		expect(textOf(host.root)).not.toContain("No results");
+	});
+
+	it("a null-able read's structuredContent renders its item, and found: false renders 'No results'", async () => {
+		const client = await harness();
+		const read = await client.readResource({
+			uri: "ui://vp/apps/v1/diary-entry",
+		});
+		await client.close();
+		const html = (read.contents[0] as { text: string }).text;
+		const found = simulateHost(html);
+		found.deliver({ jsonrpc: "2.0", id: found.sent[0]?.id, result: {} });
+		found.deliver({
+			jsonrpc: "2.0",
+			method: "ui/notifications/tool-result",
+			params: {
+				content: [{ type: "text", text: "{}" }],
+				structuredContent: {
+					found: true,
+					item: { _id: ID, date: "2026-10-01", content: "FROM-ITEM" },
+				},
+			},
+		});
+		expect(textOf(found.root)).toContain("FROM-ITEM");
+		const absent = simulateHost(html);
+		absent.deliver({ jsonrpc: "2.0", id: absent.sent[0]?.id, result: {} });
+		absent.deliver({
+			jsonrpc: "2.0",
+			method: "ui/notifications/tool-result",
+			params: {
+				content: [{ type: "text", text: "null" }],
+				structuredContent: { found: false, id: "sigma/2026-10-01" },
+			},
+		});
+		expect(textOf(absent.root)).toContain("No results");
+		expect(textOf(absent.root)).not.toContain("sigma/2026-10-01");
 	});
 
 	it("a genuinely empty result is shown as 'No results'", async () => {

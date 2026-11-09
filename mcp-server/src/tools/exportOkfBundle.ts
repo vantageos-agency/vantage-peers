@@ -24,6 +24,7 @@ import type { ConvexHttpClient } from "convex/browser";
 import { z } from "zod";
 import type { OAuthContext } from "../auth.js";
 import { acceptsJsonArrayString } from "../listArgs.js";
+import { exportOkfBundleServedOutputSchema } from "../outputSchemas.js";
 import { defineTool } from "../registerTool.js";
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -116,6 +117,7 @@ export function registerExportOkfBundle(
 			"EXAMPLE: export_okf_bundle namespace='project/elpi-corp' format='tarball'.",
 		exportOkfBundleArgsSchema,
 		{
+			outputSchema: exportOkfBundleServedOutputSchema,
 			// Not read-only: the export stores a blob and binds its storageId to the
 			// exporter's org (kbUploads), so import/validate can assert ownership.
 			readOnlyHint: false,
@@ -155,6 +157,7 @@ export function registerExportOkfBundle(
 							text: JSON.stringify(result, null, 2),
 						},
 					],
+					structuredContent: result,
 				};
 			} catch (error: unknown) {
 				if (error instanceof ProtocolError) throw error;
