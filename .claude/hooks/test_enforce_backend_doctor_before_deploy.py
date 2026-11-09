@@ -610,6 +610,8 @@ def test_ratchet_live_baseline_carries_its_command_and_never_rose():
             "7391751fa3406efb034f6792bb80a3c625e982e4",
             # CR-2 238 -> 237, list_peers lists a client org seat from its org directory, PR #1707 (task k177e8dyrnykk3c56yf2b0pgfs8hhz06)
             "caa1e2820a64e01e092e5b83b58ccbee3fc744a0",
+            # R-53 318 -> 317, list_messages day read folds sender and tenant into one filter (task k17cv03wd3g60gz3p498879f2d8hx4pv)
+            "7d23f8f55cb961f79d6cb30ba64928522b0e805c",
         }
         line = entry["output_line"]
         assert line.startswith((f"{rule}: ", f"{rule} VERDICT: ")), rule
