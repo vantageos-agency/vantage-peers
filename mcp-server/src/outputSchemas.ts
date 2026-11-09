@@ -2148,7 +2148,7 @@ export const softDeleteDocumentServedOutputSchema = z.looseObject({
 	markedCount: z
 		.number()
 		.describe(
-			"How many of its chunks were marked deleted; 0 when none were live.",
+			"How many of its chunks this call marked deleted, in its first batch of 200; the rest of a larger document is marked in the background. 0 when none were live.",
 		),
 });
 

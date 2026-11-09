@@ -106,7 +106,7 @@ export const SOFT_DELETE_DOCUMENT_TOOL_DESCRIPTION =
 	"Soft-delete all Knowledge Base chunks for a document. " +
 	"Marks every isLatest=true chunk for docId as isLatest=false — chunks remain in the DB for audit but are excluded from recall and search. " +
 	"Requires Clerk JWT with org_id (same org that ingested the document). One document per call. " +
-	"Returns { docId, markedCount }. EXAMPLE: soft_delete_document docId='abc-123-uuid'.";
+	"Returns { docId, markedCount }: docId is the document that was soft-deleted, markedCount counts the chunks marked deleted in this call's first batch; a larger document finishes in the background, so a count equal to the batch size means more were still being marked (0 when none was live, e.g. a repeated call). EXAMPLE: soft_delete_document docId='abc-123-uuid'.";
 
 export const softDeleteDocumentArgsSchema = z.object({
 	docId: z

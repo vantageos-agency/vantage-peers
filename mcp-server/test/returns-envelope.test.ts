@@ -87,7 +87,7 @@ function splitTopLevel(body: string): string[] {
  * reason it has none. The clause is the first "Returns" followed (within a
  * few words) by "{".
  */
-export function returnsTopLevel(
+function returnsTopLevel(
 	description: string,
 ):
 	| { names: string[]; children: Record<string, string[]> }
@@ -131,7 +131,7 @@ export function returnsTopLevel(
 }
 
 /** Where a description's Returns clause and its schema's top level disagree. */
-export function envelopeMismatch(tool: ServedTool): string | null {
+function envelopeMismatch(tool: ServedTool): string | null {
 	const top = Object.keys(tool.outputSchema?.properties ?? {}).sort();
 	if (top.length === 0) return "no output schema properties";
 	const r = returnsTopLevel(tool.description ?? "");

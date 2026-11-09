@@ -601,7 +601,12 @@ describe("the three get_* tools: description, schema and annotations say the sam
 				.map((s) => s.trim())
 				.filter(Boolean);
 			expect(named.length).toBeGreaterThan(2);
-			expect(named.filter((n) => !stored.has(n))).toEqual([]);
+			// A stored field, or a field the output schema declares beside the row
+			// (derived by the door: deliverableDivergence, contentTruncated).
+			const declared = new Set(Object.keys(t.outputSchema?.properties ?? {}));
+			expect(named.filter((n) => !stored.has(n) && !declared.has(n))).toEqual(
+				[],
+			);
 			expect(t.annotations?.readOnlyHint).toBe(true);
 			// a read-only fetch names no write tool as its purpose
 			expect(d).not.toMatch(/before (pause|update|delete)_/);
