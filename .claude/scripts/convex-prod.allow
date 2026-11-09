@@ -34,3 +34,6 @@ run migrations/backfill_org_clerk_id:run
 run migrations/agentOwnerBinding:count
 run migrations/authorBackfill:count
 run migrations/authorBackfill:stamp
+run migrations/fleetWriteStamp:count
+run migrations/fleetWriteStamp:run
+run migrations/fleetWriteStamp:revert
