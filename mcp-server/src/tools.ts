@@ -561,7 +561,7 @@ export const BILLING_SUMMARY_BY_PROJECT_TOOL_DESCRIPTION =
 		"EXAMPLE: billing_summary_by_project project='vantage-immo' from=1783000000000 to=1783949200149. " +
 		"unattributedTaskCount is split into noProjectCount (done task with no project, whatever its duration) and noDurationCount (a project but no measured duration); a task with neither counts in noProjectCount only. " +
 		"Pass listNoDuration=true to also get noDurationTasks [{taskId, assignedTo, project, completedAt}] (at most 200; noDurationTasksTruncated says when it is cut). " +
-		"A duration is never estimated. Returns {byProject: [{project, totalMinutes, taskCount}], unattributedTaskCount, noProjectCount, noDurationCount, truncated}.";
+		"A duration is never estimated. Returns {byProject: [{project, totalMinutes, taskCount, legacyTaskCount, legacyMinutes}], unattributedTaskCount, noProjectCount, noDurationCount, noDurationTasks?, noDurationTasksTruncated?, invalidDurationTaskCount, truncated}: legacyMinutes is the part of totalMinutes timed from start to close rather than by work segments, invalidDurationTaskCount the done tasks left out for a negative duration.";
 
 export const billingSummaryByProjectArgsSchema = z.object({
 	project: z
@@ -1180,10 +1180,21 @@ export const whoamiOutputSchema = z.looseObject({
 		),
 	actor: z
 		.looseObject({
-			agentId: z.string().nullable(),
-			orgId: z.string(),
-			agentName: z.string(),
-			orgSlug: z.string(),
+			agentId: z
+				.string()
+				.nullable()
+				.describe(
+					"The acting agent's stored ID (the identity tools take as an agent ID); null when the backend returned no ID.",
+				),
+			orgId: z
+				.string()
+				.describe("The permanent ID of the organisation the agent belongs to."),
+			agentName: z
+				.string()
+				.describe("The agent's current name: a label, not its identity."),
+			orgSlug: z
+				.string()
+				.describe("The slug of the organisation the agent belongs to."),
 		})
 		.nullable()
 		.describe(
@@ -2807,7 +2818,7 @@ export function registerTools(
 		},
 		"get_memory",
 		"Fetch a single memory by its memoryId, including relations and episode metadata. " +
-			"Returns the memory document as JSON (content, type, namespace, author, relations, episode fields, timestamps); an ID you may not read returns 'Memory not found'. " +
+			"Returns the memory row as JSON (content, type, namespace, createdBy, relations, isLatest, episode, createdAt, updatedAt): createdBy is the author, episode is present on an episode only; an ID you may not read returns 'Memory not found'. " +
 			"WHEN: use when you have a specific memoryId from a prior recall/store and need the full record. " +
 			"EXAMPLE: get_memory memoryId='j57dy3049btafda9m2f5d2ggk987ph3f'.",
 		{
@@ -3191,7 +3202,7 @@ export function registerTools(
 		"get_episode",
 		"Fetch a single episode by its memory document ID. " +
 			"Episodes are memories with type='episode' carrying context/goal/action/outcome/insight + severity. " +
-			"Returns the episode document as JSON (context, goal, action, outcome, insight, severity, namespace, author); an ID that is not an episode, or that you may not read, returns 'Episode not found'. " +
+			"Returns the episode's memory row as JSON (episode { context, goal, action, outcome, insight, severity }, content, namespace, createdBy, relations, createdAt, updatedAt): the structured fields are under episode, the author is createdBy; an ID that is not an episode, or that you may not read, returns 'Episode not found'. " +
 			"WHEN: use when you have an episodeId from store_episode or a prior search and need the full record. " +
 			"EXAMPLE: get_episode episodeId='j57dy3049btafda9m2f5d2ggk987ph3f'.",
 		{
@@ -5010,7 +5021,7 @@ export function registerTools(
 		},
 		"list_broadcast_status",
 		"Show read/unread receipt status for a broadcast message by messageId. " +
-			"Returns { messageId, channel, createdAt, receipts: [{ recipient, recipientInstanceId, read, readAt }], truncated, scopeFiltered? }. " +
+			"Returns { messageId, from, channel, createdAt, receipts: [{ recipient, recipientInstanceId, read, readAt }], truncated, scopeFiltered? }. " +
 			"WHEN: use after send_message to confirm all recipients acknowledged a critical announcement. " +
 			"EXAMPLE: list_broadcast_status messageId='j57dy3049btafda9m2f5d2ggk987ph3f'.",
 		{
@@ -12044,8 +12055,8 @@ export function registerTools(
 				"result set scoped in-handler via scopeFilterList(oauthCtx,...)/scopeFilterGet(oauthCtx,...)",
 		},
 		"get_message",
-		"Fetch a single peer message by its messageId with full body, channel, sender, sessionDay, and tenant scope. " +
-			"Returns the message document as JSON (content, channel, sender, sessionDay, tenant); an ID you may not read returns 'Message not found'. " +
+		"Fetch a single peer message by its messageId: its full body, sender, channel, session day and organisation. " +
+			"Returns the message row as JSON (content, from, fromInstanceId, channel, sessionDay, tenantId, createdAt): from is the sender, tenantId the organisation it was sent in; an ID you may not read returns 'Message not found'. " +
 			"WHEN: use when you have a messageId from list_messages/check_messages and need the raw row (e.g. " +
 			"for read-receipt audit, delete confirmation, or referencing in a fix pattern). " +
 			"EXAMPLE: get_message messageId='jn7eg21wdaxzdcpdxwkvhaxqnh88jqg2'.",

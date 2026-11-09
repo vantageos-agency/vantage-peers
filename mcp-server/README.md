@@ -249,7 +249,7 @@ _Applies to: Cloud and Self-host._
 
 - `check_messages` (read) — Check for unread messages addressed to a recipient role, returning receiptIds for acknowledgment.
 - `delete_message` (write, destructive) — Delete a message and all its receipts; only the original sender or system may delete.
-- `get_message` (read) — Fetch a single peer message by its messageId with full body, channel, sender, sessionDay, and tenant scope.
+- `get_message` (read) — Fetch a single peer message by its messageId: its full body, sender, channel, session day and organisation.
 - `list_broadcast_status` (read) — Show read/unread receipt status for a broadcast message by messageId.
 - `list_messages` (read) — List historical messages filtered by session day or sender, newest first; use check_messages for unread.
 - `mark_as_read` (write) — Mark one or more message receipts as read using receiptIds from check_messages.
