@@ -15,7 +15,7 @@ import {
 } from "./lib/auth";
 import { hasFleetStanding, requireFleetDoor } from "./lib/fleetStanding";
 import { isFleetSystemCaller } from "./lib/systemCaller";
-import { fleetOperatorRef } from "./lib/operatorOrg";
+import { fleetOperatorRef, fleetWriteClerkOrgId } from "./lib/operatorOrg";
 import { orgRefOfRow, orgRefOfScope } from "./lib/authOrgMapping";
 import {
 	agentIdOfLabelInOrg,
@@ -233,6 +233,9 @@ export const create = mutation({
 		}
 
 		const now = Date.now();
+		const fleetClerkOrgId = fleet
+			? await fleetWriteClerkOrgId(ctx.db, { isMaster: true })
+			: undefined;
 		return await ctx.db.insert("businessUnits", {
 			name: args.name,
 			description: args.description,
@@ -256,7 +259,9 @@ export const create = mutation({
 			// R-52 tenant stamp, derived from the verified scope and never from an
 			// argument. A fleet write is fleet-owned (unstamped), as `tasks` does.
 			...(fleet || scope.orgSlug === null
-				? {}
+				? fleetClerkOrgId === undefined
+					? {}
+					: { clerkOrgId: fleetClerkOrgId }
 				: {
 						orgId: scope.orgSlug,
 						clerkOrgId: scope.orgClerkId,

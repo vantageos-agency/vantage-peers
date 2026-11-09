@@ -1,3 +1,4 @@
+import { fleetWriteClerkOrgId } from "./lib/operatorOrg";
 import { v } from "convex/values";
 import { ConvexError } from "convex/values";
 import {
@@ -423,7 +424,9 @@ export const create = mutation({
 			...(createdById !== undefined ? { createdById } : {}),
 			createdAt: Date.now(),
 			orgId: stampScope.isMaster ? undefined : (stampScope.orgSlug as string),
-			clerkOrgId: stampScope.isMaster ? undefined : stampScope.orgClerkId,
+			clerkOrgId: stampScope.isMaster
+				? await fleetWriteClerkOrgId(ctx.db, stampScope)
+				: stampScope.orgClerkId,
 		});
 		await syncParticipantIndex(ctx, noteId, args.participants);
 		return noteId;

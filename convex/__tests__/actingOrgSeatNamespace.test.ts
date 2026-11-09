@@ -28,6 +28,7 @@ import { testClerkOrgId } from "../../tests/fixtures/testClerkOrgId";
 import { api } from "../_generated/api";
 import type { Id } from "../_generated/dataModel";
 import schema from "../schema";
+import { operatorClerkOrgId } from "../../tests/lib/operatorClerkOrgId";
 
 const modules = Object.fromEntries(
 	Object.entries(import.meta.glob("../**/*.ts")).filter(
@@ -174,7 +175,9 @@ describe("memories:storeMemory / listMemories under an acting org", () => {
 			createdBy: ALICE,
 		} as never);
 		const row = await t.run((ctx) => ctx.db.get(legacy as Id<"memories">));
-		expect(row?.clerkOrgId).toBeUndefined();
+		// The master write carries the operator org's ID, a different org than A's: the
+		// row is still hidden from A's acting-org read.
+		expect(row?.clerkOrgId).toBe(await operatorClerkOrgId(t));
 		expect(await list(t, `project/${A}`)).toEqual([]);
 		await drain(t);
 	});
