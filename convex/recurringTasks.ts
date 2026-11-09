@@ -28,7 +28,7 @@ import {
 import { verifiedPersonValidator } from "./lib/personPrincipal";
 import { assigneeIdForRead, requireAssigneeId } from "./lib/taskActors";
 import { clerkOrgIdForSlug } from "./lib/orgClerkId";
-import { fleetOperatorRef } from "./lib/operatorOrg";
+import { fleetOperatorRef, fleetWriteClerkOrgId } from "./lib/operatorOrg";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Fail-closed multi-tenant fix (defect class: authority attached to an
@@ -268,7 +268,7 @@ export const create = mutation({
 		const rowClerkOrgId = scope.isMaster
 			? forwardedIsClient
 				? forwardedOrgId
-				: undefined
+				: await fleetWriteClerkOrgId(ctx.db, scope)
 			: scope.orgClerkId;
 
 		// HUMAN path: the schedule is authored as "user:<subject>" (a colon-prefixed

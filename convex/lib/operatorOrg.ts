@@ -59,6 +59,28 @@ export async function fleetOperatorSlug(
 	return op.kind === "one" ? op.slug : undefined;
 }
 
+/**
+ * The permanent org ID a FLEET-MASTER write stamps on its row: the operator
+ * organisation's `clerkOrgId`, derived from the active `orgKind: "operator"`
+ * mapping (never typed). Task k176x68sj2jkwx46nshvtt40e18ht1xh: a row written
+ * through the master seat carried no organisation, so `erase:eraseRow` refused it
+ * `target-unstamped` and the system could not take it back.
+ *
+ * Defined only for a master scope (the service account or an internal system
+ * call); an organisation member, or a service account acting FOR an organisation,
+ * is not master and keeps its own stamp. `undefined` when the operator org is not
+ * exactly one active mapping with a permanent ID: nothing is invented, the row
+ * stays as it was before. A stamp is a write-time fact, never a grant.
+ */
+export async function fleetWriteClerkOrgId(
+	db: DatabaseReader,
+	scope: { isMaster: boolean },
+): Promise<string | undefined> {
+	if (!scope.isMaster) return undefined;
+	const op = await findOperatorOrg(db);
+	return op.kind === "one" ? op.clerkOrgId : undefined;
+}
+
 /** The operator org as the package names it, only when EXACTLY ONE active one exists. */
 export async function fleetOperatorRef(
 	db: DatabaseReader,

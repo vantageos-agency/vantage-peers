@@ -25,6 +25,7 @@ import { testClerkOrgId } from "../../tests/fixtures/testClerkOrgId";
 import { api } from "../_generated/api";
 import type { Id } from "../_generated/dataModel";
 import schema from "../schema";
+import { operatorClerkOrgId } from "../../tests/lib/operatorClerkOrgId";
 
 const modules = Object.fromEntries(
 	Object.entries(import.meta.glob("../**/*.ts")).filter(
@@ -279,7 +280,7 @@ describe("tasks:create — a service-account write for a verified org", () => {
 		expect(rows).toHaveLength(3);
 		for (const row of rows) {
 			expect(row.orgId).toBeUndefined();
-			expect(row.clerkOrgId).toBeUndefined();
+			expect(row.clerkOrgId).toBe(await operatorClerkOrgId(t));
 		}
 	});
 });
@@ -365,7 +366,7 @@ describe("missions:create — a service-account write for a verified org", () =>
 		expect(rows).toHaveLength(2);
 		for (const row of rows) {
 			expect(row.orgId).toBeUndefined();
-			expect(row.clerkOrgId).toBeUndefined();
+			expect(row.clerkOrgId).toBe(await operatorClerkOrgId(t));
 		}
 	});
 

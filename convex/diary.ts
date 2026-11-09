@@ -13,7 +13,7 @@ import { requireResolvedCaller, verifiedActorValidator, withOrgScope, type OrgSc
 import { seatAgentIdOf } from "./lib/seatNamespace";
 import { memoryAuthorIdOf } from "./lib/memoryTenant";
 import { isFleetSystemCaller } from "./lib/systemCaller";
-import { fleetOperatorRef } from "./lib/operatorOrg";
+import { fleetOperatorRef, fleetWriteClerkOrgId } from "./lib/operatorOrg";
 import { orgRefOfRow, orgRefOfScope } from "./lib/authOrgMapping";
 import { memberActorOf, resolveHumanActor } from "./lib/humanActor";
 import { requireMemberWriterRole } from "./memberWriterRoles";
@@ -325,6 +325,7 @@ export const write = mutation({
 			return existing._id;
 		}
 
+		const fleetClerkOrgId = await fleetWriteClerkOrgId(ctx.db, tenantScope);
 		return await ctx.db.insert("diary", {
 			date: args.date,
 			orchestrator: args.orchestrator,
@@ -335,9 +336,11 @@ export const write = mutation({
 			...(createdById === undefined ? {} : { createdById }),
 			createdAt: now,
 			// R-52 tenant stamp, derived from the verified scope. A master write is
-			// fleet-owned (unstamped), as `tasks` does.
+			// fleet-owned: it carries the operator organisation's permanent ID.
 			...(tenantScope.isMaster || tenantScope.orgSlug === null
-				? {}
+				? fleetClerkOrgId === undefined
+					? {}
+					: { clerkOrgId: fleetClerkOrgId }
 				: {
 						orgId: tenantScope.orgSlug,
 						clerkOrgId: tenantScope.orgClerkId,

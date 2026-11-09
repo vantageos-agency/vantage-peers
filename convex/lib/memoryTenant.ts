@@ -15,6 +15,7 @@ import type { MutationCtx, QueryCtx } from "../_generated/server";
 import type { OrgScope } from "./auth";
 import { lookupOrgMapping } from "./authOrgMapping";
 import { memberActorOf } from "./humanActor";
+import { fleetWriteClerkOrgId } from "./operatorOrg";
 import { clerkOrgIdForSlug } from "./orgClerkId";
 
 /** The org label of a `team/<label>[/...]` namespace, or null for any other namespace. */
@@ -78,7 +79,14 @@ export async function memoryStampForWrite(
 	namespace: string,
 	door: string,
 ): Promise<string | undefined> {
-	if (hasFleetRead(scope)) return await stampOfNamespace(ctx, namespace);
+	if (hasFleetRead(scope)) {
+		// A team namespace names its org; any other namespace is the fleet's own, and
+		// a fleet-master row carries the operator organisation's ID (never unstamped).
+		return (
+			(await stampOfNamespace(ctx, namespace)) ??
+			(await fleetWriteClerkOrgId(ctx.db, scope))
+		);
+	}
 	if (scope.orgClerkId === undefined) {
 		throw new ConvexError(
 			`RBAC_DENIED: caller's organisation has no permanent org ID to stamp a memory with — ${JSON.stringify({ reason: "org-id-missing", door, orgSlug: scope.orgSlug })}`,

@@ -29,6 +29,7 @@ import { testClerkOrgId } from "../../tests/fixtures/testClerkOrgId";
 import { api } from "../_generated/api";
 import type { Id } from "../_generated/dataModel";
 import schema from "../schema";
+import { operatorClerkOrgId } from "../../tests/lib/operatorClerkOrgId";
 
 const modules = Object.fromEntries(
 	Object.entries(import.meta.glob("../**/*.ts")).filter(
@@ -318,7 +319,9 @@ describe("(b) writes are stamped, authored by the caller, and bound to the org I
 			content: "fleet",
 			createdBy: "sigma",
 		});
-		expect((await t.run((ctx) => ctx.db.get(fleet)))?.clerkOrgId).toBeUndefined();
+		expect((await t.run((ctx) => ctx.db.get(fleet)))?.clerkOrgId).toBe(
+			await operatorClerkOrgId(t),
+		);
 	});
 
 	test("(e) the service account soft-deletes any row", async () => {

@@ -12,6 +12,7 @@ import {
 import type { QueryCtx } from "./_generated/server";
 import type { Doc, Id } from "./_generated/dataModel";
 import { creatorValidator } from "./schema";
+import { fleetWriteClerkOrgId } from "./lib/operatorOrg";
 import {
 	lookupOrgMapping,
 	withOrgScope,
@@ -396,7 +397,7 @@ export const create = mutation({
 			updatedAt: now,
 			orgId: scope.isMaster ? undefined : (scope.orgSlug as string),
 			clerkOrgId: scope.isMaster
-				? undefined
+				? await fleetWriteClerkOrgId(ctx.db, scope)
 				: scope.orgClerkId,
 		});
 	},

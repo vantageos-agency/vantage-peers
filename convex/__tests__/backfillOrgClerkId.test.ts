@@ -22,6 +22,7 @@ import schema from "../schema";
 import { mintAgentSecret } from "../../tests/lib/seedFleetAgents";
 import { seedRosterAgent } from "../../tests/fixtures/rosterAgent";
 import { agentIdOf, seedAgents } from "../../tests/lib/agentIdOf";
+import { operatorClerkOrgId } from "../../tests/lib/operatorClerkOrgId";
 
 const modules = Object.fromEntries(
 	Object.entries(import.meta.glob("../**/*.ts")).filter(
@@ -399,7 +400,7 @@ describe("new writes stamp the slug AND the Clerk org id", () => {
 		expect(titles).not.toContain("Slug only");
 	});
 
-	test("a fleet-master write stays unstamped on both columns", async () => {
+	test("a fleet-master write carries the operator org ID and no slug", async () => {
 		const t = createT();
 		await seedWorld(t);
 		const id = await t
@@ -413,7 +414,7 @@ describe("new writes stamp the slug AND the Clerk org id", () => {
 			});
 		const row = await idOf(t, id);
 		expect(row.orgId).toBeUndefined();
-		expect(row.clerkOrgId).toBeUndefined();
+		expect(row.clerkOrgId).toBe(await operatorClerkOrgId(t));
 	});
 
 	test("a message to a tenant stamps tenantId and tenantOrgId on the message and its receipt", async () => {

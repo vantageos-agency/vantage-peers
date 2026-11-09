@@ -18,6 +18,7 @@ import { convexTest } from "../../tests/fixtures/convexTestWithServiceAccount";
 import { testClerkOrgId } from "../../tests/fixtures/testClerkOrgId";
 import { api } from "../_generated/api";
 import schema from "../schema";
+import { operatorClerkOrgId } from "../../tests/lib/operatorClerkOrgId";
 
 const modules = Object.fromEntries(
 	Object.entries(import.meta.glob("../**/*.ts")).filter(
@@ -111,7 +112,7 @@ describe("the schedule carries the verified agent's organisation", () => {
 		});
 		const row = await t.run((ctx) => ctx.db.get(id));
 		expect(row?.orgId).toBeUndefined();
-		expect(row?.clerkOrgId).toBeUndefined();
+		expect(row?.clerkOrgId).toBe(await operatorClerkOrgId(t));
 	});
 
 	test("NO AGENT: the service account keeps writing fleet (unstamped) schedules", async () => {

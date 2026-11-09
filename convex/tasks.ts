@@ -87,7 +87,7 @@ import {
 	resolveReviewer,
 } from "./lib/reviewRouting";
 import { isFleetSystemCaller } from "./lib/systemCaller";
-import { fleetOperatorRef } from "./lib/operatorOrg";
+import { fleetOperatorRef, fleetWriteClerkOrgId } from "./lib/operatorOrg";
 import { orgRefOfRow } from "./lib/authOrgMapping";
 import {
 	enforceClosureGate,
@@ -753,6 +753,10 @@ async function insertTask(
 	// (`create`). Absent (the internal webhook / derivation paths, which have no
 	// caller) the ids are resolved from the labels within the row's own org.
 	actorIds?: { createdById?: string; assignedToId: string },
+	// The operator organisation's permanent ID for a FLEET-MASTER row (`orgId`
+	// undefined, written by the master scope): the slug-less stamp the erase rule
+	// reads. Only `create` passes it; the webhook and derivation paths have no master.
+	fleetClerkOrgId?: string,
 ): Promise<import("./_generated/dataModel").Id<"tasks">> {
 	// Day 130 follow-up #2 (Eta REVISE, PR #1089) — the closure-gate
 	// exemption is NOT driven by `createdBy` (see taskClosureGate.ts):
@@ -802,7 +806,7 @@ async function insertTask(
 					assignedTo: args.assignedTo,
 				})),
 		// Permanent Clerk org id of the same tenant (Pi ruling (d)).
-		clerkOrgId: await clerkOrgIdForSlug(ctx, orgId),
+		clerkOrgId: (await clerkOrgIdForSlug(ctx, orgId)) ?? fleetClerkOrgId,
 		...(origin !== undefined ? { origin } : {}),
 		createdAt: now,
 		updatedAt: now,
@@ -1032,6 +1036,12 @@ export const create = mutation({
 				`INVALID_ASSIGNEE: tasks:create needs the assignee, as \`assignedTo\` (a name) or \`assignedToAgentId\` (an agent ID from list_peers \`agentId\`) — ${JSON.stringify({ door: "tasks:create" })}`,
 			);
 		}
+		// A fleet-master row (no organisation slug) carries the operator organisation's
+		// permanent ID, so the erase rule can place it.
+		const fleetClerkOrgId =
+			(linkedAssignee?.orgSlug ?? rowOrgId) === undefined
+				? await fleetWriteClerkOrgId(ctx.db, scope)
+				: undefined;
 		if (taskArgs.createdBy === undefined) {
 			// HUMAN path: createdBy is the actor "user:<subject>" (schema keeps it a
 			// string; the prefix means it can never equal a roster slug, so it grants
@@ -1046,6 +1056,7 @@ export const create = mutation({
 				linkedAssignee?.orgSlug ?? rowOrgId,
 				undefined,
 				{ createdById: actor, assignedToId },
+				fleetClerkOrgId,
 			);
 		}
 		// M7: createdById is the VERIFIED caller's ID (scope.callerActorId, from the
@@ -1062,6 +1073,7 @@ export const create = mutation({
 			linkedAssignee?.orgSlug ?? rowOrgId,
 			undefined,
 			{ ...(createdById !== undefined ? { createdById } : {}), assignedToId },
+			fleetClerkOrgId,
 		);
 	},
 });

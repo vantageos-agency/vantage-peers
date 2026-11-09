@@ -21,6 +21,7 @@ import { api } from "../_generated/api";
 import type { Id } from "../_generated/dataModel";
 import { normalizeOrchestratorId } from "../_helpers/normalizeOrchestratorId";
 import schema from "../schema";
+import { operatorClerkOrgId } from "../../tests/lib/operatorClerkOrgId";
 
 const modules = Object.fromEntries(
 	Object.entries(import.meta.glob("../**/*.ts")).filter(
@@ -184,7 +185,7 @@ describe("briefingNotes.create carries the seat's verified org", () => {
 		});
 		const row = await t.run((ctx) => ctx.db.get(id));
 		expect(row?.orgId).toBeUndefined();
-		expect(row?.clerkOrgId).toBeUndefined();
+		expect(row?.clerkOrgId).toBe(await operatorClerkOrgId(t));
 		const got = await m.query(api.briefingNotes.get, { noteId: id });
 		expect(got?._id).toBe(id);
 	});
