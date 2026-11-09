@@ -25,10 +25,12 @@ import {
 	closeWorld,
 	connectAs,
 	freshBackend,
+	personToken,
 	ORG_ID,
 	SLUG,
 	tokenFor,
 } from "./seatWorld.js";
+import { membership } from "./authorizeHarness.js";
 
 export type CallResult = {
 	isError?: boolean;
@@ -56,7 +58,13 @@ export type Seeded = World["fixtures"]["ids"] & {
 	>;
 	receiptId: string;
 	/** The rows the erase tools remove, and the debate room. */
-	erase: { memoryId: string; taskId: string };
+	erase: {
+		memoryId: string;
+		taskId: string;
+		/** A fix pattern (with an attempt) the operator admin erases, and one the refusal poles try. */
+		patternId: string;
+		keptPatternId: string;
+	};
 	roomId: string;
 	/** IDs no row carries any more (a deleted mission), for the not-found poles. */
 	goneMissionId: string;
@@ -82,8 +90,8 @@ type Read = (tool: string, args: Record<string, unknown>) => Promise<unknown>;
 export type Call = {
 	/** Any served tool: the structured ones are checked against their schema too. */
 	tool: string;
-	/** person: a person with a bound agent; master: the fleet master bearer; fleet-agent: that bearer with a fleet agent's credential. */
-	as: "person" | "master" | "fleet-agent";
+	/** person: a person with a bound agent; master: the fleet master bearer; fleet-agent: that bearer with a fleet agent's credential; operator-admin: a person who is org:admin of the operator organisation. */
+	as: "person" | "master" | "fleet-agent" | "operator-admin";
 	args: (
 		s: Seeded,
 		read: Read,
@@ -353,6 +361,12 @@ export const CALLS: Call[] = [
 		tool: "erase_row",
 		as: "person",
 		args: (s) => ({ table: "tasks", rowId: s.erase.taskId }),
+	},
+	// a fix pattern is owned by the operator organisation: its admin erases it
+	{
+		tool: "erase_fix_pattern",
+		as: "operator-admin",
+		args: (s) => ({ patternId: s.erase.patternId }),
 	},
 	// the fleet doors: the master acting as a fleet agent (its credential)
 	{ tool: "improvisation_digest", as: "fleet-agent", args: () => ({}) },
@@ -1088,6 +1102,30 @@ export async function runE2E(): Promise<void> {
 			updatedAt: now,
 		});
 		const eraseTaskId = await task("to erase", "ulysse", "e");
+		const erasePattern = async () => {
+			const id = await ctx.db.insert("fixPatterns", {
+				symptom: "to erase",
+				rootCause: "a cause",
+				tags: [],
+				stack: [],
+				sourceProject: "p",
+				createdBy: "sigma",
+				severity: "minor",
+				createdAt: now,
+				updatedAt: now,
+			});
+			await ctx.db.insert("fixAttempts", {
+				patternId: id,
+				description: "tried",
+				worked: false,
+				why: "because",
+				createdBy: "sigma",
+				createdAt: now,
+			});
+			return id;
+		};
+		const erasePatternId = await erasePattern();
+		const keptPatternId = await erasePattern();
 		const messages = await ctx.db.query("messages").collect();
 		const receiptId = await ctx.db.insert("messageReceipts", {
 			messageId: messages[0]._id,
@@ -1102,7 +1140,12 @@ export async function runE2E(): Promise<void> {
 			tasks,
 			receiptId: String(receiptId),
 			goneMissionId: String(gone),
-			erase: { memoryId: String(eraseMemoryId), taskId: String(eraseTaskId) },
+			erase: {
+				memoryId: String(eraseMemoryId),
+				taskId: String(eraseTaskId),
+				patternId: String(erasePatternId),
+				keptPatternId: String(keptPatternId),
+			},
 		};
 	});
 	seeded = {
@@ -1118,6 +1161,8 @@ export async function runE2E(): Promise<void> {
 		erase: {
 			memoryId: world.ids.alias(extra.erase.memoryId),
 			taskId: world.ids.alias(extra.erase.taskId),
+			patternId: world.ids.alias(extra.erase.patternId),
+			keptPatternId: world.ids.alias(extra.erase.keptPatternId),
 		},
 		roomId: world.ids.alias(await openDebateRoom()),
 		kb: {},
@@ -1129,6 +1174,15 @@ export async function runE2E(): Promise<void> {
 	const fleetAgent = await connectAs(
 		"test-master-token",
 		await fleetAgentCredential(),
+	);
+	// An admin of the operator organisation, signed in as a person (no agent): the
+	// only caller a fix pattern's erase serves. The operator mapping exists since
+	// fleetAgentCredential seeded it.
+	world.harness.setMemberships("user_fleet_admin", [
+		membership(FLEET_ORG_ID, FLEET_SLUG, "org:admin"),
+	]);
+	const operatorAdmin = await connectAs(
+		await personToken(world.harness, "user_fleet_admin", "", FLEET_ORG_ID),
 	);
 	for (const t of [
 		...(await person.listTools()).tools,
@@ -1162,13 +1216,29 @@ export async function runE2E(): Promise<void> {
 				? master
 				: call.as === "fleet-agent"
 					? fleetAgent
-					: person;
+					: call.as === "operator-admin"
+						? operatorAdmin
+						: person;
 		const r = (await client.callTool({
 			name: call.tool,
 			arguments: await call.args(seeded, read),
 		})) as CallResult;
 		results.set(call.tool, r);
 		call.after?.(r, seeded);
+	}
+	// The refusals of erase_fix_pattern: an agent seat of the operator org (the fleet
+	// agent, never an admin) and a person of a client organisation.
+	for (const [pole, client] of [
+		["refused:erase_fix_pattern:agent-seat", fleetAgent],
+		["refused:erase_fix_pattern:client-person", person],
+	] as const) {
+		poles.set(
+			pole,
+			(await client.callTool({
+				name: "erase_fix_pattern",
+				arguments: { patternId: seeded.erase.keptPatternId },
+			})) as CallResult,
+		);
 	}
 	poles.set(
 		"truncated",
@@ -1226,6 +1296,7 @@ export async function runE2E(): Promise<void> {
 	await person.close();
 	await master.close();
 	await fleetAgent.close();
+	await operatorAdmin.close();
 }
 
 /** Undo what runE2E installed. */
