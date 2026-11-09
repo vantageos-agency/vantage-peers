@@ -1381,6 +1381,12 @@ MASTER_ONLY.push(
 		tables: ["fixPatterns", "fixAttempts"],
 	},
 	{
+		tool: "erase_fix_pattern",
+		why: "convex/fixPatterns.ts erase: the owning organisation of a fix pattern is the operator org; a client org's agent is refused by ID (assertMayErase)",
+		args: async () => ({ patternId: await fixPatternRow() }),
+		tables: ["fixPatterns", "fixAttempts"],
+	},
+	{
 		tool: "link_issue_to_pattern",
 		why: "tools.ts kind master + fixPatterns requireFleetMaster",
 		args: async () => ({ patternId: await fixPatternRow(), issueId: "i-1" }),
