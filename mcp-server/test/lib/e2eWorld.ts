@@ -701,6 +701,25 @@ async function fleetAgentCredential(): Promise<string> {
 			createdAt: now,
 			updatedAt: now,
 		});
+		// A closed task of the operator organisation whose note states a
+		// commit and a pull request without citing a source: what
+		// improvisation_digest flags (a real sample row for its schema).
+		await ctx.db.insert("tasks", {
+			title: "a fleet task",
+			assignedTo: "sigma",
+			assignedToId: String(id),
+			priority: "low",
+			status: "done",
+			project: "fleet",
+			completionNote: "Merged PR #4242 at commit abc1234def, deployed.",
+			createdBy: "sigma",
+			createdById: String(id),
+			createdAt: now,
+			updatedAt: now,
+			completedAt: now,
+			orgId: FLEET_SLUG,
+			clerkOrgId: FLEET_ORG_ID,
+		});
 		return id;
 	});
 	const minted = (await world.t
