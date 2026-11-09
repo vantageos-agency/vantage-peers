@@ -15,7 +15,9 @@
  */
 
 import { describe, expect, it } from "vitest";
+import { pageStructured } from "../structuredResult.js";
 import {
+	capListResponse,
 	capListResponseBytes,
 	MAX_LIST_RESPONSE_BYTES,
 } from "../tools.js";
@@ -155,5 +157,54 @@ describe("capListResponseBytes — Day 89 regression (Pi 75k overflow)", () => {
 		const parsed = JSON.parse(out);
 		expect(parsed._meta._truncated).toBe(true);
 		expect(parsed._meta._total).toBe(30);
+	});
+});
+
+// task k17592gg5t2tencwxks3kysghx8htqg8: the structuredContent of a list is
+// built from what the cap did, so `truncated` is true exactly when it cut.
+describe("capListResponse — says whether it cut, and what the text shows", () => {
+	const big = Array.from({ length: 10 }, (_, i) => ({
+		i,
+		body: "y".repeat(10_000),
+	}));
+
+	it("under the cap: the text unchanged, every row shown, truncated false", () => {
+		const items = [{ a: 1 }];
+		const raw = JSON.stringify(items, null, 2);
+		const out = capListResponse(items, raw, "list_tasks");
+		expect(out).toEqual({ text: raw, shown: items, truncated: false });
+		expect(pageStructured(items, out)).toEqual({
+			items,
+			nextCursor: null,
+			truncated: false,
+		});
+	});
+
+	it("over the cap: the same text capListResponseBytes writes, the rows it shows, truncated true", () => {
+		const raw = JSON.stringify(big, null, 2);
+		const out = capListResponse(big, raw, "list_tasks");
+		expect(out.truncated).toBe(true);
+		expect(out.text).toBe(capListResponseBytes(big, raw, "list_tasks"));
+		expect(out.shown).toEqual(JSON.parse(out.text).items);
+		expect(out.shown.length).toBeLessThan(big.length);
+		expect(pageStructured({ items: big, nextCursor: "c" }, out)).toEqual({
+			items: out.shown,
+			nextCursor: null,
+			truncated: true,
+		});
+	});
+
+	it("an envelope it cannot cut (items not an array) is uncut, its page read as is", () => {
+		const page = { items: big, nextCursor: "c", scopeFiltered: 2 };
+		const raw = JSON.stringify(page, null, 2);
+		const out = capListResponse(page, raw, "list_peers");
+		expect(out.truncated).toBe(false);
+		expect(out.text).toBe(raw);
+		expect(pageStructured(page, out)).toEqual({
+			items: big,
+			nextCursor: "c",
+			truncated: false,
+			scopeFiltered: 2,
+		});
 	});
 });

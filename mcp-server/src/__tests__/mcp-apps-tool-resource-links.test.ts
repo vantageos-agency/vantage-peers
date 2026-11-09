@@ -39,6 +39,7 @@ const ROWS: Record<string, unknown> = {
 	"tasks:list": [
 		{
 			_id: ID,
+			_creationTime: 1,
 			title: "Ship apps",
 			status: "todo",
 			priority: "high",
@@ -47,14 +48,24 @@ const ROWS: Record<string, unknown> = {
 		},
 	],
 	"messages:listMessages": [
-		{ _id: ID, from: "pi", to: "sigma", content: "hello", _creationTime: 1 },
+		{
+			_id: ID,
+			from: "pi",
+			to: "sigma",
+			content: "hello",
+			_creationTime: 1,
+			createdAt: 1,
+		},
 	],
 	"missions:list": [
 		{
 			_id: ID,
+			_creationTime: 1,
 			name: "m",
 			status: "execute",
 			pilot: "sigma",
+			priority: "high",
+			project: "p",
 			createdBy: "sigma",
 		},
 	],
@@ -62,10 +73,15 @@ const ROWS: Record<string, unknown> = {
 		value: [
 			{
 				_id: ID,
+				_creationTime: 1,
 				namespace: "global",
-				type: "fact",
+				type: "reference",
 				content: "c",
 				createdBy: "sigma",
+				relations: [],
+				isLatest: true,
+				createdAt: 1,
+				updatedAt: 1,
 			},
 		],
 		isDone: true,
@@ -101,6 +117,7 @@ const LINKED: ReadonlyArray<
 		[
 			{
 				_id: ID,
+				_creationTime: 1,
 				title: "Ship apps",
 				status: "todo",
 				priority: "high",
@@ -112,7 +129,16 @@ const LINKED: ReadonlyArray<
 		"list_messages",
 		{},
 		"messages-feed",
-		[{ _id: ID, from: "pi", to: "sigma", content: "hello", _creationTime: 1 }],
+		[
+			{
+				_id: ID,
+				from: "pi",
+				to: "sigma",
+				content: "hello",
+				_creationTime: 1,
+				createdAt: 1,
+			},
+		],
 	],
 	[
 		"list_missions",
@@ -121,9 +147,12 @@ const LINKED: ReadonlyArray<
 		[
 			{
 				_id: ID,
+				_creationTime: 1,
 				name: "m",
 				status: "execute",
 				pilot: "sigma",
+				priority: "high",
+				project: "p",
 				createdBy: "sigma",
 			},
 		],
@@ -136,10 +165,15 @@ const LINKED: ReadonlyArray<
 			items: [
 				{
 					_id: ID,
+					_creationTime: 1,
 					namespace: "global",
-					type: "fact",
+					type: "reference",
 					content: "c",
 					createdBy: "sigma",
+					relations: [],
+					isLatest: true,
+					createdAt: 1,
+					updatedAt: 1,
 				},
 			],
 		},
@@ -179,6 +213,15 @@ const LINKED: ReadonlyArray<
 // text, task k1793xkjhzh1xm23gmmwjgwfyx8htbv0): the app document prefers it,
 // and it renders the same rows (payloadOf in src/ui-resources/apps.ts).
 const STRUCTURED_LINKED = new Set(["get_briefing_note"]);
+// Linked lists whose structuredContent is the page form of their unchanged
+// text (task k17592gg5t2tencwxks3kysghx8htqg8): { items, nextCursor,
+// truncated }; the app document reads `items` from it (rowsOf).
+const PAGED_LINKED = new Set([
+	"list_tasks",
+	"list_messages",
+	"list_missions",
+	"list_memories",
+]);
 
 function masterCtx(): OAuthContext {
 	return {
@@ -259,6 +302,14 @@ describe("pole 3, FALLBACK: the text result is unchanged by the link", () => {
 			]);
 			if (STRUCTURED_LINKED.has(tool)) {
 				expect(res.structuredContent).toEqual(before);
+			} else if (PAGED_LINKED.has(tool)) {
+				expect(res.structuredContent).toEqual({
+					items: Array.isArray(before)
+						? before
+						: (before as { items: unknown[] }).items,
+					nextCursor: null,
+					truncated: false,
+				});
 			} else {
 				expect(res.structuredContent).toBeUndefined();
 			}

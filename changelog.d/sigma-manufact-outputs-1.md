@@ -1,0 +1,4 @@
+---
+section: Added
+---
+- **The 23 lists and searches return `structuredContent` with a described `outputSchema`.** `recall`, `text_search`, `hybrid_search`, `search_tasks_by_keyword`, `search_messages_by_keyword`, `search_briefing_notes_by_keyword`, `search_episodes_by_keyword`, `search_episodes_by_semantic`, `search_fix_patterns`, `get_tool_usage` and `get_owner_tool_usage` return `{ items }`; `list_episodes`, `list_memories`, `list_peers`, `list_messages`, `list_tasks`, `list_tasks_by_mission`, `list_missions`, `list_diaries`, `list_briefing_notes`, `list_recurring_tasks`, `list_repo_mappings` and `list_fix_patterns` return `{ items, nextCursor, truncated }` (plus `scopeFiltered` when rows were withheld), `truncated` true exactly when the 60 KB response cap cut the page. The text content of every one of them is unchanged; a refusal or error carries no structured content. 71 tools now declare an output schema. Task k17592gg5t2tencwxks3kysghx8htqg8 (outputs 1/3).
