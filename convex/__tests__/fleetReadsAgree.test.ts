@@ -13,7 +13,6 @@
  * POLES per read: REFUSED / ABSENT / PRESENT.
  */
 
-import { ConvexError } from "convex/values";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import { convexTest } from "../../tests/fixtures/convexTestWithServiceAccount";
 import { seedFleetAgents } from "../../tests/lib/seedFleetAgents";
@@ -68,7 +67,7 @@ const refusal = async (fn: () => Promise<unknown>): Promise<string> => {
 	try {
 		await fn();
 	} catch (e) {
-		const data = (e as ConvexError<unknown>).data;
+		const data = (e as { data?: unknown }).data;
 		return typeof data === "string" ? data : JSON.stringify(data);
 	}
 	throw new Error("expected a refusal, got a success");

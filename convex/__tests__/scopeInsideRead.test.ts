@@ -633,7 +633,7 @@ describe("single-row doors — the claim gates the row before it is returned", (
 		expect(JSON.stringify(master)).toContain("foreign-episode");
 	});
 
-	test("fixPatterns:get: a pattern outside the bearer's roster is answered null before its attempts are read", async () => {
+	test("fixPatterns:get: a pattern outside the bearer's roster is refused RBAC_DENIED before its attempts are read", async () => {
 		const t = createT();
 		const ids = await t.run(async (ctx) => {
 			const mk = async (createdBy: string) =>
@@ -655,11 +655,13 @@ describe("single-row doors — the claim gates the row before it is returned", (
 			callerIdentities: [OWN_ROSTER],
 		});
 		expect(JSON.stringify(served)).toContain("symptom of alice");
-		const hidden = await asService(t).query(api.fixPatterns.get, {
-			patternId: ids.foreign,
-			callerIdentities: [OWN_ROSTER],
-		});
-		expect(hidden).toBeNull();
+		// Refused with RBAC_DENIED (never null: null is the bytes of an absent id).
+		await expect(
+			asService(t).query(api.fixPatterns.get, {
+				patternId: ids.foreign,
+				callerIdentities: [OWN_ROSTER],
+			}),
+		).rejects.toMatchObject({ data: expect.stringContaining("RBAC_DENIED") });
 		// Master (no roster): reads the row unchanged.
 		const master = await asService(t).query(api.fixPatterns.get, {
 			patternId: ids.foreign,

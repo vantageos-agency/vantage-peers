@@ -5,6 +5,7 @@ import { requireId } from "./lib/ids";
 import { creatorValidator, severityValidator } from "./schema";
 import { verifiedActorValidator, withOrgScope } from "./lib/auth";
 import type { OrgScope } from "./lib/auth";
+import { rbacDenied } from "./lib/inboxReader";
 import { fleetPartyId, requireFleetAgentActor } from "./lib/fleetActors";
 import { requireVerifiedActorPrincipal } from "./lib/actingPrincipal";
 import { requireFleetDoor, scopeWithFleetStanding } from "./lib/fleetStanding";
@@ -238,8 +239,9 @@ export const get = query({
 		// internal table with no tenant column, so the only narrowing available is
 		// the creator: when this is present the pattern is read, gated on its
 		// creator BEFORE its attempts are read, and a pattern the bearer's roster
-		// does not name is answered `null` — the same bytes as an absent id, the
-		// MCP tool's "not found". Narrowing only: absent means the master reads
+		// does not name is REFUSED with RBAC_DENIED (never null: null is the bytes of
+		// an absent id, the MCP tool's "not found"; an id that does not exist stays
+		// null). Narrowing only: absent means the master reads
 		// the row unchanged, and a claim never widens what this master-only door
 		// admits (a non-master caller is refused above, before any row is read).
 		callerIdentities: v.optional(v.array(v.string())),
@@ -322,12 +324,22 @@ export const get = query({
 			// operator organisation (a stamped ID, else its label resolved once there);
 			// a client organisation's agent bearing the same label is another agent.
 			const creatorId = await fleetPartyId(ctx, undefined, pattern.createdBy);
-			if (creatorId !== args.verifiedActor.agentId) return null;
+			if (creatorId !== args.verifiedActor.agentId) {
+				throw rbacDenied(
+					"fixPatterns:get",
+					"not-in-creator-roster",
+					`the caller may not read fix pattern ${args.patternId}: it was created by another agent. This is a refusal, not an absence`,
+				);
+			}
 		} else if (
 			args.callerIdentities !== undefined &&
 			!args.callerIdentities.includes(pattern.createdBy)
 		) {
-			return null;
+			throw rbacDenied(
+				"fixPatterns:get",
+				"not-in-creator-roster",
+				`the caller may not read fix pattern ${args.patternId}: it was created by another agent. This is a refusal, not an absence`,
+			);
 		}
 
 		const attempts = await ctx.db

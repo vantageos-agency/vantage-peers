@@ -1,11 +1,12 @@
 import { hasFleetRead } from "@vantageos/cloud-identity";
 import { v, ConvexError } from "convex/values";
-import { internalMutation, type MutationCtx } from "./_generated/server";
+import { internalMutation, type MutationCtx, type QueryCtx } from "./_generated/server";
 import { mutation, query } from "./lib/functions";
 import { internal } from "./_generated/api";
 import { memoryTypeValidator, creatorValidator, relationTypeValidator, severityValidator } from "./schema";
 import { requireId } from "./lib/ids";
 import { isMcpBoundMaster, requireResolvedCaller, verifiedActorValidator, withOrgScope, type OrgScope } from "./lib/auth";
+import { requireFleetDoor } from "./lib/fleetStanding";
 import { ERASE_COVERED, assertMayErase, collectMemoryChain, memoryChainMayErase, resolveEraseCaller } from "./lib/eraseRow";
 import { resolveVerifiedPerson, verifiedPersonValidator } from "./lib/personPrincipal";
 import { liveOnly, liveOrNull } from "./lib/retired";
@@ -369,13 +370,65 @@ const listMemoriesResultValidator = v.object({
   isDone: v.boolean(),
 });
 
+// listMemories without a namespace: the fleet master reads across every namespace
+// through the `by_type` index (newest first). `type` is required because the
+// index is the bound; without it the read would be a table scan.
+async function listAcrossNamespaces(
+  ctx: QueryCtx,
+  scope: OrgScope,
+  args: {
+    type?: Doc<"memories">["type"];
+    createdBy?: Doc<"memories">["createdBy"];
+    includeSuperseded?: boolean;
+    limit?: number;
+    paginationOpts?: { numItems: number; cursor: string | null };
+  },
+) {
+  const type = args.type;
+  if (type === undefined) {
+    throw new ConvexError(
+      `INVALID_ARGUMENT: memories:listMemories without a namespace reads every namespace and needs a type — ${JSON.stringify({ registration: "memories:listMemories", missing: "type" })}`,
+    );
+  }
+  const includeRetired = args.includeSuperseded === true && hasFleetRead(scope);
+  const keep = <T extends { createdBy?: string; clerkOrgId?: string; isLatest: boolean }>(
+    rows: T[],
+  ): T[] => {
+    const visible = rows.filter((r) => memoryVisibleToScope(scope, r));
+    const owned = includeRetired ? visible : liveOnly("memories", visible);
+    return args.createdBy === undefined
+      ? owned
+      : owned.filter((r) => r.createdBy === args.createdBy);
+  };
+  const base = ctx.db
+    .query("memories")
+    .withIndex("by_type", (q) =>
+      includeRetired ? q.eq("type", type) : q.eq("type", type).eq("isLatest", true),
+    )
+    .order("desc");
+  if (args.paginationOpts !== undefined) {
+    const r = await base.paginate(args.paginationOpts);
+    return {
+      value: keep(r.page),
+      continueCursor: r.isDone ? null : r.continueCursor,
+      isDone: r.isDone,
+    };
+  }
+  const page = await base.take(args.limit ?? 50);
+  return { value: keep(page), continueCursor: null, isDone: true };
+}
+
+
 export const listMemories = query({
   args: {
     // The agent the MCP transport verified, by its agents-row ID (convex/lib/seatNamespace.ts):
     // the only key to `orchestrator/<its own agent ID>` for a seat acting for its org.
     verifiedActor: v.optional(verifiedActorValidator),
 	fields: v.optional(v.union(v.literal("lite"), v.literal("full"))), // v2.4.12 accept (no-op for now) — closes ArgumentValidationError from MCP wrappers passing fields
-    namespace: v.string(),
+    // Omitted: every namespace, fleet master only (list_episodes documents it). A
+    // caller who is not the fleet master is REFUSED with RBAC_DENIED, never served
+    // another tenant's rows. Omitted requires `type`, the index the read walks.
+    namespace: v.optional(v.string()),
     type: v.optional(memoryTypeValidator),
     createdBy: v.optional(creatorValidator),
     includeSuperseded: v.optional(v.boolean()),
@@ -396,6 +449,22 @@ export const listMemories = query({
     // isNamespaceAllowedForScope guard below already renders that as the
     // typed-empty page, never a throw.
     const scope = await withOrgScope(ctx, { refuseWithoutThrow: true });
+    if (args.namespace === undefined) {
+      // isolation-contract: no reactive subscriber. Enumerated by command against
+      // vantage-peers-dashboard:
+      //   grep -rn "api\.memories\.listMemories" --include=*.tsx --include=*.ts \
+      //     app components hooks lib contexts providers  -> 0 hits
+      // The omitted-namespace path did not exist (the argument was required), so no
+      // caller depends on its shape. A refusal is RAISED: an empty page would be
+      // the bytes of "no episodes exist". See refusal-is-distinguishable-from-absence.md.
+      await requireFleetDoor(ctx, scope, "memories:listMemories", {
+        masterOnly: true,
+        alsoRefusePreOrg: true,
+        operatorHumanMayRead: true,
+      });
+      return await listAcrossNamespaces(ctx, scope, args);
+    }
+    const namespace: string = args.namespace;
     // M10a: a row is served by its org ID (memoryVisibleToScope), never by the
     // namespace label. A caller with no org ID owns no row, and a member's rows
     // are only ever filed under a `team/<label>` namespace, so any other
@@ -403,8 +472,8 @@ export const listMemories = query({
     if (
       !hasFleetRead(scope) &&
       (scope.orgClerkId === undefined ||
-        (teamLabelOfNamespace(args.namespace) === null &&
-          !isMemoryNamespaceAllowed(scope, args.namespace, await seatAgentIdOf(ctx, scope, args.verifiedActor))))
+        (teamLabelOfNamespace(namespace) === null &&
+          !isMemoryNamespaceAllowed(scope, namespace, await seatAgentIdOf(ctx, scope, args.verifiedActor))))
     ) {
       return { value: [], continueCursor: null, isDone: true };
     }
@@ -439,7 +508,7 @@ export const listMemories = query({
         const r = await ctx.db
           .query("memories")
           .withIndex("by_namespace_type", (q) =>
-            q.eq("namespace", args.namespace).eq("type", type).eq("isLatest", true),
+            q.eq("namespace", namespace).eq("type", type).eq("isLatest", true),
           )
           .order("desc")
           .paginate(opts);
@@ -450,7 +519,7 @@ export const listMemories = query({
         const r = await ctx.db
           .query("memories")
           .withIndex("by_namespace_type", (q) =>
-            q.eq("namespace", args.namespace).eq("type", type),
+            q.eq("namespace", namespace).eq("type", type),
           )
           .order("desc")
           .paginate(opts);
@@ -461,7 +530,7 @@ export const listMemories = query({
         const r = await ctx.db
           .query("memories")
           .withIndex("by_namespace", (q) =>
-            q.eq("namespace", args.namespace).eq("isLatest", true),
+            q.eq("namespace", namespace).eq("isLatest", true),
           )
           .order("desc")
           .paginate(opts);
@@ -470,7 +539,7 @@ export const listMemories = query({
 
       const r = await ctx.db
         .query("memories")
-        .withIndex("by_namespace", (q) => q.eq("namespace", args.namespace))
+        .withIndex("by_namespace", (q) => q.eq("namespace", namespace))
         .order("desc")
         .paginate(opts);
       return { value: filterCreatedBy(r.page), continueCursor: r.isDone ? null : r.continueCursor, isDone: r.isDone };
@@ -485,7 +554,7 @@ export const listMemories = query({
       const page = await ctx.db
         .query("memories")
         .withIndex("by_namespace_type", (q) =>
-          q.eq("namespace", args.namespace).eq("type", type).eq("isLatest", true),
+          q.eq("namespace", namespace).eq("type", type).eq("isLatest", true),
         )
         .order("desc")
         .take(limit);
@@ -496,7 +565,7 @@ export const listMemories = query({
       const page = await ctx.db
         .query("memories")
         .withIndex("by_namespace_type", (q) =>
-          q.eq("namespace", args.namespace).eq("type", type),
+          q.eq("namespace", namespace).eq("type", type),
         )
         .order("desc")
         .take(limit);
@@ -507,7 +576,7 @@ export const listMemories = query({
       const page = await ctx.db
         .query("memories")
         .withIndex("by_namespace", (q) =>
-          q.eq("namespace", args.namespace).eq("isLatest", true),
+          q.eq("namespace", namespace).eq("isLatest", true),
         )
         .order("desc")
         .take(limit);
@@ -517,7 +586,7 @@ export const listMemories = query({
     // retirement-read: only reachable with includeRetired (fleet), otherwise isLatest is true and the branch above returns; filterCreatedBy applies liveOnly
     const page = await ctx.db
       .query("memories")
-      .withIndex("by_namespace", (q) => q.eq("namespace", args.namespace))
+      .withIndex("by_namespace", (q) => q.eq("namespace", namespace))
       .order("desc")
       .take(limit);
     return { value: filterCreatedBy(page), continueCursor: null, isDone: true };
