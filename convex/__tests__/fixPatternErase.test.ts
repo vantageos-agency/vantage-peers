@@ -1,17 +1,18 @@
 /// <reference types="vite/client" />
 //
 // fixPatterns:erase -- the erase path of a fix pattern, under the same rule as
-// erase:eraseRow (convex/lib/eraseRow.ts): an admin of the owning organisation erases
-// any pattern, the pattern's author the patterns it wrote, everyone else is refused
-// RBAC_DENIED. A fix pattern has no organisation column: it is fleet-owned, so the
-// owning organisation is the OPERATOR organisation, derived from the orgKind operator
-// mapping. Task k176x68sj2jkwx46nshvtt40e18ht1xh.
+// erase:eraseRow (convex/lib/eraseRow.ts) for a row with NO stored author ID: an admin of
+// the owning organisation erases it, everyone else is refused RBAC_DENIED. A fix pattern
+// has no organisation column and no author ID: it is fleet-owned, so the owning
+// organisation is the OPERATOR organisation, derived from the orgKind operator mapping.
+// Task k176x68sj2jkwx46nshvtt40e18ht1xh.
 //
-//   AUTHOR       an operator-org agent proven by verifiedActor erases its own pattern;
-//                the attempts that exist only for it go with it
-//   NOT AUTHOR   another operator-org agent is refused, row unchanged
-//   OTHER ORG    a client-org agent as the proof is refused, row unchanged
-//   NO PROOF     the fleet master bearer without a verified agent is refused
+//   ADMIN        an org:admin of the operator org erases a pattern and its attempts
+//   NOT ADMIN    an operator-org member, and the agent that wrote the pattern (an agent
+//                is never an admin and the pattern carries no author ID), are refused
+//   OTHER ORG    an admin of a client org is refused, row unchanged
+//   NO PROOF     the fleet master bearer without a verified agent, and an anonymous
+//                caller, are refused
 //   FLEET DOOR   the internal door erases any pattern (operator reach)
 //   ABSENT       an id that names no pattern is refused, never "not found" to a stranger
 
@@ -113,29 +114,60 @@ const patternCount = (t: T) =>
 const attemptCount = (t: T) =>
 	t.run(async (ctx) => (await ctx.db.query("fixAttempts").collect()).length);
 
+const sessionOf = (t: T, subject: string, org: string, role: string) =>
+	t.withIdentity({
+		subject,
+		org_slug: org,
+		org_id: testClerkOrgId(org),
+		org_role: role,
+	} as Parameters<typeof t.withIdentity>[0]);
+
 describe("fixPatterns:erase", () => {
-	test("the author (an operator-org agent proven by ID) erases its pattern and the attempts", async () => {
-		const { t, agents, patternId } = await setup();
-		const r = await t.withIdentity({ subject: SERVICE }).mutation(api.fixPatterns.erase, {
-			patternId,
-			verifiedActor: { agentId: agents[`${OP}/sigma`], orgSlug: OP },
-		} as never);
+	test("an admin of the operator org erases the pattern and its attempts", async () => {
+		const { t, patternId } = await setup();
+		const r = await sessionOf(t, "user_admin_op", OP, "org:admin").mutation(
+			api.fixPatterns.erase,
+			{ patternId } as never,
+		);
 		expect(r).toMatchObject({ patternId, erased: true, cascaded: { fixAttempts: 1 } });
 		expect(await patternCount(t)).toBe(0);
 		expect(await attemptCount(t)).toBe(0);
 	});
 
-	test("another operator-org agent that did not write it is refused, row unchanged", async () => {
-		const { t, agents, patternId } = await setup();
+	test("a plain member of the operator org is refused, row unchanged", async () => {
+		const { t, patternId } = await setup();
 		const out = await code(
-			t.withIdentity({ subject: SERVICE }).mutation(api.fixPatterns.erase, {
+			sessionOf(t, "user_member_op", OP, "org:member").mutation(api.fixPatterns.erase, {
 				patternId,
-				verifiedActor: { agentId: agents[`${OP}/pi`], orgSlug: OP },
 			} as never),
 		);
 		expect(out).toBe("RBAC_DENIED");
 		expect(await patternCount(t)).toBe(1);
 		expect(await attemptCount(t)).toBe(1);
+	});
+
+	test("an admin of a CLIENT org is refused, row unchanged", async () => {
+		const { t, patternId } = await setup();
+		const out = await code(
+			sessionOf(t, "user_admin_client", CLIENT, "org:admin").mutation(
+				api.fixPatterns.erase,
+				{ patternId } as never,
+			),
+		);
+		expect(out).toBe("RBAC_DENIED");
+		expect(await patternCount(t)).toBe(1);
+	});
+
+	test("the agent that wrote the pattern is refused: an agent is never an admin and a pattern carries no author ID", async () => {
+		const { t, agents, patternId } = await setup();
+		const out = await code(
+			t.withIdentity({ subject: SERVICE }).mutation(api.fixPatterns.erase, {
+				patternId,
+				verifiedActor: { agentId: agents[`${OP}/sigma`], orgSlug: OP },
+			} as never),
+		);
+		expect(out).toBe("RBAC_DENIED");
+		expect(await patternCount(t)).toBe(1);
 	});
 
 	test("a client-org agent as the proof is refused, row unchanged", async () => {
@@ -169,11 +201,10 @@ describe("fixPatterns:erase", () => {
 	});
 
 	test("an id that names no fix pattern is refused like a pattern the caller may not erase", async () => {
-		const { t, agents } = await setup();
+		const { t } = await setup();
 		const out = await code(
-			t.withIdentity({ subject: SERVICE }).mutation(api.fixPatterns.erase, {
+			sessionOf(t, "user_member_op", OP, "org:member").mutation(api.fixPatterns.erase, {
 				patternId: "not-a-pattern-id",
-				verifiedActor: { agentId: agents[`${OP}/sigma`], orgSlug: OP },
 			} as never),
 		);
 		expect(out).toBe("RBAC_DENIED");

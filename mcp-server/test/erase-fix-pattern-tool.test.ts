@@ -1,7 +1,7 @@
 /**
  * erase_fix_pattern -- the MCP face of the Convex door fixPatterns:erase (task
- * k176x68sj2jkwx46nshvtt40e18ht1xh). The decision is the door's (author agent of the
- * operator organisation or an operator admin; RBAC_DENIED otherwise, pinned by
+ * k176x68sj2jkwx46nshvtt40e18ht1xh). The decision is the door's (an admin of the
+ * operator organisation only; RBAC_DENIED otherwise, pinned by
  * convex/__tests__/fixPatternErase.test.ts); this file pins what the MCP side owes:
  *
  *   - the tool is registered, destructive, and says what it returns;

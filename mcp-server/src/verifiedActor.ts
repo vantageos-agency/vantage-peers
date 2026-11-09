@@ -64,8 +64,9 @@ export const VERIFIED_ACTOR_DOORS: ReadonlySet<string> = new Set([
 	"mandates:update",
 	"mandates:settle",
 	"fixPatterns:addAttempt",
-	// A fix pattern is erased by the operator-org agent that wrote it (the same rule as
-	// erase:eraseRow): the door judges the seat's verified agent ID.
+	// A fix pattern is erased by an operator-org admin (the erase:eraseRow rule for a row
+	// with no author ID); the door judges the seat's verified agent ID and refuses an
+	// agent, which is never an admin.
 	"fixPatterns:erase",
 	// The roster check of a read (M18): the pattern is returned only when its creator
 	// IS the verified agent, judged by agents-row ID. A client org's agent bearing

@@ -1,6 +1,5 @@
 import { v, ConvexError } from "convex/values";
 import { internalMutation } from "./_generated/server";
-import type { MutationCtx } from "./_generated/server";
 import { mutation, query } from "./lib/functions";
 import { internal } from "./_generated/api";
 import { requireId } from "./lib/ids";
@@ -10,9 +9,8 @@ import {
 	verifiedActorValidator,
 	withOrgScope,
 } from "./lib/auth";
-import { assertMayErase, resolveEraseCaller } from "./lib/eraseRow";
-import type { EraseCaller } from "./lib/eraseRow";
-import { fleetOperatorRef } from "./lib/operatorOrg";
+import { resolveEraseCaller } from "./lib/eraseRow";
+import { performFixPatternErase } from "./lib/eraseFixPattern";
 import { verifiedPersonValidator } from "./lib/personPrincipal";
 import type { OrgScope } from "./lib/auth";
 import { rbacDenied } from "./lib/inboxReader";
@@ -601,83 +599,20 @@ export const listByStack = query({
 
 // ─────────────────────────────────────────────────────────────────────────────
 // erase — permanently erase one fix pattern, under the SAME rule as erase:eraseRow
-// (convex/lib/eraseRow.ts `assertMayErase`): an admin of the owning organisation erases
-// any pattern, the pattern's author the patterns it wrote, anyone else is refused
-// RBAC_DENIED and the row is unchanged. A fix pattern has no organisation column; it is
-// fleet-owned, so the owning organisation is the OPERATOR organisation (the active
-// `orgKind: "operator"` mapping, convex/lib/operatorOrg.ts), and its author is the
-// operator-org agent its `createdBy` label names (resolved by ID, fleetPartyId). A
-// pattern whose author names no active operator agent is erasable by an admin only.
+// (convex/lib/eraseRow.ts `assertMayErase`) for a row with no stored author ID: an admin of
+// the owning organisation erases it, anyone else is refused RBAC_DENIED and the row is
+// unchanged. A fix pattern has no organisation column and no author ID; it is fleet-owned,
+// so the owning organisation is the OPERATOR organisation (the active `orgKind: "operator"`
+// mapping, convex/lib/operatorOrg.ts) and only its admin may erase (convex/lib/eraseFixPattern.ts).
 //
 // The pattern, every attempt that exists only for it, and its search entry are DELETED.
 // ─────────────────────────────────────────────────────────────────────────────
-
-const MAX_ATTEMPTS_PER_ERASE = 1000;
 
 const eraseResultValidator = v.object({
 	patternId: v.string(),
 	erased: v.literal(true),
 	cascaded: v.record(v.string(), v.number()),
 });
-
-async function performFixPatternErase(
-	ctx: MutationCtx,
-	args: { rawId: string; caller: EraseCaller; door: string },
-): Promise<{ patternId: string; erased: true; cascaded: Record<string, number> }> {
-	const { caller, door } = args;
-	const id = ctx.db.normalizeId("fixPatterns", args.rawId);
-	const pattern = id === null ? null : await ctx.db.get(id);
-	const operator = await fleetOperatorRef(ctx.db);
-	// The row the shared decision reads: its owning organisation by ID and its author
-	// by agents-row ID. A missing pattern, or no operator org with an ID, has no
-	// organisation and is refused like another org's row (no existence oracle).
-	const judged: Record<string, unknown> | null =
-		pattern === null || operator?.id === undefined
-			? null
-			: {
-					clerkOrgId: operator.id,
-					...(await authorIdOf(ctx, pattern.createdBy)),
-				};
-	await assertMayErase(
-		ctx,
-		caller,
-		judged,
-		{ orgField: "clerkOrgId", authorField: "createdById", labelField: null },
-		door,
-	);
-	if (id === null || pattern === null) {
-		throw new ConvexError(
-			`ERASE_ROW_NOT_FOUND: fixPatterns row ${args.rawId} does not exist — ${JSON.stringify({ table: "fixPatterns", door })}`,
-		);
-	}
-	const attempts = await ctx.db
-		.query("fixAttempts")
-		.withIndex("by_pattern", (q) => q.eq("patternId", id))
-		.take(MAX_ATTEMPTS_PER_ERASE + 1);
-	if (attempts.length > MAX_ATTEMPTS_PER_ERASE) {
-		throw new ConvexError(
-			`FIX_PATTERN_ERASE_TOO_LARGE: the pattern holds more than ${MAX_ATTEMPTS_PER_ERASE} attempts; nothing was erased — ${JSON.stringify({ door, cap: MAX_ATTEMPTS_PER_ERASE })}`,
-		);
-	}
-	for (const attempt of attempts) await ctx.db.delete(attempt._id);
-	await ctx.db.delete(id);
-	await ctx.scheduler.runAfter(0, internal.ragSync.removeFixPatternRagEntry, {
-		patternId: id,
-	});
-	return {
-		patternId: id,
-		erased: true,
-		cascaded: { fixAttempts: attempts.length, searchEntry: 1 },
-	};
-}
-
-async function authorIdOf(
-	ctx: MutationCtx,
-	label: string,
-): Promise<{ createdById?: string }> {
-	const authorId = await fleetPartyId(ctx, undefined, label);
-	return authorId === null ? {} : { createdById: authorId };
-}
 
 export const erase = mutation({
 	args: {
