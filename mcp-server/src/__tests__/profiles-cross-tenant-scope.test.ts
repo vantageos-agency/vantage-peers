@@ -67,6 +67,11 @@ function parseResult(result: unknown): unknown {
 	return JSON.parse(r.content[0].text);
 }
 
+/** get_profile's text is { found, item }: the profile is its item. */
+function profileOf(parsed: unknown): Record<string, unknown> | undefined {
+	return (parsed as { item?: Record<string, unknown> } | null)?.item;
+}
+
 function isErrorResult(result: unknown): boolean {
 	const r = result as { isError?: boolean };
 	return r?.isError === true;
@@ -159,7 +164,7 @@ describe("RED — get_profile refus-total reproduction (pre-fix behavior)", () =
 		expect(handler, "get_profile must be registered").toBeDefined();
 
 		const result = await handler?.({ orchestratorId: "alpha" });
-		const parsed = parseResult(result) as { orchestratorId?: string };
+		const parsed = profileOf(parseResult(result));
 
 		expect(parsed?.orchestratorId).toBe("alpha");
 	});
@@ -177,7 +182,7 @@ describe("GREEN — get_profile scoped correctly (four independent poles)", () =
 
 		const handler = handlers.get("get_profile");
 		const result = await handler?.({ orchestratorId: "alpha" });
-		const parsed = parseResult(result) as { orchestratorId?: string };
+		const parsed = profileOf(parseResult(result));
 
 		expect(parsed?.orchestratorId).toBe("alpha");
 	});
@@ -195,7 +200,8 @@ describe("GREEN — get_profile scoped correctly (four independent poles)", () =
 		const result = await handler?.({ orchestratorId: "beta" });
 		const parsed = parseResult(result);
 
-		expect(parsed).toBeNull();
+		// The text is { found: false, id } (task k17e90s1n85hjappy26vs2kww18hxjp1).
+		expect(parsed).toEqual({ found: false, id: "beta" });
 	});
 
 	it("(iv) MASTER pole alone — legacy/master callers see any profile", async () => {
@@ -209,7 +215,7 @@ describe("GREEN — get_profile scoped correctly (four independent poles)", () =
 
 		const handler = handlers.get("get_profile");
 		const result = await handler?.({ orchestratorId: "beta" });
-		const parsed = parseResult(result) as { orchestratorId?: string };
+		const parsed = profileOf(parseResult(result));
 
 		expect(parsed?.orchestratorId).toBe("beta");
 	});
@@ -225,8 +231,9 @@ describe("GREEN — get_profile scoped correctly (four independent poles)", () =
 
 		const handler = handlers.get("get_profile");
 		const result = await handler?.({ orchestratorId: "alpha" });
-		const parsed = parseResult(result) as Record<string, unknown>;
+		const parsed = profileOf(parseResult(result));
 
+		expect(parsed).toBeDefined();
 		expect(parsed).not.toHaveProperty("createdBy");
 	});
 });

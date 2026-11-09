@@ -540,8 +540,9 @@ async function main() {
 			const res = await client.callTool("get_profile", {
 				orchestratorId: "pi",
 			});
-			if (res === null || (res && res.orchestratorId === "pi")) {
-				pass("get_profile", res === null ? "no profile yet (null)" : "found profile");
+			// The text is { found, item } or { found: false, id } (task k17e90s1n85hjappy26vs2kww18hxjp1).
+			if (res?.found === false || res?.item?.orchestratorId === "pi") {
+				pass("get_profile", res.found === false ? "no profile yet (found: false)" : "found profile");
 			} else {
 				pass("get_profile", `got response: ${JSON.stringify(res)}`);
 			}
@@ -578,8 +579,9 @@ async function main() {
 			const res = await client.callTool("get_profile", {
 				orchestratorId: "pi",
 			});
-			if (res && (res.name === "Pi" || res.orchestratorId === "pi")) {
-				pass("get_profile (after update)", `name=${res.name}, orchestratorId=${res.orchestratorId}`);
+			const profile = res?.item;
+			if (profile && (profile.name === "Pi" || profile.orchestratorId === "pi")) {
+				pass("get_profile (after update)", `name=${profile.name}, orchestratorId=${profile.orchestratorId}`);
 			} else {
 				fail("get_profile (after update)", `Unexpected response: ${JSON.stringify(res)}`);
 			}
@@ -712,7 +714,8 @@ async function main() {
 			const res = await client.callTool("list_diaries", {
 				orchestrator: "pi",
 			});
-			const entries = Array.isArray(res) ? res : [];
+			// The text is { items, nextCursor, truncated } (task k17e90s1n85hjappy26vs2kww18hxjp1).
+			const entries = Array.isArray(res?.items) ? res.items : [];
 			if (entries.length >= 1) {
 				pass("list_diaries", `${entries.length} entry/entries`);
 			} else {

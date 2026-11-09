@@ -155,6 +155,8 @@ const READERS = [
 		present: [DIARY_ENTRY],
 		presentNeedle: "diary-fixture-001",
 		args: { orchestrator: "user-fixture-alpha" },
+		// The text is the structuredContent as JSON (task k17e90s1n85hjappy26vs2kww18hxjp1).
+		absentText: { items: [], nextCursor: null, truncated: false },
 	},
 ] as const;
 
@@ -168,7 +170,9 @@ describe("END TWO — the MCP reader says it was refused (ordinary organisation 
 
 			// ABSENT: a plain empty result, exactly what an empty list always was.
 			expect(absent.isError).toBe(false);
-			expect(JSON.parse(absent.text)).toEqual([]);
+			expect(JSON.parse(absent.text)).toEqual(
+				(r as { absentText?: unknown }).absentText ?? [],
+			);
 
 			// PRESENT: the rows still flow (no grant withheld to buy this).
 			expect(present.isError).toBe(false);

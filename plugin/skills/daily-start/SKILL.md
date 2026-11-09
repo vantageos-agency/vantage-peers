@@ -49,7 +49,7 @@ record. It is a single always-current value, so it is READ, never searched:
 
 ```
 mcp__vantage-peers__get_profile orchestratorId={role} instanceId={instanceId}
-                                        # read dynamic.endOfDayIndex
+                                        # read item.dynamic.endOfDayIndex
 ```
 
 **Read `dynamic.endOfDayIndex`, never `dynamic.currentTask`.** `currentTask` carries only the live,
