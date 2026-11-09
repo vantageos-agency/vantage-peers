@@ -1092,3 +1092,573 @@ export const linkIssueToPatternServedOutputSchema = z.looseObject({
 		.boolean()
 		.describe("True: the link exists (an existing link is left as it was)."),
 });
+
+// ── lists and searches (task k17592gg5t2tencwxks3kysghx8htqg8, outputs 1/3) ──
+// The text of these tools is unchanged. Their structuredContent is the object
+// form of the same answer (src/structuredResult.ts): { items } for a search
+// whose text is a bare array, { items, nextCursor, truncated } for a page
+// written through capListResponseBytes.
+
+const pageCursor = z
+	.string()
+	.nullable()
+	.describe(
+		"The cursor to pass as `cursor` for the next (older) page; null on the last page, and null when truncated is true (a cut page has no continuation: narrow the query or lower limit instead).",
+	);
+const pageTruncated = z
+	.boolean()
+	.describe(
+		"True when the page exceeded the 60 KB response cap and items holds only its first rows; false when items is the whole page.",
+	);
+const pageScopeFiltered = z
+	.number()
+	.optional()
+	.describe(
+		"How many rows of your own organisation on this page your session may not see and were left out; absent when none were.",
+	);
+
+/** A page of `row`: its rows, its continuation, and whether the cap cut it. */
+const pageOf = (row: z.ZodType, rows: string, extra: z.ZodRawShape = {}) =>
+	z.looseObject({
+		items: z.array(row).describe(rows),
+		nextCursor: pageCursor,
+		truncated: pageTruncated,
+		...extra,
+	});
+
+/** A search's matches: the same rows its text gives as a bare array. */
+const matchesOf = (row: z.ZodType, rows: string) =>
+	z.looseObject({ items: z.array(row).describe(rows) });
+
+const memoryTypeField = z
+	.string()
+	.describe(
+		"What the memory is about: user, feedback, project, reference or episode.",
+	);
+const matchMemoryId = rowId(
+	"The matching memory's ID: the memoryId get_memory takes.",
+);
+const matchNamespace = z
+	.string()
+	.describe("The namespace the matching memory is stored in.");
+const matchContent = z.string().describe("The matching memory's indexed text.");
+
+const semanticMatch = z.looseObject({
+	memoryId: matchMemoryId,
+	score: z
+		.number()
+		.describe(
+			"How close the memory is in meaning to the query (cosine similarity, higher is closer).",
+		),
+	namespace: matchNamespace,
+	type: memoryTypeField,
+	content: matchContent,
+});
+const keywordMatch = z.looseObject({
+	memoryId: matchMemoryId,
+	namespace: matchNamespace,
+	type: memoryTypeField,
+	content: matchContent,
+});
+const hybridMatch = z.looseObject({
+	memoryId: matchMemoryId,
+	rrfScore: z
+		.number()
+		.describe(
+			"The fused rank score of the meaning and keyword rankings (Reciprocal Rank Fusion, higher is better).",
+		),
+	namespace: matchNamespace,
+	type: memoryTypeField,
+	content: matchContent,
+});
+
+/** recall: search:recall `returns:`. */
+export const recallServedOutputSchema = matchesOf(
+	semanticMatch,
+	"The memories closest in meaning to the query, best match first; empty when none passes the similarity threshold or the namespace holds none.",
+);
+/** text_search: search:textSearch `returns:`. */
+export const textSearchServedOutputSchema = matchesOf(
+	keywordMatch,
+	"The memories matching the query's words, best match first; empty when none matches.",
+);
+/** hybrid_search: search:hybridSearch `returns:`. */
+export const hybridSearchServedOutputSchema = matchesOf(
+	hybridMatch,
+	"The memories matching by meaning and by words, highest fused score first; empty when none matches.",
+);
+/** search_episodes_by_keyword: search:textSearch with type 'episode'. */
+export const searchEpisodesByKeywordServedOutputSchema = matchesOf(
+	keywordMatch,
+	"The episodes matching the query's words, best match first; empty when none matches.",
+);
+/** search_episodes_by_semantic: search:recall with type 'episode'. */
+export const searchEpisodesBySemanticServedOutputSchema = matchesOf(
+	semanticMatch,
+	"The episodes closest in meaning to the query, best match first; empty when none passes the similarity threshold.",
+);
+
+const messageFields = {
+	_id: rowId("The message's ID: the messageId the message tools take."),
+	from: z.string().describe("The sender: the agent or person who wrote it."),
+	fromId: actorId("the sender"),
+	fromInstanceId: z
+		.string()
+		.optional()
+		.describe(
+			"The sender's instance, e.g. 'pi-vps'; absent when none was recorded.",
+		),
+	content: z.string().describe("The full message body."),
+	sessionDay: z
+		.number()
+		.optional()
+		.describe(
+			"The sender's working-day number when it was sent; absent when none was recorded.",
+		),
+	createdAt: ms("When the message was sent"),
+	tenantId: z
+		.string()
+		.optional()
+		.describe(
+			"The slug of the organisation the message was sent in; absent on a fleet message.",
+		),
+	tenantOrgId: z
+		.string()
+		.optional()
+		.describe(
+			"The permanent ID of that organisation; absent on a fleet message and on messages written before it was recorded.",
+		),
+};
+const messageChannel =
+	"Where it was sent: an agent's name, a comma-separated list of names, or 'broadcast'";
+
+/** list_messages: rows of messages:listMessages `returns:`. */
+export const listMessagesServedOutputSchema = pageOf(
+	z.looseObject({
+		...messageFields,
+		_creationTime: creationTime,
+		channel: z
+			.string()
+			.optional()
+			.describe(
+				`${messageChannel}; every stored message has one (the list door declares it optional)`,
+			),
+	}),
+	"The messages, newest first; empty when none matches the filters.",
+);
+
+/** search_messages_by_keyword: messages rows, lite (ID, sender, channel, text, day, time) or full. */
+export const searchMessagesByKeywordServedOutputSchema = matchesOf(
+	z.looseObject({
+		...messageFields,
+		_creationTime: z
+			.number()
+			.optional()
+			.describe(
+				"When the row was created (milliseconds since the Unix epoch); present with fields='full' only.",
+			),
+		channel: z.string().describe(`${messageChannel}.`),
+	}),
+	"The messages whose text matches the query, best match first; empty when none matches.",
+);
+
+/** list_tasks / list_tasks_by_mission: task rows, lite (ID, creation time, title, status, priority, assignee, mission) or full. */
+const taskListRow = getTaskServedOutputSchema;
+
+/** list_tasks. */
+export const listTasksServedOutputSchema = pageOf(
+	taskListRow,
+	"The tasks, newest first (newest-updated first with updatedSince); lite rows carry _id, _creationTime, title, status, priority, assignedTo and missionId, full rows every stored field.",
+);
+
+/** list_tasks_by_mission. */
+export const listTasksByMissionServedOutputSchema = pageOf(
+	taskListRow,
+	"The mission's tasks, newest first; lite rows carry _id, _creationTime, title, status, priority, assignedTo and missionId, full rows every stored field.",
+	{ scopeFiltered: pageScopeFiltered },
+);
+
+/** search_tasks_by_keyword: the lite projection carries no _creationTime. */
+export const searchTasksByKeywordServedOutputSchema = matchesOf(
+	taskListRow.extend({
+		_creationTime: z
+			.number()
+			.optional()
+			.describe(
+				"When the task was created (milliseconds since the Unix epoch); present with fields='full' only.",
+			),
+	}),
+	"The tasks whose title matches the query, best match first; lite rows carry _id, title, status, priority, assignedTo and missionId, full rows every stored field.",
+);
+
+const memoryListRow = z.looseObject(memoryRow);
+
+/** list_memories: rows of memories:listMemories `returns:`. */
+export const listMemoriesServedOutputSchema = pageOf(
+	memoryListRow,
+	"The memories (latest versions only), newest first; empty when the namespace holds none.",
+);
+
+/** list_episodes: memories rows of type 'episode'. */
+export const listEpisodesServedOutputSchema = pageOf(
+	memoryListRow,
+	"The episodes (memories of type 'episode'), newest first; their structured fields are under episode.",
+);
+
+const nullableStatus = (what: string) =>
+	z
+		.string()
+		.nullable()
+		.describe(
+			`${what}; null for an organisation's agent, whose profile is not read.`,
+		);
+
+/** list_peers: built in the handler, from the org roster or from profiles:listProfiles. */
+export const listPeersServedOutputSchema = pageOf(
+	z.looseObject({
+		_id: z
+			.string()
+			.optional()
+			.describe(
+				"The profile row's ID; absent for an organisation's agent (listed from the roster, not from a profile).",
+			),
+		_creationTime: z
+			.number()
+			.optional()
+			.describe(
+				"When the profile was created (milliseconds since the Unix epoch); absent for an organisation's agent.",
+			),
+		id: z.string().describe("The orchestrator's name, as tools take it."),
+		agentId: z
+			.string()
+			.nullable()
+			.optional()
+			.describe(
+				"The agent's permanent ID, to pass in send_message recipientAgentIds; null when the agent is not addressable, absent on the fleet's own profile listing.",
+			),
+		instanceId: z
+			.string()
+			.describe("The instance the orchestrator runs as, e.g. 'sigma-vps'."),
+		name: z.string().describe("The orchestrator's display name."),
+		role: nullableStatus("What the orchestrator does"),
+		workspace: nullableStatus("Where the orchestrator works"),
+		currentTask: nullableStatus(
+			"What the orchestrator is working on, 'idle' when nothing",
+		),
+		lastSeen: nullableStatus(
+			"When the orchestrator was last active, as an ISO 8601 timestamp",
+		),
+		sessionCount: z
+			.number()
+			.nullable()
+			.describe(
+				"How many sessions the orchestrator has run; null for an organisation's agent, whose profile is not read.",
+			),
+	}),
+	"The orchestrators, newest first; for an organisation, its agents.",
+	{ scopeFiltered: pageScopeFiltered },
+);
+
+/** list_missions: missions rows, lite (ID, creation time, name, status, pilot, priority, project) or full. */
+export const listMissionsServedOutputSchema = pageOf(
+	z.looseObject({
+		_id: rowId("The mission's ID: the missionId the mission tools take."),
+		_creationTime: creationTime,
+		name: z.string().describe("The mission's name."),
+		status: z
+			.string()
+			.describe(
+				"Which stage the mission is at: brainstorm, plan, execute, validate, complete or cancelled.",
+			),
+		pilot: z
+			.string()
+			.describe("The orchestrator leading the mission, by name."),
+		priority: z
+			.string()
+			.describe("How urgent the mission is: urgent, high, medium or low."),
+		project: z.string().describe("The project the mission belongs to."),
+		description: z
+			.string()
+			.optional()
+			.describe("What the mission is for; absent when none, and on lite rows."),
+		brief: z
+			.string()
+			.optional()
+			.describe("The mission brief; absent when none, and on lite rows."),
+		agents: z
+			.array(z.string())
+			.optional()
+			.describe(
+				"The orchestrators working on the mission, by name; absent on lite rows.",
+			),
+		progress: z
+			.number()
+			.optional()
+			.describe(
+				"How far the mission has got, as a percentage; absent when never set, and on lite rows.",
+			),
+		createdBy: z
+			.string()
+			.optional()
+			.describe("Who created the mission; absent on lite rows."),
+		createdAt: z
+			.number()
+			.optional()
+			.describe(
+				"When the mission was created (milliseconds since the Unix epoch); absent on lite rows.",
+			),
+		updatedAt: z
+			.number()
+			.optional()
+			.describe(
+				"When the mission last changed (milliseconds since the Unix epoch); absent on lite rows.",
+			),
+		orgId: orgSlug("mission"),
+	}),
+	"The missions, newest first; lite rows carry _id, _creationTime, name, status, pilot, priority and project, full rows every stored field.",
+);
+
+/** list_diaries: rows of diary:list `returns:` (DIARY_LIST_ROW). */
+export const listDiariesServedOutputSchema = pageOf(
+	z.looseObject({
+		_id: rowId("The diary entry's ID."),
+		_creationTime: creationTime,
+		date: z.string().describe("The day the entry is for, as YYYY-MM-DD."),
+		orchestrator: z
+			.string()
+			.describe("The orchestrator the entry is about, by name."),
+		instanceId: z
+			.string()
+			.optional()
+			.describe("The instance that wrote it; absent when none was recorded."),
+		content: z.string().describe("The diary entry itself."),
+		highlights: z
+			.array(z.string())
+			.optional()
+			.describe("The day's highlights; absent when none were given."),
+		blockers: z
+			.array(z.string())
+			.optional()
+			.describe("What blocked the day; absent when none were given."),
+		createdBy: z
+			.string()
+			.optional()
+			.describe(
+				"Who wrote the entry, as authenticated; absent on entries written before it was recorded.",
+			),
+		createdById: actorId("the author"),
+		createdAt: ms("When the entry was written"),
+		orgId: orgSlug("entry"),
+		clerkOrgId: clerkOrgId("entry"),
+	}),
+	"The diary entries, newest first; empty when none matches.",
+);
+
+const briefingNoteListFields = {
+	_id: rowId("The note's ID: the noteId the briefing-note tools take."),
+	title: z.string().describe("The note's title."),
+	topic: z.string().describe("What the note is about, used to group notes."),
+	participants: z
+		.array(z.string())
+		.describe("Who took part, by name; each of them may read the note."),
+	createdBy: z.string().describe("Who wrote the note."),
+	content: z
+		.string()
+		.optional()
+		.describe(
+			"The body of the note, or a preview when contentTruncated is true; absent on lite rows (get_briefing_note reads it).",
+		),
+	contentTruncated: z
+		.boolean()
+		.optional()
+		.describe(
+			"True when content is only a preview of a body stored apart; absent when content is the whole body, and on lite rows.",
+		),
+	decisions: z
+		.array(z.string())
+		.optional()
+		.describe(
+			"The decisions the note records; absent when none were given, and on lite rows.",
+		),
+	updatedAt: z
+		.number()
+		.optional()
+		.describe(
+			"When the note last changed (milliseconds since the Unix epoch); absent when it was never updated, and on lite rows.",
+		),
+	orgId: orgSlug("note"),
+};
+
+/** list_briefing_notes: briefingNotes:list `returns:` (full or lite rows). */
+export const listBriefingNotesServedOutputSchema = pageOf(
+	z.looseObject({
+		...briefingNoteListFields,
+		_creationTime: creationTime,
+		createdAt: z
+			.number()
+			.optional()
+			.describe(
+				"When the note was written (milliseconds since the Unix epoch); absent on lite rows.",
+			),
+	}),
+	"The notes, newest first; lite rows carry _id, _creationTime, topic, title, participants and createdBy, full rows every stored field.",
+);
+
+/** search_briefing_notes_by_keyword: briefingNotes:searchBriefingNotesByKeyword `returns:`. */
+export const searchBriefingNotesByKeywordServedOutputSchema = matchesOf(
+	z.looseObject({
+		...briefingNoteListFields,
+		_creationTime: z
+			.number()
+			.optional()
+			.describe(
+				"When the row was created (milliseconds since the Unix epoch); present with fields='full' only.",
+			),
+		createdAt: ms("When the note was written"),
+	}),
+	"The notes whose content matches the query, best match first; lite rows carry _id, title, topic, createdBy, createdAt and participants.",
+);
+
+/** list_recurring_tasks: recurringTasks rows. */
+export const listRecurringTasksServedOutputSchema = pageOf(
+	getRecurringTaskServedOutputSchema,
+	"The recurring schedules, newest first; empty when none matches.",
+	{ scopeFiltered: pageScopeFiltered },
+);
+
+/** list_repo_mappings: githubRepoMapping:list `returns:` (full or lite rows). */
+export const listRepoMappingsServedOutputSchema = pageOf(
+	z.looseObject({
+		_id: rowId("The mapping's ID."),
+		_creationTime: creationTime,
+		repo: z
+			.string()
+			.describe("The GitHub repository, as owner/name, e.g. 'acme/app'."),
+		orchestrator: z
+			.string()
+			.describe("The orchestrator the repository's events are routed to."),
+		project: z.string().describe("The project the repository belongs to."),
+		active: z
+			.boolean()
+			.optional()
+			.describe(
+				"Whether events are routed for the repository; absent on lite rows.",
+			),
+		lastDeployedSHA: z
+			.string()
+			.optional()
+			.describe(
+				"The commit last deployed to production; absent when no deploy was recorded, and on lite rows.",
+			),
+		lastDeployedAt: z
+			.number()
+			.optional()
+			.describe(
+				"When that commit was deployed (milliseconds since the Unix epoch); absent when no deploy was recorded, and on lite rows.",
+			),
+		reviewer: z
+			.string()
+			.optional()
+			.describe(
+				"Who reviews the repository's pull requests; absent when the fleet default applies, and on lite rows.",
+			),
+		fallbackReviewer: z
+			.string()
+			.optional()
+			.describe(
+				"Who reviews when the reviewer cannot; absent when the fleet default applies, and on lite rows.",
+			),
+		orgId: orgSlug("mapping"),
+	}),
+	"The mappings, newest first; lite rows carry _id, _creationTime, repo, orchestrator and project.",
+);
+
+/** list_fix_patterns: fixPatterns:listAll / listByProject `returns:`. */
+export const listFixPatternsServedOutputSchema = pageOf(
+	z.looseObject({
+		_id: rowId("The pattern's ID: the patternId the fix-pattern tools take."),
+		_creationTime: creationTime,
+		symptom: z.string().describe("What was observed going wrong."),
+		rootCause: z.string().describe("What actually caused it."),
+		validatedFix: z
+			.string()
+			.optional()
+			.describe(
+				"The fix confirmed to work (validate_fix); absent until one is validated.",
+			),
+		files: z
+			.array(z.string())
+			.optional()
+			.describe("The files the fix touched; absent when none were recorded."),
+		tags: z
+			.array(z.string())
+			.describe("Free labels for finding the pattern; empty when none."),
+		stack: z
+			.array(z.string())
+			.describe(
+				"The technologies the pattern applies to, e.g. 'convex', 'nextjs'; empty when none.",
+			),
+		sourceProject: z.string().describe("The project where it was first seen."),
+		linkedIssueIds: z
+			.array(z.string())
+			.optional()
+			.describe(
+				"The issues linked to the pattern (link_issue_to_pattern); absent when none.",
+			),
+		createdBy: z.string().describe("Who recorded the pattern."),
+		severity: z
+			.string()
+			.describe("How much the problem matters: critical, major or minor."),
+		createdAt: ms("When the pattern was recorded"),
+		updatedAt: ms("When the pattern last changed"),
+	}),
+	"The fix patterns, newest first; empty when none matches.",
+);
+
+/** search_fix_patterns: search:searchFixPatterns `returns:`. */
+export const searchFixPatternsServedOutputSchema = matchesOf(
+	z.looseObject({
+		patternId: rowId("The pattern's ID: the patternId get_fix_pattern takes."),
+		score: z
+			.number()
+			.describe(
+				"How close the pattern's symptom is in meaning to the query (cosine similarity, higher is closer).",
+			),
+		symptom: z.string().describe("What was observed going wrong."),
+		rootCause: z.string().describe("What actually caused it."),
+		validatedFix: z
+			.string()
+			.optional()
+			.describe("The fix confirmed to work; absent until one is validated."),
+		tags: z
+			.array(z.string())
+			.describe("Free labels on the pattern; empty when none."),
+		stack: z
+			.array(z.string())
+			.describe("The technologies the pattern applies to; empty when none."),
+		sourceProject: z.string().describe("The project where it was first seen."),
+		severity: z
+			.string()
+			.describe("How much the problem matters: critical, major or minor."),
+	}),
+	"The fix patterns closest in meaning to the query, best match first; empty when none passes the similarity threshold.",
+);
+
+const toolUsageRow = z.looseObject({
+	tool: z.string().describe("The MCP tool's name, e.g. 'store_memory'."),
+	firstAt: ms("When the tool was first called"),
+	lastAt: ms("When the tool was last called"),
+	count: z.number().describe("How many times the tool was called."),
+});
+
+/** get_tool_usage: toolUsage:getToolUsage `returns:`. */
+export const getToolUsageServedOutputSchema = matchesOf(
+	toolUsageRow,
+	"One row per tool the caller has called; empty when it has called none.",
+);
+
+/** get_owner_tool_usage: toolUsage:usageByOwner `returns:`. */
+export const getOwnerToolUsageServedOutputSchema = matchesOf(
+	toolUsageRow,
+	"One row per tool, summed across the person's agents and its own calls; empty when none was called.",
+);
