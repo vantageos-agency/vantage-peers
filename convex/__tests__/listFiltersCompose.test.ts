@@ -19,6 +19,7 @@
 import { describe, expect, test } from "vitest";
 import { api } from "../_generated/api";
 import schema from "../schema";
+import { testClerkOrgId } from "../../tests/fixtures/testClerkOrgId";
 import { convexTest } from "../../tests/fixtures/convexTestWithServiceAccount";
 
 const modules = Object.fromEntries(
@@ -188,5 +189,61 @@ describe("issues:listByProject — project + status together", () => {
 		});
 		expect(got.map((r) => r._id).sort()).toEqual([ids[0], ids[1]].sort());
 		expect(got.every((r) => r.status === "open")).toBe(true);
+	});
+});
+
+describe("messages:listMessages — an organisation's caller gets sessionDay too", () => {
+	test("sessionDay + from narrow the organisation's rows; the day is not silently dropped", async () => {
+		const t = convexTest(schema, modules);
+		const orgId = testClerkOrgId("acme");
+		await t.run(async (ctx) => {
+			await ctx.db.insert("client_org_mapping", {
+				clerkOrgSlug: "acme",
+				clerkOrgId: orgId,
+				allowedOrchestrators: ["victor", "noe"],
+				scopes: ["view-own-tasks", "view-own-missions"],
+				displayName: "acme",
+				isActive: true,
+				createdAt: Date.now(),
+			});
+		});
+		const plan: Array<[string, number]> = [
+			["victor", 249],
+			["noe", 249],
+			["victor", 250],
+			["victor", 249],
+		];
+		const ids: string[] = [];
+		let at = 1_780_000_000_000;
+		for (const [from, sessionDay] of plan) {
+			at += 1000;
+			ids.push(
+				await t.run(async (ctx) =>
+					ctx.db.insert("messages", {
+						from,
+						channel: "noe",
+						content: `acme ${from} d${sessionDay}`,
+						sessionDay,
+						createdAt: at,
+						tenantId: "acme",
+						tenantOrgId: orgId,
+					}),
+				),
+			);
+		}
+		const reader = t.withIdentity({
+			subject: "user-acme-reader",
+			organizationId: "acme",
+			org_id: orgId,
+		} as Parameters<typeof t.withIdentity>[0]);
+		const day = await reader.query(api.messages.listMessages, {
+			sessionDay: 249,
+		});
+		expect(day.map((r) => r._id)).toEqual([ids[3], ids[1], ids[0]]);
+		const both = await reader.query(api.messages.listMessages, {
+			sessionDay: 249,
+			from: "victor",
+		});
+		expect(both.map((r) => r._id)).toEqual([ids[3], ids[0]]);
 	});
 });
