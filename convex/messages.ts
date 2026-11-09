@@ -1,7 +1,12 @@
-import { type PaginationResult, paginationOptsValidator } from "convex/server";
+import {
+	type FilterBuilder,
+	type NamedTableInfo,
+	type PaginationResult,
+	paginationOptsValidator,
+} from "convex/server";
 import { ConvexError, v } from "convex/values";
 // convex-strict-mode-doc-type-import-needed-when-refactoring-list-query-from-early-return-to-accumulator-post-filter
-import type { Doc, Id } from "./_generated/dataModel";
+import type { DataModel, Doc, Id } from "./_generated/dataModel";
 import { internal } from "./_generated/api";
 import { internalMutation } from "./_generated/server";
 import { mutation, query } from "./lib/functions";
@@ -2312,6 +2317,18 @@ export const deleteMessage = mutation({
 // mission k574p02m DEFECT 2, lot 2.
 export const MESSAGES_LIST_SCAN_CAP = 2000;
 
+/**
+ * The sender narrowing of a `listMessages` read, applied as a query filter on an
+ * index range BEFORE the take. One site for the master and the organisation
+ * paths alike: a sender (when given) is matched here and nowhere else.
+ */
+function senderFilter(
+	q: FilterBuilder<NamedTableInfo<DataModel, "messages">>,
+	from: string | undefined,
+) {
+	return from !== undefined ? q.eq(q.field("from"), from) : true;
+}
+
 export const listMessages = query({
 	args: {
 		fields: v.optional(v.union(v.literal("lite"), v.literal("full"))), // v2.4.12 accept (no-op for now) — closes ArgumentValidationError from MCP wrappers passing fields
@@ -2403,7 +2420,6 @@ export const listMessages = query({
 				// is one day's volume, never the organisation's whole history (a
 				// busy organisation's old day read past the per-function read limit).
 				const sessionDay = args.sessionDay;
-				const from = args.from;
 				rows = await ctx.db
 					.query("messages")
 					.withIndex("by_day", (q) => {
@@ -2414,7 +2430,7 @@ export const listMessages = query({
 					.filter((q) =>
 						q.and(
 							q.eq(q.field("tenantOrgId"), callerOrgClerkId),
-							from !== undefined ? q.eq(q.field("from"), from) : true,
+							senderFilter(q, args.from),
 						),
 					)
 					.take(limit);
@@ -2429,9 +2445,7 @@ export const listMessages = query({
 					)
 					.order("desc")
 					// The sender narrows the organisation's range BEFORE the take.
-					.filter((q) =>
-						args.from !== undefined ? q.eq(q.field("from"), args.from) : true,
-					)
+					.filter((q) => senderFilter(q, args.from))
 					.take(fetchCap);
 
 				// Belt-and-suspenders: ensure no cross-tenant row leaks through.
@@ -2452,7 +2466,6 @@ export const listMessages = query({
 			// NAME is one more R-53 site, and the day's range is already small.
 			if (args.sessionDay !== undefined) {
 				const sessionDay = args.sessionDay;
-				const from = args.from;
 				const byDay = ctx.db
 					.query("messages")
 					.withIndex("by_day", (q) => {
@@ -2460,11 +2473,9 @@ export const listMessages = query({
 						return before !== undefined ? base.lt("_creationTime", before) : base;
 					})
 					.order("desc");
-				rows = await (
-					from !== undefined
-						? byDay.filter((q) => q.eq(q.field("from"), from))
-						: byDay
-				).take(limit);
+				rows = await byDay
+					.filter((q) => senderFilter(q, args.from))
+					.take(limit);
 			} else if (args.from !== undefined) {
 				const from = args.from;
 				rows = await ctx.db
