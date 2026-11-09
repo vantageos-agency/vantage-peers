@@ -24,8 +24,16 @@
  * nextCursor, truncated } for a page that capListResponseBytes may cut. Each is
  * called on seeded rows so that its item schema is validated on a real row, and
  * the cut itself is driven once through /mcp (list_memories over 60 KB).
+ *
+ * The null-able reads, check_messages and the Knowledge Base / OKF tools (task
+ * k170byeq1nzzv2q1z6qpag5fp18hvj8a, outputs 2/3) keep their text too
+ * (TEXT_FORMS): a read answers { found, item } or { found: false, id } (a
+ * not-found pole per read), the inbox answers the values its text is written
+ * from, and the KB / OKF chain runs for real on convex-test storage (ticket,
+ * blob, claim, ingest, soft delete, export, import dry run).
  */
 
+import { createHash } from "node:crypto";
 import Ajv2020 from "ajv/dist/2020.js";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import {
@@ -41,7 +49,11 @@ import {
 	SLUG,
 	tokenFor,
 } from "./lib/seatWorld.js";
-import { LIST_FORMS, STRUCTURED_TOOLS } from "./lib/toolMetadataDecisions.js";
+import {
+	LIST_FORMS,
+	STRUCTURED_TOOLS,
+	TEXT_FORMS,
+} from "./lib/toolMetadataDecisions.js";
 
 vi.mock("convex/browser", async () => ({
 	ConvexHttpClient: (await import("./lib/forwardingConvex.js"))
@@ -73,7 +85,20 @@ type Seeded = World["fixtures"]["ids"] & {
 		string
 	>;
 	receiptId: string;
+	/** IDs no row carries any more (a deleted mission), for the not-found poles. */
+	goneMissionId: string;
+	/** The Knowledge Base / OKF chain, filled call by call. */
+	kb: {
+		ticket?: string;
+		storageId?: string;
+		docId?: string;
+		bundleStorageId?: string;
+	};
 };
+
+/** The Knowledge Base document the chain uploads, and the sha256 its ticket binds. */
+const KB_BODY = "# Seeded document\n\nSome text to chunk.";
+const KB_SHA = createHash("sha256").update(KB_BODY).digest("hex");
 
 /** A RAG entry the stubbed searcher serves: the memory (or pattern) it indexes. */
 type RagEntry = { key: string; text: string; type: string };
@@ -237,6 +262,92 @@ const CALLS: Call[] = [
 	{ tool: "list_recurring_tasks", as: "person", args: () => ({}) },
 	{ tool: "list_repo_mappings", as: "master", args: () => ({}) },
 	{ tool: "list_fix_patterns", as: "master", args: () => ({}) },
+	// null-able reads, each on a seeded row (the not-found poles are below)
+	{
+		tool: "get_profile",
+		as: "person",
+		args: () => ({ orchestratorId: "ulysse" }),
+	},
+	{
+		tool: "get_mission",
+		as: "person",
+		args: (s) => ({ missionId: s.missionId }),
+	},
+	{
+		tool: "get_mission_template",
+		as: "master",
+		args: () => ({ name: "seeded-template" }),
+	},
+	{
+		tool: "get_diary",
+		as: "person",
+		args: () => ({ date: "2026-11-07", orchestrator: "ulysse" }),
+	},
+	// the inbox, before mark_as_read / delete_message below drain it
+	{
+		tool: "check_messages",
+		as: "person",
+		args: () => ({ recipient: "ulysse" }),
+	},
+	// the Knowledge Base / OKF chain: ticket, blob, claim, ingest, soft delete,
+	// export, import (dry run)
+	{
+		tool: "generate_upload_url",
+		as: "person",
+		args: () => ({ sha256: KB_SHA }),
+		after: (r, s) => {
+			s.kb.ticket = (
+				JSON.parse(r.content[1].text) as { ticket: string }
+			).ticket;
+		},
+	},
+	{
+		tool: "claim_upload",
+		as: "person",
+		args: async (s) => {
+			const stored = await world.t.run((ctx) =>
+				ctx.storage.store(new Blob([KB_BODY], { type: "text/markdown" })),
+			);
+			s.kb.storageId = world.ids.alias(String(stored));
+			return { storageId: s.kb.storageId, ticket: s.kb.ticket };
+		},
+	},
+	{
+		tool: "store_document_chunked",
+		as: "person",
+		args: (s) => ({
+			storageId: s.kb.storageId,
+			mimeType: "text/markdown",
+			filename: "seeded.md",
+		}),
+		after: (r, s) => {
+			s.kb.docId = (JSON.parse(r.content[0].text) as { docId: string }).docId;
+		},
+	},
+	{
+		tool: "soft_delete_document",
+		as: "person",
+		args: (s) => ({ docId: s.kb.docId }),
+	},
+	{
+		tool: "export_okf_bundle",
+		as: "person",
+		args: () => ({ namespace: `team/${SLUG}`, format: "tarball" }),
+		after: (r, s) => {
+			s.kb.bundleStorageId = (
+				JSON.parse(r.content[0].text) as { storageId: string }
+			).storageId;
+		},
+	},
+	{
+		tool: "import_okf_bundle",
+		as: "person",
+		args: (s) => ({
+			storageId: s.kb.bundleStorageId,
+			targetNamespace: `team/${SLUG}`,
+			mode: "dry-run",
+		}),
+	},
 	// after every call above, so that the person has a recorded usage to read
 	{ tool: "get_tool_usage", as: "person", args: () => ({}) },
 	{
@@ -454,6 +565,46 @@ let seeded: Seeded;
 const results = new Map<string, CallResult>();
 const schemas = new Map<string, unknown>();
 const descriptions = new Map<string, string>();
+/**
+ * For each null-able read, the call on a key no visible row carries: seatbot is
+ * on the organisation's roster and has no profile (a name off the roster is
+ * refused, not absent), the mission was deleted, no template or diary entry
+ * has that name or date.
+ */
+const NOT_FOUND: Array<
+	[
+		string,
+		(s: Seeded) => Record<string, unknown>,
+		"person" | "master",
+		(s: Seeded) => string,
+	]
+> = [
+	[
+		"get_profile",
+		() => ({ orchestratorId: "seatbot" }),
+		"person",
+		() => "seatbot",
+	],
+	[
+		"get_mission",
+		(s) => ({ missionId: s.goneMissionId }),
+		"person",
+		(s) => s.goneMissionId,
+	],
+	[
+		"get_mission_template",
+		() => ({ name: "no-such-template" }),
+		"master",
+		() => "no-such-template",
+	],
+	[
+		"get_diary",
+		() => ({ date: "1999-01-01", orchestrator: "ulysse" }),
+		"person",
+		() => "ulysse/1999-01-01",
+	],
+];
+
 /** The extra poles: a page the byte cap cut, and a refused read. */
 const poles = new Map<string, CallResult>();
 /** What the stubbed RAG searcher serves, by namespace. */
@@ -647,6 +798,39 @@ beforeAll(async () => {
 			project: "p",
 			active: true,
 		});
+		// A profile for get_profile, a template for get_mission_template, and a
+		// mission deleted at once, whose ID no row carries (get_mission not found).
+		await ctx.db.insert("profiles", {
+			orchestratorId: "ulysse",
+			instanceId: "ulysse-vps",
+			name: "Ulysse",
+			agentId: agentId("ulysse") as never,
+			static: { role: "assistant", workspace: "/w", capabilities: ["mcp"] },
+			dynamic: { currentTask: "seeding", lastSeen: now, sessionCount: 1 },
+		});
+		await ctx.db.insert("missionTemplates", {
+			name: "seeded-template",
+			description: "a template",
+			steps: [{ title: "step one", description: "do it" }],
+			isDefault: false,
+			createdBy: "ulysse",
+			createdAt: now,
+			updatedAt: now,
+		});
+		const gone = await ctx.db.insert("missions", {
+			name: "gone",
+			project: "p",
+			status: "plan",
+			priority: "low",
+			pilot: "ulysse",
+			agents: ["ulysse"],
+			createdBy: "ulysse",
+			createdAt: now,
+			updatedAt: now,
+			orgId: SLUG,
+			clerkOrgId: ORG_ID,
+		});
+		await ctx.db.delete(gone);
 		// Three memories of 30 KB each: list_memories over them exceeds the 60 KB
 		// cap, so capListResponseBytes cuts the page (the truncated pole).
 		for (const n of [1, 2, 3]) {
@@ -692,6 +876,7 @@ beforeAll(async () => {
 			patternId: String(patternId),
 			tasks,
 			receiptId: String(receiptId),
+			goneMissionId: String(gone),
 		};
 	});
 	seeded = {
@@ -703,6 +888,8 @@ beforeAll(async () => {
 			Object.entries(extra.tasks).map(([k, v]) => [k, world.ids.alias(v)]),
 		) as Seeded["tasks"],
 		receiptId: world.ids.alias(extra.receiptId),
+		goneMissionId: world.ids.alias(extra.goneMissionId),
+		kb: {},
 	};
 	const person = await connectAs(await tokenFor("person-bound", world));
 	const master = await connectAs("test-master-token");
@@ -744,6 +931,32 @@ beforeAll(async () => {
 		(await person.callTool({
 			name: "list_memories",
 			arguments: { namespace: BIG_NAMESPACE },
+		})) as CallResult,
+	);
+	for (const [tool, args, as] of NOT_FOUND) {
+		const client = as === "master" ? master : person;
+		poles.set(
+			`not-found:${tool}`,
+			(await client.callTool({
+				name: tool,
+				arguments: args(seeded),
+			})) as CallResult,
+		);
+	}
+	// The inbox once drained (mark_as_read and delete_message ran above).
+	poles.set(
+		"inbox-empty",
+		(await person.callTool({
+			name: "check_messages",
+			arguments: { recipient: "ulysse" },
+		})) as CallResult,
+	);
+	// A URL with no ticket: the second text item says so.
+	poles.set(
+		"upload-url-no-ticket",
+		(await person.callTool({
+			name: "generate_upload_url",
+			arguments: {},
 		})) as CallResult,
 	);
 	poles.set(
@@ -788,6 +1001,11 @@ describe("outputSchema: a real success carries structuredContent that validates"
 			).toBe(true);
 			expect(r.content).toHaveLength(1);
 			expect(r.content[0].type).toBe("text");
+			const other = (TEXT_FORMS as Record<string, OtherForm>)[call.tool];
+			if (other !== undefined) {
+				expectOtherTextAgrees(other, r, true);
+				return;
+			}
 			const form = (LIST_FORMS as Record<string, "array" | "page">)[call.tool];
 			if (form === undefined) {
 				// The text a client without structuredContent support reads is the
@@ -860,6 +1078,116 @@ function expectTextAgrees(
 	});
 	expect(text).toBe(JSON.stringify(page, null, 2));
 }
+
+type OtherForm = "found" | "inbox" | "upload-url" | "compact";
+
+type StuckList = {
+	entries: unknown[];
+	total: number;
+	truncated: boolean;
+	actionableStuckCount: number;
+};
+
+/**
+ * The text is unchanged and says the same thing as the structuredContent, in
+ * the form the tool has always written it (TEXT_FORMS). `present` asks that a
+ * row (or a message) was really there, so the item schema met a real value.
+ */
+function expectOtherTextAgrees(
+	form: OtherForm,
+	r: CallResult,
+	present: boolean,
+): void {
+	const sc = r.structuredContent as Record<string, unknown>;
+	if (form === "found") {
+		expect(r.content).toHaveLength(1);
+		expect(sc.found).toBe(present);
+		if (present) {
+			expect(Object.keys(sc).sort()).toEqual(["found", "item"]);
+			expect(r.content[0].text).toBe(JSON.stringify(sc.item, null, 2));
+		} else {
+			expect(Object.keys(sc).sort()).toEqual(["found", "id"]);
+			expect(r.content[0].text).toBe("null");
+		}
+		return;
+	}
+	if (form === "inbox") {
+		expect(r.content).toHaveLength(1);
+		const messages = sc.messages as unknown[];
+		expect(messages.length > 0).toBe(present);
+		const stuck = (name: string) => {
+			const l = sc[name] as StuckList;
+			return l.entries.length > 0 || l.truncated
+				? [`${name}:\n${JSON.stringify(l, null, 2)}`]
+				: [];
+		};
+		const stuckText = [
+			...stuck("stuckInProgress"),
+			...stuck("peersStuckOnYou"),
+		].join("\n\n");
+		const expected =
+			messages.length === 0
+				? stuckText.length > 0
+					? stuckText
+					: "No new messages."
+				: `${JSON.stringify(messages, null, 2)}${
+						sc.truncated === true
+							? `\n— truncated. Resume with check_messages since=${sc.nextSince}`
+							: ""
+					}${stuckText.length > 0 ? `\n\n${stuckText}` : ""}`;
+		expect(r.content[0].text).toBe(expected);
+		return;
+	}
+	if (form === "upload-url") {
+		expect(r.content).toHaveLength(2);
+		expect(r.content[0].text).toBe(sc.uploadUrl);
+		const { uploadUrl: _url, ...rest } = sc;
+		expect(r.content[1].text).toBe(JSON.stringify(rest));
+		expect(typeof sc.ticket === "string").toBe(present);
+		return;
+	}
+	expect(r.content).toHaveLength(1);
+	expect(r.content[0].text).toBe(JSON.stringify(sc));
+}
+
+describe("null-able reads, the inbox and the upload URL: the absent poles", () => {
+	const ajv = new Ajv2020({ strict: false, allErrors: true });
+	const validates = (tool: string, sc: unknown) => {
+		const { $schema: _ignored, ...body } = schemas.get(tool) as Record<
+			string,
+			unknown
+		>;
+		const validate = ajv.compile(body);
+		expect(validate(sc), JSON.stringify(validate.errors)).toBe(true);
+	};
+
+	for (const [tool, , , id] of NOT_FOUND) {
+		it(`${tool}: a key no visible row carries answers { found: false, id } and the text null`, () => {
+			const r = poles.get(`not-found:${tool}`) as CallResult;
+			expect(r.isError, r.content?.[0]?.text).not.toBe(true);
+			expect(r.structuredContent).toEqual({ found: false, id: id(seeded) });
+			expectOtherTextAgrees("found", r, false);
+			validates(tool, r.structuredContent);
+		});
+	}
+
+	it("check_messages on a drained inbox: no messages, the text unchanged, and it validates", () => {
+		const r = poles.get("inbox-empty") as CallResult;
+		expect(r.isError, r.content?.[0]?.text).not.toBe(true);
+		expectOtherTextAgrees("inbox", r, false);
+		validates("check_messages", r.structuredContent);
+	});
+
+	it("generate_upload_url with no sha256: ticket null and the note, and it validates", () => {
+		const r = poles.get("upload-url-no-ticket") as CallResult;
+		expect(r.isError, r.content?.[0]?.text).not.toBe(true);
+		expectOtherTextAgrees("upload-url", r, false);
+		expect((r.structuredContent as { note?: unknown }).note).toBeTypeOf(
+			"string",
+		);
+		validates("generate_upload_url", r.structuredContent);
+	});
+});
 
 describe("lists: the cut page and the refusal", () => {
 	const ajv = new Ajv2020({ strict: false, allErrors: true });
