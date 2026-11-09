@@ -325,7 +325,7 @@ export const write = mutation({
 			return existing._id;
 		}
 
-		const fleetClerkOrgId = await fleetWriteClerkOrgId(ctx.db, tenantScope);
+		const fleetClerkOrgId = await fleetWriteClerkOrgId(ctx.db, tenantScope.isMaster);
 		return await ctx.db.insert("diary", {
 			date: args.date,
 			orchestrator: args.orchestrator,

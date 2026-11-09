@@ -425,7 +425,7 @@ export const create = mutation({
 			createdAt: Date.now(),
 			orgId: stampScope.isMaster ? undefined : (stampScope.orgSlug as string),
 			clerkOrgId: stampScope.isMaster
-				? await fleetWriteClerkOrgId(ctx.db, stampScope)
+				? await fleetWriteClerkOrgId(ctx.db, stampScope.isMaster)
 				: stampScope.orgClerkId,
 		});
 		await syncParticipantIndex(ctx, noteId, args.participants);
