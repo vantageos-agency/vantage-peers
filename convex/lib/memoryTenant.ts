@@ -15,7 +15,7 @@ import type { MutationCtx, QueryCtx } from "../_generated/server";
 import type { OrgScope } from "./auth";
 import { lookupOrgMapping } from "./authOrgMapping";
 import { memberActorOf } from "./humanActor";
-import { fleetWriteClerkOrgId } from "./operatorOrg";
+import { operatorClerkOrgId } from "./operatorOrg";
 import { clerkOrgIdForSlug } from "./orgClerkId";
 
 /** The org label of a `team/<label>[/...]` namespace, or null for any other namespace. */
@@ -84,7 +84,7 @@ export async function memoryStampForWrite(
 		// a fleet-master row carries the operator organisation's ID (never unstamped).
 		return (
 			(await stampOfNamespace(ctx, namespace)) ??
-			(await fleetWriteClerkOrgId(ctx.db, scope))
+			(await operatorClerkOrgId(ctx.db))
 		);
 	}
 	if (scope.orgClerkId === undefined) {

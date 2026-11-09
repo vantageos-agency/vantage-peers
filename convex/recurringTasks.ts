@@ -268,7 +268,7 @@ export const create = mutation({
 		const rowClerkOrgId = scope.isMaster
 			? forwardedIsClient
 				? forwardedOrgId
-				: await fleetWriteClerkOrgId(ctx.db, scope)
+				: await fleetWriteClerkOrgId(ctx.db, scope.isMaster)
 			: scope.orgClerkId;
 
 		// HUMAN path: the schedule is authored as "user:<subject>" (a colon-prefixed

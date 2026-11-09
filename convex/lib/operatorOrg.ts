@@ -66,17 +66,17 @@ export async function fleetOperatorSlug(
  * through the master seat carried no organisation, so `erase:eraseRow` refused it
  * `target-unstamped` and the system could not take it back.
  *
- * Defined only for a master scope (the service account or an internal system
- * call); an organisation member, or a service account acting FOR an organisation,
+ * `isFleetMaster` is the caller's own master verdict (`scope.isMaster`: the service
+ * account or an internal system call), decided by the door before it calls this; an organisation member, or a service account acting FOR an organisation,
  * is not master and keeps its own stamp. `undefined` when the operator org is not
  * exactly one active mapping with a permanent ID: nothing is invented, the row
  * stays as it was before. A stamp is a write-time fact, never a grant.
  */
 export async function fleetWriteClerkOrgId(
 	db: DatabaseReader,
-	scope: { isMaster: boolean },
+	isFleetMaster: boolean,
 ): Promise<string | undefined> {
-	if (!scope.isMaster) return undefined;
+	if (!isFleetMaster) return undefined;
 	return await operatorClerkOrgId(db);
 }
 

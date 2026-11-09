@@ -397,7 +397,7 @@ export const create = mutation({
 			updatedAt: now,
 			orgId: scope.isMaster ? undefined : (scope.orgSlug as string),
 			clerkOrgId: scope.isMaster
-				? await fleetWriteClerkOrgId(ctx.db, scope)
+				? await fleetWriteClerkOrgId(ctx.db, scope.isMaster)
 				: scope.orgClerkId,
 		});
 	},

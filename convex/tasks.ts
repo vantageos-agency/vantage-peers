@@ -1040,7 +1040,7 @@ export const create = mutation({
 		// permanent ID, so the erase rule can place it.
 		const fleetClerkOrgId =
 			(linkedAssignee?.orgSlug ?? rowOrgId) === undefined
-				? await fleetWriteClerkOrgId(ctx.db, scope)
+				? await fleetWriteClerkOrgId(ctx.db, scope.isMaster)
 				: undefined;
 		if (taskArgs.createdBy === undefined) {
 			// HUMAN path: createdBy is the actor "user:<subject>" (schema keeps it a

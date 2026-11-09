@@ -16,12 +16,14 @@
 // the business of migrations/backfill_org_clerk_id and is only counted here), and its
 // author is an agent of the operator organisation and of no other:
 //   1. the author BY ID (`createdById`; `ownerId` on businessUnits), when present, is the
-//      `_id` of an agents row of the operator org. An ID that is not such a row (a client
-//      agent, a "user:<subject>" person, a dangling ID) is NOT the fleet's, whatever the
-//      label says: an ID outranks a label;
+//      `_id` of an agents row whose permanent org ID is the operator's (the package's
+//      `sameOrg`, by ID, never by slug). An ID that is not such a row (a client agent, an
+//      agent row with no org ID, a "user:<subject>" person, a dangling ID) is NOT the
+//      fleet's, whatever the label says: an ID outranks a label;
 //   2. with no author ID, the label (`createdBy`; `orchestratorId` on businessUnits),
-//      normalised, names exactly ONE agents row of the operator org and NO agents row of
-//      any other org. A label shared with a client org is ambiguous and left alone;
+//      normalised, names exactly ONE agents row in the whole deployment and it is the
+//      operator org's. A label shared with any other agents row (a client org's, or one
+//      with no org ID) is ambiguous and left alone;
 //   3. a memory filed in a `team/` namespace is left alone: the namespace names an org.
 // Every other row is left as it is and counted `unattributed`. Nothing is guessed.
 //
@@ -40,6 +42,7 @@
 //   -> repeat with {"cursor": <nextCursor>} until isDone; add "dryRun": false to write.
 //   bash .claude/scripts/convex-prod.sh run migrations/fleetWriteStamp:revert '{"table":"memories","ids":[...],"dryRun":false}'
 
+import { sameOrg } from "@vantageos/cloud-identity";
 import { ConvexError, v } from "convex/values";
 import type { DatabaseReader } from "../_generated/server";
 import { internalMutation, internalQuery } from "../_generated/server";
@@ -88,12 +91,11 @@ const AGENT_READ_CAP = 5000;
 type Row = Record<string, unknown> & { _id: string };
 
 type Resolver = {
-	operatorSlug: string;
 	operatorOrgId: string;
-	/** agents-row _id -> orgSlug */
-	orgOfAgentId: Map<string, string>;
-	/** normalised name -> number of agents rows per orgSlug */
-	rowsByName: Map<string, Map<string, number>>;
+	/** agents-row _id -> the agent's permanent org ID (absent: the row carries none) */
+	orgIdOfAgentId: Map<string, string | undefined>;
+	/** normalised name -> the permanent org ID of every agents row carrying it */
+	orgIdsByName: Map<string, (string | undefined)[]>;
 };
 
 async function loadResolver(db: DatabaseReader, door: string): Promise<Resolver> {
@@ -109,27 +111,25 @@ async function loadResolver(db: DatabaseReader, door: string): Promise<Resolver>
 			`${door}: agents holds more than ${AGENT_READ_CAP} rows; refusing to decide from a truncated read.`,
 		);
 	}
-	const orgOfAgentId = new Map<string, string>();
-	const rowsByName = new Map<string, Map<string, number>>();
+	const orgIdOfAgentId = new Map<string, string | undefined>();
+	const orgIdsByName = new Map<string, (string | undefined)[]>();
 	for (const a of agents) {
-		orgOfAgentId.set(a._id, a.orgSlug);
+		orgIdOfAgentId.set(a._id, a.clerkOrgId);
 		const key = normalizeOrchestratorId(a.name);
-		const perOrg = rowsByName.get(key) ?? new Map<string, number>();
-		perOrg.set(a.orgSlug, (perOrg.get(a.orgSlug) ?? 0) + 1);
-		rowsByName.set(key, perOrg);
+		orgIdsByName.set(key, [...(orgIdsByName.get(key) ?? []), a.clerkOrgId]);
 	}
-	return {
-		operatorSlug: operator.slug,
-		operatorOrgId: operator.clerkOrgId,
-		orgOfAgentId,
-		rowsByName,
-	};
+	return { operatorOrgId: operator.clerkOrgId, orgIdOfAgentId, orgIdsByName };
 }
 
 type Verdict = "stamped" | "slugOnly" | "fleet" | "teamNamespace" | "unattributed";
 
 const str = (x: unknown): string | undefined =>
 	typeof x === "string" && x !== "" ? x : undefined;
+
+/** The package's org comparison, by permanent ID: an agent with no ID is nobody's. */
+function inOperatorOrg(r: Resolver, agentOrgId: string | undefined): boolean {
+	return sameOrg({ id: agentOrgId }, { id: r.operatorOrgId });
+}
 
 /** The one decision, shared by the count and the backfill. */
 function classify(
@@ -145,17 +145,15 @@ function classify(
 	}
 	const authorId = str(row[cols.id]);
 	if (authorId !== undefined) {
-		return r.orgOfAgentId.get(authorId) === r.operatorSlug ? "fleet" : "unattributed";
+		return inOperatorOrg(r, r.orgIdOfAgentId.get(authorId)) ? "fleet" : "unattributed";
 	}
 	const label = str(row[cols.label]);
 	if (label === undefined || isHumanActorName(label)) return "unattributed";
-	const perOrg = r.rowsByName.get(normalizeOrchestratorId(label));
-	if (perOrg === undefined) return "unattributed";
-	const inOperator = perOrg.get(r.operatorSlug) ?? 0;
-	const elsewhere = [...perOrg.entries()].some(
-		([slug, n]) => slug !== r.operatorSlug && n > 0,
-	);
-	return inOperator === 1 && !elsewhere ? "fleet" : "unattributed";
+	const orgIds = r.orgIdsByName.get(normalizeOrchestratorId(label));
+	if (orgIds === undefined) return "unattributed";
+	// Exactly one agents row carries the label and it is the operator org's. A row
+	// of another org, or one with no permanent ID, makes the label ambiguous.
+	return orgIds.length === 1 && inOperatorOrg(r, orgIds[0]) ? "fleet" : "unattributed";
 }
 
 function pageSizeOf(n: number | undefined): number {
