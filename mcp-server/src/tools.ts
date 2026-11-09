@@ -53,6 +53,7 @@ import {
 	guardFreshState,
 } from "./fresh-state-guard.js";
 import { listTasksGate } from "./list-tasks-gate.js";
+import { refuseUnissuedListCursors } from "./listCursor.js";
 import { memberAuthorLabel } from "./memberAuthor.js";
 import {
 	addFixAttemptServedOutputSchema,
@@ -2573,6 +2574,9 @@ export function registerTools(
 		readonly publicBaseUrl?: string | null;
 	},
 ): void {
+	// tools/list, resources/list and resources/templates/list never issue a
+	// cursor: refuse one with -32602 (listCursor.ts). Before any registration.
+	refuseUnissuedListCursors(server);
 	// The acting agent's unique ID rides every actor-taking Convex door
 	// (verifiedActor.ts). Same client object when no ID was resolved.
 	const convex = withVerifiedActor(rawConvex, oauthCtx);
