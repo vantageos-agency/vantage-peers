@@ -402,8 +402,12 @@ describe("field descriptions — class sweep over every served field", () => {
 			if (!enumValues(f.schema).includes("lite")) return [];
 			const d = f.schema.description ?? "";
 			const problems: string[] = [];
-			if (!/\blite\b/.test(d) || !/\bfull\b/.test(d))
-				problems.push("names lite and full");
+			// Says what each projection returns. Pi ruling (task
+			// k1708xy6dwrb8xx36ztkxfd9d58hwf0t): a description may name the two
+			// values, or describe them without the enum words (the short form /
+			// every stored field); it always says what the full form is.
+			if (!/every stored field/.test(d))
+				problems.push("says what full returns");
 			if (f.schema.default === undefined) problems.push("schema default");
 			if (/always receives full rows/.test(d))
 				problems.push("claims full rows for some callers");

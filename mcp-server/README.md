@@ -199,7 +199,7 @@ _Applies to: Cloud and Self-host._
 - `add_fix_attempt` (write) — Record one attempt at fixing a known fix pattern: what was tried, whether it worked, why, and optionally its commit.
 - `create_fix_pattern` (write) — Create a fix pattern in the knowledge base documenting symptom, root cause, and optional validated fix.
 - `erase_fix_pattern` (write, destructive) — Permanently erase one fix pattern: the pattern, its fix attempts and its search entry are DELETED.
-- `get_fix_pattern` (read) — Fetch a single fix pattern by its patternId, including all linked fix attempts.
+- `get_fix_pattern` (read) — Fetch a single fix pattern by its patternId, with up to 100 of its fix attempts.
 - `link_issue_to_pattern` (write) — Link a VantagePeers issue to a fix pattern creating a bidirectional reference.
 - `list_fix_patterns` (read) — List fix patterns filtered by source project, newest first with cursor paging support.
 - `search_fix_patterns` (read) — Semantic search over fix patterns by symptom description, ranked by relevance.
@@ -208,8 +208,8 @@ _Applies to: Cloud and Self-host._
 ### Missions and templates (9)
 
 - `create_mission` (write) — Create a mission grouping related tasks under a project with a pilot orchestrator and agent list.
-- `get_mission` (read) — Fetch a single mission by Convex ID with full details: status, pilot, agents, progress, and dates.
-- `get_mission_template` (read) — Fetch a mission template by name with all steps, or null if not found.
+- `get_mission` (read) — Fetch a single mission by its ID with full details: status, pilot, agents, progress, start and target dates.
+- `get_mission_template` (read) — Fetch a mission template by name with all its steps.
 - `instantiate_template_into_mission` (write) — Create one task per template step inside a mission, pre-assigned to each step's declared orchestrator.
 - `list_missions` (read) — List missions filtered by project, pilot, or status, newest first with cursor paging support.
 - `list_tasks_by_mission` (read) — List all tasks linked to a mission, optionally filtered by status, newest first.
@@ -275,7 +275,7 @@ _Applies to: Cloud and Self-host._
 
 ### Diary (3)
 
-- `get_diary` (read) — Fetch a diary entry for a specific date and orchestrator, returning null if none exists.
+- `get_diary` (read) — Fetch the diary entry of one orchestrator for one date.
 - `list_diaries` (read) — List diary entries filtered by orchestrator or author, newest first with cursor paging support.
 - `write_diary` (write) — Write or upsert a diary entry for a specific date and orchestrator with highlights and blockers.
 
@@ -286,7 +286,7 @@ _Applies to: Cloud and Self-host._
 ### Profiles and peers (4)
 
 - `get_profile` (read) — Fetch an orchestrator profile with static identity and dynamic session state fields.
-- `list_peers` (read) — List all orchestrator profiles with current status, summary, and session info, newest first.
+- `list_peers` (read) — List all orchestrator profiles with current task and session info, newest first.
 - `set_summary` (write) — Set the status summary of an orchestrator instance: one or two sentences on what it is working on now, replacing the previous summary, which peers read in list_peers.
 - `update_profile` (write) — Create or update an orchestrator profile with static identity facts and dynamic session state.
 
