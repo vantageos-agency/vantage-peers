@@ -2422,22 +2422,27 @@ export const listMessages = query({
 			}
 		} else {
 			// ── Master path — existing index logic, unchanged ──────────────────────
-			// Every caller filter is applied INSIDE the index range, newest first
-			// (the cursor contract runs downward). The `createdBefore` anchor is
-			// pushed into the range too (`_creationTime` is the index's implicit
-			// last field), so a deep page is never cut by the scan cap and a
-			// partial page always has the rows after it reachable.
-			if (args.sessionDay !== undefined && args.from !== undefined) {
-				const sessionDay = args.sessionDay;
+			// Every caller filter is applied by the READ, newest first (the cursor
+			// contract runs downward), never after the take. A day alone is an index
+			// range, with the `createdBefore` anchor inside it (`_creationTime` is the
+			// index's implicit last field). A sender, with or without a day, is the
+			// sender's index range, and a day is narrowed by a query filter BEFORE
+			// the take: the sender's rows are walked newest first until `limit` of
+			// that day are found, so older matches are not lost to newer non-matches.
+			// There is no (sender, day) index on purpose: a second index keyed by the
+			// sender's NAME is one more R-53 site, and this branch needs only one.
+			if (args.from !== undefined) {
 				const from = args.from;
-				rows = await ctx.db
+				const sessionDay = args.sessionDay;
+				const bySender = ctx.db
 					.query("messages")
-					.withIndex("by_from_day", (q) => {
-						const base = q.eq("from", from).eq("sessionDay", sessionDay);
-						return before !== undefined ? base.lt("_creationTime", before) : base;
-					})
-					.order("desc")
-					.take(limit);
+					.withIndex("by_from", (q) => q.eq("from", from))
+					.order("desc");
+				rows = await (
+					sessionDay !== undefined
+						? bySender.filter((q) => q.eq(q.field("sessionDay"), sessionDay))
+						: bySender
+				).take(fetchCap);
 			} else if (args.sessionDay !== undefined) {
 				const sessionDay = args.sessionDay;
 				rows = await ctx.db
@@ -2448,13 +2453,6 @@ export const listMessages = query({
 					})
 					.order("desc")
 					.take(limit);
-			} else if (args.from !== undefined) {
-				const from = args.from;
-				rows = await ctx.db
-					.query("messages")
-					.withIndex("by_from", (q) => q.eq("from", from))
-					.order("desc")
-					.take(fetchCap);
 			} else {
 				rows = await ctx.db.query("messages").order("desc").take(fetchCap);
 			}

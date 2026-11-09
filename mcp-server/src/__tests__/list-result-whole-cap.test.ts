@@ -200,7 +200,13 @@ describe("the byte cap bounds the whole serialized result of every capped list",
 			expect(bytes).toBeLessThanOrEqual(MAX_LIST_RESPONSE_BYTES);
 			const sc = r.structuredContent;
 			expect(sc?.truncated).toBe(true);
-			expect(sc?.nextCursor).toBeNull();
+			// list_messages is the one capped list whose cut page keeps a cursor
+			// (the rows after the last one shown); every other tool still has none.
+			if (tool === "list_messages") {
+				expect(typeof sc?.nextCursor).toBe("string");
+			} else {
+				expect(sc?.nextCursor).toBeNull();
+			}
 			expect(sc?.items.length).toBeGreaterThan(0);
 			expect(sc?.items.length).toBeLessThan(ROWS);
 			const text = JSON.parse(r.content[0].text) as {
