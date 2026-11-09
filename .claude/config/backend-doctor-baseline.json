@@ -54,11 +54,11 @@
 			"modules": {}
 		},
 		"R-53": {
-			"count": 318,
-			"measured_tree_sha": "5bce1027ec9d3b3f5371a9155865655bb8faf2ec",
+			"count": 317,
+			"measured_tree_sha": "7d23f8f55cb961f79d6cb30ba64928522b0e805c",
 			"cli_commit": "f6297a29c64a0265124e3e9cf86c9dd85eac47c0",
-			"command": "npx -y @vantageos/backend-doctor@0.5.0 <vantage-peers clean full checkout @5bce1027ec9d3b3f5371a9155865655bb8faf2ec (task k177pske4qj37sfw7nw2787msd8fzp0e), deps installed> --json-evidence <dir>/",
-			"output_line": "R-53: 318 site(s) VIOLATE (the principal is the package resolver's output, every write admits by comparing stored IDs with the resolved IDs, the unresolved branch refuses, and no local function decides identity). [conform=14 non-conforming=318 could-not-judge=0] Violations: convex/diary.ts:80 (orchestratorListed: (d) local identity layer — compares names to admit (`normalizeOrchestratorId(agent.name) === claimed`, line 89)); convex/lib/agentIdentity.ts:300 (resolveAgentRef: (d) local identity layer — compares names to admit (`normalizeOrchestratorId(byNormalized.name) === normalized`, line 386); selects a row by name (`withIndex(\"by_org_normalized_name_clerk_id\")` on `normalizedName`, line 381); selects a row by name (`withIndex(\"by_org_name_clerk_id\")` on `name`, line 391); decides identity through name resolver `clerkOrgIdForSlug` (line 319)); convex/lib/auth.ts:629 (filterByOrgScope: (d) local identity layer — compares names to admit (`scope.allowedOrchestrators.includes(orchestrator)`, line 645)). Conform site(s): convex/agentCredentials.ts:83 (mintAgentCredential: principal from @vantageos/cloud-identity, target admitted by stored-ID comparison, unresolved refused); convex/agentLinks.ts:79 (grant: principal from @vantageos/cloud-identity, target admitted by stored-ID comparison, unresolved refused); convex/agentLinks.ts:154 (revoke: principal from @vantageos/cloud-identity, target admitted by stored-ID comparison, unresolved refused).; MECHANICAL RULE COUNTS: CR-2 241, CR-3 13, R-5 62, R-53 318, R-54 108, R-55 22, R-56 2",
+			"command": "npx -y @vantageos/backend-doctor@0.5.0 <vantage-peers clean full checkout @7d23f8f55cb961f79d6cb30ba64928522b0e805c (task k17cv03wd3g60gz3p498879f2d8hx4pv), deps installed> --json-evidence <dir>/",
+			"output_line": "R-53: 317 site(s) VIOLATE (the day read of listMessages folds sender and tenant into one filter helper, convex/messages.ts); MECHANICAL RULE COUNTS: CR-2 237, CR-3 13, R-5 62, R-53 317, R-54 108, R-55 22, R-56 2",
 			"modules": {}
 		},
 		"R-5": {
