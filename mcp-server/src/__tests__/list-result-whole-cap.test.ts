@@ -149,6 +149,9 @@ const CAPPED: ReadonlyArray<readonly [string, Record<string, unknown>]> = [
 	["list_fix_patterns", { limit: ROWS }],
 ];
 
+/** Tools whose text is JSON.stringify(structuredContent), cut or not. */
+const MIRRORED = new Set(["list_diaries"]);
+
 function masterCtx(): OAuthContext {
 	return {
 		clientId: "m",
@@ -209,6 +212,12 @@ describe("the byte cap bounds the whole serialized result of every capped list",
 			}
 			expect(sc?.items.length).toBeGreaterThan(0);
 			expect(sc?.items.length).toBeLessThan(ROWS);
+			if (MIRRORED.has(tool)) {
+				// The text is the structuredContent itself: the cut is its
+				// truncated: true (task k17e90s1n85hjappy26vs2kww18hxjp1).
+				expect(r.content[0].text).toBe(JSON.stringify(sc));
+				return;
+			}
 			const text = JSON.parse(r.content[0].text) as {
 				_meta: { _truncated: boolean; _showing: number };
 				items: unknown[];

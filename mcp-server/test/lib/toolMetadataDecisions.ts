@@ -9,7 +9,9 @@
  */
 
 /**
- * The 23 lists and searches (task k17592gg5t2tencwxks3kysghx8htqg8). Their text
+ * The 21 lists and searches (task k17592gg5t2tencwxks3kysghx8htqg8) whose text
+ * is not their structuredContent (get_owner_tool_usage and list_diaries left
+ * for MIRRORED_TEXT, task k17e90s1n85hjappy26vs2kww18hxjp1). Their text
  * stays byte-identical; their structuredContent is:
  *   - "array": the text is a bare JSON array, structuredContent is { items }
  *     holding that same array (MCP requires an object);
@@ -30,7 +32,6 @@ export const LIST_FORMS = {
 	search_briefing_notes_by_keyword: "array",
 	search_fix_patterns: "array",
 	get_tool_usage: "array",
-	get_owner_tool_usage: "array",
 	list_episodes: "page",
 	list_memories: "page",
 	list_peers: "page",
@@ -38,7 +39,6 @@ export const LIST_FORMS = {
 	list_tasks: "page",
 	list_tasks_by_mission: "page",
 	list_missions: "page",
-	list_diaries: "page",
 	list_briefing_notes: "page",
 	list_recurring_tasks: "page",
 	list_repo_mappings: "page",
@@ -59,13 +59,16 @@ export const LIST_FORMS = {
  *   - "compact": the same object as the text, written without indentation.
  */
 export const TEXT_FORMS = {
-	get_profile: "found",
 	get_mission: "found",
 	get_mission_template: "found",
 	get_diary: "found",
 	check_messages: "inbox",
 	generate_upload_url: "upload-url",
 	claim_upload: "compact",
+	// MIRRORED_TEXT: the text is JSON.stringify(structuredContent)
+	get_owner_tool_usage: "compact",
+	list_diaries: "compact",
+	get_profile: "compact",
 } as const satisfies Record<
 	string,
 	"found" | "inbox" | "upload-url" | "compact"

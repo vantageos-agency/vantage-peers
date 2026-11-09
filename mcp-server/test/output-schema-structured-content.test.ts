@@ -254,11 +254,17 @@ describe("null-able reads, the inbox and the upload URL: the absent poles", () =
 	};
 
 	for (const [tool, , , id] of NOT_FOUND) {
-		it(`${tool}: a key no visible row carries answers { found: false, id } and the text null`, () => {
+		it(`${tool}: a key no visible row carries answers { found: false, id } and its text says so`, () => {
 			const r = poles.get(`not-found:${tool}`) as CallResult;
 			expect(r.isError, r.content?.[0]?.text).not.toBe(true);
 			expect(r.structuredContent).toEqual({ found: false, id: id(seeded) });
-			expectOtherTextAgrees("found", r, false);
+			// "found": the text is JSON null; "compact" (get_profile,
+			// MIRRORED_TEXT): the text is { found: false, id } itself.
+			expectOtherTextAgrees(
+				(TEXT_FORMS as Record<string, OtherForm>)[tool] ?? "found",
+				r,
+				false,
+			);
 			validates(tool, r.structuredContent);
 		});
 	}
@@ -598,7 +604,9 @@ describe("Manufact 2250: the text of the three experiment tools is their structu
 		it(`${tool}: its description says the text is the same object as JSON, and no other shape`, () => {
 			const d = descriptions.get(tool) ?? "";
 			expect(d).toContain("The text is the same object as JSON");
-			expect(d).not.toMatch(/bare JSON array|the text is the profile|or null when|else \{ items, nextCursor \}/);
+			expect(d).not.toMatch(
+				/bare JSON array|the text is the profile|or null when|else \{ items, nextCursor \}/,
+			);
 		});
 	}
 
@@ -635,10 +643,14 @@ describe("Manufact 2250: the four text residues", () => {
 		});
 	}
 
-	it("store_memory.type says what type 'episode' stores through store_memory", () => {
+	it("store_memory.type says what the episode kind stores through store_memory", () => {
 		const d = field("store_memory", "type");
 		expect(d).not.toContain("use store_episode instead");
-		expect(d).toContain("'episode' stores a memory of that type holding only this content");
-		expect(d).toContain("store_episode");
+		// The enum value itself is not restated (returns-envelope.test.ts
+		// forbiddenTokens): the kind is named by the tools that read it.
+		expect(d).toContain(
+			"Written here with the kind list_episodes and get_episode read, the memory holds only this content",
+		);
+		expect(d).toContain("which only store_episode records");
 	});
 });

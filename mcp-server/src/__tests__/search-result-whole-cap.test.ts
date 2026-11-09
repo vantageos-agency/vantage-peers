@@ -116,6 +116,9 @@ const BARE: ReadonlyArray<readonly [string, Record<string, unknown>]> = [
 	["get_owner_tool_usage", { ownerUserId: "user_x" }],
 ];
 
+/** Tools whose text is JSON.stringify(structuredContent), cut or not. */
+const MIRRORED = new Set(["get_owner_tool_usage"]);
+
 function masterCtx(): OAuthContext {
 	return {
 		clientId: "m",
@@ -170,6 +173,12 @@ describe("the bare-array tools bound their whole result, and declare the cut", (
 			};
 			expect(sc.truncated).toBe(true);
 			expect(sc.items.length).toBeGreaterThan(0);
+			if (MIRRORED.has(tool)) {
+				// The text is the structuredContent itself: the cut is its
+				// truncated: true (task k17e90s1n85hjappy26vs2kww18hxjp1).
+				expect(r.content[0].text).toBe(JSON.stringify(sc));
+				return;
+			}
 			const text = JSON.parse(r.content[0].text) as {
 				_meta?: { _truncated: boolean; _showing: number; _total: number };
 				items: unknown[];

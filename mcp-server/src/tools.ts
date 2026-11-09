@@ -361,6 +361,54 @@ export function capPage(
 	structured: PageStructured | ArrayStructured;
 	truncated: boolean;
 } {
+	return capPageWith(payload, toolName, form, maxBytes, false, continueFrom);
+}
+
+/**
+ * capPage for a tool whose text is exactly JSON.stringify(structuredContent)
+ * (task k17e90s1n85hjappy26vs2kww18hxjp1, the Manufact 2250 experiment:
+ * get_owner_tool_usage, list_diaries). The same rows are kept and cut the same
+ * way; the text is the structured object itself, envelope included, so a cut
+ * is said by `truncated: true` in both channels, and the whole result is
+ * measured with that text.
+ */
+export function capPageMirrored(
+	payload: unknown,
+	toolName: string,
+	form?: "page",
+	maxBytes?: number,
+): { text: string; structured: PageStructured; truncated: boolean };
+export function capPageMirrored(
+	payload: unknown,
+	toolName: string,
+	form: "array",
+	maxBytes?: number,
+): { text: string; structured: ArrayStructured; truncated: boolean };
+export function capPageMirrored(
+	payload: unknown,
+	toolName: string,
+	form: "page" | "array" = "page",
+	maxBytes: number = MAX_LIST_RESPONSE_BYTES,
+): {
+	text: string;
+	structured: PageStructured | ArrayStructured;
+	truncated: boolean;
+} {
+	return capPageWith(payload, toolName, form, maxBytes, true);
+}
+
+function capPageWith(
+	payload: unknown,
+	toolName: string,
+	form: "page" | "array",
+	maxBytes: number,
+	mirrored: boolean,
+	continueFrom?: (shown: unknown[]) => string | null,
+): {
+	text: string;
+	structured: PageStructured | ArrayStructured;
+	truncated: boolean;
+} {
 	const rawText = JSON.stringify(payload, null, 2);
 	const rows: unknown[] | null = Array.isArray(payload)
 		? payload
@@ -380,16 +428,17 @@ export function capPage(
 			}),
 			"utf8",
 		);
+	const uncutStructured =
+		form === "array"
+			? arrayStructured(payload)
+			: pageStructured(payload, {
+					text: rawText,
+					shown: rows ?? [],
+					truncated: false,
+				});
 	const uncut = {
-		text: rawText,
-		structured:
-			form === "array"
-				? arrayStructured(payload)
-				: pageStructured(payload, {
-						text: rawText,
-						shown: rows ?? [],
-						truncated: false,
-					}),
+		text: mirrored ? JSON.stringify(uncutStructured) : rawText,
+		structured: uncutStructured,
 		truncated: false,
 	};
 	const wholeBytes = resultBytes(uncut.text, uncut.structured);
@@ -426,12 +475,15 @@ export function capPage(
 			items: shown,
 			...(resumeCursor !== null ? { nextCursor: resumeCursor } : {}),
 		};
+		const cutStructured: PageStructured | ArrayStructured =
+			form === "array"
+				? { items: shown, truncated: true }
+				: { items: shown, nextCursor: resumeCursor, truncated: true };
 		cut = {
-			text: JSON.stringify(envelope, null, 2),
-			structured:
-				form === "array"
-					? { items: shown, truncated: true }
-					: { items: shown, nextCursor: resumeCursor, truncated: true },
+			text: mirrored
+				? JSON.stringify(cutStructured)
+				: JSON.stringify(envelope, null, 2),
+			structured: cutStructured,
 			truncated: true,
 		};
 		if (resultBytes(cut.text, cut.structured) <= maxBytes) break;
@@ -686,7 +738,7 @@ export const LIST_TASKS_TOOL_DESCRIPTION =
 		"Use to keep Pi's queue clean from scheduler noise. " +
 		"With updatedSince the rows come newest-UPDATED first and a window of any size pages complete through nextCursor. " +
 		"Refused above 2000 rows (drop one key, narrow by status or raise updatedSince): assignedTo with createdBy, project or assignedToInstance with createdBy or updatedSince, and createdBy over an updatedSince window where that creator is rare. " +
-		"status shorthands: open is todo, in_progress, review and blocked; active is todo and in_progress; all applies no filter. " +
+		"status shorthands: open is todo, in_progress, review and blocked; active is todo and in_progress; all applies no filter. A shorthand stands alone in the status list: ['open'], never ['open', 'done']. " +
 		"A caller other than the fleet master may name in assignedTo (or, without it, createdBy) only an identity of its fromAllowList (whoami lists it); another name is refused.";
 
 export const listTasksArgsSchema = z.object({
@@ -703,7 +755,7 @@ export const listTasksArgsSchema = z.object({
 		["open", "active", "all"],
 	)
 		.optional()
-		.describe("Keep tasks in any of these states; a shorthand for a set of states (the tool description says which) is the only entry of its list. Without it, every state."),
+		.describe("Keep tasks in any of the states in this list, or in the set one shorthand names (the tool description lists the shorthands). Without it, every state."),
 	project: z.string().optional().describe("Keep only tasks of this project, e.g. 'vantage-peers'. Omit for every project."),
 	limit: z
 		.number()
@@ -2802,7 +2854,7 @@ export function registerTools(
 						"Omit it to write in your own space (a signed-in person: 'team/<org>'; a seat: 'orchestrator/<its own agent ID>'; whoami returns it as default_write_namespace). " +
 						"A client seat may write only 'team/<org ID>', 'project/<org slug>' and 'orchestrator/<its own agent ID>' (the permanent ID, never the agent name); a refused write names the namespaces your session may write.",
 				),
-			type: memoryTypeSchema.describe("What kind of knowledge the memory holds. For a structured past event with its context, goal, action, outcome and insight, use store_episode instead."),
+			type: memoryTypeSchema.describe("What kind of knowledge the memory holds. Written here with the kind list_episodes and get_episode read, the memory holds only this content: none of the context, goal, action, outcome, insight and severity fields, which only store_episode records."),
 			content: z
 				.string()
 				.describe("The memory itself, written so it reads on its own in a later session."),
@@ -3629,7 +3681,7 @@ export function registerTools(
 				.max(200)
 				.optional()
 				.meta({ default: 20 })
-				.describe("How many rows one page holds; when more exist, the reply's nextCursor fetches the next page. With a cursor and no limit, a page holds 50 rows."),
+				.describe("How many rows one page holds; when more exist, the reply's nextCursor fetches the next page. Pass the same limit with each cursor: a page fetched with a cursor and no limit holds 50 rows."),
 			fields: z
 				.enum(["lite", "full"])
 				.optional()
@@ -3886,7 +3938,7 @@ export function registerTools(
 		},
 		"get_profile",
 		"Fetch an orchestrator profile with static identity and dynamic session state fields. " +
-			"Returns { found, item? { _id, _creationTime, orchestratorId, name, static, dynamic }, id? }: item is the profile (orchestratorId, name, static, dynamic) when found is true, id the orchestratorId asked for when found is false; the text is the profile as JSON, or null when no profile by that ID is visible to you. " +
+			"Returns { found, item? { _id, _creationTime, orchestratorId, name, static, dynamic }, id? }: item is the profile (orchestratorId, name, static, dynamic) when found is true, id the orchestratorId asked for when found is false, which is also the answer when no profile by that ID is visible to you. The text is the same object as JSON. " +
 			"WHEN: use to check peer status, capabilities, or current task before assigning work. " +
 			"EXAMPLE: get_profile orchestratorId='gamma'.",
 		{
@@ -3939,15 +3991,12 @@ export function registerTools(
 								>;
 								return rest;
 							})();
+				// The text is the structuredContent as JSON, { found: false, id }
+				// included (task k17e90s1n85hjappy26vs2kww18hxjp1).
+				const structured = foundStructured(filteredProfile, orchestratorId);
 				return {
-					content: [
-						{
-							type: "text",
-							text: JSON.stringify(filteredProfile, null, 2),
-						},
-					],
-					// The text stays the row or null; null is said as found: false.
-					structuredContent: foundStructured(filteredProfile, orchestratorId),
+					content: [{ type: "text", text: JSON.stringify(structured) }],
+					structuredContent: structured,
 				};
 			} catch (error: any) {
 				return mcpConvexError(error);
@@ -7068,13 +7117,13 @@ export function registerTools(
 		"List all tasks linked to a mission, optionally filtered by status, newest first. " +
 			"Returns { items[{ _id, _creationTime, title, assignedTo, priority, status }], nextCursor, truncated, scopeFiltered? }: items are tasks, newest first; nextCursor is the next page's cursor, null on the last page; scopeFiltered counts rows withheld by scope; truncated is true when the 60 KB response cap cut the page (nextCursor is then null). The text is the bare JSON array of the tasks, or { items, nextCursor?, scopeFiltered? } when another page exists or rows were withheld. " +
 			"WHEN: use to review mission progress or find blocked/open tasks within a specific mission. " +
-			"status shorthands: open is todo, in_progress, review and blocked; active is todo and in_progress; all applies no filter. " +
+			"status shorthands: open is todo, in_progress, review and blocked; active is todo and in_progress; all applies no filter. A shorthand stands alone in the status list: ['open'], never ['open', 'done']. " +
 			"EXAMPLE: list_tasks_by_mission missionId='k57a36y8...' status=['in_progress'] limit=20.",
 		{
 			missionId: missionIdSchema.describe("The mission to list: its missionId as returned by create_mission or list_missions."),
 			status: taskStatusFilterSchema
 				.optional()
-				.describe("Keep tasks in any of these states; a shorthand for a set of states (the tool description says which) is the only entry of its list. Without it, every state."),
+				.describe("Keep tasks in any of the states in this list, or in the set one shorthand names (the tool description lists the shorthands). Without it, every state."),
 			limit: z
 				.number()
 				.int()
@@ -7318,7 +7367,7 @@ export function registerTools(
 		"List missions filtered by project, pilot, or status, newest first with cursor paging support. " +
 			"Returns { items[{ _id, _creationTime, name, status, pilot, priority, project }], nextCursor, truncated }: items are missions, newest first; nextCursor is the next page's cursor, null on the last page; truncated is true when the 60 KB response cap cut the page (nextCursor is then null). The text is the bare JSON array of the missions on the last page, else { items, nextCursor }. " +
 			"WHEN: use to audit active missions, find missions by pilot, or check cross-project progress. " +
-			"status shorthands: open is brainstorm, plan, execute and validate; active is plan and execute; all applies no filter. " +
+			"status shorthands: open is brainstorm, plan, execute and validate; active is plan and execute; all applies no filter. A shorthand stands alone in the status list: ['open'], never ['open', 'execute']. " +
 			"A caller other than the fleet master must pass pilot equal to its own user ID, and is refused otherwise; only the fleet master lists every pilot. " +
 			"EXAMPLE: list_missions project='vantage-peers' status=['execute'] pilot='alpha' limit=20.",
 		{
@@ -7326,7 +7375,7 @@ export function registerTools(
 			pilot: creatorSchema.optional().describe("Keep only missions led by this orchestrator. Omit for every pilot."),
 			status: missionStatusFilterSchema
 				.optional()
-				.describe("The mission stages to keep; a shorthand for a set of stages (the tool description says which) is the only entry of its list. Without it, every stage."),
+				.describe("Keep missions at any of the stages in this list, or in the set one shorthand names (the tool description lists the shorthands). Without it, every stage."),
 			limit: z
 				.number()
 				.int()
@@ -7824,7 +7873,7 @@ export function registerTools(
 		},
 		"list_diaries",
 		"List diary entries filtered by orchestrator or author, newest first with cursor paging support. " +
-			"Returns { items[{ _id, _creationTime, date, orchestrator, content, createdAt }], nextCursor, truncated }: items are diary entries, newest first; nextCursor is the next page's cursor, null on the last page; truncated is true when the 60 KB response cap cut the page (nextCursor is then null). The text is the bare JSON array of the entries on the last page, else { items, nextCursor }. " +
+			"Returns { items[{ _id, _creationTime, date, orchestrator, content, createdAt }], nextCursor, truncated }: items are diary entries, newest first; nextCursor is the next page's cursor, null on the last page; truncated is true when the 60 KB response cap cut the page (nextCursor is then null). The text is the same object as JSON. " +
 			"WHEN: use to review recent history across sessions or audit a period of activity. " +
 			"EXAMPLE: list_diaries orchestrator='beta' limit=10.",
 		{
@@ -7934,7 +7983,8 @@ export function registerTools(
 				const entriesWithCursor =
 					nextCursor !== null ? { items: entriesArr, nextCursor } : entries;
 
-				const capped = capPage(entriesWithCursor, "list_diaries");
+				// The text is the structuredContent as JSON (capPageMirrored).
+				const capped = capPageMirrored(entriesWithCursor, "list_diaries");
 				return {
 					content: [{ type: "text", text: capped.text }],
 					structuredContent: capped.structured,
@@ -11980,7 +12030,7 @@ export function registerTools(
 		},
 		"get_owner_tool_usage",
 		"List which MCP tools a person has used across all the agents it owns (one per AI client) and its own direct calls, summed per tool with the earliest first call and the latest last call. " +
-			"Returns { items[{ tool, firstAt, lastAt, count }], truncated? }, summed across the person's agents and its own calls (times in Unix milliseconds); the text is the same items as a bare JSON array; over the 60 KB response cap both are cut and say so (truncated: true, and _meta in the text). " +
+			"Returns { items[{ tool, firstAt, lastAt, count }], truncated? }, summed across the person's agents and its own calls (times in Unix milliseconds); over the 60 KB response cap the items are cut and truncated is true. The text is the same object as JSON. " +
 			"WHEN: use to tell what an onboarding step still has to introduce to a person, whichever AI client they used. " +
 			"EXAMPLE: get_owner_tool_usage ownerUserId='user_2abc' (an organisation admin reading a member).",
 		{
@@ -12016,12 +12066,14 @@ export function registerTools(
 					"toolUsage:usageByOwner" as any,
 					{ ownerUserId, ...reader.args },
 				);
-				const capped = capPage(rows ?? [], "get_owner_tool_usage", "array");
+				const capped = capPageMirrored(
+					rows ?? [],
+					"get_owner_tool_usage",
+					"array",
+				);
 				return {
-					content: [
-						{ type: "text", text: capped.text },
-					],
-					// The bare array, or the declared cut (capPage).
+					// The text is the structuredContent as JSON (capPageMirrored).
+					content: [{ type: "text", text: capped.text }],
 					structuredContent: capped.structured,
 				};
 			} catch (error: any) {

@@ -136,7 +136,8 @@ describe("get_owner_tool_usage and the unidentified bearer", () => {
 		const r = await handlers.get("get_owner_tool_usage")?.({
 			ownerUserId: "user_owner",
 		});
-		expect(JSON.parse(text(r))).toEqual(ROWS);
+		// The text is the structuredContent as JSON (task k17e90s1n85hjappy26vs2kww18hxjp1).
+		expect(JSON.parse(text(r))).toEqual({ items: ROWS });
 		expect(query).toHaveBeenCalledWith("toolUsage:usageByOwner", {
 			ownerUserId: "user_owner",
 			verifiedPerson: { accessTokenHash: "hash-1" },
