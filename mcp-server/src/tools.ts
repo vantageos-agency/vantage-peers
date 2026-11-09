@@ -132,6 +132,7 @@ import {
 import { isRefusedEnvelope } from "./refusal.js";
 import {
 	arrayStructured,
+	type ArrayStructured,
 	type CappedList,
 	type PageStructured,
 	pageStructured,
@@ -307,12 +308,35 @@ export function capListResponseBytes(
  * capListResponseBytes writes, structuredContent { items, nextCursor: null,
  * truncated: true } with the same rows. An envelope page is cut too: before,
  * only a bare array could be.
+ *
+ * `form: "array"` is a bare-array answer (the searches, tool usage): uncut,
+ * its text is the bare array, unchanged, and structuredContent { items }; cut,
+ * the text is the same { _meta, items } envelope and structuredContent
+ * { items, truncated: true }, so the cut is declared in both channels and is
+ * never a silently shorter bare array.
  */
 export function capPage(
 	payload: unknown,
 	toolName: string,
+	form?: "page",
+	maxBytes?: number,
+): { text: string; structured: PageStructured; truncated: boolean };
+export function capPage(
+	payload: unknown,
+	toolName: string,
+	form: "array",
+	maxBytes?: number,
+): { text: string; structured: ArrayStructured; truncated: boolean };
+export function capPage(
+	payload: unknown,
+	toolName: string,
+	form: "page" | "array" = "page",
 	maxBytes: number = MAX_LIST_RESPONSE_BYTES,
-): { text: string; structured: PageStructured; truncated: boolean } {
+): {
+	text: string;
+	structured: PageStructured | ArrayStructured;
+	truncated: boolean;
+} {
 	const rawText = JSON.stringify(payload, null, 2);
 	const rows: unknown[] | null = Array.isArray(payload)
 		? payload
@@ -321,7 +345,10 @@ export function capPage(
 				Array.isArray((payload as { items?: unknown }).items)
 			? ((payload as { items: unknown[] }).items as unknown[])
 			: null;
-	const resultBytes = (text: string, structured: PageStructured) =>
+	const resultBytes = (
+		text: string,
+		structured: PageStructured | ArrayStructured,
+	) =>
 		Buffer.byteLength(
 			JSON.stringify({
 				content: [{ type: "text", text }],
@@ -331,11 +358,14 @@ export function capPage(
 		);
 	const uncut = {
 		text: rawText,
-		structured: pageStructured(payload, {
-			text: rawText,
-			shown: rows ?? [],
-			truncated: false,
-		}),
+		structured:
+			form === "array"
+				? arrayStructured(payload)
+				: pageStructured(payload, {
+						text: rawText,
+						shown: rows ?? [],
+						truncated: false,
+					}),
 		truncated: false,
 	};
 	const wholeBytes = resultBytes(uncut.text, uncut.structured);
@@ -343,7 +373,11 @@ export function capPage(
 		return uncut;
 	}
 	let n = rows.length;
-	let cut = uncut;
+	let cut: {
+		text: string;
+		structured: PageStructured | ArrayStructured;
+		truncated: boolean;
+	} = uncut;
 	while (n > 1) {
 		n = Math.max(1, Math.floor(n / 2));
 		const shown = rows.slice(0, n);
@@ -363,7 +397,10 @@ export function capPage(
 		};
 		cut = {
 			text: JSON.stringify(envelope, null, 2),
-			structured: { items: shown, nextCursor: null, truncated: true },
+			structured:
+				form === "array"
+					? { items: shown, truncated: true }
+					: { items: shown, nextCursor: null, truncated: true },
 			truncated: true,
 		};
 		if (resultBytes(cut.text, cut.structured) <= maxBytes) break;
@@ -736,19 +773,19 @@ export const billingSummaryByProjectArgsSchema = z.object({
 
 export const RECALL_TOOL_DESCRIPTION =
 	"Semantic vector search over VantagePeers memories, ranked by cosine similarity. " +
-		"Returns { items[{ memoryId, score, namespace, type, content }] }, best match first; the text is the same items as a bare JSON array. " +
+		"Returns { items[{ memoryId, score, namespace, type, content }] }, best match first; the text is the same items as a bare JSON array; over the 60 KB response cap both are cut and say so (truncated: true, and _meta in the text). " +
 		"WHEN: looking up past decisions, rules or facts by meaning rather than by exact words (text_search matches exact terms). " +
 		"EXAMPLE: recall query='Pi feedback rules' namespace='global' type='feedback' limit=20.";
 
 export const HYBRID_SEARCH_TOOL_DESCRIPTION =
 	"Combined vector + BM25 search via Reciprocal Rank Fusion for best semantic and keyword coverage. " +
-		"Returns { items[{ memoryId, rrfScore, namespace, type, content }] }, highest fused score first; the text is the same items as a bare JSON array. " +
+		"Returns { items[{ memoryId, rrfScore, namespace, type, content }] }, highest fused score first; the text is the same items as a bare JSON array; over the 60 KB response cap both are cut and say so (truncated: true, and _meta in the text). " +
 		"WHEN: a query needs both meaning and exact terms to match; it fuses the two rankings recall and text_search compute alone. " +
 		"EXAMPLE: hybrid_search query='onboarding customer flow' namespace='project/vantage-peers' limit=20.";
 
 export const TEXT_SEARCH_TOOL_DESCRIPTION =
 	"BM25 full-text keyword search over VantagePeers memories for exact term matching. " +
-		"Returns { items[{ memoryId, namespace, type, content }] }, best match first; the text is the same items as a bare JSON array. " +
+		"Returns { items[{ memoryId, namespace, type, content }] }, best match first; the text is the same items as a bare JSON array; over the 60 KB response cap both are cut and say so (truncated: true, and _meta in the text). " +
 		"WHEN: the words or ID to find are known exactly (recall ranks by meaning instead). " +
 		"EXAMPLE: text_search query='Day 92 C3 descriptions' namespace='project/vantage-peers' limit=10.";
 
@@ -760,7 +797,7 @@ export const LIST_BRIEFING_NOTES_TOOL_DESCRIPTION =
 
 export const SEARCH_BRIEFING_NOTES_BY_KEYWORD_TOOL_DESCRIPTION =
 	"BM25 full-text keyword search over briefing note content, ranked by relevance. " +
-		"Returns { items }: the matching notes, best match first; the text is the same items as a bare JSON array. " +
+		"Returns { items }: the matching notes, best match first; the text is the same items as a bare JSON array; over the 60 KB response cap both are cut and say so (truncated: true, and _meta in the text). " +
 		"WHEN: use to recall briefings about a topic/decision when list_briefing_notes filters are too coarse — e.g. " +
 		"'find briefings about migration plan'. EXAMPLE: search_briefing_notes_by_keyword query='migration plan' topic='daily' limit=10.";
 
@@ -3050,15 +3087,16 @@ export function registerTools(
 					fields: fields ?? "lite",
 				});
 
+				const capped = capPage(results, "recall", "array");
 				return {
 					content: [
 						{
 							type: "text",
-							text: JSON.stringify(results, null, 2),
+							text: capped.text,
 						},
 					],
-					// The text stays the bare array; the object form of the same rows.
-					structuredContent: arrayStructured(results),
+					// The bare array, or the declared cut (capPage).
+					structuredContent: capped.structured,
 				};
 			} catch (error: any) {
 				return mcpConvexError(error);
@@ -3121,10 +3159,11 @@ export function registerTools(
 					limit: limit ?? 20,
 					fields: fields ?? "lite",
 				});
+				const capped = capPage(results, "text_search", "array");
 				return {
-					content: [{ type: "text", text: JSON.stringify(results, null, 2) }],
-					// The text stays the bare array; the object form of the same rows.
-					structuredContent: arrayStructured(results),
+					content: [{ type: "text", text: capped.text }],
+					// The bare array, or the declared cut (capPage).
+					structuredContent: capped.structured,
 				};
 			} catch (error: any) {
 				return mcpConvexError(error);
@@ -3208,10 +3247,11 @@ export function registerTools(
 					vectorWeight,
 					textWeight,
 				});
+				const capped = capPage(results, "hybrid_search", "array");
 				return {
-					content: [{ type: "text", text: JSON.stringify(results, null, 2) }],
-					// The text stays the bare array; the object form of the same rows.
-					structuredContent: arrayStructured(results),
+					content: [{ type: "text", text: capped.text }],
+					// The bare array, or the declared cut (capPage).
+					structuredContent: capped.structured,
 				};
 			} catch (error: any) {
 				return mcpConvexError(error);
@@ -3526,7 +3566,7 @@ export function registerTools(
 		{ kind: "read", namespaceArg: "namespace" },
 		"search_episodes_by_keyword",
 		"BM25 full-text keyword search restricted to episodes (memories with type='episode'). " +
-			"Returns { items[{ memoryId, namespace, type, content }] }: the matching episodes, best match first; the text is the same items as a bare JSON array. " +
+			"Returns { items[{ memoryId, namespace, type, content }] }: the matching episodes, best match first; the text is the same items as a bare JSON array; over the 60 KB response cap both are cut and say so (truncated: true, and _meta in the text). " +
 			"WHEN: use when search_episodes_by_semantic returns too-broad results and you need an exact phrase or ID inside an episode field. " +
 			"EXAMPLE: search_episodes_by_keyword query='convex deploy schema' namespace='orchestrator/sigma' limit=10.",
 		{
@@ -3571,10 +3611,11 @@ export function registerTools(
 					limit: limit ?? 20,
 					fields: fields ?? "lite",
 				});
+				const capped = capPage(results, "search_episodes_by_keyword", "array");
 				return {
-					content: [{ type: "text", text: JSON.stringify(results, null, 2) }],
-					// The text stays the bare array; the object form of the same rows.
-					structuredContent: arrayStructured(results),
+					content: [{ type: "text", text: capped.text }],
+					// The bare array, or the declared cut (capPage).
+					structuredContent: capped.structured,
 				};
 			} catch (error: any) {
 				return mcpConvexError(error);
@@ -3592,7 +3633,7 @@ export function registerTools(
 		{ kind: "read", namespaceArg: "namespace" },
 		"search_episodes_by_semantic",
 		"Semantic vector search restricted to episodes (memories with type='episode'), ranked by cosine similarity. " +
-			"Returns { items[{ memoryId, score, namespace, type, content }] }, best match first; the text is the same items as a bare JSON array. " +
+			"Returns { items[{ memoryId, score, namespace, type, content }] }, best match first; the text is the same items as a bare JSON array; over the 60 KB response cap both are cut and say so (truncated: true, and _meta in the text). " +
 			"WHEN: use to recall structured past events by intent — failure modes, lessons, similar contexts. " +
 			"EXAMPLE: search_episodes_by_semantic query='hook false positive blocked publish' namespace='orchestrator/sigma' limit=20.",
 		{
@@ -3640,15 +3681,16 @@ export function registerTools(
 					fields: fields ?? "lite",
 				});
 
+				const capped = capPage(results, "search_episodes_by_semantic", "array");
 				return {
 					content: [
 						{
 							type: "text",
-							text: JSON.stringify(results, null, 2),
+							text: capped.text,
 						},
 					],
-					// The text stays the bare array; the object form of the same rows.
-					structuredContent: arrayStructured(results),
+					// The bare array, or the declared cut (capPage).
+					structuredContent: capped.structured,
 				};
 			} catch (error: any) {
 				return mcpConvexError(error);
@@ -5029,7 +5071,7 @@ export function registerTools(
 		},
 		"search_messages_by_keyword",
 		"BM25 full-text keyword search over message content, ranked by relevance. " +
-			"Returns { items }: the matching messages, best match first; the text is the same items as a bare JSON array. " +
+			"Returns { items }: the matching messages, best match first; the text is the same items as a bare JSON array; over the 60 KB response cap both are cut and say so (truncated: true, and _meta in the text). " +
 			"WHEN: use for post-incident audit or to find peer DMs by topic — e.g. " +
 			"'find messages about deploy' across the recent sessionDay window. " +
 			"EXAMPLE: search_messages_by_keyword query='convex deploy' from='pi' sessionDay=102 limit=10.",
@@ -5110,12 +5152,13 @@ export function registerTools(
 						: []
 					).map((m) => ({ ...m, createdBy: m.from as string | undefined })),
 				).map(({ createdBy: _createdBy, ...rest }) => rest);
+				const capped = capPage(filteredResults, "search_messages_by_keyword", "array");
 				return {
 					content: [
-						{ type: "text", text: JSON.stringify(filteredResults, null, 2) },
+						{ type: "text", text: capped.text },
 					],
-					// The text stays the bare array; the object form of the same rows.
-					structuredContent: arrayStructured(filteredResults),
+					// The bare array, or the declared cut (capPage).
+					structuredContent: capped.structured,
 				};
 			} catch (error: any) {
 				return mcpConvexError(error);
@@ -5749,7 +5792,7 @@ export function registerTools(
 		},
 		"search_tasks_by_keyword",
 		"BM25 full-text keyword search over task titles, ranked by relevance. " +
-			"Returns { items }: the matching tasks, best match first; the text is the same items as a bare JSON array. " +
+			"Returns { items }: the matching tasks, best match first; the text is the same items as a bare JSON array; over the 60 KB response cap both are cut and say so (truncated: true, and _meta in the text). " +
 			"WHEN: use to find tasks by topic/keyword when list_tasks filters are too broad — e.g. " +
 			"'find tasks about hook' across all assignees. " +
 			"EXAMPLE: search_tasks_by_keyword query='hook PostToolUse' status='todo' limit=10.",
@@ -5862,10 +5905,11 @@ export function registerTools(
 							assignedTo: t.assignedTo,
 							missionId: t.missionId,
 						}));
+				const capped = capPage(projected, "search_tasks_by_keyword", "array");
 				return {
-					content: [{ type: "text", text: JSON.stringify(projected, null, 2) }],
-					// The text stays the bare array; the object form of the same rows.
-					structuredContent: arrayStructured(projected),
+					content: [{ type: "text", text: capped.text }],
+					// The bare array, or the declared cut (capPage).
+					structuredContent: capped.structured,
 				};
 			} catch (error: any) {
 				return mcpConvexError(error);
@@ -8184,12 +8228,13 @@ export function registerTools(
 						scopeFiltered.has(r) ||
 						passesBriefingNoteParticipantScope(oauthCtx, r),
 				);
+				const capped = capPage(filteredResults, "search_briefing_notes_by_keyword", "array");
 				return {
 					content: [
-						{ type: "text", text: JSON.stringify(filteredResults, null, 2) },
+						{ type: "text", text: capped.text },
 					],
-					// The text stays the bare array; the object form of the same rows.
-					structuredContent: arrayStructured(filteredResults),
+					// The bare array, or the declared cut (capPage).
+					structuredContent: capped.structured,
 				};
 			} catch (error: any) {
 				return mcpConvexError(error);
@@ -10689,7 +10734,7 @@ export function registerTools(
 		// runs an embedding-similarity ranker; cursor paging by `createdBefore`
 		// would corrupt relevance ordering. Same rationale as search_components.
 		"Semantic search over fix patterns by symptom description, ranked by relevance. " +
-			"Returns { items[{ patternId, score, symptom, rootCause, validatedFix?, tags, stack, sourceProject, severity }] }, best match first; the text is the same items as a bare JSON array. " +
+			"Returns { items[{ patternId, score, symptom, rootCause, validatedFix?, tags, stack, sourceProject, severity }] }, best match first; the text is the same items as a bare JSON array; over the 60 KB response cap both are cut and say so (truncated: true, and _meta in the text). " +
 			"WHEN: call BEFORE fixing any bug to check if a matching pattern exists and reuse the validated fix. " +
 			"EXAMPLE: search_fix_patterns query='message disappears after sending on mobile' limit=5.",
 		{
@@ -10733,15 +10778,16 @@ export function registerTools(
 					Array.isArray(results) ? results : [],
 				);
 
+				const capped = capPage(filteredResults, "search_fix_patterns", "array");
 				return {
 					content: [
 						{
 							type: "text",
-							text: JSON.stringify(filteredResults, null, 2),
+							text: capped.text,
 						},
 					],
-					// The text stays the bare array; the object form of the same rows.
-					structuredContent: arrayStructured(filteredResults),
+					// The bare array, or the declared cut (capPage).
+					structuredContent: capped.structured,
 				};
 			} catch (error: any) {
 				return mcpConvexError(error);
@@ -11573,7 +11619,7 @@ export function registerTools(
 		},
 		"get_tool_usage",
 		"List which MCP tools a caller has called, with the first call time, the last call time and the call count of each. " +
-			"Returns { items[{ tool, firstAt, lastAt, count }] }, one row per tool the caller has called (times in Unix milliseconds); the text is the same items as a bare JSON array. " +
+			"Returns { items[{ tool, firstAt, lastAt, count }] }, one row per tool the caller has called (times in Unix milliseconds); the text is the same items as a bare JSON array; over the 60 KB response cap both are cut and say so (truncated: true, and _meta in the text). " +
 			"WHEN: use to see what a person or an agent seat has already tried, e.g. " +
 			"to tell what an onboarding step still has to introduce. " +
 			"EXAMPLE: get_tool_usage (your own usage) or get_tool_usage caller='agent:<agent id>' (an organisation admin reading a seat).",
@@ -11617,12 +11663,13 @@ export function registerTools(
 						...reader.args,
 					},
 				);
+				const capped = capPage(rows ?? [], "get_tool_usage", "array");
 				return {
 					content: [
-						{ type: "text", text: JSON.stringify(rows ?? [], null, 2) },
+						{ type: "text", text: capped.text },
 					],
-					// The text stays the bare array; the object form of the same rows.
-					structuredContent: arrayStructured(rows ?? []),
+					// The bare array, or the declared cut (capPage).
+					structuredContent: capped.structured,
 				};
 			} catch (error: any) {
 				return mcpConvexError(error);
@@ -11646,7 +11693,7 @@ export function registerTools(
 		},
 		"get_owner_tool_usage",
 		"List which MCP tools a person has used across all the agents it owns (one per AI client) and its own direct calls, summed per tool with the earliest first call and the latest last call. " +
-			"Returns { items[{ tool, firstAt, lastAt, count }] }, summed across the person's agents and its own calls (times in Unix milliseconds); the text is the same items as a bare JSON array. " +
+			"Returns { items[{ tool, firstAt, lastAt, count }] }, summed across the person's agents and its own calls (times in Unix milliseconds); the text is the same items as a bare JSON array; over the 60 KB response cap both are cut and say so (truncated: true, and _meta in the text). " +
 			"WHEN: use to tell what an onboarding step still has to introduce to a person, whichever AI client they used. " +
 			"EXAMPLE: get_owner_tool_usage ownerUserId='user_2abc' (an organisation admin reading a member).",
 		{
@@ -11682,12 +11729,13 @@ export function registerTools(
 					"toolUsage:usageByOwner" as any,
 					{ ownerUserId, ...reader.args },
 				);
+				const capped = capPage(rows ?? [], "get_owner_tool_usage", "array");
 				return {
 					content: [
-						{ type: "text", text: JSON.stringify(rows ?? [], null, 2) },
+						{ type: "text", text: capped.text },
 					],
-					// The text stays the bare array; the object form of the same rows.
-					structuredContent: arrayStructured(rows ?? []),
+					// The bare array, or the declared cut (capPage).
+					structuredContent: capped.structured,
 				};
 			} catch (error: any) {
 				return mcpConvexError(error);
