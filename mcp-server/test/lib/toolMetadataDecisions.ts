@@ -45,6 +45,32 @@ export const LIST_FORMS = {
 	list_fix_patterns: "page",
 } as const satisfies Record<string, "array" | "page">;
 
+/**
+ * The other tools whose text is not the two-space JSON of their
+ * structuredContent (task k170byeq1nzzv2q1z6qpag5fp18hvj8a, outputs 2/3). The
+ * text is unchanged; structuredContent is:
+ *   - "found": { found: true, item } for a row, { found: false, id } where the
+ *     text is JSON null;
+ *   - "inbox": { messages, truncated, nextSince, stuckInProgress,
+ *     peersStuckOnYou }, the values check_messages writes its text from (a JSON
+ *     array of messages with a resume note and stuck blocks, or free text);
+ *   - "upload-url": { uploadUrl, ticket, expiresAt? , note? }, the two text
+ *     items of generate_upload_url as one object;
+ *   - "compact": the same object as the text, written without indentation.
+ */
+export const TEXT_FORMS = {
+	get_profile: "found",
+	get_mission: "found",
+	get_mission_template: "found",
+	get_diary: "found",
+	check_messages: "inbox",
+	generate_upload_url: "upload-url",
+	claim_upload: "compact",
+} as const satisfies Record<
+	string,
+	"found" | "inbox" | "upload-url" | "compact"
+>;
+
 export const STRUCTURED_TOOLS = [
 	// reads: one row or one fixed envelope, shape fixed by the Convex `returns:`
 	"whoami",
@@ -122,22 +148,25 @@ export const STRUCTURED_TOOLS = [
 	"list_recurring_tasks",
 	"list_repo_mappings",
 	"list_fix_patterns",
+	// null-able reads, the inbox, and the Knowledge Base / OKF tools (task
+	// k170byeq1nzzv2q1z6qpag5fp18hvj8a, outputs 2/3), as TEXT_FORMS says.
+	"get_profile",
+	"get_mission",
+	"get_mission_template",
+	"get_diary",
+	"check_messages",
+	"export_okf_bundle",
+	"import_okf_bundle",
+	"store_document_chunked",
+	"soft_delete_document",
+	"generate_upload_url",
+	"claim_upload",
 ] as const;
 
-const NULLABLE =
-	"a missing or unreadable row is a SUCCESS whose text is JSON null, which no object schema admits";
 const MASTER_AGENT =
 	"a fleet-master door that refuses a typed acting name without a per-agent credential (and a client org is refused outright); no /mcp harness here presents that credential, so no success could be validated";
-const STORAGE =
-	"Knowledge Base / OKF path through Convex actions and file storage (upload, chunk, bundle) that this convex-test harness does not run; unvalidated, so undeclared";
 
 export const UNSTRUCTURED_TOOLS: Record<string, string> = {
-	get_profile: NULLABLE,
-	get_mission: NULLABLE,
-	get_mission_template: NULLABLE,
-	get_diary: `${NULLABLE}; a stream marker may also follow the JSON`,
-	check_messages:
-		"answers free text ('No new messages.', stuck blocks) or a JSON array followed by prose; no single object shape",
 	improvisation_digest:
 		"fixed shape (countsByOrch, countsByCategory, samples), but its door serves the fleet master only with a fleet agent's verified credential, which no /mcp harness here presents: unvalidated, so undeclared",
 	debate_get_room:
@@ -155,12 +184,6 @@ export const UNSTRUCTURED_TOOLS: Record<string, string> = {
 	update_mission_template: MASTER_AGENT,
 	instantiate_template_into_mission:
 		"passes missionTemplates instantiation through, and needs a stored template, which this harness cannot store (update_mission_template is MASTER_AGENT): unvalidated, so undeclared",
-	export_okf_bundle: STORAGE,
-	import_okf_bundle: STORAGE,
-	store_document_chunked: STORAGE,
-	soft_delete_document: STORAGE,
-	generate_upload_url: STORAGE,
-	claim_upload: STORAGE,
 };
 
 /**
