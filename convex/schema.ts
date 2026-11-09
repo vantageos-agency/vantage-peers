@@ -226,10 +226,6 @@ export default defineSchema({
 	})
 		.index("by_day", ["sessionDay"])
 		.index("by_from", ["from", "createdAt"])
-		// listMessages master path, sender AND day together: both equalities in the
-		// range, newest first by the implicit _creationTime, so `createdBefore`
-		// can be pushed into the same range.
-		.index("by_from_day", ["from", "sessionDay"])
 		.index("by_fromId", ["fromId", "createdAt"])
 		.index("by_channel", ["channel", "createdAt"])
 		.index("by_tenant_channel", ["tenantId", "channel", "createdAt"])

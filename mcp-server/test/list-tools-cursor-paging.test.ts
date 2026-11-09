@@ -327,7 +327,7 @@ describe("list_memories — cursor paging wiring", () => {
 		expect(po.cursor).toBe("backend-cursor-prev");
 	});
 
-	it("backward compat — caller without cursor uses bounded default path", async () => {
+	it("caller without cursor asks for the FIRST paginated page, so a full page has a continuation", async () => {
 		const { server, handlers } = buildFakeServer();
 		const convex = buildMockConvex(buildRows(3));
 		registerTools(server, convex, LOCAL_STDIO_TRUST_CTX);
@@ -338,8 +338,9 @@ describe("list_memories — cursor paging wiring", () => {
 		expect(convex.query).toHaveBeenCalledOnce();
 		const [, queryArgs] = (convex.query as ReturnType<typeof vi.fn>).mock
 			.calls[0] as [string, Record<string, unknown>];
-		// No paginationOpts → bounded default path
-		expect(queryArgs.paginationOpts).toBeUndefined();
+		// The bounded no-paginationOpts path answers isDone:true with no
+		// continuation, so a full first page used to carry no cursor at all.
+		expect(queryArgs.paginationOpts).toEqual({ numItems: 20, cursor: null });
 	});
 });
 
