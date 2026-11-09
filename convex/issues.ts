@@ -409,19 +409,28 @@ export const listByProject = query({
 		const fetchCap = needsWideScan
 			? ISSUES_LIST_BY_PROJECT_SCAN_CAP + 1
 			: limit;
-		// The by_project index only has ["project"], so we query by project
-		// and filter status in-memory if needed
-		let results = await ctx.db
-			.query("issues")
-			.withIndex("by_project", (q) => q.eq("project", args.project))
-			.order("desc")
-			.take(fetchCap);
+		// Both caller filters are applied INSIDE the index range (by_project_status
+		// when a status is named): narrowing the project's newest rows in memory
+		// after the take answered a short page with no cursor while older matching
+		// rows existed.
+		const status = args.status;
+		const before = args.createdBefore;
+		let results =
+			status !== undefined
+				? await ctx.db
+						.query("issues")
+						.withIndex("by_project_status", (q) =>
+							q.eq("project", args.project).eq("status", status),
+						)
+						.order("desc")
+						.take(fetchCap)
+				: await ctx.db
+						.query("issues")
+						.withIndex("by_project", (q) => q.eq("project", args.project))
+						.order("desc")
+						.take(fetchCap);
 
-		if (args.status !== undefined) {
-			results = results.filter((r) => r.status === args.status);
-		}
-		if (args.createdBefore !== undefined) {
-			const before = args.createdBefore;
+		if (before !== undefined) {
 			results = results.filter((r) => r._creationTime < before);
 		}
 		return results.slice(0, limit);

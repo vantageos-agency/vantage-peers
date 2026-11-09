@@ -1160,7 +1160,7 @@ const pageCursor = z
 	.string()
 	.nullable()
 	.describe(
-		"The cursor to pass as `cursor` for the next (older) page; null on the last page, and null when truncated is true (a cut page has no continuation: narrow the query or lower limit instead).",
+		"The cursor to pass as `cursor` for the next (older) page; null on the last page. When truncated is true, list_messages gives the cursor that continues after the last row shown; every other tool gives null (a cut page has no continuation there: narrow the query or lower limit instead).",
 	);
 const pageTruncated = z
 	.boolean()
