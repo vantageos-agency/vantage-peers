@@ -84,6 +84,7 @@ import {
 	mcpImplementation,
 	mcpServerOptions,
 } from "./src/brand.js";
+import { buildCommit } from "./src/buildIdentity.js";
 import {
 	isBrowserLandingRequest,
 	landingPageResponse,
@@ -1531,7 +1532,9 @@ app.get("/health", (c) =>
 		// at build time — never hand-typed. Fallback is an honest "unknown"
 		// string, never a value shaped like a SHA (would be indistinguishable
 		// from a real commit and defeat the whole point of this field).
-		commit: process.env.RAILWAY_GIT_COMMIT_SHA ?? "unknown",
+		// buildCommit() is the one source; initialize's serverInfo.commitSha
+		// reads the same function (mcp-doctor rule C25).
+		commit: buildCommit(),
 		// The runtime actually serving, read from the process itself rather than
 		// inferred from the build declaration (task k178pdkzk74t7c8zh9c5d502xx8h26g5).
 		// Railway serves this app with Bun, so `runtime` and `bun` are the
