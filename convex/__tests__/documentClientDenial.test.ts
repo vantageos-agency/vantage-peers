@@ -287,15 +287,13 @@ describe("round 2 — unlisting through the same door, with an audit that keeps 
 		]);
 	});
 
-	test("a token row of an unlisted client that was minted while it was listed stays refused", async () => {
+	test("a token row that appeared while the client was listed does not come back to life at the unlisting", async () => {
 		const t = createT();
 		await deny(t);
 		await mint(t, "during", URL_A);
 		expect(await lookup(t, "during")).toBeNull();
 		await lift(t);
-		// the row appeared while listed: after the lift it is simply a live token again
-		// only if it was never revoked; the walk ran BEFORE it existed, so it answers
-		expect(await lookup(t, "during")).not.toBeNull();
+		expect(await lookup(t, "during")).toBeNull();
 	});
 
 	test("unlisting needs a reason and an operator; an unknown client unlists nothing", async () => {
