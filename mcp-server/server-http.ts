@@ -1965,7 +1965,7 @@ async function documentClientAdmin(c: Context, lift: boolean) {
 				refreshTokensRevoked: result.revokedRefresh,
 				...(scope !== "url"
 					? {
-							tokensRefused: `tokens of ${covers} are refused at every reader, not revoked: nothing was deleted and a lift restores them`,
+							tokensRefused: `tokens of ${covers} are refused, not revoked: denied at every reader, nothing was deleted, and a lift restores them`,
 						}
 					: {}),
 				...(scope === "url" &&
