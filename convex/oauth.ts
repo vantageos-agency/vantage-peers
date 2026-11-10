@@ -1810,6 +1810,8 @@ export const continueClientTokenWalk = internalMutation({
 // ─────────────────────────────────────────────────────────────────────────────
 
 const MAX_DOCUMENT_CLIENT_ID_LENGTH = 512;
+const MAX_DOCUMENT_REASON_LENGTH = 500;
+const MAX_DOCUMENT_OPERATOR_LENGTH = 120;
 
 function validDocumentClientId(clientId: string): boolean {
 	if (!clientId.startsWith("https://")) return false;
@@ -1891,6 +1893,16 @@ export const deleteClient = mutation({
 						`OPERATOR_REQUIRED: the operator who lists or unlists a client is recorded — ${door}`,
 					);
 				}
+				if ((args.reason ?? "").length > MAX_DOCUMENT_REASON_LENGTH) {
+					throw new ConvexError(
+						`REASON_TOO_LONG: reason is at most ${MAX_DOCUMENT_REASON_LENGTH} characters — ${door}`,
+					);
+				}
+				if ((args.operator ?? "").trim().length > MAX_DOCUMENT_OPERATOR_LENGTH) {
+					throw new ConvexError(
+						`OPERATOR_TOO_LONG: operator is at most ${MAX_DOCUMENT_OPERATOR_LENGTH} characters — ${door}`,
+					);
+				}
 				const by = (args.operator as string).trim();
 				const why = args.reason as string;
 				const existing = await documentClientRow(ctx, args.clientId);
@@ -1910,7 +1922,13 @@ export const deleteClient = mutation({
 						addedBy: by,
 						addedAt: when,
 						active: true,
-						history: [{ action: "listed", by, at: when, reason: why }],
+					});
+					await ctx.db.insert("oauth_document_client_events", {
+						clientId: args.clientId,
+						action: "listed",
+						by,
+						at: when,
+						reason: why,
 					});
 				} else if (args.lift !== true && existing !== null && !existing.active) {
 					await ctx.db.patch(existing._id, {
@@ -1918,10 +1936,13 @@ export const deleteClient = mutation({
 						addedBy: by,
 						addedAt: when,
 						active: true,
-						history: [
-							...existing.history,
-							{ action: "listed", by, at: when, reason: why },
-						],
+					});
+					await ctx.db.insert("oauth_document_client_events", {
+						clientId: args.clientId,
+						action: "listed",
+						by,
+						at: when,
+						reason: why,
 					});
 				}
 				// Every live token of the client dies now. At an unlisting too: a token
@@ -1940,12 +1961,13 @@ export const deleteClient = mutation({
 					});
 				}
 				if (args.lift === true && existing !== null) {
-					await ctx.db.patch(existing._id, {
-						active: false,
-						history: [
-							...existing.history,
-							{ action: "unlisted", by, at: when, reason: why },
-						],
+					await ctx.db.patch(existing._id, { active: false });
+					await ctx.db.insert("oauth_document_client_events", {
+						clientId: args.clientId,
+						action: "unlisted",
+						by,
+						at: when,
+						reason: why,
 					});
 					return {
 						revokedClient: false,

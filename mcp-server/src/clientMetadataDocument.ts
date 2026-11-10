@@ -53,6 +53,7 @@
 import dns from "node:dns";
 import https from "node:https";
 import net from "node:net";
+import { getDomain } from "tldts";
 
 /** Largest document accepted (draft §6.6 recommends 5 kilobytes). */
 export const CIMD_MAX_BYTES = 5 * 1024;
@@ -168,6 +169,7 @@ const BLOCKED_V6: [string, number][] = [
 	["100::", 64], // discard
 	["2001::", 32], // Teredo
 	["2001:10::", 28], // ORCHID (deprecated)
+	["2001:20::", 28], // ORCHIDv2
 	["3fff::", 20], // documentation (RFC 9637)
 	["2001:db8::", 32],
 	["2002::", 16], // 6to4
@@ -456,9 +458,17 @@ export function sourceKeyOf(address: string): string {
 	return bare;
 }
 
-/** The registrable domain, approximated by the last two labels of the host. */
-function domainOf(hostname: string): string {
-	return hostname.split(".").slice(-2).join(".");
+/**
+ * The key of the per-domain bound: the registrable domain (eTLD+1) from the
+ * Public Suffix List, private suffixes included, so `evil.vercel.app` and
+ * `victim.vercel.app` are different keys while `a.one.com` and `b.one.com` are
+ * one. A trailing dot is stripped first (`a.one.com.` is `a.one.com`). A host
+ * that is itself a public suffix, or does not parse, keys on itself and is
+ * shared with nobody.
+ */
+export function domainKeyOf(hostname: string): string {
+	const host = hostname.toLowerCase().replace(/\.+$/, "");
+	return getDomain(host, { allowPrivateDomains: true }) ?? host;
 }
 
 /** Counts one fetch against `key`; false when the source has used its window's allowance. */
@@ -663,22 +673,28 @@ export async function resolveClientMetadata(
 	const purpose = options.purpose ?? "authorize";
 	const source = sourceKeyOf(options.source ?? "unknown");
 	const sourceKey = `${purpose}:${source}`;
-	const domain = domainOf(parsed.url.hostname);
+	const domain = domainKeyOf(parsed.url.hostname);
 	const busy: ResolveResult = { ok: false, reason: "busy", retryable: true };
 	if (inFlightByPool[purpose] >= CIMD_POOL[purpose]) return busy;
 	if ((inFlightBySource.get(sourceKey) ?? 0) >= CIMD_PER_SOURCE_IN_FLIGHT)
 		return busy;
-	if ((inFlightByDomain.get(domain) ?? 0) >= CIMD_PER_DOMAIN_IN_FLIGHT)
+	// A refresh has no domain bucket: it keeps its own reserved pool and the
+	// per-source limits, so no one holding a domain can refuse a person's refresh.
+	const boundByDomain = purpose !== "refresh";
+	if (
+		boundByDomain &&
+		(inFlightByDomain.get(domain) ?? 0) >= CIMD_PER_DOMAIN_IN_FLIGHT
+	)
 		return busy;
 	if (!takeSourceAllowance(sourceKey))
 		return { ok: false, reason: "rate-limited", retryable: true };
 	inFlightByPool[purpose]++;
 	bump(inFlightBySource, sourceKey, 1);
-	bump(inFlightByDomain, domain, 1);
+	if (boundByDomain) bump(inFlightByDomain, domain, 1);
 	const work = fetchDocument(parsed.url, clientId).finally(() => {
 		inFlightByPool[purpose]--;
 		bump(inFlightBySource, sourceKey, -1);
-		bump(inFlightByDomain, domain, -1);
+		if (boundByDomain) bump(inFlightByDomain, domain, -1);
 		sharedFetch.delete(clientId);
 	});
 	sharedFetch.set(clientId, work);
