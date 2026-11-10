@@ -35,8 +35,10 @@
  */
 
 import type { McpServer } from "@modelcontextprotocol/server";
-import { resolvePersonActingName } from "@vantageos/cloud-identity";
-import { passesScopeFilter } from "./rosterScopeFilter.js";
+import {
+	passesScopeFilter,
+	resolvePersonActingName,
+} from "@vantageos/cloud-identity";
 import { z } from "zod";
 import {
 	decideActingNameForResolvedAgent,
