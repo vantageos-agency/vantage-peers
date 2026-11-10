@@ -174,6 +174,37 @@ describe("2. MCP Server Card, public", () => {
 		}
 	});
 
+	// S-50 (mcp-doctor served-discovery): a card names `capabilities` and a tool
+	// summary `tools`. Both are read from the server tools/list and initialize
+	// read, never a hand-kept list: the card's capabilities EQUAL what
+	// initialize declares, and its tools EQUAL the names tools/list serves, in
+	// order. A name only: no schema, no description, nothing caller-specific.
+	it("every card carries capabilities = initialize's and tools = tools/list's names (S-50)", async () => {
+		const client = await connectMaster();
+		try {
+			const capabilities = client.getServerCapabilities();
+			expect(capabilities?.tools).toBeDefined();
+			const listed: string[] = [];
+			let cursor: string | undefined;
+			do {
+				const page = await client.listTools(cursor ? { cursor } : {});
+				listed.push(...page.tools.map((t) => t.name));
+				cursor = page.nextCursor;
+			} while (cursor);
+			expect(listed.length).toBeGreaterThan(0);
+			for (const path of PATHS) {
+				const card = (await (await app.fetch(req(path))).json()) as Record<
+					string,
+					unknown
+				>;
+				expect(card.capabilities, path).toEqual(capabilities);
+				expect(card.tools, path).toEqual(listed);
+			}
+		} finally {
+			await client.close();
+		}
+	});
+
 	it("/mcp.json and /.well-known/mcp.json: same card JSON, application/json, no credential", async () => {
 		const a = await app.fetch(req("/mcp.json"));
 		const b = await app.fetch(req("/.well-known/mcp.json"));
