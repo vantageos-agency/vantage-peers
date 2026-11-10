@@ -9,8 +9,8 @@
  *      path-inserted well-known URL, and the 401 from /mcp points at the
  *      path-inserted (/mcp) variant.
  *   2. RFC 8414 AS metadata advertises `none` (public clients — DCR already
- *      accepts and /token already honours it) and does NOT advertise Client ID
- *      Metadata Documents, which this server does not implement.
+ *      accepts and /token already honours it) and advertises Client ID
+ *      Metadata Documents (client_id_metadata_document_supported: true).
  *   3. RFC 9207: the authorization response carries `iss`, and the metadata
  *      says so (`authorization_response_iss_parameter_supported: true`).
  *   4. DCR rate limit is two-tier: distinct clients behind one egress IP are
@@ -163,7 +163,7 @@ describe("item 1 — protected resource metadata names <base>/mcp", () => {
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
-// 2 + 3. Authorization Server Metadata (RFC 8414) — none, no CIMD, RFC 9207
+// 2 + 3. Authorization Server Metadata (RFC 8414) — none, CIMD, RFC 9207
 // ─────────────────────────────────────────────────────────────────────────────
 
 describe("items 2+3 — authorization server metadata", () => {
@@ -178,9 +178,9 @@ describe("items 2+3 — authorization server metadata", () => {
 		);
 	});
 
-	it("does NOT advertise Client ID Metadata Documents (not implemented)", async () => {
+	it("advertises Client ID Metadata Documents (implemented, SSRF-safe: src/clientMetadataDocument.ts)", async () => {
 		const { json } = await getJson("/.well-known/oauth-authorization-server");
-		expect(json.client_id_metadata_document_supported).not.toBe(true);
+		expect(json.client_id_metadata_document_supported).toBe(true);
 	});
 
 	it("advertises authorization_response_iss_parameter_supported (RFC 9207)", async () => {
