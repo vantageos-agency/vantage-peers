@@ -16,6 +16,10 @@
  *      and `openai/widgetDescription`.
  *   5. the six tools with a UI carry `openai/toolInvocation`.
  *   6. bulk_complete_tasks fits Claude Code's 2048-byte field.
+ *   7. one public description (task k17bgjfga0x3a0srvprvbhhfv98hymyg):
+ *      SERVER_DESCRIPTION fits the pinned schema's maxLength, initialize, every
+ *      card path, the landing page and package.json all carry it, and every
+ *      capability it names is backed by a tool tools/list serves.
  */
 
 import { readFileSync } from "node:fs";
@@ -26,6 +30,10 @@ import {
 import Ajv2020 from "ajv/dist/2020.js";
 import { describe, expect, it } from "vitest";
 import { app } from "../server-http.js";
+import {
+	SERVER_DESCRIPTION,
+	SERVER_DESCRIPTION_CAPABILITIES,
+} from "../src/brand.js";
 import * as uiIndex from "../src/ui-resources/index.js";
 
 const MASTER = "test-master-token"; // vitest.config.ts BEARER_SECRET_MASTER
@@ -439,6 +447,87 @@ describe("6. Claude Code 2 KB metadata field", () => {
 			).toBe(true);
 			expect(tool?.description ?? "").toMatch(/BULK_FILTER_TOO_BROAD/);
 			expect(tool?.description ?? "").toMatch(/BULK_CALLER_REQUIRED/);
+		} finally {
+			await client.close();
+		}
+	});
+});
+
+describe("7. one public description, every named capability served", () => {
+	const CARD_PATHS = [
+		"/mcp/server-card",
+		"/.well-known/mcp/server-card.json",
+		"/.well-known/mcp-server-card",
+		"/mcp.json",
+		"/.well-known/mcp.json",
+	];
+
+	it("fits ServerCard.description maxLength of the pinned schema fixture", () => {
+		const schema = JSON.parse(
+			readFileSync(
+				new URL("./fixtures/server-card.schema.json", import.meta.url),
+				"utf-8",
+			),
+		) as {
+			$defs: {
+				ServerCard: { properties: { description: { maxLength: number } } };
+			};
+		};
+		const max = schema.$defs.ServerCard.properties.description.maxLength;
+		expect(max).toBe(100);
+		expect(SERVER_DESCRIPTION.length).toBeGreaterThan(0);
+		expect(SERVER_DESCRIPTION.length).toBeLessThanOrEqual(max);
+	});
+
+	it("initialize serverInfo, every card path and the landing page carry SERVER_DESCRIPTION", async () => {
+		const client = await connectMaster();
+		try {
+			const info = client.getServerVersion() as Record<string, unknown>;
+			expect(info.description).toBe(SERVER_DESCRIPTION);
+		} finally {
+			await client.close();
+		}
+		for (const path of CARD_PATHS) {
+			const card = (await (await app.fetch(req(path))).json()) as Record<
+				string,
+				unknown
+			>;
+			expect(card.description, path).toBe(SERVER_DESCRIPTION);
+		}
+		const html = await (
+			await app.fetch(req("/mcp", { headers: { accept: "text/html" } }))
+		).text();
+		expect(html).toContain(`<p>${SERVER_DESCRIPTION}</p>`);
+	});
+
+	it("package.json description === SERVER_DESCRIPTION (npm cannot import the constant)", () => {
+		const pkg = JSON.parse(
+			readFileSync(new URL("../package.json", import.meta.url), "utf-8"),
+		) as { description?: unknown };
+		expect(pkg.description).toBe(SERVER_DESCRIPTION);
+	});
+
+	it("every capability phrase is in the text and every tool backing it is in tools/list", async () => {
+		const entries = Object.entries(SERVER_DESCRIPTION_CAPABILITIES ?? {});
+		expect(entries.length).toBeGreaterThan(0);
+		for (const [phrase, tools] of entries) {
+			expect(SERVER_DESCRIPTION, phrase).toContain(phrase);
+			expect(tools.length, phrase).toBeGreaterThan(0);
+		}
+		const client = await connectMaster();
+		try {
+			const listed = new Set<string>();
+			let cursor: string | undefined;
+			do {
+				const page = await client.listTools(cursor ? { cursor } : {});
+				for (const t of page.tools) listed.add(t.name);
+				cursor = page.nextCursor;
+			} while (cursor);
+			for (const [phrase, tools] of entries) {
+				for (const name of tools) {
+					expect(listed.has(name), `${phrase} -> ${name}`).toBe(true);
+				}
+			}
 		} finally {
 			await client.close();
 		}
