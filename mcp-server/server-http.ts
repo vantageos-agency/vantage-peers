@@ -91,6 +91,10 @@ import {
 import { buildCommit } from "./src/buildIdentity.js";
 import { isClientMetadataUrl } from "./src/clientMetadataDocument.js";
 import {
+	EDGE_CLIENT_HEADER,
+	verifyEdgeClientHeader,
+} from "./src/edgeClientIp.js";
+import {
 	isBrowserLandingRequest,
 	landingPageResponse,
 } from "./src/landingPage.js";
@@ -513,6 +517,15 @@ async function checkRegisterRateLimit(
 export function clientIpForRateLimit(
 	header: (name: string) => string | undefined,
 ): string {
+	// A request that came through the rate-limit proxy carries the client
+	// address in one signed header. Trusted ONLY with a valid, fresh signature
+	// under EDGE_PROXY_HMAC_SECRET; anything else (unsigned, forged, stale, no
+	// secret configured) is ignored and the derivation below applies unchanged.
+	const signed = verifyEdgeClientHeader(
+		header(EDGE_CLIENT_HEADER),
+		process.env.EDGE_PROXY_HMAC_SECRET,
+	);
+	if (signed) return signed;
 	const realIp = header("x-real-ip")?.trim();
 	if (realIp) return realIp;
 	const entries = (header("x-forwarded-for") ?? "")

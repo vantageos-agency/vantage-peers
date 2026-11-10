@@ -32,7 +32,11 @@ async function listen(s: http.Server): Promise<number> {
 
 async function start(opts: { secret?: string; upstreamUrl?: string } = {}) {
 	upstream = http.createServer((req, res) => {
-		seen.push({ method: req.method ?? "", url: req.url ?? "", headers: req.headers });
+		seen.push({
+			method: req.method ?? "",
+			url: req.url ?? "",
+			headers: req.headers,
+		});
 		if (req.url?.startsWith("/health")) {
 			res.writeHead(200, { "content-type": "application/json" });
 			res.end(JSON.stringify({ status: "ok", commit: "upstreamsha" }));
@@ -57,8 +61,11 @@ async function start(opts: { secret?: string; upstreamUrl?: string } = {}) {
 	base = `http://127.0.0.1:${port}`;
 }
 
-const get = (path: string, headers: Record<string, string> = {}, method = "GET") =>
-	fetch(base + path, { method, headers, redirect: "manual" });
+const get = (
+	path: string,
+	headers: Record<string, string> = {},
+	method = "GET",
+) => fetch(base + path, { method, headers, redirect: "manual" });
 
 beforeEach(() => {
 	seen = [];
@@ -79,12 +86,26 @@ describe("route matching", () => {
 		expect(isLimitedRoute("POST", "/token")).toBe(true);
 		expect(isLimitedRoute("POST", "/authorize")).toBe(false);
 		expect(isLimitedRoute("GET", "/token")).toBe(false);
-		for (const p of ["/mcp", "/register", "/.well-known/oauth-authorization-server", "/", "/authorized", "/tokens"])
+		for (const p of [
+			"/mcp",
+			"/register",
+			"/.well-known/oauth-authorization-server",
+			"/",
+			"/authorized",
+			"/tokens",
+		])
 			for (const m of ["GET", "POST"]) expect(isLimitedRoute(m, p)).toBe(false);
 	});
 
 	it("spellings the upstream router could fold onto the same route are limited too", () => {
-		for (const p of ["/authorize/", "//authorize", "/%61uthorize", "/Authorize", "/authorize?x=1#f", "http://h/authorize?a=1"])
+		for (const p of [
+			"/authorize/",
+			"//authorize",
+			"/%61uthorize",
+			"/Authorize",
+			"/authorize?x=1#f",
+			"http://h/authorize?a=1",
+		])
 			expect(isLimitedRoute("GET", p), p).toBe(true);
 		expect(isLimitedRoute("POST", "/token/")).toBe(true);
 		expect(isLimitedRoute("POST", "/%74oken")).toBe(true);
@@ -97,7 +118,9 @@ describe("route matching", () => {
 
 	it("the client address comes from the configured header only, and must be an address", () => {
 		expect(clientIpFrom("203.0.113.1", "x-real-ip")).toBe("203.0.113.1");
-		expect(clientIpFrom("6.6.6.6, 203.0.113.2", "x-forwarded-for")).toBe("203.0.113.2");
+		expect(clientIpFrom("6.6.6.6, 203.0.113.2", "x-forwarded-for")).toBe(
+			"203.0.113.2",
+		);
 		expect(clientIpFrom("not-an-ip", "x-real-ip")).toBeNull();
 		expect(clientIpFrom(undefined, "x-real-ip")).toBeNull();
 	});
@@ -108,7 +131,8 @@ describe("rate limiting through the proxy", () => {
 		await start();
 		const ip = { "x-real-ip": "203.0.113.9" };
 		const statuses: number[] = [];
-		for (let i = 0; i < 20; i++) statuses.push((await get("/authorize?client_id=x", ip)).status);
+		for (let i = 0; i < 20; i++)
+			statuses.push((await get("/authorize?client_id=x", ip)).status);
 		expect(statuses.every((s) => s === 302)).toBe(true);
 		expect(seen.length).toBe(20);
 		const r = await get("/authorize?client_id=x", ip);
@@ -116,7 +140,11 @@ describe("rate limiting through the proxy", () => {
 		expect(Number(r.headers.get("retry-after"))).toBeGreaterThan(0);
 		expect(seen.length).toBe(20);
 		expect(proxy.counters).toMatchObject({ allowed: 20, denied: 1 });
-		expect(logs.at(-1)).toMatchObject({ evt: "rate_limited", upstream_call: false, pool: "v4/32" });
+		expect(logs.at(-1)).toMatchObject({
+			evt: "rate_limited",
+			upstream_call: false,
+			pool: "v4/32",
+		});
 	});
 
 	it("rotating a client-sent X-Forwarded-For does not escape the limit", async () => {
@@ -135,15 +163,21 @@ describe("rate limiting through the proxy", () => {
 	it("POST /token is limited the same way", async () => {
 		await start();
 		const ip = { "x-real-ip": "203.0.113.9" };
-		for (let i = 0; i < 20; i++) expect((await get("/token", ip, "POST")).status).toBe(200);
+		for (let i = 0; i < 20; i++)
+			expect((await get("/token", ip, "POST")).status).toBe(200);
 		expect((await get("/token", ip, "POST")).status).toBe(429);
 	});
 
 	it("every other path passes straight through, however many requests", async () => {
 		await start();
 		const ip = { "x-real-ip": "203.0.113.9" };
-		for (const path of ["/mcp", "/register", "/.well-known/oauth-protected-resource"])
-			for (let i = 0; i < 40; i++) expect((await get(path, ip)).status).toBe(200);
+		for (const path of [
+			"/mcp",
+			"/register",
+			"/.well-known/oauth-protected-resource",
+		])
+			for (let i = 0; i < 40; i++)
+				expect((await get(path, ip)).status).toBe(200);
 		expect(seen.length).toBe(120);
 		expect(proxy.counters.denied).toBe(0);
 	});
@@ -152,7 +186,8 @@ describe("rate limiting through the proxy", () => {
 		await start();
 		let last = 0;
 		for (let i = 1; i <= 61; i++)
-			last = (await get("/authorize", { "x-real-ip": `203.0.113.${i}` })).status;
+			last = (await get("/authorize", { "x-real-ip": `203.0.113.${i}` }))
+				.status;
 		expect(last).toBe(429);
 		expect(seen.length).toBe(60);
 	});
@@ -161,7 +196,11 @@ describe("rate limiting through the proxy", () => {
 		await start();
 		let last = 0;
 		for (let i = 0; i < 61; i++)
-			last = (await get("/authorize", { "x-real-ip": `2001:db8:1:${i.toString(16)}::1` })).status;
+			last = (
+				await get("/authorize", {
+					"x-real-ip": `2001:db8:1:${i.toString(16)}::1`,
+				})
+			).status;
 		expect(last).toBe(429);
 		expect(seen.length).toBe(60);
 	});
@@ -170,7 +209,11 @@ describe("rate limiting through the proxy", () => {
 		await start();
 		let last = 0;
 		for (let i = 0; i < 201; i++)
-			last = (await get("/authorize", { "x-real-ip": `2001:db8:${i.toString(16)}::1` })).status;
+			last = (
+				await get("/authorize", {
+					"x-real-ip": `2001:db8:${i.toString(16)}::1`,
+				})
+			).status;
 		expect(last).toBe(429);
 		expect(seen.length).toBe(200);
 	});
@@ -183,10 +226,15 @@ describe("rate limiting through the proxy", () => {
 
 	it("a 302 from the upstream is returned as is, not followed", async () => {
 		await start();
-		const r = await get("/authorize?client_id=https://claude.ai/oauth/mcp-oauth-client-metadata", { "x-real-ip": "203.0.113.9" });
+		const r = await get(
+			"/authorize?client_id=https://claude.ai/oauth/mcp-oauth-client-metadata",
+			{ "x-real-ip": "203.0.113.9" },
+		);
 		expect(r.status).toBe(302);
 		expect(r.headers.get("location")).toBe("https://claude.ai/cb?code=x");
-		expect(seen[0].url).toBe("/authorize?client_id=https://claude.ai/oauth/mcp-oauth-client-metadata");
+		expect(seen[0].url).toBe(
+			"/authorize?client_id=https://claude.ai/oauth/mcp-oauth-client-metadata",
+		);
 	});
 });
 
@@ -202,7 +250,10 @@ describe("the signed header to the MCP", () => {
 	it("a client-sent header of that name never reaches the MCP; the proxy's own replaces it", async () => {
 		await start({ secret: SECRET });
 		const forged = `198.51.100.7|${Math.floor(Date.now() / 1000)}|${createHmac("sha256", "x").update("y").digest("hex")}`;
-		await get("/mcp", { "x-real-ip": "203.0.113.9", [EDGE_CLIENT_HEADER]: forged });
+		await get("/mcp", {
+			"x-real-ip": "203.0.113.9",
+			[EDGE_CLIENT_HEADER]: forged,
+		});
 		const got = seen[0].headers[EDGE_CLIENT_HEADER] as string;
 		expect(got).not.toBe(forged);
 		expect(verifyEdgeClientHeader(got, SECRET)).toBe("203.0.113.9");
@@ -210,7 +261,10 @@ describe("the signed header to the MCP", () => {
 
 	it("with no secret nothing is sent, and a client-sent one is still stripped", async () => {
 		await start();
-		await get("/mcp", { "x-real-ip": "203.0.113.9", [EDGE_CLIENT_HEADER]: "198.51.100.7|1|ab" });
+		await get("/mcp", {
+			"x-real-ip": "203.0.113.9",
+			[EDGE_CLIENT_HEADER]: "198.51.100.7|1|ab",
+		});
 		expect(seen[0].headers[EDGE_CLIENT_HEADER]).toBeUndefined();
 	});
 
@@ -218,7 +272,9 @@ describe("the signed header to the MCP", () => {
 		await start({ secret: SECRET });
 		await get("/mcp", { "x-real-ip": "203.0.113.9" });
 		expect(seen[0].headers.host).toMatch(/^127\.0\.0\.1:\d+$/);
-		expect(seen[0].headers["x-forwarded-host"]).toBe(base.replace("http://", ""));
+		expect(seen[0].headers["x-forwarded-host"]).toBe(
+			base.replace("http://", ""),
+		);
 	});
 });
 
@@ -238,18 +294,27 @@ describe("health", () => {
 		await start({ upstreamUrl: "http://127.0.0.1:1" });
 		const r = await get("/health");
 		expect(r.status).toBe(502);
-		expect(await r.json()).toMatchObject({ status: "upstream_unreachable", proxy: { commit: "proxysha" } });
+		expect(await r.json()).toMatchObject({
+			status: "upstream_unreachable",
+			proxy: { commit: "proxysha" },
+		});
 	});
 
 	it("/_edge/health answers from the proxy alone", async () => {
 		await start({ upstreamUrl: "http://127.0.0.1:1" });
 		const r = await get("/_edge/health");
 		expect(r.status).toBe(200);
-		expect(await r.json()).toMatchObject({ status: "ok", commit: "proxysha", signing: "disabled" });
+		expect(await r.json()).toMatchObject({
+			status: "ok",
+			commit: "proxysha",
+			signing: "disabled",
+		});
 	});
 
 	it("an unreachable upstream on a proxied path is a 502, not a hang", async () => {
 		await start({ upstreamUrl: "http://127.0.0.1:1" });
-		expect((await get("/mcp", { "x-real-ip": "203.0.113.9" })).status).toBe(502);
+		expect((await get("/mcp", { "x-real-ip": "203.0.113.9" })).status).toBe(
+			502,
+		);
 	});
 });

@@ -4,7 +4,12 @@ import { RateLimiter } from "../src/limiter.js";
 
 function clock() {
 	let t = 1_000_000;
-	return { now: () => t, advance: (ms: number) => void (t += ms) };
+	return {
+		now: () => t,
+		advance: (ms: number) => {
+			t += ms;
+		},
+	};
 }
 const keys = (ip: string) => {
 	const k = poolKeysOf(ip);
@@ -52,7 +57,9 @@ describe("RateLimiter", () => {
 	it("IPv6 /48: 60 across many /64s of one /48, the 61st is refused", () => {
 		const l = new RateLimiter(clock().now);
 		for (let i = 0; i < 60; i++)
-			expect(l.take(keys(`2001:db8:1:${i.toString(16)}::1`)).allowed).toBe(true);
+			expect(l.take(keys(`2001:db8:1:${i.toString(16)}::1`)).allowed).toBe(
+				true,
+			);
 		const d = l.take(keys("2001:db8:1:ffff::1"));
 		expect(d).toMatchObject({ allowed: false, pool: "v6/48" });
 		expect(l.take(keys("2001:db8:2::1")).allowed).toBe(true);

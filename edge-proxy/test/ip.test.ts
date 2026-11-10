@@ -50,6 +50,8 @@ describe("poolKeysOf", () => {
 		expect(ipv6Groups("::1")).toEqual([0, 0, 0, 0, 0, 0, 0, 1]);
 		expect(ipv6Groups("1::")).toEqual([1, 0, 0, 0, 0, 0, 0, 0]);
 		expect(ipv6Groups("1:2:3:4:5:6:7:8")).toEqual([1, 2, 3, 4, 5, 6, 7, 8]);
-		expect(ipv6Groups("1:2:3:4:5:6:1.2.3.4")).toEqual([1, 2, 3, 4, 5, 6, 0x102, 0x304]);
+		expect(ipv6Groups("1:2:3:4:5:6:1.2.3.4")).toEqual([
+			1, 2, 3, 4, 5, 6, 0x102, 0x304,
+		]);
 	});
 });

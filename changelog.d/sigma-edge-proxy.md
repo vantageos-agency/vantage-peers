@@ -1,0 +1,4 @@
+---
+section: Added
+---
+- **VantagePeers Cloud: rate-limit proxy `edge-proxy/` and a signed client-address header.** A separate Railway service limits `GET /authorize` and `POST /token` per 60 s (20 per IPv4 or IPv6 /64, 60 per IPv4 /24 or IPv6 /48, 200 per IPv6 /32) with a 429 and `Retry-After` before any upstream call; every other path passes through. It forwards the client address the Railway edge reports in one header, `x-vp-edge-client` (`ip|ts|HMAC-SHA256`); the MCP trusts it only with a valid signature under `EDGE_PROXY_HMAC_SECRET` fresh within 30 s (`mcp-server/src/edgeClientIp.ts`, used by `clientIpForRateLimit`), otherwise its derivation is unchanged. The MCP side is committed and not deployed in this phase; `mcp.vantagepeers.com` is not switched. Closes the residuals F1/F2 of the CIMD pool review. Task k170e3qtjfdnqbyaz4wwvgmk958hyh1q.

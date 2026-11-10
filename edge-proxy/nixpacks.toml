@@ -1,0 +1,14 @@
+# Drives what is INSTALLED and BUILT in the image. railway.json drives how Railway
+# runs it (start command, healthcheck, restart policy). Both name the same start
+# command; they do not conflict.
+[phases.setup]
+nixPkgs = ["nodejs_22"]
+
+[phases.install]
+cmds = ["npm install --no-audit --no-fund"]
+
+[phases.build]
+cmds = ["npm run build"]
+
+[start]
+cmd = "node dist/server.js"
