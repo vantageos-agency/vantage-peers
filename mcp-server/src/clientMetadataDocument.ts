@@ -95,10 +95,12 @@ const CIMD_SOURCE_BUCKETS_MAX = 4096;
 /** A client_id longer than this is refused before any parsing. */
 export const CIMD_MAX_CLIENT_ID_LENGTH = 512;
 /**
- * After a fetch of a registrable domain timed out, /authorize and /token for that
- * domain answer `cooling-down` (503, no fetch) for this long, so a few hanging
- * domains cannot keep every slot of the pool busy by being asked again. A refresh
- * is never refused by it.
+ * After a fetch of a client_id URL timed out on /authorize or /token, that exact
+ * URL answers `cooling-down` (503, no fetch) for this long, so a hanging document
+ * cannot keep a slot of the pool busy by being asked again. The key is the URL,
+ * never its domain: a third party who owns another host of the same registrable
+ * domain cannot arm it against a victim. A refresh neither arms it nor is refused
+ * by it. The pool guard across URLs of one domain stays CIMD_PER_DOMAIN_IN_FLIGHT.
  */
 export const CIMD_TIMEOUT_COOLDOWN_MS = 30 * 1000;
 const CIMD_COOLDOWNS_MAX = 1024;
@@ -696,7 +698,7 @@ const inFlightByPerson = new Map<string, number>();
 const sharedFetch = new Map<string, Promise<ResolveResult>>();
 const cooldownUntil = new Map<string, number>();
 
-function startCooldown(domain: string): void {
+function startCooldown(clientId: string): void {
 	const now = deps.now();
 	if (cooldownUntil.size >= CIMD_COOLDOWNS_MAX) {
 		for (const [k, until] of cooldownUntil)
@@ -706,14 +708,14 @@ function startCooldown(domain: string): void {
 			if (oldest !== undefined) cooldownUntil.delete(oldest);
 		}
 	}
-	cooldownUntil.set(domain, now + CIMD_TIMEOUT_COOLDOWN_MS);
+	cooldownUntil.set(clientId, now + CIMD_TIMEOUT_COOLDOWN_MS);
 }
 
-function isCoolingDown(domain: string): boolean {
-	const until = cooldownUntil.get(domain);
+function isCoolingDown(clientId: string): boolean {
+	const until = cooldownUntil.get(clientId);
 	if (until === undefined) return false;
 	if (until <= deps.now()) {
-		cooldownUntil.delete(domain);
+		cooldownUntil.delete(clientId);
 		return false;
 	}
 	return true;
@@ -779,9 +781,9 @@ async function resolveUncached(
 	if (domain === null)
 		return { ok: false, reason: "domain-unresolvable", retryable: false };
 	const busy: ResolveResult = { ok: false, reason: "busy", retryable: true };
-	// A domain whose fetch just timed out is not fetched again until its
-	// cooldown passes: no slot, no allowance. A refresh is never held back.
-	if (purpose !== "refresh" && isCoolingDown(domain))
+	// A URL whose fetch just timed out is not fetched again until its cooldown
+	// passes: no slot, no allowance. A refresh is never held back.
+	if (purpose !== "refresh" && isCoolingDown(clientId))
 		return { ok: false, reason: "cooling-down", retryable: true };
 	if (inFlightByPool[purpose] >= CIMD_POOL[purpose]) return busy;
 	if ((inFlightBySource.get(sourceKey) ?? 0) >= CIMD_PER_SOURCE_IN_FLIGHT)
@@ -810,8 +812,12 @@ async function resolveUncached(
 	if (boundByDomain) bump(inFlightByDomain, domain, 1);
 	const work = fetchDocument(url, clientId)
 		.then((result) => {
-			if (!result.ok && result.reason === "fetch-timeout")
-				startCooldown(domain);
+			if (
+				purpose !== "refresh" &&
+				!result.ok &&
+				result.reason === "fetch-timeout"
+			)
+				startCooldown(clientId);
 			return result;
 		})
 		.finally(() => {

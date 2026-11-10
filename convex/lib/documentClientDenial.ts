@@ -68,7 +68,6 @@ export async function activeDocumentClientDenial(
 ): Promise<Doc<"oauth_denied_document_clients"> | null> {
 	const own = await documentClientRow(ctx, clientId);
 	if (own?.active) return own;
-	if (!clientId.startsWith("https://")) return null;
 	const host = hostOfClientId(clientId);
 	if (host === null) return null;
 	const byHost = await documentClientRow(ctx, denialKey("host", host));
@@ -81,15 +80,13 @@ export async function activeDocumentClientDenial(
 
 /**
  * True when `clientId` is a listed Client ID Metadata Document client, by its
- * exact URL, its host or its registrable domain. A client_id that is not an
- * https URL is never listed (registered clients have their own revocation) and
- * costs no read. The grant is derived here at request time: a token minted
+ * exact URL, its host or its registrable domain. The id's shape
+ * is not trusted: an opaque id parses to no host and costs one read. The grant is derived here at request time: a token minted
  * before a host or domain listing stops answering the moment it is listed.
  */
 export async function isDocumentClientDenied(
 	ctx: Reader,
 	clientId: string,
 ): Promise<boolean> {
-	if (!clientId.startsWith("https://")) return false;
 	return (await activeDocumentClientDenial(ctx, clientId)) !== null;
 }

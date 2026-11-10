@@ -542,7 +542,10 @@ const clientPublicShape = v.object({
 // BEFORE it treats a URL as a document, so a registered "https://app.example.com/..."
 // would capture that client. Both doors refuse it, whoever calls them.
 function refuseUrlShapedClientId(clientId: string): void {
-	if (/^\s*https?:\/\//i.test(clientId)) {
+	// Leading whitespace, control and format characters (U+0001, U+200B...) and a
+	// scheme the URL parser accepts without "//" (`https:/x`, `https:x`,
+	// `https:\t//x`) are all URL-shaped: the check is on the scheme, not on "://".
+	if (/^[\s\p{Cc}\p{Cf}]*https?:/iu.test(clientId)) {
 		throw new ConvexError(
 			`URL_CLIENT_ID_REFUSED: a registered client_id is never URL-shaped (it would shadow a Client ID Metadata Document) — ${JSON.stringify({ door: "oauth:registerClient" })}`,
 		);
@@ -3361,6 +3364,8 @@ export const getRefreshTokenByHash = query({
 		if (!row) return null;
 		if (row.revokedAt !== undefined) return null;
 		if (row.expiresAt < Date.now()) return null;
+		// A listed Client ID Metadata Document client holds nothing, refresh included.
+		if (await isDocumentClientDenied(ctx, row.clientId)) return null;
 		return {
 			clientId: row.clientId,
 			userId: row.userId,
@@ -3402,6 +3407,7 @@ export const getRefreshTokenForGrant = query({
 			.withIndex("by_tokenHash", (q) => q.eq("tokenHash", args.presentedHash))
 			.unique();
 		if (!row) return null;
+		if (await isDocumentClientDenied(ctx, row.clientId)) return null;
 		const spent = row.revokedAt !== undefined;
 		if (!spent && row.expiresAt < Date.now()) return null;
 		return {
@@ -3651,6 +3657,11 @@ export const rotateRefreshToken = mutation({
 			.withIndex("by_tokenHash", (q) => q.eq("tokenHash", args.presentedHash))
 			.unique();
 		if (!row) return { status: "invalid" as const };
+		// A listed Client ID Metadata Document client cannot rotate. The family is
+		// NOT revoked: the denial is derived, so a lift restores it.
+		if (await isDocumentClientDenied(ctx, row.clientId)) {
+			return { status: "refused" as const, reason: "client-denied" };
+		}
 		const familyId = row.familyId ?? row.tokenHash;
 		if (row.revokedAt !== undefined) {
 			// REPLAY of a spent token: revoke what its descent was given.
