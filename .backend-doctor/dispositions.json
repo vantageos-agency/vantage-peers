@@ -134,6 +134,10 @@
 			"disposition": "CONSERVER",
 			"reason": "live: the operator's deny-list of Client ID Metadata Document clients, read by every access-token reader (oauth:getAccessTokenByHash, resolveVerifiedPerson, the orgRoster token readers) and written by oauth:deleteClient; its history is the audit of who listed or unlisted a client"
 		},
+		"oauth_document_client_events": {
+			"disposition": "CONSERVER",
+			"reason": "live: the append-only audit of the Client ID Metadata Document deny-list (one row per listing or unlisting: who, when, why), written by oauth:deleteClient; read by the operator in the Convex dashboard"
+		},
 		"orgMembership": {
 			"disposition": "CONSERVER",
 			"reason": "live: read by MCP-public tool(s) send_message, create_task (the agent link voids when its grantor stops being an active admin of the target organisation)"

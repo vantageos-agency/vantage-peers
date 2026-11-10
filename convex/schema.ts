@@ -1538,17 +1538,22 @@ export default defineSchema({
 		reason: v.string(),
 		addedBy: v.string(),
 		addedAt: v.number(),
-		// Listed now? An unlisting keeps the row (the audit) and sets this false.
+		// Listed now? An unlisting keeps the row and sets this false; the history
+		// of listings and unlistings is in oauth_document_client_events.
 		active: v.boolean(),
-		// Every listing and unlisting, oldest first: who, when, why.
-		history: v.array(
-			v.object({
-				action: v.union(v.literal("listed"), v.literal("unlisted")),
-				by: v.string(),
-				at: v.number(),
-				reason: v.string(),
-			}),
-		),
+	}).index("by_clientId", ["clientId"]),
+
+	// ── oauth_document_client_events ─────────────────────────────────────────
+	// The audit of the deny-list: ONE row per listing or unlisting of a Client ID
+	// Metadata Document client (who, when, why), appended by oauth:deleteClient.
+	// A row per event, never an array on the deny row: the history of a client
+	// listed and unlisted many times must not grow a single document.
+	oauth_document_client_events: defineTable({
+		clientId: v.string(),
+		action: v.union(v.literal("listed"), v.literal("unlisted")),
+		by: v.string(),
+		at: v.number(),
+		reason: v.string(),
 	}).index("by_clientId", ["clientId"]),
 
 	// ── oauth_authorization_codes ────────────────────────────────────────────
