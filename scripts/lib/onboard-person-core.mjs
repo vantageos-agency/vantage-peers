@@ -60,6 +60,27 @@ function flag(argv, name) {
 	return value;
 }
 
+/**
+ * The sign-up page that consumes __clerk_ticket, from the Clerk frontend API domain.
+ * CLERK_DOMAIN names the frontend API (clerk.<domain>), whose /sign-up answers 404;
+ * the hosted page is the account portal on accounts.<domain>. A domain that does not
+ * start with clerk. cannot be mapped and is refused rather than guessed.
+ */
+function accountPortalSignUp(clerkDomain) {
+	let host;
+	try {
+		host = new URL(clerkDomain).hostname;
+	} catch {
+		throw new Error(`CLERK_DOMAIN "${clerkDomain}" is not a URL`);
+	}
+	if (!host.startsWith("clerk.")) {
+		throw new Error(
+			`CLERK_DOMAIN "${clerkDomain}" does not start with clerk.; pass --redirect-url with the account portal sign-up page`,
+		);
+	}
+	return `https://accounts.${host.slice("clerk.".length)}/sign-up`;
+}
+
 /** argv + env -> options for onboardPerson. Throws a plain Error naming the bad input. */
 export function parseArgs(argv, env = {}) {
 	const need = (name) => {
@@ -74,7 +95,7 @@ export function parseArgs(argv, env = {}) {
 	const lang = flag(argv, "lang") ?? "fr";
 	if (!LANGS.includes(lang)) throw new Error(`--lang must be fr or en, got "${lang}"`);
 	let redirectUrl = flag(argv, "redirect-url") ?? env.ONBOARD_REDIRECT_URL;
-	if (!redirectUrl && env.CLERK_DOMAIN) redirectUrl = `${env.CLERK_DOMAIN.replace(/\/+$/, "")}/sign-up`;
+	if (!redirectUrl && env.CLERK_DOMAIN) redirectUrl = accountPortalSignUp(env.CLERK_DOMAIN);
 	if (!redirectUrl) {
 		throw new Error(
 			"no redirect URL: pass --redirect-url (a Clerk-hosted sign-up page that consumes __clerk_ticket) or set CLERK_DOMAIN",
@@ -87,6 +108,11 @@ export function parseArgs(argv, env = {}) {
 		throw new Error(`redirect URL "${redirectUrl}" is not a URL`);
 	}
 	if (parsed.protocol !== "https:") throw new Error(`redirect URL must be https, got "${parsed.protocol}"`);
+	if (parsed.hostname.startsWith("clerk.")) {
+		throw new Error(
+			`redirect URL "${redirectUrl}" is on the Clerk frontend API host, which answers 404 on /sign-up; use the account portal (accounts.${parsed.hostname.slice("clerk.".length)})`,
+		);
+	}
 	return {
 		org: { slug, name: need("org-name") },
 		person: { name: need("name"), email },
