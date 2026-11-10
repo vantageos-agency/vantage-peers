@@ -1002,3 +1002,107 @@ describe("round 4 — the refresh pool is not held by two members, and a known c
 		expect(answers.filter((a) => !a.ok && a.reason === "busy")).toHaveLength(1);
 	});
 });
+
+describe("round 5 — N6: a superseded document is never served stale", () => {
+	const URL1 = "https://app.example.com/oauth/client-metadata.json";
+	it("S2: a no-store fetch that drops a redirect URI removes the older copy; an outage then refuses the refresh", async () => {
+		let now = 1_000_000;
+		let mode: "old" | "new" | "down" = "old";
+		await install({
+			now: () => now,
+			perSourceLimit: 1000,
+			respond: () => {
+				if (mode === "down") return { status: 503 };
+				const uris =
+					mode === "old"
+						? ["https://app.example.com/old-cb", "https://app.example.com/new-cb"]
+						: ["https://app.example.com/new-cb"];
+				return {
+					headers: {
+						"content-type": "application/json",
+						...(mode === "new" ? { "cache-control": "no-store" } : {}),
+					},
+					body: bodyOf(JSON.stringify(validDocument({ redirect_uris: uris }))),
+				};
+			},
+		});
+		const first = await cimd.resolveClientMetadata(URL1, { purpose: "authorize", source: "a" });
+		expect(first.ok && first.client.redirectUris).toHaveLength(2);
+		now += cimd.CIMD_DEFAULT_TTL_MS + 1000; // expired, inside the stale window
+		mode = "new";
+		const fresh = await cimd.resolveClientMetadata(URL1, { purpose: "authorize", source: "a" });
+		expect(fresh.ok && fresh.client.redirectUris).toEqual(["https://app.example.com/new-cb"]);
+		mode = "down";
+		const refresh = await cimd.resolveClientMetadata(URL1, {
+			purpose: "refresh",
+			source: "r",
+			connection: "c",
+		});
+		expect(refresh.ok).toBe(false); // no stale copy exists: the old redirect URI is gone
+	});
+
+	it("a fetch with a TTL replaces the older copy (the stale one is the newest)", async () => {
+		let now = 1_000_000;
+		let uris = ["https://app.example.com/old-cb"];
+		let down = false;
+		await install({
+			now: () => now,
+			perSourceLimit: 1000,
+			respond: () =>
+				down
+					? { status: 503 }
+					: json(validDocument({ redirect_uris: uris })),
+		});
+		await cimd.resolveClientMetadata(URL1, { purpose: "authorize", source: "a" });
+		now += cimd.CIMD_DEFAULT_TTL_MS + 1000;
+		uris = ["https://app.example.com/new-cb"];
+		await cimd.resolveClientMetadata(URL1, { purpose: "authorize", source: "a" });
+		now += cimd.CIMD_DEFAULT_TTL_MS + 1000;
+		down = true;
+		const stale = await cimd.resolveClientMetadata(URL1, {
+			purpose: "refresh",
+			source: "r",
+			connection: "c",
+		});
+		expect(stale.ok && stale.client.redirectUris).toEqual(["https://app.example.com/new-cb"]);
+	});
+});
+
+describe("round 5 — N2 residual: one person cannot hold the refresh pool with two connections", () => {
+	const VICTIM = "https://victim.example.org/c.json";
+	it("one person, two connections, two URLs: one fetch in flight; the victim's uncached refresh resolves", async () => {
+		const rec = await install({
+			timeoutMs: 400,
+			perSourceLimit: 1000,
+			respond: (req) =>
+				req.hostname === "victim.example.org"
+					? json(validDocument({}, VICTIM))
+					: new Promise<never>(() => undefined),
+		});
+		const mine = [
+			cimd.resolveClientMetadata("https://m1.dom1.com/c.json", {
+				purpose: "refresh",
+				source: "10.0.0.1",
+				connection: "c1",
+				person: "user_attacker",
+			}),
+			cimd.resolveClientMetadata("https://m2.dom2.com/c.json", {
+				purpose: "refresh",
+				source: "10.0.0.2",
+				connection: "c2",
+				person: "user_attacker",
+			}),
+		];
+		await new Promise((r) => setTimeout(r, 30));
+		expect(rec.requests).toHaveLength(1);
+		const victim = await cimd.resolveClientMetadata(VICTIM, {
+			purpose: "refresh",
+			source: "9.9.9.9",
+			connection: "cv",
+			person: "user_victim",
+		});
+		expect(victim.ok).toBe(true);
+		const answers = await Promise.all(mine);
+		expect(answers.filter((a) => !a.ok && a.reason === "busy")).toHaveLength(1);
+	});
+});
