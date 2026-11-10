@@ -1009,7 +1009,10 @@ export async function checkDelegationAllowed(
 	// "*" entry in a roster is an ordinary string and admits nobody. On the
 	// token-hash path nothing is fleet-wide (Eta ETA-M18).
 	if (ctx.clerkJwt && ctx.orgFleetWide === true) return null;
-	if (roster.includes(assignedTo)) return null;
+	const wanted = normalizeOrchestratorId(assignedTo);
+	if (roster.some((name) => normalizeOrchestratorId(name) === wanted)) {
+		return null;
+	}
 	const allowed =
 		roster.length === 0
 			? "(none — this client's organisation has no roster on record)"

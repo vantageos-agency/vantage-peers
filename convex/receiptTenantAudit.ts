@@ -18,6 +18,7 @@ import { v } from "convex/values";
 import type { Id } from "./_generated/dataModel";
 import { internal } from "./_generated/api";
 import { internalAction, internalQuery } from "./_generated/server";
+import { isOrchestratorOnOrgRoster } from "./lib/auth";
 import { loadRealClientOrgs } from "./receiptTenantBackfill";
 
 export const _receiptTenantPage = internalQuery({
@@ -211,12 +212,10 @@ export const _withheldRecipientPage = internalQuery({
 		for (const r of page.page) {
 			const matchedSlugs = new Set<string>();
 			for (const org of clientOrgs) {
-				const recipientMatches = org.allowedOrchestrators.includes(
-					r.recipient,
-				);
+				const recipientMatches = isOrchestratorOnOrgRoster(org, r.recipient);
 				const instanceMatches =
 					r.recipientInstanceId !== undefined &&
-					org.allowedOrchestrators.includes(r.recipientInstanceId);
+					isOrchestratorOnOrgRoster(org, r.recipientInstanceId);
 				if (recipientMatches || instanceMatches) {
 					matchedSlugs.add(org.clerkOrgSlug);
 				}

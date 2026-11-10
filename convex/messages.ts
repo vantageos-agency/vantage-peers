@@ -108,7 +108,7 @@ const UNREAD_RECEIPTS_SCAN_CAP = 500;
 function isOrchestratorAllowedForScope(scope: OrgScope, orchestrator: string): boolean {
 	if (scope.isMaster) return true;
 	if (scope.orgSlug === null) return false;
-	return scope.allowedOrchestrators.includes(orchestrator);
+	return isOrchestratorOnOrgRoster(scope, orchestrator);
 }
 
 // Channel membership for a non-master, org-scoped caller: "broadcast" (shared),
@@ -120,7 +120,8 @@ function isChannelOnScope(scope: OrgScope, channel: string): boolean {
 	if (scope.orgSlug !== null && channel.startsWith(`team/${scope.orgSlug}`)) {
 		return true;
 	}
-	return scope.allowedOrchestrators.includes(channel);
+	// A channel named for an orchestrator is the normalised label the writers store.
+	return isOrchestratorOnOrgRoster(scope, channel);
 }
 
 const staleInProgressValidator = v.array(

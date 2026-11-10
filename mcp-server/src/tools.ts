@@ -13,11 +13,6 @@ import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { McpServer } from "@modelcontextprotocol/server";
 import { ProtocolError, ProtocolErrorCode } from "@modelcontextprotocol/server";
-import {
-	passesScopeFilter,
-	scopeFilterGet,
-	scopeFilterList,
-} from "@vantageos/cloud-identity";
 import type { ConvexHttpClient } from "convex/browser";
 import { z } from "zod";
 import {
@@ -53,6 +48,11 @@ import {
 	guardFreshState,
 } from "./fresh-state-guard.js";
 import { listTasksGate } from "./list-tasks-gate.js";
+import {
+	passesScopeFilter,
+	scopeFilterGet,
+	scopeFilterList,
+} from "./rosterScopeFilter.js";
 import { listContract } from "./listContract.js";
 import { refuseUnissuedListCursors } from "./listCursor.js";
 import { memberAuthorLabel } from "./memberAuthor.js";
@@ -2444,7 +2444,8 @@ function passesBriefingNoteParticipantScope(
 	if (oauthCtx === undefined) return false;
 	if (isMasterScope(oauthCtx)) return true;
 	if (Array.isArray(row.participants)) {
-		return row.participants.some((p) => oauthCtx.fromAllowList.includes(p));
+		const roster = new Set(oauthCtx.fromAllowList.map(normalizeOrchestratorId));
+		return row.participants.some((p) => roster.has(normalizeOrchestratorId(p)));
 	}
 	return false;
 }
