@@ -50,14 +50,14 @@ async function rig(stalled: (h: string) => boolean, now?: () => number) {
 	return rec;
 }
 
-const hang = (host: string) => host.endsWith(".hang.example");
+const hang = (host: string) => host.includes("hang");
 const at = (
 	url: string,
 	source: string,
 	purpose: "authorize" | "token" | "refresh" = "authorize",
 ) => cimd.resolveClientMetadata(url, { purpose, source });
 const stalledUrl = (i: number, path = "c", sub = "s") =>
-	`https://${sub}${i}.d${i}.hang.example/${path}.json`;
+	`https://${sub}${i}.hang${i}.com/${path}.json`;
 const VICTIM = "https://app.victim.example/oauth/client-metadata.json";
 
 describe("B4a sustained: strangers that already hung cannot keep the pool full", () => {
@@ -107,9 +107,15 @@ describe("the lane demotes the source only", () => {
 		expect(second).toMatchObject({ reason: "busy" });
 		await lane[0];
 		t += cimd.CIMD_SUSPECT_MS + 1;
-		const later = await at("https://later.victim.example/c.json", "203.0.113.1");
+		const later = await at(
+			"https://later.victim.example/c.json",
+			"203.0.113.1",
+		);
 		expect(later.ok).toBe(true);
-		const other = await at("https://other.victim.example/c.json", "203.0.113.9");
+		const other = await at(
+			"https://other.victim.example/c.json",
+			"203.0.113.9",
+		);
 		expect(other.ok).toBe(true);
 	});
 });
