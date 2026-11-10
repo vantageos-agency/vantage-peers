@@ -120,7 +120,14 @@ describe("callerOrchestrator sites — every one classified through the AST, eve
 	});
 
 	it("outside tools.ts the only sites are the wrapper's own: registerTool.ts (mechanism, or its prose) — nothing in auth.ts, nothing in the entry points", () => {
-		const outside = SITES.filter((s) => s.file !== "src/tools.ts");
+		// descriptionsFr.ts is the French half of the tool descriptions tools.ts
+		// declares (mcp-standard C-19): the token appears there as prose, only.
+		const french = SITES.filter((s) => s.file === "src/descriptionsFr.ts");
+		expect(french.length).toBeGreaterThan(0);
+		expect(french.filter((s) => s.cls !== "prose").map(where)).toEqual([]);
+		const outside = SITES.filter(
+			(s) => s.file !== "src/tools.ts" && s.file !== "src/descriptionsFr.ts",
+		);
 		expect(
 			outside.filter((s) => s.file !== "src/registerTool.ts").map(where),
 		).toEqual([]);

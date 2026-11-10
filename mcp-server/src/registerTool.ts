@@ -58,6 +58,7 @@ import {
 	seatAgentOf,
 	toPackageOAuthCtx,
 } from "./auth.js";
+import { composeServedDescription } from "./descriptionsFr.js";
 import { isClerkMember } from "./memberAuthor.js";
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -210,9 +211,12 @@ function enforceScope(
 			// reaches here as "undefined", which no roster lists: refused.
 			const name = String(from);
 			if (
-				passesScopeFilter(toPackageOAuthCtx(ctx.oauthCtx, { actingName: true }), {
-					createdBy: name,
-				})
+				passesScopeFilter(
+					toPackageOAuthCtx(ctx.oauthCtx, { actingName: true }),
+					{
+						createdBy: name,
+					},
+				)
 			)
 				return null;
 			return mcpError(fromNotOnRosterRefusal(ctx.oauthCtx, name));
@@ -575,7 +579,9 @@ export function defineTool(
 		schema[scope.namespaceArg] !== undefined &&
 		(schema[scope.namespaceArg] as z.ZodType).safeParse(undefined).success
 			? {
-					[scope.namespaceArg]: (schema[scope.namespaceArg] as z.ZodType).describe(
+					[scope.namespaceArg]: (
+						schema[scope.namespaceArg] as z.ZodType
+					).describe(
 						`${(schema[scope.namespaceArg] as z.ZodType).description ?? ""}${READ_NAMESPACE_NOTE}`,
 					),
 				}
@@ -684,10 +690,18 @@ export function defineTool(
 	// biome-ignore lint/suspicious/noExplicitAny: SDK overload set is wider than our spec type.
 	const registerTool = server.registerTool.bind(server) as any;
 	// A tool a person without an agent cannot call says so (NO_PERSON_DOOR_NOTE).
-	const advertisedDescription =
-		actingKeys.length > 0 && !exemptByDeclaration && personDoor !== true
-			? `${description}${NO_PERSON_DOOR_NOTE}`
-			: description;
+	const noPersonDoor =
+		actingKeys.length > 0 && !exemptByDeclaration && personDoor !== true;
+	const english = noPersonDoor
+		? `${description}${NO_PERSON_DOOR_NOTE}`
+		: description;
+	// mcp-standard C-19: the served description is "<English> / <French>", the
+	// English half exactly what was served before (descriptionsFr.ts composes).
+	const advertisedDescription = composeServedDescription(
+		name,
+		english,
+		noPersonDoor,
+	);
 	registerTool(
 		name,
 		{

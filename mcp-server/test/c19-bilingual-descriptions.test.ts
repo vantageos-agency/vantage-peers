@@ -12,6 +12,13 @@
  * stdio server's tools/list): composing the French half must never edit the
  * English one. The French half is pinned to the one map it comes from.
  *
+ * EIGHT tools are served in English only, named in OVER_BUDGET below: their
+ * English plus a faithful French exceeds the 2048-byte metadata budget past
+ * which Claude Code truncates (test/server-metadata-byte-budget.test.ts), and
+ * the English may not be shortened here. The list is checked against the
+ * budget, so it cannot go stale in either direction; closing it is a decision
+ * on those eight English texts, outside this change.
+ *
  * Not covered here, on purpose: the doctor's trigger-phrase clause
  * ("use this whenever ... even if they don't say"), which would change the
  * English half. No C-13 per-tool ceiling (`CONTEXT_CEILING` /
@@ -30,6 +37,19 @@ import { registerTools } from "../src/tools.js";
 
 const BILINGUAL_SPLIT_RE = /^(.{10,})\s\/\s(.{10,})$/;
 const SEPARATOR = " / ";
+const BUDGET_BYTES = 2048;
+
+/** Served in English only: English + " / " + French would exceed BUDGET_BYTES. */
+const OVER_BUDGET = [
+	"billing_summary_by_project",
+	"block_task",
+	"bulk_complete_tasks",
+	"correct_task_segment",
+	"erase_row",
+	"generate_upload_url",
+	"improvisation_digest",
+	"list_tasks",
+];
 
 const ENGLISH_AT_7887206C: Record<string, string> = JSON.parse(
 	readFileSync(
@@ -88,22 +108,28 @@ describe("C-19 — served descriptions carry English and French", () => {
 		expect(tools).toHaveLength(93);
 	});
 
-	it("every served description matches the doctor's <en> / <fr> split", () => {
+	it("every served description matches the doctor's <en> / <fr> split, except the eight over budget", () => {
 		const mono = tools
 			.filter((t) => !BILINGUAL_SPLIT_RE.test(t.description ?? ""))
-			.map((t) => t.name);
-		expect(mono).toEqual([]);
+			.map((t) => t.name)
+			.sort();
+		expect(mono).toEqual(OVER_BUDGET);
 	});
 
-	it("the English half is byte-identical to what 7887206c served", () => {
+	it("the English half is byte-identical to what 7887206c served (the whole text for the eight over budget)", () => {
 		const edited = tools
-			.filter((t) => frenchHalf(t) === undefined)
+			.filter((t) =>
+				OVER_BUDGET.includes(t.name)
+					? t.description !== ENGLISH_AT_7887206C[t.name]
+					: frenchHalf(t) === undefined,
+			)
 			.map((t) => t.name);
 		expect(edited).toEqual([]);
 	});
 
 	it("each French half is non-empty, single-line and not the English copied", () => {
 		const bad = tools
+			.filter((t) => !OVER_BUDGET.includes(t.name))
 			.filter((t) => {
 				const fr = frenchHalf(t);
 				const en = ENGLISH_AT_7887206C[t.name] ?? "";
@@ -119,6 +145,32 @@ describe("C-19 — served descriptions carry English and French", () => {
 		expect(bad).toEqual([]);
 	});
 
+	it("every served description fits the 2048-byte budget, and OVER_BUDGET is exactly the tools whose bilingual text would not", async () => {
+		const { TOOL_DESCRIPTIONS_FR, NO_PERSON_DOOR_NOTE_FR } = await import(
+			"../src/descriptionsFr.js"
+		);
+		const bytes = (x: string) => Buffer.byteLength(x, "utf8");
+		expect(
+			tools
+				.filter((t) => bytes(t.description ?? "") > BUDGET_BYTES)
+				.map((t) => t.name),
+		).toEqual([]);
+		const wouldExceed = tools
+			.filter((t) => {
+				const en = ENGLISH_AT_7887206C[t.name] ?? "";
+				const note = en.endsWith(NO_PERSON_DOOR_NOTE)
+					? NO_PERSON_DOOR_NOTE_FR
+					: "";
+				return (
+					bytes(`${en}${SEPARATOR}${TOOL_DESCRIPTIONS_FR[t.name]}${note}`) >
+					BUDGET_BYTES
+				);
+			})
+			.map((t) => t.name)
+			.sort();
+		expect(wouldExceed).toEqual(OVER_BUDGET);
+	});
+
 	it("every served tool has exactly one French entry, and no entry names an unserved tool", async () => {
 		const { TOOL_DESCRIPTIONS_FR } = await import("../src/descriptionsFr.js");
 		expect(Object.keys(TOOL_DESCRIPTIONS_FR).sort()).toEqual(
@@ -131,6 +183,7 @@ describe("C-19 — served descriptions carry English and French", () => {
 			"../src/descriptionsFr.js"
 		);
 		const wrong = tools
+			.filter((t) => !OVER_BUDGET.includes(t.name))
 			.filter((t) => {
 				const en = ENGLISH_AT_7887206C[t.name] ?? "";
 				const note = en.endsWith(NO_PERSON_DOOR_NOTE)
