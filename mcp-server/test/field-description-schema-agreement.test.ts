@@ -685,11 +685,50 @@ describe("Manufact fix report: every named input item is rewritten", () => {
 		});
 	}
 
-	it("search_briefing_notes_by_keyword.createdBy says where the value comes from", () => {
-		const t = tools.find((x) => x.name === "search_briefing_notes_by_keyword");
-		const d = t?.inputSchema.properties?.createdBy?.description ?? "";
-		expect(d).toMatch(/\blist_peers\b/);
-		expect(d).toMatch(/user:<subject>/);
+	// Each identity field below names the tool (or the field of a previous reply)
+	// its value is copied from. The first is Manufact's "source" item; the other
+	// three are mcp-doctor C-40 (6) inputs-sourced reds (report 56425010, mcp-doctor
+	// 39a5d0adce; task k17a9k0qneagqkp4wsp486xbh58hx7nj).
+	const SOURCED: [tool: string, field: string, sources: RegExp[]][] = [
+		["search_briefing_notes_by_keyword", "createdBy", [/\blist_peers\b/, /user:<subject>/]],
+		["list_tasks_by_mission", "createdBy", [/\blist_peers\b/, /\bwhoami\b/]],
+		["list_diaries", "createdBy", [/\blist_peers\b/, /\bwhoami\b/]],
+		["get_github_owner_bindings", "unprovenCursor", [/\bget_github_owner_bindings\b/, /\bunprovenNextCursor\b/]],
+	];
+	for (const [tool, field, sources] of SOURCED) {
+		it(`${tool}.${field} says where the value comes from`, () => {
+			const t = tools.find((x) => x.name === tool);
+			const d = t?.inputSchema.properties?.[field]?.description ?? "";
+			for (const s of sources) expect(d).toMatch(s);
+		});
+	}
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// mcp-doctor C-40 criterion (6) inputs-sourced, as a class rule over every
+// served field: an `…Id` / `…Ids` / `…Cursor` / `…By` field says where its value
+// comes from or what form it takes. Mirrors `sourced()` in mcp-doctor
+// src/detectors/c40-tool-documentation.ts at 39a5d0adce, so a field the doctor
+// would score red fails here first (task k17a9k0qneagqkp4wsp486xbh58hx7nj).
+// ─────────────────────────────────────────────────────────────────────────────
+
+const IDENTITY_FIELD = /(Id|Ids|Cursor|By)$/;
+
+function sourcedLikeDoctor(d: string, served: string[]): boolean {
+	if (served.some((name) => new RegExp(`\\b${escapeRe(name)}\\b`).test(d))) return true;
+	if (/\b(returned by|returns?|carried by|given by|from)\b/i.test(d)) return true;
+	if (/["'`][^"'`\s]{1,64}["'`]/.test(d)) return true;
+	return /\b(name|ID)\b/.test(d);
+}
+
+describe("mcp-doctor C-40 inputs-sourced: every identity field names its source", () => {
+	it("no served …Id / …Ids / …Cursor / …By field lacks a source, example or convention", () => {
+		const served = tools.map((t) => t.name);
+		const unsourced = allFields()
+			.filter((f) => IDENTITY_FIELD.test(f.name))
+			.filter((f) => !sourcedLikeDoctor(f.schema.description ?? "", served))
+			.map((f) => `${f.tool}.${f.path}`);
+		expect(unsourced).toEqual([]);
 	});
 });
 
