@@ -784,7 +784,9 @@ function clientMetadataRefusal(
 	c: Context,
 	verdict: { reason: string; retryable: boolean },
 ) {
-	console.error(`[oauth] ${c.req.path} refused: client-metadata ${verdict.reason}`);
+	console.error(
+		`[oauth] ${c.req.path} refused: client-metadata ${verdict.reason}`,
+	);
 	const error_description = `client-metadata: ${verdict.reason}`;
 	// A failure that may pass (the host is slow or down, a limit was hit) is
 	// temporarily_unavailable: a client keeps its refresh token and tries again.

@@ -317,7 +317,9 @@ describe("SSRF — the exchange", () => {
 					release.push(() =>
 						resolve({
 							body: bodyOf(
-								JSON.stringify(validDocument({}, `https://${req.hostname}/c.json`)),
+								JSON.stringify(
+									validDocument({}, `https://${req.hostname}/c.json`),
+								),
 							),
 						}),
 					);
@@ -405,20 +407,29 @@ describe("per-source fetch limit", () => {
 
 	it("the /token allowance is separate from the /authorize one", async () => {
 		await install({ perSourceLimit: 1, respond: doc });
-		const first = await cimd.resolveClientMetadata("https://a.example.com/c.json", {
-			source: "ip",
-			purpose: "authorize",
-		});
+		const first = await cimd.resolveClientMetadata(
+			"https://a.example.com/c.json",
+			{
+				source: "ip",
+				purpose: "authorize",
+			},
+		);
 		expect(first.ok).toBe(true);
-		const second = await cimd.resolveClientMetadata("https://b.example.com/c.json", {
-			source: "ip",
-			purpose: "authorize",
-		});
+		const second = await cimd.resolveClientMetadata(
+			"https://b.example.com/c.json",
+			{
+				source: "ip",
+				purpose: "authorize",
+			},
+		);
 		expect(second).toMatchObject({ reason: "rate-limited" });
-		const token = await cimd.resolveClientMetadata("https://b.example.com/c.json", {
-			source: "ip",
-			purpose: "token",
-		});
+		const token = await cimd.resolveClientMetadata(
+			"https://b.example.com/c.json",
+			{
+				source: "ip",
+				purpose: "token",
+			},
+		);
 		expect(token.ok).toBe(true);
 	});
 
@@ -428,14 +439,20 @@ describe("per-source fetch limit", () => {
 		await cimd.resolveClientMetadata("https://a.example.com/c.json", {
 			source: "ip",
 		});
-		const blocked = await cimd.resolveClientMetadata("https://b.example.com/c.json", {
-			source: "ip",
-		});
+		const blocked = await cimd.resolveClientMetadata(
+			"https://b.example.com/c.json",
+			{
+				source: "ip",
+			},
+		);
 		expect(blocked).toMatchObject({ reason: "rate-limited" });
 		now += cimd.CIMD_PER_SOURCE_WINDOW_MS + 1;
-		const again = await cimd.resolveClientMetadata("https://b.example.com/c.json", {
-			source: "ip",
-		});
+		const again = await cimd.resolveClientMetadata(
+			"https://b.example.com/c.json",
+			{
+				source: "ip",
+			},
+		);
 		expect(again.ok).toBe(true);
 	});
 });
