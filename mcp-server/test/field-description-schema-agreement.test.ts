@@ -831,3 +831,177 @@ describe("Manufact fix report: the output schema and the documented result agree
 		);
 	});
 });
+
+// ─────────────────────────────────────────────────────────────────────────────
+// The no-op `fields` key the list contract removed from seven published input
+// schemas (task k17e90s1n85hjappy26vs2kww18hxjp1, Pi ruling 2026-11-10): it is
+// not advertised, and a caller that still sends it is not refused either. One
+// declared list drops that one key before strict validation; every other
+// unknown key on those tools is still refused, and every other tool keeps its
+// behaviour. Driven through the real McpServer (the SDK's own input
+// validation), over a Convex that records what each call asked of it.
+// ─────────────────────────────────────────────────────────────────────────────
+
+const FIELDS_IGNORED = [
+	"list_recurring_tasks",
+	"list_peers",
+	"list_fix_patterns",
+	"list_messages",
+	"list_memories",
+	"list_episodes",
+	"list_diaries",
+] as const;
+
+const NOOP_ARGS: Record<
+	(typeof FIELDS_IGNORED)[number],
+	Record<string, unknown>
+> = {
+	list_recurring_tasks: {},
+	list_peers: {},
+	list_fix_patterns: {},
+	list_messages: {},
+	list_memories: { namespace: "global" },
+	list_episodes: { namespace: "global" },
+	list_diaries: {},
+};
+
+/** One row carrying what every door's handler projection reads. */
+const NOOP_ROW = {
+	_id: "row1",
+	_creationTime: 1_760_000_000_000,
+	orchestratorId: "alpha",
+	name: "n",
+	static: { role: "r", workspace: "/w", capabilities: [] },
+	dynamic: { lastSeen: 1_760_000_000_000, sessionCount: 1 },
+	from: "alpha",
+	content: "c",
+	createdBy: "alpha",
+	createdAt: 1_760_000_000_000,
+	updatedAt: 1_760_000_000_000,
+	namespace: "global",
+	type: "project",
+	relations: [],
+	isLatest: true,
+	title: "t",
+	assignedTo: "alpha",
+	priority: "medium",
+	status: "todo",
+	cronExpression: "0 9 * * *",
+	nextRunAt: 1_760_000_000_000,
+	active: true,
+	symptom: "s",
+	rootCause: "r",
+	tags: [],
+	stack: [],
+	sourceProject: "p",
+	severity: "low",
+	date: "2026-11-10",
+	orchestrator: "alpha",
+};
+
+type Called = {
+	content: Array<{ text: string }>;
+	isError?: boolean;
+	structuredContent?: unknown;
+};
+
+async function recordingClient(): Promise<{
+	call: (name: string, args: Record<string, unknown>) => Promise<Called>;
+	doors: Array<[string, unknown]>;
+	close: () => Promise<void>;
+}> {
+	const doors: Array<[string, unknown]> = [];
+	const server = new McpServer({ name: "t", version: "0.0.0" });
+	const convex = {
+		query: async (door: string, args: unknown) => {
+			doors.push([door, args]);
+			return door === "memories:listMemories"
+				? { value: [NOOP_ROW], continueCursor: null, isDone: true }
+				: [NOOP_ROW];
+		},
+		mutation: async () => null,
+		action: async () => null,
+	} as unknown as Parameters<typeof registerTools>[1];
+	registerTools(server, convex, {
+		clientId: "m",
+		userId: "m",
+		scopes: [],
+		scopeProfile: "master",
+		fromAllowList: ["*"],
+		namespaceReadPrefixes: ["*"],
+		namespaceWritePrefixes: ["*"],
+		expiresAt: Date.now() + 3600_000,
+		isMaster: true,
+	} as OAuthContext);
+	const [ct, st] = InMemoryTransport.createLinkedPair();
+	const client = new Client({ name: "c", version: "0.0.0" });
+	await Promise.all([server.connect(st), client.connect(ct)]);
+	return {
+		call: async (name, args) =>
+			(await client.callTool({ name, arguments: args })) as unknown as Called,
+		doors,
+		close: () => client.close(),
+	};
+}
+
+describe("a no-op `fields` key is ignored on the seven list tools that no longer declare it", () => {
+	it("the seven published input schemas do not contain fields", () => {
+		const declared = FIELDS_IGNORED.filter(
+			(n) =>
+				tools.find((t) => t.name === n)?.inputSchema.properties?.fields !==
+				undefined,
+		);
+		expect(declared).toEqual([]);
+	});
+
+	for (const tool of FIELDS_IGNORED) {
+		it(`${tool}: a call WITH fields ("lite", "full") answers exactly what the call without it answers, and asks Convex the same`, async () => {
+			const answers: Called[] = [];
+			const asked: string[] = [];
+			for (const extra of [{}, { fields: "lite" }, { fields: "full" }]) {
+				const c = await recordingClient();
+				answers.push(await c.call(tool, { ...NOOP_ARGS[tool], ...extra }));
+				asked.push(JSON.stringify(c.doors));
+				await c.close();
+			}
+			expect(answers[0].isError, answers[0].content?.[0]?.text).not.toBe(true);
+			expect(answers[1]).toEqual(answers[0]);
+			expect(answers[2]).toEqual(answers[0]);
+			expect(asked[1]).toBe(asked[0]);
+			expect(asked[2]).toBe(asked[0]);
+		});
+
+		it(`${tool}: any OTHER unknown key is still refused as unrecognized`, async () => {
+			const c = await recordingClient();
+			const r = await c.call(tool, {
+				...NOOP_ARGS[tool],
+				fields: "lite",
+				fieldz: "lite",
+			});
+			await c.close();
+			expect(r.isError).toBe(true);
+			expect(r.content[0].text).toMatch(/Unrecognized key/);
+			expect(r.content[0].text).toMatch(/fieldz/);
+			expect(r.content[0].text).not.toMatch(/"fields"/);
+			expect(c.doors).toEqual([]);
+		});
+	}
+
+	it("a tool outside the list keeps its behaviour: list_tasks still reads fields, get_task still refuses it", async () => {
+		const c = await recordingClient();
+		const full = await c.call("list_tasks", { fields: "full" });
+		expect(full.isError, full.content?.[0]?.text).not.toBe(true);
+		const refused = await c.call("get_task", {
+			taskId: "a".repeat(32),
+			fields: "lite",
+		});
+		await c.close();
+		expect(refused.isError).toBe(true);
+		expect(refused.content[0].text).toMatch(/Unrecognized key/);
+		expect(refused.content[0].text).toMatch(/fields/);
+		expect(
+			tools.find((t) => t.name === "list_tasks")?.inputSchema.properties
+				?.fields,
+		).toBeDefined();
+	});
+});
