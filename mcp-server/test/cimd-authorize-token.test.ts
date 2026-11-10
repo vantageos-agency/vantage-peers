@@ -785,11 +785,10 @@ describe("M2 — a listed client is refused at all three endpoints, before any f
 		await denyClient();
 		network();
 		const r = await refreshWith(refreshToken);
+		// The refresh readers obey the deny (sentinel F2): the token of a listed
+		// client is no longer found, so the grant answers invalid_grant, before any fetch.
 		expect(r.status).toBe(400);
-		expect(await r.json()).toMatchObject({
-			error: "invalid_client",
-			error_description: "client-metadata: client-denied",
-		});
+		expect(await r.json()).toMatchObject({ error: "invalid_grant" });
 		expect(net.requests).toHaveLength(0);
 	});
 });
@@ -1073,7 +1072,10 @@ describe("F4/F5 — the admin answer says what a listing covers and that tokens 
 		});
 
 	it("url: covers the exact URL", async () => {
-		const body = (await (await scoped("url")).json()) as Record<string, unknown>;
+		const body = (await (await scoped("url")).json()) as Record<
+			string,
+			unknown
+		>;
 		expect(body).toMatchObject({ scope: "url", covers: "exact URL" });
 	});
 
@@ -1091,7 +1093,10 @@ describe("F4/F5 — the admin answer says what a listing covers and that tokens 
 	});
 
 	it("domain: covers the registrable domain and all subdomains; the lift answers covers too", async () => {
-		const body = (await (await scoped("domain")).json()) as Record<string, unknown>;
+		const body = (await (await scoped("domain")).json()) as Record<
+			string,
+			unknown
+		>;
 		expect(body).toMatchObject({
 			scope: "domain",
 			covers: "registrable domain and all subdomains",

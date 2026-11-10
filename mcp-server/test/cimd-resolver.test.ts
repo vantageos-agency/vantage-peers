@@ -1209,7 +1209,10 @@ describe("round 6 — a domain whose fetch timed out cools down, so hanging doma
 					? json(validDocument({}, `https://app.example.co.uk${req.path}`))
 					: new Promise<never>(() => undefined),
 		});
-		const slow = await authorize("https://slow.example.co.uk/c.json", "10.1.0.1");
+		const slow = await authorize(
+			"https://slow.example.co.uk/c.json",
+			"10.1.0.1",
+		);
 		expect(slow).toMatchObject({ reason: "fetch-timeout" });
 		for (const [i, purpose] of (["authorize", "token"] as const).entries()) {
 			const r = await cimd.resolveClientMetadata(
@@ -1234,7 +1237,10 @@ describe("round 6 — a domain whose fetch timed out cools down, so hanging doma
 			{ purpose: "refresh", source: "10.2.0.1" },
 		);
 		expect(slow).toMatchObject({ reason: "fetch-timeout" });
-		const victim = await authorize("https://app.example.co.uk/c.json", "10.2.1.1");
+		const victim = await authorize(
+			"https://app.example.co.uk/c.json",
+			"10.2.1.1",
+		);
 		expect(victim.ok).toBe(true);
 	});
 });
