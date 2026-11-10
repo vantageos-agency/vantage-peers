@@ -1879,8 +1879,12 @@ async function documentClientAdmin(c: Context, lift: boolean) {
 	}
 }
 
-admin.post("/oauth/document-clients/deny", (c) => documentClientAdmin(c, false));
-admin.post("/oauth/document-clients/allow", (c) => documentClientAdmin(c, true));
+admin.post("/oauth/document-clients/deny", (c) =>
+	documentClientAdmin(c, false),
+);
+admin.post("/oauth/document-clients/allow", (c) =>
+	documentClientAdmin(c, true),
+);
 
 // POST /admin/organizations — one-shot org + orchestrator seats
 admin.post("/organizations", async (c) => {

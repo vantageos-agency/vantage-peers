@@ -299,8 +299,12 @@ describe("round 2 — unlisting through the same door, with an audit that keeps 
 	test("unlisting needs a reason and an operator; an unknown client unlists nothing", async () => {
 		const t = createT();
 		await deny(t);
-		await expect(lift(t, { reason: "short" })).rejects.toThrow(/REASON_TOO_SHORT/);
-		await expect(lift(t, { operator: " " })).rejects.toThrow(/OPERATOR_REQUIRED/);
+		await expect(lift(t, { reason: "short" })).rejects.toThrow(
+			/REASON_TOO_SHORT/,
+		);
+		await expect(lift(t, { operator: " " })).rejects.toThrow(
+			/OPERATOR_REQUIRED/,
+		);
 		expect(await lift(t, { clientId: URL_B })).toMatchObject({
 			revokedClient: false,
 			unlisted: false,
@@ -317,8 +321,12 @@ describe("round 2 — unlisting through the same door, with an audit that keeps 
 			operator: "pi",
 			lift: true,
 		};
-		await expect(t.mutation(api.oauth.deleteClient, args)).rejects.toThrow(/RBAC_DENIED/);
-		await expect(asMember(t).mutation(api.oauth.deleteClient, args)).rejects.toThrow(/RBAC_DENIED/);
+		await expect(t.mutation(api.oauth.deleteClient, args)).rejects.toThrow(
+			/RBAC_DENIED/,
+		);
+		await expect(
+			asMember(t).mutation(api.oauth.deleteClient, args),
+		).rejects.toThrow(/RBAC_DENIED/);
 		expect(await denial(t)).not.toBeNull();
 	});
 });
@@ -332,7 +340,9 @@ describe("round 2 — a client_id that is not in canonical form is not listed", 
 			"https://app.example.com:443/b.json",
 			"https://app.example.com/b.json#frag",
 		]) {
-			expect(await deny(t, { clientId })).toMatchObject({ revokedClient: false });
+			expect(await deny(t, { clientId })).toMatchObject({
+				revokedClient: false,
+			});
 			expect(await denial(t, clientId)).toBeNull();
 		}
 	});

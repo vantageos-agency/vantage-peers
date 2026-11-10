@@ -701,7 +701,8 @@ describe("source key (the per-source limits key on it)", () => {
 	it("an IPv6 /64 rotated on every request shares ONE fetch allowance", async () => {
 		await install({
 			perSourceLimit: 2,
-			respond: (req) => json(validDocument({}, `https://${req.hostname}/c.json`)),
+			respond: (req) =>
+				json(validDocument({}, `https://${req.hostname}/c.json`)),
 		});
 		const from = (i: number) => `2001:db8:1:2:${i.toString(16)}::${i + 1}`;
 		const results = [];
