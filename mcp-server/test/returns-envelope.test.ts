@@ -16,6 +16,7 @@ import { Client } from "@modelcontextprotocol/client";
 import { InMemoryTransport, McpServer } from "@modelcontextprotocol/server";
 import { beforeAll, describe, expect, it } from "vitest";
 import type { OAuthContext } from "../src/auth.js";
+import { LIST_CONTRACTS } from "../src/listContract.js";
 import { registerTools } from "../src/tools.js";
 import {
 	CONTRADICTIONS,
@@ -148,6 +149,25 @@ function returnsTopLevel(
 	return { problem: "unbalanced Returns clause" };
 }
 
+/** No-op inputs the list contract dropped (task k17e90s1n85hjappy26vs2kww18hxjp1). */
+const DROPPED_INPUTS = new Set(["list_peers #/properties/fields"]);
+
+/**
+ * Tools whose row fields are stated ONCE, by their outputSchema, and not in
+ * the Returns clause (task k17e90s1n85hjappy26vs2kww18hxjp1): the paged lists
+ * governed by src/listContract.ts, and the four found reads. Measured by
+ * Manufact (baseline 2026-11-09 -> 2026-11-10T13:03Z): adding a partial row
+ * list to these clauses lowered their description score (list_recurring_tasks
+ * 97 -> 80) and output score (86 -> 65); the clause names the envelope only.
+ */
+const ROWS_STATED_BY_SCHEMA = new Set<string>([
+	...Object.keys(LIST_CONTRACTS),
+	"get_diary",
+	"get_mission",
+	"get_mission_template",
+	"get_profile",
+]);
+
 /** Where a description's Returns clause and its schema's top level disagree. */
 function envelopeMismatch(tool: ServedTool): string | null {
 	const top = Object.keys(tool.outputSchema?.properties ?? {}).sort();
@@ -167,6 +187,7 @@ function envelopeMismatch(tool: ServedTool): string | null {
 		if (row === undefined) continue;
 		const named = r.children[name];
 		const fields = Object.keys(row.properties ?? {});
+		if (named === undefined && ROWS_STATED_BY_SCHEMA.has(tool.name)) continue;
 		if (named === undefined) {
 			rows.push(`${name}: row fields not named`);
 			continue;
@@ -358,6 +379,9 @@ describe("Manufact 2141: the 35 flagged field descriptions keep meaning and usag
 			const t = tools.find((x) => x.name === tool);
 			if (!t) throw new Error(`not served: ${tool}`);
 			const n = nodeAt(t, pointer);
+			// A no-op input dropped from its tool (task k17e90s1n85hjappy26vs2kww18hxjp1,
+			// list_peers.fields) is the strongest rewrite: nothing left to restate.
+			if (n === undefined && DROPPED_INPUTS.has(`${tool} ${pointer}`)) return;
 			const d = n?.description ?? "";
 			expect(d.trim()).not.toBe("");
 			expect(d).not.toBe(flagged);

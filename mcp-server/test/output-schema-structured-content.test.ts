@@ -641,10 +641,12 @@ describe("Manufact 2250: the four text residues", () => {
 		(inputSchemas.get(tool) as Props | undefined)?.properties?.[name]
 			?.description ?? "";
 
-	it("list_episodes.limit says what a page fetched with a cursor and no limit holds, without the misleading form", () => {
+	it("list_episodes.limit states no page size (the schema default is the page a cursor without limit gets)", () => {
 		const d = field("list_episodes", "limit");
-		expect(d).not.toContain("With a cursor and no limit, a page holds 50 rows");
-		expect(d).toContain("Pass the same limit with each cursor");
+		// The page size it used to state (50) was not the page served: with a
+		// cursor and no limit the door is asked for 20, the schema default
+		// (pinned in "one list contract" below), so no page size is stated.
+		expect(d).not.toMatch(/\b\d+ rows\b/);
 	});
 
 	for (const tool of ["list_tasks", "list_tasks_by_mission", "list_missions"]) {
@@ -1218,7 +1220,12 @@ describe("one list contract: description, outputSchema and every real answer agr
 });
 
 describe("the found reads and update_profile: one statement of each field", () => {
-	for (const tool of ["get_diary", "get_mission_template", "get_profile"]) {
+	for (const tool of [
+		"get_diary",
+		"get_mission",
+		"get_mission_template",
+		"get_profile",
+	]) {
 		it(`${tool}: Returns names the schema's properties once, and the item's fields are not listed a second, different way`, () => {
 			const d = descriptions.get(tool) ?? "";
 			const listed = listedReturnFields(d);

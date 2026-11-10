@@ -668,7 +668,6 @@ describe("finding 1 — a field says what its value MEANS, never only how it val
 			[/whoami/, /recipients/],
 			[/^The sender by agent ID/],
 		],
-		["list_peers", "fields", [/whole/], []],
 		["create_task", "project", [/billing/, /spell|exact/i], []],
 		["create_task", "assignedToAgentId", [/who does the work/], []],
 		[
@@ -740,7 +739,6 @@ describe("finding 1 — a field says what its value MEANS, never only how it val
 			["bulk_complete_tasks", "filter.status"],
 			["update_mission", "status"],
 			["create_recurring_task", "priority"],
-			["list_peers", "fields"],
 			["list_briefing_notes", "fields"],
 			["search_briefing_notes_by_keyword", "fields"],
 			["list_repo_mappings", "fields"],
