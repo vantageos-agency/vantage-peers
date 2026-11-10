@@ -161,6 +161,33 @@ export function decodeCursor(
 	}
 }
 
+/**
+ * The tool result for a cursor ARGUMENT that does not decode (task
+ * k171rk9evy8yy48tfx765zqwk18hwdvh; resources/references/mcp-standard.md
+ * C-11 (b), after SEP-1303): `isError: true`, and a `structuredContent` that
+ * carries ONLY `{ error: { code: "invalid_cursor", message } }`, so a caller
+ * branches on a stable machine code rather than on the text. The text is the
+ * same `Error: <message>` the tools answered before. Every tool that decodes a
+ * cursor answers a cursor it cannot decode with this, and nothing else does:
+ * every other error result still carries no structuredContent
+ * (src/outputSchemas.ts, rule 6).
+ */
+export function invalidCursorResult(err: unknown): {
+	content: Array<{ type: "text"; text: string }>;
+	isError: true;
+	structuredContent: { error: { code: "invalid_cursor"; message: string } };
+} {
+	const raw = err instanceof Error ? err.message : "";
+	const message = /invalid cursor/i.test(raw)
+		? raw
+		: `invalid cursor${raw ? `: ${raw}` : ""}`;
+	return {
+		content: [{ type: "text" as const, text: `Error: ${message}` }],
+		isError: true,
+		structuredContent: { error: { code: "invalid_cursor", message } },
+	};
+}
+
 export interface EnvelopeCapResult<T> {
 	items: T[];
 	isCapped: boolean;

@@ -319,7 +319,10 @@ describe("lists: the cut page and the refusal", () => {
 		expect(sc.truncated).toBe(false);
 	});
 
-	it("a refused read is an error and carries no structuredContent", () => {
+	// Rule 6 (src/outputSchemas.ts): an error result carries no structuredContent,
+	// except an invalid cursor argument, whose structuredContent is ONLY
+	// { error: { code: "invalid_cursor", message } } (the test below).
+	it("a refused read is an error and carries no structuredContent (only an invalid cursor carries one)", () => {
 		const r = poles.get("refused") as CallResult;
 		expect(r.isError).toBe(true);
 		expect(r.structuredContent).toBeUndefined();

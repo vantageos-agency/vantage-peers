@@ -34,8 +34,16 @@
  *      (every required field, nothing the schema lacks); `Returns ... ( a, b )`
  *      lists a selection of a stored row (each one a declared property). Never
  *      a label that is not a field ("author" for `createdBy`).
- *   6. An error result (isError) carries no structuredContent and is not
- *      validated (the SDK skips it).
+ *   6. An error result (isError) carries no structuredContent, with ONE
+ *      exception: a cursor argument that does not decode is answered
+ *      `isError: true` with structuredContent
+ *      `{ error: { code: "invalid_cursor", message } }` and nothing else
+ *      (`invalidCursorResult` in paging.ts; resources/references/mcp-standard.md
+ *      C-11 (b), after SEP-1303; task k171rk9evy8yy48tfx765zqwk18hwdvh). The
+ *      schemas here do not describe that shape and need not: the server SDK
+ *      returns before validating any isError result
+ *      (@modelcontextprotocol/server 2.3.0, McpServer.validateToolOutput:
+ *      `if (result.isError) return;`), and so does the v2 client.
  *
  * Enforced by test/output-schema-structured-content.test.ts: every schema here
  * validates a real success through /mcp, every property at every depth has a
