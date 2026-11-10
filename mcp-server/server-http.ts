@@ -1398,6 +1398,18 @@ app.post("/token", async (c) => {
 		if (refreshPresented && refreshPresented !== record.clientId) {
 			return c.json({ error: "invalid_grant" }, 400);
 		}
+		// A public Client ID Metadata Document client has no secret to identify it:
+		// the client_id is the only thing that binds the request to the token, so a
+		// refresh that names none is refused (the token is not spent).
+		if (!refreshPresented && isClientMetadataUrl(record.clientId)) {
+			return c.json(
+				{
+					error: "invalid_request",
+					error_description: "client_id is required to refresh",
+				},
+				400,
+			);
+		}
 
 		// D6 — confidential client authentication on refresh too (RFC 6749 §6).
 		let refreshClient = (await internalClient().query(
@@ -1421,7 +1433,7 @@ app.post("/token", async (c) => {
 				record.clientId,
 				undefined,
 				{
-					purpose: "token",
+					purpose: "refresh",
 					source: clientIpForRateLimit((n) => c.req.header(n)),
 				},
 			);
@@ -1840,15 +1852,19 @@ admin.post("/oauth/clients", async (c) => {
 });
 
 // POST /admin/oauth/document-clients/deny   { client_id, reason (>=20), operator }
+// POST /admin/oauth/document-clients/allow  { client_id, reason (>=20), operator }
 //
-// The operator's revocation of a Client ID Metadata Document client (a URL
-// client_id has no oauth_clients row). Wraps `oauth:deleteClient`, which for a
-// URL client_id lists it on the deny-list and revokes every live token it holds;
-// /authorize, /token and refresh then refuse it before any fetch. Lifting a
-// listing is the operator deleting the row in the Convex dashboard (a new
-// public or internal write door would raise the R-53 ratchet).
+// The operator's revocation, and unlisting, of a Client ID Metadata Document
+// client (a URL client_id has no oauth_clients row). Both wrap the SAME door,
+// `oauth:deleteClient` (a new write door would raise the R-53 ratchet): for a
+// URL client_id, deny lists it on the deny-list and revokes every live token it
+// holds; allow (`lift`) unlists it, sweeps what appeared meanwhile, and keeps who
+// did what and when in the row's history. /authorize, /token and refresh refuse a
+// listed client before any fetch. The client_id must be in canonical form: the
+// door answers `revokedClient: false` for any other string, and a listing that
+// revoked nothing carries a warning, so a typo is visible.
 // Auth: BEARER_SECRET_MASTER via masterOnlyMiddleware.
-admin.post("/oauth/document-clients/deny", async (c) => {
+async function documentClientAdmin(c: Context, lift: boolean) {
 	let body: Record<string, unknown> = {};
 	try {
 		body = await c.req.json();
@@ -1859,6 +1875,8 @@ admin.post("/oauth/document-clients/deny", async (c) => {
 		);
 	}
 	const clientId = typeof body.client_id === "string" ? body.client_id : "";
+	const reason = typeof body.reason === "string" ? body.reason : "";
+	const operator = typeof body.operator === "string" ? body.operator : "";
 	if (!clientId.startsWith("https://")) {
 		return c.json(
 			{
@@ -1868,24 +1886,37 @@ admin.post("/oauth/document-clients/deny", async (c) => {
 			400,
 		);
 	}
-	const reason = typeof body.reason === "string" ? body.reason : "";
-	const operator = typeof body.operator === "string" ? body.operator : "";
 	try {
 		const result = (await internalClient().mutation(
 			// biome-ignore lint/suspicious/noExplicitAny: Convex string API
 			"oauth:deleteClient" as any,
-			{ clientId, reason, operator },
+			{ clientId, reason, operator, ...(lift ? { lift: true } : {}) },
 		)) as {
 			revokedClient: boolean;
 			revokedTokens: number;
 			revokedRefresh: number;
 			alreadyDenied?: boolean;
+			unlisted?: boolean;
 		};
+		if (lift) {
+			if (!result.unlisted) {
+				return c.json(
+					{
+						error: "not_found",
+						detail:
+							"client_id is not a listed document client (check the exact URL)",
+					},
+					404,
+				);
+			}
+			return c.json({ clientId, unlisted: true }, 200);
+		}
 		if (!result.revokedClient) {
 			return c.json(
 				{
 					error: "invalid_request",
-					detail: "client_id is not a valid document URL",
+					detail:
+						"client_id is not a document URL in canonical form (lower-case host, no default port, no dot segments, no fragment)",
 				},
 				400,
 			);
@@ -1896,6 +1927,12 @@ admin.post("/oauth/document-clients/deny", async (c) => {
 				alreadyDenied: result.alreadyDenied ?? false,
 				accessTokensRevoked: result.revokedTokens,
 				refreshTokensRevoked: result.revokedRefresh,
+				...(result.revokedTokens === 0 && result.revokedRefresh === 0
+					? {
+							warning:
+								"listed, but no token of this exact client_id exists yet: if you expected one, the URL is mistyped",
+						}
+					: {}),
 			},
 			200,
 		);
@@ -1904,10 +1941,13 @@ admin.post("/oauth/document-clients/deny", async (c) => {
 		if (/(REASON_TOO_SHORT|OPERATOR_REQUIRED)/.test(message)) {
 			return c.json({ error: "invalid_request", detail: message }, 400);
 		}
-		console.error("[admin] document-client deny failed:", message);
+		console.error("[admin] document-client change failed:", message);
 		return c.json({ error: "server_error", detail: message }, 500);
 	}
-});
+}
+
+admin.post("/oauth/document-clients/deny", (c) => documentClientAdmin(c, false));
+admin.post("/oauth/document-clients/allow", (c) => documentClientAdmin(c, true));
 
 // POST /admin/organizations — one-shot org + orchestrator seats
 admin.post("/organizations", async (c) => {

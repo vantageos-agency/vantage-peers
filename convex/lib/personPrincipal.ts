@@ -13,6 +13,7 @@ import {
 	requireServiceAccountForClaim,
 } from "./actingPrincipal";
 import { lookupOrgMapping, type OrgScope } from "./auth";
+import { isDocumentClientDenied } from "./documentClientDenial";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // verifiedPerson — the bridge that lets a PERSON signed in through the MCP
@@ -90,10 +91,16 @@ export async function resolveVerifiedPerson(
 	});
 	if (shape !== null) refuseWith(shape);
 
-	const row = await ctx.db
+	const stored = await ctx.db
 		.query("oauth_access_tokens")
 		.withIndex("by_tokenHash", (q) => q.eq("tokenHash", proof.accessTokenHash))
 		.unique();
+	// A listed Client ID Metadata Document client holds no access: its token is
+	// not live (the same helper every token reader asks).
+	const row =
+		stored !== null && (await isDocumentClientDenied(ctx, stored.clientId))
+			? null
+			: stored;
 	const resolved = await resolvePersonPrincipal(
 		row === null
 			? null
