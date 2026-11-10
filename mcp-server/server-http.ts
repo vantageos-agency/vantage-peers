@@ -1853,12 +1853,18 @@ admin.post("/oauth/document-clients/deny", async (c) => {
 	try {
 		body = await c.req.json();
 	} catch {
-		return c.json({ error: "invalid_request", detail: "body must be valid JSON" }, 400);
+		return c.json(
+			{ error: "invalid_request", detail: "body must be valid JSON" },
+			400,
+		);
 	}
 	const clientId = typeof body.client_id === "string" ? body.client_id : "";
 	if (!clientId.startsWith("https://")) {
 		return c.json(
-			{ error: "invalid_request", detail: "client_id must be the https URL of the document" },
+			{
+				error: "invalid_request",
+				detail: "client_id must be the https URL of the document",
+			},
 			400,
 		);
 	}
@@ -1876,7 +1882,13 @@ admin.post("/oauth/document-clients/deny", async (c) => {
 			alreadyDenied?: boolean;
 		};
 		if (!result.revokedClient) {
-			return c.json({ error: "invalid_request", detail: "client_id is not a valid document URL" }, 400);
+			return c.json(
+				{
+					error: "invalid_request",
+					detail: "client_id is not a valid document URL",
+				},
+				400,
+			);
 		}
 		return c.json(
 			{
