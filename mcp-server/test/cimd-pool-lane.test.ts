@@ -1,19 +1,14 @@
 /**
- * CIMD authorize/token pool vs hanging documents (sentinel pass 2, the Medium
- * that predates the follow-up; probes B4a, B4b, B5).
+ * CIMD authorize/token pool vs hanging documents (sentinel passes 2 and 3).
  *
- * About 6 source addresses could keep every slot of a pool busy by hanging
- * distinct URLs: 10 fetches a minute each, 3 s a timeout, 3 slots. A source whose
- * fetch timed out is now SUSPECT for CIMD_SUSPECT_MS: all suspect sources
- * together may hold at most CIMD_SUSPECT_LANE slot of a pool, so the other
- * slots stay for sources that have not hung. The lane keys on the SOURCE, never
- * on a domain or a URL: a stranger can only demote itself, so it cannot cool
- * down a victim. A refresh is never held back by it.
- *
- * Residual, stated: an attacker with many fresh source addresses holds a slot
- * for one timeout per address and minute; filling 2 of 3 slots takes about 40
- * addresses, and the three that hang at the very same instant block a fresh
- * victim for one timeout (3 s).
+ * The pool is 8 slots per path (a fetch is at most 5 KB and 3 s), one prefix
+ * (IPv4 /24, IPv6 /48) may hold at most CIMD_PER_PREFIX_IN_FLIGHT of them, and a
+ * prefix that timed out twice within CIMD_SUSPECT_MS is SUSPECT: all suspect
+ * prefixes together hold at most CIMD_SUSPECT_LANE slot of a pool. One timeout
+ * marks nothing (a shared address with one slow document is not squeezed), and
+ * the `unknown` source (no address header) is never marked. A refresh is never
+ * held back. The lane keys on the source prefix, never on a domain or URL: a
+ * stranger can only demote its own prefix, so it cannot cool a victim down.
  */
 import { afterEach, describe, expect, it } from "vitest";
 import {
@@ -31,7 +26,7 @@ afterEach(async () => {
 	(await loadCimd().catch(() => null))?._setClientMetadataDepsForTest?.(null);
 });
 
-async function rig(stalled: (h: string) => boolean, now?: () => number) {
+async function rig(now?: () => number) {
 	cimd = await loadCimd();
 	const rec = scripted({
 		timeoutMs: 150,
@@ -45,77 +40,140 @@ async function rig(stalled: (h: string) => boolean, now?: () => number) {
 	});
 	const base = rec.deps.resolveHost as Resolve;
 	rec.deps.resolveHost = (h: string) =>
-		stalled(h) ? new Promise<never>(() => undefined) : base(h);
+		h.includes("hang") ? new Promise<never>(() => undefined) : base(h);
 	cimd._setClientMetadataDepsForTest(rec.deps);
 	return rec;
 }
 
-const hang = (host: string) => host.includes("hang");
+let seq = 0;
+/** A hanging URL on a registrable domain of its own. */
+const hangUrl = () => {
+	seq++;
+	return `https://h.hang${seq}.com/c.json`;
+};
+const okUrl = () => {
+	seq++;
+	return `https://app.ok${seq}.com/oauth/client-metadata.json`;
+};
 const at = (
 	url: string,
-	source: string,
+	source: string | undefined,
 	purpose: "authorize" | "token" | "refresh" = "authorize",
-) => cimd.resolveClientMetadata(url, { purpose, source });
-const stalledUrl = (i: number, path = "c", sub = "s") =>
-	`https://${sub}${i}.hang${i}.com/${path}.json`;
-const VICTIM = "https://app.victim.example/oauth/client-metadata.json";
+) =>
+	cimd.resolveClientMetadata(url, {
+		purpose,
+		...(source !== undefined ? { source } : {}),
+	});
+const reasonOf = (r: { ok: boolean; reason?: string }) =>
+	r.ok ? "ok" : r.reason;
+const settle = () => new Promise((r) => setTimeout(r, 25));
 
-describe("B4a sustained: strangers that already hung cannot keep the pool full", () => {
-	for (const purpose of ["authorize", "token"] as const) {
-		it(`${purpose}: after their first timeout, three sources hanging new URLs hold one slot, and a fresh victim is served`, async () => {
-			const rec = await rig(hang);
-			const wave1 = [1, 2, 3].map((i) =>
-				at(stalledUrl(i), `203.0.113.${i}`, purpose),
-			);
-			const out1 = await Promise.all(wave1);
-			expect(out1.every((r) => !r.ok && r.reason === "fetch-timeout")).toBe(
-				true,
-			);
-			const before = rec.requests.length;
-			const wave2 = [1, 2, 3].flatMap((i) =>
-				[0, 1].map((k) =>
-					at(stalledUrl(i, `n${k}`, "t"), `203.0.113.${i}`, purpose),
-				),
-			);
-			await new Promise((r) => setTimeout(r, 30));
-			const victim = await at(VICTIM, "198.51.100.9", purpose);
-			expect(victim.ok).toBe(true);
-			const out2 = await Promise.all(wave2);
-			expect(
-				out2.filter((r) => !r.ok && r.reason === "busy").length,
-			).toBeGreaterThanOrEqual(5);
-			expect(rec.requests.length - before - 1).toBeLessThanOrEqual(
-				cimd.CIMD_SUSPECT_LANE,
-			);
-		});
-	}
+describe("the pool is wide enough that one prefix cannot fill it", () => {
+	it("authorize and token have 8 slots, refresh keeps its 2", async () => {
+		cimd = await loadCimd();
+		expect(cimd.CIMD_POOL.authorize).toBeGreaterThanOrEqual(8);
+		expect(cimd.CIMD_POOL.token).toBeGreaterThanOrEqual(8);
+		expect(cimd.CIMD_POOL.refresh).toBe(2);
+	});
+
+	it("one /24 holds at most CIMD_PER_PREFIX_IN_FLIGHT slots, however many addresses it rotates; a victim elsewhere is served", async () => {
+		const rec = await rig();
+		const n = cimd.CIMD_PER_PREFIX_IN_FLIGHT;
+		const flood = Array.from({ length: n + 2 }, (_, i) =>
+			at(hangUrl(), `203.0.113.${10 + i}`),
+		);
+		await settle();
+		expect(rec.dnsQueries).toHaveLength(n);
+		const victim = await at(okUrl(), "198.51.100.9");
+		expect(victim.ok).toBe(true);
+		const out = await Promise.all(flood);
+		expect(out.filter((r) => reasonOf(r) === "busy")).toHaveLength(2);
+	});
+
+	it("two attacker prefixes at the cap leave a fresh victim a slot", async () => {
+		await rig();
+		const n = cimd.CIMD_PER_PREFIX_IN_FLIGHT;
+		const flood = [
+			...Array.from({ length: n }, (_, i) => at(hangUrl(), `203.0.113.${i + 1}`)),
+			...Array.from({ length: n }, (_, i) => at(hangUrl(), `192.0.2.${i + 1}`)),
+		];
+		await settle();
+		const victim = await at(okUrl(), "198.51.100.9");
+		expect(victim.ok).toBe(true);
+		await Promise.all(flood);
+	});
 });
 
-describe("the lane demotes the source only", () => {
-	it("a suspect source's refresh is served; a fresh source is unaffected; the demotion ends", async () => {
-		let t = 2_000_000;
-		await rig(hang, () => t);
-		await at(stalledUrl(1), "203.0.113.1"); // times out: the source is suspect
-		const lane = [
-			at(stalledUrl(1, "x"), "203.0.113.1"), // takes the lane
-			at(stalledUrl(2, "y"), "203.0.113.1"), // lane full
+describe("F2 — one timeout marks nothing", () => {
+	it("a second concurrent request from an address that timed out once is still fetched", async () => {
+		const rec = await rig();
+		const first = await at(hangUrl(), "198.51.100.7");
+		expect(reasonOf(first)).toBe("fetch-timeout");
+		const before = rec.dnsQueries.length;
+		const pair = [
+			at(hangUrl(), "198.51.100.7"),
+			at(hangUrl(), "198.51.100.7"),
 		];
-		await new Promise((r) => setTimeout(r, 20));
-		const refreshed = await at(VICTIM, "203.0.113.1", "refresh");
+		await settle();
+		expect(rec.dnsQueries.length - before).toBe(2);
+		const out = await Promise.all(pair);
+		expect(out.every((r) => reasonOf(r) === "fetch-timeout")).toBe(true);
+	});
+});
+
+describe("F3 — the `unknown` source is never marked", () => {
+	it("three timeouts without an address, then two concurrent requests are both fetched", async () => {
+		const rec = await rig();
+		for (let i = 0; i < 3; i++)
+			expect(reasonOf(await at(hangUrl(), undefined))).toBe("fetch-timeout");
+		const before = rec.dnsQueries.length;
+		const pair = [at(hangUrl(), undefined), at(hangUrl(), undefined)];
+		await settle();
+		expect(rec.dnsQueries.length - before).toBe(2);
+		await Promise.all(pair);
+	});
+});
+
+describe("F1 — two timeouts mark the PREFIX, so rotating addresses inside it does not escape", () => {
+	it("IPv4: after two timeouts from a /24, new addresses of it share one lane slot", async () => {
+		const rec = await rig();
+		await at(hangUrl(), "203.0.113.1");
+		await at(hangUrl(), "203.0.113.2");
+		const before = rec.dnsQueries.length;
+		const next = [3, 4, 5].map((i) => at(hangUrl(), `203.0.113.${i}`));
+		await settle();
+		expect(rec.dnsQueries.length - before).toBe(cimd.CIMD_SUSPECT_LANE);
+		const victim = await at(okUrl(), "198.51.100.9");
+		expect(victim.ok).toBe(true);
+		const out = await Promise.all(next);
+		expect(out.filter((r) => reasonOf(r) === "busy")).toHaveLength(
+			3 - cimd.CIMD_SUSPECT_LANE,
+		);
+	});
+
+	it("IPv6: the prefix is the /48, so fresh /64s of it do not escape", async () => {
+		const rec = await rig();
+		await at(hangUrl(), "2001:db8:1:1::1");
+		await at(hangUrl(), "2001:db8:1:2::1");
+		const before = rec.dnsQueries.length;
+		const next = [3, 4].map((i) => at(hangUrl(), `2001:db8:1:${i}::1`));
+		await settle();
+		expect(rec.dnsQueries.length - before).toBe(cimd.CIMD_SUSPECT_LANE);
+		await Promise.all(next);
+	});
+
+	it("a refresh from a suspect prefix is served; the mark ends after the window; another prefix is untouched", async () => {
+		let t = 2_000_000;
+		await rig(() => t);
+		await at(hangUrl(), "203.0.113.1");
+		await at(hangUrl(), "203.0.113.2");
+		const refreshed = await at(okUrl(), "203.0.113.3", "refresh");
 		expect(refreshed.ok).toBe(true);
-		const second = await lane[1];
-		expect(second).toMatchObject({ reason: "busy" });
-		await lane[0];
 		t += cimd.CIMD_SUSPECT_MS + 1;
-		const later = await at(
-			"https://later.victim.example/c.json",
-			"203.0.113.1",
-		);
-		expect(later.ok).toBe(true);
-		const other = await at(
-			"https://other.victim.example/c.json",
-			"203.0.113.9",
-		);
-		expect(other.ok).toBe(true);
+		const pair = [at(hangUrl(), "203.0.113.4"), at(hangUrl(), "203.0.113.5")];
+		await settle();
+		const out = await Promise.all(pair);
+		expect(out.every((r) => reasonOf(r) === "fetch-timeout")).toBe(true);
+		expect((await at(okUrl(), "192.0.2.9")).ok).toBe(true);
 	});
 });
