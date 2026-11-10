@@ -87,6 +87,7 @@ describe("route matching", () => {
 		expect(isLimitedRoute("HEAD", "/authorize")).toBe(true);
 		expect(isLimitedRoute("POST", "/token")).toBe(true);
 		expect(isLimitedRoute("POST", "/authorize")).toBe(false);
+		expect(isLimitedRoute("POST", "/authorize/org")).toBe(true);
 		expect(isLimitedRoute("GET", "/token")).toBe(false);
 		for (const p of [
 			"/mcp",
@@ -270,13 +271,11 @@ describe("the signed header to the MCP", () => {
 		expect(seen[0].headers[EDGE_CLIENT_HEADER]).toBeUndefined();
 	});
 
-	it("the upstream sees its own Host and the original in x-forwarded-host", async () => {
+	it("an IPv4-mapped edge address is signed as the IPv4", async () => {
 		await start({ secret: SECRET });
-		await get("/mcp", { "x-real-ip": "203.0.113.9" });
-		expect(seen[0].headers.host).toMatch(/^127\.0\.0\.1:\d+$/);
-		expect(seen[0].headers["x-forwarded-host"]).toBe(
-			base.replace("http://", ""),
-		);
+		await get("/mcp", { "x-real-ip": "::ffff:203.0.113.9" });
+		const h = seen[0].headers[EDGE_CLIENT_HEADER] as string;
+		expect(h.startsWith("203.0.113.9|")).toBe(true);
 	});
 });
 

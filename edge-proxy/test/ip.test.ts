@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { ipv6Groups, poolKeysOf } from "../src/ip.js";
+import { canonicalIp, ipv6Groups, poolKeysOf } from "../src/ip.js";
 
 describe("poolKeysOf", () => {
 	it("IPv4 counts in its /32 (20) and its /24 (60)", () => {
@@ -53,5 +53,28 @@ describe("poolKeysOf", () => {
 		expect(ipv6Groups("1:2:3:4:5:6:1.2.3.4")).toEqual([
 			1, 2, 3, 4, 5, 6, 0x102, 0x304,
 		]);
+	});
+});
+
+describe("canonicalIp", () => {
+	it("an IPv4-mapped IPv6 address is that IPv4, whatever its spelling", () => {
+		for (const f of [
+			"::ffff:203.0.113.5",
+			"::FFFF:203.0.113.5",
+			"0:0:0:0:0:ffff:cb00:7105",
+			"::ffff:cb00:7105",
+		])
+			expect(canonicalIp(f), f).toBe("203.0.113.5");
+	});
+
+	it("other addresses keep their address, lower-cased, without a zone id", () => {
+		expect(canonicalIp("203.0.113.5")).toBe("203.0.113.5");
+		expect(canonicalIp("2001:DB8::1")).toBe("2001:db8::1");
+		expect(canonicalIp("fe80::1%eth0")).toBe("fe80::1");
+	});
+
+	it("a non-address has no canonical form", () => {
+		for (const bad of ["", "unknown", "1.2.3", "::g"])
+			expect(canonicalIp(bad)).toBeNull();
 	});
 });

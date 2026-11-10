@@ -105,3 +105,52 @@ describe("RateLimiter", () => {
 		expect(l.take(keys("10.1.0.1")).allowed).toBe(true);
 	});
 });
+
+describe("RateLimiter cost and expiry", () => {
+	const v6 = (i: number) => [
+		{
+			pool: "v6/64",
+			key: `2001:db8:${(i >> 16).toString(16)}:${(i & 0xffff).toString(16)}`,
+			limit: 20,
+		},
+	];
+
+	it("a new key costs the same at full capacity as when empty (no per-request scan)", () => {
+		const cap = 200_000;
+		const l = new RateLimiter(() => 1_000_000, 60_000, cap);
+		for (let i = 0; i < cap; i++) l.take(v6(i));
+		const n = 3000;
+		const start = performance.now();
+		for (let i = cap; i < cap + n; i++) l.take(v6(i));
+		const perKeyMs = (performance.now() - start) / n;
+		// Measured before the fix: 3.7 ms per new key at this capacity.
+		expect(perKeyMs).toBeLessThan(0.25);
+	});
+
+	it("eviction at capacity drops the oldest bucket and keeps the newest", () => {
+		const l = new RateLimiter(() => 1, 60_000, 3);
+		for (let i = 0; i < 4; i++) l.take(v6(i));
+		expect(l.size("v6/64")).toBe(3);
+	});
+
+	it("sweep removes expired buckets from the head only and reports how many", () => {
+		let t = 1000;
+		const l = new RateLimiter(() => t, 60_000, 100);
+		l.take(v6(1));
+		t += 30_000;
+		l.take(v6(2));
+		t += 31_000; // bucket 1 expired, bucket 2 live
+		expect(l.sweep()).toBe(1);
+		expect(l.size("v6/64")).toBe(1);
+		expect(l.sweep()).toBe(0);
+	});
+
+	it("a swept key starts a fresh window", () => {
+		let t = 0;
+		const l = new RateLimiter(() => t);
+		for (let i = 0; i < 21; i++) l.take(v6(7));
+		t += 61_000;
+		l.sweep();
+		expect(l.take(v6(7)).allowed).toBe(true);
+	});
+});

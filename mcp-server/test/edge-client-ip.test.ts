@@ -130,6 +130,19 @@ describe("signed edge client header", () => {
 		).toBe("10.0.0.1");
 	});
 
+	it("an IPv4-mapped IPv6 address is canonicalised to the IPv4 before use", () => {
+		for (const f of [
+			"::ffff:203.0.113.5",
+			"::FFFF:203.0.113.5",
+			"::ffff:cb00:7105",
+			"0:0:0:0:0:ffff:cb00:7105",
+		])
+			expect(
+				clientIpForRateLimit(h({ [EDGE_CLIENT_HEADER]: sign(f, NOW) })),
+				f,
+			).toBe("203.0.113.5");
+	});
+
 	it("malformed values are refused, not thrown on", () => {
 		for (const v of [
 			"",
