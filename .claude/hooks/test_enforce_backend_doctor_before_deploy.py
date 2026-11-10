@@ -614,6 +614,8 @@ def test_ratchet_live_baseline_carries_its_command_and_never_rose():
             "7d23f8f55cb961f79d6cb30ba64928522b0e805c",
             # R-53 317 -> 316, diary:list and recurringTasks:list filter before the take (task k17bmxpw878e7yhqemey4c38q98hyk9f)
             "6a97510040f4749445063ff6d44f8f031356d325",
+            # CR-2 237 -> 236, R-53 316 -> 314, roster compares normalised + cloud-identity 0.35.0 resolvers, PR #1743 (task k1726h1v7hqdbk818bn8s1rgdx8hy0ts)
+            "62b2583d6afd294eac707c9622d7a90f75e4f865",
         }
         line = entry["output_line"]
         assert line.startswith((f"{rule}: ", f"{rule} VERDICT: ")), rule
