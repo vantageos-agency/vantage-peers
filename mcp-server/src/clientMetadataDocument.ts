@@ -77,7 +77,7 @@ export const CIMD_CACHE_MAX_ENTRIES = 256;
  * starve the others. `refresh` (a person's existing connection) is the one the
  * others can never take; `token` is a code exchange for a NEW connection.
  */
-export const CIMD_POOL = { authorize: 3, token: 3, refresh: 2 } as const;
+export const CIMD_POOL = { authorize: 8, token: 8, refresh: 2 } as const;
 export const CIMD_MAX_IN_FLIGHT =
 	CIMD_POOL.authorize + CIMD_POOL.token + CIMD_POOL.refresh;
 /** Fetches one source may have in flight at once, per path. */
@@ -105,18 +105,31 @@ export const CIMD_MAX_CLIENT_ID_LENGTH = 512;
 export const CIMD_TIMEOUT_COOLDOWN_MS = 30 * 1000;
 const CIMD_COOLDOWNS_MAX = 1024;
 /**
- * A source (IPv4, or IPv6 /64) whose /authorize or /token fetch timed out is
- * SUSPECT for this long. All suspect sources together may hold at most
- * CIMD_SUSPECT_LANE slot of a pool, so a pool's other slots stay for sources that
- * have not hung. It keys on the source, never on a domain or a URL: a stranger can
- * only demote itself, so it cannot cool a victim down. A refresh is never held
- * back. Residual: an attacker with many fresh addresses gets one timeout per
- * address and window (about 40 addresses to hold 2 of 3 slots), and three fresh
- * sources hanging at the same instant block a fresh victim for one timeout.
- * Chosen over a reserved cached-document slot (a first-time client is not cached)
- * and a per-domain cap of 1 (the attacker uses more domains).
+ * Fetches in flight at once from one source PREFIX (IPv4 /24, IPv6 /48) per
+ * path, so rotating addresses inside a prefix cannot fill a pool. The `unknown`
+ * source (no address header) is not bounded by it: it has the per-source bound.
+ */
+export const CIMD_PER_PREFIX_IN_FLIGHT = 3;
+/**
+ * A source PREFIX that timed out CIMD_SUSPECT_TIMEOUTS times within
+ * CIMD_SUSPECT_MS on /authorize or /token is SUSPECT for the same time. All
+ * suspect prefixes together may hold at most CIMD_SUSPECT_LANE slot of a pool.
+ * One timeout marks nothing (a shared address with one slow document is not
+ * squeezed) and `unknown` is never marked. The key is the source prefix, never a
+ * domain or a URL: a stranger can only demote its own prefix, so it cannot cool a
+ * victim down. A refresh is never held back.
+ *
+ * Attack cost with pools of 8 (a fetch is at most 5 KB and 3 s): a prefix holds
+ * at most 3 slots, so filling 7 non-lane slots takes 3 prefixes at once, and
+ * keeping them filled takes 3 FRESH prefixes per 3 s timeout (a prefix is
+ * lane-limited for 60 s after its second timeout), about 60 distinct /24 (or
+ * /48) a minute, against 1 address under the first design. Residual, stated: an
+ * attacker holding that many prefixes (an IPv6 /32 has 65,536 /48) still wins,
+ * and 3 fresh prefixes hanging at the very same instant block a fresh victim
+ * for one timeout (3 s). Pools are per process.
  */
 export const CIMD_SUSPECT_MS = 60 * 1000;
+export const CIMD_SUSPECT_TIMEOUTS = 2;
 export const CIMD_SUSPECT_LANE = 1;
 const CIMD_SUSPECTS_MAX = 4096;
 const MAX_REDIRECT_URIS = 20;
@@ -493,6 +506,8 @@ export function _setClientMetadataDepsForTest(
 	sharedFetch.clear();
 	cooldownUntil.clear();
 	suspectUntil.clear();
+	suspectHits.clear();
+	inFlightByPrefix.clear();
 	suspectInFlight.authorize = 0;
 	suspectInFlight.token = 0;
 }
@@ -721,8 +736,44 @@ const suspectInFlight: Record<"authorize" | "token", number> = {
 	token: 0,
 };
 
-function markSuspect(source: string): void {
+const suspectHits = new Map<string, { count: number; resetAt: number }>();
+const inFlightByPrefix = new Map<string, number>();
+
+/** The IPv4 /24 or IPv6 /48 an address belongs to; anything else (`unknown`) is its own key. */
+export function prefixKeyOf(address: string): string {
+	const bare = address.split("%")[0].trim();
+	if (net.isIPv4(bare)) return `${bare.split(".").slice(0, 3).join(".")}.0/24`;
+	if (net.isIPv6(bare)) {
+		const g = ipv6Groups(bare);
+		if (!g) return bare;
+		if (g.slice(0, 5).every((x) => x === 0) && g[5] === 0xffff)
+			return `${g[6] >> 8}.${g[6] & 255}.${g[7] >> 8}.0/24`;
+		return `${g
+			.slice(0, 3)
+			.map((x) => x.toString(16))
+			.join(":")}::/48`;
+	}
+	return bare;
+}
+
+/** Counts one timeout against `prefix`; marks it suspect at the second within the window. */
+function recordTimeout(prefix: string): void {
+	if (prefix === "unknown") return;
 	const now = deps.now();
+	if (suspectHits.size >= CIMD_SUSPECTS_MAX) {
+		for (const [k, v] of suspectHits) if (v.resetAt <= now) suspectHits.delete(k);
+		if (suspectHits.size >= CIMD_SUSPECTS_MAX) {
+			const oldest = suspectHits.keys().next().value;
+			if (oldest !== undefined) suspectHits.delete(oldest);
+		}
+	}
+	const hit = suspectHits.get(prefix);
+	const count = hit && hit.resetAt > now ? hit.count + 1 : 1;
+	suspectHits.set(prefix, {
+		count,
+		resetAt: hit && hit.resetAt > now ? hit.resetAt : now + CIMD_SUSPECT_MS,
+	});
+	if (count < CIMD_SUSPECT_TIMEOUTS) return;
 	if (suspectUntil.size >= CIMD_SUSPECTS_MAX) {
 		for (const [k, until] of suspectUntil)
 			if (until <= now) suspectUntil.delete(k);
@@ -731,14 +782,14 @@ function markSuspect(source: string): void {
 			if (oldest !== undefined) suspectUntil.delete(oldest);
 		}
 	}
-	suspectUntil.set(source, now + CIMD_SUSPECT_MS);
+	suspectUntil.set(prefix, now + CIMD_SUSPECT_MS);
 }
 
-function isSuspect(source: string): boolean {
-	const until = suspectUntil.get(source);
+function isSuspect(prefix: string): boolean {
+	const until = suspectUntil.get(prefix);
 	if (until === undefined) return false;
 	if (until <= deps.now()) {
-		suspectUntil.delete(source);
+		suspectUntil.delete(prefix);
 		return false;
 	}
 	return true;
@@ -816,6 +867,7 @@ async function resolveUncached(
 
 	const purpose = options.purpose ?? "authorize";
 	const source = sourceKeyOf(options.source ?? "unknown");
+	const prefix = prefixKeyOf(options.source ?? "unknown");
 	const sourceKey = `${purpose}:${source}`;
 	const connection =
 		purpose === "refresh" && options.connection
@@ -833,7 +885,14 @@ async function resolveUncached(
 		return { ok: false, reason: "cooling-down", retryable: true };
 	if (inFlightByPool[purpose] >= CIMD_POOL[purpose]) return busy;
 	// A suspect source shares one lane per pool with every other suspect source.
-	const inLane = purpose !== "refresh" && isSuspect(source);
+	const byPrefix = purpose !== "refresh" && prefix !== "unknown";
+	const prefixKey = `${purpose}:${prefix}`;
+	if (
+		byPrefix &&
+		(inFlightByPrefix.get(prefixKey) ?? 0) >= CIMD_PER_PREFIX_IN_FLIGHT
+	)
+		return busy;
+	const inLane = byPrefix && isSuspect(prefix);
 	if (
 		inLane &&
 		suspectInFlight[purpose as "authorize" | "token"] >= CIMD_SUSPECT_LANE
@@ -860,6 +919,7 @@ async function resolveUncached(
 		return { ok: false, reason: "rate-limited", retryable: true };
 	inFlightByPool[purpose]++;
 	if (inLane) suspectInFlight[purpose as "authorize" | "token"]++;
+	if (byPrefix) bump(inFlightByPrefix, prefixKey, 1);
 	bump(inFlightBySource, sourceKey, 1);
 	if (connection !== undefined) bump(inFlightByConnection, connection, 1);
 	if (person !== undefined) bump(inFlightByPerson, person, 1);
@@ -872,13 +932,14 @@ async function resolveUncached(
 				result.reason === "fetch-timeout"
 			) {
 				startCooldown(clientId);
-				markSuspect(source);
+				recordTimeout(prefix);
 			}
 			return result;
 		})
 		.finally(() => {
 			inFlightByPool[purpose]--;
 			if (inLane) suspectInFlight[purpose as "authorize" | "token"]--;
+			if (byPrefix) bump(inFlightByPrefix, prefixKey, -1);
 			bump(inFlightBySource, sourceKey, -1);
 			if (connection !== undefined) bump(inFlightByConnection, connection, -1);
 			if (person !== undefined) bump(inFlightByPerson, person, -1);
