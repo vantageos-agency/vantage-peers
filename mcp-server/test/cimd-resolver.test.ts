@@ -1015,7 +1015,10 @@ describe("round 5 — N6: a superseded document is never served stale", () => {
 				if (mode === "down") return { status: 503 };
 				const uris =
 					mode === "old"
-						? ["https://app.example.com/old-cb", "https://app.example.com/new-cb"]
+						? [
+								"https://app.example.com/old-cb",
+								"https://app.example.com/new-cb",
+							]
 						: ["https://app.example.com/new-cb"];
 				return {
 					headers: {
@@ -1026,12 +1029,20 @@ describe("round 5 — N6: a superseded document is never served stale", () => {
 				};
 			},
 		});
-		const first = await cimd.resolveClientMetadata(URL1, { purpose: "authorize", source: "a" });
+		const first = await cimd.resolveClientMetadata(URL1, {
+			purpose: "authorize",
+			source: "a",
+		});
 		expect(first.ok && first.client.redirectUris).toHaveLength(2);
 		now += cimd.CIMD_DEFAULT_TTL_MS + 1000; // expired, inside the stale window
 		mode = "new";
-		const fresh = await cimd.resolveClientMetadata(URL1, { purpose: "authorize", source: "a" });
-		expect(fresh.ok && fresh.client.redirectUris).toEqual(["https://app.example.com/new-cb"]);
+		const fresh = await cimd.resolveClientMetadata(URL1, {
+			purpose: "authorize",
+			source: "a",
+		});
+		expect(fresh.ok && fresh.client.redirectUris).toEqual([
+			"https://app.example.com/new-cb",
+		]);
 		mode = "down";
 		const refresh = await cimd.resolveClientMetadata(URL1, {
 			purpose: "refresh",
@@ -1049,14 +1060,18 @@ describe("round 5 — N6: a superseded document is never served stale", () => {
 			now: () => now,
 			perSourceLimit: 1000,
 			respond: () =>
-				down
-					? { status: 503 }
-					: json(validDocument({ redirect_uris: uris })),
+				down ? { status: 503 } : json(validDocument({ redirect_uris: uris })),
 		});
-		await cimd.resolveClientMetadata(URL1, { purpose: "authorize", source: "a" });
+		await cimd.resolveClientMetadata(URL1, {
+			purpose: "authorize",
+			source: "a",
+		});
 		now += cimd.CIMD_DEFAULT_TTL_MS + 1000;
 		uris = ["https://app.example.com/new-cb"];
-		await cimd.resolveClientMetadata(URL1, { purpose: "authorize", source: "a" });
+		await cimd.resolveClientMetadata(URL1, {
+			purpose: "authorize",
+			source: "a",
+		});
 		now += cimd.CIMD_DEFAULT_TTL_MS + 1000;
 		down = true;
 		const stale = await cimd.resolveClientMetadata(URL1, {
@@ -1064,7 +1079,9 @@ describe("round 5 — N6: a superseded document is never served stale", () => {
 			source: "r",
 			connection: "c",
 		});
-		expect(stale.ok && stale.client.redirectUris).toEqual(["https://app.example.com/new-cb"]);
+		expect(stale.ok && stale.client.redirectUris).toEqual([
+			"https://app.example.com/new-cb",
+		]);
 	});
 });
 
