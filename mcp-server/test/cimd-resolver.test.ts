@@ -1123,3 +1123,80 @@ describe("round 5 — N2 residual: one person cannot hold the refresh pool with 
 		expect(answers.filter((a) => !a.ok && a.reason === "busy")).toHaveLength(1);
 	});
 });
+
+describe("round 6 — a domain whose fetch timed out cools down, so hanging domains cannot hold the authorize pool", () => {
+	const hang = { timeoutMs: 200, perSourceLimit: 1000 };
+	const live = (req: { hostname: string }) =>
+		req.hostname === "app.example.com"
+			? json(validDocument())
+			: new Promise<never>(() => undefined);
+	const authorize = (url: string, source: string) =>
+		cimd.resolveClientMetadata(url, { purpose: "authorize", source });
+	const hanging = (i: number) => `https://h${i}.hang${i}.com/c.json`;
+
+	it("probe: N hanging domains hold every authorize slot only until their first timeout", async () => {
+		const rec = await install({ ...hang, respond: live });
+		// Wave 1: one fetch per hanging domain fills the pool.
+		const first = Array.from({ length: cimd.CIMD_POOL.authorize }, (_, i) =>
+			authorize(hanging(i), `10.6.${i}.1`),
+		);
+		await new Promise((r) => setTimeout(r, 30));
+		expect(rec.requests).toHaveLength(cimd.CIMD_POOL.authorize);
+		const timedOut = await Promise.all(first);
+		expect(timedOut.every((r) => !r.ok && r.reason === "fetch-timeout")).toBe(
+			true,
+		);
+		// Wave 2: the same domains again. Each answers 503-class "cooling-down"
+		// with NO fetch, so the pool stays free for a legitimate client.
+		const before = rec.requests.length;
+		const second = await Promise.all(
+			Array.from({ length: cimd.CIMD_POOL.authorize }, (_, i) =>
+				authorize(`https://x${i}.hang${i}.com/other.json`, `10.7.${i}.1`),
+			),
+		);
+		expect(second).toEqual(
+			second.map(() => ({
+				ok: false,
+				reason: "cooling-down",
+				retryable: true,
+			})),
+		);
+		expect(rec.requests.length).toBe(before);
+		const legit = await authorize(DOC_URL, "9.9.9.9");
+		expect(legit.ok).toBe(true);
+	});
+
+	it("the cooldown ends: the domain is fetched again once it has passed", async () => {
+		let t = 1_000_000;
+		const rec = await install({ ...hang, now: () => t, respond: live });
+		await authorize(hanging(0), "10.8.0.1");
+		expect(rec.requests).toHaveLength(1);
+		expect(await authorize(hanging(0), "10.8.0.2")).toMatchObject({
+			reason: "cooling-down",
+		});
+		t += cimd.CIMD_TIMEOUT_COOLDOWN_MS + 1;
+		await authorize(hanging(0), "10.8.0.3");
+		expect(rec.requests).toHaveLength(2);
+	});
+
+	it("a refresh is unaffected by the cooldown of its domain", async () => {
+		const rec = await install({
+			...hang,
+			respond: (req: { hostname: string }) =>
+				req.hostname === "h0.hang0.com"
+					? json(validDocument({}, "https://h0.hang0.com/c.json"))
+					: new Promise<never>(() => undefined),
+		});
+		// Cool the domain down through a different host of it.
+		await authorize("https://z.hang0.com/c.json", "10.9.0.1");
+		expect(await authorize("https://z.hang0.com/c.json", "10.9.0.2")).toMatchObject(
+			{ reason: "cooling-down" },
+		);
+		const refreshed = await cimd.resolveClientMetadata(
+			"https://h0.hang0.com/c.json",
+			{ purpose: "refresh", source: "9.9.9.9" },
+		);
+		expect(refreshed.ok).toBe(true);
+		expect(rec.requests.length).toBe(2);
+	});
+});
