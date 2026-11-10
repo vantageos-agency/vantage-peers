@@ -295,7 +295,10 @@ export function parseClientMetadataUrl(
 	// end; punycode `xn--` labels are LDH), none is empty. One root dot is
 	// allowed at the end. An empty label is how `x1..a.example` and
 	// `x2..a.example` would be two keys for one site.
-	const labels = url.hostname.replace(/^\[|\]$/g, "").replace(/\.$/, "").split(".");
+	const labels = url.hostname
+		.replace(/^\[|\]$/g, "")
+		.replace(/\.$/, "")
+		.split(".");
 	if (!labels.every((l) => /^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$/.test(l)))
 		return refuse("host-label-invalid");
 	// The host must have a registrable domain: the per-domain bound keys on it.
@@ -720,7 +723,9 @@ async function resolveUncached(
 	const source = sourceKeyOf(options.source ?? "unknown");
 	const sourceKey = `${purpose}:${source}`;
 	const connection =
-		purpose === "refresh" && options.connection ? options.connection : undefined;
+		purpose === "refresh" && options.connection
+			? options.connection
+			: undefined;
 	const domain = domainKeyOf(url.hostname);
 	if (domain === null)
 		return { ok: false, reason: "domain-unresolvable", retryable: false };
@@ -728,7 +733,10 @@ async function resolveUncached(
 	if (inFlightByPool[purpose] >= CIMD_POOL[purpose]) return busy;
 	if ((inFlightBySource.get(sourceKey) ?? 0) >= CIMD_PER_SOURCE_IN_FLIGHT)
 		return busy;
-	if (connection !== undefined && (inFlightByConnection.get(connection) ?? 0) >= 1)
+	if (
+		connection !== undefined &&
+		(inFlightByConnection.get(connection) ?? 0) >= 1
+	)
 		return busy;
 	// A refresh has no domain bucket: it keeps its own reserved pool, the
 	// per-source limits and one fetch per connection.
