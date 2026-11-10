@@ -309,10 +309,24 @@ describe("parseArgs", () => {
 		const without = argv.slice(0, -2);
 		expect(() => parseArgs(without, {})).toThrow(/redirect/i);
 	});
-	it("derives the redirect from CLERK_DOMAIN when none is passed", () => {
+	it("derives the redirect from CLERK_DOMAIN on the account portal host, never the frontend-API host", () => {
+		// The frontend API (clerk.<domain>) answers 404 on /sign-up; the page that
+		// consumes __clerk_ticket is the account portal (accounts.<domain>).
 		const without = argv.slice(0, -2);
 		const o = parseArgs(without, { CLERK_DOMAIN: "https://clerk.example.test" });
-		expect(o.redirectUrl).toBe("https://clerk.example.test/sign-up");
+		expect(o.redirectUrl).toBe("https://accounts.example.test/sign-up");
+	});
+	it("refuses a CLERK_DOMAIN it cannot map to an account portal host", () => {
+		const without = argv.slice(0, -2);
+		expect(() => parseArgs(without, { CLERK_DOMAIN: "https://auth.example.test" })).toThrow(/clerk\./);
+	});
+	it("refuses a redirect on the Clerk frontend-API host, passed or from ONBOARD_REDIRECT_URL", () => {
+		expect(() =>
+			parseArgs([...argv.slice(0, -1), "https://clerk.example.test/sign-up"], {}),
+		).toThrow(/frontend API/);
+		expect(() =>
+			parseArgs(argv.slice(0, -2), { ONBOARD_REDIRECT_URL: "https://clerk.example.test/sign-up" }),
+		).toThrow(/frontend API/);
 	});
 	it("refuses a non-https redirect", () => {
 		expect(() => parseArgs([...argv.slice(0, -1), "javascript:alert(1)"], {})).toThrow(/https/);
