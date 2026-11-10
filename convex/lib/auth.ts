@@ -7,6 +7,7 @@ import {
 	assertOrgAdmin,
 	hasFleetRead,
 	type IdentityRefusal,
+	noOrganisationRefusal,
 	type ResolvedOrg,
 	resolveCallerFromClaims,
 	sameOrg,
@@ -959,17 +960,21 @@ export async function resolveOperatorAdmin(
 				detail: "no authenticated identity presented",
 			};
 		}
-		return caller.refusal.reason === "no-verified-organisation"
-			? {
-					ok: false,
-					reason: "no-organisation",
-					detail: "identity has no verified organisation attached",
-				}
-			: {
-					ok: false,
-					reason: "caller-org-not-operator",
-					detail: `the caller's organisation is not an active provisioned organisation (${caller.refusal.reason}); only the operator may create a new organisation`,
-				};
+		// The package says "signed in, no organisation" itself (`no-organisation`,
+		// 0.32.0); it answers null for every other refusal.
+		const noOrganisation = noOrganisationRefusal(caller.refusal);
+		if (noOrganisation !== null) {
+			return {
+				ok: false,
+				reason: noOrganisation.reason,
+				detail: noOrganisation.detail,
+			};
+		}
+		return {
+			ok: false,
+			reason: "caller-org-not-operator",
+			detail: `the caller's organisation is not an active provisioned organisation (${caller.refusal.reason}); only the operator may create a new organisation`,
+		};
 	}
 	const org = caller.org;
 	if (org.orgKind !== "operator") {

@@ -38,6 +38,7 @@ export function orgByIdLookups(
 				active: row.isActive,
 				allowedOrchestrators: row.allowedOrchestrators,
 				allowedAgentIds: row.allowedAgentIds,
+				addressableFleetCoordinatorIds: row.addressableFleetCoordinatorIds,
 				scopes: row.scopes,
 				orgKind: row.orgKind,
 				serviceAccountId: row.serviceAccountAgentId,
