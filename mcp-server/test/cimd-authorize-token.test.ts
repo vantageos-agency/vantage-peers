@@ -688,3 +688,169 @@ describe("a refresh token belongs to the client it was issued to", () => {
 		expect(await r.json()).toMatchObject({ error: "invalid_grant" });
 	});
 });
+
+// ─────────────────────────────────────────────────────────────────────────────
+// M2 — an operator can revoke a CIMD client (task k1788pydyztymht9cygzzpwvjn8hyyq1)
+// ─────────────────────────────────────────────────────────────────────────────
+
+const MASTER = "test-master-token"; // matches vitest.config.ts env
+const OTHER_URL = "https://other.example.com/oauth/client-metadata.json";
+const DENY_REASON = "abuse report 2026-11-10, operator audit trail";
+
+const adminPost = (path: string, body: Record<string, unknown>, auth = `Bearer ${MASTER}`) =>
+	app.request(`http://localhost:3000/admin/oauth/document-clients/${path}`, {
+		method: "POST",
+		headers: { "content-type": "application/json", authorization: auth },
+		body: JSON.stringify(body),
+	});
+
+const denyClient = (clientId = DOC_URL) =>
+	adminPost("deny", { client_id: clientId, reason: DENY_REASON, operator: "laurent" });
+
+describe("M2 — the admin door", () => {
+	it("refuses a caller without the master bearer, and a bad body", async () => {
+		expect((await adminPost("deny", { client_id: DOC_URL, reason: DENY_REASON, operator: "x" }, "Bearer nope")).status).toBeGreaterThanOrEqual(401);
+		const short = await adminPost("deny", { client_id: DOC_URL, reason: "short", operator: "laurent" });
+		expect(short.status).toBe(400);
+		const notUrl = await adminPost("deny", { client_id: "abc", reason: DENY_REASON, operator: "laurent" });
+		expect(notUrl.status).toBe(400);
+	});
+
+	it("lists the client and answers what it revoked", async () => {
+		const refreshToken = await connected();
+		expect(refreshToken).toBeTruthy();
+		const r = await denyClient();
+		expect(r.status).toBe(200);
+		const body = (await r.json()) as Record<string, unknown>;
+		expect(body).toMatchObject({ clientId: DOC_URL, alreadyDenied: false });
+		expect(Number(body.accessTokensRevoked)).toBeGreaterThanOrEqual(1);
+		expect(Number(body.refreshTokensRevoked)).toBeGreaterThanOrEqual(1);
+	});
+});
+
+describe("M2 — a listed client is refused at all three endpoints, before any fetch", () => {
+	it("/authorize", async () => {
+		await denyClient();
+		network();
+		const r = await cimdAuthorize();
+		expect(r.status).toBe(400);
+		expect(r.json).toMatchObject({
+			error: "invalid_client",
+			error_description: "client-metadata: client-denied",
+		});
+		expect(net.dnsQueries).toHaveLength(0);
+		expect(net.requests).toHaveLength(0);
+		expect(await codes()).toBe(0);
+	});
+
+	it("/token code exchange, for a code issued before the listing", async () => {
+		const code = await cimdCode();
+		await denyClient();
+		network();
+		const r = await exchange(code);
+		expect(r.status).toBe(400);
+		expect(r.body).toMatchObject({
+			error: "invalid_client",
+			error_description: "client-metadata: client-denied",
+		});
+		expect(net.requests).toHaveLength(0);
+	});
+
+	it("/token refresh, with a refresh token issued before the listing", async () => {
+		const refreshToken = await connected();
+		await denyClient();
+		network();
+		const r = await refreshWith(refreshToken);
+		expect(r.status).toBe(400);
+		expect(await r.json()).toMatchObject({
+			error: "invalid_client",
+			error_description: "client-metadata: client-denied",
+		});
+		expect(net.requests).toHaveLength(0);
+	});
+});
+
+describe("M2 — the tokens it already holds stop answering", () => {
+	it("an access token minted BEFORE the listing resolves before and not after", async () => {
+		const first = await exchange(await cimdCode("mcp:full offline_access"));
+		expect(first.status).toBe(200);
+		const hash = await sha256Hex(first.body.access_token as string);
+		const resolve = () =>
+			bridge(t.withIdentity({ subject: SERVICE_ACCOUNT_ID })).query(
+				"oauth:getAccessTokenByHash",
+				{ tokenHash: hash },
+			);
+		expect(await resolve()).not.toBeNull();
+		expect((await denyClient()).status).toBe(200);
+		expect(await resolve()).toBeNull();
+	});
+});
+
+describe("M2 — a client that is not listed still works, and listing is reversible", () => {
+	it("another CIMD client reaches consent while the first is listed", async () => {
+		await denyClient();
+		network({
+			respond: (req) => ({
+				body: bodyOf(
+					JSON.stringify(
+						validDocument(
+							{ redirect_uris: [CIMD_REDIRECT] },
+							req.hostname === "other.example.com" ? OTHER_URL : DOC_URL,
+						),
+					),
+				),
+			}),
+		});
+		const r = await cimdAuthorize({ clientId: OTHER_URL });
+		expect(r.status).toBe(200);
+		expect(r.picker?.consentToken).toBeTruthy();
+	});
+
+	it("allow lifts the listing: the client reaches consent again", async () => {
+		await denyClient();
+		const lifted = await adminPost("allow", { client_id: DOC_URL });
+		expect(lifted.status).toBe(200);
+		expect(await lifted.json()).toMatchObject({ removed: true });
+		network();
+		const r = await cimdAuthorize();
+		expect(r.status).toBe(200);
+	});
+
+	it("a registered client is never looked up in the list", async () => {
+		const seen: string[] = [];
+		const inner = bridge(t.withIdentity({ subject: SERVICE_ACCOUNT_ID }));
+		_setInternalClientForTest({
+			query: (name: string, args: Record<string, unknown>) => {
+				seen.push(name);
+				return inner.query(name, args);
+			},
+			mutation: inner.mutation,
+			// biome-ignore lint/suspicious/noExplicitAny: test bridge
+		} as any);
+		const r = await getAuthorize(
+			app,
+			authorizeUrl({ clientId: DCR_ID, redirectUri: DCR_REDIRECT, challenge }),
+			await harness.session("user_1"),
+		);
+		expect(r.status).toBe(200);
+		expect(seen).not.toContain("oauth:getDocumentClientDenial");
+	});
+});
+
+describe("M2 — fail closed", () => {
+	it("when the list cannot be read, /authorize answers 503 and fetches nothing", async () => {
+		const inner = bridge(t.withIdentity({ subject: SERVICE_ACCOUNT_ID }));
+		_setInternalClientForTest({
+			query: (name: string, args: Record<string, unknown>) => {
+				if (name === "oauth:getDocumentClientDenial") throw new Error("convex unavailable");
+				return inner.query(name, args);
+			},
+			mutation: inner.mutation,
+			// biome-ignore lint/suspicious/noExplicitAny: test bridge
+		} as any);
+		const r = await cimdAuthorize();
+		expect(r.status).toBe(503);
+		expect(r.json).toMatchObject({ error: "temporarily_unavailable" });
+		expect(net.requests).toHaveLength(0);
+	});
+});
