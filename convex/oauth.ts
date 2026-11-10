@@ -30,8 +30,11 @@ import type { MutationCtx, QueryCtx } from "./_generated/server";
 import { internalMutation, internalQuery } from "./_generated/server";
 import {
 	activeDocumentClientDenial,
+	denialKey,
 	documentClientRow,
+	hostOfClientId,
 	isDocumentClientDenied,
+	registrableDomainOf,
 } from "./lib/documentClientDenial";
 import { mutation, query } from "./lib/functions";
 import { normalizeOrchestratorId } from "./_helpers/normalizeOrchestratorId";
@@ -533,6 +536,19 @@ const clientPublicShape = v.object({
 	revokedAt: v.optional(v.number()),
 });
 
+// A registered client_id is an opaque server-generated id (POST /register and
+// POST /admin/oauth/clients both use crypto.randomUUID()). A URL-shaped one would
+// shadow a Client ID Metadata Document URL: the MCP looks a registered row up
+// BEFORE it treats a URL as a document, so a registered "https://app.example.com/..."
+// would capture that client. Both doors refuse it, whoever calls them.
+function refuseUrlShapedClientId(clientId: string): void {
+	if (/^\s*https?:\/\//i.test(clientId)) {
+		throw new ConvexError(
+			`URL_CLIENT_ID_REFUSED: a registered client_id is never URL-shaped (it would shadow a Client ID Metadata Document) — ${JSON.stringify({ door: "oauth:registerClient" })}`,
+		);
+	}
+}
+
 export const createClient = mutation({
 	args: {
 		clientId: v.string(),
@@ -546,6 +562,7 @@ export const createClient = mutation({
 	handler: async (ctx, args) => {
 		// write-contract: MCP-transport-only — issued via mcp-server client.mutation("oauth:createClient", …) at mcp-server/server-http.ts:1163 (imperative), 0 hits in vantage-peers-dashboard {app,components,hooks,lib,contexts,providers} (measured 2026-10-01 at origin/main e2dc58f and 0466fac); never a subscribing pre-org client shell. The no-org throw is a refusal at an imperative MCP call, never at a render.
 		await requireServiceAccount(ctx, "oauth:createClient");
+		refuseUrlShapedClientId(args.clientId);
 
 		// Profile must exist
 		const profile = await ctx.db
@@ -1197,6 +1214,7 @@ export const registerPublicClient = mutation({
 	handler: async (ctx, args) => {
 		// write-contract: MCP-transport-only — issued via mcp-server client.mutation("oauth:registerPublicClient", …) at mcp-server/server-http.ts:466 (imperative), 0 hits in vantage-peers-dashboard {app,components,hooks,lib,contexts,providers} (measured 2026-10-01 at origin/main e2dc58f and 0466fac); never a subscribing pre-org client shell. The no-org throw is a refusal at an imperative MCP call, never at a render.
 		await requireServiceAccount(ctx, "oauth:registerPublicClient");
+		refuseUrlShapedClientId(args.clientId);
 
 		// SECURITY: Defense-in-depth — reject empty redirectUris at the Convex
 		// layer so that non-HTTP callers (admin scripts, direct Convex calls) also
@@ -1833,6 +1851,9 @@ export const getDocumentClientDenial = query({
 	returns: v.union(
 		v.object({
 			clientId: v.string(),
+			scope: v.optional(
+				v.union(v.literal("url"), v.literal("host"), v.literal("domain")),
+			),
 			reason: v.string(),
 			addedBy: v.string(),
 			addedAt: v.number(),
@@ -1846,6 +1867,7 @@ export const getDocumentClientDenial = query({
 		if (!row) return null;
 		return {
 			clientId: row.clientId,
+			...(row.scope !== undefined ? { scope: row.scope } : {}),
 			reason: row.reason,
 			addedBy: row.addedBy,
 			addedAt: row.addedAt,
@@ -1862,6 +1884,11 @@ export const deleteClient = mutation({
 		operator: v.optional(v.string()),
 		// Unlist a Client ID Metadata Document client (needs reason and operator).
 		lift: v.optional(v.boolean()),
+		// What the listing covers: the exact URL (default), every URL of its host,
+		// or every URL of its registrable domain. `clientId` is any URL of it.
+		scope: v.optional(
+			v.union(v.literal("url"), v.literal("host"), v.literal("domain")),
+		),
 	},
 	returns: v.object({
 		revokedClient: v.boolean(),
@@ -1903,9 +1930,22 @@ export const deleteClient = mutation({
 						`OPERATOR_TOO_LONG: operator is at most ${MAX_DOCUMENT_OPERATOR_LENGTH} characters — ${door}`,
 					);
 				}
+				const scope = args.scope ?? "url";
+				let key = args.clientId;
+				if (scope === "host" || scope === "domain") {
+					const host = hostOfClientId(args.clientId);
+					const domain = host === null ? null : registrableDomainOf(host);
+					const value = scope === "host" ? host : domain;
+					if (value === null) {
+						throw new ConvexError(
+							`DOMAIN_UNRESOLVABLE: this host has no ${scope} to list (a public suffix or a name that does not parse) — ${door}`,
+						);
+					}
+					key = denialKey(scope, value);
+				}
 				const by = (args.operator as string).trim();
 				const why = args.reason as string;
-				const existing = await documentClientRow(ctx, args.clientId);
+				const existing = await documentClientRow(ctx, key);
 				const when = Date.now();
 				if (args.lift === true && (existing === null || !existing.active)) {
 					return {
@@ -1917,14 +1957,15 @@ export const deleteClient = mutation({
 				}
 				if (args.lift !== true && existing === null) {
 					await ctx.db.insert("oauth_denied_document_clients", {
-						clientId: args.clientId,
+						clientId: key,
+						scope,
 						reason: why,
 						addedBy: by,
 						addedAt: when,
 						active: true,
 					});
 					await ctx.db.insert("oauth_document_client_events", {
-						clientId: args.clientId,
+						clientId: key,
 						action: "listed",
 						by,
 						at: when,
@@ -1938,32 +1979,52 @@ export const deleteClient = mutation({
 						active: true,
 					});
 					await ctx.db.insert("oauth_document_client_events", {
-						clientId: args.clientId,
+						clientId: key,
 						action: "listed",
 						by,
 						at: when,
 						reason: why,
 					});
 				}
-				// Every live token of the client dies now. At an unlisting too: a token
-				// that appeared while the client was listed must not come back to life.
-				const swept = await walkClientTokensPage(
-					ctx,
-					{ op: "revoke_all", clientId: args.clientId, now: when, profile: null },
-					{ accessCursor: null, accessDone: false, refreshCursor: null, refreshDone: false },
-				);
-				if (!swept.state.accessDone || !swept.state.refreshDone) {
-					await ctx.scheduler.runAfter(0, internal.oauth.continueClientTokenWalk, {
-						op: "revoke_all",
-						clientId: args.clientId,
-						now: when,
-						...swept.state,
-					});
+				// Every live token of an exact-URL client dies now. At an unlisting too:
+				// a token that appeared while the client was listed must not come back
+				// to life. A host or domain listing has no single client_id to walk:
+				// its tokens are DENIED, not deleted, at every reader of a token row
+				// (isDocumentClientDenied, derived at request time), and a lift
+				// restores them.
+				let swept = {
+					accessSeen: 0,
+					refreshSeen: 0,
+				};
+				if (scope === "url") {
+					const first = await walkClientTokensPage(
+						ctx,
+						{ op: "revoke_all", clientId: key, now: when, profile: null },
+						{
+							accessCursor: null,
+							accessDone: false,
+							refreshCursor: null,
+							refreshDone: false,
+						},
+					);
+					if (!first.state.accessDone || !first.state.refreshDone) {
+						await ctx.scheduler.runAfter(
+							0,
+							internal.oauth.continueClientTokenWalk,
+							{
+								op: "revoke_all",
+								clientId: key,
+								now: when,
+								...first.state,
+							},
+						);
+					}
+					swept = first;
 				}
 				if (args.lift === true && existing !== null) {
 					await ctx.db.patch(existing._id, { active: false });
 					await ctx.db.insert("oauth_document_client_events", {
-						clientId: args.clientId,
+						clientId: key,
 						action: "unlisted",
 						by,
 						at: when,

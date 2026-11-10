@@ -1533,7 +1533,12 @@ export default defineSchema({
 	// refused at /authorize, /token and refresh before any fetch, its live
 	// tokens are revoked, and getAccessTokenByHash refuses any token row of it.
 	oauth_denied_document_clients: defineTable({
-		clientId: v.string(), // the https URL
+		clientId: v.string(), // the https URL, or "host:<host>" / "domain:<registrable domain>"
+		// What the listing covers; absent on a row written before host/domain
+		// scopes existed, which is a "url" listing.
+		scope: v.optional(
+			v.union(v.literal("url"), v.literal("host"), v.literal("domain")),
+		),
 		// The latest listing's reason, operator and time.
 		reason: v.string(),
 		addedBy: v.string(),

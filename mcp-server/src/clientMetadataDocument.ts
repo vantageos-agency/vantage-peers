@@ -94,6 +94,14 @@ export const CIMD_PER_SOURCE_WINDOW_MS = 60 * 1000;
 const CIMD_SOURCE_BUCKETS_MAX = 4096;
 /** A client_id longer than this is refused before any parsing. */
 export const CIMD_MAX_CLIENT_ID_LENGTH = 512;
+/**
+ * After a fetch of a registrable domain timed out, /authorize and /token for that
+ * domain answer `cooling-down` (503, no fetch) for this long, so a few hanging
+ * domains cannot keep every slot of the pool busy by being asked again. A refresh
+ * is never refused by it.
+ */
+export const CIMD_TIMEOUT_COOLDOWN_MS = 30 * 1000;
+const CIMD_COOLDOWNS_MAX = 1024;
 const MAX_REDIRECT_URIS = 20;
 const MAX_NAME_LENGTH = 100;
 
@@ -466,6 +474,7 @@ export function _setClientMetadataDepsForTest(
 	inFlightByConnection.clear();
 	inFlightByPerson.clear();
 	sharedFetch.clear();
+	cooldownUntil.clear();
 }
 
 /**
@@ -685,6 +694,30 @@ const inFlightByDomain = new Map<string, number>();
 const inFlightByConnection = new Map<string, number>();
 const inFlightByPerson = new Map<string, number>();
 const sharedFetch = new Map<string, Promise<ResolveResult>>();
+const cooldownUntil = new Map<string, number>();
+
+function startCooldown(domain: string): void {
+	const now = deps.now();
+	if (cooldownUntil.size >= CIMD_COOLDOWNS_MAX) {
+		for (const [k, until] of cooldownUntil)
+			if (until <= now) cooldownUntil.delete(k);
+		if (cooldownUntil.size >= CIMD_COOLDOWNS_MAX) {
+			const oldest = cooldownUntil.keys().next().value;
+			if (oldest !== undefined) cooldownUntil.delete(oldest);
+		}
+	}
+	cooldownUntil.set(domain, now + CIMD_TIMEOUT_COOLDOWN_MS);
+}
+
+function isCoolingDown(domain: string): boolean {
+	const until = cooldownUntil.get(domain);
+	if (until === undefined) return false;
+	if (until <= deps.now()) {
+		cooldownUntil.delete(domain);
+		return false;
+	}
+	return true;
+}
 
 function bump(map: Map<string, number>, key: string, by: 1 | -1): void {
 	const next = (map.get(key) ?? 0) + by;
@@ -746,6 +779,10 @@ async function resolveUncached(
 	if (domain === null)
 		return { ok: false, reason: "domain-unresolvable", retryable: false };
 	const busy: ResolveResult = { ok: false, reason: "busy", retryable: true };
+	// A domain whose fetch just timed out is not fetched again until its
+	// cooldown passes: no slot, no allowance. A refresh is never held back.
+	if (purpose !== "refresh" && isCoolingDown(domain))
+		return { ok: false, reason: "cooling-down", retryable: true };
 	if (inFlightByPool[purpose] >= CIMD_POOL[purpose]) return busy;
 	if ((inFlightBySource.get(sourceKey) ?? 0) >= CIMD_PER_SOURCE_IN_FLIGHT)
 		return busy;
@@ -771,14 +808,20 @@ async function resolveUncached(
 	if (connection !== undefined) bump(inFlightByConnection, connection, 1);
 	if (person !== undefined) bump(inFlightByPerson, person, 1);
 	if (boundByDomain) bump(inFlightByDomain, domain, 1);
-	const work = fetchDocument(url, clientId).finally(() => {
-		inFlightByPool[purpose]--;
-		bump(inFlightBySource, sourceKey, -1);
-		if (connection !== undefined) bump(inFlightByConnection, connection, -1);
-		if (person !== undefined) bump(inFlightByPerson, person, -1);
-		if (boundByDomain) bump(inFlightByDomain, domain, -1);
-		sharedFetch.delete(clientId);
-	});
+	const work = fetchDocument(url, clientId)
+		.then((result) => {
+			if (!result.ok && result.reason === "fetch-timeout")
+				startCooldown(domain);
+			return result;
+		})
+		.finally(() => {
+			inFlightByPool[purpose]--;
+			bump(inFlightBySource, sourceKey, -1);
+			if (connection !== undefined) bump(inFlightByConnection, connection, -1);
+			if (person !== undefined) bump(inFlightByPerson, person, -1);
+			if (boundByDomain) bump(inFlightByDomain, domain, -1);
+			sharedFetch.delete(clientId);
+		});
 	sharedFetch.set(clientId, work);
 	return await work;
 }

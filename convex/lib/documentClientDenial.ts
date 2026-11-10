@@ -9,6 +9,7 @@
  * audit survives; only an ACTIVE row denies.
  */
 
+import { getDomain } from "tldts";
 import type { Doc } from "../_generated/dataModel";
 import type { QueryCtx } from "../_generated/server";
 
@@ -25,19 +26,65 @@ export async function documentClientRow(
 		.unique();
 }
 
-/** The row when the client is listed now; null otherwise. */
+/** What a listing covers: one exact URL, every URL of a host, or every URL of a registrable domain. */
+export type DenialScope = "url" | "host" | "domain";
+
+/**
+ * The key a listing is stored under. A URL is its own key; a host or a domain
+ * is prefixed, so the three can never collide in the one `by_clientId` index
+ * (a URL always starts with "https://").
+ */
+export function denialKey(scope: DenialScope, value: string): string {
+	return scope === "url" ? value : `${scope}:${value}`;
+}
+
+/** The host of an https client_id URL, lower-case, no trailing dot; null when it does not parse. */
+export function hostOfClientId(clientId: string): string | null {
+	try {
+		const host = new URL(clientId).hostname.toLowerCase().replace(/\.+$/, "");
+		return host === "" ? null : host;
+	} catch {
+		return null;
+	}
+}
+
+/**
+ * The registrable domain (eTLD+1) of a host from the Public Suffix List, private
+ * suffixes included (the same rule as mcp-server `domainKeyOf`): `evil.vercel.app`
+ * and `victim.vercel.app` are different domains. A host with none returns null.
+ */
+export function registrableDomainOf(host: string): string | null {
+	return getDomain(host, { allowPrivateDomains: true });
+}
+
+/**
+ * The row that denies `clientId` now, or null: the exact URL, its host, or its
+ * registrable domain, whichever is listed and active. The URL row is read first
+ * so the answer names the narrowest listing.
+ */
 export async function activeDocumentClientDenial(
 	ctx: Reader,
 	clientId: string,
 ): Promise<Doc<"oauth_denied_document_clients"> | null> {
-	const row = await documentClientRow(ctx, clientId);
-	return row?.active ? row : null;
+	const own = await documentClientRow(ctx, clientId);
+	if (own?.active) return own;
+	if (!clientId.startsWith("https://")) return null;
+	const host = hostOfClientId(clientId);
+	if (host === null) return null;
+	const byHost = await documentClientRow(ctx, denialKey("host", host));
+	if (byHost?.active) return byHost;
+	const domain = registrableDomainOf(host);
+	if (domain === null) return null;
+	const byDomain = await documentClientRow(ctx, denialKey("domain", domain));
+	return byDomain?.active ? byDomain : null;
 }
 
 /**
- * True when `clientId` is a listed Client ID Metadata Document client. A
- * client_id that is not an https URL is never listed (registered clients have
- * their own revocation) and costs no read.
+ * True when `clientId` is a listed Client ID Metadata Document client, by its
+ * exact URL, its host or its registrable domain. A client_id that is not an
+ * https URL is never listed (registered clients have their own revocation) and
+ * costs no read. The grant is derived here at request time: a token minted
+ * before a host or domain listing stops answering the moment it is listed.
  */
 export async function isDocumentClientDenied(
 	ctx: Reader,
