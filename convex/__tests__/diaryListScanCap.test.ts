@@ -39,7 +39,13 @@ const modules = Object.fromEntries(
 const SERVICE_ACCOUNT = { subject: "test-service-account-user-id" } as const;
 
 /** Declared scan cap: must equal `DIARY_LIST_SCAN_CAP` in convex/diary.ts. */
-const CAP = 500;
+const CAP = 250;
+/** Measured on prod (Eta, #1732): a diary row is about 10 KB (6 rows fill a 60 KB page). */
+const ROW_BYTES = 10 * 1024;
+/** Convex's per-query read ceiling. */
+const READ_CEILING_BYTES = 8 * 1024 * 1024;
+/** A capped call reads its window, then the same window again through the filter. */
+const READS_PER_CALL = 2;
 
 type Op = { m: string; args: unknown[] };
 type ReadLog = { index: string; rangeDocs: number; walked: number };
@@ -158,6 +164,13 @@ async function seed() {
 describe("diary:list master createdBy without orchestrator — a bounded scan per call", () => {
 	test("the scan cap is declared and equals the tested one", () => {
 		expect((diaryModule as Record<string, unknown>).DIARY_LIST_SCAN_CAP).toBe(CAP);
+	});
+
+	test("the two reads of one call stay under the read ceiling at the measured row size", () => {
+		expect(READS_PER_CALL * CAP * ROW_BYTES).toBeLessThan(READ_CEILING_BYTES);
+		expect(
+			READS_PER_CALL * (diaryModule as Record<string, number>).DIARY_LIST_SCAN_CAP * ROW_BYTES,
+		).toBeLessThan(READ_CEILING_BYTES);
 	});
 
 	test("a sparse author: no call walks more than the cap", async () => {
