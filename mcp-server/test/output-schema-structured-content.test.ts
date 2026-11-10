@@ -35,6 +35,9 @@
 
 import Ajv2020 from "ajv/dist/2020.js";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
+import { LOCAL_STDIO_TRUST_CTX, type OAuthContext } from "../src/auth.js";
+import { encodeCursor } from "../src/paging.js";
+import { registerTools } from "../src/tools.js";
 import {
 	CALLS,
 	type CallResult,
@@ -664,5 +667,580 @@ describe("Manufact 2250: the four text residues", () => {
 			"Written here with the kind list_episodes and get_episode read, the memory holds only this content",
 		);
 		expect(d).toContain("which only store_episode records");
+	});
+});
+
+// ── One list contract (task k17e90s1n85hjappy26vs2kww18hxjp1) ────────────────
+//
+// Every paged list tool states its result through ONE generator
+// (src/listContract.ts): the Returns { ... } clause names exactly the
+// outputSchema's top-level properties, one sentence says what the text is, and
+// a real answer on every code path (last page, a page with more behind it, a
+// page the byte cap cut, rows withheld by scope) is what that sentence says.
+// The oracle is the handler's real output, never the description.
+
+type ListContractModule = {
+	LIST_CONTRACTS: Record<
+		string,
+		{
+			rows: string;
+			form:
+				| "array-on-last-page"
+				| "array-unless-continued"
+				| "page-cursor-omitted"
+				| "page-cursor-always"
+				| "mirrored";
+			scopeFiltered?: true;
+			cutResumes?: true;
+		}
+	>;
+	listReturnsKeys: (
+		c: ListContractModule["LIST_CONTRACTS"][string],
+	) => string[];
+	listContractText: (c: ListContractModule["LIST_CONTRACTS"][string]) => string;
+};
+type Contract = ListContractModule["LIST_CONTRACTS"][string];
+
+/** The paged list tools: every one is governed by the list contract. */
+const PAGED_LISTS = [
+	"list_tasks",
+	"list_tasks_by_mission",
+	"list_memories",
+	"list_episodes",
+	"list_peers",
+	"list_messages",
+	"list_missions",
+	"list_diaries",
+	"list_briefing_notes",
+	"list_recurring_tasks",
+	"list_repo_mappings",
+	"list_fix_patterns",
+] as const;
+
+let contractModule: ListContractModule | null = null;
+beforeAll(async () => {
+	contractModule = (await import("../src/listContract.js").catch(
+		() => null,
+	)) as ListContractModule | null;
+});
+const contractOf = (tool: string): Contract | undefined =>
+	contractModule?.LIST_CONTRACTS[tool];
+
+/**
+ * What a list answer's text and structuredContent must be under a contract.
+ * Returns the disagreements, as readable lines; empty when they agree.
+ */
+function contractDisagreements(
+	c: Contract,
+	keys: string[],
+	text: string,
+	sc: ListStructured,
+): string[] {
+	const out: string[] = [];
+	for (const k of Object.keys(sc)) {
+		if (!keys.includes(k)) out.push(`structuredContent.${k} is not in Returns`);
+	}
+	for (const k of ["items", "nextCursor", "truncated"]) {
+		if (!(k in sc)) out.push(`structuredContent lacks ${k}`);
+	}
+	if (c.form === "mirrored") {
+		if (text !== JSON.stringify(sc)) out.push("text is not the object as JSON");
+		return out;
+	}
+	const parsed = JSON.parse(text) as unknown;
+	const same = (a: unknown, b: unknown, what: string) => {
+		if (JSON.stringify(a) !== JSON.stringify(b)) out.push(`${what} differs`);
+	};
+	if (Array.isArray(parsed)) {
+		if (c.form !== "array-on-last-page" && c.form !== "array-unless-continued")
+			out.push(`a bare-array text, but the contract is ${c.form}`);
+		same(
+			sc,
+			{ items: parsed, nextCursor: null, truncated: false },
+			"array page",
+		);
+		return out;
+	}
+	const page = parsed as Record<string, unknown>;
+	const pageKeys = Object.keys(page).sort().join(",");
+	if ((page._meta as { _truncated?: boolean } | undefined)?._truncated) {
+		const want =
+			c.cutResumes && sc.nextCursor !== null
+				? "_meta,items,nextCursor"
+				: "_meta,items";
+		if (pageKeys !== want) out.push(`cut text keys ${pageKeys}, want ${want}`);
+		if (sc.truncated !== true) out.push("cut page without truncated: true");
+		if (!c.cutResumes && sc.nextCursor !== null)
+			out.push("cut page carries a cursor the contract does not name");
+		same(sc.items, page.items, "cut items");
+		same(sc.nextCursor, page.nextCursor ?? null, "cut nextCursor");
+		return out;
+	}
+	if (sc.truncated !== false) out.push("uncut page without truncated: false");
+	same(sc.items, page.items, "items");
+	same(sc.nextCursor, page.nextCursor ?? null, "nextCursor");
+	same(sc.scopeFiltered, page.scopeFiltered, "scopeFiltered");
+	const cursorIs = (t: string) => typeof page.nextCursor === t;
+	switch (c.form) {
+		case "array-on-last-page":
+			if (pageKeys !== "items,nextCursor" || !cursorIs("string"))
+				out.push(
+					`text keys ${pageKeys}: only a page with more behind it is an object`,
+				);
+			break;
+		case "array-unless-continued":
+			if (
+				![
+					"items,nextCursor",
+					"items,scopeFiltered",
+					"items,nextCursor,scopeFiltered",
+				].includes(pageKeys)
+			)
+				out.push(`text keys ${pageKeys}`);
+			break;
+		case "page-cursor-omitted":
+			if (
+				!(
+					pageKeys === "items" ||
+					(pageKeys === "items,nextCursor" && cursorIs("string"))
+				)
+			)
+				out.push(`text keys ${pageKeys}`);
+			break;
+		case "page-cursor-always":
+			if (pageKeys !== "items,nextCursor") out.push(`text keys ${pageKeys}`);
+			break;
+	}
+	return out;
+}
+
+/** A row of each door, owned by `who`; `big` pads the field each projection keeps. */
+const pad = (big: boolean) => (big ? "x".repeat(40_000) : "short");
+const T0 = 1_760_000_000_000;
+type Sweep = {
+	door: string;
+	args: Record<string, unknown>;
+	row: (i: number, who: string, big: boolean) => Record<string, unknown>;
+	wrap?: (rows: unknown[], more: boolean) => unknown;
+};
+const taskRow = (i: number, who: string, big: boolean) => ({
+	_id: `task${i}`,
+	_creationTime: T0 - i,
+	title: pad(big),
+	assignedTo: who,
+	priority: "medium",
+	status: "todo",
+	createdBy: who,
+	project: "p",
+});
+const memoryRow = (type: string) => (i: number, who: string, big: boolean) => ({
+	_id: `mem${i}`,
+	_creationTime: T0 - i,
+	namespace: `orchestrator/${who}`,
+	type,
+	content: pad(big),
+	createdBy: who,
+	relations: [],
+	isLatest: true,
+	createdAt: T0 - i,
+	updatedAt: T0 - i,
+});
+const paginated = (rows: unknown[], more: boolean) => ({
+	value: rows,
+	continueCursor: more ? "backend-next" : null,
+	isDone: !more,
+});
+const SWEEP: Record<(typeof PAGED_LISTS)[number], Sweep> = {
+	list_tasks: { door: "tasks:list", args: {}, row: taskRow },
+	list_tasks_by_mission: {
+		door: "tasks:listByMission",
+		args: { missionId: "m".repeat(32) },
+		row: taskRow,
+	},
+	list_memories: {
+		door: "memories:listMemories",
+		args: { namespace: "global" },
+		row: memoryRow("project"),
+		wrap: paginated,
+	},
+	list_episodes: {
+		door: "memories:listMemories",
+		args: { namespace: "global" },
+		row: memoryRow("episode"),
+		wrap: paginated,
+	},
+	list_peers: {
+		door: "profiles:listProfiles",
+		args: {},
+		row: (i, who, big) => ({
+			_id: `prof${i}`,
+			_creationTime: T0 - i,
+			orchestratorId: who,
+			name: pad(big),
+			static: { role: "r", workspace: "/w", capabilities: [] },
+			dynamic: { lastSeen: T0, sessionCount: 1 },
+		}),
+	},
+	list_messages: {
+		door: "messages:listMessages",
+		args: {},
+		row: (i, who, big) => ({
+			_id: `msg${i}`,
+			_creationTime: T0 - i,
+			from: who,
+			content: pad(big),
+			createdAt: T0 - i,
+			channel: "beta",
+		}),
+	},
+	list_missions: {
+		door: "missions:list",
+		args: {},
+		row: (i, who, big) => ({
+			_id: `mis${i}`,
+			_creationTime: T0 - i,
+			name: pad(big),
+			status: "plan",
+			pilot: who,
+			priority: "high",
+			project: "p",
+		}),
+	},
+	list_diaries: {
+		door: "diary:list",
+		args: {},
+		row: (i, who, big) => ({
+			_id: `dia${i}`,
+			_creationTime: T0 - i,
+			date: "2026-11-10",
+			orchestrator: who,
+			content: pad(big),
+			createdAt: T0 - i,
+		}),
+	},
+	list_briefing_notes: {
+		door: "briefingNotes:list",
+		args: {},
+		row: (i, who, big) => ({
+			_id: `note${i}`,
+			_creationTime: T0 - i,
+			title: pad(big),
+			topic: "t",
+			participants: [],
+			createdBy: who,
+		}),
+	},
+	list_recurring_tasks: {
+		door: "recurringTasks:list",
+		args: {},
+		row: (i, who, big) => ({
+			_id: `rec${i}`,
+			_creationTime: T0 - i,
+			title: pad(big),
+			assignedTo: who,
+			priority: "medium",
+			cronExpression: "0 9 * * *",
+			nextRunAt: T0,
+			active: true,
+			createdBy: who,
+		}),
+	},
+	list_repo_mappings: {
+		door: "githubRepoMapping:list",
+		args: {},
+		row: (i, who, big) => ({
+			_id: `map${i}`,
+			_creationTime: T0 - i,
+			repo: big ? `a/${pad(true)}` : "a/b",
+			orchestrator: who,
+			project: "p",
+		}),
+		wrap: (rows, more) => ({
+			items: rows,
+			nextCursor: more ? "door-next" : null,
+		}),
+	},
+	list_fix_patterns: {
+		door: "fixPatterns:listAll",
+		args: {},
+		row: (i, who, big) => ({
+			_id: `fix${i}`,
+			_creationTime: T0 - i,
+			symptom: pad(big),
+			rootCause: "r",
+			tags: [],
+			stack: [],
+			sourceProject: "p",
+			createdBy: who,
+			severity: "low",
+			createdAt: T0 - i,
+			updatedAt: T0 - i,
+		}),
+	},
+};
+
+/** A non-master bearer of an organisation whose allow-list names only alpha. */
+const ALPHA_CTX = {
+	clientId: "client-alpha",
+	userId: "user-alpha",
+	scopes: ["vantage:read"],
+	scopeProfile: "tenant-alpha",
+	fromAllowList: ["alpha"],
+	namespaceReadPrefixes: ["orchestrator/alpha"],
+	namespaceWritePrefixes: ["orchestrator/alpha"],
+	expiresAt: Date.now() + 3600_000,
+	isMaster: false,
+	clerkOrgSlug: "org-fixture-alpha",
+} as OAuthContext;
+
+type ListHandler = (args: Record<string, unknown>) => Promise<CallResult>;
+
+/** Registers the tools on a capturing server over a door that answers `answer`. */
+function listHandlers(
+	ctx: OAuthContext,
+	answer: (door: string, args: Record<string, unknown>) => unknown,
+	calls: Array<[string, Record<string, unknown>]> = [],
+): Map<string, ListHandler> {
+	const handlers = new Map<string, ListHandler>();
+	const capture = (name: string, ...rest: unknown[]) => {
+		handlers.set(name, rest[rest.length - 1] as ListHandler);
+		return {};
+	};
+	const server = { tool: capture, registerTool: capture } as never;
+	const convex = {
+		query: async (door: string, args: Record<string, unknown>) => {
+			calls.push([door, args]);
+			return answer(door, args);
+		},
+		mutation: async () => null,
+		action: async () => null,
+	} as never;
+	registerTools(server, convex, ctx);
+	return handlers;
+}
+
+/** The four code paths of a paged list, as each tool really serves them. */
+async function sweepPaths(
+	tool: (typeof PAGED_LISTS)[number],
+	contract: Contract | undefined,
+): Promise<Array<[string, CallResult]>> {
+	const s = SWEEP[tool];
+	const serve = (rows: unknown[], more: boolean) =>
+		s.wrap ? s.wrap(rows, more) : rows;
+	const run = async (
+		ctx: OAuthContext,
+		rows: unknown[],
+		more: boolean,
+		limit: number,
+	) =>
+		(await listHandlers(ctx, (door) =>
+			door === s.door ? serve(rows, more) : null,
+		).get(tool)?.({ ...s.args, limit })) as CallResult;
+	const two = (who: string, big = false) => [
+		s.row(1, who, big),
+		s.row(2, who, big),
+	];
+	const paths: Array<[string, CallResult]> = [
+		["last page", await run(LOCAL_STDIO_TRUST_CTX, two("alpha"), false, 5)],
+		[
+			"page with more behind it",
+			await run(LOCAL_STDIO_TRUST_CTX, two("alpha"), true, 2),
+		],
+		[
+			"page the byte cap cut",
+			await run(LOCAL_STDIO_TRUST_CTX, two("alpha", true), false, 5),
+		],
+	];
+	if (contract?.scopeFiltered) {
+		paths.push([
+			"rows withheld by scope",
+			await run(
+				ALPHA_CTX,
+				[s.row(1, "alpha", false), s.row(2, "beta", false)],
+				false,
+				5,
+			),
+		]);
+	}
+	return paths;
+}
+
+describe("one list contract: description, outputSchema and every real answer agree", () => {
+	const ajv = new Ajv2020({ strict: false, allErrors: true });
+
+	it("the paged list tools are the paged lists LIST_FORMS decides, plus list_diaries (mirrored)", () => {
+		const decided = Object.entries(LIST_FORMS)
+			.filter(([, form]) => form === "page")
+			.map(([tool]) => tool);
+		expect([...PAGED_LISTS].sort()).toEqual(
+			[...decided, "list_diaries"].sort(),
+		);
+		expect(
+			contractModule,
+			"src/listContract.ts exports the list contract",
+		).not.toBeNull();
+		expect(Object.keys(contractModule?.LIST_CONTRACTS ?? {}).sort()).toEqual(
+			[...PAGED_LISTS].sort(),
+		);
+	});
+
+	for (const tool of PAGED_LISTS) {
+		it(`${tool}: the description carries the generated contract, and Returns names exactly the outputSchema's top-level properties`, () => {
+			const c = contractOf(tool);
+			expect(c, `a list contract for ${tool}`).toBeDefined();
+			const d = descriptions.get(tool) ?? "";
+			expect(d).toContain(contractModule?.listContractText(c as Contract));
+			// One statement of the text: never a second, different shape.
+			expect(d.match(/The text is/g) ?? []).toHaveLength(1);
+			const schema = schemas.get(tool) as JsonSchema;
+			const listed = listedReturnFields(d);
+			expect(listed, "a Returns { ... } clause").not.toBeNull();
+			expect(listed?.fields.map((f) => f.name).sort()).toEqual(
+				Object.keys(schema.properties ?? {}).sort(),
+			);
+			expect(contractModule?.listReturnsKeys(c as Contract).sort()).toEqual(
+				Object.keys(schema.properties ?? {}).sort(),
+			);
+			// A row list, when given, is the row schema's WHOLE property set: a
+			// partial list reads as the result while the schema says more.
+			for (const f of listed?.fields ?? []) {
+				if (f.children === undefined) continue;
+				expect(
+					f.children.map((x) => x.name).sort(),
+					`${tool}.${f.name}`,
+				).toEqual(
+					Object.keys(
+						objectOf(schema.properties?.[f.name])?.properties ?? {},
+					).sort(),
+				);
+			}
+		});
+
+		it(`${tool}: on every code path the real answer validates, every row key is declared, and the text is what the contract says`, async () => {
+			const c = contractOf(tool);
+			const schema = schemas.get(tool) as JsonSchema & Record<string, unknown>;
+			const { $schema: _ignored, ...body } = schema;
+			const validate = ajv.compile(body);
+			const rowProps = Object.keys(
+				objectOf(schema.properties?.items)?.properties ?? {},
+			);
+			const wrong: Record<string, string[]> = {};
+			for (const [path, r] of await sweepPaths(tool, c)) {
+				const problems: string[] = [];
+				if (r?.isError || r?.structuredContent === undefined) {
+					wrong[path] = [`no structured answer: ${r?.content?.[0]?.text}`];
+					continue;
+				}
+				const sc = r.structuredContent as ListStructured;
+				if (!validate(sc)) problems.push(JSON.stringify(validate.errors));
+				for (const row of sc.items as Array<Record<string, unknown>>) {
+					for (const k of Object.keys(row)) {
+						if (!rowProps.includes(k))
+							problems.push(`row key ${k} is undeclared`);
+					}
+				}
+				if (path === "page with more behind it" && sc.nextCursor === null)
+					problems.push("the path did not run: no nextCursor");
+				if (path === "page the byte cap cut" && sc.truncated !== true)
+					problems.push("the path did not run: not truncated");
+				if (
+					path === "rows withheld by scope" &&
+					!(Number(sc.scopeFiltered) > 0)
+				)
+					problems.push("the path did not run: no scopeFiltered");
+				if (c === undefined) problems.push("no list contract");
+				else {
+					problems.push(
+						...contractDisagreements(
+							c,
+							contractModule?.listReturnsKeys(c) ?? [],
+							r.content[0].text,
+							sc,
+						),
+					);
+				}
+				if (problems.length > 0) wrong[path] = problems;
+			}
+			expect(wrong).toEqual({});
+		});
+	}
+
+	it("no paged list tool declares an input that has no effect (a no-op input is dropped, not described as useless)", () => {
+		const noop = PAGED_LISTS.flatMap((tool) =>
+			Object.entries(
+				(
+					inputSchemas.get(tool) as JsonSchema & {
+						properties?: Record<
+							string,
+							{ deprecated?: boolean; description?: string }
+						>;
+					}
+				)?.properties ?? {},
+			)
+				.filter(
+					([, p]) =>
+						p.deprecated === true || /^Has no effect/.test(p.description ?? ""),
+				)
+				.map(([name]) => `${tool}.${name}`),
+		);
+		expect(noop).toEqual([]);
+	});
+
+	it("no list tool's limit states a page size: the schema carries the default, and a page holds what limit says", async () => {
+		const stated = PAGED_LISTS.flatMap((tool) => {
+			const d =
+				(
+					inputSchemas.get(tool) as {
+						properties?: Record<string, { description?: string }>;
+					}
+				)?.properties?.limit?.description ?? "";
+			return /\b\d+ rows\b/.test(d) ? [`${tool}.limit: ${d}`] : [];
+		});
+		expect(stated).toEqual([]);
+		// Measured: with a cursor and no limit, the page asked of the door is the
+		// schema's default (20), not the 50 an earlier text claimed.
+		for (const tool of ["list_memories", "list_episodes"] as const) {
+			const calls: Array<[string, Record<string, unknown>]> = [];
+			await listHandlers(
+				LOCAL_STDIO_TRUST_CTX,
+				() => paginated([], false),
+				calls,
+			).get(tool)?.({
+				namespace: "global",
+				cursor: encodeCursor({ backendCursor: "b" }),
+			});
+			expect(calls[0]?.[1].paginationOpts, tool).toEqual({
+				numItems: 20,
+				cursor: "b",
+			});
+		}
+	});
+});
+
+describe("the found reads and update_profile: one statement of each field", () => {
+	for (const tool of ["get_diary", "get_mission_template", "get_profile"]) {
+		it(`${tool}: Returns names the schema's properties once, and the item's fields are not listed a second, different way`, () => {
+			const d = descriptions.get(tool) ?? "";
+			const listed = listedReturnFields(d);
+			expect(listed?.fields.map((f) => f.name).sort()).toEqual(
+				Object.keys((schemas.get(tool) as JsonSchema).properties ?? {}).sort(),
+			);
+			expect(d).not.toMatch(/item is the [a-z ]+ \(/);
+		});
+	}
+
+	it("update_profile static.workspace says what it holds and where its value comes from and goes", () => {
+		const d =
+			(
+				inputSchemas.get("update_profile") as {
+					properties?: Record<
+						string,
+						{ properties?: Record<string, { description?: string }> }
+					>;
+				}
+			)?.properties?.static?.properties?.workspace?.description ?? "";
+		expect(d).toMatch(/stored as given/);
+		expect(d).toMatch(/\blist_peers\b/);
+		expect(d).toMatch(/\bget_profile\b/);
 	});
 });
