@@ -762,7 +762,7 @@ describe("round 3 — the domain bucket is the registrable domain, and never bou
 		expect(k("a.one.com.")).toBe("one.com");
 		expect(k("a.one.com")).toBe(k("b.one.com"));
 		expect(k("a.one.com")).not.toBe(k("a.two.com"));
-		expect(k("vercel.app")).toBe("vercel.app"); // a bare suffix keys on itself, never shared
+		expect(k("vercel.app")).toBeNull(); // a bare suffix has no registrable domain: never a key
 	});
 
 	it("probe E: two hanging fetches on evil.vercel.app do not refuse victim.vercel.app (refresh or token)", async () => {
@@ -823,5 +823,160 @@ describe("round 3 — the domain bucket is the registrable domain, and never bou
 		expect(refresh.ok).toBe(true);
 		expect(rec.requests.length).toBe(3);
 		await Promise.all(held);
+	});
+});
+
+describe("round 4 — a host is a real hostname, and its domain key cannot be forged", () => {
+	it("N1: empty labels are refused, so x1..attacker.example and x2..attacker.example cannot make distinct keys", async () => {
+		await install();
+		for (const id of [
+			"https://x1..attacker.example/c.json",
+			"https://x2..attacker.example/c.json",
+		]) {
+			expect(await cimd.resolveClientMetadata(id)).toMatchObject({
+				ok: false,
+				reason: "host-label-invalid",
+			});
+		}
+	});
+
+	it("N1: labels that are not LDH (leading or trailing hyphen, underscore, empty first label) are refused", async () => {
+		const rec = await install();
+		for (const id of [
+			"https://-a.example.com/c.json",
+			"https://a-.example.com/c.json",
+			"https://un_der.example.com/c.json",
+			"https://.example.com/c.json",
+			"https://a.exa$mple.com/c.json",
+		]) {
+			const r = await cimd.resolveClientMetadata(id);
+			expect(r.ok, id).toBe(false);
+		}
+		expect(rec.dnsQueries).toHaveLength(0);
+	});
+
+	it("N1: a host with no registrable domain (a public suffix) is refused, never keyed on the whole host", async () => {
+		const rec = await install();
+		expect(await cimd.resolveClientMetadata("https://co.uk/c.json")).toMatchObject({
+			ok: false,
+			reason: "domain-unresolvable",
+		});
+		expect(rec.dnsQueries).toHaveLength(0);
+	});
+
+	it("N1: a valid punycode host is still accepted", async () => {
+		await install({
+			respond: (req) => json(validDocument({}, `https://${req.hostname}/c.json`)),
+		});
+		const r = await cimd.resolveClientMetadata("https://xn--bcher-kva.example.com/c.json");
+		expect(r.ok).toBe(true);
+	});
+});
+
+describe("round 4 — the refresh pool is not held by two members, and a known client is not refused by load", () => {
+	const VICTIM = "https://victim.example.org/c.json";
+	const rig = (now: () => number) =>
+		install({
+			now,
+			timeoutMs: 400,
+			perSourceLimit: 1000,
+			respond: (req) =>
+				req.hostname === "victim.example.org"
+					? json(validDocument({}, VICTIM))
+					: new Promise<never>(() => undefined),
+		});
+	const refreshOf = (url: string, source: string, connection: string) =>
+		cimd.resolveClientMetadata(url, { purpose: "refresh", source, connection });
+
+	it("R3: two member URLs hanging hold both refresh slots; the victim's refresh still resolves from its stale document", async () => {
+		let now = 1_000_000;
+		await rig(() => now);
+		const known = await cimd.resolveClientMetadata(VICTIM, { purpose: "authorize", source: "v" });
+		expect(known.ok).toBe(true);
+		now += cimd.CIMD_DEFAULT_TTL_MS + 1000; // expired, inside the stale window
+		const held = [
+			refreshOf("https://m1.dom1.com/c.json", "10.0.0.1", "t1"),
+			refreshOf("https://m2.dom2.com/c.json", "10.0.0.2", "t2"),
+		];
+		await new Promise((r) => setTimeout(r, 30));
+		const victim = await refreshOf(VICTIM, "9.9.9.9", "tv");
+		expect(victim.ok).toBe(true);
+		expect(victim.ok && known.ok && victim.client).toEqual(known.ok && known.client);
+		await Promise.all(held);
+	});
+
+	it("the stale window is bounded: past it the document is not served", async () => {
+		let now = 1_000_000;
+		await rig(() => now);
+		await cimd.resolveClientMetadata(VICTIM, { purpose: "authorize", source: "v" });
+		now += cimd.CIMD_DEFAULT_TTL_MS + cimd.CIMD_STALE_MS + 1000;
+		const held = [
+			refreshOf("https://m1.dom1.com/c.json", "10.0.0.1", "t1"),
+			refreshOf("https://m2.dom2.com/c.json", "10.0.0.2", "t2"),
+		];
+		await new Promise((r) => setTimeout(r, 30));
+		expect(await refreshOf(VICTIM, "9.9.9.9", "tv")).toMatchObject({
+			ok: false,
+			reason: "busy",
+		});
+		await Promise.all(held);
+	});
+
+	it("a refresh whose fetch FAILS (5xx) is served stale; an authorize is not", async () => {
+		let now = 1_000_000;
+		let down = false;
+		await install({
+			now: () => now,
+			perSourceLimit: 1000,
+			respond: () => (down ? { status: 503 } : json(validDocument({}, VICTIM))),
+		});
+		await cimd.resolveClientMetadata(VICTIM, { purpose: "authorize", source: "v" });
+		now += cimd.CIMD_DEFAULT_TTL_MS + 1000;
+		down = true;
+		expect((await refreshOf(VICTIM, "9.9.9.9", "tv")).ok).toBe(true);
+		now += 0;
+		const authorize = await cimd.resolveClientMetadata(VICTIM, {
+			purpose: "authorize",
+			source: "v2",
+		});
+		expect(authorize.ok).toBe(false);
+	});
+
+	it("a document that is now WRONG is not served stale: the refresh is refused", async () => {
+		let now = 1_000_000;
+		let wrong = false;
+		await install({
+			now: () => now,
+			perSourceLimit: 1000,
+			respond: () =>
+				json(
+					wrong
+						? validDocument({ token_endpoint_auth_method: "client_secret_basic" }, VICTIM)
+						: validDocument({}, VICTIM),
+				),
+		});
+		await cimd.resolveClientMetadata(VICTIM, { purpose: "authorize", source: "v" });
+		now += cimd.CIMD_DEFAULT_TTL_MS + 1000;
+		wrong = true;
+		expect(await refreshOf(VICTIM, "9.9.9.9", "tv")).toMatchObject({
+			ok: false,
+			reason: "token-endpoint-auth-method-must-be-none",
+		});
+	});
+
+	it("one connection (refresh token) has at most one fetch in flight", async () => {
+		const rec = await install({
+			timeoutMs: 400,
+			perSourceLimit: 1000,
+			respond: () => new Promise<never>(() => undefined),
+		});
+		const two = [
+			refreshOf("https://m1.dom1.com/c.json", "10.0.0.1", "same"),
+			refreshOf("https://m2.dom2.com/c.json", "10.0.0.2", "same"),
+		];
+		await new Promise((r) => setTimeout(r, 30));
+		expect(rec.requests).toHaveLength(1);
+		const answers = await Promise.all(two);
+		expect(answers.filter((a) => !a.ok && a.reason === "busy")).toHaveLength(1);
 	});
 });
