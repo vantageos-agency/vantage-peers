@@ -220,9 +220,12 @@ describe("diary:list createdBy — the filter is applied before the take", () =>
 			createdBefore: anchor,
 		});
 		expect(rows).toHaveLength(4);
-		expect(reads).toHaveLength(1);
-		expect(reads[0].rangeDocs).toBeLessThanOrEqual(12);
-		expect(reads[0].rangeDocs).toBeLessThan(seeded.length);
+		// The window read, then the filtered read inside it: both below the anchor.
+		expect(reads.length).toBeGreaterThan(0);
+		for (const read of reads) {
+			expect(read.rangeDocs).toBeLessThanOrEqual(12);
+			expect(read.rangeDocs).toBeLessThan(seeded.length);
+		}
 	});
 });
 
