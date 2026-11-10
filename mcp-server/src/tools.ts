@@ -7141,7 +7141,7 @@ export function registerTools(
 				.optional()
 				.meta({ default: "lite" })
 				.describe("How much of each row comes back: lite is each task's ID, creation time, title, status, priority, assignee and mission, enough to pick a row for fewer tokens; full is every stored field."),
-			createdBy: assigneeSchema.optional().describe("Keep only tasks created by this orchestrator. Omit for every creator."),
+			createdBy: assigneeSchema.optional().describe("Keep only tasks created by this author, as a task records it in createdBy: an agent's name, as list_peers lists it (your own is whoami's agent_name), or 'user:<subject>' for a task a person created. Omit for every creator."),
 			updatedSince: updatedSinceSchema.optional().describe("The moment from which changes count: keep only tasks last updated at or after it (a millisecond timestamp, as Date.now() gives; Date.now() minus 86400000 for the last day). Omit for no time window."),
 			cursor: z
 				.string()
@@ -7888,8 +7888,8 @@ export function registerTools(
 			createdBy: assigneeSchema
 				.optional()
 				.describe(
-					"Keep only entries whose verified author is this agent (the orchestrator field is what the writer typed; this one is what the credential proved). " +
-						"Omit for every author.",
+					"Keep only entries whose verified author is this agent, as an entry records it in createdBy: an agent's name, as list_peers lists it (your own is whoami's agent_name), or 'user:<subject>' for an entry a person wrote. " +
+						"The orchestrator field is what the writer typed; this one is what the credential proved. Omit for every author.",
 				),
 			limit: z
 				.number()
@@ -10351,7 +10351,7 @@ export function registerTools(
 				.string()
 				.optional()
 				.describe(
-					"Where to resume the unproven mappings: the unprovenNextCursor a previous call returned. Only the fleet master is served that list. " +
+					"Where to resume the unproven mappings: the unprovenNextCursor a previous get_github_owner_bindings call returned. Only the fleet master is served that list. " +
 						"Omit for its first page.",
 				),
 		},
