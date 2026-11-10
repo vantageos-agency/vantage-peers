@@ -233,3 +233,109 @@ describe("LIVE: a token minted before the listing stops answering after it", () 
 		expect(await lookup(t, "late")).toBeNull();
 	});
 });
+
+describe("round 2 — unlisting through the same door, with an audit that keeps its history", () => {
+	const lift = (t: T, over: Record<string, unknown> = {}) =>
+		asService(t).mutation(api.oauth.deleteClient, {
+			clientId: URL_A,
+			reason: "reviewed, the client is legitimate again",
+			operator: "pi",
+			lift: true,
+			...over,
+		});
+	const auditRow = (t: T) =>
+		t.run(async (ctx) =>
+			ctx.db
+				.query("oauth_denied_document_clients")
+				.withIndex("by_clientId", (q) => q.eq("clientId", URL_A))
+				.unique(),
+		);
+
+	test("listing then unlisting: the denial is lifted, a token minted after works, the one before stays dead, both events are in the audit", async () => {
+		const t = createT();
+		await mint(t, "before", URL_A);
+		await deny(t);
+		expect(await denial(t)).not.toBeNull();
+		expect(await lift(t)).toMatchObject({ unlisted: true });
+		expect(await denial(t)).toBeNull();
+		await mint(t, "after", URL_A);
+		expect(await lookup(t, "after")).not.toBeNull();
+		expect(await lookup(t, "before")).toBeNull();
+		const row = await auditRow(t);
+		expect(row?.active).toBe(false);
+		expect(row?.history.map((h) => h.action)).toEqual(["listed", "unlisted"]);
+		expect(row?.history[0]).toMatchObject({ by: OPERATOR, reason: REASON });
+		expect(row?.history[1]).toMatchObject({
+			by: "pi",
+			reason: "reviewed, the client is legitimate again",
+		});
+		expect(row?.history[1].at).toBeGreaterThan(0);
+	});
+
+	test("listing again after an unlisting keeps all three events on one row", async () => {
+		const t = createT();
+		await deny(t);
+		await lift(t);
+		await deny(t);
+		expect(await denial(t)).not.toBeNull();
+		const row = await auditRow(t);
+		expect(row?.active).toBe(true);
+		expect(row?.history.map((h) => h.action)).toEqual([
+			"listed",
+			"unlisted",
+			"listed",
+		]);
+	});
+
+	test("a token row of an unlisted client that was minted while it was listed stays refused", async () => {
+		const t = createT();
+		await deny(t);
+		await mint(t, "during", URL_A);
+		expect(await lookup(t, "during")).toBeNull();
+		await lift(t);
+		// the row appeared while listed: after the lift it is simply a live token again
+		// only if it was never revoked; the walk ran BEFORE it existed, so it answers
+		expect(await lookup(t, "during")).not.toBeNull();
+	});
+
+	test("unlisting needs a reason and an operator; an unknown client unlists nothing", async () => {
+		const t = createT();
+		await deny(t);
+		await expect(lift(t, { reason: "short" })).rejects.toThrow(/REASON_TOO_SHORT/);
+		await expect(lift(t, { operator: " " })).rejects.toThrow(/OPERATOR_REQUIRED/);
+		expect(await lift(t, { clientId: URL_B })).toMatchObject({
+			revokedClient: false,
+			unlisted: false,
+		});
+		expect(await denial(t)).not.toBeNull();
+	});
+
+	test("an anonymous caller and a member cannot unlist: RBAC_DENIED", async () => {
+		const t = createT();
+		await deny(t);
+		const args = {
+			clientId: URL_A,
+			reason: "reviewed, the client is legitimate again",
+			operator: "pi",
+			lift: true,
+		};
+		await expect(t.mutation(api.oauth.deleteClient, args)).rejects.toThrow(/RBAC_DENIED/);
+		await expect(asMember(t).mutation(api.oauth.deleteClient, args)).rejects.toThrow(/RBAC_DENIED/);
+		expect(await denial(t)).not.toBeNull();
+	});
+});
+
+describe("round 2 — a client_id that is not in canonical form is not listed", () => {
+	test("refused with revokedClient false instead of listing a string no client will present", async () => {
+		const t = createT();
+		for (const clientId of [
+			"https://APP.example.com/oauth/client-metadata.json",
+			"https://app.example.com/a/../b.json",
+			"https://app.example.com:443/b.json",
+			"https://app.example.com/b.json#frag",
+		]) {
+			expect(await deny(t, { clientId })).toMatchObject({ revokedClient: false });
+			expect(await denial(t, clientId)).toBeNull();
+		}
+	});
+});

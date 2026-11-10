@@ -129,6 +129,9 @@ describe("SSRF — address policy", () => {
 		"fc00::1",
 		"ff02::1",
 		"64:ff9b::7f00:1",
+		"3fff::1",
+		"3fff:0fff:ffff::1",
+		"2001:10::1",
 		"2002:7f00:1::1",
 		"not-an-ip",
 	];
@@ -306,59 +309,33 @@ describe("SSRF — the exchange", () => {
 		expect((await cimd.resolveClientMetadata(DOC_URL)).ok).toBe(true);
 	});
 
-	it("bounds the fetches in flight, and /authorize cannot take the slots reserved for /token", async () => {
+	it("each path has a pool of its own that no other path can take (authorize, token, refresh)", async () => {
 		cimd = await loadCimd();
-		const release: (() => void)[] = [];
 		const rec = scripted({
-			timeoutMs: 5000,
+			timeoutMs: 300,
 			perSourceLimit: 1000,
-			respond: (req) =>
-				new Promise((resolve) => {
-					release.push(() =>
-						resolve({
-							body: bodyOf(
-								JSON.stringify(
-									validDocument({}, `https://${req.hostname}/c.json`),
-								),
-							),
-						}),
-					);
-				}),
+			respond: () => new Promise(() => undefined),
 		});
 		cimd._setClientMetadataDepsForTest(rec.deps);
-		const authorizeSlots =
-			cimd.CIMD_MAX_IN_FLIGHT - cimd.CIMD_RESERVED_FOR_TOKEN;
-		const pending = Array.from({ length: authorizeSlots }, (_, i) =>
-			cimd.resolveClientMetadata(`https://app${i}.example.com/c.json`, {
-				purpose: "authorize",
-				source: `ip${i}`,
-			}),
-		);
-		await new Promise((r) => setTimeout(r, 20));
-		const over = await cimd.resolveClientMetadata(
-			"https://over.example.com/c.json",
-			{ purpose: "authorize", source: "ipx" },
-		);
-		expect(over).toMatchObject({ ok: false, reason: "busy", retryable: true });
-		// the reserved slots are still there for a token-path resolution
-		const reserved = Array.from(
-			{ length: cimd.CIMD_RESERVED_FOR_TOKEN },
-			(_, i) =>
-				cimd.resolveClientMetadata(`https://tok${i}.example.com/c.json`, {
-					purpose: "token",
-					source: `tip${i}`,
-				}),
-		);
-		await new Promise((r) => setTimeout(r, 20));
-		expect(rec.requests).toHaveLength(cimd.CIMD_MAX_IN_FLIGHT);
-		const full = await cimd.resolveClientMetadata(
-			"https://full.example.com/c.json",
-			{ purpose: "token", source: "tipx" },
-		);
-		expect(full).toMatchObject({ ok: false, reason: "busy" });
-		for (const r of release) r();
-		const settled = await Promise.all([...pending, ...reserved]);
-		expect(settled.every((r) => r.ok)).toBe(true);
+		const { authorize, token, refresh } = cimd.CIMD_POOL;
+		expect(authorize + token + refresh).toBe(cimd.CIMD_MAX_IN_FLIGHT);
+		let n = 0;
+		const fill = (purpose: "authorize" | "token" | "refresh", count: number) =>
+			Array.from({ length: count + 1 }, () => {
+				n++;
+				return cimd.resolveClientMetadata(`https://h${n}.dom${n}.com/c.json`, {
+					purpose,
+					source: `10.0.${n}.1`,
+				});
+			});
+		const a = fill("authorize", authorize);
+		const tk = fill("token", token);
+		const rf = fill("refresh", refresh);
+		await new Promise((r) => setTimeout(r, 30));
+		// exactly pool-many fetches per purpose started, the extra one of each was busy
+		expect(rec.requests).toHaveLength(authorize + token + refresh);
+		const settled = await Promise.all([...a, ...tk, ...rf]);
+		expect(settled.filter((r) => !r.ok && r.reason === "busy")).toHaveLength(3);
 	});
 });
 
@@ -624,5 +601,137 @@ describe("cache (draft §4.4)", () => {
 		expect(rec.requests.length).toBe(before); // still cached
 		await cimd.resolveClientMetadata(url(1));
 		expect(rec.requests.length).toBe(before + 1); // evicted, fetched again
+	});
+});
+
+describe("H1 round 2 — the sentinel's probes", () => {
+	const hang = {
+		timeoutMs: 400,
+		perSourceLimit: 1000,
+	};
+	const live = (req: { hostname: string }) =>
+		req.hostname === "app.example.com"
+			? json(validDocument())
+			: new Promise<never>(() => undefined);
+
+	it("probe A: eight distinct sources on /token do not stop the refresh from resolving", async () => {
+		const rec = await install({ ...hang, respond: live });
+		const flood = Array.from({ length: 8 }, (_, i) =>
+			cimd.resolveClientMetadata(`https://h${i}.dom${i}.com/c.json`, {
+				purpose: "token",
+				source: `10.0.${i}.1`,
+			}),
+		);
+		await new Promise((r) => setTimeout(r, 30));
+		const refreshed = await cimd.resolveClientMetadata(DOC_URL, {
+			purpose: "refresh",
+			source: "9.9.9.9",
+		});
+		expect(refreshed.ok).toBe(true);
+		const answers = await Promise.all(flood);
+		expect(answers.filter((r) => !r.ok && r.reason === "busy")).toHaveLength(
+			8 - cimd.CIMD_POOL.token,
+		);
+		expect(rec.requests.length).toBe(cimd.CIMD_POOL.token + 1);
+	});
+
+	it("probe B: one source bursting eight stays at its concurrency limit, and the refresh still resolves", async () => {
+		const rec = await install({ ...hang, respond: live });
+		const burst = Array.from({ length: 8 }, (_, i) =>
+			cimd.resolveClientMetadata(`https://h${i}.dom${i}.com/c.json`, {
+				purpose: "token",
+				source: "6.6.6.6",
+			}),
+		);
+		await new Promise((r) => setTimeout(r, 30));
+		expect(rec.requests).toHaveLength(cimd.CIMD_PER_SOURCE_IN_FLIGHT);
+		const refreshed = await cimd.resolveClientMetadata(DOC_URL, {
+			purpose: "refresh",
+			source: "6.6.6.6",
+		});
+		expect(refreshed.ok).toBe(true);
+		const answers = await Promise.all(burst);
+		expect(answers.filter((r) => !r.ok && r.reason === "busy")).toHaveLength(
+			8 - cimd.CIMD_PER_SOURCE_IN_FLIGHT,
+		);
+	});
+
+	it("many sources pointed at one hanging registrable domain hold at most its concurrency bound", async () => {
+		const rec = await install({ ...hang, respond: live });
+		const many = Array.from({ length: 6 }, (_, i) =>
+			cimd.resolveClientMetadata(`https://sub${i}.shared.com/c.json`, {
+				purpose: "token",
+				source: `10.1.${i}.1`,
+			}),
+		);
+		await new Promise((r) => setTimeout(r, 30));
+		expect(rec.requests).toHaveLength(cimd.CIMD_PER_DOMAIN_IN_FLIGHT);
+		const answers = await Promise.all(many);
+		expect(answers.filter((r) => !r.ok && r.reason === "busy")).toHaveLength(
+			6 - cimd.CIMD_PER_DOMAIN_IN_FLIGHT,
+		);
+	});
+
+	it("concurrent resolutions of one client_id share one fetch", async () => {
+		const rec = await install({
+			respond: () => json(validDocument()),
+		});
+		const three = await Promise.all(
+			[1, 2, 3].map((i) =>
+				cimd.resolveClientMetadata(DOC_URL, { source: `10.2.${i}.1` }),
+			),
+		);
+		expect(three.every((r) => r.ok)).toBe(true);
+		expect(rec.requests).toHaveLength(1);
+	});
+});
+
+describe("source key (the per-source limits key on it)", () => {
+	it("IPv6 keys on its /64; IPv4 on the full address; a mapped IPv4 is that IPv4", async () => {
+		cimd = await loadCimd();
+		const k = cimd.sourceKeyOf;
+		expect(k("2001:db8:1:2:aaaa:bbbb:cccc:dddd")).toBe(k("2001:db8:1:2::1"));
+		expect(k("2001:db8:1:2::1")).not.toBe(k("2001:db8:1:3::1"));
+		expect(k("203.0.113.5")).toBe("203.0.113.5");
+		expect(k("203.0.113.5")).not.toBe(k("203.0.113.6"));
+		expect(k("::ffff:203.0.113.5")).toBe("203.0.113.5");
+		expect(k("unknown")).toBe("unknown");
+	});
+
+	it("an IPv6 /64 rotated on every request shares ONE fetch allowance", async () => {
+		await install({
+			perSourceLimit: 2,
+			respond: (req) => json(validDocument({}, `https://${req.hostname}/c.json`)),
+		});
+		const from = (i: number) => `2001:db8:1:2:${i.toString(16)}::${i + 1}`;
+		const results = [];
+		for (let i = 0; i < 3; i++)
+			results.push(
+				await cimd.resolveClientMetadata(`https://a${i}.example.com/c.json`, {
+					source: from(i + 1),
+				}),
+			);
+		expect(results.map((r) => r.ok)).toEqual([true, true, false]);
+		expect(results[2]).toMatchObject({ reason: "rate-limited" });
+		const elsewhere = await cimd.resolveClientMetadata(
+			"https://a9.example.com/c.json",
+			{ source: "2001:db8:1:3::1" },
+		);
+		expect(elsewhere.ok).toBe(true);
+	});
+});
+
+describe("client_name (round 2)", () => {
+	it("folds compatibility forms (NFKC) and turns no-break and typographic spaces into one ASCII space", async () => {
+		await install({
+			respond: () =>
+				json(
+					validDocument({
+						client_name: "\uFF21cme\u00A0\u2003\u2009Corp\u2000",
+					}),
+				),
+		});
+		const r = await cimd.resolveClientMetadata(DOC_URL);
+		expect(r.ok && r.client.clientName).toBe("Acme Corp (app.example.com)");
 	});
 });
