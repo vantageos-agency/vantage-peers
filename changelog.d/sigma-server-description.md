@@ -1,0 +1,4 @@
+---
+section: Changed
+---
+- **The server's public description names what it does.** `SERVER_DESCRIPTION` (`mcp-server/src/brand.ts`), read by the initialize `serverInfo`, every Server Card path and the `/mcp` landing page, is now "Your AI agents keep memory across sessions, message each other, and run tracked tasks and missions." (99 characters, within the Server Card schema's `description` maxLength 100). `mcp-server/package.json` `description`, previously a different sentence, now carries the same text. A declared map `SERVER_DESCRIPTION_CAPABILITIES` ties each named capability to the tools that back it (`store_memory`, `recall`, `send_message`, `check_messages`, `create_task`, `start_task`, `complete_task`, `create_mission`); `mcp-server/test/server-metadata-discoverability.test.ts` section 7 pins the length, the equality across every surface and package.json, and that every mapped tool is served by tools/list. Task k17bgjfga0x3a0srvprvbhhfv98hymyg.
