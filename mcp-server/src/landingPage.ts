@@ -17,6 +17,7 @@
 import {
 	SERVER_CONNECT_DOCS_URL,
 	SERVER_DESCRIPTION,
+	SERVER_LONG_DESCRIPTION,
 	SERVER_TITLE,
 	SERVER_WEBSITE_URL,
 } from "./brand.js";
@@ -81,6 +82,7 @@ export function renderLandingPage(publicBaseUrl: string): string {
 <main>
 <h1>${title}</h1>
 <p>${escapeHtml(SERVER_DESCRIPTION)}</p>
+<p>${escapeHtml(SERVER_LONG_DESCRIPTION)}</p>
 <p>This address is a Model Context Protocol (MCP) server. Add it to your AI client as a remote MCP server:</p>
 <p><code>${endpoint}</code></p>
 <ul>
