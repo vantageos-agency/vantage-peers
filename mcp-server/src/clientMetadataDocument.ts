@@ -64,6 +64,19 @@ export const CIMD_MAX_TTL_MS = 60 * 60 * 1000;
 /** Bound on cached documents and on fetches running at once. */
 export const CIMD_CACHE_MAX_ENTRIES = 256;
 export const CIMD_MAX_IN_FLIGHT = 8;
+/**
+ * Of the CIMD_MAX_IN_FLIGHT slots, this many are usable ONLY by /token
+ * (code exchange and refresh): a flood of /authorize requests naming a
+ * hanging host can occupy at most MAX - RESERVED slots, so a person's
+ * refresh still resolves.
+ */
+export const CIMD_RESERVED_FOR_TOKEN = 3;
+/** Network fetches one source address may start per window (cache hits are free). */
+export const CIMD_PER_SOURCE_LIMIT = 10;
+export const CIMD_PER_SOURCE_WINDOW_MS = 60 * 1000;
+const CIMD_SOURCE_BUCKETS_MAX = 4096;
+/** A client_id longer than this is refused before any parsing. */
+export const CIMD_MAX_CLIENT_ID_LENGTH = 512;
 const MAX_REDIRECT_URIS = 20;
 const MAX_NAME_LENGTH = 100;
 
@@ -100,6 +113,14 @@ export type FetchDeps = {
 	now(): number;
 	timeoutMs: number;
 	maxBytes: number;
+	perSourceLimit: number;
+};
+
+export type ResolveOptions = {
+	/** Who asked (the caller's address); the per-source fetch limit is keyed on it. */
+	source?: string;
+	/** `token` may use the reserved slots; `authorize` (the default) may not. */
+	purpose?: "authorize" | "token";
 };
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -127,6 +148,8 @@ const BLOCKED_V4: [string, number][] = [
 const BLOCKED_V6: [string, number][] = [
 	["::", 128],
 	["::1", 128],
+	["::ffff:0:0", 96], // IPv4-mapped
+	["::ffff:0:0:0", 96], // SIIT (RFC 7915)
 	["64:ff9b::", 96], // NAT64
 	["64:ff9b:1::", 48],
 	["100::", 64], // discard
@@ -183,8 +206,10 @@ export function isBlockedAddress(ip: string): boolean {
 	if (!net.isIPv6(ip)) return true;
 	const g = ipv6Groups(ip);
 	if (!g) return true;
-	const embedsV4 =
-		g.slice(0, 5).every((x) => x === 0) && (g[5] === 0xffff || g[5] === 0);
+	// IPv4-mapped (::ffff:a.b.c.d): a resolver never answers with one for a
+	// public host, so the whole range is refused.
+	if (g.slice(0, 5).every((x) => x === 0) && g[5] === 0xffff) return true;
+	const embedsV4 = g.slice(0, 6).every((x) => x === 0);
 	if (embedsV4) {
 		const v4 = `${g[6] >> 8}.${g[6] & 255}.${g[7] >> 8}.${g[7] & 255}`;
 		return blockList.check(v4, "ipv4");
@@ -205,6 +230,7 @@ export function parseClientMetadataUrl(
 	clientId: string,
 ): { ok: true; url: URL } | { ok: false; reason: string } {
 	const refuse = (reason: string) => ({ ok: false as const, reason });
+	if (clientId.length > CIMD_MAX_CLIENT_ID_LENGTH) return refuse("client-id-too-long");
 	if (!/^https:\/\//.test(clientId)) return refuse("scheme-not-https");
 	// The checks on the raw string come first: the URL parser would silently
 	// rewrite a default port, a dot segment or an empty fragment away.
@@ -226,7 +252,8 @@ export function parseClientMetadataUrl(
 	if (url.href !== clientId) return refuse("client-id-not-canonical");
 	if (url.pathname === "/" || url.pathname === "")
 		return refuse("path-required");
-	const host = url.hostname.replace(/^\[|\]$/g, "");
+	// "localhost." and "intranet." are the same names with a root dot.
+	const host = url.hostname.replace(/^\[|\]$/g, "").replace(/\.+$/, "");
 	if (net.isIP(host)) return refuse("ip-literal-host-forbidden");
 	if (
 		!host.includes(".") ||
@@ -269,9 +296,12 @@ function validRedirectUri(uri: unknown): uri is string {
 
 function sanitiseName(raw: unknown): string {
 	if (typeof raw !== "string") return "";
-	// Control characters and markup-significant characters become spaces.
+	// Format characters (\p{Cf}: bidi overrides U+202A-202E, isolates
+	// U+2066-2069, zero-width U+200B-200F, BOM U+FEFF) and the line/paragraph
+	// separators U+2028-2029 are REMOVED: they reorder or hide text on the
+	// consent screen. Control and markup characters become spaces.
 	let out = "";
-	for (const ch of raw) {
+	for (const ch of raw.replace(/[\p{Cf}\u2028\u2029]/gu, "")) {
 		const code = ch.codePointAt(0) ?? 0;
 		out += code < 0x20 || code === 0x7f || "<>\"'`&".includes(ch) ? " " : ch;
 	}
@@ -360,11 +390,13 @@ const realDeps: FetchDeps = {
 	now: () => Date.now(),
 	timeoutMs: CIMD_TIMEOUT_MS,
 	maxBytes: CIMD_MAX_BYTES,
+	perSourceLimit: CIMD_PER_SOURCE_LIMIT,
 };
 
 let deps: FetchDeps = realDeps;
 const cache = new Map<string, { client: ClientMetadata; expiresAt: number }>();
 let inFlight = 0;
+const sourceBuckets = new Map<string, { count: number; resetAt: number }>();
 
 /** Test seam: replaces the network pieces (and empties the cache); `null` restores the real ones. */
 export function _setClientMetadataDepsForTest(
@@ -372,7 +404,28 @@ export function _setClientMetadataDepsForTest(
 ): void {
 	deps = d ? { ...realDeps, ...d } : realDeps;
 	cache.clear();
+	sourceBuckets.clear();
 	inFlight = 0;
+}
+
+/** Counts one fetch against `key`; false when the source has used its window's allowance. */
+function takeSourceAllowance(key: string): boolean {
+	const now = deps.now();
+	const bucket = sourceBuckets.get(key);
+	if (!bucket || bucket.resetAt <= now) {
+		if (sourceBuckets.size >= CIMD_SOURCE_BUCKETS_MAX) {
+			for (const [k, v] of sourceBuckets) if (v.resetAt <= now) sourceBuckets.delete(k);
+			if (sourceBuckets.size >= CIMD_SOURCE_BUCKETS_MAX) {
+				const oldest = sourceBuckets.keys().next().value;
+				if (oldest !== undefined) sourceBuckets.delete(oldest);
+			}
+		}
+		sourceBuckets.set(key, { count: 1, resetAt: now + CIMD_PER_SOURCE_WINDOW_MS });
+		return deps.perSourceLimit >= 1;
+	}
+	if (bucket.count >= deps.perSourceLimit) return false;
+	bucket.count++;
+	return true;
 }
 
 function ttlFromHeaders(cacheControl: string | undefined): number {
@@ -518,16 +571,24 @@ async function fetchDocument(
  */
 export async function resolveClientMetadata(
 	clientId: string,
+	options: ResolveOptions = {},
 ): Promise<ResolveResult> {
 	const parsed = parseClientMetadataUrl(clientId);
 	if (!parsed.ok) return { ok: false, reason: parsed.reason, retryable: false };
 	const hit = cache.get(clientId);
 	if (hit) {
-		if (hit.expiresAt > deps.now()) return { ok: true, client: hit.client };
 		cache.delete(clientId);
+		if (hit.expiresAt > deps.now()) {
+			cache.set(clientId, hit); // a hit refreshes recency (true LRU)
+			return { ok: true, client: hit.client };
+		}
 	}
-	if (inFlight >= CIMD_MAX_IN_FLIGHT)
-		return { ok: false, reason: "busy", retryable: true };
+	const purpose = options.purpose ?? "authorize";
+	const limit =
+		purpose === "token" ? CIMD_MAX_IN_FLIGHT : CIMD_MAX_IN_FLIGHT - CIMD_RESERVED_FOR_TOKEN;
+	if (inFlight >= limit) return { ok: false, reason: "busy", retryable: true };
+	if (!takeSourceAllowance(`${purpose}:${options.source ?? "unknown"}`))
+		return { ok: false, reason: "rate-limited", retryable: true };
 	inFlight++;
 	try {
 		return await fetchDocument(parsed.url, clientId);

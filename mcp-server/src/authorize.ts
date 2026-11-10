@@ -33,6 +33,7 @@ import { internalClient } from "./auth.js";
 import {
 	type ClientMetadata,
 	isClientMetadataUrl,
+	type ResolveOptions,
 	resolveClientMetadata,
 } from "./clientMetadataDocument.js";
 
@@ -323,9 +324,20 @@ async function registeredClient(
 	)) as RegisteredClientRow;
 }
 
+/** What the routes tell the lookup about a Client ID Metadata Document client. */
+export type DocumentContext = {
+	/** The document already resolved earlier in THIS request: not fetched again. */
+	known?: ClientMetadata;
+	/** Who asked; the per-source fetch limit is keyed on it. */
+	source?: string;
+	/** Records the client_ids that were resolved from a document (for the consent screen). */
+	record?: (clientId: string) => void;
+};
+
 async function lookupClient(
 	clientId: string,
 	expand: RedirectExpander,
+	document: DocumentContext = {},
 ): Promise<AuthorizeClient | null> {
 	const row = await registeredClient(clientId);
 	if (row) {
@@ -341,21 +353,31 @@ async function lookupClient(
 	// (no wildcard expansion) and nothing else: no scope profile, no allow
 	// list, no namespace prefix. Rights come from the signed-in person.
 	if (!isClientMetadataUrl(clientId)) return null;
-	const resolved = await resolveClientMetadata(clientId);
-	if (!resolved.ok) {
-		console.error(`[oauth] client metadata refused: ${resolved.reason}`);
-		return null;
+	let client: ClientMetadata;
+	if (document.known && document.known.clientId === clientId) {
+		client = document.known;
+	} else {
+		const resolved = await resolveClientMetadata(clientId, {
+			purpose: "authorize",
+			...(document.source !== undefined ? { source: document.source } : {}),
+		});
+		if (!resolved.ok) {
+			console.error(`[oauth] client metadata refused: ${resolved.reason}`);
+			return null;
+		}
+		client = resolved.client;
 	}
+	document.record?.(clientId);
 	return {
-		clientId: resolved.client.clientId,
-		redirectUris: resolved.client.redirectUris,
-		clientName: resolved.client.clientName,
+		clientId: client.clientId,
+		redirectUris: client.redirectUris,
+		clientName: client.clientName,
 		revoked: false,
 	};
 }
 
 export type ClientMetadataVerdict =
-	| { ok: true }
+	| { ok: true; client?: ClientMetadata }
 	| { ok: false; reason: string; retryable: boolean };
 
 /**
@@ -368,18 +390,20 @@ export type ClientMetadataVerdict =
 export async function checkClientMetadataForAuthorize(
 	clientId: string,
 	redirectUri: string | undefined,
+	options: ResolveOptions = {},
 ): Promise<ClientMetadataVerdict> {
 	if (!isClientMetadataUrl(clientId)) return { ok: true };
 	if (await registeredClient(clientId)) return { ok: true };
-	return await checkClientMetadataDocument(clientId, redirectUri);
+	return await checkClientMetadataDocument(clientId, redirectUri, options);
 }
 
 /** Resolves the document for an UNREGISTERED URL client_id and checks the redirect_uri against it. */
 export async function checkClientMetadataDocument(
 	clientId: string,
 	redirectUri: string | undefined,
+	options: ResolveOptions = {},
 ): Promise<ClientMetadataVerdict> {
-	const resolved = await resolveClientMetadata(clientId);
+	const resolved = await resolveClientMetadata(clientId, options);
 	if (!resolved.ok) return resolved;
 	const client: ClientMetadata = resolved.client;
 	if (redirectUri !== undefined && !client.redirectUris.includes(redirectUri))
@@ -388,7 +412,7 @@ export async function checkClientMetadataDocument(
 			reason: "redirect-uri-not-registered",
 			retryable: false,
 		};
-	return { ok: true };
+	return { ok: true, client };
 }
 
 /** A mapping row read by the organisation's permanent Clerk id: its own key and kind ride along. */
@@ -491,6 +515,8 @@ export type AuthorizeRuntime = {
 	agentChoices(model: OrgPickerModel): Promise<AgentChoicesByOrg>;
 	/** Set when the last code issue failed because the agent choice was refused. */
 	agentRefusal(): string | null;
+	/** True when this client_id was resolved from a Client ID Metadata Document in this request. */
+	isDocumentClient(clientId: string): boolean;
 };
 
 /**
@@ -502,7 +528,9 @@ export function buildAuthorizeRuntime(
 	settings: AuthorizeSettings,
 	expand: RedirectExpander,
 	posted: PostedAgentFields = {},
+	document: Pick<DocumentContext, "known" | "source"> = {},
 ): AuthorizeRuntime {
+	const documentClients = new Set<string>();
 	const cfg: AuthorizeConfig = {
 		stateSecret: settings.stateSecret,
 		signInUrl: settings.signInUrl,
@@ -522,7 +550,11 @@ export function buildAuthorizeRuntime(
 	let verifiedUserId: string | null = null;
 	let agentRefusal: string | null = null;
 	const deps: AuthorizeDeps = {
-		lookupClient: (clientId) => lookupClient(clientId, expand),
+		lookupClient: (clientId) =>
+			lookupClient(clientId, expand, {
+				...document,
+				record: (id) => documentClients.add(id),
+			}),
 		listMemberships: (userId) => {
 			verifiedUserId = userId;
 			return listUsableMemberships(userId);
@@ -562,6 +594,7 @@ export function buildAuthorizeRuntime(
 			return out;
 		},
 		agentRefusal: () => agentRefusal,
+		isDocumentClient: (clientId) => documentClients.has(clientId),
 	};
 }
 
@@ -775,11 +808,32 @@ function renderAgentChoices(
  * `approved` and the hidden `consentToken` to POST /authorize/org. The
  * consentToken IS the CSRF protection of that POST; do not drop it.
  */
+/** `scheme://host[:port]` of a redirect URI, for the consent screen; null when it does not parse. */
+function redirectOrigin(uri: string | null | undefined): string | null {
+	if (!uri) return null;
+	try {
+		const u = new URL(uri);
+		return u.host ? `${u.protocol}//${u.host}` : u.protocol;
+	} catch {
+		return null;
+	}
+}
+
 export function renderOrgPicker(
 	model: OrgPickerModel,
 	choices: AgentChoicesByOrg = {},
+	context: { redirectUri?: string | null; unverifiedDocument?: boolean } = {},
 ): string {
 	const clientName = model.client.clientName ?? model.client.clientId;
+	const returnsTo = redirectOrigin(context.redirectUri);
+	const notices = [
+		context.unverifiedDocument
+			? `<p class="notice"><strong>Unverified client.</strong> ${escapeHtml(model.client.clientId)} describes itself in a metadata document it publishes; VantagePeers has not vetted it, and the name above is its own claim.</p>`
+			: "",
+		returnsTo
+			? `<p class="notice">After you decide, you are sent back to <strong>${escapeHtml(returnsTo)}</strong>.</p>`
+			: "",
+	].join("\n");
 	const orgs = model.organizations
 		.map((o) => {
 			// Nothing is preselected: the person chooses the organisation a client may reach.
@@ -801,6 +855,7 @@ export function renderOrgPicker(
 <p class="brand">VantagePeers</p>
 <h1>Connect ${escapeHtml(clientName)}</h1>
 <p>${escapeHtml(clientName)} asks to act in VantagePeers on your behalf. Choose the organisation it may reach, then approve or deny.</p>
+${notices}
 <form method="post" action="/authorize/org">
 <input type="hidden" name="state" value="${escapeHtml(model.state)}">
 <input type="hidden" name="consentToken" value="${escapeHtml(model.consentToken ?? "")}">
