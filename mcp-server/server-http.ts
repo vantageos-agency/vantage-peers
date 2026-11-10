@@ -1764,6 +1764,66 @@ admin.post("/oauth/clients", async (c) => {
 	);
 });
 
+// POST /admin/oauth/document-clients/deny   { client_id, reason (>=20), operator }
+// POST /admin/oauth/document-clients/allow   { client_id }
+//
+// The operator's revocation of a Client ID Metadata Document client (a URL
+// client_id has no oauth_clients row). Deny lists the client_id, revokes every
+// live token it holds, and makes /authorize, /token and refresh refuse it
+// before any fetch. Allow lifts the listing (revoked tokens stay revoked).
+// Auth: BEARER_SECRET_MASTER via masterOnlyMiddleware.
+admin.post("/oauth/document-clients/deny", async (c) => {
+	let body: Record<string, unknown> = {};
+	try {
+		body = await c.req.json();
+	} catch {
+		return c.json({ error: "invalid_request", detail: "body must be valid JSON" }, 400);
+	}
+	const clientId = typeof body.client_id === "string" ? body.client_id : "";
+	const reason = typeof body.reason === "string" ? body.reason : "";
+	const operator = typeof body.operator === "string" ? body.operator : "";
+	try {
+		const result = await internalClient().mutation(
+			// biome-ignore lint/suspicious/noExplicitAny: Convex string API
+			"oauth:denyDocumentClient" as any,
+			{ clientId, reason, operator },
+		);
+		return c.json(result as Record<string, unknown>, 200);
+	} catch (err: unknown) {
+		const message = convexFailureText(err);
+		if (/^(REASON_TOO_SHORT|INVALID_CLIENT_ID|OPERATOR_REQUIRED)/.test(message)) {
+			return c.json({ error: "invalid_request", detail: message }, 400);
+		}
+		console.error("[admin] denyDocumentClient failed:", message);
+		return c.json({ error: "server_error", detail: message }, 500);
+	}
+});
+
+admin.post("/oauth/document-clients/allow", async (c) => {
+	let body: Record<string, unknown> = {};
+	try {
+		body = await c.req.json();
+	} catch {
+		return c.json({ error: "invalid_request", detail: "body must be valid JSON" }, 400);
+	}
+	const clientId = typeof body.client_id === "string" ? body.client_id : "";
+	if (!clientId) {
+		return c.json({ error: "invalid_request", detail: "client_id is required" }, 400);
+	}
+	try {
+		const result = await internalClient().mutation(
+			// biome-ignore lint/suspicious/noExplicitAny: Convex string API
+			"oauth:allowDocumentClient" as any,
+			{ clientId },
+		);
+		return c.json(result as Record<string, unknown>, 200);
+	} catch (err: unknown) {
+		const message = convexFailureText(err);
+		console.error("[admin] allowDocumentClient failed:", message);
+		return c.json({ error: "server_error", detail: message }, 500);
+	}
+});
+
 // POST /admin/organizations — one-shot org + orchestrator seats
 admin.post("/organizations", async (c) => {
 	const masterToken = process.env.BEARER_SECRET_MASTER;

@@ -1795,6 +1795,135 @@ export const continueClientTokenWalk = internalMutation({
 	},
 });
 
+// ─────────────────────────────────────────────────────────────────────────────
+// Client ID Metadata Document clients: the operator's deny-list (M2).
+//
+// A CIMD client has no oauth_clients row, so deleteClient cannot revoke it. The
+// operator lists its client_id URL: the MCP refuses it at /authorize, /token and
+// refresh before any fetch (getDocumentClientDenial), the tokens it already
+// holds are revoked here, and getAccessTokenByHash refuses any token row of it.
+// ─────────────────────────────────────────────────────────────────────────────
+
+const MAX_DOCUMENT_CLIENT_ID_LENGTH = 512;
+
+function validDocumentClientId(clientId: string): boolean {
+	if (!clientId.startsWith("https://")) return false;
+	if (clientId.length > MAX_DOCUMENT_CLIENT_ID_LENGTH) return false;
+	try {
+		return new URL(clientId).protocol === "https:";
+	} catch {
+		return false;
+	}
+}
+
+export const denyDocumentClient = mutation({
+	args: { clientId: v.string(), reason: v.string(), operator: v.string() },
+	returns: v.object({
+		clientId: v.string(),
+		alreadyDenied: v.boolean(),
+		accessTokensRevoked: v.number(),
+		refreshTokensRevoked: v.number(),
+	}),
+	handler: async (ctx, args) => {
+		// write-contract: MCP-transport-only — issued via mcp-server client.mutation("oauth:denyDocumentClient", …) from POST /admin/oauth/document-clients/deny (imperative, master bearer); never a subscribing client shell. The refusal is a raise at an imperative call, never at a render.
+		await requireServiceAccount(ctx, "oauth:denyDocumentClient");
+		const door = JSON.stringify({ door: "oauth:denyDocumentClient" });
+		if (args.reason.length < 20) {
+			throw new ConvexError(
+				`REASON_TOO_SHORT: reason must be at least 20 characters (operator audit trail) — ${door}`,
+			);
+		}
+		if (!validDocumentClientId(args.clientId)) {
+			throw new ConvexError(
+				`INVALID_CLIENT_ID: a Client ID Metadata Document client_id is an https URL of at most ${MAX_DOCUMENT_CLIENT_ID_LENGTH} characters — ${door}`,
+			);
+		}
+		if (args.operator.trim().length === 0) {
+			throw new ConvexError(
+				`OPERATOR_REQUIRED: the operator who lists a client is recorded — ${door}`,
+			);
+		}
+		const existing = await ctx.db
+			.query("oauth_denied_document_clients")
+			.withIndex("by_clientId", (q) => q.eq("clientId", args.clientId))
+			.unique();
+		const now = Date.now();
+		if (!existing) {
+			await ctx.db.insert("oauth_denied_document_clients", {
+				clientId: args.clientId,
+				reason: args.reason,
+				addedBy: args.operator.trim(),
+				addedAt: now,
+			});
+		}
+		// Every live token of the client dies now (a second listing sweeps again).
+		const first = await walkClientTokensPage(
+			ctx,
+			{ op: "revoke_all", clientId: args.clientId, now, profile: null },
+			{ accessCursor: null, accessDone: false, refreshCursor: null, refreshDone: false },
+		);
+		if (!first.state.accessDone || !first.state.refreshDone) {
+			await ctx.scheduler.runAfter(0, internal.oauth.continueClientTokenWalk, {
+				op: "revoke_all",
+				clientId: args.clientId,
+				now,
+				...first.state,
+			});
+		}
+		return {
+			clientId: args.clientId,
+			alreadyDenied: existing !== null,
+			accessTokensRevoked: first.accessTouched,
+			refreshTokensRevoked: first.refreshTouched,
+		};
+	},
+});
+
+export const allowDocumentClient = mutation({
+	args: { clientId: v.string() },
+	returns: v.object({ removed: v.boolean() }),
+	handler: async (ctx, args) => {
+		// write-contract: MCP-transport-only — issued via mcp-server client.mutation("oauth:allowDocumentClient", …) from POST /admin/oauth/document-clients/allow (imperative, master bearer); never a subscribing client shell.
+		await requireServiceAccount(ctx, "oauth:allowDocumentClient");
+		const existing = await ctx.db
+			.query("oauth_denied_document_clients")
+			.withIndex("by_clientId", (q) => q.eq("clientId", args.clientId))
+			.unique();
+		if (!existing) return { removed: false };
+		// Lifting the listing does not revive revoked tokens: the client connects again.
+		await ctx.db.delete(existing._id);
+		return { removed: true };
+	},
+});
+
+export const getDocumentClientDenial = query({
+	args: { clientId: v.string() },
+	returns: v.union(
+		v.object({
+			clientId: v.string(),
+			reason: v.string(),
+			addedBy: v.string(),
+			addedAt: v.number(),
+		}),
+		v.null(),
+	),
+	handler: async (ctx, args) => {
+		// isolation-contract: no reactive subscriber exists — the only reader is the MCP server's imperative service call (mcp-server/src/authorize.ts); enumerated with `grep -rn 'getDocumentClientDenial' --include=*.ts --include=*.tsx .` (this repository: mcp-server/src/authorize.ts, tests only). The refusal stays a RAISE: requireServiceAccount throws for any other caller, so an unresolved caller is never told "not listed".
+		await requireServiceAccount(ctx, "oauth:getDocumentClientDenial");
+		const row = await ctx.db
+			.query("oauth_denied_document_clients")
+			.withIndex("by_clientId", (q) => q.eq("clientId", args.clientId))
+			.unique();
+		if (!row) return null;
+		return {
+			clientId: row.clientId,
+			reason: row.reason,
+			addedBy: row.addedBy,
+			addedAt: row.addedAt,
+		};
+	},
+});
+
 export const deleteClient = mutation({
 	args: { clientId: v.string() },
 	returns: v.object({
@@ -2955,6 +3084,15 @@ export const getAccessTokenByHash = query({
 		if (!row) return null;
 		if (row.revokedAt !== undefined) return null;
 		if (row.expiresAt < Date.now()) return null;
+		// A Client ID Metadata Document client the operator has listed holds no
+		// access, whenever its token was minted (derived live, never from a copy).
+		if (row.clientId.startsWith("https://")) {
+			const listed = await ctx.db
+				.query("oauth_denied_document_clients")
+				.withIndex("by_clientId", (q) => q.eq("clientId", row.clientId))
+				.unique();
+			if (listed) return null;
+		}
 		const agent = await liveSeatAgent(ctx, row);
 		// A PERSON token acts as the agent that person designates, decided by the
 		// package (convex/lib/personalAgent.ts); every other token resolves none.

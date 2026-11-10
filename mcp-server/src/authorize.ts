@@ -357,6 +357,11 @@ async function lookupClient(
 	if (document.known && document.known.clientId === clientId) {
 		client = document.known;
 	} else {
+		try {
+			if (await documentClientIsDenied(clientId)) return null;
+		} catch {
+			return null; // unreadable list: fail closed
+		}
 		const resolved = await resolveClientMetadata(clientId, {
 			purpose: "authorize",
 			...(document.source !== undefined ? { source: document.source } : {}),
@@ -374,6 +379,19 @@ async function lookupClient(
 		clientName: client.clientName,
 		revoked: false,
 	};
+}
+
+/**
+ * True when the operator has listed this Client ID Metadata Document client.
+ * Throws when the list cannot be read: callers fail closed.
+ */
+async function documentClientIsDenied(clientId: string): Promise<boolean> {
+	const row = await internalClient().query(
+		// biome-ignore lint/suspicious/noExplicitAny: Convex string API
+		"oauth:getDocumentClientDenial" as any,
+		{ clientId },
+	);
+	return row !== null && row !== undefined;
 }
 
 export type ClientMetadataVerdict =
@@ -403,6 +421,18 @@ export async function checkClientMetadataDocument(
 	redirectUri: string | undefined,
 	options: ResolveOptions = {},
 ): Promise<ClientMetadataVerdict> {
+	// The operator's deny-list is read BEFORE the document is fetched: a listed
+	// client costs no network call and no document is trusted.
+	try {
+		if (await documentClientIsDenied(clientId))
+			return { ok: false, reason: "client-denied", retryable: false };
+	} catch (err) {
+		console.error(
+			"[oauth] document-client deny-list unreadable:",
+			err instanceof Error ? err.message : err,
+		);
+		return { ok: false, reason: "denial-lookup-failed", retryable: true };
+	}
 	const resolved = await resolveClientMetadata(clientId, options);
 	if (!resolved.ok) return resolved;
 	const client: ClientMetadata = resolved.client;

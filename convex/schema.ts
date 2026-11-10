@@ -1525,6 +1525,20 @@ export default defineSchema({
 		.index("by_clientId", ["clientId"])
 		.index("by_scopeProfile", ["scopeProfile"]),
 
+	// ── oauth_denied_document_clients ────────────────────────────────────────
+	// The operator's deny-list of Client ID Metadata Document clients (a
+	// URL-shaped client_id has no oauth_clients row to mark revoked). Written
+	// only by oauth:denyDocumentClient / allowDocumentClient (service account,
+	// reached through the master-bearer admin route). A listed client_id is
+	// refused at /authorize, /token and refresh before any fetch, its live
+	// tokens are revoked, and getAccessTokenByHash refuses any token row of it.
+	oauth_denied_document_clients: defineTable({
+		clientId: v.string(), // the https URL
+		reason: v.string(),
+		addedBy: v.string(), // the operator who listed it
+		addedAt: v.number(),
+	}).index("by_clientId", ["clientId"]),
+
 	// ── oauth_authorization_codes ────────────────────────────────────────────
 	// Short-lived authorization codes (RFC 6749 §4.1). TTL ~10 min.
 	// Cleaned periodically by cron (processExpiredOauthCodes).

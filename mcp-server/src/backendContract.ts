@@ -40,7 +40,7 @@
  */
 
 /** Contract version this MCP build requires from the backend. */
-export const REQUIRED_CONTRACT_VERSION = 25;
+export const REQUIRED_CONTRACT_VERSION = 26;
 
 /** Every public Convex function this MCP build calls (`module:function`). */
 export const MCP_CALLED_FUNCTIONS: readonly string[] = [
@@ -133,9 +133,12 @@ export const MCP_CALLED_FUNCTIONS: readonly string[] = [
 	"oauth:consumePersonCode",
 	"oauth:createAccessToken",
 	"oauth:createClient",
+	"oauth:allowDocumentClient",
 	"oauth:deleteClient",
+	"oauth:denyDocumentClient",
 	"oauth:getAccessTokenByHash",
 	"oauth:getClientByClientId",
+	"oauth:getDocumentClientDenial",
 	"oauth:getRefreshTokenForGrant",
 	"oauth:getScopeProfile",
 	"oauth:listClients",
