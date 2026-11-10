@@ -140,7 +140,8 @@ describe("DCR POST /register — redirect_uris validation (RFC 7591 §3.2.2)", (
 // shadow a Client ID Metadata Document URL.
 // ─────────────────────────────────────────────────────────────────────────────
 describe("DCR assigns a server-generated UUID client_id and ignores the body's", () => {
-	const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
+	const UUID =
+		/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
 	const URL_ID = "https://app.example.com/oauth/client-metadata.json";
 
 	it("a body client_id that is a URL is ignored; the registered id is a UUID", async () => {
