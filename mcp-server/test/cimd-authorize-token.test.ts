@@ -283,16 +283,6 @@ describe("GET /authorize with a URL client_id", () => {
 			"document-too-large",
 		],
 		[
-			"a slow document",
-			() =>
-				network({
-					timeoutMs: 60,
-					respond: () => ({ body: stallingBody("{") }),
-				}),
-			{},
-			"fetch-timeout",
-		],
-		[
 			"a confidential client",
 			() =>
 				network({
@@ -493,5 +483,182 @@ describe("authorization server metadata", () => {
 		const json = (await res.json()) as Record<string, unknown>;
 		expect(json.client_id_metadata_document_supported).toBe(true);
 		expect(json.token_endpoint_auth_methods_supported).toContain("none");
+	});
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Audit round 1 (dev-sentinel on b999d6dc)
+// ─────────────────────────────────────────────────────────────────────────────
+
+const rawAuthorize = (clientId: string, ip: string) =>
+	app.request(
+		authorizeUrl({ clientId, redirectUri: CIMD_REDIRECT, challenge }),
+		{ headers: { "x-real-ip": ip } },
+	);
+
+const refreshWith = (refreshToken: string, extra: Record<string, string> = {}, ip = "9.9.9.9") =>
+	app.request("http://localhost:3000/token", {
+		method: "POST",
+		headers: {
+			"content-type": "application/x-www-form-urlencoded",
+			"x-real-ip": ip,
+		},
+		body: new URLSearchParams({
+			grant_type: "refresh_token",
+			refresh_token: refreshToken,
+			client_id: DOC_URL,
+			...extra,
+		}).toString(),
+	});
+
+async function connected(): Promise<string> {
+	const first = await exchange(await cimdCode("mcp:full offline_access"));
+	expect(first.status).toBe(200);
+	return first.body.refresh_token as string;
+}
+
+describe("H1 — an unauthenticated flood cannot starve the pool", () => {
+	it("a flood of /authorize at hanging hosts, as wide as the whole pool, leaves a person's refresh able to resolve its expired document", async () => {
+		let clock = Date.now();
+		network({
+			now: () => clock,
+			timeoutMs: 400,
+			perSourceLimit: 1000,
+			respond: (req) =>
+				req.hostname === "app.example.com"
+					? { body: bodyOf(JSON.stringify(validDocument())) }
+					: new Promise(() => undefined),
+		});
+		const refreshToken = await connected();
+		clock += cimd.CIMD_MAX_TTL_MS + 1; // the cached document has expired
+		const flood = Array.from({ length: cimd.CIMD_MAX_IN_FLIGHT }, (_, i) =>
+			rawAuthorize(`https://hang${i}.example.com/m.json`, `10.0.0.${i}`),
+		);
+		await new Promise((r) => setTimeout(r, 60));
+		const refreshed = await refreshWith(refreshToken);
+		expect(refreshed.status).toBe(200);
+		const answers = await Promise.all(flood);
+		expect(answers.every((r) => r.status === 503)).toBe(true);
+		const bodies = await Promise.all(answers.map((r) => r.json() as Promise<Record<string, string>>));
+		expect(bodies.filter((b) => b.error_description === "client-metadata: busy").length).toBe(
+			cimd.CIMD_RESERVED_FOR_TOKEN,
+		);
+	});
+
+	it("one source address is limited in fetches (429 rate-limited); another address is not", async () => {
+		network({
+			respond: (req) => ({
+				body: bodyOf(
+					JSON.stringify(validDocument({ client_id: `https://${req.hostname}/other` }, `https://${req.hostname}/m.json`)),
+				),
+			}),
+		});
+		for (let i = 0; i < cimd.CIMD_PER_SOURCE_LIMIT; i++) {
+			const r = await rawAuthorize(`https://c${i}.example.com/m.json`, "7.7.7.7");
+			expect(r.status).toBe(400);
+		}
+		const over = await rawAuthorize("https://cx.example.com/m.json", "7.7.7.7");
+		expect(over.status).toBe(429);
+		expect(over.headers.get("retry-after")).toBeTruthy();
+		expect(await over.json()).toMatchObject({
+			error: "temporarily_unavailable",
+			error_description: "client-metadata: rate-limited",
+		});
+		const other = await rawAuthorize("https://cx.example.com/m.json", "8.8.4.4");
+		expect(other.status).toBe(400);
+	});
+});
+
+describe("M1 — a failure that may pass is temporarily_unavailable, not invalid_client", () => {
+	it("/authorize: DNS that fails answers 503", async () => {
+		cimd._setClientMetadataDepsForTest({
+			...net.deps,
+			resolveHost: async () => {
+				throw new Error("ENOTFOUND");
+			},
+		});
+		const r = await cimdAuthorize();
+		expect(r.status).toBe(503);
+		expect(r.json).toMatchObject({
+			error: "temporarily_unavailable",
+			error_description: "client-metadata: dns-failure",
+		});
+	});
+
+	it("/authorize: a slow document answers 503 fetch-timeout", async () => {
+		network({ timeoutMs: 60, respond: () => ({ body: stallingBody("{") }) });
+		const r = await cimdAuthorize();
+		expect(r.status).toBe(503);
+		expect(r.json).toMatchObject({ error: "temporarily_unavailable", error_description: "client-metadata: fetch-timeout" });
+	});
+
+	it("/token code exchange: a document host that answers 503 gives 503", async () => {
+		const code = await cimdCode();
+		network({ respond: () => ({ status: 503 }) });
+		const r = await exchange(code);
+		expect(r.status).toBe(503);
+		expect(r.body).toMatchObject({ error: "temporarily_unavailable" });
+	});
+
+	it("/token refresh: a network blip answers 503 and the refresh token is NOT spent", async () => {
+		const refreshToken = await connected();
+		network({ respond: () => ({ status: 503 }) });
+		const blip = await refreshWith(refreshToken);
+		expect(blip.status).toBe(503);
+		expect(await blip.json()).toMatchObject({ error: "temporarily_unavailable" });
+		network(); // the host is back
+		const again = await refreshWith(refreshToken);
+		expect(again.status).toBe(200);
+	});
+
+	it("a document that is WRONG stays invalid_client (400)", async () => {
+		network({ respond: () => ({ status: 404 }) });
+		const r = await cimdAuthorize();
+		expect(r.status).toBe(400);
+		expect(r.json).toMatchObject({ error: "invalid_client" });
+	});
+});
+
+describe("M3 — the consent screen", () => {
+	it("says the client is unverified and where the person will be sent back to", async () => {
+		const r = await cimdAuthorize();
+		expect(r.status).toBe(200);
+		expect(r.html).toContain("Unverified client");
+		expect(r.html).toContain("https://app.example.com");
+		expect(r.html).toContain(DOC_URL);
+	});
+
+	it("a registered client gets the return origin but no unverified notice", async () => {
+		const r = await getAuthorize(
+			app,
+			authorizeUrl({ clientId: DCR_ID, redirectUri: DCR_REDIRECT, challenge }),
+			await harness.session("user_1"),
+		);
+		expect(r.status).toBe(200);
+		expect(r.html).toContain("https://client.example");
+		expect(r.html).not.toContain("Unverified client");
+	});
+});
+
+describe("L4 — /authorize resolves the document once", () => {
+	it("a no-store document is fetched once for one /authorize", async () => {
+		network({
+			respond: () => ({
+				headers: { "content-type": "application/json", "cache-control": "no-store" },
+				body: bodyOf(JSON.stringify(validDocument())),
+			}),
+		});
+		const r = await cimdAuthorize();
+		expect(r.status).toBe(200);
+		expect(net.requests).toHaveLength(1);
+	});
+});
+
+describe("a refresh token belongs to the client it was issued to", () => {
+	it("a refresh naming another client_id is invalid_grant", async () => {
+		const refreshToken = await connected();
+		const r = await refreshWith(refreshToken, { client_id: DCR_ID });
+		expect(r.status).toBe(400);
+		expect(await r.json()).toMatchObject({ error: "invalid_grant" });
 	});
 });
