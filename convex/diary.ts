@@ -446,6 +446,13 @@ const DIARY_LIST_ROW = v.object({
 	clerkOrgId: v.optional(v.string()),
 });
 
+/**
+ * The most rows one fleet-master `list` call reads when it filters by `createdBy`
+ * without an `orchestrator`. 500 rows of ~9 KB stay well under Convex's per-call
+ * read ceiling; a sparse author needs several calls, each carrying a cursor.
+ */
+export const DIARY_LIST_SCAN_CAP = 500;
+
 export const list = query({
 	args: {
 	fields: v.optional(v.union(v.literal("lite"), v.literal("full"))), // v2.4.12 accept (no-op for now) — closes ArgumentValidationError from MCP wrappers passing fields
@@ -462,9 +469,17 @@ export const list = query({
 	// The envelope arm is the refusal contract for the signed-in-no-organisation
 	// caller (a mounted, subscribed render: never a throw, never the bytes of an
 	// absence). An array is a served result.
+	// The `partial` arm is the fleet master's capped page (see DIARY_LIST_SCAN_CAP):
+	// fewer than `limit` matches were found inside the scan window, and
+	// `nextCreatedBefore` is the cursor anchor that resumes the scan.
 	returns: v.union(
 		v.array(DIARY_LIST_ROW),
 		v.object({ refused: v.literal(true), items: v.array(DIARY_LIST_ROW) }),
+		v.object({
+			partial: v.literal(true),
+			items: v.array(DIARY_LIST_ROW),
+			nextCreatedBefore: v.number(),
+		}),
 	),
 	handler: async (ctx, args) => {
 		const limit = args.limit ?? 20;
@@ -531,16 +546,32 @@ export const list = query({
 				.take(limit);
 		} else if (scope.isMaster) {
 			// The table's own `_creationTime` order: the cursor anchor is an index
-			// bound, so the range opened is the rows below the anchor, and the author
-			// narrows it by a filter before the take.
-			rows = await ctx.db
+			// bound. `createdBy` is a NAME stamped on legacy rows too, so no ID-keyed
+			// index serves it and a name-keyed one would count against R-53: the
+			// author is matched over a CAPPED window of at most DIARY_LIST_SCAN_CAP
+			// rows per call, never over the whole table.
+			const scanned = await ctx.db
 				.query("diary")
 				.withIndex("by_creation_time", (q) =>
 					before !== undefined ? q.lt("_creationTime", before) : q,
 				)
 				.order("desc")
-				.filter((q) => callerFilter(q, createdBy, undefined))
-				.take(limit);
+				.take(DIARY_LIST_SCAN_CAP);
+			const matched =
+				createdBy === undefined
+					? scanned
+					: scanned.filter((row) => row.createdBy === createdBy);
+			if (matched.length < limit && scanned.length >= DIARY_LIST_SCAN_CAP) {
+				// The cap was hit before the page filled: the rows found so far, plus the
+				// `_creationTime` of the last row SCANNED (not of the last match), from
+				// which the next call resumes with no gap.
+				return {
+					partial: true as const,
+					items: matched,
+					nextCreatedBefore: scanned[scanned.length - 1]._creationTime,
+				};
+			}
+			rows = matched;
 		} else {
 			// Member (with or without an `orchestrator` argument). The tenant key is
 			// the row's permanent org ID (callerTenant), the name key is the ID

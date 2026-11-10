@@ -7975,9 +7975,25 @@ export function registerTools(
 
 				// S3.3 B8 follow-up — emit nextCursor when page is full.
 				const requestedLimit = effectiveLimit ?? 20;
-				const entriesArr = Array.isArray(entries) ? entries : [];
+				// A capped master page (`createdBy`, no `orchestrator`): fewer matches than
+				// the limit were found inside the scan window. The backend names the anchor
+				// the scan resumes from; the caller is told to continue, never "that is all".
+				const partial =
+					entries !== null &&
+					typeof entries === "object" &&
+					!Array.isArray(entries) &&
+					(entries as { partial?: unknown }).partial === true
+						? (entries as { items: unknown[]; nextCreatedBefore: number })
+						: null;
+				const entriesArr = partial
+					? partial.items
+					: Array.isArray(entries)
+						? entries
+						: [];
 				let nextCursor: string | null = null;
-				if (entriesArr.length >= requestedLimit && entriesArr.length > 0) {
+				if (partial) {
+					nextCursor = encodeCursor({ createdBefore: partial.nextCreatedBefore });
+				} else if (entriesArr.length >= requestedLimit && entriesArr.length > 0) {
 					const last = entriesArr[entriesArr.length - 1] as {
 						_creationTime?: number;
 					};
