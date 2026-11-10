@@ -1,0 +1,4 @@
+---
+section: Fixed
+---
+- **`list_diaries createdBy` and `list_recurring_tasks assignedTo`+`active` return a full page.** Both cut `limit` rows and only then dropped the ones that did not match, so a page whose newest rows belonged to another author (or were paused) came back short or empty with no `nextCursor`, while matching rows sat below. The filter is now applied by the read before the take (`diary:list` through the existing `by_creation_time`, `by_orchestrator_date` and `by_org_orchestrator_date_clerk_id` ranges; `recurringTasks:list` through `by_assigneeId` / `by_orgId_assigneeId`, with the cursor anchor as an index bound). No new index, no schema change. `scripts/lib/filter-drop-detector.mjs` gains `findFilterAfterTake`, which flags a caller argument filtered after a take. Task k17bmxpw878e7yhqemey4c38q98hyk9f.
