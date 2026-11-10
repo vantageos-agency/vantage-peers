@@ -324,6 +324,15 @@ describe("lists: the cut page and the refusal", () => {
 		expect(r.isError).toBe(true);
 		expect(r.structuredContent).toBeUndefined();
 	});
+
+	it("an invalid cursor argument is an error whose structuredContent says invalid_cursor, through /mcp", () => {
+		const r = poles.get("invalid-cursor") as CallResult;
+		expect(r.isError, JSON.stringify(r)).toBe(true);
+		expect(r.structuredContent).toEqual({
+			error: { code: "invalid_cursor", message: expect.any(String) },
+		});
+		expect(r.content[0].text).toMatch(/invalid cursor/i);
+	});
 });
 
 // ── the schema as documentation ──────────────────────────────────────────────
