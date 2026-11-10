@@ -136,7 +136,7 @@ afterEach(() => {
 });
 
 function items(
-	result: Doc<"diary">[] | { refused: true; items: Doc<"diary">[] },
+	result: Doc<"diary">[] | { refused: true; items: Doc<"diary">[] } | { partial: true; items: Doc<"diary">[]; nextCreatedBefore: number },
 ) {
 	if (!Array.isArray(result))
 		throw new Error("expected a served array, got the refusal envelope");
