@@ -486,6 +486,51 @@ export function buildStrictInputSchema(
 }
 
 /**
+ * Keys a tool no longer declares but still ACCEPTS, and drops before strict
+ * validation (task k17e90s1n85hjappy26vs2kww18hxjp1, Pi ruling 2026-11-10).
+ * `fields` had no effect on these seven list tools (every row comes back
+ * whole); it is removed from their published input schema, and a caller that
+ * still sends it must not receive a new refusal for a parameter that did
+ * nothing. Only the keys named here, only on the tools named here: every other
+ * unknown key on these tools is still refused, and no other tool is loosened.
+ */
+export const IGNORED_UNDECLARED_KEYS: Readonly<
+	Record<string, readonly string[]>
+> = {
+	list_recurring_tasks: ["fields"],
+	list_peers: ["fields"],
+	list_fix_patterns: ["fields"],
+	list_messages: ["fields"],
+	list_memories: ["fields"],
+	list_episodes: ["fields"],
+	list_diaries: ["fields"],
+};
+
+/**
+ * The input schema a tool is registered with: buildStrictInputSchema, preceded
+ * for a tool of IGNORED_UNDECLARED_KEYS by a step that drops those keys. The
+ * published JSON Schema is the strict object's (the drop step has no JSON
+ * form), so the dropped keys are not advertised.
+ */
+export function buildInputSchema(
+	name: string,
+	shape: z.ZodRawShape,
+): z.ZodType {
+	const strict = buildStrictInputSchema(shape);
+	const ignored = (IGNORED_UNDECLARED_KEYS[name] ?? []).filter(
+		(k) => !(k in shape),
+	);
+	if (ignored.length === 0) return strict;
+	return z.preprocess((value) => {
+		if (value === null || typeof value !== "object" || Array.isArray(value))
+			return value;
+		const kept: Record<string, unknown> = { ...value };
+		for (const k of ignored) delete kept[k];
+		return kept;
+	}, strict);
+}
+
+/**
  * Register a tool through the mandatory-scope wrapper.
  *
  * Positional drop-in for `server.tool(name, description, schema, annotations?,
@@ -675,7 +720,7 @@ export function defineTool(
 
 	// STRICT wrap: reject any arg key not in `schema` instead of silently
 	// stripping it (see buildStrictInputSchema doc comment above).
-	const strictSchema = buildStrictInputSchema(advertisedSchema);
+	const strictSchema = buildInputSchema(name, advertisedSchema);
 
 	// Registered via the config-object API (not the deprecated positional
 	// `server.tool(...)` overload) — that overload's raw-shape/annotations
