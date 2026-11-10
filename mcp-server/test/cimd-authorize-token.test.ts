@@ -220,15 +220,95 @@ describe("GET /authorize with a URL client_id", () => {
 		expect(await codes()).toBe(0);
 	});
 
-	const refusals: [string, () => void, Partial<{ redirectUri: string; clientId: string }>, string][] = [
-		["a redirect_uri the document does not list", () => undefined, { redirectUri: "https://evil.example/callback" }, "redirect-uri-not-registered"],
-		["a document whose client_id differs from the URL", () => network({ respond: () => ({ body: bodyOf(JSON.stringify(validDocument({ client_id: "https://app.example.com/other.json" }))) }) }), {}, "client-id-mismatch"],
-		["an http:// client_id", () => undefined, { clientId: "http://app.example.com/oauth/client-metadata.json" }, "scheme-not-https"],
-		["a host that resolves to a private address", () => network({ dns: { "app.example.com": [{ address: "10.0.0.7", family: 4 }] } }), {}, "address-blocked"],
-		["a redirect from the document URL", () => network({ respond: () => ({ status: 302, headers: { location: "http://169.254.169.254/" } }) }), {}, "redirect-refused"],
-		["an oversized document", () => network({ maxBytes: 64 }), {}, "document-too-large"],
-		["a slow document", () => network({ timeoutMs: 60, respond: () => ({ body: stallingBody("{") }) }), {}, "fetch-timeout"],
-		["a confidential client", () => network({ respond: () => ({ body: bodyOf(JSON.stringify(validDocument({ token_endpoint_auth_method: "client_secret_basic" }))) }) }), {}, "token-endpoint-auth-method-must-be-none"],
+	const refusals: [
+		string,
+		() => void,
+		Partial<{ redirectUri: string; clientId: string }>,
+		string,
+	][] = [
+		[
+			"a redirect_uri the document does not list",
+			() => undefined,
+			{ redirectUri: "https://evil.example/callback" },
+			"redirect-uri-not-registered",
+		],
+		[
+			"a document whose client_id differs from the URL",
+			() =>
+				network({
+					respond: () => ({
+						body: bodyOf(
+							JSON.stringify(
+								validDocument({
+									client_id: "https://app.example.com/other.json",
+								}),
+							),
+						),
+					}),
+				}),
+			{},
+			"client-id-mismatch",
+		],
+		[
+			"an http:// client_id",
+			() => undefined,
+			{ clientId: "http://app.example.com/oauth/client-metadata.json" },
+			"scheme-not-https",
+		],
+		[
+			"a host that resolves to a private address",
+			() =>
+				network({
+					dns: { "app.example.com": [{ address: "10.0.0.7", family: 4 }] },
+				}),
+			{},
+			"address-blocked",
+		],
+		[
+			"a redirect from the document URL",
+			() =>
+				network({
+					respond: () => ({
+						status: 302,
+						headers: { location: "http://169.254.169.254/" },
+					}),
+				}),
+			{},
+			"redirect-refused",
+		],
+		[
+			"an oversized document",
+			() => network({ maxBytes: 64 }),
+			{},
+			"document-too-large",
+		],
+		[
+			"a slow document",
+			() =>
+				network({
+					timeoutMs: 60,
+					respond: () => ({ body: stallingBody("{") }),
+				}),
+			{},
+			"fetch-timeout",
+		],
+		[
+			"a confidential client",
+			() =>
+				network({
+					respond: () => ({
+						body: bodyOf(
+							JSON.stringify(
+								validDocument({
+									token_endpoint_auth_method: "client_secret_basic",
+								}),
+							),
+						),
+					}),
+				}),
+			{},
+			"token-endpoint-auth-method-must-be-none",
+		],
 	];
 	for (const [label, arrange, over, reason] of refusals) {
 		it(`refuses ${label} with ${reason}, issuing no code`, async () => {
@@ -297,7 +377,9 @@ describe("POST /token for a CIMD client (public client, PKCE alone)", () => {
 			respond: () => ({
 				body: bodyOf(
 					JSON.stringify(
-						validDocument({ token_endpoint_auth_method: "client_secret_basic" }),
+						validDocument({
+							token_endpoint_auth_method: "client_secret_basic",
+						}),
 					),
 				),
 			}),
@@ -306,13 +388,16 @@ describe("POST /token for a CIMD client (public client, PKCE alone)", () => {
 		expect(r.status).toBe(400);
 		expect(r.body).toMatchObject({
 			error: "invalid_client",
-			error_description: "client-metadata: token-endpoint-auth-method-must-be-none",
+			error_description:
+				"client-metadata: token-endpoint-auth-method-must-be-none",
 		});
 	});
 
 	it("refuses a redirect_uri the document does not list", async () => {
 		const code = await cimdCode();
-		const r = await exchange(code, { redirect_uri: "https://evil.example/callback" });
+		const r = await exchange(code, {
+			redirect_uri: "https://evil.example/callback",
+		});
 		expect(r.status).toBe(400);
 		expect(r.body).toMatchObject({
 			error: "invalid_client",
@@ -321,7 +406,9 @@ describe("POST /token for a CIMD client (public client, PKCE alone)", () => {
 	});
 
 	it("refuses a URL client_id whose host is internal", async () => {
-		network({ dns: { "app.example.com": [{ address: "127.0.0.1", family: 4 }] } });
+		network({
+			dns: { "app.example.com": [{ address: "127.0.0.1", family: 4 }] },
+		});
 		const r = await exchange("whatever-code");
 		expect(r.status).toBe(400);
 		expect(r.body).toMatchObject({
@@ -363,11 +450,18 @@ describe("registered (DCR) clients are untouched", () => {
 	it("an unknown opaque client_id is still unknown-client, with no fetch", async () => {
 		const r = await getAuthorize(
 			app,
-			authorizeUrl({ clientId: "not-registered", redirectUri: DCR_REDIRECT, challenge }),
+			authorizeUrl({
+				clientId: "not-registered",
+				redirectUri: DCR_REDIRECT,
+				challenge,
+			}),
 			await harness.session("user_1"),
 		);
 		expect(r.status).toBe(400);
-		expect(r.json).toMatchObject({ error: "invalid_client", error_description: "unknown-client" });
+		expect(r.json).toMatchObject({
+			error: "invalid_client",
+			error_description: "unknown-client",
+		});
 		expect(net.dnsQueries).toHaveLength(0);
 	});
 
@@ -393,7 +487,9 @@ describe("registered (DCR) clients are untouched", () => {
 
 describe("authorization server metadata", () => {
 	it("announces client_id_metadata_document_supported: true", async () => {
-		const res = await app.request("http://localhost:3000/.well-known/oauth-authorization-server");
+		const res = await app.request(
+			"http://localhost:3000/.well-known/oauth-authorization-server",
+		);
 		const json = (await res.json()) as Record<string, unknown>;
 		expect(json.client_id_metadata_document_supported).toBe(true);
 		expect(json.token_endpoint_auth_methods_supported).toContain("none");

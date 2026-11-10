@@ -61,7 +61,6 @@ import {
 	unattributedClaimCounts,
 	unattributedClaimSummary,
 } from "./src/auth.js";
-import { isClientMetadataUrl } from "./src/clientMetadataDocument.js";
 import { selectConvexClientForRequest } from "./src/authenticatedConvexClient.js";
 import {
 	type AuthorizeRuntime,
@@ -88,6 +87,7 @@ import {
 	mcpServerOptions,
 } from "./src/brand.js";
 import { buildCommit } from "./src/buildIdentity.js";
+import { isClientMetadataUrl } from "./src/clientMetadataDocument.js";
 import {
 	isBrowserLandingRequest,
 	landingPageResponse,
@@ -773,7 +773,9 @@ function clientMetadataRefusal(
 	c: Context,
 	verdict: { reason: string; retryable: boolean },
 ) {
-	console.error(`[oauth] ${c.req.path} refused: client-metadata ${verdict.reason}`);
+	console.error(
+		`[oauth] ${c.req.path} refused: client-metadata ${verdict.reason}`,
+	);
 	if (verdict.reason === "busy") {
 		return c.json(
 			{
