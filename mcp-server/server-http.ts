@@ -1899,6 +1899,12 @@ async function documentClientAdmin(c: Context, lift: boolean) {
 			400,
 		);
 	}
+	const covers =
+		scope === "host"
+			? "exact host"
+			: scope === "domain"
+				? "registrable domain and all subdomains"
+				: "exact URL";
 	if (!clientId.startsWith("https://")) {
 		return c.json(
 			{
@@ -1937,7 +1943,7 @@ async function documentClientAdmin(c: Context, lift: boolean) {
 					404,
 				);
 			}
-			return c.json({ clientId, scope, unlisted: true }, 200);
+			return c.json({ clientId, scope, covers, unlisted: true }, 200);
 		}
 		if (!result.revokedClient) {
 			return c.json(
@@ -1953,9 +1959,15 @@ async function documentClientAdmin(c: Context, lift: boolean) {
 			{
 				clientId,
 				scope,
+				covers,
 				alreadyDenied: result.alreadyDenied ?? false,
 				accessTokensRevoked: result.revokedTokens,
 				refreshTokensRevoked: result.revokedRefresh,
+				...(scope !== "url"
+					? {
+							tokensRefused: `tokens of ${covers} are refused at every reader, not revoked: nothing was deleted and a lift restores them`,
+						}
+					: {}),
 				...(scope === "url" &&
 				result.revokedTokens === 0 &&
 				result.revokedRefresh === 0
