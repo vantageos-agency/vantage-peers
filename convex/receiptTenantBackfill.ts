@@ -53,7 +53,7 @@ import {
 	type MutationCtx,
 	type QueryCtx,
 } from "./_generated/server";
-import { withOrgScope } from "./lib/auth";
+import { isOrchestratorOnOrgRoster, withOrgScope } from "./lib/auth";
 import { clerkOrgIdForSlug } from "./lib/orgClerkId";
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -145,10 +145,10 @@ export function resolveReceiptPair(
 	recipient: string,
 ): ReceiptPairResolution {
 	const senderOrgs = clientOrgs.filter((org) =>
-		org.allowedOrchestrators.includes(sender),
+		isOrchestratorOnOrgRoster(org, sender),
 	);
 	const recipientOrgs = clientOrgs.filter((org) =>
-		org.allowedOrchestrators.includes(recipient),
+		isOrchestratorOnOrgRoster(org, recipient),
 	);
 
 	if (

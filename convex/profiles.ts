@@ -5,6 +5,7 @@ import type { Doc } from "./_generated/dataModel";
 // convex-strict-mode-doc-type-import-needed-when-refactoring-list-query-from-early-return-to-accumulator-post-filter
 import { memoryTypeValidator, creatorValidator } from "./schema";
 import {
+  isOrchestratorOnOrgRoster,
   type OrgScope,
   requireResolvedCaller,
   verifiedActorValidator,
@@ -212,7 +213,7 @@ export const getProfile = query({
     // instance id, which names no roster entry to leak). The roster only NARROWS:
     // WHICH row is served is decided by stored agent ID (findProfileForCaller).
     const requireOnRoster = (orchestratorId: string): void => {
-      if (scope.isMaster || scope.allowedOrchestrators.includes(orchestratorId)) {
+      if (scope.isMaster || isOrchestratorOnOrgRoster(scope, orchestratorId)) {
         return;
       }
       throw new ConvexError(
