@@ -148,7 +148,9 @@ const BLOCKED_V4: [string, number][] = [
 const BLOCKED_V6: [string, number][] = [
 	["::", 128],
 	["::1", 128],
-	["::ffff:0:0", 96], // IPv4-mapped
+	// IPv4-mapped ::ffff:0:0/96 is refused in isBlockedAddress itself: node's
+	// BlockList matches IPv4 addresses against IPv6 rules by mapping them, so
+	// listing it here would refuse every IPv4 address.
 	["::ffff:0:0:0", 96], // SIIT (RFC 7915)
 	["64:ff9b::", 96], // NAT64
 	["64:ff9b:1::", 48],
