@@ -86,7 +86,8 @@ export function canonicalIp(address: string): string | null {
 	if (family === 4) return bare;
 	if (family !== 6) return null;
 	const g = ipv6Groups(bare);
-	if (g && g.slice(0, 5).every((x) => x === 0) && g[5] === 0xffff)
+	if (g === null) return bare.toLowerCase();
+	if (g.slice(0, 5).every((x) => x === 0) && g[5] === 0xffff)
 		return `${g[6] >> 8}.${g[6] & 255}.${g[7] >> 8}.${g[7] & 255}`;
 	return bare.toLowerCase();
 }

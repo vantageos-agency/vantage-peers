@@ -42,21 +42,29 @@ export function verifyEdgeClientHeader(
 /**
  * The spelling the rate-limit keys use: an IPv4-mapped IPv6 address (any
  * spelling) is its IPv4, a zone id is dropped. Mirrors the proxy's
- * canonicalIp, so the key is the same on both sides.
+ * canonicalIp (edge-proxy/src/ip.ts), so the key is the same on both sides.
  */
 export function canonicalClientIp(address: string): string {
 	const bare = address.split("%")[0];
-	const dotted = /^(?:0{1,4}:){0,5}:?(?:ffff):(\d{1,3}(?:\.\d{1,3}){3})$/i.exec(
-		bare.replace(/^::/, "0:0:0:0:0:"),
-	);
-	if (dotted) return dotted[1];
-	const hex = /^(?:0{1,4}:){5}ffff:([0-9a-f]{1,4}):([0-9a-f]{1,4})$/i.exec(
-		bare.replace(/^::/, "0:0:0:0:0:").replace(/^(::)/, "0:0:0:0:0:"),
-	);
-	if (hex) {
-		const hi = Number.parseInt(hex[1], 16);
-		const lo = Number.parseInt(hex[2], 16);
-		return `${hi >> 8}.${hi & 255}.${lo >> 8}.${lo & 255}`;
+	if (isIP(bare) !== 6) return bare;
+	let text = bare;
+	const lastColon = text.lastIndexOf(":");
+	const tail = text.slice(lastColon + 1);
+	if (tail.includes(".")) {
+		const o = tail.split(".").map(Number);
+		text = `${text.slice(0, lastColon + 1)}${((o[0] << 8) | o[1]).toString(16)}:${((o[2] << 8) | o[3]).toString(16)}`;
 	}
+	const halves = text.split("::");
+	if (halves.length > 2) return bare;
+	const head = halves[0] ? halves[0].split(":") : [];
+	const rest = halves.length === 2 && halves[1] ? halves[1].split(":") : [];
+	const fill = halves.length === 2 ? 8 - head.length - rest.length : 0;
+	if (fill < 0) return bare;
+	const g = [...head, ...Array(fill).fill("0"), ...rest].map((x) =>
+		Number.parseInt(x, 16),
+	);
+	if (g.length !== 8 || g.some((x) => Number.isNaN(x))) return bare;
+	if (g.slice(0, 5).every((x) => x === 0) && g[5] === 0xffff)
+		return `${g[6] >> 8}.${g[6] & 255}.${g[7] >> 8}.${g[7] & 255}`;
 	return bare;
 }
