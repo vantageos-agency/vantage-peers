@@ -1045,3 +1045,20 @@ describe("M2 round 2 — the admin routes", () => {
 		expect(log[1]).toMatchObject({ by: "pi" });
 	});
 });
+
+describe("round 4 — N4: an over-long reason or operator is a 400 on the admin route", () => {
+	it("reason over 500 characters and operator over 120 answer 400, not 500", async () => {
+		const longReason = await adminPost("deny", {
+			client_id: DOC_URL,
+			reason: "x".repeat(501),
+			operator: "laurent",
+		});
+		expect(longReason.status).toBe(400);
+		const longOperator = await adminPost("deny", {
+			client_id: DOC_URL,
+			reason: DENY_REASON,
+			operator: "o".repeat(121),
+		});
+		expect(longOperator.status).toBe(400);
+	});
+});
