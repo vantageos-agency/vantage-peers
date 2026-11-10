@@ -1534,9 +1534,21 @@ export default defineSchema({
 	// tokens are revoked, and getAccessTokenByHash refuses any token row of it.
 	oauth_denied_document_clients: defineTable({
 		clientId: v.string(), // the https URL
+		// The latest listing's reason, operator and time.
 		reason: v.string(),
-		addedBy: v.string(), // the operator who listed it
+		addedBy: v.string(),
 		addedAt: v.number(),
+		// Listed now? An unlisting keeps the row (the audit) and sets this false.
+		active: v.boolean(),
+		// Every listing and unlisting, oldest first: who, when, why.
+		history: v.array(
+			v.object({
+				action: v.union(v.literal("listed"), v.literal("unlisted")),
+				by: v.string(),
+				at: v.number(),
+				reason: v.string(),
+			}),
+		),
 	}).index("by_clientId", ["clientId"]),
 
 	// ── oauth_authorization_codes ────────────────────────────────────────────

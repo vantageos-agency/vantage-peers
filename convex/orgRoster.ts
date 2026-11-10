@@ -3,6 +3,7 @@ import { ConvexError, v } from "convex/values";
 import type { Doc, Id } from "./_generated/dataModel";
 import type { QueryCtx } from "./_generated/server";
 import { query } from "./lib/functions";
+import { isDocumentClientDenied } from "./lib/documentClientDenial";
 import {
 	isMcpBoundMaster,
 	lookupOrgMapping,
@@ -90,7 +91,8 @@ async function mappingOfAccessToken(
 	if (
 		token === null ||
 		token.revokedAt !== undefined ||
-		token.expiresAt < Date.now()
+		token.expiresAt < Date.now() ||
+		(await isDocumentClientDenied(ctx, token.clientId))
 	) {
 		throw new ConvexError(
 			"RBAC_DENIED: access token not found, revoked, or expired",
@@ -322,7 +324,8 @@ export const getForAccessToken = query({
 		if (
 			!token ||
 			token.revokedAt !== undefined ||
-			token.expiresAt < Date.now()
+			token.expiresAt < Date.now() ||
+			(await isDocumentClientDenied(ctx, token.clientId))
 		) {
 			throw new ConvexError(
 				"RBAC_DENIED: access token not found, revoked, or expired",

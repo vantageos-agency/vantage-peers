@@ -28,6 +28,11 @@ import { internal } from "./_generated/api";
 import type { Doc, Id } from "./_generated/dataModel";
 import type { MutationCtx, QueryCtx } from "./_generated/server";
 import { internalMutation, internalQuery } from "./_generated/server";
+import {
+	activeDocumentClientDenial,
+	documentClientRow,
+	isDocumentClientDenied,
+} from "./lib/documentClientDenial";
 import { mutation, query } from "./lib/functions";
 import { normalizeOrchestratorId } from "./_helpers/normalizeOrchestratorId";
 import {
@@ -1809,8 +1814,13 @@ const MAX_DOCUMENT_CLIENT_ID_LENGTH = 512;
 function validDocumentClientId(clientId: string): boolean {
 	if (!clientId.startsWith("https://")) return false;
 	if (clientId.length > MAX_DOCUMENT_CLIENT_ID_LENGTH) return false;
+	if (clientId.includes("#")) return false;
 	try {
-		return new URL(clientId).protocol === "https:";
+		// Canonical form only: a string the URL parser rewrites (upper-case host,
+		// default port, dot segments) is not what any client will present, so
+		// listing it would answer "listed" while blocking nothing.
+		const url = new URL(clientId);
+		return url.protocol === "https:" && url.href === clientId;
 	} catch {
 		return false;
 	}
@@ -1830,10 +1840,7 @@ export const getDocumentClientDenial = query({
 	handler: async (ctx, args) => {
 		// isolation-contract: no reactive subscriber exists — the only reader is the MCP server's imperative service call (mcp-server/src/authorize.ts); enumerated with `grep -rn 'getDocumentClientDenial' --include=*.ts --include=*.tsx .` (this repository: mcp-server/src/authorize.ts, tests only). The refusal stays a RAISE: requireServiceAccount throws for any other caller, so an unresolved caller is never told "not listed".
 		await requireServiceAccount(ctx, "oauth:getDocumentClientDenial");
-		const row = await ctx.db
-			.query("oauth_denied_document_clients")
-			.withIndex("by_clientId", (q) => q.eq("clientId", args.clientId))
-			.unique();
+		const row = await activeDocumentClientDenial(ctx, args.clientId);
 		if (!row) return null;
 		return {
 			clientId: row.clientId,
@@ -1851,12 +1858,15 @@ export const deleteClient = mutation({
 		clientId: v.string(),
 		reason: v.optional(v.string()),
 		operator: v.optional(v.string()),
+		// Unlist a Client ID Metadata Document client (needs reason and operator).
+		lift: v.optional(v.boolean()),
 	},
 	returns: v.object({
 		revokedClient: v.boolean(),
 		revokedTokens: v.number(),
 		revokedRefresh: v.number(),
 		alreadyDenied: v.optional(v.boolean()),
+		unlisted: v.optional(v.boolean()),
 	}),
 	handler: async (ctx, args) => {
 		// write-contract: MCP-transport-only — issued via mcp-server client.mutation("oauth:deleteClient", …) at mcp-server/server-http.ts:1270 (imperative), 0 hits in vantage-peers-dashboard {app,components,hooks,lib,contexts,providers} (measured 2026-10-01 at origin/main e2dc58f and 0466fac); never a subscribing pre-org client shell. The no-org throw is a refusal at an imperative MCP call, never at a render.
@@ -1867,52 +1877,89 @@ export const deleteClient = mutation({
 			.unique();
 		if (!client) {
 			if (validDocumentClientId(args.clientId)) {
-				// A Client ID Metadata Document client: deleting it LISTS it. Written
-				// inline: a separate writing function would be one more R-53 site.
-		const door = JSON.stringify({ door: "oauth:deleteClient" });
-		if ((args.reason ?? "").length < 20) {
-			throw new ConvexError(
-				`REASON_TOO_SHORT: reason must be at least 20 characters (operator audit trail) — ${door}`,
-			);
-		}
-		if ((args.operator ?? "").trim().length === 0) {
-			throw new ConvexError(
-				`OPERATOR_REQUIRED: the operator who lists a client is recorded — ${door}`,
-			);
-		}
-		const existing = await ctx.db
-			.query("oauth_denied_document_clients")
-			.withIndex("by_clientId", (q) => q.eq("clientId", args.clientId))
-			.unique();
-		const now = Date.now();
-		if (!existing) {
-			await ctx.db.insert("oauth_denied_document_clients", {
-				clientId: args.clientId,
-				reason: args.reason as string,
-				addedBy: (args.operator as string).trim(),
-				addedAt: now,
-			});
-		}
-		// Every live token of the client dies now (a second listing sweeps again).
-		const first = await walkClientTokensPage(
-			ctx,
-			{ op: "revoke_all", clientId: args.clientId, now, profile: null },
-			{ accessCursor: null, accessDone: false, refreshCursor: null, refreshDone: false },
-		);
-		if (!first.state.accessDone || !first.state.refreshDone) {
-			await ctx.scheduler.runAfter(0, internal.oauth.continueClientTokenWalk, {
-				op: "revoke_all",
-				clientId: args.clientId,
-				now,
-				...first.state,
-			});
-		}
-		return {
-			revokedClient: true,
-			revokedTokens: first.accessSeen,
-			revokedRefresh: first.refreshSeen,
-			alreadyDenied: existing !== null,
-		};
+				// A Client ID Metadata Document client: deleting it LISTS it (`lift`
+				// unlists it, through this same door). Written inline: a separate
+				// writing function would be one more R-53 site.
+				const door = JSON.stringify({ door: "oauth:deleteClient" });
+				if ((args.reason ?? "").length < 20) {
+					throw new ConvexError(
+						`REASON_TOO_SHORT: reason must be at least 20 characters (operator audit trail) — ${door}`,
+					);
+				}
+				if ((args.operator ?? "").trim().length === 0) {
+					throw new ConvexError(
+						`OPERATOR_REQUIRED: the operator who lists or unlists a client is recorded — ${door}`,
+					);
+				}
+				const by = (args.operator as string).trim();
+				const why = args.reason as string;
+				const existing = await documentClientRow(ctx, args.clientId);
+				const when = Date.now();
+				if (args.lift === true && (existing === null || !existing.active)) {
+					return {
+						revokedClient: false,
+						revokedTokens: 0,
+						revokedRefresh: 0,
+						unlisted: false,
+					};
+				}
+				if (args.lift !== true && existing === null) {
+					await ctx.db.insert("oauth_denied_document_clients", {
+						clientId: args.clientId,
+						reason: why,
+						addedBy: by,
+						addedAt: when,
+						active: true,
+						history: [{ action: "listed", by, at: when, reason: why }],
+					});
+				} else if (args.lift !== true && existing !== null && !existing.active) {
+					await ctx.db.patch(existing._id, {
+						reason: why,
+						addedBy: by,
+						addedAt: when,
+						active: true,
+						history: [
+							...existing.history,
+							{ action: "listed", by, at: when, reason: why },
+						],
+					});
+				}
+				// Every live token of the client dies now. At an unlisting too: a token
+				// that appeared while the client was listed must not come back to life.
+				const swept = await walkClientTokensPage(
+					ctx,
+					{ op: "revoke_all", clientId: args.clientId, now: when, profile: null },
+					{ accessCursor: null, accessDone: false, refreshCursor: null, refreshDone: false },
+				);
+				if (!swept.state.accessDone || !swept.state.refreshDone) {
+					await ctx.scheduler.runAfter(0, internal.oauth.continueClientTokenWalk, {
+						op: "revoke_all",
+						clientId: args.clientId,
+						now: when,
+						...swept.state,
+					});
+				}
+				if (args.lift === true && existing !== null) {
+					await ctx.db.patch(existing._id, {
+						active: false,
+						history: [
+							...existing.history,
+							{ action: "unlisted", by, at: when, reason: why },
+						],
+					});
+					return {
+						revokedClient: false,
+						revokedTokens: swept.accessSeen,
+						revokedRefresh: swept.refreshSeen,
+						unlisted: true,
+					};
+				}
+				return {
+					revokedClient: true,
+					revokedTokens: swept.accessSeen,
+					revokedRefresh: swept.refreshSeen,
+					alreadyDenied: existing !== null && existing.active,
+				};
 			}
 			return { revokedClient: false, revokedTokens: 0, revokedRefresh: 0 };
 		}
@@ -3061,13 +3108,7 @@ export const getAccessTokenByHash = query({
 		if (row.expiresAt < Date.now()) return null;
 		// A Client ID Metadata Document client the operator has listed holds no
 		// access, whenever its token was minted (derived live, never from a copy).
-		if (row.clientId.startsWith("https://")) {
-			const listed = await ctx.db
-				.query("oauth_denied_document_clients")
-				.withIndex("by_clientId", (q) => q.eq("clientId", row.clientId))
-				.unique();
-			if (listed) return null;
-		}
+		if (await isDocumentClientDenied(ctx, row.clientId)) return null;
 		const agent = await liveSeatAgent(ctx, row);
 		// A PERSON token acts as the agent that person designates, decided by the
 		// package (convex/lib/personalAgent.ts); every other token resolves none.

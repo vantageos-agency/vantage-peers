@@ -63,14 +63,23 @@ export const CIMD_DEFAULT_TTL_MS = 5 * 60 * 1000;
 export const CIMD_MAX_TTL_MS = 60 * 60 * 1000;
 /** Bound on cached documents and on fetches running at once. */
 export const CIMD_CACHE_MAX_ENTRIES = 256;
-export const CIMD_MAX_IN_FLIGHT = 8;
 /**
- * Of the CIMD_MAX_IN_FLIGHT slots, this many are usable ONLY by /token
- * (code exchange and refresh): a flood of /authorize requests naming a
- * hanging host can occupy at most MAX - RESERVED slots, so a person's
- * refresh still resolves.
+ * The fetch slots, split between the three paths that resolve a document. A
+ * pool is its own: a path never borrows from another, so a flood of one cannot
+ * starve the others. `refresh` (a person's existing connection) is the one the
+ * others can never take; `token` is a code exchange for a NEW connection.
  */
-export const CIMD_RESERVED_FOR_TOKEN = 3;
+export const CIMD_POOL = { authorize: 3, token: 3, refresh: 2 } as const;
+export const CIMD_MAX_IN_FLIGHT =
+	CIMD_POOL.authorize + CIMD_POOL.token + CIMD_POOL.refresh;
+/** Fetches one source may have in flight at once, per path. */
+export const CIMD_PER_SOURCE_IN_FLIGHT = 2;
+/**
+ * Fetches in flight at once toward one registrable domain (approximated by the
+ * last two labels of the host), whoever asks: many sources pointed at one
+ * hanging domain cannot hold the pools.
+ */
+export const CIMD_PER_DOMAIN_IN_FLIGHT = 2;
 /** Network fetches one source address may start per window (cache hits are free). */
 export const CIMD_PER_SOURCE_LIMIT = 10;
 export const CIMD_PER_SOURCE_WINDOW_MS = 60 * 1000;
@@ -119,8 +128,8 @@ export type FetchDeps = {
 export type ResolveOptions = {
 	/** Who asked (the caller's address); the per-source fetch limit is keyed on it. */
 	source?: string;
-	/** `token` may use the reserved slots; `authorize` (the default) may not. */
-	purpose?: "authorize" | "token";
+	/** Which pool the fetch draws from; `authorize` is the default. */
+	purpose?: "authorize" | "token" | "refresh";
 };
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -148,14 +157,18 @@ const BLOCKED_V4: [string, number][] = [
 const BLOCKED_V6: [string, number][] = [
 	["::", 128],
 	["::1", 128],
-	// IPv4-mapped ::ffff:0:0/96 is refused in isBlockedAddress itself: node's
-	// BlockList matches IPv4 addresses against IPv6 rules by mapping them, so
-	// listing it here would refuse every IPv4 address.
+	// IPv4-mapped ::ffff:0:0/96 is refused in isBlockedAddress itself, NOT here:
+	// node's BlockList checks an IPv4 address against IPv6 rules as its mapped
+	// form ::ffff:a.b.c.d, so a ::ffff:0:0/96 rule in this list would match
+	// EVERY IPv4 address. The SIIT range below (::ffff:0:0:0/96) is a different
+	// range and is safe to list.
 	["::ffff:0:0:0", 96], // SIIT (RFC 7915)
 	["64:ff9b::", 96], // NAT64
 	["64:ff9b:1::", 48],
 	["100::", 64], // discard
 	["2001::", 32], // Teredo
+	["2001:10::", 28], // ORCHID (deprecated)
+	["3fff::", 20], // documentation (RFC 9637)
 	["2001:db8::", 32],
 	["2002::", 16], // 6to4
 	["fc00::", 7], // unique local (includes AWS fd00:ec2::254)
@@ -299,12 +312,19 @@ function validRedirectUri(uri: unknown): uri is string {
 
 function sanitiseName(raw: unknown): string {
 	if (typeof raw !== "string") return "";
-	// Format characters (\p{Cf}: bidi overrides U+202A-202E, isolates
-	// U+2066-2069, zero-width U+200B-200F, BOM U+FEFF) and the line/paragraph
-	// separators U+2028-2029 are REMOVED: they reorder or hide text on the
-	// consent screen. Control and markup characters become spaces.
+	// Compatibility forms are folded (NFKC) so a full-width or ligature
+	// look-alike is shown as the plain text it imitates; no-break and
+	// typographic spaces become one ASCII space. Then format characters
+	// (\p{Cf}: bidi overrides U+202A-202E, isolates U+2066-2069, zero-width
+	// U+200B-200F, BOM U+FEFF) and the line/paragraph separators U+2028-2029 are
+	// REMOVED: they reorder or hide text on the consent screen. Control and
+	// markup characters become spaces.
+	const folded = raw
+		.normalize("NFKC")
+		.replace(/[\u00A0\u2000-\u200A]/g, " ")
+		.replace(/[\p{Cf}\u2028\u2029]/gu, "");
 	let out = "";
-	for (const ch of raw.replace(/[\p{Cf}\u2028\u2029]/gu, "")) {
+	for (const ch of folded) {
 		const code = ch.codePointAt(0) ?? 0;
 		out += code < 0x20 || code === 0x7f || "<>\"'`&".includes(ch) ? " " : ch;
 	}
@@ -398,7 +418,6 @@ const realDeps: FetchDeps = {
 
 let deps: FetchDeps = realDeps;
 const cache = new Map<string, { client: ClientMetadata; expiresAt: number }>();
-let inFlight = 0;
 const sourceBuckets = new Map<string, { count: number; resetAt: number }>();
 
 /** Test seam: replaces the network pieces (and empties the cache); `null` restores the real ones. */
@@ -408,7 +427,35 @@ export function _setClientMetadataDepsForTest(
 	deps = d ? { ...realDeps, ...d } : realDeps;
 	cache.clear();
 	sourceBuckets.clear();
-	inFlight = 0;
+	inFlightByPool.authorize = 0;
+	inFlightByPool.token = 0;
+	inFlightByPool.refresh = 0;
+	inFlightBySource.clear();
+	inFlightByDomain.clear();
+	sharedFetch.clear();
+}
+
+/**
+ * The key the per-source limits use. IPv4: the full address. IPv6: the /64
+ * prefix, because one subscriber holds a whole /64 and can rotate the rest of
+ * the address on every request. A mapped IPv4 (::ffff:a.b.c.d) is that IPv4.
+ */
+export function sourceKeyOf(address: string): string {
+	const bare = address.split("%")[0].trim();
+	if (net.isIPv4(bare)) return bare;
+	if (net.isIPv6(bare)) {
+		const g = ipv6Groups(bare);
+		if (!g) return bare;
+		if (g.slice(0, 5).every((x) => x === 0) && g[5] === 0xffff)
+			return `${g[6] >> 8}.${g[6] & 255}.${g[7] >> 8}.${g[7] & 255}`;
+		return `${g.slice(0, 4).map((x) => x.toString(16)).join(":")}::/64`;
+	}
+	return bare;
+}
+
+/** The registrable domain, approximated by the last two labels of the host. */
+function domainOf(hostname: string): string {
+	return hostname.split(".").slice(-2).join(".");
 }
 
 /** Counts one fetch against `key`; false when the source has used its window's allowance. */
@@ -576,6 +623,21 @@ async function fetchDocument(
  * A refusal carries a stable reason code; invalid or failed fetches are not
  * cached (draft §4.4).
  */
+const inFlightByPool: Record<"authorize" | "token" | "refresh", number> = {
+	authorize: 0,
+	token: 0,
+	refresh: 0,
+};
+const inFlightBySource = new Map<string, number>();
+const inFlightByDomain = new Map<string, number>();
+const sharedFetch = new Map<string, Promise<ResolveResult>>();
+
+function bump(map: Map<string, number>, key: string, by: 1 | -1): void {
+	const next = (map.get(key) ?? 0) + by;
+	if (next <= 0) map.delete(key);
+	else map.set(key, next);
+}
+
 export async function resolveClientMetadata(
 	clientId: string,
 	options: ResolveOptions = {},
@@ -590,18 +652,32 @@ export async function resolveClientMetadata(
 			return { ok: true, client: hit.client };
 		}
 	}
+	// A fetch of this very document is already running: wait for it. It costs
+	// no slot and no allowance, and a crowd asking for one document is one fetch.
+	const running = sharedFetch.get(clientId);
+	if (running) return await running;
+
 	const purpose = options.purpose ?? "authorize";
-	const limit =
-		purpose === "token"
-			? CIMD_MAX_IN_FLIGHT
-			: CIMD_MAX_IN_FLIGHT - CIMD_RESERVED_FOR_TOKEN;
-	if (inFlight >= limit) return { ok: false, reason: "busy", retryable: true };
-	if (!takeSourceAllowance(`${purpose}:${options.source ?? "unknown"}`))
+	const source = sourceKeyOf(options.source ?? "unknown");
+	const sourceKey = `${purpose}:${source}`;
+	const domain = domainOf(parsed.url.hostname);
+	const busy: ResolveResult = { ok: false, reason: "busy", retryable: true };
+	if (inFlightByPool[purpose] >= CIMD_POOL[purpose]) return busy;
+	if ((inFlightBySource.get(sourceKey) ?? 0) >= CIMD_PER_SOURCE_IN_FLIGHT)
+		return busy;
+	if ((inFlightByDomain.get(domain) ?? 0) >= CIMD_PER_DOMAIN_IN_FLIGHT)
+		return busy;
+	if (!takeSourceAllowance(sourceKey))
 		return { ok: false, reason: "rate-limited", retryable: true };
-	inFlight++;
-	try {
-		return await fetchDocument(parsed.url, clientId);
-	} finally {
-		inFlight--;
-	}
+	inFlightByPool[purpose]++;
+	bump(inFlightBySource, sourceKey, 1);
+	bump(inFlightByDomain, domain, 1);
+	const work = fetchDocument(parsed.url, clientId).finally(() => {
+		inFlightByPool[purpose]--;
+		bump(inFlightBySource, sourceKey, -1);
+		bump(inFlightByDomain, domain, -1);
+		sharedFetch.delete(clientId);
+	});
+	sharedFetch.set(clientId, work);
+	return await work;
 }
