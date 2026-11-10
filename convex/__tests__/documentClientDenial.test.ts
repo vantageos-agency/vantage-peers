@@ -19,7 +19,7 @@
 //          revoked, and a token row that appears later is refused by derivation.
 import { describe, expect, test } from "vitest";
 import { convexTest } from "../../tests/fixtures/convexTestWithServiceAccount";
-import { api } from "../_generated/api";
+import { api, internal } from "../_generated/api";
 import schema from "../schema";
 
 const modules = Object.fromEntries(
@@ -50,7 +50,7 @@ const REASON = "abuse report 2026-11-10, operator audit trail";
 const OPERATOR = "laurent";
 
 const deny = (t: T, over: Record<string, unknown> = {}) =>
-	asService(t).mutation(api.oauth.denyDocumentClient, {
+	asService(t).mutation(api.oauth.deleteClient, {
 		clientId: URL_A,
 		reason: REASON,
 		operator: OPERATOR,
@@ -110,14 +110,11 @@ describe("REFUSED", () => {
 	test("an anonymous caller and an ordinary member RAISE RBAC_DENIED on the write", async () => {
 		const t = createT();
 		const args = { clientId: URL_A, reason: REASON, operator: OPERATOR };
+		await expect(t.mutation(api.oauth.deleteClient, args)).rejects.toThrow(
+			/RBAC_DENIED/,
+		);
 		await expect(
-			t.mutation(api.oauth.denyDocumentClient, args),
-		).rejects.toThrow(/RBAC_DENIED/);
-		await expect(
-			asMember(t).mutation(api.oauth.denyDocumentClient, args),
-		).rejects.toThrow(/RBAC_DENIED/);
-		await expect(
-			asMember(t).mutation(api.oauth.allowDocumentClient, { clientId: URL_A }),
+			asMember(t).mutation(api.oauth.deleteClient, args),
 		).rejects.toThrow(/RBAC_DENIED/);
 		const rows = await t.run((ctx) =>
 			ctx.db.query("oauth_denied_document_clients").collect(),
@@ -135,20 +132,25 @@ describe("REFUSED", () => {
 		).rejects.toThrow(/RBAC_DENIED/);
 	});
 
-	test("a short reason, a client_id that is not an https URL, and a missing operator are refused with a code", async () => {
+	test("a short reason and a missing operator are refused with a code; nothing is listed", async () => {
 		const t = createT();
 		await expect(deny(t, { reason: "too short" })).rejects.toThrow(
 			/REASON_TOO_SHORT/,
 		);
-		await expect(deny(t, { clientId: "not-a-url" })).rejects.toThrow(
-			/INVALID_CLIENT_ID/,
-		);
-		await expect(
-			deny(t, { clientId: "http://app.example.com/c.json" }),
-		).rejects.toThrow(/INVALID_CLIENT_ID/);
 		await expect(deny(t, { operator: " " })).rejects.toThrow(
 			/OPERATOR_REQUIRED/,
 		);
+		expect(await denial(t)).toBeNull();
+	});
+
+	test("a client_id that is neither registered nor an https URL is not listed", async () => {
+		const t = createT();
+		for (const clientId of ["not-a-url", "http://app.example.com/c.json"]) {
+			expect(await deny(t, { clientId })).toMatchObject({
+				revokedClient: false,
+			});
+			expect(await denial(t, clientId)).toBeNull();
+		}
 	});
 });
 
@@ -172,7 +174,7 @@ describe("ABSENT and PRESENT", () => {
 	test("listing twice is idempotent: one row, alreadyDenied the second time", async () => {
 		const t = createT();
 		expect(await deny(t)).toMatchObject({
-			clientId: URL_A,
+			revokedClient: true,
 			alreadyDenied: false,
 		});
 		expect(await deny(t)).toMatchObject({ alreadyDenied: true });
@@ -182,23 +184,19 @@ describe("ABSENT and PRESENT", () => {
 		expect(rows).toHaveLength(1);
 	});
 
-	test("allowDocumentClient lifts the listing (the revoked tokens stay revoked)", async () => {
+	test("allowDocumentClient (an operator door, internal) lifts the listing; the revoked tokens stay revoked", async () => {
 		const t = createT();
 		await mint(t, "tok-1", URL_A);
 		await deny(t);
 		expect(
-			await asService(t).mutation(api.oauth.allowDocumentClient, {
-				clientId: URL_A,
-			}),
+			await t.mutation(internal.oauth.allowDocumentClient, { clientId: URL_A }),
 		).toMatchObject({
 			removed: true,
 		});
 		expect(await denial(t)).toBeNull();
 		expect(await lookup(t, "tok-1")).toBeNull();
 		expect(
-			await asService(t).mutation(api.oauth.allowDocumentClient, {
-				clientId: URL_A,
-			}),
+			await t.mutation(internal.oauth.allowDocumentClient, { clientId: URL_A }),
 		).toMatchObject({
 			removed: false,
 		});
@@ -217,8 +215,8 @@ describe("LIVE: a token minted before the listing stops answering after it", () 
 
 		const out = await deny(t);
 		expect(out).toMatchObject({
-			accessTokensRevoked: 1,
-			refreshTokensRevoked: 1,
+			revokedTokens: 1,
+			revokedRefresh: 1,
 		});
 
 		expect(await lookup(t, "tok-a")).toBeNull(); // after: it does not

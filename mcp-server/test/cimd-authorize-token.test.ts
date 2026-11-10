@@ -830,11 +830,12 @@ describe("M2 — a client that is not listed still works, and listing is reversi
 		expect(r.picker?.consentToken).toBeTruthy();
 	});
 
-	it("allow lifts the listing: the client reaches consent again", async () => {
+	it("allowDocumentClient (the operator door run with the admin key) lifts the listing: the client reaches consent again", async () => {
 		await denyClient();
-		const lifted = await adminPost("allow", { client_id: DOC_URL });
-		expect(lifted.status).toBe(200);
-		expect(await lifted.json()).toMatchObject({ removed: true });
+		const lifted = await bridge(t).mutation("oauth:allowDocumentClient", {
+			clientId: DOC_URL,
+		});
+		expect(lifted).toMatchObject({ removed: true });
 		network();
 		const r = await cimdAuthorize();
 		expect(r.status).toBe(200);
