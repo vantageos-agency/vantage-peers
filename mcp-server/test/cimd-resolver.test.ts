@@ -132,6 +132,7 @@ describe("SSRF — address policy", () => {
 		"3fff::1",
 		"3fff:0fff:ffff::1",
 		"2001:10::1",
+		"2001:20::1",
 		"2002:7f00:1::1",
 		"not-an-ip",
 	];
@@ -734,5 +735,85 @@ describe("client_name (round 2)", () => {
 		});
 		const r = await cimd.resolveClientMetadata(DOC_URL);
 		expect(r.ok && r.client.clientName).toBe("Acme Corp (app.example.com)");
+	});
+});
+
+describe("round 3 — the domain bucket is the registrable domain, and never bounds a refresh", () => {
+	const hang = { timeoutMs: 400, perSourceLimit: 1000 };
+	const hangExcept = (...live: string[]) =>
+		(req: { hostname: string }) =>
+			live.includes(req.hostname)
+				? json(validDocument({}, `https://${req.hostname}/c.json`))
+				: new Promise<never>(() => undefined);
+	const at = (host: string, purpose: "authorize" | "token" | "refresh", source: string) =>
+		cimd.resolveClientMetadata(`https://${host}/c.json`, { purpose, source });
+
+	it("domainKeyOf: the registrable domain from the Public Suffix List, trailing dot stripped", async () => {
+		cimd = await loadCimd();
+		const k = cimd.domainKeyOf;
+		expect(k("evil.vercel.app")).toBe("evil.vercel.app"); // vercel.app is a private suffix
+		expect(k("victim.vercel.app")).toBe("victim.vercel.app");
+		expect(k("a.b.example.co.uk")).toBe("example.co.uk");
+		expect(k("a.one.com.")).toBe("one.com");
+		expect(k("a.one.com")).toBe(k("b.one.com"));
+		expect(k("a.one.com")).not.toBe(k("a.two.com"));
+		expect(k("vercel.app")).toBe("vercel.app"); // a bare suffix keys on itself, never shared
+	});
+
+	it("probe E: two hanging fetches on evil.vercel.app do not refuse victim.vercel.app (refresh or token)", async () => {
+		const rec = await install({
+			...hang,
+			respond: hangExcept("victim.vercel.app", "victim2.vercel.app"),
+		});
+		const evil = [
+			at("evil.vercel.app", "token", "10.0.0.1"),
+			at("evil2.vercel.app", "token", "10.0.0.2"),
+		];
+		await new Promise((r) => setTimeout(r, 30));
+		const refresh = await at("victim.vercel.app", "refresh", "9.9.9.9");
+		expect(refresh.ok).toBe(true);
+		const token = await at("victim2.vercel.app", "token", "9.9.9.8");
+		expect(token.ok).toBe(true);
+		expect(rec.requests.length).toBeGreaterThanOrEqual(4);
+		await Promise.all(evil);
+	});
+
+	it("probe F: trailing-dot hosts on different registrable domains do not share a `com.` bucket", async () => {
+		const rec = await install({ ...hang, respond: hangExcept() });
+		const three = [
+			at("a.one.com.", "token", "10.0.0.1"),
+			at("b.two.com.", "token", "10.0.0.2"),
+			at("c.three.com.", "token", "10.0.0.3"),
+		];
+		await new Promise((r) => setTimeout(r, 30));
+		expect(rec.requests).toHaveLength(3);
+		const answers = await Promise.all(three);
+		expect(answers.some((r) => !r.ok && r.reason === "busy")).toBe(false);
+	});
+
+	it("two subdomains of ONE registrable domain still share a bucket (also under a private suffix)", async () => {
+		const rec = await install({ ...hang, respond: hangExcept() });
+		const many = [
+			at("a.evil.vercel.app", "token", "10.0.0.1"),
+			at("b.evil.vercel.app", "token", "10.0.0.2"),
+			at("c.evil.vercel.app", "token", "10.0.0.3"),
+		];
+		await new Promise((r) => setTimeout(r, 30));
+		expect(rec.requests).toHaveLength(cimd.CIMD_PER_DOMAIN_IN_FLIGHT);
+		const answers = await Promise.all(many);
+		expect(answers.filter((r) => !r.ok && r.reason === "busy")).toHaveLength(1);
+	});
+
+	it("the refresh path has no domain bucket: a refresh is admitted while its domain is held by hanging fetches", async () => {
+		const rec = await install({ ...hang, respond: hangExcept("legit.shared.com") });
+		const held = [
+			at("x.shared.com", "token", "10.0.0.1"),
+			at("y.shared.com", "token", "10.0.0.2"),
+		];
+		await new Promise((r) => setTimeout(r, 30));
+		const refresh = await at("legit.shared.com", "refresh", "9.9.9.9");
+		expect(refresh.ok).toBe(true);
+		expect(rec.requests.length).toBe(3);
+		await Promise.all(held);
 	});
 });

@@ -1033,10 +1033,15 @@ describe("M2 round 2 — the admin routes", () => {
 		);
 		expect(rows).toHaveLength(1);
 		expect(rows[0].active).toBe(false);
-		expect(rows[0].history.map((h: { action: string }) => h.action)).toEqual([
-			"listed",
-			"unlisted",
-		]);
-		expect(rows[0].history[1]).toMatchObject({ by: "pi" });
+		const log = (
+			await t.run((ctx) =>
+				ctx.db
+					.query("oauth_document_client_events")
+					.withIndex("by_clientId", (q) => q.eq("clientId", DOC_URL))
+					.collect(),
+			)
+		).sort((a, b) => a._creationTime - b._creationTime);
+		expect(log.map((h) => h.action)).toEqual(["listed", "unlisted"]);
+		expect(log[1]).toMatchObject({ by: "pi" });
 	});
 });
