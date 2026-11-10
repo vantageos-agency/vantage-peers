@@ -17,9 +17,11 @@
  *   5. the six tools with a UI carry `openai/toolInvocation`.
  *   6. bulk_complete_tasks fits Claude Code's 2048-byte field.
  *   7. one public description (task k17bgjfga0x3a0srvprvbhhfv98hymyg):
- *      SERVER_DESCRIPTION fits the pinned schema's maxLength, initialize, every
- *      card path, the landing page and package.json all carry it, and every
- *      capability it names is backed by a tool tools/list serves.
+ *      SERVER_DESCRIPTION and SERVER_LONG_DESCRIPTION are the operator-approved
+ *      texts word for word; the short one fits the pinned schema's maxLength
+ *      and is carried by initialize, every card path, the landing page and
+ *      package.json; the long one is on the landing page; every capability
+ *      either text names is backed by a tool tools/list serves.
  */
 
 import { readFileSync } from "node:fs";
@@ -33,6 +35,8 @@ import { app } from "../server-http.js";
 import {
 	SERVER_DESCRIPTION,
 	SERVER_DESCRIPTION_CAPABILITIES,
+	SERVER_LONG_DESCRIPTION,
+	SERVER_LONG_DESCRIPTION_CAPABILITIES,
 } from "../src/brand.js";
 import * as uiIndex from "../src/ui-resources/index.js";
 
@@ -454,6 +458,17 @@ describe("6. Claude Code 2 KB metadata field", () => {
 });
 
 describe("7. one public description, every named capability served", () => {
+	// The operator-approved texts, pinned literally: a reword fails here.
+	const APPROVED_SHORT =
+		"MCP server for multi-agent teams: persistent memory, agent messaging, time-tracked tasks, missions";
+	const APPROVED_LONG =
+		"VantagePeers Cloud is a hosted remote MCP server that gives teams of AI agents persistent memory across sessions, messaging between agents, and shared tasks and missions. Agents store and recall memories by meaning or by exact terms, message each other through channels and broadcasts, track tasks with time spent per project, and group work into missions. Each organisation stays separate behind signed-in identity. Connect any MCP client, such as Claude, at https://mcp.vantagepeers.com/mcp. Built for developers and teams running several AI agents on the same work.";
+
+	it("SERVER_DESCRIPTION and SERVER_LONG_DESCRIPTION are the approved texts, word for word", () => {
+		expect(SERVER_DESCRIPTION).toBe(APPROVED_SHORT);
+		expect(SERVER_LONG_DESCRIPTION).toBe(APPROVED_LONG);
+	});
+
 	const CARD_PATHS = [
 		"/mcp/server-card",
 		"/.well-known/mcp/server-card.json",
@@ -479,7 +494,7 @@ describe("7. one public description, every named capability served", () => {
 		expect(SERVER_DESCRIPTION.length).toBeLessThanOrEqual(max);
 	});
 
-	it("initialize serverInfo, every card path and the landing page carry SERVER_DESCRIPTION", async () => {
+	it("initialize serverInfo, every card path and the landing page carry SERVER_DESCRIPTION; the landing page also SERVER_LONG_DESCRIPTION", async () => {
 		const client = await connectMaster();
 		try {
 			const info = client.getServerVersion() as Record<string, unknown>;
@@ -498,6 +513,7 @@ describe("7. one public description, every named capability served", () => {
 			await app.fetch(req("/mcp", { headers: { accept: "text/html" } }))
 		).text();
 		expect(html).toContain(`<p>${SERVER_DESCRIPTION}</p>`);
+		expect(html).toContain(`<p>${SERVER_LONG_DESCRIPTION}</p>`);
 	});
 
 	it("package.json description === SERVER_DESCRIPTION (npm cannot import the constant)", () => {
@@ -507,12 +523,26 @@ describe("7. one public description, every named capability served", () => {
 		expect(pkg.description).toBe(SERVER_DESCRIPTION);
 	});
 
-	it("every capability phrase is in the text and every tool backing it is in tools/list", async () => {
-		const entries = Object.entries(SERVER_DESCRIPTION_CAPABILITIES ?? {});
-		expect(entries.length).toBeGreaterThan(0);
-		for (const [phrase, tools] of entries) {
-			expect(SERVER_DESCRIPTION, phrase).toContain(phrase);
-			expect(tools.length, phrase).toBeGreaterThan(0);
+	it("every capability phrase is in its text and every tool backing it is in tools/list", async () => {
+		const maps: Array<
+			[string, string, Readonly<Record<string, readonly string[]>>]
+		> = [
+			["short", SERVER_DESCRIPTION, SERVER_DESCRIPTION_CAPABILITIES ?? {}],
+			[
+				"long",
+				SERVER_LONG_DESCRIPTION,
+				SERVER_LONG_DESCRIPTION_CAPABILITIES ?? {},
+			],
+		];
+		const entries: Array<[string, readonly string[]]> = [];
+		for (const [label, text, map] of maps) {
+			const own = Object.entries(map);
+			expect(own.length, label).toBeGreaterThan(0);
+			for (const [phrase, tools] of own) {
+				expect(text, `${label}: ${phrase}`).toContain(phrase);
+				expect(tools.length, `${label}: ${phrase}`).toBeGreaterThan(0);
+				entries.push([`${label}: ${phrase}`, tools]);
+			}
 		}
 		const client = await connectMaster();
 		try {
