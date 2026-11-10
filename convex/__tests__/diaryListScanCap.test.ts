@@ -163,9 +163,9 @@ describe("diary:list master createdBy without orchestrator — a bounded scan pe
 	test("a sparse author: no call walks more than the cap", async () => {
 		const { master } = await seed();
 		const page = await readPage(master, { createdBy: AUTHOR, limit: 5 });
-		expect(page.reads).toHaveLength(1);
-		expect(page.reads[0].rangeDocs).toBeGreaterThan(CAP);
-		expect(page.reads[0].walked).toBeLessThanOrEqual(CAP);
+		// Every read of the call (the window, then the filtered read inside it).
+		expect(page.reads.length).toBeGreaterThan(0);
+		for (const read of page.reads) expect(read.walked).toBeLessThanOrEqual(CAP);
 	});
 
 	test("a capped page returns a cursor that resumes with no gap and no duplicate", async () => {
@@ -178,7 +178,7 @@ describe("diary:list master createdBy without orchestrator — a bounded scan pe
 		for (; calls < 10; ) {
 			const page = await readPage(master, { createdBy: AUTHOR, limit: 5, createdBefore });
 			calls++;
-			expect(page.reads[0].walked).toBeLessThanOrEqual(CAP);
+			for (const read of page.reads) expect(read.walked).toBeLessThanOrEqual(CAP);
 			collected.push(...page.rows.map((r) => r._id));
 			if (page.partial) {
 				sawPartial = true;

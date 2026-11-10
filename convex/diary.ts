@@ -548,30 +548,47 @@ export const list = query({
 			// The table's own `_creationTime` order: the cursor anchor is an index
 			// bound. `createdBy` is a NAME stamped on legacy rows too, so no ID-keyed
 			// index serves it and a name-keyed one would count against R-53: the
-			// author is matched over a CAPPED window of at most DIARY_LIST_SCAN_CAP
-			// rows per call, never over the whole table.
-			const scanned = await ctx.db
+			// author is matched by the read, inside a WINDOW of at most
+			// DIARY_LIST_SCAN_CAP rows per call, never over the whole table. The window
+			// is found first (its oldest `_creationTime`), then the filtered read is
+			// confined to it by an index bound, so the filter still runs before the take.
+			const window = await ctx.db
 				.query("diary")
 				.withIndex("by_creation_time", (q) =>
 					before !== undefined ? q.lt("_creationTime", before) : q,
 				)
 				.order("desc")
 				.take(DIARY_LIST_SCAN_CAP);
-			const matched =
-				createdBy === undefined
-					? scanned
-					: scanned.filter((row) => row.createdBy === createdBy);
-			if (matched.length < limit && scanned.length >= DIARY_LIST_SCAN_CAP) {
-				// The cap was hit before the page filled: the rows found so far, plus the
-				// `_creationTime` of the last row SCANNED (not of the last match), from
-				// which the next call resumes with no gap.
-				return {
-					partial: true as const,
-					items: matched,
-					nextCreatedBefore: scanned[scanned.length - 1]._creationTime,
-				};
+			if (createdBy === undefined) {
+				rows = window;
+			} else {
+				const capped = window.length >= DIARY_LIST_SCAN_CAP;
+				const oldest = capped ? window[window.length - 1]._creationTime : undefined;
+				const matched = await ctx.db
+					.query("diary")
+					.withIndex("by_creation_time", (q) => {
+						if (oldest !== undefined && before !== undefined) {
+							return q.gte("_creationTime", oldest).lt("_creationTime", before);
+						}
+						if (oldest !== undefined) return q.gte("_creationTime", oldest);
+						if (before !== undefined) return q.lt("_creationTime", before);
+						return q;
+					})
+					.order("desc")
+					.filter((q) => callerFilter(q, createdBy, undefined))
+					.take(limit);
+				if (oldest !== undefined && matched.length < limit) {
+					// The cap was hit before the page filled: the rows found so far, plus
+					// the `_creationTime` of the oldest row SCANNED (not of the last match),
+					// from which the next call resumes with no gap.
+					return {
+						partial: true as const,
+						items: matched,
+						nextCreatedBefore: oldest,
+					};
+				}
+				rows = matched;
 			}
-			rows = matched;
 		} else {
 			// Member (with or without an `orchestrator` argument). The tenant key is
 			// the row's permanent org ID (callerTenant), the name key is the ID
