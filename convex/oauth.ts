@@ -1816,81 +1816,80 @@ function validDocumentClientId(clientId: string): boolean {
 	}
 }
 
-export const denyDocumentClient = mutation({
-	args: { clientId: v.string(), reason: v.string(), operator: v.string() },
-	returns: v.object({
-		clientId: v.string(),
-		alreadyDenied: v.boolean(),
-		accessTokensRevoked: v.number(),
-		refreshTokensRevoked: v.number(),
-	}),
-	handler: async (ctx, args) => {
-		// write-contract: MCP-transport-only — issued via mcp-server client.mutation("oauth:denyDocumentClient", …) from POST /admin/oauth/document-clients/deny (imperative, master bearer); never a subscribing client shell. The refusal is a raise at an imperative call, never at a render.
-		await requireServiceAccount(ctx, "oauth:denyDocumentClient");
-		const door = JSON.stringify({ door: "oauth:denyDocumentClient" });
-		if (args.reason.length < 20) {
-			throw new ConvexError(
-				`REASON_TOO_SHORT: reason must be at least 20 characters (operator audit trail) — ${door}`,
-			);
-		}
-		if (!validDocumentClientId(args.clientId)) {
-			throw new ConvexError(
-				`INVALID_CLIENT_ID: a Client ID Metadata Document client_id is an https URL of at most ${MAX_DOCUMENT_CLIENT_ID_LENGTH} characters — ${door}`,
-			);
-		}
-		if (args.operator.trim().length === 0) {
-			throw new ConvexError(
-				`OPERATOR_REQUIRED: the operator who lists a client is recorded — ${door}`,
-			);
-		}
-		const existing = await ctx.db
-			.query("oauth_denied_document_clients")
-			.withIndex("by_clientId", (q) => q.eq("clientId", args.clientId))
-			.unique();
-		const now = Date.now();
-		if (!existing) {
-			await ctx.db.insert("oauth_denied_document_clients", {
-				clientId: args.clientId,
-				reason: args.reason,
-				addedBy: args.operator.trim(),
-				addedAt: now,
-			});
-		}
-		// Every live token of the client dies now (a second listing sweeps again).
-		const first = await walkClientTokensPage(
-			ctx,
-			{ op: "revoke_all", clientId: args.clientId, now, profile: null },
-			{ accessCursor: null, accessDone: false, refreshCursor: null, refreshDone: false },
+/**
+ * Lists a Client ID Metadata Document client and revokes everything it holds.
+ * Reached through `deleteClient` (a URL client_id has no oauth_clients row to
+ * revoke, so "delete this client" lists it). Idempotent: a second listing
+ * sweeps the tokens again and says `alreadyDenied`.
+ */
+async function listDocumentClient(
+	ctx: MutationCtx,
+	args: { clientId: string; reason: string | undefined; operator: string | undefined },
+): Promise<{
+	revokedClient: boolean;
+	revokedTokens: number;
+	revokedRefresh: number;
+	alreadyDenied: boolean;
+}> {
+	const door = JSON.stringify({ door: "oauth:deleteClient" });
+	if ((args.reason ?? "").length < 20) {
+		throw new ConvexError(
+			`REASON_TOO_SHORT: reason must be at least 20 characters (operator audit trail) — ${door}`,
 		);
-		if (!first.state.accessDone || !first.state.refreshDone) {
-			await ctx.scheduler.runAfter(0, internal.oauth.continueClientTokenWalk, {
-				op: "revoke_all",
-				clientId: args.clientId,
-				now,
-				...first.state,
-			});
-		}
-		return {
+	}
+	if ((args.operator ?? "").trim().length === 0) {
+		throw new ConvexError(
+			`OPERATOR_REQUIRED: the operator who lists a client is recorded — ${door}`,
+		);
+	}
+	const existing = await ctx.db
+		.query("oauth_denied_document_clients")
+		.withIndex("by_clientId", (q) => q.eq("clientId", args.clientId))
+		.unique();
+	const now = Date.now();
+	if (!existing) {
+		await ctx.db.insert("oauth_denied_document_clients", {
 			clientId: args.clientId,
-			alreadyDenied: existing !== null,
-			accessTokensRevoked: first.accessTouched,
-			refreshTokensRevoked: first.refreshTouched,
-		};
-	},
-});
+			reason: args.reason as string,
+			addedBy: (args.operator as string).trim(),
+			addedAt: now,
+		});
+	}
+	// Every live token of the client dies now (a second listing sweeps again).
+	const first = await walkClientTokensPage(
+		ctx,
+		{ op: "revoke_all", clientId: args.clientId, now, profile: null },
+		{ accessCursor: null, accessDone: false, refreshCursor: null, refreshDone: false },
+	);
+	if (!first.state.accessDone || !first.state.refreshDone) {
+		await ctx.scheduler.runAfter(0, internal.oauth.continueClientTokenWalk, {
+			op: "revoke_all",
+			clientId: args.clientId,
+			now,
+			...first.state,
+		});
+	}
+	return {
+		revokedClient: true,
+		revokedTokens: first.accessSeen,
+		revokedRefresh: first.refreshSeen,
+		alreadyDenied: existing !== null,
+	};
+}
 
-export const allowDocumentClient = mutation({
+// Lifts a listing. An operator door run with the admin key
+// (`npx convex run oauth:allowDocumentClient '{"clientId":"https://..."}'`): no
+// client, token or MCP route reaches it. The tokens revoked by the listing stay
+// revoked; the client connects again.
+export const allowDocumentClient = internalMutation({
 	args: { clientId: v.string() },
 	returns: v.object({ removed: v.boolean() }),
 	handler: async (ctx, args) => {
-		// write-contract: MCP-transport-only — issued via mcp-server client.mutation("oauth:allowDocumentClient", …) from POST /admin/oauth/document-clients/allow (imperative, master bearer); never a subscribing client shell.
-		await requireServiceAccount(ctx, "oauth:allowDocumentClient");
 		const existing = await ctx.db
 			.query("oauth_denied_document_clients")
 			.withIndex("by_clientId", (q) => q.eq("clientId", args.clientId))
 			.unique();
 		if (!existing) return { removed: false };
-		// Lifting the listing does not revive revoked tokens: the client connects again.
 		await ctx.db.delete(existing._id);
 		return { removed: true };
 	},
@@ -1925,11 +1924,18 @@ export const getDocumentClientDenial = query({
 });
 
 export const deleteClient = mutation({
-	args: { clientId: v.string() },
+	// `reason` and `operator` are for a Client ID Metadata Document client (a URL
+	// client_id with no oauth_clients row): deleting it LISTS it on the deny-list.
+	args: {
+		clientId: v.string(),
+		reason: v.optional(v.string()),
+		operator: v.optional(v.string()),
+	},
 	returns: v.object({
 		revokedClient: v.boolean(),
 		revokedTokens: v.number(),
 		revokedRefresh: v.number(),
+		alreadyDenied: v.optional(v.boolean()),
 	}),
 	handler: async (ctx, args) => {
 		// write-contract: MCP-transport-only — issued via mcp-server client.mutation("oauth:deleteClient", …) at mcp-server/server-http.ts:1270 (imperative), 0 hits in vantage-peers-dashboard {app,components,hooks,lib,contexts,providers} (measured 2026-10-01 at origin/main e2dc58f and 0466fac); never a subscribing pre-org client shell. The no-org throw is a refusal at an imperative MCP call, never at a render.
@@ -1939,6 +1945,9 @@ export const deleteClient = mutation({
 			.withIndex("by_clientId", (q) => q.eq("clientId", args.clientId))
 			.unique();
 		if (!client) {
+			if (validDocumentClientId(args.clientId)) {
+				return await listDocumentClient(ctx, args);
+			}
 			return { revokedClient: false, revokedTokens: 0, revokedRefresh: 0 };
 		}
 
