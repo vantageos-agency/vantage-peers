@@ -169,6 +169,18 @@ describe("operator org:admin creates a NEW client org", () => {
 		expect(await countMappings(t, "client-acme")).toBe(0);
 	});
 
+	test("REFUSED: signed in with no organisation -> reason no-organisation, nothing created", async () => {
+		const t = createT();
+		await seedOrg(t, "operator-org", "operator");
+		await denied(
+			t
+				.withIdentity({ subject: "u-no-org" } as Ident)
+				.mutation(api.oauth.provisionOrganization, args("client-acme")),
+			"no-organisation",
+		);
+		expect(await countMappings(t, "client-acme")).toBe(0);
+	});
+
 	test("REFUSED: operator admin targeting an EXISTING other org's slug (no hijack, no re-provision)", async () => {
 		const t = createT();
 		await seedOrg(t, "operator-org", "operator");
