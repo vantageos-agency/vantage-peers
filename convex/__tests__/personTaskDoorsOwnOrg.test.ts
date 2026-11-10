@@ -166,7 +166,7 @@ describe("person of a client org with a mixed-case consent agent, on its OWN tas
 	});
 	test("OWN list (list_tasks) contains the row create wrote", async () => {
 		const { a, id } = await fresh();
-		const listed = (await a.list()) as Array<{ _id: Id<"tasks"> }>;
+		const listed = (await a.list()) as unknown as Array<{ _id: Id<"tasks"> }>;
 		expect(listed.map((r) => r._id)).toContain(id);
 	});
 	test("OWN start serves", async () => {
@@ -216,7 +216,7 @@ describe("ABSENT: the roster still narrows inside the org", () => {
 		const a = as(t, A, ag.Ada);
 		expect(await a.getById(id)).toBeNull();
 		expect(await a.get(id)).toBeNull();
-		const listed = (await a.list()) as Array<{ _id: Id<"tasks"> }>;
+		const listed = (await a.list()) as unknown as Array<{ _id: Id<"tasks"> }>;
 		expect(listed.map((r) => r._id)).not.toContain(id);
 	});
 });

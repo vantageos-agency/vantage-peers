@@ -5,6 +5,7 @@ import type {
 	NamedTableInfo,
 } from "convex/server";
 import type { DataModel } from "../_generated/dataModel";
+import { normalizeOrchestratorId } from "../_helpers/normalizeOrchestratorId";
 import type { OrgScope } from "./auth";
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -21,7 +22,9 @@ import type { OrgScope } from "./auth";
 //   1. the tenant gate: the row's permanent org ID equals the caller's
 //      (`sameOrg` compares IDs, and a row with no ID matches nobody);
 //   2. the roster: the row's assignee is one the caller's org admits
-//      (`allowedOrchestrators`, exact names, as `filterByOrgScope` reads them).
+//      (`allowedOrchestrators`, matched by the exact name AND its normalised
+//      form, because writers store the normalised label while a roster holds the
+//      agent's exact name, as `filterByOrgScope` reads them).
 //
 // It decides nothing new and widens nothing: the fleet reads the table as before
 // (the package's `hasFleetRead`), and a scope that holds no org ID or no admitted
@@ -40,7 +43,13 @@ export type TaskScopeReach =
 export function taskScopeReach(scope: OrgScope): TaskScopeReach {
 	if (hasFleetRead(scope)) return { reach: "fleet" };
 	const orgId = scope.orgClerkId;
-	const names = scope.allowedOrchestrators.filter((name) => name !== "");
+	const names = [
+		...new Set(
+			scope.allowedOrchestrators
+				.filter((name) => name !== "" && name !== "*")
+				.flatMap((name) => [name, normalizeOrchestratorId(name)]),
+		),
+	];
 	if (orgId === undefined || orgId === "" || names.length === 0) {
 		return { reach: "none" };
 	}

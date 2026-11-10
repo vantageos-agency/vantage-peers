@@ -1,0 +1,4 @@
+---
+section: Fixed
+---
+- **A client-org person acting as its consent agent can read and act on its own tasks.** `create_task` succeeded, then `get_task` answered "Task not found", every write door answered `RBAC_DENIED` (tenant boundary) and `list_tasks` returned nothing. The MCP stores `assignedTo`/`createdBy` lowercased, while the org roster holds the agent's exact name ("Ada", "Bram"); the roster leg of the tenant gate (`filterByOrgScope`, hence `isRowVisibleToScope` and every task door) and the in-query roster filter of the task lists compared them by exact string and never matched a mixed-case agent. The roster is now compared after `normalizeOrchestratorId`, the same predicate `requireOrchestratorOnRoster` already used; it still only narrows inside the org, and another organisation's rows stay refused. Task k1726h1v7hqdbk818bn8s1rgdx8hy0ts.
