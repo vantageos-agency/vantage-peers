@@ -141,6 +141,11 @@ export type ResolveOptions = {
 	 * most one fetch in flight.
 	 */
 	connection?: string;
+	/**
+	 * A refresh only: the person (the userId of the refresh-token record). One
+	 * person has at most one refresh fetch in flight, over all their connections.
+	 */
+	person?: string;
 	/** Which pool the fetch draws from; `authorize` is the default. */
 	purpose?: "authorize" | "token" | "refresh";
 };
@@ -459,6 +464,7 @@ export function _setClientMetadataDepsForTest(
 	inFlightBySource.clear();
 	inFlightByDomain.clear();
 	inFlightByConnection.clear();
+	inFlightByPerson.clear();
 	sharedFetch.clear();
 }
 
@@ -530,7 +536,14 @@ function ttlFromHeaders(cacheControl: string | undefined): number {
 	return Math.min(Number(m[1]) * 1000, CIMD_MAX_TTL_MS);
 }
 
+/**
+ * The cache reflects the latest SUCCESSFUL fetch. With a TTL the entry is
+ * replaced; with none (`no-store`, `max-age=0`) it is DELETED, so an older copy
+ * (say one that still listed a redirect URI the document dropped) can never be
+ * served stale after a newer fetch superseded it.
+ */
 function remember(url: string, client: ClientMetadata, ttlMs: number): void {
+	cache.delete(url);
 	if (ttlMs <= 0) return;
 	if (cache.size >= CIMD_CACHE_MAX_ENTRIES) {
 		const oldest = cache.keys().next().value;
@@ -670,6 +683,7 @@ const inFlightByPool: Record<"authorize" | "token" | "refresh", number> = {
 const inFlightBySource = new Map<string, number>();
 const inFlightByDomain = new Map<string, number>();
 const inFlightByConnection = new Map<string, number>();
+const inFlightByPerson = new Map<string, number>();
 const sharedFetch = new Map<string, Promise<ResolveResult>>();
 
 function bump(map: Map<string, number>, key: string, by: 1 | -1): void {
@@ -726,6 +740,8 @@ async function resolveUncached(
 		purpose === "refresh" && options.connection
 			? options.connection
 			: undefined;
+	const person =
+		purpose === "refresh" && options.person ? options.person : undefined;
 	const domain = domainKeyOf(url.hostname);
 	if (domain === null)
 		return { ok: false, reason: "domain-unresolvable", retryable: false };
@@ -737,6 +753,8 @@ async function resolveUncached(
 		connection !== undefined &&
 		(inFlightByConnection.get(connection) ?? 0) >= 1
 	)
+		return busy;
+	if (person !== undefined && (inFlightByPerson.get(person) ?? 0) >= 1)
 		return busy;
 	// A refresh has no domain bucket: it keeps its own reserved pool, the
 	// per-source limits and one fetch per connection.
@@ -751,11 +769,13 @@ async function resolveUncached(
 	inFlightByPool[purpose]++;
 	bump(inFlightBySource, sourceKey, 1);
 	if (connection !== undefined) bump(inFlightByConnection, connection, 1);
+	if (person !== undefined) bump(inFlightByPerson, person, 1);
 	if (boundByDomain) bump(inFlightByDomain, domain, 1);
 	const work = fetchDocument(url, clientId).finally(() => {
 		inFlightByPool[purpose]--;
 		bump(inFlightBySource, sourceKey, -1);
 		if (connection !== undefined) bump(inFlightByConnection, connection, -1);
+		if (person !== undefined) bump(inFlightByPerson, person, -1);
 		if (boundByDomain) bump(inFlightByDomain, domain, -1);
 		sharedFetch.delete(clientId);
 	});

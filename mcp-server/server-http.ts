@@ -1437,6 +1437,7 @@ app.post("/token", async (c) => {
 				{
 					purpose: "refresh",
 					connection: refreshTokenHash,
+					person: record.userId,
 					source: clientIpForRateLimit((n) => c.req.header(n)),
 				},
 			);
