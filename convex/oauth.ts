@@ -1877,24 +1877,6 @@ async function listDocumentClient(
 	};
 }
 
-// Lifts a listing. An operator door run with the admin key
-// (`npx convex run oauth:allowDocumentClient '{"clientId":"https://..."}'`): no
-// client, token or MCP route reaches it. The tokens revoked by the listing stay
-// revoked; the client connects again.
-export const allowDocumentClient = internalMutation({
-	args: { clientId: v.string() },
-	returns: v.object({ removed: v.boolean() }),
-	handler: async (ctx, args) => {
-		const existing = await ctx.db
-			.query("oauth_denied_document_clients")
-			.withIndex("by_clientId", (q) => q.eq("clientId", args.clientId))
-			.unique();
-		if (!existing) return { removed: false };
-		await ctx.db.delete(existing._id);
-		return { removed: true };
-	},
-});
-
 export const getDocumentClientDenial = query({
 	args: { clientId: v.string() },
 	returns: v.union(

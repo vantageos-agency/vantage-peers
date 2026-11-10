@@ -1845,8 +1845,8 @@ admin.post("/oauth/clients", async (c) => {
 // client_id has no oauth_clients row). Wraps `oauth:deleteClient`, which for a
 // URL client_id lists it on the deny-list and revokes every live token it holds;
 // /authorize, /token and refresh then refuse it before any fetch. Lifting a
-// listing is an operator door run with the admin key
-// (`npx convex run oauth:allowDocumentClient`), not an HTTP route.
+// listing is the operator deleting the row in the Convex dashboard (a new
+// public or internal write door would raise the R-53 ratchet).
 // Auth: BEARER_SECRET_MASTER via masterOnlyMiddleware.
 admin.post("/oauth/document-clients/deny", async (c) => {
 	let body: Record<string, unknown> = {};

@@ -830,12 +830,14 @@ describe("M2 — a client that is not listed still works, and listing is reversi
 		expect(r.picker?.consentToken).toBeTruthy();
 	});
 
-	it("allowDocumentClient (the operator door run with the admin key) lifts the listing: the client reaches consent again", async () => {
+	it("deleting the row (the operator, in the Convex dashboard) lifts the listing: the client reaches consent again", async () => {
 		await denyClient();
-		const lifted = await bridge(t).mutation("oauth:allowDocumentClient", {
-			clientId: DOC_URL,
+		await t.run(async (ctx) => {
+			for (const row of await ctx.db
+				.query("oauth_denied_document_clients")
+				.collect())
+				await ctx.db.delete(row._id);
 		});
-		expect(lifted).toMatchObject({ removed: true });
 		network();
 		const r = await cimdAuthorize();
 		expect(r.status).toBe(200);
