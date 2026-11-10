@@ -24,8 +24,9 @@
  *
  * WHAT IT DOES NOT READ (declared, not hidden): conditions it cannot reduce to
  * a conjunction of bare names (counted in `skipped`), ternaries, early-return
- * ladders, a filter that is applied wrongly rather than dropped, and a filter
- * applied after `.take()` (a short page: a different defect, named in the task).
+ * ladders, and a filter that is applied wrongly rather than dropped. A filter
+ * applied after `.take()` is a different defect (a short page), read by
+ * `findFilterAfterTake` at the end of this file.
  */
 
 /** Blank out comments, keeping every offset and newline. */
@@ -169,4 +170,67 @@ export function findFilterDrops(source, opts = {}) {
 		}
 	}
 	return { hits, skipped, chains };
+}
+
+/**
+ * Filter-after-take detector (task k17bmxpw878e7yhqemey4c38q98hyk9f).
+ *
+ * CLASS: a Convex list read cuts `limit` rows with `.take(n)` and THEN drops the
+ * rows that do not match a filter the caller passed (`rows = rows.filter(...)`).
+ * When the newest rows belong to someone else the page comes back short, or
+ * empty, with matching rows further down; a tool that emits its cursor only on a
+ * full page tells the caller "that is all". Instances: diary:list `createdBy`,
+ * recurringTasks:list `assignedTo` + `active` (fixed by this task; #1724 and
+ * #1727 closed the siblings).
+ *
+ * WHAT IT READS: per exported function block (a Convex file), a statement
+ * `X = X.filter(<predicate>)` that follows a `.take(` in the same block and
+ * whose predicate, or the `if (...)` condition wrapping it, names `args.F` for a
+ * caller filter F. The cursor and window arguments (`createdBefore`,
+ * `updatedSince`) are excluded: the cursor over a widened fetch is the repo's
+ * declared pattern, not a caller filter.
+ *
+ * WHAT IT SKIPS (declared): a block that refuses a too-wide scan (`SCAN_CAP_EXCEEDED`
+ * or `scanCapRefusal`) instead of answering a short page silently, because that
+ * read says so; a predicate that names no `args.F` (a tenant or roster
+ * defence-in-depth filter, a closure variable such as `keepCreator`).
+ *
+ * WHAT IT DOES NOT READ: a filter hidden behind a helper, a `.filter` on an
+ * in-memory array that was not cut by `.take(`, and the MCP handlers.
+ */
+const CURSOR_ARGS = new Set(["createdBefore", "updatedSince"]);
+
+export function findFilterAfterTake(source, opts = {}) {
+	const file = opts.file ?? "<source>";
+	const s = stripComments(source);
+	const hits = [];
+	const starts = [...s.matchAll(/^export (?:const|async function|function) /gm)].map(
+		(m) => m.index,
+	);
+	let blocks = 0;
+	for (let b = 0; b < starts.length; b++) {
+		const block = s.slice(starts[b], b + 1 < starts.length ? starts[b + 1] : s.length);
+		if (!/\.take\(/.test(block)) continue;
+		blocks++;
+		if (/SCAN_CAP_EXCEEDED|scanCapRefusal/.test(block)) continue;
+		for (const m of block.matchAll(/\b(\w+)\s*=\s*\1\.filter\(/g)) {
+			const callEnd = matchParen(block, m.index + m[0].length);
+			const predicate = block.slice(m.index + m[0].length, callEnd - 1);
+			const before = block.slice(0, m.index);
+			if (!/\.take\(/.test(before)) continue;
+			const wrapper = /\bif\s*\(([^)]*)\)\s*\{?\s*$/.exec(before.slice(-240));
+			const named = new Set();
+			for (const text of [predicate, wrapper ? wrapper[1] : ""]) {
+				for (const a of text.matchAll(/\bargs\.(\w+)/g)) named.add(a[1]);
+			}
+			for (const a of [...named].filter((n) => !CURSOR_ARGS.has(n)).sort()) {
+				hits.push({
+					file,
+					line: s.slice(0, starts[b] + m.index).split("\n").length,
+					filter: a,
+				});
+			}
+		}
+	}
+	return { hits, blocks };
 }

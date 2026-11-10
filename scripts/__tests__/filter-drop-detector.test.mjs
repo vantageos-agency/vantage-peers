@@ -14,7 +14,7 @@ import { readFileSync, readdirSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
-import { findFilterDrops } from "../lib/filter-drop-detector.mjs";
+import { findFilterAfterTake, findFilterDrops } from "../lib/filter-drop-detector.mjs";
 
 const REPO = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
 
@@ -162,5 +162,112 @@ describe("filter-drop detector — the tree", () => {
 		}
 		// mandates:list (a compound five-branch chain, guarded) alone is one.
 		expect(chains).toBeGreaterThanOrEqual(3);
+	});
+});
+
+const AFTER_TAKE_PREDICATE = `
+export const list = query({ handler: async (ctx, args) => {
+  let rows = await ctx.db.query("d").withIndex("by_o", (q) => q.eq("o", args.o)).order("desc").take(5);
+  if (args.createdBy !== undefined) {
+    rows = rows.filter((r) => r.createdBy === args.createdBy);
+  }
+  return rows;
+}});`;
+
+const AFTER_TAKE_BRANCH = `
+export const list = query({ handler: async (ctx, args) => {
+  let rows = await ctx.db.query("t").withIndex("by_a", (q) => q.eq("a", args.a)).order("desc").take(5);
+  if (args.active !== undefined) {
+    rows = rows.filter((t) => t.active === args.active);
+  }
+  return rows;
+}});`;
+
+const BEFORE_TAKE = `
+export const list = query({ handler: async (ctx, args) => {
+  const rows = await ctx.db.query("d").withIndex("by_o", (q) => q.eq("o", args.o)).order("desc")
+    .filter((q) => (args.createdBy !== undefined ? q.eq(q.field("createdBy"), args.createdBy) : true))
+    .take(5);
+  return rows;
+}});`;
+
+const CURSOR_AND_TENANT_ONLY = `
+export const list = query({ handler: async (ctx, args) => {
+  let rows = await ctx.db.query("d").order("desc").take(2001);
+  rows = rows.filter((r) => r.tenantOrgId === org);
+  if (args.createdBefore !== undefined) {
+    rows = rows.filter((r) => r._creationTime < args.createdBefore);
+  }
+  return rows;
+}});`;
+
+const REFUSES_THE_WIDE_SCAN = `
+export const list = query({ handler: async (ctx, args) => {
+  const rows = await ctx.db.query("t").take(2001);
+  if (rows.length > 2000) throw new ConvexError("t.list: SCAN_CAP_EXCEEDED");
+  return rows.filter((r) => r.createdBy === args.createdBy);
+}});
+export const other = query({ handler: async (ctx, args) => {
+  let rows = await ctx.db.query("t").take(2001);
+  if (rows.length > 2000) throw new ConvexError("t.other: SCAN_CAP_EXCEEDED");
+  rows = rows.filter((r) => r.createdBy === args.createdBy);
+  return rows;
+}});`;
+
+describe("filter-after-take detector — the instrument, both poles", () => {
+	it("flags a caller filter applied to the rows a take already cut", () => {
+		expect(findFilterAfterTake(AFTER_TAKE_PREDICATE).hits.map((h) => h.filter)).toEqual([
+			"createdBy",
+		]);
+		expect(findFilterAfterTake(AFTER_TAKE_BRANCH).hits.map((h) => h.filter)).toEqual([
+			"active",
+		]);
+	});
+
+	it("passes the same filter applied by the read, before the take", () => {
+		expect(findFilterAfterTake(BEFORE_TAKE).hits).toEqual([]);
+	});
+
+	it("passes the cursor and a tenant defence-in-depth filter", () => {
+		expect(findFilterAfterTake(CURSOR_AND_TENANT_ONLY).hits).toEqual([]);
+	});
+
+	it("passes a read that refuses the too-wide scan instead of answering short", () => {
+		expect(findFilterAfterTake(REFUSES_THE_WIDE_SCAN).hits).toEqual([]);
+	});
+
+	it("ignores a commented-out filter", () => {
+		const commented = AFTER_TAKE_PREDICATE.split("\n")
+			.map((l) => `// ${l}`)
+			.join("\n");
+		expect(findFilterAfterTake(commented).hits).toEqual([]);
+	});
+});
+
+describe("filter-after-take detector — the tree", () => {
+	const convexDir = join(REPO, "convex");
+	const files = readdirSync(convexDir).filter(
+		(f) => f.endsWith(".ts") && !f.endsWith(".d.ts"),
+	);
+
+	it("no convex/*.ts list read filters a caller's argument after the take", () => {
+		const found = [];
+		for (const f of files) {
+			const { hits } = findFilterAfterTake(readFileSync(join(convexDir, f), "utf8"), {
+				file: `convex/${f}`,
+			});
+			for (const h of hits) found.push(`${h.file}:${h.line} filters ${h.filter} after the take`);
+		}
+		expect(found).toEqual([]);
+	});
+
+	it("the scan reads real take-bearing functions (a detector that reads nothing proves nothing)", () => {
+		let blocks = 0;
+		for (const f of files) {
+			blocks += findFilterAfterTake(readFileSync(join(convexDir, f), "utf8"), {
+				file: `convex/${f}`,
+			}).blocks;
+		}
+		expect(blocks).toBeGreaterThanOrEqual(20);
 	});
 });
