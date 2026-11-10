@@ -4,13 +4,14 @@ import { getModelId, RAG } from "@convex-dev/rag";
 import { embed } from "ai";
 import { v } from "convex/values";
 import { api, components, internal } from "./_generated/api";
+import type { Id } from "./_generated/dataModel";
 import type { ActionCtx } from "./_generated/server";
 import { action } from "./lib/functions";
 import {
 	getAITextEmbeddingProvider,
 	getEmbeddingModelName,
 } from "./lib/aiClient";
-import { isNamespaceAllowedForScope } from "./lib/auth";
+import { isNamespaceAllowedForScope, verifiedActorValidator } from "./lib/auth";
 import { filterValueMap, isLiveRagEntry } from "./lib/retired";
 import { memoryTypeValidator } from "./schema";
 
@@ -292,6 +293,7 @@ function buildFilters(opts: {
 async function resolveSearchNamespace(
 	ctx: ActionCtx,
 	requestedNamespace: string | undefined,
+	verifiedActor?: { agentId: Id<"agents">; orgSlug: string },
 ): Promise<string | null> {
 	const scope = await ctx.runQuery(
 		internal.lib.auth.resolveOrgScopeForAction,
@@ -305,7 +307,23 @@ async function resolveSearchNamespace(
 	// no verified organisation -> nothing. A namespace outside the caller's own
 	// subtree (including the fleet-common `global`, which is not this tenant's
 	// data to read) is AUTH_NAMESPACE_DENIED, answered as null.
-	return isNamespaceAllowedForScope(scope, requested) ? requested : null;
+	if (isNamespaceAllowedForScope(scope, requested)) return requested;
+
+	// A seat acting for its organisation owns two more roots than a member
+	// (project/<org slug>, orchestrator/<its verified agent ID>), the ones
+	// storeMemory writes and listMemories reads. The memories rule decides, in a
+	// query (an action has no db); only a namespace the team predicate refused
+	// reaches it, and a refused caller (no organisation) is never asked.
+	if (scope.refused) return null;
+	const seatMay = await ctx.runQuery(
+		internal.lib.seatNamespace.mayReadMemoryNamespaceForAction,
+		{
+			namespace: requested,
+			...actionScopeArgs(ctx),
+			...(verifiedActor !== undefined ? { verifiedActor } : {}),
+		},
+	);
+	return seatMay ? requested : null;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -481,6 +499,8 @@ export const recall = action({
 	fields: v.optional(v.union(v.literal("lite"), v.literal("full"))), // v2.4.12 accept (no-op for now) — closes ArgumentValidationError from MCP wrappers passing fields
 		query: v.string(),
 		namespace: v.optional(v.string()),
+		// The agent the transport verified for a seat (forwarded by the MCP client wrapper).
+		verifiedActor: v.optional(verifiedActorValidator),
 		type: v.optional(memoryTypeValidator),
 		limit: v.optional(v.number()),
 		scoreThreshold: v.optional(v.number()),
@@ -490,7 +510,11 @@ export const recall = action({
 		// Authority gate — see resolveSearchNamespace above. A refused caller
 		// reads NOTHING; the namespace actually searched is the RESOLVED one,
 		// never the raw argument.
-		const ns = await resolveSearchNamespace(ctx, args.namespace);
+		const ns = await resolveSearchNamespace(
+			ctx,
+			args.namespace,
+			args.verifiedActor,
+		);
 		if (ns === null) return [] as never;
 
 		const limit = args.limit ?? 10;
@@ -547,6 +571,8 @@ export const textSearch = action({
 	fields: v.optional(v.union(v.literal("lite"), v.literal("full"))), // v2.4.12 accept (no-op for now) — closes ArgumentValidationError from MCP wrappers passing fields
 		query: v.string(),
 		namespace: v.optional(v.string()),
+		// The agent the transport verified for a seat (forwarded by the MCP client wrapper).
+		verifiedActor: v.optional(verifiedActorValidator),
 		type: v.optional(memoryTypeValidator),
 		limit: v.optional(v.number()),
 	},
@@ -562,7 +588,11 @@ export const textSearch = action({
 		// Authority gate — see resolveSearchNamespace above. A refused caller
 		// reads NOTHING; the namespace actually searched is the RESOLVED one,
 		// never the raw argument.
-		const ns = await resolveSearchNamespace(ctx, args.namespace);
+		const ns = await resolveSearchNamespace(
+			ctx,
+			args.namespace,
+			args.verifiedActor,
+		);
 		if (ns === null) return [] as never;
 
 		const limit = args.limit ?? 10;
@@ -608,6 +638,8 @@ export const hybridSearch = action({
 	fields: v.optional(v.union(v.literal("lite"), v.literal("full"))), // v2.4.12 accept (no-op for now) — closes ArgumentValidationError from MCP wrappers passing fields
 		query: v.string(),
 		namespace: v.optional(v.string()),
+		// The agent the transport verified for a seat (forwarded by the MCP client wrapper).
+		verifiedActor: v.optional(verifiedActorValidator),
 		type: v.optional(memoryTypeValidator),
 		limit: v.optional(v.number()),
 		vectorWeight: v.optional(v.number()),
@@ -626,7 +658,11 @@ export const hybridSearch = action({
 		// Authority gate — see resolveSearchNamespace above. A refused caller
 		// reads NOTHING; the namespace actually searched is the RESOLVED one,
 		// never the raw argument.
-		const ns = await resolveSearchNamespace(ctx, args.namespace);
+		const ns = await resolveSearchNamespace(
+			ctx,
+			args.namespace,
+			args.verifiedActor,
+		);
 		if (ns === null) return [] as never;
 
 		const limit = args.limit ?? 10;

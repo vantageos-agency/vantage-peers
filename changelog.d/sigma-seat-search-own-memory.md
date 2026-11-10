@@ -1,0 +1,4 @@
+---
+section: Fixed
+---
+- **A client seat finds, through recall, text_search and hybrid_search, the memory it wrote in its own namespaces.** store_memory without a namespace files into `orchestrator/<agent ID>` and list_memories read it back, but the three search actions judged the namespace with the team-only rule and answered `[]` for `orchestrator/<agent ID>` and `project/<org slug>` (measured on prod 2026-11-10, memory j579g6tsgv1q8kavg1636qwxe98hyb92). They now ask the memories rule (`convex/lib/seatNamespace.ts` `mayReadMemoryNamespaceForAction`) and accept the seat's verified `verifiedActor`, forwarded by the MCP client wrapper (contract version 28). Another organisation's seat, another agent of the same org, the seat's own name and a seat with no agent proof still get nothing (`convex/__tests__/seatSearchOwnNamespaces.test.ts`).
