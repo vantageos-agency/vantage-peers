@@ -63,10 +63,13 @@ import {
 	unattributedClaimCounts,
 	unattributedClaimSummary,
 } from "./src/auth.js";
+import { isClientMetadataUrl } from "./src/clientMetadataDocument.js";
 import { selectConvexClientForRequest } from "./src/authenticatedConvexClient.js";
 import {
 	type AuthorizeRuntime,
 	buildAuthorizeRuntime,
+	checkClientMetadataDocument,
+	checkClientMetadataForAuthorize,
 	clerkHandshakeConfig,
 	clientIdInState,
 	convexCodeStore,
@@ -400,10 +403,13 @@ app.get("/.well-known/oauth-authorization-server", (c) => {
 		scopes_supported: OAUTH_SCOPES_SUPPORTED,
 		// RFC 9207 — /authorize appends `iss` to every authorization response.
 		authorization_response_iss_parameter_supported: true,
-		// Client ID Metadata Documents (URL-shaped client_id) are deliberately
-		// NOT advertised: /authorize and /token resolve client_id only against
-		// registered rows. Never advertise `client_id_metadata_document_supported`
-		// until both endpoints fetch and validate the document (SSRF-safe).
+		// Client ID Metadata Documents (draft-ietf-oauth-client-id-metadata-document
+		// §5): /authorize and /token resolve an unregistered, URL-shaped client_id
+		// by fetching and validating its document (src/clientMetadataDocument.ts:
+		// SSRF-safe, https only, no redirects, capped, time-boxed, cached). The
+		// flag is true only while BOTH endpoints do so; the test
+		// test/cimd-authorize-token.test.ts pins both.
+		client_id_metadata_document_supported: true,
 	});
 });
 
@@ -769,6 +775,29 @@ async function respondToOutcome(
 	}
 }
 
+function clientMetadataRefusal(
+	c: Context,
+	verdict: { reason: string; retryable: boolean },
+) {
+	console.error(`[oauth] ${c.req.path} refused: client-metadata ${verdict.reason}`);
+	if (verdict.reason === "busy") {
+		return c.json(
+			{
+				error: "temporarily_unavailable",
+				error_description: "client-metadata: busy",
+			},
+			503,
+		);
+	}
+	return c.json(
+		{
+			error: "invalid_client",
+			error_description: `client-metadata: ${verdict.reason}`,
+		},
+		400,
+	);
+}
+
 app.get("/authorize", async (c) => {
 	const settings = readAuthorizeSettings(
 		process.env,
@@ -781,6 +810,15 @@ app.get("/authorize", async (c) => {
 		expanderFor(query.redirect_uri),
 	);
 	const { cfg, deps } = runtime;
+	// A URL client_id is a Client ID Metadata Document: refuse a bad one with
+	// its own reason (the package can only say "unknown-client").
+	if (query.client_id) {
+		const verdict = await checkClientMetadataForAuthorize(
+			query.client_id,
+			query.redirect_uri,
+		);
+		if (!verdict.ok) return clientMetadataRefusal(c, verdict);
+	}
 	// `resource` is optional (RFC 8707 §2) and Claude.ai's connector omits it.
 	// A request naming no target is bound to the single one this server
 	// publishes; a named resource is still checked by the package, unchanged.
@@ -1130,7 +1168,7 @@ app.post("/token", async (c) => {
 
 		// D6 — authenticate the client BEFORE the code is touched, so an
 		// unauthenticated caller cannot burn someone else's code.
-		const client = (await internalClient().query(
+		let client = (await internalClient().query(
 			// biome-ignore lint/suspicious/noExplicitAny: Convex string API
 			"oauth:getClientByClientId" as any,
 			{ clientId: presentedClientId },
@@ -1139,6 +1177,18 @@ app.post("/token", async (c) => {
 			clientSecretHash?: string;
 			tokenEndpointAuthMethod?: string;
 		} | null;
+		// An unregistered URL client_id is a Client ID Metadata Document client:
+		// a public client (the document is refused unless it says "none"), so
+		// PKCE alone authenticates it. The document is re-checked here (cache,
+		// else fetch) so a document that changed since /authorize is honoured.
+		if (!client && isClientMetadataUrl(presentedClientId)) {
+			const verdict = await checkClientMetadataDocument(
+				presentedClientId,
+				redirectUri,
+			);
+			if (!verdict.ok) return clientMetadataRefusal(c, verdict);
+			client = { tokenEndpointAuthMethod: "none" };
+		}
 		if (!client || client.revokedAt !== undefined) {
 			return c.json({ error: "invalid_client" }, 400);
 		}
@@ -1324,7 +1374,7 @@ app.post("/token", async (c) => {
 		}
 
 		// D6 — confidential client authentication on refresh too (RFC 6749 §6).
-		const refreshClient = (await internalClient().query(
+		let refreshClient = (await internalClient().query(
 			// biome-ignore lint/suspicious/noExplicitAny: Convex string API
 			"oauth:getClientByClientId" as any,
 			{ clientId: record.clientId },
@@ -1334,6 +1384,20 @@ app.post("/token", async (c) => {
 			clientSecretHash?: string;
 			tokenEndpointAuthMethod?: string;
 		} | null;
+		// A person's connection made through a Client ID Metadata Document
+		// refreshes as the same public client, if its document still validates.
+		if (
+			!refreshClient &&
+			record.principal === "person" &&
+			isClientMetadataUrl(record.clientId)
+		) {
+			const verdict = await checkClientMetadataDocument(
+				record.clientId,
+				undefined,
+			);
+			if (!verdict.ok) return clientMetadataRefusal(c, verdict);
+			refreshClient = { scopeProfile: "", tokenEndpointAuthMethod: "none" };
+		}
 		if (!refreshClient || refreshClient.revokedAt !== undefined) {
 			return c.json({ error: "invalid_client" }, 400);
 		}
