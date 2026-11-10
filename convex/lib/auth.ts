@@ -643,7 +643,12 @@ export function filterByOrgScope<
 		// 2. Roster, as a narrowing intersect on top of the tenant gate.
 		const orchestrator = r.pilot ?? r.assignedTo;
 		if (!orchestrator) return false;
-		return scope.allowedOrchestrators.includes(orchestrator);
+		// Compared as the writers store it: every orchestrator label a door writes
+		// is `normalizeOrchestratorId`-ed (the MCP lowercases assignedTo/createdBy),
+		// while a roster holds the agent's exact stored name ("Ada"). An exact
+		// string `includes` therefore never matched a mixed-case agent and locked
+		// a client org out of its own rows (task k1726h1v7hqdbk818bn8s1rgdx8hy0ts).
+		return isOrchestratorOnOrgRoster(scope, orchestrator);
 	});
 }
 
