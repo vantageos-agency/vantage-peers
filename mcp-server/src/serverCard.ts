@@ -17,15 +17,22 @@
  * #2525), so the card says how to sign in only under a vendor `_meta` key; a
  * client discovers OAuth itself through the RFC 9728 document the 401 from
  * /mcp points at.
+ *
+ * Surface (mcp-doctor S-50, served discovery): `capabilities` and `tools` are
+ * top-level members the extension schema does not define (it leaves additional
+ * members open). They are READ from the running server's initialize and
+ * tools/list (serverDiscovery.ts), never written here, and `tools` carries
+ * names only.
  */
 
 import { createHash } from "node:crypto";
-import type { Icon } from "@modelcontextprotocol/server";
+import type { Icon, ServerCapabilities } from "@modelcontextprotocol/server";
 import {
 	mcpImplementation,
 	SERVER_CONNECT_DOCS_URL,
 	SERVER_NAME,
 } from "./brand.js";
+import type { ServedDiscovery } from "./serverDiscovery.js";
 
 export const SERVER_CARD_SCHEMA_URL =
 	"https://static.modelcontextprotocol.io/schemas/v1/server-card.schema.json";
@@ -59,6 +66,10 @@ export type ServerCard = {
 	websiteUrl?: string;
 	icons?: Icon[];
 	remotes: Array<{ type: "streamable-http"; url: string }>;
+	/** What initialize declares (S-50). */
+	capabilities: ServerCapabilities;
+	/** The names tools/list serves, in its order (S-50). */
+	tools: string[];
 	_meta: Record<string, unknown>;
 };
 
@@ -66,6 +77,7 @@ export type ServerCard = {
 export function buildServerCard(
 	version: string,
 	publicBaseUrl: string,
+	discovery: ServedDiscovery,
 ): ServerCard {
 	const impl = mcpImplementation(version, publicBaseUrl);
 	return {
@@ -77,6 +89,8 @@ export function buildServerCard(
 		websiteUrl: impl.websiteUrl,
 		icons: impl.icons,
 		remotes: [{ type: "streamable-http", url: `${publicBaseUrl}/mcp` }],
+		capabilities: discovery.capabilities,
+		tools: discovery.tools,
 		_meta: {
 			[SERVER_CARD_AUTH_META_KEY]: {
 				type: "oauth2",
@@ -95,8 +109,11 @@ export function serverCardResponse(
 	req: Request,
 	version: string,
 	publicBaseUrl: string,
+	discovery: ServedDiscovery,
 ): Response {
-	const body = JSON.stringify(buildServerCard(version, publicBaseUrl));
+	const body = JSON.stringify(
+		buildServerCard(version, publicBaseUrl, discovery),
+	);
 	const etag = `"${createHash("sha256").update(body).digest("hex").slice(0, 32)}"`;
 	const accept = req.headers.get("accept") ?? "";
 	const headers = new Headers({

@@ -49,6 +49,7 @@ import {
 	resolveClerkSessionForFormPost,
 	resolveClerkSessionFromRequest,
 } from "@vantageos/cloud-identity/clerk-handshake";
+import { ConvexHttpClient } from "convex/browser";
 import { type Context, Hono } from "hono";
 import { cors } from "hono/cors";
 import {
@@ -56,6 +57,7 @@ import {
 	internalClient,
 	isMasterScope,
 	masterOnlyMiddleware,
+	type OAuthContext,
 	resolveActorCredentialMode,
 	sha256Hex,
 	unattributedClaimCounts,
@@ -89,6 +91,10 @@ import {
 	landingPageResponse,
 } from "./src/landingPage.js";
 import { SERVER_CARD_PATHS, serverCardResponse } from "./src/serverCard.js";
+import {
+	readServedDiscovery,
+	type ServedDiscovery,
+} from "./src/serverDiscovery.js";
 import { registerTools } from "./src/tools.js";
 import { registerUiResources } from "./src/ui-resources/register.js";
 
@@ -1505,17 +1511,86 @@ for (const [path, [contentType, bytes]] of Object.entries(BRAND_ICON_ROUTES)) {
 	);
 }
 
+/**
+ * The ONE McpServer factory: the /mcp route builds one per request for its
+ * verified caller, and the Server Card reads its surface (initialize
+ * capabilities, tools/list names) from one built with no caller
+ * (serverDiscovery.ts), so the card and a connection are served by the same
+ * registrations.
+ */
+function buildMcpServer(
+	convex: ConvexHttpClient,
+	oauthCtx: OAuthContext | undefined,
+	iconOrigin: string | null,
+): McpServer {
+	const server = new McpServer(
+		mcpImplementation(pkg.version, iconOrigin),
+		mcpServerOptions(),
+	);
+
+	registerTools(server, convex, oauthCtx, {
+		recordToolUsage: true,
+		publicBaseUrl: iconOrigin,
+	});
+
+	// SEP-1865 ui:// resources for Generative UI primitives — see
+	// src/ui-resources/register.ts.
+	// Day-165-parity — thread the caller identity into the ui-resource
+	// primitives the same way tools.ts does (mirrors the
+	// master/callerIdentities computation at tools.ts:5712/5808/5934), so
+	// briefingNotes:get/list resolve visibility inside Convex instead of
+	// falling into the `callerIdentities === undefined` legacy-open branch.
+	// (An undefined oauthCtx never reaches a read: the registration's gate
+	// refuses it before any Convex query.)
+	const master = oauthCtx === undefined || isMasterScope(oauthCtx);
+	const callerIdentities = master ? undefined : oauthCtx.fromAllowList;
+	registerUiResources(
+		server,
+		convex,
+		oauthCtx,
+		{ master, callerIdentities },
+		iconOrigin,
+	);
+	return server;
+}
+
+// The card's surface is the same for every caller and every request: read it
+// once per process from a server built with NO caller and a Convex client on a
+// never-resolving host (RFC 6761 `.invalid`). Listing calls no tool handler,
+// so nothing is dialed; a failed read is not cached and the card answers 500.
+let servedDiscoveryRead: Promise<ServedDiscovery> | null = null;
+function servedDiscovery(): Promise<ServedDiscovery> {
+	if (servedDiscoveryRead === null) {
+		const offline = new ConvexHttpClient("https://server-card.invalid", {
+			skipConvexDeploymentUrlCheck: true,
+		});
+		servedDiscoveryRead = readServedDiscovery(
+			buildMcpServer(offline, undefined, null),
+		).catch((err: unknown) => {
+			servedDiscoveryRead = null;
+			throw err;
+		});
+	}
+	return servedDiscoveryRead;
+}
+
 // Public MCP Server Card (src/serverCard.ts): static metadata, read before any
 // connection, grants nothing. Served on the origin this request used.
 for (const path of SERVER_CARD_PATHS) {
-	app.get(path, (c) => {
+	app.get(path, async (c) => {
 		let origin: string;
 		try {
 			origin = resolveIssuer(c.req.raw);
 		} catch (err: unknown) {
 			return c.json({ error: (err as Error).message }, 500);
 		}
-		return serverCardResponse(c.req.raw, pkg.version, origin);
+		let discovery: ServedDiscovery;
+		try {
+			discovery = await servedDiscovery();
+		} catch (err: unknown) {
+			return c.json({ error: (err as Error).message }, 500);
+		}
+		return serverCardResponse(c.req.raw, pkg.version, origin, discovery);
 	});
 }
 
@@ -2322,37 +2397,8 @@ app.all("/mcp", bearerAuthMiddleware(), async (c) => {
 	// Fresh McpServer per request — stateless, no session leakage. The factory
 	// closes over THIS request's verified caller (oauthCtx) and its Convex
 	// client, so an instance never serves anyone else.
-	const buildServer = (): McpServer => {
-		const server = new McpServer(
-			mcpImplementation(pkg.version, iconOrigin),
-			mcpServerOptions(),
-		);
-
-		registerTools(server, convex, oauthCtx, {
-			recordToolUsage: true,
-			publicBaseUrl: iconOrigin,
-		});
-
-		// SEP-1865 ui:// resources for Generative UI primitives — see
-		// src/ui-resources/register.ts.
-		// Day-165-parity — thread the caller identity into the ui-resource
-		// primitives the same way tools.ts does (mirrors the
-		// master/callerIdentities computation at tools.ts:5712/5808/5934), so
-		// briefingNotes:get/list resolve visibility inside Convex instead of
-		// falling into the `callerIdentities === undefined` legacy-open branch.
-		// (An undefined oauthCtx never reaches a read: the registration's gate
-		// refuses it before any Convex query.)
-		const master = oauthCtx === undefined || isMasterScope(oauthCtx);
-		const callerIdentities = master ? undefined : oauthCtx.fromAllowList;
-		registerUiResources(
-			server,
-			convex,
-			oauthCtx,
-			{ master, callerIdentities },
-			iconOrigin,
-		);
-		return server;
-	};
+	const buildServer = (): McpServer =>
+		buildMcpServer(convex, oauthCtx, iconOrigin);
 
 	// createMcpHandler (@modelcontextprotocol/server) serves BOTH protocol eras
 	// from the one factory: a 2026-07-28 request (per-request `_meta` envelope,
