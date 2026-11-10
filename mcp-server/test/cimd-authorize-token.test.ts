@@ -536,7 +536,7 @@ describe("H1 — an unauthenticated flood cannot starve the pool", () => {
 		const refreshToken = await connected();
 		clock += cimd.CIMD_MAX_TTL_MS + 1; // the cached document has expired
 		const flood = Array.from({ length: cimd.CIMD_MAX_IN_FLIGHT }, (_, i) =>
-			rawAuthorize(`https://hang${i}.dom${i}.com/m.json`, `10.0.0.${i}`),
+			rawAuthorize(`https://hang${i}.dom${i}.com/m.json`, `10.${i}.0.1`),
 		);
 		await new Promise((r) => setTimeout(r, 60));
 		const refreshed = await refreshWith(refreshToken);
