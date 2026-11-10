@@ -31,7 +31,7 @@ export async function activeDocumentClientDenial(
 	clientId: string,
 ): Promise<Doc<"oauth_denied_document_clients"> | null> {
 	const row = await documentClientRow(ctx, clientId);
-	return row !== null && row.active ? row : null;
+	return row?.active ? row : null;
 }
 
 /**
