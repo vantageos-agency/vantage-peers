@@ -108,11 +108,16 @@ Every `list_*` MCP tool in VantagePeers follows one canonical pagination contrac
 The canonical envelope contract is fleet-wide and non-negotiable:
 
 ```typescript
+// structuredContent of every paged list tool (its outputSchema)
 interface ListEnvelope<T> {
-  items:       T[];     // projected rows (lite or full)
-  nextCursor?: string;  // present IFF there are more pages; absent when done
+  items:          T[];            // the rows; their fields are the outputSchema's items
+  nextCursor:     string | null;  // null on the last page
+  truncated:      boolean;        // true when the 60 KB cap cut the page
+  scopeFiltered?: number;         // list_peers, list_tasks_by_mission, list_recurring_tasks
 }
 ```
+
+Each tool's description states this envelope and the exact shape of its TEXT block through one generator, `mcp-server/src/listContract.ts` (the text is a bare array on the last page for some tools, `{ items, nextCursor }` for others, `{ _meta, items }` when cut). Read `structuredContent`; it has the same shape on every tool. A list tool declares only inputs that change its answer: `fields` exists only where it selects lite or full rows.
 
 `nextCursor` is an **opaque base64url token** — callers must not parse it. The format may evolve (TTL, signature). To iterate, pass the returned `nextCursor` back as the `cursor` arg on the next call. When the field is absent, the caller MUST stop. There is no separate `isDone` flag in the wire format — absence of `nextCursor` IS the done signal.
 
@@ -123,8 +128,8 @@ async function drainList(tool: string, args: Record<string, unknown>) {
   const all: unknown[] = [];
   let cursor: string | undefined;
   while (true) {
-    const res = await mcpCall(tool, { ...args, fields: "lite", limit: 100, cursor });
-    const envelope = JSON.parse(res.content[0].text) as { items: unknown[]; nextCursor?: string };
+    const res = await mcpCall(tool, { ...args, limit: 100, cursor });
+    const envelope = res.structuredContent as { items: unknown[]; nextCursor: string | null };
     all.push(...envelope.items);
     if (!envelope.nextCursor) break;
     cursor = envelope.nextCursor;
