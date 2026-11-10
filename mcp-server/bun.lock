@@ -11,6 +11,7 @@
         "@vantageos/cloud-identity": "^0.27.0",
         "convex": ">=1.0.0",
         "dotenv": "^17.4.2",
+        "tldts": "7.4.19",
         "zod": "^4.6.7",
       },
       "devDependencies": {
@@ -500,6 +501,10 @@
     "tinyglobby": ["tinyglobby@0.2.17", "", { "dependencies": { "fdir": "^6.5.0", "picomatch": "^4.0.4" } }, "sha512-wXR/dYpcqKmfWpEdZjiKJOwCNFndD0DMnrW/cYjVGttEkBfVgcLFHoNrlj47mjOVic9yyNu65alsgF4NQyTa2g=="],
 
     "tinyrainbow": ["tinyrainbow@3.1.0", "", {}, "sha512-Bf+ILmBgretUrdJxzXM0SgXLZ3XfiaUuOj/IKQHuTXip+05Xn+uyEYdVg0kYDipTBcLrCVyUzAPz7QmArb0mmw=="],
+
+    "tldts": ["tldts@7.4.19", "", { "dependencies": { "tldts-core": "^7.4.19" }, "bin": { "tldts": "bin/cli.js" } }, "sha512-48dH6aSpQnpbzDUc4vIQZ1VjB8tkK+e8c1yx05/SZK+rkssgjEOlxDd/yU8/a4vGYQ9vRgJr9dwMq9TJ0b3X2Q=="],
+
+    "tldts-core": ["tldts-core@7.4.20", "", {}, "sha512-C630TWXZCZmLq0F2bW4QqwnaaxCQ/svpAqvJwnC4JvgEM5ohhBnGsEzTLSOXcN+xjz+kEaHS5uoWIw2klnqd0A=="],
 
     "toidentifier": ["toidentifier@1.0.1", "", {}, "sha512-o5sSPKEkg/DIQNmH43V0/uerLrpzVedkUh8tGNvaeXpfpuwjKenlSox/2O/BTlZUtEe+JG7s5YhEz608PlAHRA=="],
 
