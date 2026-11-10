@@ -70,7 +70,13 @@ function harness(fail = false) {
 	const answer = async (fn: unknown, args: unknown) => {
 		calls.push({ fn: String(fn), args });
 		if (fail) throw new Error("backend unavailable");
-		return { items: [], page: [], nextCursor: null, isDone: true, continueCursor: "" };
+		return {
+			items: [],
+			page: [],
+			nextCursor: null,
+			isDone: true,
+			continueCursor: "",
+		};
 	};
 	const convex = {
 		query: answer,
@@ -89,36 +95,87 @@ function harness(fail = false) {
 }
 
 /** [tool, required args, a valid cursor of the form that tool emits, the anchor it must forward]. */
-const TOOLS: Array<[string, Record<string, unknown>, string, string | number]> = [
-	["list_episodes", {}, encodeCursor({ backendCursor: ANCHOR_BACKEND }), ANCHOR_BACKEND],
-	["list_peers", {}, encodeCursor({ createdBefore: ANCHOR_TIME }), ANCHOR_TIME],
-	["list_messages", {}, encodeCursor({ createdBefore: ANCHOR_TIME }), ANCHOR_TIME],
-	["list_tasks", {}, encodeCursor({ createdBefore: ANCHOR_TIME }), ANCHOR_TIME],
-	["list_missions", {}, encodeCursor({ createdBefore: ANCHOR_TIME }), ANCHOR_TIME],
-	["list_diaries", {}, encodeCursor({ createdBefore: ANCHOR_TIME }), ANCHOR_TIME],
-	["list_briefing_notes", {}, encodeCursor({ createdBefore: ANCHOR_TIME }), ANCHOR_TIME],
-	["list_recurring_tasks", {}, encodeCursor({ createdBefore: ANCHOR_TIME }), ANCHOR_TIME],
-	["list_repo_mappings", {}, encodeCursor({ createdBefore: ANCHOR_TIME }), ANCHOR_TIME],
+const TOOLS: Array<[string, Record<string, unknown>, string, string | number]> =
 	[
-		"get_github_owner_bindings",
-		{},
-		encodeCursor({ backendCursor: ANCHOR_BACKEND }),
-		ANCHOR_BACKEND,
-	],
-	["list_fix_patterns", {}, encodeCursor({ createdBefore: ANCHOR_TIME }), ANCHOR_TIME],
-	[
-		"list_memories",
-		{ namespace: "global" },
-		encodeCursor({ backendCursor: ANCHOR_BACKEND }),
-		ANCHOR_BACKEND,
-	],
-	[
-		"list_tasks_by_mission",
-		{ missionId: "k57aaaaaaaaaaaaaaaaaaaaaaaaaaaaa" },
-		encodeCursor({ createdBefore: ANCHOR_TIME }),
-		ANCHOR_TIME,
-	],
-];
+		[
+			"list_episodes",
+			{},
+			encodeCursor({ backendCursor: ANCHOR_BACKEND }),
+			ANCHOR_BACKEND,
+		],
+		[
+			"list_peers",
+			{},
+			encodeCursor({ createdBefore: ANCHOR_TIME }),
+			ANCHOR_TIME,
+		],
+		[
+			"list_messages",
+			{},
+			encodeCursor({ createdBefore: ANCHOR_TIME }),
+			ANCHOR_TIME,
+		],
+		[
+			"list_tasks",
+			{},
+			encodeCursor({ createdBefore: ANCHOR_TIME }),
+			ANCHOR_TIME,
+		],
+		[
+			"list_missions",
+			{},
+			encodeCursor({ createdBefore: ANCHOR_TIME }),
+			ANCHOR_TIME,
+		],
+		[
+			"list_diaries",
+			{},
+			encodeCursor({ createdBefore: ANCHOR_TIME }),
+			ANCHOR_TIME,
+		],
+		[
+			"list_briefing_notes",
+			{},
+			encodeCursor({ createdBefore: ANCHOR_TIME }),
+			ANCHOR_TIME,
+		],
+		[
+			"list_recurring_tasks",
+			{},
+			encodeCursor({ createdBefore: ANCHOR_TIME }),
+			ANCHOR_TIME,
+		],
+		[
+			"list_repo_mappings",
+			{},
+			encodeCursor({ createdBefore: ANCHOR_TIME }),
+			ANCHOR_TIME,
+		],
+		[
+			"get_github_owner_bindings",
+			{},
+			encodeCursor({ backendCursor: ANCHOR_BACKEND }),
+			ANCHOR_BACKEND,
+		],
+		[
+			"list_fix_patterns",
+			{},
+			encodeCursor({ createdBefore: ANCHOR_TIME }),
+			ANCHOR_TIME,
+		],
+		[
+			"list_memories",
+			{ namespace: "global" },
+			encodeCursor({ backendCursor: ANCHOR_BACKEND }),
+			ANCHOR_BACKEND,
+		],
+		[
+			"list_tasks_by_mission",
+			{ missionId: "k57aaaaaaaaaaaaaaaaaaaaaaaaaaaaa" },
+			encodeCursor({ createdBefore: ANCHOR_TIME }),
+			ANCHOR_TIME,
+		],
+	];
 
 describe("an invalid cursor argument is isError with structuredContent.error.code invalid_cursor", () => {
 	for (const [tool, args] of TOOLS) {
@@ -200,11 +257,12 @@ describe("get_github_owner_bindings: its cursors are opaque, so an invalid one i
 			unprovenCursor: sc.unprovenNextCursor,
 		});
 		expect(
-			calls.find((c) => c.fn === "githubOwnerBinding:listBindings")?.args.cursor,
+			calls.find((c) => c.fn === "githubOwnerBinding:listBindings")?.args
+				.cursor,
 		).toBe("githubOwnerBinding:listBindings#next");
 		expect(
-			calls.find((c) => c.fn === "githubOwnerBinding:listUnprovenMappings")?.args
-				.cursor,
+			calls.find((c) => c.fn === "githubOwnerBinding:listUnprovenMappings")
+				?.args.cursor,
 		).toBe("githubOwnerBinding:listUnprovenMappings#next");
 	});
 
