@@ -739,6 +739,11 @@ async function respondToOutcome(
 				renderOrgPicker(
 					outcome.model,
 					runtime ? await runtime.agentChoices(outcome.model) : {},
+					{
+						redirectUri: redirectUriInState(outcome.model.state),
+						unverifiedDocument:
+							runtime?.isDocumentClient(outcome.model.client.clientId) ?? false,
+					},
 				),
 			);
 		case "refused": {
@@ -773,25 +778,19 @@ function clientMetadataRefusal(
 	c: Context,
 	verdict: { reason: string; retryable: boolean },
 ) {
-	console.error(
-		`[oauth] ${c.req.path} refused: client-metadata ${verdict.reason}`,
-	);
-	if (verdict.reason === "busy") {
+	console.error(`[oauth] ${c.req.path} refused: client-metadata ${verdict.reason}`);
+	const error_description = `client-metadata: ${verdict.reason}`;
+	// A failure that may pass (the host is slow or down, a limit was hit) is
+	// temporarily_unavailable: a client keeps its refresh token and tries again.
+	// Only a document that is wrong is invalid_client.
+	if (verdict.retryable) {
+		if (verdict.reason === "rate-limited") c.header("Retry-After", "60");
 		return c.json(
-			{
-				error: "temporarily_unavailable",
-				error_description: "client-metadata: busy",
-			},
-			503,
+			{ error: "temporarily_unavailable", error_description },
+			verdict.reason === "rate-limited" ? 429 : 503,
 		);
 	}
-	return c.json(
-		{
-			error: "invalid_client",
-			error_description: `client-metadata: ${verdict.reason}`,
-		},
-		400,
-	);
+	return c.json({ error: "invalid_client", error_description }, 400);
 }
 
 app.get("/authorize", async (c) => {
@@ -801,20 +800,28 @@ app.get("/authorize", async (c) => {
 	);
 	if (!settings.ok) return authorizeUnavailable(c, settings.missing);
 	const query = c.req.query();
+	const source = clientIpForRateLimit((n) => c.req.header(n));
+	// A URL client_id is a Client ID Metadata Document: refuse a bad one with
+	// its own reason (the package can only say "unknown-client"). The document
+	// is resolved ONCE here and handed to the runtime.
+	let known: Awaited<ReturnType<typeof checkClientMetadataForAuthorize>> = {
+		ok: true,
+	};
+	if (query.client_id) {
+		known = await checkClientMetadataForAuthorize(
+			query.client_id,
+			query.redirect_uri,
+			{ purpose: "authorize", source },
+		);
+		if (!known.ok) return clientMetadataRefusal(c, known);
+	}
 	const runtime = buildAuthorizeRuntime(
 		settings.settings,
 		expanderFor(query.redirect_uri),
+		{},
+		{ source, ...(known.client ? { known: known.client } : {}) },
 	);
 	const { cfg, deps } = runtime;
-	// A URL client_id is a Client ID Metadata Document: refuse a bad one with
-	// its own reason (the package can only say "unknown-client").
-	if (query.client_id) {
-		const verdict = await checkClientMetadataForAuthorize(
-			query.client_id,
-			query.redirect_uri,
-		);
-		if (!verdict.ok) return clientMetadataRefusal(c, verdict);
-	}
 	// `resource` is optional (RFC 8707 §2) and Claude.ai's connector omits it.
 	// A request naming no target is bound to the single one this server
 	// publishes; a named resource is still checked by the package, unchanged.
@@ -841,6 +848,8 @@ app.get("/authorize/callback", async (c) => {
 	const runtime = buildAuthorizeRuntime(
 		settings.settings,
 		expanderFor(redirectUriInState(state)),
+		{},
+		{ source: clientIpForRateLimit((n) => c.req.header(n)) },
 	);
 	const { cfg, deps } = runtime;
 	let sessionToken = sessionTokenFrom(c);
@@ -953,6 +962,7 @@ app.post("/authorize/org", async (c) => {
 		settings.settings,
 		expanderFor(redirectUriInState(state)),
 		posted,
+		{ source: clientIpForRateLimit((n) => c.req.header(n)) },
 	);
 	const { cfg, deps } = runtime;
 	// The person's session. Under the same guard as the callback (no Bearer, no
@@ -1181,6 +1191,10 @@ app.post("/token", async (c) => {
 			const verdict = await checkClientMetadataDocument(
 				presentedClientId,
 				redirectUri,
+				{
+					purpose: "token",
+					source: clientIpForRateLimit((n) => c.req.header(n)),
+				},
 			);
 			if (!verdict.ok) return clientMetadataRefusal(c, verdict);
 			client = { tokenEndpointAuthMethod: "none" };
@@ -1368,6 +1382,14 @@ app.post("/token", async (c) => {
 		if (!record) {
 			return c.json({ error: "invalid_grant" }, 400);
 		}
+		// RFC 6749 section 6: the refresh token is bound to the client it was
+		// issued to; a request naming another client_id is not that client's.
+		const refreshPresented =
+			body.client_id ??
+			parseBasicAuthSecret(c.req.header("authorization"), body).clientId;
+		if (refreshPresented && refreshPresented !== record.clientId) {
+			return c.json({ error: "invalid_grant" }, 400);
+		}
 
 		// D6 — confidential client authentication on refresh too (RFC 6749 §6).
 		let refreshClient = (await internalClient().query(
@@ -1390,6 +1412,10 @@ app.post("/token", async (c) => {
 			const verdict = await checkClientMetadataDocument(
 				record.clientId,
 				undefined,
+				{
+					purpose: "token",
+					source: clientIpForRateLimit((n) => c.req.header(n)),
+				},
 			);
 			if (!verdict.ok) return clientMetadataRefusal(c, verdict);
 			refreshClient = { scopeProfile: "", tokenEndpointAuthMethod: "none" };
