@@ -16,6 +16,7 @@ const { server } = createProxy({
 	upstream,
 	secret,
 	clientIpHeader: (process.env.CLIENT_IP_HEADER ?? "x-real-ip").toLowerCase(),
+	debugHeaders: process.env.EDGE_DEBUG_HEADERS === "1",
 	commit:
 		process.env.PROXY_COMMIT ?? process.env.RAILWAY_GIT_COMMIT_SHA ?? "unknown",
 });

@@ -13,6 +13,8 @@ export interface ProxyConfig {
 	/** The header the platform edge sets to the client address. */
 	clientIpHeader: string;
 	commit: string;
+	/** Log, per request, which address headers arrived (measurement aid; off by default). */
+	debugHeaders?: boolean;
 	now?: () => number;
 	log?: (line: Record<string, unknown>) => void;
 	/** Milliseconds to wait for the upstream /health. */
@@ -235,6 +237,19 @@ export function createProxy(config: ProxyConfig) {
 			config.clientIpHeader,
 		);
 		const clientIp = edgeIp ?? req.socket.remoteAddress ?? null;
+		if (config.debugHeaders && path !== "/health") {
+			const h = req.headers;
+			log({
+				evt: "edge_headers_debug",
+				path,
+				"x-real-ip": h["x-real-ip"],
+				"x-forwarded-for": h["x-forwarded-for"],
+				forwarded: h.forwarded,
+				"cf-connecting-ip": h["cf-connecting-ip"],
+				"x-forwarded-proto": h["x-forwarded-proto"],
+				socket: req.socket.remoteAddress,
+			});
+		}
 
 		if (isLimitedRoute(method, target)) {
 			counters.limitedRouteRequests += 1;

@@ -30,7 +30,9 @@ async function listen(s: http.Server): Promise<number> {
 	return (s.address() as AddressInfo).port;
 }
 
-async function start(opts: { secret?: string; upstreamUrl?: string } = {}) {
+async function start(
+	opts: { secret?: string; upstreamUrl?: string; debugHeaders?: boolean } = {},
+) {
 	upstream = http.createServer((req, res) => {
 		seen.push({
 			method: req.method ?? "",
@@ -55,6 +57,7 @@ async function start(opts: { secret?: string; upstreamUrl?: string } = {}) {
 		secret: opts.secret,
 		clientIpHeader: "x-real-ip",
 		commit: "proxysha",
+		debugHeaders: opts.debugHeaders,
 		log: (l) => logs.push(l),
 	});
 	const port = await listen(proxy.server);
@@ -274,6 +277,26 @@ describe("the signed header to the MCP", () => {
 		expect(seen[0].headers["x-forwarded-host"]).toBe(
 			base.replace("http://", ""),
 		);
+	});
+});
+
+describe("measurement aid", () => {
+	const fwd = { "x-real-ip": "203.0.113.9", "x-forwarded-for": "6.6.6.6" };
+
+	it("logs the address headers that arrived when debugHeaders is on", async () => {
+		await start({ debugHeaders: true });
+		await get("/authorize", fwd);
+		expect(logs.find((l) => l.evt === "edge_headers_debug")).toMatchObject({
+			"x-real-ip": "203.0.113.9",
+			"x-forwarded-for": "6.6.6.6",
+			path: "/authorize",
+		});
+	});
+
+	it("logs nothing of the kind by default", async () => {
+		await start();
+		await get("/authorize", fwd);
+		expect(logs.some((l) => l.evt === "edge_headers_debug")).toBe(false);
 	});
 });
 
