@@ -30,6 +30,11 @@ import { ConvexError } from "convex/values";
 import type { Context } from "hono";
 import { getCookie } from "hono/cookie";
 import { internalClient } from "./auth.js";
+import {
+	type ClientMetadata,
+	isClientMetadataUrl,
+	resolveClientMetadata,
+} from "./clientMetadataDocument.js";
 
 /** Environment names this module reads. Values are never logged. */
 export const AUTHORIZE_ENV = {
@@ -301,27 +306,83 @@ export function convexCodeStore(
  */
 export type RedirectExpander = (registered: string[]) => readonly string[];
 
+type RegisteredClientRow = {
+	clientId: string;
+	name?: string;
+	redirectUris?: string[];
+	revokedAt?: number;
+} | null;
+
+async function registeredClient(clientId: string): Promise<RegisteredClientRow> {
+	return (await internalClient().query(
+		// biome-ignore lint/suspicious/noExplicitAny: Convex string API
+		"oauth:getClientByClientId" as any,
+		{ clientId },
+	)) as RegisteredClientRow;
+}
+
 async function lookupClient(
 	clientId: string,
 	expand: RedirectExpander,
 ): Promise<AuthorizeClient | null> {
-	const row = (await internalClient().query(
-		// biome-ignore lint/suspicious/noExplicitAny: Convex string API
-		"oauth:getClientByClientId" as any,
-		{ clientId },
-	)) as {
-		clientId: string;
-		name?: string;
-		redirectUris?: string[];
-		revokedAt?: number;
-	} | null;
-	if (!row) return null;
+	const row = await registeredClient(clientId);
+	if (row) {
+		return {
+			clientId: row.clientId,
+			redirectUris: expand(row.redirectUris ?? []),
+			...(row.name !== undefined ? { clientName: row.name } : {}),
+			revoked: row.revokedAt !== undefined,
+		};
+	}
+	// Only an UNREGISTERED, URL-shaped client_id is a Client ID Metadata
+	// Document. The document supplies a display name and EXACT redirect URIs
+	// (no wildcard expansion) and nothing else: no scope profile, no allow
+	// list, no namespace prefix. Rights come from the signed-in person.
+	if (!isClientMetadataUrl(clientId)) return null;
+	const resolved = await resolveClientMetadata(clientId);
+	if (!resolved.ok) {
+		console.error(`[oauth] client metadata refused: ${resolved.reason}`);
+		return null;
+	}
 	return {
-		clientId: row.clientId,
-		redirectUris: expand(row.redirectUris ?? []),
-		...(row.name !== undefined ? { clientName: row.name } : {}),
-		revoked: row.revokedAt !== undefined,
+		clientId: resolved.client.clientId,
+		redirectUris: resolved.client.redirectUris,
+		clientName: resolved.client.clientName,
+		revoked: false,
 	};
+}
+
+export type ClientMetadataVerdict =
+	| { ok: true }
+	| { ok: false; reason: string; retryable: boolean };
+
+/**
+ * The refusal of a Client ID Metadata Document, with its specific reason, for
+ * the routes that must say WHY (the package's lookup can only say
+ * "unknown-client"). `registered` is true when the client_id has a stored row:
+ * such a client is never fetched. A client_id that is not URL-shaped is not
+ * this module's business and passes.
+ */
+export async function checkClientMetadataForAuthorize(
+	clientId: string,
+	redirectUri: string | undefined,
+): Promise<ClientMetadataVerdict> {
+	if (!isClientMetadataUrl(clientId)) return { ok: true };
+	if (await registeredClient(clientId)) return { ok: true };
+	return await checkClientMetadataDocument(clientId, redirectUri);
+}
+
+/** Resolves the document for an UNREGISTERED URL client_id and checks the redirect_uri against it. */
+export async function checkClientMetadataDocument(
+	clientId: string,
+	redirectUri: string | undefined,
+): Promise<ClientMetadataVerdict> {
+	const resolved = await resolveClientMetadata(clientId);
+	if (!resolved.ok) return resolved;
+	const client: ClientMetadata = resolved.client;
+	if (redirectUri !== undefined && !client.redirectUris.includes(redirectUri))
+		return { ok: false, reason: "redirect-uri-not-registered", retryable: false };
+	return { ok: true };
 }
 
 /** A mapping row read by the organisation's permanent Clerk id: its own key and kind ride along. */
