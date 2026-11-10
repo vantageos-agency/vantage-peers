@@ -1054,6 +1054,27 @@ const SCOPE_CLASSIFICATION: Readonly<Record<string, ScopeClassification>> = {
 		basis: "unread",
 		reason: "keyed by the registered client id (authorize.ts:274)",
 	},
+	"authorize.ts|oauth:getDocumentClientDenial": {
+		class: "safe",
+		severity: null,
+		basis: "args+gate",
+		reason:
+			"keyed by the client_id URL the caller presented; service-account gated, an unresolved caller RAISES RBAC_DENIED (convex/oauth.ts getDocumentClientDenial); the answer is a deny-list entry, not tenant data",
+	},
+	"server-http.ts|oauth:denyDocumentClient": {
+		class: "safe",
+		severity: null,
+		basis: "args+gate",
+		reason:
+			"operator route behind masterOnlyMiddleware (/admin); service-account gated mutation (convex/oauth.ts denyDocumentClient); keyed by the client_id URL",
+	},
+	"server-http.ts|oauth:allowDocumentClient": {
+		class: "safe",
+		severity: null,
+		basis: "args+gate",
+		reason:
+			"operator route behind masterOnlyMiddleware (/admin); service-account gated mutation (convex/oauth.ts allowDocumentClient); keyed by the client_id URL",
+	},
 	"authorize.ts|clientOrgMapping:getByClerkOrgId": {
 		class: "safe",
 		severity: null,
