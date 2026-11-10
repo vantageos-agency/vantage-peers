@@ -857,7 +857,9 @@ describe("round 4 — a host is a real hostname, and its domain key cannot be fo
 
 	it("N1: a host with no registrable domain (a public suffix) is refused, never keyed on the whole host", async () => {
 		const rec = await install();
-		expect(await cimd.resolveClientMetadata("https://co.uk/c.json")).toMatchObject({
+		expect(
+			await cimd.resolveClientMetadata("https://co.uk/c.json"),
+		).toMatchObject({
 			ok: false,
 			reason: "domain-unresolvable",
 		});
@@ -866,9 +868,12 @@ describe("round 4 — a host is a real hostname, and its domain key cannot be fo
 
 	it("N1: a valid punycode host is still accepted", async () => {
 		await install({
-			respond: (req) => json(validDocument({}, `https://${req.hostname}/c.json`)),
+			respond: (req) =>
+				json(validDocument({}, `https://${req.hostname}/c.json`)),
 		});
-		const r = await cimd.resolveClientMetadata("https://xn--bcher-kva.example.com/c.json");
+		const r = await cimd.resolveClientMetadata(
+			"https://xn--bcher-kva.example.com/c.json",
+		);
 		expect(r.ok).toBe(true);
 	});
 });
@@ -891,7 +896,10 @@ describe("round 4 — the refresh pool is not held by two members, and a known c
 	it("R3: two member URLs hanging hold both refresh slots; the victim's refresh still resolves from its stale document", async () => {
 		let now = 1_000_000;
 		await rig(() => now);
-		const known = await cimd.resolveClientMetadata(VICTIM, { purpose: "authorize", source: "v" });
+		const known = await cimd.resolveClientMetadata(VICTIM, {
+			purpose: "authorize",
+			source: "v",
+		});
 		expect(known.ok).toBe(true);
 		now += cimd.CIMD_DEFAULT_TTL_MS + 1000; // expired, inside the stale window
 		const held = [
@@ -901,14 +909,19 @@ describe("round 4 — the refresh pool is not held by two members, and a known c
 		await new Promise((r) => setTimeout(r, 30));
 		const victim = await refreshOf(VICTIM, "9.9.9.9", "tv");
 		expect(victim.ok).toBe(true);
-		expect(victim.ok && known.ok && victim.client).toEqual(known.ok && known.client);
+		expect(victim.ok && known.ok && victim.client).toEqual(
+			known.ok && known.client,
+		);
 		await Promise.all(held);
 	});
 
 	it("the stale window is bounded: past it the document is not served", async () => {
 		let now = 1_000_000;
 		await rig(() => now);
-		await cimd.resolveClientMetadata(VICTIM, { purpose: "authorize", source: "v" });
+		await cimd.resolveClientMetadata(VICTIM, {
+			purpose: "authorize",
+			source: "v",
+		});
 		now += cimd.CIMD_DEFAULT_TTL_MS + cimd.CIMD_STALE_MS + 1000;
 		const held = [
 			refreshOf("https://m1.dom1.com/c.json", "10.0.0.1", "t1"),
@@ -930,7 +943,10 @@ describe("round 4 — the refresh pool is not held by two members, and a known c
 			perSourceLimit: 1000,
 			respond: () => (down ? { status: 503 } : json(validDocument({}, VICTIM))),
 		});
-		await cimd.resolveClientMetadata(VICTIM, { purpose: "authorize", source: "v" });
+		await cimd.resolveClientMetadata(VICTIM, {
+			purpose: "authorize",
+			source: "v",
+		});
 		now += cimd.CIMD_DEFAULT_TTL_MS + 1000;
 		down = true;
 		expect((await refreshOf(VICTIM, "9.9.9.9", "tv")).ok).toBe(true);
@@ -951,11 +967,17 @@ describe("round 4 — the refresh pool is not held by two members, and a known c
 			respond: () =>
 				json(
 					wrong
-						? validDocument({ token_endpoint_auth_method: "client_secret_basic" }, VICTIM)
+						? validDocument(
+								{ token_endpoint_auth_method: "client_secret_basic" },
+								VICTIM,
+							)
 						: validDocument({}, VICTIM),
 				),
 		});
-		await cimd.resolveClientMetadata(VICTIM, { purpose: "authorize", source: "v" });
+		await cimd.resolveClientMetadata(VICTIM, {
+			purpose: "authorize",
+			source: "v",
+		});
 		now += cimd.CIMD_DEFAULT_TTL_MS + 1000;
 		wrong = true;
 		expect(await refreshOf(VICTIM, "9.9.9.9", "tv")).toMatchObject({
