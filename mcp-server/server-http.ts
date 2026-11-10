@@ -495,6 +495,14 @@ async function checkRegisterRateLimit(
  *    is attacker-controlled and must never be the key (rotating it bypassed
  *    the per-IP ceiling).
  * 3. else `"unknown"` — one shared bucket, as before.
+ *
+ * What is trusted, stated (round 2 of the CIMD audit; no new header is trusted):
+ * `x-real-ip` is the only header Railway documents for the client address
+ * (https://docs.railway.com/networking/public-networking/specs-and-limits,
+ * "Request Headers": "X-Real-IP for identifying client's remote IP"). That page
+ * does not document `x-forwarded-for`; the rightmost-entry fallback predates the
+ * CIMD work (the /register limiter) and is kept as it was. The CIMD limits key
+ * the result through `sourceKeyOf` (IPv6 on its /64, IPv4 in full).
  */
 export function clientIpForRateLimit(
 	header: (name: string) => string | undefined,
