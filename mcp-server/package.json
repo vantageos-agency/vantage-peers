@@ -1,7 +1,7 @@
 {
 	"name": "vantage-peers-mcp",
 	"version": "4.1.0",
-	"description": "MCP server for VantagePeers — shared memory, messaging, and task coordination for AI agent teams",
+	"description": "Your AI agents keep memory across sessions, message each other, and run tracked tasks and missions.",
 	"type": "module",
 	"main": "./dist/server.js",
 	"exports": {

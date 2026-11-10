@@ -48,12 +48,31 @@ export const BRAND_ICON_ROUTES: Record<
  *
  * `SERVER_DESCRIPTION` stays at or under 100 characters: the Server Card schema
  * (modelcontextprotocol/experimental-ext-server-card, ServerCard.description
- * maxLength 100) reuses it verbatim.
+ * maxLength 100) reuses it verbatim. The landing page reads it too, and
+ * mcp-server/package.json "description" is a pinned literal copy (npm cannot
+ * import a constant); test/server-metadata-discoverability.test.ts section 7
+ * holds all of them equal.
  */
 export const SERVER_NAME = "vantage-peers";
 export const SERVER_TITLE = "VantagePeers";
 export const SERVER_DESCRIPTION =
-	"Shared memory, messaging, tasks and missions for teams of AI agents, over one MCP connection.";
+	"Your AI agents keep memory across sessions, message each other, and run tracked tasks and missions.";
+
+/**
+ * Each capability SERVER_DESCRIPTION names, mapped to the served tools that
+ * back it. A key is a phrase that must appear verbatim in the description; a
+ * value lists tool names that tools/list must serve. Both halves are pinned by
+ * test/server-metadata-discoverability.test.ts section 7, so the description
+ * cannot promise a capability no tool delivers.
+ */
+export const SERVER_DESCRIPTION_CAPABILITIES: Readonly<
+	Record<string, readonly string[]>
+> = {
+	"memory across sessions": ["store_memory", "recall"],
+	"message each other": ["send_message", "check_messages"],
+	"tracked tasks": ["create_task", "start_task", "complete_task"],
+	missions: ["create_mission"],
+};
 export const SERVER_WEBSITE_URL = "https://www.vantagepeers.com";
 export const SERVER_CONNECT_DOCS_URL =
 	"https://www.vantagepeers.com/docs/cloud/connect";
