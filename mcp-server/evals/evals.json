@@ -939,29 +939,30 @@
 			"source": "src/tools.ts:3336"
 		},
 		{
-			"id": "list_memories.bad-fields",
+			"id": "list_memories.unknown-key",
 			"tool": "list_memories",
 			"op": "callTool",
 			"caller": "master",
 			"runner": "offline",
-			"prompt": "List memories with fields='everything'.",
+			"prompt": "List memories passing fields='lite' and an unknown key fieldz.",
 			"args": {
 				"namespace": "team/acme",
-				"fields": "everything"
+				"fields": "lite",
+				"fieldz": "lite"
 			},
 			"expect": {
 				"isError": true,
 				"textIncludes": [
 					"Input validation error: Invalid arguments for tool list_memories",
-					"fields"
+					"fieldz"
 				]
 			},
 			"expectations": [
-				"fields is the enum lite|full",
+				"fields is not declared and is dropped before strict validation (IGNORED_UNDECLARED_KEYS); fieldz is any other unknown key and is refused",
 				"the SDK refuses before the handler runs (validateToolInput), so no backend call is made",
 				"result is isError=true with text 'Input validation error: Invalid arguments for tool list_memories: ...'"
 			],
-			"source": "src/registerTool.ts:464"
+			"source": "src/registerTool.ts:515"
 		},
 		{
 			"id": "get_profile.own-profile",
@@ -1717,28 +1718,29 @@
 			"source": "src/tools.ts:4359"
 		},
 		{
-			"id": "list_messages.bad-fields",
+			"id": "list_messages.unknown-key",
 			"tool": "list_messages",
 			"op": "callTool",
 			"caller": "master",
 			"runner": "offline",
-			"prompt": "List messages, fields=all.",
+			"prompt": "List messages passing fields='lite' and an unknown key fieldz.",
 			"args": {
-				"fields": "all"
+				"fields": "lite",
+				"fieldz": "lite"
 			},
 			"expect": {
 				"isError": true,
 				"textIncludes": [
 					"Input validation error: Invalid arguments for tool list_messages",
-					"fields"
+					"fieldz"
 				]
 			},
 			"expectations": [
-				"fields is the enum lite|full",
+				"fields is not declared and is dropped before strict validation (IGNORED_UNDECLARED_KEYS); fieldz is any other unknown key and is refused",
 				"the SDK refuses before the handler runs (validateToolInput), so no backend call is made",
 				"result is isError=true with text 'Input validation error: Invalid arguments for tool list_messages: ...'"
 			],
-			"source": "src/registerTool.ts:464"
+			"source": "src/registerTool.ts:515"
 		},
 		{
 			"id": "search_messages_by_keyword.keyword",
