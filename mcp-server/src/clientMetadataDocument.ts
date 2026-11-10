@@ -62,6 +62,13 @@ export const CIMD_TIMEOUT_MS = 3000;
 /** Cache lifetime when the server gives no cache header, and the ceiling for any header. */
 export const CIMD_DEFAULT_TTL_MS = 5 * 60 * 1000;
 export const CIMD_MAX_TTL_MS = 60 * 60 * 1000;
+/**
+ * How long past its TTL a cached document may still be served to a REFRESH when
+ * a fresh fetch is refused by load or fails in a way that may pass: a client the
+ * server already knows is never refused by someone else's flood. Bounded; a
+ * document that is now WRONG is never served stale.
+ */
+export const CIMD_STALE_MS = 60 * 60 * 1000;
 /** Bound on cached documents and on fetches running at once. */
 export const CIMD_CACHE_MAX_ENTRIES = 256;
 /**
@@ -129,6 +136,11 @@ export type FetchDeps = {
 export type ResolveOptions = {
 	/** Who asked (the caller's address); the per-source fetch limit is keyed on it. */
 	source?: string;
+	/**
+	 * A refresh only: the connection (refresh-token digest). One connection has at
+	 * most one fetch in flight.
+	 */
+	connection?: string;
 	/** Which pool the fetch draws from; `authorize` is the default. */
 	purpose?: "authorize" | "token" | "refresh";
 };
@@ -279,6 +291,15 @@ export function parseClientMetadataUrl(
 		host.endsWith(".localhost")
 	)
 		return refuse("host-not-public");
+	// A real hostname: every label is LDH (letters, digits, hyphens, none at an
+	// end; punycode `xn--` labels are LDH), none is empty. One root dot is
+	// allowed at the end. An empty label is how `x1..a.example` and
+	// `x2..a.example` would be two keys for one site.
+	const labels = url.hostname.replace(/^\[|\]$/g, "").replace(/\.$/, "").split(".");
+	if (!labels.every((l) => /^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$/.test(l)))
+		return refuse("host-label-invalid");
+	// The host must have a registrable domain: the per-domain bound keys on it.
+	if (domainKeyOf(host) === null) return refuse("domain-unresolvable");
 	return { ok: true, url };
 }
 
@@ -434,6 +455,7 @@ export function _setClientMetadataDepsForTest(
 	inFlightByPool.refresh = 0;
 	inFlightBySource.clear();
 	inFlightByDomain.clear();
+	inFlightByConnection.clear();
 	sharedFetch.clear();
 }
 
@@ -463,12 +485,13 @@ export function sourceKeyOf(address: string): string {
  * Public Suffix List, private suffixes included, so `evil.vercel.app` and
  * `victim.vercel.app` are different keys while `a.one.com` and `b.one.com` are
  * one. A trailing dot is stripped first (`a.one.com.` is `a.one.com`). A host
- * that is itself a public suffix, or does not parse, keys on itself and is
- * shared with nobody.
+ * with no registrable domain (a public suffix, or one that does not parse) has
+ * NO key: `null`, never the whole host, which a caller could forge by varying
+ * the host. parseClientMetadataUrl refuses such a host, so a fetch never sees it.
  */
-export function domainKeyOf(hostname: string): string {
+export function domainKeyOf(hostname: string): string | null {
 	const host = hostname.toLowerCase().replace(/\.+$/, "");
-	return getDomain(host, { allowPrivateDomains: true }) ?? host;
+	return getDomain(host, { allowPrivateDomains: true });
 }
 
 /** Counts one fetch against `key`; false when the source has used its window's allowance. */
@@ -643,6 +666,7 @@ const inFlightByPool: Record<"authorize" | "token" | "refresh", number> = {
 };
 const inFlightBySource = new Map<string, number>();
 const inFlightByDomain = new Map<string, number>();
+const inFlightByConnection = new Map<string, number>();
 const sharedFetch = new Map<string, Promise<ResolveResult>>();
 
 function bump(map: Map<string, number>, key: string, by: 1 | -1): void {
@@ -657,14 +681,36 @@ export async function resolveClientMetadata(
 ): Promise<ResolveResult> {
 	const parsed = parseClientMetadataUrl(clientId);
 	if (!parsed.ok) return { ok: false, reason: parsed.reason, retryable: false };
+	let stale: ClientMetadata | undefined;
 	const hit = cache.get(clientId);
 	if (hit) {
+		const now = deps.now();
 		cache.delete(clientId);
-		if (hit.expiresAt > deps.now()) {
+		if (hit.expiresAt > now) {
 			cache.set(clientId, hit); // a hit refreshes recency (true LRU)
 			return { ok: true, client: hit.client };
 		}
+		if (hit.expiresAt + CIMD_STALE_MS > now) {
+			stale = hit.client;
+			cache.set(clientId, hit); // kept for a refresh, inside the stale window
+		}
 	}
+	const result = await resolveUncached(clientId, parsed.url, options);
+	if (!result.ok) {
+		// A refresh of a known client is not refused by load or by a blip.
+		if (stale && options.purpose === "refresh" && result.retryable)
+			return { ok: true, client: stale };
+		// A document that is now wrong is never served stale again.
+		if (!result.retryable) cache.delete(clientId);
+	}
+	return result;
+}
+
+async function resolveUncached(
+	clientId: string,
+	url: URL,
+	options: ResolveOptions,
+): Promise<ResolveResult> {
 	// A fetch of this very document is already running: wait for it. It costs
 	// no slot and no allowance, and a crowd asking for one document is one fetch.
 	const running = sharedFetch.get(clientId);
@@ -673,13 +719,19 @@ export async function resolveClientMetadata(
 	const purpose = options.purpose ?? "authorize";
 	const source = sourceKeyOf(options.source ?? "unknown");
 	const sourceKey = `${purpose}:${source}`;
-	const domain = domainKeyOf(parsed.url.hostname);
+	const connection =
+		purpose === "refresh" && options.connection ? options.connection : undefined;
+	const domain = domainKeyOf(url.hostname);
+	if (domain === null)
+		return { ok: false, reason: "domain-unresolvable", retryable: false };
 	const busy: ResolveResult = { ok: false, reason: "busy", retryable: true };
 	if (inFlightByPool[purpose] >= CIMD_POOL[purpose]) return busy;
 	if ((inFlightBySource.get(sourceKey) ?? 0) >= CIMD_PER_SOURCE_IN_FLIGHT)
 		return busy;
-	// A refresh has no domain bucket: it keeps its own reserved pool and the
-	// per-source limits, so no one holding a domain can refuse a person's refresh.
+	if (connection !== undefined && (inFlightByConnection.get(connection) ?? 0) >= 1)
+		return busy;
+	// A refresh has no domain bucket: it keeps its own reserved pool, the
+	// per-source limits and one fetch per connection.
 	const boundByDomain = purpose !== "refresh";
 	if (
 		boundByDomain &&
@@ -690,10 +742,12 @@ export async function resolveClientMetadata(
 		return { ok: false, reason: "rate-limited", retryable: true };
 	inFlightByPool[purpose]++;
 	bump(inFlightBySource, sourceKey, 1);
+	if (connection !== undefined) bump(inFlightByConnection, connection, 1);
 	if (boundByDomain) bump(inFlightByDomain, domain, 1);
-	const work = fetchDocument(parsed.url, clientId).finally(() => {
+	const work = fetchDocument(url, clientId).finally(() => {
 		inFlightByPool[purpose]--;
 		bump(inFlightBySource, sourceKey, -1);
+		if (connection !== undefined) bump(inFlightByConnection, connection, -1);
 		if (boundByDomain) bump(inFlightByDomain, domain, -1);
 		sharedFetch.delete(clientId);
 	});

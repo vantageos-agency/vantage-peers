@@ -1436,6 +1436,7 @@ app.post("/token", async (c) => {
 				undefined,
 				{
 					purpose: "refresh",
+					connection: refreshTokenHash,
 					source: clientIpForRateLimit((n) => c.req.header(n)),
 				},
 			);
@@ -1871,7 +1872,11 @@ async function documentClientAdmin(c: Context, lift: boolean) {
 		);
 	} catch (err: unknown) {
 		const message = convexFailureText(err);
-		if (/(REASON_TOO_SHORT|OPERATOR_REQUIRED)/.test(message)) {
+		if (
+			/(REASON_TOO_SHORT|OPERATOR_REQUIRED|REASON_TOO_LONG|OPERATOR_TOO_LONG)/.test(
+				message,
+			)
+		) {
 			return c.json({ error: "invalid_request", detail: message }, 400);
 		}
 		console.error("[admin] document-client change failed:", message);

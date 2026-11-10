@@ -12,6 +12,7 @@
         "convex": ">=1.0.0",
         "dotenv": "^17.4.2",
         "tldts": "7.4.19",
+        "tldts-core": "7.4.20",
         "zod": "^4.6.7",
       },
       "devDependencies": {
