@@ -243,6 +243,15 @@ describe("round 2 — unlisting through the same door, with an audit that keeps 
 			lift: true,
 			...over,
 		});
+	const events = (t: T) =>
+		t.run(async (ctx) =>
+			(
+				await ctx.db
+					.query("oauth_document_client_events")
+					.withIndex("by_clientId", (q) => q.eq("clientId", URL_A))
+					.collect()
+			).sort((a, b) => a._creationTime - b._creationTime),
+		);
 	const auditRow = (t: T) =>
 		t.run(async (ctx) =>
 			ctx.db
@@ -263,13 +272,14 @@ describe("round 2 — unlisting through the same door, with an audit that keeps 
 		expect(await lookup(t, "before")).toBeNull();
 		const row = await auditRow(t);
 		expect(row?.active).toBe(false);
-		expect(row?.history.map((h) => h.action)).toEqual(["listed", "unlisted"]);
-		expect(row?.history[0]).toMatchObject({ by: OPERATOR, reason: REASON });
-		expect(row?.history[1]).toMatchObject({
+		const log = await events(t);
+		expect(log.map((h) => h.action)).toEqual(["listed", "unlisted"]);
+		expect(log[0]).toMatchObject({ by: OPERATOR, reason: REASON });
+		expect(log[1]).toMatchObject({
 			by: "pi",
 			reason: "reviewed, the client is legitimate again",
 		});
-		expect(row?.history[1].at).toBeGreaterThan(0);
+		expect(log[1].at).toBeGreaterThan(0);
 	});
 
 	test("listing again after an unlisting keeps all three events on one row", async () => {
@@ -280,7 +290,7 @@ describe("round 2 — unlisting through the same door, with an audit that keeps 
 		expect(await denial(t)).not.toBeNull();
 		const row = await auditRow(t);
 		expect(row?.active).toBe(true);
-		expect(row?.history.map((h) => h.action)).toEqual([
+		expect((await events(t)).map((h) => h.action)).toEqual([
 			"listed",
 			"unlisted",
 			"listed",
@@ -345,5 +355,47 @@ describe("round 2 — a client_id that is not in canonical form is not listed", 
 			});
 			expect(await denial(t, clientId)).toBeNull();
 		}
+	});
+});
+
+describe("round 3 — the audit is bounded", () => {
+	const lift = (t: T) =>
+		asService(t).mutation(api.oauth.deleteClient, {
+			clientId: URL_A,
+			reason: "reviewed, the client is legitimate again",
+			operator: "pi",
+			lift: true,
+		});
+
+	test("20 list/unlist cycles leave ONE small deny row and 40 event rows", async () => {
+		const t = createT();
+		for (let i = 0; i < 20; i++) {
+			await deny(t);
+			await lift(t);
+		}
+		const rows = await t.run((ctx) =>
+			ctx.db.query("oauth_denied_document_clients").collect(),
+		);
+		expect(rows).toHaveLength(1);
+		expect(JSON.stringify(rows[0]).length).toBeLessThan(1000);
+		expect(rows[0]).not.toHaveProperty("history");
+		const log = await t.run((ctx) =>
+			ctx.db
+				.query("oauth_document_client_events")
+				.withIndex("by_clientId", (q) => q.eq("clientId", URL_A))
+				.collect(),
+		);
+		expect(log).toHaveLength(40);
+	});
+
+	test("reason is capped at 500 characters and operator at 120; anything longer is refused with a code", async () => {
+		const t = createT();
+		await expect(deny(t, { reason: "x".repeat(501) })).rejects.toThrow(/REASON_TOO_LONG/);
+		await expect(deny(t, { operator: "o".repeat(121) })).rejects.toThrow(/OPERATOR_TOO_LONG/);
+		await deny(t, { reason: "x".repeat(500), operator: "o".repeat(120) });
+		expect(await denial(t)).not.toBeNull();
+		await expect(lift(t).then(() => deny(t, { reason: "y".repeat(501) }))).rejects.toThrow(
+			/REASON_TOO_LONG/,
+		);
 	});
 });
