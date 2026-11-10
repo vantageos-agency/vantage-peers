@@ -690,10 +690,18 @@ describe("Manufact fix report: every named input item is rewritten", () => {
 	// three are mcp-doctor C-40 (6) inputs-sourced reds (report 56425010, mcp-doctor
 	// 39a5d0adce; task k17a9k0qneagqkp4wsp486xbh58hx7nj).
 	const SOURCED: [tool: string, field: string, sources: RegExp[]][] = [
-		["search_briefing_notes_by_keyword", "createdBy", [/\blist_peers\b/, /user:<subject>/]],
+		[
+			"search_briefing_notes_by_keyword",
+			"createdBy",
+			[/\blist_peers\b/, /user:<subject>/],
+		],
 		["list_tasks_by_mission", "createdBy", [/\blist_peers\b/, /\bwhoami\b/]],
 		["list_diaries", "createdBy", [/\blist_peers\b/, /\bwhoami\b/]],
-		["get_github_owner_bindings", "unprovenCursor", [/\bget_github_owner_bindings\b/, /\bunprovenNextCursor\b/]],
+		[
+			"get_github_owner_bindings",
+			"unprovenCursor",
+			[/\bget_github_owner_bindings\b/, /\bunprovenNextCursor\b/],
+		],
 	];
 	for (const [tool, field, sources] of SOURCED) {
 		it(`${tool}.${field} says where the value comes from`, () => {
@@ -715,8 +723,10 @@ describe("Manufact fix report: every named input item is rewritten", () => {
 const IDENTITY_FIELD = /(Id|Ids|Cursor|By)$/;
 
 function sourcedLikeDoctor(d: string, served: string[]): boolean {
-	if (served.some((name) => new RegExp(`\\b${escapeRe(name)}\\b`).test(d))) return true;
-	if (/\b(returned by|returns?|carried by|given by|from)\b/i.test(d)) return true;
+	if (served.some((name) => new RegExp(`\\b${escapeRe(name)}\\b`).test(d)))
+		return true;
+	if (/\b(returned by|returns?|carried by|given by|from)\b/i.test(d))
+		return true;
 	if (/["'`][^"'`\s]{1,64}["'`]/.test(d)) return true;
 	return /\b(name|ID)\b/.test(d);
 }
