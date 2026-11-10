@@ -390,12 +390,16 @@ describe("round 3 — the audit is bounded", () => {
 
 	test("reason is capped at 500 characters and operator at 120; anything longer is refused with a code", async () => {
 		const t = createT();
-		await expect(deny(t, { reason: "x".repeat(501) })).rejects.toThrow(/REASON_TOO_LONG/);
-		await expect(deny(t, { operator: "o".repeat(121) })).rejects.toThrow(/OPERATOR_TOO_LONG/);
-		await deny(t, { reason: "x".repeat(500), operator: "o".repeat(120) });
-		expect(await denial(t)).not.toBeNull();
-		await expect(lift(t).then(() => deny(t, { reason: "y".repeat(501) }))).rejects.toThrow(
+		await expect(deny(t, { reason: "x".repeat(501) })).rejects.toThrow(
 			/REASON_TOO_LONG/,
 		);
+		await expect(deny(t, { operator: "o".repeat(121) })).rejects.toThrow(
+			/OPERATOR_TOO_LONG/,
+		);
+		await deny(t, { reason: "x".repeat(500), operator: "o".repeat(120) });
+		expect(await denial(t)).not.toBeNull();
+		await expect(
+			lift(t).then(() => deny(t, { reason: "y".repeat(501) })),
+		).rejects.toThrow(/REASON_TOO_LONG/);
 	});
 });

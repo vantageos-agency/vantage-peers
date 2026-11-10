@@ -740,12 +740,17 @@ describe("client_name (round 2)", () => {
 
 describe("round 3 — the domain bucket is the registrable domain, and never bounds a refresh", () => {
 	const hang = { timeoutMs: 400, perSourceLimit: 1000 };
-	const hangExcept = (...live: string[]) =>
+	const hangExcept =
+		(...live: string[]) =>
 		(req: { hostname: string }) =>
 			live.includes(req.hostname)
 				? json(validDocument({}, `https://${req.hostname}/c.json`))
 				: new Promise<never>(() => undefined);
-	const at = (host: string, purpose: "authorize" | "token" | "refresh", source: string) =>
+	const at = (
+		host: string,
+		purpose: "authorize" | "token" | "refresh",
+		source: string,
+	) =>
 		cimd.resolveClientMetadata(`https://${host}/c.json`, { purpose, source });
 
 	it("domainKeyOf: the registrable domain from the Public Suffix List, trailing dot stripped", async () => {
@@ -805,7 +810,10 @@ describe("round 3 — the domain bucket is the registrable domain, and never bou
 	});
 
 	it("the refresh path has no domain bucket: a refresh is admitted while its domain is held by hanging fetches", async () => {
-		const rec = await install({ ...hang, respond: hangExcept("legit.shared.com") });
+		const rec = await install({
+			...hang,
+			respond: hangExcept("legit.shared.com"),
+		});
 		const held = [
 			at("x.shared.com", "token", "10.0.0.1"),
 			at("y.shared.com", "token", "10.0.0.2"),
