@@ -71,12 +71,11 @@ beforeEach(() => {
 	seen = [];
 });
 afterEach(async () => {
-	proxy?.server.closeAllConnections();
-	upstream?.closeAllConnections();
-	await Promise.all([
-		new Promise((r) => proxy?.server.close(r)),
-		new Promise((r) => upstream?.close(r)),
-	]);
+	const servers = [proxy?.server, upstream].filter(
+		(x): x is http.Server => x?.listening === true,
+	);
+	for (const x of servers) x.closeAllConnections();
+	await Promise.all(servers.map((x) => new Promise((r) => x.close(r))));
 });
 
 describe("route matching", () => {
