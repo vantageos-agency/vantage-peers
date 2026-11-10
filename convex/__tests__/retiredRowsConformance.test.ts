@@ -49,6 +49,7 @@ const CLASSIFIED: Record<string, [Kind, string]> = {
 	"agentLinks.revokedAt": ["revocation", "link revocation, enforced by the package resolver"],
 	"agent_credentials.isActive": ["revocation", "credential disabled, enforced at verification"],
 	"client_org_mapping.isActive": ["revocation", "tenant switched off: withOrgScope refuses an inactive org"],
+	"oauth_denied_document_clients.active": ["switch", "listing on/off; the row stays with its history and every reader asks lib/documentClientDenial"],
 	"agents.isActive": ["switch", "seat enabled/disabled; listed to its org's admins"],
 };
 
