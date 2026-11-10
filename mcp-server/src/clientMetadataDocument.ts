@@ -761,7 +761,8 @@ function recordTimeout(prefix: string): void {
 	if (prefix === "unknown") return;
 	const now = deps.now();
 	if (suspectHits.size >= CIMD_SUSPECTS_MAX) {
-		for (const [k, v] of suspectHits) if (v.resetAt <= now) suspectHits.delete(k);
+		for (const [k, v] of suspectHits)
+			if (v.resetAt <= now) suspectHits.delete(k);
 		if (suspectHits.size >= CIMD_SUSPECTS_MAX) {
 			const oldest = suspectHits.keys().next().value;
 			if (oldest !== undefined) suspectHits.delete(oldest);

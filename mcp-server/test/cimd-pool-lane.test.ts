@@ -39,10 +39,13 @@ async function rig(now?: () => number) {
 		}),
 	});
 	const base = rec.deps.resolveHost as Resolve;
-	rec.deps.resolveHost = (h: string) =>
-		h.includes("hang") ? new Promise<never>(() => undefined) : base(h);
+	const queried: string[] = [];
+	rec.deps.resolveHost = (h: string) => {
+		queried.push(h);
+		return h.includes("hang") ? new Promise<never>(() => undefined) : base(h);
+	};
 	cimd._setClientMetadataDepsForTest(rec.deps);
-	return rec;
+	return { queried };
 }
 
 let seq = 0;
@@ -83,7 +86,7 @@ describe("the pool is wide enough that one prefix cannot fill it", () => {
 			at(hangUrl(), `203.0.113.${10 + i}`),
 		);
 		await settle();
-		expect(rec.dnsQueries).toHaveLength(n);
+		expect(rec.queried).toHaveLength(n);
 		const victim = await at(okUrl(), "198.51.100.9");
 		expect(victim.ok).toBe(true);
 		const out = await Promise.all(flood);
@@ -94,7 +97,9 @@ describe("the pool is wide enough that one prefix cannot fill it", () => {
 		await rig();
 		const n = cimd.CIMD_PER_PREFIX_IN_FLIGHT;
 		const flood = [
-			...Array.from({ length: n }, (_, i) => at(hangUrl(), `203.0.113.${i + 1}`)),
+			...Array.from({ length: n }, (_, i) =>
+				at(hangUrl(), `203.0.113.${i + 1}`),
+			),
 			...Array.from({ length: n }, (_, i) => at(hangUrl(), `192.0.2.${i + 1}`)),
 		];
 		await settle();
@@ -109,13 +114,10 @@ describe("F2 — one timeout marks nothing", () => {
 		const rec = await rig();
 		const first = await at(hangUrl(), "198.51.100.7");
 		expect(reasonOf(first)).toBe("fetch-timeout");
-		const before = rec.dnsQueries.length;
-		const pair = [
-			at(hangUrl(), "198.51.100.7"),
-			at(hangUrl(), "198.51.100.7"),
-		];
+		const before = rec.queried.length;
+		const pair = [at(hangUrl(), "198.51.100.7"), at(hangUrl(), "198.51.100.7")];
 		await settle();
-		expect(rec.dnsQueries.length - before).toBe(2);
+		expect(rec.queried.length - before).toBe(2);
 		const out = await Promise.all(pair);
 		expect(out.every((r) => reasonOf(r) === "fetch-timeout")).toBe(true);
 	});
@@ -126,10 +128,10 @@ describe("F3 — the `unknown` source is never marked", () => {
 		const rec = await rig();
 		for (let i = 0; i < 3; i++)
 			expect(reasonOf(await at(hangUrl(), undefined))).toBe("fetch-timeout");
-		const before = rec.dnsQueries.length;
+		const before = rec.queried.length;
 		const pair = [at(hangUrl(), undefined), at(hangUrl(), undefined)];
 		await settle();
-		expect(rec.dnsQueries.length - before).toBe(2);
+		expect(rec.queried.length - before).toBe(2);
 		await Promise.all(pair);
 	});
 });
@@ -139,10 +141,10 @@ describe("F1 — two timeouts mark the PREFIX, so rotating addresses inside it d
 		const rec = await rig();
 		await at(hangUrl(), "203.0.113.1");
 		await at(hangUrl(), "203.0.113.2");
-		const before = rec.dnsQueries.length;
+		const before = rec.queried.length;
 		const next = [3, 4, 5].map((i) => at(hangUrl(), `203.0.113.${i}`));
 		await settle();
-		expect(rec.dnsQueries.length - before).toBe(cimd.CIMD_SUSPECT_LANE);
+		expect(rec.queried.length - before).toBe(cimd.CIMD_SUSPECT_LANE);
 		const victim = await at(okUrl(), "198.51.100.9");
 		expect(victim.ok).toBe(true);
 		const out = await Promise.all(next);
@@ -155,10 +157,10 @@ describe("F1 — two timeouts mark the PREFIX, so rotating addresses inside it d
 		const rec = await rig();
 		await at(hangUrl(), "2001:db8:1:1::1");
 		await at(hangUrl(), "2001:db8:1:2::1");
-		const before = rec.dnsQueries.length;
+		const before = rec.queried.length;
 		const next = [3, 4].map((i) => at(hangUrl(), `2001:db8:1:${i}::1`));
 		await settle();
-		expect(rec.dnsQueries.length - before).toBe(cimd.CIMD_SUSPECT_LANE);
+		expect(rec.queried.length - before).toBe(cimd.CIMD_SUSPECT_LANE);
 		await Promise.all(next);
 	});
 
