@@ -133,3 +133,25 @@ describe("DCR POST /register — redirect_uris validation (RFC 7591 §3.2.2)", (
 		expect(registeredClients.size).toBe(1);
 	});
 });
+
+// ─────────────────────────────────────────────────────────────────────────────
+// CIMD follow-up, residue 3: POST /register assigns the client_id itself. A
+// URL-shaped client_id in the body is never used, so a registered id cannot
+// shadow a Client ID Metadata Document URL.
+// ─────────────────────────────────────────────────────────────────────────────
+describe("DCR assigns a server-generated UUID client_id and ignores the body's", () => {
+	const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
+	const URL_ID = "https://app.example.com/oauth/client-metadata.json";
+
+	it("a body client_id that is a URL is ignored; the registered id is a UUID", async () => {
+		const { status, json } = await postRegister({
+			client_id: URL_ID,
+			client_name: "shadow",
+			redirect_uris: ["https://app.example.com/cb"],
+		});
+		expect(status).toBe(201);
+		expect(json.client_id).not.toBe(URL_ID);
+		expect(json.client_id).toMatch(UUID);
+		expect([...registeredClients.keys()]).toEqual([json.client_id]);
+	});
+});
