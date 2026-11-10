@@ -19,7 +19,7 @@
 //          revoked, and a token row that appears later is refused by derivation.
 import { describe, expect, test } from "vitest";
 import { convexTest } from "../../tests/fixtures/convexTestWithServiceAccount";
-import { api, internal } from "../_generated/api";
+import { api } from "../_generated/api";
 import schema from "../schema";
 
 const modules = Object.fromEntries(
@@ -184,22 +184,19 @@ describe("ABSENT and PRESENT", () => {
 		expect(rows).toHaveLength(1);
 	});
 
-	test("allowDocumentClient (an operator door, internal) lifts the listing; the revoked tokens stay revoked", async () => {
+	test("deleting the row (the operator, in the Convex dashboard) lifts the listing; the revoked tokens stay revoked", async () => {
 		const t = createT();
 		await mint(t, "tok-1", URL_A);
 		await deny(t);
-		expect(
-			await t.mutation(internal.oauth.allowDocumentClient, { clientId: URL_A }),
-		).toMatchObject({
-			removed: true,
+		await t.run(async (ctx) => {
+			const row = await ctx.db
+				.query("oauth_denied_document_clients")
+				.withIndex("by_clientId", (q) => q.eq("clientId", URL_A))
+				.unique();
+			if (row) await ctx.db.delete(row._id);
 		});
 		expect(await denial(t)).toBeNull();
 		expect(await lookup(t, "tok-1")).toBeNull();
-		expect(
-			await t.mutation(internal.oauth.allowDocumentClient, { clientId: URL_A }),
-		).toMatchObject({
-			removed: false,
-		});
 	});
 });
 
