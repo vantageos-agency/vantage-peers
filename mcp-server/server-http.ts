@@ -1887,6 +1887,18 @@ async function documentClientAdmin(c: Context, lift: boolean) {
 	const clientId = typeof body.client_id === "string" ? body.client_id : "";
 	const reason = typeof body.reason === "string" ? body.reason : "";
 	const operator = typeof body.operator === "string" ? body.operator : "";
+	// What the listing covers: the exact URL (default), every URL of its host, or
+	// every URL of its registrable domain. `client_id` is any URL of that host.
+	const scope = body.scope === undefined ? "url" : body.scope;
+	if (scope !== "url" && scope !== "host" && scope !== "domain") {
+		return c.json(
+			{
+				error: "invalid_request",
+				detail: 'scope must be "url", "host" or "domain"',
+			},
+			400,
+		);
+	}
 	if (!clientId.startsWith("https://")) {
 		return c.json(
 			{
@@ -1900,7 +1912,13 @@ async function documentClientAdmin(c: Context, lift: boolean) {
 		const result = (await internalClient().mutation(
 			// biome-ignore lint/suspicious/noExplicitAny: Convex string API
 			"oauth:deleteClient" as any,
-			{ clientId, reason, operator, ...(lift ? { lift: true } : {}) },
+			{
+				clientId,
+				reason,
+				operator,
+				scope,
+				...(lift ? { lift: true } : {}),
+			},
 		)) as {
 			revokedClient: boolean;
 			revokedTokens: number;
@@ -1919,7 +1937,7 @@ async function documentClientAdmin(c: Context, lift: boolean) {
 					404,
 				);
 			}
-			return c.json({ clientId, unlisted: true }, 200);
+			return c.json({ clientId, scope, unlisted: true }, 200);
 		}
 		if (!result.revokedClient) {
 			return c.json(
@@ -1934,10 +1952,13 @@ async function documentClientAdmin(c: Context, lift: boolean) {
 		return c.json(
 			{
 				clientId,
+				scope,
 				alreadyDenied: result.alreadyDenied ?? false,
 				accessTokensRevoked: result.revokedTokens,
 				refreshTokensRevoked: result.revokedRefresh,
-				...(result.revokedTokens === 0 && result.revokedRefresh === 0
+				...(scope === "url" &&
+				result.revokedTokens === 0 &&
+				result.revokedRefresh === 0
 					? {
 							warning:
 								"listed, but no token of this exact client_id exists yet: if you expected one, the URL is mistyped",
@@ -1949,7 +1970,7 @@ async function documentClientAdmin(c: Context, lift: boolean) {
 	} catch (err: unknown) {
 		const message = convexFailureText(err);
 		if (
-			/(REASON_TOO_SHORT|OPERATOR_REQUIRED|REASON_TOO_LONG|OPERATOR_TOO_LONG)/.test(
+			/(REASON_TOO_SHORT|OPERATOR_REQUIRED|REASON_TOO_LONG|OPERATOR_TOO_LONG|DOMAIN_UNRESOLVABLE)/.test(
 				message,
 			)
 		) {
