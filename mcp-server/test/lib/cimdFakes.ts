@@ -64,6 +64,7 @@ export type Script = {
 	) => Partial<PinnedResponse> | Promise<Partial<PinnedResponse>>;
 	timeoutMs?: number;
 	maxBytes?: number;
+	perSourceLimit?: number;
 	now?: () => number;
 };
 
@@ -103,6 +104,9 @@ export function scripted(script: Script = {}): Recorder {
 		},
 		...(script.timeoutMs !== undefined ? { timeoutMs: script.timeoutMs } : {}),
 		...(script.maxBytes !== undefined ? { maxBytes: script.maxBytes } : {}),
+		...(script.perSourceLimit !== undefined
+			? { perSourceLimit: script.perSourceLimit }
+			: {}),
 		...(script.now ? { now: script.now } : {}),
 	};
 	return rec;

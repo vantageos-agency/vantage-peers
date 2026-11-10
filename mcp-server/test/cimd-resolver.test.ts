@@ -51,6 +51,19 @@ describe("a valid document", () => {
 		expect(rec.requests).toHaveLength(1);
 	});
 
+	it("removes bidi, zero-width, format and line-separator characters from the name", async () => {
+		await install({
+			respond: () =>
+				json(
+					validDocument({
+						client_name: "Cl\u202Eau\u200Bd\u2066e\uFEFF\u2028\u2029!\u200F",
+					}),
+				),
+		});
+		const r = await cimd.resolveClientMetadata(DOC_URL);
+		expect(r.ok && r.client.clientName).toBe("Claude! (app.example.com)");
+	});
+
 	it("shows the client_id host next to the self-declared name (draft §6.4)", async () => {
 		await install({
 			respond: () => json(validDocument({ client_name: "Claude <b>\u0007" })),
@@ -73,6 +86,9 @@ describe("SSRF — the client_id URL (draft §3)", () => {
 		["https://169.254.169.254/latest/meta-data", "ip-literal-host-forbidden"],
 		["https://localhost/c.json", "host-not-public"],
 		["https://intranet/c.json", "host-not-public"],
+		["https://localhost./c.json", "host-not-public"],
+		["https://intranet./c.json", "host-not-public"],
+		[`https://app.example.com/${"x".repeat(600)}`, "client-id-too-long"],
 	];
 	for (const [url, reason] of refused) {
 		it(`refuses ${url} (${reason}) without any DNS or HTTP`, async () => {
@@ -104,6 +120,9 @@ describe("SSRF — address policy", () => {
 		"::ffff:127.0.0.1",
 		"::ffff:7f00:1",
 		"::ffff:169.254.169.254",
+		"::ffff:8.8.8.8", // the whole IPv4-mapped range is refused
+		"::ffff:0:7f00:1", // SIIT (RFC 7915)
+		"::ffff:0:8.8.8.8",
 		"::127.0.0.1",
 		"fe80::1",
 		"fd00:ec2::254",
@@ -124,7 +143,6 @@ describe("SSRF — address policy", () => {
 		"8.8.8.8",
 		"172.32.0.1",
 		"2606:2800:220:1:248:1893:25c8:1946",
-		"::ffff:8.8.8.8",
 	]) {
 		it(`isBlockedAddress(${ip}) is false`, async () => {
 			cimd = await loadCimd();
@@ -288,29 +306,137 @@ describe("SSRF — the exchange", () => {
 		expect((await cimd.resolveClientMetadata(DOC_URL)).ok).toBe(true);
 	});
 
-	it("bounds the fetches in flight", async () => {
+	it("bounds the fetches in flight, and /authorize cannot take the slots reserved for /token", async () => {
 		cimd = await loadCimd();
 		const release: (() => void)[] = [];
 		const rec = scripted({
 			timeoutMs: 5000,
-			respond: () =>
+			perSourceLimit: 1000,
+			respond: (req) =>
 				new Promise((resolve) => {
 					release.push(() =>
-						resolve({ body: bodyOf(JSON.stringify(validDocument())) }),
+						resolve({
+							body: bodyOf(
+								JSON.stringify(validDocument({}, `https://${req.hostname}/c.json`)),
+							),
+						}),
 					);
 				}),
 		});
 		cimd._setClientMetadataDepsForTest(rec.deps);
-		const pending = Array.from({ length: cimd.CIMD_MAX_IN_FLIGHT }, (_, i) =>
-			cimd.resolveClientMetadata(`https://app${i}.example.com/c.json`),
+		const authorizeSlots =
+			cimd.CIMD_MAX_IN_FLIGHT - cimd.CIMD_RESERVED_FOR_TOKEN;
+		const pending = Array.from({ length: authorizeSlots }, (_, i) =>
+			cimd.resolveClientMetadata(`https://app${i}.example.com/c.json`, {
+				purpose: "authorize",
+				source: `ip${i}`,
+			}),
 		);
 		await new Promise((r) => setTimeout(r, 20));
 		const over = await cimd.resolveClientMetadata(
 			"https://over.example.com/c.json",
+			{ purpose: "authorize", source: "ipx" },
 		);
 		expect(over).toMatchObject({ ok: false, reason: "busy", retryable: true });
+		// the reserved slots are still there for a token-path resolution
+		const reserved = Array.from(
+			{ length: cimd.CIMD_RESERVED_FOR_TOKEN },
+			(_, i) =>
+				cimd.resolveClientMetadata(`https://tok${i}.example.com/c.json`, {
+					purpose: "token",
+					source: `tip${i}`,
+				}),
+		);
+		await new Promise((r) => setTimeout(r, 20));
+		expect(rec.requests).toHaveLength(cimd.CIMD_MAX_IN_FLIGHT);
+		const full = await cimd.resolveClientMetadata(
+			"https://full.example.com/c.json",
+			{ purpose: "token", source: "tipx" },
+		);
+		expect(full).toMatchObject({ ok: false, reason: "busy" });
 		for (const r of release) r();
-		await Promise.all(pending);
+		const settled = await Promise.all([...pending, ...reserved]);
+		expect(settled.every((r) => r.ok)).toBe(true);
+	});
+});
+
+describe("per-source fetch limit", () => {
+	const doc = (req: { hostname: string }) =>
+		json(validDocument({}, `https://${req.hostname}/c.json`));
+
+	it("refuses a source past its allowance with rate-limited, other sources unaffected", async () => {
+		await install({ perSourceLimit: 3, respond: doc });
+		for (let i = 0; i < 3; i++) {
+			const r = await cimd.resolveClientMetadata(
+				`https://h${i}.example.com/c.json`,
+				{ source: "1.2.3.4" },
+			);
+			expect(r.ok).toBe(true);
+		}
+		const over = await cimd.resolveClientMetadata(
+			"https://h9.example.com/c.json",
+			{ source: "1.2.3.4" },
+		);
+		expect(over).toMatchObject({
+			ok: false,
+			reason: "rate-limited",
+			retryable: true,
+		});
+		const other = await cimd.resolveClientMetadata(
+			"https://h9.example.com/c.json",
+			{ source: "5.6.7.8" },
+		);
+		expect(other.ok).toBe(true);
+	});
+
+	it("cache hits do not count against the allowance", async () => {
+		const rec = await install({
+			perSourceLimit: 1,
+			respond: () => json(validDocument()),
+		});
+		for (let i = 0; i < 5; i++) {
+			const r = await cimd.resolveClientMetadata(DOC_URL, {
+				source: "1.2.3.4",
+			});
+			expect(r.ok).toBe(true);
+		}
+		expect(rec.requests).toHaveLength(1);
+	});
+
+	it("the /token allowance is separate from the /authorize one", async () => {
+		await install({ perSourceLimit: 1, respond: doc });
+		const first = await cimd.resolveClientMetadata("https://a.example.com/c.json", {
+			source: "ip",
+			purpose: "authorize",
+		});
+		expect(first.ok).toBe(true);
+		const second = await cimd.resolveClientMetadata("https://b.example.com/c.json", {
+			source: "ip",
+			purpose: "authorize",
+		});
+		expect(second).toMatchObject({ reason: "rate-limited" });
+		const token = await cimd.resolveClientMetadata("https://b.example.com/c.json", {
+			source: "ip",
+			purpose: "token",
+		});
+		expect(token.ok).toBe(true);
+	});
+
+	it("the window reopens", async () => {
+		let now = 1_000_000;
+		await install({ now: () => now, perSourceLimit: 1, respond: doc });
+		await cimd.resolveClientMetadata("https://a.example.com/c.json", {
+			source: "ip",
+		});
+		const blocked = await cimd.resolveClientMetadata("https://b.example.com/c.json", {
+			source: "ip",
+		});
+		expect(blocked).toMatchObject({ reason: "rate-limited" });
+		now += cimd.CIMD_PER_SOURCE_WINDOW_MS + 1;
+		const again = await cimd.resolveClientMetadata("https://b.example.com/c.json", {
+			source: "ip",
+		});
+		expect(again.ok).toBe(true);
 	});
 });
 
@@ -463,19 +589,23 @@ describe("cache (draft §4.4)", () => {
 		expect(rec.requests).toHaveLength(3);
 	});
 
-	it("the cache is bounded", async () => {
+	it("the cache is a true LRU: a hit keeps an entry, the least recently used is evicted", async () => {
 		cimd = await loadCimd();
 		const rec = scripted({
+			perSourceLimit: 100000,
 			respond: (req) =>
 				json(validDocument({}, `https://${req.hostname}/c.json`)),
 		});
 		cimd._setClientMetadataDepsForTest(rec.deps);
-		const n = cimd.CIMD_CACHE_MAX_ENTRIES + 5;
-		for (let i = 0; i < n; i++)
-			await cimd.resolveClientMetadata(`https://h${i}.example.com/c.json`);
-		// the first entries were evicted: resolving the first again fetches again
+		const max = cimd.CIMD_CACHE_MAX_ENTRIES;
+		const url = (i: number) => `https://h${i}.example.com/c.json`;
+		for (let i = 0; i < max; i++) await cimd.resolveClientMetadata(url(i));
+		await cimd.resolveClientMetadata(url(0)); // a hit: h0 is now the most recent
+		await cimd.resolveClientMetadata(url(max)); // one more: evicts h1, not h0
 		const before = rec.requests.length;
-		await cimd.resolveClientMetadata("https://h0.example.com/c.json");
-		expect(rec.requests.length).toBe(before + 1);
+		await cimd.resolveClientMetadata(url(0));
+		expect(rec.requests.length).toBe(before); // still cached
+		await cimd.resolveClientMetadata(url(1));
+		expect(rec.requests.length).toBe(before + 1); // evicted, fetched again
 	});
 });
