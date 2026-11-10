@@ -1852,7 +1852,10 @@ admin.post("/oauth/document-clients/deny", async (c) => {
 	try {
 		body = await c.req.json();
 	} catch {
-		return c.json({ error: "invalid_request", detail: "body must be valid JSON" }, 400);
+		return c.json(
+			{ error: "invalid_request", detail: "body must be valid JSON" },
+			400,
+		);
 	}
 	const clientId = typeof body.client_id === "string" ? body.client_id : "";
 	const reason = typeof body.reason === "string" ? body.reason : "";
@@ -1866,7 +1869,9 @@ admin.post("/oauth/document-clients/deny", async (c) => {
 		return c.json(result as Record<string, unknown>, 200);
 	} catch (err: unknown) {
 		const message = convexFailureText(err);
-		if (/^(REASON_TOO_SHORT|INVALID_CLIENT_ID|OPERATOR_REQUIRED)/.test(message)) {
+		if (
+			/^(REASON_TOO_SHORT|INVALID_CLIENT_ID|OPERATOR_REQUIRED)/.test(message)
+		) {
 			return c.json({ error: "invalid_request", detail: message }, 400);
 		}
 		console.error("[admin] denyDocumentClient failed:", message);
@@ -1879,11 +1884,17 @@ admin.post("/oauth/document-clients/allow", async (c) => {
 	try {
 		body = await c.req.json();
 	} catch {
-		return c.json({ error: "invalid_request", detail: "body must be valid JSON" }, 400);
+		return c.json(
+			{ error: "invalid_request", detail: "body must be valid JSON" },
+			400,
+		);
 	}
 	const clientId = typeof body.client_id === "string" ? body.client_id : "";
 	if (!clientId) {
-		return c.json({ error: "invalid_request", detail: "client_id is required" }, 400);
+		return c.json(
+			{ error: "invalid_request", detail: "client_id is required" },
+			400,
+		);
 	}
 	try {
 		const result = await internalClient().mutation(

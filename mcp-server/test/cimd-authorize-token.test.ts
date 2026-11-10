@@ -697,7 +697,11 @@ const MASTER = "test-master-token"; // matches vitest.config.ts env
 const OTHER_URL = "https://other.example.com/oauth/client-metadata.json";
 const DENY_REASON = "abuse report 2026-11-10, operator audit trail";
 
-const adminPost = (path: string, body: Record<string, unknown>, auth = `Bearer ${MASTER}`) =>
+const adminPost = (
+	path: string,
+	body: Record<string, unknown>,
+	auth = `Bearer ${MASTER}`,
+) =>
 	app.request(`http://localhost:3000/admin/oauth/document-clients/${path}`, {
 		method: "POST",
 		headers: { "content-type": "application/json", authorization: auth },
@@ -705,14 +709,34 @@ const adminPost = (path: string, body: Record<string, unknown>, auth = `Bearer $
 	});
 
 const denyClient = (clientId = DOC_URL) =>
-	adminPost("deny", { client_id: clientId, reason: DENY_REASON, operator: "laurent" });
+	adminPost("deny", {
+		client_id: clientId,
+		reason: DENY_REASON,
+		operator: "laurent",
+	});
 
 describe("M2 — the admin door", () => {
 	it("refuses a caller without the master bearer, and a bad body", async () => {
-		expect((await adminPost("deny", { client_id: DOC_URL, reason: DENY_REASON, operator: "x" }, "Bearer nope")).status).toBeGreaterThanOrEqual(401);
-		const short = await adminPost("deny", { client_id: DOC_URL, reason: "short", operator: "laurent" });
+		expect(
+			(
+				await adminPost(
+					"deny",
+					{ client_id: DOC_URL, reason: DENY_REASON, operator: "x" },
+					"Bearer nope",
+				)
+			).status,
+		).toBeGreaterThanOrEqual(401);
+		const short = await adminPost("deny", {
+			client_id: DOC_URL,
+			reason: "short",
+			operator: "laurent",
+		});
 		expect(short.status).toBe(400);
-		const notUrl = await adminPost("deny", { client_id: "abc", reason: DENY_REASON, operator: "laurent" });
+		const notUrl = await adminPost("deny", {
+			client_id: "abc",
+			reason: DENY_REASON,
+			operator: "laurent",
+		});
 		expect(notUrl.status).toBe(400);
 	});
 
@@ -842,7 +866,8 @@ describe("M2 — fail closed", () => {
 		const inner = bridge(t.withIdentity({ subject: SERVICE_ACCOUNT_ID }));
 		_setInternalClientForTest({
 			query: (name: string, args: Record<string, unknown>) => {
-				if (name === "oauth:getDocumentClientDenial") throw new Error("convex unavailable");
+				if (name === "oauth:getDocumentClientDenial")
+					throw new Error("convex unavailable");
 				return inner.query(name, args);
 			},
 			mutation: inner.mutation,

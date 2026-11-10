@@ -93,22 +93,26 @@ describe("REFUSED", () => {
 	test("an anonymous caller and an ordinary member RAISE RBAC_DENIED on the write", async () => {
 		const t = createT();
 		const args = { clientId: URL_A, reason: REASON, operator: OPERATOR };
-		await expect(t.mutation(api.oauth.denyDocumentClient, args)).rejects.toThrow(/RBAC_DENIED/);
-		await expect(asMember(t).mutation(api.oauth.denyDocumentClient, args)).rejects.toThrow(
-			/RBAC_DENIED/,
+		await expect(
+			t.mutation(api.oauth.denyDocumentClient, args),
+		).rejects.toThrow(/RBAC_DENIED/);
+		await expect(
+			asMember(t).mutation(api.oauth.denyDocumentClient, args),
+		).rejects.toThrow(/RBAC_DENIED/);
+		await expect(
+			asMember(t).mutation(api.oauth.allowDocumentClient, { clientId: URL_A }),
+		).rejects.toThrow(/RBAC_DENIED/);
+		const rows = await t.run((ctx) =>
+			ctx.db.query("oauth_denied_document_clients").collect(),
 		);
-		await expect(asMember(t).mutation(api.oauth.allowDocumentClient, { clientId: URL_A })).rejects.toThrow(
-			/RBAC_DENIED/,
-		);
-		const rows = await t.run((ctx) => ctx.db.query("oauth_denied_document_clients").collect());
 		expect(rows).toHaveLength(0);
 	});
 
 	test("an anonymous caller and an ordinary member RAISE RBAC_DENIED on the read: a refusal is not an absence", async () => {
 		const t = createT();
-		await expect(t.query(api.oauth.getDocumentClientDenial, { clientId: URL_A })).rejects.toThrow(
-			/RBAC_DENIED/,
-		);
+		await expect(
+			t.query(api.oauth.getDocumentClientDenial, { clientId: URL_A }),
+		).rejects.toThrow(/RBAC_DENIED/);
 		await expect(
 			asMember(t).query(api.oauth.getDocumentClientDenial, { clientId: URL_A }),
 		).rejects.toThrow(/RBAC_DENIED/);
@@ -116,12 +120,18 @@ describe("REFUSED", () => {
 
 	test("a short reason, a client_id that is not an https URL, and a missing operator are refused with a code", async () => {
 		const t = createT();
-		await expect(deny(t, { reason: "too short" })).rejects.toThrow(/REASON_TOO_SHORT/);
-		await expect(deny(t, { clientId: "not-a-url" })).rejects.toThrow(/INVALID_CLIENT_ID/);
-		await expect(deny(t, { clientId: "http://app.example.com/c.json" })).rejects.toThrow(
+		await expect(deny(t, { reason: "too short" })).rejects.toThrow(
+			/REASON_TOO_SHORT/,
+		);
+		await expect(deny(t, { clientId: "not-a-url" })).rejects.toThrow(
 			/INVALID_CLIENT_ID/,
 		);
-		await expect(deny(t, { operator: " " })).rejects.toThrow(/OPERATOR_REQUIRED/);
+		await expect(
+			deny(t, { clientId: "http://app.example.com/c.json" }),
+		).rejects.toThrow(/INVALID_CLIENT_ID/);
+		await expect(deny(t, { operator: " " })).rejects.toThrow(
+			/OPERATOR_REQUIRED/,
+		);
 	});
 });
 
@@ -134,15 +144,24 @@ describe("ABSENT and PRESENT", () => {
 	test("a listed client answers its reason and the operator who added it; another URL is still absent", async () => {
 		const t = createT();
 		await deny(t);
-		expect(await denial(t)).toMatchObject({ clientId: URL_A, reason: REASON, addedBy: OPERATOR });
+		expect(await denial(t)).toMatchObject({
+			clientId: URL_A,
+			reason: REASON,
+			addedBy: OPERATOR,
+		});
 		expect(await denial(t, URL_B)).toBeNull();
 	});
 
 	test("listing twice is idempotent: one row, alreadyDenied the second time", async () => {
 		const t = createT();
-		expect(await deny(t)).toMatchObject({ clientId: URL_A, alreadyDenied: false });
+		expect(await deny(t)).toMatchObject({
+			clientId: URL_A,
+			alreadyDenied: false,
+		});
 		expect(await deny(t)).toMatchObject({ alreadyDenied: true });
-		const rows = await t.run((ctx) => ctx.db.query("oauth_denied_document_clients").collect());
+		const rows = await t.run((ctx) =>
+			ctx.db.query("oauth_denied_document_clients").collect(),
+		);
 		expect(rows).toHaveLength(1);
 	});
 
@@ -150,12 +169,20 @@ describe("ABSENT and PRESENT", () => {
 		const t = createT();
 		await mint(t, "tok-1", URL_A);
 		await deny(t);
-		expect(await asService(t).mutation(api.oauth.allowDocumentClient, { clientId: URL_A })).toMatchObject({
+		expect(
+			await asService(t).mutation(api.oauth.allowDocumentClient, {
+				clientId: URL_A,
+			}),
+		).toMatchObject({
 			removed: true,
 		});
 		expect(await denial(t)).toBeNull();
 		expect(await lookup(t, "tok-1")).toBeNull();
-		expect(await asService(t).mutation(api.oauth.allowDocumentClient, { clientId: URL_A })).toMatchObject({
+		expect(
+			await asService(t).mutation(api.oauth.allowDocumentClient, {
+				clientId: URL_A,
+			}),
+		).toMatchObject({
 			removed: false,
 		});
 	});
@@ -172,12 +199,19 @@ describe("LIVE: a token minted before the listing stops answering after it", () 
 		expect(await lookup(t, "tok-b")).not.toBeNull();
 
 		const out = await deny(t);
-		expect(out).toMatchObject({ accessTokensRevoked: 1, refreshTokensRevoked: 1 });
+		expect(out).toMatchObject({
+			accessTokensRevoked: 1,
+			refreshTokensRevoked: 1,
+		});
 
 		expect(await lookup(t, "tok-a")).toBeNull(); // after: it does not
 		expect(await lookup(t, "tok-b")).not.toBeNull(); // the other client is untouched
-		expect((await t.run((ctx) => ctx.db.get(refreshA)))?.revokedAt).toBeDefined();
-		expect((await t.run((ctx) => ctx.db.get(refreshB)))?.revokedAt).toBeUndefined();
+		expect(
+			(await t.run((ctx) => ctx.db.get(refreshA)))?.revokedAt,
+		).toBeDefined();
+		expect(
+			(await t.run((ctx) => ctx.db.get(refreshB)))?.revokedAt,
+		).toBeUndefined();
 	});
 
 	test("a token row that appears after the listing is refused by derivation, not by the walk", async () => {
