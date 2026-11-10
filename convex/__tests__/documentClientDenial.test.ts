@@ -195,6 +195,7 @@ describe("LIVE: a token minted before the listing stops answering after it", () 
 		await mint(t, "tok-b", URL_B);
 		const refreshA = await refreshRow(t, "ref-a", URL_A);
 		const refreshB = await refreshRow(t, "ref-b", URL_B);
+		console.log("DBG", JSON.stringify(await t.run((ctx) => ctx.db.query("oauth_access_tokens").collect())));
 		expect(await lookup(t, "tok-a")).not.toBeNull(); // before: it answers
 		expect(await lookup(t, "tok-b")).not.toBeNull();
 
