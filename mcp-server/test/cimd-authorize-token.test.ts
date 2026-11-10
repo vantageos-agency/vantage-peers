@@ -128,6 +128,16 @@ beforeEach(async () => {
 			isActive: true,
 			createdAt: now,
 		});
+		// The refresh door re-checks that the person is still a member.
+		await ctx.db.insert("orgMembership", {
+			clerkOrgSlug: "org-a",
+			clerkOrgId: "org_A",
+			clerkUserId: "user_1",
+			role: "admin",
+			createdAt: 1,
+			updatedAt: 1,
+			lastEventAt: 1,
+		});
 	});
 	harness.setMemberships("user_1", [membership("org_A", "org-a", "org:admin")]);
 	network();
