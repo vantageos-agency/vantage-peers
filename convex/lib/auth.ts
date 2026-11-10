@@ -1338,7 +1338,8 @@ export function isOrchestratorOnOrgRoster(
 ): boolean {
 	const claimed = normalizeOrchestratorId(name);
 	return scope.allowedOrchestrators.some(
-		(entry) => entry !== "*" && normalizeOrchestratorId(entry) === claimed,
+		(entry) =>
+			claimed !== "" && entry !== "*" && normalizeOrchestratorId(entry) === claimed,
 	);
 }
 
