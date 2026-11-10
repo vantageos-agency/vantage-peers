@@ -1,7 +1,7 @@
 import http from "node:http";
 import https from "node:https";
 import { isIP } from "node:net";
-import { poolKeysOf } from "./ip.js";
+import { canonicalIp, poolKeysOf } from "./ip.js";
 import { RateLimiter } from "./limiter.js";
 import { EDGE_CLIENT_HEADER, signEdgeClient } from "./sign.js";
 
@@ -19,6 +19,12 @@ export interface ProxyConfig {
 	log?: (line: Record<string, unknown>) => void;
 	/** Milliseconds to wait for the upstream /health. */
 	healthTimeoutMs?: number;
+	/**
+	 * Milliseconds to wait for the upstream to START answering (connect plus
+	 * response headers). Once headers arrive there is no idle timeout, so a
+	 * stream (SSE on /mcp) stays open as long as the client and upstream keep it.
+	 */
+	responseStartTimeoutMs?: number;
 }
 
 export interface Counters {
@@ -41,12 +47,24 @@ const HOP_BY_HOP = new Set([
 	"upgrade",
 ]);
 
+export type RouteClass = "limited" | "pass" | "reject";
+
+interface Resolved {
+	/** The path the upstream router could end up serving. */
+	path: string;
+	/** The raw form used a trick: dot segments, `;params`, a double-encoded segment. */
+	suspicious: boolean;
+}
+
 /**
- * The path of a request target, normalised the way the upstream router would
- * see it, only stricter: percent-decoded once, repeated slashes collapsed,
- * trailing slash dropped, lower-cased. An undecodable path returns null.
+ * Resolves a request target to the path an upstream router could end up
+ * serving, and says whether the spelling was a trick. Percent-decoded until
+ * stable (at most 3 rounds), `;params` and surrounding whitespace/control
+ * characters removed per segment, `.` and `..` segments applied, repeated and
+ * trailing slashes dropped, lower-cased: everything that could fold onto a
+ * route is folded. Null when the path cannot be decoded.
  */
-export function normalisedPath(target: string): string | null {
+export function resolvePath(target: string): Resolved | null {
 	let raw = target;
 	if (/^[a-z][a-z0-9+.-]*:\/\//i.test(raw)) {
 		try {
@@ -63,22 +81,67 @@ export function normalisedPath(target: string): string | null {
 	} catch {
 		return null;
 	}
-	const squashed = decoded.replace(/\/{2,}/g, "/").replace(/\/+$/, "");
-	return (squashed === "" ? "/" : squashed).toLowerCase();
+	const firstSegments = decoded.split("/");
+	const suspicious =
+		decoded.includes(";") ||
+		decoded.includes("%") ||
+		firstSegments.some((s) => s === "." || s === "..");
+	for (let i = 0; i < 2 && decoded.includes("%"); i++) {
+		try {
+			decoded = decodeURIComponent(decoded);
+		} catch {
+			break;
+		}
+	}
+	const out: string[] = [];
+	for (const seg of decoded.split("/")) {
+		const clean = (seg.split(";")[0] ?? "")
+			// biome-ignore lint/suspicious/noControlCharactersInRegex: trimming control characters is the point
+			.replace(/^[\u0000-\u0020\u007f]+|[\u0000-\u0020\u007f]+$/g, "")
+			.toLowerCase();
+		if (clean === "" || clean === ".") continue;
+		if (clean === "..") out.pop();
+		else out.push(clean);
+	}
+	return { path: `/${out.join("/")}`, suspicious };
 }
 
+/** The resolved path of a target, or null when it cannot be decoded. */
+export function normalisedPath(target: string): string | null {
+	return resolvePath(target)?.path ?? null;
+}
+
+const LIMITED_ROUTES: { methods: string[]; path: string }[] = [
+	// GET /authorize (HEAD is its alias in the upstream router): resolves a client-metadata document.
+	{ methods: ["GET", "HEAD"], path: "/authorize" },
+	// POST /authorize/org: the same resolver, on the organisation step.
+	{ methods: ["POST"], path: "/authorize/org" },
+	// POST /token: resolves the document (and the refresh path) for a URL client_id.
+	{ methods: ["POST"], path: "/token" },
+];
+
 /**
- * Only the two requests that can make the MCP fetch a client-metadata document
- * are limited: GET /authorize (HEAD is its alias in the upstream router) and
- * POST /token. A path that cannot be decoded is limited rather than passed.
+ * Classifies by what the request RESOLVES to, not by how it is spelled.
+ * "limited": a route that can trigger a client-metadata fetch, counted.
+ * "reject": such a route reached through a trick (dot segments, `;params`, a
+ * double-encoded segment): refused with 400, never passed. "pass": the rest.
+ * A path that cannot be decoded is limited, never passed.
  */
-export function isLimitedRoute(method: string, target: string): boolean {
-	const path = normalisedPath(target);
+export function classifyRoute(method: string, target: string): RouteClass {
 	const m = method.toUpperCase();
-	if (path === null) return m === "GET" || m === "HEAD" || m === "POST";
-	if (path === "/authorize") return m === "GET" || m === "HEAD";
-	if (path === "/token") return m === "POST";
-	return false;
+	const r = resolvePath(target);
+	if (r === null)
+		return m === "GET" || m === "HEAD" || m === "POST" ? "limited" : "pass";
+	const hit = LIMITED_ROUTES.some(
+		(x) => x.path === r.path && x.methods.includes(m),
+	);
+	if (!hit) return "pass";
+	return r.suspicious ? "reject" : "limited";
+}
+
+/** True for every request the proxy does not pass straight through. */
+export function isLimitedRoute(method: string, target: string): boolean {
+	return classifyRoute(method, target) !== "pass";
 }
 
 /** The client address the edge reported, or null when absent or not an address. */
@@ -117,12 +180,19 @@ export function createProxy(config: ProxyConfig) {
 	): http.OutgoingHttpHeaders {
 		const out: http.OutgoingHttpHeaders = {};
 		for (const [k, v] of Object.entries(req.headers)) {
-			if (HOP_BY_HOP.has(k) || k === "host" || k === EDGE_CLIENT_HEADER)
+			if (
+				HOP_BY_HOP.has(k) ||
+				k === "host" ||
+				k === EDGE_CLIENT_HEADER ||
+				// Client-controlled, and the Railway edge does not set them (measured):
+				// dropped, never forwarded.
+				k === "x-forwarded-host" ||
+				k === "x-forwarded-server"
+			)
 				continue;
 			out[k] = v;
 		}
 		out.host = upstream.host;
-		if (req.headers.host) out["x-forwarded-host"] = req.headers.host;
 		if (config.secret && clientIp)
 			out[EDGE_CLIENT_HEADER] = signEdgeClient(config.secret, clientIp, now());
 		return out;
@@ -143,9 +213,9 @@ export function createProxy(config: ProxyConfig) {
 				path: req.url,
 				headers: forwardHeaders(req, clientIp),
 				agent,
-				timeout: 15_000,
 			},
 			(upRes) => {
+				clearTimeout(startTimer);
 				const headers: http.OutgoingHttpHeaders = {};
 				for (const [k, v] of Object.entries(upRes.headers))
 					if (!HOP_BY_HOP.has(k)) headers[k] = v;
@@ -154,17 +224,42 @@ export function createProxy(config: ProxyConfig) {
 				upRes.on("error", () => res.destroy());
 			},
 		);
-		// `timeout` is the connect/first-byte idle bound; a long stream keeps
-		// producing bytes, so it is not cut.
-		up.on("timeout", () => up.destroy(new Error("upstream timeout")));
+		// Bound on connect plus time-to-first-headers only. It is cleared the moment
+		// headers arrive: there is no idle timeout on a response in progress, so an
+		// event stream is never cut. It restarts once the request body is sent.
+		let timedOut = false;
+		const startTimeoutMs = config.responseStartTimeoutMs ?? 15_000;
+		const onStartTimeout = () => {
+			timedOut = true;
+			up.destroy(new Error("upstream response timeout"));
+		};
+		let startTimer = setTimeout(onStartTimeout, startTimeoutMs);
+		up.on("finish", () => {
+			clearTimeout(startTimer);
+			startTimer = setTimeout(onStartTimeout, startTimeoutMs);
+		});
 		up.on("error", (err) => {
-			log({ evt: "upstream_error", message: String(err.message) });
+			clearTimeout(startTimer);
+			log({
+				evt: "upstream_error",
+				message: String(err.message),
+				timed_out: timedOut,
+			});
 			if (!res.headersSent) {
-				res.writeHead(502, { "content-type": "application/json" });
-				res.end(JSON.stringify({ error: "bad_gateway" }));
+				res.writeHead(timedOut ? 504 : 502, {
+					"content-type": "application/json",
+				});
+				res.end(
+					JSON.stringify({
+						error: timedOut ? "gateway_timeout" : "bad_gateway",
+					}),
+				);
 			} else res.destroy();
 		});
-		res.on("close", () => up.destroy());
+		res.on("close", () => {
+			clearTimeout(startTimer);
+			up.destroy();
+		});
 		req.pipe(up);
 	}
 
@@ -236,7 +331,9 @@ export function createProxy(config: ProxyConfig) {
 			req.headers[config.clientIpHeader],
 			config.clientIpHeader,
 		);
-		const clientIp = edgeIp ?? req.socket.remoteAddress ?? null;
+		const rawIp = edgeIp ?? req.socket.remoteAddress ?? null;
+		// One spelling is keyed and signed: a mapped IPv4 is its IPv4.
+		const clientIp = rawIp ? canonicalIp(rawIp) : null;
 		if (config.debugHeaders && path !== "/health") {
 			const h = req.headers;
 			log({
@@ -251,7 +348,15 @@ export function createProxy(config: ProxyConfig) {
 			});
 		}
 
-		if (isLimitedRoute(method, target)) {
+		const routeClass = classifyRoute(method, target);
+		if (routeClass === "reject") {
+			log({ evt: "rejected_path", method, upstream_call: false });
+			req.resume();
+			res.writeHead(400, { "content-type": "application/json" });
+			res.end(JSON.stringify({ error: "invalid_request" }));
+			return;
+		}
+		if (routeClass === "limited") {
 			counters.limitedRouteRequests += 1;
 			const keys = clientIp ? poolKeysOf(clientIp) : null;
 			// An address that cannot be keyed shares one bucket: the limit holds,
@@ -288,7 +393,7 @@ export function createProxy(config: ProxyConfig) {
 			}
 			counters.allowed += 1;
 		}
-		pass(req, res, clientIp && isIP(clientIp.split("%")[0]) ? clientIp : null);
+		pass(req, res, clientIp);
 	});
 	server.keepAliveTimeout = 65_000;
 

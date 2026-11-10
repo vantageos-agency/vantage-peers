@@ -74,3 +74,19 @@ function v4Keys(o: number[]): PoolKey[] {
 		{ pool: "v4/24", key: o.slice(0, 3).join("."), limit: LIMIT_PER_SITE },
 	];
 }
+
+/**
+ * The one spelling of a client address that is signed and keyed: an IPv4-mapped
+ * IPv6 address (any spelling) is its IPv4; any other address is lower-cased
+ * without a zone id. Null when the text is not an address.
+ */
+export function canonicalIp(address: string): string | null {
+	const bare = address.split("%")[0].trim();
+	const family = isIP(bare);
+	if (family === 4) return bare;
+	if (family !== 6) return null;
+	const g = ipv6Groups(bare);
+	if (g && g.slice(0, 5).every((x) => x === 0) && g[5] === 0xffff)
+		return `${g[6] >> 8}.${g[6] & 255}.${g[7] >> 8}.${g[7] & 255}`;
+	return bare.toLowerCase();
+}

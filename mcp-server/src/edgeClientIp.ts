@@ -36,5 +36,27 @@ export function verifyEdgeClientHeader(
 	const given = Buffer.from(mac, "hex");
 	if (given.length !== expected.length || !timingSafeEqual(given, expected))
 		return null;
-	return ip;
+	return canonicalClientIp(ip);
+}
+
+/**
+ * The spelling the rate-limit keys use: an IPv4-mapped IPv6 address (any
+ * spelling) is its IPv4, a zone id is dropped. Mirrors the proxy's
+ * canonicalIp, so the key is the same on both sides.
+ */
+export function canonicalClientIp(address: string): string {
+	const bare = address.split("%")[0];
+	const dotted = /^(?:0{1,4}:){0,5}:?(?:ffff):(\d{1,3}(?:\.\d{1,3}){3})$/i.exec(
+		bare.replace(/^::/, "0:0:0:0:0:"),
+	);
+	if (dotted) return dotted[1];
+	const hex = /^(?:0{1,4}:){5}ffff:([0-9a-f]{1,4}):([0-9a-f]{1,4})$/i.exec(
+		bare.replace(/^::/, "0:0:0:0:0:").replace(/^(::)/, "0:0:0:0:0:"),
+	);
+	if (hex) {
+		const hi = Number.parseInt(hex[1], 16);
+		const lo = Number.parseInt(hex[2], 16);
+		return `${hi >> 8}.${hi & 255}.${lo >> 8}.${lo & 255}`;
+	}
+	return bare;
 }

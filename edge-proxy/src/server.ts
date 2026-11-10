@@ -12,7 +12,7 @@ if (!secret)
 	);
 
 const port = Number(process.env.PORT ?? 3000);
-const { server } = createProxy({
+const { server, limiter } = createProxy({
 	upstream,
 	secret,
 	clientIpHeader: (process.env.CLIENT_IP_HEADER ?? "x-real-ip").toLowerCase(),
@@ -20,6 +20,9 @@ const { server } = createProxy({
 	commit:
 		process.env.PROXY_COMMIT ?? process.env.RAILWAY_GIT_COMMIT_SHA ?? "unknown",
 });
+// Expired buckets are removed on a timer, never on the request path.
+setInterval(() => limiter.sweep(), 5000).unref();
+
 // 0.0.0.0, never 127.0.0.1: Railway's prober and edge reach the container from outside.
 server.listen(port, "0.0.0.0", () =>
 	console.log(`edge-proxy listening on 0.0.0.0:${port} -> ${upstream}`),
