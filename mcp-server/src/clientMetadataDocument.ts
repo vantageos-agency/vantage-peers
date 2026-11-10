@@ -104,6 +104,21 @@ export const CIMD_MAX_CLIENT_ID_LENGTH = 512;
  */
 export const CIMD_TIMEOUT_COOLDOWN_MS = 30 * 1000;
 const CIMD_COOLDOWNS_MAX = 1024;
+/**
+ * A source (IPv4, or IPv6 /64) whose /authorize or /token fetch timed out is
+ * SUSPECT for this long. All suspect sources together may hold at most
+ * CIMD_SUSPECT_LANE slot of a pool, so a pool's other slots stay for sources that
+ * have not hung. It keys on the source, never on a domain or a URL: a stranger can
+ * only demote itself, so it cannot cool a victim down. A refresh is never held
+ * back. Residual: an attacker with many fresh addresses gets one timeout per
+ * address and window (about 40 addresses to hold 2 of 3 slots), and three fresh
+ * sources hanging at the same instant block a fresh victim for one timeout.
+ * Chosen over a reserved cached-document slot (a first-time client is not cached)
+ * and a per-domain cap of 1 (the attacker uses more domains).
+ */
+export const CIMD_SUSPECT_MS = 60 * 1000;
+export const CIMD_SUSPECT_LANE = 1;
+const CIMD_SUSPECTS_MAX = 4096;
 const MAX_REDIRECT_URIS = 20;
 const MAX_NAME_LENGTH = 100;
 
@@ -477,6 +492,9 @@ export function _setClientMetadataDepsForTest(
 	inFlightByPerson.clear();
 	sharedFetch.clear();
 	cooldownUntil.clear();
+	suspectUntil.clear();
+	suspectInFlight.authorize = 0;
+	suspectInFlight.token = 0;
 }
 
 /**
@@ -697,6 +715,34 @@ const inFlightByConnection = new Map<string, number>();
 const inFlightByPerson = new Map<string, number>();
 const sharedFetch = new Map<string, Promise<ResolveResult>>();
 const cooldownUntil = new Map<string, number>();
+const suspectUntil = new Map<string, number>();
+const suspectInFlight: Record<"authorize" | "token", number> = {
+	authorize: 0,
+	token: 0,
+};
+
+function markSuspect(source: string): void {
+	const now = deps.now();
+	if (suspectUntil.size >= CIMD_SUSPECTS_MAX) {
+		for (const [k, until] of suspectUntil)
+			if (until <= now) suspectUntil.delete(k);
+		if (suspectUntil.size >= CIMD_SUSPECTS_MAX) {
+			const oldest = suspectUntil.keys().next().value;
+			if (oldest !== undefined) suspectUntil.delete(oldest);
+		}
+	}
+	suspectUntil.set(source, now + CIMD_SUSPECT_MS);
+}
+
+function isSuspect(source: string): boolean {
+	const until = suspectUntil.get(source);
+	if (until === undefined) return false;
+	if (until <= deps.now()) {
+		suspectUntil.delete(source);
+		return false;
+	}
+	return true;
+}
 
 function startCooldown(clientId: string): void {
 	const now = deps.now();
@@ -786,6 +832,13 @@ async function resolveUncached(
 	if (purpose !== "refresh" && isCoolingDown(clientId))
 		return { ok: false, reason: "cooling-down", retryable: true };
 	if (inFlightByPool[purpose] >= CIMD_POOL[purpose]) return busy;
+	// A suspect source shares one lane per pool with every other suspect source.
+	const inLane = purpose !== "refresh" && isSuspect(source);
+	if (
+		inLane &&
+		suspectInFlight[purpose as "authorize" | "token"] >= CIMD_SUSPECT_LANE
+	)
+		return busy;
 	if ((inFlightBySource.get(sourceKey) ?? 0) >= CIMD_PER_SOURCE_IN_FLIGHT)
 		return busy;
 	if (
@@ -806,6 +859,7 @@ async function resolveUncached(
 	if (!takeSourceAllowance(sourceKey))
 		return { ok: false, reason: "rate-limited", retryable: true };
 	inFlightByPool[purpose]++;
+	if (inLane) suspectInFlight[purpose as "authorize" | "token"]++;
 	bump(inFlightBySource, sourceKey, 1);
 	if (connection !== undefined) bump(inFlightByConnection, connection, 1);
 	if (person !== undefined) bump(inFlightByPerson, person, 1);
@@ -816,12 +870,15 @@ async function resolveUncached(
 				purpose !== "refresh" &&
 				!result.ok &&
 				result.reason === "fetch-timeout"
-			)
+			) {
 				startCooldown(clientId);
+				markSuspect(source);
+			}
 			return result;
 		})
 		.finally(() => {
 			inFlightByPool[purpose]--;
+			if (inLane) suspectInFlight[purpose as "authorize" | "token"]--;
 			bump(inFlightBySource, sourceKey, -1);
 			if (connection !== undefined) bump(inFlightByConnection, connection, -1);
 			if (person !== undefined) bump(inFlightByPerson, person, -1);
