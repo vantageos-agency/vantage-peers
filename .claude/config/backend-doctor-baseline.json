@@ -54,11 +54,11 @@
 			"modules": {}
 		},
 		"R-53": {
-			"count": 317,
-			"measured_tree_sha": "7d23f8f55cb961f79d6cb30ba64928522b0e805c",
+			"count": 316,
+			"measured_tree_sha": "6a97510040f4749445063ff6d44f8f031356d325",
 			"cli_commit": "f6297a29c64a0265124e3e9cf86c9dd85eac47c0",
-			"command": "npx -y @vantageos/backend-doctor@0.5.0 <vantage-peers clean full checkout @7d23f8f55cb961f79d6cb30ba64928522b0e805c (task k17cv03wd3g60gz3p498879f2d8hx4pv), deps installed> --json-evidence <dir>/",
-			"output_line": "R-53: 317 site(s) VIOLATE (the day read of listMessages folds sender and tenant into one filter helper, convex/messages.ts). [conform=14 non-conforming=317 could-not-judge=0]; MECHANICAL RULE COUNTS: CR-2 237, CR-3 13, R-5 62, R-53 317, R-54 108, R-55 22, R-56 2",
+			"command": "npx -y @vantageos/backend-doctor@0.5.0 <vantage-peers clean full checkout @6a97510040f4749445063ff6d44f8f031356d325 (task k17bmxpw878e7yhqemey4c38q98hyk9f), deps installed> --json-evidence <dir>/",
+			"output_line": "R-53: 316 site(s) VIOLATE (the principal is the package resolver's output, every write admits by comparing stored IDs with the resolved IDs, the unresolved branch refuses, and no local function decides identity). [conform=14 non-conforming=316 could-not-judge=0]; MECHANICAL RULE COUNTS: CR-2 237, CR-3 13, R-5 62, R-53 316, R-54 108, R-55 22, R-56 2",
 			"modules": {}
 		},
 		"R-5": {
