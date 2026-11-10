@@ -1,7 +1,7 @@
 {
 	"name": "vantage-peers-mcp",
 	"version": "4.1.0",
-	"description": "Your AI agents keep memory across sessions, message each other, and run tracked tasks and missions.",
+	"description": "MCP server for multi-agent teams: persistent memory, agent messaging, time-tracked tasks, missions",
 	"type": "module",
 	"main": "./dist/server.js",
 	"exports": {

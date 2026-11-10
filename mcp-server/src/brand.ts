@@ -56,7 +56,7 @@ export const BRAND_ICON_ROUTES: Record<
 export const SERVER_NAME = "vantage-peers";
 export const SERVER_TITLE = "VantagePeers";
 export const SERVER_DESCRIPTION =
-	"Your AI agents keep memory across sessions, message each other, and run tracked tasks and missions.";
+	"MCP server for multi-agent teams: persistent memory, agent messaging, time-tracked tasks, missions";
 
 /**
  * Each capability SERVER_DESCRIPTION names, mapped to the served tools that
@@ -68,10 +68,34 @@ export const SERVER_DESCRIPTION =
 export const SERVER_DESCRIPTION_CAPABILITIES: Readonly<
 	Record<string, readonly string[]>
 > = {
-	"memory across sessions": ["store_memory", "recall"],
-	"message each other": ["send_message", "check_messages"],
-	"tracked tasks": ["create_task", "start_task", "complete_task"],
+	"persistent memory": ["store_memory", "recall"],
+	"agent messaging": ["send_message", "check_messages"],
+	"time-tracked tasks": ["create_task", "start_task", "complete_task"],
 	missions: ["create_mission"],
+};
+
+/**
+ * The long description, operator-approved word for word. Served on the /mcp
+ * landing page (landingPage.ts) under the short line, and the text of the
+ * Claude connector directory submission. It is NOT on the Server Card: the
+ * card schema has no long-description field and description is capped at 100.
+ */
+export const SERVER_LONG_DESCRIPTION =
+	"VantagePeers Cloud is a hosted remote MCP server that gives teams of AI agents persistent memory across sessions, messaging between agents, and shared tasks and missions. Agents store and recall memories by meaning or by exact terms, message each other through channels and broadcasts, track tasks with time spent per project, and group work into missions. Each organisation stays separate behind signed-in identity. Connect any MCP client, such as Claude, at https://mcp.vantagepeers.com/mcp. Built for developers and teams running several AI agents on the same work.";
+
+/**
+ * Each capability claim SERVER_LONG_DESCRIPTION makes, mapped to the served
+ * tools that back it; pinned like SERVER_DESCRIPTION_CAPABILITIES.
+ */
+export const SERVER_LONG_DESCRIPTION_CAPABILITIES: Readonly<
+	Record<string, readonly string[]>
+> = {
+	"persistent memory across sessions": ["store_memory", "recall"],
+	"by meaning or by exact terms": ["recall", "text_search"],
+	"channels and broadcasts": ["send_message"],
+	"time spent per project": ["billing_summary_by_project", "complete_task"],
+	"group work into missions": ["create_mission"],
+	"Each organisation stays separate": ["whoami"],
 };
 export const SERVER_WEBSITE_URL = "https://www.vantagepeers.com";
 export const SERVER_CONNECT_DOCS_URL =
