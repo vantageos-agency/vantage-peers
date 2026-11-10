@@ -1,9 +1,16 @@
 import { namespaceMatchesPrefix } from "@vantageos/cloud-identity";
-import type { MutationCtx, QueryCtx } from "../_generated/server";
+import { v } from "convex/values";
+import {
+	internalQuery,
+	type MutationCtx,
+	type QueryCtx,
+} from "../_generated/server";
 import {
 	requireAgentCredentialMatch,
 	type OrgScope,
 	type VerifiedActor,
+	verifiedActorValidator,
+	withOrgScope,
 } from "./auth";
 import { isTeamNamespaceAllowed, memberNamespaceRoots } from "./teamNamespace";
 
@@ -119,3 +126,48 @@ export async function seatAgentIdOf(
 	});
 	return verifiedActor.agentId;
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// mayReadMemoryNamespaceForAction -- the search ACTIONS' bridge to the memories
+// namespace rule (task k17bcp6jshmj30fqjm3p3nf4qx8hyy94).
+//
+// recall / textSearch / hybridSearch are actions: no ctx.db, so they cannot call
+// `isMemoryNamespaceAllowed` themselves. Their gate (`resolveSearchNamespace`) used
+// the team-only predicate, so a seat that WROTE `orchestrator/<own agent ID>` or
+// `project/<slug>` (storeMemory admits both) read them back through list_memories
+// and was answered [] by the search tools. This query runs the SAME rule storeMemory
+// and listMemories run, on the scope resolved from the verified principal (the
+// caller's identity crosses ctx.runQuery; `actingOrg` is the one the action carries).
+//
+// rights-derivation: derived at request time from the live organisation mapping and
+// the live agents row (withOrgScope, seatAgentIdOf); no grant is copied or stored.
+//
+// It only ANSWERS a boolean for ONE namespace; it hands out no scope. An agent proof
+// that does not verify admits nothing extra (the seat keeps its org roots) instead of
+// raising: a search is a read surface and its refusal is the typed empty array.
+// ─────────────────────────────────────────────────────────────────────────────
+export const mayReadMemoryNamespaceForAction = internalQuery({
+	args: {
+		namespace: v.string(),
+		actingOrg: v.optional(v.string()),
+		verifiedActor: v.optional(verifiedActorValidator),
+	},
+	returns: v.boolean(),
+	handler: async (ctx, args): Promise<boolean> => {
+		const scope = await withOrgScope(ctx, {
+			refuseWithoutThrow: true,
+			operatorAsMember: true,
+			...(args.actingOrg !== undefined
+				? { actingOrgClerkId: args.actingOrg }
+				: {}),
+		});
+		if (scope.orgSlug === null) return false;
+		let ownAgentId: string | undefined;
+		try {
+			ownAgentId = await seatAgentIdOf(ctx, scope, args.verifiedActor);
+		} catch {
+			ownAgentId = undefined;
+		}
+		return isMemoryNamespaceAllowed(scope, args.namespace, ownAgentId);
+	},
+});

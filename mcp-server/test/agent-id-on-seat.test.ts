@@ -415,6 +415,29 @@ describe("withVerifiedActor", () => {
 		};
 	};
 
+	it("forwards the proof on the search ACTIONS too (a seat finds its orchestrator/<agent ID> memory), and only on those doors", async () => {
+		const calls: Array<{ name: string; args: Record<string, unknown> }> = [];
+		const client = {
+			mutation: async () => null,
+			query: async () => null,
+			action: async (name: string, args: Record<string, unknown>) => {
+				calls.push({ name, args });
+				return [];
+			},
+		};
+		const wrapped = withVerifiedActor(client, ctx);
+		for (const door of ["search:recall", "search:textSearch", "search:hybridSearch"]) {
+			await wrapped.action(door as never, { query: "q", namespace: `orchestrator/${CLIO_ID}` } as never);
+		}
+		await wrapped.action("search:searchFixPatterns" as never, { query: "q" } as never);
+		expect(calls.map((c) => c.args.verifiedActor)).toEqual([
+			{ agentId: CLIO_ID, orgSlug: "acme-hr" },
+			{ agentId: CLIO_ID, orgSlug: "acme-hr" },
+			{ agentId: CLIO_ID, orgSlug: "acme-hr" },
+			undefined,
+		]);
+	});
+
 	it("returns the very same client when no agent is resolved", () => {
 		const { client } = fakeClient();
 		expect(withVerifiedActor(client, { ...ctx, seatAgent: null })).toBe(client);
@@ -491,6 +514,7 @@ describe("withVerifiedActor", () => {
 			"episodes",
 			"diary",
 			"erase",
+			"search",
 		]) {
 			const src = readFileSync(
 				resolve(__dirname, `../../convex/${file}.ts`),
@@ -498,7 +522,7 @@ describe("withVerifiedActor", () => {
 			);
 			let current = "";
 			for (const line of src.split("\n")) {
-				const m = line.match(/^export const (\w+) = (?:mutation|query)\(/);
+				const m = line.match(/^export const (\w+) = (?:mutation|query|action)\(/);
 				if (m) current = m[1];
 				// tasks:create shares its args through a named validator object.
 				if (/^const createTaskArgsValidatorWithCredential\b/.test(line)) {

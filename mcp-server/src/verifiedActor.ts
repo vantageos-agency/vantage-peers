@@ -107,6 +107,11 @@ export const VERIFIED_ACTOR_DOORS: ReadonlySet<string> = new Set([
 	// matched against the room's own participant list, never a name in an argument.
 	"debate:postTurn",
 	"debate:getRoom",
+	// The search actions (task k17bcp6jshmj30fqjm3p3nf4qx8hyy94): a seat searching the
+	// `orchestrator/<own agent ID>` it wrote is admitted by that same verified proof.
+	"search:recall",
+	"search:textSearch",
+	"search:hybridSearch",
 ]);
 
 /**
@@ -147,6 +152,7 @@ export function verifiedActorOf(
 type MutatingClient = {
 	mutation: (name: never, args: never, ...rest: never[]) => unknown;
 	query?: (name: never, args: never, ...rest: never[]) => unknown;
+	action?: (name: never, args: never, ...rest: never[]) => unknown;
 };
 
 /**
@@ -190,7 +196,7 @@ export function withVerifiedActor<T extends MutatingClient>(
 	return new Proxy(convex, {
 		get(target, prop) {
 			const value = Reflect.get(target, prop, target) as unknown;
-			if (prop === "mutation" || prop === "query") {
+			if (prop === "mutation" || prop === "query" || prop === "action") {
 				return (name: string, args: unknown, ...rest: unknown[]) => {
 					const call = (target as Record<string, unknown>)[prop] as (
 						...a: unknown[]
