@@ -169,7 +169,7 @@ describe("diary:list master createdBy without orchestrator — a bounded scan pe
 	test("the two reads of one call stay under the read ceiling at the measured row size", () => {
 		expect(READS_PER_CALL * CAP * ROW_BYTES).toBeLessThan(READ_CEILING_BYTES);
 		expect(
-			READS_PER_CALL * (diaryModule as Record<string, number>).DIARY_LIST_SCAN_CAP * ROW_BYTES,
+			READS_PER_CALL * diaryModule.DIARY_LIST_SCAN_CAP * ROW_BYTES,
 		).toBeLessThan(READ_CEILING_BYTES);
 	});
 
