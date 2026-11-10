@@ -1795,7 +1795,7 @@ admin.post("/oauth/document-clients/deny", async (c) => {
 	} catch (err: unknown) {
 		const message = convexFailureText(err);
 		if (
-			/^(REASON_TOO_SHORT|INVALID_CLIENT_ID|OPERATOR_REQUIRED)/.test(message)
+			/(REASON_TOO_SHORT|INVALID_CLIENT_ID|OPERATOR_REQUIRED)/.test(message)
 		) {
 			return c.json({ error: "invalid_request", detail: message }, 400);
 		}

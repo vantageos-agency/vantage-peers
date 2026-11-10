@@ -62,6 +62,23 @@ const lookup = (t: T, tokenHash: string) =>
 	asService(t).query(api.oauth.getAccessTokenByHash, { tokenHash });
 
 async function mint(t: T, tokenHash: string, clientId: string) {
+	// A seat-style token holds only what its live scope profile grants.
+	await t.run(async (ctx) => {
+		const have = await ctx.db
+			.query("oauth_scope_profiles")
+			.withIndex("by_profileId", (q) => q.eq("profileId", "p"))
+			.unique();
+		if (have === null)
+			await ctx.db.insert("oauth_scope_profiles", {
+				profileId: "p",
+				description: "test profile",
+				fromAllowList: ["clio"],
+				namespaceReadPrefixes: [],
+				namespaceWritePrefixes: [],
+				createdAt: Date.now(),
+				updatedAt: Date.now(),
+			});
+	});
 	await asService(t).mutation(api.oauth.createAccessToken, {
 		tokenHash,
 		clientId,
@@ -195,7 +212,6 @@ describe("LIVE: a token minted before the listing stops answering after it", () 
 		await mint(t, "tok-b", URL_B);
 		const refreshA = await refreshRow(t, "ref-a", URL_A);
 		const refreshB = await refreshRow(t, "ref-b", URL_B);
-		console.log("DBG", JSON.stringify(await t.run((ctx) => ctx.db.query("oauth_access_tokens").collect())));
 		expect(await lookup(t, "tok-a")).not.toBeNull(); // before: it answers
 		expect(await lookup(t, "tok-b")).not.toBeNull();
 
