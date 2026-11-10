@@ -1307,6 +1307,15 @@ export async function runE2E(): Promise<void> {
 			arguments: {},
 		})) as CallResult,
 	);
+	// An invalid cursor ARGUMENT, through the real /mcp route and the v2 client
+	// (task k171rk9evy8yy48tfx765zqwk18hwdvh, C-11 (b)): the literal mcp-doctor sends.
+	poles.set(
+		"invalid-cursor",
+		(await person.callTool({
+			name: "list_tasks",
+			arguments: { cursor: "mcp-doctor:invalid-cursor:%%%" },
+		})) as CallResult,
+	);
 	poles.set(
 		"refused",
 		(await person.callTool({
