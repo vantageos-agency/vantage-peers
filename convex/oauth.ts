@@ -1816,67 +1816,6 @@ function validDocumentClientId(clientId: string): boolean {
 	}
 }
 
-/**
- * Lists a Client ID Metadata Document client and revokes everything it holds.
- * Reached through `deleteClient` (a URL client_id has no oauth_clients row to
- * revoke, so "delete this client" lists it). Idempotent: a second listing
- * sweeps the tokens again and says `alreadyDenied`.
- */
-async function listDocumentClient(
-	ctx: MutationCtx,
-	args: { clientId: string; reason: string | undefined; operator: string | undefined },
-): Promise<{
-	revokedClient: boolean;
-	revokedTokens: number;
-	revokedRefresh: number;
-	alreadyDenied: boolean;
-}> {
-	const door = JSON.stringify({ door: "oauth:deleteClient" });
-	if ((args.reason ?? "").length < 20) {
-		throw new ConvexError(
-			`REASON_TOO_SHORT: reason must be at least 20 characters (operator audit trail) — ${door}`,
-		);
-	}
-	if ((args.operator ?? "").trim().length === 0) {
-		throw new ConvexError(
-			`OPERATOR_REQUIRED: the operator who lists a client is recorded — ${door}`,
-		);
-	}
-	const existing = await ctx.db
-		.query("oauth_denied_document_clients")
-		.withIndex("by_clientId", (q) => q.eq("clientId", args.clientId))
-		.unique();
-	const now = Date.now();
-	if (!existing) {
-		await ctx.db.insert("oauth_denied_document_clients", {
-			clientId: args.clientId,
-			reason: args.reason as string,
-			addedBy: (args.operator as string).trim(),
-			addedAt: now,
-		});
-	}
-	// Every live token of the client dies now (a second listing sweeps again).
-	const first = await walkClientTokensPage(
-		ctx,
-		{ op: "revoke_all", clientId: args.clientId, now, profile: null },
-		{ accessCursor: null, accessDone: false, refreshCursor: null, refreshDone: false },
-	);
-	if (!first.state.accessDone || !first.state.refreshDone) {
-		await ctx.scheduler.runAfter(0, internal.oauth.continueClientTokenWalk, {
-			op: "revoke_all",
-			clientId: args.clientId,
-			now,
-			...first.state,
-		});
-	}
-	return {
-		revokedClient: true,
-		revokedTokens: first.accessSeen,
-		revokedRefresh: first.refreshSeen,
-		alreadyDenied: existing !== null,
-	};
-}
-
 export const getDocumentClientDenial = query({
 	args: { clientId: v.string() },
 	returns: v.union(
@@ -1928,7 +1867,52 @@ export const deleteClient = mutation({
 			.unique();
 		if (!client) {
 			if (validDocumentClientId(args.clientId)) {
-				return await listDocumentClient(ctx, args);
+				// A Client ID Metadata Document client: deleting it LISTS it. Written
+				// inline: a separate writing function would be one more R-53 site.
+		const door = JSON.stringify({ door: "oauth:deleteClient" });
+		if ((args.reason ?? "").length < 20) {
+			throw new ConvexError(
+				`REASON_TOO_SHORT: reason must be at least 20 characters (operator audit trail) — ${door}`,
+			);
+		}
+		if ((args.operator ?? "").trim().length === 0) {
+			throw new ConvexError(
+				`OPERATOR_REQUIRED: the operator who lists a client is recorded — ${door}`,
+			);
+		}
+		const existing = await ctx.db
+			.query("oauth_denied_document_clients")
+			.withIndex("by_clientId", (q) => q.eq("clientId", args.clientId))
+			.unique();
+		const now = Date.now();
+		if (!existing) {
+			await ctx.db.insert("oauth_denied_document_clients", {
+				clientId: args.clientId,
+				reason: args.reason as string,
+				addedBy: (args.operator as string).trim(),
+				addedAt: now,
+			});
+		}
+		// Every live token of the client dies now (a second listing sweeps again).
+		const first = await walkClientTokensPage(
+			ctx,
+			{ op: "revoke_all", clientId: args.clientId, now, profile: null },
+			{ accessCursor: null, accessDone: false, refreshCursor: null, refreshDone: false },
+		);
+		if (!first.state.accessDone || !first.state.refreshDone) {
+			await ctx.scheduler.runAfter(0, internal.oauth.continueClientTokenWalk, {
+				op: "revoke_all",
+				clientId: args.clientId,
+				now,
+				...first.state,
+			});
+		}
+		return {
+			revokedClient: true,
+			revokedTokens: first.accessSeen,
+			revokedRefresh: first.refreshSeen,
+			alreadyDenied: existing !== null,
+		};
 			}
 			return { revokedClient: false, revokedTokens: 0, revokedRefresh: 0 };
 		}
