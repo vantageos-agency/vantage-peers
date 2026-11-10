@@ -536,7 +536,7 @@ describe("H1 — an unauthenticated flood cannot starve the pool", () => {
 		const refreshToken = await connected();
 		clock += cimd.CIMD_MAX_TTL_MS + 1; // the cached document has expired
 		const flood = Array.from({ length: cimd.CIMD_MAX_IN_FLIGHT }, (_, i) =>
-			rawAuthorize(`https://hang${i}.example.com/m.json`, `10.0.0.${i}`),
+			rawAuthorize(`https://hang${i}.dom${i}.com/m.json`, `10.0.0.${i}`),
 		);
 		await new Promise((r) => setTimeout(r, 60));
 		const refreshed = await refreshWith(refreshToken);
@@ -549,7 +549,7 @@ describe("H1 — an unauthenticated flood cannot starve the pool", () => {
 		expect(
 			bodies.filter((b) => b.error_description === "client-metadata: busy")
 				.length,
-		).toBe(cimd.CIMD_RESERVED_FOR_TOKEN);
+		).toBe(cimd.CIMD_MAX_IN_FLIGHT - cimd.CIMD_POOL.authorize);
 	});
 
 	it("one source address is limited in fetches (429 rate-limited); another address is not", async () => {
@@ -880,5 +880,163 @@ describe("M2 — fail closed", () => {
 		expect(r.status).toBe(503);
 		expect(r.json).toMatchObject({ error: "temporarily_unavailable" });
 		expect(net.requests).toHaveLength(0);
+	});
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Audit round 2 (dev-sentinel on afabc97f)
+// ─────────────────────────────────────────────────────────────────────────────
+
+const rawToken = (body: Record<string, string>, ip: string) =>
+	app.request("http://localhost:3000/token", {
+		method: "POST",
+		headers: {
+			"content-type": "application/x-www-form-urlencoded",
+			"x-real-ip": ip,
+		},
+		body: new URLSearchParams(body).toString(),
+	});
+
+describe("H1 round 2 — probes A and B through /token, and the refresh path has its own pool", () => {
+	const hangExceptApp = (clock: () => number) =>
+		network({
+			now: clock,
+			timeoutMs: 400,
+			perSourceLimit: 1000,
+			respond: (req) =>
+				req.hostname === "app.example.com"
+					? { body: bodyOf(JSON.stringify(validDocument())) }
+					: new Promise(() => undefined),
+		});
+
+	it("probe A: eight distinct sources on /token, then the refresh still resolves", async () => {
+		let clock = Date.now();
+		hangExceptApp(() => clock);
+		const refreshToken = await connected();
+		clock += cimd.CIMD_MAX_TTL_MS + 1;
+		const flood = Array.from({ length: 8 }, (_, i) =>
+			rawToken(
+				{
+					grant_type: "authorization_code",
+					code: `code-${i}`,
+					code_verifier: VERIFIER,
+					redirect_uri: CIMD_REDIRECT,
+					client_id: `https://hang${i}.dom${i}.com/m.json`,
+				},
+				`10.0.0.${i}`,
+			),
+		);
+		await new Promise((r) => setTimeout(r, 60));
+		expect((await refreshWith(refreshToken)).status).toBe(200);
+		await Promise.all(flood);
+	});
+
+	it("probe B: one source bursting eight on /token, then the refresh still resolves", async () => {
+		let clock = Date.now();
+		hangExceptApp(() => clock);
+		const refreshToken = await connected();
+		clock += cimd.CIMD_MAX_TTL_MS + 1;
+		const burst = Array.from({ length: 8 }, (_, i) =>
+			rawToken(
+				{
+					grant_type: "authorization_code",
+					code: `code-${i}`,
+					code_verifier: VERIFIER,
+					redirect_uri: CIMD_REDIRECT,
+					client_id: `https://hang${i}.dom${i}.com/m.json`,
+				},
+				"6.6.6.6",
+			),
+		);
+		await new Promise((r) => setTimeout(r, 60));
+		expect((await refreshWith(refreshToken, {}, "6.6.6.6")).status).toBe(200);
+		const answers = await Promise.all(burst);
+		expect(answers.filter((r) => r.status === 503).length).toBeGreaterThanOrEqual(
+			8 - cimd.CIMD_PER_SOURCE_IN_FLIGHT,
+		);
+	});
+});
+
+describe("refresh without a client_id (round 2)", () => {
+	it("a CIMD token's refresh that names no client_id is refused", async () => {
+		const refreshToken = await connected();
+		const r = await app.request("http://localhost:3000/token", {
+			method: "POST",
+			headers: { "content-type": "application/x-www-form-urlencoded" },
+			body: new URLSearchParams({
+				grant_type: "refresh_token",
+				refresh_token: refreshToken,
+			}).toString(),
+		});
+		expect(r.status).toBe(400);
+		expect(await r.json()).toMatchObject({ error: "invalid_request" });
+		// and the token was not spent: the same call WITH its client_id works
+		expect((await refreshWith(refreshToken)).status).toBe(200);
+	});
+});
+
+describe("M2 round 2 — the admin routes", () => {
+	it("refuses a client_id that is not in canonical form instead of listing nothing", async () => {
+		for (const id of [
+			"https://APP.example.com/oauth/client-metadata.json",
+			"https://app.example.com/a/../oauth/client-metadata.json",
+			"https://app.example.com:443/oauth/client-metadata.json",
+			"https://app.example.com/oauth/client-metadata.json#x",
+		]) {
+			const r = await adminPost("deny", {
+				client_id: id,
+				reason: DENY_REASON,
+				operator: "laurent",
+			});
+			expect(r.status, id).toBe(400);
+		}
+	});
+
+	it("warns when the listing matched no token, so a typo is visible", async () => {
+		const r = await denyClient("https://app.example.com/oauth/typo.json");
+		expect(r.status).toBe(200);
+		const body = (await r.json()) as Record<string, unknown>;
+		expect(body.accessTokensRevoked).toBe(0);
+		expect(String(body.warning)).toMatch(/no token/i);
+	});
+
+	it("allow unlists through the same door: a token minted after works, and the audit keeps both events", async () => {
+		const before = await exchange(await cimdCode("mcp:full offline_access"));
+		expect(before.status).toBe(200);
+		expect((await denyClient()).status).toBe(200);
+		const unlisted = await adminPost("allow", {
+			client_id: DOC_URL,
+			reason: "reviewed, the client is legitimate again",
+			operator: "pi",
+		});
+		expect(unlisted.status).toBe(200);
+		expect(await unlisted.json()).toMatchObject({ unlisted: true });
+		network();
+		const code = await cimdCode("mcp:full offline_access");
+		const after = await exchange(code);
+		expect(after.status).toBe(200);
+		const hash = await sha256Hex(after.body.access_token as string);
+		const resolved = await bridge(
+			t.withIdentity({ subject: SERVICE_ACCOUNT_ID }),
+		).query("oauth:getAccessTokenByHash", { tokenHash: hash });
+		expect(resolved).not.toBeNull();
+		// the token minted before the listing stays dead
+		const oldHash = await sha256Hex(before.body.access_token as string);
+		expect(
+			await bridge(t.withIdentity({ subject: SERVICE_ACCOUNT_ID })).query(
+				"oauth:getAccessTokenByHash",
+				{ tokenHash: oldHash },
+			),
+		).toBeNull();
+		const rows = await t.run((ctx) =>
+			ctx.db.query("oauth_denied_document_clients").collect(),
+		);
+		expect(rows).toHaveLength(1);
+		expect(rows[0].active).toBe(false);
+		expect(rows[0].history.map((h: { action: string }) => h.action)).toEqual([
+			"listed",
+			"unlisted",
+		]);
+		expect(rows[0].history[1]).toMatchObject({ by: "pi" });
 	});
 });
