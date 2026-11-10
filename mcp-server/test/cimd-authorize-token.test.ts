@@ -160,7 +160,7 @@ async function cimdAuthorize(
 	);
 }
 
-async function cimdCode(): Promise<string> {
+async function cimdCode(scope?: string): Promise<string> {
 	const r = await authorizeAsPerson(app, {
 		clientId: DOC_URL,
 		redirectUri: CIMD_REDIRECT,
@@ -168,6 +168,7 @@ async function cimdCode(): Promise<string> {
 		sessionToken: await harness.session("user_1"),
 		orgId: "org_A",
 		state: "xyz",
+		...(scope ? { scope } : {}),
 	});
 	expect(r.status).toBe(302);
 	expect(r.code).toBeTruthy();
@@ -268,8 +269,9 @@ describe("POST /token for a CIMD client (public client, PKCE alone)", () => {
 	});
 
 	it("refreshes the connection without a client secret", async () => {
-		const first = await exchange(await cimdCode());
+		const first = await exchange(await cimdCode("mcp:full offline_access"));
 		expect(first.status).toBe(200);
+		expect(first.body.refresh_token).toBeTruthy();
 		const again = await postToken({
 			grant_type: "refresh_token",
 			refresh_token: first.body.refresh_token as string,
