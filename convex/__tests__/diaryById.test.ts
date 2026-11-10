@@ -150,7 +150,7 @@ afterEach(() => {
 });
 
 // A served list is the bare array; the refusal envelope is a different shape.
-function served(result: Doc<"diary">[] | { refused: true; items: Doc<"diary">[] }): Doc<"diary">[] {
+function served(result: Doc<"diary">[] | { refused: true; items: Doc<"diary">[] } | { partial: true; items: Doc<"diary">[]; nextCreatedBefore: number }): Doc<"diary">[] {
 	if (!Array.isArray(result)) throw new Error("expected a served array, got the refusal envelope");
 	return result;
 }
