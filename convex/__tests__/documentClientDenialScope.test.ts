@@ -227,7 +227,11 @@ describe("residue 3 — DCR refuses URL-shaped client ids", () => {
 	test("createClient and registerPublicClient refuse any URL-shaped client_id, and write no row", async () => {
 		const t = createT();
 		await profile(t);
-		for (const clientId of [APP, "http://app.example.com/c.json", "HTTPS://App.example.com/c.json"]) {
+		for (const clientId of [
+			APP,
+			"http://app.example.com/c.json",
+			"HTTPS://App.example.com/c.json",
+		]) {
 			await expect(
 				asService(t).mutation(api.oauth.createClient, { ...base, clientId }),
 			).rejects.toThrow(/URL_CLIENT_ID_REFUSED/);
@@ -246,7 +250,10 @@ describe("residue 3 — DCR refuses URL-shaped client ids", () => {
 		const t = createT();
 		await profile(t);
 		const id = "0b0f2a52-6d1c-4d0e-9a53-7a4f0d2c1a11";
-		await asService(t).mutation(api.oauth.createClient, { ...base, clientId: id });
+		await asService(t).mutation(api.oauth.createClient, {
+			...base,
+			clientId: id,
+		});
 		await asService(t).mutation(api.oauth.registerPublicClient, {
 			...base,
 			clientId: "1b0f2a52-6d1c-4d0e-9a53-7a4f0d2c1a11",

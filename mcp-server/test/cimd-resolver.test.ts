@@ -1189,9 +1189,9 @@ describe("round 6 — a domain whose fetch timed out cools down, so hanging doma
 		});
 		// Cool the domain down through a different host of it.
 		await authorize("https://z.hang0.com/c.json", "10.9.0.1");
-		expect(await authorize("https://z.hang0.com/c.json", "10.9.0.2")).toMatchObject(
-			{ reason: "cooling-down" },
-		);
+		expect(
+			await authorize("https://z.hang0.com/c.json", "10.9.0.2"),
+		).toMatchObject({ reason: "cooling-down" });
 		const refreshed = await cimd.resolveClientMetadata(
 			"https://h0.hang0.com/c.json",
 			{ purpose: "refresh", source: "9.9.9.9" },
