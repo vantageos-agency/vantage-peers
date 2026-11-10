@@ -448,7 +448,10 @@ export function sourceKeyOf(address: string): string {
 		if (!g) return bare;
 		if (g.slice(0, 5).every((x) => x === 0) && g[5] === 0xffff)
 			return `${g[6] >> 8}.${g[6] & 255}.${g[7] >> 8}.${g[7] & 255}`;
-		return `${g.slice(0, 4).map((x) => x.toString(16)).join(":")}::/64`;
+		return `${g
+			.slice(0, 4)
+			.map((x) => x.toString(16))
+			.join(":")}::/64`;
 	}
 	return bare;
 }

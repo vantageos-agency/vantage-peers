@@ -104,8 +104,9 @@ const readers: [string, (t: T, hash: string) => Promise<unknown>][] = [
 	[
 		"oauth:getAccessTokenByHash",
 		async (t, hash) =>
-			(await service(t).query(api.oauth.getAccessTokenByHash, { tokenHash: hash })) ??
-			Promise.reject(new Error("TOKEN_NOT_LIVE")),
+			(await service(t).query(api.oauth.getAccessTokenByHash, {
+				tokenHash: hash,
+			})) ?? Promise.reject(new Error("TOKEN_NOT_LIVE")),
 	],
 	[
 		"resolveVerifiedPerson (a person door)",

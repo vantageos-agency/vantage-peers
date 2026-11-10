@@ -951,9 +951,9 @@ describe("H1 round 2 — probes A and B through /token, and the refresh path has
 		await new Promise((r) => setTimeout(r, 60));
 		expect((await refreshWith(refreshToken, {}, "6.6.6.6")).status).toBe(200);
 		const answers = await Promise.all(burst);
-		expect(answers.filter((r) => r.status === 503).length).toBeGreaterThanOrEqual(
-			8 - cimd.CIMD_PER_SOURCE_IN_FLIGHT,
-		);
+		expect(
+			answers.filter((r) => r.status === 503).length,
+		).toBeGreaterThanOrEqual(8 - cimd.CIMD_PER_SOURCE_IN_FLIGHT);
 	});
 });
 
