@@ -231,6 +231,11 @@ describe("residue 3 — DCR refuses URL-shaped client ids", () => {
 			APP,
 			"http://app.example.com/c.json",
 			"HTTPS://App.example.com/c.json",
+			"\u0001https://app.example.com/c.json",
+			"\u200bhttps://app.example.com/c.json",
+			"https:\t//app.example.com/c.json",
+			"https:/app.example.com/c.json",
+			"https:app.example.com/c.json",
 		]) {
 			await expect(
 				asService(t).mutation(api.oauth.createClient, { ...base, clientId }),
@@ -260,5 +265,90 @@ describe("residue 3 — DCR refuses URL-shaped client ids", () => {
 		});
 		const rows = await t.run((ctx) => ctx.db.query("oauth_clients").collect());
 		expect(rows).toHaveLength(2);
+	});
+});
+
+describe("F3 — the denial is checked whatever the id shape", () => {
+	test("a token whose client_id is a URL in an odd spelling is denied by its host listing", async () => {
+		const t = createT();
+		await mint(t, "tok-odd-1", "https:app.example.com/c.json");
+		await mint(t, "tok-odd-2", "\u0001https://app.example.com/c.json");
+		expect(await lookup(t, "tok-odd-1")).not.toBeNull();
+		await list(t, "host");
+		expect(await lookup(t, "tok-odd-1")).toBeNull();
+		expect(await lookup(t, "tok-odd-2")).toBeNull();
+	});
+});
+
+describe("F2 — the refresh readers obey the deny, for a token minted before the listing", () => {
+	const refreshRow = (t: T, hash: string, clientId: string) =>
+		asService(t).mutation(api.oauth.createRefreshToken, {
+			tokenHash: hash,
+			clientId,
+			userId: "user_1",
+			scopeProfile: "p",
+			expiresAt: Date.now() + 3_600_000,
+		});
+	const seedP = (t: T) =>
+		t.run((ctx) =>
+			ctx.db.insert("oauth_scope_profiles", {
+				profileId: "p",
+				description: "probe",
+				fromAllowList: ["clio"],
+				namespaceReadPrefixes: [],
+				namespaceWritePrefixes: [],
+				createdAt: Date.now(),
+				updatedAt: Date.now(),
+			}),
+		);
+	const rotate = (t: T, hash: string, clientId: string) =>
+		asService(t).mutation(api.oauth.rotateRefreshToken, {
+			presentedHash: hash,
+			clientId,
+			scopeProfile: "p",
+			scopes: ["mcp:full"],
+			fromAllowList: ["clio"],
+			namespaceReadPrefixes: [],
+			namespaceWritePrefixes: [],
+			accessExpiresAt: Date.now() + 3_600_000,
+			refreshExpiresAt: Date.now() + 86_400_000,
+		});
+
+	for (const scope of ["url", "host", "domain"] as const) {
+		test(`${scope} listing: getRefreshTokenByHash, getRefreshTokenForGrant and rotateRefreshToken refuse`, async () => {
+			const t = createT();
+			await seedP(t);
+			await refreshRow(t, "rt-1", APP_OTHER_PATH);
+			const asS = asService(t);
+			expect(
+				await asS.query(api.oauth.getRefreshTokenByHash, { tokenHash: "rt-1" }),
+			).not.toBeNull();
+			expect(
+				await asS.query(api.oauth.getRefreshTokenForGrant, {
+					presentedHash: "rt-1",
+				}),
+			).not.toBeNull();
+			await list(t, scope, scope === "url" ? APP_OTHER_PATH : APP);
+			expect(
+				await asS.query(api.oauth.getRefreshTokenByHash, { tokenHash: "rt-1" }),
+			).toBeNull();
+			expect(
+				await asS.query(api.oauth.getRefreshTokenForGrant, {
+					presentedHash: "rt-1",
+				}),
+			).toBeNull();
+			expect(await rotate(t, "rt-1", APP_OTHER_PATH)).toMatchObject({
+				status: "refused",
+				reason: "client-denied",
+			});
+		});
+	}
+
+	test("a refresh token of an unlisted client still rotates", async () => {
+		const t = createT();
+		await seedP(t);
+		await refreshRow(t, "rt-2", SIBLING);
+		await list(t, "host");
+		expect(await rotate(t, "rt-2", SIBLING)).toMatchObject({ status: "ok" });
 	});
 });

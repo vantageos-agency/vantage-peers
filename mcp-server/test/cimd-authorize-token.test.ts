@@ -1062,3 +1062,47 @@ describe("round 4 — N4: an over-long reason or operator is a 400 on the admin 
 		expect(longOperator.status).toBe(400);
 	});
 });
+
+describe("F4/F5 — the admin answer says what a listing covers and that tokens are refused, not revoked", () => {
+	const scoped = (scope: string, path = "deny") =>
+		adminPost(path, {
+			client_id: DOC_URL,
+			scope,
+			reason: DENY_REASON,
+			operator: "laurent",
+		});
+
+	it("url: covers the exact URL", async () => {
+		const body = (await (await scoped("url")).json()) as Record<string, unknown>;
+		expect(body).toMatchObject({ scope: "url", covers: "exact URL" });
+	});
+
+	it("host: covers the exact host, and tokens are refused, not revoked", async () => {
+		const r = await scoped("host");
+		expect(r.status).toBe(200);
+		const body = (await r.json()) as Record<string, unknown>;
+		expect(body).toMatchObject({
+			scope: "host",
+			covers: "exact host",
+			accessTokensRevoked: 0,
+			refreshTokensRevoked: 0,
+		});
+		expect(String(body.tokensRefused)).toMatch(/refused, not revoked/);
+	});
+
+	it("domain: covers the registrable domain and all subdomains; the lift answers covers too", async () => {
+		const body = (await (await scoped("domain")).json()) as Record<string, unknown>;
+		expect(body).toMatchObject({
+			scope: "domain",
+			covers: "registrable domain and all subdomains",
+		});
+		const lifted = (await (await scoped("domain", "allow")).json()) as Record<
+			string,
+			unknown
+		>;
+		expect(lifted).toMatchObject({
+			unlisted: true,
+			covers: "registrable domain and all subdomains",
+		});
+	});
+});

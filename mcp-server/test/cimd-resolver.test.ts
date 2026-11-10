@@ -1146,12 +1146,12 @@ describe("round 6 — a domain whose fetch timed out cools down, so hanging doma
 		expect(timedOut.every((r) => !r.ok && r.reason === "fetch-timeout")).toBe(
 			true,
 		);
-		// Wave 2: the same domains again. Each answers 503-class "cooling-down"
+		// Wave 2: the same URLs again. Each answers 503-class "cooling-down"
 		// with NO fetch, so the pool stays free for a legitimate client.
 		const before = rec.requests.length;
 		const second = await Promise.all(
 			Array.from({ length: cimd.CIMD_POOL.authorize }, (_, i) =>
-				authorize(`https://x${i}.hang${i}.com/other.json`, `10.7.${i}.1`),
+				authorize(hanging(i), `10.7.${i}.1`),
 			),
 		);
 		expect(second).toEqual(
@@ -1166,7 +1166,7 @@ describe("round 6 — a domain whose fetch timed out cools down, so hanging doma
 		expect(legit.ok).toBe(true);
 	});
 
-	it("the cooldown ends: the domain is fetched again once it has passed", async () => {
+	it("the cooldown ends: the URL is fetched again once it has passed", async () => {
 		let t = 1_000_000;
 		const rec = await install({ ...hang, now: () => t, respond: live });
 		await authorize(hanging(0), "10.8.0.1");
@@ -1179,24 +1179,62 @@ describe("round 6 — a domain whose fetch timed out cools down, so hanging doma
 		expect(rec.requests).toHaveLength(2);
 	});
 
-	it("a refresh is unaffected by the cooldown of its domain", async () => {
+	it("a refresh is unaffected by the cooldown of its URL, and its own timeout arms none", async () => {
+		const Z = "https://z.hang0.com/c.json";
+		let calls = 0;
 		const rec = await install({
 			...hang,
-			respond: (req: { hostname: string }) =>
-				req.hostname === "h0.hang0.com"
-					? json(validDocument({}, "https://h0.hang0.com/c.json"))
+			respond: () =>
+				++calls === 1
+					? new Promise<never>(() => undefined)
+					: json(validDocument({}, Z)),
+		});
+		await authorize(Z, "10.9.0.1"); // times out: arms the cooldown of Z
+		expect(await authorize(Z, "10.9.0.2")).toMatchObject({
+			reason: "cooling-down",
+		});
+		const refreshed = await cimd.resolveClientMetadata(Z, {
+			purpose: "refresh",
+			source: "9.9.9.9",
+		});
+		expect(refreshed.ok).toBe(true);
+		expect(rec.requests).toHaveLength(2);
+	});
+
+	it("F1: a timeout on another URL of the same registrable domain does not refuse the victim", async () => {
+		const rec = await install({
+			...hang,
+			respond: (req: { hostname: string; path: string }) =>
+				req.hostname === "app.example.co.uk"
+					? json(validDocument({}, `https://app.example.co.uk${req.path}`))
 					: new Promise<never>(() => undefined),
 		});
-		// Cool the domain down through a different host of it.
-		await authorize("https://z.hang0.com/c.json", "10.9.0.1");
-		expect(
-			await authorize("https://z.hang0.com/c.json", "10.9.0.2"),
-		).toMatchObject({ reason: "cooling-down" });
-		const refreshed = await cimd.resolveClientMetadata(
-			"https://h0.hang0.com/c.json",
-			{ purpose: "refresh", source: "9.9.9.9" },
+		const slow = await authorize("https://slow.example.co.uk/c.json", "10.1.0.1");
+		expect(slow).toMatchObject({ reason: "fetch-timeout" });
+		for (const [i, purpose] of (["authorize", "token"] as const).entries()) {
+			const r = await cimd.resolveClientMetadata(
+				`https://app.example.co.uk/v${i}.json`,
+				{ purpose, source: `10.1.1.${i}` },
+			);
+			expect(r.ok).toBe(true);
+		}
+		expect(rec.requests).toHaveLength(3);
+	});
+
+	it("F1: a refresh that times out arms no cooldown for another client of its domain", async () => {
+		await install({
+			...hang,
+			respond: (req: { hostname: string }) =>
+				req.hostname === "app.example.co.uk"
+					? json(validDocument({}, "https://app.example.co.uk/c.json"))
+					: new Promise<never>(() => undefined),
+		});
+		const slow = await cimd.resolveClientMetadata(
+			"https://slow.example.co.uk/c.json",
+			{ purpose: "refresh", source: "10.2.0.1" },
 		);
-		expect(refreshed.ok).toBe(true);
-		expect(rec.requests.length).toBe(2);
+		expect(slow).toMatchObject({ reason: "fetch-timeout" });
+		const victim = await authorize("https://app.example.co.uk/c.json", "10.2.1.1");
+		expect(victim.ok).toBe(true);
 	});
 });
