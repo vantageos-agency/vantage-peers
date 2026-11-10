@@ -313,7 +313,9 @@ type RegisteredClientRow = {
 	revokedAt?: number;
 } | null;
 
-async function registeredClient(clientId: string): Promise<RegisteredClientRow> {
+async function registeredClient(
+	clientId: string,
+): Promise<RegisteredClientRow> {
 	return (await internalClient().query(
 		// biome-ignore lint/suspicious/noExplicitAny: Convex string API
 		"oauth:getClientByClientId" as any,
@@ -381,7 +383,11 @@ export async function checkClientMetadataDocument(
 	if (!resolved.ok) return resolved;
 	const client: ClientMetadata = resolved.client;
 	if (redirectUri !== undefined && !client.redirectUris.includes(redirectUri))
-		return { ok: false, reason: "redirect-uri-not-registered", retryable: false };
+		return {
+			ok: false,
+			reason: "redirect-uri-not-registered",
+			retryable: false,
+		};
 	return { ok: true };
 }
 

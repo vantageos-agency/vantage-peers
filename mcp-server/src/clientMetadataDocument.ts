@@ -140,8 +140,10 @@ const BLOCKED_V6: [string, number][] = [
 ];
 
 const blockList = new net.BlockList();
-for (const [net4, prefix] of BLOCKED_V4) blockList.addSubnet(net4, prefix, "ipv4");
-for (const [net6, prefix] of BLOCKED_V6) blockList.addSubnet(net6, prefix, "ipv6");
+for (const [net4, prefix] of BLOCKED_V4)
+	blockList.addSubnet(net4, prefix, "ipv4");
+for (const [net6, prefix] of BLOCKED_V6)
+	blockList.addSubnet(net6, prefix, "ipv6");
 
 /** The 8 groups of an IPv6 address, or null when it does not parse. */
 function ipv6Groups(ip: string): number[] | null {
@@ -159,9 +161,15 @@ function ipv6Groups(ip: string): number[] | null {
 	const tail = halves.length === 2 && halves[1] ? halves[1].split(":") : [];
 	const missing = 8 - head.length - tail.length;
 	if (halves.length === 1 ? missing !== 0 : missing < 1) return null;
-	const all = [...head, ...Array(halves.length === 2 ? missing : 0).fill("0"), ...tail];
+	const all = [
+		...head,
+		...Array(halves.length === 2 ? missing : 0).fill("0"),
+		...tail,
+	];
 	if (all.length !== 8) return null;
-	const out = all.map((g) => (/^[0-9a-f]{1,4}$/.test(g) ? Number.parseInt(g, 16) : Number.NaN));
+	const out = all.map((g) =>
+		/^[0-9a-f]{1,4}$/.test(g) ? Number.parseInt(g, 16) : Number.NaN,
+	);
 	return out.some(Number.isNaN) ? null : out;
 }
 
@@ -216,10 +224,15 @@ export function parseClientMetadataUrl(
 		return refuse("invalid-client-id-url");
 	}
 	if (url.href !== clientId) return refuse("client-id-not-canonical");
-	if (url.pathname === "/" || url.pathname === "") return refuse("path-required");
+	if (url.pathname === "/" || url.pathname === "")
+		return refuse("path-required");
 	const host = url.hostname.replace(/^\[|\]$/g, "");
 	if (net.isIP(host)) return refuse("ip-literal-host-forbidden");
-	if (!host.includes(".") || host === "localhost" || host.endsWith(".localhost"))
+	if (
+		!host.includes(".") ||
+		host === "localhost" ||
+		host.endsWith(".localhost")
+	)
 		return refuse("host-not-public");
 	return { ok: true, url };
 }
@@ -239,7 +252,8 @@ const FORBIDDEN_REDIRECT_SCHEMES = new Set([
 const LOOPBACK_HOSTS = new Set(["localhost", "127.0.0.1", "[::1]"]);
 
 function validRedirectUri(uri: unknown): uri is string {
-	if (typeof uri !== "string" || uri.length === 0 || uri.length > 2048) return false;
+	if (typeof uri !== "string" || uri.length === 0 || uri.length > 2048)
+		return false;
 	if (uri.includes("*") || uri.includes("#")) return false;
 	let u: URL;
 	try {
@@ -255,8 +269,13 @@ function validRedirectUri(uri: unknown): uri is string {
 
 function sanitiseName(raw: unknown): string {
 	if (typeof raw !== "string") return "";
-	// biome-ignore lint/suspicious/noControlCharactersInRegex: stripping control characters is the point
-	return raw.replace(/[\u0000-\u001f\u007f<>"'`&]/g, " ").replace(/\s+/g, " ").trim().slice(0, MAX_NAME_LENGTH);
+	// Control characters and markup-significant characters become spaces.
+	let out = "";
+	for (const ch of raw) {
+		const code = ch.codePointAt(0) ?? 0;
+		out += code < 0x20 || code === 0x7f || "<>\"'`&".includes(ch) ? " " : ch;
+	}
+	return out.replace(/\s+/g, " ").trim().slice(0, MAX_NAME_LENGTH);
 }
 
 function validateDocument(
@@ -264,7 +283,11 @@ function validateDocument(
 	hostname: string,
 	json: unknown,
 ): ResolveResult {
-	const refuse = (reason: string): ResolveResult => ({ ok: false, reason, retryable: false });
+	const refuse = (reason: string): ResolveResult => ({
+		ok: false,
+		reason,
+		retryable: false,
+	});
 	if (typeof json !== "object" || json === null || Array.isArray(json))
 		return refuse("invalid-document");
 	const doc = json as Record<string, unknown>;
@@ -274,7 +297,8 @@ function validateDocument(
 	if (doc.token_endpoint_auth_method !== "none")
 		return refuse("token-endpoint-auth-method-must-be-none");
 	const uris = doc.redirect_uris;
-	if (!Array.isArray(uris) || uris.length === 0) return refuse("redirect-uris-missing");
+	if (!Array.isArray(uris) || uris.length === 0)
+		return refuse("redirect-uris-missing");
 	if (uris.length > MAX_REDIRECT_URIS) return refuse("redirect-uris-too-many");
 	if (!uris.every(validRedirectUri)) return refuse("redirect-uri-invalid");
 	const name = sanitiseName(doc.client_name);
@@ -330,7 +354,8 @@ function pinnedGet(req: PinnedRequest): Promise<PinnedResponse> {
 }
 
 const realDeps: FetchDeps = {
-	resolveHost: (hostname) => dns.promises.lookup(hostname, { all: true, verbatim: true }),
+	resolveHost: (hostname) =>
+		dns.promises.lookup(hostname, { all: true, verbatim: true }),
 	get: pinnedGet,
 	now: () => Date.now(),
 	timeoutMs: CIMD_TIMEOUT_MS,
@@ -342,7 +367,9 @@ const cache = new Map<string, { client: ClientMetadata; expiresAt: number }>();
 let inFlight = 0;
 
 /** Test seam: replaces the network pieces (and empties the cache); `null` restores the real ones. */
-export function _setClientMetadataDepsForTest(d: Partial<FetchDeps> | null): void {
+export function _setClientMetadataDepsForTest(
+	d: Partial<FetchDeps> | null,
+): void {
 	deps = d ? { ...realDeps, ...d } : realDeps;
 	cache.clear();
 	inFlight = 0;
@@ -381,7 +408,8 @@ async function readCapped(
 	aborted: Promise<never>,
 ): Promise<string> {
 	const declared = Number(res.headers["content-length"]);
-	if (Number.isFinite(declared) && declared > maxBytes) throw new Refused("document-too-large");
+	if (Number.isFinite(declared) && declared > maxBytes)
+		throw new Refused("document-too-large");
 	const chunks: Uint8Array[] = [];
 	let total = 0;
 	const it = res.body[Symbol.asyncIterator]();
@@ -395,7 +423,10 @@ async function readCapped(
 	return Buffer.concat(chunks).toString("utf8");
 }
 
-async function fetchDocument(url: URL, clientId: string): Promise<ResolveResult> {
+async function fetchDocument(
+	url: URL,
+	clientId: string,
+): Promise<ResolveResult> {
 	const controller = new AbortController();
 	let timer: ReturnType<typeof setTimeout> | undefined;
 	const aborted = new Promise<never>((_, reject) => {
@@ -418,7 +449,8 @@ async function fetchDocument(url: URL, clientId: string): Promise<ResolveResult>
 		if (answers.length === 0) throw new Refused("dns-failure", true);
 		// EVERY answer must be public: a host that also resolves to an internal
 		// address is refused, whichever one the connection would have picked.
-		if (answers.some((a) => isBlockedAddress(a.address))) throw new Refused("address-blocked");
+		if (answers.some((a) => isBlockedAddress(a.address)))
+			throw new Refused("address-blocked");
 		const first = answers[0];
 		try {
 			res = await Promise.race([
@@ -435,10 +467,17 @@ async function fetchDocument(url: URL, clientId: string): Promise<ResolveResult>
 			if (err instanceof Refused) throw err;
 			throw new Refused("fetch-failed", true);
 		}
-		if (res.status >= 300 && res.status < 400) throw new Refused("redirect-refused");
+		if (res.status >= 300 && res.status < 400)
+			throw new Refused("redirect-refused");
 		if (res.status !== 200) throw new Refused("bad-status", res.status >= 500);
-		const type = (res.headers["content-type"] ?? "").split(";")[0].trim().toLowerCase();
-		if (type !== "application/json" && !(type.startsWith("application/") && type.endsWith("+json")))
+		const type = (res.headers["content-type"] ?? "")
+			.split(";")[0]
+			.trim()
+			.toLowerCase();
+		if (
+			type !== "application/json" &&
+			!(type.startsWith("application/") && type.endsWith("+json"))
+		)
 			throw new Refused("bad-content-type");
 		let text: string;
 		try {
@@ -454,10 +493,16 @@ async function fetchDocument(url: URL, clientId: string): Promise<ResolveResult>
 			throw new Refused("invalid-json");
 		}
 		const verdict = validateDocument(clientId, hostname, json);
-		if (verdict.ok) remember(clientId, verdict.client, ttlFromHeaders(res.headers["cache-control"]));
+		if (verdict.ok)
+			remember(
+				clientId,
+				verdict.client,
+				ttlFromHeaders(res.headers["cache-control"]),
+			);
 		return verdict;
 	} catch (err) {
-		if (err instanceof Refused) return { ok: false, reason: err.reason, retryable: err.retryable };
+		if (err instanceof Refused)
+			return { ok: false, reason: err.reason, retryable: err.retryable };
 		return { ok: false, reason: "fetch-failed", retryable: true };
 	} finally {
 		if (timer) clearTimeout(timer);
@@ -471,7 +516,9 @@ async function fetchDocument(url: URL, clientId: string): Promise<ResolveResult>
  * A refusal carries a stable reason code; invalid or failed fetches are not
  * cached (draft §4.4).
  */
-export async function resolveClientMetadata(clientId: string): Promise<ResolveResult> {
+export async function resolveClientMetadata(
+	clientId: string,
+): Promise<ResolveResult> {
 	const parsed = parseClientMetadataUrl(clientId);
 	if (!parsed.ok) return { ok: false, reason: parsed.reason, retryable: false };
 	const hit = cache.get(clientId);
@@ -479,7 +526,8 @@ export async function resolveClientMetadata(clientId: string): Promise<ResolveRe
 		if (hit.expiresAt > deps.now()) return { ok: true, client: hit.client };
 		cache.delete(clientId);
 	}
-	if (inFlight >= CIMD_MAX_IN_FLIGHT) return { ok: false, reason: "busy", retryable: true };
+	if (inFlight >= CIMD_MAX_IN_FLIGHT)
+		return { ok: false, reason: "busy", retryable: true };
 	inFlight++;
 	try {
 		return await fetchDocument(parsed.url, clientId);

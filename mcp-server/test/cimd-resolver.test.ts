@@ -119,7 +119,13 @@ describe("SSRF — address policy", () => {
 			expect(cimd.isBlockedAddress(ip)).toBe(true);
 		});
 	}
-	for (const ip of ["93.184.216.34", "8.8.8.8", "172.32.0.1", "2606:2800:220:1:248:1893:25c8:1946", "::ffff:8.8.8.8"]) {
+	for (const ip of [
+		"93.184.216.34",
+		"8.8.8.8",
+		"172.32.0.1",
+		"2606:2800:220:1:248:1893:25c8:1946",
+		"::ffff:8.8.8.8",
+	]) {
 		it(`isBlockedAddress(${ip}) is false`, async () => {
 			cimd = await loadCimd();
 			expect(cimd.isBlockedAddress(ip)).toBe(false);
@@ -173,7 +179,10 @@ describe("SSRF — address policy", () => {
 describe("SSRF — the exchange", () => {
 	it("does not follow a redirect", async () => {
 		const rec = await install({
-			respond: () => ({ status: 302, headers: { location: "http://169.254.169.254/" } }),
+			respond: () => ({
+				status: 302,
+				headers: { location: "http://169.254.169.254/" },
+			}),
 		});
 		const r = await cimd.resolveClientMetadata(DOC_URL);
 		expect(r).toMatchObject({ ok: false, reason: "redirect-refused" });
@@ -201,7 +210,10 @@ describe("SSRF — the exchange", () => {
 	it("refuses a declared Content-Length over the cap without reading the body", async () => {
 		await install({
 			respond: () => ({
-				headers: { "content-type": "application/json", "content-length": "999999" },
+				headers: {
+					"content-type": "application/json",
+					"content-length": "999999",
+				},
 				body: bodyOf("{}"),
 			}),
 		});
@@ -267,7 +279,9 @@ describe("SSRF — the exchange", () => {
 	it("accepts application/<x>+json with a charset", async () => {
 		await install({
 			respond: () => ({
-				headers: { "content-type": "application/client-metadata+json; charset=utf-8" },
+				headers: {
+					"content-type": "application/client-metadata+json; charset=utf-8",
+				},
 				body: bodyOf(JSON.stringify(validDocument())),
 			}),
 		});
@@ -281,7 +295,9 @@ describe("SSRF — the exchange", () => {
 			timeoutMs: 5000,
 			respond: () =>
 				new Promise((resolve) => {
-					release.push(() => resolve({ body: bodyOf(JSON.stringify(validDocument())) }));
+					release.push(() =>
+						resolve({ body: bodyOf(JSON.stringify(validDocument())) }),
+					);
 				}),
 		});
 		cimd._setClientMetadataDepsForTest(rec.deps);
@@ -289,7 +305,9 @@ describe("SSRF — the exchange", () => {
 			cimd.resolveClientMetadata(`https://app${i}.example.com/c.json`),
 		);
 		await new Promise((r) => setTimeout(r, 20));
-		const over = await cimd.resolveClientMetadata("https://over.example.com/c.json");
+		const over = await cimd.resolveClientMetadata(
+			"https://over.example.com/c.json",
+		);
 		expect(over).toMatchObject({ ok: false, reason: "busy", retryable: true });
 		for (const r of release) r();
 		await Promise.all(pending);
@@ -298,17 +316,53 @@ describe("SSRF — the exchange", () => {
 
 describe("the document (draft §4.1, MCP implementation requirements)", () => {
 	const cases: [string, Record<string, unknown>, string][] = [
-		["client_id differs from the URL", { client_id: "https://app.example.com/other.json" }, "client-id-mismatch"],
+		[
+			"client_id differs from the URL",
+			{ client_id: "https://app.example.com/other.json" },
+			"client-id-mismatch",
+		],
 		["client_id absent", { client_id: undefined }, "client-id-mismatch"],
-		["redirect_uris absent", { redirect_uris: undefined }, "redirect-uris-missing"],
+		[
+			"redirect_uris absent",
+			{ redirect_uris: undefined },
+			"redirect-uris-missing",
+		],
 		["redirect_uris empty", { redirect_uris: [] }, "redirect-uris-missing"],
-		["a wildcard redirect URI", { redirect_uris: ["https://*.example.com/cb"] }, "redirect-uri-invalid"],
-		["a javascript: redirect URI", { redirect_uris: ["javascript:alert(1)"] }, "redirect-uri-invalid"],
-		["a non-loopback http redirect URI", { redirect_uris: ["http://evil.example/cb"] }, "redirect-uri-invalid"],
-		["a redirect URI with a fragment", { redirect_uris: ["https://a.example/cb#x"] }, "redirect-uri-invalid"],
-		["token_endpoint_auth_method client_secret_basic", { token_endpoint_auth_method: "client_secret_basic" }, "token-endpoint-auth-method-must-be-none"],
-		["token_endpoint_auth_method private_key_jwt", { token_endpoint_auth_method: "private_key_jwt" }, "token-endpoint-auth-method-must-be-none"],
-		["token_endpoint_auth_method absent", { token_endpoint_auth_method: undefined }, "token-endpoint-auth-method-must-be-none"],
+		[
+			"a wildcard redirect URI",
+			{ redirect_uris: ["https://*.example.com/cb"] },
+			"redirect-uri-invalid",
+		],
+		[
+			"a javascript: redirect URI",
+			{ redirect_uris: ["javascript:alert(1)"] },
+			"redirect-uri-invalid",
+		],
+		[
+			"a non-loopback http redirect URI",
+			{ redirect_uris: ["http://evil.example/cb"] },
+			"redirect-uri-invalid",
+		],
+		[
+			"a redirect URI with a fragment",
+			{ redirect_uris: ["https://a.example/cb#x"] },
+			"redirect-uri-invalid",
+		],
+		[
+			"token_endpoint_auth_method client_secret_basic",
+			{ token_endpoint_auth_method: "client_secret_basic" },
+			"token-endpoint-auth-method-must-be-none",
+		],
+		[
+			"token_endpoint_auth_method private_key_jwt",
+			{ token_endpoint_auth_method: "private_key_jwt" },
+			"token-endpoint-auth-method-must-be-none",
+		],
+		[
+			"token_endpoint_auth_method absent",
+			{ token_endpoint_auth_method: undefined },
+			"token-endpoint-auth-method-must-be-none",
+		],
 		["a client_secret", { client_secret: "s3cret" }, "client-secret-forbidden"],
 	];
 	for (const [label, over, reason] of cases) {
@@ -348,7 +402,10 @@ describe("cache (draft §4.4)", () => {
 
 	it("expires: after the TTL the document is fetched again", async () => {
 		let now = 1_000_000;
-		const rec = await install({ now: () => now, respond: () => json(validDocument()) });
+		const rec = await install({
+			now: () => now,
+			respond: () => json(validDocument()),
+		});
 		await cimd.resolveClientMetadata(DOC_URL);
 		now += cimd.CIMD_DEFAULT_TTL_MS + 1;
 		await cimd.resolveClientMetadata(DOC_URL);
@@ -360,7 +417,10 @@ describe("cache (draft §4.4)", () => {
 		const rec = await install({
 			now: () => now,
 			respond: () => ({
-				headers: { "content-type": "application/json", "cache-control": "max-age=31536000" },
+				headers: {
+					"content-type": "application/json",
+					"cache-control": "max-age=31536000",
+				},
 				body: bodyOf(JSON.stringify(validDocument())),
 			}),
 		});
@@ -373,7 +433,10 @@ describe("cache (draft §4.4)", () => {
 	it("honours no-store", async () => {
 		const rec = await install({
 			respond: () => ({
-				headers: { "content-type": "application/json", "cache-control": "no-store" },
+				headers: {
+					"content-type": "application/json",
+					"cache-control": "no-store",
+				},
 				body: bodyOf(JSON.stringify(validDocument())),
 			}),
 		});
@@ -387,7 +450,11 @@ describe("cache (draft §4.4)", () => {
 		const rec = await install({
 			respond: () => {
 				n++;
-				return n === 1 ? { status: 500 } : n === 2 ? json({ nope: 1 }) : json(validDocument());
+				return n === 1
+					? { status: 500 }
+					: n === 2
+						? json({ nope: 1 })
+						: json(validDocument());
 			},
 		});
 		expect((await cimd.resolveClientMetadata(DOC_URL)).ok).toBe(false);
@@ -399,11 +466,13 @@ describe("cache (draft §4.4)", () => {
 	it("the cache is bounded", async () => {
 		cimd = await loadCimd();
 		const rec = scripted({
-			respond: (req) => json(validDocument({}, `https://${req.hostname}/c.json`)),
+			respond: (req) =>
+				json(validDocument({}, `https://${req.hostname}/c.json`)),
 		});
 		cimd._setClientMetadataDepsForTest(rec.deps);
 		const n = cimd.CIMD_CACHE_MAX_ENTRIES + 5;
-		for (let i = 0; i < n; i++) await cimd.resolveClientMetadata(`https://h${i}.example.com/c.json`);
+		for (let i = 0; i < n; i++)
+			await cimd.resolveClientMetadata(`https://h${i}.example.com/c.json`);
 		// the first entries were evicted: resolving the first again fetches again
 		const before = rec.requests.length;
 		await cimd.resolveClientMetadata("https://h0.example.com/c.json");

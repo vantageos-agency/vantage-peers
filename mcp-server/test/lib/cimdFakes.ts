@@ -38,7 +38,9 @@ export function validDocument(
 	};
 }
 
-export function bodyOf(...chunks: (string | Uint8Array)[]): AsyncIterable<Uint8Array> {
+export function bodyOf(
+	...chunks: (string | Uint8Array)[]
+): AsyncIterable<Uint8Array> {
 	return (async function* () {
 		for (const c of chunks)
 			yield typeof c === "string" ? new TextEncoder().encode(c) : c;
@@ -57,7 +59,9 @@ export type Script = {
 	/** hostname -> answers; defaults to one public address. */
 	dns?: Record<string, { address: string; family: number }[]>;
 	/** the response for the next GET; a function is called per GET. */
-	respond?: (req: PinnedRequest) => Partial<PinnedResponse> | Promise<Partial<PinnedResponse>>;
+	respond?: (
+		req: PinnedRequest,
+	) => Partial<PinnedResponse> | Promise<Partial<PinnedResponse>>;
 	timeoutMs?: number;
 	maxBytes?: number;
 	now?: () => number;
