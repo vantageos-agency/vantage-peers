@@ -447,11 +447,14 @@ const DIARY_LIST_ROW = v.object({
 });
 
 /**
- * The most rows one fleet-master `list` call reads when it filters by `createdBy`
- * without an `orchestrator`. 500 rows of ~9 KB stay well under Convex's per-call
- * read ceiling; a sparse author needs several calls, each carrying a cursor.
+ * The most rows ONE read of a fleet-master `list` call takes when it filters by
+ * `createdBy` without an `orchestrator`. That call reads twice: the window, then
+ * the same window again through the filter. A diary row is about 10 KB (measured
+ * on prod: 6 rows fill a 60 KB page), so 2 x 250 x 10 KB = about 5 MB, under the
+ * 8 MiB (8,388,608 bytes) read ceiling. The previous 500 made it about 10 MB,
+ * over the ceiling. A sparse author needs several calls, each carrying a cursor.
  */
-export const DIARY_LIST_SCAN_CAP = 500;
+export const DIARY_LIST_SCAN_CAP = 250;
 
 export const list = query({
 	args: {
@@ -549,7 +552,7 @@ export const list = query({
 			// bound. `createdBy` is a NAME stamped on legacy rows too, so no ID-keyed
 			// index serves it and a name-keyed one would count against R-53: the
 			// author is matched by the read, inside a WINDOW of at most
-			// DIARY_LIST_SCAN_CAP rows per call, never over the whole table. The window
+			// DIARY_LIST_SCAN_CAP rows per read (two reads per call), never over the whole table. The window
 			// is found first (its oldest `_creationTime`), then the filtered read is
 			// confined to it by an index bound, so the filter still runs before the take.
 			const window = await ctx.db
