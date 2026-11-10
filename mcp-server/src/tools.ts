@@ -144,6 +144,7 @@ import {
 	clampLimit,
 	decodeCursor,
 	encodeCursor,
+	invalidCursorResult,
 	scopedPageContinuation,
 } from "./paging.js";
 import { isRefusedEnvelope } from "./refusal.js";
@@ -3720,7 +3721,7 @@ export function registerTools(
 							backendCursor = decoded.backendCursor;
 						}
 					} catch (err: any) {
-						return mcpError(err?.message ?? "invalid cursor");
+						return invalidCursorResult(err);
 					}
 				}
 				const effectiveLimit =
@@ -4153,7 +4154,7 @@ export function registerTools(
 							backendCursor = decoded.backendCursor;
 						}
 					} catch (err: any) {
-						return mcpError(err?.message ?? "invalid cursor");
+						return invalidCursorResult(err);
 					}
 				}
 				const effectiveLimit =
@@ -5083,7 +5084,7 @@ export function registerTools(
 							createdBefore = decoded.createdBefore;
 						}
 					} catch (err: any) {
-						return mcpError(err?.message ?? "invalid cursor");
+						return invalidCursorResult(err);
 					}
 				}
 				const effectiveLimit =
@@ -5234,7 +5235,7 @@ export function registerTools(
 							createdBefore = decoded.createdBefore;
 						}
 					} catch (err: any) {
-						return mcpError(err?.message ?? "invalid cursor");
+						return invalidCursorResult(err);
 					}
 				}
 				const effectiveLimit =
@@ -5805,7 +5806,7 @@ export function registerTools(
 							if (updatedSince !== undefined) updatedCursor = decoded.updatedAt;
 						}
 					} catch (err: any) {
-						return mcpError(err?.message ?? "invalid cursor");
+						return invalidCursorResult(err);
 					}
 				}
 				// Clamp caller limit through paging contract (zod already caps at 200).
@@ -7177,7 +7178,7 @@ export function registerTools(
 							createdBefore = decoded.createdBefore;
 						}
 					} catch (err: any) {
-						return mcpError(err?.message ?? "invalid cursor");
+						return invalidCursorResult(err);
 					}
 				}
 				const effectiveLimit =
@@ -7430,7 +7431,7 @@ export function registerTools(
 							createdBefore = decoded.createdBefore;
 						}
 					} catch (err: any) {
-						return mcpError(err?.message ?? "invalid cursor");
+						return invalidCursorResult(err);
 					}
 				}
 				const effectiveLimit =
@@ -7946,7 +7947,7 @@ export function registerTools(
 							createdBefore = decoded.createdBefore;
 						}
 					} catch (err: any) {
-						return mcpError(err?.message ?? "invalid cursor");
+						return invalidCursorResult(err);
 					}
 				}
 				const effectiveLimit =
@@ -8317,7 +8318,7 @@ export function registerTools(
 							createdBefore = decoded.createdBefore;
 						}
 					} catch (err: any) {
-						return mcpError(err?.message ?? "invalid cursor");
+						return invalidCursorResult(err);
 					}
 				}
 				const effectiveLimit =
@@ -8689,7 +8690,7 @@ export function registerTools(
 							createdBefore = decoded.createdBefore;
 						}
 					} catch (err: any) {
-						return mcpError(err?.message ?? "invalid cursor");
+						return invalidCursorResult(err);
 					}
 				}
 				const effectiveLimit =
@@ -9490,7 +9491,7 @@ export function registerTools(
 							createdBefore = decoded.createdBefore;
 						}
 					} catch (err: any) {
-						return mcpError(err?.message ?? "invalid cursor");
+						return invalidCursorResult(err);
 					}
 				}
 				const effectiveLimit =
@@ -9899,7 +9900,7 @@ export function registerTools(
 							createdBefore = decoded.createdBefore;
 						}
 					} catch (err: any) {
-						return mcpError(err?.message ?? "invalid cursor");
+						return invalidCursorResult(err);
 					}
 				}
 				const effectiveLimit = limit === undefined ? 20 : clampLimit(limit);
@@ -10185,8 +10186,7 @@ export function registerTools(
 							convexCursor = cursor;
 						}
 					} catch (err: unknown) {
-						const msg = err instanceof Error ? err.message : "invalid cursor";
-						return mcpError(msg);
+						return invalidCursorResult(err);
 					}
 				}
 
@@ -10370,28 +10370,53 @@ export function registerTools(
 			// door narrows to the verified org, it never serves the whole table.
 			const orgDenied = unresolvedOrgDenial("get_github_owner_bindings");
 			if (orgDenied !== null) return orgDenied;
+			// Both cursors are opaque MCP tokens wrapping the Convex cursor
+			// ({ backendCursor }), so a cursor that does not decode is known here
+			// and answered invalid_cursor before any Convex call (task
+			// k171rk9evy8yy48tfx765zqwk18hwdvh, C-11 (b)). A token of another
+			// tool's shape is not a cursor of this one.
+			const backendCursorOf = (token: string | undefined): string | undefined => {
+				const decoded = decodeCursor(token);
+				if (decoded === null) return undefined;
+				if (!("backendCursor" in decoded)) {
+					throw new Error("invalid cursor: not a get_github_owner_bindings cursor");
+				}
+				return decoded.backendCursor ?? undefined;
+			};
+			let bindingsCursor: string | undefined;
+			let unprovenBackendCursor: string | undefined;
+			try {
+				bindingsCursor = backendCursorOf(cursor);
+				unprovenBackendCursor = backendCursorOf(unprovenCursor);
+			} catch (err: unknown) {
+				return invalidCursorResult(err);
+			}
+			const opaque = (next: string | null | undefined): string | null | undefined =>
+				typeof next === "string" ? encodeCursor({ backendCursor: next }) : next;
 			try {
 				// Both reads are cursor-paginated server-side and return { items,
 				// nextCursor }: the cursors are passed on so a page never reads as the whole list.
 				const bindingsPage = await convex.query("githubOwnerBinding:listBindings" as any, {
 					limit,
 					...doorScopeArgs("githubOwnerBinding:listBindings", undefined),
-					...(cursor !== undefined ? { cursor } : {}),
+					...(bindingsCursor !== undefined ? { cursor: bindingsCursor } : {}),
 				});
 				const unprovenPage = isMasterScope(oauthCtx)
 					? await convex.query("githubOwnerBinding:listUnprovenMappings" as any, {
 							limit,
 							...doorScopeArgs("githubOwnerBinding:listUnprovenMappings", undefined),
-							...(unprovenCursor !== undefined ? { cursor: unprovenCursor } : {}),
+							...(unprovenBackendCursor !== undefined
+								? { cursor: unprovenBackendCursor }
+								: {}),
 						})
 					: undefined;
 				// The same object is the text (unchanged) and the structuredContent the
 				// outputSchema validates (task k1793xkjhzh1xm23gmmwjgwfyx8htbv0).
 				const structured: Record<string, unknown> = {
 						bindings: bindingsPage.items,
-						nextCursor: bindingsPage.nextCursor,
+						nextCursor: opaque(bindingsPage.nextCursor),
 						unprovenMappings: unprovenPage?.items,
-						unprovenNextCursor: unprovenPage?.nextCursor,
+						unprovenNextCursor: opaque(unprovenPage?.nextCursor),
 					};
 				return {
 					content: [
@@ -10482,7 +10507,7 @@ export function registerTools(
 							createdBefore = decoded.createdBefore;
 						}
 					} catch (err: any) {
-						return mcpError(err?.message ?? "invalid cursor");
+						return invalidCursorResult(err);
 					}
 				}
 				const effectiveLimit =
@@ -11191,7 +11216,7 @@ export function registerTools(
 							createdBefore = decoded.createdBefore;
 						}
 					} catch (err: any) {
-						return mcpError(err?.message ?? "invalid cursor");
+						return invalidCursorResult(err);
 					}
 				}
 				const effectiveLimit =
@@ -11842,7 +11867,7 @@ export function registerTools(
 							createdBefore = decoded.createdBefore;
 						}
 					} catch (err: any) {
-						return mcpError(err?.message ?? "invalid cursor");
+						return invalidCursorResult(err);
 					}
 				}
 				const effectiveLimit =
