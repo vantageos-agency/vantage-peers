@@ -135,7 +135,7 @@ async function readPage(client: Client, args: Record<string, unknown>): Promise<
 const AUTHOR = "pi";
 const OTHER = "beta";
 // 1300 entries, oldest first. AUTHOR wrote three: the oldest, one at 400 and one
-// at 900. Every other entry is OTHER's. With a cap of 500 the author's rows sit in
+// at 900. Every other entry is OTHER's. With a cap of 250 the author's rows sit in
 // three different scan windows, so a sparse author needs several calls.
 const TOTAL = 1300;
 const AUTHOR_AT = new Set([0, 400, 900]);
