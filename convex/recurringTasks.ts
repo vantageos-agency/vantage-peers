@@ -1,7 +1,8 @@
 import { isFleetStamp } from "@vantageos/cloud-identity";
 import { v } from "convex/values";
 import { ConvexError } from "convex/values";
-import type { Doc, Id } from "./_generated/dataModel";
+import type { FilterBuilder, NamedTableInfo } from "convex/server";
+import type { DataModel, Doc, Id } from "./_generated/dataModel";
 import { internalMutation } from "./_generated/server";
 import { mutation, query } from "./lib/functions";
 import type { MutationCtx } from "./_generated/server";
@@ -407,23 +408,38 @@ export const list = query({
 			if (assigneeId === undefined) {
 				rows = [];
 			} else {
+				// The cursor anchor is an index bound (`_creationTime` is the last field
+				// of both indexes): the range opened is the assignee's templates below
+				// the anchor. `active`, when also given, narrows that range by a filter
+				// BEFORE the take, so the page is `limit` matching templates (fewer only
+				// when fewer exist) and a full page keeps its cursor. It used to be
+				// applied to the rows the take had already cut: a page whose newest
+				// templates were all paused came back short.
+				const before = args.createdBefore;
+				const active = args.active;
+				const activeFilter = (
+					q: FilterBuilder<NamedTableInfo<DataModel, "recurringTasks">>,
+				) => (active !== undefined ? q.eq(q.field("active"), active) : true);
 				rows =
 					memberOrg !== null
 						? await ctx.db
 								.query("recurringTasks")
-								.withIndex("by_orgId_assigneeId", (q) =>
-									q.eq("orgId", memberOrg).eq("assignedToId", assigneeId),
-								)
+								.withIndex("by_orgId_assigneeId", (q) => {
+									const base = q.eq("orgId", memberOrg).eq("assignedToId", assigneeId);
+									return before !== undefined ? base.lt("_creationTime", before) : base;
+								})
 								.order("desc")
-								.take(fetchCap)
+								.filter(activeFilter)
+								.take(limit)
 						: await ctx.db
 								.query("recurringTasks")
-								.withIndex("by_assigneeId", (q) => q.eq("assignedToId", assigneeId))
+								.withIndex("by_assigneeId", (q) => {
+									const base = q.eq("assignedToId", assigneeId);
+									return before !== undefined ? base.lt("_creationTime", before) : base;
+								})
 								.order("desc")
-								.take(fetchCap);
-				if (args.active !== undefined) {
-					rows = rows.filter((t) => t.active === args.active);
-				}
+								.filter(activeFilter)
+								.take(limit);
 			}
 		} else if (args.active !== undefined) {
 			rows =

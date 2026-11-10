@@ -5,7 +5,8 @@ import {
 	sameTenantStamp,
 } from "@vantageos/cloud-identity";
 import { v, ConvexError } from "convex/values";
-import type { Doc } from "./_generated/dataModel";
+import type { FilterBuilder, NamedTableInfo } from "convex/server";
+import type { DataModel, Doc } from "./_generated/dataModel";
 import type { QueryCtx } from "./_generated/server";
 import { mutation, query } from "./lib/functions";
 import { creatorValidator } from "./schema";
@@ -410,12 +411,24 @@ export const get = query({
 // list — list diary entries by orchestrator, ordered by date desc
 // ─────────────────────────────────────────────────────────────────────────────
 
-// PR #635 wide-scan-cap pattern (see convex/tasks.ts TASK_LIST_SCAN_CAP,
-// convex/profiles.ts PROFILES_LIST_SCAN_CAP, lot 1 mission k574p02m). When
-// paginating via `createdBefore`, the post-take filter only finds rows
-// older than the cursor if the FETCH is wide enough to include them —
-// mission k574p02m DEFECT 2, lot 2.
-export const DIARY_LIST_SCAN_CAP = 2000;
+/**
+ * The caller's filters, matched by the READ on the index range BEFORE the take:
+ * the author (`createdBy`, auth-derived at write time, so a client cannot spoof
+ * it) and the cursor anchor (`createdBefore`, rows strictly older than it). One
+ * site for the master and the member paths alike.
+ */
+function callerFilter(
+	q: FilterBuilder<NamedTableInfo<DataModel, "diary">>,
+	createdBy: string | undefined,
+	createdBefore: number | undefined,
+) {
+	return q.and(
+		createdBy !== undefined ? q.eq(q.field("createdBy"), createdBy) : true,
+		createdBefore !== undefined
+			? q.lt(q.field("_creationTime"), createdBefore)
+			: true,
+	);
+}
 
 const DIARY_LIST_ROW = v.object({
 	_id: v.id("diary"),
@@ -438,7 +451,7 @@ export const list = query({
 	fields: v.optional(v.union(v.literal("lite"), v.literal("full"))), // v2.4.12 accept (no-op for now) — closes ArgumentValidationError from MCP wrappers passing fields
 		orchestrator: v.optional(creatorValidator),
 		// v2.4.8: filter by auth-derived author (distinct from orchestrator).
-		// Applied universally post-take (mirrors tasks.ts:354-357 pattern).
+		// Applied by the read, before the take (see `callerFilter`).
 		createdBy: v.optional(creatorValidator),
 		limit: v.optional(v.number()),
 		// S3.3 B8 follow-up batch 1 — cursor paging anchor (forward, newest-first).
@@ -455,11 +468,6 @@ export const list = query({
 	),
 	handler: async (ctx, args) => {
 		const limit = args.limit ?? 20;
-		// Widen the fetch whenever a cursor is present, so the post-take
-		// `createdBefore` filter has candidate rows older than the anchor to
-		// find (mirrors profiles.ts `needsWideScan` / `fetchCap`).
-		const needsWideScan = args.createdBefore !== undefined;
-		const fetchCap = needsWideScan ? DIARY_LIST_SCAN_CAP + 1 : limit;
 
 		// Fail-closed org scoping: a non-master caller reads only the rows its
 		// organisation owns by permanent org ID (callerTenant), and only the
@@ -504,6 +512,13 @@ export const list = query({
 		}
 
 		const orchestrator = args.orchestrator;
+		const createdBy = args.createdBy;
+		const before = args.createdBefore;
+		// Every caller filter (the author, the cursor anchor) is applied by the READ,
+		// before each take, never to the rows a take already cut: a page whose newest
+		// rows belong to another author used to come back short, with no cursor,
+		// while matching entries sat below. The page is therefore `limit` matching
+		// rows (or fewer only when fewer exist), and the fetch is not widened.
 		let rows: Doc<"diary">[];
 		if (orchestrator !== undefined && scope.isMaster) {
 			rows = await ctx.db
@@ -512,9 +527,20 @@ export const list = query({
 					q.eq("orchestrator", orchestrator),
 				)
 				.order("desc")
-				.take(fetchCap);
+				.filter((q) => callerFilter(q, createdBy, before))
+				.take(limit);
 		} else if (scope.isMaster) {
-			rows = await ctx.db.query("diary").order("desc").take(fetchCap);
+			// The table's own `_creationTime` order: the cursor anchor is an index
+			// bound, so the range opened is the rows below the anchor, and the author
+			// narrows it by a filter before the take.
+			rows = await ctx.db
+				.query("diary")
+				.withIndex("by_creation_time", (q) =>
+					before !== undefined ? q.lt("_creationTime", before) : q,
+				)
+				.order("desc")
+				.filter((q) => callerFilter(q, createdBy, undefined))
+				.take(limit);
 		} else {
 			// Member (with or without an `orchestrator` argument). The tenant key is
 			// the row's permanent org ID (callerTenant), the name key is the ID
@@ -523,7 +549,8 @@ export const list = query({
 			// which both read other tenants' rows and let their volume starve the
 			// member's page. The tenant ranges are disjoint (distinct clerkOrgId
 			// values), so the merge needs no de-duplication; merged newest-first by
-			// _creationTime, the order the table read used.
+			// _creationTime, the order the table read used. Each range returns its
+			// own `limit` newest MATCHING rows, so the merged top `limit` is exact.
 			const names =
 				orchestrator !== undefined
 					? [orchestrator]
@@ -538,7 +565,8 @@ export const list = query({
 								q.eq("clerkOrgId", key).eq("orchestrator", name),
 							)
 							.order("desc")
-							.take(fetchCap),
+							.filter((q) => callerFilter(q, createdBy, before))
+							.take(limit),
 					),
 				),
 			);
@@ -547,19 +575,7 @@ export const list = query({
 			rows.sort((a, b) => b._creationTime - a._creationTime);
 		}
 
-		// Universal post-take createdBy filter — mirrors tasks.ts:371-373 pattern.
-		// Anti-spoof guarantee per v2.4.8: createdBy is auth-derived at write time
-		// (oauthCtx.userId from MCP layer), client cannot spoof.
-		if (args.createdBy !== undefined) {
-			rows = rows.filter((r) => r.createdBy === args.createdBy);
-		}
-		// S3.3 B8 follow-up batch 1 — cursor paging anchor: drop rows newer-or-equal to before.
-		if (args.createdBefore !== undefined) {
-			const before = args.createdBefore;
-			rows = rows.filter((r) => r._creationTime < before);
-		}
-		// Re-bound to the requested page size now that the filter has run over
-		// the widened superset (no-op when a wide scan wasn't needed).
+		// The merged member ranges can hold more than one page.
 		return rows.slice(0, limit);
 	},
 });
