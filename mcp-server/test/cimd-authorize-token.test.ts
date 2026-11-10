@@ -496,7 +496,11 @@ const rawAuthorize = (clientId: string, ip: string) =>
 		{ headers: { "x-real-ip": ip } },
 	);
 
-const refreshWith = (refreshToken: string, extra: Record<string, string> = {}, ip = "9.9.9.9") =>
+const refreshWith = (
+	refreshToken: string,
+	extra: Record<string, string> = {},
+	ip = "9.9.9.9",
+) =>
 	app.request("http://localhost:3000/token", {
 		method: "POST",
 		headers: {
@@ -539,22 +543,33 @@ describe("H1 — an unauthenticated flood cannot starve the pool", () => {
 		expect(refreshed.status).toBe(200);
 		const answers = await Promise.all(flood);
 		expect(answers.every((r) => r.status === 503)).toBe(true);
-		const bodies = await Promise.all(answers.map((r) => r.json() as Promise<Record<string, string>>));
-		expect(bodies.filter((b) => b.error_description === "client-metadata: busy").length).toBe(
-			cimd.CIMD_RESERVED_FOR_TOKEN,
+		const bodies = await Promise.all(
+			answers.map((r) => r.json() as Promise<Record<string, string>>),
 		);
+		expect(
+			bodies.filter((b) => b.error_description === "client-metadata: busy")
+				.length,
+		).toBe(cimd.CIMD_RESERVED_FOR_TOKEN);
 	});
 
 	it("one source address is limited in fetches (429 rate-limited); another address is not", async () => {
 		network({
 			respond: (req) => ({
 				body: bodyOf(
-					JSON.stringify(validDocument({ client_id: `https://${req.hostname}/other` }, `https://${req.hostname}/m.json`)),
+					JSON.stringify(
+						validDocument(
+							{ client_id: `https://${req.hostname}/other` },
+							`https://${req.hostname}/m.json`,
+						),
+					),
 				),
 			}),
 		});
 		for (let i = 0; i < cimd.CIMD_PER_SOURCE_LIMIT; i++) {
-			const r = await rawAuthorize(`https://c${i}.example.com/m.json`, "7.7.7.7");
+			const r = await rawAuthorize(
+				`https://c${i}.example.com/m.json`,
+				"7.7.7.7",
+			);
 			expect(r.status).toBe(400);
 		}
 		const over = await rawAuthorize("https://cx.example.com/m.json", "7.7.7.7");
@@ -564,7 +579,10 @@ describe("H1 — an unauthenticated flood cannot starve the pool", () => {
 			error: "temporarily_unavailable",
 			error_description: "client-metadata: rate-limited",
 		});
-		const other = await rawAuthorize("https://cx.example.com/m.json", "8.8.4.4");
+		const other = await rawAuthorize(
+			"https://cx.example.com/m.json",
+			"8.8.4.4",
+		);
 		expect(other.status).toBe(400);
 	});
 });
@@ -589,7 +607,10 @@ describe("M1 — a failure that may pass is temporarily_unavailable, not invalid
 		network({ timeoutMs: 60, respond: () => ({ body: stallingBody("{") }) });
 		const r = await cimdAuthorize();
 		expect(r.status).toBe(503);
-		expect(r.json).toMatchObject({ error: "temporarily_unavailable", error_description: "client-metadata: fetch-timeout" });
+		expect(r.json).toMatchObject({
+			error: "temporarily_unavailable",
+			error_description: "client-metadata: fetch-timeout",
+		});
 	});
 
 	it("/token code exchange: a document host that answers 503 gives 503", async () => {
@@ -605,7 +626,9 @@ describe("M1 — a failure that may pass is temporarily_unavailable, not invalid
 		network({ respond: () => ({ status: 503 }) });
 		const blip = await refreshWith(refreshToken);
 		expect(blip.status).toBe(503);
-		expect(await blip.json()).toMatchObject({ error: "temporarily_unavailable" });
+		expect(await blip.json()).toMatchObject({
+			error: "temporarily_unavailable",
+		});
 		network(); // the host is back
 		const again = await refreshWith(refreshToken);
 		expect(again.status).toBe(200);
@@ -644,7 +667,10 @@ describe("L4 — /authorize resolves the document once", () => {
 	it("a no-store document is fetched once for one /authorize", async () => {
 		network({
 			respond: () => ({
-				headers: { "content-type": "application/json", "cache-control": "no-store" },
+				headers: {
+					"content-type": "application/json",
+					"cache-control": "no-store",
+				},
 				body: bodyOf(JSON.stringify(validDocument())),
 			}),
 		});

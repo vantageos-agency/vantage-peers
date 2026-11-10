@@ -230,7 +230,8 @@ export function parseClientMetadataUrl(
 	clientId: string,
 ): { ok: true; url: URL } | { ok: false; reason: string } {
 	const refuse = (reason: string) => ({ ok: false as const, reason });
-	if (clientId.length > CIMD_MAX_CLIENT_ID_LENGTH) return refuse("client-id-too-long");
+	if (clientId.length > CIMD_MAX_CLIENT_ID_LENGTH)
+		return refuse("client-id-too-long");
 	if (!/^https:\/\//.test(clientId)) return refuse("scheme-not-https");
 	// The checks on the raw string come first: the URL parser would silently
 	// rewrite a default port, a dot segment or an empty fragment away.
@@ -414,13 +415,17 @@ function takeSourceAllowance(key: string): boolean {
 	const bucket = sourceBuckets.get(key);
 	if (!bucket || bucket.resetAt <= now) {
 		if (sourceBuckets.size >= CIMD_SOURCE_BUCKETS_MAX) {
-			for (const [k, v] of sourceBuckets) if (v.resetAt <= now) sourceBuckets.delete(k);
+			for (const [k, v] of sourceBuckets)
+				if (v.resetAt <= now) sourceBuckets.delete(k);
 			if (sourceBuckets.size >= CIMD_SOURCE_BUCKETS_MAX) {
 				const oldest = sourceBuckets.keys().next().value;
 				if (oldest !== undefined) sourceBuckets.delete(oldest);
 			}
 		}
-		sourceBuckets.set(key, { count: 1, resetAt: now + CIMD_PER_SOURCE_WINDOW_MS });
+		sourceBuckets.set(key, {
+			count: 1,
+			resetAt: now + CIMD_PER_SOURCE_WINDOW_MS,
+		});
 		return deps.perSourceLimit >= 1;
 	}
 	if (bucket.count >= deps.perSourceLimit) return false;
@@ -585,7 +590,9 @@ export async function resolveClientMetadata(
 	}
 	const purpose = options.purpose ?? "authorize";
 	const limit =
-		purpose === "token" ? CIMD_MAX_IN_FLIGHT : CIMD_MAX_IN_FLIGHT - CIMD_RESERVED_FOR_TOKEN;
+		purpose === "token"
+			? CIMD_MAX_IN_FLIGHT
+			: CIMD_MAX_IN_FLIGHT - CIMD_RESERVED_FOR_TOKEN;
 	if (inFlight >= limit) return { ok: false, reason: "busy", retryable: true };
 	if (!takeSourceAllowance(`${purpose}:${options.source ?? "unknown"}`))
 		return { ok: false, reason: "rate-limited", retryable: true };
