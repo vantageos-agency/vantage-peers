@@ -48,6 +48,7 @@ import {
 	actingClaimRefusal,
 	checkNamespaceRead,
 	checkNamespaceWrite,
+	defaultReadNamespace,
 	internalClient,
 	isMasterScope,
 	isUnattributedClaim,
@@ -218,6 +219,27 @@ function enforceScope(
 			return mcpError(fromNotOnRosterRefusal(ctx.oauthCtx, name));
 		}
 	}
+}
+
+/**
+ * A `read` tool called with no namespace by a non-master session is served from
+ * that session's own space: the namespace argument becomes
+ * {@link defaultReadNamespace} (whoami's default_write_namespace), BEFORE the
+ * scope check and the handler, so the read check runs on it and the handler
+ * forwards it to Convex. Master, no context, and a session with no natural
+ * default are returned unchanged: the omission keeps its meaning (every
+ * namespace for master, the list-across refusal for anyone else).
+ */
+function withReadDefault(
+	scope: ToolScope,
+	oauthCtx: OAuthContext | undefined,
+	args: Record<string, unknown>,
+): Record<string, unknown> {
+	if (scope.kind !== "read") return args;
+	const ns = args[scope.namespaceArg];
+	if (ns !== undefined && ns !== null && ns !== "") return args;
+	const own = defaultReadNamespace(oauthCtx);
+	return own === undefined ? args : { ...args, [scope.namespaceArg]: own };
 }
 
 /**
@@ -396,7 +418,7 @@ export const NO_PERSON_DOOR_NOTE =
 
 /** Appended by defineTool to the namespace parameter of every `read` tool. */
 export const READ_NAMESPACE_NOTE =
-	" Required for every session except the fleet master: a call without it is refused, and the refusal names the namespaces this session may read.";
+	" A session with no own space (whoami's default_write_namespace is null) must name it: a call without it is refused, and the refusal names the namespaces this session may read.";
 
 /**
  * bindPersonActingNames — a PERSON (OAuth person token, #1444) acts in its OWN
@@ -611,11 +633,11 @@ export function defineTool(
 				(schema[key] as z.ZodType).optional(),
 			]),
 		),
-		// A `read` tool's namespace is optional in the schema (the fleet master may
-		// omit it), but every other session is refused without one
-		// (checkNamespaceRead): the parameter says so, derived from the declaration.
-		// A namespace the schema already requires carries no such note: the schema
-		// says it, and "the fleet master may omit it" would contradict it.
+		// A `read` tool's namespace is optional in the schema: the fleet master may
+		// omit it, a session with an own space reads that space (withReadDefault),
+		// and a session with none is refused without one (checkNamespaceRead): the
+		// parameter says so, derived from the declaration. A namespace the schema
+		// already requires carries no such note: the schema says it.
 		...(scope.kind === "read" &&
 		schema[scope.namespaceArg] !== undefined &&
 		(schema[scope.namespaceArg] as z.ZodType).safeParse(undefined).success
@@ -646,7 +668,14 @@ export function defineTool(
 		}
 	};
 
-	const guardedHandler: ToolHandler = async (args, extra) => {
+	const guardedHandler: ToolHandler = async (rawArgs, extra) => {
+		// A read that names no namespace reads the session's own space (see
+		// withReadDefault); every later step sees the substituted value.
+		const args = withReadDefault(
+			scope,
+			ctx.oauthCtx,
+			(rawArgs ?? {}) as Record<string, unknown>,
+		);
 		// First, before any argument is read: a person whose role may not write
 		// is refused on every non-read-only tool.
 		const exempt = annotations.readOnlyHint === true || ownStateOnly === true;
