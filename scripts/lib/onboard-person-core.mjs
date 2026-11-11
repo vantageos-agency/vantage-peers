@@ -16,6 +16,8 @@
  * every WRITE happens only with `send: true`.
  */
 
+import { renderWelcomeEmail } from "./welcome-email.mjs";
+
 const LANGS = ["fr", "en"];
 const CLIENT_TAG = /^[a-z0-9][a-z0-9-]{0,31}$/;
 const EMAIL = /^[^@\s]+@[^@\s]+\.[^@\s]+$/;
@@ -265,6 +267,16 @@ export async function onboardPerson(options, io) {
 			lang,
 			email,
 			reconnectNeeded,
+			// The script never sends mail: this is the one email the operator sends to the person.
+			welcomeEmail: invitation.url
+				? renderWelcomeEmail({
+						lang,
+						personName: person.name,
+						orgName: org.name,
+						invitationUrl: invitation.url,
+						agents: agents.map((a) => ({ label: exactName(a, byLabel), client: a.client })),
+					})
+				: null,
 			agents: agents.map((a) => ({
 				label: a.label,
 				client: a.client,

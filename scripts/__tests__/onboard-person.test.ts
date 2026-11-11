@@ -171,6 +171,17 @@ describe("--send on a fresh person", () => {
 		expect(out.result.lang).toBe("fr");
 	});
 
+	it("RETURNS the welcome email to send, in the person's language, carrying the invitation URL and every agent", async () => {
+		const { io } = fake({});
+		const out = await onboardPerson({ ...BASE, send: true }, io);
+		const mail = out.result.welcomeEmail as { subject: string; text: string };
+		expect(mail.text).toContain("https://accounts.example.test/sign-up?__clerk_ticket=tkt");
+		expect(mail.text).toContain("Qui suis-je sur VantagePeers ?");
+		for (const label of ["Milo", "Sacha", "Esteban", "Alma"]) expect(mail.text).toContain(label);
+		const en = await onboardPerson({ ...BASE, lang: "en", send: true }, fake({}).io);
+		expect((en.result.welcomeEmail as { text: string }).text).toContain("Who am I on VantagePeers?");
+	});
+
 	it("records --lang en on the invitation and on the agents", async () => {
 		const { io, calls } = fake({});
 		const out = await onboardPerson({ ...BASE, lang: "en", send: true }, io);
