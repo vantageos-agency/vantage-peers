@@ -58,8 +58,17 @@ describe("renderWelcomeEmail", () => {
 		for (const l of signUpLines) expect(l).not.toContain("mcp.vantagepeers.com");
 	});
 
+	it("Grok gets the connect page's steps, in both languages", () => {
+		const agents = [{ label: "Alma", client: "grok" }];
+		const en = renderWelcomeEmail({ ...base, agents, lang: "en" });
+		expect(en.text).toContain("Connectors > New connector > Custom connector");
+		const fr = renderWelcomeEmail({ ...base, agents, lang: "fr" });
+		expect(fr.text).toContain("Connecteurs > Nouveau connecteur > Connecteur personnalisé");
+		expect(fr.text).toContain("https://mcp.vantagepeers.com/mcp");
+	});
+
 	it("an assistant without written steps gets the generic MCP step, never an invented screen", () => {
-		const m = renderWelcomeEmail({ ...base, agents: [{ label: "Alma", client: "grok" }], lang: "en" });
+		const m = renderWelcomeEmail({ ...base, agents: [{ label: "Alma", client: "opencode" }], lang: "en" });
 		expect(m.text).toContain("Alma");
 		expect(m.text).toContain("https://mcp.vantagepeers.com/mcp");
 		expect(m.text).toContain("https://www.vantagepeers.com/docs/cloud/connect");
