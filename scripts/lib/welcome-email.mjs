@@ -4,8 +4,9 @@
  * this text, and the operator sends it. Every step after sign-up is here, so nobody improvises.
  *
  * Screen labels are the ones measured on the connect page (docs/cloud/connect, 2026-10-31):
- * the French Claude labels are measured, the English ones are as published there. An assistant
- * with no written steps gets the generic MCP step and the connect page, never an invented screen.
+ * the French Claude labels are measured, the English ones are as published there; Claude, ChatGPT
+ * and Grok have written steps. Any other assistant gets the generic MCP step and the connect page,
+ * never an invented screen. The Claude Free sentence comes from runbooks/onboard-client-org.md.
  */
 
 const MCP_URL = "https://mcp.vantagepeers.com/mcp";
@@ -29,6 +30,7 @@ const STEPS = {
 			`Dans Claude, ouvrez Personnalisation > Plugins > Ajouter une marketplace, saisissez ${MARKETPLACE}, puis installez Vantage peers.`,
 			"Ouvrez Personnalisation > Plugins > Vantage peers, onglet Connecteurs, et cliquez sur Se connecter.",
 			"Dans une conversation, vérifiez dans + > Connecteurs que vantage-peers est activé.",
+			// Source: runbooks/onboard-client-org.md "Claude Free allows ONE custom connector. Say it in the welcome email".
 			"Avec Claude Free, VantagePeers occupe votre seul connecteur personnalisé : Claude en refuse un second.",
 		],
 		en: [
@@ -36,6 +38,18 @@ const STEPS = {
 			"Open Customize > Plugins > Vantage peers, tab Connectors, and click Connect.",
 			"In a chat, check under + > Connectors that vantage-peers is enabled.",
 			"On Claude Free, VantagePeers takes your one custom connector: Claude refuses a second one.",
+		],
+	},
+	grok: {
+		fr: [
+			"Dans Grok, ouvrez Connecteurs > Nouveau connecteur > Connecteur personnalisé.",
+			`Nom : VantagePeers. URL : ${MCP_URL}.`,
+			"Ajoutez-le, puis connectez-vous.",
+		],
+		en: [
+			"In Grok, open Connectors > New connector > Custom connector.",
+			`Name: VantagePeers. URL: ${MCP_URL}.`,
+			"Add it, then connect.",
 		],
 	},
 	chatgpt: {
