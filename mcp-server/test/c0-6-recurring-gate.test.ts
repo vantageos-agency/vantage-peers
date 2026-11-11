@@ -1,5 +1,5 @@
 /**
- * Day 92 C0.6 — pause_recurring_task + resume_recurring_task + delete_recurring_task master-only gate.
+ * Day 92 C0.6 — pause_recurring_task + resume_recurring_task + delete_recurring_task attribution gate.
  *
  * TDD RED phase: asserts non-master bearer is rejected with a Forbidden error.
  * Recurring task management is cron infrastructure — no per-task identity arg
@@ -114,8 +114,8 @@ const recurringArgs = { taskId: "mock-recurring-task-id" };
 // C0.6 — pause_recurring_task
 // ─────────────────────────────────────────────────────────────────────────────
 
-describe("C0.6 — pause_recurring_task master-only gate", () => {
-	it("RED: non-master scoped bearer → Forbidden error", async () => {
+describe("C0.6 — pause_recurring_task attribution gate", () => {
+	it("non-master scoped bearer with no agent → Forbidden (cannot be attributed)", async () => {
 		const result = await callTool(
 			"pause_recurring_task",
 			recurringArgs,
@@ -123,7 +123,7 @@ describe("C0.6 — pause_recurring_task master-only gate", () => {
 		);
 		expect(result.isError).toBe(true);
 		expect(getText(result)).toMatch(/Forbidden/i);
-		expect(getText(result)).toMatch(/master/i);
+		expect(getText(result)).toMatch(/cannot attribute/i);
 	});
 
 	it("happy path: master bearer → passes through", async () => {
@@ -143,7 +143,7 @@ describe("C0.6 — pause_recurring_task master-only gate", () => {
 			undefined,
 		);
 		expect(result.isError).toBe(true);
-		expect(getText(result)).toMatch(/master/i);
+		expect(getText(result)).toMatch(/absence is never master/i);
 	});
 });
 
@@ -151,8 +151,8 @@ describe("C0.6 — pause_recurring_task master-only gate", () => {
 // C0.6 — resume_recurring_task
 // ─────────────────────────────────────────────────────────────────────────────
 
-describe("C0.6 — resume_recurring_task master-only gate", () => {
-	it("RED: non-master scoped bearer → Forbidden error", async () => {
+describe("C0.6 — resume_recurring_task attribution gate", () => {
+	it("non-master scoped bearer with no agent → Forbidden (cannot be attributed)", async () => {
 		const result = await callTool(
 			"resume_recurring_task",
 			recurringArgs,
@@ -160,7 +160,7 @@ describe("C0.6 — resume_recurring_task master-only gate", () => {
 		);
 		expect(result.isError).toBe(true);
 		expect(getText(result)).toMatch(/Forbidden/i);
-		expect(getText(result)).toMatch(/master/i);
+		expect(getText(result)).toMatch(/cannot attribute/i);
 	});
 
 	it("happy path: master bearer → passes through", async () => {
@@ -180,7 +180,7 @@ describe("C0.6 — resume_recurring_task master-only gate", () => {
 			undefined,
 		);
 		expect(result.isError).toBe(true);
-		expect(getText(result)).toMatch(/master/i);
+		expect(getText(result)).toMatch(/absence is never master/i);
 	});
 });
 
@@ -188,8 +188,8 @@ describe("C0.6 — resume_recurring_task master-only gate", () => {
 // C0.6 — delete_recurring_task
 // ─────────────────────────────────────────────────────────────────────────────
 
-describe("C0.6 — delete_recurring_task master-only gate", () => {
-	it("RED: non-master scoped bearer → Forbidden error", async () => {
+describe("C0.6 — delete_recurring_task attribution gate", () => {
+	it("non-master scoped bearer with no agent → Forbidden (cannot be attributed)", async () => {
 		const result = await callTool(
 			"delete_recurring_task",
 			recurringArgs,
@@ -197,7 +197,7 @@ describe("C0.6 — delete_recurring_task master-only gate", () => {
 		);
 		expect(result.isError).toBe(true);
 		expect(getText(result)).toMatch(/Forbidden/i);
-		expect(getText(result)).toMatch(/master/i);
+		expect(getText(result)).toMatch(/cannot attribute/i);
 	});
 
 	it("happy path: master bearer → passes through", async () => {
@@ -217,6 +217,6 @@ describe("C0.6 — delete_recurring_task master-only gate", () => {
 			undefined,
 		);
 		expect(result.isError).toBe(true);
-		expect(getText(result)).toMatch(/master/i);
+		expect(getText(result)).toMatch(/absence is never master/i);
 	});
 });
