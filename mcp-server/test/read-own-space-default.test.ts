@@ -23,7 +23,9 @@
  *   DENIED  a seat with no default namespace keeps the explicit-namespace
  *           refusal, and Convex is never called;
  *   DENIED  another org's namespace passed explicitly is still refused;
- *   MASTER  omitting namespace is unchanged: Convex receives no namespace.
+ *   MASTER  omitting namespace is unchanged: Convex receives no namespace;
+ *   EXCLUDED list_memories and export_okf_bundle, whose schema requires the
+ *           namespace, get no default: the omission is still refused.
  *
  * Harness: the real registerTools + defineTool wrapper (registerTool.ts) over a
  * recording Convex client. The recorder answers like the backend does for a
@@ -32,8 +34,8 @@
  * namespace would return the other org's row and fail the SERVED pole.
  */
 
-import { describe, expect, it } from "vitest";
-import type { OAuthContext } from "../src/auth.js";
+import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { _setInternalClientForTest, type OAuthContext } from "../src/auth.js";
 import { registerTools } from "../src/tools.js";
 
 type ToolResult = {
@@ -285,5 +287,62 @@ describe("MASTER: omitting namespace is unchanged (every namespace)", () => {
 		const forwarded = calls.filter((c) => c.fn === fn);
 		expect(forwarded).toHaveLength(1);
 		expect(forwarded[0].args.namespace).toBeUndefined();
+	});
+});
+
+/**
+ * The two read tools whose schema REQUIRES the namespace are excluded from the
+ * default on purpose: list_memories lists a namespace and export_okf_bundle
+ * exports one, so the namespace names the object of the call and is never
+ * implied. The MCP SDK refuses the omission before the handler; called past that
+ * validation (as here, on the registered handler), the omission still reaches the
+ * read check unchanged and is refused, and Convex is never called.
+ */
+const REQUIRED_NAMESPACE_READS: {
+	tool: string;
+	args: Record<string, unknown>;
+}[] = [
+	{ tool: "list_memories", args: {} },
+	{ tool: "export_okf_bundle", args: { format: "tarball" } },
+];
+
+/**
+ * export_okf_bundle is not read-only, so a person first passes the writer-role
+ * gate (memberWriterRoles:assertPersonMayWrite through the internal client). The
+ * stub admits it, so the call reaches the read check this pole is about.
+ */
+const PERSON_WRITER: OAuthContext = {
+	...PERSON,
+	clerkOrgSlug: "acme",
+	accessTokenHash: "hash-person",
+};
+
+beforeAll(() => {
+	_setInternalClientForTest({
+		query: async () => null,
+		mutation: async () => null,
+		action: async () => null,
+		// biome-ignore lint/suspicious/noExplicitAny: writer-role stub
+	} as any);
+});
+afterAll(() => {
+	_setInternalClientForTest(null);
+});
+
+describe.each([
+	{ who: "agent seat", ctx: SEAT },
+	{ who: "person", ctx: PERSON_WRITER },
+])("EXCLUDED: a $who omitting a REQUIRED namespace gets no default", ({
+	ctx,
+}) => {
+	it.each(
+		REQUIRED_NAMESPACE_READS,
+	)("$tool: refused, Convex never called", async ({ tool, args }) => {
+		const { result, calls } = await call(ctx, tool, args);
+		expect(result.isError).toBe(true);
+		expect(result.content[0].text).toMatch(
+			/requires an explicit namespace argument/,
+		);
+		expect(calls).toHaveLength(0);
 	});
 });

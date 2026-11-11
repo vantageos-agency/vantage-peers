@@ -1171,29 +1171,6 @@ export function defaultWriteNamespace(
 	return undefined;
 }
 
-/**
- * The namespace a READ is served from when a non-master caller names none: the
- * same value {@link defaultWriteNamespace} gives its writes (whoami's
- * default_write_namespace), derived per request from the live context, never
- * from a copy. Undefined for master (an omitted namespace stays every
- * namespace), for no context, and for a session with no natural default — the
- * omission then reaches {@link checkNamespaceRead} unchanged and is refused
- * there (the Day-88 list-across refusal). The caller still runs
- * checkNamespaceRead on the result, so this grants nothing the session could
- * not already name explicitly.
- */
-export function defaultReadNamespace(
-	ctx: OAuthContext | undefined,
-): string | undefined {
-	if (ctx === undefined || isMasterScope(ctx)) return undefined;
-	return defaultWriteNamespace({
-		writePrefixes: ctx.namespaceWritePrefixes,
-		ownAgentNamespace: ctx.ownAgentNamespace,
-		ownProjectNamespace: ctx.ownProjectNamespace,
-		principal: ctx.principal,
-	});
-}
-
 /** The sentence a write refusal ends with: what the caller may write instead. */
 function writableNamespacesHint(space: WriteSpace): string {
 	const writable = writableNamespacesOf(space);

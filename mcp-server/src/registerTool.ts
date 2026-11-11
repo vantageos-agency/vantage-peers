@@ -48,7 +48,6 @@ import {
 	actingClaimRefusal,
 	checkNamespaceRead,
 	checkNamespaceWrite,
-	defaultReadNamespace,
 	internalClient,
 	isMasterScope,
 	isUnattributedClaim,
@@ -115,6 +114,16 @@ export type ToolAuthContext = {
 	 * a throw or a rejection is swallowed and never fails the tool.
 	 */
 	readonly recordUsage?: (toolName: string) => void | Promise<unknown>;
+	/**
+	 * The namespace a `read` tool with an OPTIONAL namespace is served from when
+	 * the caller names none: the session's own space, i.e. whoami's
+	 * default_write_namespace. registerTools computes it once per request from
+	 * the same live write space the write tools default from
+	 * (defaultWriteNamespace(writeSpace)); undefined for master (an omitted
+	 * namespace stays every namespace), for no context, and for a session with no
+	 * natural default (the omission is then refused by checkNamespaceRead).
+	 */
+	readonly defaultReadNamespace?: string;
 };
 
 type McpTextResult = {
@@ -222,24 +231,24 @@ function enforceScope(
 }
 
 /**
- * A `read` tool called with no namespace by a non-master session is served from
- * that session's own space: the namespace argument becomes
- * {@link defaultReadNamespace} (whoami's default_write_namespace), BEFORE the
- * scope check and the handler, so the read check runs on it and the handler
- * forwards it to Convex. Master, no context, and a session with no natural
- * default are returned unchanged: the omission keeps its meaning (every
- * namespace for master, the list-across refusal for anyone else).
+ * A `read` tool whose namespace is OPTIONAL, called with none, is served from
+ * `ownSpace` (ToolAuthContext.defaultReadNamespace): the namespace argument is
+ * filled BEFORE the scope check and the handler, so the read check runs on it and
+ * the handler forwards it to Convex. `ownSpace` undefined (master, no context, no
+ * natural default) leaves the omission as it was: every namespace for master, the
+ * list-across refusal for anyone else. A read tool whose schema REQUIRES the
+ * namespace (list_memories, export_okf_bundle) never reaches here with
+ * `ownSpace` set: its namespace names what is listed or exported, never implied.
  */
 function withReadDefault(
-	scope: ToolScope,
-	oauthCtx: OAuthContext | undefined,
+	namespaceArg: string,
+	ownSpace: string | undefined,
 	args: Record<string, unknown>,
 ): Record<string, unknown> {
-	if (scope.kind !== "read") return args;
-	const ns = args[scope.namespaceArg];
+	if (ownSpace === undefined) return args;
+	const ns = args[namespaceArg];
 	if (ns !== undefined && ns !== null && ns !== "") return args;
-	const own = defaultReadNamespace(oauthCtx);
-	return own === undefined ? args : { ...args, [scope.namespaceArg]: own };
+	return { ...args, [namespaceArg]: ownSpace };
 }
 
 /**
@@ -615,6 +624,15 @@ export function defineTool(
 	} & ToolAnnotations;
 
 	const actingKeys = actingNameKeys(scope, schema);
+	// A `read` tool whose namespace the schema lets a caller omit. Only such a
+	// tool says it can be omitted (READ_NAMESPACE_NOTE) and only such a tool is
+	// served from the session's own space when it is (withReadDefault).
+	const readNamespaceArg =
+		scope.kind === "read" &&
+		schema[scope.namespaceArg] !== undefined &&
+		(schema[scope.namespaceArg] as z.ZodType).safeParse(undefined).success
+			? scope.namespaceArg
+			: undefined;
 	// The same exemption guardedHandler applies: no person acting-name gate.
 	const exemptByDeclaration =
 		annotations.readOnlyHint === true || ownStateOnly === true;
@@ -638,12 +656,10 @@ export function defineTool(
 		// and a session with none is refused without one (checkNamespaceRead): the
 		// parameter says so, derived from the declaration. A namespace the schema
 		// already requires carries no such note: the schema says it.
-		...(scope.kind === "read" &&
-		schema[scope.namespaceArg] !== undefined &&
-		(schema[scope.namespaceArg] as z.ZodType).safeParse(undefined).success
+		...(readNamespaceArg !== undefined
 			? {
-					[scope.namespaceArg]: (schema[scope.namespaceArg] as z.ZodType).describe(
-						`${(schema[scope.namespaceArg] as z.ZodType).description ?? ""}${READ_NAMESPACE_NOTE}`,
+					[readNamespaceArg]: (schema[readNamespaceArg] as z.ZodType).describe(
+						`${(schema[readNamespaceArg] as z.ZodType).description ?? ""}${READ_NAMESPACE_NOTE}`,
 					),
 				}
 			: {}),
@@ -671,11 +687,14 @@ export function defineTool(
 	const guardedHandler: ToolHandler = async (rawArgs, extra) => {
 		// A read that names no namespace reads the session's own space (see
 		// withReadDefault); every later step sees the substituted value.
-		const args = withReadDefault(
-			scope,
-			ctx.oauthCtx,
-			(rawArgs ?? {}) as Record<string, unknown>,
-		);
+		const args =
+			readNamespaceArg === undefined
+				? rawArgs
+				: withReadDefault(
+						readNamespaceArg,
+						ctx.defaultReadNamespace,
+						(rawArgs ?? {}) as Record<string, unknown>,
+					);
 		// First, before any argument is read: a person whose role may not write
 		// is refused on every non-read-only tool.
 		const exempt = annotations.readOnlyHint === true || ownStateOnly === true;
