@@ -28,7 +28,8 @@ const SENTINEL = "SENTINEL_CLIENT_ACME_k17zzzzzzzz";
 const ERROR_MESSAGE = `ArgumentValidationError: Value does not match validator.\nPath: .clientName\nValue: "${SENTINEL}"\nValidator: v.string()`;
 const STACK = `at handler (${SENTINEL})`;
 
-type T = ReturnType<typeof convexTest>;
+const createT = () => convexTest(schema, modules);
+type T = ReturnType<typeof createT>;
 
 async function seedErrorLog(t: T): Promise<Id<"errorLogs">> {
 	return await t.run(async (ctx) => {

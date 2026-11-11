@@ -35,6 +35,7 @@ import type * as errorMonitorKillSwitch from "../errorMonitorKillSwitch.js";
 import type * as errorMonitorPollDecision from "../errorMonitorPollDecision.js";
 import type * as errorMonitorRecurrence from "../errorMonitorRecurrence.js";
 import type * as errorMonitorRefusalClassifier from "../errorMonitorRefusalClassifier.js";
+import type * as errorMonitorTaskBody from "../errorMonitorTaskBody.js";
 import type * as fixPatterns from "../fixPatterns.js";
 import type * as githubComments from "../githubComments.js";
 import type * as githubDeployGate from "../githubDeployGate.js";
@@ -211,6 +212,7 @@ declare const fullApi: ApiFromModules<{
   errorMonitorPollDecision: typeof errorMonitorPollDecision;
   errorMonitorRecurrence: typeof errorMonitorRecurrence;
   errorMonitorRefusalClassifier: typeof errorMonitorRefusalClassifier;
+  errorMonitorTaskBody: typeof errorMonitorTaskBody;
   fixPatterns: typeof fixPatterns;
   githubComments: typeof githubComments;
   githubDeployGate: typeof githubDeployGate;

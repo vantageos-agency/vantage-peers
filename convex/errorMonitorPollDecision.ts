@@ -32,6 +32,7 @@ import {
 import {
 	classifyRefusal,
 	type FunctionVisibility,
+	isAccessRefusalFromListedModule,
 } from "./errorMonitorRefusalClassifier";
 
 export interface DecisionGroup {
@@ -48,6 +49,10 @@ export type PollAction =
 	// group is a registered-public function: a validator caught a malformed
 	// caller argument, this is the protection working, not a defect.
 	| { kind: "working-refusal"; reason: string }
+	// An RBAC_DENIED / IdentityRefusal from an access-controlled module where
+	// EVERY function in the group is on the closed module list: the access
+	// layer refusing a caller, not a defect. See ACCESS_REFUSAL_MODULES.
+	| { kind: "access-refusal"; reason: string }
 	// No rule matched and it is not (wholly) a working refusal -- proceed to
 	// the existing deploy-window check + upsertError escalation path.
 	| { kind: "escalate" };
@@ -107,6 +112,21 @@ export function decideGroupAction(
 			kind: "log-only",
 			ruleId: decision.matchedRule?.ruleId,
 			reason: decision.matchedRule?.reason ?? "n/a",
+		};
+	}
+
+	// Access refusals: every function of the group is on the closed module
+	// list AND the message carries a refusal code (`.every`, never `.some`).
+	if (
+		group.functionNames.length > 0 &&
+		group.functionNames.every((single) =>
+			isAccessRefusalFromListedModule({ functionName: single, errorMessage }),
+		)
+	) {
+		return {
+			kind: "access-refusal",
+			reason:
+				"RBAC_DENIED / IdentityRefusal from an access-controlled module -- the access layer refusing a caller, not a defect",
 		};
 	}
 

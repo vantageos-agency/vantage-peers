@@ -220,7 +220,29 @@ export const getDashboardSummary = query({
 
 		return {
 			tasksInProgress: inProgressTasks.length,
-			activeOrchestrators: profiles,
+			// Project ONLY the fields the `returns` validator declares (#1423): a
+			// stored field outside it (e.g. `dynamic.endOfDayIndex`) must neither
+			// throw ReturnsValidationError nor leave the backend in a raw row echo.
+			activeOrchestrators: profiles.map((p) => ({
+				_id: p._id,
+				_creationTime: p._creationTime,
+				orchestratorId: p.orchestratorId,
+				...(p.instanceId !== undefined ? { instanceId: p.instanceId } : {}),
+				...(p.agentId !== undefined ? { agentId: p.agentId } : {}),
+				name: p.name,
+				static: {
+					role: p.static.role,
+					workspace: p.static.workspace,
+					capabilities: p.static.capabilities,
+				},
+				dynamic: {
+					...(p.dynamic.currentTask !== undefined
+						? { currentTask: p.dynamic.currentTask }
+						: {}),
+					lastSeen: p.dynamic.lastSeen,
+					sessionCount: p.dynamic.sessionCount,
+				},
+			})),
 			unreadMessages,
 			openMandates,
 			recentActivity: events.slice(0, 20),

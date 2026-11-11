@@ -185,3 +185,58 @@ export function classifyRefusal(
 		reason: `ArgumentValidationError on public function ${candidate.functionName} -- validator refused a malformed caller argument, this is the protection working, not a defect -- #1297`,
 	};
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Access refusals (RBAC_DENIED / IdentityRefusal)
+// ─────────────────────────────────────────────────────────────────────────────
+// A caller the access layer refuses is the protection working. The only
+// pre-existing filter for it keys on the literal "Uncaught ConvexError:"
+// prefix (errorMonitorFilters.ts, wildcard rule), which does not match a
+// refusal that reaches the log as "Uncaught Error: RBAC_DENIED ..." (a
+// ConvexError re-thrown across an action boundary) or as an
+// "IdentityRefusalError" (the identity package's own error class). Those were
+// escalated as defects.
+//
+// This gate keys on CONTENT (the refusal code) AND on the module, so it is a
+// closed list, not a blanket: a refusal from a module outside the list, and
+// any non-refusal error inside it, keep escalating. The module list is the
+// access-controlled surface that refuses callers by design.
+
+/** Modules whose refusals are the access layer working, never a defect. */
+export const ACCESS_REFUSAL_MODULES: ReadonlySet<string> = new Set([
+	"agentCredentials",
+	"agents",
+	"clientOrgMapping",
+	"dashboard",
+	"episodes",
+	"iframeEmbedSessions",
+	"issues",
+	"okfBundleDurable",
+]);
+
+const ACCESS_REFUSAL_PATTERN =
+	/\bRBAC_DENIED\b|IdentityRefusal|\b(?:ORG_MISMATCH|VERIFIED_ACTOR_UNKNOWN|VERIFIED_ACTOR_INACTIVE)\b/;
+
+/** True iff the message carries an access-refusal code or error class. */
+export function isAccessRefusalMessage(errorMessage: string): boolean {
+	return ACCESS_REFUSAL_PATTERN.test(errorMessage);
+}
+
+/** The module part of a "module:function" Convex identifier. */
+export function moduleOf(functionName: string): string {
+	const i = functionName.indexOf(":");
+	return i === -1 ? functionName : functionName.slice(0, i);
+}
+
+/**
+ * True iff this error is an access refusal raised by one of the listed
+ * modules. Pure; the caller requires it of EVERY function in a group.
+ */
+export function isAccessRefusalFromListedModule(
+	candidate: RefusalCandidate,
+): boolean {
+	return (
+		ACCESS_REFUSAL_MODULES.has(moduleOf(candidate.functionName)) &&
+		isAccessRefusalMessage(candidate.errorMessage)
+	);
+}
