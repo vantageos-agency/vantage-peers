@@ -106,7 +106,7 @@ A person uses the VantagePeers connector at `https://mcp.vantagepeers.com/mcp`. 
     --clerk-org-id <org_…> --role org:member --email <a> --email <b>          # dry run, sends nothing
   … --send                                                                     # sends the invitations
   ```
-  The dry run is the default. An invitation is an email to a real person, so it goes out only on an explicit `--send`. For CGT Alsachimie, the operator ruled that it is sent on site, with the client.
+  The dry run is the default. An invitation is an email to a real person, so it goes out only on an explicit `--send`. Each invitation carries `redirect_url`: the account-portal sign-up page derived from `CLERK_DOMAIN` (`clerk.<domain>` becomes `https://accounts.<domain>/sign-up`, the same page as Person onboarding), or `--redirect-url`; the dry run prints it as `landing`, and the frontend-API host `clerk.<domain>` is refused. For CGT Alsachimie, the operator ruled that it is sent on site, with the client.
 - A person's session reads `team/<slug>` and `project/<slug>` (the agents' shared memory), and writes `team/<slug>` only. This was ruled by Pi on 2026-10-06 and is implemented in the MCP server: PR sigma/person-reads-org-project.
 
 ## Person onboarding
