@@ -68,7 +68,7 @@ function flag(argv, name) {
  * the hosted page is the account portal on accounts.<domain>. A domain that does not
  * start with clerk. cannot be mapped and is refused rather than guessed.
  */
-function accountPortalSignUp(clerkDomain) {
+export function accountPortalSignUp(clerkDomain) {
 	let host;
 	try {
 		host = new URL(clerkDomain).hostname;

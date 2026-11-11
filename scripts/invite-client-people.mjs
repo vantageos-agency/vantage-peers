@@ -11,8 +11,12 @@
  * Dry run is the default: an invitation is an email to a real person, sent only on an explicit
  * --send (operator order for CGT Alsachimie: sent on site, with the client).
  * Env: CLERK_SECRET_KEY (read from the environment, never printed, never on a command line).
+ * Landing page: redirect_url is the account-portal sign-up page derived from CLERK_DOMAIN
+ * (clerk.<domain> -> https://accounts.<domain>/sign-up), or --redirect-url; the clerk.* host is refused.
  * The inviter is CLERK_ORG_ADMIN_USER_ID_VANTAGE_PEERS, an org:admin of the client org.
  */
+import { invitationBody } from "./lib/invite-body.mjs";
+
 const argv = process.argv.slice(2);
 const one = (k) => {
 	const i = argv.indexOf(`--${k}`);
@@ -42,7 +46,9 @@ const api = (path, init = {}) =>
 
 const org = await api(`/organizations/${orgId}`);
 if (org.status !== 200) throw new Error(`org ${orgId} not readable: HTTP ${org.status}`);
-console.log(`org ${org.body.slug} (${orgId}); role ${role}; ${emails.length} invitation(s); mode ${send ? "SEND" : "DRY RUN"}`);
+// Derived (and refused if wrong) BEFORE anything is sent, so the dry run shows the landing page.
+const landing = invitationBody({ email: emails[0], role, inviterUserId: inviter, clerkDomain: process.env.CLERK_DOMAIN, redirectUrl: one("redirect-url") }).redirect_url;
+console.log(`org ${org.body.slug} (${orgId}); role ${role}; ${emails.length} invitation(s); landing ${landing}; mode ${send ? "SEND" : "DRY RUN"}`);
 for (const email of emails) {
 	if (!send) {
 		console.log(`  would invite ${email}`);
@@ -50,7 +56,9 @@ for (const email of emails) {
 	}
 	const r = await api(`/organizations/${orgId}/invitations`, {
 		method: "POST",
-		body: JSON.stringify({ email_address: email, role, inviter_user_id: inviter }),
+		body: JSON.stringify(
+			invitationBody({ email, role, inviterUserId: inviter, clerkDomain: process.env.CLERK_DOMAIN, redirectUrl: one("redirect-url") }),
+		),
 	});
 	console.log(`  ${email}: HTTP ${r.status} ${r.body?.status ?? r.body?.errors?.[0]?.code ?? ""}`);
 }
