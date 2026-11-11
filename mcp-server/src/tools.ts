@@ -3278,7 +3278,7 @@ export function registerTools(
 				.optional()
 				.describe("The namespace to read memories from, e.g. " +
 					"'project/vantage-peers' or 'orchestrator/sigma'; whoami lists the namespaces your session may read. " +
-					"The fleet master may omit it to read every namespace."),
+					"Omit it to read your own space (the same one whoami returns as default_write_namespace); the fleet master may omit it to read every namespace."),
 			type: memoryTypeSchema
 				.optional()
 				.describe("The kind of memory to keep, as store_memory or store_episode recorded it; without it, every kind is kept."),
@@ -3352,7 +3352,7 @@ export function registerTools(
 				.optional()
 				.describe("The namespace to read memories from, e.g. " +
 					"'project/vantage-peers' or 'orchestrator/sigma'; whoami lists the namespaces your session may read. " +
-					"The fleet master may omit it to read every namespace."),
+					"Omit it to read your own space (the same one whoami returns as default_write_namespace); the fleet master may omit it to read every namespace."),
 			type: memoryTypeSchema.optional().describe("The kind of memory to keep, as store_memory or store_episode recorded it; without it, every kind is kept."),
 			limit: z
 				.number()
@@ -3415,7 +3415,7 @@ export function registerTools(
 			query: z.string().describe("What you are looking for; matched both by meaning and by keywords."),
 			namespace: z.string().optional().describe("The namespace to read memories from, e.g. " +
 				"'project/vantage-peers' or 'orchestrator/sigma'; whoami lists the namespaces your session may read. " +
-				"The fleet master may omit it to read every namespace."),
+				"Omit it to read your own space (the same one whoami returns as default_write_namespace); the fleet master may omit it to read every namespace."),
 			type: memoryTypeSchema.optional().describe("The kind of memory to keep, as store_memory or store_episode recorded it; without it, every kind is kept."),
 			limit: z
 				.number()
@@ -3676,7 +3676,7 @@ export function registerTools(
 				.optional()
 				.describe("The namespace to read episodes from, e.g. " +
 					"'orchestrator/sigma' or 'orchestrator/pi'; whoami lists the namespaces your session may read. " +
-					"The fleet master may omit it to read every namespace."),
+					"Omit it to read your own space (the same one whoami returns as default_write_namespace); the fleet master may omit it to read every namespace."),
 			createdBy: z
 				.string()
 				.optional()
@@ -3802,7 +3802,7 @@ export function registerTools(
 				.optional()
 				.describe("The namespace to read episodes from, e.g. " +
 					"'orchestrator/sigma' or 'orchestrator/pi'; whoami lists the namespaces your session may read. " +
-					"The fleet master may omit it to read every namespace."),
+					"Omit it to read your own space (the same one whoami returns as default_write_namespace); the fleet master may omit it to read every namespace."),
 			limit: z
 				.number()
 				.int()
@@ -3871,7 +3871,7 @@ export function registerTools(
 				.optional()
 				.describe("The namespace to read episodes from, e.g. " +
 					"'orchestrator/sigma' or 'orchestrator/pi'; whoami lists the namespaces your session may read. " +
-					"The fleet master may omit it to read every namespace."),
+					"Omit it to read your own space (the same one whoami returns as default_write_namespace); the fleet master may omit it to read every namespace."),
 			limit: z
 				.number()
 				.int()
