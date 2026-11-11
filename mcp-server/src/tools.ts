@@ -2832,6 +2832,9 @@ export function registerTools(
 	// package's passesScopeFilter roster). See registerTool.ts.
 	const authCtx: ToolAuthContext = {
 		oauthCtx,
+		// A read that omits an optional namespace reads the session's own space:
+		// the same value the write tools default to and whoami returns.
+		defaultReadNamespace: defaultWriteNamespace(writeSpace),
 		...(options?.recordToolUsage === true
 			? {
 					recordUsage: (toolName: string) =>
