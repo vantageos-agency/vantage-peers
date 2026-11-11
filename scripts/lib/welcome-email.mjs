@@ -65,10 +65,10 @@ const GENERIC = {
 
 const TEXT = {
 	fr: {
-		subject: (org) => `Votre accès à VantagePeers pour ${org}`,
+		subject: (org) => `Votre accès à VantagePeers : ${org}`,
 		hello: (name) => `Bonjour ${name},`,
 		intro: (org) =>
-			`Vous êtes invité dans l'espace VantagePeers de ${org}. VantagePeers donne à vos assistants une mémoire, des tâches et des messages partagés au sein de votre organisation.`,
+			`Une invitation vous attend dans l'espace VantagePeers « ${org} ». VantagePeers donne à vos assistants une mémoire, des tâches et des messages partagés au sein de votre organisation.`,
 		step1: "1. Créez votre compte",
 		signUp: (url) => `Inscrivez-vous en ouvrant ce lien d'invitation (il ne sert qu'une fois) : ${url}`,
 		step2: "2. Connectez chaque assistant",
