@@ -2370,6 +2370,27 @@ export function registerTools(
 		);
 	};
 
+	// A non-master caller of a door that judges the acting agent BY ID must present
+	// that agent (a seat or credential, forwarded as verifiedActor) or its own Clerk
+	// session. Without either, the call would reach Convex as the bare fleet
+	// service account, which Convex serves as the fleet. This refuses an
+	// unattributable call; WHO may act is still the Convex door's decision.
+	const guardAttributedCaller = (toolName: string) => {
+		if (!oauthCtx)
+			return mcpError(
+				`Forbidden: ${toolName} carried no authorization context (absence is never master).`,
+			);
+		if (
+			isMasterScope(oauthCtx) ||
+			oauthCtx.clerkJwt !== undefined ||
+			verifiedActor !== undefined
+		)
+			return null;
+		return mcpError(
+			`Forbidden: ${toolName} cannot attribute this caller to an agent (current: ${oauthCtx.scopeProfile}); present an agent seat or credential so the backend can judge the caller by ID.`,
+		);
+	};
+
 	// A caller the transport could not resolve is never served (absence is never
 	// master). Used by tools whose Convex door derives the tenant itself.
 	const guardResolvedCaller = (toolName: string) => {
@@ -7739,7 +7760,11 @@ export function registerTools(
 	defineTool(
 		server,
 		authCtx,
-		{ kind: "master" },
+		{
+			kind: "filtered",
+			reason:
+				"guardAttributedCaller refuses a non-master caller that presents no agent or Clerk session; the Convex door recurringTasks:pause decides: it admits the fleet service account, or the acting agent BY ID as creator or assignee (authorizeScheduleActor, from the verifiedActor the wrapped client forwards), and raises RBAC_DENIED for any other caller; the MCP relays that answer unchanged",
+		},
 		"pause_recurring_task",
 		"Pause a recurring task template to stop auto-creating tasks until explicitly resumed. " +
 			"WHEN: use during holidays, freezes, or when the assignee is unavailable for a period. " +
@@ -7754,9 +7779,10 @@ export function registerTools(
 			title: "Pause recurring task",
 		},
 		async ({ taskId }) => {
-			// C0.6: cron infrastructure — master scope only
-			const masterDenied = guardMasterOnly("pause_recurring_task");
-			if (masterDenied) return masterDenied;
+			// The Convex door decides who may act (creator or assignee by agent ID, the
+			// fleet service account); this tool forwards the verified agent and relays.
+			const unattributed = guardAttributedCaller("pause_recurring_task");
+			if (unattributed) return unattributed;
 			try {
 				const result = await convex.mutation("recurringTasks:pause" as any, {
 					taskId: taskId as any,
@@ -7776,7 +7802,11 @@ export function registerTools(
 	defineTool(
 		server,
 		authCtx,
-		{ kind: "master" },
+		{
+			kind: "filtered",
+			reason:
+				"guardAttributedCaller refuses a non-master caller that presents no agent or Clerk session; the Convex door recurringTasks:resume decides: it admits the fleet service account, or the acting agent BY ID as creator or assignee (authorizeScheduleActor, from the verifiedActor the wrapped client forwards), and raises RBAC_DENIED for any other caller; the MCP relays that answer unchanged",
+		},
 		"resume_recurring_task",
 		"Resume a paused recurring task template and recalculate its next scheduled run time. " +
 			"WHEN: use after a pause period ends to re-enable automatic task generation. " +
@@ -7791,9 +7821,10 @@ export function registerTools(
 			title: "Resume recurring task",
 		},
 		async ({ taskId }) => {
-			// C0.6: cron infrastructure — master scope only
-			const masterDenied = guardMasterOnly("resume_recurring_task");
-			if (masterDenied) return masterDenied;
+			// The Convex door decides who may act (creator or assignee by agent ID, the
+			// fleet service account); this tool forwards the verified agent and relays.
+			const unattributed = guardAttributedCaller("resume_recurring_task");
+			if (unattributed) return unattributed;
 			try {
 				const result = await convex.mutation("recurringTasks:resume" as any, {
 					taskId: taskId as any,
@@ -7810,14 +7841,14 @@ export function registerTools(
 
 	// ── delete_recurring_task ───────────────────────────────────────────────────
 
-	// oracle-justified: a hard DELETE where pause_recurring_task is an active=false TRANSITION on the same row;
-	//   both doors read memberWriterRoles through resolveHumanActor (convex/lib/humanActor.ts), but
-	//   recurringTasks:remove also requires org:admin for a human (adminOnly) and stays master-only for the
-	//   MCP caller, because a deleted schedule cannot be restored and stops all future task generation.
 	defineTool(
 		server,
 		authCtx,
-		{ kind: "master" },
+		{
+			kind: "filtered",
+			reason:
+				"guardAttributedCaller refuses a non-master caller that presents no agent or Clerk session; the Convex door recurringTasks:remove decides: it admits the fleet service account, or the acting agent BY ID as creator or assignee (removal: the creator only) (authorizeScheduleActor, from the verifiedActor the wrapped client forwards), and raises RBAC_DENIED for any other caller; the MCP relays that answer unchanged",
+		},
 		"delete_recurring_task",
 		"Permanently delete a recurring task template, stopping all future scheduled task generation. " +
 			"WHEN: use when a recurring process is retired and should never generate tasks again. " +
@@ -7832,9 +7863,10 @@ export function registerTools(
 			title: "Delete recurring task",
 		},
 		async ({ taskId }) => {
-			// C0.6: cron infrastructure — master scope only
-			const masterDenied = guardMasterOnly("delete_recurring_task");
-			if (masterDenied) return masterDenied;
+			// The Convex door decides who may act (creator or assignee by agent ID, the
+			// fleet service account); this tool forwards the verified agent and relays.
+			const unattributed = guardAttributedCaller("delete_recurring_task");
+			if (unattributed) return unattributed;
 			try {
 				const result = await convex.mutation("recurringTasks:remove" as any, {
 					taskId: taskId as any,
