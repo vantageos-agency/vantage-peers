@@ -23,6 +23,10 @@
 // wrong-sender      the right body arrives, attributed to a different sender id
 // second-is-primary whoami for the second credential returns the primary's agent
 // delete-refused    delete_message is refused (the message id must be listed for cleanup)
+// recurring-admit-foreign  the other org's pause/delete of a recurring task is ACCEPTED (a leak)
+// recurring-delete-refused delete_recurring_task is refused for everyone (id must be listed for cleanup)
+// recurring-delete-noop    delete_recurring_task answers deleted:true but the row stays
+// recurring-no-org-stamp   the recurring row carries no clerkOrgId
 
 import { writeFileSync } from "node:fs";
 import { createServer } from "node:http";
@@ -52,6 +56,7 @@ const AG = {
 };
 const byAgent = (id) => Object.values(AG).find((x) => x.agent === id);
 const rows = new Map(); // memoryId -> { slug, content }
+const recurring = new Map(); // recurringTaskId -> { slug, active, assignedTo, createdBy }
 const msgs = new Map(); // messageId -> { slug, from, to, content }
 let seq = 0;
 
@@ -59,6 +64,59 @@ const text = (t, isError = false) => ({
 	content: [{ type: "text", text: t }],
 	isError,
 });
+
+function recurringTool(me, name, args) {
+	if (name === "create_recurring_task") {
+		const id = `rec${String(++seq).padStart(4, "0")}`;
+		recurring.set(id, {
+			slug: me.slug,
+			active: true,
+			assignedTo: args.assignedTo,
+			createdBy: args.createdBy,
+		});
+		return text(
+			JSON.stringify({ taskId: id, cronExpression: args.cronExpression }),
+		);
+	}
+	const id = String(args.taskId ?? args.recurringTaskId);
+	const row = recurring.get(id);
+	if (!row) return text(`Error: Recurring task not found: ${id}`, true);
+	const foreign = row.slug !== me.slug;
+	const door = name === "pause_recurring_task" ? "pause" : "remove";
+	if (name !== "get_recurring_task" && foreign) {
+		if (MODE !== "recurring-admit-foreign") {
+			return text(
+				`Error: ORG_MISMATCH: The target belongs to another organisation. — {"reason":"target-other-organisation","door":"recurringTasks:${door}"}`,
+				true,
+			);
+		}
+	}
+	if (name === "get_recurring_task") {
+		if (foreign) return text(`Error: Recurring task not found: ${id}`, true);
+		return text(
+			JSON.stringify({
+				_id: id,
+				active: row.active,
+				assignedTo: row.assignedTo,
+				createdBy: row.createdBy,
+				...(MODE === "recurring-no-org-stamp"
+					? {}
+					: { clerkOrgId: `org_${row.slug}` }),
+			}),
+		);
+	}
+	if (name === "pause_recurring_task" || name === "resume_recurring_task") {
+		row.active = name === "resume_recurring_task";
+		return text(JSON.stringify({ active: row.active, taskId: id }));
+	}
+	if (name === "delete_recurring_task") {
+		if (MODE === "recurring-delete-refused")
+			return text("Forbidden: delete not permitted", true);
+		if (MODE !== "recurring-delete-noop") recurring.delete(id);
+		return text(JSON.stringify({ deleted: true }));
+	}
+	return text(`Error: unknown tool ${name}`, true);
+}
 
 function callTool(bearer, name, args) {
 	const me = AG[bearer];
@@ -197,6 +255,7 @@ function callTool(bearer, name, args) {
 		msgs.delete(String(args.messageId));
 		return text(JSON.stringify({ deleted: true }));
 	}
+	if (name.endsWith("_recurring_task")) return recurringTool(me, name, args);
 	return text(`Error: unknown tool ${name}`, true);
 }
 

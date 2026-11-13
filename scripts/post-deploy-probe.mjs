@@ -9,9 +9,12 @@
 //
 //   own org    -> store_memory to orchestrator/<own agent id> and project/<own slug>
 //                 must be ADMITTED, read back by id; send_message must reach the
-//                 recipient door without an RBAC refusal
+//                 recipient door without an RBAC refusal; a recurring task (reminder) is
+//                 created, paused, resumed and deleted, each step read back
 //   other org  -> the same calls aimed at the other probe org must be REFUSED with
-//                 a typed code/text, and the other org's row must not be readable
+//                 a typed code/text, and the other org's row must not be readable; the
+//                 other org's seat pausing or deleting that reminder is refused
+//                 (ORG_MISMATCH|RBAC_DENIED|Forbidden) and the reminder is unchanged
 //
 // Agent ids and slugs come from whoami, never hardcoded.
 //
@@ -32,6 +35,9 @@
 //                      fallback, announced in the output and the summary.
 //
 // Credentials are read from 0600 files and are never printed.
+//
+// RECURRING TASKS (fix #1673): the reminder uses a far-future cron (0 3 1 1 *) so it never fires
+// during the probe, and is deleted in a finally. If that delete fails, a CLEANUP line carries its id.
 //
 // CLEANUP: the seats have no delete door (soft_delete_memory requires master scope,
 // measured 2026-11-02). Rows created by a run are listed as CLEANUP ids at the end,
@@ -438,10 +444,156 @@ async function crossPole(org, other, stamp) {
 	}
 }
 
+// Recurring tasks (reminders), fix #1673. OWN pole: create -> get -> pause -> get -> resume -> get
+// -> delete -> get (not found). FOREIGN pole: the other org's seat pauses and deletes the reminder,
+// both must be refused with a typed code, and the owner's row must be unchanged afterwards.
+// A far-future cron keeps the reminder from ever firing; a finally removes it whatever happened.
+const RECURRING_REFUSAL = /\b(ORG_MISMATCH|RBAC_DENIED|Forbidden)\b/;
+const RECURRING_CRON = "0 3 1 1 *";
+
+function rowOf(text) {
+	try {
+		return JSON.parse(text);
+	} catch {
+		return null;
+	}
+}
+
+async function recurringPole(org, other, stamp) {
+	const actingName = org.inboxLabel;
+	if (!actingName)
+		throw new CouldNotJudge(
+			`whoami for ${org.label} carries no acting name (suggested_orchestrator_id); cannot create a recurring task as the seat`,
+		);
+	const c = await call(org, "create_recurring_task", {
+		title: `post-deploy-probe ${stamp} recurring ${org.label}`,
+		description: `probe reminder, deleted at the end of the run (task ${TASK})`,
+		assignedTo: actingName,
+		createdBy: actingName,
+		priority: "low",
+		cronExpression: RECURRING_CRON,
+	});
+	const id = c.isError ? null : (rowOf(c.text)?.taskId ?? null);
+	record(
+		org.label,
+		"create_recurring_task",
+		!!id,
+		"admitted with a taskId",
+		c.text,
+	);
+	if (!id) return;
+	const getRow = async () => {
+		const g = await call(org, "get_recurring_task", { recurringTaskId: id });
+		return { g, row: g.isError ? null : rowOf(g.text) };
+	};
+	let deleted = false;
+	try {
+		let { g, row } = await getRow();
+		record(
+			org.label,
+			`get_recurring_task ${id} (after create)`,
+			!!row &&
+				row._id === id &&
+				row.active === true &&
+				row.assignedTo === actingName &&
+				typeof row.clerkOrgId === "string" &&
+				row.clerkOrgId.length > 0,
+			"own row: same id, active true, assigned to the seat, stamped with its org id",
+			g.text,
+		);
+		org.clerkOrgId = row?.clerkOrgId ?? null;
+		// FOREIGN pole: the other org's seat acts on this reminder.
+		for (const [tool, label] of [
+			["pause_recurring_task", "pause"],
+			["delete_recurring_task", "delete"],
+		]) {
+			const f = await call(other, tool, { taskId: id });
+			record(
+				other.label,
+				`${tool} ${id} (${org.label}'s reminder)`,
+				f.isError && RECURRING_REFUSAL.test(f.text),
+				`${label} refused with a typed code (ORG_MISMATCH|RBAC_DENIED|Forbidden)`,
+				f.text,
+			);
+		}
+		({ g, row } = await getRow());
+		record(
+			org.label,
+			`get_recurring_task ${id} (after the foreign attempts)`,
+			!!row && row._id === id && row.active === true,
+			"row unchanged by the other org: still there, still active",
+			g.text,
+		);
+		const p = await call(org, "pause_recurring_task", { taskId: id });
+		record(
+			org.label,
+			"pause_recurring_task",
+			!p.isError,
+			"own pause admitted",
+			p.text,
+		);
+		({ g, row } = await getRow());
+		record(
+			org.label,
+			`get_recurring_task ${id} (after pause)`,
+			!!row && row.active === false,
+			"active false",
+			g.text,
+		);
+		const r = await call(org, "resume_recurring_task", { taskId: id });
+		record(
+			org.label,
+			"resume_recurring_task",
+			!r.isError,
+			"own resume admitted",
+			r.text,
+		);
+		({ g, row } = await getRow());
+		record(
+			org.label,
+			`get_recurring_task ${id} (after resume)`,
+			!!row && row.active === true,
+			"active true",
+			g.text,
+		);
+		const d = await call(org, "delete_recurring_task", { taskId: id });
+		deleted = !d.isError;
+		record(
+			org.label,
+			"delete_recurring_task",
+			!d.isError,
+			"own delete admitted",
+			d.text,
+		);
+		({ g } = await getRow());
+		const gone = g.isError && /not found/i.test(g.text);
+		record(
+			org.label,
+			`get_recurring_task ${id} (after delete)`,
+			gone,
+			"not found",
+			g.text,
+		);
+		if (!gone) deleted = false;
+	} finally {
+		if (!deleted) {
+			let removed = false;
+			try {
+				const d = await call(org, "delete_recurring_task", { taskId: id });
+				const g = await getRow();
+				removed = !d.isError && g.g.isError && /not found/i.test(g.g.text);
+			} catch {
+				removed = false;
+			}
+			if (!removed) created.push({ org: org.label, ns: "recurring-task", id });
+		}
+	}
+}
+
 function summary(verdict, detail, code) {
 	if (created.length) {
 		say(
-			`CLEANUP: ${created.length} item(s) left, no seat delete door for memories (soft_delete_memory is master-only). Ids for the operator:`,
+			`CLEANUP: ${created.length} item(s) left (memories have no seat delete door, soft_delete_memory is master-only; a recurring task or message whose delete failed is listed too). Ids for the operator:`,
 		);
 		for (const c of created) say(`  CLEANUP ${c.org} ${c.ns} ${c.id}`);
 	}
@@ -479,6 +631,17 @@ async function main() {
 	await ownPole(b, stamp);
 	await crossPole(a, b, stamp);
 	await crossPole(b, a, stamp);
+	await recurringPole(a, b, stamp);
+	await recurringPole(b, a, stamp);
+	if (a.clerkOrgId && b.clerkOrgId) {
+		record(
+			"probe",
+			"recurring task org stamps",
+			a.clerkOrgId !== b.clerkOrgId,
+			"the two probe orgs stamp DIFFERENT org ids on their reminders",
+			`both stamped ${a.clerkOrgId}`,
+		);
+	}
 	if (failures.length) {
 		summary(
 			"FAIL",
@@ -489,7 +652,7 @@ async function main() {
 	const single = ORGS.filter((o) => !o.second).map((o) => o.label);
 	summary(
 		"PASS",
-		`${a.label} and ${b.label}: own namespaces admitted and read back, cross-org refused` +
+		`${a.label} and ${b.label}: own namespaces admitted and read back, cross-org refused; recurring tasks: own create/pause/resume/delete read back, cross-org pause/delete refused` +
 			(single.length
 				? `; SINGLE-AGENT FALLBACK for ${single.join(", ")}: in-org send delivery NOT tested`
 				: "; in-org send delivered and read back by the recipient"),
