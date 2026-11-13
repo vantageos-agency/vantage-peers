@@ -17,6 +17,11 @@ import {
 	isKillSwitchActive,
 } from "./errorMonitorKillSwitch";
 import { decideGroupAction } from "./errorMonitorPollDecision";
+import { buildErrorTaskBody, errorTaskTag } from "./errorMonitorTaskBody";
+
+// The backend owner: every error task goes to one named assignee in one project.
+const OWNER_ASSIGNEE = "sigma";
+const OWNER_PROJECT = "vantage-peers";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Helpers
@@ -32,101 +37,27 @@ function simpleHash(str: string): string {
 	return Math.abs(hash).toString(36);
 }
 
-// Issue dedup fix — result of checking whether the issue already linked to
-// an errorLogs row is still open. "error" covers a non-2xx response OR a
-// thrown/rejected fetch (network failure) — both collapse to the SAME
-// fail-safe outcome as "closed": the caller files a new issue. Degradation
-// here must be toward noise (a possible duplicate issue), never toward
-// silence (a real recurrence going unreported because a transient GitHub
-// API blip was misread as "still open").
-type IssueOpenCheckResult = "open" | "closed" | "error";
+// ─────────────────────────────────────────────────────────────────────────────
+// createGitHubIssue -- scheduled from upsertError when a new error is detected
+// ─────────────────────────────────────────────────────────────────────────────
+// NAME IS HISTORICAL. This action no longer talks to GitHub: the repository is
+// public and an issue body once echoed a client name and internal ids. It files
+// ONE VantagePeers task for the backend owner (assignedTo "sigma", project
+// "vantage-peers") through the existing internal door `tasks:createForWebhook`,
+// and the GitHub POST / comment / open-check calls are DELETED, not gated.
+// The registered name is kept so in-flight scheduled jobs and the generated
+// arg-name catalogue keep resolving; renaming it is a separate change.
 
-async function checkLinkedIssueOpen(
-	owner: string,
-	repo: string,
-	issueNumber: number,
-	token: string,
-): Promise<IssueOpenCheckResult> {
-	try {
-		const resp = await fetch(
-			`https://api.github.com/repos/${owner}/${repo}/issues/${issueNumber}`,
-			{
-				headers: {
-					Authorization: `Bearer ${token}`,
-					Accept: "application/vnd.github.v3+json",
-					"User-Agent": "vantagepeers-bot/1.0",
-				},
-			},
-		);
-		if (!resp.ok) return "error";
-		const data = (await resp.json()) as { state?: string };
-		if (data.state === "open") return "open";
-		if (data.state === "closed") return "closed";
-		return "error";
-	} catch (err) {
-		console.error(
-			`[ErrorMonitor] Exception checking issue #${issueNumber} open state:`,
-			err,
-		);
-		return "error";
-	}
+/** The list return is a union of lite/full shapes; read `tags` defensively. */
+function hasTag(row: unknown, tag: string): boolean {
+	const tags = (row as { tags?: unknown }).tags;
+	return Array.isArray(tags) && tags.includes(tag);
 }
 
-// Returns true only when the comment demonstrably landed (2xx response).
-// A non-2xx response AND a thrown/rejected fetch (network failure, same
-// class checkLinkedIssueOpen guards against) both resolve to false — the
-// caller MUST treat false as "the occurrence was not reported" and fall
-// through to filing a new issue. A duplicate issue is the cheap failure; a
-// recurrence nobody hears about because a comment silently failed to land
-// is the expensive one — this is the exact property this whole delivery
-// exists to close, so this path gets the SAME fail-safe-toward-noise
-// treatment as the open/closed check above it.
-async function commentOnExistingIssue(
-	owner: string,
-	repo: string,
-	issueNumber: number,
-	token: string,
-	occurrenceCount: number,
-): Promise<boolean> {
-	const body = [
-		`**New occurrence:** ${new Date().toISOString()}`,
-		`**Total occurrences (this error group):** ${occurrenceCount}`,
-	].join("\n");
-
-	try {
-		const resp = await fetch(
-			`https://api.github.com/repos/${owner}/${repo}/issues/${issueNumber}/comments`,
-			{
-				method: "POST",
-				headers: {
-					Authorization: `Bearer ${token}`,
-					"Content-Type": "application/json",
-					Accept: "application/vnd.github.v3+json",
-					"User-Agent": "vantagepeers-bot/1.0",
-				},
-				body: JSON.stringify({ body }),
-			},
-		);
-		if (!resp.ok) {
-			const text = await resp.text();
-			console.error(
-				`[ErrorMonitor] Failed to comment on existing issue #${issueNumber}: ${resp.status} — ${text}`,
-			);
-			return false;
-		}
-		return true;
-	} catch (err) {
-		console.error(
-			`[ErrorMonitor] Exception commenting on existing issue #${issueNumber}:`,
-			err,
-		);
-		return false;
-	}
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
-// createGitHubIssue — scheduled from upsertError when a new error is detected
-// ─────────────────────────────────────────────────────────────────────────────
+/** Open statuses a repeat occurrence is deduplicated against. */
+const OPEN_TASK_STATUSES = ["todo", "in_progress", "review", "blocked"];
+/** Most recent open tasks of the owner read for the dedupe (newest first). */
+const DEDUPE_SCAN_LIMIT = 200;
 
 export const createGitHubIssue = internalAction({
 	args: {
@@ -137,158 +68,96 @@ export const createGitHubIssue = internalAction({
 		stackTrace: v.string(),
 		deployment: v.string(),
 		orchestrator: v.string(),
-		// Day 107 — set by upsertError when the error re-fires after the
-		// 24h cross-tick window has elapsed AND the previous IRP was already
-		// created. The mission title is prefixed with
-		// RECURRING_ESCALATION_TITLE_PREFIX so the orchestrator can route it
-		// as an escalation rather than a fresh report.
+		// Day 107 -- set by upsertError when the error re-fires after the
+		// 24h cross-tick window has elapsed AND the previous report already
+		// existed. The task title is prefixed with
+		// RECURRING_ESCALATION_TITLE_PREFIX so it routes as an escalation.
 		recurringEscalation: v.optional(v.boolean()),
 	},
 	returns: v.null(),
 	handler: async (ctx, args) => {
-		// D90 hardening — kill-switch guard at the createGitHubIssue layer.
-		// Day 88 PR #609 guarded only pollAllDeployments; the scheduler.runAfter
-		// call from upsertError bypassed that guard, letting #632 fire despite
-		// AUTO_IRP_PAUSED=true on prod.
+		// D90 hardening -- kill-switch guard at this layer. The scheduler.runAfter
+		// call from upsertError bypasses the guard in pollAllDeployments.
 		if (isKillSwitchActive()) {
 			console.log(
-				"[createGitHubIssue] Skipped — AUTO_IRP_PAUSED env var is 'true'.",
+				"[createGitHubIssue] Skipped -- AUTO_IRP_PAUSED env var is 'true'.",
 			);
 			return null;
 		}
-		// Day 128 hardening (issue #1088, Bug 1) — belt-and-suspenders guard
-		// mirroring the kill-switch pattern above. upsertError's scheduler.
-		// runAfter call is the primary suppression point (pollDeploymentLogs
-		// skips upsertError entirely during a declared deploy window), but a
-		// race (in-flight scheduled call from just before the window opened)
-		// is caught here too. See errorMonitorDeployWindow.ts for the
-		// non-forgeable-signal rationale.
+		// Day 128 hardening (issue #1088, Bug 1) -- belt-and-suspenders for an
+		// in-flight scheduled call from just before a deploy window opened.
 		if (isDeployWindowActive(Date.now())) {
 			console.log(
-				`[createGitHubIssue] Skipped — DEPLOY_WINDOW_UNTIL_MS is active for ${args.deployment}.`,
+				`[createGitHubIssue] Skipped -- DEPLOY_WINDOW_UNTIL_MS is active for ${args.deployment}.`,
 			);
 			return null;
 		}
-		// D90 hardening — transient retry-class classification. A "Server Error
-		// + Request ID" envelope that succeeded on immediate caller-side retry
-		// must NEVER escalate to a GitHub issue + IRP cascade (issue #632 root).
+		// D90 hardening -- a transient retry-class envelope never escalates.
 		if (isTransientErrorMessage(args.errorMessage)) {
 			console.log(
-				`[createGitHubIssue] Skipped — transient retry-class error in ${args.functionName} on ${args.deployment}.`,
-			);
-			return null;
-		}
-		const token = process.env.GITHUB_TOKEN;
-		if (!token) {
-			console.warn(
-				"[ErrorMonitor] GITHUB_TOKEN not set — skipping issue creation",
+				`[createGitHubIssue] Skipped -- transient retry-class error in ${args.functionName} on ${args.deployment}.`,
 			);
 			return null;
 		}
 
-		const [owner, repo] = args.githubRepo.split("/");
-		if (!owner || !repo) {
-			console.warn(
-				`[ErrorMonitor] Invalid githubRepo format "${args.githubRepo}" — expected "owner/repo"`,
-			);
-			return null;
-		}
-
-		// Issue dedup fix — a re-raise that matches a row already carrying a
-		// linked issue number must not blindly file a duplicate. Measured on
-		// live data: hash `detbs8` (recurringTasks:processDueTasks) spawned
-		// FOUR issues (#1121, #1167, #1237, #1262) across 18 occurrences
-		// because this check did not exist. Comment on the existing issue
-		// instead — but ONLY when it is confirmed still open; a closed issue
-		// or a failed check both fall through to filing a new one below.
 		const errorLog = await ctx.runQuery(internal.errorMonitor.getErrorLogById, {
 			errorId: args.errorId,
 		});
-		if (errorLog?.issueNumber != null) {
-			const state = await checkLinkedIssueOpen(
-				owner,
-				repo,
-				errorLog.issueNumber,
-				token,
+		if (errorLog === null) {
+			console.warn(
+				`[ErrorMonitor] errorLogs row ${args.errorId} not found -- no task filed`,
 			);
-			if (state === "open") {
-				const commented = await commentOnExistingIssue(
-					owner,
-					repo,
-					errorLog.issueNumber,
-					token,
-					errorLog.count,
-				);
-				if (commented) {
-					return null;
-				}
-				// The comment did not demonstrably land (rate limit, 403 on a
-				// locked issue, transient 5xx, or a thrown fetch) — fall
-				// through and file a new issue rather than let the
-				// occurrence go unreported. Same fail-safe-toward-noise
-				// treatment as "closed"/"error" below.
-			}
-			// state === "closed" or "error", or the comment above failed to
-			// land — fall through and file a new issue, same as the
-			// distinct-new-error path below.
+			return null;
 		}
 
-		const body = [
-			"## Auto-detected Error",
-			"",
-			`**Deployment:** ${args.deployment}`,
-			`**Function:** \`${args.functionName}\``,
-			`**Detected:** ${new Date().toISOString()}`,
-			"",
-			"### Error Message",
-			"```",
-			args.errorMessage,
-			"```",
-			"",
-			"### Stack Trace",
-			"```",
-			args.stackTrace.slice(0, 3000),
-			"```",
-			"",
-			"---",
-			`*Auto-created by VantagePeers Error Monitor. Orchestrator: ${args.orchestrator.charAt(0).toUpperCase() + args.orchestrator.slice(1)} — VantageOS Team | ${new Date().toISOString().split("T")[0]}*`,
-		].join("\n");
+		const body = buildErrorTaskBody({
+			functionName: args.functionName,
+			errorMessage: args.errorMessage,
+			hash: errorLog.hash,
+			detectedAt: Date.now(),
+			titlePrefix: args.recurringEscalation
+				? RECURRING_ESCALATION_TITLE_PREFIX
+				: undefined,
+		});
+		const dedupeTag = errorTaskTag(errorLog.hash);
 
-		const resp = await fetch(
-			`https://api.github.com/repos/${owner}/${repo}/issues`,
-			{
-				method: "POST",
-				headers: {
-					Authorization: `Bearer ${token}`,
-					"Content-Type": "application/json",
-					Accept: "application/vnd.github.v3+json",
-					"User-Agent": "vantagepeers-bot/1.0",
-				},
-				body: JSON.stringify({
-					title: args.recurringEscalation
-						? `${RECURRING_ESCALATION_TITLE_PREFIX} [Auto] Error in ${args.functionName}: ${args.errorMessage.slice(0, 80)}`
-						: `[Auto] Error in ${args.functionName}: ${args.errorMessage.slice(0, 80)}`,
-					body,
-					labels: args.recurringEscalation
-						? ["bug", "auto-detected", "recurring-24h"]
-						: ["bug", "auto-detected"],
-				}),
-			},
-		);
-
-		if (resp.ok) {
-			const issue = (await resp.json()) as { number: number };
-			await ctx.runMutation(internal.errorMonitor.linkIssue, {
-				errorId: args.errorId,
-				issueNumber: issue.number,
-				githubRepo: args.githubRepo,
+		// Dedupe, mirroring the issue path: a repeat whose task is still OPEN
+		// files nothing; a task that is done (the "closed issue") or a failed
+		// read both fall through and file a new one. A failed read degrades
+		// toward noise (a possible duplicate), never toward silence.
+		try {
+			const open = await ctx.runQuery(internal.tasks.listForWebhook, {
+				// No assignedTo here: the per-hash tag below already identifies the
+				// monitor's own task, and the project+status read is the shape the
+				// tasks list serves for a multi-status array.
+				project: OWNER_PROJECT,
+				status: OPEN_TASK_STATUSES,
+				limit: DEDUPE_SCAN_LIMIT,
+				fields: "full",
 			});
-		} else {
-			const text = await resp.text();
-			console.error(
-				`[ErrorMonitor] GitHub issue creation failed: ${resp.status} — ${text}`,
-			);
+			if (
+				Array.isArray(open) &&
+				open.some((t) => hasTag(t, dedupeTag))
+			) {
+				return null;
+			}
+		} catch (err) {
+			console.error("[ErrorMonitor] open-task dedupe read failed:", err);
 		}
+
+		await ctx.runMutation(internal.tasks.createForWebhook, {
+			title: body.title,
+			description: body.description,
+			project: OWNER_PROJECT,
+			tags: body.tags,
+			assignedTo: OWNER_ASSIGNEE,
+			priority: args.recurringEscalation ? "high" : "medium",
+			status: "todo",
+			createdBy: "error-monitor",
+		});
+		await ctx.runMutation(internal.errorMonitor.markTaskFiled, {
+			errorId: args.errorId,
+		});
 
 		return null;
 	},
@@ -446,6 +315,13 @@ export const pollDeploymentLogs = internalAction({
 				if (action.kind === "log-only") {
 					console.log(
 						`[ErrorMonitor] log-only filter (${action.reason}) — ${functionName}: ${errorMessage.slice(0, 120)}`,
+					);
+					continue;
+				}
+				if (action.kind === "access-refusal") {
+					// Name the door only: the message may carry data.
+					console.log(
+						`[ErrorMonitor] access refusal (${action.reason}) -- ${functionName}`,
 					);
 					continue;
 				}

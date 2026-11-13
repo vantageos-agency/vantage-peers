@@ -211,6 +211,23 @@ export const updateCursor = internalMutation({
 	},
 });
 
+/**
+ * Marks an errorLogs row as reported once the monitor has filed (or found open)
+ * its VantagePeers task. Same gate `linkIssue` armed for a GitHub issue:
+ * `issueCreated` stops upsertError re-scheduling a report on every tick, and a
+ * measured 24h re-raise re-arms it. Writes this subsystem's own table only.
+ */
+export const markTaskFiled = internalMutation({
+	args: { errorId: v.id("errorLogs") },
+	returns: v.null(),
+	handler: async (ctx, args) => {
+		const existing = await ctx.db.get(args.errorId);
+		if (existing === null) return null;
+		await ctx.db.patch(args.errorId, { issueCreated: true });
+		return null;
+	},
+});
+
 export const linkIssue = internalMutation({
 	args: {
 		errorId: v.id("errorLogs"),
