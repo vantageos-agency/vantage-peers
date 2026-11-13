@@ -1,7 +1,7 @@
-# Audit — VantagePeers vs open-artifacts: artifacts and agent messaging
+# Audit — integrating artifacts into VantagePeers, measured against open-artifacts
 
 - **Products:** VantagePeers **Cloud** (multi-tenant) is the target of every recommendation below. VantagePeers **Self-host** inherits the same backend code but its runbook (`docs/getting-started/`) is out of scope here.
-- **Task:** k17dj3vva141smerqfnebr4k6s8j4k0x (operator order 2026-11-13). Audit only: no build task is dispatched from this document before Pi reads it.
+- **Task:** k17dj3vva141smerqfnebr4k6s8j4k0x (operator order 2026-11-13). Goal: integrate the artifact feature into VantagePeers. This audit is the first step; D5 names the build PRs Pi dispatches from it. The agent bus (D4) is a short appendix.
 - **Revisions read:** open-artifacts `f576bc6b35d3dda8b016b1d5f83c1365cf1c7504` (2026-11-13, MIT, `LICENSE` line 1-3); VantagePeers `origin/main` @ `35286a33`.
 - **Notation:** `OA:` = path in open-artifacts, `VP:` = path in this repo.
 
@@ -9,8 +9,9 @@
 
 1. open-artifacts is a **Cloudflare-Workers-native** product (one Worker, D1, R2, KV, four Durable Objects; `OA: apps/server/wrangler.template.jsonc:2-37`). Its server cannot be ported line for line onto Convex; its **client-side packages and its security design can**.
 2. Running it **as-is beside VP** would create a second identity layer (Cloudflare Access / Google / email codes; `OA: apps/server/src/auth/sign-in.ts:17-20`). That is refused by the one-identity-layer rule.
-3. **Recommendation: hybrid port.** Reimplement the artifact server on Convex, keyed on VP's existing organisations, agents and Clerk persons; reuse under MIT (attribution kept) the viewer shell, sandbox constants, runtime bridge and limits; serve content from a separate content host through a Convex HTTP action with HMAC-signed, short-lived URLs.
-4. **Bus:** adopt the *push-into-a-live-session* adapter idea and the device-flow machine approval; adapt presence; ignore the per-member hub (VP is organisation-scoped). It is a separate, later delivery.
+3. **Recommendation: hybrid port.** Artifact metadata, versions and rights in VP Convex tables, keyed on VP's existing organisations, agents and Clerk persons; artifact **bytes in Cloudflare R2 through the Convex R2 component** (`@convex-dev/r2`, the same object store open-artifacts uses); reuse under MIT (attribution kept) the viewer shell, sandbox constants, runtime bridge and limits; serve content from a separate content host with HMAC-signed, short-lived URLs.
+4. **First build PR:** VP backend — `artifacts` + `artifactVersions` tables and the `publish_artifact` / `get_artifact` / `list_artifacts` / `list_versions` / `restore_version` MCP tools. Then sharing, then the viewer on the content host (D5).
+5. **Operator prerequisite:** a Cloudflare account, one R2 bucket with CORS, and an R2 API token. None of the five R2 names is in the vault today (Pi's `VAULT:` read, 2026-11-13).
 
 ---
 
@@ -66,7 +67,21 @@ open-artifacts exposes **23** MCP tools (`grep -oE 'name: "[a-z_]+"' apps/server
 | Runtime data doc | 256 KB free / 1 MB paid (`limits.ts:6-7`) | Document ≤ 1 MiB — fits |
 | Storage / egress | R2 (no egress fee) | Professional: 100 GB storage incl., 50 GB/month egress incl., then $0.03/GB-month and $0.12/GB |
 
-**Decision: Convex file storage for v1.** Every OA file limit (25 MB file, 1 MB data doc) fits under Convex's 100 MiB HTTP response and 1 MiB document; the share/ACL check and the bytes live in one transactional store under one identity layer. **Exit criterion:** if artifact egress exceeds the 50 GB/month included, move blobs to the Convex R2 component (expiring URLs) without changing the ACL model. Reuse the existing ticketed upload (`VP: convex/kbMutations.ts:502-633`) and add the missing byte cap (25 MB, OA's value).
+**Decision (operator, 2026-11-13): bytes in Cloudflare R2 through the Convex R2 component; metadata, versions and rights in VP Convex tables.**
+
+The component, read from its published package (`npm pack @convex-dev/r2@0.10.4`, `package/README.md`):
+- Setup: install in `convex.config.ts`; one bucket with a CORS policy; five deployment variables `R2_BUCKET`, `R2_TOKEN`, `R2_ACCESS_KEY_ID`, `R2_SECRET_ACCESS_KEY`, `R2_ENDPOINT` (README lines 31-94).
+- Upload: `r2.clientApi({ checkUpload, onSyncMetadata })` exposes `generateUploadUrl` + `syncMetadata`; `checkUpload` is where the caller's org and rights are verified before a URL is issued; a custom object key needs our own mutation calling `r2.generateUploadUrl(key)` (README 149-272).
+- Read: `r2.getUrl(key, { expiresIn })` returns a **signed S3 URL, default 900 s** (README 355, 376). Delete: `r2.deleteObject(ctx, key)` (423-438).
+- Limits: "no restrictions imposed by the component itself, only R2's standard limits" ([component page](https://www.convex.dev/components/cloudflare-r2)).
+
+Why it holds with the security model:
+- **The browser never receives an R2 URL.** An R2 presigned URL is served by R2's S3 endpoint, which cannot attach our `sandbox` CSP; the iframe would load unsandboxed content from a third origin. The content host (a Convex HTTP action on its own hostname) verifies the VP HMAC token, fetches the object server-side with a short `getUrl(key, { expiresIn: 60 })`, and streams it with the OA headers. HTTP action responses are capped at 100 MiB, above OA's 25 MB file limit.
+- **One identity layer:** the R2 credentials are deployment secrets read only by Convex; rights are decided in VP tables before any URL is minted.
+- **Egress:** R2 charges no egress, which removes the Convex 50 GB/month ceiling noted above. The content host still relays the bytes through Convex, so Convex HTTP-action bandwidth applies — **not measured** on our plan.
+- **Caps to enforce in `checkUpload`:** 25 MB per file, 100 MB per publish, 1000 files per version (OA `packages/shared/src/limits.ts:10-11, 63`).
+
+**Operator prerequisites (owned by the operator, none in the vault today):** a Cloudflare account; one R2 bucket for Cloud prod (and one for dev); its CORS policy allowing the dashboard origin; an R2 API token yielding the five values above, stored in Infisical `ma-fabrique` `/shared` `prod` and set on the Convex deployments from there.
 
 ---
 
@@ -86,7 +101,7 @@ This respects `authority-attached-to-anonymous-object.md`: the grant is keyed on
 
 ---
 
-## D4 — The agent bus
+## D4 — Appendix: the agent bus (not a blocker for artifacts)
 
 What it does (`OA: packages/bus-protocol/CONTRACT.md`, `OA: packages/bus-daemon/README.md`): one hub Durable Object per member (`idFromName("bus:"+userId)`, no org id — `OA: apps/server/src/services/bus.ts:243-250`); a per-machine Node daemon holding one WebSocket to the hub; adapters that inject a message into a **live** Claude Code session through that session's local socket (`OA: packages/bus-adapter-claude-code/src/inject.ts:37-51`, session discovery from `~/.claude/sessions`, `session.ts:30-113`).
 
@@ -113,18 +128,18 @@ VP messaging today is **pull-only**: the MCP uses `ConvexHttpClient`, no subscri
 | Full port | **Not possible line for line.** The server is Hono on Workers with D1/DO/R2 bindings; on Convex it is a rewrite. |
 | **Hybrid (recommended)** | Server reimplemented on Convex against VP identity; client and design reused under MIT with attribution: `OA: packages/shared/src/sandbox.ts`, `packages/shared/src/limits.ts` (values), `apps/dashboard/src/viewer/` (Shell, frame, Diff), `packages/runtime`, `packages/render`, `packages/doc-schema`; the signing scheme of `apps/server/src/content/signing.ts` re-expressed in `@vantageos/cloud-identity`. |
 
-**Delivery order** (each step its own task, TDD, Eta review; MCP ships last per `railway-mcp-redeploy.md`):
+**Build PRs, in order** (each its own task, TDD, Eta review; Convex rollout first, MCP last, per `railway-mcp-redeploy.md`; each PR mirrors its Convex functions in the MCP tools and bumps the backend contract version):
 
-1. **Rulings first (Pi):** 404-at-browser-door vs `RBAC_DENIED` split (D2); guest grant on `orgMembership` (D3).
-2. **`@vantageos/cloud-identity`:** content-URL signer/verifier (HMAC-SHA256, HKDF per purpose, epoch-bound), alongside R1's edge-header helper.
-3. **VP backend (Convex):** tables `artifacts`, `artifactVersions`, `artifactFiles`, `artifactShares`, `artifactComments`, `artifactData`, `artifactAudit`; mutations/queries with three-pole refusal tests; content-host HTTP action with OA CSP; byte caps from OA's limits; contract version bump.
-4. **VP MCP tools:** the 22 non-bus tools mirrored (93 -> ~115 advertised), output schemas from day one (Manufact score), added to `MCP_CALLED_FUNCTIONS`.
-5. **Dashboard app:** viewer route `/a/{id}`, sandboxed shell ported, share UI, comments.
-6. **Doc Forge:** publishes through `publish_artifact` instead of claude.ai artifacts.
-7. **Bus adapter (separate mission):** daemon + Claude Code injection + device-flow approval, gated on the same-uid condition.
+0. **Operator prerequisite (blocks PR 1's deploy, not its code):** Cloudflare account, R2 buckets (prod + dev) with CORS, R2 API token; the five values in Infisical (D2).
+1. **PR 1 — VP backend, publish and versions.** `@convex-dev/r2` installed; tables `artifacts` (org, owner agent/person, title, visibility=private only for now, latest version) and `artifactVersions` (artifact, number, file manifest of R2 keys, sha256, size, author); upload through `checkUpload` with the D2 caps; MCP tools `create_upload`, `publish_artifact` (content / files / edits, `expectedVersion`), `get_artifact`, `list_artifacts`, `list_versions`, `restore_version`, `delete_artifact`. Org isolation and three-pole refusal tests (`refusal-is-distinguishable-from-absence.md`). No sharing, no viewer: an artifact is readable by its own org through MCP only.
+2. **PR 2 — sharing.** Needs Pi's two rulings first (404 at the browser door vs `RBAC_DENIED`; guest grant on `orgMembership`). Table `artifactShares`; tools `share_artifact`, `unshare_artifact`, `set_visibility` (team, public); Clerk invitation path for an unknown email (D3); audit rows for share and unshare.
+3. **PR 3 — viewer on a separate content host.** Content-URL signer/verifier in `@vantageos/cloud-identity` (HMAC-SHA256, HKDF per purpose, TTL ≤ 600 s, epoch-bound); content-host HTTP action streaming from R2 with OA's CSP; dashboard route `/a/{id}` with the OA sandboxed shell ported under MIT. Needs the content hostname (DNS) decided.
+4. **PR 4 — comments and runtime data** (`list_comments`, `add_comment`, `resolve_comment`, `artifact_data_*`), then **Doc Forge** publishing through `publish_artifact`.
+5. **Later, separate mission:** the bus adapter (D4), gated on the same-uid condition.
 
 **Risks:**
-- Convex egress beyond 50 GB/month (exit to R2 component, D2).
+- Convex HTTP-action bandwidth for bytes relayed by the content host (not measured; R2 itself has no egress fee).
+- The R2 credentials are a new deployment secret class for the Convex deployments; setting them is an operator act (`railway-mcp-redeploy.md`: configuration never travels through a merge).
 - Custom hostname for Convex HTTP actions as the content host — not measured on our plan.
 - Claude Code's session socket is an interface we do not own; it can change without notice.
 - Tool count growth weighs on the Manufact quality score already in progress (task k1793xkjhzh1xm23gmmwjgwfyx8htbv0).
@@ -134,6 +149,8 @@ VP messaging today is **pull-only**: the MCP uses `ConvexHttpClient`, no subscri
 
 - Custom domains for Convex HTTP actions on the VP deployment's plan.
 - Whether Claude Code's cross-session socket exists and accepts injection in the Claude Code version the fleet runs.
-- Real artifact egress volume (no artifacts exist in VP yet).
+- Real artifact egress volume (no artifacts exist in VP yet), and Convex HTTP-action bandwidth pricing for relayed bytes.
+- R2's own object and request limits (the component defers to them; not read).
+- The R2 component was read from its README only; it was not installed or run.
 - `apps/demo-ops` and `packages/broker-core` in open-artifacts were not read beyond file names.
 - No code from open-artifacts was executed; every OA claim is from reading files at `f576bc6b`.
