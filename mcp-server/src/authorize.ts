@@ -153,7 +153,7 @@ export function currentAuthorizeOverrides(): AuthorizeTestOverrides {
 
 let cachedJwks: { at: number; issuer: string; keys: ClerkJwks } | null = null;
 
-async function fetchClerkJwks(issuer: string): Promise<ClerkJwks> {
+export async function fetchClerkJwks(issuer: string): Promise<ClerkJwks> {
 	if (testOverrides.jwks) return testOverrides.jwks;
 	const now = Date.now();
 	if (

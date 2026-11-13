@@ -109,7 +109,7 @@ function decodeJwtExp(jwt: string): number | null {
  * and the scoped-arbitrary-user mint flow (buildDefaultScopedDeps) share the
  * exact same, already-reviewed exchange logic rather than duplicating it.
  */
-async function defaultExchangeTicketForSession(
+export async function defaultExchangeTicketForSession(
 	ticket: string,
 	domain: string,
 ): Promise<string> {
