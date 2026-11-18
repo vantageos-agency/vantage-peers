@@ -485,13 +485,6 @@ def main():
     except Exception:
         sys.exit(0)
 
-    # TOOL_NAME_GUARD_PI_FIX Day 113 — fleet deadlock fix (matcher=* fires every tool)
-    # It sits AFTER the try/except, not inside it: spliced between the load
-    # and its own `except`, it was a SyntaxError, so this module did not parse
-    # and NOTHING in it ran — the guard least of all.
-    if data.get("tool_name") != "mcp__vantage-peers__send_message":
-        sys.exit(0)
-
     tool_name = data.get("tool_name", "") or ""
     if tool_name != ENFORCED_TOOL:
         sys.exit(0)

@@ -1,7 +1,15 @@
 #!/usr/bin/env python3
 """enforce-work-under-task.py — no work without an active task; real durations.
 
-VERSION = "1.6.1"
+VERSION = "1.8.0"
+
+1.8.0: flag existence is not proof of an active task. GATE A used to allow any work
+action once the flag file existed. A flag naming a task that is `todo`, `done`, or
+`in_progress` with a closed last work segment is stale, and work under it is work under
+no task. GATE A now reads the flag's taskId (key=value line or JSON object), fetches the
+task and allows only `in_progress` with an open last segment; an unreadable flag or a
+failed fetch refuses (could-not-judge), never allows. [META]/[ADMIN] and
+`allow-no-task` keep working on this path.
 
 Class of failure: work is driven through instruction-messages instead of tasks,
 so effort leaves no trace and no billable record; and where tasks exist, their
@@ -65,8 +73,9 @@ Two gates (PreToolUse):
     the same completion; any other status passes untouched) AND on
     mcp__vantage-peers__bulk_complete_tasks (a batch can never be timed per task
     against a single flag, so it is refused whatever the elapsed time unless every
-    named task is an authorization token; the refusal says to close each task with
-    complete_task when its work ends): BLOCK (exit 2)
+    named task is an authorization token or, for a filter-based call naming no task
+    id, this station's active-flag task is one; the refusal says to close each task
+    with complete_task when its work ends): BLOCK (exit 2)
     when the elapsed time since start_task is under MIN_REAL_SECONDS, and also
     when the elapsed time cannot be read at all (no flag, no `startedAt=` line,
     or a value that is not a number) — the refusal names what was missing, so
@@ -104,6 +113,25 @@ prints the derived station key, and are how the start-work skill obtains both
 adopts `--print-station`) when a task is really started, and removes it on
 completion.
 
+GATE C (1.7.0) — station hygiene on `start_task`. Class of failure: every cleanup
+rule exists and nothing enforces it at the moment a station begins new work, so
+uncommitted files, worktrees of landed pull requests, stalled pull requests, stale
+build output and piles of local branches accumulate (measured on one shared host:
+46 worktrees of which 21 on merged or closed pull requests, 290 uncommitted files
+in one repository, 78 local branches in another). `start_task` runs
+`.claude/scripts/station_hygiene_check.py` on `CLAUDE_PROJECT_DIR`, resolved from
+THIS hook file's location like every other path here:
+  - exit 0 (clean)  -> allowed, and the task is never even read;
+  - exit 1 (dirty) or 2 (could not judge) -> REFUSED, unless the task title LEADS
+    with `[HYGIENE]` (the one exception: a hygiene task is how the station gets
+    clean, and an unreadable station must still be able to start the work that
+    repairs it), or the override `// allow-dirty-start: <reason of 15+ chars>`
+    appears in the call or in the task description;
+  - a task whose title cannot be read is refused: could-not-judge, never a pass.
+Known limit, stated rather than hidden: a title is writable by the station that owns
+the task, so `[HYGIENE]` is an honour-system tag, exactly like the override marker.
+Every use of either leaves its text on the task for the reviewer.
+
 Input JSON: {"tool_name": <str>, "tool_input": {...}}. Block convention: exit 2
 plus a stderr message, matching the wired fleet hooks (enforce-pi-task-doctrine,
 enforce-full-ids). Fail-open on any internal exception — a script bug never
@@ -113,10 +141,11 @@ import hashlib
 import json
 import os
 import re
+import shlex
 import sys
 import time
 
-VERSION = "1.6.1"
+VERSION = "1.8.0"
 
 
 def workspace_root(start):
@@ -194,7 +223,7 @@ MIN_REAL_SECONDS = 60
 COMPLETE_TASK = "mcp__vantage-peers__complete_task"
 UPDATE_TASK = "mcp__vantage-peers__update_task"
 BULK_COMPLETE_TASKS = "mcp__vantage-peers__bulk_complete_tasks"
-WORK_FILE_TOOLS = ("Edit", "Write")
+WORK_FILE_TOOLS = ("Edit", "Write", "NotebookEdit")
 AGENT_TOOL = "Agent"
 
 # Exemption / override markers (GATE A).
@@ -224,6 +253,300 @@ REDIRECT_TARGET_RE = re.compile(
 )
 
 
+# --- Shell write faces other than an output redirect --------------------------------------
+# Class: a command that writes a project file without a `>` redirect. Each face is judged
+# on the parsed command word and its real targets, never on the presence of a word in the
+# text, so `grep tee file` or `echo "cp a b"` stay reads. A write whose every target is
+# under /tmp/ (or /dev/null) is scratch, not project work.
+SCRATCH_PREFIX = "/tmp/"
+NULL_SINKS = ("/dev/null", "/dev/stdout", "/dev/stderr")
+COMMAND_WRAPPERS = ("sudo", "env", "command", "nohup", "time", "exec", "builtin")
+ENV_ASSIGNMENT_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*=")
+BARE_REDIRECT_RE = re.compile(r"^\d*[<>]+&?\d*$")
+ATTACHED_REDIRECT_RE = re.compile(r"^\d*[<>]+&?[^<>\s]")
+
+
+def _without_redirections(tokens):
+    """Drop redirection operators and their operands; redirect writes have their own check."""
+    out, skip = [], False
+    for token in tokens:
+        if skip:
+            skip = False
+        elif BARE_REDIRECT_RE.match(token):
+            skip = True
+        elif ATTACHED_REDIRECT_RE.match(token):
+            continue
+        else:
+            out.append(token)
+    return out
+
+
+def _split_segments(command):
+    """Split a shell command into per-command token lists; None when it cannot be parsed."""
+    lexer = shlex.shlex(command, posix=True, punctuation_chars=";|&\n()")
+    lexer.whitespace_split = True
+    lexer.commenters = ""
+    lexer.whitespace = " \t\r"
+    try:
+        tokens = list(lexer)
+    except ValueError:
+        return None
+    segments, current = [], []
+    for token in tokens:
+        if token and all(ch in ";|&\n()" for ch in token):
+            if current:
+                segments.append(current)
+            current = []
+        else:
+            current.append(token)
+    if current:
+        segments.append(current)
+    return segments
+
+
+def _is_scratch_or_sink(target):
+    if target in NULL_SINKS:
+        return True
+    expanded = os.path.expandvars(os.path.expanduser(target))
+    if not os.path.isabs(expanded) or "$" in expanded:
+        return False
+    resolved = os.path.realpath(expanded)
+    return resolved == SCRATCH_PREFIX.rstrip("/") or resolved.startswith(SCRATCH_PREFIX)
+
+
+def _is_active_task_flag(target):
+    flag = os.path.realpath(os.path.expanduser(ACTIVE_TASK_FLAG))
+    return os.path.realpath(os.path.expanduser(target)) == flag
+
+
+def _counts_as_project_target(target):
+    return not (_is_scratch_or_sink(target) or _is_active_task_flag(target))
+
+
+def _positionals(args, value_flags=()):
+    """Non-flag arguments; a flag in value_flags consumes the next token."""
+    out, skip, after_dd = [], False, False
+    for arg in args:
+        if skip:
+            skip = False
+        elif after_dd:
+            out.append(arg)
+        elif arg == "--":
+            after_dd = True
+        elif arg in value_flags:
+            skip = True
+        elif arg.startswith("-") and arg != "-":
+            continue
+        else:
+            out.append(arg)
+    return out
+
+
+def _flag_value(args, short, long_name):
+    for index, arg in enumerate(args):
+        if arg == short and index + 1 < len(args):
+            return args[index + 1]
+        if arg.startswith(long_name + "="):
+            return arg.split("=", 1)[1]
+    return None
+
+
+def _segment_targets(word, args):
+    """The files one command would write, or None when this command word writes nothing."""
+    if word == "tee":
+        return _positionals(args)
+    if word == "dd":
+        return [a[3:] for a in args if a.startswith("of=")]
+    if word == "install":
+        if any(a == "-d" or a == "--directory" for a in args):
+            return _positionals(args, ("-m", "-o", "-g", "--mode", "--owner", "--group"))
+        directory = _flag_value(args, "-t", "--target-directory")
+        if directory is not None:
+            return [directory]
+        found = _positionals(args, ("-m", "-o", "-g", "-S", "--mode", "--owner", "--group", "--suffix"))
+        return found[-1:]
+    if word in ("cp", "mv"):
+        directory = _flag_value(args, "-t", "--target-directory")
+        if directory is not None:
+            return [directory]
+        found = _positionals(args, ("-S", "--suffix"))
+        return found[-1:] if len(found) >= 2 else []
+    if word == "sed":
+        in_place = any(
+            a == "--in-place" or a.startswith("--in-place=")
+            or (a.startswith("-") and not a.startswith("--") and "i" in a[1:])
+            for a in args
+        )
+        if not in_place:
+            return None
+        found = _positionals(args, ("-e", "-f", "--expression", "--file"))
+        has_script_flag = any(a in ("-e", "-f", "--expression", "--file") or a.startswith("--expression=") for a in args)
+        return found if has_script_flag else found[1:]
+    if word == "perl":
+        in_place = any(
+            a.startswith("-") and not a.startswith("--") and "i" in a[1:].split("e")[0]
+            for a in args
+        )
+        if not in_place:
+            return None
+        found, skip = [], False
+        script_seen = False
+        for arg in args:
+            if skip:
+                skip, script_seen = False, True
+            elif arg.startswith("-") and arg != "-":
+                if arg.endswith("e") or arg.endswith("E"):
+                    skip = True
+            else:
+                found.append(arg)
+        if not script_seen and found:
+            found = found[1:]
+        return found
+    return None
+
+
+MAX_NESTING = 5
+SHELLS = ("bash", "sh", "zsh", "dash", "ksh")
+XARGS_VALUE_FLAGS = ("-I", "-i", "-n", "-P", "-L", "-l", "-d", "-s", "-E", "-e", "-a",
+                     "--max-args", "--max-procs", "--max-lines", "--delimiter",
+                     "--max-chars", "--eof", "--arg-file", "--replace")
+FIND_EXEC_ACTIONS = ("-exec", "-execdir", "-ok", "-okdir")
+WRITE_WORDS = ("tee", "dd", "install", "cp", "mv", "sed", "perl", "eval", "xargs", "find") + SHELLS
+READER_WORDS = ("echo", "printf", "grep", "egrep", "fgrep", "rg", "git", "man", "which",
+                "type", "help", "info", "whatis", "apropos")
+
+
+def _skip_flags(tokens, index, value_flags=(), attached=()):
+    """Advance past flags; value_flags consume the next token unless written attached."""
+    while index < len(tokens) and tokens[index].startswith("-") and tokens[index] != "-":
+        token = tokens[index]
+        index += 1
+        if token == "--":
+            break
+        if "=" in token:
+            continue
+        if token in value_flags:
+            index += 1
+        elif any(token.startswith(prefix) and len(token) > len(prefix) for prefix in attached):
+            continue
+    return index
+
+
+def _strip_wrapper(tokens, index):
+    """Return the index of the real command word after one wrapper, or None if not a wrapper."""
+    word = os.path.basename(tokens[index])
+    if word in COMMAND_WRAPPERS:
+        if word == "sudo":
+            return _skip_flags(tokens, index + 1, ("-u", "-g", "-C", "-p", "-h", "--user", "--group"))
+        if word == "env":
+            index = _skip_flags(tokens, index + 1, ("-u", "-C", "--unset", "--chdir"))
+            while index < len(tokens) and ENV_ASSIGNMENT_RE.match(tokens[index]):
+                index += 1
+            return index
+        return index + 1
+    if word == "timeout":
+        index = _skip_flags(tokens, index + 1, ("-s", "-k", "--signal", "--kill-after"))
+        return index + 1
+    if word == "nice":
+        index += 1
+        if index < len(tokens) and tokens[index] == "-n":
+            return index + 2
+        if index < len(tokens) and re.match(r"^-(n)?-?\d+$", tokens[index]):
+            return index + 1
+        return _skip_flags(tokens, index)
+    if word == "stdbuf":
+        return _skip_flags(tokens, index + 1, ("-i", "-o", "-e"), ("-i", "-o", "-e"))
+    return None
+
+
+def _judge_tokens(tokens, depth):
+    """True when this command writes outside scratch, False when not, None when it cannot tell."""
+    tokens = _without_redirections(tokens)
+    index = 0
+    while index < len(tokens) and ENV_ASSIGNMENT_RE.match(tokens[index]):
+        index += 1
+    while index < len(tokens):
+        nxt = _strip_wrapper(tokens, index)
+        if nxt is None:
+            break
+        index = nxt
+    if index >= len(tokens):
+        return False
+    word = os.path.basename(tokens[index])
+    if word in READER_WORDS:
+        return False
+    if word not in WRITE_WORDS:
+        # An unknown head word may be a wrapper nobody listed (ionice, watch, flock,
+        # chroot, doas, parallel, time -p): keep scanning to the first write word and
+        # judge the command from there. A wrapper table is a list of names; the class
+        # is "any word in front of a writer".
+        for position in range(index + 1, len(tokens)):
+            if os.path.basename(tokens[position]) in WRITE_WORDS:
+                return _judge_tokens(tokens[position:], depth + 1)
+        return False
+    args = tokens[index + 1:]
+    if word in SHELLS:
+        for position, arg in enumerate(args):
+            if arg.startswith("-") and not arg.startswith("--") and "c" in arg[1:]:
+                if position + 1 >= len(args):
+                    return None
+                return _judge_command(args[position + 1], depth + 1)
+        return False
+    if word == "eval":
+        return _judge_command(" ".join(args), depth + 1)
+    if word == "xargs":
+        start = _skip_flags(args, 0, XARGS_VALUE_FLAGS, ("-I", "-n", "-P", "-L", "-d", "-s", "-E", "-a"))
+        if start >= len(args):
+            return False
+        return _judge_tokens(args[start:], depth + 1)
+    if word == "find":
+        verdict = False
+        for position, arg in enumerate(args):
+            if arg in FIND_EXEC_ACTIONS:
+                inner = args[position + 1:]
+                if inner and inner[-1] == "+":
+                    inner = inner[:-1]
+                result = _judge_tokens(inner, depth + 1) if inner else False
+                if result is None:
+                    return None
+                verdict = verdict or result
+        return verdict
+    targets = _segment_targets(word, args)
+    if targets is None:
+        return False
+    if not targets and word in ("sed", "perl", "install"):
+        return True
+    return any(_counts_as_project_target(t) for t in targets)
+
+
+def _judge_command(command, depth=0):
+    if depth > MAX_NESTING:
+        return None
+    segments = _split_segments(command)
+    if segments is None:
+        return None
+    could_not_judge = False
+    for tokens in segments:
+        verdict = _judge_tokens(tokens, depth)
+        if verdict is True:
+            return True
+        if verdict is None:
+            could_not_judge = True
+    return None if could_not_judge else False
+
+
+def writes_into_project(command):
+    """True when a write lands outside scratch, False when none does, None when the
+    command cannot be parsed (unbalanced quote, nesting past MAX_NESTING).
+
+    Three states, never two: a command the guard cannot read is not a command that
+    writes nothing. Callers treat None as mutating, so it needs an active task.
+    Wrappers (timeout, nice, stdbuf, sudo, env), xargs, find -exec/-execdir and
+    shell -c / eval are unwrapped and their inner command judged.
+    """
+    return _judge_command(command)
+
+
 def writes_only_the_flag(command):
     """True when the command's only mutation is creating the active-task flag itself.
 
@@ -237,7 +560,7 @@ def writes_only_the_flag(command):
     is the flag path. A command that writes the flag AND anything else is not exempt.
     """
     targets = REDIRECT_TARGET_RE.findall(command)
-    if not targets:
+    if not targets or writes_into_project(command) is not False:
         return False
     flag = os.path.realpath(os.path.expanduser(ACTIVE_TASK_FLAG))
     return all(
@@ -312,7 +635,7 @@ def flag_names_other_station():
 
 
 def is_mutating_bash(command):
-    return any(pattern.search(command) for pattern in MUTATING_BASH_RES)
+    return any(pattern.search(command) for pattern in MUTATING_BASH_RES) or writes_into_project(command) is not False
 
 
 TOKEN_TITLE_RE = re.compile(r"^(?:\[(?:META|ADMIN)\]\s*)*\[[A-Z-]+-AUTHORIZED\]")
@@ -397,7 +720,7 @@ def _run_headers_helper(command, url, root):
 
 
 def fetch_task(task_id):
-    """Read-only lookup of one task by id: {"title", "description"}. Raises RuntimeError.
+    """Read-only lookup of one task by id: {"title", "description", "createdBy", "status", "workSegments"}. Raises RuntimeError.
 
     Tests inject WORK_UNDER_TASK_TASK_FIXTURE (a JSON map taskId -> {title,
     description}); an id the fixture lacks is a fetch failure. Otherwise a
@@ -413,7 +736,8 @@ def fetch_task(task_id):
         if not isinstance(entry, dict):
             raise RuntimeError("task fixture has no entry for this id")
         return {"title": str(entry.get("title") or ""), "description": str(entry.get("description") or ""),
-                "createdBy": str(entry.get("createdBy") or "")}
+                "createdBy": str(entry.get("createdBy") or ""),
+                "status": str(entry.get("status") or ""), "workSegments": entry.get("workSegments")}
     import urllib.request
 
     try:
@@ -436,7 +760,8 @@ def fetch_task(task_id):
             raise RuntimeError(f"get_task returned an error: {str(message)[:200]}")
         task = json.loads(message["result"]["content"][0]["text"])
         return {"title": str(task.get("title") or ""), "description": str(task.get("description") or ""),
-                "createdBy": str(task.get("createdBy") or "")}
+                "createdBy": str(task.get("createdBy") or ""),
+                "status": str(task.get("status") or ""), "workSegments": task.get("workSegments")}
     except RuntimeError:
         raise
     except Exception as exc:
@@ -495,11 +820,33 @@ def batch_task_ids(tool_input):
     return ids
 
 
-def bulk_refusal(tool_input):
-    """Refusal for a batch closure, or None when every named task is an authorization token.
+def filter_bulk_refusal(base):
+    """Refusal for a batch naming no task id, or None when this station's active-flag task is a token."""
+    lead = "The call names no task id, so only this station's active task can authorize it. "
+    if not has_active_task():
+        return base + lead + f"This station has no active-task flag at {ACTIVE_TASK_FLAG}.\n"
+    if flag_names_other_station():
+        return base + lead + (f"The active-task flag at {ACTIVE_TASK_FLAG} names another station "
+                              f"({read_flag_field('station')}), not {OWN_STATION_KEY}.\n")
+    flag_task_id = read_flag_field("taskId")
+    if flag_task_id is None:
+        return base + lead + f"The active-task flag at {ACTIVE_TASK_FLAG} could not be read or carries no taskId.\n"
+    is_token, failure = token_status(flag_task_id)
+    if failure:
+        return base + lead + failure + "\n"
+    if not is_token:
+        return base + lead + (f"Active task {flag_task_id} is not an authorization token "
+                              "(its title does not start with [<NAME>-AUTHORIZED]).\n")
+    return None
 
-    One flag times one task, so a batch cannot be timed per task. Only a batch
-    made entirely of token tasks is exempt; an unreadable task is a refusal.
+
+def bulk_refusal(tool_input):
+    """Refusal for a batch closure, or None when the batch is authorized by a token.
+
+    One flag times one task, so a batch cannot be timed per task. A call naming
+    task ids is exempt only when every named task is an authorization token. A
+    filter-based call names no task, so it is exempt only when this station's
+    active-flag task is a token. An unreadable task or flag is a refusal.
     """
     base = (
         "BLOCKED: bulk_complete_tasks refused — a batch cannot be timed per task "
@@ -509,7 +856,7 @@ def bulk_refusal(tool_input):
     )
     ids = batch_task_ids(tool_input)
     if not ids:
-        return base + "No task id could be read from the call, so no task could be judged a token.\n"
+        return filter_bulk_refusal(base)
     for task_id in ids:
         is_token, failure = token_status(task_id)
         if failure:
@@ -616,6 +963,78 @@ def _timing_refusal(tool_input):
     )
 
 
+START_TASK = "mcp__vantage-peers__start_task"
+HYGIENE_TITLE_RE = re.compile(r"^\s*\[HYGIENE\]")
+DIRTY_START_OVERRIDE_RE = re.compile(r"(?://|#)\s*allow-dirty-start\s*:\s*(\S[^\n]{14,})", re.IGNORECASE)
+HYGIENE_CHECK = os.path.join(os.path.dirname(os.path.realpath(__file__)), os.pardir, "scripts",
+                             "station_hygiene_check.py")
+HYGIENE_TIMEOUT_SECONDS = 180
+HYGIENE_OUTPUT_LINES = 30
+
+
+def _hygiene_verdict():
+    """(exit code, output) of the hygiene check on this session's root. Code 2 = could not judge."""
+    import subprocess
+
+    root = (os.environ.get("CLAUDE_PROJECT_DIR") or "").strip()
+    if not root:
+        return 2, ("COULD-NOT-JUDGE: CLAUDE_PROJECT_DIR is not set, so the station root is unknown "
+                   "and its hygiene cannot be read.")
+    try:
+        done = subprocess.run([sys.executable, HYGIENE_CHECK, root], capture_output=True, text=True,
+                              timeout=HYGIENE_TIMEOUT_SECONDS)
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        return 2, f"COULD-NOT-JUDGE: {HYGIENE_CHECK} did not run: {type(exc).__name__}: {exc}"
+    code = done.returncode if done.returncode in (0, 1, 2) else 2
+    return code, (done.stdout + done.stderr).strip()
+
+
+def gate_c_refusal(tool_input):
+    """Refusal text for a start_task on an unclean or unjudgeable station, else None.
+
+    Any internal failure is a refusal too: the one gate in this hook where could-not-judge
+    must never read as a pass.
+    """
+    try:
+        code, output = _hygiene_verdict()
+        if code == 0:
+            return None
+        if DIRTY_START_OVERRIDE_RE.search("\n".join(flatten_strings(tool_input))):
+            return None
+        task_id = tool_input.get("taskId") or ""
+        try:
+            task = fetch_task(task_id)
+        except RuntimeError as exc:
+            return _hygiene_message(
+                output, f"Could not read the title of task {task_id!r} to look for [HYGIENE]: {exc}.")
+        if HYGIENE_TITLE_RE.match(task["title"]):
+            return None
+        if DIRTY_START_OVERRIDE_RE.search(task["description"]):
+            return None
+        return _hygiene_message(output, "")
+    except Exception as exc:  # noqa: BLE001 - could-not-judge refuses on this gate
+        return _hygiene_message("", f"COULD-NOT-JUDGE: the hygiene gate failed internally: {type(exc).__name__}: {exc}")
+
+
+def _hygiene_message(output, extra):
+    lines = output.splitlines()
+    shown = "\n".join(lines[:HYGIENE_OUTPUT_LINES]) + (
+        f"\n... {len(lines) - HYGIENE_OUTPUT_LINES} more line(s)" if len(lines) > HYGIENE_OUTPUT_LINES else "")
+    return (
+        "BLOCKED: start_task refused: this station is not clean (station_hygiene_check.py).\n\n"
+        f"{shown}\n{extra}\n\n"
+        "A station starts no new task while its repositories carry uncommitted files, worktrees of "
+        "landed pull requests, stalled pull requests, stale build output or an unbounded pile of "
+        "local branches.\n"
+        "FIX: clear the findings above (the station reap script `reap_station.sh` classifies and "
+        "removes what is safe), then start the task again.\n"
+        "Exemptions:\n"
+        "  - The task is the cleanup itself: its title leads with [HYGIENE].\n"
+        "  - Genuine edge case: `// allow-dirty-start: <reason of 15 characters or more>` in the "
+        "call or in the task description.\n"
+    )
+
+
 def block_message(tool_name):
     return (
         "BLOCKED: no active task for this work action "
@@ -629,13 +1048,70 @@ def block_message(tool_name):
         "FIX: start (or pick up) the task first. Use the start-work skill, which "
         "guarantees a VantagePeers task exists and is really started, and writes "
         f"the active-task flag ({ACTIVE_TASK_FLAG}) with the real start "
-        "timestamp.\n\n"
+        "timestamp.\n"
+        "If the task is already started on the server, create the flag with ONE "
+        "shell command whose only mutation is the flag itself:\n"
+        "  python3 .claude/scripts/active_task_flag.py start <taskId> <ttl>\n"
+        "An edit tool (Write/Edit) cannot create the flag: it is a work action "
+        "and is refused like any other.\n\n"
         "Exemptions:\n"
         "  - A pure orchestration side-effect with no work duration: tag the "
         "input with [META] or [ADMIN].\n"
         "  - Genuine edge case: `// allow-no-task: <reason>` or "
         "`# allow-no-task: <reason>` in the command / content.\n"
     )
+
+
+def read_flag_task_id():
+    """The taskId named by the flag: a `taskId=<id>` line or a JSON object with "taskId". None if unreadable."""
+    try:
+        with open(ACTIVE_TASK_FLAG, "r", encoding="utf-8") as handle:
+            text = handle.read()
+    except Exception:
+        return None
+    try:
+        parsed = json.loads(text)
+    except ValueError:
+        parsed = None
+    if isinstance(parsed, dict):
+        value = parsed.get("taskId")
+        return value.strip() if isinstance(value, str) and value.strip() else None
+    match = re.search(r"^\s*taskId\s*=\s*(\S+)", text, re.MULTILINE)
+    return match.group(1) if match else None
+
+
+def last_segment_is_open(segments):
+    """True when work segments are absent/empty or the last one has no end."""
+    if not isinstance(segments, list) or not segments:
+        return True
+    last = segments[-1]
+    return isinstance(last, dict) and last.get("end") is None
+
+
+def stale_flag_refusal(tool_name):
+    """Refusal text when the flag does not name a really-active task, else None.
+
+    Three outcomes, never two: active (None), stale (names id and status), could-not-judge
+    (unreadable flag or failed fetch). Could-not-judge refuses.
+    """
+    task_id = read_flag_task_id()
+    head = f"BLOCKED: active-task flag is not proof of an active task ({tool_name}).\n\n"
+    fix = (
+        "FIX: `start_task <id>` then `python3 .claude/scripts/active_task_flag.py start <id> <ttl>`, "
+        "or start the right task for this work.\n"
+        "Exemptions: tag the input [META]/[ADMIN], or `// allow-no-task: <reason>`.\n"
+    )
+    if task_id is None:
+        return head + f"The flag at {ACTIVE_TASK_FLAG} is unreadable: no readable taskId.\n" + fix
+    try:
+        task = fetch_task(task_id)
+    except RuntimeError as exc:
+        return head + f"Could not judge: task {task_id} could not be read: {exc}.\n" + fix
+    if task["status"] != "in_progress":
+        return head + f"The flag names task {task_id}, whose status is {task['status'] or 'unreadable'!r}, not in_progress.\n" + fix
+    if not last_segment_is_open(task["workSegments"]):
+        return head + f"The flag names task {task_id}: in_progress, but its last work segment is closed.\n" + fix
+    return None
 
 
 def foreign_station_message(tool_name):
@@ -670,6 +1146,14 @@ def main():
     tool_name = data.get("tool_name", "") or ""
     tool_input = data.get("tool_input", {}) or {}
 
+    # GATE C — station hygiene before a task starts. Refuses (exit 2).
+    if tool_name == START_TASK:
+        refusal = gate_c_refusal(tool_input)
+        if refusal:
+            sys.stderr.write(refusal)
+            return 2
+        return 0
+
     # GATE B — real duration, on complete_task and update_task(status=done). Refuses (exit 2).
     if tool_name == BULK_COMPLETE_TASKS:
         refusal = bulk_refusal(tool_input)
@@ -703,7 +1187,14 @@ def main():
         if flag_names_other_station():
             sys.stderr.write(foreign_station_message(tool_name))
             return 2
-        return 0
+        refusal = stale_flag_refusal(tool_name)
+        if refusal is None:
+            return 0
+        if META_TAG_RE.search("\n".join(flatten_strings(tool_input))) or OVERRIDE_RE.search(
+                "\n".join(flatten_strings(tool_input))):
+            return 0
+        sys.stderr.write(refusal)
+        return 2
 
     blob = "\n".join(flatten_strings(tool_input))
     if META_TAG_RE.search(blob) or OVERRIDE_RE.search(blob):
