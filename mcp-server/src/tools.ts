@@ -10066,6 +10066,12 @@ export function registerTools(
 				.describe(
 					"Who reviews when the reviewer is stopped. Omit to use the fleet default.",
 				),
+			bible: z
+				.boolean()
+				.optional()
+				.describe(
+					"Fleet master only. true marks the repo as its project's bible repository: tasks of that project must then cite it in a DOC-REF line. Omit to leave the repo unmarked (a new mapping is not a bible; an existing mapping keeps its current value).",
+				),
 		},
 		{
 			outputSchema: addRepoMappingServedOutputSchema,
@@ -10075,7 +10081,7 @@ export function registerTools(
 			destructiveHint: false,
 			title: "Add repo mapping",
 		},
-		async ({ repo, orchestrator, project, active, reviewer, fallbackReviewer }) => {
+		async ({ repo, orchestrator, project, active, reviewer, fallbackReviewer, bible }) => {
 			// Repo mappings are tenant-owned (orgId): an unresolved caller is refused
 			// here, the Convex door decides master / org-member / own-rows.
 			const unresolved = guardResolvedCaller("add_repo_mapping");
@@ -10092,6 +10098,7 @@ export function registerTools(
 					active,
 					reviewer,
 					fallbackReviewer,
+					bible,
 					...doorScopeArgs("githubRepoMapping:add", undefined),
 				});
 

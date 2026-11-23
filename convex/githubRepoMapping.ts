@@ -78,6 +78,7 @@ const repoMappingDocOrNull = v.union(
 		fallbackReviewer: v.optional(v.string()),
 		orgId: v.optional(v.string()),
 		clerkOrgId: v.optional(v.string()),
+		bible: v.optional(v.boolean()),
 	}),
 	v.null(),
 );
@@ -150,6 +151,7 @@ const repoMappingFullObject = v.object({
 	fallbackReviewer: v.optional(v.string()),
 	orgId: v.optional(v.string()),
 	clerkOrgId: v.optional(v.string()),
+	bible: v.optional(v.boolean()),
 });
 
 const repoMappingLiteObject = v.object({
@@ -347,6 +349,8 @@ export const add = mutation({
 		active: v.optional(v.boolean()),
 		reviewer: v.optional(v.string()),
 		fallbackReviewer: v.optional(v.string()),
+		// Marks the repo as its project's bible repository (DOC-REF gate). Fleet master only.
+		bible: v.optional(v.boolean()),
 		// The organisation the MCP transport VERIFIED for a bearer that reaches
 		// Convex as the fleet service account (task k176y0q5jcz3m8m673bf61kva98h49js).
 		// Without it a seat's mapping was written as a FLEET row, exempt from the
@@ -371,6 +375,12 @@ export const add = mutation({
 		}
 		if (args.fallbackReviewer !== undefined) {
 			requireOrchestratorOnRoster(scope, args.fallbackReviewer, "githubRepoMapping:add", "assignee");
+		}
+		// The bible flag drives a fleet-wide gate, so only the fleet master sets it.
+		if (args.bible !== undefined && tenant !== undefined) {
+			throw new ConvexError(
+				`RBAC_DENIED: only the fleet master may mark a repo as a project bible — ${JSON.stringify({ reason: "bible-flag-master-only", door: "githubRepoMapping:add", repo: args.repo })}`,
+			);
 		}
 		// PROOF OF OWNERSHIP. A member may map only a repo whose GitHub OWNER is
 		// bound to its own org through a GitHub-verified step
@@ -400,6 +410,7 @@ export const add = mutation({
 				orchestrator: args.orchestrator,
 				project: args.project,
 				active: args.active ?? true,
+				...(args.bible !== undefined ? { bible: args.bible } : {}),
 				...(args.reviewer !== undefined ? { reviewer: args.reviewer } : {}),
 				...(args.fallbackReviewer !== undefined
 					? { fallbackReviewer: args.fallbackReviewer }
@@ -412,6 +423,7 @@ export const add = mutation({
 			orchestrator: args.orchestrator,
 			project: args.project,
 			active: args.active ?? true,
+			...(args.bible !== undefined ? { bible: args.bible } : {}),
 			...(tenant !== undefined ? { orgId: tenant } : {}),
 			...(tenant !== undefined && scope.orgClerkId !== undefined
 				? { clerkOrgId: scope.orgClerkId }

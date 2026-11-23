@@ -1150,6 +1150,11 @@ export default defineSchema({
 		// compared only while either side has no id (until backfill_org_clerk_id
 		// reports 0 remaining).
 		clerkOrgId: v.optional(v.string()),
+		// DOC-REF gate (convex/lib/docRefGate.ts): true marks this repo as its
+		// project's BIBLE repository. Tasks of that project must cite it in a
+		// `DOC-REF:` line. Only an active FLEET row (no orgId) with this flag
+		// gates; a client org's row never does. Absent = not a bible.
+		bible: v.optional(v.boolean()),
 	})
 		.index("by_repo", ["repo"])
 		.index("by_org", ["orgId"])

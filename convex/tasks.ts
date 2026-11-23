@@ -95,6 +95,7 @@ import {
 	getMaxSegmentMinutes,
 	getStartTaskInProgressCap,
 } from "./lib/taskClosureGate";
+import { enforceDocRefGate } from "./lib/docRefGate";
 import type { WorkSegment } from "./lib/taskClosureGate";
 import { actorIdResolver, actorOrgFor, taskActorIdFields } from "./lib/actorIds";
 import { resolveAgentIdArg } from "./lib/agentIdArgs";
@@ -895,6 +896,25 @@ function requireProject(project: string | undefined, door: string): string {
 	return trimmed;
 }
 
+// DOC-REF gate (convex/lib/docRefGate.ts): a task of a project that has a bible
+// repository must cite it at a commit. Runs after requireProject, so the project
+// is already trimmed and non-empty. An unmapped project abstains, and says so.
+async function enforceDocRefForCreate(
+	ctx: MutationCtx,
+	task: { project?: string; title: string; description?: string },
+): Promise<void> {
+	const result = await enforceDocRefGate(ctx, {
+		project: task.project ?? "",
+		title: task.title,
+		description: task.description,
+	});
+	if (result.outcome === "abstained") {
+		console.log(
+			`DOC_REF_GATE_ABSTAINED: project "${result.project}" has no bible repository mapping (githubRepoMapping bible=true) — gate not applied`,
+		);
+	}
+}
+
 export const create = mutation({
 	args: createTaskArgsValidatorWithCredential,
 	returns: v.id("tasks"),
@@ -1050,6 +1070,7 @@ export const create = mutation({
 			// Last check before the write: a caller refused for who they are
 			// learns nothing about the project rule.
 			taskArgs.project = requireProject(taskArgs.project, "tasks:create");
+			await enforceDocRefForCreate(ctx, taskArgs);
 			return await insertTask(
 				ctx,
 				{ ...taskArgs, assignedTo, createdBy: actor, lastActedBy: actor },
@@ -1067,6 +1088,7 @@ export const create = mutation({
 		const createdById = scope.callerActorId;
 		// Last check before the write (see the human path above).
 		taskArgs.project = requireProject(taskArgs.project, "tasks:create");
+		await enforceDocRefForCreate(ctx, taskArgs);
 		return await insertTask(
 			ctx,
 			{ ...taskArgs, assignedTo, createdBy: scope.callerLabel ?? taskArgs.createdBy },
