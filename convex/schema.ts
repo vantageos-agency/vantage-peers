@@ -437,6 +437,11 @@ export default defineSchema({
 		lastAssignedToId: v.optional(v.string()),
 		cancelledById: v.optional(v.string()),
 		reviewArtifactAttachedById: v.optional(v.string()),
+		// Explicit position in the assignee's work queue (1 = next). Written only by
+		// tasks:reorderQueue and cleared when the task leaves the queue (reassign,
+		// complete, fail, cancel, delete, bulkComplete). Absent = unranked: such a
+		// task keeps today's order (priority, then age). Additive: no row changes.
+		queueRank: v.optional(v.number()),
 		priority: v.union(
 			v.literal("urgent"),
 			v.literal("high"),
@@ -2102,6 +2107,13 @@ export default defineSchema({
 		// migration migrations/linkServiceAccountAgent, never read from an env var
 		// on a request path.
 		serviceAccountAgentId: v.optional(v.id("agents")),
+		// queueCoordinatorIds: the agents (by `agents._id`) of THIS organisation that
+		// may reorder ANY assignee's task queue, besides the assignee itself and the
+		// org's admins (tasks:reorderQueue). Absent or empty means none. Held as
+		// data, written only by clientOrgMapping:setQueueCoordinators (validated
+		// against the org's own agents), read live at request time, never copied
+		// onto a token.
+		queueCoordinatorIds: v.optional(v.array(v.string())),
 	})
 		.index("by_clerk_slug", ["clerkOrgSlug"])
 		.index("by_clerk_org_id", ["clerkOrgId"])
