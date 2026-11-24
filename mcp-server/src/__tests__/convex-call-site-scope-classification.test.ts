@@ -331,7 +331,7 @@ const SCOPE_CLASSIFICATION: Readonly<Record<string, ScopeClassification>> = {
 		severity: null,
 		basis: "args+gate",
 		reason:
-			"decided by the door (convex/tasks.ts reorderQueue, lib/taskQueue.ts): the caller is the verified agent ID added by the wrapped client (VERIFIED_ACTOR_DOORS) or a signed-in person who must administer the organisation; the assignee and every listed task are loaded under the principal's own organisation and a foreign one is refused by ID; unresolvedOrgDenial refuses an unresolved bearer first; pinned by the seat two-pole sweep",
+			"decided by the door (convex/tasks.ts reorderQueue, lib/taskQueue.ts): the caller is the verified agent ID added by the wrapped client (VERIFIED_ACTOR_DOORS): over MCP the assignee itself or a listed queue coordinator (a person bearer carries no verifiedActor and is refused; an organisation admin acts from a signed-in session); the assignee and every listed task are loaded under the principal's own organisation and a foreign one is refused by ID; unresolvedOrgDenial refuses an unresolved bearer first; pinned by the seat two-pole sweep",
 	},
 	"next_task|tasks:nextForAssignee": {
 		class: "safe",

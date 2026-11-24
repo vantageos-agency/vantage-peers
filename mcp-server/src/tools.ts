@@ -1319,6 +1319,33 @@ export function mcpRefused(
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// Helper: a backend reply that breaks its `returns:` contract is refused
+//
+// A tool that substitutes a default for a reply it could not read (a count taken
+// from the request, an empty queue) turns a contract break into a success. The
+// named refusal below states what the tool expected and which door answered, and
+// says the call's outcome is unknown.
+// ─────────────────────────────────────────────────────────────────────────────
+
+export function mcpBackendShapeMismatch(
+	tool: string,
+	door: string,
+	expected: string,
+): {
+	content: Array<{ type: "text"; text: string }>;
+	isError: true;
+} {
+	return mcpError(
+		`BACKEND_SHAPE_MISMATCH: ${tool} got a reply from the backend door "${door}" that does not match its contract (expected ${expected}). ` +
+			`The outcome of this call is unknown: do not read it as success or as an empty result; report it as a backend contract break.`,
+	);
+}
+
+function isPlainObject(v: unknown): v is Record<string, unknown> {
+	return typeof v === "object" && v !== null && !Array.isArray(v);
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // ConvexError parser + structured error propagation
 //
 // When a Convex mutation fails with ArgumentValidationError (e.g. passing a
@@ -5856,6 +5883,15 @@ export function registerTools(
 					),
 					["assignedTo"],
 				);
+				// sort="queue" is a new door shape: a reply that is not an array is a
+				// contract break, never an empty queue.
+				if (sort === "queue" && !Array.isArray(rawTasks)) {
+					return mcpBackendShapeMismatch(
+						"list_tasks",
+						"tasks:list",
+						"an array of tasks for sort=queue",
+					);
+				}
 				const tasks = wantsFull
 					? scopedTasks
 					: scopedTasks.map((t) => ({
@@ -7121,13 +7157,13 @@ export function registerTools(
 		{
 			kind: "filtered",
 			reason:
-				"unresolvedOrgDenial() refuses a bearer whose organisation cannot be resolved before any call; the caller gate itself is decided by its Convex door tasks:reorderQueue on the verified principal (a seat's verifiedActor, forwarded by the wrapped client; a person must administer the organisation): the assignee, a listed queue coordinator or an org admin, in the assignee's own organisation; the tool takes no acting name and relays the door's refusal unchanged (task k176p84j83gac7reyycweacyb58jvtxg)",
+				"unresolvedOrgDenial() refuses a bearer whose organisation cannot be resolved before any call; the caller gate itself is decided by its Convex door tasks:reorderQueue on the verified principal (a seat's verifiedActor, forwarded by the wrapped client): over MCP the callers that succeed are the assignee agent itself and a listed queue coordinator, in the assignee's own organisation; a person bearer carries no verifiedActor over MCP (withVerifiedActor returns the client unchanged when no agent ID resolves), so the door resolves the service-account session and refuses it, and an organisation admin acts from a signed-in session, not through this tool; the tool takes no acting name and relays the door's refusal unchanged (tasks k176p84j83gac7reyycweacyb58jvtxg, k17c5xftwzvtts05ban1dhxazs8jv4h6)",
 		},
 		"reorder_queue",
 		"Set the explicit work queue of one agent: the listed tasks get ranks 1..N in the order given (1 = next), and every other open task of that agent loses its rank. " +
 			"A FULL REPLACEMENT: an empty taskIds clears the whole queue. The order is set without dependencies: a task listed before the task it depends on is still not handed out by next_task until its dependencies are done. " +
 			"Each task must be an open task (todo, in_progress, review or blocked) assigned to that agent, listed once, at most 100 per call; one refused task changes nothing. " +
-			"Who may call: the agent itself, a queue coordinator its organisation lists, or an organisation admin; anyone else is refused. " +
+			"Who may call over MCP: the agent itself (the assignee), or a queue coordinator its organisation lists; anyone else is refused, including a person bearer (a person sets a queue from a signed-in session, not through this tool). " +
 			"Returns { ranked, cleared }: how many tasks now hold a rank and how many others lost theirs. A refusal (QUEUE_TASK_NOT_ASSIGNED, QUEUE_TASK_NOT_OPEN, QUEUE_TASK_DUPLICATE, QUEUE_TOO_LONG, RBAC_DENIED) is an error naming its cause, never a partial write. " +
 			"WHEN: to put an agent's backlog in the order it must be worked, or to clear that order. " +
 			"EXAMPLE: reorder_queue assignedToAgentId='r57bexrjnt2229qzchhj5bs3yh8j5ta1' taskIds=['k178d3ns...', 'k17bbbbb...']. " +
@@ -7167,10 +7203,23 @@ export function registerTools(
 						assignedToAgentId,
 						taskIds: taskIds.map((id: string) => id as any),
 					},
-				)) as { ranked?: number; cleared?: number } | null;
+				)) as unknown;
+				// The door's `returns:` is { ranked: number, cleared: number }: a reply
+				// that is not that is refused, never completed with a default.
+				if (
+					!isPlainObject(result) ||
+					typeof result.ranked !== "number" ||
+					typeof result.cleared !== "number"
+				) {
+					return mcpBackendShapeMismatch(
+						"reorder_queue",
+						"tasks:reorderQueue",
+						"{ ranked: number, cleared: number }",
+					);
+				}
 				const structured: Record<string, unknown> = {
-					ranked: result?.ranked ?? taskIds.length,
-					cleared: result?.cleared ?? 0,
+					ranked: result.ranked,
+					cleared: result.cleared,
 				};
 				return {
 					content: [
@@ -7245,9 +7294,22 @@ export function registerTools(
 						...(assignedToAgentId !== undefined ? { assignedToAgentId } : {}),
 						...doorScopeArgs("tasks:nextForAssignee", undefined),
 					},
-				)) as { found?: boolean; task?: Record<string, unknown> } | null;
+				)) as unknown;
+				// The door answers { found: true, task } or { found: false }; anything
+				// else is a contract break, not an empty queue.
+				if (
+					!isPlainObject(result) ||
+					typeof result.found !== "boolean" ||
+					(result.found === true && !isPlainObject(result.task))
+				) {
+					return mcpBackendShapeMismatch(
+						"next_task",
+						"tasks:nextForAssignee",
+						"{ found: true, task } or { found: false }",
+					);
+				}
 				const structured: Record<string, unknown> =
-					result?.found === true && result.task !== undefined
+					result.found === true
 						? { found: true, task: result.task }
 						: {
 								found: false,
