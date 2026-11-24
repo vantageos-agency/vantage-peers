@@ -42,7 +42,7 @@ async function makeSigner() {
 		true,
 		["sign", "verify"],
 	);
-	const jwk = (await crypto.subtle.exportKey("jwk", kp.publicKey)) as JsonWebKey;
+	const jwk = (await crypto.subtle.exportKey("jwk", kp.publicKey)) as Record<string, unknown>;
 	const sign = async (claims: Record<string, unknown>) => {
 		const h = b64u(JSON.stringify({ alg: "RS256", kid: "k1", typ: "JWT" }));
 		const p = b64u(JSON.stringify(claims));
