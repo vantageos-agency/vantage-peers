@@ -1,4 +1,0 @@
----
-section: Changed
----
-- **`vantage-peers-mcp` 4.2.0 (minor), dated 2026-11-24.** `mcp-server/package.json` 4.1.0 -> 4.2.0; `mcp-server/CHANGELOG.md` and the README release notes carry the customer-facing summary of every `mcp-server/` change since the 4.1.0 release (eb40f3c5). New tools `reorder_queue`, `next_task`, `erase_row` and `erase_fix_pattern`; Client ID Metadata Documents at `/authorize` and `/token`; `structuredContent` on every tool. Behaviour changes called out under "Action required": `create_task` requires a `project`, and the text of `get_owner_tool_usage`, `list_diaries` and `get_profile` is now an object. Self-host: the required backend contract rises 17 -> 29 and the called functions 144 -> 153, so the backend ships first. `docs/self-host/railway-template.md` carries the new version and contract numbers. The release is published separately under the review approval tokens.

@@ -2,15 +2,18 @@
 
 ## [Unreleased]
 
-## [4.2.0] — 2026-11-24
+## [5.0.0] — 2026-11-24
 
-Customer-facing summary of every `mcp-server/` change since 4.1.0. Each entry says which product it concerns (VantagePeers Cloud, the hosted service; VantagePeers Self-host, the separate product) and links the README section that documents it.
+Customer-facing summary of every `mcp-server/` change since 4.1.0. Each entry says which product it concerns (VantagePeers Cloud, the hosted service; VantagePeers Self-host, the separate product) and links the README section that documents it. This is a major release because tool inputs and output shapes changed (see the package's [Versioning](README.md#versioning) rules).
 
-### Action required
+### Breaking
 
-- Self-host: the server requires backend contract version 29 and 153 backend functions (4.1.0: 17 and 144) and refuses to start against an older backend. Deploy the backend of this release first, then upgrade this package. ([Backend compatibility check](README.md#backend-compatibility-check))
-- Cloud and Self-host: `create_task` now requires a `project`. A call without one, or with an empty one, is refused. Add a `project` to every client that creates tasks. ([Tool inputs and outputs](README.md#tool-inputs-and-outputs))
-- Cloud and Self-host: `get_owner_tool_usage`, `list_diaries` and `get_profile` now write their text as the JSON of their `structuredContent`: `{ items, truncated? }` or `{ items, nextCursor, truncated }` instead of a bare array, and `{ found: false, id }` instead of `null` when no profile is visible. A client that parsed the old text must read the new shape. ([Tool inputs and outputs](README.md#tool-inputs-and-outputs))
+- Cloud and Self-host: `create_task` requires a `project`. A call with no `project`, an empty one or a blank one is refused before any task is written, and `update_task` refuses setting `project` to empty. Caller change: pass a project name on every `create_task`. ([Tool inputs and outputs](README.md#tool-inputs-and-outputs))
+- Cloud and Self-host: the text of `get_owner_tool_usage`, `list_diaries` and `get_profile` is now exactly the JSON of their `structuredContent`. `get_owner_tool_usage` answers `{ items, truncated? }` instead of a bare array; `list_diaries` answers `{ items, nextCursor, truncated }` on every page instead of a bare array or a page without those fields, and a cut is `truncated: true` (the `_meta` text envelope is gone); `get_profile` answers `{ found: true, item }`, or `{ found: false, id }` instead of `null` when no profile is visible. Caller change: read the `items` array, or `item` / `found`, from `structuredContent` (or from the parsed text), not the former array or `null`. ([Tool inputs and outputs](README.md#tool-inputs-and-outputs))
+- Cloud and Self-host: `tools/list`, `resources/list` and `resources/templates/list` refuse any `cursor` with JSON-RPC error -32602 (these methods are served whole and never issue one); they used to ignore it and return the full list. Caller change: do not send a cursor on these three methods. ([Tool inputs and outputs](README.md#tool-inputs-and-outputs))
+- Cloud and Self-host: `list_tasks` with `updatedSince` returns the rows newest-updated first (it was newest-created first) and its `nextCursor` resumes at that position. Caller change: a client that depended on creation order must sort the rows itself; a cursor minted by an earlier version still decodes. ([Tool inputs and outputs](README.md#tool-inputs-and-outputs))
+- Cloud: `get_fix_pattern` answers `RBAC_DENIED` instead of "not found" to a caller outside the pattern's creator roster. Caller change: treat a refusal as "not allowed", not "does not exist". ([Tool inputs and outputs](README.md#tool-inputs-and-outputs))
+- Self-host: the server requires backend contract version 29 and 153 backend functions (4.1.0: 17 and 144) and refuses to start against an older backend. Caller change: deploy the backend of this release first, then upgrade this package. ([Backend compatibility check](README.md#backend-compatibility-check))
 
 ### Added
 
