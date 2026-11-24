@@ -24,16 +24,16 @@ it says UNKNOWN and why.
 
 | Fact | Value | Source |
 |---|---|---|
-| Package version | `4.2.0` | `grep '"version"' mcp-server/package.json` -> `"version": "4.2.0"` |
-| npm published version | `4.0.0` (dist-tag `latest`, the only tag) | `npm view vantage-peers-mcp dist-tags` -> `{ latest: '4.0.0' }` (run 2026-11-03) |
-| Tools **registered** by the server | `116` | `node scripts/check-tool-counts.mjs` -> `tools.ts canonical surface = 116`, `registered names 116 vs documented names 116` |
-| Tools **advertised** to MCP clients (`tools/list`) | `90` | `jq '.core\|length' mcp-server/tool-exposure.json` -> `90`; `mcp-server/README.md` line 177: "90 tools are advertised to clients" |
-| Registered, not advertised | `26` | `mcp-server/README.md` heading `### Registered, not advertised (26)`; 116 - 90 = 26 |
+| Package version | `5.0.0` | `grep '"version"' mcp-server/package.json` -> `"version": "5.0.0"` |
+| npm published version | `4.1.0` (dist-tag `latest`, the only tag) | `npm view vantage-peers-mcp dist-tags` -> `{ latest: '4.1.0' }` (run 2026-11-24) |
+| Tools **registered** by the server | `121` | `node scripts/check-tool-counts.mjs` -> `tools.ts canonical surface = 121`, `registered names 121 vs documented names 121` |
+| Tools **advertised** to MCP clients (`tools/list`) | `95` | `jq '.core\|length' mcp-server/tool-exposure.json` -> `95`; `grep -n 'tools are advertised' mcp-server/README.md` -> "95 tools are advertised to clients" |
+| Registered, not advertised | `26` | `mcp-server/README.md` heading `### Registered, not advertised (26)`; 121 - 95 = 26 |
 | Node engine | `26.12.1` | `grep -A1 '"engines"' mcp-server/package.json` -> `"node": "26.12.1"` |
 | Backend contract version required | `29` | `grep REQUIRED_CONTRACT_VERSION mcp-server/src/backendContract.ts` -> `= 29`; `grep BACKEND_CONTRACT_VERSION convex/lib/backendManifest.ts` -> `= 29` |
 | Backend functions the server calls | `153` | count of `"module:function"` entries in `MCP_CALLED_FUNCTIONS` (`mcp-server/src/backendContract.ts:46`) |
 
-A deployer's MCP client sees 90 tools, not 116. The server masks non-`core`
+A deployer's MCP client sees 95 tools, not 121. The server masks non-`core`
 tools out of `tools/list` via a data file (`mcp-server/tool-exposure.json`,
 key `"core"`, still an array of names) — masking, not deletion: the other 26
 tools stay registered but a client can neither list nor call them
@@ -41,11 +41,11 @@ tools stay registered but a client can neither list nor call them
 around line 1870-1925, reads `tool-exposure.json`, overridable by
 `VP_TOOL_EXPOSURE_PATH` for tests).
 
-Not the same as the published release: the numbers 116 / 90 / contract 29 /
+Not the same as the published release: the numbers 121 / 95 / contract 29 /
 153 are the tree on `origin/main`. `mcp-server/README.md` for the 4.0.0
 release text says contract version **10** and **141** functions
 (`grep -n 'contract version\|141' mcp-server/README.md`), and the npm
-package is `4.0.0`. Whether the `4.0.0` tarball on npm carries 116 or an
+package is `4.1.0`. Whether the `4.1.0` tarball on npm carries 121 or an
 earlier count of tools is UNKNOWN (the tarball was not unpacked); a deployer
 following the template's Source (`main`, see B1) gets the tree numbers.
 
@@ -59,16 +59,16 @@ Section B3. The live page may have changed since; re-read before editing.
 ### Categories
 
 Source: the advertised-tool headings in `mcp-server/README.md`
-(`grep -n '^### ' mcp-server/README.md`, lines 179-310). The README groups
-the 90 advertised tools into 13 headings (these replace the 22-heading
+(`grep -n '^### ' mcp-server/README.md`). The README groups
+the 95 advertised tools into 13 headings (these replace the 22-heading
 registered-count list the page carried before):
 
-Memory and search (9), Fix patterns (7), Missions and templates (9),
-Recurring tasks (7), Tasks (16), Messages (8), Briefing notes (5),
+Memory and search (10), Fix patterns (8), Missions and templates (9),
+Recurring tasks (7), Tasks (18), Messages (8), Briefing notes (5),
 Episodes (5), Diary (3), Billing (1), Profiles and peers (4), Knowledge
-bundles (OKF) (2), Other (14). Sum = 90.
+bundles (OKF) (2), Other (15). Sum = 95.
 
-The page should say "13 categories, 90 tools", not repeat a registered
+The page should say "13 categories, 95 tools", not repeat a registered
 count. The 26 masked tools are listed only as names under `### Registered,
 not advertised (26)`.
 
@@ -187,7 +187,7 @@ computes them):
 {
   "status": "ok",
   "service": "vantage-peers-mcp-http",
-  "version": "4.2.0",
+  "version": "5.0.0",
   "commit": "<RAILWAY_GIT_COMMIT_SHA or \"unknown\">",
   "runtime": "bun",
   "bun": "<Bun version or null>",
