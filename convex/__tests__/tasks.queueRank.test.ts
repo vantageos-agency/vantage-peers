@@ -18,7 +18,7 @@ import { describe, expect, test } from "vitest";
 import { testClerkOrgId } from "../../tests/fixtures/testClerkOrgId";
 import { findAgentId } from "../../tests/lib/agentIdOf";
 import { insertTaskRow, seedOrgAgents } from "../../tests/lib/seedFleetAgents";
-import { api } from "../_generated/api";
+import { api, internal } from "../_generated/api";
 import type { Id } from "../_generated/dataModel";
 import schema from "../schema";
 
@@ -566,6 +566,67 @@ describe("D4 — the rank is cleared when the task leaves the queue", () => {
 		});
 		expect(await rankOf(t, q1)).toBeUndefined();
 		expect(await rankOf(t, q2)).toBeUndefined();
+	});
+
+	// Closers that run without a caller (cron / scheduler): each moves a ranked,
+	// open task to "done" and must clear the rank like every other terminal write.
+	async function rankedInMission(t: T) {
+		const { q1 } = await ranked(t);
+		const now = Date.now();
+		const missionId = await t.run((ctx) =>
+			ctx.db.insert("missions", {
+				name: "IRP mission",
+				project: "vantage-memory",
+				status: "execute" as const,
+				priority: "high" as const,
+				pilot: "bob",
+				agents: ["bob"],
+				createdBy: "bob",
+				createdAt: now,
+				updatedAt: now,
+			}),
+		);
+		await t.run((ctx) => ctx.db.patch(q1, { missionId }));
+		expect(await rankOf(t, q1)).toBe(1);
+		return { q1, missionId, now };
+	}
+
+	test("errorMonitor:resolveStaleIrpMission (auto-resolve) clears the rank", async () => {
+		const t = await fixture();
+		const { q1, missionId, now } = await rankedInMission(t);
+		const errorLogId = await t.run((ctx) =>
+			ctx.db.insert("errorLogs", {
+				hash: "hash-queue-rank-auto-resolve",
+				deployment: "vantage-memory",
+				functionName: "tasks.get",
+				errorMessage: "stopped recurring",
+				firstSeen: now - 48 * 60 * 60_000,
+				lastSeen: now - 25 * 60 * 60_000,
+				count: 1,
+				irpMissionId: missionId,
+			}),
+		);
+		const r = await t.mutation(internal.errorMonitor.resolveStaleIrpMission, {
+			errorLogId,
+			missionId,
+		});
+		expect(r.tasksClosedCount).toBe(1);
+		const row = await t.run((ctx) => ctx.db.get(q1));
+		expect(row?.status).toBe("done");
+		expect(row?.queueRank).toBeUndefined();
+	});
+
+	test("issueClosedSweepDb:cascadeCloseMission (issue-closed cascade) clears the rank", async () => {
+		const t = await fixture();
+		const { q1, missionId } = await rankedInMission(t);
+		const r = await t.mutation(internal.issueClosedSweepDb.cascadeCloseMission, {
+			missionId,
+			issueRef: "#1752",
+		});
+		expect(r.tasksCompleted).toBe(1);
+		const row = await t.run((ctx) => ctx.db.get(q1));
+		expect(row?.status).toBe("done");
+		expect(row?.queueRank).toBeUndefined();
 	});
 });
 
