@@ -7290,7 +7290,7 @@ export function registerTools(
 		{
 			kind: "filtered",
 			reason:
-				"tenant applied INSIDE the Convex read: doorScopeArgs() forwards verifiedOrg on every call to tasks:nextForAssignee and unresolvedOrgDenial() refuses a bearer with none; tasks:nextForAssignee receives verifiedOrg (always) and no verifiedActor (the door admits an actor only from the operator organisation), resolves the assignee in that organisation only and serves the caller's visible tasks; a bearer whose organisation cannot be resolved is refused before any read (task k176p84j83gac7reyycweacyb58jvtxg)",
+				"tenant applied INSIDE the Convex read: doorScopeArgs() forwards verifiedOrg on every call to tasks:nextForAssignee for a bearer that resolves an organisation, and unresolvedOrgDenial() refuses a non-master bearer with none; the fleet master, which resolves no organisation, is admitted by its verified agent ID instead: withVerifiedActor forwards verifiedActor (MASTER_ACTOR_CLAIM_DOORS) only for a master scope and only when no verifiedOrg rides the call, so the door judges it as an operator-organisation agent, and a master with no agent ID forwards no claim and is refused by the door (claimless-service-account); a client-organisation seat is never sent an actor; the door resolves the assignee in the claimed organisation only and serves the caller's visible tasks (tasks k176p84j83gac7reyycweacyb58jvtxg, k178q6x954qeh4mxh0b4x6sss98jtarn)",
 		},
 		"next_task",
 		"Get the one task an agent should take next: among its todo tasks you may see, the first in queue order (ranked tasks by rank, then unranked by priority and age) whose dependencies are all done. " +
@@ -7331,8 +7331,10 @@ export function registerTools(
 					);
 				}
 				// The organisation is forwarded on EVERY call (doorScopeArgs, verifiedOrg
-				// always): without it the backend would resolve the caller as the fleet
-				// master. A bearer with no resolvable organisation is refused here.
+				// always for a bearer that resolves one): without it the backend would resolve
+				// the caller as the fleet master. A non-master bearer with no resolvable
+				// organisation is refused here; the master is claimed by its verified agent ID
+				// (withVerifiedActor, MASTER_ACTOR_CLAIM_DOORS), never by a verifiedOrg.
 				const orgDenied = unresolvedOrgDenial("next_task");
 				if (orgDenied) return orgDenied;
 				const result = (await convex.query(

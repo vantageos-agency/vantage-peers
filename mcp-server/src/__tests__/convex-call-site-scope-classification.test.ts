@@ -338,7 +338,7 @@ const SCOPE_CLASSIFICATION: Readonly<Record<string, ScopeClassification>> = {
 		severity: null,
 		basis: "args+gate",
 		reason:
-			"doorScopeArgs verifiedOrg always + unresolvedOrgDenial; no verifiedActor is forwarded (the door admits an actor only as an operator-org agent); the door resolves the assignee inside that organisation only (convex/tasks.ts nextForAssignee)",
+			"doorScopeArgs verifiedOrg always (when the bearer resolves an organisation) + unresolvedOrgDenial; a master scope with a verified agent ID and no verifiedOrg is claimed by verifiedActor (MASTER_ACTOR_CLAIM_DOORS, judged by the door as an operator-org agent), never beside a verifiedOrg; the door resolves the assignee inside the claimed organisation only (convex/tasks.ts nextForAssignee)",
 	},
 	"list_tasks|tasks:list": {
 		class: "safe",

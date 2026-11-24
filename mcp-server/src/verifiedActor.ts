@@ -39,10 +39,7 @@ export const VERIFIED_ACTOR_DOORS: ReadonlySet<string> = new Set([
 	"tasks:checkout",
 	"tasks:deleteTask",
 	"tasks:blockTask",
-	// The queue write door: the caller is judged by its verified agent ID. tasks:nextForAssignee is
-	// deliberately NOT here: it admits a verifiedActor only as an agent of the operator
-	// organisation (requireFleetAgentActor), so a client-organisation seat is served by
-	// verifiedOrg alone (doorScope), never refused for carrying an actor.
+	// The queue write door: the caller is judged by its verified agent ID.
 	"tasks:reorderQueue",
 	"tasks:bulkComplete",
 	// The briefing-note doors (module M10c): the author of a note, and the editor
@@ -131,6 +128,21 @@ export const MASTER_UNNARROWED_DOORS: ReadonlySet<string> = new Set([
 	"fixPatterns:get",
 ]);
 
+/**
+ * Doors that admit a `verifiedActor` ONLY from the operator organisation
+ * (requireFleetAgentActor behind requireClaimedCaller) and take the organisation of
+ * every other caller as `verifiedOrg` (doorScope). The actor is the claim of the
+ * caller that has NO `verifiedOrg`: the fleet master, whose bearer resolves no
+ * organisation, so the door would otherwise refuse it as a claimless service account
+ * (RBAC_DENIED claimless-service-account). It is forwarded for a master scope only,
+ * and only when no `verifiedOrg` rides the call, so a client-organisation seat (served
+ * by verifiedOrg) is never sent an actor the door would refuse, and the two claims
+ * never travel together. Every door here is pinned in test/next-task-claim.test.ts.
+ */
+export const MASTER_ACTOR_CLAIM_DOORS: ReadonlySet<string> = new Set([
+	"tasks:nextForAssignee",
+]);
+
 export type VerifiedActorArg = { agentId: string; orgSlug: string };
 
 /**
@@ -179,8 +191,14 @@ export function withVerifiedActor<T extends MutatingClient>(
 	if (actor === undefined) return convex;
 	const master = isMasterScope(ctx);
 	const forward = (name: string, args: unknown): unknown => {
+		const masterActorClaim = MASTER_ACTOR_CLAIM_DOORS.has(name);
 		if (
-			!VERIFIED_ACTOR_DOORS.has(name) ||
+			(!VERIFIED_ACTOR_DOORS.has(name) && !masterActorClaim) ||
+			(masterActorClaim &&
+				(!master ||
+					typeof args !== "object" ||
+					args === null ||
+					(args as Record<string, unknown>).verifiedOrg !== undefined)) ||
 			(master && MASTER_UNNARROWED_DOORS.has(name)) ||
 			typeof args !== "object" ||
 			args === null
