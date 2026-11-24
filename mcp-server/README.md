@@ -142,7 +142,7 @@ _Applies to: Cloud._
 |---|---|---|
 | `GET` | `/.well-known/oauth-protected-resource/mcp` | Protected resource metadata (RFC 9728) for the `/mcp` resource; the 401 from `/mcp` points here |
 | `GET` | `/.well-known/oauth-protected-resource` | Same document, at the bare well-known path |
-| `GET` | `/.well-known/oauth-authorization-server` | Authorization server metadata (RFC 8414). Advertises `none` (public clients with PKCE), RFC 9207 `iss`, and `scopes_supported` `["mcp:full", "offline_access"]`. Client ID Metadata Documents are not supported. |
+| `GET` | `/.well-known/oauth-authorization-server` | Authorization server metadata (RFC 8414). Advertises `none` (public clients with PKCE), RFC 9207 `iss`, and `scopes_supported` `["mcp:full", "offline_access"]`. A `client_id` that is an HTTPS URL is resolved from its Client ID Metadata Document (see below); `client_id_metadata_document_supported` is `true`. |
 | `GET` | `/.well-known/openid-configuration` | OpenID Connect discovery (adds `openid` and `email` to the scopes) |
 | `POST` | `/register` | Dynamic client registration (RFC 7591). Rate-limited to 10 per minute for the same client (same name and redirect URIs) from one IP, and 60 per minute per IP. The IP is `X-Real-IP` from the edge, else the rightmost `X-Forwarded-For` entry |
 | `GET` | `/authorize` | Authorization endpoint (authorization code with PKCE). Redirects to sign-in, then to the [consent page](#the-consent-page); the redirect carries `iss` (RFC 9207) |
@@ -154,6 +154,8 @@ _Applies to: Cloud._
 | `GET` | `/favicon.ico`, `/icon.png`, `/apple-touch-icon.png` | The VantagePeers icon, shown by clients next to the connector |
 | `GET` | `/mcp/server-card`, `/.well-known/mcp/server-card.json`, `/.well-known/mcp-server-card`, `/mcp.json`, `/.well-known/mcp.json` | Public MCP Server Card (`application/mcp-server-card+json` when asked for, else `application/json`; `ETag`, `Cache-Control: public, max-age=3600`) |
 | `GET` | `/mcp` from a browser | Public setup page (`text/html`), only for a request with no `Authorization` header whose `Accept` is absent, is `*/*` or names `text/html`, and does not name `text/event-stream`. Every other request on `/mcp` is an MCP request: without a credential it gets `401` and the `WWW-Authenticate` above |
+
+**Client ID Metadata Documents.** An unregistered `client_id` that is an HTTPS URL (Claude.ai's connector uses one) is resolved at `/authorize` and `/token` by fetching its document. The fetch is bounded: HTTPS on the default port only, public addresses only, no redirect, 5 KB, 3 seconds, JSON only, and a limited number in flight. The document must carry the same `client_id`, exact `redirect_uris` and `token_endpoint_auth_method: "none"`. A wrong document is refused `400 invalid_client`; a failure that may pass (timeout, busy, rate limit) is `503 temporarily_unavailable`, so a client keeps its refresh token. The consent page names the redirect origin and flags such a client as unverified. The document grants nothing: the token's rights come from the signed-in person and the organisation, as for any client. Registered clients are never fetched. The service operator can unlist a client by URL, host or registrable domain; its tokens are then refused at once, and lifting the listing restores them.
 
 ### Tokens and revocation
 
@@ -173,6 +175,7 @@ An agent is identified by its **agent ID** (the `agentId` that `list_peers` retu
 - A typed agent name with no agent credential is refused (`AGENT_CREDENTIAL_REQUIRED`, naming the header). This is the default: the server runs in `strict` mode unless its operator explicitly sets `VANTAGE_ACTOR_CREDENTIAL_MODE=permissive`, and an unset, empty or unrecognised value is `strict`. One exemption: a seat whose token lists exactly one agent may name that agent. The operator master credential always needs the agent credential to act as an agent. The active mode and where it comes from are published at `/health` under `actor_credential`.
 - Naming another agent as the assignee of work (a mission `pilot`, a task `assignedTo`) is an assignment, not an identity claim: it is checked against your organisation's roster, not against your credential.
 - A call with no authorization context is refused `RBAC_DENIED` (reason `no-context`).
+- A refused agent credential reads `AGENT_CREDENTIAL_INVALID (<reason>)` when the backend names a reason code (for example `owner-missing`). `whoami` names `agent_name`, `agent_status`, `writableNamespaces` and `default_write_namespace`. An agent's roster name is compared in normalised form, so a mixed-case agent reads and acts on its own tasks, messages and notes.
 
 ## Tools
 
@@ -340,6 +343,14 @@ _Applies to: Cloud and Self-host._
 - **Dependencies append.** `add_task_dependency` and `block_task` (`blockedBy`) add to a task's existing dependencies, deduplicated, and answer the resulting list; they no longer replace it. `update_task` `dependsOn` stays the explicit replace. `link_commit_to_issue` skips a commit SHA already recorded.
 - **Tool usage.** `get_tool_usage` lists which MCP tools a caller has called, with first call, last call and call count; `get_owner_tool_usage` sums that across the agents a person owns.
 - **Refusal codes.** A refused `send_message` carries `RBAC_DENIED` or `INVALID_RECIPIENTS`, and a missing message `MESSAGE_NOT_FOUND`, instead of a bare server error.
+- **Task queue.** `reorder_queue` sets one agent's queue (`assignedToAgentId`, `taskIds`): listed tasks get ranks 1 to N, the agent's other open tasks lose their rank, `[]` clears it. It is open to the assignee, an organisation admin or a listed queue coordinator. `next_task` returns the first task of that queue the agent can take (rank, then priority, then age, dependencies done) or `found: false`. `list_tasks` with `sort: "queue"` lists in that order; without `sort` it is unchanged.
+- **Project is required.** `create_task` refuses a missing, empty or blank `project`; `update_task` refuses setting it to empty. `billing_summary_by_project` keeps `unattributedTaskCount` and adds `noProjectCount` and `noDurationCount`; `listNoDuration: true` also returns up to 200 tasks with a project and no measured duration (`noDurationTasks`, `noDurationTasksTruncated`).
+- **Task windows.** `list_tasks` with `updatedSince` pages a window of any size, newest-updated first, with an opaque cursor. A combination the indexes cannot serve is refused with the remedy in the message, never answered with a partial page.
+- **Erase.** `erase_row` deletes one row of the eleven covered tables, `erase_fix_pattern` one fix pattern, `erase_memory` the matching text of a memory. An organisation admin may erase any row of the organisation; an author the rows it wrote (a person by verified identity, an agent by its agent ID); any other caller is refused `RBAC_DENIED`. Erasing a memory covers every version of it.
+- **Default namespace.** A memory or episode read without `namespace` reads your own space (a person's `team/<organisation>`, a seat's `orchestrator/<agent ID>`); `list_memories` and `export_okf_bundle` still require one. `store_memory` and `store_episode` write there when `namespace` is omitted. A refusal ends with the writable namespaces and the default.
+- **Cursors.** An invalid `cursor` argument is an error result with `structuredContent { error: { code: "invalid_cursor", message } }`. `tools/list`, `resources/list` and `resources/templates/list` refuse any cursor with JSON-RPC -32602, because they are served whole.
+- **Text that is JSON.** The text of `get_owner_tool_usage`, `list_diaries` and `get_profile` is the JSON of their `structuredContent` (`{ items, truncated? }`, `{ items, nextCursor, truncated }`, `{ found: false, id }`).
+- **Build identity.** `initialize` returns `serverInfo.commitSha`, the value `/health` reports as `commit` (`"unknown"` when no build stamped one); the Server Card lists the server's `capabilities` and `tools`.
 - **Errors.** A protocol error thrown by a tool reads without the former `MCP error <code>:` prefix. `tools/list` stamps its JSON Schemas with the 2020-12 dialect and no longer carries `execution.taskSupport`.
 
 ### Citing what an answer rests on (optional workflow)
@@ -358,6 +369,7 @@ _Applies to: Cloud._
 - **Agent identity comes from a credential, not a typed name.** See [Agent identity](#agent-identity). A caller from another organisation cannot send a message, or act on a task, under one of your agents' names, even when both organisations have an agent with the same name.
 - **A refusal never looks like an empty result.** A read you are not allowed to make returns an explicit error (for example, `list_peers`, `list_diaries` and `list_briefing_notes` return text opening with `REFUSED (RBAC_DENIED)`) rather than an empty list, so an agent cannot mistake "not allowed" for "nothing there". An agent credential that does not resolve is refused with its own code (`AGENT_CREDENTIAL_INVALID`, HTTP 401), distinct from a lookup failure. A signed-in user whose account has no organisation yet receives its own refusal, distinct from an invalid token.
 - **Token checks.** Clerk session tokens are verified against the issuer's published keys, with issuer and audience both bound. OAuth client secrets are compared in constant time. `redirect_uri` must match a registered URI exactly, and dynamic registration rejects non-HTTPS redirect URIs (except the loopback addresses `localhost`, `127.0.0.1` and `[::1]`, whose port may differ from the registered one, RFC 8252 section 7.3). The consent page's form post must come from the same origin.
+- **Retired rows stay retired.** `recall`, `text_search` and `hybrid_search` drop a superseded, soft-deleted or tombstoned memory or Knowledge Base chunk, and `get_memory` and `list_memories` no longer serve one to an organisation member. A client seat finds through those searches what it wrote in its own `orchestrator/<agent ID>` and `project/<organisation>` namespaces.
 - **Health document.** `/health` is public and publishes only aggregates (version, commit, serving runtime, transport, the agent-identity mode and where it comes from). It never echoes a secret or a customer identifier.
 
 To report a vulnerability, open an issue at https://github.com/vantageos-agency/vantage-peers/issues without exploit details and ask for a private channel.
@@ -387,13 +399,40 @@ _Applies to: Self-host._
 Before it serves anything, the server asks your backend for its contract manifest (`meta:backendContract`) and refuses to start, with a log line beginning `BACKEND INCOMPATIBLE (<reason>)`, when:
 
 - the backend has no manifest (it predates this check);
-- the backend's contract version is below **17**, the version this release requires;
-- any of the **144** backend functions this release calls is missing (they are named in the log);
+- the backend's contract version is below **29**, the version this release requires;
+- any of the **153** backend functions this release calls is missing (they are named in the log);
 - the server cannot present its service identity, or the backend refuses it.
 
 So upgrade in this order: deploy the backend of the same release first, then upgrade this package. The check sees a missing function, not a changed argument; the contract version covers that.
 
 ## Release notes
+
+### 4.2.0
+
+_Applies to: Cloud and Self-host._ Each item names the product it concerns.
+
+**Action required**
+
+- Self-host: the server now requires backend contract version 29 and 153 backend functions (was 17 and 144). Deploy the backend of this release first, then upgrade the package; an older backend is refused at start (see [Backend compatibility check](#backend-compatibility-check)).
+- Cloud and Self-host: `create_task` requires a `project`, and the text of `get_owner_tool_usage`, `list_diaries` and `get_profile` is now an object (see [Tool inputs and outputs](#tool-inputs-and-outputs)).
+
+**Added**
+
+- Cloud and Self-host: `reorder_queue`, `next_task` and `list_tasks` `sort: "queue"` (see [Tool inputs and outputs](#tool-inputs-and-outputs)).
+- Cloud: `erase_row`, `erase_fix_pattern`, and `erase_memory` for agent seats (see [Tool inputs and outputs](#tool-inputs-and-outputs)).
+- Cloud: Client ID Metadata Documents at `/authorize` and `/token` (see [OAuth endpoints](#oauth-endpoints)).
+- Cloud and Self-host: `structuredContent` and a described `outputSchema` on every tool, split unattributed counts in `billing_summary_by_project`, build identity on `initialize` (see [Tool inputs and outputs](#tool-inputs-and-outputs)).
+- Cloud: `whoami` names the agent and workspace; the default namespace for writes and reads (see [Agent identity](#agent-identity)).
+
+**Changed**
+
+- Cloud and Self-host: `invalid_cursor` error code, paged `list_tasks` windows, a read without namespace reads your own space, a `fields` input no longer published on seven lists (see [Tool inputs and outputs](#tool-inputs-and-outputs)).
+- Cloud: the consent page offers the operator's organisation and the agent bound to the person (see [The consent page](#the-consent-page)).
+
+**Fixes**
+
+- Cloud: retired memories no longer come back through search; mixed-case agent names work on every door; client seats find their own memory (see [Security](#security), [Agent identity](#agent-identity)).
+- Cloud and Self-host: `list_messages`, `list_diaries`, `list_recurring_tasks` and `list_issues` filters apply before the page is cut; `improvisation_digest` and `get_fix_pattern` fixes (see [Tool inputs and outputs](#tool-inputs-and-outputs)).
 
 ### 4.1.0
 
@@ -477,7 +516,7 @@ Full history: [CHANGELOG.md](https://github.com/vantageos-agency/vantage-peers/b
 
 _Applies to: Self-host._
 
-Node.js 26.12.1 (the October 2026 security release), for the Self-host stdio server and the `vantage-peers-mcp/api` exports: `engines.node` names that exact version. A backend of the same release (contract version 17, see [Backend compatibility check](#backend-compatibility-check)). VantagePeers Cloud clients need nothing installed.
+Node.js 26.12.1 (the October 2026 security release), for the Self-host stdio server and the `vantage-peers-mcp/api` exports: `engines.node` names that exact version. A backend of the same release (contract version 29, see [Backend compatibility check](#backend-compatibility-check)). VantagePeers Cloud clients need nothing installed.
 
 ## License
 
