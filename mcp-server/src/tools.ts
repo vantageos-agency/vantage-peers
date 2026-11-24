@@ -1345,6 +1345,38 @@ function isPlainObject(v: unknown): v is Record<string, unknown> {
 	return typeof v === "object" && v !== null && !Array.isArray(v);
 }
 
+/**
+ * The rows of a backend list reply, or null when the reply is not an array.
+ * A caller that gets null refuses with `mcpBackendShapeMismatch`: a reply that
+ * breaks the door's `returns:` contract is never read as an empty list.
+ */
+function asRows(reply: unknown): Array<Record<string, unknown>> | null {
+	return Array.isArray(reply) ? (reply as Array<Record<string, unknown>>) : null;
+}
+
+/** Thrown by `requireRows`; every tool's catch turns it into the named refusal. */
+export class BackendShapeMismatchError extends Error {
+	constructor(
+		readonly tool: string,
+		readonly door: string,
+		readonly expected: string,
+	) {
+		super(`BACKEND_SHAPE_MISMATCH: ${tool} ${door} ${expected}`);
+	}
+}
+
+/** The rows of a backend list reply; a non-array reply is a contract break, never []. */
+function requireRows(
+	reply: unknown,
+	tool: string,
+	door: string,
+	expected: string,
+): Array<Record<string, unknown>> {
+	const rows = asRows(reply);
+	if (rows === null) throw new BackendShapeMismatchError(tool, door, expected);
+	return rows;
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // ConvexError parser + structured error propagation
 //
@@ -1458,6 +1490,9 @@ export function mcpConvexError(error: unknown): {
 	content: Array<{ type: "text"; text: string }>;
 	isError: true;
 } {
+	if (error instanceof BackendShapeMismatchError) {
+		return mcpBackendShapeMismatch(error.tool, error.door, error.expected);
+	}
 	// Empirical probe (Day 127, 2026-07-10 — Sigma): Convex redacts
 	// `error.message` to a bare "[Request ID: ...] Server Error" string for
 	// ConvexError throws, but the ACTUAL actionable payload passed to
@@ -2552,7 +2587,14 @@ async function listPeersFromOrgRoster(
 	// and each keeps its own ID. An entry with no ID is keyed by its
 	// normalised name. Bounded.
 	const seen = new Map<string, { name: string; agentId: string | null }>();
-	for (const entry of Array.isArray(roster) ? (roster as unknown[]) : []) {
+	if (!Array.isArray(roster)) {
+		return mcpBackendShapeMismatch(
+			LIST_PEERS,
+			directoryDoors.directory,
+			"an array of agent directory entries",
+		);
+	}
+	for (const entry of roster as unknown[]) {
 		let name: string | null = null;
 		let agentId: string | null = null;
 		if (typeof entry === "string") {
@@ -3788,9 +3830,14 @@ export function registerTools(
 
 				// S3.3 B8 — extract from Convex paginationOpts shape {value, continueCursor, isDone}
 				// Pre-fix bug: handler read memories?.page (undefined) → rawList = [] always.
-				const rawList = Array.isArray((memories as any)?.value)
-					? (memories as any).value
-					: [];
+				if (!Array.isArray((memories as any)?.value)) {
+					return mcpBackendShapeMismatch(
+						"list_episodes",
+						"memories:listMemories",
+						"a page { value: array, continueCursor, isDone }",
+					);
+				}
+				const rawList = (memories as any).value;
 
 				const filteredList = scopeFilterList(
 					oauthCtx ?? DENIED_SCOPE_CTX,
@@ -4216,9 +4263,14 @@ export function registerTools(
 
 				// S3.3 B8 — extract from Convex paginationOpts shape {value, continueCursor, isDone}
 				// Pre-fix bug: handler read memories?.page (undefined) → rawList = [] always.
-				const rawList = Array.isArray((memories as any)?.value)
-					? (memories as any).value
-					: [];
+				if (!Array.isArray((memories as any)?.value)) {
+					return mcpBackendShapeMismatch(
+						"list_memories",
+						"memories:listMemories",
+						"a page { value: array, continueCursor, isDone }",
+					);
+				}
+				const rawList = (memories as any).value;
 
 				// S3.1.A Wave A — row-level scope filter on the post-query list.
 				// Master + legacy bearer pass through unchanged. Non-master clients
@@ -4841,13 +4893,20 @@ export function registerTools(
 						...(tenantId !== undefined ? { tenantId } : {}),
 					},
 				);
-				const waiters = (result ?? {}) as {
-					entries?: unknown[];
+				if (!isPlainObject(result) || !Array.isArray(result.entries)) {
+					return mcpBackendShapeMismatch(
+						"list_blocked_on_me",
+						"tasks:listBlockedOnMe",
+						"{ entries: array, ... }",
+					);
+				}
+				const waiters = result as {
+					entries: unknown[];
 					total?: number;
 					truncated?: boolean;
 					oldestAge?: number;
 				};
-				const entries = waiters.entries ?? [];
+				const entries = waiters.entries;
 				const shown = entries.slice(0, limit ?? 50);
 				// The same object is the text (unchanged) and the structuredContent the
 				// outputSchema validates (task k1793xkjhzh1xm23gmmwjgwfyx8htbv0).
@@ -5147,9 +5206,10 @@ export function registerTools(
 				// remap orchestratorId->createdBy before scopeFilterList, then
 				// strip the synthetic field back out (the output projection below
 				// never reads `createdBy`, so no explicit strip is needed).
+				const profileRows = requireRows(profiles, "list_peers", "profiles:listProfiles", "an array of profiles");
 				const filteredProfiles = scopeFilterList(
 					oauthCtx ?? DENIED_SCOPE_CTX,
-					(Array.isArray(profiles) ? profiles : []).map(
+					profileRows.map(
 						(p: Record<string, unknown>) => ({
 							...p,
 							createdBy: p.orchestratorId as string | undefined,
@@ -5174,7 +5234,7 @@ export function registerTools(
 				// Measured on the RAW page, before the scope filter narrowed it.
 				const requestedLimit = effectiveLimit ?? 20;
 				const { nextCursor, scopeFiltered } = scopedPageContinuation(
-					Array.isArray(profiles) ? profiles : [],
+					profileRows,
 					requestedLimit,
 					filteredProfiles.length,
 					{ reportRemoved: oauthCtx?.clerkOrgSlug !== undefined },
@@ -5292,9 +5352,10 @@ export function registerTools(
 				// sender included. Same remedy as search_messages_by_keyword
 				// (tools.ts ~3399-3423): remap `from`->`createdBy` before
 				// scopeFilterList, then strip the synthetic field back out.
+				const messageRows = requireRows(messages, "list_messages", "messages:listMessages", "an array of messages");
 				const filteredMessages = scopeFilterList(
 					oauthCtx ?? DENIED_SCOPE_CTX,
-					(Array.isArray(messages) ? messages : []).map(
+					messageRows.map(
 						(m: Record<string, unknown>) => ({
 							...m,
 							createdBy: m.from as string | undefined,
@@ -5308,9 +5369,7 @@ export function registerTools(
 				// full page whose rows the roster filter then dropped is still a
 				// page with more behind it.
 				const requestedLimit = effectiveLimit ?? 20;
-				const messagesPage = Array.isArray(messages)
-					? (messages as Array<{ _creationTime?: number }>)
-					: [];
+				const messagesPage = messageRows as Array<{ _creationTime?: number }>;
 				let nextCursor: string | null = null;
 				if (messagesPage.length >= requestedLimit && messagesPage.length > 0) {
 					const last = messagesPage[messagesPage.length - 1];
@@ -5454,12 +5513,10 @@ export function registerTools(
 				// which established the sanctioned remedy: remap the tool's real
 				// ownership field onto `createdBy` BEFORE calling scopeFilterList,
 				// then strip the synthetic field back out of the response.
+				const resultRows = requireRows(results, "search_messages_by_keyword", "messages:searchMessagesByKeyword", "an array of messages");
 				const filteredResults = scopeFilterList(
 					oauthCtx ?? DENIED_SCOPE_CTX,
-					(Array.isArray(results)
-						? (results as Array<Record<string, unknown>>)
-						: []
-					).map((m) => ({ ...m, createdBy: m.from as string | undefined })),
+					resultRows.map((m) => ({ ...m, createdBy: m.from as string | undefined })),
 				).map(({ createdBy: _createdBy, ...rest }) => rest);
 				const capped = capPage(filteredResults, "search_messages_by_keyword", "array");
 				return {
@@ -5873,25 +5930,12 @@ export function registerTools(
 				// assignee must still see their own task in the list.
 				// TENANT GATE, collection surface — applied BEFORE the roster/owner
 				// filter, with the same predicate get_task applies to its one row.
+				const taskRows = requireRows(rawTasks, "list_tasks", "tasks:list", "an array of tasks");
 				const scopedTasks = scopeFilterList(
 					oauthCtx ?? DENIED_SCOPE_CTX,
-					filterRowsToActorTenant(
-						oauthCtx,
-						Array.isArray(rawTasks)
-							? (rawTasks as Array<Record<string, unknown>>)
-							: [],
-					),
+					filterRowsToActorTenant(oauthCtx, taskRows),
 					["assignedTo"],
 				);
-				// sort="queue" is a new door shape: a reply that is not an array is a
-				// contract break, never an empty queue.
-				if (sort === "queue" && !Array.isArray(rawTasks)) {
-					return mcpBackendShapeMismatch(
-						"list_tasks",
-						"tasks:list",
-						"an array of tasks for sort=queue",
-					);
-				}
 				const tasks = wantsFull
 					? scopedTasks
 					: scopedTasks.map((t) => ({
@@ -5915,10 +5959,8 @@ export function registerTools(
 				// narrowing filters above: a full page whose rows the roster filter
 				// then dropped still has more behind it.
 				const requestedLimit = effectiveLimit ?? 20;
-				const tasksArr = Array.isArray(tasks) ? tasks : [];
-				const tasksPage = Array.isArray(rawTasks)
-					? (rawTasks as Array<{ _creationTime?: number; updatedAt?: number }>)
-					: [];
+				const tasksArr = tasks;
+				const tasksPage = taskRows as Array<{ _creationTime?: number; updatedAt?: number }>;
 				let nextCursor: string | null = null;
 				// A queue-ordered page is not in creation order: a createdBefore cursor
 				// would skip rows, so none is minted.
@@ -6215,14 +6257,10 @@ export function registerTools(
 				// createdBy===caller || assignedTo===caller), so a non-creator
 				// assignee must still see their own task in search results.
 				// TENANT GATE, collection surface (same predicate as get_task).
+				const resultRows = requireRows(results, "search_tasks_by_keyword", "tasks:searchTasksByKeyword", "an array of tasks");
 				const filteredFull = scopeFilterList(
 					oauthCtx ?? DENIED_SCOPE_CTX,
-					filterRowsToActorTenant(
-						oauthCtx,
-						Array.isArray(results)
-							? (results as Array<Record<string, unknown>>)
-							: [],
-					),
+					filterRowsToActorTenant(oauthCtx, resultRows),
 					["assignedTo"],
 				);
 				const projected = wantsFull
@@ -7423,12 +7461,8 @@ export function registerTools(
 				// `tenantRows` is the page after the tenant gate: only these rows are
 				// attributable to the caller's own organisation, so only their
 				// removals by the allow-list below are counted as `scopeFiltered`.
-				const tenantRows = filterRowsToActorTenant(
-					oauthCtx,
-					Array.isArray(tasks)
-						? (tasks as Array<Record<string, unknown>>)
-						: [],
-				);
+				const missionTaskRows = requireRows(tasks, "list_tasks_by_mission", "tasks:listByMission", "an array of tasks");
+				const tenantRows = filterRowsToActorTenant(oauthCtx, missionTaskRows);
 				const scopedRows = scopeFilterList(
 					oauthCtx ?? DENIED_SCOPE_CTX,
 					tenantRows,
@@ -7456,7 +7490,7 @@ export function registerTools(
 				// Measured on the RAW page, before the scope filter narrowed it.
 				const requestedLimit = effectiveLimit ?? 20;
 				const { nextCursor, scopeFiltered } = scopedPageContinuation(
-					Array.isArray(tasks) ? tasks : [],
+					missionTaskRows,
 					requestedLimit,
 					filteredTasks.length,
 					{
@@ -7669,7 +7703,8 @@ export function registerTools(
 
 				// S3.3 B8 follow-up — emit nextCursor when page is full.
 				const requestedLimit = effectiveLimit ?? 20;
-				const missionsArr = Array.isArray(missions) ? missions : [];
+				const missionsArr = requireRows(missions, "list_missions", "missions:list", "an array of missions");
+
 				let nextCursor: string | null = null;
 				if (missionsArr.length >= requestedLimit && missionsArr.length > 0) {
 					const last = missionsArr[missionsArr.length - 1] as {
@@ -8598,7 +8633,8 @@ export function registerTools(
 				if (isRefusedEnvelope(notes)) {
 					return mcpRefused("list_briefing_notes", "briefingNotes:list");
 				}
-				const rawNotes = Array.isArray(notes) ? notes : [];
+				const rawNotes = requireRows(notes, "list_briefing_notes", "briefingNotes:list", "an array of notes");
+
 				const scopeFiltered = new Set(
 					scopeFilterList(oauthCtx ?? DENIED_SCOPE_CTX, rawNotes as any[]),
 				);
@@ -8757,7 +8793,8 @@ export function registerTools(
 				// on lite results too, see convex/briefingNotes.ts) instead of
 				// trusting Convex's decision blindly — real defense-in-depth,
 				// same posture Day 141 relied on for tenant isolation here.
-				const rawResults = Array.isArray(results) ? (results as any[]) : [];
+				const rawResults = requireRows(results, "search_briefing_notes_by_keyword", "briefingNotes:searchBriefingNotesByKeyword", "an array of notes") as any[];
+
 				const scopeFiltered = new Set(
 					scopeFilterList(oauthCtx ?? DENIED_SCOPE_CTX, rawResults),
 				);
@@ -8930,16 +8967,17 @@ export function registerTools(
 					fields: "lite",
 					createdBefore,
 				});
+				const recurringRows = requireRows(tasks, "list_recurring_tasks", "recurringTasks:list", "an array of recurring tasks");
 				const filteredTasks = scopeFilterList(
 					oauthCtx ?? DENIED_SCOPE_CTX,
-					Array.isArray(tasks) ? tasks : [],
+					recurringRows,
 				);
 
 				// S3.3 B8 follow-up — emit nextCursor when page is full.
 				// Measured on the RAW page, before the scope filter narrowed it.
 				const requestedLimit = effectiveLimit ?? 20;
 				const { nextCursor, scopeFiltered } = scopedPageContinuation(
-					Array.isArray(tasks) ? tasks : [],
+					recurringRows,
 					requestedLimit,
 					filteredTasks.length,
 					{ reportRemoved: oauthCtx?.clerkOrgSlug !== undefined },
@@ -9743,7 +9781,8 @@ export function registerTools(
 				// 0.5.0's `grantFields` declares both as per-row grants directly —
 				// no createdBy-remap + union-by-_id workaround needed: either
 				// party to the mandate is a named grantee, consulted in one pass.
-				const mandateRows = Array.isArray(mandates) ? mandates : [];
+				const mandateRows = requireRows(mandates, "list_mandates", "mandates:list", "an array of mandates");
+
 				const filteredMandates = scopeFilterList(
 					oauthCtx ?? DENIED_SCOPE_CTX,
 					mandateRows as Array<Record<string, unknown>>,
@@ -10784,9 +10823,10 @@ export function registerTools(
 					});
 				}
 
+				const issueRows = requireRows(results, "list_issues", "issues:listBy*", "an array of issues");
 				const filteredIssues = scopeFilterList(
 					oauthCtx ?? DENIED_SCOPE_CTX,
-					Array.isArray(results) ? results : [],
+					issueRows,
 				);
 
 				// S3.3 B8 follow-up — emit nextCursor when page is full.
@@ -11360,9 +11400,10 @@ export function registerTools(
 					limit: limit ?? 20,
 					fields: fields ?? "lite",
 				});
+				const patternRows = requireRows(results, "search_fix_patterns", "search:searchFixPatterns", "an array of fix patterns");
 				const filteredResults = scopeFilterList(
 					oauthCtx ?? DENIED_SCOPE_CTX,
-					Array.isArray(results) ? results : [],
+					patternRows,
 				);
 
 				const capped = capPage(filteredResults, "search_fix_patterns", "array");
@@ -11468,9 +11509,10 @@ export function registerTools(
 							createdBefore,
 						},
 					);
+					const projectRows = requireRows(results, "list_fix_patterns", "fixPatterns:listByProject", "an array of fix patterns");
 					const filteredResults = scopeFilterList(
 						oauthCtx ?? DENIED_SCOPE_CTX,
-						Array.isArray(results) ? results : [],
+						projectRows,
 					);
 					const payload = buildPayload(filteredResults);
 					const capped = capPage(payload, "list_fix_patterns");
@@ -11485,9 +11527,10 @@ export function registerTools(
 					fields: "lite",
 					createdBefore,
 				});
+				const allRows = requireRows(allResults, "list_fix_patterns", "fixPatterns:listAll", "an array of fix patterns");
 				const filteredAll = scopeFilterList(
 					oauthCtx ?? DENIED_SCOPE_CTX,
-					Array.isArray(allResults) ? allResults : [],
+					allRows,
 				);
 				const payload = buildPayload(filteredAll);
 				const capped = capPage(payload, "list_fix_patterns");
@@ -12102,7 +12145,8 @@ export function registerTools(
 					fields: fields ?? "lite",
 					createdBefore,
 				});
-				const filteredErrors = Array.isArray(errors) ? errors : [];
+				const filteredErrors = requireRows(errors, "list_errors", "errorMonitor:listErrors", "an array of errors");
+
 
 				// S3.3 B8 follow-up — emit nextCursor when page is full.
 				const requestedLimit = effectiveLimit ?? 20;
@@ -12250,7 +12294,14 @@ export function registerTools(
 						...reader.args,
 					},
 				);
-				const capped = capPage(rows ?? [], "get_tool_usage", "array");
+				if (!Array.isArray(rows)) {
+					return mcpBackendShapeMismatch(
+						"get_tool_usage",
+						"toolUsage:getToolUsage",
+						"an array of usage rows",
+					);
+				}
+				const capped = capPage(rows, "get_tool_usage", "array");
 				return {
 					content: [
 						{ type: "text", text: capped.text },
@@ -12316,8 +12367,15 @@ export function registerTools(
 					"toolUsage:usageByOwner" as any,
 					{ ownerUserId, ...reader.args },
 				);
+				if (!Array.isArray(rows)) {
+					return mcpBackendShapeMismatch(
+						"get_owner_tool_usage",
+						"toolUsage:usageByOwner",
+						"an array of usage rows",
+					);
+				}
 				const capped = capPageMirrored(
-					rows ?? [],
+					rows,
 					"get_owner_tool_usage",
 					"array",
 				);

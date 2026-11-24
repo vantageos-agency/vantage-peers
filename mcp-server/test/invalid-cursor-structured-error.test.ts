@@ -54,6 +54,18 @@ const master = (): OAuthContext => ({
 	isMaster: true,
 });
 
+/** Doors whose `returns:` is a bare array (the tool refuses any other reply). */
+const ARRAY_DOORS = new Set([
+	"profiles:listProfiles",
+	"messages:listMessages",
+	"tasks:list",
+	"tasks:listByMission",
+	"missions:list",
+	"briefingNotes:list",
+	"recurringTasks:list",
+	"fixPatterns:listAll",
+]);
+
 function harness(fail = false) {
 	const handlers = new Map<string, Handler>();
 	const calls: Array<{ fn: string; args: unknown }> = [];
@@ -70,6 +82,12 @@ function harness(fail = false) {
 	const answer = async (fn: unknown, args: unknown) => {
 		calls.push({ fn: String(fn), args });
 		if (fail) throw new Error("backend unavailable");
+		// A list door answers an array; the memories door answers a page. A fake
+		// that answers neither is a contract break the tools now refuse.
+		if (String(fn) === "memories:listMemories") {
+			return { value: [], continueCursor: "", isDone: true };
+		}
+		if (ARRAY_DOORS.has(String(fn))) return [];
 		return {
 			items: [],
 			page: [],

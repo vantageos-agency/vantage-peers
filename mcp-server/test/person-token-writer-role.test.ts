@@ -213,6 +213,10 @@ function toolsFor(ctx: OAuthContext) {
 	const convex = {
 		query: async (name: string) => {
 			called.queries.push(name);
+			// The memories door answers a page; a list door answers an array.
+			if (name === "memories:listMemories") {
+				return { value: [], continueCursor: null, isDone: true };
+			}
 			return [];
 		},
 		mutation: async (name: string) => {
