@@ -3,7 +3,7 @@
 // Explicit per-assignee task queue order (task k174gp4nejkdmh4wt6zb7tgy1x8jvhpc).
 // VantagePeers Cloud (multi-tenant) and Self-host share this backend.
 //
-// Additive change: `tasks.queueRank`, `client_org_mapping.queueCoordinatorIds`,
+// Additive change: `tasks.queueRank`, `client_org_mapping.queueCoordinators`,
 // `tasks:reorderQueue`, `tasks:nextForAssignee`, `tasks:list { sort: "queue" }`,
 // `clientOrgMapping:setQueueCoordinators`.
 //
@@ -192,7 +192,7 @@ describe("D1 — queueRank is an optional, additive field", () => {
 		);
 	});
 
-	test("client_org_mapping accepts queueCoordinatorIds", async () => {
+	test("client_org_mapping accepts queueCoordinators", async () => {
 		const t = await fixture();
 		const cal = (await findAgentId(t, "org-b", "cal")) as Id<"agents">;
 		await t.run(async (ctx) => {
@@ -200,9 +200,9 @@ describe("D1 — queueRank is an optional, additive field", () => {
 				.query("client_org_mapping")
 				.withIndex("by_clerk_slug", (q) => q.eq("clerkOrgSlug", "org-b"))
 				.first();
-			await ctx.db.patch(row!._id, { queueCoordinatorIds: [cal] });
+			await ctx.db.patch(row!._id, { queueCoordinators: [{ agentId: cal }] });
 			const back = await ctx.db.get(row!._id);
-			expect(back?.queueCoordinatorIds).toEqual([cal]);
+			expect(back?.queueCoordinators).toEqual([{ agentId: cal }]);
 		});
 	});
 });
@@ -395,7 +395,7 @@ describe("D3 — who may reorder, read live", () => {
 				.query("client_org_mapping")
 				.withIndex("by_clerk_slug", (q) => q.eq("clerkOrgSlug", "org-c"))
 				.first();
-			await ctx.db.patch(row!._id, { queueCoordinatorIds: [zed] });
+			await ctx.db.patch(row!._id, { queueCoordinators: [{ agentId: zed }] });
 		});
 		const refusal = await refusalOf(
 			service(t).mutation(api.tasks.reorderQueue, {
@@ -475,7 +475,27 @@ describe("D3 — who may reorder, read live", () => {
 				.withIndex("by_clerk_slug", (q) => q.eq("clerkOrgSlug", "org-b"))
 				.first(),
 		);
-		expect(row?.queueCoordinatorIds).toBeUndefined();
+		expect(row?.queueCoordinators).toBeUndefined();
+	});
+
+	test("setQueueCoordinators names no organisation: a TYPED unauthorized result, never an absence and never a throw", async () => {
+		const t = await fixture();
+		const cal = (await findAgentId(t, "org-b", "cal")) as Id<"agents">;
+		const answer = await person(t, "org:admin").mutation(api.clientOrgMapping.setQueueCoordinators, {
+			agentIds: [cal],
+		});
+		expect(answer).toEqual({
+			unauthorized: true,
+			reason: "org-required",
+			door: "clientOrgMapping:setQueueCoordinators",
+		});
+		const row = await t.run((ctx) =>
+			ctx.db
+				.query("client_org_mapping")
+				.withIndex("by_clerk_slug", (q) => q.eq("clerkOrgSlug", "org-b"))
+				.first(),
+		);
+		expect(row?.queueCoordinators).toBeUndefined();
 	});
 
 	test("setQueueCoordinators REFUSED: an agent of another organisation cannot be listed", async () => {

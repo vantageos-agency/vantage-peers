@@ -15,7 +15,7 @@
 //        (a) the caller IS the assignee (actor ID === assignee ID), or
 //        (b) the signed-in person is org:admin of the queue's organisation, or
 //        (c) the caller's agent ID is listed in that organisation's
-//            `client_org_mapping.queueCoordinatorIds`.
+//            `client_org_mapping.queueCoordinators`.
 //      Never a hardcoded name; never "the creator of a task".
 //
 // rights-derivation: the coordinator list is read from client_org_mapping on every
@@ -25,11 +25,10 @@
 import { ConvexError } from "convex/values";
 import type { Doc } from "../_generated/dataModel";
 import type { MutationCtx, QueryCtx } from "../_generated/server";
-import { hasFleetRead } from "@vantageos/cloud-identity";
+import { hasFleetRead, sameOrg } from "@vantageos/cloud-identity";
 import { assigneeNotInOrgRefusal, requireAssigneeAgentActive } from "./actingPrincipal";
 import type { OrgScope } from "./auth";
-import { lookupOrgMapping } from "./auth";
-import { memberActorOf, resolveHumanActor } from "./humanActor";
+import { resolveHumanActor } from "./humanActor";
 import { rbacDenied } from "./inboxReader";
 import { requireId } from "./ids";
 
@@ -80,40 +79,63 @@ export type QueueOrg = {
 };
 
 /**
- * The organisation whose queue is being written, from the VERIFIED principal only.
+ * The organisation labels the VERIFIED caller carries for this queue:
  *   - a person: the org of the verified session;
  *   - an agent: the org the transport verified (`verifiedOrg`), the org of its own
- *     verified scope, the org of its verified agent row. Every one of those that is
- *     present must name the same org; none present, or a disagreement, refuses.
- * The org's mapping must be ONE active row, whose permanent ID agrees with the
- * session's when the session carries one.
+ *     verified scope, the org of its verified agent row.
+ * The door resolves each label to its mapping row (one read per label) and hands
+ * the rows to `decideQueueOrg`, which decides on the rows, never on the labels.
  */
-export async function resolveQueueOrg(
-	ctx: Ctx,
+export function queueOrgLabels(
 	scope: QueueCaller,
 	verifiedOrgSlug: string | undefined,
 	isPerson: boolean,
-	door: string,
-): Promise<QueueOrg> {
+): string[] {
 	const named = isPerson
 		? [scope.orgSlug]
 		: [verifiedOrgSlug, scope.orgSlug, scope.callerActorOrg];
-	const present = named.filter((s): s is string => typeof s === "string");
-	const slug = present[0];
-	if (slug === undefined || present.some((s) => s !== slug)) {
+	return named.filter((s): s is string => typeof s === "string");
+}
+
+/**
+ * The organisation whose queue is being written, decided by the mapping ROWS of
+ * the labels the verified caller carries (`rows[i]` is the mapping of `labels[i]`,
+ * null when it has none). Every label that is present must resolve to the SAME row,
+ * and that row must be ONE active mapping whose permanent ID agrees with the
+ * session's when the session carries one. None present, a disagreement, no mapping
+ * or an inactive one refuses.
+ */
+export function decideQueueOrg(
+	scope: QueueCaller,
+	labels: readonly string[],
+	rows: readonly (Doc<"client_org_mapping"> | null)[],
+	door: string,
+): QueueOrg {
+	const mapping = rows[0];
+	if (labels.length === 0 || mapping === undefined) {
 		throw rbacDenied(
 			door,
 			"queue-org-unresolved",
 			"the organisation of this queue could not be derived from the verified caller",
 		);
 	}
-	const mapping = await lookupOrgMapping(ctx, slug);
+	for (const row of rows) {
+		const agreeing = mapping === null ? row === null : row !== null && row._id === mapping._id;
+		if (!agreeing) {
+			throw rbacDenied(
+				door,
+				"queue-org-unresolved",
+				"the organisation of this queue could not be derived from the verified caller",
+			);
+		}
+	}
+	const slug = labels[0];
 	if (
 		mapping === null ||
 		!mapping.isActive ||
 		(scope.orgClerkId !== undefined &&
 			mapping.clerkOrgId !== undefined &&
-			scope.orgClerkId !== mapping.clerkOrgId)
+			!sameOrg({ id: scope.orgClerkId }, { id: mapping.clerkOrgId }))
 	) {
 		throw rbacDenied(
 			door,
@@ -122,6 +144,23 @@ export async function resolveQueueOrg(
 		);
 	}
 	return { slug, mapping };
+}
+
+/**
+ * Writes the new queue: `ranked` tasks get their position, `stale` tasks lose theirs.
+ * The door has validated the WHOLE call before it gets here, so this only writes.
+ */
+export async function applyQueueRanks(
+	ctx: MutationCtx,
+	ranked: readonly { task: Doc<"tasks">; rank: number }[],
+	stale: readonly Doc<"tasks">[],
+): Promise<void> {
+	for (const { task, rank } of ranked) {
+		if (task.queueRank !== rank) await ctx.db.patch(task._id, { queueRank: rank });
+	}
+	for (const row of stale) {
+		await ctx.db.patch(row._id, { queueRank: undefined });
+	}
 }
 
 /**
@@ -141,12 +180,10 @@ export async function requireQueueAuthority(
 	const { scope, org, assigneeId, door } = args;
 	if (args.isPerson) {
 		// A person is admitted through the ONE human gate (verified session, org
-		// member, writer role) as org:admin of the org. The "own queue" branch is
-		// effectively dead: memberActorOf(scope) yields `user:<sub>` while assigneeId
-		// is an agent _id, so the comparison is never true and every person is
-		// admin-only (fail closed). Behaviour is unchanged by this comment.
-		const own = memberActorOf(scope) === assigneeId;
-		await resolveHumanActor(ctx, scope, { door, adminOnly: !own });
+		// member, writer role) and only as org:admin of the org. A queue belongs to an
+		// agent (its ID is an agents row), so a person has no "own queue" to reorder:
+		// every person is admin-only (fail closed).
+		await resolveHumanActor(ctx, scope, { door, adminOnly: true });
 		return;
 	}
 	const callerId = scope.callerActorId;
@@ -159,7 +196,7 @@ export async function requireQueueAuthority(
 	}
 	if (callerId === assigneeId) return; // (a) the assignee; its ID was resolved inside `org`
 	// (c) a listed coordinator, read from the live mapping by the principal's own org.
-	if ((org.mapping.queueCoordinatorIds ?? []).includes(callerId)) {
+	if ((org.mapping.queueCoordinators ?? []).some((entry) => entry.agentId === callerId)) {
 		// The listed ID must still be an ACTIVE agent of this very org.
 		await requireAssigneeAgentActive(ctx, callerId, org.slug, door, org.mapping.clerkOrgId);
 		return;
@@ -186,7 +223,8 @@ export async function assigneeIdFromAgentIdForRead(
 	const id = requireId(ctx, "agents", agentId, field, `${door} takes an agent ID as returned by list_peers \`agentId\`.`);
 	const row = await ctx.db.get(id);
 	if (row === null) return undefined;
-	if (!hasFleetRead(scope) && (scope.orgSlug === null || row.orgSlug !== scope.orgSlug)) {
+	// The agent's organisation is its permanent ID, compared with the caller's own.
+	if (!hasFleetRead(scope) && !sameOrg({ id: row.clerkOrgId }, { id: scope.orgClerkId })) {
 		throw assigneeNotInOrgRefusal(agentId, scope.orgSlug ?? undefined, door);
 	}
 	return row._id;

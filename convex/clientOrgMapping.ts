@@ -1,7 +1,9 @@
 import { ConvexError, v } from "convex/values";
 import type { Doc, Id } from "./_generated/dataModel";
 import { internalMutation, internalQuery } from "./_generated/server";
+import type { MutationCtx } from "./_generated/server";
 import { mutation, query } from "./lib/functions";
+import { rbacDenied } from "./lib/inboxReader";
 import { lookupOrgMapping, requireOrgAdmin, withOrgScope } from "./lib/auth";
 import { requireServiceAccount } from "./lib/eraseRow";
 import { hasFleetStanding, requireFleetDoor } from "./lib/fleetStanding";
@@ -230,7 +232,7 @@ const mappingRowValidator = v.object({
 	addressableFleetCoordinatorIds: v.optional(v.array(v.id("agents"))),
 	fleetWide: v.optional(v.boolean()),
 	serviceAccountAgentId: v.optional(v.id("agents")),
-	queueCoordinatorIds: v.optional(v.array(v.string())),
+	queueCoordinators: v.optional(v.array(v.object({ agentId: v.id("agents") }))),
 	_id: v.id("client_org_mapping"),
 	_creationTime: v.number(),
 });
@@ -628,7 +630,7 @@ export const setClerkOrgId = internalMutation({
 // setQueueCoordinators — who, besides an assignee and the org's admins, may reorder
 // ANY assignee's task queue of this organisation (tasks:reorderQueue, task
 // k174gp4nejkdmh4wt6zb7tgy1x8jvhpc). A whole-list REPLACEMENT of
-// `queueCoordinatorIds`; [] removes every coordinator.
+// `queueCoordinators`; [] removes every coordinator.
 //
 // PUBLIC door, gated on the verified caller: the fleet (package standing, the
 // service account of the operator org) or the org:admin of THAT organisation
@@ -643,23 +645,42 @@ export const setClerkOrgId = internalMutation({
 /** Most coordinators one organisation may list. */
 export const QUEUE_COORDINATORS_MAX = 50;
 
+/** The write step of `setQueueCoordinators`; the door has judged the whole call before it runs. */
+async function writeQueueCoordinators(
+	ctx: MutationCtx,
+	mappingId: Id<"client_org_mapping">,
+	agentIds: readonly Id<"agents">[],
+): Promise<void> {
+	await ctx.db.patch(mappingId, {
+		queueCoordinators: agentIds.map((agentId) => ({ agentId })),
+	});
+}
+
 export const setQueueCoordinators = mutation({
 	args: {
 		clerkOrgSlug: v.optional(v.string()),
 		clerkOrgId: v.optional(v.string()),
 		agentIds: v.array(v.id("agents")),
 	},
-	returns: v.object({
-		clerkOrgSlug: v.string(),
-		previous: v.array(v.string()),
-		current: v.array(v.string()),
-	}),
+	// A caller that names no organisation is answered with a TYPED refusal, never a
+	// throw a pre-org shell cannot render; it carries its own `unauthorized` key so
+	// it is never the bytes of an absence. Every other refusal stays RBAC_DENIED.
+	returns: v.union(
+		v.object({
+			clerkOrgSlug: v.string(),
+			previous: v.array(v.string()),
+			current: v.array(v.string()),
+		}),
+		v.object({
+			unauthorized: v.literal(true),
+			reason: v.literal("org-required"),
+			door: v.string(),
+		}),
+	),
 	handler: async (ctx, args) => {
 		const door = "clientOrgMapping:setQueueCoordinators";
 		if (args.clerkOrgSlug === undefined && args.clerkOrgId === undefined) {
-			throw new ConvexError(
-				"ORG_REQUIRED: name the organisation with clerkOrgSlug or clerkOrgId",
-			);
+			return { unauthorized: true as const, reason: "org-required" as const, door };
 		}
 		// The target row, read by the key the caller named. A miss is answered with
 		// the same refusal as a caller that may not act, so the door is no oracle for
@@ -671,8 +692,10 @@ export const setQueueCoordinators = mutation({
 				: (args.clerkOrgSlug as string),
 		);
 		const denied = () =>
-			new ConvexError(
-				`RBAC_DENIED: only the fleet or an organisation admin of the target organisation may set its queue coordinators — ${JSON.stringify({ reason: "not-org-admin", door })}`,
+			rbacDenied(
+				door,
+				"not-org-admin",
+				"only the fleet or an organisation admin of the target organisation may set its queue coordinators",
 			);
 		if (
 			target === null ||
@@ -699,8 +722,8 @@ export const setQueueCoordinators = mutation({
 			args.agentIds,
 			target.clerkOrgId,
 		);
-		const previous = target.queueCoordinatorIds ?? [];
-		await ctx.db.patch(target._id, { queueCoordinatorIds: current });
+		const previous = (target.queueCoordinators ?? []).map((entry) => entry.agentId as string);
+		await writeQueueCoordinators(ctx, target._id, current);
 		return { clerkOrgSlug: target.clerkOrgSlug, previous, current };
 	},
 });

@@ -89,13 +89,15 @@ import {
 } from "./lib/reviewRouting";
 import { isFleetSystemCaller } from "./lib/systemCaller";
 import {
+	applyQueueRanks,
 	assigneeIdFromAgentIdForRead,
 	compareQueueOrder,
+	decideQueueOrg,
 	OPEN_QUEUE_STATUSES,
 	QUEUE_MAX_TASKS,
+	queueOrgLabels,
 	queueRefusal,
 	requireQueueAuthority,
-	resolveQueueOrg,
 } from "./lib/taskQueue";
 import { fleetOperatorRef, fleetWriteClerkOrgId } from "./lib/operatorOrg";
 import { orgRefOfRow } from "./lib/authOrgMapping";
@@ -2919,23 +2921,38 @@ export const reorderQueue = mutation({
 		// A person is the caller when no agent name is asserted, or the name is a
 		// reserved person name ("user:<subject>").
 		const isPerson = actingName === undefined || isHumanActorName(actingName);
-		const org = await resolveQueueOrg(ctx, callerScope, verifiedOrgSlug, isPerson, door);
+		const orgLabels = queueOrgLabels(callerScope, verifiedOrgSlug, isPerson);
+		const orgRows: (Doc<"client_org_mapping"> | null)[] = [];
+		for (const label of orgLabels) orgRows.push(await lookupOrgMapping(ctx, label));
+		const org = decideQueueOrg(callerScope, orgLabels, orgRows, door);
 
-		// The assignee, resolved INSIDE the queue's own organisation.
-		const assignee =
-			args.assignedToAgentId !== undefined
-				? (
-						await resolveAgentIdArg(ctx, {
-							orgSlug: org.slug,
-							agentId: args.assignedToAgentId,
-							field: "assignedToAgentId",
-							door,
-							...(org.mapping.clerkOrgId !== undefined
-								? { orgClerkId: org.mapping.clerkOrgId }
-								: {}),
-						})
-					)._id
-				: await requireAssigneeId(ctx, org.slug, args.assignedTo as string, door);
+		// The assignee, resolved INSIDE the queue's own organisation, and held as an
+		// agents ROW read by its ID: a typed name only ever selects the ID of a row,
+		// never a queue (a person has no agents row, so no queue to reorder here).
+		let assigneeRow: Doc<"agents"> | null;
+		if (args.assignedToAgentId !== undefined) {
+			assigneeRow = await resolveAgentIdArg(ctx, {
+				orgSlug: org.slug,
+				agentId: args.assignedToAgentId,
+				field: "assignedToAgentId",
+				door,
+				...(org.mapping.clerkOrgId !== undefined
+					? { orgClerkId: org.mapping.clerkOrgId }
+					: {}),
+			});
+		} else {
+			const resolvedId = await requireAssigneeId(ctx, org.slug, args.assignedTo as string, door);
+			const agentRef = ctx.db.normalizeId("agents", resolvedId);
+			assigneeRow = agentRef === null ? null : await ctx.db.get(agentRef);
+		}
+		if (assigneeRow === null) {
+			throw queueRefusal(
+				"QUEUE_ASSIGNEE_NOT_AGENT",
+				null,
+				"the assignee is not an agent of this organisation; only an agent's queue can be reordered",
+			);
+		}
+		const assignee = assigneeRow._id;
 
 		await requireQueueAuthority(ctx, { scope: callerScope, isPerson, org, assigneeId: assignee, door });
 
@@ -2990,22 +3007,19 @@ export const reorderQueue = mutation({
 				);
 			}
 			for (const row of rows) {
-				if (row.queueRank !== undefined && !listed.has(row._id) && row.orgId === org.slug) {
+				if (
+					row.queueRank !== undefined &&
+					!listed.has(row._id) &&
+					sameOrg({ id: row.clerkOrgId }, { id: org.mapping.clerkOrgId })
+				) {
 					stale.push(row);
 				}
 			}
 		}
 
-		let ranked = 0;
-		for (const [index, task] of tasks.entries()) {
-			const rank = index + 1;
-			if (task.queueRank !== rank) await ctx.db.patch(task._id, { queueRank: rank });
-			ranked++;
-		}
-		for (const row of stale) {
-			await ctx.db.patch(row._id, { queueRank: undefined });
-		}
-		return { ranked, cleared: stale.length };
+		const ranked = tasks.map((task, index) => ({ task, rank: index + 1 }));
+		await applyQueueRanks(ctx, ranked, stale);
+		return { ranked: ranked.length, cleared: stale.length };
 	},
 });
 
