@@ -76,6 +76,8 @@ export const cascadeCloseMission = internalMutation({
 					completionOutcome: "succeeded" as const,
 					completedAt: now,
 					updatedAt: now,
+					// Leaving the open set clears the explicit queue position.
+					queueRank: undefined,
 					completionNote: `issue-closed-externally: GH issue ${args.issueRef} was closed outside VP. Auto-closed by issueClosedSweep cron.`,
 					...(closedSegmentsOnCascade !== undefined
 						? { workSegments: closedSegmentsOnCascade }

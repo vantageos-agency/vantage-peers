@@ -140,8 +140,11 @@ export async function requireQueueAuthority(
 ): Promise<void> {
 	const { scope, org, assigneeId, door } = args;
 	if (args.isPerson) {
-		// (a) for a person: its own queue; (b) otherwise org:admin of the org. Both go
-		// through the ONE human gate (verified session, org member, writer role).
+		// A person is admitted through the ONE human gate (verified session, org
+		// member, writer role) as org:admin of the org. The "own queue" branch is
+		// effectively dead: memberActorOf(scope) yields `user:<sub>` while assigneeId
+		// is an agent _id, so the comparison is never true and every person is
+		// admin-only (fail closed). Behaviour is unchanged by this comment.
 		const own = memberActorOf(scope) === assigneeId;
 		await resolveHumanActor(ctx, scope, { door, adminOnly: !own });
 		return;

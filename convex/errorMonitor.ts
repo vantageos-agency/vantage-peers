@@ -483,6 +483,8 @@ export const resolveStaleIrpMission = internalMutation({
 				completionNote: AUTO_RESOLVE_NOTE,
 				completedAt: now,
 				updatedAt: now,
+				// Leaving the open set clears the explicit queue position.
+				queueRank: undefined,
 				...(closedSegmentsOnAutoResolve !== undefined
 					? { workSegments: closedSegmentsOnAutoResolve }
 					: {}),
