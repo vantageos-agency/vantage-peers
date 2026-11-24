@@ -4,19 +4,22 @@ import type { Doc } from "./_generated/dataModel";
 import type { QueryCtx } from "./_generated/server";
 import { ownerMembershipLookups } from "./lib/actingPrincipal";
 import {
-	isMcpBoundMaster,
 	isServiceTransport,
 	ORG_ADMIN_ROLES,
-	type OrgScope,
 	requireResolvedCaller,
+	type VerifiedActor,
+	verifiedActorValidator,
 	withOrgScope,
 } from "./lib/auth";
+import { requireFleetAgentActor } from "./lib/fleetActors";
 import { mutation, query } from "./lib/functions";
 import { rbacDenied } from "./lib/inboxReader";
+import { fleetOperatorRef } from "./lib/operatorOrg";
 import {
 	resolveVerifiedPerson,
 	verifiedPersonValidator,
 } from "./lib/personPrincipal";
+import { requireClaimedCaller } from "./lib/taskDoorClaim";
 import {
 	resolveVerifiedOrgScope,
 	verifiedOrgValidator,
@@ -86,21 +89,6 @@ function unresolved(door: string) {
 	return rbacDenied(door, "unresolved", `"${door}" could not resolve its caller`);
 }
 
-/** R-54: the fleet service account that names no organisation is refused, never served as master. */
-function refuseClaimlessServiceAccount(
-	transport: OrgScope,
-	claimed: boolean,
-	door: string,
-): void {
-	if (isMcpBoundMaster(transport) && !claimed) {
-		throw rbacDenied(
-			door,
-			"claimless-service-account",
-			"the fleet service account acts inside a transport-verified organisation: this call carries no verified claim naming one",
-		);
-	}
-}
-
 export const record = mutation({
 	args: {
 		toolName: v.string(),
@@ -109,6 +97,9 @@ export const record = mutation({
 		caller: v.optional(v.string()),
 		verifiedPerson: v.optional(verifiedPersonValidator),
 		verifiedOrg: v.optional(verifiedOrgValidator),
+		// The same admission as the read doors (CR-3: a row a caller may write is a
+		// row the same caller may read back): an operator-org agent's verified ID.
+		verifiedActor: v.optional(verifiedActorValidator),
 	},
 	returns: v.object({ recorded: v.boolean() }),
 	handler: async (ctx, args) => {
@@ -167,6 +158,11 @@ const readerArgs = {
 	verifiedPerson: v.optional(verifiedPersonValidator),
 	// The organisation the service account reads for (R-54).
 	verifiedOrg: v.optional(verifiedOrgValidator),
+	// The acting agent of a master-scope MCP bearer, verified by the transport and
+	// judged BY ID as an agent of the operator organisation (the task doors' own
+	// admission, `requireClaimedCaller`). With no `verifiedOrg` it reads the
+	// operator organisation's rows; with one it is narrowed to that organisation.
+	verifiedActor: v.optional(verifiedActorValidator),
 };
 
 type Reader = {
@@ -187,6 +183,7 @@ type ClaimArgs = {
 	selfKey?: string;
 	verifiedPerson?: { accessTokenHash: string };
 	verifiedOrg?: { orgSlug: string };
+	verifiedActor?: VerifiedActor;
 };
 
 /**
@@ -195,6 +192,9 @@ type ClaimArgs = {
  * organisation with `null`; a read raises instead.
  *
  *   - the fleet service account that names no organisation is REFUSED (R-54);
+ *   - its `verifiedActor` is admitted only for an ACTIVE agent of the operator
+ *     organisation (`requireClaimedCaller`, as the task doors); with no
+ *     `verifiedOrg` it then reads the operator organisation, never a client's;
  *   - a `verifiedPerson` is the person's own scope, re-read from its token row;
  *   - otherwise `verifiedOrg` narrows the service account to that organisation's
  *     member scope (a Clerk session cannot name one: refused).
@@ -222,11 +222,20 @@ async function resolveReader(
 		requireResolvedCaller(transport, door, { alsoRefusePreOrg: true });
 	}
 	const personal = args.verifiedPerson !== undefined;
-	refuseClaimlessServiceAccount(
-		transport,
-		args.verifiedOrg !== undefined || personal,
-		door,
-	);
+	// A person bearer is its own claim; any other caller must carry a verified
+	// organisation or a verified operator-org actor, or the service account is refused.
+	if (personal) {
+		if (args.verifiedActor !== undefined) {
+			await requireFleetAgentActor(ctx, transport, args.verifiedActor, door);
+		}
+	} else {
+		await requireClaimedCaller(
+			ctx,
+			transport,
+			{ verifiedActor: args.verifiedActor, verifiedOrg: args.verifiedOrg },
+			door,
+		);
+	}
 	const claimed =
 		args.verifiedOrg === undefined
 			? undefined
@@ -247,6 +256,14 @@ async function resolveReader(
 			`"${door}" refuses a claim naming another organisation than the caller's`,
 		);
 	}
+	// A verified operator-org actor with no `verifiedOrg` acts in the operator
+	// organisation, read LIVE from its mapping row (never typed, never an argument):
+	// the same organisation `requireFleetAgentActor` just judged the agent against.
+	const operator =
+		!personal && claimed === undefined && args.verifiedActor !== undefined
+			? await fleetOperatorRef(ctx.db)
+			: undefined;
+	const actingOrgId = operator === undefined ? scope.orgClerkId : operator.id;
 	// The call is the service transport with no person proof: the key it forwards
 	// (`caller` / `selfKey`) is believed, for that organisation only.
 	const trusted = isServiceTransport(transport) && !personal;
@@ -259,7 +276,7 @@ async function resolveReader(
 		const agent = agentId === null ? null : await ctx.db.get(agentId);
 		if (
 			agent === null ||
-			!sameOrg({ id: agent.clerkOrgId }, { id: scope.orgClerkId })
+			!sameOrg({ id: agent.clerkOrgId }, { id: actingOrgId })
 		) {
 			throw rbacDenied(
 				door,
@@ -268,9 +285,9 @@ async function resolveReader(
 			);
 		}
 	}
-	const orgId = scope.orgClerkId;
-	const orgSlug = scope.orgSlug;
-	if (orgId === undefined || orgId === "" || orgSlug === null) {
+	const orgId = actingOrgId;
+	const orgSlug = operator === undefined ? scope.orgSlug : (operator.label ?? null);
+	if (orgId === undefined || orgId === null || orgId === "" || orgSlug === null) {
 		if (soft) return null;
 		throw rbacDenied(
 			door,
