@@ -77,6 +77,13 @@ const CASES: Array<[string, Record<string, unknown>, unknown]> = [
 	["get_tool_usage", {}, []],
 	["get_owner_tool_usage", { ownerUserId: "u" }, []],
 	["list_blocked_on_me", {}, { entries: [], total: 0 }],
+	["list_diaries", {}, []],
+	["list_diaries", {}, { partial: true, items: [], nextCreatedBefore: 1 }],
+	["list_bus", {}, []],
+	["list_bus", {}, { items: [], nextCursor: null }],
+	["list_repo_mappings", {}, []],
+	["list_repo_mappings", {}, { items: [], nextCursor: null }],
+	["get_github_owner_bindings", {}, { items: [], nextCursor: null }],
 	["list_episodes", {}, PAGE_EMPTY],
 	["list_memories", {}, PAGE_EMPTY],
 ];
@@ -88,6 +95,7 @@ describe("a broken list reply is refused, never read as an empty list", () => {
 			["null", null],
 			["a shapeless object", { oops: 1 }],
 			["a string", "oops"],
+			["an envelope whose items is not an array", { items: "oops", nextCursor: null }],
 		] as const) {
 			it(`${label}: ${what} -> BACKEND_SHAPE_MISMATCH`, async () => {
 				const r = await call(tool, args, bad);
@@ -102,6 +110,14 @@ describe("a broken list reply is refused, never read as an empty list", () => {
 			expect(r.text).not.toContain("BACKEND_SHAPE_MISMATCH");
 		});
 	}
+});
+
+describe("get_github_owner_bindings takes the envelope only", () => {
+	it("a bare array is refused (its door returns { items, nextCursor })", async () => {
+		const r = await call("get_github_owner_bindings", {}, []);
+		expect(r.isError).toBe(true);
+		expect(r.text).toContain("BACKEND_SHAPE_MISMATCH");
+	});
 });
 
 describe("census: no Convex list reply is defaulted to an empty array", () => {
