@@ -272,6 +272,24 @@ describe("list_tasks sort", () => {
 		expect(r.text).toContain("BACKEND_SHAPE_MISMATCH");
 	});
 
+	for (const [what, bad] of [
+		["null", null],
+		["a shapeless object", { oops: 1 }],
+	] as const) {
+		it(`no sort, ${what} reply is refused BACKEND_SHAPE_MISMATCH, not read as an empty list`, async () => {
+			const r = await run(SEAT, "list_tasks", { assignedTo: "clio" }, { result: bad });
+			expect(r.refused).toBe(true);
+			expect(r.text).toContain("BACKEND_SHAPE_MISMATCH");
+			expect(r.text).toContain("tasks:list");
+		});
+	}
+
+	it("no sort, a well-formed empty array is still an empty list", async () => {
+		const r = await run(SEAT, "list_tasks", { assignedTo: "clio" }, { result: [] });
+		expect(r.refused, r.text).toBe(false);
+		expect(r.text).not.toContain("BACKEND_SHAPE_MISMATCH");
+	});
+
 	it("the args schema accepts only sort=queue", () => {
 		expect(listTasksArgsSchema.safeParse({ sort: "queue" }).success).toBe(true);
 		expect(listTasksArgsSchema.safeParse({}).success).toBe(true);
