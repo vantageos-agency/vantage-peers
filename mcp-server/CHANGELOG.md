@@ -2,6 +2,16 @@
 
 ## [Unreleased]
 
+## [5.0.1] — 2026-11-24
+
+A patch release. Tool inputs are unchanged, and so are the outputs for a backend that answers its contract. Each entry names the product it concerns.
+
+### Fixed
+
+- Cloud and Self-host: `reorder_queue` now names only the callers MCP admits: the assignee agent and a queue coordinator its organisation lists. A person bearer is refused; a person sets a queue from a signed-in session. The 5.0.0 description also named an organisation admin, which MCP never admitted. ([Tool inputs and outputs](README.md#tool-inputs-and-outputs))
+- Cloud and Self-host: a backend reply that breaks its contract (null, a shapeless object, or an envelope without its array) now fails with `BACKEND_SHAPE_MISMATCH`, naming the tool and the backend door, and the outcome is reported as unknown. Before, it was read as an empty list or a default. This covers `reorder_queue` and `next_task`, `list_tasks` (every sort), and 23 other list and read tools: `list_peers`, `list_messages`, `search_messages_by_keyword`, `search_tasks_by_keyword`, `list_tasks_by_mission`, `list_missions`, `list_briefing_notes`, `search_briefing_notes_by_keyword`, `list_recurring_tasks`, `list_mandates`, `list_issues`, `search_fix_patterns`, `list_fix_patterns`, `list_errors`, `get_tool_usage`, `get_owner_tool_usage`, `list_blocked_on_me`, `list_episodes`, `list_memories`, `list_diaries`, `list_bus`, `list_repo_mappings` and `get_github_owner_bindings`. A well-formed empty reply still returns an empty list, and a backend refusal is still reported as a refusal. `check_messages` keeps its documented tolerance of an older backend. ([Tool inputs and outputs](README.md#tool-inputs-and-outputs))
+- Self-host: no backend change. The required backend contract stays 29 with 153 called functions, so a 5.0.0 backend serves 5.0.1 as is. ([Backend compatibility check](README.md#backend-compatibility-check))
+
 ## [5.0.0] — 2026-11-24
 
 Customer-facing summary of every `mcp-server/` change since 4.1.0. Each entry says which product it concerns (VantagePeers Cloud, the hosted service; VantagePeers Self-host, the separate product) and links the README section that documents it. This is a major release because tool inputs and output shapes changed (see the package's [Versioning](README.md#versioning) rules).
