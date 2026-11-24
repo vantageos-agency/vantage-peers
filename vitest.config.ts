@@ -25,7 +25,19 @@ export default defineConfig({
 		// spurious reds. They are NOT part of this backend monorepo's suite
 		// (Laurent Day 155: "exclure resources/ de la config vitest"). Extraction
 		// of the vendored dashboard to its own repo remains the real fix.
-		exclude: [...configDefaults.exclude, "resources/**"],
+		//
+		// .claude/worktrees/ holds throwaway full checkouts made by agents (git
+		// ignored, 9 on this host when measured). An unscoped `vitest run` from
+		// the root otherwise runs EVERY test file of EVERY stale checkout as well,
+		// multiplying the CPU-bound instrument suites (publicRegistrations
+		// ResolveCallerInstrument is ~5 CPU-s per measurement) by the number of
+		// worktrees and starving the real suite; it also reports their stale
+		// reds as this tree's (task k1745b7rdfs6v7xxe9v4ph70nn8jtx19).
+		exclude: [
+			...configDefaults.exclude,
+			"resources/**",
+			".claude/worktrees/**",
+		],
 		env: {
 			VP_TEST_MODE: "1",
 			// server.ts (stdio) refuses to serve against a backend that fails the
