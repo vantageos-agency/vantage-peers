@@ -3,7 +3,7 @@
 // Explicit per-assignee task queue order (task k174gp4nejkdmh4wt6zb7tgy1x8jvhpc).
 // VantagePeers Cloud (multi-tenant) and Self-host share this backend.
 //
-// Additive change: `tasks.queueRank`, `client_org_mapping.queueCoordinators`,
+// Additive change: `tasks.queueRank`, `queue_coordinators`,
 // `tasks:reorderQueue`, `tasks:nextForAssignee`, `tasks:list { sort: "queue" }`,
 // `clientOrgMapping:setQueueCoordinators`.
 //
@@ -103,6 +103,17 @@ async function asAgent(t: T, slug: string, name: string) {
 	};
 }
 
+// The same agent for `tasks:reorderQueue`, which takes only the transport's verified claim:
+// the organisation is the one stamped on the agent's own row, never an argument.
+async function asActor(t: T, slug: string, name: string) {
+	const agentId = (await findAgentId(t, slug, name)) as Id<"agents">;
+	return { verifiedActor: { agentId, orgSlug: slug } };
+}
+
+async function agentIdOf(t: T, slug: string, name: string): Promise<Id<"agents">> {
+	return (await findAgentId(t, slug, name)) as Id<"agents">;
+}
+
 async function seedTask(
 	t: T,
 	o: {
@@ -192,17 +203,18 @@ describe("D1 — queueRank is an optional, additive field", () => {
 		);
 	});
 
-	test("client_org_mapping accepts queueCoordinators", async () => {
+	test("queue_coordinators holds one row per (organisation ID, agent ID)", async () => {
 		const t = await fixture();
 		const cal = (await findAgentId(t, "org-b", "cal")) as Id<"agents">;
 		await t.run(async (ctx) => {
-			const row = await ctx.db
-				.query("client_org_mapping")
-				.withIndex("by_clerk_slug", (q) => q.eq("clerkOrgSlug", "org-b"))
-				.first();
-			await ctx.db.patch(row!._id, { queueCoordinators: [{ agentId: cal }] });
-			const back = await ctx.db.get(row!._id);
-			expect(back?.queueCoordinators).toEqual([{ agentId: cal }]);
+			const id = await ctx.db.insert("queue_coordinators", {
+				clerkOrgId: testClerkOrgId("org-b"),
+				agentId: cal,
+				createdAt: Date.now(),
+			});
+			const back = await ctx.db.get(id);
+			expect(back?.agentId).toBe(cal);
+			expect(back?.clerkOrgId).toBe(testClerkOrgId("org-b"));
 		});
 	});
 });
@@ -217,9 +229,9 @@ describe("D2 — tasks:reorderQueue is a full replacement", () => {
 			await ctx.db.patch(q4, { queueRank: 9 });
 			await ctx.db.patch(wip, { queueRank: 4 });
 		});
-		const bob = await asAgent(t, "org-b", "bob");
+		const bob = await asActor(t, "org-b", "bob");
 		await service(t).mutation(api.tasks.reorderQueue, {
-			assignedTo: "bob",
+			assignedToAgentId: await agentIdOf(t, "org-b", "bob"),
 			taskIds: [q3, q1, q2],
 			...bob,
 		});
@@ -237,7 +249,7 @@ describe("D2 — tasks:reorderQueue is a full replacement", () => {
 		await service(t).mutation(api.tasks.reorderQueue, {
 			assignedToAgentId: bobId,
 			taskIds: [q1],
-			...(await asAgent(t, "org-b", "bob")),
+			...(await asActor(t, "org-b", "bob")),
 		});
 		expect(await rankOf(t, q1)).toBe(1);
 	});
@@ -245,12 +257,12 @@ describe("D2 — tasks:reorderQueue is a full replacement", () => {
 	test("a second call replaces the first; an empty list clears the whole queue", async () => {
 		const t = await fixture();
 		const { q1, q2 } = await queue(t);
-		const bob = await asAgent(t, "org-b", "bob");
-		await service(t).mutation(api.tasks.reorderQueue, { assignedTo: "bob", taskIds: [q1, q2], ...bob });
-		await service(t).mutation(api.tasks.reorderQueue, { assignedTo: "bob", taskIds: [q2], ...bob });
+		const bob = await asActor(t, "org-b", "bob");
+		await service(t).mutation(api.tasks.reorderQueue, { assignedToAgentId: await agentIdOf(t, "org-b", "bob"), taskIds: [q1, q2], ...bob });
+		await service(t).mutation(api.tasks.reorderQueue, { assignedToAgentId: await agentIdOf(t, "org-b", "bob"), taskIds: [q2], ...bob });
 		expect(await rankOf(t, q2)).toBe(1);
 		expect(await rankOf(t, q1)).toBeUndefined();
-		await service(t).mutation(api.tasks.reorderQueue, { assignedTo: "bob", taskIds: [], ...bob });
+		await service(t).mutation(api.tasks.reorderQueue, { assignedToAgentId: await agentIdOf(t, "org-b", "bob"), taskIds: [], ...bob });
 		expect(await rankOf(t, q2)).toBeUndefined();
 	});
 
@@ -260,9 +272,9 @@ describe("D2 — tasks:reorderQueue is a full replacement", () => {
 		const theirs = await seedTask(t, { title: "bea's", assignedTo: "bea" });
 		const refusal = await refusalOf(
 			service(t).mutation(api.tasks.reorderQueue, {
-				assignedTo: "bob",
+				assignedToAgentId: await agentIdOf(t, "org-b", "bob"),
 				taskIds: [q1, theirs],
-				...(await asAgent(t, "org-b", "bob")),
+				...(await asActor(t, "org-b", "bob")),
 			}),
 		);
 		expect(refusal).toContain("QUEUE_TASK_NOT_ASSIGNED");
@@ -275,9 +287,9 @@ describe("D2 — tasks:reorderQueue is a full replacement", () => {
 		const { q1, done } = await queue(t);
 		const refusal = await refusalOf(
 			service(t).mutation(api.tasks.reorderQueue, {
-				assignedTo: "bob",
+				assignedToAgentId: await agentIdOf(t, "org-b", "bob"),
 				taskIds: [q1, done],
-				...(await asAgent(t, "org-b", "bob")),
+				...(await asActor(t, "org-b", "bob")),
 			}),
 		);
 		expect(refusal).toContain("QUEUE_TASK_NOT_OPEN");
@@ -289,9 +301,9 @@ describe("D2 — tasks:reorderQueue is a full replacement", () => {
 		const { q1 } = await queue(t);
 		const refusal = await refusalOf(
 			service(t).mutation(api.tasks.reorderQueue, {
-				assignedTo: "bob",
+				assignedToAgentId: await agentIdOf(t, "org-b", "bob"),
 				taskIds: [q1, q1],
-				...(await asAgent(t, "org-b", "bob")),
+				...(await asActor(t, "org-b", "bob")),
 			}),
 		);
 		expect(refusal).toContain("QUEUE_TASK_DUPLICATE");
@@ -303,9 +315,9 @@ describe("D2 — tasks:reorderQueue is a full replacement", () => {
 		const { q1 } = await queue(t);
 		const refusal = await refusalOf(
 			service(t).mutation(api.tasks.reorderQueue, {
-				assignedTo: "bob",
+				assignedToAgentId: await agentIdOf(t, "org-b", "bob"),
 				taskIds: Array.from({ length: 101 }, () => q1),
-				...(await asAgent(t, "org-b", "bob")),
+				...(await asActor(t, "org-b", "bob")),
 			}),
 		);
 		expect(refusal).toContain("QUEUE_TOO_LONG");
@@ -317,9 +329,9 @@ describe("D2 — tasks:reorderQueue is a full replacement", () => {
 		const foreign = await seedTask(t, { title: "zed's", assignedTo: "zed", createdBy: "zed", org: "org-c" });
 		const refusal = await refusalOf(
 			service(t).mutation(api.tasks.reorderQueue, {
-				assignedTo: "bob",
+				assignedToAgentId: await agentIdOf(t, "org-b", "bob"),
 				taskIds: [q1, foreign],
-				...(await asAgent(t, "org-b", "bob")),
+				...(await asActor(t, "org-b", "bob")),
 			}),
 		);
 		expect(refusal).toContain("RBAC_DENIED");
@@ -335,9 +347,9 @@ describe("D3 — who may reorder, read live", () => {
 		const t = await fixture();
 		const { q1 } = await queue(t);
 		await service(t).mutation(api.tasks.reorderQueue, {
-			assignedTo: "bob",
+			assignedToAgentId: await agentIdOf(t, "org-b", "bob"),
 			taskIds: [q1],
-			...(await asAgent(t, "org-b", "bob")),
+			...(await asActor(t, "org-b", "bob")),
 		});
 		expect(await rankOf(t, q1)).toBe(1);
 	});
@@ -346,7 +358,7 @@ describe("D3 — who may reorder, read live", () => {
 		const t = await fixture();
 		const { q1 } = await queue(t);
 		await person(t, "org:admin").mutation(api.tasks.reorderQueue, {
-			assignedTo: "bob",
+			assignedToAgentId: await agentIdOf(t, "org-b", "bob"),
 			taskIds: [q1],
 		});
 		expect(await rankOf(t, q1)).toBe(1);
@@ -356,7 +368,7 @@ describe("D3 — who may reorder, read live", () => {
 		const t = await fixture();
 		const { q1 } = await queue(t);
 		const refusal = await refusalOf(
-			person(t, "org:editor").mutation(api.tasks.reorderQueue, { assignedTo: "bob", taskIds: [q1] }),
+			person(t, "org:editor").mutation(api.tasks.reorderQueue, { assignedToAgentId: await agentIdOf(t, "org-b", "bob"), taskIds: [q1] }),
 		);
 		expect(refusal).toContain("RBAC_DENIED");
 		expect(await rankOf(t, q1)).toBeUndefined();
@@ -367,9 +379,9 @@ describe("D3 — who may reorder, read live", () => {
 		const { q1 } = await queue(t); // createdBy "bea"
 		const refusal = await refusalOf(
 			service(t).mutation(api.tasks.reorderQueue, {
-				assignedTo: "bob",
+				assignedToAgentId: await agentIdOf(t, "org-b", "bob"),
 				taskIds: [q1],
-				...(await asAgent(t, "org-b", "bea")),
+				...(await asActor(t, "org-b", "bea")),
 			}),
 		);
 		expect(refusal).toContain("RBAC_DENIED");
@@ -380,7 +392,7 @@ describe("D3 — who may reorder, read live", () => {
 		const t = await fixture();
 		const { q1 } = await queue(t);
 		const refusal = await refusalOf(
-			person(t, "org:admin", "org-c").mutation(api.tasks.reorderQueue, { assignedTo: "bob", taskIds: [q1] }),
+			person(t, "org:admin", "org-c").mutation(api.tasks.reorderQueue, { assignedToAgentId: await agentIdOf(t, "org-b", "bob"), taskIds: [q1] }),
 		);
 		expect(refusal).toContain("RBAC_DENIED");
 		expect(await rankOf(t, q1)).toBeUndefined();
@@ -391,17 +403,17 @@ describe("D3 — who may reorder, read live", () => {
 		const { q1 } = await queue(t);
 		const zed = (await findAgentId(t, "org-c", "zed")) as Id<"agents">;
 		await t.run(async (ctx) => {
-			const row = await ctx.db
-				.query("client_org_mapping")
-				.withIndex("by_clerk_slug", (q) => q.eq("clerkOrgSlug", "org-c"))
-				.first();
-			await ctx.db.patch(row!._id, { queueCoordinators: [{ agentId: zed }] });
+			await ctx.db.insert("queue_coordinators", {
+				clerkOrgId: testClerkOrgId("org-c"),
+				agentId: zed,
+				createdAt: Date.now(),
+			});
 		});
 		const refusal = await refusalOf(
 			service(t).mutation(api.tasks.reorderQueue, {
-				assignedTo: "bob",
+				assignedToAgentId: await agentIdOf(t, "org-b", "bob"),
 				taskIds: [q1],
-				...(await asAgent(t, "org-c", "zed")),
+				...(await asActor(t, "org-c", "zed")),
 			}),
 		);
 		expect(refusal).toContain("RBAC_DENIED");
@@ -412,7 +424,7 @@ describe("D3 — who may reorder, read live", () => {
 		const t = await fixture();
 		const { q1 } = await queue(t);
 		await expect(
-			t.mutation(api.tasks.reorderQueue, { assignedTo: "bob", taskIds: [q1] }),
+			t.mutation(api.tasks.reorderQueue, { assignedToAgentId: await agentIdOf(t, "org-b", "bob"), taskIds: [q1] }),
 		).rejects.toThrow(/AUTH_REQUIRED|RBAC_DENIED/);
 		expect(await rankOf(t, q1)).toBeUndefined();
 	});
@@ -423,7 +435,7 @@ describe("D3 — who may reorder, read live", () => {
 		await expect(
 			t
 				.withIdentity({ subject: "drifter" } as Identity)
-				.mutation(api.tasks.reorderQueue, { assignedTo: "bob", taskIds: [q1] }),
+				.mutation(api.tasks.reorderQueue, { assignedToAgentId: await agentIdOf(t, "org-b", "bob"), taskIds: [q1] }),
 		).rejects.toThrow(/RBAC_DENIED|AUTH_REQUIRED/);
 	});
 
@@ -431,29 +443,29 @@ describe("D3 — who may reorder, read live", () => {
 		const t = await fixture();
 		const { q1, q2 } = await queue(t);
 		const cal = (await findAgentId(t, "org-b", "cal")) as Id<"agents">;
-		const asCal = await asAgent(t, "org-b", "cal");
+		const asCal = await asActor(t, "org-b", "cal");
 		// Not listed yet: refused.
 		expect(
 			await refusalOf(
-				service(t).mutation(api.tasks.reorderQueue, { assignedTo: "bob", taskIds: [q1], ...asCal }),
+				service(t).mutation(api.tasks.reorderQueue, { assignedToAgentId: await agentIdOf(t, "org-b", "bob"), taskIds: [q1], ...asCal }),
 			),
 		).toContain("RBAC_DENIED");
 
 		await person(t, "org:admin").mutation(api.clientOrgMapping.setQueueCoordinators, {
-			clerkOrgSlug: "org-b",
+			clerkOrgId: testClerkOrgId("org-b"),
 			agentIds: [cal],
 		});
-		await service(t).mutation(api.tasks.reorderQueue, { assignedTo: "bob", taskIds: [q2, q1], ...asCal });
+		await service(t).mutation(api.tasks.reorderQueue, { assignedToAgentId: await agentIdOf(t, "org-b", "bob"), taskIds: [q2, q1], ...asCal });
 		expect(await rankOf(t, q2)).toBe(1);
 		expect(await rankOf(t, q1)).toBe(2);
 
 		await person(t, "org:admin").mutation(api.clientOrgMapping.setQueueCoordinators, {
-			clerkOrgSlug: "org-b",
+			clerkOrgId: testClerkOrgId("org-b"),
 			agentIds: [],
 		});
 		expect(
 			await refusalOf(
-				service(t).mutation(api.tasks.reorderQueue, { assignedTo: "bob", taskIds: [q1], ...asCal }),
+				service(t).mutation(api.tasks.reorderQueue, { assignedToAgentId: await agentIdOf(t, "org-b", "bob"), taskIds: [q1], ...asCal }),
 			),
 		).toContain("RBAC_DENIED");
 	});
@@ -461,7 +473,7 @@ describe("D3 — who may reorder, read live", () => {
 	test("setQueueCoordinators REFUSED: non-admin member, another org's admin, unauthenticated", async () => {
 		const t = await fixture();
 		const cal = (await findAgentId(t, "org-b", "cal")) as Id<"agents">;
-		const args = { clerkOrgSlug: "org-b", agentIds: [cal] };
+		const args = { clerkOrgId: testClerkOrgId("org-b"), agentIds: [cal] };
 		expect(
 			await refusalOf(person(t, "org:editor").mutation(api.clientOrgMapping.setQueueCoordinators, args)),
 		).toContain("RBAC_DENIED");
@@ -469,13 +481,7 @@ describe("D3 — who may reorder, read live", () => {
 			await refusalOf(person(t, "org:admin", "org-c").mutation(api.clientOrgMapping.setQueueCoordinators, args)),
 		).toContain("RBAC_DENIED");
 		await expect(t.mutation(api.clientOrgMapping.setQueueCoordinators, args)).rejects.toThrow(/RBAC_DENIED/);
-		const row = await t.run((ctx) =>
-			ctx.db
-				.query("client_org_mapping")
-				.withIndex("by_clerk_slug", (q) => q.eq("clerkOrgSlug", "org-b"))
-				.first(),
-		);
-		expect(row?.queueCoordinators).toBeUndefined();
+		expect(await t.run((ctx) => ctx.db.query("queue_coordinators").collect())).toEqual([]);
 	});
 
 	test("setQueueCoordinators names no organisation: a TYPED unauthorized result, never an absence and never a throw", async () => {
@@ -489,13 +495,7 @@ describe("D3 — who may reorder, read live", () => {
 			reason: "org-required",
 			door: "clientOrgMapping:setQueueCoordinators",
 		});
-		const row = await t.run((ctx) =>
-			ctx.db
-				.query("client_org_mapping")
-				.withIndex("by_clerk_slug", (q) => q.eq("clerkOrgSlug", "org-b"))
-				.first(),
-		);
-		expect(row?.queueCoordinators).toBeUndefined();
+		expect(await t.run((ctx) => ctx.db.query("queue_coordinators").collect())).toEqual([]);
 	});
 
 	test("setQueueCoordinators REFUSED: an agent of another organisation cannot be listed", async () => {
@@ -503,7 +503,7 @@ describe("D3 — who may reorder, read live", () => {
 		const zed = (await findAgentId(t, "org-c", "zed")) as Id<"agents">;
 		const refusal = await refusalOf(
 			person(t, "org:admin").mutation(api.clientOrgMapping.setQueueCoordinators, {
-				clerkOrgSlug: "org-b",
+				clerkOrgId: testClerkOrgId("org-b"),
 				agentIds: [zed],
 			}),
 		);
@@ -517,9 +517,9 @@ describe("D4 — the rank is cleared when the task leaves the queue", () => {
 	async function ranked(t: T) {
 		const ids = await queue(t);
 		await service(t).mutation(api.tasks.reorderQueue, {
-			assignedTo: "bob",
+			assignedToAgentId: await agentIdOf(t, "org-b", "bob"),
 			taskIds: [ids.q1, ids.q2, ids.q3, ids.q4],
-			...(await asAgent(t, "org-b", "bob")),
+			...(await asActor(t, "org-b", "bob")),
 		});
 		return ids;
 	}
@@ -665,10 +665,10 @@ describe("D5 — nextForAssignee and tasks:list sort=queue", () => {
 		expect(before).toEqual([q4, q3, q2, q1]);
 
 		// Ranking and then clearing the queue must leave the plain list untouched.
-		const bob = await asAgent(t, "org-b", "bob");
-		await service(t).mutation(api.tasks.reorderQueue, { assignedTo: "bob", taskIds: [q1, q3], ...bob });
+		const bob = await asActor(t, "org-b", "bob");
+		await service(t).mutation(api.tasks.reorderQueue, { assignedToAgentId: await agentIdOf(t, "org-b", "bob"), taskIds: [q1, q3], ...bob });
 		expect(await listIds()).toEqual(before); // sort absent: the rank changes nothing
-		await service(t).mutation(api.tasks.reorderQueue, { assignedTo: "bob", taskIds: [], ...bob });
+		await service(t).mutation(api.tasks.reorderQueue, { assignedToAgentId: await agentIdOf(t, "org-b", "bob"), taskIds: [], ...bob });
 		expect(await listIds()).toEqual(before);
 
 		// nextForAssignee on an unranked queue: priority, then age (urgent q2 before urgent q4).
@@ -681,9 +681,9 @@ describe("D5 — nextForAssignee and tasks:list sort=queue", () => {
 		const t = await fixture();
 		const { q1, q2, q3, q4 } = await queue(t);
 		await service(t).mutation(api.tasks.reorderQueue, {
-			assignedTo: "bob",
+			assignedToAgentId: await agentIdOf(t, "org-b", "bob"),
 			taskIds: [q1, q3],
-			...(await asAgent(t, "org-b", "bob")),
+			...(await asActor(t, "org-b", "bob")),
 		});
 		const reader = person(t, "org:editor");
 		const rows = await reader.query(api.tasks.list, {
@@ -701,9 +701,9 @@ describe("D5 — nextForAssignee and tasks:list sort=queue", () => {
 		const t = await fixture();
 		const { q1, q2 } = await queue(t);
 		await service(t).mutation(api.tasks.reorderQueue, {
-			assignedTo: "bob",
+			assignedToAgentId: await agentIdOf(t, "org-b", "bob"),
 			taskIds: [q1],
-			...(await asAgent(t, "org-b", "bob")),
+			...(await asActor(t, "org-b", "bob")),
 		});
 		const reader = person(t, "org:editor");
 		const plain = await reader.query(api.tasks.list, { assignedTo: "bob", status: "todo", fields: "lite", limit: 1 });
@@ -717,9 +717,9 @@ describe("D5 — nextForAssignee and tasks:list sort=queue", () => {
 		});
 		expect(queued.map((r) => r._id)).toEqual([q1]);
 		await service(t).mutation(api.tasks.reorderQueue, {
-			assignedTo: "bob",
+			assignedToAgentId: await agentIdOf(t, "org-b", "bob"),
 			taskIds: [],
-			...(await asAgent(t, "org-b", "bob")),
+			...(await asActor(t, "org-b", "bob")),
 		});
 		const urgent = await reader.query(api.tasks.list, {
 			assignedTo: "bob",
@@ -776,5 +776,155 @@ describe("D5 — nextForAssignee and tasks:list sort=queue", () => {
 		const bobId = (await findAgentId(t, "org-b", "bob")) as Id<"agents">;
 		const next = await person(t, "org:editor").query(api.tasks.nextForAssignee, { assignedToAgentId: bobId });
 		expect(next.task?._id).toBe(q2);
+	});
+});
+
+// ─── D6: an organisation with NO permanent clerkOrgId (Self-host) ───────────
+// Rule of this repo (convex/lib/actingPrincipal.ts `orgHasNoPermanentIdRefusal`,
+// @vantageos/cloud-identity): an organisation is identified by its permanent ID, and an
+// organisation, agent or task stamped with none is judged to belong to nobody. The
+// queue doors do not invent a slug fallback: each REFUSES, naming RBAC_DENIED and the
+// package reason, and writes nothing. These poles pin that for rows with NO clerkOrgId.
+
+async function selfHostFixture() {
+	const t = createT();
+	await t.run(async (ctx) => {
+		await ctx.db.insert("client_org_mapping", {
+			clerkOrgSlug: "self-host",
+			allowedOrchestrators: ["hal", "ivy"],
+			scopes: ["view-own-tasks", "view-own-missions"],
+			displayName: "self-host",
+			isActive: true,
+			createdAt: Date.now(),
+		});
+		await ctx.db.insert("memberWriterRoles", { roles: ["org:admin"], updatedAt: Date.now() });
+	});
+	const ids: Record<string, Id<"agents">> = {};
+	await t.run(async (ctx) => {
+		for (const name of ["hal", "ivy"]) {
+			ids[name] = await ctx.db.insert("agents", {
+				orgSlug: "self-host",
+				name,
+				normalizedName: name,
+				isActive: true,
+				createdAt: 1,
+			});
+		}
+	});
+	const mk = (title: string, rank?: number) =>
+		t.run((ctx) =>
+			insertTaskRow(ctx, {
+				title,
+				assignedTo: "hal",
+				createdBy: "ivy",
+				priority: "medium",
+				status: "todo",
+				createdAt: Date.now(),
+				updatedAt: Date.now(),
+				orgId: "self-host",
+				...(rank !== undefined ? { queueRank: rank } : {}),
+			}),
+		);
+	const fresh = await mk("fresh");
+	const stale = await mk("stale", 5);
+	const row = await t.run((ctx) => ctx.db.get(fresh));
+	expect(row?.clerkOrgId).toBeUndefined();
+	return { t, ids, fresh, stale };
+}
+
+describe("D6 — rows with no clerkOrgId are refused by name, never matched by slug", () => {
+	test("nextForAssignee by assignedToAgentId: refused RBAC_DENIED org-not-active (no organisation ID resolves)", async () => {
+		const { t, ids } = await selfHostFixture();
+		const refusal = await refusalOf(
+			service(t).query(api.tasks.nextForAssignee, {
+				assignedToAgentId: ids.hal,
+				verifiedOrg: { orgSlug: "self-host", orgId: testClerkOrgId("self-host") },
+			}),
+		);
+		expect(refusal).toContain("RBAC_DENIED");
+		expect(refusal).toContain("org-not-active");
+	});
+
+	test("reorderQueue as an agent: refused RBAC_DENIED credential-invalid (the agent row carries no org ID); the stale rank is NOT cleared", async () => {
+		const { t, ids, fresh, stale } = await selfHostFixture();
+		const refusal = await refusalOf(
+			service(t).mutation(api.tasks.reorderQueue, {
+				assignedToAgentId: ids.hal,
+				taskIds: [fresh],
+				verifiedActor: { agentId: ids.hal, orgSlug: "self-host" },
+			}),
+		);
+		expect(refusal).toContain("RBAC_DENIED");
+		expect(refusal).toContain("credential-invalid");
+		expect(await rankOf(t, fresh)).toBeUndefined();
+		expect(await rankOf(t, stale)).toBe(5);
+	});
+
+	test("reorderQueue as a person: refused RBAC_DENIED no-verified-organisation; nothing is written", async () => {
+		const { t, ids, fresh, stale } = await selfHostFixture();
+		const admin = t.withIdentity({
+			subject: "p-admin",
+			organizationId: "self-host",
+			org_role: "org:admin",
+		} as Identity);
+		const refusal = await refusalOf(
+			admin.mutation(api.tasks.reorderQueue, { assignedToAgentId: ids.hal, taskIds: [fresh] }),
+		);
+		expect(refusal).toContain("RBAC_DENIED");
+		expect(refusal).toContain("no-verified-organisation");
+		expect(await rankOf(t, fresh)).toBeUndefined();
+		expect(await rankOf(t, stale)).toBe(5);
+	});
+
+	test("setQueueCoordinators: refused RBAC_DENIED no-verified-organisation; no coordinator row is written", async () => {
+		const { t, ids } = await selfHostFixture();
+		const admin = t.withIdentity({
+			subject: "p-admin",
+			organizationId: "self-host",
+			org_role: "org:admin",
+		} as Identity);
+		const refusal = await refusalOf(
+			admin.mutation(api.clientOrgMapping.setQueueCoordinators, {
+				clerkOrgId: testClerkOrgId("self-host"),
+				agentIds: [ids.ivy],
+			}),
+		);
+		expect(refusal).toContain("RBAC_DENIED");
+		expect(refusal).toContain("no-verified-organisation");
+		expect(await t.run((ctx) => ctx.db.query("queue_coordinators").collect())).toEqual([]);
+	});
+});
+
+describe("D3b — setQueueCoordinators replaces the whole list and says what it replaced", () => {
+	test("previous and current are agent IDs of the organisation; a second call replaces the first", async () => {
+		const t = await fixture();
+		const cal = (await findAgentId(t, "org-b", "cal")) as Id<"agents">;
+		const dan = (await findAgentId(t, "org-b", "dan")) as Id<"agents">;
+		const admin = person(t, "org:admin");
+		const first = await admin.mutation(api.clientOrgMapping.setQueueCoordinators, {
+			clerkOrgId: testClerkOrgId("org-b"),
+			agentIds: [cal],
+		});
+		expect(first).toEqual({ clerkOrgId: testClerkOrgId("org-b"), previous: [], current: [cal] });
+		const second = await admin.mutation(api.clientOrgMapping.setQueueCoordinators, {
+			clerkOrgId: testClerkOrgId("org-b"),
+			agentIds: [dan, dan],
+		});
+		expect(second).toEqual({ clerkOrgId: testClerkOrgId("org-b"), previous: [cal], current: [dan] });
+		const rows = await t.run((ctx) => ctx.db.query("queue_coordinators").collect());
+		expect(rows.map((r) => r.agentId)).toEqual([dan]);
+	});
+
+	test("an admin naming ANOTHER organisation's ID is refused RBAC_DENIED and writes nothing", async () => {
+		const t = await fixture();
+		const zed = (await findAgentId(t, "org-c", "zed")) as Id<"agents">;
+		const refusal = await refusalOf(
+			person(t, "org:admin", "org-c").mutation(api.clientOrgMapping.setQueueCoordinators, {
+				clerkOrgId: testClerkOrgId("org-b"),
+				agentIds: [zed],
+			}),
+		);
+		expect(refusal).toContain("RBAC_DENIED");
+		expect(await t.run((ctx) => ctx.db.query("queue_coordinators").collect())).toEqual([]);
 	});
 });

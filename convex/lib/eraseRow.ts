@@ -149,6 +149,7 @@ export const ERASE_SKIPPED: Record<string, string> = {
 	agent_relations: `${REVOCATION}: a parent-child agent relation is identity structure changed through the agent registry`,
 	agentLinks: `${REVOCATION}: a link between two agents is a grant, revoked through the agent-link door`,
 	agent_credentials: `${REVOCATION}: an agent credential is revoked through the agent credential door`,
+	queue_coordinators: `${REVOCATION}: a queue coordinator row is a grant of authority over the organisation task queues, changed only through its set door (clientOrgMapping:setQueueCoordinators)`,
 	debateSettings: `configuration singleton per organisation (limits), reset through its upsert door; it holds no authored content`,
 };
 

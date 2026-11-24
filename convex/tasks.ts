@@ -1,7 +1,10 @@
 import {
+	type ActingPrincipal,
+	assertOrgAdmin,
 	hasFleetRead,
 	isFleetStamp,
 	isServiceAccountScope,
+	resolveAgentWriterFromIdentity,
 	sameOrg,
 	sameTenantStamp,
 } from "@vantageos/cloud-identity";
@@ -40,6 +43,8 @@ import {
 	requireScope,
 	withOrgScope,
 	requireOrchestratorOnRoster,
+	ORG_ADMIN_ROLES,
+	refusalError,
 } from "./lib/auth";
 import { assigneeNotInOrgRefusal } from "./lib/actingPrincipal";
 import type { OrgScope, VerifiedActor } from "./lib/auth";
@@ -77,7 +82,6 @@ import type { VerifiedOrg } from "./lib/verifiedOrg";
 import {
 	assertMemberIsAdmin,
 	assertTaskVisibleToCaller,
-	isHumanActorName,
 	resolveHumanActor,
 } from "./lib/humanActor";
 import {
@@ -89,16 +93,15 @@ import {
 } from "./lib/reviewRouting";
 import { isFleetSystemCaller } from "./lib/systemCaller";
 import {
-	applyQueueRanks,
 	assigneeIdFromAgentIdForRead,
 	compareQueueOrder,
-	decideQueueOrg,
+	loadTaskOfPrincipalOrg,
 	OPEN_QUEUE_STATUSES,
 	QUEUE_MAX_TASKS,
-	queueOrgLabels,
 	queueRefusal,
-	requireQueueAuthority,
 } from "./lib/taskQueue";
+import { loadAgentOfPrincipalOrg, resolveSessionCaller } from "./lib/agentIdentity";
+import { orgByIdLookups, orgByIdPrincipalLookups, serviceAccountIdentityLookups } from "./lib/orgIdLookups";
 import { fleetOperatorRef, fleetWriteClerkOrgId } from "./lib/operatorOrg";
 import { orgRefOfRow } from "./lib/authOrgMapping";
 import {
@@ -2871,37 +2874,50 @@ const reorderQueueSummaryValidator = v.object({
 
 export const reorderQueue = mutation({
 	args: {
-		// The assignee by NAME or by AGENT ID (list_peers `agentId`), at least one. When
-		// the ID is given it alone decides.
-		assignedTo: v.optional(assigneeValidator),
-		assignedToAgentId: v.optional(v.string()),
+		// The assignee, by its `agents` row ID (list_peers `agentId`): a name never
+		// selects a queue.
+		assignedToAgentId: v.id("agents"),
 		// The new queue, first = next. At most QUEUE_MAX_TASKS, no repeats; [] clears it.
 		taskIds: v.array(v.id("tasks")),
-		callerOrchestrator: v.optional(creatorValidator),
-		// [P-T5] THE LOCK — see requireAgentCredentialMatch.
-		agentCredentialSecret: v.optional(v.string()),
+		// An AGENT caller: the claim the MCP transport verified, judged by the package
+		// against the fleet service account. Absent = a signed-in person.
 		verifiedActor: v.optional(verifiedActorValidator),
-		verifiedPerson: v.optional(verifiedPersonValidator),
-		// The organisation the MCP transport VERIFIED (service account only).
-		verifiedOrg: v.optional(verifiedOrgValidator),
 	},
 	returns: reorderQueueSummaryValidator,
 	handler: async (ctx, args) => {
 		// write-contract: MCP-transport-only — the MCP tool for queue order ships in a
 		// later task; today's callers are imperative SDK / dashboard mutation calls,
-		// never a subscribing pre-org shell. The AUTH_REQUIRED/RBAC_DENIED throw is an
-		// R-16 refusal the caller catches, not an uncaught render error.
+		// never a subscribing pre-org shell. The refusal is an R-16 refusal the caller
+		// catches, not an uncaught render error.
 		const door = "tasks:reorderQueue";
-		const callerScope = await requireAuthenticatedCaller(
-			ctx,
-			args.callerOrchestrator,
-			args.agentCredentialSecret,
-			args.verifiedActor,
-			{ proof: args.verifiedPerson, door },
-			{ proof: args.verifiedOrg, door },
-		);
-		const actingName = actingNameOf(callerScope, args.callerOrchestrator);
-		const verifiedOrgSlug = await resolveDoorVerifiedOrg(ctx, args.verifiedOrg, door);
+		// WHO: an agent is resolved by the package from the transport and the service
+		// account's claim; a person from the verified session, who must administer
+		// the organisation. Neither takes an organisation from an argument.
+		let principal: ActingPrincipal;
+		if (args.verifiedActor === undefined) {
+			const caller = await resolveSessionCaller(ctx, door);
+			const admin = assertOrgAdmin(caller.principal, caller.org.id, {
+				adminRoles: ORG_ADMIN_ROLES,
+				door: door,
+			});
+			if (!admin.ok) throw refusalError(admin.refusal);
+			principal = caller.principal;
+		} else {
+			const agentId = args.verifiedActor.agentId;
+			const stamped = (await ctx.db.get(agentId))?.clerkOrgId;
+			const writer = await resolveAgentWriterFromIdentity(
+				ctx.auth,
+				{ verifiedActor: stamped === undefined ? null : { agentId, orgId: stamped } },
+				{
+					principalLookups: orgByIdPrincipalLookups(ctx),
+					orgLookups: orgByIdLookups(ctx),
+					serviceAccountLookups: serviceAccountIdentityLookups(ctx),
+				},
+				{ door },
+			);
+			if (!writer.ok) throw refusalError(writer.refusal);
+			principal = writer.principal;
+		}
 
 		if (args.taskIds.length > QUEUE_MAX_TASKS) {
 			throw queueRefusal(
@@ -2910,70 +2926,49 @@ export const reorderQueue = mutation({
 				`${args.taskIds.length} tasks given, at most ${QUEUE_MAX_TASKS} per call`,
 			);
 		}
-		if (args.assignedTo === undefined && args.assignedToAgentId === undefined) {
-			throw queueRefusal(
-				"QUEUE_ASSIGNEE_REQUIRED",
-				null,
-				"name the assignee: assignedTo (a name) or assignedToAgentId (an agent ID)",
-			);
-		}
 
-		// A person is the caller when no agent name is asserted, or the name is a
-		// reserved person name ("user:<subject>").
-		const isPerson = actingName === undefined || isHumanActorName(actingName);
-		const orgLabels = queueOrgLabels(callerScope, verifiedOrgSlug, isPerson);
-		const orgRows: (Doc<"client_org_mapping"> | null)[] = [];
-		for (const label of orgLabels) orgRows.push(await lookupOrgMapping(ctx, label));
-		const org = decideQueueOrg(callerScope, orgLabels, orgRows, door);
-
-		// The assignee, resolved INSIDE the queue's own organisation, and held as an
-		// agents ROW read by its ID: a typed name only ever selects the ID of a row,
-		// never a queue (a person has no agents row, so no queue to reorder here).
-		let assigneeRow: Doc<"agents"> | null;
-		if (args.assignedToAgentId !== undefined) {
-			assigneeRow = await resolveAgentIdArg(ctx, {
-				orgSlug: org.slug,
-				agentId: args.assignedToAgentId,
-				field: "assignedToAgentId",
-				door,
-				...(org.mapping.clerkOrgId !== undefined
-					? { orgClerkId: org.mapping.clerkOrgId }
-					: {}),
-			});
-		} else {
-			const resolvedId = await requireAssigneeId(ctx, org.slug, args.assignedTo as string, door);
-			const agentRef = ctx.db.normalizeId("agents", resolvedId);
-			assigneeRow = agentRef === null ? null : await ctx.db.get(agentRef);
-		}
-		if (assigneeRow === null) {
+		// The assignee's row, read by ID; another organisation's agent is REFUSED
+		// by the package's target check, never reported as absent.
+		const assignee = await loadAgentOfPrincipalOrg(ctx, principal, args.assignedToAgentId, door);
+		if (assignee === null) {
 			throw queueRefusal(
 				"QUEUE_ASSIGNEE_NOT_AGENT",
 				null,
 				"the assignee is not an agent of this organisation; only an agent's queue can be reordered",
 			);
 		}
-		const assignee = assigneeRow._id;
 
-		await requireQueueAuthority(ctx, { scope: callerScope, isPerson, org, assigneeId: assignee, door });
+		// WHAT: an agent reorders its own queue, or the queue of anyone when the
+		// organisation lists it (read live from `queue_coordinators` by the principal's own
+		// organisation ID). An administrator person was admitted above.
+		const callerAgentId = args.verifiedActor?.agentId;
+		if (callerAgentId !== undefined && callerAgentId !== assignee._id) {
+			const entry = await ctx.db
+				.query("queue_coordinators")
+				.withIndex("by_agent", (q) => q.eq("agentId", callerAgentId))
+				.take(8);
+			const listed = entry.some((row) => sameOrg({ id: row.clerkOrgId }, { id: principal.orgId }));
+			if (!listed) {
+				throw rbacDenied(
+					door,
+					"queue-not-assignee-or-coordinator",
+					"caller is neither the assignee of this queue, a queue coordinator of its organisation, nor an org admin",
+				);
+			}
+		}
 
-		// Validate EVERY listed task before the first write.
+		// Every listed task is read, judged against the principal's organisation by the
+		// package, checked for assignee and status, and ranked. A refusal anywhere
+		// rolls the whole mutation back: nothing is half-written.
 		const listed = new Set<string>();
-		const tasks: Doc<"tasks">[] = [];
+		let position = 0;
 		for (const taskId of args.taskIds) {
 			if (listed.has(taskId)) {
 				throw queueRefusal("QUEUE_TASK_DUPLICATE", taskId, `task ${taskId} is listed more than once`);
 			}
 			listed.add(taskId);
-			const task = await ctx.db.get(taskId);
-			if (task === null) {
-				throw new ConvexError(
-					`TASK_NOT_FOUND: Task ${taskId} not found — ${JSON.stringify({ taskId })}`,
-				);
-			}
-			// TENANT GATE FIRST: another organisation's task is refused, never ranked.
-			assertTaskVisibleToCaller(task, callerScope, taskId);
-			await assertRowInVerifiedOrg(ctx, task, org.slug, taskId, door);
-			if (task.assignedToId !== assignee) {
+			const task = await loadTaskOfPrincipalOrg(ctx, principal, taskId, door);
+			if (task.assignedToId !== assignee._id) {
 				throw queueRefusal(
 					"QUEUE_TASK_NOT_ASSIGNED",
 					taskId,
@@ -2987,16 +2982,17 @@ export const reorderQueue = mutation({
 					`task ${taskId} is ${task.status}; only an open task (todo, in_progress, review, blocked) is queued`,
 				);
 			}
-			tasks.push(task);
+			position += 1;
+			if (task.queueRank !== position) await ctx.db.patch(task._id, { queueRank: position });
 		}
 
-		// Every OTHER open task of the assignee in this org that still holds a rank.
-		const stale: Doc<"tasks">[] = [];
+		// Every OTHER open task of the assignee in this organisation that still holds a rank.
+		let cleared = 0;
 		for (const status of OPEN_QUEUE_STATUSES) {
 			const rows = await ctx.db
 				.query("tasks")
 				.withIndex("by_assigneeId_status", (q) =>
-					q.eq("assignedToId", assignee).eq("status", status),
+					q.eq("assignedToId", assignee._id).eq("status", status),
 				)
 				.take(TASK_LIST_SCAN_CAP + 1);
 			if (rows.length > TASK_LIST_SCAN_CAP) {
@@ -3007,19 +3003,16 @@ export const reorderQueue = mutation({
 				);
 			}
 			for (const row of rows) {
-				if (
-					row.queueRank !== undefined &&
-					!listed.has(row._id) &&
-					sameOrg({ id: row.clerkOrgId }, { id: org.mapping.clerkOrgId })
-				) {
-					stale.push(row);
-				}
+				if (row.queueRank === undefined || listed.has(row._id)) continue;
+				// A row stamped with no tenant at all is nobody's to touch; any other row is
+				// touched only when its permanent organisation ID is the principal's own.
+				if (row.orgId === undefined && row.clerkOrgId === undefined) continue;
+				if (!sameOrg({ id: row.clerkOrgId }, { id: principal.orgId })) continue;
+				await ctx.db.patch(row._id, { queueRank: undefined });
+				cleared += 1;
 			}
 		}
-
-		const ranked = tasks.map((task, index) => ({ task, rank: index + 1 }));
-		await applyQueueRanks(ctx, ranked, stale);
-		return { ranked: ranked.length, cleared: stale.length };
+		return { ranked: position, cleared };
 	},
 });
 

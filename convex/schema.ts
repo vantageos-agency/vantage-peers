@@ -2107,18 +2107,29 @@ export default defineSchema({
 		// migration migrations/linkServiceAccountAgent, never read from an env var
 		// on a request path.
 		serviceAccountAgentId: v.optional(v.id("agents")),
-		// queueCoordinators: the agents (by `agents._id`) of THIS organisation that
-		// may reorder ANY assignee's task queue, besides the assignee itself and the
-		// org's admins (tasks:reorderQueue). Absent or empty means none. Held as
-		// data, written only by clientOrgMapping:setQueueCoordinators (validated
-		// against the org's own agents), read live at request time, never copied
-		// onto a token. One entry per agent, so the entry names an agent by its ID
-		// and carries no label.
-		queueCoordinators: v.optional(v.array(v.object({ agentId: v.id("agents") }))),
 	})
 		.index("by_clerk_slug", ["clerkOrgSlug"])
 		.index("by_clerk_org_id", ["clerkOrgId"])
 		.index("by_isActive", ["isActive"]),
+
+	// ── queue_coordinators ───────────────────────────────────────────────────
+	// Task k174gp4nejkdmh4wt6zb7tgy1x8jvhpc. The agents of an organisation that may
+	// reorder ANY assignee's task queue of that organisation, besides the assignee
+	// itself and the org's admins (tasks:reorderQueue). One row per (organisation,
+	// agent); the organisation is its PERMANENT id (never a slug) and the agent its
+	// `agents._id` (never a name). Written only by clientOrgMapping:setQueueCoordinators
+	// (an org admin of that organisation, every agent validated as an active agent of it),
+	// read live by reorderQueue at request time and never copied onto a token
+	// (rights-derivation). It is its own table, not a field of client_org_mapping: a
+	// public door may not read the mapping itself (R-53 (a)), and the mapping is the
+	// organisation's identity, not a list a door edits.
+	queue_coordinators: defineTable({
+		clerkOrgId: v.string(),
+		agentId: v.id("agents"),
+		createdAt: v.number(),
+	})
+		.index("by_clerk_org_id", ["clerkOrgId"])
+		.index("by_agent", ["agentId"]),
 
 	// ── orgMembership ────────────────────────────────────────────────────────
 	// Task k17a7t4a9d4hx11sgj2tcdf7kx8et4cp. One administrator holds MULTIPLE
