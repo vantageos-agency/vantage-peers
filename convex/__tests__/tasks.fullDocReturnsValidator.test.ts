@@ -407,4 +407,31 @@ describe("tasks.get / getById — Day 116 full optional-fields sentinel (drift g
 		expect(typeof result?.dueDate).toBe("number");
 		expect((result as any).orgId).toBe("novalayer");
 	});
+
+	// ── T10: queueRank (task k174gp4nejkdmh4wt6zb7tgy1x8jvhpc) ───────────────
+	test("T10: a ranked task passes the strict full-doc validator on get and getById; an unranked one has no queueRank key", async () => {
+		const t = convexTest(schema, modules).withIdentity({ subject: "test-service-account-user-id" });
+		let rankedId: string | undefined;
+		let plainId: string | undefined;
+		await t.run(async (ctx) => {
+			rankedId = await ctx.db.insert("tasks", {
+				title: "Ranked",
+				assignedTo: "sigma",
+				priority: "medium" as const,
+				status: "todo" as const,
+				createdBy: "sigma",
+				createdAt: Date.now(),
+				updatedAt: Date.now(),
+				orgId: "acme-hr",
+				queueRank: 2,
+			});
+			plainId = await seedTaskWithOrgId(ctx);
+		});
+		const viaGet = await t.query(api.tasks.get, { taskId: rankedId as any });
+		const viaGetById = await t.query(api.tasks.getById, { taskId: rankedId as any });
+		const plain = await t.query(api.tasks.get, { taskId: plainId as any });
+		expect((viaGet as any).queueRank).toBe(2);
+		expect((viaGetById as any).queueRank).toBe(2);
+		expect("queueRank" in (plain as object)).toBe(false);
+	});
 });
