@@ -11,8 +11,9 @@ import { describe, expect, it } from "vitest";
  * typecheck. This test IS the gate: it runs inside the full-suite command
  * (`npx vitest run` at the repo root, and `vitest run` in mcp-server/).
  *
- * It runs `tsc --noEmit -p mcp-server` (the same check the retired
- * typecheck workflow ran for this project) and requires exit code 0. On red,
+ * It runs `tsc --noEmit -p mcp-server` and requires exit code 0. The retired
+ * typecheck workflow ran `npx tsc --noEmit` at the root, whose tsconfig includes
+ * convex/ only, so mcp-server/ had no typecheck gate at all before this test. On red,
  * the failure message carries tsc's own diagnostics, which name the files.
  *
  * NOT COVERED: convex/ is NOT typechecked by this gate. The root project
