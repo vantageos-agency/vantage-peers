@@ -120,6 +120,7 @@ const READ_ONLY_TOOLS = new Set([
 	"list_memories",
 	"check_messages",
 	"list_blocked_on_me",
+	"next_task",
 	"list_peers",
 	"list_messages",
 	"list_broadcast_status",

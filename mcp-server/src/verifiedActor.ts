@@ -39,6 +39,11 @@ export const VERIFIED_ACTOR_DOORS: ReadonlySet<string> = new Set([
 	"tasks:checkout",
 	"tasks:deleteTask",
 	"tasks:blockTask",
+	// The queue write door: the caller is judged by its verified agent ID. tasks:nextForAssignee is
+	// deliberately NOT here: it admits a verifiedActor only as an agent of the operator
+	// organisation (requireFleetAgentActor), so a client-organisation seat is served by
+	// verifiedOrg alone (doorScope), never refused for carrying an actor.
+	"tasks:reorderQueue",
 	"tasks:bulkComplete",
 	// The briefing-note doors (module M10c): the author of a note, and the editor
 	// of one, are agents judged by ID. `deleteBriefingNote` has no MCP tool.

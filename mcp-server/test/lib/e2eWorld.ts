@@ -100,6 +100,15 @@ export type Call = {
 	after?: (r: CallResult, s: Seeded) => void;
 };
 
+/** The caller's own agent ID, as whoami returns it (agent_id). */
+async function ownAgentId(read: Read): Promise<string> {
+	const me = (await read("whoami", {})) as { agent_id?: string | null };
+	if (typeof me.agent_id !== "string") {
+		throw new Error("whoami carries no agent_id for the caller");
+	}
+	return me.agent_id;
+}
+
 // In order: a later call may depend on an earlier one's state.
 export const CALLS: Call[] = [
 	{ tool: "whoami", as: "person", args: () => ({}) },
@@ -131,6 +140,21 @@ export const CALLS: Call[] = [
 		args: (s) => ({ bulkRunId: s.bulkRunId }),
 	},
 	{ tool: "list_blocked_on_me", as: "person", args: () => ({}) },
+	{
+		tool: "next_task",
+		as: "person",
+		args: async (_s, read) => ({
+			assignedToAgentId: await ownAgentId(read),
+		}),
+	},
+	{
+		tool: "reorder_queue",
+		as: "person",
+		args: async (s, read) => ({
+			assignedToAgentId: await ownAgentId(read),
+			taskIds: [s.tasks.checkout],
+		}),
+	},
 	{
 		tool: "list_broadcast_status",
 		as: "person",

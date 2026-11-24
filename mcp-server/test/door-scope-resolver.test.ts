@@ -289,6 +289,7 @@ const SITES: [string, string, Legacy, boolean][] = [
 	["delete_task", "tasks:deleteTask", org, false],
 	["block_task", "tasks:blockTask", org, false],
 	["block_task", "tasks:update", org, false],
+	["next_task", "tasks:nextForAssignee", org, false],
 	["add_task_dependency", "tasks:update", org, false],
 	["create_mission", "missions:create", personOnly, true],
 	["update_mission", "missions:update", personOnly, true],

@@ -142,6 +142,10 @@
 			"disposition": "CONSERVER",
 			"reason": "live: served by MCP-public tool(s) get_profile, list_peers, send_message, set_summary …"
 		},
+		"queue_coordinators": {
+			"disposition": "CONSERVER",
+			"reason": "CONSERVER rights definition read live by tasks:reorderQueue; written only by clientOrgMapping:setQueueCoordinators"
+		},
 		"recurringTasks": {
 			"disposition": "CONSERVER",
 			"reason": "live: served by MCP-public tool(s) create_recurring_task, list_recurring_tasks"
