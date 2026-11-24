@@ -132,8 +132,79 @@ describe("reorder_queue", () => {
 	});
 
 	it("is not a read-only tool", async () => {
-		const r = await run(SEAT, "reorder_queue", { assignedToAgentId: CLIO_ID, taskIds: [] });
+		const r = await run(SEAT, "reorder_queue", { assignedToAgentId: CLIO_ID, taskIds: [] }, {
+			result: { ranked: 0, cleared: 0 },
+		});
 		expect(r.refused).toBe(false);
+	});
+});
+
+describe("reorder_queue: callers over MCP and fail-closed reply", () => {
+	async function description(): Promise<string> {
+		const descs = new Map<string, string>();
+		const reg = (...a: unknown[]) => {
+			if (typeof a[1] === "string") descs.set(a[0] as string, a[1] as string);
+			else descs.set(a[0] as string, String((a[1] as { description?: string })?.description ?? ""));
+			return {};
+		};
+		const server = { tool: reg, registerTool: reg } as unknown as McpServer;
+		// biome-ignore lint/suspicious/noExplicitAny: test fake ConvexHttpClient
+		registerTools(server, { query: vi.fn(), mutation: vi.fn(), action: vi.fn() } as any, SEAT);
+		return descs.get("reorder_queue") ?? "";
+	}
+
+	it("the description promises no org admin and names the assignee and the queue coordinator", async () => {
+		const d = await description();
+		expect(d.length).toBeGreaterThan(0);
+		expect(d).not.toMatch(/org(anisation|anization)?\s+admin/i);
+		expect(d).toMatch(/assignee|the agent itself/i);
+		expect(d).toMatch(/queue coordinator/i);
+	});
+
+	it("a reply lacking ranked is refused BACKEND_SHAPE_MISMATCH, never defaulted", async () => {
+		const r = await run(
+			SEAT,
+			"reorder_queue",
+			{ assignedToAgentId: CLIO_ID, taskIds: [T1, T2] },
+			{ result: { cleared: 1 } },
+		);
+		expect(r.refused).toBe(true);
+		expect(r.text).toContain("BACKEND_SHAPE_MISMATCH");
+	});
+
+	it("a null reply and a reply lacking cleared are refused too", async () => {
+		const a = await run(SEAT, "reorder_queue", { assignedToAgentId: CLIO_ID, taskIds: [] }, { result: null });
+		expect(a.refused).toBe(true);
+		expect(a.text).toContain("BACKEND_SHAPE_MISMATCH");
+		const b = await run(SEAT, "reorder_queue", { assignedToAgentId: CLIO_ID, taskIds: [] }, { result: { ranked: 0 } });
+		expect(b.refused).toBe(true);
+		expect(b.text).toContain("BACKEND_SHAPE_MISMATCH");
+	});
+});
+
+describe("next_task: fail-closed reply", () => {
+	it("a null reply is refused BACKEND_SHAPE_MISMATCH", async () => {
+		const r = await run(SEAT, "next_task", { assignedTo: "clio" }, { result: null });
+		expect(r.refused).toBe(true);
+		expect(r.text).toContain("BACKEND_SHAPE_MISMATCH");
+	});
+
+	it("a shapeless object is refused BACKEND_SHAPE_MISMATCH", async () => {
+		const r = await run(SEAT, "next_task", { assignedTo: "clio" }, { result: { hello: 1 } });
+		expect(r.refused).toBe(true);
+		expect(r.text).toContain("BACKEND_SHAPE_MISMATCH");
+	});
+
+	it("found:true without a task is refused", async () => {
+		const r = await run(SEAT, "next_task", { assignedTo: "clio" }, { result: { found: true } });
+		expect(r.refused).toBe(true);
+		expect(r.text).toContain("BACKEND_SHAPE_MISMATCH");
+	});
+
+	it("an explicit {found:false} still returns found:false", async () => {
+		const r = await run(SEAT, "next_task", { assignedTo: "clio" }, { result: { found: false } });
+		expect(r.refused).toBe(false);
+		expect(JSON.parse(r.text).found).toBe(false);
 	});
 });
 
@@ -193,6 +264,12 @@ describe("list_tasks sort", () => {
 		const r = await run(SEAT, "list_tasks", { assignedTo: "clio", sort: "queue" }, { result: [] });
 		const call = r.calls.find((c) => c.name === "tasks:list");
 		expect(call?.args.sort).toBe("queue");
+	});
+
+	it('sort="queue" with a non-array reply is refused BACKEND_SHAPE_MISMATCH, not read as an empty queue', async () => {
+		const r = await run(SEAT, "list_tasks", { assignedTo: "clio", sort: "queue" }, { result: { oops: 1 } });
+		expect(r.refused).toBe(true);
+		expect(r.text).toContain("BACKEND_SHAPE_MISMATCH");
 	});
 
 	it("the args schema accepts only sort=queue", () => {
