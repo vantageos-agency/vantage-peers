@@ -3,7 +3,7 @@
 [![npm version](https://img.shields.io/npm/v/vantage-peers-mcp)](https://www.npmjs.com/package/vantage-peers-mcp)
 [![npm weekly downloads](https://img.shields.io/npm/dw/vantage-peers-mcp)](https://www.npmjs.com/package/vantage-peers-mcp)
 [![License: FSL-1.1-Apache-2.0](https://img.shields.io/badge/license-FSL--1.1--Apache--2.0-blue)](LICENSE)
-[![MCP tools: 109](https://img.shields.io/badge/MCP_tools-109_registered-green)]()
+[![MCP tools: 121](https://img.shields.io/badge/MCP_tools-121_registered-green)]()
 
 **The coordination layer for AI agent teams. Memory. Messaging. Tasks. Knowledge.**
 
@@ -18,7 +18,7 @@ Deploy once. Connect any Claude Code agent. Your team is coordinated.
 
 ## TL;DR
 
-Multi-agent Claude Code crews share one persistent brain via 109 MCP tools: memory + semantic recall, real-time messaging, tasks, missions, and a fix-pattern KB. Backed by Convex (real-time DB + vector search). Deploy on Railway in under 10 minutes, or self-host on free Convex tier.
+Multi-agent Claude Code crews share one persistent brain via 121 MCP tools: memory + semantic recall, real-time messaging, tasks, missions, and a fix-pattern KB. Backed by Convex (real-time DB + vector search). Deploy on Railway in under 10 minutes, or self-host on free Convex tier.
 
 ## Backend: Convex
 
@@ -52,7 +52,7 @@ flowchart LR
     A1[Claude Code agent A] -->|stdio| MCP
     A2[Claude Code agent B] -->|stdio| MCP
     A3[Cursor / Codex / etc.] -->|stdio| MCP
-    MCP[vantage-peers-mcp<br/>109 MCP tools] -->|HTTPS| Convex
+    MCP[vantage-peers-mcp<br/>121 MCP tools] -->|HTTPS| Convex
     Convex[(Convex Cloud<br/>real-time DB<br/>vector search)]
     Convex -.shared by all agents.-> A1
     Convex -.shared by all agents.-> A2
@@ -326,7 +326,7 @@ VantagePeers is a standard MCP server — works with any client supporting the M
 
 See [Supported Tools](https://vantagepeers.com/docs/getting-started/supported-tools) for copy-paste config snippets per tool.
 
-## MCP Tools Reference (107 tools)
+## MCP Tools Reference (121 tools)
 
 <!-- Count derived by running mcp-server/src/tools.ts's registerTools() against
      a fake MCP server that records every registerTool()/tool() call name,
@@ -387,14 +387,16 @@ See [Supported Tools](https://vantagepeers.com/docs/getting-started/supported-to
 </details>
 
 <details>
-<summary><b>Tasks (14 tools)</b></summary>
+<summary><b>Tasks (17 tools)</b></summary>
 
 | Tool | Description |
 |------|-------------|
 | `create_task` | Create a new task with assignee, priority, optional dependencies |
 | `get_task` | Fetch a single task by Convex document ID |
 | `get_bulk_complete_run` | Status of a live `bulk_complete_tasks` run by its `bulkRunId` (running / complete / failed + reason) |
-| `list_tasks` | List tasks filtered by assignee, status, project, priority |
+| `list_tasks` | List tasks filtered by assignee, status, project, priority; `sort: "queue"` lists in the assignee's queue order (one page, no cursor), omitted `sort` keeps today's order |
+| `reorder_queue` | Set one agent's explicit work queue (Cloud and Self-host): listed tasks get ranks 1..N (1 = next), the agent's other open tasks lose their rank, `[]` clears it; all or nothing, at most 100 tasks; open to the assignee and a listed queue coordinator through MCP |
+| `next_task` | Read-only: the one task an agent should take next (rank, then priority, then age, dependencies done), or an explicit `found: false`; `start_task` takes it |
 | `list_tasks_by_mission` | List all tasks belonging to a specific mission |
 | `search_tasks_by_keyword` | BM25 full-text search over task titles |
 | `update_task` | Update any task fields — incl. **cancel** (`status="cancelled"` + `cancelReason`, creator-only) |
@@ -844,7 +846,7 @@ Full documentation at [vantagepeers.com/docs](https://vantagepeers.com/docs):
 - [Getting Started](https://vantagepeers.com/docs/getting-started) — install, deploy, configure
 - [Quickstart](https://vantagepeers.com/docs/getting-started/quickstart) — two agents exchanging messages in 5 minutes
 - [Architecture](https://vantagepeers.com/docs/core-concepts/architecture) — orchestrators, instances, namespaces
-- [Tools Reference](https://vantagepeers.com/docs/tools) — all 109 MCP tools
+- [Tools Reference](https://vantagepeers.com/docs/tools) — all 121 MCP tools
 
 ## Contributing
 
