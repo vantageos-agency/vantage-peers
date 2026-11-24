@@ -18,14 +18,17 @@ import schema from "../../convex/schema.js";
 import { convexTest } from "../../tests/fixtures/convexTestWithServiceAccount";
 import { testClerkOrgId } from "../../tests/fixtures/testClerkOrgId";
 import { agentIdOf, seedAgents } from "../../tests/lib/agentIdOf.js";
-import { insertTaskRow, seedFleetAgents } from "../../tests/lib/seedFleetAgents.js";
+import {
+	insertTaskRow,
+	seedFleetAgents,
+} from "../../tests/lib/seedFleetAgents.js";
 import type { OAuthContext } from "../src/auth.js";
 import { registerTools } from "../src/tools.js";
 
 const modules = Object.fromEntries(
-	Object.entries(import.meta.glob<Record<string, unknown>>("../../convex/**/*.ts")).filter(
-		([path]) => !path.includes("ragSync") && !path.includes("backfill"),
-	),
+	Object.entries(
+		import.meta.glob<Record<string, unknown>>("../../convex/**/*.ts"),
+	).filter(([path]) => !path.includes("ragSync") && !path.includes("backfill")),
 );
 
 type T = ReturnType<typeof convexTest>;
@@ -40,9 +43,12 @@ function resolveRef(dotted: string) {
 }
 function bridge(t: T): ConvexHttpClient {
 	return {
-		query: (name: string, args: unknown) => t.query(resolveRef(name) as never, args as never),
-		mutation: (name: string, args: unknown) => t.mutation(resolveRef(name) as never, args as never),
-		action: (name: string, args: unknown) => t.action(resolveRef(name) as never, args as never),
+		query: (name: string, args: unknown) =>
+			t.query(resolveRef(name) as never, args as never),
+		mutation: (name: string, args: unknown) =>
+			t.mutation(resolveRef(name) as never, args as never),
+		action: (name: string, args: unknown) =>
+			t.action(resolveRef(name) as never, args as never),
 	} as unknown as ConvexHttpClient;
 }
 function nextTaskHandler(t: T, ctx: OAuthContext): Handler {
@@ -75,7 +81,11 @@ let A_ETA: string;
 let B_ETA: string;
 let FLEET_SLUG: string;
 
-async function seedTodo(orgId: string | undefined, assignedToId: string, title: string) {
+async function seedTodo(
+	orgId: string | undefined,
+	assignedToId: string,
+	title: string,
+) {
 	await t.run(async (ctx) => {
 		const now = Date.now();
 		await insertTaskRow(ctx, {
@@ -85,7 +95,9 @@ async function seedTodo(orgId: string | undefined, assignedToId: string, title: 
 			createdBy: "eta",
 			priority: "low",
 			status: "todo",
-			...(orgId !== undefined ? { orgId, clerkOrgId: testClerkOrgId(orgId) } : {}),
+			...(orgId !== undefined
+				? { orgId, clerkOrgId: testClerkOrgId(orgId) }
+				: {}),
 			createdAt: now,
 			updatedAt: now,
 		});
@@ -130,7 +142,9 @@ beforeEach(async () => {
 	});
 	// The fixture's operator mapping grants no scope; a real operator org grants the read scope list_tasks needs.
 	await t.run(async (ctx) => {
-		const m = (await ctx.db.query("client_org_mapping").collect()).find((x) => x.orgKind === "operator");
+		const m = (await ctx.db.query("client_org_mapping").collect()).find(
+			(x) => x.orgKind === "operator",
+		);
 		if (m) await ctx.db.patch(m._id, { scopes: ["view-own-tasks"] });
 	});
 	await seedTodo(undefined, FLEET_ETA, "fleet task");
@@ -153,21 +167,31 @@ const seat = (org: string, agentId: string): OAuthContext => ({
 const titleOf = (r: { content: Array<{ text: string }> }) => {
 	// A refusal is an error text, not JSON: it carries no task.
 	if (!r.content[0].text.startsWith("{")) return null;
-	const body = JSON.parse(r.content[0].text) as { found: boolean; task?: { title: string } };
+	const body = JSON.parse(r.content[0].text) as {
+		found: boolean;
+		task?: { title: string };
+	};
 	return body.found ? body.task?.title : null;
 };
 
 describe("D1: a master-scope caller is served by next_task", () => {
 	it("master bearer with a verified agent ID gets the assignee's next task", async () => {
-		const r = await nextTaskHandler(t, masterAgent())({ assignedToAgentId: FLEET_ETA });
+		const r = await nextTaskHandler(
+			t,
+			masterAgent(),
+		)({ assignedToAgentId: FLEET_ETA });
 		expect(r.isError, r.content[0].text).not.toBe(true);
 		expect(titleOf(r)).toBe("fleet task");
 	});
 	it("master bearer with a verified agent ID gets an explicit found:false for an empty queue", async () => {
 		await t.run(async (ctx) => {
-			for (const row of await ctx.db.query("tasks").collect()) await ctx.db.delete(row._id);
+			for (const row of await ctx.db.query("tasks").collect())
+				await ctx.db.delete(row._id);
 		});
-		const r = await nextTaskHandler(t, masterAgent())({ assignedToAgentId: FLEET_ETA });
+		const r = await nextTaskHandler(
+			t,
+			masterAgent(),
+		)({ assignedToAgentId: FLEET_ETA });
 		expect(r.isError, r.content[0].text).not.toBe(true);
 		expect(JSON.parse(r.content[0].text)).toMatchObject({ found: false });
 	});
@@ -190,24 +214,38 @@ describe("D1: a master-scope caller is served by next_task", () => {
 
 describe("D2: a scoped seat is not widened to the master's reach", () => {
 	it("ALLOW: an org-a seat is served for an assignee of org-a", async () => {
-		const r = await nextTaskHandler(t, seat("org-a", A_ETA))({ assignedToAgentId: A_ETA });
+		const r = await nextTaskHandler(
+			t,
+			seat("org-a", A_ETA),
+		)({ assignedToAgentId: A_ETA });
 		expect(r.isError, r.content[0].text).not.toBe(true);
 		expect(titleOf(r)).toBe("org-a task");
 	});
 	it("REFUSE: the same org-a seat does not get org-b's assignee or its task", async () => {
-		const r = await nextTaskHandler(t, seat("org-a", A_ETA))({ assignedToAgentId: B_ETA });
+		const r = await nextTaskHandler(
+			t,
+			seat("org-a", A_ETA),
+		)({ assignedToAgentId: B_ETA });
 		expect(r.isError).toBe(true);
-		expect(r.content[0].text).toMatch(/RBAC_DENIED.*assignee-not-an-agent-of-org/);
+		expect(r.content[0].text).toMatch(
+			/RBAC_DENIED.*assignee-not-an-agent-of-org/,
+		);
 		expect(titleOf(r)).not.toBe("org-b task");
 	});
 	it("REFUSE: the org-a seat does not get the fleet operator's assignee or its task", async () => {
-		const r = await nextTaskHandler(t, seat("org-a", A_ETA))({ assignedToAgentId: FLEET_ETA });
+		const r = await nextTaskHandler(
+			t,
+			seat("org-a", A_ETA),
+		)({ assignedToAgentId: FLEET_ETA });
 		expect(r.isError).toBe(true);
 		expect(r.content[0].text).toMatch(/RBAC_DENIED/);
 		expect(titleOf(r)).not.toBe("fleet task");
 	});
 	it("the org-a seat sends no actor: the master claim is not forwarded to a scoped seat", async () => {
-		const r = await nextTaskHandler(t, seat("org-a", A_ETA))({ assignedToAgentId: A_ETA });
+		const r = await nextTaskHandler(
+			t,
+			seat("org-a", A_ETA),
+		)({ assignedToAgentId: A_ETA });
 		expect(r.content[0].text).not.toMatch(/verified-actor|not-operator/);
 	});
 });

@@ -96,13 +96,21 @@ async function nextTask(ctx: OAuthContext) {
 			calls.push({ kind, name, args: a });
 			return { found: false };
 		});
-	const client = { query: make("query"), mutation: make("mutation"), action: make("action") };
+	const client = {
+		query: make("query"),
+		mutation: make("mutation"),
+		action: make("action"),
+	};
 	// biome-ignore lint/suspicious/noExplicitAny: test fake ConvexHttpClient
 	registerTools(server, client as any, ctx);
 	const handler = tools.get("next_task");
 	if (!handler) throw new Error("next_task was not registered");
 	const r = await handler({ assignedToAgentId: CLIO_ID });
-	return { calls, text: r.content?.[0]?.text ?? "", refused: r.isError === true };
+	return {
+		calls,
+		text: r.content?.[0]?.text ?? "",
+		refused: r.isError === true,
+	};
 }
 
 let savedMode: string | undefined;
