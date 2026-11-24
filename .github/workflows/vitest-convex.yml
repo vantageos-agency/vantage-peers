@@ -1,4 +1,5 @@
-name: Vitest convex + mcp-server unit suite
+# DISABLED: GitHub Actions are disabled on this repository (ruling 2026-11-24); this file runs no job; the equivalent check is `npx vitest run` at the repo root, whose default collection covers convex/ and the mcp-server tests (a superset of this workflow's paths).
+name: "[DISABLED] Vitest convex + mcp-server unit suite"
 
 # A workflow that does not run and a workflow that passes look identical on the
 # checks page: neither shows a red cross. Day 131 measured that: `push` was pinned

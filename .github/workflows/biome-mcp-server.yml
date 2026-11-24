@@ -1,8 +1,10 @@
-name: Biome format (mcp-server)
+# DISABLED: GitHub Actions are disabled on this repository (ruling 2026-11-24); this file runs no job; the equivalent check is mcp-server/test/biome-format-gate.test.ts, collected by `npx vitest run` at the repo root and by `vitest run` in mcp-server/.
+name: "[DISABLED] Biome format (mcp-server)"
 
 # The repository declares its formatter in biome.json, but nothing ran it, so the
-# mcp-server tree drifted (125 files unformatted on main). This check keeps the
-# counter at zero: a PR that leaves an mcp-server file unformatted fails here.
+# mcp-server tree drifted (125 files unformatted on main). This workflow is INERT
+# (Actions are disabled), so it gates nothing. The gate that keeps the counter at
+# zero is mcp-server/test/biome-format-gate.test.ts, run by the full suite.
 # Same trigger shape as typecheck.yml: pull_request (target main) for PRs, push
 # (target main) for the post-merge commit. Scope: mcp-server/ only (the MCP
 # server owner's tree); other trees are formatted by their owners.
