@@ -24,7 +24,7 @@ it says UNKNOWN and why.
 
 | Fact | Value | Source |
 |---|---|---|
-| Package version | `5.0.1` | `grep '"version"' mcp-server/package.json` -> `"version": "5.0.1"` |
+| Package version | `5.0.2` | `grep '"version"' mcp-server/package.json` -> `"version": "5.0.2"` |
 | npm published version | `4.1.0` (dist-tag `latest`, the only tag) | `npm view vantage-peers-mcp dist-tags` -> `{ latest: '4.1.0' }` (run 2026-11-24) |
 | Tools **registered** by the server | `121` | `node scripts/check-tool-counts.mjs` -> `tools.ts canonical surface = 121`, `registered names 121 vs documented names 121` |
 | Tools **advertised** to MCP clients (`tools/list`) | `95` | `jq '.core\|length' mcp-server/tool-exposure.json` -> `95`; `grep -n 'tools are advertised' mcp-server/README.md` -> "95 tools are advertised to clients" |
@@ -187,7 +187,7 @@ computes them):
 {
   "status": "ok",
   "service": "vantage-peers-mcp-http",
-  "version": "5.0.1",
+  "version": "5.0.2",
   "commit": "<RAILWAY_GIT_COMMIT_SHA or \"unknown\">",
   "runtime": "bun",
   "bun": "<Bun version or null>",

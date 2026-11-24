@@ -2,6 +2,15 @@
 
 ## [Unreleased]
 
+## [5.0.2] — 2026-11-24
+
+A patch release. Tool inputs and outputs are unchanged. Each entry names the product it concerns.
+
+### Fixed
+
+- Cloud and Self-host: `next_task` works for a master-scope caller. Such a caller got `RBAC_DENIED` (`claimless-service-account`) because it resolves no organisation and sent no claim. A master caller with a verified agent ID now sends that agent (`verifiedActor`), and the backend judges it as an agent of the operator organisation. An organisation seat still sends its organisation only and is still refused for another organisation's assignee. A Clerk session sends no claim. A master caller with no agent ID is still refused. `get_tool_usage` and `get_owner_tool_usage` are unchanged here: their backend doors do not yet accept an agent claim. ([Tool inputs and outputs](README.md#tool-inputs-and-outputs))
+- Self-host: no backend change. The required backend contract stays 29 with 153 called functions. ([Backend compatibility check](README.md#backend-compatibility-check))
+
 ## [5.0.1] — 2026-11-24
 
 A patch release. Tool inputs are unchanged, and so are the outputs for a backend that answers its contract. Each entry names the product it concerns.
