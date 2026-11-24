@@ -407,6 +407,14 @@ So upgrade in this order: deploy the backend of the same release first, then upg
 
 ## Release notes
 
+### 5.0.1
+
+_Applies to: Cloud and Self-host._ A patch release: tool inputs are unchanged, and so are the outputs for a backend that answers its contract.
+
+- Cloud and Self-host: `reorder_queue` names only the callers MCP admits (the assignee, or a listed queue coordinator); a person bearer is refused (see [Tool inputs and outputs](#tool-inputs-and-outputs)).
+- Cloud and Self-host: a backend reply that breaks its contract fails with `BACKEND_SHAPE_MISMATCH` instead of reading as an empty list. This applies to `reorder_queue`, `next_task`, `list_tasks` and 23 other list and read tools; `check_messages` keeps its documented tolerance (see [Tool inputs and outputs](#tool-inputs-and-outputs)).
+- Self-host: no backend change; contract 29, 153 called functions (see [Backend compatibility check](#backend-compatibility-check)).
+
 ### 5.0.0
 
 _Applies to: Cloud and Self-host._ Each item names the product it concerns. A major release: tool inputs and output shapes changed.

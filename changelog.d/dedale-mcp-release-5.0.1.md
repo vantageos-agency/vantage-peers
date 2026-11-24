@@ -1,0 +1,4 @@
+---
+section: Changed
+---
+- **`vantage-peers-mcp` 5.0.1 (patch), dated 2026-11-24.** `mcp-server/package.json` 5.0.0 -> 5.0.1; `mcp-server/CHANGELOG.md` and the README release notes carry #1756 (`reorder_queue` callers over MCP; queue tools fail closed) and #1758 (24 list and read tools refuse a contract-breaking reply with `BACKEND_SHAPE_MISMATCH`). It is a patch under the Versioning rules: no input changes, and no output changes for a backend that answers its contract. Self-host: no Convex change since 5.0.0 (`git diff 4af2501d HEAD -- convex/` empty), contract 29 / 153 functions unchanged. `mcp-server/test/list-reply-shape.test.ts` also asserts the refusal text, so removing the `BackendShapeMismatchError` mapping turns it red (Minos's note on #1758). Task k17fknxj7638d8g3x97kv0bqzx8jtf9n.

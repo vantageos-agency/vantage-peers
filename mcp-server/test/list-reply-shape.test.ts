@@ -102,6 +102,7 @@ describe("a broken list reply is refused, never read as an empty list", () => {
 				expect(r.isError, r.text).toBe(true);
 				expect(r.text).toContain("BACKEND_SHAPE_MISMATCH");
 				expect(r.text).toContain(tool);
+				expect(r.text).toContain("does not match its contract");
 			});
 		}
 		it(`${label}: a well-formed empty reply is still an empty list`, async () => {
