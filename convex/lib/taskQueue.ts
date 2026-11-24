@@ -7,30 +7,36 @@
 //      medium > low), then by creation time ascending. `tasks:list { sort:"queue" }`
 //      and `tasks:nextForAssignee` both read it, so the two can never disagree.
 //
-//   2. requireQueueAuthority — who may reorder an assignee's queue, decided at
-//      REQUEST TIME from the verified principal and the live organisation mapping
-//      (rule authority-attached-to-anonymous-object: the principal is read first,
-//      the mapping is consulted by the principal's own org, an unresolved caller or
-//      a lookup miss is a refusal, never a default). Allowed iff
-//        (a) the caller IS the assignee (actor ID === assignee ID), or
-//        (b) the signed-in person is org:admin of the queue's organisation, or
-//        (c) the caller's agent ID is listed in that organisation's
-//            `client_org_mapping.queueCoordinators`.
-//      Never a hardcoded name; never "the creator of a task".
+//   2. loadTaskOfPrincipalOrg — the target check of a reorder: a listed task must be
+//      stamped with the resolved principal's organisation ID (the package's
+//      `assertTargetBelongsTo`).
+//
+// WHO may reorder an assignee's queue is decided in the door itself (tasks:reorderQueue),
+// at REQUEST TIME, from the principal @vantageos/cloud-identity resolves (rule
+// authority-attached-to-anonymous-object) and the live organisation mapping:
+//   (a) the caller IS the assignee (agent ID === assignee ID), or
+//   (b) the signed-in person is org:admin of the queue's organisation, or
+//   (c) the caller's agent ID is listed in that organisation's
+//       `client_org_mapping.queueCoordinators`.
+// Never a hardcoded name; never "the creator of a task".
 //
 // rights-derivation: the coordinator list is read from client_org_mapping on every
 // call and the admin role from the verified session on every call; nothing is copied
 // onto a token, so a change to either reaches every live connection by construction.
 
+import {
+	type ActingPrincipal,
+	assertTargetBelongsTo,
+	hasFleetRead,
+	sameOrg,
+} from "@vantageos/cloud-identity";
 import { ConvexError } from "convex/values";
-import type { Doc } from "../_generated/dataModel";
+import type { Doc, Id } from "../_generated/dataModel";
 import type { MutationCtx, QueryCtx } from "../_generated/server";
-import { hasFleetRead, sameOrg } from "@vantageos/cloud-identity";
-import { assigneeNotInOrgRefusal, requireAssigneeAgentActive } from "./actingPrincipal";
+import { assigneeNotInOrgRefusal } from "./actingPrincipal";
 import type { OrgScope } from "./auth";
-import { resolveHumanActor } from "./humanActor";
-import { rbacDenied } from "./inboxReader";
 import { requireId } from "./ids";
+import { orgByIdPrincipalLookups } from "./orgIdLookups";
 
 /** Most tasks one `reorderQueue` may rank. */
 export const QUEUE_MAX_TASKS = 100;
@@ -68,144 +74,36 @@ export function compareQueueOrder(a: QueueSortable, b: QueueSortable): number {
 
 type Ctx = QueryCtx | MutationCtx;
 
-type QueueCaller = OrgScope & {
-	callerActorId?: string;
-	callerActorOrg?: string;
-};
-
-export type QueueOrg = {
-	slug: string;
-	mapping: Doc<"client_org_mapping">;
-};
-
 /**
- * The organisation labels the VERIFIED caller carries for this queue:
- *   - a person: the org of the verified session;
- *   - an agent: the org the transport verified (`verifiedOrg`), the org of its own
- *     verified scope, the org of its verified agent row.
- * The door resolves each label to its mapping row (one read per label) and hands
- * the rows to `decideQueueOrg`, which decides on the rows, never on the labels.
+ * The task an ID names, judged against the principal's organisation by the package
+ * (`assertTargetBelongsTo`, stored organisation IDs): another organisation's task, or
+ * one stamped with no organisation, is REFUSED naming the task, never ranked and never
+ * reported as absent. A task that does not exist raises TASK_NOT_FOUND.
  */
-export function queueOrgLabels(
-	scope: QueueCaller,
-	verifiedOrgSlug: string | undefined,
-	isPerson: boolean,
-): string[] {
-	const named = isPerson
-		? [scope.orgSlug]
-		: [verifiedOrgSlug, scope.orgSlug, scope.callerActorOrg];
-	return named.filter((s): s is string => typeof s === "string");
-}
-
-/**
- * The organisation whose queue is being written, decided by the mapping ROWS of
- * the labels the verified caller carries (`rows[i]` is the mapping of `labels[i]`,
- * null when it has none). Every label that is present must resolve to the SAME row,
- * and that row must be ONE active mapping whose permanent ID agrees with the
- * session's when the session carries one. None present, a disagreement, no mapping
- * or an inactive one refuses.
- */
-export function decideQueueOrg(
-	scope: QueueCaller,
-	labels: readonly string[],
-	rows: readonly (Doc<"client_org_mapping"> | null)[],
+export async function loadTaskOfPrincipalOrg(
+	ctx: Ctx,
+	principal: ActingPrincipal,
+	taskId: Id<"tasks">,
 	door: string,
-): QueueOrg {
-	const mapping = rows[0];
-	if (labels.length === 0 || mapping === undefined) {
-		throw rbacDenied(
-			door,
-			"queue-org-unresolved",
-			"the organisation of this queue could not be derived from the verified caller",
+): Promise<Doc<"tasks">> {
+	const task = await ctx.db.get(taskId);
+	if (task === null) {
+		throw new ConvexError(
+			`TASK_NOT_FOUND: Task ${taskId} not found — ${JSON.stringify({ taskId })}`,
 		);
 	}
-	for (const row of rows) {
-		const agreeing = mapping === null ? row === null : row !== null && row._id === mapping._id;
-		if (!agreeing) {
-			throw rbacDenied(
-				door,
-				"queue-org-unresolved",
-				"the organisation of this queue could not be derived from the verified caller",
-			);
-		}
-	}
-	const slug = labels[0];
-	if (
-		mapping === null ||
-		!mapping.isActive ||
-		(scope.orgClerkId !== undefined &&
-			mapping.clerkOrgId !== undefined &&
-			!sameOrg({ id: scope.orgClerkId }, { id: mapping.clerkOrgId }))
-	) {
-		throw rbacDenied(
-			door,
-			"queue-org-not-active",
-			`organisation "${slug}" has no single active mapping for this caller`,
-		);
-	}
-	return { slug, mapping };
-}
-
-/**
- * Writes the new queue: `ranked` tasks get their position, `stale` tasks lose theirs.
- * The door has validated the WHOLE call before it gets here, so this only writes.
- */
-export async function applyQueueRanks(
-	ctx: MutationCtx,
-	ranked: readonly { task: Doc<"tasks">; rank: number }[],
-	stale: readonly Doc<"tasks">[],
-): Promise<void> {
-	for (const { task, rank } of ranked) {
-		if (task.queueRank !== rank) await ctx.db.patch(task._id, { queueRank: rank });
-	}
-	for (const row of stale) {
-		await ctx.db.patch(row._id, { queueRank: undefined });
-	}
-}
-
-/**
- * Refuses unless the caller may reorder the queue of `assigneeId` in `org`.
- * Returns nothing; every refusal is RBAC_DENIED carrying a machine-readable reason.
- */
-export async function requireQueueAuthority(
-	ctx: MutationCtx,
-	args: {
-		scope: QueueCaller;
-		isPerson: boolean;
-		org: QueueOrg;
-		assigneeId: string;
-		door: string;
-	},
-): Promise<void> {
-	const { scope, org, assigneeId, door } = args;
-	if (args.isPerson) {
-		// A person is admitted through the ONE human gate (verified session, org
-		// member, writer role) and only as org:admin of the org. A queue belongs to an
-		// agent (its ID is an agents row), so a person has no "own queue" to reorder:
-		// every person is admin-only (fail closed).
-		await resolveHumanActor(ctx, scope, { door, adminOnly: true });
-		return;
-	}
-	const callerId = scope.callerActorId;
-	if (callerId === undefined) {
-		throw rbacDenied(
-			door,
-			"queue-caller-unresolved",
-			"the caller resolves to no verified agent; a queue is reordered by its assignee, a listed coordinator or an org admin",
-		);
-	}
-	if (callerId === assigneeId) return; // (a) the assignee; its ID was resolved inside `org`
-	// (c) a listed coordinator, read from the live mapping by the principal's own org.
-	if ((org.mapping.queueCoordinators ?? []).some((entry) => entry.agentId === callerId)) {
-		// The listed ID must still be an ACTIVE agent of this very org.
-		await requireAssigneeAgentActive(ctx, callerId, org.slug, door, org.mapping.clerkOrgId);
-		return;
-	}
-	throw rbacDenied(
-		door,
-		"queue-not-assignee-or-coordinator",
-		`caller is neither the assignee of this queue, a queue coordinator of "${org.slug}", nor an org admin`,
+	const verdict = await assertTargetBelongsTo(
+		principal,
+		{ orgId: task.clerkOrgId ?? null },
+		orgByIdPrincipalLookups(ctx),
+		{ door },
 	);
+	if (!verdict.ok) {
+		throw new ConvexError(
+			`${verdict.refusal.code}: task ${taskId} belongs to another organisation or to none; ${verdict.refusal.detail} — ${JSON.stringify({ reason: verdict.refusal.reason, door: verdict.refusal.door, taskId })}`,
+		);
+	}
+	return task;
 }
 
 /**

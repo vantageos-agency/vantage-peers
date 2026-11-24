@@ -1,18 +1,19 @@
+import { assertOrgAdmin, assertTargetBelongsTo } from "@vantageos/cloud-identity";
 import { ConvexError, v } from "convex/values";
 import type { Doc, Id } from "./_generated/dataModel";
 import { internalMutation, internalQuery } from "./_generated/server";
 import type { MutationCtx } from "./_generated/server";
 import { mutation, query } from "./lib/functions";
-import { rbacDenied } from "./lib/inboxReader";
-import { lookupOrgMapping, requireOrgAdmin, withOrgScope } from "./lib/auth";
+import { lookupOrgMapping, ORG_ADMIN_ROLES, refusalError, withOrgScope } from "./lib/auth";
 import { requireServiceAccount } from "./lib/eraseRow";
-import { hasFleetStanding, requireFleetDoor } from "./lib/fleetStanding";
+import { requireFleetDoor } from "./lib/fleetStanding";
 import { orgMappingRowsForLabel } from "./lib/authOrgMapping";
 import { findOperatorOrg } from "./lib/operatorOrg";
 import { appendAgentsToRoster } from "./lib/rosterAppend";
 import { resolveProvisioningMapping } from "./lib/provisioningMapping";
 import { normalizeOrchestratorId } from "./_helpers/normalizeOrchestratorId";
-import { assertAgentNameFree } from "./lib/agentIdentity";
+import { assertAgentNameFree, resolveSessionCaller } from "./lib/agentIdentity";
+import { orgByIdPrincipalLookups } from "./lib/orgIdLookups";
 import { requireAgentsOfOrg } from "./lib/rosterIds";
 import { CLERK_ORG_ID_PATTERN, clerkOrgIdForSlug } from "./lib/orgClerkId";
 
@@ -232,7 +233,6 @@ const mappingRowValidator = v.object({
 	addressableFleetCoordinatorIds: v.optional(v.array(v.id("agents"))),
 	fleetWide: v.optional(v.boolean()),
 	serviceAccountAgentId: v.optional(v.id("agents")),
-	queueCoordinators: v.optional(v.array(v.object({ agentId: v.id("agents") }))),
 	_id: v.id("client_org_mapping"),
 	_creationTime: v.number(),
 });
@@ -629,36 +629,26 @@ export const setClerkOrgId = internalMutation({
 // ─────────────────────────────────────────────────────────────────────────────
 // setQueueCoordinators — who, besides an assignee and the org's admins, may reorder
 // ANY assignee's task queue of this organisation (tasks:reorderQueue, task
-// k174gp4nejkdmh4wt6zb7tgy1x8jvhpc). A whole-list REPLACEMENT of
-// `queueCoordinators`; [] removes every coordinator.
+// k174gp4nejkdmh4wt6zb7tgy1x8jvhpc). A whole-list REPLACEMENT of the organisation's
+// `queue_coordinators` rows; [] removes every coordinator.
 //
-// PUBLIC door, gated on the verified caller: the fleet (package standing, the
-// service account of the operator org) or the org:admin of THAT organisation
-// (`requireOrgAdmin`: the session's own org ID must be the target's, and its role
-// claim an admin role). Another organisation's admin, a plain member and an
-// unauthenticated caller are refused RBAC_DENIED. Every ID must be an ACTIVE agent
-// of the target organisation (`requireAgentsOfOrg`), so a coordinator can never be a
-// foreign or fleet agent. The list is read live by reorderQueue; nothing is copied
+// PUBLIC door, gated on the verified session through @vantageos/cloud-identity
+// (`resolveSessionCaller` + `assertOrgAdmin`): the caller must be an ADMINISTRATOR
+// of the organisation named by its PERMANENT ID, compared by ID. Another
+// organisation's admin, a plain member, an agent, the fleet service account and an
+// unauthenticated caller are refused RBAC_DENIED: no conformant admission exists
+// for the fleet account, so there is no fleet branch. Every ID must be an ACTIVE
+// agent of that organisation (judged by the package against the agent row's stored
+// organisation ID), so a coordinator can never be a foreign or fleet agent. The list is read live by reorderQueue; nothing is copied
 // onto a token (rights-derivation).
 // ─────────────────────────────────────────────────────────────────────────────
 
 /** Most coordinators one organisation may list. */
 export const QUEUE_COORDINATORS_MAX = 50;
 
-/** The write step of `setQueueCoordinators`; the door has judged the whole call before it runs. */
-async function writeQueueCoordinators(
-	ctx: MutationCtx,
-	mappingId: Id<"client_org_mapping">,
-	agentIds: readonly Id<"agents">[],
-): Promise<void> {
-	await ctx.db.patch(mappingId, {
-		queueCoordinators: agentIds.map((agentId) => ({ agentId })),
-	});
-}
-
 export const setQueueCoordinators = mutation({
 	args: {
-		clerkOrgSlug: v.optional(v.string()),
+		// The organisation's PERMANENT id. It selects nothing: it must be the caller's own.
 		clerkOrgId: v.optional(v.string()),
 		agentIds: v.array(v.id("agents")),
 	},
@@ -667,9 +657,9 @@ export const setQueueCoordinators = mutation({
 	// it is never the bytes of an absence. Every other refusal stays RBAC_DENIED.
 	returns: v.union(
 		v.object({
-			clerkOrgSlug: v.string(),
-			previous: v.array(v.string()),
-			current: v.array(v.string()),
+			clerkOrgId: v.string(),
+			previous: v.array(v.id("agents")),
+			current: v.array(v.id("agents")),
 		}),
 		v.object({
 			unauthorized: v.literal(true),
@@ -679,51 +669,61 @@ export const setQueueCoordinators = mutation({
 	),
 	handler: async (ctx, args) => {
 		const door = "clientOrgMapping:setQueueCoordinators";
-		if (args.clerkOrgSlug === undefined && args.clerkOrgId === undefined) {
+		if (args.clerkOrgId === undefined) {
 			return { unauthorized: true as const, reason: "org-required" as const, door };
 		}
-		// The target row, read by the key the caller named. A miss is answered with
-		// the same refusal as a caller that may not act, so the door is no oracle for
-		// which organisations exist.
-		const target = await lookupOrgMapping(
-			ctx,
-			args.clerkOrgId !== undefined
-				? { clerkOrgId: args.clerkOrgId }
-				: (args.clerkOrgSlug as string),
-		);
-		const denied = () =>
-			rbacDenied(
-				door,
-				"not-org-admin",
-				"only the fleet or an organisation admin of the target organisation may set its queue coordinators",
-			);
-		if (
-			target === null ||
-			(args.clerkOrgSlug !== undefined && target.clerkOrgSlug !== args.clerkOrgSlug)
-		) {
-			throw denied();
-		}
-		if (!(await hasFleetStanding(ctx, door))) {
-			await requireOrgAdmin(ctx, target.clerkOrgSlug);
-		}
-		if (!target.isActive) {
-			throw new ConvexError(
-				`ORG_MAPPING_INACTIVE: "${target.clerkOrgSlug}" is inactive; refusing to edit its queue coordinators`,
-			);
-		}
+		const caller = await resolveSessionCaller(ctx, door);
+		// The named organisation, the principal's own and an admin role are all judged
+		// by the package, by ID: an admin of another organisation is refused.
+		const admin = assertOrgAdmin(caller.principal, args.clerkOrgId, {
+			adminRoles: ORG_ADMIN_ROLES,
+			door: door,
+		});
+		if (!admin.ok) throw refusalError(admin.refusal);
 		if (args.agentIds.length > QUEUE_COORDINATORS_MAX) {
 			throw new ConvexError(
 				`QUEUE_COORDINATORS_TOO_MANY: ${args.agentIds.length} agents given, at most ${QUEUE_COORDINATORS_MAX}`,
 			);
 		}
-		const current = await requireAgentsOfOrg(
-			ctx,
-			target.clerkOrgSlug,
-			args.agentIds,
-			target.clerkOrgId,
-		);
-		const previous = (target.queueCoordinators ?? []).map((entry) => entry.agentId as string);
-		await writeQueueCoordinators(ctx, target._id, current);
-		return { clerkOrgSlug: target.clerkOrgSlug, previous, current };
+		// Each listed agent is an ACTIVE agent of the principal's organisation, judged by
+		// the package against the agent row's stored organisation ID. A foreign, fleet,
+		// unknown or retired agent is refused AGENT_NOT_IN_ORG, so a coordinator can
+		// never be listed from outside the organisation.
+		const current: Id<"agents">[] = [];
+		for (const agentId of args.agentIds) {
+			const agent = await ctx.db.get(agentId);
+			const verdict =
+				agent === null
+					? null
+					: await assertTargetBelongsTo(
+							caller.principal,
+							{ orgId: agent.clerkOrgId ?? null },
+							orgByIdPrincipalLookups(ctx),
+							{ door },
+						);
+			if (agent === null || verdict === null || !verdict.ok || !agent.isActive) {
+				throw new ConvexError(
+					`AGENT_NOT_IN_ORG: "${agentId}" is not an active agent of the caller's organisation; a coordinator list names the agents of its own organisation only`,
+				);
+			}
+			if (!current.includes(agentId)) current.push(agentId);
+		}
+		const rows = await ctx.db
+			.query("queue_coordinators")
+			.withIndex("by_clerk_org_id", (q) => q.eq("clerkOrgId", caller.org.id))
+			.take(QUEUE_COORDINATORS_MAX + 1);
+		for (const row of rows) await ctx.db.delete(row._id);
+		for (const agentId of current) {
+			await ctx.db.insert("queue_coordinators", {
+				clerkOrgId: caller.org.id,
+				agentId,
+				createdAt: Date.now(),
+			});
+		}
+		return {
+			clerkOrgId: caller.org.id,
+			previous: rows.map((row) => row.agentId),
+			current,
+		};
 	},
 });

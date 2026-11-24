@@ -667,16 +667,28 @@ export function deriveTaskMutationsOrThrow(sourcePath: string): DerivedPublicMut
 }
 
 /**
- * True only when the handler body contains a REAL CALL to
- * requireAuthenticatedCaller (`requireAuthenticatedCaller(` — the call
- * form), never a bare textual mention. Comments are already stripped out of
- * `body` by deriveTaskMutationsOrThrow, so a comment-only reference such as
- * `// requireAuthenticatedCaller(ctx, args)` cannot satisfy this (ETA-M11) —
- * both defenses (comment-stripping upstream, call-form regex here) are
- * independently sufficient and kept together deliberately.
+ * The gates a public task mutation may authenticate its caller through: the shared
+ * name-era gate `requireAuthenticatedCaller`, or one of the two refusing resolvers of
+ * @vantageos/cloud-identity (via convex/lib/agentIdentity.ts), which resolve the caller
+ * BY ID and refuse an absent identity themselves (R-53; tasks:reorderQueue). Each
+ * refuses an unauthenticated caller before the handler reaches a write.
  */
-function callsRequireAuthenticatedCaller(body: string): boolean {
-	return /requireAuthenticatedCaller\s*\(/.test(body);
+const AUTHENTICATING_GATES = [
+	"requireAuthenticatedCaller",
+	"resolveSessionCaller",
+	"resolveAgentWriterFromIdentity",
+] as const;
+
+/**
+ * True only when the handler body contains a REAL CALL to one of the
+ * AUTHENTICATING_GATES (`gate(` — the call form), never a bare textual mention.
+ * Comments are already stripped out of `body` by deriveTaskMutationsOrThrow, so a
+ * comment-only reference such as `// requireAuthenticatedCaller(ctx, args)` cannot
+ * satisfy this (ETA-M11) — both defenses (comment-stripping upstream, call-form
+ * regex here) are independently sufficient and kept together deliberately.
+ */
+export function callsAuthenticatingGate(body: string): boolean {
+	return AUTHENTICATING_GATES.some((gate) => new RegExp(`\\b${gate}\\s*\\(`).test(body));
 }
 
 describe("DERIVED — public mutation list read structurally from convex/tasks.ts, not hand-written", () => {
@@ -688,7 +700,7 @@ describe("DERIVED — public mutation list read structurally from convex/tasks.t
 		).toThrow(/DERIVED_MUTATION_LIST_UNREADABLE/);
 	});
 
-	test("derives a non-empty public mutation list from convex/tasks.ts and every one carries requireAuthenticatedCaller in its handler body", () => {
+	test("derives a non-empty public mutation list from convex/tasks.ts and every one calls an authenticating gate in its handler body", () => {
 		const sourcePath = resolveTasksSourcePath();
 		const derived = deriveTaskMutationsOrThrow(sourcePath);
 
@@ -704,12 +716,12 @@ describe("DERIVED — public mutation list read structurally from convex/tasks.t
 			"derived public mutation list must be non-empty — an empty enumeration must never report green",
 		).toBeGreaterThan(0);
 
-		const ungated = derived.filter((d) => !callsRequireAuthenticatedCaller(d.body));
+		const ungated = derived.filter((d) => !callsAuthenticatingGate(d.body));
 
 		if (ungated.length > 0) {
 			const detail = ungated.map((d) => `${d.name} (convex/tasks.ts:${d.line})`).join(", ");
 			throw new Error(
-				`UNGATED_PUBLIC_MUTATION: the following public mutation(s) in convex/tasks.ts do not call requireAuthenticatedCaller in their handler body: ${detail}`,
+				`UNGATED_PUBLIC_MUTATION: the following public mutation(s) in convex/tasks.ts do not call an authenticating gate (requireAuthenticatedCaller, resolveSessionCaller, resolveAgentWriterFromIdentity) in their handler body: ${detail}`,
 			);
 		}
 
@@ -739,5 +751,14 @@ describe("DERIVED — public mutation list read structurally from convex/tasks.t
 		expect(() => deriveTaskMutationsOrThrow(schemaPath)).toThrow(
 			/DERIVED_MUTATION_LIST_UNREADABLE/,
 		);
+	});
+
+	test("MUST_REFUSE: a body that only MENTIONS a gate, or calls none, is ungated; each real gate call is accepted", () => {
+		expect(callsAuthenticatingGate("await ctx.db.patch(id, {})")).toBe(false);
+		expect(callsAuthenticatingGate("const caller = ctx.auth.getUserIdentity(); await ctx.db.insert('t', {})")).toBe(false);
+		expect(callsAuthenticatingGate("await notresolveSessionCaller(ctx, door)")).toBe(false);
+		expect(callsAuthenticatingGate("await requireAuthenticatedCaller(ctx, a, b)")).toBe(true);
+		expect(callsAuthenticatingGate("const c = await resolveSessionCaller(ctx, door)")).toBe(true);
+		expect(callsAuthenticatingGate("await resolveAgentWriterFromIdentity(ctx.auth, {}, {})")).toBe(true);
 	});
 });
