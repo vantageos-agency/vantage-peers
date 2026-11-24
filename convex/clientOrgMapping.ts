@@ -1,10 +1,10 @@
 import { ConvexError, v } from "convex/values";
 import type { Doc, Id } from "./_generated/dataModel";
 import { internalMutation, internalQuery } from "./_generated/server";
-import { query } from "./lib/functions";
-import { lookupOrgMapping, withOrgScope } from "./lib/auth";
+import { mutation, query } from "./lib/functions";
+import { lookupOrgMapping, requireOrgAdmin, withOrgScope } from "./lib/auth";
 import { requireServiceAccount } from "./lib/eraseRow";
-import { requireFleetDoor } from "./lib/fleetStanding";
+import { hasFleetStanding, requireFleetDoor } from "./lib/fleetStanding";
 import { orgMappingRowsForLabel } from "./lib/authOrgMapping";
 import { findOperatorOrg } from "./lib/operatorOrg";
 import { appendAgentsToRoster } from "./lib/rosterAppend";
@@ -230,6 +230,7 @@ const mappingRowValidator = v.object({
 	addressableFleetCoordinatorIds: v.optional(v.array(v.id("agents"))),
 	fleetWide: v.optional(v.boolean()),
 	serviceAccountAgentId: v.optional(v.id("agents")),
+	queueCoordinatorIds: v.optional(v.array(v.string())),
 	_id: v.id("client_org_mapping"),
 	_creationTime: v.number(),
 });
@@ -620,5 +621,86 @@ export const setClerkOrgId = internalMutation({
 			previous,
 			current: args.clerkOrgId,
 		};
+	},
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// setQueueCoordinators — who, besides an assignee and the org's admins, may reorder
+// ANY assignee's task queue of this organisation (tasks:reorderQueue, task
+// k174gp4nejkdmh4wt6zb7tgy1x8jvhpc). A whole-list REPLACEMENT of
+// `queueCoordinatorIds`; [] removes every coordinator.
+//
+// PUBLIC door, gated on the verified caller: the fleet (package standing, the
+// service account of the operator org) or the org:admin of THAT organisation
+// (`requireOrgAdmin`: the session's own org ID must be the target's, and its role
+// claim an admin role). Another organisation's admin, a plain member and an
+// unauthenticated caller are refused RBAC_DENIED. Every ID must be an ACTIVE agent
+// of the target organisation (`requireAgentsOfOrg`), so a coordinator can never be a
+// foreign or fleet agent. The list is read live by reorderQueue; nothing is copied
+// onto a token (rights-derivation).
+// ─────────────────────────────────────────────────────────────────────────────
+
+/** Most coordinators one organisation may list. */
+export const QUEUE_COORDINATORS_MAX = 50;
+
+export const setQueueCoordinators = mutation({
+	args: {
+		clerkOrgSlug: v.optional(v.string()),
+		clerkOrgId: v.optional(v.string()),
+		agentIds: v.array(v.id("agents")),
+	},
+	returns: v.object({
+		clerkOrgSlug: v.string(),
+		previous: v.array(v.string()),
+		current: v.array(v.string()),
+	}),
+	handler: async (ctx, args) => {
+		const door = "clientOrgMapping:setQueueCoordinators";
+		if (args.clerkOrgSlug === undefined && args.clerkOrgId === undefined) {
+			throw new ConvexError(
+				"ORG_REQUIRED: name the organisation with clerkOrgSlug or clerkOrgId",
+			);
+		}
+		// The target row, read by the key the caller named. A miss is answered with
+		// the same refusal as a caller that may not act, so the door is no oracle for
+		// which organisations exist.
+		const target = await lookupOrgMapping(
+			ctx,
+			args.clerkOrgId !== undefined
+				? { clerkOrgId: args.clerkOrgId }
+				: (args.clerkOrgSlug as string),
+		);
+		const denied = () =>
+			new ConvexError(
+				`RBAC_DENIED: only the fleet or an organisation admin of the target organisation may set its queue coordinators — ${JSON.stringify({ reason: "not-org-admin", door })}`,
+			);
+		if (
+			target === null ||
+			(args.clerkOrgSlug !== undefined && target.clerkOrgSlug !== args.clerkOrgSlug)
+		) {
+			throw denied();
+		}
+		if (!(await hasFleetStanding(ctx, door))) {
+			await requireOrgAdmin(ctx, target.clerkOrgSlug);
+		}
+		if (!target.isActive) {
+			throw new ConvexError(
+				`ORG_MAPPING_INACTIVE: "${target.clerkOrgSlug}" is inactive; refusing to edit its queue coordinators`,
+			);
+		}
+		if (args.agentIds.length > QUEUE_COORDINATORS_MAX) {
+			throw new ConvexError(
+				`QUEUE_COORDINATORS_TOO_MANY: ${args.agentIds.length} agents given, at most ${QUEUE_COORDINATORS_MAX}`,
+			);
+		}
+		const current = await requireAgentsOfOrg(
+			ctx,
+			target.clerkOrgSlug,
+			args.agentIds,
+			target.clerkOrgId,
+		);
+		const previous = target.queueCoordinatorIds ?? [];
+		await ctx.db.patch(target._id, { queueCoordinatorIds: current });
+		return { clerkOrgSlug: target.clerkOrgSlug, previous, current };
 	},
 });
