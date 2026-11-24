@@ -7192,7 +7192,7 @@ export function registerTools(
 		{
 			kind: "filtered",
 			reason:
-				"tenant applied INSIDE the Convex read: doorScopeArgs() forwards verifiedOrg on every call to tasks:nextForAssignee and unresolvedOrgDenial() refuses a bearer with none; tasks:nextForAssignee receives verifiedOrg (always) and the verified actor, resolves the assignee in that organisation only and serves the caller's visible tasks; a bearer whose organisation cannot be resolved is refused before any read (task k176p84j83gac7reyycweacyb58jvtxg)",
+				"tenant applied INSIDE the Convex read: doorScopeArgs() forwards verifiedOrg on every call to tasks:nextForAssignee and unresolvedOrgDenial() refuses a bearer with none; tasks:nextForAssignee receives verifiedOrg (always) and no verifiedActor (the door admits an actor only from the operator organisation), resolves the assignee in that organisation only and serves the caller's visible tasks; a bearer whose organisation cannot be resolved is refused before any read (task k176p84j83gac7reyycweacyb58jvtxg)",
 		},
 		"next_task",
 		"Get the one task an agent should take next: among its todo tasks you may see, the first in queue order (ranked tasks by rank, then unranked by priority and age) whose dependencies are all done. " +
