@@ -407,6 +407,13 @@ So upgrade in this order: deploy the backend of the same release first, then upg
 
 ## Release notes
 
+### 5.0.2
+
+_Applies to: Cloud and Self-host._ A patch release: tool inputs and outputs are unchanged.
+
+- Cloud and Self-host: `next_task` serves a master-scope caller that has a verified agent ID. That caller now sends the agent as its claim; organisation seats are unchanged (see [Tool inputs and outputs](#tool-inputs-and-outputs)).
+- Self-host: no backend change; contract 29, 153 called functions (see [Backend compatibility check](#backend-compatibility-check)).
+
 ### 5.0.1
 
 _Applies to: Cloud and Self-host._ A patch release: tool inputs are unchanged, and so are the outputs for a backend that answers its contract.

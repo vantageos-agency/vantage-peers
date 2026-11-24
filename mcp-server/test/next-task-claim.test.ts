@@ -22,6 +22,7 @@ import {
 	type OAuthContext,
 } from "../src/auth.js";
 import { registerTools } from "../src/tools.js";
+import { withVerifiedActor } from "../src/verifiedActor.js";
 
 const OPS_AGENT = "agentdedale00000000000000000001";
 const CLIO_ID = "agentclio0000000000000000000001";
@@ -181,5 +182,31 @@ describe("next_task claim per caller class", () => {
 	it("master bearer with no agent ID forwards no claim: nothing true to send", async () => {
 		const r = await nextTask(MASTER_PLAIN);
 		expect(r.calls[0].args).toEqual({ assignedToAgentId: CLIO_ID });
+	});
+});
+
+describe("next_task master-only actor claim (withVerifiedActor)", () => {
+	it("a non-master bearer with a verified actor never sends verifiedActor on tasks:nextForAssignee, even with no verifiedOrg in the args", async () => {
+		// Unreachable through registerTools today (a non-master actor always resolves its
+		// own verifiedOrg), so the guard is pinned directly on the wrapper: the master-only
+		// claim must not widen a scoped bearer into an operator-agent claim.
+		const NON_MASTER_ACTOR: OAuthContext = {
+			...base,
+			actor: { orgSlug: ORG, agentName: "clio", agentId: CLIO_ID },
+		};
+		const seen: Array<Record<string, unknown>> = [];
+		const client = {
+			mutation: vi.fn(async () => null),
+			query: vi.fn(async (_n: string, a: Record<string, unknown>) => {
+				seen.push(a);
+				return { found: false };
+			}),
+		};
+		// biome-ignore lint/suspicious/noExplicitAny: test fake ConvexHttpClient
+		await (withVerifiedActor(client as any, NON_MASTER_ACTOR) as any).query(
+			"tasks:nextForAssignee",
+			{ assignedToAgentId: CLIO_ID },
+		);
+		expect(seen).toEqual([{ assignedToAgentId: CLIO_ID }]);
 	});
 });
