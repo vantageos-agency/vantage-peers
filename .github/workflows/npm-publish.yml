@@ -1,4 +1,5 @@
-name: Publish to npm
+# DISABLED: GitHub Actions are disabled on this repository (ruling 2026-11-24); this file runs no job; no equivalent gate in the reviewer's full-suite command (`npx vitest run`); traced in task k1783w611t8wjz01pbxabx9pzd8jvwhq.
+name: "[DISABLED] Publish to npm"
 
 # Two trigger paths:
 #   1. release.published — fires when a GitHub release is published. The release

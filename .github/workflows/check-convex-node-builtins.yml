@@ -1,4 +1,5 @@
-name: Check Convex node builtins
+# DISABLED: GitHub Actions are disabled on this repository (ruling 2026-11-24); this file runs no job; no equivalent gate in the reviewer's full-suite command (`npx vitest run`); traced in task k1783w611t8wjz01pbxabx9pzd8jvwhq.
+name: "[DISABLED] Check Convex node builtins"
 
 # The Convex CLI bundler treats every single-dot .ts/.js file under convex/ as a
 # function entry point and refuses the WHOLE deploy when one of them imports a

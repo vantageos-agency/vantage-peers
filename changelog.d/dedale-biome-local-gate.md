@@ -1,0 +1,4 @@
+---
+section: Fixed
+---
+- **The Biome format check now runs where the tests run (task k1783w611t8wjz01pbxabx9pzd8jvwhq).** GitHub Actions are disabled on this repository, so the `biome-mcp-server.yml` workflow never ran and enforced nothing. The check moved into the full-suite command: `mcp-server/test/biome-format-gate.test.ts` runs `biome format mcp-server biome.json` without writing, and fails with Biome's own output naming the unformatted files. It fails, never skips, when the Biome binary is missing or cannot be spawned. It is collected by both `npx vitest run` at the repo root and `vitest run` in `mcp-server/`. `mcp-server/src/tools.ts` stays excluded by the declared override in `biome.json`. All 12 workflow files now carry a `[DISABLED]` name and a first-line comment stating they run no job and where, if anywhere, an equivalent check runs.

@@ -1,4 +1,5 @@
-name: Typecheck
+# DISABLED: GitHub Actions are disabled on this repository (ruling 2026-11-24); this file runs no job; no equivalent gate in the reviewer's full-suite command (`npx vitest run`); traced in task k1783w611t8wjz01pbxabx9pzd8jvwhq.
+name: "[DISABLED] Typecheck"
 
 # A workflow that does not run and a workflow that passes look identical on the
 # checks page: neither shows a red cross. Day 131 measured that: `push` was pinned
