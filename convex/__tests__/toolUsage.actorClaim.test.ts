@@ -112,7 +112,7 @@ async function code(p: Promise<unknown>): Promise<string> {
 	} catch (e) {
 		const text = e instanceof ConvexError ? String(e.data) : String(e);
 		const m = /([A-Z][A-Z_]{3,}):/.exec(text);
-		const reason = /"reason":"([^"]+)"/.exec(text);
+		const reason = /reason\\?":\\?"([^"\\]+)/.exec(text);
 		return m
 			? `${m[1]}${reason ? `/${reason[1]}` : ""}`
 			: `OTHER(${text.slice(0, 120)})`;
@@ -169,7 +169,7 @@ describe("toolUsage doors admit verifiedActor of an operator-org agent", () => {
 					verifiedActor: { agentId: fleet.eta, orgSlug: operatorSlug },
 				}),
 			),
-		).toMatch(/^RBAC_DENIED/);
+		).toMatch(/^VERIFIED_ACTOR_INACTIVE/);
 	});
 
 	test("CLAIMLESS: the service account with no claim is still refused claimless-service-account", async () => {
@@ -180,6 +180,37 @@ describe("toolUsage doors admit verifiedActor of an operator-org agent", () => {
 		expect(
 			await code(svc.query(api.toolUsage.usageByOwner, { ownerUserId: OWNER })),
 		).toBe("RBAC_DENIED/claimless-service-account");
+	});
+
+	test("RECORD: the write door takes the same claim, files under the operator organisation, and the read door returns the row", async () => {
+		const { t, svc, fleet, operatorSlug, operatorId, clientAgent } = await fixture();
+		const actor = { agentId: fleet.eta, orgSlug: operatorSlug };
+		expect(
+			await svc.mutation(api.toolUsage.record, {
+				toolName: "store_memory",
+				caller: `agent:${fleet.eta}`,
+				verifiedActor: actor,
+			}),
+		).toEqual({ recorded: true });
+		const rows = await t.run((ctx) => ctx.db.query("tool_usage").collect());
+		const filed = rows.filter((r) => r.tool === "store_memory");
+		expect(filed).toHaveLength(1);
+		expect(filed[0].clerkOrgId).toBe(operatorId);
+		const back = (await svc.query(api.toolUsage.getToolUsage, {
+			caller: `agent:${fleet.eta}`,
+			verifiedActor: actor,
+		})) as Row[];
+		expect(back.map((r) => r.tool)).toEqual(["store_memory"]);
+		// A client-org agent is refused at the write door too, and nothing is filed.
+		expect(
+			await code(
+				svc.mutation(api.toolUsage.record, {
+					toolName: "store_memory",
+					caller: `agent:${clientAgent}`,
+					verifiedActor: { agentId: clientAgent, orgSlug: CLIENT },
+				}),
+			),
+		).toMatch(/^RBAC_DENIED/);
 	});
 
 	test("NO WIDENING: an operator agent never reads a client organisation's rows without a verifiedOrg", async () => {
