@@ -66,7 +66,8 @@ describe("MUST_PASS pole", () => {
 	it("content proofs only (ratios and SHAs) in evidence: are allowed", async () => {
 		const fetchImpl = vi.fn();
 		const deps = buildDeps({ fetchImpl });
-		const content = "evidence: npx vitest run -> 788/788 ; git rev-parse HEAD -> f972cd9";
+		const content =
+			"evidence: npx vitest run -> 788/788 ; git rev-parse HEAD -> f972cd9";
 
 		await expect(guardFreshState(content, deps)).resolves.toBeUndefined();
 		expect(fetchImpl).not.toHaveBeenCalled();
@@ -92,7 +93,8 @@ describe("MUST_PASS pole", () => {
 		const warn = vi.fn();
 		const fetchImpl = vi.fn().mockRejectedValue(new Error("ETIMEDOUT"));
 		const deps = buildDeps({ fetchImpl, warn });
-		const content = "evidence: gh pr view 54 -R owner/repo --json state -> OPEN";
+		const content =
+			"evidence: gh pr view 54 -R owner/repo --json state -> OPEN";
 
 		await expect(guardFreshState(content, deps)).resolves.toBeUndefined();
 		expect(warn).toHaveBeenCalledTimes(1);
@@ -101,9 +103,9 @@ describe("MUST_PASS pole", () => {
 	});
 
 	it("override marker allows an otherwise-contradicting claim", async () => {
-		const fetchImpl = vi.fn().mockResolvedValue(
-			jsonResponse(200, { state: "closed", merged: true }),
-		);
+		const fetchImpl = vi
+			.fn()
+			.mockResolvedValue(jsonResponse(200, { state: "closed", merged: true }));
 		const deps = buildDeps({ fetchImpl });
 		const content =
 			"evidence: PR #54 (owner/repo) -> OPEN " +
@@ -148,9 +150,11 @@ describe("MUST_BLOCK pole", () => {
 
 	it("evidence: npm state claim contradicting the live dist-tag is refused", async () => {
 		const liveVersion = "0.4.7-alpha";
-		const fetchImpl = vi.fn().mockResolvedValue(
-			jsonResponse(200, { "dist-tags": { alpha: liveVersion } }),
-		);
+		const fetchImpl = vi
+			.fn()
+			.mockResolvedValue(
+				jsonResponse(200, { "dist-tags": { alpha: liveVersion } }),
+			);
 		const deps = buildDeps({ fetchImpl });
 		const falseVersion = "0.4.6-alpha";
 		const content = `evidence: npm view some-pkg dist-tags -> some-pkg@alpha -> ${falseVersion}`;
@@ -237,8 +241,7 @@ describe("bare live-state literal on an evidence: line", () => {
 	// the claim below is TRUE by construction. It is refused anyway.
 	const liveBody = { state: "closed", merged: true };
 	const liveState = liveBody.merged ? "MERGED" : "OPEN";
-	const trueLive = () =>
-		vi.fn().mockResolvedValue(jsonResponse(200, liveBody));
+	const trueLive = () => vi.fn().mockResolvedValue(jsonResponse(200, liveBody));
 
 	it("MUST_BLOCK: a TRUE bare PR state is refused, and the error names both legal forms", async () => {
 		const fetchImpl = trueLive();
@@ -281,17 +284,33 @@ describe("bare live-state literal on an evidence: line", () => {
 	it.each([
 		["gh", "evidence: gh pr view 1092 -R o/r --json state -> MERGED"],
 		["git", "evidence: git log -1 --format=%s -> PR #1092 -> MERGED"],
-		["npm view", "evidence: npm view some-pkg dist-tags -> some-pkg@alpha -> 0.4.7"],
-		["tool call name", "evidence: get_task k1234567890 -> task k1234567890 -> done"],
-		["curl", "evidence: curl -s https://api.github.com/repos/o/r/pulls/1092 -> PR #1092 -> MERGED"],
+		[
+			"npm view",
+			"evidence: npm view some-pkg dist-tags -> some-pkg@alpha -> 0.4.7",
+		],
+		[
+			"tool call name",
+			"evidence: get_task k1234567890 -> task k1234567890 -> done",
+		],
+		[
+			"curl",
+			"evidence: curl -s https://api.github.com/repos/o/r/pulls/1092 -> PR #1092 -> MERGED",
+		],
 	])("MUST_PASS: a command line (%s) carrying a TRUE state is allowed", async (_name, content) => {
-		const fetchImpl = vi.fn().mockImplementation(async (url: string) =>
-			String(url).includes("npmjs")
-				? jsonResponse(200, { "dist-tags": { alpha: "0.4.7" } })
-				: jsonResponse(200, liveBody),
-		);
+		const fetchImpl = vi
+			.fn()
+			.mockImplementation(async (url: string) =>
+				String(url).includes("npmjs")
+					? jsonResponse(200, { "dist-tags": { alpha: "0.4.7" } })
+					: jsonResponse(200, liveBody),
+			);
 		const convexQuery = vi.fn().mockResolvedValue({ status: "done" });
-		const deps = buildDeps({ fetchImpl, convexQuery, log: vi.fn(), defaultRepo: "o/r" });
+		const deps = buildDeps({
+			fetchImpl,
+			convexQuery,
+			log: vi.fn(),
+			defaultRepo: "o/r",
+		});
 		await expect(guardFreshState(content, deps)).resolves.toBeUndefined();
 	});
 
@@ -400,7 +419,9 @@ describe("adoption counter", () => {
 		resetStateEvidenceAdoption();
 		const log = vi.fn();
 		const deps = buildDeps({
-			fetchImpl: vi.fn().mockResolvedValue(jsonResponse(200, { state: "open" })),
+			fetchImpl: vi
+				.fn()
+				.mockResolvedValue(jsonResponse(200, { state: "open" })),
 			log,
 		});
 		await guardFreshState("evidence: {{pr:o/r#1}}", deps);
@@ -408,7 +429,9 @@ describe("adoption counter", () => {
 			"evidence: gh pr view 2 -R o/r --json state -> PR #2 (o/r) -> OPEN",
 			deps,
 		);
-		await guardFreshState("evidence: PR #3 -> CLOSED", deps).catch(() => undefined);
+		await guardFreshState("evidence: PR #3 -> CLOSED", deps).catch(
+			() => undefined,
+		);
 		expect(getStateEvidenceAdoption()).toEqual({
 			withToken: 1,
 			withCommand: 1,
@@ -464,14 +487,13 @@ describe("bare literal spellings", () => {
 		);
 	});
 
-	it.each(spellings)(
-		"MUST_PASS: %s, with its command (true state)",
-		async (_label, _bare, withCommand) => {
-			await expect(
-				guardFreshState(withCommand, livePass()),
-			).resolves.toBeUndefined();
-		},
-	);
+	it.each(
+		spellings,
+	)("MUST_PASS: %s, with its command (true state)", async (_label, _bare, withCommand) => {
+		await expect(
+			guardFreshState(withCommand, livePass()),
+		).resolves.toBeUndefined();
+	});
 
 	it("MUST_REFUSE: a command line with a FALSE state in a variant spelling is still refused", async () => {
 		await expect(

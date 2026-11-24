@@ -144,7 +144,11 @@ export function withActingOrg(
 				INTERCEPTED_METHODS.has(prop) &&
 				typeof original === "function"
 			) {
-				return (fn: unknown, args?: Record<string, unknown>, ...rest: unknown[]) =>
+				return (
+					fn: unknown,
+					args?: Record<string, unknown>,
+					...rest: unknown[]
+				) =>
 					(original as (...a: unknown[]) => unknown).call(
 						target,
 						fn,

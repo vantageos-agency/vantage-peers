@@ -18,13 +18,19 @@ type ToolHandler = (args: Record<string, unknown>) => Promise<unknown>;
 async function listDiaries(
 	reply: unknown,
 	args: Record<string, unknown>,
-): Promise<{ structured: Record<string, unknown>; sent: Record<string, unknown> }> {
+): Promise<{
+	structured: Record<string, unknown>;
+	sent: Record<string, unknown>;
+}> {
 	const handlers = new Map<string, ToolHandler>();
 	const capture = (...a: unknown[]): unknown => {
 		handlers.set(a[0] as string, a[a.length - 1] as ToolHandler);
 		return {};
 	};
-	const server = { tool: capture, registerTool: capture } as unknown as McpServer;
+	const server = {
+		tool: capture,
+		registerTool: capture,
+	} as unknown as McpServer;
 	let sent: Record<string, unknown> = {};
 	const query = vi.fn(async (_fn: string, a: Record<string, unknown>) => {
 		sent = a;
@@ -32,7 +38,11 @@ async function listDiaries(
 	});
 	registerTools(
 		server,
-		{ query, mutation: vi.fn(), action: vi.fn() } as unknown as ConvexHttpClient,
+		{
+			query,
+			mutation: vi.fn(),
+			action: vi.fn(),
+		} as unknown as ConvexHttpClient,
 		LOCAL_STDIO_TRUST_CTX,
 	);
 	const result = (await handlers.get("list_diaries")?.(args)) as {
@@ -64,7 +74,10 @@ describe("list_diaries over a capped diary:list page", () => {
 	});
 
 	it("a short bare array (scan exhausted) has no cursor", async () => {
-		const { structured } = await listDiaries([ROW], { createdBy: "pi", limit: 5 });
+		const { structured } = await listDiaries([ROW], {
+			createdBy: "pi",
+			limit: 5,
+		});
 		expect(structured.nextCursor ?? null).toBeNull();
 	});
 });

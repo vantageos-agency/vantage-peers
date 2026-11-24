@@ -16,7 +16,9 @@ function createTaskSchema(): z.ZodTypeAny {
 	};
 	const convex = { query: vi.fn(), mutation: vi.fn(), action: vi.fn() };
 	registerTools(
-		{ registerTool: reg, tool: reg } as unknown as Parameters<typeof registerTools>[0],
+		{ registerTool: reg, tool: reg } as unknown as Parameters<
+			typeof registerTools
+		>[0],
 		convex as unknown as Parameters<typeof registerTools>[1],
 		LOCAL_STDIO_TRUST_CTX,
 	);
@@ -32,14 +34,22 @@ describe("create_task input schema: project is required", () => {
 		expect(createTaskSchema().safeParse(base).success).toBe(false);
 	});
 	it("REFUSED: project empty", () => {
-		expect(createTaskSchema().safeParse({ ...base, project: "" }).success).toBe(false);
+		expect(createTaskSchema().safeParse({ ...base, project: "" }).success).toBe(
+			false,
+		);
 	});
 	it("REFUSED: project whitespace only", () => {
-		expect(createTaskSchema().safeParse({ ...base, project: "   " }).success).toBe(false);
+		expect(
+			createTaskSchema().safeParse({ ...base, project: "   " }).success,
+		).toBe(false);
 	});
 	it("ACCEPTED: a real project, trimmed", () => {
-		const r = createTaskSchema().safeParse({ ...base, project: " vantage-peers " });
+		const r = createTaskSchema().safeParse({
+			...base,
+			project: " vantage-peers ",
+		});
 		expect(r.success).toBe(true);
-		if (r.success) expect((r.data as { project: string }).project).toBe("vantage-peers");
+		if (r.success)
+			expect((r.data as { project: string }).project).toBe("vantage-peers");
 	});
 });

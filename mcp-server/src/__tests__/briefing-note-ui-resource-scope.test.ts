@@ -31,11 +31,10 @@ describe("briefing-note ui-resource — scope-aware identity threading", () => {
 			return null;
 		};
 
-		await readUiResource(
-			"ui://vp/v1/briefing-note?noteId=bn1",
-			fetchConvex,
-			{ master: false, callerIdentities: ["prometheus"] },
-		);
+		await readUiResource("ui://vp/v1/briefing-note?noteId=bn1", fetchConvex, {
+			master: false,
+			callerIdentities: ["prometheus"],
+		});
 
 		expect(capturedArgs).toBeDefined();
 		expect(capturedArgs?.master).toBe(false);
@@ -73,9 +72,7 @@ describe("briefing-note ui-resource — scope-aware identity threading", () => {
 			args: Record<string, unknown>,
 		) => {
 			if (functionName === "briefingNotes:get") {
-				const callerIdentities = args.callerIdentities as
-					| string[]
-					| undefined;
+				const callerIdentities = args.callerIdentities as string[] | undefined;
 				const master = args.master as boolean | undefined;
 				const note = {
 					_id: "bn1",

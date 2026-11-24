@@ -532,7 +532,9 @@ describe("S1 boundary — the actor is resolved once, from the presented credent
 				new RegExp(`^AGENT_CREDENTIAL_INVALID \\(${reason}\\): `),
 			);
 			expect(JSON.stringify(json), credential).not.toContain("registration");
-			expect(JSON.stringify(json), credential).not.toContain("agentCredentials:");
+			expect(JSON.stringify(json), credential).not.toContain(
+				"agentCredentials:",
+			);
 		}
 	});
 

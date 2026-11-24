@@ -68,7 +68,10 @@ describe("non-master bearer: every call carries the verified org", () => {
 		await client.action("search:recall" as never, args as never);
 		for (const fn of [sa.query, sa.mutation, sa.action]) {
 			expect(fn).toHaveBeenCalledTimes(1);
-			expect(fn.mock.calls[0][1]).toEqual({ taskId: "t1", __actingOrg: "org_A" });
+			expect(fn.mock.calls[0][1]).toEqual({
+				taskId: "t1",
+				__actingOrg: "org_A",
+			});
 		}
 		// The caller's object is not mutated.
 		expect(args).toEqual({ taskId: "t1" });
@@ -79,7 +82,10 @@ describe("non-master bearer: every call carries the verified org", () => {
 		const client = selectConvexClientForRequest(URL, seat(), {
 			createServiceAccountClient: () => sa,
 		});
-		await client.query("tasks:list" as never, { __actingOrg: "org_B" } as never);
+		await client.query(
+			"tasks:list" as never,
+			{ __actingOrg: "org_B" } as never,
+		);
 		expect(sa.query.mock.calls[0][1]).toEqual({ __actingOrg: "org_A" });
 	});
 
@@ -95,10 +101,16 @@ describe("non-master bearer: every call carries the verified org", () => {
 	it("two bearers of different orgs never share an org", async () => {
 		const saA = fakeClient();
 		const saB = fakeClient();
-		const a = selectConvexClientForRequest(URL, seat(), { createServiceAccountClient: () => saA });
-		const b = selectConvexClientForRequest(URL, seat({ clerkOrgSlug: "org-b", orgClerkId: "org_B" }), {
-			createServiceAccountClient: () => saB,
+		const a = selectConvexClientForRequest(URL, seat(), {
+			createServiceAccountClient: () => saA,
 		});
+		const b = selectConvexClientForRequest(
+			URL,
+			seat({ clerkOrgSlug: "org-b", orgClerkId: "org_B" }),
+			{
+				createServiceAccountClient: () => saB,
+			},
+		);
 		await a.query("x:y" as never, {} as never);
 		await b.query("x:y" as never, {} as never);
 		expect(saA.query.mock.calls[0][1]).toEqual({ __actingOrg: "org_A" });
@@ -119,7 +131,10 @@ describe("non-master bearer with no resolvable org: no client", () => {
 			});
 			for (const method of ["query", "mutation", "action"] as const) {
 				await expect(
-					(client[method] as (...a: unknown[]) => Promise<unknown>)("tasks:list", {}),
+					(client[method] as (...a: unknown[]) => Promise<unknown>)(
+						"tasks:list",
+						{},
+					),
 				).rejects.toThrow(/RBAC_DENIED/);
 			}
 			expect(sa.query).not.toHaveBeenCalled();
@@ -133,7 +148,9 @@ describe("non-master bearer with no resolvable org: no client", () => {
 		const client = selectConvexClientForRequest(URL, undefined, {
 			createServiceAccountClient: () => sa,
 		});
-		await expect(client.query("tasks:list" as never, {} as never)).rejects.toThrow(/RBAC_DENIED/);
+		await expect(
+			client.query("tasks:list" as never, {} as never),
+		).rejects.toThrow(/RBAC_DENIED/);
 		expect(sa.query).not.toHaveBeenCalled();
 	});
 });
@@ -143,7 +160,12 @@ describe("master and Clerk callers are unchanged", () => {
 		const sa = fakeClient();
 		const client = selectConvexClientForRequest(
 			URL,
-			seat({ isMaster: true, viaMasterBearer: true, orgClerkId: undefined, clerkOrgSlug: undefined }),
+			seat({
+				isMaster: true,
+				viaMasterBearer: true,
+				orgClerkId: undefined,
+				clerkOrgSlug: undefined,
+			}),
 			{ createServiceAccountClient: () => sa },
 		);
 		expect(client).toBe(sa);
@@ -163,10 +185,14 @@ describe("master and Clerk callers are unchanged", () => {
 		const plain = fakeClient();
 		const wire = plain.query; // withQueryRetry wraps .query on the same object
 		const sa = fakeClient();
-		const client = selectConvexClientForRequest(URL, seat({ clerkJwt: "jwt-a" }), {
-			createPlainClient: () => plain,
-			createServiceAccountClient: () => sa,
-		});
+		const client = selectConvexClientForRequest(
+			URL,
+			seat({ clerkJwt: "jwt-a" }),
+			{
+				createPlainClient: () => plain,
+				createServiceAccountClient: () => sa,
+			},
+		);
 		expect(plain.setAuth).toHaveBeenCalledWith("jwt-a");
 		await client.query("tasks:list" as never, { a: 1 } as never);
 		expect(wire.mock.calls[0][1]).toEqual({ a: 1 });

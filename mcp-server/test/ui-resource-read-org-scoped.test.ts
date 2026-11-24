@@ -34,36 +34,142 @@ import { registerUiResources } from "../src/ui-resources/register.js";
 
 const ORG_A = "org-a";
 const ORG_B = "org-b";
-const ORG_ID: Record<string, string> = { [ORG_A]: "org_AAAA", [ORG_B]: "org_BBBB" };
+const ORG_ID: Record<string, string> = {
+	[ORG_A]: "org_AAAA",
+	[ORG_B]: "org_BBBB",
+};
 
 type Row = Record<string, unknown> & { org: string; marker: string };
 
 const ROWS: Record<string, Row[]> = {
 	tasks: [
-		{ org: ORG_A, marker: "A-TASK", _id: "t1", title: "A-TASK", status: "todo", assignedTo: "alice", createdBy: "alice", orgId: ORG_A },
-		{ org: ORG_B, marker: "B-TASK", _id: "t2", title: "B-TASK", status: "todo", assignedTo: "mallory", createdBy: "mallory", orgId: ORG_B },
+		{
+			org: ORG_A,
+			marker: "A-TASK",
+			_id: "t1",
+			title: "A-TASK",
+			status: "todo",
+			assignedTo: "alice",
+			createdBy: "alice",
+			orgId: ORG_A,
+		},
+		{
+			org: ORG_B,
+			marker: "B-TASK",
+			_id: "t2",
+			title: "B-TASK",
+			status: "todo",
+			assignedTo: "mallory",
+			createdBy: "mallory",
+			orgId: ORG_B,
+		},
 	],
 	messages: [
-		{ org: ORG_A, marker: "A-MSG", _id: "m1", from: "alice", channel: "broadcast", content: "A-MSG", createdAt: 1 },
-		{ org: ORG_B, marker: "B-MSG", _id: "m2", from: "mallory", channel: "broadcast", content: "B-MSG", createdAt: 2 },
+		{
+			org: ORG_A,
+			marker: "A-MSG",
+			_id: "m1",
+			from: "alice",
+			channel: "broadcast",
+			content: "A-MSG",
+			createdAt: 1,
+		},
+		{
+			org: ORG_B,
+			marker: "B-MSG",
+			_id: "m2",
+			from: "mallory",
+			channel: "broadcast",
+			content: "B-MSG",
+			createdAt: 2,
+		},
 	],
 	memories: [
-		{ org: ORG_A, marker: "A-MEM", _id: "y1", namespace: "team/org-a", type: "fact", content: "A-MEM", createdBy: "alice" },
-		{ org: ORG_B, marker: "B-MEM", _id: "y2", namespace: "team/org-b", type: "fact", content: "B-MEM", createdBy: "mallory" },
+		{
+			org: ORG_A,
+			marker: "A-MEM",
+			_id: "y1",
+			namespace: "team/org-a",
+			type: "fact",
+			content: "A-MEM",
+			createdBy: "alice",
+		},
+		{
+			org: ORG_B,
+			marker: "B-MEM",
+			_id: "y2",
+			namespace: "team/org-b",
+			type: "fact",
+			content: "B-MEM",
+			createdBy: "mallory",
+		},
 	],
 	missions: [
-		{ org: ORG_A, marker: "A-MISSION", _id: "s1", name: "A-MISSION", status: "execute", pilot: "alice" },
-		{ org: ORG_B, marker: "B-MISSION", _id: "s2", name: "B-MISSION", status: "execute", pilot: "mallory" },
+		{
+			org: ORG_A,
+			marker: "A-MISSION",
+			_id: "s1",
+			name: "A-MISSION",
+			status: "execute",
+			pilot: "alice",
+		},
+		{
+			org: ORG_B,
+			marker: "B-MISSION",
+			_id: "s2",
+			name: "B-MISSION",
+			status: "execute",
+			pilot: "mallory",
+		},
 		// org-b's own "alice": a same-named pilot of ANOTHER org.
-		{ org: ORG_B, marker: "B-ALICE-MISSION", _id: "s3", name: "B-ALICE-MISSION", status: "execute", pilot: "alice" },
+		{
+			org: ORG_B,
+			marker: "B-ALICE-MISSION",
+			_id: "s3",
+			name: "B-ALICE-MISSION",
+			status: "execute",
+			pilot: "alice",
+		},
 	],
 	diary: [
-		{ org: ORG_A, marker: "A-DIARY", _id: "d1", date: "2026-11-01", orchestrator: "alice", createdBy: "alice", content: "A-DIARY" },
-		{ org: ORG_B, marker: "B-DIARY", _id: "d2", date: "2026-11-01", orchestrator: "mallory", createdBy: "mallory", content: "B-DIARY" },
+		{
+			org: ORG_A,
+			marker: "A-DIARY",
+			_id: "d1",
+			date: "2026-11-01",
+			orchestrator: "alice",
+			createdBy: "alice",
+			content: "A-DIARY",
+		},
+		{
+			org: ORG_B,
+			marker: "B-DIARY",
+			_id: "d2",
+			date: "2026-11-01",
+			orchestrator: "mallory",
+			createdBy: "mallory",
+			content: "B-DIARY",
+		},
 	],
 	briefingNotes: [
-		{ org: ORG_A, marker: "A-NOTE", _id: "n1", topic: "t", title: "A-NOTE", createdBy: "alice", participants: ["alice"] },
-		{ org: ORG_B, marker: "B-NOTE", _id: "n2", topic: "t", title: "B-NOTE", createdBy: "mallory", participants: ["mallory"] },
+		{
+			org: ORG_A,
+			marker: "A-NOTE",
+			_id: "n1",
+			topic: "t",
+			title: "A-NOTE",
+			createdBy: "alice",
+			participants: ["alice"],
+		},
+		{
+			org: ORG_B,
+			marker: "B-NOTE",
+			_id: "n2",
+			topic: "t",
+			title: "B-NOTE",
+			createdBy: "mallory",
+			participants: ["mallory"],
+		},
 	],
 };
 
@@ -76,34 +182,58 @@ function fakeServiceAccount(calls: Call[]): ConvexHttpClient {
 		const args = (rawArgs ?? {}) as Record<string, unknown>;
 		calls.push({ fn: name, args });
 		const acting = args.__actingOrg as string | undefined;
-		const org = acting === undefined ? undefined : Object.keys(ORG_ID).find((k) => ORG_ID[k] === acting);
-		const inOrg = (rows: Row[]) => (acting === undefined ? rows : rows.filter((r) => r.org === org));
+		const org =
+			acting === undefined
+				? undefined
+				: Object.keys(ORG_ID).find((k) => ORG_ID[k] === acting);
+		const inOrg = (rows: Row[]) =>
+			acting === undefined ? rows : rows.filter((r) => r.org === org);
 		switch (name) {
 			case "tasks:list":
 				return inOrg(ROWS.tasks);
 			case "messages:listMessages":
 				return inOrg(ROWS.messages);
 			case "memories:listMemories":
-				return { value: inOrg(ROWS.memories).filter((r) => r.namespace === args.namespace), isDone: true, continueCursor: null };
+				return {
+					value: inOrg(ROWS.memories).filter(
+						(r) => r.namespace === args.namespace,
+					),
+					isDone: true,
+					continueCursor: null,
+				};
 			case "missions:list":
-				return inOrg(ROWS.missions).filter((r) => args.pilot === undefined || r.pilot === args.pilot);
+				return inOrg(ROWS.missions).filter(
+					(r) => args.pilot === undefined || r.pilot === args.pilot,
+				);
 			case "diary:list":
 				return inOrg(ROWS.diary).filter(
 					(r) =>
-						(args.orchestrator === undefined || r.orchestrator === args.orchestrator) &&
+						(args.orchestrator === undefined ||
+							r.orchestrator === args.orchestrator) &&
 						(args.createdBy === undefined || r.createdBy === args.createdBy),
 				);
 			case "diary:get":
-				return inOrg(ROWS.diary).find((r) => r.date === args.date && r.orchestrator === args.orchestrator) ?? null;
+				return (
+					inOrg(ROWS.diary).find(
+						(r) => r.date === args.date && r.orchestrator === args.orchestrator,
+					) ?? null
+				);
 			case "briefingNotes:list":
 				return inOrg(ROWS.briefingNotes);
 			case "briefingNotes:get":
-				return inOrg(ROWS.briefingNotes).find((r) => r._id === args.noteId) ?? null;
+				return (
+					inOrg(ROWS.briefingNotes).find((r) => r._id === args.noteId) ?? null
+				);
 			default:
 				throw new Error(`fake backend: no door ${name}`);
 		}
 	};
-	return { query, mutation: query, action: query, setAuth: () => undefined } as unknown as ConvexHttpClient;
+	return {
+		query,
+		mutation: query,
+		action: query,
+		setAuth: () => undefined,
+	} as unknown as ConvexHttpClient;
 }
 
 function baseCtx(over: Partial<OAuthContext>): OAuthContext {
@@ -122,7 +252,11 @@ function baseCtx(over: Partial<OAuthContext>): OAuthContext {
 }
 
 /** An org-a seat: an OAuth bearer whose access-token row resolved org-a. */
-const MEMBER_A = baseCtx({ accessTokenHash: "a".repeat(64), clerkOrgSlug: ORG_A, orgClerkId: ORG_ID[ORG_A] });
+const MEMBER_A = baseCtx({
+	accessTokenHash: "a".repeat(64),
+	clerkOrgSlug: ORG_A,
+	orgClerkId: ORG_ID[ORG_A],
+});
 /** An OAuth bearer whose organisation resolves to no ID. */
 const UNRESOLVED = baseCtx({ accessTokenHash: "b".repeat(64) });
 /** Clerk-JWT caller: its own token reaches Convex, which scopes it there. */
@@ -145,10 +279,14 @@ async function readAs(oauthCtx: OAuthContext | undefined, uri: string) {
 	const fake = fakeServiceAccount(calls);
 	// The production selection (server-http.ts /mcp), with the fake as both the
 	// service-account and the plain client.
-	const convex = selectConvexClientForRequest("https://t.convex.cloud", oauthCtx, {
-		createServiceAccountClient: () => fake,
-		createPlainClient: () => fakeServiceAccount(calls),
-	});
+	const convex = selectConvexClientForRequest(
+		"https://t.convex.cloud",
+		oauthCtx,
+		{
+			createServiceAccountClient: () => fake,
+			createPlainClient: () => fakeServiceAccount(calls),
+		},
+	);
 	const master = oauthCtx === undefined || isMasterScope(oauthCtx);
 	const server = new McpServer({ name: "t", version: "0.0.0" });
 	registerUiResources(server, convex, oauthCtx, {
@@ -180,14 +318,67 @@ type Case = {
 };
 
 const CASES: Case[] = [
-	{ primitive: "tasks-table", ownUri: "ui://vp/v1/tasks-table", own: ["A-TASK"], foreign: ["B-TASK"], door: "tasks:list" },
-	{ primitive: "messages-feed", ownUri: "ui://vp/v1/messages-feed", own: ["A-MSG"], foreign: ["B-MSG"], door: "messages:listMessages" },
-	{ primitive: "memory-quote", ownUri: "ui://vp/v1/memory-quote?namespace=team%2Forg-a", own: ["A-MEM"], foreign: ["B-MEM"], door: "memories:listMemories", foreignUri: "ui://vp/v1/memory-quote?namespace=team%2Forg-b" },
-	{ primitive: "mission-timeline", ownUri: "ui://vp/v1/mission-timeline?pilot=alice", own: ["A-MISSION"], foreign: ["B-MISSION", "B-ALICE-MISSION"], door: "missions:list", foreignUri: "ui://vp/v1/mission-timeline?pilot=mallory" },
-	{ primitive: "diary-entry (list)", ownUri: "ui://vp/v1/diary-entry?orchestrator=alice", own: ["A-DIARY"], foreign: ["B-DIARY"], door: "diary:list", foreignUri: "ui://vp/v1/diary-entry?orchestrator=mallory" },
-	{ primitive: "diary-entry (get)", ownUri: "ui://vp/v1/diary-entry?date=2026-11-01&orchestrator=alice", own: ["A-DIARY"], foreign: ["B-DIARY"], door: "diary:get", foreignUri: "ui://vp/v1/diary-entry?date=2026-11-01&orchestrator=mallory" },
-	{ primitive: "briefing-note (list)", ownUri: "ui://vp/v1/briefing-note", own: ["A-NOTE"], foreign: ["B-NOTE"], door: "briefingNotes:list" },
-	{ primitive: "briefing-note (get)", ownUri: "ui://vp/v1/briefing-note?noteId=n1", own: ["A-NOTE"], foreign: ["B-NOTE"], door: "briefingNotes:get", foreignUri: "ui://vp/v1/briefing-note?noteId=n2" },
+	{
+		primitive: "tasks-table",
+		ownUri: "ui://vp/v1/tasks-table",
+		own: ["A-TASK"],
+		foreign: ["B-TASK"],
+		door: "tasks:list",
+	},
+	{
+		primitive: "messages-feed",
+		ownUri: "ui://vp/v1/messages-feed",
+		own: ["A-MSG"],
+		foreign: ["B-MSG"],
+		door: "messages:listMessages",
+	},
+	{
+		primitive: "memory-quote",
+		ownUri: "ui://vp/v1/memory-quote?namespace=team%2Forg-a",
+		own: ["A-MEM"],
+		foreign: ["B-MEM"],
+		door: "memories:listMemories",
+		foreignUri: "ui://vp/v1/memory-quote?namespace=team%2Forg-b",
+	},
+	{
+		primitive: "mission-timeline",
+		ownUri: "ui://vp/v1/mission-timeline?pilot=alice",
+		own: ["A-MISSION"],
+		foreign: ["B-MISSION", "B-ALICE-MISSION"],
+		door: "missions:list",
+		foreignUri: "ui://vp/v1/mission-timeline?pilot=mallory",
+	},
+	{
+		primitive: "diary-entry (list)",
+		ownUri: "ui://vp/v1/diary-entry?orchestrator=alice",
+		own: ["A-DIARY"],
+		foreign: ["B-DIARY"],
+		door: "diary:list",
+		foreignUri: "ui://vp/v1/diary-entry?orchestrator=mallory",
+	},
+	{
+		primitive: "diary-entry (get)",
+		ownUri: "ui://vp/v1/diary-entry?date=2026-11-01&orchestrator=alice",
+		own: ["A-DIARY"],
+		foreign: ["B-DIARY"],
+		door: "diary:get",
+		foreignUri: "ui://vp/v1/diary-entry?date=2026-11-01&orchestrator=mallory",
+	},
+	{
+		primitive: "briefing-note (list)",
+		ownUri: "ui://vp/v1/briefing-note",
+		own: ["A-NOTE"],
+		foreign: ["B-NOTE"],
+		door: "briefingNotes:list",
+	},
+	{
+		primitive: "briefing-note (get)",
+		ownUri: "ui://vp/v1/briefing-note?noteId=n1",
+		own: ["A-NOTE"],
+		foreign: ["B-NOTE"],
+		door: "briefingNotes:get",
+		foreignUri: "ui://vp/v1/briefing-note?noteId=n2",
+	},
 ];
 
 function expectRefused(err: unknown): void {
@@ -208,7 +399,9 @@ describe("ui://vp/v1/* resources/read is partitioned by organisation", () => {
 				const call = calls.find((k) => k.fn === c.door);
 				expect(call, `the read reaches ${c.door}`).toBeDefined();
 				expect(call?.args.__actingOrg).toBe(ORG_ID[ORG_A]);
-				expect(calls.every((k) => k.args.__actingOrg === ORG_ID[ORG_A])).toBe(true);
+				expect(calls.every((k) => k.args.__actingOrg === ORG_ID[ORG_A])).toBe(
+					true,
+				);
 			});
 
 			if (c.foreignUri !== undefined) {

@@ -110,7 +110,7 @@ function checkVerificationTests(description: string, acc: Acc): void {
 		acc.auto_inject.push("description.VERIFICATION");
 		acc.warnings.push(
 			"AUTO-INJECT: VERIFICATION: section missing — added placeholder. " +
-			"Replace 'TBD' with actual acceptance criteria before closing the task.",
+				"Replace 'TBD' with actual acceptance criteria before closing the task.",
 		);
 	}
 
@@ -118,13 +118,14 @@ function checkVerificationTests(description: string, acc: Acc): void {
 		acc.auto_inject.push("description.TESTS");
 		acc.warnings.push(
 			"AUTO-INJECT: TESTS: section missing — added placeholder. " +
-			"Replace 'TBD' with actual test strategy before closing the task.",
+				"Replace 'TBD' with actual test strategy before closing the task.",
 		);
 	}
 
 	if (missingVerification || missingTests) {
 		// Inject into patched payload
-		const current = (acc.patched.description as string | undefined) ?? description;
+		const current =
+			(acc.patched.description as string | undefined) ?? description;
 		let patched = current;
 		if (missingVerification) {
 			patched += "\n\nVERIFICATION: TBD";
@@ -140,7 +141,11 @@ function checkVerificationTests(description: string, acc: Acc): void {
 // Axis: delegation triplet (hard-block when partial)
 // ─────────────────────────────────────────────────────────────────────────────
 
-const DELEGATION_KEYS = ["subagent_type", "run_in_background", "model"] as const;
+const DELEGATION_KEYS = [
+	"subagent_type",
+	"run_in_background",
+	"model",
+] as const;
 
 function checkDelegationTriplet(description: string, acc: Acc): void {
 	// Skip if [META] tag present (orchestrator meta-tasks exempt from delegation rules)
@@ -149,7 +154,9 @@ function checkDelegationTriplet(description: string, acc: Acc): void {
 	const lower = description.toLowerCase();
 
 	// Detect partial presence: any one of the three keys triggers the check
-	const present = DELEGATION_KEYS.filter((k) => lower.includes(k + ":") || lower.includes(k + " "));
+	const present = DELEGATION_KEYS.filter(
+		(k) => lower.includes(k + ":") || lower.includes(k + " "),
+	);
 	if (present.length === 0) return; // no delegation intent — not required
 
 	const missing = DELEGATION_KEYS.filter((k) => !present.includes(k));
@@ -174,11 +181,11 @@ function checkDelegationTriplet(description: string, acc: Acc): void {
 // ─────────────────────────────────────────────────────────────────────────────
 
 const EVIDENCE_PATTERNS: RegExp[] = [
-	/https?:\/\/\S+/,                                          // URL
-	/\b[0-9a-f]{7,40}\b/,                                      // commit SHA
-	/#\d{1,6}\b/,                                              // PR / issue number
-	/\b[a-z0-9]{20,}\b/,                                       // VantagePeers / Convex ID
-	/\b\d+\s*\/\s*\d+\b/,                                      // test / gate ratio
+	/https?:\/\/\S+/, // URL
+	/\b[0-9a-f]{7,40}\b/, // commit SHA
+	/#\d{1,6}\b/, // PR / issue number
+	/\b[a-z0-9]{20,}\b/, // VantagePeers / Convex ID
+	/\b\d+\s*\/\s*\d+\b/, // test / gate ratio
 	/\b\d+\s+(tests?|pass|passed|passing|green|errors?|rows?|lignes?|lines?|files?|fichiers?|issues?|commits?|insertions?|deletions?|tools?|gates?)\b/i,
 	/\b[\w./\-]+\.(png|jpe?g|gif|webp|svg|md|mdx|json|jsonl|xlsx|csv|html|pdf|tsx?|jsx?|py|sh|ya?ml|css|txt)\b/i,
 ];
@@ -189,7 +196,8 @@ function hasEvidence(note: string): boolean {
 	return EVIDENCE_PATTERNS.some((p) => p.test(note));
 }
 
-const CLAIM_WORDS_RE = /\b(done|merged|deployed|all\s+good|pass|passed|completed|finished|c'est\s+fait|terminé)\b/i;
+const CLAIM_WORDS_RE =
+	/\b(done|merged|deployed|all\s+good|pass|passed|completed|finished|c'est\s+fait|terminé)\b/i;
 
 function checkEvidence(note: string, acc: Acc): void {
 	if (note.includes(OPT_OUT_EVIDENCE)) return;
@@ -256,10 +264,10 @@ function checkFriction(note: string, acc: Acc): void {
 	acc.auto_inject.push("friction_observed");
 	acc.warnings.push(
 		"AUTO-INJECT: friction_observed missing — added 'friction_observed: none' placeholder. " +
-		"RULE #15 Auto-Amelioration (Day 89): every complete_task must declare observed friction. " +
-		"Replace 'none' with what you actually hit, or keep 'none' if truly frictionless.\n" +
-		"FIX: append the following line to completionNote:\n" +
-		"  friction_observed: none",
+			"RULE #15 Auto-Amelioration (Day 89): every complete_task must declare observed friction. " +
+			"Replace 'none' with what you actually hit, or keep 'none' if truly frictionless.\n" +
+			"FIX: append the following line to completionNote:\n" +
+			"  friction_observed: none",
 	);
 
 	const current = (acc.patched.completionNote as string | undefined) ?? note;
@@ -272,7 +280,8 @@ function checkFriction(note: string, acc: Acc): void {
 
 const CHANNEL_EXEMPT = new Set(["pi-chromebook", "pi-vps", "broadcast"]);
 
-const IMPERATIVE_VERBS_RE = /\b(fais|faire|exécute|execute|amende|amend|crée|create|mets?\s+à\s+jour|update|corrige|fix|déploie|deploy|merge|mergez?|installe|install|configure|configurez?|renomme|rename|supprimer|supprime|delete|remove|ajoute|ajouter|add|modifie|modifier|modify|retire|retirer|applique|appliquer|apply|vérifie|verify|check|génère|generate|construis|construire|build|écris|écrire|write|push|pushe|poussez?|pousse|pull|pulle|tirez?|commit|commits?|rebase|rebasez?|run|lance|lancez?|démarre|start|stop|arrête)\b/i;
+const IMPERATIVE_VERBS_RE =
+	/\b(fais|faire|exécute|execute|amende|amend|crée|create|mets?\s+à\s+jour|update|corrige|fix|déploie|deploy|merge|mergez?|installe|install|configure|configurez?|renomme|rename|supprimer|supprime|delete|remove|ajoute|ajouter|add|modifie|modifier|modify|retire|retirer|applique|appliquer|apply|vérifie|verify|check|génère|generate|construis|construire|build|écris|écrire|write|push|pushe|poussez?|pousse|pull|pulle|tirez?|commit|commits?|rebase|rebasez?|run|lance|lancez?|démarre|start|stop|arrête)\b/i;
 
 const NUMBERED_LIST_RE = /(?:^|\n)\s*\d+\.\s+[A-Za-zÀ-ÿ]/gm;
 
@@ -290,11 +299,7 @@ const INFO_MARKER_RES = [
 	/^\s*Status\s*:/im,
 ];
 
-function checkMessageTaskRef(
-	channel: string,
-	content: string,
-	acc: Acc,
-): void {
+function checkMessageTaskRef(channel: string, content: string, acc: Acc): void {
 	if (CHANNEL_EXEMPT.has(channel)) return;
 	if (!content.trim()) return;
 
@@ -416,19 +421,17 @@ function dispatchCompleteTask(
 		(hasEvidence(note) || note.includes(OPT_OUT_EVIDENCE));
 	if (noteOk) {
 		checkFriction(note, acc);
-	} else if (note.trim().length >= 40 && !acc.errors.some((e) => e.field === "completionNote.evidence")) {
+	} else if (
+		note.trim().length >= 40 &&
+		!acc.errors.some((e) => e.field === "completionNote.evidence")
+	) {
 		checkFriction(note, acc);
 	}
 }
 
-function dispatchSendMessage(
-	payload: Record<string, unknown>,
-	acc: Acc,
-): void {
-	const channel =
-		typeof payload.channel === "string" ? payload.channel : "";
-	const content =
-		typeof payload.content === "string" ? payload.content : "";
+function dispatchSendMessage(payload: Record<string, unknown>, acc: Acc): void {
+	const channel = typeof payload.channel === "string" ? payload.channel : "";
+	const content = typeof payload.content === "string" ? payload.content : "";
 
 	// Time estimate in content
 	checkTimeEstimate(content, acc);

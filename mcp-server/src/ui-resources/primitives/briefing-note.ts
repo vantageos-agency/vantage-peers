@@ -130,10 +130,9 @@ export async function renderBriefingNote(
 				args.master = identity.master;
 				args.callerIdentities = identity.callerIdentities;
 			}
-			const result = (await fetchConvex(
-				"briefingNotes:list",
-				args,
-			)) as BriefingNoteRow[] | { refused: true; items: unknown[] };
+			const result = (await fetchConvex("briefingNotes:list", args)) as
+				| BriefingNoteRow[]
+				| { refused: true; items: unknown[] };
 			// A refusal is not an absence: never render it as "No briefing notes found."
 			if (isRefusedEnvelope(result)) {
 				return `<div class="vp-briefing-note-error" role="alert">REFUSED (RBAC_DENIED): the backend read "briefingNotes:list" refused this identity. This is NOT an empty result: notes may exist that you cannot see.</div>`;

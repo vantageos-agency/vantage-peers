@@ -122,7 +122,10 @@ describe("from gate (defineTool: actor binding, then roster)", () => {
 		// The roster refusal is reached when the actor gate passes: a credential
 		// for "pi" on Marie's client, whose roster lists only "marie".
 		const err = await fromGate(
-			{ ...marieCtx, actor: { orgSlug: "marie-org", agentName: "pi", agentId: "agent-pi" } },
+			{
+				...marieCtx,
+				actor: { orgSlug: "marie-org", agentName: "pi", agentId: "agent-pi" },
+			},
 			"pi",
 		);
 		expect(err).not.toBeNull();

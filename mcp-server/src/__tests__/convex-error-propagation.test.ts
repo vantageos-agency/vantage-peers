@@ -127,7 +127,7 @@ describe("parseConvexError — path extraction edge cases", () => {
 
 	it("handles nested array path like .linkedMemoryIds[10]", () => {
 		const raw =
-			'ArgumentValidationError: type mismatch. Path: .linkedMemoryIds[10]';
+			"ArgumentValidationError: type mismatch. Path: .linkedMemoryIds[10]";
 		expect(parseConvexError(raw).path).toBe(".linkedMemoryIds[10]");
 	});
 });

@@ -201,7 +201,14 @@ describe("whoami — unit (no network)", () => {
 		expect(result?.scope_profile_name).toBe("alpha-test-trio");
 		expect(result?.suggested_orchestrator_id).toBe("Alpha");
 		expect(result?.fromAllowList).toEqual(
-			expect.arrayContaining(["Alpha", "alpha", "Beta", "beta", "Gamma", "gamma"]),
+			expect.arrayContaining([
+				"Alpha",
+				"alpha",
+				"Beta",
+				"beta",
+				"Gamma",
+				"gamma",
+			]),
 		);
 		expect(result?.namespaceReadPrefixes).toContain("orchestrator/Alpha");
 		expect(result?.namespaceWritePrefixes).toContain("orchestrator/Alpha");
@@ -334,7 +341,9 @@ describe("whoami — E2E (live prod)", () => {
 	it.skipIf(isCI || credsMissing)(
 		"alpha bearer — scope_profile_name='alpha-test-trio', suggested_orchestrator_id='Alpha'",
 		async () => {
-			const { status, parsed } = await callWhoamiProd(resolvedCreds.alpha.bearer);
+			const { status, parsed } = await callWhoamiProd(
+				resolvedCreds.alpha.bearer,
+			);
 			expect(status).toBe(200);
 			expect(parsed).not.toBeNull();
 			expect(parsed?.scope_profile_name).toBe("alpha-test-trio");
@@ -351,7 +360,9 @@ describe("whoami — E2E (live prod)", () => {
 	it.skipIf(isCI || credsMissing)(
 		"beta bearer — suggested_orchestrator_id='Beta'",
 		async () => {
-			const { status, parsed } = await callWhoamiProd(resolvedCreds.beta.bearer);
+			const { status, parsed } = await callWhoamiProd(
+				resolvedCreds.beta.bearer,
+			);
 			expect(status).toBe(200);
 			expect(parsed?.suggested_orchestrator_id).toBe("Beta");
 		},
@@ -360,7 +371,9 @@ describe("whoami — E2E (live prod)", () => {
 	it.skipIf(isCI || credsMissing)(
 		"gamma bearer — suggested_orchestrator_id='Gamma'",
 		async () => {
-			const { status, parsed } = await callWhoamiProd(resolvedCreds.gamma.bearer);
+			const { status, parsed } = await callWhoamiProd(
+				resolvedCreds.gamma.bearer,
+			);
 			expect(status).toBe(200);
 			expect(parsed?.suggested_orchestrator_id).toBe("Gamma");
 		},
@@ -369,51 +382,47 @@ describe("whoami — E2E (live prod)", () => {
 	it.skipIf(isCI || credsMissing || !creds.masterBearer)(
 		"master bearer — scope_profile_name='master', suggested_orchestrator_id='master'",
 		async () => {
-			const { status, parsed } = await callWhoamiProd(resolvedCreds.masterBearer);
+			const { status, parsed } = await callWhoamiProd(
+				resolvedCreds.masterBearer,
+			);
 			expect(status).toBe(200);
 			expect(parsed?.scope_profile_name).toBe("master");
 			expect(["master", null]).toContain(parsed?.suggested_orchestrator_id);
 		},
 	);
 
-	it.skipIf(isCI || credsMissing)(
-		"missing bearer — returns 401",
-		async () => {
-			const res = await fetch(resolvedCreds.vpTestUrl, {
-				method: "POST",
-				headers: {
-					"Content-Type": "application/json",
-					Accept: "application/json, text/event-stream",
-				},
-				body: JSON.stringify({
-					jsonrpc: "2.0",
-					method: "tools/call",
-					id: 99,
-					params: { name: "whoami", arguments: {} },
-				}),
-			});
-			expect(res.status).toBe(401);
-		},
-	);
+	it.skipIf(isCI || credsMissing)("missing bearer — returns 401", async () => {
+		const res = await fetch(resolvedCreds.vpTestUrl, {
+			method: "POST",
+			headers: {
+				"Content-Type": "application/json",
+				Accept: "application/json, text/event-stream",
+			},
+			body: JSON.stringify({
+				jsonrpc: "2.0",
+				method: "tools/call",
+				id: 99,
+				params: { name: "whoami", arguments: {} },
+			}),
+		});
+		expect(res.status).toBe(401);
+	});
 
-	it.skipIf(isCI || credsMissing)(
-		"invalid bearer — returns 401",
-		async () => {
-			const res = await fetch(resolvedCreds.vpTestUrl, {
-				method: "POST",
-				headers: {
-					Authorization: "Bearer invalid-token-xxxxxxxxxxxxxxxx",
-					"Content-Type": "application/json",
-					Accept: "application/json, text/event-stream",
-				},
-				body: JSON.stringify({
-					jsonrpc: "2.0",
-					method: "tools/call",
-					id: 99,
-					params: { name: "whoami", arguments: {} },
-				}),
-			});
-			expect(res.status).toBe(401);
-		},
-	);
+	it.skipIf(isCI || credsMissing)("invalid bearer — returns 401", async () => {
+		const res = await fetch(resolvedCreds.vpTestUrl, {
+			method: "POST",
+			headers: {
+				Authorization: "Bearer invalid-token-xxxxxxxxxxxxxxxx",
+				"Content-Type": "application/json",
+				Accept: "application/json, text/event-stream",
+			},
+			body: JSON.stringify({
+				jsonrpc: "2.0",
+				method: "tools/call",
+				id: 99,
+				params: { name: "whoami", arguments: {} },
+			}),
+		});
+		expect(res.status).toBe(401);
+	});
 });

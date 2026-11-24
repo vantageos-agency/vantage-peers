@@ -50,6 +50,8 @@ describe("checkInstanceOfSender", () => {
 			error: null,
 			instance: "eta-vps",
 		});
-		expect(checkInstanceOfSender(undefined, "bob", "bob-vps").error).not.toBeNull();
+		expect(
+			checkInstanceOfSender(undefined, "bob", "bob-vps").error,
+		).not.toBeNull();
 	});
 });

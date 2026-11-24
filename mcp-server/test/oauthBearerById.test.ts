@@ -49,7 +49,9 @@ function appWith(provider: (name: string) => unknown): Hono {
 	const a = new Hono();
 	a.use("*", bearerAuthMiddleware());
 	a.get("/echo", (c) =>
-		c.json({ ctx: (c.get("oauthContext") as OAuthContext | undefined) ?? null }),
+		c.json({
+			ctx: (c.get("oauthContext") as OAuthContext | undefined) ?? null,
+		}),
 	);
 	return a;
 }
@@ -119,7 +121,11 @@ describe("list_tasks gate follows the agent ID of a seat token", () => {
 
 	it("DENY: a stamp naming another org's agent is ignored, the allowlist rule applies", () => {
 		const foreign = ctx({
-			seatAgent: { agentId: "agent-clio-b", orgId: "org-b", agentName: "clio-2" },
+			seatAgent: {
+				agentId: "agent-clio-b",
+				orgId: "org-b",
+				agentName: "clio-2",
+			},
 		});
 		expect(listTasksGate(foreign, "clio", undefined)).toBeNull();
 		expect(listTasksGate(foreign, "clio-2", undefined)).toMatch(/Forbidden/);

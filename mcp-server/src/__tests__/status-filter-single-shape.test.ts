@@ -82,7 +82,10 @@ describe("list_tasks: every call form the backend receives as today", () => {
 			arguments: { status },
 		});
 		await client.close();
-		return { res, sent: queries.find((q) => q.name.startsWith("tasks:"))?.args.status };
+		return {
+			res,
+			sent: queries.find((q) => q.name.startsWith("tasks:"))?.args.status,
+		};
 	}
 
 	it('an alias as a bare string ("open") reaches the backend as "open"', async () => {

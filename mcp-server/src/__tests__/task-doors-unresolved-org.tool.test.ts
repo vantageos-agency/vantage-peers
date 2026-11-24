@@ -228,7 +228,10 @@ beforeEach(async () => {
 });
 
 // `orgId` undefined seeds a FLEET-owned task, assigned to the fleet's "eta".
-async function seed(orgId: string | undefined, status: Status): Promise<string> {
+async function seed(
+	orgId: string | undefined,
+	status: Status,
+): Promise<string> {
 	return await t.run(async (ctx) => {
 		const now = Date.now();
 		const id = await insertTaskRow(ctx, {
@@ -338,7 +341,9 @@ describe("a non-master bearer with no resolvable org is refused at the MCP layer
 			callerOrchestrator: "eta",
 		});
 		expect(denied?.isError, denied?.content[0]?.text).toBe(true);
-		expect(denied?.content[0]?.text).toMatch(/RBAC_DENIED|AGENT_CREDENTIAL_REQUIRED/);
+		expect(denied?.content[0]?.text).toMatch(
+			/RBAC_DENIED|AGENT_CREDENTIAL_REQUIRED/,
+		);
 		expect((await read(theirs))?.status).toBe("in_progress");
 		// M7: a Clerk session carries no agent proof (the transport never forwards
 		// `verifiedActor` for it), and "eta" is a registered agent of org-a, so the

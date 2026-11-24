@@ -123,8 +123,7 @@ describe("service-account env-var contract — negative pole (config absent)", (
 		{
 			label: "CLERK_SECRET_KEY missing",
 			setup: () => {
-				process.env.CLERK_SERVICE_ACCOUNT_USER_ID =
-					"user_fake_service_account";
+				process.env.CLERK_SERVICE_ACCOUNT_USER_ID = "user_fake_service_account";
 			},
 		},
 		{
@@ -139,25 +138,22 @@ describe("service-account env-var contract — negative pole (config absent)", (
 				/* nothing set — both stay unset */
 			},
 		},
-	])(
-		"createServiceAccountConvexClient() refuses and NAMES both env vars in the error when $label",
-		async ({ setup }) => {
-			setup();
+	])("createServiceAccountConvexClient() refuses and NAMES both env vars in the error when $label", async ({
+		setup,
+	}) => {
+		setup();
 
-			// No deps override here on purpose: getServiceAccountToken() must go
-			// through the REAL loadConfig() reading process.env, exactly as it
-			// does on the production request path.
-			const client = createServiceAccountConvexClient(
-				"https://internal.convex.cloud",
-			);
+		// No deps override here on purpose: getServiceAccountToken() must go
+		// through the REAL loadConfig() reading process.env, exactly as it
+		// does on the production request path.
+		const client = createServiceAccountConvexClient(
+			"https://internal.convex.cloud",
+		);
 
-			await expect(
-				client.query("some:query" as never, {}),
-			).rejects.toThrow(
-				/CLERK_SECRET_KEY.*CLERK_SERVICE_ACCOUNT_USER_ID.*not configured/,
-			);
-		},
-	);
+		await expect(client.query("some:query" as never, {})).rejects.toThrow(
+			/CLERK_SECRET_KEY.*CLERK_SERVICE_ACCOUNT_USER_ID.*not configured/,
+		);
+	});
 });
 
 describe("service-account env-var contract — positive pole (config present)", () => {

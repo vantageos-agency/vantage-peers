@@ -23,7 +23,10 @@ import {
 
 type ToolHandler = (args: Record<string, unknown>) => Promise<unknown>;
 
-function buildFakeServer(): { server: McpServer; handlers: Map<string, ToolHandler> } {
+function buildFakeServer(): {
+	server: McpServer;
+	handlers: Map<string, ToolHandler>;
+} {
 	const handlers = new Map<string, ToolHandler>();
 	const reg = (...args: unknown[]): unknown => {
 		handlers.set(args[0] as string, args[args.length - 1] as ToolHandler);
@@ -41,7 +44,8 @@ const RUN = {
 	status: "failed",
 	closed: 500,
 	remaining: true,
-	failureReason: "RBAC_DENIED: alpha-role is not creator or assignee of task t1 — bulk close denied",
+	failureReason:
+		"RBAC_DENIED: alpha-role is not creator or assignee of task t1 — bulk close denied",
 	startedAt: 1,
 	updatedAt: 2,
 };
@@ -49,7 +53,12 @@ const RUN = {
 function convexReturning(row: unknown): ConvexHttpClient {
 	return {
 		query: vi.fn().mockResolvedValue(row),
-		mutation: vi.fn().mockResolvedValue({ count: 500, sampleIds: [], bulkRunId: "bulk-1-aaaa", remaining: true }),
+		mutation: vi.fn().mockResolvedValue({
+			count: 500,
+			sampleIds: [],
+			bulkRunId: "bulk-1-aaaa",
+			remaining: true,
+		}),
 		action: vi.fn().mockResolvedValue(null),
 	} as unknown as ConvexHttpClient;
 }
@@ -60,7 +69,11 @@ const ACTOR_A: OAuthContext = {
 	scopes: ["mcp:full"],
 	scopeProfile: "tenant",
 	fromAllowList: ["alpha-role"],
-	actor: { orgSlug: "org-a", agentName: "alpha-role", agentId: "agent-alpha-role" },
+	actor: {
+		orgSlug: "org-a",
+		agentName: "alpha-role",
+		agentId: "agent-alpha-role",
+	},
 	namespaceReadPrefixes: ["team/org-a"],
 	namespaceWritePrefixes: ["team/org-a"],
 	expiresAt: Date.now() + 3600_000,
@@ -79,7 +92,11 @@ const MASTER: OAuthContext = {
 	isMaster: true,
 };
 
-async function call(ctx: OAuthContext, row: unknown, bulkRunId = "bulk-1-aaaa") {
+async function call(
+	ctx: OAuthContext,
+	row: unknown,
+	bulkRunId = "bulk-1-aaaa",
+) {
 	const { server, handlers } = buildFakeServer();
 	const convex = convexReturning(row);
 	registerTools(server, convex, ctx);
@@ -95,9 +112,14 @@ async function call(ctx: OAuthContext, row: unknown, bulkRunId = "bulk-1-aaaa") 
 describe("get_bulk_complete_run", () => {
 	it("is named get_bulk_complete_run and its schema requires a non-empty bulkRunId", () => {
 		expect(GET_BULK_COMPLETE_RUN_TOOL_NAME).toBe("get_bulk_complete_run");
-		expect(getBulkCompleteRunArgsSchema.parse({ bulkRunId: "bulk-1-aaaa" }).bulkRunId).toBe("bulk-1-aaaa");
+		expect(
+			getBulkCompleteRunArgsSchema.parse({ bulkRunId: "bulk-1-aaaa" })
+				.bulkRunId,
+		).toBe("bulk-1-aaaa");
 		expect(() => getBulkCompleteRunArgsSchema.parse({})).toThrow();
-		expect(() => getBulkCompleteRunArgsSchema.parse({ bulkRunId: "" })).toThrow();
+		expect(() =>
+			getBulkCompleteRunArgsSchema.parse({ bulkRunId: "" }),
+		).toThrow();
 	});
 
 	it("OWN: the creator reads its run, failure reason included, via tasks:getBulkCompleteRun", async () => {
@@ -132,7 +154,11 @@ describe("get_bulk_complete_run", () => {
 	});
 
 	it("MASTER: the fleet master reads any run", async () => {
-		const { result } = await call(MASTER, { ...RUN, orgId: "org-b", createdBy: "beta-role" });
+		const { result } = await call(MASTER, {
+			...RUN,
+			orgId: "org-b",
+			createdBy: "beta-role",
+		});
 		expect(result.isError).not.toBe(true);
 		expect(JSON.parse(result.content[0].text).bulkRunId).toBe("bulk-1-aaaa");
 	});
@@ -161,7 +187,11 @@ describe("get_bulk_complete_run", () => {
 		const orgB: OAuthContext = {
 			...ACTOR_A,
 			clientId: "client-b",
-			actor: { orgSlug: "org-b", agentName: "alpha-role", agentId: "agent-alpha-role" },
+			actor: {
+				orgSlug: "org-b",
+				agentName: "alpha-role",
+				agentId: "agent-alpha-role",
+			},
 			namespaceReadPrefixes: ["team/org-b"],
 		};
 		const { result } = await call(orgB, { ...RUN, orgId: "org-a" });
@@ -193,7 +223,9 @@ describe("get_bulk_complete_run", () => {
 				dryRun: false,
 				callerOrchestrator: "alpha-role",
 			});
-			return (convex.mutation as ReturnType<typeof vi.fn>).mock.calls[0]?.[1] as Record<string, unknown> | undefined;
+			return (convex.mutation as ReturnType<typeof vi.fn>).mock.calls[0]?.[1] as
+				| Record<string, unknown>
+				| undefined;
 		}
 
 		it("an org-a agent forwards verifiedOrg {orgSlug:'org-a'} from its verified actor", async () => {
@@ -202,7 +234,12 @@ describe("get_bulk_complete_run", () => {
 		});
 
 		it("a seat token with no actor forwards the org on its token row", async () => {
-			const args = await dispatch({ ...ACTOR_A, actor: undefined, clerkOrgSlug: "org-c", accessTokenHash: "h" });
+			const args = await dispatch({
+				...ACTOR_A,
+				actor: undefined,
+				clerkOrgSlug: "org-c",
+				accessTokenHash: "h",
+			});
 			expect(args?.verifiedOrg).toEqual({ orgSlug: "org-c" });
 		});
 
@@ -210,7 +247,11 @@ describe("get_bulk_complete_run", () => {
 			for (const dryRun of [true, false]) {
 				const { server, handlers } = buildFakeServer();
 				const convex = convexReturning(null);
-				registerTools(server, convex, { ...ACTOR_A, actor: undefined, clerkOrgSlug: undefined });
+				registerTools(server, convex, {
+					...ACTOR_A,
+					actor: undefined,
+					clerkOrgSlug: undefined,
+				});
 				// No acting name: nothing for the identity guard to refuse, so without
 				// this gate the call would reach Convex as the bare service account.
 				const out = (await handlers.get("bulk_complete_tasks")?.({
@@ -220,18 +261,29 @@ describe("get_bulk_complete_run", () => {
 				expect(out.isError).toBe(true);
 				expect(out.content[0].text).toMatch(/RBAC_DENIED: bulk_complete_tasks/);
 				expect(out.content[0].text).toContain("verified-org-unresolved");
-				expect((convex.mutation as ReturnType<typeof vi.fn>).mock.calls).toHaveLength(0);
+				expect(
+					(convex.mutation as ReturnType<typeof vi.fn>).mock.calls,
+				).toHaveLength(0);
 			}
 		});
 
 		it("PRESENT: a Clerk-JWT non-master caller (Convex sees its own org) is NOT refused and forwards none", async () => {
 			const { server, handlers } = buildFakeServer();
 			const convex = convexReturning(null);
-			registerTools(server, convex, { ...ACTOR_A, actor: undefined, clerkOrgSlug: undefined, clerkJwt: "jwt" });
-			await handlers.get("bulk_complete_tasks")?.({ filter: { assignedTo: "alpha-role" } });
+			registerTools(server, convex, {
+				...ACTOR_A,
+				actor: undefined,
+				clerkOrgSlug: undefined,
+				clerkJwt: "jwt",
+			});
+			await handlers.get("bulk_complete_tasks")?.({
+				filter: { assignedTo: "alpha-role" },
+			});
 			const calls = (convex.mutation as ReturnType<typeof vi.fn>).mock.calls;
 			expect(calls).toHaveLength(1);
-			expect((calls[0][1] as Record<string, unknown>).verifiedOrg).toBeUndefined();
+			expect(
+				(calls[0][1] as Record<string, unknown>).verifiedOrg,
+			).toBeUndefined();
 		});
 
 		it("PRESENT: the fleet master still reaches Convex and forwards none", async () => {

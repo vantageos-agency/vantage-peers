@@ -68,9 +68,7 @@ export function listTasksGate(
 
 	const allowed =
 		fromAllowList.length > 0
-			? fromAllowList.some(
-					(a) => normalizeOrchestratorId(a) === normPresented,
-				)
+			? fromAllowList.some((a) => normalizeOrchestratorId(a) === normPresented)
 			: normPresented === normalizeOrchestratorId(oauthCtx.userId); // legacy fallback
 
 	if (!allowed) {

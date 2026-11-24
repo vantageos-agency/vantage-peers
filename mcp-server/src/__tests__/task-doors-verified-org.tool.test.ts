@@ -238,7 +238,10 @@ beforeEach(async () => {
 });
 
 // `orgId` undefined seeds a FLEET-owned task, assigned to the fleet's "eta".
-async function seed(orgId: string | undefined, status: Status): Promise<string> {
+async function seed(
+	orgId: string | undefined,
+	status: Status,
+): Promise<string> {
 	return await t.run(async (ctx) => {
 		const now = Date.now();
 		const id = await insertTaskRow(ctx, {

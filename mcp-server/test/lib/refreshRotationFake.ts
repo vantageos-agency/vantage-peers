@@ -65,10 +65,12 @@ export function fakeRotateRefreshToken(
 	if (row.revokedAt !== undefined) {
 		const now = Date.now();
 		for (const r of store.refresh.values()) {
-			if (r.familyId === familyId && r.revokedAt === undefined) r.revokedAt = now;
+			if (r.familyId === familyId && r.revokedAt === undefined)
+				r.revokedAt = now;
 		}
 		for (const a of store.access) {
-			if (a.familyId === familyId && a.revokedAt === undefined) a.revokedAt = now;
+			if (a.familyId === familyId && a.revokedAt === undefined)
+				a.revokedAt = now;
 		}
 		return { status: "reused" };
 	}

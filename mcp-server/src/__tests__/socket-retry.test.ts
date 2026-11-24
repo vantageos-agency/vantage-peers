@@ -76,7 +76,9 @@ describe("withSingleRetryOnSocketClose — RED/GREEN: socket-close on attempt 1,
 
 describe("withSingleRetryOnSocketClose — NEGATIVE pole: non-socket error propagates on first throw", () => {
 	it("RBAC_DENIED propagates immediately with exactly ONE underlying call", async () => {
-		const dep = vi.fn().mockRejectedValue(new Error("RBAC_DENIED: not allowed"));
+		const dep = vi
+			.fn()
+			.mockRejectedValue(new Error("RBAC_DENIED: not allowed"));
 
 		await expect(withSingleRetryOnSocketClose(dep)).rejects.toThrow(
 			"RBAC_DENIED",

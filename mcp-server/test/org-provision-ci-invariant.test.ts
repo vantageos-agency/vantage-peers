@@ -11,10 +11,7 @@ import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
-import {
-	checkDelegationAllowed,
-	type OAuthContext,
-} from "../src/auth.js";
+import { checkDelegationAllowed, type OAuthContext } from "../src/auth.js";
 
 const CHECK_DELEGATION_START_ANCHOR =
 	"export async function checkDelegationAllowed";
@@ -110,10 +107,7 @@ describe("CI invariant — provisioned client org-binding", () => {
 
 	it("provisionOrganization mutation exists and writes clerkOrgSlug", () => {
 		const here = dirname(fileURLToPath(import.meta.url));
-		const oauth = readFileSync(
-			join(here, "../../convex/oauth.ts"),
-			"utf8",
-		);
+		const oauth = readFileSync(join(here, "../../convex/oauth.ts"), "utf8");
 		expect(oauth).toMatch(/export const provisionOrganization = mutation/);
 		const start = oauth.indexOf("export const provisionOrganization");
 		// The whole mutation body, up to the next export (it outgrew a fixed window).

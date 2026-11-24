@@ -23,7 +23,10 @@ import { registerTools } from "../src/tools.js";
 
 type ToolHandler = (args: Record<string, unknown>) => Promise<unknown>;
 
-function buildFakeServer(): { server: McpServer; handlers: Map<string, ToolHandler> } {
+function buildFakeServer(): {
+	server: McpServer;
+	handlers: Map<string, ToolHandler>;
+} {
 	const handlers = new Map<string, ToolHandler>();
 	const fakeServer = {
 		tool(...args: unknown[]): unknown {
@@ -38,7 +41,13 @@ function buildFakeServer(): { server: McpServer; handlers: Map<string, ToolHandl
 	return { server: fakeServer, handlers };
 }
 
-type Row = { _id: string; _creationTime: number; updatedAt: number; title: string; status: string };
+type Row = {
+	_id: string;
+	_creationTime: number;
+	updatedAt: number;
+	title: string;
+	status: string;
+};
 
 // 2500 rows; updatedAt tied in runs of 50 so every page boundary lands inside or at a tie.
 const WINDOW = 2500;
@@ -62,19 +71,25 @@ function backend(args: QueryArgs): Row[] {
 	const since = args.updatedSince ?? 0;
 	return ROWS.filter((r) => r.updatedAt >= since)
 		.filter((r) => {
-			if (args.updatedCursor === undefined || args.createdBefore === undefined) return true;
+			if (args.updatedCursor === undefined || args.createdBefore === undefined)
+				return true;
 			return (
 				r.updatedAt < args.updatedCursor ||
-				(r.updatedAt === args.updatedCursor && r._creationTime < args.createdBefore)
+				(r.updatedAt === args.updatedCursor &&
+					r._creationTime < args.createdBefore)
 			);
 		})
-		.sort((a, b) => b.updatedAt - a.updatedAt || b._creationTime - a._creationTime)
+		.sort(
+			(a, b) => b.updatedAt - a.updatedAt || b._creationTime - a._creationTime,
+		)
 		.slice(0, args.limit);
 }
 
 function setup() {
 	const { server, handlers } = buildFakeServer();
-	const query = vi.fn().mockImplementation(async (_fn: string, args: QueryArgs) => backend(args));
+	const query = vi
+		.fn()
+		.mockImplementation(async (_fn: string, args: QueryArgs) => backend(args));
 	const convex = {
 		query,
 		mutation: vi.fn().mockResolvedValue(null),
@@ -85,7 +100,10 @@ function setup() {
 	return { handler, query };
 }
 
-function parse(result: unknown): { items: Array<{ _id: string }>; nextCursor?: string | null } {
+function parse(result: unknown): {
+	items: Array<{ _id: string }>;
+	nextCursor?: string | null;
+} {
 	const text = (result as { content: Array<{ text: string }> }).content[0].text;
 	const parsed = JSON.parse(text.split("\n<!--")[0]) as unknown;
 	return Array.isArray(parsed)
@@ -99,7 +117,13 @@ describe("list_tasks updatedSince cursor", () => {
 		const seen: string[] = [];
 		let cursor: string | undefined;
 		for (let page = 0; page < 100; page++) {
-			const out = parse(await handler({ updatedSince: 1, limit: 200, ...(cursor ? { cursor } : {}) }));
+			const out = parse(
+				await handler({
+					updatedSince: 1,
+					limit: 200,
+					...(cursor ? { cursor } : {}),
+				}),
+			);
 			seen.push(...out.items.map((r) => r._id));
 			if (!out.nextCursor) break;
 			cursor = out.nextCursor;
@@ -118,13 +142,20 @@ describe("list_tasks updatedSince cursor", () => {
 	it("the token is versioned and carries the last row's pair; an old token decodes to createdBefore alone", () => {
 		const t = encodeCursor({ v: 2, createdBefore: 5, updatedAt: 9 });
 		expect(decodeCursor(t)).toEqual({ createdBefore: 5, v: 2, updatedAt: 9 });
-		const old = Buffer.from(JSON.stringify({ createdBefore: 5 }), "utf8").toString("base64url");
+		const old = Buffer.from(
+			JSON.stringify({ createdBefore: 5 }),
+			"utf8",
+		).toString("base64url");
 		expect(decodeCursor(old)).toEqual({ createdBefore: 5 });
 	});
 
 	it("an old createdBefore-only cursor is forwarded as createdBefore with NO updatedCursor", async () => {
 		const { handler, query } = setup();
-		await handler({ updatedSince: 1, limit: 20, cursor: encodeCursor({ createdBefore: 1_780_000_005_000 }) });
+		await handler({
+			updatedSince: 1,
+			limit: 20,
+			cursor: encodeCursor({ createdBefore: 1_780_000_005_000 }),
+		});
 		const args = query.mock.calls[0][1] as QueryArgs;
 		expect(args.createdBefore).toBe(1_780_000_005_000);
 		expect(args.updatedCursor).toBeUndefined();
@@ -134,8 +165,13 @@ describe("list_tasks updatedSince cursor", () => {
 		const { handler, query } = setup();
 		const out = parse(await handler({ limit: 20 }));
 		expect(out.nextCursor).toBeTruthy();
-		expect(decodeCursor(out.nextCursor as string)).toEqual({ createdBefore: expect.any(Number) });
-		await handler({ limit: 20, cursor: encodeCursor({ v: 2, createdBefore: 5, updatedAt: 9 }) });
+		expect(decodeCursor(out.nextCursor as string)).toEqual({
+			createdBefore: expect.any(Number),
+		});
+		await handler({
+			limit: 20,
+			cursor: encodeCursor({ v: 2, createdBefore: 5, updatedAt: 9 }),
+		});
 		const args = query.mock.calls[1][1] as QueryArgs;
 		expect(args.updatedCursor).toBeUndefined();
 	});

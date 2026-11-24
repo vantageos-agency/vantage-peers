@@ -102,7 +102,11 @@ function buildClerkTeamCtx(
 		isMaster: false,
 		clerkJwt: "mock.clerk.jwt",
 		// The agent this caller presented a credential for (resolved at the boundary).
-		actor: { orgSlug: "org_prometheus", agentName: "prometheus", agentId: "agent-prometheus" },
+		actor: {
+			orgSlug: "org_prometheus",
+			agentName: "prometheus",
+			agentId: "agent-prometheus",
+		},
 		...overrides,
 	};
 }
@@ -151,7 +155,11 @@ function buildPrometheusOauthScopedCtx(
 		userId: "prometheus-user",
 		scopes: ["vantage:read", "vantage:write"],
 		scopeProfile: "prometheus-org",
-		actor: { orgSlug: "org_prometheus", agentName: "prometheus", agentId: "agent-prometheus" },
+		actor: {
+			orgSlug: "org_prometheus",
+			agentName: "prometheus",
+			agentId: "agent-prometheus",
+		},
 		fromAllowList: ["prometheus"],
 		namespaceReadPrefixes: ["orchestrator/prometheus"],
 		namespaceWritePrefixes: ["orchestrator/prometheus"],
@@ -186,7 +194,11 @@ function buildOrchAOauthCtx(
 		isMaster: false,
 		accessTokenHash: "hash-of-orch-a-token",
 		clerkOrgSlug: "plan-org-alpha",
-		actor: { orgSlug: "plan-org-alpha", agentName: "orch-a", agentId: "agent-orch-a" },
+		actor: {
+			orgSlug: "plan-org-alpha",
+			agentName: "orch-a",
+			agentId: "agent-orch-a",
+		},
 		...overrides,
 	};
 }
@@ -474,8 +486,12 @@ describe("delegation-same-org-predicate — create_task assignee", () => {
 		);
 
 		expect(result.isError).toBe(true);
-		expect(getText(result)).toMatch(/not a member of the caller's organisation/i);
-		expect(getText(result)).not.toMatch(/from='outsider' is not in this client's allowlist/i);
+		expect(getText(result)).toMatch(
+			/not a member of the caller's organisation/i,
+		);
+		expect(getText(result)).not.toMatch(
+			/from='outsider' is not in this client's allowlist/i,
+		);
 		expect(createdTaskRow).toBeNull();
 		expect(orgRosterQueryCalled).toBe(false);
 		expect(tokenRosterQueryCalled).toBe(true);

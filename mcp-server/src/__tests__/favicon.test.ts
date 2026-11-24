@@ -73,6 +73,8 @@ describe("serverInfo declares the icons", () => {
 
 	it("without a public origin, the icon travels as a data URI", () => {
 		const info = mcpImplementation("1.2.3", null);
-		expect(info.icons?.[0]?.src.startsWith("data:image/png;base64,")).toBe(true);
+		expect(info.icons?.[0]?.src.startsWith("data:image/png;base64,")).toBe(
+			true,
+		);
 	});
 });

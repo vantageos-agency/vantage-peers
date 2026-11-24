@@ -28,8 +28,11 @@ const seat: OAuthContext = {
 };
 
 function fake() {
-	const calls: Array<{ kind: "query" | "mutation"; name: string; args: unknown }> =
-		[];
+	const calls: Array<{
+		kind: "query" | "mutation";
+		name: string;
+		args: unknown;
+	}> = [];
 	return {
 		calls,
 		client: {
@@ -108,6 +111,8 @@ describe("the inbox doors carry the verified agent ID", () => {
 
 	it("a caller with no resolved agent gets the very same client back", () => {
 		const { client } = fake();
-		expect(withVerifiedActor(client, { ...seat, seatAgent: null })).toBe(client);
+		expect(withVerifiedActor(client, { ...seat, seatAgent: null })).toBe(
+			client,
+		);
 	});
 });

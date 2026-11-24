@@ -40,7 +40,11 @@ import { selectConvexClientForRequest } from "../authenticatedConvexClient.js";
 // service-account client is selected for a MASTER context only; a non-master
 // bearer gets it wrapped with its acting org (acting-org-client.test.ts) and an
 // absent context gets no client.
-const MASTER: OAuthContext = { ...LOCAL_STDIO_TRUST_CTX, clientId: "master", viaMasterBearer: true };
+const MASTER: OAuthContext = {
+	...LOCAL_STDIO_TRUST_CTX,
+	clientId: "master",
+	viaMasterBearer: true,
+};
 
 function fakeClient(label: string): ConvexHttpClient {
 	return {
@@ -88,7 +92,9 @@ describe("selectConvexClientForRequest — PÔLE 2 (flotte / master, legitimate 
 		);
 
 		expect(createServiceAccountClient).not.toHaveBeenCalled();
-		await expect(result.query("x:y" as never, {} as never)).rejects.toThrow(/RBAC_DENIED/);
+		await expect(result.query("x:y" as never, {} as never)).rejects.toThrow(
+			/RBAC_DENIED/,
+		);
 	});
 });
 
@@ -169,15 +175,9 @@ describe("selectConvexClientForRequest — PÔLE 1 (refus) + regression guard", 
 		// non-clerk and clerk callers, i.e. it is NOT equivalent to preFixSelect.
 		const serviceAccountClient = fakeClient("service-account");
 		const plainClient = fakeClient("plain");
-		selectConvexClientForRequest(
-			"https://tenant.convex.cloud",
-			MASTER,
-			{
-				createServiceAccountClient: vi
-					.fn()
-					.mockReturnValue(serviceAccountClient),
-			},
-		);
+		selectConvexClientForRequest("https://tenant.convex.cloud", MASTER, {
+			createServiceAccountClient: vi.fn().mockReturnValue(serviceAccountClient),
+		});
 		selectConvexClientForRequest(
 			"https://tenant.convex.cloud",
 			{ ...MASTER, clerkJwt: "some-jwt" },
@@ -198,11 +198,10 @@ describe("selectConvexClientForRequest — PÔLE 1 (refus) + regression guard", 
 			.mockReturnValue(fakeClient("sa"));
 		const createPlainClient = vi.fn().mockReturnValue(fakeClient("plain"));
 
-		selectConvexClientForRequest(
-			"https://tenant.convex.cloud",
-			MASTER,
-			{ createServiceAccountClient, createPlainClient },
-		);
+		selectConvexClientForRequest("https://tenant.convex.cloud", MASTER, {
+			createServiceAccountClient,
+			createPlainClient,
+		});
 
 		expect(createServiceAccountClient).toHaveBeenCalledTimes(1);
 		expect(createPlainClient).not.toHaveBeenCalled();

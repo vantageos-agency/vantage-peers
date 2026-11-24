@@ -28,7 +28,7 @@ import { createTaskOutputSchema } from "../tools.js";
 function deriveTaskStatusLiteralsFromConvexSchema(): string[] {
 	const schemaPath = join(__dirname, "../../../convex/schema.ts");
 	const src = readFileSync(schemaPath, "utf8");
-	const tasksTableStart = src.indexOf('tasks: defineTable({');
+	const tasksTableStart = src.indexOf("tasks: defineTable({");
 	if (tasksTableStart === -1) {
 		throw new Error("Could not locate the `tasks` table in convex/schema.ts");
 	}
@@ -45,7 +45,9 @@ function deriveTaskStatusLiteralsFromConvexSchema(): string[] {
 		(m) => m[1],
 	);
 	if (literals.length === 0) {
-		throw new Error("Derived zero status literals — parser broke, not the source of truth");
+		throw new Error(
+			"Derived zero status literals — parser broke, not the source of truth",
+		);
 	}
 	return literals;
 }
@@ -60,7 +62,8 @@ describe("createTaskOutputSchema.status — complete, derived mirror of the Conv
 
 	it("createTaskOutputSchema.status enum contains every literal the Convex schema declares — no field silently dropped", () => {
 		const derived = deriveTaskStatusLiteralsFromConvexSchema();
-		const schemaOptions = createTaskOutputSchema.shape.status.options as string[];
+		const schemaOptions = createTaskOutputSchema.shape.status
+			.options as string[];
 		for (const literal of derived) {
 			expect(schemaOptions).toContain(literal);
 		}

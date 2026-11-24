@@ -68,7 +68,10 @@ function fakeConvex() {
 				spent.add(String(args.presentedHash));
 				return {
 					status: "ok",
-					issued: { refresh: randomBytes(32).toString("hex"), access: randomBytes(32).toString("hex") },
+					issued: {
+						refresh: randomBytes(32).toString("hex"),
+						access: randomBytes(32).toString("hex"),
+					},
 				};
 			}
 			throw new Error(`unmocked mutation: ${name}`);
@@ -83,7 +86,10 @@ async function refresh(): Promise<number> {
 			"Content-Type": "application/x-www-form-urlencoded",
 			Authorization: `Basic ${btoa(`${CLIENT}:${SECRET}`)}`,
 		},
-		body: new URLSearchParams({ grant_type: "refresh_token", refresh_token: REFRESH }).toString(),
+		body: new URLSearchParams({
+			grant_type: "refresh_token",
+			refresh_token: REFRESH,
+		}).toString(),
 	});
 	return res.status;
 }
@@ -107,13 +113,23 @@ describe("a refresh mints the token from the LIVE profile", () => {
 		// the operator runs scripts/seat-profile-agent-namespace.mjs --apply
 		profile = {
 			...profile,
-			namespaceReadPrefixes: [...profile.namespaceReadPrefixes, `orchestrator/${AGENT_ID}`],
-			namespaceWritePrefixes: [...profile.namespaceWritePrefixes, `orchestrator/${AGENT_ID}`],
+			namespaceReadPrefixes: [
+				...profile.namespaceReadPrefixes,
+				`orchestrator/${AGENT_ID}`,
+			],
+			namespaceWritePrefixes: [
+				...profile.namespaceWritePrefixes,
+				`orchestrator/${AGENT_ID}`,
+			],
 		};
 		expect(await refresh()).toBe(200);
 		expect(rotations).toHaveLength(1);
-		expect(rotations[0].namespaceReadPrefixes).toContain(`orchestrator/${AGENT_ID}`);
-		expect(rotations[0].namespaceWritePrefixes).toContain(`orchestrator/${AGENT_ID}`);
+		expect(rotations[0].namespaceReadPrefixes).toContain(
+			`orchestrator/${AGENT_ID}`,
+		);
+		expect(rotations[0].namespaceWritePrefixes).toContain(
+			`orchestrator/${AGENT_ID}`,
+		);
 		expect(rotations[0].scopeProfile).toBe(PROFILE);
 	});
 
@@ -121,6 +137,8 @@ describe("a refresh mints the token from the LIVE profile", () => {
 		// a token minted by provision-client-org-agents.mjs carried orchestrator/<agentId> directly;
 		// if the profile was never updated, its next refresh loses it. Update the profile first.
 		expect(await refresh()).toBe(200);
-		expect(rotations[0].namespaceWritePrefixes).not.toContain(`orchestrator/${AGENT_ID}`);
+		expect(rotations[0].namespaceWritePrefixes).not.toContain(
+			`orchestrator/${AGENT_ID}`,
+		);
 	});
 });

@@ -178,7 +178,9 @@ describe("list_messages — scopeFilterList symmetric audit", () => {
 
 	it("master scope: any createdBy passes", () => {
 		const rows = [{ createdBy: "Outsider", namespace: undefined }];
-		expect(scopeFilterList(masterCtx() as unknown as OAuthCtx, rows)).toHaveLength(1);
+		expect(
+			scopeFilterList(masterCtx() as unknown as OAuthCtx, rows),
+		).toHaveLength(1);
 	});
 
 	it("non-master: row with createdBy=Helios passes (exact in fromAllowList)", () => {
@@ -227,7 +229,9 @@ describe("list_briefing_notes — scopeFilterList symmetric audit", () => {
 
 	it("master scope: any row passes", () => {
 		const rows = [{ createdBy: "anyone" }];
-		expect(scopeFilterList(masterCtx() as unknown as OAuthCtx, rows)).toHaveLength(1);
+		expect(
+			scopeFilterList(masterCtx() as unknown as OAuthCtx, rows),
+		).toHaveLength(1);
 	});
 
 	it("non-master: row with createdBy=Helios passes", () => {
@@ -261,7 +265,9 @@ describe("list_peers — scopeFilterList symmetric audit", () => {
 
 	it("master scope: any row passes", () => {
 		const rows = [{ createdBy: "anyone" }];
-		expect(scopeFilterList(masterCtx() as unknown as OAuthCtx, rows)).toHaveLength(1);
+		expect(
+			scopeFilterList(masterCtx() as unknown as OAuthCtx, rows),
+		).toHaveLength(1);
 	});
 
 	it("non-master: peer with createdBy=Helios passes", () => {

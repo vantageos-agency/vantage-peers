@@ -507,19 +507,30 @@ describe("B2 §4 aggregate coverage", () => {
 	});
 
 	it("all descriptions contain WHEN:", () => {
-		const missing = TOOL_REGISTRY.filter(([, desc]) => !desc.includes("WHEN:")).map(([name]) => name);
-		expect(missing, `Tools missing WHEN: ${missing.join(", ")}`).toHaveLength(0);
+		const missing = TOOL_REGISTRY.filter(
+			([, desc]) => !desc.includes("WHEN:"),
+		).map(([name]) => name);
+		expect(missing, `Tools missing WHEN: ${missing.join(", ")}`).toHaveLength(
+			0,
+		);
 	});
 
 	it("all descriptions contain EXAMPLE:", () => {
-		const missing = TOOL_REGISTRY.filter(([, desc]) => !desc.includes("EXAMPLE:")).map(([name]) => name);
-		expect(missing, `Tools missing EXAMPLE: ${missing.join(", ")}`).toHaveLength(0);
+		const missing = TOOL_REGISTRY.filter(
+			([, desc]) => !desc.includes("EXAMPLE:"),
+		).map(([name]) => name);
+		expect(
+			missing,
+			`Tools missing EXAMPLE: ${missing.join(", ")}`,
+		).toHaveLength(0);
 	});
 
 	it("all descriptions are within 80-500 char bounds", () => {
 		const violations = TOOL_REGISTRY.filter(
 			([, desc]) => desc.length < 80 || desc.length > 500,
 		).map(([name, desc]) => `${name}(${desc.length})`);
-		expect(violations, `Out-of-bounds: ${violations.join(", ")}`).toHaveLength(0);
+		expect(violations, `Out-of-bounds: ${violations.join(", ")}`).toHaveLength(
+			0,
+		);
 	});
 });

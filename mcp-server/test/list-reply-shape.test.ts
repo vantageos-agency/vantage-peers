@@ -35,7 +35,11 @@ type Handler = (args: Record<string, unknown>) => Promise<{
 	content?: Array<{ text?: string }>;
 }>;
 
-async function call(tool: string, args: Record<string, unknown>, reply: unknown) {
+async function call(
+	tool: string,
+	args: Record<string, unknown>,
+	reply: unknown,
+) {
 	const handlers = new Map<string, Handler>();
 	const reg = (...a: unknown[]) => {
 		handlers.set(a[0] as string, a[a.length - 1] as Handler);
@@ -95,7 +99,10 @@ describe("a broken list reply is refused, never read as an empty list", () => {
 			["null", null],
 			["a shapeless object", { oops: 1 }],
 			["a string", "oops"],
-			["an envelope whose items is not an array", { items: "oops", nextCursor: null }],
+			[
+				"an envelope whose items is not an array",
+				{ items: "oops", nextCursor: null },
+			],
 		] as const) {
 			it(`${label}: ${what} -> BACKEND_SHAPE_MISMATCH`, async () => {
 				const r = await call(tool, args, bad);
@@ -125,19 +132,26 @@ describe("census: no Convex list reply is defaulted to an empty array", () => {
 	const here = dirname(fileURLToPath(import.meta.url));
 	const src = readFileSync(join(here, "..", "src", "tools.ts"), "utf8");
 	// Form 1: `Array.isArray(x) ? x : []` (also with an `as` cast on the true arm).
-	const FORM_COND = /Array\.isArray\(([\w.]+)\)\s*\?\s*(?:\()?\1(?:\s+as\s+[^:]+?\))?\s*:\s*\[\]/g;
+	const FORM_COND =
+		/Array\.isArray\(([\w.]+)\)\s*\?\s*(?:\()?\1(?:\s+as\s+[^:]+?\))?\s*:\s*\[\]/g;
 	// Form 2: a reply coalesced with `?? []` (a call result or a bound reply).
-	const FORM_COALESCE = /\b(?:rows|results|result|reply|replies|envelope|tasks|messages|profiles|missions|notes|mandates|errors)\s*\?\?\s*\[\]/g;
+	const FORM_COALESCE =
+		/\b(?:rows|results|result|reply|replies|envelope|tasks|messages|profiles|missions|notes|mandates|errors)\s*\?\?\s*\[\]/g;
 	const code = src
 		.split("\n")
 		.map((l, i) => [i + 1, l.trim()] as const)
-		.filter(([, l]) => !l.startsWith("//") && !l.startsWith("*") && !l.startsWith("/*"));
+		.filter(
+			([, l]) =>
+				!l.startsWith("//") && !l.startsWith("*") && !l.startsWith("/*"),
+		);
 	const hits = (re: RegExp) =>
 		code.filter(([, l]) => new RegExp(re.source).test(l)).map(([, l]) => l);
 
 	it("`Array.isArray(x) ? x : []` survives only in capListResponse (a presentation helper)", () => {
 		// capListResponse takes an already-read `items` argument, not a raw Convex reply.
-		expect(hits(FORM_COND)).toEqual(["shown: Array.isArray(items) ? items : [],"]);
+		expect(hits(FORM_COND)).toEqual([
+			"shown: Array.isArray(items) ? items : [],",
+		]);
 	});
 
 	it("`<reply> ?? []` survives only in capPage's own rows and check_messages' declared compat read", () => {
@@ -150,7 +164,11 @@ describe("census: no Convex list reply is defaulted to an empty array", () => {
 	});
 
 	it("positive control: the census patterns do match the shapes they are named for", () => {
-		expect(new RegExp(FORM_COND.source).test("const a = Array.isArray(x) ? x : [];")).toBe(true);
-		expect(new RegExp(FORM_COALESCE.source).test("capPage(rows ?? [], 'x')")).toBe(true);
+		expect(
+			new RegExp(FORM_COND.source).test("const a = Array.isArray(x) ? x : [];"),
+		).toBe(true);
+		expect(
+			new RegExp(FORM_COALESCE.source).test("capPage(rows ?? [], 'x')"),
+		).toBe(true);
 	});
 });

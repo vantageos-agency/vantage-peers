@@ -349,7 +349,11 @@ async function checkPrClaims(
 	const matches: RegExpMatchArray[] = [];
 	for (const line of text.split("\n")) {
 		const explicit = [...line.matchAll(PR_CLAIM_RE)];
-		matches.push(...(explicit.length > 0 ? explicit : [...line.matchAll(GH_PR_CMD_CLAIM_RE)]));
+		matches.push(
+			...(explicit.length > 0
+				? explicit
+				: [...line.matchAll(GH_PR_CMD_CLAIM_RE)]),
+		);
 	}
 	for (const m of matches) {
 		const [, number, repoInClaim, typedStateRaw] = m;
@@ -384,7 +388,9 @@ async function checkPrClaims(
 			continue;
 		}
 		if (res.status === 404) {
-			warn(`PR #${number} not found on ${repo} — cannot verify claim, allowing.`);
+			warn(
+				`PR #${number} not found on ${repo} — cannot verify claim, allowing.`,
+			);
 			continue;
 		}
 		if (!res.ok) {
@@ -410,7 +416,9 @@ async function checkPrClaims(
 					? "CLOSED"
 					: undefined;
 		if (!liveState) {
-			warn(`PR #${number} returned no readable state — cannot verify, allowing.`);
+			warn(
+				`PR #${number} returned no readable state — cannot verify, allowing.`,
+			);
 			continue;
 		}
 		if (liveState !== typedState) {
@@ -466,7 +474,9 @@ async function checkNpmClaims(
 		const distTags = body["dist-tags"] ?? {};
 		const liveVersion = distTags[tag];
 		if (!liveVersion) {
-			warn(`npm dist-tag ${tag} not found for ${pkg} — cannot verify, allowing.`);
+			warn(
+				`npm dist-tag ${tag} not found for ${pkg} — cannot verify, allowing.`,
+			);
 			continue;
 		}
 		if (liveVersion !== typedVersion) {
@@ -503,12 +513,16 @@ async function checkTaskClaims(
 			continue;
 		}
 		if (task === null || task === undefined) {
-			warn(`task ${taskId} does not exist per Convex — cannot verify claim, allowing.`);
+			warn(
+				`task ${taskId} does not exist per Convex — cannot verify claim, allowing.`,
+			);
 			continue;
 		}
 		const liveStatus = (task as { status?: unknown }).status;
 		if (typeof liveStatus !== "string") {
-			warn(`task ${taskId} returned no readable status — cannot verify, allowing.`);
+			warn(
+				`task ${taskId} returned no readable status — cannot verify, allowing.`,
+			);
 			continue;
 		}
 		if (liveStatus !== typedStatus) {
@@ -547,11 +561,12 @@ export async function guardFreshState(
 	content: string,
 	deps: FreshStateGuardDeps,
 ): Promise<void> {
-
 	if (!content.trim()) return;
 	if (OVERRIDE_RE.test(content)) return;
 
-	const warn = deps.warn ?? ((message: string) => console.warn(`[fresh-state-guard] ${message}`));
+	const warn =
+		deps.warn ??
+		((message: string) => console.warn(`[fresh-state-guard] ${message}`));
 
 	const scope = evidenceScope(content);
 	if (!scope.trim()) return;
@@ -559,7 +574,8 @@ export async function guardFreshState(
 	// Bare-literal check, before any network call: a refusal that needs no
 	// live read cannot be turned into a pass by an unreachable registry.
 	const log =
-		deps.log ?? ((message: string) => console.error(`[fresh-state-guard] ${message}`));
+		deps.log ??
+		((message: string) => console.error(`[fresh-state-guard] ${message}`));
 	const lines = scope.split("\n");
 	let firstBare: string | undefined;
 	let any = false;

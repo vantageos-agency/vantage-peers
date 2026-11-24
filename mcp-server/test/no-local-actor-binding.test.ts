@@ -283,5 +283,4 @@ describe("(c) the seat exemption excludes a person token (strict mode)", () => {
 		vi.stubEnv("VANTAGE_ACTOR_CREDENTIAL_MODE", "");
 		expect(actingClaimRefusal(SEAT_ROW, "x")).toBeNull();
 	});
-
 });

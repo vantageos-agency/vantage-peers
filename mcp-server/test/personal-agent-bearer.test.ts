@@ -44,7 +44,10 @@ function bridge(c: T) {
 		query: (name: string, args: Record<string, unknown>) =>
 			c.query(makeFunctionReference<"query">(name) as never, args as never),
 		mutation: (name: string, args: Record<string, unknown>) =>
-			c.mutation(makeFunctionReference<"mutation">(name) as never, args as never),
+			c.mutation(
+				makeFunctionReference<"mutation">(name) as never,
+				args as never,
+			),
 	};
 }
 
@@ -126,7 +129,11 @@ describe("a person token through the bearer middleware", () => {
 		await seedAgent("org-a", "other");
 		const ctx = await contextOf(await mint(STEPHANE, "org-a", "raw-present"));
 		expect(ctx.principal).toBe("person");
-		expect(ctx.actor).toEqual({ orgSlug: "org-a", agentName: "telemaque", agentId: tele });
+		expect(ctx.actor).toEqual({
+			orgSlug: "org-a",
+			agentName: "telemaque",
+			agentId: tele,
+		});
 		expect(verifiedActorOf(ctx)).toEqual({ agentId: tele, orgSlug: "org-a" });
 		expect(personActorOf(ctx)).toBeUndefined();
 	});

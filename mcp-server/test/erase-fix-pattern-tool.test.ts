@@ -21,22 +21,31 @@ import { VERIFIED_ACTOR_DOORS } from "../src/verifiedActor.js";
 
 type Registered = {
 	config: { description?: string; annotations?: Record<string, unknown> };
-	handler: (args: unknown, extra?: unknown) => Promise<{
+	handler: (
+		args: unknown,
+		extra?: unknown,
+	) => Promise<{
 		isError?: boolean;
 		content: { text: string }[];
 	}>;
 };
 
-function register(calls: { name: string; args: unknown }[]): Registered | undefined {
+function register(
+	calls: { name: string; args: unknown }[],
+): Registered | undefined {
 	let found: Registered | undefined;
 	const reg = (...a: unknown[]) => {
 		if (a[0] === "erase_fix_pattern") {
-			const config = (a.length > 2 ? a[a.length - 2] : {}) as Registered["config"];
+			const config = (
+				a.length > 2 ? a[a.length - 2] : {}
+			) as Registered["config"];
 			found = {
 				config: {
 					...config,
 					description:
-						typeof a[1] === "string" ? a[1] : (config as { description?: string }).description,
+						typeof a[1] === "string"
+							? a[1]
+							: (config as { description?: string }).description,
 				},
 				handler: a[a.length - 1] as Registered["handler"],
 			};
@@ -46,12 +55,19 @@ function register(calls: { name: string; args: unknown }[]): Registered | undefi
 	const convex = {
 		mutation: async (name: string, args: unknown) => {
 			calls.push({ name, args });
-			return { patternId: "p1", erased: true, cascaded: { fixAttempts: 2, searchEntry: 1 } };
+			return {
+				patternId: "p1",
+				erased: true,
+				cascaded: { fixAttempts: 2, searchEntry: 1 },
+			};
 		},
 		query: async () => null,
 		action: async () => null,
 	} as unknown as ConvexHttpClient;
-	registerTools({ tool: reg, registerTool: reg } as unknown as McpServer, convex);
+	registerTools(
+		{ tool: reg, registerTool: reg } as unknown as McpServer,
+		convex,
+	);
 	return found;
 }
 
@@ -68,11 +84,17 @@ describe("erase_fix_pattern", () => {
 	it("forwards the pattern ID to fixPatterns:erase and relays the answer", async () => {
 		const calls: { name: string; args: unknown }[] = [];
 		const tool = register(calls);
-		const r = await tool?.handler({ patternId: "m9748paffd0emrbwyskj868e1x88kvhj" });
+		const r = await tool?.handler({
+			patternId: "m9748paffd0emrbwyskj868e1x88kvhj",
+		});
 		expect(calls).toHaveLength(1);
 		expect(calls[0].name).toBe("fixPatterns:erase");
-		expect(calls[0].args).toMatchObject({ patternId: "m9748paffd0emrbwyskj868e1x88kvhj" });
-		expect(JSON.parse(r?.content[0].text ?? "{}")).toMatchObject({ erased: true });
+		expect(calls[0].args).toMatchObject({
+			patternId: "m9748paffd0emrbwyskj868e1x88kvhj",
+		});
+		expect(JSON.parse(r?.content[0].text ?? "{}")).toMatchObject({
+			erased: true,
+		});
 	});
 
 	it("is declared as a called function and as a door that takes the seat's verified agent", () => {
@@ -81,7 +103,10 @@ describe("erase_fix_pattern", () => {
 	});
 
 	it("exports a result schema whose every field is described", () => {
-		const shape = eraseFixPatternOutputSchema.shape as Record<string, { description?: string }>;
+		const shape = eraseFixPatternOutputSchema.shape as Record<
+			string,
+			{ description?: string }
+		>;
 		for (const key of ["patternId", "erased", "cascaded"]) {
 			expect(shape[key]?.description, `${key} has no description`).toBeTruthy();
 		}

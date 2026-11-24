@@ -35,11 +35,18 @@ async function callDigest(backend: unknown) {
 		handlers.set(a[0] as string, a[a.length - 1] as ToolHandler);
 		return {};
 	};
-	const server = { tool: capture, registerTool: capture } as unknown as McpServer;
+	const server = {
+		tool: capture,
+		registerTool: capture,
+	} as unknown as McpServer;
 	const query = vi.fn(async () => backend);
 	registerTools(
 		server,
-		{ query, mutation: vi.fn(), action: vi.fn() } as unknown as ConvexHttpClient,
+		{
+			query,
+			mutation: vi.fn(),
+			action: vi.fn(),
+		} as unknown as ConvexHttpClient,
 		master,
 	);
 	const result = (await handlers.get("improvisation_digest")?.({
@@ -61,7 +68,7 @@ describe("improvisation_digest real orchestrator names", () => {
 			countsByCategory: cats,
 			samples: [],
 		});
-		expect(r.structuredContent.countsByOrch).toEqual({ "hélios": 2, sigma: 1 });
+		expect(r.structuredContent.countsByOrch).toEqual({ hélios: 2, sigma: 1 });
 	});
 
 	it("falls back to the decoded record when the backend predates the array", async () => {
@@ -70,7 +77,7 @@ describe("improvisation_digest real orchestrator names", () => {
 			countsByCategory: cats,
 			samples: [],
 		});
-		expect(r.structuredContent.countsByOrch).toEqual({ "hélios": 2, sigma: 1 });
+		expect(r.structuredContent.countsByOrch).toEqual({ hélios: 2, sigma: 1 });
 	});
 });
 
@@ -88,6 +95,8 @@ describe("the running MCP survives the expanded shape", () => {
 			countsByCategory: cats,
 			samples: [],
 		};
-		expect(improvisationDigestServedOutputSchema.safeParse(raw).success).toBe(true);
+		expect(improvisationDigestServedOutputSchema.safeParse(raw).success).toBe(
+			true,
+		);
 	});
 });

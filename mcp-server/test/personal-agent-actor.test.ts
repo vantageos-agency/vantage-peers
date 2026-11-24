@@ -42,10 +42,20 @@ describe("personalActorOf", () => {
 	});
 
 	it("ABSENT: null, absent, or an empty stamp leaves the person as the person", () => {
-		expect(personalActorOf(personToken({ personalAgent: null }))).toBeUndefined();
+		expect(
+			personalActorOf(personToken({ personalAgent: null })),
+		).toBeUndefined();
 		expect(personalActorOf(personToken())).toBeUndefined();
-		expect(personalActorOf(personToken({ personalAgent: { ...AGENT, agentId: "" } }))).toBeUndefined();
-		expect(personalActorOf(personToken({ personalAgent: { ...AGENT, agentName: "" } }))).toBeUndefined();
+		expect(
+			personalActorOf(
+				personToken({ personalAgent: { ...AGENT, agentId: "" } }),
+			),
+		).toBeUndefined();
+		expect(
+			personalActorOf(
+				personToken({ personalAgent: { ...AGENT, agentName: "" } }),
+			),
+		).toBeUndefined();
 		expect(personalActorOf(null)).toBeUndefined();
 	});
 
@@ -60,7 +70,10 @@ describe("the downstream surfaces take the one path they already have", () => {
 		const ctx = personToken({ personalAgent: AGENT });
 		const actor = personalActorOf(ctx);
 		const acting = { ...ctx, ...(actor ? { actor } : {}) };
-		expect(verifiedActorOf(acting)).toEqual({ agentId: "agent_tele", orgSlug: "org-a" });
+		expect(verifiedActorOf(acting)).toEqual({
+			agentId: "agent_tele",
+			orgSlug: "org-a",
+		});
 		expect(personActorOf(acting)).toBeUndefined();
 		// Without the personal agent the same token is the person, as before.
 		expect(personActorOf(ctx)).toBe("user:user_2stephane");

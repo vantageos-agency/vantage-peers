@@ -8,7 +8,14 @@
  * test/tool-coverage.test.ts through the same CALLS table.
  */
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
-import { closeE2E, poles, results, runE2E, seeded, world } from "./lib/e2eWorld.js";
+import {
+	closeE2E,
+	poles,
+	results,
+	runE2E,
+	seeded,
+	world,
+} from "./lib/e2eWorld.js";
 
 vi.mock("convex/browser", async () => ({
 	ConvexHttpClient: (await import("./lib/forwardingConvex.js"))
@@ -19,7 +26,10 @@ beforeAll(runE2E, 180_000);
 afterAll(closeE2E);
 
 const present = (id: string) =>
-	world.t.run(async (ctx) => (await ctx.db.get(world.ids.toBackend(id) as never)) !== null);
+	world.t.run(
+		async (ctx) =>
+			(await ctx.db.get(world.ids.toBackend(id) as never)) !== null,
+	);
 
 describe("erase_fix_pattern through /mcp", () => {
 	it("SERVED: an admin of the operator organisation erases the pattern and its attempts", async () => {

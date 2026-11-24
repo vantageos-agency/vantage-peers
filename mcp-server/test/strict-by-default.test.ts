@@ -330,28 +330,21 @@ describe("the five poles — scoped non-master identity, env unset", () => {
 		expect(seatExempt(row, "alice")).toBe(true);
 		// Same claim, multi-name row: not exempt.
 		expect(
-			seatExempt(
-				{ ...row, fromAllowList: ["alice", "bob"] },
-				"alice",
-			),
+			seatExempt({ ...row, fromAllowList: ["alice", "bob"] }, "alice"),
 		).toBe(false);
 		// Same row shape but not from a token row (e.g. a Clerk-JWT session): not exempt.
-		expect(
-			seatExempt({ ...row, accessTokenHash: undefined }, "alice"),
-		).toBe(false);
-		// Any principal on the row withholds it, including a kind added later.
-		expect(seatExempt({ ...row, principal: "person" }, "alice")).toBe(
+		expect(seatExempt({ ...row, accessTokenHash: undefined }, "alice")).toBe(
 			false,
 		);
+		// Any principal on the row withholds it, including a kind added later.
+		expect(seatExempt({ ...row, principal: "person" }, "alice")).toBe(false);
 		// A principal kind that does not exist yet: the type admits only
 		// "person" today, so the future value is forced through a cast on purpose.
 		for (const future of ["service", "agent"]) {
 			const ctx = { ...row, principal: future } as unknown as OAuthContext;
 			expect(seatExempt(ctx, "alice")).toBe(false);
 		}
-		expect(seatExempt({ ...row, fromAllowList: [""] }, "")).toBe(
-			false,
-		);
+		expect(seatExempt({ ...row, fromAllowList: [""] }, "")).toBe(false);
 	});
 
 	it("SERVED — valid agent credential naming its own agent (multi-name bearer)", async () => {

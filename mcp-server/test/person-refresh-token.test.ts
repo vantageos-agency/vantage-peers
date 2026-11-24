@@ -269,7 +269,7 @@ describe("the person refresh_token grant", () => {
 		const { t, token, first } = await connect();
 		expect(first.refresh_token).toBeTruthy();
 		await t.run(async (ctx) => {
-			const m =await ctx.db
+			const m = await ctx.db
 				.query("orgMembership")
 				.withIndex("by_user", (q) => q.eq("clerkUserId", PERSON))
 				.unique();

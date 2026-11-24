@@ -80,9 +80,7 @@ describe("set_summary — unknown-param silent-drop defect (mission k17at41v7e6r
 			expect((unrecognizedIssue as { keys: string[] }).keys).toContain(
 				"bogusStaleParam",
 			);
-			expect(JSON.stringify(result.error.issues)).toContain(
-				"bogusStaleParam",
-			);
+			expect(JSON.stringify(result.error.issues)).toContain("bogusStaleParam");
 		}
 	});
 

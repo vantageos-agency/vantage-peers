@@ -19,17 +19,33 @@
 // Pattern: Estimated: N or Estimated N ... // allow-time-estimate: pattern-definition-file
 const ESTIMATE_PATTERNS: Array<{ re: RegExp; idx: number }> = [
 	{ re: /estimated?\s*:?\s*[~\d]/i, idx: 0 }, // allow-time-estimate: pattern-definition-file
-	{ re: /\b\d+\s*[-à]\s*\d+\s*(jour|jours|heure|heures|h|min|mn|mins|minutes|heures?|hours?)\b/i, idx: 1 }, // allow-time-estimate: pattern-definition-file
-	{ re: /~\s*\d+\s*\.?\d*\s*(min|mn|mins|minute|minutes|h|hour|hours|jour|jours|heure|heures|day|days)\b/i, idx: 2 }, // allow-time-estimate: pattern-definition-file
-	{ re: /\b\d+\s*\.?\d*\s*(min|mn|h|jour|jours|heure|heures|hour|hours|day|days)\s+(max|env|environ|approx|approximately)\b/i, idx: 3 }, // allow-time-estimate: pattern-definition-file
+	{
+		re: /\b\d+\s*[-à]\s*\d+\s*(jour|jours|heure|heures|h|min|mn|mins|minutes|heures?|hours?)\b/i,
+		idx: 1,
+	}, // allow-time-estimate: pattern-definition-file
+	{
+		re: /~\s*\d+\s*\.?\d*\s*(min|mn|mins|minute|minutes|h|hour|hours|jour|jours|heure|heures|day|days)\b/i,
+		idx: 2,
+	}, // allow-time-estimate: pattern-definition-file
+	{
+		re: /\b\d+\s*\.?\d*\s*(min|mn|h|jour|jours|heure|heures|hour|hours|day|days)\s+(max|env|environ|approx|approximately)\b/i,
+		idx: 3,
+	}, // allow-time-estimate: pattern-definition-file
 	{ re: /\bETA\s*:?\s*\d/, idx: 4 }, // allow-time-estimate: pattern-definition-file (case-sensitive — Eta proper noun exempted)
-	{ re: /\b\d+\s*\.?\d*\s*(?:min|mn|h|jour|jours|heure|heures|hour|hours|day|days)\s+de\s+(dev|revue|review|test|debug|coding|recherche|research|investigation|setup|implem|impl|implementation)/i, idx: 5 }, // allow-time-estimate: pattern-definition-file
+	{
+		re: /\b\d+\s*\.?\d*\s*(?:min|mn|h|jour|jours|heure|heures|hour|hours|day|days)\s+de\s+(dev|revue|review|test|debug|coding|recherche|research|investigation|setup|implem|impl|implementation)/i,
+		idx: 5,
+	}, // allow-time-estimate: pattern-definition-file
 	{ re: /^#+\s*estimated?\s*$/im, idx: 6 }, // allow-time-estimate: pattern-definition-file
-	{ re: /\b(?:effort|temps|time|durée|duration)\s*(?:estimé?|estimated?|prévu?|expected?)\s*:?\s*[~\d]/i, idx: 7 }, // allow-time-estimate: pattern-definition-file
+	{
+		re: /\b(?:effort|temps|time|durée|duration)\s*(?:estimé?|estimated?|prévu?|expected?)\s*:?\s*[~\d]/i,
+		idx: 7,
+	}, // allow-time-estimate: pattern-definition-file
 ];
 
 // Backward-context exemption for range pattern (idx=1)
-const RANGE_BACKWARD_CONTEXT_RE = /\b(?:créneau|creneau|window|shift|meeting|réunion|reunion|call|appel|slot|interval|range|history|past|hier|aujourd'hui|today|yesterday|il\s+y\s+a|duré|a\s+pris|took|lasted|spent)\b/i;
+const RANGE_BACKWARD_CONTEXT_RE =
+	/\b(?:créneau|creneau|window|shift|meeting|réunion|reunion|call|appel|slot|interval|range|history|past|hier|aujourd'hui|today|yesterday|il\s+y\s+a|duré|a\s+pris|took|lasted|spent)\b/i;
 
 const OVERRIDE_RE = /\/\/\s*allow-time-estimate:/i;
 

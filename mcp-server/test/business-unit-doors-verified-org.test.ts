@@ -18,7 +18,10 @@ type Call = { kind: string; fn: string; args: Record<string, unknown> };
 type ToolResult = { content?: Array<{ text?: string }>; isError?: boolean };
 
 function harness(oauthCtx: OAuthContext) {
-	const handlers = new Map<string, (a: Record<string, unknown>) => Promise<unknown>>();
+	const handlers = new Map<
+		string,
+		(a: Record<string, unknown>) => Promise<unknown>
+	>();
 	const calls: Call[] = [];
 	const server = {
 		tool: (name: string, _d: string, _s: unknown, _a: unknown, h: never) => {
@@ -95,7 +98,11 @@ const createArgs = {
 
 const doors: Array<[string, string, Record<string, unknown>]> = [
 	["create_bu", "businessUnits:create", createArgs],
-	["update_bu", "businessUnits:update", { buId: "bu1", callerOrchestrator: "alpha", name: "x" }],
+	[
+		"update_bu",
+		"businessUnits:update",
+		{ buId: "bu1", callerOrchestrator: "alpha", name: "x" },
+	],
 	["get_bu", "businessUnits:get", { buId: "bu1" }],
 	["list_bus", "businessUnits:list", {}],
 ];
@@ -120,7 +127,9 @@ describe("a scoped bearer forwards its verified org", () => {
 
 	it("the agent credential's org wins over the token row's (verified actor)", async () => {
 		const h = harness(
-			scoped({ actor: { agentId: "ag1", orgSlug: "org-actor", agentName: "alpha" } }),
+			scoped({
+				actor: { agentId: "ag1", orgSlug: "org-actor", agentName: "alpha" },
+			}),
 		);
 		await h.call("get_bu", { buId: "bu1" });
 		expect(h.calls[0]?.args.verifiedOrg).toEqual({ orgSlug: "org-actor" });

@@ -107,7 +107,10 @@ function near(anchor: string, index: number): boolean {
 }
 
 describe("pin 2b — the KB tools (tools/kbIngest.ts) call their doors through the resolver", () => {
-	const KB_SRC = readFileSync(resolve(HERE, "../src/tools/kbIngest.ts"), "utf8");
+	const KB_SRC = readFileSync(
+		resolve(HERE, "../src/tools/kbIngest.ts"),
+		"utf8",
+	);
 	const calls = [
 		...KB_SRC.matchAll(
 			/convex\.(?:mutation|action)\(\s*"([A-Za-z0-9_]+):([A-Za-z0-9_]+)"/g,
@@ -121,7 +124,10 @@ describe("pin 2b — the KB tools (tools/kbIngest.ts) call their doors through t
 		for (const m of calls) {
 			const door = `${m[1]}:${m[2]}`;
 			const window = KB_SRC.slice(m.index, m.index + 600);
-			if (DOOR_SCOPE[door] === undefined || !window.includes(`scopeArgs("${door}")`))
+			if (
+				DOOR_SCOPE[door] === undefined ||
+				!window.includes(`scopeArgs("${door}")`)
+			)
 				missing.push(door);
 		}
 		expect(missing).toEqual([]);

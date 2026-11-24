@@ -152,7 +152,12 @@ function deriveDoors(src: string): DerivedDoor[] {
 			};
 		}
 
-		return { name: "<unresolved>", nameIndex: -1, kind: null, scopeIndex: index };
+		return {
+			name: "<unresolved>",
+			nameIndex: -1,
+			kind: null,
+			scopeIndex: index,
+		};
 	});
 }
 
@@ -322,7 +327,9 @@ function convexCalls(
 			}
 		}
 		if (close === -1) return null;
-		const argRaw = raw.slice(open + 1, close).replace(/^(?:\s*\/\/[^\n]*\n)*/, "");
+		const argRaw = raw
+			.slice(open + 1, close)
+			.replace(/^(?:\s*\/\/[^\n]*\n)*/, "");
 		const lit = /^\s*"([\w/]+:\w+)"/.exec(argRaw);
 		calls.push([lit ? lit[1] : null, masked.slice(open + 1, close)]);
 	}
@@ -337,7 +344,10 @@ function convexExportSlice(moduleText: string, name: string): string | null {
 	if (!m) return null;
 	const rest = code.slice(m.index + m[0].length);
 	const next = /^export\s/m.exec(rest);
-	return code.slice(m.index, next ? m.index + m[0].length + next.index : undefined);
+	return code.slice(
+		m.index,
+		next ? m.index + m[0].length + next.index : undefined,
+	);
 }
 
 interface IdentityInputs {
@@ -519,10 +529,14 @@ describe("identity-bound `filtered` doors — the caller gate lives in the Conve
 		"});",
 	].join("\n");
 	const inputs = (vaText: string | null = VA_TS): IdentityInputs => ({
-		verifiedActorDoors: vaText === null ? null : parseVerifiedActorDoors(vaText),
+		verifiedActorDoors:
+			vaText === null ? null : parseVerifiedActorDoors(vaText),
 		convexModule: (m) => (m === "widgets" ? WIDGETS : null),
 	});
-	const call = (fn: string, argObj = "{ ...(tenantId !== undefined ? { tenantId } : {}) }") =>
+	const call = (
+		fn: string,
+		argObj = "{ ...(tenantId !== undefined ? { tenantId } : {}) }",
+	) =>
 		[
 			"async ({ tenantId }) => {",
 			"\ttry {",
@@ -555,8 +569,12 @@ describe("identity-bound `filtered` doors — the caller gate lives in the Conve
 	});
 
 	it("RED: a call that forwards a verified organisation (by name, through a spread helper)", () => {
-		expect(bound(call("widgets:mine", "{ ...inboxOrgArgs(recipient) }"))).toEqual([]);
-		expect(bound(call("widgets:mine", "{ verifiedOrg: { orgSlug } }"))).toEqual([]);
+		expect(
+			bound(call("widgets:mine", "{ ...inboxOrgArgs(recipient) }")),
+		).toEqual([]);
+		expect(bound(call("widgets:mine", "{ verifiedOrg: { orgSlug } }"))).toEqual(
+			[],
+		);
 	});
 
 	it("RED: a second Convex call outside the set unbinds the door", () => {
@@ -591,12 +609,20 @@ describe("identity-bound `filtered` doors — the caller gate lives in the Conve
 		const [s1, e1] = range("list_blocked_on_me");
 		expect(doorOf("list_blocked_on_me").kind).toBe("filtered");
 		expect(
-			identityBoundDoorsOf(SRC.slice(s1, e1), MASKED_SRC.slice(s1, e1), REAL_IDENTITY),
+			identityBoundDoorsOf(
+				SRC.slice(s1, e1),
+				MASKED_SRC.slice(s1, e1),
+				REAL_IDENTITY,
+			),
 		).toEqual(["tasks:listBlockedOnMe"]);
 		expect(classify(doorOf("list_blocked_on_me"))).toBe("guarded");
 		const [s2, e2] = range("check_messages");
 		expect(
-			identityBoundDoorsOf(SRC.slice(s2, e2), MASKED_SRC.slice(s2, e2), REAL_IDENTITY),
+			identityBoundDoorsOf(
+				SRC.slice(s2, e2),
+				MASKED_SRC.slice(s2, e2),
+				REAL_IDENTITY,
+			),
 		).toEqual([]);
 		expect(classify(doorOf("check_messages"))).toBe("unguarded");
 	});

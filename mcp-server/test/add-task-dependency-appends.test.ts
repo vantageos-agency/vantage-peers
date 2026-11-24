@@ -57,7 +57,9 @@ function harness(stored: string[]) {
 		action: async () => null,
 	} as unknown as Parameters<typeof registerTools>[1];
 	registerTools(
-		{ registerTool: reg, tool: reg } as unknown as Parameters<typeof registerTools>[0],
+		{ registerTool: reg, tool: reg } as unknown as Parameters<
+			typeof registerTools
+		>[0],
 		convex,
 		master(),
 	);
@@ -91,7 +93,9 @@ describe("block_task blockedBy (task k17adacqev89cc8pzkgaz5fn9s8hdee0)", () => {
 			callerOrchestrator: "sigma",
 		});
 		expect(h.calls.some((c) => c.name === "tasks:update")).toBe(false);
-		expect("dependsOn" in JSON.parse(res?.content[0]?.text ?? "{}")).toBe(false);
+		expect("dependsOn" in JSON.parse(res?.content[0]?.text ?? "{}")).toBe(
+			false,
+		);
 	});
 });
 
@@ -128,6 +132,8 @@ describe("add_task_dependency", () => {
 
 	it("CONTRACT: the new argument bumped the contract on both sides", () => {
 		expect(REQUIRED_CONTRACT_VERSION).toBeGreaterThanOrEqual(16);
-		expect(BACKEND_CONTRACT_VERSION).toBeGreaterThanOrEqual(REQUIRED_CONTRACT_VERSION);
+		expect(BACKEND_CONTRACT_VERSION).toBeGreaterThanOrEqual(
+			REQUIRED_CONTRACT_VERSION,
+		);
 	});
 });

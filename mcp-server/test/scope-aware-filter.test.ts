@@ -170,9 +170,9 @@ describe("U — passesScopeFilter (helper unit)", () => {
 		// 0.3.0: oauthCtx is mandatory — the legacy-bearer wildcard behaviour
 		// must be requested BY NAME via LEGACY_WILDCARD_CTX, never inferred
 		// from an omitted/undefined argument.
-		expect(passesScopeFilter(LEGACY_WILDCARD_CTX, { createdBy: "anyone" })).toBe(
-			true,
-		);
+		expect(
+			passesScopeFilter(LEGACY_WILDCARD_CTX, { createdBy: "anyone" }),
+		).toBe(true);
 		expect(passesScopeFilter(LEGACY_WILDCARD_CTX, {})).toBe(true);
 	});
 

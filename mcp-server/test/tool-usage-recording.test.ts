@@ -146,13 +146,9 @@ describe("defineTool records tool usage after the call resolves", () => {
 	});
 
 	it("no recorder on the context: the tool runs unchanged", async () => {
-		const r = await call(
-			{ oauthCtx: org() },
-			{ kind: "public" },
-			async () => ({
-				content: [],
-			}),
-		);
+		const r = await call({ oauthCtx: org() }, { kind: "public" }, async () => ({
+			content: [],
+		}));
 		expect(r?.isError).toBeUndefined();
 	});
 });

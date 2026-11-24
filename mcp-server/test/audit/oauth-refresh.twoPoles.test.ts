@@ -82,9 +82,15 @@ async function refresh(raw: string) {
 			"Content-Type": "application/x-www-form-urlencoded",
 			Authorization: `Basic ${btoa(`${CLIENT_ID}:${SECRET}`)}`,
 		},
-		body: new URLSearchParams({ grant_type: "refresh_token", refresh_token: raw }).toString(),
+		body: new URLSearchParams({
+			grant_type: "refresh_token",
+			refresh_token: raw,
+		}).toString(),
 	});
-	return { status: res.status, body: (await res.json().catch(() => ({}))) as Record<string, unknown> };
+	return {
+		status: res.status,
+		body: (await res.json().catch(() => ({}))) as Record<string, unknown>,
+	};
 }
 
 const liveRefresh = async (raw: string) => {
@@ -97,7 +103,10 @@ describe("oauth refresh grant", () => {
 		const first = await refresh(REFRESH_RAW);
 		expect(first.status).toBe(200); // positive control: first use is served
 		const replay = await refresh(REFRESH_RAW);
-		expect(replay.status, `replay status (error=${String(replay.body.error)})`).toBe(400);
+		expect(
+			replay.status,
+			`replay status (error=${String(replay.body.error)})`,
+		).toBe(400);
 		expect(replay.body.error).toBe("invalid_grant");
 	});
 
@@ -106,7 +115,9 @@ describe("oauth refresh grant", () => {
 		const attacker = await refresh(REFRESH_RAW);
 		expect(attacker.status).toBe(200);
 		const attackerRefresh = String(attacker.body.refresh_token);
-		const attackerAccessHash = await sha256Hex(String(attacker.body.access_token));
+		const attackerAccessHash = await sha256Hex(
+			String(attacker.body.access_token),
+		);
 		expect(await liveRefresh(attackerRefresh)).toBe(true);
 		// The victim presents the same, now spent, token.
 		const victim = await refresh(REFRESH_RAW);

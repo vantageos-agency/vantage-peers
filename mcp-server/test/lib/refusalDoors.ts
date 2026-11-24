@@ -93,7 +93,8 @@ function propName(n: ts.PropertyName): string | undefined {
 	if (ts.isNoSubstitutionTemplateLiteral(n)) return n.text;
 	if (ts.isComputedPropertyName(n)) {
 		const e = strip(n.expression);
-		if (ts.isStringLiteral(e) || ts.isNoSubstitutionTemplateLiteral(e)) return e.text;
+		if (ts.isStringLiteral(e) || ts.isNoSubstitutionTemplateLiteral(e))
+			return e.text;
 	}
 	return undefined;
 }
@@ -125,7 +126,11 @@ function isReference(id: ts.Identifier): boolean {
 }
 
 /** Does this validator subtree carry `v.literal(true)`? (a `v.boolean()` is deliberately NOT one) */
-function isFlagValidator(e: ts.Node, consts: Consts, seen: Set<string>): boolean {
+function isFlagValidator(
+	e: ts.Node,
+	consts: Consts,
+	seen: Set<string>,
+): boolean {
 	let found = false;
 	const visit = (n: ts.Node): void => {
 		if (found) return;
@@ -136,7 +141,10 @@ function isFlagValidator(e: ts.Node, consts: Consts, seen: Set<string>): boolean
 				: ts.isIdentifier(c)
 					? c.text
 					: "";
-			if (name === "literal" && n.arguments[0]?.kind === ts.SyntaxKind.TrueKeyword) {
+			if (
+				name === "literal" &&
+				n.arguments[0]?.kind === ts.SyntaxKind.TrueKeyword
+			) {
 				found = true;
 				return;
 			}
@@ -195,26 +203,36 @@ function builders(sf: ts.SourceFile, module: string): Builder[] {
 	const out: Builder[] = [];
 	for (const st of sf.statements) {
 		if (!ts.isVariableStatement(st)) continue;
-		if (!st.modifiers?.some((m) => m.kind === ts.SyntaxKind.ExportKeyword)) continue;
+		if (!st.modifiers?.some((m) => m.kind === ts.SyntaxKind.ExportKeyword))
+			continue;
 		for (const d of st.declarationList.declarations) {
 			if (!ts.isIdentifier(d.name) || !d.initializer) continue;
 			const init = strip(d.initializer);
-			if (!ts.isCallExpression(init) || !ts.isIdentifier(init.expression)) continue;
+			if (!ts.isCallExpression(init) || !ts.isIdentifier(init.expression))
+				continue;
 			if (!BUILDER.test(init.expression.text)) continue;
 			const cfg = init.arguments[0];
 			if (!cfg || !ts.isObjectLiteralExpression(cfg)) continue;
 			let returns: ts.Expression | undefined;
 			let handler: ts.Node | undefined;
 			for (const p of cfg.properties) {
-				if (ts.isPropertyAssignment(p) && propName(p.name) === "returns") returns = p.initializer;
-				if (ts.isShorthandPropertyAssignment(p) && p.name.text === "returns") returns = p.name;
+				if (ts.isPropertyAssignment(p) && propName(p.name) === "returns")
+					returns = p.initializer;
+				if (ts.isShorthandPropertyAssignment(p) && p.name.text === "returns")
+					returns = p.name;
 				if (
 					(ts.isPropertyAssignment(p) || ts.isMethodDeclaration(p)) &&
 					propName(p.name) === "handler"
 				)
 					handler = p;
 			}
-			out.push({ module, exportName: d.name.text, config: cfg, returns, handler });
+			out.push({
+				module,
+				exportName: d.name.text,
+				config: cfg,
+				returns,
+				handler,
+			});
 		}
 	}
 	return out;
@@ -251,7 +269,8 @@ export function deriveDoors(convexFiles: Src[]): Derivation {
 				const visit = (n: ts.Node): void => {
 					if (emits) return;
 					if (ts.isPropertyAssignment(n) && propName(n.name) === "refused") {
-						if (strip(n.initializer).kind === ts.SyntaxKind.TrueKeyword) emits = true;
+						if (strip(n.initializer).kind === ts.SyntaxKind.TrueKeyword)
+							emits = true;
 					}
 					ts.forEachChild(n, visit);
 				};
@@ -269,9 +288,14 @@ export function deriveDoors(convexFiles: Src[]): Derivation {
 
 // ── call sites ──────────────────────────────────────────────────────────────
 
-function stringOf(e: ts.Expression, fileConsts: Map<string, ts.Expression>, depth = 0): string | undefined {
+function stringOf(
+	e: ts.Expression,
+	fileConsts: Map<string, ts.Expression>,
+	depth = 0,
+): string | undefined {
 	const x = strip(e);
-	if (ts.isStringLiteral(x) || ts.isNoSubstitutionTemplateLiteral(x)) return x.text;
+	if (ts.isStringLiteral(x) || ts.isNoSubstitutionTemplateLiteral(x))
+		return x.text;
 	if (ts.isIdentifier(x) && depth < 4) {
 		const init = fileConsts.get(x.text);
 		if (init) return stringOf(init, fileConsts, depth + 1);
@@ -288,16 +312,21 @@ function apiPath(e: ts.Expression): string | undefined {
 			cur = strip(cur.expression);
 		} else if (ts.isElementAccessExpression(cur)) {
 			const a = strip(cur.argumentExpression);
-			if (!ts.isStringLiteral(a) && !ts.isNoSubstitutionTemplateLiteral(a)) return undefined;
+			if (!ts.isStringLiteral(a) && !ts.isNoSubstitutionTemplateLiteral(a))
+				return undefined;
 			segs.unshift(a.text);
 			cur = strip(cur.expression);
 		} else break;
 	}
-	if (!ts.isIdentifier(cur) || !API_ROOTS.has(cur.text) || segs.length < 2) return undefined;
+	if (!ts.isIdentifier(cur) || !API_ROOTS.has(cur.text) || segs.length < 2)
+		return undefined;
 	return `${segs.slice(0, -1).join("/")}:${segs[segs.length - 1]}`;
 }
 
-function resolveDoor(arg: ts.Expression, fileConsts: Map<string, ts.Expression>): string | undefined {
+function resolveDoor(
+	arg: ts.Expression,
+	fileConsts: Map<string, ts.Expression>,
+): string | undefined {
 	const s = stringOf(arg, fileConsts);
 	if (s !== undefined) return s;
 	const a = apiPath(arg);
@@ -341,7 +370,8 @@ function boundName(call: ts.CallExpression): string | undefined {
 	)
 		cur = cur.parent;
 	const p = cur.parent;
-	if (p && ts.isVariableDeclaration(p) && ts.isIdentifier(p.name)) return p.name.text;
+	if (p && ts.isVariableDeclaration(p) && ts.isIdentifier(p.name))
+		return p.name.text;
 	return undefined;
 }
 
@@ -365,7 +395,8 @@ export function sweepCallSites(srcFiles: Src[], doors: string[]): CallSweep {
 		for (const st of sf.statements) {
 			if (!ts.isVariableStatement(st)) continue;
 			for (const d of st.declarationList.declarations)
-				if (ts.isIdentifier(d.name) && d.initializer) fileConsts.set(d.name.text, d.initializer);
+				if (ts.isIdentifier(d.name) && d.initializer)
+					fileConsts.set(d.name.text, d.initializer);
 		}
 		const visit = (n: ts.Node): void => {
 			if (ts.isCallExpression(n)) {
@@ -391,7 +422,10 @@ export function sweepCallSites(srcFiles: Src[], doors: string[]): CallSweep {
 								m.expression.text === "isRefusedEnvelope"
 							) {
 								const a = m.arguments[0] ? strip(m.arguments[0]) : undefined;
-								if (bound === undefined || (a && ts.isIdentifier(a) && a.text === bound))
+								if (
+									bound === undefined ||
+									(a && ts.isIdentifier(a) && a.text === bound)
+								)
 									tested = true;
 							}
 							ts.forEachChild(m, scan);
