@@ -84,6 +84,7 @@ export const DOOR_SCOPE: Readonly<Record<string, DoorScopeRule>> = {
 	"tasks:checkout": { verifiedOrg: "always" },
 	"tasks:deleteTask": { verifiedOrg: "always" },
 	"tasks:blockTask": { verifiedOrg: "always" },
+	"tasks:nextForAssignee": { verifiedOrg: "always" },
 	// missions
 	"missions:create": { verifiedPerson: true, verifiedOrg: "unless-person" },
 	"missions:update": { verifiedPerson: true },

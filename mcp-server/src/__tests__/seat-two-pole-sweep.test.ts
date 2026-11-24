@@ -418,6 +418,38 @@ DOORS.push({
 	},
 });
 
+// reorder_queue: the queue is set for an agent of the SAME org, over that org's tasks.
+DOORS.push({
+	tool: "reorder_queue",
+	allow: async () => {
+		const first = await seedTask(A, "todo");
+		const second = await seedTask(A, "todo");
+		served(
+			await as(seatA, "reorder_queue", {
+				assignedToAgentId: String(await agentIdOf(t as never, A, "mimir")),
+				taskIds: [second, first],
+			}),
+		);
+		expect(
+			(await readRow(second)) as TaskRow & { queueRank?: number },
+		).toMatchObject({ queueRank: 1 });
+		expect(
+			(await readRow(first)) as TaskRow & { queueRank?: number },
+		).toMatchObject({ queueRank: 2 });
+	},
+	cross: async () => {
+		const target = await seedTask(B, "todo");
+		const before = JSON.stringify(await readRow(target));
+		refused(
+			await as(seatA, "reorder_queue", {
+				assignedToAgentId: String(await agentIdOf(t as never, B, "mimir")),
+				taskIds: [target],
+			}),
+		);
+		expect(JSON.stringify(await readRow(target))).toBe(before);
+	},
+});
+
 // bulk_complete_tasks: a filter sweeps the seat's OWN org only.
 DOORS.push({
 	tool: "bulk_complete_tasks",

@@ -326,6 +326,20 @@ const SCOPE_CLASSIFICATION: Readonly<Record<string, ScopeClassification>> = {
 		reason:
 			"doorScopeArgs verifiedPerson / verifiedOrg unless-person (tools.ts:4812); verifiedOrg validator spread via createTaskArgsValidatorWithCredential (convex/tasks.ts:876)",
 	},
+	"reorder_queue|tasks:reorderQueue": {
+		class: "safe",
+		severity: null,
+		basis: "args+gate",
+		reason:
+			"decided by the door (convex/tasks.ts reorderQueue, lib/taskQueue.ts): the caller is the verified agent ID added by the wrapped client (VERIFIED_ACTOR_DOORS) or a signed-in person who must administer the organisation; the assignee and every listed task are loaded under the principal's own organisation and a foreign one is refused by ID; unresolvedOrgDenial refuses an unresolved bearer first; pinned by the seat two-pole sweep",
+	},
+	"next_task|tasks:nextForAssignee": {
+		class: "safe",
+		severity: null,
+		basis: "args+gate",
+		reason:
+			"doorScopeArgs verifiedOrg always + unresolvedOrgDenial; no verifiedActor is forwarded (the door admits an actor only as an operator-org agent); the door resolves the assignee inside that organisation only (convex/tasks.ts nextForAssignee)",
+	},
 	"list_tasks|tasks:list": {
 		class: "safe",
 		severity: null,

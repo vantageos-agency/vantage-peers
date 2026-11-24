@@ -141,6 +141,7 @@ const WRITE_IDEMPOTENCY: Record<string, boolean> = {
 	delete_task: true, // the task is gone
 	block_task: true, // same blocked fields; blockedBy is appended de-duplicated
 	add_task_dependency: true, // appended de-duplicated
+	reorder_queue: true, // full replacement: the same list gives the same ranks, nothing else changes
 	update_mission: true, // patch of the given fields
 	update_mission_status: true, // same status
 	write_diary: true, // upsert by (orchestrator, date)

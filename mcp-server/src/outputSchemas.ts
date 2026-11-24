@@ -218,6 +218,12 @@ export const getTaskServedOutputSchema = z.looseObject({
 		.describe(
 			"The mission the task belongs to; absent when it belongs to none.",
 		),
+	queueRank: z
+		.number()
+		.optional()
+		.describe(
+			"The task's place in its assignee's explicit queue (1 = next); absent when the task is not ranked. Set by reorder_queue.",
+		),
 	completionNote: z
 		.string()
 		.optional()
@@ -958,6 +964,52 @@ export const addTaskDependencyServedOutputSchema = z.looseObject({
 	updated: z.boolean().describe("True: the list was written."),
 });
 
+/** reorder_queue: tasks:reorderQueue `returns:`. */
+export const reorderQueueServedOutputSchema = z.looseObject({
+	ranked: z
+		.number()
+		.describe("How many tasks now hold a rank: the length of the list you sent."),
+	cleared: z
+		.number()
+		.describe(
+			"How many other open tasks of the assignee lost the rank they held.",
+		),
+});
+
+/** next_task: tasks:nextForAssignee `returns:` plus an explicit message when none is pickable. */
+export const nextTaskServedOutputSchema = z.looseObject({
+	found: z
+		.boolean()
+		.describe("True when a task is ready to take; false when none is pickable."),
+	task: z
+		.looseObject({
+			_id: rowId("The task to take next: the taskId the task tools take."),
+			_creationTime: creationTime,
+			title: z.string().describe("The task's one-line title."),
+			description: z
+				.string()
+				.optional()
+				.describe("The brief; absent when none was given."),
+			status: taskStatusValue,
+			priority: z.string().describe("urgent, high, medium or low."),
+			assignedTo: z.string().describe("The assignee, by name."),
+			missionId: z
+				.string()
+				.optional()
+				.describe("The mission the task belongs to; absent when none."),
+			queueRank: z
+				.number()
+				.optional()
+				.describe("Its place in the assignee's queue (1 = next); absent when unranked."),
+		})
+		.optional()
+		.describe("The task to take next; absent when found is false."),
+	message: z
+		.string()
+		.optional()
+		.describe("Present when found is false: says that no task is pickable."),
+});
+
 /** checkout_task: tasks:checkout `returns:` (claimed false says why). */
 export const checkoutTaskServedOutputSchema = z.looseObject({
 	claimed: z
@@ -1341,7 +1393,7 @@ const taskListRow = getTaskServedOutputSchema;
 /** list_tasks. */
 export const listTasksServedOutputSchema = pageOf(
 	taskListRow,
-	"The tasks, newest first (newest-updated first with updatedSince); lite rows carry _id, _creationTime, title, status, priority, assignedTo and missionId, full rows every stored field.",
+	"The tasks, newest first (newest-updated first with updatedSince; queue order with sort='queue'); lite rows carry _id, _creationTime, title, status, priority, assignedTo, missionId and, when the task is ranked, queueRank, full rows every stored field.",
 );
 
 /** list_tasks_by_mission. */

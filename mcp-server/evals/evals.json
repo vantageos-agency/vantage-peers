@@ -8103,6 +8103,168 @@
 				"patternId is required; the SDK refuses before the handler runs, so no backend call is made"
 			],
 			"source": "src/registerTool.ts:464"
+		},
+		{
+			"id": "reorder_queue.set-order",
+			"tool": "reorder_queue",
+			"op": "callTool",
+			"caller": "seat",
+			"runner": "live",
+			"prompt": "Work these two tasks first, in this order.",
+			"args": {
+				"assignedToAgentId": "r57bexrjnt2229qzchhj5bs3yh8j5ta1",
+				"taskIds": [
+					"k1712121212121212121212121212121",
+					"k1715151515151515151515151515151"
+				]
+			},
+			"expect": {
+				"isError": false,
+				"jsonKeys": [
+					"ranked",
+					"cleared"
+				]
+			},
+			"expectations": [
+				"tasks:reorderQueue is called with verifiedActor added by the wrapped client, never a typed name",
+				"the listed tasks get ranks 1..N and other open tasks of the assignee lose theirs",
+				"the result is {ranked,cleared}"
+			],
+			"source": "src/tools.ts:7126"
+		},
+		{
+			"id": "reorder_queue.not-assigned-refused",
+			"tool": "reorder_queue",
+			"op": "callTool",
+			"caller": "seat",
+			"runner": "live",
+			"prompt": "Rank a task that belongs to someone else.",
+			"args": {
+				"assignedToAgentId": "r57bexrjnt2229qzchhj5bs3yh8j5ta1",
+				"taskIds": [
+					"k1712121212121212121212121212121"
+				]
+			},
+			"expect": {
+				"isError": true,
+				"textIncludes": [
+					"QUEUE_TASK_NOT_ASSIGNED"
+				]
+			},
+			"expectations": [
+				"the backend refusal is surfaced verbatim and nothing is written"
+			],
+			"source": "src/tools.ts:7126"
+		},
+		{
+			"id": "reorder_queue.bad-task-id",
+			"tool": "reorder_queue",
+			"op": "callTool",
+			"caller": "master",
+			"runner": "offline",
+			"prompt": "Rank the task 'B'.",
+			"args": {
+				"assignedToAgentId": "r57bexrjnt2229qzchhj5bs3yh8j5ta1",
+				"taskIds": [
+					"B"
+				]
+			},
+			"expect": {
+				"isError": true,
+				"textIncludes": [
+					"Input validation error: Invalid arguments for tool reorder_queue",
+					"taskIds"
+				]
+			},
+			"expectations": [
+				"each taskIds entry must match the Convex ID pattern",
+				"the SDK refuses before the handler runs, so no backend call is made"
+			],
+			"source": "src/registerTool.ts:464"
+		},
+		{
+			"id": "next_task.pickable",
+			"tool": "next_task",
+			"op": "callTool",
+			"caller": "seat",
+			"runner": "live",
+			"prompt": "What should this agent work on next?",
+			"args": {
+				"assignedToAgentId": "r57bexrjnt2229qzchhj5bs3yh8j5ta1"
+			},
+			"expect": {
+				"isError": false,
+				"jsonKeys": [
+					"found"
+				]
+			},
+			"expectations": [
+				"tasks:nextForAssignee is called with verifiedOrg on every call",
+				"answers {found:true,task} or {found:false,message}, never a silent empty"
+			],
+			"source": "src/tools.ts:7197"
+		},
+		{
+			"id": "next_task.nobody-named",
+			"tool": "next_task",
+			"op": "callTool",
+			"caller": "seat",
+			"runner": "live",
+			"prompt": "What is next? (no agent named)",
+			"args": {},
+			"expect": {
+				"isError": true,
+				"textIncludes": [
+					"QUEUE_ASSIGNEE_REQUIRED"
+				]
+			},
+			"expectations": [
+				"one of assignedTo and assignedToAgentId is required; refused before any backend call"
+			],
+			"source": "src/tools.ts:7197"
+		},
+		{
+			"id": "next_task.empty-assignee",
+			"tool": "next_task",
+			"op": "callTool",
+			"caller": "master",
+			"runner": "offline",
+			"prompt": "Next task for an empty name.",
+			"args": {
+				"assignedTo": ""
+			},
+			"expect": {
+				"isError": true,
+				"textIncludes": [
+					"Input validation error: Invalid arguments for tool next_task",
+					"assignedTo"
+				]
+			},
+			"expectations": [
+				"assignedTo must be a non-empty name",
+				"the SDK refuses before the handler runs, so no backend call is made"
+			],
+			"source": "src/registerTool.ts:464"
+		},
+		{
+			"id": "list_tasks.queue-order",
+			"tool": "list_tasks",
+			"op": "callTool",
+			"caller": "seat",
+			"runner": "live",
+			"prompt": "Show my queue in the order I must work it.",
+			"args": {
+				"assignedTo": "mimir",
+				"sort": "queue"
+			},
+			"expect": {
+				"isError": false
+			},
+			"expectations": [
+				"sort='queue' is forwarded to tasks:list; without sort no sort key is sent",
+				"ranked tasks first by rank, then unranked by priority and age; no nextCursor"
+			],
+			"source": "src/tools.ts:5746"
 		}
 	]
 }
