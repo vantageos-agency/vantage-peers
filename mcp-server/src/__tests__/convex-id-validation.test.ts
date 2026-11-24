@@ -42,7 +42,12 @@ const VALID_ID = "k172735brsw6bc3j2dkkkfxqrx88kkjq";
 
 type NamedSchema = {
 	name: string;
-	schema: { safeParse: (v: string) => { success: boolean; error?: { issues: { message: string }[] } } };
+	schema: {
+		safeParse: (v: string) => {
+			success: boolean;
+			error?: { issues: { message: string }[] };
+		};
+	};
 };
 
 const entitySchemas: NamedSchema[] = [
@@ -117,9 +122,9 @@ describe("non-regression — existing schemas retain current behaviour", () => {
 	});
 
 	it("receiptIdSchema still rejects uppercase / over-long ids", () => {
-		expect(
-			receiptIdSchema.safeParse(UPPERCASE_WRONG_CHARSET_ID).success,
-		).toBe(false);
+		expect(receiptIdSchema.safeParse(UPPERCASE_WRONG_CHARSET_ID).success).toBe(
+			false,
+		);
 		expect(receiptIdSchema.safeParse(OVER_LONG_ID).success).toBe(false);
 	});
 });

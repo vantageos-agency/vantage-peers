@@ -31,7 +31,11 @@ describe("list_repo_mappings tool description + args schema (PR-C RED)", () => {
 	it("args schema accepts {limit (1-200), cursor (string), fields ('lite'|'full')} and rejects out-of-range values", () => {
 		// Valid full object
 		expect(
-			listRepoMappingsArgsSchema.parse({ limit: 20, cursor: "abc", fields: "lite" }),
+			listRepoMappingsArgsSchema.parse({
+				limit: 20,
+				cursor: "abc",
+				fields: "lite",
+			}),
 		).toBeTruthy();
 
 		// Valid — limit at boundaries

@@ -43,7 +43,9 @@ describe("getScopedUserToken", () => {
 		const previous = process.env.CLERK_SECRET_KEY;
 		delete process.env.CLERK_SECRET_KEY;
 		try {
-			const token = await getScopedUserToken("user_3FXI326OF3bgUd6OnOgUcAYY9ip");
+			const token = await getScopedUserToken(
+				"user_3FXI326OF3bgUd6OnOgUcAYY9ip",
+			);
 			expect(token).toBeNull();
 		} finally {
 			if (previous !== undefined) process.env.CLERK_SECRET_KEY = previous;
@@ -92,9 +94,7 @@ describe("getScopedUserToken", () => {
 			);
 			expect(payload.org_id).toBe("org_perello");
 			expect(payload.org_role).toBe("org:admin");
-			expect(payload.org_slug).toBe(
-				"perello-consulting-1782214787064836324",
-			);
+			expect(payload.org_slug).toBe("perello-consulting-1782214787064836324");
 			expect(payload.aud).toBe("convex");
 		} finally {
 			if (previous !== undefined) {

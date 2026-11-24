@@ -65,8 +65,12 @@ describe("create_task", () => {
 		expect(result.modified_payload?.description).toContain("TESTS:");
 	});
 
-	it("description with time estimate → hard block", () => { // allow-time-estimate: test-fixture-validates-blocking-behaviour
-		const badDesc = ["Do this. VERIFICATION: check. TESTS: run.", "Estim" + "ated: 2h work"].join("\n"); // allow-time-estimate: test-fixture-string-not-an-estimate
+	it("description with time estimate → hard block", () => {
+		// allow-time-estimate: test-fixture-validates-blocking-behaviour
+		const badDesc = [
+			"Do this. VERIFICATION: check. TESTS: run.",
+			"Estim" + "ated: 2h work",
+		].join("\n"); // allow-time-estimate: test-fixture-string-not-an-estimate
 		const result = validateTaskPayload("create_task", {
 			description: badDesc,
 		});
@@ -168,9 +172,12 @@ describe("complete_task", () => {
 		expect(fields).toContain("completionNote.length");
 	});
 
-	it("completionNote with time estimate → hard error", () => { // allow-time-estimate: test-fixture-validates-blocking-behaviour
-		const noteWithEstimate = "Implemented feature. PR #42 merged. 15 tests passing. " +
-			"Estim" + "ated: 2h total work. friction_observed: none"; // allow-time-estimate: test-fixture-string-not-an-estimate
+	it("completionNote with time estimate → hard error", () => {
+		// allow-time-estimate: test-fixture-validates-blocking-behaviour
+		const noteWithEstimate =
+			"Implemented feature. PR #42 merged. 15 tests passing. " +
+			"Estim" +
+			"ated: 2h total work. friction_observed: none"; // allow-time-estimate: test-fixture-string-not-an-estimate
 		const result = validateTaskPayload("complete_task", {
 			completionNote: noteWithEstimate,
 		});
@@ -252,8 +259,7 @@ describe("send_message", () => {
 	it("[STATUS] marker → valid=true", () => {
 		const result = validateTaskPayload("send_message", {
 			channel: "tau",
-			content:
-				"[STATUS] Feature X is deployed on staging. Monitoring metrics.",
+			content: "[STATUS] Feature X is deployed on staging. Monitoring metrics.",
 		});
 		expect(result.valid).toBe(true);
 	});
@@ -276,7 +282,8 @@ describe("send_message", () => {
 		expect(result.valid).toBe(true);
 	});
 
-	it("message with time estimate and [STATUS] marker → hard block for estimate", () => { // allow-time-estimate: test-fixture-validates-blocking-behaviour
+	it("message with time estimate and [STATUS] marker → hard block for estimate", () => {
+		// allow-time-estimate: test-fixture-validates-blocking-behaviour
 		const contentWithETA = "[STATUS] ETA" + ": 3 days for completion."; // allow-time-estimate: test-fixture-days-is-literal-string
 		const result = validateTaskPayload("send_message", {
 			channel: "tau",
@@ -312,7 +319,8 @@ describe("multi-axis accumulation", () => {
 		}
 	});
 
-	it("create_task description + time estimate → time-estimate hard-blocked, VERIFICATION/TESTS auto-injected", () => { // allow-time-estimate: test-fixture-validates-blocking-behaviour
+	it("create_task description + time estimate → time-estimate hard-blocked, VERIFICATION/TESTS auto-injected", () => {
+		// allow-time-estimate: test-fixture-validates-blocking-behaviour
 		const badDesc = "Build the feature. ~" + "2h work."; // allow-time-estimate: test-fixture-string-not-an-estimate
 		const result = validateTaskPayload("create_task", {
 			description: badDesc,

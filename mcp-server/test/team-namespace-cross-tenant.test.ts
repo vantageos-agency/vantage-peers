@@ -90,7 +90,10 @@ describe("team-member scope — namespace enforcement", () => {
 	});
 
 	it("team A reads global/orchestrator/sigma/project/vantage — Forbidden", () => {
-		const err = checkNamespaceRead(teamA, "global/orchestrator/sigma/project/vantage");
+		const err = checkNamespaceRead(
+			teamA,
+			"global/orchestrator/sigma/project/vantage",
+		);
 		expect(err).toMatch(/Forbidden/);
 	});
 
@@ -134,7 +137,9 @@ describe("master scope — full access regression", () => {
 		expect(checkNamespaceRead(masterCtx, "team/org-a")).toBeNull();
 		expect(checkNamespaceRead(masterCtx, "team/org-b")).toBeNull();
 		expect(checkNamespaceRead(masterCtx, "global")).toBeNull();
-		expect(checkNamespaceRead(masterCtx, "global/orchestrator/sigma/project/x")).toBeNull();
+		expect(
+			checkNamespaceRead(masterCtx, "global/orchestrator/sigma/project/x"),
+		).toBeNull();
 	});
 
 	it("master writes any namespace — OK", () => {

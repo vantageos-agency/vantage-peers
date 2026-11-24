@@ -18,7 +18,9 @@ const BACKEND = readFileSync(
 );
 
 function backendTables(): string[] {
-	const m = /export const ERASE_TABLES = \[([\s\S]*?)\] as const;/.exec(BACKEND);
+	const m = /export const ERASE_TABLES = \[([\s\S]*?)\] as const;/.exec(
+		BACKEND,
+	);
 	expect(m, "ERASE_TABLES not found in convex/lib/eraseRow.ts").not.toBeNull();
 	return [...(m?.[1] ?? "").matchAll(/"([A-Za-z_]+)"/g)].map((x) => x[1]);
 }
@@ -29,7 +31,9 @@ describe("erase_row tables == the backend's covered tables", () => {
 	});
 
 	it("the backend policy table covers exactly ERASE_TABLES", () => {
-		const m = /export const ERASE_COVERED[^=]*= \{([\s\S]*?)\n\};/.exec(BACKEND);
+		const m = /export const ERASE_COVERED[^=]*= \{([\s\S]*?)\n\};/.exec(
+			BACKEND,
+		);
 		expect(m).not.toBeNull();
 		const keys = [...(m?.[1] ?? "").matchAll(/^\t([A-Za-z_]+): \{/gm)].map(
 			(x) => x[1],
@@ -39,7 +43,9 @@ describe("erase_row tables == the backend's covered tables", () => {
 
 	it("no credential, identity or system table is offered", () => {
 		for (const t of ERASE_ROW_TABLES) {
-			expect(t).not.toMatch(/^oauth_|credential|agents$|client_org_mapping|orgMembership/);
+			expect(t).not.toMatch(
+				/^oauth_|credential|agents$|client_org_mapping|orgMembership/,
+			);
 		}
 	});
 });

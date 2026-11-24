@@ -26,10 +26,12 @@ import { describe, expect, it } from "vitest";
 
 // Expected exports from T-GREEN — these do NOT exist in tools.ts yet → RED
 // @ts-expect-error — RED: exports do not exist yet, will exist post-T-GREEN
-import { IMPROVISATION_DIGEST_TOOL_NAME, improvisationDigestArgsSchema } from "../tools.js";
+import {
+	IMPROVISATION_DIGEST_TOOL_NAME,
+	improvisationDigestArgsSchema,
+} from "../tools.js";
 
 describe("improvisation_digest MCP tool registration + args schema (PR-I RED)", () => {
-
 	// ── Tool registration ────────────────────────────────────────────────────
 	it("tool name is 'improvisation_digest' and is registered in the MCP tool list", () => {
 		// Will fail until IMPROVISATION_DIGEST_TOOL_NAME is exported from tools.ts

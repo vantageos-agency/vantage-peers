@@ -1,0 +1,40 @@
+name: Biome format (mcp-server)
+
+# The repository declares its formatter in biome.json, but nothing ran it, so the
+# mcp-server tree drifted (125 files unformatted on main). This check keeps the
+# counter at zero: a PR that leaves an mcp-server file unformatted fails here.
+# Same trigger shape as typecheck.yml: pull_request (target main) for PRs, push
+# (target main) for the post-merge commit. Scope: mcp-server/ only (the MCP
+# server owner's tree); other trees are formatted by their owners.
+#
+# Declared divergence: mcp-server/src/tools.ts is excluded in biome.json because
+# three source-scanning tests (door-scope-resolver, scope-guard-coverage) read it
+# by line position and fixed character windows, so reformatting it breaks them on
+# layout alone. Making those scanners layout-independent, then formatting
+# tools.ts, is tracked in task k1756wg84ggv4etsafhrzj2v698jvnm1.
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+concurrency:
+  group: biome-mcp-server-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  format:
+    name: biome format mcp-server
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - name: Install dependencies
+        run: bun install --frozen-lockfile
+
+      - name: Biome format check (no write)
+        run: ./node_modules/.bin/biome format mcp-server biome.json

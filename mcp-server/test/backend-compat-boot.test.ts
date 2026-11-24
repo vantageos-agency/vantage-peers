@@ -80,7 +80,10 @@ const NOT_FOUND = {
 		"[Request ID: abc123] Server Error\nCould not find public function for 'meta:backendContract'. Did you forget to run `npx convex dev` or `npx convex deploy`?",
 };
 
-const manifestOf = (functions: readonly string[], contractVersion = REQUIRED_CONTRACT_VERSION) => ({
+const manifestOf = (
+	functions: readonly string[],
+	contractVersion = REQUIRED_CONTRACT_VERSION,
+) => ({
 	status: "success",
 	value: { contractVersion, functions, functionCount: functions.length },
 });

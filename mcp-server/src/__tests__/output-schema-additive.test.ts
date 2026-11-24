@@ -72,7 +72,9 @@ describe("output schemas are open to added fields", () => {
 		const tools = await servedTools();
 		const schema = tools.find((t) => t.name === "whoami")?.outputSchema as {
 			additionalProperties?: unknown;
-			properties: { actor: { anyOf?: Array<{ additionalProperties?: unknown }> } };
+			properties: {
+				actor: { anyOf?: Array<{ additionalProperties?: unknown }> };
+			};
 		};
 		expect(schema.additionalProperties).not.toBe(false);
 		for (const branch of schema.properties.actor.anyOf ?? []) {

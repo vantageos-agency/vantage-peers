@@ -80,10 +80,7 @@ describe("D7 redirect_uri wildcard matcher (S3.5)", () => {
 
 		it("rejects an empty dynamic segment (trailing slash only)", () => {
 			expect(
-				redirectUriMatches(
-					REGISTERED,
-					"https://chatgpt.com/connector/oauth/",
-				),
+				redirectUriMatches(REGISTERED, "https://chatgpt.com/connector/oauth/"),
 			).toBe(false);
 		});
 
@@ -147,10 +144,7 @@ describe("D7 redirect_uri wildcard matcher (S3.5)", () => {
 
 		it("rejects an unrelated path on the same host", () => {
 			expect(
-				redirectUriMatches(
-					REGISTERED,
-					"https://chatgpt.com/admin/oauth/abc",
-				),
+				redirectUriMatches(REGISTERED, "https://chatgpt.com/admin/oauth/abc"),
 			).toBe(false);
 		});
 
@@ -188,7 +182,10 @@ describe("D7 redirect_uri wildcard matcher (S3.5)", () => {
 
 		it("rejects a newline-injection attempt", () => {
 			expect(
-				redirectUriMatches(REGISTERED, "https://chatgpt.com/connector/oauth/abc\nattack"),
+				redirectUriMatches(
+					REGISTERED,
+					"https://chatgpt.com/connector/oauth/abc\nattack",
+				),
 			).toBe(false);
 		});
 	});
@@ -206,10 +203,7 @@ describe("D7 redirect_uri wildcard matcher (S3.5)", () => {
 			).toBe(true);
 			expect(
 				registered.some((u) =>
-					redirectUriMatches(
-						u,
-						"https://chatgpt.com/connector/oauth/conn_abc",
-					),
+					redirectUriMatches(u, "https://chatgpt.com/connector/oauth/conn_abc"),
 				),
 			).toBe(true);
 			expect(

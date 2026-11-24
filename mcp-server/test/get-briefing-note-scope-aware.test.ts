@@ -144,7 +144,9 @@ type CapturedTool = {
 	handler: (args: any) => any;
 };
 
-function captureRegisteredTools(oauthCtx?: OAuthContext): Map<string, CapturedTool> {
+function captureRegisteredTools(
+	oauthCtx?: OAuthContext,
+): Map<string, CapturedTool> {
 	const tools = new Map<string, CapturedTool>();
 	// Unwraps a strict ZodObject's `.shape` back to a raw field-validator
 	// record, so this test keeps reading the same per-field validators it

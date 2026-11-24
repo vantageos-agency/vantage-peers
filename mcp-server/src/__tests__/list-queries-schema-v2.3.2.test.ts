@@ -83,8 +83,6 @@ describe("missionStatusFilterSchema (v2.3.2)", () => {
 		]);
 	});
 	it("rejects array containing alias", () => {
-		expect(() =>
-			missionStatusFilterSchema.parse(["active", "plan"]),
-		).toThrow();
+		expect(() => missionStatusFilterSchema.parse(["active", "plan"])).toThrow();
 	});
 });

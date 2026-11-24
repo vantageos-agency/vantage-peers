@@ -91,7 +91,11 @@ const SITES: Site[] = [
 		path: "recurringTasks:list",
 		args: { limit: 2 },
 		mine: (n) => ({ _id: `r${n}`, _creationTime: 100 - n, createdBy: "alpha" }),
-		foreign: (n) => ({ _id: `r${n}`, _creationTime: 100 - n, createdBy: "beta" }),
+		foreign: (n) => ({
+			_id: `r${n}`,
+			_creationTime: 100 - n,
+			createdBy: "beta",
+		}),
 	},
 	{
 		tool: "list_mandates",
@@ -152,16 +156,28 @@ function peer(n: number, who: string): Record<string, unknown> {
 	};
 }
 
-describe.each(SITES)("$tool — bound is computed before the scope filter", (s) => {
+describe.each(
+	SITES,
+)("$tool — bound is computed before the scope filter", (s) => {
 	it("NEGATIVE: full raw page, every row removed by the filter -> says so and keeps the cursor", async () => {
-		const parsed = await call(s.path, [s.foreign(1), s.foreign(2)], s.tool, s.args);
+		const parsed = await call(
+			s.path,
+			[s.foreign(1), s.foreign(2)],
+			s.tool,
+			s.args,
+		);
 		expect(items(parsed)).toHaveLength(0);
 		expect(parsed.scopeFiltered).toBe(2);
 		expect(typeof parsed.nextCursor).toBe("string");
 	});
 
 	it("NEGATIVE vs ABSENT: the same caller on an empty population gets distinct bytes", async () => {
-		const removed = await call(s.path, [s.foreign(1), s.foreign(2)], s.tool, s.args);
+		const removed = await call(
+			s.path,
+			[s.foreign(1), s.foreign(2)],
+			s.tool,
+			s.args,
+		);
 		const empty = await call(s.path, [], s.tool, s.args);
 		expect(JSON.stringify(removed)).not.toBe(JSON.stringify(empty));
 		expect(items(empty)).toHaveLength(0);
@@ -170,7 +186,12 @@ describe.each(SITES)("$tool — bound is computed before the scope filter", (s) 
 	});
 
 	it("NEGATIVE: a full raw page narrowed to one row still carries the continuation cursor", async () => {
-		const parsed = await call(s.path, [s.mine(1), s.foreign(2)], s.tool, s.args);
+		const parsed = await call(
+			s.path,
+			[s.mine(1), s.foreign(2)],
+			s.tool,
+			s.args,
+		);
 		expect(items(parsed)).toHaveLength(1);
 		expect(parsed.scopeFiltered).toBe(1);
 		expect(typeof parsed.nextCursor).toBe("string");
@@ -185,7 +206,10 @@ describe.each(SITES)("$tool — bound is computed before the scope filter", (s) 
 });
 
 describe("list_broadcast_status — receipts removed by the scope filter after the fetch", () => {
-	const envelope = (receipts: Array<Record<string, unknown>>, truncated = false) => ({
+	const envelope = (
+		receipts: Array<Record<string, unknown>>,
+		truncated = false,
+	) => ({
 		messageId: "m1",
 		from: "gamma",
 		channel: "broadcast",
@@ -225,7 +249,9 @@ describe("list_broadcast_status — receipts removed by the scope filter after t
 				{ recipient: "beta", read: false },
 			]),
 		);
-		expect(out.receipts).toEqual([{ recipient: "alpha", read: true, readAt: 5 }]);
+		expect(out.receipts).toEqual([
+			{ recipient: "alpha", read: true, readAt: 5 },
+		]);
 		expect(out.scopeFiltered).toBe(1);
 	});
 
@@ -265,7 +291,9 @@ describe("list_broadcast_status — receipts removed by the scope filter after t
 	});
 
 	it("truncated stays true when the door cut its own list", async () => {
-		const out = await run(envelope([{ recipient: "alpha", read: false }], true));
+		const out = await run(
+			envelope([{ recipient: "alpha", read: false }], true),
+		);
 		expect(out.truncated).toBe(true);
 	});
 

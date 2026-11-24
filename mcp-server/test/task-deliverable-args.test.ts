@@ -37,7 +37,11 @@ function seat(): OAuthContext {
 		isMaster: false,
 		accessTokenHash: "hash-clio",
 		clerkOrgSlug: "acme-hr",
-		seatAgent: { agentId: "jh72scrneffpeqwy51rg8hny1x8fv2c4", orgId: "acme-hr", agentName: "clio" },
+		seatAgent: {
+			agentId: "jh72scrneffpeqwy51rg8hny1x8fv2c4",
+			orgId: "acme-hr",
+			agentName: "clio",
+		},
 	};
 }
 
@@ -68,7 +72,9 @@ function harness(rows: Record<string, unknown>[] = []) {
 		action: async () => null,
 	} as unknown as Parameters<typeof registerTools>[1];
 	registerTools(
-		{ registerTool: reg, tool: reg } as unknown as Parameters<typeof registerTools>[0],
+		{ registerTool: reg, tool: reg } as unknown as Parameters<
+			typeof registerTools
+		>[0],
 		convex,
 		seat(),
 	);
@@ -77,7 +83,8 @@ function harness(rows: Record<string, unknown>[] = []) {
 		if (!h) throw new Error(`${tool} not registered`);
 		return h(args);
 	};
-	const to = (name: string) => calls.filter((c) => c.kind !== "query" && c.name === name);
+	const to = (name: string) =>
+		calls.filter((c) => c.kind !== "query" && c.name === name);
 	return { call, to, shapes };
 }
 
@@ -86,9 +93,14 @@ const DELIVERABLE = { pkg: "@vantageos/widget", export: "WidgetPanel" };
 describe("FORWARD / ABSENT", () => {
 	it("create_task forwards deliverable verbatim", async () => {
 		const h = harness();
-		const res = await h.call("create_task", { project: "test-project",
-			title: "t", assignedTo: "clio", priority: "low", status: "todo",
-			createdBy: "clio", deliverable: DELIVERABLE,
+		const res = await h.call("create_task", {
+			project: "test-project",
+			title: "t",
+			assignedTo: "clio",
+			priority: "low",
+			status: "todo",
+			createdBy: "clio",
+			deliverable: DELIVERABLE,
 		});
 		expect(res.isError).toBeFalsy();
 		expect(h.to("tasks:create")[0]?.args.deliverable).toEqual(DELIVERABLE);
@@ -96,8 +108,13 @@ describe("FORWARD / ABSENT", () => {
 
 	it("create_task without deliverable sends no deliverable key", async () => {
 		const h = harness();
-		await h.call("create_task", { project: "test-project",
-			title: "t", assignedTo: "clio", priority: "low", status: "todo", createdBy: "clio",
+		await h.call("create_task", {
+			project: "test-project",
+			title: "t",
+			assignedTo: "clio",
+			priority: "low",
+			status: "todo",
+			createdBy: "clio",
 		});
 		expect(h.to("tasks:create")[0]?.args).not.toHaveProperty("deliverable");
 	});
@@ -105,12 +122,16 @@ describe("FORWARD / ABSENT", () => {
 	it("update_task forwards deliverable verbatim, and omits the key when absent", async () => {
 		const h = harness();
 		await h.call("update_task", {
-			taskId: "k17aaaaaaaaaaaaaaaaaaaaaaaaaaaaa", callerOrchestrator: "clio", deliverable: DELIVERABLE,
+			taskId: "k17aaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+			callerOrchestrator: "clio",
+			deliverable: DELIVERABLE,
 		});
 		expect(h.to("tasks:update")[0]?.args.deliverable).toEqual(DELIVERABLE);
 		const h2 = harness();
 		await h2.call("update_task", {
-			taskId: "k17aaaaaaaaaaaaaaaaaaaaaaaaaaaaa", callerOrchestrator: "clio", priority: "high",
+			taskId: "k17aaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+			callerOrchestrator: "clio",
+			priority: "high",
 		});
 		expect(h2.to("tasks:update")[0]?.args).not.toHaveProperty("deliverable");
 	});
@@ -118,10 +139,19 @@ describe("FORWARD / ABSENT", () => {
 
 describe("REFUSE — malformed deliverable never reaches the tool body", () => {
 	const minimal: Record<string, Record<string, unknown>> = {
-		create_task: { title: "t", project: "test-project", assignedTo: "clio", priority: "low", status: "todo" },
+		create_task: {
+			title: "t",
+			project: "test-project",
+			assignedTo: "clio",
+			priority: "low",
+			status: "todo",
+		},
 		update_task: { taskId: "k17aaaaaaaaaaaaaaaaaaaaaaaaaaaaa" },
 	};
-	it.each(["create_task", "update_task"])("%s schema accepts a well-formed deliverable and rejects malformed ones", (tool) => {
+	it.each([
+		"create_task",
+		"update_task",
+	])("%s schema accepts a well-formed deliverable and rejects malformed ones", (tool) => {
 		const schema = harness().shapes.get(tool);
 		expect(schema).toBeDefined();
 		const parse = (deliverable: unknown) =>
@@ -148,18 +178,34 @@ describe("LITE / FULL projections", () => {
 	};
 
 	it("lite carries deliverableDivergence only when the backend set it", async () => {
-		const withD = { ...base, deliverable: DELIVERABLE, deliverableDivergence: "delivered-but-open" };
-		const h = harness([withD, { ...base, _id: "k17ccccccccccccccccccccccccccccc" }]);
+		const withD = {
+			...base,
+			deliverable: DELIVERABLE,
+			deliverableDivergence: "delivered-but-open",
+		};
+		const h = harness([
+			withD,
+			{ ...base, _id: "k17ccccccccccccccccccccccccccccc" },
+		]);
 		const res = await h.call("list_tasks", {});
 		expect(res.isError).toBeFalsy();
-		const parsed = JSON.parse(res.content[0]?.text ?? "null") as Array<Record<string, unknown>>;
+		const parsed = JSON.parse(res.content[0]?.text ?? "null") as Array<
+			Record<string, unknown>
+		>;
 		const rows = Array.isArray(parsed) ? parsed : [];
 		const a = rows.find((r) => r._id === withD._id);
 		const b = rows.find((r) => r._id === "k17ccccccccccccccccccccccccccccc");
 		expect(a?.deliverableDivergence).toBe("delivered-but-open");
 		expect(a).not.toHaveProperty("deliverable");
 		expect(Object.keys(b ?? {}).sort()).toEqual(
-			["_creationTime", "_id", "assignedTo", "priority", "status", "title"].sort(),
+			[
+				"_creationTime",
+				"_id",
+				"assignedTo",
+				"priority",
+				"status",
+				"title",
+			].sort(),
 		);
 	});
 

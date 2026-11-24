@@ -35,11 +35,13 @@ function makeStubConvex() {
 	const action = vi
 		.fn()
 		.mockResolvedValue({ docId: "d", chunkCount: 1, storageId: "s" });
-	const mutation = vi.fn().mockImplementation(async (ref: string) =>
-		ref === "kbMutations:generateUploadUrlWithTicket"
-			? { uploadUrl: "https://u", ticket: "t", expiresAt: 1 }
-			: "https://upload.example/url",
-	);
+	const mutation = vi
+		.fn()
+		.mockImplementation(async (ref: string) =>
+			ref === "kbMutations:generateUploadUrlWithTicket"
+				? { uploadUrl: "https://u", ticket: "t", expiresAt: 1 }
+				: "https://upload.example/url",
+		);
 	return {
 		stub: { action, mutation } as unknown as ConvexHttpClient,
 		action,
@@ -56,7 +58,10 @@ const base = {
 };
 
 /** A client seat bearer exactly as prod whoami shows it. */
-const seatCtx = (verifiedSlug: string | undefined, extraPrefixes: string[] = []) =>
+const seatCtx = (
+	verifiedSlug: string | undefined,
+	extraPrefixes: string[] = [],
+) =>
 	({
 		...base,
 		clientId: "seat-probe-a",
@@ -93,14 +98,21 @@ function setup(ctx: OAuthContext) {
 	return { ...convex, tool };
 }
 
-const STORE_ARGS = { storageId: "sid", mimeType: "text/markdown", filename: "a.md" };
+const STORE_ARGS = {
+	storageId: "sid",
+	mimeType: "text/markdown",
+	filename: "a.md",
+};
 
 describe("pole 1: a seat acts on its verified org", () => {
 	it("generate_upload_url issues the URL, forwarding the verified org", async () => {
 		const { tool, mutation } = setup(seatCtx("probe-tenant-a"));
 		await tool("generate_upload_url")({});
 		expect(mutation).toHaveBeenCalledOnce();
-		const [ref, args] = mutation.mock.calls[0] as [string, Record<string, unknown>];
+		const [ref, args] = mutation.mock.calls[0] as [
+			string,
+			Record<string, unknown>,
+		];
 		expect(ref).toBe("kbMutations:generateUploadUrl");
 		expect(args).toMatchObject({
 			orgId: "probe-tenant-a",
@@ -112,7 +124,10 @@ describe("pole 1: a seat acts on its verified org", () => {
 	it("generate_upload_url with sha256 mints the ticket for the verified org", async () => {
 		const { tool, mutation } = setup(seatCtx("probe-tenant-a"));
 		await tool("generate_upload_url")({ sha256: "a".repeat(64) });
-		const [ref, args] = mutation.mock.calls[0] as [string, Record<string, unknown>];
+		const [ref, args] = mutation.mock.calls[0] as [
+			string,
+			Record<string, unknown>,
+		];
 		expect(ref).toBe("kbMutations:generateUploadUrlWithTicket");
 		expect(args).toMatchObject({
 			orgId: "probe-tenant-a",
@@ -124,7 +139,10 @@ describe("pole 1: a seat acts on its verified org", () => {
 		const { tool, action } = setup(seatCtx("probe-tenant-a"));
 		await tool("store_document_chunked")(STORE_ARGS);
 		await tool("soft_delete_document")({ docId: "doc-1" });
-		for (const call of action.mock.calls as [string, Record<string, unknown>][]) {
+		for (const call of action.mock.calls as [
+			string,
+			Record<string, unknown>,
+		][]) {
 			expect(call[1]).toMatchObject({
 				orgId: "probe-tenant-a",
 				namespace: "team/probe-tenant-a",
@@ -137,7 +155,10 @@ describe("pole 1: a seat acts on its verified org", () => {
 	it("claim_upload forwards the verified org", async () => {
 		const { tool, mutation } = setup(seatCtx("probe-tenant-a"));
 		await tool("claim_upload")({ storageId: "sid", ticket: "t" });
-		const [, args] = mutation.mock.calls[0] as [string, Record<string, unknown>];
+		const [, args] = mutation.mock.calls[0] as [
+			string,
+			Record<string, unknown>,
+		];
 		expect(args).toMatchObject({ verifiedOrg: { orgSlug: "probe-tenant-a" } });
 	});
 
@@ -148,7 +169,9 @@ describe("pole 1: a seat acts on its verified org", () => {
 		} as OAuthContext;
 		const { tool, mutation } = setup(ctx);
 		await tool("generate_upload_url")({});
-		expect(mutation.mock.calls[0]?.[1]).toMatchObject({ orgId: "probe-tenant-a" });
+		expect(mutation.mock.calls[0]?.[1]).toMatchObject({
+			orgId: "probe-tenant-a",
+		});
 	});
 });
 
@@ -175,24 +198,27 @@ describe("pole 2: a seat never reaches another org's namespace", () => {
 	it("soft_delete_document takes no org argument: a caller cannot name org B", async () => {
 		const { tool, action } = setup(seatCtx("probe-tenant-a"));
 		await tool("soft_delete_document")({ docId: "x", orgId: "probe-tenant-b" });
-		expect((action.mock.calls[0] as [string, Record<string, unknown>])[1]).toMatchObject({
+		expect(
+			(action.mock.calls[0] as [string, Record<string, unknown>])[1],
+		).toMatchObject({
 			orgId: "probe-tenant-a",
 		});
 	});
 });
 
 describe("pole 3: no verified org still refuses AUTH_NO_ORG_ID", () => {
-	it.each(["generate_upload_url", "store_document_chunked", "soft_delete_document"])(
-		"%s on a seat with no verified org",
-		async (name) => {
-			const { tool, action, mutation } = setup(seatCtx(undefined));
-			await expect(
-				tool(name)({ ...STORE_ARGS, docId: "d" }),
-			).rejects.toThrow(/AUTH_NO_ORG_ID/);
-			expect(action).not.toHaveBeenCalled();
-			expect(mutation).not.toHaveBeenCalled();
-		},
-	);
+	it.each([
+		"generate_upload_url",
+		"store_document_chunked",
+		"soft_delete_document",
+	])("%s on a seat with no verified org", async (name) => {
+		const { tool, action, mutation } = setup(seatCtx(undefined));
+		await expect(tool(name)({ ...STORE_ARGS, docId: "d" })).rejects.toThrow(
+			/AUTH_NO_ORG_ID/,
+		);
+		expect(action).not.toHaveBeenCalled();
+		expect(mutation).not.toHaveBeenCalled();
+	});
 
 	it("an undefined context is refused", async () => {
 		const { tool } = setup(undefined as unknown as OAuthContext);
@@ -205,13 +231,17 @@ describe("pole 4: the team/<org> bearer path is unchanged", () => {
 		const { tool, action, mutation } = setup(teamACtx);
 		await tool("store_document_chunked")(STORE_ARGS);
 		await tool("generate_upload_url")({});
-		expect((action.mock.calls[0] as [string, Record<string, unknown>])[1]).toEqual({
+		expect(
+			(action.mock.calls[0] as [string, Record<string, unknown>])[1],
+		).toEqual({
 			...STORE_ARGS,
 			docId: undefined,
 			orgId: "org-A",
 			namespace: "team/org-A",
 		});
-		expect((mutation.mock.calls[0] as [string, Record<string, unknown>])[1]).toEqual({
+		expect(
+			(mutation.mock.calls[0] as [string, Record<string, unknown>])[1],
+		).toEqual({
 			orgId: "org-A",
 			namespace: "team/org-A",
 		});

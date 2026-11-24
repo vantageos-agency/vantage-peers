@@ -745,7 +745,9 @@ export function resolveSeatOrg(
 	// Convex door keys the seat by ID, not by the reusable label. Only the token
 	// path carries it; an agent-credential-only seat forwards the label alone.
 	const orgClerkId =
-		fromToken !== undefined && ctx.orgClerkId !== undefined && ctx.orgClerkId !== ""
+		fromToken !== undefined &&
+		ctx.orgClerkId !== undefined &&
+		ctx.orgClerkId !== ""
 			? ctx.orgClerkId
 			: undefined;
 	return {

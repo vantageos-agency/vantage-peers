@@ -83,17 +83,23 @@ describe("checkNamespaceRead: a seat reads team/<its verified org ID>", () => {
 	});
 
 	it("an org ID cannot be claimed by a master-less context that has none, nor by an empty one", () => {
-		expect(checkNamespaceRead(seat({ orgClerkId: "" }), "team/")).toMatch(/^Forbidden/);
+		expect(checkNamespaceRead(seat({ orgClerkId: "" }), "team/")).toMatch(
+			/^Forbidden/,
+		);
 		expect(checkNamespaceRead(undefined, `team/${X_ID}`)).toMatch(/^Forbidden/);
 	});
 });
 
 describe("hybrid_search / text_search / recall reach Convex for the seat's own org only", () => {
 	function setup(ctx: OAuthContext) {
-		const handlers = new Map<string, (a: Record<string, unknown>) => Promise<unknown>>();
+		const handlers = new Map<
+			string,
+			(a: Record<string, unknown>) => Promise<unknown>
+		>();
 		const server = {
 			registerTool: (n: string, _c: unknown, h: never) => handlers.set(n, h),
-			tool: (n: string, _d: unknown, _s: unknown, _a: unknown, h: never) => handlers.set(n, h),
+			tool: (n: string, _d: unknown, _s: unknown, _a: unknown, h: never) =>
+				handlers.set(n, h),
 		};
 		const action = vi.fn().mockResolvedValue([]);
 		const convex = { action, query: vi.fn(), mutation: vi.fn() };

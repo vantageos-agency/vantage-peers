@@ -143,10 +143,9 @@ describe("getServiceAccountToken", () => {
 	});
 
 	test("REJECTION (404-shaped): a cached session whose mint call REJECTS clears the cache and falls through to a fresh sign-in, and the SECOND consecutive call also succeeds via the cache the fresh flow just re-primed", async () => {
-		const notFoundError = Object.assign(
-			new Error("Clerk error: Not Found"),
-			{ status: 404 },
-		);
+		const notFoundError = Object.assign(new Error("Clerk error: Not Found"), {
+			status: 404,
+		});
 		const createSignInTicket = vi
 			.fn()
 			.mockResolvedValueOnce("ticket-1")
@@ -203,10 +202,9 @@ describe("getServiceAccountToken", () => {
 	});
 
 	test("REFUSAL POLE: when the cached session mint REJECTS and the fresh sign-in flow ALSO fails, the error propagates and is not swallowed", async () => {
-		const notFoundError = Object.assign(
-			new Error("Clerk error: Not Found"),
-			{ status: 404 },
-		);
+		const notFoundError = Object.assign(new Error("Clerk error: Not Found"), {
+			status: 404,
+		});
 		const freshSignInError = new Error(
 			"Clerk sign-in ticket exchange failed: HTTP 500 backend outage",
 		);
@@ -232,9 +230,7 @@ describe("getServiceAccountToken", () => {
 
 		await getServiceAccountToken(); // primes cache with a near-expiry token/session
 
-		await expect(getServiceAccountToken()).rejects.toThrow(
-			/backend outage/,
-		);
+		await expect(getServiceAccountToken()).rejects.toThrow(/backend outage/);
 	});
 
 	test("falls back to a new sign-in ticket flow when the cached session stops yielding tokens", async () => {

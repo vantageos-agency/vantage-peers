@@ -69,9 +69,13 @@ async function listTools() {
 			);
 			waiters.set(id, (m) => {
 				clearTimeout(t);
-				m.error ? rej(new Error(`${method}: ${m.error.message}`)) : res(m.result);
+				m.error
+					? rej(new Error(`${method}: ${m.error.message}`))
+					: res(m.result);
 			});
-			child.stdin.write(`${JSON.stringify({ jsonrpc: "2.0", id, method, params })}\n`);
+			child.stdin.write(
+				`${JSON.stringify({ jsonrpc: "2.0", id, method, params })}\n`,
+			);
 		});
 	try {
 		await call(1, "initialize", {
@@ -131,7 +135,10 @@ const GROUPS = [
 // A sentence ends at ". " followed by a capital; a leading clause before " — "
 // is kept alone when it is a sentence in its own right (40+ characters).
 function summary(description = "") {
-	let head = description.split(/\s+WHEN:/)[0].replace(/\s+/g, " ").trim();
+	let head = description
+		.split(/\s+WHEN:/)[0]
+		.replace(/\s+/g, " ")
+		.trim();
 	const end = head.search(/\.\s+(?=[A-Z])/);
 	if (end !== -1) head = head.slice(0, end + 1);
 	const dash = head.indexOf(" — ");
@@ -160,7 +167,9 @@ function render(tools, registered) {
 		list.sort((a, b) => a.name.localeCompare(b.name));
 		out.push(`### ${g} (${list.length})`, "");
 		for (const t of list) {
-			out.push(`- \`${t.name}\` (${hint(t.annotations)}) — ${summary(t.description)}`);
+			out.push(
+				`- \`${t.name}\` (${hint(t.annotations)}) — ${summary(t.description)}`,
+			);
 		}
 		out.push("");
 	}
@@ -201,7 +210,9 @@ if (mode === "--write") {
 	process.stdout.write("README.md tool reference rewritten.\n");
 } else if (mode === "--check") {
 	if (next !== readme) {
-		process.stderr.write("README.md tool reference is stale: run node scripts/print-tools.mjs --write\n");
+		process.stderr.write(
+			"README.md tool reference is stale: run node scripts/print-tools.mjs --write\n",
+		);
 		process.exit(1);
 	}
 	process.stdout.write("README.md tool reference matches tools/list.\n");

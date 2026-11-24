@@ -120,7 +120,8 @@ async function main() {
 		env: {
 			...process.env,
 			// Syntactically valid — never dialed by any of the 4 calls below.
-			CONVEX_URL: process.env.CONVEX_URL ?? "https://boot-check-placeholder.convex.cloud",
+			CONVEX_URL:
+				process.env.CONVEX_URL ?? "https://boot-check-placeholder.convex.cloud",
 			// The backend-compat boot check (src/backendContract.ts) would refuse a
 			// placeholder backend; this smoke is about MCP registration, not Convex.
 			VP_BOOT_CHECK_OFFLINE: "1",
@@ -129,7 +130,10 @@ async function main() {
 			// masking). Point at a boot-check-only exposure file that keeps it
 			// enabled, so this check can call a real, Convex-free tool without
 			// touching the prod tool-exposure.json.
-			VP_TOOL_EXPOSURE_PATH: resolve(__dirname, "boot-check-tool-exposure.json"),
+			VP_TOOL_EXPOSURE_PATH: resolve(
+				__dirname,
+				"boot-check-tool-exposure.json",
+			),
 		},
 		stdio: ["pipe", "pipe", "pipe"],
 	});
@@ -161,17 +165,26 @@ async function main() {
 				`(a) initialize FAILED: ${JSON.stringify(initResp.error)}`,
 			);
 		}
-		console.log("(a) initialize -> OK:", JSON.stringify(initResp.result?.serverInfo ?? initResp.result));
+		console.log(
+			"(a) initialize -> OK:",
+			JSON.stringify(initResp.result?.serverInfo ?? initResp.result),
+		);
 
 		// SDK requires the "initialized" notification before further calls.
-		send(child, { jsonrpc: "2.0", method: "notifications/initialized", params: {} });
+		send(child, {
+			jsonrpc: "2.0",
+			method: "notifications/initialized",
+			params: {},
+		});
 
 		// ── (b) tools/list ───────────────────────────────────────────────────
 		send(child, { jsonrpc: "2.0", id: 2, method: "tools/list", params: {} });
 		const listResp = await nextResponse(child, 2);
 		results.toolsList = listResp;
 		if (listResp.error) {
-			throw new Error(`(b) tools/list FAILED: ${JSON.stringify(listResp.error)}`);
+			throw new Error(
+				`(b) tools/list FAILED: ${JSON.stringify(listResp.error)}`,
+			);
 		}
 		const toolCount = listResp.result?.tools?.length ?? 0;
 		if (toolCount === 0) {
@@ -198,7 +211,10 @@ async function main() {
 				`(c) whoami (well-formed) returned isError=true: ${JSON.stringify(wellFormedResp.result)}`,
 			);
 		}
-		console.log("(c) whoami (well-formed, no args) -> OK:", JSON.stringify(wellFormedResp.result?.content));
+		console.log(
+			"(c) whoami (well-formed, no args) -> OK:",
+			JSON.stringify(wellFormedResp.result?.content),
+		);
 
 		// ── (d) whoami — undeclared param (MUST_BLOCK pole) ─────────────────
 		send(child, {
@@ -235,12 +251,18 @@ async function main() {
 				`(d) whoami (amputated) was refused but did NOT name the offending key 'bogusUndeclaredParam'. Refusal was: ${refusalText}`,
 			);
 		}
-		console.log("(d) whoami (amputated, bogusUndeclaredParam) -> REFUSED, names the key:", refusalText);
+		console.log(
+			"(d) whoami (amputated, bogusUndeclaredParam) -> REFUSED, names the key:",
+			refusalText,
+		);
 
 		console.log("\nBOOT CHECK: PASS — all 4 calls behaved as specified.");
 	} catch (err) {
 		exitCode = 1;
-		console.error("\nBOOT CHECK: FAIL —", err instanceof Error ? err.message : String(err));
+		console.error(
+			"\nBOOT CHECK: FAIL —",
+			err instanceof Error ? err.message : String(err),
+		);
 		if (stderrBuf.trim()) {
 			console.error("\n--- server stderr ---\n" + stderrBuf.trim());
 		}

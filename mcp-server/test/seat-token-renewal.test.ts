@@ -279,7 +279,9 @@ describe("seat token renewal — /token refresh_token grant", () => {
 
 		// Module M3: rotation. The OLD refresh token (the one presented on the
 		// FIRST call) was spent by that call, so its replay is refused.
-		expect(state.refreshTokensByRaw.get(SEAT_REFRESH_RAW)?.revokedAt).toBeDefined();
+		expect(
+			state.refreshTokensByRaw.get(SEAT_REFRESH_RAW)?.revokedAt,
+		).toBeDefined();
 		const replay = await postRefresh(
 			SEAT_REFRESH_RAW,
 			basicAuth(SEAT_CLIENT_ID, SEAT_SECRET),

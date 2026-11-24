@@ -47,7 +47,10 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 // "convex/browser" is resolved (which happens while authenticatedConvexClient.ts
 // itself is being imported, below).
 const convexBrowserMockState = vi.hoisted(() => ({
-	target: null as unknown as Record<string, ReturnType<typeof import("vitest")["vi"]["fn"]>>,
+	target: null as unknown as Record<
+		string,
+		ReturnType<typeof import("vitest")["vi"]["fn"]>
+	>,
 }));
 
 vi.mock("convex/browser", () => ({
@@ -205,9 +208,7 @@ describe("withQueryRetry — the clerkJwt client path's wiring (query wrapped, m
 	});
 
 	it("MUTATION pole: mutation() is never wrapped — exactly ONE call, error propagates untouched", async () => {
-		const originalMutation = vi
-			.fn()
-			.mockRejectedValueOnce(socketCloseError());
+		const originalMutation = vi.fn().mockRejectedValueOnce(socketCloseError());
 		const client = {
 			setAuth: vi.fn(),
 			query: vi.fn(),
@@ -229,9 +230,7 @@ describe("withQueryRetry — the clerkJwt client path's wiring (query wrapped, m
 
 describe("selectConvexClientForRequest — clerkJwt branch, end-to-end through the real entry point", () => {
 	it("mutation makes exactly ONE call and propagates; query makes exactly TWO calls and resolves — same client instance", async () => {
-		const originalMutation = vi
-			.fn()
-			.mockRejectedValueOnce(socketCloseError());
+		const originalMutation = vi.fn().mockRejectedValueOnce(socketCloseError());
 		const originalQuery = vi
 			.fn()
 			.mockRejectedValueOnce(socketCloseError())

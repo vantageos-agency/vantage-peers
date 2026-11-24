@@ -92,7 +92,8 @@ describe("fail_task MCP tool — the third terminal state, distinguishable from 
 	});
 
 	it("fail_task returns status='failed', distinct from complete_task's 'done'", async () => {
-		const failCreate = await callText(tools.get("create_task")!, { project: "test-project",
+		const failCreate = await callText(tools.get("create_task")!, {
+			project: "test-project",
 			title: "will-fail",
 			assignedTo: "sigma",
 			createdBy: "sigma",
@@ -101,7 +102,8 @@ describe("fail_task MCP tool — the third terminal state, distinguishable from 
 		});
 		const failTaskId = JSON.parse(failCreate).taskId;
 
-		const doneCreate = await callText(tools.get("create_task")!, { project: "test-project",
+		const doneCreate = await callText(tools.get("create_task")!, {
+			project: "test-project",
 			title: "will-succeed",
 			assignedTo: "sigma",
 			createdBy: "sigma",
@@ -132,7 +134,8 @@ describe("fail_task MCP tool — the third terminal state, distinguishable from 
 	});
 
 	it("update_task refuses status='failed' at the MCP boundary the same way it refuses 'blocked'", async () => {
-		const createRes = await callText(tools.get("create_task")!, { project: "test-project",
+		const createRes = await callText(tools.get("create_task")!, {
+			project: "test-project",
 			title: "no-backdoor-to-failed",
 			assignedTo: "sigma",
 			createdBy: "sigma",

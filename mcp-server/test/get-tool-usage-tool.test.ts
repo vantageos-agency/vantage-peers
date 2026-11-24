@@ -219,7 +219,10 @@ describe("the wrapper records through registerTools", () => {
 
 	it("the master bearer files nothing", async () => {
 		const { mutation, handlers } = setup(LOCAL_STDIO_TRUST_CTX);
-		await handlers.get("get_tool_usage")?.({ caller: "user:u1", orgSlug: "org-b" });
+		await handlers.get("get_tool_usage")?.({
+			caller: "user:u1",
+			orgSlug: "org-b",
+		});
 		await new Promise((res) => setTimeout(res, 5));
 		expect(toolUsageCalls(mutation)).toHaveLength(0);
 	});

@@ -968,7 +968,9 @@ export const addTaskDependencyServedOutputSchema = z.looseObject({
 export const reorderQueueServedOutputSchema = z.looseObject({
 	ranked: z
 		.number()
-		.describe("How many tasks now hold a rank: the length of the list you sent."),
+		.describe(
+			"How many tasks now hold a rank: the length of the list you sent.",
+		),
 	cleared: z
 		.number()
 		.describe(
@@ -980,7 +982,9 @@ export const reorderQueueServedOutputSchema = z.looseObject({
 export const nextTaskServedOutputSchema = z.looseObject({
 	found: z
 		.boolean()
-		.describe("True when a task is ready to take; false when none is pickable."),
+		.describe(
+			"True when a task is ready to take; false when none is pickable.",
+		),
 	task: z
 		.looseObject({
 			_id: rowId("The task to take next: the taskId the task tools take."),
@@ -1000,7 +1004,9 @@ export const nextTaskServedOutputSchema = z.looseObject({
 			queueRank: z
 				.number()
 				.optional()
-				.describe("Its place in the assignee's queue (1 = next); absent when unranked."),
+				.describe(
+					"Its place in the assignee's queue (1 = next); absent when unranked.",
+				),
 		})
 		.optional()
 		.describe("The task to take next; absent when found is false."),

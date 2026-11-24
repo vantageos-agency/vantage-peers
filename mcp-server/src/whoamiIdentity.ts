@@ -115,7 +115,11 @@ export function resolveActingAgent(
 	verified: VerifiedActorArg | undefined,
 ): WhoamiActingAgent {
 	if (!ctx) {
-		return { actor: null, agent_id: null, agent_unresolved_reason: "no-context" };
+		return {
+			actor: null,
+			agent_id: null,
+			agent_unresolved_reason: "no-context",
+		};
 	}
 	const seat =
 		!ctx.actor && verified !== undefined
@@ -164,7 +168,12 @@ export function resolveWhoamiIdentity(
 	env: WhoamiEnv,
 ): WhoamiIdentity {
 	if (!ctx) {
-		return { caller_id: null, org_slug: null, role: "legacy", acting_name: null };
+		return {
+			caller_id: null,
+			org_slug: null,
+			role: "legacy",
+			acting_name: null,
+		};
 	}
 	let role: WhoamiRole;
 	if (isMasterScope(ctx)) role = "master";

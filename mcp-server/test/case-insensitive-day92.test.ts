@@ -35,42 +35,42 @@ const HELIOS_NFC = "Hélios";
 const HELIOS_LC_NFC = "hélios";
 
 const TRIO_FROM_ALLOW_LIST = [
-  "Clio",
-  "clio",
-  HELIOS_NFC, // "Hélios" NFC
-  "Helios",
-  "helios",
-  HELIOS_LC_NFC, // "hélios" NFC
-  "Victor",
-  "victor",
+	"Clio",
+	"clio",
+	HELIOS_NFC, // "Hélios" NFC
+	"Helios",
+	"helios",
+	HELIOS_LC_NFC, // "hélios" NFC
+	"Victor",
+	"victor",
 ];
 
 function heliosCtx(fromAllowList = TRIO_FROM_ALLOW_LIST): OAuthContext {
-  return {
-    clientId: "2e5d41df-b8f8-4f1a-95aa-2eb0d6bdadb7",
-    userId: "helios-acme-hr",
-    scopes: ["vantage:read", "vantage:write"],
-    scopeProfile: "helios-acme-hr",
-    fromAllowList,
-    namespaceReadPrefixes: ["orchestrator/helios-acme-hr"],
-    namespaceWritePrefixes: ["orchestrator/helios-acme-hr"],
-    expiresAt: Date.now() + 3_600_000,
-    isMaster: false,
-  };
+	return {
+		clientId: "2e5d41df-b8f8-4f1a-95aa-2eb0d6bdadb7",
+		userId: "helios-acme-hr",
+		scopes: ["vantage:read", "vantage:write"],
+		scopeProfile: "helios-acme-hr",
+		fromAllowList,
+		namespaceReadPrefixes: ["orchestrator/helios-acme-hr"],
+		namespaceWritePrefixes: ["orchestrator/helios-acme-hr"],
+		expiresAt: Date.now() + 3_600_000,
+		isMaster: false,
+	};
 }
 
 function masterCtx(): OAuthContext {
-  return {
-    clientId: "master",
-    userId: "master",
-    scopes: ["vantage:read", "vantage:write"],
-    scopeProfile: "master",
-    fromAllowList: ["*"],
-    namespaceReadPrefixes: ["*"],
-    namespaceWritePrefixes: ["*"],
-    expiresAt: Date.now() + 3_600_000,
-    isMaster: true,
-  };
+	return {
+		clientId: "master",
+		userId: "master",
+		scopes: ["vantage:read", "vantage:write"],
+		scopeProfile: "master",
+		fromAllowList: ["*"],
+		namespaceReadPrefixes: ["*"],
+		namespaceWritePrefixes: ["*"],
+		expiresAt: Date.now() + 3_600_000,
+		isMaster: true,
+	};
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -78,57 +78,57 @@ function masterCtx(): OAuthContext {
 // ─────────────────────────────────────────────────────────────────────────────
 
 describe("normalizeOrchestratorId", () => {
-  it("lowercases ASCII identifiers", () => {
-    expect(normalizeOrchestratorId("Helios")).toBe("helios");
-  });
+	it("lowercases ASCII identifiers", () => {
+		expect(normalizeOrchestratorId("Helios")).toBe("helios");
+	});
 
-  it("lowercases ALL-CAPS identifiers", () => {
-    expect(normalizeOrchestratorId("HELIOS")).toBe("helios");
-  });
+	it("lowercases ALL-CAPS identifiers", () => {
+		expect(normalizeOrchestratorId("HELIOS")).toBe("helios");
+	});
 
-  it("leaves already-lowercase ASCII identifiers unchanged", () => {
-    expect(normalizeOrchestratorId("helios")).toBe("helios");
-  });
+	it("leaves already-lowercase ASCII identifiers unchanged", () => {
+		expect(normalizeOrchestratorId("helios")).toBe("helios");
+	});
 
-  it("NFC normalizes a composed accented string and lowercases", () => {
-    // HELIOS_NFC = "Hélios" → normalize → "hélios"
-    expect(normalizeOrchestratorId(HELIOS_NFC)).toBe(HELIOS_LC_NFC);
-  });
+	it("NFC normalizes a composed accented string and lowercases", () => {
+		// HELIOS_NFC = "Hélios" → normalize → "hélios"
+		expect(normalizeOrchestratorId(HELIOS_NFC)).toBe(HELIOS_LC_NFC);
+	});
 
-  it("NFC normalizes a decomposed NFD string to the same canonical form", () => {
-    // HELIOS_NFD = "Hélios" → NFC → "Hélios" → lower → "hélios"
-    expect(normalizeOrchestratorId(HELIOS_NFD)).toBe(HELIOS_LC_NFC);
-  });
+	it("NFC normalizes a decomposed NFD string to the same canonical form", () => {
+		// HELIOS_NFD = "Hélios" → NFC → "Hélios" → lower → "hélios"
+		expect(normalizeOrchestratorId(HELIOS_NFD)).toBe(HELIOS_LC_NFC);
+	});
 
-  it("NFC+lowercase of composed == NFC+lowercase of decomposed (invariant)", () => {
-    expect(normalizeOrchestratorId(HELIOS_NFC)).toBe(
-      normalizeOrchestratorId(HELIOS_NFD),
-    );
-  });
+	it("NFC+lowercase of composed == NFC+lowercase of decomposed (invariant)", () => {
+		expect(normalizeOrchestratorId(HELIOS_NFC)).toBe(
+			normalizeOrchestratorId(HELIOS_NFD),
+		);
+	});
 
-  it("trims leading whitespace", () => {
-    expect(normalizeOrchestratorId("  helios")).toBe("helios");
-  });
+	it("trims leading whitespace", () => {
+		expect(normalizeOrchestratorId("  helios")).toBe("helios");
+	});
 
-  it("trims trailing whitespace", () => {
-    expect(normalizeOrchestratorId("helios  ")).toBe("helios");
-  });
+	it("trims trailing whitespace", () => {
+		expect(normalizeOrchestratorId("helios  ")).toBe("helios");
+	});
 
-  it("trims and normalizes combined", () => {
-    expect(normalizeOrchestratorId("  HELIOS  ")).toBe("helios");
-  });
+	it("trims and normalizes combined", () => {
+		expect(normalizeOrchestratorId("  HELIOS  ")).toBe("helios");
+	});
 
-  it("handles a simple lowercase identifier (pi)", () => {
-    expect(normalizeOrchestratorId("pi")).toBe("pi");
-  });
+	it("handles a simple lowercase identifier (pi)", () => {
+		expect(normalizeOrchestratorId("pi")).toBe("pi");
+	});
 
-  it("lowercases Greek-named orchestrator (Pi)", () => {
-    expect(normalizeOrchestratorId("Pi")).toBe("pi");
-  });
+	it("lowercases Greek-named orchestrator (Pi)", () => {
+		expect(normalizeOrchestratorId("Pi")).toBe("pi");
+	});
 
-  it("lowercases mixed orchestrator name (Sigma)", () => {
-    expect(normalizeOrchestratorId("Sigma")).toBe("sigma");
-  });
+	it("lowercases mixed orchestrator name (Sigma)", () => {
+		expect(normalizeOrchestratorId("Sigma")).toBe("sigma");
+	});
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -136,37 +136,37 @@ describe("normalizeOrchestratorId", () => {
 // ─────────────────────────────────────────────────────────────────────────────
 
 describe("isInAllowList", () => {
-  it("matches HELIOS (uppercase) against list containing Helios", () => {
-    expect(isInAllowList(TRIO_FROM_ALLOW_LIST, "HELIOS")).toBe(true);
-  });
+	it("matches HELIOS (uppercase) against list containing Helios", () => {
+		expect(isInAllowList(TRIO_FROM_ALLOW_LIST, "HELIOS")).toBe(true);
+	});
 
-  it("matches Hélios NFC (composed) against list", () => {
-    expect(isInAllowList(TRIO_FROM_ALLOW_LIST, HELIOS_NFC)).toBe(true);
-  });
+	it("matches Hélios NFC (composed) against list", () => {
+		expect(isInAllowList(TRIO_FROM_ALLOW_LIST, HELIOS_NFC)).toBe(true);
+	});
 
-  it("matches Hélios NFD (decomposed) against list after NFC normalization", () => {
-    expect(isInAllowList(TRIO_FROM_ALLOW_LIST, HELIOS_NFD)).toBe(true);
-  });
+	it("matches Hélios NFD (decomposed) against list after NFC normalization", () => {
+		expect(isInAllowList(TRIO_FROM_ALLOW_LIST, HELIOS_NFD)).toBe(true);
+	});
 
-  it("matches helios (lowercase) against list", () => {
-    expect(isInAllowList(TRIO_FROM_ALLOW_LIST, "helios")).toBe(true);
-  });
+	it("matches helios (lowercase) against list", () => {
+		expect(isInAllowList(TRIO_FROM_ALLOW_LIST, "helios")).toBe(true);
+	});
 
-  it("matches Clio (capitalised) against list containing clio + Clio", () => {
-    expect(isInAllowList(TRIO_FROM_ALLOW_LIST, "Clio")).toBe(true);
-  });
+	it("matches Clio (capitalised) against list containing clio + Clio", () => {
+		expect(isInAllowList(TRIO_FROM_ALLOW_LIST, "Clio")).toBe(true);
+	});
 
-  it("matches Victor (capitalised) against list", () => {
-    expect(isInAllowList(TRIO_FROM_ALLOW_LIST, "Victor")).toBe(true);
-  });
+	it("matches Victor (capitalised) against list", () => {
+		expect(isInAllowList(TRIO_FROM_ALLOW_LIST, "Victor")).toBe(true);
+	});
 
-  it("rejects Outsider not in allowList", () => {
-    expect(isInAllowList(TRIO_FROM_ALLOW_LIST, "Outsider")).toBe(false);
-  });
+	it("rejects Outsider not in allowList", () => {
+		expect(isInAllowList(TRIO_FROM_ALLOW_LIST, "Outsider")).toBe(false);
+	});
 
-  it("passes wildcard * regardless of presented value", () => {
-    expect(isInAllowList(["*"], "anything")).toBe(true);
-  });
+	it("passes wildcard * regardless of presented value", () => {
+		expect(isInAllowList(["*"], "anything")).toBe(true);
+	});
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -174,54 +174,54 @@ describe("isInAllowList", () => {
 // ─────────────────────────────────────────────────────────────────────────────
 
 describe("listTasksGate — case-insensitive + NFC (Day 92 C2)", () => {
-  it("allows HELIOS (all caps) as assignedTo with TRIO list", () => {
-    const err = listTasksGate(heliosCtx(), "HELIOS", undefined);
-    expect(err).toBeNull();
-  });
+	it("allows HELIOS (all caps) as assignedTo with TRIO list", () => {
+		const err = listTasksGate(heliosCtx(), "HELIOS", undefined);
+		expect(err).toBeNull();
+	});
 
-  it("allows Hélios NFC (composed) as assignedTo", () => {
-    const err = listTasksGate(heliosCtx(), HELIOS_NFC, undefined);
-    expect(err).toBeNull();
-  });
+	it("allows Hélios NFC (composed) as assignedTo", () => {
+		const err = listTasksGate(heliosCtx(), HELIOS_NFC, undefined);
+		expect(err).toBeNull();
+	});
 
-  it("allows Hélios NFD (decomposed) as assignedTo after normalize", () => {
-    const err = listTasksGate(heliosCtx(), HELIOS_NFD, undefined);
-    expect(err).toBeNull();
-  });
+	it("allows Hélios NFD (decomposed) as assignedTo after normalize", () => {
+		const err = listTasksGate(heliosCtx(), HELIOS_NFD, undefined);
+		expect(err).toBeNull();
+	});
 
-  it("allows helios (lowercase) as assignedTo", () => {
-    const err = listTasksGate(heliosCtx(), "helios", undefined);
-    expect(err).toBeNull();
-  });
+	it("allows helios (lowercase) as assignedTo", () => {
+		const err = listTasksGate(heliosCtx(), "helios", undefined);
+		expect(err).toBeNull();
+	});
 
-  it("allows hélios (lowercase NFC) as assignedTo", () => {
-    const err = listTasksGate(heliosCtx(), HELIOS_LC_NFC, undefined);
-    expect(err).toBeNull();
-  });
+	it("allows hélios (lowercase NFC) as assignedTo", () => {
+		const err = listTasksGate(heliosCtx(), HELIOS_LC_NFC, undefined);
+		expect(err).toBeNull();
+	});
 
-  it("allows Clio as createdBy", () => {
-    const err = listTasksGate(heliosCtx(), undefined, "Clio");
-    expect(err).toBeNull();
-  });
+	it("allows Clio as createdBy", () => {
+		const err = listTasksGate(heliosCtx(), undefined, "Clio");
+		expect(err).toBeNull();
+	});
 
-  it("allows CLIO (all caps) as createdBy", () => {
-    const err = listTasksGate(heliosCtx(), undefined, "CLIO");
-    expect(err).toBeNull();
-  });
+	it("allows CLIO (all caps) as createdBy", () => {
+		const err = listTasksGate(heliosCtx(), undefined, "CLIO");
+		expect(err).toBeNull();
+	});
 
-  it("rejects Outsider as assignedTo (not in TRIO list)", () => {
-    const err = listTasksGate(heliosCtx(), "Outsider", undefined);
-    expect(err).not.toBeNull();
-    expect(err).toContain("Forbidden");
-  });
+	it("rejects Outsider as assignedTo (not in TRIO list)", () => {
+		const err = listTasksGate(heliosCtx(), "Outsider", undefined);
+		expect(err).not.toBeNull();
+		expect(err).toContain("Forbidden");
+	});
 
-  it("master scope always passes through (null)", () => {
-    const err = listTasksGate(masterCtx(), "HELIOS", undefined);
-    expect(err).toBeNull();
-  });
+	it("master scope always passes through (null)", () => {
+		const err = listTasksGate(masterCtx(), "HELIOS", undefined);
+		expect(err).toBeNull();
+	});
 
-  it("undefined oauthCtx (legacy bearer) always passes through (null)", () => {
-    const err = listTasksGate(undefined, "HELIOS", undefined);
-    expect(err).toBeNull();
-  });
+	it("undefined oauthCtx (legacy bearer) always passes through (null)", () => {
+		const err = listTasksGate(undefined, "HELIOS", undefined);
+		expect(err).toBeNull();
+	});
 });

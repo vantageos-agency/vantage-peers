@@ -69,7 +69,13 @@ function makeStubServer(): {
 // Minimal ConvexHttpClient stub — spy on action() calls
 // ─────────────────────────────────────────────────────────────────────────────
 
-function makeStubConvex(actionResult: unknown = { docId: "stub-doc", chunkCount: 1, storageId: "stub-storage" }) {
+function makeStubConvex(
+	actionResult: unknown = {
+		docId: "stub-doc",
+		chunkCount: 1,
+		storageId: "stub-storage",
+	},
+) {
 	const actionSpy = vi.fn().mockResolvedValue(actionResult);
 	const stub = { action: actionSpy } as unknown as ConvexHttpClient;
 	return { stub, actionSpy };
@@ -136,7 +142,8 @@ describe("KB ingest E2E — bearer→oauthCtx→action (no withIdentity)", () =>
 
 		const handler = server.handlers.get("store_document_chunked");
 		expect(handler).toBeDefined();
-		if (!handler) throw new Error("store_document_chunked handler not registered");
+		if (!handler)
+			throw new Error("store_document_chunked handler not registered");
 
 		await handler({
 			storageId: "fake-storage-id",
@@ -147,7 +154,10 @@ describe("KB ingest E2E — bearer→oauthCtx→action (no withIdentity)", () =>
 		// The Convex action must have been called with explicit orgId + namespace.
 		// This is the key assertion: ctx.auth is NOT used — the args come from oauthCtx.
 		expect(actionSpy).toHaveBeenCalledOnce();
-		const [_ref, actionArgs] = actionSpy.mock.calls[0] as [unknown, Record<string, unknown>];
+		const [_ref, actionArgs] = actionSpy.mock.calls[0] as [
+			unknown,
+			Record<string, unknown>,
+		];
 		expect(actionArgs.orgId).toBe("org-A");
 		expect(actionArgs.namespace).toBe("team/org-A");
 		expect(actionArgs.storageId).toBe("fake-storage-id");
@@ -157,18 +167,25 @@ describe("KB ingest E2E — bearer→oauthCtx→action (no withIdentity)", () =>
 
 	it("happy path: soft_delete_document passes orgId='org-A' + namespace='team/org-A' to Convex action", async () => {
 		const server = makeStubServer();
-		const { stub, actionSpy } = makeStubConvex({ docId: "doc-xyz", markedCount: 3 });
+		const { stub, actionSpy } = makeStubConvex({
+			docId: "doc-xyz",
+			markedCount: 3,
+		});
 
 		registerKbIngestTools(server as never, stub, teamACtx);
 
 		const handler = server.handlers.get("soft_delete_document");
 		expect(handler).toBeDefined();
-		if (!handler) throw new Error("soft_delete_document handler not registered");
+		if (!handler)
+			throw new Error("soft_delete_document handler not registered");
 
 		await handler({ docId: "doc-xyz" });
 
 		expect(actionSpy).toHaveBeenCalledOnce();
-		const [_ref, actionArgs] = actionSpy.mock.calls[0] as [unknown, Record<string, unknown>];
+		const [_ref, actionArgs] = actionSpy.mock.calls[0] as [
+			unknown,
+			Record<string, unknown>,
+		];
 		expect(actionArgs.orgId).toBe("org-A");
 		expect(actionArgs.namespace).toBe("team/org-A");
 		expect(actionArgs.docId).toBe("doc-xyz");
@@ -182,7 +199,8 @@ describe("KB ingest E2E — bearer→oauthCtx→action (no withIdentity)", () =>
 
 		const handler = server.handlers.get("store_document_chunked");
 		expect(handler).toBeDefined();
-		if (!handler) throw new Error("store_document_chunked handler not registered");
+		if (!handler)
+			throw new Error("store_document_chunked handler not registered");
 
 		await expect(
 			handler({ storageId: "x", mimeType: "text/plain", filename: "x.txt" }),
@@ -200,7 +218,8 @@ describe("KB ingest E2E — bearer→oauthCtx→action (no withIdentity)", () =>
 
 		const handler = server.handlers.get("store_document_chunked");
 		expect(handler).toBeDefined();
-		if (!handler) throw new Error("store_document_chunked handler not registered");
+		if (!handler)
+			throw new Error("store_document_chunked handler not registered");
 
 		await expect(
 			handler({ storageId: "x", mimeType: "text/plain", filename: "x.txt" }),
@@ -217,7 +236,8 @@ describe("KB ingest E2E — bearer→oauthCtx→action (no withIdentity)", () =>
 
 		const handler = server.handlers.get("store_document_chunked");
 		expect(handler).toBeDefined();
-		if (!handler) throw new Error("store_document_chunked handler not registered");
+		if (!handler)
+			throw new Error("store_document_chunked handler not registered");
 
 		await expect(
 			handler({ storageId: "x", mimeType: "text/plain", filename: "x.txt" }),
@@ -237,25 +257,39 @@ describe("KB ingest E2E — bearer→oauthCtx→action (no withIdentity)", () =>
 		const server = makeStubServer();
 		const actionSpy = vi
 			.fn()
-			.mockResolvedValueOnce({ docId: "doc-A", chunkCount: 2, storageId: "shared-storage-id" })
-			.mockRejectedValueOnce(new Error("AUTH_STORAGE_NOT_OWNED: storageId does not belong to this org."));
-		const stub = { action: actionSpy } as unknown as import("convex/browser").ConvexHttpClient;
+			.mockResolvedValueOnce({
+				docId: "doc-A",
+				chunkCount: 2,
+				storageId: "shared-storage-id",
+			})
+			.mockRejectedValueOnce(
+				new Error(
+					"AUTH_STORAGE_NOT_OWNED: storageId does not belong to this org.",
+				),
+			);
+		const stub = {
+			action: actionSpy,
+		} as unknown as import("convex/browser").ConvexHttpClient;
 
 		registerKbIngestTools(server as never, stub, teamACtx);
 
 		const handler = server.handlers.get("store_document_chunked");
 		expect(handler).toBeDefined();
-		if (!handler) throw new Error("store_document_chunked handler not registered");
+		if (!handler)
+			throw new Error("store_document_chunked handler not registered");
 
 		// First call — succeeds (org-A claimed the blob; ingest honours that claim).
 		// The MCP tool wraps the Convex result in { content: [{ type:"text", text: JSON }] }.
-		const firstResult = await handler({
+		const firstResult = (await handler({
 			storageId: "shared-storage-id",
 			mimeType: "text/markdown",
 			filename: "doc.md",
-		}) as { content: Array<{ type: string; text: string }> };
+		})) as { content: Array<{ type: string; text: string }> };
 		expect(firstResult).toHaveProperty("content");
-		const parsed = JSON.parse(firstResult.content[0].text) as Record<string, unknown>;
+		const parsed = JSON.parse(firstResult.content[0].text) as Record<
+			string,
+			unknown
+		>;
 		expect(parsed).toMatchObject({ docId: "doc-A", chunkCount: 2 });
 
 		// Second call — Convex throws AUTH_STORAGE_NOT_OWNED (cross-tenant attempt);

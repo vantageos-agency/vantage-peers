@@ -128,10 +128,18 @@ describe("a stale-snapshot seat reaches its own orchestrator/<agent ID>", () => 
 	});
 
 	it("REFUSED: no verified agent (org-level seat, stamp for another org, provider predating the stamp)", async () => {
-		for (const token of [TOKENS.noAgent, TOKENS.foreignStamp, TOKENS.oldConvex]) {
+		for (const token of [
+			TOKENS.noAgent,
+			TOKENS.foreignStamp,
+			TOKENS.oldConvex,
+		]) {
 			const ctx = await ctxOf(token);
-			expect(checkNamespaceWrite(ctx, `orchestrator/${OWN}`), token).toMatch(FORBIDDEN);
-			expect(checkNamespaceRead(ctx, `orchestrator/${OWN}`), token).toMatch(FORBIDDEN);
+			expect(checkNamespaceWrite(ctx, `orchestrator/${OWN}`), token).toMatch(
+				FORBIDDEN,
+			);
+			expect(checkNamespaceRead(ctx, `orchestrator/${OWN}`), token).toMatch(
+				FORBIDDEN,
+			);
 		}
 	});
 

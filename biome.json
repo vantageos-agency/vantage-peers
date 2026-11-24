@@ -30,5 +30,13 @@
 				"organizeImports": "on"
 			}
 		}
-	}
+	},
+	"overrides": [
+		{
+			"includes": ["mcp-server/src/tools.ts"],
+			"formatter": {
+				"enabled": false
+			}
+		}
+	]
 }

@@ -311,9 +311,7 @@ describe("a seat that resolved no agent cannot act as one", () => {
 		};
 		expect(seatExempt(row, "clio")).toBe(true);
 		expect(seatExempt(row, "victor")).toBe(false);
-		expect(seatExempt({ ...row, seatAgent: null }, "clio")).toBe(
-			false,
-		);
+		expect(seatExempt({ ...row, seatAgent: null }, "clio")).toBe(false);
 		expect(
 			seatExempt(
 				{ ...row, seatAgent: { ...row.seatAgent!, orgId: "other-org" } },
@@ -426,10 +424,20 @@ describe("withVerifiedActor", () => {
 			},
 		};
 		const wrapped = withVerifiedActor(client, ctx);
-		for (const door of ["search:recall", "search:textSearch", "search:hybridSearch"]) {
-			await wrapped.action(door as never, { query: "q", namespace: `orchestrator/${CLIO_ID}` } as never);
+		for (const door of [
+			"search:recall",
+			"search:textSearch",
+			"search:hybridSearch",
+		]) {
+			await wrapped.action(
+				door as never,
+				{ query: "q", namespace: `orchestrator/${CLIO_ID}` } as never,
+			);
 		}
-		await wrapped.action("search:searchFixPatterns" as never, { query: "q" } as never);
+		await wrapped.action(
+			"search:searchFixPatterns" as never,
+			{ query: "q" } as never,
+		);
 		expect(calls.map((c) => c.args.verifiedActor)).toEqual([
 			{ agentId: CLIO_ID, orgSlug: "acme-hr" },
 			{ agentId: CLIO_ID, orgSlug: "acme-hr" },
@@ -465,7 +473,10 @@ describe("withVerifiedActor", () => {
 		const { client, calls } = fakeClient();
 		const wrapped = withVerifiedActor(client, ctx);
 		await wrapped.mutation("messages:sendMessage", { channel: "pi" });
-		await wrapped.mutation("messages:sendMessage", { channel: "pi", from: "clio" });
+		await wrapped.mutation("messages:sendMessage", {
+			channel: "pi",
+			from: "clio",
+		});
 		expect(calls[0].args).not.toHaveProperty("verifiedActor");
 		expect(calls[1].args).toHaveProperty("verifiedActor");
 	});
@@ -479,9 +490,12 @@ describe("withVerifiedActor", () => {
 				return null;
 			},
 		};
-		await withVerifiedActor(client, ctx).query("improvisationDigest:scanWindow", {
-			windowDays: 7,
-		});
+		await withVerifiedActor(client, ctx).query(
+			"improvisationDigest:scanWindow",
+			{
+				windowDays: 7,
+			},
+		);
 		expect(seen[0].args).toHaveProperty("verifiedActor");
 	});
 
@@ -522,13 +536,17 @@ describe("withVerifiedActor", () => {
 			);
 			let current = "";
 			for (const line of src.split("\n")) {
-				const m = line.match(/^export const (\w+) = (?:mutation|query|action)\(/);
+				const m = line.match(
+					/^export const (\w+) = (?:mutation|query|action)\(/,
+				);
 				if (m) current = m[1];
 				// tasks:create shares its args through a named validator object.
 				if (/^const createTaskArgsValidatorWithCredential\b/.test(line)) {
 					current = "create";
 				}
-				if (/verifiedActor: (?:v\.optional\()?verifiedActorValidator/.test(line)) {
+				if (
+					/verifiedActor: (?:v\.optional\()?verifiedActorValidator/.test(line)
+				) {
 					declared.add(`${file}:${current}`);
 				}
 				// recurringTasks shares the proof args through one spread object.

@@ -237,92 +237,93 @@ const org = (slug: string) => testClerkOrgId(slug) as string;
 const now = () => Date.now();
 
 // One seeded row per family, written by `author` (a stored author ID) in org-a.
-const FAMILIES: { table: string; seed: (author: string) => Promise<string> }[] = [
-	{
-		table: "memories",
-		seed: (author) =>
-			t.run((ctx) =>
-				ctx.db.insert("memories", {
-					namespace: "team/org-a",
-					clerkOrgId: org("org-a"),
-					type: "reference",
-					content: "route erase me",
-					createdBy: author,
-					createdById: author,
-					relations: [],
-					isLatest: true,
-					createdAt: now(),
-					updatedAt: now(),
-				}),
-			),
-	},
-	{
-		table: "tasks",
-		seed: (author) =>
-			t.run((ctx) =>
-				ctx.db.insert("tasks", {
-					title: "route erase me",
-					assignedTo: "agent",
-					priority: "medium",
-					status: "todo",
-					createdBy: author,
-					createdById: author,
-					createdAt: now(),
-					updatedAt: now(),
-					orgId: "org-a",
-					clerkOrgId: org("org-a"),
-				}),
-			),
-	},
-	{
-		table: "diary",
-		seed: (author) =>
-			t.run((ctx) =>
-				ctx.db.insert("diary", {
-					date: "2026-11-03",
-					orchestrator: "agent",
-					content: "route erase me",
-					createdBy: author,
-					createdById: author,
-					createdAt: now(),
-					orgId: "org-a",
-					clerkOrgId: org("org-a"),
-				}),
-			),
-	},
-	{
-		table: "briefingNotes",
-		seed: (author) =>
-			t.run((ctx) =>
-				ctx.db.insert("briefingNotes", {
-					title: "route erase me",
-					topic: "t",
-					participants: ["agent"],
-					content: "route erase me",
-					createdBy: author,
-					createdById: author,
-					createdAt: now(),
-					orgId: "org-a",
-					clerkOrgId: org("org-a"),
-				}),
-			),
-	},
-	{
-		table: "messages",
-		seed: (author) =>
-			t.run((ctx) =>
-				ctx.db.insert("messages", {
-					from: author,
-					fromId: author,
-					channel: "agent",
-					content: "route erase me",
-					tenantId: "org-a",
-					tenantOrgId: org("org-a"),
-					createdAt: now(),
-				}),
-			),
-	},
-];
+const FAMILIES: { table: string; seed: (author: string) => Promise<string> }[] =
+	[
+		{
+			table: "memories",
+			seed: (author) =>
+				t.run((ctx) =>
+					ctx.db.insert("memories", {
+						namespace: "team/org-a",
+						clerkOrgId: org("org-a"),
+						type: "reference",
+						content: "route erase me",
+						createdBy: author,
+						createdById: author,
+						relations: [],
+						isLatest: true,
+						createdAt: now(),
+						updatedAt: now(),
+					}),
+				),
+		},
+		{
+			table: "tasks",
+			seed: (author) =>
+				t.run((ctx) =>
+					ctx.db.insert("tasks", {
+						title: "route erase me",
+						assignedTo: "agent",
+						priority: "medium",
+						status: "todo",
+						createdBy: author,
+						createdById: author,
+						createdAt: now(),
+						updatedAt: now(),
+						orgId: "org-a",
+						clerkOrgId: org("org-a"),
+					}),
+				),
+		},
+		{
+			table: "diary",
+			seed: (author) =>
+				t.run((ctx) =>
+					ctx.db.insert("diary", {
+						date: "2026-11-03",
+						orchestrator: "agent",
+						content: "route erase me",
+						createdBy: author,
+						createdById: author,
+						createdAt: now(),
+						orgId: "org-a",
+						clerkOrgId: org("org-a"),
+					}),
+				),
+		},
+		{
+			table: "briefingNotes",
+			seed: (author) =>
+				t.run((ctx) =>
+					ctx.db.insert("briefingNotes", {
+						title: "route erase me",
+						topic: "t",
+						participants: ["agent"],
+						content: "route erase me",
+						createdBy: author,
+						createdById: author,
+						createdAt: now(),
+						orgId: "org-a",
+						clerkOrgId: org("org-a"),
+					}),
+				),
+		},
+		{
+			table: "messages",
+			seed: (author) =>
+				t.run((ctx) =>
+					ctx.db.insert("messages", {
+						from: author,
+						fromId: author,
+						channel: "agent",
+						content: "route erase me",
+						tenantId: "org-a",
+						tenantOrgId: org("org-a"),
+						createdAt: now(),
+					}),
+				),
+		},
+	];
 
 async function eraseAs(
 	userId: string,
@@ -342,12 +343,18 @@ async function eraseAs(
 const present = (id: string) =>
 	t.run(async (ctx) => (await ctx.db.get(id as never)) !== null);
 
-describe.each(FAMILIES)("erase_row through /mcp as a person bearer — $table", ({ table, seed }) => {
+describe.each(FAMILIES)("erase_row through /mcp as a person bearer — $table", ({
+	table,
+	seed,
+}) => {
 	it("SERVED: the author, an editor and not an admin, erases the row it wrote", async () => {
 		const id = await seed("user:user_author");
 		const r = await eraseAs("user_author", "org-a", table, id);
 		expect(r.isError, r.content[0].text).toBeFalsy();
-		expect(JSON.parse(r.content[0].text)).toMatchObject({ table, erased: true });
+		expect(JSON.parse(r.content[0].text)).toMatchObject({
+			table,
+			erased: true,
+		});
 		expect(await present(id)).toBe(false);
 	});
 

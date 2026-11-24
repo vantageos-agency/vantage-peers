@@ -100,9 +100,9 @@ describe("write gate by agent ID (person token)", () => {
 		expect(judge("Aria")).toBe(true);
 		expect(judge("Bo")).toBe(false);
 		// The default adapter (reads, listings) is untouched by the live flag.
-		expect(
-			passesScopeFilter(toPackageOAuthCtx(ctx), { createdBy: "bo" }),
-		).toBe(true);
+		expect(passesScopeFilter(toPackageOAuthCtx(ctx), { createdBy: "bo" })).toBe(
+			true,
+		);
 	});
 
 	it("REFUSE: the flag belongs to the resolved agent only (credential actor is another agent)", async () => {

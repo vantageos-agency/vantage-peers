@@ -49,7 +49,9 @@ function buildApp(): Hono {
 	const app = new Hono();
 	app.use("*", bearerAuthMiddleware());
 	app.get("/echo", (c) =>
-		c.json({ ctx: (c.get("oauthContext") as OAuthContext | undefined) ?? null }),
+		c.json({
+			ctx: (c.get("oauthContext") as OAuthContext | undefined) ?? null,
+		}),
 	);
 	return app;
 }

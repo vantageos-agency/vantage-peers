@@ -260,7 +260,8 @@ describe("create_task: a person reads back the task it created", () => {
 		["without createdBy", {}],
 	] as const) {
 		it(`person reads back the task it created — ${label}`, async () => {
-			const created = await call(stephane, "create_task", { project: "test-project",
+			const created = await call(stephane, "create_task", {
+				project: "test-project",
 				...TASK,
 				...extra,
 			});
@@ -285,7 +286,8 @@ describe("create_task: a person reads back the task it created", () => {
 	}
 
 	it("DENY: a person of ANOTHER org does not see it", async () => {
-		const created = await call(stephane, "create_task", { project: "test-project",
+		const created = await call(stephane, "create_task", {
+			project: "test-project",
 			...TASK,
 			createdBy: "telemaque",
 		});
@@ -315,7 +317,8 @@ describe("create_task: an org-level bearer (no single agent ID) reads back the t
 		expect(ctx.actor).toBeUndefined();
 		expect(ctx.principal).toBeUndefined();
 		const tools = realTools(ctx);
-		const created = await call(tools, "create_task", { project: "test-project",
+		const created = await call(tools, "create_task", {
+			project: "test-project",
 			...TASK,
 			createdBy: "telemaque",
 		});

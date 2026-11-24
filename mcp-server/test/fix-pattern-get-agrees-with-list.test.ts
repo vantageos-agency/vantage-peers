@@ -66,7 +66,10 @@ async function callGet(
 		handlers.set(a[0] as string, a[a.length - 1] as ToolHandler);
 		return {};
 	};
-	const server = { tool: capture, registerTool: capture } as unknown as McpServer;
+	const server = {
+		tool: capture,
+		registerTool: capture,
+	} as unknown as McpServer;
 	const calls: Array<Record<string, unknown>> = [];
 	const query = vi.fn(async (_fn: string, args: Record<string, unknown>) => {
 		calls.push(args);
@@ -74,10 +77,16 @@ async function callGet(
 	});
 	registerTools(
 		server,
-		{ query, mutation: vi.fn(), action: vi.fn() } as unknown as ConvexHttpClient,
+		{
+			query,
+			mutation: vi.fn(),
+			action: vi.fn(),
+		} as unknown as ConvexHttpClient,
 		ctx,
 	);
-	const result = await handlers.get("get_fix_pattern")?.({ patternId: PATTERN_ID });
+	const result = await handlers.get("get_fix_pattern")?.({
+		patternId: PATTERN_ID,
+	});
 	return { result, calls };
 }
 

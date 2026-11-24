@@ -205,9 +205,7 @@ describe("REFUSE — before any Convex call", () => {
 		expect(h.to("messages:sendMessage")).toEqual([]);
 	});
 	it("send_message: fromAgentId with no verified agent and no `from`", async () => {
-		const h = harness(
-			seat({ seatAgent: undefined, fromAllowList: ["clio"] }),
-		);
+		const h = harness(seat({ seatAgent: undefined, fromAllowList: ["clio"] }));
 		const res = await h.call("send_message", {
 			fromAgentId: CLIO_ID,
 			recipientAgentIds: [HELIOS_ID],
@@ -230,7 +228,11 @@ describe("REFUSE — before any Convex call", () => {
 
 describe("DESCRIBE — the ID is the list_peers agentId", () => {
 	const src = readFileSync(new URL("../src/tools.ts", import.meta.url), "utf8");
-	for (const arg of ["fromAgentId", "assignedToAgentId", "fulfilledByAgentId"]) {
+	for (const arg of [
+		"fromAgentId",
+		"assignedToAgentId",
+		"fulfilledByAgentId",
+	]) {
 		it(`${arg} is declared and says list_peers agentId`, () => {
 			const at = src.indexOf(`${arg}: z`);
 			expect(at).toBeGreaterThan(-1);

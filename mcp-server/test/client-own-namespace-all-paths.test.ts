@@ -76,7 +76,10 @@ function bridge(c: T) {
 			);
 		},
 		mutation: (name: string, args: Record<string, unknown>) =>
-			c.mutation(makeFunctionReference<"mutation">(name) as never, args as never),
+			c.mutation(
+				makeFunctionReference<"mutation">(name) as never,
+				args as never,
+			),
 	};
 }
 
@@ -117,7 +120,12 @@ async function seedSeatProfile(
 	);
 }
 
-async function mintSeat(raw: string, profileId: string, org: string, name: string) {
+async function mintSeat(
+	raw: string,
+	profileId: string,
+	org: string,
+	name: string,
+) {
 	const prefixes = [`orchestrator/${name}`, `project/${org}`];
 	await t.withIdentity({ subject: SERVICE_ACCOUNT_ID }).mutation(
 		makeFunctionReference<"mutation">("oauth:createAccessToken") as never,
@@ -171,7 +179,10 @@ async function mintPerson(raw: string, org: string) {
 	return raw;
 }
 
-async function contextOf(token: string, credential?: string): Promise<OAuthContext> {
+async function contextOf(
+	token: string,
+	credential?: string,
+): Promise<OAuthContext> {
 	const probe = new Hono();
 	probe.use("*", bearerAuthMiddleware());
 	probe.get("/ctx", (c) => c.json(c.get("oauthContext")));
@@ -221,7 +232,11 @@ afterEach(() => {
 });
 
 /** The one assertion every path shares. */
-function expectOwnCeiling(ctx: OAuthContext, ownId: string, otherAgentId: string) {
+function expectOwnCeiling(
+	ctx: OAuthContext,
+	ownId: string,
+	otherAgentId: string,
+) {
 	for (const check of [checkNamespaceRead, checkNamespaceWrite]) {
 		expect(check(ctx, `orchestrator/${ownId}`)).toBeNull();
 		expect(check(ctx, `orchestrator/${ownId}/notes`)).toBeNull();
@@ -231,14 +246,18 @@ function expectOwnCeiling(ctx: OAuthContext, ownId: string, otherAgentId: string
 		expect(check(ctx, `orchestrator/${carolId}`)).toMatch(/^Forbidden:/);
 		expect(check(ctx, "project/org-b")).toMatch(/^Forbidden:/);
 		// a name is never an identity: a prefix of the ID is not the ID
-		expect(check(ctx, `orchestrator/${ownId.slice(0, -1)}`)).toMatch(/^Forbidden:/);
+		expect(check(ctx, `orchestrator/${ownId.slice(0, -1)}`)).toMatch(
+			/^Forbidden:/,
+		);
 	}
 }
 
 describe("a client agent's own namespaces, on every path into the MCP", () => {
 	it("SEAT: the seat token alone (agent stamp)", async () => {
 		await seedSeatProfile("alice-org-a", "org-a", "alice", aliceId);
-		const ctx = await contextOf(await mintSeat("seat-1", "alice-org-a", "org-a", "alice"));
+		const ctx = await contextOf(
+			await mintSeat("seat-1", "alice-org-a", "org-a", "alice"),
+		);
 		expectOwnCeiling(ctx, aliceId, bobId);
 	});
 
@@ -271,16 +290,25 @@ describe("a client agent's own namespaces, on every path into the MCP", () => {
 	});
 
 	it("PERSON+CREDENTIAL: a person token plus an agent credential acts as that agent", async () => {
-		const ctx = await contextOf(await mintPerson("person-2", "org-a"), "cred-bob");
+		const ctx = await contextOf(
+			await mintPerson("person-2", "org-a"),
+			"cred-bob",
+		);
 		expect(ctx.actor?.agentId).toBe(bobId);
 		expectOwnCeiling(ctx, bobId, aliceId);
 	});
 
 	it("NO AGENT: a seat that resolved none, without a credential, owns no agent namespace", async () => {
 		await seedSeatProfile("ghost-org-a", "org-a", "ghost");
-		const ctx = await contextOf(await mintSeat("seat-4", "ghost-org-a", "org-a", "ghost"));
-		expect(checkNamespaceRead(ctx, `orchestrator/${aliceId}`)).toMatch(/^Forbidden:/);
-		expect(checkNamespaceWrite(ctx, `orchestrator/${aliceId}`)).toMatch(/^Forbidden:/);
+		const ctx = await contextOf(
+			await mintSeat("seat-4", "ghost-org-a", "org-a", "ghost"),
+		);
+		expect(checkNamespaceRead(ctx, `orchestrator/${aliceId}`)).toMatch(
+			/^Forbidden:/,
+		);
+		expect(checkNamespaceWrite(ctx, `orchestrator/${aliceId}`)).toMatch(
+			/^Forbidden:/,
+		);
 	});
 
 	it("CROSS-ORG: another org's credential is refused at the door, never an ownership", async () => {

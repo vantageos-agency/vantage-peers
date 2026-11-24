@@ -15,7 +15,9 @@ type Tool = (args: Record<string, unknown>) => Promise<ToolResult>;
 
 // What the Convex HTTP client throws for a ConvexError over the wire.
 function wireConvexError(data: string): Error {
-	const e = new ConvexError(`[Request ID: abc123] Server Error`) as ConvexError<string>;
+	const e = new ConvexError(
+		`[Request ID: abc123] Server Error`,
+	) as ConvexError<string>;
 	(e as { data: string }).data = data;
 	return e;
 }
@@ -46,7 +48,12 @@ describe("a ConvexError(string) reaches the tool caller and the log, not 'Server
 		[
 			"store_memory",
 			'RBAC_DENIED: caller may not write to namespace "orchestrator/victor" — {"orgSlug":"iris-rh"}',
-			{ namespace: "orchestrator/victor", type: "feedback", content: "c", createdBy: "pi" },
+			{
+				namespace: "orchestrator/victor",
+				type: "feedback",
+				content: "c",
+				createdBy: "pi",
+			},
 		],
 		[
 			"send_message",

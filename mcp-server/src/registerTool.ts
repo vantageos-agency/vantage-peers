@@ -220,9 +220,12 @@ function enforceScope(
 			// reaches here as "undefined", which no roster lists: refused.
 			const name = String(from);
 			if (
-				passesScopeFilter(toPackageOAuthCtx(ctx.oauthCtx, { actingName: true }), {
-					createdBy: name,
-				})
+				passesScopeFilter(
+					toPackageOAuthCtx(ctx.oauthCtx, { actingName: true }),
+					{
+						createdBy: name,
+					},
+				)
 			)
 				return null;
 			return mcpError(fromNotOnRosterRefusal(ctx.oauthCtx, name));

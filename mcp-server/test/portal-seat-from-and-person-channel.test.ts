@@ -71,7 +71,11 @@ describe("portal seat: the sender it may claim", () => {
 
 	it("SERVED: the same bearer sends as its own label", async () => {
 		const { send, mutations } = harness(portalSeat());
-		const r = await send({ from: "cgt-alsachimie", channel: "hal", content: "x" });
+		const r = await send({
+			from: "cgt-alsachimie",
+			channel: "hal",
+			content: "x",
+		});
 		expect(r.isError).toBeFalsy();
 		expect(mutations[0]?.args.from).toBe("cgt-alsachimie");
 	});

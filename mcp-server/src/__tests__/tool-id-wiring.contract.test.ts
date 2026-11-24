@@ -33,7 +33,12 @@ type ZodShape = Record<string, ZodType>;
 const registry = new Map<string, ZodShape>();
 
 const fakeServer = {
-	tool: (name: string, _description?: unknown, shape?: unknown, ..._rest: unknown[]) => {
+	tool: (
+		name: string,
+		_description?: unknown,
+		shape?: unknown,
+		..._rest: unknown[]
+	) => {
 		const isShapeObject =
 			shape !== null &&
 			typeof shape === "object" &&
@@ -201,9 +206,12 @@ describe("wiring contract — permissive allow-list args must NOT be tightened",
 describe("mutant: get_task.taskId must reject a truncated id", () => {
 	it("get_task.taskId (as REGISTERED, not the exported schema) rejects a truncated id", () => {
 		const shape = registry.get("get_task");
-        expect(shape, "get_task must be registered").toBeTruthy();
+		expect(shape, "get_task must be registered").toBeTruthy();
 		const taskIdSchema = shape?.taskId;
-		expect(taskIdSchema, "get_task.taskId must exist in the registered shape").toBeTruthy();
+		expect(
+			taskIdSchema,
+			"get_task.taskId must exist in the registered shape",
+		).toBeTruthy();
 
 		const unwrapped = unwrapOptional(taskIdSchema);
 		const result = unwrapped.safeParse(TRUNCATED_ID);

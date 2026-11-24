@@ -493,7 +493,8 @@ DOORS.push({
 	tool: "create_task",
 	allow: async () => {
 		served(
-			await as(seatA, "create_task", { project: "test-project",
+			await as(seatA, "create_task", {
+				project: "test-project",
 				title: "own create",
 				status: "todo",
 				assignedTo: "ivo",
@@ -508,7 +509,8 @@ DOORS.push({
 	},
 	cross: async () => {
 		refused(
-			await as(seatA, "create_task", { project: "test-project",
+			await as(seatA, "create_task", {
+				project: "test-project",
 				title: "foreign create",
 				status: "todo",
 				assignedTo: "ivo",

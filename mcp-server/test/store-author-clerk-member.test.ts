@@ -172,7 +172,11 @@ describe("(a) a Clerk-JWT member writes in its own name", () => {
 
 	it("a member that also presents an agent credential keeps the agent rules: a name that is not the credential's is refused", async () => {
 		const ctx = clerkMemberCtx({
-			actor: { orgSlug: "author-org", agentName: "alice", agentId: "agent-alice" },
+			actor: {
+				orgSlug: "author-org",
+				agentName: "alice",
+				agentId: "agent-alice",
+			},
 			fromAllowList: ["alice"],
 		});
 		const store = tools(member(), ctx).get("store_memory");
@@ -223,9 +227,9 @@ describe("(b) Convex still refuses a member that is handed another author", () =
 					() => null,
 					(e: Error) => e,
 				);
-			expect(`${err?.message} ${JSON.stringify((err as { data?: unknown })?.data)}`).toMatch(
-				/author-not-caller/,
-			);
+			expect(
+				`${err?.message} ${JSON.stringify((err as { data?: unknown })?.data)}`,
+			).toMatch(/author-not-caller/);
 		}
 		expect(await rows()).toHaveLength(0);
 	});

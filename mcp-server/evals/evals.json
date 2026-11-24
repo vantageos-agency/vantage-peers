@@ -7808,11 +7808,7 @@
 			},
 			"expect": {
 				"isError": false,
-				"jsonKeys": [
-					"memoryId",
-					"replacements",
-					"contentHashChanged"
-				]
+				"jsonKeys": ["memoryId", "replacements", "contentHashChanged"]
 			},
 			"expectations": [
 				"memories:redactMemoryContentAsPerson is called with verifiedPerson = the bearer hash from the verified context",
@@ -7839,9 +7835,7 @@
 			},
 			"expect": {
 				"isError": true,
-				"textIncludes": [
-					"RBAC_DENIED"
-				]
+				"textIncludes": ["RBAC_DENIED"]
 			},
 			"expectations": [
 				"the Convex door refuses a member who is neither admin nor the author",
@@ -7867,9 +7861,7 @@
 			},
 			"expect": {
 				"isError": true,
-				"textIncludes": [
-					"erase_memory is for a signed-in person"
-				]
+				"textIncludes": ["erase_memory is for a signed-in person"]
 			},
 			"expectations": [
 				"no person bearer hash exists on a master credential, so the tool refuses before any backend call",
@@ -7924,11 +7916,7 @@
 			},
 			"expect": {
 				"isError": false,
-				"jsonKeys": [
-					"memoryId",
-					"replacements",
-					"contentHashChanged"
-				]
+				"jsonKeys": ["memoryId", "replacements", "contentHashChanged"]
 			},
 			"expectations": [
 				"memories:redactMemoryContentAsAgent is called with verifiedActor = the agent ID the transport verified, never a typed name",
@@ -7949,12 +7937,7 @@
 			},
 			"expect": {
 				"isError": false,
-				"jsonKeys": [
-					"table",
-					"rowId",
-					"erased",
-					"cascaded"
-				]
+				"jsonKeys": ["table", "rowId", "erased", "cascaded"]
 			},
 			"expectations": [
 				"erase:eraseRow is called with verifiedActor = the agent ID the transport verified",
@@ -7976,12 +7959,7 @@
 			},
 			"expect": {
 				"isError": false,
-				"jsonKeys": [
-					"table",
-					"rowId",
-					"erased",
-					"cascaded"
-				]
+				"jsonKeys": ["table", "rowId", "erased", "cascaded"]
 			},
 			"expectations": [
 				"erase:eraseRow is called with verifiedPerson = the bearer hash from the verified context",
@@ -8003,9 +7981,7 @@
 			},
 			"expect": {
 				"isError": true,
-				"textIncludes": [
-					"RBAC_DENIED"
-				]
+				"textIncludes": ["RBAC_DENIED"]
 			},
 			"expectations": [
 				"the Convex door refuses a caller that is neither an organisation admin nor the row's stored author",
@@ -8049,11 +8025,7 @@
 			},
 			"expect": {
 				"isError": false,
-				"jsonKeys": [
-					"patternId",
-					"erased",
-					"cascaded"
-				]
+				"jsonKeys": ["patternId", "erased", "cascaded"]
 			},
 			"expectations": [
 				"fixPatterns:erase is called with verifiedPerson = the bearer hash from the verified context, never a typed name",
@@ -8074,9 +8046,7 @@
 			},
 			"expect": {
 				"isError": true,
-				"textIncludes": [
-					"RBAC_DENIED"
-				]
+				"textIncludes": ["RBAC_DENIED"]
 			},
 			"expectations": [
 				"the Convex door refuses a caller that is not an admin of the operator organisation, an agent included",
@@ -8120,10 +8090,7 @@
 			},
 			"expect": {
 				"isError": false,
-				"jsonKeys": [
-					"ranked",
-					"cleared"
-				]
+				"jsonKeys": ["ranked", "cleared"]
 			},
 			"expectations": [
 				"tasks:reorderQueue is called with verifiedActor added by the wrapped client, never a typed name",
@@ -8141,15 +8108,11 @@
 			"prompt": "Rank a task that belongs to someone else.",
 			"args": {
 				"assignedToAgentId": "r57bexrjnt2229qzchhj5bs3yh8j5ta1",
-				"taskIds": [
-					"k1712121212121212121212121212121"
-				]
+				"taskIds": ["k1712121212121212121212121212121"]
 			},
 			"expect": {
 				"isError": true,
-				"textIncludes": [
-					"QUEUE_TASK_NOT_ASSIGNED"
-				]
+				"textIncludes": ["QUEUE_TASK_NOT_ASSIGNED"]
 			},
 			"expectations": [
 				"the backend refusal is surfaced verbatim and nothing is written"
@@ -8165,9 +8128,7 @@
 			"prompt": "Rank the task 'B'.",
 			"args": {
 				"assignedToAgentId": "r57bexrjnt2229qzchhj5bs3yh8j5ta1",
-				"taskIds": [
-					"B"
-				]
+				"taskIds": ["B"]
 			},
 			"expect": {
 				"isError": true,
@@ -8194,9 +8155,7 @@
 			},
 			"expect": {
 				"isError": false,
-				"jsonKeys": [
-					"found"
-				]
+				"jsonKeys": ["found"]
 			},
 			"expectations": [
 				"tasks:nextForAssignee is called with verifiedOrg on every call",
@@ -8214,9 +8173,7 @@
 			"args": {},
 			"expect": {
 				"isError": true,
-				"textIncludes": [
-					"QUEUE_ASSIGNEE_REQUIRED"
-				]
+				"textIncludes": ["QUEUE_ASSIGNEE_REQUIRED"]
 			},
 			"expectations": [
 				"one of assignedTo and assignedToAgentId is required; refused before any backend call"

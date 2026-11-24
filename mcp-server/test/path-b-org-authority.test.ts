@@ -215,9 +215,7 @@ describe("Path B org authority — client_org_mapping is the ONLY source of gran
 			resultB.oauthCtx?.fromAllowList,
 		);
 		expect(resultA.oauthCtx?.scopes).toEqual(resultB.oauthCtx?.scopes);
-		expect(resultA.oauthCtx?.scopeProfile).toBe(
-			resultB.oauthCtx?.scopeProfile,
-		);
+		expect(resultA.oauthCtx?.scopeProfile).toBe(resultB.oauthCtx?.scopeProfile);
 		// clientId legitimately differs (dcr-clerk-<orgId> keyed on org, not sub)
 		// while the GRANTED authority is identical — the property under test.
 		expect(resultA.oauthCtx?.clientId).toBe(resultB.oauthCtx?.clientId);

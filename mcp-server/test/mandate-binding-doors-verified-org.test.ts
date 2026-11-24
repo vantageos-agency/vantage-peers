@@ -16,7 +16,10 @@ type Call = { kind: string; fn: string; args: Record<string, unknown> };
 type ToolResult = { content?: Array<{ text?: string }>; isError?: boolean };
 
 function harness(oauthCtx: OAuthContext) {
-	const handlers = new Map<string, (a: Record<string, unknown>) => Promise<unknown>>();
+	const handlers = new Map<
+		string,
+		(a: Record<string, unknown>) => Promise<unknown>
+	>();
 	const calls: Call[] = [];
 	const server = {
 		tool: (name: string, _d: string, _s: unknown, _a: unknown, h: never) => {
@@ -74,10 +77,13 @@ const master = (): OAuthContext => ({
 	isMaster: true,
 });
 
-
 const MANDATE_ID = "j57aaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
 const doors: Array<[string, string, Record<string, unknown>]> = [
-	["validate_mandate_spending", "mandates:validateSpending", { mandateId: MANDATE_ID, proposedAmount: 5 }],
+	[
+		"validate_mandate_spending",
+		"mandates:validateSpending",
+		{ mandateId: MANDATE_ID, proposedAmount: 5 },
+	],
 	["get_github_owner_bindings", "githubOwnerBinding:listBindings", {}],
 ];
 
@@ -101,7 +107,9 @@ describe("a scoped bearer forwards its verified org", () => {
 		it(`${tool}: the master forwards no org (unchanged)`, async () => {
 			const h = harness(master());
 			await h.call(tool, args);
-			expect(h.calls.find((c) => c.fn === fn)?.args).not.toHaveProperty("verifiedOrg");
+			expect(h.calls.find((c) => c.fn === fn)?.args).not.toHaveProperty(
+				"verifiedOrg",
+			);
 		});
 		it(`${tool}: a bearer whose org cannot be resolved is refused before Convex`, async () => {
 			const h = harness(scoped({ clerkOrgSlug: undefined, actor: undefined }));
@@ -117,7 +125,9 @@ describe("listUnprovenMappings: master-only call, narrowed when an org rides it"
 	it("the master reads it with no org", async () => {
 		const h = harness(master());
 		await h.call("get_github_owner_bindings", {});
-		const c = h.calls.find((x) => x.fn === "githubOwnerBinding:listUnprovenMappings");
+		const c = h.calls.find(
+			(x) => x.fn === "githubOwnerBinding:listUnprovenMappings",
+		);
 		expect(c).toBeDefined();
 		expect(c?.args).not.toHaveProperty("verifiedOrg");
 	});
