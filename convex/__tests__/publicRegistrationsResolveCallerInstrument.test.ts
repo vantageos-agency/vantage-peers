@@ -40,7 +40,13 @@ const SCRIPT = join(
 	"scripts",
 	"check-public-registrations-resolve-caller.py",
 );
-const SLOW = 60_000;
+// Each measurement of the real corpus is ~5 CPU-seconds. The instrument runs
+// at normal priority: under `nice -n 19` its wall time was unbounded on a
+// loaded host (measured: 2 CPU-s in 12 min beside 8 CPU burners; 207 s for the
+// whole file at 8 burners). The cost is bounded by the NUMBER of corpus
+// measurements per file (two: the live tree and one probed copy), and the
+// timeout is sized for two of them with headroom, never relied on alone.
+const SLOW = 180_000;
 
 type Row = { id: string; state: string; via: string; reason: string };
 type Report = {
@@ -53,14 +59,39 @@ type Report = {
 	exit: number;
 };
 
-function run(args: string[]): { status: number; stdout: string } {
-	// `nice`: the instrument is CPU-bound and this suite runs beside siblings
-	// that sit close to their 5s timeout (task k1759g5j6y3anzr2dnhfg5154h8fazb2).
-	const r = spawnSync("nice", ["-n", "19", "python3", SCRIPT, ...args], {
+function run(args: string[]): {
+	status: number;
+	stdout: string;
+	stderr: string;
+} {
+	// No `nice`: it was added so this CPU-bound suite would not crowd siblings
+	// near their 5s timeout (task k1759g5j6y3anzr2dnhfg5154h8fazb2), but it made
+	// this suite's own wall time unbounded. The crowding came largely from
+	// vitest also running every .claude/worktrees checkout; that is now excluded
+	// in vitest.config.ts (task k1745b7rdfs6v7xxe9v4ph70nn8jtx19).
+	const r = spawnSync("python3", [SCRIPT, ...args], {
 		encoding: "utf-8",
+		maxBuffer: 64 * 1024 * 1024,
 	});
 	if (r.error) throw r.error;
-	return { status: r.status ?? -1, stdout: r.stdout };
+	return { status: r.status ?? -1, stdout: r.stdout, stderr: r.stderr };
+}
+
+/** Run the instrument and parse its JSON; any other outcome says why, loudly. */
+function runJson(args: string[]): { status: number; report: Report } {
+	const r = run(args);
+	if (!r.stdout || r.stdout.trim() === "") {
+		throw new Error(
+			`instrument produced no stdout (exit ${r.status}); stderr: ${r.stderr}`,
+		);
+	}
+	try {
+		return { status: r.status, report: JSON.parse(r.stdout) as Report };
+	} catch (e) {
+		throw new Error(
+			`instrument stdout is not JSON (exit ${r.status}, ${r.stdout.length} bytes): ${String(e)}; stderr: ${r.stderr}`,
+		);
+	}
 }
 
 let realTree: Report | undefined;
@@ -71,8 +102,7 @@ function baseline(): Report {
 }
 
 function measure(convexDir: string): Report {
-	const r = run(["--convex-dir", convexDir, "--json"]);
-	return JSON.parse(r.stdout) as Report;
+	return runJson(["--convex-dir", convexDir, "--json"]).report;
 }
 
 /** Independent population: api.d.ts module list, then every registration. */
@@ -195,19 +225,11 @@ describe("public-registration counter — the instrument itself", () => {
 			const target = join(corpus, "diary.ts");
 			const original = readFileSync(target, "utf-8");
 
-			// RED pole — a known-unguarded registration.
-			writeFileSync(target, original + PROBE);
-			const red = measure(corpus);
-			expect(red.population).toBe(base.population + 1);
-			expect(red["does-not-resolve"]).toBe(base["does-not-resolve"] + 1);
-			expect(red.exit).toBe(1);
-			expect(
-				red.registrations.find((r) => r.id === "diary.zzProbeUnguarded")?.state,
-			).toBe("does-not-resolve");
-
-			// GREEN poles, in ONE measurement (each run costs ~2s of CPU beside
-			// timing-sensitive siblings): one probe CLOSED — it now resolves its
-			// caller — and one DECLARED in the code, at its own registration.
+			// ONE measurement of the corpus carries all three poles: an unguarded
+			// probe (RED), one CLOSED (it now resolves its caller) and one DECLARED
+			// in the code at its own registration (GREEN). Each run costs ~5
+			// CPU-seconds and is starved on a loaded host, so the poles
+			// are told apart by row, not by separate measurements.
 			const closedProbe = PROBE.replace("zzProbeUnguarded", "zzProbeClosed")
 				.replace(
 					"handler: async (ctx) => ctx.db",
@@ -218,17 +240,25 @@ describe("public-registration counter — the instrument itself", () => {
 				"export const zzProbeUnguarded",
 				"// @open a deliberately public probe with no tenant data in it\nexport const zzProbeDeclared",
 			);
-			writeFileSync(target, `${original}${closedProbe}${declaredProbe}`);
-			const green = measure(corpus);
-			expect(green.population).toBe(base.population + 2);
-			expect(green["does-not-resolve"]).toBe(base["does-not-resolve"]);
-			expect(green["could-not-judge"]).toBe(0);
-			expect(
-				green.registrations.find((r) => r.id === "diary.zzProbeClosed")?.state,
-			).toBe("resolves-a-caller");
-			expect(
-				green.registrations.find((r) => r.id === "diary.zzProbeDeclared")?.via,
-			).toBe("declared-open");
+			writeFileSync(
+				target,
+				`${original}${PROBE}${closedProbe}${declaredProbe}`,
+			);
+			const probed = measure(corpus);
+			const row = (id: string) =>
+				probed.registrations.find((r) => r.id === `diary.${id}`);
+
+			// RED pole: the unguarded one, and only it, is accused; the code is red.
+			expect(probed.population).toBe(base.population + 3);
+			expect(probed["does-not-resolve"]).toBe(base["does-not-resolve"] + 1);
+			expect(probed.exit).toBe(1);
+			expect(row("zzProbeUnguarded")?.state).toBe("does-not-resolve");
+
+			// GREEN poles: guarded and declared add nothing to the accused count.
+			expect(probed["could-not-judge"]).toBe(0);
+			expect(row("zzProbeClosed")?.state).toBe("resolves-a-caller");
+			expect(row("zzProbeDeclared")?.via).toBe("declared-open");
+			expect(row("zzProbeDeclared")?.state).not.toBe("does-not-resolve");
 		},
 		SLOW,
 	);
@@ -250,9 +280,12 @@ describe("public-registration counter — the instrument itself", () => {
 				join(corpus, "x.ts"),
 				"export const open = query({ args: {}, handler: async () => 1 });\n",
 			);
-			const r = run(["--convex-dir", corpus, "--json"]);
-			const rep = JSON.parse(r.stdout) as Report;
-			expect(r.status).toBe(3);
+			const { status, report: rep } = runJson([
+				"--convex-dir",
+				corpus,
+				"--json",
+			]);
+			expect(status).toBe(3);
 			expect(rep.coverage_errors.join(" ")).toContain("NON-VACUITY");
 		},
 		SLOW,
