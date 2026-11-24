@@ -64,6 +64,7 @@ const ARRAY_DOORS = new Set([
 	"briefingNotes:list",
 	"recurringTasks:list",
 	"fixPatterns:listAll",
+	"diary:list",
 ]);
 
 function harness(fail = false) {

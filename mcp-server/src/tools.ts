@@ -1354,6 +1354,17 @@ function asRows(reply: unknown): Array<Record<string, unknown>> | null {
 	return Array.isArray(reply) ? (reply as Array<Record<string, unknown>>) : null;
 }
 
+/**
+ * The rows of a list door documented as "an array, or an envelope `{ items: array }`".
+ * Anything else (null, a string, an envelope whose `items` is not an array) is a
+ * contract break, never an empty list.
+ */
+function requireItems(reply: unknown, tool: string, door: string): unknown[] {
+	if (Array.isArray(reply)) return reply;
+	if (isPlainObject(reply) && Array.isArray(reply.items)) return reply.items;
+	throw new BackendShapeMismatchError(tool, door, "an array, or { items: array, ... }");
+}
+
 /** Thrown by `requireRows`; every tool's catch turns it into the named refusal. */
 export class BackendShapeMismatchError extends Error {
 	constructor(
@@ -8235,11 +8246,9 @@ export function registerTools(
 					(entries as { partial?: unknown }).partial === true
 						? (entries as { items: unknown[]; nextCreatedBefore: number })
 						: null;
-				const entriesArr = partial
-					? partial.items
-					: Array.isArray(entries)
-						? entries
-						: [];
+				const entriesArr: unknown[] = partial
+					? requireItems(partial, "list_diaries", "diary:list")
+					: requireRows(entries, "list_diaries", "diary:list", "an array of diary entries, or a partial page { items: array, nextCreatedBefore }");
 				let nextCursor: string | null = null;
 				if (partial) {
 					nextCursor = encodeCursor({ createdBefore: partial.nextCreatedBefore });
@@ -10186,13 +10195,7 @@ export function registerTools(
 					createdBefore,
 					...doorScopeArgs("businessUnits:list", undefined),
 				});
-				const rawItems = (
-					envelope && typeof envelope === "object" && "items" in envelope
-						? (envelope as { items: unknown[] }).items
-						: Array.isArray(envelope)
-							? envelope
-							: []
-				) as unknown[];
+				const rawItems = requireItems(envelope, "list_bus", "businessUnits:list") as unknown[];
 				const backendNextCursor =
 					envelope && typeof envelope === "object" && "nextCursor" in envelope
 						? (envelope as { nextCursor: string | null }).nextCursor
@@ -10469,13 +10472,7 @@ export function registerTools(
 					createdBefore,
 					...doorScopeArgs("githubRepoMapping:list", undefined),
 				});
-				const rawItems = (
-					envelope && typeof envelope === "object" && "items" in envelope
-						? (envelope as { items: unknown[] }).items
-						: Array.isArray(envelope)
-							? envelope
-							: []
-				) as unknown[];
+				const rawItems = requireItems(envelope, "list_repo_mappings", "githubRepoMapping:list") as unknown[];
 				const backendNextCursor =
 					envelope && typeof envelope === "object" && "nextCursor" in envelope
 						? (envelope as { nextCursor: string | null }).nextCursor
@@ -10677,10 +10674,15 @@ export function registerTools(
 					: undefined;
 				// The same object is the text (unchanged) and the structuredContent the
 				// outputSchema validates (task k1793xkjhzh1xm23gmmwjgwfyx8htbv0).
+				const bindingItems = requireItems(isPlainObject(bindingsPage) ? bindingsPage : null, "get_github_owner_bindings", "githubOwnerBinding:listBindings");
+				const unprovenItems =
+					unprovenPage === undefined
+						? undefined
+						: requireItems(isPlainObject(unprovenPage) ? unprovenPage : null, "get_github_owner_bindings", "githubOwnerBinding:listUnprovenMappings");
 				const structured: Record<string, unknown> = {
-						bindings: bindingsPage.items,
+						bindings: bindingItems,
 						nextCursor: opaque(bindingsPage.nextCursor),
-						unprovenMappings: unprovenPage?.items,
+						unprovenMappings: unprovenItems,
 						unprovenNextCursor: opaque(unprovenPage?.nextCursor),
 					};
 				return {
