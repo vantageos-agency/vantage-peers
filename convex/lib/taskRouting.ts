@@ -1,6 +1,5 @@
 import { sameOrg } from "@vantageos/cloud-identity";
 import type { QueryCtx } from "../_generated/server";
-import { actorIdResolver } from "./actorIds";
 import { rbacDenied } from "./inboxReader";
 import {
 	type OrgKey,
@@ -46,7 +45,7 @@ export function repoOfReviewTask(title: string, repo: string | undefined): strin
 type RoutedInput = {
 	door: string;
 	repo: string;
-	assignedTo: string;
+	assignedToId: string | undefined;
 	isReview: boolean;
 	/** The org whose adoption and table decide (the verified org of the write, or the repo's own). */
 	org: OrgKey | null;
@@ -76,20 +75,24 @@ async function requireRouted(ctx: QueryCtx, input: RoutedInput): Promise<void> {
 			`repo "${input.repo}" is declared with no reviewer; add one with the add_repo_mapping tool before a review task can be assigned`,
 		);
 	}
-	const idOf = actorIdResolver(ctx, row.orgId ?? null, row.clerkOrgId);
-	const named =
+	const routedIds =
 		input.isReview && route.state === "routed"
-			? [route.reviewer, route.fallbackReviewer]
-			: [route.owner];
-	const routedIds = await Promise.all(named.map((label) => idOf(label)));
-	const assigneeId = await idOf(input.assignedTo);
-	if (assigneeId === undefined || !routedIds.includes(assigneeId)) {
+			? [row.reviewerId, row.fallbackReviewerId]
+			: [row.orchestratorId];
+	if (routedIds.every((id) => id === undefined)) {
+		throw rbacDenied(
+			input.door,
+			"route-has-no-agent-ids",
+			`repo "${input.repo}" is declared without agent IDs; re-save it with the add_repo_mapping tool`,
+		);
+	}
+	if (input.assignedToId === undefined || !routedIds.includes(input.assignedToId as never)) {
 		throw rbacDenied(
 			input.door,
 			input.isReview ? "reviewer-not-routed" : "repo-routed-to-other-owner",
 			input.isReview
-				? `repo "${input.repo}" is routed to reviewer "${named[0]}"${named[1] !== undefined ? ` (fallback "${named[1]}")` : ""}; a review task is assigned to the routed reviewer`
-				: `repo "${input.repo}" is routed to owner "${named[0]}"; a task naming it is assigned to that owner`,
+				? `repo "${input.repo}" is routed to reviewer "${route.state === "routed" ? route.reviewer : ""}"; a review task is assigned to the routed reviewer`
+				: `repo "${input.repo}" is routed to owner "${route.owner}"; a task naming it is assigned to that owner`,
 		);
 	}
 }
@@ -110,7 +113,7 @@ export async function requireTaskRoutedAsDeclared(
 	input: {
 		door: string;
 		repo: string | undefined;
-		assignedTo: string;
+		assignedToId: string | undefined;
 		isReview: boolean;
 		tenant: string | undefined;
 		clerkOrgId: string | undefined;
@@ -120,7 +123,7 @@ export async function requireTaskRoutedAsDeclared(
 	await requireRouted(ctx, {
 		door: input.door,
 		repo: input.repo,
-		assignedTo: input.assignedTo,
+		assignedToId: input.assignedToId,
 		isReview: input.isReview,
 		org: await orgKeyOfTenant(ctx, input.tenant, input.clerkOrgId),
 	});
@@ -135,7 +138,7 @@ export async function requireReviewOverrideRouted(
 	ctx: QueryCtx,
 	door: string,
 	repo: string,
-	assignedTo: string,
+	assignedToId: string | undefined,
 ): Promise<void> {
 	const row = await ctx.db
 		.query("githubRepoMapping")
@@ -144,7 +147,7 @@ export async function requireReviewOverrideRouted(
 	await requireRouted(ctx, {
 		door,
 		repo,
-		assignedTo,
+		assignedToId,
 		isReview: true,
 		org: await orgKeyOfRepo(ctx, repo, row),
 	});
