@@ -60,17 +60,19 @@ async function seed(t: T) {
 				clerkOrgSlug: slug,
 				clerkOrgId: testClerkOrgId(slug),
 				allowedOrchestrators: [ORCH, "rev", "rev2"],
-				scopes: [
-					"view-own-tasks",
-					"manage-repo-mappings",
-					...(slug === "org-a" ? ["review-routing-explicit"] : []),
-				],
+				scopes: ["view-own-tasks", "manage-repo-mappings"],
 				displayName: slug,
 				isActive: true,
 				createdAt: Date.now(),
 				...(slug === "org-op" ? { orgKind: "operator" as const } : {}),
 			});
 		}
+		// org-a ADOPTED: listed by permanent id in the config key, never in `scopes`.
+		await ctx.db.insert("taskClosureConfig", {
+			key: "reviewRoutingAdoptedOrgs",
+			value: [`id:${testClerkOrgId("org-a")}`],
+			updatedAt: 0,
+		});
 		for (const [i, slug] of ["org-a", "org-b"].entries()) {
 			await ctx.db.insert("githubOwnerBindings", {
 				owner: slug,
@@ -172,6 +174,8 @@ describe("an ADOPTED org never reaches the fleet default; a non-adopted org keep
 			adopted: true,
 		});
 		expect(set.changed).toBe(true);
+		expect(set.previous).toEqual([`id:${testClerkOrgId("org-a")}`]);
+		expect(set.current).toEqual([`id:${testClerkOrgId("org-a")}`, `id:${testClerkOrgId("org-b")}`]);
 		expect(await reviewerOf(t, "org-b/unreviewed")).toBeNull();
 		const again = await t.mutation(internal.clientOrgMapping.setReviewRoutingAdopted, {
 			clerkOrgSlug: "org-b",
@@ -183,6 +187,61 @@ describe("an ADOPTED org never reaches the fleet default; a non-adopted org keep
 			adopted: false,
 		});
 		expect(await reviewerOf(t, "org-b/unreviewed")).toBe(FLEET_REVIEWER);
+		// removal leaves org-a's entry alone
+		expect(await reviewerOf(t, "org-a/unreviewed")).toBeNull();
+	});
+
+	test("a mapping row with no permanent id is listed by slug, and removal is idempotent", async () => {
+		const t = makeT();
+		await seed(t);
+		await t.run(async (ctx) => {
+			const b = await ctx.db
+				.query("client_org_mapping")
+				.withIndex("by_clerk_slug", (q) => q.eq("clerkOrgSlug", "org-b"))
+				.unique();
+			if (b) await ctx.db.patch(b._id, { clerkOrgId: undefined });
+		});
+		const set = await t.mutation(internal.clientOrgMapping.setReviewRoutingAdopted, {
+			clerkOrgSlug: "org-b",
+			adopted: true,
+		});
+		expect(set.current).toContain("slug:org-b");
+		const off = await t.mutation(internal.clientOrgMapping.setReviewRoutingAdopted, {
+			clerkOrgSlug: "org-b",
+			adopted: false,
+		});
+		expect(off.changed).toBe(true);
+		const offAgain = await t.mutation(internal.clientOrgMapping.setReviewRoutingAdopted, {
+			clerkOrgSlug: "org-b",
+			adopted: false,
+		});
+		expect(offAgain.changed).toBe(false);
+	});
+
+	test("the flag is NOT in the org's authority: no scopes entry carries it, before or after adoption", async () => {
+		const t = makeT();
+		await seed(t);
+		const svc = t.withIdentity({ subject: "test-service-account-user-id" });
+		await t.mutation(internal.clientOrgMapping.setReviewRoutingAdopted, {
+			clerkOrgSlug: "org-b",
+			adopted: true,
+		});
+		for (const slug of ["org-a", "org-b"]) {
+			// the grant projection every token / Clerk-JWT context copies its scopes from
+			const grant = await svc.query(api.clientOrgMapping.getByClerkSlug, { orgSlug: slug });
+			expect(grant?.scopes).toEqual(["view-own-tasks", "manage-repo-mappings"]);
+			const byId = await svc.query(api.clientOrgMapping.getByClerkOrgId, {
+				clerkOrgId: testClerkOrgId(slug),
+			});
+			expect(byId?.scopes).toEqual(["view-own-tasks", "manage-repo-mappings"]);
+			const row = await t.run(async (ctx) =>
+				ctx.db
+					.query("client_org_mapping")
+					.withIndex("by_clerk_slug", (q) => q.eq("clerkOrgSlug", slug))
+					.unique(),
+			);
+			expect(row?.scopes).toEqual(["view-own-tasks", "manage-repo-mappings"]);
+		}
 	});
 });
 
