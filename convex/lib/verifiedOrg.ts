@@ -11,7 +11,6 @@ import {
 	isMcpBoundMaster,
 	isServiceTransport,
 	lookupOrgMapping,
-	refusalError,
 	type OrgMappingView,
 	type OrgScope,
 	withOrgScope,
@@ -82,12 +81,11 @@ export function requireVerifiedOrgFromServiceAccount(
 	door: string,
 ): void {
 	if (isMcpBoundMaster(transportScope) && verifiedOrg === undefined) {
-		throw refusalError({
-			code: "RBAC_DENIED",
-			reason: "no-verified-organisation",
+		return refuse(
+			"verified-org-required",
 			door,
-			detail: "the service account must carry a verified organisation claim",
-		});
+			"the service account must carry a verified organisation claim",
+		);
 	}
 }
 
