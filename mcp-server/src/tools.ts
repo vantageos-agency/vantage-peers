@@ -5777,6 +5777,15 @@ export function registerTools(
 			deliverable: deliverableSchema.describe("The artifact the task delivers (today an npm export). " +
 				"The backend checks the npm registry and get_task reports deliverableDivergence='delivered-but-open' when it is published while the task is still open. " +
 				"Omit when the task ships no package."),
+			repo: z
+				.string()
+				.trim()
+				.min(1)
+				.optional()
+				.describe("The repository this task is about, as 'owner/name', e.g. 'acme-hr/payroll'. " +
+					"Omit it when the task concerns no repository. If your organisation declared a route for its repositories (add_repo_mapping), " +
+					"the task must go to that repository's owner (a review task, to its reviewer) and a repository you have not declared is refused: declare it first with add_repo_mapping. " +
+					"It is checked, not stored."),
 		},
 		{
 			outputSchema: createTaskServedOutputSchema,
@@ -5803,6 +5812,7 @@ export function registerTools(
 			dueDate,
 			createdBy,
 			deliverable,
+			repo,
 		}) => {
 			try {
 				const assigneeDenied = await guardDelegation(assignedTo);
@@ -5828,6 +5838,7 @@ export function registerTools(
 							? undefined
 							: normalizeOrchestratorId(createdBy),
 					...(deliverable !== undefined ? { deliverable } : {}),
+					...(repo !== undefined ? { repo } : {}),
 					...doorScopeArgs("tasks:create", createdBy),
 				});
 
