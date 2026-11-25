@@ -96,7 +96,11 @@ describe("add_repo_mapping records an out-of-scope repo", () => {
 
 	it("ABSENT: a routed call sends no outOfScope key", async () => {
 		const h = harness();
-		await h.call({ repo: "acme-hr/payroll", orchestrator: "clio", project: "payroll" });
+		await h.call({
+			repo: "acme-hr/payroll",
+			orchestrator: "clio",
+			project: "payroll",
+		});
 		expect(h.sent()).not.toHaveProperty("outOfScope");
 		expect(h.sent().orchestrator).toBe("clio");
 	});

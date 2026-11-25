@@ -307,7 +307,10 @@ describe("check_repo_routing", () => {
 	it("an out-of-scope repo has its own bucket: it is not missing and does not make the check incomplete", async () => {
 		const withFork: Record<string, Route> = {
 			...routes,
-			"acme/fork": { state: "out-of-scope", reason: "no owning station, no activity in 30 days" },
+			"acme/fork": {
+				state: "out-of-scope",
+				reason: "no owning station, no activity in 30 days",
+			},
 		};
 		const r = await run(
 			"check_repo_routing",
@@ -315,7 +318,12 @@ describe("check_repo_routing", () => {
 			{ repos: ["acme/a", "acme/fork"] },
 			{
 				routes: withFork,
-				pages: [{ items: [{ repo: "acme/a" }, { repo: "acme/fork" }], nextCursor: null }],
+				pages: [
+					{
+						items: [{ repo: "acme/a" }, { repo: "acme/fork" }],
+						nextCursor: null,
+					},
+				],
 			},
 		);
 		expect(r.body).toEqual({
@@ -335,7 +343,12 @@ describe("check_repo_routing", () => {
 			CLIENT_SEAT,
 			{ repos: ["acme/fork", "acme/c"] },
 			{
-				routes: { "acme/fork": { state: "out-of-scope", reason: "no owning station, no activity in 30 days" } },
+				routes: {
+					"acme/fork": {
+						state: "out-of-scope",
+						reason: "no owning station, no activity in 30 days",
+					},
+				},
 				pages: [{ items: [{ repo: "acme/fork" }], nextCursor: null }],
 			},
 		);
