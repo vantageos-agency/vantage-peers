@@ -407,6 +407,13 @@ So upgrade in this order: deploy the backend of the same release first, then upg
 
 ## Release notes
 
+### 5.0.3
+
+_Applies to: Cloud and Self-host._ A patch release: tool inputs and outputs are unchanged.
+
+- Cloud and Self-host: `get_tool_usage` and `get_owner_tool_usage` serve a master-scope caller that has a verified agent ID, which now sends the agent as its claim; organisation seats are unchanged (see [Tool inputs and outputs](#tool-inputs-and-outputs)).
+- Self-host: the backend contract required moves from 29 to 30, with the same 153 called functions; deploy the backend first (see [Backend compatibility check](#backend-compatibility-check)).
+
 ### 5.0.2
 
 _Applies to: Cloud and Self-host._ A patch release: tool inputs and outputs are unchanged.

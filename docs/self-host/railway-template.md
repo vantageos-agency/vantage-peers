@@ -24,13 +24,13 @@ it says UNKNOWN and why.
 
 | Fact | Value | Source |
 |---|---|---|
-| Package version | `5.0.2` | `grep '"version"' mcp-server/package.json` -> `"version": "5.0.2"` |
+| Package version | `5.0.3` | `grep '"version"' mcp-server/package.json` -> `"version": "5.0.3"` |
 | npm published version | `4.1.0` (dist-tag `latest`, the only tag) | `npm view vantage-peers-mcp dist-tags` -> `{ latest: '4.1.0' }` (run 2026-11-24) |
 | Tools **registered** by the server | `121` | `node scripts/check-tool-counts.mjs` -> `tools.ts canonical surface = 121`, `registered names 121 vs documented names 121` |
 | Tools **advertised** to MCP clients (`tools/list`) | `95` | `jq '.core\|length' mcp-server/tool-exposure.json` -> `95`; `grep -n 'tools are advertised' mcp-server/README.md` -> "95 tools are advertised to clients" |
 | Registered, not advertised | `26` | `mcp-server/README.md` heading `### Registered, not advertised (26)`; 121 - 95 = 26 |
 | Node engine | `26.12.1` | `grep -A1 '"engines"' mcp-server/package.json` -> `"node": "26.12.1"` |
-| Backend contract version required | `29` | `grep REQUIRED_CONTRACT_VERSION mcp-server/src/backendContract.ts` -> `= 29`; `grep BACKEND_CONTRACT_VERSION convex/lib/backendManifest.ts` -> `= 29` |
+| Backend contract version required | `30` | `grep REQUIRED_CONTRACT_VERSION mcp-server/src/backendContract.ts` -> `= 30`; `grep BACKEND_CONTRACT_VERSION convex/lib/backendManifest.ts` -> `= 30` |
 | Backend functions the server calls | `153` | count of `"module:function"` entries in `MCP_CALLED_FUNCTIONS` (`mcp-server/src/backendContract.ts:46`) |
 
 A deployer's MCP client sees 95 tools, not 121. The server masks non-`core`
@@ -41,7 +41,7 @@ tools stay registered but a client can neither list nor call them
 around line 1870-1925, reads `tool-exposure.json`, overridable by
 `VP_TOOL_EXPOSURE_PATH` for tests).
 
-Not the same as the published release: the numbers 121 / 95 / contract 29 /
+Not the same as the published release: the numbers 121 / 95 / contract 30 /
 153 are the tree on `origin/main`. `mcp-server/README.md` for the 4.0.0
 release text says contract version **10** and **141** functions
 (`grep -n 'contract version\|141' mcp-server/README.md`), and the npm
@@ -187,7 +187,7 @@ computes them):
 {
   "status": "ok",
   "service": "vantage-peers-mcp-http",
-  "version": "5.0.2",
+  "version": "5.0.3",
   "commit": "<RAILWAY_GIT_COMMIT_SHA or \"unknown\">",
   "runtime": "bun",
   "bun": "<Bun version or null>",
@@ -256,7 +256,7 @@ is the boot check:
 
 - Before it binds a port, the server calls `meta:backendContract` and exits
   1 if the manifest is missing, the contract version is below
-  `REQUIRED_CONTRACT_VERSION` (29 in the tree), or any of the 153 functions
+  `REQUIRED_CONTRACT_VERSION` (30 in the tree), or any of the 153 functions
   in `MCP_CALLED_FUNCTIONS` is missing (`server-http.ts:2328`,
   `mcp-server/src/backendContract.ts:43,46`). Railway's healthcheck then
   fails the new deployment and the previous one keeps serving.
