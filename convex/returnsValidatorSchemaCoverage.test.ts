@@ -359,7 +359,7 @@ const INTENTIONAL_PROJECTIONS: Record<string, { fields: string[]; reason: string
 			"`fields: \"lite\"|\"full\"` API — `briefingNoteSearchLiteValidator` is the deliberate lite projection of a keyword hit (the handler maps `_id`/`title`/`topic`/`createdBy`/`createdAt`/`participants` explicitly, never spreading the raw row); `briefingNoteFullValidator` (in the same union) already COVERS.",
 	},
 	"githubRepoMapping.list#repoMappingLiteObject": {
-		fields: ["active", "lastDeployedSHA", "lastDeployedAt", "reviewer", "fallbackReviewer", "orgId", "clerkOrgId"],
+		fields: ["active", "lastDeployedSHA", "lastDeployedAt", "reviewer", "fallbackReviewer", "orchestratorAgentId", "reviewerAgentId", "fallbackReviewerAgentId", "orgId", "clerkOrgId"],
 		reason:
 			"Same `fields: \"lite\"|\"full\"` API — `repoMappingLiteObject` is the deliberate lite projection; `repoMappingFullObject` (in the same union) already COVERS.",
 	},
