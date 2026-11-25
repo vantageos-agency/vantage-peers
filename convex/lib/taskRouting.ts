@@ -1,10 +1,21 @@
-import { sameOrg } from "@vantageos/cloud-identity";
 import type { QueryCtx } from "../_generated/server";
 import { actorIdResolver } from "./actorIds";
-import type { OrgScope } from "./auth";
-import { orgRefOfRow, orgRefOfScope } from "./authOrgMapping";
 import { rbacDenied } from "./inboxReader";
-import { isRoutingAdopted, orgKeyOfTenant, resolveReviewer, routeOfRow } from "./reviewRouting";
+import {
+	type OrgKey,
+	isRoutingAdopted,
+	orgKeyOfRepo,
+	orgKeyOfTenant,
+	resolveReviewer,
+	routeOfRow,
+} from "./reviewRouting";
+
+// The same organisation: by permanent id when both name one, else by slug label.
+function sameOrgKey(a: OrgKey | null, b: OrgKey | null): boolean {
+	if (a === null || b === null) return false;
+	if (a.clerkOrgId !== undefined && b.clerkOrgId !== undefined) return a.clerkOrgId === b.clerkOrgId;
+	return a.clerkOrgSlug === b.clerkOrgSlug;
+}
 
 // ─────────────────────────────────────────────────────────────────────────────
 // taskRouting — a task is assigned the way its organisation ROUTED the repository
@@ -39,16 +50,14 @@ export function repoOfReviewTask(title: string, repo: string | undefined): strin
  * A no-op for an org that has not adopted routing, and when no repo is named.
  *
  * `tenant` / `clerkOrgId` are the VERIFIED org of the write (never arguments);
- * undefined tenant = a fleet row = the operator org. `assignedToId` is the
- * assignee's agents-row ID, already resolved by the caller.
+ * undefined tenant = a fleet row = the operator org.
  */
 export async function requireTaskRoutedAsDeclared(
 	ctx: QueryCtx,
-	scope: OrgScope,
 	input: {
 		door: string;
 		repo: string | undefined;
-		assignedToId: string;
+		assignedTo: string;
 		isReview: boolean;
 		tenant: string | undefined;
 		clerkOrgId: string | undefined;
@@ -62,7 +71,7 @@ export async function requireTaskRoutedAsDeclared(
 		.query("githubRepoMapping")
 		.withIndex("by_repo", (q) => q.eq("repo", input.repo as string))
 		.unique();
-	if (row === null || !(scope.isMaster || sameOrg(orgRefOfRow(row), orgRefOfScope(scope)))) {
+	if (row === null || !sameOrgKey(org, await orgKeyOfRepo(ctx, input.repo, row))) {
 		throw rbacDenied(
 			input.door,
 			"repo-not-declared",
@@ -72,8 +81,9 @@ export async function requireTaskRoutedAsDeclared(
 	const route = routeOfRow(row);
 	if (route.state === "absent") return; // unreachable: row is non-null
 	const idOf = actorIdResolver(ctx, row.orgId ?? null, row.clerkOrgId);
+	const assigneeId = await idOf(input.assignedTo);
 	if (!input.isReview) {
-		if ((await idOf(route.owner)) !== input.assignedToId) {
+		if (assigneeId === undefined || (await idOf(route.owner)) !== assigneeId) {
 			throw rbacDenied(
 				input.door,
 				"repo-routed-to-other-owner",
@@ -90,7 +100,7 @@ export async function requireTaskRoutedAsDeclared(
 		);
 	}
 	const accepted = [await idOf(route.reviewer), await idOf(route.fallbackReviewer)];
-	if (!accepted.includes(input.assignedToId)) {
+	if (assigneeId === undefined || !accepted.includes(assigneeId)) {
 		throw rbacDenied(
 			input.door,
 			"reviewer-not-routed",

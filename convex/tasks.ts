@@ -1075,10 +1075,10 @@ export const create = mutation({
 			);
 		}
 		const isReview = computeIsReviewTask(taskArgs.title, taskArgs.tags);
-		await requireTaskRoutedAsDeclared(ctx, scope, {
+		await requireTaskRoutedAsDeclared(ctx, {
 			door: "tasks:create",
 			repo: isReview ? repoOfReviewTask(taskArgs.title, repo) : repo,
-			assignedToId,
+			assignedTo,
 			isReview,
 			tenant: rowOrgId,
 			clerkOrgId: scope.orgClerkId,
