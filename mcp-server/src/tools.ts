@@ -120,6 +120,8 @@ import {
 	pauseRecurringTaskServedOutputSchema,
 	recallServedOutputSchema,
 	removeRepoMappingServedOutputSchema,
+	getRepoRouteServedOutputSchema,
+	checkRepoRoutingServedOutputSchema,
 	resumeRecurringTaskServedOutputSchema,
 	searchBriefingNotesByKeywordServedOutputSchema,
 	searchEpisodesByKeywordServedOutputSchema,
@@ -2269,6 +2271,12 @@ export const listRepoMappingsOutputSchema = z.union([
 
 // remove_repo_mapping
 export const removeRepoMappingOutputSchema = z.record(z.string(), z.unknown());
+
+// get_repo_route
+export const getRepoRouteOutputSchema = z.record(z.string(), z.unknown());
+
+// check_repo_routing
+export const checkRepoRoutingOutputSchema = z.record(z.string(), z.unknown());
 
 // list_issues
 export const listIssuesOutputSchema = z.object({
@@ -10570,6 +10578,166 @@ export function registerTools(
 					content: [
 						{ type: "text" as const, text: JSON.stringify(structured, null, 2) },
 					],
+					structuredContent: structured,
+				};
+			} catch (error: any) {
+				return mcpConvexError(error);
+			}
+		},
+	);
+
+	// ── get_repo_route ──────────────────────────────────────────────────────────
+
+	// oracle-justified: the route is read at the Convex door githubRepoMapping:getRoute under the caller's
+	//   VERIFIED org (verifiedOrg forwarded by doorScopeArgs, never an argument): a row of another org or of
+	//   the fleet is answered as absent, a caller with no org is RAISED. The MCP layer only refuses an
+	//   unresolved caller before the read.
+	defineTool(
+		server,
+		authCtx,
+		{
+			kind: "filtered",
+			reason:
+				"unresolvedOrgDenial() refuses an unresolved caller; the route is read inside the caller's verified org at githubRepoMapping:getRoute (another org's row answers absent)",
+		},
+		"get_repo_route",
+		"Get the review route of one GitHub repo in your organisation: routed, unreviewed or absent. " +
+			"Returns { state, repo, owner?, reviewer?, fallbackReviewer? }; absent is a typed state, never an empty reply. " +
+			"WHEN: use to know who owns and who reviews a repo before opening a pull request, or why none is routed. " +
+			"EXAMPLE: get_repo_route repo='vantageos-agency/vantage-peers'. " +
+			"FR: Lire la route de revue d'un dépôt GitHub de votre organisation : routé, sans relecteur ou absent.",
+		{
+			repo: z
+				.string()
+				.min(1)
+				.describe("The GitHub repository, as owner/name, e.g. 'vantageos-agency/vantage-peers'."),
+		},
+		{
+			outputSchema: getRepoRouteServedOutputSchema,
+			readOnlyHint: true,
+			idempotentHint: true,
+			openWorldHint: false,
+			destructiveHint: false,
+			title: "Get repo route",
+		},
+		async ({ repo }) => {
+			try {
+				const orgDenied = unresolvedOrgDenial("get_repo_route");
+				if (orgDenied) return orgDenied;
+				const route = (await convex.query("githubRepoMapping:getRoute" as any, {
+					repo,
+					...doorScopeArgs("githubRepoMapping:getRoute", undefined),
+				})) as Record<string, unknown> | null;
+				if (route === null || typeof route !== "object" || typeof route.state !== "string") {
+					return mcpError(
+						`githubRepoMapping:getRoute returned no route state for ${repo}; refusing to report an empty success`,
+					);
+				}
+				const structured: Record<string, unknown> = { ...route, repo };
+				return {
+					content: [{ type: "text" as const, text: JSON.stringify(structured, null, 2) }],
+					structuredContent: structured,
+				};
+			} catch (error: any) {
+				return mcpConvexError(error);
+			}
+		},
+	);
+
+	// ── check_repo_routing ──────────────────────────────────────────────────────
+
+	// oracle-justified: same tenant rule as get_repo_route and list_repo_mappings: both doors
+	//   (githubRepoMapping:getRoute, githubRepoMapping:list) resolve the org from the verified caller and the
+	//   MCP layer forwards verifiedOrg through doorScopeArgs; an unresolved caller is refused before any read.
+	defineTool(
+		server,
+		authCtx,
+		{
+			kind: "filtered",
+			reason:
+				"unresolvedOrgDenial() refuses an unresolved caller; every read (getRoute per repo, list all pages) runs inside the caller's verified org",
+		},
+		"check_repo_routing",
+		"Check that a list of repos is fully routed in your organisation, against the org's whole routing table. " +
+			"Returns { routed[], unreviewed[], missing[], stale[], complete }; stale are mapped repos not in your list, complete is true only when missing, unreviewed and stale are all empty. " +
+			"WHEN: use after listing your real GitHub repos, to find repos with no owner, no reviewer, or a mapping for a repo that is gone. " +
+			"EXAMPLE: check_repo_routing repos=['vantageos-agency/vantage-peers','vantageos-agency/vantage-registry']. " +
+			"FR: Vérifier qu'une liste de dépôts est entièrement routée dans votre organisation.",
+		{
+			repos: z
+				.array(z.string().min(1))
+				.min(1)
+				.max(500)
+				.describe(
+					"The organisation's real repository list, each as owner/name; 1 to 500. Duplicates are counted once.",
+				),
+		},
+		{
+			outputSchema: checkRepoRoutingServedOutputSchema,
+			readOnlyHint: true,
+			idempotentHint: true,
+			openWorldHint: false,
+			destructiveHint: false,
+			title: "Check repo routing",
+		},
+		async ({ repos }) => {
+			try {
+				const orgDenied = unresolvedOrgDenial("check_repo_routing");
+				if (orgDenied) return orgDenied;
+				const wanted = [...new Set(repos)];
+				const routed: string[] = [];
+				const unreviewed: string[] = [];
+				const missing: string[] = [];
+				const BATCH = 20;
+				for (let i = 0; i < wanted.length; i += BATCH) {
+					const batch = wanted.slice(i, i + BATCH);
+					const answers = await Promise.all(
+						batch.map(
+							(repo) =>
+								convex.query("githubRepoMapping:getRoute" as any, {
+									repo,
+									...doorScopeArgs("githubRepoMapping:getRoute", undefined),
+								}) as Promise<{ state?: string } | null>,
+						),
+					);
+					for (let j = 0; j < batch.length; j++) {
+						const state = answers[j]?.state;
+						if (state === "routed") routed.push(batch[j]);
+						else if (state === "unreviewed") unreviewed.push(batch[j]);
+						else if (state === "absent") missing.push(batch[j]);
+						else {
+							return mcpError(
+								`githubRepoMapping:getRoute returned no route state for ${batch[j]}; refusing to report an incomplete check`,
+							);
+						}
+					}
+				}
+				// Every page of the org's table, until the door's cursor is exhausted.
+				const known = new Set(wanted);
+				const stale: string[] = [];
+				let cursor: string | undefined;
+				do {
+					const page = (await convex.query("githubRepoMapping:list" as any, {
+						limit: 200,
+						fields: "lite",
+						cursor,
+						...doorScopeArgs("githubRepoMapping:list", undefined),
+					})) as { items?: Array<{ repo: string }>; nextCursor?: string | null };
+					const items = requireItems(page, "check_repo_routing", "githubRepoMapping:list") as Array<{
+						repo: string;
+					}>;
+					for (const row of items) if (!known.has(row.repo)) stale.push(row.repo);
+					cursor = typeof page.nextCursor === "string" ? page.nextCursor : undefined;
+				} while (cursor !== undefined);
+				const structured: Record<string, unknown> = {
+					routed,
+					unreviewed,
+					missing,
+					stale,
+					complete: missing.length === 0 && unreviewed.length === 0 && stale.length === 0,
+				};
+				return {
+					content: [{ type: "text" as const, text: JSON.stringify(structured, null, 2) }],
 					structuredContent: structured,
 				};
 			} catch (error: any) {
