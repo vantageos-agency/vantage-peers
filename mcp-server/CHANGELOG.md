@@ -2,6 +2,19 @@
 
 ## [Unreleased]
 
+## [5.1.0] — 2026-11-25
+
+A minor release: two new read tools. No existing tool input or output changes. Each entry names the product it concerns.
+
+### Added
+
+- Cloud and Self-host: `get_repo_route` reads who owns and who reviews one GitHub repository in your organisation: `routed` (owner and reviewer), `unreviewed` (owner, no reviewer) or `absent` (no row), always a typed state, never an empty reply. Another organisation's row answers `absent`. ([Tool inputs and outputs](README.md#tool-inputs-and-outputs))
+- Cloud and Self-host: `check_repo_routing` takes your organisation's real repository list and returns which repos are `routed`, `unreviewed`, `missing` (no row) and `stale` (a row for a repo not in your list), with `complete` true only when the last three are empty. It reads every page of your routing table. ([Tool inputs and outputs](README.md#tool-inputs-and-outputs))
+
+### Changed
+
+- Self-host: the server calls one more backend function, `githubRepoMapping:getRoute` (154 called functions, 5.0.3: 153); the required backend contract stays 30. A backend that lacks `getRoute` is refused at start, naming it. Deploy the backend of this release first, then upgrade this package. ([Backend compatibility check](README.md#backend-compatibility-check))
+
 ## [5.0.3] — 2026-11-25
 
 A patch release. Tool inputs and outputs are unchanged. Each entry names the product it concerns.

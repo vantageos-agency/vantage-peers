@@ -409,6 +409,13 @@ So upgrade in this order: deploy the backend of the same release first, then upg
 
 ## Release notes
 
+### 5.1.0
+
+_Applies to: Cloud and Self-host._ A minor release: two new read tools; existing tools are unchanged.
+
+- Cloud and Self-host: `get_repo_route` reads the review route of one repository (routed, unreviewed or absent) and `check_repo_routing` checks a repository list against your organisation's routing table (routed, unreviewed, missing, stale) (see [Tool inputs and outputs](#tool-inputs-and-outputs)).
+- Self-host: one more called backend function (`githubRepoMapping:getRoute`, 154 in all), contract still 30; deploy the backend first (see [Backend compatibility check](#backend-compatibility-check)).
+
 ### 5.0.3
 
 _Applies to: Cloud and Self-host._ A patch release: tool inputs and outputs are unchanged.
