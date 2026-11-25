@@ -8237,7 +8237,10 @@
 				"isError": false,
 				"jsonKeys": ["state", "repo"]
 			},
-			"expectations": ["state is routed, unreviewed or absent, never an empty reply", "repo echoes the repo asked"],
+			"expectations": [
+				"state is routed, unreviewed or absent, never an empty reply",
+				"repo echoes the repo asked"
+			],
 			"source": "src/tools.ts:10603"
 		},
 		{
@@ -8254,7 +8257,9 @@
 				"isError": false,
 				"textIncludes": ["absent"]
 			},
-			"expectations": ["a repo with no mapping in the caller's organisation answers state absent, not an error"],
+			"expectations": [
+				"a repo with no mapping in the caller's organisation answers state absent, not an error"
+			],
 			"source": "src/tools.ts:10603"
 		},
 		{
@@ -8272,7 +8277,10 @@
 					"repo"
 				]
 			},
-			"expectations": ["`repo` is required", "the SDK refuses before the handler runs, so no backend call is made"],
+			"expectations": [
+				"`repo` is required",
+				"the SDK refuses before the handler runs, so no backend call is made"
+			],
 			"source": "src/tools.ts:10603"
 		},
 		{
@@ -8289,7 +8297,9 @@
 				"isError": false,
 				"jsonKeys": ["routed", "unreviewed", "missing", "stale", "complete"]
 			},
-			"expectations": ["complete is true only when missing, unreviewed and stale are all empty"],
+			"expectations": [
+				"complete is true only when missing, unreviewed and stale are all empty"
+			],
 			"source": "src/tools.ts:10660"
 		},
 		{
@@ -8306,7 +8316,9 @@
 				"isError": false,
 				"jsonKeys": ["stale", "complete"]
 			},
-			"expectations": ["every page of the organisation's table is read; a mapped repo not in the list is stale"],
+			"expectations": [
+				"every page of the organisation's table is read; a mapped repo not in the list is stale"
+			],
 			"source": "src/tools.ts:10660"
 		},
 		{
@@ -8326,7 +8338,10 @@
 					"repos"
 				]
 			},
-			"expectations": ["repos needs at least one entry", "the SDK refuses before the handler runs, so no backend call is made"],
+			"expectations": [
+				"repos needs at least one entry",
+				"the SDK refuses before the handler runs, so no backend call is made"
+			],
 			"source": "src/tools.ts:10660"
 		}
 	]
