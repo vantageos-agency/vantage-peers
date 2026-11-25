@@ -1075,14 +1075,20 @@ export const create = mutation({
 			);
 		}
 		const isReview = computeIsReviewTask(taskArgs.title, taskArgs.tags);
-		await requireTaskRoutedAsDeclared(ctx, {
-			door: "tasks:create",
-			repo: isReview ? repoOfReviewTask(taskArgs.title, repo) : repo,
-			assignedToId,
-			isReview,
-			tenant: rowOrgId,
-			clerkOrgId: scope.orgClerkId,
-		});
+		// The route is judged on the STORED task (its assignedToId), after the insert, inside
+		// the same transaction: a refusal rolls the insert back.
+		const routedRepo = isReview ? repoOfReviewTask(taskArgs.title, repo) : repo;
+		const judgeRoute = async (taskId: Id<"tasks">): Promise<Id<"tasks">> => {
+			await requireTaskRoutedAsDeclared(ctx, {
+				door: "tasks:create",
+				repo: routedRepo,
+				taskId,
+				isReview,
+				tenant: rowOrgId,
+				clerkOrgId: scope.orgClerkId,
+			});
+			return taskId;
+		};
 		// A fleet-master row (no organisation slug) carries the operator organisation's
 		// permanent ID, so the erase rule can place it.
 		const fleetClerkOrgId =
@@ -1097,13 +1103,15 @@ export const create = mutation({
 			// Last check before the write: a caller refused for who they are
 			// learns nothing about the project rule.
 			taskArgs.project = requireProject(taskArgs.project, "tasks:create");
-			return await insertTask(
-				ctx,
-				{ ...taskArgs, assignedTo, createdBy: actor, lastActedBy: actor },
-				linkedAssignee?.orgSlug ?? rowOrgId,
-				undefined,
-				{ createdById: actor, assignedToId },
-				fleetClerkOrgId,
+			return await judgeRoute(
+				await insertTask(
+					ctx,
+					{ ...taskArgs, assignedTo, createdBy: actor, lastActedBy: actor },
+					linkedAssignee?.orgSlug ?? rowOrgId,
+					undefined,
+					{ createdById: actor, assignedToId },
+					fleetClerkOrgId,
+				),
 			);
 		}
 		// M7: createdById is the VERIFIED caller's ID (scope.callerActorId, from the
@@ -1114,13 +1122,15 @@ export const create = mutation({
 		const createdById = scope.callerActorId;
 		// Last check before the write (see the human path above).
 		taskArgs.project = requireProject(taskArgs.project, "tasks:create");
-		return await insertTask(
-			ctx,
-			{ ...taskArgs, assignedTo, createdBy: scope.callerLabel ?? taskArgs.createdBy },
-			linkedAssignee?.orgSlug ?? rowOrgId,
-			undefined,
-			{ ...(createdById !== undefined ? { createdById } : {}), assignedToId },
-			fleetClerkOrgId,
+		return await judgeRoute(
+			await insertTask(
+				ctx,
+				{ ...taskArgs, assignedTo, createdBy: scope.callerLabel ?? taskArgs.createdBy },
+				linkedAssignee?.orgSlug ?? rowOrgId,
+				undefined,
+				{ ...(createdById !== undefined ? { createdById } : {}), assignedToId },
+				fleetClerkOrgId,
+			),
 		);
 	},
 });
@@ -6899,23 +6909,13 @@ export const createOrUpdateReviewTask = internalMutation({
 			return target._id;
 		}
 
-		// An explicit reviewer is the routed one (or its fallback) for an org that
-		// adopted routing; an override is never a way around the route.
-		if (args.assignedTo !== undefined) {
-			await requireReviewOverrideRouted(
-				ctx,
-				"tasks:createOrUpdateReviewTask",
-				args.repoFullName,
-				(await taskActorIdFields(ctx, undefined, { assignedTo: args.assignedTo })).assignedToId,
-			);
-		}
 		const assignedTo =
 			args.assignedTo ?? (await resolveReviewer(ctx, args.repoFullName)).assignee;
 		// REVIEWER_UNRESOLVED: no task is created — never one on the author.
 		// The caller (convex/http.ts) surfaces it to the coordinator channel(s).
 		if (assignedTo === null) return null;
 
-		return await ctx.db.insert("tasks", {
+		const insertedId = await ctx.db.insert("tasks", {
 			title,
 			description: args.description,
 			project: args.project,
@@ -6949,6 +6949,17 @@ export const createOrUpdateReviewTask = internalMutation({
 			reviewPrRepoFullName: args.repoFullName,
 			reviewPrNumber: args.prNumber,
 		});
+		// An explicit reviewer is the routed one (or its fallback) for an org that adopted
+		// routing; judged on the STORED row, so an override is never a way around the route.
+		if (args.assignedTo !== undefined) {
+			await requireReviewOverrideRouted(
+				ctx,
+				"tasks:createOrUpdateReviewTask",
+				args.repoFullName,
+				insertedId,
+			);
+		}
+		return insertedId;
 	},
 });
 
