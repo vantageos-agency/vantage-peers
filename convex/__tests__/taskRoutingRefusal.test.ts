@@ -510,3 +510,69 @@ describe("githubRepoMapping:add stores the agent IDs", () => {
 		expect(msg).toContain("route-has-no-agent-ids");
 	});
 });
+
+describe("the open-pr review title names the repo; a review task whose repo cannot be derived is refused in an adopted org", () => {
+	// The sanctioned open-pr flow titles a review task `[REVIEW] PR #<n> <owner/name> — <scope>`
+	// and passes no `repo`; these titles are used VERBATIM.
+	const OPEN_PR = (slug: string) => `[REVIEW] PR #4 ${slug}/mine — scope`;
+
+	test("DENY: open-pr title + a reviewer who is not the routed one -> reviewer-not-routed", async () => {
+		const t = makeT();
+		await seed(t);
+		const msg = await refusal(create(t, "org-a", { title: OPEN_PR("org-a"), assignedTo: "stranger" }));
+		expect(msg).toContain("reviewer-not-routed");
+		expect(await taskCount(t)).toBe(0);
+	});
+
+	test("ADMIT: open-pr title + the routed reviewer (and its fallback) -> created", async () => {
+		const t = makeT();
+		await seed(t);
+		expect(await create(t, "org-a", { title: OPEN_PR("org-a"), assignedTo: "rev" })).toBeTruthy();
+		expect(await create(t, "org-a", { title: OPEN_PR("org-a"), assignedTo: "rev2" })).toBeTruthy();
+	});
+
+	test("the tag is case-insensitive and anything may follow the repo", async () => {
+		const t = makeT();
+		await seed(t);
+		const msg = await refusal(
+			create(t, "org-a", { title: "[review] PR #12 org-a/mine", assignedTo: "stranger" }),
+		);
+		expect(msg).toContain("reviewer-not-routed");
+		const longTail = await refusal(
+			create(t, "org-a", {
+				title: "[REVIEW] PR #7 org-a/mine — scope: a long tail, with: punctuation (and more)",
+				assignedTo: "stranger",
+			}),
+		);
+		expect(longTail).toContain("reviewer-not-routed");
+	});
+
+	test("DENY: a review task whose repo is derivable from neither `repo` nor the title -> review-repo-unresolved", async () => {
+		const t = makeT();
+		await seed(t);
+		for (const over of [
+			{ title: "[REVIEW] the payroll change", assignedTo: "rev" },
+			{ title: "payroll change", assignedTo: "rev", tags: ["review"] },
+		]) {
+			const msg = await refusal(create(t, "org-a", over));
+			expect(msg).toContain("RBAC_DENIED");
+			expect(msg).toContain("review-repo-unresolved");
+			expect(msg).toContain("[REVIEW] PR #<n> <owner/name>");
+		}
+		expect(await taskCount(t)).toBe(0);
+	});
+
+	test("NOT ADOPTED: the same review tasks are created as today", async () => {
+		const t = makeT();
+		await seed(t);
+		expect(await create(t, "org-b", { title: "[REVIEW] the payroll change", assignedTo: "rev" })).toBeTruthy();
+		expect(await create(t, "org-b", { title: "payroll change", assignedTo: "stranger", tags: ["review"] })).toBeTruthy();
+		expect(await create(t, "org-b", { title: OPEN_PR("org-b"), assignedTo: "stranger" })).toBeTruthy();
+	});
+
+	test("a NON-review task with no repo is unchanged in an adopted org", async () => {
+		const t = makeT();
+		await seed(t);
+		expect(await create(t, "org-a", { title: "plain work", assignedTo: "stranger" })).toBeTruthy();
+	});
+});
