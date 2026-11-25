@@ -1133,12 +1133,18 @@ def prod_action_in_heredoc_to_shell(cmd: str, binary: str = "convex"):
 #   - a script FILE run by an interpreter: its text is not read;
 #   - a GET to an endpoint that is not `api/query` (Convex writes are POSTs; a
 #     GET is not counted as a write);
-#   - a value assigned in an EARLIER segment of the line: the target is judged
-#     in the segment that reaches it, and an unresolved target fails closed.
+#   - a URL source that is a bare identifier or a function result (`sys.argv[1]`,
+#     a local variable): it is neither an environment read, a shell variable nor a
+#     command substitution, so url_sources() cannot name it. A dev host in the SAME
+#     segment still certifies such a write as dev. Declared, Medium; the follow-up
+#     extracts the URL argument of the write call;
+#   - a value assigned in an EARLIER segment of the line: judged where it is used,
+#     and an unresolved source fails closed.
+
 # ---------------------------------------------------------------------------
 WRITE_VECTOR_HEADS = frozenset({
     "curl", "wget", "http", "https", "httpie", "xh", "fetch",
-    "python", "python2", "python3", "node", "nodejs", "bun", "deno",
+    "python", "node", "nodejs", "bun", "deno",
     "tsx", "ts-node", "npx", "bunx", "ruby", "perl", "php",
 })
 
@@ -1163,10 +1169,36 @@ WRITE_SIGNAL_RE = re.compile(
 # and `"api/mut""ation"` both become `api/mutation`.
 _FLATTEN_RE = re.compile(r"[\"'`+\\\s]")
 _HOST_RE = re.compile(r"\b([a-z0-9][a-z0-9-]*)\.convex\.(?:cloud|site)\b", re.IGNORECASE)
-_ENV_URL_NAME_RE = re.compile(r"\b[A-Z0-9_]*CONVEX_[A-Z0-9_]*URL\b")
-_INLINE_URL_ASSIGN_RE = re.compile(
-    r"\b([A-Z0-9_]*CONVEX_[A-Z0-9_]*URL)=(?:'([^']*)'|\"([^\"]*)\"|([^\s'\";|&]*))"
+# Every read that NAMES a variable: os.environ, os.getenv, process.env, Deno.env,
+# Ruby ENV, Perl %ENV, PHP getenv / $_ENV, and a shell $VAR / ${VAR}. The shell
+# pattern skips the perl and php forms, which are read by their own patterns.
+_ENV_READ_RES = (
+    re.compile(r"os\.environ\[\s*['\"]([A-Za-z_]\w*)['\"]\s*\]"),
+    re.compile(r"os\.environ\.get\(\s*['\"]([A-Za-z_]\w*)['\"]"),
+    re.compile(r"os\.getenv\(\s*['\"]([A-Za-z_]\w*)['\"]"),
+    re.compile(r"process\.env\.([A-Za-z_]\w*)"),
+    re.compile(r"process\.env\[\s*['\"]([A-Za-z_]\w*)['\"]\s*\]"),
+    re.compile(r"Deno\.env\.get\(\s*['\"]([A-Za-z_]\w*)['\"]"),
+    re.compile(r"\bENV\[\s*['\"]([A-Za-z_]\w*)['\"]\s*\]"),
+    re.compile(r"\bENV\.fetch\(\s*['\"]([A-Za-z_]\w*)['\"]"),
+    re.compile(r"\$ENV\{\s*['\"]?([A-Za-z_]\w*)"),
+    re.compile(r"\bgetenv\(\s*['\"]([A-Za-z_]\w*)['\"]"),
+    re.compile(r"\$_(?:ENV|SERVER)\[\s*['\"]([A-Za-z_]\w*)['\"]\s*\]"),
+    re.compile(r"\$(?!ENV\{|_ENV\[|_SERVER\[)\{?([A-Za-z_]\w*)(?![\w.(\[])"),
 )
+# A read whose NAME is computed at runtime, or a command substitution: an
+# unresolvable URL source by construction.
+_ENV_DYNAMIC_RE = re.compile(
+    r"os\.environ\[(?!\s*['\"])|os\.getenv\((?!\s*['\"])|process\.env\[(?!\s*['\"])"
+    r"|Deno\.env\.get\((?!\s*['\"])|\bENV\[(?!\s*['\"])|\bgetenv\((?!\s*['\"])"
+    r"|\$\(|`|\$\{(?![A-Za-z_])"
+)
+# Auth material is not a destination: a key or a token never names a URL source.
+_AUTH_NAME_RE = re.compile(r"KEY|TOKEN|SECRET|PASSWORD|AUTH", re.IGNORECASE)
+_INLINE_ASSIGN_RE = re.compile(
+    r"\b([A-Za-z_][A-Za-z0-9_]*)=(?:'([^']*)'|\"([^\"]*)\"|([^\s'\";|&]*))"
+)
+
 
 
 class WriteVector:
@@ -1179,14 +1211,23 @@ class WriteVector:
         self.evidence = evidence
 
 
+def runtime_family(word: str) -> str:
+    """The FAMILY of a command word: `/usr/bin/python3.14` -> `python`, `node22` ->
+    `node`, `php8.3` -> `php`, `curl` -> `curl`. The `@version` pin is removed by
+    the shared `_strip_version_suffix`; a trailing runtime version is removed here,
+    so every version of an interpreter or HTTP client walks the same head test."""
+    base = _strip_version_suffix(os.path.basename(word))
+    return re.sub(r"(?<=[a-z])[0-9][0-9.]*$", "", base)
+
+
 def _segment_head(segment: str, tokens) -> str | None:
     if tokens is not None:
         if not tokens:
             return None
-        return tokens[0].rsplit("/", 1)[-1]
+        return runtime_family(tokens[0])
     # Un-tokenizable: the first word is still the head.
     words = segment.split(None, 1)
-    return words[0].rsplit("/", 1)[-1] if words else None
+    return runtime_family(words[0]) if words else None
 
 
 def runtime_write_vector(segment: str, tokens=None) -> WriteVector | None:
@@ -1220,19 +1261,28 @@ def convex_host_name(text: str | None) -> str | None:
     return match.group(1).lower() if match else None
 
 
-def convex_references(segment: str):
-    """(hosts, env_names, inline) for one segment: the deployment hosts it names
-    literally, the CONVEX_*URL variables it reads, and the value each of those
-    is assigned inline in the SAME segment. Values go back to the caller and are
-    never printed."""
+def url_sources(segment: str):
+    """(hosts, names, dynamic, inline) for one segment.
+
+    hosts: the Convex deployment hosts the segment names literally.
+    names: the variables it reads whose NAME is literal, auth material excluded.
+    dynamic: True when it reads a variable whose name is computed at runtime, or
+    a command substitution: a source that cannot be resolved.
+    inline: the NAME=value assignments made in the SAME segment.
+    Values go back to the caller and are never printed.
+    """
     hosts = [m.group(1).lower() for m in _HOST_RE.finditer(segment)]
-    env_names = sorted(set(_ENV_URL_NAME_RE.findall(segment)))
+    names = set()
+    for pattern in _ENV_READ_RES:
+        names.update(pattern.findall(segment))
+    names = {name for name in names if not _AUTH_NAME_RE.search(name)}
+    dynamic = _ENV_DYNAMIC_RE.search(segment) is not None
     inline = {}
-    for match in _INLINE_URL_ASSIGN_RE.finditer(segment):
+    for match in _INLINE_ASSIGN_RE.finditer(segment):
         inline[match.group(1)] = next(
             (g for g in match.groups()[1:] if g is not None), ""
         )
-    return hosts, env_names, inline
+    return hosts, names, dynamic, inline
 
 
 # ---------------------------------------------------------------------------
@@ -1245,7 +1295,7 @@ def convex_references(segment: str):
 # judges must judge these bodies first.
 # ---------------------------------------------------------------------------
 _INTERPRETER_STDIN_HEADS = frozenset({
-    "python", "python2", "python3", "node", "nodejs", "ruby", "perl", "php",
+    "python", "node", "nodejs", "ruby", "perl", "php",
 })
 
 
@@ -1261,7 +1311,7 @@ def heredoc_programs(cmd: str):
             toks = strip_transparent(_stage_tokens(stage))
             if not toks:
                 continue
-            head = _strip_version_suffix(os.path.basename(toks[0]))
+            head = runtime_family(toks[0])
             if _reads_program_from_stdin(toks):
                 yield (line, match.group(4), toks, True)
                 break

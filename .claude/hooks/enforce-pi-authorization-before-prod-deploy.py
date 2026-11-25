@@ -166,7 +166,17 @@ to dev is refused, and an unresolvable one is refused too (fail closed). A write
 that resolves to dev passes. The literal form uses the same target rule, so a
 literal dev URL passes and a literal prod URL is still refused. A dev deploy key
 and a read-only marker cannot excuse a runtime write on the same line.
+Fix (task k17bx73va6s36bg1qdqw0enjch8f97h2, review REVISE on PR #1768): the head is
+normalised by runtime_family() (which reuses _strip_version_suffix), so python3.12,
+/usr/bin/python3.14, node22, php8.3 and bun1 walk the same head test as their family.
+write_targets_dev() is dev only when EVERY URL source the write uses resolves to dev:
+every literal host and every variable read (any name, auth material excluded), and
+no read with a computed name and no command substitution. A dev host elsewhere in
+the command, or beside an unresolved source in the same segment, proves nothing.
 RESIDUE, stated (the full list is in the header of _lib/command_predicate.py):
+a URL source that is a bare identifier or a function result (sys.argv[1], a local
+variable), which is not an environment read: a dev host in the same segment still
+certifies it (Medium, declared; the follow-up extracts the write call's URL argument);
 a head outside WRITE_VECTOR_HEADS; a write whose segment carries no Convex token;
 a script FILE run by an interpreter (its text is not read); a GET to an endpoint
 that is not /api/query (not counted as a write); a value assigned in an EARLIER
@@ -204,7 +214,7 @@ try:
         WriteVector,
         carries_prod_action,
         convex_host_name,
-        convex_references,
+        url_sources,
         has_convex_context,
         heredoc_programs,
         runtime_write_vector,
@@ -461,13 +471,22 @@ def _deployment_class(name: str | None) -> str | None:
 
 
 def write_targets_dev(segment: str) -> bool:
-    """True only when EVERY Convex deployment the segment names or reaches
-    resolves to DEV. Nothing named at all is not dev; neither is a reference
-    that resolves to prod or to nothing."""
-    hosts, env_names, inline = convex_references(segment)
+    """True only when EVERY URL source the segment uses resolves to DEV.
+
+    The sources are: each literal deployment host the segment names; each variable
+    it reads (any name, auth material excluded), resolved from the value assigned
+    inline in the SAME segment or else from the hook's environment; and any read
+    whose name is computed at runtime, or a command substitution, which resolves to
+    nothing. A dev host elsewhere in the command proves nothing, and neither does a
+    dev host beside an unresolved source in the same segment. Nothing to resolve,
+    or any source that resolves to prod or to nothing, is not dev.
+    """
+    hosts, names, dynamic, inline = url_sources(segment)
     classes = [_deployment_class(host) for host in hosts]
-    for var in env_names:
-        value = inline[var] if var in inline else (os.environ.get(var) or "")
+    if dynamic:
+        classes.append(None)
+    for name in names:
+        value = inline[name] if name in inline else (os.environ.get(name) or "")
         classes.append(_deployment_class(convex_host_name(value)))
     if deploy_key_env(segment) == "prod":
         classes.append("prod")
