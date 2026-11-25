@@ -1394,10 +1394,10 @@ def _write_pubkeys(tmp_path, issuers, name="pubkeys.json"):
     return path
 
 
-def _payload(floor, **over):
+def _payload(base_floor, **over):
     body = {
         "v": 1, "purpose": "PROD-DEPLOY-AUTHORIZED", "task": _OFFLINE_TASK,
-        "floor": floor, "deployment": _OFFLINE_NAME, "issuer": "pi",
+        "floor": base_floor, "deployment": _OFFLINE_NAME, "issuer": "pi",
         "orchestrator": "sigma", "iat": int(time.time()),
     }
     body.update(over)

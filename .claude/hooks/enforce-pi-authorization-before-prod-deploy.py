@@ -12,6 +12,17 @@ unless one of:
     `# read-only-query: <reason>` (k174v3sw, Day-111). Scoped to convex-run
     only -- a `convex deploy` can NEVER bypass via this marker.
 
+OFFLINE SIGNATURE (task k176yhdtn9kbht75skevmhgwn18fb6wp): a command that carries
+`# pi-auth-payload: <b64url json> # pi-auth-sig: <b64url ed25519>` next to the
+`# pi-authorized: k<id>` marker is judged by VERIFYING THAT SIGNATURE LOCALLY
+against `.claude/config/deploy-authority-pubkeys.json`. No network is touched: a
+Cloudflare bot filter in front of the identity provider (HTTP 403 / code 1010 on an
+unknown User-Agent) once stopped every deploy of the fleet, and an unreachable third
+party must never again be a reason. The payload binds task, commit floor, target
+deployment, orchestrator and the issued-at the window is measured on. See the
+OFFLINE SIGNATURE section below. The paragraphs that follow describe the NETWORK path
+(phase 1 keeps it for an unsigned token; NETWORK_AUTH_PATH_ENABLED switches it off).
+
 Whichever form carries the id, the hook FETCHES the referenced VP task via the
 Convex HTTP public API (no CLI auth required -- workspace-agnostic) and
 validates it before allowing:
@@ -194,9 +205,11 @@ Audit trail: /tmp/pi-auth-prod-deploy.log (append-only per call).
 Exit 0 = allow
 Exit 2 = block
 """
+import base64
 import json
 import os
 import re
+import subprocess
 import sys
 import time
 import urllib.error
@@ -1483,6 +1496,353 @@ def audit_log(entry: dict) -> None:
 
 
 # ---------------------------------------------------------------------------
+# OFFLINE SIGNATURE (task k176yhdtn9kbht75skevmhgwn18fb6wp)
+#
+# The authorising orchestrator signs, with an Ed25519 key, a canonical payload
+# that covers everything this guard checks. The guard verifies it LOCALLY
+# against the public keys in `.claude/config/deploy-authority-pubkeys.json`.
+# No network is touched on this path: a third party that is unreachable, or that
+# filters our User-Agent, can never again be the reason the fleet cannot deploy.
+#
+# Command form (shell comments next to the existing marker, one line):
+#   <deploy> # pi-authorized: k<task> # pi-auth-payload: <b64url json> # pi-auth-sig: <b64url sig>
+#
+# Payload (sorted-key compact JSON, UTF-8; the signature covers those exact bytes):
+#   v            1
+#   purpose      "PROD-DEPLOY-AUTHORIZED"
+#   task         the token task id            == the `# pi-authorized:` id
+#   floor        authorised commit floor, full 40-hex SHA
+#                                             == the floor given to convex-prod-deploy.sh,
+#                                                or, when the command carries none, an
+#                                                ancestor of this checkout's HEAD (local git)
+#   deployment   target deployment name       == the deployment the command targets
+#   issuer       the signing authority        -> key list in the config
+#   orchestrator the orchestrator authorised  == PI_AUTH_ORCHESTRATOR, when declared
+#   iat          issued-at, unix seconds      -> TASK_TTL_SEC window, on the SIGNED value
+#
+# THREE EXITS, as before: ALLOW (valid signature, in window, fields match);
+# BLOCK (absent/bad signature, unknown issuer, expired, a field that does not match
+# what the command does -- each named); REFUSE TO JUDGE (the public-key config is
+# absent or malformed, the verifier cannot run, or the checkout cannot be read for
+# the floor). A presented signature that does not verify decides ALONE: the network
+# path below cannot rescue it, so a tampered token is never "retried" into an allow.
+# ---------------------------------------------------------------------------
+NETWORK_AUTH_PATH_ENABLED = True
+PUBKEYS_PATH = os.environ.get("VP_GUARD_PUBKEYS_FILE") or str(
+    Path(__file__).resolve().parent.parent / "config" / "deploy-authority-pubkeys.json"
+)
+ED25519_BACKEND = (os.environ.get("VP_GUARD_ED25519_BACKEND") or "auto").strip()
+SIGNED_PAYLOAD_VERSION = 1
+SIGNED_PAYLOAD_PURPOSE = "PROD-DEPLOY-AUTHORIZED"
+SIGNATURE_FUTURE_SKEW_SEC = 300
+GIT_TIMEOUT_SEC = 10
+
+PAYLOAD_MARKER_RE = re.compile(r"#\s*pi-auth-payload:[ \t]*(\S*)")
+SIG_MARKER_RE = re.compile(r"#\s*pi-auth-sig:[ \t]*(\S*)")
+BASE64URL_RE = re.compile(r"[A-Za-z0-9_-]+")
+FULL_SHA_RE = re.compile(r"[0-9a-f]{40}")
+SCRIPT_FLOOR_RE = re.compile(
+    r"convex-prod-deploy\.sh\s+(k[a-z0-9]{15,40})\s+([0-9a-fA-F]{7,40})\b"
+)
+DEPLOY_KEY_NAME_RE = re.compile(r"CONVEX_DEPLOY_KEY=['\"]?prod:([A-Za-z0-9-]+)\|")
+SIGNED_FIELD_TYPES = {
+    "v": int, "purpose": str, "task": str, "floor": str, "deployment": str,
+    "issuer": str, "orchestrator": str, "iat": int,
+}
+
+
+class PubkeyConfigError(Exception):
+    """The public-key config is absent or malformed: the guard cannot judge."""
+
+
+def has_signature_markers(command: str) -> bool:
+    """True when the command carries either offline-signature fragment (RAW command)."""
+    return bool(PAYLOAD_MARKER_RE.search(command) or SIG_MARKER_RE.search(command))
+
+
+def load_authority_pubkeys(path: str) -> dict:
+    """issuer -> list of raw 32-byte public keys. Raises PubkeyConfigError on ANY defect.
+
+    Strict on purpose: a config that is half-understood is a config the guard cannot
+    judge by, and judging by half of it is how a rotation silently drops a key."""
+    try:
+        text = Path(path).read_text(encoding="utf-8")
+    except OSError as error:
+        raise PubkeyConfigError(f"{path} cannot be read ({error})") from error
+    try:
+        data = json.loads(text)
+    except ValueError as error:
+        raise PubkeyConfigError(f"{path} is not valid JSON ({error})") from error
+    if not isinstance(data, dict):
+        raise PubkeyConfigError(f"{path} must be a JSON object of issuer -> [base64 keys]")
+    issuers: dict = {}
+    for issuer, keys in data.items():
+        if not issuer or not isinstance(keys, list) or not keys:
+            raise PubkeyConfigError(f"{path}: issuer {issuer!r} needs a non-empty list of keys")
+        decoded = []
+        for key in keys:
+            try:
+                raw = base64.b64decode(key, validate=True) if isinstance(key, str) else b""
+            except ValueError:
+                raw = b""
+            if len(raw) != 32:
+                raise PubkeyConfigError(
+                    f"{path}: a key of issuer {issuer!r} is not a base64 raw 32-byte Ed25519 key"
+                )
+            decoded.append(raw)
+        issuers[issuer] = decoded
+    return issuers
+
+
+def canonical_payload_bytes(payload: dict) -> bytes:
+    """The ONE canonical form: sorted keys, compact separators, UTF-8."""
+    return json.dumps(
+        payload, sort_keys=True, separators=(",", ":"), ensure_ascii=False
+    ).encode("utf-8")
+
+
+def _b64url_decode(text: str) -> bytes:
+    if not BASE64URL_RE.fullmatch(text):
+        raise ValueError("not base64url")
+    return base64.urlsafe_b64decode(text + "=" * (-len(text) % 4))
+
+
+def command_deployments(command: str) -> set:
+    """The deployment NAMES the command itself targets: an inline prod deploy key's
+    name, or a `<name>.convex.cloud|site` host. Empty when the command names none."""
+    names = {m.group(1).lower() for m in DEPLOY_KEY_NAME_RE.finditer(command)}
+    for match in re.finditer(r"https?://([a-z0-9-]+)\.convex\.(?:cloud|site)\b", command, re.I):
+        names.add(match.group(1).lower())
+    return names
+
+
+def command_script_floor(command: str) -> str | None:
+    """The floor handed to `convex-prod-deploy.sh <token> <floor>`, lowercased, or None."""
+    match = SCRIPT_FLOOR_RE.search(command)
+    return match.group(2).lower() if match else None
+
+
+def floor_reachable_from_head(floor: str) -> tuple:
+    """("yes"|"no"|"cannot", detail): is `floor` an ancestor of this checkout's HEAD?
+
+    Local git only. "cannot" is a checkout that cannot be read at all (REFUSE TO JUDGE);
+    a commit this checkout has never seen is "no" (BLOCK): the checkout is behind the floor."""
+    try:
+        inside = subprocess.run(
+            ["git", "rev-parse", "--git-dir"], capture_output=True, text=True,
+            timeout=GIT_TIMEOUT_SEC, check=False,
+        )
+        if inside.returncode != 0:
+            return "cannot", "the working directory is not a git checkout"
+        ancestor = subprocess.run(
+            ["git", "merge-base", "--is-ancestor", floor, "HEAD"], capture_output=True,
+            text=True, timeout=GIT_TIMEOUT_SEC, check=False,
+        )
+    except (OSError, subprocess.SubprocessError) as error:
+        return "cannot", f"git could not be run ({type(error).__name__}: {error})"
+    if ancestor.returncode == 0:
+        return "yes", "floor is an ancestor of HEAD"
+    if ancestor.returncode == 1:
+        return "no", "floor is not an ancestor of this checkout's HEAD"
+    return "no", "floor names no commit in this checkout"
+
+
+def _verdict(verdict: str, reason: str, detail: str, **extra) -> dict:
+    return {"verdict": verdict, "reason": reason, "detail": detail, **extra}
+
+
+def _invalid(detail: str, **extra) -> dict:
+    return _verdict("block", "offline-signature-invalid", detail, **extra)
+
+
+def _cannot_verify(detail: str, **extra) -> dict:
+    return _verdict("refuse-to-judge", "offline-signature-could-not-be-verified", detail, **extra)
+
+
+def _mismatch(field: str, detail: str, **extra) -> dict:
+    return _verdict("block", "offline-signature-field-mismatch", detail, field=field, **extra)
+
+
+def judge_offline_signature(command: str, now: float | None = None) -> dict:
+    """Decide on the command's offline signature. Returns a dict with `verdict`
+    ("allow" | "block" | "refuse-to-judge"), `reason`, `detail`, and audit extras.
+
+    No network call is made anywhere below this line."""
+    now = time.time() if now is None else now
+    task_id = extract_task_id(command)
+    caller = caller_orchestrator()
+    extra = {"task_id": task_id, "caller": caller, "assignee_checked": caller is not None}
+
+    payload_values = PAYLOAD_MARKER_RE.findall(command)
+    sig_values = SIG_MARKER_RE.findall(command)
+    for marker, values in (("pi-auth-payload", payload_values), ("pi-auth-sig", sig_values)):
+        if len(values) != 1 or not values[0]:
+            return _invalid(
+                f"the `# {marker}:` marker must appear exactly once with a value "
+                f"(found {len(values)}); the signature needs both fragments.", **extra)
+
+    # Everything that makes the guard UNABLE to judge is settled before anything is
+    # decided about the token: a broken config must not look like a bad signature.
+    try:
+        issuers = load_authority_pubkeys(PUBKEYS_PATH)
+    except PubkeyConfigError as error:
+        return _cannot_verify(f"public-key config: {error}", **extra)
+    try:
+        from _lib import ed25519_offline  # noqa: PLC0415 - failing here is a refusal, not a crash
+
+        backend = ed25519_offline.resolve_backend(ED25519_BACKEND)
+    except Exception as error:  # ImportError, VerifierUnavailable, anything else
+        return _cannot_verify(f"Ed25519 verifier: {type(error).__name__}: {error}", **extra)
+    extra["verifier"] = backend
+
+    try:
+        payload_bytes = _b64url_decode(payload_values[0])
+        signature = _b64url_decode(sig_values[0])
+        payload = json.loads(payload_bytes.decode("utf-8"))
+    except ValueError as error:  # includes UnicodeDecodeError and binascii.Error
+        return _invalid(f"the signature fragments cannot be decoded ({error}).", **extra)
+    if not isinstance(payload, dict):
+        return _invalid("the signed payload is not a JSON object.", **extra)
+
+    issuer = payload.get("issuer")
+    if not isinstance(issuer, str) or issuer not in issuers:
+        return _verdict(
+            "block", "offline-signature-unknown-issuer",
+            f"issuer {issuer!r} is not in {PUBKEYS_PATH}.", **extra)
+    extra["issuer"] = issuer
+
+    try:
+        verified = any(
+            ed25519_offline.verify(key, payload_bytes, signature, backend=backend)[0]
+            for key in issuers[issuer]
+        )
+    except Exception as error:
+        return _cannot_verify(f"Ed25519 verifier: {type(error).__name__}: {error}", **extra)
+    if not verified:
+        return _invalid(
+            f"no configured key of issuer {issuer!r} verifies this signature over this payload.",
+            **extra)
+    if canonical_payload_bytes(payload) != payload_bytes:
+        return _invalid(
+            "the signed payload is not in the canonical form "
+            "(sorted keys, compact separators, UTF-8).", **extra)
+
+    # From here on the payload is AUTHENTIC; what remains is whether it authorises THIS command.
+    for name, kind in SIGNED_FIELD_TYPES.items():
+        value = payload.get(name)
+        if not isinstance(value, kind) or isinstance(value, bool):
+            return _invalid(f"signed field {name!r} is missing or not a {kind.__name__}.", **extra)
+    if payload["v"] != SIGNED_PAYLOAD_VERSION or payload["purpose"] != SIGNED_PAYLOAD_PURPOSE:
+        return _invalid(
+            f"signed payload is not v{SIGNED_PAYLOAD_VERSION} {SIGNED_PAYLOAD_PURPOSE}.", **extra)
+    if not FULL_SHA_RE.fullmatch(payload["floor"]):
+        return _invalid("signed field 'floor' is not a full 40-hex commit SHA.", **extra)
+
+    age = int(now - payload["iat"])
+    extra["age_sec"] = age
+    if age > TASK_TTL_SEC:
+        return _verdict(
+            "block", "offline-signature-expired",
+            f"signed iat is {age}s old (age limit {TASK_TTL_SEC}s = {TASK_TTL_SEC // 60} min).",
+            **extra)
+    if age < -SIGNATURE_FUTURE_SKEW_SEC:
+        return _verdict(
+            "block", "offline-signature-expired",
+            f"signed iat is {-age}s in the future (allowed skew {SIGNATURE_FUTURE_SKEW_SEC}s).",
+            **extra)
+
+    if payload["task"] != task_id:
+        return _mismatch(
+            "task", f"signed task {payload['task']!r} is not the `# pi-authorized:` id {task_id!r}.",
+            **extra)
+    if caller is not None and payload["orchestrator"] != caller:
+        return _mismatch(
+            "orchestrator",
+            f"signed for orchestrator {payload['orchestrator']!r}, declared caller is {caller!r}.",
+            **extra)
+
+    targeted = command_deployments(command)
+    if targeted:
+        if targeted != {payload["deployment"].lower()}:
+            return _mismatch(
+                "deployment",
+                f"signed deployment {payload['deployment']!r}, the command targets {sorted(targeted)}.",
+                **extra)
+    else:
+        station_prod = _deployment_names()[0]
+        if not station_prod:
+            return _cannot_verify(
+                "the command names no deployment and this station knows no production "
+                "deployment name to compare against.", **extra)
+        if payload["deployment"].lower() not in station_prod:
+            return _mismatch(
+                "deployment",
+                f"signed deployment {payload['deployment']!r}, this station's production "
+                f"deployment is {sorted(station_prod)}.", **extra)
+
+    script_floor = command_script_floor(command)
+    if script_floor is not None:
+        if not payload["floor"].startswith(script_floor):
+            return _mismatch(
+                "floor",
+                f"signed floor {payload['floor']}, the deploy script is given {script_floor}.",
+                **extra)
+    else:
+        reachable, why = floor_reachable_from_head(payload["floor"])
+        if reachable == "cannot":
+            return _cannot_verify(f"floor cannot be checked: {why}.", **extra)
+        if reachable == "no":
+            return _mismatch("floor", f"signed floor {payload['floor']}: {why}.", **extra)
+
+    return _verdict("allow", "offline-signature-valid", "signature verified locally", **extra)
+
+
+def run_offline_signature(command: str) -> int:
+    """Judge, audit and report an offline-signature command. Returns 0 or 2."""
+    try:
+        result = judge_offline_signature(command)
+    except Exception as error:  # a crash here is not a verdict; it is a refusal to judge
+        result = _cannot_verify(f"the signature check crashed ({type(error).__name__}: {error})")
+    verdict, reason, detail = result["verdict"], result["reason"], result["detail"]
+    audit_log({
+        "ts": int(time.time()),
+        "command": command[:200],
+        **{k: v for k, v in result.items() if k != "detail"},
+        "detail": detail[:300],
+    })
+    if verdict == "allow":
+        return 0
+    if verdict == "refuse-to-judge":
+        print(
+            "COULD NOT CHECK: this guard could not verify the offline signature, "
+            "so it has judged NOTHING.\n"
+            "\n"
+            "This is NOT a refusal of your token -- it may well be valid. It is the "
+            "guard saying it cannot tell.\n"
+            f"\nWhat happened: {detail}\n"
+            "\n"
+            "Public keys live in .claude/config/deploy-authority-pubkeys.json "
+            "(issuer -> list of base64 raw 32-byte Ed25519 keys). No network is involved.\n"
+            "\n"
+            "Audit trail: /tmp/pi-auth-prod-deploy.log (verdict: refuse-to-judge)\n",
+            file=sys.stderr,
+        )
+        return 2
+    print(
+        f"BLOCKED: the offline signature does not authorize this deploy ({reason}).\n"
+        "\n"
+        f"{detail}\n"
+        "\n"
+        "Ask the authorising orchestrator for a fresh signature "
+        "(.claude/scripts/sign-deploy-authorization.py) rather than editing this one.\n"
+        "\n"
+        "Audit trail: /tmp/pi-auth-prod-deploy.log\n",
+        file=sys.stderr,
+    )
+    return 2
+
+
+# ---------------------------------------------------------------------------
 # Core hook logic (extracted for testability)
 # ---------------------------------------------------------------------------
 
@@ -1534,6 +1894,13 @@ def run_hook(command: str) -> int:
         })
         return 0
 
+    # OFFLINE SIGNATURE (task k176yhdtn9kbht75skevmhgwn18fb6wp). A command that
+    # carries signature fragments is judged by the signature ALONE -- locally, no
+    # network. A presented signature that fails is never rescued by the network
+    # path below: a tampered token must not be "retried" into an allow.
+    if has_signature_markers(command):
+        return run_offline_signature(command)
+
     # Pi-signed authorization check
     if not has_pi_authorization(command):
         audit_log({
@@ -1561,6 +1928,10 @@ def run_hook(command: str) -> int:
             "To proceed (only after Pi task [PROD-DEPLOY-AUTHORIZED] created):\n"
             "  CANONICAL: npx convex deploy --yes # pi-authorized: k<task-id>\n"
             "\n"
+            "  SIGNED (offline, no network): append the fragments printed by\n"
+            "    .claude/scripts/sign-deploy-authorization.py:\n"
+            "    npx convex deploy --yes # pi-authorized: k<task-id> # pi-auth-payload: <b64url> # pi-auth-sig: <b64url>\n"
+            "\n"
             "  (The shell # comment is ignored by the convex CLI but read by the hook.\n"
             "  The old flag `--pi-authorized-task=k<id>` is rejected by the convex CLI as an\n"
             "  unknown flag, and the env-var prefix `PI_AUTHORIZED_TASK_ID=k<id>` does not always\n"
@@ -1578,6 +1949,29 @@ def run_hook(command: str) -> int:
             "  `convex run` of a query -- can be allowed via `# read-only-query: <reason>`\n"
             "  (reason >= 3 chars). Nothing else on prod is covered: not `import`, `env set`,\n"
             "  `env remove`, `deploy`, nor any other subcommand.\n"
+            "\n"
+            "Audit trail: /tmp/pi-auth-prod-deploy.log\n",
+            file=sys.stderr,
+        )
+        return 2
+
+    # PHASE 2 SWITCH. With the network path disabled, an unsigned `# pi-authorized:`
+    # marker proves nothing and nothing is read from anywhere: refuse, by name.
+    if not NETWORK_AUTH_PATH_ENABLED:
+        audit_log({
+            "ts": int(time.time()),
+            "verdict": "block",
+            "reason": "offline-signature-required",
+            "task_id": extract_task_id(command),
+            "command": command[:200],
+        })
+        print(
+            "BLOCKED: this deploy carries a `# pi-authorized:` id but no offline signature "
+            "(offline-signature-required).\n"
+            "\n"
+            "The guard no longer reads the token from the network. The authorising "
+            "orchestrator signs it: .claude/scripts/sign-deploy-authorization.py prints the "
+            "two fragments `# pi-auth-payload: ...` and `# pi-auth-sig: ...` to append.\n"
             "\n"
             "Audit trail: /tmp/pi-auth-prod-deploy.log\n",
             file=sys.stderr,
