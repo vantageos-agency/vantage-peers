@@ -70,6 +70,8 @@ async function run(
 			items: Array<{ repo: string }>;
 			nextCursor: string | null;
 		}>;
+		// What the routedElsewhere door answers (default: it does not apply to the caller).
+		elsewhere?: { applicable: boolean; elsewhere: string[] };
 	} = {},
 ) {
 	const tools = new Map<string, Handler>();
@@ -84,6 +86,15 @@ async function run(
 			calls.push({ name, args: a });
 			if (name === "githubRepoMapping:getRoute") {
 				return backend.routes?.[a.repo as string] ?? { state: "absent" };
+			}
+			if (name === "githubRepoMapping:routedElsewhere") {
+				const asked = (a.repos as string[]) ?? [];
+				const answer = backend.elsewhere ?? { applicable: false, elsewhere: [] };
+				// The fake answers only about the repos it was asked.
+				return {
+					applicable: answer.applicable,
+					elsewhere: answer.elsewhere.filter((r) => asked.includes(r)),
+				};
 			}
 			if (name === "githubRepoMapping:list") {
 				const pages = backend.pages ?? [{ items: [], nextCursor: null }];
@@ -254,6 +265,7 @@ describe("check_repo_routing", () => {
 			unreviewed: ["acme/b"],
 			missing: ["acme/c"],
 			outOfScope: [],
+			routedElsewhere: 0,
 			stale: ["acme/old1", "acme/old2"],
 			complete: false,
 		});
@@ -299,6 +311,7 @@ describe("check_repo_routing", () => {
 			unreviewed: [],
 			missing: [],
 			outOfScope: [],
+			routedElsewhere: 0,
 			stale: [],
 			complete: true,
 		});
@@ -331,6 +344,7 @@ describe("check_repo_routing", () => {
 			unreviewed: [],
 			missing: [],
 			outOfScope: ["acme/fork"],
+			routedElsewhere: 0,
 			stale: [],
 			complete: true,
 		});
@@ -355,6 +369,69 @@ describe("check_repo_routing", () => {
 		expect(r.body?.outOfScope).toEqual(["acme/fork"]);
 		expect(r.body?.missing).toEqual(["acme/c"]);
 		expect(r.body?.complete).toBe(false);
+	});
+
+	it("a repo routed in ANOTHER org is counted, not missing, and does not block completeness", async () => {
+		const r = await run(
+			"check_repo_routing",
+			CLIENT_SEAT,
+			{ repos: ["acme/a", "client/ws", "client/ws2"] },
+			{
+				routes,
+				pages: [{ items: [{ repo: "acme/a" }], nextCursor: null }],
+				elsewhere: { applicable: true, elsewhere: ["client/ws", "client/ws2"] },
+			},
+		);
+		expect(r.body).toEqual({
+			routed: ["acme/a"],
+			unreviewed: [],
+			missing: [],
+			outOfScope: [],
+			routedElsewhere: 2,
+			stale: [],
+			complete: true,
+		});
+		expect(r.structured).toEqual(r.body);
+		const doors = r.calls.filter((c) => c.name === "githubRepoMapping:routedElsewhere");
+		expect(doors).toHaveLength(1);
+		expect(doors[0].args.repos).toEqual(["client/ws", "client/ws2"]);
+		expect(doors[0].args.verifiedOrg).toEqual({ orgSlug: ORG });
+	});
+
+	it("a repo with no row anywhere is still missing beside one routed elsewhere", async () => {
+		const r = await run(
+			"check_repo_routing",
+			CLIENT_SEAT,
+			{ repos: ["client/ws", "acme/none"] },
+			{
+				pages: [{ items: [], nextCursor: null }],
+				elsewhere: { applicable: true, elsewhere: ["client/ws"] },
+			},
+		);
+		expect(r.body?.routedElsewhere).toBe(1);
+		expect(r.body?.missing).toEqual(["acme/none"]);
+		expect(r.body?.complete).toBe(false);
+	});
+
+	it("where the door does not apply (a client org), absent repos stay missing and nothing is counted", async () => {
+		const r = await run(
+			"check_repo_routing",
+			CLIENT_SEAT,
+			{ repos: ["client/ws"] },
+			{ pages: [{ items: [], nextCursor: null }], elsewhere: { applicable: false, elsewhere: [] } },
+		);
+		expect(r.body?.routedElsewhere).toBe(0);
+		expect(r.body?.missing).toEqual(["client/ws"]);
+	});
+
+	it("the door is not asked when no repo is missing", async () => {
+		const r = await run(
+			"check_repo_routing",
+			CLIENT_SEAT,
+			{ repos: ["acme/a"] },
+			{ routes, pages: [{ items: [{ repo: "acme/a" }], nextCursor: null }] },
+		);
+		expect(r.calls.filter((c) => c.name === "githubRepoMapping:routedElsewhere")).toHaveLength(0);
 	});
 
 	it("an unreviewed repo alone makes the check incomplete", async () => {
