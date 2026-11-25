@@ -80,6 +80,7 @@ export const MCP_CALLED_FUNCTIONS: readonly string[] = [
 	"githubOwnerBinding:listUnprovenMappings",
 	"githubRepoMapping:add",
 	"githubRepoMapping:getByRepo",
+	"githubRepoMapping:getRoute",
 	"githubRepoMapping:list",
 	"githubRepoMapping:remove",
 	"improvisationDigest:scanWindow",

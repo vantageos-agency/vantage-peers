@@ -49,7 +49,12 @@ type Result = {
 type Handler = (args: Record<string, unknown>) => Promise<Result>;
 type Call = { name: string; args: Record<string, unknown> };
 type Route =
-	| { state: "routed"; owner: string; reviewer: string; fallbackReviewer?: string }
+	| {
+			state: "routed";
+			owner: string;
+			reviewer: string;
+			fallbackReviewer?: string;
+	  }
 	| { state: "unreviewed"; owner: string }
 	| { state: "absent" };
 
@@ -60,7 +65,10 @@ async function run(
 	args: Record<string, unknown>,
 	backend: {
 		routes?: Record<string, Route>;
-		pages?: Array<{ items: Array<{ repo: string }>; nextCursor: string | null }>;
+		pages?: Array<{
+			items: Array<{ repo: string }>;
+			nextCursor: string | null;
+		}>;
 	} = {},
 ) {
 	const tools = new Map<string, Handler>();
@@ -78,7 +86,8 @@ async function run(
 			}
 			if (name === "githubRepoMapping:list") {
 				const pages = backend.pages ?? [{ items: [], nextCursor: null }];
-				const at = a.cursor === undefined ? 0 : Number(String(a.cursor).slice(1));
+				const at =
+					a.cursor === undefined ? 0 : Number(String(a.cursor).slice(1));
 				return pages[at];
 			}
 			return null;
@@ -97,7 +106,8 @@ async function run(
 		text,
 		refused: r.isError === true,
 		structured: r.structuredContent,
-		body: r.isError === true ? null : (JSON.parse(text) as Record<string, unknown>),
+		body:
+			r.isError === true ? null : (JSON.parse(text) as Record<string, unknown>),
 	};
 }
 
@@ -120,11 +130,21 @@ afterEach(() => {
 
 describe("get_repo_route", () => {
 	it("a routed repo returns owner, reviewer and fallbackReviewer", async () => {
-		const r = await run("get_repo_route", CLIENT_SEAT, { repo: "acme/app" }, {
-			routes: {
-				"acme/app": { state: "routed", owner: "clio", reviewer: "eta", fallbackReviewer: "pi" },
+		const r = await run(
+			"get_repo_route",
+			CLIENT_SEAT,
+			{ repo: "acme/app" },
+			{
+				routes: {
+					"acme/app": {
+						state: "routed",
+						owner: "clio",
+						reviewer: "eta",
+						fallbackReviewer: "pi",
+					},
+				},
 			},
-		});
+		);
 		expect(r.refused, r.text).toBe(false);
 		expect(r.body).toMatchObject({
 			state: "routed",
@@ -137,15 +157,29 @@ describe("get_repo_route", () => {
 	});
 
 	it("an unreviewed repo returns state unreviewed and its owner, no reviewer", async () => {
-		const r = await run("get_repo_route", CLIENT_SEAT, { repo: "acme/app" }, {
-			routes: { "acme/app": { state: "unreviewed", owner: "clio" } },
+		const r = await run(
+			"get_repo_route",
+			CLIENT_SEAT,
+			{ repo: "acme/app" },
+			{
+				routes: { "acme/app": { state: "unreviewed", owner: "clio" } },
+			},
+		);
+		expect(r.body).toMatchObject({
+			state: "unreviewed",
+			repo: "acme/app",
+			owner: "clio",
 		});
-		expect(r.body).toMatchObject({ state: "unreviewed", repo: "acme/app", owner: "clio" });
 		expect(r.body).not.toHaveProperty("reviewer");
 	});
 
 	it("an absent repo is a typed absent state, never an empty success", async () => {
-		const r = await run("get_repo_route", CLIENT_SEAT, { repo: "acme/none" }, {});
+		const r = await run(
+			"get_repo_route",
+			CLIENT_SEAT,
+			{ repo: "acme/none" },
+			{},
+		);
 		expect(r.refused).toBe(false);
 		expect(r.body).toEqual({ state: "absent", repo: "acme/none" });
 		expect(r.text.length).toBeGreaterThan(2);
@@ -181,7 +215,10 @@ describe("check_repo_routing", () => {
 			{
 				routes,
 				pages: [
-					{ items: [{ repo: "acme/a" }, { repo: "acme/old1" }], nextCursor: "c1" },
+					{
+						items: [{ repo: "acme/a" }, { repo: "acme/old1" }],
+						nextCursor: "c1",
+					},
 					{ items: [{ repo: "acme/b" }], nextCursor: "c2" },
 					{ items: [{ repo: "acme/old2" }], nextCursor: null },
 				],
@@ -214,7 +251,11 @@ describe("check_repo_routing", () => {
 		);
 		const lists = r.calls.filter((c) => c.name === "githubRepoMapping:list");
 		expect(lists.map((c) => c.args.cursor)).toEqual([undefined, "c1", "c2"]);
-		expect(lists.every((c) => (c.args.verifiedOrg as { orgSlug: string }).orgSlug === ORG)).toBe(true);
+		expect(
+			lists.every(
+				(c) => (c.args.verifiedOrg as { orgSlug: string }).orgSlug === ORG,
+			),
+		).toBe(true);
 		expect(r.body?.stale).toEqual(["acme/late"]);
 	});
 
@@ -255,7 +296,12 @@ describe("check_repo_routing", () => {
 			{ repos: ["acme/a"] },
 			{
 				routes,
-				pages: [{ items: [{ repo: "acme/a" }, { repo: "acme/gone" }], nextCursor: null }],
+				pages: [
+					{
+						items: [{ repo: "acme/a" }, { repo: "acme/gone" }],
+						nextCursor: null,
+					},
+				],
 			},
 		);
 		expect(r.body?.complete).toBe(false);
@@ -276,7 +322,9 @@ describe("check_repo_routing", () => {
 			{ repos: ["acme/a", "acme/b"] },
 			{ routes },
 		);
-		const doors = r.calls.filter((c) => c.name === "githubRepoMapping:getRoute");
+		const doors = r.calls.filter(
+			(c) => c.name === "githubRepoMapping:getRoute",
+		);
 		expect(doors).toHaveLength(2);
 		for (const d of doors) expect(d.args.verifiedOrg).toEqual({ orgSlug: ORG });
 	});

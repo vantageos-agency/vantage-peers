@@ -1200,6 +1200,53 @@ export const removeRepoMappingServedOutputSchema = z.looseObject({
 		),
 });
 
+/** get_repo_route: the typed route state of one repo (routed | unreviewed | absent). */
+export const getRepoRouteServedOutputSchema = z.looseObject({
+	state: z
+		.enum(["routed", "unreviewed", "absent"])
+		.describe(
+			"routed: an owner and a reviewer are named; unreviewed: an owner is named and no reviewer; absent: your organisation has no mapping for this repo.",
+		),
+	repo: z.string().describe("The repo the call was for, as 'owner/name'."),
+	owner: z
+		.string()
+		.optional()
+		.describe(
+			"The orchestrator that receives the repo's events; absent when the state is absent.",
+		),
+	reviewer: z
+		.string()
+		.optional()
+		.describe(
+			"Who reviews the repo's pull requests; present only when the state is routed.",
+		),
+	fallbackReviewer: z
+		.string()
+		.optional()
+		.describe(
+			"Who reviews when the reviewer is stopped; present only when one was set.",
+		),
+});
+
+/** check_repo_routing: the completeness verdict of a repo list against the org's routing table. */
+export const checkRepoRoutingServedOutputSchema = z.looseObject({
+	routed: z
+		.array(z.string())
+		.describe("Repos of your list that have an owner and a reviewer."),
+	unreviewed: z
+		.array(z.string())
+		.describe("Repos of your list that have an owner and no reviewer."),
+	missing: z
+		.array(z.string())
+		.describe("Repos of your list that your organisation has no mapping for."),
+	stale: z
+		.array(z.string())
+		.describe("Repos mapped by your organisation that are not in your list."),
+	complete: z
+		.boolean()
+		.describe("True only when missing, unreviewed and stale are all empty."),
+});
+
 /** validate_fix. */
 export const validateFixServedOutputSchema = z.looseObject({
 	patternId: rowId("The fix pattern that was validated."),

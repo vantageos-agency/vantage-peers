@@ -300,9 +300,10 @@ _Applies to: Cloud and Self-host._
 - `export_okf_bundle` (write) — Export a VantagePeers namespace as an OKF v0.1 bundle (tarball).
 - `import_okf_bundle` (write) — Import an OKF v0.1 bundle (memories + briefing-notes + tasks) into a target VantagePeers namespace.
 
-### Other (15)
+### Other (17)
 
 - `add_repo_mapping` (write) — Register or update a GitHub repo to orchestrator mapping for webhook event routing.
+- `check_repo_routing` (read) — Check that a list of repos is fully routed in your organisation, against the org's whole routing table.
 - `claim_upload` (write) — Claim an uploaded blob for your organisation with the single-use ticket generate_upload_url returned.
 - `debate_get_room` (read) — Read a debate room: its subject, frozen template, pointer and the full transcript.
 - `debate_post_turn` (write) — Post your answer to the debate-room turn you were asked for; the only way a turn enters a room.
@@ -311,6 +312,7 @@ _Applies to: Cloud and Self-host._
 - `get_bulk_complete_run` (read) — Read the status of one live bulk_complete_tasks run by the `bulkRunId` its first call returned.
 - `get_github_owner_bindings` (read) — List the GitHub owners bound to your organisation (master: all), and for master the org-owned repo mappings that have no proof.
 - `get_owner_tool_usage` (read) — List which MCP tools a person has used across all the agents it owns (one per AI client) and its own direct calls, summed per tool with the earliest first call and the latest last call.
+- `get_repo_route` (read) — Get the review route of one GitHub repo in your organisation: routed, unreviewed or absent.
 - `get_tool_usage` (read) — List which MCP tools a caller has called, with the first call time, the last call time and the call count of each.
 - `improvisation_digest` (read) — Audit a rolling window of recent closed-task notes, messages and memories for claims about fleet state (a commit SHA, a PR number, a VantagePeers ID, or a decisive verb such as merged, deployed or approved) that carry no source citation line (a 'recall("<query>")→[ids]' or 'none-needed: <reason>' marker).
 - `list_blocked_on_me` (read) — List the tasks that other peers have BLOCKED on one of YOUR live tasks (blockedOnTaskId), oldest wait first, with the age of each wait.

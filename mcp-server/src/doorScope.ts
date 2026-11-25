@@ -114,6 +114,7 @@ export const DOOR_SCOPE: Readonly<Record<string, DoorScopeRule>> = {
 	"businessUnits:remove": { verifiedOrg: "always" },
 	// GitHub repo mappings
 	"githubRepoMapping:list": { verifiedOrg: "always" },
+	"githubRepoMapping:getRoute": { verifiedOrg: "always" },
 	"githubRepoMapping:add": { verifiedOrg: "always" },
 	"githubRepoMapping:remove": { verifiedOrg: "always" },
 	// knowledge base: a seat reaches these as the service account, so the org it
