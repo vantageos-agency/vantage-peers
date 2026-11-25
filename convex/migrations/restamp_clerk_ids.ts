@@ -60,7 +60,8 @@
 // auth check exists here by design.
 
 import { ConvexError, v } from "convex/values";
-import type { Doc } from "../_generated/dataModel";
+import type { Doc, Id } from "../_generated/dataModel";
+import { rewriteAdoptionKey } from "../lib/reviewRouting";
 import type { DatabaseReader } from "../_generated/server";
 import { internalMutation, internalQuery } from "../_generated/server";
 import { CLERK_ORG_ID_PATTERN } from "../lib/orgClerkId";
@@ -538,7 +539,23 @@ export const run = internalMutation({
 		let rewritten = 0;
 		if (!dryRun) {
 			for (const p of scan.patches) {
+				// A mapping row's id is the key of its review-routing adoption entry:
+				// follow the change in the same mutation (lib/reviewRouting).
+				const mappingBefore =
+					args.table === "client_org_mapping"
+						? await ctx.db.get("client_org_mapping", p.id as Id<"client_org_mapping">)
+						: null;
 				await ctx.db.patch(args.table, p.id as never, p.set as never);
+				if (mappingBefore !== null && p.set.clerkOrgId !== undefined) {
+					await rewriteAdoptionKey(
+						ctx,
+						{
+							clerkOrgSlug: mappingBefore.clerkOrgSlug,
+							previousClerkOrgId: mappingBefore.clerkOrgId,
+						},
+						p.set.clerkOrgId,
+					);
+				}
 				rewritten++;
 			}
 		}

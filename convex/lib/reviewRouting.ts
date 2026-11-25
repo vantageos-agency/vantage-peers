@@ -111,7 +111,7 @@ export async function isRoutingAdopted(
 	if (org === null) return false;
 	// EITHER form names the org: an org adopted by slug before its mapping gained a
 	// permanent id must not lose adoption when the id is stamped (the writer
-	// `rewriteAdoptionSlugToId` also migrates the entry; this reader is the net).
+	// `rewriteAdoptionKey` also migrates the entry; this reader is the net).
 	const adopted = await readAdoptedOrgs(ctx);
 	return (
 		adopted.includes(`slug:${org.clerkOrgSlug}`) ||
@@ -120,22 +120,29 @@ export async function isRoutingAdopted(
 }
 
 /**
- * The org just gained its permanent id: its `slug:` adoption entry (if any)
- * becomes the `id:` entry, in the caller's own transaction. Idempotent.
+ * The ONE writer that follows an identifier change of a mapping row. The org's
+ * adoption entry, whichever form it holds now (`slug:<clerkOrgSlug>`, or
+ * `id:<previousId>`), becomes `id:<newId>`, in the caller's own transaction, and
+ * the list then holds exactly one entry for the org. A no-op when the org is not
+ * adopted. Every door that changes a mapping row's clerkOrgId calls it:
+ * clientOrgMapping:setClerkOrgId and migrations/restamp_clerk_ids (table
+ * client_org_mapping). No door changes a mapping's clerkOrgSlug.
  */
-export async function rewriteAdoptionSlugToId(
+export async function rewriteAdoptionKey(
 	ctx: MutationCtx,
-	clerkOrgSlug: string,
-	clerkOrgId: string,
+	org: { clerkOrgSlug: string; previousClerkOrgId: string | undefined },
+	newClerkOrgId: string,
 ): Promise<void> {
 	const config = await ctx.db
 		.query("taskClosureConfig")
 		.withIndex("by_key", (q) => q.eq("key", REVIEW_ROUTING_ADOPTED_KEY))
 		.unique();
-	const slugEntry = `slug:${clerkOrgSlug}`;
-	if (config === null || !config.value.includes(slugEntry)) return;
-	const idEntry = `id:${clerkOrgId}`;
-	const rest = config.value.filter((e) => e !== slugEntry && e !== idEntry);
+	if (config === null) return;
+	const idEntry = `id:${newClerkOrgId}`;
+	const old = new Set([`slug:${org.clerkOrgSlug}`, idEntry]);
+	if (org.previousClerkOrgId !== undefined) old.add(`id:${org.previousClerkOrgId}`);
+	if (!config.value.some((e) => old.has(e))) return;
+	const rest = config.value.filter((e) => !old.has(e));
 	await ctx.db.patch(config._id, {
 		value: [...rest, idEntry],
 		updatedAt: Date.now(),
@@ -178,19 +185,36 @@ export async function orgMappingOfRepo(
 	row: RepoMappingRow | null,
 ): Promise<OrgMappingRow | null> {
 	if (row !== null) {
-		if (row.clerkOrgId !== undefined) {
-			return await lookupOrgMapping(ctx, { clerkOrgId: row.clerkOrgId });
+		if (row.clerkOrgId !== undefined || row.orgId !== undefined) {
+			return await mappingOfStamp(ctx, row.clerkOrgId, row.orgId);
 		}
-		if (row.orgId !== undefined) return await lookupOrgMapping(ctx, row.orgId);
 		return await operatorMapping(ctx);
 	}
 	const owner = ownerOfRepo(repo);
 	if (owner === null) return null;
 	const binding = await activeBindingForOwner(ctx, owner);
 	if (binding === null) return null;
-	return binding.clerkOrgId !== undefined
-		? await lookupOrgMapping(ctx, { clerkOrgId: binding.clerkOrgId })
-		: await lookupOrgMapping(ctx, binding.orgId);
+	return await mappingOfStamp(ctx, binding.clerkOrgId, binding.orgId);
+}
+
+/**
+ * The mapping a stamp (permanent id + slug label) names: by id, else by label.
+ * The label is the fallback because a row's stamped id can lag the mapping's own
+ * id while an identifier change (setClerkOrgId replace, restamp_clerk_ids) is
+ * still being propagated to the stamped tables; losing the org in that window
+ * would reopen the fleet default for an adopted org. This only ever decides
+ * ADOPTION (a narrowing); it grants nothing.
+ */
+async function mappingOfStamp(
+	ctx: QueryCtx,
+	clerkOrgId: string | undefined,
+	label: string | undefined,
+): Promise<OrgMappingRow | null> {
+	if (clerkOrgId !== undefined) {
+		const byId = await lookupOrgMapping(ctx, { clerkOrgId });
+		if (byId !== null) return byId;
+	}
+	return label !== undefined ? await lookupOrgMapping(ctx, label) : null;
 }
 
 export type RepoRoute =

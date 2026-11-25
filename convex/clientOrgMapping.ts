@@ -12,7 +12,7 @@ import { findOperatorOrg } from "./lib/operatorOrg";
 import {
 	REVIEW_ROUTING_ADOPTED_KEY,
 	adoptionEntryOf,
-	rewriteAdoptionSlugToId,
+	rewriteAdoptionKey,
 } from "./lib/reviewRouting";
 import { appendAgentsToRoster } from "./lib/rosterAppend";
 import { resolveProvisioningMapping } from "./lib/provisioningMapping";
@@ -622,8 +622,13 @@ export const setClerkOrgId = internalMutation({
 		}
 		if (previous !== args.clerkOrgId) {
 			await ctx.db.patch(row._id, { clerkOrgId: args.clerkOrgId });
-			// An org adopted by slug keeps its adoption under its new permanent id.
-			await rewriteAdoptionSlugToId(ctx, row.clerkOrgSlug, args.clerkOrgId);
+			// An adopted org keeps its adoption under its new permanent id (from a
+			// slug entry, or from the id it replaces).
+			await rewriteAdoptionKey(
+				ctx,
+				{ clerkOrgSlug: row.clerkOrgSlug, previousClerkOrgId: row.clerkOrgId },
+				args.clerkOrgId,
+			);
 		}
 		return {
 			clerkOrgSlug: args.clerkOrgSlug,
