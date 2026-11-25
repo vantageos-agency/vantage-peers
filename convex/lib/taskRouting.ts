@@ -1,4 +1,5 @@
 import { sameOrg } from "@vantageos/cloud-identity";
+import type { Id } from "../_generated/dataModel";
 import type { QueryCtx } from "../_generated/server";
 import { rbacDenied } from "./inboxReader";
 import {
@@ -45,7 +46,7 @@ export function repoOfReviewTask(title: string, repo: string | undefined): strin
 type RoutedInput = {
 	door: string;
 	repo: string;
-	assignedToId: string | undefined;
+	taskId: Id<"tasks">;
 	isReview: boolean;
 	/** The org whose adoption and table decide (the verified org of the write, or the repo's own). */
 	org: OrgKey | null;
@@ -86,7 +87,8 @@ async function requireRouted(ctx: QueryCtx, input: RoutedInput): Promise<void> {
 			`repo "${input.repo}" is declared without agent IDs; re-save it with the add_repo_mapping tool`,
 		);
 	}
-	if (input.assignedToId === undefined || !routedIds.includes(input.assignedToId as never)) {
+	const stored = await ctx.db.get(input.taskId);
+	if (stored === null || stored.assignedToId === undefined || !routedIds.includes(stored.assignedToId as never)) {
 		throw rbacDenied(
 			input.door,
 			input.isReview ? "reviewer-not-routed" : "repo-routed-to-other-owner",
@@ -113,7 +115,7 @@ export async function requireTaskRoutedAsDeclared(
 	input: {
 		door: string;
 		repo: string | undefined;
-		assignedToId: string | undefined;
+		taskId: Id<"tasks">;
 		isReview: boolean;
 		tenant: string | undefined;
 		clerkOrgId: string | undefined;
@@ -123,7 +125,7 @@ export async function requireTaskRoutedAsDeclared(
 	await requireRouted(ctx, {
 		door: input.door,
 		repo: input.repo,
-		assignedToId: input.assignedToId,
+		taskId: input.taskId,
 		isReview: input.isReview,
 		org: await orgKeyOfTenant(ctx, input.tenant, input.clerkOrgId),
 	});
@@ -138,7 +140,7 @@ export async function requireReviewOverrideRouted(
 	ctx: QueryCtx,
 	door: string,
 	repo: string,
-	assignedToId: string | undefined,
+	taskId: Id<"tasks">,
 ): Promise<void> {
 	const row = await ctx.db
 		.query("githubRepoMapping")
@@ -147,7 +149,7 @@ export async function requireReviewOverrideRouted(
 	await requireRouted(ctx, {
 		door,
 		repo,
-		assignedToId,
+		taskId,
 		isReview: true,
 		org: await orgKeyOfRepo(ctx, repo, row),
 	});
