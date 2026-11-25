@@ -8,8 +8,10 @@ import { ConvexError, v } from "convex/values";
 import type { MutationCtx, QueryCtx } from "../_generated/server";
 import {
 	actingOrgAdmits,
+	isMcpBoundMaster,
 	isServiceTransport,
 	lookupOrgMapping,
+	refusalError,
 	type OrgMappingView,
 	type OrgScope,
 	withOrgScope,
@@ -67,6 +69,26 @@ function refuse(reason: string, door: string, detail: string): never {
 	throw new ConvexError(
 		`RBAC_DENIED: ${detail} — ${JSON.stringify({ reason, door })}`,
 	);
+}
+
+/**
+ * A door that must act inside a transport-verified organisation (R-54): the
+ * service account that carries NO `verifiedOrg` claim is refused, never served as
+ * master. Every other caller (a member, the operator human) is untouched.
+ */
+export function requireVerifiedOrgFromServiceAccount(
+	transportScope: OrgScope,
+	verifiedOrg: VerifiedOrg | undefined,
+	door: string,
+): void {
+	if (isMcpBoundMaster(transportScope) && verifiedOrg === undefined) {
+		throw refusalError({
+			code: "RBAC_DENIED",
+			reason: "no-verified-organisation",
+			door,
+			detail: "the service account must carry a verified organisation claim",
+		});
+	}
 }
 
 /**

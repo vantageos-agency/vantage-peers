@@ -16,12 +16,12 @@ import {
 	routeOfRow,
 } from "./lib/reviewRouting";
 import {
+	requireVerifiedOrgFromServiceAccount,
 	resolveVerifiedOrgScope,
 	verifiedOrgValidator,
 } from "./lib/verifiedOrg";
 import {
 	type OrgScope,
-	isMcpBoundMaster,
 	requireOrchestratorOnRoster,
 	requireResolvedCaller,
 	requireScope,
@@ -170,11 +170,11 @@ export const getRoute = query({
 		});
 		// R-54: the service account acts inside a transport-verified organisation. A
 		// claimless service-account call is refused, never served as master.
-		if (isMcpBoundMaster(transportScope) && args.verifiedOrg === undefined) {
-			throw new ConvexError(
-				`RBAC_DENIED: githubRepoMapping:getRoute — the service account must carry a verifiedOrg claim — ${JSON.stringify({ reason: "verified-org-required", door: "githubRepoMapping:getRoute" })}`,
-			);
-		}
+		requireVerifiedOrgFromServiceAccount(
+			transportScope,
+			args.verifiedOrg,
+			"githubRepoMapping:getRoute",
+		);
 		const scope = await resolveVerifiedOrgScope(
 			ctx,
 			transportScope,
