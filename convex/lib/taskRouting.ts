@@ -35,12 +35,23 @@ function inSameOrganisation(a: OrgKey | null, b: OrgKey | null): boolean {
 	);
 }
 
-const REVIEW_TITLE_REPO = /^\[review\]\s+([^\s/]+\/[^\s/]+)\s+PR\s+#\d+/i;
+// The two titles a review task carries (case-insensitive tag, anything may follow):
+//   `[REVIEW] PR #<n> <owner/name> — <scope>`   the sanctioned open-pr flow
+//   `[Review] <owner/name> PR #<n>: <title>`     the webhook's own form
+const REPO = String.raw`([\w.-]+/[\w.-]+)`;
+const REVIEW_TITLE_REPOS = [
+	new RegExp(String.raw`^\[review\]\s+PR\s+#\d+\s+${REPO}(?![\w./-])`, "i"),
+	new RegExp(String.raw`^\[review\]\s+${REPO}\s+PR\s+#\d+`, "i"),
+];
 
-/** The repo a review task is about: the one passed, else the one its `[Review] <repo> PR #n` title names. */
+/** The repo a review task is about: the one passed, else the one its title names (either form). */
 export function repoOfReviewTask(title: string, repo: string | undefined): string | undefined {
 	if (repo !== undefined) return repo;
-	return REVIEW_TITLE_REPO.exec(title)?.[1];
+	for (const re of REVIEW_TITLE_REPOS) {
+		const found = re.exec(title)?.[1];
+		if (found !== undefined) return found;
+	}
+	return undefined;
 }
 
 type RoutedInput = {
@@ -121,7 +132,18 @@ export async function requireTaskRoutedAsDeclared(
 		clerkOrgId: string | undefined;
 	},
 ): Promise<void> {
-	if (input.repo === undefined) return;
+	if (input.repo === undefined) {
+		// An adopted org's review task must say which repository it reviews: without it
+		// the route cannot be judged, and silence would be a way around it.
+		if (!input.isReview) return;
+		const org = await orgKeyOfTenant(ctx, input.tenant, input.clerkOrgId);
+		if (!(await isRoutingAdopted(ctx, org))) return;
+		throw rbacDenied(
+			input.door,
+			"review-repo-unresolved",
+			"the repository of this review task cannot be derived; pass `repo` (owner/name) or title it `[REVIEW] PR #<n> <owner/name>`",
+		);
+	}
 	await requireRouted(ctx, {
 		door: input.door,
 		repo: input.repo,
