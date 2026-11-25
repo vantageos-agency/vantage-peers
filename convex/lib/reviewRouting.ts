@@ -1,5 +1,5 @@
 import type { Doc } from "../_generated/dataModel";
-import type { QueryCtx } from "../_generated/server";
+import type { MutationCtx, QueryCtx } from "../_generated/server";
 import { activeBindingForOwner, ownerOfRepo } from "../githubOwnerBinding";
 import { lookupOrgMapping } from "./authOrgMapping";
 import { findOperatorOrg } from "./operatorOrg";
@@ -109,7 +109,37 @@ export async function isRoutingAdopted(
 	// Deliberately NOT gated on `isActive`: a disabled org that adopted explicit
 	// routing must not start reaching the fleet default.
 	if (org === null) return false;
-	return (await readAdoptedOrgs(ctx)).includes(adoptionEntryOf(org));
+	// EITHER form names the org: an org adopted by slug before its mapping gained a
+	// permanent id must not lose adoption when the id is stamped (the writer
+	// `rewriteAdoptionSlugToId` also migrates the entry; this reader is the net).
+	const adopted = await readAdoptedOrgs(ctx);
+	return (
+		adopted.includes(`slug:${org.clerkOrgSlug}`) ||
+		(org.clerkOrgId !== undefined && adopted.includes(`id:${org.clerkOrgId}`))
+	);
+}
+
+/**
+ * The org just gained its permanent id: its `slug:` adoption entry (if any)
+ * becomes the `id:` entry, in the caller's own transaction. Idempotent.
+ */
+export async function rewriteAdoptionSlugToId(
+	ctx: MutationCtx,
+	clerkOrgSlug: string,
+	clerkOrgId: string,
+): Promise<void> {
+	const config = await ctx.db
+		.query("taskClosureConfig")
+		.withIndex("by_key", (q) => q.eq("key", REVIEW_ROUTING_ADOPTED_KEY))
+		.unique();
+	const slugEntry = `slug:${clerkOrgSlug}`;
+	if (config === null || !config.value.includes(slugEntry)) return;
+	const idEntry = `id:${clerkOrgId}`;
+	const rest = config.value.filter((e) => e !== slugEntry && e !== idEntry);
+	await ctx.db.patch(config._id, {
+		value: [...rest, idEntry],
+		updatedAt: Date.now(),
+	});
 }
 
 /** The mapping of the ONE active operator org, or null (never guessed). */

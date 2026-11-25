@@ -9,7 +9,11 @@ import { requireServiceAccount } from "./lib/eraseRow";
 import { requireFleetDoor } from "./lib/fleetStanding";
 import { orgMappingRowsForLabel } from "./lib/authOrgMapping";
 import { findOperatorOrg } from "./lib/operatorOrg";
-import { REVIEW_ROUTING_ADOPTED_KEY, adoptionEntryOf } from "./lib/reviewRouting";
+import {
+	REVIEW_ROUTING_ADOPTED_KEY,
+	adoptionEntryOf,
+	rewriteAdoptionSlugToId,
+} from "./lib/reviewRouting";
 import { appendAgentsToRoster } from "./lib/rosterAppend";
 import { resolveProvisioningMapping } from "./lib/provisioningMapping";
 import { normalizeOrchestratorId } from "./_helpers/normalizeOrchestratorId";
@@ -618,6 +622,8 @@ export const setClerkOrgId = internalMutation({
 		}
 		if (previous !== args.clerkOrgId) {
 			await ctx.db.patch(row._id, { clerkOrgId: args.clerkOrgId });
+			// An org adopted by slug keeps its adoption under its new permanent id.
+			await rewriteAdoptionSlugToId(ctx, row.clerkOrgSlug, args.clerkOrgId);
 		}
 		return {
 			clerkOrgSlug: args.clerkOrgSlug,
