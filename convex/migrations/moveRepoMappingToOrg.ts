@@ -32,6 +32,7 @@ import { sameOrg } from "@vantageos/cloud-identity";
 import { ConvexError, v } from "convex/values";
 import type { Doc, Id } from "../_generated/dataModel";
 import { internalMutation } from "../_generated/server";
+import { orgMappingLookups } from "../lib/authOrgMapping";
 
 const MAX_ROWS = 100;
 
@@ -114,15 +115,13 @@ export const run = internalMutation({
 				unknownRepos.push(input.repo);
 				continue;
 			}
-			const target = await ctx.db
-				.query("client_org_mapping")
-				.withIndex("by_clerk_org_id", (q) => q.eq("clerkOrgId", input.toClerkOrgId))
-				.unique();
-			if (target === null) {
+			// The target org is read through the org-ID adapter (permanent id), never the table.
+			const target = await orgMappingLookups(ctx).orgById(input.toClerkOrgId);
+			if (target === null || target === undefined) {
 				refused.push({ repo: input.repo, reason: "target-org-not-found" });
 				continue;
 			}
-			const targetRef = { id: target.clerkOrgId, label: target.clerkOrgSlug };
+			const targetRef = { id: target.id, label: target.label };
 			const wanted: Array<[Field, string | undefined, Id<"agents"> | undefined]> = [
 				["orchestratorAgentId", row.orchestrator, input.orchestratorAgentId],
 				["reviewerAgentId", row.reviewer, input.reviewerAgentId],
@@ -163,8 +162,8 @@ export const run = internalMutation({
 			};
 			if (apply) {
 				await ctx.db.patch(row._id, {
-					orgId: target.clerkOrgSlug,
-					clerkOrgId: target.clerkOrgId,
+					orgId: target.label,
+					clerkOrgId: input.toClerkOrgId,
 					...ids,
 				});
 			}
