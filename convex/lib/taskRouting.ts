@@ -7,12 +7,27 @@ import {
 	isRoutingAdopted,
 	orgKeyOfRepo,
 	orgKeyOfTenant,
-	resolveReviewer,
 	routeOfRow,
 } from "./reviewRouting";
 
+// ─────────────────────────────────────────────────────────────────────────────
+// taskRouting — a task is assigned the way its organisation ROUTED the repository
+// (mission k577f8ksjx5ec3gq9bggc1brqd8jwkbh, S2; task k1730d1b6wzwepjyyth266xq958jxfv0).
+//
+// Only an org that ADOPTED explicit routing (reviewRouting.isRoutingAdopted) is
+// judged here; every other org keeps today's behaviour with no read of its table.
+// The route is the judged org's own row (a row of another org, or of the fleet for
+// a member, is ABSENT: no content leaks).
+//
+// WHO is compared by agent ID (R-53): the route row stores labels; they are
+// resolved to agents-row IDs in the row's own org and compared with the
+// assignee's ID. A label that names no agent there matches nobody.
+// Refusals are RBAC_DENIED through `rbacDenied` (lib/inboxReader.ts), the one
+// refusal constructor, with a typed `reason` and the route's own names in the text.
+// ─────────────────────────────────────────────────────────────────────────────
+
 // The same organisation, as the package decides it (permanent id first, label otherwise).
-function sameOrgKey(a: OrgKey | null, b: OrgKey | null): boolean {
+function inSameOrganisation(a: OrgKey | null, b: OrgKey | null): boolean {
 	if (a === null || b === null) return false;
 	return sameOrg(
 		{ id: a.clerkOrgId, label: a.clerkOrgSlug },
@@ -26,6 +41,57 @@ const REVIEW_TITLE_REPO = /^\[review\]\s+([^\s/]+\/[^\s/]+)\s+PR\s+#\d+/i;
 export function repoOfReviewTask(title: string, repo: string | undefined): string | undefined {
 	if (repo !== undefined) return repo;
 	return REVIEW_TITLE_REPO.exec(title)?.[1];
+}
+
+type RoutedInput = {
+	door: string;
+	repo: string;
+	assignedTo: string;
+	isReview: boolean;
+	/** The org whose adoption and table decide (the verified org of the write, or the repo's own). */
+	org: OrgKey | null;
+};
+
+// The one judgement: adoption, the org's own row, then the assignee compared BY AGENT ID
+// with the id(s) the route names. Both public doors below reach it; neither compares.
+async function requireRouted(ctx: QueryCtx, input: RoutedInput): Promise<void> {
+	if (!(await isRoutingAdopted(ctx, input.org))) return;
+	const row = await ctx.db
+		.query("githubRepoMapping")
+		.withIndex("by_repo", (q) => q.eq("repo", input.repo))
+		.unique();
+	if (row === null || !inSameOrganisation(input.org, await orgKeyOfRepo(ctx, input.repo, row))) {
+		throw rbacDenied(
+			input.door,
+			"repo-not-declared",
+			`repo "${input.repo}" has no routing entry in this organisation; declare it first with the add_repo_mapping tool (repo, orchestrator, reviewer)`,
+		);
+	}
+	const route = routeOfRow(row);
+	if (route.state === "absent") return; // unreachable: row is non-null
+	if (input.isReview && route.state === "unreviewed") {
+		throw rbacDenied(
+			input.door,
+			"repo-has-no-reviewer",
+			`repo "${input.repo}" is declared with no reviewer; add one with the add_repo_mapping tool before a review task can be assigned`,
+		);
+	}
+	const idOf = actorIdResolver(ctx, row.orgId ?? null, row.clerkOrgId);
+	const named =
+		input.isReview && route.state === "routed"
+			? [route.reviewer, route.fallbackReviewer]
+			: [route.owner];
+	const routedIds = await Promise.all(named.map((label) => idOf(label)));
+	const assigneeId = await idOf(input.assignedTo);
+	if (assigneeId === undefined || !routedIds.includes(assigneeId)) {
+		throw rbacDenied(
+			input.door,
+			input.isReview ? "reviewer-not-routed" : "repo-routed-to-other-owner",
+			input.isReview
+				? `repo "${input.repo}" is routed to reviewer "${named[0]}"${named[1] !== undefined ? ` (fallback "${named[1]}")` : ""}; a review task is assigned to the routed reviewer`
+				: `repo "${input.repo}" is routed to owner "${named[0]}"; a task naming it is assigned to that owner`,
+		);
+	}
 }
 
 /**
@@ -51,55 +117,19 @@ export async function requireTaskRoutedAsDeclared(
 	},
 ): Promise<void> {
 	if (input.repo === undefined) return;
-	const org = await orgKeyOfTenant(ctx, input.tenant, input.clerkOrgId);
-	if (!(await isRoutingAdopted(ctx, org))) return;
-
-	const row = await ctx.db
-		.query("githubRepoMapping")
-		.withIndex("by_repo", (q) => q.eq("repo", input.repo as string))
-		.unique();
-	if (row === null || !sameOrgKey(org, await orgKeyOfRepo(ctx, input.repo, row))) {
-		throw rbacDenied(
-			input.door,
-			"repo-not-declared",
-			`repo "${input.repo}" has no routing entry in this organisation; declare it first with the add_repo_mapping tool (repo, orchestrator, reviewer)`,
-		);
-	}
-	const route = routeOfRow(row);
-	if (route.state === "absent") return; // unreachable: row is non-null
-	const idOf = actorIdResolver(ctx, row.orgId ?? null, row.clerkOrgId);
-	const assigneeId = await idOf(input.assignedTo);
-	if (!input.isReview) {
-		if (assigneeId === undefined || (await idOf(route.owner)) !== assigneeId) {
-			throw rbacDenied(
-				input.door,
-				"repo-routed-to-other-owner",
-				`repo "${input.repo}" is routed to owner "${route.owner}"; a task naming it is assigned to that owner`,
-			);
-		}
-		return;
-	}
-	if (route.state === "unreviewed") {
-		throw rbacDenied(
-			input.door,
-			"repo-has-no-reviewer",
-			`repo "${input.repo}" is declared with no reviewer; add one with the add_repo_mapping tool before a review task can be assigned`,
-		);
-	}
-	const accepted = [await idOf(route.reviewer), await idOf(route.fallbackReviewer)];
-	if (assigneeId === undefined || !accepted.includes(assigneeId)) {
-		throw rbacDenied(
-			input.door,
-			"reviewer-not-routed",
-			`repo "${input.repo}" is routed to reviewer "${route.reviewer}"${route.fallbackReviewer !== undefined ? ` (fallback "${route.fallbackReviewer}")` : ""}; a review task is assigned to the routed reviewer`,
-		);
-	}
+	await requireRouted(ctx, {
+		door: input.door,
+		repo: input.repo,
+		assignedTo: input.assignedTo,
+		isReview: input.isReview,
+		org: await orgKeyOfTenant(ctx, input.tenant, input.clerkOrgId),
+	});
 }
 
 /**
  * The review-task twin, for the webhook-driven door that has no caller scope: the
- * repo's own org decides adoption (resolveReviewer reads it), and an explicit
- * `assignedTo` must be the routed reviewer or its fallback. Same codes, same texts.
+ * repo's own org decides adoption, and an explicit `assignedTo` must be the routed
+ * reviewer or its fallback. Same codes, same texts.
  */
 export async function requireReviewOverrideRouted(
 	ctx: QueryCtx,
@@ -107,20 +137,15 @@ export async function requireReviewOverrideRouted(
 	repo: string,
 	assignedTo: string,
 ): Promise<void> {
-	const resolved = await resolveReviewer(ctx, repo);
-	if (!resolved.adopted) return;
 	const row = await ctx.db
 		.query("githubRepoMapping")
 		.withIndex("by_repo", (q) => q.eq("repo", repo))
 		.unique();
-	const idOf = actorIdResolver(ctx, row?.orgId ?? null, row?.clerkOrgId);
-	const accepted = [await idOf(resolved.reviewer ?? undefined), await idOf(resolved.fallback ?? undefined)];
-	const assigneeId = await idOf(assignedTo);
-	if (assigneeId === undefined || !accepted.includes(assigneeId)) {
-		throw rbacDenied(
-			door,
-			"reviewer-not-routed",
-			`repo "${repo}" is routed to reviewer "${resolved.reviewer ?? "none"}"; a review task is assigned to the routed reviewer`,
-		);
-	}
+	await requireRouted(ctx, {
+		door,
+		repo,
+		assignedTo,
+		isReview: true,
+		org: await orgKeyOfRepo(ctx, repo, row),
+	});
 }
