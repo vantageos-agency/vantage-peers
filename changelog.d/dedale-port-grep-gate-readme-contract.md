@@ -1,0 +1,4 @@
+---
+section: Fixed
+---
+- **The grep gate runs in the full suite, and the README's backend contract numbers are derived from the code (task k178k1e07c9tq1k2vb2wgxzw0x8jvx5d).** `.github/workflows/grep-gate.yml` ran no job (Actions are disabled); its two jobs (no legacy `claude-peers` reference, no `Buffer` global in a V8-runtime Convex file) now live in `scripts/grep-gate.sh` with the same commands, run by `scripts/__tests__/grep-gate-gate.test.mjs`. `mcp-server/README.md` still said the server requires backend contract 29 in two current-state sentences while the code requires 30; both now say 30, and `mcp-server/test/readme-backend-contract.test.ts` pins them (and the 153 called functions) to `REQUIRED_CONTRACT_VERSION` and `MCP_CALLED_FUNCTIONS`, failing when a sentence is reworded out of its pattern.
