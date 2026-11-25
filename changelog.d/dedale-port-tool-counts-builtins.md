@@ -1,0 +1,4 @@
+---
+section: Fixed
+---
+- **Three more dark workflows now run in the full suite (task k178k1e07c9tq1k2vb2wgxzw0x8jvx5d).** GitHub Actions are disabled on this repository, so their workflows enforced nothing. `scripts/__tests__/check-tool-counts-gate.test.mjs` runs `scripts/check-tool-counts.mjs` (documented tool tallies equal the registered tool surface) and `scripts/__tests__/check-convex-node-builtins-gate.test.mjs` runs `scripts/check-convex-node-builtins.mjs` (no Convex entry point imports a Node builtin without "use node"); each fails with the script's own output, and fails when the script cannot run. `mcp-server/test/typecheck-gate.test.ts` adds the root project (`tsc --noEmit -p .`), the exact command of the retired typecheck workflow, clean since PR #1767. The three workflow headers now name their equivalent check. Seven workflows still have none, each traced in the same task.
