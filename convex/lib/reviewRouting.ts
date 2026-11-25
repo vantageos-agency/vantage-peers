@@ -222,14 +222,19 @@ async function orgKeyOfStamp(
 	const lookups = orgMappingLookups(ctx);
 	if (clerkOrgId !== undefined) {
 		const byId = await lookups.orgById(clerkOrgId);
-		if (byId) return { clerkOrgId: byId.id, clerkOrgSlug: byId.label };
+		if (byId) {
+			return {
+				clerkOrgSlug: byId.label,
+				...(typeof byId.id === "string" ? { clerkOrgId: byId.id } : {}),
+			};
+		}
 	}
 	if (label !== undefined) {
 		const byLabel = await lookups.orgByLabel(label);
 		if (byLabel) {
 			return {
 				clerkOrgSlug: byLabel.label,
-				...(byLabel.id !== undefined ? { clerkOrgId: byLabel.id } : {}),
+				...(typeof byLabel.id === "string" ? { clerkOrgId: byLabel.id } : {}),
 			};
 		}
 		return {
