@@ -7204,7 +7204,7 @@ export function registerTools(
 		server,
 		authCtx,
 		{
-			kind: "filtered",
+			kind: "public",
 			reason:
 				"unresolvedOrgDenial() refuses a bearer whose organisation cannot be resolved before any call; the caller gate itself is decided by its Convex door tasks:reorderQueue on the verified principal (a seat's verifiedActor, forwarded by the wrapped client): over MCP the callers that succeed are the assignee agent itself and a listed queue coordinator, in the assignee's own organisation; a person bearer carries no verifiedActor over MCP (withVerifiedActor returns the client unchanged when no agent ID resolves), so the door resolves the service-account session and refuses it, and an organisation admin acts from a signed-in session, not through this tool; the tool takes no acting name and relays the door's refusal unchanged (tasks k176p84j83gac7reyycweacyb58jvtxg, k17c5xftwzvtts05ban1dhxazs8jv4h6)",
 		},
@@ -7288,9 +7288,9 @@ export function registerTools(
 		server,
 		authCtx,
 		{
-			kind: "filtered",
+			kind: "public",
 			reason:
-				"tenant applied INSIDE the Convex read: doorScopeArgs() forwards verifiedOrg on every call to tasks:nextForAssignee for a bearer that resolves an organisation, and unresolvedOrgDenial() refuses a non-master bearer with none; the fleet master, which resolves no organisation, is admitted by its verified agent ID instead: withVerifiedActor forwards verifiedActor (MASTER_ACTOR_CLAIM_DOORS) only for a master scope and only when no verifiedOrg rides the call, so the door judges it as an operator-organisation agent, and a master with no agent ID forwards no claim and is refused by the door (claimless-service-account); a client-organisation seat is never sent an actor; the door resolves the assignee in the claimed organisation only and serves the caller's visible tasks (tasks k176p84j83gac7reyycweacyb58jvtxg, k178q6x954qeh4mxh0b4x6sss98jtarn)",
+				"decided by its Convex door tasks:nextForAssignee, which refuses an unresolved caller (requireResolvedCaller) and applies the tenant INSIDE the read: doorScopeArgs() forwards verifiedOrg on every call to tasks:nextForAssignee for a bearer that resolves an organisation, and unresolvedOrgDenial() refuses a non-master bearer with none; the fleet master, which resolves no organisation, is admitted by its verified agent ID instead: withVerifiedActor forwards verifiedActor (MASTER_ACTOR_CLAIM_DOORS) only for a master scope and only when no verifiedOrg rides the call, so the door judges it as an operator-organisation agent, and a master with no agent ID forwards no claim and is refused by the door (claimless-service-account); a client-organisation seat is never sent an actor; the door resolves the assignee in the claimed organisation only and serves the caller's visible tasks (tasks k176p84j83gac7reyycweacyb58jvtxg, k178q6x954qeh4mxh0b4x6sss98jtarn)",
 		},
 		"next_task",
 		"Get the one task an agent should take next: among its todo tasks you may see, the first in queue order (ranked tasks by rank, then unranked by priority and age) whose dependencies are all done. " +
