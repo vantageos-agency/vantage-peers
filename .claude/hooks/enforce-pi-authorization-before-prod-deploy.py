@@ -169,20 +169,22 @@ and a read-only marker cannot excuse a runtime write on the same line.
 Fix (task k17bx73va6s36bg1qdqw0enjch8f97h2, review REVISE on PR #1768): the head is
 normalised by runtime_family() (which reuses _strip_version_suffix), so python3.12,
 /usr/bin/python3.14, node22, php8.3 and bun1 walk the same head test as their family.
-write_targets_dev() is dev only when EVERY URL source the write uses resolves to dev:
-every literal host and every variable read (any name, auth material excluded), and
-no read with a computed name and no command substitution. A dev host elsewhere in
-the command, or beside an unresolved source in the same segment, proves nothing.
-RESIDUE, stated (the full list is in the header of _lib/command_predicate.py):
-a URL source that is a bare identifier or a function result (sys.argv[1], a local
-variable), which is not an environment read: a dev host in the same segment still
-certifies it (Medium, declared; the follow-up extracts the write call's URL argument);
-a head outside WRITE_VECTOR_HEADS; a write whose segment carries no Convex token;
-a script FILE run by an interpreter (its text is not read); a GET to an endpoint
-that is not /api/query (not counted as a write); a value assigned in an EARLIER
-segment (judged where it is used, so it fails closed); a heredoc body fed to an
-interpreter (stripped before judgement, as before); a local dev backend on a
-non-convex host (unresolved, so refused).
+write_targets_dev() judges the URL ARGUMENT of each write, never the segment
+(task k179p2pkn0s9zgt6pdc5ps86wn8jw599): the first argument of a request call in
+interpreter text, or the URL word of a shell HTTP tool (curl, wget, http, ...). It is
+dev only when every source INSIDE that argument resolves to dev, and no source anywhere
+in the segment resolves to prod. A dev host elsewhere in the segment proves nothing. An
+argument that cannot be extracted is not dev (fail closed). Auth material is excluded by
+name WORD (CONVEX_DEPLOY_KEY), never by substring: PROD_AUTHORITY and MONKEY_URL are URL
+sources. Aliased environ (`from os import environ as E`, `env = os.environ`) and
+destructured process.env are environment reads. `pypy` is the python family;
+`uv run`, `poetry run` and `pipx run` name their program through runtime_family().
+RESIDUE, stated (the full list is in the header of _lib/command_predicate.py): a request
+call named outside _CODE_WRITE_CALLS is not extracted (Medium, declared); a head outside
+WRITE_VECTOR_HEADS (go run, java, dotnet, lua, awk, jq) forms no vector; a URL read from a
+shell tool's config file (curl -K); a script FILE run by an interpreter (its text is not
+read); a value assigned in an earlier segment (fails closed); a template literal, a
+command substitution or a computed environment read inside a URL argument is refused.
 
 Override discipline: PI_AUTHORIZED_TASK_ID is meant for one-shot pre-validated
 deploy. Set, run command once, unset. Never persist in shell rc.
@@ -214,7 +216,9 @@ try:
         WriteVector,
         carries_prod_action,
         convex_host_name,
-        url_sources,
+        expression_sources,
+        segment_sources,
+        write_url_arguments,
         has_convex_context,
         heredoc_programs,
         runtime_write_vector,
@@ -470,24 +474,54 @@ def _deployment_class(name: str | None) -> str | None:
     return None
 
 
-def write_targets_dev(segment: str) -> bool:
-    """True only when EVERY URL source the segment uses resolves to DEV.
-
-    The sources are: each literal deployment host the segment names; each variable
-    it reads (any name, auth material excluded), resolved from the value assigned
-    inline in the SAME segment or else from the hook's environment; and any read
-    whose name is computed at runtime, or a command substitution, which resolves to
-    nothing. A dev host elsewhere in the command proves nothing, and neither does a
-    dev host beside an unresolved source in the same segment. Nothing to resolve,
-    or any source that resolves to prod or to nothing, is not dev.
-    """
-    hosts, names, dynamic, inline = url_sources(segment)
+def _source_classes(hosts, names, inline) -> list:
+    """The deployment class of each source: a literal host, or a variable's value
+    (assigned inline in the same segment, else read from this station's environment).
+    A value that names no deployment is None, which is not dev."""
     classes = [_deployment_class(host) for host in hosts]
-    if dynamic:
-        classes.append(None)
     for name in names:
         value = inline[name] if name in inline else (os.environ.get(name) or "")
         classes.append(_deployment_class(convex_host_name(value)))
+    return classes
+
+
+def segment_resolves_prod(segment: str) -> bool:
+    """True when ANY source in the segment resolves to prod. A dev decoy elsewhere in
+    the same segment cannot excuse a prod source of this segment."""
+    hosts, names, _dynamic, inline = segment_sources(segment)
+    classes = _source_classes(hosts, names, inline)
+    classes += [_deployment_class(convex_host_name(value)) for value in inline.values()]
+    return "prod" in classes
+
+
+def write_targets_dev(segment: str, tokens=None) -> bool:
+    """True only when the URL ARGUMENT of every write in `segment` resolves to DEV.
+
+    The argument is extracted (write_url_arguments), and every source INSIDE it must
+    resolve to dev. A dev host elsewhere in the segment proves nothing. An argument that
+    cannot be extracted, or names no source, is not dev (fail closed). No source anywhere
+    in the segment may resolve to prod, and a `CONVEX_DEPLOY_KEY=prod:` assignment refuses.
+    """
+    if deploy_key_env(segment) == "prod" or segment_resolves_prod(segment):
+        return False
+    arguments = write_url_arguments(segment, tokens)
+    if not arguments:
+        return False
+    for expression, shell in arguments:
+        hosts, names, unresolved, inline = expression_sources(expression, segment, shell)
+        classes = [] if unresolved else _source_classes(hosts, names, inline)
+        if not classes or any(c != "dev" for c in classes):
+            return False
+    return True
+
+
+def _segment_all_dev(segment: str) -> bool:
+    """Every source of the WHOLE segment resolves to dev, and none is dynamic. This is the
+    rule for a literal URL: the literal is the URL, so no other source may be non-dev."""
+    hosts, names, dynamic, inline = segment_sources(segment)
+    if dynamic:
+        return False
+    classes = _source_classes(hosts, names, inline)
     if deploy_key_env(segment) == "prod":
         classes.append("prod")
     return bool(classes) and all(c == "dev" for c in classes)
@@ -496,14 +530,14 @@ def write_targets_dev(segment: str) -> bool:
 def literal_write_blocks(segment: str) -> bool:
     """A literal /api/mutation or /api/action URL whose target is not provably dev."""
     literal = URL_MUTATION_RE.search(segment) or URL_ACTION_RE.search(segment)
-    return bool(literal) and not write_targets_dev(segment)
+    return bool(literal) and not _segment_all_dev(segment)
 
 
 def runtime_write_blocked(segment: str, tokens) -> "WriteVector | None":
     """The WriteVector refused for this segment; None when it is not a write,
     or when it is a write provably to dev."""
     vector = runtime_write_vector(segment, tokens)
-    if vector is None or write_targets_dev(segment):
+    if vector is None or write_targets_dev(segment, tokens):
         return None
     return vector
 

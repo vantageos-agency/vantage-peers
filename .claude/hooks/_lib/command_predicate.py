@@ -1131,18 +1131,21 @@ def prod_action_in_heredoc_to_shell(cmd: str, binary: str = "convex"):
 # station knows (see enforce-pi-authorization-before-prod-deploy.py).
 #
 # DECLARED RESIDUE (not seen by this predicate):
-#   - a head outside WRITE_VECTOR_HEADS (an unknown binary carrying the URL);
+#   - a head outside WRITE_VECTOR_HEADS (go run, java, dotnet, lua, awk, jq): no
+#     vector, so no judgement. `uv`, `poetry` and `pipx` are heads, and the program a
+#     runner names after them is read as well;
 #   - a write with NO Convex token in its own segment (a host and a path both
 #     assembled elsewhere): no reach, no judgement;
 #   - a script FILE run by an interpreter: its text is not read;
-#   - a GET to an endpoint that is not `api/query` (Convex writes are POSTs; a
-#     GET is not counted as a write);
-#   - a URL source that is a bare identifier or a function result (`sys.argv[1]`,
-#     a local variable): it is neither an environment read, a shell variable nor a
-#     command substitution, so url_sources() cannot name it. A dev host in the SAME
-#     segment still certifies such a write as dev. Declared, Medium; the follow-up
-#     extracts the URL argument of the write call;
+#   - a GET to an endpoint that is not `api/query` (a GET is not counted as a write);
+#   - a request made by a call NAME outside _CODE_WRITE_CALLS: its URL is not
+#     extracted. A dev URL in a named call does not certify an unnamed call beside
+#     it. Declared, Medium; the list is the place to extend;
+#   - a URL carried by a shell tool's config file (`curl -K file`): the file is not read;
 #   - a value assigned in an EARLIER segment of the line: judged where it is used,
+#     and an unresolved source fails closed;
+#   - a template literal, a command substitution or a computed environment read inside
+#     a URL argument: refused by design (fail closed), never judged as dev.
 #     and an unresolved source fails closed.
 
 # ---------------------------------------------------------------------------
@@ -1150,6 +1153,7 @@ WRITE_VECTOR_HEADS = frozenset({
     "curl", "wget", "http", "https", "httpie", "xh", "fetch",
     "python", "node", "nodejs", "bun", "deno",
     "tsx", "ts-node", "npx", "bunx", "ruby", "perl", "php",
+    "uv", "poetry", "pipx",
 })
 
 # A Convex surface reached by the segment: a convex host, a CONVEX_* URL or key
@@ -1197,8 +1201,21 @@ _ENV_DYNAMIC_RE = re.compile(
     r"|Deno\.env\.get\((?!\s*['\"])|\bENV\[(?!\s*['\"])|\bgetenv\((?!\s*['\"])"
     r"|\$\(|`|\$\{(?![A-Za-z_])"
 )
-# Auth material is not a destination: a key or a token never names a URL source.
-_AUTH_NAME_RE = re.compile(r"KEY|TOKEN|SECRET|PASSWORD|AUTH", re.IGNORECASE)
+# Auth material is not a destination. A name is auth material when one of its
+# `_`-separated words is a credential word: CONVEX_DEPLOY_KEY, VP_GUARD_CONVEX_TOKEN.
+# PROD_AUTHORITY and MONKEY_URL are destinations: AUTHORITY and MONKEY are whole words
+# that merely CONTAIN a credential word (task k179p2pkn0s9zgt6pdc5ps86wn8jw599).
+_AUTH_WORDS = frozenset({
+    "KEY", "TOKEN", "SECRET", "PASSWORD", "PASSWD", "AUTH", "AUTHORIZATION",
+    "BEARER", "CREDENTIAL", "CREDENTIALS",
+})
+
+
+def is_auth_name(name: str) -> bool:
+    """True when one `_`-separated word of `name` is a credential word. Never a substring."""
+    return any(word in _AUTH_WORDS for word in name.upper().split("_"))
+
+
 _INLINE_ASSIGN_RE = re.compile(
     r"\b([A-Za-z_][A-Za-z0-9_]*)=(?:'([^']*)'|\"([^\"]*)\"|([^\s'\";|&]*))"
 )
@@ -1217,25 +1234,43 @@ class WriteVector:
 
 def runtime_family(word: str) -> str:
     """The FAMILY of a command word: `/usr/bin/python3.14` -> `python`, `node22` ->
-    `node`, `php8.3` -> `php`, `curl` -> `curl`. The `@version` pin is removed by
-    the shared `_strip_version_suffix`; a trailing runtime version is removed here,
-    so every version of an interpreter or HTTP client walks the same head test."""
+    `node`, `php8.3` -> `php`, `curl` -> `curl`, `pypy3` -> `python`. The `@version`
+    pin is removed by the shared `_strip_version_suffix`; a trailing runtime version
+    is removed here, so every version of an interpreter or HTTP client walks the same
+    head test. PyPy runs the Python family, so it is normalised here too."""
     base = _strip_version_suffix(os.path.basename(word))
+    base = re.sub(r"^pypy", "python", base)
     return re.sub(r"(?<=[a-z])[0-9][0-9.]*$", "", base)
 
 
+# Runners that name their PROGRAM as the next word (`uv run python -c`,
+# `poetry run node`, `pipx run python`). The tokenizer does not make them transparent,
+# so the program after them is read here as a head of the segment.
+_RUNNER_WRAPPERS = frozenset({"uv", "poetry", "pipx"})
+
+
 def _segment_heads(segment: str, tokens) -> set:
-    """Every family this segment may run under: the tokenizer's head, and the raw
-    first word after leading NAME=value assignments (a runner like `bun -e` is
-    transparent to the tokenizer, so its own word would otherwise be lost)."""
+    """Every family this segment may run under: the tokenizer's head, the raw first
+    word after leading NAME=value assignments, and the program a runner wrapper names
+    (`uv run --quiet python -c` -> python), followed through a chain of wrappers."""
     heads = set()
     if tokens:
         heads.add(runtime_family(tokens[0]))
-    for word in segment.split():
-        if re.match(r"[A-Za-z_][A-Za-z0-9_]*=", word):
-            continue
-        heads.add(runtime_family(word))
-        break
+    words = [w for w in segment.split() if not re.match(r"[A-Za-z_][A-Za-z0-9_]*=", w)]
+    if not words:
+        return heads
+    heads.add(runtime_family(words[0]))
+    i = 0
+    while i < len(words) and runtime_family(words[i]) in _RUNNER_WRAPPERS:
+        i += 1
+        while i < len(words) and words[i].startswith("-"):
+            i += 1
+        if i < len(words) and words[i] in RUNNER_VERBS:
+            i += 1
+        while i < len(words) and words[i].startswith("-"):
+            i += 1
+        if i < len(words):
+            heads.add(runtime_family(words[i]))
     return heads
 
 
@@ -1271,28 +1306,279 @@ def convex_host_name(text: str | None) -> str | None:
     return match.group(1).lower() if match else None
 
 
-def url_sources(segment: str):
-    """(hosts, names, dynamic, inline) for one segment.
+# ---------------------------------------------------------------------------
+# THE WRITE CALL'S URL ARGUMENT (task k179p2pkn0s9zgt6pdc5ps86wn8jw599)
+#
+# The target of a write is the expression passed as its URL, never a dev host that
+# sits elsewhere in the same segment. This part finds that expression and names every
+# source inside it. It returns SOURCES only: the caller decides which deployment each
+# one is, because only the caller knows the station's names.
+# ---------------------------------------------------------------------------
+_CLI_HTTP_HEADS = frozenset({"curl", "wget", "http", "https", "httpie", "xh", "fetch"})
+# Options that take their value as the NEXT word. Their value is never a URL.
+_CLI_VALUE_FLAGS = frozenset({
+    "-H", "--header", "-d", "--data", "--data-raw", "--data-binary", "--data-urlencode",
+    "--data-ascii", "--post-data", "--body-data", "--body-file", "-F", "--form",
+    "--form-string", "-X", "--request", "-o", "--output", "-O", "-u", "--user",
+    "--password", "-A", "--user-agent", "-U", "-e", "--referer", "-b", "--cookie",
+    "-c", "--cookie-jar", "-m", "--max-time", "--connect-timeout", "--timeout", "-w",
+    "--write-out", "-x", "--proxy", "-K", "--config", "-T", "--upload-file", "-a",
+    "--auth", "--auth-type", "--session", "--verify", "--cert", "--cacert", "-E",
+    "--retry", "-r", "--range", "-C", "--continue-at", "--max-redirs", "--resolve",
+    "--interface", "--dns-servers", "-P", "--ftp-port", "-z", "--time-cond",
+})
+_HTTP_METHODS = frozenset({"GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"})
+# A httpie request item (`key=value`, `Header:value`, `key@file`); never a URL.
+_HTTPIE_ITEM_RE = re.compile(r"^[^/\s]*?(?:==|:=|=|:|@)")
+# The calls whose first argument is the URL of a request, in interpreter text.
+_CODE_WRITE_CALLS = (
+    "urlopen", "Request", "URI", "fetch", "axios", "got", "post", "put", "patch",
+    "delete", "request", "send", "file_get_contents", "ConvexHttpClient", "ConvexClient",
+)
+_CODE_CALL_RE = re.compile(r"\b(?:" + "|".join(_CODE_WRITE_CALLS) + r")\b\)?\s*\(")
+_HTTP_METHOD_LITERAL_RE = re.compile(
+    r"""^\s*['"](?:GET|POST|PUT|PATCH|DELETE|HEAD|OPTIONS)['"]\s*$""", re.IGNORECASE
+)
+_STRING_LITERAL_RE = re.compile(r"'[^']*'|\"[^\"]*\"")
+_TEMPLATE_RE = re.compile(r"`([^`]*)`")
+_TEMPLATE_HOLE_RE = re.compile(r"\$\{([^}]*)\}")
+_PERL_ENV_HASH_RE = re.compile(r"[$%]ENV\{[^}]*\}")
+# An identifier that is a VALUE reference: not a member (`os.environ`), not a call.
+_IDENT_RE = re.compile(r"(?<![\w.])([A-Za-z_]\w*)(?![\w.(])")
+_EXPR_KEYWORDS = frozenset({
+    "ENV", "None", "True", "False", "true", "false", "null", "undefined", "new",
+    "await", "and", "or", "not", "if", "else", "in", "is", "lambda", "function", "return",
+})
+# Environment bindings: an alias is a read of the environment, not an unknown name.
+_JS_DESTRUCTURE_RE = re.compile(r"\{([^{}]*)\}\s*=\s*(?:process\.env|Deno\.env)(?![\w.\[(])")
 
-    hosts: the Convex deployment hosts the segment names literally.
-    names: the variables it reads whose NAME is literal, auth material excluded.
-    dynamic: True when it reads a variable whose name is computed at runtime, or
-    a command substitution: a source that cannot be resolved.
-    inline: the NAME=value assignments made in the SAME segment.
-    Values go back to the caller and are never printed.
-    """
-    hosts = [m.group(1).lower() for m in _HOST_RE.finditer(segment)]
+
+def _call_arguments(text: str, start: int):
+    """The top-level arguments of the call whose `(` ends just before `start`, or
+    None when the call is not closed. Quotes and nested brackets are respected."""
+    args, buf, depth, quote, i = [], [], 0, None, start
+    while i < len(text):
+        ch = text[i]
+        if quote:
+            buf.append(ch)
+            if ch == "\\" and i + 1 < len(text):
+                buf.append(text[i + 1])
+                i += 2
+                continue
+            if ch == quote:
+                quote = None
+        elif ch in "'\"`":
+            quote = ch
+            buf.append(ch)
+        elif ch in "([{":
+            depth += 1
+            buf.append(ch)
+        elif ch in ")]}":
+            if depth == 0:
+                if ch != ")":
+                    return None
+                tail = "".join(buf).strip()
+                if tail or args:
+                    args.append(tail)
+                return args
+            depth -= 1
+            buf.append(ch)
+        elif ch == "," and depth == 0:
+            args.append("".join(buf).strip())
+            buf = []
+        else:
+            buf.append(ch)
+        i += 1
+    return None
+
+
+def _code_url_arguments(segment: str):
+    """The URL argument of every request call in interpreter text, or None when a call
+    cannot be read (fail closed). A method word first (`request('POST', url)`) means
+    the URL is the second argument."""
+    urls = []
+    for match in _CODE_CALL_RE.finditer(segment):
+        args = _call_arguments(segment, match.end())
+        if not args:
+            return None
+        if len(args) > 1 and _HTTP_METHOD_LITERAL_RE.match(args[0]):
+            urls.append(args[1])
+        else:
+            urls.append(args[0])
+    return urls or None
+
+
+def _is_cli_tool(word: str) -> bool:
+    """A word that names a shell HTTP tool: `curl`, `/usr/bin/curl`, `wget2`, `http2`."""
+    return (
+        "://" not in word
+        and ("/" not in word or word.startswith("/"))
+        and runtime_family(word) in _CLI_HTTP_HEADS
+    )
+
+
+def _is_httpie_item(word: str) -> bool:
+    return "://" not in word and _HTTPIE_ITEM_RE.match(word) is not None
+
+
+def _cli_url_arguments(segment: str):
+    """The URL word(s) of a shell HTTP tool: every positional word that is not a value
+    of an option, not an HTTP method and not a httpie request item. `--url URL` counts.
+    None when the tool or its URL cannot be named (fail closed)."""
+    try:
+        words = shlex.split(segment)
+    except ValueError:
+        return None
+    start = next((i for i, word in enumerate(words) if _is_cli_tool(word)), None)
+    if start is None:
+        return None
+    urls, skip, next_is_url = [], False, False
+    for word in words[start + 1:]:
+        if skip:
+            skip = False
+            continue
+        if next_is_url:
+            urls.append(word)
+            next_is_url = False
+            continue
+        if word == "--url":
+            next_is_url = True
+            continue
+        if word.startswith("--url="):
+            urls.append(word[len("--url="):])
+            continue
+        if word.startswith("-"):
+            skip = word in _CLI_VALUE_FLAGS
+            continue
+        if word.upper() in _HTTP_METHODS or _is_httpie_item(word):
+            continue
+        urls.append(word)
+    return urls or None
+
+
+def write_url_arguments(segment: str, tokens=None):
+    """The URL argument(s) of the write in `segment`, as (expression, shell) pairs, or
+    None when the write's URL cannot be extracted (the caller fails closed).
+    shell True: a shell HTTP tool, whose URL is a word. shell False: a request call in
+    an interpreter's text, whose URL is the first argument of that call."""
+    heads = _segment_heads(segment, tokens)
+    if next((h for h in sorted(heads) if h in WRITE_VECTOR_HEADS), None) is None:
+        return None
+    if heads & _CLI_HTTP_HEADS:
+        urls = _cli_url_arguments(segment)
+        return [(url, True) for url in urls] if urls else None
+    urls = _code_url_arguments(segment)
+    return [(url, False) for url in urls] if urls else None
+
+
+def env_bindings(scope: str):
+    """What `scope` declares about the process environment, beyond a literal read:
+    objects  the names that ARE an environment mapping (`from os import environ as E`,
+             `import os as o` then `env = o.environ`, `const e = process.env`);
+    getters  the names that ARE getenv (`from os import getenv as G`);
+    bound    a name destructured from it (`{DEPLOY_HOST:h} = process.env`: h -> DEPLOY_HOST).
+    Returns (objects, getters, bound)."""
+    modules = {"os"} | set(re.findall(r"\bimport\s+os\s+as\s+(\w+)", scope))
+    objects, getters, bound = set(), set(), {}
+    for kind, alias in re.findall(r"\bfrom\s+os\s+import\s+(environ|getenv)(?:\s+as\s+(\w+))?", scope):
+        (objects if kind == "environ" else getters).add(alias or kind)
+    for mod in modules:
+        objects.add(f"{mod}.environ")
+        getters.add(f"{mod}.getenv")
+    sources = "|".join(
+        [re.escape(f"{mod}.environ") for mod in modules] + [r"process\.env", r"Deno\.env"]
+    )
+    objects.update(re.findall(rf"\b(\w+)\s*=\s*(?:{sources})(?![\w.\[(])", scope))
+    for body in _JS_DESTRUCTURE_RE.findall(scope):
+        for item in body.split(","):
+            match = re.match(r"\s*(\w+)\s*(?::\s*(\w+))?\s*$", item)
+            if match:
+                bound[match.group(2) or match.group(1)] = match.group(1)
+    return objects, getters, bound
+
+
+def inline_values(scope: str) -> dict:
+    """The NAME=value assignments made in `scope`. Values are judged, never printed."""
+    return {
+        m.group(1): next((g for g in m.groups()[1:] if g is not None), "")
+        for m in _INLINE_ASSIGN_RE.finditer(scope)
+    }
+
+
+def _env_reads(text: str, objects, getters):
+    """(names, dynamic): the environment variables `text` reads, by any form that names
+    them (the literal readers, an alias, a getenv alias), and whether a read is dynamic."""
     names = set()
     for pattern in _ENV_READ_RES:
-        names.update(pattern.findall(segment))
-    names = {name for name in names if not _AUTH_NAME_RE.search(name)}
-    dynamic = _ENV_DYNAMIC_RE.search(segment) is not None
-    inline = {}
-    for match in _INLINE_ASSIGN_RE.finditer(segment):
-        inline[match.group(1)] = next(
-            (g for g in match.groups()[1:] if g is not None), ""
-        )
-    return hosts, names, dynamic, inline
+        names.update(pattern.findall(text))
+    dynamic = _ENV_DYNAMIC_RE.search(text) is not None
+    for obj in objects:
+        o = re.escape(obj)
+        names.update(re.findall(rf"\b{o}\[\s*['\"]([A-Za-z_]\w*)['\"]\s*\]", text))
+        names.update(re.findall(rf"\b{o}\.get\(\s*['\"]([A-Za-z_]\w*)['\"]", text))
+        names.update(re.findall(rf"\b{o}\.(?!get\b)([A-Za-z_]\w*)", text))
+        if re.search(rf"\b{o}\[(?!\s*['\"])|\b{o}\.get\((?!\s*['\"])", text):
+            dynamic = True
+    for fn in getters:
+        f = re.escape(fn)
+        names.update(re.findall(rf"\b{f}\(\s*['\"]([A-Za-z_]\w*)['\"]", text))
+        if re.search(rf"\b{f}\((?!\s*['\"])", text):
+            dynamic = True
+    return names, dynamic
+
+
+def _code_scan_text(expression: str) -> str:
+    """The text an identifier scan reads: template holes as code, string literals and
+    perl `$ENV{...}` removed."""
+    text = _TEMPLATE_RE.sub(
+        lambda m: " " + " ".join(_TEMPLATE_HOLE_RE.findall(m.group(1))) + " ", expression
+    )
+    text = _STRING_LITERAL_RE.sub(" ", text)
+    return _PERL_ENV_HASH_RE.sub(" ", text)
+
+
+def expression_sources(expression: str, scope: str, shell: bool = False):
+    """(hosts, names, unresolved, inline) of ONE write call's URL argument.
+
+    hosts: the deployment hosts the expression names literally, or that an identifier
+    in it is assigned to in `scope`. names: the environment variables it reads (a
+    literal read, an alias, a destructured name, a shell `$VAR`), auth material
+    excluded. unresolved: True when a source cannot be named: a read whose name is
+    computed, a command substitution, an identifier that `scope` does not bind to a
+    host or to the environment, or a shell URL with neither a host nor a variable.
+    inline: the NAME=value assignments of `scope`."""
+    objects, getters, bound = env_bindings(scope)
+    inline = inline_values(scope)
+    reads, dynamic = _env_reads(expression, objects, getters)
+    hosts = [m.group(1).lower() for m in _HOST_RE.finditer(expression)]
+    names = set(reads)
+    unresolved = dynamic
+    if shell:
+        if not hosts and not names:
+            unresolved = True
+    else:
+        for ident in _IDENT_RE.findall(_code_scan_text(expression)):
+            if ident in _EXPR_KEYWORDS or ident in objects or ident in getters:
+                continue
+            if ident in bound:
+                names.add(bound[ident])
+            elif ident in inline and convex_host_name(inline[ident]):
+                hosts.append(convex_host_name(inline[ident]))
+            else:
+                unresolved = True
+    names = {name for name in names if not is_auth_name(name)}
+    return hosts, names, unresolved, inline
+
+
+def segment_sources(segment: str):
+    """(hosts, names, dynamic, inline) of the WHOLE segment: every literal host, every
+    environment variable it reads or destructures (auth material excluded), and whether
+    a read is dynamic. For the question about the segment, never a single URL argument."""
+    objects, getters, bound = env_bindings(segment)
+    hosts = [m.group(1).lower() for m in _HOST_RE.finditer(segment)]
+    reads, dynamic = _env_reads(segment, objects, getters)
+    names = {name for name in reads | set(bound.values()) if not is_auth_name(name)}
+    return hosts, names, dynamic, inline_values(segment)
 
 
 # ---------------------------------------------------------------------------
