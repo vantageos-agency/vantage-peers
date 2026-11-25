@@ -40,7 +40,7 @@
  */
 
 /** Contract version this MCP build requires from the backend. */
-export const REQUIRED_CONTRACT_VERSION = 33;
+export const REQUIRED_CONTRACT_VERSION = 34;
 
 /** Every public Convex function this MCP build calls (`module:function`). */
 export const MCP_CALLED_FUNCTIONS: readonly string[] = [
@@ -83,6 +83,7 @@ export const MCP_CALLED_FUNCTIONS: readonly string[] = [
 	"githubRepoMapping:getRoute",
 	"githubRepoMapping:list",
 	"githubRepoMapping:remove",
+	"githubRepoMapping:routedElsewhere",
 	"improvisationDigest:scanWindow",
 	"issues:getByRepoNumber",
 	"issues:getStats",

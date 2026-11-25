@@ -31,7 +31,7 @@ it says UNKNOWN and why.
 | Registered, not advertised | `26` | `mcp-server/README.md` heading `### Registered, not advertised (26)`; 123 - 97 = 26 |
 | Node engine | `26.12.1` | `grep -A1 '"engines"' mcp-server/package.json` -> `"node": "26.12.1"` |
 | Backend contract version required | `30` | `grep REQUIRED_CONTRACT_VERSION mcp-server/src/backendContract.ts` -> `= 30`; `grep BACKEND_CONTRACT_VERSION convex/lib/backendManifest.ts` -> `= 30` |
-| Backend functions the server calls | `154` | count of `"module:function"` entries in `MCP_CALLED_FUNCTIONS` (`mcp-server/src/backendContract.ts:46`) |
+| Backend functions the server calls | `155` | count of `"module:function"` entries in `MCP_CALLED_FUNCTIONS` (`mcp-server/src/backendContract.ts:46`) |
 
 A deployer's MCP client sees 97 tools, not 123. The server masks non-`core`
 tools out of `tools/list` via a data file (`mcp-server/tool-exposure.json`,
@@ -42,7 +42,7 @@ around line 1870-1925, reads `tool-exposure.json`, overridable by
 `VP_TOOL_EXPOSURE_PATH` for tests).
 
 Not the same as the published release: the numbers 123 / 97 / contract 30 /
-154 are the tree on `origin/main`. `mcp-server/README.md` for the 4.0.0
+155 are the tree on `origin/main`. `mcp-server/README.md` for the 4.0.0
 release text says contract version **10** and **141** functions
 (`grep -n 'contract version\|141' mcp-server/README.md`), and the npm
 package is `4.1.0`. Whether the `4.1.0` tarball on npm carries 123 or an
