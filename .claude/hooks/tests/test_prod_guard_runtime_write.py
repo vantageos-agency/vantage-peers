@@ -429,3 +429,46 @@ def test_decoy_class_dev_url_argument_passes(name, guard_env_file, tmp_path):
     command, env = DECOY_CLASS_ALLOW_CASES[name]
     rc, out = run(command, guard_env_file, tmp_path, extra_env=env)
     assert rc == 0, f"{name}: expected ALLOW (exit 0), got {rc}. output: {out}"
+
+
+# Runner heads that name their program as the next word, and the PyPy family, in the
+# decoy class (origin k179p2pkn0s9zgt6pdc5ps86wn8jw599). Each names a prod source in
+# the URL argument and a dev decoy elsewhere in the segment.
+HEAD_FAMILY_DECOY_CASES = {
+    "poetry_run_python_decoy": (
+        "poetry run python -c \"d='https://fake-dev-y.convex.cloud'; import os,urllib.request; "
+        "urllib.request.urlopen(os.environ['PROD_AUTHORITY']+'/api/mutation', data=b'{}')\"",
+        {"PROD_AUTHORITY": PROD_URL},
+    ),
+    "pipx_run_python_decoy": (
+        "pipx run python -c \"d='https://fake-dev-y.convex.cloud'; import os,urllib.request; "
+        "urllib.request.urlopen(os.environ['PROD_AUTHORITY']+'/api/mutation', data=b'{}')\"",
+        {"PROD_AUTHORITY": PROD_URL},
+    ),
+    "uv_run_with_flag_before_python_decoy": (
+        "uv run --with requests python -c \"d='https://fake-dev-y.convex.cloud'; import os,urllib.request; "
+        "urllib.request.urlopen(os.environ['PROD_AUTHORITY']+'/api/mutation', data=b'{}')\"",
+        {"PROD_AUTHORITY": PROD_URL},
+    ),
+    "npx_node_decoy": (
+        "npx node -e \"const d='https://fake-dev-y.convex.cloud'; "
+        "fetch(process.env.DEPLOY_HOST+'/api/mutation',{method:'POST'})\"",
+        {"DEPLOY_HOST": PROD_URL},
+    ),
+    "npx_tsx_decoy": (
+        "npx tsx -e \"const d='https://fake-dev-y.convex.cloud'; "
+        "fetch(process.env.DEPLOY_HOST+'/api/mutation',{method:'POST'})\"",
+        {"DEPLOY_HOST": PROD_URL},
+    ),
+    "pypy_literal_prod_mutation": (
+        f"pypy -c \"import urllib.request; urllib.request.urlopen('{PROD_URL}/api/mutation', data=b'{{}}')\"",
+        {},
+    ),
+}
+
+
+@pytest.mark.parametrize("name", sorted(HEAD_FAMILY_DECOY_CASES))
+def test_runner_and_pypy_heads_judge_the_url_argument(name, guard_env_file, tmp_path):
+    command, env = HEAD_FAMILY_DECOY_CASES[name]
+    rc, out = run(command, guard_env_file, tmp_path, extra_env={**PROD_STATION_ENV, **env})
+    assert rc == 2, f"{name}: expected BLOCK (exit 2), got {rc}. output: {out}"
