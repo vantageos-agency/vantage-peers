@@ -3051,6 +3051,9 @@ export const nextForAssignee = query({
 		// RAISED at — anonymous and signed-in-without-organisation alike — never
 		// answered with the bytes of an absence.
 		const transportScope = await withOrgScope(ctx);
+		// R-5: the caller is resolved from the verified credential before any claim is
+		// read; an unresolved caller (no credential) is refused here by RAISING.
+		requireResolvedCaller(transportScope, door);
 		await requireClaimedCaller(
 			ctx,
 			transportScope,
