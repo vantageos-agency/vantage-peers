@@ -157,14 +157,14 @@ export default defineSchema({
 		]),
 
 	// ── profiles ────────────────────────────────────────────────────────────────
-	// One row per INSTANCE. orchestratorAgentId = role (pi/tau/phi).
+	// One row per INSTANCE. orchestratorId = role (pi/tau/phi).
 	// instanceId = unique running copy (pi-chromebook, pi-vps, tau-client-acme).
 	// Multiple instances can share the same role.
 	// static  = stable identity facts (role, workspace, capabilities)
 	// dynamic = mutable session state (current task, last seen, session count)
 	profiles: defineTable({
 		// Role: "pi" | "tau" | "phi"
-		orchestratorAgentId: v.string(),
+		orchestratorId: v.string(),
 
 		// Unique instance identifier: "pi-chromebook" | "pi-vps" | "tau-vps-1"
 		instanceId: v.optional(v.string()),
@@ -172,7 +172,7 @@ export default defineSchema({
 		name: v.string(),
 
 		// The AGENT this profile belongs to: an `agents` row `_id`. A profile is
-		// owned, read and written by this ID, never by `orchestratorAgentId` (a label that
+		// owned, read and written by this ID, never by `orchestratorId` (a label that
 		// two organisations may both carry). The profile's organisation is the
 		// organisation of that agent row. Optional ONLY for the rollout: rows written
 		// before it existed are filled by migrations/backfill_profile_agent_ids, and a
@@ -197,7 +197,7 @@ export default defineSchema({
 			sessionCount: v.number(),
 		}),
 	})
-		.index("by_orchestrator", ["orchestratorAgentId"])
+		.index("by_orchestrator", ["orchestratorId"])
 		.index("by_instance", ["instanceId"])
 		.index("by_agent", ["agentId"]),
 
@@ -1144,6 +1144,10 @@ export default defineSchema({
 		// convex/lib/reviewRouting.ts.
 		reviewer: v.optional(v.string()),
 		fallbackReviewer: v.optional(v.string()),
+		// The agents the three labels above name, by agents-row ID (added by
+		// githubRepoMapping:add / migrations/stampRepoMappingAgentIds). An org that
+		// adopted explicit review routing compares a task's assignee with THESE, never
+		// with a label (convex/lib/taskRouting.ts). Absent = labels only (a legacy row).
 		orchestratorAgentId: v.optional(v.id("agents")),
 		reviewerAgentId: v.optional(v.id("agents")),
 		fallbackReviewerAgentId: v.optional(v.id("agents")),
@@ -1215,7 +1219,7 @@ export default defineSchema({
 		description: v.string(),
 		purpose: v.string(),
 		domain: v.optional(v.string()), // e.g. "vantagepeers.com"
-		orchestratorAgentId: v.string(), // lead orchestrator — e.g. "sigma"
+		orchestratorId: v.string(), // lead orchestrator — e.g. "sigma"
 		status: v.union(
 			v.literal("idea"),
 			v.literal("building"),
@@ -1250,8 +1254,8 @@ export default defineSchema({
 		// Optional during the expand phase: filled by migrations/backfill_org_clerk_id.
 		clerkOrgId: v.optional(v.string()),
 		// M10f: the unit's lead orchestrator BY ID -- the `agents` row `_id` of
-		// `orchestratorAgentId` in the unit's own organisation (the operator org for a
-		// fleet-owned unit). `orchestratorAgentId` stays the display LABEL; the doors
+		// `orchestratorId` in the unit's own organisation (the operator org for a
+		// fleet-owned unit). `orchestratorId` stays the display LABEL; the doors
 		// decide on this column. Optional only for the rollout: rows written before
 		// it are filled by migrations/backfill_business_unit_owner_ids, and a row
 		// without it names nobody (an org member does not read it).
@@ -1259,8 +1263,8 @@ export default defineSchema({
 	})
 		// Expand phase: the two NAME indexes below are no longer read by any door
 		// (the doors read the ID indexes under them); the contract step drops them.
-		.index("by_orchestrator", ["orchestratorAgentId"])
-		.index("by_orchestrator_status", ["orchestratorAgentId", "status"])
+		.index("by_orchestrator", ["orchestratorId"])
+		.index("by_orchestrator_status", ["orchestratorId", "status"])
 		// R-11: the owner+status read of `businessUnits:list` is one index range.
 		// The fleet master reads by owner ID; an org member reads through the
 		// org-leading second one, so a page is the caller's own units (the tenant
