@@ -43,7 +43,12 @@ describe("README backend contract numbers equal the code", () => {
 
 	it("Backend compatibility check: called function count", () => {
 		expect(
-			Number(only(/any of the \*\*(\d+)\*\* backend functions/, "**M** backend functions")),
+			Number(
+				only(
+					/any of the \*\*(\d+)\*\* backend functions/,
+					"**M** backend functions",
+				),
+			),
 		).toBe(MCP_CALLED_FUNCTIONS.length);
 	});
 
