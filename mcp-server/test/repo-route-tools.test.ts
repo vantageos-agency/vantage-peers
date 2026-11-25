@@ -56,6 +56,7 @@ type Route =
 			fallbackReviewer?: string;
 	  }
 	| { state: "unreviewed"; owner: string }
+	| { state: "out-of-scope"; reason: string }
 	| { state: "absent" };
 
 /** One fake backend: getRoute answers from `routes`, list answers page by page from `pages`. */
@@ -173,6 +174,29 @@ describe("get_repo_route", () => {
 		expect(r.body).not.toHaveProperty("reviewer");
 	});
 
+	it("an out-of-scope repo returns its state and reason, no owner", async () => {
+		const r = await run(
+			"get_repo_route",
+			CLIENT_SEAT,
+			{ repo: "acme/fork" },
+			{
+				routes: {
+					"acme/fork": {
+						state: "out-of-scope",
+						reason: "no owning station, no activity in 30 days",
+					},
+				},
+			},
+		);
+		expect(r.refused, r.text).toBe(false);
+		expect(r.body).toEqual({
+			state: "out-of-scope",
+			reason: "no owning station, no activity in 30 days",
+			repo: "acme/fork",
+		});
+		expect(r.structured).toEqual(r.body);
+	});
+
 	it("an absent repo is a typed absent state, never an empty success", async () => {
 		const r = await run(
 			"get_repo_route",
@@ -229,6 +253,7 @@ describe("check_repo_routing", () => {
 			routed: ["acme/a"],
 			unreviewed: ["acme/b"],
 			missing: ["acme/c"],
+			outOfScope: [],
 			stale: ["acme/old1", "acme/old2"],
 			complete: false,
 		});
@@ -273,9 +298,50 @@ describe("check_repo_routing", () => {
 			routed: ["acme/a"],
 			unreviewed: [],
 			missing: [],
+			outOfScope: [],
 			stale: [],
 			complete: true,
 		});
+	});
+
+	it("an out-of-scope repo has its own bucket: it is not missing and does not make the check incomplete", async () => {
+		const withFork: Record<string, Route> = {
+			...routes,
+			"acme/fork": { state: "out-of-scope", reason: "no owning station, no activity in 30 days" },
+		};
+		const r = await run(
+			"check_repo_routing",
+			CLIENT_SEAT,
+			{ repos: ["acme/a", "acme/fork"] },
+			{
+				routes: withFork,
+				pages: [{ items: [{ repo: "acme/a" }, { repo: "acme/fork" }], nextCursor: null }],
+			},
+		);
+		expect(r.body).toEqual({
+			routed: ["acme/a"],
+			unreviewed: [],
+			missing: [],
+			outOfScope: ["acme/fork"],
+			stale: [],
+			complete: true,
+		});
+		expect(r.structured).toEqual(r.body);
+	});
+
+	it("an absent repo is still missing and still blocks completeness beside an out-of-scope one", async () => {
+		const r = await run(
+			"check_repo_routing",
+			CLIENT_SEAT,
+			{ repos: ["acme/fork", "acme/c"] },
+			{
+				routes: { "acme/fork": { state: "out-of-scope", reason: "no owning station, no activity in 30 days" } },
+				pages: [{ items: [{ repo: "acme/fork" }], nextCursor: null }],
+			},
+		);
+		expect(r.body?.outOfScope).toEqual(["acme/fork"]);
+		expect(r.body?.missing).toEqual(["acme/c"]);
+		expect(r.body?.complete).toBe(false);
 	});
 
 	it("an unreviewed repo alone makes the check incomplete", async () => {
