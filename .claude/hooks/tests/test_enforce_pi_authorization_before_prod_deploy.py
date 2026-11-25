@@ -1273,6 +1273,599 @@ def test_refusal_names_what_the_marker_covers():
     )
 
 
+# ---------------------------------------------------------------------------
+# OFFLINE SIGNATURE (task k176yhdtn9kbht75skevmhgwn18fb6wp)
+#
+# The guard decides whether a prod deploy is authorised by verifying an Ed25519
+# SIGNATURE locally. No network on the authorisation path: a third party being
+# unreachable (or filtering our User-Agent) can never again be the reason the
+# fleet cannot deploy.
+#
+# Every pole here runs the REAL hook with the network REMOVED: socket.connect,
+# socket.create_connection, socket.getaddrinfo and urllib.request.urlopen all
+# raise inside the hook's own process (see _NO_NETWORK_DRIVER), and every
+# attempt is recorded so a test can assert there were ZERO. A pole that passes
+# only because the network happened to answer would measure nothing.
+#
+# The three exits stay three, and each refusal is told apart by the audit
+# line's `reason` (a bare rc==2 is the same bytes for all of them, which is the
+# defect `refusal-is-distinguishable-from-absence.md` names):
+#   allow            reason offline-signature-valid
+#   block            reasons offline-signature-invalid / -expired / -unknown-issuer
+#                    / -field-mismatch (with `field`)
+#   refuse-to-judge  reason offline-signature-could-not-be-verified
+# ---------------------------------------------------------------------------
+
+import base64  # noqa: E402
+
+_OFFLINE_NAME = "offline-test-123"
+_OFFLINE_URL = f"https://{_OFFLINE_NAME}.convex.cloud"
+_OFFLINE_TASK = "kofflinetesttoken0123456789abcdef"
+_OFFLINE_OTHER_TASK = "kotherofflinetoken0123456789abcde"
+_OFFLINE_DEPLOY = "npx convex deploy --yes"
+SCRIPTS_DIR = HOOKS_DIR.parent / "scripts"
+SIGNER = SCRIPTS_DIR / "sign-deploy-authorization.py"
+
+_NO_NETWORK_DRIVER = r"""
+import os, runpy, socket, sys, urllib.request
+def _no(*args, **kwargs):
+    with open(os.environ["OFFLINE_TEST_ATTEMPTS"], "a") as handle:
+        handle.write("network attempted\n")
+    raise OSError("network removed by the test")
+socket.socket.connect = _no
+socket.socket.connect_ex = _no
+socket.create_connection = _no
+socket.getaddrinfo = _no
+urllib.request.urlopen = _no
+sys.argv = [os.environ["OFFLINE_TEST_HOOK"]]
+runpy.run_path(os.environ["OFFLINE_TEST_HOOK"], run_name="__main__")
+"""
+
+_OFFLINE_ENV_DROP = (
+    "PI_AUTHORIZED_TASK_ID", "PI_AUTH_ORCHESTRATOR", "VP_GUARD_CONVEX_TOKEN",
+    "VP_GUARD_ED25519_BACKEND", "CLERK_SECRET_KEY", "CLERK_SERVICE_ACCOUNT_USER_ID",
+    "CLERK_DOMAIN",
+)
+
+
+def _b64u(raw: bytes) -> str:
+    return base64.urlsafe_b64encode(raw).rstrip(b"=").decode("ascii")
+
+
+def _unb64u(text: str) -> bytes:
+    return base64.urlsafe_b64decode(text + "=" * (-len(text) % 4))
+
+
+def _canonical(payload: dict) -> bytes:
+    return json.dumps(payload, sort_keys=True, separators=(",", ":"),
+                      ensure_ascii=False).encode("utf-8")
+
+
+def _ed25519():
+    sys.path.insert(0, str(HOOKS_DIR))
+    from _lib import ed25519_offline  # noqa: PLC0415 - fails until the module exists
+    return ed25519_offline
+
+
+def _flip_payload_byte(fragments: str) -> str:
+    """The same fragments with ONE byte of the signed payload changed.
+
+    The byte is the first character of the signed floor, so the payload still
+    parses as JSON: it is the SIGNATURE that must catch the change, not the parser."""
+    _, _, rest = fragments.partition("# pi-auth-payload: ")
+    encoded, _, tail = rest.partition(" ")
+    raw = bytearray(_unb64u(encoded))
+    raw[raw.index(b'"floor":"') + len(b'"floor":"')] ^= 0x01
+    return f"# pi-auth-payload: {_b64u(bytes(raw))} {tail}"
+
+
+@pytest.fixture
+def offline_repo(tmp_path):
+    """A throwaway git repository: `floor` is an ancestor of HEAD, HEAD is one commit later."""
+    repo = tmp_path / "offline-repo"
+    repo.mkdir()
+    git = ["git", "-c", "user.name=t", "-c", "user.email=t@example.invalid",
+           "-c", "commit.gpgsign=false", "-C", str(repo)]
+    subprocess.run([*git, "init", "-q", "-b", "main"], check=True)
+    (repo / "a.txt").write_text("one\n")
+    subprocess.run([*git, "add", "a.txt"], check=True)
+    subprocess.run([*git, "commit", "-q", "-m", "floor"], check=True)
+    floor = subprocess.run([*git, "rev-parse", "HEAD"], capture_output=True, text=True,
+                           check=True).stdout.strip()
+    (repo / "a.txt").write_text("two\n")
+    subprocess.run([*git, "commit", "-q", "-am", "head"], check=True)
+    head = subprocess.run([*git, "rev-parse", "HEAD"], capture_output=True, text=True,
+                          check=True).stdout.strip()
+    return {"path": repo, "floor": floor, "head": head}
+
+
+@pytest.fixture
+def offline_key():
+    return os.urandom(32)  # an Ed25519 seed
+
+
+def _pub_b64(seed: bytes) -> str:
+    return base64.b64encode(_ed25519().public_key(seed)).decode("ascii")
+
+
+def _write_pubkeys(tmp_path, issuers, name="pubkeys.json"):
+    path = tmp_path / name
+    path.write_text(json.dumps(issuers))
+    return path
+
+
+def _payload(floor, **over):
+    body = {
+        "v": 1, "purpose": "PROD-DEPLOY-AUTHORIZED", "task": _OFFLINE_TASK,
+        "floor": floor, "deployment": _OFFLINE_NAME, "issuer": "pi",
+        "orchestrator": "sigma", "iat": int(time.time()),
+    }
+    body.update(over)
+    return body
+
+
+def _fragments(seed, payload, *, raw_payload=None, signing_seed=None):
+    raw = raw_payload if raw_payload is not None else _canonical(payload)
+    signature = _ed25519().sign(signing_seed or seed, raw)
+    return f"# pi-auth-payload: {_b64u(raw)} # pi-auth-sig: {_b64u(signature)}"
+
+
+def _run_offline(command, *, pubkeys, repo, tmp_path, extra_env=None, network_off=True):
+    """Run the real hook, network removed, in the throwaway repository."""
+    payload = json.dumps({"tool_name": "Bash", "tool_input": {"command": command}})
+    env = {k: v for k, v in os.environ.items() if k not in _OFFLINE_ENV_DROP}
+    attempts = tmp_path / "network-attempts.log"
+    audit = tmp_path / "offline-audit.log"
+    env.update({
+        "VP_CONVEX_URL": _OFFLINE_URL,
+        "VP_GUARD_ENV_FILE": "/nonexistent/hermetic/.env.local",
+        "VP_GUARD_AUDIT_LOG": str(audit),
+        "VP_GUARD_PUBKEYS_FILE": str(pubkeys),
+        "OFFLINE_TEST_HOOK": str(HOOK),
+        "OFFLINE_TEST_ATTEMPTS": str(attempts),
+    })
+    env.update(extra_env or {})
+    argv = ([sys.executable, "-c", _NO_NETWORK_DRIVER] if network_off
+            else [sys.executable, str(HOOK)])
+    proc = subprocess.run(argv, input=payload, capture_output=True, text=True,
+                          timeout=30, env=env, cwd=str(repo["path"]))
+    entries = [json.loads(line) for line in audit.read_text().splitlines()] if audit.exists() else []
+    return {
+        "rc": proc.returncode, "out": proc.stderr + proc.stdout,
+        "audit": entries[-1] if entries else {},
+        "attempts": attempts.read_text() if attempts.exists() else "",
+    }
+
+
+def _signed_run(tmp_path, repo, seed, *, payload_over=None, command=_OFFLINE_DEPLOY,
+                task=_OFFLINE_TASK, issuers=None, extra_env=None, raw_payload=None,
+                signing_seed=None, mutate=None):
+    payload = _payload(repo["floor"], **(payload_over or {}))
+    fragments = _fragments(seed, payload, raw_payload=raw_payload, signing_seed=signing_seed)
+    if mutate:
+        fragments = mutate(fragments)
+    pubkeys = _write_pubkeys(tmp_path, issuers if issuers is not None else {"pi": [_pub_b64(seed)]})
+    full = f"{command} # pi-authorized: {task} {fragments}"
+    return _run_offline(full, pubkeys=pubkeys, repo=repo, tmp_path=tmp_path, extra_env=extra_env)
+
+
+# --- the measurement this task exists for -----------------------------------
+
+def test_offline_signature_valid_token_allows_with_the_network_removed(
+        tmp_path, offline_repo, offline_key):
+    result = _signed_run(tmp_path, offline_repo, offline_key)
+    assert result["rc"] == 0, result["out"]
+    assert result["attempts"] == "", f"the auth path touched the network: {result['attempts']}"
+    assert result["audit"].get("verdict") == "allow", result["audit"]
+    assert result["audit"].get("reason") == "offline-signature-valid", result["audit"]
+    assert result["audit"].get("task_id") == _OFFLINE_TASK
+    assert result["audit"].get("issuer") == "pi"
+    assert result["audit"].get("verifier") in ("cryptography", "pure-python"), result["audit"]
+
+
+@pytest.mark.parametrize("backend", ["pure-python", "cryptography"])
+def test_offline_signature_both_verifier_backends_allow_and_block_alike(
+        tmp_path, offline_repo, offline_key, backend):
+    """The audit line says WHICH verifier ran; both give the same verdicts."""
+    if backend == "cryptography":
+        pytest.importorskip("cryptography")
+    env = {"VP_GUARD_ED25519_BACKEND": backend}
+    ok = _signed_run(tmp_path, offline_repo, offline_key, extra_env=env)
+    assert ok["rc"] == 0, ok["out"]
+    assert ok["audit"].get("verifier") == backend, ok["audit"]
+    bad = _signed_run(tmp_path, offline_repo, offline_key, extra_env=env, mutate=_flip_payload_byte)
+    assert bad["rc"] == 2, bad["out"]
+    assert bad["audit"].get("reason") == "offline-signature-invalid", bad["audit"]
+    assert bad["audit"].get("verifier") == backend, bad["audit"]
+
+
+def test_offline_signature_auto_backend_prefers_cryptography_when_importable(
+        tmp_path, offline_repo, offline_key):
+    pytest.importorskip("cryptography")
+    ok = _signed_run(tmp_path, offline_repo, offline_key)
+    assert ok["audit"].get("verifier") == "cryptography", ok["audit"]
+
+
+# --- BLOCK poles: each says WHICH thing was wrong ---------------------------
+
+def test_offline_signature_one_changed_payload_byte_blocks(tmp_path, offline_repo, offline_key):
+    result = _signed_run(tmp_path, offline_repo, offline_key, mutate=_flip_payload_byte)
+    assert result["rc"] == 2, result["out"]
+    assert result["audit"].get("verdict") == "block"
+    assert result["audit"].get("reason") == "offline-signature-invalid", result["audit"]
+    assert "BLOCKED" in result["out"] and "signature" in result["out"].lower()
+
+
+def test_offline_signature_signed_by_another_key_blocks(tmp_path, offline_repo, offline_key):
+    result = _signed_run(tmp_path, offline_repo, offline_key, signing_seed=os.urandom(32))
+    assert result["rc"] == 2, result["out"]
+    assert result["audit"].get("verdict") == "block"
+    assert result["audit"].get("reason") == "offline-signature-invalid", result["audit"]
+
+
+def test_offline_signature_garbage_signature_blocks(tmp_path, offline_repo, offline_key):
+    result = _signed_run(
+        tmp_path, offline_repo, offline_key,
+        mutate=lambda f: f.rsplit("# pi-auth-sig: ", 1)[0] + "# pi-auth-sig: AAAA")
+    assert result["rc"] == 2, result["out"]
+    assert result["audit"].get("reason") == "offline-signature-invalid", result["audit"]
+
+
+def test_offline_signature_unknown_issuer_blocks_naming_it(tmp_path, offline_repo, offline_key):
+    result = _signed_run(tmp_path, offline_repo, offline_key,
+                         issuers={"eta": [_pub_b64(offline_key)]})
+    assert result["rc"] == 2, result["out"]
+    assert result["audit"].get("reason") == "offline-signature-unknown-issuer", result["audit"]
+    assert "'pi'" in result["out"]
+
+
+def test_offline_signature_rotation_second_listed_key_verifies(tmp_path, offline_repo, offline_key):
+    retired = _pub_b64(os.urandom(32))
+    result = _signed_run(tmp_path, offline_repo, offline_key,
+                         issuers={"pi": [retired, _pub_b64(offline_key)]})
+    assert result["rc"] == 0, result["out"]
+    assert result["audit"].get("reason") == "offline-signature-valid", result["audit"]
+
+
+def test_offline_signature_past_the_window_blocks_naming_age(tmp_path, offline_repo, offline_key):
+    result = _signed_run(tmp_path, offline_repo, offline_key,
+                         payload_over={"iat": int(time.time()) - 7200 - 120})
+    assert result["rc"] == 2, result["out"]
+    assert result["audit"].get("reason") == "offline-signature-expired", result["audit"]
+    assert "age" in result["out"].lower() and "iat" in result["out"]
+    assert result["audit"].get("age_sec", 0) >= 7200
+
+
+def test_offline_signature_inside_the_window_still_allows(tmp_path, offline_repo, offline_key):
+    """The window is the SAME length as before (TASK_TTL_SEC, 120 minutes)."""
+    result = _signed_run(tmp_path, offline_repo, offline_key,
+                         payload_over={"iat": int(time.time()) - 7100})
+    assert result["rc"] == 0, result["out"]
+    assert result["audit"].get("reason") == "offline-signature-valid", result["audit"]
+
+
+def test_offline_signature_issued_in_the_future_blocks(tmp_path, offline_repo, offline_key):
+    result = _signed_run(tmp_path, offline_repo, offline_key,
+                         payload_over={"iat": int(time.time()) + 3600})
+    assert result["rc"] == 2, result["out"]
+    assert result["audit"].get("reason") == "offline-signature-expired", result["audit"]
+    assert "future" in result["out"].lower()
+
+
+@pytest.mark.parametrize("field,over,env", [
+    ("floor", {"floor": "0" * 40}, None),
+    ("deployment", {"deployment": "some-other-deployment-999"}, None),
+    ("task", {"task": _OFFLINE_OTHER_TASK}, None),
+    ("orchestrator", {"orchestrator": "eta"}, {"PI_AUTH_ORCHESTRATOR": "sigma"}),
+])
+def test_offline_signature_field_mismatch_blocks_naming_the_field(
+        tmp_path, offline_repo, offline_key, field, over, env):
+    result = _signed_run(tmp_path, offline_repo, offline_key, payload_over=over, extra_env=env)
+    assert result["rc"] == 2, result["out"]
+    assert result["audit"].get("reason") == "offline-signature-field-mismatch", result["audit"]
+    assert result["audit"].get("field") == field, result["audit"]
+    assert field in result["out"]
+
+
+def test_offline_signature_deployment_is_read_from_an_inline_deploy_key(
+        tmp_path, offline_repo, offline_key):
+    """The command names a DIFFERENT deployment than the one signed -> BLOCK."""
+    command = "CONVEX_DEPLOY_KEY='prod:another-deploy-456|secretvalue' npx convex deploy --yes"
+    result = _signed_run(tmp_path, offline_repo, offline_key, command=command)
+    assert result["rc"] == 2, result["out"]
+    assert result["audit"].get("field") == "deployment", result["audit"]
+    matching = f"CONVEX_DEPLOY_KEY='prod:{_OFFLINE_NAME}|secretvalue' npx convex deploy --yes"
+    ok = _signed_run(tmp_path, offline_repo, offline_key, command=matching)
+    assert ok["rc"] == 0, ok["out"]
+
+
+def test_offline_signature_floor_given_to_the_deploy_script_must_match(
+        tmp_path, offline_repo, offline_key):
+    script = f".claude/scripts/convex-prod-deploy.sh {_OFFLINE_TASK}"
+    wrong = f"{script} {'1' * 40} && {_OFFLINE_DEPLOY}"
+    result = _signed_run(tmp_path, offline_repo, offline_key, command=wrong)
+    assert result["rc"] == 2, result["out"]
+    assert result["audit"].get("field") == "floor", result["audit"]
+    right = f"{script} {offline_repo['floor']} && {_OFFLINE_DEPLOY}"
+    ok = _signed_run(tmp_path, offline_repo, offline_key, command=right)
+    assert ok["rc"] == 0, ok["out"]
+
+
+def test_offline_signature_floor_must_be_an_ancestor_of_the_checkout(
+        tmp_path, offline_repo, offline_key):
+    """No floor in the command: the signed floor must be reachable from this checkout's HEAD."""
+    unknown = _signed_run(tmp_path, offline_repo, offline_key, payload_over={"floor": "f" * 40})
+    assert unknown["rc"] == 2, unknown["out"]
+    assert unknown["audit"].get("field") == "floor", unknown["audit"]
+    at_head = _signed_run(tmp_path, offline_repo, offline_key,
+                          payload_over={"floor": offline_repo["head"]})
+    assert at_head["rc"] == 0, at_head["out"]
+
+
+def test_offline_signature_absent_marker_part_blocks_naming_it(tmp_path, offline_repo, offline_key):
+    only_payload = _signed_run(
+        tmp_path, offline_repo, offline_key,
+        mutate=lambda f: f.rsplit("# pi-auth-sig: ", 1)[0])
+    assert only_payload["rc"] == 2, only_payload["out"]
+    assert only_payload["audit"].get("reason") == "offline-signature-invalid", only_payload["audit"]
+    assert "pi-auth-sig" in only_payload["out"]
+    only_sig = _signed_run(
+        tmp_path, offline_repo, offline_key,
+        mutate=lambda f: "# pi-auth-sig: " + f.rsplit("# pi-auth-sig: ", 1)[1])
+    assert only_sig["rc"] == 2, only_sig["out"]
+    assert only_sig["audit"].get("reason") == "offline-signature-invalid", only_sig["audit"]
+    assert "pi-auth-payload" in only_sig["out"]
+
+
+def test_offline_signature_payload_must_be_canonical(tmp_path, offline_repo, offline_key):
+    """A validly SIGNED payload that is not the canonical form (spaces, unsorted) is refused."""
+    loose = json.dumps(_payload(offline_repo["floor"]), sort_keys=False, indent=1).encode("utf-8")
+    result = _signed_run(tmp_path, offline_repo, offline_key, raw_payload=loose)
+    assert result["rc"] == 2, result["out"]
+    assert result["audit"].get("reason") == "offline-signature-invalid", result["audit"]
+    assert "canonical" in result["out"].lower()
+
+
+def test_offline_signature_bad_signature_never_falls_back_to_the_network_path(
+        tmp_path, offline_repo, offline_key):
+    """A presented signature that fails decides alone: a good network token cannot rescue it."""
+    with stub_vp({_OFFLINE_TASK: token_task()}) as url:
+        pubkeys = _write_pubkeys(tmp_path, {"pi": [_pub_b64(offline_key)]})
+        fragments = _fragments(offline_key, _payload(offline_repo["floor"]),
+                               signing_seed=os.urandom(32))
+        result = _run_offline(
+            f"{_OFFLINE_DEPLOY} # pi-authorized: {_OFFLINE_TASK} {fragments}",
+            pubkeys=pubkeys, repo=offline_repo, tmp_path=tmp_path, network_off=False,
+            extra_env={"VP_CONVEX_URL": url, "VP_GUARD_CONVEX_TOKEN": "stub-identity"})
+    assert result["rc"] == 2, result["out"]
+    assert result["audit"].get("reason") == "offline-signature-invalid", result["audit"]
+
+
+_PHASE_TWO_DRIVER = r"""
+import importlib.util, os, sys, urllib.request
+spec = importlib.util.spec_from_file_location("guard_phase_two", os.environ["OFFLINE_TEST_HOOK"])
+guard = importlib.util.module_from_spec(spec)
+guard._TESTING = True
+spec.loader.exec_module(guard)
+guard.NETWORK_AUTH_PATH_ENABLED = False
+def _no(*args, **kwargs):
+    with open(os.environ["OFFLINE_TEST_ATTEMPTS"], "a") as handle:
+        handle.write("network attempted\n")
+    raise OSError("network removed by the test")
+urllib.request.urlopen = _no
+sys.exit(guard.main(sys.stdin.read()))
+"""
+
+
+def test_offline_signature_switch_off_refuses_an_unsigned_token_without_touching_the_network(
+        tmp_path, offline_repo, offline_key):
+    """NETWORK_AUTH_PATH_ENABLED = False (phase 2): a bare `# pi-authorized:` is not enough."""
+    attempts = tmp_path / "phase-two-attempts.log"
+    audit = tmp_path / "phase-two-audit.log"
+    env = {k: v for k, v in os.environ.items() if k not in _OFFLINE_ENV_DROP}
+    env.update({
+        "VP_CONVEX_URL": _OFFLINE_URL, "VP_GUARD_ENV_FILE": "/nonexistent/hermetic/.env.local",
+        "VP_GUARD_AUDIT_LOG": str(audit), "OFFLINE_TEST_HOOK": str(HOOK),
+        "OFFLINE_TEST_ATTEMPTS": str(attempts),
+        "VP_GUARD_PUBKEYS_FILE": str(_write_pubkeys(tmp_path, {"pi": [_pub_b64(offline_key)]})),
+    })
+    payload = json.dumps({"tool_name": "Bash", "tool_input": {
+        "command": f"{_OFFLINE_DEPLOY} # pi-authorized: {_OFFLINE_TASK}"}})
+    proc = subprocess.run([sys.executable, "-c", _PHASE_TWO_DRIVER], input=payload,
+                          capture_output=True, text=True, timeout=30, env=env,
+                          cwd=str(offline_repo["path"]))
+    assert proc.returncode == 2, proc.stderr
+    assert not attempts.exists(), "the refusal touched the network"
+    entry = json.loads(audit.read_text().splitlines()[-1])
+    assert entry.get("verdict") == "block" and entry.get("reason") == "offline-signature-required", entry
+
+
+# --- REFUSE TO JUDGE: the guard could not verify ---------------------------
+
+@pytest.mark.parametrize("content", [
+    "not json at all",
+    json.dumps([1, 2]),
+    json.dumps({"pi": "not-a-list"}),
+    json.dumps({"pi": []}),
+    json.dumps({"pi": ["!!!not-base64!!!"]}),
+    json.dumps({"pi": [base64.b64encode(b"short").decode()]}),
+    json.dumps({"pi": [42]}),
+], ids=["not-json", "top-level-list", "value-not-list", "empty-key-list",
+        "bad-base64", "wrong-key-length", "key-not-string"])
+def test_offline_signature_malformed_pubkey_config_refuses_to_judge(
+        tmp_path, offline_repo, offline_key, content):
+    pubkeys = tmp_path / "broken.json"
+    pubkeys.write_text(content)
+    fragments = _fragments(offline_key, _payload(offline_repo["floor"]))
+    result = _run_offline(f"{_OFFLINE_DEPLOY} # pi-authorized: {_OFFLINE_TASK} {fragments}",
+                          pubkeys=pubkeys, repo=offline_repo, tmp_path=tmp_path)
+    assert result["rc"] == 2, result["out"]
+    assert result["audit"].get("verdict") == "refuse-to-judge", result["audit"]
+    assert result["audit"].get("reason") == "offline-signature-could-not-be-verified"
+    assert "COULD NOT CHECK" in result["out"], result["out"]
+
+
+def test_offline_signature_absent_pubkey_config_refuses_to_judge(tmp_path, offline_repo, offline_key):
+    fragments = _fragments(offline_key, _payload(offline_repo["floor"]))
+    result = _run_offline(f"{_OFFLINE_DEPLOY} # pi-authorized: {_OFFLINE_TASK} {fragments}",
+                          pubkeys=tmp_path / "does-not-exist.json", repo=offline_repo,
+                          tmp_path=tmp_path)
+    assert result["rc"] == 2, result["out"]
+    assert result["audit"].get("verdict") == "refuse-to-judge", result["audit"]
+    assert result["audit"].get("reason") == "offline-signature-could-not-be-verified"
+
+
+def test_offline_signature_broken_verifier_refuses_to_judge(tmp_path, offline_repo, offline_key):
+    result = _signed_run(tmp_path, offline_repo, offline_key,
+                         extra_env={"VP_GUARD_ED25519_BACKEND": "no-such-backend"})
+    assert result["rc"] == 2, result["out"]
+    assert result["audit"].get("verdict") == "refuse-to-judge", result["audit"]
+    assert result["audit"].get("reason") == "offline-signature-could-not-be-verified"
+    assert "COULD NOT CHECK" in result["out"]
+
+
+def test_offline_signature_not_a_git_checkout_refuses_to_judge_the_floor(
+        tmp_path, offline_repo, offline_key):
+    bare = tmp_path / "not-a-repo"
+    bare.mkdir()
+    result = _signed_run(tmp_path, {**offline_repo, "path": bare}, offline_key)
+    assert result["rc"] == 2, result["out"]
+    assert result["audit"].get("verdict") == "refuse-to-judge", result["audit"]
+    assert result["audit"].get("reason") == "offline-signature-could-not-be-verified"
+
+
+# --- the verifier itself: RFC 8032 vectors, both backends -------------------
+
+_RFC8032 = [
+    ("9d61b19deffd5a60ba844af492ec2cc44449c5697b326919703bac031cae7f60",
+     "d75a980182b10ab7d54bfed3c964073a0ee172f3daa62325af021a68f707511a", "",
+     "e5564300c360ac729086e2cc806e828a84877f1eb8e5d974d873e065224901555fb8821590a33bacc61e39701cf9b46bd25bf5f0595bbe24655141438e7a100b"),
+    ("4ccd089b28ff96da9db6c346ec114e0f5b8a319f35aba624da8cf6ed4fb8a6fb",
+     "3d4017c3e843895a92b70aa74d1b7ebc9c982ccf2ec4968cc0cd55f12af4660c", "72",
+     "92a009a9f0d4cab8720e820b5f642540a2b27b5416503f8fb3762223ebdb69da085ac1e43e15996e458f3613d0f11d8c387b2eaeb4302aeeb00d291612bb0c00"),
+    ("c5aa8df43f9f837bedb7442f31dcb7b166d38535076f094b85ce3a2e0b4458f7",
+     "fc51cd8e6218a1a38da47ed00230f0580816ed13ba3303ac5deb911548908025", "af82",
+     "6291d657deec24024827e69c3abe01a30ce548a284743a445e3680d7db5ac3ac18ff9b538d16f290ae67f760984dc6594a7c15e9716ed28dc027beceea1ec40a"),
+]
+_L = 2**252 + 27742317777372353535851937790883648493
+
+
+@pytest.mark.parametrize("backend", ["pure-python", "cryptography"])
+@pytest.mark.parametrize("seed,public,message,signature", _RFC8032, ids=["rfc-1", "rfc-2", "rfc-3"])
+def test_offline_signature_rfc8032_vectors_verify_on_every_backend(
+        backend, seed, public, message, signature):
+    if backend == "cryptography":
+        pytest.importorskip("cryptography")
+    lib = _ed25519()
+    pub, msg, sig = bytes.fromhex(public), bytes.fromhex(message), bytes.fromhex(signature)
+    ok, used = lib.verify(pub, msg, sig, backend=backend)
+    assert ok is True and used == backend
+    assert lib.verify(pub, msg + b"x", sig, backend=backend)[0] is False
+    flipped = bytearray(sig)
+    flipped[5] ^= 1
+    assert lib.verify(pub, msg, bytes(flipped), backend=backend)[0] is False
+    assert lib.verify(pub, msg, sig[:-1], backend=backend)[0] is False
+    # a malleated S (S + L) satisfies the same equation and must be refused: S must be < L
+    s_value = int.from_bytes(sig[32:], "little") + _L
+    if s_value < 2**256:
+        malleated = sig[:32] + s_value.to_bytes(32, "little")
+        assert lib.verify(pub, msg, malleated, backend=backend)[0] is False
+
+
+@pytest.mark.parametrize("backend", ["pure-python", "cryptography"])
+@pytest.mark.parametrize("seed,public,message,signature", _RFC8032, ids=["rfc-1", "rfc-2", "rfc-3"])
+def test_offline_signature_rfc8032_public_key_and_signature_derive_from_the_seed(
+        backend, seed, public, message, signature):
+    if backend == "cryptography":
+        pytest.importorskip("cryptography")
+    lib = _ed25519()
+    assert lib.public_key(bytes.fromhex(seed), backend=backend).hex() == public
+    assert lib.sign(bytes.fromhex(seed), bytes.fromhex(message), backend=backend).hex() == signature
+
+
+def test_offline_signature_backends_agree_on_random_inputs():
+    pytest.importorskip("cryptography")
+    lib = _ed25519()
+    for _ in range(20):
+        seed, message = os.urandom(32), os.urandom(os.urandom(1)[0])
+        pub, sig = lib.public_key(seed), lib.sign(seed, message)
+        assert lib.verify(pub, message, sig, backend="pure-python")[0] is True
+        assert lib.verify(pub, message, sig, backend="cryptography")[0] is True
+        bad = bytearray(sig)
+        bad[63 - (os.urandom(1)[0] % 31)] ^= 0x10
+        assert lib.verify(pub, message, bytes(bad), backend="pure-python")[0] is False
+        assert lib.verify(pub, message, bytes(bad), backend="cryptography")[0] is False
+
+
+def test_offline_signature_unknown_backend_raises_instead_of_guessing():
+    lib = _ed25519()
+    with pytest.raises(lib.VerifierUnavailable):
+        lib.verify(b"\0" * 32, b"", b"\0" * 64, backend="no-such-backend")
+
+
+# --- the signing tool -------------------------------------------------------
+
+def _run_signer(args, env_extra=None):
+    env = {k: v for k, v in os.environ.items() if not k.startswith("DEPLOY_AUTHORITY_SIGNING_KEY")}
+    env.update(env_extra or {})
+    return subprocess.run([sys.executable, str(SIGNER), *args], capture_output=True, text=True,
+                          timeout=30, env=env)
+
+
+def test_offline_signature_signer_output_is_accepted_by_the_guard(
+        tmp_path, offline_repo, offline_key):
+    seed_b64 = base64.b64encode(offline_key).decode()
+    proc = _run_signer(
+        ["--issuer", "pi", "--task", _OFFLINE_TASK, "--floor", offline_repo["floor"],
+         "--deployment", _OFFLINE_NAME, "--orchestrator", "sigma"],
+        {"DEPLOY_AUTHORITY_SIGNING_KEY_PI": seed_b64})
+    assert proc.returncode == 0, proc.stderr
+    assert seed_b64 not in proc.stdout + proc.stderr, "the signer printed the private key"
+    fragments = proc.stdout.strip()
+    assert fragments.startswith("# pi-auth-payload: ") and "# pi-auth-sig: " in fragments
+    pubkeys = _write_pubkeys(tmp_path, {"pi": [_pub_b64(offline_key)]})
+    result = _run_offline(f"{_OFFLINE_DEPLOY} # pi-authorized: {_OFFLINE_TASK} {fragments}",
+                          pubkeys=pubkeys, repo=offline_repo, tmp_path=tmp_path)
+    assert result["rc"] == 0, result["out"]
+    assert result["audit"].get("reason") == "offline-signature-valid", result["audit"]
+
+
+def test_offline_signature_signer_refuses_without_the_injected_key(offline_repo):
+    proc = _run_signer(["--issuer", "pi", "--task", _OFFLINE_TASK, "--floor", offline_repo["floor"],
+                        "--deployment", _OFFLINE_NAME, "--orchestrator", "sigma"])
+    assert proc.returncode != 0
+    assert "DEPLOY_AUTHORITY_SIGNING_KEY_PI" in proc.stderr
+    assert "infisical run" in proc.stderr
+
+
+def test_offline_signature_signer_has_no_flag_that_takes_a_private_key():
+    source = SIGNER.read_text()
+    for forbidden in ("--private-key", "--seed", "--secret", "--key-file", "--signing-key"):
+        assert forbidden not in source, f"signer accepts a key through {forbidden!r}"
+
+
+def test_offline_signature_signer_rejects_a_short_floor(offline_key, offline_repo):
+    proc = _run_signer(
+        ["--issuer", "pi", "--task", _OFFLINE_TASK, "--floor", offline_repo["floor"][:12],
+         "--deployment", _OFFLINE_NAME, "--orchestrator", "sigma"],
+        {"DEPLOY_AUTHORITY_SIGNING_KEY_PI": base64.b64encode(offline_key).decode()})
+    assert proc.returncode != 0
+    assert "floor" in proc.stderr
+
+
+def test_offline_signature_generate_keypair_prints_the_private_key_only_as_an_env_line():
+    proc = _run_signer(["--generate-keypair", "--issuer", "pi"])
+    assert proc.returncode == 0, proc.stderr
+    lines = [line for line in proc.stdout.splitlines() if line.strip()]
+    assert len(lines) == 1 and lines[0].startswith("DEPLOY_AUTHORITY_SIGNING_KEY_PI="), proc.stdout
+    seed_b64 = lines[0].split("=", 1)[1]
+    assert len(base64.b64decode(seed_b64)) == 32
+    assert seed_b64 not in proc.stderr, "the private key leaked to stderr"
+    public_b64 = base64.b64encode(_ed25519().public_key(base64.b64decode(seed_b64))).decode()
+    assert public_b64 in proc.stderr, "the public key must be printed for the config"
+    assert public_b64 not in proc.stdout
+
+
 if __name__ == "__main__":
     fails = 0
     for name, fn in sorted(globals().items()):
