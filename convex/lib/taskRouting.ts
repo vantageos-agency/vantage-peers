@@ -1,3 +1,4 @@
+import { sameOrg } from "@vantageos/cloud-identity";
 import type { QueryCtx } from "../_generated/server";
 import { actorIdResolver } from "./actorIds";
 import { rbacDenied } from "./inboxReader";
@@ -10,28 +11,14 @@ import {
 	routeOfRow,
 } from "./reviewRouting";
 
-// The same organisation: by permanent id when both name one, else by slug label.
+// The same organisation, as the package decides it (permanent id first, label otherwise).
 function sameOrgKey(a: OrgKey | null, b: OrgKey | null): boolean {
 	if (a === null || b === null) return false;
-	if (a.clerkOrgId !== undefined && b.clerkOrgId !== undefined) return a.clerkOrgId === b.clerkOrgId;
-	return a.clerkOrgSlug === b.clerkOrgSlug;
+	return sameOrg(
+		{ id: a.clerkOrgId, label: a.clerkOrgSlug },
+		{ id: b.clerkOrgId, label: b.clerkOrgSlug },
+	);
 }
-
-// ─────────────────────────────────────────────────────────────────────────────
-// taskRouting — a task is assigned the way its organisation ROUTED the repository
-// (mission k577f8ksjx5ec3gq9bggc1brqd8jwkbh, S2; task k1730d1b6wzwepjyyth266xq958jxfv0).
-//
-// Only an org that ADOPTED explicit routing (reviewRouting.isRoutingAdopted) is
-// judged here; every other org keeps today's behaviour with no read of its table.
-// The route is the caller's own org's row, read by the verified scope (a row of
-// another org, or of the fleet for a member, is ABSENT: no content leaks).
-//
-// WHO is compared by agent ID (R-53): the route row stores labels; they are
-// resolved to agents-row IDs in the row's own org and compared with the
-// assignee's ID. A label that names no agent there matches nobody.
-// Refusals are RBAC_DENIED through `rbacDenied` (lib/inboxReader.ts), the one
-// refusal constructor, with a typed `reason` and the route's own names in the text.
-// ─────────────────────────────────────────────────────────────────────────────
 
 const REVIEW_TITLE_REPO = /^\[review\]\s+([^\s/]+\/[^\s/]+)\s+PR\s+#\d+/i;
 
