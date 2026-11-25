@@ -218,6 +218,55 @@ describe("an ADOPTED org never reaches the fleet default; a non-adopted org keep
 		expect(offAgain.changed).toBe(false);
 	});
 
+	test("adopt by slug, then the mapping gains an id: still adopted (no fleet default reopens)", async () => {
+		const t = makeT();
+		await seed(t);
+		await t.run(async (ctx) => {
+			const b = await ctx.db
+				.query("client_org_mapping")
+				.withIndex("by_clerk_slug", (q) => q.eq("clerkOrgSlug", "org-b"))
+				.unique();
+			if (b) await ctx.db.patch(b._id, { clerkOrgId: undefined });
+		});
+		await t.mutation(internal.clientOrgMapping.setReviewRoutingAdopted, {
+			clerkOrgSlug: "org-b",
+			adopted: true,
+		});
+		expect(await reviewerOf(t, "org-b/never-mapped")).toBeNull();
+		await t.mutation(internal.clientOrgMapping.setClerkOrgId, {
+			clerkOrgSlug: "org-b",
+			clerkOrgId: testClerkOrgId("org-b"),
+		});
+		expect(await reviewerOf(t, "org-b/never-mapped")).toBeNull();
+		expect(await reviewerOf(t, "org-b/unreviewed")).toBeNull();
+		expect(await t.query(internal.reviewRouting.acceptedForRepo, { repo: "org-b/routed" })).toEqual(["rev"]);
+		// the list now names the org by its permanent id, and removal still clears it
+		const list = await t.run(async (ctx) =>
+			ctx.db.query("taskClosureConfig").withIndex("by_key", (q) => q.eq("key", "reviewRoutingAdoptedOrgs")).unique(),
+		);
+		expect(list?.value).toContain(`id:${testClerkOrgId("org-b")}`);
+		expect(list?.value).not.toContain("slug:org-b");
+		await t.mutation(internal.clientOrgMapping.setReviewRoutingAdopted, {
+			clerkOrgSlug: "org-b",
+			adopted: false,
+		});
+		expect(await reviewerOf(t, "org-b/never-mapped")).toBe(FLEET_REVIEWER);
+	});
+
+	test("READER: a stale `slug:` entry is still honoured once the row has an id", async () => {
+		const t = makeT();
+		await seed(t);
+		await t.run(async (ctx) => {
+			await ctx.db.insert("taskClosureConfig", {
+				key: "reviewRoutingAdoptedOrgs",
+				value: ["slug:org-b"],
+				updatedAt: 0,
+			});
+		});
+		expect(await reviewerOf(t, "org-b/never-mapped")).toBeNull();
+		expect(await t.query(internal.reviewRouting.acceptedForRepo, { repo: "org-b/unreviewed" })).toEqual([]);
+	});
+
 	test("the flag is NOT in the org's authority: no scopes entry carries it, before or after adoption", async () => {
 		const t = makeT();
 		await seed(t);
