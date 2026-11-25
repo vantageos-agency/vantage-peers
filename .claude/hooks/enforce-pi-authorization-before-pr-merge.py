@@ -45,7 +45,11 @@ reaches it, not only the words `gh pr merge`: `gh api` on `.../pulls/<n>/merge` 
 method, the GraphQL `mergePullRequest` / `enablePullRequestAutoMerge` mutation, curl / wget /
 httpie at api.github.com, and a gh alias that expands to one of those or to `pr merge`
 (defined in the command, or read from gh's config). A payload this guard cannot read (a shell
-variable as the method, endpoint or query, a GraphQL body on stdin) is refused.
+variable as the method, endpoint or query, a GraphQL body on stdin) is refused. A repository
+given as the gh placeholder `{owner}/{repo}` is resolved from the cwd's git remote, and refused
+when no remote can be read. The host api.github.com is matched without regard to case, a
+trailing dot or :443. A merge into a branch (`repos/<o>/<r>/merges`, or the GraphQL `mergeBranch`
+mutation) carries the Pi-token requirement; no pull request exists, so no reviewer verdict is read.
 
 RESIDUE (what this guard does NOT read, so it is not mistaken for coverage):
 - Interpreter SOURCE (`python3 -c`, `node -e`, a heredoc fed to python) is not read as
@@ -152,16 +156,66 @@ GH_API_VALUE_FLAGS = frozenset({
 GH_API_FIELD_FLAGS = frozenset({"-f", "--raw-field", "-F", "--field"})
 CURL_DATA_FLAGS = frozenset({"-d", "-F", "--form", "--form-string", "--json"})
 WGET_DATA_FLAGS = frozenset({"--post-data", "--post-file", "--body-data", "--body-file"})
+# A repository is a literal owner/name, or a gh placeholder ({owner}/{repo}, :owner/:repo),
+# or a mix of the two; the mix is refused by _named_repo, never resolved.
+REPO_TEXT = r"[\w.{}:-]+/[\w.{}:-]+"
 MERGE_PATH_RE = re.compile(
-    r"(?:^|/)repos/(?P<repo>[\w.-]+/[\w.-]+)/pulls/(?P<pr>\d+)/merge(?:[/?#]|$)"
+    rf"(?:^|/)repos/(?P<repo>{REPO_TEXT})/pulls/(?P<pr>\d+)/merge(?:[/?#]|$)", re.IGNORECASE
 )
-MERGE_MUTATION_RE = re.compile(r"\b(?:mergePullRequest|enablePullRequestAutoMerge)\b")
+# A merge into a branch: repos/<o>/<r>/merges. No pull request, so no verdict.
+BRANCH_PATH_RE = re.compile(
+    rf"(?:^|/)repos/(?P<repo>{REPO_TEXT})/merges(?:[/?#]|$)", re.IGNORECASE
+)
+# The host, matched without regard to case, with a tolerated trailing dot and :443.
+API_HOST_RE = re.compile(r"(?<![\w.-])api\.github\.com\.?(?::443)?(?![\w.-])", re.IGNORECASE)
+PR_MERGE_MUTATION_RE = re.compile(r"\b(?:mergePullRequest|enablePullRequestAutoMerge)\b")
+BRANCH_MERGE_MUTATION_RE = re.compile(r"\bmergeBranch\b")
+# The pr value of a branch-merge target: no pull request exists, so no verdict is read.
+BRANCH_MERGE = "branch"
 GH_ENV_RE = re.compile(
     r"""(?:^|[\s;&|(])(GH_CONFIG_DIR|XDG_CONFIG_HOME)=(?:"([^"]*)"|'([^']*)'|([^\s;&|)'"]+))"""
 )
 ALIAS_LINE_RE = re.compile(r"^\s+([A-Za-z0-9_.-]+):\s*(.*?)\s*$")
 PAYLOAD_LIMIT = 65536
 MAX_ALIAS_DEPTH = 3
+
+
+def _named_repo(repo_text: str):
+    """(repo, residue). repo is owner/name; "" when the repository is a gh placeholder pair,
+    which the caller resolves from the cwd remote. A placeholder mixed with a literal name
+    cannot be resolved without guessing, so it is named as residue and refused."""
+    if repo_text.lower() in ("{owner}/{repo}", ":owner/:repo"):
+        return "", None
+    if any(ch in repo_text for ch in "{}:"):
+        return None, (
+            "a repository placeholder is mixed with a literal name, so the repository cannot "
+            f"be resolved without guessing: {repo_text[:80]}"
+        )
+    return repo_text, None
+
+
+def _merge_target(repo_text: str, pr: str):
+    """(target, residue) for a merge of pull request `pr` in the repository `repo_text`."""
+    repo, problem = _named_repo(repo_text)
+    if problem:
+        return None, [problem]
+    return (repo, pr), []
+
+
+def _branch_target(repo_text: str):
+    """(target, residue) for a merge into a branch of the repository `repo_text`."""
+    repo, problem = _named_repo(repo_text)
+    if problem:
+        return None, [problem]
+    return (repo, BRANCH_MERGE), []
+
+
+def _slug_of(remote: str | None) -> str:
+    """owner/name from a git remote URL or scp-style address, or "" when none is found."""
+    if not remote:
+        return ""
+    match = re.search(r"[:/]([\w.-]+)/([\w.-]+?)(?:\.git)?/?$", remote.strip())
+    return f"{match.group(1)}/{match.group(2)}" if match else ""
 
 
 def _basename(word: str) -> str:
@@ -295,8 +349,10 @@ def _gh_api_route(args):
         return None, []
     if endpoint == "graphql":
         text, residue = _graphql_payload(args)
-        if MERGE_MUTATION_RE.search(text):
+        if PR_MERGE_MUTATION_RE.search(text):
             return ("", ""), residue
+        if BRANCH_MERGE_MUTATION_RE.search(text):
+            return ("", BRANCH_MERGE), residue
         return None, residue
     method = _api_method(args)
     if "$" in method or ("$" in endpoint and method in WRITE_METHODS):
@@ -308,7 +364,10 @@ def _gh_api_route(args):
         return None, []
     match = MERGE_PATH_RE.search(endpoint)
     if match:
-        return (match.group("repo"), match.group("pr")), []
+        return _merge_target(match.group("repo"), match.group("pr"))
+    match = BRANCH_PATH_RE.search(endpoint)
+    if match:
+        return _branch_target(match.group("repo"))
     return None, []
 
 
@@ -342,10 +401,13 @@ def _http_route(client: str, tail):
     if method not in WRITE_METHODS:
         return None, []
     for tok in args:
-        if "api.github.com" in tok:
+        if API_HOST_RE.search(tok):
             match = MERGE_PATH_RE.search(tok)
             if match:
-                return (match.group("repo"), match.group("pr")), []
+                return _merge_target(match.group("repo"), match.group("pr"))
+            match = BRANCH_PATH_RE.search(tok)
+            if match:
+                return _branch_target(match.group("repo"))
     return None, []
 
 
@@ -746,6 +808,12 @@ def judge_verdict(comments, head):
 def judge_target(repo: str, pr: str):
     """Judge one merge target: (allowed, cause, detail). A target with no pull request
     number, or no repository, is refused: nothing was read, so nothing passes."""
+    if pr == BRANCH_MERGE:
+        return (
+            True, "branch-merge-token-only",
+            "a merge into a branch names no pull request, so no reviewer verdict applies; "
+            "the Pi token is the authority for it",
+        )
     if not pr:
         return (
             False, "no-verdict-readable",
@@ -857,7 +925,7 @@ try:
             detail = f"the predicate could not read this command: {exc}"
         for repo, pr, route in targets:
             allowed, cause, detail = judge_target(
-                repo or _remote_repo(_command_cwd(command)) or "", pr
+                repo or _slug_of(_remote_repo(_command_cwd(command))), pr
             )
             if not allowed:
                 failed_route = route
