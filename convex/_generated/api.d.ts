@@ -110,6 +110,7 @@ import type * as lib_taskClosureGate from "../lib/taskClosureGate.js";
 import type * as lib_taskDeliverable from "../lib/taskDeliverable.js";
 import type * as lib_taskDoorClaim from "../lib/taskDoorClaim.js";
 import type * as lib_taskQueue from "../lib/taskQueue.js";
+import type * as lib_taskRouting from "../lib/taskRouting.js";
 import type * as lib_taskScopeFilter from "../lib/taskScopeFilter.js";
 import type * as lib_teamNamespace from "../lib/teamNamespace.js";
 import type * as lib_tenantSlug from "../lib/tenantSlug.js";
@@ -301,6 +302,7 @@ declare const fullApi: ApiFromModules<{
   "lib/taskDeliverable": typeof lib_taskDeliverable;
   "lib/taskDoorClaim": typeof lib_taskDoorClaim;
   "lib/taskQueue": typeof lib_taskQueue;
+  "lib/taskRouting": typeof lib_taskRouting;
   "lib/taskScopeFilter": typeof lib_taskScopeFilter;
   "lib/teamNamespace": typeof lib_teamNamespace;
   "lib/tenantSlug": typeof lib_tenantSlug;
