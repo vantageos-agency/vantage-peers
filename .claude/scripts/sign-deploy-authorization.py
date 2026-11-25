@@ -10,10 +10,15 @@ DEPLOY_AUTHORITY_SIGNING_KEY_<ISSUER> (issuer upper-cased, '-' -> '_'), injected
 `infisical run`. It is never read from a file, never taken from argv, never printed,
 never logged. There is no flag that accepts one.
 
+The vault project and path are NOT named here: the caller supplies them to `infisical run`
+from DEPLOY_AUTHORITY_SIGNING_PROJECT_ID and DEPLOY_AUTHORITY_SIGNING_PATH. This tool reads
+only DEPLOY_AUTHORITY_SIGNING_KEY_<ISSUER> from its environment and refuses if it is absent.
+
 Sign (inside `infisical run`, so the value exists only in this process):
 
-    infisical run --domain https://eu.infisical.com --projectId <ma-fabrique id> \\
-      --env prod --path /shared -- \\
+    infisical run --domain https://eu.infisical.com --env prod \\
+      --projectId "$DEPLOY_AUTHORITY_SIGNING_PROJECT_ID" \\
+      --path "$DEPLOY_AUTHORITY_SIGNING_PATH" -- \\
       python3 .claude/scripts/sign-deploy-authorization.py --issuer pi \\
       --task k<token-task-id> --floor <40-hex commit> --deployment <deployment-name> \\
       --orchestrator <who deploys>
@@ -21,8 +26,9 @@ Sign (inside `infisical run`, so the value exists only in this process):
 Create a keypair (the private key goes straight into the vault, never to a terminal
 or a file; the public key goes into .claude/config/deploy-authority-pubkeys.json):
 
-    infisical secrets set --domain https://eu.infisical.com --projectId <ma-fabrique id> \\
-      --env prod --path /shared \\
+    infisical secrets set --domain https://eu.infisical.com --env prod \\
+      --projectId "$DEPLOY_AUTHORITY_SIGNING_PROJECT_ID" \\
+      --path "$DEPLOY_AUTHORITY_SIGNING_PATH" \\
       --file <(python3 .claude/scripts/sign-deploy-authorization.py --generate-keypair --issuer pi)
 
 --generate-keypair writes exactly one line, `DEPLOY_AUTHORITY_SIGNING_KEY_<ISSUER>=<base64

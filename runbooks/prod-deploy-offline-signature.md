@@ -39,11 +39,14 @@ The audit line names the verifier that ran (`verifier`: `cryptography` or `pure-
 
 ## Create the signing key (once per issuer, and on rotation)
 
-The private key goes from the generator straight into the vault. It is never shown, never written to a file, never pasted.
+The signing key lives in its OWN Infisical project (`pi-signing`), whose only member is the signing station's machine identity. It is not a folder of the `ma-fabrique` project, and `/shared` of `ma-fabrique` is never the target: every host identity reads all of `ma-fabrique`, so a key stored there is readable by every station, and the signature would prove nothing about who issued it. The project and the path are not typed in this runbook or in the tool: they come from the environment of the signing station, as `DEPLOY_AUTHORITY_SIGNING_PROJECT_ID` and `DEPLOY_AUTHORITY_SIGNING_PATH`.
+
+The keypair is generated on the signing station itself, and only the PUBLIC key leaves it (posted for the config pull request). The private key goes from the generator straight into the vault. It is never shown, never written to a file, never pasted.
 
 ```
-infisical secrets set --domain https://eu.infisical.com --projectId <ma-fabrique project id> \
-  --env prod --path /shared \
+infisical secrets set --domain https://eu.infisical.com --env prod \
+  --projectId "$DEPLOY_AUTHORITY_SIGNING_PROJECT_ID" \
+  --path "$DEPLOY_AUTHORITY_SIGNING_PATH" \
   --file <(python3 .claude/scripts/sign-deploy-authorization.py --generate-keypair --issuer pi)
 ```
 
@@ -58,14 +61,15 @@ Rotation: add the new key to the issuer's list, merge, start signing with the ne
 ## Sign (the authorising orchestrator, per deploy)
 
 ```
-infisical run --domain https://eu.infisical.com --projectId <ma-fabrique project id> \
-  --env prod --path /shared -- \
+infisical run --domain https://eu.infisical.com --env prod \
+  --projectId "$DEPLOY_AUTHORITY_SIGNING_PROJECT_ID" \
+  --path "$DEPLOY_AUTHORITY_SIGNING_PATH" -- \
   python3 .claude/scripts/sign-deploy-authorization.py --issuer pi \
   --task k<token-task-id> --floor <40-hex commit> --deployment <deployment name> \
   --orchestrator <who deploys>
 ```
 
-It prints one line, `# pi-auth-payload: ... # pi-auth-sig: ...`, to append after `# pi-authorized: k<task>`. The key is read only from `DEPLOY_AUTHORITY_SIGNING_KEY_<ISSUER>` in the environment (issuer upper-cased, `-` becomes `_`). There is no flag, file or argument that takes it. `--iat` exists for tests and defaults to now.
+The two variables name the `pi-signing` project and path; the tool never reads them. It prints one line, `# pi-auth-payload: ... # pi-auth-sig: ...`, to append after `# pi-authorized: k<task>`. The key is read only from `DEPLOY_AUTHORITY_SIGNING_KEY_<ISSUER>` in the environment (issuer upper-cased, `-` becomes `_`). There is no flag, file or argument that takes it. `--iat` exists for tests and defaults to now.
 
 ## Staged migration (same delivery)
 

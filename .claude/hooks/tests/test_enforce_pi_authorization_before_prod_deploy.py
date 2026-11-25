@@ -1313,6 +1313,18 @@ def test_offline_signature_signer_has_no_flag_that_takes_a_private_key():
         assert forbidden not in source, f"signer accepts a key through {forbidden!r}"
 
 
+def test_offline_signature_vault_location_is_never_typed_in_the_hook_or_the_tool():
+    """The signing key lives in a separate vault project named by the caller's environment."""
+    assert "infisical" not in HOOK.read_text().lower(), "the hook must not reference the vault"
+    tool = SIGNER.read_text()
+    for needle in ("ma-fabrique", "--path /shared", "--projectId <"):
+        assert needle not in tool, f"the tool types a vault location: {needle!r}"
+    runbook = (HOOKS_DIR.parent.parent / "runbooks" / "prod-deploy-offline-signature.md").read_text()
+    assert "--path /shared" not in runbook and "<ma-fabrique" not in runbook
+    for name in ("DEPLOY_AUTHORITY_SIGNING_PROJECT_ID", "DEPLOY_AUTHORITY_SIGNING_PATH"):
+        assert name in runbook and name in tool
+
+
 def test_offline_signature_signer_rejects_a_short_floor(offline_key, offline_repo):
     proc = _run_signer(
         ["--issuer", "pi", "--task", _OFFLINE_TASK, "--floor", offline_repo["floor"][:12],
