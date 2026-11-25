@@ -342,3 +342,90 @@ def test_versioned_head_or_decoy_dev_host_blocks(name, guard_env_file, tmp_path)
 def test_versioned_head_resolved_to_dev_passes(name, guard_env_file, tmp_path):
     rc, out = run(FAMILY_ALLOW_CASES[name], guard_env_file, tmp_path)
     assert rc == 0, f"{name}: expected ALLOW (exit 0), got {rc}. output: {out}"
+
+
+# ---------------------------------------------------------------------------
+# DECOY CLASS: the write's URL ARGUMENT decides, not the dev host in the segment
+# (origin: task k179p2pkn0s9zgt6pdc5ps86wn8jw599, follow-up of PR #1768).
+#
+# A dev host string elsewhere in the segment certified a write whose URL came from
+# a source the guard did not resolve. The reviewer's six cases, each run through
+# the real hook with the prod host named by a variable, exit 0 on main and must exit 2.
+# ---------------------------------------------------------------------------
+PROD_URL = f"https://{PROD_LITERAL_NAME}.convex.cloud"
+DEV_URL = f"https://{DEV_NAME}.convex.cloud"
+PROD_STATION_ENV = {"VP_CONVEX_URL": PROD_URL, "CONVEX_DEPLOYMENT": f"dev:{DEV_NAME}"}
+
+# origin k179p2pkn0s9zgt6pdc5ps86wn8jw599
+DECOY_CLASS_BLOCK_CASES = {
+    "python_auth_substring_authority_name": (
+        "python3 -c \"d='https://fake-dev-y.convex.cloud'; import os,urllib.request; "
+        "urllib.request.urlopen(os.environ['PROD_AUTHORITY']+'/api/mutation', data=b'{}')\"",
+        {"PROD_AUTHORITY": PROD_URL},
+    ),
+    "python_auth_substring_key_name": (
+        "python3 -c \"d='https://fake-dev-y.convex.cloud'; import os,urllib.request; "
+        "urllib.request.urlopen(os.environ['MONKEY_URL']+'/api/mutation', data=b'{}')\"",
+        {"MONKEY_URL": PROD_URL},
+    ),
+    "python_aliased_environ_from_import": (
+        "python3 -c \"from os import environ as E; import urllib.request; "
+        "d='https://fake-dev-y.convex.cloud'; "
+        "urllib.request.urlopen(E['DEPLOY_HOST']+'/api/mutation', data=b'{}')\"",
+        {"DEPLOY_HOST": PROD_URL},
+    ),
+    "node_destructured_process_env": (
+        "node -e \"const {DEPLOY_HOST:h}=process.env; const d='https://fake-dev-y.convex.cloud'; "
+        "fetch(h+'/api/mutation',{method:'POST'})\"",
+        {"DEPLOY_HOST": PROD_URL},
+    ),
+    "pypy3_head_outside_interpreter_families": (
+        "pypy3 -c \"import os,urllib.request; d='https://fake-dev-y.convex.cloud'; "
+        "urllib.request.urlopen(os.environ['VP_CONVEX_URL']+'/api/mutation', data=b'{}')\"",
+        {},
+    ),
+    "uv_run_python_head_outside_interpreter_families": (
+        "uv run python -c \"import os,urllib.request; d='https://fake-dev-y.convex.cloud'; "
+        "urllib.request.urlopen(os.environ['VP_CONVEX_URL']+'/api/mutation', data=b'{}')\"",
+        {},
+    ),
+}
+
+
+@pytest.mark.parametrize("name", sorted(DECOY_CLASS_BLOCK_CASES))
+def test_decoy_dev_host_does_not_certify_the_url_argument(name, guard_env_file, tmp_path):
+    """The URL ARGUMENT is judged; AUTH-named variables are excluded by name component."""
+    command, env = DECOY_CLASS_BLOCK_CASES[name]
+    rc, out = run(command, guard_env_file, tmp_path, extra_env={**PROD_STATION_ENV, **env})
+    assert rc == 2, f"{name}: expected BLOCK (exit 2), got {rc}. output: {out}"
+
+
+# Must-pass poles for the same class: a write whose URL argument resolves to DEV still passes.
+DECOY_CLASS_ALLOW_CASES = {
+    "dev_literal_mutation_with_auth_header_deploy_key": (
+        f"curl -X POST -H \"Authorization: Bearer $CONVEX_DEPLOY_KEY\" "
+        f"https://{DEV_NAME}.convex.cloud/api/mutation -d '{{}}'",
+        {},
+    ),
+    "python_authority_name_resolving_to_dev": (
+        "python3 -c \"import os,urllib.request; urllib.request.urlopen("
+        "os.environ['PROD_AUTHORITY']+'/api/mutation', data=b'{}')\"",
+        {"PROD_AUTHORITY": DEV_URL},
+    ),
+    "node_destructured_env_resolving_to_dev": (
+        "node -e \"const {DEPLOY_HOST:h}=process.env; fetch(h+'/api/mutation',{method:'POST'})\"",
+        {"DEPLOY_HOST": DEV_URL},
+    ),
+    "uv_run_python_inline_dev_write": (
+        f"CONVEX_URL={DEV_URL} uv run python -c \"import os,urllib.request; "
+        "urllib.request.urlopen(os.environ['CONVEX_URL']+'/api/mutation', data=b'{}')\"",
+        {},
+    ),
+}
+
+
+@pytest.mark.parametrize("name", sorted(DECOY_CLASS_ALLOW_CASES))
+def test_decoy_class_dev_url_argument_passes(name, guard_env_file, tmp_path):
+    command, env = DECOY_CLASS_ALLOW_CASES[name]
+    rc, out = run(command, guard_env_file, tmp_path, extra_env=env)
+    assert rc == 0, f"{name}: expected ALLOW (exit 0), got {rc}. output: {out}"
