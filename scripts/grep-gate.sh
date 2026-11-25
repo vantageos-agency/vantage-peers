@@ -3,14 +3,21 @@
 # (scripts/__tests__/grep-gate-gate.test.mjs) because GitHub Actions are disabled here.
 #   1. No legacy brand reference "claude-peers" in mcp-server/src/, convex/,
 #      docs/why-vantagepeers.md or mcp-server/server.ts.
-#   2. No Buffer.(from|concat|byteLength|alloc) in a V8-runtime convex/*.ts file (no "use node"
+#   2. No Buffer.(from|concat|byteLength|alloc) in a V8-runtime convex/**/*.ts file (no "use node"
 #      in its first 10 lines); comment lines and '// allow-buffer-in-v8: <reason>' lines excepted.
-# Exit 0 = both pass; 1 = a violation, named. Run from the repository root.
+# A scanned path that does not exist is a refusal, never a pass.
+# Exit 0 = both pass; 1 = a violation or a missing path, named. Run from the repository root.
 set -u
 FAIL=0
 
 check_brand() {
-	if grep -rn "claude-peers" "$1" 2>/dev/null; then
+	# A path that does not exist was not scanned: it is a refusal, never a PASS.
+	if [ ! -e "$1" ]; then
+		echo "ERROR: $1 does not exist, so it was not scanned (the gate refuses to pass it)"
+		FAIL=1
+		return
+	fi
+	if grep -rn "claude-peers" "$1"; then
 		echo "ERROR: legacy 'claude-peers' reference found in $1"
 		FAIL=1
 	else
@@ -23,7 +30,8 @@ check_brand docs/why-vantagepeers.md
 check_brand mcp-server/server.ts
 
 VIOLATIONS=""
-for file in $(find convex -maxdepth 2 -name '*.ts' -not -path '*/_generated/*' -not -path '*/__tests__/*' 2>/dev/null); do
+# Every depth of convex/ (the workflow stopped at depth 2; a deeper file would have been skipped).
+for file in $(find convex -name '*.ts' -not -path '*/_generated/*' -not -path '*/__tests__/*' -not -path '*/node_modules/*'); do
 	if head -10 "$file" | grep -qE '^\s*"use node"\s*;?'; then
 		continue
 	fi
