@@ -482,7 +482,16 @@ MEASURED_2260673_RULE_COUNTS = {
 # R-55 29, R-56 2`, 0 FALLBACK (task k1755rzrkbr397hpeftnjcqb2d8h7yhg). The live CR-3
 # ceiling may never exceed it.
 MEASURED_73465351_050_RULE_COUNTS = {"CR-3": 16}
-LIVE_CEILINGS = {**MEASURED_2260673_RULE_COUNTS, **MEASURED_73465351_050_RULE_COUNTS}
+# backend-doctor 0.9.0 (npm latest, gitHead 2850defd) prints three mechanical rules no
+# earlier version printed: R-4 (retrieval, no unindexed scan), R-60 and R-61 (the row
+# grant). Measured on a clean full checkout of vantage-peers 915e1f11 with deps installed,
+# `npx -y @vantageos/backend-doctor@0.9.0 ./convex --json-evidence <dir>/` -> `MECHANICAL RULE
+# COUNTS: CR-2 236, CR-3 13, R-4 33, R-5 62, R-53 314, R-54 108, R-55 22, R-60 11, R-61 13`,
+# 0 FALLBACK; R-56 no longer prints (task k175a6cfcq9qz2xcct7jskejm18jxc45). The live
+# ceilings of these three may never exceed it.
+MEASURED_915E1F11_090_RULE_COUNTS = {"R-4": 33, "R-60": 11, "R-61": 13}
+LIVE_CEILINGS = {**MEASURED_2260673_RULE_COUNTS, **MEASURED_73465351_050_RULE_COUNTS,
+                 **MEASURED_915E1F11_090_RULE_COUNTS}
 
 
 def _ratchet_repo(tmp, main_baseline=None, head_baseline=None):
@@ -550,14 +559,14 @@ def test_ratchet_baseline_values_carry_their_command():
 
 def test_ratchet_live_baseline_carries_its_command_and_never_rose():
     live = json.loads(REAL_BASELINE.read_text())
-    # the ceilings below were measured with 0.5.0, and the file says so
-    assert live["doctor_version"] == "0.5.0"
+    # the ceilings below were measured with the published latest (0.9.0), and the file says so
+    assert live["doctor_version"] == "0.9.0"
     assert set(live["rules"]) <= set(LIVE_CEILINGS)
     for rule, entry in live["rules"].items():
         assert entry["command"].startswith(
             f"npx -y @vantageos/backend-doctor@{live['doctor_version']} ")
-        # 0.5.0 was published from backend-doctor f6297a29 (npm gitHead; task k1755rzrkbr397hpeftnjcqb2d8h7yhg)
-        assert entry["cli_commit"] == "f6297a29c64a0265124e3e9cf86c9dd85eac47c0"
+        # 0.9.0 was published from backend-doctor 2850defd (npm gitHead; task k175a6cfcq9qz2xcct7jskejm18jxc45)
+        assert entry["cli_commit"] == "2850defd1402788c70ba7bd5f4be77673597804c"
         # R-53 was lowered by slice 1 of the deletion series, measured at 6058f82
         assert entry["measured_tree_sha"] in {
             "226067389ad98f0f56eccfad38d5f39ea6908542",
@@ -616,12 +625,16 @@ def test_ratchet_live_baseline_carries_its_command_and_never_rose():
             "6a97510040f4749445063ff6d44f8f031356d325",
             # CR-2 237 -> 236, R-53 316 -> 314, roster compares normalised + cloud-identity 0.35.0 resolvers, PR #1743 (task k1726h1v7hqdbk818bn8s1rgdx8hy0ts)
             "62b2583d6afd294eac707c9622d7a90f75e4f865",
+            # re-baselined on 0.9.0, the published latest: R-4 33, R-60 11, R-61 13 added, R-56 2 -> 0 (task k175a6cfcq9qz2xcct7jskejm18jxc45)
+            "915e1f115c38961394b7403ea466e1d8a57aab48",
         }
         line = entry["output_line"]
         assert line.startswith((f"{rule}: ", f"{rule} VERDICT: ")), rule
         # the 0.4.7/0.4.8/0.4.9/0.5.0 doctor prints the count as `N site(s) VIOLATE`, `N violation(s)`
         # or inside its `[... non-conforming=N ...]` bracket, never as a bare prefix
+        # (0.9.0 prints R-60 / R-61 as `[... violations=N conform=M ...]`)
         assert (f"non-conforming={entry['count']} " in line
+                or f"violations={entry['count']} " in line
                 or f"{entry['count']} violation(s)" in line), rule
         assert entry["cli_commit"]
         assert entry["count"] <= LIVE_CEILINGS[rule], rule
