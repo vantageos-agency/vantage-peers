@@ -1168,11 +1168,17 @@ export const addRepoMappingServedOutputSchema = z.looseObject({
 	orchestrator: z
 		.string()
 		.optional()
-		.describe("Who receives the repo's webhook events; absent for an out-of-scope repo."),
+		.describe(
+			"Who receives the repo's webhook events; absent for an out-of-scope repo.",
+		),
 	outOfScope: z
-		.object({ reason: z.string() })
+		.looseObject({
+			reason: z.string().describe("Why nobody owns the repo."),
+		})
 		.optional()
-		.describe("Present when the repo is recorded as owned by nobody, with the reason."),
+		.describe(
+			"Present when the repo is recorded as owned by nobody, with the reason.",
+		),
 	project: z
 		.string()
 		.describe("The project the repo's events are filed under."),
@@ -1217,7 +1223,9 @@ export const getRepoRouteServedOutputSchema = z.looseObject({
 	reason: z
 		.string()
 		.optional()
-		.describe("Why nobody owns the repo; present only when the state is out-of-scope."),
+		.describe(
+			"Why nobody owns the repo; present only when the state is out-of-scope.",
+		),
 	repo: z.string().describe("The repo the call was for, as 'owner/name'."),
 	owner: z
 		.string()

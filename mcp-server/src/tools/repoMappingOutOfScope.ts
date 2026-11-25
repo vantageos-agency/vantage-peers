@@ -12,7 +12,7 @@ export const repoMappingOutOfScopeShape = {
 				.trim()
 				.min(REPO_OUT_OF_SCOPE_MIN_REASON)
 				.describe(
-					"Why nobody owns the repo, e.g. 'no owning station, no activity in 30 days' (at least 10 characters).",
+					"Why nobody owns the repo, e.g. 'no owning station, no activity in 30 days'.",
 				),
 		})
 		.optional()
