@@ -37,6 +37,13 @@ A2="$tmp/absent-a2.bearer"
 B2="$tmp/absent-b2.bearer"
 two_agents() { A2="$tmp/a2.bearer"; B2="$tmp/b2.bearer"; }
 one_agent() { A2="$tmp/absent-a2.bearer"; B2="$tmp/absent-b2.bearer"; }
+# The primary B file, switchable so a case can prove the env path works with NO file.
+BFILE="$tmp/b.bearer"
+# Bearer VALUES from the environment (the Infisical vault names). Unset unless a case sets
+# them; run_case always strips the real ones first so a developer's shell cannot leak in.
+ENV_NAMES=(VP_PROBE_A_SEAT_BEARER VP_PROBE_B_SEAT_BEARER VP_PROBE_A2_SEAT_BEARER VP_PROBE_B2_SEAT_BEARER)
+unset_env_bearers() { unset ENV_VP_PROBE_A_SEAT_BEARER ENV_VP_PROBE_B_SEAT_BEARER ENV_VP_PROBE_A2_SEAT_BEARER ENV_VP_PROBE_B2_SEAT_BEARER; }
+unset_env_bearers
 
 start_stub() { # <mode>
   rm -f "$tmp/port"
@@ -67,7 +74,15 @@ run_case() {
     start_stub "$mode" || { echo "FAIL  $name (stub)"; return; }
     url="http://127.0.0.1:$(cat "$tmp/port")/mcp"
   fi
-  out="$(VP_PROBE_MCP_URL="$url" VP_PROBE_BEARER_A="$bearer_a" VP_PROBE_BEARER_B="$tmp/b.bearer" \
+  local envargs=() n v
+  for n in "${ENV_NAMES[@]}"; do
+    envargs+=(-u "$n")
+  done
+  for n in "${ENV_NAMES[@]}"; do
+    v="ENV_$n"
+    [[ -v "$v" ]] && envargs+=("$n=${!v}")
+  done
+  out="$(env "${envargs[@]}" VP_PROBE_MCP_URL="$url" VP_PROBE_BEARER_A="$bearer_a" VP_PROBE_BEARER_B="$BFILE" \
     VP_PROBE_BEARER_A2="$A2" VP_PROBE_BEARER_B2="$B2" \
     node "$PROBE" 2>&1)"
   rc=$?
@@ -124,5 +139,40 @@ A2="$tmp/empty.bearer"
 run_case "second credential present but empty -> COULD-NOT-JUDGE (not a silent fallback)" ok 2 COULD-NOT-JUDGE
 one_agent
 
+# --- bearer VALUES from the environment (Infisical names), file as the fallback ---
+# (d) env unset: the files still work, and the output names the FILE as the source.
+run_case "env unset, files present -> PASS, source named as the file" ok 0 PASS "$tmp/a.bearer" 'credential probe-tenant-a: file .*/a\.bearer'
+# (a) env provided, files absent -> PASS, source named as the env var (never the value).
+ENV_VP_PROBE_A_SEAT_BEARER="bearer-a"
+ENV_VP_PROBE_B_SEAT_BEARER="bearer-b"
+BFILE="$tmp/absent-b.bearer"
+run_case "env bearers, primary files absent -> PASS, source named as env A" ok 0 PASS "$tmp/absent-a.bearer" 'credential probe-tenant-a: env VP_PROBE_A_SEAT_BEARER'
+run_case "env bearers, primary files absent -> PASS, source named as env B" ok 0 PASS "$tmp/absent-a.bearer" 'credential probe-tenant-b: env VP_PROBE_B_SEAT_BEARER'
+ENV_VP_PROBE_A2_SEAT_BEARER="bearer-a2"
+ENV_VP_PROBE_B2_SEAT_BEARER="bearer-b2"
+run_case "env bearers for all four, no file at all -> PASS, delivered and read back" ok 0 PASS "$tmp/absent-a.bearer" 'delivered and read back by the recipient'
+run_case "env second-agent bearer -> source named as env A2" ok 0 PASS "$tmp/absent-a.bearer" 'second-agent credential probe-tenant-a: env VP_PROBE_A2_SEAT_BEARER'
+unset_env_bearers
+BFILE="$tmp/b.bearer"
+# (b) env SET but empty is a broken credential: COULD-NOT-JUDGE, never a silent fallback to the
+# file (the file is present and valid here, so a fallback would PASS).
+ENV_VP_PROBE_A_SEAT_BEARER=""
+run_case "primary env set but empty, file present -> COULD-NOT-JUDGE (no file fallback)" ok 2 COULD-NOT-JUDGE "$tmp/a.bearer" 'VP_PROBE_A_SEAT_BEARER is set but empty'
+unset_env_bearers
+ENV_VP_PROBE_B2_SEAT_BEARER="  "
+two_agents
+run_case "second-agent env set but blank, file present -> COULD-NOT-JUDGE (no fallback)" ok 2 COULD-NOT-JUDGE "$tmp/a.bearer" 'VP_PROBE_B2_SEAT_BEARER is set but empty'
+one_agent
+unset_env_bearers
+# (c) the env value never reaches the output, even when the server rejects it. The canary is
+# unknown to the stub (HTTP 401 -> COULD-NOT-JUDGE); the leak check in run_case greps for it,
+# and this case pins that the run really went through the env value, not the file.
+ENV_VP_PROBE_A_SEAT_BEARER="bearer-a-canary-0123"
+run_case "rejected env bearer -> COULD-NOT-JUDGE, value absent from output" ok 2 COULD-NOT-JUDGE "$tmp/a.bearer" 'HTTP 401 to probe-tenant-a'
+unset_env_bearers
+
 echo "$pass/$total passed"
+# The same count in the shape a test runner reads (Boat recognises "<n> failed, <n> passed in <t>s";
+# without it a failing run reads as "no test summary" rather than as a failure).
+echo "$((total - pass)) failed, $pass passed in ${SECONDS}s"
 [[ "$pass" == "$total" ]]
