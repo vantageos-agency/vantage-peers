@@ -38,26 +38,46 @@ const b64u = (b: ArrayBuffer | Uint8Array | string) =>
 
 async function makeSigner() {
 	const kp = await crypto.subtle.generateKey(
-		{ name: "RSASSA-PKCS1-v1_5", modulusLength: 2048, publicExponent: new Uint8Array([1, 0, 1]), hash: "SHA-256" },
+		{
+			name: "RSASSA-PKCS1-v1_5",
+			modulusLength: 2048,
+			publicExponent: new Uint8Array([1, 0, 1]),
+			hash: "SHA-256",
+		},
 		true,
 		["sign", "verify"],
 	);
-	const jwk = (await crypto.subtle.exportKey("jwk", kp.publicKey)) as Record<string, unknown>;
+	const jwk = (await crypto.subtle.exportKey("jwk", kp.publicKey)) as Record<
+		string,
+		unknown
+	>;
 	const sign = async (claims: Record<string, unknown>) => {
 		const h = b64u(JSON.stringify({ alg: "RS256", kid: "k1", typ: "JWT" }));
 		const p = b64u(JSON.stringify(claims));
-		const sig = await crypto.subtle.sign("RSASSA-PKCS1-v1_5", kp.privateKey, new TextEncoder().encode(`${h}.${p}`));
+		const sig = await crypto.subtle.sign(
+			"RSASSA-PKCS1-v1_5",
+			kp.privateKey,
+			new TextEncoder().encode(`${h}.${p}`),
+		);
 		return `${h}.${p}.${b64u(sig)}`;
 	};
-	return { sign, jwks: { keys: [{ ...jwk, kid: "k1", alg: "RS256", use: "sig" }] } };
+	return {
+		sign,
+		jwks: { keys: [{ ...jwk, kid: "k1", alg: "RS256", use: "sig" }] },
+	};
 }
 
 function stubJwks(jwks: unknown) {
 	const real = globalThis.fetch;
 	vi.stubGlobal("fetch", (input: unknown, init?: unknown) => {
-		const url = typeof input === "string" ? input : String((input as { url?: string }).url ?? input);
+		const url =
+			typeof input === "string"
+				? input
+				: String((input as { url?: string }).url ?? input);
 		if (url.endsWith("/.well-known/jwks.json")) {
-			return Promise.resolve(new Response(JSON.stringify(jwks), { status: 200 }));
+			return Promise.resolve(
+				new Response(JSON.stringify(jwks), { status: 200 }),
+			);
 		}
 		return real(input as never, init as never);
 	});
@@ -87,7 +107,9 @@ describe("http:POST /issueBearerFromClerk", () => {
 		});
 		expect(res.status).toBe(401); // positive control: the failure path was reached
 		const text = await res.text();
-		expect(text.includes(AUD), "401 body contains the expected audience").toBe(false);
+		expect(text.includes(AUD), "401 body contains the expected audience").toBe(
+			false,
+		);
 	});
 
 	test("http:POST /issueBearerFromClerk — minting a second bearer leaves at most one live bearer for the user", async () => {
