@@ -1021,12 +1021,17 @@ def has_laurent_override(command: str) -> bool:
 def caller_orchestrator() -> str | None:
     """The orchestrator running this command, or None when it cannot be known.
 
-    Only an explicit declaration counts. Anything inferred from the working
-    directory would be wrong exactly where it matters.
+    Only an explicit declaration counts: PI_AUTH_ORCHESTRATOR, else the workspace's
+    VP_ORCHESTRATOR (the source `enforce-irp-sequence.py` reads). Neither the hostname
+    (the VPS is shared, no hostname names an orchestrator) nor the working directory
+    nor a CLAUDE.md role is used: each would be wrong exactly where it matters, and a
+    wrong identity is worse than none. The offline signature REFUSES TO JUDGE when this
+    returns None; it never skips the orchestrator comparison.
     """
-    declared = os.environ.get("PI_AUTH_ORCHESTRATOR", "").strip().lower()
-    if declared and re.fullmatch(r"[a-z][a-z0-9_-]{1,31}", declared):
-        return declared
+    for variable in ("PI_AUTH_ORCHESTRATOR", "VP_ORCHESTRATOR"):
+        declared = os.environ.get(variable, "").strip().lower()
+        if declared and re.fullmatch(r"[a-z][a-z0-9_-]{1,31}", declared):
+            return declared
     return None
 
 
@@ -1065,7 +1070,9 @@ def audit_log(entry: dict) -> None:
 #                                                ancestor of this checkout's HEAD (local git)
 #   deployment   target deployment name       == the deployment the command targets
 #   issuer       the signing authority        -> key list in the config
-#   orchestrator the orchestrator authorised  == PI_AUTH_ORCHESTRATOR, when declared
+#   orchestrator the orchestrator authorised  == the executing station's declared identity
+#                                                (PI_AUTH_ORCHESTRATOR, else VP_ORCHESTRATOR);
+#                                                none declared = REFUSE TO JUDGE, never skip
 #   iat          issued-at, unix seconds      -> TASK_TTL_SEC window, on the SIGNED value
 #
 # THREE EXITS, as before: ALLOW (valid signature, in window, fields match);
@@ -1075,9 +1082,19 @@ def audit_log(entry: dict) -> None:
 # the floor). There is no other way to be authorised: a bare `# pi-authorized:` marker
 # is refused as `offline-signature-required`.
 # ---------------------------------------------------------------------------
-PUBKEYS_PATH = os.environ.get("VP_GUARD_PUBKEYS_FILE") or str(
+# THE TRUST ROOT is the file below, in the repository, reviewed and merged by pull
+# request. The process environment can NOT move it: `VP_GUARD_PUBKEYS_FILE` is ignored
+# in every run, and the audit line says so. The only other source is a module global
+# `_TEST_HARNESS_PUBKEYS` that a test driver injects into the hook's namespace (a
+# Python-level handoff no environment variable can reproduce), together with the temp
+# root `_TEST_HARNESS_TMPDIR`; even then only a path under that root is honoured.
+DEFAULT_PUBKEYS_PATH = str(
     Path(__file__).resolve().parent.parent / "config" / "deploy-authority-pubkeys.json"
 )
+# The verifier backend may be named from the environment because naming one can only
+# NARROW what runs: both backends apply the same rules (S < L, canonical points, the
+# same equation) and the audit line records which ran. A name that cannot load is a
+# refusal to judge, never a substitution.
 ED25519_BACKEND = (os.environ.get("VP_GUARD_ED25519_BACKEND") or "auto").strip()
 SIGNED_PAYLOAD_VERSION = 1
 SIGNED_PAYLOAD_PURPOSE = "PROD-DEPLOY-AUTHORIZED"
@@ -1100,6 +1117,27 @@ SIGNED_FIELD_TYPES = {
 
 class PubkeyConfigError(Exception):
     """The public-key config is absent or malformed: the guard cannot judge."""
+
+
+def resolve_trust_root() -> tuple:
+    """(path of the public-key config, audit notes). Never read from the environment."""
+    notes: dict = {}
+    if os.environ.get("VP_GUARD_PUBKEYS_FILE"):
+        notes["trust_root_env_override"] = "ignored"
+    harness = globals().get("_TEST_HARNESS_PUBKEYS")
+    harness_root = globals().get("_TEST_HARNESS_TMPDIR")
+    if harness:
+        try:
+            resolved = Path(str(harness)).resolve()
+            inside = bool(harness_root) and resolved.is_relative_to(Path(str(harness_root)).resolve())
+        except (OSError, ValueError):
+            resolved, inside = None, False
+        if inside:
+            notes["trust_root_source"] = "test-harness"
+            return str(resolved), notes
+        notes["trust_root_harness_override"] = "ignored-outside-tmpdir"
+    notes["trust_root_source"] = "repo-default"
+    return DEFAULT_PUBKEYS_PATH, notes
 
 
 def has_signature_markers(command: str) -> bool:
@@ -1218,7 +1256,9 @@ def judge_offline_signature(command: str, now: float | None = None) -> dict:
     now = time.time() if now is None else now
     task_id = extract_task_id(command)
     caller = caller_orchestrator()
-    extra = {"task_id": task_id, "caller": caller, "assignee_checked": caller is not None}
+    pubkeys_path, trust_notes = resolve_trust_root()
+    extra = {"task_id": task_id, "caller": caller, "assignee_checked": caller is not None,
+             **trust_notes}
 
     payload_values = PAYLOAD_MARKER_RE.findall(command)
     sig_values = SIG_MARKER_RE.findall(command)
@@ -1231,7 +1271,7 @@ def judge_offline_signature(command: str, now: float | None = None) -> dict:
     # Everything that makes the guard UNABLE to judge is settled before anything is
     # decided about the token: a broken config must not look like a bad signature.
     try:
-        issuers = load_authority_pubkeys(PUBKEYS_PATH)
+        issuers = load_authority_pubkeys(pubkeys_path)
     except PubkeyConfigError as error:
         return _cannot_verify(f"public-key config: {error}", **extra)
     try:
@@ -1255,7 +1295,7 @@ def judge_offline_signature(command: str, now: float | None = None) -> dict:
     if not isinstance(issuer, str) or issuer not in issuers:
         return _verdict(
             "block", "offline-signature-unknown-issuer",
-            f"issuer {issuer!r} is not in {PUBKEYS_PATH}.", **extra)
+            f"issuer {issuer!r} is not in {pubkeys_path}.", **extra)
     extra["issuer"] = issuer
 
     try:
@@ -1302,10 +1342,15 @@ def judge_offline_signature(command: str, now: float | None = None) -> dict:
         return _mismatch(
             "task", f"signed task {payload['task']!r} is not the `# pi-authorized:` id {task_id!r}.",
             **extra)
-    if caller is not None and payload["orchestrator"] != caller:
+    if caller is None:
+        return _cannot_verify(
+            "this station declares no orchestrator identity (set PI_AUTH_ORCHESTRATOR, or the "
+            "workspace's VP_ORCHESTRATOR), so the signed orchestrator "
+            f"{payload['orchestrator']!r} cannot be compared with anything.", **extra)
+    if payload["orchestrator"] != caller:
         return _mismatch(
             "orchestrator",
-            f"signed for orchestrator {payload['orchestrator']!r}, declared caller is {caller!r}.",
+            f"signed for orchestrator {payload['orchestrator']!r}, this station is {caller!r}.",
             **extra)
 
     targeted = command_deployments(command)
@@ -1477,8 +1522,8 @@ def run_hook(command: str) -> int:
             "  The two fragments are printed by .claude/scripts/sign-deploy-authorization.py; the\n"
             "  hook verifies them LOCALLY against .claude/config/deploy-authority-pubkeys.json\n"
             "  (no network). The signature must be under 120 minutes old and bind this task,\n"
-            "  the commit floor, the target deployment and (when PI_AUTH_ORCHESTRATOR is set)\n"
-            "  that orchestrator.\n"
+            "  the commit floor, the target deployment and the orchestrator declared by\n"
+            "  PI_AUTH_ORCHESTRATOR (or VP_ORCHESTRATOR).\n"
             "\n"
             "  (The shell # comment is ignored by the convex CLI but read by the hook.\n"
             "  The old flag `--pi-authorized-task=k<id>` is rejected by the convex CLI as an\n"

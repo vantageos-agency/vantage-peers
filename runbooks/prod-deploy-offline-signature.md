@@ -18,7 +18,7 @@ The authorising orchestrator signs a canonical payload (sorted-key compact JSON,
 | `floor` | authorised commit floor, full 40-hex SHA | the floor given to `convex-prod-deploy.sh`, else: an ancestor of this checkout's HEAD (local git) |
 | `deployment` | target deployment name | the name in an inline `CONVEX_DEPLOY_KEY=prod:<name>\|` or a `<name>.convex.cloud` host, else this station's production deployment |
 | `issuer` | the signing authority | the key list in `.claude/config/deploy-authority-pubkeys.json` |
-| `orchestrator` | who may run it | `PI_AUTH_ORCHESTRATOR`, when the caller declares it |
+| `orchestrator` | who may run it | the executing station's declared identity, ALWAYS: `PI_AUTH_ORCHESTRATOR`, else the workspace's `VP_ORCHESTRATOR`. Hostname and directory are never used (the VPS is shared). None declared: the guard refuses to judge, it does not skip the comparison. |
 | `iat` | issued-at, unix seconds | the window, `TASK_TTL_SEC` (120 minutes), measured on this signed value; more than 300 s in the future is refused |
 
 The command carries it as shell comments on the deploy line:
@@ -31,7 +31,7 @@ npx convex deploy --yes # pi-authorized: k<task> # pi-auth-payload: <base64url j
 
 - ALLOW: valid signature of a configured key of the issuer, in window, every field matches.
 - BLOCK, each reason named in the audit line (`/tmp/pi-auth-prod-deploy.log`): `offline-signature-invalid` (absent fragment, undecodable, one changed byte, another key, non-canonical payload), `offline-signature-unknown-issuer`, `offline-signature-expired` (names the age), `offline-signature-field-mismatch` (names the `field`: task, orchestrator, deployment, floor).
-- REFUSE TO JUDGE (`offline-signature-could-not-be-verified`, text `COULD NOT CHECK`): the public-key config is absent or malformed, the Ed25519 verifier cannot run, or the working directory is not a git checkout (floor). It is not a refusal of the token.
+- REFUSE TO JUDGE (`offline-signature-could-not-be-verified`, text `COULD NOT CHECK`): the public-key config is absent or malformed, the Ed25519 verifier cannot run, the working directory is not a git checkout (floor), or the station declares no orchestrator identity. It is not a refusal of the token.
 
 A signature that is present and fails decides alone. The legacy network path cannot rescue it.
 
@@ -72,8 +72,14 @@ It prints one line, `# pi-auth-payload: ... # pi-auth-sig: ...`, to append after
 - Phase 1 (`NETWORK_AUTH_PATH_ENABLED = True`): a command with signature fragments is judged by the signature alone. A command with only `# pi-authorized: k<id>` still takes the legacy network path.
 - Phase 2: the network path is deleted (no `guard_identity`, no `_post_json`, no `read_task`); an unsigned marker is refused as `offline-signature-required`. The head that ships is the operator's decision, once the issuing station signs.
 
+## A signed authorisation cannot be withdrawn inside its window
+
+Once an authorisation is signed, it is valid for 120 minutes from its signed `iat` and nothing can cancel it: the guard reads no store, so there is no place to mark it revoked. Closing the token task, deleting the message, or asking the executor to stop does not change what the guard accepts. Do not rely on any of them.
+
+What to do instead: rotate the issuer's key out of `.claude/config/deploy-authority-pubkeys.json` in a pull request. That invalidates EVERY outstanding signature by that key at once, including the ones you meant to keep; re-sign those with the new key. The rotation takes effect on a station when it has merged the change, so a station that has not pulled yet still accepts the old signature until it does. Sign with a short `iat` window in mind: issue the signature when the deploy is about to run, not hours ahead.
+
 ## Residue, stated
 
-- `VP_GUARD_PUBKEYS_FILE` (hook process environment) overrides the key file, exactly as `VP_CONVEX_URL` overrides the deployment: whoever controls the hook's environment controls the keys. Same trust already placed in that environment.
+- The trust root is the config file in the repository and nothing else. `VP_GUARD_PUBKEYS_FILE` is IGNORED in every run, and the audit line records `trust_root_env_override: ignored` and `trust_root_source: repo-default`. The only other source is a Python-level handoff from the test driver (`_TEST_HARNESS_PUBKEYS` with `_TEST_HARNESS_TMPDIR`, honoured only for a path under that temp root), which no environment variable can reproduce. `VP_GUARD_ED25519_BACKEND` stays honoured because naming a backend cannot widen what is accepted: both apply the same checks, and the audit line names the one that ran.
 - The signature proves the issuer authorised those fields at `iat`. It cannot be revoked inside the window other than by removing the key from the config.
 - The floor check against HEAD runs when the command carries no floor; the deploy script, when given one, enforces ancestry against `origin/main` itself.

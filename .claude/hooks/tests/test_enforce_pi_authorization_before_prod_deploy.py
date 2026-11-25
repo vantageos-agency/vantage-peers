@@ -706,23 +706,32 @@ _OFFLINE_DEPLOY = "npx convex deploy --yes"
 SCRIPTS_DIR = HOOKS_DIR.parent / "scripts"
 SIGNER = SCRIPTS_DIR / "sign-deploy-authorization.py"
 
+# The TEST HARNESS: this driver is the only thing that may move the hook's trust root. It
+# hands the key-file path and the temp root to the hook as PYTHON GLOBALS (init_globals),
+# a channel no environment variable can reproduce; the hook ignores VP_GUARD_PUBKEYS_FILE
+# in every run. With OFFLINE_TEST_NETWORK_OFF=1 it also removes the network.
 _NO_NETWORK_DRIVER = r"""
 import os, runpy, socket, sys, urllib.request
 def _no(*args, **kwargs):
     with open(os.environ["OFFLINE_TEST_ATTEMPTS"], "a") as handle:
         handle.write("network attempted\n")
     raise OSError("network removed by the test")
-socket.socket.connect = _no
-socket.socket.connect_ex = _no
-socket.create_connection = _no
-socket.getaddrinfo = _no
-urllib.request.urlopen = _no
+if os.environ.get("OFFLINE_TEST_NETWORK_OFF") == "1":
+    socket.socket.connect = _no
+    socket.socket.connect_ex = _no
+    socket.create_connection = _no
+    socket.getaddrinfo = _no
+    urllib.request.urlopen = _no
 sys.argv = [os.environ["OFFLINE_TEST_HOOK"]]
-runpy.run_path(os.environ["OFFLINE_TEST_HOOK"], run_name="__main__")
+runpy.run_path(
+    os.environ["OFFLINE_TEST_HOOK"], run_name="__main__",
+    init_globals={"_TEST_HARNESS_PUBKEYS": os.environ["OFFLINE_TEST_PUBKEYS"],
+                  "_TEST_HARNESS_TMPDIR": os.environ["OFFLINE_TEST_TMPDIR"]})
 """
 
 _OFFLINE_ENV_DROP = (
-    "PI_AUTHORIZED_TASK_ID", "PI_AUTH_ORCHESTRATOR", "VP_GUARD_CONVEX_TOKEN",
+    "PI_AUTHORIZED_TASK_ID", "PI_AUTH_ORCHESTRATOR", "VP_ORCHESTRATOR", "VP_GUARD_CONVEX_TOKEN",
+    "VP_GUARD_PUBKEYS_FILE",
     "VP_GUARD_ED25519_BACKEND", "CLERK_SECRET_KEY", "CLERK_SERVICE_ACCOUNT_USER_ID",
     "CLERK_DOMAIN",
 )
@@ -810,8 +819,12 @@ def _fragments(seed, payload, *, raw_payload=None, signing_seed=None):
     return f"# pi-auth-payload: {_b64u(raw)} # pi-auth-sig: {_b64u(signature)}"
 
 
-def _run_offline(command, *, pubkeys, repo, tmp_path, extra_env=None, network_off=True):
-    """Run the real hook, network removed, in the throwaway repository."""
+def _run_offline(command, *, pubkeys, repo, tmp_path, extra_env=None, network_off=True,
+                 production_style=False):
+    """Run the real hook, network removed, in the throwaway repository.
+
+    `production_style=True` runs it the way Claude Code does (plain `python3 hook.py`, no
+    harness handoff): the key file can then be named only through the process environment."""
     payload = json.dumps({"tool_name": "Bash", "tool_input": {"command": command}})
     env = {k: v for k, v in os.environ.items() if k not in _OFFLINE_ENV_DROP}
     attempts = tmp_path / "network-attempts.log"
@@ -820,13 +833,18 @@ def _run_offline(command, *, pubkeys, repo, tmp_path, extra_env=None, network_of
         "VP_CONVEX_URL": _OFFLINE_URL,
         "VP_GUARD_ENV_FILE": "/nonexistent/hermetic/.env.local",
         "VP_GUARD_AUDIT_LOG": str(audit),
-        "VP_GUARD_PUBKEYS_FILE": str(pubkeys),
+        "PI_AUTH_ORCHESTRATOR": "sigma",
         "OFFLINE_TEST_HOOK": str(HOOK),
         "OFFLINE_TEST_ATTEMPTS": str(attempts),
+        "OFFLINE_TEST_PUBKEYS": str(pubkeys),
+        "OFFLINE_TEST_TMPDIR": str(tmp_path),
+        "OFFLINE_TEST_NETWORK_OFF": "1" if network_off else "0",
     })
+    if production_style:
+        env["VP_GUARD_PUBKEYS_FILE"] = str(pubkeys)
     env.update(extra_env or {})
-    argv = ([sys.executable, "-c", _NO_NETWORK_DRIVER] if network_off
-            else [sys.executable, str(HOOK)])
+    argv = ([sys.executable, str(HOOK)] if production_style
+            else [sys.executable, "-c", _NO_NETWORK_DRIVER])
     proc = subprocess.run(argv, input=payload, capture_output=True, text=True,
                           timeout=30, env=env, cwd=str(repo["path"]))
     entries = [json.loads(line) for line in audit.read_text().splitlines()] if audit.exists() else []
@@ -1058,6 +1076,77 @@ def test_offline_signature_no_network_code_remains_on_the_auth_path():
     source = HOOK.read_text()
     for needle in ("clerk", "_post_json", "urlopen", "urllib", "read_task", "guard_identity"):
         assert needle not in source.lower(), f"{needle!r} is back in the guard"
+
+
+# --- THE TRUST ROOT: the environment cannot move it ------------------------
+
+def test_offline_signature_harness_override_is_honoured_and_says_so(
+        tmp_path, offline_repo, offline_key):
+    result = _signed_run(tmp_path, offline_repo, offline_key)
+    assert result["rc"] == 0, result["out"]
+    assert result["audit"].get("trust_root_source") == "test-harness", result["audit"]
+
+
+def test_offline_signature_env_override_does_not_change_the_trust_root(
+        tmp_path, offline_repo, offline_key):
+    """A normal run with VP_GUARD_PUBKEYS_FILE set to a file holding the signer's key:
+    the variable is ignored, the repository's own config decides, the audit line says so."""
+    pubkeys = _write_pubkeys(tmp_path, {"pi": [_pub_b64(offline_key)]})
+    fragments = _fragments(offline_key, _payload(offline_repo["floor"]))
+    result = _run_offline(f"{_OFFLINE_DEPLOY} # pi-authorized: {_OFFLINE_TASK} {fragments}",
+                          pubkeys=pubkeys, repo=offline_repo, tmp_path=tmp_path,
+                          production_style=True)
+    assert result["rc"] == 2, result["out"]
+    assert result["audit"].get("verdict") == "block", result["audit"]
+    assert result["audit"].get("reason") in (
+        "offline-signature-unknown-issuer", "offline-signature-invalid"), result["audit"]
+    assert result["audit"].get("trust_root_env_override") == "ignored", result["audit"]
+    assert result["audit"].get("trust_root_source") == "repo-default", result["audit"]
+
+
+def test_offline_signature_harness_override_outside_its_tmpdir_is_ignored(
+        tmp_path, offline_repo, offline_key):
+    outside = tmp_path.parent / "outside-the-harness-tmpdir"
+    outside.mkdir(exist_ok=True)
+    pubkeys = _write_pubkeys(outside, {"pi": [_pub_b64(offline_key)]})
+    fragments = _fragments(offline_key, _payload(offline_repo["floor"]))
+    result = _run_offline(f"{_OFFLINE_DEPLOY} # pi-authorized: {_OFFLINE_TASK} {fragments}",
+                          pubkeys=pubkeys, repo=offline_repo, tmp_path=tmp_path)
+    assert result["rc"] == 2, result["out"]
+    assert result["audit"].get("trust_root_harness_override") == "ignored-outside-tmpdir", result["audit"]
+    assert result["audit"].get("trust_root_source") == "repo-default", result["audit"]
+
+
+# --- THE ORCHESTRATOR is always compared ------------------------------------
+
+def test_offline_signature_no_declared_identity_refuses_to_judge_never_skips(
+        tmp_path, offline_repo, offline_key):
+    result = _signed_run(tmp_path, offline_repo, offline_key,
+                         extra_env={"PI_AUTH_ORCHESTRATOR": ""})
+    assert result["rc"] == 2, result["out"]
+    assert result["audit"].get("verdict") == "refuse-to-judge", result["audit"]
+    assert result["audit"].get("reason") == "offline-signature-could-not-be-verified"
+    assert "COULD NOT CHECK" in result["out"] and "orchestrator" in result["out"]
+
+
+def test_offline_signature_identity_from_the_workspace_env_is_compared_too(
+        tmp_path, offline_repo, offline_key):
+    same = _signed_run(tmp_path, offline_repo, offline_key,
+                       extra_env={"PI_AUTH_ORCHESTRATOR": "", "VP_ORCHESTRATOR": "sigma"})
+    assert same["rc"] == 0, same["out"]
+    other = _signed_run(tmp_path, offline_repo, offline_key,
+                        extra_env={"PI_AUTH_ORCHESTRATOR": "", "VP_ORCHESTRATOR": "eta"})
+    assert other["rc"] == 2, other["out"]
+    assert other["audit"].get("field") == "orchestrator", other["audit"]
+
+
+def test_offline_signature_hostname_is_never_the_identity(tmp_path, offline_repo, offline_key):
+    """The shared host's name must not stand in for an undeclared identity."""
+    import socket as _socket
+    payload_over = {"orchestrator": _socket.gethostname().lower().replace(".", "-")[:31] or "sigma"}
+    result = _signed_run(tmp_path, offline_repo, offline_key, payload_over=payload_over,
+                         extra_env={"PI_AUTH_ORCHESTRATOR": ""})
+    assert result["rc"] == 2 and result["audit"].get("verdict") == "refuse-to-judge", result
 
 
 # --- REFUSE TO JUDGE: the guard could not verify ---------------------------
