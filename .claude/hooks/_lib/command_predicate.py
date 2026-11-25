@@ -78,6 +78,10 @@ TRANSPARENT = {
     # chained as `builtin exec ...`). Neither changes the ACTION, only its
     # bookkeeping in the process table -- same class as sudo/env/nice.
     "exec", "builtin",
+    # `{ ...; }` (brace group) and `! ...` (pipeline negation) run their argv
+    # unchanged. Unrecognised, they turned the command they wrap into an
+    # unknown head.
+    "{", "!",
 }
 RUNNERS = {"npm", "pnpm", "yarn", "bun", "deno"}
 RUNNER_VERBS = {"run", "exec", "dlx", "x"}
@@ -179,7 +183,7 @@ UNKNOWN_FLAGS = []
 # INTERPRETERS: wrappers whose value is a COMMAND STRING, recursed into
 # (never skipped) by iter_real_commands().
 INTERPRETER_RE = re.compile(
-    r"\b(?:bash|sh|zsh)\s+-[a-zA-Z]*c[a-zA-Z]*\s+(\"[^\"]*\"|'[^']*')"
+    r"\b(?:bash|sh|zsh|dash|ksh|mksh|ash)\s+-[a-zA-Z]*c[a-zA-Z]*\s+(\"[^\"]*\"|'[^']*')"
     r"|\beval\s+(\"[^\"]*\"|'[^']*')"
     r"|\benv\s+(?:-[a-zA-Z]*S|--split-string(?:=)?)\s*(\"[^\"]*\"|'[^']*')"
     r"|\bscript\s+(?:-[a-zA-Z]*\s+)*-[a-zA-Z]*c[a-zA-Z]*\s+(\"[^\"]*\"|'[^']*')"
@@ -1327,3 +1331,141 @@ def heredoc_programs(cmd: str):
             ):
                 yield (line, match.group(4), toks, False)
                 break
+
+
+# ---------------------------------------------------------------------------
+# THE INVOCATION PROBE -- PR guards, wrapper class (one predicate, shared).
+#
+# `enforce-pi-authorization-before-pr-merge.py` and `enforce-pr-opened-via-skill.py`
+# decided on a regex over the QUOTE-STRIPPED command line. A wrapper that carries
+# the guarded command inside a quoted payload (`bash -c 'gh pr merge 1'`,
+# `eval '...'`, a heredoc fed to a shell) was erased by that stripping and passed.
+# Measured on the unchanged tree: 17 of the wrapper poles exited 0.
+#
+# `scan_invocations(cmd, words)` answers the question both guards ask with the
+# machinery the deploy guards already share: transparent prefixes stripped,
+# command-string payloads recursed into, heredoc programs judged (heredoc DATA
+# skipped), and the head tested with the reader exemption. It returns the argv of
+# every real invocation of `words` (e.g. ("gh", "pr", "merge")) AND the reasons it
+# could not read a payload. A caller REFUSES on an unresolved payload, never allows.
+# ---------------------------------------------------------------------------
+_VARIABLE_HEAD_RE = re.compile(r"^\$[\w{]")
+_SHELL_OR_EVAL = SHELLS | {"eval"}
+_EXEC_FIND_FLAGS = {"-exec", "-execdir", "-ok", "-okdir"}
+
+
+def _words_at(tokens, start: int, words) -> bool:
+    """True when `tokens[start:]` begins with `words`. The first word is
+    basename- and version-normalised (`/usr/bin/gh`, `gh@latest`); the rest are
+    literal."""
+    n = len(words)
+    if len(tokens) - start < n:
+        return False
+    if _strip_version_suffix(os.path.basename(tokens[start])) != words[0]:
+        return False
+    return all(tokens[start + k] == words[k] for k in range(1, n))
+
+
+def carries_command_words(tokens, words) -> bool:
+    """True when argv `tokens` INVOKES `words`, e.g. ("gh", "pr", "merge").
+
+    A head that IS the guarded command is a hit whatever the reader table says:
+    `gh` and `git` are readers for other purposes and must still be caught.
+    Under any OTHER head -- a wrapper nobody enumerated (`strace gh pr merge`),
+    `find -exec`, `eval gh pr merge`, a command string anchored by -c / --command /
+    <<< -- the words are looked for as adjacent tokens, under the same reader
+    exemption the deploy probe uses. SAFE_FLAGS (`--help`, `--dry-run`) still
+    de-escalate."""
+    if not tokens or has_safe_flag(tokens):
+        return False
+    if _words_at(tokens, 0, words):
+        return True
+    head = _strip_version_suffix(os.path.basename(tokens[0]))
+    if head == "find":
+        # `find . -exec gh pr merge {} \;` executes its trailing argv.
+        for i, tok in enumerate(tokens):
+            if tok in _EXEC_FIND_FLAGS and carries_command_words(tokens[i + 1:], words):
+                return True
+        return False
+    if is_safe_head(tokens):
+        return False
+    if any(_words_at(tokens, i, words) for i in range(1, len(tokens))):
+        return True
+    for prev, tok in zip(tokens, tokens[1:]):
+        if " " not in tok or prev not in CMD_STRING_ANCHORS:
+            continue
+        try:
+            inner = shlex.split(tok)
+        except ValueError:
+            continue
+        if carries_command_words(inner, words):
+            return True
+    return False
+
+
+def _keep_heredoc_header(match) -> str:
+    """Drop a heredoc BODY and its terminator, keep the header line. The body is
+    either judged on its own (a shell program) or is data (`cat <<EOF`) and must
+    not be split into fake commands by the newline splitter."""
+    return match.group(0)[: match.start(4) - match.start(0)]
+
+
+def _unresolved_reason(piece: str, tokens):
+    """Why this real segment's payload cannot be read, or None.
+
+    A head that is a shell variable (`$X pr merge`) names a command we cannot
+    know. A shell or `eval` whose command string is a variable (`eval "$X"`,
+    `bash -c "$CMD"`) hands the shell a program we cannot read. Both are refused:
+    the guard never allows a payload it did not read."""
+    head = tokens[0]
+    if _VARIABLE_HEAD_RE.match(head):
+        return ("command head is a shell variable, so the command it runs cannot be "
+                f"read; name the command literally: {piece[:120]}")
+    base = _strip_version_suffix(os.path.basename(head))
+    if base not in _SHELL_OR_EVAL:
+        return None
+    if base == "eval":
+        joined = " ".join(tokens[1:]).split()
+        if joined and _VARIABLE_HEAD_RE.match(joined[0]):
+            return ("eval runs a payload that begins with a shell variable, so it cannot "
+                    f"be read; name the command literally: {piece[:120]}")
+    for prev, tok in zip(tokens, tokens[1:]):
+        if prev not in CMD_STRING_ANCHORS:
+            continue
+        first = tok.split()[:1]
+        if first and _VARIABLE_HEAD_RE.match(first[0]):
+            return ("a command string begins with a shell variable, so it cannot be read; "
+                    f"name the command literally: {piece[:120]}")
+    return None
+
+
+def scan_invocations(cmd: str, words):
+    """Return (hits, unresolved) for the real invocations of `words` in `cmd`.
+
+    hits: the argv (transparent prefixes stripped) of every real invocation, reached
+    through any wrapper, command-string payload, or heredoc shell program.
+    unresolved: one reason per payload the probe cannot read. A non-empty
+    unresolved list is a REFUSAL for the caller, not a pass."""
+    hits, unresolved = [], []
+    for _owner, body, _toks, is_shell in heredoc_programs(cmd):
+        if is_shell:
+            h, u = scan_invocations(body, words)
+            hits.extend(h)
+            unresolved.extend(u)
+    stripped = _HEREDOC_BODY_RE.sub(_keep_heredoc_header, cmd)
+    for piece, tokens in iter_real_commands(stripped):
+        if tokens is None:
+            # An unparseable segment is judged by TEXT only when it names the guarded
+            # command: a stray unbalanced quote elsewhere must not refuse a command.
+            if all(w in piece for w in words):
+                unresolved.append(
+                    f"unparseable segment names the guarded command: {piece[:120]}")
+            continue
+        if not tokens:
+            continue  # a bare `VAR=value` assignment runs nothing
+        reason = _unresolved_reason(piece, tokens)
+        if reason:
+            unresolved.append(reason)
+        if carries_command_words(tokens, words):
+            hits.append(tokens)
+    return hits, unresolved

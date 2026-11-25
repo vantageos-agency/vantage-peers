@@ -29,6 +29,24 @@ Audit trail: /tmp/pi-auth-pr-merge.log (append-only per call).
 
 Exit 0 = allow
 Exit 2 = block
+
+WRAPPER CLASS (closed, Day 133): the guarded command is judged where a shell or a
+wrapper runs it: `bash -c` / `sh -c` / `zsh -c` / any POSIX shell, `eval`, `env
+[VAR=..]`, `command`, `exec`, `xargs`, `nohup` / `timeout` / `sudo` prefixes, `{ ...; }`,
+`! ...`, `find -exec`, a heredoc fed to a shell, and a quoted `;` / `&&` chain inside
+a payload. The decision is the shared probe in `.claude/hooks/_lib/command_predicate.py`
+(`scan_invocations`), not the quote-stripped text. A payload the probe cannot read (a
+shell variable as the command head, or `eval` / `bash -c` of one) is REFUSED, never
+allowed, and the refusal names the reason. That refusal applies to a fleet repo or to a
+repo whose remote cannot be read.
+
+RESIDUE (what this guard does NOT read, so it is not mistaken for coverage):
+- Interpreter SOURCE (`python3 -c`, `node -e`, a heredoc fed to python) is not read as
+  shell: a `gh pr merge` written inside a Python or Node program passes.
+- A script FILE (`bash deploy.sh`) is not opened, so its contents are not judged.
+- The Pi token and the reviewer verdict are read as TEXT on the raw command line, as
+  before this change. A token written anywhere on the line is accepted; this guard
+  does not authenticate it.
 """
 import json
 import os
@@ -38,6 +56,9 @@ import subprocess
 import sys
 import time
 from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from _lib.command_predicate import scan_invocations  # noqa: E402
 
 # Patterns that indicate client-facing fleet repo merge
 # Hors scope: Pi-workspace internes (CLAUDE.md, .claude/), docs-only PRs
@@ -55,26 +76,11 @@ FLEET_CLIENT_FACING_REPOS = [
     r"\belpiarthera/vantageos-crm\b",  # theta
 ]
 
-# Commands that trigger fleet merge
-MERGE_CMD_PATTERNS = [
-    r"\bgh\s+pr\s+merge\b",  # GitHub CLI PR merge
-    r"\bgit\s+push\s+origin\s+main\b",  # direct push main
-    r"\bgit\s+push\s+.*\bmain\b",  # push variant main
-]
-
 # Override token (Pi PR-MERGE-AUTHORIZED task ID, format k... — Convex IDs)
 APPROVED_TASK_RE = re.compile(r"\bk[a-z0-9]{15,40}\b")
 
 # Audit log path
 AUDIT_LOG = "/tmp/pi-auth-pr-merge.log"
-
-
-def strip_quoted_strings(command: str) -> str:
-    """Remove content inside single/double quotes to avoid false positives
-    on text like `git commit -m "merge main into feature"`."""
-    command = re.sub(r'"[^"]*"', '""', command)
-    command = re.sub(r"'[^']*'", "''", command)
-    return command
 
 
 def _command_cwd(command: str) -> str:
@@ -102,34 +108,41 @@ def _remote_repo(cwd: str) -> str | None:
     return result.stdout.strip()
 
 
-def is_fleet_merge(command: str) -> bool:
-    """Returns True if command is a merge/push targeting a fleet client-facing repo.
-    Day 130 fail-open closed: `gh pr merge N` from a checkout names no repo —
-    gh derives it from the git remote, so the gate must derive it the same way.
-    A PWD path pattern never matches an org/repo and guarded nothing.
-    Fail-closed: a merge whose target repo cannot be established is refused."""
-    sanitized = strip_quoted_strings(command)
-    cmd_lower = sanitized.lower()
+def merge_scan(command: str):
+    """(hit, unresolved): does a real `gh pr merge` or a `git push` of main run
+    anywhere in `command`, and which payloads could not be read. Judged by the
+    shared probe on the real argv, never by the quote-stripped text, which hid
+    every command carried inside `bash -c '...'`."""
+    try:
+        gh_hits, gh_unresolved = scan_invocations(command, ("gh", "pr", "merge"))
+        push_hits, push_unresolved = scan_invocations(command, ("git", "push"))
+    except Exception as exc:
+        return True, [f"the predicate could not read this command: {exc}"]
+    pushes_main = [
+        argv for argv in push_hits if any(re.search(r"\bmain\b", tok) for tok in argv)
+    ]
+    return bool(gh_hits or pushes_main), gh_unresolved + push_unresolved
 
-    has_merge = any(re.search(p, cmd_lower) for p in MERGE_CMD_PATTERNS)
-    if not has_merge:
-        return False
 
-    # Help/dry invocations act on nothing — never gate them (a false positive
-    # on --help teaches operators to bypass, and a bypassed guard guards nothing).
-    if re.search(r"(^|\s)(--help|-h)(\s|$)", sanitized):
-        return False
-
-    # Explicit repo in the command wins
-    if any(re.search(p, sanitized, re.IGNORECASE) for p in FLEET_CLIENT_FACING_REPOS):
+def _targets_fleet(command: str) -> bool:
+    """Does the command act on a fleet client-facing repository? A fleet repo named
+    ANYWHERE in the raw command wins: the quote-stripped text used to hide a repo
+    named inside a `bash -c` payload. Otherwise the repo is the cwd's git remote,
+    and a remote that cannot be read is refused, never assumed."""
+    if any(re.search(p, command, re.IGNORECASE) for p in FLEET_CLIENT_FACING_REPOS):
         return True
-
-    # No explicit repo: derive from the git remote of the command's cwd
     remote = _remote_repo(_command_cwd(command))
     if remote is None:
-        # Unreadable remote on a merge command: refuse rather than assume.
         return True
     return any(re.search(p, remote, re.IGNORECASE) for p in FLEET_CLIENT_FACING_REPOS)
+
+
+def is_fleet_merge(command: str) -> bool:
+    """True when the command merges, or pushes main of, a fleet client-facing repo.
+    Help and dry invocations act on nothing and are exempt inside the probe
+    (SAFE_FLAGS). Fail-closed: a repo that cannot be established is refused."""
+    hit, _unresolved = merge_scan(command)
+    return hit and _targets_fleet(command)
 
 
 def has_pi_authorization(command: str) -> bool:
@@ -399,6 +412,31 @@ try:
     command = data.get("tool_input", {}).get("command", "")
     if not command:
         sys.exit(0)
+
+    # A payload this guard cannot read is refused, never allowed. No Pi token and no
+    # Laurent override can vouch for a command the guard did not read.
+    unresolved = merge_scan(command)[1]
+    if unresolved and _targets_fleet(command):
+        audit_log({
+            "ts": int(time.time()),
+            "verdict": "block",
+            "reason": "unresolvable-payload",
+            "detail": unresolved[0][:300],
+            "command": command[:200],
+        })
+        print(
+            "BLOCKED: the command carries a payload this guard cannot read.\n"
+            "\n"
+            f"  {unresolved[0]}\n"
+            "\n"
+            "A payload that cannot be read is refused, never allowed: a shell variable in\n"
+            "a command head, or an eval of one, hides the command it runs. Write the\n"
+            "guarded command literally on the command line, then run it again.\n"
+            "\n"
+            "Audit trail: /tmp/pi-auth-pr-merge.log\n",
+            file=sys.stderr,
+        )
+        sys.exit(2)
 
     if not is_fleet_merge(command):
         sys.exit(0)
