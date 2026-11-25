@@ -11,8 +11,8 @@ import { ownerOfRepo, repoOwnerBoundToOrg } from "./githubOwnerBinding";
 import { orgRefOfRow, orgRefOfScope } from "./lib/authOrgMapping";
 import {
 	isRoutingAdopted,
-	mappingOfTenant,
-	orgMappingOfRepo,
+	orgKeyOfTenant,
+	orgKeyOfRepo,
 	routeOfRow,
 } from "./lib/reviewRouting";
 import {
@@ -21,6 +21,7 @@ import {
 } from "./lib/verifiedOrg";
 import {
 	type OrgScope,
+	isMcpBoundMaster,
 	requireOrchestratorOnRoster,
 	requireResolvedCaller,
 	requireScope,
@@ -56,18 +57,24 @@ function resolveWriteTenant(scope: OrgScope, door: string): string | undefined {
 }
 
 // A member may touch only rows its own org owns. Master may touch any row
-// (and never changes who owns it).
+// (and never changes who owns it). `refuse: false` answers false instead of
+// raising for a row that is not the caller's: the per-org route lookup states a
+// typed absence for it (`getRoute`), the one place a refusal would be an oracle
+// that the row exists.
 function requireRowOwnedBy(
 	scope: OrgScope,
 	row: Doc<"githubRepoMapping">,
 	door: string,
-): void {
-	if (scope.isMaster) return;
+	opts?: { refuse: boolean },
+): boolean {
+	if (scope.isMaster) return true;
 	if (!sameOrg(orgRefOfRow(row), orgRefOfScope(scope))) {
+		if (opts?.refuse === false) return false;
 		throw new ConvexError(
 			`RBAC_DENIED: ${door} — repo is not owned by org "${scope.orgSlug}" — ${JSON.stringify({ door, repo: row.repo })}`,
 		);
 	}
+	return true;
 }
 
 const repoMappingDocOrNull = v.union(
@@ -161,6 +168,13 @@ export const getRoute = query({
 		requireResolvedCaller(transportScope, "githubRepoMapping:getRoute", {
 			alsoRefusePreOrg: true,
 		});
+		// R-54: the service account acts inside a transport-verified organisation. A
+		// claimless service-account call is refused, never served as master.
+		if (isMcpBoundMaster(transportScope) && args.verifiedOrg === undefined) {
+			throw new ConvexError(
+				`RBAC_DENIED: githubRepoMapping:getRoute — the service account must carry a verifiedOrg claim — ${JSON.stringify({ reason: "verified-org-required", door: "githubRepoMapping:getRoute" })}`,
+			);
+		}
 		const scope = await resolveVerifiedOrgScope(
 			ctx,
 			transportScope,
@@ -169,7 +183,7 @@ export const getRoute = query({
 		);
 		const row = await lookupByRepo(ctx, args.repo);
 		if (row === null) return { state: "absent" as const };
-		if (!scope.isMaster && !sameOrg(orgRefOfRow(row), orgRefOfScope(scope))) {
+		if (!requireRowOwnedBy(scope, row, "githubRepoMapping:getRoute", { refuse: false })) {
 			return { state: "absent" as const };
 		}
 		return routeOfRow(row);
@@ -456,8 +470,8 @@ export const add = mutation({
 		// unchanged: a reviewer stays optional and the fleet default applies.
 		if (existing) requireRowOwnedBy(scope, existing, "githubRepoMapping:add");
 		const writeOrg = existing
-			? await orgMappingOfRepo(ctx, args.repo, existing)
-			: await mappingOfTenant(ctx, tenant, scope.orgClerkId);
+			? await orgKeyOfRepo(ctx, args.repo, existing)
+			: await orgKeyOfTenant(ctx, tenant, scope.orgClerkId);
 		if (
 			(await isRoutingAdopted(ctx, writeOrg)) &&
 			(args.reviewer ?? existing?.reviewer) === undefined
