@@ -42,3 +42,5 @@ run migrations/stampFleetRepoMappings:revert
 run clientOrgMapping:setReviewRoutingAdopted
 run migrations/stampRepoMappingAgentIds:run
 run migrations/stampRepoMappingAgentIds:revert
+run migrations/moveRepoMappingToOrg:run
+run migrations/moveRepoMappingToOrg:revert

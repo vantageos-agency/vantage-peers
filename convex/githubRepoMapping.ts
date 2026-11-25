@@ -11,6 +11,7 @@ import { sameOrg } from "@vantageos/cloud-identity";
 import { ownerOfRepo, repoOwnerBoundToOrg } from "./githubOwnerBinding";
 import { orgRefOfRow, orgRefOfScope } from "./lib/authOrgMapping";
 import { rbacDenied } from "./lib/inboxReader";
+import { findOperatorOrg } from "./lib/operatorOrg";
 import {
 	type OrgKey,
 	isRoutingAdopted,
@@ -204,6 +205,57 @@ export const getRoute = query({
 			return { state: "absent" as const };
 		}
 		return routeOfRow(row);
+	},
+});
+
+// Which of the caller's listed repositories have a row in ANOTHER organisation (task
+// k170nabwrnahjcey4zayn7an3h8jxjg5): a client's repositories are routed in that client's
+// org, so the operator org's completeness check must not count them as missing. The
+// answer is the caller's own input names, filtered: no org, owner or content of the
+// other org's row. It applies to the OPERATOR org only (a client org is told
+// `applicable: false`, a typed answer, never an empty absence); getRoute is untouched
+// and keeps answering absent for another org's row.
+// isolation-contract: no reactive subscriber. New door, so 0 consumers by construction;
+// re-enumerate before adding one:
+//   grep -rn "api\.githubRepoMapping\.routedElsewhere" --include=*.tsx --include=*.ts app components hooks lib → 0 hits.
+export const routedElsewhere = query({
+	args: {
+		repos: v.array(v.string()),
+		verifiedOrg: v.optional(verifiedOrgValidator),
+	},
+	returns: v.object({ applicable: v.boolean(), elsewhere: v.array(v.string()) }),
+	handler: async (ctx, args) => {
+		const transportScope = await withOrgScope(ctx, { refuseWithoutThrow: true });
+		requireResolvedCaller(transportScope, "githubRepoMapping:routedElsewhere", {
+			alsoRefusePreOrg: true,
+		});
+		requireVerifiedOrgFromServiceAccount(
+			transportScope,
+			args.verifiedOrg,
+			"githubRepoMapping:routedElsewhere",
+		);
+		const scope = await resolveVerifiedOrgScope(
+			ctx,
+			transportScope,
+			args.verifiedOrg,
+			"githubRepoMapping:routedElsewhere",
+		);
+		const operator = await findOperatorOrg(ctx.db);
+		const callerRef = orgRefOfScope(scope);
+		if (
+			operator.kind !== "one" ||
+			!sameOrg(callerRef, { id: operator.clerkOrgId, label: operator.slug })
+		) {
+			return { applicable: false, elsewhere: [] };
+		}
+		const elsewhere: string[] = [];
+		for (const repo of [...new Set(args.repos)].slice(0, 500)) {
+			const row = await lookupByRepo(ctx, repo);
+			// A fleet row (no stamp) is the operator's own; a stamped row of another org is elsewhere.
+			if (row === null || (row.orgId === undefined && row.clerkOrgId === undefined)) continue;
+			if (!sameOrg(orgRefOfRow(row), callerRef)) elsewhere.push(repo);
+		}
+		return { applicable: true, elsewhere };
 	},
 });
 

@@ -150,6 +150,7 @@ import type * as migrations_drop_orphan_tables from "../migrations/drop_orphan_t
 import type * as migrations_fleetOrgStamp from "../migrations/fleetOrgStamp.js";
 import type * as migrations_fleetWriteStamp from "../migrations/fleetWriteStamp.js";
 import type * as migrations_linkServiceAccountAgent from "../migrations/linkServiceAccountAgent.js";
+import type * as migrations_moveRepoMappingToOrg from "../migrations/moveRepoMappingToOrg.js";
 import type * as migrations_offloadNoteBody from "../migrations/offloadNoteBody.js";
 import type * as migrations_reindexMemoriesByPeriod from "../migrations/reindexMemoriesByPeriod.js";
 import type * as migrations_restamp_clerk_ids from "../migrations/restamp_clerk_ids.js";
@@ -343,6 +344,7 @@ declare const fullApi: ApiFromModules<{
   "migrations/fleetOrgStamp": typeof migrations_fleetOrgStamp;
   "migrations/fleetWriteStamp": typeof migrations_fleetWriteStamp;
   "migrations/linkServiceAccountAgent": typeof migrations_linkServiceAccountAgent;
+  "migrations/moveRepoMappingToOrg": typeof migrations_moveRepoMappingToOrg;
   "migrations/offloadNoteBody": typeof migrations_offloadNoteBody;
   "migrations/reindexMemoriesByPeriod": typeof migrations_reindexMemoriesByPeriod;
   "migrations/restamp_clerk_ids": typeof migrations_restamp_clerk_ids;

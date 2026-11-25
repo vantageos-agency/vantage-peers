@@ -1263,6 +1263,11 @@ export const checkRepoRoutingServedOutputSchema = z.looseObject({
 		.describe(
 			"Repos of your list recorded as owned by nobody: not missing, and they do not block completeness.",
 		),
+	routedElsewhere: z
+		.number()
+		.describe(
+			"How many repos of your list have a row in another organisation (a client's repos are routed in that client's org): not missing, and they do not block completeness. Only the operator organisation's check counts them.",
+		),
 	stale: z
 		.array(z.string())
 		.describe("Repos mapped by your organisation that are not in your list."),

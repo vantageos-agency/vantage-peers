@@ -10714,7 +10714,7 @@ export function registerTools(
 		},
 		"check_repo_routing",
 		"Check that a list of repos is fully routed in your organisation, against the org's whole routing table. " +
-			"Returns { routed, unreviewed, missing, outOfScope, stale, complete }, each of the first five a list of repos; outOfScope are repos of your list recorded as owned by nobody (not missing), stale are mapped repos not in your list, complete is true only when missing, unreviewed and stale are all empty. " +
+			"Returns { routed, unreviewed, missing, outOfScope, routedElsewhere, stale, complete }; routed, unreviewed, missing, outOfScope and stale are lists of repos, routedElsewhere is a count. outOfScope are repos of your list recorded as owned by nobody (not missing); routedElsewhere counts repos of your list routed in another organisation (the operator organisation's own check only; not missing, never described); stale are mapped repos not in your list; complete is true only when missing, unreviewed and stale are all empty. " +
 			"WHEN: use after listing your real GitHub repos, to find repos with no owner, no reviewer, or a mapping for a repo that is gone. " +
 			"EXAMPLE: check_repo_routing repos=['vantageos-agency/vantage-peers','vantageos-agency/vantage-registry']. " +
 			"FR: Vérifier qu'une liste de dépôts est entièrement routée dans votre organisation.",
@@ -10744,6 +10744,7 @@ export function registerTools(
 				const unreviewed: string[] = [];
 				const missing: string[] = [];
 				const outOfScope: string[] = [];
+				const absent: string[] = [];
 				const BATCH = 20;
 				for (let i = 0; i < wanted.length; i += BATCH) {
 					const batch = wanted.slice(i, i + BATCH);
@@ -10761,12 +10762,37 @@ export function registerTools(
 						if (state === "routed") routed.push(batch[j]);
 						else if (state === "unreviewed") unreviewed.push(batch[j]);
 						else if (state === "out-of-scope") outOfScope.push(batch[j]);
-						else if (state === "absent") missing.push(batch[j]);
+						else if (state === "absent") absent.push(batch[j]);
 						else {
 							return mcpError(
 								`githubRepoMapping:getRoute returned no route state for ${batch[j]}; refusing to report an incomplete check`,
 							);
 						}
+					}
+				}
+				// A client's repo is routed in the CLIENT's org: for the operator org the door
+				// names which absent repos have a row elsewhere (counted, never described), and
+				// those are not missing. A client org is told it does not apply.
+				let routedElsewhere = 0;
+				if (absent.length > 0) {
+					const answer = (await convex.query("githubRepoMapping:routedElsewhere" as any, {
+						repos: absent,
+						...doorScopeArgs("githubRepoMapping:routedElsewhere", undefined),
+					})) as { applicable?: boolean; elsewhere?: string[] } | null;
+					if (
+						answer === null ||
+						typeof answer !== "object" ||
+						typeof answer.applicable !== "boolean" ||
+						!Array.isArray(answer.elsewhere)
+					) {
+						return mcpError(
+							"githubRepoMapping:routedElsewhere returned no answer; refusing to report an incomplete check",
+						);
+					}
+					const elsewhere = new Set(answer.elsewhere);
+					for (const repo of absent) {
+						if (elsewhere.has(repo)) routedElsewhere += 1;
+						else missing.push(repo);
 					}
 				}
 				// Every page of the org's table, until the door's cursor is exhausted.
@@ -10791,6 +10817,7 @@ export function registerTools(
 					unreviewed,
 					missing,
 					outOfScope,
+					routedElsewhere,
 					stale,
 					complete: missing.length === 0 && unreviewed.length === 0 && stale.length === 0,
 				};

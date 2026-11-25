@@ -126,8 +126,8 @@ describe("add_repo_mapping records an out-of-scope repo", () => {
 });
 
 describe("CONTRACT", () => {
-	it("the new argument bumped the contract: MCP requires >= 33, Convex serves the same", () => {
-		expect(REQUIRED_CONTRACT_VERSION).toBeGreaterThanOrEqual(33);
+	it("the new argument bumped the contract: MCP requires >= 34, Convex serves the same", () => {
+		expect(REQUIRED_CONTRACT_VERSION).toBeGreaterThanOrEqual(34);
 		expect(BACKEND_CONTRACT_VERSION).toBe(REQUIRED_CONTRACT_VERSION);
 	});
 });
