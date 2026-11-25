@@ -10,6 +10,12 @@ import { sameOrg } from "@vantageos/cloud-identity";
 import { ownerOfRepo, repoOwnerBoundToOrg } from "./githubOwnerBinding";
 import { orgRefOfRow, orgRefOfScope } from "./lib/authOrgMapping";
 import {
+	isRoutingAdopted,
+	mappingOfTenant,
+	orgMappingOfRepo,
+	routeOfRow,
+} from "./lib/reviewRouting";
+import {
 	resolveVerifiedOrgScope,
 	verifiedOrgValidator,
 } from "./lib/verifiedOrg";
@@ -117,6 +123,56 @@ export const getByRepo = query({
 		if (row === null) return null;
 		requireRowOwnedBy(scope, row, "githubRepoMapping:getByRepo");
 		return row;
+	},
+});
+
+const routeValidator = v.union(
+	v.object({
+		state: v.literal("routed"),
+		owner: v.string(),
+		reviewer: v.string(),
+		fallbackReviewer: v.optional(v.string()),
+	}),
+	v.object({ state: v.literal("unreviewed"), owner: v.string() }),
+	v.object({ state: v.literal("absent") }),
+);
+
+// The route of ONE repository in the CALLER'S OWN org (mission
+// k577f8ksjx5ec3gq9bggc1brqd8jwkbh, S1). The org is the verified one
+// (withOrgScope / the transport's verifiedOrg), never an argument.
+//   routed      the org's row names an owner and a reviewer
+//   unreviewed  the org's row exists and names no reviewer (the owner is named)
+//   absent      the org has no row for this repository — an explicit state, not a
+//               fallback. A row that belongs to ANOTHER org (or to the fleet, for a
+//               member of another org) is answered as absent too: it is not this
+//               org's route, and the answer carries none of its content.
+// A caller with no credential (or signed in with no organisation) is RAISED at
+// RBAC_DENIED, never answered with an absence. The fleet master reads any row.
+// Whether the fleet default applies to an `unreviewed`/`absent` repo is NOT said
+// here: it depends on the org's adoption (convex/lib/reviewRouting.ts).
+// isolation-contract: no reactive subscriber. New door, so 0 consumers by
+// construction; re-enumerate before adding one:
+//   grep -rn "api\.githubRepoMapping\.getRoute" --include=*.tsx --include=*.ts app components hooks lib → 0 hits.
+export const getRoute = query({
+	args: { repo: v.string(), verifiedOrg: v.optional(verifiedOrgValidator) },
+	returns: routeValidator,
+	handler: async (ctx, args) => {
+		const transportScope = await withOrgScope(ctx, { refuseWithoutThrow: true });
+		requireResolvedCaller(transportScope, "githubRepoMapping:getRoute", {
+			alsoRefusePreOrg: true,
+		});
+		const scope = await resolveVerifiedOrgScope(
+			ctx,
+			transportScope,
+			args.verifiedOrg,
+			"githubRepoMapping:getRoute",
+		);
+		const row = await lookupByRepo(ctx, args.repo);
+		if (row === null) return { state: "absent" as const };
+		if (!scope.isMaster && !sameOrg(orgRefOfRow(row), orgRefOfScope(scope))) {
+			return { state: "absent" as const };
+		}
+		return routeOfRow(row);
 	},
 });
 
@@ -394,8 +450,23 @@ export const add = mutation({
 			.query("githubRepoMapping")
 			.withIndex("by_repo", (q) => q.eq("repo", args.repo))
 			.unique();
+		// ADOPTED ORG: a routing row names its reviewer (the one on the row already,
+		// or this call's). The org is the existing row's own, else the writer's
+		// tenant (an unstamped fleet row = the operator org). A NON-adopted org is
+		// unchanged: a reviewer stays optional and the fleet default applies.
+		if (existing) requireRowOwnedBy(scope, existing, "githubRepoMapping:add");
+		const writeOrg = existing
+			? await orgMappingOfRepo(ctx, args.repo, existing)
+			: await mappingOfTenant(ctx, tenant, scope.orgClerkId);
+		if (
+			(await isRoutingAdopted(ctx, writeOrg)) &&
+			(args.reviewer ?? existing?.reviewer) === undefined
+		) {
+			throw new ConvexError(
+				`REVIEWER_REQUIRED: org "${writeOrg?.clerkOrgSlug}" adopted explicit review routing — a mapping must name its reviewer — ${JSON.stringify({ door: "githubRepoMapping:add", repo: args.repo })}`,
+			);
+		}
 		if (existing) {
-			requireRowOwnedBy(scope, existing, "githubRepoMapping:add");
 			await ctx.db.patch(existing._id, {
 				orchestrator: args.orchestrator,
 				project: args.project,

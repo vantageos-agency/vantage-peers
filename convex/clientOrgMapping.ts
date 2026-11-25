@@ -9,6 +9,7 @@ import { requireServiceAccount } from "./lib/eraseRow";
 import { requireFleetDoor } from "./lib/fleetStanding";
 import { orgMappingRowsForLabel } from "./lib/authOrgMapping";
 import { findOperatorOrg } from "./lib/operatorOrg";
+import { REVIEW_ROUTING_ADOPTED_KEY, adoptionEntryOf } from "./lib/reviewRouting";
 import { appendAgentsToRoster } from "./lib/rosterAppend";
 import { resolveProvisioningMapping } from "./lib/provisioningMapping";
 import { normalizeOrchestratorId } from "./_helpers/normalizeOrchestratorId";
@@ -642,6 +643,80 @@ export const setClerkOrgId = internalMutation({
 // organisation ID), so a coordinator can never be a foreign or fleet agent. The list is read live by reorderQueue; nothing is copied
 // onto a token (rights-derivation).
 // ─────────────────────────────────────────────────────────────────────────────
+
+// ─────────────────────────────────────────────────────────────────────────────
+// setReviewRoutingAdopted — an org ADOPTS explicit review routing, as data
+// (mission k577f8ksjx5ec3gq9bggc1brqd8jwkbh, S1). The flag lives in the
+// taskClosureConfig list REVIEW_ROUTING_ADOPTED_KEY, keyed by the org's permanent
+// clerkOrgId (slug only for a mapping row with no id) — NOT in the mapping's
+// `scopes`, which is copied into every caller's authority. An adopted org's
+// repositories are routed ONLY by their own githubRepoMapping rows
+// (convex/lib/reviewRouting.ts) and `githubRepoMapping:add` requires a reviewer.
+// Idempotent: `changed: false` means nothing was written. internalMutation, run
+// by the operator: `clientOrgMapping:setReviewRoutingAdopted '{"clerkOrgSlug":"…","adopted":true}'`.
+// ─────────────────────────────────────────────────────────────────────────────
+export const setReviewRoutingAdopted = internalMutation({
+	args: { clerkOrgSlug: v.string(), adopted: v.boolean() },
+	returns: v.object({
+		clerkOrgSlug: v.string(),
+		adopted: v.boolean(),
+		changed: v.boolean(),
+		previous: v.array(v.string()),
+		current: v.array(v.string()),
+	}),
+	handler: async (ctx, args) => {
+		const rows = await orgMappingRowsForLabel(ctx, args.clerkOrgSlug);
+		if (rows.length > 1) {
+			throw new ConvexError(
+				`ORG_MAPPING_AMBIGUOUS: more than one client_org_mapping row carries the label "${args.clerkOrgSlug}": ${rows.map((r) => r._id).join(", ")}`,
+			);
+		}
+		const row = rows[0];
+		if (!row) {
+			throw new ConvexError(
+				`ORG_MAPPING_NOT_FOUND: no client_org_mapping row for clerkOrgSlug "${args.clerkOrgSlug}"`,
+			);
+		}
+		const config = await ctx.db
+			.query("taskClosureConfig")
+			.withIndex("by_key", (q) => q.eq("key", REVIEW_ROUTING_ADOPTED_KEY))
+			.unique();
+		const previous = config?.value ?? [];
+		const entry = adoptionEntryOf(row);
+		// Removal also drops the slug form: an org that gained its id after adopting.
+		const own = new Set([entry, `slug:${row.clerkOrgSlug}`]);
+		const others = previous.filter((e) => !own.has(e));
+		const current = args.adopted ? [...others, entry] : others;
+		if (
+			current.length === previous.length &&
+			current.every((e) => previous.includes(e))
+		) {
+			return {
+				clerkOrgSlug: args.clerkOrgSlug,
+				adopted: args.adopted,
+				changed: false,
+				previous,
+				current: previous,
+			};
+		}
+		if (config === null) {
+			await ctx.db.insert("taskClosureConfig", {
+				key: REVIEW_ROUTING_ADOPTED_KEY,
+				value: current,
+				updatedAt: Date.now(),
+			});
+		} else {
+			await ctx.db.patch(config._id, { value: current, updatedAt: Date.now() });
+		}
+		return {
+			clerkOrgSlug: args.clerkOrgSlug,
+			adopted: args.adopted,
+			changed: true,
+			previous,
+			current,
+		};
+	},
+});
 
 /** Most coordinators one organisation may list. */
 export const QUEUE_COORDINATORS_MAX = 50;

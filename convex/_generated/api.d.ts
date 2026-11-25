@@ -153,6 +153,7 @@ import type * as migrations_offloadNoteBody from "../migrations/offloadNoteBody.
 import type * as migrations_reindexMemoriesByPeriod from "../migrations/reindexMemoriesByPeriod.js";
 import type * as migrations_restamp_clerk_ids from "../migrations/restamp_clerk_ids.js";
 import type * as migrations_seat_binding_inventory from "../migrations/seat_binding_inventory.js";
+import type * as migrations_stampFleetRepoMappings from "../migrations/stampFleetRepoMappings.js";
 import type * as migrations_seed_client_scope_profiles from "../migrations/seed_client_scope_profiles.js";
 import type * as migrations_seed_task_closure_config from "../migrations/seed_task_closure_config.js";
 import type * as migrations_taskMissionTenantLinks from "../migrations/taskMissionTenantLinks.js";
@@ -343,6 +344,7 @@ declare const fullApi: ApiFromModules<{
   "migrations/reindexMemoriesByPeriod": typeof migrations_reindexMemoriesByPeriod;
   "migrations/restamp_clerk_ids": typeof migrations_restamp_clerk_ids;
   "migrations/seat_binding_inventory": typeof migrations_seat_binding_inventory;
+  "migrations/stampFleetRepoMappings": typeof migrations_stampFleetRepoMappings;
   "migrations/seed_client_scope_profiles": typeof migrations_seed_client_scope_profiles;
   "migrations/seed_task_closure_config": typeof migrations_seed_task_closure_config;
   "migrations/taskMissionTenantLinks": typeof migrations_taskMissionTenantLinks;

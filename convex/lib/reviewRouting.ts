@@ -1,4 +1,8 @@
+import type { Doc } from "../_generated/dataModel";
 import type { QueryCtx } from "../_generated/server";
+import { activeBindingForOwner, ownerOfRepo } from "../githubOwnerBinding";
+import { lookupOrgMapping } from "./authOrgMapping";
+import { findOperatorOrg } from "./operatorOrg";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // reviewRouting — WHO reviews an automation review task is DATA.
@@ -11,6 +15,18 @@ import type { QueryCtx } from "../_generated/server";
 //   fallback        githubRepoMapping.fallbackReviewer  (per-repo)
 //                   taskClosureConfig "reviewerFallback" (fleet default)
 //   stopped         taskClosureConfig "stoppedOrchestrators" (operator-maintained)
+//
+// PER-ORG ADOPTION (mission k577f8ksjx5ec3gq9bggc1brqd8jwkbh, S1). An org that has
+// ADOPTED explicit routing is listed under taskClosureConfig REVIEW_ROUTING_ADOPTED_KEY
+// (set by clientOrgMapping:setReviewRoutingAdopted). The flag is NOT in the org's
+// `client_org_mapping.scopes`: that array is copied into every caller's authority.
+// For that org's repositories the per-repo row is the ONLY source: an absent row, or
+// a row with no reviewer, is REVIEWER_UNRESOLVED and the fleet defaults are never
+// read. A NON-adopted org (every org today) keeps the precedence above unchanged.
+// The org of a repo is derived, never passed: its row's stamp; an unstamped fleet
+// row is the operator org's; for a repo with no row, the active owner binding of
+// the repo's GitHub owner. A repo that no org can be derived for is nobody's and
+// keeps the fleet default.
 //   coordinators    taskClosureConfig "reviewCoordinators"   (who may reassign a
 //                                                         system review task)
 //
@@ -57,6 +73,117 @@ async function mappingFor(ctx: QueryCtx, repo: string) {
 
 export const REVIEWER_UNRESOLVED = "REVIEWER_UNRESOLVED";
 
+/**
+ * The adoption list: taskClosureConfig key whose value names the adopting orgs.
+ * Plain configuration, never part of a grant. It only ever NARROWS what an org is
+ * served (no fleet default). Entries are `id:<clerkOrgId>` (the permanent id) or,
+ * only for a mapping row that holds no id, `slug:<clerkOrgSlug>`. Read RAW (not
+ * through `readConfigList`, which lower-cases): a Clerk org id is case-sensitive.
+ */
+export const REVIEW_ROUTING_ADOPTED_KEY = "reviewRoutingAdoptedOrgs";
+
+type OrgMappingRow = Doc<"client_org_mapping">;
+type RepoMappingRow = Doc<"githubRepoMapping">;
+
+/** The list entry that names this org: its permanent id when it has one, else its slug. */
+export function adoptionEntryOf(
+	org: Pick<OrgMappingRow, "clerkOrgId" | "clerkOrgSlug">,
+): string {
+	return org.clerkOrgId !== undefined
+		? `id:${org.clerkOrgId}`
+		: `slug:${org.clerkOrgSlug}`;
+}
+
+export async function readAdoptedOrgs(ctx: QueryCtx): Promise<string[]> {
+	const row = await ctx.db
+		.query("taskClosureConfig")
+		.withIndex("by_key", (q) => q.eq("key", REVIEW_ROUTING_ADOPTED_KEY))
+		.unique();
+	return row === null ? [] : row.value;
+}
+
+export async function isRoutingAdopted(
+	ctx: QueryCtx,
+	org: OrgMappingRow | null,
+): Promise<boolean> {
+	// Deliberately NOT gated on `isActive`: a disabled org that adopted explicit
+	// routing must not start reaching the fleet default.
+	if (org === null) return false;
+	return (await readAdoptedOrgs(ctx)).includes(adoptionEntryOf(org));
+}
+
+/** The mapping of the ONE active operator org, or null (never guessed). */
+async function operatorMapping(ctx: QueryCtx): Promise<OrgMappingRow | null> {
+	const op = await findOperatorOrg(ctx.db);
+	if (op.kind !== "one") return null;
+	return op.clerkOrgId !== undefined
+		? await lookupOrgMapping(ctx, { clerkOrgId: op.clerkOrgId })
+		: await lookupOrgMapping(ctx, op.slug);
+}
+
+/**
+ * The org mapping that a WRITE of a new row by `tenant` belongs to: the tenant's
+ * own org, or (tenant undefined = a fleet row) the operator org.
+ */
+export async function mappingOfTenant(
+	ctx: QueryCtx,
+	tenant: string | undefined,
+	clerkOrgId: string | undefined,
+): Promise<OrgMappingRow | null> {
+	if (tenant === undefined) return await operatorMapping(ctx);
+	return clerkOrgId !== undefined
+		? await lookupOrgMapping(ctx, { clerkOrgId })
+		: await lookupOrgMapping(ctx, tenant);
+}
+
+/**
+ * The org mapping a repository belongs to, derived from data and never passed:
+ * its row's stamp; an unstamped (fleet) row is the operator org's; a repo with
+ * no row belongs to the org its GitHub owner is actively bound to. null = no org
+ * can be derived (or its mapping cannot be read as exactly one row).
+ */
+export async function orgMappingOfRepo(
+	ctx: QueryCtx,
+	repo: string,
+	row: RepoMappingRow | null,
+): Promise<OrgMappingRow | null> {
+	if (row !== null) {
+		if (row.clerkOrgId !== undefined) {
+			return await lookupOrgMapping(ctx, { clerkOrgId: row.clerkOrgId });
+		}
+		if (row.orgId !== undefined) return await lookupOrgMapping(ctx, row.orgId);
+		return await operatorMapping(ctx);
+	}
+	const owner = ownerOfRepo(repo);
+	if (owner === null) return null;
+	const binding = await activeBindingForOwner(ctx, owner);
+	if (binding === null) return null;
+	return binding.clerkOrgId !== undefined
+		? await lookupOrgMapping(ctx, { clerkOrgId: binding.clerkOrgId })
+		: await lookupOrgMapping(ctx, binding.orgId);
+}
+
+export type RepoRoute =
+	| { state: "routed"; owner: string; reviewer: string; fallbackReviewer?: string }
+	| { state: "unreviewed"; owner: string }
+	| { state: "absent" };
+
+/** The route a row states. A row naming no reviewer is `unreviewed`, never defaulted. */
+export function routeOfRow(row: RepoMappingRow | null): RepoRoute {
+	if (row === null) return { state: "absent" };
+	if (row.reviewer === undefined) {
+		return { state: "unreviewed", owner: row.orchestrator };
+	}
+	return {
+		state: "routed",
+		owner: row.orchestrator,
+		reviewer: row.reviewer,
+		...(row.fallbackReviewer !== undefined
+			? { fallbackReviewer: row.fallbackReviewer }
+			: {}),
+	};
+}
+
 export type ResolvedReviewer = {
 	/** Who the task goes to; null exactly when `unresolved`. */
 	assignee: string | null;
@@ -67,6 +194,8 @@ export type ResolvedReviewer = {
 	reviewer: string | null;
 	fallback: string | null;
 	usedFallback: boolean;
+	/** True when the repo's org adopted explicit routing: no fleet default was read. */
+	adopted: boolean;
 };
 
 export async function resolveReviewer(
@@ -74,13 +203,20 @@ export async function resolveReviewer(
 	repo: string,
 ): Promise<ResolvedReviewer> {
 	const mapping = await mappingFor(ctx, repo);
-	const reviewerRaw =
-		mapping?.reviewer ?? (await readConfigOne(ctx, REVIEWER_DEFAULT_KEY));
+	const adopted = await isRoutingAdopted(
+		ctx,
+		await orgMappingOfRepo(ctx, repo, mapping),
+	);
+	// ADOPTED: the row is the only source. NOT adopted: the row, else the fleet default.
+	const reviewerRaw = adopted
+		? (mapping?.reviewer ?? null)
+		: (mapping?.reviewer ?? (await readConfigOne(ctx, REVIEWER_DEFAULT_KEY)));
 	const reviewer = reviewerRaw === null ? null : norm(reviewerRaw);
 	const owner = mapping === null ? null : norm(mapping.orchestrator);
-	const fallbackRaw =
-		mapping?.fallbackReviewer ??
-		(await readConfigOne(ctx, REVIEWER_FALLBACK_KEY));
+	const fallbackRaw = adopted
+		? (mapping?.fallbackReviewer ?? null)
+		: (mapping?.fallbackReviewer ??
+			(await readConfigOne(ctx, REVIEWER_FALLBACK_KEY)));
 	const fallback = fallbackRaw === null ? null : norm(fallbackRaw);
 	const stopped = new Set(await readConfigList(ctx, STOPPED_ORCHESTRATORS_KEY));
 
@@ -91,9 +227,9 @@ export async function resolveReviewer(
 		!stopped.has(fallback);
 	const picked = usedFallback ? fallback : reviewer;
 	if (picked === null || picked === owner) {
-		return { assignee: null, unresolved: true, reviewer, fallback, usedFallback };
+		return { assignee: null, unresolved: true, reviewer, fallback, usedFallback, adopted };
 	}
-	return { assignee: picked, unresolved: false, reviewer, fallback, usedFallback };
+	return { assignee: picked, unresolved: false, reviewer, fallback, usedFallback, adopted };
 }
 
 /**
@@ -106,11 +242,18 @@ export async function acceptedReviewers(
 	repo: string | undefined,
 ): Promise<string[]> {
 	const out = new Set<string>();
-	for (const key of [REVIEWER_DEFAULT_KEY, REVIEWER_FALLBACK_KEY]) {
-		for (const name of await readConfigList(ctx, key)) out.add(name);
+	const mapping = repo === undefined ? null : await mappingFor(ctx, repo);
+	// An adopted org's approvers are its own row's only: the fleet defaults are
+	// not accepted for its repositories either.
+	const adopted =
+		repo !== undefined &&
+		(await isRoutingAdopted(ctx, await orgMappingOfRepo(ctx, repo, mapping)));
+	if (!adopted) {
+		for (const key of [REVIEWER_DEFAULT_KEY, REVIEWER_FALLBACK_KEY]) {
+			for (const name of await readConfigList(ctx, key)) out.add(name);
+		}
 	}
 	if (repo !== undefined) {
-		const mapping = await mappingFor(ctx, repo);
 		if (mapping?.reviewer) out.add(norm(mapping.reviewer));
 		if (mapping?.fallbackReviewer) out.add(norm(mapping.fallbackReviewer));
 	}

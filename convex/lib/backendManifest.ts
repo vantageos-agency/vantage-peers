@@ -82,6 +82,7 @@ export const BACKEND_FUNCTIONS: readonly string[] = [
 	"githubOwnerBinding:listUnprovenMappings",
 	"githubRepoMapping:add",
 	"githubRepoMapping:getByRepo",
+	"githubRepoMapping:getRoute",
 	"githubRepoMapping:list",
 	"githubRepoMapping:remove",
 	"iframeEmbedSessions:getSession",

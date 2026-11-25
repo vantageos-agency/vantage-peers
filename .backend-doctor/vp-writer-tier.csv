@@ -37,7 +37,7 @@ add_fix_attempt,fixAttempts+fixPatterns,UPSERT,master,masterOnly,fixPatterns:add
 create_fix_pattern,fixPatterns,CREATE,master,masterOnly,fixPatterns:create=masterOnly
 link_issue_to_pattern,fixPatterns,UPDATE,master,masterOnly,fixPatterns:linkIssue=masterOnly
 validate_fix,fixPatterns,UPDATE,master,masterOnly,fixPatterns:validate=masterOnly
-add_repo_mapping,githubOwnerBindings+githubRepoMapping,UPSERT,org-member,orgResolver,githubRepoMapping:add=orgResolver
+add_repo_mapping,githubOwnerBindings+githubRepoMapping+taskClosureConfig,UPSERT,org-member,orgResolver,githubRepoMapping:add=orgResolver
 remove_repo_mapping,githubRepoMapping,DELETE,org-member,orgResolver,githubRepoMapping:remove=orgResolver
 link_commit_to_issue,issues,UPDATE,org-member,orgResolver,issues:linkCommit=orgResolver
 update_issue_status,issues,TRANSITION,org-member,orgResolver,issues:updateStatus=orgResolver
