@@ -1,4 +1,4 @@
-import type { Doc } from "../_generated/dataModel";
+import type { Doc, Id } from "../_generated/dataModel";
 import type { MutationCtx, QueryCtx } from "../_generated/server";
 import { activeBindingForOwner, ownerOfRepo } from "../githubOwnerBinding";
 import { orgMappingLookups } from "./authOrgMapping";
@@ -246,15 +246,25 @@ async function orgKeyOfStamp(
 }
 
 export type RepoRoute =
-	| { state: "routed"; owner: string; reviewer: string; fallbackReviewer?: string }
-	| { state: "unreviewed"; owner: string }
+	| {
+			state: "routed";
+			owner: string;
+			reviewer: string;
+			fallbackReviewer?: string;
+			ownerAgentId?: Id<"agents">;
+			reviewerAgentId?: Id<"agents">;
+			fallbackReviewerAgentId?: Id<"agents">;
+	  }
+	| { state: "unreviewed"; owner: string; ownerAgentId?: Id<"agents"> }
 	| { state: "absent" };
 
 /** The route a row states. A row naming no reviewer is `unreviewed`, never defaulted. */
 export function routeOfRow(row: RepoMappingRow | null): RepoRoute {
 	if (row === null) return { state: "absent" };
+	const ownerId =
+		row.orchestratorAgentId !== undefined ? { ownerAgentId: row.orchestratorAgentId } : {};
 	if (row.reviewer === undefined) {
-		return { state: "unreviewed", owner: row.orchestrator };
+		return { state: "unreviewed", owner: row.orchestrator, ...ownerId };
 	}
 	return {
 		state: "routed",
@@ -262,6 +272,11 @@ export function routeOfRow(row: RepoMappingRow | null): RepoRoute {
 		reviewer: row.reviewer,
 		...(row.fallbackReviewer !== undefined
 			? { fallbackReviewer: row.fallbackReviewer }
+			: {}),
+		...ownerId,
+		...(row.reviewerAgentId !== undefined ? { reviewerAgentId: row.reviewerAgentId } : {}),
+		...(row.fallbackReviewerAgentId !== undefined
+			? { fallbackReviewerAgentId: row.fallbackReviewerAgentId }
 			: {}),
 	};
 }

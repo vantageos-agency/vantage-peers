@@ -78,8 +78,8 @@ async function requireRouted(ctx: QueryCtx, input: RoutedInput): Promise<void> {
 	}
 	const routedIds =
 		input.isReview && route.state === "routed"
-			? [row.reviewerId, row.fallbackReviewerId]
-			: [row.orchestratorId];
+			? [row.reviewerAgentId, row.fallbackReviewerAgentId]
+			: [row.orchestratorAgentId];
 	if (routedIds.every((id) => id === undefined)) {
 		throw rbacDenied(
 			input.door,

@@ -13,7 +13,7 @@
 import { describe, expect, test } from "vitest";
 import { convexTest } from "../../tests/fixtures/convexTestWithServiceAccount";
 import { testClerkOrgId } from "../../tests/fixtures/testClerkOrgId";
-import { actingWith, seedOrgAgents } from "../../tests/lib/seedFleetAgents";
+import { actingWith, seedFleetAgents, seedOrgAgents } from "../../tests/lib/seedFleetAgents";
 import { api, internal } from "../_generated/api";
 import schema from "../schema";
 
@@ -59,17 +59,17 @@ async function seed(t: T) {
 			value: [`id:${testClerkOrgId("org-a")}`],
 			updatedAt: 0,
 		});
-		const stamp = (slug: string) => ({ orgId: slug, clerkOrgId: testClerkOrgId(slug) });
-		const rows: Array<Record<string, unknown>> = [];
-		for (const slug of ["org-a", "org-b"]) {
-			rows.push(
-				{ repo: `${slug}/mine`, orchestrator: ORCH, reviewer: "rev", fallbackReviewer: "rev2", ...stamp(slug) },
-				{ repo: `${slug}/theirs`, orchestrator: OWNER, reviewer: "rev", ...stamp(slug) },
-				{ repo: `${slug}/unreviewed`, orchestrator: ORCH, ...stamp(slug) },
-			);
-		}
-		for (const r of rows) {
-			await ctx.db.insert("githubRepoMapping", { project: "p", active: true, ...r } as never);
+		for (const [i, slug] of ["org-a", "org-b"].entries()) {
+			await ctx.db.insert("githubOwnerBindings", {
+				owner: slug,
+				orgId: slug,
+				installationId: i + 1,
+				accountType: "Organization",
+				githubUserLogin: `gh-${slug}`,
+				boundBy: `admin-${slug}`,
+				boundAt: 1,
+				active: true,
+			});
 		}
 	});
 	secrets.clear();
@@ -87,7 +87,69 @@ async function seed(t: T) {
 	])) {
 		secrets.set(k, val);
 	}
+	await t.run(async (ctx) => {
+		const stamp = (slug: string) => ({ orgId: slug, clerkOrgId: testClerkOrgId(slug) });
+		for (const slug of ["org-a", "org-b"]) {
+			const id = async (label: string) => {
+				const agent = await ctx.db
+					.query("agents")
+					.withIndex("by_org_normalized_name", (q) => q.eq("orgSlug", slug).eq("normalizedName", label))
+					.first();
+				if (agent === null) throw new Error(`no agent ${slug}/${label}`);
+				return agent._id;
+			};
+			const rows: Array<Record<string, unknown>> = [
+				{
+					repo: `${slug}/mine`,
+					orchestrator: ORCH,
+					reviewer: "rev",
+					fallbackReviewer: "rev2",
+					orchestratorAgentId: await id(ORCH),
+					reviewerAgentId: await id("rev"),
+					fallbackReviewerAgentId: await id("rev2"),
+				},
+				{
+					repo: `${slug}/theirs`,
+					orchestrator: OWNER,
+					reviewer: "rev",
+					orchestratorAgentId: await id(OWNER),
+					reviewerAgentId: await id("rev"),
+				},
+				{ repo: `${slug}/unreviewed`, orchestrator: ORCH, orchestratorAgentId: await id(ORCH) },
+				// The LABEL says ORCH, the stored ID is OWNER's: the ID decides.
+				{
+					repo: `${slug}/relabelled`,
+					orchestrator: ORCH,
+					reviewer: "rev",
+					orchestratorAgentId: await id(OWNER),
+					reviewerAgentId: await id("rev"),
+				},
+				// A row written before agent IDs were stored: labels only.
+				{ repo: `${slug}/legacy`, orchestrator: ORCH, reviewer: "rev" },
+			];
+			for (const r of rows) {
+				await ctx.db.insert("githubRepoMapping", { project: "p", active: true, ...stamp(slug), ...r } as never);
+			}
+		}
+	});
 }
+
+const agentIdOf = (t: T, slug: string, label: string) =>
+	t.run(async (ctx) => {
+		const agent = await ctx.db
+			.query("agents")
+			.withIndex("by_org_normalized_name", (q) => q.eq("orgSlug", slug).eq("normalizedName", label))
+			.first();
+		if (agent === null) throw new Error(`no agent ${slug}/${label}`);
+		return agent._id;
+	});
+
+const member = (t: T, slug: string) =>
+	t.withIdentity({
+		subject: `user-${slug}`,
+		organizationId: slug,
+		org_id: testClerkOrgId(slug),
+	} as Parameters<T["withIdentity"]>[0]);
 
 const create = (
 	t: T,
@@ -252,12 +314,45 @@ describe("ADOPTED org: createOrUpdateReviewTask's assignedTo override", () => {
 		expect(await taskCount(t)).toBe(0);
 	});
 
-	test("ADMIT: the routed reviewer as override, and no override (resolved from data)", async () => {
+	test("DENY: even the routed reviewer's label as override is refused for a client org (the row is stored on the fleet, not under the org's agents)", async () => {
 		const t = makeT();
 		await seed(t);
-		expect(await t.mutation(internal.tasks.createOrUpdateReviewTask, args("rev"))).toBeTruthy();
-		expect(await t.mutation(internal.tasks.createOrUpdateReviewTask, { ...args(undefined), prNumber: 8 })).toBeTruthy();
-		expect(await taskCount(t)).toBe(2);
+		const msg = await refusal(t.mutation(internal.tasks.createOrUpdateReviewTask, args("rev")));
+		expect(msg).toContain("reviewer-not-routed");
+		expect(await taskCount(t)).toBe(0);
+	});
+
+	test("ADMIT: no override (the reviewer is resolved from data)", async () => {
+		const t = makeT();
+		await seed(t);
+		expect(await t.mutation(internal.tasks.createOrUpdateReviewTask, args(undefined))).toBeTruthy();
+		expect(await taskCount(t)).toBe(1);
+	});
+
+	test("ADMIT / DENY on an adopted OPERATOR org: the stored assignee ID is the routed reviewer's", async () => {
+		const t = makeT();
+		const ids = await seedFleetAgents(t, ["eta", "rev", "stranger"]);
+		await t.run(async (ctx) => {
+			await ctx.db.insert("githubRepoMapping", {
+				repo: "fleet/one",
+				orchestrator: "eta",
+				project: "p",
+				active: true,
+				reviewer: "rev",
+				orchestratorAgentId: ids.eta,
+				reviewerAgentId: ids.rev,
+			});
+		});
+		await t.mutation(internal.clientOrgMapping.setReviewRoutingAdopted, {
+			clerkOrgSlug: "fleet-operator",
+			adopted: true,
+		});
+		const msg = await refusal(
+			t.mutation(internal.tasks.createOrUpdateReviewTask, args("stranger", "fleet/one")),
+		);
+		expect(msg).toContain("reviewer-not-routed");
+		expect(await t.mutation(internal.tasks.createOrUpdateReviewTask, args("rev", "fleet/one"))).toBeTruthy();
+		expect(await taskCount(t)).toBe(1);
 	});
 });
 
@@ -295,5 +390,122 @@ describe("NOT ADOPTED org: today's behaviour, exactly", () => {
 				assignedTo: "stranger",
 			}),
 		).toBeTruthy();
+	});
+});
+
+describe("ADOPTED org: the stored agent ID decides, not the label", () => {
+	test("DENY: the label matches the assignee but the stored ID is another agent's", async () => {
+		const t = makeT();
+		await seed(t);
+		const msg = await refusal(create(t, "org-a", { assignedTo: ORCH, repo: "org-a/relabelled" }));
+		expect(msg).toContain("repo-routed-to-other-owner");
+		expect(await taskCount(t)).toBe(0);
+	});
+
+	test("ADMIT: the stored ID matches the assignee although the label names someone else", async () => {
+		const t = makeT();
+		await seed(t);
+		expect(await create(t, "org-a", { assignedTo: OWNER, repo: "org-a/relabelled" })).toBeTruthy();
+	});
+
+	test("DENY: a row with no stored IDs is refused, whoever is assigned", async () => {
+		const t = makeT();
+		await seed(t);
+		for (const assignedTo of [ORCH, OWNER]) {
+			const msg = await refusal(create(t, "org-a", { assignedTo, repo: "org-a/legacy" }));
+			expect(msg).toContain("route-has-no-agent-ids");
+		}
+		const review = await refusal(
+			create(t, "org-a", { title: "[REVIEW] x", assignedTo: "rev", repo: "org-a/legacy" }),
+		);
+		expect(review).toContain("route-has-no-agent-ids");
+		expect(await taskCount(t)).toBe(0);
+	});
+
+	test("NOT ADOPTED: a row with no IDs, or the wrong ID, changes nothing", async () => {
+		const t = makeT();
+		await seed(t);
+		expect(await create(t, "org-b", { assignedTo: ORCH, repo: "org-b/legacy" })).toBeTruthy();
+		expect(await create(t, "org-b", { assignedTo: ORCH, repo: "org-b/relabelled" })).toBeTruthy();
+	});
+});
+
+describe("githubRepoMapping:add stores the agent IDs", () => {
+	const base = { repo: "org-a/fresh", project: "p" };
+
+	test("ADMIT: the IDs of the org's own agents are stored and served by getRoute", async () => {
+		const t = makeT();
+		await seed(t);
+		const orchestratorAgentId = await agentIdOf(t, "org-a", ORCH);
+		const reviewerAgentId = await agentIdOf(t, "org-a", "rev");
+		await member(t, "org-a").mutation(api.githubRepoMapping.add, {
+			...base,
+			orchestrator: ORCH,
+			reviewer: "rev",
+			orchestratorAgentId,
+			reviewerAgentId,
+		});
+		expect(await member(t, "org-a").query(api.githubRepoMapping.getRoute, { repo: "org-a/fresh" })).toEqual({
+			state: "routed",
+			owner: ORCH,
+			reviewer: "rev",
+			ownerAgentId: orchestratorAgentId,
+			reviewerAgentId,
+		});
+		expect(await create(t, "org-a", { assignedTo: ORCH, repo: "org-a/fresh" })).toBeTruthy();
+	});
+
+	test("DENY: another org's agent ID is refused, nothing written", async () => {
+		const t = makeT();
+		await seed(t);
+		const foreign = await agentIdOf(t, "org-b", ORCH);
+		const msg = await refusal(
+			member(t, "org-a").mutation(api.githubRepoMapping.add, {
+				...base,
+				orchestrator: ORCH,
+				reviewer: "rev",
+				orchestratorAgentId: foreign,
+			}),
+		);
+		expect(msg).toContain("route-agent-not-in-org");
+		const row = await t.run(async (ctx) =>
+			ctx.db.query("githubRepoMapping").withIndex("by_repo", (q) => q.eq("repo", "org-a/fresh")).unique(),
+		);
+		expect(row).toBeNull();
+	});
+
+	test("DENY: a reviewer ID without its reviewer label is refused", async () => {
+		const t = makeT();
+		await seed(t);
+		const msg = await refusal(
+			member(t, "org-a").mutation(api.githubRepoMapping.add, {
+				...base,
+				orchestrator: ORCH,
+				reviewerAgentId: await agentIdOf(t, "org-a", "rev"),
+			}),
+		);
+		expect(msg).toContain("INVALID_ROUTE");
+	});
+
+	test("an update restates the IDs: re-saving with labels only clears them, so the route is refused until they are given again", async () => {
+		const t = makeT();
+		await seed(t);
+		const orchestratorAgentId = await agentIdOf(t, "org-a", ORCH);
+		await member(t, "org-a").mutation(api.githubRepoMapping.add, {
+			repo: "org-a/mine",
+			project: "p",
+			orchestrator: ORCH,
+			reviewer: "rev",
+			orchestratorAgentId,
+		});
+		expect(await create(t, "org-a", { assignedTo: ORCH, repo: "org-a/mine" })).toBeTruthy();
+		await member(t, "org-a").mutation(api.githubRepoMapping.add, {
+			repo: "org-a/mine",
+			project: "p",
+			orchestrator: ORCH,
+			reviewer: "rev",
+		});
+		const msg = await refusal(create(t, "org-a", { assignedTo: ORCH, repo: "org-a/mine" }));
+		expect(msg).toContain("route-has-no-agent-ids");
 	});
 });

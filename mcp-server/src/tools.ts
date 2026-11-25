@@ -171,6 +171,7 @@ import { resolveStateTokens, StateTokenError } from "./state-tokens.js";
 import { registerExportOkfBundle } from "./tools/exportOkfBundle.js";
 import { registerImportOkfBundle } from "./tools/importOkfBundle.js";
 import { registerKbIngestTools } from "./tools/kbIngest.js";
+import { repoMappingAgentIdArgs, repoMappingAgentIdShape } from "./tools/repoMappingAgentIds.js";
 import { registerValidateOkfBundle } from "./tools/validateOkfBundle.js";
 import { registerUiAppResources, withUiAppLink } from "./ui-resources/apps.js";
 import type { VpToolResult } from "./ui-resources/schemas.js";
@@ -10334,7 +10335,7 @@ export function registerTools(
 		},
 		"add_repo_mapping",
 		"Register or update a GitHub repo to orchestrator mapping for webhook event routing. " +
-			"Returns { id, repo, orchestrator, project, active, reviewer, fallbackReviewer }; calling again for the same repo updates the mapping. " +
+			"Returns { id, repo, orchestrator, project, active, reviewer, fallbackReviewer } (plus the agent IDs you gave); calling again for the same repo updates the mapping and restates its agent IDs. " +
 			"WHEN: use when adding a new repo to monitoring or changing which orchestrator handles its events. " +
 			"EXAMPLE: add_repo_mapping repo='vantageos-agency/vantage-peers' orchestrator='alpha' project='vantage-peers'.",
 		{
@@ -10364,6 +10365,7 @@ export function registerTools(
 				.describe(
 					"Who reviews when the reviewer is stopped. Omit to use the fleet default.",
 				),
+			...repoMappingAgentIdShape,
 		},
 		{
 			outputSchema: addRepoMappingServedOutputSchema,
@@ -10373,7 +10375,17 @@ export function registerTools(
 			destructiveHint: false,
 			title: "Add repo mapping",
 		},
-		async ({ repo, orchestrator, project, active, reviewer, fallbackReviewer }) => {
+		async ({
+			repo,
+			orchestrator,
+			project,
+			active,
+			reviewer,
+			fallbackReviewer,
+			orchestratorAgentId,
+			reviewerAgentId,
+			fallbackReviewerAgentId,
+		}) => {
 			// Repo mappings are tenant-owned (orgId): an unresolved caller is refused
 			// here, the Convex door decides master / org-member / own-rows.
 			const unresolved = guardResolvedCaller("add_repo_mapping");
@@ -10390,12 +10402,30 @@ export function registerTools(
 					active,
 					reviewer,
 					fallbackReviewer,
+					...repoMappingAgentIdArgs({
+						orchestratorAgentId,
+						reviewerAgentId,
+						fallbackReviewerAgentId,
+					}),
 					...doorScopeArgs("githubRepoMapping:add", undefined),
 				});
 
 				// The same object is the text (unchanged) and the structuredContent the
 				// outputSchema validates (task k1793xkjhzh1xm23gmmwjgwfyx8htbv0).
-				const structured: Record<string, unknown> = { id, repo, orchestrator, project, active, reviewer, fallbackReviewer };
+				const structured: Record<string, unknown> = {
+					id,
+					repo,
+					orchestrator,
+					project,
+					active,
+					reviewer,
+					fallbackReviewer,
+					...repoMappingAgentIdArgs({
+						orchestratorAgentId,
+						reviewerAgentId,
+						fallbackReviewerAgentId,
+					}),
+				};
 				return {
 					content: [
 						{ type: "text" as const, text: JSON.stringify(structured, null, 2) },
