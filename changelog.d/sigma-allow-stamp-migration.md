@@ -1,1 +1,4 @@
+---
+section: Changed
+---
 - The prod guard's allow list names `migrations/stampFleetRepoMappings:run` and `:revert`, so the fleet-row stamp migration of delegation routing S1 (#1772) can be dry-run, applied and reverted through `convex-prod.sh` (task k1707fkmyaavn0v0fkdjg2mhs58jx8dr, Pi authorization). `convex/_generated/api.d.ts` lists the migration in codegen order.
