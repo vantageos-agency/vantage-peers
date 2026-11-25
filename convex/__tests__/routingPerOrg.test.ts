@@ -257,11 +257,11 @@ describe("an ADOPTED org never reaches the fleet default; a non-adopted org keep
 		const t = makeT();
 		await seed(t);
 		await t.run(async (ctx) => {
-			await ctx.db.insert("taskClosureConfig", {
-				key: "reviewRoutingAdoptedOrgs",
-				value: ["slug:org-b"],
-				updatedAt: 0,
-			});
+			const cfg = await ctx.db
+				.query("taskClosureConfig")
+				.withIndex("by_key", (q) => q.eq("key", "reviewRoutingAdoptedOrgs"))
+				.unique();
+			if (cfg) await ctx.db.patch(cfg._id, { value: ["slug:org-b"] });
 		});
 		expect(await reviewerOf(t, "org-b/never-mapped")).toBeNull();
 		expect(await t.query(internal.reviewRouting.acceptedForRepo, { repo: "org-b/unreviewed" })).toEqual([]);
