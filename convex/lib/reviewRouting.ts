@@ -1,7 +1,7 @@
 import type { Doc } from "../_generated/dataModel";
 import type { MutationCtx, QueryCtx } from "../_generated/server";
 import { activeBindingForOwner, ownerOfRepo } from "../githubOwnerBinding";
-import { lookupOrgMapping } from "./authOrgMapping";
+import { orgMappingLookups } from "./authOrgMapping";
 import { findOperatorOrg } from "./operatorOrg";
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -82,13 +82,17 @@ export const REVIEWER_UNRESOLVED = "REVIEWER_UNRESOLVED";
  */
 export const REVIEW_ROUTING_ADOPTED_KEY = "reviewRoutingAdoptedOrgs";
 
-type OrgMappingRow = Doc<"client_org_mapping">;
 type RepoMappingRow = Doc<"githubRepoMapping">;
 
+/**
+ * An organisation as the adoption list names it: its permanent id when it has
+ * one, and its slug label (the legacy key of an id-less mapping). No mapping row
+ * is read to build one from a verified scope or from the operator org.
+ */
+export type OrgKey = { clerkOrgId?: string; clerkOrgSlug: string };
+
 /** The list entry that names this org: its permanent id when it has one, else its slug. */
-export function adoptionEntryOf(
-	org: Pick<OrgMappingRow, "clerkOrgId" | "clerkOrgSlug">,
-): string {
+export function adoptionEntryOf(org: OrgKey): string {
 	return org.clerkOrgId !== undefined
 		? `id:${org.clerkOrgId}`
 		: `slug:${org.clerkOrgSlug}`;
@@ -104,10 +108,10 @@ export async function readAdoptedOrgs(ctx: QueryCtx): Promise<string[]> {
 
 export async function isRoutingAdopted(
 	ctx: QueryCtx,
-	org: OrgMappingRow | null,
+	org: OrgKey | null,
 ): Promise<boolean> {
-	// Deliberately NOT gated on `isActive`: a disabled org that adopted explicit
-	// routing must not start reaching the fleet default.
+	// Deliberately NOT gated on the org's `isActive`: a disabled org that adopted
+	// explicit routing must not start reaching the fleet default.
 	if (org === null) return false;
 	// EITHER form names the org: an org adopted by slug before its mapping gained a
 	// permanent id must not lose adoption when the id is stamped (the writer
@@ -149,72 +153,91 @@ export async function rewriteAdoptionKey(
 	});
 }
 
-/** The mapping of the ONE active operator org, or null (never guessed). */
-async function operatorMapping(ctx: QueryCtx): Promise<OrgMappingRow | null> {
+/** The ONE active operator org, as the package settles it (never guessed), or null. */
+async function operatorKey(ctx: QueryCtx): Promise<OrgKey | null> {
 	const op = await findOperatorOrg(ctx.db);
 	if (op.kind !== "one") return null;
-	return op.clerkOrgId !== undefined
-		? await lookupOrgMapping(ctx, { clerkOrgId: op.clerkOrgId })
-		: await lookupOrgMapping(ctx, op.slug);
+	return {
+		clerkOrgSlug: op.slug,
+		...(op.clerkOrgId !== undefined ? { clerkOrgId: op.clerkOrgId } : {}),
+	};
 }
 
 /**
- * The org mapping that a WRITE of a new row by `tenant` belongs to: the tenant's
- * own org, or (tenant undefined = a fleet row) the operator org.
+ * The org a WRITE of a new row by `tenant` belongs to. `tenant` and `clerkOrgId`
+ * are the writer's own VERIFIED scope (never an argument); undefined tenant = a
+ * fleet row = the operator org. No mapping row is read for a member.
  */
-export async function mappingOfTenant(
+export async function orgKeyOfTenant(
 	ctx: QueryCtx,
 	tenant: string | undefined,
 	clerkOrgId: string | undefined,
-): Promise<OrgMappingRow | null> {
-	if (tenant === undefined) return await operatorMapping(ctx);
-	return clerkOrgId !== undefined
-		? await lookupOrgMapping(ctx, { clerkOrgId })
-		: await lookupOrgMapping(ctx, tenant);
+): Promise<OrgKey | null> {
+	if (tenant === undefined) return await operatorKey(ctx);
+	return {
+		clerkOrgSlug: tenant,
+		...(clerkOrgId !== undefined ? { clerkOrgId } : {}),
+	};
 }
 
 /**
- * The org mapping a repository belongs to, derived from data and never passed:
- * its row's stamp; an unstamped (fleet) row is the operator org's; a repo with
- * no row belongs to the org its GitHub owner is actively bound to. null = no org
- * can be derived (or its mapping cannot be read as exactly one row).
+ * The org a repository belongs to, derived from data and never passed: its row's
+ * stamp; an unstamped (fleet) row is the operator org's; a repo with no row
+ * belongs to the org its GitHub owner is actively bound to. null = no org can be
+ * derived.
  */
-export async function orgMappingOfRepo(
+export async function orgKeyOfRepo(
 	ctx: QueryCtx,
 	repo: string,
 	row: RepoMappingRow | null,
-): Promise<OrgMappingRow | null> {
+): Promise<OrgKey | null> {
 	if (row !== null) {
 		if (row.clerkOrgId !== undefined || row.orgId !== undefined) {
-			return await mappingOfStamp(ctx, row.clerkOrgId, row.orgId);
+			return await orgKeyOfStamp(ctx, row.clerkOrgId, row.orgId);
 		}
-		return await operatorMapping(ctx);
+		return await operatorKey(ctx);
 	}
 	const owner = ownerOfRepo(repo);
 	if (owner === null) return null;
 	const binding = await activeBindingForOwner(ctx, owner);
 	if (binding === null) return null;
-	return await mappingOfStamp(ctx, binding.clerkOrgId, binding.orgId);
+	return await orgKeyOfStamp(ctx, binding.clerkOrgId, binding.orgId);
 }
 
 /**
- * The mapping a stamp (permanent id + slug label) names: by id, else by label.
- * The label is the fallback because a row's stamped id can lag the mapping's own
- * id while an identifier change (setClerkOrgId replace, restamp_clerk_ids) is
- * still being propagated to the stamped tables; losing the org in that window
- * would reopen the fleet default for an adopted org. This only ever decides
- * ADOPTION (a narrowing); it grants nothing.
+ * The org a stamp (permanent id + slug label) names, settled through the
+ * package's own lookup adapters (`orgMappingLookups`): by id first, and by label
+ * ONLY for the legacy id-less stamp or an id that lags the mapping's own while an
+ * identifier change (setClerkOrgId replace, restamp_clerk_ids) is still being
+ * propagated to the stamped tables. Losing the org in that window would reopen the
+ * fleet default for an adopted org. This only ever decides ADOPTION (a
+ * narrowing); it grants nothing. A stamp no mapping answers for stands as its own
+ * key, so an entry naming it still holds.
  */
-async function mappingOfStamp(
+async function orgKeyOfStamp(
 	ctx: QueryCtx,
 	clerkOrgId: string | undefined,
 	label: string | undefined,
-): Promise<OrgMappingRow | null> {
+): Promise<OrgKey | null> {
+	const lookups = orgMappingLookups(ctx);
 	if (clerkOrgId !== undefined) {
-		const byId = await lookupOrgMapping(ctx, { clerkOrgId });
-		if (byId !== null) return byId;
+		const byId = await lookups.orgById(clerkOrgId);
+		if (byId) return { clerkOrgId: byId.id, clerkOrgSlug: byId.label };
 	}
-	return label !== undefined ? await lookupOrgMapping(ctx, label) : null;
+	if (label !== undefined) {
+		const byLabel = await lookups.orgByLabel(label);
+		if (byLabel) {
+			return {
+				clerkOrgSlug: byLabel.label,
+				...(byLabel.id !== undefined ? { clerkOrgId: byLabel.id } : {}),
+			};
+		}
+		return {
+			clerkOrgSlug: label,
+			...(clerkOrgId !== undefined ? { clerkOrgId } : {}),
+		};
+	}
+	return null;
 }
 
 export type RepoRoute =
@@ -259,7 +282,7 @@ export async function resolveReviewer(
 	const mapping = await mappingFor(ctx, repo);
 	const adopted = await isRoutingAdopted(
 		ctx,
-		await orgMappingOfRepo(ctx, repo, mapping),
+		await orgKeyOfRepo(ctx, repo, mapping),
 	);
 	// ADOPTED: the row is the only source. NOT adopted: the row, else the fleet default.
 	const reviewerRaw = adopted
@@ -301,7 +324,7 @@ export async function acceptedReviewers(
 	// not accepted for its repositories either.
 	const adopted =
 		repo !== undefined &&
-		(await isRoutingAdopted(ctx, await orgMappingOfRepo(ctx, repo, mapping)));
+		(await isRoutingAdopted(ctx, await orgKeyOfRepo(ctx, repo, mapping)));
 	if (!adopted) {
 		for (const key of [REVIEWER_DEFAULT_KEY, REVIEWER_FALLBACK_KEY]) {
 			for (const name of await readConfigList(ctx, key)) out.add(name);
