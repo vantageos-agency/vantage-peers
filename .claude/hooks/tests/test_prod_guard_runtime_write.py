@@ -224,3 +224,121 @@ def test_heredoc_program_runtime_write_blocks(name, guard_env_file, tmp_path):
 def test_heredoc_dev_or_data_passes(name, guard_env_file, tmp_path):
     rc, out = run(HEREDOC_ALLOW_CASES[name], guard_env_file, tmp_path)
     assert rc == 0, f"{name}: expected ALLOW (exit 0), got {rc}. output: {out}"
+
+
+# ---------------------------------------------------------------------------
+# VERSIONED / PATH-QUALIFIED HEADS and DECOY DEV HOSTS, per interpreter family
+# (task k17bx73va6s36bg1qdqw0enjch8f97h2, review REVISE on PR #1768, head 48c5740a).
+#
+# 1. `python3.12 -c`, `/usr/bin/python3.14 -c`, `node22 -e` walked past the head test.
+# 2. A dev host string in the SAME write segment certified the write as dev while the
+#    URL came from an unresolved environment read (`os.environ['DEPLOY_HOST']`).
+# ---------------------------------------------------------------------------
+FAMILY_BLOCK_CASES = {
+    "python_versioned_python3_12": (
+        "python3.12 -c \"import os,urllib.request; urllib.request.urlopen("
+        "os.environ['VP_CONVEX_URL'] + '/api/mutation', data=b'{}')\""
+    ),
+    "python_path_qualified_python3_14": (
+        "/usr/bin/python3.14 -c \"import os,urllib.request; urllib.request.urlopen("
+        "os.environ['VP_CONVEX_URL'] + '/api/mutation', data=b'{}')\""
+    ),
+    "node_versioned_node22": (
+        "node22 -e \"fetch(process.env.VP_CONVEX_URL + '/api/mutation', "
+        "{method:'POST', body:'{}'})\""
+    ),
+    "bun_versioned_bun1": (
+        "bun1 -e \"fetch(process.env.VP_CONVEX_URL + '/api/mutation', {method:'POST'})\""
+    ),
+    "deno_versioned_deno2": (
+        "deno2 eval \"fetch(Deno.env.get('VP_CONVEX_URL') + '/api/mutation', {method:'POST'})\""
+    ),
+    "ruby_versioned_ruby3_3": (
+        "ruby3.3 -e \"require 'net/http'; Net::HTTP.post(URI(ENV['VP_CONVEX_URL'] + "
+        "'/api/mutation'), '{}')\""
+    ),
+    "perl_versioned_perl5_38": (
+        "perl5.38 -e 'use LWP::Simple; post($ENV{VP_CONVEX_URL} . \"/api/mutation\", \"{}\")'"
+    ),
+    "php_versioned_php8_3": (
+        "php8.3 -r 'file_get_contents(getenv(\"VP_CONVEX_URL\") . \"/api/mutation\");'"
+    ),
+    "curl_path_qualified": (
+        "/usr/bin/curl -X POST \"$VP_CONVEX_URL/api/mutation\" -d '{}'"
+    ),
+    "wget_versioned_wget2": (
+        "wget2 --post-data='{}' \"$VP_CONVEX_URL/api/mutation\""
+    ),
+    "http_versioned_http2": (
+        "http2 POST \"$VP_CONVEX_URL/api/mutation\" a=b"
+    ),
+    "python_decoy_dev_host_unresolved_env": (
+        "python3 -c \"import os,urllib.request; d='https://fake-dev-y.convex.cloud'; "
+        "urllib.request.urlopen(os.environ['DEPLOY_HOST'] + '/api/mutation', data=b'{}')\""
+    ),
+    "node_decoy_dev_host_unresolved_env": (
+        "node -e \"const d='https://fake-dev-y.convex.cloud'; fetch(process.env.DEPLOY_HOST "
+        "+ '/api/mutation', {method:'POST', body:'{}'})\""
+    ),
+    "bun_decoy_dev_host_unresolved_env": (
+        "bun -e \"const d='https://fake-dev-y.convex.cloud'; fetch(process.env.DEPLOY_HOST "
+        "+ '/api/mutation', {method:'POST'})\""
+    ),
+    "deno_decoy_dev_host_unresolved_env": (
+        "deno eval \"const d='https://fake-dev-y.convex.cloud'; fetch(Deno.env.get('DEPLOY_HOST') "
+        "+ '/api/mutation', {method:'POST'})\""
+    ),
+    "ruby_decoy_dev_host_unresolved_env": (
+        "ruby -e \"d='https://fake-dev-y.convex.cloud'; require 'net/http'; "
+        "Net::HTTP.post(URI(ENV['DEPLOY_HOST'] + '/api/mutation'), '{}')\""
+    ),
+    "perl_decoy_dev_host_unresolved_env": (
+        "perl -e 'my $d=\"https://fake-dev-y.convex.cloud\"; use LWP::Simple; "
+        "post($ENV{DEPLOY_HOST} . \"/api/mutation\", \"{}\")'"
+    ),
+    "php_decoy_dev_host_unresolved_env": (
+        "php -r '$d=\"https://fake-dev-y.convex.cloud\"; "
+        "file_get_contents(getenv(\"DEPLOY_HOST\") . \"/api/mutation\");'"
+    ),
+    "curl_decoy_dev_host_unresolved_var": (
+        "curl -H 'X: https://fake-dev-y.convex.cloud' -X POST \"$DEPLOY_HOST/api/mutation\" -d '{}'"
+    ),
+    "wget_decoy_dev_host_unresolved_var": (
+        "wget --header='X: https://fake-dev-y.convex.cloud' --post-data='{}' "
+        "\"$DEPLOY_HOST/api/mutation\""
+    ),
+    "http_decoy_dev_host_unresolved_var": (
+        "http --headers='X: https://fake-dev-y.convex.cloud' POST \"$DEPLOY_HOST/api/mutation\" a=b"
+    ),
+}
+
+FAMILY_ALLOW_CASES = {
+    "python_versioned_dev": (
+        f"CONVEX_URL=https://{DEV_NAME}.convex.cloud python3.12 -c \"import os,urllib.request; "
+        "urllib.request.urlopen(os.environ['CONVEX_URL'] + '/api/mutation', data=b'{}')\""
+    ),
+    "node_versioned_dev": (
+        f"CONVEX_URL=https://{DEV_NAME}.convex.cloud node22 -e \"fetch(process.env.CONVEX_URL "
+        "+ '/api/mutation', {method:'POST', body:'{}'})\""
+    ),
+    "ruby_versioned_dev": (
+        f"CONVEX_URL=https://{DEV_NAME}.convex.cloud ruby3.3 -e \"require 'net/http'; "
+        "Net::HTTP.post(URI(ENV['CONVEX_URL'] + '/api/mutation'), '{}')\""
+    ),
+    "curl_dev_inline": (
+        f"CONVEX_URL=https://{DEV_NAME}.convex.cloud /usr/bin/curl -X POST "
+        "\"$CONVEX_URL/api/mutation\" -d '{}'"
+    ),
+}
+
+
+@pytest.mark.parametrize("name", sorted(FAMILY_BLOCK_CASES))
+def test_versioned_head_or_decoy_dev_host_blocks(name, guard_env_file, tmp_path):
+    rc, out = run(FAMILY_BLOCK_CASES[name], guard_env_file, tmp_path)
+    assert rc == 2, f"{name}: expected BLOCK (exit 2), got {rc}. output: {out}"
+
+
+@pytest.mark.parametrize("name", sorted(FAMILY_ALLOW_CASES))
+def test_versioned_head_resolved_to_dev_passes(name, guard_env_file, tmp_path):
+    rc, out = run(FAMILY_ALLOW_CASES[name], guard_env_file, tmp_path)
+    assert rc == 0, f"{name}: expected ALLOW (exit 0), got {rc}. output: {out}"
