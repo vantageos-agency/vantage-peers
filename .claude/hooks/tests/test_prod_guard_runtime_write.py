@@ -472,3 +472,41 @@ def test_runner_and_pypy_heads_judge_the_url_argument(name, guard_env_file, tmp_
     command, env = HEAD_FAMILY_DECOY_CASES[name]
     rc, out = run(command, guard_env_file, tmp_path, extra_env={**PROD_STATION_ENV, **env})
     assert rc == 2, f"{name}: expected BLOCK (exit 2), got {rc}. output: {out}"
+
+
+# Poles that pin the URL-ARGUMENT rule itself (origin k179p2pkn0s9zgt6pdc5ps86wn8jw599).
+# A URL that is a function result is no environment read and no literal, so only the
+# argument rule refuses it; a dev decoy elsewhere in the segment must not certify it.
+URL_ARGUMENT_BLOCK_CASES = {
+    "python_function_result_url_with_dev_decoy": (
+        "python3 -c \"import sys,urllib.request; d='https://fake-dev-y.convex.cloud'; "
+        "urllib.request.urlopen(sys.argv[1]+'/api/mutation', data=b'{}')\"",
+        {},
+    ),
+}
+
+URL_ARGUMENT_ALLOW_CASES = {
+    "dev_url_beside_unset_header_variable": (
+        f"curl -X POST -H \"X-Trace: $TRACE_ID_UNSET\" https://{DEV_NAME}.convex.cloud/api/mutation -d '{{}}'",
+        {},
+    ),
+    "python_monkey_url_resolving_to_dev": (
+        "python3 -c \"import os,urllib.request; urllib.request.urlopen("
+        "os.environ['MONKEY_URL']+'/api/mutation', data=b'{}')\"",
+        {"MONKEY_URL": DEV_URL},
+    ),
+}
+
+
+@pytest.mark.parametrize("name", sorted(URL_ARGUMENT_BLOCK_CASES))
+def test_url_argument_function_result_blocks(name, guard_env_file, tmp_path):
+    command, env = URL_ARGUMENT_BLOCK_CASES[name]
+    rc, out = run(command, guard_env_file, tmp_path, extra_env={**PROD_STATION_ENV, **env})
+    assert rc == 2, f"{name}: expected BLOCK (exit 2), got {rc}. output: {out}"
+
+
+@pytest.mark.parametrize("name", sorted(URL_ARGUMENT_ALLOW_CASES))
+def test_url_argument_dev_passes_beside_unrelated_sources(name, guard_env_file, tmp_path):
+    command, env = URL_ARGUMENT_ALLOW_CASES[name]
+    rc, out = run(command, guard_env_file, tmp_path, extra_env=env)
+    assert rc == 0, f"{name}: expected ALLOW (exit 0), got {rc}. output: {out}"
