@@ -11,7 +11,7 @@
         "@modelcontextprotocol/sdk": "^1.32.0",
         "@types/pdf-parse": "^1.1.5",
         "@vantageos/agent-engine": "^0.4.0-alpha.0",
-        "@vantageos/cloud-identity": "^0.38.0",
+        "@vantageos/cloud-identity": "^0.39.0",
         "ai": "^6.0.134",
         "convex": "^1.42.1",
         "convex-helpers": "^0.1.114",
@@ -38,7 +38,7 @@
     },
     "mcp-server": {
       "name": "vantage-peers-mcp",
-      "version": "5.0.3",
+      "version": "5.1.0",
       "bin": {
         "vantage-peers-mcp": "./dist/server.js",
       },
@@ -46,7 +46,7 @@
         "@clerk/backend": "^3.11.4",
         "@mcp-ui/server": "^6.1.0",
         "@modelcontextprotocol/server": "^2.3.0",
-        "@vantageos/cloud-identity": "^0.38.0",
+        "@vantageos/cloud-identity": "^0.39.0",
         "convex": ">=1.0.0",
         "dotenv": "^17.4.2",
         "tldts": "7.4.19",
@@ -323,7 +323,7 @@
 
     "@vantageos/agent-engine": ["@vantageos/agent-engine@0.4.0-alpha.0", "", { "dependencies": { "@convex-dev/agent": "0.6.4", "@convex-dev/aggregate": "^0.2.2", "@convex-dev/crons": "^0.2.2", "@convex-dev/rate-limiter": "^0.3.2", "@convex-dev/sharded-counter": "^0.2.1", "@convex-dev/workflow": "0.4.4", "@convex-dev/workpool": "0.4.7", "@vantageos/cloud-identity": "0.21.3", "@vercel/sandbox": "^2.6.1", "ai": "6.0.35", "convex": "1.42.1", "convex-helpers": "0.1.103" } }, "sha512-yO9B1Pes5L6tA55jp8op+a00c2PoMtZEGAEHiz28B5eL52iYG7Ko5r0htjElU44h5vODICkkD/Rc17XMZvlRiA=="],
 
-    "@vantageos/cloud-identity": ["@vantageos/cloud-identity@0.38.0", "", { "dependencies": { "@clerk/backend": "^3.23.2", "zod": "^4.6.7" } }, "sha512-3u2qnTMHN8LdJr1EO9O268ZDlChI3XLbYfLh0ZGFtKZpzhdX8OGf/fgO8kevPXiMhDQ9pcEyae0N0vdRs0wOnQ=="],
+    "@vantageos/cloud-identity": ["@vantageos/cloud-identity@0.39.0", "", { "dependencies": { "@clerk/backend": "^3.23.2", "zod": "^4.6.7" } }, "sha512-rWTFufdWfQU7UGjg4ESPFdETB/eIxvojNnWHh6njcJCuKqviYn+VTwOB0Cc0ps0XzuH1OLR8UQXNGgilghR/4w=="],
 
     "@vercel/oidc": ["@vercel/oidc@3.2.0", "", {}, "sha512-UycprH3T6n3jH0k44NHMa7pnFHGu/N05MjojYr+Mc6I7obkoLIJujSWwin1pCvdy/eOxrI/l3uDLQsmcrOb4ug=="],
 
