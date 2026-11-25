@@ -39,3 +39,4 @@ run migrations/fleetWriteStamp:run
 run migrations/fleetWriteStamp:revert
 run migrations/stampFleetRepoMappings:run
 run migrations/stampFleetRepoMappings:revert
+run clientOrgMapping:setReviewRoutingAdopted
