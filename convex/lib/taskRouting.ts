@@ -80,6 +80,13 @@ async function requireRouted(ctx: QueryCtx, input: RoutedInput): Promise<void> {
 	}
 	const route = routeOfRow(row);
 	if (route.state === "absent") return; // unreachable: row is non-null
+	if (route.state === "out-of-scope") {
+		throw rbacDenied(
+			input.door,
+			"repo-out-of-scope",
+			`repo "${input.repo}" is out of scope (${route.reason}); route it with the add_repo_mapping tool and an owner before a task can name it`,
+		);
+	}
 	if (input.isReview && route.state === "unreviewed") {
 		throw rbacDenied(
 			input.door,

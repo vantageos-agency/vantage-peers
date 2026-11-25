@@ -85,7 +85,8 @@ const repoMappingDocOrNull = v.union(
 		_id: v.id("githubRepoMapping"),
 		_creationTime: v.number(),
 		repo: v.string(),
-		orchestrator: v.string(),
+		orchestrator: v.optional(v.string()),
+		outOfScope: v.optional(v.object({ reason: v.string() })),
 		project: v.string(),
 		active: v.boolean(),
 		lastDeployedSHA: v.optional(v.string()),
@@ -156,6 +157,7 @@ const routeValidator = v.union(
 		owner: v.string(),
 		ownerAgentId: v.optional(v.id("agents")),
 	}),
+	v.object({ state: v.literal("out-of-scope"), reason: v.string() }),
 	v.object({ state: v.literal("absent") }),
 );
 
@@ -226,7 +228,8 @@ const repoMappingFullObject = v.object({
 	_id: v.id("githubRepoMapping"),
 	_creationTime: v.number(),
 	repo: v.string(),
-	orchestrator: v.string(),
+	orchestrator: v.optional(v.string()),
+	outOfScope: v.optional(v.object({ reason: v.string() })),
 	project: v.string(),
 	active: v.boolean(),
 	lastDeployedSHA: v.optional(v.string()),
@@ -244,7 +247,7 @@ const repoMappingLiteObject = v.object({
 	_id: v.id("githubRepoMapping"),
 	_creationTime: v.number(),
 	repo: v.string(),
-	orchestrator: v.string(),
+	orchestrator: v.optional(v.string()),
 	project: v.string(),
 });
 
@@ -417,7 +420,7 @@ export const list = query({
 				_id: r._id,
 				_creationTime: r._creationTime,
 				repo: r.repo,
-				orchestrator: r.orchestrator,
+				...(r.orchestrator !== undefined ? { orchestrator: r.orchestrator } : {}),
 				project: r.project,
 			}));
 			return { items: liteItems, nextCursor };
@@ -455,7 +458,10 @@ async function requireRouteAgent(
 export const add = mutation({
 	args: {
 		repo: v.string(),
-		orchestrator: v.string(),
+		// Required for a routed row; absent for an out-of-scope row (refused otherwise).
+		orchestrator: v.optional(v.string()),
+		// A repo no station owns. Excludes orchestrator, reviewers and agent IDs.
+		outOfScope: v.optional(v.object({ reason: v.string() })),
 		project: v.string(),
 		active: v.optional(v.boolean()),
 		reviewer: v.optional(v.string()),
@@ -480,8 +486,35 @@ export const add = mutation({
 			"githubRepoMapping:add",
 		);
 		const tenant = resolveWriteTenant(scope, "githubRepoMapping:add");
+		// A row is either routed OR out of scope, never both.
+		const outOfScopeReason = args.outOfScope?.reason.trim();
+		if (args.outOfScope !== undefined) {
+			if (outOfScopeReason === undefined || outOfScopeReason.length < 10) {
+				throw new ConvexError(
+					`INVALID_ROUTE: an out-of-scope repo needs a reason of at least 10 characters — ${JSON.stringify({ door: "githubRepoMapping:add", repo: args.repo })}`,
+				);
+			}
+			if (
+				args.orchestrator !== undefined ||
+				args.reviewer !== undefined ||
+				args.fallbackReviewer !== undefined ||
+				args.orchestratorAgentId !== undefined ||
+				args.reviewerAgentId !== undefined ||
+				args.fallbackReviewerAgentId !== undefined
+			) {
+				throw new ConvexError(
+					`INVALID_ROUTE: an out-of-scope repo is not routed: it takes no orchestrator, reviewer or agent ID — ${JSON.stringify({ door: "githubRepoMapping:add", repo: args.repo })}`,
+				);
+			}
+		} else if (args.orchestrator === undefined) {
+			throw new ConvexError(
+				`INVALID_ROUTE: a routed repo needs an orchestrator (or record it as outOfScope with a reason) — ${JSON.stringify({ door: "githubRepoMapping:add", repo: args.repo })}`,
+			);
+		}
 		// A member routes only to orchestrators of its OWN roster.
-		requireOrchestratorOnRoster(scope, args.orchestrator, "githubRepoMapping:add", "assignee");
+		if (args.orchestrator !== undefined) {
+			requireOrchestratorOnRoster(scope, args.orchestrator, "githubRepoMapping:add", "assignee");
+		}
 		if (args.reviewer !== undefined) {
 			requireOrchestratorOnRoster(scope, args.reviewer, "githubRepoMapping:add", "assignee");
 		}
@@ -519,6 +552,7 @@ export const add = mutation({
 			? await orgKeyOfRepo(ctx, args.repo, existing)
 			: await orgKeyOfTenant(ctx, tenant, scope.orgClerkId);
 		if (
+			args.outOfScope === undefined &&
 			(await isRoutingAdopted(ctx, writeOrg)) &&
 			(args.reviewer ?? existing?.reviewer) === undefined
 		) {
@@ -546,9 +580,38 @@ export const add = mutation({
 		]) {
 			if (agentId !== undefined) await requireRouteAgent(ctx, agentId, writeOrg, args.repo);
 		}
+		if (args.outOfScope !== undefined) {
+			// Out of scope: the whole route is cleared, so no half of it outlives the conversion.
+			const outOfScope = { reason: outOfScopeReason as string };
+			if (existing) {
+				await ctx.db.patch(existing._id, {
+					outOfScope,
+					orchestrator: undefined,
+					reviewer: undefined,
+					fallbackReviewer: undefined,
+					orchestratorAgentId: undefined,
+					reviewerAgentId: undefined,
+					fallbackReviewerAgentId: undefined,
+					project: args.project,
+					active: args.active ?? true,
+				});
+				return existing._id;
+			}
+			return await ctx.db.insert("githubRepoMapping", {
+				repo: args.repo,
+				outOfScope,
+				project: args.project,
+				active: args.active ?? true,
+				...(tenant !== undefined ? { orgId: tenant } : {}),
+				...(tenant !== undefined && scope.orgClerkId !== undefined
+					? { clerkOrgId: scope.orgClerkId }
+					: {}),
+			});
+		}
 		if (existing) {
 			await ctx.db.patch(existing._id, {
 				orchestrator: args.orchestrator,
+				outOfScope: undefined,
 				project: args.project,
 				active: args.active ?? true,
 				// The IDs are restated by each call, role by role: an ID never outlives

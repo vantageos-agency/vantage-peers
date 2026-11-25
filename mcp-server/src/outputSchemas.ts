@@ -1165,7 +1165,14 @@ export const resumeRecurringTaskServedOutputSchema = z.looseObject({
 export const addRepoMappingServedOutputSchema = z.looseObject({
 	id: rowId("The mapping's ID."),
 	repo: z.string().describe("The GitHub repo, as 'owner/name'."),
-	orchestrator: z.string().describe("Who receives the repo's webhook events."),
+	orchestrator: z
+		.string()
+		.optional()
+		.describe("Who receives the repo's webhook events; absent for an out-of-scope repo."),
+	outOfScope: z
+		.object({ reason: z.string() })
+		.optional()
+		.describe("Present when the repo is recorded as owned by nobody, with the reason."),
 	project: z
 		.string()
 		.describe("The project the repo's events are filed under."),
@@ -1203,10 +1210,14 @@ export const removeRepoMappingServedOutputSchema = z.looseObject({
 /** get_repo_route: the typed route state of one repo (routed | unreviewed | absent). */
 export const getRepoRouteServedOutputSchema = z.looseObject({
 	state: z
-		.enum(["routed", "unreviewed", "absent"])
+		.enum(["routed", "unreviewed", "out-of-scope", "absent"])
 		.describe(
-			"routed: an owner and a reviewer are named; unreviewed: an owner is named and no reviewer; absent: your organisation has no mapping for this repo.",
+			"routed: an owner and a reviewer are named; unreviewed: an owner is named and no reviewer; out-of-scope: nobody owns the repo, by decision; absent: your organisation has no mapping for this repo.",
 		),
+	reason: z
+		.string()
+		.optional()
+		.describe("Why nobody owns the repo; present only when the state is out-of-scope."),
 	repo: z.string().describe("The repo the call was for, as 'owner/name'."),
 	owner: z
 		.string()
@@ -1239,6 +1250,11 @@ export const checkRepoRoutingServedOutputSchema = z.looseObject({
 	missing: z
 		.array(z.string())
 		.describe("Repos of your list that your organisation has no mapping for."),
+	outOfScope: z
+		.array(z.string())
+		.describe(
+			"Repos of your list recorded as owned by nobody: not missing, and they do not block completeness.",
+		),
 	stale: z
 		.array(z.string())
 		.describe("Repos mapped by your organisation that are not in your list."),
