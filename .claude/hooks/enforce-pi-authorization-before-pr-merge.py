@@ -40,10 +40,23 @@ shell variable as the command head, or `eval` / `bash -c` of one) is REFUSED, ne
 allowed, and the refusal names the reason. That refusal applies to a fleet repo or to a
 repo whose remote cannot be read.
 
+ROUTES (task k17cm51e8c1m3qv0w45pxybmx18jxsnr): a merge is judged by every route that
+reaches it, not only the words `gh pr merge`: `gh api` on `.../pulls/<n>/merge` with a write
+method, the GraphQL `mergePullRequest` / `enablePullRequestAutoMerge` mutation, curl / wget /
+httpie at api.github.com, and a gh alias that expands to one of those or to `pr merge`
+(defined in the command, or read from gh's config). A payload this guard cannot read (a shell
+variable as the method, endpoint or query, a GraphQL body on stdin) is refused.
+
 RESIDUE (what this guard does NOT read, so it is not mistaken for coverage):
 - Interpreter SOURCE (`python3 -c`, `node -e`, a heredoc fed to python) is not read as
-  shell: a `gh pr merge` written inside a Python or Node program passes.
+  shell: a `gh pr merge`, or a REST merge written inside a Python or Node program, passes.
 - A script FILE (`bash deploy.sh`) is not opened, so its contents are not judged.
+- An alias in a gh config the hook does not read: the hook reads `GH_CONFIG_DIR`,
+  `XDG_CONFIG_HOME` and `~/.config/gh` (plus any value assigned inline in the command), not
+  another directory. `gh alias import FILE` is not read. An unknown `gh <word>` with no alias
+  in reach is allowed: a `gh` extension may define it.
+- A GraphQL merge names a node id, not a number, so a Pi-token call is refused rather than
+  read against a verdict.
 - The Pi token and the reviewer verdict are read as TEXT on the raw command line, as
   before this change. A token written anywhere on the line is accepted; this guard
   does not authenticate it.
@@ -58,7 +71,7 @@ import time
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from _lib.command_predicate import scan_invocations  # noqa: E402
+from _lib.command_predicate import carries_command_words, scan_invocations  # noqa: E402
 
 # Patterns that indicate client-facing fleet repo merge
 # Hors scope: Pi-workspace internes (CLAUDE.md, .claude/), docs-only PRs
@@ -108,20 +121,375 @@ def _remote_repo(cwd: str) -> str | None:
     return result.stdout.strip()
 
 
-def merge_scan(command: str):
-    """(hit, unresolved): does a real `gh pr merge` or a `git push` of main run
-    anywhere in `command`, and which payloads could not be read. Judged by the
-    shared probe on the real argv, never by the quote-stripped text, which hid
-    every command carried inside `bash -c '...'`."""
+# ---------------------------------------------------------------------------
+# ROUTES TO A MERGE (task k17cm51e8c1m3qv0w45pxybmx18jxsnr).
+#
+# `gh pr merge` typed as those words was the only route this guard read. Four
+# others merge the same pull request with no such words:
+#   - `gh api` on .../pulls/<n>/merge with a write method (PUT, POST, PATCH), and the
+#     GraphQL mergePullRequest / enablePullRequestAutoMerge mutation;
+#   - curl / wget / httpie doing the same REST call at api.github.com;
+#   - a gh alias that expands to either, or to `pr merge`, defined in the same
+#     command (`gh alias set`) or read from the user's gh config.
+# Each is read off the argv the shared probe produces, and each target goes through
+# the same verdict gate as `gh pr merge`. A payload that cannot be read is refused.
+# ---------------------------------------------------------------------------
+
+HTTP_CLIENTS = ("curl", "wget", "http", "https", "xh", "xhs")
+HTTP_METHODS = frozenset({"GET", "HEAD", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"})
+WRITE_METHODS = frozenset({"PUT", "POST", "PATCH"})
+# gh's own top-level commands. An alias never shadows one, so these are never looked up.
+GH_BUILTINS = frozenset({
+    "agent-task", "alias", "api", "attestation", "auth", "browse", "cache", "codespace",
+    "completion", "config", "copilot", "extension", "gist", "gpg-key", "help", "issue",
+    "label", "org", "pr", "preview", "project", "release", "repo", "ruleset", "run",
+    "search", "secret", "ssh-key", "status", "variable", "version", "workflow",
+})
+GH_API_VALUE_FLAGS = frozenset({
+    "-H", "--header", "-X", "--method", "-f", "--raw-field", "-F", "--field", "--input",
+    "-q", "--jq", "-t", "--template", "-p", "--preview", "--cache", "--hostname",
+})
+GH_API_FIELD_FLAGS = frozenset({"-f", "--raw-field", "-F", "--field"})
+CURL_DATA_FLAGS = frozenset({"-d", "-F", "--form", "--form-string", "--json"})
+WGET_DATA_FLAGS = frozenset({"--post-data", "--post-file", "--body-data", "--body-file"})
+MERGE_PATH_RE = re.compile(
+    r"(?:^|/)repos/(?P<repo>[\w.-]+/[\w.-]+)/pulls/(?P<pr>\d+)/merge(?:[/?#]|$)"
+)
+MERGE_MUTATION_RE = re.compile(r"\b(?:mergePullRequest|enablePullRequestAutoMerge)\b")
+GH_ENV_RE = re.compile(
+    r"""(?:^|[\s;&|(])(GH_CONFIG_DIR|XDG_CONFIG_HOME)=(?:"([^"]*)"|'([^']*)'|([^\s;&|)'"]+))"""
+)
+ALIAS_LINE_RE = re.compile(r"^\s+([A-Za-z0-9_.-]+):\s*(.*?)\s*$")
+PAYLOAD_LIMIT = 65536
+MAX_ALIAS_DEPTH = 3
+
+
+def _basename(word: str) -> str:
+    return os.path.basename(word).split("@", 1)[0]
+
+
+def _argv_at(argv, words):
+    """The argv from the position where `words` is the command, or None."""
+    for i, tok in enumerate(argv):
+        if _basename(tok) == words[0] and list(argv[i + 1:i + len(words)]) == list(words[1:]):
+            return argv[i:]
+    return None
+
+
+def _invocations(command, words):
+    """Argv tails, each starting at `words`, of every real invocation in `command`."""
+    hits, _unresolved = scan_invocations(command, words)
+    tails = []
+    for argv in hits:
+        tail = _argv_at(argv, words)
+        if tail is not None:
+            tails.append(tail)
+    return tails
+
+
+def _explicit_method(args):
+    """The method a curl / gh api / wget argv names with -X, --request, --method, or None."""
+    for i, tok in enumerate(args):
+        if tok in ("-X", "--request", "--method") and i + 1 < len(args):
+            return args[i + 1]
+        key, eq, value = tok.partition("=")
+        if eq and key in ("--request", "--method"):
+            return value
+        if tok.startswith("-X") and not tok.startswith("--") and len(tok) > 2:
+            return tok[2:]
+    return None
+
+
+def _api_endpoint(args):
+    """The first positional of a gh api call, skipping the values of its value flags."""
+    skip = False
+    for tok in args:
+        if skip:
+            skip = False
+            continue
+        if tok in GH_API_VALUE_FLAGS:
+            skip = True
+            continue
+        if not tok.startswith("-"):
+            return tok
+    return None
+
+
+def _api_method(args):
+    """The method a gh api call sends: explicit, else POST when it carries a field, else GET."""
+    explicit = _explicit_method(args)
+    if explicit is not None:
+        return explicit.upper()
+    implied = any(
+        t in GH_API_FIELD_FLAGS or t.partition("=")[0] in ("--field", "--raw-field", "--input")
+        for t in args
+    )
+    return "POST" if implied else "GET"
+
+
+def _payload_slots(args):
+    """(kind, value) for each argument carrying a payload. kind is "input" for a file the
+    body is read from (--input), "field" for a key=value pair (-f, -F, --field, --raw-field)."""
+    slots = []
+    i = 0
+    while i < len(args):
+        tok = args[i]
+        if tok in ("--input", "-f", "-F", "--raw-field", "--field"):
+            kind = "input" if tok == "--input" else "field"
+            slots.append((kind, args[i + 1] if i + 1 < len(args) else ""))
+            i += 2
+            continue
+        key, eq, value = tok.partition("=")
+        if eq and key in ("--input", "--field", "--raw-field"):
+            slots.append(("input" if key == "--input" else "field", value))
+        i += 1
+    return slots
+
+
+def _read_payload(path: str):
+    """(text, None) for a payload file this guard can read, else (None, reason)."""
+    if path in ("", "-", "/dev/stdin"):
+        return None, "a GraphQL payload read from stdin cannot be judged"
     try:
-        gh_hits, gh_unresolved = scan_invocations(command, ("gh", "pr", "merge"))
-        push_hits, push_unresolved = scan_invocations(command, ("git", "push"))
-    except Exception as exc:
-        return True, [f"the predicate could not read this command: {exc}"]
+        target = Path(os.path.expanduser(path))
+        if target.stat().st_size > PAYLOAD_LIMIT:
+            return None, f"the GraphQL payload file {path} is larger than this guard reads"
+        return target.read_text(errors="replace"), None
+    except OSError as exc:
+        return None, f"the GraphQL payload file {path} cannot be read: {exc}"
+
+
+def _graphql_payload(args):
+    """(text, residue): the text of a `gh api graphql` call with each @file and --input
+    file read in. residue names every payload that could not be read."""
+    texts = [" ".join(args)]
+    residue = []
+    for kind, value in _payload_slots(args):
+        if kind == "input":
+            path = value
+        else:
+            _name, _eq, field = value.partition("=")
+            if field.startswith("$"):
+                residue.append(
+                    "a GraphQL field is a shell variable, so the query it sends cannot be read: "
+                    f"{value[:80]}"
+                )
+                continue
+            if not field.startswith("@"):
+                continue
+            path = field[1:]
+        text, problem = _read_payload(path)
+        if problem:
+            residue.append(problem)
+        else:
+            texts.append(text)
+    return "\n".join(texts), residue
+
+
+def _gh_api_route(args):
+    """(target, residue) for the arguments of one `gh api` call. target is (repo, pr) when the
+    call merges a pull request, ("", "") for a GraphQL merge (its node id names no number), or
+    None. residue names an endpoint, method or payload this read cannot judge."""
+    endpoint = _api_endpoint(args)
+    if endpoint is None:
+        return None, []
+    if endpoint == "graphql":
+        text, residue = _graphql_payload(args)
+        if MERGE_MUTATION_RE.search(text):
+            return ("", ""), residue
+        return None, residue
+    method = _api_method(args)
+    if "$" in method or ("$" in endpoint and method in WRITE_METHODS):
+        return None, [
+            "the gh api call takes its method or endpoint from a shell variable, so it "
+            f"cannot be read: {endpoint[:80]}"
+        ]
+    if method not in WRITE_METHODS:
+        return None, []
+    match = MERGE_PATH_RE.search(endpoint)
+    if match:
+        return (match.group("repo"), match.group("pr")), []
+    return None, []
+
+
+def _http_route(client: str, tail):
+    """(target, residue) for one curl / wget / httpie call that reaches api.github.com."""
+    args = tail[1:]
+    if client == "curl":
+        method = _explicit_method(args)
+        if method is None:
+            if any(t in CURL_DATA_FLAGS or t.startswith("--data") for t in args):
+                method = "POST"
+            elif any(t in ("-T", "--upload-file") for t in args):
+                method = "PUT"
+            else:
+                method = "GET"
+    elif client == "wget":
+        method = _explicit_method(args)
+        if method is None:
+            method = "POST" if any(t.partition("=")[0] in WGET_DATA_FLAGS for t in args) else "GET"
+    else:
+        method = next(
+            (t for t in args if t.upper() in HTTP_METHODS and not t.startswith("-")), None
+        )
+        if method is None:
+            method = "POST" if any("=" in t and not t.startswith("-") for t in args) else "GET"
+    method = method.upper()
+    if "$" in method or (method in WRITE_METHODS and any("$" in t for t in args)):
+        return None, [
+            f"{client} takes its method or URL from a shell variable, so the request cannot be read"
+        ]
+    if method not in WRITE_METHODS:
+        return None, []
+    for tok in args:
+        if "api.github.com" in tok:
+            match = MERGE_PATH_RE.search(tok)
+            if match:
+                return (match.group("repo"), match.group("pr")), []
+    return None, []
+
+
+def _aliases_defined_here(command: str):
+    """name -> [expansion] for every `gh alias set` in the command. A `!` prefix marks a
+    shell alias, as it does in gh's own config."""
+    defined = {}
+    for tail in _invocations(command, ("gh", "alias", "set")):
+        shell = False
+        positional = []
+        for tok in tail[3:]:
+            if tok in ("-s", "--shell"):
+                shell = True
+            elif not tok.startswith("-"):
+                positional.append(tok)
+        if len(positional) >= 2:
+            value = " ".join(positional[1:])
+            defined.setdefault(positional[0], []).append(("!" + value) if shell else value)
+    return defined
+
+
+def _gh_config_files(command: str):
+    """The gh config files this guard can read: GH_CONFIG_DIR and XDG_CONFIG_HOME from the
+    hook's environment and from the command itself, then ~/.config/gh. Every readable file
+    counts; an alias in any of them is judged."""
+    dirs, xdgs = [], []
+    if os.environ.get("GH_CONFIG_DIR"):
+        dirs.append(os.environ["GH_CONFIG_DIR"])
+    if os.environ.get("XDG_CONFIG_HOME"):
+        xdgs.append(os.environ["XDG_CONFIG_HOME"])
+    for name, double, single, bare in GH_ENV_RE.findall(command):
+        (dirs if name == "GH_CONFIG_DIR" else xdgs).append(double or single or bare)
+    candidates = [Path(os.path.expanduser(d)) / "config.yml" for d in dirs]
+    candidates += [Path(os.path.expanduser(x)) / "gh" / "config.yml" for x in xdgs]
+    candidates.append(Path(os.path.expanduser("~/.config/gh/config.yml")))
+    seen, files = set(), []
+    for path in candidates:
+        if str(path) not in seen and path.is_file():
+            seen.add(str(path))
+            files.append(path)
+    return files
+
+
+def _gh_config_aliases(command: str):
+    """name -> [expansion] for every alias in the readable gh config files."""
+    expansions = {}
+    for path in _gh_config_files(command):
+        try:
+            text = path.read_text(errors="replace")[:PAYLOAD_LIMIT]
+        except OSError:
+            continue
+        in_block = False
+        for line in text.splitlines():
+            if not line.strip() or line.lstrip().startswith("#"):
+                continue
+            if not line[0].isspace():
+                in_block = line.partition(":")[0].strip() == "aliases"
+                continue
+            match = ALIAS_LINE_RE.match(line)
+            if in_block and match:
+                value = match.group(2)
+                if len(value) >= 2 and value[0] == value[-1] and value[0] in "'\"":
+                    value = value[1:-1]
+                expansions.setdefault(match.group(1), []).append(value)
+    return expansions
+
+
+def _alias_targets(tail, expansion: str, depth: int):
+    """(targets, unresolved) of one `gh <alias> ...` invocation whose alias expands to
+    `expansion`. A shell alias is judged as the shell text it runs."""
+    rest = tail[2:]
+    if expansion.startswith("!"):
+        if depth >= MAX_ALIAS_DEPTH:
+            return [], [f"a shell alias nests more than {MAX_ALIAS_DEPTH} deep and cannot be read"]
+        return _merge_routes(expansion[1:] + " " + shlex.join(rest), depth + 1)
+    try:
+        expanded = ["gh"] + shlex.split(expansion) + rest
+    except ValueError as exc:
+        return [], [f"the alias expansion cannot be read ({exc}): {expansion[:80]}"]
+    if carries_command_words(expanded, ("gh", "pr", "merge")):
+        text = shlex.join(expanded)
+        repo_m = PR_REPO_RE.search(text)
+        pr = extract_pr_number(text) or ""
+        return [((repo_m.group("repo") if repo_m else ""), pr, "gh alias")], []
+    if expanded[1:2] == ["api"]:
+        target, residue = _gh_api_route(expanded[2:])
+        return ([(target[0], target[1], "gh alias")] if target else []), residue
+    return [], []
+
+
+def _route_targets(command: str, depth: int):
+    """(targets, unresolved) for every merge reached through gh api, an HTTP client at
+    api.github.com, or a gh alias that expands to one of those or to `pr merge`."""
+    targets, unresolved = [], []
+    for tail in _invocations(command, ("gh", "api")):
+        target, problems = _gh_api_route(tail[2:])
+        unresolved += problems
+        if target is not None:
+            targets.append((target[0], target[1], "gh api"))
+    for client in HTTP_CLIENTS:
+        for tail in _invocations(command, (client,)):
+            target, problems = _http_route(client, tail)
+            unresolved += problems
+            if target is not None:
+                targets.append((target[0], target[1], client))
+    defined = _aliases_defined_here(command)
+    configured = _gh_config_aliases(command)
+    for tail in _invocations(command, ("gh",)):
+        if len(tail) < 2 or tail[1].startswith("-") or tail[1] in GH_BUILTINS:
+            continue
+        for expansion in defined.get(tail[1], []) + configured.get(tail[1], []):
+            found, problems = _alias_targets(tail, expansion, depth)
+            targets += found
+            unresolved += problems
+    return targets, unresolved
+
+
+def _merge_routes(command: str, depth: int = 0):
+    """(targets, unresolved): every merge the command performs, as (repo, pr, route), where
+    repo is "" when the command names none and pr is "" when no number can be derived; and
+    the payloads this guard could not read. Judged on the real argv, never the quote-stripped
+    text, which hid every command carried inside `bash -c '...'`."""
+    gh_hits, gh_unresolved = scan_invocations(command, ("gh", "pr", "merge"))
+    push_hits, push_unresolved = scan_invocations(command, ("git", "push"))
     pushes_main = [
         argv for argv in push_hits if any(re.search(r"\bmain\b", tok) for tok in argv)
     ]
-    return bool(gh_hits or pushes_main), gh_unresolved + push_unresolved
+    targets = []
+    if gh_hits or pushes_main:
+        repo_m = PR_REPO_RE.search(command)
+        pr = extract_pr_number(command) or ""
+        targets.append((repo_m.group("repo") if repo_m else "", pr, "gh pr merge"))
+    routed, route_unresolved = _route_targets(command, depth)
+    return targets + routed, gh_unresolved + push_unresolved + route_unresolved
+
+
+def merge_scan(command: str):
+    """(hit, unresolved): does a merge run anywhere in `command`, by any route (see the
+    ROUTES section above), and which payloads could not be read."""
+    try:
+        targets, unresolved = _merge_routes(command)
+    except Exception as exc:
+        return True, [f"the predicate could not read this command: {exc}"]
+    return bool(targets), unresolved
 
 
 def _targets_fleet(command: str) -> bool:
@@ -375,6 +743,22 @@ def judge_verdict(comments, head):
     return (True, "approved-at-this-head", opening)
 
 
+def judge_target(repo: str, pr: str):
+    """Judge one merge target: (allowed, cause, detail). A target with no pull request
+    number, or no repository, is refused: nothing was read, so nothing passes."""
+    if not pr:
+        return (
+            False, "no-verdict-readable",
+            "the pull request number could not be derived from this command, so no "
+            "verdict could be read; name the pull request explicitly",
+        )
+    if not repo:
+        return (False, "no-verdict-readable",
+                "the repository could not be derived, so no verdict could be read")
+    comments, head = read_pr_comments(repo, pr)
+    return judge_verdict(comments, head)
+
+
 def read_pr_comments(repo: str, pr: str):
     """Returns (comments, head) or (None, None) when the read FAILED.
 
@@ -460,24 +844,24 @@ try:
         # `if pr_m:` — on a command whose number it failed to parse it skipped
         # this whole block and logged `verdict-approved-at-head`, asserting in
         # the audit trail the very examination it had just declined to perform.
-        pr_number = extract_pr_number(command)
-        repo_m = PR_REPO_RE.search(command)
-        if not pr_number:
-            allowed, cause, detail = (
-                False, "no-verdict-readable",
-                "the pull request number could not be derived from this command, "
-                "so no verdict could be read; name the pull request explicitly",
+        # Every merge the command performs, by any route, is judged on its own verdict.
+        # No target found is a refusal: a merge this guard cannot name is not a pass.
+        allowed, cause, detail, failed_route = (
+            False, "no-verdict-readable",
+            "no pull request merge could be read from this command", "",
+        )
+        try:
+            targets, _residue = _merge_routes(command)
+        except Exception as exc:
+            targets = []
+            detail = f"the predicate could not read this command: {exc}"
+        for repo, pr, route in targets:
+            allowed, cause, detail = judge_target(
+                repo or _remote_repo(_command_cwd(command)) or "", pr
             )
-        else:
-            repo = repo_m.group("repo") if repo_m else _remote_repo(_command_cwd(command))
-            if not repo:
-                allowed, cause, detail = (
-                    False, "no-verdict-readable",
-                    "the repository could not be derived, so no verdict could be read",
-                )
-            else:
-                comments, head = read_pr_comments(repo, pr_number)
-                allowed, cause, detail = judge_verdict(comments, head)
+            if not allowed:
+                failed_route = route
+                break
 
         if not allowed:
             ov = MERGE_OVER_REVISE_RE.search(command)
@@ -492,7 +876,7 @@ try:
                 sys.exit(0)
             audit_log({
                 "ts": int(time.time()), "verdict": "block",
-                "reason": cause, "detail": detail[:300],
+                "reason": cause, "detail": detail[:300], "route": failed_route,
                 "command": command[:200],
             })
             print(
