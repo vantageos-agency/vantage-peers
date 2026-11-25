@@ -2,6 +2,18 @@
 
 ## [Unreleased]
 
+## [5.0.3] — 2026-11-25
+
+A patch release. Tool inputs and outputs are unchanged. Each entry names the product it concerns.
+
+### Fixed
+
+- Cloud and Self-host: `get_tool_usage` and `get_owner_tool_usage` serve a master-scope caller that has a verified agent ID. Such a caller got `RBAC_DENIED` (`claimless-service-account`) because it resolves no organisation; it now sends its agent as the claim, never beside an organisation claim. Organisation seats, person sessions and a master with no agent ID are unchanged. ([Tool inputs and outputs](README.md#tool-inputs-and-outputs))
+
+### Changed
+
+- Self-host: the server requires backend contract version 30 (5.0.2: 29); the 153 called functions are unchanged. A backend of contract 29 is refused at start. Deploy the backend of this release first, then upgrade this package. ([Backend compatibility check](README.md#backend-compatibility-check))
+
 ## [5.0.2] — 2026-11-24
 
 A patch release. Tool inputs and outputs are unchanged. Each entry names the product it concerns.
