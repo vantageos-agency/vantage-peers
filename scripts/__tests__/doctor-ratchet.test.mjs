@@ -6,6 +6,7 @@
  */
 import { spawnSync } from "node:child_process";
 import {
+	chmodSync,
 	mkdirSync,
 	mkdtempSync,
 	readFileSync,
@@ -73,9 +74,51 @@ afterAll(() => {
 	rmSync(CLEAN_REPORT, { force: true });
 });
 
-function runRaw(args) {
+// The script reads the published latest with `npm view @vantageos/backend-doctor version`.
+// The tests inject the registry through PATH: a stub `npm` that answers from the
+// environment (STUB_LATEST, or STUB_MODE=fail|garbage). The script carries no override
+// switch of its own, so nothing in a real run can stand in for the registry.
+let STUB_DIR;
+beforeAll(() => {
+	STUB_DIR = mkdtempSync(join(tmpdir(), "doctor-ratchet-npm-"));
+	const stub = join(STUB_DIR, "npm");
+	writeFileSync(
+		stub,
+		[
+			"#!/bin/sh",
+			'if [ "$1 $2 $3" != "view @vantageos/backend-doctor version" ]; then echo "stub npm: unexpected args: $*" >&2; exit 64; fi',
+			'if [ "$STUB_MODE" = "fail" ]; then echo "npm ERR! network" >&2; exit 1; fi',
+			'if [ "$STUB_MODE" = "garbage" ]; then echo "not a version"; exit 0; fi',
+			'echo "$STUB_LATEST"',
+			"",
+		].join("\n"),
+	);
+	chmodSync(stub, 0o755);
+});
+afterAll(() => {
+	rmSync(STUB_DIR, { recursive: true, force: true });
+});
+// Unless a test names the registry's answer, latest = the baseline's own doctorVersion,
+// so every pre-existing pole keeps judging the shape it was written for.
+function defaultLatest(args) {
+	const i = args.indexOf("--baseline");
+	if (i < 0) return "0.0.0";
+	try {
+		const v = JSON.parse(readFileSync(args[i + 1], "utf8")).doctorVersion;
+		return typeof v === "string" ? v : "0.0.0";
+	} catch {
+		return "0.0.0";
+	}
+}
+function runRaw(args, registry = {}) {
 	const r = spawnSync(process.execPath, [SCRIPT, ...args], {
 		encoding: "utf8",
+		env: {
+			...process.env,
+			PATH: `${STUB_DIR}:${process.env.PATH}`,
+			STUB_LATEST: registry.latest ?? defaultLatest(args),
+			STUB_MODE: registry.mode ?? "",
+		},
 	});
 	return { status: r.status, out: `${r.stdout}${r.stderr}` };
 }
@@ -90,7 +133,7 @@ function stampEvidence(args, sha) {
 	writeFileSync(out, JSON.stringify({ ...doc, sha }));
 	return [...args.slice(0, i + 1), out, ...args.slice(i + 2)];
 }
-function run(args) {
+function run(args, registry) {
 	const extra = [];
 	if (!args.includes("--report")) extra.push("--report", CLEAN_REPORT);
 	let a = args;
@@ -98,7 +141,7 @@ function run(args) {
 		extra.push("--tree", CLEAN_TREE);
 		a = stampEvidence(args, CLEAN_HEAD);
 	}
-	return runRaw([...a, ...extra]);
+	return runRaw([...a, ...extra], registry);
 }
 // main's baseline is the committed one unless a test passes its own.
 const withBaseline = (evidence, extra = []) =>
@@ -993,5 +1036,103 @@ describe("doctor-ratchet: the RATCHET line names every ratcheted key", () => {
 		} finally {
 			rmSync(dir, { recursive: true, force: true });
 		}
+	});
+});
+
+describe("doctor-ratchet: the baseline must be measured with the published latest (task k175a6cfcq9qz2xcct7jskejm18jxc45)", () => {
+	const base = () => JSON.parse(readFileSync(BASELINE, "utf8"));
+	function baselineAt(version) {
+		const out = join(tmp(), "ratchet.json");
+		writeFileSync(out, JSON.stringify({ ...base(), doctorVersion: version }));
+		return out;
+	}
+	function evidenceAt(version) {
+		const doc = JSON.parse(readFileSync(join(FIX, "equal.json"), "utf8"));
+		const out = join(tmp(), "evidence.json");
+		writeFileSync(
+			out,
+			JSON.stringify({
+				...doc,
+				cli_commit: `npm @vantageos/backend-doctor@${version}`,
+			}),
+		);
+		return out;
+	}
+	const judge = (baselineV, evidenceV, registry) => {
+		const b = baselineAt(baselineV);
+		return run(
+			[
+				"--baseline",
+				b,
+				"--evidence",
+				evidenceAt(evidenceV),
+				"--previous-baseline",
+				b,
+			],
+			registry,
+		);
+	};
+
+	it("RED: a baseline older than the published latest is refused (exit 1), naming both versions and the re-baseline command", () => {
+		const r = judge("0.5.0", "0.5.0", { latest: "0.9.0" });
+		expect(r.status).toBe(1);
+		expect(r.out).toContain("0.5.0");
+		expect(r.out).toContain("0.9.0");
+		expect(r.out).toContain(
+			"npx -y @vantageos/backend-doctor@0.9.0 <repo>/convex --json-evidence <dir>",
+		);
+		expect(r.out).toMatch(/doctorVersion/);
+		expect(r.out).not.toMatch(/^RATCHET:/m);
+	});
+
+	it("RED: an older baseline is refused even when its counts are equal to the evidence", () => {
+		const r = judge("0.4.9", "0.4.9", { latest: "0.5.0" });
+		expect(r.status).toBe(1);
+		expect(r.out).not.toMatch(/PASS/);
+	});
+
+	it("GREEN: a baseline equal to the published latest proceeds as before", () => {
+		const r = judge("0.9.0", "0.9.0", { latest: "0.9.0" });
+		expect(r.status).toBe(0);
+		expect(r.out).toMatch(/^RATCHET: .* rise=0$/m);
+	});
+
+	it("RED: a registry that cannot be read is could-not-judge (exit 2), never a pass", () => {
+		const r = judge("0.5.0", "0.5.0", { mode: "fail" });
+		expect(r.status).toBe(2);
+		expect(r.out).toMatch(/could-not-judge/);
+		expect(r.out).toMatch(/npm view @vantageos\/backend-doctor version/);
+		expect(r.out).not.toMatch(/^RATCHET:/m);
+	});
+
+	it("RED: a registry answer that is not a semver is could-not-judge, naming the answer", () => {
+		const r = judge("0.5.0", "0.5.0", { mode: "garbage" });
+		expect(r.status).toBe(2);
+		expect(r.out).toMatch(/could-not-judge/);
+		expect(r.out).toContain("not a version");
+	});
+
+	it("RED: a baseline NEWER than the published latest cannot be reproduced, so it cannot judge", () => {
+		const r = judge("0.9.0", "0.9.0", { latest: "0.5.0" });
+		expect(r.status).toBe(2);
+		expect(r.out).toMatch(/could-not-judge/);
+		expect(r.out).toContain("0.9.0");
+		expect(r.out).toContain("0.5.0");
+	});
+
+	it("RED: evidence produced by a version other than latest is refused, naming latest and the command to score with", () => {
+		const r = judge("0.5.0", "0.4.9", { latest: "0.5.0" });
+		expect(r.status).toBe(2);
+		expect(r.out).toMatch(/latest/);
+		expect(r.out).toContain(
+			"npx -y @vantageos/backend-doctor@0.5.0 <repo>/convex --json-evidence <dir>",
+		);
+		expect(r.out).not.toMatch(/^RATCHET:/m);
+	});
+
+	it("RED: no refusal tells the reviewer to score with the baseline's own (older) version", () => {
+		const src = readFileSync(SCRIPT, "utf8");
+		const forbidden = ["backend-doctor@", "$", "{baselineV}"].join("");
+		expect(src).not.toContain(forbidden);
 	});
 });
