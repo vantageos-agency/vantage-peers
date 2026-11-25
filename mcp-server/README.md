@@ -401,7 +401,7 @@ _Applies to: Self-host._
 Before it serves anything, the server asks your backend for its contract manifest (`meta:backendContract`) and refuses to start, with a log line beginning `BACKEND INCOMPATIBLE (<reason>)`, when:
 
 - the backend has no manifest (it predates this check);
-- the backend's contract version is below **30**, the version this release requires;
+- the backend's contract version is below **31**, the version this release requires;
 - any of the **154** backend functions this release calls is missing (they are named in the log);
 - the server cannot present its service identity, or the backend refuses it.
 
@@ -551,7 +551,7 @@ Full history: [CHANGELOG.md](https://github.com/vantageos-agency/vantage-peers/b
 
 _Applies to: Self-host._
 
-Node.js 26.12.1 (the October 2026 security release), for the Self-host stdio server and the `vantage-peers-mcp/api` exports: `engines.node` names that exact version. A backend of the same release (contract version 30, see [Backend compatibility check](#backend-compatibility-check)). VantagePeers Cloud clients need nothing installed.
+Node.js 26.12.1 (the October 2026 security release), for the Self-host stdio server and the `vantage-peers-mcp/api` exports: `engines.node` names that exact version. A backend of the same release (contract version 31, see [Backend compatibility check](#backend-compatibility-check)). VantagePeers Cloud clients need nothing installed.
 
 ## License
 

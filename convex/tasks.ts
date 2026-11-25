@@ -52,7 +52,12 @@ import { requireId } from "./lib/ids";
 import { computeBlockedOnMe } from "./lib/blockedOnMe";
 import { rbacDenied, resolveInboxReader } from "./lib/inboxReader";
 import { agentLinkAdmits } from "./lib/agentLinks";
-import { mappingIsProven } from "./githubOwnerBinding";
+import { mappingIsProven, ownerOfRepo } from "./githubOwnerBinding";
+import {
+	repoOfReviewTask,
+	requireReviewOverrideRouted,
+	requireTaskRoutedAsDeclared,
+} from "./lib/taskRouting";
 import {
 	afterDeliveryWork,
 	claimDeliveryStep,
@@ -731,6 +736,10 @@ const createTaskArgsValidatorWithCredential = {
 	// reading of that artifact (convex/taskDeliverable.ts). Public door only: the
 	// webhook mirror does not accept it.
 	deliverable: v.optional(deliverableValidator),
+	// The repository ("owner/name") this task is about. A check parameter only: it
+	// is never stored. For an organisation that adopted explicit review routing the
+	// assignment must follow the route that org declared for it (lib/taskRouting.ts).
+	repo: v.optional(v.string()),
 };
 
 interface CreateTaskArgs {
@@ -927,6 +936,7 @@ export const create = mutation({
 			verifiedOrg,
 			assignedTo: assignedToName,
 			assignedToAgentId,
+			repo,
 			...taskArgs
 		} = args;
 		// SECURITY REMEDIATION (task k1712yrxjr570m6ks81rnhjh5n8cryf0) — this
@@ -1056,6 +1066,23 @@ export const create = mutation({
 				`INVALID_ASSIGNEE: tasks:create needs the assignee, as \`assignedTo\` (a name) or \`assignedToAgentId\` (an agent ID from list_peers \`agentId\`) — ${JSON.stringify({ door: "tasks:create" })}`,
 			);
 		}
+		// An org that adopted explicit routing assigns a task the way it declared the
+		// repository's route; any other org is not read here. Judged after the caller
+		// and the assignee are verified, so a refused caller learns nothing of a route.
+		if (repo !== undefined && ownerOfRepo(repo) === null) {
+			throw new ConvexError(
+				`INVALID_REPO: repo must be "owner/name" — ${JSON.stringify({ repo, door: "tasks:create" })}`,
+			);
+		}
+		const isReview = computeIsReviewTask(taskArgs.title, taskArgs.tags);
+		await requireTaskRoutedAsDeclared(ctx, scope, {
+			door: "tasks:create",
+			repo: isReview ? repoOfReviewTask(taskArgs.title, repo) : repo,
+			assignedTo,
+			isReview,
+			tenant: rowOrgId,
+			clerkOrgId: scope.orgClerkId,
+		});
 		// A fleet-master row (no organisation slug) carries the operator organisation's
 		// permanent ID, so the erase rule can place it.
 		const fleetClerkOrgId =
@@ -6872,6 +6899,16 @@ export const createOrUpdateReviewTask = internalMutation({
 			return target._id;
 		}
 
+		// An explicit reviewer is the routed one (or its fallback) for an org that
+		// adopted routing; an override is never a way around the route.
+		if (args.assignedTo !== undefined) {
+			await requireReviewOverrideRouted(
+				ctx,
+				"tasks:createOrUpdateReviewTask",
+				args.repoFullName,
+				args.assignedTo,
+			);
+		}
 		const assignedTo =
 			args.assignedTo ?? (await resolveReviewer(ctx, args.repoFullName)).assignee;
 		// REVIEWER_UNRESOLVED: no task is created — never one on the author.
