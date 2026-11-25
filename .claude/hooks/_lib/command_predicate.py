@@ -1233,3 +1233,41 @@ def convex_references(segment: str):
             (g for g in match.groups()[1:] if g is not None), ""
         )
     return hosts, env_names, inline
+
+
+# ---------------------------------------------------------------------------
+# HEREDOC BODIES CONSUMED AS A PROGRAM (task k17bx73va6s36bg1qdqw0enjch8f97h2)
+#
+# A heredoc body is DATA only when a consumer reads it as data (`cat <<EOF`,
+# `curl --data-binary @-`). It is a PROGRAM when a shell reads its program from
+# stdin (`bash <<EOF`) or an interpreter runs with no script argument or with `-`
+# (`python3 - <<EOF`, `python3 <<EOF`). A caller that strips heredocs before it
+# judges must judge these bodies first.
+# ---------------------------------------------------------------------------
+_INTERPRETER_STDIN_HEADS = frozenset({
+    "python", "python2", "python3", "node", "nodejs", "ruby", "perl", "php",
+})
+
+
+def heredoc_programs(cmd: str):
+    """Yield (owner_text, body, tokens, is_shell) for each heredoc body that a
+    program consumes AS CODE. is_shell True: the body is shell commands. is_shell
+    False: the body is the source of an interpreter. A heredoc consumed as data
+    is not yielded."""
+    for match in _HEREDOC_BODY_RE.finditer(cmd):
+        owner = re.split(r"[;&\n]", cmd[: match.start()])[-1]
+        line = owner + " " + match.group(3)
+        for stage in re.split(r"(?<!\|)\|(?!\|)", line):
+            toks = strip_transparent(_stage_tokens(stage))
+            if not toks:
+                continue
+            head = _strip_version_suffix(os.path.basename(toks[0]))
+            if _reads_program_from_stdin(toks):
+                yield (line, match.group(4), toks, True)
+                break
+            args = toks[1:]
+            if head in _INTERPRETER_STDIN_HEADS and (
+                "-" in args or not any(not a.startswith("-") for a in args)
+            ):
+                yield (line, match.group(4), toks, False)
+                break
