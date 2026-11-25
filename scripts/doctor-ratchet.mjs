@@ -47,6 +47,16 @@
  * headroom with rise=0. Each such rule is named: `CR-2: measured 256, ratchet.json says
  * 262 -> write "CR-2": 256`. Mechanical rule counts only; the M-* markers are unaffected.
  *
+ * Published latest (task k175a6cfcq9qz2xcct7jskejm18jxc45): nothing forced a baseline forward,
+ * so every review scored with the version the baseline happened to name while a newer doctor
+ * was published. At run time the script reads `npm view @vantageos/backend-doctor version` and
+ * REQUIRES the baseline's doctorVersion, and the evidence's version, to equal it. A baseline
+ * older than latest is a refusal (exit 1) naming both versions and the re-baseline command;
+ * an unreadable registry, a non-semver answer, or a baseline newer than latest is
+ * could-not-judge (exit 2), never a pass. There is no override: the registry is reached by
+ * running `npm` from PATH, which is how the tests stand a stub in. No refusal text tells a
+ * reviewer to score with an older version.
+ *
  * Exit: 0 no count above main's baseline (or, under a re-baseline, above this branch's) and
  * none below this branch's ratchet.json;
  * 1 a count, a marker or the baseline was raised, or a count dropped without the baseline; 2 could not judge (bad usage, unreadable
@@ -147,6 +157,49 @@ if (baselineV === NO_VERSION) {
 		`baseline ${args.baseline} names no doctorVersion, so the backend-doctor version its counts were measured with is unknown and no count can be compared with them. Add a top-level "doctorVersion": "<exact semver>" naming the published @vantageos/backend-doctor that printed them.`,
 	);
 }
+
+// The published latest. `npm` is run from PATH with a fixed argument list; there is no flag or
+// variable that supplies a version in its place.
+function publishedLatest() {
+	let out;
+	try {
+		out = execFileSync(
+			"npm",
+			["view", "@vantageos/backend-doctor", "version"],
+			{
+				encoding: "utf8",
+				stdio: ["ignore", "pipe", "pipe"],
+				timeout: 60_000,
+			},
+		).trim();
+	} catch (e) {
+		const why = String(e.stderr ?? e.message)
+			.trim()
+			.split("\n")[0];
+		couldNotJudge(
+			`the published latest backend-doctor cannot be read (\`npm view @vantageos/backend-doctor version\` failed: ${why}), so the baseline's version cannot be compared with it. This is not a pass; retry when the registry answers.`,
+		);
+	}
+	if (!SEMVER_RE.test(out)) {
+		couldNotJudge(
+			`\`npm view @vantageos/backend-doctor version\` answered ${JSON.stringify(out)}, which is not an exact semver, so the published latest is unknown.`,
+		);
+	}
+	return out;
+}
+const latestV = publishedLatest();
+const scoreCommand = `npx -y @vantageos/backend-doctor@${latestV} <repo>/convex --json-evidence <dir>`;
+if (semverNewer(latestV, baselineV)) {
+	console.log(
+		`doctor-ratchet: FAIL — ${args.baseline} names doctorVersion ${baselineV} while the published latest backend-doctor is ${latestV}. A baseline older than latest means every review scores with an instrument that is no longer the one shipped. Re-baseline: score with \`${scoreCommand}\` (clean full checkout, deps installed, 0 FALLBACK), then raise doctorVersion to ${latestV} and every count as ${latestV} prints it, in one reviewed PR.`,
+	);
+	process.exit(1);
+}
+if (semverNewer(baselineV, latestV)) {
+	couldNotJudge(
+		`${args.baseline} names doctorVersion ${baselineV}, newer than the published latest ${latestV}: that version is not published, so its counts cannot be reproduced and no count is compared with them.`,
+	);
+}
 const evidence = readJson(args.evidence, "evidence");
 
 if (
@@ -166,13 +219,13 @@ if (!measured || typeof measured !== "object")
 	const m = typeof cli === "string" ? NPM_CLI_RE.exec(cli) : null;
 	if (!m) {
 		couldNotJudge(
-			`the backend-doctor version that produced the evidence cannot be derived: cli_commit=${JSON.stringify(cli ?? null)} is not of the form \`npm @vantageos/backend-doctor@<semver>\` (a git-checkout run names a commit, not a published version). The baseline's counts were measured with backend-doctor ${baselineV}; score this commit with \`npx -y @vantageos/backend-doctor@${baselineV} <repo>/convex --json-evidence <dir>\`.`,
+			`the backend-doctor version that produced the evidence cannot be derived: cli_commit=${JSON.stringify(cli ?? null)} is not of the form \`npm @vantageos/backend-doctor@<semver>\` (a git-checkout run names a commit, not a published version). The latest published backend-doctor is ${latestV}; score this commit with \`${scoreCommand}\`.`,
 		);
 	}
 	const evidenceV = m[1];
-	if (evidenceV !== baselineV) {
+	if (evidenceV !== latestV) {
 		couldNotJudge(
-			`the evidence was produced by backend-doctor ${evidenceV} while the baseline ${args.baseline} names doctorVersion ${baselineV}: its counts were measured with ${baselineV} and mean nothing under ${evidenceV}, so no count is compared across the two versions. The baseline must be re-measured with the running version ${evidenceV} (doctorVersion ${evidenceV} and every count as ${evidenceV} prints it, in one reviewed PR), or this commit scored with \`npx -y @vantageos/backend-doctor@${baselineV} <repo>/convex --json-evidence <dir>\`.`,
+			`the evidence was produced by backend-doctor ${evidenceV} while the published latest is ${latestV} (the baseline ${args.baseline} names doctorVersion ${baselineV}): counts mean something only under the version that printed them, and the one in force is the latest, so no count is compared across versions. Score this commit with \`${scoreCommand}\`; the baseline is re-measured with that same version (doctorVersion and every count) in one reviewed PR.`,
 		);
 	}
 }
