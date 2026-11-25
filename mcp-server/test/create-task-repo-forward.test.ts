@@ -6,7 +6,7 @@
  *   FORWARD   `repo` given -> sent unchanged to tasks:create
  *   ABSENT    no `repo` -> no `repo` key sent (the call is byte-identical to before)
  *   REFUSAL   a backend refusal reaches the caller as an error naming its code
- *   CONTRACT  the new argument to an existing function bumped the contract to >= 31
+ *   CONTRACT  the new argument to an existing function bumped the contract to >= 32
  */
 import { describe, expect, it } from "vitest";
 import type { z } from "zod";
@@ -119,8 +119,8 @@ describe("create_task forwards `repo`", () => {
 });
 
 describe("CONTRACT", () => {
-	it("the new argument bumped the contract: MCP requires >= 31, Convex serves the same", () => {
-		expect(REQUIRED_CONTRACT_VERSION).toBeGreaterThanOrEqual(31);
+	it("the new argument bumped the contract: MCP requires >= 32, Convex serves the same", () => {
+		expect(REQUIRED_CONTRACT_VERSION).toBeGreaterThanOrEqual(32);
 		expect(BACKEND_CONTRACT_VERSION).toBe(REQUIRED_CONTRACT_VERSION);
 	});
 });

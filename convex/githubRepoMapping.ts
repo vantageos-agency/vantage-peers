@@ -1,6 +1,7 @@
 import { ConvexError, v } from "convex/values";
-import type { Doc } from "./_generated/dataModel";
+import type { Doc, Id } from "./_generated/dataModel";
 import {
+	type MutationCtx,
 	type QueryCtx,
 	internalMutation,
 	internalQuery,
@@ -9,7 +10,9 @@ import { mutation, query } from "./lib/functions";
 import { sameOrg } from "@vantageos/cloud-identity";
 import { ownerOfRepo, repoOwnerBoundToOrg } from "./githubOwnerBinding";
 import { orgRefOfRow, orgRefOfScope } from "./lib/authOrgMapping";
+import { rbacDenied } from "./lib/inboxReader";
 import {
+	type OrgKey,
 	isRoutingAdopted,
 	orgKeyOfTenant,
 	orgKeyOfRepo,
@@ -89,6 +92,11 @@ const repoMappingDocOrNull = v.union(
 		lastDeployedAt: v.optional(v.number()),
 		reviewer: v.optional(v.string()),
 		fallbackReviewer: v.optional(v.string()),
+		// The agents the labels above name, by agents-row ID (list_peers `agentId`).
+		// A task's assignee is compared with THESE, never with a label.
+		orchestratorAgentId: v.optional(v.id("agents")),
+		reviewerAgentId: v.optional(v.id("agents")),
+		fallbackReviewerAgentId: v.optional(v.id("agents")),
 		orgId: v.optional(v.string()),
 		clerkOrgId: v.optional(v.string()),
 	}),
@@ -139,8 +147,15 @@ const routeValidator = v.union(
 		owner: v.string(),
 		reviewer: v.string(),
 		fallbackReviewer: v.optional(v.string()),
+		ownerAgentId: v.optional(v.id("agents")),
+		reviewerAgentId: v.optional(v.id("agents")),
+		fallbackReviewerAgentId: v.optional(v.id("agents")),
 	}),
-	v.object({ state: v.literal("unreviewed"), owner: v.string() }),
+	v.object({
+		state: v.literal("unreviewed"),
+		owner: v.string(),
+		ownerAgentId: v.optional(v.id("agents")),
+	}),
 	v.object({ state: v.literal("absent") }),
 );
 
@@ -218,6 +233,9 @@ const repoMappingFullObject = v.object({
 	lastDeployedAt: v.optional(v.number()),
 	reviewer: v.optional(v.string()),
 	fallbackReviewer: v.optional(v.string()),
+	orchestratorAgentId: v.optional(v.id("agents")),
+	reviewerAgentId: v.optional(v.id("agents")),
+	fallbackReviewerAgentId: v.optional(v.id("agents")),
 	orgId: v.optional(v.string()),
 	clerkOrgId: v.optional(v.string()),
 });
@@ -409,6 +427,31 @@ export const list = query({
 	},
 });
 
+// A route's agent ID must name an active agent of the org the row belongs to. The
+// refusal is the one RBAC_DENIED constructor, with its own reason.
+async function requireRouteAgent(
+	ctx: MutationCtx,
+	agentId: Id<"agents">,
+	org: OrgKey | null,
+	repo: string,
+): Promise<void> {
+	const agent = await ctx.db.get(agentId);
+	const inOrg =
+		agent !== null &&
+		org !== null &&
+		sameOrg(
+			{ id: agent.clerkOrgId, label: agent.orgSlug },
+			{ id: org.clerkOrgId, label: org.clerkOrgSlug },
+		);
+	if (agent === null || !agent.isActive || !inOrg) {
+		throw rbacDenied(
+			"githubRepoMapping:add",
+			"route-agent-not-in-org",
+			`agent "${agentId}" is not an active agent of the organisation that owns repo "${repo}"`,
+		);
+	}
+}
+
 export const add = mutation({
 	args: {
 		repo: v.string(),
@@ -417,9 +460,9 @@ export const add = mutation({
 		active: v.optional(v.boolean()),
 		reviewer: v.optional(v.string()),
 		fallbackReviewer: v.optional(v.string()),
-		orchestratorId: v.optional(v.id("agents")),
-		reviewerId: v.optional(v.id("agents")),
-		fallbackReviewerId: v.optional(v.id("agents")),
+		orchestratorAgentId: v.optional(v.id("agents")),
+		reviewerAgentId: v.optional(v.id("agents")),
+		fallbackReviewerAgentId: v.optional(v.id("agents")),
 		// The organisation the MCP transport VERIFIED for a bearer that reaches
 		// Convex as the fleet service account (task k176y0q5jcz3m8m673bf61kva98h49js).
 		// Without it a seat's mapping was written as a FLEET row, exempt from the
@@ -483,17 +526,42 @@ export const add = mutation({
 				`REVIEWER_REQUIRED: org "${writeOrg?.clerkOrgSlug}" adopted explicit review routing — a mapping must name its reviewer — ${JSON.stringify({ door: "githubRepoMapping:add", repo: args.repo })}`,
 			);
 		}
+		// A stored agent ID names an ACTIVE agent of the org the row belongs to, and
+		// belongs to a label the same call gives: it is what a task's assignee is later
+		// compared with (lib/taskRouting.ts).
+		if (args.reviewerAgentId !== undefined && args.reviewer === undefined) {
+			throw new ConvexError(
+				`INVALID_ROUTE: reviewerAgentId needs the reviewer label it belongs to — ${JSON.stringify({ door: "githubRepoMapping:add", repo: args.repo })}`,
+			);
+		}
+		if (args.fallbackReviewerAgentId !== undefined && args.fallbackReviewer === undefined) {
+			throw new ConvexError(
+				`INVALID_ROUTE: fallbackReviewerAgentId needs the fallbackReviewer label it belongs to — ${JSON.stringify({ door: "githubRepoMapping:add", repo: args.repo })}`,
+			);
+		}
+		for (const agentId of [
+			args.orchestratorAgentId,
+			args.reviewerAgentId,
+			args.fallbackReviewerAgentId,
+		]) {
+			if (agentId !== undefined) await requireRouteAgent(ctx, agentId, writeOrg, args.repo);
+		}
 		if (existing) {
 			await ctx.db.patch(existing._id, {
 				orchestrator: args.orchestrator,
 				project: args.project,
 				active: args.active ?? true,
-				...(args.orchestratorId !== undefined ? { orchestratorId: args.orchestratorId } : {}),
-				...(args.reviewerId !== undefined ? { reviewerId: args.reviewerId } : {}),
-				...(args.fallbackReviewerId !== undefined ? { fallbackReviewerId: args.fallbackReviewerId } : {}),
-				...(args.reviewer !== undefined ? { reviewer: args.reviewer } : {}),
+				// The IDs are restated by each call, role by role: an ID never outlives
+				// the label it was given with (undefined clears it).
+				orchestratorAgentId: args.orchestratorAgentId,
+				...(args.reviewer !== undefined
+					? { reviewer: args.reviewer, reviewerAgentId: args.reviewerAgentId }
+					: {}),
 				...(args.fallbackReviewer !== undefined
-					? { fallbackReviewer: args.fallbackReviewer }
+					? {
+							fallbackReviewer: args.fallbackReviewer,
+							fallbackReviewerAgentId: args.fallbackReviewerAgentId,
+						}
 					: {}),
 			});
 			return existing._id;
@@ -503,9 +571,15 @@ export const add = mutation({
 			orchestrator: args.orchestrator,
 			project: args.project,
 			active: args.active ?? true,
-			...(args.orchestratorId !== undefined ? { orchestratorId: args.orchestratorId } : {}),
-			...(args.reviewerId !== undefined ? { reviewerId: args.reviewerId } : {}),
-			...(args.fallbackReviewerId !== undefined ? { fallbackReviewerId: args.fallbackReviewerId } : {}),
+			...(args.orchestratorAgentId !== undefined
+				? { orchestratorAgentId: args.orchestratorAgentId }
+				: {}),
+			...(args.reviewer !== undefined && args.reviewerAgentId !== undefined
+				? { reviewerAgentId: args.reviewerAgentId }
+				: {}),
+			...(args.fallbackReviewer !== undefined && args.fallbackReviewerAgentId !== undefined
+				? { fallbackReviewerAgentId: args.fallbackReviewerAgentId }
+				: {}),
 			...(tenant !== undefined ? { orgId: tenant } : {}),
 			...(tenant !== undefined && scope.orgClerkId !== undefined
 				? { clerkOrgId: scope.orgClerkId }
