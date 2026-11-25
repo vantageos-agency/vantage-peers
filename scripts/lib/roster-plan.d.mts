@@ -5,4 +5,7 @@ export function planRoster(input: {
 	seatOnly?: boolean;
 }): { missing: string[]; toRegister: string[] };
 /** The operator command that appends agents to the roster by ID. */
-export function rosterStepCommand(input: { agentIds: string[]; org: string }): string;
+export function rosterStepCommand(input: {
+	agentIds: string[];
+	org: string;
+}): string;
