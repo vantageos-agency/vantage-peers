@@ -245,7 +245,7 @@ describe("ADOPTED org: createOrUpdateReviewTask's assignedTo override", () => {
 		const msg = await refusal(
 			t.mutation(internal.tasks.createOrUpdateReviewTaskDelivery, {
 				...args("stranger"),
-				delivery: { deliveryId: "d1", step: "review" },
+				delivery: { deliveryId: "d1", step: "review", repo: "org-a/mine", eventType: "pull_request" },
 			} as never),
 		);
 		expect(msg).toContain("reviewer-not-routed");
