@@ -253,6 +253,102 @@ describe("an ADOPTED org never reaches the fleet default; a non-adopted org keep
 		expect(await reviewerOf(t, "org-b/never-mapped")).toBe(FLEET_REVIEWER);
 	});
 
+	// Adoption must survive EVERY identifier change of a mapping row. One row per
+	// door that changes a mapping's clerkOrgId (the inventory: setClerkOrgId,
+	// migrations/restamp_clerk_ids on client_org_mapping). No door renames a
+	// mapping's clerkOrgSlug (none patches it), so there is no slug-rename row.
+	describe("adoption survives every identifier change (table-driven)", () => {
+		const OLD = testClerkOrgId("org-b");
+		const NEW = testClerkOrgId("org-b-renamed");
+		type Transition = {
+			name: string;
+			// state of org-b's mapping and adoption BEFORE the change
+			idLess: boolean;
+			change: (t: T) => Promise<unknown>;
+		};
+		const transitions: Transition[] = [
+			{
+				name: "none -> id: adopted by slug, then setClerkOrgId stamps an id",
+				idLess: true,
+				change: (t) =>
+					t.mutation(internal.clientOrgMapping.setClerkOrgId, {
+						clerkOrgSlug: "org-b",
+						clerkOrgId: NEW,
+					}),
+			},
+			{
+				name: "id -> id: setClerkOrgId replace:true",
+				idLess: false,
+				change: (t) =>
+					t.mutation(internal.clientOrgMapping.setClerkOrgId, {
+						clerkOrgSlug: "org-b",
+						clerkOrgId: NEW,
+						replace: true,
+					}),
+			},
+			{
+				name: "id -> id: migrations/restamp_clerk_ids on client_org_mapping",
+				idLess: false,
+				change: (t) =>
+					t.mutation(internal.migrations.restamp_clerk_ids.run, {
+						map: { orgs: [{ from: OLD, to: NEW }], users: [] },
+						table: "client_org_mapping",
+						dryRun: false,
+					}),
+			},
+		];
+
+		const entriesOfOrgB = async (t: T) => {
+			const cfg = await t.run(async (ctx) =>
+				ctx.db
+					.query("taskClosureConfig")
+					.withIndex("by_key", (q) => q.eq("key", "reviewRoutingAdoptedOrgs"))
+					.unique(),
+			);
+			return (cfg?.value ?? []).filter(
+				(e) => e === "slug:org-b" || e === `id:${OLD}` || e === `id:${NEW}`,
+			);
+		};
+
+		for (const tr of transitions) {
+			test(tr.name, async () => {
+				const t = makeT();
+				await seed(t);
+				if (tr.idLess) {
+					await t.run(async (ctx) => {
+						const b = await ctx.db
+							.query("client_org_mapping")
+							.withIndex("by_clerk_slug", (q) => q.eq("clerkOrgSlug", "org-b"))
+							.unique();
+						if (b) await ctx.db.patch(b._id, { clerkOrgId: undefined });
+					});
+				}
+				await t.mutation(internal.clientOrgMapping.setReviewRoutingAdopted, {
+					clerkOrgSlug: "org-b",
+					adopted: true,
+				});
+				expect(await reviewerOf(t, "org-b/never-mapped")).toBeNull();
+
+				await tr.change(t);
+
+				// still adopted: no fleet default for an unmapped repo, none accepted
+				expect(await reviewerOf(t, "org-b/never-mapped")).toBeNull();
+				expect(await reviewerOf(t, "org-b/unreviewed")).toBeNull();
+				expect(await t.query(internal.reviewRouting.acceptedForRepo, { repo: "org-b/routed" })).toEqual(["rev"]);
+				// exactly one entry names the org, and it is the current id
+				expect(await entriesOfOrgB(t)).toEqual([`id:${NEW}`]);
+
+				// removal after the change clears it
+				await t.mutation(internal.clientOrgMapping.setReviewRoutingAdopted, {
+					clerkOrgSlug: "org-b",
+					adopted: false,
+				});
+				expect(await entriesOfOrgB(t)).toEqual([]);
+				expect(await reviewerOf(t, "org-b/never-mapped")).toBe(FLEET_REVIEWER);
+			});
+		}
+	});
+
 	test("READER: a stale `slug:` entry is still honoured once the row has an id", async () => {
 		const t = makeT();
 		await seed(t);
