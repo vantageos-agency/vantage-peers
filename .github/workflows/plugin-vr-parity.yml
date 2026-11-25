@@ -1,4 +1,4 @@
-# DISABLED: GitHub Actions are disabled on this repository (ruling 2026-11-24); this file runs no job; no equivalent gate in the reviewer's full-suite command (`npx vitest run`); traced in task k178k1e07c9tq1k2vb2wgxzw0x8jvx5d.
+# DISABLED: GitHub Actions are disabled on this repository (ruling 2026-11-24); this file runs no job; test_source_prose_identity_guard.py and test_check_outward_contribution_verdict.py run in scripts/__tests__/pytest-gates.test.mjs under `npx vitest run`; no equivalent gate in the reviewer's full-suite command for test_leak_guard.py and test_vr_parity.py, which need secrets the suite does not hold (client vocabulary, VANTAGE_REGISTRY_TOKEN); traced in task k178k1e07c9tq1k2vb2wgxzw0x8jvx5d.
 name: "[DISABLED] Plugin <-> VantageRegistry parity gate"
 
 # A workflow that does not run and a workflow that passes look identical on the
