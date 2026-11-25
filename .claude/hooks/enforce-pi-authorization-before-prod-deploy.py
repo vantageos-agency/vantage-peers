@@ -151,6 +151,29 @@ values included, and every assignment in that segment must name dev. Before,
 `dev:x|secret`, whose `|` is a pipe -- was waved through as DEV while the
 deploy itself ran with the ambient key.
 
+Fix (task k17bx73va6s36bg1qdqw0enjch8f97h2, the RUNTIME-ASSEMBLED write): the
+write vector was a LITERAL `https://<name>.convex.cloud/api/mutation` only. A
+write whose URL is assembled at runtime (os.environ concatenation, an f-string,
+a variable host, urljoin, node process.env, a split fragment) was waved through.
+The ACTION is now decided by `runtime_write_vector()` (_lib/command_predicate.py):
+an HTTP client or an interpreter whose text reaches a Convex surface AND writes.
+The TARGET is then resolved from what the station can name (write_targets_dev()):
+a literal host; a CONVEX_*URL variable, read from the value assigned inline in
+the same segment or else from the hook's environment; the prod name (the host of
+VP_CONVEX_URL, or a `prod:` CONVEX_DEPLOYMENT); the dev name (a `dev:`
+CONVEX_DEPLOYMENT, environment then dotenv). A write that does not resolve
+to dev is refused, and an unresolvable one is refused too (fail closed). A write
+that resolves to dev passes. The literal form uses the same target rule, so a
+literal dev URL passes and a literal prod URL is still refused. A dev deploy key
+and a read-only marker cannot excuse a runtime write on the same line.
+RESIDUE, stated (the full list is in the header of _lib/command_predicate.py):
+a head outside WRITE_VECTOR_HEADS; a write whose segment carries no Convex token;
+a script FILE run by an interpreter (its text is not read); a GET to an endpoint
+that is not /api/query (not counted as a write); a value assigned in an EARLIER
+segment (judged where it is used, so it fails closed); a heredoc body fed to an
+interpreter (stripped before judgement, as before); a local dev backend on a
+non-convex host (unresolved, so refused).
+
 Override discipline: PI_AUTHORIZED_TASK_ID is meant for one-shot pre-validated
 deploy. Set, run command once, unset. Never persist in shell rc.
 
@@ -178,8 +201,12 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 try:
     from _lib.command_predicate import (  # noqa: E402
         INTERPRETER_RE,
+        WriteVector,
         carries_prod_action,
+        convex_host_name,
+        convex_references,
         has_convex_context,
+        runtime_write_vector,
         has_unreadable_command_string,
         head_prod_action,
         is_safe_head,
@@ -392,6 +419,73 @@ def deploy_key_env(command: str) -> str | None:
     if "prod" in envs:
         return "prod"
     return None
+
+
+# ---------------------------------------------------------------------------
+# RUNTIME-ASSEMBLED WRITE: the TARGET (task k17bx73va6s36bg1qdqw0enjch8f97h2).
+#
+# The ACTION is decided in `_lib/command_predicate.py` (runtime_write_vector).
+# The TARGET is decided HERE, from what the station knows, and only ever to DEV.
+# A name in both the prod and the dev sets is prod. A reference that resolves to
+# neither, or to prod, is not dev, and a write that is not provably dev is refused.
+# ---------------------------------------------------------------------------
+def _deployment_names() -> tuple:
+    """(prod, dev) deployment names this station knows about."""
+    prod: set = set()
+    dev: set = set()
+    host = convex_host_name(VP_CONVEX_URL)
+    if host:
+        prod.add(host)
+    for raw in (os.environ.get("CONVEX_DEPLOYMENT"), _dotenv_value("CONVEX_DEPLOYMENT")):
+        kind, sep, name = (raw or "").strip().partition(":")
+        name = name.strip()
+        if not sep or not name:
+            continue
+        if kind == "prod":
+            prod.add(name)
+        elif kind == "dev":
+            dev.add(name)
+    return prod, dev - prod
+
+
+def _deployment_class(name: str | None) -> str | None:
+    if not name:
+        return None
+    prod, dev = _deployment_names()
+    if name in prod:
+        return "prod"
+    if name in dev:
+        return "dev"
+    return None
+
+
+def write_targets_dev(segment: str) -> bool:
+    """True only when EVERY Convex deployment the segment names or reaches
+    resolves to DEV. Nothing named at all is not dev; neither is a reference
+    that resolves to prod or to nothing."""
+    hosts, env_names, inline = convex_references(segment)
+    classes = [_deployment_class(host) for host in hosts]
+    for var in env_names:
+        value = inline[var] if var in inline else (os.environ.get(var) or "")
+        classes.append(_deployment_class(convex_host_name(value)))
+    if deploy_key_env(segment) == "prod":
+        classes.append("prod")
+    return bool(classes) and all(c == "dev" for c in classes)
+
+
+def literal_write_blocks(segment: str) -> bool:
+    """A literal /api/mutation or /api/action URL whose target is not provably dev."""
+    literal = URL_MUTATION_RE.search(segment) or URL_ACTION_RE.search(segment)
+    return bool(literal) and not write_targets_dev(segment)
+
+
+def runtime_write_blocked(segment: str, tokens) -> "WriteVector | None":
+    """The WriteVector refused for this segment; None when it is not a write,
+    or when it is a write provably to dev."""
+    vector = runtime_write_vector(segment, tokens)
+    if vector is None or write_targets_dev(segment):
+        return None
+    return vector
 
 
 def _segment_prod_action(tokens):
@@ -975,6 +1069,23 @@ def is_prod_deploy(command: str) -> bool:
             file=sys.stderr,
         )
         return True
+    # RUNTIME-ASSEMBLED WRITE (task k17bx73va6s36bg1qdqw0enjch8f97h2). Judged on the
+    # RAW segments, quotes kept: a payload handed to `python3 -c` or `node -e` is text
+    # the guard must read whole, and stripping its quotes first is what blinded the
+    # literal test. A write provably to dev passes; any other write is refused.
+    for segment, tokens in iter_real_commands(raw_command):
+        vector = runtime_write_blocked(segment, tokens)
+        if vector is not None:
+            print(
+                "enforce-pi-authorization: a Convex WRITE is reached by "
+                f"`{vector.head}` ({vector.evidence}) and its target does not resolve to DEV. "
+                "The URL is assembled at runtime, so the guard judges the action and the "
+                "deployment it can name: a literal host, a CONVEX_*URL variable (inline or in "
+                "the environment), or the dev name in CONVEX_DEPLOYMENT. Name the dev "
+                "deployment inline, or obtain Pi authorization.",
+                file=sys.stderr,
+            )
+            return True
     convex_context = has_convex_context(raw_command)
     # v1.4.0 (defect C): a prod-deploy command CITED inside a QUOTED STRING
     # (a review comment, a commit message) must not be read as a real deploy.
@@ -992,7 +1103,7 @@ def is_prod_deploy(command: str) -> bool:
     if not INTERPRETER_RE.search(command) and not _hands_command_string_to_unknown_head(command):
         command = strip_quoted_strings(command)
     for segment, tokens in iter_real_commands(command):
-        if URL_MUTATION_RE.search(segment) or URL_ACTION_RE.search(segment):
+        if literal_write_blocks(segment):
             return True
         if tokens is None:
             # Un-tokenizable segment: fail-closed ONLY if the raw text
@@ -1060,6 +1171,8 @@ def deploy_is_dev_keyed(command: str) -> bool:
     command = strip_heredocs(command)
     saw_deploy_verb = False
     for segment, tokens in iter_real_commands(command):
+        if runtime_write_blocked(segment, tokens) is not None:
+            return False  # a runtime-assembled write that is not provably dev
         if URL_MUTATION_RE.search(segment) or URL_ACTION_RE.search(segment):
             return False  # explicit HTTP prod write
         if tokens is None:
@@ -1113,6 +1226,9 @@ def is_convex_run_only(command: str) -> bool:
     prod_read = False
     is_deploy_class = False
     for segment, tokens in iter_real_commands(command):
+        if runtime_write_blocked(segment, tokens) is not None:
+            is_deploy_class = True
+            continue
         if URL_MUTATION_RE.search(segment) or URL_ACTION_RE.search(segment):
             is_deploy_class = True
             continue

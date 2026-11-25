@@ -1112,3 +1112,124 @@ def prod_action_in_heredoc_to_shell(cmd: str, binary: str = "convex"):
                 if action:
                     return action
     return None
+
+
+# ---------------------------------------------------------------------------
+# CONVEX WRITE VECTOR over an HTTP client or an interpreter
+# (task k17bx73va6s36bg1qdqw0enjch8f97h2, prod-write guard)
+#
+# A literal-URL test (`https://<name>.convex.cloud/api/mutation`) never sees a
+# write whose URL is assembled at runtime: os.environ concatenation, an
+# f-string, a variable host, urljoin, node process.env, a split fragment. This
+# decides on the ACTION instead: an HTTP client or an interpreter whose text
+# REACHES a Convex surface AND WRITES. It returns the evidence only. WHICH
+# deployment a write reaches is not syntax; the caller resolves it from what the
+# station knows (see enforce-pi-authorization-before-prod-deploy.py).
+#
+# DECLARED RESIDUE (not seen by this predicate):
+#   - a head outside WRITE_VECTOR_HEADS (an unknown binary carrying the URL);
+#   - a write with NO Convex token in its own segment (a host and a path both
+#     assembled elsewhere): no reach, no judgement;
+#   - a script FILE run by an interpreter: its text is not read;
+#   - a GET to an endpoint that is not `api/query` (Convex writes are POSTs; a
+#     GET is not counted as a write);
+#   - a value assigned in an EARLIER segment of the line: the target is judged
+#     in the segment that reaches it, and an unresolved target fails closed.
+# ---------------------------------------------------------------------------
+WRITE_VECTOR_HEADS = frozenset({
+    "curl", "wget", "http", "https", "httpie", "xh", "fetch",
+    "python", "python2", "python3", "node", "nodejs", "bun", "deno",
+    "tsx", "ts-node", "npx", "bunx", "ruby", "perl", "php",
+})
+
+# A Convex surface reached by the segment: a convex host, a CONVEX_* URL or key
+# variable, a convex client class or import path, or an `/api/<verb>` path.
+CONVEX_REACH_RE = re.compile(
+    r"convex\.(?:cloud|site)\b|[A-Za-z0-9_]*CONVEX_[A-Za-z0-9_]*(?:URL|KEY)"
+    r"|ConvexHttpClient|ConvexClient\b|convex/(?:browser|react|server)"
+    r"|/api/(?:query|mutation|action|run)\b"
+)
+# The write verbs, as a WORD: `/api/mutation`, `.mutation(`, `'action'`.
+WRITE_WORD_RE = re.compile(r"(?<![a-z])(?:mutation|action)(?![a-z])", re.IGNORECASE)
+# A request that carries a body or a non-GET method.
+WRITE_SIGNAL_RE = re.compile(
+    r"-X\s*(?:POST|PUT|PATCH|DELETE)\b|--request\s*(?:POST|PUT|PATCH|DELETE)\b"
+    r"|\s-(?:d|F|T)\b|\s--(?:data|form|upload-file)"
+    r"|\bmethod\s*[:=]\s*['\"]?(?:POST|PUT|PATCH|DELETE)"
+    r"|\.(?:post|put|patch|delete)\s*\(|\bdata\s*=|\bbody\s*:|\bjson\s*=",
+    re.IGNORECASE,
+)
+# Quotes, concatenation operators and whitespace removed: `"api/" + "mutation"`
+# and `"api/mut""ation"` both become `api/mutation`.
+_FLATTEN_RE = re.compile(r"[\"'`+\\\s]")
+_HOST_RE = re.compile(r"\b([a-z0-9][a-z0-9-]*)\.convex\.(?:cloud|site)\b", re.IGNORECASE)
+_ENV_URL_NAME_RE = re.compile(r"\b[A-Z0-9_]*CONVEX_[A-Z0-9_]*URL\b")
+_INLINE_URL_ASSIGN_RE = re.compile(
+    r"\b([A-Z0-9_]*CONVEX_[A-Z0-9_]*URL)=(?:'([^']*)'|\"([^\"]*)\"|([^\s'\";|&]*))"
+)
+
+
+class WriteVector:
+    """The evidence that a segment writes to Convex. Never a target."""
+
+    __slots__ = ("head", "evidence")
+
+    def __init__(self, head: str, evidence: str):
+        self.head = head
+        self.evidence = evidence
+
+
+def _segment_head(segment: str, tokens) -> str | None:
+    if tokens is not None:
+        if not tokens:
+            return None
+        return tokens[0].rsplit("/", 1)[-1]
+    # Un-tokenizable: the first word is still the head.
+    words = segment.split(None, 1)
+    return words[0].rsplit("/", 1)[-1] if words else None
+
+
+def runtime_write_vector(segment: str, tokens=None) -> WriteVector | None:
+    """WriteVector when `segment` is an HTTP client or interpreter that reaches
+    Convex and writes; None otherwise. Judged on the RAW segment text, quotes
+    kept, so a payload handed to `python3 -c` or `node -e` is read whole.
+
+    evidence is one of: "url-path" (the flattened text names /api/mutation or
+    /api/action), "method-word" (a `mutation` or `action` word: a client call),
+    "endpoint-unknown" (a body or non-GET method on a Convex surface that is not
+    provably /api/query).
+    """
+    head = _segment_head(segment, tokens)
+    if head is None or head not in WRITE_VECTOR_HEADS:
+        return None
+    if not CONVEX_REACH_RE.search(segment):
+        return None
+    flat = _FLATTEN_RE.sub("", segment.lower())
+    if "api/mutation" in flat or "api/action" in flat:
+        return WriteVector(head, "url-path")
+    if WRITE_WORD_RE.search(segment):
+        return WriteVector(head, "method-word")
+    if "api/query" not in flat and WRITE_SIGNAL_RE.search(segment):
+        return WriteVector(head, "endpoint-unknown")
+    return None
+
+
+def convex_host_name(text: str | None) -> str | None:
+    """The deployment name of a `<name>.convex.cloud|site` host in `text`."""
+    match = _HOST_RE.search(text or "")
+    return match.group(1).lower() if match else None
+
+
+def convex_references(segment: str):
+    """(hosts, env_names, inline) for one segment: the deployment hosts it names
+    literally, the CONVEX_*URL variables it reads, and the value each of those
+    is assigned inline in the SAME segment. Values go back to the caller and are
+    never printed."""
+    hosts = [m.group(1).lower() for m in _HOST_RE.finditer(segment)]
+    env_names = sorted(set(_ENV_URL_NAME_RE.findall(segment)))
+    inline = {}
+    for match in _INLINE_URL_ASSIGN_RE.finditer(segment):
+        inline[match.group(1)] = next(
+            (g for g in match.groups()[1:] if g is not None), ""
+        )
+    return hosts, env_names, inline
