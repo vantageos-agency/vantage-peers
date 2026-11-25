@@ -1,4 +1,4 @@
-# DISABLED: GitHub Actions are disabled on this repository (ruling 2026-11-24); this file runs no job; no equivalent gate in the reviewer's full-suite command (`npx vitest run`); traced in task k178k1e07c9tq1k2vb2wgxzw0x8jvx5d.
+# DISABLED: GitHub Actions are disabled on this repository (ruling 2026-11-24); this file runs no job. Its gate runs in the reviewer's full-suite command (`npx vitest run`): scripts/__tests__/generated-and-lockfile-gates.test.mjs.
 name: "[DISABLED] MCP Server Lockfile Isolated"
 
 # Reproduces, on every push, the exact install layer Railway runs for
