@@ -206,6 +206,7 @@ try:
         convex_host_name,
         convex_references,
         has_convex_context,
+        heredoc_programs,
         runtime_write_vector,
         has_unreadable_command_string,
         head_prod_action,
@@ -486,6 +487,22 @@ def runtime_write_blocked(segment: str, tokens) -> "WriteVector | None":
     if vector is None or write_targets_dev(segment):
         return None
     return vector
+
+
+def heredoc_write_blocked(command: str) -> bool:
+    """True when a heredoc body that a PROGRAM consumes (a shell reading stdin, or
+    an interpreter run with `-` or no script) carries a runtime write that is not
+    provably dev. The body is judged AS the program it is: shell commands segment
+    by segment, an interpreter source as one text. The owner line is judged with
+    the body, so an inline `CONVEX_URL=...` on that line resolves the target."""
+    for owner_text, body, tokens, is_shell in heredoc_programs(command):
+        if is_shell:
+            for segment, seg_tokens in iter_real_commands(body):
+                if runtime_write_blocked(segment, seg_tokens) is not None:
+                    return True
+        elif runtime_write_blocked(owner_text + "\n" + body, tokens) is not None:
+            return True
+    return False
 
 
 def _segment_prod_action(tokens):
@@ -1049,6 +1066,16 @@ def is_prod_deploy(command: str) -> bool:
     """
     # A heredoc fed to a shell is a PROGRAM, not data: judged BEFORE the
     # heredoc bodies are stripped.
+    # HEREDOC BODY CONSUMED AS A PROGRAM (task k17bx73va6s36bg1qdqw0enjch8f97h2): the
+    # body is the program the shell or the interpreter runs, judged before the strip below.
+    if heredoc_write_blocked(command):
+        print(
+            "enforce-pi-authorization: a Convex WRITE is inside a heredoc that a shell or an "
+            "interpreter runs as its program, and its target does not resolve to DEV. Name the "
+            "dev deployment inline, or obtain Pi authorization.",
+            file=sys.stderr,
+        )
+        return True
     heredoc_action = prod_action_in_heredoc_to_shell(command)
     command = strip_heredocs(command)
     raw_command = command
@@ -1168,6 +1195,8 @@ def deploy_is_dev_keyed(command: str) -> bool:
     key -- and only a key assigned in the deploy's own segment reaches it. A
     deploy segment without such a key is opaque, and opaque is conservative.
     """
+    if heredoc_write_blocked(command):
+        return False  # a heredoc program carrying a write that is not provably dev
     command = strip_heredocs(command)
     saw_deploy_verb = False
     for segment, tokens in iter_real_commands(command):
@@ -1222,6 +1251,8 @@ def is_convex_run_only(command: str) -> bool:
     written to the audit log; it lowers the ceremony of a prod READ, it does
     not certify one.
     """
+    if heredoc_write_blocked(command):
+        return False  # a heredoc program carrying a write is not a read
     command = strip_heredocs(command)
     prod_read = False
     is_deploy_class = False
