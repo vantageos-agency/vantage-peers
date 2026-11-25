@@ -712,6 +712,12 @@ const SCOPE_CLASSIFICATION: Readonly<Record<string, ScopeClassification>> = {
 		basis: "args+gate",
 		reason: "doorScopeArgs verifiedOrg always + unresolvedOrgDenial",
 	},
+	"check_repo_routing|githubRepoMapping:routedElsewhere": {
+		class: "safe",
+		severity: null,
+		basis: "args+gate",
+		reason: "doorScopeArgs verifiedOrg always + unresolvedOrgDenial",
+	},
 	"check_repo_routing|githubRepoMapping:list": {
 		class: "safe",
 		severity: null,
