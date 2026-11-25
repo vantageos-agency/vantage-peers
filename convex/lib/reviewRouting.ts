@@ -256,11 +256,16 @@ export type RepoRoute =
 			fallbackReviewerAgentId?: Id<"agents">;
 	  }
 	| { state: "unreviewed"; owner: string; ownerAgentId?: Id<"agents"> }
+	| { state: "out-of-scope"; reason: string }
 	| { state: "absent" };
 
 /** The route a row states. A row naming no reviewer is `unreviewed`, never defaulted. */
 export function routeOfRow(row: RepoMappingRow | null): RepoRoute {
 	if (row === null) return { state: "absent" };
+	// A row with no orchestrator is out of scope (the only legal shape without one).
+	if (row.outOfScope !== undefined || row.orchestrator === undefined) {
+		return { state: "out-of-scope", reason: row.outOfScope?.reason ?? "" };
+	}
 	const ownerId =
 		row.orchestratorAgentId !== undefined ? { ownerAgentId: row.orchestratorAgentId } : {};
 	if (row.reviewer === undefined) {
@@ -309,7 +314,8 @@ export async function resolveReviewer(
 		? (mapping?.reviewer ?? null)
 		: (mapping?.reviewer ?? (await readConfigOne(ctx, REVIEWER_DEFAULT_KEY)));
 	const reviewer = reviewerRaw === null ? null : norm(reviewerRaw);
-	const owner = mapping === null ? null : norm(mapping.orchestrator);
+	const owner =
+		mapping === null || mapping.orchestrator === undefined ? null : norm(mapping.orchestrator);
 	const fallbackRaw = adopted
 		? (mapping?.fallbackReviewer ?? null)
 		: (mapping?.fallbackReviewer ??
@@ -364,7 +370,9 @@ export async function repoOwner(
 ): Promise<string | null> {
 	if (repo === undefined) return null;
 	const mapping = await mappingFor(ctx, repo);
-	return mapping === null ? null : norm(mapping.orchestrator);
+	return mapping === null || mapping.orchestrator === undefined
+		? null
+		: norm(mapping.orchestrator);
 }
 
 /** Coordinator channels from data; empty when none configured. */
@@ -388,7 +396,11 @@ export async function mayReassignReviewTask(
 	}
 	if (repo === undefined) return false;
 	const mapping = await mappingFor(ctx, repo);
-	return mapping !== null && norm(mapping.orchestrator) === who;
+	return (
+		mapping !== null &&
+		mapping.orchestrator !== undefined &&
+		norm(mapping.orchestrator) === who
+	);
 }
 
 /**

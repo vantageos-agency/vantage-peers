@@ -172,6 +172,7 @@ import { registerExportOkfBundle } from "./tools/exportOkfBundle.js";
 import { registerImportOkfBundle } from "./tools/importOkfBundle.js";
 import { registerKbIngestTools } from "./tools/kbIngest.js";
 import { repoMappingAgentIdArgs, repoMappingAgentIdShape } from "./tools/repoMappingAgentIds.js";
+import { repoMappingOutOfScopeShape, repoMappingRouteConflict } from "./tools/repoMappingOutOfScope.js";
 import { registerValidateOkfBundle } from "./tools/validateOkfBundle.js";
 import { registerUiAppResources, withUiAppLink } from "./ui-resources/apps.js";
 import type { VpToolResult } from "./ui-resources/schemas.js";
@@ -10334,17 +10335,22 @@ export function registerTools(
 				"guardResolvedCaller() refuses an unresolved caller; tenant (orgId) derived server-side from the verified scope in githubRepoMapping:add; member needs manage-repo-mappings and a GitHub-verified owner binding",
 		},
 		"add_repo_mapping",
-		"Register or update a GitHub repo to orchestrator mapping for webhook event routing. " +
-			"Returns { id, repo, orchestrator, project, active, reviewer, fallbackReviewer } (plus the agent IDs you gave); calling again for the same repo updates the mapping and restates its agent IDs. " +
-			"WHEN: use when adding a new repo to monitoring or changing which orchestrator handles its events. " +
-			"EXAMPLE: add_repo_mapping repo='vantageos-agency/vantage-peers' orchestrator='alpha' project='vantage-peers'.",
+		"Register or update a GitHub repo to orchestrator mapping for webhook event routing, or record that nobody owns the repo (outOfScope). " +
+			"Returns { id, repo, orchestrator, project, active, reviewer, fallbackReviewer } (plus the agent IDs or the outOfScope you gave); calling again for the same repo updates the mapping and restates its agent IDs. " +
+			"WHEN: use when adding a new repo to monitoring, changing which orchestrator handles its events, or recording a repo no station owns. " +
+			"EXAMPLE: add_repo_mapping repo='vantageos-agency/vantage-peers' orchestrator='alpha' project='vantage-peers'. " +
+			"EXAMPLE (nobody owns it): add_repo_mapping repo='vantageos-agency/old-fork' project='archive' outOfScope={reason:'no owning station, no activity in 30 days'}.",
 		{
 			repo: z
 				.string()
 				.describe("The GitHub repository, as owner/name, e.g. 'vantageos-agency/vantage-peers'."),
 			orchestrator: z
 				.string()
-				.describe("The orchestrator that receives the repo's webhook events, e.g. 'sigma'."),
+				.optional()
+				.describe(
+					"The orchestrator that receives the repo's webhook events, e.g. 'sigma'. " +
+						"Required unless you give outOfScope; omit it only for an out-of-scope repo.",
+				),
 			project: z
 				.string()
 				.describe("The project the repo's work is billed to, e.g. 'vantage-peers'."),
@@ -10366,6 +10372,7 @@ export function registerTools(
 					"Who reviews when the reviewer is stopped. Omit to use the fleet default.",
 				),
 			...repoMappingAgentIdShape,
+			...repoMappingOutOfScopeShape,
 		},
 		{
 			outputSchema: addRepoMappingServedOutputSchema,
@@ -10385,11 +10392,23 @@ export function registerTools(
 			orchestratorAgentId,
 			reviewerAgentId,
 			fallbackReviewerAgentId,
+			outOfScope,
 		}) => {
 			// Repo mappings are tenant-owned (orgId): an unresolved caller is refused
 			// here, the Convex door decides master / org-member / own-rows.
 			const unresolved = guardResolvedCaller("add_repo_mapping");
 			if (unresolved) return unresolved;
+			// A repo is routed OR out of scope: refused here, before any backend call.
+			const conflict = repoMappingRouteConflict({
+				orchestrator,
+				outOfScope,
+				reviewer,
+				fallbackReviewer,
+				orchestratorAgentId,
+				reviewerAgentId,
+				fallbackReviewerAgentId,
+			});
+			if (conflict !== null) return mcpError(conflict);
 			try {
 				// The mapping is written IN the bearer's verified org, as its read
 				// sibling list_repo_mappings reads it (task k176y0q5jcz3m8m673bf61kva98h49js).
@@ -10397,7 +10416,8 @@ export function registerTools(
 				if (orgDenied) return orgDenied;
 				const id = await convex.mutation("githubRepoMapping:add" as any, {
 					repo,
-					orchestrator,
+					...(orchestrator !== undefined ? { orchestrator } : {}),
+					...(outOfScope !== undefined ? { outOfScope } : {}),
 					project,
 					active,
 					reviewer,
@@ -10415,7 +10435,8 @@ export function registerTools(
 				const structured: Record<string, unknown> = {
 					id,
 					repo,
-					orchestrator,
+					...(orchestrator !== undefined ? { orchestrator } : {}),
+					...(outOfScope !== undefined ? { outOfScope } : {}),
 					project,
 					active,
 					reviewer,
@@ -10638,8 +10659,8 @@ export function registerTools(
 				"decided by its Convex door githubRepoMapping:getRoute, which refuses an unresolved caller (requireResolvedCaller, alsoRefusePreOrg) and reads inside the caller's verified org: doorScopeArgs() forwards verifiedOrg, unresolvedOrgDenial() refuses a non-master bearer with none, another org's row answers absent",
 		},
 		"get_repo_route",
-		"Get the review route of one GitHub repo in your organisation: routed, unreviewed or absent. " +
-			"Returns { state, repo, owner?, reviewer?, fallbackReviewer? }; absent is a typed state, never an empty reply. " +
+		"Get the review route of one GitHub repo in your organisation: routed, unreviewed, out-of-scope or absent. " +
+			"Returns { state, repo, owner?, reviewer?, fallbackReviewer?, reason? }; absent is a typed state, never an empty reply, and out-of-scope carries the reason nobody owns the repo. " +
 			"WHEN: use to know who owns and who reviews a repo before opening a pull request, or why none is routed. " +
 			"EXAMPLE: get_repo_route repo='vantageos-agency/vantage-peers'. " +
 			"FR: Lire la route de revue d'un dépôt GitHub de votre organisation : routé, sans relecteur ou absent.",
@@ -10693,7 +10714,7 @@ export function registerTools(
 		},
 		"check_repo_routing",
 		"Check that a list of repos is fully routed in your organisation, against the org's whole routing table. " +
-			"Returns { routed, unreviewed, missing, stale, complete }, each of the four a list of repos; stale are mapped repos not in your list, complete is true only when missing, unreviewed and stale are all empty. " +
+			"Returns { routed, unreviewed, missing, outOfScope, stale, complete }, each of the first five a list of repos; outOfScope are repos of your list recorded as owned by nobody (not missing), stale are mapped repos not in your list, complete is true only when missing, unreviewed and stale are all empty. " +
 			"WHEN: use after listing your real GitHub repos, to find repos with no owner, no reviewer, or a mapping for a repo that is gone. " +
 			"EXAMPLE: check_repo_routing repos=['vantageos-agency/vantage-peers','vantageos-agency/vantage-registry']. " +
 			"FR: Vérifier qu'une liste de dépôts est entièrement routée dans votre organisation.",
@@ -10722,6 +10743,7 @@ export function registerTools(
 				const routed: string[] = [];
 				const unreviewed: string[] = [];
 				const missing: string[] = [];
+				const outOfScope: string[] = [];
 				const BATCH = 20;
 				for (let i = 0; i < wanted.length; i += BATCH) {
 					const batch = wanted.slice(i, i + BATCH);
@@ -10738,6 +10760,7 @@ export function registerTools(
 						const state = answers[j]?.state;
 						if (state === "routed") routed.push(batch[j]);
 						else if (state === "unreviewed") unreviewed.push(batch[j]);
+						else if (state === "out-of-scope") outOfScope.push(batch[j]);
 						else if (state === "absent") missing.push(batch[j]);
 						else {
 							return mcpError(
@@ -10767,6 +10790,7 @@ export function registerTools(
 					routed,
 					unreviewed,
 					missing,
+					outOfScope,
 					stale,
 					complete: missing.length === 0 && unreviewed.length === 0 && stale.length === 0,
 				};

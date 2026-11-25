@@ -118,6 +118,11 @@ http.route({
 		if (!mapping || !mapping.active) {
 			return new Response("OK - unmapped repo", { status: 200 });
 		}
+		// An out-of-scope repo has no owner: its events route nowhere.
+		if (mapping.orchestrator === undefined || mapping.outOfScope !== undefined) {
+			return new Response("OK - repo out of scope", { status: 200 });
+		}
+		const mappedOrchestrator: string = mapping.orchestrator;
 
 		// An org-owned mapping routes only while its GitHub-owner binding is active
 		// (deleted/suspended installation or deactivated binding = no routing).
@@ -144,8 +149,8 @@ http.route({
 			eventType: eventType ?? "unknown",
 		});
 
-		const orchestrator = mapping.orchestrator as CreatorLiteral;
-		const orchestratorAssignee = mapping.orchestrator as AssigneeLiteral;
+		const orchestrator = mappedOrchestrator as CreatorLiteral;
+		const orchestratorAssignee = mappedOrchestrator as AssigneeLiteral;
 		const project = mapping.project;
 
 		// REVIEWER_UNRESOLVED surfacing: system message to each coordinator in
@@ -299,7 +304,7 @@ http.route({
 						pilot: orchestrator,
 						priority,
 						createdBy: "system",
-						agents: [mapping.orchestrator],
+						agents: [mappedOrchestrator],
 						status: "execute",
 					},
 				);

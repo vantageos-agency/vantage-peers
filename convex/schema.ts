@@ -1133,7 +1133,13 @@ export default defineSchema({
 	//   successful `npx convex deploy --yes`.
 	githubRepoMapping: defineTable({
 		repo: v.string(), // "myreeldream-ai/MyShortReel-beta"
-		orchestrator: v.string(), // "omega", "tau", "sigma", etc.
+		// "omega", "tau", "sigma", etc. Absent ONLY on an out-of-scope row (below): a row
+		// is either routed (it names an orchestrator) or out of scope, never both.
+		orchestrator: v.optional(v.string()),
+		// A repo no station owns, recorded on its own row (no second data file): `reason`
+		// is the operator's trimmed statement (>= 10 characters). An out-of-scope row carries
+		// no orchestrator, no reviewer and no agent IDs (githubRepoMapping:add refuses the mix).
+		outOfScope: v.optional(v.object({ reason: v.string() })),
 		project: v.string(), // "myreeldream", "vantage-starter", etc.
 		active: v.boolean(),
 		lastDeployedSHA: v.optional(v.string()), // Day 98 — most recent prod-deployed commit OID
