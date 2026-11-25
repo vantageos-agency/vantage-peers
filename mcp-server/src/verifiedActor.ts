@@ -137,10 +137,15 @@ export const MASTER_UNNARROWED_DOORS: ReadonlySet<string> = new Set([
  * (RBAC_DENIED claimless-service-account). It is forwarded for a master scope only,
  * and only when no `verifiedOrg` rides the call, so a client-organisation seat (served
  * by verifiedOrg) is never sent an actor the door would refuse, and the two claims
- * never travel together. Every door here is pinned in test/next-task-claim.test.ts.
+ * never travel together. Every door here is pinned in test/next-task-claim.test.ts or
+ * test/tool-usage-claim.test.ts.
  */
 export const MASTER_ACTOR_CLAIM_DOORS: ReadonlySet<string> = new Set([
 	"tasks:nextForAssignee",
+	// Contract 30 (PR #1764): both tool-usage reads admit an operator-org verifiedActor.
+	// Pinned in test/tool-usage-claim.test.ts.
+	"toolUsage:getToolUsage",
+	"toolUsage:usageByOwner",
 ]);
 
 export type VerifiedActorArg = { agentId: string; orgSlug: string };

@@ -1239,14 +1239,14 @@ const SCOPE_CLASSIFICATION: Readonly<Record<string, ScopeClassification>> = {
 		severity: null,
 		basis: "args+gate",
 		reason:
-			"toolUsageReadArgs (toolUsage.ts:119) forwards doorScopeArgs verifiedOrg and refuses a bearer that resolves no identity; the Convex door raises RBAC_DENIED for a foreign caller or non-admin (convex/toolUsage.ts:321-338); call at tools.ts:10924",
+			"toolUsageReadArgs (toolUsage.ts:119) forwards doorScopeArgs verifiedOrg and refuses a bearer that resolves no identity; the Convex door raises RBAC_DENIED for a foreign caller or non-admin (convex/toolUsage.ts:321-338); call at tools.ts:10924; a master scope with a verified agent ID and no named organisation is claimed by verifiedActor (MASTER_ACTOR_CLAIM_DOORS, contract 30, judged by the door as an operator-org agent), never beside a verifiedOrg",
 	},
 	"get_owner_tool_usage|toolUsage:usageByOwner": {
 		class: "safe",
 		severity: null,
 		basis: "args+gate",
 		reason:
-			"toolUsageReadArgs (toolUsage.ts:119) forwards doorScopeArgs verifiedOrg and refuses an unidentified bearer; the Convex door refuses an owner outside the organisation with RBAC_DENIED (convex/toolUsage.ts:385-405); call at tools.ts:10986",
+			"toolUsageReadArgs (toolUsage.ts:119) forwards doorScopeArgs verifiedOrg and refuses an unidentified bearer; the Convex door refuses an owner outside the organisation with RBAC_DENIED (convex/toolUsage.ts:385-405); call at tools.ts:10986; a master scope with a verified agent ID and no named organisation is claimed by verifiedActor (MASTER_ACTOR_CLAIM_DOORS, contract 30, judged by the door as an operator-org agent), never beside a verifiedOrg",
 	},
 	"toolUsage.ts|toolUsage:record": {
 		class: "safe",

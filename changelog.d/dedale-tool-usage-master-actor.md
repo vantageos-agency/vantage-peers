@@ -1,0 +1,4 @@
+---
+section: Fixed
+---
+- **get_tool_usage and get_owner_tool_usage serve a fleet-master seat with a verified agent ID (task k174spsjex627qrkvtfc703x598jvyt1).** Backend contract 30 (PR #1764) lets `toolUsage:getToolUsage` and `toolUsage:usageByOwner` admit the `verifiedActor` of an operator-organisation agent, but the MCP never sent one, so a master bearer reached both doors with no claim and was refused (RBAC_DENIED claimless-service-account). Both doors are now in `MASTER_ACTOR_CLAIM_DOORS`: a master scope with a verified agent ID and no named organisation forwards `verifiedActor`, never beside a `verifiedOrg`; a client seat still forwards `verifiedOrg` only, a Clerk session and a master with no agent ID forward no actor. Pinned per caller class in `mcp-server/test/tool-usage-claim.test.ts`.
