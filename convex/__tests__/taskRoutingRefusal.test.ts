@@ -478,10 +478,11 @@ describe("githubRepoMapping:add stores the agent IDs", () => {
 		const t = makeT();
 		await seed(t);
 		const msg = await refusal(
-			member(t, "org-a").mutation(api.githubRepoMapping.add, {
-				...base,
+			member(t, "org-b").mutation(api.githubRepoMapping.add, {
+				repo: "org-b/fresh",
+				project: "p",
 				orchestrator: ORCH,
-				reviewerAgentId: await agentIdOf(t, "org-a", "rev"),
+				reviewerAgentId: await agentIdOf(t, "org-b", "rev"),
 			}),
 		);
 		expect(msg).toContain("INVALID_ROUTE");
