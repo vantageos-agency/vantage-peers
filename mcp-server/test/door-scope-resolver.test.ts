@@ -327,6 +327,9 @@ const SITES: [string, string, Legacy, boolean][] = [
 	["list_bus", "businessUnits:list", org, false],
 	["delete_bu", "businessUnits:remove", org, false],
 	["list_repo_mappings", "githubRepoMapping:list", org, false],
+	["get_repo_route", "githubRepoMapping:getRoute", org, false],
+	["check_repo_routing", "githubRepoMapping:getRoute", org, false],
+	["check_repo_routing", "githubRepoMapping:list", org, false],
 	["validate_mandate_spending", "mandates:validateSpending", org, false],
 	["get_github_owner_bindings", "githubOwnerBinding:listBindings", org, false],
 	[

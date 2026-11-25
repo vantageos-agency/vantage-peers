@@ -620,6 +620,16 @@ export const CALLS: Call[] = [
 		args: () => ({ repo: "owner/repo", orchestrator: "ulysse", project: "p" }),
 	},
 	{
+		tool: "get_repo_route",
+		as: "person",
+		args: () => ({ repo: "owner/repo" }),
+	},
+	{
+		tool: "check_repo_routing",
+		as: "person",
+		args: () => ({ repos: ["owner/repo"] }),
+	},
+	{
 		tool: "remove_repo_mapping",
 		as: "master",
 		args: () => ({ repo: "owner/repo" }),

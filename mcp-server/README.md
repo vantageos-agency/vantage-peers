@@ -402,7 +402,7 @@ Before it serves anything, the server asks your backend for its contract manifes
 
 - the backend has no manifest (it predates this check);
 - the backend's contract version is below **30**, the version this release requires;
-- any of the **153** backend functions this release calls is missing (they are named in the log);
+- any of the **154** backend functions this release calls is missing (they are named in the log);
 - the server cannot present its service identity, or the backend refuses it.
 
 So upgrade in this order: deploy the backend of the same release first, then upgrade this package. The check sees a missing function, not a changed argument; the contract version covers that.

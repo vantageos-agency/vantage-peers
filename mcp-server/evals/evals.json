@@ -8222,6 +8222,112 @@
 				"ranked tasks first by rank, then unranked by priority and age; no nextCursor"
 			],
 			"source": "src/tools.ts:5746"
+		},
+		{
+			"id": "get_repo_route.routed",
+			"tool": "get_repo_route",
+			"op": "callTool",
+			"caller": "seat",
+			"runner": "live",
+			"prompt": "Who owns and who reviews acme/app?",
+			"args": {
+				"repo": "acme/app"
+			},
+			"expect": {
+				"isError": false,
+				"jsonKeys": ["state", "repo"]
+			},
+			"expectations": ["state is routed, unreviewed or absent, never an empty reply", "repo echoes the repo asked"],
+			"source": "src/tools.ts:10603"
+		},
+		{
+			"id": "get_repo_route.absent",
+			"tool": "get_repo_route",
+			"op": "callTool",
+			"caller": "seat",
+			"runner": "live",
+			"prompt": "Is acme/unmapped routed?",
+			"args": {
+				"repo": "acme/unmapped"
+			},
+			"expect": {
+				"isError": false,
+				"textIncludes": ["absent"]
+			},
+			"expectations": ["a repo with no mapping in the caller's organisation answers state absent, not an error"],
+			"source": "src/tools.ts:10603"
+		},
+		{
+			"id": "get_repo_route.missing-repo",
+			"tool": "get_repo_route",
+			"op": "callTool",
+			"caller": "master",
+			"runner": "offline",
+			"prompt": "Get a repo route without naming the repo.",
+			"args": {},
+			"expect": {
+				"isError": true,
+				"textIncludes": [
+					"Input validation error: Invalid arguments for tool get_repo_route",
+					"repo"
+				]
+			},
+			"expectations": ["`repo` is required", "the SDK refuses before the handler runs, so no backend call is made"],
+			"source": "src/tools.ts:10603"
+		},
+		{
+			"id": "check_repo_routing.complete",
+			"tool": "check_repo_routing",
+			"op": "callTool",
+			"caller": "seat",
+			"runner": "live",
+			"prompt": "Is every one of my repos routed?",
+			"args": {
+				"repos": ["acme/app", "acme/site"]
+			},
+			"expect": {
+				"isError": false,
+				"jsonKeys": ["routed", "unreviewed", "missing", "stale", "complete"]
+			},
+			"expectations": ["complete is true only when missing, unreviewed and stale are all empty"],
+			"source": "src/tools.ts:10660"
+		},
+		{
+			"id": "check_repo_routing.stale",
+			"tool": "check_repo_routing",
+			"op": "callTool",
+			"caller": "seat",
+			"runner": "live",
+			"prompt": "Does my organisation map a repo that is not in my list?",
+			"args": {
+				"repos": ["acme/app"]
+			},
+			"expect": {
+				"isError": false,
+				"jsonKeys": ["stale", "complete"]
+			},
+			"expectations": ["every page of the organisation's table is read; a mapped repo not in the list is stale"],
+			"source": "src/tools.ts:10660"
+		},
+		{
+			"id": "check_repo_routing.empty-list",
+			"tool": "check_repo_routing",
+			"op": "callTool",
+			"caller": "master",
+			"runner": "offline",
+			"prompt": "Check routing for an empty repo list.",
+			"args": {
+				"repos": []
+			},
+			"expect": {
+				"isError": true,
+				"textIncludes": [
+					"Input validation error: Invalid arguments for tool check_repo_routing",
+					"repos"
+				]
+			},
+			"expectations": ["repos needs at least one entry", "the SDK refuses before the handler runs, so no backend call is made"],
+			"source": "src/tools.ts:10660"
 		}
 	]
 }
