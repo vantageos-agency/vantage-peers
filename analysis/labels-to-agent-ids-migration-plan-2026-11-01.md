@@ -31,7 +31,7 @@ grep -n "findAgentByName" -r convex mcp-server/src --include=*.ts | grep -v __te
     ("the by-name lookup has exactly the owned callers"): auth.ts 1, messages.ts 2, inboxReader 1,
     actorIds 1, seatAgent 1, fleetActors 1.
 
-npx -y @vantageos/backend-doctor@0.5.0 . --json-evidence <dir>
+npx -y @vantageos/backend-doctor@<latest> . --json-evidence <dir> (<latest> = `npm view @vantageos/backend-doctor version`)
   -> exit 1; sha 48ac259ae08d03d5cdefdc00a9b0490915fd3ef9; checked 54 / total 56
      mechanical_rule_counts: CR-2 246, CR-3 16, R-5 62, R-53 323, R-54 132, R-55 22, R-56 2
      (the evidence file is backend-doctor-48ac259ae08d03d5cdefdc00a9b0490915fd3ef9.json;
@@ -276,7 +276,7 @@ Per door, for all 70, table-driven one file per module in `convex/__tests__/`, u
 4. ABSENT pole for reads: a resolvable in-org ID with no rows -> empty SUCCESS (no throw, no `refused`).
 5. MCP side (`mcp-server/test/`, beside `agent-id-on-seat.test.ts`): a sweep deriving the doors that declare `<arg>AgentId` from `convex/*.ts` and failing when a tool call site for such a door does not forward from `verifiedActorOf`; both poles: a credential-bearing context forwards, a master/stdio context forwards nothing and is byte-for-byte unchanged.
 6. Pins: `agentRegistryNoNameSelection.test.ts` green at every step (no new caller); the boot-check test pins the version pair; the manifest drift test runs after E7.
-7. Doctor gate per step: `npx -y @vantageos/backend-doctor@0.5.0 . --json-evidence <dir>`; CR-2 / R-53 before and after go in the PR body.
+7. Doctor gate per step: `npx -y @vantageos/backend-doctor@<latest> . --json-evidence <dir>`; CR-2 / R-53 before and after go in the PR body.
 
 Repo gates before each Convex PR: the RULE #19 sandbox build pass (dry-run of the Convex build, as the project CLAUDE.md prescribes), biome and tsc on touched files.
 
