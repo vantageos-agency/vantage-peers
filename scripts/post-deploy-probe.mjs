@@ -25,13 +25,23 @@
 //
 // Environment (all optional):
 //   VP_PROBE_MCP_URL   default https://mcp.vantagepeers.com/mcp
-//   VP_PROBE_DIR       default ~/.config/vantage-probe-tenants/prod
-//   VP_PROBE_BEARER_A / VP_PROBE_BEARER_B   explicit bearer file paths
-//   VP_PROBE_BEARER_A2 / VP_PROBE_BEARER_B2 optional SECOND agent per org (default
-//                      <tenant>/probe-a2.bearer, probe-b2.bearer). Absent file: single-agent
-//                      fallback, announced in the output and the summary.
+//   Bearer VALUES (the Infisical vault names; set by `infisical run`, see
+//   runbooks/railway-mcp-redeploy.md step 6). When one is SET it is used and its file is
+//   not read; a value that is set but empty or blank is a broken credential
+//   (COULD-NOT-JUDGE), never a silent fallback to the file:
+//     VP_PROBE_A_SEAT_BEARER / VP_PROBE_B_SEAT_BEARER    primary seat of each org
+//     VP_PROBE_A2_SEAT_BEARER / VP_PROBE_B2_SEAT_BEARER  optional SECOND agent per org
+//   Bearer FILES, the fallback when the value variable is unset:
+//     VP_PROBE_DIR       default ~/.config/vantage-probe-tenants/prod
+//     VP_PROBE_BEARER_A / VP_PROBE_BEARER_B   explicit bearer file paths
+//     VP_PROBE_BEARER_A2 / VP_PROBE_BEARER_B2 second-agent file paths (default
+//                        <tenant>/probe-a2.bearer, probe-b2.bearer).
+//   A primary bearer absent from both env and file: COULD-NOT-JUDGE. A second-agent bearer
+//   absent from both (env unset, file does not exist): single-agent fallback, announced in
+//   the output and the summary.
 //
-// Credentials are read from 0600 files and are never printed.
+// Files are 0600. A credential is never printed: the output names its SOURCE (the env
+// variable name or the file path), never its value.
 //
 // CLEANUP: the seats have no delete door (soft_delete_memory requires master scope,
 // measured 2026-11-02). Rows created by a run are listed as CLEANUP ids at the end,
@@ -50,6 +60,8 @@ const TASK = "k179zpdjs4m7h7xfgn4yn84j8n8heqke";
 const ORGS = [
 	{
 		label: "probe-tenant-a",
+		envName: "VP_PROBE_A_SEAT_BEARER",
+		secondEnvName: "VP_PROBE_A2_SEAT_BEARER",
 		file:
 			process.env.VP_PROBE_BEARER_A ??
 			join(DIR, "probe-tenant-a/probe-a.bearer"),
@@ -59,6 +71,8 @@ const ORGS = [
 	},
 	{
 		label: "probe-tenant-b",
+		envName: "VP_PROBE_B_SEAT_BEARER",
+		secondEnvName: "VP_PROBE_B2_SEAT_BEARER",
 		file:
 			process.env.VP_PROBE_BEARER_B ??
 			join(DIR, "probe-tenant-b/probe-b.bearer"),
@@ -89,10 +103,35 @@ function record(org, call, ok, expectation, response) {
 	}
 }
 
-// The SECOND probe agent of an org is optional. A file that does not exist (ENOENT) means
-// "not provisioned": the probe falls back to the single-agent check and says so. A file that
-// exists but cannot be read, or is empty, is a broken credential, never a silent fallback.
+// A bearer VALUE from the environment. Returns null when the variable is UNSET (the caller
+// then reads the file). A variable that is set but empty or blank is a broken credential,
+// never a reason to fall back to the file: whoever set it meant it to be used.
+function bearerFromEnv(what, org, envName) {
+	const v = process.env[envName];
+	if (v === undefined) return null;
+	const raw = v.trim();
+	if (!raw)
+		throw new CouldNotJudge(
+			`${what} for ${org.label}: env ${envName} is set but empty`,
+		);
+	return raw;
+}
+
+// The SECOND probe agent of an org is optional. Env unset AND a file that does not exist
+// (ENOENT) means "not provisioned": the probe falls back to the single-agent check and says
+// so. A file that exists but cannot be read, or is empty, is a broken credential, never a
+// silent fallback.
 function readSecondBearer(org) {
+	const fromEnv = bearerFromEnv(
+		"second-agent credential",
+		org,
+		org.secondEnvName,
+	);
+	if (fromEnv !== null) {
+		org.secondSource = `env ${org.secondEnvName}`;
+		return fromEnv;
+	}
+	org.secondSource = `file ${org.secondFile}`;
 	let raw;
 	try {
 		raw = readFileSync(org.secondFile, "utf8").trim();
@@ -109,13 +148,19 @@ function readSecondBearer(org) {
 	return raw;
 }
 
-async function readBearer(org) {
+function readBearer(org) {
+	const fromEnv = bearerFromEnv("credential", org, org.envName);
+	if (fromEnv !== null) {
+		org.source = `env ${org.envName}`;
+		return fromEnv;
+	}
+	org.source = `file ${org.file}`;
 	let raw;
 	try {
 		raw = readFileSync(org.file, "utf8").trim();
 	} catch (e) {
 		throw new CouldNotJudge(
-			`credential for ${org.label} unreadable (${org.file}): ${e.code ?? e.message}`,
+			`credential for ${org.label} unreadable (env ${org.envName} unset, file ${org.file}): ${e.code ?? e.message}`,
 		);
 	}
 	if (!raw)
@@ -336,7 +381,7 @@ async function sendPole(org, stamp) {
 	const second = org.second;
 	if (!second) {
 		say(
-			`  NOTE  ${org.label}: SINGLE-AGENT FALLBACK, no second-agent credential (${org.secondFile}); in-org send_message delivery is NOT tested for this org`,
+			`  NOTE  ${org.label}: SINGLE-AGENT FALLBACK, no second-agent credential (env ${org.secondEnvName} unset, no file ${org.secondFile}); in-org send_message delivery is NOT tested for this org`,
 		);
 		const s = await call(org, "send_message", {
 			fromAgentId: org.agentId,
@@ -452,7 +497,10 @@ function summary(verdict, detail, code) {
 async function main() {
 	const stamp = new Date().toISOString();
 	say(`post-deploy-probe ${stamp} against ${MCP}`);
-	for (const org of ORGS) org.bearer = await readBearer(org);
+	for (const org of ORGS) {
+		org.bearer = readBearer(org);
+		say(`  credential ${org.label}: ${org.source}`);
+	}
 	for (const org of ORGS) {
 		await openSession(org);
 		await whoami(org);
@@ -461,6 +509,7 @@ async function main() {
 	for (const org of ORGS) {
 		const bearer = readSecondBearer(org);
 		if (bearer === null) continue;
+		say(`  second-agent credential ${org.label}: ${org.secondSource}`);
 		const second = { label: `${org.label}/second`, bearer };
 		await openSession(second);
 		await whoami(second);
