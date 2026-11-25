@@ -19,12 +19,11 @@ import { describe, expect, it } from "vitest";
  * It also runs `tsc --noEmit -p convex` (convex/tsconfig.json, the Convex
  * functions project), which is clean on main.
  *
- * NOT COVERED: the ROOT project (`npx tsc --noEmit` at the repo root, tsconfig
- * "include": ["convex"], which adds convex/__tests__/) is red on main with 3
- * errors, all in convex/__tests__/ (a missing JsonWebKey type and two untyped
- * .mjs imports). That debt belongs to the Convex owner and is traced in task
- * k17ebtntz80wst04av4b6ae6sn8jtb9v. A gate that is red from day one would be
- * removed, so the root project is added once that task lands.
+ * And it runs the ROOT project (`tsc --noEmit -p .`, tsconfig "include":
+ * ["convex"], which adds convex/__tests__/): the exact command the retired
+ * typecheck workflow ran. It was red with 3 errors in convex/__tests__/ until
+ * PR #1767 (task k17ebtntz80wst04av4b6ae6sn8jtb9v) cleared them; it is clean on
+ * main since, so the gate holds all three projects.
  *
  * Fail-closed: if the tsc binary cannot be found or cannot be spawned, the
  * test FAILS. A gate that cannot run is red, never green.
@@ -70,5 +69,9 @@ describe("typecheck gate", () => {
 
 	it("convex/ typechecks clean under convex/tsconfig.json", () => {
 		runTsc("convex");
+	}, 300_000);
+
+	it("the root project typechecks clean under tsconfig.json (the retired workflow's command)", () => {
+		runTsc(".");
 	}, 300_000);
 });

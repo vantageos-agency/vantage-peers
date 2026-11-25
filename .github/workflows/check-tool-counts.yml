@@ -1,4 +1,4 @@
-# DISABLED: GitHub Actions are disabled on this repository (ruling 2026-11-24); this file runs no job; no equivalent gate in the reviewer's full-suite command (`npx vitest run`); traced in task k178k1e07c9tq1k2vb2wgxzw0x8jvx5d.
+# DISABLED: GitHub Actions are disabled on this repository (ruling 2026-11-24); this file runs no job; the equivalent check is scripts/__tests__/check-tool-counts-gate.test.mjs, collected by `npx vitest run` at the repo root.
 name: "[DISABLED] Check tool counts"
 
 # A workflow that does not run and a workflow that passes look identical on the
